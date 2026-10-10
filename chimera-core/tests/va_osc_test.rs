@@ -37,7 +37,7 @@ fn osc_at(sr: f32, c: Correction) -> VarOsc {
 fn render_at(m: Morph, hz: f32, sr: f32, n: usize, c: Correction) -> Vec<f32> {
     let mut o = osc_at(sr, c);
     let inc = o.inc_for(hz);
-    (0..n).map(|_| o.tick(inc, m, false, None).out).collect()
+    (0..n).map(|_| o.tick(inc, m, None).out).collect()
 }
 
 fn render(m: Morph, hz: f32, n: usize, c: Correction) -> Vec<f32> {
@@ -49,11 +49,11 @@ fn render(m: Morph, hz: f32, n: usize, c: Correction) -> Vec<f32> {
 fn cycle(m: Morph, c: Correction) -> Vec<(f32, f32)> {
     let mut o = osc_at(SR, c);
     o.set_phase(0.5 * CYCLE);
-    o.tick(CYCLE, m, false, None);
+    o.tick(CYCLE, m, None);
     let mut p = o.phase();
     (0..4800)
         .map(|_| {
-            let y = o.tick(CYCLE, m, false, None).out;
+            let y = o.tick(CYCLE, m, None).out;
             let s = (p, y);
             p = o.phase();
             s
@@ -347,7 +347,7 @@ fn pulse_never_narrower_than_a_sample() {
     assert!((inc - 0.0872).abs() < 1e-4);
     let (mut rise, mut runs) = (None, 0);
     for n in 0..4096 {
-        o.tick(inc, morph(1.0, 1.0), false, None);
+        o.tick(inc, morph(1.0, 1.0), None);
         for &(t, step, _) in o.last_edges() {
             let at = n as f32 - t;
             if step > 0.0 {
@@ -372,7 +372,7 @@ fn tracks(inc: f32, p0: f32, n: usize, set: impl Fn(f64) -> Morph, skip: Option<
     let mut phase = vec![f64::from(p0)];
     let mut y = vec![0.0f32];
     for i in 1..=n + 1 {
-        y.push(o.tick(inc, set(i as f64), true, None).out);
+        y.push(o.tick(inc, set(i as f64), None).out);
         phase.push(f64::from(o.phase()));
     }
     let f = |t: f64| {
@@ -427,9 +427,9 @@ fn the_reference_catches_a_step() {
 #[test]
 fn a_threshold_crossing_backwards_is_an_edge() {
     let mut o = osc_at(SR, Correction::On);
-    o.tick(MIN_INC, morph(1.0, 1.0), true, None);
+    o.tick(MIN_INC, morph(1.0, 1.0), None);
     o.set_phase(0.28);
-    o.tick(MIN_INC, morph(1.0, 0.9), true, None);
+    o.tick(MIN_INC, morph(1.0, 0.9), None);
     let e = o.last_edges();
     assert_eq!(e.len(), 1, "{e:?}");
     let (t, step, _) = e[0];
@@ -442,9 +442,9 @@ fn a_corner_crossed_backwards_bends_its_own_way() {
     // the triangle's trough (−w/2) moves forward past the phase as SHAPE
     // falls 1 → 0.9; a trough bends up whichever way it is crossed
     let mut o = osc_at(SR, Correction::On);
-    o.tick(MIN_INC, morph(1.0 / 3.0, 1.0), true, None);
+    o.tick(MIN_INC, morph(1.0 / 3.0, 1.0), None);
     o.set_phase(0.53);
-    o.tick(MIN_INC, morph(1.0 / 3.0, 0.9), true, None);
+    o.tick(MIN_INC, morph(1.0 / 3.0, 0.9), None);
     let e = o.last_edges();
     assert_eq!(e.len(), 1, "{e:?}");
     let (t, step, slope) = e[0];

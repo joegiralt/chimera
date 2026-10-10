@@ -140,8 +140,8 @@ fn sync_restarts_the_slave() {
     let mut resets = 0;
     let mut worst = 0.0f32;
     for _ in 0..4000 {
-        let wrap = m.tick(0.0123, morph(0.0, 0.0), false, None).wrap;
-        s.tick(0.031, morph(1.0, 0.5), false, wrap);
+        let wrap = m.tick(0.0123, morph(0.0, 0.0), None).wrap;
+        s.tick(0.031, morph(1.0, 0.5), wrap);
         if let Some(t) = wrap {
             let e = (s.phase() - t * 0.031).abs();
             assert!(e <= 1e-6, "t {t}: phase {} vs {}", s.phase(), t * 0.031);
@@ -158,10 +158,10 @@ fn sync_splits_around_the_reset() {
     let (mut m, mut s) = (osc(Correction::On), osc(Correction::On));
     m.set_phase(0.95);
     s.set_phase(0.80);
-    let wrap = m.tick(0.125, morph(0.0, 0.0), false, None).wrap;
+    let wrap = m.tick(0.125, morph(0.0, 0.0), None).wrap;
     let t = wrap.expect("the master wraps");
     assert!((t - 0.6).abs() <= 1e-5, "{t}");
-    s.tick(0.25, morph(2.0 / 3.0, 1.0), false, wrap);
+    s.tick(0.25, morph(2.0 / 3.0, 1.0), wrap);
     let e = s.last_edges();
     let want = [(0.7, 0.5237, 0.0), (0.6, -0.1047, 0.0), (0.1, 0.5237, 0.0)];
     assert_eq!(e.len(), 3, "{e:?}");
@@ -182,8 +182,8 @@ fn synced(m: Morph, hz: f32, ratio: f32, c: Correction) -> Vec<f32> {
     let (im, is) = (master.inc_for(hz), slave.inc_for(hz * ratio));
     (0..GATE_LEN)
         .map(|_| {
-            let wrap = master.tick(im, morph(0.0, 0.0), false, None).wrap;
-            slave.tick(is, m, false, wrap).out
+            let wrap = master.tick(im, morph(0.0, 0.0), None).wrap;
+            slave.tick(is, m, wrap).out
         })
         .collect()
 }
@@ -234,8 +234,8 @@ fn ring_passes_the_alias_gate_detuned() {
                         let k = ring_gain(pk);
                         let y: Vec<f32> = (0..GATE_LEN)
                             .map(|_| {
-                                let ya = a.tick(i1, m1, false, None).out;
-                                let yb = b.tick(i2, m2, false, None).out;
+                                let ya = a.tick(i1, m1, None).out;
+                                let yb = b.tick(i2, m2, None).out;
                                 combine(VaMode::Ring, ya, yb, x, k, pk, &crush)
                             })
                             .collect();
@@ -261,7 +261,7 @@ fn sub_under(hz: f32, n: usize) -> (Vec<f32>, Vec<usize>) {
     let mut wraps = Vec::new();
     let y = (0..n)
         .map(|i| {
-            let wrap = m.tick(inc, morph(0.0, 0.0), false, None).wrap;
+            let wrap = m.tick(inc, morph(0.0, 0.0), None).wrap;
             if wrap.is_some() {
                 wraps.push(i);
             }

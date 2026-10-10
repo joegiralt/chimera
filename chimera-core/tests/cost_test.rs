@@ -1566,7 +1566,7 @@ fn va_sound(mode: chimera_core::dsp::va::VaMode) -> ParamSnapshot {
 /// the voices each is admitted beside the reserve on the four rooms (rev V,
 /// rev Y, rev V with ORBIT, rev V with the master tape), INIT's 2040 REV2
 /// (+15) and the chain and routing (83) on top. ADR 0040's done-when is six
-/// on each: the count does not meet it, the owner's call (Task 9 report).
+/// on each: met by every MODE but SYNC, five on rev Y (Task 9b report).
 #[test]
 fn va_bills_each_mode() {
     use chimera_core::dsp::va::VaMode::{Bits, Mix, Ring, Sync, Xor};
@@ -1583,14 +1583,18 @@ fn va_bills_each_mode() {
     assert_eq!(rooms, [4_984, 3_817, 4_813, 4_674]);
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     for (mode, bill, voices) in [
-        (Mix, 2_370, [2, 1, 1, 1]),
-        (Sync, 3_020, [1, 1, 1, 1]),
-        (Ring, 2_380, [2, 1, 1, 1]),
-        (Xor, 2_450, [1, 1, 1, 1]),
-        (Bits, 2_410, [1, 1, 1, 1]),
+        (Mix, 510, [8, 6, 7, 7]),
+        (Sync, 620, [6, 5, 6, 6]),
+        (Ring, 520, [8, 6, 7, 7]),
+        (Xor, 530, [7, 6, 7, 7]),
+        (Bits, 520, [8, 6, 7, 7]),
     ] {
         let p = va_sound(mode);
-        assert_eq!(EngineSlot::cost(&p, &ModState::new()), Cost(bill), "{mode:?}");
+        assert_eq!(
+            EngineSlot::cost(&p, &ModState::new()),
+            Cost(bill),
+            "{mode:?}"
+        );
         let voice = Voice::cost(&p, &ModState::new()).0;
         assert_eq!(voice, bill + 83 + 15, "{mode:?}");
         assert_eq!(at(voice), voices, "{mode:?}");
@@ -1607,7 +1611,11 @@ fn a_held_va_note_bills_its_playing_mode() {
     let (sync, mix) = (va_sound(VaMode::Sync), va_sound(VaMode::Mix));
     let mods = ModState::new();
     let mut rig = common::Rig::new(common::SR);
-    rig.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &sync);
+    rig.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &sync,
+    );
     let mut block = [0.0; chimera_hal::BLOCK_SIZE];
     rig.render(&mut block, &sync, &mods);
     assert_eq!(rig.held_model_extra(&mix), Cost(COST_SYNC.0 - COST_MIX.0));

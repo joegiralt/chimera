@@ -5,8 +5,9 @@
 use super::VaMode;
 use super::osc::R;
 use crate::dsp::algo::math::exp2;
-use crate::dsp::clampf;
 use crate::dsp::provenance::{Patent, PatentLine, Provenance};
+use crate::dsp::ring::rint;
+use crate::dsp::{clampf, sqrt};
 
 pub const PROVENANCE: &[Provenance] = &[
     Provenance::Textbook {
@@ -28,6 +29,16 @@ pub const PATENT: &[PatentLine] = &[PatentLine {
 pub fn xor16(a: f32, b: f32) -> f32 {
     let w = |v: f32| (clampf(v, -1.0, 1.0) * 32767.0) as i16;
     (w(a) ^ w(b)) as f32 / 32768.0
+}
+
+/// `p·xor16(a/p, b/p)` with `k = 32767/p` and `g = p/32768` set once a
+/// block: the engine's loop (the 16-bit XOR on the low halves of the
+/// words, sign-extended). The words saturate to i16 (one SSAT): only an
+/// input past its peak bound reaches −32768, where `xor16` stops at −32767.
+#[inline(always)]
+pub fn xor16_scaled(a: f32, b: f32, k: f32, g: f32) -> f32 {
+    let w = |v: f32| ((v * k) as i32).clamp(-32768, 32767);
+    ((((w(a) ^ w(b)) << 16) >> 16) as f32) * g
 }
 
 /// BITS' depth at AMOUNT `x`: `16 · 8^(−x)`, 16 → 2 bits on a log curve.
@@ -60,7 +71,18 @@ impl Crusher {
     /// non-integer `levels` would round its top step past 1.
     #[inline(always)]
     pub fn process(&self, v: f32) -> f32 {
-        clampf(libm::roundf(v * self.levels) * self.inv, -1.0, 1.0)
+        clampf(rint(v * self.levels) * self.inv, -1.0, 1.0)
+    }
+
+    /// `process` of `v / q`, `iq = 1/q` folded into the levels: once a
+    /// block (BITS' engine loop).
+    #[inline(always)]
+    pub fn process_scaled(&self, v: f32, levels_iq: f32) -> f32 {
+        clampf(rint(v * levels_iq) * self.inv, -1.0, 1.0)
+    }
+
+    pub fn levels(&self) -> f32 {
+        self.levels
     }
 }
 
@@ -100,5 +122,5 @@ pub fn combine(mode: VaMode, a: f32, b: f32, x: f32, k: f32, pk: Peaks, crush: &
 /// The sub `s` mixed in at level `sub`, level-stable.
 #[inline(always)]
 pub fn with_sub(c: f32, s: f32, sub: f32) -> f32 {
-    (c + sub * s) / libm::sqrtf(1.0 + sub * sub)
+    (c + sub * s) / sqrt(1.0 + sub * sub)
 }

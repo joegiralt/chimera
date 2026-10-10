@@ -15,16 +15,16 @@ use crate::block::{
     Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
 };
 use crate::dsp::algo::math::exp2;
-use crate::dsp::clampf;
-use crate::dsp::ease::{Ramp, at, step_of};
+use crate::dsp::ease::{Ramp, step_of};
 use crate::dsp::glide::Glide;
+use crate::dsp::{clampf, sqrt};
 use crate::glyph::FocusGlyph;
 use crate::hw::Cost;
 use crate::project::PartId;
 use crate::voice_alloc::VoiceIdx;
-use combine::{Crusher, Peaks, combine, ring_gain, with_sub};
-use osc::{Morph, R, Sub, Unit, VarOsc, peak_bound};
-use stability::{Seed, Stability, depth};
+use combine::{Crusher, Peaks, ring_gain, xor16_scaled};
+use osc::{Morph, NO_WRAP, R, Ramps, Sub, Unit, VarOsc, peak_bound};
+use stability::{JITTER_CENTS, Seed, Stability, depth};
 #[cfg(any(test, feature = "test-support"))]
 use {osc::Correction, stability::Character};
 
@@ -281,29 +281,29 @@ pub const VA_CHAIN_GAIN: f32 = 1.0 / (R * 1.732_050_8);
 /// loudness.
 pub const VA_OUT_GAIN: f32 = 1.0;
 
-/// Cycles a sample per MODE by ADR 0056's count (`render_*` on the release
-/// ELF, instr × 1.46 × 1.1, + 12 a `vdiv`/`vsqrt`): the worst voice has
-/// SHAPE moving on both oscillators, each refilling its two live waves every
-/// sample (libm `sqrtf` included), the wave pair that costs most, no
-/// crossing; plus 0.45 of the wrap-side branches (at MAX_INC), 2 × 1.8
-/// crossings an sample at 131 (59 instr + 3 `vdiv`), the block's work ÷ 64
-/// (43) and LP24's 95. Each line: fast + wraps + crossings + block + 95.
+/// Cycles a sample per MODE by ADR 0056's count on the release ELF (instr ×
+/// 1.46 × 1.1, + 12 a `vdiv`/`vsqrt`; Task 9b's scripts). Each oscillator
+/// bills its dearest wave pair, constants lerped and SHAPE and WAVE moving:
+/// its loop's round with no event, + 0.45 of its wrap's side, + each edge's
+/// crossing side at 0.45 + 0.225/64 a sample (backward 0.225/64); the SYNC
+/// slave + 0.45 of a reset. Then the operator loop (sub flips at 0.45), the
+/// block's work ÷ 64 (cold paths apart: a sample-rate change, a WAVE
+/// segment change, a wave's first block) and LP24's 95. Each line: OSC 1
+/// (TRI/SAW) + OSC 2 + operator + block + 95.
 ///
-/// MIX: 1,642 + 114 + 472 + 43 + 95.
-pub const COST_MIX: Cost = Cost(2_370);
-/// SYNC: 1,486 + 150 + 472 + 43 + 95, + 0.45 of a reset's 1,704 (its worst
-/// pair SINE/TRI, whose two edge evals cost most).
-pub const COST_SYNC: Cost = Cost(3_020);
-/// RING: 1,648 + 115 + 472 + 43 + 95.
-pub const COST_RING: Cost = Cost(2_380);
-/// XOR: 1,719 + 115 + 472 + 43 + 95.
-pub const COST_XOR: Cost = Cost(2_450);
-/// BITS: 1,678 + 123 + 472 + 43 + 95.
-pub const COST_BITS: Cost = Cost(2_410);
+/// MIX: 155.1 + 148.0 (TRI/SAW) + 41.6 + 64.7 + 95.
+pub const COST_MIX: Cost = Cost(510);
+/// SYNC: 155.1 + 255.9 (SINE/TRI slave: a reset's 204.0 × 0.45) + 41.6 +
+/// 66.8 + 95.
+pub const COST_SYNC: Cost = Cost(620);
+/// RING: 155.1 + 148.0 + 51.7 + 64.8 + 95.
+pub const COST_RING: Cost = Cost(520);
+/// XOR: 155.1 + 148.0 + 66.1 + 65.3 + 95.
+pub const COST_XOR: Cost = Cost(530);
+/// BITS: 155.1 + 148.0 + 55.7 + 65.0 + 95.
+pub const COST_BITS: Cost = Cost(520);
 
-/// The MODE duck's length each way, two blocks. Its per-sample `cosf` (up to
-/// 160 instr, 250 cycles a voice) runs 4 blocks after a MODE edit and is not
-/// in the bills above: a transient, not a note-on.
+/// The MODE duck's length each way, two blocks.
 const DUCK: usize = 2 * BLOCK_SIZE;
 
 /// A jitter's cents as a share of the increment, `2^(c/1200) − 1` to first
@@ -320,11 +320,36 @@ enum Duck {
     Up(u8),
 }
 
-/// The duck's gain at sample `j` (0..`DUCK`) of its way down, a raised
-/// cosine landing on 0: a linear duck clicks at its turnaround.
-#[inline]
-fn duck_down(j: usize) -> f32 {
-    0.5 + 0.5 * libm::cosf(core::f32::consts::PI * (j + 1) as f32 / DUCK as f32)
+/// The duck's gain at sample `j` of its way down, `½(1 + cos(π(j + 1)/128))`:
+/// a raised cosine landing on 0 (a linear duck clicks at its turnaround).
+/// The cosine is its Taylor series in f64 at compile time.
+static DUCK_DOWN: [[f32; BLOCK_SIZE]; 2] = {
+    let mut g = [[0.0f32; BLOCK_SIZE]; 2];
+    let mut j = 0;
+    while j < DUCK {
+        let x = core::f64::consts::PI * (j + 1) as f64 / DUCK as f64;
+        // x ≤ π: 40 terms are past f64's precision
+        let (mut term, mut sum, mut k) = (1.0f64, 1.0f64, 1);
+        while k < 40 {
+            term *= -x * x / ((2 * k - 1) * (2 * k)) as f64;
+            sum += term;
+            k += 1;
+        }
+        g[j / BLOCK_SIZE][j % BLOCK_SIZE] = (0.5 + 0.5 * sum) as f32;
+        j += 1;
+    }
+    g
+};
+
+/// `Lanes::norm` for SUB's block `(from, to)`.
+fn norm((s0, s1): (f32, f32)) -> (f32, f32, f32) {
+    let n = |s: f32| VA_CHAIN_GAIN / sqrt(1.0 + s * s);
+    let h = (BLOCK_SIZE / 2) as f32;
+    let (n0, n1, n2) = (n(s0), n(0.5 * (s0 + s1)), n(s1));
+    // n(j) = n0 + a·j + b·j², j = 0 the sample before, through j = h and 2h
+    let b = (n2 - 2.0 * n1 + n0) / (2.0 * h * h);
+    let a = (n1 - n0) / h - b * h;
+    (n0 + a + b, a + 3.0 * b, 2.0 * b)
 }
 
 /// What a voice's VA keeps across the idle slot's rebuild (spec
@@ -341,13 +366,14 @@ pub(crate) struct VaCarry {
 /// One block's lanes: each a `(from, step)` ramp a sample (`ease::at`).
 #[derive(Clone, Copy)]
 struct Lanes {
-    inc: [(f32, f32); 2],
-    wave: [(f32, f32); 2],
-    shape: [(f32, f32); 2],
+    osc: [Ramps; 2],
     amount: (f32, f32),
     sub: (f32, f32),
     k: (f32, f32),
-    moving: [bool; 2],
+    /// `VA_CHAIN_GAIN / √(1 + SUB²)` along SUB's ramp: a quadratic through
+    /// the block's ends and middle, its value at sample 0, its step and its
+    /// step's step (within 10⁻⁷ of exact on a knob's sweep).
+    norm: (f32, f32, f32),
     pk: Peaks,
     d: f32,
 }
@@ -361,6 +387,13 @@ pub struct VaEngine {
     crusher: Crusher,
     /// Each oscillator's cycle factor from its last wrap's jitter.
     jit: [f32; 2],
+    /// Each oscillator's last block-end (WAVE, SHAPE, inc) and its
+    /// `peak_bound`: the next block's start.
+    peak: [([f32; 3], f32); 2],
+    /// Scratch, written before it is read every block: OSC 2's block and
+    /// OSC 1's wraps (kept here so no block zeroes them).
+    osc2: [f32; BLOCK_SIZE],
+    wraps: [f32; BLOCK_SIZE],
     inc: [Ramp; 2],
     wave: [Ramp; 2],
     shape: [Ramp; 2],
@@ -392,6 +425,9 @@ impl VaEngine {
             stab: Stability::NEW,
             crusher: Crusher::NEW,
             jit: [1.0; 2],
+            peak: [([f32::NAN; 3], 0.0); 2],
+            osc2: [0.0; BLOCK_SIZE],
+            wraps: [NO_WRAP; BLOCK_SIZE],
             inc: [Ramp::default(); 2],
             wave: [Ramp::default(); 2],
             shape: [Ramp::default(); 2],
@@ -525,6 +561,9 @@ impl VaEngine {
         self.amount.hold();
         self.sub_level.hold();
         self.ring_k.hold();
+        for o in &mut self.osc {
+            o.hold();
+        }
     }
 
     /// From the first note-on on: VA never decays.
@@ -556,6 +595,8 @@ impl VaEngine {
         self.active.then(|| Self::mode_cost(self.playing))
     }
 
+    /// One block. Never inlined: its block work is counted on its own.
+    #[inline(never)]
     pub fn render(&mut self, out: &mut [f32; BLOCK_SIZE], p: &VaParams, sample_rate: u32) {
         if !self.active {
             out.fill(0.0);
@@ -583,14 +624,13 @@ impl VaEngine {
             let ft = r.step(v);
             (ft, (ft.0, step_of(ft, BLOCK_SIZE)))
         };
+        let (sub_ft, sub) = lane(&mut self.sub_level, unit(p.sub));
         let mut l = Lanes {
-            inc: [(0.0, 0.0); 2],
-            wave: [(0.0, 0.0); 2],
-            shape: [(0.0, 0.0); 2],
+            osc: [Ramps::default(); 2],
             amount: lane(&mut self.amount, unit(p.amount)).1,
-            sub: lane(&mut self.sub_level, unit(p.sub)).1,
+            sub,
             k: (0.0, 0.0),
-            moving: [false; 2],
+            norm: norm(sub_ft),
             pk: Peaks { a: 0.0, b: 0.0 },
             d,
         };
@@ -599,14 +639,25 @@ impl VaEngine {
             let (inc, li) = lane(&mut self.inc[k], self.osc[k].inc_for(hz[k]));
             let (wave, lw) = lane(&mut self.wave[k], unit(p.wave[k]));
             let (shape, ls) = lane(&mut self.shape[k], unit(p.shape[k]));
-            (l.inc[k], l.wave[k], l.shape[k]) = (li, lw, ls);
-            l.moving[k] = shape.0 != shape.1;
+            l.osc[k] = Ramps {
+                inc: li,
+                wave: lw,
+                shape: ls,
+            };
             let m = |w, s| Morph {
                 wave: Unit::new(w),
                 shape: Unit::new(s),
             };
-            pk[k] =
-                peak_bound(m(wave.0, shape.0), inc.0).max(peak_bound(m(wave.1, shape.1), inc.1));
+            // the block's start is the last block's end (bar a fresh note)
+            let (key, end) = ([wave.1, shape.1, inc.1], self.peak[k]);
+            let from = if end.0 == [wave.0, shape.0, inc.0] {
+                end.1
+            } else {
+                peak_bound(m(wave.0, shape.0), inc.0)
+            };
+            let to = peak_bound(m(wave.1, shape.1), inc.1);
+            self.peak[k] = (key, to);
+            pk[k] = from.max(to);
         }
         l.pk = Peaks { a: pk[0], b: pk[1] };
         let k = self.ring_k.step(ring_gain(l.pk));
@@ -633,8 +684,9 @@ impl VaEngine {
         self.duck = match duck {
             Duck::Steady => Duck::Steady,
             Duck::Down(b) => {
-                for (i, y) in out.iter_mut().enumerate() {
-                    *y *= duck_down(b as usize * BLOCK_SIZE + i);
+                let g = &DUCK_DOWN[usize::from(b & 1)];
+                for (y, g) in out.iter_mut().zip(g) {
+                    *y *= g;
                 }
                 if b == 0 {
                     Duck::Down(1)
@@ -644,8 +696,9 @@ impl VaEngine {
                 }
             }
             Duck::Up(b) => {
-                for (i, y) in out.iter_mut().enumerate() {
-                    *y *= 1.0 - duck_down(b as usize * BLOCK_SIZE + i);
+                let g = &DUCK_DOWN[usize::from(b & 1)];
+                for (y, g) in out.iter_mut().zip(g) {
+                    *y *= 1.0 - g;
                 }
                 if b == 0 { Duck::Up(1) } else { Duck::Steady }
             }
@@ -678,36 +731,59 @@ impl VaEngine {
     }
 
     /// One block in `mode`, a constant in each caller, so each mode's loop
-    /// is its own (the count sees each).
+    /// is its own (the count sees each). OSC 1 renders into `out` with its
+    /// wraps, OSC 2 beside it (synced to them in SYNC), then the operator,
+    /// the sub and the chain gain run over both.
     #[inline(always)]
     fn run(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, mode: VaMode) {
-        let ramp = |(from, step): (f32, f32), i| at(from, step, i);
-        for (i, y) in out.iter_mut().enumerate() {
-            let morph = |k: usize| Morph {
-                wave: Unit::new(ramp(l.wave[k], i)),
-                shape: Unit::new(ramp(l.shape[k], i)),
-            };
-            let a = self.osc[0].tick(ramp(l.inc[0], i) * self.jit[0], morph(0), l.moving[0], None);
-            let s = self.sub.tick(a.wrap);
-            if a.wrap.is_some() {
-                self.jit[0] = 1.0 + self.stab.jitter(l.d) * CENT;
-            }
-            let sync = if mode == VaMode::Sync { a.wrap } else { None };
-            let b = self.osc[1].tick(ramp(l.inc[1], i) * self.jit[1], morph(1), l.moving[1], sync);
-            if b.wrap.is_some() {
-                self.jit[1] = 1.0 + self.stab.jitter(l.d) * CENT;
-            }
-            let c = combine(
-                mode,
-                a.out,
-                b.out,
-                ramp(l.amount, i),
-                ramp(l.k, i),
-                l.pk,
-                &self.crusher,
-            );
-            *y = with_sub(c, s, ramp(l.sub, i)) * VA_CHAIN_GAIN;
+        let Self {
+            osc: [o1, o2],
+            stab,
+            jit,
+            sub,
+            crusher,
+            osc2: b,
+            wraps: wr,
+            ..
+        } = self;
+        // a wrap's factor, `1 + jitter(d)·CENT`, from the raw draw: exactly
+        // 1 at d = 0 (STAB 1)
+        let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
+        let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+        o1.render::<BLOCK_SIZE, true, false>(out, wr, &l.osc[0], &mut jit[0], &mut draw);
+        if mode == VaMode::Sync {
+            o2.render::<BLOCK_SIZE, false, true>(b, wr, &l.osc[1], &mut jit[1], &mut draw);
+        } else {
+            o2.render::<BLOCK_SIZE, false, false>(b, wr, &l.osc[1], &mut jit[1], &mut draw);
         }
+        let (mut x, dx) = l.amount;
+        let (mut k, dk) = l.k;
+        let (s0, ds) = l.sub;
+        let (mut n, mut dn, ddn) = l.norm;
+        // XOR's and BITS' block constants
+        let p = l.pk.a.max(l.pk.b);
+        let (kx, gx) = (32767.0 / p, p / 32768.0);
+        let q = 0.5 * (l.pk.a + l.pk.b);
+        let liq = crusher.levels() / q;
+        let (mut s, mut j) = (*sub, 0.0f32);
+        for (i, (y, b)) in out.iter_mut().zip(b.iter()).enumerate() {
+            x += dx;
+            k += dk;
+            j += 1.0;
+            let (a, b) = (*y, *b);
+            let half = 0.5 * (a + b);
+            let c = match mode {
+                VaMode::Mix | VaMode::Sync => a + (b - a) * x,
+                VaMode::Ring => half + (k * a * b - half) * x,
+                VaMode::Xor => half + (xor16_scaled(a, b, kx, gx) - half) * x,
+                VaMode::Bits => q * crusher.process_scaled(half, liq),
+            };
+            let sv = s.step(wr[i]);
+            *y = (c + (s0 + ds * j) * sv) * n;
+            n += dn;
+            dn += ddn;
+        }
+        *sub = s;
     }
 
     /// A glide steal's ratio now, 1 at rest.

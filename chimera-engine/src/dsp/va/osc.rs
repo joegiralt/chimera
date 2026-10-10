@@ -5,10 +5,17 @@
 //! crossfade never cancels it. Steps and corners, fixed or moving, are
 //! found every sample and corrected by the 2-point kernels (`blep`). The
 //! precedent is Ambika's variable-waveform oscillator, architecture only.
+//!
+//! The live pair's constants (crossfade weight folded in) and edge places
+//! are computed at the ends of a run (a block, or the part of one on one
+//! WAVE segment) and lerped per sample. Each edge keeps an offset `o` (its
+//! place plus a whole number of cycles) with `u = phase − o` in `0..1`: `u`
+//! leaving that range is the crossing, and `u` is the eval's phase since
+//! the edge, so the eval and the crossings never disagree.
 
-use super::blep::Corrector;
+use super::blep::{blamp_into, blamp6_into, blep_into};
 use crate::dsp::provenance::{PatentLine, Provenance};
-use crate::dsp::{clampf, fast_sin_turns};
+use crate::dsp::{clampf, sqrt};
 
 pub const PROVENANCE: &[Provenance] = &[
     Provenance::Textbook {
@@ -41,7 +48,31 @@ pub const MIN_INC: f32 = 1e-6;
 
 /// The triangle's peak, `R√3`.
 const TRI_PEAK: f32 = R * 1.732_050_8;
-const INV_TAU: f32 = 1.0 / core::f32::consts::TAU;
+const TAU: f32 = core::f32::consts::TAU;
+
+/// `sin x` for |x| ≤ π within 6.1·10⁻⁶ (f32): an odd degree-9 polynomial,
+/// least-squares weighted toward minimax. One argument reduction serves
+/// both the phase (`2π(φ − ½)`) and the fold (|g·sin| ≤ 3).
+const S: [f32; 5] = [
+    0.999_979_4,
+    -0.166_624_38,
+    0.008_308_984,
+    -0.000_192_649_82,
+    2.147_865_6e-6,
+];
+
+#[inline(always)]
+fn psin(x: f32) -> f32 {
+    let x2 = x * x;
+    x * (S[0] + x2 * (S[1] + x2 * (S[2] + x2 * (S[3] + x2 * S[4]))))
+}
+
+/// `psin`'s derivative.
+#[inline(always)]
+fn dpsin(x: f32) -> f32 {
+    let x2 = x * x;
+    S[0] + x2 * (3.0 * S[1] + x2 * (5.0 * S[2] + x2 * (7.0 * S[3] + x2 * (9.0 * S[4]))))
+}
 
 /// An `f32` in 0..=1; NaN is 0.
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
@@ -65,12 +96,12 @@ pub struct Morph {
 }
 
 impl Morph {
-    /// The first of the two live waves and the second's weight.
+    /// The live pair and the second wave's weight.
     #[inline(always)]
-    fn segment(self) -> (usize, f32) {
+    fn segment(self) -> (Pair, f32) {
         let x3 = 3.0 * self.wave.get();
-        let k = (x3 as usize).min(2);
-        (k, x3 - k as f32)
+        let p = Pair::of(x3);
+        (p, x3 - p as usize as f32)
     }
 }
 
@@ -83,9 +114,8 @@ enum Wave {
 }
 
 impl Wave {
-    const ALL: [Wave; 4] = [Wave::Sine, Wave::Tri, Wave::Saw, Wave::Pulse];
-
     /// The slot of a wave with edges (the sine has none).
+    #[inline(always)]
     fn edge_slot(self) -> Option<usize> {
         match self {
             Wave::Sine => None,
@@ -94,30 +124,262 @@ impl Wave {
             Wave::Pulse => Some(2),
         }
     }
-}
 
-/// A step or a corner at phase `pos`: crossing it forward, the output
-/// jumps by `step` and its slope by `slope` per cycle.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Edge {
-    pos: f32,
-    step: f32,
-    slope: f32,
-}
-
-impl Edge {
-    const NONE: Self = Self {
-        pos: 0.0,
-        step: 0.0,
-        slope: 0.0,
-    };
-
-    fn weighted(self, g: f32) -> Self {
-        Self {
-            pos: self.pos,
-            step: self.step * g,
-            slope: self.slope * g,
+    /// The run constants (`Kind::value`'s `c`), weighted by `x`.
+    fn consts(self, sh: &Shaped, x: f32) -> [f32; 3] {
+        match self {
+            // y = −x·g·((1 − s)·P + s·psin(g'·P)), P = psin(2π(φ − ½)) = −sin 2πφ
+            Wave::Sine => [
+                -x * sh.sine_g * (1.0 - sh.fold),
+                -x * sh.sine_g * sh.fold,
+                1.0 + 2.0 * sh.fold,
+            ],
+            Wave::Tri => {
+                let w = sh.tri_w;
+                [-x * TRI_PEAK, x * sh.tri_j * (1.0 - w), x * sh.tri_j * w]
+            }
+            Wave::Saw => {
+                let g = x * sh.saw_g;
+                [g, -2.0 * g * sh.saw_a, -2.0 * g * sh.saw_b]
+            }
+            Wave::Pulse => {
+                let g = 2.0 * x * sh.pulse_g;
+                [-g * sh.pulse_w, g, 0.0]
+            }
         }
+    }
+
+    /// The edges' places, in 0..=1 (the sine's are unused).
+    fn pos(self, sh: &Shaped) -> [f32; 2] {
+        match self {
+            Wave::Sine => [0.0; 2],
+            Wave::Tri => [1.0 - 0.5 * sh.tri_w, 0.5 * sh.tri_w],
+            Wave::Saw => [1.0 + sh.saw_e1, sh.saw_e2],
+            Wave::Pulse => [0.25 - 0.5 * sh.pulse_w, 0.25 + 0.5 * sh.pulse_w],
+        }
+    }
+
+    fn value_slope(self, c: [f32; 3], p: f32, pos: [f32; 2]) -> (f32, f32) {
+        match self {
+            Wave::Sine => Sine::value_slope(c, p, pos),
+            Wave::Tri => Tri::value_slope(c, p, pos),
+            Wave::Saw => Saw::value_slope(c, p, pos),
+            Wave::Pulse => Pulse::value_slope(c, p, pos),
+        }
+    }
+}
+
+/// The two live waves: WAVE's segment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pair {
+    SineTri = 0,
+    TriSaw = 1,
+    SawPulse = 2,
+}
+
+impl Pair {
+    /// The pair at `3 × WAVE`.
+    #[inline(always)]
+    fn of(x3: f32) -> Pair {
+        match x3 as usize {
+            0 => Pair::SineTri,
+            1 => Pair::TriSaw,
+            _ => Pair::SawPulse,
+        }
+    }
+
+    fn waves(self) -> (Wave, Wave) {
+        match self {
+            Pair::SineTri => (Wave::Sine, Wave::Tri),
+            Pair::TriSaw => (Wave::Tri, Wave::Saw),
+            Pair::SawPulse => (Wave::Saw, Wave::Pulse),
+        }
+    }
+
+    /// Both waves' constants and edge places at `m`, the second weighted
+    /// by `3·WAVE − self` (outside 0..1 when `m` is past the segment: a
+    /// run starting on it extrapolates its lines from the sample before).
+    fn consts(self, m: Morph, inc: f32) -> ([f32; 6], [f32; 4]) {
+        let (a, b) = self.waves();
+        let f = 3.0 * m.wave.get() - self as usize as f32;
+        let mut sh = Shaped::ZERO;
+        sh.fill(a, m.shape.get(), inc);
+        sh.fill(b, m.shape.get(), inc);
+        let (ca, cb) = (a.consts(&sh, 1.0 - f), b.consts(&sh, f));
+        let (pa, pb) = (a.pos(&sh), b.pos(&sh));
+        (
+            [ca[0], ca[1], ca[2], cb[0], cb[1], cb[2]],
+            [pa[0], pa[1], pb[0], pb[1]],
+        )
+    }
+}
+
+/// `Pair::consts` off the block's common path (a WAVE segment change).
+#[cold]
+#[inline(never)]
+fn cold_consts(pair: Pair, m: Morph, inc: f32) -> ([f32; 6], [f32; 4]) {
+    pair.consts(m, inc)
+}
+
+/// One wave's per-sample work: the hot loop's eval and crossing, and the
+/// value with its slope for the reference and the sync reset. `c` holds
+/// `Wave::consts`.
+trait Kind {
+    /// Two edges (all but the sine).
+    const EDGES: bool;
+    /// The edges are corners (BLAMP), not steps (BLEP).
+    const CORNERS: bool;
+    /// The pulse: its level `h` (0 or 1) flips at every crossing.
+    const FLIPS: bool;
+
+    /// The value at phase `p`, `u` the phases since the edges.
+    fn value(c: [f32; 3], p: f32, u: [f32; 2], h: f32) -> f32;
+
+    /// Edge `e` crossed (`fwd`, else backward): the step, or the corner's
+    /// slope jump a cycle, from the constants at the crossing.
+    fn jump(c: [f32; 3], e: usize, fwd: bool, h: f32) -> f32;
+
+    /// The slope a cycle at `p`, `u` as `value`'s (a sync reset's).
+    fn slope(c: [f32; 3], p: f32, u: [f32; 2]) -> f32;
+
+    /// The value at `p` and its slope a cycle, edges at `pos` (mod 1).
+    fn value_slope(c: [f32; 3], p: f32, pos: [f32; 2]) -> (f32, f32);
+}
+
+struct Sine;
+struct Tri;
+struct Saw;
+struct Pulse;
+
+impl Kind for Sine {
+    const EDGES: bool = false;
+    const CORNERS: bool = false;
+    const FLIPS: bool = false;
+
+    #[inline(always)]
+    fn value(c: [f32; 3], p: f32, _: [f32; 2], _: f32) -> f32 {
+        let q = psin(TAU * (p - 0.5));
+        c[0] * q + c[1] * psin(c[2] * q)
+    }
+
+    fn jump(_: [f32; 3], _: usize, _: bool, _: f32) -> f32 {
+        0.0
+    }
+
+    #[inline(always)]
+    fn slope(c: [f32; 3], p: f32, _: [f32; 2]) -> f32 {
+        let th = TAU * (p - 0.5);
+        TAU * dpsin(th) * (c[0] + c[1] * c[2] * dpsin(c[2] * psin(th)))
+    }
+
+    fn value_slope(c: [f32; 3], p: f32, _: [f32; 2]) -> (f32, f32) {
+        let th = TAU * (p - 0.5);
+        let q = psin(th);
+        let y = c[0] * q + c[1] * psin(c[2] * q);
+        let d = TAU * dpsin(th) * (c[0] + c[1] * c[2] * dpsin(c[2] * q));
+        (y, d)
+    }
+}
+
+impl Kind for Tri {
+    const EDGES: bool = true;
+    const CORNERS: bool = true;
+    const FLIPS: bool = false;
+
+    /// The two sides from the trough (`u[0]`), the lower one: continuous
+    /// whatever the lerp does to `up` and `down`.
+    #[inline(always)]
+    fn value(c: [f32; 3], _: f32, u: [f32; 2], _: f32) -> f32 {
+        c[0] + (c[1] * u[0]).min(c[2] * (1.0 - u[0]))
+    }
+
+    #[inline(always)]
+    fn jump(c: [f32; 3], e: usize, _: bool, _: f32) -> f32 {
+        // a trough bends up, a peak down, whichever way it is crossed
+        let j = c[1] + c[2];
+        if e == 0 { j } else { -j }
+    }
+
+    #[inline(always)]
+    fn slope(c: [f32; 3], _: f32, u: [f32; 2]) -> f32 {
+        if c[1] * u[0] < c[2] * (1.0 - u[0]) {
+            c[1]
+        } else {
+            -c[2]
+        }
+    }
+
+    fn value_slope(c: [f32; 3], p: f32, pos: [f32; 2]) -> (f32, f32) {
+        let u = frac(p - pos[0]);
+        let (up, down) = (c[1] * u, c[2] * (1.0 - u));
+        if up < down {
+            (c[0] + up, c[1])
+        } else {
+            (c[0] + down, -c[2])
+        }
+    }
+}
+
+impl Kind for Saw {
+    const EDGES: bool = true;
+    const CORNERS: bool = false;
+    const FLIPS: bool = false;
+
+    #[inline(always)]
+    fn value(c: [f32; 3], _: f32, u: [f32; 2], _: f32) -> f32 {
+        c[0] + c[1] * u[0] + c[2] * u[1]
+    }
+
+    #[inline(always)]
+    fn jump(c: [f32; 3], e: usize, fwd: bool, _: f32) -> f32 {
+        let s = if e == 0 { -c[1] } else { -c[2] };
+        if fwd { s } else { -s }
+    }
+
+    #[inline(always)]
+    fn slope(c: [f32; 3], _: f32, _: [f32; 2]) -> f32 {
+        c[1] + c[2]
+    }
+
+    fn value_slope(c: [f32; 3], p: f32, pos: [f32; 2]) -> (f32, f32) {
+        let (u1, u2) = (frac(p - pos[0]), frac(p - pos[1]));
+        (c[0] + c[1] * u1 + c[2] * u2, c[1] + c[2])
+    }
+}
+
+impl Kind for Pulse {
+    const EDGES: bool = true;
+    const CORNERS: bool = false;
+    const FLIPS: bool = true;
+
+    #[inline(always)]
+    fn value(c: [f32; 3], _: f32, _: [f32; 2], h: f32) -> f32 {
+        c[0] + c[1] * h
+    }
+
+    #[inline(always)]
+    fn jump(c: [f32; 3], _: usize, _: bool, h: f32) -> f32 {
+        c[1] * (1.0 - 2.0 * h)
+    }
+
+    #[inline(always)]
+    fn slope(_: [f32; 3], _: f32, _: [f32; 2]) -> f32 {
+        0.0
+    }
+
+    fn value_slope(c: [f32; 3], p: f32, pos: [f32; 2]) -> (f32, f32) {
+        (c[0] + c[1] * high(p, pos), 0.0)
+    }
+}
+
+/// 1 where the pulse is high at `p` (edges at `pos`), else 0: high is
+/// `[rise, fall)`, so the phase since the rise is the shorter.
+#[inline(always)]
+fn high(p: f32, pos: [f32; 2]) -> f32 {
+    if frac(p - pos[0]) < frac(p - pos[1]) {
+        1.0
+    } else {
+        0.0
     }
 }
 
@@ -172,85 +434,12 @@ impl Shaped {
                 let ms = (a * a + b * b) / 3.0 + 2.0 * a * b * (1.0 / 3.0 - 2.0 * q + 2.0 * q * q);
                 (self.saw_a, self.saw_b) = (a, b);
                 (self.saw_e1, self.saw_e2) = (-q * b, q * a);
-                self.saw_g = R / libm::sqrtf(ms);
+                self.saw_g = R / sqrt(ms);
             }
             Wave::Pulse => {
                 let w = (0.5 - 0.45 * s).max(inc);
                 self.pulse_w = w;
-                self.pulse_g = R / (2.0 * libm::sqrtf(w * (1.0 - w)));
-            }
-        }
-    }
-
-    /// The value at phase `p` (0..1) and its slope per cycle.
-    #[inline(always)]
-    fn eval(&self, wave: Wave, p: f32) -> (f32, f32) {
-        match wave {
-            Wave::Sine => {
-                let (s, g) = (self.fold, 1.0 + 2.0 * self.fold);
-                let st = sin_q(p);
-                let arg = g * st * INV_TAU;
-                let y = (1.0 - s) * st + s * sin_q(arg);
-                let d = core::f32::consts::TAU
-                    * sin_q(p + 0.25)
-                    * ((1.0 - s) + s * g * sin_q(arg + 0.25));
-                (self.sine_g * y, self.sine_g * d)
-            }
-            Wave::Tri => {
-                let w = self.tri_w;
-                let (up, down) = (self.tri_j * (1.0 - w), self.tri_j * w);
-                let mut u = p + 0.5 * w;
-                if u >= 1.0 {
-                    u -= 1.0;
-                }
-                if u < w {
-                    (-TRI_PEAK + u * up, up)
-                } else {
-                    (TRI_PEAK - (u - w) * down, -down)
-                }
-            }
-            Wave::Saw => {
-                let mut u1 = p - self.saw_e1;
-                if u1 >= 1.0 {
-                    u1 -= 1.0;
-                }
-                let mut u2 = p - self.saw_e2;
-                if u2 < 0.0 {
-                    u2 += 1.0;
-                }
-                let y = self.saw_a * (1.0 - 2.0 * u1) + self.saw_b * (1.0 - 2.0 * u2);
-                (self.saw_g * y, -2.0 * self.saw_g)
-            }
-            Wave::Pulse => {
-                let w = self.pulse_w;
-                let mut u = p - (0.25 - 0.5 * w);
-                if u < 0.0 {
-                    u += 1.0;
-                }
-                let y = if u < w { 1.0 - w } else { -w };
-                (2.0 * self.pulse_g * y, 0.0)
-            }
-        }
-    }
-
-    /// The wave's two edges (the sine has none).
-    #[inline(always)]
-    fn edges(&self, wave: Wave) -> [Edge; 2] {
-        let e = |pos, step, slope| Edge { pos, step, slope };
-        match wave {
-            Wave::Sine => [Edge::NONE; 2],
-            Wave::Tri => {
-                let h = 0.5 * self.tri_w;
-                [e(-h, 0.0, self.tri_j), e(h, 0.0, -self.tri_j)]
-            }
-            Wave::Saw => [
-                e(self.saw_e1, 2.0 * self.saw_a * self.saw_g, 0.0),
-                e(self.saw_e2, 2.0 * self.saw_b * self.saw_g, 0.0),
-            ],
-            Wave::Pulse => {
-                let h = 0.5 * self.pulse_w;
-                let s = 2.0 * self.pulse_g;
-                [e(0.25 - h, s, 0.0), e(0.25 + h, -s, 0.0)]
+                self.pulse_g = R / (2.0 * sqrt(w * (1.0 - w)));
             }
         }
     }
@@ -263,34 +452,32 @@ impl Shaped {
             Wave::Pulse => 2.0 * (1.0 - self.pulse_w) * self.pulse_g,
         }
     }
-
-    /// The constants of `m`'s two live waves.
-    fn of(m: Morph, inc: f32) -> (Self, Wave, Wave, f32) {
-        let (k, f) = m.segment();
-        let (a, b) = (Wave::ALL[k], Wave::ALL[k + 1]);
-        let mut sh = Self::ZERO;
-        sh.fill(a, m.shape.get(), inc);
-        sh.fill(b, m.shape.get(), inc);
-        (sh, a, b, f)
-    }
 }
 
 /// The naive value at `phase` (0..1) and its slope per cycle: the morph's
 /// two waves, weighted, the pulse never narrower than `inc`. The reference
-/// for tests and for sync.
+/// for tests.
 pub fn wave_at(phase: f32, m: Morph, inc: f32) -> (f32, f32) {
-    let (sh, a, b, f) = Shaped::of(m, inc);
-    let ((ya, da), (yb, db)) = (sh.eval(a, phase), sh.eval(b, phase));
-    (ya + (yb - ya) * f, da + (db - da) * f)
+    let (pair, _) = m.segment();
+    let (a, b) = pair.waves();
+    let (c, pos) = pair.consts(m, inc);
+    let (ya, da) = a.value_slope([c[0], c[1], c[2]], phase, [pos[0], pos[1]]);
+    let (yb, db) = b.value_slope([c[3], c[4], c[5]], phase, [pos[2], pos[3]]);
+    (ya + yb, da + db)
 }
 
 /// A bound on |`wave_at`|: each live wave's peak, weighted.
 pub fn peak_bound(m: Morph, inc: f32) -> f32 {
-    let (sh, a, b, f) = Shaped::of(m, inc);
+    let (pair, f) = m.segment();
+    let (a, b) = pair.waves();
+    let mut sh = Shaped::ZERO;
+    sh.fill(a, m.shape.get(), inc);
+    sh.fill(b, m.shape.get(), inc);
     (1.0 - f) * sh.peak(a) + f * sh.peak(b)
 }
 
 /// Whether edges are corrected; `Off` is the alias gate's baseline.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Correction {
     On,
@@ -305,28 +492,46 @@ pub struct Tick {
     pub wrap: Option<f32>,
 }
 
-/// `fast_sin_turns` folded onto the quarter turn about 0, where its table
-/// is exact (it errs up to 4.6e-4 near half a turn).
-#[inline(always)]
-fn sin_q(t: f32) -> f32 {
-    let t = t - floor(t + 0.5) as f32;
-    let t = if t > 0.25 {
-        0.5 - t
-    } else if t < -0.25 {
-        -0.5 - t
-    } else {
-        t
-    };
-    fast_sin_turns(t)
+/// An oscillator's settings over a block, each a ramp `(from, step)`:
+/// sample `i` plays `from + step·(i + 1)` (`ease::at`).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Ramps {
+    pub inc: (f32, f32),
+    pub wave: (f32, f32),
+    pub shape: (f32, f32),
 }
 
-/// The phase since a still edge at `pos` was passed in `(lo, hi]`, if it
-/// was (`hi − lo < 1`, both unwrapped).
+/// A ramp's value `j` samples in: sample `i` is `j = i + 1`, 0 the one
+/// before the block.
 #[inline(always)]
-fn passed(lo: f32, hi: f32, pos: f32) -> Option<f32> {
-    let (dl, dh) = (lo - pos, hi - pos);
-    let fh = floor(dh);
-    (floor(dl) != fh).then_some(dh - fh as f32)
+fn val((from, step): (f32, f32), j: usize) -> f32 {
+    from + step * j as f32
+}
+
+/// The first `i` in `lo..hi` where `on` turns false (`on(lo)` holds, and
+/// `on(hi − 1)` fails): WAVE's ramp is monotone, so its segments are runs.
+#[cold]
+#[inline(never)]
+fn split(lo: usize, hi: usize, on: impl Fn(usize) -> bool) -> usize {
+    let (mut lo, mut hi) = (lo, hi - 1);
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2;
+        if on(mid) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    hi
+}
+
+/// "No wrap" in a wrap buffer (a wrap's `t` is in 0..=1).
+pub const NO_WRAP: f32 = -1.0;
+
+/// The fraction of `x` (|x| < 2³¹), in 0..1.
+#[inline(always)]
+fn frac(x: f32) -> f32 {
+    x - floor(x) as f32
 }
 
 /// ⌊x⌋ for |x| < 2³¹.
@@ -336,6 +541,40 @@ fn floor(x: f32) -> i32 {
     if (i as f32) > x { i - 1 } else { i }
 }
 
+/// A run constant: its value this sample and its step a sample.
+#[derive(Clone, Copy, Debug, Default)]
+struct Lin {
+    v: f32,
+    d: f32,
+}
+
+impl Lin {
+    /// The value `t` samples back (0..1): the crossing instant.
+    #[inline(always)]
+    fn back(self, t: f32) -> f32 {
+        self.v - self.d * t
+    }
+}
+
+/// One run's lerps: the pair's six constants and four edge offsets, each
+/// edge's `1/r` and `|r|/6` (`r` the phase's speed past it, cycles a
+/// sample; a corner's BLAMP takes `/6`) and the increment.
+struct Run {
+    c: [Lin; 6],
+    o: [Lin; 4],
+    rcp: [f32; 4],
+    ar: [f32; 4],
+    /// `1/inc` mid-run: a wrap's `t` (jitter and the ramp move it by
+    /// under 10⁻³ of itself).
+    rinc: f32,
+    inc: f32,
+    dinc: f32,
+    /// The value at phase 0 and its slope a cycle, at the run's end: a
+    /// sync reset's landing.
+    y0: f32,
+    d0: f32,
+}
+
 #[cfg(any(test, feature = "test-support"))]
 const EDGE_LOG: usize = 8;
 
@@ -343,14 +582,20 @@ const EDGE_LOG: usize = 8;
 pub struct VarOsc {
     phase: f32,
     inv_sr: f32,
+    #[cfg(any(test, feature = "test-support"))]
     correction: Correction,
-    corrector: Corrector,
-    shaped: Shaped,
-    /// What `shaped` was computed for: SHAPE, the segment, the increment.
-    key: (f32, usize, f32),
-    /// Each edged wave's edges last sample, and which waves were live.
-    last: [[Edge; 2]; 3],
+    /// The corrector's held sample: the output, one sample late.
+    held: f32,
+    /// The pair whose constants and edge places (at the last sample) are
+    /// held, if they are current.
+    pair: Option<Pair>,
+    c: [f32; 6],
+    pos: [f32; 4],
+    /// Each edged wave's offsets (tri, saw, pulse), where `live` has it.
+    off: [[f32; 2]; 3],
     live: u8,
+    /// The pulse's level, 0 or 1.
+    h: f32,
     #[cfg(any(test, feature = "test-support"))]
     log: [(f32, f32, f32); EDGE_LOG],
     #[cfg(any(test, feature = "test-support"))]
@@ -363,12 +608,15 @@ impl VarOsc {
     pub const NEW: Self = Self {
         phase: 0.0,
         inv_sr: 1.0 / 48_000.0,
+        #[cfg(any(test, feature = "test-support"))]
         correction: Correction::On,
-        corrector: Corrector::NEW,
-        shaped: Shaped::ZERO,
-        key: (f32::NAN, 0, f32::NAN),
-        last: [[Edge::NONE; 2]; 3],
+        held: 0.0,
+        pair: None,
+        c: [0.0; 6],
+        pos: [0.0; 4],
+        off: [[0.0; 2]; 3],
         live: 0,
+        h: 0.0,
         #[cfg(any(test, feature = "test-support"))]
         log: [(0.0, 0.0, 0.0); EDGE_LOG],
         #[cfg(any(test, feature = "test-support"))]
@@ -387,11 +635,19 @@ impl VarOsc {
         clampf(hz * self.inv_sr, MIN_INC, MAX_INC)
     }
 
-    /// Phase 0, the corrector cleared, the edges re-anchored.
+    /// Phase 0, the corrector cleared, the edges re-anchored and the
+    /// constants recomputed at the next sample.
     pub fn reset(&mut self) {
         self.phase = 0.0;
-        self.corrector.clear();
+        self.held = 0.0;
         self.live = 0;
+        self.pair = None;
+    }
+
+    /// The next block's constants start on its settings, not where the
+    /// last block left them (a fresh note's ramps start on their values).
+    pub fn hold(&mut self) {
+        self.pair = None;
     }
 
     pub fn phase(&self) -> f32 {
@@ -399,179 +655,469 @@ impl VarOsc {
     }
 
     /// Jumps the phase (wrapped into 0..1; NaN is 0). The jump itself is
-    /// not an edge.
+    /// not an edge: the edges re-anchor.
     pub fn set_phase(&mut self, p: f32) {
         let f = p - libm::floorf(p);
         self.phase = if (0.0..1.0).contains(&f) { f } else { 0.0 };
+        self.live = 0;
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn with_correction(mut self, c: Correction) -> Self {
         self.correction = c;
         self
     }
 
-    /// Advances one sample at `inc` cycles a sample. `moving` says SHAPE or
-    /// a floored pulse's `inc` moves: the constants are then exact every
-    /// sample (a still oscillator also refreshes them when its SHAPE,
-    /// segment or floored `inc` changed). `sync` is a master's wrap `t`
-    /// samples ago: the phase restarts at 0 there (spec § Combine).
-    #[inline(always)]
-    pub fn tick(&mut self, inc: f32, m: Morph, moving: bool, sync: Option<f32>) -> Tick {
-        let (k, f) = m.segment();
-        let s = m.shape.get();
-        let (ks, kk, ki) = self.key;
-        let floor_moves = k == 2 && inc != ki && 0.5 - 0.45 * s < inc.max(ki);
-        if moving || s != ks || k != kk || floor_moves {
-            self.shaped.fill(Wave::ALL[k], s, inc);
-            self.shaped.fill(Wave::ALL[k + 1], s, inc);
-            self.key = (s, k, inc);
-        }
-        let live = [(Wave::ALL[k], 1.0 - f), (Wave::ALL[k + 1], f)];
-
+    /// One sample at `inc` cycles a sample and morph `m`, exact (its own
+    /// run). `sync` is a master's wrap `t` samples ago: the phase restarts
+    /// at 0 there (spec § Combine).
+    pub fn tick(&mut self, inc: f32, m: Morph, sync: Option<f32>) -> Tick {
         #[cfg(any(test, feature = "test-support"))]
         {
             self.logged = 0;
         }
-        let (p1, wrap) = match sync {
-            None => self.advance(inc, live),
-            Some(t) => self.restart(inc, live, f, clampf(t, 0.0, 1.0)),
+        let r = Ramps {
+            inc: (inc, 0.0),
+            wave: (m.wave.get(), 0.0),
+            shape: (m.shape.get(), 0.0),
         };
-        self.phase = p1;
-
-        let (ya, _) = self.shaped.eval(live[0].0, p1);
-        let (yb, _) = self.shaped.eval(live[1].0, p1);
+        let mut out = [0.0f32];
+        let mut wr = [sync.map_or(NO_WRAP, |t| clampf(t, 0.0, 1.0))];
+        self.render::<1, true, true>(&mut out, &mut wr, &r, &mut 1.0, &mut || 1.0);
         Tick {
-            out: self.corrector.push(ya + (yb - ya) * f),
-            wrap,
+            out: out[0],
+            wrap: (wr[0] >= 0.0).then_some(wr[0]),
         }
     }
 
-    /// The free-running sample: the new phase and the wrap's `t`.
-    #[inline(always)]
-    fn advance(&mut self, inc: f32, live: [(Wave, f32); 2]) -> (f32, Option<f32>) {
-        let p0 = self.phase;
-        let mut p1 = p0 + inc;
-        let wrapped = p1 >= 1.0;
-        if wrapped {
-            p1 -= 1.0;
-        }
-        if self.correction == Correction::On {
-            let mut now = 0;
-            for (wave, g) in live {
-                let Some(i) = wave.edge_slot() else { continue };
-                let cur = self.shaped.edges(wave).map(|e| e.weighted(g));
-                let last = if self.live & (1 << i) != 0 {
-                    self.last[i]
-                } else {
-                    cur
-                };
-                for (a, b) in last.into_iter().zip(cur) {
-                    self.cross(p0, p1, wrapped, a, b);
-                }
-                self.last[i] = cur;
-                now |= 1 << i;
+    /// `N` samples into `out`, one sample late. `REC` writes each sample's
+    /// wrap `t` (else `NO_WRAP`) into `wr`; `SYNC` restarts the phase at
+    /// each `t` it reads there first. `jit` scales the increment; `draw`
+    /// gives the next at each wrap (STABILITY's jitter).
+    pub fn render<const N: usize, const REC: bool, const SYNC: bool>(
+        &mut self,
+        out: &mut [f32; N],
+        wr: &mut [f32; N],
+        r: &Ramps,
+        jit: &mut f32,
+        draw: &mut impl FnMut() -> f32,
+    ) {
+        let seg = |i: usize| {
+            Morph {
+                wave: Unit::new(val(r.wave, i + 1)),
+                shape: Unit(0.0),
             }
-            self.live = now;
-        }
-        (p1, wrapped.then(|| p1 / inc))
-    }
-
-    /// A sync sample, the reset `t` samples ago, split in three in time
-    /// order: own edges up to the reset, the reset, own edges after it.
-    /// SHAPE holds through it, so the edges stand still. Each correction is
-    /// a branch difference in time order (after − before). The wrap
-    /// reported is the natural one, before the reset.
-    #[inline(always)]
-    fn restart(&mut self, inc: f32, live: [(Wave, f32); 2], f: f32, t: f32) -> (f32, Option<f32>) {
-        let p0 = self.phase;
-        let pre = p0 + inc * (1.0 - t);
-        let post = t * inc;
-        if self.correction == Correction::On {
-            let mut edges = [[Edge::NONE; 2]; 2];
-            let mut now = 0;
-            for ((wave, g), e) in live.into_iter().zip(&mut edges) {
-                let Some(i) = wave.edge_slot() else { continue };
-                *e = self.shaped.edges(wave).map(|e| e.weighted(g));
-                self.last[i] = *e;
-                now |= 1 << i;
-            }
-            self.live = now;
-            for e in edges.iter().flatten() {
-                if let Some(d) = passed(p0, pre, e.pos) {
-                    self.fixed_edge(t + d / inc, e, inc);
-                }
-            }
-            let at = |p| {
-                let (ya, da) = self.shaped.eval(live[0].0, p);
-                let (yb, db) = self.shaped.eval(live[1].0, p);
-                (ya + (yb - ya) * f, da + (db - da) * f)
+            .segment()
+            .0
+        };
+        let mut i0 = 0;
+        while i0 < N {
+            let pair = seg(i0);
+            let i1 = if seg(N - 1) == pair {
+                N
+            } else {
+                split(i0, N, |i| seg(i) == pair)
             };
-            let ((y0, d0), (y1, d1)) = (at(0.0), at(if pre >= 1.0 { pre - 1.0 } else { pre }));
-            let (step, slope) = (y0 - y1, (d0 - d1) * inc);
-            if step != 0.0 || slope != 0.0 {
-                self.edge(t, step, slope);
-            }
-            for e in edges.iter().flatten() {
-                if let Some(d) = passed(0.0, post, e.pos) {
-                    self.fixed_edge(d / inc, e, inc);
+            let run = self.setup::<SYNC>(pair, (i0, i1), r, *jit);
+            match pair {
+                Pair::SineTri => {
+                    self.run::<Sine, Tri, N, REC, SYNC>(&run, i0, i1, out, wr, jit, draw)
+                }
+                Pair::TriSaw => {
+                    self.run::<Tri, Saw, N, REC, SYNC>(&run, i0, i1, out, wr, jit, draw)
+                }
+                Pair::SawPulse => {
+                    self.run::<Saw, Pulse, N, REC, SYNC>(&run, i0, i1, out, wr, jit, draw)
                 }
             }
-        }
-        (
-            post,
-            (pre >= 1.0).then(|| clampf(t + (pre - 1.0) / inc, 0.0, 1.0)),
-        )
-    }
-
-    /// A still edge crossed forward at `t`.
-    #[inline(always)]
-    fn fixed_edge(&mut self, t: f32, e: &Edge, inc: f32) {
-        if e.step != 0.0 || e.slope != 0.0 {
-            self.edge(clampf(t, 0.0, 1.0), e.step, e.slope * inc);
+            i0 = i1;
         }
     }
 
-    /// An edge moving from `a` to `b` while the phase moves from `p0` to
-    /// `p1` (`wrapped` past 1): corrected if they crossed, either way.
+    /// The run of samples `i0..i1` on `pair`: its constants lerp from the
+    /// held ones (or, on a new pair, from the sample before) to those at
+    /// its last sample; each edge's offset glides to its place there.
+    fn setup<const SYNC: bool>(
+        &mut self,
+        pair: Pair,
+        (i0, i1): (usize, usize),
+        r: &Ramps,
+        jit: f32,
+    ) -> Run {
+        let il = 1.0 / (i1 - i0) as f32;
+        let morph = |j| Morph {
+            wave: Unit::new(val(r.wave, j)),
+            shape: Unit::new(val(r.shape, j)),
+        };
+        let (c1, p1) = pair.consts(morph(i1), val(r.inc, i1));
+        // held: lerp on; a new note: start on the values (as its ramps do);
+        // a new segment: the pair's lines from the sample before
+        let (c0, p0) = match self.pair {
+            Some(q) if q == pair => (self.c, self.pos),
+            None => (c1, p1),
+            Some(_) => cold_consts(pair, morph(i0), val(r.inc, i0)),
+        };
+        (self.pair, self.c, self.pos) = (Some(pair), c1, p1);
+        let ie = val(r.inc, (i0 + i1).div_ceil(2)) * jit;
+        let mut run = Run {
+            c: [Lin::default(); 6],
+            o: [Lin::default(); 4],
+            rcp: [0.0; 4],
+            ar: [0.0; 4],
+            rinc: 1.0 / ie,
+            inc: val(r.inc, i0),
+            dinc: r.inc.1,
+            y0: 0.0,
+            d0: 0.0,
+        };
+        for (k, l) in run.c.iter_mut().enumerate() {
+            *l = Lin {
+                v: c0[k],
+                d: (c1[k] - c0[k]) * il,
+            };
+        }
+        let (a, b) = pair.waves();
+        if SYNC {
+            let (ya, da) = a.value_slope([c1[0], c1[1], c1[2]], 0.0, [p1[0], p1[1]]);
+            let (yb, db) = b.value_slope([c1[3], c1[4], c1[5]], 0.0, [p1[2], p1[3]]);
+            (run.y0, run.d0) = (ya + yb, da + db);
+        }
+        let mut live = 0;
+        if let Some((e, o, rcp, ar)) = self.glide(a, [p0[0], p0[1]], [p1[0], p1[1]], il, ie) {
+            live |= 1 << e;
+            (
+                [run.o[0], run.o[1]],
+                [run.rcp[0], run.rcp[1]],
+                [run.ar[0], run.ar[1]],
+            ) = (o, rcp, ar);
+        }
+        if let Some((e, o, rcp, ar)) = self.glide(b, [p0[2], p0[3]], [p1[2], p1[3]], il, ie) {
+            live |= 1 << e;
+            (
+                [run.o[2], run.o[3]],
+                [run.rcp[2], run.rcp[3]],
+                [run.ar[2], run.ar[3]],
+            ) = (o, rcp, ar);
+        }
+        self.live = live;
+        run
+    }
+
+    /// Wave `w`'s two edges over a run from places `p0` to `p1`: its slot,
+    /// each offset gliding to its place at the run's end, and `1/r`,
+    /// `|r|/6` at the run's middle increment `ie`. A wave entering starts
+    /// on its places, uncrossed.
     #[inline(always)]
-    fn cross(&mut self, p0: f32, p1: f32, wrapped: bool, a: Edge, b: Edge) {
-        let w = wrapped as i32;
-        // the next sample's d0 is bit for bit this d1, so no crossing is
-        // seen twice or missed
-        let (d0, d1) = (p0 - a.pos, p1 - b.pos);
-        let (f0, f1) = (floor(d0), floor(d1) + w);
-        if f0 == f1 {
+    #[allow(clippy::type_complexity)]
+    fn glide(
+        &mut self,
+        w: Wave,
+        p0: [f32; 2],
+        p1: [f32; 2],
+        il: f32,
+        ie: f32,
+    ) -> Option<(usize, [Lin; 2], [f32; 2], [f32; 2])> {
+        let e = w.edge_slot()?;
+        // slots are 0..=2: the bound lets the indexing go unchecked
+        let e = e.min(2);
+        if self.live & (1 << e) == 0 {
+            self.off[e] = self.enter(w, p0);
+        }
+        let off = self.off[e];
+        let one = |o: f32, end: f32| {
+            // places span under ½ a cycle, so the nearest whole is it
+            let whole = floor(o - end + 0.5) as f32;
+            let d = (end + whole - o) * il;
+            let rate = ie - d;
+            (Lin { v: o, d }, 1.0 / rate, rate.abs() * (1.0 / 6.0))
+        };
+        let (a, b) = (one(off[0], p1[0]), one(off[1], p1[1]));
+        Some((e, [a.0, b.0], [a.1, b.1], [a.2, b.2]))
+    }
+
+    /// Offsets for a wave entering at places `pos`: no crossing. Off the
+    /// block's common path (a note's start, a WAVE segment change).
+    #[cold]
+    #[inline(never)]
+    fn enter(&mut self, w: Wave, pos: [f32; 2]) -> [f32; 2] {
+        let p = self.phase;
+        if w == Wave::Pulse {
+            self.h = high(p, pos);
+        }
+        pos.map(|x| {
+            let mut o = x + floor(p - x) as f32;
+            if p - o >= 1.0 {
+                o += 1.0;
+            } else if p - o < 0.0 {
+                o -= 1.0;
+            }
+            o
+        })
+    }
+
+    /// The per-sample loop of one run on the pair `A`, `B`.
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn run<A: Kind, B: Kind, const N: usize, const REC: bool, const SYNC: bool>(
+        &mut self,
+        run: &Run,
+        i0: usize,
+        i1: usize,
+        out: &mut [f32; N],
+        wr: &mut [f32; N],
+        jit: &mut f32,
+        draw: &mut impl FnMut() -> f32,
+    ) {
+        let (mut p, mut held, mut h, mut j) = (self.phase, self.held, self.h, *jit);
+        let (mut c, mut o, rcp, ar) = (run.c, run.o, run.rcp, run.ar);
+        let (mut inc, dinc) = (run.inc, run.dinc);
+        for i in i0..i1.min(N) {
+            inc += dinc;
+            let ie = inc * j;
+            for l in &mut c {
+                l.v += l.d;
+            }
+            if A::EDGES {
+                o[0].v += o[0].d;
+                o[1].v += o[1].d;
+            }
+            if B::EDGES {
+                o[2].v += o[2].d;
+                o[3].v += o[3].d;
+            }
+            let ca = [c[0], c[1], c[2]];
+            let cb = [c[3], c[4], c[5]];
+            // -0.0: `y + acc` is `y` itself when nothing crossed
+            let mut acc = -0.0f32;
+            let mut wrap = NO_WRAP;
+            let p1 = if SYNC && wr[i] >= 0.0 {
+                // the reset `t` samples ago, in time order: own edges up to
+                // it, the reset, own edges after it (below, as any sample's)
+                let t = wr[i];
+                let pre = p + ie * (1.0 - t);
+                if A::EDGES {
+                    for e in 0..2 {
+                        self.cross::<A>(
+                            e,
+                            &mut o[e],
+                            (pre, t),
+                            (rcp[e], ar[e]),
+                            ca,
+                            &mut h,
+                            (&mut held, &mut acc),
+                        );
+                    }
+                }
+                if B::EDGES {
+                    for e in 0..2 {
+                        let k = e + 2;
+                        self.cross::<B>(
+                            e,
+                            &mut o[k],
+                            (pre, t),
+                            (rcp[k], ar[k]),
+                            cb,
+                            &mut h,
+                            (&mut held, &mut acc),
+                        );
+                    }
+                }
+                // y(0) − y(φ⁻) and the slopes' difference × inc
+                let u = [pre - o[0].v, pre - o[1].v, pre - o[2].v, pre - o[3].v];
+                let pw = if pre >= 1.0 { pre - 1.0 } else { pre };
+                let (va, vb) = (ca.map(|l| l.v), cb.map(|l| l.v));
+                let y = A::value(va, pw, [u[0], u[1]], h) + B::value(vb, pw, [u[2], u[3]], h);
+                let d = A::slope(va, pw, [u[0], u[1]]) + B::slope(vb, pw, [u[2], u[3]]);
+                let (step, slope) = (run.y0 - y, (run.d0 - d) * ie);
+                if self.apply(t, step, slope) {
+                    blep_into(&mut held, &mut acc, t, step);
+                    blamp_into(&mut held, &mut acc, t, slope);
+                }
+                if pre >= 1.0 {
+                    if REC {
+                        wrap = clampf(t + (pre - 1.0) * run.rinc, 0.0, 1.0);
+                    }
+                    j = draw();
+                }
+                // each edge's phase at 0 is `u − φ⁻` mod 1 (`u` and the
+                // wrapped φ⁻ are in 0..1); phase 0 itself is no edge
+                let mut v = [0.0f32; 4];
+                for (k, l) in o.iter_mut().enumerate() {
+                    if !(if k < 2 { A::EDGES } else { B::EDGES }) {
+                        continue;
+                    }
+                    v[k] = u[k] - pw;
+                    if v[k] < 0.0 {
+                        v[k] += 1.0;
+                    }
+                    l.v = -v[k];
+                }
+                // the pulse at 0: high where the phase since the rise is
+                // the shorter (`high`)
+                if A::FLIPS {
+                    h = if v[0] < v[1] { 1.0 } else { 0.0 };
+                }
+                if B::FLIPS {
+                    h = if v[2] < v[3] { 1.0 } else { 0.0 };
+                }
+                t * ie
+            } else {
+                let mut q = p + ie;
+                if q >= 1.0 {
+                    q -= 1.0;
+                    for l in &mut o {
+                        l.v -= 1.0;
+                    }
+                    if REC {
+                        wrap = (q * run.rinc).min(1.0);
+                    }
+                    j = draw();
+                }
+                q
+            };
+            // -0.0: no time offset (`x + -0.0` is `x`)
+            if A::EDGES {
+                for e in 0..2 {
+                    self.cross::<A>(
+                        e,
+                        &mut o[e],
+                        (p1, -0.0),
+                        (rcp[e], ar[e]),
+                        ca,
+                        &mut h,
+                        (&mut held, &mut acc),
+                    );
+                }
+            }
+            if B::EDGES {
+                for e in 0..2 {
+                    let k = e + 2;
+                    self.cross::<B>(
+                        e,
+                        &mut o[k],
+                        (p1, -0.0),
+                        (rcp[k], ar[k]),
+                        cb,
+                        &mut h,
+                        (&mut held, &mut acc),
+                    );
+                }
+            }
+            let u = [p1 - o[0].v, p1 - o[1].v, p1 - o[2].v, p1 - o[3].v];
+            let y = A::value([c[0].v, c[1].v, c[2].v], p1, [u[0], u[1]], h)
+                + B::value([c[3].v, c[4].v, c[5].v], p1, [u[2], u[3]], h);
+            out[i] = held;
+            held = y + acc;
+            p = p1;
+            if REC {
+                wr[i] = wrap;
+            }
+        }
+        (self.phase, self.held, self.h, *jit) = (p, held, h, j);
+        for (base, w) in [(0, A::EDGES), (2, B::EDGES)] {
+            if w {
+                let e = self.slot_at(base).min(2);
+                self.off[e] = [o[base].v, o[base + 1].v];
+            }
+        }
+    }
+
+    /// The edge slot of the live pair's wave at run index `base` (0 or 2).
+    fn slot_at(&self, base: usize) -> usize {
+        let (a, b) = self.pair.map_or((Wave::Sine, Wave::Sine), Pair::waves);
+        let w = if base == 0 { a } else { b };
+        w.edge_slot().unwrap_or(0)
+    }
+
+    /// Edge `e` of wave `K`, offset `o`: if the phase `p1` (`t0` samples
+    /// before the sample) left `o`'s cycle, the crossing is corrected at
+    /// `t0 + d₁/r` samples ago, forward or backward (an edge outrunning the
+    /// phase).
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn cross<K: Kind>(
+        &mut self,
+        e: usize,
+        o: &mut Lin,
+        (p1, t0): (f32, f32),
+        (rcp, ar): (f32, f32),
+        c: [Lin; 3],
+        h: &mut f32,
+        (held, acc): (&mut f32, &mut f32),
+    ) {
+        let u = p1 - o.v;
+        let bits = u.to_bits();
+        // in 0..1 below 1's bits; a negative `u` has the sign bit
+        if bits < 1.0f32.to_bits() {
             return;
         }
-        let m = f0.max(f1);
-        let (e0, e1) = (d0 - m as f32, d1 - (m - w) as f32);
-        let r = e1 - e0;
-        let t = clampf(e1 / r, 0.0, 1.0);
-        let step = (b.step + (a.step - b.step) * t) * r.signum();
-        let slope = (b.slope + (a.slope - b.slope) * t) * r.abs();
-        if step != 0.0 || slope != 0.0 {
-            self.edge(t, step, slope);
+        if (bits as i32) < 0 {
+            o.v -= 1.0;
+            let t = clampf(t0 + u * rcp, 0.0, 1.0);
+            self.correct::<K>(e, false, t, c, ar, h, (held, acc));
+        } else {
+            o.v += 1.0;
+            let t = clampf(t0 + (p1 - o.v) * rcp, 0.0, 1.0);
+            self.correct::<K>(e, true, t, c, ar, h, (held, acc));
         }
     }
 
+    /// The crossing's correction at `t`, constants lerped back to it.
     #[inline(always)]
-    fn edge(&mut self, t: f32, step: f32, slope: f32) {
-        #[cfg(any(test, feature = "test-support"))]
-        {
-            match self.skip {
-                Some(0) => {
-                    self.skip = None;
-                    return;
-                }
-                Some(n) => self.skip = Some(n - 1),
-                None => {}
-            }
-            if self.logged < EDGE_LOG {
-                self.log[self.logged] = (t, step, slope);
-                self.logged += 1;
-            }
+    #[allow(clippy::too_many_arguments)]
+    fn correct<K: Kind>(
+        &mut self,
+        e: usize,
+        fwd: bool,
+        t: f32,
+        c: [Lin; 3],
+        ar: f32,
+        h: &mut f32,
+        (held, acc): (&mut f32, &mut f32),
+    ) {
+        let ct = [c[0].back(t), c[1].back(t), c[2].back(t)];
+        let jump = K::jump(ct, e, fwd, *h);
+        if K::FLIPS {
+            *h = 1.0 - *h;
         }
-        self.corrector.edge(t, step, slope);
+        if K::CORNERS {
+            // `ar` is |r|/6: the slope a sample over 6
+            let s6 = jump * ar;
+            if self.apply(t, 0.0, 6.0 * s6) {
+                blamp6_into(held, acc, t, s6);
+            }
+        } else if self.apply(t, jump, 0.0) {
+            blep_into(held, acc, t, jump);
+        }
+    }
+
+    /// Whether to correct an edge: always, outside tests.
+    #[cfg(not(any(test, feature = "test-support")))]
+    #[inline(always)]
+    fn apply(&mut self, _: f32, _: f32, _: f32) -> bool {
+        true
+    }
+
+    /// Logs the edge (a silent one, of a wave at weight 0, is neither
+    /// logged nor counted); false when uncorrected or the planted skip.
+    #[cfg(any(test, feature = "test-support"))]
+    fn apply(&mut self, t: f32, step: f32, slope: f32) -> bool {
+        if step == 0.0 && slope == 0.0 {
+            return true;
+        }
+        match self.skip {
+            Some(0) => {
+                self.skip = None;
+                return false;
+            }
+            Some(n) => self.skip = Some(n - 1),
+            None => {}
+        }
+        if self.logged < EDGE_LOG {
+            self.log[self.logged] = (t, step, slope);
+            self.logged += 1;
+        }
+        self.correction == Correction::On
     }
 
     /// The `(t, step, slope)` corrected in the last `tick`, up to 8.
@@ -593,13 +1139,13 @@ impl VarOsc {
 #[derive(Clone, Copy, Debug)]
 pub struct Sub {
     high: bool,
-    corrector: Corrector,
+    held: f32,
 }
 
 impl Sub {
     pub const NEW: Self = Self {
         high: true,
-        corrector: Corrector::NEW,
+        held: 0.0,
     };
 
     /// +R, the corrector cleared.
@@ -607,15 +1153,25 @@ impl Sub {
         *self = Self::NEW;
     }
 
-    /// One sample; `wrap` is OSC 1's wrap `t` samples ago.
+    /// One sample; `wrap` is OSC 1's wrap `t` samples ago (`NO_WRAP` for
+    /// none).
     #[inline(always)]
     pub fn tick(&mut self, wrap: Option<f32>) -> f32 {
-        if let Some(t) = wrap {
+        self.step(wrap.map_or(NO_WRAP, |t| clampf(t, 0.0, 1.0)))
+    }
+
+    /// `tick` on a wrap buffer's entry.
+    #[inline(always)]
+    pub fn step(&mut self, wrap: f32) -> f32 {
+        let mut acc = -0.0f32;
+        if wrap >= 0.0 {
             self.high = !self.high;
             let step = if self.high { 2.0 * R } else { -2.0 * R };
-            self.corrector.edge(clampf(t, 0.0, 1.0), step, 0.0);
+            blep_into(&mut self.held, &mut acc, wrap, step);
         }
-        self.corrector.push(if self.high { R } else { -R })
+        let out = self.held;
+        self.held = (if self.high { R } else { -R }) + acc;
+        out
     }
 
     pub fn high(&self) -> bool {

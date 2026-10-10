@@ -48,6 +48,31 @@ pub fn blamp(t: f32) -> [f32; 2] {
     [t * t * t / 6.0, u * u * u / 6.0]
 }
 
+/// `step × blep(t)` added to the sample before (`held`) and after (`acc`):
+/// the oscillators' inner loops, one multiply fewer than through `blep`.
+#[inline(always)]
+pub fn blep_into(held: &mut f32, acc: &mut f32, t: f32, step: f32) {
+    let (h, u) = (0.5 * step, 1.0 - t);
+    *held += h * (t * t);
+    *acc -= h * (u * u);
+}
+
+/// `slope × blamp(t)`, as `blep_into`.
+#[inline(always)]
+pub fn blamp_into(held: &mut f32, acc: &mut f32, t: f32, slope: f32) {
+    let (s, u) = (slope * (1.0 / 6.0), 1.0 - t);
+    *held += s * (t * t * t);
+    *acc += s * (u * u * u);
+}
+
+/// `blamp_into` with the slope already divided by 6.
+#[inline(always)]
+pub fn blamp6_into(held: &mut f32, acc: &mut f32, t: f32, slope6: f32) {
+    let u = 1.0 - t;
+    *held += slope6 * (t * t * t);
+    *acc += slope6 * (u * u * u);
+}
+
 #[cfg(any(test, feature = "test-support"))]
 const EDGE_LOG: usize = 8;
 

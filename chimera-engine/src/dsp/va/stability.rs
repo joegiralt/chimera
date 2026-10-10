@@ -226,4 +226,16 @@ impl Stability {
         let x = xorshift(&mut self.rng[3]);
         if d == 0.0 { 0.0 } else { JITTER_CENTS * d * x }
     }
+
+    /// `jitter`'s draw as a raw word: `jitter(d)` is `JITTER_CENTS · d ·
+    /// uni(word)` (0 at `d == 0`), the scale set once a block.
+    #[inline(always)]
+    pub fn jitter_word(&mut self) -> i32 {
+        let mut x = self.rng[3];
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.rng[3] = x;
+        x as i32
+    }
 }
