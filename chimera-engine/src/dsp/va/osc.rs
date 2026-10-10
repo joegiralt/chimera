@@ -237,13 +237,17 @@ trait Kind {
     const CORNERS: bool;
     /// The pulse: its level `h` (0 or 1) flips at every crossing.
     const FLIPS: bool;
+    /// `c[0]` is a constant term (all but the sine): a pair of two keeps
+    /// one, their sum.
+    const BIAS: bool;
 
     /// The value at phase `p`, `u` the phases since the edges.
     fn value(c: [f32; 3], p: f32, u: [f32; 2], h: f32) -> f32;
 
-    /// Edge `e` crossed (`fwd`, else backward): the step, or the corner's
-    /// slope jump a cycle, from the constants at the crossing.
-    fn jump(c: [f32; 3], e: usize, fwd: bool, h: f32) -> f32;
+    /// Edge `e` crossed (`fwd`, else backward) `t` samples ago: the step,
+    /// or the corner's slope jump a cycle, from the constants lerped back to
+    /// the crossing.
+    fn jump(c: [Lin; 3], t: f32, e: usize, fwd: bool, h: f32) -> f32;
 
     /// The slope a cycle at `p`, `u` as `value`'s (a sync reset's).
     fn slope(c: [f32; 3], p: f32, u: [f32; 2]) -> f32;
@@ -262,6 +266,7 @@ impl Kind for Sine {
     const EDGES: bool = false;
     const CORNERS: bool = false;
     const FLIPS: bool = false;
+    const BIAS: bool = false;
 
     #[inline(always)]
     fn value(c: [f32; 3], p: f32, _: [f32; 2], _: f32) -> f32 {
@@ -269,7 +274,7 @@ impl Kind for Sine {
         c[0] * q + c[1] * psin(c[2] * q)
     }
 
-    fn jump(_: [f32; 3], _: usize, _: bool, _: f32) -> f32 {
+    fn jump(_: [Lin; 3], _: f32, _: usize, _: bool, _: f32) -> f32 {
         0.0
     }
 
@@ -293,6 +298,7 @@ impl Kind for Tri {
     const EDGES: bool = true;
     const CORNERS: bool = true;
     const FLIPS: bool = false;
+    const BIAS: bool = true;
 
     /// The two sides from the trough (`u[0]`), the lower one: continuous
     /// whatever the lerp does to `up` and `down`.
@@ -302,9 +308,10 @@ impl Kind for Tri {
     }
 
     #[inline(always)]
-    fn jump(c: [f32; 3], e: usize, _: bool, _: f32) -> f32 {
+    fn jump(c: [Lin; 3], t: f32, e: usize, _: bool, _: f32) -> f32 {
         // a trough bends up, a peak down, whichever way it is crossed
-        let j = c[1] + c[2];
+        // (the slopes' sum lerped back: its step is the run's)
+        let j = (c[1].v + c[2].v) - (c[1].d + c[2].d) * t;
         if e == 0 { j } else { -j }
     }
 
@@ -333,6 +340,7 @@ impl Kind for Saw {
     const EDGES: bool = true;
     const CORNERS: bool = false;
     const FLIPS: bool = false;
+    const BIAS: bool = true;
 
     #[inline(always)]
     fn value(c: [f32; 3], _: f32, u: [f32; 2], _: f32) -> f32 {
@@ -340,8 +348,8 @@ impl Kind for Saw {
     }
 
     #[inline(always)]
-    fn jump(c: [f32; 3], e: usize, fwd: bool, _: f32) -> f32 {
-        let s = if e == 0 { -c[1] } else { -c[2] };
+    fn jump(c: [Lin; 3], t: f32, e: usize, fwd: bool, _: f32) -> f32 {
+        let s = if e == 0 { -c[1].back(t) } else { -c[2].back(t) };
         if fwd { s } else { -s }
     }
 
@@ -361,6 +369,7 @@ impl Kind for Pulse {
     const EDGES: bool = true;
     const CORNERS: bool = false;
     const FLIPS: bool = true;
+    const BIAS: bool = true;
 
     #[inline(always)]
     fn value(c: [f32; 3], _: f32, _: [f32; 2], h: f32) -> f32 {
@@ -368,8 +377,8 @@ impl Kind for Pulse {
     }
 
     #[inline(always)]
-    fn jump(c: [f32; 3], _: usize, _: bool, h: f32) -> f32 {
-        c[1] * (1.0 - 2.0 * h)
+    fn jump(c: [Lin; 3], t: f32, _: usize, _: bool, h: f32) -> f32 {
+        c[1].back(t) * (1.0 - 2.0 * h)
     }
 
     #[inline(always)]
@@ -470,6 +479,12 @@ impl Shaped {
             Wave::Saw => self.saw_g,
             Wave::Pulse => 2.0 * (1.0 - self.pulse_w) * self.pulse_g,
         }
+    }
+
+    /// Every wave's `peak`, in WAVE's order.
+    #[inline(always)]
+    fn peaks(&self) -> [f32; 4] {
+        WAVES.map(|w| self.peak(w))
     }
 }
 
@@ -605,43 +620,60 @@ const WAVES: [Wave; 4] = [Wave::Sine, Wave::Tri, Wave::Saw, Wave::Pulse];
 /// peak is a quadratic in time, bounded by its ends plus a quarter of its
 /// curvature.
 fn bound(sh0: &Shaped, sh1: &Shaped, w0: f32, w1: f32) -> f32 {
+    let (k0, k1) = (Pair::of(3.0 * w0) as usize, Pair::of(3.0 * w1) as usize);
     // no anchor passed (the steady case): one piece
-    if Pair::of(3.0 * w0) == Pair::of(3.0 * w1) {
-        return piece(sh0, sh1, (w0, w1), (0.0, 1.0));
+    if k0 == k1 {
+        let (p0, p1) = (sh0.peaks(), sh1.peaks());
+        return match k0 {
+            0 => piece::<0>(&p0, &p1, (w0, w1), (0.0, 1.0)),
+            1 => piece::<1>(&p0, &p1, (w0, w1), (0.0, 1.0)),
+            _ => piece::<2>(&p0, &p1, (w0, w1), (0.0, 1.0)),
+        };
     }
-    bound_split(sh0, sh1, w0, w1)
+    bound_split(sh0, sh1, (w0, w1), (k0, k1))
 }
 
-/// `bound` across anchors: up to three pieces.
+/// `bound` across anchors: a piece for each pair the path is on (pairs
+/// `k0` to `k1`), over the stretch it is on it.
 #[inline(never)]
-fn bound_split(sh0: &Shaped, sh1: &Shaped, w0: f32, w1: f32) -> f32 {
+fn bound_split(sh0: &Shaped, sh1: &Shaped, (w0, w1): (f32, f32), (k0, k1): (usize, usize)) -> f32 {
     let dw = w1 - w0;
-    // where the path passes 1/3 and 2/3 (not passed: t = 1, a point piece)
-    let at = |a: f32| {
-        if (a - w0) * (a - w1) < 0.0 {
-            (a - w0) / dw
-        } else {
-            1.0
-        }
-    };
+    // when the path is at WAVE `a`, held to the block (an anchor not
+    // passed lands on an end)
+    let at = |a: f32| clampf((a - w0) / dw, 0.0, 1.0);
     let (t1, t2) = (at(1.0 / 3.0), at(2.0 / 3.0));
-    let (ta, tb) = (t1.min(t2), t1.max(t2));
-    let p = |a: f32, b: f32| piece(sh0, sh1, (w0, w1), (a, b));
-    p(0.0, ta).max(p(ta, tb)).max(p(tb, 1.0))
+    let (p0, p1) = (sh0.peaks(), sh1.peaks());
+    let w = (w0, w1);
+    let (lo, hi) = (k0.min(k1), k0.max(k1));
+    // the path rises through the pairs or falls; a pair it is not on adds 0
+    let on = |k: usize, v: f32| if lo <= k && k <= hi { v } else { 0.0 };
+    let (s0, s1, s2) = if dw > 0.0 {
+        ((0.0, t1), (t1, t2), (t2, 1.0))
+    } else {
+        ((t1, 1.0), (t2, t1), (0.0, t2))
+    };
+    on(0, piece::<0>(&p0, &p1, w, s0))
+        .max(on(1, piece::<1>(&p0, &p1, w, s1)))
+        .max(on(2, piece::<2>(&p0, &p1, w, s2)))
 }
 
-/// `bound` on the piece `ta..tb` of the path (one pair).
+/// `bound` on the piece `ta..tb` of the path, on pair `K`, each wave's
+/// peak lerping from `pk0`'s to `pk1`'s.
 #[inline(always)]
-fn piece(sh0: &Shaped, sh1: &Shaped, (w0, w1): (f32, f32), (ta, tb): (f32, f32)) -> f32 {
-    let pk = |w: Wave, t: f32| {
-        let (a, b) = (sh0.peak(w), sh1.peak(w));
-        a + (b - a) * t
-    };
+fn piece<const K: usize>(
+    pk0: &[f32; 4],
+    pk1: &[f32; 4],
+    (w0, w1): (f32, f32),
+    (ta, tb): (f32, f32),
+) -> f32 {
     let dw = w1 - w0;
     let (wa, wb) = (w0 + dw * ta, w0 + dw * tb);
-    let pair = Pair::of(1.5 * (wa + wb));
-    let (a, b) = pair.waves();
-    let base = pair as usize as f32;
+    let pk = |i: usize, t: f32| {
+        let (a, b) = (pk0[i], pk1[i]);
+        a + (b - a) * t
+    };
+    let (a, b) = (K, K + 1);
+    let base = K as f32;
     let f = |w: f32| clampf(3.0 * w - base, 0.0, 1.0);
     let (fa, fb) = (f(wa), f(wb));
     let g = |t: f32, fw: f32| (1.0 - fw) * pk(a, t) + fw * pk(b, t);
@@ -997,6 +1029,11 @@ impl VarOsc {
                 d: (c1[k] - c0[k]) * il,
             };
         }
+        if A::BIAS && B::BIAS {
+            // one constant term, the sum (`run`'s B leaves its own out)
+            let (v, e) = (c0[0] + c0[3], c1[0] + c1[3]);
+            run.c[0] = Lin { v, d: (e - v) * il };
+        }
         if SYNC {
             let f = weight(i1);
             let (za, zb) = (blk.zero[a as usize], blk.zero[b as usize]);
@@ -1090,21 +1127,30 @@ impl VarOsc {
         // each edge's phase since it moves with the phase and against its
         // place; a wrap moves both, so it leaves `u` alone
         let edged = |k: usize| if k < 2 { A::EDGES } else { B::EDGES };
+        // B's constant term rides in A's when both have one; -0.0 in its
+        // place adds nothing (`x + -0.0` is `x`)
+        let merged = A::BIAS && B::BIAS;
+        let bias = |l: Lin| if merged { -0.0 } else { l.v };
         for i in i0..i1.min(N) {
             inc += dinc;
             let ie = inc * j;
-            for l in &mut c {
-                l.v += l.d;
+            for (k, l) in c.iter_mut().enumerate() {
+                if !(merged && k == 3) {
+                    l.v += l.d;
+                }
             }
             let ca = [c[0], c[1], c[2]];
             let cb = [c[3], c[4], c[5]];
             // -0.0: `y + acc` is `y` itself when nothing crossed
             let mut acc = -0.0f32;
-            let mut wrap = NO_WRAP;
-            let p1 = if SYNC && wr[i] >= 0.0 {
+            // a lone `tick` both reads a sync and writes its wrap here
+            let t = if SYNC { wr[i] } else { NO_WRAP };
+            if REC {
+                wr[i] = NO_WRAP;
+            }
+            let p1 = if SYNC && t >= 0.0 {
                 // the reset `t` samples ago, in time order: own edges up to
                 // it, the reset, own edges after it (below, as any sample's)
-                let t = wr[i];
                 let dp = ie * (1.0 - t);
                 let pre = p + dp;
                 for (k, u) in u.iter_mut().enumerate() {
@@ -1127,7 +1173,7 @@ impl VarOsc {
                 }
                 // y(0) − y(φ⁻) and the slopes' difference × inc
                 let pw = if pre >= 1.0 { pre - 1.0 } else { pre };
-                let (va, vb) = (ca.map(|l| l.v), cb.map(|l| l.v));
+                let (va, vb) = (ca.map(|l| l.v), [bias(cb[0]), cb[1].v, cb[2].v]);
                 let y = A::value(va, pw, [u[0], u[1]], h) + B::value(vb, pw, [u[2], u[3]], h);
                 let d = A::slope(va, pw, [u[0], u[1]]) + B::slope(vb, pw, [u[2], u[3]]);
                 let (step, slope) = (run.y0 - y, (run.d0 - d) * ie);
@@ -1137,7 +1183,7 @@ impl VarOsc {
                 }
                 if pre >= 1.0 {
                     if REC {
-                        wrap = clampf(t + (pre - 1.0) * run.rinc, 0.0, 1.0);
+                        wr[i] = clampf(t + (pre - 1.0) * run.rinc, 0.0, 1.0);
                     }
                     j = draw();
                 }
@@ -1169,7 +1215,7 @@ impl VarOsc {
                 if q >= 1.0 {
                     q -= 1.0;
                     if REC {
-                        wrap = (q * run.rinc).min(1.0);
+                        wr[i] = (q * run.rinc).min(1.0);
                     }
                     j = draw();
                 }
@@ -1195,13 +1241,10 @@ impl VarOsc {
                 }
             }
             let y = A::value([c[0].v, c[1].v, c[2].v], p1, [u[0], u[1]], h)
-                + B::value([c[3].v, c[4].v, c[5].v], p1, [u[2], u[3]], h);
+                + B::value([bias(c[3]), c[4].v, c[5].v], p1, [u[2], u[3]], h);
             out[i] = held;
             held = y + acc;
             p = p1;
-            if REC {
-                wr[i] = wrap;
-            }
         }
         (self.phase, self.held, self.h, *jit) = (p, held, h, j);
         for (base, w) in [(0, A::EDGES), (2, B::EDGES)] {
@@ -1264,8 +1307,7 @@ impl VarOsc {
         h: &mut f32,
         (held, acc): (&mut f32, &mut f32),
     ) {
-        let ct = [c[0].back(t), c[1].back(t), c[2].back(t)];
-        let jump = K::jump(ct, e, fwd, *h);
+        let jump = K::jump(c, t, e, fwd, *h);
         if K::FLIPS {
             *h = 1.0 - *h;
         }
