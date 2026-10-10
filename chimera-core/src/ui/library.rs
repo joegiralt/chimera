@@ -461,6 +461,40 @@ impl UiState {
         }
     }
 
+    /// A library load pending, as while its source streams: P1 from
+    /// S0000001, confirmed now, no source.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn start_pending_library_load_for_test(&mut self) {
+        use crate::project::{LibFile, LibSeen};
+        let file = LibFile {
+            id: LibId::new(1).expect("a user id"),
+            vol: VolumeId {
+                serial: 0,
+                label: [b' '; 11],
+            },
+            seen: LibSeen {
+                generation: None,
+                name: None,
+            },
+        };
+        let target = LibraryPart {
+            part: PartId::ALL[0],
+            file,
+        };
+        let go = match ReplaceGuard::check(&self.project, self.template, target) {
+            Ok(c) => c,
+            Err(n) => n.into_pending().anyway(&self.project),
+        };
+        self.lib.load = Some(PendingLoad {
+            go,
+            read: LibRead {
+                skips: 0,
+                source: None,
+            },
+        });
+    }
+
     /// Why LIBRARY's page is empty, if its listing failed.
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]

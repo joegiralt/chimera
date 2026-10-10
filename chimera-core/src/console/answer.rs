@@ -90,12 +90,18 @@ pub trait Unit {
     type Files: Files;
     /// The card, for `ls` and `put`. `None`: not in this build.
     fn files(&mut self) -> Option<&mut Self::Files>;
+    /// A Sound `put` or `rm` reached the card: the library's page goes,
+    /// once the answer is out.
+    fn forget_library(&mut self) {}
 }
 
 /// Why an answer is a single `ERR` line.
 enum Why {
     Refused(Refusal),
     Absent(Command),
+    /// Card work is pending in the UI: a card verb waits for it.
+    #[cfg(feature = "card-put")]
+    Busy,
 }
 
 impl fmt::Display for Why {
@@ -105,6 +111,8 @@ impl fmt::Display for Why {
             Why::Refused(Refusal::Arguments(c)) => write!(f, "{} takes {}", c.name(), c.usage()),
             Why::Refused(Refusal::TooLong) => write!(f, "line too long, {MAX_LINE} max"),
             Why::Absent(c) => write!(f, "{} is not in this build", c.name()),
+            #[cfg(feature = "card-put")]
+            Why::Busy => f.write_str("busy"),
         }
     }
 }
@@ -189,6 +197,12 @@ pub fn answer(
         #[cfg(feature = "fault-inject")]
         Ok(r @ Request::Fault(arg)) => unit.fault(arg).map(Ok).ok_or(Why::Absent(r.command())),
         #[cfg(feature = "card-put")]
+        Ok(Request::Ls(_) | Request::Put(_) | Request::Rm(_) | Request::Get(_))
+            if unit.ui().card_pending() =>
+        {
+            Err(Why::Busy)
+        }
+        #[cfg(feature = "card-put")]
         Ok(r @ Request::Ls(arg)) => match unit.files() {
             None => Err(Why::Absent(r.command())),
             Some(f) => return super::ls(arg, f, t.0),
@@ -198,9 +212,29 @@ pub fn answer(
             let open = unit.ui().project().meta().id();
             match unit.files() {
                 None => Err(Why::Absent(r.command())),
-                Some(f) => return super::put(arg, open, f, t.0),
+                Some(f) => {
+                    let said = super::put(arg, open, f, t.0);
+                    if matches!(arg.to, super::PutTo::Sound { .. }) {
+                        unit.forget_library();
+                    }
+                    return said;
+                }
             }
         }
+        #[cfg(feature = "card-put")]
+        Ok(r @ Request::Rm(arg)) => match unit.files() {
+            None => Err(Why::Absent(r.command())),
+            Some(f) => {
+                let said = super::rm(arg, f, t.0);
+                unit.forget_library();
+                return said;
+            }
+        },
+        #[cfg(feature = "card-put")]
+        Ok(r @ Request::Get(arg)) => match unit.files() {
+            None => Err(Why::Absent(r.command())),
+            Some(f) => return super::get(arg, f, t.0),
+        },
     };
     match body {
         Ok(wrote) => wrote.and_then(|()| t.write_str("OK\n")),
