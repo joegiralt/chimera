@@ -281,15 +281,29 @@ pub const VA_CHAIN_GAIN: f32 = 1.0 / (R * 1.732_050_8);
 /// loudness.
 pub const VA_OUT_GAIN: f32 = 1.0;
 
-/// Cycles a sample per MODE, LP24's 95 included: paper estimates (spec
-/// § Budget) until the ADR 0056 count re-bills them.
-pub const COST_MIX: Cost = Cost(450);
-pub const COST_SYNC: Cost = Cost(500);
-pub const COST_RING: Cost = Cost(450);
-pub const COST_XOR: Cost = Cost(460);
-pub const COST_BITS: Cost = Cost(460);
+/// Cycles a sample per MODE by ADR 0056's count (`render_*` on the release
+/// ELF, instr × 1.46 × 1.1, + 12 a `vdiv`/`vsqrt`): the worst voice has
+/// SHAPE moving on both oscillators, each refilling its two live waves every
+/// sample (libm `sqrtf` included), the wave pair that costs most, no
+/// crossing; plus 0.45 of the wrap-side branches (at MAX_INC), 2 × 1.8
+/// crossings an sample at 131 (59 instr + 3 `vdiv`), the block's work ÷ 64
+/// (43) and LP24's 95. Each line: fast + wraps + crossings + block + 95.
+///
+/// MIX: 1,642 + 114 + 472 + 43 + 95.
+pub const COST_MIX: Cost = Cost(2_370);
+/// SYNC: 1,486 + 150 + 472 + 43 + 95, + 0.45 of a reset's 1,704 (its worst
+/// pair SINE/TRI, whose two edge evals cost most).
+pub const COST_SYNC: Cost = Cost(3_020);
+/// RING: 1,648 + 115 + 472 + 43 + 95.
+pub const COST_RING: Cost = Cost(2_380);
+/// XOR: 1,719 + 115 + 472 + 43 + 95.
+pub const COST_XOR: Cost = Cost(2_450);
+/// BITS: 1,678 + 123 + 472 + 43 + 95.
+pub const COST_BITS: Cost = Cost(2_410);
 
-/// The MODE duck's length each way, two blocks.
+/// The MODE duck's length each way, two blocks. Its per-sample `cosf` (up to
+/// 160 instr, 250 cycles a voice) runs 4 blocks after a MODE edit and is not
+/// in the bills above: a transient, not a note-on.
 const DUCK: usize = 2 * BLOCK_SIZE;
 
 /// A jitter's cents as a share of the increment, `2^(c/1200) − 1` to first

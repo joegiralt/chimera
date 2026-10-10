@@ -1556,6 +1556,68 @@ fn tape_bills_each_model() {
     }
 }
 
+fn va_sound(mode: chimera_core::dsp::va::VaMode) -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Va);
+    p.va.mode = mode;
+    p
+}
+
+/// Spec § Budget: each MODE bills ADR 0056's count of its worst voice, and
+/// the voices each is admitted beside the reserve on the four rooms (rev V,
+/// rev Y, rev V with ORBIT, rev V with the master tape), INIT's 2040 REV2
+/// (+15) and the chain and routing (83) on top. ADR 0040's done-when is six
+/// on each: the count does not meet it, the owner's call (Task 9 report).
+#[test]
+fn va_bills_each_mode() {
+    use chimera_core::dsp::va::VaMode::{Bits, Mix, Ring, Sync, Xor};
+    let rooms = {
+        let v = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
+        let y = SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0;
+        [
+            v - RESERVED,
+            y - RESERVED,
+            v - RESERVED - ORBIT_COST,
+            v - RESERVED_TAPE,
+        ]
+    };
+    assert_eq!(rooms, [4_984, 3_817, 4_813, 4_674]);
+    let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
+    for (mode, bill, voices) in [
+        (Mix, 2_370, [2, 1, 1, 1]),
+        (Sync, 3_020, [1, 1, 1, 1]),
+        (Ring, 2_380, [2, 1, 1, 1]),
+        (Xor, 2_450, [1, 1, 1, 1]),
+        (Bits, 2_410, [1, 1, 1, 1]),
+    ] {
+        let p = va_sound(mode);
+        assert_eq!(EngineSlot::cost(&p, &ModState::new()), Cost(bill), "{mode:?}");
+        let voice = Voice::cost(&p, &ModState::new()).0;
+        assert_eq!(voice, bill + 83 + 15, "{mode:?}");
+        assert_eq!(at(voice), voices, "{mode:?}");
+    }
+}
+
+/// A VA note holds its playing MODE's bill until the duck swaps the MODE:
+/// held in SYNC with MIX stored, it bills SYNC's extra over MIX for the
+/// duck's first block, then none.
+#[test]
+fn a_held_va_note_bills_its_playing_mode() {
+    use chimera_core::dsp::va::{COST_MIX, COST_SYNC, VaMode};
+    use chimera_core::{MidiNote, Velocity};
+    let (sync, mix) = (va_sound(VaMode::Sync), va_sound(VaMode::Mix));
+    let mods = ModState::new();
+    let mut rig = common::Rig::new(common::SR);
+    rig.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &sync);
+    let mut block = [0.0; chimera_hal::BLOCK_SIZE];
+    rig.render(&mut block, &sync, &mods);
+    assert_eq!(rig.held_model_extra(&mix), Cost(COST_SYNC.0 - COST_MIX.0));
+    // MIX stored: block 0 ducks down, block 1 ducks down and swaps.
+    rig.render(&mut block, &mix, &mods);
+    assert_eq!(rig.held_model_extra(&mix), Cost(COST_SYNC.0 - COST_MIX.0));
+    rig.render(&mut block, &mix, &mods);
+    assert_eq!(rig.held_model_extra(&mix), Cost::ZERO);
+}
+
 /// Spec § 5: TRANSWAVE bills a level change's 370 more only where its pitch
 /// can move more than 620 cents in a note: STEAL GLIDE, or PITCH and FINE
 /// routes whose `|amount| × range` sum past it. A vibrato bills none. A

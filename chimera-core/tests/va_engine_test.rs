@@ -10,6 +10,7 @@ use chimera_core::dsp::ease::{at, step_of};
 use chimera_core::dsp::va::combine::with_sub;
 use chimera_core::dsp::va::osc::{Morph, Unit, wave_at};
 use chimera_core::dsp::va::{VA_CHAIN_GAIN, VaEngine, VaMode, VaParams};
+use chimera_core::hw::Cost;
 use chimera_core::project::PartId;
 use chimera_core::voice_alloc::VoiceIdx;
 use chimera_hal::BLOCK_SIZE;
@@ -684,8 +685,10 @@ fn steal_glide_glides() {
 
 #[test]
 fn bills_follow_the_mode() {
+    let bills = [2_370, 3_020, 2_380, 2_450, 2_410];
     assert!(VaEngine::mode_cost(VaMode::Sync) > VaEngine::mode_cost(VaMode::Mix));
-    for mode in VaMode::ALL {
+    for (mode, bill) in VaMode::ALL.into_iter().zip(bills) {
+        assert_eq!(VaEngine::mode_cost(mode), Cost(bill), "{mode:?}");
         let p = VaParams {
             mode,
             ..VaParams::default()
