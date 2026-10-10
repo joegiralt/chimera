@@ -212,6 +212,8 @@ pub struct Peek {
     pub name: Option<SoundName>,
     pub engine: Option<EngineType>,
     pub stamp: Option<BuildStamp>,
+    /// An `Engine` code this build doesn't know: greyed, name and stamp kept.
+    pub needs_newer: bool,
 }
 
 /// The record at `at`: its tag and payload, when whole in `b` and before
@@ -244,6 +246,7 @@ pub fn peek_library(b: &[u8], file_len: u32) -> Result<Peek, FileError> {
         name: h.name,
         engine: None,
         stamp: None,
+        needs_newer: false,
     };
     if let Some((tag, p)) = record_at(b, HEADER_LEN, file_len)
         && tag == RecordTag::Engine.code()
@@ -251,7 +254,8 @@ pub fn peek_library(b: &[u8], file_len: u32) -> Result<Peek, FileError> {
         let &[code] = p else {
             return Err(FileError::Corrupt);
         };
-        peek.engine = Some(EngineType::from_disk_code(code).ok_or(FileError::NeedsNewerFirmware)?);
+        peek.engine = EngineType::from_disk_code(code);
+        peek.needs_newer = peek.engine.is_none();
         peek.stamp = record_at(b, HEADER_LEN + 5, file_len)
             .filter(|&(t, _)| t == RecordTag::Build.code())
             .and_then(|(_, p)| BuildStamp::parse(p));

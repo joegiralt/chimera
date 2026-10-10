@@ -322,6 +322,7 @@ fn lib_entry(
     for (r, len) in sides.iter().flatten() {
         match r {
             Ok(p) => {
+                nnf |= p.needs_newer;
                 if best.is_none_or(|(b, _)| p.generation.is_newer_than(b.generation)) {
                     best = Some((p, *len));
                 }

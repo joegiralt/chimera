@@ -261,9 +261,10 @@ fn peek_refuses_other_kinds_and_unknown_engines() {
     assert_eq!(peek_library(&f[..LIB_PEEK], len), Err(FileError::WrongKind));
     f[6] = FileKind::Sound as u8;
     f[32] = 0x7F;
+    let p = peek_library(&f[..LIB_PEEK], len).unwrap();
     assert_eq!(
-        peek_library(&f[..LIB_PEEK], len),
-        Err(FileError::NeedsNewerFirmware)
+        (p.needs_newer, p.engine, p.name.unwrap().as_str(), p.stamp),
+        (true, None, "BASS-1", Some(ST))
     );
 }
 
@@ -501,4 +502,18 @@ fn no_card_is_its_store_error() {
     let mut st = MemStore::new(1);
     st.eject();
     assert_eq!(list_err(&mut st), LibNote::Store(StoreError::NoCard));
+}
+
+#[test]
+fn an_unknown_engine_lists_greyed_with_its_name_and_stamp() {
+    let mut st = card_with_sounds(1..=1);
+    rewrite(&mut st, "S0000001.A", |mut b| {
+        b[32] = 0x7F;
+        b
+    });
+    let p = list(&mut st, PageAt::Newest);
+    let e = entry(&p, 1);
+    assert_eq!(e.err, Some(FileError::NeedsNewerFirmware));
+    assert_eq!(e.file.seen.name.unwrap().as_str(), "BASS-1");
+    assert_eq!((e.engine, e.stamp), (None, Some(ST)));
 }
