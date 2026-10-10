@@ -25,7 +25,9 @@ pub use guard::{
 };
 pub(crate) use ids::bounded_index;
 pub use ids::{PartId, PartSet, SlotId};
-pub use library::{LibNote, save_library_sound};
+pub use library::{
+    LibEntry, LibFile, LibNote, LibPage, LibSeen, PageAt, list_library, save_library_sound,
+};
 pub use marks::{
     ActionRefused, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, StatusCache,
     part_actions, part_status, project_status,

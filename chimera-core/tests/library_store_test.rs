@@ -10,7 +10,7 @@ use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::test_support::FullOnWrite;
-use chimera_core::project::{LibNote, save_library_sound};
+use chimera_core::project::{LibNote, LibPage, PageAt, list_library, save_library_sound};
 use chimera_core::storage::{
     BuildStamp, Card, FileError, FileKind, Generation, Header, ID_WINDOW, LIB_PEEK, LibId, NextId,
     SoundDecoder, encode_library_sound, encode_sound, lib_id, library_file, load_ab, next_user_id,
@@ -318,4 +318,187 @@ fn a_file_that_landed_before_the_error_is_deleted() {
     let before = listing(&mut st, Dir::Sounds).unwrap();
     assert_eq!(save(&mut st).unwrap_err(), LibNote::Store(StoreError::Full));
     assert_eq!(listing(&mut st, Dir::Sounds).unwrap(), before);
+}
+
+fn put<S: Store>(st: &mut S, name: &str, bytes: &[u8]) {
+    let v = st.mount().unwrap();
+    st.write(v, file_name(name), &mut |s: &mut dyn ByteSink| s.put(bytes))
+        .unwrap();
+}
+
+/// Real library files for ids `r`, `.A` only.
+fn card_with_sounds(r: std::ops::RangeInclusive<u32>) -> MemStore {
+    let mut st = card_with(&[]);
+    let snd = factory_sound(0).unwrap();
+    for _ in r {
+        save_named(&mut st, &snd, "BASS-1").unwrap();
+    }
+    st
+}
+
+fn chimera_only() -> MemStore {
+    let mut st = MemStore::new(1);
+    let v = st.mount().unwrap();
+    st.make_dir(v, Dir::Chimera).unwrap();
+    st
+}
+
+fn list<S: Store>(st: &mut S, at: PageAt) -> Box<LibPage> {
+    let mut p = Box::new(LibPage::EMPTY);
+    list_library(&mut Card::new(), st, at, &mut p).out.unwrap();
+    p
+}
+
+fn list_err<S: Store>(st: &mut S) -> LibNote {
+    let mut p = Box::new(LibPage::EMPTY);
+    list_library(&mut Card::new(), st, PageAt::Newest, &mut p)
+        .out
+        .unwrap_err()
+}
+
+fn ids(p: &LibPage) -> Vec<u32> {
+    p.entries().iter().flatten().map(|e| e.file.id.get()).collect()
+}
+
+fn entry(p: &LibPage, id: u32) -> chimera_core::project::LibEntry {
+    p.entries()
+        .iter()
+        .flatten()
+        .find(|e| e.file.id.get() == id)
+        .copied()
+        .unwrap()
+}
+
+fn rewrite(st: &mut MemStore, name: &str, f: impl FnOnce(Vec<u8>) -> Vec<u8>) {
+    let n = len_of(st, name) as usize;
+    let b = f(first(st, name, n));
+    put(st, name, &b);
+}
+
+fn truncate(st: &mut MemStore, name: &str, n: usize) {
+    rewrite(st, name, |mut b| {
+        b.truncate(n);
+        b
+    });
+}
+
+fn set_version(st: &mut MemStore, name: &str, v: u8) {
+    rewrite(st, name, |mut b| {
+        b[4] = v;
+        b
+    });
+}
+
+/// A store that records the name of each `read`.
+struct Counting(MemStore, std::cell::RefCell<Vec<String>>);
+
+impl Counting {
+    fn new(st: MemStore) -> Self {
+        Counting(st, Default::default())
+    }
+    fn reads(&self) -> Vec<String> {
+        let mut r = self.1.borrow().clone();
+        r.sort();
+        r
+    }
+}
+
+impl Store for Counting {
+    fn mount(&mut self) -> Result<VolumeId, StoreError> {
+        self.0.mount()
+    }
+    fn list(
+        &mut self,
+        v: VolumeId,
+        d: Dir,
+        f: &mut dyn FnMut(FileName, u32),
+    ) -> Result<(), StoreError> {
+        self.0.list(v, d, f)
+    }
+    fn read(&mut self, v: VolumeId, f: FileName, s: &mut dyn ReadSink) -> Result<(), StoreError> {
+        self.1.borrow_mut().push(format!(
+            "{}.{}",
+            String::from_utf8_lossy(f.stem()),
+            String::from_utf8_lossy(f.ext())
+        ));
+        self.0.read(v, f, s)
+    }
+    fn write(
+        &mut self,
+        v: VolumeId,
+        f: FileName,
+        body: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
+    ) -> Result<u32, StoreError> {
+        self.0.write(v, f, body)
+    }
+    fn delete(&mut self, v: VolumeId, f: FileName) -> Result<(), StoreError> {
+        self.0.delete(v, f)
+    }
+    fn make_dir(&mut self, v: VolumeId, d: Dir) -> Result<(), StoreError> {
+        self.0.make_dir(v, d)
+    }
+}
+
+#[test]
+fn a_hundred_sounds_page_48_48_4_newest_first() {
+    let mut st = card_with_sounds(1..=100);
+    let p1 = list(&mut st, PageAt::Newest);
+    assert_eq!(
+        (ids(&p1)[..3].to_vec(), ids(&p1).len(), p1.newer, p1.older),
+        (vec![100, 99, 98], 48, false, true)
+    );
+    let p2 = list(&mut st, PageAt::Below(LibId::new(53).unwrap()));
+    assert_eq!(
+        (ids(&p2)[0], ids(&p2).len(), p2.newer, p2.older),
+        (52, 48, true, true)
+    );
+    let p3 = list(&mut st, PageAt::Below(LibId::new(5).unwrap()));
+    assert_eq!((ids(&p3), p3.older), (vec![4, 3, 2, 1], false));
+    let up = list(&mut st, PageAt::Above(LibId::new(52).unwrap()));
+    assert_eq!((ids(&up)[47], ids(&up)[0], up.older), (53, 100, true));
+    assert!(!up.newer);
+    assert_eq!(up.position(LibId::new(100).unwrap()), Some(0));
+}
+
+#[test]
+fn factory_and_foreign_names_are_never_listed_or_opened() {
+    let mut st = card_with_sounds(1..=1);
+    for n in ["S9000001.A", "BANK1.BNK", "S000001.A"] {
+        put(&mut st, n, &[0; 40]);
+    }
+    let mut st = Counting::new(st);
+    let p = list(&mut st, PageAt::Newest);
+    assert_eq!(ids(&p), vec![1]);
+    assert_eq!(st.reads(), vec!["S0000001.A"]);
+}
+
+#[test]
+fn only_seen_sides_are_read() {
+    let mut st = Counting::new(card_with_sounds(1..=10));
+    list(&mut st, PageAt::Newest);
+    assert_eq!(st.reads().len(), 10);
+    assert!(st.reads().iter().all(|n| n.ends_with(".A")));
+}
+
+#[test]
+fn bad_sides_list_with_their_errors() {
+    let mut st = card_with_sounds(1..=2);
+    truncate(&mut st, "S0000001.A", 0);
+    set_version(&mut st, "S0000002.A", 2);
+    let p = list(&mut st, PageAt::Newest);
+    assert_eq!(entry(&p, 1).err, Some(FileError::Truncated));
+    assert_eq!(entry(&p, 1).file.seen.name, None);
+    assert_eq!(entry(&p, 2).err, Some(FileError::NeedsNewerFirmware));
+}
+
+#[test]
+fn no_sounds_dir_is_an_empty_page() {
+    assert!(ids(&list(&mut chimera_only(), PageAt::Newest)).is_empty());
+}
+
+#[test]
+fn no_card_is_its_store_error() {
+    let mut st = MemStore::new(1);
+    st.eject();
+    assert_eq!(list_err(&mut st), LibNote::Store(StoreError::NoCard));
 }
