@@ -621,7 +621,11 @@ fn mods(p: &mut PartAudio) {
     ]);
 }
 
-static mut SCOPE: TripleBuffer<ScopeFrame> = scope_buffer();
+// SAFETY: ".ram_d2" is NOLOAD, so this holds garbage at boot; sound
+// because it is `MaybeUninit` and `run` writes it before any read. In D2,
+// cacheable, out of AXI's margin: the bench's scope is never timed.
+#[unsafe(link_section = ".ram_d2")]
+static mut SCOPE: MaybeUninit<TripleBuffer<ScopeFrame>> = MaybeUninit::uninit();
 // A static, not a local: `AudioShared` is 3 KB (ADR 0020).
 static mut SHARED: MaybeUninit<AudioShared> = MaybeUninit::uninit();
 // SAFETY: ".ram_d2.voices" is NOLOAD, so this holds garbage at boot; sound
@@ -666,7 +670,7 @@ pub fn run(
     // returns, before `engine::init` takes the slots.
     let (inst_slot, fx_slot, shared_slot, scope_w) = unsafe {
         let (i, f) = engine::slots();
-        let (w, _unread) = (&mut *addr_of_mut!(SCOPE)).split();
+        let (w, _unread) = (&mut *addr_of_mut!(SCOPE)).write(scope_buffer()).split();
         (i, f, &mut *addr_of_mut!(SHARED), w)
     };
     #[cfg_attr(not(feature = "bench-tape"), allow(unused_mut))]

@@ -13,7 +13,7 @@ use chimera_hal::store::{Dir, Store, StoreError, VolumeId};
 use crate::name::SoundName;
 use crate::project::{
     AdoptError, CardOut, Confirmed, LibEntry, LibNote, LibPage, LibRead, LibraryPart, Line, PageAt,
-    PartId, ReplaceError, ReplaceGuard, SlotId, SourceNeed, Staged, list_library,
+    PartId, PartSet, ReplaceError, ReplaceGuard, SlotId, SourceNeed, Staged, list_library,
     read_library_sound, save_library_sound,
 };
 use crate::storage::{Card, LibId, held_for_file_len, source_file};
@@ -50,16 +50,24 @@ pub(crate) struct PendingLoad {
 pub(crate) struct LibState {
     page: LibPage,
     listed: bool,
+    /// Why the last listing failed: its row says so until listed again,
+    /// on the next tab or rung entry.
+    err: Option<LibNote>,
     pub load: Option<PendingLoad>,
     pub tab: Tab,
+    /// SAVE PART FIRST's Stale Parts and slot: asked about once the load
+    /// it ran before ends, not under it.
+    after: Option<(PartSet, SlotId)>,
 }
 
 impl LibState {
     pub const NEW: LibState = LibState {
         page: LibPage::EMPTY,
         listed: false,
+        err: None,
         load: None,
         tab: Tab::Project,
+        after: None,
     };
 
     /// A load is pending: no other card work starts.
@@ -76,10 +84,16 @@ impl LibState {
         self.listed.then_some(&self.page)
     }
 
-    /// The page to list into; listed once written.
-    pub fn listing(&mut self) -> &mut LibPage {
-        self.listed = true;
-        &mut self.page
+    /// Why the page on screen is empty: the card couldn't be listed.
+    pub fn err(&self) -> Option<LibNote> {
+        self.err.filter(|_| self.listed)
+    }
+
+    /// A failed listing is tried again: LIBRARY entered anew.
+    pub fn entered(&mut self) {
+        if self.err.is_some() {
+            self.forget();
+        }
     }
 }
 
@@ -125,14 +139,16 @@ pub fn sound_rows(page: &LibPage) -> (usize, usize) {
     (first, first + page.entries().len().saturating_sub(1))
 }
 
-/// Placeholder rows; the browser's LIBRARY look is drawn later.
-pub fn draw<D>(d: &mut D, page: Option<&LibPage>, part: PartId, cursor: usize, scroll: usize)
+/// Placeholder rows; the browser's LIBRARY look is drawn later. With no
+/// row, `err`'s words, or `NO SOUNDS YET`.
+pub(crate) fn draw<D>(d: &mut D, lib: &LibState, part: PartId, cursor: usize, scroll: usize)
 where
     D: DrawTarget<Color = Rgb565>,
 {
     let mut p = FmtBuf::new();
     let _ = write!(p, "P{}", part.index() + 1);
     components::title_to(d, "LIBRARY", p.as_str());
+    let page = lib.page();
     let total = rows(page);
     for i in 0..VISIBLE_ROWS {
         let at = scroll + i;
@@ -148,8 +164,8 @@ where
         let name = match row(page, at) {
             LibRow::Newer => components::upper("‹ NEWER"),
             LibRow::Older => components::upper("OLDER ›"),
-            LibRow::Empty => components::upper("NO SOUNDS YET"),
-            LibRow::Sound(e) => match e.file.seen.name {
+            LibRow::Empty => components::upper(lib.err().map_or("NO SOUNDS YET", LibNote::message)),
+            LibRow::Sound(e) => match e.seen.name {
                 Some(n) => components::upper(n.as_str()),
                 None => components::upper("—"),
             },
@@ -196,8 +212,8 @@ impl UiState {
     /// EDIT on a LIBRARY row of Part `part`'s browser.
     pub(crate) fn library_edit(&mut self, part: PartId, b: Browse) {
         let page = self.lib.page();
-        let first = page.and_then(|p| p.entries().iter().flatten().next().map(|e| e.file.id));
-        let last = page.and_then(|p| p.entries().iter().flatten().last().map(|e| e.file.id));
+        let first = page.and_then(|p| p.entries().iter().flatten().next().map(|e| e.id));
+        let last = page.and_then(|p| p.entries().iter().flatten().last().map(|e| e.id));
         let entry = match row(page, b.lib_cursor()) {
             LibRow::Newer => {
                 return self.queue_opt(first.map(|id| Job::LibraryList(PageAt::Above(id))));
@@ -211,10 +227,10 @@ impl UiState {
         if let Some(e) = entry.err {
             return self.error(Line::new(e.message()));
         }
-        let src = LibraryPart {
-            part,
-            file: entry.file,
+        let Some(file) = self.lib.page.file(&entry) else {
+            return;
         };
+        let src = LibraryPart { part, file };
         match ReplaceGuard::check(&self.project, self.template, src) {
             Ok(c) => self.queue(Job::LibraryLoad(c)),
             Err(n) => self.ask(Ask::LoadLibrary(LibraryAsk::new(n))),
@@ -240,6 +256,30 @@ impl UiState {
         if self.lib.load.take().is_some() {
             self.src.unhold();
             self.error(Line::new(CANCELLED));
+            self.lib_ended();
+        }
+    }
+
+    /// SAVE PART FIRST's confirmed load queued; the Stale Parts it left
+    /// are asked about once it ends. Refused, they are asked now.
+    pub(crate) fn queue_library(&mut self, c: Confirmed<LibraryPart>, stale: Option<Ask>) {
+        self.queue(Job::LibraryLoad(c));
+        match (self.job.is_some(), stale) {
+            (true, s) => self.lib.after = s.and_then(|a| a.stale_parts()),
+            (false, Some(a)) => self.ask(a),
+            (false, None) => {}
+        }
+    }
+
+    /// A load over, whatever its outcome: what SAVE PART FIRST left Stale.
+    fn lib_ended(&mut self) {
+        if self.lib.busy() {
+            return;
+        }
+        if let Some((parts, slot)) = self.lib.after.take()
+            && let Some(a) = Ask::update_stale(parts, slot, &self.project)
+        {
+            self.ask(a);
         }
     }
 
@@ -247,10 +287,12 @@ impl UiState {
     /// it: the top for the newest, else the Sound nearest where it came
     /// from.
     pub(crate) fn lib_list<S: Store>(&mut self, card: &mut Card, store: &mut S, at: PageAt) {
-        let CardOut { event, .. } = list_library(card, store, at, self.lib.listing());
+        let CardOut { out, event } = list_library(card, store, at, &mut self.lib.page);
         self.saw(event);
         // The rows just read are the new card's: its event is no news.
+        // A failure is listed too, as its row, so it isn't retried a pass.
         self.lib.listed = true;
+        self.lib.err = out.err();
         if let Some((p, b)) = self.loc.browse() {
             let page = &self.lib.page;
             let (first, last) = sound_rows(page);
@@ -282,7 +324,9 @@ impl UiState {
                     ms: Toast::SAVED_MS,
                 });
                 self.lib.forget();
-                // The page holding it: page 1 for a top + 1 id.
+                // On the browser, the page holding it, the cursor on it:
+                // page 1 for a top + 1 id. Elsewhere, LIBRARY lists anew.
+                self.loc.browse()?;
                 let at = LibId::new(id.get() + 1).map_or(PageAt::Newest, PageAt::Below);
                 Some(Job::LibraryList(at))
             }
@@ -313,6 +357,11 @@ impl UiState {
         store: &mut S,
         go: Confirmed<LibraryPart>,
     ) {
+        self.lib_read(card, store, go);
+        self.lib_ended();
+    }
+
+    fn lib_read<S: Store>(&mut self, card: &mut Card, store: &mut S, go: Confirmed<LibraryPart>) {
         let file = go.target().file;
         let CardOut { out, event } = read_library_sound(card, store, &mut self.project, file);
         self.saw(event);
@@ -323,45 +372,53 @@ impl UiState {
         if let Err(f) = self.project.library_needs(read.source) {
             return self.refuse(f);
         }
-        match read.source {
-            Some(need) if need.readable() => match self.stream(card, store, file.vol, need) {
+        let Some(need) = read.source.filter(SourceNeed::readable) else {
+            let staged = read.source.map(|n| Staged::Missing(n.r));
+            return self.lib_adopt(go, read, staged);
+        };
+        match self.stream_size(card, store, file.vol, need) {
+            // Gone or changed since the read: it loads absent.
+            None => self.lib_adopt(go, read, Some(Staged::Missing(need.r))),
+            Some(size) => match SourceLoad::start(&mut self.project, need.r.crc, size) {
                 Some(stream) => {
+                    debug_assert!(
+                        !self.src.busy(),
+                        "a library load starts beside no SOURCE job"
+                    );
                     self.src.hold(stream);
                     self.lib.load = Some(PendingLoad { go, read });
                 }
                 None => self.error(Line::new(READ_FAILED)),
             },
-            src => self.lib_adopt(go, read, src.map(|n| Staged::Missing(n.r))),
         }
     }
 
-    /// A `SourceLoad` of `need`'s file on `vol`, if it is still the size
-    /// the read costed it at.
-    fn stream<S: Store>(
+    /// The size of `need`'s file on `vol`, if it is still the size the read
+    /// costed it at.
+    fn stream_size<S: Store>(
         &mut self,
         card: &mut Card,
         store: &mut S,
         vol: VolumeId,
         need: SourceNeed,
-    ) -> Option<SourceLoad> {
+    ) -> Option<u32> {
         let name = source_file(need.r);
-        let size = card
-            .run(store, |s, r| {
-                let mut size = None;
-                if r.volume() == vol {
-                    s.list(vol, Dir::Tapes, &mut |f, len| {
-                        if f == name {
-                            size = Some(len);
-                        }
-                    })?;
-                }
-                Ok::<_, StoreError>(size)
-            })
-            .ok()?
-            .result
-            .ok()??;
+        let ran = card.run(store, |s, r| {
+            let mut size = None;
+            if r.volume() == vol {
+                s.list(vol, Dir::Tapes, &mut |f, len| {
+                    if f == name {
+                        size = Some(len);
+                    }
+                })?;
+            }
+            Ok::<_, StoreError>(size)
+        });
+        let o = ran.ok()?;
+        self.saw(Some(o.event));
+        let size = o.result.ok()??;
         held_for_file_len(size).filter(|&h| h as usize == need.held)?;
-        SourceLoad::start(&mut self.project, need.r.crc, size)
+        Some(size)
     }
 
     /// One pass of a pending load's source: on its last chunk, `adopt`.
@@ -383,18 +440,20 @@ impl UiState {
             },
             None => StagedStep::Failed(READ_FAILED),
         };
-        if step != StagedStep::More {
-            self.src.unhold();
+        if step == StagedStep::More {
+            self.lib.load = Some(l);
+            return;
         }
+        self.src.unhold();
         match (step, l.read.source) {
-            (StagedStep::More, _) => self.lib.load = Some(l),
-            (StagedStep::Failed(w), _) => self.error(Line::new(w)),
             // Committed as the read costed it: the bytes staged are its file's.
             (StagedStep::Staged(got), Some(need)) if got.r == need.r => {
                 self.lib_adopt(l.go, l.read, Some(Staged::Read(need)))
             }
-            (StagedStep::Staged(_), _) => self.error(Line::new(READ_FAILED)),
+            (StagedStep::Failed(w), _) => self.error(Line::new(w)),
+            _ => self.error(Line::new(READ_FAILED)),
         }
+        self.lib_ended();
     }
 
     /// The scratch Sound adopted into the Part, then its pages and one
@@ -426,9 +485,16 @@ impl UiState {
     pub fn library_cursor_id_for_test(&self) -> Option<LibId> {
         let (_, b) = self.loc.browse()?;
         match row(self.lib.page(), b.lib_cursor()) {
-            LibRow::Sound(e) => Some(e.file.id),
+            LibRow::Sound(e) => Some(e.id),
             _ => None,
         }
+    }
+
+    /// Why LIBRARY's page is empty, if its listing failed.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn library_err_for_test(&self) -> Option<&'static str> {
+        self.lib.err().map(LibNote::message)
     }
 
     /// EDIT on the LIBRARY row under the cursor, whatever the keys.

@@ -158,10 +158,11 @@ pub struct LibFile {
 }
 
 /// One row: the newer readable side's name, engine and stamp, or the
-/// error that left it unreadable.
+/// error that left it unreadable. Its volume is the page's.
 #[derive(Clone, Copy, Debug)]
 pub struct LibEntry {
-    pub file: LibFile,
+    pub id: LibId,
+    pub seen: LibSeen,
     pub engine: Option<EngineType>,
     pub stamp: Option<BuildStamp>,
     /// That side's size.
@@ -202,7 +203,16 @@ impl LibPage {
     pub fn position(&self, id: LibId) -> Option<usize> {
         self.entries()
             .iter()
-            .position(|e| e.is_some_and(|e| e.file.id == id))
+            .position(|e| e.is_some_and(|e| e.id == id))
+    }
+
+    /// `e`, a row of this page, as the file a load re-checks.
+    pub fn file(&self, e: &LibEntry) -> Option<LibFile> {
+        Some(LibFile {
+            id: e.id,
+            vol: self.vol?,
+            seen: e.seen,
+        })
     }
 }
 
@@ -318,11 +328,7 @@ fn peek_side<S: Store>(
 /// An id's row from its sides, `project::store::entry`'s rule: a side that
 /// needs newer firmware is the error even beside a readable one; else the
 /// newer readable side; else the first error.
-fn lib_entry(
-    id: LibId,
-    vol: VolumeId,
-    sides: [Option<(Result<Peek, FileError>, u32)>; 2],
-) -> LibEntry {
+fn lib_entry(id: LibId, sides: [Option<(Result<Peek, FileError>, u32)>; 2]) -> LibEntry {
     let mut best: Option<(&Peek, u32)> = None;
     let mut err = None;
     let mut nnf = false;
@@ -341,13 +347,10 @@ fn lib_entry(
         }
     }
     LibEntry {
-        file: LibFile {
-            id,
-            vol,
-            seen: LibSeen {
-                generation: best.map(|(p, _)| p.generation),
-                name: best.and_then(|(p, _)| p.name),
-            },
+        id,
+        seen: LibSeen {
+            generation: best.map(|(p, _)| p.generation),
+            name: best.and_then(|(p, _)| p.name),
         },
         engine: best.and_then(|(p, _)| p.engine),
         stamp: best.and_then(|(p, _)| p.stamp),
@@ -380,7 +383,7 @@ fn peek_pair<S: Store>(
             sides[i] = Some((p, size));
         }
     }
-    Ok(lib_entry(id, vol, sides))
+    Ok(lib_entry(id, sides))
 }
 
 /// The page of user Sounds at `at`, highest id first, into `out` in place:
@@ -557,10 +560,10 @@ pub fn read_library_sound<S: Store>(
             Err(e) => return Err(e.into()),
         }
         let now = peek_pair(s, vol, file.id, sizes)?;
-        if now.file.seen.generation.is_none() && now.err.is_none() {
+        if now.seen.generation.is_none() && now.err.is_none() {
             return Ok(Err(LibNote::Gone));
         }
-        if now.file.seen != file.seen {
+        if now.seen != file.seen {
             return Ok(Err(LibNote::Changed));
         }
         let mut d = LibraryDecoder::new(p.pool.scratch());

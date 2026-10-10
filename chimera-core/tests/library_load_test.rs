@@ -70,12 +70,8 @@ fn listed(st: &mut MemStore, id: LibId) -> LibFile {
     list_library(&mut Card::new(), st, PageAt::Newest, &mut p)
         .out
         .unwrap();
-    p.entries()
-        .iter()
-        .flatten()
-        .find(|e| e.file.id == id)
-        .unwrap()
-        .file
+    let e = p.entries().iter().flatten().find(|e| e.id == id).unwrap();
+    p.file(e).unwrap()
 }
 
 /// `s` saved and listed, beside a NEW project.

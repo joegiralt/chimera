@@ -207,6 +207,16 @@ impl Ask {
         })
     }
 
+    /// UPDATE's Parts and slot, to ask again later.
+    pub(crate) fn stale_parts(&self) -> Option<(PartSet, SlotId)> {
+        match self {
+            Ask::UpdateStale {
+                first, more, slot, ..
+            } => Some((more.with(*first), *slot)),
+            _ => None,
+        }
+    }
+
     pub(crate) fn with_view<R>(&self, f: impl FnOnce(&PromptView<'_>) -> R) -> R {
         prompt::once(f, |g| self.show(g))
     }

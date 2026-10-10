@@ -358,18 +358,14 @@ fn list_err<S: Store>(st: &mut S) -> LibNote {
 }
 
 fn ids(p: &LibPage) -> Vec<u32> {
-    p.entries()
-        .iter()
-        .flatten()
-        .map(|e| e.file.id.get())
-        .collect()
+    p.entries().iter().flatten().map(|e| e.id.get()).collect()
 }
 
 fn entry(p: &LibPage, id: u32) -> chimera_core::project::LibEntry {
     p.entries()
         .iter()
         .flatten()
-        .find(|e| e.file.id.get() == id)
+        .find(|e| e.id.get() == id)
         .copied()
         .unwrap()
 }
@@ -492,7 +488,7 @@ fn bad_sides_list_with_their_errors() {
     set_version(&mut st, "S0000002.A", 2);
     let p = list(&mut st, PageAt::Newest);
     assert_eq!(entry(&p, 1).err, Some(FileError::Truncated));
-    assert_eq!(entry(&p, 1).file.seen.name, None);
+    assert_eq!(entry(&p, 1).seen.name, None);
     assert_eq!(entry(&p, 2).err, Some(FileError::NeedsNewerFirmware));
 }
 
@@ -518,6 +514,6 @@ fn an_unknown_engine_lists_greyed_with_its_name_and_stamp() {
     let p = list(&mut st, PageAt::Newest);
     let e = entry(&p, 1);
     assert_eq!(e.err, Some(FileError::NeedsNewerFirmware));
-    assert_eq!(e.file.seen.name.unwrap().as_str(), "BASS-1");
+    assert_eq!(e.seen.name.unwrap().as_str(), "BASS-1");
     assert_eq!((e.engine, e.stamp), (None, Some(ST)));
 }

@@ -40,6 +40,9 @@ const ST: BuildStamp = BuildStamp::new("0.1.0", "02e440e2", false);
 struct Counted {
     inner: MemStore,
     reads: usize,
+    /// TAPES listings so far; past `hide_tapes` they list nothing.
+    tapes: usize,
+    hide_tapes: usize,
 }
 
 impl Store for Counted {
@@ -53,6 +56,12 @@ impl Store for Counted {
         f: &mut dyn FnMut(FileName, u32),
     ) -> Result<(), StoreError> {
         self.reads += 1;
+        if d == Dir::Tapes {
+            self.tapes += 1;
+            if self.tapes > self.hide_tapes {
+                return Ok(());
+            }
+        }
         self.inner.list(v, d, f)
     }
     fn read(&mut self, v: VolumeId, f: FileName, s: &mut dyn ReadSink) -> Result<(), StoreError> {
@@ -101,6 +110,8 @@ impl Rig {
         let mut st = Counted {
             inner: MemStore::new(1),
             reads: 0,
+            tapes: 0,
+            hide_tapes: usize::MAX,
         };
         let mut card = Card::new();
         let (sync, set, _) = SystemSync::boot(&mut card, &mut st);
@@ -624,4 +635,95 @@ fn stamped(s: &Sound) -> Vec<u8> {
     let mut sink = VecSink(Vec::new());
     write_file(&mut sink, &h, &mut |w| encode_library_sound(s, &ST, w)).unwrap();
     sink.0
+}
+
+#[test]
+fn a_failed_listing_says_why_and_relists_on_the_next_entry() {
+    let mut r = Rig::new();
+    r.library_with(&factory_sound(0));
+    r.st.inner.eject();
+    r.open_library();
+    r.work();
+    assert_eq!(r.ui.library_err_for_test(), Some("NO CARD"));
+    assert!(!r.ui.card_pending(), "not retried every pass");
+    r.st.inner.insert();
+    r.turn(EncoderId::B, -1);
+    r.turn(EncoderId::B, 1);
+    let reads = r.reads();
+    r.work();
+    assert!(r.reads() > reads);
+    assert_eq!(r.ui.library_err_for_test(), None);
+    assert_eq!(r.cursor_id(), Some(1));
+}
+
+#[test]
+fn a_source_gone_before_its_stream_loads_absent() {
+    let mut r = Rig::new();
+    let sref = tape_library(&mut r, 100.0, "TAPE");
+    r.open_library();
+    r.work();
+    // The read's TAPES listing sees it; the stream's doesn't.
+    r.st.tapes = 0;
+    r.st.hide_tapes = 1;
+    r.press(ButtonId::Edit);
+    r.work();
+    assert_eq!(r.toast(), "SOURCE MISSING");
+    let p = r.ui.project();
+    assert_eq!(p.part(P1).sound.source_ref(), Some(sref));
+    let id = p.pool().find_source(sref).unwrap();
+    assert!(p.pool().source(id).unwrap().absent());
+}
+
+#[test]
+fn save_part_first_asks_about_stale_parts_after_the_load() {
+    use chimera_core::project::{PartFrom, PartSource, ReplaceGuard};
+    let mut r = Rig::new();
+    tape_library(&mut r, 100.0, "TAPE");
+    // P2 plays P1's slot: a save over it leaves P2 Stale.
+    let slot = r.ui.project().pool().first_free().unwrap();
+    let t = r.ui.template();
+    let p = r.ui.project_mut();
+    p.pool_store(slot, &factory_sound(3)).unwrap();
+    for part in [P1, PartId::ALL[1]] {
+        let src = PartSource {
+            part,
+            from: PartFrom::Slot(slot),
+        };
+        let c = ReplaceGuard::check(p, t, src).unwrap();
+        p.replace_part(c).unwrap();
+    }
+    r.edit_part();
+    r.start_load();
+    r.answer(LibraryAnswer::SavePartFirst);
+    r.one_pass(); // the read; the stream starts
+    assert!(r.ui.card_pending(), "streaming");
+    assert!(!r.ui.prompt_open(), "not under the stream");
+    r.work();
+    assert!(r.toast().starts_with("LOADED TO SLOT "));
+    let engine = r.ui.project().part(P1).sound.engine();
+    assert_eq!(r.ui.location(), Location::part_home(P1, engine));
+    assert_eq!(r.ui.prompt_kind_for_test(), Some(AskKind::UpdateStale));
+}
+
+#[test]
+fn a_save_from_settings_drops_the_page_and_lists_on_entry() {
+    let mut r = Rig::new();
+    r.open_library();
+    r.work();
+    screen::to_leaf(&mut r.ui, &["PART"]);
+    for _ in 0..5 {
+        r.press(ButtonId::Plus);
+    }
+    r.press(ButtonId::Edit);
+    tap(&mut r.ui, ButtonId::Seq);
+    r.one_pass();
+    assert_eq!(r.toast(), "SAVED TO LIBRARY");
+    assert!(!r.ui.card_pending(), "no page listed off the browser");
+    while r.ui.in_settings() {
+        tap(&mut r.ui, ButtonId::Menu);
+    }
+    r.feed(Input::chord(ButtonId::Edit, ButtonId::B1));
+    assert!(r.ui.card_pending());
+    r.work();
+    assert_eq!(r.cursor_id(), Some(1));
 }

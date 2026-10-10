@@ -840,6 +840,9 @@ impl UiState {
     /// matrix), and the page's values snap.
     fn go(&mut self, to: Location) {
         let from = self.loc;
+        if from.browse().is_none() && to.browse().is_some() {
+            self.lib.entered();
+        }
         self.loc = to;
         if let Some(s) = to.settings() {
             let prev = match from.settings() {
@@ -1139,6 +1142,14 @@ impl UiState {
         self.landed(part, was);
     }
 
+    /// SAVE PART FIRST's replace, then what the save left Stale.
+    fn replace_then(&mut self, c: Confirmed<PartSource>, stale: Option<Ask>) {
+        self.replace(c);
+        if let Some(x) = stale {
+            self.ask(x);
+        }
+    }
+
     /// After `part`'s Sound was replaced: from the Sound rung, its pages.
     fn landed(&mut self, part: PartId, was: EngineType) {
         match self.loc.browse() {
@@ -1157,7 +1168,7 @@ impl UiState {
         ask: Asked<R, A>,
         save: fn(&Offer) -> Option<project::PartAction>,
         again: impl Fn(Asked<R, A>) -> Ask,
-        then: fn(&mut UiState, Confirmed<R>),
+        then: fn(&mut UiState, Confirmed<R>, Option<Ask>),
     ) {
         let part = ask.source().part();
         let Some(a) = save(&Offer::of(&self.project, part)) else {
@@ -1166,12 +1177,7 @@ impl UiState {
         };
         let stale = self.save_sound(a);
         match ask.save_then(&self.project, self.template) {
-            Ok(c) => {
-                then(self, c);
-                if let Some(x) = stale {
-                    self.ask(x);
-                }
-            }
+            Ok(c) => then(self, c, stale),
             Err(ask) => self.ask(again(ask)),
         }
     }
@@ -1658,7 +1664,7 @@ impl UiState {
                     ask,
                     Offer::first_save,
                     |x| Ask::ReplacePart(x, to),
-                    UiState::replace,
+                    UiState::replace_then,
                 ),
                 Reply::Cancel => {}
             },
@@ -1668,17 +1674,19 @@ impl UiState {
                     // Over its own slot, the reload would undo nothing and
                     // leave the slot's other Parts Stale.
                     let new_slot = |o: &Offer| o.get(PartCmd::NewSlot);
-                    self.save_first(ask, new_slot, |x| Ask::ReloadPart(x, s), UiState::replace)
+                    let again = |x| Ask::ReloadPart(x, s);
+                    self.save_first(ask, new_slot, again, UiState::replace_then)
                 }
                 Reply::Cancel => {}
             },
             Answered::LoadLibrary(r) => match r {
                 Reply::Confirmed(c) => self.queue(Job::LibraryLoad(c)),
-                Reply::SaveFirst(ask) => {
-                    self.save_first(ask, Offer::first_save, Ask::LoadLibrary, |ui, c| {
-                        ui.queue(Job::LibraryLoad(c))
-                    })
-                }
+                Reply::SaveFirst(ask) => self.save_first(
+                    ask,
+                    Offer::first_save,
+                    Ask::LoadLibrary,
+                    UiState::queue_library,
+                ),
                 Reply::Cancel => {}
             },
             Answered::UpdateStale(reverts, a) => {
@@ -2247,7 +2255,10 @@ impl UiState {
                 d if d > 0 => Tab::Library,
                 _ => Tab::Project,
             };
-            self.browser_dirty |= tab != self.lib.tab;
+            if tab != self.lib.tab {
+                self.browser_dirty = true;
+                self.lib.entered();
+            }
             self.lib.tab = tab;
             let moved = match tab {
                 Tab::Project => browser::input(controls, b),
@@ -2604,7 +2615,7 @@ impl UiState {
                 self.theme.hints,
                 self.refusal(),
             ),
-            Tab::Library => library::draw(d, self.lib.page(), part, b.lib_cursor(), b.lib_scroll()),
+            Tab::Library => library::draw(d, &self.lib, part, b.lib_cursor(), b.lib_scroll()),
         }
     }
 
