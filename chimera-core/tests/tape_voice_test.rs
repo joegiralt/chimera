@@ -125,12 +125,12 @@ fn init_routes_env1_to_vca() {
     assert!(play(&mut v, p, m, 4).iter().all(|&x| x == 0.0));
 }
 
-/// Every `match` lists TAPE: three engines, its own slot kind, and a voice
+/// Every `match` lists TAPE: four engines, its own slot kind, and a voice
 /// that plays ALGO, then TAPE, then MODAL starts MODAL as a fresh voice
 /// does.
 #[test]
 fn every_match_lists_tape() {
-    assert_eq!(EngineType::ALL.len(), 3);
+    assert_eq!(EngineType::ALL.len(), 4);
     let tape = Sound::init(EngineType::Tape);
     assert_eq!(SlotKind::of(&tape.params), SlotKind::Tape);
     assert_eq!(SlotKind::Tape.engine(), EngineType::Tape);
@@ -256,6 +256,7 @@ fn with_view(v: &mut Rig, f: impl FnOnce(&mut Voice, &mut EngineCtx<'_>)) {
         &mut EngineCtx {
             sym: pool,
             src: &view,
+            part: chimera_core::project::PartId::ALL[0],
         },
     );
 }
@@ -312,6 +313,7 @@ fn no_source_unlatches_the_last() {
         let ctx = &mut EngineCtx {
             sym: &mut sym,
             src: &view,
+            part: chimera_core::project::PartId::ALL[0],
         };
         if let Some(latched) = on {
             v.note_on(c4(), Velocity::DEFAULT, p, latched.then_some(id), ctx);
@@ -339,6 +341,7 @@ fn a_sounding_note_bills_its_latched_model() {
     let ctx = &mut EngineCtx {
         sym: &mut sym,
         src: &view,
+        part: chimera_core::project::PartId::ALL[0],
     };
     slot.note_on(c4(), Velocity::DEFAULT, &s.params, SR, Some(id), ctx);
     assert_eq!(slot.playing_cost(), Some(COST_LOOP));
@@ -416,6 +419,7 @@ fn a_note_waiting_a_fade_plays_its_source() {
         let ctx = &mut EngineCtx {
             sym: &mut sym,
             src: &view,
+            part: chimera_core::project::PartId::ALL[0],
         };
         if let Some(id) = on {
             v.note_on(c4(), Velocity::DEFAULT, p, Some(id), ctx);

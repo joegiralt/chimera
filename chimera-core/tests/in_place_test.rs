@@ -125,7 +125,11 @@ fn fx_bus_built_in_place_processes_like_new() {
 }
 
 fn ctx<'a>(sym: &'a mut SymPool, src: &'a GateView<'a>) -> EngineCtx<'a> {
-    EngineCtx { sym, src }
+    EngineCtx {
+        sym,
+        src,
+        part: chimera_core::project::PartId::ALL[0],
+    }
 }
 
 #[test]

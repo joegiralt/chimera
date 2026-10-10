@@ -38,6 +38,7 @@ fn sound(a: ParamAddr) -> (Sound, Option<Vec<u8>>) {
     let engine = match a.block {
         BlockRef::Modal => EngineType::Modal,
         BlockRef::TapeEngine => EngineType::Tape,
+        BlockRef::Va => EngineType::Va,
         _ => EngineType::Algo,
     };
     let mut s = Sound::init(engine);

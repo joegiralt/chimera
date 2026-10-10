@@ -393,7 +393,15 @@ fn a_block_record_twice_is_corrupt() {
 fn neutral_is_a_contract() {
     let golden = include_str!("fixtures/neutral_v1.txt");
     for e in EngineType::ALL {
-        let want = golden.replace("engine: ENGINE,", &format!("engine: {e:?},"));
+        let want = golden
+            .replace("engine: ENGINE,", &format!("engine: {e:?},"))
+            .replace(
+                "kind: Svf,",
+                &format!(
+                    "kind: {:?},",
+                    chimera_core::dsp::filter::FilterKind::default_for(e)
+                ),
+            );
         let got = format!("{:#?}\n", Sound::neutral(e));
         assert!(
             got == want,
@@ -562,9 +570,14 @@ fn sparse_sizes() {
     // neutral (ADR 0063): RR on six operators and OUT LEVEL, a one-param
     // block each.
     // TAPE's INIT routes ENV 1 into VCA: one fixed-column route more, 4 B.
+    // VA's too, and its FINE2 and STAB: one block of two params, 15 B.
     for e in EngineType::ALL {
-        let vca = if e == EngineType::Tape { 4 } else { 0 };
-        assert_eq!(cost(&encode(&Sound::init(e))), 46 + 7 * 10 + vca, "{e:?}");
+        let more = match e {
+            EngineType::Algo | EngineType::Modal => 0,
+            EngineType::Tape => 4,
+            EngineType::Va => 4 + 15,
+        };
+        assert_eq!(cost(&encode(&Sound::init(e))), 46 + 7 * 10 + more, "{e:?}");
     }
 }
 

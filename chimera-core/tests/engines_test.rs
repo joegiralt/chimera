@@ -5,6 +5,7 @@
 //! | Algo   | no             | a carrier's envelope   |
 //! | Modal  | no             | `modal.is_active()`    |
 //! | Tape   | no (INIT: ENV 1) | its source reads (a loop has no end) |
+//! | Va     | no (INIT: ENV 1) | from its first note on (`va_voice_test`) |
 
 mod common;
 
@@ -24,7 +25,11 @@ fn params(kind: EngineType) -> ParamSnapshot {
 }
 
 fn ctx<'a>(sym: &'a mut SymPool, src: &'a GateView<'a>) -> EngineCtx<'a> {
-    EngineCtx { sym, src }
+    EngineCtx {
+        sym,
+        src,
+        part: chimera_core::project::PartId::ALL[0],
+    }
 }
 
 fn render(e: &mut EngineSlot, p: &ParamSnapshot, pool: &mut SymPool, blocks: usize) -> f32 {
@@ -48,7 +53,7 @@ fn render(e: &mut EngineSlot, p: &ParamSnapshot, pool: &mut SymPool, blocks: usi
 
 #[test]
 fn all_lists_every_engine_once_in_order() {
-    assert_eq!(EngineType::ALL.len(), EngineType::Tape as usize + 1);
+    assert_eq!(EngineType::ALL.len(), EngineType::Va as usize + 1);
     for (i, &e) in EngineType::ALL.iter().enumerate() {
         assert_eq!(e as usize, i);
         let _ = expects_sound(e); // exhaustive match: new variants fail to compile

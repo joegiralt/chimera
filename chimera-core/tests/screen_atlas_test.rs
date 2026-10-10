@@ -137,6 +137,7 @@ impl Ctx {
             Ctx::Part(EngineType::Modal) => "modal".into(),
             // Not walked until TAPE Task 15 puts SRC and DECK on its chain.
             Ctx::Part(EngineType::Tape) => "tape".into(),
+            Ctx::Part(EngineType::Va) => "va".into(),
             Ctx::Mixer => "mixer".into(),
             Ctx::Orbit => "orbit".into(),
             Ctx::Settings(i) => leaves()[i].name(),

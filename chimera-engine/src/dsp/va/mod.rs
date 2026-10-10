@@ -317,10 +317,6 @@ fn duck_down(j: usize) -> f32 {
 /// § Stability, free-run): both phases, the sub's level, the walks and the
 /// seeded character, and whose seed it is.
 #[derive(Clone, Copy)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the slot carries it from Task 8")
-)]
 pub(crate) struct VaCarry {
     phase: [f32; 2],
     high: bool,
@@ -411,10 +407,6 @@ impl VaEngine {
         self.voice = voice;
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the slot carries it from Task 8")
-    )]
     pub(crate) fn carry(&self) -> VaCarry {
         VaCarry {
             phase: [self.osc[0].phase(), self.osc[1].phase()],
@@ -426,10 +418,6 @@ impl VaEngine {
 
     /// A fresh engine where the voice's last one left off: the phases run
     /// on from there at the next note-on, below STABILITY 1.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the slot carries it from Task 8")
-    )]
     pub(crate) fn restore(&mut self, c: VaCarry) {
         for (o, p) in self.osc.iter_mut().zip(c.phase) {
             o.set_phase(p);

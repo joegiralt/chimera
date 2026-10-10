@@ -148,6 +148,7 @@ pub fn init_params(engine: EngineType) -> ParamSnapshot {
         EngineType::Algo => Sound::init(EngineType::Algo).params,
         EngineType::Modal => Sound::init(EngineType::Modal).params,
         EngineType::Tape => Sound::init(EngineType::Tape).params,
+        EngineType::Va => Sound::init(EngineType::Va).params,
     }
 }
 
@@ -363,7 +364,7 @@ pub fn spots(samples: &[f32]) -> [u32; 8] {
 pub fn expects_sound(e: EngineType) -> bool {
     match e {
         // TAPE on a source; with none it plays nothing.
-        EngineType::Algo | EngineType::Modal | EngineType::Tape => true,
+        EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va => true,
     }
 }
 

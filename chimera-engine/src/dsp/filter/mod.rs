@@ -220,11 +220,12 @@ impl FilterKind {
         }
     }
 
-    /// The TYPE a new Sound on `e` starts with. VA (2040) adds its arm when
-    /// that engine lands.
+    /// The TYPE a new Sound on `e` starts with. VA starts on the 2040 (ADR
+    /// 0096).
     pub const fn default_for(e: EngineType) -> FilterKind {
         match e {
             EngineType::Algo | EngineType::Modal | EngineType::Tape => FilterKind::Svf,
+            EngineType::Va => FilterKind::K2040,
         }
     }
 

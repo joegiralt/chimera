@@ -165,7 +165,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_system_diag_aud_load", 0x0d5edcdc4826225e),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns (11 · 2.0K, 158K free).
-    ("settings_project_pool", 0x4b4c1b086f6263c8),
+    ("settings_project_pool", 0xc96d14eba15c42a4),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).

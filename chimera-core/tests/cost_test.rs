@@ -42,6 +42,8 @@ fn worst() -> AlgoParams {
 /// The Modal Sound, STRING at BODY 0.3: `COST_STRING` 330 and `BODY` 80,
 /// host estimates until the bench (Modal 2 step A, task 12), plus
 /// `CHAIN_COST` (30 since ADR 0060, 36 with ADR 0110's amp gate). Algo is priced from its patch.
+/// Each engine's default filter bills over the LP24 its term carries (VA's
+/// 2040 REV2, 15).
 #[test]
 fn voice_costs_are_the_billed_literals() {
     assert_eq!(Voice::CHAIN_COST, Cost(36));
@@ -54,7 +56,10 @@ fn voice_costs_are_the_billed_literals() {
         let p = ParamSnapshot::for_engine(e);
         assert_eq!(
             Voice::cost(&p, &mods),
-            EngineSlot::cost(&p, &mods) + Voice::CHAIN_COST + LP24 + ModRouting::BASE,
+            EngineSlot::cost(&p, &mods)
+                + Voice::CHAIN_COST
+                + p.filter.filter_cost()
+                + ModRouting::BASE,
             "{e:?}"
         );
     }

@@ -1,5 +1,8 @@
 //! VA's pages (spec § Pages, ADR 0112 point 8): VA, OSC 1, OSC 2.
 
+mod common;
+mod screen;
+
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::dsp::va::{MODE_NAMES, VaParams};
 use chimera_core::params::EngineType;
@@ -7,12 +10,14 @@ use chimera_core::preset::Sound;
 use chimera_core::ui::block_def::BlockDef;
 use chimera_core::ui::block_registry::{PITCH, VA_CHAIN, VA_HOME, VA_OSC1, VA_OSC2};
 use chimera_core::ui::view::{self, SlotCtx};
-use chimera_core::ui::{draw, hint, theme};
+use chimera_core::ui::{draw, hint, nav, theme};
+use chimera_hal::ButtonId;
+use screen::{load_init, page_def_id, tap};
 
 type P = VaParams;
 
 fn ctx() -> SlotCtx {
-    SlotCtx::read(&Sound::init(EngineType::Algo).params, Op::A)
+    SlotCtx::read(&Sound::init(EngineType::Va).params, Op::A)
 }
 
 fn labels(def: &BlockDef) -> Vec<&'static str> {
@@ -116,4 +121,24 @@ fn mode_names_fit_the_cell() {
             );
         }
     }
+}
+
+#[test]
+fn a_va_load_lands_on_va() {
+    let mut ui = chimera_core::ui::UiState::new();
+    load_init(&mut ui, EngineType::Va);
+    assert_eq!(page_def_id(&ui), VA_HOME.id);
+    assert!(core::ptr::eq(nav::chain_def_for(EngineType::Va), &VA_CHAIN));
+}
+
+#[test]
+fn edit_walks_and_wraps() {
+    let mut ui = chimera_core::ui::UiState::new();
+    load_init(&mut ui, EngineType::Va);
+    let mut walk = Vec::new();
+    for _ in 0..4 {
+        tap(&mut ui, ButtonId::Edit);
+        walk.push(page_def_id(&ui));
+    }
+    assert_eq!(walk, [VA_OSC1.id, VA_OSC2.id, PITCH.id, VA_HOME.id]);
 }

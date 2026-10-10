@@ -473,6 +473,12 @@ impl Voice {
         self.slot.kind()
     }
 
+    /// Its engine slot: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn slot(&self) -> &EngineSlot {
+        &self.slot
+    }
+
     /// The sounding (or last) note's velocity.
     pub fn velocity(&self) -> Velocity {
         self.last_velocity
@@ -745,10 +751,10 @@ impl Voice {
     }
 
     /// No route into VCA, and the engine can't end the note itself: a TAPE
-    /// loop has no end (spec § 2), so its key holds it, as a VCA route from
-    /// a source other than an ENV does.
+    /// loop has no end (spec § 2), nor does VA, so its key holds it, as a
+    /// VCA route from a source other than an ENV does.
     fn key_gates(&self) -> bool {
-        self.vca.bits == 0 && matches!(self.slot, EngineSlot::Tape(_))
+        self.vca.bits == 0 && matches!(self.slot, EngineSlot::Tape(_) | EngineSlot::Va(_))
     }
 
     /// A VCA source still holds the voice (spec § 4): an ENV slot per its
@@ -995,8 +1001,11 @@ impl Voice {
                 // No route: the engine decides (spec § 4). No wildcard, so a new
                 // engine can't inherit the pass-through (VA gates: #148).
                 match &self.slot {
-                    // TAPE's key ends it (`key_gates`), through the fade.
-                    EngineSlot::Algo(_) | EngineSlot::Modal(_) | EngineSlot::Tape(_) => {
+                    // TAPE's and VA's key ends it (`key_gates`), through the fade.
+                    EngineSlot::Algo(_)
+                    | EngineSlot::Modal(_)
+                    | EngineSlot::Tape(_)
+                    | EngineSlot::Va(_) => {
                         // Its own envelopes shape the sound: today's expression, bit for bit.
                         if dv == 0.0 {
                             for sample in output.iter_mut() {
@@ -1051,7 +1060,8 @@ impl Voice {
             }
         }
 
-        // A TAPE note with no route into VCA ends at key up, through the fade.
+        // A TAPE or VA note with no route into VCA ends at key up, through
+        // the fade.
         if self.active && self.fade == 0 && self.key_gates() && !self.held {
             self.after_fade = AfterFade::Idle;
             self.fade = Self::FADE;
@@ -1102,6 +1112,7 @@ mod tests {
         let ctx = &mut EngineCtx {
             sym: &mut pool,
             src: &none,
+            part: crate::project::PartId::ALL[0],
         };
         let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
         v.note_on(MidiNote::A4, Velocity::DEFAULT, &p, None, ctx);

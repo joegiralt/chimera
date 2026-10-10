@@ -121,6 +121,7 @@ fn patches(p: &Param, quick: bool) -> Vec<(Patch, bool)> {
         return v.into_iter().map(|s| (s, true)).collect();
     }
     let v: Vec<Patch> = match (p.block, quick) {
+        (BlockRef::Va, _) => vec![Patch::VaInit],
         (BlockRef::Modal, true) => SOUNDS
             .into_iter()
             .filter(|s| matches!(s, Patch::ModalInit(_)) || *s == Patch::BusyModal)
@@ -1578,6 +1579,7 @@ fn tape_params_sweep() {
                                 let mut ctx = EngineCtx {
                                     sym: &mut sym,
                                     src: &view,
+                                    part: chimera_core::project::PartId::ALL[0],
                                 };
                                 if b == 0 {
                                     slot.note_on(note, Velocity::DEFAULT, p, SR, id, &mut ctx);

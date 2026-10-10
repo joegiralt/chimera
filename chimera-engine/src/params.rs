@@ -900,6 +900,8 @@ pub enum EngineType {
     Modal = 1,
     /// The sample engine (ADR 0093): `dsp::tape_engine`.
     Tape = 2,
+    /// The virtual analog: `dsp::va`.
+    Va = 3,
 }
 
 impl DiskCode for EngineType {
@@ -908,6 +910,7 @@ impl DiskCode for EngineType {
             EngineType::Algo => 0,
             EngineType::Modal => 1,
             EngineType::Tape => 2,
+            EngineType::Va => 3,
         }
     }
 
@@ -916,6 +919,7 @@ impl DiskCode for EngineType {
             EngineType::Algo => "ALGO",
             EngineType::Modal => "MODAL",
             EngineType::Tape => "TAPE",
+            EngineType::Va => "VA",
         }
     }
 
@@ -924,6 +928,7 @@ impl DiskCode for EngineType {
             0 => Some(EngineType::Algo),
             1 => Some(EngineType::Modal),
             2 => Some(EngineType::Tape),
+            3 => Some(EngineType::Va),
             _ => None,
         }
     }
@@ -932,7 +937,12 @@ impl DiskCode for EngineType {
 impl EngineType {
     /// Every engine. Tests iterate this; see `engines_test.rs` for the
     /// exhaustive-match guard that makes a new variant a compile error there.
-    pub const ALL: [EngineType; 3] = [EngineType::Algo, EngineType::Modal, EngineType::Tape];
+    pub const ALL: [EngineType; 4] = [
+        EngineType::Algo,
+        EngineType::Modal,
+        EngineType::Tape,
+        EngineType::Va,
+    ];
 
     /// Short display label for the engine and its chain.
     pub fn label(self) -> &'static str {
@@ -940,6 +950,7 @@ impl EngineType {
             EngineType::Algo => "Algo",
             EngineType::Modal => "Modal",
             EngineType::Tape => "Tape",
+            EngineType::Va => "VA",
         }
     }
 }

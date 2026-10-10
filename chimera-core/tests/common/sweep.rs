@@ -59,6 +59,8 @@ pub enum Patch {
     /// Modal STRING with BODY and the ensemble on and every modulator routed.
     BusyModal,
     Factory(u8),
+    /// VA's INIT: where its own params are swept.
+    VaInit,
     /// Operator 1 alone on the triangle: smooth, so any step in it stands out.
     Probe,
 }
@@ -71,6 +73,7 @@ impl Patch {
             Patch::BusyAlgo => "BUSY ALGO".into(),
             Patch::BusyModal => "BUSY MODAL".into(),
             Patch::Probe => "TRI PROBE".into(),
+            Patch::VaInit => "VA INIT".into(),
             Patch::Factory(i) => format!(
                 "F{i} {}",
                 chimera_core::factory::factory_sound(i as usize)
@@ -115,6 +118,7 @@ impl Patch {
                 s
             }
             Patch::Factory(i) => chimera_core::factory::factory_sound(i as usize).expect("factory"),
+            Patch::VaInit => Sound::init(EngineType::Va),
             Patch::Probe => {
                 let mut s = Sound::init(EngineType::Algo);
                 s.params.algo = AlgoParams::single(chimera_core::dsp::algo::waves::WaveId::TRI);
@@ -237,6 +241,7 @@ impl Param {
         match self.block {
             BlockRef::Algo | BlockRef::AlgoOp(_) => patch.engine() == EngineType::Algo,
             BlockRef::Modal => patch.mode().is_some_and(|m| reads(m, self.spec.id)),
+            BlockRef::Va => patch.engine() == EngineType::Va,
             _ => true,
         }
     }
