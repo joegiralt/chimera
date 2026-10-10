@@ -50,7 +50,7 @@ ADR 0045 already reserves the name, `FileKind` 1 (Sound) and the format. The lib
 | 8 | hash, ASCII, NUL-padded (`CHIMERA_HASH`: 8 hex digits, `dev` on host builds, `unknown` without git) |
 | 1 | flags: bit 0 dirty (`CHIMERA_DIRTY`); other bits 0 when written, ignored when read |
 
-- **Informational: `Build` never refuses a file.** The decoder reads it as it reads an unknown record. A payload under 21 B, a second `Build`, or `Build` anywhere but second shows `NO STAMP`; bytes past 21 are ignored (a later build may grow it); any byte outside printable ASCII draws as `?`.
+- **Informational: `Build` never refuses a file.** The decoder reads it as it reads an unknown record. The stamp is the record right after `Engine`: a payload there under 21 B, or no `Build` there, shows `NO STAMP`; a `Build` anywhere else, or a repeat, is skipped; bytes past 21 are ignored (a later build may grow it); any byte outside printable ASCII draws as `?`.
 - It is the second record because `SoundCheck` skips an unknown record only after `Engine` (`sound.rs`, since 13cd8349). Every alpha build already reads a stamped file and ignores the stamp; `unknown_non_critical_skipped` pins that and stays.
 - Header 28 + `Engine` 5 + `Build` 25 = 58 B, so a listing peeks the first **64 B** of a side and has name, engine and stamp. Shorter files (an unstamped Sound can be 50 B) are peeked whole.
 - A file without it (the v1 fixtures, today's factory TAPE Sounds) shows `NO STAMP`.
@@ -205,9 +205,9 @@ Any other directory, `..`, `//` or a malformed stem is `ERR <verb> takes …`. A
 
 ## Code layout
 
-- `chimera-engine/src/storage/library.rs`: `LibId`, the id ranges and allocation, `BuildStamp` (a value; the engine has no build env), its encode and lenient peek, `library_file(id)`, `save_library_sound`, `list_library(floor)`, `LibraryDecoder`. Pure apart from the `Store` calls.
+- `chimera-engine/src/storage/library.rs`: `LibId`, the id ranges and the pure allocation, `BuildStamp` (a value; the engine has no build env), the stamped encoder, the lenient peek, `library_file(id)`, `LibraryDecoder`. No `Store` calls.
 - `chimera-engine/src/storage/record.rs`: `RecordTag::Build` (`0x001C`). `sound.rs`: the split of `encode_sound`, `Build` skipped, and the skip count.
-- `chimera-engine/src/project/library.rs`: `LibraryPart`, `LibFile`, the scratch-decoding load step (scratch is `pub(in crate::project)`), and `Project::adopt`.
+- `chimera-engine/src/project/library.rs`: the card functions (`save_library_sound`, `list_library`, `read_library_sound`, reusing `CardOut`), `LibraryPart`, `LibFile`, the scratch-decoding read (scratch is `pub(in crate::project)`), and `Project::adopt`.
 - `chimera-core/src/ui/about_page.rs`: `BuildStamp::THIS` from `CHIMERA_HASH`/`CHIMERA_DIRTY`, passed into the engine's writer and comparer.
 - `chimera-core/src/ui/browser.rs`: the tab, LIBRARY rows, line 3.
 - `chimera-core/src/ui/settings/`: `Job::LibraryList`, `Job::LibrarySave`, `Job::LibraryLoad`; `NamingFor::SaveToLibrary`; the PART row.
