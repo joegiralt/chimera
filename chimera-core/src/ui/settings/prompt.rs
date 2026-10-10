@@ -499,6 +499,7 @@ pub fn refused(e: &ReplaceError) -> &'static str {
         ReplaceError::SlotEmpty => "SLOT IS EMPTY",
         ReplaceError::Changed => "PART CHANGED",
         ReplaceError::Unreadable => "SOUND UNREADABLE",
+        ReplaceError::Full(_) => "POOL FULL",
     }
 }
 

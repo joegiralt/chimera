@@ -5,14 +5,21 @@ use core::ops::ControlFlow;
 
 use chimera_hal::store::{Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 
+use super::arena::Cost;
+use super::guard::Confirmed;
+use super::sources::source_cost;
 use super::store::{CardOut, MAX_LISTED, split};
+use super::{
+    Absence, PartFrom, PartId, PartSource, PoolFull, Project, ReplaceError, SlotId, SourceRef,
+};
 use crate::name::SoundName;
 use crate::params::EngineType;
 use crate::preset::Sound;
 use crate::storage::{
     BuildStamp, Card, CardFault, FileError, Generation, HEADER_LEN, ID_WINDOW, LIB_PEEK, LibId,
-    NextId, Peek, SaveError, Side, SideState, SoundCheck, check_file, encode_library_sound, lib_id,
-    library_file, next_user_id, peek_library, save_ab,
+    LibraryDecoder, LoadError, NextId, Peek, SaveError, Side, SideState, SoundCheck, check_file,
+    encode_library_sound, held_for_file_len, lib_id, library_file, load_ab_in_place, next_user_id,
+    peek_library, save_ab, sound_crc, source_file,
 };
 
 /// What a library operation says to the screen.
@@ -408,4 +415,256 @@ pub fn list_library<S: Store>(
     });
     let (out, event) = split(run);
     CardOut { out, event }
+}
+
+/// EDIT on a library row: the Part it replaces, and the file as listed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LibraryPart {
+    pub part: PartId,
+    pub file: LibFile,
+}
+
+/// A TAPE source a read Sound needs and the pool doesn't hold.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SourceNeed {
+    pub r: SourceRef,
+    /// From its `.SRC`'s directory size; 0 when not on the card.
+    pub held: usize,
+    pub on_card: bool,
+}
+
+/// A library Sound in the pool's scratch: what it lost, what it needs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LibRead {
+    pub skips: u16,
+    pub source: Option<SourceNeed>,
+}
+
+/// The source `adopt` commits: staged bytes, or absent.
+#[derive(Clone, Copy, Debug)]
+pub enum Staged {
+    Read(SourceNeed),
+    Missing(SourceRef),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Adopted {
+    pub slot: SlotId,
+    pub deduped: bool,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum AdoptError {
+    /// The Part moved since it was confirmed.
+    Changed,
+    /// `None`: every slot taken.
+    Full(Option<PoolFull>),
+}
+
+impl From<AdoptError> for ReplaceError {
+    fn from(e: AdoptError) -> Self {
+        match e {
+            AdoptError::Changed => ReplaceError::Changed,
+            AdoptError::Full(f) => ReplaceError::Full(f),
+        }
+    }
+}
+
+/// `source`'s pool need now: `None` when the pool holds it with its bytes.
+fn source_need<S: Store>(
+    s: &mut S,
+    vol: VolumeId,
+    p: &Project,
+    r: SourceRef,
+) -> Result<Option<SourceNeed>, StoreError> {
+    let pool = &p.pool;
+    if pool
+        .find_source(r)
+        .and_then(|id| pool.source(id))
+        .is_some_and(|e| !e.absent())
+    {
+        return Ok(None);
+    }
+    let name = source_file(r);
+    let mut held = None;
+    match s.list(vol, Dir::Tapes, &mut |f, size| {
+        if f == name {
+            held = held_for_file_len(size);
+        }
+    }) {
+        Ok(()) | Err(StoreError::NotFound) => {}
+        Err(e) => return Err(e),
+    }
+    Ok(Some(SourceNeed {
+        r,
+        held: held.map_or(0, |h| h as usize),
+        on_card: held.is_some(),
+    }))
+}
+
+/// `file` decoded into the pool's scratch, nothing else touched: its
+/// sides re-peeked first, so a pair gone or re-written since the listing
+/// refuses. A clobbered scratch is harmless: only `adopt` reads it.
+pub fn read_library_sound<S: Store>(
+    card: &mut Card,
+    store: &mut S,
+    p: &mut Project,
+    file: LibFile,
+) -> CardOut<Result<LibRead, LibNote>> {
+    let run = card.run(store, |s, r| {
+        let vol = r.volume();
+        if vol != file.vol {
+            return Ok(Err(LibNote::Store(StoreError::VolumeChanged(vol))));
+        }
+        let ab = library_file(file.id);
+        let mut sizes = [None; 2];
+        match s.list(vol, Dir::Sounds, &mut |f, size| {
+            if lib_id(f) == Some(file.id) {
+                sizes[usize::from(f.ext() == b"B")] = Some(size);
+            }
+        }) {
+            Ok(()) | Err(StoreError::NotFound) => {}
+            Err(e) => return Err(e.into()),
+        }
+        let mut sides = [None, None];
+        for (i, side) in [Side::A, Side::B].into_iter().enumerate() {
+            if let Some(size) = sizes[i]
+                && let Some(pk) = peek_side(s, vol, ab.side(side), size)?
+            {
+                sides[i] = Some((pk, size));
+            }
+        }
+        if sides.iter().all(Option::is_none) {
+            return Ok(Err(LibNote::Gone));
+        }
+        if lib_entry(file.id, vol, sides).file.seen != file.seen {
+            return Ok(Err(LibNote::Changed));
+        }
+        let mut d = LibraryDecoder::new(p.pool.scratch());
+        match load_ab_in_place(s, r, ab, &mut d) {
+            Ok(_) => {}
+            Err(e) => {
+                return match e.err {
+                    LoadError::Store(e) => Err(e.into()),
+                    LoadError::File(e) => Ok(Err(LibNote::File(e))),
+                    // Busy: no `begin`, never.
+                    LoadError::Missing | LoadError::Busy => Ok(Err(LibNote::Gone)),
+                };
+            }
+        }
+        let skips = d.skips();
+        let source = match p.pool.scratch_ref().source_ref() {
+            Some(sr) => source_need(s, vol, p, sr)?,
+            None => None,
+        };
+        Ok(Ok(LibRead { skips, source }))
+    });
+    let (out, event) = split(run);
+    CardOut {
+        out: out.and_then(|r| r),
+        event,
+    }
+}
+
+impl Project {
+    /// What adopting the scratch Sound takes: `Ok(Some(slot))` for a slot
+    /// already holding it, `Ok(None)` when it fits. Its slot cost and a
+    /// free Sound slot, plus, for a source on the card, its cost and a
+    /// free source slot. A source not on the card is stored absent: no
+    /// cost, no slot.
+    pub fn library_needs(
+        &self,
+        src: Option<SourceNeed>,
+    ) -> Result<Option<SlotId>, Option<PoolFull>> {
+        let pool = &self.pool;
+        let crc = sound_crc(pool.scratch_ref());
+        let dedupe = SlotId::ALL
+            .into_iter()
+            .find(|&s| pool.get(s).is_some_and(|e| e.crc() == crc));
+        let mut needs = Cost::default();
+        if dedupe.is_none() {
+            let slot = pool.first_free().ok_or(None)?;
+            needs = needs + pool.needs(slot, pool.scratch_ref());
+        }
+        if let Some(src) = src.filter(|s| s.on_card) {
+            match pool.find_source(src.r).and_then(|id| pool.source(id)) {
+                Some(e) if !e.absent() => {}
+                found => {
+                    if found.is_none() && pool.free_source().is_none() {
+                        return Err(None);
+                    }
+                    needs = needs + source_cost(src.held);
+                }
+            }
+        }
+        if !pool.fits(needs) {
+            return Err(Some(PoolFull {
+                needs,
+                free: pool.free(),
+            }));
+        }
+        Ok(dedupe)
+    }
+
+    /// The scratch Sound into the first free slot (or the one holding it),
+    /// with `staged`'s source, and the Part loaded from it: the witness
+    /// re-checked, then the budget, before anything moves. A refusal
+    /// changes nothing. Only a library load's confirmation adopts:
+    ///
+    /// ```compile_fail,E0308
+    /// use chimera_engine::project::{PartSource, Project, ReplaceGuard, TemplateCrc};
+    /// fn f(p: &mut Project, t: TemplateCrc, s: PartSource) {
+    ///     if let Ok(c) = ReplaceGuard::check(p, t, s) {
+    ///         let _ = p.adopt(c, None);
+    ///     }
+    /// }
+    /// ```
+    pub fn adopt(
+        &mut self,
+        c: Confirmed<LibraryPart>,
+        staged: Option<Staged>,
+    ) -> Result<Adopted, AdoptError> {
+        if !c.holds(self) {
+            return Err(AdoptError::Changed);
+        }
+        let need = staged.map(|s| match s {
+            Staged::Read(n) => n,
+            Staged::Missing(r) => SourceNeed {
+                r,
+                held: 0,
+                on_card: false,
+            },
+        });
+        let dedupe = self.library_needs(need).map_err(AdoptError::Full)?;
+        match staged {
+            Some(Staged::Read(n)) => {
+                self.pool
+                    .source_commit(n.r, n.held)
+                    .map_err(|f| AdoptError::Full(Some(f)))?;
+            }
+            // Its slot, if every one is taken, refuses here: nothing moved.
+            Some(Staged::Missing(r)) => {
+                let id = self.pool.source_absent(r).ok_or(AdoptError::Full(None))?;
+                self.pool.mark_absent(id, Absence::NotOnCard);
+            }
+            None => {}
+        }
+        let slot = match dedupe {
+            Some(s) => s,
+            None => {
+                let s = self.pool.first_free().expect("library_needs found one");
+                self.pool.store_scratch(s).expect("library_needs: it fits");
+                s
+            }
+        };
+        self.load_part(PartSource {
+            part: c.target().part,
+            from: PartFrom::Slot(slot),
+        })
+        .expect("a slot just checked or stored decodes");
+        Ok(Adopted {
+            slot,
+            deduped: dedupe.is_some(),
+        })
+    }
 }

@@ -856,3 +856,79 @@ fn missing_file<S: Store>(s: &mut S) {
         Some(Line::new("PROJECT NOT FOUND: P0000003"))
     );
 }
+
+/// The load's scratch Sound, as the last read left it.
+pub fn scratch_of(p: &Project) -> &Sound {
+    p.pool.scratch_ref()
+}
+
+/// A neutral ALGO Sound whose first `k` stored params are off neutral:
+/// 16 B more every three or so.
+fn filler(k: usize) -> Sound {
+    let mut s = Sound::neutral(EngineType::Algo);
+    let mut n = 0;
+    for b in BlockRef::ALL {
+        let Some(blk) = s.params.block_mut(b) else {
+            continue;
+        };
+        for sp in blk
+            .specs()
+            .iter()
+            .filter(|sp| sp.stored && sp.kind != ParamKind::Enum)
+        {
+            if n == k {
+                return s;
+            }
+            let v = if blk.get(sp.id) == sp.max {
+                sp.min
+            } else {
+                sp.max
+            };
+            blk.set(sp.id, v);
+            n += 1;
+        }
+    }
+    s
+}
+
+/// Fills the arena until `free()` is `c`: a source (its ref no Sound's)
+/// for the bulk, then a filler Sound. 16 B left first frees a Part-less
+/// slot, as no Sound costs under 48.
+pub fn set_free_to(p: &mut Project, c: super::arena::Cost) {
+    let left = |p: &Project| {
+        p.pool()
+            .free()
+            .bytes()
+            .checked_sub(c.bytes())
+            .expect("free() is at least the target")
+    };
+    if left(p) == 16 {
+        let s = SlotId::ALL
+            .into_iter()
+            .find(|&s| p.pool().get(s).is_some() && p.users(s).is_empty())
+            .expect("a slot no Part plays");
+        p.pool_clear(s).expect("no users");
+    }
+    let r = left(p) as usize;
+    let sound = |r: usize| r == 48 || r == 64;
+    if r > 64 || r == 32 {
+        let bulk = if r == 32 { 32 } else { r - 48 };
+        let sref = crate::storage::SourceRef {
+            crc: 0xF111_0000 + p.pool().source_count() as u32,
+            frames: 1,
+            rate: 48_000,
+        };
+        p.source_write(sref, bulk - super::SOURCE_HEAD, |b| b.fill(0))
+            .expect("the bulk fits");
+    }
+    let r = left(p) as usize;
+    if sound(r) {
+        let slot = p.pool().first_free().expect("a free slot");
+        let s = (0..64)
+            .map(filler)
+            .find(|s| p.pool().needs(slot, s).bytes() as usize == r)
+            .expect("a filler of that cost");
+        p.pool_store(slot, &s).expect("it fits");
+    }
+    assert_eq!(p.pool().free(), c);
+}

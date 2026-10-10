@@ -54,8 +54,8 @@ use crate::storage::{Crc32, Generation, ProjectId, sound_crc};
 
 use super::marks::status_at;
 use super::{
-    Origin, PartSource, PartStatus, Project, ProjectEntry, ProjectFile, ProjectStatus, TemplateCrc,
-    part_status, project_crc, project_status,
+    LibraryPart, Origin, PartFrom, PartSource, PartStatus, Project, ProjectEntry, ProjectFile,
+    ProjectStatus, TemplateCrc, part_status, project_crc, project_status,
 };
 use crate::confirm::Said;
 
@@ -72,6 +72,7 @@ mod sealed {
     pub trait Sealed {}
     impl Sealed for super::PartSource {}
     impl Sealed for super::ProjectSource {}
+    impl Sealed for super::LibraryPart {}
     impl Sealed for super::OverwriteTarget {}
     impl Sealed for super::DeleteTarget {}
     impl Sealed for super::SceneSlot {}
@@ -131,6 +132,31 @@ impl Target for PartSource {
             Origin::Init(e) => c.update(&[1, e.disk_code()]),
         }
         c.finish()
+    }
+}
+
+impl LibraryPart {
+    /// The Part as a replace sees it: only the Part is witnessed.
+    fn as_part(&self) -> PartSource {
+        PartSource {
+            part: self.part,
+            from: PartFrom::Init(crate::params::EngineType::Algo),
+        }
+    }
+}
+
+impl Witnessed for LibraryPart {
+    type Witness = u32;
+}
+
+/// `PartSource`'s: the file is checked by the load, not the guard.
+impl Target for LibraryPart {
+    fn at_risk(&self, p: &Project, t: TemplateCrc) -> Option<Prompt> {
+        self.as_part().at_risk(p, t)
+    }
+
+    fn witness(&self, p: &Project) -> u32 {
+        self.as_part().witness(p)
     }
 }
 

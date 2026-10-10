@@ -26,7 +26,8 @@ pub use guard::{
 pub(crate) use ids::bounded_index;
 pub use ids::{PartId, PartSet, SlotId};
 pub use library::{
-    LibEntry, LibFile, LibNote, LibPage, LibSeen, PageAt, list_library, save_library_sound,
+    AdoptError, Adopted, LibEntry, LibFile, LibNote, LibPage, LibRead, LibSeen, LibraryPart,
+    PageAt, SourceNeed, Staged, list_library, read_library_sound, save_library_sound,
 };
 pub use marks::{
     ActionRefused, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, StatusCache,
@@ -124,6 +125,8 @@ pub enum ReplaceError {
     /// The slot's bytes didn't decode: never, as they were checked when
     /// stored; the Part is left as it was.
     Unreadable,
+    /// A library load the pool has no room for; `None`: no slot free.
+    Full(Option<PoolFull>),
 }
 
 pub struct Project {

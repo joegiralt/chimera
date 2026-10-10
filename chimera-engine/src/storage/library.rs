@@ -4,10 +4,10 @@ use core::fmt;
 
 use chimera_hal::store::{Dir, FileName, StoreError};
 
-use super::file::AbFile;
-use super::frame::{FileError, FileKind, Generation, HEADER_LEN, peek_header};
+use super::file::{AbFile, Check, DecodeInPlace};
+use super::frame::{Event, FileError, FileKind, Generation, HEADER_LEN, peek_header};
 use super::record::{RecordTag, RecordWriter};
-use super::sound::encode_sound_body;
+use super::sound::{SoundCheck, encode_sound_body};
 use crate::block::DiskCode;
 use crate::name::SoundName;
 use crate::params::EngineType;
@@ -261,4 +261,47 @@ pub fn peek_library(b: &[u8], file_len: u32) -> Result<Peek, FileError> {
             .and_then(|(_, p)| BuildStamp::parse(p));
     }
     Ok(peek)
+}
+
+/// A library Sound decoded in place onto `target` (`load_ab_in_place`):
+/// pass 2 writes it only after a clean pass 1.
+pub struct LibraryDecoder<'a> {
+    check: SoundCheck,
+    target: &'a mut Sound,
+}
+
+impl<'a> LibraryDecoder<'a> {
+    pub fn new(target: &'a mut Sound) -> Self {
+        LibraryDecoder {
+            check: SoundCheck::new(),
+            target,
+        }
+    }
+
+    /// Entries pass 2 dropped (`SoundCheck::skips`).
+    pub fn skips(&self) -> u16 {
+        self.check.skips()
+    }
+}
+
+impl Check for LibraryDecoder<'_> {
+    const KIND: FileKind = FileKind::Sound;
+
+    fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
+        self.check.event(e)
+    }
+
+    fn end(&mut self) -> Result<(), FileError> {
+        self.check.end()
+    }
+}
+
+impl DecodeInPlace for LibraryDecoder<'_> {
+    fn apply(&mut self, e: Event<'_>) -> Result<(), FileError> {
+        self.check.step(e, Some(self.target))
+    }
+
+    fn finish(&mut self) -> Result<(), FileError> {
+        self.check.finish(Some(self.target))
+    }
 }
