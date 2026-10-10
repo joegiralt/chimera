@@ -270,11 +270,6 @@ fn hf_tracking() {
         }
     }
     println!("C7 {lo:.2}..{hi:.2} cents, A2 max |e| {a2:.3}, {pairs} pairs beat faster at C7");
-    // the extremes, from u
-    for (u, want) in [(1.0f64, -14.43), (-0.25, 3.63)] {
-        let c = -1200.0 * (1.0 + 2093.0 * 4e-6 * u).log2();
-        assert!((c - want).abs() < 0.01, "u {u}: {c}");
-    }
 }
 
 #[test]

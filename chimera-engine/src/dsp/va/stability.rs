@@ -74,6 +74,7 @@ pub struct Seed(u32);
 
 impl Seed {
     pub const fn of(part: u32, slot: u32) -> Seed {
+        debug_assert!(slot < 256);
         Seed(mix32(part << 8 | slot))
     }
 
@@ -159,7 +160,8 @@ impl Stability {
         self.g = WALK_RMS / libm::sqrtf(var);
     }
 
-    /// The character and the streams; the walks' states run on.
+    /// The character, and the streams restart from the seed; the walks'
+    /// filter states run on.
     pub fn seed(&mut self, s: Seed) {
         self.character = Character::of(s);
         self.rng = [
