@@ -287,6 +287,7 @@ use chimera_core::ui::browser::{
 use chimera_core::ui::draw;
 use chimera_core::ui::hint::{self, Gesture};
 use chimera_core::ui::theme_settings::ThemeSettings;
+use chimera_hal::store::Store;
 use chimera_hal::testkit::MemStore;
 
 fn this() -> BuildStamp {
@@ -372,13 +373,75 @@ fn line_three_draws_with_hints_off() {
     assert!(!text_in_row_at(&fb, browser::HINT_Y), "the hints are off");
 }
 
+/// `c` among the pixels of the row at baseline `y`, short of its right edge.
+fn ink_in_row(fb: &Fb, y: i32, c: embedded_graphics::pixelcolor::Rgb565) -> bool {
+    (y - 12..y + 2).any(|yy| (12..230).any(|x| fb.at(x, yy) == c))
+}
+
 #[test]
 fn the_empty_library_is_one_dimmed_row() {
-    let ui = library_ui(MemStore::new(1));
-    let fb = render_ui(&ui);
-    assert!(row_has(&fb, 0, theme::ACCENT) || row_has(&fb, 0, theme::BG));
     assert_eq!(EMPTY_LIBRARY, "NO SOUNDS YET");
-    assert!(!text_in_row_at(&fb, STAMP_Y), "no row, no stamp");
+    let mut gone = MemStore::new(1);
+    gone.eject();
+    for st in [MemStore::new(1), gone] {
+        let fb = render_ui(&library_ui(st));
+        let y = row_y(0);
+        assert!(!ink_in_row(&fb, y, theme::ACCENT), "no selection pill");
+        assert!(
+            ink_in_row(&fb, y, theme::MID),
+            "the words in the dim colour"
+        );
+        assert!(!ink_in_row(&fb, y, theme::INK), "not a live row");
+        assert!(!text_in_row_at(&fb, STAMP_Y), "no row, no stamp");
+    }
+}
+
+#[test]
+fn a_newer_firmware_row_is_greyed_with_its_name_and_message() {
+    use chimera_core::storage::{HEADER_LEN, TRAILER_LEN};
+    let mut st = MemStore::new(1);
+    saved(&mut st, "FUTURE", &this());
+    // An engine code this build doesn't know: the peek has no CRC.
+    let v = st.mount().unwrap();
+    let f = chimera_hal::store::FileName::new(
+        chimera_hal::store::Dir::Sounds,
+        &chimera_core::storage::LibId::new(1).unwrap().stem(),
+        b"A",
+    )
+    .unwrap();
+    let mut bytes = Vec::new();
+    struct Take<'a>(&'a mut Vec<u8>);
+    impl chimera_hal::store::ReadSink for Take<'_> {
+        fn begin(&mut self, _: u32) -> core::ops::ControlFlow<()> {
+            core::ops::ControlFlow::Continue(())
+        }
+        fn chunk(&mut self, b: &[u8]) -> core::ops::ControlFlow<()> {
+            self.0.extend_from_slice(b);
+            core::ops::ControlFlow::Continue(())
+        }
+    }
+    st.read(v, f, &mut Take(&mut bytes)).unwrap();
+    assert!(bytes.len() > HEADER_LEN + TRAILER_LEN);
+    bytes[HEADER_LEN + 4] = 0xEE; // Engine's payload
+    st.write(v, f, &mut |w: &mut dyn chimera_hal::store::ByteSink| {
+        w.put(&bytes)
+    })
+    .unwrap();
+    let fb = render_ui(&library_ui(st));
+    let y = row_y(0);
+    // Selected: BG ink on the pill, the name left and the message right.
+    assert!(
+        ink_in_row(&fb, y, theme::BG),
+        "name and message on the pill"
+    );
+    let msg = "NEEDS NEWER FIRMWARE";
+    let w = draw::text_width(&theme::FONT_LABEL, msg, 0);
+    let left = 18 + draw::text_width(&theme::FONT_VALUE, "FUTURE", 0);
+    let ink = (230 - w..230).any(|x| (y - 12..y + 2).any(|yy| fb.at(x, yy) == theme::BG));
+    assert!(ink, "the message at the right edge");
+    assert!(left < 230 - w, "name and message fit side by side");
+    let none = (232..240).all(|x| fb.at(x, y) != theme::INK);
+    assert!(none);
 }
 
 #[test]

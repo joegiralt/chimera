@@ -43,6 +43,8 @@ struct Counted {
     /// TAPES listings so far; past `hide_tapes` they list nothing.
     tapes: usize,
     hide_tapes: usize,
+    /// Reads past this many fail with `Io`.
+    fail_after: usize,
 }
 
 impl Store for Counted {
@@ -75,6 +77,9 @@ impl Store for Counted {
         s: &mut dyn ReadSink,
     ) -> Result<(), StoreError> {
         self.reads += 1;
+        if self.reads > self.fail_after {
+            return Err(StoreError::Io);
+        }
         self.inner.read_at(v, f, at, s)
     }
     fn write(
@@ -112,6 +117,7 @@ impl Rig {
             reads: 0,
             tapes: 0,
             hide_tapes: usize::MAX,
+            fail_after: usize::MAX,
         };
         let mut card = Card::new();
         let (sync, set, _) = SystemSync::boot(&mut card, &mut st);
@@ -726,4 +732,30 @@ fn a_save_from_settings_drops_the_page_and_lists_on_entry() {
     assert!(r.ui.card_pending());
     r.work();
     assert_eq!(r.cursor_id(), Some(1));
+}
+
+#[test]
+fn a_listing_that_fails_partway_keeps_its_rows_and_says_why() {
+    use chimera_core::ui::browser::INFO_Y;
+    let mut r = Rig::new();
+    for i in 0..3 {
+        r.library_with(&factory_sound(i));
+    }
+    // The directory pass, one peek, then the card fails.
+    r.st.fail_after = r.reads() + 2;
+    r.open_library();
+    r.work();
+    let msg = r.ui.library_err_for_test().expect("the failure is kept");
+    let fb = screen::render_ui(&r.ui);
+    let warn = |y0: i32, y1: i32| {
+        (y0..y1).any(|y| (12..228).any(|x| fb.at(x, y) == chimera_core::ui::theme::WARN))
+    };
+    assert!(warn(INFO_Y - 9, INFO_Y + 1), "{msg} in WARN at INFO_Y");
+    assert!(r.cursor_id().is_some(), "the rows that were read stay");
+    let row0 = chimera_core::ui::browser::row_y(0);
+    assert!(
+        (row0 - 12..row0 + 2)
+            .any(|y| (12..228).any(|x| fb.at(x, y) == chimera_core::ui::theme::BG)),
+        "row 0 drawn on its pill"
+    );
 }

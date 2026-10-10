@@ -510,6 +510,8 @@ fn library_row<D>(d: &mut D, lib: &LibState, row: LibRow<'_>, y: i32, selected: 
 where
     D: DrawTarget<Color = Rgb565>,
 {
+    // The lone `Empty` row is never a selection: inert, dim, no pill.
+    let selected = selected && !matches!(row, LibRow::Empty);
     if selected {
         draw::pill(d, 8, y - 16, 224, 22, theme::ACCENT);
     }

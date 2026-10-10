@@ -160,8 +160,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("sound_browser_pool_full", 0x559fd223dfe911ae),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
-    ("library_empty", 0xc4da57e4beba981d),
-    ("library_no_card", 0x50320eb540a4f563),
+    ("library_empty", 0xa94e4a6edf448c09),
+    ("library_no_card", 0xa7957021c5215364),
     ("library_sounds", 0x9862f2a4b75c51c5),
     ("library_this_build", 0x70a9cbf404b9c7b6),
     ("library_cut_short", 0x8a79ffdc4d4088a5),
