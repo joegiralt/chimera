@@ -645,7 +645,11 @@ impl Instrument {
                 crate::block::GlideMs::KNOB,
                 sample_rate,
             ));
-            addr_of_mut!((*p).knobs).write([(Knobs::UNPRIMED, Loads::NONE); MAX_PARTS]);
+            // A Part at a time: the whole array by value is 5 KB of stack.
+            let knobs = addr_of_mut!((*p).knobs).cast::<(Knobs, Loads)>();
+            for i in 0..MAX_PARTS {
+                knobs.add(i).write((Knobs::UNPRIMED, Loads::NONE));
+            }
             addr_of_mut!((*p).knob_pace).write(Pace::Glide(sample_rate));
             addr_of_mut!((*p).rev_extra).write(Cost::ZERO);
             addr_of_mut!((*p).rev_bill).write(RevBill::new());

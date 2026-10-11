@@ -76,6 +76,19 @@ pub fn take_ui() -> Option<&'static mut UiState> {
 static mut AUDIO: MaybeUninit<TripleBuffer<AudioShared>> = MaybeUninit::uninit();
 static AUDIO_TAKEN: AtomicBool = AtomicBool::new(false);
 
+/// `AUDIO`'s first slot, lent to the bench, which runs before
+/// `take_audio`: its `AudioShared` needs no 7 KB of AXI of its own.
+///
+/// # Safety
+/// Only before `take_audio`, which builds every slot; the reference must
+/// be gone by then.
+#[cfg(feature = "bench")]
+pub unsafe fn bench_audio() -> &'static mut MaybeUninit<AudioShared> {
+    debug_assert!(!AUDIO_TAKEN.load(Ordering::Acquire));
+    // SAFETY: the caller's: nothing else references `AUDIO` yet.
+    TripleBuffer::first_slot(unsafe { &mut *addr_of_mut!(AUDIO) })
+}
+
 // The UI side of the knobs, beside the writer it publishes through (ADR
 // 0115): 2.2 KB of the UI's, in D2, not AXI, which the bench builds hold
 // within 8 KiB of full (ADR 0087). NOLOAD: written at `take_audio`.

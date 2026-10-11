@@ -687,8 +687,6 @@ fn mods(p: &mut PartAudio) {
 // cacheable, out of AXI's margin: the bench's scope is never timed.
 #[unsafe(link_section = ".ram_d2")]
 static mut SCOPE: MaybeUninit<TripleBuffer<ScopeFrame>> = MaybeUninit::uninit();
-// A static, not a local: `AudioShared` is 3 KB (ADR 0020).
-static mut SHARED: MaybeUninit<AudioShared> = MaybeUninit::uninit();
 // SAFETY: ".ram_d2.voices" is NOLOAD, so this holds garbage at boot; sound
 // because it is `MaybeUninit` and `time_rebuild` builds it in place before
 // any read. In D2 with the `Instrument`, as a voice's slot is.
@@ -747,12 +745,12 @@ pub fn run(
     title(rec, clocks);
     // SAFETY: the bench runs once from `main`, before `engine::init` and
     // before any interrupt is unmasked, so it is the only user of the
-    // engine's slots and of its own statics; its references are gone when it
-    // returns, before `engine::init` takes the slots.
+    // engine's slots, the audio buffer's and its own statics; its references
+    // are gone when it returns, before `take_audio` and `engine::init`.
     let (inst_slot, fx_slot, shared_slot, scope_w) = unsafe {
         let (i, f) = engine::slots();
         let (w, _unread) = (&mut *addr_of_mut!(SCOPE)).write(scope_buffer()).split();
-        (i, f, &mut *addr_of_mut!(SHARED), w)
+        (i, f, chimera_board::shared::bench_audio(), w)
     };
     #[cfg_attr(not(feature = "bench-tape"), allow(unused_mut))]
     let mut scope = ScopeWriter::new(scope_w);
