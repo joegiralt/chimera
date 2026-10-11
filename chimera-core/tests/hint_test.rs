@@ -682,3 +682,44 @@ fn hints_draw() {
         assert!(hint::width(h) <= theme::CONTENT_W, "{h:?}");
     }
 }
+
+/// The focus band draws `want`: every pixel of `want` drawn alone sits in
+/// it, in its colour (the band holds other ink besides).
+fn focus_hint_is(ui: &UiState, want: Hint) -> bool {
+    let mut alone = screen::Fb::new();
+    hint::draw(&mut alone, want, theme::MARGIN_X, hint::FOCUS_Y);
+    let (fb, ground) = (render_ui(ui), alone.at(theme::SCREEN_W - 1, hint::FOCUS_Y));
+    (0..theme::SCREEN_W)
+        .flat_map(|x| (hint::FOCUS_Y - 7..=hint::FOCUS_Y).map(move |y| (x, y)))
+        .filter(|&(x, y)| alone.at(x, y) != ground)
+        .all(|(x, y)| fb.at(x, y) == alone.at(x, y))
+}
+
+/// The CHORUS send hints the project's chorus MODE as the UI draws it, on
+/// AMP and on the mixer's SENDS (a Sound's params hold no FX).
+#[test]
+fn chorus_send_hint_follows_the_project_chorus() {
+    let amp = |ui: &mut UiState| {
+        screen::plus(ui, 4);
+        feed(ui, Input::turn(A, 1)); // the CHORUS cell
+    };
+    let sends = |ui: &mut UiState| {
+        feed(
+            ui,
+            Input::chord(chimera_hal::ButtonId::Mix, chimera_hal::ButtonId::B1),
+        );
+        feed(ui, Input::turn(A, 1));
+    };
+    for go in [amp, sends] {
+        let mut ui = Box::new(UiState::new());
+        go(&mut ui);
+        screen::settle(&mut ui);
+        assert!(
+            focus_hint_is(&ui, &[Gesture("CHORUS ▸", "I")]),
+            "NEW: mode I"
+        );
+        ui.project_mut().edit_fx().chorus.mode = ChorusMode::JunoII as u8;
+        screen::settle(&mut ui);
+        assert!(focus_hint_is(&ui, &[Gesture("CHORUS ▸", "II")]), "mode II");
+    }
+}

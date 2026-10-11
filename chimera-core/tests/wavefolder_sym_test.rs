@@ -136,10 +136,7 @@ fn fold_sweep_never_steppier() {
             step(&|f, s| old(peak, f, s), peak),
         );
         println!("peak {peak}: worst FOLD step new {n:.2} dB, today {o:.2}");
-        assert!(
-            n <= o.max(-20.0) + 0.5,
-            "peak {peak}: step {n:.2} dB vs today {o:.2}"
-        );
+        assert!(n <= o + 0.5, "peak {peak}: step {n:.2} dB vs today {o:.2}");
         if peak == 0.01 {
             assert!(n <= -20.0, "peak 0.01 step {n:.2} dB");
         }

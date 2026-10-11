@@ -16,7 +16,7 @@ use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
 use crate::dsp::Stereo;
-use crate::dsp::chorus::{ChorusParams, JunoChorus};
+use crate::dsp::chorus::{ChorusMode, ChorusParams, JunoChorus};
 use crate::dsp::comp::{CompParams, MasterComp};
 use crate::dsp::delay::{DelayParams, TapeDelay};
 use crate::dsp::ease::{Ease, ease_coeff};
@@ -61,7 +61,7 @@ impl FxParams {
     /// tests and bench rows that measure the dry path.
     pub const OFF: Self = Self {
         chorus: ChorusParams {
-            mode: 0,
+            mode: ChorusMode::Off as u8,
             mix: 0.0,
             ..ChorusParams::DEFAULT
         },

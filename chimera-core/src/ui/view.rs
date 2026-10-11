@@ -74,9 +74,9 @@ pub struct SlotCtx {
     pub unpitched: bool,
     /// TAPE's SOURCE as SRC reads it.
     pub src: SourceState,
-    /// The reverb panel REV and REV › MORE show (`reverb_panel::shown`).
     /// The chorus MODE the CHORUS send hints.
     pub chorus: ChorusMode,
+    /// The reverb panel REV and REV › MORE show (`reverb_panel::shown`).
     pub rev: ReverbType,
     /// HALL's SIZE sits in its plate zone: the SIZE cell reads `PLATE`.
     pub plate: bool,
@@ -148,6 +148,15 @@ impl SlotCtx {
         Self {
             rev: reverb_panel::shown(rev.kind),
             plate: in_plate_zone(rev),
+            ..self
+        }
+    }
+
+    /// This context under the project chorus `fx` (a Sound's params hold
+    /// no FX): the mode the CHORUS send hints.
+    pub fn on_chorus(self, fx: &ChorusParams) -> Self {
+        Self {
+            chorus: ChorusMode::from_u8(fx.mode),
             ..self
         }
     }

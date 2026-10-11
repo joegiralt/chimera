@@ -110,7 +110,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_home_bowed", 0x997c6d6606b0dd7c),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_amp", 0x8ac5c00a7c8b7b27),
+    ("modal_amp", 0x44e231e2a0f622db),
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it, the screens are as before.
     #[cfg(not(feature = "master-tape"))]
@@ -188,9 +188,9 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_master_level", 0xfa809f321d216a97),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_out_p2", 0x61706e98c91f5477),
+    ("mixer_out_p2", 0xc7fad296ace82da3),
     #[cfg(feature = "master-tape")]
-    ("mixer_out_p2", 0xc0d61ab7b05e9b69),
+    ("mixer_out_p2", 0x97c6eb559ffe4f95),
     ("algo_out_p3", 0x3e91d6b588f4ebfa),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).

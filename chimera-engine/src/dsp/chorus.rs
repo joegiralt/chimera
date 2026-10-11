@@ -84,7 +84,7 @@ pub struct ChorusParams {
 impl ChorusParams {
     /// Juno I at unity return (sends spec § 4): the send sets the amount.
     pub const DEFAULT: Self = Self {
-        mode: 1,
+        mode: ChorusMode::JunoI as u8,
         rate: 0.5,
         depth: 0.5,
         mix: 1.0,

@@ -1015,7 +1015,8 @@ impl UiState {
         let sound = &self.project.part(self.active_part).sound;
         let ctx = SlotCtx::read(&sound.params, self.sel_op)
             .on_clock(self.orbit.status.source)
-            .on_rev(&self.project.perf().fx.reverb);
+            .on_rev(&self.project.perf().fx.reverb)
+            .on_chorus(&self.project.perf().fx.chorus);
         let base = view::SourceState::of(ctx.tape, sound.source_ref(), self.project.pool());
         let ctx = ctx.on_source(self.src.state(self.active_part, base, &self.project));
         match self.loc.orbit() {

@@ -27,7 +27,7 @@ Hearing reverb took three knobs in three places: the Part's send (mixer SENDS), 
 ## Consequences
 - A send edit marks the Sound edited; anything that replaces a Part's Sound (pool or library load, RELOAD FROM PROJ, INIT, an engine change) replaces its sends.
 - Old FX MIX values stay, so an old project's sends stay silent until MIX is raised.
-- Flash ~0; `MAX_SOUND_COST` +16 B; `ParamSnapshot` +12 B, `PartParams` -12 B.
+- Flash <= 1.3 KB (measured); `MAX_SOUND_COST` +16 B; `ParamSnapshot` +12 B, `PartParams` -12 B.
 - Per-Part MIDI mapping of sends (#247, ADR 0128) needs nothing special: they are Sound params; CC 91/93 are candidate defaults.
 
 ## Sources

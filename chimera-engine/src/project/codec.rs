@@ -24,7 +24,7 @@ use chimera_hal::store::{Dir, Store, StoreError};
 
 use crate::addr::{BlockRead, BlockRef, Blocks};
 use crate::block::{Block, DiskCode};
-use crate::dsp::algo::math::clampf;
+use crate::dsp::clampf;
 use crate::dsp::fx_bus::{FX_SENDS, FxParams};
 use crate::hw::MAX_PARTS;
 use crate::name::SoundName;
@@ -398,11 +398,11 @@ pub struct ProjectCheck {
     mix: bool,
     origin: bool,
     origins: [ReadOrigin; MAX_PARTS],
+    /// The open Part's pre-ADR-0123 sends (PART ids 5-7), for its Sound.
+    old_sends: Option<[f32; FX_SENDS]>,
     /// Pass 2 took less than the file holds: an ORBIT record skipped or a
     /// value in it defaulted, or no ORBIT records at all (ADR 0078). A save
     /// would write other bytes, so the load is not Saved.
-    /// The open Part's pre-ADR-0123 sends (PART ids 5-7), for its Sound.
-    old_sends: Option<[f32; FX_SENDS]>,
     lossy: bool,
 }
 

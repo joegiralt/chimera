@@ -5,7 +5,7 @@ mod common;
 use common::SR;
 
 use chimera_core::dsp::Stereo;
-use chimera_core::dsp::chorus::{ChorusParams, JunoChorus};
+use chimera_core::dsp::chorus::{ChorusMode, ChorusParams, JunoChorus};
 use chimera_core::dsp::delay::{DelayParams, TapeDelay};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use chimera_core::dsp::rev::Reverb;
@@ -345,10 +345,10 @@ fn an_effect_switched_off_fades_its_return() {
 #[test]
 fn new_returns_are_audible() {
     let p = FxParams::default();
-    assert_eq!(p.chorus.mode, 1);
+    assert_eq!(p.chorus.mode, ChorusMode::JunoI as u8);
     assert_eq!((p.chorus.mix, p.delay.mix, p.reverb.mix), (1.0, 1.0, 1.0));
     let o = FxParams::OFF;
-    assert_eq!(o.chorus.mode, 0);
+    assert_eq!(o.chorus.mode, ChorusMode::Off as u8);
     assert_eq!((o.chorus.mix, o.delay.mix, o.reverb.mix), (0.0, 0.0, 0.0));
     assert!(!o.chorus.is_on() && !o.delay.is_on() && !o.reverb.is_on());
 }
