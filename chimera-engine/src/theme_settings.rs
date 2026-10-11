@@ -1,5 +1,5 @@
 //! SETTINGS › PERSONALIZE › THEME: backlight, panel gamma, accent and
-//! ground (ADR 0033), and whether focus bands show gesture hints (ADR
+//! ground (ADR 0033), light mode (ADR 0122), and whether focus bands show gesture hints (ADR
 //! 0086).
 //!
 //! The values, their disk codes and the THEME block; what they look like
@@ -14,7 +14,8 @@ use crate::block::{
     Block, Change, DiskCode, Motion, OFF_ON, ParamId, ParamSpec, ValFmt, apply_code,
 };
 
-/// BRIGHT's and BLACK's values, by step index (see `DiskCode`).
+/// BRIGHT's and BLACK's values, by step index: their disk idents and their
+/// shown names, one copy.
 const BRIGHT_IDENTS: [&str; 19] = [
     "10", "15", "20", "25", "30", "35", "40", "45", "50", "55", "60", "65", "70", "75", "80", "85",
     "90", "95", "100",
@@ -223,6 +224,9 @@ pub struct ThemeSettings {
     pub black: Black,
     /// Gesture hints in the focus bands; off, a band reads its cell alone.
     pub hints: bool,
+    /// Light mode: white ground, black ink; BLACK then takes the edge off
+    /// the white.
+    pub invert: bool,
 }
 
 impl Default for ThemeSettings {
@@ -239,6 +243,7 @@ impl ThemeSettings {
         accent: Accent::Teal,
         black: Black::DEFAULT,
         hints: true,
+        invert: false,
     };
 
     /// TEAL at ground 0: the palette the renderer draws, unchanged.
@@ -252,26 +257,22 @@ impl ThemeSettings {
     pub const ACCENT: ParamId = ParamId(2);
     pub const BLACK: ParamId = ParamId(3);
     pub const HINTS: ParamId = ParamId(4);
+    pub const INVERT: ParamId = ParamId(5);
 }
 
-const BRIGHT_NAMES: [&str; 19] = [
-    "10", "15", "20", "25", "30", "35", "40", "45", "50", "55", "60", "65", "70", "75", "80", "85",
-    "90", "95", "100",
-];
 const GAMMA_NAMES: [&str; 3] = ["PANEL", "SOFT", "PUNCH"];
 const ACCENT_NAMES: [&str; 5] = ["TEAL", "AMBER", "ROSE", "LIME", "ICE"];
-const BLACK_NAMES: [&str; 7] = ["-2", "-1", "0", "+1", "+2", "+3", "+4"];
 
 const _: () = assert!(BRIGHT_IDENTS.len() == THEME_SPECS[0].max as usize + 1);
 const _: () = assert!(BLACK_IDENTS.len() == THEME_SPECS[3].max as usize + 1);
 
 /// Choices by index: BRIGHT 0..=18 (10..100 %), BLACK 0..=6 (−2..+4). The
 /// defaults are the owner's pick: 70, PUNCH, TEAL, −2.
-pub static THEME_SPECS: [ParamSpec; 5] = [
+pub static THEME_SPECS: [ParamSpec; 6] = [
     ParamSpec::choice(
         0,
         "BRIGHT",
-        ValFmt::Names(&BRIGHT_NAMES),
+        ValFmt::Names(&BRIGHT_IDENTS),
         18.0,
         12.0,
         Change::Snap,
@@ -300,7 +301,7 @@ pub static THEME_SPECS: [ParamSpec; 5] = [
     ParamSpec::choice(
         3,
         "BLACK",
-        ValFmt::Names(&BLACK_NAMES),
+        ValFmt::Names(&BLACK_IDENTS),
         6.0,
         0.0,
         Change::Snap,
@@ -319,6 +320,19 @@ pub static THEME_SPECS: [ParamSpec; 5] = [
     )
     .ident("HINTS")
     .glyph(crate::glyph::FocusGlyph::Switch),
+    // A SYSTEM from before INVERT has none: OFF.
+    ParamSpec::stepped(
+        5,
+        "INVERT",
+        ValFmt::Names(&OFF_ON),
+        0.0,
+        1.0,
+        0.0,
+        false,
+        Motion::Stepped(Change::Snap),
+    )
+    .ident("INVERT")
+    .glyph(crate::glyph::FocusGlyph::Switch),
 ];
 
 impl Block for ThemeSettings {
@@ -333,6 +347,7 @@ impl Block for ThemeSettings {
             Self::ACCENT => self.accent as u8 as f32,
             Self::BLACK => (self.black.0 - Black::MIN) as f32,
             Self::HINTS => f32::from(self.hints),
+            Self::INVERT => f32::from(self.invert),
             _ => 0.0,
         }
     }
@@ -345,6 +360,7 @@ impl Block for ThemeSettings {
             Self::ACCENT => self.accent = Accent::ALL[(i as usize).min(Accent::ALL.len() - 1)],
             Self::BLACK => self.black = Black::new(Black::MIN.saturating_add(i.min(127) as i8)),
             Self::HINTS => self.hints = i != 0,
+            Self::INVERT => self.invert = i != 0,
             _ => {}
         }
     }

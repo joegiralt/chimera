@@ -1,5 +1,5 @@
 use chimera_core::console::Frame;
-use chimera_core::ui::theme_settings::{Palette, ThemeSettings, palette};
+use chimera_core::ui::theme_settings::{Palette, ThemeSettings, palette, splash_palette};
 use chimera_hal::{ChimeraDisplay, FB_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 use embedded_graphics_core::Pixel;
 use embedded_graphics_core::draw_target::DrawTarget;
@@ -44,6 +44,12 @@ impl DesktopDisplay {
     pub fn set_theme(&mut self, theme: &ThemeSettings) {
         self.palette = palette(theme);
         self.bright_pct = theme.bright.percent() as u32;
+    }
+
+    /// `theme`'s colours with light mode off, for the boot splash, until
+    /// the next `set_theme`.
+    pub fn set_splash_theme(&mut self, theme: &ThemeSettings) {
+        self.palette = splash_palette(theme);
     }
 
     /// The framebuffer and its palette, as `shot` reads them: BRIGHT is

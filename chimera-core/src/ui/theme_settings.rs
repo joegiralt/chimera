@@ -129,30 +129,118 @@ pub const fn ground(b: Black) -> Rgb565 {
     Rgb565::new(g / 2, g, g / 2)
 }
 
-/// The three canonical colours a theme replaces, in the display shell.
+/// Contrast the light-mode accent, WARN and ALERT must keep against the
+/// ground: WCAG's 3:1 for UI glyphs, with a margin (x10) because the check
+/// uses gamma 2.0, which reads a dark colour lighter than sRGB does.
+const LIGHT_CONTRAST_X10: u32 = 32;
+
+/// The lightest ground's weakest case: BLACK +4 in light mode, `#e7e7e7`
+/// (28, 57, 28 in RGB565). The light colours are checked against it, so
+/// they hold on every BLACK; a test pins it to `ground_light`.
+const LIGHT_FLOOR: u32 = 231;
+
+/// Gamma-2 luminance, 0..=65025 (white).
+const fn luma(r: u32, g: u32, b: u32) -> u32 {
+    (2126 * r * r + 7152 * g * g + 722 * b * b) / 10_000
+}
+
+/// `hex` scaled toward black, in 1/128ths, until it holds
+/// `LIGHT_CONTRAST_X10` against `LIGHT_FLOOR`; unchanged if it already does.
+const fn darken(hex: u32) -> u32 {
+    const K: u32 = 3251; // 0.05 of white's luminance
+    let (r, g, b) = (hex >> 16 & 0xFF, hex >> 8 & 0xFF, hex & 0xFF);
+    let lb = luma(LIGHT_FLOOR, LIGHT_FLOOR, LIGHT_FLOOR) + K;
+    let mut s = 256;
+    while s > 0
+        && lb * 10 < LIGHT_CONTRAST_X10 * (luma((r * s) >> 8, (g * s) >> 8, (b * s) >> 8) + K)
+    {
+        s -= 2;
+    }
+    ((r * s) >> 8) << 16 | ((g * s) >> 8) << 8 | ((b * s) >> 8)
+}
+
+/// 12 % of `hex` over white: the fill under a viz line, light mode (BLACK's
+/// few levels do not show in it).
+const fn mix12(c: u32) -> u32 {
+    (c * 12 + 255 * 88 + 50) / 100
+}
+
+const fn soft_over_white(hex: u32) -> u32 {
+    mix12(hex >> 16 & 0xFF) << 16 | mix12(hex >> 8 & 0xFF) << 8 | mix12(hex & 0xFF)
+}
+
+const LIGHT_HEX: [u32; 5] = [
+    darken(accent_hex(Accent::Teal)),
+    darken(accent_hex(Accent::Amber)),
+    darken(accent_hex(Accent::Rose)),
+    darken(accent_hex(Accent::Lime)),
+    darken(accent_hex(Accent::Ice)),
+];
+
+/// The five accents in light mode: each pick, darkened only as far as it
+/// takes to hold 3:1, computed at compile time, and the soft fill.
+static ACCENTS_LIGHT: [Rgb565; 5] = [
+    rgb565(LIGHT_HEX[0]),
+    rgb565(LIGHT_HEX[1]),
+    rgb565(LIGHT_HEX[2]),
+    rgb565(LIGHT_HEX[3]),
+    rgb565(LIGHT_HEX[4]),
+];
+static SOFTS_LIGHT: [Rgb565; 5] = [
+    rgb565(soft_over_white(LIGHT_HEX[0])),
+    rgb565(soft_over_white(LIGHT_HEX[1])),
+    rgb565(soft_over_white(LIGHT_HEX[2])),
+    rgb565(soft_over_white(LIGHT_HEX[3])),
+    rgb565(soft_over_white(LIGHT_HEX[4])),
+];
+
+/// WARN (`#f88000`) and ALERT (`#f80000`) in light mode, by the same rule.
+pub const WARN_LIGHT: Rgb565 = rgb565(darken(0xf88000));
+pub const ALERT_LIGHT: Rgb565 = rgb565(darken(0xf80000));
+
+/// INVERT's ground: the dark ground at the same BLACK, bit-flipped. BLACK
+/// −2 is white; each step takes a little more off it.
+pub fn ground_light(b: Black) -> Rgb565 {
+    from_raw(!raw(ground(b)))
+}
+
+/// The accent in light mode.
+pub fn accent_light(a: Accent) -> Rgb565 {
+    ACCENTS_LIGHT[a as usize]
+}
+
+/// The colours a theme replaces, in the display shell. Dark mode swaps
+/// three canonical colours; light mode (`invert`) flips every other colour's
+/// luminance and swaps the signal colours too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Palette {
     pub accent: Rgb565,
     pub accent_soft: Rgb565,
     pub bg: Rgb565,
+    pub invert: bool,
 }
 
 impl Palette {
-    /// TEAL, BLACK 0: maps every colour to itself.
+    /// TEAL, BLACK 0, dark: maps every colour to itself.
     pub const IDENTITY: Palette = Palette {
         accent: theme::ACCENT,
         accent_soft: theme::ACCENT_SOFT,
         bg: theme::BG,
+        invert: false,
     };
 
     /// The colour to show for a canonical palette colour `c`.
     pub fn map(&self, c: Rgb565) -> Rgb565 {
-        RawU16::new(self.map_raw(RawU16::from(c).into_inner())).into()
+        from_raw(self.map_raw(raw(c)))
     }
 
-    /// `map` on a raw framebuffer pixel.
-    #[inline]
+    /// `map` on a raw framebuffer pixel. Out of line: the display, the
+    /// console shot and the desktop each flush through it.
+    #[inline(never)]
     pub fn map_raw(&self, px: u16) -> u16 {
+        if self.invert {
+            return self.light_raw(px);
+        }
         if px == raw(theme::ACCENT) {
             raw(self.accent)
         } else if px == raw(theme::ACCENT_SOFT) {
@@ -163,6 +251,24 @@ impl Palette {
             px
         }
     }
+
+    /// Light mode's `map_raw`: every colour but the swapped five is flipped.
+    #[inline]
+    fn light_raw(&self, px: u16) -> u16 {
+        if px == raw(theme::BG) {
+            raw(self.bg)
+        } else if px == raw(theme::ACCENT) {
+            raw(self.accent)
+        } else if px == raw(theme::ACCENT_SOFT) {
+            raw(self.accent_soft)
+        } else if px == raw(theme::WARN) {
+            raw(WARN_LIGHT)
+        } else if px == raw(theme::ALERT) {
+            raw(ALERT_LIGHT)
+        } else {
+            !px
+        }
+    }
 }
 
 #[inline]
@@ -170,9 +276,26 @@ fn raw(c: Rgb565) -> u16 {
     RawU16::from(c).into_inner()
 }
 
-/// The colours the display shows for ACCENT, ACCENT_SOFT and BG. The soft
-/// accent rides the ground: it moves with BLACK by the ground's own step.
+#[inline]
+fn from_raw(px: u16) -> Rgb565 {
+    RawU16::new(px).into()
+}
+
+/// The colours the display shows for ACCENT, ACCENT_SOFT and BG (and, in
+/// light mode, WARN and ALERT). The soft accent rides the ground: in dark
+/// mode it moves with BLACK by the ground's own step.
+#[inline(never)]
 pub fn palette(t: &ThemeSettings) -> Palette {
+    if t.invert {
+        let bg = ground_light(t.black);
+        let accent = accent_light(t.accent);
+        return Palette {
+            accent,
+            accent_soft: SOFTS_LIGHT[t.accent as usize],
+            bg,
+            invert: true,
+        };
+    }
     let (g0, g) = (ground(Black::ZERO), ground(t.black));
     let s = accent_soft(t.accent);
     let ch = |v: u8, d0: u8, d: u8, max: i16| (v as i16 + d as i16 - d0 as i16).clamp(0, max);
@@ -184,5 +307,15 @@ pub fn palette(t: &ThemeSettings) -> Palette {
             ch(s.b(), g0.b(), g.b(), 31) as u8,
         ),
         bg: g,
+        invert: false,
     }
+}
+
+/// The palette for the boot splash: `t` with light mode off, so the Yellow
+/// Sign stays yellow with a dark ink (ADR 0122).
+pub fn splash_palette(t: &ThemeSettings) -> Palette {
+    palette(&ThemeSettings {
+        invert: false,
+        ..*t
+    })
 }
