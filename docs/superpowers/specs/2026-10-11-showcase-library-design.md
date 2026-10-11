@@ -1,27 +1,27 @@
 # Showcase factory library (alpha): Design
 
-- **Status:** design, for owner review
+- **Status:** Approved 2026-10-11
 - **Date:** 2026-10-11
 - **Issues:** #317 (factory library, FACTORY tab), #302 (importer, TX81Z slice), #243 (formant operators, placeholders), #476 (TAPE coming soon)
 - **Builds on:** ADR 0119 and `2026-10-09-sound-library-design.md` (the card library); `2026-10-04-patch-importer-design.md` and ADR 0088 (Proposed, branch `importer-spec`: the TX81Z parser, map and guards); ADR 0109 (−11 LUFS reference); `tools/factory-tapes/recipes.toml` (the text recipe model)
 - **Read against:** `origin/main` d5e59a86; facts from (private notes)
+
+## Owner decisions on the open questions (2026-10-11)
+
+1. **The TX81Z ports stay private until #410 (counsel) is answered.** They are built and kept locally, outside the repo and outside the public card set. The public alpha set is the non-port Sounds (9 VA, 2 FM vocal, 4 MODAL: **15 Sounds**) plus the 4 demo projects. The importer and the private pipeline are still built now, so the 16 ports are ready the day #410 clears.
+2. **Bank origin:** the Yamaha TX81Z factory banks, the voices that come with the instrument ("all the TX81Z patches that come with it"). No third-party bank is used.
+3. **Demo project ids:** `P0000001`–`P0000009` are reserved for demos, and a project save allocates from `P0000010` up (§ 5).
+4. **Tester install:** over USB with the console tool (`tools/chimera-usb.py`), or by copying the files onto the card in the stock bootloader's SD-card-access mode (tested working 2026-10-11). The release zip mirrors the card's layout so the copy is a drag and drop (§ 3).
+5. **VA split:** 2 Boards-of-Canada pads, plus 1 Sound that is a pad played softly and brass played hard (NEON BRASS).
 
 ## Owner decisions (approved in chat, 2026-10-11)
 
 1. **A showcase factory library for the alpha.** It shows off the engines, sounds musical and organic, and is never samey. Each Sound has its own character and one sentence saying what it demonstrates.
 2. **All of it lives on the SD card, at zero flash cost.** About 26 KB of flash is free; NEW's 8 built-in ALGO Sounds stay as they are.
 3. **No new DSP** (alpha sound freeze). TAPE is COMING SOON, so the showcase is VA, ALGO (FM), MODAL and effects only.
-4. **The set:** 9 VA, 16 modernised TX81Z ports, 2 FM vocal Sounds, formant placeholders (#243), 4 MODAL, and 4 effects demo projects.
+4. **The set:** 9 VA, 2 FM vocal Sounds, formant placeholders (#243), 4 MODAL, and 4 effects demo projects in public; 16 modernised TX81Z ports kept private until #410 (answer 1 above).
 5. **Every Sound is alive through designed modulation**: envelopes, LFOs, velocity, NOTE, STABILITY. Short sounds get a low-pass-gate action (factory-library method).
 6. **Claude does QA** (levels, clicks, aliasing); then the owner listens on a page of renders; only then does anything go on the unit (QA before UAT).
-
-## Open questions for the owner
-
-1. **Public release of TX81Z derivatives.** The importer spec (§ 9) kept mutated Yamaha-voice derivatives out of public view until the V1 licensing decision. The repo is now private, so committing them is consistent with that. But the alpha's card set ships to testers from the public releases repo, which publishes them. Do the 16 ports ship in the public alpha set? The options: (a) ship them (our edits on top of factory voice data, a known grey area for patch data); (b) ship only the VA, vocal and MODAL Sounds publicly, and give the ports to the owner's unit only until V1; (c) port only voices the owner programmed himself. The recommendation is (b) if counsel (#410) can't answer before alpha, otherwise (a). ADR 0134 records the answer.
-2. **Which bank files?** The importer spec names the TX81Z factory banks as the private set. If any bank is third-party (a commercial or forum bank), it needs the same answer as question 1, voice by voice.
-3. **Demo project ids.** The demos take the reserved ids `P0000001`–`P0000009`, and a project save allocates from `P0000010` up (§ 5), so they list first in LOAD PROJECT. The alternative is to install them at the next free ids, with no code change, but then they sort last and drop off a card with more than 48 projects.
-4. **Tester install.** The factory set reaches a tester's card over USB with `tools/chimera-usb.py` (the card is inside the case). Is a Python install step acceptable for alpha testers, or does the set wait for a firmware-side install?
-5. **VA split.** The spec makes 2 Boards-of-Canada pads and 1 CS-style Sound that is a pad when played softly and brass when played hard, to fit 9. The alternative is 1 Boards-of-Canada pad with separate brass and pad Sounds.
 
 ## 1. Descriptions
 
@@ -68,7 +68,7 @@
 
 ## 3. Sources and the `factory-sounds` tool
 
-**Where.** `tools/factory-sounds/`: `va.toml`, `fm.toml`, `modal.toml` and `projects.toml`. They are read by `listen::tables`, the parser `recipes.toml` uses, extended to accept dotted keys (valid TOML). Only `key = "value"` lines, `[[table]]` headers and comments are allowed, so a file stays one line per setting, readable and diffable.
+**Where.** Public Sources are committed in `tools/factory-sounds/`: `va.toml`, `fm.toml` (the vocal Sounds), `modal.toml` and `projects.toml`. **Port Sources are never in the repo** (§ 6): they live in `$CHIMERA_TX_PORTS`, default (private notes) (durable, under `~/dev`, and ignored by git through `.superpowers/`). They are read by `listen::tables`, the parser `recipes.toml` uses, extended to accept dotted keys (valid TOML). Only `key = "value"` lines, `[[table]]` headers and comments are allowed, so a file stays one line per setting, readable and diffable.
 
 ```toml
 [[sound]]
@@ -91,7 +91,7 @@ trim = "-1.0"                     # dB on the output level, written by `fmt --le
 
 - **Keys** are `<BLOCK>.<PARAM>` by the frozen idents in `chimera-core/tests/fixtures/disk_codes_v1.txt`. Values are stored values or enum idents. A param left out keeps `Sound::neutral`'s value: sparse, as the encoder is.
 - **`mod.<SOURCE>`** lists that matrix row's routes as `DEST ±amount` (amount −127…127). **`tap.OP5`** and **`tap.OP6`** list ALGO's audio-rate filter routes (FREQ, Q, VCA, FOLD). An unroutable destination fails the build with its name.
-- **Provenance** (ports only): `from = "tx81z <sha256 of the bank, first 8 hex digits> #<voice>"` (never the Yamaha voice name), plus `edits = "filter: …; lfo: …"`, naming at least one of filter, fold, LFO, envelope or effects.
+- **Provenance** (ports only, so private Sources only): `from = "tx81z <sha256 of the bank, first 8 hex digits> #<voice>"` (never the Yamaha voice name), plus `edits = "filter: …; lfo: …"`, naming at least one of filter, fold, LFO, envelope or effects.
 - **`status = "placeholder"`** reserves an id and name. The build skips it.
 - **`fmt`** rewrites each value line with a trailing comment showing its display value (`# 80 ms`). Comments are ignored on read, so the canonical text round-trips exactly.
 
@@ -99,12 +99,13 @@ trim = "-1.0"                     # dB on the output level, written by `fmt --le
 
 | `just …` | Does |
 |---|---|
-| `factory-sounds` | Parses, checks (unique ids and names, id ranges, description width and characters, routes, `edits` on every `from`), and builds into `target/factory-sounds/`: `S91xxxxx.A`, `P000000n.A`, `manifest.json` (id, name, CRC, size) |
-| `factory-sounds fmt [--level]` | Canonical text. `--level` writes each `trim` (§ 4) |
-| `factory-sounds qa [--wav]` | Renders every Sound and demo project, measures, writes `report.txt`, and writes `index.html` only when every render passes |
-| `put-factory-sounds [dir]` | `chimera-usb.py put --over` for each file: Sounds into `/CHIMERA/SOUNDS/`, demo projects into `/CHIMERA/PROJECTS/` |
+| `factory-sounds` | Parses, checks (unique ids and names, id ranges, description width and characters, routes) and builds the public set into `target/factory-sounds/public/CHIMERA/{SOUNDS,PROJECTS}/` (`S91xxxxx.A`, `P000000n.A`) plus `manifest.json` (id, name, CRC, size). **Refuses any Source with a `from` line** |
+| `factory-sounds --private` | Also reads `$CHIMERA_TX_PORTS/*.toml` (each must have `from` and `edits`), and builds the ports into `target/factory-sounds/private/CHIMERA/SOUNDS/`. Never into `public/` |
+| `factory-sounds fmt [--level] [--private]` | Canonical text. `--level` writes each `trim` (§ 4) |
+| `factory-sounds qa [--wav] [--private]` | Renders every Sound and demo project, measures, writes `report.txt`, and writes `index.html` only when every render passes, all into the ledger folder (§ 4) |
+| `put-factory-sounds [dir]` | `chimera-usb.py put --over` for each file under `dir/CHIMERA/` (default the public build): Sounds into `/CHIMERA/SOUNDS/`, demo projects into `/CHIMERA/PROJECTS/`. The owner's unit takes `private` too, for UAT |
 
-Stamp: `Build` carries the version and the commit the Sources were built from; the golden test passes a fixed stamp. The release gets `factory-v1.zip` with the files and the manifest.
+Stamp: `Build` carries the version and the commit the Sources were built from; the golden test passes a fixed stamp. The release gets `factory-v1.zip`: the **public** build only, laid out as `CHIMERA/SOUNDS/…` and `CHIMERA/PROJECTS/…`, plus the manifest. A tester installs it either with `put-factory-sounds` over USB, or by copying the `CHIMERA` folder onto the card in the stock bootloader's SD-card-access mode. `just release` refuses a zip holding any id in the port range `S9100010`–`S9100025`.
 
 ## 4. QA before UAT
 
@@ -133,7 +134,7 @@ Effects demos: each project's Parts play `stab` and `short` through every reverb
 | Tap | The vocal Sounds: the render with the tap differs from one without it by at least 6 dB of spectral error, so the op 5 or op 6 route is audible |
 | Samey | No two Sounds' `long` renders within 3 dB on all 32 ERB bands (the importer spec's spectral metric). A pair that fails is reported for a by-ear verdict |
 
-**The owner's page.** `target/factory-sounds/index.html` lists each Sound with its name, description, demo mode, players for each render, LUFS, peak and the `edits` line. Claude may publish it as a private artifact. The owner's verdicts go in (private notes). Only Sounds the owner keeps are installed on the unit for UAT.
+**The owner's page.** Renders, `report.txt` and `index.html` go in (private notes) (`$CHIMERA_SHOWCASE_LEDGER` overrides it), never `/tmp` or the scratchpad (durable ledgers rule). `index.html` lists each Sound with its name, description, demo mode, players for each render, LUFS, peak and the `edits` line. Claude may publish it as a private artifact. The owner's verdicts go in `listening.md` in the same folder. Private ports render into the same page, in their own section marked PRIVATE. Only Sounds the owner keeps are installed on the unit for UAT.
 
 ## 5. Effects demo projects
 
@@ -144,17 +145,18 @@ The effects belong to the performance (`FxParams`, one set per project), so the 
 id = "P0000001"
 name = "REVERB ROOMS"
 fx.REVERB.TYPE = "ROOM"
-part.1 = "TINE PIANO, POLY, CH 1"
-part.2 = "NYLON, POLY, CH 2"
+part.1 = "NYLON, POLY, CH 1"
+part.2 = "GAMELAN, POLY, CH 2"
 ```
 
 | Id | Name | FX | Parts (MIDI channels 1–4) | What to try |
 |---|---|---|---|---|
-| P0000001 | REVERB ROOMS | REVERB ROOM | TINE PIANO, NYLON, WOOD BASS | Turn TYPE through QUAD, ROOM and HALL |
-| P0000002 | REVERB BLOOM | REVERB BLOOM, long | FADED HYMN, ICE BELLS | Turn TYPE to REVERSE |
-| P0000003 | REVERB GATE | REVERB GATE | SOLID BASS, FUNK CLAV, MALLET | Gated percussive tails |
+| P0000001 | REVERB ROOMS | REVERB ROOM | NYLON, GAMELAN, FOLD BASS | Turn TYPE through QUAD, ROOM and HALL |
+| P0000002 | REVERB BLOOM | REVERB BLOOM, long | FADED HYMN, CELLO SWELL | Turn TYPE to REVERSE |
+| P0000003 | REVERB GATE | REVERB GATE | GROWL BASS, RING LEAD, VOWEL BUZZ | Gated percussive tails |
 | P0000004 | CHORUS DELAY | CHORUS I+II, delay 3/16 | TAPE DRIFT, GLIDE BASS (MONO), FIFTH SLIDE (MONO) | CHORUS I, II and I+II; delay feedback |
 
+- **Public Sounds only.** A demo project never holds a port, so the demos ship in the public set (the build refuses a `part.n` naming a private Sound). They may be recast with ports after #410.
 - **Players find them** at the top of SETTINGS › LOAD PROJECT, where they list first. Their names are their content. The release notes give the "What to try" column.
 - **Ids.** `P0000001`–`P0000009` are reserved. `ProjectId`'s save allocation becomes `max(top, 9) + 1` (one line), so a new user project never takes a demo id. A player may save over a demo (it is an ordinary project); `put-factory-sounds` restores it.
 - **Sends.** With the `sound-sends` branch (sends on the Sound's OUT block), a Source sets its own sends, and a Sound loaded from FACTORY arrives with them. Without it, the demo project's Part sends carry them. Either way the project holds the FX settings.
@@ -163,7 +165,7 @@ part.2 = "NYLON, POLY, CH 2"
 
 **Scope:** the TX81Z slice of the importer spec. That is § 5.2's VMEM/VCED/ACED parser (`no_std`, in `chimera-engine/src/import/`, where the crate split puts the spec's `chimera-core/src/import/`) and § 6's TX81Z rows (map in `chimera-desktop/src/import/`), without DX7, PreenFM3, or the ymfm A/B (the ports are mutated, and the owner judges them by ear). The one change from that spec: it **emits text Sources**, not card files.
 
-`just import-tx <bank.syx> [--voices 1,4,9-12] [--out DIR]` writes one `<voice>.toml` per voice and an import report (the importer spec's loss lines). `DIR` defaults to `$CHIMERA_TX_PORTS`. The CLI refuses any path inside the git work tree (the importer spec's guard).
+`just import-tx <bank.syx> [--voices 1,4,9-12] [--out DIR]` writes one `<voice>.toml` per voice and an import report (the importer spec's loss lines). `DIR` defaults to `$CHIMERA_TX_PORTS`. The CLI refuses any output path inside a git work tree unless `git check-ignore` says it is ignored (so (private notes) is allowed, `tools/` is not).
 
 **The map** (ADR 0088's TX81Z rows): ALG n → T n on ops 1–4, with ops 5 and 6 at LEVEL 0; CRS/FINE → CRSE/FINE through `dsp/algo/tx.rs`'s `COARSE`/`FINE_TOP` indices (`ratio`); DET → DETUN; OUT → LEVEL; AR, D1R, D1L, D2R, RR, RS 1:1; KVS → VEL; FBL → FDBK on op 4; OSW → W1–W8; TRPS → TRNSP; LFO wave, speed, PMD × PMS and AMD × AMS/AME → LFO 1 with routes. The filter is open, and ENV 1, ENV 3, LFO 2 and LFO 3 are left free for the mutation.
 
@@ -177,10 +179,11 @@ part.2 = "NYLON, POLY, CH 2"
 - FINE: within about 14 c of the TX81Z's steps;
 - mod wheel, breath, foot controller, aftertouch, pitch-bend range, portamento and poly/mono: dropped, because Chimera has no such sources and mono and glide belong to the Part.
 
-**What may be committed** (ADR 0114 § 6, ADR 0032, the factory-library method, importer spec § 9):
-- **Never:** bank files, verbatim conversions, Yamaha voice names. `.gitignore` gains `*.syx`, `*.SYX`, `*.bnk`, `*.mix` and `*.wav`, and `just check` fails if `git ls-files` lists any of them.
-- **Committed:** a port only after its mutation, recorded in `edits`, and changed in at least one of filter, fold, LFO, envelope or effects. `factory-sounds check` re-imports the voice from `$CHIMERA_TX_PORTS` when that is set and fails if the committed Source changes nothing in the categories its `edits` names, so edits are verified, not just claimed.
-- **Rights:** we commit our edits on top of voice parameter data, and that data isn't ours. ADR 0114's rule allows facts from a manual (the ratio tables), and ADR 0032 bars GPL code; neither rules on patch data. Committing to the now-private repo is within the importer spec's rule. Shipping is open question 1.
+**What may be committed** (ADR 0114 § 6, ADR 0032, the factory-library method, importer spec § 9, owner decision 1):
+- **Never:** bank files, verbatim conversions, Yamaha voice names, **and port Sources, mutated or not, until #410 clears.** `.gitignore` gains `*.syx`, `*.SYX`, `*.bnk`, `*.mix`, `*.wav` and `/tools/factory-sounds/private/` (a local fallback folder for anyone who keeps ports in the tree).
+- **The guard:** a test, `no_private_ports_in_index`, runs `git ls-files -z` (tracked **and staged** files) and fails on any tracked bank file, any path under `tools/factory-sounds/private/`, and any `.toml` file with a `from = "tx81z` line (only `.toml`, so docs and tests that quote the rule don't trip it). The fuzz seeds under `chimera-desktop/fuzz/seeds/` are the one allowed `*.wav` path. It runs in `just test`, so `just check` (required before every commit, ADR 0013) fails the moment a port Source is staged. The public build's refusal of `from` (§ 3) is the second wall; the release's id check is the third.
+- **Edits verified:** `factory-sounds --private` re-imports each voice from its bank (`$CHIMERA_TX_BANKS`) and fails if a port changes nothing in the categories its `edits` names.
+- **Rights:** our edits sit on top of voice parameter data that isn't ours. ADR 0114's rule allows facts from a manual (the ratio tables), and ADR 0032 bars GPL code; neither rules on patch data, which is why the ports wait for #410. When #410 clears, a new ADR superseding 0134's port rule moves the ports into the repo and the public set; their ids are already reserved.
 
 ## 7. The patch list
 
@@ -202,7 +205,7 @@ The ids run in browse order. Names are at most 12 characters. Descriptions are d
 
 Coverage: WAVE (02), BLEND (05, 07, 09), SHAPE (02, 04), filter (all), STABILITY (01, 02, 03, 06), velocity (03, 04, 05, 08, 09), LFO (01, 02, 04, 07, 09), ENV (02, 03, 05, 06, 08).
 
-**FM, 16 TX81Z ports, `S9100010`–`S9100025`.** Each starts from a port and changes character by its `edits`.
+**FM, 16 TX81Z ports, `S9100010`–`S9100025`: private until #410.** Their ids are reserved; their Sources live in `$CHIMERA_TX_PORTS`. Each starts from a port and changes character by its `edits`.
 
 | Id | Name | Kind | Description | Edits (category: change) |
 |---|---|---|---|---|
@@ -223,7 +226,7 @@ Coverage: WAVE (02), BLEND (05, 07, 09), SHAPE (02, 04), filter (all), STABILITY
 | 24 | KOTO PLUCK | pluck | LOW-PASS-GATE PLUCK, BONGO-LIKE | envelope + filter: one fast ENV on VCA and FREQ |
 | 25 | MALLET | pluck | VELOCITY SETS THE MALLET HARDNESS | envelope: VELOCITY → modulator LEVEL and FREQ |
 
-Which TX81Z voice each starts from is chosen at the porting step, by the nearest character in the owner's banks.
+Which TX81Z voice each starts from is chosen at the porting step, by the nearest character in the Yamaha TX81Z factory banks (owner decision 2). The bank-to-voice record stays in the private ledger.
 
 **FM vocal, `S9100026`–`S9100027`.** The filter is TYPE 2040, mode LP4, VOICE REV2, with OP 5 or OP 6 on FREQ at audio rate (ADR 0096). A tap reads its operator's output, so that operator must be sounding: either a carrier heard as part of the voice, or a modulator in an A algorithm.
 
@@ -255,8 +258,9 @@ Which TX81Z voice each starts from is chosen at the porting step, by the nearest
 - **Old Sounds:** every v1 fixture and `library_1.snd` load and render identically (`v1_fixtures_render_identically`). A described fixture, `factory_1.snd`, joins them.
 - **FACTORY guards:** `save_library_sound` takes only `UserId` (a `compile_fail` doctest with a `FactoryId`). MIX + EDIT and MIX + MINUS in FACTORY write nothing (a counting store). LIBRARY never lists `S9…`, and FACTORY lists only `S9…`. `rm` refuses `S9…` (existing). A FACTORY load goes through the guard and `adopt` like a LIBRARY load. A save on an empty card writes `P0000010`.
 - **UI:** screen goldens, dark and INVERT (`light_golden_test`): FACTORY with a description, empty, NO CARD, a greyed COMING SOON row, and the three-tab title. `dpad_nav_test`: B over three tabs, and the inert MIX combinations. The text-width test covers the title and every committed description.
-- **Tool:** a golden Source (`chimera-desktop/tests/fixtures/factory_sounds/golden.toml`) builds to committed bytes under a fixed stamp. `fmt` is idempotent, and text → `Sound` → text is identical. Every committed Source builds and passes `check`. Bad Sources fail with their line: an unknown ident, an unroutable destination, a duplicate id, an id outside its range, a description that is too wide, a `from` without `edits`.
-- **Importer:** the importer spec's § 8.1 parser tests for TX81Z (fixtures built in code, a proptest that it never panics, the checksum warning), the § 8.2 TX81Z round trip for E rows, and the work-tree guard. `just check` fails on a tracked `*.syx`.
+- **Tool:** a golden Source (`chimera-desktop/tests/fixtures/factory_sounds/golden.toml`) builds to committed bytes under a fixed stamp. `fmt` is idempotent, and text → `Sound` → text is identical. Every committed Source builds and passes `check`. Bad Sources fail with their line: an unknown ident, an unroutable destination, a duplicate id, an id outside its range, a description that is too wide, a `from` without `edits` (private build), a `from` at all (public build), a demo `part.n` naming a private Sound.
+- **Privacy:** `no_private_ports_in_index` (§ 6) passes on the branch, and fails on a scratch repo where a Source with `from = "tx81z` is staged. The release check refuses a zip holding `S9100010`–`S9100025`.
+- **Importer:** the importer spec's § 8.1 parser tests for TX81Z (fixtures built in code, a proptest that it never panics, the checksum warning), the § 8.2 TX81Z round trip for E rows, and the work-tree guard. `no_private_ports_in_index` fails on a tracked `*.syx`.
 
 ## 9. Task order (for the plan)
 
@@ -265,21 +269,21 @@ Which TX81Z voice each starts from is chosen at the porting step, by the nearest
 3. **FACTORY tab:** `UserId` and `FactoryId`, the listing, the rows and lines, the guards, the project id floor; goldens; flash and AXI deltas in a line.
 4. **Source format and the `factory-sounds` build/fmt/check**, with the golden and the just recipes. ADR 0134 lands here.
 5. **Render, QA and the page** (`factory-sounds qa`, `chimera-utils stim`).
-6. **TX81Z importer** (`just import-tx`), with the guards and `.gitignore`. This needs the importer spec's TX81Z parts merged or rebased from `importer-spec`.
+6. **TX81Z importer** (`just import-tx`), with the guards and `.gitignore`. The importer spec and ADR 0088 are brought over from `importer-spec` (docs only; no code exists there).
 7. **Author the VA 9.** After `sound-sends` merges, Sources set their own sends.
-8. **Port and mutate the FM 16** (after open questions 1 and 2), then the vocal 2.
+8. **Port and mutate the FM 16, privately**, then the vocal 2 (public).
 9. **MODAL 4**, then **the 4 demo projects**.
 10. **QA pass**, then **the owner's listening page**, then fixes. Then put the set on the unit for UAT.
-11. **Release:** `factory-v1.zip` and install notes in the public releases repo, with `put-factory-sounds` for the unit.
+11. **Release:** `factory-v1.zip` (public set only) and install notes (USB console, or bootloader SD-card-access copy) in the public releases repo, with `put-factory-sounds` for the unit.
 12. **After #243:** fill the formant placeholders and re-run the QA pass for them.
 
 **ADRs:**
 - **0133**, "Factory Sounds list in a read-only FACTORY tab and carry a one-line description": the `Note` record `0x001D`; the factory id blocks (TAPE `S9000001`–`S9099999`, showcase `S9100001`–`S9199999`); `UserId`/`FactoryId`; the FACTORY tab; the reserved demo project ids `P0000001`–`P0000009`. It amends 0119.
-- **0134**, "Factory Sounds are text Sources built and checked on the host": the Source format, the tool, the QA gates, and the TX81Z-derivative rule (what is committed, what ships: open questions 1 and 2). It relates to 0088.
+- **0134**, "Factory Sounds are text Sources built and checked on the host": the Source format, the tool, the QA gates, and the TX81Z-derivative rule (ports are private, out of git and out of the public set until #410; Yamaha factory banks only). It relates to 0088.
 
 ## 10. Risks
 
-- **Licensing (biggest).** The 16 ports are derivatives of voice data that isn't ours. Shipping them publicly is the owner's call (open question 1), and #410's counsel may not answer before alpha. Fallback (b) keeps the alpha on schedule with 18 public showcase Sounds.
+- **Licensing.** The 16 ports are derivatives of voice data that isn't ours, so they stay private until #410 (owner decision 1). The public alpha has 15 showcase Sounds and 4 demo projects. The residual risk is a port leaking into git or a release; three checks stop it (§ 6).
 - **Dependencies on branches in flight:** `sound-sends` (sends in the Sound), `tape-coming-soon` (#476), `formant-ops` (#243) and `importer-spec` (ADR 0088). Each task above names the one it waits on; none blocks tasks 2–5.
 - **"Never samey" is a judgement.** The samey check only flags pairs; the owner's ear decides. Plan for at least two listening rounds.
-- **Tester install** over the USB console (open question 4).
+- **Tester install:** USB console or bootloader SD-card copy (owner decision 4). The bootloader path writes the card from a computer, so the zip's layout must be exact; the release notes say where the `CHIMERA` folder goes.
