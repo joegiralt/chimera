@@ -20,7 +20,7 @@ use chimera_core::storage::{
     ProjectId, SoundDecoder, SystemSettings, encode_sound, encode_system, write_file,
 };
 use chimera_core::ui::midi_settings::MidiSettings;
-use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, ThemeSettings};
+use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, Saver, ThemeSettings};
 use chimera_hal::store::{ByteSink, StoreError};
 
 pub struct VecSink(pub Vec<u8>);
@@ -173,6 +173,7 @@ pub fn system_fixture_settings() -> SystemSettings {
             accent: Accent::Rose,
             black: Black::new(3),
             hints: true,
+            saver: Saver::DEFAULT,
         },
         last_project: ProjectId::new(1_234_567),
     }
@@ -196,6 +197,7 @@ pub fn system_midi_fixture_settings() -> SystemSettings {
             accent: Accent::ALL[2],
             black: Black::new(-1),
             hints: true,
+            saver: Saver::DEFAULT,
         },
         last_project: ProjectId::new(89),
     }

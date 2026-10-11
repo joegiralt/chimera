@@ -9,7 +9,7 @@ use chimera_core::storage::{
     SystemCheck, SystemSettings, SystemSync, encode_system, exit_plan, save_ab,
 };
 use chimera_core::ui::midi_settings::MidiSettings;
-use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, ThemeSettings};
+use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, Saver, ThemeSettings};
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
 use common::codec_util::{
@@ -31,6 +31,7 @@ fn settings() -> SystemSettings {
             accent: Accent::ALL[3],
             black: Black::new(1),
             hints: false,
+            saver: Saver::from_index(3),
         },
         last_project: ProjectId::new(7),
     }
@@ -641,6 +642,7 @@ fn hints_off_round_trips() {
     let off = SystemSettings {
         theme: ThemeSettings {
             hints: false,
+            saver: Saver::from_index(3),
             ..ThemeSettings::DEFAULT
         },
         ..SystemSettings::DEFAULT

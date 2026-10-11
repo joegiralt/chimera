@@ -831,6 +831,7 @@ impl Instrument {
     ) {
         match ev.kind {
             NoteKind::On(vel) => {
+                let live = from == NoteOrigin::Live;
                 #[cfg(feature = "probe")]
                 let t0 = crate::probe::now();
                 // Judge the note against this block's patches, not the last.
@@ -934,9 +935,17 @@ impl Instrument {
                     self.note_origin[v] = from;
                     self.keys[v] = ev.note;
                     self.resnap_to[v] = None;
+                    if live {
+                        // The UI's screensaver: the note as this Part sounds it.
+                        let cents = libm::roundf(part.params.pitch.semitones() * 100.0) as i16;
+                        crate::played::note_on(q, ev.note.get(), vel.get(), note.get(), cents);
+                    }
                 }
             }
             NoteKind::Off => {
+                if from == NoteOrigin::Live {
+                    crate::played::note_off(ev.note.get());
+                }
                 // By voice index: every held voice this channel and `from`
                 // hold the key on (one per layered Part), let go with the
                 // last of its keys.

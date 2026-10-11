@@ -8,8 +8,8 @@ use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::SYS_THEME;
 use chimera_core::ui::theme;
 use chimera_core::ui::theme_settings::{
-    Accent, Black, Bright, Gamma, Palette, ThemeSettings, accent_color, accent_soft, duty, ground,
-    midpoint, palette, tables,
+    Accent, Black, Bright, Gamma, Palette, Saver, ThemeSettings, accent_color, accent_soft, duty,
+    ground, midpoint, palette, tables,
 };
 use chimera_hal::{ButtonId, EncoderId};
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
@@ -273,10 +273,16 @@ fn theme_page_is_reachable_and_edits_the_settings() {
             .block(BlockRef::Theme)
             .is_none()
     );
-    // Empty slots edit nothing.
+    // HINTS is already on; SAVER runs to its last step, 60 s.
     feed(&mut ui, Input::turn(EncoderId::E, 3));
-    feed(&mut ui, Input::turn(EncoderId::F, 3));
-    assert_eq!(ui.theme(), t);
+    feed(&mut ui, Input::turn(EncoderId::F, 9));
+    assert_eq!(
+        ui.theme(),
+        ThemeSettings {
+            saver: Saver::from_index(5),
+            ..t
+        }
+    );
 }
 
 /// SYSTEM's hooks: `in_settings` follows MENU and the Part buttons, and
@@ -296,6 +302,7 @@ fn in_settings_and_set_theme() {
         accent: Accent::Lime,
         black: Black::new(1),
         hints: false,
+        saver: Saver::from_index(5),
     };
     ui.set_theme(t);
     assert_eq!(ui.theme(), t);

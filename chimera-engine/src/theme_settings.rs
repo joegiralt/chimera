@@ -214,6 +214,37 @@ impl DiskCode for Black {
     }
 }
 
+/// Idle time before the screensaver, by step index (OFF, then seconds).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Saver(u8);
+
+impl Saver {
+    const SECS: [u8; 6] = [0, 5, 7, 10, 30, 60];
+    pub const OFF: Saver = Saver(0);
+    pub const DEFAULT: Saver = Saver(2);
+
+    /// Step `i`, held to the last.
+    pub const fn from_index(i: u8) -> Saver {
+        Saver(if (i as usize) < Self::SECS.len() {
+            i
+        } else {
+            Self::SECS.len() as u8 - 1
+        })
+    }
+
+    pub const fn index(self) -> u8 {
+        self.0
+    }
+
+    /// Idle time in ms; `None` for OFF.
+    pub const fn ms(self) -> Option<u32> {
+        match Self::SECS[self.0 as usize] {
+            0 => None,
+            s => Some(s as u32 * 1000),
+        }
+    }
+}
+
 /// Everything SETTINGS › PERSONALIZE › THEME sets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ThemeSettings {
@@ -223,6 +254,8 @@ pub struct ThemeSettings {
     pub black: Black,
     /// Gesture hints in the focus bands; off, a band reads its cell alone.
     pub hints: bool,
+    /// Idle time before the oscilloscope screensaver.
+    pub saver: Saver,
 }
 
 impl Default for ThemeSettings {
@@ -239,6 +272,7 @@ impl ThemeSettings {
         accent: Accent::Teal,
         black: Black::DEFAULT,
         hints: true,
+        saver: Saver::DEFAULT,
     };
 
     /// TEAL at ground 0: the palette the renderer draws, unchanged.
@@ -252,6 +286,7 @@ impl ThemeSettings {
     pub const ACCENT: ParamId = ParamId(2);
     pub const BLACK: ParamId = ParamId(3);
     pub const HINTS: ParamId = ParamId(4);
+    pub const SAVER: ParamId = ParamId(5);
 }
 
 const BRIGHT_NAMES: [&str; 19] = [
@@ -260,6 +295,7 @@ const BRIGHT_NAMES: [&str; 19] = [
 ];
 const GAMMA_NAMES: [&str; 3] = ["PANEL", "SOFT", "PUNCH"];
 const ACCENT_NAMES: [&str; 5] = ["TEAL", "AMBER", "ROSE", "LIME", "ICE"];
+const SAVER_NAMES: [&str; 6] = ["OFF", "5 S", "7 S", "10 S", "30 S", "60 S"];
 const BLACK_NAMES: [&str; 7] = ["-2", "-1", "0", "+1", "+2", "+3", "+4"];
 
 const _: () = assert!(BRIGHT_IDENTS.len() == THEME_SPECS[0].max as usize + 1);
@@ -267,7 +303,7 @@ const _: () = assert!(BLACK_IDENTS.len() == THEME_SPECS[3].max as usize + 1);
 
 /// Choices by index: BRIGHT 0..=18 (10..100 %), BLACK 0..=6 (−2..+4). The
 /// defaults are the owner's pick: 70, PUNCH, TEAL, −2.
-pub static THEME_SPECS: [ParamSpec; 5] = [
+pub static THEME_SPECS: [ParamSpec; 6] = [
     ParamSpec::choice(
         0,
         "BRIGHT",
@@ -319,6 +355,19 @@ pub static THEME_SPECS: [ParamSpec; 5] = [
     )
     .ident("HINTS")
     .glyph(crate::glyph::FocusGlyph::Switch),
+    // A SYSTEM from before SAVER has none: 7 S.
+    ParamSpec::stepped(
+        5,
+        "SAVER",
+        ValFmt::Names(&SAVER_NAMES),
+        0.0,
+        5.0,
+        2.0,
+        false,
+        Motion::Stepped(Change::Snap),
+    )
+    .ident("SAVER")
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 impl Block for ThemeSettings {
@@ -334,6 +383,7 @@ impl Block for ThemeSettings {
             Self::ACCENT => self.accent as u8 as f32,
             Self::BLACK => (self.black.0 - Black::MIN) as f32,
             Self::HINTS => f32::from(self.hints),
+            Self::SAVER => self.saver.index() as f32,
             _ => 0.0,
         }
     }
@@ -347,6 +397,7 @@ impl Block for ThemeSettings {
             Self::ACCENT => self.accent = Accent::ALL[(i as usize).min(Accent::ALL.len() - 1)],
             Self::BLACK => self.black = Black::new(Black::MIN.saturating_add(i.min(127) as i8)),
             Self::HINTS => self.hints = i != 0,
+            Self::SAVER => self.saver = Saver::from_index(i),
             _ => {}
         }
     }

@@ -168,6 +168,7 @@ fn main() {
         let now = Instant::now();
         let toast_ms = now.duration_since(toast_at).as_millis() as u32;
         toast_at = now;
+        ui.step_idle(toast_ms);
         if let ToastStep::Show(text) = ui.step_toast(toast_ms) {
             draw_toast(&mut display, text.as_str());
         }

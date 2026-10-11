@@ -1,0 +1,49 @@
+# 0123. An oscilloscope screensaver reads the notes played and the scope
+
+- **Status:** Accepted (2026-10-11)
+- **Deciders:** owner (design), Claude (implementation)
+
+## Context
+The panel's TN display wants resting, and an idle synth can show what it
+hears. The UI already has the scope capture (`scope`, 240 samples, 48 kHz)
+but knows nothing of the notes: they go straight to the audio thread.
+
+## Decision
+- THEME gains SAVER: OFF / 5 / 7 / 10 / 30 / 60 s, default 7 s, stored in
+  SYSTEM beside HINTS (`B 26 5 SAVER`). After that long with no button or
+  encoder input (a prompt or card work counts as attention) the screen shows
+  the master scope large in the accent, through the palette. MIDI never wakes
+  it. Any button or encoder wakes it; that press, and everything until it is
+  released, is swallowed.
+- The readout: IN (last note received, velocity, Part; `+N` for more keys
+  held), OUT (the note as the Part sounds it: after live SNAP, plus PITCH and
+  FINE, as nearest note and cents), "(heard ..)" measured off the scope, then
+  the held keys of every Part and their chord. The cent sign is not in the
+  ASCII fonts: cents read `ct`.
+- OUT comes from the audio thread's note-on, which stores the note after snap
+  and the Part's PITCH + FINE in cents (`played`: a few relaxed atomic ops per
+  note event, none per sample or block). No pitch bend or global tuning exists
+  in the engine, so there is none to add; modulation of PITCH is not in OUT.
+- Measuring runs in the UI loop at ~7 Hz: YIN's cumulative-mean difference
+  finds a period only below a dip of 0.1 (so noise and silence read nothing),
+  sharpened by a linearly interpolated rising zero crossing k periods on.
+  The 5 ms scope window limits it to about 300 Hz and up; below that nothing
+  is shown. Tolerance on clean synthetic sines and saws: 1 cent (tested 3).
+- Chords come from `chimera-theory`'s `Chord::from_notes`: the lowest key is
+  tried as the root first (root position wins: C E G A is C6), then the other
+  tones rising; slash chords name the lowest key; "?" when no quality fits
+  exactly. One key shows its name, two the interval.
+
+## Alternatives considered
+- A SETTINGS page of its own: a sixth cell on THEME was free.
+- Measuring in the audio thread or capturing a longer window: costs the audio
+  path or changes the scope for every page.
+- Waking on MIDI: a playing synth would never rest.
+
+## Consequences
+About 4.4 KB of flash. The screensaver redraws the whole screen at ~7 Hz.
+Low notes (under ~300 Hz) show OUT but no "heard".
+
+## Sources
+de Cheveigné and Kawahara, "YIN, a fundamental frequency estimator for speech
+and music", JASA 2002.

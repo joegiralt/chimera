@@ -30,6 +30,7 @@ pub mod pool_page;
 pub mod region;
 pub mod renderer;
 pub mod reverb_panel;
+pub mod saver;
 pub mod settings;
 pub mod source_cell;
 pub mod splash;
@@ -233,6 +234,11 @@ pub struct UiState {
     theme: ThemeSettings,
     /// SETTINGS › MIDI CONFIG's SYNC; boot sets it from SYSTEM (`set_midi`).
     midi: MidiSettings,
+    /// The screensaver's idle timer, whether it has been drawn since the
+    /// screen last woke, and the frames since it last redrew.
+    idle: saver::Idle,
+    saver_drawn: bool,
+    saver_frames: u8,
     /// What the last card operation said, for a moment.
     toast: busy::ToastTimer,
     /// `project_status`, refreshed by `handle_input` and `update` inside
@@ -332,6 +338,9 @@ crate::in_place::field_list!(UiState => UiState {
     refusal,
     theme,
     midi,
+    idle,
+    saver_drawn,
+    saver_frames,
     toast,
     status,
     clock,
@@ -421,6 +430,9 @@ impl UiState {
             addr_of_mut!((*p).refusal).write(None);
             addr_of_mut!((*p).theme).write(theme);
             addr_of_mut!((*p).midi).write(midi);
+            addr_of_mut!((*p).idle).write(saver::Idle::new());
+            addr_of_mut!((*p).saver_drawn).write(false);
+            addr_of_mut!((*p).saver_frames).write(saver::REDRAW_FRAMES);
             addr_of_mut!((*p).toast).write(busy::ToastTimer::new());
             addr_of_mut!((*p).status).write(StatusCache::new());
             addr_of_mut!((*p).clock).write(animation::UiClock::new());
@@ -773,6 +785,18 @@ impl UiState {
     fn adopt_system(&mut self, s: &SystemSettings) {
         self.theme = s.theme;
         self.midi = s.midi;
+    }
+
+    /// `elapsed_ms` of wall time since the last call, for the screensaver:
+    /// the shells' loops call it beside `step_toast`. A prompt or card work
+    /// is the owner's attention, so neither counts as idle.
+    pub fn step_idle(&mut self, elapsed_ms: u32) {
+        let timeout = self
+            .theme
+            .saver
+            .ms()
+            .filter(|_| !self.prompt_open() && !self.card_pending());
+        self.idle.tick(elapsed_ms, timeout);
     }
 
     /// Once a frame: the toast, `elapsed_ms` after the last frame.
@@ -1998,6 +2022,9 @@ impl UiState {
     /// Process one frame of input: navigation + encoder deltas, then
     /// ORBIT's commands flushed for the frame's publish.
     pub fn handle_input(&mut self, controls: &impl Controls) {
+        if self.idle.touch(any_turn(controls), any_down(controls)) == saver::Touch::Swallow {
+            return;
+        }
         let rev = self.project.rev();
         self.input(controls);
         self.jog_pass(controls.now_ms().0);
@@ -2358,6 +2385,8 @@ impl UiState {
 
     /// Advance animations one frame: a `Pacer`'s, at `UI_FPS`.
     pub fn update(&mut self, _: animation::UiTick) {
+        self.saver_frames = self.saver_frames.saturating_add(1);
+        self.saver_drawn |= self.idle.asleep();
         // A pending source hole closes when nothing above it sounds; never
         // under a load staging in the gap.
         if !self.src.loading() {
@@ -2472,6 +2501,20 @@ impl UiState {
         self.render_with_audio(display, perf, None, scope);
     }
 
+    /// The screensaver, if the screen is asleep: drawn and `true`.
+    fn draw_saver<D>(&self, display: &mut D, scope: &[f32; SCOPE_LEN]) -> bool
+    where
+        D: embedded_graphics::draw_target::DrawTarget<
+                Color = embedded_graphics::pixelcolor::Rgb565,
+            >,
+    {
+        let asleep = self.idle.asleep();
+        if asleep {
+            saver::draw(display, scope, &saver::Readout::capture(scope));
+        }
+        asleep
+    }
+
     /// Render full screen with `scope` as the live output and `audio` behind
     /// SYSTEM › ABOUT and DIAGNOSTICS › AUDIO LOAD.
     pub fn render_with_audio<D>(
@@ -2485,6 +2528,9 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             >,
     {
+        if self.draw_saver(display, scope) {
+            return;
+        }
         if let Some((part, b)) = self.loc.browse() {
             let _ = display.clear(theme::BG);
             let (cursor, scroll) = (b.cursor(), b.scroll());
@@ -2803,6 +2849,23 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             > + chimera_hal::ChimeraDisplay,
     {
+        // Asleep: the screensaver alone, ~7 Hz, the whole screen.
+        if self.idle.asleep() {
+            let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];
+            if self.saver_frames >= saver::REDRAW_FRAMES {
+                self.saver_frames = 0;
+                self.saver_drawn = true;
+                self.draw_saver(display, scope);
+                flush_list[0] = (0, chimera_hal::SCREEN_HEIGHT);
+            }
+            return flush_list;
+        }
+        // Awake again: every region and the browser redraw over it.
+        if core::mem::take(&mut self.saver_drawn) {
+            self.saver_frames = saver::REDRAW_FRAMES;
+            self.region_set.prev_screen = None;
+            self.browser_dirty = true;
+        }
         let hints_moved = self.hints_moved();
         // The Sound rung's browser: one flush region, redrawn only while
         // dirty (opened, cursor/scroll moved; #7).
@@ -2918,6 +2981,21 @@ fn part_key(c: &impl Controls) -> bool {
         && PART_BUTTONS
             .iter()
             .any(|&b| c.button_state(b) == ButtonState::Pressed)
+}
+
+/// An encoder moved this frame.
+fn any_turn(controls: &impl Controls) -> bool {
+    ALL_ENCODERS.iter().any(|&e| controls.encoder_delta(e) != 0)
+}
+
+/// A button went down or is held down.
+fn any_down(controls: &impl Controls) -> bool {
+    ALL_BUTTONS.iter().any(|&b| {
+        matches!(
+            controls.button_state(b),
+            ButtonState::Pressed | ButtonState::Held
+        )
+    })
 }
 
 /// Whether `controls` reports an encoder turn or a button press this frame —
