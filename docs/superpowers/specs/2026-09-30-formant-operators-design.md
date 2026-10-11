@@ -1,11 +1,18 @@
 # Formant Operators for Algo: Design
 
 **Date:** 2026-09-30
-**Status:** Draft, revised 2026-09-30 after an adversarial review and the owner's rulings; awaiting owner review
+**Status:** Refreshed 2026-10-11 against main 4473f0a1; awaiting owner review of the delta
 **Issue:** private issue #243
 **Related:** private issue #247 (the per-Part MIDI map); #37 (operator pages, a prerequisite)
-**Builds on:** main at 4374cff, plus Modal 2 step A (branch `modal2-resonators`), which brings ADR 0056's cost method.
-**Sources:** the research brief (FSVR's prose docs and Yamaha's patent US5610354), the Algo code on main (`dsp/algo/*`), and ADRs 0010, 0022, 0024–0026, 0031, 0045, 0056 and 0058.
+**Builds on:** main at 4473f0a1. Modal 2, ORBIT, projects-core, the param sweep, ADR 0044's ladder and ADR 0108's crate split have all merged: the DSP and the model live in `chimera-engine`, the UI in `chimera-core`. The CPU share of ADR 0124 (75 %, branch `audio-share-75`) is a prerequisite for three formants (§ 1).
+**Sources:** the research brief (FSVR's prose docs and Yamaha's patent US5610354), the Algo code on main (`chimera-engine/src/dsp/algo/*`), and ADRs 0010, 0022, 0024–0026, 0031, 0045, 0056, 0063, 0067, 0081, 0087, 0091, 0096, 0108, 0109, 0112, 0119, 0122 and 0126.
+
+**Refresh (2026-10-11).** Every path, type, constant and ADR number now matches main at 4473f0a1. The Decisions are unchanged. What moved (the ledger's `refresh-delta.md` lists it for the owner):
+- **The budget.** Today's cost model bills the filter's moving path and its LEVEL clipper under heavy routes, and the bus and chain cost more. The budget is 72 at 70 % and 197 at 75 %, so N = 3 needs `audio-share-75` and the 120 target (§ 1).
+- **Labels follow the full-word rule** (§ 2, § 6): FORMANT, CENTRE, COARSE, VELOCITY and NOISE. BW, RES, SLOT and FDBK stay short because the full words don't fit.
+- **Loudness** is ADR 0063's reference at ADR 0109's gain, −11.0 LUFS (§ 3, Demo clips).
+- **Saving** goes through ADR 0087's neutral omission, and the Sound cap grows (§ 10).
+- **Navigation** is ADR 0044's ladder, so focus by identity goes through `NavCtx`, `Recall` and `PageAt` (§ 6).
 
 **Revision (2026-09-30).** An adversarial review found four promises the first draft broke and eight weaker points. The owner and the controller ruled on them, and this revision makes these changes:
 - **Owner's rulings:**
@@ -31,7 +38,7 @@ This spec adds a voiced kind, FRMT, and an unvoiced kind, NOIS, to Algo's WAVE l
 - VOWEL, FRMT and BW are mod destinations;
 - the pages adapt: a patch with no formant operator shows the same pages and cells as today, apart from one dimmed cell (§ 6);
 - every test in § Tests passes, and old patches load and sound bit for bit as before;
-- its ADR is written (the next free number; 0060 and 0061 went to Modal 2);
+- its ADR is written (the next free number; 0127 is the highest on any branch on 2026-10-11, so expect 0129, after Phase 0's 0128);
 - the three demo clips have passed the owner's UAT;
 - the chip bench's formant rows are measured at the ship flash.
 
@@ -84,7 +91,7 @@ This spec adds a voiced kind, FRMT, and an unvoiced kind, NOIS, to Algo's WAVE l
 
 ### Types
 
-- `WaveId` stays what it is: an index into the 16 generated tables (`WAVE_COUNT = 16`). The tables, `chimera-waves` and ADR 0025's DTCM copy are unchanged.
+- `WaveId` stays what it is: an index into the 16 generated tables (`WAVE_COUNT = 16`, `chimera-engine/src/dsp/algo/waves.rs`). The tables, `chimera-waves` and the DTCM tables rendered at boot (ADR 0122, amending 0025) are unchanged.
 - A new `OpKind` is what an operator is:
 
   ```rust
@@ -100,21 +107,37 @@ This spec adds a voiced kind, FRMT, and an unvoiced kind, NOIS, to Algo's WAVE l
 |---|---|---|---|
 | 0–15 | W1 … SSAW | as today | `Table(WaveId(code))` |
 | 16 | FRMT | `FRMT` | `Formant` |
-| 17 | NOIS | `NOIS` | `Noise` |
+| 17 | NOISE | `NOIS` | `Noise` |
 
+- **Names follow the full-word rule** (refresh 2026-10-11). A value is measured in `theme::FONT_VALUE` against `theme::CELL_BAR_W` (62 px).
+  - NOISE fits (46 px), so it is the name, while its frozen ident stays `NOIS`.
+  - FORMANT doesn't fit (74 px), so code 16 reads FRMT.
 - `OP_KIND_NAMES` and `OP_KIND_IDENTS` (18 entries each) are `WAVE_NAMES` and `WAVE_IDENTS` followed by the two new entries. `ALGO_OP_SPECS[0]` lists them, with `max` 17.
 - The const assert becomes `ALGO_OP_SPECS[0].max as usize == OP_KIND_COUNT - 1`.
-- `set_enum_code` accepts 0–17. Codes 16 and 17 are appended to `disk_codes_v1.txt` for each of the six operator blocks.
-- The OSC home page (WAVE) is unchanged: FRMT and NOIS are the last two entries of its list.
+- `set_enum_code` accepts 0–17. Codes 16 and 17 are appended to `disk_codes_v1.txt` (K 3–8, `OP_A` … `OP_F`) for each of the six operator blocks.
+- The OSC home page (WAVE) is unchanged: FRMT and NOISE are the last two entries of its list.
+- **WAVE's focus glyph** is `FocusGlyph::Wave` (ADR 0070), which today clamps the value to a `WaveId`, so codes 16 and 17 would draw SSAW. It resolves through `OpKind` instead:
+  - a table draws `wave_trace`;
+  - FRMT draws one grain;
+  - NOISE draws its band.
 
 ### The formant budget
 
-**The floor's worst case.** This is ADR 0026's convention: LP24, no FOLD or DRIVE, and A16 ∪ A17's 12 links. On top of that, **heavy routes and the master tape**:
+**The floor's worst case.** This is ADR 0026's convention: LP24 on the clean SVF (steady bill 0), no FOLD, DRIVE or ALGO taps (ADR 0096), and A16 ∪ A17's 12 links. On top of that, **heavy routes and the master tape**:
 
-- **Heavy routes:** ENV B in BURST mode on the VCA with its curve, a slide, all 16 destinations routed, and all three LFOs as FUNC.
-  - That is `ModRouting` 47 + 24 + 98 + 1 + 76 + 33 + 6 + 15 + 15 = **315**, so the voice's overhead is 315 + `CHAIN_COST` 10 = **325**.
-- **Four voices on rev V with the tape:** (7,000 − 1,470) / 4 = 1,382 cycles a voice. That leaves the engine **1,057**.
-- **The shape's fixed terms:** `COST_BASE` 370, 12 links × 8 = 96, and six operators at `COST_OP` + `COST_FEEDBACK` = 366. That leaves **225 cycles** for the formant operators' extra cost over a table operator.
+- **Heavy routes (refreshed 2026-10-11).** The 2026-09-30 case is priced on today's model. In 2026-09-30's matrix, "all 16 destinations" included CUTOFF. Since filter-types (ADR 0096), CUTOFF and RES are fixed columns (FREQ and Q) beside 16 registry columns, and a route into them bills the filter's moving path. So the case is:
+  - ENV B in BURST mode on the VCA, with its LEVEL routed;
+  - a slide;
+  - FREQ and Q, and all 16 registry destinations, the filter's LEVEL among them;
+  - all three LFOs as FUNC.
+- **What it costs:**
+  - `ModRouting` is BASE 47 + CLAMP 24 + ENV_B 98 + BURST 76 + LEVEL 10 + SLIDE 33 + DEST_FIRST 6 + 17 × DEST 1 + 3 × FUNC 5 = **326**. CURVE isn't billed in BURST mode: `env_slot_cost`'s arms are exclusive.
+  - The filter adds its moving path, `CLEAN_MOVE_COST` 75, and LEVEL's clipper, `FILTER_LEVEL_COST` 35. Neither was billed on 2026-09-30.
+  - With `Voice::CHAIN_COST` 36 (was 10), the voice's overhead is 326 + 110 + 36 = **472**.
+- **Four voices on rev V with the tape:** ⌊(7,000 − 1,494) / 4⌋ = 1,376 cycles a voice at main's 70 % share. That leaves the engine **904**.
+  - At ADR 0124's 75 % (branch `audio-share-75`): ⌊(7,500 − 1,494) / 4⌋ = 1,501, which leaves **1,029**.
+- **The shape's fixed terms:** `COST_BASE` 370, 12 links × 8 = 96, and six operators at `COST_OP` + `COST_FEEDBACK` = 366, so 832 in all (unchanged). That leaves the formant operators' extra cost over a table operator **72 cycles at 70 %**, or **197 at 75 %**.
+- **ORBIT is outside the convention.** While it plays, ADR 0091 reserves 1,028 more, and even the costliest table patch under heavy routes gets 3 voices.
 
 The budget:
 
@@ -125,12 +148,21 @@ The budget:
 | Table | 0 |
 
 ```
-FORMANT_BUDGET = 1,382 − 325 − 370 − 96 − 366 = 225
-Σ charges ≤ 225   ⇒   N = ⌊225 / 70⌋ = 3 FRMT operators
+FORMANT_BUDGET = ⌊(budget − FxBus::COST with the tape) / 4⌋ − 472 − 832
+               = 1,376 − 472 − 832 =  72   at 70 % (main)
+               = 1,501 − 472 − 832 = 197   at 75 % (audio-share-75)
+Σ charges ≤ FORMANT_BUDGET   ⇒   N = ⌊FORMANT_BUDGET / charge(FRMT)⌋
 ```
 
-- **On Modal 2's terms (amended 2026-09-30, controller ruling).** Modal 2 raises `CHAIN_COST` to 30 and the bus with the tape to 1,490 (its ADRs 0060–0061). That gives ⌊(7,000 − 1,490)/4⌋ − 345 − 832 = **200**, so N = 2. The budget is derived at build time and never typed in.
+| Share | Budget | N at the estimate (charge 70) | N at the target (charge 60) |
+|---|---|---|---|
+| 70 % (main) | 72 | 1 | 1 |
+| 75 % (`audio-share-75`) | 197 | 2 | **3** (CHOIR: 3 · 60 + 10 = 190 ≤ 197) |
+
+- **History.** The first draft had 225, and Modal 2's terms gave 200. Today's 197 at 75 % is that same picture. At 70 % the filter's newly billed routes take the margin down to one FRMT.
+- **The budget is derived at build time** and never typed in.
 - **Optimise first, fall back to 2 (owner, 2026-09-30).** A performance pass makes FRMT cheap enough that 3 fit on these terms. It uses block-at-a-time spans between grain starts, hoisted per-block and per-grain work, and output bit-exact against the per-sample path. The target is `COST_FRMT` ≤ 120 by ADR 0056's method.
+  - **Refresh (2026-10-11).** The fallback to 2 needs the 75 % share, and on main's 70 % neither outcome is reachable. The plan stops for the owner at Task 3 if the derived N is under 2.
   - If the target is met, N = 3, and CHOIR and TALK BASS keep three formants.
   - If not, N = 2, and they take two-formant voicings. Nothing stops.
   - The ADR records both the target and the outcome.
@@ -138,12 +170,22 @@ FORMANT_BUDGET = 1,382 − 325 − 370 − 96 − 366 = 225
   - F1 and F2 carry a vowel's identity, and F3 adds speech clarity. More than three isn't worth the polyphony it costs.
   - Formant operators are meant to be mixed with regular FM operators, not to fill all six.
 
-**The rule the type enforces is exactly `70·n_FRMT + 10·n_NOIS ≤ 225`**, checked on every assignment: 3 FRMT with at most 1 NOIS (220), 2 FRMT with up to 4 NOIS (180), and any number of NOIS with fewer FRMT. 3 FRMT with 2 NOIS (230) is refused.
+**The rule the type enforces is exactly `charge(FRMT)·n_FRMT + 10·n_NOIS ≤ FORMANT_BUDGET`**, checked on every assignment. At 75 % with the 120 target (charge 60, budget 197):
+- 3 FRMT go with at most 1 NOIS (190);
+- 2 FRMT go with up to 4 NOIS (160);
+- any number of NOIS goes with fewer FRMT;
+- 3 FRMT with 2 NOIS (200) is refused.
 
-- **Derived, not typed in.** `FORMANT_BUDGET` is a `const` computed from `COST_*`, `FxBus::COST` with the tape, the heavy-route overhead and the rev V budget. When the bench updates a term, N follows.
+- **Derived, not typed in.** `FORMANT_BUDGET` is a `const` computed from:
+  - `COST_*`;
+  - the bus with the tape (`FxBus::COST` under `master-tape`, today 1,494);
+  - the heavy-route overhead, from `ModRouting`'s terms, `CLEAN_MOVE_COST`, `FILTER_LEVEL_COST` and `Voice::CHAIN_COST`;
+  - the rev V `SampleBudget` (`hw::AUDIO_BUDGET_PERCENT`).
+
+  When the bench or the share updates a term, N follows.
 - **Only a patch within budget can be built.** Kinds live in a newtype, `Kinds([OpKind; OPS])`, held by `AlgoParams`:
   - Its only mutator, `AlgoParams::try_set_kind(op, kind) -> Result<(), OverBudget>`, refuses a kind that would overspend.
-  - `AlgoOpParams` no longer carries its own wave byte. The `(AlgoOp(n), WAVE)` address is served through `AlgoParams`, so every write path goes through the check: the UI, `set_enum_code`, the decoder, the param sweep and a future gang edit.
+  - `AlgoOpParams` no longer carries its own wave byte. The `(AlgoOp(n), WAVE)` address is served through `AlgoParams` (`BlockRead::block` and `Blocks::block_mut` in `chimera-engine/src/addr.rs`), so every write path goes through the check: the UI, `set_enum_code`, the decoder, the param sweep and a future gang edit.
   - `Kinds::new` is `const` and checks its argument, so INIT and the factory Sounds are checked at compile time.
 - **The WAVE cell.** Turning the encoder steps over a refused FRMT or NOIS, and a toast reads "FORMANT BUDGET FULL". The value never lands on a refused kind.
 - **Decoding.** A file that would overspend decodes its excess formant operators as W1, in operator order, and the load toast says so. No firmware writes such a file.
@@ -171,7 +213,7 @@ Operator block (`AlgoOpParams`):
 
 | Id | Ident | FRMT label | NOIS label | Range (stored) | Law | Default | Read | Modulatable |
 |---|---|---|---|---|---|---|---|---|
-| 13 | `FRMT` | FRMT | CNTR | 0–168 | `100 · 2^(v/24)` Hz: 100 Hz to 12.8 kHz, 50 cents a step | 72 (800 Hz) | every block | yes |
+| 13 | `FRMT` | FORMANT | CENTRE | 0–168 | `100 · 2^(v/24)` Hz: 100 Hz to 12.8 kHz, 50 cents a step | 72 (800 Hz) | every block | yes |
 | 14 | `BW` | BW | WIDTH | 0–216 | `20 · 2^(v/24)` Hz: 20 Hz to 10.24 kHz, 50 cents a step | 72 (160 Hz) | every block | yes |
 | 15 | `SKIRT` | SKIRT | — | 0–3 | window exponent `q = 2^(SKIRT+1)` (§ 3) | 1 | note-on | no |
 | 16 | `KEY` | KEY | — | 0–100 | % keyboard follow | 0 | note-on | no |
@@ -183,6 +225,17 @@ Algo block (`AlgoParams`):
 | Id | Ident | Label | Range | Law | Default | Read | Modulatable |
 |---|---|---|---|---|---|---|---|
 | 4 | `VOWEL` | VOWEL | 0–100 | position `x = v/25` along U O A E I (§ 5) | 50 (A) | every block | yes |
+
+- **Labels follow the full-word rule** (refresh 2026-10-11). A label is measured with `draw::text_width(&theme::FONT_LABEL, s, theme::LABEL_TRACKING)` against `theme::CELL_BAR_W` (62 px).
+  - These fit: FORMANT 57, CENTRE 48, WIDTH 38, SKIRT 34, KEY 24 and VOWEL 42.
+  - These don't, so the short forms stay: BANDWIDTH (72) is BW, RESONANCE (76) is RES, and VOWEL SLOT (76) is SLOT.
+  - The idents are frozen and unchanged.
+- **Motion (ADR 0112).** Each spec declares one:
+  - FRMT, BW and VOWEL are `Continuous(Smoothing::KNOB)`. The Part's knobs glide them through `AlgoLive`, as FINE and DETUNE are.
+  - KEY and RES are `Continuous(Smoothing::NoteOn)`.
+  - SKIRT and VSLOT are `Stepped(Change::NoteOn)`.
+  - `param_declarations_test` and `param_motion_test` cover them.
+- **Focus glyphs (ADR 0067).** FRMT, BW, KEY, RES and VOWEL take the default `Arc`, and SKIRT and VSLOT take `None` (word choices).
 
 - **One field serves both kinds for frequency and width.** FRMT and CENTRE are the same stored field, and so are BW and WIDTH.
   - Each pair means the same measurable thing on both kinds: the frequency of the spectral peak, and the peak's −3 dB full width in Hz.
@@ -203,7 +256,7 @@ Algo block (`AlgoParams`):
   - RES 0 is pure band noise.
   - VOWEL A is the table's reference, where every operator's offset is its FRMT exactly (§ 5).
 - **Display.**
-  - A new `ValFmt::LogHz { base: u16, per_octave: u8 }` shows Hz below 1 kHz ("734") and kHz above ("1.10k").
+  - A new `ValFmt::LogHz { base: u16, per_octave: u8 }` reads as CUTOFF's `Law::Cutoff` does (`ui/fmt.rs`): whole Hz under 1 kHz ("734 Hz"), then kHz to three figures ("1.10 kHz", "12.8 kHz").
   - A new `ValFmt::Vowel` shows the nearest vowel's letter, and the cell's arc shows the exact position.
   - KEY and RES are `ValFmt::Int(100)`, SKIRT is `ValFmt::Int(3)`, and VSLOT is `ValFmt::Names`.
   - FRMT's cell shows the stored Hz, which is the Hz heard at VOWEL A and C4. The operator page's viz shows the live FC and BW_eff (§ 6).
@@ -299,7 +352,7 @@ SKIRT's constants, measured on the host and pinned by tests:
 
 ### Carrier
 
-- The carrier is the sine table W1 at mip 0. It is already in DTCM, so no new table is needed.
+- The carrier is the sine table W1 at mip 0. It is already in DTCM (rendered there at boot, ADR 0122), so no new table is needed.
 - A lane restarts its carrier at `c0 = −inc_c / (2 · r_w)` cycles, which puts the sine's zero crossing at the window's centre.
 - The carrier frequency `FC` is read every block. The carrier phase is continuous, so a change never clicks.
 
@@ -347,7 +400,7 @@ The operator produces one raw grain signal, `y = Σ lanes W(x) · sin(c')`, time
   - `y · g_c`, with `g_c = min(R · g_rms, 1/p̂)`.
   - The exact RMS gain is `g_rms = 1 / sqrt(D · c_q · max(1 − ρ_q(2·FC·L), 0.05))`, where `ρ_q` is W²'s normalised transform. The bracket is the odd grain's exact energy: its negative-frequency image cancels part of it (review C1).
   - **The reference is `R = −12 dB`, relative to a full-scale sine's RMS.** A formant operator at LEVEL 99 has the RMS of a sine at LEVEL 83.
-  - **The owner accepted this (2026-09-30):** clean peaks, and loudness through ADR 0058's reference.
+  - **The owner accepted this (2026-09-30):** clean peaks, and loudness through ADR 0058's reference (ADR 0063's today, at ADR 0109's gain).
   - **Why −12 dB:** a grain train is peaky. Its crest runs 4–15 dB across the vowel range. At equal RMS to a sine it would peak up to +12 dB over a sine and break the factory and sanity tests' peak of 1.0. So the reference is set so the ceiling `1/p̂` binds only past a 15 dB crest.
   - **The peak is at most 1.0 by construction**, like a sine's.
 - **How the gains are applied.** `g_m` is folded into the operator's gain ramp, and `g_c / g_m` into its carrier-weight ramp. Both are computed per block and ramped, so they cost nothing per sample and never step.
@@ -444,52 +497,65 @@ The table is in path order, from dark to bright round the vowel triangle:
 
 ### ALGO home
 
-- The cells are ALG A, ALG B, MORPH, TRNSP, VOL and **VOWEL**.
-- `view::dimmed` gains `(Algo, VOWEL) => no operator is a formant kind`.
+- The cells are ALG A, ALG B, MORPH, TRNSP, VOL and **VOWEL**. `ALGO_ALG.params[5]` is `EMPTY` on main, so VOWEL takes it.
+- `view::dimmed` gains `(Algo, VOWEL) => no operator is a formant kind`, beside its MORPH arm.
 
 ### OSC sub-row: dynamic, and focus by identity
 
-- **Two sub-rows.** The Algo chain gets two static `ChainDef2`s, identical except the OSC block's sub-pages: today's list, and the same list with **FRMT** first. FRMT is a `group(...)` page of `AlgoOpParams::FRMT` across OP1–OP6, named "Formant", short "FRM".
-  - A pure `fn algo_chain(&AlgoParams) -> &'static ChainDef2` picks the list: the formant one when any operator is a formant kind.
-  - `block_def.rs` and `dungeon_map.rs` read the chain through it.
-- **Focus by identity** (review I8). The UI's page position is kept by `BlockDef.id`, not by the `sub_page: u8` index. When the list changes, the focus resolves to the same page's new index.
+- **Two sub-rows.** `ALGO_CHAIN` gets a twin, `ALGO_FORMANT_CHAIN`. The two are identical except the OSC block's sub-pages: today's list, and the same list with **FORMANT** first.
+  - FORMANT is a `group(...)` page of `AlgoOpParams::FRMT` across OP1–OP6, named "Formant", short "FRM". Map pills are 34 px, so the map keeps the short, as every group page does.
+- **The chain is picked per Sound** (ADR 0044's ladder).
+  - `nav_cx` builds `NavCtx` from each Part's Sound. Today it carries `engines: [EngineType; MAX_PARTS]`, and `nav.rs` reads a chain through `chain_def_for(engine)`.
+  - It carries a `PartChain` per Part instead, `PartChain::of(&Sound)`: the formant chain when any operator is a formant kind.
+  - `chain_def_for(engine)` stays as each engine's base chain, for the browser and the tests.
+- **Focus by identity** (review I8). A page is kept by `BlockDef.id`, not by its `PageAt` index. When a Part's list changes, `refocus` maps the `PageAt` to the same page's new place.
+  - The list changes on a WAVE edit, a project load (`UiState::project_replaced`), or `Recall`'s stored page (`Recall::pages_of`, which today goes home only on an engine change).
   - If the page left the list, the focus moves to the OSC home.
-  - So inserting FRMT first never lands a Sound load or an undo on the wrong page.
-- **Why FRMT first:** it is what a formant patch is edited by most, and it appears as the player sets a WAVE to FRMT or NOIS on the OSC home, so one step right lands on it.
+  - So inserting FORMANT first never lands the player on the wrong page. There is no undo on main.
+- **Why FORMANT first:** it is what a formant patch is edited by most, and it appears as the player sets a WAVE to FRMT or NOISE on the OSC home, so one EDIT lands on it.
 - **Cells.**
-  - On the FRMT page, a table operator's cell is dimmed (`(AlgoOp(n), FRMT) => kind is Table`).
-  - A NOIS operator's cell shows its centre.
-- The all-pages walk includes the FRMT page exactly when a formant operator exists.
+  - On the FORMANT page, a table operator's cell is dimmed (`(AlgoOp(n), FRMT) => kind is Table`).
+  - A NOISE operator's cell shows its centre.
+- The all-pages walk includes the FORMANT page exactly when a formant operator exists.
 
 ### Operator pages (prerequisite phase)
 
-- **Where they live (amended 2026-09-30, owner).** OP1 … OP6 are sub-pages of the OSC node, after its twelve group pages, which stay unchanged. There is no envelope-page merge: the controller's default, which the owner may revisit. EDIT and SEQ step through them as on every page. There is no new gesture: B*n* keeps meaning Part *n*, and #37's hold-B1–B6 is dropped.
-- **Dependency.** No operator page is built on main, and BW, SKIRT, KEY, RES and SLOT have no page without one. The OP sub-pages land first, as their own branch (Phase 0), with the dynamic sub-row and focus by identity. This spec builds on that branch.
+- **Where they live (amended 2026-09-30, owner).** OP1 … OP6 are sub-pages of the OSC node, after its twelve group pages, which stay unchanged: CRS, FIN, DET, LVL, VEL, AR, D1R, D1L, D2R, RR, RS and FBK.
+  - There is no envelope-page merge. That is the controller's default, which the owner may revisit.
+  - EDIT and SEQ step through them as on every page. EDIT wraps from OP6 back to OSC (ADR 0081).
+  - There is no new gesture: B*n* keeps meaning Part *n*, and #37's hold-B1–B6 is dropped.
+- **Dependency.** No operator page is built on main at 4473f0a1, and BW, SKIRT, KEY, RES and SLOT have no page without one.
+  - The OP sub-pages land first, as their own branch (Phase 0), with the dynamic sub-row and focus by identity. This spec builds on that branch.
   - Gang edit, LEVEL SCALE and the living diagram stay in #37.
-- **Cells by kind.** Cells come from a pure lookup keyed on the operator's kind:
+- **Cells by kind.** Cells come from a pure lookup keyed on the operator's kind, `op_page::page_cells(kind)`. It is resolved in `view::view` through a new `SlotBinding::OpPanel(op, k)`, as MDL2's cells are through `SlotBinding::ModalPanel` and `modal::page_cells`. Labels follow the full-word rule (62 px):
 
   | Kind | Cells |
   |---|---|
-  | Table | WAVE, COARSE, FINE, LEVEL, FB, VEL (as #37 specs them) |
-  | FRMT | WAVE, FRMT, BW, SKIRT, KEY, SLOT |
-  | NOIS | WAVE, CNTR, WIDTH, RES, SLOT, LEVEL |
+  | Table | WAVE, COARSE, FINE, LEVEL, FDBK, VELOCITY |
+  | FRMT | WAVE, FORMANT, BW, SKIRT, KEY, SLOT |
+  | NOISE | WAVE, CENTRE, WIDTH, RES, SLOT, LEVEL |
 
-  - FRMT's COARSE, FINE, LEVEL, FB and VEL stay on their group pages.
+  - COARSE (50 px) and VELOCITY (59) fit. FEEDBACK (65) doesn't, so the cell reads the spec's FDBK.
+  - FRMT's COARSE, FINE, LEVEL, FDBK and VELOCITY stay on their group pages.
   - Only the OP pages of formant operators swap in formant cells (amended 2026-09-30, owner). A table operator's OP page is always the Table row.
 - **Viz band.**
   - A FRMT page draws one grain (window times carrier) at the live FC and BW_eff, and prints both. So the page shows what VOWEL, KEY and the width floor are doing, even when the cell's stored Hz differs.
-  - A NOIS page draws its band as a bell over a log-frequency axis at the live centre.
-  - The envelope beside it is unchanged.
+  - A NOISE page draws its band as a bell over a log-frequency axis at the live centre.
+  - The envelope beside it is today's `viz::op_env`, and the table operator's wave is `glyph::wave_trace`.
+  - Everything is drawn in theme tokens only (`ui::theme`). INVERT maps them (ADR 0126), and `light_golden_test` fails on any other colour.
 
 ### Dimming on the group pages
 
-COARSE, FINE, DETUNE and FDBK cells are dimmed for NOIS operators, through `view::dimmed`.
+- COARSE, FINE, DETUNE and FDBK cells are dimmed for NOISE operators, through `view::dimmed`.
+- One pure `kinds::reads(kind, id) -> bool` decides, as `modal::reads` and `tape_engine::reads` do for their pages.
 
 ## 7. Modulation
 
 - **New destinations.** VOWEL (`Algo`, id 4), FRMT (`AlgoOp(n)`, id 13) and BW (id 14) are `modulatable` under ADR 0010, because the engine reads them every block.
-  - `AlgoLive` gains `vowel: f32`, `frmt: [f32; OPS]` and `bw: [f32; OPS]`.
-  - `AlgoLive::offset` gains the three arms, with ADR 0010's formula unchanged.
+  - `AlgoLive` (`chimera-engine/src/dsp/algo/engine.rs`) holds today `morph`, `level`, `patch`, `fine`, `detune`, `feedback`, `velocity`, `routed` and `morph_routed`. It gains `vowel: f32`, `frmt: [f32; OPS]` and `bw: [f32; OPS]`.
+  - `AlgoLive::slot` gains the three arms, so the Part's knobs glide them (ADR 0112).
+  - `AlgoLive::offset` gains them too, so routes reach them, with ADR 0010's formula unchanged.
+  - They are registry columns: the matrix has 16 of them beside its four fixed columns (FREQ, Q, VCA, FOLD, ADR 0096).
 - **Routes to non-formant operators.** A route into FRMT or BW on a table operator is allowed and does nothing, like a LEVEL route to an operator outside the algorithm. The matrix already shows such columns as inert, through `view::dimmed`.
 - **Not modulatable:**
   - SKIRT, because an exponent change mid-grain would jump the window;
@@ -504,6 +570,7 @@ COARSE, FINE, DETUNE and FDBK cells are dimmed for NOIS operators, through `view
   - a CC drives a parameter over a range;
   - the map is saved with the Part, assigned by MIDI learn, and listed on a MIDI MAP page.
   - This project builds nothing for it.
+- **ALGO taps (ADR 0096).** A formant operator is a tap source like any operator. Its tap row takes the peak-referenced signal (§ 3), clamped to ±1 as every row is.
 - **Supersedes in part:** ADR 0022's rule that "MORPH and the six LEVELs are the destinations", now extended by these three.
 
 ## 8. Engine and kernel
@@ -514,10 +581,11 @@ COARSE, FINE, DETUNE and FDBK cells are dimmed for NOIS operators, through `view
   - `run_noise::<N>` for NOIS.
   - `run_pair` pairs only two table operators.
   - `render_samples` matches on the kind in `step`. The branch is the same every sample, so the predictor carries it.
+  - Each path writes its operator's block into the row `render_ops` keeps for the links and the taps (`bufs`, then `TapRows`), as `run_one` does.
 - **Formant state.** Per operator, `Kernel` holds a plain enum, with no `unsafe`:
 
   ```rust
-  enum OpState {
+  enum KindState {   // kernel.rs already has a lane struct named `OpState`
       Table,
       Formant { w: [f32; 2], c: [u32; 2], older: u8 },
       Noise { rng: u32, y1: f32, y2: f32 },
@@ -525,9 +593,13 @@ COARSE, FINE, DETUNE and FDBK cells are dimmed for NOIS operators, through `view
   ```
 
   - The per-block `OpBlock` gains the kind's increments, ramps and gains. Its `lo`/`hi` table pair is unused by these kinds.
-- **Swap.** A kind change is a WAVE code change, so `Swap::Ducking` ducks the operator over one block and swaps it, as today.
+- **Swap.** A kind change is a WAVE code change, so `Swap::Ducking` (its `waves` mask) ducks the operator over one block and swaps it, as today.
+  - `Kernel::reset(op)` becomes `reset(op, kind)`.
   - The new kind's state starts closed: a FRMT's lanes at `w = 1` with its first grain fired; a NOIS's poles at 0, keeping its seed.
 - **Idle.** A silent formant operator advances its grain clock and envelope, as `idle` does today.
+- **Glides.** `glide_on` and `glide_to` (#254) move the pitch, so they move the grain clock like any operator's. FC follows only through KEY.
+- **In-place build.** `AlgoEngine::init_in_place` writes every new field, and `field_list!` fails to compile until it does.
+- **Seeding.** `EngineSlot::build`'s Algo arm seeds the noise from its `VoiceIdx`, as VA's `place` and TAPE's `seed` do.
 - **Unchanged:**
   - the mip machinery (`mip_target`, `mip_step`) is skipped for these kinds;
   - MORPH, `carrier_norm`, the plan, VELOCITY and the envelopes are untouched;
@@ -539,7 +611,7 @@ COARSE, FINE, DETUNE and FDBK cells are dimmed for NOIS operators, through `view
 
 - This is ADR 0056's method: the sine operator's benched `COST_OP` (60), plus the hot path's added instructions at 1.46 cycles an instruction, plus 10 %, rounded up to 10.
 - Per-block work is spread over the block's 64 samples.
-- The counts are estimates from the planned code paths. The plan recounts them from the release build's `llvm-objdump -d --mcpu=cortex-m7` once the code exists, and the chip bench confirms them at ship.
+- The counts are estimates from the planned code paths. The plan recounts them from the `bench-algo` build with `tools/loop_count.py` (ADR 0056's count, automated) once the code exists, and the chip bench confirms them at ship.
 - The M7 is in-order, so the squaring chain's dependent latency may cost more than its count. The bench decides.
 
 | Path | Added instructions a sample (vs a sine operator) |
@@ -566,42 +638,50 @@ COARSE, FINE, DETUNE and FDBK cells are dimmed for NOIS operators, through `view
   - `COST_FEEDBACK` is billed for table and FRMT operators with FEEDBACK above 0, never for NOIS.
   - Links into any active operator are billed `COST_LINK`, as today.
 
-Voices beside the whole FX bus, per ADR 0031's arithmetic, without mod routes: rev V budget 7,000, rev Y 5,833, bus 1,160, voice = engine cost + 57.
+Voices beside the whole FX bus, per ADR 0031's arithmetic, without mod routes (refreshed 2026-10-11):
+- rev V's budget is 7,500 at 75 % (7,000 at main's 70 %), and rev Y's 6,250 (5,833);
+- the bus is 1,204, or 1,494 with the tape;
+- a voice is the engine's cost + 83 (`CHAIN_COST` 36 + `ModRouting::BASE` 47).
 
-| Patch | Engine cost | Rev V | Rev Y |
+The counts are at 75 %; brackets show 70 % where it differs. Rows with three FRMT need N = 3, so they need the 75 % share and the 120 target.
+
+| Patch | Engine cost (estimates) | Rev V | Rev Y |
 |---|---|---|---|
 | Any plain FM patch | unchanged | unchanged | unchanged |
-| Two NOIS, A1 (BREATH) | 510 | 8 | 8 |
-| One sine + three FRMT at SKIRT 1, A1 (TALK BASS) | 820 | 6 | 5 |
-| Three FRMT + one NOIS, A1 (CHOIR) | 830 | 6 | 5 |
-| Two FRMT + four NOIS, A1 | 910 | 6 | 4 |
-| Three FRMT + one NOIS + two table, all with feedback where billed, A16 ∪ A17 (**the worst allowed**) | 1,051 | 5 | 4 |
+| Two NOIS, A1 (BREATH) | 510 | 8 | 8 [7] |
+| One sine + three FRMT at SKIRT 1, A1 (TALK BASS) | 820 (790 at the target) | 6 | 5 |
+| Three FRMT + one NOIS, A1 (CHOIR) | 830 (800 at the target) | 6 | 5 |
+| Two FRMT + four NOIS, A1 | 910 | 6 [5] | 5 [4] |
+| Three FRMT at the target + one NOIS + two table, all with feedback where billed, A16 ∪ A17 (**the worst allowed** at N = 3) | 1,021 | 5 | 4 |
 
-**The worst allowed patch under the floor's worst case** (heavy routes, § 1): its voice bills 1,051 + 325 = 1,376.
+**The worst allowed patch under the floor's worst case** (heavy routes, § 1): its voice bills 1,021 + 472 = 1,493. By construction it is never more than ⌊(budget − 1,494) / 4⌋.
 
-| | Rev V | Rev Y |
+| At 75 % | Rev V | Rev Y |
 |---|---|---|
-| With the tape | (7,000 − 1,470) / 1,376 = 4.02 → **4** | (5,833 − 1,470) / 1,376 = 3.2 → 3 |
-| Without the tape | (7,000 − 1,160) / 1,376 = 4.24 → **4** | 3 |
+| With the tape | (7,500 − 1,494) / 1,493 = 4.02 → **4** | (6,250 − 1,494) / 1,493 = 3.2 → 3 |
+| Without the tape | (7,500 − 1,204) / 1,493 = 4.2 → **4** | 3 |
 
-- The other extreme allowed, two FRMT and four NOIS on A16 ∪ A17, bills 1,008 + 325 = 1,333: 4 voices on rev V, with and without the tape.
-- ADR 0026's floor holds for every patch that can be built. The owner's floor is rev V's; on rev Y, as for the costliest table patch under heavy routes, it is 3.
-- **The convention is ADR 0026's.** The floor was never promised under every route at once plus FOLD and DRIVE: `ModRouting`'s full-pool worst (633) takes even the costliest table patch to 3 voices with the tape. The heavy-route case above is the floor's defined worst.
-- ADR 0031's "the costliest patch gets six voices on rev V" still holds without routes: the worst allowed formant patch bills 1,051 + 57 = 1,108, which gives 5 voices, and the costliest table patch still gets its six.
+- ADR 0026's floor holds for every patch that can be built. The owner's floor is rev V's. On rev Y it is 3, as it is for the costliest table patch under heavy routes: (5,833 − 1,494) / 1,304 = 3.3.
+- **The convention is ADR 0026's.** The floor was never promised under every route at once plus FOLD, DRIVE or ALGO taps, nor while ORBIT plays (ADR 0091's reserve of 1,028). The heavy-route case above is the floor's defined worst.
+- ADR 0031's "the costliest patch gets six voices on rev V" still holds without routes. The worst allowed formant patch bills 1,021 + 83 = 1,104, which gives 5 voices, and the costliest table patch (915 with `ModRouting::BASE`) still gets its six (`the_costliest_patch_gets_six_voices_on_rev_v`).
 
 ### Memory
 
 | Item | Size |
 |---|---|
-| Per operator: `OpState` (20 B), latched SKIRT and slot (2 B), KEY-or-RES (4 B) | 26 B |
+| Per operator: `KindState` (20 B), latched SKIRT and slot (2 B), KEY-or-RES (4 B) | 26 B |
 | `kinds: [OpKind; 6]` over `waves: [WaveId; 6]` | +6 B |
 | **Per voice** | **about 160 B** |
 
-- `AlgoEngine` grows from 676 B to about 836 B (host, main at 4374cff). The owner's estimate was about 100 B.
-- The `EngineSlot` is sized by `ModalEngine` (4,008 B), so `Voice` and the pool don't grow. `voice_is_its_chain_plus_one_slot` pins that.
+- `AlgoEngine` grows from 700 B to about 860 B (host, main at 4473f0a1). The owner's estimate was about 100 B.
+- The `EngineSlot` (4,248 B) is sized by `ModalEngine` (4,240 B), so `Voice` (6,304 B) and the pool don't grow. `voice_is_its_chain_plus_one_slot` pins that.
 - No new wave table, and DTCM is untouched: both kinds read W1's mip 0, which is already there.
 - The new constants are all in flash and read per block: the SKIRT arrays (80 B), the `ρ_q` and `p_q` curves (about 1.5 KB), and the vowel table (60 B).
-- Flash grows by 30 kernel variants (`run_formant` 6 × 4, `run_noise` 6), well inside the 896 KB region. The bench checks the I-cache: a formant operator's block touches one variant.
+- **Flash is now the tight resource** (refresh 2026-10-11). About 58 KB is free on main at 4473f0a1, in the 917,504 B firmware area.
+  - Today `Kernel::render_ops`, with its 15 inlined `run_one` and `run_pair` variants, is 14.5 KB. So 30 more variants (`run_formant` 6 × 4, `run_noise` 6) could cost 15–25 KB.
+  - The plan measures them at Task 10. If they pass 10 KB, it specialises `run_formant` on SKIRT only, with the link count a runtime loop (4 variants).
+  - Free flash must stay above the owner's 40 KB line.
+- The bench checks the I-cache: a formant operator's block touches one variant.
 
 ### Bench rows (ship flash)
 
@@ -614,6 +694,8 @@ Voices beside the whole FX bus, per ADR 0031's arithmetic, without mod routes: r
 | FRMT MAX | the worst allowed patch (§ 9) | the budget's worst case |
 | CHOIR | the CHOIR factory Sound | a real patch |
 
+The rows join the `bench-algo` build, one bench area a build. Claude flashes it and reads the rows over the USB console (`just flash-bench algo`, `just usb bench`).
+
 ## 10. Saving and compatibility
 
 - **Frozen codes (ADR 0045),** all appended to `disk_codes_v1.txt`:
@@ -621,13 +703,22 @@ Voices beside the whole FX bus, per ADR 0031's arithmetic, without mod routes: r
   - operator param ids 13–18, with idents `FRMT`, `BW`, `SKIRT`, `KEY`, `RES` and `VSLOT`;
   - VSLOT's codes 0–4, with idents `AUTO`, `F1`, `F2`, `F3` and `OFF`;
   - Algo param id 4, `VOWEL`.
-- **How old patches decode** (review I7). A file decodes onto `Sound::neutral`, which is `ParamSnapshot::for_engine`, which is `AlgoParams::default()` (INIT). Then the file's own values are applied. An old file carries none of the new ids, so its new fields take INIT's values:
+- **How old patches decode** (review I7). A file decodes onto `Sound::neutral` (`chimera-engine/src/storage/sound.rs`): `ParamSnapshot::for_engine`, which is `AlgoParams::default()` (INIT), with OUT VOLUME 0.8 and RR 8. Then the file's own values are applied. An old file carries none of the new ids, so its new fields take INIT's values:
   - FRMT 69, 83, 111, 123, 123 and 123;
   - BW 72, SKIRT 1, KEY 0, RES 0, VSLOT AUTO;
   - VOWEL 50.
   - Its WAVE codes are 0–15, so every operator is a table operator and those fields are inert.
   - It sounds bit for bit as before.
-  - Because INIT is the decode base, INIT's new values are frozen with the codes. `old_patches_load_unchanged` pins them.
+- **Neutral omission (ADR 0087).** `Sound::neutral` is a format contract: `encode_sound` omits every param at its neutral value.
+  - So INIT's new values are frozen with the codes, and a Sound that leaves them alone saves no new bytes.
+  - `neutral_v1.txt` gains the new fields at those values, and the kinds' new representation, with every existing value unchanged.
+  - `v1_fixtures_render_identically` and `v1_fixture_bytes_are_frozen` pin the old files.
+- **The Sound cap grows.** `MAX_SOUND_COST` (2,352 B, pinned by `sparse_bound`) counts every param off neutral at 5 B.
+  - 37 new params (6 × 6 operator ids, plus VOWEL) take the worst case from 2,349 B to 2,534 B, so the cap becomes 2,544.
+  - The pool's meter and refusal goldens move with it, as they did for VA.
+- **The sound library (ADR 0119).** A formant Sound saved to the card and loaded by an older build reads as "newer".
+  - Its unknown ids are skipped (`unknown_non_critical_skipped`), and WAVE 16 or 17 is refused by the old `set_enum_code`, so those operators stay W1.
+  - It loads safely, not the same, which is the owner's rule for old builds.
 - The file format and version don't change. New values are new ids in the existing `Block` records.
 
 ## Tests
@@ -660,25 +751,28 @@ Each test fails on the first draft's design or on a plausible bug, or it pins a 
 | `formant_operators_are_stable` | Every new parameter at its ends, FDBK 7, full PM from five modulators, 30 s: finite, every carrier ≤ 1.0 before `carrier_norm`, \|DC\| < 1e-3, no growth. |
 | `laws_are_pinned` | K, c_q, m_q, ρ_q and p_q against the window's measured transform and peaks, within 0.5 %. |
 | `plain_fm_is_bit_identical` | Every existing Algo golden and factory render is unchanged. |
-| `old_patches_load_unchanged` | Every stored v1 fixture decodes to the same params, including INIT's new fields (§ 10), and the same render hash. |
-| `disk_codes_v1` | The appended codes and idents. |
-| `pages_adapt_to_formant_kinds` | The FRMT page is present exactly when a formant operator exists. The focus is kept by `BlockDef.id` through a list change (on DETUNE, a Sound load that adds FRMT stays on DETUNE). VOWEL and the table operators' FRMT cells are dimmed, as are NOIS's COARSE, FINE, DETUNE and FDBK. Operator pages show each kind's cells. |
+| `old_patches_load_unchanged` | Every stored v1 fixture decodes to the same params, including INIT's new fields (§ 10), and the same render hash. Beside `codec_compat_test`'s `v1_fixtures_render_identically` and `v1_fixture_bytes_are_frozen`, and `sound_codec_test`'s `neutral_is_a_contract` and `sparse_bound`. |
+| `disk_codes_test` | The appended codes and idents in `disk_codes_v1.txt`. |
+| `pages_adapt_to_formant_kinds` | The FORMANT page is present exactly when a formant operator exists. The focus is kept by `BlockDef.id` through a list change (on DETUNE, a WAVE edit or a project load that adds FRMT stays on DETUNE). VOWEL and the table operators' FRMT cells are dimmed, as are NOIS's COARSE, FINE, DETUNE and FDBK. Operator pages show each kind's cells. |
 | `formant_costs_bill_by_kind` | Each term and the voice-count table above, in `cost_test`. |
 | `formant_budget_keeps_four_voices` | `FORMANT_BUDGET` recomputes from the cost terms. Every allowed kind assignment (all 3⁶ over table/FRMT/NOIS, within budget), at every SKIRT, with feedback on every billed operator, on the costliest union (A16 ∪ A17) under the heavy routes, bills ≥ 4 voices on rev V, with and without the tape. The first refused assignment of each shape would bill 3. |
-| `over_budget_kinds_cannot_be_built` | `try_set_kind` refuses a fourth FRMT, and a second NOIS beside three FRMT. A property test drives random writes through every path (UI encoder, `set_enum_code`, the decoder, the sweep): no `AlgoParams` ever exceeds the budget. The WAVE encoder steps over refused kinds and toasts. An over-budget file decodes its excess as W1. `Kinds::new` rejects an over-budget const at compile time. |
+| `over_budget_kinds_cannot_be_built` | `try_set_kind` refuses the (N+1)th FRMT, and the NOIS past the budget beside N FRMT. A property test drives random writes through every path (UI encoder, `set_enum_code`, the decoder, the sweep): no `AlgoParams` ever exceeds the budget. The WAVE encoder steps over refused kinds and toasts. An over-budget file decodes its excess as W1. `Kinds::new` rejects an over-budget const at compile time. |
 | memory | `voice_is_its_chain_plus_one_slot` still passes, and `Voice`'s size is unchanged. |
 
 - **ADR 0010's modulatable test.** `modulatable_test::recipe` makes the destination audible. For `AlgoOp(n)`'s FRMT or BW, operator n's WAVE is set to FRMT (NOIS for a second case). For `Algo`'s VOWEL, operators 1–3 are FRMT on A1.
-- **Param-sweep harness** (branch `param-sweep`, on main before this plan ends). It picks up the new registry parameters automatically.
+- **Param-sweep harness** (`chimera-core/tests/param_sweep_test.rs`, on main). It picks up the new registry parameters automatically.
   - It gets a formant fixture Sound: operators 1–3 FRMT, operator 4 NOIS, on A1, where each new parameter must move the output.
   - It plays at C3, not at KEY_REF, so KEY is heard.
-- **Screen goldens.** The ALGO home is re-recorded once, for the dimmed VOWEL cell. New goldens cover the FRMT page and a FRMT and a NOIS operator page.
+- **Screen goldens.** The ALGO home goldens are re-recorded once, for the dimmed VOWEL cell: `engine_algo`, `algo_alg`, `algo_alg_morph_dimmed` and `algo_out_p3`.
+  - The pool and library goldens move with `MAX_SOUND_COST` (§ 10).
+  - New goldens cover the FORMANT page and a FRMT and a NOISE operator page.
+  - `light_golden_test` checks every case's colours against the theme tokens (ADR 0126).
 
 ## Demo clips (owner UAT)
 
 Three new factory Sounds. The clips render from them, so what the owner approves is what ships.
 
-- **CHOIR:** a pad on A1, within the budget (3 FRMT, 1 NOIS: 3·70 + 10 = 220 ≤ 225; 6 voices on rev V).
+- **CHOIR:** a pad on A1, within the budget at N = 3 (3 FRMT at the 120 target and 1 NOIS: 3·60 + 10 = 190 ≤ 197 at 75 %; 6 voices on rev V). At N = 2 it takes the plan's two-formant voicing.
   - Operator 1 is FRMT on slot F1.
   - Operators 2 and 3 are FRMT on slot F2, DETUNE −2 and +2. F2 carries the vowel's identity, and its beating is the most audible, so doubling it gives the choir its width.
   - Operator 4 is NOIS on slot F3: breath and air on the third formant, which follows the vowel (WIDTH 3 kHz, low).
@@ -693,7 +787,9 @@ Three new factory Sounds. The clips render from them, so what the owner approves
   - Operator 2 is NOIS (CENTRE 5 kHz, WIDTH 4 kHz), lower.
   - Both are on slot OFF, with slow attack and release.
 - **LEVELs** are set so `factory_test`'s peak ≤ 1.0 holds with `carrier_norm`.
-  - Each Sound is measured against ADR 0058's loudness reference (−15 LUFS). Equal RMS isn't equal loudness: formants at 2–4 kHz weigh 2–4 dB louder under K-weighting.
+  - Each Sound is measured against the loudness reference, ADR 0063's at ADR 0109's gain (`REFERENCE_LUFS` −11.0 in `param_sweep_test`). Equal RMS isn't equal loudness: formants at 2–4 kHz weigh 2–4 dB louder under K-weighting.
+- **The factory bank.** It is `chimera-engine/src/factory.rs`'s `factory.bin` blob, checked against the `authored` Sounds (`blob_matches_authored`; `GOLDEN_RECORD=1` rewrites it).
+  - The three Sounds append after the eight (`FACTORY_LEN` 8 to 11), before the INITs.
 - **Rendering.** An `#[ignore]`d host test, `render_formant_demo_clips`, plays a short phrase of each Sound through the `Instrument` and writes 48 kHz WAVs to `target/demo/`, with no new dependency.
 - The plan pins each Sound's voice count in `cost_test`.
 
@@ -727,14 +823,14 @@ Three new factory Sounds. The clips render from them, so what the owner approves
 
 ## ADR
 
-The next free ADR number when it is written (0060 and 0061 went to Modal 2, and ORBIT's two follow): "Formant operators are Algo operator kinds, after the FS1R patent". It records:
+The next free ADR number when it is written. On 2026-10-11 the highest on any branch is 0127 (`screensaver`); 0123 is reserved by `sound-sends` and 0124 is `audio-share-75`'s, so expect 0129, after Phase 0's 0128: "Formant operators are Algo operator kinds, after the FS1R patent". It records:
 
 - **Provenance:** the split above, including FSVR's measured skirt law, and FSVR's GPL status.
 - **Kinds:** `OpKind`, the WAVE codes, and VOWEL SLOT.
 - **Level:** the −12 dB reference, the peak ceiling and the peak-referenced modulator signal, and why they differ from a table operator's.
 - **Width:** the SKIRT-free floor.
 - **Cost terms:** `COST_FRMT_ONE`, `COST_FRMT` and `COST_NOIS`, as host estimates by ADR 0056's method until the bench, with the voice-count table and billing by SKIRT.
-- **The formant budget:** its derivation, N = 3, the `Kinds` newtype, and the floor's heavy-route worst case.
+- **The formant budget:** its derivation on the share it ships with (ADR 0124's 75 %), N, the `Kinds` newtype, and the floor's heavy-route worst case with the filter's moving path and LEVEL clipper.
 - **The clean-peak decision (owner, 2026-09-30).**
 - **Partial supersessions:**
   - ADR 0022's destination list (§ 7);
@@ -745,11 +841,22 @@ It is added to `docs/adr/README.md`.
 
 ## Interactions with in-flight branches
 
-- **#37's operator pages** land first, as their own branch and UAT (§ 6).
-- **`modal2-resonators`** must merge first. It brings ADR 0056's method and 0058's loudness reference.
-- **The chain-lookup change** (`algo_chain`, and focus by `BlockDef.id`) touches `block_def.rs` and `dungeon_map.rs`, which other UI branches also read. It is its own task, with the page-walk tests.
-- **ORBIT and projects-core** run alongside. Both append to `disk_codes_v1.txt`, which is append-only, so a clash is resolved by keeping both appends in merge order. Neither touches `dsp/algo`.
-- **`param-sweep`** supplies the harness (§ Tests).
+Branches open on 2026-10-11:
+- **#37's operator pages** land first, as their own branch and UAT (§ 6). Modal 2, ORBIT, projects-core and the param sweep have merged.
+- **`audio-share-75`** (ADR 0124, `hw::AUDIO_BUDGET_PERCENT` 75) must merge before the budget is derived. On main's 70 % the budget is 72, so N = 1. It also edits `cost_test`, `param_sweep_test` and `hw.rs`.
+- **`sound-sends`** (ADR 0123) adds OUT params and edits:
+  - `addr.rs`, `params.rs` and `storage/sound.rs` (`MAX_SOUND_COST` 2,352 to 2,368);
+  - `disk_codes_v1.txt` and `neutral_v1.txt`;
+  - `common/sweep.rs`, `param_declarations_test` and `bench.rs`.
+
+  It overlaps Tasks 4 and 5 most. Whichever lands second rebases the appends and recomputes `sparse_bound`'s bound.
+- **`va-glyphs`** will touch `FocusGlyph` and `ui/glyph.rs`'s gauges, where WAVE's glyph learns FRMT and NOISE (§ 1).
+- **`screensaver`** (ADR 0127) adds `played.rs`, an audio-to-UI reader, and an AXI line in `memory_budget_test`. The OP page's live view is a second such reader, so the two share the AXI headroom.
+- **`browser-init-top`** edits `ui/browser.rs` and `ui/mod.rs`, which Task 1 also touches (`chain_def_for`, `project_replaced`).
+- **`midi-bend-sustain` and `master-vol-tune`** have no commits yet.
+  - A pitch bend reaches KEY through the voice's pitch, as the spec wants.
+  - A master-volume change that moves `REFERENCE_LUFS` re-tunes the demo Sounds' VOL.
+- `disk_codes_v1.txt` and `neutral_v1.txt` are append-only, so a clash is resolved by keeping both appends in merge order.
 
 ## Out of scope
 
@@ -764,17 +871,16 @@ It is added to `docs/adr/README.md`.
 
 Each task leaves the tree green. Phase 0 is its own branch.
 
-0. **Phase 0, #37's operator pages**, as `2026-09-27-algo-pages-design.md` § Operator pages specifies, with its owner UAT.
-1. The dynamic OSC sub-row: `algo_chain`, and focus by `BlockDef.id`. Every screen golden bit-identical.
-2. `OpKind`, `Kinds` and the formant budget, the WAVE list and its encoder, the new params and their disk codes, INIT's values, and the decode pin. The engine treats FRMT and NOIS as silent. Goldens bit-identical.
-3. The pure laws: the window, the constants and curves, the width floor, the level and peak gains, `fc_hz`, the vowel table and Δ, slot resolution, the NOIS band and gains, and the edge laws. Each has its unit tests.
-4. The NOIS kernel path, with its tests.
-5. The FRMT kernel path (lanes, exact starts, the grain delay, the two signals, feedback), with its tests.
-6. VOWEL, VSLOT, and the modulation destinations, with the modulatable recipe.
-7. Pages: the ALGO cell, the FRMT group page, the operator-page cells and viz, dimming, and the screen goldens.
-8. Costs: the objdump recount, the terms, `cost_test`, and the ADR.
-9. The factory Sounds, the loudness check, the demo clips, and the owner's UAT.
-10. At ship: the flash, the bench rows, and the terms updated from the bench.
+0. **Phase 0, #37's operator pages**, as `2026-09-27-algo-pages-design.md` § Operator pages specifies, with its owner UAT. It brings the dynamic OSC sub-row (`PartChain` in `NavCtx`) and focus by `BlockDef.id` (`refocus`).
+1. `OpKind`, `Kinds` and the formant budget (after `audio-share-75`), the WAVE list and its encoder, the new params and their disk codes, INIT's values, neutral and the Sound cap, and the decode pin. The engine treats FRMT and NOISE as silent. Goldens are bit-identical but for the pool's.
+2. The pure laws: the window, the constants and curves, the width floor, the level and peak gains, `fc_hz`, the vowel table and Δ, slot resolution, the NOISE band and gains, and the edge laws. Each has its unit tests.
+3. The NOISE kernel path, with its tests.
+4. The FRMT kernel path (lanes, exact starts, the grain delay, the two signals, feedback), with its tests, its flash measured, then the span pass and the count.
+5. VOWEL, VSLOT, and the modulation destinations, with the modulatable recipe.
+6. Pages: the ALGO cell, the FORMANT group page, the operator-page cells and viz, WAVE's glyph, dimming, and the screen goldens.
+7. Costs: the `tools/loop_count.py` recount, the terms, `cost_test`, and the ADR.
+8. The factory Sounds, the loudness check, the demo clips, and the owner's UAT.
+9. At ship: the flash, the bench rows read over the USB console, and the terms updated from the bench.
 
 ## For the owner
 
@@ -784,6 +890,12 @@ These change what the owner approved, and the owner should confirm them:
 - **The cost terms rose:** 90 and 130 for FRMT and 70 for NOIS, against 75–110 and 55. They set N (§ 1): if the bench lowers COST_FRMT to 110 or less, N becomes 4.
 - **Per-voice memory is about 160 B,** against 100 B. No pool growth.
 - **The floor's heavy-route case** (§ 1) follows ADR 0026's convention: the matrix's full-pool worst plus FOLD and DRIVE was never covered, even for table patches.
+
+New since 2026-09-30 (refresh 2026-10-11; the ledger's `refresh-delta.md`):
+- **Three formants need the 75 % share.** Today's model bills a heavy-route voice 472 over its engine (was 325). The budget is 72 at 70 %, which allows one FRMT, and 197 at 75 %, which allows 2 at the estimate and 3 at the 120 target.
+- **Labels are full words where they fit:** FORMANT, CENTRE, COARSE, VELOCITY and NOISE. BW, RES, SLOT and FDBK stay short.
+- **Flash is the tight resource:** about 58 KB is free, and 30 kernel variants could take 15–25 KB. The plan caps them at 10 KB.
+- **ORBIT playing** lowers every patch's floor to 3 under heavy routes (ADR 0091's reserve). The floor's convention excludes it, as it does for table patches.
 
 Design choices the owner hasn't seen, each with its reason above:
 - the window law;
