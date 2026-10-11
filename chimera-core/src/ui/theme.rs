@@ -99,6 +99,12 @@ pub const XF_CX: i32 = SCREEN_W - MARGIN_X - XF_W / 2;
 pub const XF_TRACK_H: i32 = 6;
 pub const XF_CAP_W: i32 = 10;
 pub const XF_CAP_H: i32 = 26;
+/// VA's BLEND: the crossfader on a longer track, room for an end word
+/// under each end (ADR 0129), on this baseline, at least `XF_ENDS_GAP`
+/// apart.
+pub const BLEND_W: i32 = 96;
+pub const XF_ENDS_Y: i32 = ARC_CY + XF_CAP_H / 2 + 12;
+pub const XF_ENDS_GAP: i32 = 6;
 /// The STAFF glyph: three lines on the arc's centre line, flush with the
 /// right margin, `STAFF_GAP` apart (a notehead's height); the note sits
 /// at `STAFF_NOTE_X`, half a gap a step, its accidental to the left.
@@ -113,6 +119,8 @@ pub const WAVE_H: i32 = 48;
 pub const WAVE_X: i32 = SCREEN_W - MARGIN_X - WAVE_W;
 pub const WAVE_Y: i32 = ARC_CY - WAVE_H / 2;
 pub const WAVE_PAD: i32 = 5;
+/// VA's MODE scope: the WAVE scope's frame, wider, for two periods.
+pub const VA_MIX_W: i32 = 96;
 /// The chorus braid's box, flush with the right margin, as tall as the
 /// arc: the only pixels it redraws each frame.
 pub const BRAID_W: i32 = 80;

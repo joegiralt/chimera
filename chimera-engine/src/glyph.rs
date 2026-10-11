@@ -6,6 +6,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::delay::DelayParams;
 use crate::dsp::reverb::ReverbParams;
+use crate::dsp::va::VaParams;
 
 /// The gauge a parameter's focus band shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -29,7 +30,56 @@ pub enum FocusGlyph {
     /// params`: the braid's 4, the rings' 7, the cube's 6), drawn from
     /// their set values, never the modulated ones.
     Composite(CompositeId),
+    /// VA's own gauges, drawn from the VA block's set values (ADR 0129).
+    Va(VaGlyph),
 }
+
+/// VA's gauges: what the oscillators and the operator do to the sound.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VaGlyph {
+    /// A scope of one oscillator's naive wave at its WAVE and SHAPE.
+    Wave(VaOsc),
+    /// OSC 1 MODE OSC 2: the operator's output over two of OSC 1's periods.
+    Mode,
+    /// The crossfader, its ends named by MODE.
+    Blend,
+}
+
+/// One of VA's two oscillators.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VaOsc {
+    One,
+    Two,
+}
+
+impl VaOsc {
+    /// Its WAVE and SHAPE.
+    pub const fn params(self) -> [ParamAddr; 2] {
+        let (w, s) = match self {
+            VaOsc::One => (VaParams::WAVE1, VaParams::SHAPE1),
+            VaOsc::Two => (VaParams::WAVE2, VaParams::SHAPE2),
+        };
+        [
+            ParamAddr::new(BlockRef::Va, w),
+            ParamAddr::new(BlockRef::Va, s),
+        ]
+    }
+}
+
+/// What MODE's glyph reads, in `VaMix::from_set`'s order: MODE, AMOUNT,
+/// then each oscillator's WAVE and SHAPE. BLEND's reads the first two.
+pub const VA_MIX_PARAMS: [ParamAddr; 6] = {
+    let [w1, s1] = VaOsc::One.params();
+    let [w2, s2] = VaOsc::Two.params();
+    [
+        ParamAddr::new(BlockRef::Va, VaParams::MODE),
+        ParamAddr::new(BlockRef::Va, VaParams::AMOUNT),
+        w1,
+        s1,
+        w2,
+        s2,
+    ]
+};
 
 /// The composites, each shared by its effect's params.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,7 +105,7 @@ impl CompositeId {
 }
 
 impl FocusGlyph {
-    pub const ALL: [FocusGlyph; 10] = [
+    pub const ALL: [FocusGlyph; 14] = [
         FocusGlyph::Arc,
         FocusGlyph::None,
         FocusGlyph::Switch,
@@ -66,6 +116,10 @@ impl FocusGlyph {
         FocusGlyph::Composite(CompositeId::Reverb),
         FocusGlyph::Composite(CompositeId::DelayRings),
         FocusGlyph::Composite(CompositeId::ChorusBraid),
+        FocusGlyph::Va(VaGlyph::Wave(VaOsc::One)),
+        FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two)),
+        FocusGlyph::Va(VaGlyph::Mode),
+        FocusGlyph::Va(VaGlyph::Blend),
     ];
 
     /// Index in `ALL`. Exhaustive: a new variant fails to compile here
@@ -82,6 +136,10 @@ impl FocusGlyph {
             FocusGlyph::Composite(CompositeId::Reverb) => 7,
             FocusGlyph::Composite(CompositeId::DelayRings) => 8,
             FocusGlyph::Composite(CompositeId::ChorusBraid) => 9,
+            FocusGlyph::Va(VaGlyph::Wave(VaOsc::One)) => 10,
+            FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two)) => 11,
+            FocusGlyph::Va(VaGlyph::Mode) => 12,
+            FocusGlyph::Va(VaGlyph::Blend) => 13,
         }
     }
 }
