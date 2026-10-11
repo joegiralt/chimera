@@ -23,7 +23,7 @@ use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::reverb_panel::RevPage;
 use crate::ui::settings::leaves::{
     ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, LIVE_SNAP_LEAF, OUTPUTS_LEAF,
-    POOL_LEAF, SYNC_LEAF, THEME_LEAF, TUNING_LEAF,
+    POOL_LEAF, SAVER_LEAF, SYNC_LEAF, THEME_LEAF, TUNING_LEAF,
 };
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -817,6 +817,24 @@ pub static SYS_THEME: BlockDef = BlockDef {
     ],
 };
 
+/// SETTINGS › PERSONALIZE › SCREENSAVER: the idle time, one cell. Held in
+/// the THEME block (`ui::theme_settings`), stored in SYSTEM with it.
+pub static SYS_SAVER: BlockDef = BlockDef {
+    id: 99,
+    name: "Screensaver",
+    short: "SAV",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Theme, ThemeSettings::SAVER),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
 /// MIDI CONFIG › SYNC: who drives ORBIT's transport (ADR 0080).
 pub static SYS_SYNC: BlockDef = BlockDef {
     id: 86,
@@ -1165,7 +1183,7 @@ pub static DEMO_BLOCKS: [ChainBlock; 15] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 15] = [
+const FIXED: [&ChainDef2; 16] = [
     &ALGO_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &TAPE_CHAIN,
@@ -1176,6 +1194,7 @@ const FIXED: [&ChainDef2; 15] = [
     OUTPUTS_LEAF.chain(),
     TUNING_LEAF.chain(),
     THEME_LEAF.chain(),
+    SAVER_LEAF.chain(),
     ABOUT_LEAF.chain(),
     AUDIO_LOAD_LEAF.chain(),
     POOL_LEAF.chain(),

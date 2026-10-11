@@ -189,9 +189,10 @@ fn ui_state_rest_under_4k() {
     // on their own, 128 beside TAPE's, padded); 192 B the reverb's (the
     // TYPEs' knob memory, 108 B, and the cells' text keys); 3 KB the
     // library's page, 48 rows of 60 B, and a pending load (its source
-    // streams in the SOURCE cell's slot).
+    // streams in the SOURCE cell's slot); 16 B the screensaver's (its idle
+    // timer and redraw count).
     assert!(
-        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072,
+        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072 + 16,
         "UiState grew to {rest} B besides its Project"
     );
 }

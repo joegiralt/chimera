@@ -8,8 +8,8 @@ use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::SYS_THEME;
 use chimera_core::ui::theme;
 use chimera_core::ui::theme_settings::{
-    Accent, Black, Bright, Gamma, Palette, ThemeSettings, accent_color, accent_soft, duty, ground,
-    midpoint, palette, tables,
+    Accent, Black, Bright, Gamma, Palette, Saver, ThemeSettings, accent_color, accent_soft, duty,
+    ground, midpoint, palette, tables,
 };
 use chimera_hal::{ButtonId, EncoderId};
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
@@ -298,6 +298,7 @@ fn in_settings_and_set_theme() {
         black: Black::new(1),
         hints: false,
         invert: false,
+        saver: Saver::from_index(5),
     };
     ui.set_theme(t);
     assert_eq!(ui.theme(), t);
@@ -477,4 +478,18 @@ fn the_light_floor_is_the_darkest_light_ground() {
         (ch(floor.r(), 5), ch(floor.g(), 6), ch(floor.b(), 5)),
         (231, 231, 231)
     );
+}
+
+/// SETTINGS › PERSONALIZE › SCREENSAVER: its one cell is the idle time.
+#[test]
+fn the_screensaver_page_edits_its_idle_time() {
+    use chimera_core::ui::block_registry::SYS_SAVER;
+    let mut ui = chimera_core::ui::UiState::new();
+    to_leaf(&mut ui, &["PERSONALIZE", "SCREENSAVER"]);
+    assert_eq!(ui.page_def().id, SYS_SAVER.id);
+    assert_eq!(ui.theme().saver, Saver::DEFAULT);
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    assert_eq!(ui.theme().saver, Saver::from_index(3));
+    feed(&mut ui, Input::turn(EncoderId::A, -9));
+    assert_eq!(ui.theme().saver, Saver::OFF);
 }
