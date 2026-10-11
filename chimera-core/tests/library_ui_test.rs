@@ -313,7 +313,10 @@ fn skip_file() -> Vec<u8> {
         name: Some(SoundName::new("SKIPS").unwrap()),
     };
     let mut sink = VecSink(Vec::new());
-    write_file(&mut sink, &h, &mut |w| encode_library_sound(&s, &ST, w)).unwrap();
+    write_file(&mut sink, &h, &mut |w| {
+        encode_library_sound(&s, &ST, None, w)
+    })
+    .unwrap();
     let mut f = sink.0;
     let o = record_offsets(&f);
     let i = o[..o.len() - 1]
@@ -639,7 +642,10 @@ fn stamped(s: &Sound) -> Vec<u8> {
         name: Some(s.name),
     };
     let mut sink = VecSink(Vec::new());
-    write_file(&mut sink, &h, &mut |w| encode_library_sound(s, &ST, w)).unwrap();
+    write_file(&mut sink, &h, &mut |w| {
+        encode_library_sound(s, &ST, None, w)
+    })
+    .unwrap();
     sink.0
 }
 

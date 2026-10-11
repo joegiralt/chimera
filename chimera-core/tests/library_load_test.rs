@@ -486,7 +486,10 @@ fn a_newer_side_failing_its_crc_never_loads_the_older() {
         name: Some(other.name),
     };
     let mut sink = VecSink(Vec::new());
-    write_file(&mut sink, &h, &mut |w| encode_library_sound(&other, &ST, w)).unwrap();
+    write_file(&mut sink, &h, &mut |w| {
+        encode_library_sound(&other, &ST, None, w)
+    })
+    .unwrap();
     let mut b = sink.0;
     let at = b.len() - 8;
     b[at] ^= 0x01;

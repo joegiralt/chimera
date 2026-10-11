@@ -303,7 +303,7 @@ fn sound_file() -> Vec<u8> {
     };
     let mut out = Bytes(Vec::new());
     write_file(&mut out, &h, &mut |w| {
-        encode_library_sound(&sound(3), &STAMP, w)
+        encode_library_sound(&sound(3), &STAMP, None, w)
     })
     .unwrap();
     out.0

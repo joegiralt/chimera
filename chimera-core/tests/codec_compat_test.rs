@@ -17,7 +17,7 @@ use chimera_core::project::{
     Origin, PartFrom, PartId, PartSource, PartStatus, Project, SlotId, part_block, part_status,
 };
 use chimera_core::storage::{
-    BuildStamp, Card, FileError, FileKind, Generation, Header, MIGRATIONS, TRANSLATIONS,
+    BuildStamp, Card, FileError, FileKind, Generation, Header, MIGRATIONS, Note, TRANSLATIONS,
     decode_block, encode_library_sound, sound_crc, write_file,
 };
 use chimera_hal::BLOCK_SIZE;
@@ -41,6 +41,9 @@ fn sources() -> Vec<(String, Sound)> {
     v.push(("init_tape.snd".into(), Sound::init(EngineType::Tape)));
     // A library Sound (library spec): factory 0 behind a `Build` record.
     v.push((LIBRARY_FIXTURE.into(), factory_sound(0).unwrap()));
+    // A described one (showcase spec § 1): factory 1 behind `Build` and `Note`.
+    // Not `factory_1.snd`: that name is the frozen v1 file.
+    v.push((DESCRIBED_FIXTURE.into(), factory_sound(1).unwrap()));
     // VA's INIT as VA Task 10 saved it: engine code 3 frozen.
     v.push(("init_va.snd".into(), Sound::init(EngineType::Va)));
     v
@@ -48,12 +51,16 @@ fn sources() -> Vec<(String, Sound)> {
 
 /// `library_1.snd`: factory 0, stamped by `encode_library_sound`.
 const LIBRARY_FIXTURE: &str = "library_1.snd";
+/// `described_1.snd`: factory 1, stamped, with a `Note`.
+const DESCRIBED_FIXTURE: &str = "described_1.snd";
 
 /// `name`'s fixture bytes as written: a library Sound carries its stamp.
 fn written(name: &str, s: &Sound) -> Vec<u8> {
-    if name != LIBRARY_FIXTURE {
+    if name != LIBRARY_FIXTURE && name != DESCRIBED_FIXTURE {
         return encode(s);
     }
+    let note = (name == DESCRIBED_FIXTURE)
+        .then(|| Note::new("PLAY SOFT FOR PAD, HARD FOR BRASS").unwrap());
     let h = Header {
         kind: FileKind::Sound,
         generation: Generation::FIRST,
@@ -61,7 +68,10 @@ fn written(name: &str, s: &Sound) -> Vec<u8> {
     };
     let mut sink = VecSink(Vec::new());
     let stamp = BuildStamp::new("0.1.0", "dev", false);
-    write_file(&mut sink, &h, &mut |w| encode_library_sound(s, &stamp, w)).unwrap();
+    write_file(&mut sink, &h, &mut |w| {
+        encode_library_sound(s, &stamp, note.as_ref(), w)
+    })
+    .unwrap();
     sink.0
 }
 
@@ -204,6 +214,7 @@ const FIXTURE_BYTES: &[(&str, usize, u64)] = &[
     // Written sparse (pool Task 2), at TAPE Task 12.
     ("init_tape.snd", 160, 0xc6205acfbcaf2836),
     ("library_1.snd", 257, 0xa89d3e8a322ca1fa),
+    ("described_1.snd", 269, 0x893658c9cf138330),
     // Written sparse, at VA Task 10.
     ("init_va.snd", 151, 0x63ec203363dcfe8c),
 ];
@@ -523,6 +534,8 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     ("init_tape.snd", 0xcaf4315437e08679),
     // Factory 0's render: the stamp changes no sound.
     ("library_1.snd", 0x2b0219df38902ede),
+    // Factory 1's render: the Note changes no sound.
+    ("described_1.snd", 0x0e3d85b43ff9ccf9),
     // On the rig's second of saw, at VA Task 10.
     ("init_va.snd", 0x3739e2ecc6befaf5),
 ];

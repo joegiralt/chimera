@@ -111,14 +111,52 @@ impl fmt::Display for BuildStamp {
     }
 }
 
-/// `Engine`, `Build`, then the rest of the Sound.
+/// A factory Sound's description: 1-40 B of `A`-`Z`, `0`-`9`, space and
+/// `. , ' - + / : ( ) & %`. Width is the host's check (`draw::text_width`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Note([u8; Note::MAX], u8);
+
+impl Note {
+    pub const MAX: usize = 40;
+
+    pub fn new(t: &str) -> Option<Note> {
+        let ok =
+            |c: u8| c.is_ascii_uppercase() || c.is_ascii_digit() || b" .,'-+/:()&%".contains(&c);
+        (t.bytes().all(ok))
+            .then(|| Note::parse(t.as_bytes()))
+            .flatten()
+    }
+
+    /// A stored payload, leniently: 1-40 B, a byte outside 0x20-0x7E as `?`.
+    fn parse(p: &[u8]) -> Option<Note> {
+        if p.is_empty() || p.len() > Self::MAX {
+            return None;
+        }
+        let mut b = [0; Self::MAX];
+        for (o, &c) in b.iter_mut().zip(p) {
+            *o = if (0x20..0x7F).contains(&c) { c } else { b'?' };
+        }
+        Some(Note(b, p.len() as u8))
+    }
+
+    pub fn as_str(&self) -> &str {
+        // Printable ASCII by construction.
+        core::str::from_utf8(&self.0[..usize::from(self.1)]).unwrap_or("?")
+    }
+}
+
+/// `Engine`, `Build`, `Note` if any, then the rest of the Sound.
 pub fn encode_library_sound(
     s: &Sound,
     stamp: &BuildStamp,
+    note: Option<&Note>,
     w: &mut RecordWriter<'_>,
 ) -> Result<(), StoreError> {
     w.put(RecordTag::Engine, &[s.engine().disk_code()])?;
     w.put(RecordTag::Build, &stamp.to_bytes())?;
+    if let Some(n) = note {
+        w.put(RecordTag::Note, n.as_str().as_bytes())?;
+    }
     encode_sound_body(s, w)
 }
 
@@ -202,8 +240,9 @@ pub fn next_user_id(top: u32, window_base: u32, taken: &[u8; 512]) -> NextId {
     }
 }
 
-/// Bytes a peek reads: the header, `Engine` and `Build`.
-pub const LIB_PEEK: usize = 64;
+/// Bytes a peek reads: the header, `Engine`, `Build` and a full `Note`
+/// (28 + 5 + 25 + 4 + 40 = 102).
+pub const LIB_PEEK: usize = 128;
 
 /// What a list row shows, from a file's first bytes.
 #[derive(Debug, PartialEq)]
@@ -212,6 +251,7 @@ pub struct Peek {
     pub name: Option<SoundName>,
     pub engine: Option<EngineType>,
     pub stamp: Option<BuildStamp>,
+    pub note: Option<Note>,
     /// An `Engine` code this build doesn't know: greyed, name and stamp kept.
     pub needs_newer: bool,
 }
@@ -247,6 +287,7 @@ pub fn peek_library(b: &[u8], file_len: u32) -> Result<Peek, FileError> {
         name: h.name,
         engine: None,
         stamp: None,
+        note: None,
         needs_newer: false,
     };
     if let Some((tag, p)) = record_at(b, HEADER_LEN, file_len)
@@ -260,6 +301,10 @@ pub fn peek_library(b: &[u8], file_len: u32) -> Result<Peek, FileError> {
         peek.stamp = record_at(b, HEADER_LEN + 5, file_len)
             .filter(|&(t, _)| t == RecordTag::Build.code())
             .and_then(|(_, p)| BuildStamp::parse(p));
+        // Third, straight after `Build`; anything else is not a description.
+        peek.note = record_at(b, HEADER_LEN + 5 + 4 + BUILD_LEN, file_len)
+            .filter(|&(t, _)| t == RecordTag::Note.code())
+            .and_then(|(_, p)| Note::parse(p));
     }
     Ok(peek)
 }

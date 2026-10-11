@@ -116,7 +116,7 @@ pub fn save_library_sound<S: Store>(
         let id = free_id(st, r)?;
         let file = library_file(id);
         let saved = save_ab(st, r, file, &mut SoundCheck::new(), Some(name), &mut |w| {
-            encode_library_sound(s, stamp, w)
+            encode_library_sound(s, stamp, None, w)
         })
         .map_err(|e| match e {
             SaveError::Store(e) => LibNote::Store(e),

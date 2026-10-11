@@ -129,7 +129,7 @@ fn file_of(
 }
 
 fn stamped_named(s: &Sound, name: &str) -> Vec<u8> {
-    file_of(s, name, &mut |w| encode_library_sound(s, &ST, w))
+    file_of(s, name, &mut |w| encode_library_sound(s, &ST, None, w))
 }
 
 fn unstamped(s: &Sound) -> Vec<u8> {

@@ -186,7 +186,7 @@ const fn once_bit(tag: RecordTag) -> u8 {
         RecordTag::ZoneTune => 1 << 6,
         RecordTag::TapRoutes => 1 << 7,
         // Skipped before `once` is asked.
-        RecordTag::Build => 0,
+        RecordTag::Build | RecordTag::Note => 0,
         // A project's own records: refused before `once` is asked.
         RecordTag::Slot
         | RecordTag::Part
@@ -361,7 +361,7 @@ impl SoundCheck {
             return Err(FileError::Corrupt);
         }
         // Informational: any build, any repeat, any length.
-        if tag == RecordTag::Build {
+        if matches!(tag, RecordTag::Build | RecordTag::Note) {
             return Ok(());
         }
         let once = match tag {
@@ -446,7 +446,7 @@ impl SoundCheck {
             | RecordTag::SourceHead
             | RecordTag::SourceData
             | RecordTag::SourceZones => Err(FileError::Corrupt),
-            RecordTag::Build => Ok(()),
+            RecordTag::Build | RecordTag::Note => Ok(()),
         }
     }
 
