@@ -584,8 +584,9 @@ fn at(a: Wave, b: Wave, sh: &Shaped, f: f32) -> ([f32; 6], [f32; 4]) {
 /// `at` between the block's SHAPE ends, `x` of the way: a run's end or
 /// start at a WAVE segment crossing. The constants themselves are lerped
 /// (each linear in its weight), so a value stays between its ends' and the
-/// block's peak bound holds.
-#[inline(never)]
+/// block's peak bound holds. Inlined: its arrays stay in registers (the
+/// count then bills it on every run's way, crossing or not).
+#[inline(always)]
 fn at_lerp<A: Kind, B: Kind>(blk: &Blk, x: f32, f: f32) -> ([f32; 6], [f32; 4]) {
     let (c0, p0) = at(A::WAVE, B::WAVE, &blk.sh0, f);
     let (c1, p1) = at(A::WAVE, B::WAVE, &blk.sh1, f);
