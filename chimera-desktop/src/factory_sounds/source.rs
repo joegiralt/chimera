@@ -3,7 +3,7 @@
 //! `disk_codes_v1.txt`. Pure: text in, `Source`, `Sound` and card bytes
 //! out; the files are `build`'s.
 
-use chimera_core::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
+use chimera_core::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
 use chimera_core::block::{Block, DiskCode};
 use chimera_core::mod_path::LABEL_LEN;
 use chimera_core::modulation::{FixedCol, ModSource};
@@ -20,6 +20,7 @@ use chimera_core::ui::draw::text_width;
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::ui::mod_grid::block_tag;
 use chimera_core::ui::theme::{CONTENT_W, FONT_LABEL, LABEL_TRACKING};
+use chimera_core::ui::view::{SlotCtx, shown_fmt};
 use chimera_hal::store::{ByteSink, StoreError};
 
 use crate::listen::{lined_tables, value_line};
@@ -89,8 +90,9 @@ pub struct Source {
     pub mods: Vec<(ModSource, Vec<Route>)>,
     /// A tap's routes, each into a fixed column.
     pub taps: Vec<(TapOp, Vec<(Route, FixedCol)>)>,
-    /// dB on OUT LEVEL.
+    /// dB on OUT LEVEL, and its line (0: none written).
     pub trim: f32,
+    pub trim_line: usize,
     /// Provenance, ports only: `(line, "tx81z <bank sha> #<voice>")`.
     pub from: Option<(usize, String)>,
     pub edits: Option<String>,
@@ -184,6 +186,7 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
         mods: Vec::new(),
         taps: Vec::new(),
         trim: 0.0,
+        trim_line: 0,
         from: None,
         edits: None,
         level_by_ear: None,
@@ -194,6 +197,7 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
         let unknown = || at(line, format!("unknown key {k}"));
         match k.as_str() {
             "trim" => {
+                s.trim_line = line;
                 s.trim = v
                     .parse::<f32>()
                     .ok()
@@ -409,8 +413,26 @@ pub fn patch(s: &Source) -> Result<Sound, String> {
 /// The Sound as built: `patch`, its OUT LEVEL trimmed `trim` dB.
 pub fn to_sound(s: &Source) -> Result<Sound, String> {
     let mut snd = patch(s)?;
-    snd.params.out.volume *= 10f32.powf(s.trim / 20.0);
+    snd.params.out.volume = trimmed(snd.params.out.volume, s.trim)
+        .map_err(|m| format!("{}: {m}", s.at(s.trim_line)))?;
     Ok(snd)
+}
+
+/// OUT LEVEL `level` trimmed `trim` dB, refused (never clipped) when it
+/// leaves the param's range. `fmt --level` writes a trim through it too.
+pub fn trimmed(level: f32, trim: f32) -> Result<f32, String> {
+    let spec = valid_addr("OUT", "LEVEL")
+        .expect("OUT LEVEL is stored")
+        .spec();
+    let t = level * 10f32.powf(trim / 20.0);
+    if (spec.min..=spec.max).contains(&t) {
+        Ok(t)
+    } else {
+        Err(format!(
+            "trim {trim:+} dB puts OUT LEVEL {level} at {t}, outside {}..={}",
+            spec.min, spec.max
+        ))
+    }
 }
 
 /// `v` into `a`: an enum by its ident, else a number the block holds
@@ -517,21 +539,40 @@ pub fn lines(snd: &Sound) -> Vec<String> {
 }
 
 /// Canonical text: each numeric param line ends `  # <display value>`, as
-/// the unit shows it; every other line is kept. Comments are ignored on
-/// read, so this changes no Sound, and a second run changes nothing.
+/// the unit's page draws it for that Sound (an LFO's RATE by its TYPE's
+/// panel, `view::shown_fmt`); every other line is kept. Comments are
+/// ignored on read, so this changes no Sound, and a second run changes
+/// nothing. A table that doesn't build is left as written.
 pub fn fmt(text: &str) -> String {
+    let tables = lined_tables(text, "").unwrap_or_default();
+    // Each table's header line and the page context of its patched Sound.
+    let ctx: Vec<(usize, Option<SlotCtx>)> = tables
+        .iter()
+        .map(|t| {
+            let snd = (t.kind == "sound")
+                .then(|| sound("", t.line, &t.entries).and_then(|s| patch(&s)).ok())
+                .flatten();
+            (t.line, snd.map(|s| SlotCtx::read(&s.params, Op::A)))
+        })
+        .collect();
     text.lines()
-        .map(|l| fmt_line(l).unwrap_or_else(|| l.to_string()) + "\n")
+        .enumerate()
+        .map(|(n, l)| {
+            let c = ctx.iter().rev().find(|t| t.0 <= n + 1).and_then(|t| t.1);
+            c.and_then(|c| fmt_line(l, &c))
+                .unwrap_or_else(|| l.to_string())
+                + "\n"
+        })
         .collect()
 }
 
-fn fmt_line(line: &str) -> Option<String> {
+fn fmt_line(line: &str, ctx: &SlotCtx) -> Option<String> {
     let (k, v, _) = value_line(line.trim())?;
     let (block, param) = k.split_once('.')?;
     let a = valid_addr(block, param).filter(|a| !a.coded())?;
-    let spec = a.spec();
     let mut b = FmtBuf::new();
-    fmt_val(&mut b, spec.normalize(v.parse().ok()?), spec.fmt);
+    let shown = shown_fmt(a.addr(), ctx)?;
+    fmt_val(&mut b, a.spec().normalize(v.parse().ok()?), shown);
     Some(match b.as_str() {
         "" => format!("{k} = \"{v}\""),
         shown if shown == v => format!("{k} = \"{v}\""),

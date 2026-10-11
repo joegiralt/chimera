@@ -607,6 +607,24 @@ pub fn is_reverb_panel(def: &BlockDef, i: usize) -> bool {
     )
 }
 
+/// The format `addr` reads in under `ctx`: its modulator panel's cell for
+/// an ENV or LFO param on that kind's page, else its spec's (a filter MODE
+/// by KIND). One source for the pages and the host's `factory-sounds fmt`.
+pub fn shown_fmt(addr: ParamAddr, ctx: &SlotCtx) -> Option<ValFmt> {
+    let panel = match addr.block {
+        BlockRef::Env(s) => Some(mod_panel::env_panel(ctx.envs[s.index()])),
+        BlockRef::Lfo(s) => Some(mod_panel::lfo_panel(ctx.lfos[s.index()])),
+        _ => None,
+    };
+    let cell = panel.and_then(|p| {
+        p.slots.iter().flatten().find_map(|c| match *c {
+            PanelSlot::Param { id, fmt, .. } if id == addr.param => Some(fmt),
+            _ => None,
+        })
+    });
+    cell.or_else(|| addr.spec().map(|s| fmt_of(addr, s.fmt, ctx)))
+}
+
 /// Cell `k` of a modulator panel, its params in `block`.
 fn panel_view(panel: &mod_panel::ModPanel, k: u8, block: BlockRef) -> View {
     match panel.slots[k as usize] {

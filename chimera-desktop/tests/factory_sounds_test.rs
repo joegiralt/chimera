@@ -3,11 +3,18 @@
 //! identical, every committed Source builds, and each bad Source fails
 //! with its line.
 
+use chimera_core::block::{ParamId, ParamSpec};
+use chimera_core::dsp::lfo::{LFO_SPECS, LfoParams};
+use chimera_core::dsp::modulator::{Func, LfoForm};
+use chimera_core::params::{ENV_SPECS, EnvParams};
 use chimera_core::storage::{
     BuildStamp, Card, FileKind, SoundDecoder, load_file, peek_library, sound_crc,
 };
 use chimera_core::ui::draw::text_width;
+use chimera_core::ui::fmt::{FmtBuf, fmt_val};
+use chimera_core::ui::mod_panel;
 use chimera_core::ui::theme::{CONTENT_W, FONT_LABEL, LABEL_TRACKING};
+use chimera_core::ui::view::{EnvKind, LfoKind};
 use chimera_core::{params::EngineType, preset::Sound};
 use chimera_desktop::factory_sounds::{build, source};
 use chimera_hal::store::{Dir, FileName, Store};
@@ -296,4 +303,83 @@ fn placeholder_skipped() {
         BASE.replace("S9100002", "S9100003")
     );
     fails(&clash, 15, "TEST PAD");
+}
+
+/// `fmt`'s comment for `key` in `text`.
+fn comment(text: &str, key: &str) -> String {
+    let f = source::fmt(text);
+    let l = f.lines().find(|l| l.starts_with(key)).unwrap();
+    l.split("  # ").nth(1).unwrap_or("").to_string()
+}
+
+/// The page's own readout of `v` in `block`'s param `id` on `panel`.
+fn on_panel(panel: &mod_panel::ModPanel, id: ParamId, spec_of: &[ParamSpec], v: f32) -> String {
+    let fmt = panel
+        .slots
+        .iter()
+        .flatten()
+        .find_map(|c| match *c {
+            mod_panel::PanelSlot::Param { id: i, fmt, .. } if i == id => Some(fmt),
+            _ => None,
+        })
+        .unwrap();
+    let spec = spec_of.iter().find(|s| s.id == id).unwrap();
+    let mut b = FmtBuf::new();
+    fmt_val(&mut b, spec.normalize(v), fmt);
+    b.as_str().to_string()
+}
+
+#[test]
+fn fmt_reads_as_the_page_draws() {
+    // CLASSIC LFO RATE, and a type-B ENV's RISE (its RATE under LFO).
+    let t = format!(
+        "{BASE}LFO1.RATE = \"0.5\"\nENV2.TYPE = \"B\"\nENV2.MODE = \"LFO\"\nENV2.RISE = \"0.3\"\nLFO2.TYPE = \"FUNC\"\nLFO2.RISE = \"0.3\"\n"
+    );
+    run(&t).unwrap();
+    let rate = comment(&t, "LFO1.RATE");
+    assert_eq!(
+        rate,
+        on_panel(
+            mod_panel::lfo_panel(LfoKind::Classic),
+            LfoParams::RATE,
+            &LFO_SPECS,
+            0.5
+        )
+    );
+    let rise = comment(&t, "ENV2.RISE");
+    assert_eq!(
+        rise,
+        on_panel(
+            mod_panel::env_panel(EnvKind::B(Func::Lfo(LfoForm::Free))),
+            EnvParams::RISE,
+            &ENV_SPECS,
+            0.3
+        )
+    );
+    assert!(rise.ends_with("Hz"), "{rise}");
+    let func = comment(&t, "LFO2.RISE");
+    assert_eq!(
+        func,
+        on_panel(
+            mod_panel::lfo_panel(LfoKind::Func(LfoForm::Free)),
+            LfoParams::RISE,
+            &LFO_SPECS,
+            0.3
+        )
+    );
+    assert!(func.ends_with("Hz"), "{func}");
+    println!("LFO1.RATE # {rate}; ENV2.RISE # {rise}; LFO2.RISE # {func}");
+}
+
+#[test]
+fn trim_out_of_range_fails() {
+    // VA's neutral OUT LEVEL is 0.8: +3 dB passes 1.0, the param's top.
+    fails(&base_with(11, r#"trim = "+3""#), 11, "OUT LEVEL");
+    fails(&base_with(11, r#"trim = "1e30""#), 11, "OUT LEVEL");
+    // Never clipped: the check is `trimmed`, which `fmt --level` reuses.
+    assert!(source::trimmed(0.8, 3.0).is_err());
+    assert!(source::trimmed(0.5, 6.0).is_ok());
+    // OUT LEVEL's floor is 0: a cut only nears it, so no low side fails.
+    assert!(source::trimmed(0.8, -200.0).is_ok_and(|t| t >= 0.0));
+    run(&base_with(11, r#"trim = "+1.9""#)).unwrap();
 }
