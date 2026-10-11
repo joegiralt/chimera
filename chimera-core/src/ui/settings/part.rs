@@ -51,6 +51,7 @@ impl Act {
             Act::SaveProjectAs
             | Act::PartRename
             | Act::PartClear
+            | Act::SaveToLibrary
             | Act::SceneClear
             | Act::SceneReload
             | Act::EnterDfu

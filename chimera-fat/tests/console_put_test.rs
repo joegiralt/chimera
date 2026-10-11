@@ -13,14 +13,18 @@ mod tools;
 
 use chimera_core::console::{PUT_CHUNK_BYTES, PUT_DEADLINE_MS, PUT_MAX_BYTES, PutArg, PutTo, put};
 use chimera_core::dsp::tape_engine::read::DESC_LEN;
-use chimera_core::name::Name;
+use chimera_core::factory;
+use chimera_core::name::{Name, SoundName};
+use chimera_core::params::EngineType;
+use chimera_core::preset::Sound;
 use chimera_core::project::test_support::full_dense;
 use chimera_core::project::{
     Project, ProjectDecoder, encode_new_project, encode_project, list_projects, project_file,
 };
 use chimera_core::storage::{
-    Card, FileKind, Generation, Header, ProjectId, RecordWriter, Side, SourceHead,
-    load_ab_in_place, peek_header, read_source_into, source_name, write_file,
+    BuildStamp, Card, FileKind, Generation, Header, LibId, LibraryDecoder, ProjectId, RecordWriter,
+    Side, SourceHead, encode_library_sound, library_file, load_ab_in_place, peek_header,
+    read_source_into, source_name, write_file,
 };
 use chimera_fat::FatStore;
 use chimera_hal::store::{Dir, FileName, Store, StoreError, VolumeId};
@@ -317,13 +321,16 @@ fn refusals_before_ready_write_nothing() {
     ] {
         assert!(ask(&mut s, &line, b"").starts_with("ERR put: "), "{line}");
     }
-    let usage = "ERR put takes /CHIMERA/PROJECTS/P#######.A or /CHIMERA/TAPES/<CRC>.SRC, its size and CRC-32 in hex\n";
+    let usage = "ERR put takes /CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A [--over] \
+                 or /CHIMERA/TAPES/<CRC>.SRC, its size and CRC-32 in hex\n";
     for path in [
         "/CHIMERA/PROJECTS/AVRIL14.A",
         "/CHIMERA/PROJECTS/../SYSTEM.A",
         "/CHIMERA/PROJECTS//P0000014.A",
         "/CHIMERA/PROJECTS/",
-        "/CHIMERA/SOUNDS/S0000001.A",
+        "/CHIMERA/SOUNDS/S0000001",
+        "/CHIMERA/SOUNDS/../SYSTEM.A",
+        "/CHIMERA/SOUNDS//S0000001.A",
         "/CHIMERA/SYSTEM.A",
         "/CHIMERA/BENCH/CARD0.BIN",
         "PROJECTS/P0000014.A",
@@ -918,4 +925,328 @@ fn fsck_passes_after_source_puts_and_device_errors() {
     assert_eq!(ask(&mut s, &src_line(&h, &file), &chunked(&file)), SRC_OK);
     let f = tools::fsck(&disk);
     assert_eq!(f.code, 0, "after a good source put: {}", f.out);
+}
+
+// Library Sounds: `ls sounds`, `put`, `rm` and `get` in `/CHIMERA/SOUNDS`.
+
+const STAMP: BuildStamp = BuildStamp::new("0.1.0", "02e440e2", false);
+
+/// Factory Sound `i`, named as its library file's header names it.
+fn sound_of(i: usize) -> Sound {
+    let mut s = factory::factory_sound(i).unwrap();
+    s.name = SoundName::new("LIB").unwrap();
+    s
+}
+
+/// Sound `i` as a library file at generation `g`.
+fn sound_bytes(i: usize, g: u32) -> Vec<u8> {
+    let s = sound_of(i);
+    let h = Header {
+        kind: FileKind::Sound,
+        generation: Generation::new(g),
+        name: Some(Name::new("LIB").unwrap()),
+    };
+    let mut out = Bytes(Vec::new());
+    write_file(&mut out, &h, &mut |w| encode_library_sound(&s, &STAMP, w)).unwrap();
+    out.0
+}
+
+fn sound_name(stem: &str) -> FileName {
+    let (stem, ext) = stem.split_once('.').unwrap_or((stem, ""));
+    FileName::new(Dir::Sounds, stem.as_bytes(), ext.as_bytes()).unwrap()
+}
+
+/// A card with S0000001 (Sound 0, A at 1), S0000002 (Sound 1, A at 1 and
+/// B at 2) and the factory S9000001 (Sound 2).
+fn library<S: Store>(s: &mut S) -> VolumeId {
+    let vol = card(s);
+    s.make_dir(vol, Dir::Sounds).unwrap();
+    for (name, i, g) in [
+        ("S0000001.A", 0, 1),
+        ("S0000002.A", 1, 1),
+        ("S0000002.B", 1, 2),
+        ("S9000001.A", 2, 1),
+    ] {
+        let b = sound_bytes(i, g);
+        s.write(vol, sound_name(name), &mut |w| w.put(&b)).unwrap();
+    }
+    vol
+}
+
+fn on_card<S: Store>(s: &mut S, name: &str) -> Option<Vec<u8>> {
+    let vol = s.mount().unwrap();
+    read(s, vol, sound_name(name))
+}
+
+fn overwrite<S: Store>(s: &mut S, name: &str, b: &[u8]) {
+    let vol = s.mount().unwrap();
+    s.write(vol, sound_name(name), &mut |w| w.put(b)).unwrap();
+}
+
+/// The Sound a library load of `n` takes.
+fn load_sound<S: Store>(s: &mut S, n: u32) -> Option<Sound> {
+    let mut got = Sound::init(EngineType::Algo);
+    Card::new()
+        .run(s, |s, r| {
+            load_ab_in_place(
+                s,
+                r,
+                library_file(LibId::new(n).unwrap()),
+                &mut LibraryDecoder::new(&mut got),
+            )
+        })
+        .ok()?
+        .result
+        .ok()?;
+    Some(got)
+}
+
+fn sound_put(path: &str, body: &[u8], over: bool) -> String {
+    let line = put_line(path, body);
+    match over {
+        true => line.replace('\n', " --over\n"),
+        false => line,
+    }
+}
+
+#[test]
+fn ls_sounds_lists_the_library() {
+    let mut s = FatStore::new(fat16(16_384, 1));
+    let vol = card(&mut s);
+    assert_eq!(ask(&mut s, "ls sounds\n", b""), "ERR ls: FILE NOT FOUND\n");
+    library(&mut s);
+    let f = FileName::new(Dir::Projects, b"P0000001", b"A").unwrap();
+    s.make_dir(vol, Dir::Projects).unwrap();
+    s.write(vol, f, &mut |w| w.put(b"project")).unwrap();
+    let len = |i, g| sound_bytes(i, g).len();
+    assert_eq!(
+        ask(&mut s, "LS Sounds\n", b""),
+        format!(
+            "S0000001.A {}\nS0000002.A {}\nS0000002.B {}\nS9000001.A {}\nOK\n",
+            len(0, 1),
+            len(1, 1),
+            len(1, 2),
+            len(2, 1)
+        )
+    );
+}
+
+#[test]
+fn a_sound_put_onto_a_free_id_loads_and_forgets_the_page() {
+    let mut s = FatStore::new(fat16(16_384, 1));
+    card(&mut s);
+    let body = sound_bytes(3, 7);
+    let mut unit = Fake::new(&mut s);
+    let (said, _) = ask_unit(
+        &mut unit,
+        &sound_put("/chimera/sounds/s0000005.b", &body, false),
+        &lines(&body),
+        0,
+    );
+    assert_eq!(said, "READY\nOK\n");
+    assert_eq!(unit.forgotten, 1);
+    let a = on_card(&mut s, "S0000005.A").unwrap();
+    let h = peek_header(a[..28].try_into().unwrap()).unwrap();
+    assert_eq!(h.generation, Generation::FIRST, "the unit's generation");
+    assert_eq!(on_card(&mut s, "S0000005.B"), None);
+    assert!(load_sound(&mut s, 5).unwrap().bits_eq(&sound_of(3)));
+    clean(s.device());
+}
+
+#[test]
+fn put_onto_an_existing_id_refuses_unless_over() {
+    let mut s = FatStore::new(fat16(16_384, 1));
+    library(&mut s);
+    let before = on_card(&mut s, "S0000001.A").unwrap();
+    let body = sound_bytes(3, 1);
+    for path in ["/CHIMERA/SOUNDS/S0000001.A", "/CHIMERA/SOUNDS/S0000001.B"] {
+        let (said, unread) = ask_on(&mut s, &sound_put(path, &body, false), &lines(&body), 0);
+        assert_eq!(said, "ERR put: exists\n");
+        assert_eq!(unread, lines(&body).len(), "no data taken");
+    }
+    assert_eq!(on_card(&mut s, "S0000001.A").unwrap(), before);
+    assert_eq!(on_card(&mut s, "S0000001.B"), None);
+    // A torn pair is a pair: refused too.
+    overwrite(&mut s, "S0000002.A", b"");
+    overwrite(&mut s, "S0000002.B", b"");
+    let said = ask(
+        &mut s,
+        &sound_put("/CHIMERA/SOUNDS/S0000002.A", &body, false),
+        &lines(&body),
+    );
+    assert_eq!(said, "ERR put: exists\n");
+    // The factory id is taken by the same rule.
+    let said = ask(
+        &mut s,
+        &sound_put("/CHIMERA/SOUNDS/S9000001.A", &body, false),
+        &lines(&body),
+    );
+    assert_eq!(said, "ERR put: exists\n");
+    clean(s.device());
+}
+
+#[test]
+fn put_over_replaces_the_unit_way() {
+    let mut s = FatStore::new(fat16(16_384, 1));
+    library(&mut s);
+    let kept = on_card(&mut s, "S0000001.A").unwrap();
+    let body = sound_bytes(3, 1);
+    let said = ask(
+        &mut s,
+        &sound_put("/CHIMERA/SOUNDS/S0000001.A", &body, true),
+        &lines(&body),
+    );
+    assert_eq!(said, "READY\nOK\n");
+    assert_eq!(on_card(&mut s, "S0000001.A").unwrap(), kept, "A kept");
+    let b = on_card(&mut s, "S0000001.B").unwrap();
+    let h = peek_header(b[..28].try_into().unwrap()).unwrap();
+    assert_eq!(h.generation, Generation::new(2));
+    assert!(load_sound(&mut s, 1).unwrap().bits_eq(&sound_of(3)));
+    // `--over` onto a free id is a plain put.
+    let said = ask(
+        &mut s,
+        &sound_put("/CHIMERA/SOUNDS/S0000009.A", &body, true),
+        &lines(&body),
+    );
+    assert_eq!(said, "READY\nOK\n");
+    clean(s.device());
+}
+
+/// The Sound kind's own check runs as the file comes: a project, or a
+/// Sound it refuses, never shadows the pair.
+#[test]
+fn a_sound_put_takes_only_a_sound_the_check_passes() {
+    let mut s = FatStore::new(fat16(16_384, 1));
+    library(&mut s);
+    let project = project_bytes("AVRIL 14", 1);
+    let said = ask(
+        &mut s,
+        &sound_put("/CHIMERA/SOUNDS/S0000001.A", &project, true),
+        &lines(&project),
+    );
+    assert_eq!(said, "READY\nERR put: WRONG FILE TYPE\n");
+    // An empty Sound: no Engine record, which the check refuses.
+    let h = Header {
+        kind: FileKind::Sound,
+        generation: Generation::FIRST,
+        name: None,
+    };
+    let mut empty = Bytes(Vec::new());
+    write_file(&mut empty, &h, &mut |_| Ok(())).unwrap();
+    let said = ask(
+        &mut s,
+        &sound_put("/CHIMERA/SOUNDS/S0000001.A", &empty.0, true),
+        &lines(&empty.0),
+    );
+    assert!(said.starts_with("READY\nERR put: FILE "), "{said}");
+    assert_eq!(on_card(&mut s, "S0000001.B"), None, "the torn side deleted");
+    assert!(load_sound(&mut s, 1).unwrap().bits_eq(&sound_of(0)));
+    clean(s.device());
+}
+
+#[test]
+fn rm_deletes_pairs_and_torn_ones_and_refuses_factory_and_missing() {
+    let mut s = FatStore::new(fat16(16_384, 1));
+    library(&mut s);
+    let mut unit = Fake::new(&mut s);
+    let rm = |unit: &mut Fake<'_, _>, n: &str| {
+        ask_unit(unit, &format!("rm /CHIMERA/SOUNDS/{n}\n"), b"", 0).0
+    };
+    assert_eq!(rm(&mut unit, "S0000001"), "OK\n");
+    assert_eq!(unit.forgotten, 1);
+    assert_eq!(rm(&mut unit, "s0000001"), "ERR rm: not found\n");
+    assert_eq!(rm(&mut unit, "S0000077"), "ERR rm: not found\n");
+    assert_eq!(rm(&mut unit, "S9000001"), "ERR rm: factory\n");
+    overwrite(unit.files, "S0000002.A", b"");
+    assert_eq!(rm(&mut unit, "S0000002"), "OK\n");
+    for gone in ["S0000001.A", "S0000002.A", "S0000002.B"] {
+        assert_eq!(on_card(&mut s, gone), None, "{gone}");
+    }
+    assert!(on_card(&mut s, "S9000001.A").is_some());
+    clean(s.device());
+}
+
+/// `rm` on a card with no SOUNDS: not found, nothing made.
+#[test]
+fn rm_without_a_library_is_not_found() {
+    let mut s = FatStore::new(fat16(16_384, 1));
+    card(&mut s);
+    assert_eq!(
+        ask(&mut s, "rm /CHIMERA/SOUNDS/S0000001\n", b""),
+        "ERR rm: not found\n"
+    );
+    assert_eq!(ask(&mut s, "ls sounds\n", b""), "ERR ls: FILE NOT FOUND\n");
+}
+
+/// `GET <len>`, its base64 lines, `CRC <hex>` and `OK`: the bytes and their CRC.
+fn parse_get(said: &str) -> (Vec<u8>, u32) {
+    let mut lines = said.lines();
+    let len: usize = lines
+        .next()
+        .unwrap()
+        .strip_prefix("GET ")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let mut data = Vec::new();
+    let mut crc_line = None;
+    for l in lines.by_ref() {
+        if let Some(c) = l.strip_prefix("CRC ") {
+            crc_line = Some(u32::from_str_radix(c, 16).unwrap());
+            break;
+        }
+        assert!(l.len() <= 64, "{l}");
+        data.extend(unbase64(l));
+    }
+    assert_eq!(lines.next(), Some("OK"));
+    assert_eq!(lines.next(), None);
+    assert_eq!(data.len(), len);
+    (data, crc_line.unwrap())
+}
+
+fn unbase64(l: &str) -> Vec<u8> {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let v = |c: u8| A.iter().position(|&a| a == c).map(|x| x as u32);
+    let mut out = Vec::new();
+    for q in l.as_bytes().chunks(4) {
+        let n = q.iter().fold(0, |n, &c| n << 6 | v(c).unwrap_or(0));
+        let k = q.iter().filter(|&&c| c != b'=').count() - 1;
+        out.extend(&n.to_be_bytes()[1..1 + k]);
+    }
+    out
+}
+
+#[test]
+fn get_streams_the_picked_side() {
+    let mut s = FatStore::new(fat16(16_384, 1));
+    library(&mut s);
+    let (data, c) = parse_get(&ask(&mut s, "get /CHIMERA/SOUNDS/S0000001\n", b""));
+    assert_eq!(data, on_card(&mut s, "S0000001.A").unwrap());
+    assert_eq!(c, crc(&data));
+    // The newer side of a pair; then, with it torn, the other.
+    let (data, _) = parse_get(&ask(&mut s, "get /chimera/sounds/s0000002\n", b""));
+    assert_eq!(data, on_card(&mut s, "S0000002.B").unwrap());
+    let mut torn = data.clone();
+    torn[40] ^= 1;
+    overwrite(&mut s, "S0000002.B", &torn);
+    let (data, _) = parse_get(&ask(&mut s, "get /CHIMERA/SOUNDS/S0000002\n", b""));
+    assert_eq!(data, on_card(&mut s, "S0000002.A").unwrap());
+}
+
+#[test]
+fn get_of_a_torn_pair_says_why() {
+    let mut s = FatStore::new(fat16(16_384, 1));
+    library(&mut s);
+    overwrite(&mut s, "S0000002.A", b"");
+    let mut b = on_card(&mut s, "S0000002.B").unwrap();
+    b.truncate(b.len() - 10);
+    overwrite(&mut s, "S0000002.B", &b);
+    assert_eq!(
+        ask(&mut s, "get /CHIMERA/SOUNDS/S0000002\n", b""),
+        "ERR get: FILE IS CUT SHORT\n"
+    );
+    assert_eq!(
+        ask(&mut s, "get /CHIMERA/SOUNDS/S0000003\n", b""),
+        "ERR get: not found\n"
+    );
 }

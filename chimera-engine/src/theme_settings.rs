@@ -286,7 +286,7 @@ impl ThemeSettings {
     pub const ACCENT: ParamId = ParamId(2);
     pub const BLACK: ParamId = ParamId(3);
     pub const HINTS: ParamId = ParamId(4);
-    pub const SAVER: ParamId = ParamId(5);
+    pub const SAVER: ParamId = ParamId(6);
 }
 
 const BRIGHT_NAMES: [&str; 19] = [
@@ -357,7 +357,7 @@ pub static THEME_SPECS: [ParamSpec; 6] = [
     .glyph(crate::glyph::FocusGlyph::Switch),
     // A SYSTEM from before SAVER has none: 7 S.
     ParamSpec::stepped(
-        5,
+        6,
         "SAVER",
         ValFmt::Names(&SAVER_NAMES),
         0.0,

@@ -30,7 +30,7 @@ use crate::orbit::runner::{OrbitRunner, OrbitShared};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::part::{Held, LiveSnap, PartParams};
 use crate::preset::{Part, Performance, Sound};
-use crate::project::{Loads, Project, SourceId};
+use crate::project::{Loads, PartId, Project, SourceId};
 use crate::scope::ScopeWriter;
 use crate::source_table::{AudioToken, GateView};
 use crate::tracked::Tracked;
@@ -253,6 +253,11 @@ impl AudioShared {
         *fx = perf.fx;
         *e = epoch;
     }
+}
+
+/// Part index `q`, as a voice's `sounding` holds it.
+fn part_id(q: u8) -> PartId {
+    PartId::ALL[q as usize % MAX_PARTS]
 }
 
 /// A new Sound in `part` (its `loads` moved): its knobs read whole and
@@ -679,6 +684,12 @@ impl Instrument {
         core::array::from_fn(|v| self.voices[v].kind())
     }
 
+    /// Voice `v`: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn voice(&self, v: usize) -> &Voice {
+        &self.voices[v]
+    }
+
     /// Whether each voice rings a pool set: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn rings(&self) -> [bool; MAX_VOICES] {
@@ -922,6 +933,7 @@ impl Instrument {
                         let ctx = &mut EngineCtx {
                             sym: &mut self.sym,
                             src,
+                            part: part_id(q),
                         };
                         voice.note_on(note, vel, &part.params, part.source, ctx)
                     };
@@ -970,6 +982,7 @@ impl Instrument {
                         self.voices[v].note_off(&mut EngineCtx {
                             sym: &mut self.sym,
                             src: &NO_SOURCES,
+                            part: part_id(self.sounding[v]),
                         });
                     }
                 }
@@ -1052,6 +1065,7 @@ impl Instrument {
                 &mut EngineCtx {
                     sym: &mut self.sym,
                     src: &NO_SOURCES,
+                    part: part_id(self.sounding[v]),
                 },
             );
             self.resnap_to[v] = None;
@@ -1105,6 +1119,7 @@ impl Instrument {
         let ctx = &mut EngineCtx {
             sym: &mut self.sym,
             src,
+            part: part_id(q),
         };
         let _ = voice.note_on(note, w.vel, params, w.source, ctx);
         if !held {
@@ -1347,6 +1362,7 @@ impl Instrument {
             let ctx = &mut EngineCtx {
                 sym: &mut self.sym,
                 src,
+                part: PartId::ALL[p],
             };
             self.voices[v].render_knobs(
                 &mut block,

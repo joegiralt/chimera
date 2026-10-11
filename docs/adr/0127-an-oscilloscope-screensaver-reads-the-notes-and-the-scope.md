@@ -1,4 +1,4 @@
-# 0123. An oscilloscope screensaver reads the notes played and the scope
+# 0127. An oscilloscope screensaver reads the notes played and the scope
 
 - **Status:** Accepted (2026-10-11)
 - **Deciders:** owner (design), Claude (implementation)
@@ -9,8 +9,8 @@ hears. The UI already has the scope capture (`scope`, 240 samples, 48 kHz)
 but knows nothing of the notes: they go straight to the audio thread.
 
 ## Decision
-- THEME gains SAVER: OFF / 5 / 7 / 10 / 30 / 60 s, default 7 s, stored in
-  SYSTEM beside HINTS (`B 26 5 SAVER`). After that long with no button or
+- SETTINGS › PERSONALIZE › SCREENSAVER (own row, one cell): OFF / 5 / 7 / 10 / 30 / 60 s, default 7 s, stored in
+  SYSTEM in the THEME block (`B 26 6 SAVER`; 5 is INVERT's). After that long with no button or
   encoder input (a prompt or card work counts as attention) the screen shows
   the master scope large in the accent, through the palette. MIDI never wakes
   it. Any button or encoder wakes it; that press, and everything until it is
@@ -35,7 +35,7 @@ but knows nothing of the notes: they go straight to the audio thread.
   exactly. One key shows its name, two the interval.
 
 ## Alternatives considered
-- A SETTINGS page of its own: a sixth cell on THEME was free.
+- A sixth THEME cell: INVERT's.
 - Measuring in the audio thread or capturing a longer window: costs the audio
   path or changes the scope for every page.
 - Waking on MIDI: a playing synth would never rest.

@@ -124,7 +124,7 @@ impl<T> CardOut<T> {
 }
 
 /// The event of a `Card::run`, and its result flattened.
-fn split<R, E>(run: Result<Outcome<R, E>, E>) -> (Result<R, E>, Option<CardEvent>) {
+pub(super) fn split<R, E>(run: Result<Outcome<R, E>, E>) -> (Result<R, E>, Option<CardEvent>) {
     match run {
         Ok(o) => (o.result, Some(o.event)),
         Err(e) => (Err(e), None),

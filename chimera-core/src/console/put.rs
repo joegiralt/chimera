@@ -6,6 +6,9 @@
 //! pair as it was. Every card operation runs under what is left of
 //! `PUT_DEADLINE_MS`.
 //!
+//! A library Sound goes the same way, its own kind's check in place of
+//! the project's; an id already on the card refuses unless `--over`.
+//!
 //! With `source-writer`, `put` also takes a TAPE source (ADR 0106): in
 //! 256 KiB chunks, each checked and under its own deadline, written once,
 //! read back and sealed. A file already sealed answers `OK PRESENT`.
@@ -15,11 +18,12 @@ use core::fmt::{self, Write};
 use chimera_hal::Ms;
 use chimera_hal::store::{CHUNK, Dir, FileName, Files, StoreError};
 
-use super::{Arg, Out, Stalled, Words};
+use super::{Arg, Out, Stalled, Words, sound_file::exists};
 use crate::project::{ProjectCheck, peek_entry, project_file};
 use crate::storage::{
-    Card, CardFault, Check, Crc32, Event, FileError, Framer, Generation, HEADER_LEN, Header,
-    ProjectId, Ready, SaveError, peek_header, save_target, write_file,
+    AbFile, Card, CardFault, Check, Crc32, Event, FileError, Framer, Generation, HEADER_LEN,
+    Header, LibId, Pick, ProjectId, Ready, SaveError, Side, SideState, SoundCheck, check_file,
+    library_file, peek_header, pick, save_target, write_file,
 };
 #[cfg(feature = "source-writer")]
 use crate::storage::{PutRefusal, SourceCheck, Wrote, source_name, source_target, verify_and_seal};
@@ -42,6 +46,8 @@ pub const READY: &str = "READY\n";
 pub const PUT_CHUNK_BYTES: u32 = 256 * 1024;
 /// The word that asks to resume a source: reserved for TRON, refused.
 pub const RESUME: &[u8] = b"resume";
+/// The word that lets a Sound `put` replace an id on the card.
+pub const OVER: &[u8] = b"--over";
 /// Kept back from the write for judging the pair, or deleting the side,
 /// after it.
 const VERIFY_MS: u32 = 3_000;
@@ -56,6 +62,7 @@ const DRAIN_MS: u32 = 5_000;
 const MIN_FILE: u32 = 32;
 const DECODED: usize = PUT_LINE / 4 * 3;
 const PROJECTS: &[u8] = b"/CHIMERA/PROJECTS/";
+pub(super) const SOUNDS: &[u8] = b"/CHIMERA/SOUNDS/";
 #[cfg(feature = "source-writer")]
 const TAPES: &[u8] = b"/CHIMERA/TAPES/";
 #[cfg(feature = "source-writer")]
@@ -69,7 +76,7 @@ const _: () = assert!(PUT_LINE <= super::MAX_LINE);
 /// Digits only, at most `max` of them, in `radix`. Out of line: inlined
 /// at each of its four calls it doubled `PutArg::parse`.
 #[inline(never)]
-fn number(w: &[u8], radix: u32, max: usize) -> Option<u32> {
+pub(super) fn number(w: &[u8], radix: u32, max: usize) -> Option<u32> {
     if w.is_empty() || w.len() > max {
         return None;
     }
@@ -79,18 +86,34 @@ fn number(w: &[u8], radix: u32, max: usize) -> Option<u32> {
     })
 }
 
-/// `/CHIMERA/PROJECTS/P0000014.A` (or `.B`: the letter names the pair; the
-/// unit picks the side it writes), any case. Nothing else parses: no other
-/// directory, no `..`, no `//`.
-fn project(p: &[u8]) -> Option<ProjectId> {
-    let (dir, name) = p.split_at_checked(PROJECTS.len())?;
-    let [b'P' | b'p', digits @ .., b'.', b'A' | b'B' | b'a' | b'b'] = name else {
-        return None;
-    };
-    if !dir.eq_ignore_ascii_case(PROJECTS) || digits.len() != 7 {
+/// `<dir><letter>#######`, any case: the number. Nothing else parses: no
+/// other directory, no `..`, no `//`.
+pub(super) fn numbered(p: &[u8], dir: &[u8], letter: u8) -> Option<u32> {
+    let (d, name) = p.split_at_checked(dir.len())?;
+    let (&first, digits) = name.split_first()?;
+    if !d.eq_ignore_ascii_case(dir) || !first.eq_ignore_ascii_case(&letter) || digits.len() != 7 {
         return None;
     }
-    ProjectId::new(number(digits, 10, 7)?)
+    number(digits, 10, 7)
+}
+
+/// `.A` or `.B`, any case: the letter names the pair; the unit picks the
+/// side it writes.
+fn pair_name(p: &[u8]) -> Option<&[u8]> {
+    match p {
+        [stem @ .., b'.', b'A' | b'B' | b'a' | b'b'] => Some(stem),
+        _ => None,
+    }
+}
+
+/// `/CHIMERA/PROJECTS/P0000014.A` (or `.B`).
+fn project(p: &[u8]) -> Option<ProjectId> {
+    ProjectId::new(numbered(pair_name(p)?, PROJECTS, b'P')?)
+}
+
+/// `/CHIMERA/SOUNDS/S0000012.A` (or `.B`): user and factory ids alike.
+fn sound(p: &[u8]) -> Option<LibId> {
+    LibId::new(numbered(pair_name(p)?, SOUNDS, b'S')?)
 }
 
 /// `/CHIMERA/TAPES/0BADF00D.SRC`, any case: the stem is the source's CRC.
@@ -109,13 +132,18 @@ fn source(p: &[u8]) -> Option<u32> {
 pub enum PutTo {
     /// A project's pair, saved the unit's way.
     Project(ProjectId),
+    /// A library Sound's pair, the same way. `over`: an id on the card is
+    /// replaced, not refused.
+    Sound { id: LibId, over: bool },
     /// A TAPE source, by its stem: written once and sealed.
     #[cfg(feature = "source-writer")]
     Source(u32),
 }
 
 fn put_to(p: &[u8]) -> Option<PutTo> {
-    let to = project(p).map(PutTo::Project);
+    let to = project(p)
+        .map(PutTo::Project)
+        .or_else(|| sound(p).map(|id| PutTo::Sound { id, over: false }));
     #[cfg(feature = "source-writer")]
     let to = to.or_else(|| source(p).map(PutTo::Source));
     to
@@ -133,18 +161,23 @@ pub struct PutArg {
 
 impl Arg for PutArg {
     #[cfg(not(feature = "source-writer"))]
-    const USAGE: &'static str = "/CHIMERA/PROJECTS/P#######.A, its size and CRC-32 in hex";
+    const USAGE: &'static str = "/CHIMERA/PROJECTS/P#######.A or /CHIMERA/SOUNDS/S#######.A \
+        [--over], its size and CRC-32 in hex";
     #[cfg(feature = "source-writer")]
-    const USAGE: &'static str =
-        "/CHIMERA/PROJECTS/P#######.A or /CHIMERA/TAPES/<CRC>.SRC, its size and CRC-32 in hex";
+    const USAGE: &'static str = "/CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A \
+        [--over] or /CHIMERA/TAPES/<CRC>.SRC, its size and CRC-32 in hex";
     fn parse(mut words: Words<'_>) -> Option<Self> {
-        let to = put_to(words.next()?)?;
+        let mut to = put_to(words.next()?)?;
         let size = number(words.next()?, 10, 10)?;
         let crc = number(words.next()?, 16, 8)?;
-        let resume = match words.next() {
-            None => false,
-            Some(w) if w.eq_ignore_ascii_case(RESUME) => true,
-            Some(_) => return None,
+        let resume = match (words.next(), &mut to) {
+            (None, _) => false,
+            (Some(w), _) if w.eq_ignore_ascii_case(RESUME) => true,
+            (Some(w), PutTo::Sound { over, .. }) if w.eq_ignore_ascii_case(OVER) => {
+                *over = true;
+                false
+            }
+            (Some(_), _) => return None,
         };
         words.next().is_none().then_some(PutArg {
             to,
@@ -155,19 +188,21 @@ impl Arg for PutArg {
     }
 }
 
-/// `ls`'s argument: PROJECTS, or `tapes`.
+/// `ls`'s argument: PROJECTS, `tapes` or `sounds`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LsArg {
     Projects,
     Tapes,
+    Sounds,
 }
 
 impl Arg for LsArg {
-    const USAGE: &'static str = "tapes or nothing";
+    const USAGE: &'static str = "tapes, sounds or nothing";
     fn parse(mut words: Words<'_>) -> Option<Self> {
         let got = match words.next() {
             None => LsArg::Projects,
             Some(w) if w.eq_ignore_ascii_case(b"tapes") => LsArg::Tapes,
+            Some(w) if w.eq_ignore_ascii_case(b"sounds") => LsArg::Sounds,
             Some(_) => return None,
         };
         words.next().is_none().then_some(got)
@@ -178,6 +213,8 @@ impl Arg for LsArg {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PutFail {
     ProjectOpen,
+    /// A Sound id with a side on the card, and no `--over`.
+    Exists,
     TooBig,
     Timeout,
     /// A block's worth of data didn't come within `PUT_STALL_MS`: a short
@@ -209,6 +246,7 @@ impl PutFail {
     pub fn message(self) -> &'static str {
         match self {
             PutFail::ProjectOpen => "project is open",
+            PutFail::Exists => "exists",
             PutFail::TooBig => "over 1 MiB",
             PutFail::Timeout => "timeout",
             PutFail::Stalled => "no block for 500 ms",
@@ -336,7 +374,32 @@ fn transfer<F: Files, P: Out>(
             }
             due.arm(files, port, 0)?;
             Card::new()
-                .run(files, |s, r| session(s, r, id, arg, port, due))
+                .run(files, |s, r| {
+                    session(s, r, Dir::Projects, port, due, |s, port| {
+                        let mut src = Incoming::new(arg, port, due);
+                        save::<_, _, ProjectCheck>(s, r, project_file(id), &mut src, |s, g| {
+                            judge(s, r, id, g)
+                        })
+                    })
+                })
+                .and_then(|o| o.result)
+                .map(|()| Done::Saved)
+        }
+        PutTo::Sound { id, over } => {
+            due.arm(files, port, 0)?;
+            let file = library_file(id);
+            Card::new()
+                .run(files, |s, r| {
+                    if !over && exists(s, r, file)? {
+                        return Err(PutFail::Exists);
+                    }
+                    session(s, r, Dir::Sounds, port, due, |s, port| {
+                        let mut src = Incoming::new(arg, port, due);
+                        save::<_, _, SoundCheck>(s, r, file, &mut src, |s, g| {
+                            judge_pair::<_, SoundCheck>(s, r, file, g)
+                        })
+                    })
+                })
                 .and_then(|o| o.result)
                 .map(|()| Done::Saved)
         }
@@ -360,25 +423,24 @@ fn drain(port: &mut impl Out) {
     while port.now().since(start) < DRAIN_MS && port.recv(QUIET_MS).is_some() {}
 }
 
-/// On the mounted card: the directory, `READY`, then the data. After
+/// On the mounted card: `dir`, `READY`, then the data to `save`. After
 /// `READY` any failure drains the host before the `ERR`.
 fn session<F: Files, P: Out>(
     s: &mut F,
     r: &Ready,
-    id: ProjectId,
-    arg: PutArg,
+    dir: Dir,
     port: &mut P,
     due: Due,
+    save: impl FnOnce(&mut F, &mut P) -> Result<(), PutFail>,
 ) -> Result<(), PutFail> {
-    for d in [Dir::Chimera, Dir::Projects] {
+    for d in [Dir::Chimera, dir] {
         due.arm(s, port, 0)?;
         s.make_dir(r.volume(), d)?;
     }
     port.fresh();
     port.put(READY.as_bytes())
         .map_err(|Stalled| PutFail::Stalled)?;
-    let mut src = Incoming::new(arg, port, due);
-    let saved = save(s, r, id, &mut src);
+    let saved = save(s, port);
     if saved.is_err() {
         drain(port);
     }
@@ -497,37 +559,35 @@ impl Chunk {
 }
 
 /// The header read, then the file saved as the unit saves it while the
-/// project's own check reads it as it comes: a file the check refuses
-/// ends before its trailer, a torn side a load never takes. Then the
-/// headers, as the project list reads them: `OK` only if they show the
-/// side just written as the one that loads.
+/// kind's own check reads it as it comes: a file the check refuses
+/// ends before its trailer, a torn side a load never takes. Then `judge`:
+/// `OK` only if the pair shows the side just written as the one that loads.
 #[inline(never)]
-fn save<F: Files, P: Out>(
+fn save<F: Files, P: Out, C: Check + Default>(
     s: &mut F,
     r: &Ready,
-    id: ProjectId,
+    file: AbFile,
     src: &mut Incoming<'_, P>,
+    judge: impl FnOnce(&mut F, Generation) -> Result<(), PutFail>,
 ) -> Result<(), PutFail> {
-    let file = project_file(id);
     let mut framer = Framer::new(src.size).map_err(PutFail::File)?;
-    let mut check = ProjectCheck::default();
+    let mut check = C::default();
     let mut head = [0; HEADER_LEN];
     for b in &mut head {
         *b = src.next()?;
     }
     let h = peek_header(&head).map_err(PutFail::File)?;
-    if h.kind != ProjectCheck::KIND {
+    if h.kind != C::KIND {
         return Err(PutFail::File(FileError::WrongKind));
     }
     framer
         .push(&head, &mut |e: Event<'_>| check.event(e))
         .map_err(PutFail::File)?;
-    let (side, generation) =
-        save_target(s, r, file, &mut ProjectCheck::default()).map_err(|e| match e {
-            SaveError::Store(e) => PutFail::Store(e),
-            SaveError::File(e) => PutFail::File(e),
-            SaveError::Damaged => PutFail::File(FileError::Corrupt),
-        })?;
+    let (side, generation) = save_target(s, r, file, &mut C::default()).map_err(|e| match e {
+        SaveError::Store(e) => PutFail::Store(e),
+        SaveError::File(e) => PutFail::File(e),
+        SaveError::Damaged => PutFail::File(FileError::Corrupt),
+    })?;
     let h = Header { generation, ..h };
     src.due.arm(s, src.port, VERIFY_MS)?;
     let mut why = None;
@@ -553,7 +613,7 @@ fn save<F: Files, P: Out>(
         return Err(why.unwrap_or(PutFail::Store(e)));
     }
     src.due.arm(s, src.port, 0)?;
-    judge(s, r, id, generation)
+    judge(s, generation)
 }
 
 /// `Ok` if the headers, as the project list reads them, show the new
@@ -563,6 +623,32 @@ fn judge<F: Files>(s: &mut F, r: &Ready, id: ProjectId, g: Generation) -> Result
         Some(e) if e.err.is_none() && e.generation == Some(g) => Ok(()),
         Some(e) => Err(PutFail::File(e.err.unwrap_or(FileError::Corrupt))),
         None => Err(PutFail::File(FileError::Corrupt)),
+    }
+}
+
+/// `Ok` if a load of `file`, as `C` judges both sides, takes the side at
+/// generation `g`: the kind's check after the write.
+fn judge_pair<F: Files, C: Check + Default>(
+    s: &mut F,
+    r: &Ready,
+    file: AbFile,
+    g: Generation,
+) -> Result<(), PutFail> {
+    let mut c = C::default();
+    let [a, b] = [Side::A, Side::B].map(|sd| {
+        c.side(sd);
+        check_file(s, r, file.side(sd), &mut c)
+    });
+    let (a, b) = (a?, b?);
+    let loads = match pick(a, b) {
+        Pick::Load(Side::A) => a,
+        Pick::Load(Side::B) => b,
+        Pick::Refuse(_, e) => return Err(PutFail::File(e)),
+        Pick::Missing => return Err(PutFail::File(FileError::Corrupt)),
+    };
+    match loads {
+        SideState::Present { generation, .. } if generation == g => Ok(()),
+        _ => Err(PutFail::File(FileError::Corrupt)),
     }
 }
 
@@ -804,6 +890,7 @@ pub fn ls<F: Files>(arg: LsArg, f: &mut F, out: &mut impl Out) -> Result<(), Sta
     let dir = match arg {
         LsArg::Projects => Dir::Projects,
         LsArg::Tapes => Dir::Tapes,
+        LsArg::Sounds => Dir::Sounds,
     };
     let mut t = super::Text(out);
     let mut wrote = Ok(());

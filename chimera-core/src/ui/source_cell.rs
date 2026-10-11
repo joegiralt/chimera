@@ -15,7 +15,7 @@ use chimera_hal::store::{ReadSink, Store, StoreError};
 
 use crate::preset::Sound;
 use crate::project::arena::{Cost, MAX_SOURCES};
-use crate::project::{PartId, Pool, Project, SOURCE_HEAD, SourceId};
+use crate::project::{PartId, Pool, Project, SOURCE_HEAD, SourceId, SourceNeed};
 use crate::storage::{
     MAX_TAPES, Ready, SourceCheck, SourceHead, SourceRef, TapeList, TapeSource, held_for_file_len,
     source_file,
@@ -183,6 +183,15 @@ pub enum LoadStep {
     Failed(&'static str),
 }
 
+/// One pass of a `SourceLoad` that doesn't publish.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StagedStep {
+    More,
+    /// Whole and passing in the staging, unpublished.
+    Staged(SourceNeed),
+    Failed(&'static str),
+}
+
 impl SourceLoad {
     /// Card file `stem` of `size` bytes, into `p`'s gap; `None` when it
     /// won't fit.
@@ -202,12 +211,28 @@ impl SourceLoad {
     /// Reads the next 4 KiB into the staging; once the file is whole and
     /// passes, publishes it with `Release`.
     pub fn step<S: Store>(&mut self, s: &mut S, r: &Ready, p: &mut Project) -> LoadStep {
+        match self.step_staged(s, r, p) {
+            StagedStep::More => LoadStep::More,
+            StagedStep::Failed(w) => LoadStep::Failed(w),
+            StagedStep::Staged(need) => {
+                match (p.source_commit(need.r, need.held), self.check.head()) {
+                    (Ok(id), Some(head)) => LoadStep::Done(id, head),
+                    _ => LoadStep::Failed(crate::ui::settings::prompt::POOL_FULL),
+                }
+            }
+        }
+    }
+
+    /// `step` without the commit: the last chunk leaves the whole, passing
+    /// file staged, unpublished, and says what it is. A library load's
+    /// `adopt` publishes it.
+    pub fn step_staged<S: Store>(&mut self, s: &mut S, r: &Ready, p: &mut Project) -> StagedStep {
         // A gap that moved under the staging: never published.
         let Some((stage, held)) = p.source_staging(self.held) else {
-            return LoadStep::Failed(READ_FAILED);
+            return StagedStep::Failed(READ_FAILED);
         };
         if stage != self.stage {
-            return LoadStep::Failed(READ_FAILED);
+            return StagedStep::Failed(READ_FAILED);
         }
         let mut feed = Feed {
             check: &mut self.check,
@@ -219,22 +244,23 @@ impl SourceLoad {
         let read = s.read_at(r.volume(), file(self.stem), self.at, &mut feed);
         let (got, refused) = (feed.got, feed.refused);
         if let Err(e) = read {
-            return LoadStep::Failed(said(e));
+            return StagedStep::Failed(said(e));
         }
         if refused || got == 0 {
-            return LoadStep::Failed(READ_FAILED);
+            return StagedStep::Failed(READ_FAILED);
         }
         self.at += got;
         if self.at < self.size {
-            return LoadStep::More;
+            return StagedStep::More;
         }
         // Every byte came and passed: the last feed checked the CRC.
-        let (Some(head), Some(len)) = (self.check.head(), self.check.held_len()) else {
-            return LoadStep::Failed(READ_FAILED);
-        };
-        match p.source_commit(head.sref, len) {
-            Ok(id) => LoadStep::Done(id, head),
-            Err(_) => LoadStep::Failed(crate::ui::settings::prompt::POOL_FULL),
+        match (self.check.head(), self.check.held_len()) {
+            (Some(head), Some(held)) => StagedStep::Staged(SourceNeed {
+                r: head.sref,
+                held,
+                on_card: true,
+            }),
+            _ => StagedStep::Failed(READ_FAILED),
         }
     }
 }
@@ -338,7 +364,6 @@ impl SourceMemo {
 }
 
 /// Card work SOURCE queued: run by `card_work`, one a UI pass, under BUSY.
-#[expect(clippy::large_enum_variant, reason = "one, in the UI state, in AXI")]
 enum SourceJob {
     /// List the card, then turn.
     List(PartId, i8),
@@ -351,6 +376,9 @@ enum SourceJob {
         pick: bool,
     },
     Load(PartId, SourceLoad),
+    /// A library load's source, held for `UiState` to step: never run
+    /// here. It shares this slot, as the two never stream at once.
+    Stage(SourceLoad),
 }
 
 /// The SOURCE cell's state beside the project: the card as listed, the
@@ -390,6 +418,27 @@ impl SourceCell {
     /// is as it was.
     pub fn cancel(&mut self) {
         if self.loading() {
+            self.job = None;
+        }
+    }
+
+    /// A library load's source into the job slot: BUSY, and no SOURCE
+    /// card work starts beside it.
+    pub(crate) fn hold(&mut self, l: SourceLoad) {
+        self.job = Some(SourceJob::Stage(l));
+    }
+
+    /// The library load's source, if held.
+    pub(crate) fn staging(&mut self) -> Option<&mut SourceLoad> {
+        match &mut self.job {
+            Some(SourceJob::Stage(l)) => Some(l),
+            _ => None,
+        }
+    }
+
+    /// The library load's source dropped: nothing was published.
+    pub(crate) fn unhold(&mut self) {
+        if matches!(self.job, Some(SourceJob::Stage(_))) {
             self.job = None;
         }
     }
@@ -558,6 +607,8 @@ impl SourceCell {
                 }
                 LoadStep::Failed(w) => self.note = Some(w),
             },
+            // `UiState::lib_step`'s, not this.
+            SourceJob::Stage(l) => self.job = Some(SourceJob::Stage(l)),
         }
     }
 }

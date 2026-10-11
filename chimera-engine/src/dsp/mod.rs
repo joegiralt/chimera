@@ -25,6 +25,29 @@ static SINE_LUT: [f32; 1024] = {
     table
 };
 
+/// `√x`, correctly rounded: the FPU's VSQRT on the M7 (14 cycles), libm's
+/// on the host, so both give the same bits (libm's own `sqrtf` is a
+/// software loop on this target).
+#[inline(always)]
+pub fn sqrt(x: f32) -> f32 {
+    #[cfg(all(target_arch = "arm", target_feature = "vfp2"))]
+    {
+        let r: f32;
+        // SAFETY: one register-to-register VFP op; no memory or stack
+        // touched. It may set FPSCR's IOC (negative input) or IXC flags;
+        // nothing reads them.
+        unsafe {
+            core::arch::asm!("vsqrt.f32 {r}, {x}", r = lateout(sreg) r, x = in(sreg) x,
+                options(pure, nomem, nostack));
+        }
+        r
+    }
+    #[cfg(not(all(target_arch = "arm", target_feature = "vfp2")))]
+    {
+        libm::sqrtf(x)
+    }
+}
+
 /// Fast sine approximation using 1024-entry LUT with linear interpolation.
 /// Input: theta in radians (any range, wraps automatically).
 /// ~10 cycles on Cortex-M7 vs ~500 for libm::sinf.
@@ -137,10 +160,12 @@ pub mod lfo;
 pub mod limiter;
 pub mod modal;
 pub mod modulator;
+pub mod provenance;
 pub mod rev;
 pub mod reverb;
 pub mod ring;
 pub mod tape;
 pub mod tape_engine;
+pub mod va;
 pub mod voice;
 pub mod wavefolder;

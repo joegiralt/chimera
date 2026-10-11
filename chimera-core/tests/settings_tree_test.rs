@@ -165,9 +165,12 @@ fn demo_only_in_debug() {
     assert_eq!(labels, want);
 }
 
+/// An action row is never entered, so its crumb names only its NAMING
+/// (`SAVE TO LIB`), whose breadcrumb is drawn on its own.
 #[test]
 fn every_crumb_fits() {
     for (r, _) in all() {
-        assert!(r.crumb.len() <= 8, "{}", r.crumb);
+        let entered = !matches!(r.kind, Kind::Act(_));
+        assert!(!entered || r.crumb.len() <= 8, "{}", r.crumb);
     }
 }

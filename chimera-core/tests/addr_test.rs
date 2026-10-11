@@ -4,6 +4,7 @@ use chimera_core::addr::{BlockRead, BlockRef, Blocks, Op, OpOutOfRange, ParamAdd
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::modal::ModalParams;
 use chimera_core::dsp::modulator::EnvSlot;
+use chimera_core::dsp::va::VaParams;
 use chimera_core::params::{
     DriveParams, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot, PitchParams,
 };
@@ -116,6 +117,21 @@ fn modulatable_addresses_are_exactly_the_spec_list() {
         ModalParams::POS,
     ] {
         want.push(ParamAddr::new(BlockRef::Modal, id));
+    }
+    for id in [
+        VaParams::WAVE1,
+        VaParams::WAVE2,
+        VaParams::AMOUNT,
+        VaParams::SUB,
+        VaParams::STAB,
+        VaParams::CRSE1,
+        VaParams::FINE1,
+        VaParams::SHAPE1,
+        VaParams::CRSE2,
+        VaParams::FINE2,
+        VaParams::SHAPE2,
+    ] {
+        want.push(ParamAddr::new(BlockRef::Va, id));
     }
     for op in Op::ALL {
         want.push(ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL));

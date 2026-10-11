@@ -250,6 +250,28 @@ Sound {
             slice: 0,
             wow: Capstan,
         },
+        va: VaParams {
+            wave: [
+                0.6666667,
+                0.6666667,
+            ],
+            shape: [
+                0.0,
+                0.0,
+            ],
+            coarse: [
+                0,
+                0,
+            ],
+            fine: [
+                0.0,
+                0.0,
+            ],
+            mode: Mix,
+            amount: 0.5,
+            sub: 0.0,
+            stability: 1.0,
+        },
         lfos: [
             LfoParams {
                 rate: 1.0,

@@ -273,16 +273,10 @@ fn theme_page_is_reachable_and_edits_the_settings() {
             .block(BlockRef::Theme)
             .is_none()
     );
-    // HINTS is already on; SAVER runs to its last step, 60 s.
+    // Empty slots edit nothing.
     feed(&mut ui, Input::turn(EncoderId::E, 3));
-    feed(&mut ui, Input::turn(EncoderId::F, 9));
-    assert_eq!(
-        ui.theme(),
-        ThemeSettings {
-            saver: Saver::from_index(5),
-            ..t
-        }
-    );
+    feed(&mut ui, Input::turn(EncoderId::F, 3));
+    assert_eq!(ui.theme(), t);
 }
 
 /// SYSTEM's hooks: `in_settings` follows MENU and the Part buttons, and
@@ -326,4 +320,18 @@ fn input_dismisses_the_toast() {
     feed(&mut ui, Input::press(ButtonId::B2));
     assert_eq!(ui.step_toast(16), ToastStep::Ended);
     assert_eq!(ui.step_toast(16), ToastStep::Idle);
+}
+
+/// SETTINGS › PERSONALIZE › SCREENSAVER: its one cell is the idle time.
+#[test]
+fn the_screensaver_page_edits_its_idle_time() {
+    use chimera_core::ui::block_registry::SYS_SAVER;
+    let mut ui = chimera_core::ui::UiState::new();
+    to_leaf(&mut ui, &["PERSONALIZE", "SCREENSAVER"]);
+    assert_eq!(ui.page_def().id, SYS_SAVER.id);
+    assert_eq!(ui.theme().saver, Saver::DEFAULT);
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    assert_eq!(ui.theme().saver, Saver::from_index(3));
+    feed(&mut ui, Input::turn(EncoderId::A, -9));
+    assert_eq!(ui.theme().saver, Saver::OFF);
 }
