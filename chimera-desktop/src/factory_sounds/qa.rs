@@ -10,10 +10,11 @@ use std::path::{Component, Path, PathBuf};
 use chimera_core::block::DiskCode;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::limiter::OUTPUT_GAIN;
-use chimera_core::dsp::modulator::EnvType;
 use chimera_core::dsp::modulator::law::{B_TIME, speed_ranges};
+use chimera_core::dsp::modulator::{EnvSlot, EnvType};
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
+use chimera_core::modulation::{FixedCol, ModSource};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::EngineType;
 use chimera_core::part::PartMode;
@@ -37,7 +38,7 @@ const SR: f32 = SAMPLE_RATE as f32;
 pub const REFERENCE_LUFS: f32 = -11.0;
 /// The loudness gate's half-width.
 pub const LOUDNESS_LU: f32 = 2.0;
-/// Gain reduction a single note may take, and a chord (`stab`, `texture`).
+/// Gain reduction a single note may take, and the chord `stab`.
 pub const LIMIT_SINGLE_DB: f32 = 1.0;
 pub const LIMIT_CHORD_DB: f32 = 3.0;
 /// A render's mean must sit under this.
@@ -233,10 +234,10 @@ pub fn loudness(lufs: f32, by_ear: Option<&str>) -> Verdict {
     }
 }
 
-/// The most gain reduction the limiter took: 1 dB for a single note,
-/// 3 dB for a chord.
-pub fn limiter(reduced_db: f32, chord: bool) -> Verdict {
-    let bar = if chord {
+/// The most gain reduction the limiter took under `script` (`None`: the
+/// level render): 1 dB for a single note, 3 dB for `stab`.
+pub fn limiter(reduced_db: f32, script: Option<Script>) -> Verdict {
+    let bar = if matches!(script, Some(Script::Stab)) {
         LIMIT_CHORD_DB
     } else {
         LIMIT_SINGLE_DB
@@ -338,17 +339,32 @@ pub fn tail(x: &[f32], off: usize, within_s: f32) -> (f32, Verdict) {
 }
 
 /// How long after note-off the Sound must fall silent: MODAL 10 s; any
-/// other its ENV 1 release (A: its SPEED's range; B: FALL) plus 2 s.
+/// other the longest release (A: its SPEED's range; B: FALL) among the
+/// ENVs routed into the VCA (any slot may be, as the voice reads it),
+/// ENV 1's when none is, plus 2 s.
 pub fn tail_within(s: &Source, snd: &Sound) -> f32 {
     if s.engine == EngineType::Modal {
         return MODAL_TAIL_S;
     }
-    let e = &snd.params.envelopes[0];
-    let release = match e.env_type {
-        EnvType::A => speed_ranges(e.speed).dec_rel.at(e.release),
-        EnvType::B => B_TIME.at(e.func.fall),
+    let m = &snd.mod_state;
+    let routed = |e: EnvSlot| {
+        let i = ModSource::of_env(e).index();
+        m.fixed_present(FixedCol::Vca) & (1 << i) != 0 && m.fixed_amount(i, FixedCol::Vca) != 0
     };
-    release + TAIL_GRACE_S
+    let release = |e: EnvSlot| {
+        let p = &snd.params.envelopes[e.index()];
+        match p.env_type {
+            EnvType::A => speed_ranges(p.speed).dec_rel.at(p.release),
+            EnvType::B => B_TIME.at(p.func.fall),
+        }
+    };
+    let longest = EnvSlot::ALL
+        .into_iter()
+        .filter(|&e| routed(e))
+        .map(release)
+        .reduce(f32::max)
+        .unwrap_or_else(|| release(EnvSlot::Env1));
+    longest + TAIL_GRACE_S
 }
 
 /// ERB-rate (Glasberg and Moore): `21.4 · log10(1 + 0.00437 f)`.
@@ -521,7 +537,7 @@ pub fn gates(src: &Source) -> Result<Report, String> {
     );
     gate(
         Check::Limiter(None),
-        (t.reduced_db, limiter(t.reduced_db, false)),
+        (t.reduced_db, limiter(t.reduced_db, None)),
     );
     gate(Check::Tail, tail(&t.mono(), held + LATE, within));
 
@@ -530,10 +546,9 @@ pub fn gates(src: &Source) -> Result<Report, String> {
         let p = plan(s, src.home);
         let t = play(&snd, src.demo, &p);
         let mono = t.mono();
-        let chord = matches!(s, Script::Stab | Script::Texture);
         gate(
             Check::Limiter(Some(s)),
-            (t.reduced_db, limiter(t.reduced_db, chord)),
+            (t.reduced_db, limiter(t.reduced_db, Some(s))),
         );
         let onsets: Vec<usize> = p
             .hits

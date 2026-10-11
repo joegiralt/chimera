@@ -493,10 +493,19 @@ fn loudness_gate() {
 
 #[test]
 fn limiter_gate() {
-    assert_eq!(qa::limiter(0.9, false), Verdict::Pass);
-    assert_eq!(qa::limiter(1.1, false), Verdict::Fail);
-    assert_eq!(qa::limiter(2.9, true), Verdict::Pass);
-    assert_eq!(qa::limiter(3.1, true), Verdict::Fail);
+    // A single note (the level render, or any script but stab): 1 dB.
+    for s in [
+        None,
+        Some(Script::Long),
+        Some(Script::Bass),
+        Some(Script::Texture),
+    ] {
+        assert_eq!(qa::limiter(0.9, s), Verdict::Pass, "{s:?}");
+        assert_eq!(qa::limiter(1.1, s), Verdict::Fail, "{s:?}");
+    }
+    // `stab`, the chord: 3 dB.
+    assert_eq!(qa::limiter(2.9, Some(Script::Stab)), Verdict::Pass);
+    assert_eq!(qa::limiter(3.1, Some(Script::Stab)), Verdict::Fail);
 }
 
 #[test]
@@ -577,6 +586,18 @@ fn tail_gate() {
         (2.0..3.0).contains(&w),
         "VA's neutral release (300 ms) + 2 s: {w}"
     );
+    // The VCA follows ENV 2 too, its release 4.5 s (MED at 0.9): the
+    // longest release routed to the VCA sets the limit.
+    let env2 = format!("{BASE}ENV2.REL = \"0.9\"\nmod.ENV2 = \"OUT.VCA +127\"\n");
+    let s = source::parse(&env2, "e.toml").unwrap();
+    let snd = source::to_sound(&s[0]).unwrap();
+    let w = qa::tail_within(&s[0], &snd);
+    assert!((6.0..7.0).contains(&w), "ENV 2's 4.5 s + 2 s: {w}");
+    // An ENV 2 not routed to the VCA does not count.
+    let free = format!("{BASE}ENV2.REL = \"0.9\"\n");
+    let s = source::parse(&free, "e.toml").unwrap();
+    let snd = source::to_sound(&s[0]).unwrap();
+    assert!(qa::tail_within(&s[0], &snd) < 3.0);
 }
 
 #[test]
@@ -748,7 +769,4 @@ fn gates_render_through_the_instrument() {
         "VA is harmonic"
     );
     assert!(!has(Check::Tap), "no tap routes");
-    for g in &r.gates {
-        println!("{:?} {:.2} {:?}", g.check, g.value, g.verdict);
-    }
 }
