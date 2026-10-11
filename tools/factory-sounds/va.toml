@@ -1,0 +1,6 @@
+# The VA showcase Sounds (spec § 7): `[[sound]]` Sources, S9100001 up, built
+# by `just factory-sounds` (ADR 0134). Keys are the frozen idents of
+# chimera-core/tests/fixtures/disk_codes_v1.txt: id, name, engine, note,
+# demo, plays, home, BLOCK.PARAM, mod.<SOURCE>, trim; status =
+# "placeholder" reserves an id and name. Never a `from` line: ports are
+# private.

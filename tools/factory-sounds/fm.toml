@@ -1,0 +1,4 @@
+# The FM vocal Sounds and the formant placeholders (spec § 7, #243):
+# `[[sound]]` Sources as in va.toml, plus tap.OP5 and tap.OP6 for ALGO's
+# audio-rate filter routes. Never a `from` line: the TX81Z ports are
+# private and live in $CHIMERA_TX_PORTS.

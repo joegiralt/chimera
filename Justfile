@@ -46,6 +46,14 @@ factory-tapes *args:
         rm -r cc0-originals
     fi
 
+# The public factory Sounds (spec § 3, ADR 0134): tools/factory-sounds/'s
+# Sources parsed, checked (ids, names, descriptions, routes) and built
+# through the firmware's encoder into target/factory-sounds/public/
+# (CHIMERA/SOUNDS/S91xxxxx.A and manifest.json). Refuses a port Source.
+# `just factory-sounds fmt` writes each value's display comment.
+factory-sounds *args:
+    cargo run -q --release -p chimera-desktop --bin factory-sounds -- {{args}}
+
 # The factory set onto the unit's card: each source through `put` (ADR
 # 0106; a re-run answers OK PRESENT for each). `dir` is `just
 # factory-tapes`' output, or a downloaded `tapes-vN` release. The factory

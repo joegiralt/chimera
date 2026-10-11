@@ -1,0 +1,566 @@
+//! A factory Sound's text Source (spec § 3, ADR 0134): `[[sound]]` tables
+//! read by `listen::lined_tables`, keyed by the frozen idents of
+//! `disk_codes_v1.txt`. Pure: text in, `Source`, `Sound` and card bytes
+//! out; the files are `build`'s.
+
+use chimera_core::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
+use chimera_core::block::{Block, DiskCode};
+use chimera_core::mod_path::LABEL_LEN;
+use chimera_core::modulation::{FixedCol, ModSource};
+use chimera_core::name::SoundName;
+use chimera_core::params::EngineType;
+use chimera_core::part::PartMode;
+use chimera_core::preset::Sound;
+use chimera_core::storage::{
+    BuildStamp, DiskValue, FactoryId, FileKind, Generation, Header, LibId, Note, ValidAddr,
+    encode_library_sound, read_value, write_file,
+};
+use chimera_core::taps::TapOp;
+use chimera_core::ui::draw::text_width;
+use chimera_core::ui::fmt::{FmtBuf, fmt_val};
+use chimera_core::ui::mod_grid::block_tag;
+use chimera_core::ui::theme::{CONTENT_W, FONT_LABEL, LABEL_TRACKING};
+use chimera_hal::store::{ByteSink, StoreError};
+
+use crate::listen::{lined_tables, value_line};
+use crate::privacy::PORT_IDS;
+
+/// The showcase's id block (ADR 0133); TAPE's is below it.
+pub const SHOWCASE_IDS: core::ops::RangeInclusive<u32> = 9_100_001..=9_199_999;
+
+/// A render script (spec § 4); the QA task plays them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Script {
+    Bass,
+    Stab,
+    Short,
+    Long,
+    Texture,
+    Glide,
+}
+
+impl Script {
+    pub const ALL: [Script; 6] = [
+        Script::Bass,
+        Script::Stab,
+        Script::Short,
+        Script::Long,
+        Script::Texture,
+        Script::Glide,
+    ];
+
+    pub const fn word(self) -> &'static str {
+        match self {
+            Script::Bass => "bass",
+            Script::Stab => "stab",
+            Script::Short => "short",
+            Script::Long => "long",
+            Script::Texture => "texture",
+            Script::Glide => "glide",
+        }
+    }
+}
+
+/// A route into a destination the matrix (or a tap) reaches, with the
+/// 1-based line it was written on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Route {
+    pub line: usize,
+    pub dest: ParamAddr,
+    pub amount: i8,
+}
+
+#[derive(Clone, Debug)]
+pub struct Source {
+    pub file: String,
+    pub id: FactoryId,
+    pub id_line: usize,
+    pub name: SoundName,
+    pub name_line: usize,
+    pub engine: EngineType,
+    pub note: Note,
+    pub demo: PartMode,
+    pub plays: Vec<Script>,
+    /// The MIDI note its level and aliasing are measured at (C4 = 60).
+    pub home: u8,
+    /// `(line, param, value)` in file order; a value resolves in `patch`,
+    /// where an enum's ident may hang on another param (MODE on KIND).
+    pub params: Vec<(usize, ValidAddr, String)>,
+    pub mods: Vec<(ModSource, Vec<Route>)>,
+    /// A tap's routes, each into a fixed column.
+    pub taps: Vec<(TapOp, Vec<(Route, FixedCol)>)>,
+    /// dB on OUT LEVEL.
+    pub trim: f32,
+    /// Provenance, ports only: `(line, "tx81z <bank sha> #<voice>")`.
+    pub from: Option<(usize, String)>,
+    pub edits: Option<String>,
+    /// `level = "by ear: …"`: the loudness gate's exemption, and why.
+    pub level_by_ear: Option<String>,
+    /// Reserves its id and name; never built.
+    pub placeholder: bool,
+}
+
+impl Source {
+    fn at(&self, line: usize) -> String {
+        format!("{}:{line}", self.file)
+    }
+}
+
+/// Every `[[sound]]` in `text`; each error names `file:line`.
+pub fn parse(text: &str, file: &str) -> Result<Vec<Source>, String> {
+    lined_tables(text, file)?
+        .into_iter()
+        .map(|t| {
+            if t.kind != "sound" {
+                return Err(format!("{file}:{}: [[{}]], not [[sound]]", t.line, t.kind));
+            }
+            sound(file, t.line, &t.entries)
+        })
+        .collect()
+}
+
+const HEAD: [&str; 7] = ["id", "name", "engine", "note", "demo", "plays", "home"];
+
+fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Source, String> {
+    let at = |line: usize, msg: String| format!("{file}:{line}: {msg}");
+    for (i, (line, k, _)) in e.iter().enumerate() {
+        if e[..i].iter().any(|x| x.1 == *k) {
+            return Err(at(*line, format!("{k} twice")));
+        }
+    }
+    let need = |k: &str| {
+        e.iter()
+            .find(|x| x.1 == k)
+            .map(|x| (x.0, x.2.as_str()))
+            .ok_or_else(|| at(header, format!("a [[sound]] without {k}")))
+    };
+
+    let (id_line, v) = need("id")?;
+    let id = match LibId::parse(v) {
+        Some(LibId::Factory(f)) if SHOWCASE_IDS.contains(&f.get()) => f,
+        _ => return Err(at(id_line, format!("id {v} is outside S9100001-S9199999"))),
+    };
+    let (name_line, v) = need("name")?;
+    let name =
+        SoundName::new(v).map_err(|_| at(name_line, format!("name {v}: not a Sound name")))?;
+    let (l, v) = need("engine")?;
+    let engine = [EngineType::Va, EngineType::Algo, EngineType::Modal]
+        .into_iter()
+        .find(|e| e.disk_ident() == v)
+        .ok_or_else(|| at(l, format!("engine {v}: VA, ALGO or MODAL")))?;
+    let (l, v) = need("note")?;
+    let note = description(v).map_err(|m| at(l, m))?;
+    let (l, v) = need("demo")?;
+    let demo = match v {
+        "mono" => PartMode::Mono,
+        "poly" => PartMode::Poly,
+        _ => return Err(at(l, format!("demo {v}: mono or poly"))),
+    };
+    let (l, v) = need("plays")?;
+    let plays = v
+        .split_whitespace()
+        .map(|w| {
+            Script::ALL
+                .into_iter()
+                .find(|s| s.word() == w)
+                .ok_or_else(|| at(l, format!("plays {w}: not a script")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let (l, v) = need("home")?;
+    let home = note_number(v).ok_or_else(|| at(l, format!("home {v}: not a note (C4 is 60)")))?;
+
+    let mut s = Source {
+        file: file.into(),
+        id,
+        id_line,
+        name,
+        name_line,
+        engine,
+        note,
+        demo,
+        plays,
+        home,
+        params: Vec::new(),
+        mods: Vec::new(),
+        taps: Vec::new(),
+        trim: 0.0,
+        from: None,
+        edits: None,
+        level_by_ear: None,
+        placeholder: false,
+    };
+    for (line, k, v) in e.iter().filter(|x| !HEAD.contains(&x.1.as_str())) {
+        let line = *line;
+        let unknown = || at(line, format!("unknown key {k}"));
+        match k.as_str() {
+            "trim" => {
+                s.trim = v
+                    .parse::<f32>()
+                    .ok()
+                    .filter(|t| t.is_finite())
+                    .ok_or_else(|| at(line, format!("trim {v}: dB")))?;
+            }
+            "from" => s.from = Some((line, v.clone())),
+            "edits" => s.edits = Some(v.clone()),
+            "level" => {
+                let why = v
+                    .strip_prefix("by ear:")
+                    .ok_or_else(|| at(line, format!("level {v}: by ear: <why>")))?;
+                s.level_by_ear = Some(why.trim().into());
+            }
+            "status" if v == "placeholder" => s.placeholder = true,
+            "status" => return Err(at(line, format!("status {v}: placeholder"))),
+            _ => {
+                let (head, rest) = k.split_once('.').ok_or_else(unknown)?;
+                let r = || routes(v, line).map_err(|m| at(line, m));
+                match head {
+                    "mod" => {
+                        let src = ModSource::ALL
+                            .into_iter()
+                            .find(|m| m.disk_ident() == rest)
+                            .ok_or_else(unknown)?;
+                        s.mods.push((src, r()?));
+                    }
+                    "tap" => {
+                        let op = TapOp::ALL
+                            .into_iter()
+                            .find(|t| t.tag() == rest)
+                            .ok_or_else(unknown)?;
+                        if engine != EngineType::Algo {
+                            return Err(at(line, format!("{k}: taps are ALGO's")));
+                        }
+                        let taps = r()?
+                            .into_iter()
+                            .map(|r| {
+                                FixedCol::of(r.dest).map(|c| (r, c)).ok_or_else(|| {
+                                    at(
+                                        line,
+                                        format!(
+                                            "{}: a tap routes to FREQ, Q, VCA or FOLD",
+                                            ident(r.dest)
+                                        ),
+                                    )
+                                })
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        s.taps.push((op, taps));
+                    }
+                    _ => {
+                        let a = valid_addr(head, rest).ok_or_else(unknown)?;
+                        s.params.push((line, a, v.clone()));
+                    }
+                }
+            }
+        }
+    }
+    Ok(s)
+}
+
+/// A description: `Note`'s characters and 1-40 B, and it fits the FACTORY
+/// tab's line (`CONTENT_W` in `FONT_LABEL`, as the firmware draws it).
+fn description(v: &str) -> Result<Note, String> {
+    let n = Note::new(v)
+        .ok_or_else(|| format!("note {v:?}: 1-40 of A-Z, 0-9, space and . , ' - + / : ( ) & %"))?;
+    let w = text_width(&FONT_LABEL, v, LABEL_TRACKING);
+    if w > CONTENT_W {
+        return Err(format!("note {v:?} is {w} px wide, past {CONTENT_W}"));
+    }
+    Ok(n)
+}
+
+/// `C4` is 60, as the firmware names notes; `C#-1` is 1.
+fn note_number(v: &str) -> Option<u8> {
+    let mut c = v.chars();
+    let pc = match c.next()? {
+        'C' => 0,
+        'D' => 2,
+        'E' => 4,
+        'F' => 5,
+        'G' => 7,
+        'A' => 9,
+        'B' => 11,
+        _ => return None,
+    };
+    let rest = c.as_str();
+    let (sharp, oct) = rest.strip_prefix('#').map_or((0, rest), |o| (1, o));
+    let n = (oct.parse::<i32>().ok()? + 1) * 12 + pc + sharp;
+    u8::try_from(n).ok().filter(|&n| n <= 127)
+}
+
+/// A stored param of a Sound block, by its frozen idents.
+fn valid_addr(block: &str, param: &str) -> Option<ValidAddr> {
+    let b = BlockRef::ALL
+        .into_iter()
+        .find(|b| b.disk_ident() == Some(block))?;
+    Sound::neutral(EngineType::Algo).params.block(b)?;
+    ValidAddr::of_block(b).find(|a| a.spec().ident == param)
+}
+
+/// `BLOCK.PARAM`.
+fn ident(a: ParamAddr) -> String {
+    let p = ValidAddr::find(a.block, a.param).map_or("?", |v| v.spec().ident);
+    format!("{}.{p}", a.block.disk_ident().unwrap_or("?"))
+}
+
+/// `DEST ±amount, …`: each destination a matrix column takes (a fixed
+/// column or a modulatable param), amounts −127…127.
+fn routes(v: &str, line: usize) -> Result<Vec<Route>, String> {
+    v.split(',')
+        .map(|r| {
+            let r = r.trim();
+            let (d, a) = r
+                .rsplit_once(' ')
+                .ok_or_else(|| format!("route {r:?}: DEST ±amount"))?;
+            let dest = d
+                .split_once('.')
+                .and_then(|(b, p)| valid_addr(b, p))
+                .ok_or_else(|| format!("unknown destination {d}"))?
+                .addr();
+            if FixedCol::of(dest).is_none() && !dest.modulatable() {
+                return Err(format!("{d} is not a mod destination"));
+            }
+            let amount = a
+                .parse::<i8>()
+                .ok()
+                .filter(|&a| a != i8::MIN)
+                .ok_or_else(|| format!("{d} {a}: amount -127..+127"))?;
+            Ok(Route { line, dest, amount })
+        })
+        .collect()
+}
+
+/// Ids unique and names unique across every Source, placeholders included.
+pub fn check(all: &[Source]) -> Result<(), String> {
+    for (i, s) in all.iter().enumerate() {
+        if let Some(o) = all[..i].iter().find(|o| o.id == s.id) {
+            return Err(format!(
+                "{}: id S{} is {}'s too",
+                s.at(s.id_line),
+                s.id.get(),
+                o.at(o.id_line)
+            ));
+        }
+        if let Some(o) = all[..i].iter().find(|o| o.name == s.name) {
+            return Err(format!(
+                "{}: name {} is {}'s too",
+                s.at(s.name_line),
+                s.name.as_str(),
+                o.at(o.name_line)
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The public set's walls (ADR 0134): no Source with a `from` line, and no
+/// id reserved for the private ports.
+pub fn public(all: &[Source]) -> Result<(), String> {
+    for s in all {
+        if let Some((line, _)) = &s.from {
+            return Err(format!(
+                "{}: from: a port Source; the public build refuses it",
+                s.at(*line)
+            ));
+        }
+        if PORT_IDS.contains(&s.id.get()) {
+            return Err(format!(
+                "{}: id S{} is reserved for the private ports",
+                s.at(s.id_line),
+                s.id.get()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The Sound the Source authors, before `trim`: `Sound::neutral`, each
+/// param in file order, then the routes and taps.
+pub fn patch(s: &Source) -> Result<Sound, String> {
+    let mut snd = Sound::neutral(s.engine);
+    snd.name = s.name;
+    for (line, a, v) in &s.params {
+        let blk = snd
+            .params
+            .block_mut(a.addr().block)
+            .expect("valid_addr takes Sound blocks only");
+        set(blk, *a, v).map_err(|m| format!("{}: {m}", s.at(*line)))?;
+    }
+    for (src, routes) in &s.mods {
+        for r in routes {
+            let fail = |m: &str| format!("{}: {} {m}", s.at(r.line), ident(r.dest));
+            if FixedCol::of(r.dest).is_none() {
+                snd.dest_registry
+                    .add(r.dest, label(r.dest))
+                    .map_err(|e| fail(&format!("{e:?}")))?;
+            }
+            if !snd.mod_state.set_route_addr(src.index(), r.dest, r.amount) {
+                return Err(fail("is past the matrix's columns"));
+            }
+        }
+    }
+    for (op, routes) in &s.taps {
+        for (r, c) in routes {
+            snd.params.taps.set(*op, *c, r.amount);
+        }
+    }
+    Ok(snd)
+}
+
+/// The Sound as built: `patch`, its OUT LEVEL trimmed `trim` dB.
+pub fn to_sound(s: &Source) -> Result<Sound, String> {
+    let mut snd = patch(s)?;
+    snd.params.out.volume *= 10f32.powf(s.trim / 20.0);
+    Ok(snd)
+}
+
+/// `v` into `a`: an enum by its ident, else a number the block holds
+/// exactly (never clamped or rounded: a Source says what the card stores).
+fn set(blk: &mut dyn Block, a: ValidAddr, v: &str) -> Result<(), String> {
+    let id = a.spec().id;
+    let key = ident(a.addr());
+    if a.coded() {
+        let was = blk.enum_code(id);
+        for c in 0..=u8::MAX {
+            if blk.set_enum_code(id, c) && blk.enum_ident(id) == Some(v) {
+                return Ok(());
+            }
+        }
+        if let Some(c) = was {
+            blk.set_enum_code(id, c);
+        }
+        return Err(format!("{key}: unknown value {v}"));
+    }
+    let x = v
+        .parse::<f32>()
+        .ok()
+        .filter(|x| x.is_finite())
+        .ok_or_else(|| format!("{key}: {v} is not a number"))?;
+    blk.set(id, x);
+    let got = blk.get(id);
+    if got.to_bits() != x.to_bits() {
+        let sp = a.spec();
+        return Err(format!(
+            "{key}: {v} is stored as {got} ({}..={})",
+            sp.min, sp.max
+        ));
+    }
+    Ok(())
+}
+
+/// A registry column's 8-byte label as priming spells it: `O5 LEVEL`,
+/// `E2 DEC`, else the block's tag and the param's label.
+fn label(a: ParamAddr) -> [u8; LABEL_LEN] {
+    let spec = ValidAddr::find(a.block, a.param).map_or("", |v| v.spec().label);
+    let prefix: String = match a.block {
+        BlockRef::AlgoOp(op) => format!("O{} ", op.index() + 1),
+        BlockRef::Env(e) => format!("E{} ", e.index() + 1),
+        b => block_tag(b).chars().take(3).chain([' ']).collect(),
+    };
+    let mut l = [0u8; LABEL_LEN];
+    for (o, c) in l.iter_mut().zip(format!("{prefix}{spec}").bytes()) {
+        *o = c;
+    }
+    l
+}
+
+/// The Sound's param, route and tap lines, canonical: each param off
+/// `Sound::neutral` in block and spec-table order, then each source's
+/// routes (fixed columns, then registry columns), then each tap's.
+pub fn lines(snd: &Sound) -> Vec<String> {
+    let neutral = Sound::neutral(snd.engine());
+    let mut out = Vec::new();
+    for b in BlockRef::ALL {
+        let (Some(blk), Some(base)) = (snd.params.block(b), neutral.params.block(b)) else {
+            continue;
+        };
+        for a in ValidAddr::of_block(b) {
+            let text = match (read_value(blk, a), read_value(base, a)) {
+                (DiskValue::Real(x), DiskValue::Real(y)) if x.to_bits() == y.to_bits() => continue,
+                (DiskValue::Code(x), DiskValue::Code(y)) if x == y => continue,
+                (DiskValue::Real(x), _) => format!("{x}"),
+                (DiskValue::Code(_), _) => blk.enum_ident(a.spec().id).unwrap_or("?").into(),
+            };
+            out.push(format!("{} = \"{text}\"", ident(a.addr())));
+        }
+    }
+    let m = &snd.mod_state;
+    for src in ModSource::ALL.into_iter().take(m.num_sources()) {
+        let (i, bit) = (src.index(), 1 << src.index());
+        let fixed = FixedCol::ALL
+            .into_iter()
+            .filter(|&c| m.fixed_present(c) & bit != 0)
+            .map(|c| (c.addr(), m.fixed_amount(i, c)));
+        let reg = (0..m.num_dests())
+            .filter(|&d| m.present(d) & bit != 0)
+            .map(|d| (m.dest(d), m.amount(i, d)));
+        let r: Vec<String> = fixed
+            .chain(reg)
+            .map(|(d, a)| format!("{} {a:+}", ident(d)))
+            .collect();
+        if !r.is_empty() {
+            out.push(format!("mod.{} = \"{}\"", src.disk_ident(), r.join(", ")));
+        }
+    }
+    for op in TapOp::ALL {
+        let r: Vec<String> = snd
+            .params
+            .taps
+            .entries()
+            .filter(|e| e.0 == op)
+            .map(|(_, c, a)| format!("{} {a:+}", ident(c.addr())))
+            .collect();
+        if !r.is_empty() {
+            out.push(format!("tap.{} = \"{}\"", op.tag(), r.join(", ")));
+        }
+    }
+    out
+}
+
+/// Canonical text: each numeric param line ends `  # <display value>`, as
+/// the unit shows it; every other line is kept. Comments are ignored on
+/// read, so this changes no Sound, and a second run changes nothing.
+pub fn fmt(text: &str) -> String {
+    text.lines()
+        .map(|l| fmt_line(l).unwrap_or_else(|| l.to_string()) + "\n")
+        .collect()
+}
+
+fn fmt_line(line: &str) -> Option<String> {
+    let (k, v, _) = value_line(line.trim())?;
+    let (block, param) = k.split_once('.')?;
+    let a = valid_addr(block, param).filter(|a| !a.coded())?;
+    let spec = a.spec();
+    let mut b = FmtBuf::new();
+    fmt_val(&mut b, spec.normalize(v.parse().ok()?), spec.fmt);
+    Some(match b.as_str() {
+        "" => format!("{k} = \"{v}\""),
+        shown if shown == v => format!("{k} = \"{v}\""),
+        shown => format!("{k} = \"{v}\"  # {shown}"),
+    })
+}
+
+struct VecSink(Vec<u8>);
+
+impl ByteSink for VecSink {
+    fn put(&mut self, b: &[u8]) -> Result<(), StoreError> {
+        self.0.extend_from_slice(b);
+        Ok(())
+    }
+}
+
+/// The card file `S91xxxxx.A`: a first-generation Sound file of `Engine`,
+/// `Build`, `Note`, then the Sound, through the library's own encoder.
+pub fn file_bytes(s: &Source, stamp: &BuildStamp) -> Result<Vec<u8>, String> {
+    let snd = to_sound(s)?;
+    let h = Header {
+        kind: FileKind::Sound,
+        generation: Generation::FIRST,
+        name: Some(snd.name),
+    };
+    let mut sink = VecSink(Vec::new());
+    write_file(&mut sink, &h, &mut |w| {
+        encode_library_sound(&snd, stamp, Some(&s.note), w)
+    })
+    .map_err(|e| format!("{}: {e:?}", s.at(s.id_line)))?;
+    Ok(sink.0)
+}

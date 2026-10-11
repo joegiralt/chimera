@@ -782,42 +782,75 @@ pub struct Src {
 /// A table's `key = "value"` lines, in order.
 pub type Table = Vec<(String, String)>;
 
+/// A `[[kind]]` table with the 1-based line of its header and of each entry.
+pub struct Lined {
+    pub kind: String,
+    pub line: usize,
+    pub entries: Vec<(usize, String, String)>,
+}
+
+/// `l` (trimmed) as `key = "value"` with an optional trailing `# comment`:
+/// the key, the value and the comment. A key is letters, digits, `_` and
+/// `.` (a dotted TOML key); a value holds no `"`.
+pub fn value_line(l: &str) -> Option<(&str, &str, Option<&str>)> {
+    let (k, v) = l.split_once('=')?;
+    let (v, rest) = v.trim_start().strip_prefix('"')?.split_once('"')?;
+    let rest = rest.trim();
+    let comment = match rest {
+        "" => None,
+        r => Some(r.strip_prefix('#')?),
+    };
+    let k = k.trim();
+    is_key(k).then_some((k, v, comment))
+}
+
+fn is_key(k: &str) -> bool {
+    !k.is_empty()
+        && !k.starts_with('.')
+        && !k.ends_with('.')
+        && k.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+}
+
 /// `file`'s `[[kind]]` tables of `key = "value"` lines, `#` comments and
 /// blank lines, each with its kind; anything else is an error, so a
 /// malformed file fails loudly.
 pub fn tables(toml: &str, file: &str) -> Result<Vec<(String, Table)>, String> {
-    let mut tables: Vec<(String, Table)> = Vec::new();
+    Ok(lined_tables(toml, file)?
+        .into_iter()
+        .map(|t| {
+            let e = t.entries.into_iter().map(|(_, k, v)| (k, v)).collect();
+            (t.kind, e)
+        })
+        .collect())
+}
+
+/// `tables`, with line numbers.
+pub fn lined_tables(toml: &str, file: &str) -> Result<Vec<Lined>, String> {
+    let mut tables: Vec<Lined> = Vec::new();
     for (n, line) in toml.lines().enumerate() {
         let l = line.trim();
         if l.is_empty() || l.starts_with('#') {
             continue;
         }
         let bad = || format!("{file}:{}: not key = \"value\": {l}", n + 1);
-        let key =
-            |k: &str| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
         if let Some(kind) = l.strip_prefix("[[").and_then(|l| l.strip_suffix("]]")) {
-            if !key(kind) {
+            if kind.is_empty() || !kind.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
                 return Err(bad());
             }
-            tables.push((kind.into(), Vec::new()));
+            tables.push(Lined {
+                kind: kind.into(),
+                line: n + 1,
+                entries: Vec::new(),
+            });
             continue;
         }
-        let (k, v) = l.split_once('=').ok_or_else(bad)?;
-        let v = v.trim();
-        let v = v
-            .strip_prefix('"')
-            .and_then(|v| v.strip_suffix('"'))
-            .filter(|v| !v.contains('"'))
-            .ok_or_else(bad)?;
-        let k = k.trim();
-        if !key(k) {
-            return Err(bad());
-        }
+        let (k, v, _) = value_line(l).ok_or_else(bad)?;
         tables
             .last_mut()
             .ok_or_else(bad)?
-            .1
-            .push((k.into(), v.into()));
+            .entries
+            .push((n + 1, k.into(), v.into()));
     }
     Ok(tables)
 }
@@ -1090,9 +1123,12 @@ mod tests {
         let c = credits(ok).unwrap();
         assert_eq!((c[0].0.as_str(), c[0].1.slug.as_str()), ("A.wav", "a"));
         assert_eq!(c[0].1.title, "T");
+        // A trailing comment is read past (`factory-sounds fmt` writes them).
+        let commented = credits("[[source]]\nfile = \"A.wav\"  # x\n").unwrap();
+        assert_eq!(commented[0].0, "A.wav");
         for bad in [
             "[[source]]\nfile = A.wav\n",
-            "[[source]]\nfile = \"A.wav\" # x\n",
+            "[[source]]\nfile = \"A.wav\" x\n",
             "file = \"A.wav\"\n",
             "[[source]]\nfile = \"A.wav\"\n[sources]\n",
             "[[source]]\ntitle = \"T\"\n",
