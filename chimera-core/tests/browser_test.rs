@@ -142,9 +142,9 @@ fn the_list_ends_on_the_pools_last_slot() {
 #[test]
 fn entries_split_into_init_rows_then_slots() {
     assert_eq!(Browse::default().cursor(), INITS);
-    for e in 0..INITS {
+    for (e, &engine) in INIT_TYPES.iter().enumerate() {
         assert!(browser::slot_at(e).is_none());
-        assert_eq!(browser::init_at(e), Some(INIT_TYPES[e]));
+        assert_eq!(browser::init_at(e), Some(engine));
     }
     assert_eq!(browser::slot_at(INITS), Some(SlotId::ALL[0]));
     assert!(browser::init_at(INITS).is_none());
