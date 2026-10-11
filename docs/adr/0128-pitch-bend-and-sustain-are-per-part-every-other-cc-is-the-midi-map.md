@@ -19,7 +19,7 @@ The MIDI input dropped pitch bend and every CC (#437). Two controls a keyboard p
 - **A bend a step per message:** a zipper; the wheel sends hundreds a second and CLAUDE.md says never snap.
 
 ## Consequences
-- A moving wheel on a Modal Part retunes its strings each block (ADR 0042's `ModalEngine::PITCH`, 12 cycles/sample), unbilled: a held wheel costs nothing, a moving one lands in the reserve.
+- Any wheel may move any Modal voice, which retunes its strings each block (ADR 0042), so every Modal voice bills `ModalEngine::PITCH` (30 cycles/sample, +23 `HALO_PITCH` on SYMP) whether or not a route or a glide steal does: the INIT Modal voice goes 446 → 476, and the allocator fits one fewer voice on some Modal Sounds. A Part with BEND 0 still pays; the cost is worst-case, not per Part.
 - The MIDI map (#247) adds CCs without touching this path.
 
 ## Sources
