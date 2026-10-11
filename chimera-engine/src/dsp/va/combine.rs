@@ -31,14 +31,55 @@ pub fn xor16(a: f32, b: f32) -> f32 {
     (w(a) ^ w(b)) as f32 / 32768.0
 }
 
-/// `p·xor16(a/p, b/p)` with `k = 32767/p` and `g = p/32768` set once a
-/// block: the engine's loop (the 16-bit XOR on the low halves of the
-/// words, sign-extended). The words saturate to i16 (one SSAT): only an
-/// input past its peak bound reaches −32768, where `xor16` stops at −32767.
+/// `p·xor16(a/p, b/p)` with `k = 32767/p` set once a block: the engine's
+/// loop. The words saturate to i16: only an input past its peak bound
+/// reaches −32768, where `xor16` stops at −32767.
 #[inline(always)]
-pub fn xor16_scaled(a: f32, b: f32, k: f32, g: f32) -> f32 {
-    let w = |v: f32| ((v * k) as i32).clamp(-32768, 32767);
-    ((((w(a) ^ w(b)) << 16) >> 16) as f32) * g
+pub fn xor16_scaled(a: f32, b: f32, k: f32, p: f32) -> f32 {
+    unword(word(a * k) ^ word(b * k)) * p
+}
+
+/// `v` as a 16-bit word, truncated and saturated (`as i32`, then clamped
+/// to i16), sign-extended: VCVT.S16.F32 on the M7, NaN 0 either way.
+#[inline(always)]
+fn word(v: f32) -> i32 {
+    #[cfg(all(target_arch = "arm", target_feature = "vfp2"))]
+    {
+        let mut r = v;
+        // SAFETY: one register-to-register VFP op (fixed-point VCVT, 0
+        // fraction bits); no memory or stack touched. It may set FPSCR's
+        // IOC or IXC flags; nothing reads them.
+        unsafe {
+            core::arch::asm!("vcvt.s16.f32 {r}, {r}, #0", r = inout(sreg) r,
+                options(pure, nomem, nostack));
+        }
+        r.to_bits() as i32
+    }
+    #[cfg(not(all(target_arch = "arm", target_feature = "vfp2")))]
+    {
+        (v as i32).clamp(-32768, 32767)
+    }
+}
+
+/// A word's low 16 bits, sign-extended, over 2¹⁵ (exact): VCVT.F32.S16
+/// with 15 fraction bits on the M7.
+#[inline(always)]
+fn unword(w: i32) -> f32 {
+    #[cfg(all(target_arch = "arm", target_feature = "vfp2"))]
+    {
+        let mut r = f32::from_bits(w as u32);
+        // SAFETY: one register-to-register VFP op (fixed-point VCVT, 15
+        // fraction bits, exact); no memory or stack touched.
+        unsafe {
+            core::arch::asm!("vcvt.f32.s16 {r}, {r}, #15", r = inout(sreg) r,
+                options(pure, nomem, nostack));
+        }
+        r
+    }
+    #[cfg(not(all(target_arch = "arm", target_feature = "vfp2")))]
+    {
+        (((w << 16) >> 16) as f32) * (1.0 / 32768.0)
+    }
 }
 
 /// BITS' depth at AMOUNT `x`: `16 · 8^(−x)`, 16 → 2 bits on a log curve.

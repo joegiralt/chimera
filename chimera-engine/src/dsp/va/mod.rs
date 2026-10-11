@@ -749,26 +749,39 @@ impl VaEngine {
         let (mut n, mut dn, ddn) = l.norm;
         // XOR's and BITS' block constants
         let p = l.pk.a.max(l.pk.b);
-        let (kx, gx) = (32767.0 / p, p / 32768.0);
+        let kx = 32767.0 / p;
         let q = 0.5 * (l.pk.a + l.pk.b);
-        let liq = crusher.levels() / q;
+        // BITS crushes `½(a + b) / q`: the ½ rides in the levels (exact)
+        let liq = 0.5 * crusher.levels() / q;
         let (mut s, mut j) = (*sub, 0.0f32);
-        for (i, (y, b)) in out.iter_mut().zip(b.iter()).enumerate() {
-            x += dx;
-            k += dk;
-            j += 1.0;
-            let (a, b) = (*y, *b);
-            let half = 0.5 * (a + b);
-            let c = match mode {
-                VaMode::Mix | VaMode::Sync => a + (b - a) * x,
-                VaMode::Ring => half + (k * a * b - half) * x,
-                VaMode::Xor => half + (xor16_scaled(a, b, kx, gx) - half) * x,
-                VaMode::Bits => q * crusher.process_scaled(half, liq),
-            };
-            let sv = s.step(wr[i]);
-            *y = (c + (s0 + ds * j) * sv) * n;
-            n += dn;
-            dn += ddn;
+        // one sample (a macro: a closure here is left out of line)
+        macro_rules! one {
+            ($i:expr) => {{
+                let i = $i;
+                x += dx;
+                k += dk;
+                j += 1.0;
+                let (a, b) = (out[i], b[i]);
+                let half = 0.5 * (a + b);
+                let c = match mode {
+                    VaMode::Mix | VaMode::Sync => a + (b - a) * x,
+                    VaMode::Ring => half + (k * a * b - half) * x,
+                    VaMode::Xor => half + (xor16_scaled(a, b, kx, p) - half) * x,
+                    VaMode::Bits => q * crusher.process_scaled(a + b, liq),
+                };
+                let sv = s.step(wr[i]);
+                out[i] = (c + (s0 + ds * j) * sv) * n;
+                n += dn;
+                dn += ddn;
+            }};
+        }
+        // four samples a round, unrolled here: XOR's and BITS' FPU
+        // instructions (inline asm) keep the compiler from unrolling it
+        for i in (0..BLOCK_SIZE).step_by(4) {
+            one!(i);
+            one!(i + 1);
+            one!(i + 2);
+            one!(i + 3);
         }
         *sub = s;
     }

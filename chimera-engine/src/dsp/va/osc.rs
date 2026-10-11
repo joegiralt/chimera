@@ -63,8 +63,11 @@ const S: [f32; 5] = [
 
 #[inline(always)]
 fn psin(x: f32) -> f32 {
-    let x2 = x * x;
-    x * (S[0] + x2 * (S[1] + x2 * (S[2] + x2 * (S[3] + x2 * S[4]))))
+    // Estrin's split of the Horner chain: one multiply-add fewer
+    let (x2, x4) = (x * x, (x * x) * (x * x));
+    let lo = S[0] + x2 * S[1];
+    let hi = S[2] + x2 * S[3] + x4 * S[4];
+    x * (lo + x4 * hi)
 }
 
 /// `psin`'s derivative.
@@ -1369,15 +1372,13 @@ impl VarOsc {
 /// wraps and BLEP-corrected, one sample late like the oscillators.
 #[derive(Clone, Copy, Debug)]
 pub struct Sub {
-    high: bool,
+    /// The level, R or −R.
+    level: f32,
     held: f32,
 }
 
 impl Sub {
-    pub const NEW: Self = Self {
-        high: true,
-        held: 0.0,
-    };
+    pub const NEW: Self = Self { level: R, held: 0.0 };
 
     /// +R, the corrector cleared.
     pub fn reset(&mut self) {
@@ -1396,21 +1397,20 @@ impl Sub {
     pub fn step(&mut self, wrap: f32) -> f32 {
         let mut acc = -0.0f32;
         if wrap >= 0.0 {
-            self.high = !self.high;
-            let step = if self.high { 2.0 * R } else { -2.0 * R };
-            blep_into(&mut self.held, &mut acc, wrap, step);
+            self.level = -self.level;
+            blep_into(&mut self.held, &mut acc, wrap, 2.0 * self.level);
         }
         let out = self.held;
-        self.held = (if self.high { R } else { -R }) + acc;
+        self.held = self.level + acc;
         out
     }
 
     pub fn high(&self) -> bool {
-        self.high
+        self.level > 0.0
     }
 
     /// Restores the level (the carry); not an edge.
     pub fn set_high(&mut self, h: bool) {
-        self.high = h;
+        self.level = if h { R } else { -R };
     }
 }
