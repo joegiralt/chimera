@@ -1586,9 +1586,9 @@ fn va_bills_each_mode() {
     for (mode, bill, voices) in [
         (Mix, 510, [8, 6, 7, 7]),
         (Sync, 570, [7, 5, 7, 6]),
-        (Ring, 520, [8, 6, 7, 7]),
+        (Ring, 510, [8, 6, 7, 7]),
         (Xor, 530, [7, 6, 7, 7]),
-        (Bits, 520, [8, 6, 7, 7]),
+        (Bits, 510, [8, 6, 7, 7]),
     ] {
         let p = va_sound(mode);
         assert_eq!(

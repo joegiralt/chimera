@@ -8,7 +8,7 @@ use core::mem::MaybeUninit;
 
 use chimera_core::dsp::ease::{at, step_of};
 use chimera_core::dsp::va::combine::with_sub;
-use chimera_core::dsp::va::osc::{Morph, Unit, wave_at};
+use chimera_core::dsp::va::osc::{Morph, NO_WRAP, Ramps, Unit, VarOsc, wave_at};
 use chimera_core::dsp::va::{VA_CHAIN_GAIN, VaEngine, VaMode, VaParams};
 use chimera_core::hw::Cost;
 use chimera_core::project::PartId;
@@ -478,7 +478,7 @@ fn wave_driven_end_to_end_lands_in_two_blocks_without_a_click() {
                 for b in 0..2 * AT + 2 {
                     p.wave[k] = drive(b);
                     run(e, &mut p, 1, |_, _| {});
-                    if b >= AT && b < 2 * AT {
+                    if (AT..2 * AT).contains(&b) {
                         let v = e.wave_now()[k].unwrap();
                         assert!(v == 0.0 || mid(v), "block {b}: {v}");
                     }
@@ -558,6 +558,63 @@ fn sync_master_stops_at_12k() {
     assert!(d <= lim, "{d} > {lim}");
 }
 
+/// A block starts two runs an oscillator at most (one WAVE segment
+/// crossing, ADR 0118): WAVE jumped to a random target every block, in every
+/// MODE, from every segment (the jumps from the third segment down are the
+/// ones whose rounding could reach past ⅓).
+#[test]
+fn a_block_never_starts_a_third_run() {
+    let mut x = 0x2545_F491u32;
+    let mut uni = || {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        x as f32 / u32::MAX as f32
+    };
+    let mut most = 0u8;
+    for mode in VaMode::ALL {
+        with_engine(|e| {
+            let mut p = VaParams { mode, ..sine() };
+            e.hold();
+            e.note_on(A4, &p, part(0), SR);
+            for b in 0..600 {
+                // every other block from high in the third segment
+                p.wave = if b % 2 == 0 {
+                    [0.7 + 0.3 * uni(), 0.7 + 0.3 * uni()]
+                } else {
+                    [uni(), uni()]
+                };
+                p.shape = [uni(), uni()];
+                run(e, &mut p, 1, |_, _| {});
+                let r = e.runs();
+                assert!(r[0] <= 2 && r[1] <= 2, "{mode:?} block {b}: {r:?} runs");
+                most = most.max(r[0].max(r[1]));
+            }
+        });
+    }
+    println!("most runs in a block: {most}");
+    assert_eq!(most, 2, "the drive crosses an edge");
+    // the oscillator itself, handed ramps across both edges in one block
+    // (past the engine's reach): still two runs, the second to the end
+    for (w0, w1) in [(0.05f32, 0.95f32), (0.95, 0.05), (0.0, 1.0), (1.0, 0.0)] {
+        let mut o = VarOsc::NEW;
+        o.prepare(SR as f32);
+        let r = Ramps {
+            inc: (0.01, 0.0),
+            wave: (w0, (w1 - w0) / B as f32),
+            shape: (0.3, 0.0),
+        };
+        let (mut out, mut wr) = ([0.0f32; B], [NO_WRAP; B]);
+        o.begin(&r, B);
+        o.render::<B, false, false>(&mut out, &mut wr, &r, &mut 1.0, &mut || 1.0);
+        assert_eq!(o.runs(), 2, "{w0} → {w1}");
+        assert!(
+            out.iter().all(|v| v.is_finite() && v.abs() < 1.0),
+            "{w0} → {w1}"
+        );
+    }
+}
+
 #[test]
 fn the_duck_is_two_blocks_each_way() {
     let g_down = |j: usize| 0.5 * (1.0 + (std::f64::consts::PI * (j + 1) as f64 / 128.0).cos());
@@ -586,9 +643,8 @@ fn the_duck_is_two_blocks_each_way() {
                 } else {
                     1.0 - g_down(j - 128)
                 };
-                if g > 1e-3 {
-                    slack = slack.min(1.0 - f64::from(v.abs()) / (g * steady));
-                }
+                // the margin under the bound plus its absolute tolerance
+                slack = slack.min(g * steady + 1e-6 - f64::from(v.abs()));
                 if f64::from(v.abs()) > g * steady + 1e-6 {
                     viol += 1;
                     println!("{m0:?} → {m1:?} sample {j}: {v} > {}", g * steady);
@@ -596,10 +652,7 @@ fn the_duck_is_two_blocks_each_way() {
             }
         });
     }
-    println!(
-        "least slack under the duck's bound (g > 1e-3) {:.1}%",
-        100.0 * slack
-    );
+    println!("least margin under the duck's bound + 1e-6: {slack:.2e} (of 1e-6 tolerance)");
     assert_eq!(viol, 0);
 }
 
@@ -837,7 +890,7 @@ fn steal_glide_glides() {
 
 #[test]
 fn bills_follow_the_mode() {
-    let bills = [510, 570, 520, 530, 520];
+    let bills = [510, 570, 510, 530, 510];
     assert!(VaEngine::mode_cost(VaMode::Sync) > VaEngine::mode_cost(VaMode::Mix));
     for (mode, bill) in VaMode::ALL.into_iter().zip(bills) {
         assert_eq!(VaEngine::mode_cost(mode), Cost(bill), "{mode:?}");

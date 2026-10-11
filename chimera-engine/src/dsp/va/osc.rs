@@ -571,8 +571,8 @@ pub fn wave_reach(from: f32, to: f32) -> f32 {
         // up from the first segment: short of 2/3 (inside the second)
         to.min(THIRDS[2] - 1e-6)
     } else if k0 > k1 + 1 {
-        // down from the third: 1/3 itself is in the second
-        to.max(THIRDS[1])
+        // down from the third: short of 1/3 (inside the second)
+        to.max(THIRDS[1] + 1e-6)
     } else {
         to
     }
@@ -844,6 +844,9 @@ pub struct VarOsc {
     logged: usize,
     #[cfg(any(test, feature = "test-support"))]
     skip: Option<usize>,
+    /// Runs the last `render` started (two at most).
+    #[cfg(any(test, feature = "test-support"))]
+    runs: u8,
 }
 
 impl VarOsc {
@@ -868,6 +871,8 @@ impl VarOsc {
         logged: 0,
         #[cfg(any(test, feature = "test-support"))]
         skip: None,
+        #[cfg(any(test, feature = "test-support"))]
+        runs: 0,
     };
 
     pub fn prepare(&mut self, sample_rate: f32) {
@@ -951,16 +956,30 @@ impl VarOsc {
         draw: &mut impl FnMut() -> f32,
     ) {
         let blk = self.block::<SYNC>(r, N, *jit);
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.runs = 0;
+        }
         // WAVE's ramp is linear: the pairs run from the first sample's to
         // the last's, one segment at a time
         let (mut pair, last, up) = (seg(r, 0), seg(r, N - 1), r.wave.1 > 0.0);
         let mut i0 = 0;
+        // two runs a block at most, by construction: a second run plays to
+        // the block's end on its pair (`wave_reach` keeps WAVE short of a
+        // second edge; rounding past it plays that pair a hair beyond its
+        // end, and the next block takes the new segment). Never a third.
+        let mut first = true;
         while i0 < N {
-            let i1 = if pair == last {
+            let i1 = if pair == last || !first {
                 N
             } else {
                 run_end(r, pair, i0, N)
             };
+            first = false;
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                self.runs += 1;
+            }
             let span = (i0, i1);
             match pair {
                 Pair::SineTri => {
@@ -1390,6 +1409,12 @@ impl VarOsc {
             self.logged += 1;
         }
         self.correction == Correction::On
+    }
+
+    /// The runs the last `render` started.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn runs(&self) -> u8 {
+        self.runs
     }
 
     /// The `(t, step, slope)` corrected in the last `tick`, up to 8.

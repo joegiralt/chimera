@@ -281,17 +281,17 @@ pub const VA_OUT_GAIN: f32 = 3.631;
 /// ceiling, 0.25 a sample. Each line: OSC 1 (TRI/SAW) + OSC 2 + operator
 /// and sub + block + crossings + 95.
 ///
-/// MIX: 140.6 + 134.4 (TRI/SAW) + 35.8 + 67.0 + 30.2 + 95.
+/// MIX: 140.6 + 134.4 (TRI/SAW) + 35.8 + 66.9 + 29.6 + 95.
 pub const COST_MIX: Cost = Cost(510);
 /// SYNC: 122.7 (master at 12 kHz) + 206.1 (SINE/TRI slave: a reset's 197.5
-/// × 0.25) + 35.8 + 70.4 + 31.2 + 95.
+/// × 0.25) + 35.8 + 70.3 + 30.7 + 95.
 pub const COST_SYNC: Cost = Cost(570);
-/// RING: 140.6 + 134.4 + 42.2 + 67.7 + 30.2 + 95.
-pub const COST_RING: Cost = Cost(520);
-/// XOR: 140.6 + 134.4 + 53.5 + 68.9 + 30.2 + 95.
+/// RING: 140.6 + 134.4 + 42.2 + 67.6 + 29.6 + 95.
+pub const COST_RING: Cost = Cost(510);
+/// XOR: 140.6 + 134.4 + 53.5 + 68.7 + 29.6 + 95.
 pub const COST_XOR: Cost = Cost(530);
-/// BITS: 140.6 + 134.4 + 42.2 + 67.9 + 30.2 + 95.
-pub const COST_BITS: Cost = Cost(520);
+/// BITS: 140.6 + 134.4 + 42.2 + 67.7 + 29.6 + 95.
+pub const COST_BITS: Cost = Cost(510);
 
 /// SYNC's master pitch ceiling (owner, 2026-10-11; ADR 0118): it bounds the
 /// slave's resets at a quarter of the sample rate.
@@ -884,6 +884,12 @@ impl VaEngine {
     #[cfg(any(test, feature = "test-support"))]
     pub fn wave_now(&self) -> [Option<f32>; 2] {
         [self.wave[0].value(), self.wave[1].value()]
+    }
+
+    /// The runs each oscillator's last block started (two at most).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn runs(&self) -> [u8; 2] {
+        [self.osc[0].runs(), self.osc[1].runs()]
     }
 
     /// The last block's RING gain ramp, from and to.
