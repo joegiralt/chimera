@@ -35,7 +35,7 @@ pub const fn exp2(x: f32) -> f32 {
 /// `log2(x)` for `x > 0`; absolute error below 3e-5. Zero, negative and
 /// subnormal inputs clamp up to the smallest positive normal,
 /// `f32::MIN_POSITIVE`, rather than being undefined.
-pub fn log2(x: f32) -> f32 {
+pub const fn log2(x: f32) -> f32 {
     let x = x.max(f32::MIN_POSITIVE);
     let bits = x.to_bits();
     let e = ((bits >> 23) & 0xff) as i32 - 127;

@@ -314,12 +314,19 @@ const OWN_OUTSIDE: &[&str] = &[
     "Delay TONE",
     "Delay MIX",
     "Delay REV",
-    // Reverb: TIME, DAMP and GRIT one-poles, SIZE a 30 ms crossfade, MIX `Ease`.
-    "Reverb GRIT",
+    // Reverb: each TYPE eases its gains and filters (τ 20-50 ms), crossfades
+    // its read heads (30 ms), and MIX `Ease`s; TYPE and SYNC are choices.
     "Reverb TIME",
     "Reverb DAMP",
     "Reverb SIZE",
     "Reverb MIX",
+    "Reverb TONE",
+    "Reverb DIFFUSE",
+    "Reverb PRE-DLY",
+    "Reverb SHAPE",
+    "Reverb SMEAR",
+    "Reverb RATE",
+    "Reverb DENSITY",
     // The master tape ramps its smoothed controls across each block.
     "Tape DRIVE",
     "Tape TONE",

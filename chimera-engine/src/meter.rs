@@ -4,6 +4,8 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::dsp::rev::sync::{FoldState, Tempo};
+
 /// A level in dB, held as its bits: the last block's, a relaxed store.
 pub struct DbMeter(AtomicU32);
 
@@ -88,6 +90,34 @@ pub static MASTER_GR: DbMeter = DbMeter::new();
 /// the UI last took it (`Voice::filter_clip`). Global, as `MASTER_GR`.
 pub static FILTER_CLIP: [ClipMeter; crate::hw::MAX_PARTS] =
     [const { ClipMeter::new() }; crate::hw::MAX_PARTS];
+
+/// The tempo the reverb follows and its synced time's fold, in one word:
+/// tempo × 4 (its 0.25 BPM grid) in the low 16 bits, the fold above. What
+/// a synced cell shows. Global as `MASTER_GR`: only a test binary whose
+/// renders keep 120 BPM may draw synced cells.
+static REV_CLOCK: AtomicU32 = AtomicU32::new(0);
+
+pub fn publish_rev_clock(t: Tempo, f: FoldState) {
+    REV_CLOCK.store(clock_word(t, f), Ordering::Relaxed);
+}
+
+/// `t` × 4 in bits 0–15, `f` in bits 16–23: the published word, and what
+/// a synced cell's redraw is keyed on.
+pub fn clock_word(t: Tempo, f: FoldState) -> u32 {
+    (libm::roundf(t.0 * 4.0) as u32 & 0xFFFF) | (f.0 as u8 as u32) << 16
+}
+
+/// The last published clock; 120 BPM, unfolded, before any.
+pub fn rev_clock() -> (Tempo, FoldState) {
+    let w = REV_CLOCK.load(Ordering::Relaxed);
+    let q = w & 0xFFFF;
+    let t = if q == 0 {
+        Tempo::DEFAULT
+    } else {
+        Tempo(q as f32 / 4.0)
+    };
+    (t, FoldState((w >> 16) as u8 as i8))
+}
 
 #[cfg(test)]
 mod tests {

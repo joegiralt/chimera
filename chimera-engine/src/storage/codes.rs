@@ -6,6 +6,7 @@
 use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::block::{Block, DiskCode, ParamId, ParamKind, ParamSpec};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
+use crate::dsp::reverb::{RevSync, ReverbType};
 use crate::modulation::ModSource;
 use crate::orbit::chords::ScaleKind;
 use crate::orbit::ring::{NoteMode, Range, SnapTo};
@@ -151,6 +152,8 @@ pub const RETIRED: &[(u8, u8)] = &[
     (1, 7),
     (1, 8),
     (10, 2),
+    // The reverb's GRIT (reverb TYPEs spec § GRIT is retired).
+    (22, 5),
 ];
 
 /// Block codes that are gone for good (each of its params is in `RETIRED`).
@@ -579,5 +582,58 @@ impl DiskCode for TargetKind {
 
     fn from_disk_code(c: u8) -> Option<Self> {
         (c == 0).then_some(TargetKind::Part)
+    }
+}
+
+// The reverb's (reverb TYPEs spec § The TYPE list). Code 6 was never
+// assigned: ECHO never shipped.
+
+impl DiskCode for ReverbType {
+    fn disk_code(self) -> u8 {
+        match self {
+            ReverbType::Quad => 0,
+            ReverbType::Room => 1,
+            ReverbType::Hall => 2,
+            ReverbType::Gate => 3,
+            ReverbType::Reverse => 4,
+            ReverbType::Bloom => 5,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            ReverbType::Quad => "QUAD",
+            ReverbType::Room => "ROOM",
+            ReverbType::Hall => "HALL",
+            ReverbType::Gate => "GATE",
+            ReverbType::Reverse => "REVERSE",
+            ReverbType::Bloom => "BLOOM",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        find_code(&ReverbType::ALL, c)
+    }
+}
+
+impl DiskCode for RevSync {
+    fn disk_code(self) -> u8 {
+        match self {
+            RevSync::Off => 0,
+            RevSync::Time => 1,
+            RevSync::All => 2,
+        }
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            RevSync::Off => "OFF",
+            RevSync::Time => "TIME",
+            RevSync::All => "ALL",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        find_code(&RevSync::ALL, c)
     }
 }

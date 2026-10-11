@@ -30,6 +30,11 @@ probe = []
 # The filter's static-cost probes (`dsp::filter::probe`) alone, for
 # `tools/loop_count.py`: none of `probe`'s stamps.
 filter-probe = []
+# `ring::smear_probe`: SMEAR's reads, recorded per thread. Tests only.
+smear-probe = []
+# `rev::parts::clamp_counts`: the reverb's clamp hits, counted per thread.
+# Tests only.
+clamp-probe = []
 
 # The `SourceTable` model (`chimera-core/tests/loom_source_table.rs`): only
 # under `RUSTFLAGS="--cfg loom"`, never in a firmware or desktop build. MIT.
@@ -43,5 +48,5 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
 chimera-waves = { path = "../chimera-waves" }
 
 [dev-dependencies]
-chimera-engine = { path = ".", features = ["test-support", "source-writer"] }
+chimera-engine = { path = ".", features = ["test-support", "source-writer", "smear-probe", "clamp-probe"] }
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }

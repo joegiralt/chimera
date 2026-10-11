@@ -262,14 +262,17 @@ fn an_abort_mid_way_stops_it() {
 
 #[test]
 fn more_data_than_the_size_is_refused() {
-    let body = project_bytes("AVRIL 14", 1);
+    // A whole project is now 440 lines exactly (21,120 B, DENSITY's id
+    // grew it): cut 20 bytes so its last line carries more than one.
+    let full = project_bytes("AVRIL 14", 1);
+    let body = &full[..full.len() - 20];
     assert!(
         body.len() % 48 > 1,
         "the last line carries more than one byte"
     );
     // Declared a byte short of what the last line carries.
     let line = format!("put {PATH} {} 0\n", body.len() - 1);
-    fails_after_ready(line, &lines(&body), 0, "more data than its size");
+    fails_after_ready(line, &lines(body), 0, "more data than its size");
 }
 
 #[test]

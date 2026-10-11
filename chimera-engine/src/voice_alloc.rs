@@ -62,6 +62,9 @@ pub struct VoiceSlot {
     /// Shed, fading out, freed by `release_finished`: the shed's order.
     dying: Option<u32>,
     cost: Cost,
+    /// A knob glide's extra on `cost`: billed to admission, never shed
+    /// on (ADR 0117).
+    glide: Cost,
     /// What the voice's last note, taken for this one, costs while it
     /// fades out before this one starts (ADR 0091).
     fading: Cost,
@@ -99,6 +102,11 @@ impl VoiceSlot {
     /// Cycles/sample this voice costs now (0 when free): its note's, or
     /// while the note it took fades out, the costlier of the two.
     pub fn cost(&self) -> Cost {
+        (self.cost + self.glide).max(self.fading)
+    }
+
+    /// `cost` without the glide: what shedding counts.
+    fn shed_cost(&self) -> Cost {
         self.cost.max(self.fading)
     }
 }
@@ -175,6 +183,15 @@ impl Allocator {
             .sum()
     }
 
+    /// `live_cost` without the knob glides: a turn never sheds.
+    fn steady_live_cost(&self) -> Cost {
+        self.slots
+            .iter()
+            .filter(|s| s.dying.is_none())
+            .map(VoiceSlot::shed_cost)
+            .sum()
+    }
+
     /// Allocate a voice for `note` on `part`. `cost` is the voice's
     /// cycles/sample; `reserved` is what is spent outside the pool (the FX
     /// bus). The pool's own sounding cost is tracked here, per slot.
@@ -219,6 +236,7 @@ impl Allocator {
             mono,
             dying: None,
             cost,
+            glide: Cost::ZERO,
             fading: Cost::ZERO,
         };
     }
@@ -253,8 +271,14 @@ impl Allocator {
 
     /// The voice now costs `cost` (its Part's Sound changed).
     pub fn recost(&mut self, voice: usize, cost: Cost) {
+        self.recost_with_glide(voice, cost, Cost::ZERO);
+    }
+
+    /// `glide` is a knob glide's extra: it counts toward admission, not
+    /// shedding (ADR 0117).
+    pub fn recost_with_glide(&mut self, voice: usize, cost: Cost, glide: Cost) {
         if let Some(s) = self.slots.get_mut(voice).filter(|s| !s.is_free()) {
-            s.cost = cost;
+            (s.cost, s.glide) = (cost, glide);
         }
     }
 
@@ -263,7 +287,7 @@ impl Allocator {
     /// first, then the oldest tail, then the newest held note. Call until
     /// `None`. Dying voices still count in `sounding_cost`.
     pub fn shed(&mut self, reserved: Cost) -> Option<usize> {
-        if reserved + self.live_cost() <= self.budget.as_cost() {
+        if reserved + self.steady_live_cost() <= self.budget.as_cost() {
             return None;
         }
         let v = (0..MAX_VOICES)

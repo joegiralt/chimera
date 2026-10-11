@@ -165,7 +165,7 @@ impl OrbitRig {
     pub fn on_init() -> Self {
         let mut r = Self::new();
         for p in PartId::ALL {
-            *r.project.edit_part(p).sound = Sound::init(EngineType::Algo);
+            **r.project.edit_part(p).sound = Sound::init(EngineType::Algo);
         }
         r
     }

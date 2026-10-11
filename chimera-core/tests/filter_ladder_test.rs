@@ -427,6 +427,7 @@ fn ladder_stays_bounded_under_audio_rate_modulation() {
                 freq: Some(lane),
                 q: Some(lane),
                 level_routed: false,
+                glide: false,
             };
             let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|i| {
                 if (b * BLOCK_SIZE + i).is_multiple_of(4001) {

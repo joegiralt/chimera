@@ -486,7 +486,7 @@ fn marks_compare_encodings() {
                 e.params.out.volume = v * 0.5 + 0.01;
                 e.params.out.volume = v;
             }
-            _ => *e = copy,
+            _ => **e = copy,
         }
         let held = p.pool().get(slot).unwrap().to_sound();
         let eq = p.part(part).sound.bits_eq(&held);

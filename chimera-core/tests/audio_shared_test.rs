@@ -13,7 +13,7 @@ use chimera_core::tracked::Tracked;
 
 fn non_default_performance() -> Performance {
     let mut perf = Performance::new();
-    *perf.edit(PartId::ALL[4]).sound = Sound::init(EngineType::Algo);
+    **perf.edit(PartId::ALL[4]).sound = Sound::init(EngineType::Algo);
     perf.edit(PartId::ALL[4]).mix.mode = PartMode::Mono;
     perf.edit(PartId::ALL[4]).mix.pan = -0.5;
     perf.fx.reverb.mix = 0.4;
@@ -100,6 +100,7 @@ fn init_in_place_matches_from_performance() {
             PartAudio {
                 params: Tracked::fresh(p.sound.params.clone()),
                 mod_state: Tracked::fresh(p.sound.mod_state.clone()),
+                knobs: Default::default(),
                 mix: p.mix,
                 // The first publish sets it (`PartAudio::of`).
                 loads: chimera_core::project::Loads::NONE,

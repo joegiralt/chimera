@@ -9,6 +9,7 @@ use chimera_core::dsp::delay::DelayParams;
 use chimera_core::dsp::fx_bus::{FxBus, FxParams};
 use chimera_core::dsp::knobs::Knobs;
 use chimera_core::dsp::limiter::{CEILING, KNEE, LOOKAHEAD, Limiter, OUTPUT_GAIN, THRESHOLD};
+use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::ReverbParams;
 use chimera_core::dsp::tape::TapeParams;
 use chimera_core::dsp::voice::Voice;
@@ -69,7 +70,9 @@ fn max() -> FxParams {
             time: 1.0,
             size: 1.0,
             damping: 0.0,
-            grit: 0.3,
+            smear: 1.0,
+            rate: 1.0,
+            ..Default::default()
         },
         tape: TapeParams {
             mix: 1.0,
@@ -120,7 +123,8 @@ fn chord(
     // ADR 0060) a budget for all eight.
     let voice = Voice::cost(&shared.parts[0].params, &shared.parts[0].mod_state).0;
     // And the Part's knobs (ADR 0112).
-    let eight = ((FxBus::COST.0 + 8 * voice + Knobs::COST.0) as u64 * 480_000).div_ceil(7) as u32;
+    let reserved = FxBus::COST.0 + Knobs::RESERVE.0;
+    let eight = ((reserved + 8 * voice + Knobs::COST.0) as u64 * 480_000).div_ceil(7) as u32;
     let mut inst = Box::new(Instrument::new(
         SAMPLE_RATE,
         SampleBudget::for_cpu(eight.max(CPU_HZ_REV_V)),
@@ -169,7 +173,7 @@ fn no_stage_exceeds_ceiling() {
                 let input = dac.input();
                 let trimmed = input.iter().flatten().map(|x| x.abs() * OUTPUT_GAIN);
                 pre = trimmed.fold(pre, f32::max);
-                let lines = fx.reverb().ring().lines();
+                let lines = fx.reverb().arena().lines();
                 ring = lines.iter().fold(ring, |m, &v| m.max((v as i32).abs()));
                 rails += lines
                     .iter()
@@ -337,10 +341,10 @@ fn everything_before_the_limiter_is_mains_mix() {
         let bus = inst.part_bus(0);
         let mut sends = [bus.map(|b| b * SEND); 3];
         let mut ret = chimera_core::dsp::Stereo::SILENT;
-        reference.process(&mut sends, &fxp, SAMPLE_RATE, &mut ret);
+        reference.process(&mut sends, &fxp, Tempo::DEFAULT, SAMPLE_RATE, &mut ret);
         assert_eq!(
-            fx.reverb().ring().lines(),
-            reference.reverb().ring().lines()
+            fx.reverb().arena().lines(),
+            reference.reverb().arena().lines()
         );
         let input = dac.input().iter().flatten();
         peak = input.fold(peak, |m, x| m.max(x.abs()));

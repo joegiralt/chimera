@@ -287,6 +287,18 @@ impl FilterKind {
         }
     }
 
+    /// What a knob glide adds, per sample, over the steady bill (ADR 0117):
+    /// the block's four coefficient sets, not one, for the three loops with
+    /// a divide; DIRTY's one loop already reads the arrays. Counted on the
+    /// `filter-probes` ELF: ~49 instructions and 2 `vdiv` an extra set,
+    /// three extra, 3 × (49 × 1.606 + 24) / 64 = 4.8: 5.
+    pub const fn glide_cost(self) -> Cost {
+        match self {
+            FilterKind::Dirty => Cost::ZERO,
+            _ => Cost(5),
+        }
+    }
+
     /// LEVEL's clipper, while it can run; the 2040 and LADDER have none.
     pub const fn level_cost(self) -> Cost {
         match self {
@@ -317,6 +329,20 @@ pub fn routed_cutoff(base: f32, sum: f32) -> f32 {
         return base;
     }
     crate::params::FILTER_SPECS[0].offset(base, sum)
+}
+
+/// A knob glide's block runs in `STEPS` sub-blocks of `SUB` samples, each
+/// on the steady loop at its own `g` and `k`, stepped linearly to the
+/// block's end values (ADR 0117): four divides a block, not 128.
+pub(crate) const STEPS: usize = 4;
+pub(crate) const SUB: usize = BLOCK_SIZE / STEPS;
+
+/// Sub-block `j`'s value on the ramp `r`: at its midpoint, where the
+/// per-sample ramp's average over it lies. The block after starts from
+/// `r.1`, an eighth of a block on.
+#[inline(always)]
+pub(crate) fn step_to(r: (f32, f32), j: usize) -> f32 {
+    r.0 + (r.1 - r.0) * ((2 * j + 1) as f32 * (0.5 / STEPS as f32))
 }
 
 /// Sample `i`'s coefficient on a ramp from `from` by `step` a sample: the

@@ -12,6 +12,8 @@ perf-probe = []
 bench = ["perf-probe"]
 sd-probe = []
 orbit = ["chimera-core/orbit"]
+# The master tape's bench build: it drops the card bench, for AXI (ADR 0087).
+master-tape = []
 usb-console = [
     "stm32h7xx-hal/usb_hs",
     "dep:usb-device",

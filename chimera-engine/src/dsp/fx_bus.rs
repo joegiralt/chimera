@@ -21,8 +21,9 @@ use crate::dsp::comp::{CompParams, MasterComp};
 use crate::dsp::delay::{DelayParams, TapeDelay};
 use crate::dsp::ease::{Ease, ease_coeff};
 use crate::dsp::limiter::{DacBlocks, Limiter};
+use crate::dsp::rev::Reverb;
+use crate::dsp::rev::sync::Tempo;
 use crate::dsp::reverb::ReverbParams;
-use crate::dsp::ring::RingReverb;
 #[cfg(feature = "master-tape")]
 use crate::dsp::tape::Tape;
 use crate::dsp::tape::TapeParams;
@@ -61,7 +62,7 @@ impl Default for FxParams {
 pub struct FxBus {
     chorus: JunoChorus,
     delay: TapeDelay,
-    reverb: RingReverb,
+    reverb: Reverb,
     #[cfg(feature = "master-tape")]
     tape: Tape,
     comp: MasterComp,
@@ -92,8 +93,10 @@ impl FxBus {
     /// moving is the UI's doing, never a route's, so what its ease costs
     /// while it moves (up to 50 instructions a sample, a delay TIME
     /// crossfade under a MIX ramp) is brief and sits in the headroom.
+    /// Without the tape it is the BUS+V row as read: BUS with six voices
+    /// rendered between its blocks, its eases running.
     #[cfg(not(feature = "master-tape"))]
-    pub const COST: Cost = Cost(1180); // BUS 1155, measured 2026-09-29, bench, rev V at 480 MHz, b34a66a; + 10.4 (ADR 0061); rounded up
+    pub const COST: Cost = Cost(1188); // BUS+V 1188, measured 2026-10-04, bench, rev V at 480 MHz, 2431fedc (BUS 1118: six A16+17 voices' cache traffic between its blocks)
     #[cfg(feature = "master-tape")]
     pub const COST: Cost = Cost(1490); // BUS 1468, measured 2026-09-29, bench, rev V at 480 MHz, 87c2930 (tape in); + 10.4 (ADR 0061); rounded up
 
@@ -101,7 +104,7 @@ impl FxBus {
         Self {
             chorus: JunoChorus::new(),
             delay: TapeDelay::new(),
-            reverb: RingReverb::new(),
+            reverb: Reverb::new(),
             #[cfg(feature = "master-tape")]
             tape: Tape::new(),
             comp: MasterComp::new(),
@@ -118,7 +121,7 @@ impl FxBus {
         unsafe {
             JunoChorus::init_in_place(uninit_at(addr_of_mut!((*p).chorus)));
             TapeDelay::init_in_place(uninit_at(addr_of_mut!((*p).delay)));
-            RingReverb::init_in_place(uninit_at(addr_of_mut!((*p).reverb)));
+            Reverb::init_in_place(uninit_at(addr_of_mut!((*p).reverb)));
             #[cfg(feature = "master-tape")]
             Tape::init_in_place(uninit_at(addr_of_mut!((*p).tape)));
             MasterComp::init_in_place(uninit_at(addr_of_mut!((*p).comp)));
@@ -136,6 +139,7 @@ impl FxBus {
         &mut self,
         sends: &mut [[f32; BLOCK_SIZE]; FX_SENDS],
         params: &FxParams,
+        tempo: Tempo,
         sample_rate: u32,
         ret: &mut Stereo,
     ) {
@@ -161,13 +165,8 @@ impl FxBus {
         } else {
             0.0
         };
-        self.reverb.process(
-            reverb,
-            &params.reverb.controls(),
-            mix,
-            sample_rate,
-            &mut wet,
-        );
+        self.reverb
+            .process(reverb, &params.reverb, mix, tempo, sample_rate, &mut wet);
         add(&mut ret.l, &wet.l);
         add(&mut ret.r, &wet.r);
     }
@@ -192,9 +191,16 @@ impl FxBus {
         self.limiter.process(dac, sample_rate);
     }
 
-    /// The reverb, for reading its ring.
-    pub fn reverb(&self) -> &RingReverb {
+    /// The reverb, for reading its arena and state.
+    pub fn reverb(&self) -> &Reverb {
         &self.reverb
+    }
+
+    /// Start a reverb TYPE switch now, QUAD → QUAD: the bench's REV SWITCH
+    /// MAX.
+    #[doc(hidden)]
+    pub fn force_reverb_restart(&mut self) {
+        self.reverb.force_restart();
     }
 
     /// The compressor's gain reduction, dB, for the GR meter.

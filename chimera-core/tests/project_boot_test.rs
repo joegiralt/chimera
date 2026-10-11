@@ -91,7 +91,14 @@ fn boot_loads_the_last_project() {
 
     let mut b = boot_system(&mut s);
     assert_eq!(b.settings.last_project, Some(id(2)));
+    // A project stores only its TYPE's knobs: a load forgets the rest
+    // (reverb TYPEs spec § A TYPE change loads that TYPE's knobs).
+    use chimera_core::dsp::reverb::{KnobMemory, ReverbParams, ReverbType};
+    let hall = ReverbParams::default().with_type(ReverbType::Hall, &KnobMemory::new());
+    b.ui.rev_knobs_mut().store(&hall);
+    assert!(b.ui.rev_knobs().recall(ReverbType::Hall).is_some());
     b.ui.boot_project(&mut b.card, &mut s, b.settings.last_project);
+    assert_eq!(*b.ui.rev_knobs(), KnobMemory::new(), "the load clears it");
     same(&p, b.ui.project());
     assert_eq!(
         project_status(b.ui.project(), b.ui.template()),
