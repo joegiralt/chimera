@@ -144,7 +144,8 @@ pub static TAPE_MODEL: BlockDef = BlockDef {
 // VA engine pages (spec § Pages): VA, then OSC 1 and OSC 2 beneath it
 // ---------------------------------------------------------------------------
 
-/// VA, the home. Ids 87-89: free, under the focus table's top.
+/// VA, the home. Ids 87-89: free, under the focus table's top. AMOUNT
+/// reads BLEND, STAB STABILITY on the page (ADR 0129); their idents stay.
 pub static VA_HOME: BlockDef = BlockDef {
     id: 87,
     name: "VA",
@@ -155,9 +156,9 @@ pub static VA_HOME: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Va, VaParams::WAVE1),
         ParamSlot::param(BlockRef::Va, VaParams::WAVE2),
         ParamSlot::param(BlockRef::Va, VaParams::MODE),
-        ParamSlot::param(BlockRef::Va, VaParams::AMOUNT).with_label("AMNT"),
+        ParamSlot::param(BlockRef::Va, VaParams::AMOUNT).with_label("BLEND"),
         ParamSlot::param(BlockRef::Va, VaParams::SUB),
-        ParamSlot::param(BlockRef::Va, VaParams::STAB),
+        ParamSlot::param(BlockRef::Va, VaParams::STAB).with_label("STABILITY"),
     ],
 };
 

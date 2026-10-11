@@ -2886,6 +2886,7 @@ impl UiState {
                 self.prime_status,
             )
             .with_set(region::quantize(self.renderer.set[f.focus].current()))
+            .with_gauge(shown.map_or(0, |g| g.outside_key()))
             .with_text(
                 f.orbit_focus
                     .as_ref()

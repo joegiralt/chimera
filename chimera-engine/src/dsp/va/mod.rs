@@ -18,7 +18,7 @@ use crate::dsp::algo::math::exp2;
 use crate::dsp::ease::{Ramp, step_of};
 use crate::dsp::glide::Glide;
 use crate::dsp::{clampf, sqrt};
-use crate::glyph::FocusGlyph;
+use crate::glyph::{FocusGlyph, VaGlyph, VaOsc};
 use crate::hw::Cost;
 use crate::project::PartId;
 use crate::voice_alloc::VoiceIdx;
@@ -179,8 +179,12 @@ const fn fine(id: u8, label: &'static str, short: &'static str) -> ParamSpec {
 }
 
 pub static VA_SPECS: [ParamSpec; 12] = [
-    uni(0, "WAVE1", "WAVE1", 2.0 / 3.0).short("WV1"),
-    uni(1, "WAVE2", "WAVE2", 2.0 / 3.0).short("WV2"),
+    uni(0, "WAVE1", "WAVE1", 2.0 / 3.0)
+        .short("WV1")
+        .glyph(FocusGlyph::Va(VaGlyph::Wave(VaOsc::One))),
+    uni(1, "WAVE2", "WAVE2", 2.0 / 3.0)
+        .short("WV2")
+        .glyph(FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two))),
     ParamSpec::choice(
         2,
         "MODE",
@@ -190,8 +194,8 @@ pub static VA_SPECS: [ParamSpec; 12] = [
         Change::Crossfade,
     )
     .ident("MODE")
-    .glyph(FocusGlyph::None),
-    uni(3, "AMNT", "AMOUNT", 0.5).glyph(FocusGlyph::Crossfader),
+    .glyph(FocusGlyph::Va(VaGlyph::Mode)),
+    uni(3, "AMNT", "AMOUNT", 0.5).glyph(FocusGlyph::Va(VaGlyph::Blend)),
     uni(4, "SUB", "SUB", 0.0).glyph(FocusGlyph::LevelBar),
     uni(5, "STAB", "STAB", 1.0),
     coarse(6, "CRSE1", "CR1"),
