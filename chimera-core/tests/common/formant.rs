@@ -60,28 +60,31 @@ pub fn one(kind: OpKind, frmt: u8, bw: u8, skirt: u8) -> AlgoParams {
 }
 
 /// The carrier's frequency: the mean zero-crossing rate over the half
-/// cycles whose lobe tops 1 % of the peak, so the gaps between grains
+/// cycles inside one run of non-zero samples (a grain, or overlapping
+/// ones) whose lobe tops 1 % of the peak, so the gaps between grains
 /// don't count.
 pub fn grain_fc(out: &[f32]) -> f32 {
     let peak = out.iter().fold(0.0f32, |m, x| m.max(x.abs()));
-    let mut last: Option<(usize, f32)> = None;
-    let mut crossings = Vec::new();
-    for (i, &y) in out.iter().enumerate() {
-        if y == 0.0 {
-            continue;
+    // (position, run): an exact zero ends a run.
+    let mut crossings: Vec<(f32, usize)> = Vec::new();
+    let mut run = 0;
+    for (i, w) in out.windows(2).enumerate() {
+        let (a, b) = (w[0], w[1]);
+        if a == 0.0 || b == 0.0 {
+            run += 1;
+        } else if (a < 0.0) != (b < 0.0) {
+            crossings.push((i as f32 + a / (a - b), run));
         }
-        if let Some((j, prev)) = last
-            && (prev < 0.0) != (y < 0.0)
-        {
-            crossings.push(j as f32 + (i - j) as f32 * prev / (prev - y));
-        }
-        last = Some((i, y));
     }
     let (mut span, mut halves) = (0.0f64, 0u32);
     for c in crossings.windows(2) {
-        let lobe = &out[c[0].ceil() as usize..=c[1] as usize];
+        let ((c0, r0), (c1, r1)) = (c[0], c[1]);
+        if r0 != r1 {
+            continue;
+        }
+        let lobe = &out[c0.ceil() as usize..=c1 as usize];
         if lobe.iter().any(|x| x.abs() > 0.01 * peak) {
-            span += f64::from(c[1] - c[0]);
+            span += f64::from(c1 - c0);
             halves += 1;
         }
     }

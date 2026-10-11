@@ -255,12 +255,12 @@ fn train(fc: f32, period: usize, len: usize, s: Skirt) -> Vec<f32> {
 
 #[test]
 fn the_helpers_read_a_known_train() {
+    // At len 130 SKIRT 0 the edge lobes top 1 %, either side of the gap.
+    for (len, s) in [(150, Skirt::S1), (130, Skirt::S0)] {
+        let fc = grain_fc(&train(1000.0, 218, len, s));
+        assert!((fc / 1000.0 - 1.0).abs() < 0.01, "{len} {s:?} {fc}");
+    }
     let out = train(1000.0, 218, 150, Skirt::S1);
-    assert!(
-        (grain_fc(&out) / 1000.0 - 1.0).abs() < 0.01,
-        "{}",
-        grain_fc(&out)
-    );
     let grid: Vec<f32> = (1..)
         .map(|k| k as f32 * common::SR as f32 / 218.0)
         .take_while(|&h| h < 24_000.0)
