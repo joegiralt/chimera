@@ -85,7 +85,18 @@ release-bin:
         cargo build --release -p chimera-stm32 --target $T $f --config "target.$T.rustflags=$flags"
         rust-objcopy -O binary target/$T/release/chimera-stm32 target/release-bin/$out.bin
         just check-bin-paths target/release-bin/$out.bin
+        just check-bin-size target/release-bin/$out.bin
     done
+
+# Stock bootloader SD flash erases sectors 1..size/128K+1: a .bin of 917,504 B
+# or more reaches sector 8, which wraps to sector 0 and erases the bootloader.
+# Every shipped .bin stays strictly under it.
+check-bin-size bin:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    n=$(stat -c %s "{{bin}}")
+    if [ "$n" -ge 917504 ]; then echo "{{bin}} is $n B: the stock bootloader's SD flash would erase itself at 917,504 B or more" >&2; exit 1; fi
+    echo "{{bin}}: $n B, $((917504 - n)) B under the SD-flash limit"
 
 # Draft a release of the path-clean firmware on the PUBLIC chimera-releases
 # repo (#413): `just release 0.1.0 [--dry-run]`. Refuses a dirty tree or a
