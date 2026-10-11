@@ -214,7 +214,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("library_pool_full", 0x6660706bd8a9d80c),
     ("library_naming", 0xab3925136bf27a0f),
     // Re-recorded: a fresh project's footer drops NEW (#286).
-    ("settings_personal_theme", 0xc35039e65219cdc2),
+    // Re-recorded: INVERT in cell F (ADR 0126).
+    ("settings_personal_theme", 0x69eb789acb0d98db),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
     ("settings_system_diag_aud_load", 0x0d5edcdc4826225e),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
