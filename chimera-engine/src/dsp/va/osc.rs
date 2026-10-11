@@ -1395,13 +1395,16 @@ impl Sub {
     /// `tick` on a wrap buffer's entry.
     #[inline(always)]
     pub fn step(&mut self, wrap: f32) -> f32 {
-        let mut acc = -0.0f32;
+        let mut out = self.held;
         if wrap >= 0.0 {
+            // `blep_into` of the step 2·level: its half is the level
             self.level = -self.level;
-            blep_into(&mut self.held, &mut acc, wrap, 2.0 * self.level);
+            let (h, u) = (self.level, 1.0 - wrap);
+            out += h * (wrap * wrap);
+            self.held = self.level - h * (u * u);
+        } else {
+            self.held = self.level;
         }
-        let out = self.held;
-        self.held = self.level + acc;
         out
     }
 

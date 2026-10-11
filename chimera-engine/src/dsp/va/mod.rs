@@ -753,14 +753,15 @@ impl VaEngine {
         let q = 0.5 * (l.pk.a + l.pk.b);
         // BITS crushes `½(a + b) / q`: the ½ rides in the levels (exact)
         let liq = 0.5 * crusher.levels() / q;
-        let (mut s, mut j) = (*sub, 0.0f32);
+        // SUB's level, a sample's step at a time
+        let (mut s, mut sl) = (*sub, s0);
         // one sample (a macro: a closure here is left out of line)
         macro_rules! one {
             ($i:expr) => {{
                 let i = $i;
                 x += dx;
                 k += dk;
-                j += 1.0;
+                sl += ds;
                 let (a, b) = (out[i], b[i]);
                 let half = 0.5 * (a + b);
                 let c = match mode {
@@ -770,7 +771,7 @@ impl VaEngine {
                     VaMode::Bits => q * crusher.process_scaled(a + b, liq),
                 };
                 let sv = s.step(wr[i]);
-                out[i] = (c + (s0 + ds * j) * sv) * n;
+                out[i] = (c + sl * sv) * n;
                 n += dn;
                 dn += ddn;
             }};
