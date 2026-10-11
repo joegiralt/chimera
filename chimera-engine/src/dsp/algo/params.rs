@@ -231,6 +231,7 @@ impl Block for AlgoOpParams {
         &ALGO_OP_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::WAVE => self.wave as f32,
@@ -250,6 +251,7 @@ impl Block for AlgoOpParams {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::WAVE => self.wave = v as u8,
@@ -398,6 +400,7 @@ impl Block for AlgoParams {
         &ALGO_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::ALG_A => self.alg_a as f32,
@@ -408,6 +411,7 @@ impl Block for AlgoParams {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::ALG_A => self.alg_a = v as u8,

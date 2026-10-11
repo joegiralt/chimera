@@ -326,6 +326,7 @@ impl Block for ThemeSettings {
         &THEME_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::BRIGHT => self.bright.index() as f32,
@@ -337,6 +338,7 @@ impl Block for ThemeSettings {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         let i = v as u8;
         match id {
