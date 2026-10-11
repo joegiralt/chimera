@@ -967,6 +967,11 @@ impl Voice {
                 }
             }
             self.env_mods = next;
+            // The wheel goes on after the routes: the same pitch path,
+            // past PITCH's range.
+            if knobs.bend() != 0.0 {
+                m.pitch.pitch += knobs.bend();
+            }
         }
         self.mod_values = mod_values;
         let (m, live) = (&self.played, &self.played_live);

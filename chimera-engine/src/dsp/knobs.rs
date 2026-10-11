@@ -548,6 +548,9 @@ const COLS: [FixedCol; 2] = [FixedCol::Freq, FixedCol::Q];
 /// span, 1e-4 octave of CUTOFF (0.12 c).
 const LAND: f32 = 1e-5;
 
+/// Closer than this to its target, the bend lands: a hundredth of a cent.
+const BEND_LAND: f32 = 1e-4;
+
 /// Which moving paths a Part's gliding knobs feed (`Knobs::gliding`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Gliding {
@@ -591,6 +594,9 @@ pub struct Knobs {
     /// The sample rate and the KNOB and STAGE coefficients at it: worked
     /// out once, not an `exp2` a knob a block.
     k: (u32, [f32; 2]),
+    /// The pitch bend now, semitones: the wheel's reach, glided (not a
+    /// knob of the Sound).
+    bend: f32,
 }
 
 impl Knobs {
@@ -623,7 +629,25 @@ impl Knobs {
         routes: [[0.0; MAX_MOD_SOURCES]; 2],
         reads: 0,
         k: (0, [0.0; 2]),
+        bend: 0.0,
     };
+
+    /// The pitch bend now, in semitones, added to every voice's pitch.
+    #[inline]
+    pub fn bend(&self) -> f32 {
+        self.bend
+    }
+
+    /// One block of the bend toward `to` semitones at the KNOB coefficient
+    /// `k`, or landed with none; within `BEND_LAND` it lands.
+    pub fn ease_bend(&mut self, to: f32, k: Option<f32>) {
+        match k {
+            Some(k) => {
+                glide(&mut self.bend, to, k, BEND_LAND);
+            }
+            None => self.bend = to,
+        }
+    }
 
     /// A new Sound (its Part's `loads` moved): every knob lands on its
     /// stored value, at once.

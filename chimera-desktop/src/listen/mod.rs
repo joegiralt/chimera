@@ -37,7 +37,7 @@ const SEED: u64 = 0x7A9E;
 
 /// A factory Sound held on `note` for `secs`, then `TAIL_S` of its release,
 /// rendered offline through `Instrument` at 48 kHz: DAC pair 1, `(L + R)/2`.
-/// Slots past the factory bank are NEW's INIT Sounds, by `EngineType::ALL`
+/// Slots past the factory bank are NEW's INIT Sounds, by `EngineType::PLAYABLE`
 /// (as `template::new_slot`): `FACTORY_LEN + 1` is INIT MODAL.
 pub fn chimera_source(slot: usize, note: u8, secs: f32) -> Mono {
     chimera_render(slot, note, secs, &|_, _| {})
@@ -62,7 +62,7 @@ fn chimera_render(
 ) -> Mono {
     let sound = factory_sound(slot)
         .or_else(|| {
-            let e = EngineType::ALL.get(slot.checked_sub(FACTORY_LEN)?)?;
+            let e = EngineType::PLAYABLE.get(slot.checked_sub(FACTORY_LEN)?)?;
             Some(Sound::init(*e))
         })
         .expect("a factory or INIT slot");

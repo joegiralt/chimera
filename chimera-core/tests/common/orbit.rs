@@ -284,6 +284,8 @@ impl OrbitRig {
                         self.runner.live(n);
                         self.inst.handle(n, &self.shared);
                     }
+                    InEvent::Bend(b) => self.inst.bend(b),
+                    InEvent::Sustain(p) => self.inst.sustain(p),
                     InEvent::Rt(rt) => self.runner.realtime(src, rt, now),
                 }
             }

@@ -19,8 +19,8 @@ use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::test_support::save_at;
 use chimera_core::project::{
-    LoadLink, PartId, Project, ProjectNote, ProjectSource, ReplaceGuard, SourceId, SourceRef,
-    load_project, project_file,
+    LoadLink, PartFrom, PartId, PartSource, Project, ProjectNote, ProjectSource, ReplaceGuard,
+    SlotId, SourceId, SourceRef, load_project, project_file,
 };
 use chimera_core::scope::ScopeWriter;
 use chimera_core::source_table::{AudioToken, SourceTable};
@@ -395,8 +395,7 @@ fn tuning_lives_in_the_sound() {
         put_source(&mut st, label, &data);
         let (mut p, _) = Project::boxed();
         p.source_absent(label.sref).unwrap();
-        **p.edit_part(PartId::ALL[0]).sound = s.clone();
-        let (q, note) = round_trip(&mut st, &mut p);
+        let (q, note) = tape_round_trip(&mut st, &mut p, &s);
         assert_eq!(note, None);
         assert_eq!(q.part(PartId::ALL[0]).sound.params.tape.root, 6_100.0);
         let mut r = Rig::of(&q);
@@ -434,8 +433,7 @@ fn project_round_trip_carries_no_audio() {
     put_source(&mut st, &h, &data);
     let (mut p, _) = Project::boxed();
     p.source_absent(h.sref).unwrap();
-    **p.edit_part(PartId::ALL[0]).sound = s.clone();
-    let (q, _) = round_trip(&mut st, &mut p);
+    let (q, _) = tape_round_trip(&mut st, &mut p, &s);
     assert_eq!(
         q.part(PartId::ALL[0]).sound.source.map(|t| t.r),
         Some(h.sref),
@@ -455,8 +453,7 @@ fn project_round_trip_carries_no_audio() {
     let mut bare = MemStore::new(1);
     let (mut p, _) = Project::boxed();
     p.source_absent(h.sref).unwrap();
-    **p.edit_part(PartId::ALL[0]).sound = s;
-    let (q, note) = round_trip(&mut bare, &mut p);
+    let (q, note) = tape_round_trip(&mut bare, &mut p, &s);
     assert_eq!(note, Some(ProjectNote::SourcesMissing(1)));
     let mut r = Rig::of(&q);
     r.shared
@@ -476,6 +473,26 @@ fn zone_tune_clamps_to_the_sets_zones() {
 }
 
 /// `p` saved as P0000001 on `s`, then loaded into a fresh project.
+/// TAPE `s` across a round trip: it rides in a pool slot and comes back to
+/// Part 1 from there, as a project's TAPE Part loads as INIT VA (ADR 0132).
+fn tape_round_trip(
+    st: &mut MemStore,
+    p: &mut Project,
+    s: &Sound,
+) -> (Box<Project>, Option<ProjectNote>) {
+    let (part, slot) = (PartId::ALL[0], SlotId::ALL[20]);
+    p.pool_store(slot, s).unwrap();
+    let (mut q, note) = round_trip(st, p);
+    let (_, t) = Project::boxed();
+    let src = PartSource {
+        part,
+        from: PartFrom::Slot(slot),
+    };
+    q.replace_part(ReplaceGuard::check(&q, t, src).unwrap())
+        .unwrap();
+    (q, note)
+}
+
 fn round_trip(s: &mut MemStore, p: &mut Project) -> (Box<Project>, Option<ProjectNote>) {
     let mut card = Card::new();
     assert!(matches!(save_at(&mut card, s, p, 1), ProjectNote::Saved(_)));

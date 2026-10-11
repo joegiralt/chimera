@@ -348,4 +348,6 @@ const OWN_OUTSIDE: &[&str] = &[
     "Part CHR",
     "Part DLY",
     "Part REV",
+    // The wheel's reach, glided as a knob (`Instrument::ease_bend`).
+    "Part BEND",
 ];

@@ -23,7 +23,7 @@ use crate::dsp::voice::Voice;
 use crate::hw::{Cost, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SampleBudget, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
 use crate::modulation::ModState;
-use crate::note_queue::{NoteEvent, NoteKind};
+use crate::note_queue::{BendEvent, NoteEvent, NoteKind, SustainEvent};
 use crate::orbit::RingIdx;
 use crate::orbit::ring::Harmony;
 use crate::orbit::runner::{OrbitRunner, OrbitShared};
@@ -545,6 +545,15 @@ pub struct Instrument {
     costed: usize,
     /// `costs` worked out since start: for the tests.
     costings: u32,
+    /// Each MIDI channel's pitch-bend wheel, -8192..=8191.
+    wheel: [i16; 16],
+    /// The channels whose sustain pedal is down, a bit each.
+    pedal: u16,
+    /// A voice whose last key is up with its channel's pedal down: let go
+    /// when the pedal is, or when a note takes the voice.
+    sustained: [bool; MAX_VOICES],
+    /// The KNOB glide's coefficient a block, for the bend (ADR 0112).
+    bend_k: f32,
     /// Each Part's knobs, eased (ADR 0112), and the Part's loads they
     /// last saw.
     knobs: [(Knobs, Loads); MAX_PARTS],
@@ -572,7 +581,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, knobs, knob_pace, rev_extra, rev_bill, tune_ease, tune });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, pedal, sustained, bend_k, knobs, knob_pace, rev_extra, rev_bill, tune_ease, tune });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -629,6 +638,13 @@ impl Instrument {
             addr_of_mut!((*p).costs).write([Cost::ZERO; MAX_PARTS]);
             addr_of_mut!((*p).costed).write(0);
             addr_of_mut!((*p).costings).write(0);
+            addr_of_mut!((*p).wheel).write([0; 16]);
+            addr_of_mut!((*p).pedal).write(0);
+            addr_of_mut!((*p).sustained).write([false; MAX_VOICES]);
+            addr_of_mut!((*p).bend_k).write(crate::dsp::knobs::coeff(
+                crate::block::GlideMs::KNOB,
+                sample_rate,
+            ));
             addr_of_mut!((*p).knobs).write([(Knobs::UNPRIMED, Loads::NONE); MAX_PARTS]);
             addr_of_mut!((*p).knob_pace).write(Pace::Glide(sample_rate));
             addr_of_mut!((*p).rev_extra).write(Cost::ZERO);
@@ -791,6 +807,7 @@ impl Instrument {
         }
         self.waiting = [None; MAX_VOICES];
         self.resnap_to = [None; MAX_VOICES];
+        self.sustained = [false; MAX_VOICES];
         crate::played::clear_held();
     }
 
@@ -959,6 +976,9 @@ impl Instrument {
                     self.note_channel[v] = ev.channel;
                     self.note_origin[v] = from;
                     self.keys[v] = ev.note;
+                    // A key down again, or a steal, takes the voice back
+                    // from the pedal.
+                    self.sustained[v] = false;
                     self.resnap_to[v] = None;
                     if live {
                         // The UI's screensaver: the note as this Part sounds it.
@@ -996,18 +1016,82 @@ impl Instrument {
                     if let Some(left) = self.held_keys[v].lowest() {
                         // A key still down names it now.
                         self.keys[v] = left;
+                    } else if from == NoteOrigin::Live && self.pedal_down(ev.channel) {
+                        // The pedal holds it. ORBIT's rings are not the
+                        // player's keys: they end on their own.
+                        self.sustained[v] = true;
                     } else {
-                        self.alloc.release(v);
-                        self.resnap_to[v] = None;
-                        self.voices[v].note_off(&mut EngineCtx {
-                            sym: &mut self.sym,
-                            src: &NO_SOURCES,
-                            part: part_id(self.sounding[v]),
-                            tune: self.tune,
-                        });
+                        self.let_go(v);
                     }
                 }
             }
+        }
+    }
+
+    /// Part `part`'s pitch bend now, semitones: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn bend_of(&self, part: usize) -> f32 {
+        self.knobs[part].0.bend()
+    }
+
+    fn pedal_down(&self, ch: MidiChannel) -> bool {
+        self.pedal & (1 << ch.get()) != 0
+    }
+
+    /// Voice `v`'s note ends (its last key up, or the pedal).
+    fn let_go(&mut self, v: usize) {
+        self.alloc.release(v);
+        self.resnap_to[v] = None;
+        self.voices[v].note_off(&mut EngineCtx {
+            sym: &mut self.sym,
+            src: &NO_SOURCES,
+            part: part_id(self.sounding[v]),
+            tune: self.tune,
+        });
+    }
+
+    /// A channel's wheel moved: its Parts' pitch glides there
+    /// (`ease_bend`), never steps.
+    pub fn bend(&mut self, ev: BendEvent) {
+        self.wheel[usize::from(ev.channel.get())] = ev.value.clamp(-8192, 8191);
+    }
+
+    /// A channel's sustain pedal: down holds the keys it lifts; up lets
+    /// them go.
+    pub fn sustain(&mut self, ev: SustainEvent) {
+        let bit = 1 << ev.channel.get();
+        if ev.down {
+            self.pedal |= bit;
+            return;
+        }
+        self.pedal &= !bit;
+        for v in 0..MAX_VOICES {
+            if self.sustained[v] && self.note_channel[v] == ev.channel {
+                self.sustained[v] = false;
+                if self.alloc.slots()[v].held() && self.held_keys[v].is_empty() {
+                    self.let_go(v);
+                }
+            }
+        }
+    }
+
+    /// Each Part's wheel reach in semitones, glided as a knob: a Part with
+    /// no voice lands (nothing to zip).
+    fn ease_bend(&mut self, shared: &AudioShared, playing: [bool; MAX_PARTS]) {
+        let k = match self.knob_pace {
+            Pace::Glide(_) => Some(self.bend_k),
+            Pace::Land => None,
+        };
+        for ((knobs, part), playing) in self.knobs.iter_mut().zip(&shared.parts).zip(playing) {
+            let w = self.wheel[usize::from(part.mix.channel.get())];
+            let unit = if w > 0 {
+                f32::from(w) / 8191.0
+            } else {
+                f32::from(w) / 8192.0
+            };
+            knobs
+                .0
+                .ease_bend(unit * f32::from(part.mix.bend), k.filter(|_| playing));
         }
     }
 
@@ -1300,6 +1384,7 @@ impl Instrument {
                 playing[self.sounding[v] as usize % MAX_PARTS] = true;
             }
         }
+        self.ease_bend(shared, playing);
         // Each Part takes its delta's moves (ADR 0116): a quiet one, none.
         let pace = self.knob_pace;
         for ((knobs, part), playing) in self.knobs.iter_mut().zip(&shared.parts).zip(playing) {

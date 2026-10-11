@@ -276,7 +276,8 @@ fn crossing_period(buf: &[f32; SCOPE_LEN], mean: f32, coarse: f32) -> Option<f32
             if (c - want).abs() <= coarse / 8.0 {
                 return Some((c - c0) / k as f32);
             }
-            at = i;
+            // Past this crossing: from `i` it is found again, forever.
+            at = i + 1;
         }
         None
     })

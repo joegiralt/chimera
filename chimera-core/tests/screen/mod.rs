@@ -33,7 +33,7 @@ use chimera_core::triple::{Reader, TripleBuffer, Writer};
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_registry as reg;
-use chimera_core::ui::browser::HEAD;
+use chimera_core::ui::browser::{HEAD, INIT_TYPES};
 use chimera_core::ui::busy::{draw_busy, draw_toast};
 use chimera_core::ui::hold::HOLD_MS;
 use chimera_core::ui::perf::PerfStats;
@@ -720,10 +720,18 @@ const PART_KEYS: [ButtonId; 5] = [
 /// scroll to the init row, EDIT), then MINUS from the engine's home to its
 /// first node.
 pub fn load_init(ui: &mut UiState, engine: EngineType) {
-    let row = EngineType::ALL.iter().position(|&c| c == engine).unwrap();
     feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
-    feed(ui, Input::turn(EncoderId::A, row as i8 - HEAD as i8));
-    feed(ui, Input::press(ButtonId::Edit));
+    match INIT_TYPES.iter().position(|&c| c == engine) {
+        Some(row) => {
+            feed(ui, Input::turn(EncoderId::A, row as i8 - HEAD as i8));
+            feed(ui, Input::press(ButtonId::Edit));
+        }
+        // TAPE: coming soon, so not listed (ADR 0132).
+        None => ui.load_for_test(chimera_core::project::PartSource {
+            part: chimera_core::project::PartId::ALL[0],
+            from: chimera_core::project::PartFrom::Init(engine),
+        }),
+    }
     let home = chimera_core::ui::nav::chain_def_for(engine).home();
     assert_eq!(
         ui.location(),
