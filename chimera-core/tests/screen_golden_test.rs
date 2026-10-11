@@ -198,9 +198,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the pool meter, row costs, the hints' bytes (sound-pool
     // plan Task 6); and its refusal. Then the merge with filter-types: a
     // Sound is smaller (fixed columns, no registry entry).
-    ("sound_browser", 0x295fa923be4c0d5c),
+    ("sound_browser", 0x7e5c9171f094822b),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
-    ("sound_browser_pool_full", 0x281d837b42fcb0c3),
+    ("sound_browser_pool_full", 0x83fc082530a2c28c),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     ("library_empty", 0xa94e4a6edf448c09),

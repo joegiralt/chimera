@@ -300,7 +300,7 @@ fn every_first_landing_is_the_chains_home() {
         .iter()
         .position(|&e| e == EngineType::Modal)
         .unwrap();
-    let d = init as i8 - chimera_core::ui::browser::INITS as i8;
+    let d = init as i8 - chimera_core::ui::browser::HEAD as i8;
     feed(&mut ui, Input::turn(EncoderId::A, d));
     feed(&mut ui, Input::press(ButtonId::Edit));
     assert_eq!(ui.location(), res(P[2]), "INIT");

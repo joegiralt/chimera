@@ -30,15 +30,32 @@ use crate::ui::theme;
 
 /// Rows on screen.
 pub const VISIBLE_ROWS: usize = 8;
-/// One init Sound per engine, in `EngineType::ALL` order, then the pool's
-/// slots.
+/// One init Sound per engine, in `EngineType::ALL` order, then the DRUM
+/// row (an engine not built yet), then the pool's slots.
 pub const INIT_TYPES: [EngineType; EngineType::ALL.len()] = EngineType::ALL;
 pub const INITS: usize = INIT_TYPES.len();
-pub const TOTAL_ENTRIES: usize = INITS + MAX_SOUNDS;
+/// The DRUM row's entry.
+pub const DRUM: usize = INITS;
+/// The rows above slot 1.
+pub const HEAD: usize = INITS + 1;
+pub const TOTAL_ENTRIES: usize = HEAD + MAX_SOUNDS;
+/// What DRUM's row says in place of an engine tag.
+pub const DRUM_SOON: &str = "COMING SOON";
+/// DRUM's toast on a load.
+pub const DRUM_TOAST: &str = "DRUM: COMING SOON";
+
+/// What a list entry is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Entry {
+    Init(EngineType),
+    /// Inert until the DRUM engine exists.
+    Drum,
+    Slot(SlotId),
+}
 
 /// The Sound rung's browser: each tab's cursor and first row shown. Only
 /// `input`, `input_library` and a listing's landing move them; PROJECT
-/// opens on slot 1, the INIT rows just above, LIBRARY at its top.
+/// opens on slot 1, the INIT and DRUM rows just above, LIBRARY at its top.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Browse {
     cursor: u8,
@@ -52,7 +69,7 @@ const _: () = assert!(TOTAL_ENTRIES <= 256);
 impl Default for Browse {
     fn default() -> Self {
         Browse {
-            cursor: INITS as u8,
+            cursor: HEAD as u8,
             scroll: 0,
             lib_cursor: 0,
             lib_scroll: 0,
@@ -108,12 +125,22 @@ fn follow(cursor: usize, scroll: usize, rows: usize) -> (u8, u8) {
     (cursor as u8, scroll as u8)
 }
 
-/// The pool slot at list entry `entry`; `None` for the INIT rows.
+/// The pool slot at list entry `entry`; `None` for the rows above them.
 pub fn slot_at(entry: usize) -> Option<SlotId> {
-    SlotId::new(u8::try_from(entry.checked_sub(INITS)?).ok()?)
+    SlotId::new(u8::try_from(entry.checked_sub(HEAD)?).ok()?)
 }
 
-/// The engine of the INIT row at `entry`; `None` for the pool's slots.
+/// The entry at `entry`; `None` past the list.
+pub fn entry_at(entry: usize) -> Option<Entry> {
+    if entry == DRUM {
+        return Some(Entry::Drum);
+    }
+    init_at(entry)
+        .map(Entry::Init)
+        .or_else(|| slot_at(entry).map(Entry::Slot))
+}
+
+/// The engine of the INIT row at `entry`; `None` for DRUM and the pool's slots.
 pub fn init_at(entry: usize) -> Option<EngineType> {
     INIT_TYPES.get(entry).copied()
 }
@@ -619,23 +646,33 @@ where
     D: DrawTarget<Color = Rgb565>,
 {
     let mut slot = FmtBuf::new();
-    let (name, chain, cost) = if let Some(s) = slot_at(entry) {
-        let _ = write!(slot, "{:02}", s.index() + 1);
-        match pool.get(s) {
-            Some(s) => (
-                components::upper(s.name().as_str()),
-                Some(s.engine()),
-                Some(s.cost()),
-            ),
-            None => (FmtBuf::new(), None, None),
+    let (name, chain, cost) = match entry_at(entry) {
+        Some(Entry::Slot(s)) => {
+            let _ = write!(slot, "{:02}", s.index() + 1);
+            match pool.get(s) {
+                Some(s) => (
+                    components::upper(s.name().as_str()),
+                    Some(s.engine()),
+                    Some(s.cost()),
+                ),
+                None => (FmtBuf::new(), None, None),
+            }
         }
-    } else {
-        let _ = slot.write_str("INIT");
-        let engine = INIT_TYPES[entry];
-        (components::upper(engine.label()), Some(engine), None)
+        Some(Entry::Init(engine)) => {
+            let _ = slot.write_str("INIT");
+            (components::upper(engine.label()), Some(engine), None)
+        }
+        Some(Entry::Drum) => {
+            let _ = slot.write_str("INIT");
+            let mut name = FmtBuf::new();
+            let _ = name.write_str("DRUM");
+            (name, None, None)
+        }
+        None => return,
     };
     let saved = cost.is_some();
-    let empty = chain.is_none();
+    let drum = entry_at(entry) == Some(Entry::Drum);
+    let empty = chain.is_none() && !drum;
     if selected {
         draw::pill(d, 8, y - 16, 224, 22, theme::ACCENT);
     }
@@ -681,5 +718,7 @@ where
     }
     if let Some(engine) = chain {
         tag(d, engine, y, dim);
+    } else if drum {
+        draw::text_right(d, &theme::FONT_LABEL, DRUM_SOON, TAG_RIGHT, y, dim, 0);
     }
 }

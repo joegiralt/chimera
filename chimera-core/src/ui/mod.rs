@@ -1124,11 +1124,13 @@ impl UiState {
     /// its pages.
     fn load_sound(&mut self, part: PartId, b: Browse) {
         let cursor = b.cursor();
-        // The init entries lead the pool slots.
-        let from = browser::slot_at(cursor)
-            .map(PartFrom::Slot)
-            .or_else(|| browser::init_at(cursor).map(PartFrom::Init));
-        let Some(from) = from else { return };
+        // The init entries lead the pool slots; DRUM's is not built yet.
+        let from = match browser::entry_at(cursor) {
+            Some(browser::Entry::Slot(s)) => PartFrom::Slot(s),
+            Some(browser::Entry::Init(e)) => PartFrom::Init(e),
+            Some(browser::Entry::Drum) => return self.notice(Line::new(browser::DRUM_TOAST)),
+            None => return,
+        };
         // An empty slot has nothing to ask about.
         if let PartFrom::Slot(s) = from
             && self.project.pool().get(s).is_none()

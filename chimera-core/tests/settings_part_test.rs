@@ -48,7 +48,7 @@ fn rung(ui: &mut UiState, p: PartId, slot: usize) {
     feed(ui, Input::chord(ButtonId::Edit, B[p.index()]));
     feed(ui, Input::turn(EncoderId::A, slot as i8));
     let at = ui.location().browse().map(|(_, b)| b.cursor());
-    assert_eq!(at, Some(chimera_core::ui::browser::INITS + slot));
+    assert_eq!(at, Some(chimera_core::ui::browser::HEAD + slot));
 }
 
 /// Slot `s` into a Part that doesn't ask, through the Sound rung.

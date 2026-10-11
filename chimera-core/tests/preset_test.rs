@@ -6,7 +6,7 @@ use chimera_core::project::{
 };
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry as reg;
-use chimera_core::ui::browser::INITS;
+use chimera_core::ui::browser::HEAD;
 use chimera_core::ui::nav::{Browse, NavCtx, OrbitCx};
 use chimera_core::ui::page::PageKey;
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
@@ -421,6 +421,6 @@ fn performance_default_is_new() {
 
 /// Encoder A turned from the browser's opening row to list entry `entry`.
 fn to_entry(ui: &mut UiState, entry: usize) {
-    let d = entry as i8 - INITS as i8;
+    let d = entry as i8 - HEAD as i8;
     ui.handle_input(&MockControls::new().encoder(EncoderId::A, d));
 }

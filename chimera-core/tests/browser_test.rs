@@ -6,7 +6,8 @@ use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::{PartFrom, PartId, PartSource, Project, ReplaceGuard, SlotId};
 use chimera_core::ui::browser::{
-    self, INIT_TYPES, INITS, SCROLL_TOP, SCROLL_X, TOTAL_ENTRIES, VISIBLE_ROWS, row_y,
+    self, DRUM, DRUM_TOAST, Entry, HEAD, INIT_TYPES, INITS, SCROLL_TOP, SCROLL_X, TOTAL_ENTRIES,
+    VISIBLE_ROWS, row_y,
 };
 use chimera_core::ui::nav::{Browse, Location, MixPage};
 use chimera_core::ui::perf::PerfStats;
@@ -67,7 +68,7 @@ fn empty_slots_are_dimmed_and_saved_ones_bright() {
     let mut p = empty();
     p.pool_store(SlotId::ALL[0], &Sound::init(EngineType::Algo))
         .unwrap();
-    let fb = drawn(&p, 9, INITS);
+    let fb = drawn(&p, 9, HEAD);
     assert!(row_has(&fb, 0, theme::INK), "saved slot name in ink");
     assert!(
         !row_has(&fb, 1, theme::INK) && row_has(&fb, 1, theme::FAINT),
@@ -81,7 +82,7 @@ fn empty_slots_are_dimmed_and_saved_ones_bright() {
 /// dash (no name at all), since it is neither.
 #[test]
 fn init_rows_name_their_chain_in_a_distinct_shade() {
-    let fb = drawn(&empty(), INITS, 0); // cursor on slot 1, the INIT rows above
+    let fb = drawn(&empty(), HEAD, 0); // cursor on slot 1, the INIT rows above
     for row in 0..INITS {
         assert!(row_has(&fb, row, theme::INK2), "INIT row name in INK2");
         assert!(!row_has(&fb, row, theme::INK), "not the saved-slot shade");
@@ -112,9 +113,9 @@ fn init_rows_lead_the_list_and_load() {
     // Opens on slot 1, the INIT rows above it.
     assert_eq!(
         ui.location(),
-        Location::sound_at(PartId::ALL[1], Browse::of(INITS as u8, 0))
+        Location::sound_at(PartId::ALL[1], Browse::of(HEAD as u8, 0))
     );
-    feed(&mut ui, Input::turn(EncoderId::A, -1)); // the last of the INIT rows
+    feed(&mut ui, Input::turn(EncoderId::A, -2)); // the last of the INIT rows
     let fb = render_ui(&ui);
     assert_eq!(fb.at(120, row_y(INITS - 1) - 5), theme::ACCENT);
     feed(&mut ui, Input::press(ButtonId::Edit));
@@ -141,13 +142,21 @@ fn the_list_ends_on_the_pools_last_slot() {
 
 #[test]
 fn entries_split_into_init_rows_then_slots() {
-    assert_eq!(Browse::default().cursor(), INITS);
+    assert_eq!(Browse::default().cursor(), HEAD);
     for (e, &engine) in INIT_TYPES.iter().enumerate() {
         assert!(browser::slot_at(e).is_none());
         assert_eq!(browser::init_at(e), Some(engine));
     }
-    assert_eq!(browser::slot_at(INITS), Some(SlotId::ALL[0]));
-    assert!(browser::init_at(INITS).is_none());
+    assert_eq!(browser::slot_at(HEAD), Some(SlotId::ALL[0]));
+    assert!(browser::init_at(HEAD).is_none());
+    assert!(browser::slot_at(DRUM).is_none() && browser::init_at(DRUM).is_none());
+    assert_eq!(browser::entry_at(DRUM), Some(Entry::Drum));
+    assert_eq!(
+        browser::entry_at(INITS - 1),
+        Some(Entry::Init(INIT_TYPES[INITS - 1]))
+    );
+    assert_eq!(browser::entry_at(HEAD), Some(Entry::Slot(SlotId::ALL[0])));
+    assert_eq!(browser::entry_at(TOTAL_ENTRIES), None);
     assert_eq!(
         browser::slot_at(TOTAL_ENTRIES - 1),
         SlotId::ALL.last().copied()
@@ -165,7 +174,7 @@ fn clear_and_save_never_act_on_an_init_row() {
         .filter(|&&s| ui.project().pool().get(s).is_some())
         .count();
     feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B1));
-    feed(&mut ui, Input::turn(EncoderId::A, -(INITS as i8)));
+    feed(&mut ui, Input::turn(EncoderId::A, -(HEAD as i8)));
     assert_eq!(ui.location().browse().map(|(_, b)| b.cursor()), Some(0));
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
     assert!(!ui.prompt_open());
@@ -205,11 +214,14 @@ fn rows_tag_their_engine_in_full() {
     for (i, e) in EngineType::ALL.into_iter().enumerate() {
         p.pool_store(SlotId::ALL[i], &Sound::init(e)).unwrap();
     }
-    // Cursor off every shown row: INIT rows 0-3, then slots 1-4.
+    // Cursor off every shown row: INIT rows 0-3, DRUM, then slots.
     let fb = drawn(&p, 20, 0);
     for (i, e) in EngineType::ALL.into_iter().enumerate() {
         assert!(tag_px(&fb, i, e.label()), "INIT row {i}");
-        assert!(tag_px(&fb, INITS + i, e.label()), "slot row {i}");
+    }
+    let fb = drawn(&p, 20, INITS); // DRUM at the top, the slots under it
+    for (i, e) in EngineType::ALL.into_iter().enumerate() {
+        assert!(tag_px(&fb, 1 + i, e.label()), "slot row {i}");
     }
     assert!(!tag_px(&fb, 0, "MODAL"), "the tags differ");
 }
@@ -278,7 +290,7 @@ fn the_longest_sound_name_is_not_truncated() {
     s.name = chimera_core::name::SoundName::new("ABCDEFGHIJKLMNOP").unwrap();
     assert_eq!(s.name.as_str().len(), 16);
     p.pool_store(SlotId::ALL[0], &s).unwrap();
-    let fb = drawn(&p, 9, INITS); // drawn() asserts fb.oob == 0 (nothing clipped off-screen)
+    let fb = drawn(&p, 9, HEAD); // drawn() asserts fb.oob == 0 (nothing clipped off-screen)
     assert!(row_has(&fb, 0, theme::INK), "16-char name drawn in full");
 }
 
@@ -340,7 +352,7 @@ fn a_long_name_clears_its_cost() {
     let mut s = Sound::init(EngineType::Algo);
     s.name = chimera_core::name::SoundName::new("WWWWWWWWWWWWWWWW").unwrap();
     p.pool_store(SlotId::ALL[0], &s).unwrap();
-    let fb = drawn(&p, 9, INITS);
+    let fb = drawn(&p, 9, HEAD);
     let y = row_y(0);
     let cols = |c| {
         (100..SCROLL_X)
@@ -587,4 +599,73 @@ fn a_sound_that_wont_fit_previews_in_alert_and_says_so() {
     let alert = (12..228)
         .any(|x| (browser::HINT_Y - 9..browser::HINT_Y).any(|y| fb.at(x, y) == theme::ALERT));
     assert!(alert, "WON'T FIT in ALERT");
+}
+
+/// DRUM sits after the INIT rows, in INIT's shade, saying it is coming.
+#[test]
+fn the_drum_row_follows_the_inits_and_says_coming_soon() {
+    let fb = drawn(&empty(), HEAD, 0);
+    assert!(row_has(&fb, DRUM, theme::INK2), "DRUM named like an INIT");
+    assert!(!row_has(&fb, DRUM, theme::INK));
+    // Its note sits right-aligned, clear of the name.
+    let y = row_y(DRUM);
+    let note_px =
+        |fb: &Fb, x0, x1| (y - 12..y + 2).any(|yy| (x0..x1).any(|x| fb.at(x, yy) == theme::MID));
+    assert!(note_px(
+        &fb,
+        browser::TAG_RIGHT - 80,
+        browser::TAG_RIGHT + 1
+    ));
+    let w = chimera_core::ui::draw::text_width(&theme::FONT_LABEL, browser::DRUM_SOON, 0);
+    assert!(browser::TAG_RIGHT - w > 52 + 4 * 14, "{w}");
+    // Selected, it is the accent pill like any row.
+    let fb = drawn(&empty(), DRUM, 0);
+    assert_eq!(fb.at(120, row_y(DRUM) - 5), theme::ACCENT);
+}
+
+/// Loading DRUM changes nothing but a toast; the cursor starts on slot 1.
+#[test]
+fn loading_drum_is_a_no_op() {
+    let mut ui = chimera_core::ui::UiState::new();
+    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
+    let part = PartId::ALL[1];
+    let engine = ui.project().part(part).sound.engine();
+    feed(&mut ui, Input::turn(EncoderId::A, -1));
+    assert_eq!(
+        ui.location(),
+        Location::sound_at(part, Browse::of(DRUM as u8, 0))
+    );
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    assert_eq!(ui.project().part(part).sound.engine(), engine);
+    assert!(!ui.prompt_open());
+    assert_eq!(
+        ui.location().browse().map(|(p, b)| (p, b.cursor())),
+        Some((part, DRUM))
+    );
+    assert!(chimera_core::ui::busy::toast_fits(DRUM_TOAST));
+}
+
+/// Clear and save on DRUM act on nothing.
+#[test]
+fn clear_and_save_never_act_on_the_drum_row() {
+    let mut ui = chimera_core::ui::UiState::new();
+    let filled = |ui: &chimera_core::ui::UiState| {
+        SlotId::ALL
+            .iter()
+            .filter(|&&s| ui.project().pool().get(s).is_some())
+            .count()
+    };
+    let before = filled(&ui);
+    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+    feed(
+        &mut ui,
+        Input::turn(EncoderId::A, -(HEAD as i8) + DRUM as i8),
+    );
+    assert_eq!(ui.location().browse().map(|(_, b)| b.cursor()), Some(DRUM));
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
+    assert!(!ui.prompt_open());
+    assert_eq!(filled(&ui), before);
+    let fb = drawn(ui.project(), DRUM, 0);
+    assert!(!text_in_row_at(&fb, browser::CLEAR_Y));
+    assert!(browser::slot_at(DRUM).is_none());
 }
