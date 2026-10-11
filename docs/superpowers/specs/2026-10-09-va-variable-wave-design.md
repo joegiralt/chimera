@@ -243,7 +243,7 @@ chimera-engine/src/dsp/va/
   - `CHAIN_COST` 36 and routing 47;
   - INIT's 2040 REV2, +15 over LP24.
 - **What that leaves:** 6 voices on rev V in every row. On rev Y, 6 voices only if the count lands at or under 636. The count decides; if it doesn't fit, the owner chooses (5 VA voices on rev Y, or a cheaper SYNC).
-  > **Amended 2026-10-11:** the count (ADR 0118 point 10) is MIX 510, RING 520, XOR 530, BITS 520, SYNC 570, after the owner's WAVE reach and SYNC master ceiling. Rev Y fits 6 in every MODE but SYNC (5).
+  > **Amended 2026-10-11:** the count (ADR 0118 point 10) is MIX 510, RING 510, XOR 530, BITS 510, SYNC 570, after the owner's WAVE reach and SYNC master ceiling. Rev Y fits 6 in every MODE but SYNC (5).
 - **Billing:** `VaEngine::cost` is one committed term per MODE, host-counted by the ADR 0056 method:
   - bill = the per-sample fast path + Σ (each event's cost × its maximum rate at the 0.45 ceiling) + per-block work ÷ 64 + 95;
   - each oscillator's `tick` is `#[inline(always)]` into each mode's loop, so the count sees it;
