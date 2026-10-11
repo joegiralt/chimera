@@ -68,6 +68,10 @@ pub struct CompParams {
     pub makeup: f32,
     /// Parallel blend: 0 dry (bypass), 1 all compressed.
     pub mix: f32,
+    /// Master VOL (MST > LVL), after the limiter: gain = vol², 1 unity.
+    pub vol: f32,
+    /// Master PAN, -1..1: a balance, the far side cos-tapered.
+    pub pan: f32,
 }
 
 impl Default for CompParams {
@@ -79,6 +83,8 @@ impl Default for CompParams {
             release: 0.5,
             makeup: 0.0,
             mix: 1.0,
+            vol: 1.0,
+            pan: 0.0,
         }
     }
 }
@@ -90,6 +96,8 @@ impl CompParams {
     pub const RELEASE: ParamId = ParamId(3);
     pub const MAKEUP: ParamId = ParamId(4);
     pub const MIX: ParamId = ParamId(5);
+    pub const VOL: ParamId = ParamId(6);
+    pub const PAN: ParamId = ParamId(7);
 
     /// Off at MIX 0, or at 1:1 with no makeup: every pair passes untouched.
     pub fn is_on(&self) -> bool {
@@ -127,6 +135,12 @@ impl CompParams {
             release: f(self.release, d.release),
             makeup: f(self.makeup, d.makeup),
             mix: f(self.mix, d.mix),
+            vol: f(self.vol, d.vol),
+            pan: if self.pan.is_nan() {
+                0.0
+            } else {
+                clampf(self.pan, -1.0, 1.0)
+            },
         }
     }
 }
@@ -134,7 +148,7 @@ impl CompParams {
 const _: () = assert!(RATIO_TABLE.len() == COMP_SPECS[1].max as usize + 1);
 
 /// The compressor runs outside `Voice`: nothing is modulatable.
-pub static COMP_SPECS: [ParamSpec; 6] = [
+pub static COMP_SPECS: [ParamSpec; 8] = [
     ParamSpec::continuous(
         0,
         "THRESH",
@@ -206,6 +220,31 @@ pub static COMP_SPECS: [ParamSpec; 6] = [
     )
     .ident("MIX")
     .glyph(crate::glyph::FocusGlyph::LevelBar),
+    ParamSpec::continuous(
+        6,
+        "VOL",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        1.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("VOL")
+    .glyph(crate::glyph::FocusGlyph::LevelBar),
+    ParamSpec::continuous(
+        7,
+        "PAN",
+        ValFmt::Pan,
+        -1.0,
+        1.0,
+        0.0,
+        2.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("PAN"),
 ];
 
 impl Block for CompParams {
@@ -222,6 +261,8 @@ impl Block for CompParams {
             Self::RELEASE => self.release,
             Self::MAKEUP => self.makeup,
             Self::MIX => self.mix,
+            Self::VOL => self.vol,
+            Self::PAN => self.pan,
             _ => 0.0,
         }
     }
@@ -235,6 +276,8 @@ impl Block for CompParams {
             Self::RELEASE => self.release = v,
             Self::MAKEUP => self.makeup = v,
             Self::MIX => self.mix = v,
+            Self::VOL => self.vol = v,
+            Self::PAN => self.pan = v,
             _ => {}
         }
     }

@@ -110,6 +110,7 @@ fn init_in_place_matches_from_performance() {
         fx: perf.fx,
         epoch: 0,
         orbit: Default::default(),
+        tune: 0,
     };
     let placed = format!("{placed:?}");
     assert_eq!(placed, format!("{expected:?}"));

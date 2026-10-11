@@ -521,8 +521,8 @@ pub static MASTER_LEVEL: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("VOL", ValFmt::Uni),
-        ParamSlot::legacy("PAN", ValFmt::Bi),
+        ParamSlot::param(BlockRef::Comp, CompParams::VOL),
+        ParamSlot::param(BlockRef::Comp, CompParams::PAN),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -791,7 +791,7 @@ pub static SYS_TUNING: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("TUNE", ValFmt::Bi),
+        ParamSlot::param(BlockRef::Midi, MidiSettings::TUNE),
         ParamSlot::legacy("SCALE", ValFmt::Int(2)),
         EMPTY,
         EMPTY,
