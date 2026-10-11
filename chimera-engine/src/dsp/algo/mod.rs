@@ -4,6 +4,7 @@
 pub mod algorithms;
 pub mod engine;
 pub mod env;
+pub mod formant;
 pub mod kernel;
 pub mod kinds;
 pub mod math;
