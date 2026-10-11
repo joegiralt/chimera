@@ -167,6 +167,7 @@ impl Block for ChorusParams {
         &CHORUS_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::MODE => self.mode as f32,
@@ -177,6 +178,7 @@ impl Block for ChorusParams {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::MODE => self.mode = v as u8,

@@ -8,14 +8,12 @@ use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode};
 use chimera_core::params::{EngineType, ParamSnapshot};
-use chimera_core::project::PartId;
-use chimera_core::ui::UiState;
+use chimera_core::part::PartParams;
 use chimera_core::ui::block_def::{BlockDef, ParamSlot, VizType, slot_addr};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::page::PageLayout;
 use chimera_core::ui::part_page;
 use chimera_core::ui::view::{SlotCtx, View, view};
-use chimera_hal::{ButtonId, EncoderId};
 
 mod screen;
 
@@ -113,21 +111,17 @@ fn exciter_page_follows_the_model() {
     assert_eq!(p.modal.force, force + 1.0 / 128.0);
 }
 
-/// SPACE on MDL is the Part's REV send, the value SENDS edits.
+/// The reverb send lives on SENDS only (ADR 0120): RES and DECK carry none.
 #[test]
-fn space_is_the_parts_reverb_send() {
-    let mut ui = UiState::new();
-    screen::load_init(&mut ui, EngineType::Modal);
-    assert_eq!(ui.page_def().id, reg::MODAL_EXC.id);
-    screen::feed(&mut ui, screen::Input::press(ButtonId::Plus));
-    assert_eq!(ui.page_def().id, reg::MODAL_1.id);
-    let was = ui.project().part(PartId::ALL[0]).mix.sends[2];
-    screen::feed(&mut ui, screen::Input::turn(EncoderId::F, 10));
-    let now = ui.project().part(PartId::ALL[0]).mix.sends[2];
-    assert!((now - was - 10.0 / 128.0).abs() < 1e-6, "{was} → {now}");
-    let edit = ui.project_mut().edit_part(PartId::ALL[0]);
-    let space = part_page::read_values(&reg::MODAL_1, &edit, Op::A)[5];
-    assert_eq!(part_page::read_values(&reg::SENDS, &edit, Op::A)[2], space);
+fn reverb_send_is_on_sends_only() {
+    let rev = ParamAddr::new(BlockRef::Part, PartParams::SEND_REVERB);
+    let ctx = SlotCtx::read(&ParamSnapshot::default(), Op::A);
+    for def in [&reg::MODAL_1, &reg::TAPE_DECK] {
+        for k in 0..6 {
+            assert_ne!(slot_addr(def, k, &ctx), Some(rev), "{} {k}", def.short);
+        }
+    }
+    assert_eq!(slot_addr(&reg::SENDS, 2, &ctx), Some(rev));
 }
 
 #[test]

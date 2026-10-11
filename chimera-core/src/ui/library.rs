@@ -270,6 +270,7 @@ impl UiState {
     }
 
     /// `part`'s Sound to the library as `name`; then its page, read again.
+    #[inline(never)]
     pub(crate) fn lib_save<S: Store>(
         &mut self,
         card: &mut Card,
@@ -314,6 +315,7 @@ impl UiState {
 
     /// A confirmed load: the file into scratch, the budget, then its
     /// source streamed (pending) or straight to `adopt`.
+    #[inline(never)]
     pub(crate) fn lib_load<S: Store>(
         &mut self,
         card: &mut Card,
@@ -324,6 +326,7 @@ impl UiState {
         self.lib_ended();
     }
 
+    #[inline(never)]
     fn lib_read<S: Store>(&mut self, card: &mut Card, store: &mut S, go: Confirmed<LibraryPart>) {
         let file = go.target().file;
         let CardOut { out, event } = read_library_sound(card, store, &mut self.project, file);
@@ -358,6 +361,7 @@ impl UiState {
 
     /// The size of `need`'s file on `vol`, if it is still the size the read
     /// costed it at.
+    #[inline(never)]
     fn stream_size<S: Store>(
         &mut self,
         card: &mut Card,
@@ -385,6 +389,7 @@ impl UiState {
     }
 
     /// One pass of a pending load's source: on its last chunk, `adopt`.
+    #[inline(never)]
     pub(crate) fn lib_step<S: Store>(&mut self, card: &mut Card, store: &mut S) {
         let Some(l) = self.lib.load.take() else {
             return;
