@@ -587,9 +587,13 @@ fn at(a: Wave, b: Wave, sh: &Shaped, f: f32) -> ([f32; 6], [f32; 4]) {
 /// block's peak bound holds. Inlined: its arrays stay in registers (the
 /// count then bills it on every run's way, crossing or not).
 #[inline(always)]
-fn at_lerp<A: Kind, B: Kind>(blk: &Blk, x: f32, f: f32) -> ([f32; 6], [f32; 4]) {
-    let (c0, p0) = at(A::WAVE, B::WAVE, &blk.sh0, f);
-    let (c1, p1) = at(A::WAVE, B::WAVE, &blk.sh1, f);
+fn at_lerp<A: Kind, B: Kind>(
+    (sh0, sh1): (&Shaped, &Shaped),
+    x: f32,
+    f: f32,
+) -> ([f32; 6], [f32; 4]) {
+    let (c0, p0) = at(A::WAVE, B::WAVE, sh0, f);
+    let (c1, p1) = at(A::WAVE, B::WAVE, sh1, f);
     let l = |a: f32, b: f32| a + (b - a) * x;
     (
         core::array::from_fn(|k| l(c0[k], c1[k])),
@@ -685,10 +689,9 @@ fn piece<const K: usize>(
     g(ta, fa).max(g(tb, fb)) + 0.25 * curve.abs()
 }
 
-/// One block's SHAPE ends and edge rates (`VarOsc::block`).
+/// One block's edge rates (`VarOsc::block`); its SHAPE ends are
+/// `VarOsc::sh`.
 struct Blk {
-    sh0: Shaped,
-    sh1: Shaped,
     /// Tri, saw, pulse: each edge's `1/r` and `|r|/6`.
     rate: [[(f32, f32); 2]; 3],
     rinc: f32,
@@ -803,11 +806,12 @@ pub struct VarOsc {
     live: u8,
     /// The pulse's level, 0 or 1.
     h: f32,
-    /// Every wave's constants at the last block's end, if current; and the
-    /// next block's end, if `begin` set it.
-    sh: Shaped,
+    /// Every wave's constants at the block's start and end (`begin` moves
+    /// the end to the start, then fills the end); the end is current if
+    /// `sh_ok`, this block's if `next_ok`.
+    sh: [Shaped; 2],
     sh_ok: bool,
-    next: Option<Shaped>,
+    next_ok: bool,
     #[cfg(any(test, feature = "test-support"))]
     log: [(f32, f32, f32); EDGE_LOG],
     #[cfg(any(test, feature = "test-support"))]
@@ -829,9 +833,9 @@ impl VarOsc {
         since: [[0.0; 2]; 3],
         live: 0,
         h: 0.0,
-        sh: Shaped::ZERO,
+        sh: [Shaped::ZERO; 2],
         sh_ok: false,
-        next: None,
+        next_ok: false,
         #[cfg(any(test, feature = "test-support"))]
         log: [(0.0, 0.0, 0.0); EDGE_LOG],
         #[cfg(any(test, feature = "test-support"))]
@@ -944,15 +948,23 @@ impl VarOsc {
     /// samples), kept for `render`, and the block's peak bound: the larger
     /// of its two ends' (`peak_bound`'s, from the same constants).
     pub fn begin(&mut self, r: &Ramps, n: usize) -> f32 {
-        let sh1 = Shaped::all(Unit::new(val(r.shape, n)).get(), val(r.inc, n));
-        let sh0 = if self.sh_ok { self.sh } else { sh1 };
-        self.next = Some(sh1);
+        self.ends(Shaped::all(Unit::new(val(r.shape, n)).get(), val(r.inc, n)));
+        self.next_ok = true;
         bound(
-            &sh0,
-            &sh1,
+            &self.sh[0],
+            &self.sh[1],
             Unit::new(val(r.wave, 0)).get(),
             Unit::new(val(r.wave, n)).get(),
         )
+    }
+
+    /// The block's SHAPE ends: the last block's end (or `end`, if none is
+    /// current) to `end`.
+    #[inline(always)]
+    fn ends(&mut self, end: Shaped) {
+        self.sh[0] = if self.sh_ok { self.sh[1] } else { end };
+        self.sh[1] = end;
+        self.sh_ok = true;
     }
 
     /// The block's ends (the start is the last block's end), each edged
@@ -963,23 +975,20 @@ impl VarOsc {
     #[inline(never)]
     fn block<const SYNC: bool>(&mut self, r: &Ramps, n: usize, jit: f32) -> Blk {
         // the engine's blocks have `begin`'s; a lone `tick` fills here
-        let sh1 = match self.next.take() {
-            Some(sh) => sh,
-            None => end_shape(r, n),
-        };
-        let sh0 = if self.sh_ok { self.sh } else { sh1 };
-        (self.sh, self.sh_ok) = (sh1, true);
+        if !self.next_ok {
+            self.ends(end_shape(r, n));
+        }
+        self.next_ok = false;
+        let [sh0, sh1] = &self.sh;
         let ie = val(r.inc, n.div_ceil(2)) * jit;
         let il = RECIP[n.min(RECIP.len() - 1)];
         let mut blk = Blk {
-            sh0,
-            sh1,
             rate: [[(0.0, 0.0); 2]; 3],
             rinc: 1.0 / ie,
             zero: [(0.0, 0.0); 4],
         };
         for (e, w) in [Wave::Tri, Wave::Saw, Wave::Pulse].into_iter().enumerate() {
-            let (p0, p1) = (w.pos(&sh0), w.pos(&sh1));
+            let (p0, p1) = (w.pos(sh0), w.pos(sh1));
             for q in 0..2 {
                 let rate = ie - (p1[q] - p0[q]) * il;
                 blk.rate[e][q] = (1.0 / rate, rate.abs() * (1.0 / 6.0));
@@ -987,7 +996,7 @@ impl VarOsc {
         }
         if SYNC {
             for (k, w) in WAVES.into_iter().enumerate() {
-                blk.zero[k] = w.value_slope(w.consts(&sh1, 1.0), 0.0, w.pos(&sh1));
+                blk.zero[k] = w.value_slope(w.consts(sh1, 1.0), 0.0, w.pos(sh1));
             }
         }
         blk
@@ -1013,17 +1022,20 @@ impl VarOsc {
         let weight = |j: usize| 3.0 * Unit::new(val(r.wave, j)).get() - pair as usize as f32;
         // the block's end is its SHAPE end itself; a run ending earlier
         // (a WAVE segment crossing) lerps the two ends
+        let ends = (&self.sh[0], &self.sh[1]);
         let (c1, p1) = if i1 == n {
-            at(a, b, &blk.sh1, weight(i1))
+            at(a, b, ends.1, weight(i1))
         } else {
-            at_lerp::<A, B>(blk, i1 as f32 * RECIP[n.min(RECIP.len() - 1)], weight(i1))
+            at_lerp::<A, B>(ends, i1 as f32 * RECIP[n.min(RECIP.len() - 1)], weight(i1))
         };
         // held: lerp on; a new note: start on the values (as its ramps do);
         // a new segment: the pair's lines from the sample before
         let (c0, p0) = match self.pair {
             Some(q) if q == pair => (self.c, self.pos),
             None => (c1, p1),
-            Some(_) => at_lerp::<A, B>(blk, i0 as f32 * RECIP[n.min(RECIP.len() - 1)], weight(i0)),
+            Some(_) => {
+                at_lerp::<A, B>(ends, i0 as f32 * RECIP[n.min(RECIP.len() - 1)], weight(i0))
+            }
         };
         (self.pair, self.c, self.pos) = (Some(pair), c1, p1);
         (run.rinc, run.inc, run.dinc) = (blk.rinc, val(r.inc, i0), r.inc.1);
