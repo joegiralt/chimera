@@ -9,6 +9,7 @@ pub mod kernel;
 pub mod kinds;
 pub mod math;
 pub mod morph;
+pub mod noise;
 pub mod params;
 pub mod plan;
 pub mod tx;

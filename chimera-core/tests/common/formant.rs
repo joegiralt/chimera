@@ -4,7 +4,7 @@ use super::filter_ref::fft;
 use super::{SR, VEL, goertzel, rms};
 use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::engine::{AlgoEngine, AlgoLive};
-use chimera_core::dsp::algo::formant::R_REF;
+use chimera_core::dsp::algo::formant::{R_REF, Skirt, formant_law};
 use chimera_core::dsp::algo::kinds::OpKind;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::vowel::VowelSlot;
@@ -160,4 +160,37 @@ pub fn worst_10ms_db(x: &[f32], steady_rms: f32) -> f32 {
         .map(|i| rms(&x[i..i + win]))
         .fold(0.0f32, f32::max);
     20.0 * (worst / steady_rms).log10()
+}
+
+/// One period of both lanes at `formant_law`'s latched law, synthesised
+/// exactly in f64 with no PM (spec § 3): its RMS against R in dB, and its
+/// peak. The level is measured from the waveform, not from the law's gain.
+pub fn synth_level(f0: f32, fc: f32, bw: f32, s: Skirt) -> (f32, f32) {
+    let l = formant_law(f0, fc, bw, s);
+    let (d, q) = (f64::from(l.d), s.q() as i32);
+    let o = f64::from(l.slack) / 2.0;
+    let cycles = f64::from(l.fc) / f64::from(f0);
+    let gain = f64::from(l.g_c) * f64::from(l.edge);
+    // A lane `u` periods after its start: delayed by `o`, carrier's zero at
+    // the window's centre.
+    let lane = |u: f64| {
+        let x = (u - o) / d;
+        if !(0.0..=1.0).contains(&x) {
+            return 0.0;
+        }
+        (4.0 * x * (1.0 - x)).powi(q) * (TAU * cycles * (u - o - d / 2.0)).sin()
+    };
+    // At least 128 samples a carrier cycle; a lane restarts every two
+    // periods, so only the grains started now and a period ago sound.
+    let n = ((cycles * 128.0) as usize).max(8192);
+    let (mut sum, mut peak) = (0.0f64, 0.0f64);
+    for i in 0..n {
+        let t = i as f64 / n as f64;
+        let y = gain * (lane(t) + lane(t + 1.0));
+        sum += y * y;
+        peak = peak.max(y.abs());
+    }
+    let rms = (sum / n as f64).sqrt();
+    let r = f64::from(R_REF) / core::f64::consts::SQRT_2;
+    ((20.0 * (rms / r).log10()) as f32, peak as f32)
 }

@@ -2,8 +2,73 @@
 //! its SKIRT constants and curves. Those are measured on the host from the
 //! window's definition (`formant_laws_test`'s `measure` and `print_curves`).
 
+use super::math::{clampf, sqrt};
+
 /// The carrier's level reference: −12 dB of a full-scale sine's RMS.
 pub const R_REF: f32 = 0.251_19;
+
+/// The floor under the exact-energy bracket `1 − ρ`.
+pub const BRACKET_FLOOR: f32 = 0.05;
+
+pub const NYQUIST_HZ: f32 = 24_000.0;
+
+/// FC's floor.
+const FC_MIN: f32 = 20.0;
+
+/// The width floor `B_min = K_3·f0/2`: SKIRT 3's span in two periods, the
+/// same at every SKIRT.
+pub fn width_floor(f0: f32) -> f32 {
+    Skirt::S3.k() * f0 / 2.0
+}
+
+/// One lane's latched law (spec § 3): the band, the window, the gains and
+/// the edge fade.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FormantLaw {
+    /// The carrier, Hz.
+    pub fc: f32,
+    /// The −3 dB full width, Hz.
+    pub bw_eff: f32,
+    /// The window's length, periods.
+    pub d: f32,
+    /// `2 − D`, periods.
+    pub slack: f32,
+    /// The modulator gain: the raw grain to a peak of 1.
+    pub g_m: f32,
+    /// The carrier gain: RMS at R, under the peak ceiling.
+    pub g_c: f32,
+    /// The gain fade where even `B_min` reaches past Nyquist.
+    pub edge: f32,
+}
+
+/// The law at pitch `f0`, carrier `fc` and width `bw` (Hz).
+pub fn formant_law(f0: f32, fc: f32, bw: f32, s: Skirt) -> FormantLaw {
+    let b_min = width_floor(f0);
+    let m = s.m_q();
+    let room = (NYQUIST_HZ - fc) / m;
+    let (fc, bw_eff, edge) = if room >= b_min {
+        (fc, sqrt(bw * bw + b_min * b_min).min(room), 1.0)
+    } else {
+        let h = b_min / 2.0;
+        let edge = clampf((room - h) / h, 0.0, 1.0);
+        (fc.min(NYQUIST_HZ - m * h), b_min, edge)
+    };
+    let fc = fc.max(FC_MIN);
+    let l = s.k() / bw_eff;
+    let d = l * f0;
+    let lanes = if d > 1.0 { 2.0 } else { 1.0 };
+    let p_hat = (lane_peak(s, fc * l) * lanes).min(1.0);
+    let bracket = (1.0 - rho(s, 2.0 * fc * l)).max(BRACKET_FLOOR);
+    FormantLaw {
+        fc,
+        bw_eff,
+        d,
+        slack: 2.0 - d,
+        g_m: 1.0 / p_hat,
+        g_c: (R_REF / sqrt(d * s.c_q() * bracket)).min(1.0 / p_hat),
+        edge,
+    }
+}
 
 /// The window's exponent, `q = 2^(SKIRT+1)`: how steeply the skirts fall.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

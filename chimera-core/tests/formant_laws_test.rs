@@ -4,10 +4,17 @@
 
 mod common;
 
-use chimera_core::dsp::algo::formant::{Skirt, cycles_to_phase, lane_peak, rho, window};
+use chimera_core::dsp::algo::formant::{
+    BRACKET_FLOOR, NYQUIST_HZ, R_REF, Skirt, cycles_to_phase, formant_law, lane_peak, rho,
+    width_floor, window,
+};
 use chimera_core::dsp::algo::kinds::OpKind;
+use chimera_core::dsp::algo::noise::{
+    NOISE_CLAMP, NOISE_GAIN, noise_coef, noise_edge, noise_seed, res_mix,
+};
 use chimera_core::dsp::algo::waves::WaveId;
-use common::formant::{grain_fc, off_grid_db, one, render_algo, spectrum_db};
+use common::SR;
+use common::formant::{grain_fc, off_grid_db, one, render_algo, spectrum_db, synth_level};
 use std::f64::consts::TAU;
 
 /// Midpoint integration over the window's length.
@@ -276,6 +283,167 @@ fn the_helpers_read_a_known_train() {
     let sine = render_algo(&one(OpKind::Table(WaveId::W1), 80, 72, 1), 57, 40);
     assert_eq!(sine.len(), 40 * chimera_hal::BLOCK_SIZE);
     assert!(common::rms(&sine) > 0.1);
+}
+
+const C1: f32 = 32.70;
+const C2: f32 = 65.41;
+const C3: f32 = 130.81;
+const A3: f32 = 220.0;
+const C5: f32 = 523.25;
+
+#[test]
+fn width_floor_is_skirt_free() {
+    assert!((width_floor(A3) - 343.3).abs() < 0.5);
+    assert!((width_floor(98.0) - 152.9).abs() < 0.5);
+    for s in Skirt::ALL {
+        assert!((formant_law(A3, 1000.0, 20.0, s).bw_eff - 343.9).abs() < 0.5);
+    }
+}
+
+#[test]
+fn a_window_never_exceeds_two_periods() {
+    for (s, dmax) in Skirt::ALL.into_iter().zip([0.881, 1.111, 1.468, 2.0]) {
+        for f0 in [33.0, 110.0, 440.0, 2093.0] {
+            assert!(formant_law(f0, 1000.0, 0.0, s).d <= dmax + 1e-3);
+        }
+    }
+}
+
+#[test]
+fn rms_gain_uses_the_exact_energy() {
+    for s in Skirt::ALL {
+        // Past 2 kHz at C3 the ceiling binds: spec § 3's level-held domain.
+        for bw in [524.0, 1000.0, 1500.0, 2000.0] {
+            assert!(synth_level(C3, 1000.0, bw, s).0.abs() < 0.02, "{s:?} {bw}");
+        }
+    }
+    // +1.56 dB with the curves flat past 4.
+    assert!(synth_level(C3, 1000.0, 524.0, Skirt::S3).0.abs() < 0.02);
+    assert!(synth_level(C5, 270.0, 160.0, Skirt::S1).0.abs() < 0.02);
+    assert!(synth_level(C5, 300.0, 160.0, Skirt::S3).0.abs() < 0.02);
+    let l = formant_law(C3, 1000.0, 4000.0, Skirt::S1);
+    let draft = 1.0 / (l.d * Skirt::S1.c_q()).sqrt() * R_REF;
+    // The first draft's law was 7.47 dB off the exact gain here; g_c is the
+    // ceiling, so it compares against the uncapped gain.
+    let bracket = (1.0 - rho(Skirt::S1, 2.0 * l.fc * l.d / C3)).max(BRACKET_FLOOR);
+    let exact = R_REF / (l.d * Skirt::S1.c_q() * bracket).sqrt();
+    assert!((20.0 * (draft / exact).log10()).abs() > 6.0);
+}
+
+#[test]
+fn the_ceiling_bounds_the_peak() {
+    for f0 in [C1, C2, C3, 261.6, C5, 1046.5, 2093.0] {
+        for fc in [270.0, 730.0, 1000.0, 2440.0, 8000.0, 12_800.0] {
+            for bw in [20.0, 160.0, 2000.0, 10_000.0] {
+                for s in Skirt::ALL {
+                    assert!(
+                        synth_level(f0, fc, bw, s).1 <= 1.0 + 1e-3,
+                        "{f0} {fc} {bw} {s:?}"
+                    );
+                }
+            }
+        }
+    }
+    // 1.22 with p̂ flat past 4.
+    assert!(synth_level(C1, 12_800.0, 2000.0, Skirt::S3).1 <= 1.0 + 1e-3);
+    // The edge law narrows BW_eff to 8,742 Hz (−5.83 unnarrowed); p̂ sits
+    // 0.75 % over the true peak at FC·L 0.198 (never under).
+    let (l, pk) = synth_level(C3, 1000.0, 10_000.0, Skirt::S1);
+    assert!(
+        (l + 5.32).abs() < 0.1 && (pk - 1.0).abs() < 0.01,
+        "{l} {pk}"
+    );
+    let l = synth_level(C2, 1000.0, 2000.0, Skirt::S1).0;
+    assert!((l + 2.23).abs() < 0.5, "{l}");
+    let pk = synth_level(C3, 1000.0, 1000.0, Skirt::S1).1;
+    assert!((pk - 0.746).abs() < 0.02, "{pk}");
+    let pk = synth_level(C5, 270.0, 160.0, Skirt::S1).1;
+    assert!((pk - 0.287).abs() < 0.02, "{pk}");
+}
+
+#[test]
+fn the_edge_narrows_then_fades() {
+    let m = Skirt::S0.m_q();
+    // (24 kHz − 8 kHz)/m_q: 2,894 at the measured m_q (2,914 at the
+    // first draft's 5.49).
+    let l = formant_law(C3, 8000.0, 10_000.0, Skirt::S0);
+    assert!((l.bw_eff - (NYQUIST_HZ - 8000.0) / m).abs() < 5.0 && l.edge == 1.0);
+    let b = width_floor(C3);
+    assert!(
+        formant_law(C3, NYQUIST_HZ - m * b / 2.0, 0.0, Skirt::S0)
+            .edge
+            .abs()
+            < 1e-6
+    );
+    assert!((formant_law(C3, NYQUIST_HZ - m * 0.75 * b, 0.0, Skirt::S0).edge - 0.5).abs() < 0.01);
+}
+
+/// The two poles' output variance at `x = k_n·n` from uniform `n` in
+/// [−1, 1): their impulse response's energy × k_n²/3, in f64.
+fn two_pole_variance(width: f32) -> f64 {
+    let (c, k_n) = noise_coef(width, SR as f32);
+    let (c, a) = (f64::from(c), 1.0 - f64::from(c));
+    let (mut y1, mut y2, mut e) = (c, 0.0f64, 0.0f64);
+    for _ in 0..2_000_000 {
+        y2 += c * (y1 - y2);
+        e += y2 * y2;
+        y1 *= a;
+    }
+    e * f64::from(k_n).powi(2) / 3.0
+}
+
+/// The RMS of the two poles' output over 20 s (after 1 s to settle) of
+/// xorshift32 noise at `x = k_n·n`.
+fn steady_two_pole_rms(width: f32, seed: u32) -> f32 {
+    let (c, k_n) = noise_coef(width, SR as f32);
+    let (mut st, mut y1, mut y2, mut acc) = (seed, 0.0f32, 0.0f32, 0.0f64);
+    let (settle, n) = (SR as usize, 20 * SR as usize);
+    for i in 0..settle + n {
+        st ^= st << 13;
+        st ^= st >> 17;
+        st ^= st << 5;
+        let x = k_n * (st as i32) as f32 / 2_147_483_648.0;
+        y1 += c * (x - y1);
+        y2 += c * (y1 - y2);
+        if i >= settle {
+            acc += f64::from(y2 * y2);
+        }
+    }
+    (acc / n as f64).sqrt() as f32
+}
+
+#[test]
+fn noise_band_laws() {
+    for w in [20.0, 500.0, 4000.0, 20_000.0] {
+        let v = two_pole_variance(w);
+        assert!((v - 1.0).abs() < 1e-4, "{w} {v}");
+    }
+    // 20 s of a 20 Hz band holds too few independent samples for 1 %.
+    for w in [500.0, 4000.0] {
+        let r = steady_two_pole_rms(w, 0x1234);
+        assert!((r - 1.0).abs() < 0.01, "{w} {r}");
+    }
+    for r in [0, 50, 100] {
+        let (a, b) = res_mix(r);
+        assert!((a * a + b * b - 1.0).abs() < 1e-6);
+    }
+    assert!(NOISE_GAIN * (NOISE_CLAMP * NOISE_CLAMP + 1.0).sqrt() <= 0.99);
+    assert_eq!(
+        [
+            noise_edge(15_000.0, 2_000.0),
+            noise_edge(17_000.0, 2_000.0),
+            noise_edge(19_000.0, 2_000.0)
+        ],
+        [1.0, 0.5, 0.0]
+    );
+    let seeds: Vec<u32> = (0..8)
+        .flat_map(|v| (0..6).map(move |o| noise_seed(v, o)))
+        .collect();
+    assert!(seeds.iter().all(|&s| s != 0));
+    let mut u = seeds.clone();
+    u.sort();
+    u.dedup();
+    assert_eq!(u.len(), 48);
 }
 
 /// `cargo test -p chimera-core --test formant_laws_test -- --ignored
