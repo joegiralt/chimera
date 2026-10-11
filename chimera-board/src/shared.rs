@@ -115,7 +115,7 @@ pub fn take_audio(
     // reference to `KNOBS` ever made; `write` initialises it whole.
     let knobs = unsafe { &mut *addr_of_mut!(KNOBS) }.write(KnobPublisher::new());
     // SAFETY: the flag lets exactly one caller past, so this is the only
-    // reference to `AUDIO` ever made.
+    // live reference to `AUDIO`: the bench's (`bench_audio`) is gone.
     let slot = unsafe { &mut *addr_of_mut!(AUDIO) };
     // SAFETY: `AudioShared::init_in_place` writes every field of each slot,
     // one Part at a time, so no whole `AudioShared` is ever on the stack.
