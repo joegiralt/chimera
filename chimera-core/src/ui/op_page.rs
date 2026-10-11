@@ -30,12 +30,12 @@ const fn page(id: u16, op: Op, name: &'static str, short: &'static str) -> Block
 }
 
 pub static ALGO_OP_PAGES: [BlockDef; 6] = [
-    page(98, Op::A, "Operator 1", "OP1"),
-    page(99, Op::B, "Operator 2", "OP2"),
-    page(100, Op::C, "Operator 3", "OP3"),
-    page(101, Op::D, "Operator 4", "OP4"),
-    page(102, Op::E, "Operator 5", "OP5"),
-    page(103, Op::F, "Operator 6", "OP6"),
+    page(100, Op::A, "Operator 1", "OP1"),
+    page(101, Op::B, "Operator 2", "OP2"),
+    page(102, Op::C, "Operator 3", "OP3"),
+    page(103, Op::D, "Operator 4", "OP4"),
+    page(104, Op::E, "Operator 5", "OP5"),
+    page(105, Op::F, "Operator 6", "OP6"),
 ];
 
 /// The wave's inset at the band's top right: the envelope's peak sits at
