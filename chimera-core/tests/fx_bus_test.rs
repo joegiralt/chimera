@@ -46,13 +46,7 @@ fn effects_that_are_off_return_nothing() {
     let mut bus = Box::new(FxBus::new());
     let mut sends = [burst(); FX_SENDS];
     let mut ret = full();
-    bus.process(
-        &mut sends,
-        &FxParams::OFF,
-        Tempo::DEFAULT,
-        SR,
-        &mut ret,
-    );
+    bus.process(&mut sends, &FxParams::OFF, Tempo::DEFAULT, SR, &mut ret);
     assert_eq!(ret, Stereo::SILENT);
 }
 

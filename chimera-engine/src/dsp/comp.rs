@@ -72,12 +72,12 @@ pub struct CompParams {
 
 impl CompParams {
     pub const DEFAULT: Self = Self {
-            thresh: 0.7,
-            ratio: 0,
-            attack: 0.5,
-            release: 0.5,
-            makeup: 0.0,
-            mix: 1.0,
+        thresh: 0.7,
+        ratio: 0,
+        attack: 0.5,
+        release: 0.5,
+        makeup: 0.0,
+        mix: 1.0,
     };
 }
 

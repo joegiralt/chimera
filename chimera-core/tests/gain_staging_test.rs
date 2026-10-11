@@ -208,16 +208,10 @@ fn only_final_limiter_is_nonlinear() {
         // The same products `mix_parts` hoists.
         let (gl, gr) = (gl * level, gr * level);
         let (mut bus, mut out) = (Vec::new(), Vec::new());
-        chord(
-            Voices::Init,
-            FxParams::OFF,
-            level,
-            0.0,
-            |inst, _, dac| {
-                bus.extend_from_slice(inst.part_bus(0));
-                out.extend_from_slice(&dac.out()[0]);
-            },
-        );
+        chord(Voices::Init, FxParams::OFF, level, 0.0, |inst, _, dac| {
+            bus.extend_from_slice(inst.part_bus(0));
+            out.extend_from_slice(&dac.out()[0]);
+        });
         let over = bus
             .iter()
             .position(|&b| (b * gl).abs() > THRESHOLD || (b * gr).abs() > THRESHOLD);

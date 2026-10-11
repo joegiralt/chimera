@@ -27,10 +27,10 @@ pub struct TapeParams {
 
 impl TapeParams {
     pub const DEFAULT: Self = Self {
-            drive: 0.0,
-            tone: 0.5,
-            wow: 0.0,
-            mix: 0.0,
+        drive: 0.0,
+        tone: 0.5,
+        wow: 0.0,
+        mix: 0.0,
     };
 }
 

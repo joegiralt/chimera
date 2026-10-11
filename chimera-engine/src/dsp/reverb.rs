@@ -105,19 +105,19 @@ pub struct ReverbParams {
 
 impl ReverbParams {
     pub const DEFAULT: Self = Self {
-            kind: ReverbType::Quad,
-            time: 0.5,
-            damping: 0.3,
-            size: 0.5,
-            mix: 1.0,
-            tone: 0.3,
-            diffuse: 0.4,
-            predelay: 0.0,
-            shape: 0.2,
-            smear: 0.0,
-            rate: RATE_DEFAULT,
-            sync: RevSync::Off,
-            density: DENSITY_DEFAULT,
+        kind: ReverbType::Quad,
+        time: 0.5,
+        damping: 0.3,
+        size: 0.5,
+        mix: 1.0,
+        tone: 0.3,
+        diffuse: 0.4,
+        predelay: 0.0,
+        shape: 0.2,
+        smear: 0.0,
+        rate: RATE_DEFAULT,
+        sync: RevSync::Off,
+        density: DENSITY_DEFAULT,
     };
 }
 

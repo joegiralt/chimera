@@ -68,13 +68,13 @@ pub struct DelayParams {
 
 impl DelayParams {
     pub const DEFAULT: Self = Self {
-            time_ms: 375.0, // ~1/8 note at 120bpm
-            feedback: 0.4,
-            wow_flutter: 0.15,
-            saturation: 0.2,
-            tone: 0.6,
-            mix: 1.0, // unity return (sends spec § 4)
-            rev_send: 0.0,
+        time_ms: 375.0, // ~1/8 note at 120bpm
+        feedback: 0.4,
+        wow_flutter: 0.15,
+        saturation: 0.2,
+        tone: 0.6,
+        mix: 1.0, // unity return (sends spec § 4)
+        rev_send: 0.0,
     };
 }
 

@@ -55,11 +55,7 @@ impl Case {
     }
 
     fn bench(&self) -> Bench {
-        let fx = if self.wet {
-            fx_on()
-        } else {
-            FxParams::OFF
-        };
+        let fx = if self.wet { fx_on() } else { FxParams::OFF };
         let mut b = Bench::new(self.patch, PartParams::default(), fx);
         if self.wet {
             // After the patch: it is the Sound that carries the sends.
