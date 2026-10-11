@@ -4,4 +4,5 @@
 pub mod factory_tapes;
 pub mod import;
 pub mod listen;
+pub mod privacy;
 pub mod store;
