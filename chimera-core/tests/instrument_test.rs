@@ -711,7 +711,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // then the free ring on release (ADR 0062).
     ("two_parts_two_pairs", 0x99176e24a041d1ea),
     ("reverb_send_off", 0xfd4ac36e6db74819), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("reverb_send_on", 0xcab2cda9e63f4822),  // ADR 0049 INIT, then the ADR 0050 output trim
+    ("reverb_send_on", 0x815a3b73b4db0061),  // ADR 0049 INIT, then the ADR 0050 output trim
     ("six_voice_chord", 0x38adad839982e05d), // ADR 0049 INIT, then the ADR 0050 output trim
                                              // Every row re-recorded for ADR 0109's master gain and soft knee.
 ];
@@ -729,7 +729,7 @@ const PRE_LIMITER: &[(&str, u64)] = &[
     // then the free ring on release (ADR 0062).
     ("two_parts_two_pairs", 0x39011cff1c61c20f),
     ("reverb_send_off", 0xfa51f05d4383455d),
-    ("reverb_send_on", 0x8e4fef581954c725),
+    ("reverb_send_on", 0x6c4f0bdf615a9cd5),
     ("six_voice_chord", 0x5132735055c0c78d),
 ];
 

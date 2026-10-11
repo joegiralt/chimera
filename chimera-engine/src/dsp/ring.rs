@@ -218,13 +218,17 @@ pub fn q_trunc_fixed(x: f32) -> i16 {
     (x as i32).clamp(i16::MIN as i32, i16::MAX as i32) as i16
 }
 
-/// SMEAR's depth D at `step`, in ring samples: SMEAR × 0.18 % of the
-/// ring's round trip (spec § The SMEAR bound, ADR 0085), so SMEAR 1 is the
-/// cap at every SIZE, the four stage delays together move the loop by at
-/// most 1.45 % (25 cents), and the whole knob always does something.
+/// SMEAR 1's depth D, a share of the ring's round trip (ADR 0121): the
+/// four stage delays together move the loop by at most 1.2 %, and a held
+/// tone's pitch by at most 15 cents (P95) at RATE's top.
+pub const SMEAR_SHARE: f32 = 0.0015;
+
+/// SMEAR's depth D at `step`, in ring samples: SMEAR × `SMEAR_SHARE` of
+/// the round trip, so SMEAR 1 is the cap at every SIZE and the whole knob
+/// always does something.
 pub fn smear_depth(smear: f32, step: u8) -> f32 {
     let trip: u32 = (0..STAGES).map(|k| stage_len(step, k) as u32).sum();
-    clampf(smear, 0.0, 1.0) * 0.0018 * trip as f32
+    clampf(smear, 0.0, 1.0) * SMEAR_SHARE * trip as f32
 }
 
 /// The SMEAR reads each stage delay made on this thread since the last
@@ -260,10 +264,11 @@ pub mod smear_probe {
     }
 }
 
-/// RATE's wander speed: 0.05 Hz at 0 to 1 Hz at 1, exponential.
+/// RATE's wander speed: 0.1 Hz at 0 to 2 Hz at 1, exponential, every
+/// TYPE's law (ADR 0121).
 pub fn smear_hz(rate: f32) -> f32 {
     const LOG2_20: f32 = 4.321_928;
-    0.05 * exp2(clampf(rate, 0.0, 1.0) * LOG2_20)
+    0.1 * exp2(clampf(rate, 0.0, 1.0) * LOG2_20)
 }
 
 /// Nearest integer, ties away from zero, saturating, NaN to 0: VCVTA on

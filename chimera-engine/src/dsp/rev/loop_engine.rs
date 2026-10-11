@@ -295,7 +295,7 @@ pub trait Layout<const L: usize, const S: usize> {
     const SMEARED: [(usize, usize); 2];
     /// The send into each loop's first delay.
     const INJECT: [f32; L];
-    /// SMEAR's cap, a share of the loop (§ The SMEAR bound).
+    /// SMEAR's cap, a share of the loop (ADR 0121).
     const SMEAR_CAP: f32;
 
     const HEADS: Heads<L, S> = place(&Self::LENS);

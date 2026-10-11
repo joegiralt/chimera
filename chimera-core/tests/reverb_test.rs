@@ -783,7 +783,7 @@ fn smear_and_rate_are_params_11_and_12() {
     );
     assert_eq!(
         (p.get(ReverbParams::SMEAR), p.get(ReverbParams::RATE)),
-        (0.0, 0.5)
+        (0.0, 0.75)
     );
     p.write(ReverbParams::SMEAR, 0.8);
     p.write(ReverbParams::RATE, 0.2);

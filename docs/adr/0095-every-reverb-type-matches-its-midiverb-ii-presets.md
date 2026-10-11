@@ -1,6 +1,6 @@
 # 0095. Match every reverb TYPE to its MidiVerb II presets; rebuild ROOM and BLOOM on the programs' structure
 
-- **Status:** Proposed; supersedes in part [0085](0085-the-master-reverb-picks-a-type.md) (ROOM's and BLOOM's designs, its provenance rule for structure numbers, and its ±30 % A/B pass for every TYPE with a MidiVerb counterpart)
+- **Status:** Proposed; supersedes in part [0085](0085-the-master-reverb-picks-a-type.md) (ROOM's and BLOOM's designs, its provenance rule for structure numbers, and its ±30 % A/B pass for every TYPE with a MidiVerb counterpart); amended by [0121](0121-smear-is-bounded-by-the-pitch-it-plays-and-rate-runs-to-2-hz.md) (2026-10-11: SMEAR's bound is the pitch a held tone plays, ≤ 15 cents P95 at RATE's top; RATE 0.1 → 2 Hz from 0.95 Hz; SMEAR linear to its cap; new depths. SMEAR 0 still matches the unit)
 - **Deciders:** project owner, 2026-10-05 ("yes to all three": structure numbers, ROOM's cost, ROOM's two new knobs). Firmware drafted it from the reference harness's findings.
 
 ## Context

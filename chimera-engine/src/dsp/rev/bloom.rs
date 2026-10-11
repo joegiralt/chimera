@@ -161,7 +161,7 @@ const HEADS: Heads = {
 pub const SLOTS: usize = HEADS.slots;
 pub const FSLOTS: usize = HEADS.fslots;
 
-/// SMEAR's cap, a share of the loop (§ The SMEAR bound).
+/// SMEAR's cap, a share of the loop (ADR 0121).
 const SMEAR_CAP: f32 = crate::dsp::reverb::BLOOM.smear_cap;
 
 const FITS: () = assert!(

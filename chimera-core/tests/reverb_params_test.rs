@@ -233,13 +233,13 @@ fn with_type_loads_starting_knobs_and_keeps_mix_and_sync() {
             h.size, h.time, h.tone, h.diffuse, h.predelay, h.smear, h.rate, h.damping
         ),
         (
-            0.921878, 0.300266, 0.012, 0.383327, 0.058513, 0.0, 0.4, 0.626335
+            0.921878, 0.300266, 0.012, 0.383327, 0.058513, 0.0, 0.75, 0.626335
         )
     );
     assert_eq!((h.shape, h.density), (0.878866, DENSITY_DEFAULT));
     assert_eq!((h.mix, h.sync), (0.7, RevSync::Time));
     let q = h.with_type(ReverbType::Quad, &KnobMemory::new());
-    assert_eq!((q.smear, q.rate), (0.0, 0.5));
+    assert_eq!((q.smear, q.rate), (0.0, 0.75));
     assert_eq!((q.size, q.time, q.damping), (0.5, 0.5, 0.3));
 }
 
@@ -272,11 +272,13 @@ fn quad_knobs_are_the_rings_laws() {
     close(at(&|p| p.size = 0.0).length_ms, 338.583, "size 0");
     close(at(&|p| p.time = 0.5).rt60_s, 0.3 * 40f32.sqrt(), "time .5");
     close(at(&|p| p.damping = 0.3).damp_hz, 6_050.65, "damp .3");
-    close(at(&|p| p.rate = 0.5).rate_hz, 0.2236, "rate .5");
-    // SMEAR is 0.18 % of the round trip at 1, at every SIZE.
+    close(at(&|p| p.rate = 0.0).rate_hz, 0.1, "rate 0");
+    close(at(&|p| p.rate = 0.75).rate_hz, 0.9457, "rate .75");
+    close(at(&|p| p.rate = 1.0).rate_hz, 2.0, "rate 1");
+    // SMEAR is 0.15 % of the round trip at 1, at every SIZE (ADR 0121).
     for i in 0..=31 {
         let k = at(&|p| (p.size, p.smear) = (i as f32 / 31.0, 1.0));
-        close(k.smear_ms, 0.0018 * k.length_ms, "smear cap");
+        close(k.smear_ms, 0.0015 * k.length_ms, "smear cap");
     }
 }
 
@@ -306,15 +308,16 @@ fn knobs_hit_the_spec_endpoints() {
         knobs_120(&p)
     };
     // ADR 0095 § GATE and REVERSE, as built.
-    for t in [ReverbType::Gate, ReverbType::Reverse] {
+    // SMEAR's depths and RATE's law, ADR 0121.
+    for (t, smear_ms) in [(ReverbType::Gate, 0.85), (ReverbType::Reverse, 2.4)] {
         let k = |f: &dyn Fn(&mut ReverbParams)| at(t, f);
         close(k(&|p| p.tone = 0.0).tone_hz, 12_000.0, "tone 0");
         close(k(&|p| p.tone = 1.0).tone_hz, 1_000.0, "tone 1");
-        close(k(&|p| p.smear = 1.0).smear_ms, 1.0, "smear 1");
+        close(k(&|p| p.smear = 1.0).smear_ms, smear_ms, "smear 1");
         assert_eq!(k(&|p| p.smear = 0.0).smear_ms, 0.0);
         close(k(&|p| p.rate = 0.0).rate_hz, 0.1, "rate 0");
         close(k(&|p| p.rate = 1.0).rate_hz, 2.0, "rate 1");
-        close(k(&|_| {}).rate_hz, 0.4472, "rate default");
+        close(k(&|_| {}).rate_hz, 0.9457, "rate default");
     }
     let g = |f: &dyn Fn(&mut ReverbParams)| at(ReverbType::Gate, f);
     close(g(&|p| p.size = 0.0).length_ms, 40.0, "gate length 0");
@@ -380,11 +383,16 @@ fn knobs_hit_the_spec_endpoints() {
     close(m(&|p| p.predelay = 1.0).predelay_ms, 50.0, "pre 1");
     close(
         m(&|p| (p.smear, p.size) = (1.0, 1.0)).smear_ms,
-        0.0072 * 136.9,
+        1.65,
+        "smear 1, under the cap",
+    );
+    close(
+        m(&|p| (p.smear, p.size) = (1.0, 0.0)).smear_ms,
+        0.014 * 80.14,
         "smear 1, at the cap",
     );
     close(m(&|p| p.rate = 0.0).rate_hz, 0.1, "room rate 0");
-    close(m(&|p| p.rate = 1.0).rate_hz, 1.0, "room rate 1");
+    close(m(&|p| p.rate = 1.0).rate_hz, 2.0, "room rate 1");
     let d = m(&|_| {});
     // MidiVerb II program 5's fitted knobs (ADR 0095), SMEAR 0: the program exactly.
     close(d.length_ms, 116.69, "room size default");
@@ -395,7 +403,7 @@ fn knobs_hit_the_spec_endpoints() {
     close(d.damp_hz, 4_456.7, "room damp default");
     close(d.shape_db, 57.06, "room loops default");
     close(d.smear_ms, 0.0, "room smear default");
-    close(d.rate_hz, 0.3162, "room rate default");
+    close(d.rate_hz, 0.9457, "room rate default");
     // HALL, above its plate zone (SIZE ≥ 0.05).
     let h = |f: &dyn Fn(&mut ReverbParams)| at(ReverbType::Hall, f);
     close(h(&|p| p.size = 0.0).length_ms, 120.0, "hall size 0");
@@ -426,11 +434,16 @@ fn knobs_hit_the_spec_endpoints() {
     assert_eq!(h(&|p| p.predelay = 0.0).predelay_ms, 0.0);
     close(
         h(&|p| (p.smear, p.size) = (1.0, 1.0)).smear_ms,
-        2.0,
+        0.6,
         "hall smear 1",
     );
+    close(
+        h(&|p| (p.smear, p.size) = (1.0, 0.05)).smear_ms,
+        0.0011 * 144.0,
+        "hall smear 1, at the cap",
+    );
     close(h(&|p| p.rate = 0.0).rate_hz, 0.1, "hall rate 0");
-    close(h(&|p| p.rate = 1.0).rate_hz, 1.5, "hall rate 1");
+    close(h(&|p| p.rate = 1.0).rate_hz, 2.0, "hall rate 1");
     let d = h(&|_| {});
     close(d.length_ms, 562.50146, "hall size default");
     close(d.rt60_s, 1.96673, "hall decay default");
@@ -439,7 +452,7 @@ fn knobs_hit_the_spec_endpoints() {
     close(d.damp_hz, 3_159.62, "hall damp default");
     close(d.predelay_ms, 7.314125, "hall pre default");
     assert_eq!(d.smear_ms, 0.0, "hall smear default: START is the preset");
-    close(d.rate_hz, 0.2954, "hall rate default");
+    close(d.rate_hz, 0.9457, "hall rate default");
     close(d.spread.scale(), 0.9728093, "hall spread default");
     close(d.density.get(), 4.03649, "hall density default");
     // HALL's DAMP is its own law now (ADR 0095 § HALL, as built), not
@@ -555,9 +568,10 @@ fn an_old_gate_or_reverse_loads_safely() {
 #[test]
 fn smear_caps_hold_at_every_size() {
     for (t, cap) in [
-        (ReverbType::Room, 0.0072),
-        (ReverbType::Hall, 0.0036),
-        (ReverbType::Quad, 0.0018),
+        (ReverbType::Room, 0.014),
+        (ReverbType::Hall, 0.0011),
+        (ReverbType::Bloom, 0.0012),
+        (ReverbType::Quad, 0.0015),
     ] {
         let mut p = ReverbParams::default().with_type(t, &KnobMemory::new());
         p.smear = 1.0;

@@ -53,8 +53,11 @@ fn bus<'a>(
     move |send| tick(&mut rv.borrow_mut(), send, &p.borrow())
 }
 
+/// A fresh reverb, its tail gate out: these tests read the engines.
 fn fresh(p: &ReverbParams) -> RefCell<Box<Reverb>> {
-    RefCell::new(Box::new(Reverb::of_type(p.kind)))
+    let mut rv = Box::new(Reverb::of_type(p.kind));
+    rv.tail_gate_off();
+    RefCell::new(rv)
 }
 
 fn is_prime(n: usize) -> bool {
@@ -673,10 +676,10 @@ fn room_settles_on_its_input_pitch() {
     check_settles_on_pitch(&mut bus(&rv, &pc), &mut step, 0.2);
 }
 
-/// SMEAR's cap (§ The SMEAR bound) where ROOM keeps it: each loop's one
-/// smeared allpass reads within [M − 2D, M], never under 2, and 2D is at
-/// most 1.45 % of that loop's 2-stage round trip at every SIZE (θ 0's,
-/// the shortest), however deep the offsets asked.
+/// SMEAR's cap (ADR 0121) where ROOM keeps it: each loop's one smeared
+/// allpass reads within [M − 2D, M], never under 2, and 2D is at most
+/// 2.8 % of that loop's 2-stage round trip at every SIZE (θ 0's, the
+/// shortest), however deep the offsets asked.
 #[test]
 fn room_smear_reads_stay_within_the_cap() {
     let mut p = params(1.0);
@@ -684,7 +687,7 @@ fn room_smear_reads_stay_within_the_cap() {
     for i in 0..=16 {
         p.size = i as f32 / 16.0;
         let k = knobs_120(&p);
-        assert!(k.smear_ms <= 0.0072 * k.length_ms + 1e-6, "SIZE {}", p.size);
+        assert!(k.smear_ms <= 0.014 * k.length_ms + 1e-6, "SIZE {}", p.size);
         let (mut e, mut arena) = engine(&p);
         let (u, mut l, mut r) = ([0.0f32; HALF], [0.0; HALF], [0.0; HALF]);
         e.set_smear([(1e9, -1e9), (-5.0, 1e9), (1e9, 1e9), (0.0, 1e9)]);
@@ -695,13 +698,17 @@ fn room_smear_reads_stay_within_the_cap() {
                 + room::AP[lp].iter().sum::<usize>();
             for x in [held[lp].0, held[lp].1] {
                 assert!(
-                    (0.0..=2.0 * 0.0072 * trip as f32 + 1e-3).contains(&x),
+                    (0.0..=2.0 * 0.014 * trip as f32 + 1e-3).contains(&x),
                     "{x} of {trip}"
                 );
                 assert!(room::AP[lp][st] as f32 - x >= 2.0);
             }
             let e_share = held[lp].0.max(held[lp].1) / trip as f32;
-            assert!(e_share <= 0.0145, "SIZE {}: loop {lp} E {e_share}", p.size);
+            assert!(
+                e_share <= 0.028 + 1e-6,
+                "SIZE {}: loop {lp} E {e_share}",
+                p.size
+            );
         }
     }
     // Through a SIZE move the cap follows the shorter of each moving
@@ -725,7 +732,7 @@ fn room_smear_reads_stay_within_the_cap() {
                 .map(|s| from[lp][s].min(to[lp][s]) as usize)
                 .sum::<usize>()
                 + room::AP[lp].iter().sum::<usize>();
-            let top = 2.0 * 0.0072 * trip as f32;
+            let top = 2.0 * 0.014 * trip as f32;
             assert!(
                 held[lp].0 <= top + 1e-3 && held[lp].1 <= top + 1e-3,
                 "loop {lp}: {:?} over {top}",
@@ -809,9 +816,12 @@ fn room_smear_does_not_move_the_tails_peak() {
 fn size_tail(from: f32, start: f32, coarse: u16) -> Vec<f32> {
     let mut p = params(1.0);
     // DIFFUSE 0.4 (g 0.55): at the starting 0.45 the 50 ms control's
-    // slap passes the check, so it has no teeth there. SMEAR 0.3, where
-    // the control was tuned: at 0 its 50 ms slap passes too.
-    (p.time, p.size, p.diffuse, p.smear) = (1.0, from, 0.4, 0.3);
+    // slap passes the check, so it has no teeth there. SMEAR at ±0.09 ms
+    // and RATE at 0.32 Hz, where the control was tuned (SMEAR 0.3 under
+    // the old squared law, RATE 0.5; ADR 0121): at 0 its 50 ms slap
+    // passes too.
+    (p.time, p.size, p.diffuse) = (1.0, from, 0.4);
+    (p.smear, p.rate) = (0.09 / 1.65, 0.384_31);
     let (rv, pc) = (fresh(&p), RefCell::new(p));
     if coarse > 0 {
         rv.borrow_mut()
@@ -1800,10 +1810,10 @@ fn hall_settles_on_its_input_pitch() {
     }
 }
 
-/// SMEAR at 1 and RATE 1 (1.5 Hz) at SIZE 0, its 120 ms loop: D is capped
-/// at 0.36 % of the loop, and the engine holds both smeared reads to it
-/// however deep they are asked, so E ≤ 1.45 % of the round trip: 25 cents
-/// (ADR 0085's ROOM deviation 5, the bound held in the engine). Zero
+/// SMEAR at 1 and RATE 1 (2 Hz) at SIZE 0, its 120 ms loop: D is capped
+/// at 0.11 % of the loop (ADR 0121), and the engine holds both smeared
+/// reads to it however deep they are asked, so E ≤ 0.44 % of the round
+/// trip, under ADR 0085's 1.45 %. Zero
 /// crossings judge a still HALL (0–2 cents pass to pass), but the
 /// smeared tail's per-pass reading wanders among the 8 Hz-spaced loop
 /// modes beside its frozen reference; the spectral peak is judged instead.
@@ -1812,8 +1822,8 @@ fn hall_smear_is_bounded_without_drift_or_vibrato() {
     let mut p = hall(1.0);
     (p.size, p.time, p.smear, p.rate) = (0.0, 1.0, 1.0, 1.0);
     let k = knobs_120(&p);
-    assert!(k.smear_ms <= 0.0036 * k.length_ms * (1.0 + 1e-6));
-    assert!(k.smear_ms > 0.4, "capped, not off: {}", k.smear_ms);
+    assert!(k.smear_ms <= 0.0011 * k.length_ms * (1.0 + 1e-6));
+    assert!(k.smear_ms > 0.1, "capped, not off: {}", k.smear_ms);
     for size in [0.0, 0.5, 1.0] {
         p.size = size;
         let k = knobs_120(&p);
@@ -1827,7 +1837,7 @@ fn hall_smear_is_bounded_without_drift_or_vibrato() {
         for (m, &(_, st)) in <H as Layout<1, 4>>::SMEARED.iter().enumerate() {
             for x in [held[m].0, held[m].1] {
                 assert!(
-                    (0.0..=2.0 * 0.0036 * trip as f32 + 1e-3).contains(&x),
+                    (0.0..=2.0 * 0.0011 * trip as f32 + 1e-3).contains(&x),
                     "{x}"
                 );
                 assert!(HLENS.ap[0][st] as f32 - x >= 2.0);
