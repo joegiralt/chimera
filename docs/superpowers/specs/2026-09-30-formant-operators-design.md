@@ -320,10 +320,10 @@ SKIRT's constants, measured on the host and pinned by tests:
 
 | SKIRT | q | Span `K` (−3 dB full width × window length) | Energy `c_q` (mean of `W²`) | First sidelobe | −60 dB extent `m_q` (× BW_eff) |
 |---|---|---|---|---|---|
-| 0 | 2 | 1.375 | 0.40635 | −28 dB | 5.49 |
-| 1 | 4 | 1.734 | 0.29954 | −38 dB | 2.62 |
-| 2 | 8 | 2.291 | 0.21653 | −56 dB | 2.07 |
-| 3 | 16 | 3.121 | 0.15486 | −87 dB | 1.97 |
+| 0 | 2 | 1.375 | 0.40635 | −28 dB | 5.528 |
+| 1 | 4 | 1.734 | 0.29954 | −38 dB | 2.631 |
+| 2 | 8 | 2.291 | 0.21653 | −56 dB | 2.078 |
+| 3 | 16 | 3.121 | 0.15486 | −87 dB | 1.985 |
 
 `c_q = 4^(2q) · ((2q)!)² / (4q + 1)!`. `K` and `m_q` are solved numerically from the window's transform.
 

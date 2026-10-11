@@ -759,7 +759,7 @@ git commit -m "FRMT, BW, SKIRT, KEY, RES, SLOT and VOWEL are stored with frozen 
       pub const fn q(self) -> u32;     // 2, 4, 8, 16
       pub const fn k(self) -> f32;     // 1.3748, 1.7341, 2.2910, 3.1209
       pub const fn c_q(self) -> f32;   // 0.40635, 0.29954, 0.21653, 0.15486
-      pub const fn m_q(self) -> f32;   // 5.49, 2.62, 2.07, 1.97
+      pub const fn m_q(self) -> f32;   // 5.528, 2.631, 2.078, 1.985 (measured, Task 6)
   }
   pub fn window(x: f32, s: Skirt) -> f32;        // clamp to [0,1], u = 4x(1−x), square s+1 times
   pub fn rho(s: Skirt, nu: f32) -> f32;          // ν = 2·FC·L: 49 points on [0, 12], linear; 0 past 12
