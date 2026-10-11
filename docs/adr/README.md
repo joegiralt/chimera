@@ -30,7 +30,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0022](0022-one-algorithmic-engine.md) | One algorithmic six-operator engine replaces Pizza, FM and VA | Accepted; VCA note superseded in part by [0035](0035-every-connection-is-a-matrix-route.md); superseded in part by [0060](0060-one-dc-blocker-per-voice.md) |
 | [0023](0023-waves-from-our-own-recipes.md) | The waves come from our own recipes | Accepted |
 | [0024](0024-morph-blends-link-weights.md) | MORPH blends link weights; one plan orders both algorithms | Accepted; output scale superseded in part by [0049](0049-algo-init-routed-morph-dims.md) |
-| [0025](0025-dtcm-holds-wave-tables-and-stack.md) | DTCM holds the wave tables and the stack | Accepted |
+| [0025](0025-dtcm-holds-wave-tables-and-stack.md) | DTCM holds the wave tables and the stack | Accepted; superseded in part by [0122](0122-render-the-wave-tables-at-boot.md) |
 | [0026](0026-algo-voices-billed-by-patch-shape.md) | Algo voices are billed by patch shape; heavy patches get fewer voices | Accepted; shedding clause and four-voice floor superseded in part by 0027; rev V voice counts superseded by [0031](0031-six-voices-on-rev-v.md) |
 | [0027](0027-shedding-fades-tails-first.md) | Shedding fades, and takes tails before held notes | Proposed; "rev Y gets two" superseded by [0031](0031-six-voices-on-rev-v.md); cross-Part steal billing amended by [0091](0091-orbit-billed-while-it-plays.md) |
 | [0028](0028-one-alesis-style-reverb.md) | One Alesis-style ring is the reverb; Plate, FDN and MidiVerb retire | Accepted; "one reverb" and GRIT superseded by [0085](0085-the-master-reverb-picks-a-type.md) |
