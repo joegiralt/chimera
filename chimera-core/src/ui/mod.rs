@@ -67,7 +67,6 @@ use crate::orbit::runner::{OrbitShared, OrbitView};
 use crate::orbit::scene::{OrbitSong, Refused, SceneIdx, SceneSave};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
-use crate::preset::MAX_SOUNDS;
 use crate::project::arena::ArenaWriter;
 use crate::project::{
     self, CardOut, Confirmed, DeleteTarget, Line, LoadLink, PartEdit, PartFrom, PartId, PartSource,
@@ -1125,13 +1124,10 @@ impl UiState {
     /// its pages.
     fn load_sound(&mut self, part: PartId, b: Browse) {
         let cursor = b.cursor();
-        // Init entries follow the pool slots.
-        let from = browser::slot_at(cursor).map(PartFrom::Slot).or_else(|| {
-            cursor
-                .checked_sub(MAX_SOUNDS)
-                .and_then(|j| browser::INIT_TYPES.get(j))
-                .map(|&e| PartFrom::Init(e))
-        });
+        // The init entries lead the pool slots.
+        let from = browser::slot_at(cursor)
+            .map(PartFrom::Slot)
+            .or_else(|| browser::init_at(cursor).map(PartFrom::Init));
         let Some(from) = from else { return };
         // An empty slot has nothing to ask about.
         if let PartFrom::Slot(s) = from

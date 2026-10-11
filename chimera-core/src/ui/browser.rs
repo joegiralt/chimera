@@ -24,22 +24,22 @@ use crate::ui::fmt::FmtBuf;
 use crate::ui::hint::{self, Gesture};
 use crate::ui::library::{LibRow, LibState, Tab, row as lib_row_at, rows as lib_rows};
 use crate::ui::meter::{self, MeterView};
-use crate::ui::nav::chain_def_for;
 use crate::ui::settings::part::Offer;
 use crate::ui::settings::prompt::POOL_FULL;
 use crate::ui::theme;
 
 /// Rows on screen.
 pub const VISIBLE_ROWS: usize = 8;
-/// The pool's slots, then one init Sound per engine, in `EngineType::ALL`
-/// order.
+/// One init Sound per engine, in `EngineType::ALL` order, then the pool's
+/// slots.
 pub const INIT_TYPES: [EngineType; EngineType::ALL.len()] = EngineType::ALL;
-pub const TOTAL_ENTRIES: usize = MAX_SOUNDS + INIT_TYPES.len();
+pub const INITS: usize = INIT_TYPES.len();
+pub const TOTAL_ENTRIES: usize = INITS + MAX_SOUNDS;
 
 /// The Sound rung's browser: each tab's cursor and first row shown. Only
-/// `input`, `input_library` and a listing's landing move them; it opens
-/// at the top.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+/// `input`, `input_library` and a listing's landing move them; PROJECT
+/// opens on slot 1, the INIT rows just above, LIBRARY at its top.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Browse {
     cursor: u8,
     scroll: u8,
@@ -48,6 +48,17 @@ pub struct Browse {
 }
 
 const _: () = assert!(TOTAL_ENTRIES <= 256);
+
+impl Default for Browse {
+    fn default() -> Self {
+        Browse {
+            cursor: INITS as u8,
+            scroll: 0,
+            lib_cursor: 0,
+            lib_scroll: 0,
+        }
+    }
+}
 
 impl Browse {
     pub const fn cursor(self) -> usize {
@@ -99,7 +110,12 @@ fn follow(cursor: usize, scroll: usize, rows: usize) -> (u8, u8) {
 
 /// The pool slot at list entry `entry`; `None` for the INIT rows.
 pub fn slot_at(entry: usize) -> Option<SlotId> {
-    SlotId::new(u8::try_from(entry).ok()?)
+    SlotId::new(u8::try_from(entry.checked_sub(INITS)?).ok()?)
+}
+
+/// The engine of the INIT row at `entry`; `None` for the pool's slots.
+pub fn init_at(entry: usize) -> Option<EngineType> {
+    INIT_TYPES.get(entry).copied()
 }
 
 pub const LIST_TOP: i32 = 44;
@@ -116,14 +132,14 @@ pub const INFO_Y: i32 = 300;
 /// The pool meter's top, under its percentage.
 pub const METER_Y: i32 = 306;
 /// A row's cost, right-aligned short of its engine tag.
-const COST_RIGHT: i32 = 196;
+const COST_RIGHT: i32 = 184;
 /// Where a row's name starts, and its clearance from the cost or tag.
 const NAME_X: i32 = 52;
 const NAME_GAP: i32 = 6;
 /// The engine tag's right edge.
-const TAG_RIGHT: i32 = 223;
-/// The widest engine tag, three letters.
-const TAG_ROOM: i32 = 24;
+pub const TAG_RIGHT: i32 = 223;
+/// The widest engine tag, `MODAL`.
+const TAG_ROOM: i32 = 38;
 /// The keys and what they do here (Pre-flight 22, ADR 0086). SEQ's way up
 /// is every chain's (ADR 0081), so it goes unsaid. MIX + EDIT's save says
 /// what it costs; MIX + MINUS's clear, on a filled slot alone, what it
@@ -569,14 +585,21 @@ where
     }
 }
 
-/// `engine`'s short tag, right-aligned at `TAG_RIGHT`.
+/// `engine`'s name in full, right-aligned at `TAG_RIGHT`.
 fn tag<D>(d: &mut D, engine: EngineType, y: i32, color: Rgb565)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let chain = chain_def_for(engine);
-    let label = chain.blocks[chain.engine_node()].def.short;
-    draw::text_right(d, &theme::FONT_LABEL, label, TAG_RIGHT, y, color, 0);
+    let label = components::upper(engine.label());
+    draw::text_right(
+        d,
+        &theme::FONT_LABEL,
+        label.as_str(),
+        TAG_RIGHT,
+        y,
+        color,
+        0,
+    );
 }
 
 /// The longest start of `s` that fits `w` px in `font`.
@@ -597,7 +620,7 @@ where
 {
     let mut slot = FmtBuf::new();
     let (name, chain, cost) = if let Some(s) = slot_at(entry) {
-        let _ = write!(slot, "{:02}", entry + 1);
+        let _ = write!(slot, "{:02}", s.index() + 1);
         match pool.get(s) {
             Some(s) => (
                 components::upper(s.name().as_str()),
@@ -608,7 +631,7 @@ where
         }
     } else {
         let _ = slot.write_str("INIT");
-        let engine = INIT_TYPES[entry - MAX_SOUNDS];
+        let engine = INIT_TYPES[entry];
         (components::upper(engine.label()), Some(engine), None)
     };
     let saved = cost.is_some();
