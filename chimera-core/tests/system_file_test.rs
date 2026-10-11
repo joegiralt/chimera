@@ -768,3 +768,20 @@ fn system_midi_fixture_round_trips() {
     assert!(again.len() > f.len(), "HINTS added");
     assert_eq!(boot_bytes(&again), (got, None));
 }
+
+/// SYSTEM files written before SAVER have no such record: they load with
+/// the screensaver at its default, 7 s, the rest as written.
+#[test]
+fn an_old_system_file_gets_the_default_screensaver() {
+    for f in [
+        include_bytes!("fixtures/v1/system.sys").as_slice(),
+        include_bytes!("fixtures/v1/system_midi.sys").as_slice(),
+    ] {
+        let (got, note) = boot_bytes(f);
+        assert_eq!(note, None);
+        assert_eq!(got.theme.saver, Saver::DEFAULT);
+        assert_eq!(got.theme.saver.ms(), Some(7_000));
+    }
+    let (got, _) = boot_bytes(include_bytes!("fixtures/v1/system.sys"));
+    assert_eq!(got.theme.accent, Accent::Rose, "the rest as written");
+}

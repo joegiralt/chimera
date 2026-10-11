@@ -5,7 +5,8 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-static HELD: [AtomicU32; 4] = [const { AtomicU32::new(0) }; 4];
+/// Held keys, a 128-bit set a MIDI channel: word `channel * 4 + key / 32`.
+static HELD: [AtomicU32; 64] = [const { AtomicU32::new(0) }; 64];
 static LAST_IN: AtomicU32 = AtomicU32::new(0);
 static LAST_OUT: AtomicU32 = AtomicU32::new(0);
 const VALID: u32 = 1 << 31;
@@ -34,8 +35,8 @@ impl NoteOut {
 }
 
 /// Audio: a key went down on `part`, sounding `note` at `cents` offset.
-pub fn note_on(part: u8, key: u8, vel: u8, note: u8, cents: i16) {
-    HELD[(key >> 5) as usize & 3].fetch_or(1 << (key & 31), Ordering::Relaxed);
+pub fn note_on(channel: u8, part: u8, key: u8, vel: u8, note: u8, cents: i16) {
+    HELD[word(channel, key)].fetch_or(1 << (key & 31), Ordering::Relaxed);
     LAST_IN.store(
         VALID | (part as u32 & 15) << 14 | (vel as u32 & 127) << 7 | key as u32 & 127,
         Ordering::Relaxed,
@@ -46,9 +47,26 @@ pub fn note_on(part: u8, key: u8, vel: u8, note: u8, cents: i16) {
     );
 }
 
-/// Audio: a key came up.
-pub fn note_off(key: u8) {
-    HELD[(key >> 5) as usize & 3].fetch_and(!(1 << (key & 31)), Ordering::Relaxed);
+/// Audio: a key came up on `channel`.
+pub fn note_off(channel: u8, key: u8) {
+    HELD[word(channel, key)].fetch_and(!(1 << (key & 31)), Ordering::Relaxed);
+}
+
+fn word(channel: u8, key: u8) -> usize {
+    (channel as usize & 15) * 4 + (key as usize >> 5 & 3)
+}
+
+/// Nothing is held: the voices were killed, or no voice holds a key (a
+/// lost note-off).
+pub fn clear_held() {
+    for w in &HELD {
+        w.store(0, Ordering::Relaxed);
+    }
+}
+
+/// Any key held on any channel.
+pub fn any_held() -> bool {
+    HELD.iter().any(|w| w.load(Ordering::Relaxed) != 0)
 }
 
 pub fn last_in() -> Option<NoteIn> {
@@ -68,22 +86,20 @@ pub fn last_out() -> Option<NoteOut> {
     })
 }
 
-/// The held keys, lowest first, up to `N`.
+/// The held keys across every channel, each key number once, lowest
+/// first: the first `N` of them, and how many there are in all.
 pub fn held<const N: usize>() -> ([u8; N], usize) {
     let mut out = [0u8; N];
-    let mut n = 0;
+    let mut total = 0;
     for key in 0..128u8 {
-        if n < N && HELD[(key >> 5) as usize].load(Ordering::Relaxed) >> (key & 31) & 1 != 0 {
-            out[n] = key;
-            n += 1;
+        let down =
+            (0..16).any(|ch| HELD[word(ch, key)].load(Ordering::Relaxed) >> (key & 31) & 1 != 0);
+        if down {
+            if total < N {
+                out[total] = key;
+            }
+            total += 1;
         }
     }
-    (out, n)
-}
-
-/// How many keys are held.
-pub fn held_count() -> u32 {
-    HELD.iter()
-        .map(|w| w.load(Ordering::Relaxed).count_ones())
-        .sum()
+    (out, total)
 }

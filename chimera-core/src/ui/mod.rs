@@ -811,15 +811,16 @@ impl UiState {
     }
 
     /// `elapsed_ms` of wall time since the last call, for the screensaver:
-    /// the shells' loops call it beside `step_toast`. A prompt or card work
-    /// is the owner's attention, so neither counts as idle.
-    pub fn step_idle(&mut self, elapsed_ms: u32) {
-        let timeout = self
-            .theme
-            .saver
-            .ms()
-            .filter(|_| !self.prompt_open() && !self.card_pending());
-        self.idle.tick(elapsed_ms, timeout);
+    /// the shells' loops call it beside `step_toast`. `busy`: card work ran
+    /// this frame, so `elapsed_ms` is its blocking time. A prompt, card work
+    /// or that time is the owner's attention, not idleness (and never wakes
+    /// the screen).
+    pub fn step_idle(&mut self, elapsed_ms: u32, busy: bool) {
+        if busy || self.prompt_open() || self.card_pending() {
+            self.idle.hold();
+            return;
+        }
+        self.idle.tick(elapsed_ms, self.theme.saver.ms());
     }
 
     /// Once a frame: the toast, `elapsed_ms` after the last frame.
@@ -2136,6 +2137,8 @@ impl UiState {
     /// ORBIT's commands flushed for the frame's publish.
     pub fn handle_input(&mut self, controls: &impl Controls) {
         if self.idle.touch(any_turn(controls), any_down(controls)) == saver::Touch::Swallow {
+            // A held key still ages.
+            self.jog_pass(controls.now_ms().0);
             return;
         }
         let rev = self.project.rev();

@@ -61,6 +61,12 @@ impl Idle {
         self.asleep |= self.idle_ms >= t;
     }
 
+    /// Time that doesn't count: the clock restarts, and an asleep screen
+    /// stays so.
+    pub fn hold(&mut self) {
+        self.idle_ms = 0;
+    }
+
     /// One frame of input: `turned` an encoder moved, `down` a button is
     /// down. The touch that wakes the screen is swallowed, and a waking
     /// button's press, hold and release with it.
@@ -276,6 +282,22 @@ fn crossing_period(buf: &[f32; SCOPE_LEN], mean: f32, coarse: f32) -> Option<f32
     })
 }
 
+/// OUT below this (D4, about the window's 300 Hz floor) has no reliable
+/// "heard": the period is past what the window holds.
+const MIN_HEARD_CENTS: i32 = 6200;
+
+/// A measurement worth showing: one note at most is held (a chord has no
+/// one pitch), OUT is in the window's reach, and the measure is within a
+/// semitone of OUT, so an octave error (a strong 2nd harmonic reads an
+/// octave up) is never shown as heard.
+pub fn trusted(hz: f32, out: Option<NoteOut>, held: usize) -> bool {
+    let Some(o) = out.filter(|o| held <= 1 && o.total_cents() >= MIN_HEARD_CENTS) else {
+        return false;
+    };
+    let total = 6900.0 + 1200.0 * libm::log2f(hz / 440.0);
+    (total - o.total_cents() as f32).abs() < 100.0
+}
+
 // --- Drawing ---
 
 /// Up to this many held keys are named.
@@ -290,6 +312,7 @@ const SCOPE_AMP: i32 = 80;
 pub struct Readout {
     pub input: Option<NoteIn>,
     pub out: Option<NoteOut>,
+    /// The first held keys, lowest first, and how many are held in all.
     pub keys: [u8; MAX_HELD],
     pub held: usize,
     pub heard: Option<f32>,
@@ -306,12 +329,13 @@ impl Readout {
 
     pub fn capture(scope: &[f32; SCOPE_LEN]) -> Self {
         let (keys, held) = played::held::<MAX_HELD>();
+        let out = played::last_out();
         Self {
             input: played::last_in(),
-            out: played::last_out(),
+            out,
             keys,
             held,
-            heard: measure(scope),
+            heard: measure(scope).filter(|&hz| trusted(hz, out, held)),
         }
     }
 }
@@ -364,8 +388,8 @@ where
         }
         note_name(&mut line, k as i32);
     }
-    if keys.len() > SHOWN {
-        let _ = write!(line, " +{}", keys.len() - SHOWN);
+    if r.held > SHOWN {
+        let _ = write!(line, " +{}", r.held - SHOWN);
     }
     text(d, line.as_str(), 276, theme::INK2);
     line.clear();

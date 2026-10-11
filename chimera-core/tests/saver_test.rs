@@ -348,7 +348,7 @@ use chimera_hal::ButtonId;
 use screen::Input;
 
 fn idle(ui: &mut UiState, ms: u32) {
-    ui.step_idle(ms);
+    ui.step_idle(ms, false);
 }
 
 /// Asleep at 7 s, not at 6.999. The
@@ -389,4 +389,82 @@ fn off_never_sleeps() {
     let mut saver_fb = Fb::new();
     saver::draw(&mut saver_fb, &[0.0; SCOPE_LEN], &Readout::NONE);
     assert_ne!(fb.hash(), saver_fb.hash(), "a page, not the saver");
+}
+
+#[test]
+fn card_work_is_not_idle_time() {
+    let mut ui = UiState::new();
+    ui.step_idle(6_000, false);
+    // A blocking save or load: its time doesn't count, and the clock restarts.
+    ui.step_idle(5_000, true);
+    ui.step_idle(1_000, false);
+    let mut fb = Fb::new();
+    let mut saver_fb = Fb::new();
+    saver::draw(&mut saver_fb, &[0.0; SCOPE_LEN], &Readout::NONE);
+    ui.render_with_scope(&mut fb, &PerfStats::zero(), &[0.0; SCOPE_LEN]);
+    assert_ne!(fb.hash(), saver_fb.hash(), "awake");
+    ui.step_idle(6_000, false);
+    ui.render_with_scope(&mut fb, &PerfStats::zero(), &[0.0; SCOPE_LEN]);
+    assert_eq!(fb.hash(), saver_fb.hash(), "asleep after 7 s of nothing");
+    // Busy asleep stays asleep (no wake without a touch).
+    ui.step_idle(100, true);
+    ui.render_with_scope(&mut fb, &PerfStats::zero(), &[0.0; SCOPE_LEN]);
+    assert_eq!(fb.hash(), saver_fb.hash());
+}
+
+// --- Heard is shown only when trustworthy ---
+
+fn out(note: u8, cents: i16) -> Option<chimera_core::played::NoteOut> {
+    Some(chimera_core::played::NoteOut { note, cents })
+}
+
+fn hz(midi_cents: f32) -> f32 {
+    440.0 * ((midi_cents - 6900.0) / 1200.0).exp2()
+}
+
+#[test]
+fn heard_needs_a_note_in_reach_and_agreement() {
+    use saver::trusted;
+    // E4, one note, heard right: shown. An octave up, a chord, nothing
+    // played, a bass note below the window: not.
+    assert!(trusted(hz(6400.0), out(64, 0), 1));
+    assert!(trusted(hz(6440.0), out(64, 0), 1));
+    assert!(!trusted(hz(7600.0), out(64, 0), 1), "an octave up");
+    assert!(!trusted(hz(5200.0), out(64, 0), 1), "an octave down");
+    assert!(!trusted(hz(6400.0), out(64, 0), 3), "a chord");
+    assert!(!trusted(hz(6400.0), None, 0));
+    assert!(
+        !trusted(hz(5500.0), out(55, 0), 1),
+        "G3 is below the window"
+    );
+    assert!(!trusted(hz(6000.0), out(60, 0), 1), "C4 too");
+}
+
+/// A saw with a strong 2nd harmonic, and a 200 Hz tone: never a wrong
+/// octave, whatever the measure says.
+#[test]
+fn a_strong_second_harmonic_never_shows_the_octave() {
+    let two = |f: f32| -> [f32; SCOPE_LEN] {
+        core::array::from_fn(|i| {
+            let p = f * i as f32 / 48_000.0 * core::f32::consts::TAU;
+            0.15 * p.sin() + 0.5 * (2.0 * p).sin()
+        })
+    };
+    // A3 (220 Hz): the window holds one period, so the measure may read 440.
+    let m = saver::measure(&two(220.0));
+    if let Some(h) = m {
+        assert!(!saver::trusted(h, out(57, 0), 1), "{h}");
+    }
+    // E4 (329.6 Hz): either right or hidden.
+    if let Some(h) = saver::measure(&two(329.63)) {
+        let shown = saver::trusted(h, out(64, 0), 1);
+        let off = 1200.0 * (h / 329.63).log2();
+        assert!(!shown || off.abs() < 100.0, "{h} shown {off:+.0} ct off");
+    }
+    // 200 Hz: nothing, or hidden.
+    let sine200: [f32; SCOPE_LEN] =
+        core::array::from_fn(|i| (200.0 * i as f32 / 48_000.0 * core::f32::consts::TAU).sin());
+    if let Some(h) = saver::measure(&sine200) {
+        assert!(!saver::trusted(h, out(55, 0), 1), "{h}");
+    }
 }
