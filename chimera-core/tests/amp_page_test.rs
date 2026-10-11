@@ -45,7 +45,7 @@ fn on_amp() -> UiState {
 #[test]
 fn a_dimmed_vel_ignores_its_encoder() {
     let mut ui = on_amp();
-    feed(&mut ui, Input::turn(EncoderId::D, -20));
+    feed(&mut ui, Input::turn(EncoderId::E, -20));
     assert_eq!(ui.params().out.vca_vel, 1.0);
 }
 
@@ -54,7 +54,7 @@ fn a_dimmed_vel_ignores_its_encoder() {
 #[test]
 fn mix_plus_on_vel_primes_the_vca() {
     let mut ui = on_amp();
-    feed(&mut ui, Input::turn(EncoderId::D, 1));
+    feed(&mut ui, Input::turn(EncoderId::E, 1));
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
     assert_eq!(ui.prime_status(), Some(PrimeStatus::AlreadyRouted));
     assert!(
@@ -80,10 +80,51 @@ fn the_cells_key_carries_vels_dimming() {
         let Some(RegionData::Cells { looks, .. }) = ui.drawn_key(RegionKind::Cells) else {
             panic!("AMP has cells");
         };
-        looks >> 6 & 3
+        looks >> 8 & 3
     };
     assert_eq!(vel_look(&mut ui), Look::Dimmed as u32);
     let m = &mut ui.project_mut().edit_part(PartId::ALL[0]).sound.mod_state;
     m.set_fixed(ModSource::Env2.index(), FixedCol::Vca, 127);
     assert_eq!(vel_look(&mut ui), Look::Live as u32);
+}
+
+#[test]
+fn amp_rows() {
+    let got: Vec<_> = (0..6).map(|i| FOLDER.params[i].label()).collect();
+    assert_eq!(got, ["CHORUS", "DELAY", "REVERB", "FOLD", "VEL", "MIX"]);
+}
+
+/// AMP's cell 2 and the mixer's SENDS cell 2 are one address.
+#[test]
+fn amp_and_sends_are_one_value() {
+    use chimera_core::addr::Op;
+    use chimera_core::params::ParamSnapshot;
+    use chimera_core::ui::block_registry::SENDS;
+    use chimera_core::ui::part_page;
+    let mut p = ParamSnapshot::default();
+    part_page::apply_encoder(&FOLDER, 2, 3, &mut p, &mut Op::A);
+    assert_eq!(part_page::read_values(&SENDS, &p, Op::A)[2], 3.0 / 128.0);
+}
+
+#[test]
+fn sym_is_one_edit_down() {
+    let mut seen = 0;
+    for ct in EngineType::ALL {
+        let c = chain_def_for(ct);
+        for b in c.blocks.iter().filter(|b| b.def.id == FOLDER.id) {
+            seen += 1;
+            assert_eq!(b.sub_page_count(), 2, "{ct:?}");
+            assert_eq!(b.active_def(1).id, 98, "{ct:?}");
+        }
+    }
+    assert!(seen >= 4);
+}
+
+#[test]
+fn labels_fit() {
+    use chimera_core::ui::{draw, theme};
+    for s in ["CHORUS", "DELAY", "REVERB", "SYM"] {
+        let w = draw::text_width(&theme::FONT_LABEL, s, theme::LABEL_TRACKING);
+        assert!(w <= theme::CELL_BAR_W, "{s} {w}");
+    }
 }

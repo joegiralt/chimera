@@ -80,8 +80,11 @@ const GOLDENS: &[(&str, u64)] = &[
     ("spd", 0x96c5fde07700d7dc),
     ("lfo_classic", 0x3136c2e044ecb304),
     ("lfo_func", 0x60ec706c0ecfc450),
-    ("amp_vel_dimmed", 0x496ba84d34eb9c06),
-    ("amp_vel_live", 0x07fe7ee2b28245d6),
+    // Re-recorded: AMP is the sends over FOLD, VEL, MIX, SYM one page down (sends Task 5);
+    // mod_matrix_wide primes FOLD and MIX on their new cells.
+    ("amp_vel_dimmed", 0x0a0c82c553ac1086),
+    ("amp_vel_live", 0x9489af0bd7841342),
+    ("amp_sym", 0xe833d5db249ae1b9),
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
     ("algo_pitch", 0x58e8a368827c4a5f),
@@ -106,7 +109,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_home_bowed", 0x997c6d6606b0dd7c),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_amp", 0x126f578eb867adcf),
+    ("modal_amp", 0x18866d46d2e58eaf),
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it, the screens are as before.
     #[cfg(not(feature = "master-tape"))]
@@ -191,7 +194,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
     ("mod_matrix", 0x7fac5633d604d50c),
-    ("mod_matrix_wide", 0xeeb753551d0d9d1c),
+    ("mod_matrix_wide", 0x2d53cf82f2c6856c),
     // OP5 → FREQ, the cursor on OP5's X cell and its hint; MODAL's eight
     // rows of 17 (Task 17).
     ("mod_matrix_algo_taps", 0x5a2a634ad30444b4),

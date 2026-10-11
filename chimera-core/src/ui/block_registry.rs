@@ -244,14 +244,33 @@ pub static FOLDER: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
+        ParamSlot::param(BlockRef::Out, OutParams::SEND1),
+        ParamSlot::param(BlockRef::Out, OutParams::SEND2),
+        ParamSlot::param(BlockRef::Out, OutParams::SEND3),
         ParamSlot::param(BlockRef::Folder, FolderParams::FOLD),
-        ParamSlot::param(BlockRef::Folder, FolderParams::SYMMETRY),
-        ParamSlot::param(BlockRef::Folder, FolderParams::MIX),
         ParamSlot::param(BlockRef::Out, OutParams::VCA_VEL),
+        ParamSlot::param(BlockRef::Folder, FolderParams::MIX),
+    ],
+};
+
+/// AMP › SYM: the fold symmetry, one EDIT down (sends spec § 3).
+pub static FOLDER_SYM: BlockDef = BlockDef {
+    id: 98,
+    name: "Symmetry",
+    short: "SYM",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Folder, FolderParams::SYMMETRY),
+        EMPTY,
+        EMPTY,
+        EMPTY,
         EMPTY,
         EMPTY,
     ],
 };
+
+static AMP_SUB_PAGES: [&BlockDef; 1] = [&FOLDER_SYM];
 
 // ---------------------------------------------------------------------------
 // Filter
@@ -635,7 +654,7 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 5] = [
     ChainBlock::page(&MODAL_EXC),
     ChainBlock::with_subs(&MODAL_1, &MODAL_SUB_PAGES),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::page(&FOLDER),
+    ChainBlock::with_subs(&FOLDER, &AMP_SUB_PAGES),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -670,7 +689,7 @@ static ALGO_BLOCKS: [ChainBlock; 6] = [
     ChainBlock::with_subs(&ALGO_WAVE, &ALGO_OSC_SUB_PAGES),
     ChainBlock::page(&DRIVE),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::page(&FOLDER),
+    ChainBlock::with_subs(&FOLDER, &AMP_SUB_PAGES),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -689,7 +708,7 @@ static TAPE_BLOCKS: [ChainBlock; 6] = [
     ChainBlock::with_subs(&TAPE_DECK, &TAPE_SUB_PAGES),
     ChainBlock::page(&DRIVE),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::page(&FOLDER),
+    ChainBlock::with_subs(&FOLDER, &AMP_SUB_PAGES),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -708,7 +727,7 @@ static VA_BLOCKS: [ChainBlock; 5] = [
     ChainBlock::with_subs(&VA_HOME, &VA_SUB_PAGES),
     ChainBlock::page(&DRIVE),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::page(&FOLDER),
+    ChainBlock::with_subs(&FOLDER, &AMP_SUB_PAGES),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
