@@ -651,17 +651,17 @@ fn bound(sh0: &Shaped, sh1: &Shaped, w0: f32, w1: f32) -> f32 {
 /// `k0` to `k1`), over the stretch it is on it.
 #[inline(never)]
 fn bound_split(sh0: &Shaped, sh1: &Shaped, (w0, w1): (f32, f32), (k0, k1): (usize, usize)) -> f32 {
-    let dw = w1 - w0;
+    let rdw = 1.0 / (w1 - w0);
     // when the path is at WAVE `a`, held to the block (an anchor not
     // passed lands on an end)
-    let at = |a: f32| clampf((a - w0) / dw, 0.0, 1.0);
+    let at = |a: f32| clampf((a - w0) * rdw, 0.0, 1.0);
     let (t1, t2) = (at(1.0 / 3.0), at(2.0 / 3.0));
     let (p0, p1) = (sh0.peaks(), sh1.peaks());
     let w = (w0, w1);
     let (lo, hi) = (k0.min(k1), k0.max(k1));
     // the path rises through the pairs or falls; a pair it is not on adds 0
     let on = |k: usize, v: f32| if lo <= k && k <= hi { v } else { 0.0 };
-    let (s0, s1, s2) = if dw > 0.0 {
+    let (s0, s1, s2) = if w1 > w0 {
         ((0.0, t1), (t1, t2), (t2, 1.0))
     } else {
         ((t1, 1.0), (t2, t1), (0.0, t2))
