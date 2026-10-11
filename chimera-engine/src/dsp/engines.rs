@@ -359,9 +359,7 @@ impl EngineSlot {
     /// sets its frequency each block anyway.
     pub fn glide_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         match p.engine() {
-            EngineType::Modal if !(pitch_routed(mods) || p.pitch.steal == Steal::Glide) => {
-                pitch_cost(p)
-            }
+            // Billed in `cost` already: the pitch wheel may move any Modal voice.
             EngineType::Tape if wave_levels(p) && !level_billed(p, mods) => COST_WAVE_LEVEL,
             _ => Cost::ZERO,
         }
@@ -505,10 +503,9 @@ impl EngineSlot {
             EngineType::Algo => AlgoEngine::cost(&p.algo, &mods.algo_levels_routed()),
             EngineType::Modal => {
                 let mut c = ModalEngine::cost(&p.modal);
-                // A steal's glide retunes each block, as a route does.
-                if pitch_routed(mods) || p.pitch.steal == Steal::Glide {
-                    c = c + pitch_cost(p);
-                }
+                // A route, a steal's glide or the pitch wheel (#437) retunes
+                // each block: any Modal voice may be bent, so all are billed.
+                c = c + pitch_cost(p);
                 if p.modal.mode == ResonatorMode::Sympathetic && chord_routed(mods) {
                     c = c + ModalEngine::CHORD;
                 }
@@ -567,13 +564,6 @@ fn pitch_cost(p: &ParamSnapshot) -> Cost {
     } else {
         ModalEngine::PITCH
     }
-}
-
-/// A route, of any amount, into the voice's PITCH or FINE.
-fn pitch_routed(mods: &ModState) -> bool {
-    [PitchParams::PITCH, PitchParams::FINE]
-        .into_iter()
-        .any(|q| mods.routes_into(ParamAddr::new(BlockRef::Pitch, q)) != 0)
 }
 
 #[cfg(test)]

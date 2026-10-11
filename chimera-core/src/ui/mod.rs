@@ -1154,11 +1154,19 @@ impl UiState {
     /// its pages.
     fn load_sound(&mut self, part: PartId, b: Browse) {
         let cursor = b.cursor();
-        // The init entries lead the pool slots; DRUM's is not built yet.
+        // The init entries lead the pool slots; a coming-soon engine's
+        // row, or a pool Sound of one, only says so.
+        let soon = |s: browser::Soon| Line::new(s.toast());
         let from = match browser::entry_at(cursor) {
-            Some(browser::Entry::Slot(s)) => PartFrom::Slot(s),
+            Some(browser::Entry::Slot(s)) => {
+                let engine = self.project.pool().get(s).map(|x| x.engine());
+                if let Some(x) = engine.and_then(browser::Soon::of) {
+                    return self.notice(soon(x));
+                }
+                PartFrom::Slot(s)
+            }
             Some(browser::Entry::Init(e)) => PartFrom::Init(e),
-            Some(browser::Entry::Drum) => return self.notice(Line::new(browser::DRUM_TOAST)),
+            Some(browser::Entry::Soon(s)) => return self.notice(soon(s)),
             None => return,
         };
         // An empty slot has nothing to ask about.
@@ -1611,6 +1619,21 @@ impl UiState {
     #[doc(hidden)]
     pub fn legend_for_test(&self) -> Option<&'static str> {
         self.bands().map(|b| b.legend())
+    }
+
+    /// EDIT's load of `src` from the Sound rung, guard and all: how tests
+    /// reach an engine the browser no longer lists (TAPE, ADR 0132).
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn load_for_test(&mut self, src: PartSource) {
+        self.guarded_part(src, ReplaceTo::Init)
+    }
+
+    /// LIBRARY lists TAPE Sounds, for the tests of their load.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn list_tape_for_test(&mut self) {
+        self.lib.tape = true;
     }
 
     /// A replace from `src` that asks opens its prompt; whether it did.
