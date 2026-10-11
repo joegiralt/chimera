@@ -121,6 +121,7 @@ fn patches(p: &Param, quick: bool) -> Vec<(Patch, bool)> {
         return v.into_iter().map(|s| (s, true)).collect();
     }
     let v: Vec<Patch> = match (p.block, quick) {
+        (BlockRef::Va, _) => vec![Patch::VaInit],
         (BlockRef::Modal, true) => SOUNDS
             .into_iter()
             .filter(|s| matches!(s, Patch::ModalInit(_)) || *s == Patch::BusyModal)
@@ -197,7 +198,14 @@ fn run_all(cases: &[Case], t: Timing) -> Vec<Run> {
                     loop {
                         let i = next.fetch_add(1, Ordering::Relaxed);
                         let Some(c) = cases.get(i) else { break };
-                        let r = play(&mut c.bench(), Some(&c.param), c.mv, t);
+                        let mut r = play(&mut c.bench(), Some(&c.param), c.mv, t);
+                        // A DC over the limit on a window shorter than a
+                        // sub-Hz beat (VA's RING of a detuned pair) is the
+                        // beat, not an offset: judge it over whole beats.
+                        if matches!(c.mv, Move::Static(_)) && r.dc.iter().any(|&d| d > DC_MAX) {
+                            let long = play(&mut c.bench(), Some(&c.param), c.mv, BEAT_HOLD);
+                            r.dc = beat_checked(&r, &long);
+                        }
                         results.lock().unwrap()[i] = Some(r);
                     }
                 })
@@ -745,6 +753,49 @@ fn sweep_thorough() {
     );
 }
 
+/// The BEAT_HOLD re-judge cannot excuse a real offset that follows a
+/// decaying signal (a pluck's rectified tail), yet clears VA INIT's RING beat.
+#[test]
+fn beat_hold_does_not_dilute_a_decaying_offset() {
+    let ring = find(BlockRef::Va, chimera_core::dsp::va::VaParams::MODE);
+    let judged = |patch, p: Param, v, rectify: f32| {
+        let c = Case {
+            param: p,
+            patch,
+            mv: Move::Static(v),
+            wet: false,
+        };
+        let bench = || {
+            let mut b = c.bench();
+            b.rectify = rectify;
+            b
+        };
+        let short = play(&mut bench(), Some(&p), c.mv, THOROUGH);
+        let long = play(&mut bench(), Some(&p), c.mv, BEAT_HOLD);
+        println!(
+            "{}: short {:.4} long {:.4} steady {:.2} -> {:.4}",
+            c.label(),
+            short.dc[0],
+            long.dc[0],
+            long.steady[0],
+            beat_checked(&short, &long)[0]
+        );
+        let dc = beat_checked(&short, &long)[0];
+        (short, long, dc)
+    };
+    let pluck = Patch::ModalInit(ResonatorMode::String);
+    let damp = find(BlockRef::Modal, ModalParams::DAMP);
+    let (short, long, dc) = judged(pluck, damp, 0.8, 0.2);
+    assert!(short.dc[0] > DC_MAX, "the fault reads on the short window");
+    assert!(long.dc[0] < DC_MAX, "the long window alone would excuse it");
+    assert!(dc > DC_MAX, "the guard keeps the short reading: {dc}");
+    let (_, long, dc) = judged(Patch::VaInit, ring, 2.0, 0.0);
+    assert!(
+        long.steady[0] <= STEADY_MAX && dc < DC_MAX,
+        "VA RING beat clears: {dc}"
+    );
+}
+
 /// OUT moves Part 1's dry signal to its pair whole, and only there; the
 /// FX return stays on pair 1. Summed, the pairs are what OUT = P1 plays.
 #[test]
@@ -821,6 +872,16 @@ fn levels_are_safe() {
 /// ADR 0109's reference: ADR 0063's factory median (−22 LUFS) plus the
 /// master gain's +10.97 dB. ALGO INIT's C4 at velocity 100 on P1, LUFS.
 const REFERENCE_LUFS: f32 = -11.0;
+
+/// ADR 0063 at ADR 0109's gain: VA INIT, one C4 at velocity 100 on P1, LEVEL 45/128, within ±1 dB of
+/// REFERENCE_LUFS (−11.0), over 4 whole beats of the +6-cent pair (C4: 0.906 Hz, 4.415 s).
+#[test]
+fn va_init_matches_the_loudness_reference() {
+    let one = level(Patch::VaInit, &[60], 100, BPS * 4415 / 1000);
+    let d = one.lufs + one.limited_db - REFERENCE_LUFS;
+    println!("VA INIT: {d:+.2} dB ({:.2} LUFS)", one.lufs);
+    assert!(d.abs() <= 1.0, "VA INIT {d:+.2} dB off the reference");
+}
 
 /// ADR 0063, at ADR 0109's gain: ALGO INIT sits at the reference, ±0.1 dB, and BANK, BOWED and
 /// SYMP INIT, one C4 at velocity 100, within ±1 dB of it. STRING is set by
@@ -1578,6 +1639,7 @@ fn tape_params_sweep() {
                                 let mut ctx = EngineCtx {
                                     sym: &mut sym,
                                     src: &view,
+                                    part: chimera_core::project::PartId::ALL[0],
                                 };
                                 if b == 0 {
                                     slot.note_on(note, Velocity::DEFAULT, p, SR, id, &mut ctx);

@@ -3,10 +3,11 @@
 
 use chimera_hal::store::{Store, StoreError};
 
-use crate::name::ProjectName;
+use crate::name::{ProjectName, SoundName};
 use crate::project::{
-    self, CardOut, Confirmed, DeleteTarget, FreshFile, Line, LoadLink, OverwriteTarget, Pending,
-    ProjectEntry, ProjectNote, ProjectSource, SaveTo, Swap,
+    self, CardOut, Confirmed, DeleteTarget, FreshFile, LibraryPart, Line, LoadLink,
+    OverwriteTarget, PageAt, PartId, Pending, ProjectEntry, ProjectNote, ProjectSource, SaveTo,
+    Swap,
 };
 use crate::storage::{Card, CardEvent, SystemSettings, SystemSync};
 use crate::ui::UiState;
@@ -65,6 +66,12 @@ pub(crate) enum Job {
     Delete(Confirmed<DeleteTarget>),
     /// CLEAR of another project's file.
     Clear(Confirmed<OverwriteTarget>),
+    /// The library's page at `PageAt`; on the browser, the cursor lands.
+    LibraryList(PageAt),
+    /// SAVE TO LIBRARY, named: the Part's Sound to a new library file.
+    LibrarySave(PartId, SoundName),
+    /// A confirmed library load: the file, then its source or `adopt`.
+    LibraryLoad(Confirmed<LibraryPart>),
 }
 
 /// What card work borrows from the shell.
@@ -78,7 +85,11 @@ pub struct CardCx<'a, S: Store> {
 impl UiState {
     /// Card work is queued: the shell shows BUSY before `card_work`.
     pub fn card_pending(&self) -> bool {
-        self.job.is_some() || self.wants_list() || self.src.busy()
+        self.job.is_some()
+            || self.wants_list()
+            || self.src.busy()
+            || self.lib.busy()
+            || self.wants_lib_list()
     }
 
     /// LOAD or MANAGE on screen over a listing something moved.
@@ -99,7 +110,12 @@ impl UiState {
         link: &LoadLink,
         publish: impl FnOnce(Swap, &UiState) -> R,
     ) -> Option<R> {
-        self.src.work(cx.card, cx.store, &mut self.project);
+        // At most one of the two streams: each refuses to start beside the other.
+        if self.lib.busy() {
+            self.lib_step(cx.card, cx.store);
+        } else {
+            self.src.work(cx.card, cx.store, &mut self.project);
+        }
         let mut publish = Some(publish);
         let mut out = None;
         let mut next = self.job.take();
@@ -108,6 +124,9 @@ impl UiState {
         }
         if self.wants_list() {
             let _ = self.relist(cx.card, cx.store);
+        }
+        if self.wants_lib_list() {
+            self.lib_list(cx.card, cx.store, PageAt::Newest);
         }
         out
     }
@@ -121,7 +140,11 @@ impl UiState {
         publish: &mut Option<F>,
         out: &mut Option<R>,
     ) -> Option<Job> {
-        if !matches!(job, Job::List(_)) {
+        // The library is outside the projects' listing.
+        if !matches!(
+            job,
+            Job::List(_) | Job::LibraryList(_) | Job::LibrarySave(..) | Job::LibraryLoad(_)
+        ) {
             self.listing.mark_stale();
         }
         match job {
@@ -196,6 +219,15 @@ impl UiState {
                 if let Err(n) = r {
                     self.show_note(n);
                 }
+                None
+            }
+            Job::LibraryList(at) => {
+                self.lib_list(cx.card, cx.store, at);
+                None
+            }
+            Job::LibrarySave(part, name) => self.lib_save(cx.card, cx.store, part, name),
+            Job::LibraryLoad(go) => {
+                self.lib_load(cx.card, cx.store, go);
                 None
             }
         }
@@ -324,6 +356,7 @@ impl UiState {
     pub(crate) fn saw(&mut self, e: Option<CardEvent>) {
         if let Some(CardEvent::Swapped { .. }) = e {
             self.listing.swapped();
+            self.lib.forget();
         }
     }
 

@@ -374,7 +374,7 @@ flash-sd-probe:
     rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe.bin
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 
-# Coverage-guided fuzz of the Sound and project decoders, seeded with the
+# Coverage-guided fuzz of the Sound and project decoders, the library peek, seeded with the
 # v1 fixtures and NEW, so ORBIT's records are in the corpus from the start,
 # and of the TAPE importer's WAV reader, seeded with small WAVs
 # (needs nightly and cargo-fuzz)
@@ -383,7 +383,7 @@ fuzz:
     cp chimera-core/tests/fixtures/v1/*.snd chimera-core/fuzz/corpus/decode_sound/
     cp chimera-core/tests/fixtures/v1/project.prj chimera-core/fuzz/corpus/decode_project/
     cp chimera-core/tests/fixtures/v1/orbit.prj chimera-core/fuzz/seeds/decode_project/*.prj chimera-core/fuzz/corpus/decode_project/
-    cd chimera-core/fuzz && for t in decode_sound decode_project; do cargo +nightly fuzz run $t -- -max_total_time=300; done
+    cd chimera-core/fuzz && for t in decode_sound decode_project peek_library; do cargo +nightly fuzz run $t -- -max_total_time=300; done
     mkdir -p chimera-desktop/fuzz/corpus/read_wav
     cp chimera-desktop/fuzz/seeds/read_wav/*.wav chimera-desktop/fuzz/corpus/read_wav/
     cd chimera-desktop/fuzz && cargo +nightly fuzz run read_wav -- -max_total_time=300

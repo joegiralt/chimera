@@ -25,7 +25,7 @@ sweep-free = []
 fault-inject = ["usb-console", "chimera-core/fault-inject"]
 
 [dependencies]
-chimera-core = { path = "../chimera-core", default-features = false, features = ["stamp"] }
+chimera-core = { path = "../chimera-core", default-features = false, features = ["stamp", "boot-waves"] }
 chimera-hal = { path = "../chimera-hal" }
 chimera-fat = { path = "../chimera-fat" }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }

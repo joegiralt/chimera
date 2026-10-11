@@ -118,6 +118,7 @@ impl Block for TapeParams {
         &TAPE_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::DRIVE => self.drive,
@@ -128,6 +129,7 @@ impl Block for TapeParams {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::DRIVE => self.drive = v,

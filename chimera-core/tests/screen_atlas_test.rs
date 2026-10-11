@@ -137,6 +137,7 @@ impl Ctx {
             Ctx::Part(EngineType::Modal) => "modal".into(),
             // Not walked until TAPE Task 15 puts SRC and DECK on its chain.
             Ctx::Part(EngineType::Tape) => "tape".into(),
+            Ctx::Part(EngineType::Va) => "va".into(),
             Ctx::Mixer => "mixer".into(),
             Ctx::Orbit => "orbit".into(),
             Ctx::Settings(i) => leaves()[i].name(),
@@ -443,6 +444,20 @@ fn prompt(k: AskKind, ui: &mut UiState) {
             edit(ui, P1);
             part_row(ui, 3); // RELOAD FROM PROJ
             tap(ui, ButtonId::Edit);
+        }
+        AskKind::LoadLibrary => {
+            let mut s = MemStore::new(1);
+            let snd = chimera_core::preset::Sound::init(chimera_core::params::EngineType::Modal);
+            let stamp = &chimera_core::ui::about_page::THIS;
+            let mut card = chimera_core::storage::Card::new();
+            let saved =
+                chimera_core::project::save_library_sound(&mut card, &mut s, &snd, snd.name, stamp);
+            saved.out.unwrap();
+            let mut r = Rig::new(ui, s);
+            edit(r.ui, P1);
+            r.feed(Input::chord(ButtonId::Edit, ButtonId::B1));
+            r.feed(Input::turn(EncoderId::B, 1));
+            r.feed(Input::press(ButtonId::Edit));
         }
         AskKind::UpdateStale => {
             load_slot(ui, P1, S3);

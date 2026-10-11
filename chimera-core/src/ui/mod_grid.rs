@@ -610,6 +610,7 @@ pub fn block_tag(b: BlockRef) -> &'static str {
     match b {
         BlockRef::Modal => "MDL",
         BlockRef::TapeEngine => "TPE",
+        BlockRef::Va => "VA",
         BlockRef::AlgoOp(op) => ["OP1", "OP2", "OP3", "OP4", "OP5", "OP6"][op.index()],
         BlockRef::Algo => "ALG",
         BlockRef::Drive => "DRV",
@@ -684,6 +685,7 @@ pub fn block_name(b: BlockRef) -> &'static str {
     match b {
         BlockRef::Modal => "MODAL",
         BlockRef::TapeEngine => "TAPE",
+        BlockRef::Va => "VA",
         BlockRef::AlgoOp(op) => [
             "OPERATOR 1",
             "OPERATOR 2",

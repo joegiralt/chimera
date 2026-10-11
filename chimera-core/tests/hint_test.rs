@@ -290,7 +290,16 @@ fn the_browser_offers_clear_on_a_filled_slot() {
         .expect("an empty slot");
     let ink = |cursor| {
         let mut fb = screen::Fb::new();
-        browser::draw(&mut fb, ui.project(), PartId::ALL[0], cursor, 0, true, None);
+        browser::draw(
+            &mut fb,
+            ui.project(),
+            browser::BrowserView::Project,
+            PartId::ALL[0],
+            cursor,
+            0,
+            true,
+            None,
+        );
         (0..120)
             .flat_map(|x| (browser::CLEAR_Y - 7..=browser::CLEAR_Y).map(move |y| (x, y)))
             .filter(|&(x, y)| fb.at(x, y) == theme::INK)
@@ -478,8 +487,26 @@ fn hints_off_shows_no_hint() {
     );
     let (mut a, mut b) = (screen::Fb::new(), screen::Fb::new());
     let ui = ui_for("sound_browser");
-    browser::draw(&mut a, ui.project(), PartId::ALL[0], 0, 0, true, None);
-    browser::draw(&mut b, ui.project(), PartId::ALL[0], 0, 0, false, None);
+    browser::draw(
+        &mut a,
+        ui.project(),
+        browser::BrowserView::Project,
+        PartId::ALL[0],
+        0,
+        0,
+        true,
+        None,
+    );
+    browser::draw(
+        &mut b,
+        ui.project(),
+        browser::BrowserView::Project,
+        PartId::ALL[0],
+        0,
+        0,
+        false,
+        None,
+    );
     assert_ne!(a.hash(), b.hash(), "the browser's go too");
 }
 

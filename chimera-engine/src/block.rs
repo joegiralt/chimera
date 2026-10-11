@@ -407,6 +407,30 @@ impl ParamSpec {
         })
     }
 
+    /// Where shift+encoder takes `v`: the format's next snap point up
+    /// (`delta > 0`) or down, as a value. Out of line: one copy, not one
+    /// per block.
+    #[inline(never)]
+    pub fn snap_target(&self, v: f32, delta: i8) -> f32 {
+        let n = self.normalize(v);
+        let points = self.fmt.snap_points();
+        let target = if delta > 0 {
+            points
+                .iter()
+                .copied()
+                .find(|&sp| sp > n + 0.005)
+                .unwrap_or(1.0)
+        } else {
+            points
+                .iter()
+                .rev()
+                .copied()
+                .find(|&sp| sp < n - 0.005)
+                .unwrap_or(0.0)
+        };
+        self.denormalize(target)
+    }
+
     /// This spec ticking `1/n` octave a tick (`Scale::Octaves`).
     pub const fn ticks_per_octave(self, n: f32) -> Self {
         Self {
@@ -544,6 +568,10 @@ pub trait Block {
     /// `as`). Only `set` and `apply_offset` call this.
     fn write(&mut self, id: ParamId, v: f32);
 
+    /// Out of line, as `get` and `write` are in every impl: inlined, each
+    /// block's search and conversions are copied into each default method
+    /// below (the UI's), not shared.
+    #[inline(never)]
     fn spec(&self, id: ParamId) -> Option<&'static ParamSpec> {
         find_spec(self.specs(), id)
     }
@@ -587,24 +615,9 @@ pub trait Block {
 
     /// Shift+encoder: jump to the next snap point of the spec's format.
     fn snap(&mut self, id: ParamId, delta: i8) {
-        let Some(s) = self.spec(id) else { return };
-        let n = s.normalize(self.get(id));
-        let points = s.fmt.snap_points();
-        let target = if delta > 0 {
-            points
-                .iter()
-                .copied()
-                .find(|&sp| sp > n + 0.005)
-                .unwrap_or(1.0)
-        } else {
-            points
-                .iter()
-                .rev()
-                .copied()
-                .find(|&sp| sp < n - 0.005)
-                .unwrap_or(0.0)
-        };
-        self.set(id, s.denormalize(target));
+        if let Some(s) = self.spec(id) {
+            self.set(id, s.snap_target(self.get(id), delta));
+        }
     }
 }
 

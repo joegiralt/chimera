@@ -38,6 +38,7 @@ struct Fake {
     sweep_ask: Option<SweepAsk>,
     sweeps: usize,
     usb_regs: Option<UsbRegs>,
+    forgotten: usize,
 }
 
 impl Fake {
@@ -56,6 +57,7 @@ impl Fake {
             sweep_ask: None,
             sweeps: 0,
             usb_regs: None,
+            forgotten: 0,
         }
     }
 }
@@ -101,6 +103,9 @@ impl Unit for Fake {
     fn files(&mut self) -> Option<&mut Self::Files> {
         None
     }
+    fn forget_library(&mut self) {
+        self.forgotten += 1;
+    }
 }
 
 fn audio() -> AudioStats {
@@ -145,8 +150,10 @@ fn help_is_the_specs_text() {
          shot    the screen in THEME's colours; shot raw: canonical\n\
          dfu     restart into the ROM loader for just flash\n\
          sweep   the lost-cluster sweep at the next boot: restarts into it\n\
-         ls      project files on the card, sizes; ls tapes: the sources\n\
-         put     a project or source onto the card: <path> <size> <crc32>\n\
+         ls      files and sizes in PROJECTS; ls tapes, ls sounds: theirs\n\
+         put     a project, Sound or source: <path> <size> <crc32> [--over]\n\
+         rm      a library Sound's pair: /CHIMERA/SOUNDS/S#######\n\
+         get     a library Sound's file, base64: /CHIMERA/SOUNDS/S#######\n\
          OK\n"
     );
 }
@@ -765,4 +772,38 @@ fn a_stopped_sweep_toasts_at_boot() {
     assert_eq!(ui.step_toast(0), ToastStep::Idle);
     ui.note_sweep(&SweepRun::Skipped(Mark::Doubted(3)));
     assert!(matches!(ui.step_toast(0), ToastStep::Show(l) if l.as_str() == SWEEP_STOPPED));
+}
+
+/// Card verbs wait while a library load holds the card's work: no card
+/// touched, and the page kept.
+#[cfg(feature = "card-put")]
+#[test]
+fn card_verbs_answer_busy_while_a_library_load_is_pending() {
+    let mut u = Fake::new();
+    u.ui.start_pending_library_load_for_test();
+    assert!(u.ui.card_pending());
+    for line in [
+        "ls sounds",
+        "put /CHIMERA/SOUNDS/S0000002.A 10 0",
+        "rm /CHIMERA/SOUNDS/S0000001",
+        "get /CHIMERA/SOUNDS/S0000001",
+        "ls",
+        "put /CHIMERA/PROJECTS/P0000001.A 10 0",
+    ] {
+        assert_eq!(ask(&mut u, &format!("{line}\n")), "ERR busy\n", "{line}");
+    }
+    assert_eq!(u.forgotten, 0);
+    assert_eq!(ask(&mut u, "status\n").lines().last(), Some("OK"));
+}
+
+/// No card in the build: nothing reached it, so nothing is forgotten.
+#[cfg(feature = "card-put")]
+#[test]
+fn rm_without_a_card_forgets_nothing() {
+    let mut u = Fake::new();
+    assert_eq!(
+        ask(&mut u, "rm /CHIMERA/SOUNDS/S0000001\n"),
+        "ERR rm is not in this build\n"
+    );
+    assert_eq!(u.forgotten, 0);
 }

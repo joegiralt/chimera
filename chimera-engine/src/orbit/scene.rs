@@ -1159,6 +1159,7 @@ impl Block for SceneRing {
         &RING_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         let r = &self.ring;
         macro_rules! at {
@@ -1186,6 +1187,7 @@ impl Block for SceneRing {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         let r = &mut self.ring;
         macro_rules! put {
@@ -1286,6 +1288,7 @@ impl Block for ChordRing {
         &CHORD_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::KEY => index_of(&PitchClass::ALL, &self.tonic),
@@ -1296,6 +1299,7 @@ impl Block for ChordRing {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         let n = (v as u8).saturating_add(1);
         match id {
@@ -1353,6 +1357,7 @@ impl Block for Bpm {
         &TEMPO_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::BPM => Bpm::get(*self) as f32,
@@ -1360,6 +1365,7 @@ impl Block for Bpm {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         if id == Self::BPM {
             *self = Bpm::clamped(v as u16);
