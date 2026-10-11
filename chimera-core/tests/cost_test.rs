@@ -42,6 +42,8 @@ fn worst() -> AlgoParams {
 /// The Modal Sound, STRING at BODY 0.3: `COST_STRING` 330 and `BODY` 80,
 /// host estimates until the bench (Modal 2 step A, task 12), plus
 /// `CHAIN_COST` (30 since ADR 0060, 36 with ADR 0110's amp gate). Algo is priced from its patch.
+/// Each engine's default filter bills over the LP24 its term carries (VA's
+/// 2040 REV2, 15).
 #[test]
 fn voice_costs_are_the_billed_literals() {
     assert_eq!(Voice::CHAIN_COST, Cost(36));
@@ -54,7 +56,10 @@ fn voice_costs_are_the_billed_literals() {
         let p = ParamSnapshot::for_engine(e);
         assert_eq!(
             Voice::cost(&p, &mods),
-            EngineSlot::cost(&p, &mods) + Voice::CHAIN_COST + LP24 + ModRouting::BASE,
+            EngineSlot::cost(&p, &mods)
+                + Voice::CHAIN_COST
+                + p.filter.filter_cost()
+                + ModRouting::BASE,
             "{e:?}"
         );
     }
@@ -1454,12 +1459,13 @@ fn a_refused_note_on_does_not_recost() {
     assert_eq!(r.inst.costings(), before + 2, "and once the next");
 }
 
-/// ADR 0091's reserve beside the voices: the bus's 1,180 and a note-on
-/// burst's 836 (1,490 + 836 with the master tape), 171 more while ORBIT
-/// plays. Spec § 5's admission table is counted against it.
+/// ADR 0091's reserve beside the voices: the bus's 1,204, the knobs' 14
+/// (ADR 0116) and a note-on burst's 836 (1,494 + 14 + 836 with the master
+/// tape), 171 more while ORBIT plays. Spec § 5's admission table is counted
+/// against it.
 // ponytail: literal until `Instrument::RESERVED` (orbit-budget) merges.
-const RESERVED: u32 = 2_016;
-const RESERVED_TAPE: u32 = 2_326;
+const RESERVED: u32 = 2_054;
+const RESERVED_TAPE: u32 = 2_344;
 const ORBIT_COST: u32 = 171;
 
 /// A matrix with `routes` (source, destination, amount) and nothing else;
@@ -1503,7 +1509,7 @@ fn tape_bills_each_model() {
             v - RESERVED_TAPE,
         ]
     };
-    assert_eq!(rooms, [4_984, 3_817, 4_813, 4_674]);
+    assert_eq!(rooms, [4_946, 3_779, 4_775, 4_656]);
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     let on = |q| ParamAddr::new(BlockRef::TapeEngine, q);
     // Model, bill, voices with TAPE and AGE off, with both.
@@ -1552,6 +1558,77 @@ fn tape_bills_each_model() {
             }
         }
     }
+}
+
+fn va_sound(mode: chimera_core::dsp::va::VaMode) -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Va);
+    p.va.mode = mode;
+    p
+}
+
+/// Spec § Budget: each MODE bills ADR 0056's count of its worst voice, and
+/// the voices each is admitted beside the reserve on the four rooms (rev V,
+/// rev Y, rev V with ORBIT, rev V with the master tape), INIT's 2040 REV2
+/// (+15) and the chain and routing (83) on top. ADR 0040's done-when is six
+/// on each: met on rev V and rev Y in every MODE (ADR 0118: WAVE's reach
+/// and SYNC's master held under 7 kHz, points 11 and 12).
+#[test]
+fn va_bills_each_mode() {
+    use chimera_core::dsp::va::VaMode::{Bits, Mix, Ring, Sync, Xor};
+    let rooms = {
+        let v = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
+        let y = SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0;
+        [
+            v - RESERVED,
+            y - RESERVED,
+            v - RESERVED - ORBIT_COST,
+            v - RESERVED_TAPE,
+        ]
+    };
+    assert_eq!(rooms, [4_946, 3_779, 4_775, 4_656]);
+    let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
+    for (mode, bill, voices) in [
+        (Mix, 510, [8, 6, 7, 7]),
+        (Sync, 530, [7, 6, 7, 7]),
+        (Ring, 510, [8, 6, 7, 7]),
+        (Xor, 530, [7, 6, 7, 7]),
+        (Bits, 510, [8, 6, 7, 7]),
+    ] {
+        let p = va_sound(mode);
+        assert_eq!(
+            EngineSlot::cost(&p, &ModState::new()),
+            Cost(bill),
+            "{mode:?}"
+        );
+        let voice = Voice::cost(&p, &ModState::new()).0;
+        assert_eq!(voice, bill + 83 + 15, "{mode:?}");
+        assert_eq!(at(voice), voices, "{mode:?}");
+    }
+}
+
+/// A VA note holds its playing MODE's bill until the duck swaps the MODE:
+/// held in SYNC with MIX stored, it bills SYNC's extra over MIX for the
+/// duck's first block, then none.
+#[test]
+fn a_held_va_note_bills_its_playing_mode() {
+    use chimera_core::dsp::va::{COST_MIX, COST_SYNC, VaMode};
+    use chimera_core::{MidiNote, Velocity};
+    let (sync, mix) = (va_sound(VaMode::Sync), va_sound(VaMode::Mix));
+    let mods = ModState::new();
+    let mut rig = common::Rig::new(common::SR);
+    rig.note_on(
+        MidiNote::new(60).unwrap(),
+        Velocity::new(100).unwrap(),
+        &sync,
+    );
+    let mut block = [0.0; chimera_hal::BLOCK_SIZE];
+    rig.render(&mut block, &sync, &mods);
+    assert_eq!(rig.held_model_extra(&mix), Cost(COST_SYNC.0 - COST_MIX.0));
+    // MIX stored: block 0 ducks down, block 1 ducks down and swaps.
+    rig.render(&mut block, &mix, &mods);
+    assert_eq!(rig.held_model_extra(&mix), Cost(COST_SYNC.0 - COST_MIX.0));
+    rig.render(&mut block, &mix, &mods);
+    assert_eq!(rig.held_model_extra(&mix), Cost::ZERO);
 }
 
 /// Spec § 5: TRANSWAVE bills a level change's 370 more only where its pitch

@@ -53,6 +53,7 @@ impl BlockRef {
             // A block code: the registry's retired page id 34 is another
             // namespace.
             BlockRef::TapeEngine => 34,
+            BlockRef::Va => 35,
             BlockRef::PartMix(_) | BlockRef::Tempo => return None,
         })
     }
@@ -93,6 +94,7 @@ impl BlockRef {
             }
             BlockRef::Midi => "MIDI",
             BlockRef::TapeEngine => "TAPE_ENG",
+            BlockRef::Va => "VA",
             BlockRef::PartMix(_) | BlockRef::Tempo => return None,
         })
     }

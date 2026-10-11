@@ -99,6 +99,7 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
     use crate::dsp::lfo::LfoParams;
     use crate::dsp::modal::ModalParams;
     use crate::dsp::tape_engine::TapeEngineParams as T;
+    use crate::dsp::va::VaParams as V;
     use crate::params::{
         DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams,
     };
@@ -226,6 +227,30 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
                 panic!("a TAPE knob without a field")
             };
             (offset_of!(P, tape) + f, Kind::F32)
+        }
+        BlockRef::Va => {
+            let f = if id == V::WAVE1.0 {
+                offset_of!(V, wave)
+            } else if id == V::WAVE2.0 {
+                offset_of!(V, wave) + size_of::<f32>()
+            } else if id == V::AMOUNT.0 {
+                offset_of!(V, amount)
+            } else if id == V::SUB.0 {
+                offset_of!(V, sub)
+            } else if id == V::STAB.0 {
+                offset_of!(V, stability)
+            } else if id == V::FINE1.0 {
+                offset_of!(V, fine)
+            } else if id == V::FINE2.0 {
+                offset_of!(V, fine) + size_of::<f32>()
+            } else if id == V::SHAPE1.0 {
+                offset_of!(V, shape)
+            } else if id == V::SHAPE2.0 {
+                offset_of!(V, shape) + size_of::<f32>()
+            } else {
+                panic!("a VA knob without a field")
+            };
+            (offset_of!(P, va) + f, Kind::F32)
         }
         _ => panic!("a knob on a block without a read plan"),
     };

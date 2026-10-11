@@ -248,6 +248,8 @@ fn prop_param_change_changes_output() {
                 // ROOT an octave up: the note reads the rig's saw an octave
                 // down (START barely moves a loop of a periodic saw).
                 EngineType::Tape => params_b.tape.root = params_a.tape.root + 1_200.0,
+                // OSC 1 an octave up.
+                EngineType::Va => params_b.va.coarse[0] = params_a.va.coarse[0] + 12,
             },
         }
 
