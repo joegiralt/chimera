@@ -1515,7 +1515,7 @@ fn tape_bills_each_model() {
     for (model, bill, off, both) in [
         (Loop, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
         (PingPong, 490, [8, 7, 8, 8], [8, 6, 8, 8]),
-        (Scrub, 480, [8, 7, 8, 8], [8, 7, 8, 8]),
+        (Scrub, 480, [8, 7, 8, 8], [8, 6, 8, 8]),
         (Transwave, 400, [8, 8, 8, 8], [8, 8, 8, 8]),
         (Stretch, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
         (Oneshot, 230, [8, 8, 8, 8], [8, 8, 8, 8]),
@@ -1569,7 +1569,7 @@ fn va_sound(mode: chimera_core::dsp::va::VaMode) -> ParamSnapshot {
 /// the voices each is admitted beside the reserve on the four rooms (rev V,
 /// rev Y, rev V with ORBIT, rev V with the master tape), INIT's 2040 REV2
 /// (+15) and the chain and routing (83) on top. ADR 0040's done-when is six
-/// on each: met on rev V and rev Y in every MODE (ADR 0118: WAVE's reach
+/// on each: met on rev V and rev Y in every MODE, eight on rev V at 75 % (ADR 0124) (ADR 0118: WAVE's reach
 /// and SYNC's master held under 7 kHz, points 11 and 12).
 #[test]
 fn va_bills_each_mode() {
@@ -1584,14 +1584,14 @@ fn va_bills_each_mode() {
             v - RESERVED_TAPE,
         ]
     };
-    assert_eq!(rooms, [4_946, 3_779, 4_775, 4_656]);
+    assert_eq!(rooms, [5_446, 4_196, 5_275, 5_156]);
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     for (mode, bill, voices) in [
-        (Mix, 510, [8, 6, 7, 7]),
-        (Sync, 530, [7, 6, 7, 7]),
-        (Ring, 510, [8, 6, 7, 7]),
-        (Xor, 530, [7, 6, 7, 7]),
-        (Bits, 510, [8, 6, 7, 7]),
+        (Mix, 510, [8, 6, 8, 8]),
+        (Sync, 530, [8, 6, 8, 8]),
+        (Ring, 510, [8, 6, 8, 8]),
+        (Xor, 530, [8, 6, 8, 8]),
+        (Bits, 510, [8, 6, 8, 8]),
     ] {
         let p = va_sound(mode);
         assert_eq!(
