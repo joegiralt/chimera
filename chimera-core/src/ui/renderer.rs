@@ -10,6 +10,7 @@ use crate::block::find_spec;
 use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::params::AlgoOpParams;
+use crate::dsp::algo::waves::WaveId;
 use crate::dsp::modulator::{EnvType, HoldPos};
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
 use crate::part::DacPair;
@@ -342,8 +343,18 @@ impl Renderer {
                     viz::envelope_from(display, top, &widths, &heights, &viz::OP_ENV_LABELS, lit);
                 }
             }
+            VizType::OpPage(op) => {
+                let (rates, wave) = Self::op_page(f, op);
+                crate::ui::op_page::draw_band(display, rates, wave);
+            }
             _ => viz::live_output(display, f.scope),
         }
+    }
+
+    /// An OP page's operator: its stored envelope and wave.
+    fn op_page(f: &Frame, op: Op) -> (EnvRates, WaveId) {
+        let o = &f.parts[f.active_part.index()].sound.params.algo.ops[op.index()];
+        (o.rates(), WaveId::clamped(o.wave))
     }
 
     /// The active Part's machine and its TAPE params, this page's as its
@@ -493,6 +504,10 @@ impl Renderer {
                             | lit.map_or(7, |l| l as u32)
                     });
                     ([0; 6], key)
+                }
+                VizType::OpPage(op) => {
+                    let (r, w) = Self::op_page(f, op);
+                    ([0; 6], crate::ui::op_page::key(r, w))
                 }
                 _ => ([0; 6], viz::live_key(f.scope)),
             },

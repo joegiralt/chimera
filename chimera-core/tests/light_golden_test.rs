@@ -15,6 +15,8 @@ use screen::*;
 
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xe39774d6e124e6a1),
+    ("algo_op_page_3", 0x380578a757df3272),
+    ("algo_op_page_3_held", 0x4e60271ac64ddbc1),
     ("flt_clean", 0xcc4a729ff4ba5faf),
     ("settings_top", 0xf1655533215f4e4b),
     ("settings_personal_theme", 0x3a2a9ae7815335b2),

@@ -39,6 +39,8 @@ pub enum VizType {
     OrbitScenes,
     /// ALGO's AR · D1R · D1L · D2R · RR: the focused operator's envelope.
     OpEnv,
+    /// OP1–OP6: the operator's envelope, with its wave inset.
+    OpPage(Op),
     /// TAPE's SRC and DECK: the source, the machine's part of it, the heads.
     Strip,
 }

@@ -270,12 +270,14 @@ fn the_osc_node_has_every_operator_parameter() {
             let SlotBinding::Param(a) = slot.binding else {
                 panic!("{} slot {i}", def.name)
             };
-            assert_eq!(
-                a.block,
-                BlockRef::AlgoOp(Op::ALL[i]),
-                "{} slot {i}",
-                def.name
-            );
+            // A group page runs one parameter across the operators; an OP
+            // page runs its own operator's parameters.
+            let op = if sub < 13 {
+                Op::ALL[i]
+            } else {
+                Op::ALL[sub - 13]
+            };
+            assert_eq!(a.block, BlockRef::AlgoOp(op), "{} slot {i}", def.name);
             edited.push(a.param);
         }
     }
@@ -288,7 +290,8 @@ fn the_osc_node_has_every_operator_parameter() {
     assert_eq!(
         names,
         [
-            "OSC", "CRS", "FIN", "DET", "LVL", "VEL", "AR", "D1R", "D1L", "D2R", "RR", "RS", "FBK"
+            "OSC", "CRS", "FIN", "DET", "LVL", "VEL", "AR", "D1R", "D1L", "D2R", "RR", "RS", "FBK",
+            "OP1", "OP2", "OP3", "OP4", "OP5", "OP6"
         ]
     );
 }
