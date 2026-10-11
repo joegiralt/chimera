@@ -5,6 +5,7 @@
 use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use crate::block::ValFmt;
 use crate::dsp::algo::params::AlgoParams;
+use crate::dsp::chorus::{ChorusMode, ChorusParams, MODE_NAMES};
 use crate::dsp::filter::FilterKind;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::{self, ModalParams, ResonatorMode};
@@ -19,7 +20,7 @@ use crate::name::SoundName;
 use crate::orbit::RingIdx;
 use crate::orbit::clock::ClockSource;
 use crate::orbit::scene::SceneRing;
-use crate::params::{EnvParams, FilterParams, OutParams};
+use crate::params::{EnvParams, FilterParams, FolderParams, OutParams};
 use crate::preset::Sound;
 use crate::project::arena::Cost;
 use crate::project::{Absence, Pool};
@@ -73,6 +74,8 @@ pub struct SlotCtx {
     pub unpitched: bool,
     /// TAPE's SOURCE as SRC reads it.
     pub src: SourceState,
+    /// The chorus MODE the CHORUS send hints.
+    pub chorus: ChorusMode,
     /// The reverb panel REV and REV › MORE show (`reverb_panel::shown`).
     pub rev: ReverbType,
     /// HALL's SIZE sits in its plate zone: the SIZE cell reads `PLATE`.
@@ -94,6 +97,7 @@ impl SlotCtx {
         };
         Self {
             sel_op,
+            chorus: ChorusMode::from_u8(get(BlockRef::Chorus, ChorusParams::MODE) as u8),
             kind: FilterKind::from_index(get(BlockRef::Filter, FilterParams::KIND)),
             envs: EnvSlot::ALL.map(|s| {
                 let at = |id| get(BlockRef::Env(s), id);
@@ -144,6 +148,15 @@ impl SlotCtx {
         Self {
             rev: reverb_panel::shown(rev.kind),
             plate: in_plate_zone(rev),
+            ..self
+        }
+    }
+
+    /// This context under the project chorus `fx` (a Sound's params hold
+    /// no FX): the mode the CHORUS send hints.
+    pub fn on_chorus(self, fx: &ChorusParams) -> Self {
+        Self {
+            chorus: ChorusMode::from_u8(fx.mode),
             ..self
         }
     }
@@ -437,11 +450,27 @@ impl View {
     /// MIX + B*n*, which mutes any ring from anywhere in ORBIT. ORBIT's
     /// own cells give theirs through their focus. A route view's: MIX +
     /// MINUS deletes its route.
-    pub fn hint(&self) -> Hint {
+    pub fn hint(&self, ctx: &SlotCtx) -> Hint {
         if let View::Route { .. } = self {
             return crate::ui::mod_grid::DELETE;
         }
         match self.addr() {
+            Some(ParamAddr {
+                block: BlockRef::Out,
+                param,
+            }) if param == OutParams::SEND3 => REV_HINTS[ctx.rev.index()],
+            Some(ParamAddr {
+                block: BlockRef::Out,
+                param,
+            }) if param == OutParams::SEND1 => CHORUS_HINTS[ctx.chorus as usize],
+            Some(ParamAddr {
+                block: BlockRef::Folder,
+                param,
+            }) if param == FolderParams::FOLD || param == FolderParams::MIX => SYM_HINT,
+            Some(ParamAddr {
+                block: BlockRef::Out,
+                param,
+            }) if param == OutParams::VCA_VEL => SYM_HINT,
             Some(a) if matches!(a.block, BlockRef::OrbitRing(_)) && a.param == SceneRing::MUTE => {
                 MUTE_HINT
             }
@@ -449,6 +478,24 @@ impl View {
         }
     }
 }
+
+const SYM_HINT: Hint = &[Gesture("EDIT ▾", "SYM")];
+
+const REV_HINTS: [Hint; 6] = [
+    &[Gesture("REVERB ▸", ReverbType::NAMES[0])],
+    &[Gesture("REVERB ▸", ReverbType::NAMES[1])],
+    &[Gesture("REVERB ▸", ReverbType::NAMES[2])],
+    &[Gesture("REVERB ▸", ReverbType::NAMES[3])],
+    &[Gesture("REVERB ▸", ReverbType::NAMES[4])],
+    &[Gesture("REVERB ▸", ReverbType::NAMES[5])],
+];
+
+const CHORUS_HINTS: [Hint; 4] = [
+    &[Gesture("CHORUS ▸", MODE_NAMES[0])],
+    &[Gesture("CHORUS ▸", MODE_NAMES[1])],
+    &[Gesture("CHORUS ▸", MODE_NAMES[2])],
+    &[Gesture("CHORUS ▸", MODE_NAMES[3])],
+];
 
 const MUTE_HINT: Hint = &[Gesture("MIX + B1-5", "MUTES THAT RING")];
 

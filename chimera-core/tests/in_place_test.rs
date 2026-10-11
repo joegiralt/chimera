@@ -55,7 +55,7 @@ fn every_engine_and_every_effect() -> AudioShared {
     *s.parts[3].params = ParamSnapshot::for_engine(EngineType::Modal);
     s.parts[3].params.modal.mode = ResonatorMode::Sympathetic;
     for part in &mut s.parts[..4] {
-        part.mix.sends = [0.3; FX_SENDS];
+        part.params.out.sends = [0.3; FX_SENDS];
     }
     s.fx.chorus.mode = 1;
     s.fx.chorus.mix = 0.5;

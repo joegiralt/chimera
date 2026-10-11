@@ -526,7 +526,7 @@ fn tape_pages_have_no_other_gestures() {
         for def in [&TAPE_SRC, &TAPE_DECK, &TAPE_MODEL] {
             for i in 0..6 {
                 let v = view::view(def, i, &ctx);
-                assert!(v.hint() == hint::NONE, "{m:?} {} {i}", def.short);
+                assert!(v.hint(&ctx) == hint::NONE, "{m:?} {} {i}", def.short);
             }
         }
     }

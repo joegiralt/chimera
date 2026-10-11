@@ -68,7 +68,7 @@ fn stop_bound() -> usize {
 
 /// Blocks from a released chord at velocity 127 until its voices are free.
 fn longest_release(patch: Patch) -> usize {
-    let mut b = Bench::new(patch, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(patch, PartParams::default(), FxParams::OFF);
     let mut tape = Tape::default();
     for &n in &C4_CHORD {
         b.note(n, Some(127));
@@ -342,7 +342,7 @@ fn a_steal_fades_clean_on_its_pair() {
 /// block on.
 fn gate0(patch: Patch, note: u8, off: Option<usize>, hard: bool) -> Tape {
     const ON: usize = 60;
-    let mut b = Bench::new(patch, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(patch, PartParams::default(), FxParams::OFF);
     let mut t = Tape::default();
     for i in 0..ON + 80 {
         if i == ON {

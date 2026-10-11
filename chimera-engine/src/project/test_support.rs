@@ -102,6 +102,7 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
     }
     let e = p.edit_part(PartId::ALL[1]);
     e.sound.params.filter.set(FilterParams::RESONANCE, 0.6);
+    e.sound.params.out.set(OutParams::SEND2, 0.4);
     e.sound.name = SoundName::new("RENAMED").expect("a valid name");
     p.edit_part(PartId::ALL[3])
         .sound
@@ -110,7 +111,6 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
         .set(OutParams::VOLUME, 0.25);
     let mix = p.edit_part(PartId::ALL[2]).mix;
     mix.set(PartParams::PAN, -0.5);
-    mix.set(PartParams::SEND_DELAY, 0.4);
     mix.set(PartParams::LEVEL, 0.6);
     let fx = p.edit_fx();
     fx.delay.mix = 0.3;
