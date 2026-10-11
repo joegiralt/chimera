@@ -292,3 +292,11 @@ Read-only, over the console's `flash` command (raw log in (private notes)):
 - **Bank 2 is erased** at 0x08100000 and at 0x08180000. SR1 and SR2 show no error flags before or after reading it, so reading bank 2 raised no ECC faults.
 - **Both CRs are locked, with different parallelism:** CR1 has PSIZE 2 (×32), CR2 has PSIZE 3 (×64), probably left by the 2026-10-07 ROM DFU attempt. *Correction (phase 0b research):* the PSIZE limit comes from the supply voltage, not VOS. ×64 needs 1.8 V or more and the unit runs at 3.3 V (H743 datasheet DocID030538 Rev 3, Table 51), so ×64 does not explain the hang. Phase 0b's writer still sets ×32 explicitly, matching bank 1.
 - **So candidate (a), write protection, is ruled out** for the 2026-10-07 hang. What remains: ROM DFU's assumptions after a software jump at 480 MHz (clocks, voltage scaling, PSIZE), or a hardware or erase-timing fault. Phase 0b tests Chimera's own erase with explicit settings.
+
+## Phase 0b result (2026-10-11, unit on the bank2-spike build, owner at the unit, audio playing)
+
+Raw log: (private notes).
+- **Erase** of bank-2 sector 0 by Chimera's own code at PSIZE ×32: **975 ms**, EOP set, no error flags. **Audio: 0 overruns, 732 blocks rendered during the erase** (continuous), so read-while-write holds with audio running.
+- **Program** of 5 flash words (pattern plus a Thumb function at 0x08100080) in under 1 ms, read-back matches, no errors, 0 overruns.
+- **Call** of the function in bank 2 through a pointer: `f(1) = 43`, as expected. Code executes from bank 2.
+- **The 2026-10-07 hang is ROM DFU's alone.** Chimera's own writer erases and programs bank 2 cleanly at 480 MHz with audio running. Phase 1 (header and seal) and Phase 2 (the self-programmer) can build on this.
