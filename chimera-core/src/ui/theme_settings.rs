@@ -1,124 +1,26 @@
-//! System › Theme: backlight, panel gamma, accent and ground (ADR 0033).
+//! THEME as the panel shows it: the accent's and ground's colours, the
+//! backlight's PWM duty and the ILI9341's gamma tables. The values and
+//! their disk codes are the engine's (`chimera_engine::theme_settings`).
 //!
 //! The renderer keeps drawing the canonical palette (`theme::ACCENT`,
 //! `ACCENT_SOFT`, `BG`); the display shell swaps those three colours for the
 //! chosen ones as it pushes pixels out (`Palette::map`), so TEAL with BLACK 0
 //! is the identity and every screen golden stays bit-identical. BRIGHT and
 //! GAMMA are hardware: the shell turns them into PWM duty and ILI9341
-//! commands. Nothing here touches the audio thread.
-//!
-//! Stored in SYSTEM (`storage::SystemSettings`); with no card, no file or an
-//! error, boot takes the owner's pick, 70 / PUNCH / TEAL / −2.
+//! commands.
 
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
 use embedded_graphics::prelude::RgbColor;
 
-use crate::block::{Block, DiskCode, ParamId, ParamSpec, ValFmt, apply_code};
+pub use chimera_engine::theme_settings::*;
+
 use crate::ui::theme;
 
-/// BRIGHT's and BLACK's values, by step index (see `DiskCode`).
-const BRIGHT_IDENTS: [&str; 19] = [
-    "10", "15", "20", "25", "30", "35", "40", "45", "50", "55", "60", "65", "70", "75", "80", "85",
-    "90", "95", "100",
-];
-const BLACK_IDENTS: [&str; 7] = ["-2", "-1", "0", "+1", "+2", "+3", "+4"];
-
-/// Backlight duty, percent: 10..=100 in steps of 5.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Bright(u8);
-
-impl Bright {
-    pub const MIN: u8 = 10;
-    pub const MAX: u8 = 100;
-    pub const STEP: u8 = 5;
-    pub const DEFAULT: Bright = Bright(70);
-
-    /// `pct` clamped to 10..=100 and rounded to the nearest step.
-    pub const fn new(pct: u8) -> Self {
-        let p = if pct < Self::MIN {
-            Self::MIN
-        } else if pct > Self::MAX {
-            Self::MAX
-        } else {
-            pct
-        };
-        Bright((p + Self::STEP / 2) / Self::STEP * Self::STEP)
-    }
-
-    pub const fn percent(self) -> u8 {
-        self.0
-    }
-
-    /// PWM compare value for a timer whose full scale is `max_duty`. In u32:
-    /// `max_duty * pct` overflows u16 (TIM1 at 20 kHz counts to 12000).
-    pub const fn duty(self, max_duty: u16) -> u16 {
-        (max_duty as u32 * self.0 as u32 / 100) as u16
-    }
-
-    /// Step index 0..=18 (the param's value).
-    const fn index(self) -> u8 {
-        (self.0 - Self::MIN) / Self::STEP
-    }
-
-    const fn from_index(i: u8) -> Self {
-        Self::new(Self::MIN.saturating_add(i.saturating_mul(Self::STEP)))
-    }
-}
-
-/// The code is the percent itself, 10..=100 in steps of 5.
-impl DiskCode for Bright {
-    fn disk_code(self) -> u8 {
-        self.0
-    }
-
-    fn disk_ident(self) -> &'static str {
-        BRIGHT_IDENTS[self.index() as usize]
-    }
-
-    fn from_disk_code(c: u8) -> Option<Self> {
-        let on_step =
-            (Self::MIN..=Self::MAX).contains(&c) && (c - Self::MIN).is_multiple_of(Self::STEP);
-        on_step.then_some(Bright(c))
-    }
-}
-
-/// Panel gamma: which 0xE0/0xE1 tables the ILI9341 gets.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Gamma {
-    /// The panel's power-on tables: the look the PreenFM3 init leaves.
-    Panel,
-    /// Halfway between PANEL and PUNCH, field by field.
-    Soft,
-    /// Adafruit's tables: deeper blacks, more contrast, a muted teal.
-    Punch,
-}
-
-impl DiskCode for Gamma {
-    fn disk_code(self) -> u8 {
-        match self {
-            Gamma::Panel => 0,
-            Gamma::Soft => 1,
-            Gamma::Punch => 2,
-        }
-    }
-
-    fn disk_ident(self) -> &'static str {
-        match self {
-            Gamma::Panel => "PANEL",
-            Gamma::Soft => "SOFT",
-            Gamma::Punch => "PUNCH",
-        }
-    }
-
-    fn from_disk_code(c: u8) -> Option<Self> {
-        match c {
-            0 => Some(Gamma::Panel),
-            1 => Some(Gamma::Soft),
-            2 => Some(Gamma::Punch),
-            _ => None,
-        }
-    }
+/// PWM compare value for BRIGHT on a timer whose full scale is `max_duty`.
+/// In u32: `max_duty * pct` overflows u16 (TIM1 at 20 kHz counts to 12000).
+pub const fn duty(b: Bright, max_duty: u16) -> u16 {
+    (max_duty as u32 * b.percent() as u32 / 100) as u16
 }
 
 /// Positive (0xE0) and negative (0xE1) gamma correction, 15 bytes each.
@@ -174,98 +76,42 @@ pub const fn midpoint(a: &[u8; 15], b: &[u8; 15]) -> [u8; 15] {
     out
 }
 
-impl Gamma {
-    pub const ALL: [Gamma; 3] = [Gamma::Panel, Gamma::Soft, Gamma::Punch];
-
-    pub const fn tables(self) -> &'static GammaTables {
-        match self {
-            Gamma::Panel => &PANEL_TABLES,
-            Gamma::Soft => &SOFT_TABLES,
-            Gamma::Punch => &PUNCH_TABLES,
-        }
-    }
-}
-
-/// The one accent colour.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Accent {
-    Teal,
-    Amber,
-    Rose,
-    Lime,
-    Ice,
-}
-
-impl DiskCode for Accent {
-    fn disk_code(self) -> u8 {
-        match self {
-            Accent::Teal => 0,
-            Accent::Amber => 1,
-            Accent::Rose => 2,
-            Accent::Lime => 3,
-            Accent::Ice => 4,
-        }
-    }
-
-    fn disk_ident(self) -> &'static str {
-        match self {
-            Accent::Teal => "TEAL",
-            Accent::Amber => "AMBER",
-            Accent::Rose => "ROSE",
-            Accent::Lime => "LIME",
-            Accent::Ice => "ICE",
-        }
-    }
-
-    fn from_disk_code(c: u8) -> Option<Self> {
-        match c {
-            0 => Some(Accent::Teal),
-            1 => Some(Accent::Amber),
-            2 => Some(Accent::Rose),
-            3 => Some(Accent::Lime),
-            4 => Some(Accent::Ice),
-            _ => None,
-        }
+/// GAMMA's 0xE0/0xE1 tables.
+pub const fn tables(g: Gamma) -> &'static GammaTables {
+    match g {
+        Gamma::Panel => &PANEL_TABLES,
+        Gamma::Soft => &SOFT_TABLES,
+        Gamma::Punch => &PUNCH_TABLES,
     }
 }
 
 /// The ground `#0a0b0d` the soft accent mixes over.
 const GROUND_HEX: u32 = 0x0a0b0d;
 
-impl Accent {
-    pub const ALL: [Accent; 5] = [
-        Accent::Teal,
-        Accent::Amber,
-        Accent::Rose,
-        Accent::Lime,
-        Accent::Ice,
-    ];
-
-    /// `#rrggbb`: mid-light and moderately saturated like the teal, so each
-    /// reads on the dark ground without blooming on the TN panel.
-    pub const fn hex(self) -> u32 {
-        match self {
-            Accent::Teal => 0x7fd4c8,
-            Accent::Amber => 0xe8b45c,
-            Accent::Rose => 0xe89aae,
-            Accent::Lime => 0xb4d86a,
-            Accent::Ice => 0xa4c4f0,
-        }
+/// The accent's `#rrggbb`: mid-light and moderately saturated like the
+/// teal, so each reads on the dark ground without blooming on the TN panel.
+pub const fn accent_hex(a: Accent) -> u32 {
+    match a {
+        Accent::Teal => 0x7fd4c8,
+        Accent::Amber => 0xe8b45c,
+        Accent::Rose => 0xe89aae,
+        Accent::Lime => 0xb4d86a,
+        Accent::Ice => 0xa4c4f0,
     }
+}
 
-    pub const fn color(self) -> Rgb565 {
-        rgb565(self.hex())
-    }
+pub const fn accent_color(a: Accent) -> Rgb565 {
+    rgb565(accent_hex(a))
+}
 
-    /// The accent at 12 % over the ground: fill under a viz line.
-    pub fn soft(self) -> Rgb565 {
-        let (a, g) = (self.hex(), GROUND_HEX);
-        let mix = |s: u32| {
-            let (a, g) = ((a >> s) & 0xFF, (g >> s) & 0xFF);
-            (a * 12 + g * 88 + 50) / 100
-        };
-        rgb565(mix(16) << 16 | mix(8) << 8 | mix(0))
-    }
+/// The accent at 12 % over the ground: fill under a viz line.
+pub fn accent_soft(a: Accent) -> Rgb565 {
+    let (a, g) = (accent_hex(a), GROUND_HEX);
+    let mix = |s: u32| {
+        let (a, g) = ((a >> s) & 0xFF, (g >> s) & 0xFF);
+        (a * 12 + g * 88 + 50) / 100
+    };
+    rgb565(mix(16) << 16 | mix(8) << 8 | mix(0))
 }
 
 /// `#rrggbb` to RGB565 by truncation, as the palette consts were made.
@@ -277,96 +123,145 @@ pub const fn rgb565(hex: u32) -> Rgb565 {
     )
 }
 
-/// Ground lift in RGB565 levels, −2..=4: green (6-bit) moves one level per
-/// step, red and blue follow at half that, so the ground stays neutral and
-/// every step differs (−2 is pure black; +4 is `#181818`, still well below
-/// FAINT).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Black(i8);
-
-impl Black {
-    pub const MIN: i8 = -2;
-    pub const MAX: i8 = 4;
-    pub const DEFAULT: Black = Black(-2);
-    /// The renderer's own ground.
-    pub const ZERO: Black = Black(0);
-
-    pub const fn new(v: i8) -> Self {
-        Black(if v < Self::MIN {
-            Self::MIN
-        } else if v > Self::MAX {
-            Self::MAX
-        } else {
-            v
-        })
-    }
-
-    pub const fn get(self) -> i8 {
-        self.0
-    }
-
-    /// The ground at this lift; 0 is `theme::BG` (1, 2, 1).
-    pub const fn ground(self) -> Rgb565 {
-        let g = (2 + self.0) as u8;
-        Rgb565::new(g / 2, g, g / 2)
-    }
+/// The ground at BLACK's lift; 0 is `theme::BG` (1, 2, 1).
+pub const fn ground(b: Black) -> Rgb565 {
+    let g = (2 + b.get()) as u8;
+    Rgb565::new(g / 2, g, g / 2)
 }
 
-/// The code is the lift itself as a two's-complement byte, −2..=4.
-impl DiskCode for Black {
-    fn disk_code(self) -> u8 {
-        self.0 as u8
-    }
+/// Contrast the light-mode accent, WARN and ALERT must keep against the
+/// ground: WCAG's 3:1 for UI glyphs, with a margin (x10) because the check
+/// uses gamma 2.0, which reads a dark colour lighter than sRGB does.
+const LIGHT_CONTRAST_X10: u32 = 32;
 
-    fn disk_ident(self) -> &'static str {
-        BLACK_IDENTS[(self.0 - Self::MIN) as usize]
-    }
+/// The lightest ground's weakest case: BLACK +4 in light mode, `#e7e7e7`
+/// (28, 57, 28 in RGB565). The light colours are checked against it, so
+/// they hold on every BLACK; a test pins it to `ground_light`.
+const LIGHT_FLOOR: u32 = 231;
 
-    fn from_disk_code(c: u8) -> Option<Self> {
-        let v = c as i8;
-        (Self::MIN..=Self::MAX).contains(&v).then_some(Black(v))
-    }
+/// Gamma-2 luminance, 0..=65025 (white).
+const fn luma(r: u32, g: u32, b: u32) -> u32 {
+    (2126 * r * r + 7152 * g * g + 722 * b * b) / 10_000
 }
 
-/// Everything System › Theme sets.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ThemeSettings {
-    pub bright: Bright,
-    pub gamma: Gamma,
-    pub accent: Accent,
-    pub black: Black,
-}
-
-impl Default for ThemeSettings {
-    fn default() -> Self {
-        Self::DEFAULT
+/// `hex` scaled toward black, in 1/128ths, until it holds
+/// `LIGHT_CONTRAST_X10` against `LIGHT_FLOOR`; unchanged if it already does.
+const fn darken(hex: u32) -> u32 {
+    const K: u32 = 3251; // 0.05 of white's luminance
+    let (r, g, b) = (hex >> 16 & 0xFF, hex >> 8 & 0xFF, hex & 0xFF);
+    let lb = luma(LIGHT_FLOOR, LIGHT_FLOOR, LIGHT_FLOOR) + K;
+    let mut s = 256;
+    while s > 0
+        && lb * 10 < LIGHT_CONTRAST_X10 * (luma((r * s) >> 8, (g * s) >> 8, (b * s) >> 8) + K)
+    {
+        s -= 2;
     }
+    ((r * s) >> 8) << 16 | ((g * s) >> 8) << 8 | ((b * s) >> 8)
 }
 
-/// The three canonical colours a theme replaces, in the display shell.
+/// 12 % of `hex` over white: the fill under a viz line, light mode (BLACK's
+/// few levels do not show in it).
+const fn mix12(c: u32) -> u32 {
+    (c * 12 + 255 * 88 + 50) / 100
+}
+
+const fn soft_over_white(hex: u32) -> u32 {
+    mix12(hex >> 16 & 0xFF) << 16 | mix12(hex >> 8 & 0xFF) << 8 | mix12(hex & 0xFF)
+}
+
+const LIGHT_HEX: [u32; 5] = [
+    darken(accent_hex(Accent::Teal)),
+    darken(accent_hex(Accent::Amber)),
+    darken(accent_hex(Accent::Rose)),
+    darken(accent_hex(Accent::Lime)),
+    darken(accent_hex(Accent::Ice)),
+];
+
+/// The five accents in light mode: each pick, darkened only as far as it
+/// takes to hold 3:1, computed at compile time, and the soft fill.
+static ACCENTS_LIGHT: [Rgb565; 5] = [
+    rgb565(LIGHT_HEX[0]),
+    rgb565(LIGHT_HEX[1]),
+    rgb565(LIGHT_HEX[2]),
+    rgb565(LIGHT_HEX[3]),
+    rgb565(LIGHT_HEX[4]),
+];
+static SOFTS_LIGHT: [Rgb565; 5] = [
+    rgb565(soft_over_white(LIGHT_HEX[0])),
+    rgb565(soft_over_white(LIGHT_HEX[1])),
+    rgb565(soft_over_white(LIGHT_HEX[2])),
+    rgb565(soft_over_white(LIGHT_HEX[3])),
+    rgb565(soft_over_white(LIGHT_HEX[4])),
+];
+
+/// WARN (`#f88000`) and ALERT (`#f80000`) in light mode, by the same rule.
+pub const WARN_LIGHT: Rgb565 = rgb565(darken(0xf88000));
+pub const ALERT_LIGHT: Rgb565 = rgb565(darken(0xf80000));
+
+/// INVERT's ground: the dark ground at the same BLACK, bit-flipped. BLACK
+/// −2 is white; each step takes a little more off it.
+pub fn ground_light(b: Black) -> Rgb565 {
+    from_raw(!raw(ground(b)))
+}
+
+/// The accent in light mode.
+pub fn accent_light(a: Accent) -> Rgb565 {
+    ACCENTS_LIGHT[a as usize]
+}
+
+/// The colours a theme replaces, in the display shell. Dark mode swaps
+/// three canonical colours; light mode (`invert`) flips every other colour's
+/// luminance and swaps the signal colours too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Palette {
     pub accent: Rgb565,
     pub accent_soft: Rgb565,
     pub bg: Rgb565,
+    pub invert: bool,
 }
 
 impl Palette {
-    /// TEAL, BLACK 0: maps every colour to itself.
+    /// TEAL, BLACK 0, dark: maps every colour to itself.
     pub const IDENTITY: Palette = Palette {
         accent: theme::ACCENT,
         accent_soft: theme::ACCENT_SOFT,
         bg: theme::BG,
+        invert: false,
     };
 
     /// The colour to show for a canonical palette colour `c`.
     pub fn map(&self, c: Rgb565) -> Rgb565 {
-        RawU16::new(self.map_raw(RawU16::from(c).into_inner())).into()
+        from_raw(self.map_raw(raw(c)))
     }
 
-    /// `map` on a raw framebuffer pixel.
-    #[inline]
+    /// `map` on one raw framebuffer pixel (tests, the desktop). Flushes use
+    /// `map_into`, which branches on INVERT once per call, not per pixel.
+    #[inline(never)]
     pub fn map_raw(&self, px: u16) -> u16 {
+        if self.invert {
+            self.light_raw(px)
+        } else {
+            self.dark_raw(px)
+        }
+    }
+
+    /// `src` through the palette as big-endian bytes into `dst` (two a pixel).
+    /// INVERT off costs the three compares it always did.
+    pub fn map_into(&self, src: &[u16], dst: &mut [u8]) {
+        let put = |d: &mut [u8; 2], v: u16| *d = v.to_be_bytes();
+        if self.invert {
+            for (d, &p) in dst.as_chunks_mut::<2>().0.iter_mut().zip(src) {
+                put(d, self.light_raw(p));
+            }
+        } else {
+            for (d, &p) in dst.as_chunks_mut::<2>().0.iter_mut().zip(src) {
+                put(d, self.dark_raw(p));
+            }
+        }
+    }
+
+    #[inline]
+    fn dark_raw(&self, px: u16) -> u16 {
         if px == raw(theme::ACCENT) {
             raw(self.accent)
         } else if px == raw(theme::ACCENT_SOFT) {
@@ -377,6 +272,24 @@ impl Palette {
             px
         }
     }
+
+    /// Light mode's `map_raw`: every colour but the swapped five is flipped.
+    #[inline]
+    fn light_raw(&self, px: u16) -> u16 {
+        if px == raw(theme::BG) {
+            raw(self.bg)
+        } else if px == raw(theme::ACCENT) {
+            raw(self.accent)
+        } else if px == raw(theme::ACCENT_SOFT) {
+            raw(self.accent_soft)
+        } else if px == raw(theme::WARN) {
+            raw(WARN_LIGHT)
+        } else if px == raw(theme::ALERT) {
+            raw(ALERT_LIGHT)
+        } else {
+            !px
+        }
+    }
 }
 
 #[inline]
@@ -384,117 +297,46 @@ fn raw(c: Rgb565) -> u16 {
     RawU16::from(c).into_inner()
 }
 
-impl ThemeSettings {
-    /// Boot state without a SYSTEM file: the owner's pick, 70 %, PUNCH, TEAL, −2.
-    pub const DEFAULT: ThemeSettings = ThemeSettings {
-        bright: Bright::DEFAULT,
-        gamma: Gamma::Punch,
-        accent: Accent::Teal,
-        black: Black::DEFAULT,
-    };
+#[inline]
+fn from_raw(px: u16) -> Rgb565 {
+    RawU16::new(px).into()
+}
 
-    /// TEAL at ground 0: the palette the renderer draws, unchanged.
-    pub const NEUTRAL: ThemeSettings = ThemeSettings {
-        black: Black::ZERO,
-        ..ThemeSettings::DEFAULT
-    };
-
-    pub const BRIGHT: ParamId = ParamId(0);
-    pub const GAMMA: ParamId = ParamId(1);
-    pub const ACCENT: ParamId = ParamId(2);
-    pub const BLACK: ParamId = ParamId(3);
-
-    /// The colours the display shows for ACCENT, ACCENT_SOFT and BG. The soft
-    /// accent rides the ground: it moves with BLACK by the ground's own step.
-    pub fn palette(&self) -> Palette {
-        let (g0, g) = (Black::ZERO.ground(), self.black.ground());
-        let s = self.accent.soft();
-        let ch = |v: u8, d0: u8, d: u8, max: i16| (v as i16 + d as i16 - d0 as i16).clamp(0, max);
-        Palette {
-            accent: self.accent.color(),
-            accent_soft: Rgb565::new(
-                ch(s.r(), g0.r(), g.r(), 31) as u8,
-                ch(s.g(), g0.g(), g.g(), 63) as u8,
-                ch(s.b(), g0.b(), g.b(), 31) as u8,
-            ),
-            bg: g,
-        }
+/// The colours the display shows for ACCENT, ACCENT_SOFT and BG (and, in
+/// light mode, WARN and ALERT). The soft accent rides the ground: in dark
+/// mode it moves with BLACK by the ground's own step.
+#[inline(never)]
+pub fn palette(t: &ThemeSettings) -> Palette {
+    if t.invert {
+        let bg = ground_light(t.black);
+        let accent = accent_light(t.accent);
+        return Palette {
+            accent,
+            accent_soft: SOFTS_LIGHT[t.accent as usize],
+            bg,
+            invert: true,
+        };
+    }
+    let (g0, g) = (ground(Black::ZERO), ground(t.black));
+    let s = accent_soft(t.accent);
+    let ch = |v: u8, d0: u8, d: u8, max: i16| (v as i16 + d as i16 - d0 as i16).clamp(0, max);
+    Palette {
+        accent: accent_color(t.accent),
+        accent_soft: Rgb565::new(
+            ch(s.r(), g0.r(), g.r(), 31) as u8,
+            ch(s.g(), g0.g(), g.g(), 63) as u8,
+            ch(s.b(), g0.b(), g.b(), 31) as u8,
+        ),
+        bg: g,
+        invert: false,
     }
 }
 
-const BRIGHT_NAMES: [&str; 19] = [
-    "10", "15", "20", "25", "30", "35", "40", "45", "50", "55", "60", "65", "70", "75", "80", "85",
-    "90", "95", "100",
-];
-const GAMMA_NAMES: [&str; 3] = ["PANEL", "SOFT", "PUNCH"];
-const ACCENT_NAMES: [&str; 5] = ["TEAL", "AMBER", "ROSE", "LIME", "ICE"];
-const BLACK_NAMES: [&str; 7] = ["-2", "-1", "0", "+1", "+2", "+3", "+4"];
-
-const _: () = assert!(BRIGHT_IDENTS.len() == THEME_SPECS[0].max as usize + 1);
-const _: () = assert!(BLACK_IDENTS.len() == THEME_SPECS[3].max as usize + 1);
-
-/// Choices by index: BRIGHT 0..=18 (10..100 %), BLACK 0..=6 (−2..+4). The
-/// defaults are the owner's pick: 70, PUNCH, TEAL, −2.
-pub static THEME_SPECS: [ParamSpec; 4] = [
-    ParamSpec::choice(0, "BRIGHT", ValFmt::Names(&BRIGHT_NAMES), 18.0, 12.0).ident("BRIGHT"),
-    ParamSpec::choice(1, "GAMMA", ValFmt::Names(&GAMMA_NAMES), 2.0, 2.0).ident("GAMMA"),
-    ParamSpec::choice(2, "ACCENT", ValFmt::Names(&ACCENT_NAMES), 4.0, 0.0).ident("ACCENT"),
-    ParamSpec::choice(3, "BLACK", ValFmt::Names(&BLACK_NAMES), 6.0, 0.0).ident("BLACK"),
-];
-
-impl Block for ThemeSettings {
-    fn specs(&self) -> &'static [ParamSpec] {
-        &THEME_SPECS
-    }
-
-    fn get(&self, id: ParamId) -> f32 {
-        match id {
-            Self::BRIGHT => self.bright.index() as f32,
-            Self::GAMMA => self.gamma as u8 as f32,
-            Self::ACCENT => self.accent as u8 as f32,
-            Self::BLACK => (self.black.0 - Black::MIN) as f32,
-            _ => 0.0,
-        }
-    }
-
-    fn write(&mut self, id: ParamId, v: f32) {
-        let i = v as u8;
-        match id {
-            Self::BRIGHT => self.bright = Bright::from_index(i),
-            Self::GAMMA => self.gamma = Gamma::ALL[(i as usize).min(Gamma::ALL.len() - 1)],
-            Self::ACCENT => self.accent = Accent::ALL[(i as usize).min(Accent::ALL.len() - 1)],
-            Self::BLACK => self.black = Black::new(Black::MIN.saturating_add(i.min(127) as i8)),
-            _ => {}
-        }
-    }
-
-    fn enum_code(&self, id: ParamId) -> Option<u8> {
-        match id {
-            Self::BRIGHT => Some(self.bright.disk_code()),
-            Self::GAMMA => Some(self.gamma.disk_code()),
-            Self::ACCENT => Some(self.accent.disk_code()),
-            Self::BLACK => Some(self.black.disk_code()),
-            _ => None,
-        }
-    }
-
-    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
-        match id {
-            Self::BRIGHT => Some(self.bright.disk_ident()),
-            Self::GAMMA => Some(self.gamma.disk_ident()),
-            Self::ACCENT => Some(self.accent.disk_ident()),
-            Self::BLACK => Some(self.black.disk_ident()),
-            _ => None,
-        }
-    }
-
-    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
-        match id {
-            Self::BRIGHT => apply_code(Bright::from_disk_code(code), |b| self.bright = b),
-            Self::GAMMA => apply_code(Gamma::from_disk_code(code), |g| self.gamma = g),
-            Self::ACCENT => apply_code(Accent::from_disk_code(code), |a| self.accent = a),
-            Self::BLACK => apply_code(Black::from_disk_code(code), |b| self.black = b),
-            _ => false,
-        }
-    }
+/// The palette for the boot splash: `t` with light mode off, so the Yellow
+/// Sign stays yellow with a dark ink (ADR 0126).
+pub fn splash_palette(t: &ThemeSettings) -> Palette {
+    palette(&ThemeSettings {
+        invert: false,
+        ..*t
+    })
 }

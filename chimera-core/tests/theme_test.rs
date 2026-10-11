@@ -2,12 +2,14 @@
 
 mod screen;
 
-use chimera_core::addr::{BlockRef, Blocks};
+use chimera_core::addr::{BlockRead, BlockRef};
 use chimera_core::block::Block;
+use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::SYS_THEME;
 use chimera_core::ui::theme;
 use chimera_core::ui::theme_settings::{
-    Accent, Black, Bright, Gamma, Palette, ThemeSettings, midpoint,
+    Accent, Black, Bright, Gamma, Palette, ThemeSettings, accent_color, accent_soft, duty, ground,
+    midpoint, palette, tables,
 };
 use chimera_hal::{ButtonId, EncoderId};
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
@@ -32,9 +34,9 @@ fn bright_clamps_and_steps_by_five() {
 
 #[test]
 fn bright_duty_does_not_overflow() {
-    assert_eq!(Bright::DEFAULT.duty(12_000), 8_400);
-    assert_eq!(Bright::new(100).duty(u16::MAX), u16::MAX);
-    assert_eq!(Bright::new(10).duty(12_000), 1_200);
+    assert_eq!(duty(Bright::DEFAULT, 12_000), 8_400);
+    assert_eq!(duty(Bright::new(100), u16::MAX), u16::MAX);
+    assert_eq!(duty(Bright::new(10), 12_000), 1_200);
 }
 
 #[test]
@@ -80,14 +82,14 @@ fn boot_defaults() {
 fn gamma_tables_are_the_right_bytes() {
     // ILI9341 datasheet V1.11 E0h/E1h reset defaults.
     assert_eq!(
-        Gamma::Panel.tables().positive,
+        tables(Gamma::Panel).positive,
         [
             0x08, 0x0E, 0x12, 0x05, 0x03, 0x09, 0x47, 0x86, 0x2B, 0x0B, 0x04, 0x00, 0x00, 0x00,
             0x00
         ]
     );
     assert_eq!(
-        Gamma::Panel.tables().negative,
+        tables(Gamma::Panel).negative,
         [
             0x08, 0x1A, 0x20, 0x07, 0x0E, 0x05, 0x3A, 0x8A, 0x40, 0x04, 0x18, 0x0F, 0x3F, 0x3F,
             0x0F
@@ -95,28 +97,28 @@ fn gamma_tables_are_the_right_bytes() {
     );
     // Adafruit's, as commit 7293a02 sent them.
     assert_eq!(
-        Gamma::Punch.tables().positive,
+        tables(Gamma::Punch).positive,
         [
             0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E, 0xF1, 0x37, 0x07, 0x10, 0x03, 0x0E, 0x09,
             0x00
         ]
     );
     assert_eq!(
-        Gamma::Punch.tables().negative,
+        tables(Gamma::Punch).negative,
         [
             0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31, 0xC1, 0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36,
             0x0F
         ]
     );
     assert_eq!(
-        Gamma::Soft.tables().positive,
+        tables(Gamma::Soft).positive,
         [
             0x0B, 0x1F, 0x1E, 0x08, 0x08, 0x08, 0x4A, 0xB3, 0x31, 0x09, 0x0A, 0x01, 0x07, 0x04,
             0x00
         ]
     );
     assert_eq!(
-        Gamma::Soft.tables().negative,
+        tables(Gamma::Soft).negative,
         [
             0x04, 0x14, 0x1A, 0x05, 0x0F, 0x06, 0x35, 0xA5, 0x44, 0x06, 0x13, 0x0D, 0x38, 0x3A,
             0x0F
@@ -140,10 +142,10 @@ fn soft_averages_fields_not_bytes() {
 
 #[test]
 fn teal_and_black_zero_are_the_canonical_palette() {
-    assert_eq!(Accent::Teal.color(), theme::ACCENT);
-    assert_eq!(Accent::Teal.soft(), theme::ACCENT_SOFT);
-    assert_eq!(Black::ZERO.ground(), theme::BG);
-    assert_eq!(ThemeSettings::NEUTRAL.palette(), Palette::IDENTITY);
+    assert_eq!(accent_color(Accent::Teal), theme::ACCENT);
+    assert_eq!(accent_soft(Accent::Teal), theme::ACCENT_SOFT);
+    assert_eq!(ground(Black::ZERO), theme::BG);
+    assert_eq!(palette(&ThemeSettings::NEUTRAL), Palette::IDENTITY);
 }
 
 #[test]
@@ -160,22 +162,22 @@ fn accents_are_distinct_from_each_other_and_the_greys() {
     ];
     for (i, a) in Accent::ALL.iter().enumerate() {
         for b in &Accent::ALL[..i] {
-            assert_ne!(a.color(), b.color(), "{a:?} {b:?}");
+            assert_ne!(accent_color(*a), accent_color(*b), "{a:?} {b:?}");
         }
-        assert!(!others.contains(&a.color()), "{a:?}");
+        assert!(!others.contains(&accent_color(*a)), "{a:?}");
     }
 }
 
 #[test]
 fn black_steps_are_distinct_and_below_faint() {
     let grounds: Vec<Rgb565> = (Black::MIN..=Black::MAX)
-        .map(|k| Black::new(k).ground())
+        .map(|k| ground(Black::new(k)))
         .collect();
     for (i, g) in grounds.iter().enumerate() {
         assert!(!grounds[..i].contains(g), "{g:?}");
         assert!(g.g() < theme::FAINT.g(), "{g:?}");
     }
-    assert_eq!(Black::new(-2).ground(), Rgb565::new(0, 0, 0));
+    assert_eq!(ground(Black::new(-2)), Rgb565::new(0, 0, 0));
 }
 
 fn mapped(fb: &Fb, p: &Palette) -> Vec<u16> {
@@ -183,9 +185,11 @@ fn mapped(fb: &Fb, p: &Palette) -> Vec<u16> {
 }
 
 /// TEAL, BLACK 0 through the display's palette changes no pixel of any golden.
+/// The goldens are recorded with ORBIT built.
+#[cfg(feature = "orbit")]
 #[test]
 fn default_theme_leaves_every_golden_bit_identical() {
-    let p = ThemeSettings::NEUTRAL.palette();
+    let p = palette(&ThemeSettings::NEUTRAL);
     for (name, _) in CASES {
         let fb = render(name);
         assert_eq!(mapped(&fb, &p), fb.px, "{name}");
@@ -207,12 +211,12 @@ fn each_accent_recolours_only_accent_pixels() {
             accent: *accent,
             ..ThemeSettings::NEUTRAL
         };
-        let out = mapped(&fb, &t.palette());
+        let out = mapped(&fb, &palette(&t));
         for (&before, &after) in fb.px.iter().zip(&out) {
             if before == a {
-                assert_eq!(after, raw(accent.color()), "{accent:?}");
+                assert_eq!(after, raw(accent_color(*accent)), "{accent:?}");
             } else if before == s {
-                assert_eq!(after, raw(accent.soft()), "{accent:?}");
+                assert_eq!(after, raw(accent_soft(*accent)), "{accent:?}");
                 assert_ne!(after, s, "{accent:?}");
             } else {
                 assert_eq!(after, before, "{accent:?}");
@@ -231,10 +235,10 @@ fn each_black_step_moves_only_the_ground() {
             black: Black::new(k),
             ..ThemeSettings::DEFAULT
         };
-        let out = mapped(&fb, &t.palette());
+        let out = mapped(&fb, &palette(&t));
         for (&before, &after) in fb.px.iter().zip(&out) {
             if before == bg {
-                assert_eq!(after, raw(Black::new(k).ground()), "{k}");
+                assert_eq!(after, raw(ground(Black::new(k))), "{k}");
                 assert_ne!(after, bg, "{k}");
             } else if before != s {
                 assert_eq!(after, before, "{k}");
@@ -243,14 +247,12 @@ fn each_black_step_moves_only_the_ground() {
     }
 }
 
-/// MENU, PLUS ×2 reaches THEME; its four encoders edit the UI's settings.
+/// SETTINGS › PERSONALIZE › THEME; its four encoders edit the UI's settings.
 #[test]
 fn theme_page_is_reachable_and_edits_the_settings() {
     let mut ui = chimera_core::ui::UiState::new();
-    feed(&mut ui, Input::press(ButtonId::Menu));
-    feed(&mut ui, Input::press(ButtonId::Plus));
-    feed(&mut ui, Input::press(ButtonId::Plus));
-    assert_eq!(ui.nav.active_block_def().id, SYS_THEME.id);
+    to_leaf(&mut ui, &["PERSONALIZE", "THEME"]);
+    assert_eq!(ui.page_def().id, SYS_THEME.id);
     assert_eq!(ui.theme(), ThemeSettings::DEFAULT);
 
     feed(&mut ui, Input::turn(EncoderId::A, 1));
@@ -264,56 +266,215 @@ fn theme_page_is_reachable_and_edits_the_settings() {
     assert_eq!(t.black.get(), -2);
     // The Sound is untouched: THEME lives in the UI.
     assert!(
-        ui.performance
-            .edit(0)
-            .part
+        ui.project_mut()
+            .edit_part(PartId::ALL[0])
             .sound
             .params
             .block(BlockRef::Theme)
             .is_none()
     );
-    // Empty slots edit nothing.
-    feed(&mut ui, Input::turn(EncoderId::E, 3));
-    feed(&mut ui, Input::turn(EncoderId::F, 3));
+    // F is INVERT: OFF stays OFF below zero, and ON sticks at the top.
+    feed(&mut ui, Input::turn(EncoderId::F, -3));
     assert_eq!(ui.theme(), t);
+    feed(&mut ui, Input::turn(EncoderId::F, 3));
+    assert!(ui.theme().invert);
 }
 
-/// SYSTEM's hooks: `in_system` follows MENU and the Part buttons, and
+/// SYSTEM's hooks: `in_settings` follows MENU and the Part buttons, and
 /// `set_theme` is what `theme` then reports.
 #[test]
-fn in_system_and_set_theme() {
+fn in_settings_and_set_theme() {
     let mut ui = chimera_core::ui::UiState::new();
-    assert!(!ui.in_system());
-    feed(&mut ui, Input::press(ButtonId::Menu));
-    assert!(ui.in_system());
+    assert!(!ui.in_settings());
+    tap(&mut ui, ButtonId::Menu);
+    assert!(ui.in_settings());
     feed(&mut ui, Input::press(ButtonId::B1));
-    assert!(!ui.in_system());
+    assert!(!ui.in_settings());
 
     let t = ThemeSettings {
         bright: Bright::new(40),
         gamma: Gamma::Soft,
         accent: Accent::Lime,
         black: Black::new(1),
+        hints: false,
+        invert: false,
     };
     ui.set_theme(t);
     assert_eq!(ui.theme(), t);
 }
 
-/// A press after leaving System takes the toast down before its time.
+/// A press after leaving SETTINGS takes the toast down before its time.
 #[test]
 fn input_dismisses_the_toast() {
+    use chimera_core::project::Line;
     use chimera_core::storage::{Card, SystemSync};
     use chimera_core::ui::busy::ToastStep;
     let mut s = chimera_hal::testkit::MemStore::new(1);
     let mut card = Card::new();
     let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
     let mut ui = chimera_core::ui::UiState::new();
-    feed(&mut ui, Input::press(ButtonId::Menu));
+    tap(&mut ui, ButtonId::Menu);
     ui.sync_system(&mut sync, &mut card, &mut s, &mut cur);
     feed(&mut ui, Input::press(ButtonId::B1));
     ui.sync_system(&mut sync, &mut card, &mut s, &mut cur);
-    assert_eq!(ui.step_toast(16), ToastStep::Show("SAVED"));
+    assert_eq!(ui.step_toast(16), ToastStep::Show(Line::new("SAVED")));
     feed(&mut ui, Input::press(ButtonId::B2));
     assert_eq!(ui.step_toast(16), ToastStep::Ended);
     assert_eq!(ui.step_toast(16), ToastStep::Idle);
+}
+
+// --- INVERT (ADR 0126) ---
+
+use chimera_core::ui::theme_settings::{
+    ALERT_LIGHT, WARN_LIGHT, accent_light, ground_light, splash_palette,
+};
+
+fn light(black: i8, accent: Accent) -> ThemeSettings {
+    ThemeSettings {
+        invert: true,
+        black: Black::new(black),
+        accent,
+        ..ThemeSettings::DEFAULT
+    }
+}
+
+/// WCAG 2 contrast ratio, true sRGB.
+fn contrast(a: Rgb565, b: Rgb565) -> f64 {
+    let lum = |c: Rgb565| {
+        let lin = |v: u32| {
+            let v = v as f64 / 255.0;
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let (r, g, bl) = (c.r() as u32, c.g() as u32, c.b() as u32);
+        0.2126 * lin(r << 3 | r >> 2)
+            + 0.7152 * lin(g << 2 | g >> 4)
+            + 0.0722 * lin(bl << 3 | bl >> 2)
+    };
+    let (x, y) = (lum(a), lum(b));
+    (x.max(y) + 0.05) / (x.min(y) + 0.05)
+}
+
+#[test]
+fn invert_is_off_by_default_and_toggles() {
+    let mut t = ThemeSettings::DEFAULT;
+    assert!(!t.invert);
+    t.nudge(ThemeSettings::INVERT, 1);
+    assert!(t.invert);
+    assert_eq!(t.normalized(ThemeSettings::INVERT), 1.0);
+}
+
+#[test]
+fn light_mode_flips_every_other_colour_and_twice_is_the_identity() {
+    let p = palette(&light(0, Accent::Teal));
+    let swapped = [
+        theme::BG,
+        theme::ACCENT,
+        theme::ACCENT_SOFT,
+        theme::WARN,
+        theme::ALERT,
+    ]
+    .map(raw);
+    for px in 0..=u16::MAX {
+        if swapped.contains(&px) || swapped.contains(&!px) {
+            continue;
+        }
+        let f = p.map_raw(px);
+        assert_eq!(p.map_raw(f), px, "{px:04x}");
+    }
+    let (g, f) = (Rgb565::new(10, 20, 10), p.map(Rgb565::new(10, 20, 10)));
+    assert_eq!((f.r(), f.g(), f.b()), (21, 43, 21), "{g:?}");
+}
+
+#[test]
+fn light_greys_keep_their_order_and_their_contrast() {
+    let p = palette(&light(-2, Accent::Teal));
+    let ladder = [
+        theme::INK,
+        theme::INK2,
+        theme::MID,
+        theme::BAR_REST,
+        theme::FAINT,
+    ]
+    .map(|c| p.map(c));
+    assert_eq!(p.bg, Rgb565::new(31, 63, 31), "BLACK -2 is white");
+    let l = |c: Rgb565| contrast(c, Rgb565::new(0, 0, 0));
+    for w in ladder.windows(2) {
+        assert!(l(w[0]) < l(w[1]), "{w:?}");
+    }
+    assert!(l(ladder[4]) < l(p.bg));
+    assert!(contrast(ladder[0], p.bg) >= 12.0, "INK on white");
+    assert!(contrast(ladder[2], p.bg) >= 3.0, "MID on white");
+    assert_eq!(p.map(theme::BG), p.bg);
+}
+
+#[test]
+fn black_takes_the_edge_off_white_in_light_mode() {
+    let grounds: Vec<Rgb565> = (Black::MIN..=Black::MAX)
+        .map(|k| ground_light(Black::new(k)))
+        .collect();
+    for (i, g) in grounds.iter().enumerate() {
+        assert!(!grounds[..i].contains(g), "{g:?}");
+        assert!(g.g() > theme::FAINT.g(), "{g:?}");
+        if i > 0 {
+            assert!(g.g() < grounds[i - 1].g());
+        }
+    }
+}
+
+/// Every ACCENT keeps 3:1 against the ground at every BLACK, both modes.
+#[test]
+fn every_accent_holds_3_to_1_in_both_modes() {
+    for a in Accent::ALL {
+        for k in Black::MIN..=Black::MAX {
+            for invert in [false, true] {
+                let t = ThemeSettings {
+                    invert,
+                    ..light(k, a)
+                };
+                let p = palette(&t);
+                assert!(contrast(p.accent, p.bg) >= 3.0, "{a:?} {k} {invert}");
+                assert_ne!(p.accent_soft, p.bg, "{a:?} {k} {invert}");
+                if invert {
+                    assert!(contrast(WARN_LIGHT, p.bg) >= 3.0, "WARN {k}");
+                    assert!(contrast(ALERT_LIGHT, p.bg) >= 3.0, "ALERT {k}");
+                }
+            }
+        }
+    }
+}
+
+/// The light accent is the pick darkened, never lightened or re-hued.
+#[test]
+fn light_accent_only_darkens() {
+    for a in Accent::ALL {
+        let (c, l) = (accent_color(a), accent_light(a));
+        assert!(l.r() <= c.r() && l.g() <= c.g() && l.b() <= c.b(), "{a:?}");
+    }
+}
+
+/// The Yellow Sign ignores INVERT.
+#[test]
+fn the_splash_palette_is_dark_mode() {
+    let t = light(-2, Accent::Teal);
+    let splash = splash_palette(&t);
+    assert_eq!(splash, palette(&ThemeSettings { invert: false, ..t }));
+    let yellow = raw(Rgb565::new(241 >> 3, 229 >> 2, 121 >> 3));
+    assert_eq!(splash.map_raw(yellow), yellow);
+}
+
+/// `LIGHT_FLOOR` (231) is the darkest light ground, BLACK +4: (28, 57, 28)
+/// expands to #e7e7e7 in 8 bits.
+#[test]
+fn the_light_floor_is_the_darkest_light_ground() {
+    let floor = ground_light(Black::new(Black::MAX));
+    assert_eq!(floor, Rgb565::new(28, 57, 28));
+    let ch = |v: u8, bits: u32| (v as u32) << (8 - bits) | (v as u32) >> (2 * bits - 8);
+    assert_eq!(
+        (ch(floor.r(), 5), ch(floor.g(), 6), ch(floor.b(), 5)),
+        (231, 231, 231)
+    );
 }

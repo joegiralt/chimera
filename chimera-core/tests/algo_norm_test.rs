@@ -13,6 +13,7 @@ use chimera_core::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
+use chimera_core::taps::TapRows;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 
@@ -56,7 +57,13 @@ fn play(
         for d in 0..ms.num_dests() {
             live.offset(ms.dest(d), ms.sum_for(d, &sources(b)));
         }
-        e.render(&mut blk, p, &live, SAMPLE_RATE);
+        e.render(
+            &mut blk,
+            p,
+            &live,
+            SAMPLE_RATE,
+            &mut TapRows::new([false; 2]),
+        );
         out.extend_from_slice(&blk);
     }
     out

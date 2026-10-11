@@ -5,24 +5,75 @@ mod common;
 
 use std::path::PathBuf;
 
+use chimera_core::addr::BlockRef;
+use chimera_core::block::{Block, ParamId};
+use chimera_core::dsp::modal::{BankModes, ResonatorMode, damp_for, damp_from_v1_decay};
+use chimera_core::dsp::note_to_freq;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
-use chimera_core::params::EngineType;
+use chimera_core::name::{ProjectName, SoundName};
+use chimera_core::params::{EngineType, FilterParams, OutParams, ParamSnapshot};
 use chimera_core::preset::Sound;
-use chimera_core::storage::FileError;
-use common::codec_util::{
-    SYSTEM_FIXTURE, decode, decode_into, encode, fix_crc, record_offsets, system_file,
-    system_fixture_settings,
+use chimera_core::project::{
+    Origin, PartFrom, PartId, PartSource, PartStatus, Project, SlotId, part_block, part_status,
 };
-use common::{fnv1a, render_sound};
+use chimera_core::storage::{
+    BuildStamp, Card, FileError, FileKind, Generation, Header, MIGRATIONS, TRANSLATIONS,
+    decode_block, encode_library_sound, sound_crc, write_file,
+};
+use chimera_hal::BLOCK_SIZE;
+use common::codec_util::{
+    SYSTEM_FIXTURE, SYSTEM_MIDI_FIXTURE, VecSink, decode, decode_into, encode, fix_crc,
+    record_offsets, system_file, system_fixture_settings, system_midi_fixture_settings,
+};
+use common::project::{decode as decode_project, encode as encode_project, load};
+use common::{
+    SR, assert_stable, fnv1a, fundamental_hz, octave_clear, play_modal, play_modal_at, render_sound,
+};
 
 /// The v1 corpus: name, and the Sound it was written from.
 fn sources() -> Vec<(String, Sound)> {
     let mut v: Vec<_> = (0..FACTORY_LEN)
         .map(|i| (format!("factory_{i}.snd"), factory_sound(i).unwrap()))
         .collect();
-    v.push(("init_algo.snd".into(), Sound::init(EngineType::Algo)));
-    v.push(("init_modal.snd".into(), Sound::init(EngineType::Modal)));
+    v.push(("init_algo.snd".into(), v1_init(EngineType::Algo)));
+    v.push(("init_modal.snd".into(), v1_init(EngineType::Modal)));
+    // TAPE's INIT as TAPE Task 12 saved it: engine code 2 frozen (ADR 0045).
+    v.push(("init_tape.snd".into(), Sound::init(EngineType::Tape)));
+    // A library Sound (library spec): factory 0 behind a `Build` record.
+    v.push((LIBRARY_FIXTURE.into(), factory_sound(0).unwrap()));
+    // VA's INIT as VA Task 10 saved it: engine code 3 frozen.
+    v.push(("init_va.snd".into(), Sound::init(EngineType::Va)));
     v
+}
+
+/// `library_1.snd`: factory 0, stamped by `encode_library_sound`.
+const LIBRARY_FIXTURE: &str = "library_1.snd";
+
+/// `name`'s fixture bytes as written: a library Sound carries its stamp.
+fn written(name: &str, s: &Sound) -> Vec<u8> {
+    if name != LIBRARY_FIXTURE {
+        return encode(s);
+    }
+    let h = Header {
+        kind: FileKind::Sound,
+        generation: Generation::FIRST,
+        name: Some(s.name),
+    };
+    let mut sink = VecSink(Vec::new());
+    let stamp = BuildStamp::new("0.1.0", "dev", false);
+    write_file(&mut sink, &h, &mut |w| encode_library_sound(s, &stamp, w)).unwrap();
+    sink.0
+}
+
+/// INIT as the v1 fixtures saved it: OUT LEVEL 0.8 and every operator's
+/// RR 8, before ADR 0063 moved them. An old INIT loads as it was saved.
+fn v1_init(engine: EngineType) -> Sound {
+    let mut s = Sound::init(engine);
+    s.params.out.volume = 0.8;
+    for o in &mut s.params.algo.ops {
+        o.rr = 8;
+    }
+    s
 }
 
 fn path(name: &str) -> PathBuf {
@@ -73,8 +124,40 @@ fn write_v1_fixtures() {
     if write_fixture(SYSTEM_FIXTURE, &sys) {
         println!("system ({}, {:#018x}),", sys.len(), fnv1a_bytes(&sys));
     }
+    let midi = system_file(&system_midi_fixture_settings());
+    if write_fixture(SYSTEM_MIDI_FIXTURE, &midi) {
+        println!(
+            "system midi ({}, {:#018x}),",
+            midi.len(),
+            fnv1a_bytes(&midi)
+        );
+    }
+    let prj = encode_project(&fixture_project());
+    if write_fixture(PROJECT_FIXTURE, &prj) {
+        println!("project ({}, {:#018x}),", prj.len(), fnv1a_bytes(&prj));
+        let (mut p, _) = Project::boxed();
+        decode_project(&prj, &mut p).unwrap();
+        println!("fx");
+        for b in FX_BLOCKS {
+            let blk = part_block(
+                &p.part(PartId::ALL[0]).sound,
+                &p.part(PartId::ALL[0]).mix,
+                &p.perf().fx,
+                b,
+            );
+            println!(
+                "    ({}, &{:?}),",
+                b.disk_code().unwrap(),
+                values(blk.unwrap())
+            );
+        }
+        println!("mix");
+        for id in PartId::ALL {
+            println!("    &{:?},", values(&p.part(id).mix));
+        }
+    }
     for (name, s) in sources() {
-        let bytes = encode(&s);
+        let bytes = written(&name, &s);
         if !write_fixture(&name, &bytes) {
             continue;
         }
@@ -118,19 +201,293 @@ const FIXTURE_BYTES: &[(&str, usize, u64)] = &[
     ("factory_7.snd", 1159, 0xc0d43d4e79a25648),
     ("init_algo.snd", 1159, 0x44acd895ff6f6af5),
     ("init_modal.snd", 1159, 0xd122f91342eff62a),
+    // Written sparse (pool Task 2), at TAPE Task 12.
+    ("init_tape.snd", 160, 0xc6205acfbcaf2836),
+    ("library_1.snd", 257, 0xa89d3e8a322ca1fa),
+    // Written sparse, at VA Task 10.
+    ("init_va.snd", 151, 0x63ec203363dcfe8c),
 ];
+
+/// Every v1 `.snd` fixture, `library_1.snd` included, loads through the
+/// library read (`LibraryDecoder` under `load_ab_in_place`) to the Sound
+/// the plain decode gives.
+#[test]
+fn v1_fixtures_load_through_the_library_path() {
+    use chimera_core::storage::{LibId, LibraryDecoder, Side, library_file, load_ab_in_place};
+    use chimera_hal::store::{Dir, Store};
+    use chimera_hal::testkit::MemStore;
+
+    let id = LibId::new(1).unwrap();
+    for (name, _) in sources() {
+        let bytes = fixture(&name);
+        let mut st = MemStore::new(1);
+        let vol = st.mount().unwrap();
+        st.make_dir(vol, Dir::Chimera).unwrap();
+        st.make_dir(vol, Dir::Sounds).unwrap();
+        st.write(vol, library_file(id).side(Side::A), &mut |w| w.put(&bytes))
+            .unwrap();
+        let mut got = Sound::neutral(EngineType::Algo);
+        let mut d = LibraryDecoder::new(&mut got);
+        Card::new()
+            .run(&mut st, |s, r| {
+                load_ab_in_place(s, r, library_file(id), &mut d)
+            })
+            .unwrap()
+            .result
+            .unwrap();
+        assert_eq!(d.skips(), 0, "{name}");
+        assert!(got.bits_eq(&decode(&bytes).unwrap()), "{name}");
+    }
+}
 
 /// `system.sys`'s length and FNV-1a.
 const SYSTEM_FIXTURE_BYTES: (usize, u64) = (65, 0xf544fe6fdcbdda8c);
 
+/// `system_midi.sys`'s length and FNV-1a.
+const SYSTEM_MIDI_FIXTURE_BYTES: (usize, u64) = (75, 0x4b20b5e9de7cbffc);
+
+/// The v1 project fixture, written from `fixture_project`.
+const PROJECT_FIXTURE: &str = "project.prj";
+
+/// `project.prj`'s length and FNV-1a.
+const PROJECT_FIXTURE_BYTES: (usize, u64) = (20624, 0x12b9dada0b932378);
+
+/// INIT as NEW's pool held it when `project.prj` was written: OUT LEVEL
+/// 45/128 and every operator's RR 5 (ADR 0063).
+fn prj_init(engine: EngineType) -> Sound {
+    let mut s = Sound::init(engine);
+    s.params.out.volume = 45.0 / 128.0;
+    for o in &mut s.params.algo.ops {
+        o.rr = 5;
+    }
+    s
+}
+
+/// Slot 11's edit of `factory_0`.
+fn fixture_edits(s: &mut Sound) {
+    s.name = SoundName::new("EDITED").unwrap();
+    s.params.filter.set(FilterParams::CUTOFF, 2_500.0);
+    s.params.out.set(OutParams::VOLUME, 0.5);
+}
+
+/// Part 1's further edit, after loading slot 11.
+fn fixture_part_edits(s: &mut Sound) {
+    s.name = SoundName::new("EDITED AGAIN").unwrap();
+    s.params.filter.set(FilterParams::CUTOFF, 900.0);
+}
+
+/// NEW, slot 11 an edited copy of slot 0; Part 1 (0-based) from slot 11,
+/// then edited; Part 2 from slot 9; delay MIX 0.3; `FIXTURE`.
+fn fixture_project() -> Box<Project> {
+    let (mut p, t) = Project::boxed();
+    let mut s = p.pool().get(SlotId::ALL[0]).unwrap().to_sound();
+    fixture_edits(&mut s);
+    p.pool_store(SlotId::ALL[11], &s).unwrap();
+    for (part, slot) in [(1, 11), (2, 9)] {
+        load(
+            &mut p,
+            t,
+            PartSource {
+                part: PartId::ALL[part],
+                from: PartFrom::Slot(SlotId::ALL[slot]),
+            },
+        )
+        .unwrap();
+    }
+    fixture_part_edits(p.edit_part(PartId::ALL[1]).sound);
+    p.edit_fx().delay.mix = 0.3;
+    p.set_name(ProjectName::new("FIXTURE").unwrap());
+    p
+}
+
+const FX_BLOCKS: [BlockRef; 5] = [
+    BlockRef::Chorus,
+    BlockRef::Delay,
+    BlockRef::Reverb,
+    BlockRef::Tape,
+    BlockRef::Comp,
+];
+
+/// Every `(id, value)` of `blk`, in spec order.
+fn values(blk: &dyn Block) -> Vec<(u8, f32)> {
+    blk.specs()
+        .iter()
+        .map(|s| (s.id.0, blk.get(s.id)))
+        .collect()
+}
+
+/// The FX `project.prj` was written with: (block code, (id, value)*).
+const PROJECT_FIXTURE_FX: &[(u8, &[(u8, f32)])] = &[
+    (20, &[(0, 0.0), (1, 0.5), (2, 0.5), (3, 0.0)]),
+    (
+        21,
+        &[
+            (0, 375.0),
+            (1, 0.4),
+            (2, 0.15),
+            (3, 0.2),
+            (4, 0.6),
+            (5, 0.3),
+            (6, 0.0),
+        ],
+    ),
+    // GRIT (5) is retired: the fixture's 0.3 is skipped.
+    (22, &[(1, 0.5), (2, 0.3), (3, 0.5), (4, 0.0)]),
+    (23, &[(0, 0.0), (1, 0.5), (2, 0.0), (3, 0.0)]),
+    (
+        24,
+        &[(0, 0.7), (1, 0.0), (2, 0.5), (3, 0.5), (4, 0.0), (5, 1.0)],
+    ),
+];
+
+/// Each Part's mix in `project.prj`.
+const PROJECT_FIXTURE_MIX: [&[(u8, f32)]; 6] = [
+    &[
+        (0, 0.0),
+        (1, 1.0),
+        (2, 0.0),
+        (3, 0.8),
+        (4, 0.0),
+        (5, 0.0),
+        (6, 0.0),
+        (7, 0.0),
+    ],
+    &[
+        (0, 1.0),
+        (1, 1.0),
+        (2, 0.0),
+        (3, 0.8),
+        (4, 0.0),
+        (5, 0.0),
+        (6, 0.0),
+        (7, 0.0),
+    ],
+    &[
+        (0, 2.0),
+        (1, 1.0),
+        (2, 0.0),
+        (3, 0.8),
+        (4, 0.0),
+        (5, 0.0),
+        (6, 0.0),
+        (7, 0.0),
+    ],
+    &[
+        (0, 3.0),
+        (1, 1.0),
+        (2, 0.0),
+        (3, 0.8),
+        (4, 0.0),
+        (5, 0.0),
+        (6, 0.0),
+        (7, 0.0),
+    ],
+    &[
+        (0, 4.0),
+        (1, 1.0),
+        (2, 0.0),
+        (3, 0.8),
+        (4, 0.0),
+        (5, 0.0),
+        (6, 0.0),
+        (7, 0.0),
+    ],
+    &[
+        (0, 5.0),
+        (1, 1.0),
+        (2, 0.0),
+        (3, 0.8),
+        (4, 0.0),
+        (5, 0.0),
+        (6, 0.0),
+        (7, 0.0),
+    ],
+];
+
+/// `pinned`'s values in `blk`; a param added since is not pinned.
+fn assert_values(blk: &dyn Block, pinned: &[(u8, f32)], what: &str) {
+    assert!(!pinned.is_empty(), "{what}: pinned");
+    for &(id, v) in pinned {
+        assert_eq!(blk.get(ParamId(id)), v, "{what} id {id}");
+    }
+}
+
+#[test]
+fn project_fixture_loads() {
+    let f = fixture(PROJECT_FIXTURE);
+    assert_eq!((f.len(), fnv1a_bytes(&f)), PROJECT_FIXTURE_BYTES);
+    let (mut p, _) = Project::boxed();
+    decode_project(&f, &mut p).unwrap();
+    assert_eq!(p.meta().name().as_str(), "FIXTURE");
+
+    let slot = |i: usize| p.pool().get(SlotId::ALL[i]).map(|e| e.to_sound());
+    for i in 0..FACTORY_LEN {
+        let want = decode(&fixture(&format!("factory_{i}.snd"))).unwrap();
+        assert!(slot(i).unwrap().bits_eq(&want), "slot {i}");
+    }
+    assert!(slot(8).unwrap().bits_eq(&prj_init(EngineType::Algo)));
+    assert!(slot(9).unwrap().bits_eq(&prj_init(EngineType::Modal)));
+    let mut edited = decode(&fixture("factory_0.snd")).unwrap();
+    fixture_edits(&mut edited);
+    assert!(slot(11).unwrap().bits_eq(&edited));
+    assert_eq!(p.pool().sound_count(), 11);
+    assert!(slot(10).is_none());
+
+    let mut part1 = edited.clone();
+    fixture_part_edits(&mut part1);
+    let origin = |i: usize| Origin::Slot {
+        slot: SlotId::ALL[i],
+        generation: p.pool().generation(SlotId::ALL[i]),
+        crc: sound_crc(&slot(i).unwrap()),
+    };
+    for id in PartId::ALL {
+        let part = p.part(id);
+        let (sound, o) = match id.index() {
+            1 => (part1.clone(), origin(11)),
+            2 => (prj_init(EngineType::Modal), origin(9)),
+            _ => (prj_init(EngineType::Algo), Origin::Init(EngineType::Algo)),
+        };
+        assert!(part.sound.bits_eq(&sound), "Part {}", id.index());
+        assert_eq!(part.origin(), o, "Part {}", id.index());
+        assert_values(&part.mix, PROJECT_FIXTURE_MIX[id.index()], "mix");
+        let status = match id.index() {
+            1 => PartStatus::Edited,
+            _ => PartStatus::Clean,
+        };
+        assert_eq!(part_status(part, p.pool()), status, "Part {}", id.index());
+    }
+
+    let first = p.part(PartId::ALL[0]);
+    assert_eq!(PROJECT_FIXTURE_FX.len(), FX_BLOCKS.len());
+    for (b, &(code, pinned)) in FX_BLOCKS.into_iter().zip(PROJECT_FIXTURE_FX) {
+        assert_eq!(b.disk_code(), Some(code));
+        let blk = part_block(&first.sound, &first.mix, &p.perf().fx, b).unwrap();
+        assert_values(blk, pinned, b.disk_ident().unwrap());
+    }
+    assert_eq!(p.perf().fx.delay.mix, 0.3);
+}
+
 #[test]
 fn v1_fixture_bytes_are_frozen() {
     assert_eq!(FIXTURE_BYTES.len(), sources().len());
-    for &(name, len, h) in FIXTURE_BYTES.iter().chain([&(
-        SYSTEM_FIXTURE,
-        SYSTEM_FIXTURE_BYTES.0,
-        SYSTEM_FIXTURE_BYTES.1,
-    )]) {
+    let own = [
+        (
+            SYSTEM_FIXTURE,
+            SYSTEM_FIXTURE_BYTES.0,
+            SYSTEM_FIXTURE_BYTES.1,
+        ),
+        (
+            SYSTEM_MIDI_FIXTURE,
+            SYSTEM_MIDI_FIXTURE_BYTES.0,
+            SYSTEM_MIDI_FIXTURE_BYTES.1,
+        ),
+        (
+            PROJECT_FIXTURE,
+            PROJECT_FIXTURE_BYTES.0,
+            PROJECT_FIXTURE_BYTES.1,
+        ),
+    ];
+    for &(name, len, h) in FIXTURE_BYTES.iter().chain(&own) {
         let f = fixture(name);
         assert_eq!((f.len(), fnv1a_bytes(&f)), (len, h), "{name}");
     }
@@ -138,16 +495,36 @@ fn v1_fixture_bytes_are_frozen() {
 
 /// FNV-1a of each fixture's render, recorded when the fixtures were written.
 const FIXTURE_RENDERS: &[(&str, u64)] = &[
-    ("factory_0.snd", 0x878c9ca6ca353aa1),
-    ("factory_1.snd", 0x0edce6a988cf7f1b),
-    ("factory_2.snd", 0xe0277f16dca55649),
-    ("factory_3.snd", 0x10424d2460e991df),
-    ("factory_4.snd", 0x05a4301cc61a2332),
-    ("factory_5.snd", 0x73b6b9429389dc2a),
-    ("factory_6.snd", 0x2cf3c112b967ff6f),
-    ("factory_7.snd", 0x7ef436e312c3c9e6),
-    ("init_algo.snd", 0xfd37f75c4096594b),
-    ("init_modal.snd", 0x90f1197c153d0b05),
+    // Re-recorded, every row, as `golden_test`'s: ADR 0060's DC blocker;
+    // SQR BASS and ALGO INIT for the filter's C1 `saturate` (ADR 0063); every
+    // row for the harness's 1.6 s release (`OFF_BLOCKS`, ADR 0063); every
+    // row for CLEAN's ACCURATE tan and exact divides (#57); every row for
+    // CLEAN's k law and trims (ADR 0096).
+    ("factory_0.snd", 0x2b0219df38902ede),
+    ("factory_1.snd", 0x0e3d85b43ff9ccf9),
+    ("factory_2.snd", 0xfe00848f39d1981e),
+    ("factory_3.snd", 0x901698e789a3ccf9),
+    ("factory_4.snd", 0x68328532bf9779a7),
+    // Then the voice-end fade (ADR 0096): SQR BASS's −65 dB filter tail.
+    ("factory_5.snd", 0xdb1cd08add369508),
+    ("factory_6.snd", 0x144e8d10ce6ac51e),
+    ("factory_7.snd", 0xcabe755163058e15),
+    ("init_algo.snd", 0x889c731ceb1c7089),
+    // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
+    // then Task 18's DAMP make-up and relative silence (ADR 0056),
+    // then the free ring on release (ADR 0062), then CLEAN's ACCURATE tan
+    // and exact divides (#57), and STRING's out_gain 5.7 for it, then
+    // CLEAN's k law and trims (ADR 0096).
+    ("init_modal.snd", 0x12099b1d30a46e52),
+    // On the rig's second of saw (`common::rig`); re-recorded for TAPE's
+    // `out_gain` (ADR 0063, TAPE Task 19), then its smoothstep note-on ramp
+    // (#385), then CLEAN's ACCURATE tan, exact divides, k law and trims
+    // (#57, ADR 0096).
+    ("init_tape.snd", 0xcaf4315437e08679),
+    // Factory 0's render: the stamp changes no sound.
+    ("library_1.snd", 0x2b0219df38902ede),
+    // On the rig's second of saw, at VA Task 10.
+    ("init_va.snd", 0x3739e2ecc6befaf5),
 ];
 
 #[test]
@@ -162,6 +539,41 @@ fn v1_fixtures_render_identically() {
         assert_eq!(
             fnv1a(&render_sound(&s.params, &s.mod_state)),
             want,
+            "{name}"
+        );
+    }
+}
+
+/// TAPE's engine code is 2 for good (ADR 0045): the frozen INIT loads as
+/// TAPE, with its ENV 1 into VCA (`bits_eq` holds while INIT is unchanged;
+/// the render row is the lasting pin).
+#[test]
+fn init_tape_fixture_pins_engine_code_2() {
+    use chimera_core::block::DiskCode;
+    assert_eq!(EngineType::Tape.disk_code(), 2);
+    let s = decode(&fixture("init_tape.snd")).unwrap();
+    assert_eq!(s.engine(), EngineType::Tape);
+    assert!(s.bits_eq(&Sound::init(EngineType::Tape)));
+}
+
+/// VA's engine code is 3 for good: the frozen INIT loads as VA.
+#[test]
+fn init_va_fixture_pins_engine_code_3() {
+    use chimera_core::block::DiskCode;
+    assert_eq!(EngineType::Va.disk_code(), 3);
+    let s = decode(&fixture("init_va.snd")).unwrap();
+    assert_eq!(s.engine(), EngineType::Va);
+    assert!(s.bits_eq(&Sound::init(EngineType::Va)));
+}
+
+/// Every v1 file, saved before STEAL (#254), steals CUT.
+#[test]
+fn v1_fixtures_steal_cut() {
+    for (name, _) in sources() {
+        let s = decode(&fixture(&name)).unwrap();
+        assert_eq!(
+            s.params.pitch.steal,
+            chimera_core::params::Steal::Cut,
             "{name}"
         );
     }
@@ -278,4 +690,92 @@ fn truncated_bad_crc_bad_magic_leave_target() {
         assert_eq!(decode_into(&mut t, &f), Err(FileError::BadMagic), "{name}");
         assert!(t.bits_eq(&factory_sound(3).unwrap()), "{name}");
     }
+}
+
+/// A v1 Modal block in `mode`: every old id, DECAY at `decay`.
+fn v1_modal(mode: ResonatorMode, decay: f32) -> Vec<u8> {
+    let mut p = vec![1, 0];
+    p.extend(u32::from(mode as u8).to_le_bytes());
+    let reals = [0.6, decay, 0.9, 0.4, 0.7, 0.5, 0.35, 1.0, 0.1, 0.2, 0.3];
+    for (id, v) in (1u8..).zip(reals) {
+        p.push(id);
+        p.extend(f32::to_le_bytes(v));
+    }
+    p
+}
+
+fn decode_modal(payload: &[u8]) -> ParamSnapshot {
+    let mut snap = ParamSnapshot::for_engine(EngineType::Modal);
+    decode_block(payload, MIGRATIONS, TRANSLATIONS, Some(&mut snap)).unwrap();
+    snap
+}
+
+/// Spec § 3: DECAY → DAMP, STIFF or INHARM → STRUCTURE, FDBK dropped; the
+/// string models' BRIGHT flips to the new direction. BANK's BURST is its
+/// EXCITE; Bowed loads its old sound, now in tune (#240, ADR 0064).
+#[test]
+fn old_modal_patches_translate() {
+    use ResonatorMode::{Bowed, Modal, String, Sympathetic};
+    let init = decode(&fixture("init_modal.snd")).unwrap();
+    assert!(init.bits_eq(&v1_init(EngineType::Modal)));
+    for mode in [String, Modal, Bowed, Sympathetic] {
+        let snap = decode_modal(&v1_modal(mode, 0.2));
+        let m = &snap.modal;
+        let (damp, structure) = match mode {
+            Modal => (0.2, 0.7),
+            String | Bowed => (damp_from_v1_decay(0.2), 0.35),
+            Sympathetic => (damp_from_v1_decay(0.2), 0.7),
+        };
+        let bright = if mode == Modal { 0.9 } else { 1.0 - 0.9 };
+        // v1 Bowed never read them: the old sound's values.
+        let (damp, bright, pos) = if mode == Bowed {
+            (damp_for(0.12), 1.0, 0.0)
+        } else {
+            (damp, bright, 0.4)
+        };
+        assert_eq!((m.damp, m.structure), (damp, structure), "{mode:?}");
+        assert_eq!(
+            (m.excite, m.bright, m.pos, m.body),
+            (0.6, bright, pos, 0.5),
+            "{mode:?}"
+        );
+        // The exciters' hidden values; an old strike keeps its length.
+        assert_eq!((m.color, m.force, m.speed), (0.8, 0.5, 0.5), "{mode:?}");
+        let burst = if mode == Modal { 0.6 } else { 0.8 };
+        assert_eq!(m.burst, burst, "{mode:?}");
+        assert_eq!((m.ens_depth, m.ens_rate, m.ens_mix), (0.1, 0.2, 0.3));
+        assert_eq!((m.couple, m.halo, m.modes), (0.25, 0.25, BankModes::M32));
+    }
+}
+
+/// A v1 Bowed patch on the one-loop bow restored in tune (ADR 0064):
+/// re-recorded deliberately, then for BRIGHT on the output (its BRIGHT 1
+/// no longer opens the loop); its level is `out_gain`'s now, at the VCA.
+const BOWED_V1_HELD: u64 = 0x9fb6_8f3a_568a_5b83;
+const BOWED_V1_RELEASED: u64 = 0xbe49_7c66_9987_19cf;
+
+/// A v1 Bowed patch plays at its note.
+#[test]
+fn a_v1_bowed_patch_bows_in_tune() {
+    let snap = decode_modal(&v1_modal(ResonatorMode::Bowed, 0.2));
+    let second = SR as usize / BLOCK_SIZE;
+    let held = play_modal_at(&snap.modal, 48, 127, second, 0);
+    let f0 = note_to_freq(48);
+    let s = &held[SR as usize / 2..];
+    let cents = 1200.0 * (fundamental_hz(s, f0 as f64) / f0 as f64).log2();
+    // Bowed's gate (spec § 2 BOWED): a bow moves its pitch a few cents.
+    assert!(cents.abs() < 5.0, "{cents:+.2} cents");
+    assert!(octave_clear(s, f0), "an octave low");
+    let released = play_modal_at(&snap.modal, 48, 127, second, second / 2);
+    assert_eq!(fnv1a(&held), BOWED_V1_HELD);
+    assert_eq!(fnv1a(&released), BOWED_V1_RELEASED);
+}
+
+/// Review focus 4: FDBK 1 at DECAY 0, today's longest, once ran away. It
+/// now loads as a plain long STRING.
+#[test]
+fn an_old_fdbk_1_patch_loads_stable() {
+    let snap = decode_modal(&v1_modal(ResonatorMode::String, 0.0));
+    let out = play_modal(&snap.modal, 36, 30 * SR as usize / BLOCK_SIZE, 0);
+    assert_stable(&out, 1.0, 1.0, "STRING, FDBK 1");
 }

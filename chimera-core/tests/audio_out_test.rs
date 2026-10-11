@@ -1,6 +1,7 @@
 use chimera_core::audio_out::{
     DacSample, Half, HalfPlan, Heartbeat, LSI_MAX_HZ, LSI_NOMINAL_HZ, WATCHDOG_TIMEOUT_MS,
-    desynced, interleave, iwdg_reload_at_div4, kick_gap_us, plan_halves, to_dac,
+    desynced, interleave, iwdg_reload_at_div4, kick_gap_us, plan_halves, rearm_due, to_dac,
+    trail_verdict,
 };
 use chimera_core::hw::{BLOCK_SIZE, DAC_PAIRS};
 use chimera_core::instrument::DacOut;
@@ -54,7 +55,7 @@ fn a_words_level_is_what_the_dac_plays() {
         let x = i as f32 / 997.0;
         let step = to_dac(x).level();
         assert!(
-            (step - x.clamp(-1.0, 1.0)).abs() <= 0.5 / 8_388_607.0 + 1e-7,
+            (step - chimera_core::dsp::clampf(x, -1.0, 1.0)).abs() <= 0.5 / 8_388_607.0 + 1e-7,
             "{x}"
         );
     }
@@ -165,4 +166,41 @@ fn watchdog_outlasts_the_healthy_kick_gap_at_the_fastest_lsi() {
 fn watchdog_timeout_fits_the_12_bit_reload_at_div4() {
     assert_eq!(iwdg_reload_at_div4(WATCHDOG_TIMEOUT_MS), 800);
     assert!(iwdg_reload_at_div4(WATCHDOG_TIMEOUT_MS) <= 0xFFF);
+}
+
+#[test]
+fn kicks_are_live_once_audio_and_the_tick_both_move() {
+    use chimera_core::audio_out::LiveCheck;
+    let c = LiveCheck::start(10, 500);
+    assert!(!c.live(10, 500));
+    assert!(!c.live(40, 501), "the tick moved once");
+    assert!(!c.live(11, 900), "audio moved once");
+    assert!(c.live(12, 502));
+    let wrap = LiveCheck::start(u32::MAX, u32::MAX - 1);
+    assert!(wrap.live(1, 0), "counters wrap");
+}
+
+#[test]
+fn rearm_waits_for_stream_0s_wrap() {
+    assert!(rearm_due(true, true));
+    assert!(!rearm_due(true, false));
+    assert!(!rearm_due(false, true));
+}
+
+#[test]
+fn trail_verdict_counts_each_cause_apart() {
+    let v = trail_verdict(true, false, true, false, true);
+    assert!(v.transfer_error && !v.drift && !v.fifo_error);
+    let v = trail_verdict(false, true, false, false, true);
+    assert!(v.fifo_error && !v.transfer_error);
+    let v = trail_verdict(false, false, true, false, true);
+    assert!(v.drift);
+    // A stream waiting for its re-arm is frozen, not drifting.
+    assert!(!trail_verdict(false, false, true, true, true).drift);
+    // The start-up's FIFO errors are not counted.
+    assert!(!trail_verdict(false, true, false, false, false).fifo_error);
+    assert_eq!(
+        trail_verdict(false, false, false, false, true),
+        Default::default()
+    );
 }

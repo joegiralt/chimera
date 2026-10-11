@@ -3,11 +3,12 @@
 mod screen;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
-use chimera_core::modulation::{ModSource, VCA};
+use chimera_core::modulation::{FixedCol, ModSource};
 use chimera_core::params::{EngineType, OutParams};
 use chimera_core::preset::Sound;
+use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::FOLDER;
-use chimera_core::ui::chain::chain_def_for;
+use chimera_core::ui::nav::chain_def_for;
 use chimera_core::ui::{PrimeStatus, UiState, view};
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
@@ -28,8 +29,8 @@ fn vel_is_dimmed_until_a_vca_route_exists() {
     let s = Sound::init(EngineType::Algo);
     assert!(view::dimmed(VEL, &s));
     let mut r = s.clone();
-    let d = r.mod_state.push(VCA).unwrap();
-    r.mod_state.set_route(ModSource::Env2.index(), d, 127);
+    r.mod_state
+        .set_fixed(ModSource::Env2.index(), FixedCol::Vca, 127);
     assert!(!view::dimmed(VEL, &r));
 }
 
@@ -48,14 +49,21 @@ fn a_dimmed_vel_ignores_its_encoder() {
     assert_eq!(ui.params().out.vca_vel, 1.0);
 }
 
-/// MIX+PLUS on AMP's VEL primes the hidden VCA (the plan's Decisions table).
+/// MIX+PLUS on AMP's VEL primes the VCA, a permanent column: already
+/// there, and the registry stays empty.
 #[test]
 fn mix_plus_on_vel_primes_the_vca() {
     let mut ui = on_amp();
     feed(&mut ui, Input::turn(EncoderId::D, 1));
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
-    assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
-    assert!(ui.performance.parts[0].sound.dest_registry.is_primed(VCA));
+    assert_eq!(ui.prime_status(), Some(PrimeStatus::AlreadyRouted));
+    assert!(
+        ui.project()
+            .part(PartId::ALL[0])
+            .sound
+            .dest_registry
+            .is_empty()
+    );
 }
 
 /// The Cells key carries VEL's look, so a route into VCA redraws the cells
@@ -74,9 +82,8 @@ fn the_cells_key_carries_vels_dimming() {
         };
         looks >> 6 & 3
     };
-    assert_eq!(vel_look(&mut ui), Look::Dimmed as u16);
-    let m = &mut ui.performance.parts[0].sound.mod_state;
-    let d = m.push(VCA).unwrap();
-    m.set_route(ModSource::Env2.index(), d, 127);
-    assert_eq!(vel_look(&mut ui), Look::Live as u16);
+    assert_eq!(vel_look(&mut ui), Look::Dimmed as u32);
+    let m = &mut ui.project_mut().edit_part(PartId::ALL[0]).sound.mod_state;
+    m.set_fixed(ModSource::Env2.index(), FixedCol::Vca, 127);
+    assert_eq!(vel_look(&mut ui), Look::Live as u32);
 }

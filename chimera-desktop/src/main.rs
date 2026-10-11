@@ -1,69 +1,100 @@
 mod audio;
+mod console;
 mod controls;
 mod display;
 #[cfg(feature = "midi")]
 mod midi;
-mod store;
+#[cfg(test)]
+mod qa;
 
+use chimera_core::console::Served;
+use chimera_core::orbit::runner::orbit_buffer;
+use chimera_core::project::arena::{ARENA_BYTES, ArenaWriter};
+use chimera_core::project::{LOAD_ACK_TIMEOUT_MS, LOAD_LINK};
 use chimera_core::scope::scope_buffer;
-use chimera_core::storage::{Card, SystemSync};
+use chimera_core::source_table::{SOURCE_TABLE, SourceTable};
+use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::Pacer;
 use chimera_core::ui::busy::{ToastStep, draw_busy, draw_toast};
 use chimera_core::ui::perf::PerfTracker;
-use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Velocity};
+use chimera_core::ui::settings::CardCx;
+use chimera_desktop::store::{DirStore, sim_card};
+use chimera_hal::store::Store;
+use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Ms, Velocity};
+use console::DeskUnit;
 use controls::DesktopControls;
 use display::DesktopDisplay;
-use std::path::PathBuf;
-use std::time::Instant;
-use store::DirStore;
+use std::time::{Duration, Instant};
 
-/// The card: `CHIMERA_CARD`, or `chimera-card` made on first run. A
-/// `CHIMERA_CARD` that doesn't exist is an empty slot.
-fn card_dir() -> PathBuf {
-    std::env::var_os("CHIMERA_CARD").map_or_else(
-        || {
-            let dir = PathBuf::from("chimera-card");
-            // A failure shows as no card.
-            let _ = std::fs::create_dir_all(&dir);
-            dir
-        },
-        PathBuf::from,
-    )
+/// SYSTEM and its theme, then step 2: the last project, or NEW and why.
+fn boot<S: Store>(
+    ui: &mut UiState,
+    card: &mut Card,
+    store: &mut S,
+) -> (SystemSync, SystemSettings) {
+    // No card or a card fault shows at the project's boot; a SYSTEM
+    // file that can't be read still applies the defaults silently:
+    // private issue #197
+    let (sync, settings, _) = SystemSync::boot(card, store);
+    ui.set_theme(settings.theme);
+    ui.set_midi(settings.midi);
+    ui.boot_project(card, store, settings.last_project);
+    (sync, settings)
 }
 
 fn main() {
     let mut display = DesktopDisplay::new();
     let mut controls = DesktopControls::new();
     let (scope_w, mut scope_r) = Box::leak(Box::new(scope_buffer())).split();
-    let mut audio = audio::DesktopAudio::new(scope_w);
+    let (orbit_w, mut orbit_r) = Box::leak(Box::new(orbit_buffer())).split();
+    let mut audio = audio::DesktopAudio::new(scope_w, orbit_w);
 
-    let mut ui = UiState::new();
+    let mut ui = UiState::with_arena(leaked_arena(&SOURCE_TABLE));
+    ui.project_mut().set_gate_clock(gate_ms);
 
-    // Boot step 1: SYSTEM behind BUSY, then its theme.
-    draw_busy(&mut display);
+    // Boot: SYSTEM and the last project behind the splash, held 1 s from
+    // first light as on the chip; then the splash again in the card's theme.
+    let first_light = std::time::Instant::now();
+    display.set_theme(&ui.theme());
+    let _ = chimera_core::ui::splash::draw(&mut display);
     display.flush();
-    let mut store = DirStore::new(card_dir());
+    let mut store = DirStore::new(sim_card());
     let mut card = Card::new();
-    // Why the defaults applied is not shown yet:
-    // private issue #197
-    let (mut sync, mut settings, _) = SystemSync::boot(&mut card, &mut store);
-    ui.set_theme(settings.theme);
+    let (mut sync, mut settings) = boot(&mut ui, &mut card, &mut store);
+    // The Yellow Sign ignores INVERT (`splash_palette`).
+    display.set_splash_theme(&ui.theme());
+    let _ = chimera_core::ui::splash::draw(&mut display);
+    display.flush();
+    display.set_theme(&ui.theme());
+    std::thread::sleep(std::time::Duration::from_secs(1).saturating_sub(first_light.elapsed()));
     let mut perf = PerfTracker::new();
     // The held key and the channel it was sent on, so its note-off follows
     // it even if the selected Part changes while it is held.
     let mut current_note: Option<(MidiChannel, MidiNote)> = None;
     let mut octave: i8 = 0; // -2 to +2
     let mut frame_start = Instant::now();
+    // The loop runs near 30 Hz; animation at UI_FPS.
+    let (mut pacer, _) = Pacer::start(Ms(first_light.elapsed().as_millis() as u32));
     // The toast's clock, read after the card work, as the firmware's is.
     let mut toast_at = Instant::now();
 
+    let mut console = console::bind_or_off(console::ADDR);
+
     while display.is_open() {
+        // Before the frame's input and draw: the snapshot point the chip uses.
+        let served = console.as_mut().map_or(Served::Idle, |c| {
+            c.service(&mut DeskUnit {
+                ui: &ui,
+                frame: display.frame(),
+            })
+        });
         let now = Instant::now();
         let frame_us = now.duration_since(frame_start).as_micros() as u32;
         frame_start = now;
 
         let keys = display.get_keys();
-        controls.update(&keys);
+        controls.update_events(&keys, Ms(first_light.elapsed().as_millis() as u32));
 
         // Octave shift: [ and ]
         if keys.contains(&minifb::Key::LeftBracket) {
@@ -92,31 +123,61 @@ fn main() {
             if let Some((ch, n)) = current_note {
                 audio.note_off(ch, n);
             }
-            current_note = note.map(|n| (ui.performance.parts[ui.active_part].mix.channel, n));
+            current_note = note.map(|n| (ui.project().part(ui.active_part).mix.channel, n));
             if let Some((ch, n)) = current_note {
                 audio.note_on(ch, n, Velocity::DEFAULT);
             }
         }
 
+        // ORBIT's latest view: the pages draw it, the drift is absorbed.
+        ui.set_orbit_view(orbit_r.read());
         // UI framework handles navigation + encoder -> param binding
         ui.handle_input(&controls);
-        // Leaving System syncs SYSTEM; a toast says how it went.
+        if ui
+            .take_dfu_synced(&mut sync, &mut card, &mut store, &mut settings)
+            .is_some()
+        {
+            eprintln!("dfu: not in this build");
+        }
+        // Card work the keys asked for, under BUSY; a load publishes
+        // once the audio acks, or the timeout passes.
+        if ui.card_pending() {
+            let (y0, y1) = draw_busy(&mut display);
+            display.flush_region(y0, y1);
+        }
+        let cx = CardCx {
+            card: &mut card,
+            store: &mut store,
+            sync: &mut sync,
+            settings: &mut settings,
+        };
+        ui.card_work(cx, &LOAD_LINK, |swap, u| {
+            let deadline = Instant::now() + Duration::from_millis(LOAD_ACK_TIMEOUT_MS.into());
+            let _ = swap.settle(&LOAD_LINK, || Instant::now() < deadline);
+            audio.update(u.project(), LOAD_LINK.epoch(), |o| u.publish_orbit(o));
+        });
+        // Leaving SETTINGS syncs SYSTEM; a toast says how it went.
         ui.sync_system(&mut sync, &mut card, &mut store, &mut settings);
         display.set_theme(&ui.theme());
-        ui.update();
+        if let Some(t) = pacer.due(Ms(first_light.elapsed().as_millis() as u32)) {
+            ui.update(t);
+        }
 
-        // Push every Part and the FX to the audio thread.
-        audio.update(&ui.performance);
+        // Push every Part, the FX and ORBIT to the audio thread.
+        audio.update(ui.project(), LOAD_LINK.epoch(), |o| ui.publish_orbit(o));
 
         ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
         let now = Instant::now();
         let toast_ms = now.duration_since(toast_at).as_millis() as u32;
         toast_at = now;
         if let ToastStep::Show(text) = ui.step_toast(toast_ms) {
-            draw_toast(&mut display, text);
+            draw_toast(&mut display, text.as_str());
         }
 
-        perf.record(frame_us, 0);
+        // An answer's time is the console's, not a frame spike.
+        if served == Served::Idle {
+            perf.record(frame_us, 0);
+        }
 
         display.flush();
         std::thread::sleep(std::time::Duration::from_millis(33));
@@ -143,4 +204,16 @@ fn piano_note(keys: &[minifb::Key]) -> Option<u8> {
         }
     }
     None
+}
+
+/// The source gate's clock (ADR 0087): ms since the first call.
+fn gate_ms() -> u32 {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u32
+}
+
+/// The pool arena: the chip's AXI static, here a leaked box, read by
+/// `table`: `SOURCE_TABLE` where the audio runs.
+fn leaked_arena(table: &'static SourceTable) -> ArenaWriter {
+    ArenaWriter::new(Box::leak(vec![0; ARENA_BYTES].into_boxed_slice()), table)
 }

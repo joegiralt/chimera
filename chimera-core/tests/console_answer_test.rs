@@ -1,0 +1,809 @@
+use chimera_core::boot::{BootAction, BootSeen, UsbRegs};
+use chimera_core::clock_plan::SiliconRev;
+use chimera_core::console::{
+    CardAnswer, CardFail, CardSpeed, Colours, Command, Console, Frame, NoArg, Out, Request,
+    SHOT_HEADER, Stalled, Stats, SweepAsk, Unit, answer,
+};
+use chimera_core::perf::load::AudioStats;
+use chimera_core::reset::ResetCause;
+use chimera_core::ui::UiState;
+use chimera_core::ui::theme_settings::{ThemeSettings, palette};
+use chimera_hal::FB_SIZE;
+use chimera_hal::store::{
+    Doubt, Mark, StoreError, Sweep, SweepRun, SweepStats, Swept, Then, Trigger,
+};
+
+struct Sink(Vec<u8>);
+impl Out for Sink {
+    fn now(&self) -> chimera_hal::Ms {
+        chimera_hal::Ms(0)
+    }
+    fn put(&mut self, b: &[u8]) -> Result<(), Stalled> {
+        self.0.extend_from_slice(b);
+        Ok(())
+    }
+}
+
+struct Fake {
+    ui: Box<UiState>,
+    fb: Box<[u16; FB_SIZE]>,
+    stats: Option<Stats>,
+    bench: Option<String>,
+    card: Option<CardAnswer>,
+    stats_reads: usize,
+    dfu: Option<()>,
+    dfu_calls: usize,
+    boot: Option<BootSeen>,
+    sweep: Option<SweepRun>,
+    sweep_ask: Option<SweepAsk>,
+    sweeps: usize,
+    usb_regs: Option<UsbRegs>,
+    forgotten: usize,
+}
+
+impl Fake {
+    fn new() -> Fake {
+        Fake {
+            ui: Box::new(UiState::new()),
+            fb: Box::new([0xBEEF; FB_SIZE]),
+            stats: None,
+            bench: None,
+            card: None,
+            stats_reads: 0,
+            dfu: None,
+            dfu_calls: 0,
+            boot: None,
+            sweep: None,
+            sweep_ask: None,
+            sweeps: 0,
+            usb_regs: None,
+            forgotten: 0,
+        }
+    }
+}
+
+impl Unit for Fake {
+    fn ui(&self) -> &UiState {
+        &self.ui
+    }
+    fn stats(&mut self) -> Option<Stats> {
+        self.stats_reads += 1;
+        self.stats
+    }
+    fn bench(&self) -> Option<&str> {
+        self.bench.as_deref()
+    }
+    fn card(&mut self) -> Option<CardAnswer> {
+        self.card
+    }
+    fn frame(&self) -> Frame<'_> {
+        Frame {
+            fb: &self.fb,
+            palette: palette(&ThemeSettings::DEFAULT),
+        }
+    }
+    fn dfu(&mut self) -> Option<()> {
+        self.dfu_calls += 1;
+        self.dfu
+    }
+    fn boot(&self) -> Option<BootSeen> {
+        self.boot
+    }
+    fn sweep(&self) -> Option<SweepRun> {
+        self.sweep
+    }
+    fn request_sweep(&mut self) -> Option<SweepAsk> {
+        self.sweeps += 1;
+        self.sweep_ask
+    }
+    fn usb_regs(&self) -> Option<UsbRegs> {
+        self.usb_regs
+    }
+    type Files = chimera_core::console::NoCard;
+    fn files(&mut self) -> Option<&mut Self::Files> {
+        None
+    }
+    fn forget_library(&mut self) {
+        self.forgotten += 1;
+    }
+}
+
+fn audio() -> AudioStats {
+    AudioStats::new(SiliconRev::V, 480_000_000, ResetCause::Watchdog)
+}
+
+fn ask(u: &mut Fake, line: &str) -> String {
+    let mut c = Console::new();
+    let mut s = Sink(Vec::new());
+    for &b in line.as_bytes() {
+        if let Some(r) = c.push(b) {
+            answer(r, u, &mut s).unwrap();
+        }
+    }
+    // Lossy: a shot's body is not text.
+    String::from_utf8_lossy(&s.0).into_owned()
+}
+
+#[test]
+fn help_lists_the_table_in_order() {
+    let mut u = Fake::new();
+    let mut want = String::from("chimera console 1\n");
+    for c in Command::ALL {
+        want += &format!("{:<8}{}\n", c.name(), c.about());
+    }
+    want += "OK\n";
+    assert_eq!(ask(&mut u, "help\n"), want);
+}
+
+#[cfg(all(feature = "card-put", not(feature = "fault-inject")))]
+#[test]
+fn help_is_the_specs_text() {
+    let mut u = Fake::new();
+    assert_eq!(
+        ask(&mut u, "help\n"),
+        "chimera console 1\n\
+         help    this list\n\
+         status  firmware, project, Part and where the UI is\n\
+         stats   AUDIO LOAD and the UI loop's time\n\
+         bench   the bench's numbers (bench builds)\n\
+         card    SD speed and streams, a chord playing; clean (bench builds)\n\
+         shot    the screen in THEME's colours; shot raw: canonical\n\
+         dfu     restart into the ROM loader for just flash\n\
+         sweep   the lost-cluster sweep at the next boot: restarts into it\n\
+         ls      files and sizes in PROJECTS; ls tapes, ls sounds: theirs\n\
+         put     a project, Sound or source: <path> <size> <crc32> [--over]\n\
+         rm      a library Sound's pair: /CHIMERA/SOUNDS/S#######\n\
+         get     a library Sound's file, base64: /CHIMERA/SOUNDS/S#######\n\
+         OK\n"
+    );
+}
+
+#[test]
+fn each_refusal_is_one_err_line() {
+    let mut u = Fake::new();
+    assert_eq!(
+        ask(&mut u, "frob\n"),
+        "ERR unknown command frob, try help\n"
+    );
+    assert_eq!(
+        ask(&mut u, "abcdefghijklmnopqrstuvwxyz\n"),
+        "ERR unknown command abcdefghijklmnop, try help\n"
+    );
+    assert_eq!(
+        ask(&mut u, "status now\n"),
+        "ERR status takes no arguments\n"
+    );
+    assert_eq!(ask(&mut u, "shot x\n"), "ERR shot takes raw or nothing\n");
+    assert_eq!(
+        ask(&mut u, &format!("{}\n", "y".repeat(65))),
+        "ERR line too long, 64 max\n"
+    );
+}
+
+#[test]
+fn none_from_the_unit_is_one_err_line() {
+    let mut u = Fake::new();
+    assert_eq!(ask(&mut u, "stats\n"), "ERR stats is not in this build\n");
+    assert_eq!(ask(&mut u, "bench\n"), "ERR bench is not in this build\n");
+    assert_eq!(ask(&mut u, "card\n"), "ERR card is not in this build\n");
+}
+
+/// Every phase measured.
+fn full() -> CardSpeed {
+    use chimera_core::console::{CardInfo, CardKind, Files, Latency, Load, Throughput};
+    let tp = Some(Throughput {
+        bytes: 1_440_000,
+        us: 1_000_000,
+    });
+    CardSpeed {
+        seed: 7,
+        card: Some(CardInfo {
+            kind: CardKind::Sdhc,
+            bytes: 15_931_539_456,
+            free_bytes: Some(15_000_000_000),
+        }),
+        files: Some(Files::default()),
+        seq: [tp; 3],
+        random: Some(Latency::default()),
+        interleaved: tp,
+        // A p95 round of 8 × 4 KB in 1 ms: 32.8 MB/s, 455 streams at half.
+        rounds: Some(Latency {
+            p95_us: 1_000,
+            ..Latency::default()
+        }),
+        load: Some(Load::default()),
+        overruns: 0,
+    }
+}
+
+#[test]
+fn card_fails_as_one_err_line() {
+    let mut u = Fake::new();
+    u.card = Some(CardAnswer::Cleaned(Err(CardFail::Store(
+        chimera_hal::store::StoreError::Timeout,
+    ))));
+    assert_eq!(ask(&mut u, "card clean\n"), "ERR card: CARD TIMEOUT\n");
+    u.card = Some(CardAnswer::Cleaned(Ok(())));
+    assert_eq!(ask(&mut u, "card clean\n"), "OK\n");
+}
+
+#[test]
+fn a_card_stopped_short_keeps_what_came_before() {
+    let mut u = Fake::new();
+    let mut s = full();
+    (s.random, s.interleaved, s.rounds, s.load) = (None, None, None, None);
+    u.card = Some(CardAnswer::Measured(s, Some(CardFail::Timeout)));
+    let got = ask(&mut u, "card seed=7\n");
+    assert!(
+        got.starts_with("seed 7\ncard_type SDHC\ncard_mb 15931\nfree_mb 15000\nfile_kb 8388\n"),
+        "{got}"
+    );
+    assert!(got.contains("seq_16k_kb_s 1440\n"), "{got}");
+    assert!(!got.contains("rand_") && !got.contains("streams"), "{got}");
+    assert!(got.ends_with("overruns 0\nERR card: timeout\n"), "{got}");
+    u.card = Some(CardAnswer::Measured(
+        CardSpeed::default(),
+        Some(CardFail::NoAudio),
+    ));
+    assert_eq!(
+        ask(&mut u, "card\n"),
+        "seed 0\noverruns 0\nERR card: audio is not running\n"
+    );
+}
+
+#[test]
+fn card_is_key_value_lines_then_ok() {
+    let mut u = Fake::new();
+    u.card = Some(CardAnswer::Measured(full(), None));
+    let got = ask(&mut u, "card\n");
+    assert!(
+        got.starts_with("seed 7\n") && got.ends_with("streams 455\nOK\n"),
+        "{got}"
+    );
+    assert!(
+        got.lines().all(|l| l == "OK" || l.split(' ').count() == 2),
+        "{got}"
+    );
+}
+
+#[test]
+fn stats_reads_audio_load_and_the_loop() {
+    let mut u = Fake::new();
+    let mut a = audio();
+    (
+        a.load_avg,
+        a.load_peak,
+        a.overruns,
+        a.desyncs,
+        a.sources,
+        a.stack_used,
+    ) = (23, 41, 0, 2, 2, 12_288);
+    (a.dma_errors, a.fifo_errors) = (3, 4);
+    a.drops = [5, 7];
+    a.record_voices(5, 60, false);
+    a.record_voices(3, 47, false);
+    u.stats = Some(Stats {
+        audio: a,
+        loop_avg_us: 812,
+        loop_peak_us: 4210,
+    });
+    assert_eq!(
+        ask(&mut u, "stats\n"),
+        "load_pct 23\npeak_pct 41\noverruns 0\ndrops 5 7\ndesyncs 2\ndma_errors 3\nfifo_errors 4\nstack_bytes 12288\nvoices 3 5 of 8\ncost_pct 47\nloop_avg_us 812\nloop_peak_us 4210\nOK\n"
+    );
+    for (sources, want) in [
+        (1, "\ndrops 5\n"),
+        (0, "\ndrops -\n"),
+        (200, "\ndrops 5 7\n"),
+    ] {
+        a.sources = sources;
+        u.stats = Some(Stats {
+            audio: a,
+            loop_avg_us: 0,
+            loop_peak_us: 0,
+        });
+        assert!(ask(&mut u, "stats\n").contains(want), "{sources} sources");
+    }
+}
+
+#[test]
+fn only_stats_reads_the_stats() {
+    let mut u = Fake::new();
+    for l in ["help\n", "status\n", "bench\n", "shot\n", "dfu\n", "nope\n"] {
+        ask(&mut u, l);
+    }
+    assert_eq!(u.stats_reads, 0);
+    ask(&mut u, "stats\n");
+    assert_eq!(u.stats_reads, 1);
+}
+
+#[test]
+fn dfu_is_ok_then_the_unit_is_told_once() {
+    let mut u = Fake::new();
+    u.dfu = Some(());
+    assert_eq!(ask(&mut u, "dfu\n"), "OK\n");
+    assert_eq!(u.dfu_calls, 1);
+    assert_eq!(ask(&mut u, "DFU now\n"), "ERR dfu takes no arguments\n");
+    assert_eq!(u.dfu_calls, 1, "a refusal arms nothing");
+}
+
+#[test]
+fn dfu_without_the_chip_is_one_err_line() {
+    let mut u = Fake::new(); // dfu None
+    assert_eq!(ask(&mut u, "dfu\n"), "ERR dfu is not in this build\n");
+}
+
+#[test]
+fn bench_is_its_text_then_ok() {
+    let mut u = Fake::new();
+    u.bench = Some("# VOICES\nALG 1  12 24 36\n".into());
+    assert_eq!(ask(&mut u, "bench\n"), "# VOICES\nALG 1  12 24 36\nOK\n");
+    u.bench = Some("# VOICES\nALG 1".into());
+    assert_eq!(ask(&mut u, "bench\n"), "# VOICES\nALG 1\nOK\n");
+    u.bench = Some(String::new());
+    assert_eq!(ask(&mut u, "bench\n"), "OK\n");
+}
+
+#[test]
+fn status_is_its_lines_then_ok() {
+    let mut u = Fake::new();
+    let mut want = String::new();
+    chimera_core::console::write_status(&u.ui, &mut want).unwrap();
+    assert_eq!(ask(&mut u, "status\n"), want + "OK\n");
+}
+
+#[test]
+fn the_chips_status_ends_with_its_boot_line() {
+    let mut u = Fake::new();
+    let seen = BootSeen {
+        marker: 0,
+        readback: 0,
+        action: BootAction::Synth,
+        rsr: 0x00e6_0000,
+        dbp: false,
+        boots: 1,
+        from: 0,
+        jump_rsr: 0,
+        last_stage: 0,
+        last_usb: 0,
+        last_usb_step: 0,
+        last_usb_regs: Default::default(),
+    };
+    u.boot = Some(seen);
+    let mut want = String::new();
+    chimera_core::console::write_status(&u.ui, &mut want).unwrap();
+    assert_eq!(ask(&mut u, "status\n"), format!("{want}{seen}\nOK\n"));
+    u.usb_regs = Some(UsbRegs::from_words([1, 2, 3, 4, 5, 6]));
+    assert_eq!(
+        ask(&mut u, "status\n"),
+        format!(
+            "{want}{seen}\nusb_regs gotgctl=00000001 gccfg=00000002 dctl=00000003 \
+             gintsts=00000004 dsts=00000005 pwr_cr3=00000006\nOK\n"
+        )
+    );
+}
+
+#[test]
+fn shot_answers_through_the_units_frame() {
+    let mut u = Fake::new();
+    let mut s = Sink(Vec::new());
+    answer(Ok(Request::Shot(Colours::Raw)), &mut u, &mut s).unwrap();
+    assert_eq!(s.0.len(), SHOT_HEADER.len() + 153_600 + 3);
+    assert_eq!(&s.0[SHOT_HEADER.len()..][..2], &[0xBE, 0xEF]);
+    assert!(s.0.ends_with(b"OK\n"));
+}
+
+/// Takes nothing: every put stalls.
+struct Wall;
+impl Out for Wall {
+    fn now(&self) -> chimera_hal::Ms {
+        chimera_hal::Ms(0)
+    }
+    fn put(&mut self, _: &[u8]) -> Result<(), Stalled> {
+        Err(Stalled)
+    }
+}
+
+#[test]
+fn a_stall_is_returned_from_every_answer() {
+    let mut u = Fake::new();
+    u.bench = Some("x\n".into());
+    u.stats = Some(Stats {
+        audio: audio(),
+        loop_avg_us: 1,
+        loop_peak_us: 2,
+    });
+    let mut c = Console::new();
+    u.card = Some(CardAnswer::Measured(full(), None));
+    for &b in b"help\nstatus\nstats\nbench\ncard\nshot\nfrob\n" {
+        if let Some(r) = c.push(b) {
+            assert_eq!(answer(r, &mut u, &mut Wall), Err(Stalled));
+        }
+    }
+}
+
+/// Takes the first `left` puts whole, then stalls; counts puts made after the stall.
+struct Stalls {
+    got: Vec<u8>,
+    left: usize,
+    stalled: bool,
+    after: usize,
+}
+impl Out for Stalls {
+    fn now(&self) -> chimera_hal::Ms {
+        chimera_hal::Ms(0)
+    }
+    fn put(&mut self, b: &[u8]) -> Result<(), Stalled> {
+        if self.stalled {
+            self.after += 1;
+            return Err(Stalled);
+        }
+        if self.left == 0 {
+            self.stalled = true;
+            return Err(Stalled);
+        }
+        self.left -= 1;
+        self.got.extend_from_slice(b);
+        Ok(())
+    }
+}
+
+#[test]
+fn a_stall_mid_text_ends_the_answer_there() {
+    let mut u = Fake::new();
+    u.bench = Some("# VOICES\nALG 1\n".into());
+    u.stats = Some(Stats {
+        audio: audio(),
+        loop_avg_us: 1,
+        loop_peak_us: 2,
+    });
+    for req in [
+        Request::Help(NoArg),
+        Request::Status(NoArg),
+        Request::Stats(NoArg),
+        Request::Bench(NoArg),
+    ] {
+        let mut s = Stalls {
+            got: Vec::new(),
+            left: 1,
+            stalled: false,
+            after: 0,
+        };
+        assert_eq!(answer(Ok(req), &mut u, &mut s), Err(Stalled), "{req:?}");
+        assert!(s.stalled, "{req:?} stalled");
+        assert_eq!(s.after, 0, "{req:?} put after the stall");
+        let got = String::from_utf8(s.got).unwrap();
+        assert!(
+            !got.contains("OK") && !got.contains("ERR"),
+            "{req:?}: {got:?}"
+        );
+    }
+}
+
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n as u64) as usize
+    }
+
+    /// Up to 200 bytes: 70 % command words, `raw`, spaces, CR and LF; 30 % any byte.
+    fn stream(&mut self) -> Vec<u8> {
+        const PIECES: [&[u8]; 12] = [
+            b"help", b"status", b"stats", b"bench", b"card", b"shot", b"dfu", b"raw", b" ", b"\r",
+            b"\n", b"\n",
+        ];
+        let len = self.below(201);
+        let mut v = Vec::with_capacity(len + 8);
+        while v.len() < len {
+            if self.below(10) < 7 {
+                v.extend_from_slice(PIECES[self.below(PIECES.len())]);
+            } else {
+                v.push(self.next() as u8);
+            }
+        }
+        v.truncate(len);
+        v
+    }
+}
+
+/// The answer with a shot's body cut out: the header, then what follows exactly 153 600 bytes on.
+fn strip_shot_body(a: &[u8]) -> String {
+    let a = match a.strip_prefix(SHOT_HEADER.as_bytes()) {
+        Some(rest) => [SHOT_HEADER.as_bytes(), &rest[153_600..]].concat(),
+        None => a.to_vec(),
+    };
+    String::from_utf8(a).unwrap()
+}
+
+#[test]
+fn random_streams_never_panic_and_end_each_answer_once() {
+    let mut rng = Rng(0x5eed_cafe);
+    let mut u = Fake::new();
+    u.stats = Some(Stats {
+        audio: audio(),
+        loop_avg_us: 1,
+        loop_peak_us: 2,
+    });
+    let mut answers = 0;
+    for _ in 0..5_000 {
+        let mut c = Console::new();
+        for b in rng.stream() {
+            let Some(r) = c.push(b) else { continue };
+            let mut s = Sink(Vec::new());
+            answer(r, &mut u, &mut s).unwrap();
+            let text = strip_shot_body(&s.0);
+            let lines: Vec<&str> = text.lines().collect();
+            let last = *lines.last().expect("an answer");
+            assert!(last == "OK" || last.starts_with("ERR "), "{text}");
+            let terminals = lines
+                .iter()
+                .filter(|l| **l == "OK" || l.starts_with("ERR "))
+                .count();
+            assert_eq!(terminals, 1, "{text}");
+            assert!(
+                text.bytes()
+                    .all(|b| b == b'\n' || (0x20..=0x7e).contains(&b)),
+                "{text:?}"
+            );
+            answers += 1;
+        }
+    }
+    assert!(answers > 5_000, "{answers} answers");
+}
+
+/// The spec's example block for `cmd`: the lines between its heading's
+/// fences.
+fn spec_block(cmd: &str) -> Vec<&'static str> {
+    const SPEC: &str =
+        include_str!("../../docs/superpowers/specs/2026-10-02-usb-console-design.md");
+    let head = format!("**`{cmd}`**\n\n```\n");
+    let at = SPEC.find(&head).unwrap_or_else(|| panic!("no {cmd} block")) + head.len();
+    let end = at + SPEC[at..].find("```").unwrap();
+    SPEC[at..end].lines().collect()
+}
+
+#[test]
+fn the_specs_stats_has_every_line_stats_writes() {
+    let mut u = Fake::new();
+    u.stats = Some(Stats {
+        audio: audio(),
+        loop_avg_us: 0,
+        loop_peak_us: 0,
+    });
+    let key = |l: &str| l.split(' ').next().unwrap().to_owned();
+    let got: Vec<_> = ask(&mut u, "stats\n").lines().map(key).collect();
+    let spec: Vec<_> = spec_block("stats").into_iter().map(key).collect();
+    assert_eq!(got, spec);
+    let voices = spec_block("stats")
+        .into_iter()
+        .find(|l| l.starts_with("voices "));
+    let words: Vec<_> = voices.unwrap().split(' ').collect();
+    assert_eq!(words[3..], ["of", "8"], "voices <now> <peak> of MAX_VOICES");
+}
+
+#[cfg(all(feature = "card-put", not(feature = "fault-inject")))]
+#[test]
+fn the_specs_help_is_what_help_writes() {
+    let mut u = Fake::new();
+    let spec = spec_block("help").join("\n") + "\n";
+    assert_eq!(ask(&mut u, "help\n"), spec);
+}
+
+#[test]
+fn the_specs_card_has_every_line_card_writes() {
+    let mut u = Fake::new();
+    u.card = Some(CardAnswer::Measured(full(), None));
+    let key = |l: &str| l.split(' ').next().unwrap().to_owned();
+    let got: Vec<_> = ask(&mut u, "card\n").lines().map(key).collect();
+    let spec: Vec<_> = spec_block("card").into_iter().map(key).collect();
+    assert_eq!(got, spec);
+}
+
+/// The volume and phase times the sweep lines carry.
+const STATS: SweepStats = SweepStats {
+    spc: 64,
+    clusters: 488_281,
+    fat_bytes: 1_953_792,
+    compare_ms: 210,
+    mark_ms: 35,
+    count_ms: 104,
+};
+const TAIL: &str = "spc 64 clusters 488281 fat 1953792 compare 210ms mark 35ms count 104ms";
+
+/// The boot's sweep after `boot`, before `usb_regs`: skipped on a clean
+/// mark, or why it ran, what it found or why it stopped, the volume, each
+/// phase's time, and whether the mark was cleared.
+#[test]
+fn status_has_the_sweep_after_boot() {
+    let mut u = Fake::new();
+    u.sweep = Some(SweepRun::Ran {
+        mode: Sweep::DryRun,
+        why: Trigger::Owed(Mark::Missing),
+        seen: Ok(Swept {
+            lost: 93,
+            freed: 0,
+            stale: true,
+            healed: false,
+            stats: STATS,
+        }),
+        then: Then::Kept,
+    });
+    u.usb_regs = Some(UsbRegs::from_words([0; 6]));
+    let mut want = String::new();
+    chimera_core::console::write_status(&u.ui, &mut want).unwrap();
+    let got = ask(&mut u, "status\n");
+    let rest = got.strip_prefix(&want).unwrap();
+    assert_eq!(
+        rest.lines().next().unwrap(),
+        format!("sweep dry-run why missing lost 93 freed 0 stale yes healed no {TAIL} then kept")
+    );
+    assert!(rest.lines().nth(1).unwrap().starts_with("usb_regs "));
+    for (run, line) in [
+        (
+            SweepRun::Ran {
+                mode: Sweep::DryRun,
+                why: Trigger::Unread,
+                seen: Err((Doubt::Card(StoreError::Timeout), STATS)),
+                then: Then::Kept,
+            },
+            format!("sweep dry-run why unread doubt timeout {TAIL} then kept"),
+        ),
+        (
+            SweepRun::Ran {
+                mode: Sweep::Free,
+                why: Trigger::Owed(Mark::Dirty),
+                seen: Err((Doubt::TooMany(9_000), STATS)),
+                then: Then::Kept,
+            },
+            format!("sweep free why dirty doubt too-many lost 9000 {TAIL} then kept"),
+        ),
+        (
+            SweepRun::Ran {
+                mode: Sweep::Free,
+                why: Trigger::Owed(Mark::Dirty),
+                seen: Ok(Swept {
+                    lost: 6,
+                    freed: 6,
+                    stale: false,
+                    healed: false,
+                    stats: STATS,
+                }),
+                then: Then::Failed,
+            },
+            format!("sweep free why dirty lost 6 freed 6 stale no healed no {TAIL} then failed"),
+        ),
+        (
+            SweepRun::Skipped(Mark::Clean),
+            "sweep skipped mark clean".to_string(),
+        ),
+        (
+            SweepRun::Skipped(Mark::Unused),
+            "sweep skipped mark unused".to_string(),
+        ),
+    ] {
+        u.sweep = Some(run);
+        let got = ask(&mut u, "status\n");
+        assert!(got.contains(&format!("\n{line}\n")), "{got}");
+    }
+}
+
+/// `sweep` asks the next boot: its line, then `OK` (the shell restarts);
+/// unsaved changes, a card with no `/CHIMERA` or a card fault are an `ERR`;
+/// a build without it says so.
+#[test]
+fn sweep_asks_the_next_boot() {
+    let mut u = Fake::new();
+    assert_eq!(ask(&mut u, "sweep\n"), "ERR sweep is not in this build\n");
+    for (got, want) in [
+        (
+            SweepAsk::Requested,
+            "sweep asked: the next boot sweeps, restarting\nOK\n",
+        ),
+        (
+            SweepAsk::Unsaved,
+            "ERR sweep: unsaved changes, save first\n",
+        ),
+        (
+            SweepAsk::Unused,
+            "ERR sweep: the card has no /CHIMERA, nothing to sweep\n",
+        ),
+        (SweepAsk::Failed(StoreError::NoCard), "ERR sweep: NO CARD\n"),
+    ] {
+        u.sweep_ask = Some(got);
+        assert_eq!(ask(&mut u, "sweep\n"), want);
+    }
+    assert_eq!(ask(&mut u, "sweep now\n"), "ERR sweep takes no arguments\n");
+    assert_eq!(u.sweeps, 5, "a refused line never asks");
+    ask(&mut u, "status\n");
+    assert_eq!(u.sweeps, 5, "status never asks");
+}
+
+/// Doubting boots counted, and the warning once the boot stops sweeping.
+#[test]
+fn status_warns_once_the_sweep_stopped() {
+    let mut u = Fake::new();
+    let doubt = |n| SweepRun::Ran {
+        mode: Sweep::Free,
+        why: Trigger::Owed(if n == 1 {
+            Mark::Dirty
+        } else {
+            Mark::Doubted(n - 1)
+        }),
+        seen: Err((Doubt::CrossLinked, STATS)),
+        then: Then::Doubted(n),
+    };
+    const WARN: &str = "warn sweep stopped: 3 doubting boots in a row; check the card on a computer, then run sweep";
+    u.sweep = Some(doubt(2));
+    let got = ask(&mut u, "status\n");
+    assert!(
+        got.contains(&format!(
+            "\nsweep free why doubted 1 doubt cross-linked {TAIL} then doubted 2\n"
+        )),
+        "{got}"
+    );
+    assert!(!got.contains("warn "), "{got}");
+    u.sweep = Some(doubt(3));
+    let got = ask(&mut u, "status\n");
+    assert!(got.contains(&format!("then doubted 3\n{WARN}\n")), "{got}");
+    u.sweep = Some(SweepRun::Skipped(Mark::Doubted(3)));
+    let got = ask(&mut u, "status\n");
+    assert!(
+        got.contains(&format!("\nsweep skipped mark doubted 3\n{WARN}\n")),
+        "{got}"
+    );
+}
+
+/// The boot's toast when the sweep stopped, and none otherwise.
+#[test]
+fn a_stopped_sweep_toasts_at_boot() {
+    use chimera_core::ui::SWEEP_STOPPED;
+    use chimera_core::ui::busy::{ToastStep, toast_fits};
+    assert!(toast_fits(SWEEP_STOPPED));
+    let mut ui = UiState::new();
+    ui.note_sweep(&SweepRun::Skipped(Mark::Clean));
+    assert_eq!(ui.step_toast(0), ToastStep::Idle);
+    ui.note_sweep(&SweepRun::Skipped(Mark::Doubted(3)));
+    assert!(matches!(ui.step_toast(0), ToastStep::Show(l) if l.as_str() == SWEEP_STOPPED));
+}
+
+/// Card verbs wait while a library load holds the card's work: no card
+/// touched, and the page kept.
+#[cfg(feature = "card-put")]
+#[test]
+fn card_verbs_answer_busy_while_a_library_load_is_pending() {
+    let mut u = Fake::new();
+    u.ui.start_pending_library_load_for_test();
+    assert!(u.ui.card_pending());
+    for line in [
+        "ls sounds",
+        "put /CHIMERA/SOUNDS/S0000002.A 10 0",
+        "rm /CHIMERA/SOUNDS/S0000001",
+        "get /CHIMERA/SOUNDS/S0000001",
+        "ls",
+        "put /CHIMERA/PROJECTS/P0000001.A 10 0",
+    ] {
+        assert_eq!(ask(&mut u, &format!("{line}\n")), "ERR busy\n", "{line}");
+    }
+    assert_eq!(u.forgotten, 0);
+    assert_eq!(ask(&mut u, "status\n").lines().last(), Some("OK"));
+}
+
+/// No card in the build: nothing reached it, so nothing is forgotten.
+#[cfg(feature = "card-put")]
+#[test]
+fn rm_without_a_card_forgets_nothing() {
+    let mut u = Fake::new();
+    assert_eq!(
+        ask(&mut u, "rm /CHIMERA/SOUNDS/S0000001\n"),
+        "ERR rm is not in this build\n"
+    );
+    assert_eq!(u.forgotten, 0);
+}

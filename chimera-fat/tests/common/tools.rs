@@ -1,5 +1,7 @@
 //! dosfstools as a second opinion: `mkfs.fat` makes images, `fsck.fat -n`
 //! checks them. A missing tool fails the test; it never skips.
+// Each test binary uses its own part of this module.
+#![allow(dead_code)]
 
 use crate::image::{PART_LBA, RamDisk, mbr};
 use chimera_fat::volume::FsKind;
@@ -73,13 +75,35 @@ pub fn mkfs(kind: FsKind, blocks: u32, spc: u8, serial: u32) -> RamDisk {
     disk
 }
 
-/// `fsck.fat -n` on a partition: its exit code, its output, and its summary
-/// line's `used/total clusters`.
+/// `fsck.fat -n` on a partition: its exit code, its output, its summary
+/// line's `used/total clusters`, and the clusters its `Reclaimed N unused
+/// cluster(s)` line names (0 without one): those no entry reaches.
 pub struct Fsck {
     pub code: i32,
     pub out: String,
     pub used: u32,
     pub total: u32,
+    pub reclaimed: u32,
+}
+
+impl Fsck {
+    /// Its findings: every line but the banner, the summary, the
+    /// reclaim, the FSInfo count's and the no-write notice.
+    pub fn findings(&self) -> Vec<&str> {
+        self.out
+            .lines()
+            .skip(1)
+            .filter(|l| {
+                !(l.is_empty()
+                    || l.starts_with("Reclaimed ")
+                    || l.starts_with("Free cluster summary")
+                    || l.starts_with("Leaving filesystem unchanged")
+                    || l.starts_with("FATs differ")
+                    || l.trim_start().starts_with("Using first FAT")
+                    || l.ends_with(" clusters"))
+            })
+            .collect()
+    }
 }
 
 /// Runs `fsck.fat -n` on `disk`'s partition alone.
@@ -98,10 +122,21 @@ pub fn fsck(disk: &RamDisk) -> Fsck {
             Some((used.parse().ok()?, total.parse().ok()?))
         })
         .unwrap_or_else(|| panic!("no summary line in fsck.fat's output: {out}"));
+    let reclaimed = out
+        .lines()
+        .find_map(|l| {
+            l.strip_prefix("Reclaimed ")?
+                .split(' ')
+                .next()?
+                .parse()
+                .ok()
+        })
+        .unwrap_or(0);
     Fsck {
         code,
         out,
         used,
         total,
+        reclaimed,
     }
 }

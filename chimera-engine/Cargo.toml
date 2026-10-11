@@ -1,0 +1,56 @@
+[package]
+name = "chimera-engine"
+version.workspace = true
+edition.workspace = true
+
+# The synth's model and everything the audio runs (ADR 0108), in the fast
+# profile: the DSP, the Instrument, ORBIT, the project and its storage.
+# `chimera-core` re-exports it under the same paths and adds the UI and the
+# console, built for size.
+[dependencies]
+chimera-hal = { path = "../chimera-hal" }
+chimera-theory = { path = "../chimera-theory" }
+libm = "0.2"
+chimera-waves = { path = "../chimera-waves" }
+
+[features]
+# The wave tables rendered into RAM at boot (`waves::render_into`), not
+# shipped in flash (ADR 0122). The firmware's; a host keeps the static.
+boot-waves = []
+# The console's `ls` and `put` (ADR 0092): project files onto the card.
+card-put = []
+# The master tape stage on DAC pair 1 (ADR 0055: off the chain by default;
+# its parameters and disk codes stay either way).
+master-tape = []
+# The by-value engine constructors (`AlgoEngine::new`, `ModalEngine::new`,
+# `EngineSlot::new`), for tests only: firmware builds every engine in place.
+test-support = []
+# `write_source`: sources written, verified and sealed on the card. Host
+# only (the importer, the desktop, tests); no firmware build enables it
+# until the lost-cluster sweep frees on the unit (#360).
+source-writer = []
+# Bench-only phase stamps inside ORBIT's block and the note handling.
+probe = []
+# The filter's static-cost probes (`dsp::filter::probe`) alone, for
+# `tools/loop_count.py`: none of `probe`'s stamps.
+filter-probe = []
+# `ring::smear_probe`: SMEAR's reads, recorded per thread. Tests only.
+smear-probe = []
+# `rev::parts::clamp_counts`: the reverb's clamp hits, counted per thread.
+# Tests only.
+clamp-probe = []
+
+# The `SourceTable` model (`chimera-core/tests/loom_source_table.rs`): only
+# under `RUSTFLAGS="--cfg loom"`, never in a firmware or desktop build. MIT.
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
+
+[build-dependencies]
+chimera-waves = { path = "../chimera-waves", features = ["emit"] }
+
+[dev-dependencies]
+chimera-engine = { path = ".", features = ["test-support", "source-writer", "smear-probe", "clamp-probe"] }
+chimera-hal = { path = "../chimera-hal", features = ["testkit"] }

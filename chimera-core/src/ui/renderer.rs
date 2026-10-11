@@ -1,31 +1,60 @@
+use crate::dsp::clampf;
+use crate::dsp::reverb::ReverbType;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
-use crate::addr::Op;
+use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
+use crate::block::find_spec;
 use crate::dsp::algo::algorithms::AlgoId;
+use crate::dsp::algo::env::EnvRates;
+use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::modulator::{EnvType, HoldPos};
+use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
+use crate::part::DacPair;
 use crate::perf::load::AudioStats;
+use crate::project::PartId;
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
 use crate::ui::audio_page;
-use crate::ui::block_def::{BlockDef, FxFlow, SlotBinding, VizType, slot_addr};
-use crate::ui::chain::ChainNav;
-use crate::ui::components;
+use crate::ui::block_def::{BlockDef, ChainDef2, FxFlow, SlotBinding, VizType, slot_addr};
+use crate::ui::components::{self, Head};
+use crate::ui::draw;
 use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
+use crate::ui::glyph::{
+    BRAID_PARAMS, Braid, BraidPart, CompositeId, Cube, CubePart, FocusGlyph, Gauge, REVERB_PARAMS,
+    RINGS_PARAMS, Rings, RingsPart, Tail,
+};
+use crate::ui::hint;
 use crate::ui::mod_grid::MatrixState;
+use crate::ui::nav::PageAt;
+use crate::ui::orbit::draw::{self as orbit, OrbitFrame};
 use crate::ui::page::PageLayout;
 use crate::ui::perf::PerfStats;
-use crate::ui::region::{self, RegionKind};
+use crate::ui::region::{self, Layout, RegionKind};
+use crate::ui::settings::Ask;
+use crate::ui::settings::prompt::{Beneath, blank_beneath, draw_prompt};
+use crate::ui::settings::view::Bands;
 use crate::ui::theme;
 use crate::ui::view::{self, EnvKind, SlotCtx, View};
 use crate::ui::viz;
 
+/// Every Part, as the project holds them.
+pub type Parts = [crate::preset::Part; crate::hw::MAX_PARTS];
+
 /// Everything one frame draws from, besides the renderer's own animation.
 pub struct Frame<'a> {
-    pub nav: &'a ChainNav,
+    /// Whose page this is, for the header and its OUT warning.
+    pub head: Head,
+    /// The chain the map shows, and where on it; `None` in SETTINGS.
+    pub map: Option<(&'static ChainDef2, PageAt)>,
+    pub layout: Layout,
+    /// SETTINGS' breadcrumb, list and footer.
+    pub settings: Option<Bands<'a>>,
+    /// A prompt over the screen.
+    pub(crate) prompt: Option<&'a Ask>,
     pub def: &'static BlockDef,
     pub perf: &'a PerfStats,
     pub matrix: &'a MatrixState,
@@ -38,24 +67,74 @@ pub struct Frame<'a> {
     pub scope: &'a [f32; crate::scope::SCOPE_LEN],
     /// The live output is above silence (header dot).
     pub sounding: bool,
+    /// ORBIT's beat dot: its fill while ORBIT runs (`OrbitAnim::dot`).
+    pub orbit_dot: Option<u8>,
     /// Every Part (Mixer overview) and the one being edited.
-    pub parts: &'a [crate::preset::Part; crate::hw::MAX_PARTS],
-    pub active_part: usize,
+    pub parts: &'a Parts,
+    pub active_part: PartId,
     /// The last MIX+PLUS outcome, shown in the focus band in place of the
     /// value readout (issue #21).
     pub prime_status: Option<PrimeStatus>,
-    /// The AUDIO sub-page's measured stats, `None` where it is not shown.
+    /// The project's pool, for PROJECT › POOL.
+    pub pool: &'a crate::project::Pool,
+    /// The measured stats AUDIO LOAD and ABOUT show; `None` where not had.
     pub audio: Option<&'a AudioStats>,
+    /// The card as last seen, for ABOUT.
+    pub card: crate::storage::Card,
     /// The master compressor's gain reduction, dB (MST's GR meter).
     pub master_gr_db: f32,
+    /// The active Part's LEVEL LED fill (`ClipHold`); 0 is dark.
+    pub clip: f32,
+    /// The tempo the reverb follows and its synced time's fold.
+    pub rev_clock: (
+        crate::dsp::rev::sync::Tempo,
+        crate::dsp::rev::sync::FoldState,
+    ),
+    /// Animation phase: what an animated glyph draws from.
+    pub clock: crate::ui::animation::UiClock,
+    /// The FX's stored params (a composite reads the chorus's).
+    pub fx: &'a crate::dsp::fx_bus::FxParams,
+    /// What ORBIT's pages draw: the live scene and the UI's view of it.
+    pub orbit: OrbitFrame<'a>,
+    /// ORBIT's reading of the focused slot, if it has its own: built once
+    /// a frame, for the band's key, its gauge and its drawing.
+    pub orbit_focus: Option<orbit::Focus>,
+    /// THEME's HINTS: gesture hints drawn (ADR 0086).
+    pub hints: bool,
+    /// TAPE's strip: the active Part's source, and its newest note's heads.
+    pub strip: &'a crate::ui::tape_strip::Overview,
+    pub heads: crate::dsp::tape_engine::Heads,
+}
+
+impl Frame<'_> {
+    /// `h`, or none with HINTS off.
+    pub fn hint(&self, h: hint::Hint) -> hint::Hint {
+        if self.hints { h } else { hint::NONE }
+    }
+
+    /// What the header shows beside its words: the load and the dots.
+    pub fn header_status(&self) -> components::HeaderStatus {
+        components::HeaderStatus {
+            sounding: self.sounding,
+            load_pct: self.perf.audio_load_pct,
+            orbit_dot: self.orbit_dot,
+        }
+    }
 }
 
 /// Full-screen renderer. Composites header, visualization, parameters, and dungeon map.
 pub struct Renderer {
     /// Animated display values for the 6 encoders (normalized 0..1).
     pub anim: [AnimatedValue; 6],
+    /// The same slots' set values, eased, with no modulation: what the
+    /// glyphs that ignore modulation draw (CROSSFADER, and the composites
+    /// through `eased_set`).
+    pub set: [AnimatedValue; 6],
     /// Animated scroll offset for dungeon map sub-page branches (in pixels).
     pub branch_scroll: AnimatedValue,
+    /// CUSTOM's cursor in twelfths round the circle, unwrapped, so it eases
+    /// the short way across 11 and 0 (`animation::nearest`).
+    pub orbit_cursor: AnimatedValue,
 }
 
 impl Default for Renderer {
@@ -68,13 +147,18 @@ impl Renderer {
     pub fn new() -> Self {
         Self {
             anim: [AnimatedValue::new(0.5); 6],
+            set: [AnimatedValue::new(0.5); 6],
             branch_scroll: AnimatedValue::new(0.0).with_speed(0.25),
+            orbit_cursor: AnimatedValue::new(0.0),
         }
     }
 
     /// Jump the animated values (page change: nothing to lerp from).
     pub fn snap_to_current(&mut self, values: [f32; 6]) {
         for (a, &v) in self.anim.iter_mut().zip(values.iter()) {
+            a.snap(v);
+        }
+        for (a, &v) in self.set.iter_mut().zip(values.iter()) {
             a.snap(v);
         }
     }
@@ -95,7 +179,7 @@ impl Renderer {
                         .map_or(0.0, a)
                 };
                 use crate::params::FilterParams;
-                let mode = f.parts[f.active_part].sound.params.filter.mode();
+                let flt = &f.parts[f.active_part.index()].sound.params.filter;
                 let v = view::view(f.def, f.focus, &f.ctx);
                 let buf = value_text(f, f.focus, a(f.focus));
                 let readout = (v != View::Empty).then(|| (v.label(), buf.as_str()));
@@ -103,9 +187,12 @@ impl Renderer {
                     display,
                     at(FilterParams::CUTOFF),
                     at(FilterParams::RESONANCE),
-                    viz::Response::of(mode),
+                    viz::Response::of(flt.kind(), flt.mode()),
                     readout,
                 );
+                if f.clip > 0.0 {
+                    draw::clip_led(display, viz::LED_X, viz::LED_Y, f.clip);
+                }
             }
             VizType::Adsr => {
                 let Some(SlotBinding::EnvPanel(s, _)) = f.def.params.first().map(|p| p.binding)
@@ -119,7 +206,7 @@ impl Renderer {
                         .map(a)
                 };
                 use crate::params::EnvParams as E;
-                let p = &f.parts[f.active_part].sound.params.envelopes[s.index()];
+                let p = &f.parts[f.active_part.index()].sound.params.envelopes[s.index()];
                 match f.ctx.envs[s.index()] {
                     EnvKind::A(_) => {
                         let (atk, dec, sus, rel) = (
@@ -174,8 +261,11 @@ impl Renderer {
                 let ratio = RATIOS[((a(1) * 7.0 + 0.5) as usize).min(RATIOS.len() - 1)];
                 viz::compressor(display, -40.0 + 40.0 * a(0), ratio, f.master_gr_db);
             }
+            VizType::About => crate::ui::about_page::draw_viz(display),
+            VizType::Orbit => orbit::orb(display, &f.orbit, f.ctx.ring),
+            VizType::OrbitCircle => orbit::circle(display, &f.orbit, self.orbit_cursor.current()),
             VizType::EnvSpeed => {
-                let e = &f.parts[f.active_part].sound.params.envelopes;
+                let e = &f.parts[f.active_part.index()].sound.params.envelopes;
                 viz::env_speed(
                     display,
                     core::array::from_fn(|i| {
@@ -197,7 +287,10 @@ impl Renderer {
     {
         match f.def.viz {
             VizType::AudioStats => audio_page::draw_viz(display, f.audio),
-            VizType::MixerLevels => viz::parts_overview(display, &self.strips(f), f.active_part),
+            VizType::Pool => crate::ui::pool_page::draw_viz(display, f.pool),
+            VizType::MixerLevels => {
+                viz::parts_overview(display, &self.strips(f), f.active_part.index())
+            }
             VizType::EffectsFlow(FxFlow::Sends) => {
                 let sends = [
                     self.anim[0].current(),
@@ -209,8 +302,13 @@ impl Renderer {
             VizType::EffectsFlow(FxFlow::Effect(node)) => {
                 viz::effects_flow(display, Some(node as usize), None)
             }
+            VizType::OrbitRhythm => orbit::rhythm(display, &f.orbit, f.ctx.ring),
+            VizType::OrbitVoice => orbit::voice(display, &f.orbit, f.ctx.ring),
+            VizType::OrbitNotes => orbit::notes(display, &f.orbit, f.ctx.ring),
+            VizType::OrbitChords => orbit::chords(display, &f.orbit),
+            VizType::OrbitScenes => orbit::scenes(display, &f.orbit),
             VizType::AlgoDiagram => {
-                let algo = &f.parts[f.active_part].sound.params.algo;
+                let algo = &f.parts[f.active_part.index()].sound.params.algo;
                 let morph = crate::addr::ParamAddr::new(
                     crate::addr::BlockRef::Algo,
                     crate::dsp::algo::params::AlgoParams::MORPH,
@@ -225,8 +323,69 @@ impl Renderer {
                     self.anim[slot].current(),
                 );
             }
+            VizType::Strip => {
+                let (model, p) = self.strip_params(f);
+                crate::ui::tape_strip::draw_strip(
+                    display,
+                    f.strip,
+                    model,
+                    &p,
+                    f.heads,
+                    theme::VIZ_LEFT,
+                    crate::ui::tape_strip::Y,
+                );
+            }
+            VizType::OpEnv => {
+                if let Some((rates, lit)) = self.op_env(f) {
+                    let (widths, heights) = viz::op_env(rates);
+                    let top = viz::BAND_PLOT_TOP;
+                    viz::envelope_from(display, top, &widths, &heights, &viz::OP_ENV_LABELS, lit);
+                }
+            }
             _ => viz::live_output(display, f.scope),
         }
+    }
+
+    /// The active Part's machine and its TAPE params, this page's as its
+    /// slots glide: the strip never snaps.
+    fn strip_params(&self, f: &Frame) -> (TapeModel, TapeEngineParams) {
+        let t = f.parts[f.active_part.index()].sound.params.tape;
+        let mut p = t;
+        for (i, anim) in self.anim.iter().enumerate().take(f.def.params.len()) {
+            let Some(a) = slot_addr(f.def, i, &f.ctx).filter(|a| a.block == BlockRef::TapeEngine)
+            else {
+                continue;
+            };
+            if let Some(s) = find_spec(a.block.specs(), a.param) {
+                let v = s.min + anim.current() * (s.max - s.min);
+                crate::block::Block::set(&mut p, a.param, v);
+            }
+        }
+        (t.model, p)
+    }
+
+    /// The focused operator's envelope rates, this page's from its animated
+    /// slot (to the nearest step), and the stage that rate edits.
+    fn op_env(&self, f: &Frame) -> Option<(EnvRates, Option<usize>)> {
+        use AlgoOpParams as P;
+        let addr = slot_addr(f.def, f.focus, &f.ctx)?;
+        let BlockRef::AlgoOp(op) = addr.block else {
+            return None;
+        };
+        let spec = find_spec(addr.block.specs(), addr.param)?;
+        let v =
+            spec.quantize(spec.min + self.anim[f.focus].current() * (spec.max - spec.min)) as u8;
+        let mut r = f.parts[f.active_part.index()].sound.params.algo.ops[op.index()].rates();
+        let (field, lit) = match addr.param {
+            P::AR => (&mut r.ar, 0),
+            P::D1R => (&mut r.d1r, 1),
+            P::D1L => (&mut r.d1l, 1),
+            P::D2R => (&mut r.d2r, 2),
+            P::RR => (&mut r.rr, 3),
+            _ => return Some((r, None)),
+        };
+        *field = v;
+        Some((r, Some(lit)))
     }
 
     /// Level and pan of every Part; the edited one from its animated LEVEL
@@ -246,7 +405,7 @@ impl Renderer {
                 level: mix.level,
                 pan: mix.pan,
             };
-            if i == f.active_part {
+            if i == f.active_part.index() {
                 if let Some(l) = level {
                     s.level = self.anim[l].current();
                 }
@@ -270,8 +429,25 @@ impl Renderer {
             Size::new(theme::SCREEN_W as u32, theme::SCREEN_H as u32),
         )
         .draw_styled(&PrimitiveStyle::with_fill(theme::BG), display);
-        for &(kind, _, _) in region::layout_regions(f.def.layout) {
+        for &(kind, _, _) in f.layout.regions() {
             self.draw_region_with_def(display, kind, f);
+        }
+        Self::blank_beneath_prompt(display, f);
+        self.draw_region_with_def(display, RegionKind::Prompt, f);
+    }
+
+    /// Under an opening prompt: the panel's band over a SETTINGS list,
+    /// all but the header and map over a page.
+    pub fn blank_beneath_prompt<D>(display: &mut D, f: &Frame)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        if f.prompt.is_some() {
+            let on = match f.settings {
+                Some(_) => Beneath::List,
+                None => Beneath::Page,
+            };
+            blank_beneath(display, on);
         }
     }
 
@@ -281,18 +457,42 @@ impl Renderer {
         match f.def.layout {
             PageLayout::CellGrid => match f.def.viz {
                 VizType::AudioStats => ([0; 6], audio_page::viz_key(f.audio)),
+                VizType::Pool => ([0; 6], crate::ui::pool_page::viz_key(f.pool)),
                 VizType::MixerLevels => (
                     region::quantize_values(&self.anim),
-                    strips_key(&self.strips(f), f.active_part),
+                    strips_key(&self.strips(f), f.active_part.index()),
                 ),
                 VizType::EffectsFlow(_) => (region::quantize_values(&self.anim), f.focus as u32),
                 VizType::AlgoDiagram => {
-                    let algo = &f.parts[f.active_part].sound.params.algo;
+                    let algo = &f.parts[f.active_part.index()].sound.params.algo;
                     let q = region::quantize_values(&self.anim);
                     (
                         [0, 0, q[2], 0, 0, 0],
                         (algo.alg_a as u32) << 8 | algo.alg_b as u32,
                     )
+                }
+                // ORBIT's own key: `orbit_viz_key`.
+                VizType::OrbitRhythm
+                | VizType::OrbitVoice
+                | VizType::OrbitNotes
+                | VizType::OrbitChords
+                | VizType::OrbitScenes => ([0; 6], 0),
+                VizType::Strip => {
+                    let (model, p) = self.strip_params(f);
+                    let key = crate::ui::tape_strip::key(f.strip, model, &p, f.heads);
+                    (region::quantize_values(&self.anim), key)
+                }
+                VizType::OpEnv => {
+                    // AR D1R D2R 5 bits, D1L RR 4, the lit stage 3.
+                    let key = self.op_env(f).map_or(0, |(r, lit)| {
+                        (r.ar as u32) << 23
+                            | (r.d1r as u32) << 18
+                            | (r.d2r as u32) << 13
+                            | (r.d1l as u32) << 9
+                            | (r.rr as u32) << 5
+                            | lit.map_or(7, |l| l as u32)
+                    });
+                    ([0; 6], key)
                 }
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
@@ -300,13 +500,13 @@ impl Renderer {
                 // The GR meter redraws every 0.25 dB.
                 let gr = match f.def.viz {
                     VizType::CompressorCurve => {
-                        (f.master_gr_db.clamp(0.0, viz::GR_RANGE_DB) * 4.0) as u32
+                        (clampf(f.master_gr_db, 0.0, viz::GR_RANGE_DB) * 4.0) as u32
                     }
                     _ => 0,
                 };
                 (
                     region::quantize_values(&self.anim),
-                    f.focus as u32 | gr << 8,
+                    f.focus as u32 | gr << 8 | led_key(f) << 16,
                 )
             }
             PageLayout::Matrix => ([0; 6], 0),
@@ -318,7 +518,7 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let (nav, def, matrix_state) = (f.nav, f.def, f.matrix);
+        let (def, matrix_state) = (f.def, f.matrix);
         match kind {
             RegionKind::Header => self.draw_header(display, f),
             RegionKind::Focus => self.draw_focus(display, f),
@@ -335,11 +535,35 @@ impl Renderer {
                 inert(f),
             ),
             RegionKind::Nav => {
-                dungeon_map::draw(
-                    display,
-                    nav,
-                    (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32,
-                );
+                if let Some((chain, at)) = f.map {
+                    dungeon_map::draw(
+                        display,
+                        chain,
+                        at,
+                        f.ctx.models(),
+                        (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32,
+                    );
+                }
+            }
+            RegionKind::Crumbs => {
+                if let Some(b) = &f.settings {
+                    b.draw_crumbs(display, f.header_status())
+                }
+            }
+            RegionKind::List => {
+                if let Some(b) = &f.settings {
+                    b.draw_list(display)
+                }
+            }
+            RegionKind::Footer => {
+                if let Some(b) = &f.settings {
+                    b.draw_footer(display)
+                }
+            }
+            RegionKind::Prompt => {
+                if let Some(a) = f.prompt {
+                    a.with_view(|v| draw_prompt(display, v))
+                }
             }
         }
     }
@@ -355,14 +579,30 @@ impl Renderer {
                 f.matrix,
                 amount_of(self.anim[MATRIX_AMOUNT_SLOT].current()),
                 inert(f),
+                f.hint(f.matrix.hint()),
             );
         }
         if f.def.viz == VizType::AudioStats {
             return audio_page::draw_focus(display, f.def, f.audio);
         }
+        if f.def.viz == VizType::Pool {
+            return crate::ui::pool_page::draw_focus(display, f.pool);
+        }
         let view = view::view(f.def, f.focus, &f.ctx);
         if view == View::Empty {
             return;
+        }
+        if let Some(o) = &f.orbit_focus {
+            let (label, text) = (o.label.as_str(), o.text.as_str());
+            components::focus_band(
+                display,
+                label,
+                text,
+                o.gauge,
+                look(f, f.focus),
+                f.prime_status,
+            );
+            return hint::focus(display, f.hint(o.hint));
         }
         let v = self.anim[f.focus].current();
         let buf = value_text(f, f.focus, v);
@@ -370,11 +610,107 @@ impl Renderer {
             display,
             view.label(),
             buf.as_str(),
-            v,
-            view.fmt().is_bipolar(),
+            self.gauge(f),
             look(f, f.focus),
             f.prime_status,
         );
+        hint::focus(display, f.hint(view.hint()));
+        if let View::Source(view::SourceState::Card { cost, free, .. }) = view {
+            crate::ui::source_cell::draw_card_row(display, f.pool, cost, free, f.hints);
+        }
+    }
+
+    /// What an ORBIT viz draws, for its region's key; 0 on any other.
+    pub fn orbit_viz_key(&self, f: &Frame) -> u32 {
+        orbit::viz_key(f.def, &f.orbit, f.ctx.ring, self.orbit_cursor.current())
+    }
+
+    /// The focused slot's gauge, by its glyph; ORBIT's own where it reads
+    /// the slot itself.
+    pub fn gauge(&self, f: &Frame) -> Gauge {
+        if let Some(o) = &f.orbit_focus {
+            return o.gauge;
+        }
+        let view = view::view(f.def, f.focus, &f.ctx);
+        let (fmt, glyph, focused) = (view.fmt(), view.glyph(), view.addr());
+        let value = match glyph {
+            FocusGlyph::Crossfader | FocusGlyph::Staff | FocusGlyph::Wave => {
+                self.set[f.focus].current()
+            }
+            _ => self.anim[f.focus].current(),
+        };
+        let frame = f.clock.frame();
+        super::glyph::gauge(glyph, value, fmt, |id| {
+            // Which of the composite's params has focus.
+            let focus = id.params().iter().position(|&a| Some(a) == focused);
+            match id {
+                CompositeId::ChorusBraid => Gauge::Braid(Braid::from_set(
+                    self.eased_set(f, BRAID_PARAMS),
+                    focus.map(|i| BraidPart::ALL[i]),
+                    frame,
+                )),
+                CompositeId::DelayRings => Gauge::Rings(Rings::from_set(
+                    self.eased_set(f, RINGS_PARAMS),
+                    focus.map(|i| RingsPart::ALL[i]),
+                    frame,
+                )),
+                // The cube is QUAD's picture; the others draw their TAIL.
+                // The cube's params lead `REVERB_PARAMS`.
+                CompositeId::Reverb => {
+                    let set = self.eased_set(f, REVERB_PARAMS);
+                    if f.ctx.rev == ReverbType::Quad {
+                        Gauge::Cube(Cube::from_set(
+                            core::array::from_fn(|i| set[i]),
+                            focus.and_then(|i| CubePart::ALL.get(i).copied()),
+                            frame,
+                        ))
+                    } else {
+                        Gauge::Tail(Tail::from_set(f.ctx.rev, set, focus, frame))
+                    }
+                }
+            }
+        })
+    }
+
+    /// A composite's inputs, `addrs`' set values normalized: eased (`set`)
+    /// where the page has a slot for one, else stored; never `anim` or
+    /// anything modulated, so the glyph only ever moves by its own
+    /// animation.
+    fn eased_set<const N: usize>(&self, f: &Frame, addrs: [ParamAddr; N]) -> [f32; N] {
+        let stored = stored_set(&Stored(f), addrs);
+        core::array::from_fn(|i| {
+            (0..f.def.params.len())
+                .find(|&s| slot_addr(f.def, s, &f.ctx) == Some(addrs[i]))
+                .map_or(stored[i], |s| self.set[s].current())
+        })
+    }
+
+    /// The gauge the focus band shows now: none while a prime status holds
+    /// the band, or for a dimmed, absent or empty slot.
+    pub fn shown_gauge(&self, f: &Frame) -> Option<Gauge> {
+        let plain = f.def.layout != PageLayout::Matrix
+            && !matches!(f.def.viz, VizType::AudioStats | VizType::Pool);
+        (plain
+            && f.prime_status.is_none()
+            && view::view(f.def, f.focus, &f.ctx) != View::Empty
+            && look(f, f.focus) == components::Look::Live)
+            .then(|| self.gauge(f))
+    }
+
+    /// Redraw only `gauge` (the shown one) in its box, if it has one; the
+    /// rows to flush.
+    pub fn redraw_gauge<D>(
+        display: &mut D,
+        fb: impl FnOnce(&mut D) -> &mut [u16],
+        gauge: Gauge,
+    ) -> Option<(u16, u16)>
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let (x, y, w, h) = components::gauge_rect(&gauge)?;
+        Self::clear_rect_fb(fb(display), x, y, w, h);
+        components::draw_gauge(display, gauge);
+        Some((y as u16, (y + h) as u16))
     }
 
     /// The six cells, first row's labels at `top`.
@@ -382,8 +718,15 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        if f.def.viz == VizType::AudioStats {
-            return audio_page::draw_cells(display, f.def, f.audio, top);
+        match f.def.viz {
+            VizType::AudioStats => return audio_page::draw_cells(display, f.def, f.audio, top),
+            VizType::Pool => {
+                return crate::ui::pool_page::draw_cells(display, f.def, f.pool, top);
+            }
+            VizType::About => {
+                return crate::ui::about_page::draw_cells(display, f.def, f.audio, f.card, top);
+            }
+            _ => {}
         }
         for (i, anim) in self.anim.iter().enumerate() {
             let v = view::view(f.def, i, &f.ctx);
@@ -394,10 +737,16 @@ impl Renderer {
             let value = anim.current();
             let mut buf = FmtBuf::new();
             match v {
+                // The cell keeps a readout's first words: `POLY`, not
+                // `POLY (UNPITCHED)`; the focus band reads it whole.
                 View::Text { text, .. } => {
+                    let end = text.bytes().position(|b| b == b'(').unwrap_or(text.len());
+                    let text = text[..end].trim_end();
                     let _ = core::fmt::Write::write_str(&mut buf, text);
                 }
-                _ => fmt::fmt_val(&mut buf, value, v.fmt()),
+                View::Orbit(cell) => buf = orbit::cell_text(cell, &f.orbit, f.ctx.ring),
+                View::Source(s) => s.cell(&mut buf),
+                _ => buf = param_text(f, i, &v, value),
             }
             let c = components::Cell {
                 label: cell_label(&v),
@@ -407,8 +756,18 @@ impl Renderer {
                 active: i == f.focus,
                 mod_amount: mod_info(f, i),
                 look: look(f, i),
+                motion: v.addr().and_then(|a| a.spec()).map(|s| s.motion()),
             };
             components::cell(display, i, top, Some(&c));
+            if f.clip > 0.0 && v.addr() == Some(LEVEL) {
+                let w = draw::text_width(&theme::FONT_VALUE, buf.as_str(), 0);
+                draw::clip_led(
+                    display,
+                    theme::MARGIN_X + (i % 3) as i32 * theme::CELL_COL_W + w + LED_DX,
+                    top + (i / 3) as i32 * theme::CELL_ROW_H + theme::CELL_VALUE_DY - LED_RISE,
+                    f.clip,
+                );
+            }
         }
     }
 
@@ -417,20 +776,28 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let (context, mut name) = components::header_text(f.nav, f.def);
-        if let Some(ty) = ["", " / A", " / B"].get(title_type(f) as usize) {
-            let _ = core::fmt::Write::write_str(&mut name, ty);
-        }
+        let h = page_header(f.head, f.def, &f.ctx, f.parts);
         components::header(
             display,
-            context.as_str(),
-            name.as_str(),
-            f.sounding,
-            f.perf.audio_load_pct,
+            h.context.as_str(),
+            h.name.as_str(),
+            h.warn,
+            f.header_status(),
         );
     }
 
     // ── Dirty region helpers ─────────────────────────────────────────
+
+    /// Clear a box by direct framebuffer fill.
+    pub fn clear_rect_fb(fb: &mut [u16], x: i32, y: i32, w: i32, h: i32) {
+        use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
+        let bg = RawU16::from(theme::BG).into_inner();
+        let sw = theme::SCREEN_W as usize;
+        for row in y.max(0) as usize..(y + h).min(theme::SCREEN_H) as usize {
+            fb[row * sw + x.max(0) as usize..row * sw + (x + w).min(theme::SCREEN_W) as usize]
+                .fill(bg);
+        }
+    }
 
     /// Clear a screen region by direct framebuffer fill. Much faster than draw_iter.
     pub fn clear_region_fb(fb: &mut [u16], y_start: u16, y_end: u16) {
@@ -442,10 +809,57 @@ impl Renderer {
     }
 }
 
+/// `addrs`' stored values, normalized: `eased_set`'s fallback for a param
+/// the page has no slot for.
+fn stored_set<const N: usize>(stored: &impl BlockRead, addrs: [ParamAddr; N]) -> [f32; N] {
+    addrs.map(|a| stored.block(a.block).map_or(0.0, |b| b.normalized(a.param)))
+}
+
+/// The edited Part's stored blocks and the FX's, read-only.
+struct Stored<'f, 'a>(&'f Frame<'a>);
+
+impl BlockRead for Stored<'_, '_> {
+    fn block(&self, b: crate::addr::BlockRef) -> Option<&dyn crate::block::Block> {
+        let p = &self.0.parts[self.0.active_part.index()];
+        crate::project::part_block(&p.sound, &p.mix, self.0.fx, b)
+    }
+}
+
+/// The header a page draws: the one place its name is decided, for the
+/// screen and for the console's `status`.
+pub fn page_header(
+    head: Head,
+    def: &BlockDef,
+    ctx: &SlotCtx,
+    parts: &Parts,
+) -> components::HeaderText {
+    let suffix = ["", " / A", " / B"][title_type(def, &ctx.envs) as usize % 3];
+    components::header_text(
+        head,
+        def,
+        ctx.models(),
+        ctx.kind,
+        suffix,
+        out_of(head, parts),
+    )
+}
+
+/// The OUT of the Part whose pages these are; P1 in SETTINGS.
+pub fn header_out(f: &Frame) -> DacPair {
+    out_of(f.head, f.parts)
+}
+
+fn out_of(head: Head, parts: &Parts) -> DacPair {
+    match head {
+        Head::Sound(p) | Head::Mix(p) => parts[p.index()].mix.output,
+        Head::Settings | Head::Ring(_) | Head::Orbit(_) => DacPair::P1,
+    }
+}
+
 /// The ENV page title's TYPE suffix: 0 none, 1 A, 2 B.
-pub fn title_type(f: &Frame) -> u8 {
-    match f.def.params.first().map(|p| p.binding) {
-        Some(SlotBinding::EnvPanel(s, _)) => match f.ctx.envs[s.index()] {
+pub fn title_type(def: &BlockDef, envs: &[EnvKind; 3]) -> u8 {
+    match def.params.first().map(|p| p.binding) {
+        Some(SlotBinding::EnvPanel(s, _)) => match envs[s.index()] {
             EnvKind::A(_) => 1,
             EnvKind::B(_) => 2,
         },
@@ -457,22 +871,24 @@ pub fn title_type(f: &Frame) -> u8 {
 /// decided, for drawing and for the dirty-region key. Both looks read the
 /// Sound's `mod_state`, which every matrix edit syncs, not the UI's mirror.
 pub fn look(f: &Frame, i: usize) -> components::Look {
-    let sound = &f.parts[f.active_part].sound;
+    let sound = &f.parts[f.active_part.index()].sound;
     match view::view(f.def, i, &f.ctx) {
-        View::Route { source, .. }
-            if sound.mod_state.routes_into(crate::modulation::CUTOFF) & (1 << source.index())
-                == 0 =>
-        {
-            components::Look::Absent
+        View::Route { route, .. } => {
+            let (row, c) = route.cell(sound);
+            match crate::ui::filter_panel::cell_route(sound, row, c) {
+                Some(_) => components::Look::Live,
+                None => components::Look::Absent,
+            }
         }
-        v if view::is_dimmed(&v, sound) => components::Look::Dimmed,
+        View::Source(view::SourceState::Card { .. }) => components::Look::Dimmed,
+        v if view::is_dimmed(&v, sound, &f.ctx) => components::Look::Dimmed,
         _ => components::Look::Live,
     }
 }
 
 /// The matrix's inert columns on the edited Part (`mod_grid::inert_dests`).
-pub fn inert(f: &Frame) -> u16 {
-    crate::ui::mod_grid::inert_dests(f.matrix, &f.parts[f.active_part].sound)
+pub fn inert(f: &Frame) -> u32 {
+    crate::ui::mod_grid::inert_dests(f.matrix, &f.parts[f.active_part.index()].sound)
 }
 
 /// Mod-bar amount for cell `i`, if its param is a destination.
@@ -488,33 +904,74 @@ fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
         View::Text { text, .. } => {
             let _ = core::fmt::Write::write_str(&mut buf, text);
         }
+        View::Source(s) => s.text(&mut buf),
         _ if look(f, i) == components::Look::Absent => {
             let _ = core::fmt::Write::write_str(&mut buf, "--");
         }
-        view => fmt::fmt_val(&mut buf, v, view.fmt()),
+        view => buf = param_text(f, i, &view, v),
     }
     buf
 }
 
+/// A param's text at display value `v`: a reverb panel cell's in its
+/// units (`reverb_panel::value_text`), any other by its format.
+fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
+    match view.addr().filter(|_| view::is_reverb_panel(f.def, i)) {
+        Some(a) => {
+            let mut p = f.fx.reverb;
+            crate::block::Block::set(&mut p, a.param, v);
+            let (tempo, fold) = f.rev_clock;
+            crate::ui::reverb_panel::value_text(a.param, &p, tempo, fold)
+        }
+        None => {
+            let mut buf = FmtBuf::new();
+            fmt::fmt_val(&mut buf, v, view.fmt());
+            buf
+        }
+    }
+}
+
 /// Fingerprint of the Mixer overview (quantized levels and pans, selection).
 fn strips_key(strips: &[viz::Strip], selected: usize) -> u32 {
-    strips.iter().fold(selected as u32, |h, s| {
-        let q = (region::quantize(s.level) as u32) << 16 | region::quantize(s.pan + 1.0) as u32;
-        (h ^ q).wrapping_mul(0x0100_0193)
-    })
+    use core::hash::Hasher;
+    let mut h = region::Fnv::new();
+    h.write_usize(selected);
+    for s in strips {
+        h.write_u16(region::quantize(s.level));
+        h.write_u16(region::quantize(s.pan + 1.0));
+    }
+    h.get()
 }
 
 /// The matrix page shows the selected amount through this display slot.
 pub const MATRIX_AMOUNT_SLOT: usize = 4;
 
 /// Amount −127..127 as a 0..1 display value (0 at the centre).
+/// The filter LEVEL, whose cell carries the clip LED (the 2040's DRIVE).
+const LEVEL: ParamAddr = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::LEVEL);
+/// The LED's centre from the end of LEVEL's value, and above its baseline.
+const LED_DX: i32 = 7;
+const LED_RISE: i32 = 7;
+
+/// The LED's redraw key: its fill on a page that draws it (FLT's viz, a
+/// LEVEL cell), else 0.
+pub fn led_key(f: &Frame) -> u32 {
+    let shows = f.def.viz == VizType::FilterResponse
+        || (0..f.def.params.len()).any(|i| view::view(f.def, i, &f.ctx).addr() == Some(LEVEL));
+    if shows {
+        region::quantize(f.clip) as u32
+    } else {
+        0
+    }
+}
+
 pub fn amount_value(amount: i8) -> f32 {
     0.5 + amount as f32 / 254.0
 }
 
 /// Inverse of `amount_value`, rounded.
 pub fn amount_of(v: f32) -> i8 {
-    libm::roundf((v - 0.5) * 254.0).clamp(-127.0, 127.0) as i8
+    clampf(libm::roundf((v - 0.5) * 254.0), -127.0, 127.0) as i8
 }
 
 /// A cell's label: the spec's short form when the full one would outrun

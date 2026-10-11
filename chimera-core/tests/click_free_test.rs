@@ -3,13 +3,14 @@
 //! and scattering to variable-size output buffers.
 mod common;
 use common::Rig;
-use common::{SR, tri};
+use common::{SR, at_model_level, clicks, tri};
 
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modal::ResonatorMode;
+use chimera_core::dsp::rev::Reverb;
+use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::ReverbParams;
-use chimera_core::dsp::ring::RingReverb;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -25,7 +26,7 @@ fn check_no_clicks(
 ) {
     let empty_mod = ModState::new();
     let mut voice = Rig::new(SR);
-    let mut reverb = Box::new(RingReverb::new());
+    let mut reverb = Box::new(Reverb::new());
     let mut params = ParamSnapshot::default();
     let mut rv = FxParams::default().reverb;
     setup(&mut params, &mut rv);
@@ -48,30 +49,23 @@ fn check_no_clicks(
                 voice.render(&mut block, &params, &empty_mod);
                 if rv.is_on() {
                     let mut wet = Stereo::SILENT;
-                    reverb.process(&block, &rv.controls(), rv.mix, SR, &mut wet);
+                    reverb.process(&block, &rv, rv.mix, Tempo::DEFAULT, SR, &mut wet);
                     for (b, w) in block.iter_mut().zip(&wet.l) {
                         *b += w;
                     }
                 }
                 block_pos = 0;
             }
-            let s = libm::tanhf(block[block_pos] * 0.4);
-            all_samples.push(s);
+            all_samples.push(block[block_pos]);
             block_pos += 1;
         }
     }
 
-    // Check for clicks: sample-to-sample jumps > threshold
-    let click_threshold = 0.15; // max allowed jump between adjacent samples
-    let mut clicks = Vec::new();
-
-    for i in 1..all_samples.len() {
-        let jump = (all_samples[i] - all_samples[i - 1]).abs();
-        if jump > click_threshold {
-            clicks.push((i, all_samples[i - 1], all_samples[i], jump));
-        }
+    // A Modal voice at its model's level (ADR 0058): the detector's step is absolute.
+    if params.engine() == EngineType::Modal {
+        all_samples = at_model_level(all_samples, params.modal.mode);
     }
-
+    let clicks = clicks(&all_samples);
     assert!(
         clicks.is_empty(),
         "{}: found {} clicks. First 5: {:?}",
@@ -170,6 +164,104 @@ fn test_no_clicks_modal() {
     for (i, &s) in all_samples.iter().enumerate() {
         assert!(s.is_finite(), "modal sample {} is not finite", i);
         assert!(s.abs() < 2.0, "modal sample {} too loud: {}", i, s);
+    }
+}
+
+// ── TAPE ────────────────────────────────────────────────────────────
+
+/// Neutral TAPE through the voice: half a second of a sine whose length
+/// isn't a whole period, looped whole under its folded crossfade for 3 s.
+#[test]
+fn test_no_clicks_tape() {
+    use common::tape::{held_plain, sine};
+    let p = chimera_core::preset::Sound::neutral(EngineType::Tape).params;
+    let mut v = Rig::with_source(SR, &held_plain(&sine(48_000, 100.7, 24_000), 48_000));
+    v.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &p);
+    let m = ModState::new();
+    let mut block = [0.0f32; BLOCK_SIZE];
+    let mut out = Vec::new();
+    for _ in 0..3 * 750 {
+        v.render(&mut block, &p, &m);
+        out.extend_from_slice(&block);
+    }
+    assert!(out.iter().any(|x| x.abs() > 0.1), "TAPE sounds");
+    let c = clicks(&out);
+    assert!(
+        c.is_empty(),
+        "{} clicks: {:?}",
+        c.len(),
+        &c[..c.len().min(5)]
+    );
+}
+
+/// Every machine on its own defaults (spec § 2 Machines; ONESHOT at SLICE
+/// 5 and WOW WARBLE besides), and LOOP and STRETCH with END before START,
+/// through the voice: 3 s of the sine, held, with no click.
+#[test]
+fn test_no_clicks_tape_machines() {
+    use chimera_core::block::Block;
+    use chimera_core::dsp::tape_engine::machine::defaults;
+    use chimera_core::dsp::tape_engine::{TapeEngineParams as P, TapeModel, Wow};
+    use common::tape::{held_plain, held_transwave, sine};
+    let plain = held_plain(&sine(48_000, 100.7, 4 * 24_000), 48_000);
+    let wave = held_transwave(512, 4, |f, h| if h <= 1 + f as u32 { 0.4 } else { 0.0 });
+    let mut cases = Vec::new();
+    for m in TapeModel::ALL {
+        let mut t = P {
+            model: m,
+            period: 100.7,
+            ..P::default()
+        };
+        for (id, d) in defaults(m) {
+            t.set(id, d);
+        }
+        cases.push(t);
+        if matches!(m, TapeModel::Loop | TapeModel::Stretch) {
+            cases.push(P {
+                start: 0.9,
+                end: 0.1,
+                ..t
+            });
+        }
+    }
+    cases.push(P {
+        model: TapeModel::Oneshot,
+        slice: chimera_core::dsp::tape_engine::SliceCode::new(6),
+        ..P::default()
+    });
+    cases.push(P {
+        tape: 0.5,
+        wow: Wow::Warble,
+        ..P::default()
+    });
+    for t in cases {
+        let mut p = chimera_core::preset::Sound::neutral(EngineType::Tape).params;
+        p.tape = t;
+        let held = if t.model == TapeModel::Transwave {
+            &wave
+        } else {
+            &plain
+        };
+        let mut v = Rig::with_source(SR, held);
+        v.note_on(MidiNote::new(60).unwrap(), Velocity::new(100).unwrap(), &p);
+        let m = ModState::new();
+        let mut block = [0.0f32; BLOCK_SIZE];
+        let mut out = Vec::new();
+        for _ in 0..3 * 750 {
+            v.render(&mut block, &p, &m);
+            out.extend_from_slice(&block);
+        }
+        assert!(out.iter().any(|x| x.abs() > 0.1), "{t:?} sounds");
+        let c = clicks(&out);
+        assert!(
+            c.is_empty(),
+            "{:?} {}..{}: {} clicks: {:?}",
+            t.model,
+            t.start,
+            t.end,
+            c.len(),
+            &c[..c.len().min(5)]
+        );
     }
 }
 

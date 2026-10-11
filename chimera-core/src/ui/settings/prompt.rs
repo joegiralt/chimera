@@ -1,0 +1,664 @@
+//! The prompt (spec § Screens): a teal-outlined panel with the question,
+//! the reason in the route colour, and two or three pills. A picks, SEQ
+//! confirms, MENU is always CANCEL. Each prompt answers in its own enum,
+//! whose `ALL` is the pills' order: a pill's place never decides its meaning.
+
+use core::fmt::{Debug, Write};
+
+use embedded_graphics::draw_target::DrawTarget;
+use embedded_graphics::pixelcolor::Rgb565;
+use u8g2_fonts::FontRenderer;
+
+use crate::name::ProjectName;
+use crate::orbit::scene::{Refused, SceneIdx};
+use crate::project::{Line, PartId, PartSet, PoolFull, ReplaceError, SlotId, Subject, Unused};
+use crate::storage::ProjectId;
+use crate::ui::components::upper;
+use crate::ui::draw;
+use crate::ui::region::PROMPT;
+use crate::ui::theme;
+
+pub use chimera_engine::confirm::{
+    AlsoUsesAnswer, Answer, Answers, CardChangedAnswer, Choice, ClearAnswer, ClearSceneAnswer,
+    DeleteAnswer, DfuAnswer, LibraryAnswer, LoadAnswer, NameExistsAnswer, Opts, PurgeAnswer,
+    ReloadAnswer, ReloadSceneAnswer, ReplaceAnswer, SaveOverAnswer, SaveSceneOverAnswer,
+};
+
+/// A prompt answer's words on its pill.
+pub trait Pill: Answers {
+    fn label(self) -> &'static str;
+}
+
+macro_rules! pills {
+    ($($name:ident { $($v:ident => $l:literal),+ $(,)? };)+) => {
+        $(impl Pill for $name {
+            fn label(self) -> &'static str {
+                match self {
+                    $($name::$v => $l),+
+                }
+            }
+        })+
+    };
+}
+
+pills!(
+    LoadAnswer { SaveThenLoad => "SAVE THEN LOAD", LoadAnyway => "LOAD ANYWAY", Cancel => "CANCEL" };
+    ReplaceAnswer { SavePartFirst => "SAVE PART FIRST", Replace => "REPLACE", Cancel => "CANCEL" };
+    ReloadAnswer { SavePartFirst => "SAVE PART FIRST", Reload => "RELOAD", Cancel => "CANCEL" };
+    LibraryAnswer { SavePartFirst => "SAVE PART FIRST", Replace => "REPLACE", Cancel => "CANCEL" };
+    AlsoUsesAnswer { Update => "UPDATE", Leave => "LEAVE" };
+    NameExistsAnswer { KeepBoth => "KEEP BOTH", Overwrite => "OVERWRITE THAT ONE" };
+    DeleteAnswer { Delete => "DELETE", Cancel => "CANCEL" };
+    ClearAnswer { Clear => "CLEAR", Cancel => "CANCEL" };
+    SaveOverAnswer { SaveOver => "SAVE OVER", Cancel => "CANCEL" };
+    SaveSceneOverAnswer { SaveOver => "SAVE OVER", Cancel => "CANCEL" };
+    ClearSceneAnswer { Clear => "CLEAR", Cancel => "CANCEL" };
+    ReloadSceneAnswer { Reload => "RELOAD", Cancel => "CANCEL" };
+    CardChangedAnswer { SaveAs => "SAVE AS", Cancel => "CANCEL" };
+    DfuAnswer { EnterDfu => "ENTER DFU", Cancel => "CANCEL" };
+    PurgeAnswer { Purge => "PURGE", Cancel => "CANCEL" };
+);
+
+/// A prompt's words (plan Pre-flight 13). Names are `Name<16>`, so
+/// `every_prompt_fits` covers the longest.
+pub trait Prompt {
+    type Answer: Pill;
+    fn words(&self, question: &mut Line, reason: &mut Line);
+    fn label(&self, a: Self::Answer, out: &mut Line) {
+        let _ = out.write_str(a.label());
+    }
+}
+
+/// What a panel draws: only `with_view` makes one, so its pick is one of
+/// its options.
+#[derive(Clone, Copy, Debug)]
+pub struct PromptView<'a> {
+    pub question: &'a str,
+    pub reason: &'a str,
+    options: Opts<&'a str>,
+    picked: u8,
+}
+
+impl PromptView<'_> {
+    pub fn options(&self) -> &[&str] {
+        self.options.as_slice()
+    }
+
+    pub fn picked(&self) -> usize {
+        self.picked as usize
+    }
+}
+
+/// `p` as drawn with `c`'s pick, to `f`.
+pub fn with_view<P: Prompt, R>(
+    p: &P,
+    c: &Choice<P::Answer>,
+    f: impl FnOnce(&PromptView<'_>) -> R,
+) -> R {
+    once(f, |g| show(p, c.at(), g))
+}
+
+/// `f`, run once by `run` through a `dyn` callback, so the panel's body
+/// is built once rather than per prompt and caller (#336).
+pub(super) fn once<R>(
+    f: impl FnOnce(&PromptView<'_>) -> R,
+    run: impl FnOnce(&mut dyn FnMut(&PromptView<'_>)),
+) -> R {
+    let (mut f, mut out) = (Some(f), None);
+    run(&mut |v| out = f.take().map(|f| f(v)));
+    out.expect("show calls back once")
+}
+
+/// A prompt's words and pills, without its answer type.
+trait Panel {
+    fn question(&self, q: &mut Line, r: &mut Line);
+    fn pills(&self) -> Opts<Line>;
+}
+
+impl<P: Prompt> Panel for P {
+    fn question(&self, q: &mut Line, r: &mut Line) {
+        self.words(q, r);
+    }
+
+    fn pills(&self) -> Opts<Line> {
+        P::Answer::ALL.map(|a| {
+            let mut l = Line::new("");
+            self.label(a, &mut l);
+            l
+        })
+    }
+}
+
+/// `p` as drawn with `c`'s pick, to `f`.
+pub(super) fn panel<P: Prompt>(p: &P, c: &Choice<P::Answer>, f: &mut dyn FnMut(&PromptView<'_>)) {
+    show(p, c.at(), f)
+}
+
+/// `p` as drawn with option `at` picked, to `f`.
+fn show(p: &dyn Panel, at: u8, f: &mut dyn FnMut(&PromptView<'_>)) {
+    let (mut q, mut r) = (Line::new(""), Line::new(""));
+    p.question(&mut q, &mut r);
+    let labels = p.pills();
+    let options = match &labels {
+        Opts::Two([a, b]) => Opts::Two([a.as_str(), b.as_str()]),
+        Opts::Three([a, b, c]) => Opts::Three([a.as_str(), b.as_str(), c.as_str()]),
+    };
+    f(&PromptView {
+        question: q.as_str(),
+        reason: r.as_str(),
+        options,
+        picked: at,
+    })
+}
+
+fn name(n: ProjectName) -> crate::ui::fmt::FmtBuf {
+    upper(n.as_str())
+}
+
+/// A listed project: its name, or its file's when it has none.
+fn subject(s: Subject) -> crate::ui::fmt::FmtBuf {
+    let mut l = Line::new("");
+    let _ = write!(l, "{s}");
+    upper(l.as_str())
+}
+
+fn part(p: PartId) -> usize {
+    p.index() + 1
+}
+
+/// `SLOT 03`.
+pub(super) struct Slot(pub(super) SlotId);
+
+impl core::fmt::Display for Slot {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "SLOT {:02}", self.0.index() + 1)
+    }
+}
+
+/// LOAD over a Modified project: `to` a file, or NEW.
+pub struct Load {
+    pub to: Option<ProjectName>,
+    pub current: ProjectName,
+}
+
+impl Prompt for Load {
+    type Answer = LoadAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = match self.to {
+            Some(t) => write!(q, "LOAD {}?", name(t).as_str()),
+            None => q.write_str("START A NEW PROJECT?"),
+        };
+        let _ = write!(r, "{} HAS UNSAVED CHANGES", name(self.current).as_str());
+    }
+}
+
+/// A Part's Sound replaced: from a slot, or cleared to INIT.
+pub struct Replace {
+    pub part: PartId,
+    pub to: ReplaceTo,
+}
+
+/// What an Edited Part's Sound would become.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplaceTo {
+    /// A Sound chosen on the Sound rung.
+    Sound,
+    Init,
+}
+
+impl Prompt for Replace {
+    type Answer = ReplaceAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let p = part(self.part);
+        let _ = match self.to {
+            ReplaceTo::Sound => write!(q, "REPLACE P{p} SOUND?"),
+            ReplaceTo::Init => write!(q, "CLEAR P{p} TO INIT?"),
+        };
+        let _ = write!(r, "P{p} IS EDITED");
+    }
+}
+
+/// A library Sound into an Edited Part.
+pub struct LoadLibrary {
+    pub part: PartId,
+}
+
+impl Prompt for LoadLibrary {
+    type Answer = LibraryAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let p = part(self.part);
+        let _ = write!(q, "LOAD INTO P{p}?");
+        let _ = write!(r, "P{p} IS EDITED");
+    }
+}
+
+/// RELOAD FROM PROJ into an Edited Part: its own slot again.
+pub struct Reload {
+    pub part: PartId,
+    pub slot: SlotId,
+}
+
+impl Prompt for Reload {
+    type Answer = ReloadAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let p = part(self.part);
+        let _ = write!(q, "RELOAD P{p} FROM {}?", Slot(self.slot));
+        let _ = write!(r, "P{p} IS EDITED");
+    }
+}
+
+/// Saving over a slot `first` and any of `more` also use.
+pub struct AlsoUses {
+    pub first: PartId,
+    pub more: PartSet,
+    pub slot: SlotId,
+}
+
+impl Prompt for AlsoUses {
+    type Answer = AlsoUsesAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let all = self.more.with(self.first);
+        for x in all.iter() {
+            let _ = write!(q, "P{} ", part(x));
+        }
+        let verb = if all.len() > 1 { "USE" } else { "USES" };
+        let _ = write!(q, "ALSO {verb} {}", Slot(self.slot));
+        let _ = r.write_str("IT KEEPS THE OLD SOUND");
+    }
+    fn label(&self, a: AlsoUsesAnswer, out: &mut Line) {
+        let _ = match a {
+            AlsoUsesAnswer::Update if self.more.with(self.first).len() > 1 => {
+                out.write_str("UPDATE ALL")
+            }
+            AlsoUsesAnswer::Update => write!(out, "UPDATE P{}", part(self.first)),
+            AlsoUsesAnswer::Leave => out.write_str(a.label()),
+        };
+    }
+}
+
+/// `id`, the project file already so named: its slot on the card.
+pub struct NameExists {
+    pub id: ProjectId,
+    pub name: ProjectName,
+}
+
+impl Prompt for NameExists {
+    type Answer = NameExistsAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = q.write_str("NAME EXISTS");
+        let _ = write!(
+            r,
+            "SLOT {:02} IS NAMED {}",
+            self.id.get(),
+            name(self.name).as_str()
+        );
+    }
+}
+
+pub struct Delete {
+    pub name: Subject,
+}
+
+impl Prompt for Delete {
+    type Answer = DeleteAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = write!(q, "DELETE {}?", subject(self.name).as_str());
+        let _ = r.write_str("THIS CANNOT BE UNDONE");
+    }
+}
+
+pub struct Clear {
+    pub name: Subject,
+}
+
+impl Prompt for Clear {
+    type Answer = ClearAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = write!(q, "CLEAR {}?", subject(self.name).as_str());
+        let _ = r.write_str("IT BECOMES A NEW PROJECT");
+    }
+}
+
+pub struct SaveOver {
+    pub name: Subject,
+}
+
+impl Prompt for SaveOver {
+    type Answer = SaveOverAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = write!(q, "SAVE OVER {}?", subject(self.name).as_str());
+        let _ = r.write_str("ITS CONTENTS ARE REPLACED");
+    }
+}
+
+/// SCN's SAVE over a saved scene other than the playing one.
+pub struct SaveSceneOver {
+    pub scene: SceneIdx,
+}
+
+impl Prompt for SaveSceneOver {
+    type Answer = SaveSceneOverAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = write!(q, "SAVE OVER SCENE {}?", self.scene.get() + 1);
+        let _ = r.write_str("ITS SAVED SCENE IS REPLACED");
+    }
+}
+
+/// SETTINGS › ORBIT's CLEAR, of the playing scene: its slot goes
+/// neutral, and so does `live` on the loop.
+pub struct ClearScene {
+    pub scene: SceneIdx,
+}
+
+impl Prompt for ClearScene {
+    type Answer = ClearSceneAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = write!(q, "CLEAR SCENE {}?", self.scene.get() + 1);
+        let _ = r.write_str("IT GOES SILENT ON THE LOOP");
+    }
+}
+
+/// SETTINGS › ORBIT's RELOAD FROM PROJ: the playing scene's slot again,
+/// on the loop: its edits, its drift restarted (ADR 0083).
+pub struct ReloadScene {
+    pub scene: SceneIdx,
+}
+
+impl Prompt for ReloadScene {
+    type Answer = ReloadSceneAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = write!(q, "RELOAD SCENE {}?", self.scene.get() + 1);
+        let _ = r.write_str("ITS DRIFT RESTARTS, ITS EDITS STAY");
+    }
+}
+
+/// A scene save while a switch waits: `live` is the queued scene's.
+pub const SWITCH_PENDING: &str = "SWITCH PENDING";
+
+/// Scene `n` saved.
+pub fn scene_saved(n: SceneIdx) -> Line {
+    let mut l = Line::new("");
+    let _ = write!(l, "SCENE {} SAVED", n.get() + 1);
+    l
+}
+
+/// SAVE OVER refused.
+pub fn scene_refused(e: Refused) -> &'static str {
+    match e {
+        Refused::SwitchPending => SWITCH_PENDING,
+        Refused::SlotChanged => "SCENE CHANGED",
+    }
+}
+
+pub struct CardChanged;
+
+impl Prompt for CardChanged {
+    type Answer = CardChangedAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = q.write_str("CARD CHANGED");
+        let _ = r.write_str("SAVE AS A NEW PROJECT ON THIS CARD?");
+    }
+}
+
+pub struct ClearSlot {
+    pub slot: SlotId,
+}
+
+impl Prompt for ClearSlot {
+    type Answer = ClearAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = write!(q, "CLEAR {}?", Slot(self.slot));
+        let _ = r.write_str("NO PART USES IT");
+    }
+}
+
+/// OS UPGRADE: restart into the ROM loader for `just flash`.
+pub struct EnterDfu;
+
+impl Prompt for EnterDfu {
+    type Answer = DfuAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = q.write_str("ENTER DFU?");
+        let _ = r.write_str("PLAY STOPS UNTIL FLASHED OR POWER-CYCLED");
+    }
+}
+
+/// PURGE UNUSED SOURCES, counted as it opened; the purge recounts.
+pub struct PurgeSources {
+    pub unused: Unused,
+}
+
+/// `PURGE 3 SOURCES? FREES 61K`.
+pub fn purge_question(u: Unused) -> Line {
+    let mut l = Line::new("");
+    let noun = if u.count == 1 { "SOURCE" } else { "SOURCES" };
+    let _ = write!(
+        l,
+        "PURGE {} {noun}? FREES {}",
+        u.count,
+        u.cost.kib_label().as_str()
+    );
+    l
+}
+
+impl Prompt for PurgeSources {
+    type Answer = PurgeAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        *q = purge_question(self.unused);
+        let _ = r.write_str("THE CARD KEEPS THEM");
+    }
+}
+
+/// After a clear that left its source unused: `CHOIR 41K UNUSED · PURGE
+/// FREES IT`.
+/// The name is cut to fit the toast.
+pub fn unused_after_clear(name: crate::name::SoundName, cost: crate::project::arena::Cost) -> Line {
+    let name = upper(name.as_str());
+    let mut n = name.as_str();
+    loop {
+        let mut l = Line::new(n);
+        let _ = write!(l, " {} UNUSED · PURGE FREES IT", cost.kib_label().as_str());
+        match n.char_indices().last() {
+            Some((cut, _)) if !crate::ui::busy::toast_fits(l.as_str()) => n = &n[..cut],
+            _ => return l,
+        }
+    }
+}
+
+/// NEW without room for every factory Sound: `NEW: 2 SOUNDS SKIPPED`.
+pub fn new_skipped(n: u8) -> Line {
+    let mut l = Line::new("");
+    let _ = write!(l, "NEW: {n} SOUNDS SKIPPED");
+    l
+}
+
+/// PURGE with every source in use.
+pub const NO_UNUSED: &str = "NO UNUSED SOURCES";
+
+/// A save with every slot taken.
+pub const POOL_FULL: &str = "POOL FULL";
+
+/// What a save the arena has no room for needs: `NEEDS 1.2K, 0.4K FREE`,
+/// the line under `POOL_FULL`.
+pub fn pool_needs(f: PoolFull) -> Line {
+    let mut l = Line::new("");
+    let _ = write!(
+        l,
+        "NEEDS {}, {} FREE",
+        f.needs.kib_label().as_str(),
+        f.free.kib_floor_label().as_str()
+    );
+    l
+}
+
+/// The refusal as one line, for a toast: `POOL FULL · NEEDS …`, or
+/// `POOL FULL` with every slot taken.
+pub fn pool_full(f: Option<PoolFull>) -> Line {
+    let mut l = Line::new(POOL_FULL);
+    if let Some(f) = f {
+        let _ = write!(l, " · {}", pool_needs(f).as_str());
+    }
+    l
+}
+
+/// A Part saved to `s` from SAVE TO PROJ.
+pub fn saved_to(s: SlotId) -> Line {
+    let mut l = Line::new("");
+    let _ = write!(l, "SAVED TO {}", Slot(s));
+    l
+}
+
+/// A confirmed replace refused.
+pub fn refused(e: &ReplaceError) -> &'static str {
+    match e {
+        ReplaceError::SlotEmpty => "SLOT IS EMPTY",
+        ReplaceError::Changed => "PART CHANGED",
+        ReplaceError::Unreadable => "SOUND UNREADABLE",
+        ReplaceError::Full(_) => "POOL FULL",
+    }
+}
+
+/// MIX+MINUS on a slot `parts` play: `SLOT IN USE: P1 P3`.
+pub fn in_use(parts: PartSet) -> Line {
+    let mut l = Line::new("SLOT IN USE:");
+    for p in parts.iter() {
+        let _ = write!(l, " P{}", part(p));
+    }
+    l
+}
+
+const PANEL_X: i32 = 14;
+const PANEL_W: i32 = 212;
+const PANEL_R: u32 = 10;
+/// The text's width inside the panel.
+pub const TEXT_W: i32 = 200;
+const CX: i32 = PANEL_X + PANEL_W / 2;
+const Q_FONT: &FontRenderer = &theme::FONT_LABEL_BOLD;
+const R_FONT: &FontRenderer = &theme::FONT_LABEL;
+/// The first question line's baseline, below the panel's top.
+const TEXT_DY: i32 = 26;
+const Q_LINE: i32 = 14;
+const R_LINE: i32 = 12;
+const PILL_X: i32 = 36;
+const PILL_W: i32 = 168;
+const PILL_H: i32 = 26;
+const PILL_STEP: i32 = 32;
+const PILL_TEXT_W: i32 = PILL_W - 2 * 8;
+const PILL_BASELINE: i32 = 17;
+/// The last pill's bottom, above the panel's.
+const PILLS_BOTTOM: i32 = PROMPT.2 as i32 - 14;
+/// Below a baseline, the label faces' descent.
+const DESCENT: i32 = 3;
+// Two question lines and two reason lines clear three pills.
+const _: () = assert!(
+    PROMPT.1 as i32 + TEXT_DY + 2 * Q_LINE + R_LINE + DESCENT
+        <= PILLS_BOTTOM - (3 * PILL_STEP - (PILL_STEP - PILL_H))
+);
+
+/// `s` in one line, or two broken at the last space that fits.
+fn wrap<'s>(font: &FontRenderer, s: &'s str) -> (&'s str, Option<&'s str>) {
+    let fits = |t: &str| draw::text_width(font, t, theme::LABEL_TRACKING) <= TEXT_W;
+    if fits(s) {
+        return (s, None);
+    }
+    let cut = s
+        .match_indices(' ')
+        .map(|(i, _)| i)
+        .take_while(|&i| fits(&s[..i]))
+        .last();
+    match cut {
+        Some(i) => (&s[..i], Some(&s[i + 1..])),
+        None => (s, None),
+    }
+}
+
+/// Every line within the panel in at most two lines each, and every option
+/// within its pill.
+pub fn fits(v: &PromptView<'_>) -> bool {
+    let w = |f, s| draw::text_width(f, s, theme::LABEL_TRACKING);
+    let lines = |f, s| {
+        let (a, b) = wrap(f, s);
+        w(f, a) <= TEXT_W && b.is_none_or(|b| w(f, b) <= TEXT_W)
+    };
+    lines(Q_FONT, v.question)
+        && lines(R_FONT, v.reason)
+        && v.options()
+            .iter()
+            .all(|o| w(&theme::FONT_LABEL_BOLD, o) <= PILL_TEXT_W)
+}
+
+/// What a prompt lands on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Beneath {
+    /// A SETTINGS list, already blank under the panel.
+    List,
+    /// A page or the Sound rung: only its header and map stay.
+    Page,
+}
+
+impl Beneath {
+    /// The rows the prompt blanks before its panel.
+    pub fn blanks(self) -> (i32, i32) {
+        match self {
+            Beneath::List => (PROMPT.1 as i32, PROMPT.2 as i32),
+            Beneath::Page => (theme::HEADER_BOTTOM, theme::MAP_TOP),
+        }
+    }
+}
+
+/// Blank what the prompt lands on, once as it opens: no cut glyph of the
+/// screen beneath beside the panel.
+pub fn blank_beneath<D: DrawTarget<Color = Rgb565>>(d: &mut D, on: Beneath) {
+    let (y0, y1) = on.blanks();
+    draw::fill_rect(d, 0, y0, theme::SCREEN_W, y1 - y0, theme::BG);
+}
+
+/// The panel, opaque over its own last frame: it never needs a clear.
+pub fn draw_prompt<D: DrawTarget<Color = Rgb565>>(d: &mut D, v: &PromptView<'_>) {
+    let (top, h) = (PROMPT.1 as i32, (PROMPT.2 - PROMPT.1) as i32);
+    draw::round_rect(d, PANEL_X, top, PANEL_W, h, PANEL_R, theme::PANEL);
+    draw::round_outline(d, PANEL_X, top, PANEL_W, h, PANEL_R, theme::ACCENT);
+    let mut y = top + TEXT_DY;
+    let mut put = |d: &mut D, font, s: Option<&str>, step, color| {
+        if let Some(s) = s {
+            draw::text_center(d, font, s, CX, y, color, theme::LABEL_TRACKING);
+            y += step;
+        }
+    };
+    let (q1, q2) = wrap(Q_FONT, v.question);
+    put(d, Q_FONT, Some(q1), Q_LINE, theme::INK);
+    put(d, Q_FONT, q2, Q_LINE, theme::INK);
+    let (r1, r2) = wrap(R_FONT, v.reason);
+    put(d, R_FONT, Some(r1), R_LINE, theme::WARN);
+    put(d, R_FONT, r2, R_LINE, theme::WARN);
+    let opts = v.options();
+    let first = PILLS_BOTTOM - (opts.len() as i32 * PILL_STEP - (PILL_STEP - PILL_H));
+    for (i, o) in opts.iter().enumerate() {
+        let y = first + i as i32 * PILL_STEP;
+        let on = i == v.picked();
+        if on {
+            draw::pill(d, PILL_X, y, PILL_W, PILL_H, theme::ACCENT);
+        } else {
+            draw::pill(d, PILL_X, y, PILL_W, PILL_H, theme::BG);
+            draw::round_outline(
+                d,
+                PILL_X,
+                y,
+                PILL_W,
+                PILL_H,
+                PILL_H as u32 / 2,
+                theme::PILL_EDGE,
+            );
+        }
+        let ink = if on { theme::BG } else { theme::INK2 };
+        draw::text_center(
+            d,
+            &theme::FONT_LABEL_BOLD,
+            o,
+            CX,
+            y + PILL_BASELINE,
+            ink,
+            theme::LABEL_TRACKING,
+        );
+    }
+}

@@ -4,6 +4,8 @@
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::part::{DacPair, PartMode, PartParams};
 use chimera_core::preset::Performance;
+use chimera_core::project::PartId;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_def::{BlockDef, FxFlow, FxNode, SlotBinding, VizType};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::page::PageKey;
@@ -44,12 +46,19 @@ impl Controls for MockControls {
     }
 }
 
+/// MIX + `b`: the mixer opens on SENDS (ADR 0057).
 fn open_mixer(ui: &mut UiState, b: ButtonId) {
     ui.handle_input(
         &MockControls::new()
             .button(ButtonId::Mix, ButtonState::Held)
             .button(b, ButtonState::Pressed),
     );
+}
+
+/// MIX + `b`, then MINUS back to PART.
+fn open_mixer_part(ui: &mut UiState, b: ButtonId) {
+    open_mixer(ui, b);
+    ui.handle_input(&MockControls::new().button(ButtonId::Minus, ButtonState::Pressed));
 }
 
 fn turn(ui: &mut UiState, enc: EncoderId, delta: i8) {
@@ -66,7 +75,7 @@ fn mixer_chain_is_part_sends_and_fx() {
     // TAPE before MASTER only with `master-tape` (ADR 0055).
     let want: &[&str] = if cfg!(feature = "master-tape") {
         &[
-            "Part", "Sends", "Chorus", "Delay", "Reverb", "Tape", "Master",
+            "Part", "Sends", "Chorus", "Delay", "Reverb", "Reel", "Master",
         ]
     } else {
         &["Part", "Sends", "Chorus", "Delay", "Reverb", "Master"]
@@ -83,6 +92,8 @@ fn every_mixer_slot_is_bound() {
             match slot.binding {
                 SlotBinding::Empty => {}
                 SlotBinding::Param(a) => assert!(a.spec().is_some(), "{} slot {i}", block.def.name),
+                // The reverb's TYPE names the slot (`reverb_panel_test`).
+                SlotBinding::ReverbPanel(..) if block.def.id == reg::EFX.id => {}
                 other => panic!("{} slot {i}: {other:?}", block.def.name),
             }
         }
@@ -111,21 +122,21 @@ fn part_page_binds_channel_mode_output_level_pan() {
 #[test]
 fn mix_b2_edits_part_2() {
     let mut ui = UiState::new();
-    open_mixer(&mut ui, ButtonId::B2);
-    assert_eq!(ui.active_part, 1);
+    open_mixer_part(&mut ui, ButtonId::B2);
+    assert_eq!(ui.active_part, PartId::ALL[1]);
     assert!(matches!(ui.page(), PageKey::Part { def: 27, .. }));
     turn(&mut ui, EncoderId::A, 3); // CH 1 → 4
     turn(&mut ui, EncoderId::B, -1); // Poly → Mono
     turn(&mut ui, EncoderId::C, 2); // P1 → P3
     turn(&mut ui, EncoderId::D, -8); // level
-    let m = &ui.performance.parts[1].mix;
+    let m = &ui.project().part(PartId::ALL[1]).mix;
     assert_eq!(
         (m.channel.get(), m.mode, m.output),
         (4, PartMode::Mono, DacPair::P3)
     );
     assert_eq!(m.level, 0.8 - 8.0 / 128.0);
     assert_eq!(
-        ui.performance.parts[0].mix,
+        ui.project().part(PartId::ALL[0]).mix,
         PartParams::for_part(0),
         "part 1 untouched"
     );
@@ -134,14 +145,13 @@ fn mix_b2_edits_part_2() {
 #[test]
 fn sends_page_edits_the_part_sends() {
     let mut ui = UiState::new();
-    open_mixer(&mut ui, ButtonId::B3);
-    ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed)); // → SENDS
+    open_mixer(&mut ui, ButtonId::B3); // SENDS
     turn(&mut ui, EncoderId::C, 64); // reverb send
-    assert_eq!(ui.performance.parts[2].mix.sends, [0.0, 0.0, 0.5]);
+    assert_eq!(ui.project().part(PartId::ALL[2]).mix.sends, [0.0, 0.0, 0.5]);
 }
 
 fn turn_def(def: &BlockDef, slot: usize, delta: i8, perf: &mut Performance) {
-    part_page::apply_encoder(def, slot, delta, &mut perf.edit(0), &mut Op::A);
+    part_page::apply_encoder(def, slot, delta, &mut perf.edit(PartId::ALL[0]), &mut Op::A);
 }
 
 /// Each slot's parameter address, `None` where the slot is not bound.
@@ -163,19 +173,21 @@ fn fx_encoders_step_like_before() {
     assert_eq!(perf.fx.delay.time_ms, 375.0 + 2.0 * 8.0);
     turn_def(&reg::CHORUS, 0, 5, &mut perf);
     assert_eq!(perf.fx.chorus.mode, 3);
-    turn_def(&reg::EFX, 4, -1, &mut perf);
+    turn_def(&reg::EFX, 5, -1, &mut perf);
     assert_eq!(perf.fx.reverb.mix, 0.0);
-    turn_def(&reg::EFX, 4, 1, &mut perf);
+    turn_def(&reg::EFX, 5, 1, &mut perf);
     assert_eq!(perf.fx.reverb.mix, 1.0 / 128.0);
-    turn_def(&reg::EFX, 0, 5, &mut perf);
-    assert!((perf.fx.reverb.grit - (0.3 + 5.0 / 128.0)).abs() < 1e-6);
-    turn_def(&reg::EFX, 3, 1, &mut perf);
-    assert!((perf.fx.reverb.size - (0.5 + 1.0 / 31.0)).abs() < 1e-6);
+    turn_def(&reg::EFX, 4, 5, &mut perf);
+    assert!((perf.fx.reverb.smear - 5.0 / 128.0).abs() < 1e-6);
+    // QUAD's SIZE ticks its table step through the UI's panel turn
+    // (`the_reverb_pages_turn_by_the_panel`).
+    turn_def(&reg::EFX_MORE, 3, 2, &mut perf);
+    assert!((perf.fx.reverb.rate - (0.75 + 2.0 / 128.0)).abs() < 1e-6);
     turn_def(&reg::DELAY, 3, 64, &mut perf);
     assert_eq!(perf.fx.delay.rev_send, 0.5);
     turn_def(&reg::DELAY_CHAR, 0, 1, &mut perf);
     assert!((perf.fx.delay.wow_flutter - (0.15 + 1.0 / 128.0)).abs() < 1e-6);
-    part_page::snap_encoder(&reg::DELAY, 4, 1, &mut perf.edit(0), Op::A);
+    part_page::snap_encoder(&reg::DELAY, 4, 1, &mut perf.edit(PartId::ALL[0]), Op::A);
     assert_eq!(perf.fx.delay.mix, 100.0 / 127.0);
 }
 
@@ -184,7 +196,7 @@ fn fx_encoders_step_like_before() {
 fn fx_are_shared_across_parts() {
     let mut perf = Performance::new();
     turn_def(&reg::DELAY, 0, 2, &mut perf);
-    let shown = part_page::read_values(&reg::DELAY, &perf.edit(3), Op::A)[0];
+    let shown = part_page::read_values(&reg::DELAY, &perf.edit(PartId::ALL[3]), Op::A)[0];
     assert_eq!(shown, (391.0 - 10.0) / (500.0 - 10.0));
 }
 
@@ -192,17 +204,19 @@ fn fx_are_shared_across_parts() {
 #[test]
 fn priming_a_part_param_is_refused() {
     let mut ui = UiState::new();
-    open_mixer(&mut ui, ButtonId::B1);
+    open_mixer_part(&mut ui, ButtonId::B1);
     turn(&mut ui, EncoderId::D, 1); // focus LEVEL
     ui.handle_input(
         &MockControls::new()
             .button(ButtonId::Mix, ButtonState::Held)
             .button(ButtonId::Plus, ButtonState::Pressed),
     );
-    assert_eq!(
-        ui.performance.parts[0].sound.dest_registry.len(),
-        1,
-        "only the default CUTOFF"
+    assert!(
+        ui.project()
+            .part(PartId::ALL[0])
+            .sound
+            .dest_registry
+            .is_empty()
     );
 }
 
@@ -211,7 +225,7 @@ mod screen;
 fn overview(setup: impl FnOnce(&mut UiState), part_button: ButtonId) -> screen::Fb {
     let mut ui = UiState::new();
     setup(&mut ui);
-    open_mixer(&mut ui, part_button);
+    open_mixer_part(&mut ui, part_button);
     screen::settle(&mut ui);
     let mut fb = screen::Fb::new();
     ui.render_with_scope(
@@ -230,11 +244,11 @@ fn part_overview_shows_every_part_with_the_edited_one_lit() {
     use chimera_core::ui::viz::{STRIP_H, STRIP_PAN_Y, STRIP_TOP, strip_x};
     let fb = overview(
         |ui| {
-            ui.performance.parts[0].mix.pan = -1.0;
-            ui.performance.parts[1].mix.level = 1.0;
-            ui.performance.parts[1].mix.pan = 1.0;
-            ui.performance.parts[2].mix.pan = 0.0;
-            ui.performance.parts[3].mix.level = 0.0;
+            ui.project_mut().edit_part(PartId::ALL[0]).mix.pan = -1.0;
+            ui.project_mut().edit_part(PartId::ALL[1]).mix.level = 1.0;
+            ui.project_mut().edit_part(PartId::ALL[1]).mix.pan = 1.0;
+            ui.project_mut().edit_part(PartId::ALL[2]).mix.pan = 0.0;
+            ui.project_mut().edit_part(PartId::ALL[3]).mix.level = 0.0;
         },
         ButtonId::B2,
     );
@@ -282,7 +296,7 @@ fn part_overview_shows_every_part_with_the_edited_one_lit() {
 #[test]
 fn part_overview_redraws_as_the_level_lerps() {
     let mut ui = UiState::new();
-    open_mixer(&mut ui, ButtonId::B1);
+    open_mixer_part(&mut ui, ButtonId::B1);
     screen::settle(&mut ui);
     let mut fb = screen::Fb::new();
     let (perf, scope) = (
@@ -291,7 +305,7 @@ fn part_overview_redraws_as_the_level_lerps() {
     );
     ui.render_dirty_with_scope(&mut fb, &perf, &scope);
     turn(&mut ui, EncoderId::D, -20);
-    ui.update();
+    ui.update(UiTick::for_test());
     let flushed = ui.render_dirty_with_scope(&mut fb, &perf, &scope);
     assert!(
         flushed.contains(&(118, 186)),
@@ -383,26 +397,74 @@ fn the_delay_page_is_time_fdbk_tone_rev_mix_with_char_below() {
     assert_eq!(subs, [reg::DELAY_CHAR.id], "{}", chain.name);
 }
 
-/// FX diet spec § UI: TYPE's slot is GRIT; the rest keep their order.
+/// Reverb TYPEs spec § Pages: REV is TYPE · the TYPE's four · MIX, and
+/// QUAD's four are SIZE · TIME · DAMP · SMEAR; REV › MORE hangs under it
+/// with RATE.
 #[test]
-fn the_reverb_page_is_grit_time_damp_size_mix() {
+fn the_reverb_page_is_type_size_time_damp_smear_mix() {
     use chimera_core::dsp::reverb::ReverbParams;
+    use chimera_core::ui::view::{SlotCtx, view};
+    let ctx = SlotCtx::read(&chimera_core::params::ParamSnapshot::default(), Op::A);
     let at = |p| Some(ParamAddr::new(BlockRef::Reverb, p));
+    let shown = |def: &BlockDef| {
+        (0..6)
+            .map(|i| view(def, i, &ctx).addr())
+            .collect::<Vec<_>>()
+    };
     assert_eq!(
-        bound(&reg::EFX),
+        shown(&reg::EFX),
         [
-            at(ReverbParams::GRIT),
+            at(ReverbParams::TYPE),
+            at(ReverbParams::SIZE),
             at(ReverbParams::TIME),
             at(ReverbParams::DAMPING),
-            at(ReverbParams::SIZE),
+            at(ReverbParams::SMEAR),
             at(ReverbParams::MIX),
-            None
         ]
+    );
+    assert_eq!(
+        shown(&reg::EFX_MORE),
+        [None, None, None, at(ReverbParams::RATE), None, None]
     );
     assert_eq!(
         reg::EFX.viz,
         VizType::EffectsFlow(FxFlow::Effect(FxNode::Reverb))
     );
+    let rev = reg::MIXER_CHANNEL_CHAIN
+        .blocks
+        .iter()
+        .find(|b| b.def.id == reg::EFX.id)
+        .unwrap();
+    let subs: Vec<(u16, &str)> = rev.sub_pages.iter().map(|d| (d.id, d.short)).collect();
+    assert_eq!(subs, [(96, "MORE"), (97, "MOR2")]);
+}
+
+/// On the unit: REV's B ticks QUAD's SIZE a table step, A turns to GATE
+/// on its knobs and back to QUAD on its tweaked ones, and REV › MORE's D
+/// turns RATE.
+#[test]
+fn the_reverb_pages_turn_by_the_panel() {
+    let mut ui = UiState::new();
+    open_mixer(&mut ui, ButtonId::B1);
+    for _ in 0..3 {
+        ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
+    }
+    assert_eq!(ui.page_def().id, reg::EFX.id);
+    let rev = |ui: &UiState| ui.project().perf().fx.reverb;
+    turn(&mut ui, EncoderId::B, 1);
+    assert!((rev(&ui).size - (0.5 + 1.0 / 31.0)).abs() < 1e-6);
+    use chimera_core::dsp::reverb::ReverbType;
+    turn(&mut ui, EncoderId::A, 1);
+    // ROOM on its starting knobs: MidiVerb II program 5's SIZE (ADR 0095).
+    assert_eq!((rev(&ui).kind, rev(&ui).size), (ReverbType::Room, 0.644));
+    turn(&mut ui, EncoderId::A, -1);
+    assert_eq!(rev(&ui).kind, ReverbType::Quad);
+    assert!((rev(&ui).size - (0.5 + 1.0 / 31.0)).abs() < 1e-4);
+    ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
+    assert_eq!(ui.page_def().id, reg::EFX_MORE.id);
+    turn(&mut ui, EncoderId::D, 4);
+    // QUAD's knobs came back through `KnobMemory`'s 1/65 534 steps.
+    assert!((rev(&ui).rate - (0.75 + 4.0 / 128.0)).abs() < 1e-4);
 }
 
 #[test]
@@ -434,25 +496,27 @@ fn mixer_part_dirty_render_equals_full_render() {
     }
 }
 
-/// The sound browser's title names what it loads and the Part it loads
-/// into: "LOAD SOUND → PART 2" for Part 2.
+/// The sound browser's title keeps the Part on screen: `· P2` for Part 2,
+/// the tabs on its left the same for every Part.
 #[test]
 fn sound_browser_title_names_the_part() {
-    use chimera_core::preset::SoundPool;
-    use chimera_core::ui::{browser, components, theme};
+    use chimera_core::project::Project;
+    use chimera_core::ui::{browser, theme};
     use embedded_graphics::draw_target::DrawTarget;
 
-    // `draw` expects a screen cleared to the ground.
-    let mut got = screen::Fb::new();
-    let _ = got.clear(theme::BG);
-    browser::draw(&mut got, &SoundPool::new(), 1, 0, 0);
-    let mut want = screen::Fb::new();
-    let _ = want.clear(theme::BG);
-    components::title_to(&mut want, "LOAD SOUND", "PART 2");
-    assert!(
-        got.px[..28 * 240] == want.px[..28 * 240],
-        "title is LOAD SOUND → PART 2"
-    );
+    let (p, _) = Project::boxed();
+    let band = |part: usize| {
+        // `draw` expects a screen cleared to the ground.
+        let mut fb = screen::Fb::new();
+        let _ = fb.clear(theme::BG);
+        let v = browser::BrowserView::Project;
+        browser::draw(&mut fb, &p, v, PartId::ALL[part], 0, 0, true, None);
+        fb.px[..28 * 240].to_vec()
+    };
+    let (one, two) = (band(0), band(1));
+    let left = |b: &[u16]| -> Vec<u16> { b.chunks(240).flat_map(|r| r[..140].to_vec()).collect() };
+    assert_eq!(left(&one), left(&two), "the tabs are the same");
+    assert_ne!(one, two, "the Part's mark differs");
 }
 
 /// The PART page shows CH as 1–16 (stored 0–15), MODE as MONO/POLY and OUT
@@ -617,3 +681,36 @@ fn the_master_page_meters_gain_reduction() {
     );
     MASTER_GR.publish(0.0);
 }
+
+/// REV › MORE under HALL reads PRE-DLY as it plays: a SIZE move from
+/// elsewhere (a CC) into the plate zone pulls it to 0 ms, and the dirty
+/// render redraws the cells though no cell's own value moved.
+#[test]
+fn rev_more_redraws_the_plate_zones_predelay() {
+    use chimera_core::dsp::reverb::ReverbType;
+    use chimera_core::ui::perf::PerfStats;
+    let mut ui = UiState::new();
+    screen::to_fx(&mut ui, screen::REV);
+    {
+        let r = &mut ui.project_mut().edit_fx().reverb;
+        (r.kind, r.size, r.predelay) = (ReverbType::Hall, 0.5, 0.5);
+    }
+    screen::feed(&mut ui, screen::Input::press(ButtonId::Edit)); // REV › MORE
+    screen::settle(&mut ui);
+    let (perf, scope) = (PerfStats::zero(), screen::scope_fixture());
+    let mut fb = screen::Fb::new();
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+    ui.project_mut().edit_fx().reverb.size = 0.0;
+    screen::settle(&mut ui);
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+    let mut full = screen::Fb::new();
+    ui.render_with_audio(&mut full, &perf, None, &scope);
+    // Everything below the focus band. (The band's TAIL, drawn from the
+    // stored SIZE, is keyed on the focused cell only: a CC to a knob off
+    // the page leaves it stale too, for every composite.)
+    let rows = |f: &screen::Fb| f.px[FOCUS_BOTTOM * 240..].to_vec();
+    assert!(rows(&fb) == rows(&full), "REV › MORE kept a stale PRE-DLY");
+}
+
+/// The first pixel row under the focus band.
+const FOCUS_BOTTOM: usize = chimera_core::ui::theme::FOCUS_BOTTOM as usize;

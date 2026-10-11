@@ -1,28 +1,37 @@
-//! SYSTEM (ADR 0045): theme and last project, read at boot and written on
+//! SYSTEM (ADR 0045): theme, MIDI CONFIG (ADR 0080) and last project, read at boot and written on
 //! leaving System when RAM differs from what this card is known to hold.
 
 mod common;
 
+use chimera_core::orbit::clock::SyncMode;
 use chimera_core::storage::{
     AbFile, BootNote, Card, Exit, ExitPlan, FileError, LoadError, ProjectId, Side, SyncError,
-    SystemSettings, SystemSync, exit_plan,
+    SystemCheck, SystemSettings, SystemSync, encode_system, exit_plan, save_ab,
 };
+use chimera_core::ui::midi_settings::MidiSettings;
 use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, ThemeSettings};
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
 use common::codec_util::{
-    SYSTEM_FIXTURE, fix_crc, record_offsets, system_file, system_fixture_settings,
+    SYSTEM_FIXTURE, SYSTEM_MIDI_FIXTURE, fix_crc, record_offsets, system_file,
+    system_fixture_settings, system_midi_fixture_settings,
 };
 use core::ops::ControlFlow;
 
-/// BRIGHT 40, GAMMA SOFT, ACCENT index 3, BLACK +1, project 7.
+/// BRIGHT 40, GAMMA SOFT, ACCENT index 3, BLACK +1, HINTS OFF, INVERT ON, SYNC INT,
+/// project 7.
 fn settings() -> SystemSettings {
     SystemSettings {
+        midi: MidiSettings {
+            sync: SyncMode::Int,
+        },
         theme: ThemeSettings {
             bright: Bright::new(40),
             gamma: Gamma::Soft,
             accent: Accent::ALL[3],
             black: Black::new(1),
+            hints: false,
+            invert: true,
         },
         last_project: ProjectId::new(7),
     }
@@ -55,11 +64,22 @@ fn get<S: Store>(s: &mut S, side: Side) -> Vec<u8> {
     c.0
 }
 
-/// `write` from a fresh boot on `s`.
+/// `want` as SYSTEM's next generation on `s`, written as it stands.
 fn save(s: &mut MemStore, want: &SystemSettings) {
-    let mut card = Card::new();
-    let (mut sync, ..) = SystemSync::boot(&mut card, s);
-    sync.write(&mut card, s, want).unwrap();
+    Card::new()
+        .run(s, |st, r| {
+            st.make_dir(r.volume(), Dir::Chimera)?;
+            save_ab(
+                st,
+                r,
+                AbFile::SYSTEM,
+                &mut SystemCheck::new(),
+                None,
+                &mut |w| encode_system(want, w),
+            )
+        })
+        .and_then(|o| o.result)
+        .unwrap();
 }
 
 fn boot<S: Store>(s: &mut S) -> (SystemSettings, Option<BootNote>, Card) {
@@ -267,6 +287,28 @@ fn record_rules() {
     let g = with_record(&f, end, 0x8002, &[0]);
     assert_eq!(boot_bytes(&g), (SystemSettings::DEFAULT, corrupt));
 
+    // A project's records, Origin and ORBIT's (non-critical) too, are
+    // refused.
+    for (tag, payload) in [
+        (0x8007, vec![0; 17]),
+        (0x8008, vec![0; 17]),
+        (0x8009, vec![]),
+        (0x000A, vec![0, 0]),
+        (0x000B, vec![0; 4]),
+        (0x0010, vec![8, 27]),
+        (0x0011, vec![0; 40]),
+        (0x0012, vec![0; 7]),
+        (0x0013, vec![0; 37]),
+        (0x0014, vec![0; 3]),
+    ] {
+        let g = with_record(&f, end, tag, &payload);
+        assert_eq!(
+            boot_bytes(&g),
+            (SystemSettings::DEFAULT, corrupt),
+            "{tag:#x}"
+        );
+    }
+
     // A second THEME block or last project is refused.
     let first = record_offsets(&f)[0];
     let theme_len = 4 + u16::from_le_bytes([f[first + 2], f[first + 3]]) as usize;
@@ -345,7 +387,7 @@ fn same_card_writes_only_a_change() {
     let before = sides(&mut s);
     assert!(visit(&mut sync, &cur));
     assert_eq!(
-        sync.on_exit(&mut card, &mut s, &mut cur),
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
         Ok(Exit::Unchanged)
     );
     assert_eq!(sides(&mut s), before, "no change, no write");
@@ -353,13 +395,16 @@ fn same_card_writes_only_a_change() {
     assert!(!sync.left_system(true, &cur));
     cur.theme.bright = Bright::new(90);
     assert!(sync.left_system(false, &cur));
-    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Wrote)
+    );
     assert_eq!(boot(&mut s).0, cur);
 
     let before = sides(&mut s);
     assert!(visit(&mut sync, &cur));
     assert_eq!(
-        sync.on_exit(&mut card, &mut s, &mut cur),
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
         Ok(Exit::Unchanged)
     );
     assert_eq!(
@@ -386,19 +431,22 @@ fn late_card_loads_its_system() {
     s.insert();
     let before = sides(&mut s);
     assert!(visit(&mut sync, &cur));
-    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Loaded));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Loaded)
+    );
     assert_eq!(sides(&mut s), before, "the card's SYSTEM is untouched");
     assert_eq!(cur, settings(), "RAM holds the card's");
 
     // Loaded from this card: no change is no write.
     assert!(visit(&mut sync, &cur));
     assert_eq!(
-        sync.on_exit(&mut card, &mut s, &mut cur),
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
         Ok(Exit::Unchanged)
     );
 }
 
-/// Loaded from card A, then a fresh card B: A's settings go to B.
+/// Loaded from card A, then a fresh card B: A's theme goes to B.
 #[test]
 fn swap_writes_to_the_new_card() {
     let mut s = MemStore::new(1);
@@ -408,9 +456,17 @@ fn swap_writes_to_the_new_card() {
 
     s.swap(2);
     assert!(visit(&mut sync, &cur));
-    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
-    assert_eq!(cur, settings());
-    assert_eq!(boot(&mut s), (settings(), None, card));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Wrote)
+    );
+    // A's last project names a file on A: B keeps its own (none).
+    let on_b = SystemSettings {
+        last_project: None,
+        ..settings()
+    };
+    assert_eq!(cur, on_b);
+    assert_eq!(boot(&mut s), (on_b, None, card));
 }
 
 /// A read that fails at boot leaves the defaults untouched: leaving System
@@ -431,14 +487,20 @@ fn transient_boot_error_writes_nothing() {
     );
 
     assert!(visit(&mut sync, &cur));
-    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Loaded));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Loaded)
+    );
     assert_eq!(sides(&mut s.inner), before, "nothing written");
     assert_eq!(cur, settings());
 
     assert!(!sync.left_system(true, &cur));
     cur.theme.black = Black::new(4);
     assert!(sync.left_system(false, &cur));
-    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Wrote)
+    );
     assert_eq!(boot(&mut s.inner).0, cur);
 }
 
@@ -459,7 +521,7 @@ fn unreadable_card_with_untouched_defaults_writes_nothing() {
     let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
     assert!(visit(&mut sync, &cur));
     assert_eq!(
-        sync.on_exit(&mut card, &mut s, &mut cur),
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
         Err(SyncError::File(FileError::BadCrc))
     );
     assert_eq!(sides(&mut s), before);
@@ -501,7 +563,7 @@ fn newer_firmware_system_is_never_written() {
             let want = cur;
             assert!(sync.left_system(false, &cur));
             assert_eq!(
-                sync.on_exit(&mut card, &mut s, &mut cur),
+                sync.on_exit(&mut card, &mut s, &mut cur, None),
                 nnf,
                 "{shape} {change}"
             );
@@ -519,12 +581,88 @@ fn no_file_boot_creates_on_first_exit() {
     let (mut sync, mut cur, note) = SystemSync::boot(&mut card, &mut s);
     assert_eq!(note, Some(BootNote::NoFile));
     assert!(visit(&mut sync, &cur));
-    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Wrote)
+    );
     assert_eq!(boot(&mut s), (SystemSettings::DEFAULT, None, card));
     assert!(visit(&mut sync, &cur));
     assert_eq!(
-        sync.on_exit(&mut card, &mut s, &mut cur),
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
         Ok(Exit::Unchanged)
+    );
+}
+
+/// SYNC is the user's too: a change to it alone touches the defaults.
+#[test]
+fn a_sync_change_is_a_change() {
+    let mut s = MemStore::new(1);
+    save(&mut s, &settings());
+    s.eject();
+    let mut card = Card::new();
+    let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
+    cur.midi.sync = SyncMode::Int;
+    assert!(!sync.left_system(true, &cur));
+    assert!(sync.left_system(false, &cur));
+    s.insert();
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Wrote)
+    );
+    assert_eq!(boot(&mut s).0.midi.sync, SyncMode::Int);
+}
+
+/// A SYSTEM from before SYNC, the v1 fixture, reads as EXT, the default.
+#[test]
+fn a_system_from_before_sync_is_ext() {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/v1")
+        .join(SYSTEM_FIXTURE);
+    let f = std::fs::read(p).unwrap();
+    assert_eq!(boot_bytes(&f).0.midi.sync, SyncMode::Ext);
+}
+
+/// A SYSTEM from before HINTS, either v1 fixture, shows them: ON, the
+/// default (ADR 0086).
+#[test]
+fn a_system_from_before_hints_shows_them() {
+    for name in [SYSTEM_FIXTURE, SYSTEM_MIDI_FIXTURE] {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/v1")
+            .join(name);
+        let f = std::fs::read(p).unwrap();
+        assert!(boot_bytes(&f).0.theme.hints, "{name}");
+    }
+}
+
+/// A SYSTEM from before INVERT, either v1 fixture, is dark (ADR 0126).
+#[test]
+fn a_system_from_before_invert_is_dark() {
+    for name in [SYSTEM_FIXTURE, SYSTEM_MIDI_FIXTURE] {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/v1")
+            .join(name);
+        let f = std::fs::read(p).unwrap();
+        assert!(!boot_bytes(&f).0.theme.invert, "{name}");
+    }
+}
+
+/// HINTS OFF round-trips, and alone is a change to write.
+#[test]
+fn hints_off_round_trips() {
+    let mut s = MemStore::new(1);
+    let off = SystemSettings {
+        theme: ThemeSettings {
+            hints: false,
+            ..ThemeSettings::DEFAULT
+        },
+        ..SystemSettings::DEFAULT
+    };
+    save(&mut s, &off);
+    assert!(!boot(&mut s).0.theme.hints);
+    assert_ne!(
+        chimera_core::storage::body_crc(&off),
+        chimera_core::storage::body_crc(&SystemSettings::DEFAULT)
     );
 }
 
@@ -543,8 +681,16 @@ fn a_reverted_change_is_still_a_change() {
     assert!(sync.left_system(false, &cur));
 
     s.insert();
-    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
-    assert_eq!(boot(&mut s).0, SystemSettings::DEFAULT);
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Wrote)
+    );
+    // The card keeps its own last project.
+    let want = SystemSettings {
+        last_project: settings().last_project,
+        ..SystemSettings::DEFAULT
+    };
+    assert_eq!(boot(&mut s).0, want);
 }
 
 #[test]
@@ -589,7 +735,7 @@ fn no_card_exit_tries_once() {
 
     assert!(visit(&mut sync, &cur), "the exit edge");
     assert_eq!(
-        sync.on_exit(&mut card, &mut s, &mut cur),
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
         Err(SyncError::Store(StoreError::NoCard))
     );
     assert_eq!(card, Card::Absent);
@@ -600,7 +746,10 @@ fn no_card_exit_tries_once() {
 
     // The card back: that exit creates the file.
     s.insert();
-    assert_eq!(sync.on_exit(&mut card, &mut s, &mut cur), Ok(Exit::Wrote));
+    assert_eq!(
+        sync.on_exit(&mut card, &mut s, &mut cur, None),
+        Ok(Exit::Wrote)
+    );
     assert!(matches!(card, Card::Ready(_)), "{card:?}");
     assert_eq!(boot(&mut s), (cur, None, card));
 }
@@ -612,4 +761,21 @@ fn system_fixture_loads() {
         .join(SYSTEM_FIXTURE);
     let f = std::fs::read(p).unwrap();
     assert_eq!(boot_bytes(&f), (system_fixture_settings(), None));
+}
+
+/// The frozen SYSTEM with MIDI CONFIG's record, SYNC INT: it reads as
+/// written, and what it read writes and reads back the same. Not byte for
+/// byte since HINTS: the fixture predates it, a write carries it (ADR 0086).
+#[test]
+fn system_midi_fixture_round_trips() {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/v1")
+        .join(SYSTEM_MIDI_FIXTURE);
+    let f = std::fs::read(p).unwrap();
+    let (got, note) = boot_bytes(&f);
+    assert_eq!((got, note), (system_midi_fixture_settings(), None));
+    assert_eq!(got.midi.sync, SyncMode::Int);
+    let again = system_file(&got);
+    assert!(again.len() > f.len(), "HINTS added");
+    assert_eq!(boot_bytes(&again), (got, None));
 }

@@ -1,5 +1,6 @@
 use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::block::{ParamId, ParamSpec, find_spec};
+use crate::orbit::RingIdx;
 use crate::ui::page::{PageLayout, ValFmt};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -7,16 +8,39 @@ pub enum VizType {
     None,
     FilterResponse,
     Adsr,
-    Logo,
+    /// SYSTEM › ABOUT: the name and firmware; its cells are `about_page`'s.
+    About,
     /// IN → CHR → DLY → REV → OUT, lighting this page's part of it.
     EffectsFlow(FxFlow),
     MixerLevels,
     CompressorCurve,
     AudioStats,
+    /// PROJECT › POOL: the pool meter; its cells are `pool_page`'s.
+    Pool,
     /// ALG A's diagram moving to ALG B's with MORPH.
     AlgoDiagram,
     /// SPD: each slot's SPEED and HOLD POSITION.
     EnvSpeed,
+    /// ORB: the rings round their circles inside the progression, swept
+    /// by the clock.
+    Orbit,
+    /// RING · RHYTHM: the ring's pattern unrolled, its step lit.
+    OrbitRhythm,
+    /// RING · VOICE: each hit's gate as a bar, its force as its height.
+    OrbitVoice,
+    /// RING · NOTES: the pool as chips, or one a step.
+    OrbitNotes,
+    /// CHRD: the progression's segments as chips over the loop's bars.
+    OrbitChords,
+    /// CHRD › CUSTOM: the twelve notes round a circle, the set's lit.
+    OrbitCircle,
+    /// SCN: the eight slots, the playing one outlined, a queued one
+    /// filling as the loop runs out.
+    OrbitScenes,
+    /// ALGO's AR · D1R · D1L · D2R · RR: the focused operator's envelope.
+    OpEnv,
+    /// TAPE's SRC and DECK: the source, the machine's part of it, the heads.
+    Strip,
 }
 
 /// A node of the FX flow; the value is its index in `viz::effects_flow`.
@@ -50,13 +74,35 @@ pub enum SlotBinding {
         label: &'static str,
         fmt: ValFmt,
     },
-    /// Knob `k` of the Sound's filter KIND's panel (spec § 6): 0–4 FLT's
-    /// knobs 2–6, 5–6 FLT › MODE's extras.
+    /// Knob `k` of the Sound's filter type's panel (`filter_panel::knob`):
+    /// 0–4 FLT's knobs 2–6, 5–10 FLT › MOD's cells.
     FilterPanel(u8),
     /// Cell k of ENV slot s's page, per its TYPE, MODE and FORM.
     EnvPanel(crate::dsp::modulator::EnvSlot, u8),
     /// Cell k of LFO slot s's page, per its TYPE and FORM.
     LfoPanel(crate::dsp::modulator::LfoSlot, u8),
+    /// Cell k of EXC or MDL2, per MODEL (`modal::page_cells`).
+    ModalPanel(crate::dsp::modal::ModalPage, u8),
+    /// A TAPE cell the machine labels (spec § 3, `tape_engine::machine`).
+    Machine(MachineSlot),
+    /// TAPE's SOURCE: the Sound's `SourceRef`, not a param.
+    Source,
+    /// Cell k of REV's knobs 1–4 or of REV › MORE, per the reverb's TYPE
+    /// (`reverb_panel::knob`).
+    ReverbPanel(crate::ui::reverb_panel::RevPage, u8),
+    /// A param of the ORBIT ring the location selects.
+    SelectedRing(ParamId),
+    /// One of ORBIT's own cells.
+    Orbit(crate::ui::orbit::OrbitCell),
+}
+
+/// Where a TAPE cell sits: DECK's POSITION and MOTION, or cell `k` of the
+/// model page, each labelled by the Sound's machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MachineSlot {
+    Position,
+    Motion,
+    Page(u8),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -83,6 +129,13 @@ impl ParamSlot {
     pub const fn selected_op(param: ParamId) -> Self {
         Self {
             binding: SlotBinding::SelectedOp(param),
+            label_override: None,
+        }
+    }
+
+    pub const fn selected_ring(param: ParamId) -> Self {
+        Self {
+            binding: SlotBinding::SelectedRing(param),
             label_override: None,
         }
     }
@@ -122,6 +175,41 @@ impl ParamSlot {
         }
     }
 
+    pub const fn modal_panel(page: crate::dsp::modal::ModalPage, k: u8) -> Self {
+        Self {
+            binding: SlotBinding::ModalPanel(page, k),
+            label_override: None,
+        }
+    }
+
+    pub const fn machine(at: MachineSlot) -> Self {
+        Self {
+            binding: SlotBinding::Machine(at),
+            label_override: None,
+        }
+    }
+
+    pub const fn source() -> Self {
+        Self {
+            binding: SlotBinding::Source,
+            label_override: None,
+        }
+    }
+
+    pub const fn reverb_panel(page: crate::ui::reverb_panel::RevPage, k: u8) -> Self {
+        Self {
+            binding: SlotBinding::ReverbPanel(page, k),
+            label_override: None,
+        }
+    }
+
+    pub const fn orbit(cell: crate::ui::orbit::OrbitCell) -> Self {
+        Self {
+            binding: SlotBinding::Orbit(cell),
+            label_override: None,
+        }
+    }
+
     pub const fn with_label(self, label: &'static str) -> Self {
         Self {
             label_override: Some(label),
@@ -135,12 +223,20 @@ impl ParamSlot {
             SlotBinding::Param(a) => a.spec(),
             // All six operators share one spec table, so AlgoOp(Op::A) stands in.
             SlotBinding::SelectedOp(id) => find_spec(BlockRef::AlgoOp(Op::A).specs(), id),
+            SlotBinding::SelectedRing(id) => {
+                find_spec(BlockRef::OrbitRing(RingIdx::ALL[0]).specs(), id)
+            }
             SlotBinding::Empty
+            | SlotBinding::Orbit(_)
             | SlotBinding::SelectOp
             | SlotBinding::Legacy { .. }
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
-            | SlotBinding::LfoPanel(..) => None,
+            | SlotBinding::LfoPanel(..)
+            | SlotBinding::ModalPanel(..)
+            | SlotBinding::ReverbPanel(..)
+            | SlotBinding::Machine(_)
+            | SlotBinding::Source => None,
         }
     }
 
@@ -151,12 +247,17 @@ impl ParamSlot {
         match self.binding {
             // Views resolve a panel knob.
             SlotBinding::Empty
+            | SlotBinding::Orbit(_)
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
-            | SlotBinding::LfoPanel(..) => "--",
+            | SlotBinding::LfoPanel(..)
+            | SlotBinding::ModalPanel(..)
+            | SlotBinding::ReverbPanel(..)
+            | SlotBinding::Machine(_) => "--",
+            SlotBinding::Source => "SOURCE",
             SlotBinding::SelectOp => "OP",
             SlotBinding::Legacy { label, .. } => label,
-            SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
+            SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::SelectedRing(_) => {
                 self.spec().map_or("??", |s| s.label)
             }
         }
@@ -165,12 +266,17 @@ impl ParamSlot {
     pub fn format(&self) -> ValFmt {
         match self.binding {
             SlotBinding::Empty
+            | SlotBinding::Orbit(_)
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
-            | SlotBinding::LfoPanel(..) => ValFmt::Uni,
+            | SlotBinding::LfoPanel(..)
+            | SlotBinding::ModalPanel(..)
+            | SlotBinding::ReverbPanel(..)
+            | SlotBinding::Machine(_)
+            | SlotBinding::Source => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
             SlotBinding::Legacy { fmt, .. } => fmt,
-            SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
+            SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::SelectedRing(_) => {
                 self.spec().map_or(ValFmt::Uni, |s| s.fmt)
             }
         }
@@ -235,7 +341,7 @@ impl ChainBlock {
         }
     }
 
-    pub fn sub_page_count(&self) -> usize {
+    pub const fn sub_page_count(&self) -> usize {
         if self.sub_pages.is_empty() {
             0
         } else {
@@ -250,9 +356,142 @@ pub struct ChainDef2 {
     pub blocks: &'static [ChainBlock],
     /// Mod matrix source rows, in `Voice`'s source order (spec §4).
     pub mod_sources: &'static [&'static str],
+    /// Where a first visit lands (ADR 0066): only `new` and
+    /// `with_home_def` set it, so the build checks it.
+    home: PageAt,
+}
+
+/// A page on a chain. Only a chain makes one (`ChainDef2::home`, `page`,
+/// `step`), so no code can land on a node it assumed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PageAt {
+    node: u8,
+    sub: u8,
+}
+
+impl PageAt {
+    pub const fn node(self) -> u8 {
+        self.node
+    }
+
+    pub const fn sub(self) -> u8 {
+        self.sub
+    }
+
+    /// Any page, unchecked: tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub const fn of(node: u8, sub: u8) -> Self {
+        PageAt { node, sub }
+    }
+}
+
+/// A key on a chain's pages: PLUS, MINUS, EDIT (sub-page down), SEQ (up).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Move {
+    Next,
+    Prev,
+    Down,
+    Up,
 }
 
 impl ChainDef2 {
+    /// A new chain's home: its first node.
+    const FIRST: PageAt = PageAt { node: 0, sub: 0 };
+
+    /// A chain whose home is its first node. An empty chain fails the
+    /// build: every chain is a static. Nothing else makes one, so the home
+    /// can't skip the checks:
+    ///
+    /// ```compile_fail,E0451
+    /// use chimera_core::ui::block_def::ChainDef2;
+    /// use chimera_core::ui::block_registry::ALGO_CHAIN;
+    /// static BAD: ChainDef2 = ChainDef2 { blocks: &[], ..ALGO_CHAIN };
+    /// ```
+    ///
+    /// ```compile_fail,E0451
+    /// use chimera_core::ui::block_def::PageAt;
+    /// let home = PageAt { node: 1, sub: 0 };
+    /// ```
+    pub const fn new(
+        name: &'static str,
+        blocks: &'static [ChainBlock],
+        mod_sources: &'static [&'static str],
+    ) -> Self {
+        assert!(!blocks.is_empty(), "a chain has a page");
+        assert!(blocks.len() <= u8::MAX as usize);
+        ChainDef2 {
+            name,
+            blocks,
+            mod_sources,
+            home: Self::FIRST,
+        }
+    }
+
+    /// Home on `def`'s node instead; a def not on the chain fails the build.
+    pub const fn with_home_def(self, def: &BlockDef) -> Self {
+        let mut i = 0;
+        while i < self.blocks.len() {
+            if self.blocks[i].def.id == def.id {
+                return ChainDef2 {
+                    home: PageAt {
+                        node: i as u8,
+                        sub: 0,
+                    },
+                    ..self
+                };
+            }
+            i += 1;
+        }
+        panic!("home def not on the chain")
+    }
+
+    /// Where a first visit lands (ADR 0066).
+    pub const fn home(&self) -> PageAt {
+        self.home
+    }
+
+    /// `node`'s sub-page `sub`, if the chain has it.
+    pub const fn page(&self, node: usize, sub: usize) -> Option<PageAt> {
+        if node >= self.blocks.len() {
+            return None;
+        }
+        let subs = self.blocks[node].sub_page_count();
+        if sub >= if subs == 0 { 1 } else { subs } {
+            return None;
+        }
+        Some(PageAt {
+            node: node as u8,
+            sub: sub as u8,
+        })
+    }
+
+    /// The def at `at`, if `at` is on this chain.
+    pub fn def_at(&self, at: PageAt) -> Option<&'static BlockDef> {
+        self.active_def(at.node as usize, at.sub as usize)
+    }
+
+    /// The page `m` moves to from `at`: the next or previous node,
+    /// clamped, on its own page; a sub-page down or up.
+    pub fn step(&self, at: PageAt, m: Move) -> Option<PageAt> {
+        let (node, sub) = (at.node as usize, at.sub as usize);
+        match m {
+            Move::Next => self.page(node + 1, 0),
+            Move::Prev => self.page(node.checked_sub(1)?, 0),
+            Move::Down => self.page(node, sub + 1),
+            Move::Up => self.page(node, sub.checked_sub(1)?),
+        }
+    }
+
+    /// The engine's node: the one PIT hangs under (ADR 0042); the first
+    /// on a chain without it.
+    pub fn engine_node(&self) -> usize {
+        let pitch = crate::ui::block_registry::PITCH.id;
+        self.blocks
+            .iter()
+            .position(|b| b.sub_pages.iter().any(|d| d.id == pitch))
+            .unwrap_or(0)
+    }
+
     pub fn block_at(&self, node: usize) -> Option<&'static ChainBlock> {
         self.blocks.get(node)
     }

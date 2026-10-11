@@ -1083,3 +1083,179 @@ fn chain_errors_read_as_corrupt() {
     );
     assert_eq!(log(&s).reinits.get(), 0);
 }
+
+/// The bytes `runs` names, read raw from the device, cut to `len`.
+fn raw_runs(disk: &RamDisk, runs: &[(u32, u32)], len: u32) -> Vec<u8> {
+    let mut out: Vec<u8> = runs
+        .iter()
+        .flat_map(|&(at, n)| (at..at + n).flat_map(|b| disk.block(b)))
+        .collect();
+    out.truncate(len as usize);
+    out
+}
+
+#[test]
+fn runs_name_the_files_blocks_on_the_device() {
+    let (disk, vol) = card();
+    let mut s = probed(&disk);
+    let cluster = layout_of(&disk).cluster_bytes() as usize;
+    let body = pattern(3, 3 * cluster + 100);
+    s.write(vol, name(b"DATA"), &mut |w| w.put(&body)).unwrap();
+    let mut runs = Vec::new();
+    let len = s
+        .runs(vol, name(b"DATA"), &mut |at, n| runs.push((at, n)))
+        .unwrap();
+    assert_eq!(len as usize, body.len());
+    assert_eq!(runs.len(), 1, "a fresh file on an empty card is one run");
+    assert_eq!(runs[0].1, (body.len() as u32).div_ceil(512));
+    assert_eq!(raw_runs(&disk, &runs, len), body);
+}
+
+#[test]
+fn runs_split_where_the_chain_jumps() {
+    let (disk, vol) = card();
+    let cluster = layout_of(&disk).cluster_bytes() as usize;
+    let body = pattern(4, 3 * cluster);
+    let mut s = probed(&disk);
+    s.write(vol, name(b"DATA"), &mut |w| w.put(&body)).unwrap();
+    let first = start(&disk, b"DATA    BIN");
+    s.delete(vol, name(b"DATA")).unwrap();
+    // A fresh store starts its search at cluster 2: it takes `first` again,
+    // then has to jump the bad cluster after it.
+    put(&disk, first + 1, layout_of(&disk).end_mark() - 8);
+    let mut s = probed(&disk);
+    s.write(vol, name(b"DATA"), &mut |w| w.put(&body)).unwrap();
+    let mut runs = Vec::new();
+    let len = s
+        .runs(vol, name(b"DATA"), &mut |at, n| runs.push((at, n)))
+        .unwrap();
+    let per = (cluster / 512) as u32;
+    assert_eq!(runs.len(), 2);
+    assert_eq!((runs[0].1, runs[1].1), (per, 2 * per));
+    assert_eq!(raw_runs(&disk, &runs, len), body);
+}
+
+#[test]
+fn runs_of_a_missing_file_is_not_found() {
+    let (disk, vol) = card();
+    let mut s = probed(&disk);
+    let mut f = |_, _| panic!("no runs");
+    assert_eq!(
+        s.runs(vol, name(b"NONE"), &mut f),
+        Err(StoreError::NotFound)
+    );
+}
+
+#[test]
+fn the_bench_dir_lives_under_chimera() {
+    let (disk, vol) = card();
+    let mut s = probed(&disk);
+    let f = FileName::new(Dir::Bench, b"CARDTEST", b"BIN").unwrap();
+    s.make_dir(vol, Dir::Bench).unwrap();
+    s.write(vol, f, &mut |w| w.put(b"x")).unwrap();
+    assert_eq!(read_back(&mut s, vol, f), b"x");
+    entry(&disk, b"BENCH      ");
+}
+
+#[test]
+fn free_bytes_counts_free_clusters() {
+    let (disk, vol) = card();
+    let cluster = u64::from(layout_of(&disk).cluster_bytes());
+    let mut s = probed(&disk);
+    assert_eq!(s.free_bytes(vol), Ok(u64::from(free(&disk).0) * cluster));
+    fill(&disk, 3);
+    assert_eq!(s.free_bytes(vol), Ok(3 * cluster));
+}
+
+#[test]
+fn aim_puts_the_next_file_there() {
+    let (disk, vol) = card();
+    let clusters = layout_of(&disk).clusters();
+    let mut s = probed(&disk);
+    s.aim(vol, 750).unwrap();
+    s.write(vol, name(b"FAR"), &mut |w| w.put(&pattern(5, 600)))
+        .unwrap();
+    let at = start(&disk, b"FAR     BIN");
+    assert!(
+        at >= 2 + clusters * 3 / 4 && at < 2 + clusters * 3 / 4 + 4,
+        "{at}"
+    );
+    s.aim(vol, 1_000).unwrap();
+    s.write(vol, name(b"END"), &mut |w| w.put(&pattern(6, 600)))
+        .unwrap();
+    assert!(
+        start(&disk, b"END     BIN") >= at,
+        "the last cluster, or wrapped past it"
+    );
+    assert_eq!(read_back(&mut s, vol, name(b"FAR")), pattern(5, 600));
+}
+
+#[test]
+fn remove_dir_takes_only_an_empty_one() {
+    for (what, img) in [("FAT16", with_clusters(CLUSTERS, 7)), ("FAT32", fat32(7))] {
+        let disk = Rc::new(img);
+        let mut s = probed(&disk);
+        let vol = s.mount().unwrap();
+        s.make_dir(vol, Dir::Chimera).unwrap();
+        let before = free(&disk);
+        let f = FileName::new(Dir::Bench, b"CARD0", b"BIN").unwrap();
+        s.make_dir(vol, Dir::Bench).unwrap();
+        s.write(vol, f, &mut |w| w.put(&pattern(1, 3_000))).unwrap();
+        assert_eq!(
+            s.remove_dir(vol, Dir::Bench),
+            Ok(false),
+            "{what}: holds CARD0"
+        );
+        s.delete(vol, f).unwrap();
+        assert_eq!(s.remove_dir(vol, Dir::Bench), Ok(true), "{what}");
+        assert_eq!(free(&disk), before, "{what}: every cluster back");
+        assert_eq!(
+            s.remove_dir(vol, Dir::Bench),
+            Err(StoreError::NotFound),
+            "{what}"
+        );
+        consistent(&s);
+        s.make_dir(vol, Dir::Bench).unwrap();
+        s.write(vol, f, &mut |w| w.put(b"again")).unwrap();
+        assert_eq!(read_back(&mut s, vol, f), b"again", "{what}");
+    }
+}
+
+/// TAPE Task 17: `read_at(off)` streams `read()[off..]`, its `begin` that
+/// length, for offsets across block and cluster edges; past the end, none.
+#[test]
+fn read_at_matches_read() {
+    struct Begun(u32, Vec<u8>);
+    impl chimera_hal::store::ReadSink for Begun {
+        fn begin(&mut self, len: u32) -> core::ops::ControlFlow<()> {
+            self.0 = len;
+            core::ops::ControlFlow::Continue(())
+        }
+        fn chunk(&mut self, b: &[u8]) -> core::ops::ControlFlow<()> {
+            self.1.extend_from_slice(b);
+            core::ops::ControlFlow::Continue(())
+        }
+    }
+    for image in [fat16(16_384, 1), fat32_counted(1)] {
+        let disk = Rc::new(image);
+        let mut s = probed(&disk);
+        let vol = s.mount().unwrap();
+        s.make_dir(vol, Dir::Chimera).unwrap();
+        let body = pattern(3, 9_000);
+        s.write(vol, name(b"DATA"), &mut |w| w.put(&body)).unwrap();
+        let whole = read_back(&mut s, vol, name(b"DATA"));
+        assert_eq!(whole, body);
+        let cluster = layout_of(&disk).cluster_bytes() as usize;
+        let mut offs = vec![0, 1, 511, 512, 513, 4_095, 4_096, 8_999, 9_000, 9_500];
+        for c in [cluster, 2 * cluster] {
+            offs.extend([c - 1, c, c + 1].into_iter().filter(|&o| o < 9_000));
+        }
+        for off in offs {
+            let mut got = Begun(u32::MAX, Vec::new());
+            s.read_at(vol, name(b"DATA"), off as u32, &mut got).unwrap();
+            let want = whole.get(off..).unwrap_or_default();
+            assert_eq!(got.0 as usize, want.len(), "begin at {off}");
+            assert_eq!(got.1, want, "bytes at {off}");
+        }
+    }
+}

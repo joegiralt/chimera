@@ -52,6 +52,14 @@ fn render_with_param_change(
     (rms(&before_buf), rms(&after_buf), before_buf, after_buf)
 }
 
+/// Blocks after a stage setting's change: its 20 ms ease settles in 15.
+const EASED: usize = 48;
+
+/// The last 8 blocks, after the ease.
+fn settled(after: &[f32]) -> &[f32] {
+    &after[after.len() - 8 * 64..]
+}
+
 fn harmonic_energy(buf: &[f32], f0: f32) -> f32 {
     (2..=8).map(|h| goertzel(buf, f0 * h as f32, SR)).sum()
 }
@@ -81,27 +89,54 @@ fn test_filter_cutoff_sweep_mid_note() {
 
 #[test]
 fn test_filter_resonance_mid_note() {
-    let (_, _, before, after) = render_with_param_change(
-        |p| {
-            *p = tri();
-            p.filter.cutoff = 1000.0;
-            p.filter
-                .set_mode(chimera_core::dsp::filter::FilterMode::Lp12);
-            p.filter.resonance = 0.0;
-        },
-        |p| {
-            p.filter.resonance = 0.9;
-        },
-        8,
-        8,
-    );
-    let peak_before = goertzel(&before, 1000.0, SR);
-    let peak_after = goertzel(&after, 1000.0, SR);
+    // The same note twice, RES raised mid-note or left at 0: the control
+    // takes out the note's own onset.
+    let render = |res: f32| {
+        render_with_param_change(
+            |p| {
+                *p = tri();
+                p.filter.cutoff = 1000.0;
+                p.filter
+                    .set_mode(chimera_core::dsp::filter::FilterMode::Lp12);
+                p.filter.resonance = 0.0;
+            },
+            |p| p.filter.resonance = res,
+            8,
+            8,
+        )
+        .3
+    };
+    // A triangle has no 4th harmonic: read the odd ones either side of
+    // the 1 kHz cutoff, C4's 3rd and 5th, over the fundamental: CLEAN's
+    // trim (ADR 0096) lowers the whole note as RES nears onset, so only
+    // the shape shows the resonance.
+    let near = |b: &[f32]| {
+        (goertzel(b, 3.0 * 261.63, SR) + goertzel(b, 5.0 * 261.63, SR)) / goertzel(b, 261.63, SR)
+    };
+    let (dead, live) = (render(0.0), render(0.9));
+    let (control, raised) = (near(&dead), near(&live));
+    // Live, 1.89×; with RES left dead, 1.00×. The bar was 2× on the level
+    // alone, before the trim.
     assert!(
-        peak_after > peak_before,
-        "resonance should boost cutoff freq: before={} after={}",
-        peak_before,
-        peak_after
+        raised > 1.5 * control,
+        "resonance should boost near the cutoff: {raised} vs {control} with RES 0"
+    );
+    // The level: the trim at RES 0.9 (0.586 on LP12, −4.64 dB) takes the
+    // fundamental down with it, less the lower `k`'s +1.18 dB there (the
+    // LP12 response at r = 0.26 of the cutoff, prewarped): −3.46 dB by the
+    // law, −3.06 measured over the RES ramp's block. Without the trim it
+    // would rise 1.2 dB.
+    use chimera_core::dsp::filter::FilterMode;
+    use chimera_core::dsp::filter::clean::{clean_k, trim};
+    let w = |f: f64| (core::f64::consts::PI * f / f64::from(SR)).tan();
+    let r = w(261.63) / w(1000.0);
+    let lp = |k: f64| 1.0 / (1.0 - r * r).hypot(k * r);
+    let k = f64::from(clean_k(0.9));
+    let law = 20.0 * (f64::from(trim(FilterMode::Lp12, clean_k(0.9))) * lp(k) / lp(2.0)).log10();
+    let drop = 20.0 * f64::from(goertzel(&live, 261.63, SR) / goertzel(&dead, 261.63, SR)).log10();
+    assert!(
+        (drop - law).abs() <= 1.0,
+        "fundamental {drop:+.2} dB at RES 0.9, the law {law:+.2}"
     );
 }
 
@@ -119,11 +154,11 @@ fn test_drive_amount_mid_note() {
             p.drive.drive = 0.9;
         },
         8,
-        8,
+        EASED,
     );
     let f0 = 261.6;
     let h_before = harmonic_energy(&before, f0);
-    let h_after = harmonic_energy(&after, f0);
+    let h_after = harmonic_energy(settled(&after), f0);
     assert!(
         h_after > h_before,
         "drive should add harmonics: before={} after={}",
@@ -146,11 +181,11 @@ fn test_folder_mid_note() {
             p.folder.mix = 1.0;
         },
         8,
-        8,
+        EASED,
     );
     let f0 = 261.6;
     let h_before = harmonic_energy(&before, f0);
-    let h_after = harmonic_energy(&after, f0);
+    let h_after = harmonic_energy(settled(&after), f0);
     assert!(
         h_after > h_before,
         "folder should add harmonics: before={} after={}",
@@ -161,16 +196,58 @@ fn test_folder_mid_note() {
 
 // ── KS+ String: live parameter tests ────────────────────────────────
 
+/// BODY is a model-page setting, latched at note-on (spec § 1): a
+/// mid-note change leaves the sounding note alone.
 #[test]
-fn test_ks_body_mid_note() {
+fn test_string_body_latched_at_note_on() {
+    let setup = |p: &mut ParamSnapshot| {
+        *p = ParamSnapshot::for_engine(EngineType::Modal);
+        p.modal.mode = ResonatorMode::String;
+        p.modal.body = 0.0;
+    };
+    let (_, _, _, kept) = render_with_param_change(setup, |_| {}, 8, 8);
+    let (_, _, _, turned) = render_with_param_change(setup, |p| p.modal.body = 0.8, 8, 8);
+    assert!(
+        kept.iter()
+            .zip(&turned)
+            .all(|(a, b)| a.to_bits() == b.to_bits()),
+        "BODY moved a sounding note"
+    );
+}
+
+/// ENS DEPTH, RATE and MIX are latched at note-on too (spec § 1).
+#[test]
+fn test_string_ens_latched_at_note_on() {
+    let setup = |p: &mut ParamSnapshot| {
+        *p = ParamSnapshot::for_engine(EngineType::Modal);
+        p.modal.mode = ResonatorMode::String;
+        (p.modal.ens_depth, p.modal.ens_rate, p.modal.ens_mix) = (0.5, 0.5, 0.5);
+    };
+    let (_, _, _, kept) = render_with_param_change(setup, |_| {}, 8, 8);
+    let (_, _, _, turned) = render_with_param_change(
+        setup,
+        |p| (p.modal.ens_depth, p.modal.ens_rate, p.modal.ens_mix) = (1.0, 1.0, 0.0),
+        8,
+        8,
+    );
+    assert!(
+        kept.iter()
+            .zip(&turned)
+            .all(|(a, b)| a.to_bits() == b.to_bits()),
+        "ENS moved a sounding note"
+    );
+}
+
+#[test]
+fn test_string_structure_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
             *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::String;
-            p.modal.ks_body = 0.0;
+            p.modal.structure = 0.0;
         },
         |p| {
-            p.modal.ks_body = 0.8;
+            p.modal.structure = 0.7;
         },
         8,
         8,
@@ -181,70 +258,19 @@ fn test_ks_body_mid_note() {
         .map(|(a, b)| (a - b).abs())
         .sum::<f32>()
         / before.len() as f32;
-    assert!(
-        diff > 0.001,
-        "body resonance should change sound: diff={}",
-        diff
-    );
+    assert!(diff > 0.001, "structure should change sound: diff={}", diff);
 }
 
 #[test]
-fn test_ks_stiffness_mid_note() {
+fn test_string_bright_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
             *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::String;
-            p.modal.ks_stiffness = 0.0;
+            p.modal.bright = 1.0 - 0.1;
         },
         |p| {
-            p.modal.ks_stiffness = 0.7;
-        },
-        8,
-        8,
-    );
-    let diff: f32 = before
-        .iter()
-        .zip(after.iter())
-        .map(|(a, b)| (a - b).abs())
-        .sum::<f32>()
-        / before.len() as f32;
-    assert!(diff > 0.001, "stiffness should change sound: diff={}", diff);
-}
-
-#[test]
-fn test_ks_feedback_mid_note() {
-    let (before_rms, after_rms, _, _) = render_with_param_change(
-        |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Modal);
-            p.modal.mode = ResonatorMode::String;
-            p.modal.ks_feedback = 0.0;
-        },
-        |p| {
-            p.modal.ks_feedback = 0.9;
-        },
-        8,
-        16,
-    );
-    // Higher feedback should sustain longer — after_rms should be higher
-    // relative to what it would be without feedback
-    assert!(
-        after_rms > before_rms,
-        "feedback should help sustain: before_rms={} after_rms={}",
-        before_rms,
-        after_rms
-    );
-}
-
-#[test]
-fn test_ks_brightness_mid_note() {
-    let (_, _, before, after) = render_with_param_change(
-        |p| {
-            *p = ParamSnapshot::for_engine(EngineType::Modal);
-            p.modal.mode = ResonatorMode::String;
-            p.modal.brightness = 0.1;
-        },
-        |p| {
-            p.modal.brightness = 0.9;
+            p.modal.bright = 1.0 - 0.9;
         },
         4,
         8,
@@ -254,7 +280,7 @@ fn test_ks_brightness_mid_note() {
     let h_after = harmonic_energy(&after, f0);
     assert!(
         (h_before - h_after).abs() > 0.0001,
-        "brightness should change harmonics: before={} after={}",
+        "bright should change harmonics: before={} after={}",
         h_before,
         h_after
     );
@@ -263,38 +289,38 @@ fn test_ks_brightness_mid_note() {
 // ── Modal resonator: live parameter tests ───────────────────────────
 
 #[test]
-fn test_modal_decay_mid_note() {
+fn test_bank_damp_mid_note() {
     let (before_rms, after_rms, _, _) = render_with_param_change(
         |p| {
             *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::Modal;
-            p.modal.decay = 0.8;
+            p.modal.damp = 0.8;
         },
         |p| {
-            p.modal.decay = 0.1;
-        }, // shorten decay dramatically
+            p.modal.damp = 0.1;
+        }, // shorten the ring dramatically
         8,
         16,
     );
-    // After shortening decay, the sound should die faster
+    // After shortening DAMP, the sound should die faster
     assert!(
         after_rms < before_rms || after_rms < 0.01,
-        "reducing decay should quiet the sound: before={} after={}",
+        "reducing DAMP should quiet the sound: before={} after={}",
         before_rms,
         after_rms
     );
 }
 
 #[test]
-fn test_modal_brightness_mid_note() {
+fn test_bank_bright_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
             *p = ParamSnapshot::for_engine(EngineType::Modal);
             p.modal.mode = ResonatorMode::Modal;
-            p.modal.brightness = 0.1;
+            p.modal.bright = 0.1;
         },
         |p| {
-            p.modal.brightness = 1.0;
+            p.modal.bright = 1.0;
         },
         4,
         8,
@@ -304,7 +330,7 @@ fn test_modal_brightness_mid_note() {
     let h_after = harmonic_energy(&after, f0);
     assert!(
         (h_before - h_after).abs() > 0.0001,
-        "modal brightness should change spectrum: before={} after={}",
+        "bank bright should change spectrum: before={} after={}",
         h_before,
         h_after
     );
@@ -314,7 +340,7 @@ fn test_modal_brightness_mid_note() {
 
 #[test]
 fn test_volume_mid_note() {
-    let (before_rms, after_rms, _, _) = render_with_param_change(
+    let (before_rms, _, _, after) = render_with_param_change(
         |p| {
             *p = tri();
             p.out.volume = 0.8;
@@ -323,8 +349,10 @@ fn test_volume_mid_note() {
             p.out.volume = 0.1;
         },
         8,
-        8,
+        EASED,
     );
+    let tail = settled(&after);
+    let after_rms = libm::sqrtf(tail.iter().map(|s| s * s).sum::<f32>() / tail.len() as f32);
     assert!(
         after_rms < before_rms * 0.3,
         "reducing volume should reduce level: before={} after={}",

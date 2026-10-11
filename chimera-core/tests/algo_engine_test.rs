@@ -6,6 +6,7 @@ use chimera_core::dsp::algo::algorithms::{ALGO_COUNT, AlgoId};
 use chimera_core::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::algo::waves::{WaveId, mip_step};
+use chimera_core::taps::TapRows;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::{SR, peak, period_hz};
@@ -29,7 +30,13 @@ fn render_with(
     let mut blk = [0.0; BLOCK_SIZE];
     for b in 0..blocks {
         change(b, &mut p);
-        e.render(&mut blk, &p, &AlgoLive::from_params(&p), SR);
+        e.render(
+            &mut blk,
+            &p,
+            &AlgoLive::from_params(&p),
+            SR,
+            &mut TapRows::new([false; 2]),
+        );
         out.extend_from_slice(&blk);
     }
     out
@@ -208,7 +215,13 @@ fn retrigger_on_a_sounding_voice_does_not_click() {
         if b == 15 {
             e.note_on(MidiNote::new(64).unwrap(), Velocity::DEFAULT, &p, SR);
         }
-        e.render(&mut blk, &p, &AlgoLive::from_params(&p), SR);
+        e.render(
+            &mut blk,
+            &p,
+            &AlgoLive::from_params(&p),
+            SR,
+            &mut TapRows::new([false; 2]),
+        );
         out.extend_from_slice(&blk);
     }
     let (edge, inner) = jumps(&out);
@@ -262,14 +275,27 @@ fn a_release_ends_the_voice_and_a_silent_carrier_does_not_hold_it() {
     e.note_on(MidiNote::A4, Velocity::DEFAULT, &p, SR);
     let mut blk = [0.0; BLOCK_SIZE];
     for _ in 0..50 {
-        e.render(&mut blk, &p, &AlgoLive::from_params(&p), SR);
+        e.render(
+            &mut blk,
+            &p,
+            &AlgoLive::from_params(&p),
+            SR,
+            &mut TapRows::new([false; 2]),
+        );
     }
     e.note_off();
     let mut n = 0;
     while e.is_active() {
-        e.render(&mut blk, &p, &AlgoLive::from_params(&p), SR);
+        e.render(
+            &mut blk,
+            &p,
+            &AlgoLive::from_params(&p),
+            SR,
+            &mut TapRows::new([false; 2]),
+        );
         n += 1;
-        assert!(n < 400, "never ends");
+        // RR 5: T60 about 1.1 s, 825 blocks.
+        assert!(n < 1500, "never ends");
     }
     assert!(peak(&blk) < 1e-3);
 }
@@ -317,7 +343,13 @@ fn retrigger_at_another_velocity_does_not_click() {
                 SR,
             );
         }
-        e.render(&mut blk, &p, &AlgoLive::from_params(&p), SR);
+        e.render(
+            &mut blk,
+            &p,
+            &AlgoLive::from_params(&p),
+            SR,
+            &mut TapRows::new([false; 2]),
+        );
         out.extend_from_slice(&blk);
     }
     let (edge, inner) = jumps(&out);
@@ -336,7 +368,7 @@ fn a_one_block_level_dip_to_zero_does_not_end_a_held_note() {
         if b == 10 {
             live.level[0] = 0.0;
         }
-        e.render(&mut blk, &p, &live, SR);
+        e.render(&mut blk, &p, &live, SR, &mut TapRows::new([false; 2]));
         out.extend_from_slice(&blk);
         assert!(e.is_active(), "block {b}");
     }
@@ -350,17 +382,35 @@ fn after(first: &AlgoParams, first_note: u8) -> Vec<u32> {
     let mut blk = [0.0; BLOCK_SIZE];
     e.note_on(MidiNote::new(first_note).unwrap(), Velocity::MAX, first, SR);
     for _ in 0..20 {
-        e.render(&mut blk, first, &AlgoLive::from_params(first), SR);
+        e.render(
+            &mut blk,
+            first,
+            &AlgoLive::from_params(first),
+            SR,
+            &mut TapRows::new([false; 2]),
+        );
     }
     e.note_off();
     while e.is_active() {
-        e.render(&mut blk, first, &AlgoLive::from_params(first), SR);
+        e.render(
+            &mut blk,
+            first,
+            &AlgoLive::from_params(first),
+            SR,
+            &mut TapRows::new([false; 2]),
+        );
     }
     let p = stack(AlgoId::A14, AlgoId::A22, 40);
     e.note_on(MidiNote::new(60).unwrap(), Velocity::DEFAULT, &p, SR);
     let mut out = Vec::new();
     for _ in 0..20 {
-        e.render(&mut blk, &p, &AlgoLive::from_params(&p), SR);
+        e.render(
+            &mut blk,
+            &p,
+            &AlgoLive::from_params(&p),
+            SR,
+            &mut TapRows::new([false; 2]),
+        );
         out.extend(blk.iter().map(|s| s.to_bits()));
     }
     out
@@ -388,7 +438,13 @@ fn a_note_on_a_silent_voice_does_not_depend_on_the_note_before() {
         let mut out = Vec::new();
         let mut blk = [0.0; BLOCK_SIZE];
         for _ in 0..20 {
-            e.render(&mut blk, &p, &AlgoLive::from_params(&p), SR);
+            e.render(
+                &mut blk,
+                &p,
+                &AlgoLive::from_params(&p),
+                SR,
+                &mut TapRows::new([false; 2]),
+            );
             out.extend(blk.iter().map(|s| s.to_bits()));
         }
         out
@@ -409,12 +465,24 @@ fn a_retrigger_adopts_an_idle_operators_new_wave_without_a_duck() {
         let mut blk = [0.0; BLOCK_SIZE];
         e.note_on(MidiNote::A4, Velocity::DEFAULT, first, SR);
         for _ in 0..40 {
-            e.render(&mut blk, first, &AlgoLive::from_params(first), SR);
+            e.render(
+                &mut blk,
+                first,
+                &AlgoLive::from_params(first),
+                SR,
+                &mut TapRows::new([false; 2]),
+            );
         }
         e.note_on(MidiNote::A4, Velocity::DEFAULT, &q, SR);
         let mut out = Vec::new();
         for _ in 0..10 {
-            e.render(&mut blk, &q, &AlgoLive::from_params(&q), SR);
+            e.render(
+                &mut blk,
+                &q,
+                &AlgoLive::from_params(&q),
+                SR,
+                &mut TapRows::new([false; 2]),
+            );
             out.extend(blk.iter().map(|s| s.to_bits()));
         }
         out
@@ -435,15 +503,69 @@ fn a_one_block_morph_away_from_the_only_sounding_carrier_does_not_end_the_note()
     let mut out = Vec::new();
     let mut blk = [0.0; BLOCK_SIZE];
     for b in 0..30 {
+        // A MORPH route's one-block swing.
         let mut live = AlgoLive::from_params(&p);
+        live.morph_routed = true;
         if b == 10 {
             live.morph = 127.0;
         }
-        e.render(&mut blk, &p, &live, SR);
+        e.render(&mut blk, &p, &live, SR, &mut TapRows::new([false; 2]));
         out.extend_from_slice(&blk);
         assert!(e.is_active(), "block {b}");
     }
     assert!(peak(&out[20 * BLOCK_SIZE..]) > 0.5);
+}
+
+/// ADR 0061: a held key holds its voice, so a hand MORPH sweep to an end
+/// where every live carrier is silent (operator 5 carries in T1, not in
+/// A17) and back never ends the note; released, the voice frees.
+#[test]
+fn a_held_note_survives_a_morph_sweep_to_silence_and_frees_after_release() {
+    let mut p = AlgoParams {
+        alg_b: AlgoId::A17.get(),
+        ..AlgoParams::default()
+    };
+    for (i, op) in p.ops.iter_mut().enumerate() {
+        op.level = if i == 4 { 99 } else { 0 };
+    }
+    let mut e = AlgoEngine::new();
+    e.note_on(MidiNote::A4, Velocity::DEFAULT, &p, SR);
+    let mut blk = [0.0; BLOCK_SIZE];
+    let mut silent_end = 0.0f32;
+    for b in 0..64u32 {
+        // 0 → 127 over 16 blocks, held there 16, back over 16, then A.
+        p.morph = match b {
+            0..16 => (b * 127 / 16) as u8,
+            16..32 => 127,
+            32..48 => (127 - (b - 32) * 127 / 16) as u8,
+            _ => 0,
+        };
+        e.render(
+            &mut blk,
+            &p,
+            &AlgoLive::from_params(&p),
+            SR,
+            &mut TapRows::new([false; 2]),
+        );
+        assert!(e.is_active(), "block {b}");
+        if (24..32).contains(&b) {
+            silent_end = silent_end.max(peak(&blk));
+        }
+    }
+    assert!(silent_end < 1e-6, "MORPH 127 is silent: {silent_end}");
+    assert!(peak(&blk) > 0.1, "back at A, the note sounds");
+    e.note_off();
+    let freed = (0..3000).find(|_| {
+        e.render(
+            &mut blk,
+            &p,
+            &AlgoLive::from_params(&p),
+            SR,
+            &mut TapRows::new([false; 2]),
+        );
+        !e.is_active()
+    });
+    assert!(freed.is_some(), "released, the voice frees");
 }
 
 #[test]
@@ -547,7 +669,13 @@ fn the_output_scale_is_continuous_as_a_carrier_fades_out() {
             p.ops[1].level = l;
             let mut out = Vec::new();
             for _ in 0..40 {
-                e.render(&mut blk, &p, &AlgoLive::from_params(&p), SR);
+                e.render(
+                    &mut blk,
+                    &p,
+                    &AlgoLive::from_params(&p),
+                    SR,
+                    &mut TapRows::new([false; 2]),
+                );
                 out.extend_from_slice(&blk);
             }
             20.0 * a4_rms(&out).log10()

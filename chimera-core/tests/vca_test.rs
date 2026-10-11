@@ -6,7 +6,6 @@ use common::Rig;
 use chimera_core::addr::ParamAddr;
 use chimera_core::dsp::envelope::{EnvMods, Envelope};
 use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, LfoForm};
-use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{CUTOFF, MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
@@ -15,14 +14,9 @@ use chimera_hal::BLOCK_SIZE;
 const SR: u32 = 48_000;
 
 pub fn mods(routes: &[(ModSource, ParamAddr, i8)]) -> ModState {
-    let mut reg = ModDestRegistry::new();
-    for &(_, a, _) in routes {
-        let _ = reg.add(a, *b"TEST\0\0\0\0");
-    }
-    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    let mut ms = ModState::with_sources(MAX_MOD_SOURCES);
     for &(s, a, amt) in routes {
-        let d = ms.find(a).unwrap();
-        ms.set_route(s.index(), d, amt);
+        assert!(ms.set_route_addr(s.index(), a, amt));
     }
     ms
 }
@@ -73,7 +67,14 @@ fn env2_on_the_vca_follows_its_contour() {
         let mut env = Envelope::new();
         env.note_on();
         let v = 100.0 / 127.0;
-        for blk in 0..80 {
+        // Unrouted, TAPE's and VA's key ends it (neither ends itself):
+        // compare while held.
+        let blocks = if matches!(e, EngineType::Tape | EngineType::Va) {
+            50
+        } else {
+            80
+        };
+        for blk in 0..blocks {
             let mut g = [0.0f32; BLOCK_SIZE];
             env.run_block(
                 &p.envelopes[1],
@@ -84,7 +85,7 @@ fn env2_on_the_vca_follows_its_contour() {
             );
             for (n, gn) in g.iter().enumerate() {
                 let i = blk * BLOCK_SIZE + n;
-                let want = plain[i] * gn.clamp(0.0, 1.0) * v;
+                let want = plain[i] * chimera_core::dsp::clampf(*gn, 0.0, 1.0) * v;
                 assert!(
                     (routed[i] - want).abs() <= 0.01 * plain[i].abs() + 1e-7,
                     "{e:?} sample {i}"
@@ -440,8 +441,8 @@ fn a_release_the_vca_holds_is_not_idle() {
         kind,
     };
     let mut shared = AudioShared::default();
-    shared.parts[0].params = long();
-    shared.parts[0].mod_state = mods(&[(ModSource::Env2, VCA, 127)]);
+    *shared.parts[0].params = long();
+    *shared.parts[0].mod_state = mods(&[(ModSource::Env2, VCA, 127)]);
     // Note 60 released at block 20; another note at `other`. Per block:
     // (part 0 sounds, voice 0 still holds note 60).
     let run = |other: Option<usize>| {

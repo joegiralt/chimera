@@ -7,16 +7,38 @@
 #![allow(dead_code)]
 
 use chimera_core::clock_plan::SiliconRev;
+use chimera_core::dsp::filter::{FilterKind, FilterMode};
+use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
+use chimera_core::dsp::tape_engine::wave::frame_len;
+use chimera_core::dsp::tape_engine::{Heads, SliceCode};
+use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
+use chimera_core::instrument::{AudioShared, Instrument, PartHeads};
+use chimera_core::name::ProjectName;
+use chimera_core::orbit::engine::OrbitEvent;
+use chimera_core::orbit::runner::{OrbitRunner, OrbitView, orbit_buffer};
 use chimera_core::params::EngineType;
 use chimera_core::perf::load::AudioStats;
-use chimera_core::preset::{POOL_SIZE, Sound};
+use chimera_core::preset::{MAX_SOUNDS, Sound};
+use chimera_core::project::SlotId;
+use chimera_core::project::{
+    LoadLink, PartFrom, PartId, PartSource, Project, ProjectFile, ProjectNote, ProjectSource,
+    ReplaceGuard, SaveTo, new_project_id, save_project,
+};
 use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
+use chimera_core::storage::twelve::pack12;
+use chimera_core::storage::{Card, SystemSettings, SystemSync};
+use chimera_core::storage::{SourceRef, TapeSource};
+use chimera_core::triple::{Reader, TripleBuffer, Writer};
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::busy::{draw_busy, draw_toast};
+use chimera_core::ui::hold::HOLD_MS;
 use chimera_core::ui::perf::PerfStats;
-use chimera_hal::{ButtonId, ButtonState, ChimeraDisplay, Controls, EncoderId};
+use chimera_core::ui::settings::CardCx;
+use chimera_hal::testkit::MemStore;
+use chimera_hal::{ButtonId, ButtonState, ChimeraDisplay, Controls, Edges, EncoderId, Ms};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
 use embedded_graphics::prelude::*;
@@ -114,11 +136,32 @@ impl ChimeraDisplay for Fb {
 /// One frame of input.
 #[derive(Default)]
 pub struct Input {
+    at_ms: u32,
     buttons: Vec<(ButtonId, ButtonState)>,
+    /// Latched edges that a `ButtonState` can't say (a tap inside one frame).
+    edges: Vec<(ButtonId, Edges)>,
     encoders: Vec<(EncoderId, i8)>,
 }
 
 impl Input {
+    /// The frame's clock; press and release edges are stamped with it.
+    pub fn at(mut self, ms: u32) -> Self {
+        self.at_ms = ms;
+        self
+    }
+    pub fn release(b: ButtonId) -> Self {
+        Self {
+            buttons: vec![(b, ButtonState::Released)],
+            ..Self::default()
+        }
+    }
+    /// A frame with `b` still down.
+    pub fn held(b: ButtonId) -> Self {
+        Self {
+            buttons: vec![(b, ButtonState::Held)],
+            ..Self::default()
+        }
+    }
     pub fn press(b: ButtonId) -> Self {
         Self {
             buttons: vec![(b, ButtonState::Pressed)],
@@ -132,6 +175,41 @@ impl Input {
             ..Self::default()
         }
     }
+    /// `b` pressed and released inside this one frame (a stalled frame).
+    pub fn tap_in_frame(b: ButtonId) -> Self {
+        Self {
+            edges: vec![(
+                b,
+                Edges {
+                    down: false,
+                    pressed_at: Some(Ms(0)),
+                    released_at: Some(Ms(50)),
+                },
+            )],
+            ..Self::default()
+        }
+    }
+    /// `b` released inside this frame, at `ms`: the release a stalled
+    /// frame latched.
+    pub fn released_at(b: ButtonId, ms: u32) -> Self {
+        Self {
+            at_ms: ms,
+            edges: vec![(
+                b,
+                Edges {
+                    down: false,
+                    pressed_at: None,
+                    released_at: Some(Ms(ms)),
+                },
+            )],
+            ..Self::default()
+        }
+    }
+    /// This frame with `b` held down too.
+    pub fn and_held(mut self, b: ButtonId) -> Self {
+        self.buttons.push((b, ButtonState::Held));
+        self
+    }
     pub fn turn(e: EncoderId, delta: i8) -> Self {
         Self {
             encoders: vec![(e, delta)],
@@ -141,14 +219,42 @@ impl Input {
 }
 
 impl Controls for Input {
+    fn now_ms(&self) -> Ms {
+        Ms(self.at_ms)
+    }
     fn encoder_delta(&self, id: EncoderId) -> i8 {
         self.encoders.iter().find(|e| e.0 == id).map_or(0, |e| e.1)
     }
     fn button_state(&self, id: ButtonId) -> ButtonState {
+        if let Some(e) = self.edges.iter().find(|e| e.0 == id) {
+            return ButtonState::from_edges(e.1);
+        }
         self.buttons
             .iter()
             .find(|b| b.0 == id)
             .map_or(ButtonState::Up, |b| b.1)
+    }
+    fn edges(&self, id: ButtonId) -> Edges {
+        if let Some(e) = self.edges.iter().find(|e| e.0 == id) {
+            return e.1;
+        }
+        let now = Some(self.now_ms());
+        match self.button_state(id) {
+            ButtonState::Up => Edges::default(),
+            ButtonState::Pressed => Edges {
+                down: true,
+                pressed_at: now,
+                released_at: None,
+            },
+            ButtonState::Held => Edges {
+                down: true,
+                ..Edges::default()
+            },
+            ButtonState::Released => Edges {
+                released_at: now,
+                ..Edges::default()
+            },
+        }
     }
 }
 
@@ -156,11 +262,333 @@ pub fn feed(ui: &mut UiState, input: Input) {
     ui.handle_input(&input);
 }
 
+/// Press, then release 100 ms later.
+pub fn tap(ui: &mut UiState, b: ButtonId) {
+    feed(ui, Input::press(b).at(0));
+    feed(ui, Input::release(b).at(100));
+}
+
+/// Press, a frame at `HOLD_MS`, then release.
+pub fn hold(ui: &mut UiState, b: ButtonId) {
+    feed(ui, Input::press(b).at(0));
+    feed(ui, Input::held(b).at(HOLD_MS));
+    feed(ui, Input::release(b).at(HOLD_MS + 33));
+}
+
 /// Let every lerp settle (the goldens lock the resting screen).
 pub fn settle(ui: &mut UiState) {
     for _ in 0..120 {
-        ui.update();
+        ui.update(UiTick::for_test());
     }
+}
+
+/// A SETTINGS list or leaf: its row labels and crumbs from the top.
+pub struct Node<T> {
+    pub labels: Vec<&'static str>,
+    pub crumbs: Vec<&'static str>,
+    pub of: T,
+}
+
+/// A leaf, and its page.
+pub type Leaf = Node<&'static chimera_core::ui::settings::leaves::OnePage>;
+
+impl<T> Node<T> {
+    /// `settings_<crumbs>`, lowercased; the top list is `settings_top`.
+    pub fn name(&self) -> String {
+        if self.crumbs.is_empty() {
+            return "settings_top".into();
+        }
+        let mut n = String::from("settings");
+        for c in &self.crumbs {
+            n.push('_');
+            n.push_str(&c.to_lowercase().replace(' ', "_"));
+        }
+        n
+    }
+}
+
+/// Every list and leaf of the SETTINGS tree, depth first from `ROOT`.
+pub fn tree() -> Vec<Node<chimera_core::ui::settings::Kind>> {
+    use chimera_core::ui::settings::{Kind, ROOT, rows};
+    fn walk(
+        path: &mut Vec<u8>,
+        labels: &mut Vec<&'static str>,
+        crumbs: &mut Vec<&'static str>,
+        out: &mut Vec<Node<Kind>>,
+    ) {
+        for (i, r) in rows(path).iter().enumerate() {
+            path.push(i as u8);
+            labels.push(r.label);
+            crumbs.push(r.crumb);
+            if matches!(r.kind, Kind::Leaf(_) | Kind::List(_)) {
+                out.push(Node {
+                    labels: labels.clone(),
+                    crumbs: crumbs.clone(),
+                    of: r.kind,
+                });
+            }
+            walk(path, labels, crumbs, out);
+            path.pop();
+            labels.pop();
+            crumbs.pop();
+        }
+    }
+    let mut out = vec![Node {
+        labels: vec![],
+        crumbs: vec![],
+        of: ROOT.kind,
+    }];
+    walk(&mut Vec::new(), &mut Vec::new(), &mut Vec::new(), &mut out);
+    out
+}
+
+/// Every leaf of the SETTINGS tree, depth first.
+pub fn leaves() -> Vec<Leaf> {
+    use chimera_core::ui::settings::Kind;
+    tree()
+        .into_iter()
+        .filter_map(|n| match n.of {
+            Kind::Leaf(chain) => Some(Node {
+                labels: n.labels,
+                crumbs: n.crumbs,
+                of: chain,
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The def id of the page shown.
+pub fn page_def_id(ui: &UiState) -> u16 {
+    use chimera_core::ui::page::{PageId, PageKey};
+    match ui.page() {
+        PageKey::Part { def, .. } => def,
+        PageKey::Legacy(PageId::System(id) | PageId::Demo(id)) => id,
+    }
+}
+
+/// Out of SETTINGS, MENU, then down the tree by row label: PLUS to each
+/// row, EDIT.
+pub fn to_leaf(ui: &mut UiState, labels: &[&str]) {
+    use chimera_core::ui::settings::rows;
+    for _ in 0..8 {
+        if !ui.in_settings() {
+            break;
+        }
+        tap(ui, ButtonId::Menu);
+    }
+    tap(ui, ButtonId::Menu);
+    let mut path = Vec::new();
+    for l in labels {
+        let i = rows(&path)
+            .iter()
+            .position(|r| r.label == *l)
+            .unwrap_or_else(|| panic!("no row {l} under {path:?}"));
+        plus(ui, i);
+        feed(ui, Input::press(ButtonId::Edit));
+        path.push(i as u8);
+    }
+    assert_eq!(
+        ui.location(),
+        chimera_core::ui::nav::Location::settings_at(&path, 0),
+        "{labels:?}"
+    );
+}
+
+/// A UI with a card in the slot: `MemStore` behind the shell's
+/// `card_work`, run after every frame of input.
+pub struct Rig<'u> {
+    pub ui: &'u mut UiState,
+    pub s: MemStore,
+    card: Card,
+    sync: SystemSync,
+    set: SystemSettings,
+    link: LoadLink,
+}
+
+impl<'u> Rig<'u> {
+    pub fn new(ui: &'u mut UiState, mut s: MemStore) -> Self {
+        let mut card = Card::new();
+        let (sync, set, _) = SystemSync::boot(&mut card, &mut s);
+        Rig {
+            ui,
+            s,
+            card,
+            sync,
+            set,
+            link: LoadLink::new(),
+        }
+    }
+
+    fn work(&mut self) {
+        let link = &self.link;
+        let cx = CardCx {
+            card: &mut self.card,
+            store: &mut self.s,
+            sync: &mut self.sync,
+            settings: &mut self.set,
+        };
+        let _ = self.ui.card_work(cx, link, |swap, _| {
+            let _ = swap.settle(link, || false);
+        });
+    }
+
+    /// The load epoch: what a snapshot published now carries.
+    pub fn epoch(&self) -> u32 {
+        self.link.epoch()
+    }
+
+    pub fn tap(&mut self, b: ButtonId) {
+        tap(self.ui, b);
+        self.work();
+    }
+
+    pub fn hold(&mut self, b: ButtonId) {
+        hold(self.ui, b);
+        self.work();
+    }
+
+    pub fn feed(&mut self, i: Input) {
+        feed(self.ui, i);
+        self.work();
+    }
+
+    /// Out of SETTINGS, MENU, then down the tree by row label.
+    pub fn to(&mut self, labels: &[&str]) {
+        use chimera_core::ui::settings::rows;
+        while self.ui.in_settings() {
+            self.tap(ButtonId::Menu);
+        }
+        self.tap(ButtonId::Menu);
+        let mut path = Vec::new();
+        for l in labels {
+            let i = rows(&path).iter().position(|r| r.label == *l).unwrap();
+            for _ in 0..i {
+                self.feed(Input::press(ButtonId::Plus));
+            }
+            self.feed(Input::press(ButtonId::Edit));
+            path.push(i as u8);
+        }
+    }
+
+    /// The bar to row `i`.
+    pub fn bar_to(&mut self, i: usize) {
+        let row = |r: &Rig| r.ui.location().settings().unwrap().row() as usize;
+        while row(self) != i {
+            let k = if row(self) < i {
+                ButtonId::Plus
+            } else {
+                ButtonId::Minus
+            };
+            self.feed(Input::press(k));
+        }
+    }
+
+    /// `f` loaded through LOAD, then out of SETTINGS.
+    pub fn load(&mut self, f: ProjectFile) {
+        self.to(&["PROJECT", "LOAD PROJECT"]);
+        let l = self.ui.listing();
+        let i = (0..l.len())
+            .find(|&i| l.entry(i).unwrap().file() == f)
+            .expect("listed");
+        self.bar_to(i);
+        self.tap(ButtonId::Edit);
+        assert_eq!(self.ui.project().meta().file(), Some(f));
+        while self.ui.in_settings() {
+            self.tap(ButtonId::Menu);
+        }
+        self.ui.update(UiTick::for_test());
+    }
+}
+
+/// A project named `n` saved to the card at its next id.
+pub fn put(s: &mut MemStore, n: &str) -> ProjectFile {
+    let mut card = Card::new();
+    let (mut p, _) = Project::boxed();
+    p.set_name(ProjectName::new(n).unwrap());
+    let fresh = new_project_id(&mut card, s).out.unwrap();
+    let f = fresh.file();
+    assert!(matches!(
+        save_project(&mut card, s, &mut p, SaveTo::Fresh(fresh)).out,
+        ProjectNote::Saved(_)
+    ));
+    f
+}
+
+/// A card with three projects.
+pub fn three() -> (MemStore, [ProjectFile; 3]) {
+    let mut s = MemStore::new(1);
+    let f = ["ALPHA", "BETA", "GAMMA"].map(|n| put(&mut s, n));
+    (s, f)
+}
+
+/// An edit that leaves the project Modified, its name kept.
+pub fn modify(ui: &mut UiState) {
+    let p = chimera_core::project::PartId::ALL[0];
+    ui.project_mut().edit_part(p).sound.params.filter.cutoff *= 0.5;
+    ui.update(UiTick::for_test());
+    assert_eq!(
+        ui.project_status(),
+        chimera_core::project::ProjectStatus::Modified
+    );
+}
+
+/// ALPHA loaded and edited, then LOAD on BETA: LOAD BETA?
+pub fn prompt_load(ui: &mut UiState) {
+    let (s, [a, b, _]) = three();
+    let mut r = Rig::new(ui, s);
+    r.load(a);
+    modify(r.ui);
+    r.to(&["PROJECT", "LOAD PROJECT"]);
+    let l = r.ui.listing();
+    let i = (0..l.len()).find(|&i| l.entry(i).unwrap().file() == b);
+    r.bar_to(i.unwrap());
+    r.tap(ButtonId::Edit);
+    assert!(r.ui.prompt_open());
+}
+
+/// SETTINGS › PROJECT › SAVE PROJECT AS on a fresh project: NAMING.
+pub fn naming_save_as(ui: &mut UiState) {
+    let mut r = Rig::new(ui, MemStore::new(1));
+    r.to(&["PROJECT"]);
+    r.bar_to(1);
+    r.tap(ButtonId::Edit);
+    assert!(r.ui.naming().is_some());
+}
+
+/// The shared FX page `node` of the mixer chain, through real presses:
+/// MIX+B6 (Part 6's SENDS), then PLUS past it into Part 6's FX.
+pub fn to_fx(ui: &mut UiState, node: usize) {
+    use chimera_core::ui::nav::{Location, MixPage};
+    assert!(node > reg::MIXER_HOME, "{node} is not an FX node");
+    feed(ui, Input::chord(ButtonId::Mix, ButtonId::B6));
+    // The mixer reopens on the FX page last left: MINUS back to SENDS.
+    let sends = Location::mixer(chimera_core::project::PartId::ALL[5], MixPage::Sends);
+    for _ in 0..reg::MIXER_CHANNEL_CHAIN.len() {
+        if ui.location() == sends {
+            break;
+        }
+        feed(ui, Input::press(ButtonId::Minus));
+    }
+    assert_eq!(ui.location(), sends);
+    plus(ui, node - reg::MIXER_HOME);
+    let def = reg::MIXER_CHANNEL_CHAIN.blocks[node].def;
+    assert_eq!(
+        ui.page(),
+        chimera_core::ui::page::PageKey::Part {
+            def: def.id,
+            op: chimera_core::addr::Op::A
+        },
+        "{}",
+        def.name
+    );
+}
+
+/// SETTINGS › SYSTEM › DIAGNOSTICS › DEMO's row `node` (debug builds: a
+/// release build has no DEMO row).
+pub fn to_demo(ui: &mut UiState, node: usize) {
+    let row = reg::DEMO_BLOCKS[node].def.short;
+    to_leaf(ui, &["SYSTEM", "DIAGNOSTICS", "DEMO", row]);
 }
 
 /// Live output the goldens draw: two periods of a lopsided triangle, peak 0.5.
@@ -176,13 +604,278 @@ pub fn scope_fixture() -> [f32; SCOPE_LEN] {
     })
 }
 
+/// `f` of a bar as a clock phase.
+pub fn phase(f: f64) -> chimera_core::orbit::clock::Phase {
+    chimera_core::orbit::clock::Phase::new((f * 4_294_967_296.0) as u32)
+}
+
+/// The runner's view of the init scene at `f` of the first bar, playing:
+/// what the ORBIT goldens draw from.
+pub fn orbit_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
+    use chimera_core::orbit::clock::step_at;
+    let mut v = chimera_core::orbit::runner::OrbitView {
+        running: true,
+        ..Default::default()
+    };
+    v.pos.phase = phase(f);
+    for r in &mut v.rings {
+        r.step = step_at(v.pos.phase, r.hits.steps());
+    }
+    v
+}
+
+/// PLAY armed on CHRD's segment and `notes` captured into it: the
+/// runner's `count`th capture, a third into the bar.
+pub fn played(ui: &mut UiState, count: u8, notes: &[u8]) {
+    use chimera_core::orbit::runner::{Capture, Captured};
+    feed(ui, Input::turn(EncoderId::C, 1));
+    let Capture::Segment(seg) = ui.orbit().capture else {
+        panic!("PLAY arms the segment");
+    };
+    // Every command applied: the runner armed, nothing taken yet.
+    let mut v = orbit_view(0.3);
+    v.acked = ui.orbit().log().head();
+    v.armed = Capture::Segment(seg);
+    v.captured.count = ui.orbit().took;
+    ui.set_orbit_view(&v);
+    assert_eq!(ui.orbit().capture, Capture::Segment(seg), "armed");
+    // Then the capture, and the runner disarmed by its take.
+    v.armed = Capture::Off;
+    let mut c = Captured {
+        count,
+        target: Capture::Segment(seg),
+        scene: ui.project().orbit().current(),
+        notes: [chimera_theory::Note::MIN; 8],
+        len: notes.len() as u8,
+    };
+    for (n, &k) in c.notes.iter_mut().zip(notes) {
+        *n = chimera_theory::Note::new(k).unwrap();
+    }
+    v.captured = c;
+    ui.set_orbit_view(&v);
+    assert_eq!(ui.orbit().took, count, "taken");
+    assert_eq!(ui.orbit().capture, Capture::Off, "disarmed");
+}
+
+/// `orbit_view(f)` with ring 1 just fired: what ORB's golden draws.
+pub fn orb_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
+    let mut v = orbit_view(f);
+    v.rings[0].fired = 1;
+    v
+}
+
+/// `orb_view(f)` with a MIDI clock leading at 133 BPM.
+pub fn midi_view(f: f64) -> chimera_core::orbit::runner::OrbitView {
+    use chimera_core::orbit::clock::{Bpm, ClockSource};
+    chimera_core::orbit::runner::OrbitView {
+        source: ClockSource::Midi,
+        bpm: Bpm::new(133).unwrap(),
+        ..orb_view(f)
+    }
+}
+
+/// Part `p` on INIT Algo, where NEW has a factory Sound: for the tests
+/// whose subject is an INIT Part, not NEW's.
+#[allow(dead_code)]
+pub fn init_part(ui: &mut UiState, p: PartId) {
+    let src = PartSource {
+        part: p,
+        from: PartFrom::Init(EngineType::Algo),
+    };
+    let c = ReplaceGuard::check(ui.project(), ui.template(), src).expect("a Clean Part");
+    ui.project_mut().replace_part(c).expect("INIT loads");
+}
+
+/// Hold SEQ into ORBIT, then B`n`'s tap: RING `n`'s RHYTHM.
+pub fn to_ring(ui: &mut UiState, n: usize) {
+    hold(ui, ButtonId::Seq);
+    tap(ui, PART_KEYS[n - 1]);
+}
+
+const PART_KEYS: [ButtonId; 5] = [
+    ButtonId::B1,
+    ButtonId::B2,
+    ButtonId::B3,
+    ButtonId::B4,
+    ButtonId::B5,
+];
+
 /// Load `engine`'s init Sound into Part 1 through the sound browser (EDIT + B1,
-/// scroll to the init row, EDIT).
+/// scroll to the init row, EDIT), then MINUS from the engine's home to its
+/// first node.
 pub fn load_init(ui: &mut UiState, engine: EngineType) {
-    let row = POOL_SIZE + EngineType::ALL.iter().position(|&c| c == engine).unwrap();
+    let row = MAX_SOUNDS + EngineType::ALL.iter().position(|&c| c == engine).unwrap();
     feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
-    feed(ui, Input::turn(EncoderId::A, row as i8));
+    feed(ui, Input::turn(EncoderId::A, 100));
+    feed(ui, Input::turn(EncoderId::A, (row - 100) as i8));
     feed(ui, Input::press(ButtonId::Edit));
+    let home = chimera_core::ui::nav::chain_def_for(engine).home();
+    assert_eq!(
+        ui.location(),
+        chimera_core::ui::nav::Location::pages(chimera_core::project::PartId::ALL[0], home),
+        "a load lands on the engine's home"
+    );
+    for _ in 0..home.node() {
+        feed(ui, Input::press(ButtonId::Minus));
+    }
+}
+
+/// TAPE's init on Part 1, at DECK, MODEL turned `by` from LOOP.
+pub fn tape_deck(ui: &mut UiState, by: i8) {
+    load_init(ui, EngineType::Tape);
+    plus(ui, 1); // SRC · DECK
+    if by != 0 {
+        feed(ui, Input::turn(EncoderId::A, by));
+    }
+}
+
+/// Samples as the arena holds them: a descriptor, then 12 bits each.
+fn held(shape: Shape, count: u8, rate: u16, x: &[f32]) -> Vec<u8> {
+    let d = Descriptor {
+        shape,
+        count,
+        rate,
+        head_frames: 0,
+    };
+    let s: Vec<i16> = x
+        .iter()
+        .map(|&v| (chimera_core::dsp::clampf(v, -1.0, 1.0) * 2047.0).round() as i16)
+        .collect();
+    let mut h = d.to_bytes().to_vec();
+    h.resize(DESC_LEN + 3 * s.len().div_ceil(2), 0);
+    pack12(&s, &mut h[DESC_LEN..]);
+    h
+}
+
+/// The strip's source, held in the pool and on Part 1's Sound: two
+/// plucks, 1.5 s at 24 kHz; or (`wave`) a transwave of 8 frames, each
+/// louder than the last.
+pub fn strip_source(ui: &mut UiState, wave: bool) {
+    let (shape, count, rate, x): (_, _, u16, Vec<f32>) = if wave {
+        let len = frame_len(512) as usize;
+        let x = (0..8 * len)
+            .map(|i| {
+                (0.3 + 0.1 * (i / len) as f32) * (i as f32 * core::f32::consts::FRAC_PI_4).sin()
+            })
+            .collect();
+        (Shape::Transwave, 8, 48_000, x)
+    } else {
+        let x = (0..36_000)
+            .map(|i| {
+                let t = i as f32 / 24_000.0;
+                let env = (-5.0 * t).exp()
+                    + if t < 0.75 {
+                        0.0
+                    } else {
+                        0.8 * (-5.0 * (t - 0.75)).exp()
+                    };
+                0.95 * env * (core::f32::consts::TAU * 180.0 * t).sin()
+            })
+            .collect();
+        (Shape::Plain, 1, 24_000, x)
+    };
+    let r = SourceRef {
+        crc: 0x5791_0001 + u32::from(wave),
+        frames: x.len() as u32,
+        rate,
+    };
+    let held = held(shape, count, rate, &x);
+    ui.project_mut().source_store(r, &held).unwrap();
+    ui.project_mut().edit_part(PartId::ALL[0]).sound.source = Some(TapeSource { r, tune: None });
+}
+
+/// What SOURCE's card goldens do once SOURCE is on the CHOIR's row.
+#[derive(Clone, Copy, PartialEq)]
+pub enum CardRow {
+    /// Shown: its name, the hint, the meter's preview.
+    On,
+    /// The pool filled first: WON'T FIT in ALERT.
+    Full,
+    /// MIX + PLUS, every pass: the Part plays it, named.
+    Loaded,
+    /// MIX + PLUS, then the card gone: CARD READ FAILED.
+    Failed,
+}
+
+/// TAPE's init on Part 1 at SRC, the CHOIR (1.2 s at 24 kHz, 41K) on the
+/// card, and SOURCE turned onto its row; then `then`.
+pub fn src_card(ui: &mut UiState, then: CardRow) {
+    use chimera_core::name::SoundName;
+    use chimera_core::storage::{SourceHead, WholeShape, source_crc, write_source};
+    load_init(ui, EngineType::Tape);
+    let x: Vec<f32> = (0..27_648)
+        .map(|i| {
+            let t = i as f32 / 24_000.0;
+            let swell = (core::f32::consts::PI * t / 1.152).sin();
+            0.8 * swell * (core::f32::consts::TAU * 220.0 * t).sin()
+        })
+        .collect();
+    let h = held(Shape::Plain, 1, 24_000, &x);
+    let data = &h[DESC_LEN..];
+    let head = SourceHead {
+        sref: SourceRef {
+            crc: source_crc(WholeShape::Plain, 1, data),
+            frames: x.len() as u32,
+            rate: 24_000,
+        },
+        shape: Shape::Plain,
+        count: 1,
+        root: 5_700,
+        period_q16: 109 << 16,
+        name: SoundName::new("CHOIR").unwrap(),
+    };
+    let mut s = MemStore::new(1);
+    let w = Card::new().run(&mut s, |s, r| write_source(s, r, &head, data));
+    w.unwrap().result.unwrap();
+    if then == CardRow::Full {
+        strip_source(ui, false);
+        strip_source(ui, true);
+        let mut crc = 0x0F11_0000;
+        while ui.project().pool().free().bytes() > 40_000 {
+            let r = SourceRef {
+                crc,
+                frames: 20_000,
+                rate: 24_000,
+            };
+            let x = vec![0.0; 20_000];
+            ui.project_mut()
+                .source_store(r, &held(Shape::Plain, 1, 24_000, &x))
+                .unwrap();
+            crc += 1;
+        }
+    }
+    let mut r = Rig::new(ui, s);
+    r.feed(Input::turn(EncoderId::A, 100)); // the card's row, the last
+    r.work(); // its head
+    match then {
+        CardRow::On | CardRow::Full => {}
+        CardRow::Loaded => {
+            feed(r.ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
+            while r.ui.card_pending() {
+                r.work();
+            }
+        }
+        CardRow::Failed => {
+            feed(r.ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
+            r.work();
+            r.s.eject();
+            r.work();
+        }
+    }
+}
+
+/// TAPE's init on Part 1 with the strip's source, at DECK, MODEL turned
+/// `by` from LOOP, the audio's heads `heads`.
+pub fn tape_strip(ui: &mut UiState, by: i8, heads: Heads) {
+    load_init(ui, EngineType::Tape);
+    strip_source(ui, by == 3);
+    plus(ui, 1); // SRC · DECK
+    if by != 0 {
+        feed(ui, Input::turn(EncoderId::A, by));
+    }
+    let from: &'static PartHeads = Box::leak(Box::new(PartHeads::new()));
+    from.publish(0, heads);
+    ui.hear_heads(from);
 }
 
 /// The OSC node's index on the Algo chain.
@@ -202,31 +895,49 @@ pub fn to_osc(ui: &mut UiState) {
 
 /// From Part 1's home, to OSC, then EDIT down to the LEVEL sub-page.
 pub fn to_level_page(ui: &mut UiState) {
-    use chimera_core::ui::block_registry::{ALGO_CHAIN, ALGO_LEVEL};
     to_osc(ui);
+    to_osc_sub(ui, &chimera_core::ui::block_registry::ALGO_LEVEL);
+}
+
+/// From OSC or an earlier OSC sub-page, EDIT on down to `def`.
+pub fn to_osc_sub(ui: &mut UiState, def: &chimera_core::ui::block_def::BlockDef) {
+    use chimera_core::ui::block_registry::ALGO_CHAIN;
     let subs = ALGO_CHAIN.blocks[osc_node()].sub_pages;
     let n = subs
         .iter()
-        .position(|d| d.id == ALGO_LEVEL.id)
-        .expect("LEVEL is an OSC sub-page")
+        .position(|d| d.id == def.id)
+        .expect("an OSC sub-page")
         + 1;
-    for _ in 0..n {
+    while ui.page_def().id != def.id {
+        let before = ui.page_def().id;
         feed(ui, Input::press(ButtonId::Edit));
+        assert_ne!(
+            before,
+            ui.page_def().id,
+            "EDIT moves on toward sub-page {n}"
+        );
     }
 }
 
-/// From Part 1's home (the engine's node), EDIT down its sub-list to PIT.
+/// From Part 1's first node, on to the engine's node and EDIT down its
+/// sub-list to PIT.
 pub fn to_pitch(ui: &mut UiState, engine: EngineType) {
-    use chimera_core::ui::block_registry::{ALGO_CHAIN, MODAL_PLUCK_CHAIN, PITCH};
+    use chimera_core::ui::block_registry::{
+        ALGO_CHAIN, MODAL_PLUCK_CHAIN, PITCH, TAPE_CHAIN, VA_CHAIN,
+    };
     let chain = match engine {
         EngineType::Algo => &ALGO_CHAIN,
         EngineType::Modal => &MODAL_PLUCK_CHAIN,
+        EngineType::Tape => &TAPE_CHAIN,
+        EngineType::Va => &VA_CHAIN,
     };
-    let n = chain.blocks[0]
+    let node = chain.engine_node();
+    plus(ui, node);
+    let n = chain.blocks[node]
         .sub_pages
         .iter()
         .position(|d| d.id == PITCH.id)
-        .expect("PIT is a sub-page of the engine's node")
+        .unwrap()
         + 1;
     for _ in 0..n {
         feed(ui, Input::press(ButtonId::Edit));
@@ -241,7 +952,7 @@ pub fn to_pitch(ui: &mut UiState, engine: EngineType) {
     );
 }
 
-fn plus(ui: &mut UiState, n: usize) {
+pub fn plus(ui: &mut UiState, n: usize) {
     for _ in 0..n {
         feed(ui, Input::press(ButtonId::Plus));
     }
@@ -282,26 +993,50 @@ fn to_e3(ui: &mut UiState) {
 }
 
 /// ENV1→CUTOFF +20, ENV1→FOLD −30, LFO1→CUTOFF +42 (selected).
+/// FREQ (CUTOFF) and FOLD are permanent columns, 0 and 3: no priming.
 fn mod_matrix(ui: &mut UiState) {
-    plus(ui, 3);
-    feed(ui, Input::turn(EncoderId::B, 1)); // focus CUTOFF
-    prime(ui);
-    plus(ui, 1);
-    feed(ui, Input::turn(EncoderId::A, 1)); // focus FOLD
-    prime(ui);
-    plus(ui, 1);
+    plus(ui, 5);
     to_matrix(ui);
-    feed(ui, Input::turn(EncoderId::E, 20)); // ENV → CUTOFF
-    feed(ui, Input::turn(EncoderId::B, 1));
+    feed(ui, Input::turn(EncoderId::E, 20)); // ENV → FREQ
+    feed(ui, Input::turn(EncoderId::B, 3));
     feed(ui, Input::turn(EncoderId::E, -30)); // ENV → FOLD
     feed(ui, Input::turn(EncoderId::A, 3)); // LFO1
-    feed(ui, Input::turn(EncoderId::B, -1));
-    feed(ui, Input::turn(EncoderId::E, 42)); // LFO → CUTOFF, selected
+    feed(ui, Input::turn(EncoderId::B, -3));
+    feed(ui, Input::turn(EncoderId::E, 42)); // LFO → FREQ, selected
 }
 
 /// Prime the focused slot for modulation (MIX + PLUS).
 fn prime(ui: &mut UiState) {
     feed(ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
+}
+
+/// Part 1 on INIT Algo as filter `kind`, on FLT (or FLT › MOD with `sub`).
+fn on_flt(ui: &mut UiState, kind: chimera_core::dsp::filter::FilterKind, sub: bool) {
+    init_part(ui, PartId::ALL[0]);
+    ui.params_mut().filter.set_kind(kind);
+    plus(ui, 3);
+    if sub {
+        feed(ui, Input::press(ButtonId::Edit)); // FLT › MOD
+    }
+}
+
+/// The LED cases: the clip each shows, taken after the lerps settle
+/// (`UiState::show_clip`, the meter's read with no time passed).
+pub const LEDS: &[(&str, f32)] = &[
+    ("flt_led_0", 0.0),
+    ("flt_led_half", 0.5),
+    ("flt_led_full", 1.0),
+];
+
+/// From Part 1's home to the MOD node on `engine`'s chain (its matrix).
+fn to_matrix_on(ui: &mut UiState, engine: EngineType) {
+    let node = chimera_core::ui::nav::chain_def_for(engine)
+        .blocks
+        .iter()
+        .position(|b| b.def.id == reg::MOD_MATRIX.id)
+        .expect("MOD on every Part chain");
+    plus(ui, node);
+    to_matrix(ui);
 }
 
 /// A named screen-golden case: a case name paired with the input sequence
@@ -310,24 +1045,133 @@ pub type ScreenCase = (&'static str, fn(&mut UiState));
 
 /// Every screen the goldens lock, one or more per page type (spec § Testing).
 /// MST's place on the Mix chain: after TAPE only with `master-tape`
-/// (ADR 0055).
+/// (ADR 0055). The mixer opens on SENDS, node 1 (ADR 0057); the FX come
+/// after the Part's SENDS.
 const MST: usize = if cfg!(feature = "master-tape") { 6 } else { 5 };
+const DLY: usize = 3;
+pub const REV: usize = 4;
+#[cfg(feature = "master-tape")]
+const TAPE: usize = 5;
+
+/// The build the LIBRARY screens compare stamps with.
+const LIB_THIS: chimera_core::storage::BuildStamp =
+    chimera_core::storage::BuildStamp::new("0.1.0", "02e440e2", false);
+
+/// `name` in the library as `engine`, stamped by `stamp`.
+pub fn lib_sound(
+    st: &mut MemStore,
+    name: &str,
+    engine: EngineType,
+    stamp: &chimera_core::storage::BuildStamp,
+) {
+    let mut s = Sound::init(engine);
+    s.name = chimera_core::name::SoundName::new(name).unwrap();
+    chimera_core::project::save_library_sound(&mut Card::new(), st, &s, s.name, stamp)
+        .out
+        .unwrap();
+}
+
+/// A library file `S<id>.A` cut short at 20 bytes.
+pub fn lib_cut_short(st: &mut MemStore, id: u32) {
+    use chimera_hal::store::{ByteSink, Dir, FileName, Store};
+    let v = st.mount().unwrap();
+    let _ = st.make_dir(v, Dir::Chimera);
+    let _ = st.make_dir(v, Dir::Sounds);
+    let id = chimera_core::storage::LibId::new(id).unwrap();
+    let f = FileName::new(Dir::Sounds, &id.stem(), b"A").unwrap();
+    st.write(v, f, &mut |s: &mut dyn ByteSink| s.put(&[0x43; 20]))
+        .unwrap();
+}
+
+/// Four Sounds and a cut-short file, newest first: FM BELL (a dirty
+/// build), GLASS PLUCK (this build), the cut-short one, WARM BASS.
+pub fn lib_card() -> MemStore {
+    use chimera_core::storage::BuildStamp;
+    let mut st = MemStore::new(1);
+    let old = BuildStamp::new("0.1.0", "12345678", false);
+    lib_sound(&mut st, "WARM BASS", EngineType::Algo, &old);
+    lib_cut_short(&mut st, 2);
+    lib_sound(&mut st, "GLASS PLUCK", EngineType::Modal, &LIB_THIS);
+    let dirty = BuildStamp::new("0.1.0", "aabbccdd", true);
+    lib_sound(&mut st, "FM BELL", EngineType::Algo, &dirty);
+    st
+}
+
+/// Part 1's LIBRARY tab on `st`, listed; `f` drives it from there.
+pub fn library_tab(ui: &mut UiState, st: MemStore, f: impl FnOnce(&mut Rig)) {
+    ui.set_this_build_for_test(LIB_THIS);
+    let mut r = Rig::new(ui, st);
+    r.feed(Input::chord(ButtonId::Edit, ButtonId::B1));
+    r.feed(Input::turn(EncoderId::B, 1));
+    for _ in 0..3 {
+        r.feed(Input::turn(EncoderId::A, 0));
+    }
+    f(&mut r);
+}
+
+/// `n` Sounds in the library, SOUND 1 the oldest.
+fn lib_many(n: u32) -> MemStore {
+    let mut st = MemStore::new(1);
+    for i in 1..=n {
+        let name = format!("SOUND {i}");
+        lib_sound(&mut st, &name, EngineType::Algo, &LIB_THIS);
+    }
+    st
+}
+
+/// A pool with one free slot and 16 B: every library Sound won't fit.
+fn pool_nearly_full(ui: &mut UiState) {
+    use chimera_core::project::arena::Cost;
+    chimera_core::project::test_support::set_free_to(ui.project_mut(), Cost::of(16));
+}
 
 pub const CASES: &[ScreenCase] = &[
-    ("engine_algo", |ui| feed(ui, Input::turn(EncoderId::A, 2))),
+    // The Algo cases walk from INIT Algo on Part 1, not NEW's TX BASS.
+    ("engine_algo", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        feed(ui, Input::turn(EncoderId::A, 2))
+    }),
     ("algo_alg", |ui| {
+        init_part(ui, PartId::ALL[0]);
         feed(ui, Input::turn(EncoderId::B, 16)); // ALG B = A17, from INIT's A1
         feed(ui, Input::turn(EncoderId::C, 50)); // MORPH 50: the diagrams blend
     }),
     ("algo_wave", |ui| {
+        init_part(ui, PartId::ALL[0]);
         to_osc(ui);
         feed(ui, Input::turn(EncoderId::B, 5)); // operator 2's wave, a few steps in
     }),
     ("algo_level", |ui| {
+        init_part(ui, PartId::ALL[0]);
         to_level_page(ui);
         feed(ui, Input::turn(EncoderId::B, 60)); // operator 2 LEVEL
     }),
+    ("algo_ar", |ui| {
+        use chimera_core::ui::block_registry::ALGO_AR;
+        to_osc(ui);
+        to_osc_sub(ui, &ALGO_AR);
+        feed(ui, Input::turn(EncoderId::A, -20)); // operator 1 AR 11
+    }),
+    ("algo_d1l", |ui| {
+        use chimera_core::ui::block_registry::{ALGO_D1L, ALGO_D1R};
+        to_osc(ui);
+        to_osc_sub(ui, &ALGO_D1R);
+        feed(ui, Input::turn(EncoderId::B, 14)); // operator 2 D1R 14
+        to_osc_sub(ui, &ALGO_D1L);
+        feed(ui, Input::turn(EncoderId::B, -5)); // D1L 10
+    }),
+    ("algo_d2r", |ui| {
+        use chimera_core::ui::block_registry::{ALGO_D1L, ALGO_D1R, ALGO_D2R};
+        to_osc(ui);
+        to_osc_sub(ui, &ALGO_D1R);
+        feed(ui, Input::turn(EncoderId::A, 18)); // D1R 18
+        to_osc_sub(ui, &ALGO_D1L);
+        feed(ui, Input::turn(EncoderId::A, -3)); // D1L 12
+        to_osc_sub(ui, &ALGO_D2R);
+        feed(ui, Input::turn(EncoderId::A, 8)); // D2R 8
+    }),
     ("algo_osc_last", |ui| {
+        init_part(ui, PartId::ALL[0]);
         to_osc(ui);
         for _ in 0..12 {
             feed(ui, Input::press(ButtonId::Edit)); // FEEDBACK, the last sub-page
@@ -341,8 +1185,77 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("flt_mode", |ui| {
         plus(ui, 3);
-        feed(ui, Input::press(ButtonId::Edit)); // FLT › MODE
-        feed(ui, Input::turn(EncoderId::A, 3)); // MODE: BP12
+        feed(ui, Input::press(ButtonId::Edit)); // FLT › MOD
+        feed(ui, Input::turn(EncoderId::B, 30)); // FM3: LFO 1 → FREQ
+    }),
+    // Each type's FLT and FLT › MOD (filter-types spec § 5).
+    ("flt_clean", |ui| {
+        on_flt(ui, FilterKind::Svf, false);
+        ui.params_mut().filter.set_mode(FilterMode::Notch); // NOTCH1: 2 × FREQ
+        feed(ui, Input::turn(EncoderId::B, -80)); // FREQ
+        feed(ui, Input::turn(EncoderId::C, 40)); // Q
+    }),
+    ("flt_mod_clean", |ui| {
+        on_flt(ui, FilterKind::Svf, true);
+        feed(ui, Input::turn(EncoderId::D, 40)); // QM: ENV 3 → Q
+    }),
+    ("flt_2040", |ui| {
+        on_flt(ui, FilterKind::K2040, false);
+        feed(ui, Input::turn(EncoderId::B, -70)); // CUTOFF
+        feed(ui, Input::turn(EncoderId::C, 90)); // RES: the pass band falls
+        feed(ui, Input::turn(EncoderId::E, 1)); // KEYBD, stepped
+    }),
+    ("flt_mod_2040", |ui| {
+        on_flt(ui, FilterKind::K2040, true);
+        feed(ui, Input::turn(EncoderId::F, 1)); // MODE: fixed, dimmed
+    }),
+    ("flt_mod_2040_exp", |ui| {
+        on_flt(ui, FilterKind::K2040, true);
+        feed(ui, Input::turn(EncoderId::A, 1)); // VOICE EXP
+    }),
+    ("flt_dirty", |ui| {
+        on_flt(ui, FilterKind::Dirty, false);
+        ui.params_mut().filter.set_mode(FilterMode::Notch); // NOTCH1: at FREQ
+        feed(ui, Input::turn(EncoderId::B, -70)); // FREQ
+        feed(ui, Input::turn(EncoderId::C, 60)); // RES
+    }),
+    ("flt_mod_dirty", |ui| {
+        // CLEAN's cells and words (spec § 4); flt_mode's FM3 turn would
+        // draw the same screen.
+        on_flt(ui, FilterKind::Dirty, true);
+        feed(ui, Input::turn(EncoderId::A, 20)); // LEVEL
+    }),
+    // LADDER (ADR 0104): CLEAN's cells, its LP4's bass loss in the viz.
+    ("flt_ladder", |ui| {
+        on_flt(ui, FilterKind::Ladder, false);
+        feed(ui, Input::turn(EncoderId::B, -70)); // FREQ
+        feed(ui, Input::turn(EncoderId::C, 90)); // Q: the pass band falls
+    }),
+    ("flt_mod_ladder", |ui| {
+        on_flt(ui, FilterKind::Ladder, true);
+        feed(ui, Input::turn(EncoderId::A, 20)); // LEVEL
+    }),
+    // The LEVEL LED (`LEDS`): beside LEVEL on CLEAN's FLT › MOD, and
+    // beside the 2040's DRIVE and in FLT's viz corner.
+    ("flt_led_0", |ui| {
+        on_flt(ui, FilterKind::Svf, true);
+        feed(ui, Input::turn(EncoderId::A, 30)); // LEVEL past unity
+    }),
+    ("flt_led_half", |ui| {
+        on_flt(ui, FilterKind::Svf, true);
+        feed(ui, Input::turn(EncoderId::A, 30));
+    }),
+    ("flt_led_full", |ui| {
+        on_flt(ui, FilterKind::K2040, false);
+        feed(ui, Input::turn(EncoderId::B, -60)); // CUTOFF
+        feed(ui, Input::turn(EncoderId::F, 40)); // DRIVE
+    }),
+    ("flt_mod_repatched", |ui| {
+        on_flt(ui, FilterKind::Svf, true);
+        feed(ui, Input::turn(EncoderId::B, 30)); // FM3 on LFO 1
+        feed(ui, Input::turn(EncoderId::C, 1)); // FM3 IN = LFO 2
+        feed(ui, Input::turn(EncoderId::D, 40)); // QM on ENV 3
+        feed(ui, Input::turn(EncoderId::E, 20)); // QM IN = OP 6, the list's end
     }),
     ("env_a", |ui| {
         to_mod_sub(ui, 1, &reg::ENVELOPE);
@@ -408,11 +1321,11 @@ pub const CASES: &[ScreenCase] = &[
     ("amp_vel_live", |ui| {
         plus(ui, 4);
         feed(ui, Input::turn(EncoderId::D, 1));
-        prime(ui); // VEL primes the VCA
+        prime(ui); // VEL primes the VCA: a permanent column, ALREADY ROUTED
         plus(ui, 1);
-        to_matrix(ui); // ENV1 → FLT CUTOFF
+        to_matrix(ui); // ENV1 → FREQ
         feed(ui, Input::turn(EncoderId::A, 1)); // ENV2
-        feed(ui, Input::turn(EncoderId::B, 1)); // OUT VCA
+        feed(ui, Input::turn(EncoderId::B, 2)); // VCA, the third fixed column
         feed(ui, Input::turn(EncoderId::E, 100)); // E2 → VCA
         feed(ui, Input::press(ButtonId::Minus)); // back to AMP: VEL live
     }),
@@ -426,49 +1339,291 @@ pub const CASES: &[ScreenCase] = &[
         to_pitch(ui, EngineType::Modal);
         feed(ui, Input::turn(EncoderId::A, -12)); // PITCH -12, focused
     }),
+    ("tape_pitch_musical", |ui| {
+        load_init(ui, EngineType::Tape);
+        to_pitch(ui, EngineType::Tape);
+        feed(ui, Input::turn(EncoderId::E, 1)); // SNAP MUSICAL
+        feed(ui, Input::turn(EncoderId::A, 3)); // PITCH +19, focused
+    }),
+    // TAPE's pages (TAPE Task 15): SRC, then DECK and the model page per
+    // machine, MODEL turned from LOOP (index 1).
+    ("tape_src", |ui| load_init(ui, EngineType::Tape)),
+    // A source the pool doesn't hold: SOURCE MISSING, focused.
+    ("tape_src_missing", |ui| {
+        load_init(ui, EngineType::Tape);
+        let r = chimera_core::storage::SourceRef {
+            crc: 0x5EED,
+            frames: 36_000,
+            rate: 24_000,
+        };
+        ui.project_mut()
+            .edit_part(chimera_core::project::PartId::ALL[0])
+            .sound
+            .source = Some(chimera_core::storage::TapeSource { r, tune: None });
+        feed(ui, Input::turn(EncoderId::A, 1));
+    }),
+    ("tape_deck_oneshot", |ui| tape_deck(ui, -1)),
+    ("tape_page_oneshot", |ui| {
+        tape_deck(ui, -1);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_loop", |ui| tape_deck(ui, 0)),
+    ("tape_page_loop", |ui| {
+        tape_deck(ui, 0);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_tron", |ui| tape_deck(ui, 1)),
+    ("tape_page_tron", |ui| {
+        tape_deck(ui, 1);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_stretch", |ui| tape_deck(ui, 2)),
+    ("tape_page_stretch", |ui| {
+        tape_deck(ui, 2);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    // An unpitched source's TYPE in focus: too wide for the numerals.
+    ("tape_page_stretch_type", |ui| {
+        tape_deck(ui, 2);
+        feed(ui, Input::press(ButtonId::Edit));
+        feed(ui, Input::turn(EncoderId::B, 1));
+    }),
+    ("tape_deck_transwave", |ui| tape_deck(ui, 3)),
+    ("tape_page_transwave", |ui| {
+        tape_deck(ui, 3);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_scrub", |ui| tape_deck(ui, 4)),
+    ("tape_page_scrub", |ui| {
+        tape_deck(ui, 4);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_pingpong", |ui| tape_deck(ui, 5)),
+    ("tape_page_pingpong", |ui| {
+        tape_deck(ui, 5);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    // The strip (TAPE Task 16): each machine over the plucks (a transwave
+    // for TRANSWAVE), with the heads the audio would store.
+    ("tape_strip_oneshot", |ui| {
+        tape_strip(ui, -1, Heads::new(9_000, None))
+    }),
+    // A loop's fade: the second head plays on.
+    ("tape_strip_loop", |ui| {
+        tape_strip(ui, 0, Heads::new(20_000, Some(2_000)))
+    }),
+    ("tape_strip_tron", |ui| {
+        tape_strip(ui, 1, Heads::new(6_000, Some(30_000)))
+    }),
+    ("tape_strip_stretch", |ui| {
+        tape_strip(ui, 2, Heads::new(12_000, Some(13_200)))
+    }),
+    ("tape_strip_transwave", |ui| {
+        tape_strip(ui, 3, Heads::new(2, Some(3)))
+    }),
+    ("tape_strip_scrub", |ui| {
+        tape_strip(ui, 4, Heads::new(16_000, None));
+        let p = chimera_core::project::PartId::ALL[0];
+        ui.project_mut().edit_part(p).sound.params.tape.position = 0.4; // FINGER
+    }),
+    ("tape_strip_pingpong", |ui| {
+        tape_strip(ui, 5, Heads::new(25_000, None))
+    }),
+    // END before START on SRC: LOOP plays reversed.
+    ("tape_strip_loop_reversed", |ui| {
+        tape_strip(ui, 0, Heads::new(20_000, None));
+        feed(ui, Input::press(ButtonId::Minus)); // SRC
+        feed(ui, Input::turn(EncoderId::B, 100)); // START
+        feed(ui, Input::turn(EncoderId::C, -80)); // END
+    }),
+    // SLICE 5 on the model page, back on DECK.
+    ("tape_strip_oneshot_slice", |ui| {
+        tape_strip(ui, -1, Heads::new(10_000, None)); // in slice 5
+        feed(ui, Input::press(ButtonId::Edit));
+        feed(ui, Input::turn(EncoderId::A, 6));
+        tap(ui, ButtonId::Seq);
+    }),
+    // END before START: ONESHOT's slice 5 counts from START, PING-PONG
+    // plays its sorted window.
+    ("tape_strip_oneshot_slice_reversed", |ui| {
+        tape_strip(ui, -1, Heads::NONE);
+        let p = &mut ui
+            .project_mut()
+            .edit_part(chimera_core::project::PartId::ALL[0])
+            .sound
+            .params
+            .tape;
+        (p.start, p.end, p.slice) = (0.9, 0.1, SliceCode::new(6));
+    }),
+    ("tape_strip_pingpong_reversed", |ui| {
+        tape_strip(ui, 5, Heads::new(20_000, None));
+        let p = &mut ui
+            .project_mut()
+            .edit_part(chimera_core::project::PartId::ALL[0])
+            .sound
+            .params
+            .tape;
+        (p.start, p.end, p.size) = (0.9, 0.1, 0.8);
+    }),
+    // No note: TRON's LENGTH 0 (0.25 s) at ROOT.
+    ("tape_strip_tron_idle", |ui| {
+        tape_strip(ui, 1, Heads::NONE);
+        let p = &mut ui
+            .project_mut()
+            .edit_part(chimera_core::project::PartId::ALL[0])
+            .sound
+            .params
+            .tape;
+        p.size = 0.0;
+    }),
+    // SRC on a pool row, SOURCE focused.
+    ("tape_src_pool", |ui| {
+        load_init(ui, EngineType::Tape);
+        strip_source(ui, false);
+        feed(ui, Input::turn(EncoderId::A, 0));
+    }),
+    // SOURCE on a card row (TAPE Task 17): CHOIR's name and cost, MIX +
+    // PLUS's hint and the meter's preview; full, WON'T FIT; loaded, the
+    // Part plays it; the card gone mid-load, CARD READ FAILED.
+    ("tape_src_card", |ui| src_card(ui, CardRow::On)),
+    ("tape_src_wont_fit", |ui| src_card(ui, CardRow::Full)),
+    ("tape_src_loaded", |ui| src_card(ui, CardRow::Loaded)),
+    ("tape_src_read_failed", |ui| src_card(ui, CardRow::Failed)),
+    ("modal_exc", |ui| load_init(ui, EngineType::Modal)), // PLUCK: EXCITE, COLOR
+    ("modal_exc_bank", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 1); // RES
+        feed(ui, Input::turn(EncoderId::A, 1)); // MODEL → BANK
+        feed(ui, Input::press(ButtonId::Minus)); // STRIKE: EXCITE, BURST
+    }),
+    ("modal_exc_bowed", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 1); // RES
+        feed(ui, Input::turn(EncoderId::A, 2)); // MODEL → BOWED
+        feed(ui, Input::press(ButtonId::Minus)); // BOW: FORCE, SPEED
+    }),
+    ("modal_home", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 1); // EXC · RES
+    }),
+    ("modal_mdl2_symp", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 1); // RES
+        feed(ui, Input::turn(EncoderId::A, 3)); // MODEL → SYMP
+        feed(ui, Input::press(ButtonId::Edit)); // MDL2
+    }),
+    ("modal_home_bowed", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 1); // RES
+        feed(ui, Input::turn(EncoderId::A, 2)); // MODEL → BOWED: STRUCT dims
+    }),
     ("modal_amp", |ui| {
         load_init(ui, EngineType::Modal);
-        plus(ui, 2); // MDL · FLT · AMP
+        plus(ui, 3); // EXC · RES · FLT · AMP
     }),
     ("mixer_part", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        feed(ui, Input::press(ButtonId::Minus)); // SENDS → PART
         feed(ui, Input::turn(EncoderId::D, -8));
     }),
     ("mixer_sends", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, 1);
         feed(ui, Input::turn(EncoderId::C, 40));
     }),
-    ("mixer_fx_delay", |ui| {
-        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, 3);
-    }),
+    ("mixer_fx_delay", |ui| to_fx(ui, DLY)),
     ("mixer_fx_reverb", |ui| {
-        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, 4);
-        feed(ui, Input::turn(EncoderId::A, 20)); // GRIT
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::E, 40)); // SMEAR
+    }),
+    ("mixer_fx_reverb_more", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::turn(EncoderId::D, 20)); // RATE
+    }),
+    // HALL at SIZE 0: the SIZE cell reads PLATE (reverb TYPEs T10).
+    ("mixer_fx_reverb_hall", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 2)); // TYPE → HALL
+        feed(ui, Input::turn(EncoderId::B, -128)); // SIZE 0: PLATE
+    }),
+    ("mixer_fx_reverb_hall_more", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 2)); // TYPE → HALL
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::turn(EncoderId::B, 20)); // DAMP
+    }),
+    // REV › MORE 2: HALL's DENSITY alone (ADR 0095 § HALL, as built).
+    ("mixer_fx_reverb_hall_more2", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 2)); // TYPE → HALL
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE 2
+        feed(ui, Input::turn(EncoderId::A, 20)); // DENSITY
+    }),
+    ("mixer_fx_reverb_gate", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 4)); // TYPE → GATE
+        feed(ui, Input::turn(EncoderId::C, 10)); // TAIL
+    }),
+    ("mixer_fx_reverb_gate_more", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 4)); // TYPE → GATE
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::turn(EncoderId::B, 20)); // SHAPE
+    }),
+    // SYNC TIME, then LENGTH a note up: 1/8 (reverb TYPEs T12).
+    ("mixer_fx_reverb_gate_sync", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 4)); // TYPE → GATE
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::turn(EncoderId::E, 1)); // SYNC TIME: LENGTH 1/16D
+        feed(ui, Input::press(ButtonId::Edit)); // back to REV
+        feed(ui, Input::turn(EncoderId::B, 1)); // LENGTH 1/8
+    }),
+    // BLOOM: SWELL first, and MORE's two empty cells (reverb TYPEs T11).
+    ("mixer_fx_reverb_bloom", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 3)); // TYPE → BLOOM
+        feed(ui, Input::turn(EncoderId::B, -10)); // SWELL
+    }),
+    ("mixer_fx_reverb_bloom_more", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 3)); // TYPE → BLOOM
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::turn(EncoderId::A, 20)); // PRE-DLY
     }),
     ("mixer_fx_delay_char", |ui| {
-        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, 3);
+        to_fx(ui, DLY);
         feed(ui, Input::press(ButtonId::Edit)); // DLY › CHAR
         feed(ui, Input::turn(EncoderId::A, 20)); // WOW
     }),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", |ui| {
-        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, 5);
+        to_fx(ui, TAPE);
         feed(ui, Input::turn(EncoderId::A, 40)); // DRIVE
     }),
     ("mixer_master", |ui| {
-        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, MST);
+        to_fx(ui, MST);
         feed(ui, Input::turn(EncoderId::B, 4)); // RATIO 4:1: the curve bends
     }),
     ("mixer_master_level", |ui| {
-        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
-        plus(ui, MST);
+        to_fx(ui, MST);
         feed(ui, Input::press(ButtonId::Edit)); // MST › LEVEL
+    }),
+    // Part 1 on P2: the OUT warning on its mixer (ADR 0057).
+    ("mixer_out_p2", |ui| {
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        feed(ui, Input::press(ButtonId::Minus)); // → PART
+        feed(ui, Input::turn(EncoderId::C, 1)); // OUT P2
+        feed(ui, Input::press(ButtonId::Plus)); // → SENDS
+    }),
+    // Part 1 on P3: the warning on its sound pages; ALGORITHM falls back to ALG.
+    ("algo_out_p3", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        feed(ui, Input::press(ButtonId::Minus));
+        feed(ui, Input::turn(EncoderId::C, 2)); // OUT P3
+        feed(ui, Input::press(ButtonId::B1)); // back to the sound pages
     }),
     ("mod_matrix", mod_matrix),
     ("mod_matrix_wide", |ui| {
@@ -495,17 +1650,38 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 3)); // LFO1 → VELO
         feed(ui, Input::turn(EncoderId::E, -127));
     }),
+    // ALGO's ten rows: OP5 → FREQ routed, the cursor on OP5's X cell
+    // under DRV's primed column, its hint (filter-types spec § 7).
+    ("mod_matrix_algo_taps", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        plus(ui, 2); // DRV
+        feed(ui, Input::turn(EncoderId::A, 1));
+        prime(ui);
+        plus(ui, 3);
+        to_matrix(ui);
+        feed(ui, Input::turn(EncoderId::A, 8)); // OP5
+        feed(ui, Input::turn(EncoderId::E, 40)); // OP5 → FREQ
+        feed(ui, Input::turn(EncoderId::B, 4)); // DRV's column: an X cell
+    }),
+    // MODAL's eight rows and the four fixed columns.
+    ("mod_matrix_modal", |ui| {
+        load_init(ui, EngineType::Modal);
+        to_matrix_on(ui, EngineType::Modal);
+        feed(ui, Input::turn(EncoderId::E, 30)); // ENV 1 → FREQ
+    }),
     ("algo_alg_morph_dimmed", |ui| {
+        init_part(ui, PartId::ALL[0]);
         feed(ui, Input::turn(EncoderId::B, -8)); // ALG B = T1 = ALG A
         feed(ui, Input::turn(EncoderId::C, 1)); // MORPH focused, dimmed
     }),
     // ENV1 → MORPH primed while it was live; then ALG B = ALG A (#188).
     ("mod_matrix_morph_inert", |ui| {
+        init_part(ui, PartId::ALL[0]);
         feed(ui, Input::turn(EncoderId::C, 1));
         prime(ui);
         plus(ui, 5);
         to_matrix(ui);
-        feed(ui, Input::turn(EncoderId::B, 1)); // past FLT CUTOFF to MORPH
+        feed(ui, Input::turn(EncoderId::B, 4)); // past the fixed four to MORPH
         feed(ui, Input::turn(EncoderId::E, 60));
         for _ in 0..5 {
             feed(ui, Input::press(ButtonId::Minus));
@@ -516,27 +1692,245 @@ pub const CASES: &[ScreenCase] = &[
     ("sound_browser", |ui| {
         let mut s = Sound::init(EngineType::Algo);
         s.name = chimera_core::name::Name::new("WARM BASS").unwrap();
-        ui.pool.store(0, s);
+        ui.project_mut().pool_store(SlotId::ALL[0], &s).unwrap();
         let mut s = Sound::init(EngineType::Modal);
         s.name = chimera_core::name::Name::new("GLASS PLUCK").unwrap();
-        ui.pool.store(1, s);
+        ui.project_mut().pool_store(SlotId::ALL[1], &s).unwrap();
         feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
         feed(ui, Input::turn(EncoderId::A, 1));
     }),
-    ("system", |ui| feed(ui, Input::press(ButtonId::Menu))),
-    ("system_theme", |ui| {
-        feed(ui, Input::press(ButtonId::Menu));
-        plus(ui, 2);
+    // Part 1 edited past the pool's free bytes: MIX + EDIT is refused,
+    // and the band says by how much (sound-pool plan Task 6).
+    ("sound_browser_pool_full", |ui| {
+        use chimera_core::project::test_support::dense;
+        feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+        dense(ui.project_mut().edit_part(PartId::ALL[0]).sound, 7);
+        for s in SlotId::ALL {
+            if ui.project().pool().get(s).is_some() {
+                continue;
+            }
+            let mut x = Sound::init(EngineType::Algo);
+            dense(&mut x, s.index() as u64);
+            let p = ui.project_mut();
+            if p.pool_store(s, &x).is_err()
+                && p.pool_store(s, &Sound::init(EngineType::Algo)).is_err()
+            {
+                break;
+            }
+        }
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::Edit));
+    }),
+    ("library_empty", |ui| {
+        library_tab(ui, MemStore::new(1), |_| {})
+    }),
+    ("library_no_card", |ui| {
+        let mut st = MemStore::new(1);
+        st.eject();
+        library_tab(ui, st, |_| {})
+    }),
+    // The newest row: a dirty build's stamp.
+    ("library_sounds", |ui| library_tab(ui, lib_card(), |_| {})),
+    // The second: this build.
+    ("library_this_build", |ui| {
+        library_tab(ui, lib_card(), |r| r.feed(Input::turn(EncoderId::A, 1)))
+    }),
+    // The third, cut short: greyed, its message, no stamp.
+    ("library_cut_short", |ui| {
+        library_tab(ui, lib_card(), |r| r.feed(Input::turn(EncoderId::A, 2)))
+    }),
+    // Page 1 of 60, the cursor on OLDER ›.
+    ("library_older", |ui| {
+        library_tab(ui, lib_many(60), |r| r.feed(Input::turn(EncoderId::A, 60)))
+    }),
+    // Page 2, the cursor on ‹ NEWER.
+    ("library_newer", |ui| {
+        library_tab(ui, lib_many(60), |r| {
+            r.feed(Input::turn(EncoderId::A, 60));
+            r.feed(Input::press(ButtonId::Edit));
+            for _ in 0..3 {
+                r.feed(Input::turn(EncoderId::A, 0));
+            }
+        })
+    }),
+    ("library_wont_fit", |ui| {
+        pool_nearly_full(ui);
+        library_tab(ui, lib_card(), |_| {})
+    }),
+    ("library_pool_full", |ui| {
+        pool_nearly_full(ui);
+        library_tab(ui, lib_card(), |r| r.feed(Input::press(ButtonId::Edit)))
+    }),
+    ("library_naming", |ui| {
+        library_tab(ui, lib_card(), |r| {
+            r.feed(Input::chord(ButtonId::Mix, ButtonId::Edit))
+        })
+    }),
+    ("settings_personal_theme", |ui| {
+        to_leaf(ui, &["PERSONALIZE", "THEME"]);
         feed(ui, Input::turn(EncoderId::C, 1)); // ACCENT AMBER, focused
     }),
-    ("system_audio", |ui| {
-        feed(ui, Input::press(ButtonId::Menu));
-        plus(ui, 4);
+    // MIDI CONFIG › SYNC (ADR 0080): EXT, the default, focused.
+    ("settings_midi_sync", |ui| {
+        to_leaf(ui, &["MIDI CONFIG", "SYNC"]);
+        feed(ui, Input::turn(EncoderId::A, 1));
+    }),
+    ("settings_system_diag_aud_load", |ui| {
+        to_leaf(ui, &["SYSTEM", "DIAGNOSTICS", "AUDIO LOAD"])
+    }),
+    // PROJECT › POOL on NEW: the bar, SOUNDS, SOURCES, FREE.
+    ("settings_project_pool", |ui| {
+        to_leaf(ui, &["PROJECT", "POOL"])
+    }),
+    ("settings_top", |ui| tap(ui, ButtonId::Menu)),
+    // Part 3's LIVE SNAP (plan Task 15): SNAP CHORD, HELD RE-SNAP focused.
+    ("settings_part_live_snap", |ui| {
+        tap(ui, ButtonId::B3);
+        to_leaf(ui, &["PART", "LIVE SNAP"]);
+        feed(ui, Input::turn(EncoderId::A, 2));
+        feed(ui, Input::turn(EncoderId::B, 1));
+    }),
+    // SETTINGS › ORBIT (plan Task 17): the bar on CLEAR, RENAME later,
+    // RELOAD dimmed with nothing to drop.
+    ("settings_orbit", |ui| {
+        to_leaf(ui, &["ORBIT"]);
+        plus(ui, 1);
+    }),
+    // Its SAVE TO PROJ, slot 3 saved: the bar on the playing one.
+    ("settings_orbit_save_to", |ui| {
+        use chimera_core::orbit::scene::SceneIdx;
+        use chimera_core::project::{Confirmed, SceneSlot};
+        let c = Confirmed::<SceneSlot>::unasked(ui.project().orbit(), SceneIdx::ALL[2]);
+        ui.project_mut().orbit_mut().overwrite_scene(c).unwrap();
+        to_leaf(ui, &["ORBIT"]);
+        plus(ui, 2);
         feed(ui, Input::press(ButtonId::Edit));
+    }),
+    // ALPHA loaded, the bar on BETA.
+    ("settings_load", |ui| {
+        let (s, [a, ..]) = three();
+        let mut r = Rig::new(ui, s);
+        r.load(a);
+        r.to(&["PROJECT", "LOAD PROJECT"]);
+        r.bar_to(1);
+    }),
+    ("settings_prompt_load", prompt_load),
+    ("settings_naming", naming_save_as),
+    // RING 3's RHYTHM at a third of the bar, HITS focused: 1/1, the
+    // pad's one held note a bar.
+    ("orbit_rhythm", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::turn(EncoderId::B, -1)); // down first: 1/1 is HITS' top
+        feed(ui, Input::turn(EncoderId::B, 1));
+        ui.set_orbit_view(&orbit_view(0.3));
+    }),
+    // CHRD: segment 1 playing, a third into bar 1 of 4; segment 3 picked
+    // (MIX + DEGREE).
+    ("orbit_chrd", |ui| {
+        to_ring(ui, 3);
+        plus(ui, 1);
+        feed(ui, Input::turn(EncoderId::B, 2).and_held(ButtonId::Mix));
+        ui.set_orbit_view(&orbit_view(0.3));
+    }),
+    // CHRD with two chords played in through PLAY: Bm7b5 on segment 2,
+    // picked, and C on segment 4. Each a name, no numeral.
+    ("orbit_chrd_played", |ui| {
+        to_ring(ui, 3);
+        plus(ui, 1);
+        feed(ui, Input::turn(EncoderId::B, 3).and_held(ButtonId::Mix));
+        played(ui, 1, &[60, 64, 67]);
+        feed(ui, Input::turn(EncoderId::B, -2).and_held(ButtonId::Mix));
+        played(ui, 2, &[59, 62, 65, 69]);
+    }),
+    // ORB on ring 3 at a third of the bar, ring 1 just fired.
+    ("orbit_orb", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::press(ButtonId::Minus));
+        ui.set_orbit_view(&orb_view(0.3));
+    }),
+    // ORB under a MIDI clock at 133 BPM: the header reads the source, and
+    // F, the internal BPM, is dimmed.
+    ("orbit_orb_midi", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::press(ButtonId::Minus));
+        ui.set_orbit_view(&midi_view(0.3));
+    }),
+    // ORB › CUSTOM from MINOR, the tritone set under the cursor.
+    ("orbit_custom", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::press(ButtonId::Minus));
+        feed(ui, Input::turn(EncoderId::C, 9));
+        feed(ui, Input::turn(EncoderId::A, 6));
+        feed(ui, Input::turn(EncoderId::B, 1));
+    }),
+    // ORB › CUSTOM by EDIT, SCALE still MINOR: its notes, the tritone
+    // under the cursor, nothing toggled.
+    ("orbit_custom_named", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::press(ButtonId::Minus));
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::A, 6));
+    }),
+    // RING 3's VOICE, its pad note made E(5,8) on RHYTHM: GATE 60, two
+    // accents, a third into the bar, playing.
+    ("orbit_voice", |ui| {
+        to_ring(ui, 3);
+        feed(ui, Input::turn(EncoderId::A, 7)); // STEPS 8
+        feed(ui, Input::turn(EncoderId::B, 4)); // HITS 5
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::A, -40)); // GATE 60
+        feed(ui, Input::turn(EncoderId::C, 2)); // ACCENT 2
+        let mut v = orbit_view(0.3);
+        v.rings[2].step = 2;
+        ui.set_orbit_view(&v);
+    }),
+    // RING 3's NOTES: CLEAR down's eight notes (MIX held), the fourth picked and
+    // raised a tone, past two others: the sixth now.
+    ("orbit_notes", |ui| {
+        to_ring(ui, 3);
+        tap(ui, ButtonId::Edit);
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::E, -1).and_held(ButtonId::Mix));
+        feed(ui, Input::turn(EncoderId::F, 3).and_held(ButtonId::Mix));
+        feed(ui, Input::turn(EncoderId::F, 2));
+    }),
+    // SCN on ring 3: scene 5 saved, SAVE on 3, scene 2 queued, the
+    // playing scene's loop past half way, playing.
+    ("orbit_scn", |ui| {
+        to_ring(ui, 3);
+        plus(ui, 2);
+        feed(ui, Input::turn(EncoderId::B, 4));
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::B, -2));
+        feed(ui, Input::turn(EncoderId::A, 1));
+        let mut v = orbit_view(0.3);
+        v.pos.bar = 2;
+        ui.set_orbit_view(&v);
+    }),
+    // RING 2 as a STEP ring, CLEAR down's notes, step 4 picked; a third
+    // into the bar, playing.
+    ("orbit_notes_step", |ui| {
+        to_ring(ui, 2);
+        tap(ui, ButtonId::Edit);
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::A, -1));
+        feed(ui, Input::turn(EncoderId::E, -1).and_held(ButtonId::Mix));
+        feed(ui, Input::turn(EncoderId::F, 3).and_held(ButtonId::Mix));
+        ui.set_orbit_view(&orbit_view(0.3));
+    }),
+    // RING 2 as a 32-step STEP ring, CLEAR down's notes, step 32 picked:
+    // the chip row scrolled to its last eight, NOTE's gestures under it.
+    ("orbit_notes_step32", |ui| {
+        to_ring(ui, 2);
+        feed(ui, Input::turn(EncoderId::A, 40)); // STEPS 32
+        tap(ui, ButtonId::Edit);
+        tap(ui, ButtonId::Edit);
+        feed(ui, Input::turn(EncoderId::A, -1));
+        feed(ui, Input::turn(EncoderId::E, -1).and_held(ButtonId::Mix));
+        feed(ui, Input::turn(EncoderId::F, 40).and_held(ButtonId::Mix));
     }),
 ];
 
-/// `AudioStats` fixture for the AUDIO sub-page's goldens and tests.
+/// `AudioStats` fixture for AUDIO LOAD's and ABOUT's goldens and tests.
 pub fn audio_fixture() -> AudioStats {
     let mut s = AudioStats::new(SiliconRev::V, 480_000_000, ResetCause::Watchdog);
     s.load_avg = 23;
@@ -558,6 +1952,9 @@ pub fn ui_for(name: &str) -> UiState {
     let mut ui = UiState::new();
     setup(&mut ui);
     settle(&mut ui);
+    if let Some(&(_, clip)) = LEDS.iter().find(|l| l.0 == name) {
+        ui.show_clip(clip);
+    }
     ui
 }
 
@@ -601,7 +1998,13 @@ pub fn render(name: &str) -> Fb {
         fb.dump(name);
         return fb;
     }
-    let ui = ui_for(name);
+    let fb = render_ui(&ui_for(name));
+    fb.dump(name);
+    fb
+}
+
+/// Full render of `ui` with the goldens' audio and scope fixtures.
+pub fn render_ui(ui: &UiState) -> Fb {
     let mut fb = Fb::new();
     ui.render_with_audio(
         &mut fb,
@@ -609,7 +2012,6 @@ pub fn render(name: &str) -> Fb {
         Some(&audio_fixture()),
         &scope_fixture(),
     );
-    fb.dump(name);
     fb
 }
 
@@ -624,4 +2026,149 @@ pub fn render_dirty(name: &str) -> Fb {
         &scope_fixture(),
     );
     fb
+}
+
+/// The UI and the runner through their triple buffers, as the desktop
+/// runs them: the view read, the keys, the publish; then the blocks, each
+/// publishing its view.
+pub struct ShellRig {
+    pub ui: Box<UiState>,
+    pub w: Writer<AudioShared>,
+    pub r: Reader<AudioShared>,
+    view_w: Writer<OrbitView>,
+    view_r: Reader<OrbitView>,
+    pub inst: Box<Instrument>,
+    pub runner: Box<OrbitRunner>,
+    /// Each block's events.
+    pub sent: Vec<Vec<OrbitEvent>>,
+    pub views: Vec<OrbitView>,
+    /// A card for `load_new`, and the load's epoch every publish carries.
+    card: Card,
+    store: MemStore,
+    sync: SystemSync,
+    set: SystemSettings,
+    link: LoadLink,
+}
+
+impl ShellRig {
+    pub fn new(ui: Box<UiState>) -> ShellRig {
+        let buf = Box::leak(Box::new(TripleBuffer::new(
+            AudioShared::default(),
+            AudioShared::default(),
+            AudioShared::default(),
+        )));
+        let (w, r) = buf.split();
+        let (view_w, view_r) = Box::leak(Box::new(orbit_buffer())).split();
+        let sr = core::num::NonZeroU32::new(chimera_hal::SAMPLE_RATE).unwrap();
+        let mut card = Card::new();
+        let mut store = MemStore::new(1);
+        let (sync, set, _) = SystemSync::boot(&mut card, &mut store);
+        ShellRig {
+            ui,
+            w,
+            r,
+            view_w,
+            view_r,
+            inst: Box::new(Instrument::new(
+                chimera_hal::SAMPLE_RATE,
+                SampleBudget::for_cpu(CPU_HZ_REV_V),
+            )),
+            runner: Box::new(OrbitRunner::new(sr)),
+            sent: Vec::new(),
+            views: Vec::new(),
+            card,
+            store,
+            sync,
+            set,
+            link: LoadLink::new(),
+        }
+    }
+
+    pub fn frame(&mut self, input: Input, blocks: usize) {
+        self.late(0, input, blocks);
+    }
+
+    /// A frame the audio thread interrupts: `first` blocks run between
+    /// the UI's view read and its keys, so the keys act on a view already
+    /// stale; then the publish and `then` blocks.
+    pub fn late(&mut self, first: usize, input: Input, then: usize) {
+        self.ui.set_orbit_view(self.view_r.read());
+        self.blocks(first);
+        feed(&mut self.ui, input);
+        let (ui, epoch) = (&self.ui, self.link.epoch());
+        self.w.publish(|b| {
+            b.update_from(ui.project().perf(), epoch);
+            ui.publish_orbit(&mut b.orbit);
+        });
+        self.blocks(then);
+    }
+
+    /// NEW loaded as the shells load a project: `card_work`'s publish,
+    /// after the settle, with no block between (the card read). The
+    /// blocks of the next frame take it.
+    pub fn load_new(&mut self) {
+        let ui = &mut *self.ui;
+        let go = match ReplaceGuard::check(ui.project(), ui.template(), ProjectSource::New) {
+            Ok(go) => go,
+            Err(ask) => ask.into_pending().anyway(ui.project()),
+        };
+        let (w, link) = (&mut self.w, &self.link);
+        let loaded = ui.load_project(
+            &mut self.card,
+            &mut self.store,
+            &mut self.sync,
+            &mut self.set,
+            go,
+            link,
+            |swap, u| {
+                let _ = swap.settle(link, || false);
+                w.publish(|b| {
+                    b.update_from(u.project().perf(), link.epoch());
+                    u.publish_orbit(&mut b.orbit);
+                });
+            },
+        );
+        assert!(loaded.is_some(), "NEW loads");
+    }
+
+    /// `n` blocks, each publishing its view: with no frame between, the
+    /// UI is busy (a card read, a stall).
+    pub fn blocks(&mut self, n: usize) {
+        for _ in 0..n {
+            let ev = self.runner.block(&mut self.inst, self.r.read());
+            self.sent.push(ev.iter().collect());
+            let v = self.runner.view();
+            self.view_w.publish(|o| *o = v);
+            self.views.push(v);
+        }
+    }
+
+    pub fn idle(&mut self, blocks: usize) {
+        self.frame(Input::default(), blocks);
+    }
+
+    pub fn b6(&mut self) {
+        self.frame(Input::press(chimera_hal::ButtonId::B6), 1);
+        self.frame(Input::release(chimera_hal::ButtonId::B6), 1);
+    }
+
+    pub fn tap(&mut self, b: chimera_hal::ButtonId) {
+        self.frame(Input::press(b).at(0), 1);
+        self.frame(Input::release(b).at(100), 1);
+    }
+
+    pub fn view(&self) -> OrbitView {
+        self.runner.view()
+    }
+
+    /// Frames of one block until `f` holds of the view.
+    pub fn until(&mut self, f: impl Fn(&OrbitView) -> bool) {
+        for _ in 0..200_000 {
+            if f(&self.view()) {
+                return;
+            }
+            self.idle(1);
+        }
+        panic!("never");
+    }
 }

@@ -9,9 +9,11 @@ Full design spec: `docs/chimera-synth-design.md`
 ## Workspace layout
 
 ```
-chimera-core/     — no_std portable logic (DSP, UI, params)
+chimera-engine/   — no_std model and DSP, everything the audio runs (opt 2)
+chimera-core/     — no_std UI, console and params; re-exports the engine (opt z)
 chimera-hal/      — trait definitions (Controls, Display, MidiIn)
-chimera-stm32/    — hardware target (SAI, SPI, GPIO, DMA)
+chimera-board/    — the unit off the audio path: boot, UI loop, drivers (opt z)
+chimera-stm32/    — hardware target: main, audio ISR, MIDI DIN, bench (opt 2)
 chimera-desktop/  — simulator (minifb window, cpal audio)
 ```
 
@@ -42,5 +44,6 @@ chimera-desktop/  — simulator (minifb window, cpal audio)
 - No libc
 - Audio thread never blocks, never allocates
 - All parameter changes lerped in UI — never snap
+- Type-driven first: if the type system can solve it, it must. Encode invariants in types — newtypes for units and ranges (`Hz`, `MidiNote`), enums over magic numbers, illegal states unrepresentable, `const` validation of statics — so the compiler rejects misuse. Use a runtime check or test only for what a type can't express; reviews flag any check or test a type could replace.
 - Bugs, known issues and follow-ups go in the private tracker (joegiralt/chimera-private), not in repo files (public bug reports come in at joegiralt/chimera-releases' issues); reference them by URL.
 - Decisions that constrain future work (architecture, algorithm choice and provenance, UX behavior, licensing) get an ADR in `docs/adr/` (template `0000-template.md`, add it to `docs/adr/README.md`). Check existing ADRs before re-deciding something; never edit an accepted ADR — supersede it with a new one.

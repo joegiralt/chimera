@@ -6,7 +6,7 @@ use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use chimera_core::ui::block_registry as reg;
-use chimera_core::ui::chain::chain_def_for;
+use chimera_core::ui::nav::chain_def_for;
 use chimera_core::ui::page::ValFmt;
 use chimera_core::ui::view::{SlotCtx, view};
 
@@ -31,12 +31,19 @@ fn every_part_slot_resolves_to_a_spec() {
                 | SlotBinding::SelectOp
                 | SlotBinding::FilterPanel(_)
                 | SlotBinding::EnvPanel(..)
-                | SlotBinding::LfoPanel(..) => {}
+                | SlotBinding::LfoPanel(..)
+                | SlotBinding::ModalPanel(..)
+                | SlotBinding::ReverbPanel(..)
+                | SlotBinding::Machine(_)
+                | SlotBinding::Source => {}
                 SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
                     assert!(slot.spec().is_some(), "{} slot {i}: no spec", def.name)
                 }
                 SlotBinding::Legacy { .. } => {
                     panic!("{} slot {i}: Part pages must not be Legacy", def.name)
+                }
+                SlotBinding::SelectedRing(_) | SlotBinding::Orbit(_) => {
+                    panic!("{} slot {i}: an ORBIT cell on a Part page", def.name)
                 }
             }
         }
@@ -54,12 +61,9 @@ fn part_chains_offer_the_eight_sources() {
             "{engine:?}"
         );
         let sound = chimera_core::preset::Sound::init(engine);
-        assert_eq!(
-            sound.dest_registry.len(),
-            1,
-            "{engine:?}: the default CUTOFF column"
-        );
-        assert_eq!(sound.mod_state.num_dests(), 1, "{engine:?}");
+        // The default routes live in the fixed FREQ column.
+        assert_eq!(sound.dest_registry.len(), 0, "{engine:?}");
+        assert_eq!(sound.mod_state.num_dests(), 0, "{engine:?}");
     }
 }
 
@@ -88,27 +92,52 @@ fn block_def_ids_are_unique() {
 }
 
 /// Every chain the navigation can reach is in `ALL_CHAINS`, so the
-/// registry-wide checks cover it.
+/// registry-wide checks cover it: each engine's, the mixer's, and every
+/// SETTINGS leaf's, walked by `Location`.
 #[test]
 fn all_chains_holds_every_reachable_chain() {
-    use chimera_core::ui::chain::{ChainId, ChainNav};
-    let mut nav = ChainNav::new();
-    for id in [
-        ChainId::Part(0),
-        ChainId::Mixer(0),
-        ChainId::System,
-        ChainId::Demo,
-    ] {
-        nav.chain_id = id;
-        for engine in EngineType::ALL {
-            nav.engine = engine;
-            let chain = nav.active_chain();
-            assert!(
-                reg::ALL_CHAINS.iter().any(|c| core::ptr::eq(*c, chain)),
-                "{}",
-                chain.name
-            );
+    use chimera_core::project::PartId;
+    use chimera_core::ui::nav::{Location, MixPage, NavCtx, OrbitCx, chain_def_for};
+    use chimera_core::ui::settings::{Kind, rows};
+    fn leaves(path: &mut Vec<u8>, out: &mut Vec<Location>) {
+        for (i, r) in rows(path).iter().enumerate() {
+            path.push(i as u8);
+            match r.kind {
+                Kind::Leaf(_) => out.push(Location::settings_at(path, 0)),
+                Kind::List(_) => leaves(path, out),
+                _ => {}
+            }
+            path.pop();
         }
+    }
+    let mut at = Vec::new();
+    for engine in EngineType::ALL {
+        at.push((
+            engine,
+            Location::pages(PartId::ALL[0], chain_def_for(engine).home()),
+        ));
+    }
+    at.push((
+        EngineType::Algo,
+        Location::mixer(PartId::ALL[0], MixPage::Sends),
+    ));
+    let mut ls = Vec::new();
+    leaves(&mut Vec::new(), &mut ls);
+    assert!(!ls.is_empty());
+    at.extend(ls.into_iter().map(|l| (EngineType::Algo, l)));
+    for (engine, l) in at {
+        let cx = NavCtx {
+            engines: [engine; 6],
+            dyn_rows: 0,
+            orbit: OrbitCx::NONE,
+            rev: chimera_core::dsp::reverb::ReverbType::Quad,
+        };
+        let (chain, _) = l.page(&cx).unwrap();
+        assert!(
+            reg::ALL_CHAINS.iter().any(|c| core::ptr::eq(*c, chain)),
+            "{}",
+            chain.name
+        );
     }
 }
 
@@ -116,30 +145,41 @@ fn all_chains_holds_every_reachable_chain() {
 /// bindings (spec labels + the two plan-D6 overrides; plan D5 BODY fix).
 #[test]
 fn part_pages_display_like_before() {
-    use ValFmt::{Bi, Int, Law, Names, Uni};
+    use ValFmt::{Bi, Law, Names, Uni};
     use chimera_core::dsp::modulator::EnvSpeed::Med;
-    use chimera_core::dsp::modulator::law::Law::{Attack, DecRel, Hold, Pct};
-    let want: [(&BlockDef, [(&str, ValFmt); 6]); 7] = [
+    use chimera_core::dsp::modulator::law::Law::{Attack, Cutoff, DecRel, Hold, Pct};
+    let want: [(&BlockDef, [(&str, ValFmt); 6]); 8] = [
         (
             &reg::MODAL_1,
             [
-                ("MODE", Int(3)),
-                ("EXCITE", Uni),
-                ("DECAY", Uni),
+                ("MODEL", Names(&chimera_core::dsp::modal::MODEL_NAMES)),
+                ("STRUCT", Uni),
                 ("BRIGHT", Uni),
+                ("DAMP", Uni),
                 ("POS", Uni),
-                ("INHARM", Uni),
+                ("--", Uni),
+            ],
+        ),
+        (
+            &reg::MODAL_EXC,
+            [
+                ("EXCITE", Uni),
+                ("COLOR", Uni),
+                ("--", Uni),
+                ("--", Uni),
+                ("--", Uni),
+                ("--", Uni),
             ],
         ),
         (
             &reg::MODAL_2,
             [
                 ("BODY", Uni),
-                ("STIFF", Uni),
-                ("FDBK", Uni),
-                ("E.DPT", Uni),
-                ("E.RAT", Uni),
-                ("E.MIX", Uni),
+                ("ENS.D", Uni),
+                ("ENS.R", Uni),
+                ("ENS.M", Uni),
+                ("--", Uni),
+                ("--", Uni),
             ],
         ),
         (
@@ -168,17 +208,17 @@ fn part_pages_display_like_before() {
             &reg::FILTER,
             [
                 (
-                    "KIND",
+                    "TYPE",
                     ValFmt::Names(&chimera_core::dsp::filter::KIND_NAMES),
                 ),
-                ("CUTOFF", Uni),
-                ("RES", Uni),
+                ("FREQ", Law(Cutoff)),
+                ("Q", Uni),
                 (
                     "MODE",
-                    ValFmt::Names(&chimera_core::dsp::filter::SVF_MODE_NAMES),
+                    ValFmt::Names(chimera_core::dsp::filter::FilterKind::Svf.mode_labels()),
                 ),
-                ("ENV", ValFmt::Route),
-                ("KEY", ValFmt::Route),
+                ("FM1", ValFmt::Route),
+                ("FM2", ValFmt::Route),
             ],
         ),
         (
@@ -204,10 +244,16 @@ fn part_pages_display_like_before() {
             ],
         ),
     ];
-    // A panel slot's own label and format are empty: FLT, ENV and LFO read
-    // their views.
+    // A panel slot's own label and format are empty: FLT, ENV, LFO, EXC
+    // and MDL2 (here STRING's) read their views.
     let ctx = ctx();
-    let panels: [&BlockDef; 3] = [&reg::FILTER, &reg::ENVELOPE, &reg::LFO];
+    let panels: [&BlockDef; 5] = [
+        &reg::FILTER,
+        &reg::ENVELOPE,
+        &reg::LFO,
+        &reg::MODAL_EXC,
+        &reg::MODAL_2,
+    ];
     for (def, slots) in want {
         for (i, (label, fmt)) in slots.iter().enumerate() {
             let got = if panels.iter().any(|p| core::ptr::eq(*p, def)) {

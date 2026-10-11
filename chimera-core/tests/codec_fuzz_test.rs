@@ -1,12 +1,14 @@
-//! Mutated and random bytes never panic the Sound decoder or leave a value
-//! outside its spec. Seeded xorshift: deterministic and fast.
+//! Mutated and random bytes never panic the Sound or project decoder or
+//! leave a value outside its spec. Seeded xorshift: deterministic and fast.
 
 mod common;
 
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
-use common::codec_util::{check_decode, encode, fix_crc, record_offsets};
+use chimera_core::project::Project;
+use common::codec_util::{check_decode, check_project_decode, encode, fix_crc, record_offsets};
+use common::project::{encode as encode_project, full};
 
 struct Rng(u64);
 
@@ -94,5 +96,36 @@ fn random_bytes_never_panic() {
             fix_crc(&mut f);
         }
         check_decode(&f);
+    }
+}
+
+/// `mutate` on a full project, a file 40 times a Sound's, then random
+/// bytes behind a project header. The target is reused, as a failed pass 2
+/// leaves it for the next load to rebuild.
+#[test]
+fn project_bytes_never_panic() {
+    let good = encode_project(&full().0);
+    let (mut target, _) = Project::boxed();
+    let mut r = Rng(0x9E37_79B9_7F4A_7C15);
+    let mut oks = 0;
+    for _ in 0..2_000 {
+        let mut f = good.clone();
+        for _ in 0..=r.below(4) {
+            mutate(&mut f, &mut r);
+        }
+        fix_crc(&mut f);
+        oks += usize::from(check_project_decode(&f, &mut target));
+    }
+    // Enough survive to reach pass 2's writes and the Origins.
+    assert!(oks > 200, "{oks} Ok");
+    let mut r = Rng(0xD1B5_4A32_D192_ED03);
+    for _ in 0..2_000 {
+        let n = r.below(4_097);
+        let mut f: Vec<u8> = (0..n).map(|_| r.byte()).collect();
+        if n >= 32 {
+            f[..28].copy_from_slice(&good[..28]);
+            fix_crc(&mut f);
+        }
+        check_project_decode(&f, &mut target);
     }
 }

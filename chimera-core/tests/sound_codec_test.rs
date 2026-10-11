@@ -1,19 +1,23 @@
 //! The Sound codec (ADR 0045): a Sound encodes to card records and decodes
 //! back bit-equal; bad values fall back to the frozen neutral base.
 
-use chimera_core::addr::{BlockRef, Blocks, ParamAddr};
+mod common;
+
+use chimera_core::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS};
-use chimera_core::modulation::{CUTOFF, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModState};
+use chimera_core::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModState};
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot, PitchParams};
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
-    Check, Decode, FileError, FileKind, Framer, Generation, Header, Migration, RecordBuf,
-    RecordTag, SoundDecoder, ValidAddr, decode_block, encode_block, encode_sound, write_file,
+    Check, Decode, FileError, FileKind, Framer, Generation, HEADER_LEN, Header, MAX_SOUND_COST,
+    Migration, RecordBuf, RecordTag, SoundDecoder, TRAILER_LEN, ValidAddr, decode_block,
+    encode_block, encode_sound, write_file,
 };
 use chimera_hal::store::{ByteSink, StoreError};
+use common::XorShift;
 
 struct VecSink(Vec<u8>);
 
@@ -64,7 +68,7 @@ fn decode(bytes: &[u8]) -> Result<Sound, FileError> {
 
 fn block(b: BlockRef, s: &Sound) -> Vec<u8> {
     let mut r = RecordBuf::new();
-    encode_block(b, s.params.block(b).unwrap(), &mut r);
+    encode_block(b, s.params.block(b).unwrap(), None, &mut r);
     r.as_slice().to_vec()
 }
 
@@ -109,19 +113,19 @@ fn init_round_trip() {
 #[test]
 fn zero_amount_route_survives() {
     let mut s = Sound::init(EngineType::Algo);
-    let d = s.mod_state.find(CUTOFF).unwrap();
-    s.mod_state.set_route(6, d, 0);
+    s.mod_state.set_fixed(6, FixedCol::Freq, 0);
     let got = decode(&encode(&s)).unwrap();
-    assert_ne!(got.mod_state.present(d) & 1 << 6, 0);
+    assert_ne!(got.mod_state.fixed_present(FixedCol::Freq) & 1 << 6, 0);
     assert!(got.bits_eq(&s));
 }
 
-/// The first `n` modulatable addresses, in `BlockRef::ALL` order.
+/// The first `n` modulatable registry addresses (no fixed column's), in
+/// `BlockRef::ALL` order.
 fn modulatable(n: usize) -> Vec<ParamAddr> {
     BlockRef::ALL
         .into_iter()
         .flat_map(|b| b.specs().iter().map(move |s| ParamAddr::new(b, s.id)))
-        .filter(|a| a.modulatable())
+        .filter(|&a| a.modulatable() && FixedCol::of(a).is_none())
         .take(n)
         .collect()
 }
@@ -142,11 +146,19 @@ fn full_matrix_round_trip() {
             x ^= x << 5;
             s.mod_state.set_route(src, d, x as u8 as i8);
         }
+        // Every fixed column too: the largest Routes record there is.
+        for c in FixedCol::ALL {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            s.mod_state.set_fixed(src, c, x as u8 as i8);
+        }
     }
     let got = decode(&encode(&s)).unwrap();
     assert!(got.bits_eq(&s));
     assert_eq!(got.dest_registry.len(), MAX_REGISTRY_DESTS);
     assert_eq!(got.mod_state.present(MAX_MOD_DESTS - 1), 0xFF);
+    assert_eq!(got.mod_state.fixed_present(FixedCol::Fold), 0xFF);
 }
 
 #[test]
@@ -154,11 +166,13 @@ fn bits_eq_sees_differences_in_range() {
     let a = Sound::init(EngineType::Algo);
     let mut b = a.clone();
     assert!(a.bits_eq(&b));
-    b.mod_state.set_route(1, 0, 5);
+    b.mod_state.set_fixed(1, FixedCol::Freq, 5);
     assert!(!a.bits_eq(&b));
 
     let mut b = a.clone();
-    b.dest_registry.remove(CUTOFF);
+    b.dest_registry
+        .add(modulatable(1)[0], [b'A'; LABEL_LEN])
+        .unwrap();
     assert!(!a.bits_eq(&b));
 
     let mut b = a.clone();
@@ -264,18 +278,21 @@ fn unknown_engine_needs_newer() {
 #[test]
 fn block_payload_shape_is_checked() {
     let mut p = Sound::neutral(EngineType::Algo).params;
-    assert_eq!(decode_block(&[], &[], None), Err(FileError::Bounds));
-    assert_eq!(decode_block(&[10, 0, 0], &[], None), Err(FileError::Bounds));
-    let dup = [10, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0];
-    assert_eq!(decode_block(&dup, &[], None), Err(FileError::Corrupt));
-    // Unknown block codes and param ids are skipped.
+    assert_eq!(decode_block(&[], &[], &[], None), Err(FileError::Bounds));
     assert_eq!(
-        decode_block(&[200, 1, 0, 0, 0, 0], &[], Some(&mut p)),
-        Ok(())
+        decode_block(&[10, 0, 0], &[], &[], None),
+        Err(FileError::Bounds)
+    );
+    let dup = [10, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0];
+    assert_eq!(decode_block(&dup, &[], &[], None), Err(FileError::Corrupt));
+    // Unknown block codes and param ids are skipped, and counted.
+    assert_eq!(
+        decode_block(&[200, 1, 0, 0, 0, 0], &[], &[], Some(&mut p)),
+        Ok(1)
     );
     assert_eq!(
-        decode_block(&[10, 99, 0, 0, 0, 0], &[], Some(&mut p)),
-        Ok(())
+        decode_block(&[10, 99, 0, 0, 0, 0], &[], &[], Some(&mut p)),
+        Ok(1)
     );
 }
 
@@ -290,7 +307,7 @@ fn migration_maps_old_id() {
     let mut p = vec![10, 5];
     p.extend_from_slice(&0.8f32.to_le_bytes());
     let mut snap = Sound::neutral(EngineType::Algo).params;
-    decode_block(&p, &[m], Some(&mut snap)).unwrap();
+    decode_block(&p, &[m], &[], Some(&mut snap)).unwrap();
     assert_eq!(snap.filter.resonance, 0.4);
 }
 
@@ -302,29 +319,14 @@ fn init_is_named_init() {
     }
 }
 
-/// xorshift32: the same Sounds every run.
-struct Rng(u32);
-
-impl Rng {
-    fn next(&mut self) -> u32 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 17;
-        self.0 ^= self.0 << 5;
-        self.0
-    }
-
-    fn below(&mut self, n: usize) -> usize {
-        self.next() as usize % n
-    }
-
-    fn unit(&mut self) -> f32 {
-        (self.next() >> 8) as f32 / (1 << 24) as f32
-    }
+/// A draw in 0..1.
+fn unit(rng: &mut XorShift) -> f32 {
+    (rng.next_u32() >> 8) as f32 / (1 << 24) as f32
 }
 
 /// Every stored param of every voice block at a random value in range (an
 /// enum at a random code it accepts), random primed dests and routes.
-fn random_sound(e: EngineType, rng: &mut Rng) -> Sound {
+fn random_sound(e: EngineType, rng: &mut XorShift) -> Sound {
     let mut s = Sound::neutral(e);
     for b in BlockRef::ALL {
         let Some(blk) = s.params.block_mut(b) else {
@@ -340,7 +342,7 @@ fn random_sound(e: EngineType, rng: &mut Rng) -> Sound {
                     .collect();
                 assert!(blk.set_enum_code(spec.id, ok[rng.below(ok.len())]));
             } else {
-                blk.set(spec.id, spec.min + rng.unit() * (spec.max - spec.min));
+                blk.set(spec.id, spec.min + unit(rng) * (spec.max - spec.min));
             }
         }
     }
@@ -355,7 +357,12 @@ fn random_sound(e: EngineType, rng: &mut Rng) -> Sound {
     for src in 0..s.mod_state.num_sources() {
         for d in 0..s.mod_state.num_dests() {
             if rng.below(2) == 0 {
-                s.mod_state.set_route(src, d, rng.next() as u8 as i8);
+                s.mod_state.set_route(src, d, rng.next_u32() as u8 as i8);
+            }
+        }
+        for c in FixedCol::ALL {
+            if rng.below(2) == 0 {
+                s.mod_state.set_fixed(src, c, rng.next_u32() as u8 as i8);
             }
         }
     }
@@ -364,7 +371,7 @@ fn random_sound(e: EngineType, rng: &mut Rng) -> Sound {
 
 #[test]
 fn random_sounds_round_trip() {
-    let mut rng = Rng(0xC0DE_CAFE);
+    let mut rng = XorShift(0xC0DE_CAFE);
     for e in EngineType::ALL {
         for _ in 0..150 {
             assert_round_trip(&random_sound(e, &mut rng));
@@ -380,14 +387,282 @@ fn a_block_record_twice_is_corrupt() {
     assert_eq!(decode(&bytes).err(), Some(FileError::Corrupt));
 }
 
-/// The frozen base, pinned per engine: a change to a default moves every
-/// old file's sound.
+/// The frozen base, pinned per engine. A sparse file omits every param at
+/// neutral, so a change here moves every saved Sound: it needs a migration.
 #[test]
-fn neutral_is_pinned() {
+fn neutral_is_a_contract() {
     let golden = include_str!("fixtures/neutral_v1.txt");
     for e in EngineType::ALL {
-        let want = golden.replace("engine: ENGINE,", &format!("engine: {e:?},"));
+        let want = golden
+            .replace("engine: ENGINE,", &format!("engine: {e:?},"))
+            .replace(
+                "kind: Svf,",
+                &format!(
+                    "kind: {:?},",
+                    chimera_core::dsp::filter::FilterKind::default_for(e)
+                ),
+            );
         let got = format!("{:#?}\n", Sound::neutral(e));
-        assert!(got == want, "neutral {e:?} moved; now:\n{got}");
+        assert!(
+            got == want,
+            "neutral {e:?} moved: changing neutral needs a migration (ADR 0087); now:\n{got}"
+        );
     }
+}
+
+/// STEAL and GLIDE TIME (#254) round-trip.
+#[test]
+fn steal_and_glide_time_round_trip() {
+    use chimera_core::params::Steal;
+    for e in EngineType::ALL {
+        let mut s = Sound::init(e);
+        s.params.pitch.steal = Steal::Glide;
+        s.params.pitch.set(PitchParams::GLIDE_TIME, 0.25);
+        assert_round_trip(&s);
+        let d = decode(&encode(&s)).unwrap();
+        assert_eq!(d.params.pitch.steal, Steal::Glide);
+        assert_eq!(d.params.pitch.glide_time, 0.25);
+    }
+}
+
+/// A Pitch record from before STEAL (PITCH and FINE only) decodes to CUT,
+/// GLIDE TIME at its 150 ms.
+#[test]
+fn a_pitch_record_before_steal_decodes_to_cut() {
+    use chimera_core::params::Steal;
+    let mut p = vec![19];
+    for (id, v) in [(PitchParams::PITCH, 3.0_f32), (PitchParams::FINE, 0.0)] {
+        p.push(id.0);
+        p.extend_from_slice(&v.to_le_bytes());
+    }
+    for e in EngineType::ALL {
+        let got = decode(&file(&[engine(e), (RecordTag::Block, p.clone())])).unwrap();
+        assert_eq!(got.params.pitch.pitch, 3.0);
+        assert_eq!(got.params.pitch.steal, Steal::Cut, "{e:?}");
+        assert!(
+            (got.params.pitch.glide_secs() - 0.150).abs() < 1e-4,
+            "{e:?}"
+        );
+    }
+}
+
+/// `<engine code> <KIND code> <MODE code>`, append-only: a new engine adds a row.
+const NEUTRAL_FILTER_ROWS: &str = include_str!("fixtures/neutral_filter_v1.txt");
+
+#[test]
+fn neutral_filter_rows_are_pinned() {
+    use chimera_core::block::DiskCode;
+    let rows: Vec<[u8; 3]> = NEUTRAL_FILTER_ROWS
+        .lines()
+        .map(|l| {
+            let v: Vec<u8> = l.split(' ').map(|n| n.parse().unwrap()).collect();
+            [v[0], v[1], v[2]]
+        })
+        .collect();
+    assert_eq!(rows.len(), EngineType::ALL.len());
+    for e in EngineType::ALL {
+        let row = rows
+            .iter()
+            .find(|r| r[0] == e.disk_code())
+            .unwrap_or_else(|| panic!("no row for {e:?}"));
+        let codes = |s: &Sound| {
+            [
+                e.disk_code(),
+                s.params.filter.kind().disk_code(),
+                s.params.filter.mode().disk_code(),
+            ]
+        };
+        assert_eq!(&codes(&Sound::init(e)), row, "init {e:?}");
+        assert_eq!(&codes(&Sound::neutral(e)), row, "neutral {e:?}");
+        let bare = decode(&file(&[engine(e)])).unwrap();
+        assert_eq!(&codes(&bare), row, "decoded {e:?}");
+    }
+}
+
+/// The factory Sounds, INIT on each engine, then `n` random Sounds.
+fn sparse_cases(n: usize) -> Vec<Sound> {
+    let mut v: Vec<Sound> = (0..FACTORY_LEN)
+        .map(|i| factory_sound(i).unwrap())
+        .collect();
+    v.extend(EngineType::ALL.map(Sound::init));
+    let mut rng = XorShift(0x5EED_5A25);
+    for i in 0..n {
+        v.push(random_sound(EngineType::ALL[i % 2], &mut rng));
+    }
+    v
+}
+
+/// The bytes a Sound costs in the pool: its 16 B name and its records.
+fn cost(file: &[u8]) -> usize {
+    16 + file.len() - HEADER_LEN - TRAILER_LEN
+}
+
+#[test]
+fn sparse_round_trip() {
+    for s in sparse_cases(1000) {
+        assert_round_trip(&s);
+    }
+}
+
+#[test]
+fn sparse_byte_identity() {
+    for s in sparse_cases(1000) {
+        let f = encode(&s);
+        assert_eq!(encode(&decode(&f).unwrap()), f, "{}", s.name.as_str());
+    }
+    // The old encoder's full files: a factory one re-encodes to its
+    // Sound's sparse bytes, and INIT's sparse form decodes the same.
+    for i in 0..FACTORY_LEN {
+        let full = v1_fixture(&format!("factory_{i}.snd"));
+        let s = factory_sound(i).unwrap();
+        assert_eq!(cost(&full), 1143 + 16 * usize::from(i == 6), "{i}");
+        assert_eq!(encode(&decode(&full).unwrap()), encode(&s), "{i}");
+    }
+    for name in ["init_algo.snd", "init_modal.snd"] {
+        let old = decode(&v1_fixture(name)).unwrap();
+        let sparse = encode(&old);
+        assert!(decode(&sparse).unwrap().bits_eq(&old), "{name}");
+    }
+}
+
+fn v1_fixture(name: &str) -> Vec<u8> {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v1");
+    std::fs::read(p.join(name)).unwrap()
+}
+
+/// One random stored param of `s` moved one step.
+fn nudged(s: &Sound, rng: &mut XorShift) -> Sound {
+    let mut t = s.clone();
+    let blocks: Vec<BlockRef> = BlockRef::ALL
+        .into_iter()
+        .filter(|&b| s.params.block(b).is_some())
+        .collect();
+    let b = blocks[rng.below(blocks.len())];
+    let addrs: Vec<ValidAddr> = ValidAddr::of_block(b).collect();
+    let id = addrs[rng.below(addrs.len())].spec().id;
+    let dir = if rng.below(2) == 0 { -1 } else { 1 };
+    t.params.block_mut(b).unwrap().nudge(id, dir);
+    t
+}
+
+#[test]
+fn sparse_is_canonical() {
+    let mut rng = XorShift(0xCA70_0001);
+    let (mut same, mut moved) = (0, 0);
+    for (i, a) in sparse_cases(1000).into_iter().enumerate().take(1000) {
+        let b = nudged(&a, &mut rng);
+        let eq = a.bits_eq(&b);
+        assert_eq!(encode(&a) == encode(&b), eq, "case {i}");
+        if eq { same += 1 } else { moved += 1 }
+    }
+    assert!(same > 0 && moved > 900, "{same} same, {moved} moved");
+}
+
+#[test]
+fn sparse_sizes() {
+    let costs: Vec<usize> = (0..FACTORY_LEN)
+        .map(|i| cost(&encode(&factory_sound(i).unwrap())))
+        .collect();
+    println!("factory: {costs:?}");
+    assert!(costs.iter().all(|c| (141..=261).contains(c)), "{costs:?}");
+    // 46 B of name, Engine, an empty Registry, ModDests and Routes (its
+    // three fixed-FREQ routes), and 70 B for the values INIT moved off
+    // neutral (ADR 0063): RR on six operators and OUT LEVEL, a one-param
+    // block each.
+    // TAPE's INIT routes ENV 1 into VCA: one fixed-column route more, 4 B.
+    // VA's too, and its FINE2 and STAB: one block of two params, 15 B.
+    for e in EngineType::ALL {
+        let more = match e {
+            EngineType::Algo | EngineType::Modal => 0,
+            EngineType::Tape => 4,
+            EngineType::Va => 4 + 15,
+        };
+        assert_eq!(cost(&encode(&Sound::init(e))), 46 + 7 * 10 + more, "{e:?}");
+    }
+}
+
+/// `neutral(e)` with every stored param that can move at another value, a
+/// full registry, every route and tap and a source; and how many can't
+/// (one-value enums).
+fn worst(e: EngineType) -> (Sound, usize) {
+    let neutral = Sound::neutral(e);
+    let mut s = Sound::neutral(e);
+    let mut stuck = 0;
+    for b in BlockRef::ALL {
+        let Some(blk) = s.params.block_mut(b) else {
+            continue;
+        };
+        let base = neutral.params.block(b).unwrap();
+        for a in ValidAddr::of_block(b) {
+            let (id, sp) = (a.spec().id, a.spec());
+            if a.coded() {
+                let was = base.enum_code(id).unwrap();
+                if !(0..=u8::MAX).any(|c| c != was && blk.set_enum_code(id, c)) {
+                    stuck += 1;
+                }
+            } else {
+                blk.set(
+                    id,
+                    if base.get(id) == sp.max {
+                        sp.min
+                    } else {
+                        sp.max
+                    },
+                );
+            }
+        }
+        for a in ValidAddr::of_block(b) {
+            let (id, ident) = (a.spec().id, a.spec().ident);
+            let moved = blk.get(id).to_bits() != base.get(id).to_bits();
+            assert!(moved || a.coded(), "{b:?} {ident} didn't move");
+        }
+    }
+    for (i, a) in modulatable(MAX_REGISTRY_DESTS).into_iter().enumerate() {
+        s.dest_registry.add(a, [b'A' + i as u8; LABEL_LEN]).unwrap();
+    }
+    s.mod_state = ModState::from_registry(&s.dest_registry, MAX_MOD_SOURCES);
+    for src in 0..MAX_MOD_SOURCES {
+        for d in 0..MAX_MOD_DESTS {
+            s.mod_state.set_route(src, d, 1);
+        }
+        for c in FixedCol::ALL {
+            s.mod_state.set_fixed(src, c, 1);
+        }
+    }
+    for op in chimera_core::taps::TapOp::ALL {
+        for c in FixedCol::ALL {
+            s.params.taps.set(op, c, 1);
+        }
+    }
+    let tune = chimera_core::storage::ZoneTune::new(&[(6_000, 1 << 16); 24]);
+    assert!(tune.is_some());
+    s.source = Some(chimera_core::storage::TapeSource {
+        r: chimera_core::project::SourceRef {
+            crc: 0xC401_0001,
+            frames: 27_900,
+            rate: 24_000,
+        },
+        tune,
+    });
+    (s, stuck)
+}
+
+/// 16 + 5 (`Engine`) + 21 × 5 (block heads) + 236 × 5 (params) + 164
+/// (`Registry`) + 37 (`ModDests`) + 644 (`Routes`, the fixed columns'
+/// among them) + 36 (`TapRoutes`) + 14 (`SourceRef`) + 148 (`ZoneTune`,
+/// 24 zones) = 2 349 B, less 5 B for each param that has nowhere to move.
+/// A new param moves it: raise
+/// `MAX_SOUND_COST` with it.
+#[test]
+fn sparse_bound() {
+    let mut most = 0;
+    for e in EngineType::ALL {
+        let (s, stuck) = worst(e);
+        let c = cost(&encode(&s));
+        println!("worst {e:?}: {c} B, {stuck} stuck");
+        assert!(c <= MAX_SOUND_COST, "{e:?} {c}");
+        most = most.max(c + 5 * stuck);
+    }
+    assert_eq!(most, 2349);
+    assert_eq!(MAX_SOUND_COST, most.next_multiple_of(16));
 }

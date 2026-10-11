@@ -1,6 +1,8 @@
 //! `Block` trait semantics (spec §1) and per-block conformance.
 
-use chimera_core::block::{Block, ParamId, ParamKind, ParamSpec, ValFmt, apply_offset};
+use chimera_core::block::{
+    Block, Change, Motion, ParamId, ParamKind, ParamSpec, Smoothing, ValFmt, apply_offset,
+};
 
 /// A block with one param of each kind.
 #[derive(Default)]
@@ -15,9 +17,28 @@ const S: ParamId = ParamId(1);
 const E: ParamId = ParamId(2);
 
 static PROBE_SPECS: [ParamSpec; 3] = [
-    ParamSpec::continuous(0, "C", ValFmt::Bi, -1.0, 1.0, 0.0, 0.25, true),
-    ParamSpec::stepped(1, "S", ValFmt::Int(10), 0.0, 10.0, 5.0, true),
-    ParamSpec::choice(2, "E", ValFmt::Int(3), 3.0, 0.0),
+    ParamSpec::continuous(
+        0,
+        "C",
+        ValFmt::Bi,
+        -1.0,
+        1.0,
+        0.0,
+        0.25,
+        true,
+        Smoothing::KNOB,
+    ),
+    ParamSpec::stepped(
+        1,
+        "S",
+        ValFmt::Int(10),
+        0.0,
+        10.0,
+        5.0,
+        true,
+        Motion::Stepped(Change::Snap),
+    ),
+    ParamSpec::choice(2, "E", ValFmt::Int(3), 3.0, 0.0, Change::Snap),
 ];
 
 impl Block for Probe {
@@ -134,10 +155,16 @@ fn apply_offset_is_the_old_formula_and_never_rounds() {
         e: 0,
     };
     apply_offset(&mut p, S, 0.03);
-    assert_eq!(p.s, (5.0f32 + 0.03f32 * (10.0 - 0.0)).clamp(0.0, 10.0));
+    assert_eq!(
+        p.s,
+        chimera_core::dsp::clampf(5.0 + 0.03 * (10.0 - 0.0), 0.0, 10.0)
+    );
     assert_ne!(p.s, 5.0); // fractional: Stepped modulation is not rounded
     apply_offset(&mut p, C, -0.1);
-    assert_eq!(p.c, (0.0f32 + -0.1f32 * (1.0 - -1.0)).clamp(-1.0, 1.0));
+    assert_eq!(
+        p.c,
+        chimera_core::dsp::clampf(0.0 + -0.1 * (1.0 - -1.0), -1.0, 1.0)
+    );
     apply_offset(&mut p, C, 2.0);
     assert_eq!(p.c, 1.0);
 }
@@ -273,10 +300,12 @@ fn snap_walks_bipolar_points_both_ways() {
     }
 }
 
-/// Spec §1: `ParamSnapshot` shrinks from 1,524 B to roughly 0.4 KB.
+/// Spec §1: `ParamSnapshot` shrinks from 1,524 B to roughly 0.4 KB; TAPE's
+/// params add 48 B (TAPE spec § 2, Structure); VA's params add 40 B
+/// (VA spec § Params).
 #[test]
 fn snapshot_is_small() {
     let size = core::mem::size_of::<chimera_core::params::ParamSnapshot>();
     eprintln!("ParamSnapshot = {size} B");
-    assert!(size <= 512, "ParamSnapshot is {size} B");
+    assert!(size <= 584, "ParamSnapshot is {size} B");
 }

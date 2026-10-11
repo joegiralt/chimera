@@ -12,7 +12,6 @@ use chimera_core::dsp::modal::{ResonatorMode, take_cleared_bytes};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{CPU_HZ_REV_V, MAX_VOICES, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument, SYM_CLEAR_BUDGET};
-use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -33,6 +32,11 @@ fn modal(mode: ResonatorMode) -> ParamSnapshot {
     p.modal.mode = mode;
     p
 }
+
+/// Blocks a released Sympathetic note may ring: neither its main string
+/// nor its halo gets a release (ADR 0054, 0062), about 40 s at the default
+/// DAMP.
+const HALO_RINGS: usize = 60 * chimera_hal::SAMPLE_RATE as usize / BLOCK_SIZE;
 
 fn sym() -> ParamSnapshot {
     modal(ResonatorMode::Sympathetic)
@@ -67,7 +71,7 @@ impl Stage {
     fn with_budget(parts: &[(ParamSnapshot, PartMode)], budget: SampleBudget) -> Self {
         let mut shared = AudioShared::default();
         for (part, (p, mode)) in shared.parts.iter_mut().zip(parts) {
-            part.params = p.clone();
+            *part.params = p.clone();
             part.mix.mode = *mode;
         }
         Self {
@@ -368,7 +372,7 @@ fn a_handed_over_slot_carries_nothing() {
     }
     assert_eq!(s.inst.sym().holder(SymSlot::ALL[0]), Some(VoiceIdx::ALL[a]));
     s.off(0, 60);
-    s.until_idle(5_000);
+    s.until_idle(HALO_RINGS);
     assert_eq!(s.inst.sym().free(), SYM_SLOTS);
 
     s.off(0, 60);
@@ -442,10 +446,10 @@ fn storm(budget: SampleBudget) -> usize {
             let p = &mut s.shared.parts[next(3) as usize].params;
             let engine = match p.engine() {
                 EngineType::Algo => EngineType::Modal,
-                EngineType::Modal => EngineType::Algo,
+                EngineType::Modal | EngineType::Tape | EngineType::Va => EngineType::Algo,
             };
             let mode = p.modal.mode;
-            *p = ParamSnapshot::for_engine(engine);
+            **p = ParamSnapshot::for_engine(engine);
             p.modal.mode = mode;
         }
         s.block();
@@ -454,7 +458,7 @@ fn storm(budget: SampleBudget) -> usize {
     for (part, n) in held {
         s.off(part, n);
     }
-    s.until_idle(5_000);
+    s.until_idle(HALO_RINGS);
     assert_eq!(s.inst.sym().free(), SYM_SLOTS);
     most
 }
@@ -491,7 +495,7 @@ fn switch_gives_the_last_four_played_a_halo() {
         let holders: Vec<usize> = older.iter().map(|&n| s.voice_of(1, n)).collect();
         let before = s.inst.rebuilds();
 
-        s.shared.parts[0].params = sym();
+        *s.shared.parts[0].params = sym();
         for _ in 0..FADE_BLOCKS + 1 {
             s.block();
         }
@@ -516,7 +520,7 @@ fn switch_gives_the_last_four_played_a_halo() {
         for &n in older {
             s.off(1, n);
         }
-        s.until_idle(5_000);
+        s.until_idle(HALO_RINGS);
         assert_eq!(s.inst.sym().free(), SYM_SLOTS);
     }
 }
@@ -524,17 +528,15 @@ fn switch_gives_the_last_four_played_a_halo() {
 #[test]
 fn a_resting_voice_gives_its_slot_back() {
     let mut p = sym();
-    p.modal.decay = 0.3;
+    p.modal.damp = chimera_core::dsp::modal::damp_from_v1_decay(0.3);
     let mut s = Stage::new(&[(p, PartMode::Poly)]);
     s.on(0, 60);
     let v = s.voice_of(0, 60);
     s.block();
     assert_eq!(s.inst.sym().lent(), 1);
-    // Released, it rings down on its own: no fade, no reset. Held, the
-    // default KS feedback sustains it for good
-    // (private issue #191).
+    // Released, it rings down on its own: no fade, no reset.
     s.off(0, 60);
-    for _ in 0..5_000 {
+    for _ in 0..HALO_RINGS {
         let r = s.inst.rebuilds()[v];
         s.block();
         if !s.inst.active()[v] {
@@ -582,14 +584,11 @@ fn a_mono_part_keeps_one_voice() {
 /// goes idle within a block, however low (a low loop filters too seldom
 /// to fall silent soon on its own).
 fn short_sym(s: &mut Stage, parts: usize) {
-    let mut reg = ModDestRegistry::new();
-    let _ = reg.add(VCA, *b"TEST\0\0\0\0");
-    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
-    let d = ms.find(VCA).unwrap();
-    ms.set_route(ModSource::Env1.index(), d, 127);
+    let mut ms = ModState::with_sources(MAX_MOD_SOURCES);
+    assert!(ms.set_route_addr(ModSource::Env1.index(), VCA, 127));
     for part in &mut s.shared.parts[..parts] {
         part.params.envelopes[0].release = 0.0;
-        part.mod_state = ms.clone();
+        *part.mod_state = ms.clone();
     }
 }
 
@@ -734,7 +733,7 @@ fn a_note_waiting_across_a_switch_to_sympathetic_is_placed() {
         s.inst.active()[v],
         "50 waits for Part 3's fade on its voice"
     );
-    s.shared.parts[1].params = sym();
+    *s.shared.parts[1].params = sym();
     let mut sounded = false;
     for _ in 0..12 {
         s.block();
@@ -787,7 +786,7 @@ fn a_note_waiting_across_a_switch_takes_a_free_slot() {
         s.inst.active()[v],
         "50 waits for Part 3's fade on its voice"
     );
-    s.shared.parts[1].params = sym();
+    *s.shared.parts[1].params = sym();
     for _ in 0..FADE_BLOCKS + 3 {
         s.block();
     }
@@ -842,7 +841,7 @@ fn a_mode_toggle_storm_keeps_the_clear_budget() {
     let _ = take_cleared_bytes();
     let mut cleared = Vec::new();
     for b in 0..40 {
-        s.shared.parts[0].params = match b {
+        *s.shared.parts[0].params = match b {
             0 | 3 | 5 => modal(ResonatorMode::String),
             _ => sym(),
         };

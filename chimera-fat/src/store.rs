@@ -3,10 +3,15 @@
 //! mapped here, and a device error re-inits the card.
 
 use crate::blocks::{BLOCK, Blocks, FsError};
-use crate::fat::{FatCache, Stale};
+use crate::fat::{FatCache, Orphan, Stale, Table};
 use crate::fs::Fs;
+use crate::mark::{self, CLEAN, DIRTY};
+use crate::sweep::{self, Fail};
 use crate::volume::{Layout, first_partition, layout};
-use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
+use chimera_hal::store::{
+    ByteSink, Dir, Doubt, FileName, Files, Mark, ReadSink, Store, StoreError, Sweep, SweepSeen,
+    SweepStats, Swept, VolumeId,
+};
 use embedded_hal::delay::DelayNs;
 use embedded_hal::spi::SpiDevice;
 use embedded_sdmmc::{Block, BlockDevice, BlockIdx, SdCard, SdCardError};
@@ -20,8 +25,16 @@ pub trait Medium: BlockDevice {
     fn reinit(&self) {}
     /// The volume opened: fast clock.
     fn mounted(&self) {}
+    /// Each operation armed from now on ends after `ms` in all; `None`:
+    /// the medium's own cap.
+    fn cap(&self, _ms: Option<u32>) {}
     fn classify(&self, _e: &Self::Error) -> StoreError {
         StoreError::Io
+    }
+    /// Ms since this operation's `start_op`, as of its last transaction:
+    /// the sweep's phase times. 0 where nothing counts.
+    fn elapsed_ms(&self) -> u32 {
+        0
     }
 }
 
@@ -41,7 +54,13 @@ pub trait SdBus {
     fn phase(&self) -> BusPhase;
     /// Arm the phase's deadline.
     fn start_op(&mut self);
+    /// `Medium::cap`.
+    fn set_cap(&mut self, _ms: Option<u32>) {}
     fn timed_out(&self) -> bool;
+    /// `Medium::elapsed_ms`.
+    fn elapsed_ms(&self) -> u32 {
+        0
+    }
 }
 
 /// The deadline, if it passed: no card while acquiring, a timeout after.
@@ -71,6 +90,14 @@ impl<S: SpiDevice<u8> + SdBus, D: DelayNs> Medium for SdCard<S, D> {
         self.spi(|s| s.set_phase(BusPhase::Data));
     }
 
+    fn cap(&self, ms: Option<u32>) {
+        self.spi(|s| s.set_cap(ms));
+    }
+
+    fn elapsed_ms(&self) -> u32 {
+        self.spi(|s| s.elapsed_ms())
+    }
+
     fn classify(&self, e: &SdCardError) -> StoreError {
         match e {
             SdCardError::CardNotFound => StoreError::NoCard,
@@ -96,6 +123,9 @@ struct Part<'a, D> {
     dev: &'a D,
     lba: u32,
     blocks: u32,
+    /// The clean mark's block: `mark::DIRTY` lands there before the first
+    /// write, then this is `None`.
+    dirty: Option<u32>,
 }
 
 impl<D: BlockDevice> Part<'_, D> {
@@ -122,10 +152,42 @@ impl<D: BlockDevice> Blocks for Part<'_, D> {
     }
 
     fn write(&mut self, lba: u32, buf: &[u8; BLOCK]) -> Result<(), Self::Error> {
+        if let Some(mark) = self.dirty {
+            let at = self.at(mark)?;
+            self.dev
+                .write(&[Block { contents: DIRTY }], at)
+                .map_err(PartError::Dev)?;
+            self.dirty = None;
+        }
         let at = self.at(lba)?;
         self.dev
             .write(&[Block { contents: *buf }], at)
             .map_err(PartError::Dev)
+    }
+}
+
+/// Why a `ReadOnly` access failed.
+enum RoError<E> {
+    Dev(E),
+    /// A write: never sent.
+    Refused,
+}
+
+/// The sweep's blocks while it only reads, and for all of a dry run:
+/// every write is refused before it reaches the card.
+struct ReadOnly<B>(B);
+
+impl<B: Blocks> Blocks for ReadOnly<B> {
+    type Error = RoError<B::Error>;
+
+    fn read(&mut self, lba: u32, buf: &mut [u8; BLOCK]) -> Result<(), Self::Error> {
+        self.0.read(lba, buf).map_err(RoError::Dev)
+    }
+
+    /// Never asked: the read phases don't write. A bug, if it is.
+    fn write(&mut self, _lba: u32, _buf: &[u8; BLOCK]) -> Result<(), Self::Error> {
+        debug_assert!(false, "a write in the sweep's read phases");
+        Err(RoError::Refused)
     }
 }
 
@@ -149,13 +211,14 @@ impl<T> Keyed<T> {
 
 /// A FAT16/FAT32 card behind `Store`. Its RAM: one block buffer, the FAT
 /// cache, and, each for the volume it was taken on, the allocator's hint
-/// and a FAT sector FAT 2 missed.
+/// a FAT sector FAT 2 missed, and a chain a failed write left.
 pub struct FatStore<D: Medium> {
     dev: D,
     buf: [u8; BLOCK],
     fat: FatCache,
     hint: Keyed<u32>,
     stale: Keyed<Stale>,
+    orphan: Keyed<Orphan>,
 }
 
 type FsResult<T, D> = Result<T, FsError<PartError<<D as BlockDevice>::Error>>>;
@@ -168,11 +231,138 @@ impl<D: Medium> FatStore<D> {
             fat: FatCache::new(),
             hint: Keyed::new(),
             stale: Keyed::new(),
+            orphan: Keyed::new(),
         }
     }
 
     pub fn device(&self) -> &D {
         &self.dev
+    }
+
+    /// `Fs::remove_dir` on the card, if it is still `vol`.
+    pub fn remove_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<bool, StoreError> {
+        self.change(vol, |fs| fs.remove_dir(dir))
+    }
+
+    /// `Fs::free_bytes` on the card, if it is still `vol`.
+    pub fn free_bytes(&mut self, vol: VolumeId) -> Result<u64, StoreError> {
+        self.run(vol, |fs, _| fs.free_bytes())
+    }
+
+    /// `Fs::aim` on the card, if it is still `vol`: kept for its next write.
+    pub fn aim(&mut self, vol: VolumeId, per_mille: u16) -> Result<(), StoreError> {
+        self.run(vol, |fs, _| {
+            fs.aim(per_mille);
+            Ok(())
+        })
+    }
+
+    /// `Fs::runs` on the card, if it is still `vol`, each run's first block
+    /// on the device: for raw reads that bypass the FAT.
+    pub fn runs(
+        &mut self,
+        vol: VolumeId,
+        file: FileName,
+        f: &mut dyn FnMut(u32, u32),
+    ) -> Result<u32, StoreError> {
+        self.run(vol, |fs, lba| {
+            fs.runs(file, &mut |at, n| f(lba.saturating_add(at), n))
+        })
+    }
+
+    /// The lost-cluster sweep (#360): `Store::sweep`, one operation under
+    /// the card's deadlines. `DryRun` reads through `ReadOnly` and never
+    /// heals: no stale sector or orphan is touched, no FSInfo patched.
+    pub fn sweep(&mut self, vol: VolumeId, mode: Sweep, marks: &mut [u8]) -> SweepSeen {
+        let mut stats = SweepStats::default();
+        self.dev.start_op();
+        if let Err(e) = self.read(0) {
+            return Err((self.read_doubt(&e), stats));
+        }
+        let (lba, layout, now) = self.identify().map_err(|e| (Doubt::Card(e), stats))?;
+        if now != vol {
+            return Err((Doubt::Card(StoreError::VolumeChanged(now)), stats));
+        }
+        stats.spc = layout.blocks_per_cluster();
+        stats.clusters = layout.clusters();
+        stats.fat_bytes = layout.fat1().len() as u32 * BLOCK as u32;
+        if !sweep::has_room(&layout, marks) {
+            return Err((Doubt::NoRoom, stats));
+        }
+        let mut ro = ReadOnly(Part {
+            dev: &self.dev,
+            lba,
+            blocks: layout.blocks(),
+            dirty: None,
+        });
+        // FAT 2's copy of the one sector it differs in.
+        let mut d = [0; BLOCK];
+        let dev = &self.dev;
+        let found = sweep::survey(
+            &mut Table::new(&mut ro, &layout, &mut self.fat),
+            &mut self.buf,
+            marks,
+            &mut d,
+            &|| dev.elapsed_ms(),
+            &mut stats,
+        );
+        let found = match found {
+            Ok(f) => f,
+            Err(Fail::Doubt(d)) => return Err((d, stats)),
+            Err(Fail::Dev(RoError::Dev(PartError::Dev(e)))) => {
+                return Err((self.read_doubt(&e), stats));
+            }
+            Err(Fail::Dev(RoError::Dev(PartError::Outside))) => {
+                return Err((Doubt::Card(StoreError::Corrupt), stats));
+            }
+            Err(Fail::Dev(RoError::Refused)) => {
+                return Err((Doubt::Card(StoreError::ReadOnly), stats));
+            }
+        };
+        let mut swept = Swept {
+            lost: found.lost,
+            freed: 0,
+            stale: found.differs.is_some(),
+            healed: false,
+            stats,
+        };
+        if mode == Sweep::DryRun || (found.lost == 0 && found.differs.is_none()) {
+            return Ok(swept);
+        }
+        if found.lost > sweep::max_lost(&layout) {
+            return Err((Doubt::TooMany(found.lost), stats));
+        }
+        swept.healed = swept.stale;
+        let ReadOnly(mut part) = ro;
+        let freed = sweep::free(
+            &mut part,
+            &layout,
+            &mut self.fat,
+            &mut self.buf,
+            marks,
+            &found,
+            &d,
+        );
+        if let Some(s) = self.fat.take_stale() {
+            self.stale.set(now, s);
+        }
+        swept.freed = freed.map_err(|e| {
+            let e = match e {
+                FsError::Dev(PartError::Dev(e)) => self.fault(&e),
+                _ => StoreError::Corrupt,
+            };
+            (Doubt::Card(e), stats)
+        })?;
+        Ok(swept)
+    }
+
+    /// A device error while the sweep reads: `Io` is `Unreadable`; a
+    /// timeout, an empty slot or a swap is the card's.
+    fn read_doubt(&self, e: &D::Error) -> Doubt {
+        match self.fault(e) {
+            StoreError::Io => Doubt::Unreadable,
+            e => Doubt::Card(e),
+        }
     }
 
     /// A device error: classified by the medium, which re-inits.
@@ -199,7 +389,8 @@ impl<D: Medium> FatStore<D> {
         Ok((p.lba, l, id))
     }
 
-    /// Runs `op` on the card, if it is still `vol`.
+    /// Runs `op` on the card, if it is still `vol`, with the partition's
+    /// first block.
     ///
     /// Error mapping. `FsError::Dev` is fatal for the whole operation: the
     /// `Fs` has stopped where it failed and dropped any unflushed FAT
@@ -212,41 +403,116 @@ impl<D: Medium> FatStore<D> {
     fn run<T>(
         &mut self,
         vol: VolumeId,
-        op: impl FnOnce(&mut Fs<'_, Part<'_, D>>) -> FsResult<T, D>,
+        op: impl FnOnce(&mut Fs<'_, Part<'_, D>>, u32) -> FsResult<T, D>,
     ) -> Result<T, StoreError> {
-        self.dev.start_op();
-        self.read(0).map_err(|e| self.fault(&e))?;
-        let (lba, layout, now) = self.identify()?;
-        if now != vol {
-            return Err(StoreError::VolumeChanged(now));
-        }
-        let mut hint = self.hint.for_volume(now);
-        self.fat.keep_stale(self.stale.for_volume(now));
+        let (lba, layout, now, mut hint) = self.open_op(vol)?;
         let mut part = Part {
             dev: &self.dev,
             lba,
             blocks: layout.blocks(),
+            dirty: None,
         };
-        let r = op(&mut Fs::new(
+        let r = op(
+            &mut Fs::new(&mut part, layout, &mut self.fat, &mut self.buf, &mut hint),
+            lba,
+        );
+        self.close_op(now, hint);
+        r.map_err(|e| self.op_error(e))
+    }
+
+    /// `run` for a change that may write (ADR 0094). A clean mark goes
+    /// `DIRTY` before the change's first write, and back to `CLEAN` only
+    /// once the change returned `Ok` with every write landed and nothing
+    /// left for the next change to heal. A mark not clean at the start
+    /// stays as it is: a debt is never cleared here, only by a settled
+    /// sweep. A change that writes nothing writes no mark.
+    fn change<T>(
+        &mut self,
+        vol: VolumeId,
+        op: impl FnOnce(&mut Fs<'_, Part<'_, D>>) -> FsResult<T, D>,
+    ) -> Result<T, StoreError> {
+        let (lba, layout, now, mut hint) = self.open_op(vol)?;
+        let mut part = Part {
+            dev: &self.dev,
+            lba,
+            blocks: layout.blocks(),
+            dirty: None,
+        };
+        let seen = mark::read(&mut Fs::new(
             &mut part,
             layout,
             &mut self.fat,
             &mut self.buf,
             &mut hint,
         ));
+        let r = match seen {
+            Ok((m, at)) => {
+                let clean = at.filter(|_| m == Mark::Clean);
+                part.dirty = clean;
+                let r = op(&mut Fs::new(
+                    &mut part,
+                    layout,
+                    &mut self.fat,
+                    &mut self.buf,
+                    &mut hint,
+                ));
+                let fired = clean.is_some() && part.dirty.is_none();
+                // A failed `CLEAN` leaves the mark dirty: a sweep at the
+                // next boot, the change itself done.
+                if let (Some(at), true, Ok(_)) = (clean, fired && !self.fat.pending(), &r)
+                    && let Err(PartError::Dev(e)) = part.write(at, &CLEAN)
+                {
+                    self.fault(&e);
+                }
+                r
+            }
+            Err(e) => Err(e),
+        };
+        self.close_op(now, hint);
+        r.map_err(|e| self.op_error(e))
+    }
+
+    /// `run`'s start, out of line: one copy for every op, not one each.
+    #[inline(never)]
+    fn open_op(
+        &mut self,
+        vol: VolumeId,
+    ) -> Result<(u32, Layout, VolumeId, Option<u32>), StoreError> {
+        self.dev.start_op();
+        self.read(0).map_err(|e| self.fault(&e))?;
+        let (lba, layout, now) = self.identify()?;
+        if now != vol {
+            return Err(StoreError::VolumeChanged(now));
+        }
+        let hint = self.hint.for_volume(now);
+        self.fat.keep_stale(self.stale.for_volume(now));
+        self.fat.keep_orphan(self.orphan.for_volume(now));
+        Ok((lba, layout, now, hint))
+    }
+
+    /// `run`'s end: what the op learned of the volume, kept for it.
+    #[inline(never)]
+    fn close_op(&mut self, now: VolumeId, hint: Option<u32>) {
         if let Some(c) = hint {
             self.hint.set(now, c);
+        }
+        if let Some(c) = self.fat.take_orphan() {
+            self.orphan.set(now, c);
         }
         if let Some(s) = self.fat.take_stale() {
             self.stale.set(now, s);
         }
-        r.map_err(|e| match e {
+    }
+
+    #[inline(never)]
+    fn op_error(&mut self, e: FsError<PartError<<D as BlockDevice>::Error>>) -> StoreError {
+        match e {
             FsError::Dev(PartError::Dev(e)) => self.fault(&e),
             FsError::Dev(PartError::Outside) | FsError::Corrupt => StoreError::Corrupt,
             FsError::NotFound => StoreError::NotFound,
             FsError::Full => StoreError::Full,
             FsError::Body(e) => e,
-        })
+        }
     }
 }
 
@@ -272,7 +538,7 @@ impl<D: Medium> Store for FatStore<D> {
         dir: Dir,
         f: &mut dyn FnMut(FileName, u32),
     ) -> Result<(), StoreError> {
-        self.run(vol, |fs| fs.list(dir, f))
+        self.run(vol, |fs, _| fs.list(dir, f))
     }
 
     fn read(
@@ -281,7 +547,17 @@ impl<D: Medium> Store for FatStore<D> {
         file: FileName,
         sink: &mut dyn ReadSink,
     ) -> Result<(), StoreError> {
-        self.run(vol, |fs| fs.read(file, sink))
+        self.run(vol, |fs, _| fs.read(file, sink))
+    }
+
+    fn read_at(
+        &mut self,
+        vol: VolumeId,
+        file: FileName,
+        offset: u32,
+        sink: &mut dyn ReadSink,
+    ) -> Result<(), StoreError> {
+        self.run(vol, |fs, _| fs.read_at(file, offset, sink))
     }
 
     fn write(
@@ -290,14 +566,53 @@ impl<D: Medium> Store for FatStore<D> {
         file: FileName,
         body: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
     ) -> Result<u32, StoreError> {
-        self.run(vol, |fs| fs.write(file, body))
+        if file == mark::name() {
+            return Err(StoreError::ReadOnly);
+        }
+        self.change(vol, |fs| fs.write(file, body))
     }
 
     fn delete(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
-        self.run(vol, |fs| fs.delete(file))
+        if file == mark::name() {
+            return Err(StoreError::ReadOnly);
+        }
+        self.change(vol, |fs| fs.delete(file))
     }
 
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
-        self.run(vol, |fs| fs.make_dir(dir))
+        self.change(vol, |fs| fs.make_dir(dir))
+    }
+
+    fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
+        self.change(vol, |fs| fs.seal(file))
+    }
+
+    fn mark(&mut self, vol: VolumeId) -> Result<Mark, StoreError> {
+        self.run(vol, |fs, _| mark::read(fs).map(|(m, _)| m))
+    }
+
+    fn settle(&mut self, vol: VolumeId, swept: &Swept) -> Result<bool, StoreError> {
+        if !swept.settled() {
+            return self.run(vol, |fs, _| mark::unsettled(fs)).map(|()| false);
+        }
+        self.run(vol, |fs, _| mark::clear(fs))
+    }
+
+    fn note_doubt(&mut self, vol: VolumeId, count: bool) -> Result<u8, StoreError> {
+        self.run(vol, |fs, _| mark::doubt(fs, count))
+    }
+
+    fn request_sweep(&mut self, vol: VolumeId) -> Result<Mark, StoreError> {
+        self.run(vol, |fs, _| mark::request(fs))
+    }
+
+    fn sweep(&mut self, vol: VolumeId, mode: Sweep, marks: &mut [u8]) -> SweepSeen {
+        FatStore::sweep(self, vol, mode, marks)
+    }
+}
+
+impl<D: Medium> Files for FatStore<D> {
+    fn cap(&mut self, ms: Option<u32>) {
+        self.dev.cap(ms);
     }
 }

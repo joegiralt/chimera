@@ -2,17 +2,21 @@
 resolver = "2"
 members = [
     "chimera-core",
+    "chimera-engine",
     "chimera-hal",
     "chimera-stm32",
+    "chimera-board",
     "chimera-desktop",
     "chimera-bootloader",
     "chimera-waves",
     "chimera-fat",
     "chimera-theory",
+    "chimera-utils",
 ]
-exclude = ["chimera-core/fuzz"]
+exclude = ["chimera-core/fuzz", "chimera-desktop/fuzz"]
 default-members = [
     "chimera-core",
+    "chimera-engine",
     "chimera-hal",
     "chimera-desktop",
     "chimera-waves",
@@ -28,11 +32,42 @@ license = "MIT"
 # Optimize all firmware dependencies in dev builds
 [profile.dev.package.chimera-stm32]
 opt-level = 2
+[profile.dev.package.chimera-board]
+opt-level = 2
 [profile.dev.package.stm32h7xx-hal]
 opt-level = 2
 [profile.dev.package.stm32h7]
 opt-level = 2
 [profile.dev.package.cortex-m]
+opt-level = 2
+# With the USB console's crates, the debug bench builds no longer fit the
+# 896 KB of flash unoptimised.
+[profile.dev.package.synopsys-usb-otg]
+opt-level = 2
+[profile.dev.package.usb-device]
+opt-level = 2
+[profile.dev.package.usbd-serial]
+opt-level = 2
+[profile.dev.package.embedded-graphics]
+opt-level = 2
+# With the console and ORBIT, the debug default build no longer fits
+# unoptimised; libm at opt-level 0 is about 23 KB of it.
+[profile.dev.package.libm]
+opt-level = 2
+# With the sound pool and the filter types, it overflows again by 23 KB;
+# the card, HAL, font and container crates optimised win it back (9 KB
+# left).
+[profile.dev.package.chimera-fat]
+opt-level = 2
+[profile.dev.package.embedded-sdmmc]
+opt-level = 2
+[profile.dev.package.chimera-theory]
+opt-level = 2
+[profile.dev.package.chimera-hal]
+opt-level = 2
+[profile.dev.package.heapless]
+opt-level = 2
+[profile.dev.package.u8g2-fonts]
 opt-level = 2
 
 # The DSP tests render seconds of audio in debug builds; opt-level 1 keeps
@@ -40,9 +75,32 @@ opt-level = 2
 # fast-math), so every golden still matches bit for bit.
 [profile.dev.package.chimera-core]
 opt-level = 1
+[profile.dev.package.chimera-engine]
+opt-level = 1
 
-# Release profile for firmware
+# Release profile for firmware: fat LTO in one codegen unit (ADR 0089).
+# Its opt-level is the binary's, and so the LTO pipeline's: it stays 2, the
+# audio's (ADR 0108).
 [profile.release]
 panic = "abort"
 opt-level = 2
-lto = "thin"
+lto = "fat"
+codegen-units = 1
+
+# The small profile (ADR 0108): crates off the audio path build for size,
+# the UI loop and drivers (chimera-board) and the UI and console
+# (chimera-core). A function's level is its crate's (a generic's, the crate
+# instantiating it), so nothing the audio interrupt runs may live in one of
+# these; the stack check fails if it reaches one.
+[profile.release.package.chimera-board]
+opt-level = "z"
+[profile.release.package.chimera-core]
+opt-level = "z"
+
+# chimera-utils (ADR 0098), through its just recipes: release speed without
+# the firmware's fat LTO, and panics that unwind so scratch files are removed.
+[profile.utils]
+inherits = "release"
+lto = false
+codegen-units = 16
+panic = "unwind"

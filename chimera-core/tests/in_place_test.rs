@@ -1,18 +1,23 @@
 mod common;
+use chimera_core::taps::TapRows;
+use common::tape::{OneSource, held_plain, saw_with_burst};
 use common::{SR, tri};
 
 use std::mem::MaybeUninit;
 
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::algo::algorithms::AlgoId;
+use chimera_core::dsp::engines::EngineCtx;
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::modal::{ResonatorMode, SymPool};
+use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::modulation::ModState;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::source_table::GateView;
 use chimera_core::voice_alloc::VoiceIdx;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 
@@ -38,16 +43,16 @@ fn event(ch: u8, note: u8, kind: NoteKind) -> NoteEvent {
 
 fn every_engine_and_every_effect() -> AudioShared {
     let mut s = AudioShared::default();
-    s.parts[0].params = tri();
-    s.parts[1].params = ParamSnapshot::for_engine(EngineType::Algo);
+    *s.parts[0].params = tri();
+    *s.parts[1].params = ParamSnapshot::for_engine(EngineType::Algo);
     let a = &mut s.parts[1].params.algo;
     (a.alg_a, a.alg_b, a.morph) = (AlgoId::A14.get(), AlgoId::A22.get(), 64);
     for (i, op) in a.ops.iter_mut().enumerate() {
         (op.wave, op.coarse, op.level, op.feedback) = (i as u8, [4, 8, 10, 13, 16, 19][i], 99, 7);
     }
-    s.parts[2].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *s.parts[2].params = ParamSnapshot::for_engine(EngineType::Modal);
     s.parts[2].params.modal.mode = ResonatorMode::String;
-    s.parts[3].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *s.parts[3].params = ParamSnapshot::for_engine(EngineType::Modal);
     s.parts[3].params.modal.mode = ResonatorMode::Sympathetic;
     for part in &mut s.parts[..4] {
         part.mix.sends = [0.3; FX_SENDS];
@@ -110,13 +115,21 @@ fn fx_bus_built_in_place_processes_like_new() {
         }
         let mut sends_b = sends;
         let (mut ret_a, mut ret_b) = (Stereo::SILENT, Stereo::SILENT);
-        a.process(&mut sends, &params, SR, &mut ret_a);
-        b.process(&mut sends_b, &params, SR, &mut ret_b);
+        a.process(&mut sends, &params, Tempo::DEFAULT, SR, &mut ret_a);
+        b.process(&mut sends_b, &params, Tempo::DEFAULT, SR, &mut ret_b);
         assert_eq!(
             [ret_a.l, ret_a.r].map(|x| x.map(f32::to_bits)),
             [ret_b.l, ret_b.r].map(|x| x.map(f32::to_bits)),
             "block {block}"
         );
+    }
+}
+
+fn ctx<'a>(sym: &'a mut SymPool, src: &'a GateView<'a>) -> EngineCtx<'a> {
+    EngineCtx {
+        sym,
+        src,
+        part: chimera_core::project::PartId::ALL[0],
     }
 }
 
@@ -128,6 +141,7 @@ fn voice_built_in_place_renders_like_new_for_every_engine() {
         ResonatorMode::Bowed,
         ResonatorMode::Sympathetic,
     ];
+    let mut src = OneSource::new(&held_plain(&saw_with_burst(24_000, 1.0), 24_000));
     for engine in EngineType::ALL {
         for mode in modes {
             let mut params = ParamSnapshot::for_engine(engine);
@@ -137,12 +151,25 @@ fn voice_built_in_place_renders_like_new_for_every_engine() {
             let mut slot = poisoned::<Voice>();
             let b = Voice::init_in_place(&mut slot, SR, VoiceIdx::ALL[0]);
             let note = MidiNote::new(52).unwrap();
-            a.note_on(note, Velocity::DEFAULT, &params, &mut pa);
-            b.note_on(note, Velocity::DEFAULT, &params, &mut pb);
+            let (id, view) = (Some(src.id), src.view());
+            a.note_on(
+                note,
+                Velocity::DEFAULT,
+                &params,
+                id,
+                &mut ctx(&mut pa, &view),
+            );
+            b.note_on(
+                note,
+                Velocity::DEFAULT,
+                &params,
+                id,
+                &mut ctx(&mut pb, &view),
+            );
             let (mut xa, mut xb) = ([0.0f32; BLOCK_SIZE], [0.0f32; BLOCK_SIZE]);
             for block in 0..60 {
-                a.render(&mut xa, &params, &ModState::new(), &mut pa);
-                b.render(&mut xb, &params, &ModState::new(), &mut pb);
+                a.render(&mut xa, &params, &ModState::new(), &mut ctx(&mut pa, &view));
+                b.render(&mut xb, &params, &ModState::new(), &mut ctx(&mut pb, &view));
                 assert_eq!(
                     xa.map(f32::to_bits),
                     xb.map(f32::to_bits),
@@ -169,7 +196,7 @@ fn algo_engine_built_in_place_renders_like_new() {
             let mut out = Vec::new();
             let mut blk = [0.0f32; BLOCK_SIZE];
             for _ in 0..20 {
-                e.render(&mut blk, &p, &live, SR);
+                e.render(&mut blk, &p, &live, SR, &mut TapRows::new([false; 2]));
                 out.extend(blk.iter().map(|s| s.to_bits()));
             }
             out

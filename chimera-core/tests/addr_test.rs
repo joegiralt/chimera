@@ -1,12 +1,15 @@
 //! Semantic addresses (spec §2) and `ParamSnapshot::block(_mut)`.
 
-use chimera_core::addr::{BlockRef, Blocks, Op, OpOutOfRange, ParamAddr};
+use chimera_core::addr::{BlockRead, BlockRef, Blocks, Op, OpOutOfRange, ParamAddr};
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
+use chimera_core::dsp::modal::ModalParams;
 use chimera_core::dsp::modulator::EnvSlot;
+use chimera_core::dsp::va::VaParams;
 use chimera_core::params::{
     DriveParams, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot, PitchParams,
 };
 use chimera_core::preset::Performance;
+use chimera_core::project::PartId;
 
 #[test]
 fn op_rejects_out_of_range() {
@@ -34,15 +37,18 @@ fn block_ref_all_has_no_duplicates() {
 }
 
 /// `block()` hands out the instance whose spec table `BlockRef::specs`
-/// names; a Part view resolves every address but THEME and the channel
-/// overview (the UI holds them), a Sound all but the FX and the Part's own
-/// mix settings.
+/// names; a Part view resolves every address but THEME, MIDI CONFIG, the channel
+/// overview (the UI holds them) and ORBIT's (the project's), a Sound all
+/// but the FX and the Part's own mix settings.
 #[test]
 fn block_and_specs_agree() {
     let mut perf = Performance::new();
-    let part = perf.edit(0);
+    let part = perf.edit(PartId::ALL[0]);
     for b in BlockRef::ALL {
-        if matches!(b, BlockRef::Theme | BlockRef::Channels) {
+        if matches!(
+            b,
+            BlockRef::Theme | BlockRef::Midi | BlockRef::OrbitChords | BlockRef::OrbitRing(_)
+        ) {
             assert!(part.block(b).is_none());
             assert!(ParamSnapshot::default().block(b).is_none());
             continue;
@@ -94,7 +100,7 @@ fn modulatable_addresses_are_exactly_the_spec_list() {
         ParamAddr::new(BlockRef::Drive, DriveParams::MIX),
         ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF),
         ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE),
-        ParamAddr::new(BlockRef::Filter, FilterParams::DRIVE),
+        ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL),
         ParamAddr::new(BlockRef::Folder, FolderParams::FOLD),
         ParamAddr::new(BlockRef::Folder, FolderParams::SYMMETRY),
         ParamAddr::new(BlockRef::Folder, FolderParams::MIX),
@@ -104,6 +110,29 @@ fn modulatable_addresses_are_exactly_the_spec_list() {
         ParamAddr::new(BlockRef::Pitch, PitchParams::FINE),
     ];
     want.push(ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH));
+    for id in [
+        ModalParams::STRUCTURE,
+        ModalParams::BRIGHT,
+        ModalParams::DAMP,
+        ModalParams::POS,
+    ] {
+        want.push(ParamAddr::new(BlockRef::Modal, id));
+    }
+    for id in [
+        VaParams::WAVE1,
+        VaParams::WAVE2,
+        VaParams::AMOUNT,
+        VaParams::SUB,
+        VaParams::STAB,
+        VaParams::CRSE1,
+        VaParams::FINE1,
+        VaParams::SHAPE1,
+        VaParams::CRSE2,
+        VaParams::FINE2,
+        VaParams::SHAPE2,
+    ] {
+        want.push(ParamAddr::new(BlockRef::Va, id));
+    }
     for op in Op::ALL {
         want.push(ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL));
     }

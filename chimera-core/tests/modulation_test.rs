@@ -1,11 +1,12 @@
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::mod_path::ModDestRegistry;
-use chimera_core::modulation::{MAX_MOD_DESTS, MAX_MOD_SOURCES, ModState};
+use chimera_core::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModState};
 use chimera_core::params::{DriveParams, FilterParams, FolderParams};
-use chimera_core::ui::mod_grid::MatrixState;
+use chimera_core::ui::mod_grid::{FIXED_COLS, MatrixState};
 
 const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
+const LEVEL: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL);
 
 /// A ModState with one dest and `n` sources.
 fn one_dest(addr: ParamAddr, n: usize) -> ModState {
@@ -47,19 +48,23 @@ fn mod_state_offset_no_routes() {
 
 #[test]
 fn mod_state_offset_single_route() {
-    let mut ms = one_dest(CUTOFF, 1);
+    let mut ms = one_dest(LEVEL, 1);
     ms.set_amount(0, 0, 64);
-    assert_eq!(ms.dest(0), CUTOFF);
+    assert_eq!(ms.dest(0), LEVEL);
 
     let mut sources = [0.0f32; MAX_MOD_SOURCES];
     sources[0] = 1.0;
-    let offset = ms.offset_for(CUTOFF, &sources);
+    let offset = ms.offset_for(LEVEL, &sources);
     let expected = 1.0 * (64.0 / 127.0);
     assert!(
         (offset - expected).abs() < 1e-5,
         "expected {expected}, got {offset}"
     );
     assert_eq!(ms.sum_for(0, &sources), offset);
+    // The fixed FREQ column: CUTOFF's offset, the same sum.
+    ms.set_fixed(0, FixedCol::Freq, 64);
+    assert_eq!(ms.offset_for(CUTOFF, &sources), offset);
+    assert_eq!(ms.fixed_sum(FixedCol::Freq, &sources), offset);
 }
 
 #[test]
@@ -105,22 +110,25 @@ fn mod_state_sync_from_matrix() {
     let tone = ParamAddr::new(BlockRef::Drive, DriveParams::TONE);
     let mut registry = ModDestRegistry::new();
     registry.add(tone, *b"A  p\0\0\0\0").unwrap();
-    registry.add(CUTOFF, *b"B  q\0\0\0\0").unwrap();
+    assert!(
+        registry.add(CUTOFF, *b"B  q\0\0\0\0").is_err(),
+        "a fixed column's"
+    );
     let mut matrix = MatrixState::new();
     matrix.rebuild_dests_from_registry(&registry);
     matrix.num_sources = 2;
     matrix.amounts[0][0] = 42;
-    matrix.amounts[1][1] = -99;
+    matrix.set(1, FixedCol::Freq.index(), -99);
 
     let mut ms = ModState::new();
-    ms.sync_from_matrix(&matrix);
+    matrix.sync_into(&mut ms);
 
     assert_eq!(ms.num_sources(), 2);
-    assert_eq!(ms.num_dests(), 2);
+    assert_eq!(ms.num_dests(), 1);
     assert_eq!(ms.amount(0, 0), 42);
-    assert_eq!(ms.amount(1, 1), -99);
+    assert_eq!(ms.fixed_amount(1, FixedCol::Freq), -99);
+    assert_eq!(ms.fixed_present(FixedCol::Freq), 0b10);
     assert_eq!(ms.dest(0), tone);
-    assert_eq!(ms.dest(1), CUTOFF);
 }
 
 /// Review Focus 2: a registry at capacity keeps amounts aligned. The
@@ -143,7 +151,7 @@ fn mod_state_truncates_without_misaligning() {
     matrix.num_sources = 2;
     matrix.amounts[1][15] = 77;
     let mut ms = ModState::new();
-    ms.sync_from_matrix(&matrix);
+    matrix.sync_into(&mut ms);
     assert_eq!(ms.num_dests(), MAX_MOD_DESTS);
     assert_eq!(ms.amount(1, 15), 77);
     assert_eq!(Some(ms.dest(15)), matrix.dests[15].map(|d| d.addr));
@@ -155,13 +163,13 @@ fn mod_state_truncates_without_misaligning() {
 #[test]
 fn mod_state_clamps_sources() {
     let mut registry = ModDestRegistry::new();
-    registry.add(CUTOFF, *b"X\0\0\0\0\0\0\0").unwrap();
+    registry.add(LEVEL, *b"X\0\0\0\0\0\0\0").unwrap();
     let mut matrix = MatrixState::new();
     matrix.rebuild_dests_from_registry(&registry);
     matrix.num_sources = 16;
-    matrix.set(7, 0, 50);
+    matrix.set(7, FIXED_COLS, 50);
     let mut ms = ModState::new();
-    ms.sync_from_matrix(&matrix); // nothing panicked
+    matrix.sync_into(&mut ms); // nothing panicked
     assert_eq!(ms.num_sources(), MAX_MOD_SOURCES);
     assert_eq!(ms.amount(7, 0), 50);
 }
@@ -185,14 +193,20 @@ fn dest_and_sum_for_never_panic_out_of_range() {
 #[test]
 fn matrix_dests_are_semantic() {
     let op_c = ParamAddr::new(BlockRef::AlgoOp(Op::C), AlgoOpParams::LEVEL);
-    let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
+    let sym = ParamAddr::new(BlockRef::Folder, FolderParams::SYMMETRY);
     let mut registry = ModDestRegistry::new();
     registry.add(op_c, *b"O3 LEVEL").unwrap();
-    registry.add(fold, *b"FLDFOLD\0").unwrap();
+    registry.add(sym, *b"FLDSYM\0\0").unwrap();
     let mut matrix = MatrixState::new();
     matrix.rebuild_dests_from_registry(&registry);
     assert_eq!(matrix.mod_info_for(op_c), Some(0.0));
-    assert_eq!(matrix.mod_info_for(fold), Some(0.0));
+    assert_eq!(matrix.mod_info_for(sym), Some(0.0));
+    // A fixed column counts as primed once it has a route.
+    let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
+    assert_eq!(matrix.mod_info_for(fold), None);
+    matrix.num_sources = 1;
+    matrix.set(0, FixedCol::Fold.index(), 127);
+    assert_eq!(matrix.mod_info_for(fold), Some(1.0));
     assert_eq!(
         matrix.mod_info_for(ParamAddr::new(BlockRef::AlgoOp(Op::D), AlgoOpParams::LEVEL)),
         None

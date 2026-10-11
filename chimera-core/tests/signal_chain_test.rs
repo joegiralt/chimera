@@ -1,6 +1,6 @@
 mod common;
 use chimera_core::dsp::drive::Drive;
-use chimera_core::dsp::filter::SvfFilter;
+use chimera_core::dsp::filter::{Clean, FilterMods};
 use chimera_core::dsp::wavefolder::Wavefolder;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
@@ -12,11 +12,11 @@ use common::tri;
 
 #[test]
 fn test_drive_passthrough_at_zero() {
-    let drive = Drive::new();
+    let mut drive = Drive::new();
     let params = DriveParams::default(); // drive=0
     let mut buf = [0.5, -0.5, 0.3, -0.3];
     let original = buf;
-    drive.process(&mut buf, &params);
+    drive.process(&mut buf, &params, params.drive >= 0.001);
     for (a, b) in buf.iter().zip(original.iter()) {
         assert!((a - b).abs() < 0.001, "drive=0 should passthrough");
     }
@@ -24,7 +24,7 @@ fn test_drive_passthrough_at_zero() {
 
 #[test]
 fn test_drive_clips_signal() {
-    let drive = Drive::new();
+    let mut drive = Drive::new();
     let params = DriveParams {
         drive: 1.0, // full drive
         mix: 1.0,
@@ -32,7 +32,7 @@ fn test_drive_clips_signal() {
     };
 
     let mut buf = [1.0; 4];
-    drive.process(&mut buf, &params);
+    drive.process(&mut buf, &params, params.drive >= 0.001);
     for &s in &buf {
         assert!(s.abs() <= 1.5, "drive should soft-clip, got {}", s);
     }
@@ -40,7 +40,7 @@ fn test_drive_clips_signal() {
 
 #[test]
 fn test_drive_output_bounded() {
-    let drive = Drive::new();
+    let mut drive = Drive::new();
     let params = DriveParams {
         drive: 1.0,
         mix: 1.0,
@@ -48,7 +48,7 @@ fn test_drive_output_bounded() {
     };
 
     let mut buf = [5.0, -5.0, 10.0, -10.0];
-    drive.process(&mut buf, &params);
+    drive.process(&mut buf, &params, params.drive >= 0.001);
     for &s in &buf {
         assert!(s.abs() < 3.0, "drive output should be bounded, got {}", s);
     }
@@ -58,7 +58,7 @@ fn test_drive_output_bounded() {
 
 #[test]
 fn test_filter_lowpass_attenuates_high_freq() {
-    let mut filter = SvfFilter::new();
+    let mut filter = Clean::new();
     let mut params = FilterParams::default();
     params.cutoff = 200.0; // very low cutoff
 
@@ -69,7 +69,7 @@ fn test_filter_lowpass_attenuates_high_freq() {
     }
 
     let pre_energy: f32 = buf.iter().map(|s| s * s).sum();
-    filter.process(&mut buf, &params, 48000);
+    filter.process(&mut buf, &params, 48000, &FilterMods::NONE);
     let post_energy: f32 = buf.iter().map(|s| s * s).sum();
 
     assert!(
@@ -82,7 +82,7 @@ fn test_filter_lowpass_attenuates_high_freq() {
 
 #[test]
 fn test_filter_passes_low_freq() {
-    let mut filter = SvfFilter::new();
+    let mut filter = Clean::new();
     let mut params = FilterParams::default();
     params.cutoff = 5000.0;
 
@@ -93,7 +93,7 @@ fn test_filter_passes_low_freq() {
     }
 
     let pre_energy: f32 = buf.iter().map(|s| s * s).sum();
-    filter.process(&mut buf, &params, 48000);
+    filter.process(&mut buf, &params, 48000, &FilterMods::NONE);
     let post_energy: f32 = buf.iter().map(|s| s * s).sum();
 
     assert!(
@@ -106,7 +106,7 @@ fn test_filter_passes_low_freq() {
 
 #[test]
 fn test_filter_output_stable() {
-    let mut filter = SvfFilter::new();
+    let mut filter = Clean::new();
     let mut params = FilterParams::default();
     params.resonance = 0.99; // near self-oscillation
     params.cutoff = 1000.0;
@@ -115,7 +115,7 @@ fn test_filter_output_stable() {
     buf[0] = 1.0; // impulse
 
     for _ in 0..10 {
-        filter.process(&mut buf, &params, 48000);
+        filter.process(&mut buf, &params, 48000, &FilterMods::NONE);
         let max = buf.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         assert!(
             max < 100.0,
@@ -141,11 +141,11 @@ fn fast_tanh_is_within_its_documented_error() {
 
 #[test]
 fn test_folder_passthrough_at_zero() {
-    let folder = Wavefolder::new();
+    let mut folder = Wavefolder::new();
     let params = FolderParams::default(); // fold=0
     let mut buf = [0.5, -0.5, 0.8, -0.8];
     let original = buf;
-    folder.process(&mut buf, &params);
+    folder.process(&mut buf, &params, params.fold >= 0.001, None);
     for (a, b) in buf.iter().zip(original.iter()) {
         assert!((a - b).abs() < 0.001, "fold=0 should passthrough");
     }
@@ -153,7 +153,7 @@ fn test_folder_passthrough_at_zero() {
 
 #[test]
 fn test_folder_output_bounded() {
-    let folder = Wavefolder::new();
+    let mut folder = Wavefolder::new();
     let params = FolderParams {
         fold: 1.0,
         mix: 1.0,
@@ -161,7 +161,7 @@ fn test_folder_output_bounded() {
     };
 
     let mut buf = [5.0, -5.0, 10.0, -10.0];
-    folder.process(&mut buf, &params);
+    folder.process(&mut buf, &params, params.fold >= 0.001, None);
     for &s in &buf {
         assert!(
             s.abs() <= 1.01,
@@ -173,7 +173,7 @@ fn test_folder_output_bounded() {
 
 #[test]
 fn test_folder_adds_harmonics() {
-    let folder = Wavefolder::new();
+    let mut folder = Wavefolder::new();
     let params = FolderParams {
         fold: 1.0,
         mix: 1.0,
@@ -191,7 +191,7 @@ fn test_folder_adds_harmonics() {
         .filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0))
         .count();
 
-    folder.process(&mut buf, &params);
+    folder.process(&mut buf, &params, params.fold >= 0.001, None);
 
     let zc_after: usize = buf
         .windows(2)

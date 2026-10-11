@@ -14,17 +14,25 @@ use ab::{
     Slot, assert_kept, copy, file, load, load_side, name83, save, save_on, slot, sound, target,
 };
 use chimera_core::addr::BlockRef;
-use chimera_core::block::DiskCode;
+use chimera_core::block::{Block, DiskCode};
 use chimera_core::mod_path::MAX_REGISTRY_DESTS;
 use chimera_core::params::EngineType;
+use chimera_core::part::PartParams;
 use chimera_core::preset::Sound;
+use chimera_core::project::test_support::{confirm_overwrite, full_dense, same, save_at};
+use chimera_core::project::{
+    PartId, Project, ProjectDecoder, ProjectNote, clear_project, list_projects, project_crc,
+    project_file, save_library_sound,
+};
+use chimera_core::storage::LoadError;
 use chimera_core::storage::{
-    Card, CardError, CardEvent, FileKind, Generation, Header, RecordTag, RecordWriter, SaveError,
-    Side, SoundCheck, SoundDecoder, encode_sound, load_ab, save_ab, write_file,
+    BuildStamp, Card, CardError, CardEvent, FileKind, Generation, Header, InPlaceError, LibId,
+    ProjectId, RecordTag, RecordWriter, SaveError, Side, SoundCheck, SoundDecoder, encode_sound,
+    library_file, load_ab, load_ab_in_place, save_ab, write_file,
 };
 use chimera_hal::store::{ByteSink, Dir, FileName, Store, StoreError};
-use image::{Cut, FatEntry, RamDisk, Tear, fat_check, with_clusters};
-use probe::{XorShift, free, log, probed};
+use image::{Cut, CutDisk, FatEntry, RamDisk, Tear, fat_check, with_clusters};
+use probe::{Probed, XorShift, free, log, probed, swept_clean};
 use std::collections::HashSet;
 
 /// A FAT16 card of 512 B clusters: every file of the pair and `/CHIMERA`
@@ -72,7 +80,8 @@ fn assert_safe(what: &str, disk: &RamDisk, kept: &FatEntry, cuts: &[u32]) {
 }
 
 /// The next save after a cut lands and loads, and rewrites FAT sector 0,
-/// which the pair shares, so both FATs agree again.
+/// which the pair shares, so both FATs agree again; the next boot's sweep
+/// frees what the cut left lost.
 fn assert_recovers(what: &str, slot: &Slot, n: u32) {
     assert!(save(slot, n).0.is_ok(), "{what}: the next save");
     let got = load(slot).unwrap_or_else(|e| panic!("{what}: after the next save, {e:?}"));
@@ -82,6 +91,7 @@ fn assert_recovers(what: &str, slot: &Slot, n: u32) {
         r.cross_linked.is_empty() && r.short.is_empty() && r.fats_differ.is_empty(),
         "{what}: after the next save, {r:?}"
     );
+    swept_clean(what, slot, &slot.inner);
 }
 
 /// Blocks a save of `n` on `disk` writes, in order.
@@ -97,6 +107,9 @@ fn writes_of(disk: &RamDisk, n: u32) -> Vec<u32> {
 #[test]
 fn cut_at_every_block_write_keeps_a_generation() {
     let base = slot(first_card());
+    // A `dense` Sound spans clusters: a cut lands mid-chain.
+    let a = kept(&base);
+    assert!(a.chain.len() >= 3, "{} clusters", a.chain.len());
     // Save 2 creates B, 3 truncates A, 4 truncates B.
     for n in 2..=4 {
         let before = copy(&base.inner);
@@ -283,6 +296,8 @@ fn cut_then_reinsert_loads_previous_generation() {
     assert!(t.bits_eq(&sound(1)));
     assert_eq!(card, Card::Ready(v));
     assert_kept("reinserted", &disk, Side::A, Generation::FIRST, &sound(1));
+    swept_clean("reinserted", &disk, &disk.inner);
+    assert_kept("swept", &disk, Side::A, Generation::FIRST, &sound(1));
 }
 
 struct Bytes(Vec<u8>);
@@ -421,4 +436,236 @@ fn full_card_keeps_previous_generation() {
     s.delete(v, file().side(side)).unwrap();
     assert_eq!(free(&disk.inner), (1 + old, 1 + old), "Full leaked nothing");
     assert!(load(&disk).unwrap().bits_eq(&sound(2)));
+}
+
+/// `full_dense()` with Part 1's LEVEL at save `n`'s value: each save
+/// differs.
+fn project_gen(n: u32) -> Box<Project> {
+    let (mut p, _) = full_dense();
+    p.edit_part(PartId::ALL[0])
+        .mix
+        .set(PartParams::LEVEL, 0.1 * n as f32);
+    p
+}
+
+/// The cluster count of each side of the project pair on `disk`, A then B
+/// (0: absent).
+fn project_chains(disk: &RamDisk) -> [usize; 2] {
+    let r = fat_check(disk);
+    let stem = project_id().stem();
+    b"AB".map(|ext| {
+        r.entries
+            .iter()
+            .find(|e| e.name[..8] == stem[..] && e.name[8] == ext)
+            .map_or(0, |e| e.chain.len())
+    })
+}
+
+fn project_id() -> ProjectId {
+    ProjectId::new(1).unwrap()
+}
+
+/// Save `n` over the pair, as listed (a SAVE OVER), or to it fresh.
+fn save_project_on(s: &mut Probed<CutDisk>, n: u32) -> ProjectNote {
+    save_at(&mut Card::new(), s, &mut project_gen(n), project_id().get())
+}
+
+/// CLEAR of the pair as listed now, from a project not loaded from it.
+fn clear_project_on(s: &mut Probed<CutDisk>) -> Result<(), ProjectNote> {
+    let mut card = Card::new();
+    let mut listed = None;
+    let out = list_projects(&mut card, s, &mut |e| listed = Some(e));
+    assert_eq!(out.note, None);
+    let c = confirm_overwrite(&listed.expect("listed"));
+    clear_project(&mut card, s, &Project::boxed().0, c).out
+}
+
+fn load_project_in_place(slot: &Slot) -> Result<Box<Project>, InPlaceError> {
+    let (mut q, _) = Project::boxed();
+    ab::op(&mut probed(slot), |s, r| {
+        load_ab_in_place(
+            s,
+            r,
+            project_file(project_id()),
+            &mut ProjectDecoder::new_for_test(&mut q),
+        )
+    })?;
+    Ok(q)
+}
+
+/// A project (`project_gen`'s, 119 clusters a side) cut at every block
+/// write of its third save: the in-place load always gets save 2 or 3
+/// whole, never an error, and the next save lands.
+#[test]
+fn project_cut_keeps_a_generation() {
+    let base = slot(with_clusters(CLUSTERS, 0xC0DE));
+    for n in 1..=2 {
+        let note = save_project_on(&mut probed(&base), n);
+        assert!(matches!(note, ProjectNote::Saved(_)), "save {n}: {note:?}");
+    }
+    let before = copy(&base.inner);
+    // Both sides span many clusters: a cut lands mid-chain.
+    let chains = project_chains(&before);
+    assert!(chains.iter().all(|&n| n >= 100), "chains {chains:?}");
+    let blocks = {
+        let dry = slot(copy(&before));
+        let mut s = probed(&dry);
+        assert!(matches!(save_project_on(&mut s, 3), ProjectNote::Saved(_)));
+        let blocks: Vec<u32> = log(&s).writes.borrow().iter().map(|&(b, _)| b).collect();
+        blocks
+    };
+    let (two, three) = (project_gen(2), project_gen(3));
+    let (crc2, crc3) = (project_crc(&two), project_crc(&three));
+    assert_ne!(crc2, crc3);
+    let mut loaded = [0; 2];
+    for k in 0..blocks.len() {
+        let what = format!("project save 3 cut at write {k} of {}", blocks.len());
+        let cut = slot(copy(&before));
+        cut.cut.set(Cut::After(k as u32));
+        let note = save_project_on(&mut probed(&cut), 3);
+        assert!(!matches!(note, ProjectNote::Saved(_)), "{what}: {note:?}");
+        cut.cut.set(Cut::Never);
+        let r = fat_check(&cut.inner);
+        assert!(
+            r.cross_linked.is_empty() && r.short.is_empty(),
+            "{what}: {r:?}"
+        );
+        let got = load_project_in_place(&cut).unwrap_or_else(|e| panic!("{what}: {e:?}"));
+        if project_crc(&got) == crc3 {
+            same(&three, &got);
+            loaded[1] += 1;
+        } else {
+            same(&two, &got);
+            loaded[0] += 1;
+        }
+        let note = save_project_on(&mut probed(&cut), 4);
+        assert!(
+            matches!(note, ProjectNote::Saved(_)),
+            "{what}: next save {note:?}"
+        );
+        same(&project_gen(4), &load_project_in_place(&cut).unwrap());
+        swept_clean(&what, &cut, &cut.inner);
+        same(&project_gen(4), &load_project_in_place(&cut).unwrap());
+    }
+    println!(
+        "project cuts: {} writes; save 2 loads at {}, save 3 at {}",
+        blocks.len(),
+        loaded[0],
+        loaded[1]
+    );
+}
+
+/// CLEAR cut at every block write: the load gets save 2 or NEW whole,
+/// never an error, and a CLEAR run again lands and loads Pristine.
+#[test]
+fn project_clear_cut_keeps_a_generation() {
+    let base = slot(with_clusters(CLUSTERS, 0xC0DE));
+    for n in 1..=2 {
+        let note = save_project_on(&mut probed(&base), n);
+        assert!(matches!(note, ProjectNote::Saved(_)), "save {n}: {note:?}");
+    }
+    let before = copy(&base.inner);
+    let blocks = {
+        let dry = slot(copy(&before));
+        let mut s = probed(&dry);
+        assert_eq!(clear_project_on(&mut s), Ok(()));
+        // NEW, as CLEAR writes it, spans several clusters.
+        let chains = project_chains(&dry.inner);
+        assert!(chains.iter().any(|&n| n >= 8), "chains {chains:?}");
+        let blocks: Vec<u32> = log(&s).writes.borrow().iter().map(|&(b, _)| b).collect();
+        blocks
+    };
+    let (new, t) = Project::boxed();
+    let two = project_gen(2);
+    let mut loaded = [0; 2];
+    for k in 0..blocks.len() {
+        let what = format!("clear cut at write {k} of {}", blocks.len());
+        let cut = slot(copy(&before));
+        cut.cut.set(Cut::After(k as u32));
+        assert!(clear_project_on(&mut probed(&cut)).is_err(), "{what}");
+        cut.cut.set(Cut::Never);
+        let r = fat_check(&cut.inner);
+        assert!(
+            r.cross_linked.is_empty() && r.short.is_empty(),
+            "{what}: {r:?}"
+        );
+        let got = load_project_in_place(&cut).unwrap_or_else(|e| panic!("{what}: {e:?}"));
+        if project_crc(&got) == t.get() {
+            same(&new, &got);
+            loaded[1] += 1;
+        } else {
+            same(&two, &got);
+            loaded[0] += 1;
+        }
+        assert_eq!(clear_project_on(&mut probed(&cut)), Ok(()), "{what}: again");
+        let got = load_project_in_place(&cut).unwrap();
+        assert_eq!(project_crc(&got), t.get(), "{what}: Pristine");
+        swept_clean(&what, &cut, &cut.inner);
+        let got = load_project_in_place(&cut).unwrap();
+        assert_eq!(project_crc(&got), t.get(), "{what}: swept");
+    }
+    println!(
+        "clear cuts: {} writes; save 2 loads at {}, NEW at {}",
+        blocks.len(),
+        loaded[0],
+        loaded[1]
+    );
+}
+
+const STAMP: BuildStamp = BuildStamp::new("0.1.0", "02e440e2", false);
+
+fn save_library_on(s: &mut Probed<CutDisk>) -> Result<LibId, chimera_core::project::LibNote> {
+    let snd = sound(1);
+    save_library_sound(&mut Card::new(), s, &snd, snd.name, &STAMP).out
+}
+
+/// A library save cut or torn at every block: no `S0000001.A`, a file that
+/// fails to load, or the Sound whole; never another Sound.
+#[test]
+fn library_save_cut_at_every_block_never_loads_wrong() {
+    let base = slot(with_clusters(CLUSTERS, 0xC0DE));
+    ab::make_dir(&base);
+    let before = copy(&base.inner);
+    let blocks = {
+        let dry = slot(copy(&before));
+        let mut s = probed(&dry);
+        assert_eq!(save_library_on(&mut s).unwrap().get(), 1);
+        let n = dry.writes.get();
+        assert!(n >= 3, "{n} writes");
+        n
+    };
+    let want = sound(1);
+    let (mut whole, mut failed, mut absent) = (0, 0, 0);
+    let cuts = (0..blocks).map(Cut::After).chain(
+        (0..blocks).flat_map(|k| [Tear::HalfOld, Tear::Garbage].map(|t| Cut::TornAfter(k, t))),
+    );
+    for cut in cuts {
+        let what = format!("library save, {cut:?}");
+        let disk = slot(copy(&before));
+        disk.cut.set(cut);
+        assert!(save_library_on(&mut probed(&disk)).is_err(), "{what}");
+        disk.cut.set(Cut::Never);
+        // A torn directory block is noise: only a clean cut keeps the FAT sane.
+        if let Cut::After(_) = cut {
+            let r = fat_check(&disk.inner);
+            assert!(
+                r.cross_linked.is_empty() && r.short.is_empty(),
+                "{what}: {r:?}"
+            );
+        }
+        let mut t = Sound::neutral(EngineType::Algo);
+        let id = LibId::new(1).unwrap();
+        let got = ab::op(&mut probed(&disk), |s, r| {
+            load_ab(s, r, library_file(id), &mut SoundDecoder::new(&mut t))
+        });
+        match got {
+            Ok(_) => {
+                assert!(t.bits_eq(&want), "{what}: loaded another Sound");
+                whole += 1;
+            }
+            Err(LoadError::Missing) => absent += 1,
+            Err(_) => failed += 1,
+        }
+    }
+    println!("library cuts: {whole} whole, {failed} refused, {absent} absent");
 }

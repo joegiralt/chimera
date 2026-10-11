@@ -1,23 +1,26 @@
 //! Leaving System: no BUSY before the card work; a short toast after it,
 //! counted down by the frame clock, never a sleep.
 
+mod screen;
+
+use chimera_core::project::Line;
 use chimera_core::storage::{Card, Exit, FileError, SyncError, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
 use chimera_core::ui::busy::{Toast, ToastStep, ToastTimer, toast_for};
-use chimera_core::ui::chain::ChainId;
 use chimera_core::ui::theme_settings::Bright;
+use chimera_hal::ButtonId;
 use chimera_hal::store::{StoreError, Unsupported};
 use chimera_hal::testkit::MemStore;
 
 #[test]
 fn toast_for_table() {
     let saved = Some(Toast {
-        text: "SAVED",
+        text: Line::new("SAVED"),
         ms: Toast::SAVED_MS,
     });
     let err = |text| {
         Some(Toast {
-            text,
+            text: Line::new(text),
             ms: Toast::ERROR_MS,
         })
     };
@@ -65,11 +68,11 @@ fn toast_expires_after_its_time() {
     let mut t = ToastTimer::new();
     assert_eq!(t.step(16), ToastStep::Idle);
     t.show(Toast {
-        text: "SAVED",
+        text: Line::new("SAVED"),
         ms: 600,
     });
-    assert_eq!(t.step(0), ToastStep::Show("SAVED"));
-    assert_eq!(t.step(599), ToastStep::Show("SAVED"));
+    assert_eq!(t.step(0), ToastStep::Show(Line::new("SAVED")));
+    assert_eq!(t.step(599), ToastStep::Show(Line::new("SAVED")));
     // The frame that runs out clears it once, so the page repaints.
     assert_eq!(t.step(1), ToastStep::Ended);
     assert_eq!(t.step(16), ToastStep::Idle);
@@ -81,11 +84,14 @@ fn toast_expires_after_its_time() {
 fn a_slow_operation_does_not_eat_the_toast() {
     let mut t = ToastTimer::new();
     t.show(Toast {
-        text: "CARD TIMEOUT",
+        text: Line::new("CARD TIMEOUT"),
         ms: Toast::ERROR_MS,
     });
-    assert_eq!(t.step(10_000), ToastStep::Show("CARD TIMEOUT"));
-    assert_eq!(t.step(Toast::ERROR_MS - 1), ToastStep::Show("CARD TIMEOUT"));
+    assert_eq!(t.step(10_000), ToastStep::Show(Line::new("CARD TIMEOUT")));
+    assert_eq!(
+        t.step(Toast::ERROR_MS - 1),
+        ToastStep::Show(Line::new("CARD TIMEOUT"))
+    );
     assert_eq!(t.step(1), ToastStep::Ended);
 }
 
@@ -99,7 +105,7 @@ fn dismiss_ends_it_early_once() {
         "nothing shown, nothing to clear"
     );
     t.show(Toast {
-        text: "SAVED",
+        text: Line::new("SAVED"),
         ms: 600,
     });
     t.dismiss();
@@ -130,7 +136,7 @@ fn leaving_system_toasts_saved_not_busy() {
     let mut ui = UiState::new();
     ui.set_theme(cur.theme);
 
-    ui.nav.chain_id = ChainId::System;
+    screen::tap(&mut ui, ButtonId::Menu);
     assert_eq!(
         frame(&mut ui, &mut sync, &mut card, &mut s, &mut cur),
         ToastStep::Idle
@@ -138,18 +144,18 @@ fn leaving_system_toasts_saved_not_busy() {
     let mut theme = ui.theme();
     theme.bright = Bright::new(40);
     ui.set_theme(theme);
-    ui.nav.chain_id = ChainId::Part(0);
+    screen::tap(&mut ui, ButtonId::Menu);
     assert_eq!(
         frame(&mut ui, &mut sync, &mut card, &mut s, &mut cur),
-        ToastStep::Show("SAVED")
+        ToastStep::Show(Line::new("SAVED"))
     );
     assert_eq!(cur.theme, theme, "the save took the UI's theme");
 
     // Back in and out with no change: nothing to do, no toast.
     ui.step_toast(Toast::SAVED_MS);
-    ui.nav.chain_id = ChainId::System;
+    screen::tap(&mut ui, ButtonId::Menu);
     frame(&mut ui, &mut sync, &mut card, &mut s, &mut cur);
-    ui.nav.chain_id = ChainId::Part(0);
+    screen::tap(&mut ui, ButtonId::Menu);
     assert_eq!(
         frame(&mut ui, &mut sync, &mut card, &mut s, &mut cur),
         ToastStep::Idle
@@ -163,8 +169,11 @@ fn a_loaded_theme_is_its_own_feedback() {
     want.theme.bright = Bright::new(40);
     {
         let mut card = Card::new();
-        let (mut sync, ..) = SystemSync::boot(&mut card, &mut s);
-        sync.write(&mut card, &mut s, &want).unwrap();
+        let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
+        cur.theme = want.theme;
+        sync.left_system(true, &cur);
+        sync.left_system(false, &cur);
+        sync.on_exit(&mut card, &mut s, &mut cur, None).unwrap();
     }
     // Booted with no card: untouched defaults, then the card goes in.
     s.eject();
@@ -172,9 +181,9 @@ fn a_loaded_theme_is_its_own_feedback() {
     let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
     s.insert();
     let mut ui = UiState::new();
-    ui.nav.chain_id = ChainId::System;
+    screen::tap(&mut ui, ButtonId::Menu);
     frame(&mut ui, &mut sync, &mut card, &mut s, &mut cur);
-    ui.nav.chain_id = ChainId::Part(0);
+    screen::tap(&mut ui, ButtonId::Menu);
     assert_eq!(
         frame(&mut ui, &mut sync, &mut card, &mut s, &mut cur),
         ToastStep::Idle
@@ -189,16 +198,16 @@ fn a_failed_exit_toasts_its_message() {
     let (mut sync, mut cur, _) = SystemSync::boot(&mut card, &mut s);
     s.eject();
     let mut ui = UiState::new();
-    ui.nav.chain_id = ChainId::System;
+    screen::tap(&mut ui, ButtonId::Menu);
     frame(&mut ui, &mut sync, &mut card, &mut s, &mut cur);
-    ui.nav.chain_id = ChainId::Part(0);
+    screen::tap(&mut ui, ButtonId::Menu);
     assert_eq!(
         frame(&mut ui, &mut sync, &mut card, &mut s, &mut cur),
-        ToastStep::Show("NO CARD")
+        ToastStep::Show(Line::new("NO CARD"))
     );
     assert_eq!(
         ui.step_toast(Toast::ERROR_MS - 1),
-        ToastStep::Show("NO CARD")
+        ToastStep::Show(Line::new("NO CARD"))
     );
     assert_eq!(ui.step_toast(1), ToastStep::Ended);
 }

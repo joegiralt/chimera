@@ -6,7 +6,6 @@ use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::lfo::{Lfo, LfoParams};
 use chimera_core::dsp::modulator::func::{BCoefs, FuncGen, Slides};
 use chimera_core::dsp::modulator::{FuncParams, LfoForm, LfoType};
-use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{ModSource, ModState};
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
@@ -46,7 +45,7 @@ impl Reference {
             }
             _ => self.random_value,
         };
-        let out = (raw * p.depth + 0.0).clamp(-1.0, 1.0);
+        let out = chimera_core::dsp::clampf(raw * p.depth + 0.0, -1.0, 1.0);
         self.phase += p.rate / SR as f32 * BLOCK_SIZE as f32;
         if self.phase >= 1.0 {
             self.phase -= 1.0;
@@ -195,9 +194,7 @@ fn after_retrigger(sync: u8, phase: f32, pre_rate: f32) -> Vec<f32> {
         phase_offset: phase,
         ..LfoParams::default()
     };
-    let mut reg = ModDestRegistry::new();
-    reg.add(CUTOFF, *b"FLTCUTOF").unwrap();
-    let mut ms = ModState::from_registry(&reg, 8);
+    let mut ms = ModState::with_sources(8);
     let mut v = Rig::new(SR);
     let (n, vel) = (MidiNote::new(60).unwrap(), Velocity::new(100).unwrap());
     let mut b = [0.0f32; BLOCK_SIZE];
@@ -206,7 +203,7 @@ fn after_retrigger(sync: u8, phase: f32, pre_rate: f32) -> Vec<f32> {
         v.render(&mut b, &p, &ms);
     }
     p.lfos[0].rate = 3.0;
-    ms.set_amount(ModSource::Lfo1.index(), 0, 16);
+    ms.set_route_addr(ModSource::Lfo1.index(), CUTOFF, 16);
     v.note_on(n, vel, &p);
     let mut out = Vec::new();
     for _ in 0..24 {

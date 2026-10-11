@@ -6,7 +6,7 @@
 mod screen;
 
 use chimera_core::mod_path::RegistryError;
-use chimera_core::ui::draw;
+use chimera_core::project::PartId;
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::theme;
 use chimera_core::ui::{PrimeStatus, UiState};
@@ -107,16 +107,18 @@ fn un_priming_also_clears_the_status() {
     assert_eq!(ui.prime_status(), None);
 }
 
-/// Direction A (ADR 0016): the hint must fit its row (spec: no literals —
-/// widths come from `theme::SCREEN_W`/`MARGIN_X`, the same budget every
-/// other row is checked against).
+/// Direction A (ADR 0016): each of the matrix's hints fits its row (ADR
+/// 0086; widths from `theme`, the budget every row is checked against).
 #[test]
 fn matrix_hint_fits_its_row() {
-    let w = draw::text_width(&theme::FONT_LABEL, chimera_core::ui::mod_grid::HINT, 0);
-    assert!(
-        w <= theme::SCREEN_W - 2 * theme::MARGIN_X,
-        "hint is {w}px wide"
-    );
+    use chimera_core::ui::{hint, mod_grid};
+    for h in [mod_grid::DELETE, mod_grid::PRIME] {
+        let w = hint::width(h);
+        assert!(
+            w <= theme::SCREEN_W - 2 * theme::MARGIN_X,
+            "hint is {w}px wide"
+        );
+    }
 }
 
 /// Review Focus (#21): the message is redrawn through the dirty-region
@@ -318,15 +320,16 @@ fn prime_every_slot(ui: &mut UiState, slots: &[EncoderId], out: &mut Vec<PrimeSt
     }
 }
 
-/// The Algo chain alone reaches 17 modulatable addresses (MORPH, VOL, six
-/// LEVELs, Drive's three, CUTOFF, RESO, the filter's DRIVE on FLT › MODE,
-/// Folder's three), one more than the matrix holds. CUTOFF is a default
-/// column, so priming it reports ALREADY ROUTED. Priming them all through
-/// real input: exactly `MAX_MOD_DESTS − 1` report ADDED (CUTOFF is a default
-/// column), then MATRIX FULL, and the matrix holds every added one.
+/// The Algo chain reaches 14 registry addresses (MORPH, VOL, six LEVELs,
+/// Drive's three, the filter's LEVEL on FLT › MODE, Folder's SYM and MIX);
+/// CUTOFF, RESO and FOLD are permanent columns, so priming them reports
+/// ALREADY ROUTED. Then each ENV's TIME and LEVEL: through real input,
+/// exactly `MAX_MOD_DESTS` report ADDED, then MATRIX FULL, and the matrix
+/// holds every added one.
 #[test]
 fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     use chimera_core::modulation::MAX_MOD_DESTS;
+    use chimera_core::ui::block_registry::{ENV_2, ENV_3, ENVELOPE};
     let mut ui = UiState::new();
     let mut seen = Vec::new();
 
@@ -335,15 +338,23 @@ fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen); // six LEVELs
     feed(&mut ui, Input::press(ButtonId::Plus)); // Drive
     prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
-    feed(&mut ui, Input::press(ButtonId::Plus)); // Filter: CUTOFF, RESO (MODE refused)
+    feed(&mut ui, Input::press(ButtonId::Plus)); // Filter: CUTOFF, RESO fixed (MODE refused)
     prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
-    feed(&mut ui, Input::press(ButtonId::Edit)); // FLT › MODE: the filter's DRIVE
+    feed(&mut ui, Input::press(ButtonId::Edit)); // FLT › MODE: the filter's LEVEL
     prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
-    feed(&mut ui, Input::press(ButtonId::Plus)); // Folder
+    feed(&mut ui, Input::press(ButtonId::Plus)); // Folder: FOLD fixed
     prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
+    let chain = seen.iter().filter(|&&s| s == PrimeStatus::Added).count();
+    assert!(chain < MAX_MOD_DESTS, "{seen:?}");
+    for (n, def) in [(1, &ENVELOPE), (2, &ENV_2), (3, &ENV_3)] {
+        feed(&mut ui, Input::press(ButtonId::B2));
+        feed(&mut ui, Input::press(ButtonId::B1)); // via Part 2: Part 1's home
+        to_mod_sub(&mut ui, n, def);
+        prime_every_slot(&mut ui, &[EncoderId::A, EncoderId::C], &mut seen); // TIME, LEVEL
+    }
 
     let added = seen.iter().filter(|&&s| s == PrimeStatus::Added).count();
-    assert_eq!(added, MAX_MOD_DESTS - 1, "{seen:?}");
+    assert_eq!(added, MAX_MOD_DESTS, "{seen:?}");
     let first_full = seen.iter().position(|&s| s == PrimeStatus::Full);
     let added_before = first_full.map(|i| {
         seen[..i]
@@ -353,12 +364,12 @@ fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     });
     assert_eq!(
         added_before,
-        Some(MAX_MOD_DESTS - 1),
+        Some(MAX_MOD_DESTS),
         "the 17th distinct address must report MATRIX FULL: {seen:?}"
     );
     assert_eq!(ui.matrix_state.num_dests, MAX_MOD_DESTS);
     assert_eq!(
-        ui.performance.parts[0].sound.dest_registry.len(),
+        ui.project().part(PartId::ALL[0]).sound.dest_registry.len(),
         MAX_MOD_DESTS
     );
 }
@@ -376,7 +387,7 @@ fn stage_cells_prime_time_and_sustain_primes_level() {
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
     prime(&mut ui, EncoderId::C); // SUSTAIN
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
-    let reg = &ui.performance.parts[0].sound.dest_registry;
+    let reg = &ui.project().part(PartId::ALL[0]).sound.dest_registry;
     let primed: Vec<ParamAddr> = (0..reg.len()).map(|i| reg.get(i).unwrap().addr).collect();
     let has = |id| {
         primed

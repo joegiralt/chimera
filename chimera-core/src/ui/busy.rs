@@ -8,6 +8,7 @@ use embedded_graphics::geometry::Point;
 use embedded_graphics::pixelcolor::Rgb565;
 use u8g2_fonts::types::VerticalPosition;
 
+use crate::project::Line;
 use crate::storage::{Exit, SyncError};
 use crate::ui::{draw, theme};
 
@@ -63,6 +64,12 @@ fn lines(text: &str) -> (&str, Option<&str>) {
         .map_or((text, None), |(a, b)| (a, Some(b)))
 }
 
+/// `text` fits a toast: one line, or two split at a space.
+pub fn toast_fits(text: &str) -> bool {
+    let (a, b) = lines(text);
+    ink(a) <= MAX_INK && b.is_none_or(|b| ink(b) <= MAX_INK)
+}
+
 fn draw_band<D: DrawTarget<Color = Rgb565>>(d: &mut D, text: &str) -> (u16, u16) {
     let (first, second) = lines(text);
     let widest = ink(first).max(second.map_or(0, ink));
@@ -97,13 +104,17 @@ fn draw_band<D: DrawTarget<Color = Rgb565>>(d: &mut D, text: &str) -> (u16, u16)
 /// A line shown for a while after a card operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Toast {
-    pub text: &'static str,
+    pub text: Line,
     pub ms: u32,
 }
 
 impl Toast {
     pub const SAVED_MS: u32 = 600;
     pub const ERROR_MS: u32 = 1_200;
+    /// What a change did, read once: as long as an error, not one.
+    pub const INFO_MS: u32 = 1_200;
+    /// A start-up fault, read once after PART 1 comes up.
+    pub const BOOT_MS: u32 = 5_000;
 }
 
 /// What leaving System shows: SAVED for a write that landed, the error's
@@ -116,7 +127,10 @@ pub fn toast_for(r: &Result<Exit, SyncError>) -> Option<Toast> {
         Err(SyncError::Store(e)) => (e.message(), Toast::ERROR_MS),
         Err(SyncError::File(e)) => (e.message(), Toast::ERROR_MS),
     };
-    Some(Toast { text, ms })
+    Some(Toast {
+        text: Line::new(text),
+        ms,
+    })
 }
 
 /// What the shell does with the toast this frame.
@@ -124,7 +138,7 @@ pub fn toast_for(r: &Result<Exit, SyncError>) -> Option<Toast> {
 pub enum ToastStep {
     Idle,
     /// Draw it over the rendered frame and flush its band.
-    Show(&'static str),
+    Show(Line),
     /// It went this frame: repaint what it covered.
     Ended,
 }

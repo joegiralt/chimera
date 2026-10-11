@@ -4,6 +4,7 @@
 mod screen;
 
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::focus::{FocusMemory, MAX_PAGES};
 use chimera_hal::{ButtonId, EncoderId};
@@ -23,7 +24,7 @@ fn the_first_tick_of_another_slot_moves_focus_and_it_stays() {
     feed(&mut ui, Input::turn(EncoderId::C, 1));
     assert_eq!(ui.focused_slot(), 2);
     for _ in 0..50 {
-        ui.update(); // no timer: focus does not fall back
+        ui.update(UiTick::for_test()); // no timer: focus does not fall back
     }
     assert_eq!(ui.focused_slot(), 2);
     feed(&mut ui, Input::turn(EncoderId::B, -1));
@@ -47,6 +48,7 @@ fn focus_is_remembered_per_page() {
 fn mixer_part_and_matrix_pages_use_the_same_mechanism() {
     let mut ui = UiState::new();
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+    feed(&mut ui, Input::press(ButtonId::Minus)); // SENDS → PART
     feed(&mut ui, Input::turn(EncoderId::D, -1)); // LEVEL
     assert_eq!(ui.focused_slot(), 3);
     feed(&mut ui, Input::press(ButtonId::B1)); // Part 1 chain, Algo

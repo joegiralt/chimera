@@ -1,6 +1,6 @@
 //! The shared FX bus (instrument-core spec § Audio path, FX diet spec
 //! § Bus): each effect runs once on the sum of the parts' sends; the return
-//! is the sum of the wet outputs of the effects that are on.
+//! is the sum of the effects' wet outputs, each × its eased MIX.
 mod common;
 use common::SR;
 
@@ -8,7 +8,9 @@ use chimera_core::dsp::Stereo;
 use chimera_core::dsp::chorus::{ChorusParams, JunoChorus};
 use chimera_core::dsp::delay::{DelayParams, TapeDelay};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
-use chimera_core::dsp::ring::{RingReverb, first_reflection, size_step};
+use chimera_core::dsp::rev::Reverb;
+use chimera_core::dsp::rev::sync::Tempo;
+use chimera_core::dsp::ring::{first_reflection, size_step};
 use chimera_core::hw::DAC_PAIRS;
 use chimera_hal::BLOCK_SIZE;
 
@@ -44,7 +46,13 @@ fn effects_that_are_off_return_nothing() {
     let mut bus = Box::new(FxBus::new());
     let mut sends = [burst(); FX_SENDS];
     let mut ret = full();
-    bus.process(&mut sends, &FxParams::default(), SR, &mut ret);
+    bus.process(
+        &mut sends,
+        &FxParams::default(),
+        Tempo::DEFAULT,
+        SR,
+        &mut ret,
+    );
     assert_eq!(ret, Stereo::SILENT);
 }
 
@@ -80,7 +88,7 @@ fn return_is_each_effects_wet_output() {
         let (mut c, mut d, mut r) = (
             Box::new(JunoChorus::new()),
             Box::new(TapeDelay::new()),
-            Box::new(RingReverb::new()),
+            Box::new(Reverb::new()),
         );
         let mut heard = 0.0f32;
         for b in 0..80 {
@@ -88,7 +96,7 @@ fn return_is_each_effects_wet_output() {
             let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
             sends[slot] = input;
             let mut ret = Stereo::SILENT;
-            bus.process(&mut sends, &params, SR, &mut ret);
+            bus.process(&mut sends, &params, Tempo::DEFAULT, SR, &mut ret);
             let want = match slot {
                 0 => {
                     let mut w = Stereo::SILENT;
@@ -100,8 +108,9 @@ fn return_is_each_effects_wet_output() {
                     let mut w = Stereo::SILENT;
                     r.process(
                         &input,
-                        &params.reverb.controls(),
+                        &params.reverb,
                         params.reverb.mix,
+                        Tempo::DEFAULT,
                         SR,
                         &mut w,
                     );
@@ -129,7 +138,7 @@ fn reverb_return_is_silent_before_its_first_reflection() {
     for b in 0..first_reflection(size_step(p.reverb.size)) / BLOCK_SIZE {
         let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], burst()];
         let mut ret = full();
-        bus.process(&mut sends, &p, SR, &mut ret);
+        bus.process(&mut sends, &p, Tempo::DEFAULT, SR, &mut ret);
         assert_eq!(ret, Stereo::SILENT, "block {b}");
     }
 }
@@ -150,7 +159,7 @@ fn with_rev_send(blocks: usize, own: bool, send: impl Fn(usize) -> f32) -> Vec<f
         let own = if own { x } else { [0.0; BLOCK_SIZE] };
         let mut sends = [[0.0; BLOCK_SIZE], x, own];
         let mut ret = Stereo::SILENT;
-        bus.process(&mut sends, &p, SR, &mut ret);
+        bus.process(&mut sends, &p, Tempo::DEFAULT, SR, &mut ret);
         out.extend(ret.l);
     }
     out
@@ -165,16 +174,16 @@ fn rev_send_0_leaves_the_reverb_its_own_send() {
     (p.delay.time_ms, p.delay.feedback, p.delay.mix) = (120.0, 0.5, 0.5);
     p.reverb.mix = 0.5;
     let mut bus = Box::new(FxBus::new());
-    let (mut d, mut r) = (Box::new(TapeDelay::new()), Box::new(RingReverb::new()));
+    let (mut d, mut r) = (Box::new(TapeDelay::new()), Box::new(Reverb::new()));
     for b in 0..64 {
         let x = if b < 8 { burst() } else { [0.0; BLOCK_SIZE] };
         let mut sends = [[0.0; BLOCK_SIZE], x, x];
         let mut ret = Stereo::SILENT;
-        bus.process(&mut sends, &p, SR, &mut ret);
+        bus.process(&mut sends, &p, Tempo::DEFAULT, SR, &mut ret);
         let mut dw = x;
         d.process_wet(&mut dw, &p.delay, SR);
         let mut rw = Stereo::SILENT;
-        r.process(&x, &p.reverb.controls(), p.reverb.mix, SR, &mut rw);
+        r.process(&x, &p.reverb, p.reverb.mix, Tempo::DEFAULT, SR, &mut rw);
         let want = Stereo {
             l: core::array::from_fn(|i| dw[i] + rw.l[i]),
             r: core::array::from_fn(|i| dw[i] + rw.r[i]),
@@ -211,7 +220,7 @@ fn rev_send_feeds_nothing_while_the_delay_is_off() {
     for b in 0..first_reflection(size_step(p.reverb.size)) / BLOCK_SIZE + 64 {
         let mut sends = [[0.0; BLOCK_SIZE], burst(), [0.0; BLOCK_SIZE]];
         let mut ret = full();
-        bus.process(&mut sends, &p, SR, &mut ret);
+        bus.process(&mut sends, &p, Tempo::DEFAULT, SR, &mut ret);
         assert_eq!(ret, Stereo::SILENT, "block {b}");
     }
 }
@@ -241,24 +250,25 @@ fn a_rev_send_jump_does_not_click() {
     }
 }
 
-/// GRIT reaches the ring through the bus: at 1 the return differs.
+/// SMEAR reaches the ring through the bus: at 1 the return differs once
+/// the burst has been round a stage delay (about 100 blocks at SIZE 0.5).
 #[test]
-fn grit_changes_the_return() {
-    let render = |grit: f32| {
+fn smear_changes_the_return() {
+    let render = |smear: f32| {
         let mut p = FxParams::default();
-        (p.reverb.mix, p.reverb.grit) = (0.5, grit);
+        (p.reverb.mix, p.reverb.smear, p.reverb.rate) = (0.5, smear, 1.0);
         let mut bus = Box::new(FxBus::new());
         let mut out = Vec::new();
-        for b in 0..40 {
+        for b in 0..200 {
             let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
             sends[2] = if b < 4 { burst() } else { [0.0; BLOCK_SIZE] };
             let mut ret = Stereo::SILENT;
-            bus.process(&mut sends, &p, SR, &mut ret);
+            bus.process(&mut sends, &p, Tempo::DEFAULT, SR, &mut ret);
             out.extend(ret.l);
         }
         out
     };
-    assert_ne!(render(0.0), render(1.0));
+    assert!(render(0.0) != render(1.0));
 }
 
 /// FX diet spec § Master section: off by default, the master section
@@ -276,4 +286,62 @@ fn the_master_section_is_off_by_default() {
         bus.master(&mut out, &p, SR);
         assert_eq!(out, before, "block {b}");
     }
+}
+
+/// #61: an effect at MIX 0 keeps running on its send, so bringing MIX back
+/// up plays what the send is doing now. A burst into each effect, MIX 0
+/// through 2 s of silence, then MIX back to 0.5: the delay's line and the
+/// reverb's ring have long let the burst go, and the return stays silent.
+#[test]
+fn an_effect_at_mix_0_never_replays_a_stale_tail() {
+    let mut p = FxParams::default();
+    p.chorus.mode = 3;
+    (p.delay.time_ms, p.delay.feedback) = (400.0, 0.0);
+    (p.reverb.time, p.reverb.size) = (0.3, 0.5);
+    let on = |p: &mut FxParams, mix: f32| {
+        (p.chorus.mix, p.delay.mix, p.reverb.mix) = (mix, mix, mix);
+    };
+    let mut bus = Box::new(FxBus::new());
+    let mut peak_after = 0.0f32;
+    for b in 0..1600 {
+        on(&mut p, if (4..1500).contains(&b) { 0.0 } else { 0.5 });
+        let x = if b < 4 { burst() } else { [0.0; BLOCK_SIZE] };
+        let mut sends = [x, x, x];
+        let mut ret = Stereo::SILENT;
+        bus.process(&mut sends, &p, Tempo::DEFAULT, SR, &mut ret);
+        if b >= 1500 {
+            peak_after = ret
+                .l
+                .iter()
+                .chain(&ret.r)
+                .fold(peak_after, |m, s| m.max(s.abs()));
+        }
+    }
+    assert!(peak_after < 1e-4, "stale tail at {peak_after}");
+}
+
+/// Never snap: an effect's MIX 0.5 → 0 fades its return over the ease,
+/// no step at the switch.
+#[test]
+fn an_effect_switched_off_fades_its_return() {
+    let mut p = FxParams::default();
+    p.delay.mix = 0.5;
+    (p.delay.time_ms, p.delay.feedback) = (20.0, 0.0);
+    let mut bus = Box::new(FxBus::new());
+    let mut rets = Vec::new();
+    for b in 0..40 {
+        if b == 20 {
+            p.delay.mix = 0.0;
+        }
+        let mut sends = [[0.0; BLOCK_SIZE], [0.25; BLOCK_SIZE], [0.0; BLOCK_SIZE]];
+        let mut ret = Stereo::SILENT;
+        bus.process(&mut sends, &p, Tempo::DEFAULT, SR, &mut ret);
+        rets.extend(ret.l);
+    }
+    let at = 20 * BLOCK_SIZE;
+    // A DC send's echo: 0.125 held, then gliding down, never stepping.
+    assert!((rets[at - 1] - 0.125).abs() < 1e-3, "{}", rets[at - 1]);
+    let steps = rets[at - 1..].windows(2).map(|w| (w[1] - w[0]).abs());
+    assert!(steps.fold(0.0f32, f32::max) < 0.005);
+    assert!(rets[at + BLOCK_SIZE] > 0.05, "a fade, not a cut");
 }

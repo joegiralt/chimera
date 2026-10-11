@@ -8,6 +8,7 @@ use chimera_core::dsp::modulator::{EnvForm, EnvSpeed, EnvType, Func, LfoForm, Lf
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::preset::Sound;
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_registry::{
     ALGO_CHAIN, ENV_2, ENV_3, ENV_SPEED, ENVELOPE, LFO, LFO_2, LFO_3, MOD_MATRIX,
 };
@@ -146,7 +147,7 @@ fn a_type_change_reseeds_the_page() {
     let mut ui = UiState::new();
     to_mod_sub(&mut ui, 1, &ENVELOPE);
     feed(&mut ui, Input::turn(EncoderId::F, 1)); // TYPE → B
-    ui.update();
+    ui.update(UiTick::for_test());
     let rise = ui.params().envelopes[0].func.rise;
     assert_eq!(ui.renderer.anim[1].current(), rise, "RISE shown at once");
 }
@@ -211,7 +212,7 @@ fn spd_dims_a_type_b_slot() {
     let s = Sound::init(EngineType::Algo);
     let ctx = SlotCtx::read(&s.params, Op::A);
     let dim: Vec<bool> = (0..6)
-        .map(|i| is_dimmed(&view(&ENV_SPEED, i, &ctx), &s))
+        .map(|i| is_dimmed(&view(&ENV_SPEED, i, &ctx), &s, &ctx))
         .collect();
     assert_eq!(dim, [false, false, true, false, false, true]);
 }
@@ -220,7 +221,7 @@ fn spd_dims_a_type_b_slot() {
 /// slot's read its values.
 #[test]
 fn spd_reads_type_b_on_a_type_b_slot() {
-    use chimera_core::addr::Blocks;
+    use chimera_core::addr::BlockRead;
     let s = Sound::init(EngineType::Algo);
     let ctx = SlotCtx::read(&s.params, Op::A);
     for (i, label) in [(2, "E3 SPEED"), (5, "E3 HOLD")] {
@@ -274,7 +275,17 @@ fn a_fixed_slot_is_dimmed_in_the_focus_band() {
     let mut want = Fb::new();
     want.px.fill(fb.px[0]);
     let v = ui.renderer.anim[0].current();
-    components::focus_band(&mut want, "MODE", "LFO", v, false, Look::Dimmed, None);
+    components::focus_band(
+        &mut want,
+        "MODE",
+        "LFO",
+        chimera_core::ui::glyph::Gauge::Arc {
+            value: v,
+            bipolar: false,
+        },
+        Look::Dimmed,
+        None,
+    );
     assert!(band(&fb) == band(&want), "the band is MODE LFO, dimmed");
     let inks = [theme::INK, theme::ACCENT];
     assert!(

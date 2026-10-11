@@ -9,8 +9,8 @@ fn filter_block_params() {
         &chimera_core::params::ParamSnapshot::default(),
         chimera_core::addr::Op::A,
     );
-    assert_eq!(view(def, 1, &ctx).label(), "CUTOFF");
-    assert_eq!(view(def, 2, &ctx).label(), "RES");
+    assert_eq!(view(def, 1, &ctx).label(), "FREQ");
+    assert_eq!(view(def, 2, &ctx).label(), "Q");
     assert_eq!(def.layout, PageLayout::BigViz);
 }
 
@@ -25,8 +25,16 @@ fn chain_active_def_resolves() {
 #[test]
 fn modal_pluck_chain() {
     let chain = &block_registry::MODAL_PLUCK_CHAIN;
-    assert_eq!(chain.blocks[0].def.name, "Modal");
-    assert_eq!(chain.blocks[0].sub_page_count(), 3); // primary + Modal-2 + Pitch
+    assert_eq!(chain.blocks[0].def.name, "Exciter");
+    assert_eq!(chain.blocks[0].sub_page_count(), 0);
+    assert_eq!(chain.blocks[1].def.name, "Modal");
+    assert_eq!(chain.blocks[1].sub_page_count(), 3); // primary + Modal-2 + Pitch
+    let map: Vec<_> = chain
+        .blocks
+        .iter()
+        .map(|b| b.map.unwrap_or(b.def.short))
+        .collect();
+    assert_eq!(map, ["EXC", "RES", "FLT", "AMP", "MOD"]);
 }
 
 #[test]
@@ -41,32 +49,23 @@ fn mixer_channel_strip_chain() {
 }
 
 #[test]
-fn system_chain_has_5_blocks() {
-    let chain = &block_registry::SYSTEM_CHAIN;
-    assert_eq!(chain.blocks[0].def.name, "MIDI Setup");
-    assert_eq!(chain.blocks[4].def.name, "About");
-    assert_eq!(chain.len(), 5);
+fn demo_has_5_pages_then_the_glyph_pages() {
+    let pages = &block_registry::DEMO_BLOCKS;
+    assert!(pages[5..].iter().all(|b| b.def.name.starts_with("Glyph: ")));
+    assert_eq!(pages[5].def.name, "Glyph: Arc");
+    assert_eq!(pages[0].def.name, "Waves");
+    assert_eq!(pages[2].def.name, "Motion");
+    assert_eq!(pages[3].def.name, "FM Icons");
+    assert_eq!(pages[4].def.name, "Matrix");
+    assert_eq!(pages[4].def.layout, PageLayout::Matrix);
 }
 
 #[test]
-fn demo_chain_has_5_blocks() {
-    let chain = &block_registry::DEMO_CHAIN;
-    assert_eq!(chain.blocks.len(), 5);
-    assert_eq!(chain.blocks[0].def.name, "Waves");
-    assert_eq!(chain.blocks[2].def.name, "Motion");
-    assert_eq!(chain.blocks[3].def.name, "FM Icons");
-    assert_eq!(chain.blocks[4].def.name, "Matrix");
-    assert_eq!(chain.blocks[4].def.layout, PageLayout::Matrix);
-    assert_eq!(chain.len(), 5);
-}
-
-#[test]
-fn about_has_the_audio_sub_page() {
-    let about = &block_registry::SYSTEM_CHAIN.blocks[4];
-    assert_eq!(about.def.name, "About");
-    assert_eq!(about.sub_pages.len(), 1);
-    assert_eq!(about.sub_pages[0].name, "Audio");
-    assert_eq!(about.sub_pages[0].id, 41);
+fn about_and_audio_load_are_their_own_leaves() {
+    use chimera_core::ui::settings::leaves::{ABOUT_LEAF, AUDIO_LOAD_LEAF};
+    assert_eq!(ABOUT_LEAF.def().name, "About");
+    assert_eq!(AUDIO_LOAD_LEAF.def().name, "Audio");
+    assert_eq!(AUDIO_LOAD_LEAF.def().id, 41);
 }
 
 #[test]
@@ -81,4 +80,38 @@ fn algo_chain_is_alg_osc_then_the_voice_chain() {
     assert_eq!(chain.active_def(1, 0).unwrap().name, "Wave");
     assert!(chain.blocks[1].sub_pages.iter().any(|d| d.name == "Level"));
     assert_eq!(chain.blocks[5].sub_pages.len(), 7);
+}
+
+/// Lists and the Sound rung show `NO_PAGE`: no chain's page shares its id,
+/// and it binds nothing.
+#[test]
+fn no_page_id_is_reserved() {
+    use chimera_core::ui::block_def::SlotBinding;
+    use chimera_core::ui::{NO_PAGE, NO_PAGE_ID};
+    for chain in block_registry::ALL_CHAINS {
+        for (n, b) in chain.blocks.iter().enumerate() {
+            for s in 0..b.sub_page_count().max(1) {
+                let def = chain.active_def(n, s).unwrap();
+                assert_ne!(def.id, NO_PAGE_ID, "{}", def.name);
+            }
+        }
+    }
+    assert_eq!(NO_PAGE.id, NO_PAGE_ID);
+    assert!(
+        NO_PAGE
+            .params
+            .iter()
+            .all(|p| p.binding == SlotBinding::Empty)
+    );
+}
+
+#[cfg(feature = "master-tape")]
+#[test]
+fn master_stage_reads_reel() {
+    use chimera_core::addr::BlockRef;
+    use chimera_core::ui::mod_grid::{block_name, block_tag};
+    assert_eq!(block_registry::TAPE.short, "REEL");
+    assert_eq!(block_registry::TAPE.name, "Reel");
+    assert_eq!(block_tag(BlockRef::Tape), "REL");
+    assert_eq!(block_name(BlockRef::Tape), "REEL");
 }

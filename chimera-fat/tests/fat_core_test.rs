@@ -3,15 +3,19 @@
 
 #[path = "common/image.rs"]
 mod image;
+#[path = "common/probe.rs"]
+mod probe;
 
 use chimera_fat::blocks::FsError;
-use chimera_fat::dir::{Entry, ShortName, Slot, encode, lfn_checksum, parse};
+use chimera_fat::dir::{Attr, Entry, ShortName, Slot, encode, lfn_checksum, parse, read_only};
 use chimera_fat::fat::{FatCache, Table};
 use chimera_fat::fsinfo;
 use chimera_fat::volume::{FsKind, Layout};
-use chimera_hal::store::{Dir, FileName};
-use image::{PART_LBA, RamDisk, Rec, fat16, fat32, layout_of, with_clusters};
+use chimera_hal::store::{Dir, FileName, Store, VolumeId};
+use image::{PART_LBA, RamDisk, Rec, fat_check, fat16, fat32, layout_of, with_clusters};
+use probe::{log, probed};
 use std::collections::HashSet;
+use std::rc::Rc;
 
 /// Cluster `c`'s entry, set to `v` in every FAT on the disk.
 fn put(disk: &RamDisk, l: &Layout, c: u32, v: u32) {
@@ -254,7 +258,7 @@ fn broken_chains_are_bounded() {
             let mut cache = FatCache::new();
             let mut t = Table::new(&mut rec, &l, &mut cache);
             assert_eq!(t.chain_len(3), Err(FsError::Corrupt), "{what}");
-            assert_eq!(t.free_chain(3), Ok(freed), "{what}");
+            assert_eq!(t.free_chain(3).map(|f| f.n), Ok(freed), "{what}");
             t.flush().unwrap();
             assert_eq!(rec.reads, 1, "{what}: one FAT sector, cached");
             assert_eq!(entries(&disk, &l, 3), [0, 0], "{what}");
@@ -268,10 +272,10 @@ fn broken_chains_are_bounded() {
         let mut cache = FatCache::new();
         let mut t = Table::new(&mut rec, &l, &mut cache);
         assert_eq!(t.chain_len(3), Err(FsError::Corrupt), "self-loop");
-        assert_eq!(t.free_chain(3), Ok(1), "self-loop");
+        assert_eq!(t.free_chain(3).map(|f| f.n), Ok(1), "self-loop");
         for start in [0, 1, count + 2, u32::MAX] {
             assert_eq!(t.chain_len(start), Err(FsError::Corrupt), "start {start}");
-            assert_eq!(t.free_chain(start), Ok(0), "start {start}");
+            assert_eq!(t.free_chain(start).map(|f| f.n), Ok(0), "start {start}");
         }
         t.flush().unwrap();
         assert_eq!(rec.reads, 1, "unheld starts read nothing");
@@ -292,7 +296,7 @@ fn a_loop_through_every_cluster_is_corrupt() {
     let mut cache = FatCache::new();
     let mut t = Table::new(&mut rec, &l, &mut cache);
     assert_eq!(t.chain_len(2), Err(FsError::Corrupt));
-    assert_eq!(t.free_chain(2), Ok(5_000));
+    assert_eq!(t.free_chain(2).map(|f| f.n), Ok(5_000));
     assert_eq!(t.free_count(), Ok(5_000));
     t.flush().unwrap();
     // chain_len, free_chain and free_count each pass over the 20 sectors.
@@ -321,7 +325,12 @@ fn entry_codec_round_trips() {
         len: 5_000,
     };
     let mut r = [0xFF; 32];
-    encode(&e, false, FsKind::Fat32, &mut r);
+    encode(&e, Attr::Sealed, FsKind::Fat32, &mut r);
+    assert_eq!(r[11], 0x21, "a sealed file is read-only");
+    assert!(read_only(&r));
+    assert_eq!(parse(&r, FsKind::Fat32), Slot::File(e));
+    encode(&e, Attr::File, FsKind::Fat32, &mut r);
+    assert!(!read_only(&r));
     assert_eq!(&r[..11], b"SONG1   CHP");
     assert_eq!(r[11], 0x20);
     assert_eq!(u16::from_le_bytes([r[24], r[25]]), 0x5C21, "2026-01-01");
@@ -329,7 +338,7 @@ fn entry_codec_round_trips() {
     assert_eq!(name.to_file(Dir::Projects), Some(file(b"SONG1", b"CHP")));
 
     let e16 = Entry { start: 0x2345, ..e };
-    encode(&e16, false, FsKind::Fat16, &mut r);
+    encode(&e16, Attr::File, FsKind::Fat16, &mut r);
     assert_eq!(r[20..22], [0, 0], "FAT16 has no high half");
     assert_eq!(parse(&r, FsKind::Fat16), Slot::File(e16));
     r[20] = 1;
@@ -344,10 +353,10 @@ fn entry_codec_round_trips() {
         start: 7,
         len: 0,
     };
-    encode(&d, true, FsKind::Fat16, &mut r);
+    encode(&d, Attr::Dir, FsKind::Fat16, &mut r);
     assert_eq!((&r[..11], r[11]), (&b"PROJECTS   "[..], 0x10));
     assert_eq!(parse(&r, FsKind::Fat16), Slot::Dir(d));
-    encode(&Entry { len: 99, ..d }, true, FsKind::Fat16, &mut r);
+    encode(&Entry { len: 99, ..d }, Attr::Dir, FsKind::Fat16, &mut r);
     assert_eq!(
         parse(&r, FsKind::Fat16),
         Slot::Dir(d),
@@ -444,4 +453,199 @@ fn a_dirty_cache_is_not_dropped() {
     let mut t = Table::new(&mut rec, &l, &mut cache);
     t.set(300, 7).unwrap();
     let _ = Table::new(&mut rec, &l, &mut cache);
+}
+
+/// Clusters 250..=255 chained in both FATs: the tail of FAT sector 0 on
+/// FAT16, so the next cluster, 256, is in sector 1.
+fn sector0_tail(disk: &RamDisk, l: &Layout) {
+    for c in 250..255 {
+        put(disk, l, c, c + 1);
+    }
+    put(disk, l, 255, l.end_mark());
+}
+
+/// After a fault: the next operation's `heal`, with the card answering
+/// again, then nothing held by no entry, crossed or short, and both FATs
+/// alike.
+fn healed_clean(what: &str, disk: &RamDisk, l: &Layout, cache: &mut FatCache) {
+    let mut rec = Rec::new(disk);
+    let mut t = Table::new(&mut rec, l, cache);
+    t.heal().unwrap_or_else(|e| panic!("{what}: heal {e:?}"));
+    t.flush().unwrap();
+    let r = fat_check(disk);
+    assert_eq!(r.lost, [] as [u32; 0], "{what}: lost");
+    assert!(
+        r.cross_linked.is_empty() && r.short.is_empty() && r.fats_differ.is_empty(),
+        "{what}: {r:?}"
+    );
+}
+
+/// #362: an alloc whose new cluster is in the next FAT sector, refused or
+/// landed-then-erred at each of its four FAT writes (both copies of both
+/// sectors): `drop_chain` frees the chain and the stranded cluster.
+#[test]
+fn drop_chain_frees_the_stranded_cluster() {
+    let base = fat16(16_384, 1);
+    let l = layout_of(&base);
+    sector0_tail(&base, &l);
+    assert_ne!(l.fat_block(255), l.fat_block(256));
+    let writes = {
+        let disk = RamDisk(base.0.clone());
+        let mut rec = Rec::new(&disk);
+        let mut cache = FatCache::new();
+        let mut t = Table::new(&mut rec, &l, &mut cache);
+        assert_eq!(t.alloc(256, Some(255)), Ok(256));
+        t.flush().unwrap();
+        rec.writes.iter().map(|&(b, _)| b).collect::<Vec<_>>()
+    };
+    let (s0, s1): (Vec<u32>, Vec<u32>) = (
+        l.fat_copies(l.fat_block(255)).collect(),
+        l.fat_copies(l.fat_block(256)).collect(),
+    );
+    assert_eq!(
+        writes,
+        [s1, s0].concat(),
+        "sector 1 lands first, then the link"
+    );
+    for (k, &block) in writes.iter().enumerate() {
+        for land in [false, true] {
+            let what = match land {
+                false => format!("fail_write at write {k} (block {block})"),
+                true => format!("land_then_fail at write {k} (block {block})"),
+            };
+            let disk = RamDisk(base.0.clone());
+            let mut cache = FatCache::new();
+            {
+                let mut rec = Rec::new(&disk);
+                match land {
+                    false => rec.fail_write = Some(block),
+                    true => rec.land_then_fail = Some(k),
+                }
+                let mut t = Table::new(&mut rec, &l, &mut cache);
+                let r = t.alloc(256, Some(255)).and_then(|_| t.flush());
+                assert!(r.is_err(), "{what}: the fault reached the alloc");
+                // No entry holds the chain: dropped as a failed write drops it.
+                let _ = t.drop_chain(250);
+            }
+            healed_clean(&what, &disk, &l, &mut cache);
+        }
+    }
+}
+
+/// The next alloc's free cluster is in the sector holding the pending
+/// link, and that sector's flush fails at FAT 1: the pending pair is
+/// still the one `drop_chain` sees, so cluster 256 is freed once the card
+/// answers.
+#[test]
+fn pending_link_sector_flush_fails() {
+    let disk = fat16(16_384, 1);
+    let l = layout_of(&disk);
+    sector0_tail(&disk, &l);
+    let fat1_s0 = l.fat_block(255);
+    let mut cache = FatCache::new();
+    {
+        let mut rec = Rec::new(&disk);
+        let mut t = Table::new(&mut rec, &l, &mut cache);
+        assert_eq!(t.alloc(256, Some(255)), Ok(256));
+        t.blocks().fail_write = Some(fat1_s0);
+        assert!(t.alloc(100, Some(256)).is_err(), "the pending link's flush");
+        let _ = t.drop_chain(250);
+    }
+    healed_clean("pending link", &disk, &l, &mut cache);
+}
+
+fn chimera_file(stem: &str) -> FileName {
+    FileName::new(Dir::Chimera, stem.as_bytes(), b"BIN").unwrap()
+}
+
+/// `/CHIMERA`'s chain, raw from FAT 1: every cluster linked or ended, and
+/// the last ended.
+fn chimera_chain(disk: &RamDisk) -> Vec<u32> {
+    let l = layout_of(disk);
+    let start = fat_check(disk)
+        .entries
+        .iter()
+        .find(|e| e.name == *b"FILL1   BIN")
+        .map(|_| ())
+        .and(Some(2))
+        .unwrap();
+    let mut chain = vec![start];
+    loop {
+        let c = *chain.last().unwrap();
+        let v = entries(disk, &l, c)[0];
+        assert_ne!(v, 0, "/CHIMERA links to a free cluster: {chain:?}");
+        if v >= 0xFFF8 {
+            return chain;
+        }
+        assert!(chain.len() < 8, "/CHIMERA's chain runs on: {chain:?}");
+        chain.push(v);
+    }
+}
+
+/// `/CHIMERA` full in cluster 2, a file to cluster 255: the next new file
+/// grows the directory into cluster 256, across a FAT sector, then the
+/// replace fails at each later write. The directory keeps its chain and
+/// entries, nothing is cross-linked, and nothing it holds is freed.
+#[test]
+fn grow_then_failed_replace_keeps_the_directory() {
+    let base = Rc::new(with_clusters(4_200, 7));
+    let vol = {
+        let mut s = probed(&base);
+        let vol = s.mount().unwrap();
+        s.make_dir(vol, Dir::Chimera).unwrap();
+        s.write(vol, chimera_file("FILL1"), &mut |w| w.put(&[7; 253 * 512]))
+            .unwrap();
+        for i in 1..=13 {
+            s.write(vol, chimera_file(&format!("F{i:02}")), &mut |_| Ok(()))
+                .unwrap();
+        }
+        vol
+    };
+    let before = fat_check(&base);
+    assert_eq!(
+        before.entry(b"FILL1   BIN").unwrap().chain.last(),
+        Some(&255)
+    );
+    assert_eq!(chimera_chain(&base), [2]);
+    let body = [9u8; 3 * 512];
+    let replace = |s: &mut probe::Probed<RamDisk>, vol: VolumeId| {
+        s.write(vol, chimera_file("NEWF"), &mut |w| w.put(&body))
+    };
+    let writes: Vec<u32> = {
+        let disk = Rc::new(RamDisk(base.0.clone()));
+        let mut s = probed(&disk);
+        replace(&mut s, vol).unwrap();
+        assert_eq!(chimera_chain(&disk), [2, 256], "the directory grew");
+        log(&s).writes.borrow().iter().map(|&(b, _)| b).collect()
+    };
+    for (k, &block) in writes.iter().enumerate() {
+        for land in [false, true] {
+            let what = match land {
+                false => format!("fail_write at write {k} (block {block})"),
+                true => format!("land_then_fail at write {k} (block {block})"),
+            };
+            let disk = Rc::new(RamDisk(base.0.clone()));
+            let mut s = probed(&disk);
+            match land {
+                false => log(&s).fail_write.set(Some(block)),
+                true => log(&s).land_then_fail.set(Some(k)),
+            }
+            let _ = replace(&mut s, vol);
+            log(&s).fail_write.set(None);
+            log(&s).land_then_fail.set(None);
+            // The next change heals what the fault left.
+            let vol = s.mount().unwrap();
+            s.write(vol, chimera_file("F01"), &mut |_| Ok(())).unwrap();
+            let chain = chimera_chain(&disk);
+            assert!(chain == [2] || chain == [2, 256], "{what}: {chain:?}");
+            let r = fat_check(&disk);
+            assert!(
+                r.cross_linked.is_empty() && r.short.is_empty(),
+                "{what}: {r:?}"
+            );
+            for e in &before.entries {
+                assert_eq!(r.entry(&e.name), Some(e), "{what}: an entry changed");
+            }
+        }
+    }
 }

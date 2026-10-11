@@ -8,7 +8,7 @@
 //! change without a word; the store re-inits the card instead.
 
 use crate::blocks::{BLOCK, Blocks, FsError};
-use crate::dir::{self, ENTRY, Entry, ShortName, Slot, encode, lfn_checksum, parse};
+use crate::dir::{self, Attr, ENTRY, Entry, ShortName, Slot, encode, lfn_checksum, parse};
 use crate::fat::{FatCache, Table};
 use crate::fsinfo;
 use crate::volume::{Layout, Link, Root};
@@ -21,6 +21,8 @@ fn path(dir: Dir) -> &'static [Dir] {
         Dir::Chimera => &[Dir::Chimera],
         Dir::Projects => &[Dir::Chimera, Dir::Projects],
         Dir::Sounds => &[Dir::Chimera, Dir::Sounds],
+        Dir::Bench => &[Dir::Chimera, Dir::Bench],
+        Dir::Tapes => &[Dir::Chimera, Dir::Tapes],
     }
 }
 
@@ -127,6 +129,132 @@ impl<'a, B: Blocks> Fs<'a, B> {
         file: FileName,
         sink: &mut dyn ReadSink,
     ) -> Result<(), FsError<B::Error>> {
+        self.read_at(file, 0, sink)
+    }
+
+    /// `read` from byte `offset`: the chain is followed to the cluster that
+    /// holds it, so only those blocks are read. `begin` gets the bytes from
+    /// `offset` on (0 past the end).
+    pub fn read_at(
+        &mut self,
+        file: FileName,
+        offset: u32,
+        sink: &mut dyn ReadSink,
+    ) -> Result<(), FsError<B::Error>> {
+        let e = self.find(file)?;
+        let layout = *self.table.layout();
+        let mut left = e.len.saturating_sub(offset) as usize;
+        if sink.begin(left as u32).is_break() || left == 0 {
+            return Ok(());
+        }
+        let mut c = e.start;
+        for _ in 0..offset / layout.cluster_bytes() {
+            c = self.next(c)?;
+        }
+        let mut skip = (offset % layout.cluster_bytes()) as usize;
+        loop {
+            let first = layout.cluster_block(c).ok_or(FsError::Corrupt)?;
+            let from = (skip / BLOCK) as u32;
+            for b in first + from..first + layout.blocks_per_cluster() {
+                self.table
+                    .blocks()
+                    .read(b, self.buf)
+                    .map_err(FsError::Dev)?;
+                let at = skip % BLOCK;
+                skip = 0;
+                let n = left.min(BLOCK - at);
+                left -= n;
+                if sink.chunk(&self.buf[at..at + n]).is_break() || left == 0 {
+                    return Ok(());
+                }
+            }
+            c = self.next(c)?;
+        }
+    }
+
+    /// The cluster after `c`; a chain that ends early is `Corrupt`.
+    fn next(&mut self, c: u32) -> Result<u32, FsError<B::Error>> {
+        match self.table.link(c)? {
+            Link::Next(next) => Ok(next),
+            Link::End | Link::Broken => Err(FsError::Corrupt),
+        }
+    }
+
+    /// Calls `f` with each run of contiguous blocks that holds `file`'s
+    /// bytes, in order, as (first block, blocks), and returns its length.
+    /// The chain is checked as `read` checks it.
+    pub fn runs(
+        &mut self,
+        file: FileName,
+        f: &mut dyn FnMut(u32, u32),
+    ) -> Result<u32, FsError<B::Error>> {
+        let e = self.find(file)?;
+        let layout = *self.table.layout();
+        let (mut c, mut left) = (e.start, e.len.div_ceil(BLOCK as u32));
+        let mut run: Option<(u32, u32)> = None;
+        while left > 0 {
+            let first = layout.cluster_block(c).ok_or(FsError::Corrupt)?;
+            let n = left.min(layout.blocks_per_cluster());
+            run = match run {
+                Some((at, len)) if at + len == first => Some((at, len + n)),
+                Some((at, len)) => {
+                    f(at, len);
+                    Some((first, n))
+                }
+                None => Some((first, n)),
+            };
+            left -= n;
+            if left > 0 {
+                c = match self.table.link(c)? {
+                    Link::Next(next) => next,
+                    Link::End | Link::Broken => return Err(FsError::Corrupt),
+                };
+            }
+        }
+        if let Some((at, len)) = run {
+            f(at, len);
+        }
+        Ok(e.len)
+    }
+
+    /// Whether `dir` exists.
+    pub fn has_dir(&mut self, dir: Dir) -> Result<bool, FsError<B::Error>> {
+        match self.open(dir) {
+            Ok(_) => Ok(true),
+            Err(FsError::NotFound) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The block that holds `file`, if it is exactly one block long.
+    pub fn one_block(&mut self, file: FileName) -> Result<Option<u32>, FsError<B::Error>> {
+        let mut first = None;
+        let len = self.runs(file, &mut |at, _| _ = first.get_or_insert(at))?;
+        Ok(first.filter(|_| len == BLOCK as u32))
+    }
+
+    /// The blocks underneath, for a block outside every FAT and entry.
+    pub(crate) fn blocks(&mut self) -> &mut B {
+        self.table.blocks()
+    }
+
+    /// Bytes in free clusters, counted from the FAT (FSInfo's count is
+    /// only a hint): one read of the whole FAT.
+    pub fn free_bytes(&mut self) -> Result<u64, FsError<B::Error>> {
+        let per = u64::from(self.table.layout().cluster_bytes());
+        Ok(u64::from(self.table.free_count()?) * per)
+    }
+
+    /// The allocator's next search starts `per_mille` of the way into the
+    /// volume's clusters: a file written next lands about there.
+    pub fn aim(&mut self, per_mille: u16) {
+        let n = u64::from(self.table.layout().clusters());
+        let at = n * u64::from(per_mille.min(1_000)) / 1_000;
+        *self.hint = Some(2 + at.min(n.saturating_sub(1)) as u32);
+    }
+
+    /// `file`'s entry, its chain checked to hold its length.
+    fn find(&mut self, file: FileName) -> Result<Entry, FsError<B::Error>> {
         let at = self.open(file.dir())?;
         let Some((Slot::File(e), _)) = self.lookup(at, ShortName::file(&file))?.hit else {
             return Err(FsError::NotFound);
@@ -135,29 +263,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
         if e.len > 0 && self.table.chain_len(e.start)? < e.len.div_ceil(layout.cluster_bytes()) {
             return Err(FsError::Corrupt);
         }
-        if sink.begin(e.len).is_break() {
-            return Ok(());
-        }
-        let (mut c, mut left) = (e.start, e.len as usize);
-        while left > 0 {
-            let first = layout.cluster_block(c).ok_or(FsError::Corrupt)?;
-            for b in first..first + layout.blocks_per_cluster() {
-                self.table
-                    .blocks()
-                    .read(b, self.buf)
-                    .map_err(FsError::Dev)?;
-                let n = left.min(BLOCK);
-                left -= n;
-                if sink.chunk(&self.buf[..n]).is_break() || left == 0 {
-                    return Ok(());
-                }
-            }
-            c = match self.table.link(c)? {
-                Link::Next(next) => next,
-                Link::End | Link::Broken => return Err(FsError::Corrupt),
-            };
-        }
-        Ok(())
+        Ok(e)
     }
 
     /// Replaces `file` with what `body` puts, and returns its length. In
@@ -194,6 +300,69 @@ impl<'a, B: Blocks> Fs<'a, B> {
         self.settle(r)
     }
 
+    /// Marks `file` read-only: its entry's attribute through `put_entry`,
+    /// the one block that holds it. A sealed file is `Ok` with nothing
+    /// written. No FAT sector changes, so there is no FSInfo patch or heal.
+    pub fn seal(&mut self, file: FileName) -> Result<(), FsError<B::Error>> {
+        let r = self.mark_sealed(file);
+        self.settle(r)
+    }
+
+    fn mark_sealed(&mut self, file: FileName) -> Result<(), FsError<B::Error>> {
+        if file.dir() != Dir::Tapes {
+            return Err(FsError::Body(StoreError::Io));
+        }
+        let dir = self.open(file.dir())?;
+        let Some((Slot::File(e), at)) = self.lookup(dir, ShortName::file(&file))?.hit else {
+            return Err(FsError::NotFound);
+        };
+        match self.writable(at) {
+            Err(FsError::Body(StoreError::ReadOnly)) => Ok(()),
+            Err(e) => Err(e),
+            Ok(()) => self.put_entry(at, &e, Attr::Sealed),
+        }
+    }
+
+    /// Removes `dir` if it holds nothing but `.` and `..`: its entry, and
+    /// a matching long-name run, become 0xE5, then its chain is freed.
+    /// `false`, nothing written, if it holds anything else; a missing one
+    /// is `NotFound`.
+    pub fn remove_dir(&mut self, dir: Dir) -> Result<bool, FsError<B::Error>> {
+        let r = self.drop_dir(dir);
+        self.settle(r)
+    }
+
+    fn drop_dir(&mut self, dir: Dir) -> Result<bool, FsError<B::Error>> {
+        let parent = match path(dir) {
+            [.., p, _] => self.open(*p)?,
+            _ => self.table.layout().root(),
+        };
+        let found = self.lookup(parent, ShortName::dir(dir))?;
+        let Some((Slot::Dir(e), at)) = found.hit else {
+            return Err(FsError::NotFound);
+        };
+        let first = self
+            .table
+            .layout()
+            .cluster_block(e.start)
+            .ok_or(FsError::Corrupt)?;
+        let held = self.scan(Root::Cluster(e.start), |s, l| {
+            let dot = l.block == first && l.slot < 2;
+            match s {
+                Slot::Free | Slot::End => ControlFlow::Continue(()),
+                _ if dot => ControlFlow::Continue(()),
+                _ => ControlFlow::Break(()),
+            }
+        })?;
+        if held.is_some() {
+            return Ok(false);
+        }
+        self.will_change()?;
+        self.mark_free(at, &found.run.at[..found.run.n])?;
+        self.table.drop_chain(e.start)?;
+        Ok(true)
+    }
+
     /// Makes `dir`. One that exists is `Ok`, with nothing written. A new
     /// one is a zeroed cluster holding `.` and `..` (0 under the root),
     /// flushed before the parent's entry points at it.
@@ -221,7 +390,10 @@ impl<'a, B: Blocks> Fs<'a, B> {
         let name = ShortName::file(&file);
         let found = self.lookup(dir, name)?;
         let (space, old) = match found.hit {
-            Some((Slot::File(e), at)) => (Space::Slot(at), Some(e.start)),
+            Some((Slot::File(e), at)) => {
+                self.writable(at)?;
+                (Space::Slot(at), Some(e.start))
+            }
             Some(_) => return Err(FsError::Corrupt),
             None => (Space::find(found.free, dir)?, None),
         };
@@ -232,10 +404,10 @@ impl<'a, B: Blocks> Fs<'a, B> {
             start: 0,
             len: 0,
         };
-        self.put_entry(at, &empty, false)?;
+        self.put_entry(at, &empty, Attr::File)?;
         if let Some(old) = old {
-            self.table.free_chain(old)?;
-            self.table.flush()?;
+            // The entry no longer holds it: freed now, or at the next change.
+            self.table.drop_chain(old)?;
         }
 
         let mut out = Stream {
@@ -254,10 +426,26 @@ impl<'a, B: Blocks> Fs<'a, B> {
         let Stream {
             first, len, failed, ..
         } = out;
-        if let Some(e @ FsError::Dev(_)) = failed {
+        let (dev, failed) = match failed {
+            Some(e @ FsError::Dev(_)) => (Some(e), None),
+            f => (None, f),
+        };
+        let flushed = match dev {
+            Some(e) => Err(e),
+            None => self.table.flush(),
+        };
+        if let Err(e) = flushed {
+            // No entry holds the chain: free it now, or at the next change.
+            if first != 0 {
+                // A refusal is kept for the next change; `e` is the cause.
+                let _ = self.table.drop_chain(first);
+            }
             return Err(e);
         }
-        self.table.flush()?;
+        // A failed entry write may still have landed (a card that took the
+        // block, then timed out busy), so its chain is never freed here: a
+        // leak at worst, never a cross-link.
+        // private issue #360
         self.put_entry(
             at,
             &Entry {
@@ -265,7 +453,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
                 len,
                 ..empty
             },
-            false,
+            Attr::File,
         )?;
         match (failed, r) {
             (Some(e), _) => Err(e),
@@ -280,17 +468,30 @@ impl<'a, B: Blocks> Fs<'a, B> {
         let Some((Slot::File(e), at)) = found.hit else {
             return Err(FsError::NotFound);
         };
+        self.writable(at)?;
         self.will_change()?;
         self.mark_free(at, &found.run.at[..found.run.n])?;
-        self.table.free_chain(e.start)?;
-        self.table.flush()
+        self.table.drop_chain(e.start)
+    }
+
+    /// A file entry marked read-only is `ReadOnly`, before anything is
+    /// written.
+    fn writable(&mut self, at: Loc) -> Result<(), FsError<B::Error>> {
+        self.table
+            .blocks()
+            .read(at.block, self.buf)
+            .map_err(FsError::Dev)?;
+        match dir::read_only(&self.buf.as_chunks::<ENTRY>().0[at.slot]) {
+            true => Err(FsError::Body(StoreError::ReadOnly)),
+            false => Ok(()),
+        }
     }
 
     fn add_dir(&mut self, dir: Dir) -> Result<(), FsError<B::Error>> {
         let root = self.table.layout().root();
         let parent = match dir {
             Dir::Chimera => root,
-            Dir::Projects | Dir::Sounds => self.open(Dir::Chimera)?,
+            Dir::Projects | Dir::Sounds | Dir::Bench | Dir::Tapes => self.open(Dir::Chimera)?,
         };
         let name = ShortName::dir(dir);
         let found = self.lookup(parent, name)?;
@@ -308,13 +509,19 @@ impl<'a, B: Blocks> Fs<'a, B> {
             _ => 0,
         };
         self.fresh(c, Some(up))?;
-        self.table.flush()?;
+        if let Err(e) = self.table.flush() {
+            // No entry holds it: freed now, or at the next change, as
+            // `replace` frees a chain (#359). A refusal is kept; `e` is
+            // the cause.
+            let _ = self.table.drop_chain(c);
+            return Err(e);
+        }
         let e = Entry {
             name,
             start: c,
             len: 0,
         };
-        self.put_entry(at, &e, true)
+        self.put_entry(at, &e, Attr::Dir)
     }
 
     /// Before an operation's first write. FAT32's FSInfo gets its one patch
@@ -369,7 +576,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
                         start,
                         len: 0,
                     },
-                    true,
+                    Attr::Dir,
                     layout.kind(),
                     raw,
                 );
@@ -404,6 +611,9 @@ impl<'a, B: Blocks> Fs<'a, B> {
                 Link::End => {
                     let c = self.claim(Some(last))?;
                     let block = self.fresh(c, None)?;
+                    // Not `add_dir`'s drop_chain on a failed flush: `c` is
+                    // linked from `last`, so freeing it alone would leave
+                    // the directory pointing at a free cluster.
                     self.table.flush()?;
                     return Ok(Loc { block, slot: 0 });
                 }
@@ -414,12 +624,12 @@ impl<'a, B: Blocks> Fs<'a, B> {
     }
 
     /// Writes `e` into slot `at`, unless it holds those bytes already.
-    fn put_entry(&mut self, at: Loc, e: &Entry, is_dir: bool) -> Result<(), FsError<B::Error>> {
+    fn put_entry(&mut self, at: Loc, e: &Entry, attr: Attr) -> Result<(), FsError<B::Error>> {
         let kind = self.table.layout().kind();
         let blocks = self.table.blocks();
         blocks.read(at.block, self.buf).map_err(FsError::Dev)?;
         let mut raw = [0; ENTRY];
-        encode(e, is_dir, kind, &mut raw);
+        encode(e, attr, kind, &mut raw);
         let slot = &mut self.buf.as_chunks_mut::<ENTRY>().0[at.slot];
         if *slot == raw {
             return Ok(());

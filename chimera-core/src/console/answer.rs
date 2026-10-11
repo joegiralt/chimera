@@ -1,0 +1,280 @@
+//! `answer`: one request in, its whole answer out, ending in one `OK` or `ERR` line.
+
+use core::fmt::{self, Write};
+
+use super::{
+    CardAnswer, Command, Frame, MAX_LINE, NoArg, Out, PROTOCOL, Refusal, Request, Stalled,
+    write_card, write_shot, write_status, write_sweep,
+};
+use crate::boot::{BootSeen, UsbRegs};
+use crate::hw::MAX_VOICES;
+use crate::perf::load::AudioStats;
+use crate::ui::UiState;
+use chimera_hal::store::{Files, Mark, Store, StoreError, SweepRun};
+
+#[derive(Clone, Copy, Debug)]
+pub struct Stats {
+    pub audio: AudioStats,
+    pub loop_avg_us: u32,
+    pub loop_peak_us: u32,
+}
+
+/// `sweep`'s outcome, reached before its answer starts. Nothing sweeps in
+/// the running synth: the bitmap needs the arena's gap as it is before a
+/// project loads, so the mark asks the next boot (ADR 0094).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SweepAsk {
+    /// The mark asks the next boot; the unit restarts once `OK` is out.
+    Requested,
+    /// The project has unsaved changes a restart would lose: nothing
+    /// written.
+    Unsaved,
+    /// No `/CHIMERA`: nothing Chimera wrote, nothing to sweep.
+    Unused,
+    Failed(StoreError),
+}
+
+/// `sweep`'s request: refused over unsaved changes, else the card's mark
+/// set to `Asked`. A mark it can't rewrite owes a sweep already.
+pub fn ask_sweep(unsaved: bool, s: &mut impl Store) -> SweepAsk {
+    if unsaved {
+        return SweepAsk::Unsaved;
+    }
+    match s.mount().and_then(|vol| s.request_sweep(vol)) {
+        Ok(Mark::Unused) => SweepAsk::Unused,
+        Ok(_) => SweepAsk::Requested,
+        Err(e) => SweepAsk::Failed(e),
+    }
+}
+
+/// What a shell can tell. `None`: not in this build.
+pub trait Unit {
+    fn ui(&self) -> &UiState;
+    /// Reading resets the loop timer.
+    fn stats(&mut self) -> Option<Stats>;
+    fn bench(&self) -> Option<&str>;
+    /// `card`'s outcome, reached before the answer starts. `None`: not in
+    /// this build.
+    fn card(&mut self) -> Option<CardAnswer>;
+    fn frame(&self) -> Frame<'_>;
+    /// Arms the restart, made once `OK` is out. `None`: not in this build.
+    fn dfu(&mut self) -> Option<()>;
+    /// What the chip saw at boot: `status`'s `boot` and `last_usb_regs`
+    /// lines, after `at`. `None`: neither.
+    fn boot(&self) -> Option<BootSeen>;
+    /// The boot's card sweep, run or skipped: `status`'s `sweep` line,
+    /// after `boot`. `None`: no line.
+    fn sweep(&self) -> Option<SweepRun> {
+        None
+    }
+    /// `sweep`'s request (`ask_sweep`), reached before the answer starts;
+    /// on `Requested` the shell restarts once `OK` is out. `None`: not in
+    /// this build.
+    fn request_sweep(&mut self) -> Option<SweepAsk> {
+        None
+    }
+    /// The OTG and PWR registers now: `status`'s `usb_regs` line, last
+    /// before `OK`. `None`: no line.
+    fn usb_regs(&self) -> Option<UsbRegs>;
+    /// Provokes the fault, once `OK` is not yet out. `None`: not in this build.
+    #[cfg(feature = "fault-inject")]
+    fn fault(&mut self, _: super::FaultArg) -> Option<()> {
+        None
+    }
+    /// The three DMA streams' registers and NDTR range. `None`: not in this build.
+    #[cfg(feature = "fault-inject")]
+    fn fault_dump(&mut self) -> Option<[super::StreamSnap; 3]> {
+        None
+    }
+    /// The card behind `ls` and `put`; `NoCard` where there is none.
+    type Files: Files;
+    /// The card, for `ls` and `put`. `None`: not in this build.
+    fn files(&mut self) -> Option<&mut Self::Files>;
+    /// A Sound `put` or `rm` reached the card: the library's page goes,
+    /// once the answer is out.
+    fn forget_library(&mut self) {}
+}
+
+/// Why an answer is a single `ERR` line.
+enum Why {
+    Refused(Refusal),
+    Absent(Command),
+    /// Card work is pending in the UI: a card verb waits for it.
+    #[cfg(feature = "card-put")]
+    Busy,
+}
+
+impl fmt::Display for Why {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Why::Refused(Refusal::Unknown(w)) => write!(f, "unknown command {w}, try help"),
+            Why::Refused(Refusal::Arguments(c)) => write!(f, "{} takes {}", c.name(), c.usage()),
+            Why::Refused(Refusal::TooLong) => write!(f, "line too long, {MAX_LINE} max"),
+            Why::Absent(c) => write!(f, "{} is not in this build", c.name()),
+            #[cfg(feature = "card-put")]
+            Why::Busy => f.write_str("busy"),
+        }
+    }
+}
+
+/// Text straight to `out`: no response buffer. The only `fmt::Error` source is `put`,
+/// so a `fmt::Error` here always means `Stalled`.
+pub(super) struct Text<'a, O: Out>(pub(super) &'a mut O);
+
+impl<O: Out> Write for Text<'_, O> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.0.put(s.as_bytes()).map_err(|Stalled| fmt::Error)
+    }
+}
+
+/// The whole answer, terminal line included. `Unit::stats` is read only for `stats`.
+pub fn answer(
+    req: Result<Request, Refusal>,
+    unit: &mut impl Unit,
+    out: &mut impl Out,
+) -> Result<(), Stalled> {
+    let mut t = Text(out);
+    let body = match req {
+        Err(r) => Err(Why::Refused(r)),
+        Ok(Request::Help(NoArg)) => Ok(help(&mut t)),
+        Ok(Request::Status(NoArg)) => Ok(write_status(unit.ui(), &mut t)
+            .and_then(|()| unit.boot().map_or(Ok(()), |b| writeln!(t, "{b}")))
+            .and_then(|()| unit.sweep().map_or(Ok(()), |r| write_sweep(&r, &mut t)))
+            .and_then(|()| {
+                unit.usb_regs()
+                    .map_or(Ok(()), |r| writeln!(t, "usb_regs {r}"))
+            })),
+        Ok(r @ Request::Stats(NoArg)) => unit
+            .stats()
+            .map(|s| stats(&s, &mut t))
+            .ok_or(Why::Absent(r.command())),
+        Ok(r @ Request::Bench(NoArg)) => unit
+            .bench()
+            .map(|b| bench(b, &mut t))
+            .ok_or(Why::Absent(r.command())),
+        // Its ERR is its own line, not a `Why`: a build that never
+        // measures links none of it. A stop keeps what came before.
+        Ok(r @ Request::Card(_)) => match unit.card() {
+            None => Err(Why::Absent(r.command())),
+            Some(CardAnswer::Cleaned(Ok(()))) => Ok(Ok(())),
+            Some(CardAnswer::Cleaned(Err(e))) => {
+                return writeln!(t, "ERR card: {}", e.message()).map_err(|fmt::Error| Stalled);
+            }
+            Some(CardAnswer::Measured(s, fail)) => {
+                let wrote = write_card(&s, &mut t);
+                match fail {
+                    None => Ok(wrote),
+                    Some(e) => {
+                        return wrote
+                            .and_then(|()| writeln!(t, "ERR card: {}", e.message()))
+                            .map_err(|fmt::Error| Stalled);
+                    }
+                }
+            }
+        },
+        Ok(Request::Shot(c)) => return write_shot(unit.frame(), c, t.0),
+        Ok(r @ Request::Dfu(NoArg)) => unit.dfu().map(Ok).ok_or(Why::Absent(r.command())),
+        Ok(r @ Request::Sweep(NoArg)) => match unit.request_sweep() {
+            None => Err(Why::Absent(r.command())),
+            Some(SweepAsk::Requested) => {
+                Ok(t.write_str("sweep asked: the next boot sweeps, restarting\n"))
+            }
+            Some(no) => {
+                let why = match no {
+                    SweepAsk::Unsaved => "unsaved changes, save first",
+                    SweepAsk::Unused => "the card has no /CHIMERA, nothing to sweep",
+                    SweepAsk::Failed(e) => e.message(),
+                    SweepAsk::Requested => unreachable!(),
+                };
+                return writeln!(t, "ERR sweep: {why}").map_err(|fmt::Error| Stalled);
+            }
+        },
+        #[cfg(feature = "fault-inject")]
+        Ok(r @ Request::Fault(super::FaultArg::Ndtr)) => unit
+            .fault_dump()
+            .map(|d| super::write_snaps(&d, &mut t))
+            .ok_or(Why::Absent(r.command())),
+        #[cfg(feature = "fault-inject")]
+        Ok(r @ Request::Fault(arg)) => unit.fault(arg).map(Ok).ok_or(Why::Absent(r.command())),
+        #[cfg(feature = "card-put")]
+        Ok(Request::Ls(_) | Request::Put(_) | Request::Rm(_) | Request::Get(_))
+            if unit.ui().card_pending() =>
+        {
+            Err(Why::Busy)
+        }
+        #[cfg(feature = "card-put")]
+        Ok(r @ Request::Ls(arg)) => match unit.files() {
+            None => Err(Why::Absent(r.command())),
+            Some(f) => return super::ls(arg, f, t.0),
+        },
+        #[cfg(feature = "card-put")]
+        Ok(r @ Request::Put(arg)) => {
+            let open = unit.ui().project().meta().id();
+            match unit.files() {
+                None => Err(Why::Absent(r.command())),
+                Some(f) => {
+                    let said = super::put(arg, open, f, t.0);
+                    if matches!(arg.to, super::PutTo::Sound { .. }) {
+                        unit.forget_library();
+                    }
+                    return said;
+                }
+            }
+        }
+        #[cfg(feature = "card-put")]
+        Ok(r @ Request::Rm(arg)) => match unit.files() {
+            None => Err(Why::Absent(r.command())),
+            Some(f) => {
+                let said = super::rm(arg, f, t.0);
+                unit.forget_library();
+                return said;
+            }
+        },
+        #[cfg(feature = "card-put")]
+        Ok(r @ Request::Get(arg)) => match unit.files() {
+            None => Err(Why::Absent(r.command())),
+            Some(f) => return super::get(arg, f, t.0),
+        },
+    };
+    match body {
+        Ok(wrote) => wrote.and_then(|()| t.write_str("OK\n")),
+        Err(why) => writeln!(t, "ERR {why}"),
+    }
+    .map_err(|fmt::Error| Stalled)
+}
+
+fn help(t: &mut impl Write) -> fmt::Result {
+    writeln!(t, "chimera console {PROTOCOL}")?;
+    Command::ALL
+        .iter()
+        .try_for_each(|c| writeln!(t, "{:<8}{}", c.name(), c.about()))
+}
+
+fn stats(s: &Stats, t: &mut impl Write) -> fmt::Result {
+    let a = &s.audio;
+    writeln!(t, "load_pct {}", a.load_avg)?;
+    writeln!(t, "peak_pct {}", a.load_peak)?;
+    writeln!(t, "overruns {}", a.overruns)?;
+    t.write_str("drops")?;
+    match a.active_drops() {
+        [] => t.write_str(" -")?,
+        d => d.iter().try_for_each(|n| write!(t, " {n}"))?,
+    }
+    writeln!(t, "\ndesyncs {}", a.desyncs)?;
+    writeln!(t, "dma_errors {}", a.dma_errors)?;
+    writeln!(t, "fifo_errors {}", a.fifo_errors)?;
+    writeln!(t, "stack_bytes {}", a.stack_used)?;
+    writeln!(t, "voices {} {} of {MAX_VOICES}", a.voices, a.voices_peak)?;
+    writeln!(t, "cost_pct {}", a.cost_pct)?;
+    writeln!(t, "loop_avg_us {}", s.loop_avg_us)?;
+    writeln!(t, "loop_peak_us {}", s.loop_peak_us)
+}
+
+fn bench(b: &str, t: &mut impl Write) -> fmt::Result {
+    t.write_str(b)?;
+    if b.is_empty() || b.ends_with('\n') {
+        Ok(())
+    } else {
+        t.write_str("\n")
+    }
+}

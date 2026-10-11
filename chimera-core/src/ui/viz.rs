@@ -2,11 +2,17 @@
 //! soft accent fill under a 1.5-px accent line (spec § Shared components);
 //! drawn 2 px since the display has no anti-aliasing. No grid lines.
 
+use crate::dsp::clampf;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::dsp::algo::algorithms::Algorithm;
+use crate::dsp::algo::env::{
+    DECAY_OCTAVES, DECAY_OVER_ATTACK_OCTAVES, EnvRates, decay_seconds, effective, effective_release,
+};
+use crate::dsp::algo::math::log2;
 use crate::dsp::algo::plan::{OPS, blend};
+use crate::dsp::algo::tx::d1l_level;
 use crate::dsp::modulator::{EnvForm, EnvSpeed, Func, HoldPos, LfoForm};
 use crate::scope::{self, SCOPE_LEN};
 use crate::ui::alg_layout;
@@ -32,9 +38,7 @@ pub fn live_columns(buf: &[f32; SCOPE_LEN]) -> [i8; LIVE_COLS] {
 /// Cheap fingerprint of what `live_output` draws: the viz region redraws
 /// only when it changes (a silent or frozen scope costs no SPI traffic).
 pub fn live_key(buf: &[f32; SCOPE_LEN]) -> u32 {
-    live_columns(buf).iter().fold(0x811c_9dc5u32, |h, &c| {
-        (h ^ c as u8 as u32).wrapping_mul(0x0100_0193)
-    })
+    crate::ui::region::settings_key(&[&live_columns(buf).map(|c| c as u8)])
 }
 
 /// The page's live output as a filled waveform in the viz band.
@@ -66,6 +70,11 @@ pub const PLOT_TOP: i32 = 40;
 pub const PLOT_BASE: i32 = 170;
 /// Filter pass band (the mockup's 0 dB line); resonance peaks above it.
 pub const FILTER_PASS_Y: i32 = 72;
+/// The response's dB scale: the pass line to the base is 48 dB.
+const PX_PER_DB: f32 = (PLOT_BASE - FILTER_PASS_Y) as f32 / 48.0;
+/// The LEVEL LED in the FLT viz's top-right corner.
+pub const LED_X: i32 = theme::VIZ_RIGHT - 4;
+pub const LED_Y: i32 = PLOT_TOP + 4;
 
 /// Filter response y at column `t` (0..1 across the plot): flat pass band,
 /// a resonance bump at `cutoff`, then roll-off to the base (the pre-refresh
@@ -85,50 +94,123 @@ pub fn filter_y(t: f32, cutoff: f32, reso: f32) -> i32 {
     (y as i32).clamp(PLOT_TOP, PLOT_BASE)
 }
 
-/// Which side of the cutoff passes (the viz reads MODE, spec § UI).
+/// The shape the viz draws for a kind's mode (spec § 5).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Response {
     Low,
+    /// LP1: half the low-pass's roll-off, the same resonant peak.
+    Lp1,
     High,
     Band,
+    /// A notch at FREQ.
     Notch,
-    /// All-pass (PHASER): the magnitude stays flat.
-    Flat,
+    /// CLEAN's NOTCH1: a dip at FREQ that Q turns into a peak, a notch at
+    /// 2 × FREQ and the treble 12 dB down.
+    Notch2x,
+    /// NOTCH2: notches at 0.414 × and 2.414 × FREQ, Q raising the peak
+    /// between them.
+    DoubleNotch,
+    /// The 2040's LP4 and LADDER's LP4: the pass band lowered by
+    /// `1/(1 + k)` as RES rises.
+    K2040,
+    /// LADDER's LP2: LP4's bass loss and its mode gain, ½ at the onset.
+    LadderLp2,
+    /// LADDER's BP2 and BP4: 0 dB peaks at RES 0, eased down to LP4's ring
+    /// as their mode gains are (ADR 0104).
+    LadderBand,
 }
 
 impl Response {
-    pub fn of(m: crate::dsp::filter::FilterMode) -> Self {
-        use crate::dsp::filter::FilterMode as M;
-        match m {
-            M::Hp24 => Response::High,
-            M::Bp12 | M::Bp24 => Response::Band,
-            M::Notch => Response::Notch,
-            M::Phaser => Response::Flat,
-            M::Lp6 | M::Lp12 | M::Lp24 => Response::Low,
+    pub fn of(kind: crate::dsp::filter::FilterKind, m: crate::dsp::filter::FilterMode) -> Self {
+        use crate::dsp::filter::{FilterKind as K, FilterMode as M};
+        match (kind, m) {
+            (K::Svf, M::Lp6) => Response::Lp1,
+            (K::Svf, M::Hp24 | M::Hp12) => Response::High,
+            (K::Svf, M::Bp12 | M::Bp24) => Response::Band,
+            (K::Svf, M::Notch) => Response::Notch2x,
+            (K::Svf, M::Phaser) => Response::DoubleNotch,
+            (K::Svf, M::Lp12 | M::Lp24) => Response::Low,
+            (K::K2040, _) => Response::K2040,
+            // DIRTY's NOTCH1 notches at FREQ (spec § 5).
+            (K::Dirty, M::Notch) => Response::Notch,
+            (K::Dirty, M::Bp12 | M::Bp24) => Response::Band,
+            (K::Dirty, M::Hp12 | M::Hp24) => Response::High,
+            (K::Dirty, _) => Response::Low,
+            // LADDER keeps the loop's bass loss and its mode gains (ADR 0104).
+            (K::Ladder, M::Bp12 | M::Bp24) => Response::LadderBand,
+            (K::Ladder, M::Hp24 | M::Hp12) => Response::High,
+            (K::Ladder, M::Lp12) => Response::LadderLp2,
+            (K::Ladder, _) => Response::K2040,
         }
+    }
+}
+
+/// 0..1: how far into a notch drawn at `at` column `t` is (cos-shaped,
+/// a twelfth of the plot each side).
+fn dip(t: f32, at: f32) -> f32 {
+    let d = ((t - at) * 6.0).abs();
+    if d < 0.5 {
+        0.5 + 0.5 * libm::cosf(d * 2.0 * core::f32::consts::PI)
+    } else {
+        0.0
     }
 }
 
 /// `filter_y` for each response: high-pass mirrors it about the cutoff,
-/// band-pass takes both skirts, notch dips at the cutoff, all-pass is flat.
+/// band-pass takes both skirts, the notches dip where they cut. The plot
+/// is linear in Hz, so k × FREQ sits at k × `cutoff`.
 pub fn response_y(t: f32, cutoff: f32, reso: f32, r: Response) -> i32 {
     let low = filter_y(t, cutoff, reso);
     let high = filter_y(2.0 * cutoff - t, cutoff, reso);
-    match r {
-        Response::Low => low,
-        Response::High => high,
-        Response::Band => low.max(high),
-        Response::Notch => {
-            let d = ((t - cutoff) * 6.0).abs();
-            if d < 0.5 {
-                let dip = 0.5 + 0.5 * libm::cosf(d * 2.0 * core::f32::consts::PI);
-                FILTER_PASS_Y + ((PLOT_BASE - FILTER_PASS_Y) as f32 * dip) as i32
-            } else {
-                FILTER_PASS_Y
-            }
+    let span = (PLOT_BASE - FILTER_PASS_Y) as f32;
+    let peak_h = (FILTER_PASS_Y - PLOT_TOP) as f32;
+    // `h` px down at FREQ (up if negative), in a notch's shape.
+    let bump = |h: f32| h * dip(t, cutoff);
+    let y = match r {
+        Response::Low => return low,
+        Response::High => return high,
+        Response::Band => return low.max(high),
+        // The roll-off below the pass line halved: 6 dB, not 12.
+        Response::Lp1 => {
+            let d = low - FILTER_PASS_Y;
+            return FILTER_PASS_Y + if d > 0 { d / 2 } else { d };
         }
-        Response::Flat => FILTER_PASS_Y,
-    }
+        Response::Notch => FILTER_PASS_Y as f32 + span * dip(t, cutoff),
+        Response::Notch2x => {
+            // Q 0 dips 8.6 dB at FREQ; the treble is drawn a quarter down.
+            let treble = if t > 2.0 * cutoff { 0.25 * span } else { 0.0 };
+            let at_freq = 0.2 * span * (1.0 - reso) - peak_h * reso;
+            let notch = dip(t, 2.0 * cutoff);
+            FILTER_PASS_Y as f32 + treble + bump(at_freq) + (span - treble) * notch
+        }
+        // The bass loss in dB, on the low-pass's shape; the peak still rises.
+        // LADDER's LP2 also loses its mode gain; its band-passes ease from
+        // 0 dB at RES 0 to LP4's loss at the onset. One `log10f`.
+        Response::K2040 | Response::LadderLp2 | Response::LadderBand => {
+            let k = crate::dsp::filter::k2040::k2040_k(reso);
+            let (base, loss, ease) = match r {
+                Response::LadderLp2 => {
+                    let g = crate::dsp::filter::ladder::mode_gain(
+                        crate::dsp::filter::FilterMode::Lp12,
+                        k,
+                    );
+                    (low, (1.0 + k) / g, 1.0)
+                }
+                Response::LadderBand => (
+                    low.max(high),
+                    1.0 + k,
+                    crate::dsp::clampf(k * 0.25, 0.0, 1.0),
+                ),
+                _ => (low, 1.0 + k, 1.0),
+            };
+            base as f32 + ease * 20.0 * libm::log10f(loss) * PX_PER_DB
+        }
+        Response::DoubleNotch => {
+            let n = dip(t, 0.414 * cutoff).max(dip(t, 2.414 * cutoff));
+            FILTER_PASS_Y as f32 - bump(peak_h * reso) * (1.0 - n) + span * n
+        }
+    };
+    (y as i32).clamp(PLOT_TOP, PLOT_BASE)
 }
 
 /// Columns `x0..=x1`: soft fill from the curve point `y(x)` down to `base`,
@@ -227,7 +309,7 @@ pub fn filter<D>(
         1,
         theme::FAINT,
     );
-    let mx = theme::VIZ_LEFT + (w * cutoff.clamp(0.0, 1.0)) as i32;
+    let mx = theme::VIZ_LEFT + (w * clampf(cutoff, 0.0, 1.0)) as i32;
     let my = y(mx);
     let mut dy = my + 6;
     while dy < PLOT_BASE {
@@ -250,17 +332,36 @@ pub fn envelope<D>(d: &mut D, widths: &[f32], heights: &[f32], labels: &[&str], 
 where
     D: DrawTarget<Color = Rgb565>,
 {
+    envelope_from(d, PLOT_TOP, widths, heights, labels, lit);
+}
+
+/// Top of `envelope` in the viz band (`op_env`'s graph): clear of the band's
+/// edge by a breakpoint dot.
+pub const BAND_PLOT_TOP: i32 = theme::VIZ_BAND_TOP + 4;
+
+/// `envelope` with its full level at `top`; the base line and labels stay
+/// where they are, which fits the viz band too.
+pub fn envelope_from<D>(
+    d: &mut D,
+    top: i32,
+    widths: &[f32],
+    heights: &[f32],
+    labels: &[&str],
+    lit: Option<usize>,
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
     let n = widths.len().min(MAX_STAGES);
     let base = PLOT_BASE - 8;
     let (x0, w, h) = (
         theme::VIZ_LEFT,
         (theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32,
-        (base - PLOT_TOP) as f32,
+        (base - top) as f32,
     );
     let mut pts = [(0i32, 0i32); MAX_STAGES + 1];
     let mut cx = x0 as f32;
     for i in 0..=n {
-        pts[i] = (cx as i32, base - (h * heights[i].clamp(0.0, 1.0)) as i32);
+        pts[i] = (cx as i32, base - (h * clampf(heights[i], 0.0, 1.0)) as i32);
         if i < n {
             cx += w * widths[i];
         }
@@ -329,6 +430,68 @@ pub fn label_floor(label: &str, rest: f32) -> f32 {
     m * rest / ((theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32 - m)
 }
 
+/// The operator envelope's stage labels, one per `op_env` width.
+pub const OP_ENV_LABELS: [&str; 4] = ["A", "D1", "D2", "R"];
+
+/// D2 runs while the key is held, so like the amp's sustain it gets a set
+/// weight beside the other stages' widths rather than a time; how far D2R
+/// sinks it is read over `OP_D2_SECONDS`.
+const OP_D2_WIDTH: f32 = 0.3;
+pub const OP_D2_SECONDS: f32 = 1.0;
+/// The graph's level axis: 48 dB, D1L's own range (3 dB a step), so D1L 1
+/// sits near the floor.
+pub const OP_LEVEL_OCTAVES: f32 = 8.0;
+
+/// An operator envelope (key scaling aside) as `envelope`'s widths and
+/// heights: A · D1 · D2 · R. Each stage's width is the log of its own DSP
+/// time (`env`'s law, `t = K * 2^(-rate/4)`, in closed form), placed
+/// between the fastest attack and the slowest stage that can occur, a fall
+/// down the whole axis at effective rate 2; a rate 0 holds, so its stage
+/// is full width. Levels are in dB (`OP_LEVEL_OCTAVES`), the axis the
+/// decays fall straight along. A keeps the amp's least width; D1 and R
+/// widen to fit their labels; all are then scaled to fill the plot.
+pub fn op_env(r: EnvRates) -> ([f32; 4], [f32; 5]) {
+    // Octaves of time above the fastest attack (effective rate 63).
+    let attack = |rate: u8| (63 - rate) as f32 / 4.0;
+    // A fall of `by` heights at `rate`: a full decay's time, scaled.
+    let fall = |rate: u8, by: f32| {
+        attack(rate) + DECAY_OVER_ATTACK_OCTAVES + log2(by * OP_LEVEL_OCTAVES / DECAY_OCTAVES)
+    };
+    let span = |oct: f32| clampf(oct / fall(2, 1.0), 0.0, 1.0);
+    let (ar, d1r, d2r) = (effective(r.ar, 0), effective(r.d1r, 0), effective(r.d2r, 0));
+    let l = d1l_level(r.d1l);
+    // D1R 0 holds D1, unless D1L 15 meets it at once and D2 runs (`OpEnv`).
+    let d1_holds = d1r == 0 && l < 1.0;
+    let peak = if ar == 0 { 0.0 } else { 1.0 };
+    let knee = if d1_holds {
+        peak
+    } else if l > 0.0 {
+        clampf(1.0 + log2(l) / OP_LEVEL_OCTAVES, 0.0, peak)
+    } else {
+        0.0
+    };
+    let end = if d1_holds || d2r == 0 {
+        knee
+    } else {
+        let per_height = decay_seconds(d2r) * OP_LEVEL_OCTAVES / DECAY_OCTAVES;
+        (knee - OP_D2_SECONDS / per_height).max(0.0)
+    };
+    let a = if ar == 0 { 1.0 } else { span(attack(ar)) }.max(0.02);
+    let d1 = if d1_holds {
+        1.0
+    } else {
+        span(fall(d1r, peak - knee))
+    };
+    let rel = span(fall(effective_release(r.rr, 0), end)).max(0.02);
+    let d1 = d1.max(label_floor("D1", a + OP_D2_WIDTH + rel));
+    let rel = rel.max(label_floor("R", a + d1 + OP_D2_WIDTH));
+    let total = a + d1 + OP_D2_WIDTH + rel;
+    (
+        [a / total, d1 / total, OP_D2_WIDTH / total, rel / total],
+        [0.0, peak, knee, end, 0.0],
+    )
+}
+
 /// Where each stage label of `envelope` goes, as `(left, right)` columns
 /// (inclusive), centred under its segment `xs[s]..xs[s + 1]`; `None` = left
 /// out. The lit stage's label is always drawn. Any other is drawn only when
@@ -393,7 +556,7 @@ pub fn func_shape(f: Func, rise: f32, fall: f32, shape: f32, t: f32) -> f32 {
             let x = t * 8.0;
             let k = (x as usize).min(7);
             let u = x - k as f32;
-            let at = |i: usize| 0.5 + 0.5 * (WALK[i] * fall.max(0.2)).clamp(-1.0, 1.0);
+            let at = |i: usize| 0.5 + 0.5 * clampf(WALK[i] * fall.max(0.2), -1.0, 1.0);
             let lin = at(k) + (at(k + 1) - at(k)) * u;
             // SLEW rounds each corner toward the segment's middle.
             let mid = 0.5 * (at(k) + at(k + 1));
@@ -440,7 +603,7 @@ where
     );
     let y = |x: i32| {
         let t = (x - theme::VIZ_LEFT) as f32 / w;
-        PLOT_BASE - (h * func_shape(f, rise, fall, shape, t).clamp(0.0, 1.0)) as i32
+        PLOT_BASE - (h * clampf(func_shape(f, rise, fall, shape, t), 0.0, 1.0)) as i32
     };
     filled_curve(d, theme::VIZ_LEFT, theme::VIZ_RIGHT, PLOT_BASE, y);
 }
@@ -480,7 +643,7 @@ where
         PLOT_TOP + 8,
         theme::MID,
     );
-    let lit = (h * (gr_db / GR_RANGE_DB).clamp(0.0, 1.0) + 0.5) as i32;
+    let lit = (h * clampf(gr_db / GR_RANGE_DB, 0.0, 1.0) + 0.5) as i32;
     draw::fill_rect(d, GR_X, PLOT_TOP, GR_W, PLOT_BASE - PLOT_TOP, theme::FAINT);
     draw::fill_rect(d, GR_X, PLOT_TOP, GR_W, lit, theme::ACCENT);
 }
@@ -520,7 +683,7 @@ where
         };
         draw::text_center(d, font, num.as_str(), x + 4, STRIP_NUM_Y, color, 0);
         draw::fill_rect(d, x, STRIP_TOP, 8, STRIP_H, theme::FAINT);
-        let h = (STRIP_H as f32 * s.level.clamp(0.0, 1.0) + 0.5) as i32;
+        let h = (STRIP_H as f32 * clampf(s.level, 0.0, 1.0) + 0.5) as i32;
         let fill = if sel {
             theme::ACCENT
         } else if s.level > 0.0 {
@@ -530,7 +693,7 @@ where
         };
         draw::fill_rect(d, x, STRIP_TOP + STRIP_H - h, 8, h, fill);
         draw::fill_rect(d, x - 6, STRIP_PAN_Y, 20, 1, theme::FAINT);
-        let px = x + 4 + libm::roundf(s.pan.clamp(-1.0, 1.0) * 10.0) as i32;
+        let px = x + 4 + libm::roundf(clampf(s.pan, -1.0, 1.0) * 10.0) as i32;
         draw::dot(
             d,
             px,
@@ -618,7 +781,7 @@ where
             }
         }
     }
-    for (op, label) in ["1", "2", "3", "4", "5", "6"].into_iter().enumerate() {
+    for (op, &label) in crate::part::NUMERALS[1..=OPS].iter().enumerate() {
         let (x, y) = l.pos[op];
         let c = blend(
             on(a.carriers & (1 << op) != 0),

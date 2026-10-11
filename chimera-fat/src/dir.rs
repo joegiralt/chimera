@@ -22,6 +22,7 @@ const SIZE: usize = 28;
 
 const END: u8 = 0x00;
 const FREE: u8 = 0xE5;
+const ATTR_READ_ONLY: u8 = 0x01;
 const ATTR_LABEL: u8 = 0x08;
 const ATTR_DIR: u8 = 0x10;
 const ATTR_FILE: u8 = 0x20;
@@ -59,6 +60,8 @@ impl ShortName {
                 Dir::Chimera => b"CHIMERA",
                 Dir::Projects => b"PROJECTS",
                 Dir::Sounds => b"SOUNDS",
+                Dir::Bench => b"BENCH",
+                Dir::Tapes => b"TAPES",
             },
             b"",
         )
@@ -139,12 +142,25 @@ pub fn parse(raw: &[u8; ENTRY], kind: FsKind) -> Slot {
     }
 }
 
-/// `e` as a file (attribute 0x20) or directory (0x10, length 0), stamped
-/// 2026-01-01 00:00. FAT16 keeps the cluster's high half 0.
-pub fn encode(e: &Entry, is_dir: bool, kind: FsKind, raw: &mut [u8; ENTRY]) {
+/// What an entry is: a file, a sealed (read-only) file, or a directory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Attr {
+    File,
+    Sealed,
+    Dir,
+}
+
+/// `e` as a file (attribute 0x20, 0x21 sealed) or directory (0x10, length
+/// 0), stamped 2026-01-01 00:00. FAT16 keeps the cluster's high half 0.
+pub fn encode(e: &Entry, attr: Attr, kind: FsKind, raw: &mut [u8; ENTRY]) {
     raw.fill(0);
     raw[..NAME_LEN].copy_from_slice(&e.name.0);
-    raw[ATTR] = if is_dir { ATTR_DIR } else { ATTR_FILE };
+    let is_dir = attr == Attr::Dir;
+    raw[ATTR] = match attr {
+        Attr::File => ATTR_FILE,
+        Attr::Sealed => ATTR_FILE | ATTR_READ_ONLY,
+        Attr::Dir => ATTR_DIR,
+    };
     for at in [CREATE_DATE, ACCESS_DATE, WRITE_DATE] {
         put16(raw, at, STAMP_DATE);
     }
@@ -157,6 +173,11 @@ pub fn encode(e: &Entry, is_dir: bool, kind: FsKind, raw: &mut [u8; ENTRY]) {
     put16(raw, CLUSTER_LO, e.start as u16);
     let len = if is_dir { 0 } else { e.len };
     raw[SIZE..].copy_from_slice(&len.to_le_bytes());
+}
+
+/// Whether the entry is marked read-only: Chimera never rewrites it.
+pub fn read_only(raw: &[u8; ENTRY]) -> bool {
+    raw[ATTR] & ATTR_READ_ONLY != 0
 }
 
 /// Marks the slot deleted.

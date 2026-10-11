@@ -3,15 +3,16 @@
 //! Each PageLayout defines screen regions with data snapshots.
 //! Only regions whose data changed get cleared, redrawn, and flushed.
 
+use crate::dsp::clampf;
 use crate::ui::PrimeStatus;
 use crate::ui::animation::AnimatedValue;
-use crate::ui::components::Look;
+use crate::ui::components::{HeaderStatus, Look};
 use crate::ui::page::{PageId, PageKey, PageLayout};
 use crate::ui::theme;
 
 /// Quantize a float to u16 for cheap comparison. Range 0.0..65.0 → 0..65000.
 pub fn quantize(f: f32) -> u16 {
-    (f.clamp(0.0, 65.0) * 1000.0) as u16
+    (clampf(f, 0.0, 65.0) * 1000.0) as u16
 }
 
 /// Quantize 6 animated values into a [u16; 6] for snapshot comparison.
@@ -38,11 +39,14 @@ pub enum RegionData {
         chain_idx: u8,
         node_idx: u8,
         sub_page: u8,
-        /// Audio load shown in the header (0 = not measured).
-        load_pct: u8,
-        sounding: bool,
         /// The ENV title's TYPE suffix (`renderer::title_type`).
         title_type: u8,
+        /// The Part's OUT, for its warning (`renderer::header_out`).
+        out: u8,
+        /// The load and the dots.
+        status: HeaderStatus,
+        /// ORBIT's `SCENE n`, one-based; 0 where the header reads no scene.
+        scene: u8,
     },
     /// The focus band: which slot, its animated value, and any pending
     /// prime-status message (issue #21) shown in the value's place.
@@ -53,6 +57,15 @@ pub enum RegionData {
         /// The slot's look: it can change without a `matrix_rev` bump.
         look: Look,
         status: Option<PrimeStatus>,
+        /// `glyph::anim_key`: the clock while the glyph animates.
+        anim: u32,
+        /// The slot's set value (quantized): a glyph may draw it, not `value`.
+        set: u16,
+        /// What the band shows from outside its slot (ORBIT's readings, a
+        /// synced reverb cell's clock).
+        text: u32,
+        /// HINTS on: the band draws its hint.
+        hints: bool,
     },
     /// The mod matrix readout: the selected route, its animated amount and
     /// the route count.
@@ -64,7 +77,7 @@ pub enum RegionData {
         /// `MatrixState::rev`: a deleted route redraws.
         matrix_rev: u16,
         /// `mod_grid::inert_dests`: it can change without a `matrix_rev` bump.
-        inert: u16,
+        inert: u32,
     },
     Viz {
         page: PageKey,
@@ -74,6 +87,9 @@ pub enum RegionData {
         /// A pending prime-status message drawn on the viz — BigViz pages
         /// only, which have no focus band to carry it (issue #21).
         status: Option<PrimeStatus>,
+        /// What an ORBIT viz draws of the scene and the runner
+        /// (`orbit::draw::viz_key`).
+        orbit: u32,
     },
     Cells {
         page: PageKey,
@@ -85,13 +101,19 @@ pub enum RegionData {
         mods: [Option<u32>; 6],
         /// `MatrixState::rev`, and each cell's `Look` in two bits.
         matrix_rev: u16,
-        looks: u16,
+        looks: u32,
+        /// What a cell's text reads beyond its own value: the reverb
+        /// panels' plate zone and its effective PRE-DLY, and the clock a
+        /// synced cell reads.
+        text: u64,
     },
     Nav {
         chain_idx: u8,
         node_idx: u8,
         sub_page: u8,
         branch_scroll: u16,
+        /// MODEL: MDL2's name on the map.
+        model: u8,
     },
     Grid {
         sel_row: u8,
@@ -101,8 +123,13 @@ pub enum RegionData {
         sel_value: u16,
         matrix_rev: u16,
         /// `mod_grid::inert_dests`.
-        inert: u16,
+        inert: u32,
     },
+    /// A SETTINGS band (breadcrumb, list or footer): a fingerprint of what
+    /// it shows.
+    Settings { key: u32 },
+    /// The prompt's panel: a fingerprint of its words and pick.
+    Overlay { key: u32 },
 }
 
 impl RegionData {
@@ -110,18 +137,27 @@ impl RegionData {
         chain_idx: u8,
         node_idx: u8,
         sub_page: u8,
-        load_pct: u8,
-        sounding: bool,
         title_type: u8,
+        out: u8,
+        status: HeaderStatus,
     ) -> Self {
         Self::Header {
             chain_idx,
             node_idx,
             sub_page,
-            load_pct,
-            sounding,
             title_type,
+            out,
+            status,
+            scene: 0,
         }
+    }
+
+    /// A header reading `SCENE n`: it redraws when a switch lands.
+    pub fn with_scene(mut self, n: u8) -> Self {
+        if let Self::Header { scene, .. } = &mut self {
+            *scene = n;
+        }
+        self
     }
 
     pub fn focus(
@@ -137,7 +173,43 @@ impl RegionData {
             value,
             look,
             status,
+            anim: 0,
+            set: 0,
+            text: 0,
+            hints: false,
         }
+    }
+
+    /// This key with no animation share: equal when only an animated
+    /// glyph's frame moved.
+    pub fn without_anim(self) -> Self {
+        self.animated(0)
+    }
+
+    /// A focus band keyed on its slot's set value too.
+    pub fn with_set(mut self, set: u16) -> Self {
+        if let Self::Focus { set: s, .. } = &mut self {
+            *s = set;
+        }
+        self
+    }
+
+    /// A focus band keyed on the text it shows from outside its slot,
+    /// and on HINTS, too.
+    pub fn with_text(mut self, key: u32, hints_on: bool) -> Self {
+        if let Self::Focus { text, hints, .. } = &mut self {
+            *text = key;
+            *hints = hints_on;
+        }
+        self
+    }
+
+    /// A focus band keyed on its glyph's `anim` too.
+    pub fn animated(mut self, anim: u32) -> Self {
+        if let Self::Focus { anim: a, .. } = &mut self {
+            *a = anim;
+        }
+        self
     }
 
     pub fn viz(page: PageKey, values: [u16; 6], live: u32) -> Self {
@@ -156,7 +228,16 @@ impl RegionData {
             values,
             live,
             status,
+            orbit: 0,
         }
+    }
+
+    /// A viz keyed on what it draws of ORBIT too.
+    pub fn with_orbit(mut self, key: u32) -> Self {
+        if let Self::Viz { orbit, .. } = &mut self {
+            *orbit = key;
+        }
+        self
     }
 
     pub fn cells(
@@ -174,15 +255,17 @@ impl RegionData {
             mods,
             matrix_rev: 0,
             looks: 0,
+            text: 0,
         }
     }
 
-    pub fn nav(chain_idx: u8, node_idx: u8, sub_page: u8, branch_scroll: u16) -> Self {
+    pub fn nav(chain_idx: u8, node_idx: u8, sub_page: u8, branch_scroll: u16, model: u8) -> Self {
         Self::Nav {
             chain_idx,
             node_idx,
             sub_page,
             branch_scroll,
+            model,
         }
     }
 
@@ -191,9 +274,14 @@ impl RegionData {
             chain_idx: 255,
             node_idx: 255,
             sub_page: 255,
-            load_pct: u8::MAX,
-            sounding: false,
             title_type: u8::MAX,
+            out: u8::MAX,
+            status: HeaderStatus {
+                sounding: false,
+                load_pct: u8::MAX,
+                orbit_dot: None,
+            },
+            scene: u8::MAX,
         }
     }
 
@@ -204,6 +292,10 @@ impl RegionData {
             value: SENTINEL,
             look: Look::Live,
             status: None,
+            anim: u32::MAX,
+            set: SENTINEL,
+            text: u32::MAX,
+            hints: false,
         }
     }
 
@@ -213,6 +305,7 @@ impl RegionData {
             values: [SENTINEL; 6],
             live: u32::MAX,
             status: None,
+            orbit: u32::MAX,
         }
     }
 
@@ -224,7 +317,8 @@ impl RegionData {
             dest_count: u16::MAX,
             mods: [Some(u32::MAX); 6],
             matrix_rev: u16::MAX,
-            looks: u16::MAX,
+            looks: u32::MAX,
+            text: u64::MAX,
         }
     }
 
@@ -234,6 +328,7 @@ impl RegionData {
             node_idx: 255,
             sub_page: 255,
             branch_scroll: SENTINEL,
+            model: 255,
         }
     }
 
@@ -271,14 +366,16 @@ impl RegionData {
             scroll_x: 255,
             sel_value: SENTINEL,
             matrix_rev: u16::MAX,
-            inert: u16::MAX,
+            inert: u32::MAX,
         }
     }
 
     /// With the matrix's revision in the key, and `looks`: the cells' looks,
     /// or the matrix's inert columns. A deleted route, a dimmed cell or an
     /// inert column redraws.
-    pub fn keyed(self, matrix_rev: u16, looks: u16) -> Self {
+    /// Cells keyed on `text` too: what their text reads beyond their
+    /// values.
+    pub fn with_text_key(self, key: u64) -> Self {
         match self {
             Self::Cells {
                 page,
@@ -286,6 +383,8 @@ impl RegionData {
                 focus,
                 dest_count,
                 mods,
+                matrix_rev,
+                looks,
                 ..
             } => Self::Cells {
                 page,
@@ -295,6 +394,31 @@ impl RegionData {
                 mods,
                 matrix_rev,
                 looks,
+                text: key,
+            },
+            other => other,
+        }
+    }
+
+    pub fn keyed(self, matrix_rev: u16, looks: u32) -> Self {
+        match self {
+            Self::Cells {
+                page,
+                values,
+                focus,
+                dest_count,
+                mods,
+                text,
+                ..
+            } => Self::Cells {
+                page,
+                values,
+                focus,
+                dest_count,
+                mods,
+                matrix_rev,
+                looks,
+                text,
             },
             Self::Grid {
                 sel_row,
@@ -338,6 +462,13 @@ pub enum RegionKind {
     Cells,
     Nav,
     Grid,
+    /// SETTINGS' header: the breadcrumb.
+    Crumbs,
+    List,
+    /// SETTINGS' project line and key legend, in the map's band.
+    Footer,
+    /// A prompt's panel, over the bands beneath.
+    Prompt,
 }
 
 /// A screen region with Y bounds and cached data.
@@ -349,13 +480,82 @@ pub struct Region {
     pub prev_data: RegionData,
 }
 
-pub const MAX_REGIONS: usize = 5;
+/// A Part page's five bands and a prompt over them.
+pub const MAX_REGIONS: usize = 6;
 
 /// Tracks the region list for the current page layout.
 pub struct RegionSet {
     pub regions: [Region; MAX_REGIONS],
     pub count: u8,
-    pub prev_layout: Option<PageLayout>,
+    /// The layout built, and whether a prompt is over it; `None` rebuilds.
+    pub prev_screen: Option<(Layout, bool)>,
+    /// THEME's HINTS as the bands were last drawn: any band may draw a
+    /// hint, so a change redraws them all (`UiState::hints_moved`).
+    pub drawn_hints: Option<bool>,
+}
+
+/// Which bands a screen has: a page's, or SETTINGS' (a list, or a leaf of
+/// a layout).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    Page(PageLayout),
+    Settings(Option<PageLayout>),
+}
+
+impl Layout {
+    pub fn regions(self) -> &'static [(RegionKind, u16, u16)] {
+        match self {
+            Layout::Page(l) => layout_regions(l),
+            Layout::Settings(leaf) => settings_regions(leaf),
+        }
+    }
+}
+
+impl From<PageLayout> for Layout {
+    fn from(l: PageLayout) -> Self {
+        Layout::Page(l)
+    }
+}
+
+/// FNV-1a, 32 bits wide, as a `Hasher`: every region key's hash.
+#[derive(Clone, Copy, Debug)]
+pub struct Fnv(u32);
+
+impl Fnv {
+    pub const fn new() -> Self {
+        Fnv(0x811c_9dc5)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl Default for Fnv {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl core::hash::Hasher for Fnv {
+    fn finish(&self) -> u64 {
+        self.0 as u64
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0 ^ b as u32).wrapping_mul(0x0100_0193);
+        }
+    }
+}
+
+/// FNV-1a over `parts`: a SETTINGS band's key.
+pub fn settings_key(parts: &[&[u8]]) -> u32 {
+    let mut h = Fnv::new();
+    parts
+        .iter()
+        .for_each(|p| core::hash::Hasher::write(&mut h, p));
+    h.get()
 }
 
 impl RegionSet {
@@ -368,14 +568,22 @@ impl RegionSet {
                 prev_data: RegionData::sentinel_header(),
             }; MAX_REGIONS],
             count: 0,
-            prev_layout: None,
+            prev_screen: None,
+            drawn_hints: None,
         }
     }
 
     /// Rebuild the region list for a new layout. All regions start dirty (sentinel data).
-    pub fn set_layout(&mut self, layout: PageLayout) {
-        let bands = layout_regions(layout);
-        for (r, &(kind, y_start, y_end)) in self.regions.iter_mut().zip(bands) {
+    pub fn set_layout(&mut self, layout: impl Into<Layout>) {
+        self.set_screen(layout.into(), false);
+    }
+
+    /// `layout`'s bands, then the prompt's panel over them when `prompt`.
+    /// All start dirty.
+    pub fn set_screen(&mut self, layout: Layout, prompt: bool) {
+        let bands = layout.regions();
+        let over = prompt.then_some(&PROMPT);
+        for (r, &(kind, y_start, y_end)) in self.regions.iter_mut().zip(bands.iter().chain(over)) {
             *r = Region {
                 kind,
                 y_start,
@@ -383,8 +591,8 @@ impl RegionSet {
                 prev_data: sentinel(kind),
             };
         }
-        self.count = bands.len() as u8;
-        self.prev_layout = Some(layout);
+        self.count = (bands.len() + prompt as usize) as u8;
+        self.prev_screen = Some((layout, prompt));
     }
 
     pub fn active_regions(&self) -> &[Region] {
@@ -445,6 +653,69 @@ pub fn layout_regions(layout: PageLayout) -> &'static [(RegionKind, u16, u16)] {
     }
 }
 
+const FOOTER: u16 = theme::MAP_TOP as u16;
+// A leaf's footer starts where its cells end.
+const _: () = assert!(CELLS == FOOTER);
+
+/// A SETTINGS list: breadcrumb, rows, footer.
+const SETTINGS_LIST: [(RegionKind, u16, u16); 3] = [
+    (K::Crumbs, 0, HEADER),
+    (K::List, HEADER, FOOTER),
+    (K::Footer, FOOTER, SCREEN),
+];
+const SETTINGS_CELL_GRID: [(RegionKind, u16, u16); 5] = [
+    (K::Crumbs, 0, HEADER),
+    (K::Focus, HEADER, FOCUS),
+    (K::Viz, FOCUS, BAND),
+    (K::Cells, BAND, CELLS),
+    (K::Footer, FOOTER, SCREEN),
+];
+const SETTINGS_BIG_VIZ: [(RegionKind, u16, u16); 4] = [
+    (K::Crumbs, 0, HEADER),
+    (K::Viz, HEADER, BIG_VIZ_END),
+    (K::Cells, BIG_VIZ_END, CELLS),
+    (K::Footer, FOOTER, SCREEN),
+];
+const SETTINGS_MATRIX: [(RegionKind, u16, u16); 4] = [
+    (K::Crumbs, 0, HEADER),
+    (K::Grid, HEADER, MATRIX_GRID),
+    (K::Focus, MATRIX_GRID, CELLS),
+    (K::Footer, FOOTER, SCREEN),
+];
+
+/// A prompt's panel: over the List band, and whatever lies there.
+pub const PROMPT: (RegionKind, u16, u16) = (K::Prompt, 60, 240);
+
+// Every region set has room for a prompt over it.
+const _: () = {
+    let sets: [&[(RegionKind, u16, u16)]; 7] = [
+        &CELL_GRID,
+        &BIG_VIZ,
+        &MATRIX,
+        &SETTINGS_LIST,
+        &SETTINGS_CELL_GRID,
+        &SETTINGS_BIG_VIZ,
+        &SETTINGS_MATRIX,
+    ];
+    let mut i = 0;
+    while i < sets.len() {
+        assert!(sets[i].len() < MAX_REGIONS);
+        i += 1;
+    }
+};
+
+/// SETTINGS' bands: a list (`None`) or a leaf page of `layout`. The
+/// breadcrumb takes the header's place and the footer the map's, so a leaf
+/// never shows the map.
+pub fn settings_regions(leaf: Option<PageLayout>) -> &'static [(RegionKind, u16, u16)] {
+    match leaf {
+        None => &SETTINGS_LIST,
+        Some(PageLayout::CellGrid) => &SETTINGS_CELL_GRID,
+        Some(PageLayout::BigViz) => &SETTINGS_BIG_VIZ,
+        Some(PageLayout::Matrix) => &SETTINGS_MATRIX,
+    }
+}
+
 fn sentinel(kind: RegionKind) -> RegionData {
     match kind {
         K::Header => RegionData::sentinel_header(),
@@ -453,5 +724,7 @@ fn sentinel(kind: RegionKind) -> RegionData {
         K::Cells => RegionData::sentinel_cells(),
         K::Nav => RegionData::sentinel_nav(),
         K::Grid => RegionData::sentinel_grid(),
+        K::Crumbs | K::List | K::Footer => RegionData::Settings { key: u32::MAX },
+        K::Prompt => RegionData::Overlay { key: u32::MAX },
     }
 }

@@ -1,34 +1,4 @@
-/// Fixed-size buffer for no_std text formatting via core::fmt::Write.
-pub struct FmtBuf {
-    buf: [u8; 32],
-    pos: usize,
-}
-
-impl Default for FmtBuf {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl FmtBuf {
-    pub fn new() -> Self {
-        Self {
-            buf: [0; 32],
-            pos: 0,
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        // SAFETY: `pos` only ever advances in `write_str`, which copies a
-        // prefix of a `&str` (valid UTF-8) cut at a char boundary, so
-        // `buf[..pos]` is always a concatenation of whole UTF-8 chars.
-        unsafe { core::str::from_utf8_unchecked(&self.buf[..self.pos]) }
-    }
-
-    pub fn clear(&mut self) {
-        self.pos = 0;
-    }
-}
+pub use chimera_engine::fmt_buf::FmtBuf;
 
 use crate::ui::page::ValFmt;
 
@@ -57,7 +27,14 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
                 v => write!(buf, "R{}", v),
             };
         }
-        ValFmt::Route => {
+        ValFmt::Keybd if matches!(crate::ui::renderer::amount_of(val), 0 | 64 | 127) => {
+            let _ = buf.write_str(match crate::ui::renderer::amount_of(val) {
+                0 => "OFF",
+                64 => "HALF",
+                _ => "FULL",
+            });
+        }
+        ValFmt::Route | ValFmt::Keybd => {
             let a = crate::ui::renderer::amount_of(val) as i32;
             let pct = (a * 100 + a.signum() * 63) / 127;
             let _ = if pct > 0 {
@@ -86,20 +63,33 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
             }
         }
         ValFmt::Law(law) => fmt_law(buf, val, law),
+        ValFmt::Bpm => {
+            use crate::orbit::clock::Bpm;
+            let span = (Bpm::MAX - Bpm::MIN) as f32;
+            let _ = write!(buf, "{}", Bpm::MIN + libm::roundf(val * span) as u16);
+        }
     }
 }
 
-/// `x ≥ 0` to `places` decimals in integers: `{:.1}` would link core's
-/// float formatting, several KB of flash.
+/// `x` to `places` decimals (none: a whole number), then `unit` as given,
+/// in integers: `{:.1}` would link core's float formatting, several KB.
 pub(crate) fn fixed(buf: &mut FmtBuf, x: f32, places: u32, unit: &str) {
     use core::fmt::Write;
     let k = 10i32.pow(places);
     let n = libm::roundf(x * k as f32) as i32;
-    let _ = write!(buf, "{}.{:02$} {unit}", n / k, n % k, places as usize);
+    let sign = if n < 0 { "-" } else { "" };
+    // `as` saturates (-inf is `i32::MIN`), whose `abs` would overflow.
+    let n = n.unsigned_abs();
+    let k = k as u32;
+    let _ = if places == 0 {
+        write!(buf, "{sign}{n}{unit}")
+    } else {
+        write!(buf, "{sign}{}.{:02$}{unit}", n / k, n % k, places as usize)
+    };
 }
 
 fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
-    use crate::dsp::modulator::law::Law;
+    use crate::dsp::modulator::law::{CUTOFF_HZ, Law};
     use core::fmt::Write;
     let round = |x: f32| libm::roundf(x) as i32;
     let bend = |buf: &mut FmtBuf, lo: &str, mid: &str, hi: &str| {
@@ -124,22 +114,33 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
             // Each unit is picked from the value as it would print.
             let hz = law.range().map_or(0.0, |r| r.at(v));
             if round(hz * 100.0) < 1000 {
-                fixed(buf, hz, 2, "Hz");
+                fixed(buf, hz, 2, " Hz");
             } else if round(hz * 10.0) < 1000 {
-                fixed(buf, hz, 1, "Hz");
+                fixed(buf, hz, 1, " Hz");
             } else {
                 let _ = write!(buf, "{} Hz", round(hz));
+            }
+        }
+        // Whole Hz under 1 kHz, then kHz to 3 figures.
+        Law::Cutoff => {
+            let hz = round(CUTOFF_HZ.at(v));
+            if hz < 1000 {
+                let _ = write!(buf, "{hz} Hz");
+            } else if hz < 9995 {
+                fixed(buf, hz as f32 / 1000.0, 2, " kHz");
+            } else {
+                fixed(buf, hz as f32 / 1000.0, 1, " kHz");
             }
         }
         _ => {
             let s = law.range().map_or(0.0, |r| r.at(v));
             let ms = s * 1000.0;
             if round(ms * 10.0) < 100 {
-                fixed(buf, ms, 1, "ms");
+                fixed(buf, ms, 1, " ms");
             } else if round(ms) < 1000 {
                 let _ = write!(buf, "{} ms", round(ms));
             } else {
-                fixed(buf, s, 1, "s");
+                fixed(buf, s, 1, " s");
             }
         }
     }
@@ -151,36 +152,24 @@ fn discrete(val: f32, max: u8) -> u8 {
     if v > max { max } else { v }
 }
 
-impl core::fmt::Write for FmtBuf {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        let bytes = s.as_bytes();
-        let mut len = bytes.len().min(self.buf.len() - self.pos);
-        // Truncate whole chars only: `as_str` relies on `buf[..pos]` being
-        // valid UTF-8.
-        while !s.is_char_boundary(len) {
-            len -= 1;
-        }
-        self.buf[self.pos..self.pos + len].copy_from_slice(&bytes[..len]);
-        self.pos += len;
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::FmtBuf;
-    use core::fmt::Write;
+    use super::{FmtBuf, fixed};
 
-    /// A multi-byte char straddling the capacity is dropped whole, never
-    /// split, so `as_str`'s unchecked conversion stays sound.
+    /// Out-of-range values saturate, never overflow: +-inf print the
+    /// `i32` ends, NaN prints 0.
     #[test]
-    fn truncation_never_splits_a_char() {
-        let mut buf = FmtBuf::new();
-        let _ = buf.write_str("0123456789012345678901234567890"); // 31 bytes
-        let _ = buf.write_str("é"); // 2 bytes: would straddle byte 32
-        assert!(core::str::from_utf8(&buf.buf[..buf.pos]).is_ok());
-        assert_eq!(buf.as_str(), "0123456789012345678901234567890");
-        let _ = buf.write_str("x"); // the one byte left still fits
-        assert_eq!(buf.as_str().len(), 32);
+    fn fixed_saturates() {
+        let at = |x: f32, places| {
+            let mut b = FmtBuf::new();
+            fixed(&mut b, x, places, "ms");
+            b
+        };
+        assert_eq!(at(f32::NEG_INFINITY, 0).as_str(), "-2147483648ms");
+        assert_eq!(at(f32::NEG_INFINITY, 2).as_str(), "-21474836.48ms");
+        assert_eq!(at(f32::INFINITY, 1).as_str(), "214748364.7ms");
+        assert_eq!(at(f32::NAN, 2).as_str(), "0.00ms");
+        assert_eq!(at(-3.6, 1).as_str(), "-3.6ms");
+        assert_eq!(at(0.37, 2).as_str(), "0.37ms");
     }
 }

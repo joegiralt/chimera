@@ -62,8 +62,9 @@ impl Sub for PitchClass {
     }
 }
 
-const PC_NAMES: [[u8; 2]; 12] = [
-    *b"C ", *b"C#", *b"D ", *b"D#", *b"E ", *b"F ", *b"F#", *b"G ", *b"G#", *b"A ", *b"A#", *b"B ",
+/// The pitch classes' names, C first: what `Display` writes.
+pub const PITCH_NAMES: [&str; 12] = [
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 ];
 
 fn write_ascii(f: &mut Formatter<'_>, bytes: &[u8]) -> fmt::Result {
@@ -75,7 +76,7 @@ fn write_ascii(f: &mut Formatter<'_>, bytes: &[u8]) -> fmt::Result {
 
 impl Display for PitchClass {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write_ascii(f, &PC_NAMES[*self as usize])
+        f.write_str(PITCH_NAMES[*self as usize])
     }
 }
 
@@ -364,29 +365,18 @@ impl Scale {
     }
 }
 
-const SCALE_NAMES: [[u8; 8]; 10] = [
-    *b"MAJOR   ",
-    *b"MINOR   ",
-    *b"DORIAN  ",
-    *b"PHRYGIAN",
-    *b"LYDIAN  ",
-    *b"MIXOLYD ",
-    *b"LOCRIAN ",
-    *b"HARM MIN",
-    *b"PENT MAJ",
-    *b"PENT MIN",
+/// The named scales' names, in `Scale::ALL`'s order: what `Display`
+/// writes.
+pub const SCALE_NAMES: [&str; 10] = [
+    "MAJOR", "MINOR", "DORIAN", "PHRYGIAN", "LYDIAN", "MIXOLYD", "LOCRIAN", "HARM MIN", "PENT MAJ",
+    "PENT MIN",
 ];
 
 impl Display for Scale {
     /// A named scale's name, else "CUSTOM".
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match Scale::ALL.iter().position(|s| s == self) {
-            // Names hold one space at most, never at the start of a word.
-            Some(i) => f.write_str(
-                core::str::from_utf8(&SCALE_NAMES[i])
-                    .map_err(|_| fmt::Error)?
-                    .trim_end(),
-            ),
+            Some(i) => f.write_str(SCALE_NAMES[i]),
             None => f.write_str("CUSTOM"),
         }
     }

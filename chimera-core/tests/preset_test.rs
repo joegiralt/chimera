@@ -1,10 +1,20 @@
 use chimera_core::addr::Op;
 use chimera_core::params::EngineType;
-use chimera_core::preset::{POOL_SIZE, Part, Performance, Sound, SoundPool};
+use chimera_core::preset::{MAX_SOUNDS, Performance, Sound};
+use chimera_core::project::{
+    Origin, PartFrom, PartId, PartSource, Project, ReplaceError, ReplaceGuard, SlotId, TemplateCrc,
+};
+use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry as reg;
+use chimera_core::ui::nav::{Browse, NavCtx, OrbitCx};
 use chimera_core::ui::page::PageKey;
-use chimera_core::ui::{UiMode, UiState};
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
+
+/// A load into a Clean or Stale Part: the guard lets it through.
+fn load(p: &mut Project, t: TemplateCrc, src: PartSource) -> Result<(), ReplaceError> {
+    let c = ReplaceGuard::check(p, t, src).expect("a Clean or Stale Part");
+    p.replace_part(c)
+}
 
 /// Mock controls for testing UI input handling.
 struct MockControls {
@@ -66,111 +76,69 @@ fn patch_init_has_musically_useful_defaults() {
     assert!(p.name.as_str() == "INIT");
 }
 
-#[test]
-fn sound_pool_starts_empty() {
-    let pool = SoundPool::new();
-    assert!(pool.get(0).is_none());
-    assert!(pool.get(31).is_none());
-}
-
-#[test]
-fn sound_pool_store_and_retrieve() {
-    let mut pool = SoundPool::new();
-    let sound = Sound::init(EngineType::Algo);
-    pool.store(0, sound);
-    assert!(pool.get(0).is_some());
-    assert_eq!(pool.get(0).unwrap().engine(), EngineType::Algo);
-}
-
-#[test]
-fn sound_pool_slot_count() {
-    let pool = SoundPool::new();
-    assert_eq!(pool.slot_count(), 32);
-}
-
-#[test]
-fn part_starts_with_init_patch() {
-    let part = Part::new(EngineType::Algo);
-    assert_eq!(part.sound.engine(), EngineType::Algo);
-    assert!(part.loaded_from.is_none());
-}
-
-#[test]
-fn part_load_from_pool_copies() {
-    let mut pool = SoundPool::new();
-    let mut sound = Sound::init(EngineType::Algo);
-    sound.name = chimera_core::name::Name::new("Acid Bass").unwrap();
-    pool.store(3, sound);
-
-    let mut part = Part::new(EngineType::Algo);
-    part.load_from_pool(&pool, 3);
-
-    assert_eq!(part.sound.name.as_str(), "Acid Bass");
-    assert_eq!(part.loaded_from, Some(3));
-}
-
+/// Editing a loaded Part edits its copy: the slot keeps its Sound.
 #[test]
 fn part_edit_does_not_modify_pool() {
-    let mut pool = SoundPool::new();
-    pool.store(0, Sound::init(EngineType::Algo));
-
-    let mut part = Part::new(EngineType::Algo);
-    part.load_from_pool(&pool, 0);
-    part.sound.params.out.volume = 0.0; // mute
-    assert_eq!(
-        part.sound.params.out.volume, 0.0,
-        "edit should land on the part's copy"
-    );
-
-    // Pool slot unchanged
-    assert!(pool.get(0).unwrap().params.out.volume > 0.0);
-}
-
-#[test]
-fn part_save_to_pool_overwrites() {
-    let mut pool = SoundPool::new();
-    pool.store(5, Sound::init(EngineType::Algo));
-
-    let mut part = Part::new(EngineType::Modal);
-    part.sound.name = chimera_core::name::Name::new("My Sound").unwrap();
-    part.save_to_pool(&mut pool, 5);
-
-    assert_eq!(pool.get(5).unwrap().name.as_str(), "My Sound");
-    assert_eq!(pool.get(5).unwrap().engine(), EngineType::Modal);
+    let (mut p, t) = Project::boxed();
+    let (part, slot) = (PartId::ALL[0], SlotId::ALL[0]);
+    p.pool_store(slot, &Sound::init(EngineType::Algo)).unwrap();
+    load(
+        &mut p,
+        t,
+        PartSource {
+            part,
+            from: PartFrom::Slot(slot),
+        },
+    )
+    .unwrap();
+    p.edit_part(part).sound.params.out.volume = 0.0; // mute
+    assert_eq!(p.part(part).sound.params.out.volume, 0.0);
+    assert!(p.pool().get(slot).unwrap().to_sound().params.out.volume > 0.0);
 }
 
 /// Spec § Vocabulary: a Performance holds MAX_PARTS Parts, each playing a Sound.
 #[test]
 fn performance_has_six_parts_playing_sounds() {
     let perf = Performance::new();
-    assert_eq!(perf.parts.len(), chimera_core::hw::MAX_PARTS);
-    let sound: &Sound = &perf.parts[0].sound;
+    assert_eq!(perf.parts().len(), chimera_core::hw::MAX_PARTS);
+    let sound: &Sound = &perf.parts()[0].sound;
     assert_eq!(sound.engine(), EngineType::Algo);
-    assert_eq!(&perf.name, b"New Performance\0");
+    assert_eq!(Project::boxed().0.meta().name().as_str(), "NEW PROJECT");
 }
 
 // ── Navigation tests ─────────────────────────────────────────────
 
+/// The node of the page shown.
+fn node(ui: &UiState) -> usize {
+    let cx = NavCtx {
+        engines: [EngineType::Algo; 6],
+        dyn_rows: 0,
+        orbit: OrbitCx::NONE,
+        rev: chimera_core::dsp::reverb::ReverbType::Quad,
+    };
+    ui.location().page(&cx).unwrap().1.node() as usize
+}
+
 #[test]
 fn plus_moves_one_block_per_press() {
     let mut ui = UiState::new();
-    let start_node = ui.nav.node;
+    let start_node = node(&ui);
 
     // Single Pressed event → one step
     ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
-    assert_eq!(ui.nav.node, start_node + 1);
+    assert_eq!(node(&ui), start_node + 1);
 
     // Held does NOT advance further
     ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Held));
-    assert_eq!(ui.nav.node, start_node + 1);
+    assert_eq!(node(&ui), start_node + 1);
 
     // Released does NOT advance
     ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Released));
-    assert_eq!(ui.nav.node, start_node + 1);
+    assert_eq!(node(&ui), start_node + 1);
 
     // Another Pressed → one more step
     ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
-    assert_eq!(ui.nav.node, start_node + 2);
+    assert_eq!(node(&ui), start_node + 2);
 }
 
 #[test]
@@ -180,21 +148,21 @@ fn minus_moves_one_block_per_press() {
     // Move forward first so we have room to go back
     ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
     ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
-    assert_eq!(ui.nav.node, 2);
+    assert_eq!(node(&ui), 2);
 
     // Minus → one step back
     ui.handle_input(&MockControls::new().button(ButtonId::Minus, ButtonState::Pressed));
-    assert_eq!(ui.nav.node, 1);
+    assert_eq!(node(&ui), 1);
 
     // Held does NOT go further
     ui.handle_input(&MockControls::new().button(ButtonId::Minus, ButtonState::Held));
-    assert_eq!(ui.nav.node, 1);
+    assert_eq!(node(&ui), 1);
 }
 
 #[test]
 fn edit_held_with_b_press_does_not_navigate() {
     let mut ui = UiState::new();
-    let start_node = ui.nav.node;
+    let start_node = node(&ui);
 
     // Edit+B1 should open browser, NOT navigate
     ui.handle_input(
@@ -203,9 +171,10 @@ fn edit_held_with_b_press_does_not_navigate() {
             .button(ButtonId::B1, ButtonState::Pressed),
     );
 
-    // Should be in browser, not navigated
-    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
-    assert_eq!(ui.nav.node, start_node);
+    // On the Sound rung, not a page step
+    assert!(ui.location().browse().is_some());
+    ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
+    assert_eq!(node(&ui), start_node);
 }
 
 // ── Sound browser integration tests ─────────────────────────────
@@ -222,10 +191,14 @@ fn open_browser(ui: &mut UiState, btn: ButtonId) {
 #[test]
 fn edit_b1_opens_patch_browser() {
     let mut ui = UiState::new();
-    assert!(matches!(ui.ui_mode, UiMode::Normal));
+    assert!(ui.location().browse().is_none());
 
     open_browser(&mut ui, ButtonId::B1);
-    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { part: 0, .. }));
+    assert!(
+        ui.location()
+            .browse()
+            .is_some_and(|(p, _)| p == PartId::ALL[0])
+    );
 }
 
 #[test]
@@ -233,7 +206,11 @@ fn edit_b3_opens_browser_for_track_2() {
     let mut ui = UiState::new();
 
     open_browser(&mut ui, ButtonId::B3);
-    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { part: 2, .. }));
+    assert!(
+        ui.location()
+            .browse()
+            .is_some_and(|(p, _)| p == PartId::ALL[2])
+    );
 }
 
 #[test]
@@ -241,7 +218,7 @@ fn b1_without_edit_does_not_open_browser() {
     let mut ui = UiState::new();
 
     ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
-    assert!(matches!(ui.ui_mode, UiMode::Normal));
+    assert!(ui.location().browse().is_none());
 }
 
 #[test]
@@ -251,18 +228,14 @@ fn browser_load_copies_patch_to_part() {
     // Store a named sound in pool slot 2
     let mut sound = Sound::init(EngineType::Algo);
     sound.name = chimera_core::name::Name::new("Test Sound").unwrap();
-    ui.pool.store(2, sound);
+    ui.project_mut().pool_store(SlotId::ALL[2], &sound).unwrap();
 
     // Open browser for B1 (part 0)
     open_browser(&mut ui, ButtonId::B1);
-    assert!(matches!(
-        ui.ui_mode,
-        UiMode::SoundBrowser {
-            part: 0,
-            cursor: 0,
-            ..
-        }
-    ));
+    assert_eq!(
+        ui.location().browse(),
+        Some((PartId::ALL[0], Browse::default()))
+    );
 
     // Scroll down to slot 2
     ui.handle_input(&MockControls::new().encoder(EncoderId::A, 2));
@@ -271,68 +244,62 @@ fn browser_load_copies_patch_to_part() {
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
     // Should exit browser and load sound into part 0
-    assert!(matches!(ui.ui_mode, UiMode::Normal));
-    assert_eq!(ui.performance.parts[0].sound.name.as_str(), "Test Sound");
-    assert_eq!(ui.performance.parts[0].loaded_from, Some(2));
+    assert!(ui.location().browse().is_none());
+    assert_eq!(
+        ui.project().part(PartId::ALL[0]).sound.name.as_str(),
+        "Test Sound"
+    );
+    assert!(matches!(
+        ui.project().part(PartId::ALL[0]).origin(),
+        Origin::Slot { slot, .. } if slot == SlotId::ALL[2]
+    ));
 }
 
 #[test]
 fn browser_cancel_does_not_load() {
     let mut ui = UiState::new();
-    let original_name = ui.performance.parts[0].sound.name;
+    let original_name = ui.project().part(PartId::ALL[0]).sound.name;
 
     // Store sound and open browser
-    ui.pool.store(0, Sound::init(EngineType::Modal));
+    ui.project_mut()
+        .pool_store(SlotId::ALL[0], &Sound::init(EngineType::Modal))
+        .unwrap();
     open_browser(&mut ui, ButtonId::B1);
-    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
+    assert!(ui.location().browse().is_some());
 
     // Cancel by pressing a B-button
     ui.handle_input(&MockControls::new().button(ButtonId::B2, ButtonState::Pressed));
 
-    assert!(matches!(ui.ui_mode, UiMode::Normal));
-    assert_eq!(ui.performance.parts[0].sound.name, original_name);
-}
-
-#[test]
-fn browser_save_to_pool() {
-    let mut ui = UiState::new();
-
-    // Edit part 0's sound name
-    ui.performance.parts[0].sound.name = chimera_core::name::Name::new("My Bass").unwrap();
-
-    // Open browser for B1
-    open_browser(&mut ui, ButtonId::B1);
-    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
-
-    // Scroll to slot 5 and save
-    ui.handle_input(&MockControls::new().encoder(EncoderId::A, 5));
-    ui.handle_input(&MockControls::new().button(ButtonId::Seq, ButtonState::Pressed));
-
-    // Should stay in browser, and pool slot 5 now has our sound
-    assert!(matches!(ui.ui_mode, UiMode::SoundBrowser { .. }));
-    assert_eq!(ui.pool.get(5).unwrap().name.as_str(), "My Bass");
+    assert!(ui.location().browse().is_none());
+    assert_eq!(ui.project().part(PartId::ALL[0]).sound.name, original_name);
 }
 
 #[test]
 fn browser_init_entries_set_the_engine() {
     let mut ui = UiState::new();
 
-    // Open browser, scroll to "INIT Modal" (POOL_SIZE + 1)
+    // Open browser, scroll to "INIT Modal" (MAX_SOUNDS + 1)
     open_browser(&mut ui, ButtonId::B1);
-    ui.handle_input(&MockControls::new().encoder(EncoderId::A, (POOL_SIZE + 1) as i8));
+    scroll(&mut ui, MAX_SOUNDS + 1);
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
-    assert!(matches!(ui.ui_mode, UiMode::Normal));
-    assert_eq!(ui.performance.parts[0].sound.engine(), EngineType::Modal);
-    assert!(ui.performance.parts[0].sound.name.as_str() == "INIT");
+    assert!(ui.location().browse().is_none());
+    assert_eq!(
+        ui.project().part(PartId::ALL[0]).sound.engine(),
+        EngineType::Modal
+    );
+    assert!(ui.project().part(PartId::ALL[0]).sound.name.as_str() == "INIT");
 
-    // Open browser again, scroll to "INIT Algo" (POOL_SIZE)
+    // Open browser again, scroll to "INIT Algo" (MAX_SOUNDS)
     open_browser(&mut ui, ButtonId::B1);
-    ui.handle_input(&MockControls::new().encoder(EncoderId::A, POOL_SIZE as i8));
+    scroll(&mut ui, MAX_SOUNDS);
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
-    assert!(matches!(ui.ui_mode, UiMode::Normal));
-    assert_eq!(ui.performance.parts[0].sound.engine(), EngineType::Algo);
+    assert!(ui.location().browse().is_none());
+    assert_eq!(
+        ui.project().part(PartId::ALL[0]).sound.engine(),
+        EngineType::Algo
+    );
 }
 
 /// Loading from the browser replaces the Sound only: the Part keeps its
@@ -340,14 +307,18 @@ fn browser_init_entries_set_the_engine() {
 #[test]
 fn browser_load_keeps_part_mix() {
     let mut ui = UiState::new();
-    ui.performance.parts[2].mix.channel = chimera_core::MidiChannel::new(9).unwrap();
-    ui.performance.parts[2].mix.level = 0.3;
+    ui.project_mut().edit_part(PartId::ALL[2]).mix.channel =
+        chimera_core::MidiChannel::new(9).unwrap();
+    ui.project_mut().edit_part(PartId::ALL[2]).mix.level = 0.3;
     open_browser(&mut ui, ButtonId::B3);
-    ui.handle_input(&MockControls::new().encoder(EncoderId::A, (POOL_SIZE + 1) as i8));
+    scroll(&mut ui, MAX_SOUNDS + 1);
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
-    assert_eq!(ui.performance.parts[2].sound.engine(), EngineType::Modal);
-    assert_eq!(ui.performance.parts[2].mix.channel.get(), 9);
-    assert_eq!(ui.performance.parts[2].mix.level, 0.3);
+    assert_eq!(
+        ui.project().part(PartId::ALL[2]).sound.engine(),
+        EngineType::Modal
+    );
+    assert_eq!(ui.project().part(PartId::ALL[2]).mix.channel.get(), 9);
+    assert_eq!(ui.project().part(PartId::ALL[2]).mix.level, 0.3);
 }
 
 // ── Priming by slot address ──────────────────────────────────────
@@ -366,11 +337,12 @@ fn prime(ui: &mut UiState) {
 }
 
 fn primed(ui: &UiState) -> Vec<chimera_core::addr::ParamAddr> {
-    let reg = &ui.performance.parts[ui.active_part].sound.dest_registry;
+    let reg = &ui.project().part(ui.active_part).sound.dest_registry;
     (0..reg.len()).map(|i| reg.get(i).unwrap().addr).collect()
 }
 
-/// Positive control: the filter page primes cutoff.
+/// Positive control: the drive page primes DRIVE. The filter page's
+/// cutoff is the permanent FREQ column: priming it registers nothing.
 #[test]
 fn priming_on_main_page_registers_focused_param() {
     let mut ui = UiState::new();
@@ -379,11 +351,19 @@ fn priming_on_main_page_registers_focused_param() {
     press(&mut ui, ButtonId::Plus); // node 3: Filter
     ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1));
     prime(&mut ui); // slot 1: cutoff
+    assert_eq!(primed(&ui), []);
+    assert_eq!(
+        ui.prime_status(),
+        Some(chimera_core::ui::PrimeStatus::AlreadyRouted)
+    );
+    press(&mut ui, ButtonId::Minus); // node 2: Drive
+    ui.handle_input(&MockControls::new().encoder(EncoderId::A, 1));
+    prime(&mut ui); // slot 0: drive
     assert_eq!(
         primed(&ui),
         [chimera_core::addr::ParamAddr::new(
-            chimera_core::addr::BlockRef::Filter,
-            chimera_core::params::FilterParams::CUTOFF
+            chimera_core::addr::BlockRef::Drive,
+            chimera_core::params::DriveParams::DRIVE
         )]
     );
 }
@@ -407,7 +387,7 @@ fn priming_on_the_lfo_sub_page_registers_nothing() {
         }
     );
     prime(&mut ui);
-    assert_eq!(primed(&ui), [chimera_core::modulation::CUTOFF]);
+    assert_eq!(primed(&ui), []);
 }
 
 /// The WAVE page's slots are Enums, never modulatable, so the registry
@@ -425,7 +405,7 @@ fn priming_a_wave_registers_nothing() {
     );
     ui.handle_input(&MockControls::new().encoder(EncoderId::C, 1)); // focus slot 2
     prime(&mut ui);
-    assert_eq!(primed(&ui), [chimera_core::modulation::CUTOFF]);
+    assert_eq!(primed(&ui), []);
 }
 
 /// `Performance::default()` is `Performance::new()` (clippy new_without_default).
@@ -433,7 +413,17 @@ fn priming_a_wave_registers_nothing() {
 fn performance_default_is_new() {
     use chimera_core::part::PartParams;
     let p = chimera_core::preset::Performance::default();
-    for (i, part) in p.parts.iter().enumerate() {
+    for (i, part) in p.parts().iter().enumerate() {
         assert_eq!(part.mix, PartParams::for_part(i));
+    }
+}
+
+/// Encoder A turned `rows` down the browser, in turns an `i8` holds.
+fn scroll(ui: &mut UiState, rows: usize) {
+    let mut left = rows;
+    while left > 0 {
+        let step = left.min(100);
+        ui.handle_input(&MockControls::new().encoder(EncoderId::A, step as i8));
+        left -= step;
     }
 }

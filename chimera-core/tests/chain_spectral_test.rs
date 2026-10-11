@@ -1,10 +1,11 @@
 mod common;
 use chimera_core::dsp::drive::Drive;
-use chimera_core::dsp::filter::{FilterMode, SvfFilter};
+use chimera_core::dsp::filter::{Clean, FilterMode, FilterMods};
 use chimera_core::dsp::wavefolder::Wavefolder;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
+use chimera_hal::BLOCK_SIZE;
 use common::Rig;
 use common::{SR, goertzel, tri};
 
@@ -26,7 +27,6 @@ fn harmonic_energy(buf: &[f32], fundamental: f32) -> f32 {
 
 #[test]
 fn test_drive_adds_harmonics() {
-    let drive = Drive::new();
     let freq = 440.0;
 
     let mut clean = sine_buf(freq, 4096);
@@ -37,7 +37,7 @@ fn test_drive_adds_harmonics() {
         mix: 1.0,
         ..Default::default()
     };
-    drive.process(&mut clean, &params);
+    Drive::new().process(&mut clean, &params, params.drive >= 0.001);
     let driven_harmonics = harmonic_energy(&clean, freq);
 
     assert!(
@@ -50,13 +50,12 @@ fn test_drive_adds_harmonics() {
 
 #[test]
 fn test_drive_at_zero_preserves_spectrum() {
-    let drive = Drive::new();
     let freq = 440.0;
 
     let original = sine_buf(freq, 4096);
     let mut processed = original.clone();
     let params = DriveParams::default(); // drive=0
-    drive.process(&mut processed, &params);
+    Drive::new().process(&mut processed, &params, params.drive >= 0.001);
 
     let orig_h = harmonic_energy(&original, freq);
     let proc_h = harmonic_energy(&processed, freq);
@@ -71,7 +70,6 @@ fn test_drive_at_zero_preserves_spectrum() {
 
 #[test]
 fn test_drive_more_drive_more_harmonics() {
-    let drive = Drive::new();
     let freq = 440.0;
 
     let measure = |amount: f32| -> f32 {
@@ -81,7 +79,7 @@ fn test_drive_more_drive_more_harmonics() {
             mix: 1.0,
             ..Default::default()
         };
-        drive.process(&mut buf, &params);
+        Drive::new().process(&mut buf, &params, params.drive >= 0.001);
         harmonic_energy(&buf, freq)
     };
 
@@ -105,7 +103,6 @@ fn test_drive_more_drive_more_harmonics() {
 
 #[test]
 fn test_drive_tone_changes_spectrum() {
-    let drive = Drive::new();
     let freq = 440.0;
 
     let measure = |tone: f32| -> f32 {
@@ -115,7 +112,7 @@ fn test_drive_tone_changes_spectrum() {
             tone,
             mix: 1.0,
         };
-        drive.process(&mut buf, &params);
+        Drive::new().process(&mut buf, &params, params.drive >= 0.001);
         harmonic_energy(&buf, freq)
     };
 
@@ -134,7 +131,7 @@ fn test_drive_tone_changes_spectrum() {
 
 #[test]
 fn test_filter_lp_removes_highs() {
-    let mut filter = SvfFilter::new();
+    let mut filter = Clean::new();
     let mut params = FilterParams::default();
     params.cutoff = 500.0;
     params.set_mode(FilterMode::Lp24);
@@ -151,7 +148,9 @@ fn test_filter_lp_removes_highs() {
     let pre_low = goertzel(&buf, 200.0, SR);
     let pre_high = goertzel(&buf, 2000.0, SR);
 
-    filter.process(&mut buf, &params, SR);
+    for c in buf.as_chunks_mut::<BLOCK_SIZE>().0 {
+        filter.process(c, &params, SR, &FilterMods::NONE);
+    }
 
     let post_low = goertzel(&buf, 200.0, SR);
     let post_high = goertzel(&buf, 2000.0, SR);
@@ -172,7 +171,7 @@ fn test_filter_lp_removes_highs() {
 
 #[test]
 fn test_filter_hp_removes_lows() {
-    let mut filter = SvfFilter::new();
+    let mut filter = Clean::new();
     let mut params = FilterParams::default();
     params.cutoff = 1000.0;
     params.set_mode(FilterMode::Hp24);
@@ -188,7 +187,9 @@ fn test_filter_hp_removes_lows() {
     let pre_low = goertzel(&buf, 200.0, SR);
     let pre_high = goertzel(&buf, 4000.0, SR);
 
-    filter.process(&mut buf, &params, SR);
+    for c in buf.as_chunks_mut::<BLOCK_SIZE>().0 {
+        filter.process(c, &params, SR, &FilterMods::NONE);
+    }
 
     let post_low = goertzel(&buf, 200.0, SR);
     let post_high = goertzel(&buf, 4000.0, SR);
@@ -209,7 +210,7 @@ fn test_filter_hp_removes_lows() {
 
 #[test]
 fn test_filter_bp_passes_center() {
-    let mut filter = SvfFilter::new();
+    let mut filter = Clean::new();
     let mut params = FilterParams::default();
     params.cutoff = 1000.0;
     params.resonance = 0.7;
@@ -224,7 +225,9 @@ fn test_filter_bp_passes_center() {
         })
         .collect();
 
-    filter.process(&mut buf, &params, SR);
+    for c in buf.as_chunks_mut::<BLOCK_SIZE>().0 {
+        filter.process(c, &params, SR, &FilterMods::NONE);
+    }
 
     let low = goertzel(&buf, 200.0, SR);
     let center = goertzel(&buf, 1000.0, SR);
@@ -244,7 +247,7 @@ fn test_filter_resonance_boosts_cutoff() {
     let freq = 1000.0;
 
     let measure_peak = |reso: f32| -> f32 {
-        let mut filter = SvfFilter::new();
+        let mut filter = Clean::new();
         let mut params = FilterParams::default();
         params.cutoff = freq;
         params.resonance = reso;
@@ -262,7 +265,9 @@ fn test_filter_resonance_boosts_cutoff() {
             })
             .collect();
 
-        filter.process(&mut buf, &params, SR);
+        for c in buf.as_chunks_mut::<BLOCK_SIZE>().0 {
+            filter.process(c, &params, SR, &FilterMods::NONE);
+        }
         goertzel(&buf, freq, SR)
     };
 
@@ -280,7 +285,7 @@ fn test_filter_resonance_boosts_cutoff() {
 #[test]
 fn test_filter_cutoff_sweep_changes_brightness() {
     let measure_brightness = |cutoff: f32| -> f32 {
-        let mut filter = SvfFilter::new();
+        let mut filter = Clean::new();
         let mut params = FilterParams::default();
         params.cutoff = cutoff;
         params.set_mode(FilterMode::Lp24);
@@ -297,7 +302,9 @@ fn test_filter_cutoff_sweep_changes_brightness() {
             })
             .collect();
 
-        filter.process(&mut buf, &params, SR);
+        for c in buf.as_chunks_mut::<BLOCK_SIZE>().0 {
+            filter.process(c, &params, SR, &FilterMods::NONE);
+        }
         harmonic_energy(&buf, 200.0)
     };
 
@@ -323,7 +330,6 @@ fn test_filter_cutoff_sweep_changes_brightness() {
 
 #[test]
 fn test_folder_adds_harmonics() {
-    let folder = Wavefolder::new();
     let freq = 440.0;
 
     let clean = sine_buf(freq, 4096);
@@ -335,7 +341,7 @@ fn test_folder_adds_harmonics() {
         mix: 1.0,
         ..Default::default()
     };
-    folder.process(&mut folded, &params);
+    Wavefolder::new().process(&mut folded, &params, params.fold >= 0.001, None);
     let folded_h = harmonic_energy(&folded, freq);
 
     assert!(
@@ -348,7 +354,6 @@ fn test_folder_adds_harmonics() {
 
 #[test]
 fn test_folder_more_fold_more_harmonics() {
-    let folder = Wavefolder::new();
     let freq = 440.0;
 
     let measure = |amount: f32| -> f32 {
@@ -358,7 +363,7 @@ fn test_folder_more_fold_more_harmonics() {
             mix: 1.0,
             ..Default::default()
         };
-        folder.process(&mut buf, &params);
+        Wavefolder::new().process(&mut buf, &params, params.fold >= 0.001, None);
         harmonic_energy(&buf, freq)
     };
 

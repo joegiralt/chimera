@@ -7,9 +7,22 @@
 #![allow(dead_code)]
 
 pub mod codec_util;
+pub mod filter_ref;
 pub mod golden;
+pub mod inst_rig;
+pub mod orbit;
+pub mod part_rig;
+pub mod project;
+pub mod rev;
 pub mod rig;
+pub mod scene;
+pub mod spectrum;
+pub mod sweep;
+pub mod tape;
+pub mod turn;
 
+#[allow(unused_imports)] // each test binary uses some of these
+pub use inst_rig::InstRig;
 pub use rig::Rig;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
@@ -17,10 +30,10 @@ use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::dsp::modal::ResonatorMode;
+use chimera_core::dsp::modal::{Halo, ModalEngine, ModalParams, Model, ResonatorMode, SymPool};
 use chimera_core::instrument::{AudioShared, Instrument};
 use chimera_core::mod_path::ModDestRegistry;
-use chimera_core::modulation::ModState;
+use chimera_core::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
 use chimera_core::preset::Sound;
@@ -37,7 +50,8 @@ pub const SR: u32 = chimera_hal::SAMPLE_RATE;
 pub const NOTE: u8 = 60;
 pub const VEL: u8 = 100;
 pub const ON_BLOCKS: usize = 200;
-pub const OFF_BLOCKS: usize = 200;
+/// 1.6 s: ALGO INIT's RR 5 falls 60 dB in about 1.1 s (ADR 0063).
+pub const OFF_BLOCKS: usize = 1200;
 pub const TOTAL_SAMPLES: usize = (ON_BLOCKS + OFF_BLOCKS) * BLOCK_SIZE;
 /// LFO rate for every modulated case. At the 1 Hz default the LFO stays
 /// positive for the first 0.5 s, so a route to a param already at its max
@@ -50,6 +64,8 @@ pub const MOD_AMOUNT: i8 = 64;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Case {
     ModalInit,
+    /// VA init: two saws, the 2040 filter.
+    VaInit,
     ModalLfoCutoff,
     /// Modal init on the Sympathetic model.
     ModalSympathetic,
@@ -86,7 +102,7 @@ static FACTORY_NAMES: [&str; 8] = [
 ];
 
 impl Case {
-    pub const ALL: [Case; 24] = [
+    pub const ALL: [Case; 25] = [
         Case::ModalInit,
         Case::ModalLfoCutoff,
         Case::ModalSympathetic,
@@ -111,11 +127,13 @@ impl Case {
         Case::Factory(5),
         Case::Factory(6),
         Case::Factory(7),
+        Case::VaInit,
     ];
 
     pub fn name(self) -> &'static str {
         match self {
             Case::ModalInit => "modal_init",
+            Case::VaInit => "va_init",
             Case::ModalLfoCutoff => "modal_lfo_cutoff",
             Case::ModalSympathetic => "modal_sympathetic",
             Case::AlgoInit => "algo_init",
@@ -134,6 +152,8 @@ pub fn init_params(engine: EngineType) -> ParamSnapshot {
     match engine {
         EngineType::Algo => Sound::init(EngineType::Algo).params,
         EngineType::Modal => Sound::init(EngineType::Modal).params,
+        EngineType::Tape => Sound::init(EngineType::Tape).params,
+        EngineType::Va => Sound::init(EngineType::Va).params,
     }
 }
 
@@ -174,11 +194,38 @@ pub fn morph_patch() -> ParamSnapshot {
 /// One LFO (source 1) route at MOD_AMOUNT to `dest`; env is source 0 so
 /// `num_sources >= 2` and the LFO runs.
 pub fn lfo_route(dest: ParamAddr) -> ModState {
+    let mut ms = ModState::with_sources(2);
+    assert!(
+        ms.set_route_addr(1, dest, MOD_AMOUNT),
+        "golden destination must be modulatable"
+    );
+    ms
+}
+
+/// LFO 1 → `addr` at `lfo`; an ENV slot also routes itself into CUTOFF.
+pub fn routes(addr: ParamAddr, lfo: i8) -> ModState {
+    assert!(addr.modulatable());
+    let mut ms = ModState::with_sources(MAX_MOD_SOURCES);
+    if lfo != 0 {
+        assert!(ms.set_route_addr(ModSource::Lfo1.index(), addr, lfo));
+    }
+    if let BlockRef::Env(s) = addr.block {
+        ms.set_route_addr(ModSource::of_env(s).index(), CUTOFF, 127);
+    }
+    ms
+}
+
+/// Each `(source, addr, amount)` routed, its column primed.
+pub fn mods(routes: &[(ModSource, ParamAddr, i8)]) -> ModState {
     let mut reg = ModDestRegistry::new();
-    reg.add(dest, *b"GOLDEN\0\0")
-        .expect("golden destination must be modulatable");
-    let mut ms = ModState::from_registry(&reg, 2);
-    ms.set_amount(1, 0, MOD_AMOUNT);
+    for &(_, a, _) in routes {
+        let _ = reg.add(a, *b"TEST\0\0\0\0");
+    }
+    let mut ms = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    for &(s, a, amt) in routes {
+        let d = ms.find(a).unwrap();
+        ms.set_route(s.index(), d, amt);
+    }
     ms
 }
 
@@ -191,6 +238,7 @@ pub fn setup(case: Case) -> (ParamSnapshot, ModState) {
     };
     match case {
         Case::ModalInit => (init_params(EngineType::Modal), ModState::new()),
+        Case::VaInit => (init_params(EngineType::Va), ModState::new()),
         Case::ModalLfoCutoff => with_lfo(EngineType::Modal, CUTOFF),
         Case::ModalSympathetic => {
             let mut p = init_params(EngineType::Modal);
@@ -262,10 +310,10 @@ fn render_with(
 pub fn render_case_through_instrument(case: Case) -> Vec<f32> {
     let (params, mod_state) = setup(case);
     let mut shared = AudioShared::default();
-    shared.parts[0].params = params;
-    shared.parts[0].mod_state = mod_state;
+    *shared.parts[0].params = params;
+    *shared.parts[0].mod_state = mod_state;
     let mut switched = shared.clone();
-    switched.parts[0].params = init_params(EngineType::Modal);
+    *switched.parts[0].params = init_params(EngineType::Modal);
     let mut inst = Box::new(Instrument::new(
         chimera_hal::SAMPLE_RATE,
         chimera_core::hw::SampleBudget::for_cpu(chimera_core::hw::CPU_HZ_REV_V),
@@ -321,7 +369,8 @@ pub fn spots(samples: &[f32]) -> [u32; 8] {
 /// expectation is written (spec § Testing "Engines").
 pub fn expects_sound(e: EngineType) -> bool {
     match e {
-        EngineType::Algo | EngineType::Modal => true,
+        // TAPE on a source; with none it plays nothing.
+        EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va => true,
     }
 }
 
@@ -391,10 +440,203 @@ pub fn period_hz(s: &[f32]) -> f64 {
     f
 }
 
+/// `s`'s strongest frequency within ±100 cents of `near`, Hann-windowed,
+/// to 0.05 cents: its fundamental, however its upper partials are tuned.
+pub fn fundamental_hz(s: &[f32], near: f64) -> f64 {
+    let n = s.len() as f64;
+    let x: Vec<f64> = s
+        .iter()
+        .enumerate()
+        .map(|(i, &x)| x as f64 * (0.5 - 0.5 * (core::f64::consts::TAU * i as f64 / n).cos()))
+        .collect();
+    let at = |cents: f64| near * 2f64.powf(cents / 1200.0);
+    let mag = |cents: f64| {
+        let w = core::f64::consts::TAU * at(cents) / SR as f64;
+        let (c, s) = (w.cos(), w.sin());
+        let (mut re, mut im, mut pr, mut pi) = (0.0, 0.0, 1.0, 0.0);
+        for &x in &x {
+            re += x * pr;
+            im += x * pi;
+            (pr, pi) = (pr * c - pi * s, pr * s + pi * c);
+        }
+        re.hypot(im)
+    };
+    let peak = |from: f64, step: f64, steps: usize| {
+        (0..=steps)
+            .map(|k| from + k as f64 * step)
+            .max_by(|&a, &b| mag(a).total_cmp(&mag(b)))
+            .unwrap()
+    };
+    let coarse = peak(-100.0, 1.0, 200);
+    at(peak(coarse - 1.0, 0.05, 40))
+}
+
 /// Root mean square, summed in f64.
 pub fn rms(x: &[f32]) -> f32 {
     (x.iter().map(|&s| s as f64 * s as f64).sum::<f64>() / x.len() as f64).sqrt() as f32
 }
 
+/// RMS of `a − b`.
+pub fn rms_diff(a: &[f32], b: &[f32]) -> f32 {
+    assert_eq!(a.len(), b.len());
+    let d: Vec<f32> = a.iter().zip(b).map(|(x, y)| x - y).collect();
+    rms(&d)
+}
+
+/// A held note's render: finite and within `bound`, its last second no
+/// louder than its second × `margin`, and no DC. The DC mean is over 10 s:
+/// a high-passed output's 1 s mean is its edge samples', up to about 1e-2.
+pub fn assert_stable(out: &[f32], bound: f32, margin: f32, label: &str) {
+    let sr = SR as usize;
+    assert!(
+        out.iter().all(|x| x.is_finite() && x.abs() <= bound),
+        "{label}: bounded"
+    );
+    let (second, last) = (&out[sr..2 * sr], &out[out.len() - sr..]);
+    assert!(rms(last) <= rms(second) * margin + 1e-6, "{label}: grows");
+    let tail = &out[out.len() - 10 * sr..];
+    let mean = tail.iter().sum::<f32>() / tail.len() as f32;
+    assert!(mean.abs() < 1e-3, "{label}: DC {mean}");
+}
+
+/// `assert_stable` for a note of `f0` Hz: the growth check compares RMS
+/// over whole periods (the most that fit in a second), so a periodic
+/// waveform's window phase can't read as growth.
+pub fn assert_stable_at(out: &[f32], f0: f32, bound: f32, margin: f32, label: &str) {
+    let sr = SR as usize;
+    assert!(
+        out.iter().all(|x| x.is_finite() && x.abs() <= bound),
+        "{label}: bounded"
+    );
+    let n = ((f0 as f64).floor() * SR as f64 / f0 as f64).round() as usize;
+    let (second, last) = (&out[sr..sr + n], &out[out.len() - n..]);
+    assert!(rms(last) <= rms(second) * margin + 1e-6, "{label}: grows");
+    let tail = &out[out.len() - 10 * sr..];
+    let mean = tail.iter().sum::<f32>() / tail.len() as f32;
+    assert!(mean.abs() < 1e-3, "{label}: DC {mean}");
+}
+
+/// Each `(i, jump)` where `tanh(0.4·x)` jumps more than 0.15 from the
+/// sample before: the desktop's output stage, clicking.
+pub fn clicks(out: &[f32]) -> Vec<(usize, f32)> {
+    let soft = |x: f32| libm::tanhf(x * 0.4);
+    (1..out.len())
+        .map(|i| (i, (soft(out[i]) - soft(out[i - 1])).abs()))
+        .filter(|&(_, jump)| jump > 0.15)
+        .collect()
+}
+
+/// The largest step the desktop's output stage hears (`clicks`).
+pub fn step(x: &[f32]) -> f32 {
+    let soft = |x: f32| libm::tanhf(x * 0.4);
+    x.windows(2)
+        .map(|w| (soft(w[1]) - soft(w[0])).abs())
+        .fold(0.0, f32::max)
+}
+
+/// `s` sounds `f0`, not an octave below it.
+pub fn octave_clear(s: &[f32], f0: f32) -> bool {
+    goertzel(s, f0, SR) > 10.0 * goertzel(s, f0 / 2.0, SR)
+}
+
+/// One Modal note at `VEL`: `on_blocks` held, then `off_blocks` released.
+/// Sympathetic rings a full halo.
+pub fn play_modal(p: &ModalParams, note: u8, on_blocks: usize, off_blocks: usize) -> Vec<f32> {
+    play_modal_at(p, note, VEL, on_blocks, off_blocks)
+}
+
+/// `play_modal` at `velocity`.
+pub fn play_modal_at(
+    p: &ModalParams,
+    note: u8,
+    velocity: u8,
+    on_blocks: usize,
+    off_blocks: usize,
+) -> Vec<f32> {
+    let mut pool = SymPool::boxed();
+    let mut e = Box::new(ModalEngine::new_in(&mut pool, p.mode));
+    play(
+        &mut e,
+        &mut pool,
+        p,
+        (note, velocity),
+        on_blocks,
+        off_blocks,
+    )
+}
+
+/// `play_modal_at` for Sympathetic with a bare halo: the main string alone.
+pub fn play_modal_bare(
+    p: &ModalParams,
+    note: u8,
+    velocity: u8,
+    on_blocks: usize,
+    off_blocks: usize,
+) -> Vec<f32> {
+    assert_eq!(p.mode, ResonatorMode::Sympathetic);
+    let mut pool = SymPool::boxed();
+    let mut raw = Box::<ModalEngine>::new_uninit();
+    ModalEngine::init_in_place(&mut raw, Model::Sympathetic(Halo::Bare));
+    // SAFETY: `init_in_place` built a valid engine in the box.
+    let mut e = unsafe { raw.assume_init() };
+    assert!(e.is_bare());
+    play(
+        &mut e,
+        &mut pool,
+        p,
+        (note, velocity),
+        on_blocks,
+        off_blocks,
+    )
+}
+
+fn play(
+    e: &mut ModalEngine,
+    pool: &mut SymPool,
+    p: &ModalParams,
+    (note, velocity): (u8, u8),
+    on_blocks: usize,
+    off_blocks: usize,
+) -> Vec<f32> {
+    e.note_on(note, velocity, p, SR, pool);
+    let mut out = Vec::with_capacity((on_blocks + off_blocks) * BLOCK_SIZE);
+    let mut block = [0.0; BLOCK_SIZE];
+    for i in 0..on_blocks + off_blocks {
+        if i == on_blocks {
+            e.note_off(pool);
+        }
+        e.render(&mut block, p, SR, pool);
+        out.extend_from_slice(&block);
+    }
+    out
+}
+
+/// A Modal voice's `out` with its model's output gain divided out (ADR
+/// 0058): the level the models' click and bound checks were set at.
+pub fn at_model_level(mut out: Vec<f32>, mode: ResonatorMode) -> Vec<f32> {
+    let g = chimera_core::dsp::modal::out_gain(mode);
+    for s in &mut out {
+        *s /= g;
+    }
+    out
+}
+
 #[allow(unused_imports)] // each test binary uses some of these
 pub use chimera_core::scope::peak;
+
+/// xorshift64: the same draws every run. `chimera-fat`'s test copy can't be
+/// imported here.
+pub struct XorShift(pub u64);
+
+impl XorShift {
+    pub fn next_u32(&mut self) -> u32 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 >> 32) as u32
+    }
+
+    pub fn below(&mut self, n: usize) -> usize {
+        self.next_u32() as usize % n
+    }
+}

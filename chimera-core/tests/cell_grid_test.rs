@@ -3,7 +3,9 @@
 
 mod screen;
 
+use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::components::{self, Cell};
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::ui::page::ValFmt;
@@ -19,7 +21,13 @@ fn band(fb: &Fb, y0: i32, y1: i32) -> Vec<u16> {
 
 #[test]
 fn dirty_render_from_scratch_equals_full_render() {
-    for name in ["engine_algo", "algo_alg", "algo_level", "system"] {
+    for name in [
+        "engine_algo",
+        "algo_alg",
+        "algo_level",
+        "algo_d2r",
+        "settings_personal_theme",
+    ] {
         assert!(render(name).px == render_dirty(name).px, "{name}");
     }
 }
@@ -41,7 +49,7 @@ fn a_turn_redraws_focus_and_cells_only() {
     let scope = scope_fixture();
     ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
     feed(&mut ui, Input::turn(EncoderId::C, 3));
-    ui.update();
+    ui.update(UiTick::for_test());
     let flushed = ui.render_dirty_with_scope(&mut fb, &PerfStats::zero(), &scope);
     let bands: Vec<(u16, u16)> = flushed.into_iter().filter(|&(a, b)| a != b).collect();
     assert_eq!(bands, [(28, 118), (186, 266)]);
@@ -79,11 +87,12 @@ fn new_live_output_redraws_only_the_viz_band() {
 #[test]
 fn focus_band_shows_the_last_touched_slot() {
     let mut ui = UiState::new();
+    init_part(&mut ui, PartId::ALL[0]);
     feed(&mut ui, Input::turn(EncoderId::C, 5)); // MORPH
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
-    let slot = &ui.nav.active_block_def().params[2];
+    let slot = &ui.page_def().params[2];
     let v = ui.renderer.anim[2].current();
     let mut text = FmtBuf::new();
     fmt_val(&mut text, v, slot.format());
@@ -93,8 +102,10 @@ fn focus_band_shows_the_last_touched_slot() {
         &mut want,
         slot.label(),
         text.as_str(),
-        v,
-        slot.format().is_bipolar(),
+        // MORPH's glyph: a crossfader on its set value.
+        chimera_core::ui::glyph::Gauge::Crossfader {
+            value: ui.renderer.set[2].current(),
+        },
         components::Look::Live,
         None,
     );
@@ -112,7 +123,7 @@ fn the_focus_value_animates_toward_its_target() {
     let mut ui = ui_for("engine_algo");
     let before = ui.renderer.anim[0].current();
     feed(&mut ui, Input::turn(EncoderId::A, 40));
-    ui.update();
+    ui.update(UiTick::for_test());
     let (now, target) = (ui.renderer.anim[0].current(), ui.renderer.anim[0].target());
     assert!(before < now && now < target, "{before} < {now} < {target}");
 }
@@ -142,6 +153,7 @@ fn empty_slots_are_a_dim_dash_and_choices_have_no_bar() {
         active: false,
         mod_amount: None,
         look: components::Look::Live,
+        motion: None,
     };
     let mut fb = Fb::new();
     components::cell(&mut fb, 1, 200, Some(&c));
@@ -169,22 +181,6 @@ fn live_output_is_flat_when_silent_and_scaled_to_the_band() {
     }
 }
 
-/// A page whose slots are all empty (System UPDATES) shows no focus band.
-#[test]
-fn an_all_empty_page_has_an_empty_focus_band() {
-    let mut ui = UiState::new();
-    feed(&mut ui, Input::press(chimera_hal::ButtonId::Menu));
-    for _ in 0..3 {
-        feed(&mut ui, Input::press(chimera_hal::ButtonId::Plus)); // → UPDATES
-    }
-    settle(&mut ui);
-    let mut fb = Fb::new();
-    ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
-    let ground = fb.px[0];
-    assert!(band(&fb, 28, 118).iter().all(|&p| p == ground));
-    assert_eq!(fb.oob, 0);
-}
-
 /// Garbage in the scope buffer (NaN, ±inf) draws a flat line, in the band.
 #[test]
 fn non_finite_live_output_is_flat() {
@@ -209,9 +205,10 @@ fn part_switch_redraws_mod_bars_that_differ() {
     use chimera_core::modulation::ModState;
     let addr = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
     let mut ui = chimera_core::ui::UiState::new();
-    ui.performance.parts[1].sound = ui.performance.parts[0].sound.clone();
+    let s = chimera_core::preset::Sound::clone(&ui.project().part(PartId::ALL[0]).sound);
+    **ui.project_mut().edit_part(PartId::ALL[1]).sound = s;
     for (part, amount) in [(0, -64), (1, -40)] {
-        let s = &mut ui.performance.parts[part].sound;
+        let s = ui.project_mut().edit_part(PartId::ALL[part]).sound;
         s.dest_registry.add(addr, *b"MORPH\0\0\0").unwrap();
         s.mod_state = ModState::from_registry(&s.dest_registry, 2);
         s.mod_state.set_amount(0, 0, amount);

@@ -50,7 +50,13 @@ fn cases() -> Vec<(&'static str, Vec<u8>, Vec<MidiMessage>)> {
         (
             "realtime_mid_message",
             vec![0x90, 60, 0xF8, 100, 0xFE, 0x92, 0xFA, 61, 0xFC, 1],
-            vec![on(0, 60, 100), on(2, 61, 1)],
+            vec![
+                MidiMessage::Clock,
+                on(0, 60, 100),
+                MidiMessage::Start,
+                MidiMessage::Stop,
+                on(2, 61, 1),
+            ],
         ),
         (
             "sysex_with_note_like_bytes",

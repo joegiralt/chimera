@@ -2,23 +2,21 @@ use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use chimera_core::audio_out::{Half, interleave};
-use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::hw::{SAMPLE_RATE, SampleBudget};
-use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
-#[cfg(feature = "midi-din")]
-use chimera_core::note_queue::SourceId;
-use chimera_core::note_queue::{NoteDrain, NoteSources};
-use chimera_core::part::DacPair;
-use chimera_core::scope::{ScopeFrame, ScopeWriter};
-use chimera_core::triple::{Reader, Writer};
+use chimera_board::shared::NOTE_SOURCES;
+#[cfg(feature = "perf-probe")]
+use chimera_board::shared::{COST_PCT, VOICES};
+use chimera_engine::audio_out::{Half, interleave};
+use chimera_engine::dsp::fx_bus::FxBus;
+use chimera_engine::hw::{BLOCK_SIZE, SAMPLE_RATE, SampleBudget};
+use chimera_engine::instrument::{AudioShared, DacBlocks, Instrument};
+use chimera_engine::note_queue::{InEvent, NoteDrain};
+use chimera_engine::part::DacPair;
+use chimera_engine::project::{LOAD_LINK, LoadGate};
+use chimera_engine::scope::{ScopeFrame, ScopeWriter};
+use chimera_engine::source_table::AudioToken;
+use chimera_engine::triple::{Reader, Writer};
 
 use super::dma;
-
-pub const NOTE_SOURCES: usize = 1;
-#[cfg(feature = "midi-din")]
-pub const DIN: SourceId<NOTE_SOURCES> = SourceId::new(0);
-pub static NOTES: NoteSources<NOTE_SOURCES> = NoteSources::new();
 
 // SAFETY: ".ram_d2.voices" is real RAM_D2 SRAM (linker-defined) and NOLOAD,
 // so this static holds garbage at boot; sound because the type is
@@ -35,6 +33,11 @@ struct Engine {
     notes: NoteDrain<'static, NOTE_SOURCES>,
     scope: ScopeWriter,
     dac: DacBlocks,
+    /// Holds the note queues through a project load (ADR 0046).
+    gate: LoadGate,
+    orbit: chimera_board::orbit::Runner,
+    /// The source table's one reader (ADR 0087).
+    sources: AudioToken,
 }
 
 static mut ENGINE: MaybeUninit<Engine> = MaybeUninit::uninit();
@@ -56,6 +59,8 @@ pub fn init(
     shared: Reader<AudioShared>,
     notes: NoteDrain<'static, NOTE_SOURCES>,
     scope: Writer<ScopeFrame>,
+    orbit: chimera_board::orbit::Runner,
+    mut sources: AudioToken,
 ) {
     if ENGINE_TAKEN.swap(true, Ordering::AcqRel) {
         return;
@@ -63,7 +68,7 @@ pub fn init(
     // SAFETY: the flag lets exactly one caller past, and `render_half` does
     // not touch these statics until `ENGINE_READY` is set below, so these are
     // the only references. The Instrument (D2) and FX bus (AXI) are built in
-    // place; `Engine` (5 KB) is written by value.
+    // place; `Engine` (5 KB, 6 KB with ORBIT's runner) is written by value.
     unsafe {
         let (inst_slot, fx_slot) = slots();
         let inst = Instrument::init_in_place(inst_slot, SAMPLE_RATE, budget);
@@ -75,11 +80,22 @@ pub fn init(
             notes,
             scope: ScopeWriter::new(scope),
             dac: DacBlocks::new(),
+            gate: LoadGate::new(),
+            orbit,
+            sources: {
+                // One block a half (ADR 0099's drain wait).
+                sources.set_period_us(BLOCK_SIZE as u32 * 1_000_000 / SAMPLE_RATE);
+                sources
+            },
         });
     }
     ENGINE_READY.store(true, Ordering::Release);
 }
 
+/// One half, as the desktop's `Engine::block` renders a block: the gate,
+/// then only when it opens the drain (live notes to ORBIT's capture and
+/// then the Parts, real-time to ORBIT's clock) and ORBIT, then the render
+/// and ORBIT's view.
 pub fn render_half(half: Half) {
     if !ENGINE_READY.load(Ordering::Acquire) {
         return;
@@ -90,8 +106,30 @@ pub fn render_half(half: Half) {
     // this is the only live reference to `ENGINE`.
     let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
     let shared = e.shared.read();
-    e.notes.drain(|ev| e.inst.handle(ev, shared));
-    e.inst.render(e.fx, &mut e.dac, shared, &mut e.scope);
+    // TAPE's voices read the pool through the block's view.
+    let (gate, notes, orbit) = (&mut e.gate, &mut e.notes, &mut e.orbit);
+    let out = (&mut *e.fx, &mut e.dac, &mut e.scope);
+    e.inst
+        .run_block(&mut e.sources, out, shared, |inst, reads| {
+            if gate.before_block(&LOAD_LINK, inst, shared) {
+                let now = orbit.now();
+                notes.drain(|src, ev| match ev {
+                    // Capture sees the raw key, before any snap.
+                    InEvent::Note(n) => {
+                        orbit.live(n);
+                        inst.handle_with(n, shared, reads);
+                    }
+                    InEvent::Rt(rt) => orbit.realtime(src.index(), rt, now),
+                });
+                orbit.block(inst, shared, reads);
+            }
+        });
+    e.orbit.publish();
+    #[cfg(feature = "perf-probe")]
+    {
+        VOICES.store(e.inst.sounding() as u8, Ordering::Relaxed);
+        COST_PCT.store(e.inst.cost_pct(), Ordering::Relaxed);
+    }
     for pair in DacPair::ALL {
         // SAFETY: `main` runs `dma::clear` before `prefill`; the caller is
         // this half's only writer while the DMA reads the other half, and the

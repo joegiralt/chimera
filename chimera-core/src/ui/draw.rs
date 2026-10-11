@@ -3,6 +3,8 @@
 //! grid's (ADR 0041). Every function ignores draw errors (the targets are
 //! infallible framebuffers).
 
+use crate::dsp::clampf;
+use crate::ui::theme;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{AngleUnit, Point, Size};
 use embedded_graphics::pixelcolor::Rgb565;
@@ -42,6 +44,11 @@ where
 {
     let mut cx = x;
     for ch in s.chars() {
+        if let Some(adv) = mark_adv(ch) {
+            draw_mark(d, ch, cx, y, color);
+            cx += adv + tracking;
+            continue;
+        }
         let adv = font
             .render(
                 ch,
@@ -56,12 +63,78 @@ where
     cx - x
 }
 
+/// Marks: characters the ASCII u8g2 faces lack, drawn as primitives by
+/// `text_tracked` and counted by `text_width`. `·` is a 2×2 dot.
+pub const MIDDOT: char = '·';
+/// A 3×5 chevron: a row that opens more.
+pub const CHEVRON: char = '›';
+/// Its mirror: a row that opens the page before.
+pub const CHEVRON_LEFT: char = '‹';
+/// A filled dot, r = 2: the loaded one.
+pub const BULLET: char = '●';
+/// A hollow dot, r = 2.
+pub const RING: char = '◦';
+/// 3×5 triangles, a turn's way: `◂▸` along a row, `▴▾` up and down.
+pub const LEFT: char = '◂';
+pub const RIGHT: char = '▸';
+pub const UP: char = '▴';
+pub const DOWN: char = '▾';
+
+fn mark_adv(ch: char) -> Option<i32> {
+    match ch {
+        MIDDOT => Some(3),
+        CHEVRON | CHEVRON_LEFT => Some(5),
+        BULLET | RING => Some(6),
+        LEFT | RIGHT => Some(4),
+        UP | DOWN => Some(5),
+        _ => None,
+    }
+}
+
+#[inline(never)]
+fn draw_mark<D>(d: &mut D, ch: char, x: i32, y: i32, color: Rgb565)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    match ch {
+        MIDDOT => fill_rect(d, x, y - 4, 2, 2, color),
+        CHEVRON => {
+            line(d, x, y - 6, x + 2, y - 4, color, 1);
+            line(d, x + 2, y - 4, x, y - 2, color, 1);
+        }
+        CHEVRON_LEFT => {
+            line(d, x + 2, y - 6, x, y - 4, color, 1);
+            line(d, x, y - 4, x + 2, y - 2, color, 1);
+        }
+        BULLET => dot(d, x + 2, y - 4, 2, color),
+        RING => ring(d, x + 2, y - 4, 2, color, 1),
+        LEFT | RIGHT | UP | DOWN => {
+            for i in 0..3 {
+                let (x, y, w, h) = match ch {
+                    RIGHT => (x + i, y - 6 + i, 1, 5 - 2 * i),
+                    LEFT => (x + 2 - i, y - 6 + i, 1, 5 - 2 * i),
+                    UP => (x + i, y - 3 - i, 5 - 2 * i, 1),
+                    _ => (x + i, y - 5 + i, 5 - 2 * i, 1),
+                };
+                fill_rect(d, x, y, w, h, color);
+            }
+        }
+        _ => debug_assert!(false, "{ch:?} is not a mark"),
+    }
+}
+
 /// Advance of `s` in `font` (with `tracking` after each glyph).
 pub fn text_width(font: &FontRenderer, s: &str, tracking: i32) -> i32 {
     let adv = font
         .get_rendered_dimensions(s, Point::zero(), VerticalPosition::Baseline)
         .map_or(0, |dims| dims.advance.x);
-    adv + tracking * s.chars().count() as i32
+    let marks: i32 = s.chars().filter_map(mark_adv).sum();
+    adv + marks + tracking * s.chars().count() as i32
+}
+
+/// The first of `fonts` (largest first) that sets `s` within `w`.
+pub fn fit_font<'a>(fonts: &[&'a FontRenderer], s: &str, w: i32) -> Option<&'a FontRenderer> {
+    fonts.iter().copied().find(|f| text_width(f, s, 0) <= w)
 }
 
 /// Draw `s` ending at `right` (exclusive).
@@ -150,6 +223,32 @@ where
         .draw_styled(&PrimitiveStyle::with_stroke(color, width), d);
 }
 
+/// An impossible patch (a tap row's X cell): a 5 × 5 X of two 1 px
+/// diagonals in MID, centred on (cx, cy). Not a dash, not a dimmed cell.
+pub fn x_mark<D>(d: &mut D, cx: i32, cy: i32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    line(d, cx - 2, cy - 2, cx + 2, cy + 2, theme::MID, 1);
+    line(d, cx - 2, cy + 2, cx + 2, cy - 2, theme::MID, 1);
+}
+
+/// The filter LEVEL's clip LED: a 3 px ALERT ring, filled to a radius of
+/// `fill` (0..=1) of it; at 1 it is solid.
+pub fn clip_led<D>(d: &mut D, cx: i32, cy: i32, fill: f32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    ring(d, cx, cy, 3, theme::ALERT, 1);
+    dot(
+        d,
+        cx,
+        cy,
+        libm::roundf(clampf(fill, 0.0, 1.0) * 3.0) as i32 - 1,
+        theme::ALERT,
+    );
+}
+
 /// Filled rounded rectangle with fully round ends (radius h/2). A
 /// non-positive `w` or `h` draws nothing, the same guard `fill_rect` uses —
 /// otherwise `w`/`h` (and the radius derived from `h`) would cast a
@@ -165,6 +264,22 @@ where
     let _ = RoundedRectangle::new(
         Rectangle::new(Point::new(x, y), Size::new(w as u32, h as u32)),
         CornerRadii::new(Size::new(r, r)),
+    )
+    .draw_styled(&PrimitiveStyle::with_fill(color), d);
+}
+
+/// Filled rounded rectangle with corner `radius`; nothing for a
+/// non-positive `w` or `h`.
+pub fn round_rect<D>(d: &mut D, x: i32, y: i32, w: i32, h: i32, radius: u32, color: Rgb565)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let _ = RoundedRectangle::new(
+        Rectangle::new(Point::new(x, y), Size::new(w as u32, h as u32)),
+        CornerRadii::new(Size::new(radius, radius)),
     )
     .draw_styled(&PrimitiveStyle::with_fill(color), d);
 }
@@ -202,7 +317,7 @@ pub fn bar<D>(
     D: DrawTarget<Color = Rgb565>,
 {
     fill_rect(d, x, y, w, h, track);
-    let v = value.clamp(0.0, 1.0);
+    let v = clampf(value, 0.0, 1.0);
     if bipolar {
         let c = x + w / 2;
         let len = ((v - 0.5) * w as f32) as i32;
@@ -213,6 +328,30 @@ pub fn bar<D>(
         let len = ((v * w as f32 + 0.5) as i32).max(2);
         fill_rect(d, x, y, len, h, fill);
     }
+}
+
+/// An arc of radius `r`, `width` wide, from `start` degrees (0 at 3:00,
+/// clockwise) through `sweep` degrees.
+#[allow(clippy::too_many_arguments)]
+pub fn arc<D>(
+    d: &mut D,
+    cx: i32,
+    cy: i32,
+    r: i32,
+    width: u32,
+    start: f32,
+    sweep: f32,
+    color: Rgb565,
+) where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let _ = Arc::with_center(
+        Point::new(cx, cy),
+        (2 * r + 1) as u32,
+        start.deg(),
+        sweep.deg(),
+    )
+    .draw_styled(&PrimitiveStyle::with_stroke(color, width), d);
 }
 
 /// 270° gauge from 7:30 clockwise to 4:30 (the mockup's 0.75π..2.25π).
@@ -234,11 +373,8 @@ pub fn arc_gauge<D>(
 {
     const START: f32 = 135.0;
     const SWEEP: f32 = 270.0;
-    let v = value.clamp(0.0, 1.0);
-    let dia = (2 * r + 1) as u32;
-    let center = Point::new(cx, cy);
-    let stroke = |c| PrimitiveStyle::with_stroke(c, width);
-    let _ = Arc::with_center(center, dia, START.deg(), SWEEP.deg()).draw_styled(&stroke(track), d);
+    let v = clampf(value, 0.0, 1.0);
+    arc(d, cx, cy, r, width, START, SWEEP, track);
     let end = START + SWEEP * v;
     let (from, to) = if bipolar {
         let mid = START + SWEEP / 2.0;
@@ -246,15 +382,22 @@ pub fn arc_gauge<D>(
     } else {
         (START, end.max(START + 1.0))
     };
-    let _ =
-        Arc::with_center(center, dia, from.deg(), (to - from).deg()).draw_styled(&stroke(fill), d);
+    arc(d, cx, cy, r, width, from, to - from, fill);
     let cap = (width as i32) / 2;
     for a in [from, to] {
-        let rad = a.to_radians();
-        let px = cx + libm::roundf(r as f32 * libm::cosf(rad)) as i32;
-        let py = cy + libm::roundf(r as f32 * libm::sinf(rad)) as i32;
+        let (px, py) = polar(cx, cy, r as f32, (a + 90.0) / 360.0);
         dot(d, px, py, cap, fill);
     }
+}
+
+/// The point `turn` (clockwise from 12:00, any range) round (`cx`, `cy`),
+/// `r` out, by the DSP's sine table rather than libm.
+pub fn polar(cx: i32, cy: i32, r: f32, turn: f32) -> (i32, i32) {
+    use crate::dsp::fast_sin_turns as sin;
+    (
+        cx + libm::roundf(r * sin(turn)) as i32,
+        cy - libm::roundf(r * sin(turn + 0.25)) as i32,
+    )
 }
 
 /// A right arrow ("→") at the text baseline in the label size; returns its width.

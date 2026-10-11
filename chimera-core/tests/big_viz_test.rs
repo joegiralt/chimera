@@ -38,7 +38,7 @@ fn filter_curve_keeps_its_shape() {
 #[test]
 fn filter_readout_rides_the_focused_value() {
     let mut ui = ui_for("bigviz_filter");
-    feed(&mut ui, Input::turn(EncoderId::C, -1)); // RES
+    feed(&mut ui, Input::turn(EncoderId::C, -1)); // Q
     settle(&mut ui);
     let mut fb = Fb::new();
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
@@ -52,7 +52,7 @@ fn filter_readout_rides_the_focused_value() {
         cutoff,
         reso,
         viz::Response::Low,
-        Some(("RES", text.as_str())),
+        Some(("Q", text.as_str())),
     );
     assert!(band(&fb, 28, 186) == band(&want, 28, 186));
 }
@@ -221,15 +221,34 @@ fn envelope_label_spans_keep_the_two_pixel_gap() {
     }
 }
 
-/// PHASER is an all-pass: its curve is flat, not a low-pass.
+/// NOTCH2 (PHASER) and CLEAN's NOTCH1 draw their notches where they cut:
+/// 0.414 × and 2.414 × FREQ, and 2 × FREQ, on the plot's linear axis.
 #[test]
-fn the_phaser_draws_flat() {
-    use chimera_core::dsp::filter::FilterMode;
-    let r = viz::Response::of(FilterMode::Phaser);
-    assert_eq!(r, viz::Response::Flat);
-    for t in [0.0, 0.3, 0.5, 0.9, 1.0] {
-        assert_eq!(viz::response_y(t, 0.3, 1.0, r), FILTER_PASS_Y, "{t}");
+fn the_notches_draw_where_they_cut() {
+    use chimera_core::dsp::filter::{FilterKind, FilterMode};
+    let (c, k) = (0.3, FilterKind::Svf);
+    let r = viz::Response::of(k, FilterMode::Phaser);
+    assert_eq!(r, viz::Response::DoubleNotch);
+    for t in [0.414 * c, 2.414 * c] {
+        assert_eq!(viz::response_y(t, c, 0.0, r), PLOT_BASE, "{t}");
     }
+    assert!(
+        viz::response_y(c, c, 1.0, r) < FILTER_PASS_Y,
+        "Q raises the middle"
+    );
+    let r = viz::Response::of(k, FilterMode::Notch);
+    assert_eq!(r, viz::Response::Notch2x);
+    assert_eq!(viz::response_y(2.0 * c, c, 0.0, r), PLOT_BASE);
+    assert!(
+        viz::response_y(c, c, 0.0, r) > FILTER_PASS_Y,
+        "Q 0 dips at FREQ"
+    );
+    assert!(viz::response_y(c, c, 1.0, r) < FILTER_PASS_Y, "Q peaks it");
+    assert!(
+        viz::response_y(0.9, c, 0.0, r) > FILTER_PASS_Y,
+        "the treble is down"
+    );
+    assert_eq!(viz::Response::of(k, FilterMode::Lp6), viz::Response::Lp1);
 }
 
 /// Width of the lit segment on the plot: HOLD focused lights H.
@@ -280,4 +299,46 @@ fn hold_is_a_segment_of_env_a() {
     assert_eq!(stage_labels_at_hold_0(HoldPos::Ahdsr), 5, "A H D S R");
     assert_eq!(stage_labels_at_hold_0(HoldPos::Off), 4, "A D S R");
     assert_eq!(stage_labels_at_hold_0(HoldPos::GateExt), 4, "A D S R");
+}
+
+/// The 2040's pass band falls by `1/(1 + k)` as RES rises: at RES 0 it is
+/// the low-pass, at RES 1 about 14 dB down (spec § 5).
+#[test]
+fn the_2040_pass_band_falls_with_res() {
+    use chimera_core::dsp::filter::{FilterKind, FilterMode};
+    let r = viz::Response::of(FilterKind::K2040, FilterMode::Lp24);
+    assert_eq!(r, viz::Response::K2040);
+    let (t, c) = (0.1, 0.5);
+    assert_eq!(
+        viz::response_y(t, c, 0.0, r),
+        viz::response_y(t, c, 0.0, viz::Response::Low)
+    );
+    let drop = viz::response_y(t, c, 1.0, r) - FILTER_PASS_Y;
+    assert!((25..=31).contains(&drop), "{drop} px");
+}
+
+/// The LEVEL LED falls through the dirty regions: each frame of its fall
+/// redraws the DRIVE cell and FLT's viz corner, and dark it leaves nothing.
+#[test]
+fn the_led_falls_through_the_dirty_regions() {
+    use chimera_core::ui::animation::UiTick;
+    use chimera_core::ui::perf::PerfStats;
+    let mut ui = ui_for("flt_led_full");
+    let mut fb = Fb::new();
+    let frame = |ui: &mut chimera_core::ui::UiState, fb: &mut Fb| {
+        ui.render_dirty_with_audio(
+            fb,
+            &PerfStats::zero(),
+            Some(&audio_fixture()),
+            &scope_fixture(),
+        )
+    };
+    frame(&mut ui, &mut fb);
+    let lit = fb.px.clone();
+    for i in 0..12 {
+        ui.update(UiTick::for_test());
+        frame(&mut ui, &mut fb);
+        assert!(fb.px == render_ui(&ui).px, "frame {i}");
+    }
+    assert!(fb.px != lit, "it went dark");
 }

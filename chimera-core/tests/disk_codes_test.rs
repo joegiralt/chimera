@@ -1,12 +1,16 @@
 //! Frozen disk codes (ADR 0045): every stored enum's code is permanent.
+//! So are `Sound::neutral`'s values: a sparse Sound omits each param at
+//! neutral (ADR 0087), and `neutral_is_a_contract` pins them.
 
 use chimera_core::addr::{BlockRef, Blocks, Op};
-use chimera_core::block::{Block, ParamId, ValFmt};
+use chimera_core::block::{Block, DiskCode, ParamId, ValFmt};
 use chimera_core::dsp::algo::algorithms::{ALGO_IDENTS, ALGO_NAMES};
 use chimera_core::dsp::algo::waves::{WAVE_IDENTS, WAVE_NAMES};
+use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, FuncMode, LfoForm};
 use chimera_core::modulation::ModSource;
+use chimera_core::orbit::scene::{Scene, TargetKind};
 use chimera_core::params::EnvParams;
 use chimera_core::params::{FilterParams, ParamSnapshot};
 use chimera_core::part::PartParams;
@@ -14,7 +18,10 @@ use chimera_core::storage::{
     Crc32, DiskValue, RETIRED, RETIRED_BLOCKS, RETIRED_CODES, RETIRED_SOURCES, ValidAddr,
     read_value,
 };
+use chimera_core::taps::{Jack, TapOp};
+use chimera_core::ui::midi_settings::MidiSettings;
 use chimera_core::ui::theme_settings::ThemeSettings;
+use chimera_theory::Degree;
 
 /// One of each block's owner, so any stored `BlockRef` resolves.
 struct Bank {
@@ -22,6 +29,8 @@ struct Bank {
     fx: FxParams,
     part: PartParams,
     theme: ThemeSettings,
+    midi: MidiSettings,
+    scene: Scene,
 }
 
 impl Bank {
@@ -31,6 +40,8 @@ impl Bank {
             fx: FxParams::default(),
             part: PartParams::default(),
             theme: ThemeSettings::DEFAULT,
+            midi: MidiSettings::DEFAULT,
+            scene: Scene::init(),
         }
     }
 
@@ -43,6 +54,9 @@ impl Bank {
             BlockRef::Comp => &mut self.fx.comp,
             BlockRef::Part => &mut self.part,
             BlockRef::Theme => &mut self.theme,
+            BlockRef::Midi => &mut self.midi,
+            BlockRef::OrbitChords => &mut self.scene.chords,
+            BlockRef::OrbitRing(r) => &mut self.scene.rings[r.get() as usize],
             b => self.snap.block_mut(b).expect("a Sound block"),
         }
     }
@@ -89,6 +103,26 @@ fn table() -> Vec<String> {
                     shown(s.fmt, v)
                 ));
             }
+            // MODE through TYPE: every built kind's modes, not only CLEAN's.
+            if (b, s.id) == (BlockRef::Filter, FilterParams::MODE) {
+                for k in FilterKind::BUILT {
+                    let blk = bank.block(b);
+                    assert!(blk.set_enum_code(FilterParams::KIND, k.disk_code()));
+                    for (v, label) in k.mode_labels().iter().enumerate() {
+                        blk.set(s.id, v as f32);
+                        let c = blk.enum_code(s.id).expect("an Enum has a code");
+                        let ident = blk.enum_ident(s.id).expect("an Enum has an ident");
+                        let line = format!("E {code} {} {c} {ident} # {label}", s.id.0);
+                        if !out.iter().any(|l| key(l) == key(&line)) {
+                            out.push(line);
+                        }
+                    }
+                }
+                bank.block(b).set(FilterParams::KIND, 0.0);
+            }
+            // Back to its default, so a param read through it (MODE through
+            // TYPE) lists its own codes, not the last kind's.
+            bank.block(b).set(s.id, s.default);
         }
     }
     for s in ModSource::ALL {
@@ -99,6 +133,26 @@ fn table() -> Vec<String> {
             s.name()
         ));
     }
+    // Enums stored outside a block param: a record's own byte.
+    let mut coded = |table: &str, all: &mut dyn Iterator<Item = (u8, &'static str)>| {
+        for (c, i) in all {
+            out.push(format!("C {table} {c} {i} # {i}"));
+        }
+    };
+    coded(
+        "DEGREE",
+        &mut Degree::ALL.iter().map(|d| (d.disk_code(), d.disk_ident())),
+    );
+    coded(
+        "JACK",
+        &mut Jack::ALL.iter().map(|j| (j.disk_code(), j.disk_ident())),
+    );
+    coded(
+        "TARGET_KIND",
+        &mut [TargetKind::Part]
+            .iter()
+            .map(|k| (k.disk_code(), k.disk_ident())),
+    );
     out
 }
 
@@ -194,6 +248,7 @@ fn idents_are_tokens_and_unique() {
                 assert!(!values.contains(&i), "{b:?} {} repeats {i}", s.ident);
                 values.push(i);
             }
+            bank.block(b).set(s.id, s.default);
         }
     }
 }
@@ -397,10 +452,9 @@ fn block_codes_unique_and_round_trip() {
         assert!(!seen.contains(&c), "code {c} twice");
         seen.push(c);
     }
-    assert_eq!(seen.len(), BlockRef::ALL.len() - 1);
-    assert_eq!(BlockRef::Channels.disk_code(), None);
+    assert_eq!(seen.len(), BlockRef::ALL.len());
     assert_eq!(BlockRef::from_disk_code(0), None);
-    assert_eq!(BlockRef::from_disk_code(27), None);
+    assert_eq!(BlockRef::from_disk_code(36), None);
     assert_eq!(BlockRef::from_disk_code(255), None);
 }
 
@@ -425,10 +479,45 @@ fn mod_source_codes_round_trip() {
     assert_eq!(ModSource::from_disk_code(255), None);
 }
 
+/// `Jack` extends `ModSource`'s codes; `ModSource` itself is unchanged.
+#[test]
+fn jack_codes_round_trip_and_extend_mod_source() {
+    for s in ModSource::ALL {
+        assert_eq!(Jack::Mod(s).disk_code(), s.disk_code());
+        assert_eq!(Jack::Mod(s).disk_ident(), s.disk_ident());
+    }
+    assert_eq!(Jack::Tap(TapOp::Op5).disk_code(), 8);
+    assert_eq!(Jack::Tap(TapOp::Op6).disk_code(), 9);
+    assert_eq!(Jack::Tap(TapOp::Op5).disk_ident(), "OP5");
+    assert_eq!(Jack::Tap(TapOp::Op6).disk_ident(), "OP6");
+    for j in Jack::ALL {
+        assert_eq!(Jack::from_disk_code(j.disk_code()), Some(j));
+    }
+    let codes: Vec<u8> = Jack::ALL.iter().map(|j| j.disk_code()).collect();
+    assert_eq!(codes, (0..10).collect::<Vec<u8>>());
+    assert_eq!(Jack::from_disk_code(10), None);
+    assert_eq!(Jack::from_disk_code(255), None);
+}
+
 #[test]
 fn retired_never_live() {
-    assert_eq!(RETIRED, &[(10, 3), (10, 4), (10, 5)]);
-    assert!(RETIRED_CODES.is_empty() && RETIRED_SOURCES.is_empty() && RETIRED_BLOCKS.is_empty());
+    assert_eq!(
+        RETIRED,
+        &[
+            (10, 3),
+            (10, 4),
+            (10, 5),
+            (1, 2),
+            (1, 5),
+            (1, 7),
+            (1, 8),
+            (10, 2),
+            (22, 5)
+        ]
+    );
+    // TAPE's MODEL REVERSE (#369): LOOP with END before START.
+    assert_eq!(RETIRED_CODES, &[(34, 0, 1)]);
+    assert!(RETIRED_SOURCES.is_empty() && RETIRED_BLOCKS.is_empty());
     for &(block, id) in RETIRED {
         for b in BlockRef::ALL
             .into_iter()
@@ -472,10 +561,10 @@ fn valid_addr_only_from_specs() {
     let ids: Vec<u8> = ValidAddr::of_block(BlockRef::Filter)
         .map(|a| a.addr().param.0)
         .collect();
-    assert_eq!(ids, [0, 1, 2, 6, 7]);
+    assert_eq!(ids, [0, 1, 12, 6, 7, 13, 8, 11]);
     let kind = ValidAddr::find(BlockRef::Filter, FilterParams::KIND).unwrap();
     assert!(kind.coded());
-    assert_eq!(kind.spec().label, "KIND");
+    assert_eq!(kind.spec().label, "TYPE");
     assert!(
         !ValidAddr::find(BlockRef::Filter, FilterParams::CUTOFF)
             .unwrap()

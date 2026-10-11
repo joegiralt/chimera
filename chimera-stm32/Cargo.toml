@@ -4,19 +4,57 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["midi-din", "perf-probe"]
-midi-din = []
-perf-probe = []
-bench = ["perf-probe"]
+default = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free"]
+midi-din = ["chimera-board/midi-din"]
+perf-probe = ["chimera-board/perf-probe"]
+# The bench on the unit, one area a build: all of it no longer fits FLASH
+# beside the synth. `bench` is the shared rig, built with an area and
+# `--no-default-features`: the shipping set less the console's `put`
+# (`card-put`, ~7 KB), which no bench run needs, so ORBIT's areas fit.
+bench = ["perf-probe", "chimera-core/probe", "chimera-board/bench", "midi-din", "usb-console"]
+# ALGO's patches, the FX bus and the kernel.
+bench-algo = ["bench"]
+# ROUTING: the matrix, filter types, taps and MODAL's rows.
+bench-routing = ["bench"]
+# MEMORY: sizes, a rebuild, MODAL's note-ons, the project CRC.
+bench-memory = ["bench"]
+# STRESS: NEW's Parts with every key down, and the runs' phases; ORBIT
+# plays in them with `orbit`.
+bench-stress = ["bench"]
+# ORBIT: its block's cost and phases.
+bench-orbit = ["bench", "orbit"]
+# TAPE COLD: each machine's cold-cache voice.
+bench-tape = ["bench"]
+# The filter probes, linked though nothing calls them, for
+# `tools/loop_count.py`'s static counts: the shipping build plus them,
+# `default` included, as the bench sets are built without it.
+filter-probes = ["default", "chimera-core/filter-probe"]
 # On-unit SD bring-up: prints the card probe and halts; no audio.
-sd-probe = []
+sd-probe = ["chimera-board/sd-probe"]
 # The master tape stage back on the chain, with its bench row (ADR 0055).
-master-tape = ["chimera-core/master-tape"]
+master-tape = ["chimera-core/master-tape", "chimera-board/master-tape"]
+# ORBIT, the ring sequencer: SEQ hold opens it, the audio block runs it.
+orbit = ["chimera-core/orbit", "chimera-board/orbit"]
+# The USB console (ADR 0068): CDC-ACM on the OTG FS port, polled from the UI
+# loop, its interrupt never unmasked.
+usb-console = ["chimera-board/usb-console"]
+# The console's `ls` and `put` (ADR 0092): files onto the card over USB;
+# TAPE sources too, in checked chunks, sealed (ADR 0106). The owner took
+# #360's risk for sources (2026-10-07): a cut mid-put can lose clusters.
+# Bench builds answer `ls` and `put` "not in this build": FLASH is full.
+card-put = ["usb-console", "chimera-board/card-put", "chimera-core/source-writer"]
+# The boot's lost-cluster sweep frees what it finds (#360, ADR 0094). Off,
+# it runs dry; on, it fails to build until the owner's go.
+sweep-free = ["chimera-board/sweep-free"]
+# The console's `fault dma <1|2>`: provokes a transfer error on a trailing
+# DMA stream, to test its re-arm on the unit (#25). Never in a shipping build.
+fault-inject = ["usb-console", "perf-probe", "midi-din", "chimera-board/fault-inject", "chimera-core/fault-inject"]
 
 [dependencies]
-chimera-core = { path = "../chimera-core" }
+chimera-board = { path = "../chimera-board" }
+chimera-core = { path = "../chimera-core", default-features = false }
+chimera-engine = { path = "../chimera-engine" }
 chimera-hal = { path = "../chimera-hal" }
-chimera-fat = { path = "../chimera-fat" }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 # set-vtor: Reset points VTOR at the linked __vector_table (FLASH ORIGIN in
 # memory.x), whatever the bootloader left there.
@@ -27,8 +65,6 @@ stm32h7xx-hal = { version = "0.16", features = ["stm32h750v", "rt"] }
 embedded-graphics = "0.8"
 embedded-graphics-core = "0.4"
 libm = "0.2"
-embedded-sdmmc = { version = "0.10", default-features = false }
-embedded-hal = "1.0"
 
 # no_std bin, own #[panic_handler]: the test harness pulls in std's, which
 # clashes (E0152). Nothing here to unit test; chimera-core holds the logic.

@@ -1,3 +1,5 @@
+use chimera_hal::Ms;
+
 /// Linear interpolation between a and b
 pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
@@ -74,5 +76,95 @@ impl AnimatedValue {
 
     pub fn is_settled(&self) -> bool {
         abs(self.target - self.current) < SNAP_THRESHOLD
+    }
+
+    /// One frame round a circle `period` long: eases toward `to` the short
+    /// way, unwrapped, and comes back into 0..period once it rests.
+    pub fn ease_round(&mut self, to: f32, period: f32) {
+        self.set_target(nearest(self.target, to, period));
+        self.update();
+        if self.is_settled() {
+            self.snap(wrap(self.target, period));
+        }
+    }
+}
+
+/// `x` into 0..period.
+pub fn wrap(x: f32, period: f32) -> f32 {
+    x - period * libm::floorf(x / period)
+}
+
+/// `to`, or `to` some whole `period`s away, whichever is nearest `from`
+/// (a tie goes back): a value round a circle, unwrapped so it eases the
+/// short way.
+pub fn nearest(from: f32, to: f32, period: f32) -> f32 {
+    let d = to - from;
+    from + d - period * libm::floorf(d / period + 0.5)
+}
+
+/// UI frames since boot, ticked once per `UiState::update`: the phase an
+/// animated glyph reads. UI side only; wraps.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UiClock(u32);
+
+impl UiClock {
+    pub const fn new() -> Self {
+        Self(0)
+    }
+
+    pub fn tick(&mut self) {
+        self.0 = self.0.wrapping_add(1);
+    }
+
+    pub const fn frame(self) -> u32 {
+        self.0
+    }
+}
+
+/// UI frames a second: what `update`'s easing and clock are tuned for.
+pub const UI_FPS: u32 = 20;
+pub const FRAME_MS: u32 = 1000 / UI_FPS;
+/// Frames still owed after a stall: the rest are dropped.
+const MAX_OWED: u32 = 2;
+
+/// Leave to run one UI frame. Only `Pacer` makes one, so `update` runs at
+/// `UI_FPS` however fast the loop spins:
+/// ```compile_fail,E0603
+/// let _ = chimera_core::ui::animation::UiTick(());
+/// ```
+#[derive(Debug)]
+pub struct UiTick(());
+
+impl UiTick {
+    /// A frame for tests and harnesses that step time themselves.
+    #[cfg(any(test, feature = "test-support"))]
+    pub const fn for_test() -> UiTick {
+        UiTick(())
+    }
+}
+
+/// Hands out `UiTick`s at `UI_FPS` from a wrapping ms clock.
+#[derive(Clone, Copy, Debug)]
+pub struct Pacer {
+    last: Ms,
+}
+
+impl Pacer {
+    /// A pacer from `now`, and the first frame, due at once.
+    pub const fn start(now: Ms) -> (Pacer, UiTick) {
+        (Pacer { last: now }, UiTick(()))
+    }
+
+    /// One frame if one is due: never a burst, and after a stall at most
+    /// `MAX_OWED` more on the calls that follow.
+    pub fn due(&mut self, now: Ms) -> Option<UiTick> {
+        if now.since(self.last) < FRAME_MS {
+            return None;
+        }
+        self.last = Ms(self.last.0.wrapping_add(FRAME_MS));
+        if now.since(self.last) > MAX_OWED * FRAME_MS {
+            self.last = Ms(now.0.wrapping_sub(MAX_OWED * FRAME_MS));
+        }
+        Some(UiTick(()))
     }
 }

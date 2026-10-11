@@ -2,7 +2,8 @@
 //! (instrument-core spec § Threading).
 
 use chimera_core::note_queue::{
-    MAX_NOTE_SOURCES, NOTE_QUEUE_LEN, NoteEvent, NoteKind, NoteQueue, NoteSources, SourceId,
+    InEvent, MAX_NOTE_SOURCES, NOTE_OFF_RESERVE, NOTE_QUEUE_LEN, NoteEvent, NoteKind, NoteQueue,
+    NoteSources, RealTime, SourceId,
 };
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::MidiMessage;
@@ -19,7 +20,7 @@ fn ev(ch: u8, note: u8, vel: u8) -> NoteEvent {
 }
 
 #[test]
-fn only_note_on_and_off_become_note_events() {
+fn only_notes_and_real_time_are_queued() {
     let c = MidiChannel::new(4).unwrap();
     let n = MidiNote::new(60).unwrap();
     let on = MidiMessage::NoteOn {
@@ -32,10 +33,10 @@ fn only_note_on_and_off_become_note_events() {
         note: n,
         velocity: 64,
     };
-    assert_eq!(NoteEvent::from_midi(on), Some(ev(4, 60, 127)));
-    assert_eq!(NoteEvent::from_midi(off), Some(ev(4, 60, 0)));
+    assert_eq!(InEvent::from_midi(on), Some(InEvent::Note(ev(4, 60, 127))));
+    assert_eq!(InEvent::from_midi(off), Some(InEvent::Note(ev(4, 60, 0))));
     assert_eq!(
-        NoteEvent::from_midi(MidiMessage::ControlChange {
+        InEvent::from_midi(MidiMessage::ControlChange {
             channel: c,
             cc: 1,
             value: 2
@@ -43,7 +44,7 @@ fn only_note_on_and_off_become_note_events() {
         None
     );
     assert_eq!(
-        NoteEvent::from_midi(MidiMessage::PitchBend {
+        InEvent::from_midi(MidiMessage::PitchBend {
             channel: c,
             value: 0
         }),
@@ -67,7 +68,7 @@ fn events_come_out_in_order_and_intact() {
         assert!(tx.push(e));
     }
     for e in evs {
-        assert_eq!(rx.pop(), Some(e));
+        assert_eq!(rx.pop(), Some(e.into()));
     }
     assert_eq!(rx.pop(), None);
 }
@@ -77,14 +78,36 @@ fn full_queue_drops_and_counts() {
     let q = NoteQueue::new();
     let (mut tx, mut rx) = q.split().unwrap();
     for i in 0..NOTE_QUEUE_LEN {
-        assert!(tx.push(ev(0, i as u8, 100)), "slot {i}");
+        assert!(tx.push(ev(0, i as u8, 0)), "slot {i}");
     }
-    assert!(!tx.push(ev(0, 100, 100)));
-    assert!(!tx.push(ev(0, 101, 100)));
+    assert!(!tx.push(ev(0, 100, 0)));
+    assert!(!tx.push(ev(0, 101, 0)));
     assert_eq!(q.dropped(), 2);
     // The queued events are untouched by the drops.
-    assert_eq!(rx.pop(), Some(ev(0, 0, 100)));
-    assert!(tx.push(ev(0, 102, 100)), "room again after a pop");
+    assert_eq!(rx.pop(), Some(ev(0, 0, 0).into()));
+    assert!(tx.push(ev(0, 102, 0)), "room again after a pop");
+}
+
+/// The last `NOTE_OFF_RESERVE` slots take note-offs only, never a note-on
+/// or a clock tick: every note-on queued can still be followed by its
+/// note-off, however fast the clock runs.
+#[test]
+fn note_ons_leave_room_for_note_offs() {
+    let q = NoteQueue::new();
+    let (mut tx, _rx) = q.split().unwrap();
+    let ons = NOTE_QUEUE_LEN - NOTE_OFF_RESERVE;
+    for i in 0..ons {
+        assert!(tx.push(ev(0, i as u8, 100)), "note-on {i}");
+    }
+    assert!(!tx.push(ev(0, 100, 100)), "a note-on into the reserve");
+    for _ in 0..NOTE_OFF_RESERVE {
+        assert!(!tx.push(RealTime::Clock), "a tick into the reserve");
+    }
+    for i in 0..NOTE_OFF_RESERVE {
+        assert!(tx.push(ev(0, i as u8, 0)), "note-off {i}");
+    }
+    assert!(!tx.push(ev(0, 99, 0)), "full");
+    assert_eq!(q.dropped(), 2 + NOTE_OFF_RESERVE as u32);
 }
 
 #[test]
@@ -94,7 +117,7 @@ fn indices_wrap_around() {
     for i in 0..10 * NOTE_QUEUE_LEN {
         let e = ev((i % 16) as u8, (i % 128) as u8, (i % 128) as u8);
         assert!(tx.push(e));
-        assert_eq!(rx.pop(), Some(e), "event {i}");
+        assert_eq!(rx.pop(), Some(e.into()), "event {i}");
     }
     assert_eq!(q.dropped(), 0);
 }
@@ -117,7 +140,7 @@ fn producer_and_consumer_threads() {
     let mut got = 0;
     while got < N {
         if let Some(e) = rx.pop() {
-            assert_eq!(e, ev(0, (got % 128) as u8, 1 + (got % 127) as u8));
+            assert_eq!(e, ev(0, (got % 128) as u8, 1 + (got % 127) as u8).into());
             got += 1;
         }
     }
@@ -137,9 +160,17 @@ fn drain_pops_every_source_in_fixed_order() {
     a.push(ev(0, 60, 100));
     b.push(ev(1, 62, 0));
     let mut got = Vec::new();
-    drain.drain(|e| got.push(e));
-    assert_eq!(got, [ev(0, 60, 100), ev(1, 61, 100), ev(1, 62, 0)]);
-    drain.drain(|_| panic!("already drained"));
+    drain.drain(|s, e| got.push((s, e)));
+    let note = |s, e| (s, InEvent::Note(e));
+    assert_eq!(
+        got,
+        [
+            note(A, ev(0, 60, 100)),
+            note(B, ev(1, 61, 100)),
+            note(B, ev(1, 62, 0))
+        ]
+    );
+    drain.drain(|_, _| panic!("already drained"));
 }
 
 #[test]
@@ -148,7 +179,7 @@ fn drops_are_counted_per_source() {
     let (mut producers, _) = s.split().unwrap();
     let mut b = producers.take(B).unwrap();
     for i in 0..NOTE_QUEUE_LEN + 3 {
-        b.push(ev(0, (i % 128) as u8, 100));
+        b.push(ev(0, (i % 128) as u8, 0));
     }
     assert_eq!(s.drops(), [0, 3]);
 }

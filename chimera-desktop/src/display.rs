@@ -1,4 +1,5 @@
-use chimera_core::ui::theme_settings::{Palette, ThemeSettings};
+use chimera_core::console::Frame;
+use chimera_core::ui::theme_settings::{Palette, ThemeSettings, palette, splash_palette};
 use chimera_hal::{ChimeraDisplay, FB_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 use embedded_graphics_core::Pixel;
 use embedded_graphics_core::draw_target::DrawTarget;
@@ -13,8 +14,9 @@ pub struct DesktopDisplay {
     window: Window,
     fb: Box<[u16; FB_SIZE]>,
     window_buf: Vec<u32>,
-    /// System › Theme: the palette swap, and BRIGHT as a dimming of the
-    /// window. GAMMA has no desktop equivalent and is ignored here.
+    /// SETTINGS › PERSONALIZE › THEME: the palette swap, and BRIGHT as a
+    /// dimming of the window. GAMMA has no desktop equivalent and is
+    /// ignored here.
     palette: Palette,
     bright_pct: u32,
 }
@@ -40,8 +42,23 @@ impl DesktopDisplay {
 
     /// Show the framebuffer with `theme`'s colours and brightness.
     pub fn set_theme(&mut self, theme: &ThemeSettings) {
-        self.palette = theme.palette();
+        self.palette = palette(theme);
         self.bright_pct = theme.bright.percent() as u32;
+    }
+
+    /// `theme`'s colours with light mode off, for the boot splash, until
+    /// the next `set_theme`.
+    pub fn set_splash_theme(&mut self, theme: &ThemeSettings) {
+        self.palette = splash_palette(theme);
+    }
+
+    /// The framebuffer and its palette, as `shot` reads them: BRIGHT is
+    /// the window's, not the screen's, so it stays out.
+    pub fn frame(&self) -> Frame<'_> {
+        Frame {
+            fb: &self.fb,
+            palette: self.palette,
+        }
     }
 
     /// One framebuffer pixel as window RGB888: palette, then brightness.

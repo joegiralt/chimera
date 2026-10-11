@@ -2,7 +2,7 @@
 
 use chimera_hal::store::{ByteSink, CHUNK, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -19,6 +19,20 @@ fn io_err(e: io::Error) -> StoreError {
     }
 }
 
+/// The sim's card: `CHIMERA_CARD`, or `chimera-card` made on first run. A
+/// `CHIMERA_CARD` that doesn't exist is an empty slot.
+pub fn sim_card() -> PathBuf {
+    std::env::var_os("CHIMERA_CARD").map_or_else(
+        || {
+            let dir = PathBuf::from("chimera-card");
+            // A failure shows as no card.
+            let _ = fs::create_dir_all(&dir);
+            dir
+        },
+        PathBuf::from,
+    )
+}
+
 impl DirStore {
     pub fn new(root: PathBuf) -> Self {
         DirStore { root }
@@ -29,6 +43,8 @@ impl DirStore {
             Dir::Chimera => self.root.join("CHIMERA"),
             Dir::Projects => self.root.join("CHIMERA/PROJECTS"),
             Dir::Sounds => self.root.join("CHIMERA/SOUNDS"),
+            Dir::Bench => self.root.join("CHIMERA/BENCH"),
+            Dir::Tapes => self.root.join("CHIMERA/TAPES"),
         }
     }
 
@@ -41,7 +57,8 @@ impl DirStore {
         self.dir_path(f.dir()).join(n)
     }
 
-    fn write_volume(&self, serial: u32, label: [u8; 11]) -> Result<(), StoreError> {
+    /// Writes the card's id: a new one is another card, as a swap is.
+    pub fn write_volume(&self, serial: u32, label: [u8; 11]) -> Result<(), StoreError> {
         let mut v = format!("{serial:08X} ").into_bytes();
         v.extend_from_slice(&label);
         fs::write(self.root.join("VOLUME"), v).map_err(io_err)
@@ -70,6 +87,14 @@ impl DirStore {
             Ok(())
         } else {
             Err(StoreError::VolumeChanged(now))
+        }
+    }
+
+    /// A read-only file on the host is sealed: `ReadOnly`.
+    fn writable(&self, f: FileName) -> Result<(), StoreError> {
+        match fs::metadata(self.file_path(f)) {
+            Ok(m) if m.permissions().readonly() => Err(StoreError::ReadOnly),
+            _ => Ok(()),
         }
     }
 
@@ -134,9 +159,24 @@ impl Store for DirStore {
         file: FileName,
         sink: &mut dyn ReadSink,
     ) -> Result<(), StoreError> {
+        self.read_at(vol, file, 0, sink)
+    }
+
+    fn read_at(
+        &mut self,
+        vol: VolumeId,
+        file: FileName,
+        offset: u32,
+        sink: &mut dyn ReadSink,
+    ) -> Result<(), StoreError> {
         self.open(vol)?;
         let mut fh = File::open(self.file_path(file)).map_err(io_err)?;
-        let len = fh.metadata().map_err(io_err)?.len();
+        let len = fh
+            .metadata()
+            .map_err(io_err)?
+            .len()
+            .saturating_sub(offset.into());
+        fh.seek(SeekFrom::Start(offset.into())).map_err(io_err)?;
         if sink.begin(len as u32).is_break() {
             return Ok(());
         }
@@ -162,6 +202,7 @@ impl Store for DirStore {
     ) -> Result<u32, StoreError> {
         self.open(vol)?;
         self.has_dir(file.dir())?;
+        self.writable(file)?;
         let mut fh = File::create(self.file_path(file)).map_err(io_err)?;
         // What the body wrote stays on Err.
         let r = body(&mut FileSink(&mut fh));
@@ -174,6 +215,7 @@ impl Store for DirStore {
 
     fn delete(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
         self.open(vol)?;
+        self.writable(file)?;
         fs::remove_file(self.file_path(file)).map_err(io_err)
     }
 
@@ -186,6 +228,17 @@ impl Store for DirStore {
             Err(e) if e.kind() != io::ErrorKind::AlreadyExists => Err(io_err(e)),
             _ => Ok(()),
         }
+    }
+
+    fn seal(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
+        self.open(vol)?;
+        if file.dir() != Dir::Tapes {
+            return Err(StoreError::Io);
+        }
+        let path = self.file_path(file);
+        let mut perm = fs::metadata(&path).map_err(io_err)?.permissions();
+        perm.set_readonly(true);
+        fs::set_permissions(&path, perm).map_err(io_err)
     }
 }
 
@@ -242,10 +295,77 @@ mod tests {
         assert!(!sync.left_system(true, &s));
         s.theme.bright = Bright::new(40);
         assert!(sync.left_system(false, &s));
-        assert_eq!(sync.on_exit(&mut card, &mut store, &mut s), Ok(Exit::Wrote));
+        assert_eq!(
+            sync.on_exit(&mut card, &mut store, &mut s, None),
+            Ok(Exit::Wrote)
+        );
 
         let (_, again, note) = SystemSync::boot(&mut Card::new(), &mut DirStore::new(root.clone()));
         assert_eq!((again, note), (s, None));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn project_store_suite_on_dir_store() {
+        let mut roots = Vec::new();
+        chimera_core::project::test_support::project_store_suite(&mut || {
+            let root = unique_root();
+            roots.push(root.clone());
+            DirStore::new(root)
+        });
+        for r in roots {
+            let _ = fs::remove_dir_all(r);
+        }
+    }
+
+    /// The sim's boot: a project saved, then the next launch loads it from
+    /// the files alone.
+    #[test]
+    fn project_survives_a_relaunch() {
+        use chimera_core::block::Block;
+        use chimera_core::name::ProjectName;
+        use chimera_core::params::{EngineType, FilterParams};
+        use chimera_core::preset::Sound;
+        use chimera_core::project::test_support::same;
+        use chimera_core::project::{
+            PartId, ProjectStatus, SaveTo, SlotId, new_project_id, project_status,
+        };
+        use chimera_core::storage::{Card, SystemSync};
+        use chimera_core::ui::UiState;
+        let root = unique_root();
+        let mut store = DirStore::new(root.clone());
+        let mut card = Card::new();
+        let (mut sync, mut s, _) = SystemSync::boot(&mut card, &mut store);
+        let mut ui = Box::new(UiState::new());
+        let p = ui.project_mut();
+        p.edit_part(PartId::ALL[2])
+            .sound
+            .params
+            .filter
+            .set(FilterParams::RESONANCE, 0.7);
+        p.pool_store(SlotId::ALL[20], &Sound::init(EngineType::Modal))
+            .unwrap();
+        p.edit_fx().reverb.mix = 0.6;
+        p.set_name(ProjectName::new("RELAUNCH").unwrap());
+        let file = new_project_id(&mut card, &mut store).out.unwrap();
+        ui.save_project(
+            &mut card,
+            &mut store,
+            &mut sync,
+            &mut s,
+            SaveTo::Fresh(file),
+        );
+
+        let mut store = DirStore::new(root.clone());
+        let mut card = Card::new();
+        let (_, s, _) = SystemSync::boot(&mut card, &mut store);
+        let mut again = Box::new(UiState::new());
+        again.boot_project(&mut card, &mut store, s.last_project);
+        same(ui.project(), again.project());
+        assert_eq!(
+            project_status(again.project(), again.template()),
+            ProjectStatus::Saved
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -260,7 +380,7 @@ mod tests {
         sync.left_system(true, &s);
         assert!(sync.left_system(false, &s));
         assert_eq!(
-            sync.on_exit(&mut card, &mut store, &mut s),
+            sync.on_exit(&mut card, &mut store, &mut s, None),
             Err(SyncError::Store(StoreError::NoCard))
         );
     }

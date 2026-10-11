@@ -242,14 +242,14 @@ fn other_parts_are_untouched_by_a_switch() {
     // the DAC carries the FX return alone, fed by Part 2 alone: a switch
     // that touched the FX would change it.
     let mut shared = AudioShared::default();
-    shared.parts[0].params = tri();
+    *shared.parts[0].params = tri();
     shared.parts[0].mix.level = 0.0;
-    shared.parts[1].params = string();
+    *shared.parts[1].params = string();
     shared.parts[1].mix.level = 0.0;
     shared.parts[1].mix.sends = [0.5; 3];
     shared.fx.reverb.mix = 0.5;
     let mut switched = shared.clone();
-    switched.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
+    *switched.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);
 
     let run = |switch: bool| {
         let (mut inst, mut fx) = instrument();
@@ -368,8 +368,8 @@ fn first_sounding(n: u8, p: &ParamSnapshot) -> Vec<Block> {
 fn a_steal_across_kinds_plays_the_new_kind_clean() {
     // Instrument: Part 2's note steals one of Part 1's voices.
     let mut shared = AudioShared::default();
-    shared.parts[0].params = tri();
-    shared.parts[1].params = sym();
+    *shared.parts[0].params = tri();
+    *shared.parts[1].params = sym();
     let (mut inst, mut fx) = instrument();
     let mut scope = scope_writer();
     let mut dac = Box::new(DacBlocks::new());
@@ -430,9 +430,9 @@ fn a_voice_rebuilds_at_most_three_times_a_block() {
         o.level = 0; // quiet from its first block: the fade ends there
     }
     let mut shared = AudioShared::default();
-    shared.parts[0].params = silent;
-    shared.parts[1].params = sym();
-    shared.parts[2].params = tri();
+    *shared.parts[0].params = silent;
+    *shared.parts[1].params = sym();
+    *shared.parts[2].params = tri();
     let mut inst = Box::new(Instrument::new(SR, SampleBudget::for_cpu(u32::MAX)));
     let mut fx = Box::new(FxBus::new());
     let mut scope = scope_writer();
@@ -444,7 +444,7 @@ fn a_voice_rebuilds_at_most_three_times_a_block() {
     inst.handle(event(1, 40, NoteKind::On(vel())), &shared);
     inst.render(&mut fx, &mut dac, &shared, &mut scope);
     inst.handle(event(1, 40, NoteKind::Off), &shared);
-    shared.parts[1].params = string();
+    *shared.parts[1].params = string();
     for _ in 0..FADE_BLOCKS + 1 {
         inst.render(&mut fx, &mut dac, &shared, &mut scope);
     }
@@ -494,7 +494,7 @@ fn a_switch_storm_never_rebuilds_a_voice_more_than_three_times_a_block() {
         let before = inst.rebuilds();
         for part in &mut shared.parts[..4] {
             if next(8) == 0 {
-                part.params = sounds[next(4) as usize].clone();
+                *part.params = sounds[next(4) as usize].clone();
             }
         }
         for _ in 0..next(6) {

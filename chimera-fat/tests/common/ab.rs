@@ -10,6 +10,7 @@ use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::name::Name;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
+use chimera_core::project::test_support;
 use chimera_core::storage::{
     AbFile, Card, CardFault, Generation, LoadError, Ready, RecordWriter, SaveError, Side,
     SoundCheck, SoundDecoder, check_file, encode_sound, load_ab, load_file, save_ab, write_target,
@@ -39,10 +40,11 @@ pub fn name83(side: Side) -> [u8; 11] {
     }
 }
 
-/// Save attempt `n`'s Sound, told apart by its name.
+/// Save attempt `n`'s Sound, told apart by its name, and `dense`.
 pub fn sound(n: u32) -> Sound {
     let mut s = factory_sound(n as usize % FACTORY_LEN).unwrap();
     s.name = Name::new(&format!("SAVE {n}")).unwrap();
+    test_support::dense(&mut s, n.into());
     s
 }
 
@@ -82,13 +84,17 @@ pub fn save_on(
     })
 }
 
-/// Save `n`, and the block its failed write was aimed at, if one failed.
+/// Save `n`, and the block its first failed write was aimed at, if one
+/// failed. A store may try more writes after it (freeing a chain no entry
+/// holds); those fail too once the card is cut.
 pub fn save(slot: &Slot, n: u32) -> (Result<Generation, SaveError>, Option<u32>) {
     let mut s = probed(slot);
+    let landed = slot.writes.get();
     let r = save_on(&mut s, n, &|_| Ok(()));
+    let first_failed = (slot.writes.get() - landed) as usize;
     let failed = r
         .is_err()
-        .then(|| log(&s).writes.borrow().last().map(|&(b, _)| b))
+        .then(|| log(&s).writes.borrow().get(first_failed).map(|&(b, _)| b))
         .flatten();
     (r, failed)
 }

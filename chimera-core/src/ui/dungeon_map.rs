@@ -6,9 +6,14 @@
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
-use crate::ui::chain::ChainNav;
+use crate::dsp::modal::MODEL_NAMES;
+use crate::dsp::tape_engine::machine::machine;
+use crate::ui::block_def::{BlockDef, ChainDef2};
+use crate::ui::block_registry::{MODAL_2, TAPE_MODEL};
 use crate::ui::draw;
+use crate::ui::nav::PageAt;
 use crate::ui::theme;
+use crate::ui::view::Models;
 
 /// Centre x of node `i` of `n`, spread evenly over the map line.
 pub fn node_x(i: usize, n: usize) -> i32 {
@@ -19,12 +24,29 @@ pub fn node_x(i: usize, n: usize) -> i32 {
     }
 }
 
-/// Draw the map. `branch_scroll_px` scrolls the sub-page list (animated).
-pub fn draw<D>(d: &mut D, nav: &ChainNav, branch_scroll_px: i32)
-where
+/// A page's name on the map: MDL2 is named after MODAL's model, TAPE's
+/// model page after its machine (`STRCH`).
+pub fn page_label(def: &BlockDef, models: impl Into<Models>) -> &'static str {
+    let m = models.into();
+    match def.id {
+        id if id == MODAL_2.id => MODEL_NAMES[m.modal as usize],
+        id if id == TAPE_MODEL.id => machine(m.tape).page,
+        _ => def.short,
+    }
+}
+
+/// Draw `chain`'s map at `at`. `branch_scroll_px` scrolls the sub-page
+/// list (animated).
+pub fn draw<D>(
+    d: &mut D,
+    chain: &ChainDef2,
+    at: PageAt,
+    models: impl Into<Models>,
+    branch_scroll_px: i32,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
-    let chain = nav.active_chain();
+    let node = at.node() as usize;
     let n = chain.blocks.len();
     if n > 1 {
         draw::fill_rect(
@@ -36,16 +58,49 @@ where
             theme::FAINT,
         );
     }
+    let models = models.into();
+    // The sub-pages' labels own their rows: a node label on the right
+    // they'd run into (DECK's `DECK` into `DRV`) gives way.
+    let reach = branch_reach(chain, at, models, node_x(node, n));
     for (i, block) in chain.blocks.iter().enumerate() {
         let x = node_x(i, n);
-        let label = block.map.unwrap_or(block.def.short);
-        if i == nav.node {
+        let mut label = block.map.unwrap_or(block.def.short);
+        if i > node && x - draw::text_width(&theme::FONT_LABEL, label, 0) / 2 < reach {
+            label = "";
+        }
+        if i == node {
             pill_node(d, x, theme::MAP_LINE_Y, label, theme::ACCENT);
         } else {
             ring_node(d, x, theme::MAP_LINE_Y, label, theme::NODE_LABEL_Y);
         }
     }
-    draw_branches(d, nav, node_x(nav.node, n), branch_scroll_px);
+    draw_branches(d, chain, at, models, node_x(node, n), branch_scroll_px);
+}
+
+/// The right edge of the labels hanging right of the
+/// current node's trunk; 0 with none, or hanging left.
+fn branch_reach(chain: &ChainDef2, at: PageAt, models: Models, pill_x: i32) -> i32 {
+    let Some(block) = chain.block_at(at.node() as usize) else {
+        return 0;
+    };
+    let count = block.sub_page_count();
+    let widest = (0..count)
+        .map(|i| {
+            let def = if i == 0 {
+                block.def
+            } else {
+                block.sub_pages[i - 1]
+            };
+            draw::text_width(&theme::FONT_LABEL, page_label(def, models), 0)
+        })
+        .max()
+        .unwrap_or(0);
+    let right = pill_x - 8 + 6 + widest;
+    if count == 0 || right > theme::SCREEN_W {
+        0
+    } else {
+        right
+    }
 }
 
 /// A current node: a `fill` pill centred on (x, cy) with a dark bold label.
@@ -83,11 +138,17 @@ where
 }
 
 /// Sub-pages of the current block, under its pill.
-fn draw_branches<D>(d: &mut D, nav: &ChainNav, pill_x: i32, branch_scroll_px: i32)
-where
+fn draw_branches<D>(
+    d: &mut D,
+    chain: &ChainDef2,
+    at: PageAt,
+    model: Models,
+    pill_x: i32,
+    branch_scroll_px: i32,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
-    let Some(block) = nav.active_chain_block() else {
+    let Some(block) = chain.block_at(at.node() as usize) else {
         return;
     };
     let count = block.sub_page_count();
@@ -95,6 +156,19 @@ where
         return;
     }
     let x = pill_x - 8;
+    let def_at = |i: usize| {
+        if i == 0 {
+            block.def
+        } else {
+            block.sub_pages[i - 1]
+        }
+    };
+    // Labels that would run off the right hang left of the trunk.
+    let widest = (0..count)
+        .map(|i| draw::text_width(&theme::FONT_LABEL, page_label(def_at(i), model), 0))
+        .max()
+        .unwrap_or(0);
+    let hang_left = x + 6 + widest > theme::SCREEN_W;
     let pill_bottom = theme::MAP_LINE_Y + theme::PILL_H / 2;
     let visible = |i: i32| {
         let y = theme::BRANCH_START_Y + i * theme::BRANCH_LINE_HEIGHT - branch_scroll_px;
@@ -109,18 +183,19 @@ where
     }
     for i in 0..count as i32 {
         let Some(y) = visible(i) else { continue };
-        let label = if i == 0 {
-            block.def.short
-        } else {
-            block.sub_pages[i as usize - 1].short
-        };
+        let label = page_label(def_at(i as usize), model);
         let cy = y + theme::BRANCH_LINE_HEIGHT / 2;
-        if i as usize == nav.sub_page {
+        let color = if i == at.sub() as i32 {
             draw::dot(d, x, cy, 2, theme::ACCENT);
-            draw::text(d, &theme::FONT_LABEL, label, x + 6, y + 8, theme::ACCENT);
+            theme::ACCENT
         } else {
             draw::ring(d, x, cy, 2, theme::MID, 1);
-            draw::text(d, &theme::FONT_LABEL, label, x + 6, y + 8, theme::MID);
+            theme::MID
+        };
+        if hang_left {
+            draw::text_right(d, &theme::FONT_LABEL, label, x - 6, y + 8, color, 0);
+        } else {
+            draw::text(d, &theme::FONT_LABEL, label, x + 6, y + 8, color);
         }
     }
 }

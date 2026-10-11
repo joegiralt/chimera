@@ -28,8 +28,16 @@ impl MidiParser {
 
     /// Feed a byte from the UART. Returns a message when complete.
     pub fn feed(&mut self, byte: u8) -> Option<MidiMessage> {
+        // Real-time: a byte of its own, anywhere, running status untouched.
+        // Active Sensing, Reset and the undefined 0xF9 and 0xFD drop.
         if byte >= 0xF8 {
-            return None; // Real-time — ignore
+            return match byte {
+                0xF8 => Some(MidiMessage::Clock),
+                0xFA => Some(MidiMessage::Start),
+                0xFB => Some(MidiMessage::Continue),
+                0xFC => Some(MidiMessage::Stop),
+                _ => None,
+            };
         }
 
         if byte >= 0x80 {

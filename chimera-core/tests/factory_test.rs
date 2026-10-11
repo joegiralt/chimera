@@ -1,9 +1,10 @@
 //! Spec § Replacing the old engines: a bank of eight Algo Sounds that plays.
 
 mod common;
-use chimera_core::factory::{FACTORY_LEN, factory_sound, load_factory};
+use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::params::EngineType;
-use chimera_core::preset::SoundPool;
+use chimera_core::preset::Sound;
+use chimera_core::project::SlotId;
 use chimera_core::ui::UiState;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
@@ -94,8 +95,8 @@ fn the_morph_showcases_morph() {
         );
     }
     let pad = factory_sound(6).unwrap();
-    assert_eq!(pad.mod_state.num_dests(), 2);
-    assert_ne!(pad.mod_state.amount(1, 1), 0, "LFO 1 moves MORPH");
+    assert_eq!(pad.mod_state.num_dests(), 1, "MORPH; CUTOFF is fixed FREQ");
+    assert_ne!(pad.mod_state.amount(1, 0), 0, "LFO 1 moves MORPH");
 }
 
 /// #33: the LFO's full swing must not push MORPH past its 0..=127 range —
@@ -152,10 +153,70 @@ fn the_ui_starts_with_the_bank_in_the_pool() {
     let ui = UiState::new();
     for i in 0..FACTORY_LEN {
         let want = factory_sound(i).unwrap();
-        assert_eq!(ui.pool.get(i).unwrap().name.as_str(), want.name.as_str());
+        let got = ui.project().pool().get(SlotId::ALL[i]).unwrap().to_sound();
+        assert!(got.bits_eq(&want), "slot {i}");
     }
-    assert!(ui.pool.get(FACTORY_LEN).is_none());
-    let mut pool = SoundPool::new();
-    load_factory(&mut pool);
-    assert!(pool.get(FACTORY_LEN - 1).is_some() && pool.get(FACTORY_LEN).is_none());
+    let after = ui
+        .project()
+        .pool()
+        .get(SlotId::ALL[FACTORY_LEN])
+        .unwrap()
+        .to_sound();
+    assert!(
+        after.bits_eq(&Sound::init(EngineType::Algo)),
+        "INIT follows the bank"
+    );
+}
+
+/// The blob is today's authored Sounds, sparse: each entry decodes to its
+/// Sound. `GOLDEN_RECORD=1` writes `factory.bin` from them.
+#[test]
+fn blob_matches_authored() {
+    use chimera_core::factory::{FACTORY_BLOB, authored_sound, factory_entries};
+    use chimera_core::project::EncodedSound;
+    let authored: Vec<Sound> = (0..FACTORY_LEN)
+        .map(|i| authored_sound(i).unwrap())
+        .chain(EngineType::ALL.map(Sound::init))
+        .collect();
+    if std::env::var_os("GOLDEN_RECORD").is_some() {
+        let mut blob = (authored.len() as u16).to_le_bytes().to_vec();
+        for s in &authored {
+            let bytes = chimera_core::factory::encode_entry(s);
+            blob.extend((bytes.len() as u16).to_le_bytes());
+            blob.extend(bytes);
+        }
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../chimera-engine/src/factory.bin"
+        );
+        std::fs::write(path, blob).unwrap();
+        return;
+    }
+    assert_eq!(FACTORY_BLOB[..2], (authored.len() as u16).to_le_bytes());
+    let entries: Vec<_> = factory_entries().collect();
+    assert_eq!(entries.len(), authored.len());
+    for ((name, bytes), want) in entries.iter().zip(&authored) {
+        assert_eq!(*name, want.name);
+        let got = EncodedSound::new(bytes).to_sound();
+        assert!(got.bits_eq(want), "{}", want.name.as_str());
+        assert!(EncodedSound::new(bytes).matches(want));
+    }
+}
+
+#[test]
+fn new_holds_the_blob_bytes() {
+    use chimera_core::factory::factory_entries;
+    let (p, _) = chimera_core::project::Project::boxed();
+    for (s, (name, bytes)) in SlotId::ALL.into_iter().zip(factory_entries()) {
+        let got = p.pool().get(s).unwrap();
+        assert_eq!(got.bytes(), bytes, "{}", name.as_str());
+    }
+    assert_eq!(p.pool().sound_count(), factory_entries().count());
+}
+
+#[test]
+fn new_is_pristine() {
+    use chimera_core::project::{ProjectStatus, project_status};
+    let (p, t) = chimera_core::project::Project::boxed();
+    assert_eq!(project_status(&p, t), ProjectStatus::Pristine);
 }

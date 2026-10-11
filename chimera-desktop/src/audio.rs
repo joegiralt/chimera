@@ -5,11 +5,16 @@
 
 use chimera_core::audio_out::to_dac;
 use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, DacOut, Instrument};
-use chimera_core::note_queue::{NoteEvent, NoteKind, NoteProducer, NoteSources, SourceId};
-use chimera_core::preset::Performance;
+use chimera_core::note_queue::{
+    InEvent, NoteDrain, NoteEvent, NoteKind, NoteProducer, NoteSources, SourceId,
+};
+use chimera_core::orbit::runner::{OrbitRunner, OrbitShared, OrbitView};
+use chimera_core::project::{LOAD_LINK, LoadGate, LoadLink, Project};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
+use chimera_core::source_table::{AudioToken, SOURCE_TABLE};
 use chimera_core::triple::{TripleBuffer, Writer};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use cpal::Stream;
@@ -40,13 +45,15 @@ pub struct DesktopAudio {
     /// The computer keyboard's note source.
     keys: NoteProducer<'static>,
     shared_audio: Writer<AudioShared>,
+    /// The UI side of the knobs: every publish's delta (ADR 0115).
+    knobs: Box<KnobPublisher>,
     clamp_log: ClampLog,
     #[cfg(feature = "midi")]
     _midi: Option<midir::MidiInputConnection<()>>,
 }
 
 impl DesktopAudio {
-    pub fn new(scope: Writer<ScopeFrame>) -> Self {
+    pub fn new(scope: Writer<ScopeFrame>, orbit: Writer<OrbitView>) -> Self {
         let host = cpal::default_host();
         let device = host.default_output_device().expect("no output device");
         let config = stereo_48k(&device).unwrap_or_else(|| {
@@ -74,12 +81,8 @@ impl DesktopAudio {
         });
         let audio = Arc::clone(&shared);
 
-        let mut inst = Box::new(Instrument::new(
-            sample_rate,
-            SampleBudget::for_cpu(CPU_HZ_REV_V),
-        ));
-        let mut fx = Box::new(FxBus::new());
-        let mut dac = DacBlocks::new();
+        let sources = SOURCE_TABLE.reader().expect("the source reader, once");
+        let mut engine = Engine::new(sample_rate, orbit, sources);
         let mut block_pos = BLOCK_SIZE;
         let mut scope = ScopeWriter::new(scope);
 
@@ -87,15 +90,19 @@ impl DesktopAudio {
             .build_output_stream(
                 &config.into(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    flush_denormals();
                     let shared = shared_reader.read();
-                    drain.drain(|ev| inst.handle(ev, shared));
                     let solo = audio.solo.load(Ordering::Relaxed);
+                    // A load's waits scale with this period (ADR 0099).
+                    let frames = (data.len() / channels) as u64;
+                    let us = frames * 1_000_000 / u64::from(sample_rate);
+                    engine.sources.set_period_us(us as u32);
                     for frame in data.chunks_mut(channels) {
                         if block_pos >= BLOCK_SIZE {
-                            inst.render(&mut fx, &mut dac, shared, &mut scope);
+                            engine.block(&LOAD_LINK, &mut drain, shared, &mut scope);
                             block_pos = 0;
                         }
-                        let ((l, r), clamped) = stereo_frame(dac.out(), solo, block_pos);
+                        let ((l, r), clamped) = stereo_frame(engine.dac.out(), solo, block_pos);
                         if clamped {
                             audio.clamped.fetch_add(1, Ordering::Relaxed);
                         }
@@ -124,14 +131,21 @@ impl DesktopAudio {
             shared,
             keys,
             shared_audio,
+            knobs: Box::new(KnobPublisher::new()),
             clamp_log: ClampLog::default(),
         }
     }
 
-    /// Push the Performance to the audio thread through the triple buffer,
-    /// and report any mixdown frames clamped since the last call.
-    pub fn update(&mut self, perf: &Performance) {
-        self.shared_audio.publish(|b| b.update_from(perf));
+    /// Push the Performance, tagged with the load `epoch`, and ORBIT's
+    /// settings (`orbit` writes every field) to the audio thread through the
+    /// triple buffer, and report any mixdown frames clamped since the last
+    /// call.
+    pub fn update(&mut self, project: &Project, epoch: u32, orbit: impl FnOnce(&mut OrbitShared)) {
+        let knobs = &mut self.knobs;
+        self.shared_audio.publish(|b| {
+            b.update_from_project(project, epoch, knobs);
+            orbit(&mut b.orbit);
+        });
         let clamped = self.shared.clamped.swap(0, Ordering::Relaxed);
         if let Some(n) = self.clamp_log.note(clamped, Instant::now()) {
             eprintln!("speakers: {n} frames of the pairs' sum clamped at full scale");
@@ -161,6 +175,78 @@ impl DesktopAudio {
         self.shared
             .solo
             .store(pair.min(DAC_PAIRS as u8), Ordering::Relaxed);
+    }
+}
+
+/// What the callback renders with: the firmware's `Engine`, less the queue
+/// and the snapshot it is handed.
+struct Engine {
+    inst: Box<Instrument>,
+    fx: Box<FxBus>,
+    dac: DacBlocks,
+    /// Holds the note queues through a project load (ADR 0046).
+    gate: LoadGate,
+    runner: Box<OrbitRunner>,
+    view: Writer<OrbitView>,
+    /// The source table's one reader (ADR 0087).
+    sources: AudioToken,
+}
+
+impl Engine {
+    /// `sources`: its table's one reader (`SOURCE_TABLE`'s for the sim).
+    fn new(sample_rate: u32, view: Writer<OrbitView>, sources: AudioToken) -> Self {
+        Self {
+            inst: Box::new(Instrument::new(
+                sample_rate,
+                SampleBudget::for_cpu(CPU_HZ_REV_V),
+            )),
+            fx: Box::new(FxBus::new()),
+            dac: DacBlocks::new(),
+            gate: LoadGate::new(),
+            runner: Box::new(OrbitRunner::new(
+                core::num::NonZeroU32::new(sample_rate).expect("sample rate"),
+            )),
+            view,
+            sources,
+        }
+    }
+
+    /// One block, as the firmware renders each half: the gate, then only
+    /// when it opens the drain (live notes to any capture and then the
+    /// Parts, real-time to ORBIT's clock) and ORBIT, then the render and
+    /// ORBIT's report.
+    fn block<const N: usize>(
+        &mut self,
+        link: &LoadLink,
+        drain: &mut NoteDrain<'_, N>,
+        shared: &AudioShared,
+        scope: &mut ScopeWriter,
+    ) {
+        let Self {
+            inst,
+            fx,
+            dac,
+            gate,
+            runner,
+            view,
+            sources,
+        } = self;
+        // TAPE's voices read the pool through the block's view.
+        inst.run_block(sources, (fx, dac, scope), shared, |inst, reads| {
+            if gate.before_block(link, inst, shared) {
+                let now = runner.now();
+                drain.drain(|src, ev| match ev {
+                    // Capture sees the raw key, before any snap.
+                    InEvent::Note(n) => {
+                        runner.live(n);
+                        inst.handle_with(n, shared, reads);
+                    }
+                    InEvent::Rt(rt) => runner.realtime(src.index(), rt, now),
+                });
+                runner.block_with(inst, shared, reads);
+            }
+        });
+        view.publish(|v| runner.fill_view(v));
     }
 }
 
@@ -247,7 +333,7 @@ fn connect_midi(mut notes: NoteProducer<'static>) -> Option<midir::MidiInputConn
             "chimera-in",
             move |_stamp, bytes, _| {
                 for &b in bytes {
-                    if let Some(ev) = parser.feed(b).and_then(NoteEvent::from_midi) {
+                    if let Some(ev) = parser.feed(b).and_then(InEvent::from_midi) {
                         notes.push(ev);
                     }
                 }
@@ -258,9 +344,51 @@ fn connect_midi(mut notes: NoteProducer<'static>) -> Option<midir::MidiInputConn
         .ok()
 }
 
+/// Subnormals flush to zero on this thread, as the firmware's FPSCR FZ
+/// and DN have them: f32 state (the reverb's allpasses, its dampers)
+/// decays to exactly 0 on both, never sits in subnormals on the host.
+/// Every callback, as it costs two instructions and cpal may move threads.
+#[inline(always)]
+fn flush_denormals() {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // FTZ (bit 15) and DAZ (bit 6).
+        const FTZ_DAZ: u32 = 0x8040;
+        let mut csr: u32 = 0;
+        // SAFETY: STMXCSR and LDMXCSR read and write this thread's SSE
+        // control register through `csr`, a live local; setting FTZ and
+        // DAZ changes only subnormal results and operands, and keeps the
+        // rounding mode and exception masks as they were.
+        unsafe {
+            core::arch::asm!("stmxcsr [{0}]", in(reg) &mut csr, options(nostack));
+            csr |= FTZ_DAZ;
+            core::arch::asm!("ldmxcsr [{0}]", in(reg) &csr, options(nostack, readonly));
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        // FZ (bit 24).
+        // SAFETY: MRS and MSR read and write this thread's FPCR; setting
+        // FZ changes only subnormal results and operands, and keeps the
+        // rounding mode and traps as they were.
+        unsafe {
+            let fpcr: u64;
+            core::arch::asm!("mrs {0}, fpcr", out(reg) fpcr, options(nomem, nostack));
+            core::arch::asm!("msr fpcr, {0}", in(reg) fpcr | (1 << 24), options(nomem, nostack));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// A reader of a table of its own: the sim's is taken once.
+    fn test_reader() -> chimera_core::source_table::AudioToken {
+        let t = Box::leak(Box::new(chimera_core::source_table::SourceTable::new()));
+        t.reader().unwrap()
+    }
+
     use super::*;
+    use chimera_core::preset::Performance;
 
     fn dac() -> DacOut {
         let mut d = [[0.0; BLOCK_SIZE * 2]; DAC_PAIRS];
@@ -315,6 +443,173 @@ mod tests {
         assert_eq!(log.note(2, at(900)), None);
         assert_eq!(log.note(0, at(1010)), Some(7), "the held count, once due");
         assert_eq!(log.note(0, at(3000)), None);
+    }
+
+    /// ADR 0046: the gate steps once per block, not per callback, so one
+    /// callback's blocks kill, fade and ack a load, and a note queued
+    /// meanwhile waits for the publish.
+    #[test]
+    fn the_gate_steps_every_block() {
+        let sources: &'static NoteSources<1> = Box::leak(Box::new(NoteSources::new()));
+        let (mut producers, mut drain) = sources.split().unwrap();
+        let mut keys = producers.take(SourceId::new(0)).unwrap();
+        let mut e = Engine::new(SAMPLE_RATE, orbit_writer(), test_reader());
+        let (w, _unread) = Box::leak(Box::new(chimera_core::scope::scope_buffer())).split();
+        let mut scope = ScopeWriter::new(w);
+        let mut shared = AudioShared::default();
+        let link = LoadLink::new();
+        let _swap = link.bump_for_test();
+        let ch = MidiChannel::new(0).unwrap();
+        let note = MidiNote::new(60).unwrap();
+        keys.push(NoteEvent {
+            channel: ch,
+            note,
+            kind: NoteKind::On(Velocity::DEFAULT),
+        });
+        for _ in 0..3 {
+            e.block(&link, &mut drain, &shared, &mut scope);
+        }
+        assert!(link.acked(link.epoch()), "kill, fade, ack: three blocks");
+        assert!(e.inst.quiet(), "the note waits in the queue");
+        shared.epoch = link.epoch();
+        e.block(&link, &mut drain, &shared, &mut scope);
+        assert!(!e.inst.quiet(), "it plays once published");
+    }
+
+    /// Task 9's desktop QA without a window: `boot` over a card holding a
+    /// saved project, over no card and over a fresh card. Each gives the
+    /// toast the shell would draw, and a note held on the selected Part's
+    /// channel sounds; on NEW, sample for sample as `Project::boxed`'s
+    /// own Part plays it.
+    #[test]
+    fn each_card_boots_a_project_that_plays() {
+        use chimera_core::project::test_support::{full, same};
+        use chimera_core::project::{ProjectStatus, SaveTo, new_project_id, project_status};
+        use chimera_core::storage::{Card, SystemSync};
+        use chimera_core::ui::UiState;
+        use chimera_core::ui::busy::ToastStep;
+        use chimera_desktop::store::DirStore;
+
+        let base = std::env::temp_dir().join(format!("chimera-qa-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (saved, fresh) = (base.join("saved"), base.join("fresh"));
+        for d in [&saved, &fresh] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        // The relaunch root: `full()` saved, so SYSTEM names it.
+        let (want, _) = full();
+        {
+            let mut store = DirStore::new(saved.clone());
+            let mut card = Card::new();
+            let (mut sync, mut set, _) = SystemSync::boot(&mut card, &mut store);
+            let mut ui = Box::new(UiState::new());
+            *ui.project_mut() = *full().0;
+            let file = new_project_id(&mut card, &mut store).out.unwrap();
+            ui.save_project(
+                &mut card,
+                &mut store,
+                &mut sync,
+                &mut set,
+                SaveTo::Fresh(file),
+            );
+            assert_eq!(
+                project_status(ui.project(), ui.template()),
+                ProjectStatus::Saved
+            );
+        }
+        let cases = [
+            (saved.clone(), None),
+            (base.join("absent"), Some("NO CARD")),
+            (fresh.clone(), Some("NEW PROJECT")),
+        ];
+        for (root, toast) in cases {
+            let mut ui = Box::new(UiState::new());
+            let mut card = Card::new();
+            crate::boot(&mut ui, &mut card, &mut DirStore::new(root.clone()));
+            let shown = match ui.step_toast(0) {
+                ToastStep::Show(t) => Some(t),
+                _ => None,
+            };
+            assert_eq!(shown.as_ref().map(|t| t.as_str()), toast, "{root:?}");
+            let ch = ui.project().part(ui.active_part).mix.channel;
+            let played = held_note(ui.project().perf(), ch);
+            assert!(played.iter().any(|s| s.abs() > 1e-3), "{root:?}: silent");
+            if toast.is_some() {
+                let new = chimera_core::project::Project::boxed().0;
+                assert_eq!(played, held_note(new.perf(), ch), "{root:?}");
+            } else {
+                same(ui.project(), &want);
+                assert_eq!(
+                    project_status(ui.project(), ui.template()),
+                    ProjectStatus::Saved
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    fn orbit_writer() -> Writer<OrbitView> {
+        Box::leak(Box::new(chimera_core::orbit::runner::orbit_buffer()))
+            .split()
+            .0
+    }
+
+    /// Task 5's pre-flight: ORBIT's init scene playing for 20 s renders the
+    /// same twice, every pair's block bit for bit (the runner holds no
+    /// wall-clock or allocator state the render could depend on).
+    #[test]
+    fn desktop_render_is_repeatable() {
+        let render = || {
+            let sources: &'static NoteSources<1> = Box::leak(Box::new(NoteSources::new()));
+            let (_producers, mut drain) = sources.split().unwrap();
+            let mut e = Engine::new(SAMPLE_RATE, orbit_writer(), test_reader());
+            let (w, _unread) = Box::leak(Box::new(chimera_core::scope::scope_buffer())).split();
+            let mut scope = ScopeWriter::new(w);
+            let link = LoadLink::new();
+            let mut shared = Box::new(AudioShared::default());
+            shared
+                .orbit
+                .push(chimera_core::orbit::channel::Cmd::TogglePlay);
+            let mut sums = Vec::new();
+            for _ in 0..(20 * SAMPLE_RATE as usize) / BLOCK_SIZE {
+                e.block(&link, &mut drain, &shared, &mut scope);
+                // FNV-1a over every pair's bits.
+                let mut h = 0xcbf2_9ce4_8422_2325_u64;
+                for x in e.dac.out().iter().flatten() {
+                    h = (h ^ x.to_bits() as u64).wrapping_mul(0x0100_0000_01b3);
+                }
+                sums.push(h);
+            }
+            sums
+        };
+        let (a, b) = (render(), render());
+        assert!(a.windows(2).any(|w| w[0] != w[1]), "something rendered");
+        assert!(a == b, "two runs differ");
+    }
+
+    /// 100 ms of the speakers' left channel with middle C held on `ch`
+    /// from the first block, `perf` published.
+    fn held_note(perf: &Performance, ch: MidiChannel) -> Vec<f32> {
+        let sources: &'static NoteSources<1> = Box::leak(Box::new(NoteSources::new()));
+        let (mut producers, mut drain) = sources.split().unwrap();
+        let mut keys = producers.take(SourceId::new(0)).unwrap();
+        let mut e = Engine::new(SAMPLE_RATE, orbit_writer(), test_reader());
+        let (w, _unread) = Box::leak(Box::new(chimera_core::scope::scope_buffer())).split();
+        let mut scope = ScopeWriter::new(w);
+        let link = LoadLink::new();
+        let mut shared = Box::new(AudioShared::default());
+        shared.update_from(perf, link.epoch());
+        keys.push(NoteEvent {
+            channel: ch,
+            note: MidiNote::new(60).unwrap(),
+            kind: NoteKind::On(Velocity::DEFAULT),
+        });
+        let mut out = Vec::new();
+        for _ in 0..(SAMPLE_RATE as usize / 10).div_ceil(BLOCK_SIZE) {
+            e.block(&link, &mut drain, &shared, &mut scope);
+            out.extend((0..BLOCK_SIZE).map(|i| stereo_frame(e.dac.out(), 0, i).0.0));
+        }
+        out
     }
 
     /// Three pairs near full scale sum past 1.0: the speakers still get
