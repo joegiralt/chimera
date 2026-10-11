@@ -119,6 +119,8 @@ pub fn render_half(half: Half) {
                         orbit.live(n);
                         inst.handle_with(n, shared, reads);
                     }
+                    InEvent::Bend(b) => inst.bend(b),
+                    InEvent::Sustain(p) => inst.sustain(p),
                     InEvent::Rt(rt) => orbit.realtime(src.index(), rt, now),
                 });
                 orbit.block(inst, shared, reads);

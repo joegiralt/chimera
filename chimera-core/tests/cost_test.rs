@@ -49,7 +49,7 @@ fn voice_costs_are_the_billed_literals() {
     assert_eq!(Voice::CHAIN_COST, Cost(36));
     assert_eq!(
         voice_cost(EngineType::Modal),
-        Cost(446) + ModRouting::BASE + LP24
+        Cost(446) + chimera_core::dsp::modal::ModalEngine::PITCH + ModRouting::BASE + LP24
     );
     let mods = ModState::new();
     for e in EngineType::ALL {
@@ -1117,21 +1117,24 @@ fn a_pitch_route_on_modal_bills_the_retune() {
         ms
     };
     let modal = ParamSnapshot::for_engine(EngineType::Modal);
+    // The pitch wheel (#437) may retune any Modal voice, so every one bills
+    // the retune whether or not a route does.
     let bare = EngineSlot::cost(&modal, &ModState::new());
-    assert_eq!(bare, ModalEngine::cost(&modal.modal));
+    assert_eq!(bare, ModalEngine::cost(&modal.modal) + ModalEngine::PITCH);
     for q in [PitchParams::PITCH, PitchParams::FINE] {
         for amount in [127, 0] {
-            assert_eq!(
-                EngineSlot::cost(&modal, &routed(q, amount)),
-                bare + ModalEngine::PITCH
-            );
+            assert_eq!(EngineSlot::cost(&modal, &routed(q, amount)), bare);
         }
     }
     let mut symp = modal.clone();
     symp.modal.mode = chimera_core::dsp::modal::ResonatorMode::Sympathetic;
     assert_eq!(
         EngineSlot::cost(&symp, &routed(PitchParams::PITCH, 127)),
-        EngineSlot::cost(&symp, &ModState::new()) + ModalEngine::PITCH + ModalEngine::HALO_PITCH
+        EngineSlot::cost(&symp, &ModState::new())
+    );
+    assert_eq!(
+        EngineSlot::cost(&symp, &ModState::new()),
+        ModalEngine::cost(&symp.modal) + ModalEngine::PITCH + ModalEngine::HALO_PITCH
     );
     let algo = ParamSnapshot::for_engine(EngineType::Algo);
     assert_eq!(
@@ -1201,10 +1204,10 @@ fn modal_bills_each_model() {
         (sound(String, 0.0, 0.0), 330, (8, 8), (8, 8)),
         (sound(String, 0.3, 0.0), 410, (8, 8), (8, 8)),
         (sound(String, 0.3, 0.5), 550, (8, 7), (8, 7)),
-        (sound(Bowed, 0.3, 0.5), 640, (8, 6), (8, 6)),
-        (sound(Sympathetic, 0.0, 0.0), 470, (8, 8), (8, 8)),
-        (sound(Sympathetic, 0.3, 0.0), 550, (8, 7), (8, 7)),
-        (sound(Sympathetic, 0.3, 0.5), 690, (8, 6), (7, 6)),
+        (sound(Bowed, 0.3, 0.5), 640, (8, 6), (7, 6)),
+        (sound(Sympathetic, 0.0, 0.0), 470, (8, 8), (8, 7)),
+        (sound(Sympathetic, 0.3, 0.0), 550, (8, 7), (8, 6)),
+        (sound(Sympathetic, 0.3, 0.5), 690, (7, 6), (7, 5)),
         (sound(Modal, 0.3, 0.5), 1_840, (3, 2), (3, 2)),
     ] {
         let (rev_v, rev_y) = if cfg!(feature = "master-tape") {
@@ -1214,8 +1217,14 @@ fn modal_bills_each_model() {
         };
         let m = (p.modal.mode, p.modal.body, p.modal.ens_mix);
         let engine = EngineSlot::cost(&p, &ModState::new());
-        assert_eq!(engine, ModalEngine::cost(&p.modal), "{m:?}");
-        assert_eq!(engine, Cost(billed), "{m:?}");
+        // The model's own bill, then the wheel's retune (#437).
+        let halo = if p.modal.mode == Sympathetic {
+            ModalEngine::HALO_PITCH
+        } else {
+            Cost(0)
+        };
+        assert_eq!(ModalEngine::cost(&p.modal), Cost(billed), "{m:?}");
+        assert_eq!(engine, Cost(billed) + ModalEngine::PITCH + halo, "{m:?}");
         let voice = Voice::cost(&p, &ModState::new()).0;
         let at = |hz| {
             let budget = SampleBudget::for_cpu(hz).as_cost().0;
@@ -1282,7 +1291,12 @@ fn a_glide_steal_bills_the_retune() {
         } else {
             Cost(0)
         };
-        assert_eq!(glide, cut + ModalEngine::PITCH + halo, "{mode:?}");
+        assert_eq!(glide, cut, "{mode:?}");
+        assert_eq!(
+            cut,
+            ModalEngine::cost(&p.modal) + ModalEngine::PITCH + halo,
+            "{mode:?}"
+        );
         assert_eq!(EngineSlot::cost(&p, &pitch_route()), glide, "{mode:?}");
     }
     let mut algo = ParamSnapshot::for_engine(EngineType::Algo);

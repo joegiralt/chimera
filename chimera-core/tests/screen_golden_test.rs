@@ -110,7 +110,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it, the screens are as before.
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_part", 0x24ee8f61ddea9047),
+    ("mixer_part", 0xcb00285b98360434),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_sends", 0xdf3aab7c23ee0c31),
     #[cfg(not(feature = "master-tape"))]
@@ -148,7 +148,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master_level", 0xe699d6651832774d),
     #[cfg(feature = "master-tape")]
-    ("mixer_part", 0x91b06a3780c2bbb5),
+    ("mixer_part", 0x3dc63406465fad8e),
     #[cfg(feature = "master-tape")]
     ("mixer_sends", 0xcf97b892a7d5a933),
     // DLY's branch hides REV's label it ran into (TAPE Task 15).
