@@ -1204,10 +1204,10 @@ fn modal_bills_each_model() {
         (sound(String, 0.0, 0.0), 330, (8, 8), (8, 8)),
         (sound(String, 0.3, 0.0), 410, (8, 8), (8, 8)),
         (sound(String, 0.3, 0.5), 550, (8, 7), (8, 7)),
-        (sound(Bowed, 0.3, 0.5), 640, (8, 6), (8, 6)),
-        (sound(Sympathetic, 0.0, 0.0), 470, (8, 8), (8, 8)),
-        (sound(Sympathetic, 0.3, 0.0), 550, (8, 7), (8, 7)),
-        (sound(Sympathetic, 0.3, 0.5), 690, (7, 6), (7, 6)),
+        (sound(Bowed, 0.3, 0.5), 640, (8, 6), (7, 6)),
+        (sound(Sympathetic, 0.0, 0.0), 470, (8, 8), (8, 7)),
+        (sound(Sympathetic, 0.3, 0.0), 550, (8, 7), (8, 6)),
+        (sound(Sympathetic, 0.3, 0.5), 690, (7, 6), (7, 5)),
         (sound(Modal, 0.3, 0.5), 1_840, (3, 2), (3, 2)),
     ] {
         let (rev_v, rev_y) = if cfg!(feature = "master-tape") {
