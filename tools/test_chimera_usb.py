@@ -296,7 +296,8 @@ class Tool(unittest.TestCase):
             r = run_tool(["status"], str(tty))
         self.assertEqual(r.returncode, 1)
         self.assertEqual(r.stderr.count(b"\n"), 1, r.stderr)
-        self.assertIn(b"70-chimera.rules /etc/udev/rules.d/", r.stderr)
+        self.assertIn(b"dialout", r.stderr)
+        self.assertIn(b"/etc/udev/rules.d/70-chimera.rules", r.stderr)
 
     def test_udev_rule_matches_the_firmware_identity(self):
         rule = (ROOT / "tools/70-chimera.rules").read_text()

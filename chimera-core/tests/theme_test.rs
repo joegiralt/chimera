@@ -273,10 +273,11 @@ fn theme_page_is_reachable_and_edits_the_settings() {
             .block(BlockRef::Theme)
             .is_none()
     );
-    // Empty slots edit nothing.
-    feed(&mut ui, Input::turn(EncoderId::E, 3));
-    feed(&mut ui, Input::turn(EncoderId::F, 3));
+    // F is INVERT: OFF stays OFF below zero, and ON sticks at the top.
+    feed(&mut ui, Input::turn(EncoderId::F, -3));
     assert_eq!(ui.theme(), t);
+    feed(&mut ui, Input::turn(EncoderId::F, 3));
+    assert!(ui.theme().invert);
 }
 
 /// SYSTEM's hooks: `in_settings` follows MENU and the Part buttons, and
@@ -296,6 +297,7 @@ fn in_settings_and_set_theme() {
         accent: Accent::Lime,
         black: Black::new(1),
         hints: false,
+        invert: false,
         saver: Saver::from_index(5),
     };
     ui.set_theme(t);
@@ -320,6 +322,162 @@ fn input_dismisses_the_toast() {
     feed(&mut ui, Input::press(ButtonId::B2));
     assert_eq!(ui.step_toast(16), ToastStep::Ended);
     assert_eq!(ui.step_toast(16), ToastStep::Idle);
+}
+
+// --- INVERT (ADR 0126) ---
+
+use chimera_core::ui::theme_settings::{
+    ALERT_LIGHT, WARN_LIGHT, accent_light, ground_light, splash_palette,
+};
+
+fn light(black: i8, accent: Accent) -> ThemeSettings {
+    ThemeSettings {
+        invert: true,
+        black: Black::new(black),
+        accent,
+        ..ThemeSettings::DEFAULT
+    }
+}
+
+/// WCAG 2 contrast ratio, true sRGB.
+fn contrast(a: Rgb565, b: Rgb565) -> f64 {
+    let lum = |c: Rgb565| {
+        let lin = |v: u32| {
+            let v = v as f64 / 255.0;
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let (r, g, bl) = (c.r() as u32, c.g() as u32, c.b() as u32);
+        0.2126 * lin(r << 3 | r >> 2)
+            + 0.7152 * lin(g << 2 | g >> 4)
+            + 0.0722 * lin(bl << 3 | bl >> 2)
+    };
+    let (x, y) = (lum(a), lum(b));
+    (x.max(y) + 0.05) / (x.min(y) + 0.05)
+}
+
+#[test]
+fn invert_is_off_by_default_and_toggles() {
+    let mut t = ThemeSettings::DEFAULT;
+    assert!(!t.invert);
+    t.nudge(ThemeSettings::INVERT, 1);
+    assert!(t.invert);
+    assert_eq!(t.normalized(ThemeSettings::INVERT), 1.0);
+}
+
+#[test]
+fn light_mode_flips_every_other_colour_and_twice_is_the_identity() {
+    let p = palette(&light(0, Accent::Teal));
+    let swapped = [
+        theme::BG,
+        theme::ACCENT,
+        theme::ACCENT_SOFT,
+        theme::WARN,
+        theme::ALERT,
+    ]
+    .map(raw);
+    for px in 0..=u16::MAX {
+        if swapped.contains(&px) || swapped.contains(&!px) {
+            continue;
+        }
+        let f = p.map_raw(px);
+        assert_eq!(p.map_raw(f), px, "{px:04x}");
+    }
+    let (g, f) = (Rgb565::new(10, 20, 10), p.map(Rgb565::new(10, 20, 10)));
+    assert_eq!((f.r(), f.g(), f.b()), (21, 43, 21), "{g:?}");
+}
+
+#[test]
+fn light_greys_keep_their_order_and_their_contrast() {
+    let p = palette(&light(-2, Accent::Teal));
+    let ladder = [
+        theme::INK,
+        theme::INK2,
+        theme::MID,
+        theme::BAR_REST,
+        theme::FAINT,
+    ]
+    .map(|c| p.map(c));
+    assert_eq!(p.bg, Rgb565::new(31, 63, 31), "BLACK -2 is white");
+    let l = |c: Rgb565| contrast(c, Rgb565::new(0, 0, 0));
+    for w in ladder.windows(2) {
+        assert!(l(w[0]) < l(w[1]), "{w:?}");
+    }
+    assert!(l(ladder[4]) < l(p.bg));
+    assert!(contrast(ladder[0], p.bg) >= 12.0, "INK on white");
+    assert!(contrast(ladder[2], p.bg) >= 3.0, "MID on white");
+    assert_eq!(p.map(theme::BG), p.bg);
+}
+
+#[test]
+fn black_takes_the_edge_off_white_in_light_mode() {
+    let grounds: Vec<Rgb565> = (Black::MIN..=Black::MAX)
+        .map(|k| ground_light(Black::new(k)))
+        .collect();
+    for (i, g) in grounds.iter().enumerate() {
+        assert!(!grounds[..i].contains(g), "{g:?}");
+        assert!(g.g() > theme::FAINT.g(), "{g:?}");
+        if i > 0 {
+            assert!(g.g() < grounds[i - 1].g());
+        }
+    }
+}
+
+/// Every ACCENT keeps 3:1 against the ground at every BLACK, both modes.
+#[test]
+fn every_accent_holds_3_to_1_in_both_modes() {
+    for a in Accent::ALL {
+        for k in Black::MIN..=Black::MAX {
+            for invert in [false, true] {
+                let t = ThemeSettings {
+                    invert,
+                    ..light(k, a)
+                };
+                let p = palette(&t);
+                assert!(contrast(p.accent, p.bg) >= 3.0, "{a:?} {k} {invert}");
+                assert_ne!(p.accent_soft, p.bg, "{a:?} {k} {invert}");
+                if invert {
+                    assert!(contrast(WARN_LIGHT, p.bg) >= 3.0, "WARN {k}");
+                    assert!(contrast(ALERT_LIGHT, p.bg) >= 3.0, "ALERT {k}");
+                }
+            }
+        }
+    }
+}
+
+/// The light accent is the pick darkened, never lightened or re-hued.
+#[test]
+fn light_accent_only_darkens() {
+    for a in Accent::ALL {
+        let (c, l) = (accent_color(a), accent_light(a));
+        assert!(l.r() <= c.r() && l.g() <= c.g() && l.b() <= c.b(), "{a:?}");
+    }
+}
+
+/// The Yellow Sign ignores INVERT.
+#[test]
+fn the_splash_palette_is_dark_mode() {
+    let t = light(-2, Accent::Teal);
+    let splash = splash_palette(&t);
+    assert_eq!(splash, palette(&ThemeSettings { invert: false, ..t }));
+    let yellow = raw(Rgb565::new(241 >> 3, 229 >> 2, 121 >> 3));
+    assert_eq!(splash.map_raw(yellow), yellow);
+}
+
+/// `LIGHT_FLOOR` (231) is the darkest light ground, BLACK +4: (28, 57, 28)
+/// expands to #e7e7e7 in 8 bits.
+#[test]
+fn the_light_floor_is_the_darkest_light_ground() {
+    let floor = ground_light(Black::new(Black::MAX));
+    assert_eq!(floor, Rgb565::new(28, 57, 28));
+    let ch = |v: u8, bits: u32| (v as u32) << (8 - bits) | (v as u32) >> (2 * bits - 8);
+    assert_eq!(
+        (ch(floor.r(), 5), ch(floor.g(), 6), ch(floor.b(), 5)),
+        (231, 231, 231)
+    );
 }
 
 /// SETTINGS › PERSONALIZE › SCREENSAVER: its one cell is the idle time.

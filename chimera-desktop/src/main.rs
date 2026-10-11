@@ -62,9 +62,11 @@ fn main() {
     let mut store = DirStore::new(sim_card());
     let mut card = Card::new();
     let (mut sync, mut settings) = boot(&mut ui, &mut card, &mut store);
-    display.set_theme(&ui.theme());
+    // The Yellow Sign ignores INVERT (`splash_palette`).
+    display.set_splash_theme(&ui.theme());
     let _ = chimera_core::ui::splash::draw(&mut display);
     display.flush();
+    display.set_theme(&ui.theme());
     std::thread::sleep(std::time::Duration::from_secs(1).saturating_sub(first_light.elapsed()));
     let mut perf = PerfTracker::new();
     // The held key and the channel it was sent on, so its note-off follows

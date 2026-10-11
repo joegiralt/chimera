@@ -92,9 +92,7 @@ pub fn write_shot(f: Frame<'_>, c: Colours, out: &mut impl Out) -> Result<(), St
     };
     let mut row = [[0u8; 2]; W];
     for src in f.fb.as_chunks::<W>().0 {
-        for (dst, &px) in row.iter_mut().zip(src) {
-            *dst = pal.map_raw(px).to_be_bytes();
-        }
+        pal.map_into(src, row.as_flattened_mut());
         out.put(row.as_flattened())?;
     }
     out.put(b"OK\n")

@@ -813,7 +813,7 @@ pub static SYS_THEME: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Theme, ThemeSettings::ACCENT),
         ParamSlot::param(BlockRef::Theme, ThemeSettings::BLACK),
         ParamSlot::param(BlockRef::Theme, ThemeSettings::HINTS),
-        EMPTY,
+        ParamSlot::param(BlockRef::Theme, ThemeSettings::INVERT),
     ],
 };
 

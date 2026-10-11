@@ -18,7 +18,7 @@ use common::codec_util::{
 };
 use core::ops::ControlFlow;
 
-/// BRIGHT 40, GAMMA SOFT, ACCENT index 3, BLACK +1, HINTS OFF, SYNC INT,
+/// BRIGHT 40, GAMMA SOFT, ACCENT index 3, BLACK +1, HINTS OFF, INVERT ON, SYNC INT,
 /// project 7.
 fn settings() -> SystemSettings {
     SystemSettings {
@@ -31,6 +31,7 @@ fn settings() -> SystemSettings {
             accent: Accent::ALL[3],
             black: Black::new(1),
             hints: false,
+            invert: true,
             saver: Saver::from_index(3),
         },
         last_project: ProjectId::new(7),
@@ -632,6 +633,18 @@ fn a_system_from_before_hints_shows_them() {
             .join(name);
         let f = std::fs::read(p).unwrap();
         assert!(boot_bytes(&f).0.theme.hints, "{name}");
+    }
+}
+
+/// A SYSTEM from before INVERT, either v1 fixture, is dark (ADR 0126).
+#[test]
+fn a_system_from_before_invert_is_dark() {
+    for name in [SYSTEM_FIXTURE, SYSTEM_MIDI_FIXTURE] {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/v1")
+            .join(name);
+        let f = std::fs::read(p).unwrap();
+        assert!(!boot_bytes(&f).0.theme.invert, "{name}");
     }
 }
 
