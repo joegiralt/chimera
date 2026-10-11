@@ -4,7 +4,7 @@ mod common;
 
 use chimera_core::dsp::va::VaMode;
 use chimera_core::dsp::va::combine::{
-    self, Crusher, Peaks, bits, combine, ring_gain, with_sub, xor16,
+    self, Crusher, Operator, Peaks, bits, combine, ring_gain, with_sub, xor16, xor16_scaled,
 };
 use chimera_core::dsp::va::osc::{Correction, Morph, R, Sub, Unit, VarOsc, peak_bound};
 use common::spectrum::{alias_db, alias_db_lattice, peak_hz};
@@ -99,6 +99,67 @@ fn bits_follow_the_log_curve() {
         );
         assert!((lo.process(v) - v).abs() <= 2f32.powi(-15), "x 0: {v}");
     }
+}
+
+/// The engine's loop runs the operators as `Operator` has them (block
+/// constants folded, RING and XOR at twice the level, XOR's words by one
+/// saturating convert): against the reference `combine`, RING and MIX are
+/// the same bits (doubled), XOR's words are the reference's within the one
+/// truncation step the folded scale can move and its output is their XOR
+/// exactly, BITS lands within one level of the reference (the ½ and `1/q`
+/// folded into the levels move only a tie).
+#[test]
+fn the_engine_operators_are_the_reference() {
+    let mut bits_off = (0usize, 0usize);
+    for pk in [
+        Peaks { a: 0.87, b: 0.87 },
+        Peaks { a: 0.26, b: 0.87 },
+        Peaks { a: 0.35, b: 0.26 },
+    ] {
+        let k = ring_gain(pk);
+        let p = pk.a.max(pk.b);
+        let q = 0.5 * (pk.a + pk.b);
+        for xi in 0..=8 {
+            let x = xi as f32 / 8.0;
+            let crush = crusher(x);
+            for mode in VaMode::ALL {
+                let op = Operator::new(mode, pk, &crush);
+                for a in span(pk.a, 64) {
+                    for b in span(pk.b, 64) {
+                        let got = op.at(a, b, x, op.scale * k) / op.scale;
+                        let want = combine(mode, a, b, x, k, pk, &crush);
+                        match mode {
+                            VaMode::Mix | VaMode::Sync | VaMode::Ring => {
+                                assert_eq!(got.to_bits(), want.to_bits(), "{mode:?} {a} {b} {x}")
+                            }
+                            VaMode::Xor => {
+                                // each word, read back through a XOR with 0
+                                let word = |v: f32| {
+                                    (xor16_scaled(v, 0.0, 32767.0 / p, p) * 32768.0 / p).round() as i32
+                                };
+                                let refw = |v: f32| (v / p * 32767.0) as i32;
+                                for v in [a, b] {
+                                    assert!((word(v) - refw(v)).abs() <= 1, "{v} of {p}");
+                                }
+                                let xr = ((word(a) ^ word(b)) << 16 >> 16) as f32 / 32768.0;
+                                let half = 0.5 * (a + b);
+                                let mine = half + (p * xr - half) * x;
+                                assert!((got - mine).abs() <= 1e-6, "{a} {b} {x}: {got} {mine}");
+                            }
+                            VaMode::Bits => {
+                                let step = q / crush.levels();
+                                assert!((got - want).abs() <= step * 1.0001, "{a} {b} {x}");
+                                bits_off.0 += usize::from(got != want);
+                                bits_off.1 += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    println!("BITS off by a level at {} of {} points", bits_off.0, bits_off.1);
+    assert!(bits_off.0 * 100 <= bits_off.1, "{bits_off:?}");
 }
 
 #[test]

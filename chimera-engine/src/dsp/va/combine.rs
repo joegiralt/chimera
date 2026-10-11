@@ -141,6 +141,55 @@ pub fn ring_gain(pk: Peaks) -> f32 {
     (1.0 / R).min(0.9 / (pk.a * pk.b))
 }
 
+/// One block's operator as the engine's loop runs it: MODE and its block
+/// constants, at `scale` times `combine`'s level (2 for RING and XOR, where
+/// `½(a + b)` is then `a + b`; the scalings are exact, so the bits are
+/// `combine`'s doubled, as RING shows).
+#[derive(Clone, Copy, Debug)]
+pub struct Operator {
+    pub mode: VaMode,
+    /// The output is `scale · combine(…)`.
+    pub scale: f32,
+    kx: f32,
+    p2: f32,
+    q: f32,
+    liq: f32,
+    crush: Crusher,
+}
+
+impl Operator {
+    /// Once a block, from the oscillators' peak bounds and the crusher.
+    #[inline(always)]
+    pub fn new(mode: VaMode, pk: Peaks, crush: &Crusher) -> Self {
+        let scale = if matches!(mode, VaMode::Ring | VaMode::Xor) { 2.0 } else { 1.0 };
+        let p = pk.a.max(pk.b);
+        let q = 0.5 * (pk.a + pk.b);
+        Self {
+            mode,
+            scale,
+            kx: 32767.0 / p,
+            p2: scale * p,
+            q,
+            // BITS crushes `½(a + b) / q`: the ½ rides in the levels (exact)
+            liq: 0.5 * crush.levels() / q,
+            crush: *crush,
+        }
+    }
+
+    /// `scale · combine(mode, a, b, x, k, …)`, `ks` being RING's `k ·
+    /// scale`.
+    #[inline(always)]
+    pub fn at(&self, a: f32, b: f32, x: f32, ks: f32) -> f32 {
+        let sum = a + b;
+        match self.mode {
+            VaMode::Mix | VaMode::Sync => a + (b - a) * x,
+            VaMode::Ring => sum + (ks * a * b - sum) * x,
+            VaMode::Xor => sum + (xor16_scaled(a, b, self.kx, self.p2) - sum) * x,
+            VaMode::Bits => self.q * self.crush.process_scaled(sum, self.liq),
+        }
+    }
+}
+
 /// One sample of `mode` at AMOUNT `x`. `k` is RING's gain, ramped by the
 /// caller; XOR and BITS scale their inputs to unit peak by `pk`.
 #[inline(always)]

@@ -22,7 +22,7 @@ use crate::glyph::FocusGlyph;
 use crate::hw::Cost;
 use crate::project::PartId;
 use crate::voice_alloc::VoiceIdx;
-use combine::{Crusher, Peaks, ring_gain, xor16_scaled};
+use combine::{Crusher, Operator, Peaks, ring_gain};
 use osc::{NO_WRAP, R, Ramps, Sub, VarOsc};
 use stability::{JITTER_CENTS, Seed, Stability, depth};
 #[cfg(any(test, feature = "test-support"))]
@@ -810,21 +810,14 @@ impl VaEngine {
             wraps: wr,
             ..
         } = self;
-        // RING and XOR run at twice their level, the chain gain halved:
-        // `½(a + b)` is then `a + b`, and every scaling is exact (the same
-        // bits out)
-        let two = matches!(mode, VaMode::Ring | VaMode::Xor);
-        let (up, down) = if two { (2.0, 0.5) } else { (1.0, 1.0) };
+        // RING and XOR run at twice their level (`Operator`), the chain
+        // gain halved: the same bits out
+        let op = Operator::new(mode, l.pk, crusher);
+        let (up, down) = (op.scale, 1.0 / op.scale);
         let (mut x, dx) = l.amount;
         let (mut k, dk) = (up * l.k.0, up * l.k.1);
         let (s0, ds) = (up * l.sub.0, up * l.sub.1);
         let (mut n, mut dn, ddn) = (down * l.norm.0, down * l.norm.1, down * l.norm.2);
-        // XOR's and BITS' block constants
-        let p = l.pk.a.max(l.pk.b);
-        let (kx, p2) = (32767.0 / p, up * p);
-        let q = 0.5 * (l.pk.a + l.pk.b);
-        // BITS crushes `½(a + b) / q`: the ½ rides in the levels (exact)
-        let liq = 0.5 * crusher.levels() / q;
         // SUB's level, a sample's step at a time
         let (mut s, mut sl) = (*sub, s0);
         // one sample (a macro: a closure here is left out of line)
@@ -834,14 +827,7 @@ impl VaEngine {
                 x += dx;
                 k += dk;
                 sl += ds;
-                let (a, b) = (out[i], b[i]);
-                let sum = a + b;
-                let c = match mode {
-                    VaMode::Mix | VaMode::Sync => a + (b - a) * x,
-                    VaMode::Ring => sum + (k * a * b - sum) * x,
-                    VaMode::Xor => sum + (xor16_scaled(a, b, kx, p2) - sum) * x,
-                    VaMode::Bits => q * crusher.process_scaled(sum, liq),
-                };
+                let c = op.at(out[i], b[i], x, k);
                 let sv = s.step(wr[i]);
                 let y = (c + sl * sv) * n;
                 out[i] = if DUCKED { y * g[i] } else { y };
