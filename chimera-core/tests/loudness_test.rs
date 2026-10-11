@@ -49,9 +49,6 @@ pub fn dense() -> (Performance, Vec<(usize, u8)>) {
             notes.push((k, n + 12 * (k as u8 % 2)));
         }
     }
-    p.fx.chorus.mix = 0.5;
-    p.fx.delay.mix = 0.5;
-    p.fx.reverb.mix = 0.5;
     (p, notes)
 }
 

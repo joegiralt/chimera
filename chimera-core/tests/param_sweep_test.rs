@@ -58,7 +58,7 @@ impl Case {
         let fx = if self.wet {
             fx_on()
         } else {
-            FxParams::default()
+            FxParams::OFF
         };
         let mut b = Bench::new(self.patch, PartParams::default(), fx);
         if self.wet {
@@ -439,7 +439,7 @@ fn a_self_oscillating_filter_dies_with_its_note() {
         Patch::ModalInit(ResonatorMode::Bowed),
         Patch::ModalInit(ResonatorMode::Sympathetic),
     ] {
-        let mut b = Bench::new(patch, PartParams::default(), FxParams::default());
+        let mut b = Bench::new(patch, PartParams::default(), FxParams::OFF);
         b.set(&find(BlockRef::Filter, FilterParams::RESONANCE), 1.0);
         let mut t = Tape::default();
         for blk in 0..30_000 {
@@ -951,7 +951,7 @@ const MAX_STRING_GR_DB: f32 = 15.0;
 /// after 0.5 s falls 60 dB in about 1.1 s, 0.8 to 1.5 s.
 #[test]
 fn algo_init_releases_in_about_a_second() {
-    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::OFF);
     let mut t = Tape::default();
     b.note(60, Some(100));
     for blk in 0..2 * BPS {
@@ -998,7 +998,7 @@ fn find(block: BlockRef, id: ParamId) -> Param {
 /// so pair 1 doesn't step as the voice frees (ADR 0060).
 #[test]
 fn the_folder_sym_puts_no_dc_on_the_dac() {
-    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::OFF);
     b.set(&find(BlockRef::Folder, FolderParams::FOLD), 0.5);
     b.set(&find(BlockRef::Folder, FolderParams::SYMMETRY), 0.0);
     let mut t = Tape::default();
@@ -1257,7 +1257,7 @@ fn drive_jumps_never_click_at_any_tone() {
 /// holds neither the voice nor its bill (23 s before Task 17).
 #[test]
 fn a_silent_operator_frees_the_voice() {
-    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::OFF);
     b.set(&find(BlockRef::AlgoOp(Op::B), AlgoOpParams::RR), 1.0);
     let mut t = Tape::default();
     for blk in 0..1500 {

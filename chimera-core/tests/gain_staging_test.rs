@@ -210,7 +210,7 @@ fn only_final_limiter_is_nonlinear() {
         let (mut bus, mut out) = (Vec::new(), Vec::new());
         chord(
             Voices::Init,
-            FxParams::default(),
+            FxParams::OFF,
             level,
             0.0,
             |inst, _, dac| {

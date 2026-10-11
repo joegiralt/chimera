@@ -336,7 +336,7 @@ fn retune_tape(
         held,
         ..PartParams::default()
     };
-    let mut b = Bench::new(patch, mix, FxParams::default());
+    let mut b = Bench::new(patch, mix, FxParams::OFF);
     b.harmony(Some(from));
     let mut t = Tape::default();
     let mut glide = Vec::new();

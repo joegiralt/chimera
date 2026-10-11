@@ -54,7 +54,7 @@ fn saw(kind: FilterKind, cutoff: f32, res: f32) -> Sound {
 /// the Sound (and published) before block `b` where `ticks[b]` isn't 0:
 /// the filter settings each block played.
 fn play(s: Sound, note: u8, ticks: &[i8], edit: impl Fn(&mut Sound, i8)) -> Vec<FilterParams> {
-    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::OFF);
     b.edit_sound(|x| *x = s);
     b.note(note, Some(100));
     let mut t = Tape::default();

@@ -358,7 +358,7 @@ fn a_fresh_filter_clips_from_its_first_sample() {
 /// TONE 0) and a wide-open CLEAN, so a step reaches the output. Its LEVEL
 /// param.
 fn bench(wave: WaveId, drive: f32, tone: f32) -> (Bench, Param) {
-    let mut b = Bench::new(Patch::Probe, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(Patch::Probe, PartParams::default(), FxParams::OFF);
     let reg = registry(false);
     let find = |block: fn(BlockRef) -> bool, id| {
         *reg.iter()

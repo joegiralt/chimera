@@ -761,7 +761,7 @@ fn reverb_params_default_to_the_spec_and_retire_type() {
         assert_eq!(p.get(s.id), s.default, "{}", s.label);
         assert_ne!(s.id, ParamId(0), "the old TYPE's id is retired (ADR 0009)");
     }
-    assert_eq!(p.mix, 0.0);
+    assert_eq!(p.mix, 1.0);
     // Slot 3 ticks 1/128 (GATE's LENGTH); QUAD's panel keeps its 1/31
     // (`reverb_panel_test`).
     let size = REVERB_SPECS

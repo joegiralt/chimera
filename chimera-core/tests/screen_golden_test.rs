@@ -115,35 +115,35 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_sends", 0x37b85f76ea901bdc),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay", 0x57508228791992f2),
+    ("mixer_fx_delay", 0xc697f9d549cfb496),
     // TYPE first, the panel's units, and REV › MORE (reverb TYPEs T6);
     // the REV pages re-recorded for RATE's default and law (ADR 0121).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb", 0x511aff474332e012),
+    ("mixer_fx_reverb", 0xd63df29d1fff7b34),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_more", 0x75d670f5545caa06),
+    ("mixer_fx_reverb_more", 0x9e7e4d1cddac9c0c),
     // HALL (its SIZE cell PLATE at SIZE 0) and GATE, each page (T10);
     // MORE re-recorded: the SYNC cell, and GATE's synced LENGTH (T12).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_hall", 0xfc941630851b83be),
+    ("mixer_fx_reverb_hall", 0xee42abcf28055f52),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_hall_more", 0x294f0d43d2e8e2bf),
     // HALL re-recorded as fitted (T10b): its knobs, SPREAD, MORE 2's DENSITY.
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_hall_more2", 0x17b7da341482dcdf),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate", 0x20ce834959d730b0),
+    ("mixer_fx_reverb_gate", 0x1959301cfa1bfc54),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_gate_more", 0x286d4c6b82bbf6ed),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate_sync", 0x8a41594bb680ee68),
+    ("mixer_fx_reverb_gate_sync", 0x7cbc1d7b8d07ecac),
     // BLOOM, each page (T11).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_bloom", 0x508fea4a2cbf10ed),
+    ("mixer_fx_reverb_bloom", 0x89b262d8d8284309),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_bloom_more", 0xb8c9a258c854705b),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_char", 0xc6fd6e6be7eb22e8),
+    ("mixer_fx_delay_char", 0x7479f1fb3a9df4bc),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master", 0x56a92de14c3c7d2f),
     #[cfg(not(feature = "master-tape"))]
@@ -154,29 +154,29 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_sends", 0xa0553c50ec8dd15a),
     // DLY's branch hides REV's label it ran into (TAPE Task 15).
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay", 0x6bfad50017562c25),
+    ("mixer_fx_delay", 0x364b8608736dd631),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb", 0x4a284e675148ec1d),
+    ("mixer_fx_reverb", 0xec89096986df2f47),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_more", 0x5112307c2ebf2d6d),
+    ("mixer_fx_reverb_more", 0xf5795852136e2c13),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall", 0xa14653a47fb15291),
+    ("mixer_fx_reverb_hall", 0x2d7e131c9a01535d),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_hall_more", 0x009f09dbbd885180),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_hall_more2", 0xd28a6bad16b350c0),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate", 0x588ed520be572fdb),
+    ("mixer_fx_reverb_gate", 0x0908875e4470c3a7),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_gate_more", 0xc5297468f739990e),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate_sync", 0x189823bdfed79d53),
+    ("mixer_fx_reverb_gate_sync", 0x1ae7fa73664a157f),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_bloom", 0x9aa85a2e46eeed12),
+    ("mixer_fx_reverb_bloom", 0x4653d819fbea6cd6),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_bloom_more", 0xc730d8e88bc28db4),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_char", 0x8efda1c817189d8f),
+    ("mixer_fx_delay_char", 0xf907b08d9f6706ab),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", 0xe4642868fa275a5c),
     #[cfg(feature = "master-tape")]

@@ -921,7 +921,7 @@ pub struct Level {
 /// `notes` at `vel` on `patch`, held `blocks`, measured over the hold
 /// (from the block the limiter's lookahead first lets through).
 pub fn level(patch: Patch, notes: &[u8], vel: u8, blocks: usize) -> Level {
-    let mut b = Bench::new(patch, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(patch, PartParams::default(), FxParams::OFF);
     let mut tape = Tape::default();
     for blk in 0..=blocks {
         if blk == 0 {
@@ -1001,7 +1001,7 @@ pub fn power(x: &[f32], n: usize) -> Vec<f64> {
 
 /// `notes` at `vel` on `patch`, held `blocks`: P1's left side, limited.
 pub fn p1_left(patch: Patch, notes: &[u8], vel: u8, blocks: usize) -> Vec<f32> {
-    let mut b = Bench::new(patch, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(patch, PartParams::default(), FxParams::OFF);
     let mut tape = Tape::default();
     for &n in notes {
         b.note(n, Some(vel));

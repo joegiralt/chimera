@@ -875,7 +875,7 @@ fn saw_bench() -> common::sweep::Bench {
     use chimera_core::dsp::fx_bus::FxParams;
     use chimera_core::part::PartParams;
     use common::sweep::{Bench, Patch};
-    let mut b = Bench::new(Patch::Probe, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(Patch::Probe, PartParams::default(), FxParams::OFF);
     b.edit_sound(|s| {
         s.params.algo = chimera_core::dsp::algo::params::AlgoParams::single(WaveId::SAW);
         s.params.filter.cutoff = 900.0;

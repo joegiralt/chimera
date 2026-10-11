@@ -103,14 +103,13 @@ pub struct ReverbParams {
     pub density: f32,
 }
 
-impl Default for ReverbParams {
-    fn default() -> Self {
-        Self {
+impl ReverbParams {
+    pub const DEFAULT: Self = Self {
             kind: ReverbType::Quad,
             time: 0.5,
             damping: 0.3,
             size: 0.5,
-            mix: 0.0,
+            mix: 1.0,
             tone: 0.3,
             diffuse: 0.4,
             predelay: 0.0,
@@ -119,7 +118,12 @@ impl Default for ReverbParams {
             rate: RATE_DEFAULT,
             sync: RevSync::Off,
             density: DENSITY_DEFAULT,
-        }
+    };
+}
+
+impl Default for ReverbParams {
+    fn default() -> Self {
+        Self::DEFAULT
     }
 }
 
@@ -900,7 +904,7 @@ pub static REVERB_SPECS: [ParamSpec; 13] = [
         ValFmt::Law(Law::Pct),
         0.0,
         1.0,
-        0.0,
+        1.0,
         1.0 / 128.0,
         false,
         Smoothing::Own,

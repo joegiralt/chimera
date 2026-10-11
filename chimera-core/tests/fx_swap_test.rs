@@ -275,7 +275,7 @@ fn project_b() -> FxParams {
 /// comp and the tape work on the delay's tail.
 fn solo(fx: Fx) -> FxParams {
     let a = project_a();
-    let mut p = FxParams::default();
+    let mut p = FxParams::OFF;
     match fx {
         Fx::Chorus => p.chorus = a.chorus,
         Fx::Reverb => p.reverb = a.reverb,
@@ -384,7 +384,7 @@ fn tape_settings_never_step_the_tail() {
     each_setting(Fx::Tape, solo(Fx::Tape));
 }
 
-/// A project to another, and to and from NEW (every effect off).
+/// A project to another, and to and from NEW (every return at unity).
 #[test]
 fn a_project_change_never_steps_the_tail() {
     let (a, b, new) = (project_a(), project_b(), FxParams::default());

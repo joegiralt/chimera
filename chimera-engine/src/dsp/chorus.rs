@@ -81,14 +81,19 @@ pub struct ChorusParams {
     pub mix: f32,
 }
 
+impl ChorusParams {
+    /// Juno I at unity return (sends spec § 4): the send sets the amount.
+    pub const DEFAULT: Self = Self {
+        mode: 1,
+        rate: 0.5,
+        depth: 0.5,
+        mix: 1.0,
+    };
+}
+
 impl Default for ChorusParams {
     fn default() -> Self {
-        Self {
-            mode: 0, // off by default
-            rate: 0.5,
-            depth: 0.5,
-            mix: 0.0,
-        }
+        Self::DEFAULT
     }
 }
 
@@ -116,7 +121,7 @@ pub static CHORUS_SPECS: [ParamSpec; 4] = [
         "MODE",
         ValFmt::Names(&MODE_NAMES),
         3.0,
-        0.0,
+        1.0,
         Change::Crossfade,
     )
     .ident("MODE")
@@ -153,7 +158,7 @@ pub static CHORUS_SPECS: [ParamSpec; 4] = [
         ValFmt::Uni,
         0.0,
         1.0,
-        0.0,
+        1.0,
         1.0 / 128.0,
         false,
         Smoothing::Own,
