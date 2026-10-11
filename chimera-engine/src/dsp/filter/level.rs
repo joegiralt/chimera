@@ -48,6 +48,10 @@ pub struct FilterMods<'a> {
     pub freq: Option<TapLane<'a>>,
     /// The Q taps (QM): RES moved by the lane, per sample.
     pub q: Option<TapLane<'a>>,
+    /// Only a knob moves `g` and `k` (no route or tap does): a glide's
+    /// block steps them `STEPS` times, each step on the steady loop, not
+    /// per sample (ADR 0117).
+    pub glide: bool,
 }
 
 impl FilterMods<'_> {
@@ -56,6 +60,7 @@ impl FilterMods<'_> {
         level_routed: false,
         freq: None,
         q: None,
+        glide: false,
     };
 }
 

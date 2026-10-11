@@ -1046,7 +1046,7 @@ pub type ScreenCase = (&'static str, fn(&mut UiState));
 /// after the Part's SENDS.
 const MST: usize = if cfg!(feature = "master-tape") { 6 } else { 5 };
 const DLY: usize = 3;
-const REV: usize = 4;
+pub const REV: usize = 4;
 #[cfg(feature = "master-tape")]
 const TAPE: usize = 5;
 
@@ -1530,7 +1530,64 @@ pub const CASES: &[ScreenCase] = &[
     ("mixer_fx_delay", |ui| to_fx(ui, DLY)),
     ("mixer_fx_reverb", |ui| {
         to_fx(ui, REV);
-        feed(ui, Input::turn(EncoderId::A, 20)); // GRIT
+        feed(ui, Input::turn(EncoderId::E, 40)); // SMEAR
+    }),
+    ("mixer_fx_reverb_more", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::turn(EncoderId::D, 20)); // RATE
+    }),
+    // HALL at SIZE 0: the SIZE cell reads PLATE (reverb TYPEs T10).
+    ("mixer_fx_reverb_hall", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 2)); // TYPE → HALL
+        feed(ui, Input::turn(EncoderId::B, -128)); // SIZE 0: PLATE
+    }),
+    ("mixer_fx_reverb_hall_more", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 2)); // TYPE → HALL
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::turn(EncoderId::B, 20)); // DAMP
+    }),
+    // REV › MORE 2: HALL's DENSITY alone (ADR 0095 § HALL, as built).
+    ("mixer_fx_reverb_hall_more2", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 2)); // TYPE → HALL
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE 2
+        feed(ui, Input::turn(EncoderId::A, 20)); // DENSITY
+    }),
+    ("mixer_fx_reverb_gate", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 4)); // TYPE → GATE
+        feed(ui, Input::turn(EncoderId::C, 10)); // TAIL
+    }),
+    ("mixer_fx_reverb_gate_more", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 4)); // TYPE → GATE
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::turn(EncoderId::B, 20)); // SHAPE
+    }),
+    // SYNC TIME, then LENGTH a note up: 1/8 (reverb TYPEs T12).
+    ("mixer_fx_reverb_gate_sync", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 4)); // TYPE → GATE
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::turn(EncoderId::E, 1)); // SYNC TIME: LENGTH 1/16D
+        feed(ui, Input::press(ButtonId::Edit)); // back to REV
+        feed(ui, Input::turn(EncoderId::B, 1)); // LENGTH 1/8
+    }),
+    // BLOOM: SWELL first, and MORE's two empty cells (reverb TYPEs T11).
+    ("mixer_fx_reverb_bloom", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 3)); // TYPE → BLOOM
+        feed(ui, Input::turn(EncoderId::B, -10)); // SWELL
+    }),
+    ("mixer_fx_reverb_bloom_more", |ui| {
+        to_fx(ui, REV);
+        feed(ui, Input::turn(EncoderId::A, 3)); // TYPE → BLOOM
+        feed(ui, Input::press(ButtonId::Edit)); // REV › MORE
+        feed(ui, Input::turn(EncoderId::A, 20)); // PRE-DLY
     }),
     ("mixer_fx_delay_char", |ui| {
         to_fx(ui, DLY);

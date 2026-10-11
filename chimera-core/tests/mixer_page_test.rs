@@ -92,6 +92,8 @@ fn every_mixer_slot_is_bound() {
             match slot.binding {
                 SlotBinding::Empty => {}
                 SlotBinding::Param(a) => assert!(a.spec().is_some(), "{} slot {i}", block.def.name),
+                // The reverb's TYPE names the slot (`reverb_panel_test`).
+                SlotBinding::ReverbPanel(..) if block.def.id == reg::EFX.id => {}
                 other => panic!("{} slot {i}: {other:?}", block.def.name),
             }
         }
@@ -171,14 +173,16 @@ fn fx_encoders_step_like_before() {
     assert_eq!(perf.fx.delay.time_ms, 375.0 + 2.0 * 8.0);
     turn_def(&reg::CHORUS, 0, 5, &mut perf);
     assert_eq!(perf.fx.chorus.mode, 3);
-    turn_def(&reg::EFX, 4, -1, &mut perf);
+    turn_def(&reg::EFX, 5, -1, &mut perf);
     assert_eq!(perf.fx.reverb.mix, 0.0);
-    turn_def(&reg::EFX, 4, 1, &mut perf);
+    turn_def(&reg::EFX, 5, 1, &mut perf);
     assert_eq!(perf.fx.reverb.mix, 1.0 / 128.0);
-    turn_def(&reg::EFX, 0, 5, &mut perf);
-    assert!((perf.fx.reverb.grit - (0.3 + 5.0 / 128.0)).abs() < 1e-6);
-    turn_def(&reg::EFX, 3, 1, &mut perf);
-    assert!((perf.fx.reverb.size - (0.5 + 1.0 / 31.0)).abs() < 1e-6);
+    turn_def(&reg::EFX, 4, 5, &mut perf);
+    assert!((perf.fx.reverb.smear - 5.0 / 128.0).abs() < 1e-6);
+    // QUAD's SIZE ticks its table step through the UI's panel turn
+    // (`the_reverb_pages_turn_by_the_panel`).
+    turn_def(&reg::EFX_MORE, 3, 2, &mut perf);
+    assert!((perf.fx.reverb.rate - (0.75 + 2.0 / 128.0)).abs() < 1e-6);
     turn_def(&reg::DELAY, 3, 64, &mut perf);
     assert_eq!(perf.fx.delay.rev_send, 0.5);
     turn_def(&reg::DELAY_CHAR, 0, 1, &mut perf);
@@ -393,26 +397,74 @@ fn the_delay_page_is_time_fdbk_tone_rev_mix_with_char_below() {
     assert_eq!(subs, [reg::DELAY_CHAR.id], "{}", chain.name);
 }
 
-/// FX diet spec § UI: TYPE's slot is GRIT; the rest keep their order.
+/// Reverb TYPEs spec § Pages: REV is TYPE · the TYPE's four · MIX, and
+/// QUAD's four are SIZE · TIME · DAMP · SMEAR; REV › MORE hangs under it
+/// with RATE.
 #[test]
-fn the_reverb_page_is_grit_time_damp_size_mix() {
+fn the_reverb_page_is_type_size_time_damp_smear_mix() {
     use chimera_core::dsp::reverb::ReverbParams;
+    use chimera_core::ui::view::{SlotCtx, view};
+    let ctx = SlotCtx::read(&chimera_core::params::ParamSnapshot::default(), Op::A);
     let at = |p| Some(ParamAddr::new(BlockRef::Reverb, p));
+    let shown = |def: &BlockDef| {
+        (0..6)
+            .map(|i| view(def, i, &ctx).addr())
+            .collect::<Vec<_>>()
+    };
     assert_eq!(
-        bound(&reg::EFX),
+        shown(&reg::EFX),
         [
-            at(ReverbParams::GRIT),
+            at(ReverbParams::TYPE),
+            at(ReverbParams::SIZE),
             at(ReverbParams::TIME),
             at(ReverbParams::DAMPING),
-            at(ReverbParams::SIZE),
+            at(ReverbParams::SMEAR),
             at(ReverbParams::MIX),
-            None
         ]
+    );
+    assert_eq!(
+        shown(&reg::EFX_MORE),
+        [None, None, None, at(ReverbParams::RATE), None, None]
     );
     assert_eq!(
         reg::EFX.viz,
         VizType::EffectsFlow(FxFlow::Effect(FxNode::Reverb))
     );
+    let rev = reg::MIXER_CHANNEL_CHAIN
+        .blocks
+        .iter()
+        .find(|b| b.def.id == reg::EFX.id)
+        .unwrap();
+    let subs: Vec<(u16, &str)> = rev.sub_pages.iter().map(|d| (d.id, d.short)).collect();
+    assert_eq!(subs, [(96, "MORE"), (97, "MOR2")]);
+}
+
+/// On the unit: REV's B ticks QUAD's SIZE a table step, A turns to GATE
+/// on its knobs and back to QUAD on its tweaked ones, and REV › MORE's D
+/// turns RATE.
+#[test]
+fn the_reverb_pages_turn_by_the_panel() {
+    let mut ui = UiState::new();
+    open_mixer(&mut ui, ButtonId::B1);
+    for _ in 0..3 {
+        ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
+    }
+    assert_eq!(ui.page_def().id, reg::EFX.id);
+    let rev = |ui: &UiState| ui.project().perf().fx.reverb;
+    turn(&mut ui, EncoderId::B, 1);
+    assert!((rev(&ui).size - (0.5 + 1.0 / 31.0)).abs() < 1e-6);
+    use chimera_core::dsp::reverb::ReverbType;
+    turn(&mut ui, EncoderId::A, 1);
+    // ROOM on its starting knobs: MidiVerb II program 5's SIZE (ADR 0095).
+    assert_eq!((rev(&ui).kind, rev(&ui).size), (ReverbType::Room, 0.644));
+    turn(&mut ui, EncoderId::A, -1);
+    assert_eq!(rev(&ui).kind, ReverbType::Quad);
+    assert!((rev(&ui).size - (0.5 + 1.0 / 31.0)).abs() < 1e-4);
+    ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
+    assert_eq!(ui.page_def().id, reg::EFX_MORE.id);
+    turn(&mut ui, EncoderId::D, 4);
+    // QUAD's knobs came back through `KnobMemory`'s 1/65 534 steps.
+    assert!((rev(&ui).rate - (0.75 + 4.0 / 128.0)).abs() < 1e-4);
 }
 
 #[test]
@@ -629,3 +681,36 @@ fn the_master_page_meters_gain_reduction() {
     );
     MASTER_GR.publish(0.0);
 }
+
+/// REV › MORE under HALL reads PRE-DLY as it plays: a SIZE move from
+/// elsewhere (a CC) into the plate zone pulls it to 0 ms, and the dirty
+/// render redraws the cells though no cell's own value moved.
+#[test]
+fn rev_more_redraws_the_plate_zones_predelay() {
+    use chimera_core::dsp::reverb::ReverbType;
+    use chimera_core::ui::perf::PerfStats;
+    let mut ui = UiState::new();
+    screen::to_fx(&mut ui, screen::REV);
+    {
+        let r = &mut ui.project_mut().edit_fx().reverb;
+        (r.kind, r.size, r.predelay) = (ReverbType::Hall, 0.5, 0.5);
+    }
+    screen::feed(&mut ui, screen::Input::press(ButtonId::Edit)); // REV › MORE
+    screen::settle(&mut ui);
+    let (perf, scope) = (PerfStats::zero(), screen::scope_fixture());
+    let mut fb = screen::Fb::new();
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+    ui.project_mut().edit_fx().reverb.size = 0.0;
+    screen::settle(&mut ui);
+    ui.render_dirty_with_scope(&mut fb, &perf, &scope);
+    let mut full = screen::Fb::new();
+    ui.render_with_audio(&mut full, &perf, None, &scope);
+    // Everything below the focus band. (The band's TAIL, drawn from the
+    // stored SIZE, is keyed on the focused cell only: a CC to a knob off
+    // the page leaves it stale too, for every composite.)
+    let rows = |f: &screen::Fb| f.px[FOCUS_BOTTOM * 240..].to_vec();
+    assert!(rows(&fb) == rows(&full), "REV › MORE kept a stale PRE-DLY");
+}
+
+/// The first pixel row under the focus band.
+const FOCUS_BOTTOM: usize = chimera_core::ui::theme::FOCUS_BOTTOM as usize;

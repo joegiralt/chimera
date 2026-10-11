@@ -933,11 +933,12 @@ fn a16_a17() -> AlgoParams {
 /// some counts below are one fewer.
 const TAPE: bool = cfg!(feature = "master-tape");
 
-/// FX diet spec § Intent and ADR 0031: with the bus at 1,180 (ADR 0055,
-/// ADR 0061; 1,490 with the master tape) and the modulator pool's floor
-/// (`ModRouting::BASE`, 47) added, the costliest patch gets six voices on
-/// rev V (6 × 915 + 1,180 = 6,670 ≤ 7,000; a seventh would be 7,585), and
-/// five on rev Y ((5,833 − 1,180) / 915 = 5.09; four with the tape),
+/// FX diet spec § Intent and ADR 0031: with the bus at 1,204 (BUS+V
+/// 1,188 of 2026-10-04 and the reverb's tail gate; 1,494 with the master
+/// tape) and the modulator pool's floor (`ModRouting::BASE`, 47) added,
+/// the costliest patch gets six voices on rev V (6 × 915 + 1,204 = 6,694
+/// ≤ 7,000; a seventh would be 7,609), and five on rev Y ((5,833 − 1,204)
+/// / 915 = 5.06; four with the tape),
 /// without FOLD or DRIVE, at LP24 (its SVF term 0). ADR 0040: the budget,
 /// not the eight-voice pool, is what stops it.
 #[test]
@@ -947,7 +948,7 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 915);
     let plain = 915 + LP24.0;
     assert_eq!(cost(&costliest()), cost(&p), "no pair has more links");
-    let bus = if TAPE { 1_490 } else { 1_180 };
+    let bus = if TAPE { 1_494 } else { 1_204 };
     assert_eq!(FxBus::COST.0, bus, "{:?}", FxBus::COST);
     assert_eq!(voices_at(CPU_HZ_REV_V, &p), 6);
     assert_eq!(MAX_VOICES, 8, "the budget stops it short of the pool");
@@ -1196,7 +1197,8 @@ fn modal_bills_each_model() {
         (sound(Bowed, 0.3, 0.5), 640, (8, 6), (7, 6)),
         (sound(Sympathetic, 0.0, 0.0), 470, (8, 8), (8, 7)),
         (sound(Sympathetic, 0.3, 0.0), 550, (8, 7), (8, 6)),
-        (sound(Sympathetic, 0.3, 0.5), 690, (7, 6), (7, 5)),
+        // One fewer on rev Y since the reverb's tail low-pass (+16).
+        (sound(Sympathetic, 0.3, 0.5), 690, (7, 5), (7, 5)),
         (sound(Modal, 0.3, 0.5), 1_840, (3, 2), (2, 2)),
     ] {
         let (rev_v, rev_y) = if cfg!(feature = "master-tape") {
@@ -1418,10 +1420,11 @@ fn orbit_and_a_burst_fit_beside_what_renders() {
     for keys_first in [true, false] {
         let (voices, most, kept) = stress(keys_first, STRESS_BLOCKS);
         // Six keys first, none stolen or shed once ORBIT starts; a block
-        // after, five voices beside ORBIT's reserve. The counts come out
-        // the same on the `master-tape` bus, so the assert takes no cfg.
-        assert_eq!(voices, if keys_first { 6 } else { 5 }, "{keys_first}");
-        assert!(kept || !keys_first, "a key stolen or shed");
+        // after, five voices beside ORBIT's reserve. On the `master-tape`
+        // bus five either way since the reverb's tail low-pass (+16).
+        let six = keys_first && !TAPE;
+        assert_eq!(voices, if six { 6 } else { 5 }, "{keys_first}");
+        assert!(kept || !six, "a key stolen or shed");
         let room = match keys_first {
             true => 0,
             false => Instrument::BURST.0 + OrbitRunner::COST.0,
@@ -1599,5 +1602,48 @@ fn vibrato_costs_no_level_heads() {
         assert_eq!(Voice::glide_cost(&p, &ModState::new()), Cost(0), "{m:?}");
         p.pitch.steal = Steal::Glide;
         assert_eq!(EngineSlot::cost(&p, &ModState::new()), base, "{m:?}");
+    }
+}
+
+/// Every audio path is billed at its measured cost: the reverb TYPE's extra
+/// over QUAD comes off the voice budget, so the dearest TYPE admits fewer
+/// voices, and a switch mid-play (both engines, the clear) sheds voices
+/// rather than overrun: once the fades end, the booked cost is in budget.
+#[test]
+fn the_reverb_type_is_paid_for_by_admission() {
+    use chimera_core::dsp::rev::{SWITCH_BILLED, extra_cost};
+    use chimera_core::dsp::reverb::ReverbType as T;
+    // Rev Y's budget leaves QUAD five A16 ∪ A17 voices and 70 to spare:
+    // BLOOM's extra (206) takes one.
+    let rig = || common::InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_Y));
+    let held = |kind: T| {
+        let mut r = rig();
+        r.shared.fx.reverb.kind = kind;
+        *r.shared.parts[5].params = a16_a17_sound();
+        r.render(2);
+        for k in 0..8 {
+            r.note_on(5, 36 + 6 * k);
+        }
+        r.render(4);
+        r.inst.sounding()
+    };
+    let (quad, bloom) = (held(T::Quad), held(T::Bloom));
+    eprintln!("admitted on rev Y: QUAD {quad}, BLOOM {bloom}");
+    assert!(extra_cost(T::Bloom) > Cost(0));
+    assert_eq!(quad, if TAPE { 4 } else { 5 });
+    // With the master tape QUAD's four leave 683 spare: BLOOM fits too.
+    assert_eq!(bloom, 4, "BLOOM {bloom} vs QUAD {quad}");
+
+    // QUAD → BLOOM → HALL → QUAD → ROOM mid-play: never more voices than
+    // the TYPE's budget holds once the switch and its fades are over.
+    let mut r = rig();
+    *r.shared.parts[5].params = a16_a17_sound();
+    for k in 0..8 {
+        r.note_on(5, 36 + 6 * k);
+    }
+    for kind in [T::Quad, T::Bloom, T::Hall, T::Quad, T::Room] {
+        r.shared.fx.reverb.kind = kind;
+        r.render(SWITCH_BILLED as usize + 40);
+        assert!(r.inst.cost_pct() <= 100, "{kind:?}: {}%", r.inst.cost_pct());
     }
 }

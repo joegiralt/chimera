@@ -186,11 +186,12 @@ fn ui_state_rest_under_4k() {
     // SOURCE cell (a load's `SourceCheck` 1 KB, the 16 heads, the
     // per-source memory's 512 B, the card's 64 rows; TAPE Task 17); 128 B
     // the filter types' (the LEVEL LEDs' holds and the matrix's taps: 88 B
-    // on their own, 128 beside TAPE's, padded); 3 KB the library's page,
-    // 48 rows of 60 B, and a pending load (its source streams in the
-    // SOURCE cell's slot).
+    // on their own, 128 beside TAPE's, padded); 192 B the reverb's (the
+    // TYPEs' knob memory, 108 B, and the cells' text keys); 3 KB the
+    // library's page, 48 rows of 60 B, and a pending load (its source
+    // streams in the SOURCE cell's slot).
     assert!(
-        rest <= 4096 + 512 + 2816 + 128 + 3072,
+        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072,
         "UiState grew to {rest} B besides its Project"
     );
 }
@@ -285,4 +286,23 @@ fn arena_needs_the_delay() {
         after(0) > hw::AXI_SRAM - 32 * 1024,
         "and would not with the f32 line (ADR 0087)"
     );
+}
+
+/// D2 holds the voices' Instrument, the DMA rings' reserve and the UI's
+/// knob publisher (ADR 0115), and keeps room: the figure ADR 0115 records.
+#[test]
+fn d2_holds_the_knob_publisher() {
+    use chimera_core::dsp::knobs::KnobPublisher;
+    let (inst, knobs) = (
+        size_of::<chimera_core::instrument::Instrument>(),
+        size_of::<KnobPublisher>(),
+    );
+    assert_eq!(knobs, hw::D2_KNOBS);
+    let used = inst + hw::D2_DMA_RESERVE + knobs;
+    eprintln!(
+        "D2: Instrument {inst} + DMA reserve {} + knobs {knobs} = {used} B, {} B free",
+        hw::D2_DMA_RESERVE,
+        hw::D2_SRAM - used
+    );
+    assert!(used <= hw::D2_SRAM);
 }

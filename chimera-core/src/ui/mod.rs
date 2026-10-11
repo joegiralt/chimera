@@ -30,6 +30,7 @@ pub mod perf;
 pub mod pool_page;
 pub mod region;
 pub mod renderer;
+pub mod reverb_panel;
 pub mod settings;
 pub mod source_cell;
 pub mod splash;
@@ -53,6 +54,7 @@ use crate::block::Block;
 use crate::boot::RomDfu;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
+use crate::dsp::reverb::KnobMemory;
 use crate::dsp::tape_engine::{Heads, TapeEngineParams, TapeModel};
 use crate::in_place::uninit_at;
 use crate::instrument::PartHeads;
@@ -287,6 +289,9 @@ pub struct UiState {
     lib: library::LibState,
     /// Each Part's filter LEVEL LED: its meter, held and falling.
     clip: [ClipHold; crate::hw::MAX_PARTS],
+    /// Each reverb TYPE's knobs as last left: a TYPE nudge away and back
+    /// loses nothing. RAM only; a project load clears it.
+    rev_knobs: KnobMemory,
 }
 
 /// How long the LEVEL LED takes to fall from a peak to dark.
@@ -366,6 +371,7 @@ crate::in_place::field_list!(UiState => UiState {
     src,
     lib,
     clip,
+    rev_knobs,
 });
 
 #[cfg(any(test, feature = "test-support"))]
@@ -449,6 +455,7 @@ impl UiState {
             addr_of_mut!((*p).orbit).write(orbit::OrbitUi::new());
             addr_of_mut!((*p).led).write(led::Led::OFF);
             addr_of_mut!((*p).dfu).write(None);
+            addr_of_mut!((*p).rev_knobs).write(KnobMemory::new());
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui
@@ -631,6 +638,7 @@ impl UiState {
         let note = project::boot_project(card, store, last, &mut self.project);
         self.show_note_or_skipped(note);
         self.orbit.booted(self.project.orbit_mut());
+        self.rev_knobs.clear();
         self.project_replaced(was);
     }
 
@@ -730,6 +738,9 @@ impl UiState {
         if busy {
             return (Some(published), out.event);
         }
+        // A project stores only its TYPE's knobs (reverb TYPEs spec § A
+        // TYPE change loads that TYPE's knobs).
+        self.rev_knobs.clear();
         self.project_replaced(was);
         // Only a file load sets it: NEW, loaded or fallen back to, has none.
         if let Some(f) = self.project.meta().file() {
@@ -867,6 +878,17 @@ impl UiState {
         &self.project
     }
 
+    /// Each reverb TYPE's knobs as last left.
+    pub fn rev_knobs(&self) -> &KnobMemory {
+        &self.rev_knobs
+    }
+
+    /// The knob memory, to fill before a load (tests only).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn rev_knobs_mut(&mut self) -> &mut KnobMemory {
+        &mut self.rev_knobs
+    }
+
     /// The cache is dropped first: a whole project assigned through this
     /// brings its own revision, which may be the one last hashed.
     pub fn project_mut(&mut self) -> &mut Project {
@@ -966,7 +988,9 @@ impl UiState {
     #[inline(never)]
     fn ctx(&self) -> SlotCtx {
         let sound = &self.project.part(self.active_part).sound;
-        let ctx = SlotCtx::read(&sound.params, self.sel_op).on_clock(self.orbit.status.source);
+        let ctx = SlotCtx::read(&sound.params, self.sel_op)
+            .on_clock(self.orbit.status.source)
+            .on_rev(&self.project.perf().fx.reverb);
         let base = view::SourceState::of(ctx.tape, sound.source_ref(), self.project.pool());
         let ctx = ctx.on_source(self.src.state(self.active_part, base, &self.project));
         match self.loc.orbit() {
@@ -2355,6 +2379,18 @@ impl UiState {
                     self.jog.turn(delta, controls.now_ms().0);
                     continue;
                 }
+                // The reverb turns by its TYPE's panel, and TYPE keeps the
+                // knobs it leaves (reverb TYPEs spec § Pages).
+                if let Some(a) = v.addr()
+                    && a.block == BlockRef::Reverb
+                    && (!shift
+                        || reverb_panel::whole_ticks(&self.project.perf().fx.reverb, a.param))
+                {
+                    let (tempo, _) = crate::meter::rev_clock();
+                    let rev = &mut self.project.edit_part(at).fx.reverb;
+                    *rev = reverb_panel::turn(rev, a.param, delta, &mut self.rev_knobs, tempo);
+                    continue;
+                }
                 let params = &mut UiBlocks {
                     project: &mut self.project,
                     part: at,
@@ -2702,6 +2738,7 @@ impl UiState {
             card: self.card,
             master_gr_db: crate::meter::MASTER_GR.read(),
             clip: self.clip[self.active_part.index()].fill(),
+            rev_clock: crate::meter::rev_clock(),
             clock: self.clock,
             fx: &self.project.perf().fx,
             orbit,
@@ -2794,7 +2831,12 @@ impl UiState {
                 self.prime_status,
             )
             .with_set(region::quantize(self.renderer.set[f.focus].current()))
-            .with_text(f.orbit_focus.as_ref().map_or(0, |o| o.key()), f.hints)
+            .with_text(
+                f.orbit_focus
+                    .as_ref()
+                    .map_or_else(|| rev_clock_key(f), |o| o.key()),
+                f.hints,
+            )
             .animated(glyph::anim_key(
                 shown.is_some_and(|g| g.animates()),
                 f.clock.frame(),
@@ -2824,6 +2866,7 @@ impl UiState {
                     core::array::from_fn(|i| renderer::mod_info(f, i).map(f32::to_bits)),
                 )
                 .keyed(self.matrix_state.rev, looks | renderer::led_key(f) << 12)
+                .with_text_key(rev_text_key(f))
             }
             RegionKind::Nav => RegionData::nav(
                 chain,
@@ -3111,6 +3154,7 @@ fn nav_cx(project: &Project) -> NavCtx {
     let live = project.orbit().live();
     NavCtx {
         engines: PartId::ALL.map(|p| project.part(p).sound.engine()),
+        rev: project.perf().fx.reverb.kind,
         dyn_rows: 0,
         orbit: OrbitCx {
             targets: live.rings.map(|r| r.target.part()),
@@ -3123,6 +3167,33 @@ fn page_def(at: Location, cx: &NavCtx) -> &'static BlockDef {
     at.page(cx)
         .and_then(|(c, p)| c.def_at(p))
         .unwrap_or(&NO_PAGE)
+}
+
+/// What a reverb panel's cells read beyond their own values: HALL's plate
+/// zone (the SIZE cell's `PLATE`) and the PRE-DLY it plays there, which a
+/// SIZE CC moves while REV › MORE shows only PRE-DLY's stored knob; and
+/// the clock a synced cell's note reads. 0 on any other page. Bits 0–15
+/// PRE-DLY, 16 the plate, 17–40 the clock (`rev_clock_key`).
+fn rev_text_key(f: &renderer::Frame) -> u64 {
+    if !is_rev_page(f) {
+        return 0;
+    }
+    let pre = crate::dsp::reverb::plate_pull(&f.fx.reverb).predelay;
+    region::quantize(pre) as u64 | (f.ctx.plate as u64) << 16 | (rev_clock_key(f) as u64) << 17
+}
+
+/// The tempo and fold a synced reverb cell reads (`meter::clock_word`);
+/// 0 off the reverb's pages.
+fn rev_clock_key(f: &renderer::Frame) -> u32 {
+    if !is_rev_page(f) {
+        return 0;
+    }
+    let (t, fold) = f.rev_clock;
+    crate::meter::clock_word(t, fold)
+}
+
+fn is_rev_page(f: &renderer::Frame) -> bool {
+    (0..f.def.params.len()).any(|i| view::is_reverb_panel(f.def, i))
 }
 
 #[cfg(test)]
