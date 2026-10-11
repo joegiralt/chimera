@@ -111,6 +111,10 @@ fn block_35_is_va() {
 }
 
 #[test]
-fn wave_cell_draws_an_arc() {
-    assert_eq!(VA_SPECS[VaParams::WAVE1.0 as usize].glyph, FocusGlyph::Arc);
+fn wave_draws_its_scope() {
+    use chimera_core::ui::glyph::{VaGlyph, VaOsc};
+    assert_eq!(
+        VA_SPECS[VaParams::WAVE1.0 as usize].glyph,
+        FocusGlyph::Va(VaGlyph::Wave(VaOsc::One))
+    );
 }

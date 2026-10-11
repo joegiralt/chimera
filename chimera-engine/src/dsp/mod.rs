@@ -158,6 +158,7 @@ pub mod halfband;
 pub mod knobs;
 pub mod lfo;
 pub mod limiter;
+pub mod master_out;
 pub mod modal;
 pub mod modulator;
 pub mod provenance;

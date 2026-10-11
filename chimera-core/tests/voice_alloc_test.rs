@@ -1,11 +1,14 @@
 //! Digitone-style voice allocation (instrument-core spec § Voice allocation).
 
 use chimera_core::MidiNote;
-use chimera_core::hw::{CPU_HZ_REV_V, Cost, MAX_VOICES, SampleBudget};
+use chimera_core::hw::{AUDIO_BUDGET_PERCENT, CPU_HZ_REV_V, Cost, MAX_VOICES, SampleBudget};
 use chimera_core::part::PartMode::{self, Mono, Poly};
 use chimera_core::voice_alloc::{Alloc, Allocator};
 
-const BUDGET: SampleBudget = SampleBudget::for_cpu(CPU_HZ_REV_V);
+/// The 7,000 cycles a sample these scenarios' bills were written against,
+/// whatever share of the chip audio gets.
+const BUDGET: SampleBudget =
+    SampleBudget::for_cpu((7_000 * 4_800_000 / AUDIO_BUDGET_PERCENT as u64) as u32);
 const NOTE_COST: Cost = Cost(610);
 const NONE: Cost = Cost::ZERO;
 

@@ -18,8 +18,8 @@ use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_def::{BlockDef, slot_addr};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::glyph::{
-    Accidental, Braid, CompositeId, FocusGlyph, Gauge, Rings, StaffNote, anim_key, gauge,
-    wave_trace,
+    Accidental, Braid, CompositeId, FocusGlyph, Gauge, Reads, Rings, StaffNote, VaGlyph, VaOsc,
+    anim_key, gauge, wave_trace,
 };
 use chimera_core::ui::page::{PageId, PageKey, PageLayout};
 use chimera_core::ui::region::{RegionData, RegionKind};
@@ -42,7 +42,9 @@ const CUBE: FocusGlyph = FocusGlyph::Composite(CompositeId::Reverb);
 const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     // Word choices: the word is the value, there is no amount to gauge.
     ("Modal", "MODE", NONE),
-    ("Va", "MODE", NONE),
+    ("Va", "MODE", FocusGlyph::Va(VaGlyph::Mode)),
+    ("Va", "WAVE1", FocusGlyph::Va(VaGlyph::Wave(VaOsc::One))),
+    ("Va", "WAVE2", FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two))),
     ("TapeEngine", "MODEL", NONE),
     ("TapeEngine", "TYPE", NONE),
     ("TapeEngine", "SLICE", NONE),
@@ -81,10 +83,11 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Out", "SEND2", LEVEL),
     ("Out", "SEND3", LEVEL),
     ("Tape", "MIX", LEVEL),
-    ("Va", "AMOUNT", XF),
+    ("Va", "AMOUNT", FocusGlyph::Va(VaGlyph::Blend)),
     ("Va", "SUB", LEVEL),
     ("Comp", "MAKEUP", LEVEL),
     ("Comp", "MIX", LEVEL),
+    ("Comp", "VOL", LEVEL),
     // The chorus, all four params: the braid.
     ("Chorus", "MODE", BRAID),
     ("Chorus", "RATE", BRAID),
@@ -125,6 +128,8 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Theme", "GAMMA", NONE),
     ("Theme", "ACCENT", NONE),
     ("Theme", "HINTS", SWITCH),
+    ("Theme", "INVERT", SWITCH),
+    ("Theme", "SAVER", NONE),
     ("Midi", "SYNC", NONE),
     ("OrbitChords", "KEY", NONE),
     ("OrbitChords", "SCALE", NONE),
@@ -350,15 +355,23 @@ fn each_glyph_maps_to_its_gauge() {
             FocusGlyph::Composite(CompositeId::ChorusBraid) => Gauge::Switch { on: 9.0 },
             FocusGlyph::Composite(CompositeId::DelayRings) => Gauge::Switch { on: 8.0 },
             FocusGlyph::Composite(CompositeId::Reverb) => Gauge::Switch { on: 7.0 },
+            FocusGlyph::Va(VaGlyph::Wave(VaOsc::One)) => Gauge::Switch { on: 10.0 },
+            FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two)) => Gauge::Switch { on: 11.0 },
+            FocusGlyph::Va(VaGlyph::Mode) => Gauge::Switch { on: 12.0 },
+            FocusGlyph::Va(VaGlyph::Blend) => Gauge::Switch { on: 13.0 },
             _ => Gauge::Arc {
                 value: 0.25,
                 bipolar: true,
             },
         };
-        let composite = |id| match id {
-            CompositeId::ChorusBraid => Gauge::Switch { on: 9.0 },
-            CompositeId::DelayRings => Gauge::Switch { on: 8.0 },
-            CompositeId::Reverb => Gauge::Switch { on: 7.0 },
+        let composite = |reads| match reads {
+            Reads::Composite(CompositeId::ChorusBraid) => Gauge::Switch { on: 9.0 },
+            Reads::Composite(CompositeId::DelayRings) => Gauge::Switch { on: 8.0 },
+            Reads::Composite(CompositeId::Reverb) => Gauge::Switch { on: 7.0 },
+            Reads::Va(VaGlyph::Wave(VaOsc::One)) => Gauge::Switch { on: 10.0 },
+            Reads::Va(VaGlyph::Wave(VaOsc::Two)) => Gauge::Switch { on: 11.0 },
+            Reads::Va(VaGlyph::Mode) => Gauge::Switch { on: 12.0 },
+            Reads::Va(VaGlyph::Blend) => Gauge::Switch { on: 13.0 },
         };
         assert_eq!(gauge(g, 0.25, ValFmt::Bi, composite), want, "{g:?}");
     }

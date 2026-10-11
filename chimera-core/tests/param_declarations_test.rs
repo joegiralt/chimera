@@ -343,6 +343,9 @@ const OWN_OUTSIDE: &[&str] = &[
     "Comp REL",
     "Comp MAKEUP",
     "Comp MIX",
+    // The master VOL and PAN, `Ease`d after the limiter (`MasterOut`).
+    "Comp VOL",
+    "Comp PAN",
     // The Part's pan × LEVEL gains, `Ease`.
     "Part LEVEL",
     "Part PAN",

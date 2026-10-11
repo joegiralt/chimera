@@ -11,7 +11,7 @@ const V: BlockBudget = BlockBudget::for_cpu(480_000_000);
 fn load_is_a_percentage_of_the_block_deadline() {
     assert_eq!(load_percent(0, V), 0);
     assert_eq!(load_percent(320_000, V), 50);
-    assert_eq!(load_percent(448_000, V), 70);
+    assert_eq!(load_percent(480_000, V), 75);
     assert_eq!(load_percent(640_000, V), 100);
 }
 

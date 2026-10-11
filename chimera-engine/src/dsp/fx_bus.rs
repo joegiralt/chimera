@@ -21,6 +21,7 @@ use crate::dsp::comp::{CompParams, MasterComp};
 use crate::dsp::delay::{DelayParams, TapeDelay};
 use crate::dsp::ease::{Ease, ease_coeff};
 use crate::dsp::limiter::{DacBlocks, Limiter};
+use crate::dsp::master_out::MasterOut;
 use crate::dsp::rev::Reverb;
 use crate::dsp::rev::sync::Tempo;
 use crate::dsp::reverb::ReverbParams;
@@ -90,14 +91,16 @@ pub struct FxBus {
     tape: Tape,
     comp: MasterComp,
     limiter: Limiter,
+    /// Master VOL and PAN, after the limiter.
+    master_out: MasterOut,
     /// REV SEND, eased.
     rev_send: Ease,
 }
 
 #[cfg(feature = "master-tape")]
-crate::in_place::field_list!(FxBus => FxBus { chorus, delay, reverb, tape, comp, limiter, rev_send });
+crate::in_place::field_list!(FxBus => FxBus { chorus, delay, reverb, tape, comp, limiter, master_out, rev_send });
 #[cfg(not(feature = "master-tape"))]
-crate::in_place::field_list!(FxBus => FxBus { chorus, delay, reverb, comp, limiter, rev_send });
+crate::in_place::field_list!(FxBus => FxBus { chorus, delay, reverb, comp, limiter, master_out, rev_send });
 
 impl Default for FxBus {
     fn default() -> Self {
@@ -132,6 +135,7 @@ impl FxBus {
             tape: Tape::new(),
             comp: MasterComp::new(),
             limiter: Limiter::new(),
+            master_out: MasterOut::new(),
             rev_send: Ease::default(),
         }
     }
@@ -149,6 +153,7 @@ impl FxBus {
             Tape::init_in_place(uninit_at(addr_of_mut!((*p).tape)));
             MasterComp::init_in_place(uninit_at(addr_of_mut!((*p).comp)));
             Limiter::init_in_place(uninit_at(addr_of_mut!((*p).limiter)));
+            addr_of_mut!((*p).master_out).write(MasterOut::new());
             addr_of_mut!((*p).rev_send).write(Ease::default());
             slot.assume_init_mut()
         }
@@ -207,11 +212,14 @@ impl FxBus {
         self.comp.process(out, &params.comp, sample_rate);
     }
 
-    /// The output stage, after the master section: the output trim and the
-    /// peak limiter, one block late (ADR 0050). `dac.out()` is then the
-    /// block for the DACs.
-    pub fn limit(&mut self, dac: &mut DacBlocks, sample_rate: u32) {
+    /// The output stage, after the master section: the output gain and the
+    /// peak limiter, one block late (ADR 0050), then the master VOL and PAN
+    /// (`MasterOut`, after the limiter so the fader never moves its
+    /// behaviour). `dac.out()` is then the block for the DACs.
+    pub fn limit(&mut self, dac: &mut DacBlocks, params: &FxParams, sample_rate: u32) {
         self.limiter.process(dac, sample_rate);
+        self.master_out
+            .apply(dac.out_mut(), &params.comp, sample_rate);
     }
 
     /// The reverb, for reading its arena and state.

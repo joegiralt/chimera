@@ -53,7 +53,7 @@ fn chain_is_va_then_the_voice_chain() {
 fn va_page_cells() {
     assert_eq!(
         labels(&VA_HOME),
-        ["WAVE1", "WAVE2", "MODE", "AMNT", "SUB", "STAB"]
+        ["WAVE1", "WAVE2", "MODE", "BLEND", "SUB", "STABILITY"]
     );
     assert_eq!(
         addrs(&VA_HOME),
@@ -114,11 +114,10 @@ fn mode_names_fit_the_cell() {
     }
     for def in [&VA_HOME, &VA_OSC1, &VA_OSC2] {
         for i in 0..6 {
+            // The cell draws its label in FONT_LABEL, tracked.
             let l = view::view(def, i, &c).label();
-            assert!(
-                draw::text_width(&theme::FONT_VALUE, l, 0) <= theme::CELL_COL_W - 4,
-                "{l}"
-            );
+            let w = draw::text_width(&theme::FONT_LABEL, l, theme::LABEL_TRACKING);
+            assert!(w <= theme::CELL_BAR_W, "{l}: {w} px");
         }
     }
 }

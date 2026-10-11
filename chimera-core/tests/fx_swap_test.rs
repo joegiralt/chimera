@@ -217,6 +217,7 @@ fn project_a() -> FxParams {
             release: 0.5,
             makeup: 0.1,
             mix: 1.0,
+            ..CompParams::default()
         },
         tape: TapeParams {
             drive: 0.5,
@@ -261,6 +262,7 @@ fn project_b() -> FxParams {
             release: 0.8,
             makeup: 0.3,
             mix: 0.7,
+            ..CompParams::default()
         },
         tape: TapeParams {
             drive: 0.2,
