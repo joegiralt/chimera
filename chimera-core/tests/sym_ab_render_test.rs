@@ -2,7 +2,7 @@
 //! FOLD 0.3, SYM swept 0 -> 1 over the render, to `$SYM_AB_OUT/<name>.wav`
 //! (48 kHz 16-bit stereo, peak-normalised to -3 dBFS).
 //!
-//! `SYM_AB_OUT=dir SYM_AB_NAME=sym_sweep_fold0.3_new cargo test -p chimera-core
+//! `SYM_AB_OUT=dir SYM_AB_NAME=sym_sweep_fold0.3 cargo test -p chimera-core
 //!  --test sym_ab_render_test -- --ignored`
 
 mod common;

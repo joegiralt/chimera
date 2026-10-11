@@ -6,10 +6,10 @@ use crate::params::FolderParams;
 use crate::taps::TapLane;
 
 /// Post-filter wavefolder.
-/// Folds the signal by reflecting it at ±1 boundaries. SYM's bias, added
-/// after the gain and ramped in with FOLD, shapes the fold, not the level:
-/// silence folds to silence. FOLD, SYM and MIX ramp across each block;
-/// below FOLD 0.001 the gate fades the fold out over 20 ms, then rests.
+/// Folds the signal by reflecting it at ±1 boundaries. SYM's bias shapes
+/// the fold, not the level: silence folds to silence. FOLD, SYM and MIX
+/// ramp across each block; below FOLD 0.001 the gate fades the fold
+/// out over 20 ms, then rests.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Wavefolder {
     fold: Ramp,
@@ -64,13 +64,13 @@ impl Wavefolder {
             return Self::tapped(b, (f, y, m, g), t);
         }
         if f.0 == f.1 && y.0 == y.1 && m.0 == m.1 && g == (1.0, 1.0) {
-            let (fold, sym, mix) = (f.1, y.1, m.1); // SYM and FOLD set the bias
+            let (fold, sym, mix) = (f.1, y.1, m.1); // SYM 0.5: no bias
             let gain = 1.0 + fold * fold * 6.0; // quadratic gain ramp
-            let bias = sym_bias(sym, fold);
-            let rest = fold_wave(bias);
+            let bias = (sym - 0.5) * 0.5;
+            let rest = fold_wave(bias * gain);
             for sample in buf.iter_mut() {
                 let dry = *sample;
-                let folded = fold_wave(dry * gain + bias) - rest;
+                let folded = fold_wave((dry + bias) * gain) - rest;
                 *sample = dry * (1.0 - mix) + folded * mix;
             }
             return;
@@ -79,11 +79,11 @@ impl Wavefolder {
             for (j, sub) in buf.as_chunks_mut::<SUB>().0.iter_mut().enumerate() {
                 let (fold, sym, mix) = (step_to(f, j), step_to(y, j), step_to(m, j));
                 let gain = 1.0 + fold * fold * 6.0;
-                let bias = sym_bias(sym, fold);
-                let rest = fold_wave(bias);
+                let bias = (sym - 0.5) * 0.5;
+                let rest = fold_wave(bias * gain);
                 for sample in sub {
                     let dry = *sample;
-                    let folded = fold_wave(dry * gain + bias) - rest;
+                    let folded = fold_wave((dry + bias) * gain) - rest;
                     *sample = dry * (1.0 - mix) + folded * mix;
                 }
             }
@@ -91,12 +91,17 @@ impl Wavefolder {
         }
         let n = buf.len();
         let (sf, sy, sm, sg) = (step_of(f, n), step_of(y, n), step_of(m, n), step_of(g, n));
+        // Silence's fold at the block's ends, lerped between: one fold a
+        // sample, not two.
+        let rest = |fold: f32, sym: f32| fold_wave((sym - 0.5) * 0.5 * (1.0 + fold * fold * 6.0));
+        let r = (rest(f.0, y.0), rest(f.1, y.1));
+        let sr = step_of(r, n);
         for (i, sample) in buf.iter_mut().enumerate() {
             let (fold, sym) = (at(f.0, sf, i), at(y.0, sy, i));
             let mix = at(m.0, sm, i) * at(g.0, sg, i);
             let dry = *sample;
-            let (bias, gain) = (sym_bias(sym, fold), 1.0 + fold * fold * 6.0);
-            let folded = fold_wave(dry * gain + bias) - fold_wave(bias);
+            let (bias, gain) = ((sym - 0.5) * 0.5, 1.0 + fold * fold * 6.0);
+            let folded = fold_wave((dry + bias) * gain) - at(r.0, sr, i);
             *sample = dry * (1.0 - mix) + folded * mix;
         }
     }
@@ -111,11 +116,11 @@ impl Wavefolder {
         let (sf, sy, sm, sg) = (step_of(f, n), step_of(y, n), step_of(m, n), step_of(g, n));
         for (i, sample) in buf.iter_mut().enumerate() {
             let fold = clampf(at(f.0, sf, i) + t.at(i), 0.0, 1.0);
+            let bias = (at(y.0, sy, i) - 0.5) * 0.5;
             let mix = at(m.0, sm, i) * at(g.0, sg, i);
-            let bias = sym_bias(at(y.0, sy, i), fold);
             let gain = 1.0 + fold * fold * 6.0;
             let dry = *sample;
-            let folded = fold_wave(dry * gain + bias) - fold_wave(bias);
+            let folded = fold_wave((dry + bias) * gain) - fold_wave(bias * gain);
             *sample = dry * (1.0 - mix) + folded * mix;
         }
     }
@@ -123,18 +128,6 @@ impl Wavefolder {
 
 /// FOLD's, SYM's, MIX's and the gate's `(from, to)` for a block.
 type Ends = ((f32, f32), (f32, f32), (f32, f32), (f32, f32));
-
-/// SYM's bias span, post-gain: |bias| <= 0.9 stays off the fold point (1).
-const SYM_SPAN: f32 = 1.8;
-/// FOLD at which SYM's bias is fully in; below it the bias ramps in.
-const SYM_RAMP: f32 = 0.25;
-
-/// SYM's bias in post-gain units, ramped in with FOLD. It moves neither
-/// with the gain (no sign flip as FOLD turns) nor the level (`fold_wave`
-/// is 1-Lipschitz).
-fn sym_bias(sym: f32, fold: f32) -> f32 {
-    (sym - 0.5) * SYM_SPAN * (fold / SYM_RAMP).min(1.0)
-}
 
 /// Triangle-fold: reflects signal at ±1 boundaries, keeping output in -1..1.
 fn fold_wave(x: f32) -> f32 {
@@ -168,37 +161,6 @@ mod tests {
             let mut buf = [0.0f32; 64];
             f.process(&mut buf, &p, true, None);
             assert!(buf.iter().all(|&x| x.abs() < 1e-6), "SYM {symmetry}");
-        }
-    }
-
-    /// A one-block joint jump of FOLD and SYM through the ramp path folds
-    /// each sample as the law does at its own FOLD and SYM: no bump
-    /// mid-block from a silence term lerped between the ends.
-    #[test]
-    fn a_joint_jump_follows_the_law_each_sample() {
-        let mut f = Wavefolder::new();
-        let mut warm = [0.0f32; BLOCK_SIZE];
-        let at0 = FolderParams {
-            fold: 0.0,
-            symmetry: 0.5,
-            mix: 1.0,
-        };
-        f.process(&mut warm, &at0, true, None);
-        let dry: [f32; BLOCK_SIZE] = core::array::from_fn(|i| 0.7 * (i as f32 * 0.37).sin());
-        let mut buf = dry;
-        let jump = FolderParams {
-            fold: 0.5,
-            symmetry: 1.0,
-            mix: 1.0,
-        };
-        f.process(&mut buf, &jump, true, None);
-        let n = BLOCK_SIZE as f32;
-        for (i, (&out, &x)) in buf.iter().zip(&dry).enumerate() {
-            let k = (i + 1) as f32 / n;
-            let (fold, sym) = (0.5 * k, 0.5 + 0.5 * k);
-            let bias = sym_bias(sym, fold);
-            let want = fold_wave(x * (1.0 + fold * fold * 6.0) + bias) - fold_wave(bias);
-            assert!((out - want).abs() < 1e-5, "sample {i}: {out} vs {want}");
         }
     }
 }

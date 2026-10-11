@@ -200,6 +200,8 @@
 
 ### Task 7: SYM's bias-only fold law
 
+> **Reverted 2026-10-11 by the owner's verdict** (the A/B was inaudible): `wavefolder.rs` is back to main's, `wavefolder_sym_test.rs` is gone. Today's law stays.
+
 **Files:**
 - Modify: `chimera-engine/src/dsp/wavefolder.rs` (all three paths: steady, glide sub-blocks, ramp and tapped)
 - Test: the `wavefolder.rs` unit tests, plus `param_sweep_test`

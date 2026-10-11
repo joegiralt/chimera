@@ -99,6 +99,8 @@ labels become the slot names.
 
 ### 3a. SYM: what the code does (finding) and the fix
 
+> **Reverted 2026-10-11 by the owner's verdict** (the A/B was inaudible): the fix below was dropped and today's fold law stays, bit-identical to main. The text records the finding and the dropped fix.
+
 SYM is wired end to end: `FolderParams::symmetry` → `Wavefolder::process`
 (`dsp/wavefolder.rs`), a `Knobs` glide (`knobs.rs`), ramps and cost in
 `voice.rs`. It is not a dead param. It is inaudible over most of FOLD:
@@ -262,7 +264,7 @@ Consequences:
 - [ ] `mix_parts` and the bench read the Sound's sends.
 - [ ] AMP (every chain using `FOLDER`, VA too) is CHORUS · DELAY · REVERB / FOLD · VEL · MIX; AMP › SYM holds SYM; mixer SENDS shows the same three values.
 - [ ] Labels CHORUS, DELAY, REVERB fit `CELL_BAR_W`; REVERB's hint names the TYPE, CHORUS's the MODE, FOLD/VEL/MIX hint `EDIT ▾ SYM`.
-- [ ] SYM's bias-only law passes the § 3a gate; owner A/B by ear done.
+- [x] SYM's bias-only law reverted by the owner (2026-10-11); today's law stays.
 - [ ] NEW: chorus MODE I, every MIX 1.0; a send turned up on a NEW project is heard with no other knob.
 - [ ] A pre-change project loads with each Part's sends in its Sound, `lossy`, `ProjectStatus::Modified`; a pre-change Sound loads with sends 0.
 - [ ] Saving a Sound to the pool or the library and loading it into another Part brings its sends.
