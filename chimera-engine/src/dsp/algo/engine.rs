@@ -38,6 +38,11 @@ pub struct AlgoLive {
     pub detune: [f32; OPS],
     pub feedback: [f32; OPS],
     pub velocity: [f32; OPS],
+    /// The formant operators' glided settings (the kernels read them from
+    /// Task 10).
+    pub frmt: [f32; OPS],
+    pub bw: [f32; OPS],
+    pub vowel: f32,
     /// LEVELs with a mod route (`ModState::algo_levels_routed`): live even
     /// at a stored 0, as `cost` bills them.
     pub routed: [bool; OPS],
@@ -57,6 +62,9 @@ impl AlgoLive {
             detune: op(|o| f32::from(o.detune)),
             feedback: op(|o| f32::from(o.feedback)),
             velocity: op(|o| f32::from(o.velocity)),
+            frmt: op(|o| f32::from(o.frmt)),
+            bw: op(|o| f32::from(o.bw)),
+            vowel: f32::from(p.vowel),
             routed: [false; OPS],
             morph_routed: false,
         }
@@ -66,6 +74,7 @@ impl AlgoLive {
     fn slot(&mut self, addr: ParamAddr) -> Option<&mut f32> {
         Some(match (addr.block, addr.param) {
             (BlockRef::Algo, AlgoParams::MORPH) => &mut self.morph,
+            (BlockRef::Algo, AlgoParams::VOWEL) => &mut self.vowel,
             (BlockRef::AlgoOp(op), id) => {
                 let i = op.index();
                 match id {
@@ -74,6 +83,8 @@ impl AlgoLive {
                     AlgoOpParams::DETUNE => &mut self.detune[i],
                     AlgoOpParams::FEEDBACK => &mut self.feedback[i],
                     AlgoOpParams::VELOCITY => &mut self.velocity[i],
+                    AlgoOpParams::FRMT => &mut self.frmt[i],
+                    AlgoOpParams::BW => &mut self.bw[i],
                     _ => return None,
                 }
             }
@@ -198,6 +209,8 @@ impl AlgoEngine {
                 let kind = p.kinds().get(i);
                 ops += match kind {
                     OpKind::Table(_) => Self::COST_OP.0,
+                    // SKIRT 0 keeps one lane open at a time.
+                    OpKind::Formant if p.ops[i].skirt == 0 => Self::COST_FRMT_ONE.0,
                     OpKind::Formant => Self::COST_FRMT.0,
                     OpKind::Noise => Self::COST_NOIS.0,
                 };

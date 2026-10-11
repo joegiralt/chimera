@@ -68,6 +68,16 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
             let span = (Bpm::MAX - Bpm::MIN) as f32;
             let _ = write!(buf, "{}", Bpm::MIN + libm::roundf(val * span) as u16);
         }
+        // The stored value, not 0..1: the range isn't in the format.
+        ValFmt::LogHz { base, per_octave } => {
+            hz_text(
+                buf,
+                libm::roundf(f32::from(base) * libm::exp2f(val / f32::from(per_octave))) as i32,
+            );
+        }
+        ValFmt::Vowel => {
+            let _ = buf.write_str(["U", "O", "A", "E", "I"][((val / 25.0 + 0.5) as usize).min(4)]);
+        }
     }
 }
 
@@ -86,6 +96,18 @@ pub(crate) fn fixed(buf: &mut FmtBuf, x: f32, places: u32, unit: &str) {
     } else {
         write!(buf, "{sign}{}.{:02$}{unit}", n / k, n % k, places as usize)
     };
+}
+
+/// Whole Hz under 1 kHz, then kHz to 3 figures.
+fn hz_text(buf: &mut FmtBuf, hz: i32) {
+    use core::fmt::Write;
+    if hz < 1000 {
+        let _ = write!(buf, "{hz} Hz");
+    } else if hz < 9995 {
+        fixed(buf, hz as f32 / 1000.0, 2, " kHz");
+    } else {
+        fixed(buf, hz as f32 / 1000.0, 1, " kHz");
+    }
 }
 
 fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
@@ -122,16 +144,7 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
             }
         }
         // Whole Hz under 1 kHz, then kHz to 3 figures.
-        Law::Cutoff => {
-            let hz = round(CUTOFF_HZ.at(v));
-            if hz < 1000 {
-                let _ = write!(buf, "{hz} Hz");
-            } else if hz < 9995 {
-                fixed(buf, hz as f32 / 1000.0, 2, " kHz");
-            } else {
-                fixed(buf, hz as f32 / 1000.0, 1, " kHz");
-            }
-        }
+        Law::Cutoff => hz_text(buf, round(CUTOFF_HZ.at(v))),
         _ => {
             let s = law.range().map_or(0.0, |r| r.at(v));
             let ms = s * 1000.0;

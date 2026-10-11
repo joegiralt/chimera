@@ -64,8 +64,10 @@ pub const D2_KNOBS: usize = core::mem::size_of::<crate::dsp::knobs::KnobPublishe
 /// publisher.
 pub const VOICE_RAM_BUDGET: usize = D2_SRAM - D2_DMA_RESERVE - D2_KNOBS;
 /// A `Voice` less its `EngineSlot`: the chain, modulators and bookkeeping
-/// (ADR 0051, 2,048 B; ADR 0101 raises it to 2,112 for the 2040's state).
-pub const VOICE_CHAIN_BYTES: usize = 2112;
+/// (ADR 0051, 2,048 B; ADR 0101 raises it to 2,112 for the 2040's state;
+/// 2,176 for the formant operators' 13 glided settings in `AlgoLive`, which
+/// ADR F records).
+pub const VOICE_CHAIN_BYTES: usize = 2176;
 
 /// Framebuffer: 240 × 320 RGB565, one static in AXI (`chimera-board/src/display.rs`).
 pub const FB_BYTES: usize = chimera_hal::FB_SIZE * 2; // 153_600

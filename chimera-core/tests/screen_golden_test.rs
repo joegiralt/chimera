@@ -205,7 +205,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // Sound is smaller (fixed columns, no registry entry).
     ("sound_browser", 0x874eaa34493bb6ca),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
-    ("sound_browser_pool_full", 0xa66982256a3e11d9),
+    // Then pool_full: 2352 → 2544 (the formant fields).
+    ("sound_browser_pool_full", 0x941800e328b33329),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     ("library_empty", 0xa94e4a6edf448c09),

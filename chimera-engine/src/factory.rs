@@ -62,15 +62,16 @@ pub fn encode_entry(s: &Sound) -> alloc::vec::Vec<u8> {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub use authored::authored_sound;
+pub use authored::{Demo, authored_sound, demo_sound};
 
 #[cfg(any(test, feature = "test-support"))]
 mod authored {
     use super::*;
     use crate::addr::{BlockRef, ParamAddr};
+    use crate::budget::FORMANT_N;
     use crate::dsp::algo::algorithms::AlgoId;
     use crate::dsp::algo::kinds::{Kinds, OpKind};
-    use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
+    use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, INIT_FRMT};
     use crate::dsp::algo::waves::WaveId;
     use crate::modulation::ModSource;
 
@@ -93,7 +94,18 @@ mod authored {
         }
     }
 
-    fn algo(a: AlgoId, b: AlgoId, morph: u8, kinds: Kinds, ops: [AlgoOpParams; 6]) -> AlgoParams {
+    /// The eight table Sounds sit on INIT's formants, so they stay sparse
+    /// against the decode base.
+    fn algo(
+        a: AlgoId,
+        b: AlgoId,
+        morph: u8,
+        kinds: Kinds,
+        mut ops: [AlgoOpParams; 6],
+    ) -> AlgoParams {
+        for (o, f) in ops.iter_mut().zip(INIT_FRMT) {
+            o.frmt = f;
+        }
         AlgoParams::new(a, b, morph, kinds, ops)
     }
 
@@ -334,5 +346,149 @@ mod authored {
             _ => return None,
         };
         Some(sound)
+    }
+
+    /// The formant demo Sounds (spec § Demo clips), the voicing by
+    /// `FORMANT_N`.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Demo {
+        Choir,
+        TalkBass,
+        Breath,
+    }
+
+    const FRMT: OpKind = OpKind::Formant;
+    const NOIS: OpKind = OpKind::Noise;
+    const W1_: OpKind = OpKind::Table(WaveId::W1);
+
+    // CHOIR: three FRMT and a NOIS, else two FRMT and two NOIS.
+    const CHOIR_KINDS: Kinds = if FORMANT_N >= 3 {
+        Kinds::new([FRMT, FRMT, FRMT, NOIS, W1_, W1_])
+    } else {
+        Kinds::new([NOIS, FRMT, FRMT, NOIS, W1_, W1_])
+    };
+    const TALK_KINDS: Kinds = if FORMANT_N >= 3 {
+        Kinds::new([W1_, FRMT, FRMT, FRMT, W1_, W1_])
+    } else {
+        Kinds::new([W1_, FRMT, FRMT, NOIS, W1_, W1_])
+    };
+    const BREATH_KINDS: Kinds = Kinds::new([NOIS, NOIS, W1_, W1_, W1_, W1_]);
+
+    /// `FRMT`, `BW` and `SLOT` are stored values (`frmt_hz`, `bw_hz`).
+    fn band(level: u8, frmt: u8, bw: u8, slot: u8, env: [u8; 2]) -> AlgoOpParams {
+        let [ar, rr] = env;
+        AlgoOpParams {
+            level,
+            ar,
+            rr,
+            frmt,
+            bw,
+            vslot: slot,
+            ..AlgoOpParams::default()
+        }
+    }
+
+    // A's F1–F3 on the grid (INIT_FRMT), and the slot codes.
+    const F1: u8 = 69;
+    const F2: u8 = 83;
+    const F3: u8 = 111;
+    const S_AUTO: u8 = 0;
+    const S_F1: u8 = 1;
+    const S_F2: u8 = 2;
+    const S_F3: u8 = 3;
+    const S_OFF: u8 = 4;
+    /// 113 Hz, 160 Hz and 3 kHz of width.
+    const W_113: u8 = 60;
+    const W_FMT: u8 = 72;
+    const W_3K: u8 = 173;
+
+    /// A named Algo Sound on A1 (all six carriers). Silent operators sit
+    /// at LEVEL 0.
+    fn demo(name: &str, kinds: Kinds, vowel: u8, ops: [AlgoOpParams; 4]) -> Sound {
+        let off = AlgoOpParams::default();
+        let [a, b, c, d] = ops;
+        let mut p = AlgoParams::new(AlgoId::A1, AlgoId::A1, 0, kinds, [a, b, c, d, off, off]);
+        p.vowel = vowel;
+        named(name, p)
+    }
+
+    /// Operators 5 and 6 are unused; the VOWEL motion (LFO 1 across O to A
+    /// on CHOIR, ENV 2 to A on TALK BASS) joins when VOWEL is modulatable.
+    pub fn demo_sound(d: Demo) -> Sound {
+        let few = FORMANT_N < 3;
+        match d {
+            Demo::Choir => {
+                let pad = [14, 7];
+                let ops = if few {
+                    [
+                        AlgoOpParams {
+                            res: 70,
+                            ..band(99, F1, W_113, S_F1, pad)
+                        },
+                        AlgoOpParams {
+                            detune: -2,
+                            ..band(99, F2, W_FMT, S_F2, pad)
+                        },
+                        AlgoOpParams {
+                            detune: 2,
+                            ..band(99, F2, W_FMT, S_F2, pad)
+                        },
+                        band(30, F3, W_3K, S_F3, pad),
+                    ]
+                } else {
+                    [
+                        band(99, F1, W_FMT, S_F1, pad),
+                        AlgoOpParams {
+                            detune: -2,
+                            ..band(99, F2, W_FMT, S_F2, pad)
+                        },
+                        AlgoOpParams {
+                            detune: 2,
+                            ..band(99, F2, W_FMT, S_F2, pad)
+                        },
+                        band(30, F3, W_3K, S_F3, pad),
+                    ]
+                };
+                demo("CHOIR", CHOIR_KINDS, 37, ops)
+            }
+            Demo::TalkBass => {
+                let hit = [31, 8];
+                let (slots, last) = if few {
+                    (
+                        [S_F1, S_F2],
+                        AlgoOpParams {
+                            res: 70,
+                            ..band(60, F3, W_3K, S_F3, hit)
+                        },
+                    )
+                } else {
+                    ([S_AUTO; 2], band(99, F3, W_FMT, S_AUTO, hit))
+                };
+                let body = AlgoOpParams {
+                    coarse: 4,
+                    level: 91,
+                    ar: 31,
+                    rr: 8,
+                    ..AlgoOpParams::default()
+                };
+                let ops = [
+                    body,
+                    band(99, F1, W_FMT, slots[0], hit),
+                    band(99, F2, W_FMT, slots[1], hit),
+                    last,
+                ];
+                demo("TALK BASS", TALK_KINDS, 0, ops)
+            }
+            Demo::Breath => {
+                let slow = [10, 6];
+                let ops = [
+                    band(99, 86, 167, S_OFF, slow),
+                    band(60, 135, 183, S_OFF, slow),
+                    AlgoOpParams::default(),
+                    AlgoOpParams::default(),
+                ];
+                demo("BREATH", BREATH_KINDS, 50, ops)
+            }
+        }
     }
 }

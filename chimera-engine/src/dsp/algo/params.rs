@@ -7,8 +7,10 @@ use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::kinds::{
     Kinds, OP_KIND_COUNT, OP_KIND_IDENTS, OP_KIND_NAMES, OpKind, OverBudget, step_kind,
 };
+use crate::dsp::algo::math::exp2;
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::algo::tx::COARSE_NAMES;
+use crate::dsp::algo::vowel::{VSLOT_IDENTS, VSLOT_NAMES, VowelSlot};
 use crate::dsp::algo::waves::WaveId;
 
 /// One operator's parameters but its kind, which `AlgoParams` holds
@@ -27,6 +29,24 @@ pub struct AlgoOpParams {
     pub rate_scale: u8,
     pub feedback: u8,
     pub velocity: u8,
+    /// FRMT's formant frequency and NOIS's centre: `frmt_hz`.
+    pub frmt: u8,
+    /// FRMT's bandwidth and NOIS's width: `bw_hz`.
+    pub bw: u8,
+    pub skirt: u8,
+    pub key: u8,
+    pub res: u8,
+    pub vslot: u8,
+}
+
+/// `100 · 2^(v / 24)` Hz.
+pub fn frmt_hz(v: f32) -> f32 {
+    100.0 * exp2(v / 24.0)
+}
+
+/// `20 · 2^(v / 24)` Hz.
+pub fn bw_hz(v: f32) -> f32 {
+    20.0 * exp2(v / 24.0)
 }
 
 impl Default for AlgoOpParams {
@@ -50,6 +70,12 @@ impl AlgoOpParams {
         rate_scale: 0,
         feedback: 0,
         velocity: 0,
+        frmt: 72,
+        bw: 72,
+        skirt: 1,
+        key: 0,
+        res: 0,
+        vslot: 0,
     };
 
     pub const WAVE: ParamId = ParamId(0);
@@ -65,6 +91,12 @@ impl AlgoOpParams {
     pub const RATE_SCALE: ParamId = ParamId(10);
     pub const FEEDBACK: ParamId = ParamId(11);
     pub const VELOCITY: ParamId = ParamId(12);
+    pub const FRMT: ParamId = ParamId(13);
+    pub const BW: ParamId = ParamId(14);
+    pub const SKIRT: ParamId = ParamId(15);
+    pub const KEY: ParamId = ParamId(16);
+    pub const RES: ParamId = ParamId(17);
+    pub const VSLOT: ParamId = ParamId(18);
 
     pub fn rates(&self) -> EnvRates {
         EnvRates {
@@ -81,7 +113,7 @@ impl AlgoOpParams {
 /// LEVEL is read every block and applied to the gain after conversion, so
 /// it is the one operator destination (ADR 0010). FINE and FEEDBACK are
 /// not: FINE's 104-cent steps would zipper.
-pub static ALGO_OP_SPECS: [ParamSpec; 13] = [
+pub static ALGO_OP_SPECS: [ParamSpec; 19] = [
     ParamSpec::choice(
         0,
         "WAVE",
@@ -226,6 +258,78 @@ pub static ALGO_OP_SPECS: [ParamSpec; 13] = [
         Motion::Continuous(Smoothing::KNOB),
     )
     .ident("VEL"),
+    ParamSpec::stepped(
+        13,
+        "FORMANT",
+        ValFmt::LogHz {
+            base: 100,
+            per_octave: 24,
+        },
+        0.0,
+        168.0,
+        72.0,
+        false,
+        Motion::Continuous(Smoothing::KNOB),
+    )
+    .ident("FRMT"),
+    ParamSpec::stepped(
+        14,
+        "BW",
+        ValFmt::LogHz {
+            base: 20,
+            per_octave: 24,
+        },
+        0.0,
+        216.0,
+        72.0,
+        false,
+        Motion::Continuous(Smoothing::KNOB),
+    )
+    .ident("BW"),
+    ParamSpec::stepped(
+        15,
+        "SKIRT",
+        ValFmt::Int(3),
+        0.0,
+        3.0,
+        1.0,
+        false,
+        Motion::Stepped(Change::NoteOn),
+    )
+    .ident("SKIRT")
+    .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::stepped(
+        16,
+        "KEY",
+        ValFmt::Int(100),
+        0.0,
+        100.0,
+        0.0,
+        false,
+        Motion::Continuous(Smoothing::NoteOn),
+    )
+    .ident("KEY"),
+    ParamSpec::stepped(
+        17,
+        "RES",
+        ValFmt::Int(100),
+        0.0,
+        100.0,
+        0.0,
+        false,
+        Motion::Continuous(Smoothing::NoteOn),
+    )
+    .ident("RES"),
+    ParamSpec::choice(
+        18,
+        "SLOT",
+        ValFmt::Names(&VSLOT_NAMES),
+        4.0,
+        0.0,
+        Change::NoteOn,
+    )
+    .ident("VSLOT")
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 // An Enum's `max` is its last code: a longer table needs the spec to grow too.
@@ -248,6 +352,12 @@ impl AlgoOpParams {
             Self::RATE_SCALE => self.rate_scale as f32,
             Self::FEEDBACK => self.feedback as f32,
             Self::VELOCITY => self.velocity as f32,
+            Self::FRMT => self.frmt as f32,
+            Self::BW => self.bw as f32,
+            Self::SKIRT => self.skirt as f32,
+            Self::KEY => self.key as f32,
+            Self::RES => self.res as f32,
+            Self::VSLOT => self.vslot as f32,
             _ => 0.0,
         }
     }
@@ -270,6 +380,12 @@ impl AlgoOpParams {
             Self::RATE_SCALE => self.rate_scale = b,
             Self::FEEDBACK => self.feedback = b,
             Self::VELOCITY => self.velocity = b,
+            Self::FRMT => self.frmt = b,
+            Self::BW => self.bw = b,
+            Self::SKIRT => self.skirt = b,
+            Self::KEY => self.key = b,
+            Self::RES => self.res = b,
+            Self::VSLOT => self.vslot = b,
             _ => {}
         }
     }
@@ -288,12 +404,22 @@ fn op_get(p: &AlgoParams, op: usize, id: ParamId) -> f32 {
 
 #[inline(never)]
 fn op_code(p: &AlgoParams, op: usize, id: ParamId) -> Option<u8> {
-    (id == AlgoOpParams::WAVE).then(|| p.kinds.get(op).code())
+    match id {
+        AlgoOpParams::WAVE => Some(p.kinds.get(op).code()),
+        AlgoOpParams::VSLOT => Some(p.ops[op].vslot),
+        _ => None,
+    }
 }
 
 /// A kind's ident is its own literal (`Recipe::ident`), not its label.
 fn op_ident(p: &AlgoParams, op: usize, id: ParamId) -> Option<&'static str> {
-    op_code(p, op, id).map(|c| OP_KIND_IDENTS[usize::from(c)])
+    let c = usize::from(op_code(p, op, id)?);
+    let idents: &[&str] = if id == AlgoOpParams::WAVE {
+        &OP_KIND_IDENTS
+    } else {
+        &VSLOT_IDENTS
+    };
+    idents.get(c).copied()
 }
 
 /// Shared by both views, so each is one call.
@@ -385,8 +511,15 @@ impl Block for OpViewMut<'_> {
     }
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
-        id == AlgoOpParams::WAVE
-            && OpKind::from_code(code).is_some_and(|k| self.p.try_set_kind(self.op, k).is_ok())
+        match id {
+            AlgoOpParams::WAVE => {
+                OpKind::from_code(code).is_some_and(|k| self.p.try_set_kind(self.op, k).is_ok())
+            }
+            AlgoOpParams::VSLOT => VowelSlot::from_code(code)
+                .map(|v| self.p.ops[self.op].vslot = v.code())
+                .is_some(),
+            _ => false,
+        }
     }
 
     /// WAVE steps over the kinds the budget refuses (`step_kind`).
@@ -406,6 +539,8 @@ pub struct AlgoParams {
     pub alg_b: u8,
     pub morph: u8,
     pub transpose: i8,
+    /// 0–100 over U O A E I (`ValFmt::Vowel`).
+    pub vowel: u8,
     pub ops: [AlgoOpParams; OPS],
     /// Private: every write goes through `try_set_kind`.
     kinds: Kinds,
@@ -417,6 +552,11 @@ pub struct AlgoParams {
 const INIT_LEVEL: u8 = 72;
 /// Operators routed on INIT: four, so eight INIT voices fit rev V (ADR 0040).
 const INIT_OPS: usize = 4;
+/// INIT's formants, the grid points nearest A's F1–F3 and a steady fourth
+/// (spec § 2): part of the frozen decode base (ADR 0087).
+pub const INIT_FRMT: [u8; OPS] = [69, 83, 111, 123, 123, 123];
+/// Vowel A, the table's reference.
+pub const INIT_VOWEL: u8 = 50;
 const INIT_A: AlgoId = AlgoId::T1;
 const INIT_B: AlgoId = AlgoId::A1;
 
@@ -439,10 +579,16 @@ impl AlgoParams {
     pub const ALG_B: ParamId = ParamId(1);
     pub const MORPH: ParamId = ParamId(2);
     pub const TRANSPOSE: ParamId = ParamId(3);
+    pub const VOWEL: ParamId = ParamId(4);
 
     /// Operator 1 alone at full level on `wave` (the one-operator Sounds).
     pub const fn single(wave: WaveId) -> Self {
         let mut ops = [AlgoOpParams::DEFAULT; OPS];
+        let mut i = 0;
+        while i < OPS {
+            ops[i].frmt = INIT_FRMT[i];
+            i += 1;
+        }
         ops[0].level = 99;
         let mut w = [WaveId::W1; OPS];
         w[0] = wave;
@@ -462,6 +608,7 @@ impl AlgoParams {
             alg_b: alg_b.get(),
             morph,
             transpose: 0,
+            vowel: INIT_VOWEL,
             ops,
             kinds,
         }
@@ -492,7 +639,7 @@ impl AlgoParams {
     }
 }
 
-pub static ALGO_SPECS: [ParamSpec; 4] = [
+pub static ALGO_SPECS: [ParamSpec; 5] = [
     ParamSpec::choice(
         0,
         "ALG A",
@@ -538,6 +685,17 @@ pub static ALGO_SPECS: [ParamSpec; 4] = [
     )
     .ident("TRNSP")
     .glyph(crate::glyph::FocusGlyph::Staff),
+    ParamSpec::stepped(
+        4,
+        "VOWEL",
+        ValFmt::Vowel,
+        0.0,
+        100.0,
+        INIT_VOWEL as f32,
+        false,
+        Motion::Continuous(Smoothing::KNOB),
+    )
+    .ident("VOWEL"),
 ];
 
 const _: () = assert!(ALGO_SPECS[0].max as usize == ALGO_COUNT - 1);
@@ -556,6 +714,7 @@ impl Block for AlgoParams {
             Self::ALG_B => self.alg_b as f32,
             Self::MORPH => self.morph as f32,
             Self::TRANSPOSE => self.transpose as f32,
+            Self::VOWEL => self.vowel as f32,
             _ => 0.0,
         }
     }
@@ -567,6 +726,7 @@ impl Block for AlgoParams {
             Self::ALG_B => self.alg_b = v as u8,
             Self::MORPH => self.morph = v as u8,
             Self::TRANSPOSE => self.transpose = v as i8,
+            Self::VOWEL => self.vowel = v as u8,
             _ => {}
         }
     }

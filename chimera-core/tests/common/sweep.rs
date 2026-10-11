@@ -63,6 +63,9 @@ pub enum Patch {
     VaInit,
     /// Operator 1 alone on the triangle: smooth, so any step in it stands out.
     Probe,
+    /// Formant and noise operators on A1, at LEVEL 99: three FRMT and a
+    /// NOIS, else two and two (`FORMANT_N`). Played at C3.
+    Formant,
 }
 
 impl Patch {
@@ -73,6 +76,7 @@ impl Patch {
             Patch::BusyAlgo => "BUSY ALGO".into(),
             Patch::BusyModal => "BUSY MODAL".into(),
             Patch::Probe => "TRI PROBE".into(),
+            Patch::Formant => "FORMANT".into(),
             Patch::VaInit => "VA INIT".into(),
             Patch::Factory(i) => format!(
                 "F{i} {}",
@@ -81,6 +85,11 @@ impl Patch {
                     .unwrap_or_default()
             ),
         }
+    }
+
+    /// The sweep's note: C3 for the formant fixture (Ruling 11).
+    pub fn note(self) -> u8 {
+        if self == Patch::Formant { 48 } else { 60 }
     }
 
     pub fn engine(self) -> EngineType {
@@ -122,6 +131,31 @@ impl Patch {
             Patch::Probe => {
                 let mut s = Sound::init(EngineType::Algo);
                 s.params.algo = AlgoParams::single(chimera_core::dsp::algo::waves::WaveId::TRI);
+                s
+            }
+            Patch::Formant => {
+                use chimera_core::dsp::algo::algorithms::AlgoId;
+                use chimera_core::dsp::algo::kinds::{Kinds, OpKind};
+                use chimera_core::dsp::algo::params::AlgoOpParams;
+                const F: OpKind = OpKind::Formant;
+                const N: OpKind = OpKind::Noise;
+                const W1: OpKind = OpKind::Table(chimera_core::dsp::algo::waves::WaveId::W1);
+                const KINDS: Kinds = if chimera_core::budget::FORMANT_N >= 3 {
+                    Kinds::new([F, F, F, N, W1, W1])
+                } else {
+                    Kinds::new([F, F, N, N, W1, W1])
+                };
+                let on = AlgoOpParams {
+                    level: 99,
+                    ..AlgoOpParams::default()
+                };
+                let mut ops = [AlgoOpParams::default(); 6];
+                ops[..4].fill(on);
+                for (o, f) in ops.iter_mut().zip([69, 83, 111, 123]) {
+                    o.frmt = f;
+                }
+                let mut s = Sound::init(EngineType::Algo);
+                s.params.algo = AlgoParams::new(AlgoId::A1, AlgoId::A1, 0, KINDS, ops);
                 s
             }
         }
@@ -306,6 +340,7 @@ pub fn registry(one_instance: bool) -> Vec<Param> {
 // ── The rig ────────────────────────────────────────────────────────────
 
 pub struct Bench {
+    pub patch: Patch,
     pub perf: Box<Performance>,
     shared: Box<AudioShared>,
     inst: Box<Instrument>,
@@ -329,6 +364,7 @@ impl Bench {
         perf.fx = fx;
         let shared = Box::new(AudioShared::from_performance(&perf));
         Self {
+            patch,
             perf,
             shared,
             inst: Box::new(Instrument::new(
@@ -736,11 +772,12 @@ pub fn play(bench: &mut Bench, p: Option<&Param>, mv: Move, t: Timing) -> Run {
     let mut events: Vec<(usize, &'static str)> = Vec::new();
     let end = t.b_off() + t.bound;
     for b in 0..end {
+        let note = bench.patch.note();
         if b == 0 {
-            bench.note(60, Some(100));
+            bench.note(note, Some(100));
         }
         if b == t.a_off() {
-            bench.note(60, None);
+            bench.note(note, None);
             events.push((b, "note-off"));
         }
         if b == t.b_on() {

@@ -70,6 +70,9 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Lfo", "SHAPE", NONE),
     // A wave choice: a scope tracing its table.
     ("AlgoOp", "WAVE", FocusGlyph::Wave),
+    // SKIRT is a window's step, VSLOT a vowel slot: words and digits, no amount.
+    ("AlgoOp", "SKIRT", NONE),
+    ("AlgoOp", "VSLOT", NONE),
     // Semitones: a note on the staff.
     ("Algo", "TRNSP", FocusGlyph::Staff),
     // Two states, one of them off: a toggle.
@@ -305,7 +308,13 @@ fn every_none_word_fits_the_band() {
     for b in BlockRef::ALL {
         for s in b.specs().iter().filter(|s| s.glyph == FocusGlyph::None) {
             let ValFmt::Names(names) = s.fmt else {
-                panic!("{b:?}.{}: NONE on a value that isn't a word", s.ident);
+                // A small integer (SKIRT's 0–3) is a digit, which fits.
+                assert!(
+                    matches!(s.fmt, ValFmt::Int(n) if n < 10),
+                    "{b:?}.{}: NONE on a value that isn't a word",
+                    s.ident
+                );
+                continue;
             };
             for w in names {
                 let width = draw::text_width(&theme::FONT_FOCUS, w, 0);

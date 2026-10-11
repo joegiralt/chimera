@@ -11,4 +11,5 @@ pub mod morph;
 pub mod params;
 pub mod plan;
 pub mod tx;
+pub mod vowel;
 pub mod waves;

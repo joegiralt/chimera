@@ -38,6 +38,12 @@ pub enum ValFmt {
     Law(crate::dsp::modulator::law::Law),
     /// ORBIT's tempo, whole BPM over `Bpm::MIN..=Bpm::MAX`.
     Bpm,
+    /// A frequency of `base · 2^(v / per_octave)` Hz over a stored `v`
+    /// (FRMT, BW). Snaps each octave. `fmt_val` takes the stored value.
+    LogHz { base: u16, per_octave: u8 },
+    /// VOWEL, 0–100 over U O A E I, 25 apart. Snaps each vowel.
+    /// `fmt_val` takes the stored value.
+    Vowel,
 }
 
 impl ValFmt {
@@ -53,6 +59,9 @@ impl ValFmt {
             ValFmt::Signed(_) => &[0.0, 0.5, 1.0],
             // MIN, the default, MAX.
             ValFmt::Bpm => &[0.0, BPM_SNAP, 1.0],
+            // `ParamSpec::snap_target` steps LogHz by octaves.
+            ValFmt::LogHz { .. } => &[0.0, 1.0],
+            ValFmt::Vowel => &[0.0, 0.25, 0.5, 0.75, 1.0],
         }
     }
 
@@ -84,7 +93,9 @@ impl ValFmt {
             | ValFmt::Route
             | ValFmt::Keybd
             | ValFmt::Law(_)
-            | ValFmt::Bpm => 127,
+            | ValFmt::Bpm
+            | ValFmt::LogHz { .. }
+            | ValFmt::Vowel => 127,
         }
     }
 }
@@ -412,6 +423,16 @@ impl ParamSpec {
     /// per block.
     #[inline(never)]
     pub fn snap_target(&self, v: f32, delta: i8) -> f32 {
+        if let ValFmt::LogHz { per_octave, .. } = self.fmt {
+            let o = f32::from(per_octave);
+            let k = v / o;
+            let k = if delta > 0 {
+                libm::floorf(k + 0.005) + 1.0
+            } else {
+                libm::ceilf(k - 0.005) - 1.0
+            };
+            return clampf(k * o, self.min, self.max);
+        }
         let n = self.normalize(v);
         let points = self.fmt.snap_points();
         let target = if delta > 0 {

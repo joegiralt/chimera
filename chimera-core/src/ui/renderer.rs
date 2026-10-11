@@ -961,7 +961,16 @@ fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
         }
         None => {
             let mut buf = FmtBuf::new();
-            fmt::fmt_val(&mut buf, v, view.fmt());
+            let fmt = view.fmt();
+            // These two read the stored value (`ValFmt::LogHz`).
+            let v = match (fmt, view.addr().and_then(|a| a.spec())) {
+                (
+                    crate::ui::page::ValFmt::LogHz { .. } | crate::ui::page::ValFmt::Vowel,
+                    Some(s),
+                ) => s.denormalize(v),
+                _ => v,
+            };
+            fmt::fmt_val(&mut buf, v, fmt);
             buf
         }
     }

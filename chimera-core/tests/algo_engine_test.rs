@@ -247,9 +247,16 @@ fn extreme_parameter_bytes_render_finite_and_bounded() {
         rate_scale: 255,
         feedback: 255,
         velocity: 255,
+        frmt: 255,
+        bw: 255,
+        skirt: 255,
+        key: 255,
+        res: 255,
+        vslot: 255,
     };
     let mut p = AlgoParams::default();
     (p.alg_a, p.alg_b, p.morph, p.transpose, p.ops) = (255, 255, 255, i8::MAX, [op; 6]);
+    p.vowel = 255;
     for i in 0..6 {
         p.try_set_kind(i, OpKind::Table(WaveId::SSAW)).unwrap();
     }

@@ -544,6 +544,29 @@ fn v1_fixtures_render_identically() {
     }
 }
 
+/// The formant fields (spec § 10) load at INIT's values from files that
+/// never stored them, and the sound is bit for bit as before.
+#[test]
+fn old_patches_load_unchanged() {
+    for (i, &(name, want)) in FIXTURE_RENDERS.iter().take(FACTORY_LEN).enumerate() {
+        assert_eq!(name, format!("factory_{i}.snd"));
+        let d = decode(&fixture(name)).unwrap();
+        let a = &d.params.algo;
+        assert_eq!(a.ops.map(|o| o.frmt), [69, 83, 111, 123, 123, 123]);
+        assert!(
+            a.ops
+                .iter()
+                .all(|o| (o.bw, o.skirt, o.key, o.res, o.vslot) == (72, 1, 0, 0, 0))
+        );
+        assert_eq!(a.vowel, 50);
+        assert_eq!(
+            fnv1a(&render_sound(&d.params, &d.mod_state)),
+            want,
+            "{name}"
+        );
+    }
+}
+
 /// TAPE's engine code is 2 for good (ADR 0045): the frozen INIT loads as
 /// TAPE, with its ENV 1 into VCA (`bits_eq` holds while INIT is unchanged;
 /// the render row is the lasting pin).
