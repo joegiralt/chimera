@@ -354,8 +354,9 @@ impl Renderer {
 
     /// An OP page's operator: its stored envelope and wave.
     fn op_page(f: &Frame, op: Op) -> (EnvRates, WaveId) {
-        let o = &f.parts[f.active_part.index()].sound.params.algo.ops[op.index()];
-        (o.rates(), WaveId::clamped(o.wave))
+        let algo = &f.parts[f.active_part.index()].sound.params.algo;
+        let kind = algo.kinds().get(op.index());
+        (algo.ops[op.index()].rates(), WaveId::clamped(kind.code()))
     }
 
     /// The active Part's machine and its TAPE params, this page's as its
@@ -854,7 +855,7 @@ fn stored_set<const N: usize>(stored: &impl BlockRead, addrs: [ParamAddr; N]) ->
 struct Stored<'f, 'a>(&'f Frame<'a>);
 
 impl BlockRead for Stored<'_, '_> {
-    fn block(&self, b: crate::addr::BlockRef) -> Option<&dyn crate::block::Block> {
+    fn block(&self, b: crate::addr::BlockRef) -> Option<crate::addr::BlockView<'_>> {
         let p = &self.0.parts[self.0.active_part.index()];
         crate::project::part_block(&p.sound, &p.mix, self.0.fx, b)
     }

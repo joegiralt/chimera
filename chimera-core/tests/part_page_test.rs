@@ -237,7 +237,7 @@ fn algo_pages_edit_every_operator_and_the_algorithm() {
     for slot in 0..6 {
         turn(&reg::ALGO_WAVE, slot, 1 + slot as i8, &mut p);
     }
-    assert_eq!(p.algo.ops.map(|o| o.wave), [1, 2, 3, 4, 5, 6]);
+    assert_eq!(p.algo.kinds().all().map(|k| k.code()), [1, 2, 3, 4, 5, 6]);
     turn(&reg::ALGO_LEVEL, 5, 40, &mut p);
     assert_eq!(p.algo.ops[5].level, 40);
     turn(&reg::ALGO_LEVEL, 0, 5, &mut p);

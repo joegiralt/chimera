@@ -317,7 +317,9 @@ fn knob_moves_never_rebuild() {
             if moved {
                 let delta = if b % 2 == 0 { 1 } else { -1 };
                 for blk in BlockRef::ALL {
-                    let Some(k) = p.block_mut(blk) else { continue };
+                    let Some(mut k) = p.block_mut(blk) else {
+                        continue;
+                    };
                     for s in blk.specs() {
                         if (blk, s.id) != (BlockRef::Modal, ModalParams::MODE) {
                             k.nudge(s.id, delta);

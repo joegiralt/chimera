@@ -148,7 +148,7 @@ fn write_v1_fixtures() {
             println!(
                 "    ({}, &{:?}),",
                 b.disk_code().unwrap(),
-                values(blk.unwrap())
+                values(&*blk.unwrap())
             );
         }
         println!("mix");
@@ -462,7 +462,7 @@ fn project_fixture_loads() {
     for (b, &(code, pinned)) in FX_BLOCKS.into_iter().zip(PROJECT_FIXTURE_FX) {
         assert_eq!(b.disk_code(), Some(code));
         let blk = part_block(&first.sound, &first.mix, &p.perf().fx, b).unwrap();
-        assert_values(blk, pinned, b.disk_ident().unwrap());
+        assert_values(&*blk, pinned, b.disk_ident().unwrap());
     }
     assert_eq!(p.perf().fx.delay.mix, 0.3);
 }

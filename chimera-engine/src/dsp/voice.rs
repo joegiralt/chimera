@@ -942,9 +942,9 @@ impl Voice {
                 let off = knobs.fixed_sum(mod_state, c, &mod_values);
                 let a = c.addr();
                 if off != 0.0
-                    && let Some(blk) = m.block_mut(a.block)
+                    && let Some(mut blk) = m.block_mut(a.block)
                 {
-                    apply_offset(blk, a.param, off);
+                    apply_offset(&mut *blk, a.param, off);
                 }
             }
             let mut next = [EnvMods::NONE; 3];
@@ -961,8 +961,8 @@ impl Voice {
                         continue;
                     }
                     // Modulatable addresses are always Sound blocks (`voice_reads`).
-                    if let Some(blk) = m.block_mut(a.block) {
-                        apply_offset(blk, a.param, off);
+                    if let Some(mut blk) = m.block_mut(a.block) {
+                        apply_offset(&mut *blk, a.param, off);
                     }
                 }
             }

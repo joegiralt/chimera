@@ -9,7 +9,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::algorithms::{ALGORITHMS, AlgoId, plan};
 use crate::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
 use crate::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
-use crate::dsp::algo::kinds::OpKind;
+use crate::dsp::algo::kinds::{Kinds, OpKind};
 use crate::dsp::algo::math::exp2;
 use crate::dsp::algo::morph::{Morph, carrier_norm, incoming};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
@@ -114,10 +114,10 @@ impl AlgoLive {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Swap {
     Idle,
-    /// `waves`: mask of operators whose WAVE changed.
+    /// `kinds`: mask of operators whose WAVE changed.
     Ducking {
         alg: bool,
-        waves: u8,
+        kinds: u8,
     },
     Rising,
 }
@@ -128,7 +128,7 @@ pub struct AlgoEngine {
     /// Rebuilt only when ALG A or B changes.
     plan: EvalPlan,
     plan_key: (AlgoId, AlgoId),
-    waves: [WaveId; OPS],
+    kinds: [OpKind; OPS],
     rates: [EnvRates; OPS],
     /// Gain, mip position, MORPH and output scale at the end of the last
     /// block: the next block's ramps start here.
@@ -150,7 +150,7 @@ pub struct AlgoEngine {
 }
 
 crate::in_place::field_list!(AlgoEngine => AlgoEngine {
-    kernel, env, plan, plan_key, waves, rates, gain, mip, morph, norm, swap, note, pitch, slide,
+    kernel, env, plan, plan_key, kinds, rates, gain, mip, morph, norm, swap, note, pitch, slide,
     velocity, active, held,
 });
 
@@ -158,6 +158,15 @@ crate::in_place::field_list!(AlgoEngine => AlgoEngine {
 impl Default for AlgoEngine {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The table an operator reads: W1 under a formant or noise kind, whose
+/// gain is 0.
+const fn table_of(k: OpKind) -> WaveId {
+    match k {
+        OpKind::Table(w) => w,
+        OpKind::Formant | OpKind::Noise => WaveId::W1,
     }
 }
 
@@ -186,7 +195,7 @@ impl AlgoEngine {
         while i < OPS {
             if p.ops[i].level > 0 || level_routed[i] {
                 active |= 1 << i;
-                let kind = OpKind::clamped(p.ops[i].wave);
+                let kind = p.kinds().get(i);
                 ops += match kind {
                     OpKind::Table(_) => Self::COST_OP.0,
                     OpKind::Formant => Self::COST_FRMT.0,
@@ -236,7 +245,7 @@ impl AlgoEngine {
             addr_of_mut!((*p).env).write([OpEnv::IDLE; OPS]);
             addr_of_mut!((*p).plan).write(plan(key.0, key.1));
             addr_of_mut!((*p).plan_key).write(key);
-            addr_of_mut!((*p).waves).write([WaveId::W1; OPS]);
+            addr_of_mut!((*p).kinds).write(Kinds::TABLE.all());
             addr_of_mut!((*p).rates).write([rates; OPS]);
             addr_of_mut!((*p).gain).write([0.0; OPS]);
             addr_of_mut!((*p).mip).write([0.0; OPS]);
@@ -286,7 +295,7 @@ impl AlgoEngine {
             self.rates[i] = p.ops[i].rates();
             if self.env[i].is_idle() {
                 self.kernel.reset(i);
-                self.waves[i] = WaveId::clamped(p.ops[i].wave);
+                self.kinds[i] = p.kinds().get(i);
                 self.gain[i] = self.target_gain(&live, i);
                 self.mip[i] = self.mip_target(p, &live, cycles, sr, m, &level, i);
             }
@@ -392,8 +401,8 @@ impl AlgoEngine {
                 gain_from: self.gain[i],
                 gain_to: self.target_gain(live, i) * self.op_duck(i),
                 feedback: feedback_cycles(live.feedback[i]),
-                lo: self.waves[i].table(lo),
-                hi: self.waves[i].table(lo + 1),
+                lo: table_of(self.kinds[i]).table(lo),
+                hi: table_of(self.kinds[i]).table(lo + 1),
                 xfade_from,
                 xfade_to,
             }
@@ -455,7 +464,12 @@ impl AlgoEngine {
         mip_position(bandwidth)
     }
 
+    /// 0 for a formant or noise operator: silent until its kernel (Tasks 9
+    /// and 10).
     fn target_gain(&self, live: &AlgoLive, i: usize) -> f32 {
+        if self.kinds[i].is_formant() {
+            return 0.0;
+        }
         let vel = clampf(live.velocity[i], 0.0, 7.0) * (1.0 - self.velocity) * VELOCITY_STEPS;
         level_gain(live.level[i] - vel) * SAMPLE_SCALE
     }
@@ -473,27 +487,27 @@ impl AlgoEngine {
             return;
         }
         let alg = (AlgoId::clamped(p.alg_a), AlgoId::clamped(p.alg_b)) != self.plan_key;
-        let waves = (0..OPS).fold(0u8, |m, i| {
-            if WaveId::clamped(p.ops[i].wave) != self.waves[i] {
+        let kinds = (0..OPS).fold(0u8, |m, i| {
+            if p.kinds().get(i) != self.kinds[i] {
                 m | 1 << i
             } else {
                 m
             }
         });
-        if alg || waves != 0 {
-            self.swap = Swap::Ducking { alg, waves };
+        if alg || kinds != 0 {
+            self.swap = Swap::Ducking { alg, kinds };
         }
     }
 
     fn finish_swap(&mut self, p: &AlgoParams) {
         self.swap = match self.swap {
-            Swap::Ducking { alg, waves } => {
+            Swap::Ducking { alg, kinds } => {
                 if alg {
                     self.adopt_alg(p);
                 }
-                for i in 0..OPS {
-                    if waves & (1 << i) != 0 {
-                        self.waves[i] = WaveId::clamped(p.ops[i].wave);
+                for (i, k) in self.kinds.iter_mut().enumerate() {
+                    if kinds & (1 << i) != 0 {
+                        *k = p.kinds().get(i);
                     }
                 }
                 Swap::Rising
@@ -504,7 +518,7 @@ impl AlgoEngine {
 
     fn op_duck(&self, i: usize) -> f32 {
         match self.swap {
-            Swap::Ducking { waves, .. } if waves & (1 << i) != 0 => 0.0,
+            Swap::Ducking { kinds, .. } if kinds & (1 << i) != 0 => 0.0,
             _ => 1.0,
         }
     }

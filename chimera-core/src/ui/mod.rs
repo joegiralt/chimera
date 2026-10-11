@@ -51,9 +51,11 @@ use chimera_hal::{
     ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, EncoderId, PART_BUTTONS,
 };
 
-use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
+use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks, Op, ParamAddr};
 use crate::block::Block;
 use crate::boot::RomDfu;
+use crate::dsp::algo::kinds::step_kind;
+use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::dsp::reverb::KnobMemory;
@@ -1400,6 +1402,22 @@ impl UiState {
         });
     }
 
+    /// A WAVE turn steps over a kind the formant budget refuses: say so.
+    #[inline(never)]
+    fn formant_full(&mut self, at: PartId, a: ParamAddr, delta: i8) {
+        if let BlockRef::AlgoOp(op) = a.block
+            && a.param == AlgoOpParams::WAVE
+            && step_kind(
+                self.project.part(at).sound.params.algo.kinds(),
+                op.index(),
+                delta,
+            )
+            .skipped
+        {
+            self.error(Line::new(prompt::FORMANT_FULL));
+        }
+    }
+
     /// The keys this frame, in order: MENU, B*n*, PLUS and MINUS, SEQ, EDIT,
     /// then encoder A on a list. With MIX down, PLUS and MINUS are MIX's
     /// own (prime, delete), never a move.
@@ -2453,6 +2471,9 @@ impl UiState {
                     *rev = reverb_panel::turn(rev, a.param, delta, &mut self.rev_knobs, tempo);
                     continue;
                 }
+                if !shift && let Some(a) = v.addr() {
+                    self.formant_full(at, a, delta);
+                }
                 let params = &mut UiBlocks {
                     project: &mut self.project,
                     part: at,
@@ -3215,31 +3236,32 @@ fn read_block<'a>(
     part: PartId,
     (theme, midi): (&'a ThemeSettings, &'a MidiSettings),
     b: BlockRef,
-) -> Option<&'a dyn Block> {
+) -> Option<BlockView<'a>> {
     let song = project.orbit();
+    let plain = |b: &'a dyn Block| Some(BlockView::Plain(b));
     match b {
-        BlockRef::Theme => Some(theme),
-        BlockRef::Midi => Some(midi),
-        BlockRef::PartMix(p) => Some(project.read_part(p).mix),
-        BlockRef::OrbitChords => Some(&song.live().chords),
-        BlockRef::OrbitRing(r) => Some(&song.live().rings[r.get() as usize]),
-        BlockRef::Tempo => Some(&song.bpm),
+        BlockRef::Theme => plain(theme),
+        BlockRef::Midi => plain(midi),
+        BlockRef::PartMix(p) => plain(project.read_part(p).mix),
+        BlockRef::OrbitChords => plain(&song.live().chords),
+        BlockRef::OrbitRing(r) => plain(&song.live().rings[r.get() as usize]),
+        BlockRef::Tempo => plain(&song.bpm),
         _ => project.read_part(part).block(b),
     }
 }
 
 impl BlockRead for UiBlocks<'_> {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+    fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
         read_block(self.project, self.part, (self.theme, self.midi), b)
     }
 }
 
 impl Blocks for UiBlocks<'_> {
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
+    fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
         match b {
-            BlockRef::Theme => Some(self.theme),
-            BlockRef::Midi => Some(self.midi),
-            BlockRef::PartMix(p) => Some(self.project.edit_part(p).mix),
+            BlockRef::Theme => Some(BlockViewMut::Plain(self.theme)),
+            BlockRef::Midi => Some(BlockViewMut::Plain(self.midi)),
+            BlockRef::PartMix(p) => Some(BlockViewMut::Plain(self.project.edit_part(p).mix)),
             // A scene's params change through `OrbitSong::edit`, which
             // writes its slot too (ADR 0083): never from here. A caller
             // naming one is a bug the tests catch; release reads nothing.
@@ -3247,7 +3269,7 @@ impl Blocks for UiBlocks<'_> {
                 debug_assert!(false, "{b:?} edits through OrbitSong::edit");
                 None
             }
-            BlockRef::Tempo => Some(&mut self.project.orbit_mut().bpm),
+            BlockRef::Tempo => Some(BlockViewMut::Plain(&mut self.project.orbit_mut().bpm)),
             _ => {
                 let PartEdit { sound, mix, fx } = self.project.edit_part(self.part);
                 part_block_mut(sound, mix, fx, b)
@@ -3257,7 +3279,7 @@ impl Blocks for UiBlocks<'_> {
 }
 
 impl BlockRead for UiRead<'_> {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+    fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
         read_block(self.project, self.part, (self.theme, self.midi), b)
     }
 }

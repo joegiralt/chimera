@@ -27,6 +27,7 @@ pub use rig::Rig;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::algo::algorithms::AlgoId;
+use chimera_core::dsp::algo::kinds::OpKind;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxBus;
@@ -174,9 +175,11 @@ pub fn tx_patch(alg: AlgoId) -> ParamSnapshot {
         (WaveId::W2, 4, 80, 0),
         (WaveId::W1, 13, 60, 4),
     ];
-    for (o, (wave, coarse, level, feedback)) in p.algo.ops.iter_mut().zip(ops) {
-        (o.wave, o.coarse, o.level, o.feedback) = (wave.get(), coarse, level, feedback);
+    for (i, (wave, coarse, level, feedback)) in ops.into_iter().enumerate() {
+        let o = &mut p.algo.ops[i];
+        (o.coarse, o.level, o.feedback) = (coarse, level, feedback);
         (o.d1r, o.d1l, o.d2r) = (6, 10, 2);
+        p.algo.try_set_kind(i, OpKind::Table(wave)).unwrap();
     }
     p
 }

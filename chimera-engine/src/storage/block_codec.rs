@@ -1,8 +1,10 @@
 //! The `Block` record: block code `u8`, then (`ParamId` `u8`, value 4 B LE)*.
 //! A value is an `f32` in spec units, or an enum's frozen code as a `u32`.
 
-use crate::addr::{BlockRef, Blocks};
+use crate::addr::{BlockRef, BlockViewMut, Blocks};
 use crate::block::{Block, ParamId};
+use crate::dsp::algo::kinds::OpKind;
+use crate::dsp::algo::params::AlgoOpParams;
 
 use super::codes::{
     DiskValue, Migration, RETIRED, RETIRED_BLOCKS, RETIRED_CODES, Retired, Translation, ValidAddr,
@@ -68,13 +70,15 @@ fn same(a: DiskValue, b: DiskValue) -> bool {
 ///
 /// Returns the entries lost, counted only with a `target`: an unknown block
 /// code, an unknown id, or an enum code refused, none of them retired or
-/// migrated. A block the target doesn't hold counts nothing.
+/// migrated. A block the target doesn't hold counts nothing. An operator
+/// kind the formant budget refuses isn't lost: it keeps the target's kind,
+/// and `refused_kind` says so.
 pub fn decode_block(
     payload: &[u8],
     migrations: &[Migration],
     translations: &[Translation],
     target: Option<&mut dyn Blocks>,
-) -> Result<u16, FileError> {
+) -> Result<Applied, FileError> {
     let (&code, body) = payload.split_first().ok_or(FileError::Bounds)?;
     let (entries, []) = body.as_chunks::<ENTRY_LEN>() else {
         return Err(FileError::Bounds);
@@ -89,14 +93,18 @@ pub fn decode_block(
         }
     }
 
-    let Some(target) = target else { return Ok(0) };
+    let mut out = Applied::default();
+    let Some(target) = target else {
+        return Ok(out);
+    };
     let Some(b) = BlockRef::from_disk_code(code) else {
-        return Ok(u16::from(!RETIRED_BLOCKS.contains(&code)));
+        out.count = u16::from(!RETIRED_BLOCKS.contains(&code));
+        return Ok(out);
     };
-    let Some(blk) = target.block_mut(b) else {
-        return Ok(0);
+    let Some(mut blk) = target.block_mut(b) else {
+        return Ok(out);
     };
-    let mut lost = 0u16;
+    let lost = &mut out.count;
     let specs = b.specs();
     debug_assert!(specs.len() <= MAX_BLOCK_PARAMS);
     let slot = |id: ParamId| specs.iter().position(|s| s.id == id);
@@ -118,7 +126,7 @@ pub fn decode_block(
                     if !RETIRED.contains(&(code, id.0))
                         && !migrations.iter().any(|m| m.block == code && m.old == id)
                     {
-                        lost += 1;
+                        *lost += 1;
                     }
                     continue;
                 };
@@ -142,8 +150,13 @@ pub fn decode_block(
             Some(DiskValue::Code(c)) if !blk.set_enum_code(s.id, c) => {
                 if RETIRED_CODES.contains(&(code, s.id.0, c)) {
                     retired.put_code(s.id, c);
+                } else if matches!(blk, BlockViewMut::Op(_))
+                    && s.id == AlgoOpParams::WAVE
+                    && OpKind::from_code(c).is_some()
+                {
+                    out.refused_kind = true;
                 } else {
-                    lost += 1;
+                    *lost += 1;
                 }
             }
             Some(DiskValue::Code(_)) => {}
@@ -153,9 +166,18 @@ pub fn decode_block(
     if retired.any()
         && let Some(t) = translations.iter().find(|t| t.block == code)
     {
-        (t.apply)(&retired, blk);
+        (t.apply)(&retired, &mut *blk);
     }
-    Ok(lost)
+    Ok(out)
+}
+
+/// What `decode_block` did to its target.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Applied {
+    /// Entries lost.
+    pub count: u16,
+    /// An operator kind the formant budget refused (`Kinds`).
+    pub refused_kind: bool,
 }
 
 /// A set of `u8`s: ids or codes a record may name once.
@@ -220,14 +242,14 @@ mod tests {
     }
 
     impl crate::addr::BlockRead for Order {
-        fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-            (b == BlockRef::Filter).then_some(self as &dyn Block)
+        fn block(&self, b: BlockRef) -> Option<crate::addr::BlockView<'_>> {
+            (b == BlockRef::Filter).then_some(crate::addr::BlockView::Plain(self))
         }
     }
 
     impl Blocks for Order {
-        fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
-            (b == BlockRef::Filter).then_some(self as &mut dyn Block)
+        fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
+            (b == BlockRef::Filter).then_some(BlockViewMut::Plain(self))
         }
     }
 

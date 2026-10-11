@@ -1810,8 +1810,9 @@ fn heavy_routes_bill_their_named_sum() {
 fn a16_a17_with(k: [OpKind; OPS]) -> AlgoParams {
     let mut p = AlgoParams::default();
     (p.alg_a, p.alg_b) = (AlgoId::A16.get(), AlgoId::A17.get());
-    for (op, kind) in p.ops.iter_mut().zip(k) {
-        (op.wave, op.level, op.feedback) = (kind.code(), 99, 1);
+    for (i, kind) in k.into_iter().enumerate() {
+        (p.ops[i].level, p.ops[i].feedback) = (99, 1);
+        p.try_set_kind(i, kind).unwrap();
     }
     p
 }
@@ -1821,26 +1822,26 @@ fn formant_budget_keeps_four_voices() {
     let kinds = [OpKind::Table(WaveId::W1), OpKind::Formant, OpKind::Noise];
     for code in 0..3usize.pow(6) {
         let k: [OpKind; OPS] = core::array::from_fn(|i| kinds[code / 3usize.pow(i as u32) % 3]);
+        if !fits(&k) {
+            continue; // `Kinds` can't hold it
+        }
         let p = a16_a17_with(k);
         let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
         let v = |bus: Cost| {
             (budget - bus.0) / (AlgoEngine::cost(&p, &[false; OPS]).0 + HEAVY_OVERHEAD.0)
         };
-        if fits(&k) {
-            assert!(
-                v(FxBus::COST_TAPE) >= FLOOR_VOICES && v(FxBus::COST_NO_TAPE) >= FLOOR_VOICES,
-                "{k:?}"
-            );
-        }
+        assert!(
+            v(FxBus::COST_TAPE) >= FLOOR_VOICES && v(FxBus::COST_NO_TAPE) >= FLOOR_VOICES,
+            "{k:?}"
+        );
     }
-    let mut over = [OpKind::Table(WaveId::W1); OPS];
-    for slot in over.iter_mut().take(FORMANT_N as usize + 1) {
+    // One FRMT past the budget breaks the floor: N formants, plus one more's
+    // charge (cost is additive per operator).
+    let mut at_n = [OpKind::Table(WaveId::W1); OPS];
+    for slot in at_n.iter_mut().take(FORMANT_N as usize) {
         *slot = OpKind::Formant;
     }
-    let p = a16_a17_with(over);
+    let over = AlgoEngine::cost(&a16_a17_with(at_n), &[false; OPS]).0 + OpKind::Formant.charge();
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
-    assert!(
-        (budget - FxBus::COST_TAPE.0) / (AlgoEngine::cost(&p, &[false; OPS]).0 + HEAVY_OVERHEAD.0)
-            < FLOOR_VOICES
-    );
+    assert!((budget - FxBus::COST_TAPE.0) / (over + HEAVY_OVERHEAD.0) < FLOOR_VOICES);
 }

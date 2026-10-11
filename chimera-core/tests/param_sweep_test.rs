@@ -250,6 +250,9 @@ fn silences(c: &Case) -> Option<&'static str> {
              note",
         );
     }
+    if c.is_op(AlgoOpParams::WAVE) && c.any(|v| v >= 16.0) {
+        return Some("formant kind before its kernel: FRMT and NOISE are silent (Tasks 9 and 10)");
+    }
     if c.is_op(AlgoOpParams::AR) && c.any(|v| v == 0.0) {
         return Some("AR 0 never attacks (the TX81Z's rate 0)");
     }

@@ -68,7 +68,7 @@ fn decode(bytes: &[u8]) -> Result<Sound, FileError> {
 
 fn block(b: BlockRef, s: &Sound) -> Vec<u8> {
     let mut r = RecordBuf::new();
-    encode_block(b, s.params.block(b).unwrap(), None, &mut r);
+    encode_block(b, &*s.params.block(b).unwrap(), None, &mut r);
     r.as_slice().to_vec()
 }
 
@@ -287,11 +287,11 @@ fn block_payload_shape_is_checked() {
     assert_eq!(decode_block(&dup, &[], &[], None), Err(FileError::Corrupt));
     // Unknown block codes and param ids are skipped, and counted.
     assert_eq!(
-        decode_block(&[200, 1, 0, 0, 0, 0], &[], &[], Some(&mut p)),
+        decode_block(&[200, 1, 0, 0, 0, 0], &[], &[], Some(&mut p)).map(|a| a.count),
         Ok(1)
     );
     assert_eq!(
-        decode_block(&[10, 99, 0, 0, 0, 0], &[], &[], Some(&mut p)),
+        decode_block(&[10, 99, 0, 0, 0, 0], &[], &[], Some(&mut p)).map(|a| a.count),
         Ok(1)
     );
 }
@@ -329,7 +329,7 @@ fn unit(rng: &mut XorShift) -> f32 {
 fn random_sound(e: EngineType, rng: &mut XorShift) -> Sound {
     let mut s = Sound::neutral(e);
     for b in BlockRef::ALL {
-        let Some(blk) = s.params.block_mut(b) else {
+        let Some(mut blk) = s.params.block_mut(b) else {
             continue;
         };
         for a in ValidAddr::of_block(b) {
@@ -589,7 +589,7 @@ fn worst(e: EngineType) -> (Sound, usize) {
     let mut s = Sound::neutral(e);
     let mut stuck = 0;
     for b in BlockRef::ALL {
-        let Some(blk) = s.params.block_mut(b) else {
+        let Some(mut blk) = s.params.block_mut(b) else {
             continue;
         };
         let base = neutral.params.block(b).unwrap();

@@ -22,7 +22,7 @@
 
 use chimera_hal::store::{Dir, Store, StoreError};
 
-use crate::addr::{BlockRead, BlockRef, Blocks};
+use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks};
 use crate::block::{Block, DiskCode};
 use crate::dsp::fx_bus::FxParams;
 use crate::hw::MAX_PARTS;
@@ -82,22 +82,22 @@ fn fx_block(fx: &FxParams, b: BlockRef) -> Option<&dyn Block> {
 struct FxBlocks<'a>(&'a mut FxParams);
 
 impl BlockRead for FxBlocks<'_> {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        fx_block(self.0, b)
+    fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
+        fx_block(self.0, b).map(BlockView::Plain)
     }
 }
 
 impl Blocks for FxBlocks<'_> {
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
+    fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
         let fx = &mut *self.0;
-        Some(match b {
+        Some(BlockViewMut::Plain(match b {
             BlockRef::Chorus => &mut fx.chorus,
             BlockRef::Delay => &mut fx.delay,
             BlockRef::Reverb => &mut fx.reverb,
             BlockRef::Tape => &mut fx.tape,
             BlockRef::Comp => &mut fx.comp,
             _ => return None,
-        })
+        }))
     }
 }
 
@@ -105,14 +105,14 @@ impl Blocks for FxBlocks<'_> {
 struct MixBlocks<'a>(&'a mut PartParams);
 
 impl BlockRead for MixBlocks<'_> {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        (b == BlockRef::Part).then_some(&*self.0 as &dyn Block)
+    fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
+        (b == BlockRef::Part).then_some(BlockView::Plain(&*self.0))
     }
 }
 
 impl Blocks for MixBlocks<'_> {
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
-        (b == BlockRef::Part).then_some(&mut *self.0 as &mut dyn Block)
+    fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
+        (b == BlockRef::Part).then_some(BlockViewMut::Plain(&mut *self.0))
     }
 }
 

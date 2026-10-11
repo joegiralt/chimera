@@ -69,6 +69,7 @@ mod authored {
     use super::*;
     use crate::addr::{BlockRef, ParamAddr};
     use crate::dsp::algo::algorithms::AlgoId;
+    use crate::dsp::algo::kinds::{Kinds, OpKind};
     use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
     use crate::dsp::algo::waves::WaveId;
     use crate::modulation::ModSource;
@@ -78,10 +79,9 @@ mod authored {
     const OPEN: f32 = 20000.0;
 
     /// `env` is AR, D1R, D1L, D2R, RR.
-    fn op(wave: WaveId, coarse: u8, level: u8, env: [u8; 5]) -> AlgoOpParams {
+    fn op(coarse: u8, level: u8, env: [u8; 5]) -> AlgoOpParams {
         let [ar, d1r, d1l, d2r, rr] = env;
         AlgoOpParams {
-            wave: wave.get(),
             coarse,
             level,
             ar,
@@ -93,15 +93,15 @@ mod authored {
         }
     }
 
-    fn algo(a: AlgoId, b: AlgoId, morph: u8, ops: [AlgoOpParams; 6]) -> AlgoParams {
-        AlgoParams {
-            alg_a: a.get(),
-            alg_b: b.get(),
-            morph,
-            transpose: 0,
-            ops,
-        }
+    fn algo(a: AlgoId, b: AlgoId, morph: u8, kinds: Kinds, ops: [AlgoOpParams; 6]) -> AlgoParams {
+        AlgoParams::new(a, b, morph, kinds, ops)
     }
+
+    const W1: OpKind = OpKind::Table(WaveId::W1);
+    const W2: OpKind = OpKind::Table(WaveId::W2);
+    const W3: OpKind = OpKind::Table(WaveId::W3);
+    const SAW: OpKind = OpKind::Table(WaveId::SAW);
+    const SQR: OpKind = OpKind::Table(WaveId::SQR);
 
     fn named(name: &str, algo: AlgoParams) -> Sound {
         let mut s = Sound::init(EngineType::Algo);
@@ -118,7 +118,6 @@ mod authored {
             rr: 8,
             ..AlgoOpParams::default()
         };
-        let w1 = WaveId::W1;
         let sound = match i {
             0 => {
                 let mut s = named(
@@ -127,18 +126,19 @@ mod authored {
                         AlgoId::T5,
                         AlgoId::T5,
                         0,
+                        const { Kinds::new([W1, W1, W2, W1, W1, W1]) },
                         [
                             AlgoOpParams {
                                 velocity: 2,
-                                ..op(w1, 0, 99, [31, 9, 12, 4, 9])
+                                ..op(0, 99, [31, 9, 12, 4, 9])
                             },
                             AlgoOpParams {
                                 feedback: 5,
                                 velocity: 4,
-                                ..op(w1, 4, 76, [31, 14, 3, 6, 9])
+                                ..op(4, 76, [31, 14, 3, 6, 9])
                             },
-                            op(WaveId::W2, 4, 80, [31, 10, 10, 4, 9]),
-                            op(w1, 8, 60, [31, 16, 2, 6, 9]),
+                            op(4, 80, [31, 10, 10, 4, 9]),
+                            op(8, 60, [31, 16, 2, 6, 9]),
                             off,
                             off,
                         ],
@@ -155,22 +155,23 @@ mod authored {
                         AlgoId::T5,
                         AlgoId::T5,
                         0,
+                        Kinds::TABLE,
                         [
                             AlgoOpParams {
                                 velocity: 3,
-                                ..op(w1, 4, 93, [31, 6, 9, 3, 8])
+                                ..op(4, 93, [31, 6, 9, 3, 8])
                             },
                             AlgoOpParams {
                                 velocity: 5,
-                                ..op(w1, 42, 58, [31, 18, 0, 0, 8])
+                                ..op(42, 58, [31, 18, 0, 0, 8])
                             },
                             AlgoOpParams {
                                 velocity: 3,
-                                ..op(w1, 4, 86, [31, 5, 10, 3, 8])
+                                ..op(4, 86, [31, 5, 10, 3, 8])
                             },
                             AlgoOpParams {
                                 velocity: 5,
-                                ..op(w1, 4, 66, [31, 9, 5, 3, 8])
+                                ..op(4, 66, [31, 9, 5, 3, 8])
                             },
                             off,
                             off,
@@ -190,13 +191,14 @@ mod authored {
                         AlgoId::T3,
                         AlgoId::T3,
                         0,
+                        Kinds::TABLE,
                         [
-                            op(w1, 4, 99, [18, 5, 13, 2, 7]),
-                            op(w1, 4, 72, [16, 6, 11, 2, 7]),
-                            op(w1, 4, 64, [20, 4, 12, 2, 7]),
+                            op(4, 99, [18, 5, 13, 2, 7]),
+                            op(4, 72, [16, 6, 11, 2, 7]),
+                            op(4, 64, [20, 4, 12, 2, 7]),
                             AlgoOpParams {
                                 feedback: 6,
-                                ..op(w1, 4, 58, [14, 6, 10, 2, 7])
+                                ..op(4, 58, [14, 6, 10, 2, 7])
                             },
                             off,
                             off,
@@ -214,11 +216,12 @@ mod authored {
                         AlgoId::T5,
                         AlgoId::T5,
                         0,
+                        Kinds::TABLE,
                         [
-                            op(w1, 4, 93, [31, 4, 0, 0, 5]),
-                            op(w1, 12, 72, [31, 6, 0, 0, 5]),
-                            op(w1, 11, 82, [31, 5, 0, 0, 5]),
-                            op(w1, 23, 66, [31, 7, 0, 0, 5]),
+                            op(4, 93, [31, 4, 0, 0, 5]),
+                            op(12, 72, [31, 6, 0, 0, 5]),
+                            op(11, 82, [31, 5, 0, 0, 5]),
+                            op(23, 66, [31, 7, 0, 0, 5]),
                             off,
                             off,
                         ],
@@ -236,11 +239,12 @@ mod authored {
                         AlgoId::A2,
                         AlgoId::A2,
                         0,
+                        const { Kinds::new([SAW, SAW, W1, W1, W1, W1]) },
                         [
-                            op(WaveId::SAW, 4, 90, [31, 0, 15, 0, 8]),
+                            op(4, 90, [31, 0, 15, 0, 8]),
                             AlgoOpParams {
                                 detune: 3,
-                                ..op(WaveId::SAW, 4, 86, [31, 0, 15, 0, 8])
+                                ..op(4, 86, [31, 0, 15, 0, 8])
                             },
                             off,
                             off,
@@ -257,10 +261,16 @@ mod authored {
             }
             5 => {
                 // LEVEL 95: -3.0 dB, T1's old 1 / √2, into DRIVE (ADR 0049).
-                let sqr = op(WaveId::SQR, 0, 95, [31, 8, 12, 0, 9]);
+                let sqr = op(0, 95, [31, 8, 12, 0, 9]);
                 let mut s = named(
                     "SQR BASS",
-                    algo(AlgoId::T1, AlgoId::T1, 0, [sqr, off, off, off, off, off]),
+                    algo(
+                        AlgoId::T1,
+                        AlgoId::T1,
+                        0,
+                        const { Kinds::new([SQR, W1, W1, W1, W1, W1]) },
+                        [sqr, off, off, off, off, off],
+                    ),
                 );
                 (s.params.filter.cutoff, s.params.filter.resonance) = (900.0, 0.4);
                 // DRIVE 0.3 trimmed for LEVEL 95's +0.01 dB: the clipper's input is unchanged.
@@ -273,8 +283,11 @@ mod authored {
                 const COARSE: [u8; 6] = [4, 8, 10, 13, 16, 19];
                 const LEVEL: [u8; 6] = [88, 80, 76, 72, 70, 66];
                 const MORPH_BASE: u8 = 40;
-                let ops = core::array::from_fn(|i| op(w1, COARSE[i], LEVEL[i], [12, 0, 15, 0, 5]));
-                let mut s = named("MORPH PAD", algo(AlgoId::A1, AlgoId::A17, MORPH_BASE, ops));
+                let ops = core::array::from_fn(|i| op(COARSE[i], LEVEL[i], [12, 0, 15, 0, 5]));
+                let mut s = named(
+                    "MORPH PAD",
+                    algo(AlgoId::A1, AlgoId::A17, MORPH_BASE, Kinds::TABLE, ops),
+                );
                 s.params.lfos[0].rate = 0.2;
                 s.params.filter.cutoff = 4000.0;
                 s.params.out.volume = 0.380_297_63; // at MORPH 40 (ADR 0049)
@@ -297,19 +310,20 @@ mod authored {
                         AlgoId::T5,
                         AlgoId::A12,
                         64,
+                        const { Kinds::new([W1, W2, W1, W1, W3, W1]) },
                         [
                             AlgoOpParams {
                                 velocity: 3,
-                                ..op(w1, 4, 94, [31, 6, 9, 3, 8])
+                                ..op(4, 94, [31, 6, 9, 3, 8])
                             },
-                            op(WaveId::W2, 8, 70, [31, 10, 4, 3, 8]),
-                            op(w1, 4, 86, [31, 6, 9, 3, 8]),
+                            op(8, 70, [31, 10, 4, 3, 8]),
+                            op(4, 86, [31, 6, 9, 3, 8]),
                             AlgoOpParams {
                                 feedback: 3,
-                                ..op(w1, 13, 64, [31, 8, 6, 3, 8])
+                                ..op(13, 64, [31, 8, 6, 3, 8])
                             },
-                            op(WaveId::W3, 4, 76, [31, 6, 9, 3, 8]),
-                            op(w1, 19, 60, [31, 9, 5, 3, 8]),
+                            op(4, 76, [31, 6, 9, 3, 8]),
+                            op(19, 60, [31, 9, 5, 3, 8]),
                         ],
                     ),
                 );

@@ -1,15 +1,20 @@
 //! The Algo Sound's parameters, stored as bytes (spec § Voice model).
 
+use crate::addr::Op;
 use crate::block::{Block, Change, Motion, ParamId, ParamSpec, Smoothing, ValFmt};
 use crate::dsp::algo::algorithms::{ALGO_COUNT, ALGO_IDENTS, ALGO_NAMES, AlgoId};
 use crate::dsp::algo::env::EnvRates;
+use crate::dsp::algo::kinds::{
+    Kinds, OP_KIND_COUNT, OP_KIND_IDENTS, OP_KIND_NAMES, OpKind, OverBudget, step_kind,
+};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::algo::tx::COARSE_NAMES;
-use crate::dsp::algo::waves::{WAVE_COUNT, WAVE_IDENTS, WAVE_NAMES, WaveId};
+use crate::dsp::algo::waves::WaveId;
 
+/// One operator's parameters but its kind, which `AlgoParams` holds
+/// (`Kinds`), so WAVE is read and written through `OpView` and `OpViewMut`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AlgoOpParams {
-    pub wave: u8,
     pub coarse: u8,
     pub fine: u8,
     pub detune: i8,
@@ -26,26 +31,27 @@ pub struct AlgoOpParams {
 
 impl Default for AlgoOpParams {
     fn default() -> Self {
-        Self {
-            wave: 0,
-            coarse: 4,
-            fine: 0,
-            detune: 0,
-            level: 0,
-            ar: 31,
-            d1r: 0,
-            d1l: 15,
-            d2r: 0,
-            // RR 5: INIT's release, T60 about 1.1 s (ADR 0049's note).
-            rr: 5,
-            rate_scale: 0,
-            feedback: 0,
-            velocity: 0,
-        }
+        Self::DEFAULT
     }
 }
 
 impl AlgoOpParams {
+    pub const DEFAULT: Self = Self {
+        coarse: 4,
+        fine: 0,
+        detune: 0,
+        level: 0,
+        ar: 31,
+        d1r: 0,
+        d1l: 15,
+        d2r: 0,
+        // RR 5: INIT's release, T60 about 1.1 s (ADR 0049's note).
+        rr: 5,
+        rate_scale: 0,
+        feedback: 0,
+        velocity: 0,
+    };
+
     pub const WAVE: ParamId = ParamId(0);
     pub const COARSE: ParamId = ParamId(1);
     pub const FINE: ParamId = ParamId(2);
@@ -79,8 +85,8 @@ pub static ALGO_OP_SPECS: [ParamSpec; 13] = [
     ParamSpec::choice(
         0,
         "WAVE",
-        ValFmt::Names(WAVE_NAMES),
-        15.0,
+        ValFmt::Names(&OP_KIND_NAMES),
+        17.0,
         0.0,
         Change::Crossfade,
     )
@@ -223,18 +229,13 @@ pub static ALGO_OP_SPECS: [ParamSpec; 13] = [
 ];
 
 // An Enum's `max` is its last code: a longer table needs the spec to grow too.
-const _: () = assert!(ALGO_OP_SPECS[0].max as usize == WAVE_COUNT - 1);
-const _: () = assert!(WAVE_IDENTS.len() == WAVE_COUNT && WAVE_NAMES.len() == WAVE_COUNT);
+const _: () = assert!(ALGO_OP_SPECS[0].max as usize == OP_KIND_COUNT - 1);
 
-impl Block for AlgoOpParams {
-    fn specs(&self) -> &'static [ParamSpec] {
-        &ALGO_OP_SPECS
-    }
-
+impl AlgoOpParams {
+    /// Every id but WAVE, which `OpView` reads.
     #[inline(never)]
-    fn get(&self, id: ParamId) -> f32 {
+    pub fn get(&self, id: ParamId) -> f32 {
         match id {
-            Self::WAVE => self.wave as f32,
             Self::COARSE => self.coarse as f32,
             Self::FINE => self.fine as f32,
             Self::DETUNE => self.detune as f32,
@@ -251,43 +252,151 @@ impl Block for AlgoOpParams {
         }
     }
 
+    /// Every id but WAVE, which `OpViewMut` writes.
     #[inline(never)]
-    fn write(&mut self, id: ParamId, v: f32) {
+    pub fn write(&mut self, id: ParamId, v: f32) {
+        // One conversion, not one per arm.
+        let b = v as u8;
         match id {
-            Self::WAVE => self.wave = v as u8,
-            Self::COARSE => self.coarse = v as u8,
-            Self::FINE => self.fine = v as u8,
+            Self::COARSE => self.coarse = b,
+            Self::FINE => self.fine = b,
             Self::DETUNE => self.detune = v as i8,
-            Self::LEVEL => self.level = v as u8,
-            Self::AR => self.ar = v as u8,
-            Self::D1R => self.d1r = v as u8,
-            Self::D1L => self.d1l = v as u8,
-            Self::D2R => self.d2r = v as u8,
-            Self::RR => self.rr = v as u8,
-            Self::RATE_SCALE => self.rate_scale = v as u8,
-            Self::FEEDBACK => self.feedback = v as u8,
-            Self::VELOCITY => self.velocity = v as u8,
+            Self::LEVEL => self.level = b,
+            Self::AR => self.ar = b,
+            Self::D1R => self.d1r = b,
+            Self::D1L => self.d1l = b,
+            Self::D2R => self.d2r = b,
+            Self::RR => self.rr = b,
+            Self::RATE_SCALE => self.rate_scale = b,
+            Self::FEEDBACK => self.feedback = b,
+            Self::VELOCITY => self.velocity = b,
             _ => {}
         }
     }
+}
 
-    /// WAVE's code is its `WaveId` index.
-    fn enum_code(&self, id: ParamId) -> Option<u8> {
-        (id == Self::WAVE).then_some(self.wave)
+/// Operator `op` of `p` as a block: WAVE is its kind's code (ADR 0045).
+/// Out of line, as every block's `get` is (`Block::spec`).
+#[inline(never)]
+fn op_get(p: &AlgoParams, op: usize, id: ParamId) -> f32 {
+    if id == AlgoOpParams::WAVE {
+        f32::from(p.kinds.get(op).code())
+    } else {
+        p.ops[op].get(id)
+    }
+}
+
+#[inline(never)]
+fn op_code(p: &AlgoParams, op: usize, id: ParamId) -> Option<u8> {
+    (id == AlgoOpParams::WAVE).then(|| p.kinds.get(op).code())
+}
+
+/// A kind's ident is its own literal (`Recipe::ident`), not its label.
+fn op_ident(p: &AlgoParams, op: usize, id: ParamId) -> Option<&'static str> {
+    op_code(p, op, id).map(|c| OP_KIND_IDENTS[usize::from(c)])
+}
+
+/// Shared by both views, so each is one call.
+#[inline(never)]
+fn op_normalized(p: &AlgoParams, op: usize, id: ParamId) -> f32 {
+    crate::block::find_spec(&ALGO_OP_SPECS, id).map_or(0.0, |s| s.normalize(op_get(p, op, id)))
+}
+
+/// One operator, read: `BlockRef::AlgoOp`'s block.
+pub struct OpView<'a> {
+    p: &'a AlgoParams,
+    op: usize,
+}
+
+/// One operator, written: WAVE only through `AlgoParams::try_set_kind`, so
+/// a write that would overspend the formant budget changes nothing.
+pub struct OpViewMut<'a> {
+    p: &'a mut AlgoParams,
+    op: usize,
+}
+
+impl Block for OpView<'_> {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &ALGO_OP_SPECS
     }
 
-    /// A wave's ident is its own literal (`Recipe::ident`), not its label.
+    fn get(&self, id: ParamId) -> f32 {
+        op_get(self.p, self.op, id)
+    }
+
+    fn normalized(&self, id: ParamId) -> f32 {
+        op_normalized(self.p, self.op, id)
+    }
+
+    /// A shared view writes nothing; `BlockView` lends it only as `&`.
+    fn write(&mut self, _: ParamId, _: f32) {}
+
+    fn set(&mut self, _: ParamId, _: f32) {}
+
+    fn nudge(&mut self, _: ParamId, _: i8) {}
+
+    fn snap(&mut self, _: ParamId, _: i8) {}
+
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        op_code(self.p, self.op, id)
+    }
+
     fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
-        (id == Self::WAVE)
-            .then(|| WAVE_IDENTS.get(usize::from(self.wave)).copied())
-            .flatten()
+        op_ident(self.p, self.op, id)
+    }
+}
+
+impl Block for OpViewMut<'_> {
+    fn specs(&self) -> &'static [ParamSpec] {
+        &ALGO_OP_SPECS
+    }
+
+    fn get(&self, id: ParamId) -> f32 {
+        op_get(self.p, self.op, id)
+    }
+
+    fn normalized(&self, id: ParamId) -> f32 {
+        op_normalized(self.p, self.op, id)
+    }
+
+    /// Out of line, so `snap` calls it.
+    #[inline(never)]
+    fn set(&mut self, id: ParamId, v: f32) {
+        if let Some(s) = self.spec(id) {
+            self.write(id, s.quantize(v));
+        }
+    }
+
+    #[inline(never)]
+    fn write(&mut self, id: ParamId, v: f32) {
+        if id == AlgoOpParams::WAVE {
+            let _ = self.p.try_set_kind(self.op, OpKind::clamped(v as u8));
+        } else {
+            self.p.ops[self.op].write(id, v);
+        }
+    }
+
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        op_code(self.p, self.op, id)
+    }
+
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        op_ident(self.p, self.op, id)
     }
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
-        id == Self::WAVE
-            && WaveId::from_index(code)
-                .map(|w| self.wave = w.get())
-                .is_some()
+        id == AlgoOpParams::WAVE
+            && OpKind::from_code(code).is_some_and(|k| self.p.try_set_kind(self.op, k).is_ok())
+    }
+
+    /// WAVE steps over the kinds the budget refuses (`step_kind`).
+    fn nudge(&mut self, id: ParamId, delta: i8) {
+        if id == AlgoOpParams::WAVE {
+            let to = step_kind(self.p.kinds, self.op, delta).to;
+            let _ = self.p.try_set_kind(self.op, to);
+        } else if let Some(s) = self.spec(id) {
+            self.write(id, s.nudged(self.get(id), delta));
+        }
     }
 }
 
@@ -298,6 +407,8 @@ pub struct AlgoParams {
     pub morph: u8,
     pub transpose: i8,
     pub ops: [AlgoOpParams; OPS],
+    /// Private: every write goes through `try_set_kind`.
+    kinds: Kinds,
 }
 
 /// INIT's operators 2–4 (ADR 0049). At 72 T1's stack keeps a strong
@@ -330,15 +441,53 @@ impl AlgoParams {
     pub const TRANSPOSE: ParamId = ParamId(3);
 
     /// Operator 1 alone at full level on `wave` (the one-operator Sounds).
-    pub fn single(wave: WaveId) -> Self {
-        let mut ops = [AlgoOpParams::default(); OPS];
-        (ops[0].wave, ops[0].level) = (wave.get(), 99);
+    pub const fn single(wave: WaveId) -> Self {
+        let mut ops = [AlgoOpParams::DEFAULT; OPS];
+        ops[0].level = 99;
+        let mut w = [WaveId::W1; OPS];
+        w[0] = wave;
+        Self::new(AlgoId::T1, AlgoId::T1, 0, Kinds::tables(w), ops)
+    }
+
+    /// TRNSP 0.
+    pub const fn new(
+        alg_a: AlgoId,
+        alg_b: AlgoId,
+        morph: u8,
+        kinds: Kinds,
+        ops: [AlgoOpParams; OPS],
+    ) -> Self {
         Self {
-            alg_a: 0,
-            alg_b: 0,
-            morph: 0,
+            alg_a: alg_a.get(),
+            alg_b: alg_b.get(),
+            morph,
             transpose: 0,
             ops,
+            kinds,
+        }
+    }
+
+    pub const fn kinds(&self) -> Kinds {
+        self.kinds
+    }
+
+    /// The one write of an operator's kind: refused, it changes nothing.
+    pub fn try_set_kind(&mut self, op: usize, kind: OpKind) -> Result<(), OverBudget> {
+        self.kinds = self.kinds.with(op, kind)?;
+        Ok(())
+    }
+
+    pub fn op(&self, op: Op) -> OpView<'_> {
+        OpView {
+            p: self,
+            op: op.index(),
+        }
+    }
+
+    pub fn op_mut(&mut self, op: Op) -> OpViewMut<'_> {
+        OpViewMut {
+            p: self,
+            op: op.index(),
         }
     }
 }

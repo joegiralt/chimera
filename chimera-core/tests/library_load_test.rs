@@ -297,6 +297,7 @@ fn a_read_counts_no_skips_and_needs_no_source() {
         read(&mut st, &mut p, file).unwrap(),
         LibRead {
             skips: 0,
+            over: false,
             source: None
         }
     );

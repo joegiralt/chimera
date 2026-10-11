@@ -249,10 +249,8 @@ fn algo_conforms() {
         "algo",
         chimera_core::dsp::algo::params::AlgoParams::default(),
     );
-    conforms(
-        "algo_op",
-        chimera_core::dsp::algo::params::AlgoOpParams::default(),
-    );
+    let mut p = chimera_core::dsp::algo::params::AlgoParams::default();
+    conforms("algo_op", p.op_mut(chimera_core::addr::Op::E));
 }
 
 #[test]
@@ -302,10 +300,10 @@ fn snap_walks_bipolar_points_both_ways() {
 
 /// Spec §1: `ParamSnapshot` shrinks from 1,524 B to roughly 0.4 KB; TAPE's
 /// params add 48 B (TAPE spec § 2, Structure); VA's params add 40 B
-/// (VA spec § Params).
+/// (VA spec § Params); the operators' `Kinds` add 4 B (formant spec § 1).
 #[test]
 fn snapshot_is_small() {
     let size = core::mem::size_of::<chimera_core::params::ParamSnapshot>();
     eprintln!("ParamSnapshot = {size} B");
-    assert!(size <= 584, "ParamSnapshot is {size} B");
+    assert!(size <= 588, "ParamSnapshot is {size} B");
 }

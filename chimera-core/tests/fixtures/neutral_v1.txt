@@ -123,7 +123,6 @@ Sound {
             transpose: 0,
             ops: [
                 AlgoOpParams {
-                    wave: 0,
                     coarse: 4,
                     fine: 0,
                     detune: 0,
@@ -138,7 +137,6 @@ Sound {
                     velocity: 0,
                 },
                 AlgoOpParams {
-                    wave: 0,
                     coarse: 4,
                     fine: 0,
                     detune: 0,
@@ -153,7 +151,6 @@ Sound {
                     velocity: 0,
                 },
                 AlgoOpParams {
-                    wave: 0,
                     coarse: 4,
                     fine: 0,
                     detune: 0,
@@ -168,7 +165,6 @@ Sound {
                     velocity: 0,
                 },
                 AlgoOpParams {
-                    wave: 0,
                     coarse: 4,
                     fine: 0,
                     detune: 0,
@@ -183,7 +179,6 @@ Sound {
                     velocity: 0,
                 },
                 AlgoOpParams {
-                    wave: 0,
                     coarse: 4,
                     fine: 0,
                     detune: 0,
@@ -198,7 +193,6 @@ Sound {
                     velocity: 0,
                 },
                 AlgoOpParams {
-                    wave: 0,
                     coarse: 4,
                     fine: 0,
                     detune: 0,
@@ -213,6 +207,40 @@ Sound {
                     velocity: 0,
                 },
             ],
+            kinds: Kinds(
+                [
+                    Table(
+                        WaveId(
+                            0,
+                        ),
+                    ),
+                    Table(
+                        WaveId(
+                            0,
+                        ),
+                    ),
+                    Table(
+                        WaveId(
+                            0,
+                        ),
+                    ),
+                    Table(
+                        WaveId(
+                            0,
+                        ),
+                    ),
+                    Table(
+                        WaveId(
+                            0,
+                        ),
+                    ),
+                    Table(
+                        WaveId(
+                            0,
+                        ),
+                    ),
+                ],
+            ),
         },
         modal: ModalParams {
             mode: String,

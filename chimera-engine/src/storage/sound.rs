@@ -104,7 +104,7 @@ pub(crate) fn encode_sound_body(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(
     for b in BlockRef::ALL {
         if let Some(blk) = s.params.block(b) {
             r.clear();
-            if encode_block(b, blk, neutral.block(b), &mut r) > 0 {
+            if encode_block(b, &*blk, neutral.block(b).as_deref(), &mut r) > 0 {
                 w.put(RecordTag::Block, r.as_slice())?;
             }
         }
@@ -224,6 +224,8 @@ pub struct SoundCheck {
     had_qm: bool,
     /// Entries pass 2 dropped from this file; 0 in pass 1.
     skips: u16,
+    /// Pass 2 refused an operator kind over the formant budget.
+    over: bool,
 }
 
 impl SoundCheck {
@@ -243,6 +245,7 @@ impl SoundCheck {
             had_fm3: false,
             had_qm: false,
             skips: 0,
+            over: false,
         }
     }
 
@@ -251,6 +254,12 @@ impl SoundCheck {
     /// in pass 2 only, so zero until it has run.
     pub fn skips(&self) -> u16 {
         self.skips
+    }
+
+    /// Pass 2 decoded an operator kind past the formant budget as W1 (no
+    /// firmware writes one).
+    pub fn over_budget(&self) -> bool {
+        self.over
     }
 
     fn skip(&mut self, n: u16) {
@@ -291,6 +300,13 @@ impl<'a> SoundDecoder<'a> {
             target,
             staged: Sound::neutral(EngineType::Algo),
         }
+    }
+}
+
+impl SoundDecoder<'_> {
+    /// `SoundCheck::over_budget`.
+    pub fn over_budget(&self) -> bool {
+        self.check.over_budget()
     }
 }
 
@@ -338,6 +354,7 @@ impl SoundCheck {
                 self.routes_len = 0;
                 (self.had_fm3, self.had_qm) = (false, false);
                 self.skips = 0;
+                self.over = false;
                 return Ok(());
             }
             Event::Record(ReadTag::Known(tag), p) => (tag, p),
@@ -384,13 +401,14 @@ impl SoundCheck {
                     self.had_fm3 = has(FilterParams::FM3_IN);
                     self.had_qm = has(FilterParams::QM_IN);
                 }
-                let lost = decode_block(
+                let a = decode_block(
                     p,
                     MIGRATIONS,
                     TRANSLATIONS,
                     staged.map(|s| &mut s.params as &mut dyn Blocks),
                 )?;
-                self.skip(lost);
+                self.skip(a.count);
+                self.over |= a.refused_kind;
                 Ok(())
             }
             RecordTag::Registry => {

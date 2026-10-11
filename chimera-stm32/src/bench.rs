@@ -28,6 +28,7 @@ use chimera_engine::audio_out::{DacSample, interleave};
 use chimera_engine::dsp::algo::algorithms::AlgoId;
 use chimera_engine::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
 use chimera_engine::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
+use chimera_engine::dsp::algo::kinds::Kinds;
 use chimera_engine::dsp::algo::params::AlgoParams;
 use chimera_engine::dsp::algo::plan::{EvalPlan, OPS};
 use chimera_engine::dsp::algo::tx::FEEDBACK_CYCLES;
@@ -2054,11 +2055,12 @@ const ALL: u8 = 0b11_1111;
 #[inline(never)]
 fn algo(alg: AlgoId, lit: u8, feedback: u8) -> ParamSnapshot {
     let mut p = snapshot(EngineType::Algo);
-    (p.algo.alg_a, p.algo.alg_b, p.algo.morph) = (alg.get(), alg.get(), 0);
-    for (i, op) in p.algo.ops.iter_mut().enumerate() {
+    for i in 0..OPS {
         let level = if lit & (1 << i) != 0 { 99 } else { 0 };
-        (op.wave, op.coarse, op.level, op.feedback) = (WAVES[i].get(), COARSE[i], level, feedback);
+        let op = &mut p.algo.ops[i];
+        (op.coarse, op.level, op.feedback) = (COARSE[i], level, feedback);
     }
+    p.algo = AlgoParams::new(alg, alg, 0, Kinds::tables(WAVES), p.algo.ops);
     p
 }
 

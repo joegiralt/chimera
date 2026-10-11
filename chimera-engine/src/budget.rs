@@ -5,7 +5,7 @@
 
 use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::engine::AlgoEngine;
-use crate::dsp::algo::kinds::OpKind;
+use crate::dsp::algo::kinds::{Kinds, OpKind};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::filter::{CLEAN_MOVE_COST, FILTER_LEVEL_COST};
@@ -14,30 +14,15 @@ use crate::dsp::voice::Voice;
 use crate::hw::{CPU_HZ_REV_V, Cost, FLOOR_VOICES, SampleBudget};
 use crate::modulation::ModRouting;
 
-const TABLE_OP: AlgoOpParams = AlgoOpParams {
-    wave: OpKind::Table(crate::dsp::algo::waves::WaveId::W1).code(),
-    coarse: 4,
-    fine: 0,
-    detune: 0,
-    level: 99,
-    ar: 31,
-    d1r: 0,
-    d1l: 15,
-    d2r: 0,
-    rr: 5,
-    rate_scale: 0,
-    feedback: 1,
-    velocity: 0,
+const TABLE_OP: AlgoOpParams = {
+    let mut o = AlgoOpParams::DEFAULT;
+    (o.level, o.feedback) = (99, 1);
+    o
 };
 
 /// A16/A17 with six table operators at LEVEL 99 and FDBK 1: 832.
-pub const COSTLIEST_TABLE: AlgoParams = AlgoParams {
-    alg_a: AlgoId::A16.get(),
-    alg_b: AlgoId::A17.get(),
-    morph: 0,
-    transpose: 0,
-    ops: [TABLE_OP; OPS],
-};
+pub const COSTLIEST_TABLE: AlgoParams =
+    AlgoParams::new(AlgoId::A16, AlgoId::A17, 0, Kinds::TABLE, [TABLE_OP; OPS]);
 
 /// What a voice costs beyond its engine at the heaviest routing.
 pub const HEAVY_OVERHEAD: Cost =

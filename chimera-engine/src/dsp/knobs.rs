@@ -805,7 +805,7 @@ impl Knobs {
         for i in self.moving.iter() {
             let (a, v) = (KNOBS[i].addr, KNOBS[i].spec.denormalize(self.v[i]));
             if !live.set(a, v)
-                && let Some(b) = p.block_mut(a.block)
+                && let Some(mut b) = p.block_mut(a.block)
             {
                 b.write(a.param, v);
             }
