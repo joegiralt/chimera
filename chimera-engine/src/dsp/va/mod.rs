@@ -359,6 +359,43 @@ static DUCK_UP: [[f32; BLOCK_SIZE]; 2] = {
     g
 };
 
+/// `clampf` of a stored value: VMAXNM then VMINNM on the M7 (the compiler
+/// quiets a load's possible signalling NaN with selects first, three times
+/// the work). A quiet NaN lands on `lo`; a signalling one (never an
+/// arithmetic result) on `hi`, either way.
+#[inline(always)]
+fn held(v: f32, lo: f32, hi: f32) -> f32 {
+    #[cfg(all(target_arch = "arm", target_feature = "vfp2"))]
+    {
+        let r: f32;
+        // SAFETY: two register-to-register VFP ops (FPv5's VMAXNM and
+        // VMINNM); no memory or stack touched. `r` is an early output, so
+        // it never shares `hi`'s register. They may set FPSCR's IOC on a
+        // signalling NaN; nothing reads it.
+        unsafe {
+            core::arch::asm!(
+                "vmaxnm.f32 {r}, {v}, {lo}",
+                "vminnm.f32 {r}, {r}, {hi}",
+                r = out(sreg) r,
+                v = in(sreg) v,
+                lo = in(sreg) lo,
+                hi = in(sreg) hi,
+                options(pure, nomem, nostack),
+            );
+        }
+        r
+    }
+    #[cfg(not(all(target_arch = "arm", target_feature = "vfp2")))]
+    {
+        // VMAXNM passes a quiet NaN's other operand, a signalling NaN's NaN
+        if v.is_nan() && v.to_bits() & 0x0040_0000 == 0 {
+            hi
+        } else {
+            clampf(v, lo, hi)
+        }
+    }
+}
+
 /// `Lanes::norm` for SUB's block `(from, to)`.
 fn norm((s0, s1): (f32, f32)) -> (f32, f32, f32) {
     let n = |s: f32| VA_CHAIN_GAIN / sqrt(1.0 + s * s);
@@ -617,8 +654,8 @@ impl VaEngine {
             return;
         }
         self.prepare(sample_rate);
-        let unit = |v: f32| clampf(v, 0.0, 1.0);
-        let d = depth(p.stability);
+        let unit = |v: f32| held(v, 0.0, 1.0);
+        let d = depth(held(p.stability, 0.0, 1.0));
         self.slide.tick();
         let drift = self.stab.step(d);
         let base = self.note as f32 * 100.0 + self.pitch;
@@ -626,7 +663,7 @@ impl VaEngine {
         for (k, c) in cents.iter_mut().enumerate() {
             *c = base
                 + f32::from(p.coarse[k].clamp(-24, 24)) * 100.0
-                + clampf(p.fine[k], -100.0, 100.0)
+                + held(p.fine[k], -100.0, 100.0)
                 + drift[k];
         }
         let scale = self.stab.scale_cents(cents, d);
