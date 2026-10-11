@@ -505,41 +505,44 @@ fn wave_driven_end_to_end_lands_in_two_blocks_without_a_click() {
     println!("worst {:.0}% of the limit at {}", 100.0 * worst.0, worst.1);
 }
 
-/// SYNC's master stops at 12 kHz (ADR 0118): asked for 16.7 kHz it plays
-/// 12 kHz, so the synced wave repeats every 4 samples, as a master asked
-/// for 20 kHz does (the same bits); a pitch rising through the ceiling
-/// stays finite, peak-safe and click-free against the two held.
+/// SYNC's master stops at 7 kHz (ADR 0118): asked for 8.4 kHz it plays
+/// 7 kHz, as a master asked for 9.9 kHz does (the same bits), so the synced
+/// wave repeats every 48 samples (7 master cycles, to the phase's f32
+/// rounding); a pitch rising through the ceiling stays finite, peak-safe
+/// and click-free against the two held.
 #[test]
-fn sync_master_stops_at_12k() {
+fn sync_master_stops_at_its_ceiling() {
+    // CRSE2 +24: the slave sits at the oscillators' own top in both asks,
+    // so only the master's ceiling is under test
     let base = VaParams {
         mode: VaMode::Sync,
-        coarse: [0, 7],
+        coarse: [0, 24],
         ..sine()
     };
+    // C8 is 4186 Hz: +1200 cents asks 8.4 kHz, +1500 cents 9.9 kHz
     let at = |cents: f32| {
         with_engine(|e| {
             let mut p = base;
             e.set_pitch(cents);
             e.hold();
-            e.note_on(120, &p, part(0), SR);
+            e.note_on(108, &p, part(0), SR);
             run(e, &mut p, AT, |_, _| {})
         })
     };
-    // C9 is 8372 Hz: +1200 cents asks 16.7 kHz, +1500 cents 19.9 kHz
     let (y, z) = (at(1200.0), at(1500.0));
     assert_eq!(y, z, "both at the ceiling");
     let tail = &y[y.len() - 4 * B..];
-    let period = (4..tail.len())
-        .map(|n| (tail[n] - tail[n - 4]).abs())
+    let period = (48..tail.len())
+        .map(|n| (tail[n] - tail[n - 48]).abs())
         .fold(0.0f32, f32::max);
-    println!("SYNC master at the ceiling: |y[n] − y[n − 4]| ≤ {period:.1e}");
+    println!("SYNC master at the ceiling: |y[n] − y[n − 48]| ≤ {period:.1e}");
     assert!(period <= 1e-5, "{period}");
     // rising through the ceiling, a block at a time
     let held: Vec<_> = [0.0, 1200.0].map(at).into();
     let y = with_engine(|e| {
         let mut p = base;
         e.hold();
-        e.note_on(120, &p, part(0), SR);
+        e.note_on(108, &p, part(0), SR);
         let mut y = Vec::new();
         for b in 0..2 * AT {
             e.set_pitch(1200.0 * (b as f32 / AT as f32).min(1.0));
@@ -551,7 +554,7 @@ fn sync_master_stops_at_12k() {
     let pk = peak(&y) * VA_CHAIN_GAIN;
     let (d, lim) = click(&y, &held);
     println!(
-        "rising through 12 kHz: peak {pk:.3}, Δ² {d:.3e} / limit {lim:.3e} ({:.0}%)",
+        "rising through 7 kHz: peak {pk:.3}, Δ² {d:.3e} / limit {lim:.3e} ({:.0}%)",
         100.0 * d / lim
     );
     assert!(pk <= 0.95, "{pk}");
@@ -890,7 +893,7 @@ fn steal_glide_glides() {
 
 #[test]
 fn bills_follow_the_mode() {
-    let bills = [510, 560, 510, 530, 510];
+    let bills = [510, 530, 510, 530, 510];
     assert!(VaEngine::mode_cost(VaMode::Sync) > VaEngine::mode_cost(VaMode::Mix));
     for (mode, bill) in VaMode::ALL.into_iter().zip(bills) {
         assert_eq!(VaEngine::mode_cost(mode), Cost(bill), "{mode:?}");

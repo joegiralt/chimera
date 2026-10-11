@@ -116,7 +116,7 @@ Let `a` be OSC 1 and `b` be OSC 2, each at RMS R and within its block peak bound
 - **XOR and BITS** alias by nature; that is their character, and they are exempt from the alias gate.
   - Near-unison XOR is biased positive (the inputs share sign bits). The DC goes through the drive and the filter to the voice's DC blocker, in ADR 0060's order. By design.
   - BITS sets its depth once a block, so a modulated AMOUNT steps at 750 Hz in BITS. This is exempt from never-snap, like the crush itself.
-- **SYNC's master stops at 12 kHz** (amended 2026-10-11, owner, ADR 0118 point 12): while SYNC plays or is coming (the duck down), OSC 1's pitch is held at or under 12 kHz (a quarter of 48 kHz), ramped like any pitch. A master asked higher plays 12 kHz; the slave and the other MODEs are unchanged.
+- **SYNC's master stops at 7 kHz** (amended 2026-10-11, owner, ADR 0118 point 12; first 12 kHz, lowered the same day): while SYNC plays or is coming (the duck down), OSC 1's pitch is held at or under 7 kHz (A8 − 10 cents), ramped like any pitch, never snapped. A master asked higher plays 7 kHz; the slave and the other MODEs are unchanged.
 - **SYNC reset:** at each OSC 1 wrap, `t` samples ago, OSC 2 restarts at phase 0. A sample that holds a reset is split in three parts, in time order:
   1. The slave's own events between the last sample and the reset instant (its natural wrap included) are corrected at `t + (φ⁻ − e)/inc`.
   2. The reset gets one polyBLEP scaled by `y(0) − y(φ⁻)` and one polyBLAMP scaled by `(y′(0) − y′(φ⁻))·inc`. Both are taken on the combined slave output (WAVE crossfade and SHAPE included) at the reset instant. BLEP alone is right only where the slope is equal either side (saw, square); a triangle, a sine (slope jump 2π·inc·(1 − cos φ⁻)), the fold and the skew need the BLAMP.
@@ -243,7 +243,7 @@ chimera-engine/src/dsp/va/
   - `CHAIN_COST` 36 and routing 47;
   - INIT's 2040 REV2, +15 over LP24.
 - **What that leaves:** 6 voices on rev V in every row. On rev Y, 6 voices only if the count lands at or under 636. The count decides; if it doesn't fit, the owner chooses (5 VA voices on rev Y, or a cheaper SYNC).
-  > **Amended 2026-10-11:** the count (ADR 0118 point 10) is MIX 510, RING 510, XOR 530, BITS 510, SYNC 560, after the owner's WAVE reach and SYNC master ceiling. Rev Y fits 6 in every MODE but SYNC (5).
+  > **Amended 2026-10-11:** the count (ADR 0118 point 10) is MIX 510, RING 510, XOR 530, BITS 510, SYNC 530, after the owner's WAVE reach and SYNC master ceiling. Rev Y fits 6 in every MODE.
 - **Billing:** `VaEngine::cost` is one committed term per MODE, host-counted by the ADR 0056 method:
   - bill = the per-sample fast path + Σ (each event's cost × its maximum rate at the 0.45 ceiling) + per-block work ÷ 64 + 95;
   - each oscillator's `tick` is `#[inline(always)]` into each mode's loop, so the count sees it;

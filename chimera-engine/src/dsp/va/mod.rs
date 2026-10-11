@@ -277,15 +277,15 @@ pub const VA_OUT_GAIN: f32 = 3.631;
 /// steady block's work ÷ 64 and one WAVE segment crossing an oscillator
 /// every block (WAVE's reach, `wave_reach`), an extra run with its share of
 /// the render loop, plus the crossing block's split peak bound, and LP24's
-/// 95. In SYNC the master's events and the slave's resets run at its 12 kHz
-/// ceiling, 0.25 a sample. Each line: OSC 1 (TRI/SAW) + OSC 2 + operator
+/// 95. In SYNC the master's events and the slave's resets run at its 7 kHz
+/// ceiling, 7/48 a sample. Each line: OSC 1 (TRI/SAW) + OSC 2 + operator
 /// and sub + block + crossings + 95.
 ///
 /// MIX: 140.6 + 134.4 (TRI/SAW) + 35.8 + 66.9 + 29.6 + 95.
 pub const COST_MIX: Cost = Cost(510);
-/// SYNC: 122.7 (master at 12 kHz) + 204.3 (SINE/TRI slave: a reset's 197.5
-/// × 0.25) + 35.8 + 70.3 + 30.7 + 95.
-pub const COST_SYNC: Cost = Cost(560);
+/// SYNC: 113.8 (master at 7 kHz) + 183.7 (SINE/TRI slave: a reset's 197.5
+/// × 7/48) + 35.8 + 70.3 + 30.7 + 95.
+pub const COST_SYNC: Cost = Cost(530);
 /// RING: 140.6 + 134.4 + 42.2 + 67.6 + 29.6 + 95.
 pub const COST_RING: Cost = Cost(510);
 /// XOR: 140.6 + 134.4 + 53.5 + 68.7 + 29.6 + 95.
@@ -293,9 +293,9 @@ pub const COST_XOR: Cost = Cost(530);
 /// BITS: 140.6 + 134.4 + 42.2 + 67.7 + 29.6 + 95.
 pub const COST_BITS: Cost = Cost(510);
 
-/// SYNC's master pitch ceiling (owner, 2026-10-11; ADR 0118): it bounds the
-/// slave's resets at a quarter of the sample rate.
-pub const SYNC_MASTER_HZ: f32 = 12_000.0;
+/// SYNC's master pitch ceiling, A8 − 10 cents (owner, 2026-10-11; ADR 0118
+/// point 12): it bounds the slave's resets at 7 kHz.
+pub const SYNC_MASTER_HZ: f32 = 7_000.0;
 
 /// A MODE duck's gain over one block, if one runs.
 type Gain = Option<&'static [f32; BLOCK_SIZE]>;
@@ -675,7 +675,7 @@ impl VaEngine {
             d,
         };
         let mut pk = [0.0f32; 2];
-        // SYNC's master stops at 12 kHz: while SYNC plays or is coming (the
+        // SYNC's master stops at 7 kHz: while SYNC plays or is coming (the
         // duck down), so the cap ramps in and out under the duck
         let sync = p.mode == VaMode::Sync || self.playing == VaMode::Sync;
         let hz = [
