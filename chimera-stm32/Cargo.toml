@@ -49,6 +49,10 @@ sweep-free = ["chimera-board/sweep-free"]
 # The console's `fault dma <1|2>`: provokes a transfer error on a trailing
 # DMA stream, to test its re-arm on the unit (#25). Never in a shipping build.
 fault-inject = ["usb-console", "perf-probe", "midi-din", "chimera-board/fault-inject", "chimera-core/fault-inject"]
+# The console's bank-2 phase 0b spike: `b2erase`, `b2prog`, `b2call` and
+# `b2stat` erase and program bank-2 sector 0 (0x08100000) only. A developer
+# build on the unit with the owner present; never shipping.
+bank2-spike = ["usb-console", "chimera-board/bank2-spike", "chimera-core/bank2-spike"]
 
 [dependencies]
 chimera-board = { path = "../chimera-board" }

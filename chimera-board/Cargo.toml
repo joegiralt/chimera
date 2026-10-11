@@ -23,6 +23,7 @@ usb-console = [
 card-put = ["usb-console", "chimera-core/card-put"]
 sweep-free = []
 fault-inject = ["usb-console", "chimera-core/fault-inject"]
+bank2-spike = ["usb-console", "chimera-core/bank2-spike"]
 
 [dependencies]
 chimera-core = { path = "../chimera-core", default-features = false, features = ["stamp", "boot-waves"] }

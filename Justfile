@@ -67,6 +67,14 @@ firmware:
 firmware-orbit:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit
 
+# The bank-2 phase 0b spike (DEVELOPER): the ORBIT firmware plus the
+# console's b2erase, b2prog, b2call and b2stat, which erase and program
+# bank-2 sector 0 only. Builds target/chimera-b2spike.bin and never flashes
+# it: the run sheet does, with the owner present.
+firmware-b2spike:
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit,bank2-spike
+    rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-b2spike.bin
+
 # Release binaries: the shipping firmware and its ORBIT variant with every build
 # path remapped (#413), so no home directory, user name or registry path
 # survives in the .bin. `--config` arrays append to .cargo/config.toml's
@@ -166,6 +174,7 @@ check:
     cargo test -p chimera-core -p chimera-engine --features master-tape
     cargo test -p chimera-core -p chimera-engine --no-default-features
     cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
+    cargo test -p chimera-core --features bank2-spike --test console_bank2_test --test console_parse_test --test console_answer_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
@@ -177,6 +186,7 @@ check:
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit,bank2-spike
     # The bench, an area a build: all of it no longer fits FLASH.
     for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; done
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
@@ -196,7 +206,7 @@ check:
 # all nested at once, against the stack, each call through a pointer
 # charged the deepest address-taken function, three deep; and that the audio
 # interrupt reaches no small-profile code (ADR 0108). Checked for the default,
-# no-default, orbit, every bench set (`bench_sets`) and sd-probe feature
+# no-default, orbit, the bank-2 spike, every bench set (`bench_sets`) and sd-probe feature
 # sets (sd-probe has no interrupts: frames only).
 # Needs the llvm-tools rustup component; a missing llvm-objdump or an
 # unreadable ELF fails the recipe instead of passing silently.
@@ -208,7 +218,7 @@ stack-check:
     nm="$bin/llvm-nm"
     test -x "$objdump" && test -x "$nm"
     elf=target/thumbv7em-none-eabihf/release/chimera-stm32
-    sets=("" "--no-default-features" "--features orbit")
+    sets=("" "--no-default-features" "--features orbit" "--features orbit,bank2-spike")
     for f in {{bench_sets}}; do sets+=("--no-default-features --features $f"); done
     sets+=("--no-default-features --features sd-probe")
     for features in "${sets[@]}"; do
@@ -254,10 +264,12 @@ clippy:
     cargo clippy -p chimera-core -p chimera-engine -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --features master-tape --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --no-default-features --all-targets -- -D warnings
+    cargo clippy -p chimera-core --features bank2-spike --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features orbit -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features orbit,bank2-spike -- -D warnings
     for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features "$f" -- -D warnings || exit 1; done
     # Every bench area at once: too big to link, but no area's code is dead.
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}} -- -D warnings

@@ -331,6 +331,8 @@ impl Usb {
         card: CardRun<'_>,
         store: &mut SdStore,
     ) -> Option<Restart> {
+        #[cfg(feature = "bank2-spike")]
+        let cpu_hz = self.cycles_per_us * 1_000_000;
         let now = DWT::cycle_count();
         let us = now.wrapping_sub(self.top) / self.cycles_per_us;
         self.top = now;
@@ -376,6 +378,10 @@ impl Usb {
                 )),
                 _ => None,
             };
+            // The spike's erase or program runs here, seconds at most,
+            // before the answer's clock starts.
+            #[cfg(feature = "bank2-spike")]
+            let b2 = crate::bank2::run(&req, cpu_hz);
             let unit = &mut ChipUnit {
                 ui: &*ui,
                 stats,
@@ -389,6 +395,8 @@ impl Usb {
                 sweep_ask,
                 files: store,
                 forget: false,
+                #[cfg(feature = "bank2-spike")]
+                b2,
             };
             let out = &mut UsbOut {
                 dev,
@@ -446,6 +454,9 @@ struct ChipUnit<'a> {
     /// A Sound `put` or `rm` reached the card: the library's page goes
     /// once the answer is out.
     forget: bool,
+    /// The bank-2 spike's outcome, before the answer.
+    #[cfg(feature = "bank2-spike")]
+    b2: Option<chimera_core::console::B2Answer>,
 }
 
 impl Unit for ChipUnit<'_> {
@@ -493,6 +504,11 @@ impl Unit for ChipUnit<'_> {
             chimera_core::console::FaultArg::Dma(n) => crate::fault::dma_transfer_error(n),
             chimera_core::console::FaultArg::Ndtr => None,
         }
+    }
+
+    #[cfg(feature = "bank2-spike")]
+    fn bank2(&mut self) -> Option<chimera_core::console::B2Answer> {
+        self.b2
     }
 
     fn boot(&self) -> Option<BootSeen> {

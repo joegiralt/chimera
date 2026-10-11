@@ -80,7 +80,7 @@ const SR_ERRORS: [(u32, &str); 9] = [
     (26, "dbeccerr"),
 ];
 
-fn write_sr(name: &str, sr: u32, w: &mut impl Write) -> fmt::Result {
+pub(super) fn write_sr(name: &str, sr: u32, w: &mut impl Write) -> fmt::Result {
     write!(
         w,
         "{name} {sr:08x} bsy {} wbne {} qw {} crc_busy {} eop {} crcend {} errors",
@@ -102,6 +102,22 @@ fn write_sr(name: &str, sr: u32, w: &mut impl Write) -> fmt::Result {
         w.write_str(" -")?;
     }
     w.write_char('\n')
+}
+
+/// One FLASH_CRx line.
+pub(super) fn write_cr(n: usize, cr: u32, w: &mut impl Write) -> fmt::Result {
+    writeln!(
+        w,
+        "cr{n} {cr:08x} lock {} pg {} ser {} ber {} psize {} fw {} start {} snb {}",
+        bit(cr, 0),
+        bit(cr, 1),
+        bit(cr, 2),
+        bit(cr, 3),
+        (cr >> 4) & 3,
+        bit(cr, 6),
+        bit(cr, 7),
+        (cr >> 8) & 7
+    )
 }
 
 fn write_area(name: &str, what: &str, reg: u32, bank: usize, w: &mut impl Write) -> fmt::Result {
@@ -162,19 +178,7 @@ pub fn write_flash_regs(r: &FlashRegs, w: &mut impl Write) -> fmt::Result {
     )?;
     for (i, (b, [sr, prar, scar])) in r.banks.iter().zip(NAMES).enumerate() {
         let n = i + 1;
-        let cr = b.cr;
-        writeln!(
-            w,
-            "cr{n} {cr:08x} lock {} pg {} ser {} ber {} psize {} fw {} start {} snb {}",
-            bit(cr, 0),
-            bit(cr, 1),
-            bit(cr, 2),
-            bit(cr, 3),
-            (cr >> 4) & 3,
-            bit(cr, 6),
-            bit(cr, 7),
-            (cr >> 8) & 7
-        )?;
+        write_cr(n, b.cr, w)?;
         write_sr(sr, b.sr, w)?;
         write!(w, "wpsn_cur{n}r {:08x} protected", b.wpsn_cur)?;
         let p = protected_sectors(b.wpsn_cur);

@@ -10,12 +10,16 @@
                                                    (<remote> ending in / takes the local name; /CHIMERA/SOUNDS/ takes
                                                    `ls sounds`' top user id + 1)
     python3 chimera-usb.py flash             the flash controller's registers and bank 2's first bytes, read only
+    python3 chimera-usb.py b2erase|b2prog|b2call|b2stat
+                                                   DEVELOPER SPIKE (bank2-spike builds only): erase bank-2 sector 0,
+                                                   program its test image, call its test code, show cr2/sr2 and the
+                                                   image's words (.superpowers/ledgers/bank2-phase0b-runsheet.md)
     python3 chimera-usb.py to-dfu            the unit into ROM DFU, to flash it
     python3 chimera-usb.py wait-console [s]  wait (default 10 s) for the console on the bus
 
 Exit 0 on OK, 1 on ERR (to stderr) or 2 s of silence (60 s before `card`'s
 first line: it measures before it answers; 15 s before `ls`'s, `rm`'s,
-`get`'s and `sweep`'s, 35 s before `put`'s). Bodies go to stdout; `shot` writes a PNG and prints its
+`get`'s and `sweep`'s, 35 s before `put`'s, 10 s before `b2erase`'s and `b2prog`'s). Bodies go to stdout; `shot` writes a PNG and prints its
 path; `put` shows its progress on stderr and never retries a failure (a source
 already on the card answers `OK PRESENT`, so a re-run is the retry). `ERR busy`
 (the unit's card work pending) is retried: 5 tries, 200 ms apart, doubling.
@@ -59,6 +63,7 @@ SILENCE_S = 2.0
 CARD_WAIT_S = 60.0  # `card` measures before it answers: ~5 s, ~15 s writing its test file
 LS_WAIT_S = 15.0  # a cold card acquire, then one listing under the card's 10 s cap
 SWEEP_WAIT_S = 15.0  # a cold acquire, then the mark's one write; the unit restarts after OK
+B2_WAIT_S = 10.0  # the spike's erase gives up at 6 s (ERASE_TIMEOUT_MS), then answers
 PUT_WAIT_S = 35.0  # the unit's whole put is 30 s (PUT_DEADLINE_MS), card work included
 PUT_MAX = 1 << 20  # the unit's limit
 PUT_LINE = 48  # bytes a data line carries: 64 base64 characters
@@ -257,7 +262,7 @@ def retry_busy(ask, sleep=time.sleep) -> tuple:
 
 def first_wait(line: str) -> float:
     """How long a request's first byte may take."""
-    waits = {"card": CARD_WAIT_S, "ls": LS_WAIT_S, "rm": LS_WAIT_S, "get": LS_WAIT_S, "sweep": SWEEP_WAIT_S}
+    waits = {"card": CARD_WAIT_S, "ls": LS_WAIT_S, "rm": LS_WAIT_S, "get": LS_WAIT_S, "sweep": SWEEP_WAIT_S, "b2erase": B2_WAIT_S, "b2prog": B2_WAIT_S}
     return waits.get((line.split() or [""])[0], SILENCE_S)
 
 

@@ -86,7 +86,7 @@ get     a library Sound's file, base64: /CHIMERA/SOUNDS/S#######
 OK
 ```
 
-The first line names the protocol version, `1`. A change that breaks a host parser bumps it. Rows come from the command table in table order.
+A `bank2-spike` build lists `b2erase`, `b2prog`, `b2call` and `b2stat` after `flash`. The first line names the protocol version, `1`. A change that breaks a host parser bumps it. Rows come from the command table in table order.
 
 **`status`**
 
@@ -251,6 +251,28 @@ OK
 ```
 
 The flash controller's state for bank 2 (RM0433 § 4.9, the bank-2 design's Phase 0a), each register's raw word then its fields. Read only: nothing is written, unlocked or erased, and the option bytes are untouched. `protected` lists the sectors whose WRPS bit is 0; `pcrop` and `secure` give an area's first and last byte, or `none` when START > END. `peek` is the first 32 bytes at bank 2's start and at the stock bootloader's slot, `erased` when all are 0xFF. The register lines go out before the peek, and `sr*_after` shows any ECC error the peek raised. The desktop answers `ERR flash is not in this build`.
+
+**`b2erase`, `b2prog`, `b2call`, `b2stat`** (DEVELOPER, SPIKE: `bank2-spike` builds only, `just firmware-b2spike`; never shipping, orbit or bench)
+
+```
+b2erase sector 0 08100000..0811ffff psize 2 timeout_ms 6000
+elapsed_ms 1100 cycles 528000000
+cr2 00000021 lock 1 pg 0 ser 0 ber 0 psize 2 fw 0 start 0 snb 0
+sr2 00010000 bsy 0 wbne 0 qw 0 crc_busy 0 eop 1 crcend 0 errors -
+audio overruns 3 -> 3 (+0) blocks +1650
+OK
+b2prog words 5 08100000..0810009f code at 08100080 psize 2 word_timeout_ms 5
+elapsed_ms 0 cycles 48000
+cr2 …, sr2 …, as b2erase's
+readback matches
+audio overruns 3 -> 3 (+0) blocks +0
+OK
+b2call 08100081 f(1) = 43 want 43
+OK
+b2stat: cr2 …, sr2 …, then one `peek <addr> <8 words>` per image word, then `readback erased|matches|differs …`
+```
+
+The bank-2 design's Phase 0b spike: Chimera erases and programs bank-2 sector 0 (0x08100000–0x0811FFFF) itself and runs code from it. The address type (`Bank2Sector0Addr`) can't name anything outside that sector; the shell writes FLASH_KEYR2, CR2 and CCR2 only, never the option bytes or bank 1's registers. `b2erase` sets SER, SNB 0 and PSIZE ×32, then polls BSY and QW for at most 6 s; `b2prog` refuses unless the image's words read erased, then programs five 256-bit words (a pattern, then `adds r0, r0, #42; bx lr`), each waited for (WBNE, QW) for at most 5 ms, and reads them back through an invalidated D-cache. `b2call` calls the code (Thumb bit set) only if its word reads back exactly, after an I-cache invalidate. CR2 is relocked after every erase or program, and the `cr2` line is read after the relock. Both run before the answer starts, from the UI loop, while the audio plays from bank 1; `audio` is the overrun counter and the audio blocks rendered, before and after. A failure prints what it has, then `ERR <cmd>: timeout`, `flash error`, `flash busy, nothing started`, `cr2 still locked after the keys`, `sector 0 not erased, b2erase first`, `readback differs from the image`, `the code's word differs, not called` or `wrong return value`; nothing retries. The run sheet: (private notes) (main checkout).
 
 **`fault dma <1|2>`** (builds with `fault-inject` only; never shipping, orbit or bench)
 
