@@ -52,35 +52,78 @@ and gains 12 B in `params`. A send edit now writes the Sound, so its
 `Tracked` stamp moves and the publisher diffs that Part on the UI thread
 (ADR 0116); no `KnobMove` is sent (not a knob). No audio-thread cost.
 
-### 3. Pages: one value, two views
+### 3. Pages: one value, two views (owner, 2026-10-11)
 
-| Where | Page | Cells |
+AMP (`FOLDER`, id 9) is rebuilt; SYM moves to a sub-page under it.
+
+| Page | Row 1 | Row 2 |
 |---|---|---|
-| Mixer (Part rung) | SENDS (`block_registry::SENDS`, id 30, home per ADR 0057) | A B C = SEND1 SEND2 SEND3; D E F empty |
-| Sound (every chain: ALGO, MODAL, TAPE) | AMP › SENDS: AMP (`FOLDER`) becomes `ChainBlock::with_subs(&FOLDER, &AMP_SUB_PAGES)`, `AMP_SUB_PAGES = [&SENDS]`; EDIT goes down to it | the same `BlockDef` |
+| AMP (every chain: ALGO, MODAL, TAPE) | CHORUS · DELAY · REVERB (`Out` SEND1–3) | FOLD · VEL · MIX (`Folder::FOLD`, `Out::VCA_VEL`, `Folder::MIX`) |
+| AMP › SYM (new sub-page, `ChainBlock::with_subs(&FOLDER, &[&FOLDER_SYM])`, EDIT down; id 98, short `SYM`) | SYM · — · — | — · — · — |
+| Mixer SENDS (id 30, home per ADR 0057, unchanged place) | CHORUS · DELAY · REVERB (the same three addresses) | — |
 
-The same def in both chains (as FILTER is shared): same cells, same
-`EffectsFlow(Sends)` viz, zero new page code. AMP's own page is full in
-the places that matter (FOLD SYM MIX / VEL, two cells free), so three
-sends don't fit on it without splitting them; the sub-page keeps them
-together (open question 1).
+Both pages bind `ParamSlot::param(BlockRef::Out, SENDn)`; `part_block`
+already maps `Out` to the Part's Sound, so the mixer's and the Sound's
+cells are one value. The SENDS page keeps its `EffectsFlow(Sends)` viz.
 
-Cells bind through a new `SlotBinding::Send(k)` (`ParamSlot::send(k)`),
-resolved in `ui::view` to `ParamAddr(Out, SEND1 + k)` with a label from
-`SlotCtx`:
+Labels: the specs' own, full words, fixed (owner: no three-letter
+abbreviation when the word fits). Measured with `draw::text_width`
+(`FONT_LABEL`, `LABEL_TRACKING`) against `CELL_BAR_W` = 62 px:
 
-| Slot | Label | Short (ADR 0053) |
+| Label | px | Short |
 |---|---|---|
-| 1 | `CHORUS` | `CHR` |
-| 2 | `DELAY` | `DLY` |
-| 3 | the reverb TYPE's name: `QUAD` `ROOM` `HALL` `BLOOM` `GATE` `REVERSE` (`SlotCtx::rev`, already read) | `REVERSE` → `RVRS` |
+| `CHORUS` | 52 | none needed |
+| `DELAY` | 40 | none needed |
+| `REVERB` | 48 | none needed |
+| `SYM` | 26 | — (`SYMMETRY` is 66: too wide) |
 
-Phase B swaps the table for "the effect slot n holds". The SENDS page
-reaches the Sound through `PartEdit`/`PartRead` (`part_block` already maps
-`Out` to the Sound), so the mixer's and the Sound's views are one value.
+A test pins each ≤ `CELL_BAR_W` (the pattern of
+`reverb_panel_test::labels_and_values_fit_their_cells`).
 
-Hint (ADR 0086 / hidden-gestures rule): on AMP, the focus band's hint row
-names the sub-page ("EDIT ↓ SENDS"), as other sub-pages do.
+Focus-band hint (ADR 0086): touching REVERB shows `REVERB → HALL` (the
+reverb's current TYPE, from `SlotCtx::rev`); CHORUS shows `CHORUS → I`
+(its MODE, or `OFF`); DELAY shows `DELAY`. On AMP the band also hints
+`EDIT ↓ SYM`. In Phase B the three labels become the slot names.
+
+### 3a. SYM: what the code does (finding)
+
+SYM is wired end to end: `FolderParams::symmetry` → `Wavefolder::process`
+(`dsp/wavefolder.rs`), a `Knobs` glide (`knobs.rs`), ramps and cost in
+`voice.rs`. It is not a dead param. It is inaudible over most of FOLD:
+
+- the fold is `fold_wave((x + bias)·gain) − fold_wave(bias·gain)`,
+  `gain = 1 + 6·FOLD²`, `bias = (SYM − 0.5)·0.5`. Until `(|x| + |bias|)·gain`
+  crosses 1 nothing folds, and the `rest` term cancels the bias exactly:
+  SYM changes nothing, bit for bit;
+- the stage is off at FOLD < 0.001 (`stage_runs`), so at the default FOLD 0
+  SYM does nothing at all.
+
+Measured (host, the DSP's own `Wavefolder`, sine, MIX 0.5, SYM 0 or 1 vs 0.5):
+
+| Peak in | FOLD 0.1 | 0.25 | 0.5 | 1.0 |
+|---|---|---|---|---|
+| 0.1 | 0 | 0 | 0 | audible |
+| 0.3 | 0 | 0 | audible | audible |
+| 0.7 | −53 dB | audible | audible | audible |
+
+FOLD has the same dead lower half: below the fold threshold it is only
+a gain on the wet half. So SYM reads broken because the fold's law only
+folds at high FOLD. Fixing it is part of this work:
+
+- **Law**: retune `gain` (and SYM's bias span) so a voice at its INIT
+  level folds from low FOLD, and SYM acts wherever FOLD folds. Constants
+  are picked by measurement in the plan. Widening the bias alone fails: at
+  ±1 the extreme reflects the whole wave (`fw(1 + d) − 1 = −d`), which
+  cancels the dry half at MIX 0.5 (host: −3 dB of pure polarity, no new
+  timbre).
+- **Keep**: SYM 0.5 and FOLD 0 bit-identical (default Sounds and factory
+  unchanged at those values); silence folds to silence; the ramps, gate
+  and `Knobs` glide; cost (same ops).
+- **Gate** (test): at the INIT level, SYM 0 vs 0.5 differs by ≥ −20 dB
+  residual for every FOLD ≥ 0.1; no SYM value is a polarity flip of the
+  dry (residual correlation with −dry < 0.9); `loudness_test` holds.
+- Sounds saved with FOLD > 0 will sound different (no-legacy-compat
+  rule). Factory Sounds with FOLD > 0 are re-auditioned at QA.
 
 ### 4. Returns default audible
 
@@ -94,7 +137,7 @@ names the sub-page ("EDIT ↓ SENDS"), as other sub-pages do.
 | Reverb MIX | 0 | 1.0 |
 
 Unity return, as a send/return mixer: the send sets the amount, MIX trims
-the return (open question 2). Every other FX default unchanged. A Sound
+the return (owner, 2026-10-11). Every other FX default unchanged. A Sound
 with sends at 0 sounds as before, so the factory and ADR 0063/0109 levels
 don't move. CPU: none billed. `FxBus::COST` is reserved whether or not an
 effect is on, and the effects run at MIX 0 anyway (ADR 0061).
@@ -138,7 +181,7 @@ Consequences of the migration:
 | ORBIT scenes / rings | none: rings target Parts, no scene or step holds a param lock. Several rings on one Part share its Sound's sends, as before. |
 | MIDI map (#247, not built) | sends become Sound params (`Out` SEND1–3), mappable per Part like any other; a mapped CC dirties the Sound. #247's spec notes it (CC 91/93 are the GM reverb/chorus sends: a candidate default). |
 | Sound library (ADR 0119, unmerged) | nothing to do: library files are `encode_sound`, so sends ride along. Merge order free; whichever lands second rebases the fixtures. |
-| SPACE (ADR 0120) | not reinstated: the AMP view is labelled by the effect it feeds, on a Sound page beside the mixer's, not a cell on the engine's home page. ADR 0120 is superseded in part ("lives on SENDS only"). |
+| SPACE (ADR 0120) | not reinstated as such: AMP's cells are labelled by the effect they feed (CHORUS, DELAY, REVERB) and edit the same value as the mixer's SENDS; no engine home page gets one. ADR 0120 is superseded in part ("lives on SENDS only"). |
 | Edit marks | a send edit marks the Sound edited (it is the Sound's now), not the mix. |
 | Delay's REV SEND (`DelayParams::REV_SEND`) | unchanged, project level |
 
@@ -146,7 +189,7 @@ Consequences of the migration:
 
 | | |
 |---|---|
-| Flash | ~0: three specs (+), three specs (−), one binding variant; the def is shared |
+| Flash | ~0: three specs (+), three specs (−), one sub-page def, SYM's law constants |
 | RAM | `ParamSnapshot` +12 B, `PartParams` −12 B: `AudioShared` and `Project` net 0. Voice `played` +12 B, 8 voices +96 B D2; `Voice` today 6,264 B against 2,112 + 4,248 = 6,360 (ADR 0101), 96 B left, so it fits; the const asserts check it. |
 | Pool | `MAX_SOUND_COST` 2,288 → 2,304 (three entries, 15 B, rounded to 16; `sparse_bound` pins) |
 | Records | OUT's record ≤ 36 B, far under 640 (ADR 0102) |
@@ -156,7 +199,9 @@ Consequences of the migration:
 
 - [ ] `OutParams` holds SEND1–3 (ids 4–6, idents frozen); `PartParams` has no sends; `(25, 5..7)` retired.
 - [ ] `mix_parts` and the bench read the Sound's sends.
-- [ ] Mixer SENDS and AMP › SENDS show one value; labels CHORUS, DELAY, the reverb TYPE.
+- [ ] AMP is CHORUS · DELAY · REVERB / FOLD · VEL · MIX; AMP › SYM holds SYM; mixer SENDS shows the same three values.
+- [ ] Labels CHORUS, DELAY, REVERB fit `CELL_BAR_W`; the hint reads `REVERB → <TYPE>`.
+- [ ] SYM audible wherever FOLD folds, from low FOLD at the INIT level (§ 3a gate); SYM 0.5 and FOLD 0 bit-identical.
 - [ ] NEW: chorus MODE I, every MIX 1.0; a send turned up on a NEW project is heard with no other knob.
 - [ ] A pre-change project loads with each Part's sends in its Sound, not-Saved; a pre-change Sound loads with sends 0.
 - [ ] Saving a Sound to the pool or the library and loading it into another Part brings its sends.
@@ -174,10 +219,13 @@ Consequences of the migration:
 | new `sends_migration_test` | v-old project bytes (fixture written by today's encoder) → each Part's sends in its Sound; a Sound already with sends keeps them; load is lossy |
 | `instrument_test`, `gain_staging_test`, `loudness_test`, `param_sweep_test`, `load_protocol_test` | move `mix.sends` to `params.out.sends`; bit-identical output for the same values; FX-off cases use `FxParams::OFF` |
 | `loudness_test` | six Parts, sends up, NEW FX defaults: at or under the ceiling (ADR 0109) |
-| `part_page_test`, ADR 0120's test | SENDS cells and AMP › SENDS cells address `Out` SEND1–3; MODAL/TAPE home pages still have no send |
-| `dpad_nav_test`, `header_map_test` | EDIT on AMP reaches SENDS; mixer home unchanged |
-| `screen_golden_test` | `mixer_sends` and a new `amp_sends` golden, labels CHORUS/DELAY/HALL |
-| desktop QA | NEW project, turn AMP › SENDS › reverb up: audible; same value on mixer SENDS; load the Sound into another Part: send follows |
+| `part_page_test`, ADR 0120's test | SENDS cells and AMP's row 1 address `Out` SEND1–3; MODAL/TAPE home pages still have no send |
+| `dpad_nav_test`, `header_map_test` | EDIT on AMP reaches SYM; mixer home unchanged |
+| `screen_golden_test` | `mixer_sends` and AMP (every chain) re-blessed; new AMP › SYM golden |
+| label width test | CHORUS, DELAY, REVERB, SYM ≤ `CELL_BAR_W` |
+| `hint_test` | REVERB's hint names the TYPE (`REVERB → HALL`); AMP hints `EDIT ↓ SYM` |
+| `wavefolder` unit + `param_sweep_test` | § 3a gate: SYM residual ≥ −20 dB at FOLD ≥ 0.1, no polarity flip, SYM 0.5 / FOLD 0 bit-identical |
+| desktop QA | NEW project, turn AMP › REVERB up: audible; same value on mixer SENDS; load the Sound into another Part: send follows; SYM sweep at FOLD 0.2 audible |
 
 ## ADR note
 
@@ -187,14 +235,11 @@ audible". Supersedes in part 0120 (the reverb send on SENDS only) and the
 `PartParams` sends of the instrument-core spec / ADR 0043's "mix" contents;
 amends 0057 only in that SENDS now edits the Sound. Records: OUT SEND1–3
 slot-indexed for #461, retired PART 5–7, the Part-context migration, the
-FX defaults.
+FX defaults, AMP's new layout with SYM on a sub-page, and SYM's new fold law.
 
-## Open questions for the owner
+## Owner's answers (2026-10-11)
 
-1. **Placement.** AMP › SENDS sub-page (same page as the mixer's), or the
-   two free AMP cells for DELAY and REVERB only with chorus on the mixer?
-   Recommend the sub-page: all three together, one page shared.
-2. **Return default.** Unity (1.0), or 75 %? Recommend unity: the send is
-   the amount, and the limiter (ADR 0109) holds the ceiling.
-3. **Reverb label.** The TYPE's name (HALL), or REVERB? Recommend the
-   TYPE: it says what the send is heard as, and it is Phase B's rule.
+1. Placement: AMP row 1 CHORUS · DELAY · REVERB, row 2 FOLD · VEL · MIX;
+   SYM to a sub-page under AMP; SYM's fix is in scope (§ 3a).
+2. Returns: MIX 1.0 in a NEW project (§ 4).
+3. Labels: full words, fixed; the hint names the reverb TYPE (§ 3).
