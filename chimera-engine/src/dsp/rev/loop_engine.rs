@@ -999,7 +999,7 @@ where
     }
 
     /// One block: a moving block (a crossfade, or DENSITY's taps moving)
-    /// blends only the reads that move and ramps the tap weights; a still
+    /// blends every read that can move and ramps the tap weights; a still
     /// one (most blocks) reads each line once.
     #[inline(always)]
     fn block<Ln: Lines + ?Sized, const CLIP: bool>(
@@ -1024,33 +1024,18 @@ where
         let xs = xf && (self.to != self.at || self.pre_to != self.pre_at);
         let xd = xf && self.dif_to != self.dif_at;
         let dr = self.taps != taps0;
-        // One path for each single move, and one for any two at once
-        // (rare: it does all three).
-        match (xs, xd, dr) {
-            (false, false, false) => {
-                self.block_xf::<Ln, CLIP, false, false, false>(lines, f, u, l, r, g0, taps0)
-            }
-            (true, false, false) => {
-                self.block_xf::<Ln, CLIP, true, false, false>(lines, f, u, l, r, g0, taps0)
-            }
-            (false, true, false) => {
-                self.block_xf::<Ln, CLIP, false, true, false>(lines, f, u, l, r, g0, taps0)
-            }
-            (false, false, true) => {
-                self.block_xf::<Ln, CLIP, false, false, true>(lines, f, u, l, r, g0, taps0)
-            }
-            _ => self.block_xf::<Ln, CLIP, true, true, true>(lines, f, u, l, r, g0, taps0),
+        // Two paths: still, and moving, which does all three. A move it
+        // doesn't make costs reads it blends with themselves (old and new
+        // are one slot, the blend exact), never the worst case's bill.
+        if xs || xd || dr {
+            self.block_xf::<Ln, CLIP, true>(lines, f, u, l, r, g0, taps0)
+        } else {
+            self.block_xf::<Ln, CLIP, false>(lines, f, u, l, r, g0, taps0)
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn block_xf<
-        Ln: Lines + ?Sized,
-        const CLIP: bool,
-        const XS: bool,
-        const XD: bool,
-        const DR: bool,
-    >(
+    fn block_xf<Ln: Lines + ?Sized, const CLIP: bool, const MOVING: bool>(
         &mut self,
         lines: &mut Ln,
         f: &mut [f32],
@@ -1071,7 +1056,7 @@ where
         let dg: [[f32; S]; L] =
             core::array::from_fn(|l| core::array::from_fn(|s| (self.g[l][s] - g0[l][s]) * n));
         let wt1 = self.tap_weights();
-        let mut wt = if DR {
+        let mut wt = if MOVING {
             Self::weights_at(TapCount(taps0))
         } else {
             wt1
@@ -1152,7 +1137,7 @@ where
                 tone += ta * (us[t] * IN_GAIN - tone);
                 // SAFETY: as `rd`'s.
                 unsafe { lines.round(b[A::<L, S>::W_PRE] + t, tone) };
-                let mut d = if XS {
+                let mut d = if MOVING {
                     blend!(A::<L, S>::R_PRE, A::<L, S>::R_PRE + 1)
                 } else {
                     rd!(A::<L, S>::R_PRE)
@@ -1164,7 +1149,7 @@ where
                     if DIF_F32[J] {
                         const FJ: usize = match J { 0 => 0, 1 => 1, 4 => 2, _ => 3 };
                         let mut z = fget!(F::<L, S>::R_DF_TO + FJ);
-                        if XD {
+                        if MOVING {
                             let o = fget!(F::<L, S>::R_DF_FROM + FJ);
                             z = o + w * (z - o);
                         }
@@ -1173,7 +1158,7 @@ where
                         d = y;
                     } else {
                         const IJ: usize = J.saturating_sub(2);
-                        let z = if XD {
+                        let z = if MOVING {
                             blend!(A::<L, S>::R_DIF_TO + IJ, A::<L, S>::R_DIF_FROM + IJ)
                         } else {
                             rd!(A::<L, S>::R_DIF_TO + IJ)
@@ -1196,7 +1181,7 @@ where
                                 // write: before or after it, the same.
                                 // While a length moves all four blend; the
                                 // still ones' reads are one slot.
-                                let x = if XS {
+                                let x = if MOVING {
                                     blend!(A::<L, S>::R_D_TO + j, A::<L, S>::R_D_FROM + j)
                                 } else {
                                     rd!(A::<L, S>::R_D_TO + j)
@@ -1245,7 +1230,7 @@ where
                         side[SD] += wt[SD][Q] * rd!(A::<L, S>::R_TAP + TAPS * SD + Q);
                     });
                 });
-                if XS {
+                if MOVING {
                     // The moving line's taps: each read at its new length
                     // above, and here (1 − w) of the way back to its old.
                     let mut back = [0.0f32; 2];
@@ -1257,7 +1242,7 @@ where
                     side[0] += (1.0 - w) * back[0];
                     side[1] += (1.0 - w) * back[1];
                 }
-                if DR {
+                if MOVING {
                     unroll!(SD in [0, 1] {
                         unroll!(Q in [0, 1, 2, 3, 4, 5, 6, 7] {
                             wt[SD][Q] += dwt[SD][Q];
