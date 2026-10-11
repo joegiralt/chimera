@@ -283,9 +283,9 @@ pub const VA_OUT_GAIN: f32 = 3.631;
 ///
 /// MIX: 140.6 + 134.4 (TRI/SAW) + 35.8 + 66.9 + 29.6 + 95.
 pub const COST_MIX: Cost = Cost(510);
-/// SYNC: 122.7 (master at 12 kHz) + 206.1 (SINE/TRI slave: a reset's 197.5
+/// SYNC: 122.7 (master at 12 kHz) + 204.3 (SINE/TRI slave: a reset's 197.5
 /// × 0.25) + 35.8 + 70.3 + 30.7 + 95.
-pub const COST_SYNC: Cost = Cost(570);
+pub const COST_SYNC: Cost = Cost(560);
 /// RING: 140.6 + 134.4 + 42.2 + 67.6 + 29.6 + 95.
 pub const COST_RING: Cost = Cost(510);
 /// XOR: 140.6 + 134.4 + 53.5 + 68.7 + 29.6 + 95.

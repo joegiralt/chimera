@@ -88,8 +88,11 @@ fn psin(x: f32) -> f32 {
 /// `psin`'s derivative, a turn.
 #[inline(always)]
 fn dpsin(x: f32) -> f32 {
-    let x2 = x * x;
-    ST[0] + x2 * (3.0 * ST[1] + x2 * (5.0 * ST[2] + x2 * (7.0 * ST[3] + x2 * (9.0 * ST[4]))))
+    // Estrin's split, `psin`'s powers shared where both run
+    let (x2, x4) = (x * x, (x * x) * (x * x));
+    let lo = ST[0] + x2 * (3.0 * ST[1]);
+    let hi = 5.0 * ST[2] + x2 * (7.0 * ST[3]) + x4 * (9.0 * ST[4]);
+    lo + x4 * hi
 }
 
 /// An `f32` in 0..=1; NaN is 0.

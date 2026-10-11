@@ -1585,7 +1585,7 @@ fn va_bills_each_mode() {
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     for (mode, bill, voices) in [
         (Mix, 510, [8, 6, 7, 7]),
-        (Sync, 570, [7, 5, 7, 6]),
+        (Sync, 560, [7, 5, 7, 7]),
         (Ring, 510, [8, 6, 7, 7]),
         (Xor, 530, [7, 6, 7, 7]),
         (Bits, 510, [8, 6, 7, 7]),
