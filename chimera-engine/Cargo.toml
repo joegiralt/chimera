@@ -19,6 +19,9 @@ chimera-waves = { path = "../chimera-waves" }
 boot-waves = []
 # The console's `ls` and `put` (ADR 0092): project files onto the card.
 card-put = []
+# The TAPE engine's DSP (ADR 0132): off in the shipping firmware, where no
+# Part plays TAPE until its rework (#476); on for the desktop and tests.
+tape = []
 # The master tape stage on DAC pair 1 (ADR 0055: off the chain by default;
 # its parameters and disk codes stay either way).
 master-tape = []
@@ -52,5 +55,5 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
 chimera-waves = { path = "../chimera-waves", features = ["emit"] }
 
 [dev-dependencies]
-chimera-engine = { path = ".", features = ["test-support", "source-writer", "smear-probe", "clamp-probe"] }
+chimera-engine = { path = ".", features = ["test-support", "source-writer", "smear-probe", "clamp-probe", "tape"] }
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }

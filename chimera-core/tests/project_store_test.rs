@@ -646,3 +646,48 @@ fn saved_toast_skips_stale_parts() {
         ProjectNote::Saved(Differ::One(PartId::ALL[2], SlotId::ALL[6]))
     );
 }
+
+/// A project saved with TAPE Parts (before TAPE was coming soon) loads
+/// without a panic: each TAPE Part as a clean INIT VA, the rest as saved,
+/// and the pool keeps its TAPE Sound for TAPE's return (ADR 0132).
+#[test]
+fn an_old_tape_project_loads_its_tape_parts_as_init_va() {
+    use chimera_core::preset::Sound;
+    use chimera_core::project::Origin;
+    let mut s = MemStore::new(1);
+    let mut card = Card::new();
+    let (mut p, t) = Project::boxed();
+    let slot = SlotId::ALL[20];
+    p.pool_store(slot, &Sound::init(EngineType::Tape)).unwrap();
+    for (part, from) in [
+        (0, PartFrom::Init(EngineType::Tape)),
+        (1, PartFrom::Slot(slot)),
+    ] {
+        let src = PartSource {
+            part: PartId::ALL[part],
+            from,
+        };
+        p.replace_part(ReplaceGuard::check(&p, t, src).unwrap())
+            .unwrap();
+        assert_eq!(p.part(PartId::ALL[part]).sound.engine(), EngineType::Tape);
+    }
+    let kept = p.part(PartId::ALL[2]).sound.clone();
+    let file = new_project_id(&mut card, &mut s).out.unwrap();
+    let id = file.file().id();
+    let _ = save_project(&mut card, &mut s, &mut p, SaveTo::Fresh(file)).out;
+    let (mut q, t) = Project::boxed();
+    let out = load_file(&mut card, &mut s, &mut q, t, id, &LoadLink::new());
+    assert!(out.swap.is_some(), "{:?}", out.note);
+    for part in [PartId::ALL[0], PartId::ALL[1]] {
+        let x = q.part(part);
+        assert!(x.sound.bits_eq(&Sound::init(EngineType::Va)), "{part:?}");
+        assert_eq!(x.origin(), Origin::Init(EngineType::Va), "{part:?}");
+        assert_eq!(part_status(x, q.pool()), PartStatus::Clean, "{part:?}");
+    }
+    assert!(
+        q.part(PartId::ALL[2]).sound.bits_eq(&kept),
+        "the rest as saved"
+    );
+    let pooled = q.pool().get(slot).expect("the pool keeps it");
+    assert_eq!(pooled.engine(), EngineType::Tape);
+}

@@ -198,18 +198,18 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the pool meter, row costs, the hints' bytes (sound-pool
     // plan Task 6); and its refusal. Then the merge with filter-types: a
     // Sound is smaller (fixed columns, no registry entry).
-    ("sound_browser", 0x7e5c9171f094822b),
+    ("sound_browser", 0x874eaa34493bb6ca),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
-    ("sound_browser_pool_full", 0x83fc082530a2c28c),
+    ("sound_browser_pool_full", 0xa66982256a3e11d9),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     ("library_empty", 0xa94e4a6edf448c09),
     ("library_no_card", 0xa7957021c5215364),
-    ("library_sounds", 0x6d5c9ca6aae65005),
-    ("library_this_build", 0xe5de1af86823f93a),
+    ("library_sounds", 0xbdd7b70b99cd94dd),
+    ("library_this_build", 0xcf33aa71b7f402e2),
     ("library_cut_short", 0xd797a54b3cebf09d),
     ("library_older", 0xddc7ed0f09a1592b),
-    ("library_newer", 0x75c4fb27df07827c),
+    ("library_newer", 0xfa0990aa288420a4),
     ("library_wont_fit", 0x46253d45450aded1),
     ("library_pool_full", 0x6660706bd8a9d80c),
     ("library_naming", 0xab3925136bf27a0f),
@@ -220,7 +220,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_system_diag_aud_load", 0x0063331a51f3da0e),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.
-    ("settings_project_pool", 0xc96d14eba15c42a4),
+    ("settings_project_pool", 0x4b4c1b086f6263c8),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).

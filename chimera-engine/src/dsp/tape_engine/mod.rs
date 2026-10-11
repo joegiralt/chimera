@@ -20,6 +20,11 @@
 //! a table of single-cycle frames (`wave`). STRETCH (Akai S950 Operator's
 //! Manual p. 32, TIMESTRETCH) splices two grains at a time pointer
 //! (`stretch`).
+//!
+//! The engine itself is the `tape` feature's (ADR 0132): the shipping
+//! build has no TAPE Part to play, so it links `off`'s silent stand-in.
+//! The params, sources and UI helpers stay either way.
+#![cfg_attr(not(feature = "tape"), allow(dead_code, unused_imports))]
 
 pub mod age;
 pub mod heads;
@@ -31,6 +36,11 @@ pub mod stretch;
 pub mod tron;
 pub mod warble;
 pub mod wave;
+
+#[cfg(not(feature = "tape"))]
+mod off;
+#[cfg(not(feature = "tape"))]
+pub use off::TapeEngine;
 
 use core::mem::MaybeUninit;
 
@@ -322,6 +332,7 @@ pub(crate) struct Strip {
     warble: Warble,
 }
 
+#[cfg(feature = "tape")]
 #[derive(Clone, Copy)]
 pub struct TapeEngine {
     /// The source a note plays, latched at note-on (ADR 0087): never
@@ -452,6 +463,7 @@ pub struct TapeEngine {
     no_transport: bool,
 }
 
+#[cfg(feature = "tape")]
 impl TapeEngine {
     fn idle() -> TapeEngine {
         TapeEngine {
