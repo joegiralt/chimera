@@ -18,7 +18,7 @@ use chimera_core::orbit::engine::OrbitEvent;
 use chimera_core::orbit::runner::{OrbitRunner, OrbitView, orbit_buffer};
 use chimera_core::params::EngineType;
 use chimera_core::perf::load::AudioStats;
-use chimera_core::preset::{MAX_SOUNDS, Sound};
+use chimera_core::preset::Sound;
 use chimera_core::project::SlotId;
 use chimera_core::project::{
     LoadLink, PartFrom, PartId, PartSource, Project, ProjectFile, ProjectNote, ProjectSource,
@@ -33,6 +33,7 @@ use chimera_core::triple::{Reader, TripleBuffer, Writer};
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_registry as reg;
+use chimera_core::ui::browser::HEAD;
 use chimera_core::ui::busy::{draw_busy, draw_toast};
 use chimera_core::ui::hold::HOLD_MS;
 use chimera_core::ui::perf::PerfStats;
@@ -704,10 +705,9 @@ const PART_KEYS: [ButtonId; 5] = [
 /// scroll to the init row, EDIT), then MINUS from the engine's home to its
 /// first node.
 pub fn load_init(ui: &mut UiState, engine: EngineType) {
-    let row = MAX_SOUNDS + EngineType::ALL.iter().position(|&c| c == engine).unwrap();
+    let row = EngineType::ALL.iter().position(|&c| c == engine).unwrap();
     feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
-    feed(ui, Input::turn(EncoderId::A, 100));
-    feed(ui, Input::turn(EncoderId::A, (row - 100) as i8));
+    feed(ui, Input::turn(EncoderId::A, row as i8 - HEAD as i8));
     feed(ui, Input::press(ButtonId::Edit));
     let home = chimera_core::ui::nav::chain_def_for(engine).home();
     assert_eq!(

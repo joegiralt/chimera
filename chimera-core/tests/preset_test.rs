@@ -1,11 +1,12 @@
 use chimera_core::addr::Op;
 use chimera_core::params::EngineType;
-use chimera_core::preset::{MAX_SOUNDS, Performance, Sound};
+use chimera_core::preset::{Performance, Sound};
 use chimera_core::project::{
     Origin, PartFrom, PartId, PartSource, Project, ReplaceError, ReplaceGuard, SlotId, TemplateCrc,
 };
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry as reg;
+use chimera_core::ui::browser::HEAD;
 use chimera_core::ui::nav::{Browse, NavCtx, OrbitCx, PartChain};
 use chimera_core::ui::page::PageKey;
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
@@ -278,9 +279,9 @@ fn browser_cancel_does_not_load() {
 fn browser_init_entries_set_the_engine() {
     let mut ui = UiState::new();
 
-    // Open browser, scroll to "INIT Modal" (MAX_SOUNDS + 1)
+    // Open browser, scroll to "INIT Modal" (entry 1)
     open_browser(&mut ui, ButtonId::B1);
-    scroll(&mut ui, MAX_SOUNDS + 1);
+    to_entry(&mut ui, 1);
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
     assert!(ui.location().browse().is_none());
@@ -290,9 +291,9 @@ fn browser_init_entries_set_the_engine() {
     );
     assert!(ui.project().part(PartId::ALL[0]).sound.name.as_str() == "INIT");
 
-    // Open browser again, scroll to "INIT Algo" (MAX_SOUNDS)
+    // Open browser again, scroll to "INIT Algo" (entry 0)
     open_browser(&mut ui, ButtonId::B1);
-    scroll(&mut ui, MAX_SOUNDS);
+    to_entry(&mut ui, 0);
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
 
     assert!(ui.location().browse().is_none());
@@ -311,7 +312,7 @@ fn browser_load_keeps_part_mix() {
         chimera_core::MidiChannel::new(9).unwrap();
     ui.project_mut().edit_part(PartId::ALL[2]).mix.level = 0.3;
     open_browser(&mut ui, ButtonId::B3);
-    scroll(&mut ui, MAX_SOUNDS + 1);
+    to_entry(&mut ui, 1);
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
     assert_eq!(
         ui.project().part(PartId::ALL[2]).sound.engine(),
@@ -418,12 +419,8 @@ fn performance_default_is_new() {
     }
 }
 
-/// Encoder A turned `rows` down the browser, in turns an `i8` holds.
-fn scroll(ui: &mut UiState, rows: usize) {
-    let mut left = rows;
-    while left > 0 {
-        let step = left.min(100);
-        ui.handle_input(&MockControls::new().encoder(EncoderId::A, step as i8));
-        left -= step;
-    }
+/// Encoder A turned from the browser's opening row to list entry `entry`.
+fn to_entry(ui: &mut UiState, entry: usize) {
+    let d = entry as i8 - HEAD as i8;
+    ui.handle_input(&MockControls::new().encoder(EncoderId::A, d));
 }

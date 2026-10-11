@@ -13,6 +13,7 @@ use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::algo::waves::WaveId;
 use crate::dsp::modulator::{EnvType, HoldPos};
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
+use crate::dsp::va::osc::{Morph, Unit};
 use crate::part::DacPair;
 use crate::perf::load::AudioStats;
 use crate::project::PartId;
@@ -26,7 +27,7 @@ use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
 use crate::ui::glyph::{
     BRAID_PARAMS, Braid, BraidPart, CompositeId, Cube, CubePart, FocusGlyph, Gauge, REVERB_PARAMS,
-    RINGS_PARAMS, Rings, RingsPart, Tail,
+    RINGS_PARAMS, Reads, Rings, RingsPart, Tail, VA_MIX_PARAMS, VaGlyph, VaMix, va_mode,
 };
 use crate::ui::hint;
 use crate::ui::mod_grid::MatrixState;
@@ -655,33 +656,52 @@ impl Renderer {
             _ => self.anim[f.focus].current(),
         };
         let frame = f.clock.frame();
-        super::glyph::gauge(glyph, value, fmt, |id| {
-            // Which of the composite's params has focus.
-            let focus = id.params().iter().position(|&a| Some(a) == focused);
-            match id {
-                CompositeId::ChorusBraid => Gauge::Braid(Braid::from_set(
-                    self.eased_set(f, BRAID_PARAMS),
-                    focus.map(|i| BraidPart::ALL[i]),
-                    frame,
-                )),
-                CompositeId::DelayRings => Gauge::Rings(Rings::from_set(
-                    self.eased_set(f, RINGS_PARAMS),
-                    focus.map(|i| RingsPart::ALL[i]),
-                    frame,
-                )),
-                // The cube is QUAD's picture; the others draw their TAIL.
-                // The cube's params lead `REVERB_PARAMS`.
-                CompositeId::Reverb => {
-                    let set = self.eased_set(f, REVERB_PARAMS);
-                    if f.ctx.rev == ReverbType::Quad {
-                        Gauge::Cube(Cube::from_set(
-                            core::array::from_fn(|i| set[i]),
-                            focus.and_then(|i| CubePart::ALL.get(i).copied()),
-                            frame,
-                        ))
-                    } else {
-                        Gauge::Tail(Tail::from_set(f.ctx.rev, set, focus, frame))
+        super::glyph::gauge(glyph, value, fmt, |reads| match reads {
+            Reads::Composite(id) => {
+                // Which of the composite's params has focus.
+                let focus = id.params().iter().position(|&a| Some(a) == focused);
+                match id {
+                    CompositeId::ChorusBraid => Gauge::Braid(Braid::from_set(
+                        self.eased_set(f, BRAID_PARAMS),
+                        focus.map(|i| BraidPart::ALL[i]),
+                        frame,
+                    )),
+                    CompositeId::DelayRings => Gauge::Rings(Rings::from_set(
+                        self.eased_set(f, RINGS_PARAMS),
+                        focus.map(|i| RingsPart::ALL[i]),
+                        frame,
+                    )),
+                    // The cube is QUAD's picture; the others draw their TAIL.
+                    // The cube's params lead `REVERB_PARAMS`.
+                    CompositeId::Reverb => {
+                        let set = self.eased_set(f, REVERB_PARAMS);
+                        if f.ctx.rev == ReverbType::Quad {
+                            Gauge::Cube(Cube::from_set(
+                                core::array::from_fn(|i| set[i]),
+                                focus.and_then(|i| CubePart::ALL.get(i).copied()),
+                                frame,
+                            ))
+                        } else {
+                            Gauge::Tail(Tail::from_set(f.ctx.rev, set, focus, frame))
+                        }
                     }
+                }
+            }
+            Reads::Va(VaGlyph::Wave(osc)) => {
+                let [wave, shape] = self.eased_set(f, osc.params());
+                Gauge::VaWave(Morph {
+                    wave: Unit::new(wave),
+                    shape: Unit::new(shape),
+                })
+            }
+            Reads::Va(VaGlyph::Mode) => {
+                Gauge::VaMix(VaMix::from_set(self.eased_set(f, VA_MIX_PARAMS)))
+            }
+            Reads::Va(VaGlyph::Blend) => {
+                let [mode, amount] = self.eased_set(f, [VA_MIX_PARAMS[0], VA_MIX_PARAMS[1]]);
+                Gauge::Blend {
+                    value: amount,
+                    mode: va_mode(mode),
                 }
             }
         })

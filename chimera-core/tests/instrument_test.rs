@@ -29,7 +29,7 @@ use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::fnv1a;
 
-use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
+use chimera_core::hw::{AUDIO_BUDGET_PERCENT, CPU_HZ_REV_V, SampleBudget};
 
 /// The budget a voice share of `voice_share` cycles/sample gives, the FX
 /// bus's own cost folded in: the smallest `cpu_hz` whose `SampleBudget`
@@ -37,7 +37,9 @@ use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 const fn budget_for(voice_share: u32) -> SampleBudget {
     // The bus and the knobs, reserved (ADR 0116).
     let reserved = FxBus::COST.0 + Knobs::RESERVE.0;
-    SampleBudget::for_cpu(((reserved + voice_share) as u64 * 480_000).div_ceil(7) as u32)
+    SampleBudget::for_cpu(
+        ((reserved + voice_share) as u64 * 4_800_000).div_ceil(AUDIO_BUDGET_PERCENT as u64) as u32,
+    )
 }
 
 /// The voices' share before the FX diet (7,000 − 3,310). After the diet
@@ -487,12 +489,15 @@ fn tails_ring_out_then_free_the_voice() {
     );
 }
 
-/// Six Mono Parts of the costliest factory Sound, MORPH KEYS, spend the
-/// rev V budget with two voices still free: a Poly note on top would go over
-/// it, and every sounding voice is mono, so nothing can be stolen.
+/// Six Mono Parts of the costliest factory Sound, MORPH KEYS, spend a
+/// budget of exactly six of them (rev V's 75 % admits seven) with two voices
+/// still free: a Poly note on top would go over it, and every sounding
+/// voice is mono, so nothing can be stolen.
 #[test]
 fn refused_notes_are_counted_and_silent() {
-    let mut rig = Rig::rev_v();
+    let mut rig = Rig::with_budget(budget_for(
+        6 * factory_voice_cost(7) + factory_voice_cost(7) / 2,
+    ));
     let mut perf = Performance::new();
     for p in PartId::ALL {
         **perf.edit(p).sound = chimera_core::factory::factory_sound(7).unwrap();
@@ -871,9 +876,9 @@ fn sound_change_mid_chord_stays_in_budget() {
     assert_eq!(busy.iter().filter(|s| s.cost() != modal).count(), 1);
 }
 
-/// ADR 0040, 0049: eight held INIT notes all sound at rev V's budget;
-/// seven with the master tape (ADR 0055), whose two cycles to spare ADR
-/// 0060's DC blocker took.
+/// ADR 0040, 0049: eight held INIT notes all sound at rev V's budget, with
+/// or without the master tape (ADR 0055; seven at the 70 % share, before
+/// ADR 0124).
 #[test]
 fn eight_init_voices_fit_rev_v() {
     let mut rig = Rig::rev_v();
@@ -886,8 +891,7 @@ fn eight_init_voices_fit_rev_v() {
     }
     let a = rig.inst.allocator();
     assert_eq!(MAX_VOICES, 8);
-    let want = if cfg!(feature = "master-tape") { 7 } else { 8 };
-    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), want);
+    assert_eq!(a.slots().iter().filter(|s| !s.is_free()).count(), 8);
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost();
     assert!(
         a.sounding_cost() + FxBus::COST <= budget,

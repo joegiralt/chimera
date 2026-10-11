@@ -43,11 +43,12 @@ fn crc(ui: &UiState, p: PartId) -> u32 {
     sound_crc(&ui.project().part(p).sound)
 }
 
-/// Part `p`'s Sound rung, the cursor on entry `entry`.
-fn rung(ui: &mut UiState, p: PartId, entry: usize) {
+/// Part `p`'s Sound rung, the cursor on pool slot `slot` (0-based).
+fn rung(ui: &mut UiState, p: PartId, slot: usize) {
     feed(ui, Input::chord(ButtonId::Edit, B[p.index()]));
-    feed(ui, Input::turn(EncoderId::A, entry as i8));
-    assert_eq!(ui.location().browse().map(|(_, b)| b.cursor()), Some(entry));
+    feed(ui, Input::turn(EncoderId::A, slot as i8));
+    let at = ui.location().browse().map(|(_, b)| b.cursor());
+    assert_eq!(at, Some(chimera_core::ui::browser::HEAD + slot));
 }
 
 /// Slot `s` into a Part that doesn't ask, through the Sound rung.

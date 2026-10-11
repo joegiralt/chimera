@@ -791,6 +791,7 @@ impl Instrument {
         }
         self.waiting = [None; MAX_VOICES];
         self.resnap_to = [None; MAX_VOICES];
+        crate::played::clear_held();
     }
 
     /// Part `part`'s mono bus from the last `render` (before pan and level).
@@ -853,6 +854,7 @@ impl Instrument {
     ) {
         match ev.kind {
             NoteKind::On(vel) => {
+                let live = from == NoteOrigin::Live;
                 #[cfg(feature = "probe")]
                 let t0 = crate::probe::now();
                 // Judge the note against this block's patches, not the last.
@@ -958,9 +960,24 @@ impl Instrument {
                     self.note_origin[v] = from;
                     self.keys[v] = ev.note;
                     self.resnap_to[v] = None;
+                    if live {
+                        // The UI's screensaver: the note as this Part sounds it.
+                        let cents = libm::roundf(part.params.pitch.semitones() * 100.0) as i16;
+                        crate::played::note_on(
+                            ev.channel.get(),
+                            q,
+                            ev.note.get(),
+                            vel.get(),
+                            note.get(),
+                            cents,
+                        );
+                    }
                 }
             }
             NoteKind::Off => {
+                if from == NoteOrigin::Live {
+                    crate::played::note_off(ev.channel.get(), ev.note.get());
+                }
                 // By voice index: every held voice this channel and `from`
                 // hold the key on (one per layered Part), let go with the
                 // last of its keys.
@@ -1435,6 +1452,11 @@ impl Instrument {
 
         // Oscilloscope: every part's bus, before pan and level.
         scope.write(&scope_block);
+        // A key the readout holds that no voice does was lost (a dropped
+        // note-off): let it go.
+        if !self.alloc.slots().iter().any(|s| s.held() && !s.dying()) && crate::played::any_held() {
+            crate::played::clear_held();
+        }
         // The block is over: the next may carry other patches.
         self.costed = 0;
     }
