@@ -161,12 +161,6 @@ pub fn encode_library_sound(
 }
 
 /// A user Sound's number, 1..=8_999_999: the only kind a save can take.
-///
-/// ```compile_fail,E0308
-/// # use chimera_engine::storage::{FactoryId, UserId};
-/// fn takes_user(_: UserId) {}
-/// takes_user(FactoryId::new(9_100_001).unwrap());
-/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct UserId(u32);
 
@@ -251,8 +245,19 @@ impl LibId {
     }
 }
 
+/// A library pair for reads, peeks, `rm` and console `put`; writes go through `user_file`.
 pub fn library_file(id: LibId) -> AbFile {
     AbFile::new(Dir::Sounds, &id.stem()).expect("S + 7 digits is a stem")
+}
+
+/// The pair a library save writes: a user id only.
+///
+/// ```compile_fail,E0308
+/// use chimera_engine::storage::{FactoryId, user_file};
+/// let _ = user_file(FactoryId::new(9_100_001).unwrap());
+/// ```
+pub fn user_file(id: UserId) -> AbFile {
+    library_file(LibId::User(id))
 }
 
 /// A `S#######.A` or `.B` in `SOUNDS`.

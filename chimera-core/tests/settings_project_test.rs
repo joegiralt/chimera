@@ -423,11 +423,20 @@ fn save_as_takes_the_id_free_when_named() {
     let mut r = Rig::new(MemStore::new(1));
     r.hold(ButtonId::Menu);
     assert_eq!(r.ui.naming().unwrap().text(), "DRIFT-010");
-    let taken = put(&mut r.s, "BETA");
+    // NAMING opened on id 10; a project takes it meanwhile.
+    let mut card = Card::new();
+    let fresh = new_project_id(&mut card, &mut r.s).out.unwrap();
+    let taken = fresh.file();
+    let (mut p, _) = Project::boxed();
+    p.set_name(name("BETA"));
+    assert!(matches!(
+        save_project(&mut card, &mut r.s, &mut p, SaveTo::Fresh(fresh)).out,
+        ProjectNote::Saved(_)
+    ));
     r.tap(ButtonId::Seq);
     assert_eq!(r.toast(), "SAVED");
     let f = r.ui.project().meta().file().unwrap();
-    assert_eq!((taken.id().get(), f.id().get()), (1, 10));
+    assert_eq!((taken.id().get(), f.id().get()), (10, 11));
     assert_eq!(listed(&mut r.s).len(), 2);
 }
 

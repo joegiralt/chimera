@@ -19,7 +19,7 @@ use crate::storage::{
     BuildStamp, Card, CardFault, FileError, Generation, HEADER_LEN, ID_WINDOW, LIB_PEEK, LibId,
     LibraryDecoder, LoadError, NextId, Peek, SaveError, Side, SideState, SoundCheck, UserId,
     check_file, encode_library_sound, held_for_file_len, lib_id, library_file, load_ab_in_place,
-    next_user_id, peek_library, save_ab, sound_crc, source_file,
+    next_user_id, peek_library, save_ab, sound_crc, source_file, user_file,
 };
 
 /// What a library operation says to the screen.
@@ -114,7 +114,7 @@ pub fn save_library_sound<S: Store>(
         st.make_dir(r.volume(), Dir::Chimera)?;
         st.make_dir(r.volume(), Dir::Sounds)?;
         let id = free_id(st, r)?;
-        let file = library_file(id.into());
+        let file = user_file(id);
         let saved = save_ab(st, r, file, &mut SoundCheck::new(), Some(name), &mut |w| {
             encode_library_sound(s, stamp, None, w)
         })
