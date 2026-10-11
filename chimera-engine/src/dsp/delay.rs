@@ -201,6 +201,7 @@ impl Block for DelayParams {
         &DELAY_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::TIME_MS => self.time_ms,
@@ -214,6 +215,7 @@ impl Block for DelayParams {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::TIME_MS => self.time_ms = v,

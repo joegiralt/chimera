@@ -10,28 +10,32 @@ use crate::hw::SAMPLE_RATE;
 
 include!(concat!(env!("OUT_DIR"), "/waves.rs"));
 
-pub const WAVE_LEN: usize = 256;
-pub const MIPS: usize = 8;
-pub const WAVE_COUNT: usize = 16;
-/// One period and a guard copy of its first sample.
-pub type Table = [i16; WAVE_LEN + 1];
+pub use chimera_waves::{MIPS, Table, WAVE_COUNT, WAVE_LEN, Waves};
 
 pub const WAVE_FLASH_BUDGET: usize = 64 * 1024 + WAVE_COUNT * MIPS * 2;
-pub type Waves = [[Table; MIPS]; WAVE_COUNT];
 const _: () = assert!(core::mem::size_of::<Waves>() <= WAVE_FLASH_BUDGET);
 
-/// The tables `WaveId::table` reads: `WAVES` itself, or a RAM copy.
+/// The tables `WaveId::table` reads: `WAVES` itself, or a RAM copy. With
+/// `boot-waves` there is no `WAVES`: null until `render_into` fills the
+/// RAM, which the firmware's boot does before the audio starts.
+#[cfg(not(feature = "boot-waves"))]
 static ACTIVE: AtomicPtr<Waves> = AtomicPtr::new(ptr::addr_of!(WAVES).cast_mut());
+#[cfg(feature = "boot-waves")]
+static ACTIVE: AtomicPtr<Waves> = AtomicPtr::new(ptr::null_mut());
 
-/// Copies the tables into `ram` and reads them from there from then on, for
-/// a target whose RAM is faster than its flash. Call before any audio runs.
-pub fn copy_into(ram: &'static mut MaybeUninit<Waves>) {
-    // SAFETY: both are one `Waves`, so the copy is in bounds and initialises
-    // all of `ram`; `ram` is a unique `&mut`, so it cannot overlap the
-    // immutable `WAVES`.
-    unsafe { ptr::copy_nonoverlapping(ptr::addr_of!(WAVES), ram.as_mut_ptr(), 1) };
-    let copy: &'static MaybeUninit<Waves> = ram;
-    ACTIVE.store(copy.as_ptr().cast_mut(), Ordering::Release);
+/// Renders the tables into `ram` and reads them from there from then on:
+/// the firmware's zero-wait copy, built at boot (ADR 0122), the same bits
+/// as `WAVES`. Call before any audio runs.
+pub fn render_into(ram: &'static mut MaybeUninit<Waves>) {
+    // SAFETY: all-zero bytes are a valid `Waves` (plain `i16`s), so after
+    // the fill `ram` is initialised.
+    let w = unsafe {
+        ptr::write_bytes(ram.as_mut_ptr(), 0, 1);
+        ram.assume_init_mut()
+    };
+    chimera_waves::render_all(w);
+    let done: &'static Waves = w;
+    ACTIVE.store(ptr::from_ref(done).cast_mut(), Ordering::Release);
 }
 
 /// Mip 0's 127 harmonics stay under Nyquist up to this fundamental; each
@@ -85,8 +89,10 @@ impl WaveId {
     }
 
     pub fn table(self, mip: usize) -> &'static Table {
-        // SAFETY: `ACTIVE` points at `WAVES` or at a finished copy, whose
-        // only `&mut` was given up to `copy_into`; neither is written again.
+        // SAFETY: `ACTIVE` points at `WAVES` or at finished tables, whose
+        // only `&mut` was given up to `render_into`; neither is
+        // written again. With `boot-waves` it is null only before the boot's
+        // `render_into`, and nothing plays a wave before that.
         let waves = unsafe { &*ACTIVE.load(Ordering::Acquire) };
         &waves[self.0 as usize][mip.min(MIPS - 1)]
     }

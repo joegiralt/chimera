@@ -337,6 +337,10 @@ dependencies = [
 [[package]]
 name = "chimera-waves"
 version = "0.1.0"
+dependencies = [
+ "chimera-waves",
+ "libm",
+]
 
 [[package]]
 name = "clang-sys"
