@@ -24,6 +24,7 @@ use chimera_core::addr::{BlockRef, Op};
 use chimera_core::block::ParamId;
 use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::dsp::chorus::ChorusParams;
+use chimera_core::dsp::comp::CompParams;
 use chimera_core::dsp::delay::DelayParams;
 use chimera_core::dsp::fx_bus::{FxBus, FxParams};
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode};
@@ -226,6 +227,9 @@ fn run_all(cases: &[Case], t: Timing) -> Vec<Run> {
 fn silences(c: &Case) -> Option<&'static str> {
     if c.is(BlockRef::Part, PartParams::LEVEL) && c.any(|v| v == 0.0) {
         return Some("Part LEVEL 0 mutes the Part");
+    }
+    if c.is(BlockRef::Comp, CompParams::VOL) && c.any(|v| v == 0.0) {
+        return Some("master VOL 0 mutes the unit");
     }
     if c.is(BlockRef::Out, OutParams::VOLUME) && c.any(|v| v == 0.0) {
         return Some("OUT LEVEL 0 is the voice at volume 0");
@@ -1640,6 +1644,7 @@ fn tape_params_sweep() {
                                     sym: &mut sym,
                                     src: &view,
                                     part: chimera_core::project::PartId::ALL[0],
+                                    tune: 0.0,
                                 };
                                 if b == 0 {
                                     slot.note_on(note, Velocity::DEFAULT, p, SR, id, &mut ctx);

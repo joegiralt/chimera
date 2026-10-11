@@ -8,7 +8,7 @@ use chimera_core::ui::UiState;
 use chimera_core::ui::settings::prompt::{Answers, DfuAnswer, EnterDfu, Pill, Prompt};
 use chimera_core::ui::settings::replace::said::Said;
 use chimera_core::ui::settings::{Act, AskKind, Kind};
-use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, ThemeSettings};
+use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, Saver, ThemeSettings};
 use chimera_hal::testkit::MemStore;
 use chimera_hal::{ButtonId, EncoderId};
 use screen::{Input, feed, tap, to_leaf};
@@ -114,6 +114,8 @@ fn the_theme_is_saved_before_the_restart() {
         accent: Accent::Lime,
         black: Black::new(1),
         hints: false,
+        invert: false,
+        saver: Saver::from_index(4),
     };
     let mut ui = Box::new(UiState::new());
     let mut sys = Sys::new();

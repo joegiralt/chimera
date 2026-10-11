@@ -97,6 +97,8 @@ pub struct AudioShared {
     /// The load epoch this snapshot was published under (ADR 0046).
     pub epoch: u32,
     pub orbit: OrbitShared,
+    /// SETTINGS > TUNING, cents (`MidiSettings::tune`), from SYSTEM.
+    pub tune: i8,
 }
 
 impl Default for AudioShared {
@@ -150,7 +152,7 @@ impl PartAudio {
 /// the chord, slow enough not to click (spec § 5.2).
 pub const RESNAP_GLIDE_MS: u32 = 40;
 
-crate::in_place::field_list!(AudioShared => AudioShared { parts, fx, epoch, orbit });
+crate::in_place::field_list!(AudioShared => AudioShared { parts, fx, epoch, orbit, tune });
 
 impl AudioShared {
     pub fn from_performance(perf: &Performance) -> Self {
@@ -178,6 +180,7 @@ impl AudioShared {
             addr_of_mut!((*p).fx).write(perf.fx);
             addr_of_mut!((*p).epoch).write(0);
             addr_of_mut!((*p).orbit).write(OrbitShared::default());
+            addr_of_mut!((*p).tune).write(0);
             slot.assume_init_mut()
         }
     }
@@ -244,6 +247,8 @@ impl AudioShared {
             epoch: e,
             // `UiState::publish_orbit` writes it, in the same publish.
             orbit: _,
+            // Likewise: the shells write it, from SYSTEM.
+            tune: _,
         } = self;
         for (i, (d, p)) in parts.iter_mut().zip(perf.parts()).enumerate() {
             *d = PartAudio::of(p, knobs(i, p));
@@ -474,7 +479,7 @@ pub fn mix_parts(
     }
     // The master section, after every pair is summed; then the output stage.
     fx.master(out, &shared.fx, sample_rate);
-    fx.limit(dac, sample_rate);
+    fx.limit(dac, &shared.fx, sample_rate);
     scope
 }
 
@@ -557,6 +562,10 @@ pub struct Instrument {
     /// The reverb's reserve from the budget this block, and its tracker.
     rev_extra: Cost,
     rev_bill: RevBill,
+    /// SETTINGS > TUNING in cents, eased a block at a time (never snap),
+    /// and in semitones as the engines read it.
+    tune_ease: Ease,
+    tune: f32,
 }
 
 /// Who plays a note: the keys and MIDI, or one of ORBIT's rings.
@@ -572,7 +581,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, pedal, sustained, bend_k, knobs, knob_pace, rev_extra, rev_bill });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, pedal, sustained, bend_k, knobs, knob_pace, rev_extra, rev_bill, tune_ease, tune });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -640,6 +649,8 @@ impl Instrument {
             addr_of_mut!((*p).knob_pace).write(Pace::Glide(sample_rate));
             addr_of_mut!((*p).rev_extra).write(Cost::ZERO);
             addr_of_mut!((*p).rev_bill).write(RevBill::new());
+            addr_of_mut!((*p).tune_ease).write(Ease::default());
+            addr_of_mut!((*p).tune).write(0.0);
             slot.assume_init_mut()
         }
     }
@@ -797,6 +808,7 @@ impl Instrument {
         self.waiting = [None; MAX_VOICES];
         self.resnap_to = [None; MAX_VOICES];
         self.sustained = [false; MAX_VOICES];
+        crate::played::clear_held();
     }
 
     /// Part `part`'s mono bus from the last `render` (before pan and level).
@@ -859,6 +871,7 @@ impl Instrument {
     ) {
         match ev.kind {
             NoteKind::On(vel) => {
+                let live = from == NoteOrigin::Live;
                 #[cfg(feature = "probe")]
                 let t0 = crate::probe::now();
                 // Judge the note against this block's patches, not the last.
@@ -950,6 +963,7 @@ impl Instrument {
                             sym: &mut self.sym,
                             src,
                             part: part_id(q),
+                            tune: self.tune,
                         };
                         voice.note_on(note, vel, &part.params, part.source, ctx)
                     };
@@ -966,9 +980,24 @@ impl Instrument {
                     // from the pedal.
                     self.sustained[v] = false;
                     self.resnap_to[v] = None;
+                    if live {
+                        // The UI's screensaver: the note as this Part sounds it.
+                        let cents = libm::roundf(part.params.pitch.semitones() * 100.0) as i16;
+                        crate::played::note_on(
+                            ev.channel.get(),
+                            q,
+                            ev.note.get(),
+                            vel.get(),
+                            note.get(),
+                            cents,
+                        );
+                    }
                 }
             }
             NoteKind::Off => {
+                if from == NoteOrigin::Live {
+                    crate::played::note_off(ev.channel.get(), ev.note.get());
+                }
                 // By voice index: every held voice this channel and `from`
                 // hold the key on (one per layered Part), let go with the
                 // last of its keys.
@@ -1017,6 +1046,7 @@ impl Instrument {
             sym: &mut self.sym,
             src: &NO_SOURCES,
             part: part_id(self.sounding[v]),
+            tune: self.tune,
         });
     }
 
@@ -1141,6 +1171,7 @@ impl Instrument {
                     sym: &mut self.sym,
                     src: &NO_SOURCES,
                     part: part_id(self.sounding[v]),
+                    tune: self.tune,
                 },
             );
             self.resnap_to[v] = None;
@@ -1195,6 +1226,7 @@ impl Instrument {
             sym: &mut self.sym,
             src,
             part: part_id(q),
+            tune: self.tune,
         };
         let _ = voice.note_on(note, w.vel, params, w.source, ctx);
         if !held {
@@ -1407,6 +1439,10 @@ impl Instrument {
         src: &GateView<'_>,
     ) {
         self.rev_extra = self.rev_bill.step(shared.fx.reverb.kind);
+        let (_, cents) = self
+            .tune_ease
+            .step(f32::from(shared.tune), ease_coeff(self.sample_rate));
+        self.tune = cents / 100.0;
         self.recost(shared);
         self.restart_switched(shared);
 
@@ -1439,6 +1475,7 @@ impl Instrument {
                 sym: &mut self.sym,
                 src,
                 part: PartId::ALL[p],
+                tune: self.tune,
             };
             self.voices[v].render_knobs(
                 &mut block,
@@ -1500,6 +1537,11 @@ impl Instrument {
 
         // Oscilloscope: every part's bus, before pan and level.
         scope.write(&scope_block);
+        // A key the readout holds that no voice does was lost (a dropped
+        // note-off): let it go.
+        if !self.alloc.slots().iter().any(|s| s.held() && !s.dying()) && crate::played::any_held() {
+            crate::played::clear_held();
+        }
         // The block is over: the next may carry other patches.
         self.costed = 0;
     }

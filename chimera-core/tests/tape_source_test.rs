@@ -632,6 +632,7 @@ fn a_dropped_queued_note_frees_its_source() {
             sym: &mut sym,
             src: &view,
             part: chimera_core::project::PartId::ALL[0],
+            tune: 0.0,
         };
         f(v, ctx);
         v.render(&mut out, &params, &mods, ctx);
@@ -649,6 +650,7 @@ fn a_dropped_queued_note_frees_its_source() {
         sym: &mut sym,
         src: &view,
         part: chimera_core::project::PartId::ALL[0],
+        tune: 0.0,
     };
     v.note_on(note, Velocity::DEFAULT, &params, Some(b), ctx);
     assert_eq!(v.reads(), [Some(a), Some(b)], "queued behind the fade");

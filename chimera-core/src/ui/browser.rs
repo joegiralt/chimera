@@ -24,22 +24,39 @@ use crate::ui::fmt::FmtBuf;
 use crate::ui::hint::{self, Gesture};
 use crate::ui::library::{LibRow, LibState, Tab, row as lib_row_at, rows as lib_rows};
 use crate::ui::meter::{self, MeterView};
-use crate::ui::nav::chain_def_for;
 use crate::ui::settings::part::Offer;
 use crate::ui::settings::prompt::POOL_FULL;
 use crate::ui::theme;
 
 /// Rows on screen.
 pub const VISIBLE_ROWS: usize = 8;
-/// The pool's slots, then one init Sound per engine, in `EngineType::ALL`
-/// order.
+/// One init Sound per engine, in `EngineType::ALL` order, then the DRUM
+/// row (an engine not built yet), then the pool's slots.
 pub const INIT_TYPES: [EngineType; EngineType::ALL.len()] = EngineType::ALL;
-pub const TOTAL_ENTRIES: usize = MAX_SOUNDS + INIT_TYPES.len();
+pub const INITS: usize = INIT_TYPES.len();
+/// The DRUM row's entry.
+pub const DRUM: usize = INITS;
+/// The rows above slot 1.
+pub const HEAD: usize = INITS + 1;
+pub const TOTAL_ENTRIES: usize = HEAD + MAX_SOUNDS;
+/// What DRUM's row says in place of an engine tag.
+pub const DRUM_SOON: &str = "COMING SOON";
+/// DRUM's toast on a load.
+pub const DRUM_TOAST: &str = "DRUM: COMING SOON";
+
+/// What a list entry is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Entry {
+    Init(EngineType),
+    /// Inert until the DRUM engine exists.
+    Drum,
+    Slot(SlotId),
+}
 
 /// The Sound rung's browser: each tab's cursor and first row shown. Only
-/// `input`, `input_library` and a listing's landing move them; it opens
-/// at the top.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+/// `input`, `input_library` and a listing's landing move them; PROJECT
+/// opens on slot 1, the INIT and DRUM rows just above, LIBRARY at its top.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Browse {
     cursor: u8,
     scroll: u8,
@@ -48,6 +65,17 @@ pub struct Browse {
 }
 
 const _: () = assert!(TOTAL_ENTRIES <= 256);
+
+impl Default for Browse {
+    fn default() -> Self {
+        Browse {
+            cursor: HEAD as u8,
+            scroll: 0,
+            lib_cursor: 0,
+            lib_scroll: 0,
+        }
+    }
+}
 
 impl Browse {
     pub const fn cursor(self) -> usize {
@@ -97,9 +125,24 @@ fn follow(cursor: usize, scroll: usize, rows: usize) -> (u8, u8) {
     (cursor as u8, scroll as u8)
 }
 
-/// The pool slot at list entry `entry`; `None` for the INIT rows.
+/// The pool slot at list entry `entry`; `None` for the rows above them.
 pub fn slot_at(entry: usize) -> Option<SlotId> {
-    SlotId::new(u8::try_from(entry).ok()?)
+    SlotId::new(u8::try_from(entry.checked_sub(HEAD)?).ok()?)
+}
+
+/// The entry at `entry`; `None` past the list.
+pub fn entry_at(entry: usize) -> Option<Entry> {
+    if entry == DRUM {
+        return Some(Entry::Drum);
+    }
+    init_at(entry)
+        .map(Entry::Init)
+        .or_else(|| slot_at(entry).map(Entry::Slot))
+}
+
+/// The engine of the INIT row at `entry`; `None` for DRUM and the pool's slots.
+pub fn init_at(entry: usize) -> Option<EngineType> {
+    INIT_TYPES.get(entry).copied()
 }
 
 pub const LIST_TOP: i32 = 44;
@@ -116,14 +159,14 @@ pub const INFO_Y: i32 = 300;
 /// The pool meter's top, under its percentage.
 pub const METER_Y: i32 = 306;
 /// A row's cost, right-aligned short of its engine tag.
-const COST_RIGHT: i32 = 196;
+const COST_RIGHT: i32 = 184;
 /// Where a row's name starts, and its clearance from the cost or tag.
 const NAME_X: i32 = 52;
 const NAME_GAP: i32 = 6;
 /// The engine tag's right edge.
-const TAG_RIGHT: i32 = 223;
-/// The widest engine tag, three letters.
-const TAG_ROOM: i32 = 24;
+pub const TAG_RIGHT: i32 = 223;
+/// The widest engine tag, `MODAL`.
+const TAG_ROOM: i32 = 38;
 /// The keys and what they do here (Pre-flight 22, ADR 0086). SEQ's way up
 /// is every chain's (ADR 0081), so it goes unsaid. MIX + EDIT's save says
 /// what it costs; MIX + MINUS's clear, on a filled slot alone, what it
@@ -569,14 +612,21 @@ where
     }
 }
 
-/// `engine`'s short tag, right-aligned at `TAG_RIGHT`.
+/// `engine`'s name in full, right-aligned at `TAG_RIGHT`.
 fn tag<D>(d: &mut D, engine: EngineType, y: i32, color: Rgb565)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let chain = chain_def_for(engine);
-    let label = chain.blocks[chain.engine_node()].def.short;
-    draw::text_right(d, &theme::FONT_LABEL, label, TAG_RIGHT, y, color, 0);
+    let label = components::upper(engine.label());
+    draw::text_right(
+        d,
+        &theme::FONT_LABEL,
+        label.as_str(),
+        TAG_RIGHT,
+        y,
+        color,
+        0,
+    );
 }
 
 /// The longest start of `s` that fits `w` px in `font`.
@@ -596,23 +646,33 @@ where
     D: DrawTarget<Color = Rgb565>,
 {
     let mut slot = FmtBuf::new();
-    let (name, chain, cost) = if let Some(s) = slot_at(entry) {
-        let _ = write!(slot, "{:02}", entry + 1);
-        match pool.get(s) {
-            Some(s) => (
-                components::upper(s.name().as_str()),
-                Some(s.engine()),
-                Some(s.cost()),
-            ),
-            None => (FmtBuf::new(), None, None),
+    let (name, chain, cost) = match entry_at(entry) {
+        Some(Entry::Slot(s)) => {
+            let _ = write!(slot, "{:02}", s.index() + 1);
+            match pool.get(s) {
+                Some(s) => (
+                    components::upper(s.name().as_str()),
+                    Some(s.engine()),
+                    Some(s.cost()),
+                ),
+                None => (FmtBuf::new(), None, None),
+            }
         }
-    } else {
-        let _ = slot.write_str("INIT");
-        let engine = INIT_TYPES[entry - MAX_SOUNDS];
-        (components::upper(engine.label()), Some(engine), None)
+        Some(Entry::Init(engine)) => {
+            let _ = slot.write_str("INIT");
+            (components::upper(engine.label()), Some(engine), None)
+        }
+        Some(Entry::Drum) => {
+            let _ = slot.write_str("INIT");
+            let mut name = FmtBuf::new();
+            let _ = name.write_str("DRUM");
+            (name, None, None)
+        }
+        None => return,
     };
     let saved = cost.is_some();
-    let empty = chain.is_none();
+    let drum = entry_at(entry) == Some(Entry::Drum);
+    let empty = chain.is_none() && !drum;
     if selected {
         draw::pill(d, 8, y - 16, 224, 22, theme::ACCENT);
     }
@@ -658,5 +718,7 @@ where
     }
     if let Some(engine) = chain {
         tag(d, engine, y, dim);
+    } else if drum {
+        draw::text_right(d, &theme::FONT_LABEL, DRUM_SOON, TAG_RIGHT, y, dim, 0);
     }
 }

@@ -315,6 +315,7 @@ fn nan_and_out_of_range_controls_render_finite() {
         release: f32::NAN,
         makeup: 9.0,
         mix: 1.0,
+        ..CompParams::default()
     };
     let mut comp = Box::new(MasterComp::new());
     let out = run(&mut comp, &ch, |_| bad);

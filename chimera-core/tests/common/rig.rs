@@ -49,6 +49,8 @@ pub struct Rig {
     pub part: PartId,
     /// The knobs of the one-voice Part `render_glided` plays.
     knobs: Knobs,
+    /// SETTINGS > TUNING in semitones, as the Instrument hands it.
+    pub tune: f32,
 }
 
 /// `$body` on the rig's voice with a context: its source's view this
@@ -60,15 +62,17 @@ macro_rules! with_ctx {
             pool,
             src,
             part,
+            tune,
             ..
         } = $rig;
-        let part = *part;
+        let (part, tune) = (*part, *tune);
         let $v = voice;
         let mut run = |$id: Option<chimera_core::project::SourceId>, view: &GateView<'_>| {
             let $ctx = &mut EngineCtx {
                 sym: &mut **pool,
                 src: view,
                 part,
+                tune,
             };
             $body
         };
@@ -112,6 +116,7 @@ impl Rig {
             src,
             part: PartId::ALL[0],
             knobs: Knobs::UNPRIMED,
+            tune: 0.0,
         }
     }
 

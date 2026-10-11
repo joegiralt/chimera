@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Read the unit over its USB console (or the desktop sim's socket).
+"""Talk to your Chimera over USB: status for bug reports, screenshots, files onto the card.
 
-    python3 tools/chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu, sweep,
+    python3 chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu, sweep,
                                                    ls [tapes|sounds], rm|get /CHIMERA/SOUNDS/S#######
-    python3 tools/chimera-usb.py put <local> <remote> [--over]
+    python3 chimera-usb.py put <local> <remote> [--over]
                                                    a project file onto the card as /CHIMERA/PROJECTS/P#######.A,
                                                    a library Sound as /CHIMERA/SOUNDS/S#######.A (--over replaces one there),
                                                    or a TAPE source as /CHIMERA/TAPES/<CRC>.SRC, in checked chunks
                                                    (<remote> ending in / takes the local name; /CHIMERA/SOUNDS/ takes
                                                    `ls sounds`' top user id + 1)
-    python3 tools/chimera-usb.py to-dfu            the unit into ROM DFU, for just flash
-    python3 tools/chimera-usb.py wait-console [s]  wait (default 10 s) for the console on the bus
+    python3 chimera-usb.py to-dfu            the unit into ROM DFU, to flash it
+    python3 chimera-usb.py wait-console [s]  wait (default 10 s) for the console on the bus
 
 Exit 0 on OK, 1 on ERR (to stderr) or 2 s of silence (60 s before `card`'s
 first line: it measures before it answers; 15 s before `ls`'s, `rm`'s,
@@ -18,18 +18,25 @@ first line: it measures before it answers; 15 s before `ls`'s, `rm`'s,
 path; `put` shows its progress on stderr and never retries a failure (a source
 already on the card answers `OK PRESENT`, so a re-run is the retry). `ERR busy`
 (the unit's card work pending) is retried: 5 tries, 200 ms apart, doubling.
-Standard library only.
+Python 3 and its standard library only; Linux and macOS (no Windows).
+`--version` prints this tool's release.
 
-Environment: CHIMERA_USB picks the target (unset: /dev/chimera if present,
-else /dev/ttyACM0; `sim`: the desktop sim; `tcp:HOST:PORT`; else a device
-path). CHIMERA_SHOTS overrides target/shots. CHIMERA_SYSFS and
-CHIMERA_DFU_WAIT (s, default 10) are for to-dfu and wait-console.
+The port: CHIMERA_USB picks it. Unset, the first of /dev/chimera,
+/dev/ttyACM0 (Linux) or /dev/cu.usbmodem* (macOS) that exists; else give a
+device path, or `tcp:HOST:PORT`. On Linux, if it says "no access", either
+add yourself to the dialout group (then log out and in again), or run the
+`sudo tee` line it prints once. Shots are saved in the current directory;
+CHIMERA_SHOTS picks another. CHIMERA_SYSFS and CHIMERA_DFU_WAIT (s,
+default 10) are for to-dfu and wait-console.
 """
+
+VERSION = "dev"  # `just release` stamps the release version here
 
 import base64
 import datetime
 import enum
 import errno
+import glob
 import os
 import pathlib
 import select
@@ -38,27 +45,34 @@ import struct
 import subprocess
 import sys
 import time
-import tty
 import zlib
 from typing import NamedTuple, Union
 
-SIM = ("127.0.0.1", 7341)  # chimera-desktop/src/console.rs ADDR
+try:
+    import tty
+except ImportError:  # Windows
+    sys.exit("chimera-usb.py needs Linux or macOS (Python's tty module is missing)")
+
+SIM = ("127.0.0.1", 7341)  # the desktop simulator (developers)
 SILENCE_S = 2.0
 CARD_WAIT_S = 60.0  # `card` measures before it answers: ~5 s, ~15 s writing its test file
 LS_WAIT_S = 15.0  # a cold card acquire, then one listing under the card's 10 s cap
 SWEEP_WAIT_S = 15.0  # a cold acquire, then the mark's one write; the unit restarts after OK
 PUT_WAIT_S = 35.0  # the unit's whole put is 30 s (PUT_DEADLINE_MS), card work included
-PUT_MAX = 1 << 20  # chimera-core/src/console/put.rs PUT_MAX_BYTES
+PUT_MAX = 1 << 20  # the unit's limit
 PUT_LINE = 48  # bytes a data line carries: 64 base64 characters
-PUT_CHUNK = 256 * 1024  # chimera-core/src/console/put.rs PUT_CHUNK_BYTES: a source's chunk
+PUT_CHUNK = 256 * 1024  # a TAPE source goes in chunks this big
 TAPES = "/CHIMERA/TAPES/"
 SOUNDS = "/CHIMERA/SOUNDS/"
-USER_MAX = 8_999_999  # chimera-engine/src/storage/library.rs LibId::USER_MAX
+USER_MAX = 8_999_999  # highest user Sound id
 BUSY_TRIES = 5
 BUSY_WAIT_S = 0.2  # doubling after each `ERR busy`
 DRAIN_S = 0.05
 MAX_SHOT = 1 << 20  # well over 240 x 320 x 2; a garbled header can't ask for gigabytes
-UDEV_HINT = "sudo cp tools/70-chimera.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger"
+UDEV_HINT = (
+    "echo 'SUBSYSTEM==\"tty\", ATTRS{idVendor}==\"0483\", ATTRS{idProduct}==\"5740\", ENV{ID_MM_DEVICE_IGNORE}=\"1\", TAG+=\"uaccess\", SYMLINK+=\"chimera\"'"
+    " | sudo tee /etc/udev/rules.d/70-chimera.rules && sudo udevadm control --reload && sudo udevadm trigger"
+)
 
 
 class UsbId(NamedTuple):
@@ -66,7 +80,7 @@ class UsbId(NamedTuple):
     pid: int
 
 
-CONSOLE_ID = UsbId(0x0483, 0x5740)  # chimera-board/src/usb.rs VID_PID
+CONSOLE_ID = UsbId(0x0483, 0x5740)  # Chimera and the stock PreenFM3 share this USB id
 ROM_DFU_ID = UsbId(0x0483, 0xDF11)  # ST's system memory loader
 
 
@@ -87,7 +101,10 @@ Target = Union[Tcp, Tty]
 def target(env) -> Target:
     v = env.get("CHIMERA_USB")
     if v is None:
-        return Tty("tty", "/dev/chimera" if os.path.exists("/dev/chimera") else "/dev/ttyACM0")
+        for p in ["/dev/chimera", "/dev/ttyACM0", *sorted(glob.glob("/dev/cu.usbmodem*"))]:
+            if os.path.exists(p):
+                return Tty("tty", p)
+        return Tty("tty", "/dev/ttyACM0")
     if v == "sim":
         return Tcp("tcp", *SIM)
     if v.startswith("tcp:"):
@@ -438,7 +455,10 @@ def repo_root() -> pathlib.Path:
 
 def shot_dir() -> pathlib.Path:
     d = os.environ.get("CHIMERA_SHOTS")
-    return pathlib.Path(d) if d else repo_root() / "target/shots"
+    if d:
+        return pathlib.Path(d)
+    root = repo_root()
+    return root / "target/shots" if (root / "Cargo.toml").exists() else pathlib.Path.cwd()
 
 
 def shot_path(raw: bool, now) -> pathlib.Path:
@@ -480,9 +500,9 @@ def open_conn(t: Target) -> Conn:
     try:
         return Conn(t)
     except PermissionError:
-        sys.exit(fail("no access to %s: install the udev rule: %s" % (describe(t), UDEV_HINT)))
+        sys.exit(fail("no access to %s. Add yourself to the dialout group (sudo usermod -aG dialout $USER, then log out and in), or on Linux run: %s" % (describe(t), UDEV_HINT)))
     except OSError as e:
-        sys.exit(fail("no console at %s: %s" % (describe(t), e.strerror or e)))
+        sys.exit(fail("no console at %s: %s. Is the unit on, running Chimera, and connected by USB? CHIMERA_USB=<port> picks another port." % (describe(t), e.strerror or e)))
 
 
 def to_dfu(t: Target, env) -> int:
@@ -514,7 +534,7 @@ def to_dfu(t: Target, env) -> int:
         if ROM_DFU_ID in usb_devices(sysfs):
             return 0
         time.sleep(0.1)
-    return fail("no DFU device after dfu: see U10 (marker clobbered?)")
+    return fail("no DFU device after dfu: marker clobbered? re-plug and try again")
 
 
 def wait_console(env, secs) -> int:
@@ -529,6 +549,9 @@ def wait_console(env, secs) -> int:
 
 
 def main(argv, env) -> int:
+    if argv[:1] == ["--version"]:
+        print(VERSION)
+        return 0
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__.strip(), file=sys.stderr)
         return 2
