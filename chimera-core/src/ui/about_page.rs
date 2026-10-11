@@ -6,7 +6,7 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::perf::load::AudioStats;
-use crate::storage::Card;
+use crate::storage::{BuildStamp, Card};
 use crate::ui::audio_page::NONE;
 use crate::ui::block_def::BlockDef;
 use crate::ui::fmt::FmtBuf;
@@ -18,6 +18,9 @@ pub const BUILD: &str = if cfg!(debug_assertions) {
 } else {
     "RELEASE"
 };
+
+pub const THIS: BuildStamp = BuildStamp::new(VERSION, HASH, DIRTY);
+const _: () = assert!(VERSION.len() <= 12);
 
 const HASH: &str = env!("CHIMERA_HASH");
 const DIRTY: bool = env!("CHIMERA_DIRTY").len() == 1 && env!("CHIMERA_DIRTY").as_bytes()[0] == b'1';

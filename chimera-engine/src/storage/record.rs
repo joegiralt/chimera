@@ -65,6 +65,9 @@ pub enum RecordTag {
     /// `(Jack code, block code, param id, amount)` entries. 0x1B: 0x19 and
     /// 0x1A are TAPE's zone records.
     TapRoutes,
+    /// The build a library Sound was saved on (library spec § Files):
+    /// `BuildStamp`, 21 B. Written second, skipped everywhere.
+    Build,
 }
 
 impl RecordTag {
@@ -93,6 +96,7 @@ impl RecordTag {
             RecordTag::SourceZones => 0x0019,
             RecordTag::ZoneTune => 0x001A,
             RecordTag::TapRoutes => 0x001B,
+            RecordTag::Build => 0x001C,
         }
     }
 
@@ -121,6 +125,7 @@ impl RecordTag {
             0x0019 => RecordTag::SourceZones,
             0x001A => RecordTag::ZoneTune,
             0x001B => RecordTag::TapRoutes,
+            0x001C => RecordTag::Build,
             _ => return None,
         })
     }

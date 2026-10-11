@@ -25,11 +25,12 @@ pub mod said {
 use chimera_hal::{Controls, EncoderId};
 
 use crate::project::{
-    Confirmed, NeedsConfirm, PartSource, Pending, Project, ProjectSource, Target, TemplateCrc,
+    Confirmed, LibraryPart, NeedsConfirm, PartSource, Pending, Project, ProjectSource, Target,
+    TemplateCrc,
 };
 use crate::ui::hold::Presses;
 
-use super::prompt::{Choice, LoadAnswer, ReloadAnswer, ReplaceAnswer};
+use super::prompt::{Choice, LibraryAnswer, LoadAnswer, ReloadAnswer, ReplaceAnswer};
 
 pub use chimera_engine::confirm::{Commits, Guarded, said};
 
@@ -44,6 +45,8 @@ pub struct Asked<R, A> {
 pub type PartAsk = Asked<PartSource, ReplaceAnswer>;
 /// SAVE PART FIRST / RELOAD / CANCEL.
 pub type ReloadAsk = Asked<PartSource, ReloadAnswer>;
+/// A library Sound: SAVE PART FIRST / REPLACE / CANCEL.
+pub type LibraryAsk = Asked<LibraryPart, LibraryAnswer>;
 /// SAVE THEN LOAD / LOAD ANYWAY / CANCEL.
 pub type ProjectAsk = Asked<ProjectSource, LoadAnswer>;
 

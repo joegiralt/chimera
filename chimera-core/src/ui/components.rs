@@ -8,7 +8,6 @@ use core::fmt::Write;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
-use crate::dsp::algo::waves::WaveId;
 use crate::dsp::filter::FilterKind;
 use crate::dsp::modal::{EXCITER_NAMES, ModalPage};
 use crate::part::DacPair;
@@ -19,7 +18,7 @@ use crate::ui::block_registry::FILTER_MOD;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::glyph::{
-    Accidental, Braid, BraidPart, Cube, CubePart, Gauge, Rings, RingsPart, TAIL_COLS, Tail,
+    self, Accidental, Braid, BraidPart, Cube, CubePart, Gauge, Rings, RingsPart, TAIL_COLS, Tail,
 };
 use crate::ui::theme;
 
@@ -426,7 +425,10 @@ pub fn gauge_rect(gauge: &Gauge) -> Option<(i32, i32, i32, i32)> {
         | Gauge::LevelBar { .. }
         | Gauge::Crossfader { .. }
         | Gauge::Staff { .. }
-        | Gauge::Wave(_) => None,
+        | Gauge::Wave(_)
+        | Gauge::VaWave(_)
+        | Gauge::VaMix(_)
+        | Gauge::Blend { .. } => None,
     }
 }
 
@@ -443,9 +445,15 @@ where
         Gauge::Tail(t) => tail(d, &t),
         Gauge::Switch { on } => switch(d, on),
         Gauge::LevelBar { value, ticks } => level_bar(d, value, ticks),
-        Gauge::Crossfader { value } => crossfader(d, value),
+        Gauge::Crossfader { value } => crossfader(d, value, theme::XF_W),
         Gauge::Staff { step, accidental } => staff(d, step, accidental),
-        Gauge::Wave(w) => wave_scope(d, w),
+        Gauge::Wave(w) => scope(d, &glyph::wave_trace::<SCOPE_N>(w, SCOPE_HALF)),
+        Gauge::VaWave(m) => scope(d, &glyph::va_wave_trace::<SCOPE_N>(m, SCOPE_HALF)),
+        Gauge::VaMix(v) => scope(d, &glyph::va_mix_trace::<VA_MIX_N>(&v, SCOPE_HALF)),
+        Gauge::Blend { value, mode } => {
+            crossfader(d, value, theme::BLEND_W);
+            blend_ends(d, glyph::blend_ends(mode));
+        }
         Gauge::Arc { value, bipolar } => draw::arc_gauge(
             d,
             theme::ARC_CX,
@@ -504,18 +512,18 @@ where
     }
 }
 
-/// The CROSSFADER glyph at the band's right: a faint horizontal track, a
-/// MID centre detent, and an accent cap with a groove at `value` (0 left,
-/// 1 right).
-fn crossfader<D>(d: &mut D, value: f32)
+/// The CROSSFADER glyph at the band's right: a faint horizontal track `w`
+/// px long, a MID centre detent, and an accent cap with a groove at
+/// `value` (0 left, 1 right).
+fn crossfader<D>(d: &mut D, value: f32, w: i32)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let (w, cy) = (theme::XF_W, theme::ARC_CY);
+    let cy = theme::ARC_CY;
     let (cap_w, cap_h, track_h) = (theme::XF_CAP_W, theme::XF_CAP_H, theme::XF_TRACK_H);
-    let x0 = theme::XF_CX - w / 2;
+    let x0 = theme::SCREEN_W - theme::MARGIN_X - w;
     draw::pill(d, x0, cy - track_h / 2, w, track_h, theme::FAINT);
-    draw::fill_rect(d, theme::XF_CX - 1, cy - 7, 2, 14, theme::MID);
+    draw::fill_rect(d, x0 + w / 2 - 1, cy - 7, 2, 14, theme::MID);
     let travel = (w - cap_w) as f32;
     let cx = x0 + cap_w / 2 + libm::roundf(clampf(value, 0.0, 1.0) * travel) as i32;
     draw::round_rect(
@@ -530,20 +538,31 @@ where
     draw::fill_rect(d, cx - cap_w / 2 + 2, cy - 1, cap_w - 4, 2, theme::BG);
 }
 
-/// The WAVE glyph at the band's right: a FAINT frame, a dotted FAINT
-/// centre line and one period of `wave`'s own table traced in the accent.
-fn wave_scope<D>(d: &mut D, wave: WaveId)
+/// The scope's points: one a pixel across its frame, less the padding.
+pub const SCOPE_N: usize = (theme::WAVE_W - 2 * theme::WAVE_PAD) as usize + 1;
+/// The MODE scope's points.
+pub const VA_MIX_N: usize = (theme::VA_MIX_W - 2 * theme::WAVE_PAD) as usize + 1;
+/// A trace's peak, px from the centre line.
+pub const SCOPE_HALF: i32 = theme::WAVE_H / 2 - theme::WAVE_PAD;
+
+/// The scope at the band's right (WAVE's table, a VA oscillator, MODE): a
+/// FAINT frame round `trace` (px up from the centre, one a pixel), a
+/// dotted FAINT centre line and the trace in the accent.
+fn scope<D, const N: usize>(d: &mut D, trace: &[i32; N])
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    const N: usize = (theme::WAVE_W - 2 * theme::WAVE_PAD) as usize + 1;
-    let (x0, y0, w, h) = (theme::WAVE_X, theme::WAVE_Y, theme::WAVE_W, theme::WAVE_H);
+    let w = N as i32 - 1 + 2 * theme::WAVE_PAD;
+    let (x0, y0, h) = (
+        theme::SCREEN_W - theme::MARGIN_X - w,
+        theme::WAVE_Y,
+        theme::WAVE_H,
+    );
     let cy = y0 + h / 2;
     draw::round_outline(d, x0, y0, w, h, 4, theme::FAINT);
     for x in (x0 + 3..x0 + w - 3).step_by(2) {
         draw::fill_rect(d, x, cy, 1, 1, theme::FAINT);
     }
-    let trace = crate::ui::glyph::wave_trace::<N>(wave, h / 2 - theme::WAVE_PAD);
     let px = |i: usize| x0 + theme::WAVE_PAD + i as i32;
     for i in 1..N {
         draw::line(
@@ -554,6 +573,27 @@ where
             cy - trace[i],
             theme::ACCENT,
             2,
+        );
+    }
+}
+
+/// BLEND's end words under its track's ends, MID: the left one from the
+/// track's left, the right one to its right.
+fn blend_ends<D>(d: &mut D, [left, right]: [&str; 2])
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let end = theme::SCREEN_W - theme::MARGIN_X;
+    let rw = draw::text_width(&theme::FONT_LABEL, right, theme::LABEL_TRACKING);
+    for (word, x) in [(left, end - theme::BLEND_W), (right, end - rw)] {
+        draw::text_tracked(
+            d,
+            &theme::FONT_LABEL,
+            word,
+            x,
+            theme::XF_ENDS_Y,
+            theme::MID,
+            theme::LABEL_TRACKING,
         );
     }
 }

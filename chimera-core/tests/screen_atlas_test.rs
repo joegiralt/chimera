@@ -445,6 +445,20 @@ fn prompt(k: AskKind, ui: &mut UiState) {
             part_row(ui, 3); // RELOAD FROM PROJ
             tap(ui, ButtonId::Edit);
         }
+        AskKind::LoadLibrary => {
+            let mut s = MemStore::new(1);
+            let snd = chimera_core::preset::Sound::init(chimera_core::params::EngineType::Modal);
+            let stamp = &chimera_core::ui::about_page::THIS;
+            let mut card = chimera_core::storage::Card::new();
+            let saved =
+                chimera_core::project::save_library_sound(&mut card, &mut s, &snd, snd.name, stamp);
+            saved.out.unwrap();
+            let mut r = Rig::new(ui, s);
+            edit(r.ui, P1);
+            r.feed(Input::chord(ButtonId::Edit, ButtonId::B1));
+            r.feed(Input::turn(EncoderId::B, 1));
+            r.feed(Input::press(ButtonId::Edit));
+        }
         AskKind::UpdateStale => {
             load_slot(ui, P1, S3);
             load_slot(ui, P4, S3);

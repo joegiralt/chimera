@@ -360,8 +360,11 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     ui.boot_project(&mut card, store, settings.last_project);
     ui.note_sweep(&swept);
     // The splash again in the card's theme; it stays up until PART 1.
+    // The Yellow Sign ignores INVERT (`splash_palette`).
+    display.set_palette(chimera_core::ui::theme_settings::splash_palette(&theme));
     let _ = chimera_core::ui::splash::draw(&mut display);
     display.flush();
+    display.set_palette(palette(&theme));
     marker.stage(BootStage::Card);
     let perf = PerfTracker::new();
     // The audio's one source reader, taken once the boot's source passes
@@ -525,6 +528,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         let now = controls::ticks();
         let elapsed_ms = now.wrapping_sub(last_tick) * 1_000 / controls::CONTROLS_HZ;
         last_tick = now;
+        ui.step_idle(elapsed_ms, busy);
         let toast = ui.step_toast(elapsed_ms);
         if toast == ToastStep::Ended || busy {
             // The toast or BUSY covered rows the dirty regions don't know about.
@@ -599,6 +603,7 @@ fn publish(
 ) {
     b.update_from_project(ui.project(), LOAD_LINK.epoch(), knobs);
     orbit::publish(ui, b);
+    ui.publish_tune(b);
 }
 
 /// The audio's latest stats with the stack's high-water mark, as the

@@ -198,6 +198,7 @@ fn codes_are_frozen() {
         (RecordTag::SourceHead, 0x8017),
         (RecordTag::SourceData, 0x0018),
         (RecordTag::TapRoutes, 0x001B),
+        (RecordTag::Build, 0x001C),
     ];
     for (t, c) in table {
         assert_eq!(t.code(), c);

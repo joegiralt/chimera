@@ -7,9 +7,13 @@ use crate::dsp::chorus::ChorusMode;
 use crate::dsp::clampf;
 use crate::dsp::rev::sync::{FoldState, Tempo};
 use crate::dsp::reverb::{EngineKnobs, RevSync, ReverbParams, ReverbType, knobs};
+use crate::dsp::va::VaMode;
+use crate::dsp::va::combine::{Crusher, Peaks, combine, ring_gain};
+use crate::dsp::va::osc::{MIN_INC, Morph, Unit, peak_bound, wave_at};
 
 pub use chimera_engine::glyph::{
-    BRAID_PARAMS, CUBE_PARAMS, CompositeId, FocusGlyph, REVERB_PARAMS, RINGS_PARAMS,
+    BRAID_PARAMS, CUBE_PARAMS, CompositeId, FocusGlyph, REVERB_PARAMS, RINGS_PARAMS, VA_MIX_PARAMS,
+    VaGlyph, VaOsc,
 };
 
 /// What the focus band draws, with its inputs.
@@ -40,6 +44,20 @@ pub enum Gauge {
     Cube(Cube),
     /// The reverb's TAIL (`CompositeId::Reverb`), under the other TYPEs.
     Tail(Tail),
+    /// A VA oscillator's scope: `va_wave_trace` of its WAVE and SHAPE.
+    VaWave(Morph),
+    /// OSC 1 MODE OSC 2: `va_mix_trace`.
+    VaMix(VaMix),
+    /// A crossfader at the set AMOUNT, its ends named by MODE
+    /// (`blend_ends`).
+    Blend { value: f32, mode: VaMode },
+}
+
+/// What a gauge built from more than the focused value reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reads {
+    Composite(CompositeId),
+    Va(VaGlyph),
 }
 
 /// A staff note's accidental.
@@ -112,6 +130,105 @@ pub fn wave_trace<const N: usize>(wave: WaveId, half: i32) -> [i32; N] {
         let s = table[i * WAVE_LEN / (N - 1).max(1)] as i32;
         (s * half + (1 << 14)) >> 15
     })
+}
+
+/// `ys` scaled so the largest is `half` px (rounded), up positive; a
+/// trace quieter than `floor` is scaled as if `floor`.
+fn scaled<const N: usize>(ys: [f32; N], floor: f32, half: i32) -> [i32; N] {
+    let peak = ys.iter().fold(floor, |p, y| p.max(libm::fabsf(*y)));
+    ys.map(|y| libm::roundf(y / peak * half as f32) as i32)
+}
+
+/// One period of a VA oscillator's naive wave (`osc::wave_at`, no BLEP)
+/// at `m` across `N` points, the last the first again: its own shape
+/// code, so WAVE's in-between values draw the mixed shape. Scaled so its
+/// peak is `half` px, up positive.
+pub fn va_wave_trace<const N: usize>(m: Morph, half: i32) -> [i32; N] {
+    let last = (N - 1).max(1) as f32;
+    scaled(
+        core::array::from_fn(|i| wave_at(i as f32 / last, m, MIN_INC).0),
+        0.0,
+        half,
+    )
+}
+
+/// OSC 2's cycles a cycle of OSC 1 on MODE's glyph: a fixed ratio, so
+/// SYNC's reset shows whatever CRSE says (at unison it would not).
+pub const VA_MIX_RATIO: f32 = 2.5;
+
+/// OSC 1's periods MODE's glyph draws.
+pub const VA_MIX_PERIODS: f32 = 2.0;
+
+/// OSC 1 MODE OSC 2, from the VA block's set values (normalized).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VaMix {
+    pub mode: VaMode,
+    pub amount: f32,
+    pub osc: [Morph; 2],
+}
+
+impl VaMix {
+    /// From `VA_MIX_PARAMS`' set values, normalized.
+    pub fn from_set(set: [f32; 6]) -> Self {
+        let morph = |i: usize| Morph {
+            wave: Unit::new(set[i]),
+            shape: Unit::new(set[i + 1]),
+        };
+        Self {
+            mode: va_mode(set[0]),
+            amount: clampf(set[1], 0.0, 1.0),
+            osc: [morph(2), morph(4)],
+        }
+    }
+}
+
+/// MODE at its normalized set value.
+pub fn va_mode(v: f32) -> VaMode {
+    let last = (VaMode::ALL.len() - 1) as f32;
+    VaMode::ALL[libm::roundf(clampf(v, 0.0, 1.0) * last) as usize]
+}
+
+/// The operator's output over `VA_MIX_PERIODS` of OSC 1 across `N`
+/// points: both naive waves, OSC 2 at `VA_MIX_RATIO` (reset by OSC 1's
+/// wrap under SYNC), through `combine::combine` at AMOUNT with the
+/// engine's own peak bounds, RING gain and crusher. Scaled so its peak is
+/// `half` px (a near-silent output no louder than a tenth of the inputs'
+/// peak), up positive.
+pub fn va_mix_trace<const N: usize>(v: &VaMix, half: i32) -> [i32; N] {
+    let [m1, m2] = v.osc;
+    let pk = Peaks {
+        a: peak_bound(m1, MIN_INC),
+        b: peak_bound(m2, MIN_INC),
+    };
+    let mut crush = Crusher::NEW;
+    crush.set(v.amount);
+    let k = ring_gain(pk);
+    let frac = |x: f32| x - libm::floorf(x);
+    let last = (N - 1).max(1) as f32;
+    let ys = core::array::from_fn(|i| {
+        let t = VA_MIX_PERIODS * i as f32 / last;
+        let p1 = frac(t);
+        let p2 = if v.mode == VaMode::Sync {
+            frac(VA_MIX_RATIO * p1)
+        } else {
+            frac(VA_MIX_RATIO * t)
+        };
+        let (a, b) = (wave_at(p1, m1, MIN_INC).0, wave_at(p2, m2, MIN_INC).0);
+        combine(v.mode, a, b, v.amount, k, pk, &crush)
+    });
+    scaled(ys, 0.1 * pk.a.max(pk.b), half)
+}
+
+/// The words at BLEND's ends under `mode`: what AMOUNT 0 and 1 give.
+/// MIX and SYNC fade OSC 1 to OSC 2; RING and XOR the plain mix to the
+/// operator; BITS crushes the mix from 16 bits to 2.
+pub const fn blend_ends(mode: VaMode) -> [&'static str; 2] {
+    match mode {
+        VaMode::Mix | VaMode::Sync => ["1", "2"],
+        VaMode::Ring => ["MIX", "RING"],
+        VaMode::Xor => ["MIX", "XOR"],
+        VaMode::Bits => ["CLEAN", "CRUSH"],
+    }
 }
 
 /// The cube's param in focus, emphasised.
@@ -533,13 +650,13 @@ impl Braid {
 }
 
 /// The gauge the focus band draws for `glyph` at the focused slot's
-/// `value` in format `fmt`. A composite's comes from `composite`,
-/// which reads its params' set values (`Renderer::eased_set`).
+/// `value` in format `fmt`. A composite's or VA's comes from `outside`,
+/// which reads their params' set values (`Renderer::eased_set`).
 pub fn gauge(
     glyph: FocusGlyph,
     value: f32,
     fmt: ValFmt,
-    composite: impl FnOnce(CompositeId) -> Gauge,
+    outside: impl FnOnce(Reads) -> Gauge,
 ) -> Gauge {
     let bipolar = fmt.is_bipolar();
     match glyph {
@@ -557,9 +674,8 @@ pub fn gauge(
         FocusGlyph::Wave => Gauge::Wave(WaveId::clamped(libm::roundf(
             clampf(value, 0.0, 1.0) * fmt.max_int() as f32,
         ) as u8)),
-        FocusGlyph::Composite(CompositeId::ChorusBraid) => composite(CompositeId::ChorusBraid),
-        FocusGlyph::Composite(CompositeId::DelayRings) => composite(CompositeId::DelayRings),
-        FocusGlyph::Composite(CompositeId::Reverb) => composite(CompositeId::Reverb),
+        FocusGlyph::Composite(id) => outside(Reads::Composite(id)),
+        FocusGlyph::Va(v) => outside(Reads::Va(v)),
         FocusGlyph::Arc => Gauge::Arc { value, bipolar },
     }
 }
@@ -574,8 +690,25 @@ impl Gauge {
             | Gauge::LevelBar { .. }
             | Gauge::Crossfader { .. }
             | Gauge::Staff { .. }
-            | Gauge::Wave(_) => false,
+            | Gauge::Wave(_)
+            | Gauge::VaWave(_)
+            | Gauge::VaMix(_)
+            | Gauge::Blend { .. } => false,
             Gauge::Braid(_) | Gauge::Rings(_) | Gauge::Cube(_) | Gauge::Tail(_) => true,
+        }
+    }
+
+    /// What a still gauge draws from beyond its slot's set value (VA's
+    /// other params), as a key: the focus band redraws when it moves.
+    pub fn outside_key(&self) -> u32 {
+        let q = |v: f32| (clampf(v, 0.0, 1.0) * 1023.0) as u32;
+        let m = |m: &Morph| q(m.wave.get()) | q(m.shape.get()) << 10;
+        match self {
+            Gauge::VaWave(o) => m(o),
+            Gauge::VaMix(v) => (m(&v.osc[0]) ^ m(&v.osc[1]).rotate_left(11) ^ q(v.amount) << 22)
+                .wrapping_add(v.mode as u32),
+            Gauge::Blend { mode, .. } => *mode as u32,
+            _ => 0,
         }
     }
 }

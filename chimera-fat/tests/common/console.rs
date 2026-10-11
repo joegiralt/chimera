@@ -22,6 +22,19 @@ pub struct Fake<'a, S> {
     pub ui: Box<UiState>,
     pub fb: Box<[u16; FB_SIZE]>,
     pub files: &'a mut S,
+    /// `forget_library` calls: a Sound `put` or `rm` drops the page.
+    pub forgotten: usize,
+}
+
+impl<'a, S> Fake<'a, S> {
+    pub fn new(files: &'a mut S) -> Self {
+        Fake {
+            ui: Box::new(UiState::new()),
+            fb: Box::new([0; FB_SIZE]),
+            files,
+            forgotten: 0,
+        }
+    }
 }
 
 impl<S: Files> Unit for Fake<'_, S> {
@@ -55,6 +68,10 @@ impl<S: Files> Unit for Fake<'_, S> {
     type Files = S;
     fn files(&mut self) -> Option<&mut S> {
         Some(&mut *self.files)
+    }
+    fn forget_library(&mut self) {
+        self.forgotten += 1;
+        self.ui.forget_library();
     }
 }
 
@@ -99,16 +116,21 @@ impl Out for Host {
 /// `line`, then `data`, through `answer`: what the unit said, and what of
 /// the host's data it left unread.
 pub fn ask_on<S: Files>(s: &mut S, line: &str, data: &[u8], per_byte_us: u64) -> (String, usize) {
-    let mut unit = Fake {
-        ui: Box::new(UiState::new()),
-        fb: Box::new([0; FB_SIZE]),
-        files: s,
-    };
+    ask_unit(&mut Fake::new(s), line, data, per_byte_us)
+}
+
+/// `ask_on` through a unit the test keeps.
+pub fn ask_unit<S: Files>(
+    unit: &mut Fake<'_, S>,
+    line: &str,
+    data: &[u8],
+    per_byte_us: u64,
+) -> (String, usize) {
     let mut host = Host::new(data, per_byte_us);
     let mut c = Console::new();
     for &b in line.as_bytes() {
         if let Some(r) = c.push(b) {
-            answer(r, &mut unit, &mut host).unwrap();
+            answer(r, unit, &mut host).unwrap();
         }
     }
     (String::from_utf8(host.out).unwrap(), host.input.len())

@@ -5,7 +5,8 @@ use crate::addr::{BlockRef, Blocks};
 use crate::block::{Block, ParamId};
 
 use super::codes::{
-    DiskValue, Migration, RETIRED, RETIRED_CODES, Retired, Translation, ValidAddr, read_value,
+    DiskValue, Migration, RETIRED, RETIRED_BLOCKS, RETIRED_CODES, Retired, Translation, ValidAddr,
+    read_value,
 };
 use super::frame::FileError;
 use super::record::RecordBuf;
@@ -64,12 +65,16 @@ fn same(a: DiskValue, b: DiskValue) -> bool {
 /// retired value is kept for the block's translation, run after the writes.
 /// A non-finite value or an unknown code keeps the target's value; a real is
 /// clamped and quantised by its spec.
+///
+/// Returns the entries lost, counted only with a `target`: an unknown block
+/// code, an unknown id, or an enum code refused, none of them retired or
+/// migrated. A block the target doesn't hold counts nothing.
 pub fn decode_block(
     payload: &[u8],
     migrations: &[Migration],
     translations: &[Translation],
     target: Option<&mut dyn Blocks>,
-) -> Result<(), FileError> {
+) -> Result<u16, FileError> {
     let (&code, body) = payload.split_first().ok_or(FileError::Bounds)?;
     let (entries, []) = body.as_chunks::<ENTRY_LEN>() else {
         return Err(FileError::Bounds);
@@ -84,13 +89,14 @@ pub fn decode_block(
         }
     }
 
-    let Some(target) = target else { return Ok(()) };
+    let Some(target) = target else { return Ok(0) };
     let Some(b) = BlockRef::from_disk_code(code) else {
-        return Ok(());
+        return Ok(u16::from(!RETIRED_BLOCKS.contains(&code)));
     };
     let Some(blk) = target.block_mut(b) else {
-        return Ok(());
+        return Ok(0);
     };
+    let mut lost = 0u16;
     let specs = b.specs();
     debug_assert!(specs.len() <= MAX_BLOCK_PARAMS);
     let slot = |id: ParamId| specs.iter().position(|s| s.id == id);
@@ -109,6 +115,11 @@ pub fn decode_block(
                     .iter()
                     .find(|m| m.block == code && m.old == id && !seen.contains(m.new.0))
                 else {
+                    if !RETIRED.contains(&(code, id.0))
+                        && !migrations.iter().any(|m| m.block == code && m.old == id)
+                    {
+                        lost += 1;
+                    }
                     continue;
                 };
                 let Some(a) = ValidAddr::find(b, m.new) else {
@@ -127,11 +138,13 @@ pub fn decode_block(
         match v {
             Some(DiskValue::Real(x)) => blk.set(s.id, x),
             // false: an unknown code, or one this KIND lacks; keep the base.
-            // A retired code goes to the translation.
-            Some(DiskValue::Code(c))
-                if !blk.set_enum_code(s.id, c) && RETIRED_CODES.contains(&(code, s.id.0, c)) =>
-            {
-                retired.put_code(s.id, c)
+            // A retired code goes to the translation, any other is lost.
+            Some(DiskValue::Code(c)) if !blk.set_enum_code(s.id, c) => {
+                if RETIRED_CODES.contains(&(code, s.id.0, c)) {
+                    retired.put_code(s.id, c);
+                } else {
+                    lost += 1;
+                }
             }
             Some(DiskValue::Code(_)) => {}
             None => {}
@@ -142,7 +155,7 @@ pub fn decode_block(
     {
         (t.apply)(&retired, blk);
     }
-    Ok(())
+    Ok(lost)
 }
 
 /// A set of `u8`s: ids or codes a record may name once.

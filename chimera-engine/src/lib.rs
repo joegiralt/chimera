@@ -36,6 +36,7 @@ pub mod orbit;
 pub mod params;
 pub mod part;
 pub mod perf;
+pub mod played;
 pub mod preset;
 #[cfg(feature = "probe")]
 pub mod probe;

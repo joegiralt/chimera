@@ -129,6 +129,7 @@ impl SystemCheck {
                     TRANSLATIONS,
                     sys.as_mut().map(|t| t as &mut dyn Blocks),
                 )
+                .map(drop)
             }
             ReadTag::Known(RecordTag::LastProject) => {
                 if core::mem::replace(&mut self.last_project, true) {

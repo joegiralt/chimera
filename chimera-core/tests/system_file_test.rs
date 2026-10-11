@@ -9,7 +9,7 @@ use chimera_core::storage::{
     SystemCheck, SystemSettings, SystemSync, encode_system, exit_plan, save_ab,
 };
 use chimera_core::ui::midi_settings::MidiSettings;
-use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, ThemeSettings};
+use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, Saver, ThemeSettings};
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
 use common::codec_util::{
@@ -18,12 +18,13 @@ use common::codec_util::{
 };
 use core::ops::ControlFlow;
 
-/// BRIGHT 40, GAMMA SOFT, ACCENT index 3, BLACK +1, HINTS OFF, SYNC INT,
+/// BRIGHT 40, GAMMA SOFT, ACCENT index 3, BLACK +1, HINTS OFF, INVERT ON, SYNC INT,
 /// project 7.
 fn settings() -> SystemSettings {
     SystemSettings {
         midi: MidiSettings {
             sync: SyncMode::Int,
+            tune: -37,
         },
         theme: ThemeSettings {
             bright: Bright::new(40),
@@ -31,6 +32,8 @@ fn settings() -> SystemSettings {
             accent: Accent::ALL[3],
             black: Black::new(1),
             hints: false,
+            invert: true,
+            saver: Saver::from_index(3),
         },
         last_project: ProjectId::new(7),
     }
@@ -634,6 +637,18 @@ fn a_system_from_before_hints_shows_them() {
     }
 }
 
+/// A SYSTEM from before INVERT, either v1 fixture, is dark (ADR 0126).
+#[test]
+fn a_system_from_before_invert_is_dark() {
+    for name in [SYSTEM_FIXTURE, SYSTEM_MIDI_FIXTURE] {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/v1")
+            .join(name);
+        let f = std::fs::read(p).unwrap();
+        assert!(!boot_bytes(&f).0.theme.invert, "{name}");
+    }
+}
+
 /// HINTS OFF round-trips, and alone is a change to write.
 #[test]
 fn hints_off_round_trips() {
@@ -641,6 +656,7 @@ fn hints_off_round_trips() {
     let off = SystemSettings {
         theme: ThemeSettings {
             hints: false,
+            saver: Saver::from_index(3),
             ..ThemeSettings::DEFAULT
         },
         ..SystemSettings::DEFAULT
@@ -765,4 +781,21 @@ fn system_midi_fixture_round_trips() {
     let again = system_file(&got);
     assert!(again.len() > f.len(), "HINTS added");
     assert_eq!(boot_bytes(&again), (got, None));
+}
+
+/// SYSTEM files written before SAVER have no such record: they load with
+/// the screensaver at its default, 7 s, the rest as written.
+#[test]
+fn an_old_system_file_gets_the_default_screensaver() {
+    for f in [
+        include_bytes!("fixtures/v1/system.sys").as_slice(),
+        include_bytes!("fixtures/v1/system_midi.sys").as_slice(),
+    ] {
+        let (got, note) = boot_bytes(f);
+        assert_eq!(note, None);
+        assert_eq!(got.theme.saver, Saver::DEFAULT);
+        assert_eq!(got.theme.saver.ms(), Some(7_000));
+    }
+    let (got, _) = boot_bytes(include_bytes!("fixtures/v1/system.sys"));
+    assert_eq!(got.theme.accent, Accent::Rose, "the rest as written");
 }

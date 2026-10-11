@@ -16,11 +16,14 @@ use chimera_core::preset::Sound;
 use chimera_core::project::{
     Origin, PartFrom, PartId, PartSource, PartStatus, Project, SlotId, part_block, part_status,
 };
-use chimera_core::storage::{FileError, MIGRATIONS, TRANSLATIONS, decode_block, sound_crc};
+use chimera_core::storage::{
+    BuildStamp, Card, FileError, FileKind, Generation, Header, MIGRATIONS, TRANSLATIONS,
+    decode_block, encode_library_sound, sound_crc, write_file,
+};
 use chimera_hal::BLOCK_SIZE;
 use common::codec_util::{
-    SYSTEM_FIXTURE, SYSTEM_MIDI_FIXTURE, decode, decode_into, encode, fix_crc, record_offsets,
-    system_file, system_fixture_settings, system_midi_fixture_settings,
+    SYSTEM_FIXTURE, SYSTEM_MIDI_FIXTURE, VecSink, decode, decode_into, encode, fix_crc,
+    record_offsets, system_file, system_fixture_settings, system_midi_fixture_settings,
 };
 use common::project::{decode as decode_project, encode as encode_project, load};
 use common::{
@@ -36,9 +39,30 @@ fn sources() -> Vec<(String, Sound)> {
     v.push(("init_modal.snd".into(), v1_init(EngineType::Modal)));
     // TAPE's INIT as TAPE Task 12 saved it: engine code 2 frozen (ADR 0045).
     v.push(("init_tape.snd".into(), Sound::init(EngineType::Tape)));
+    // A library Sound (library spec): factory 0 behind a `Build` record.
+    v.push((LIBRARY_FIXTURE.into(), factory_sound(0).unwrap()));
     // VA's INIT as VA Task 10 saved it: engine code 3 frozen.
     v.push(("init_va.snd".into(), Sound::init(EngineType::Va)));
     v
+}
+
+/// `library_1.snd`: factory 0, stamped by `encode_library_sound`.
+const LIBRARY_FIXTURE: &str = "library_1.snd";
+
+/// `name`'s fixture bytes as written: a library Sound carries its stamp.
+fn written(name: &str, s: &Sound) -> Vec<u8> {
+    if name != LIBRARY_FIXTURE {
+        return encode(s);
+    }
+    let h = Header {
+        kind: FileKind::Sound,
+        generation: Generation::FIRST,
+        name: Some(s.name),
+    };
+    let mut sink = VecSink(Vec::new());
+    let stamp = BuildStamp::new("0.1.0", "dev", false);
+    write_file(&mut sink, &h, &mut |w| encode_library_sound(s, &stamp, w)).unwrap();
+    sink.0
 }
 
 /// INIT as the v1 fixtures saved it: OUT LEVEL 0.8 and every operator's
@@ -133,7 +157,7 @@ fn write_v1_fixtures() {
         }
     }
     for (name, s) in sources() {
-        let bytes = encode(&s);
+        let bytes = written(&name, &s);
         if !write_fixture(&name, &bytes) {
             continue;
         }
@@ -179,9 +203,42 @@ const FIXTURE_BYTES: &[(&str, usize, u64)] = &[
     ("init_modal.snd", 1159, 0xd122f91342eff62a),
     // Written sparse (pool Task 2), at TAPE Task 12.
     ("init_tape.snd", 160, 0xc6205acfbcaf2836),
+    ("library_1.snd", 257, 0xa89d3e8a322ca1fa),
     // Written sparse, at VA Task 10.
     ("init_va.snd", 151, 0x63ec203363dcfe8c),
 ];
+
+/// Every v1 `.snd` fixture, `library_1.snd` included, loads through the
+/// library read (`LibraryDecoder` under `load_ab_in_place`) to the Sound
+/// the plain decode gives.
+#[test]
+fn v1_fixtures_load_through_the_library_path() {
+    use chimera_core::storage::{LibId, LibraryDecoder, Side, library_file, load_ab_in_place};
+    use chimera_hal::store::{Dir, Store};
+    use chimera_hal::testkit::MemStore;
+
+    let id = LibId::new(1).unwrap();
+    for (name, _) in sources() {
+        let bytes = fixture(&name);
+        let mut st = MemStore::new(1);
+        let vol = st.mount().unwrap();
+        st.make_dir(vol, Dir::Chimera).unwrap();
+        st.make_dir(vol, Dir::Sounds).unwrap();
+        st.write(vol, library_file(id).side(Side::A), &mut |w| w.put(&bytes))
+            .unwrap();
+        let mut got = Sound::neutral(EngineType::Algo);
+        let mut d = LibraryDecoder::new(&mut got);
+        Card::new()
+            .run(&mut st, |s, r| {
+                load_ab_in_place(s, r, library_file(id), &mut d)
+            })
+            .unwrap()
+            .result
+            .unwrap();
+        assert_eq!(d.skips(), 0, "{name}");
+        assert!(got.bits_eq(&decode(&bytes).unwrap()), "{name}");
+    }
+}
 
 /// `system.sys`'s length and FNV-1a.
 const SYSTEM_FIXTURE_BYTES: (usize, u64) = (65, 0xf544fe6fdcbdda8c);
@@ -464,6 +521,8 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     // (#385), then CLEAN's ACCURATE tan, exact divides, k law and trims
     // (#57, ADR 0096).
     ("init_tape.snd", 0xcaf4315437e08679),
+    // Factory 0's render: the stamp changes no sound.
+    ("library_1.snd", 0x2b0219df38902ede),
     // On the rig's second of saw, at VA Task 10.
     ("init_va.snd", 0x3739e2ecc6befaf5),
 ];

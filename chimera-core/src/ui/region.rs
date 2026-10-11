@@ -61,6 +61,8 @@ pub enum RegionData {
         anim: u32,
         /// The slot's set value (quantized): a glyph may draw it, not `value`.
         set: u16,
+        /// What a still glyph draws from other params (`Gauge::outside_key`).
+        gauge: u32,
         /// What the band shows from outside its slot (ORBIT's readings, a
         /// synced reverb cell's clock).
         text: u32,
@@ -175,6 +177,7 @@ impl RegionData {
             status,
             anim: 0,
             set: 0,
+            gauge: 0,
             text: 0,
             hints: false,
         }
@@ -190,6 +193,14 @@ impl RegionData {
     pub fn with_set(mut self, set: u16) -> Self {
         if let Self::Focus { set: s, .. } = &mut self {
             *s = set;
+        }
+        self
+    }
+
+    /// A focus band keyed on what its glyph reads from other params.
+    pub fn with_gauge(mut self, key: u32) -> Self {
+        if let Self::Focus { gauge, .. } = &mut self {
+            *gauge = key;
         }
         self
     }
@@ -294,6 +305,7 @@ impl RegionData {
             status: None,
             anim: u32::MAX,
             set: SENTINEL,
+            gauge: u32::MAX,
             text: u32::MAX,
             hints: false,
         }

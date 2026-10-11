@@ -18,7 +18,7 @@ use chimera_core::orbit::engine::OrbitEvent;
 use chimera_core::orbit::runner::{OrbitRunner, OrbitView, orbit_buffer};
 use chimera_core::params::EngineType;
 use chimera_core::perf::load::AudioStats;
-use chimera_core::preset::{MAX_SOUNDS, Sound};
+use chimera_core::preset::Sound;
 use chimera_core::project::SlotId;
 use chimera_core::project::{
     LoadLink, PartFrom, PartId, PartSource, Project, ProjectFile, ProjectNote, ProjectSource,
@@ -33,6 +33,7 @@ use chimera_core::triple::{Reader, TripleBuffer, Writer};
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_registry as reg;
+use chimera_core::ui::browser::HEAD;
 use chimera_core::ui::busy::{draw_busy, draw_toast};
 use chimera_core::ui::hold::HOLD_MS;
 use chimera_core::ui::perf::PerfStats;
@@ -704,10 +705,9 @@ const PART_KEYS: [ButtonId; 5] = [
 /// scroll to the init row, EDIT), then MINUS from the engine's home to its
 /// first node.
 pub fn load_init(ui: &mut UiState, engine: EngineType) {
-    let row = MAX_SOUNDS + EngineType::ALL.iter().position(|&c| c == engine).unwrap();
+    let row = EngineType::ALL.iter().position(|&c| c == engine).unwrap();
     feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
-    feed(ui, Input::turn(EncoderId::A, 100));
-    feed(ui, Input::turn(EncoderId::A, (row - 100) as i8));
+    feed(ui, Input::turn(EncoderId::A, row as i8 - HEAD as i8));
     feed(ui, Input::press(ButtonId::Edit));
     let home = chimera_core::ui::nav::chain_def_for(engine).home();
     assert_eq!(
@@ -1052,6 +1052,78 @@ const DLY: usize = 3;
 pub const REV: usize = 4;
 #[cfg(feature = "master-tape")]
 const TAPE: usize = 5;
+
+/// The build the LIBRARY screens compare stamps with.
+const LIB_THIS: chimera_core::storage::BuildStamp =
+    chimera_core::storage::BuildStamp::new("0.1.0", "02e440e2", false);
+
+/// `name` in the library as `engine`, stamped by `stamp`.
+pub fn lib_sound(
+    st: &mut MemStore,
+    name: &str,
+    engine: EngineType,
+    stamp: &chimera_core::storage::BuildStamp,
+) {
+    let mut s = Sound::init(engine);
+    s.name = chimera_core::name::SoundName::new(name).unwrap();
+    chimera_core::project::save_library_sound(&mut Card::new(), st, &s, s.name, stamp)
+        .out
+        .unwrap();
+}
+
+/// A library file `S<id>.A` cut short at 20 bytes.
+pub fn lib_cut_short(st: &mut MemStore, id: u32) {
+    use chimera_hal::store::{ByteSink, Dir, FileName, Store};
+    let v = st.mount().unwrap();
+    let _ = st.make_dir(v, Dir::Chimera);
+    let _ = st.make_dir(v, Dir::Sounds);
+    let id = chimera_core::storage::LibId::new(id).unwrap();
+    let f = FileName::new(Dir::Sounds, &id.stem(), b"A").unwrap();
+    st.write(v, f, &mut |s: &mut dyn ByteSink| s.put(&[0x43; 20]))
+        .unwrap();
+}
+
+/// Four Sounds and a cut-short file, newest first: FM BELL (a dirty
+/// build), GLASS PLUCK (this build), the cut-short one, WARM BASS.
+pub fn lib_card() -> MemStore {
+    use chimera_core::storage::BuildStamp;
+    let mut st = MemStore::new(1);
+    let old = BuildStamp::new("0.1.0", "12345678", false);
+    lib_sound(&mut st, "WARM BASS", EngineType::Algo, &old);
+    lib_cut_short(&mut st, 2);
+    lib_sound(&mut st, "GLASS PLUCK", EngineType::Modal, &LIB_THIS);
+    let dirty = BuildStamp::new("0.1.0", "aabbccdd", true);
+    lib_sound(&mut st, "FM BELL", EngineType::Algo, &dirty);
+    st
+}
+
+/// Part 1's LIBRARY tab on `st`, listed; `f` drives it from there.
+pub fn library_tab(ui: &mut UiState, st: MemStore, f: impl FnOnce(&mut Rig)) {
+    ui.set_this_build_for_test(LIB_THIS);
+    let mut r = Rig::new(ui, st);
+    r.feed(Input::chord(ButtonId::Edit, ButtonId::B1));
+    r.feed(Input::turn(EncoderId::B, 1));
+    for _ in 0..3 {
+        r.feed(Input::turn(EncoderId::A, 0));
+    }
+    f(&mut r);
+}
+
+/// `n` Sounds in the library, SOUND 1 the oldest.
+fn lib_many(n: u32) -> MemStore {
+    let mut st = MemStore::new(1);
+    for i in 1..=n {
+        let name = format!("SOUND {i}");
+        lib_sound(&mut st, &name, EngineType::Algo, &LIB_THIS);
+    }
+    st
+}
+
+/// A pool with one free slot and 16 B: every library Sound won't fit.
+fn pool_nearly_full(ui: &mut UiState) {
+    use chimera_core::project::arena::Cost;
+    chimera_core::project::test_support::set_free_to(ui.project_mut(), Cost::of(16));
+}
 
 pub const CASES: &[ScreenCase] = &[
     // The Algo cases walk from INIT Algo on Part 1, not NEW's TX BASS.
@@ -1647,6 +1719,51 @@ pub const CASES: &[ScreenCase] = &[
             }
         }
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::Edit));
+    }),
+    ("library_empty", |ui| {
+        library_tab(ui, MemStore::new(1), |_| {})
+    }),
+    ("library_no_card", |ui| {
+        let mut st = MemStore::new(1);
+        st.eject();
+        library_tab(ui, st, |_| {})
+    }),
+    // The newest row: a dirty build's stamp.
+    ("library_sounds", |ui| library_tab(ui, lib_card(), |_| {})),
+    // The second: this build.
+    ("library_this_build", |ui| {
+        library_tab(ui, lib_card(), |r| r.feed(Input::turn(EncoderId::A, 1)))
+    }),
+    // The third, cut short: greyed, its message, no stamp.
+    ("library_cut_short", |ui| {
+        library_tab(ui, lib_card(), |r| r.feed(Input::turn(EncoderId::A, 2)))
+    }),
+    // Page 1 of 60, the cursor on OLDER ›.
+    ("library_older", |ui| {
+        library_tab(ui, lib_many(60), |r| r.feed(Input::turn(EncoderId::A, 60)))
+    }),
+    // Page 2, the cursor on ‹ NEWER.
+    ("library_newer", |ui| {
+        library_tab(ui, lib_many(60), |r| {
+            r.feed(Input::turn(EncoderId::A, 60));
+            r.feed(Input::press(ButtonId::Edit));
+            for _ in 0..3 {
+                r.feed(Input::turn(EncoderId::A, 0));
+            }
+        })
+    }),
+    ("library_wont_fit", |ui| {
+        pool_nearly_full(ui);
+        library_tab(ui, lib_card(), |_| {})
+    }),
+    ("library_pool_full", |ui| {
+        pool_nearly_full(ui);
+        library_tab(ui, lib_card(), |r| r.feed(Input::press(ButtonId::Edit)))
+    }),
+    ("library_naming", |ui| {
+        library_tab(ui, lib_card(), |r| {
+            r.feed(Input::chord(ButtonId::Mix, ButtonId::Edit))
+        })
     }),
     ("settings_personal_theme", |ui| {
         to_leaf(ui, &["PERSONALIZE", "THEME"]);

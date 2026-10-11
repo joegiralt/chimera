@@ -17,6 +17,7 @@ pub mod hint;
 pub mod hold;
 pub mod jog;
 pub mod led;
+pub mod library;
 pub mod meter;
 pub use chimera_engine::midi_settings;
 pub mod mod_grid;
@@ -30,6 +31,7 @@ pub mod pool_page;
 pub mod region;
 pub mod renderer;
 pub mod reverb_panel;
+pub mod saver;
 pub mod settings;
 pub mod source_cell;
 pub mod splash;
@@ -56,6 +58,7 @@ use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::dsp::reverb::KnobMemory;
 use crate::dsp::tape_engine::{Heads, TapeEngineParams, TapeModel};
 use crate::in_place::uninit_at;
+use crate::instrument::AudioShared;
 use crate::instrument::PartHeads;
 use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
@@ -66,7 +69,6 @@ use crate::orbit::runner::{OrbitShared, OrbitView};
 use crate::orbit::scene::{OrbitSong, Refused, SceneIdx, SceneSave};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
-use crate::preset::MAX_SOUNDS;
 use crate::project::arena::ArenaWriter;
 use crate::project::{
     self, CardOut, Confirmed, DeleteTarget, Line, LoadLink, PartEdit, PartFrom, PartId, PartSource,
@@ -85,6 +87,7 @@ use components::Head;
 use filter_panel::{JackSlot, RouteView};
 use fmt::FmtBuf;
 use hold::{HoldGates, Press};
+use library::Tab;
 use midi_settings::MidiSettings;
 use mod_grid::MatrixState;
 use nav::{
@@ -109,6 +112,23 @@ use settings::{
 };
 use theme_settings::ThemeSettings;
 use view::{SlotCtx, View};
+
+/// A replace aimed at one Part: SAVE PART FIRST saves that Part.
+trait PartTarget: project::Target {
+    fn part(&self) -> PartId;
+}
+
+impl PartTarget for PartSource {
+    fn part(&self) -> PartId {
+        self.part
+    }
+}
+
+impl PartTarget for project::LibraryPart {
+    fn part(&self) -> PartId {
+        self.part
+    }
+}
 
 /// MIX + turn on a route knob: the next of −127, 0, +127 that way.
 fn snap_amount(a: i8, delta: i8) -> i8 {
@@ -233,6 +253,11 @@ pub struct UiState {
     theme: ThemeSettings,
     /// SETTINGS › MIDI CONFIG's SYNC; boot sets it from SYSTEM (`set_midi`).
     midi: MidiSettings,
+    /// The screensaver's idle timer, whether it has been drawn since the
+    /// screen last woke, and the frames since it last redrew.
+    idle: saver::Idle,
+    saver_drawn: bool,
+    saver_frames: u8,
     /// What the last card operation said, for a moment.
     toast: busy::ToastTimer,
     /// `project_status`, refreshed by `handle_input` and `update` inside
@@ -266,6 +291,8 @@ pub struct UiState {
     /// TAPE's SOURCE cell: the card's rows, the heads, a load, the
     /// per-source memory.
     src: source_cell::SourceCell,
+    /// The Sound rung's LIBRARY tab: its page, and a load in flight.
+    lib: library::LibState,
     /// Each Part's filter LEVEL LED: its meter, held and falling.
     clip: [ClipHold; crate::hw::MAX_PARTS],
     /// Each reverb TYPE's knobs as last left: a TYPE nudge away and back
@@ -332,6 +359,9 @@ crate::in_place::field_list!(UiState => UiState {
     refusal,
     theme,
     midi,
+    idle,
+    saver_drawn,
+    saver_frames,
     toast,
     status,
     clock,
@@ -348,6 +378,7 @@ crate::in_place::field_list!(UiState => UiState {
     heads,
     heads_from,
     src,
+    lib,
     clip,
     rev_knobs,
 });
@@ -411,6 +442,7 @@ impl UiState {
             addr_of_mut!((*p).heads).write(Heads::NONE);
             addr_of_mut!((*p).heads_from).write(&crate::instrument::HEADS);
             addr_of_mut!((*p).src).write(source_cell::SourceCell::NEW);
+            addr_of_mut!((*p).lib).write(library::LibState::NEW);
             addr_of_mut!((*p).browser_dirty).write(false);
             addr_of_mut!((*p).page).write(page);
             addr_of_mut!((*p).sel_op).write(Op::A);
@@ -421,6 +453,9 @@ impl UiState {
             addr_of_mut!((*p).refusal).write(None);
             addr_of_mut!((*p).theme).write(theme);
             addr_of_mut!((*p).midi).write(midi);
+            addr_of_mut!((*p).idle).write(saver::Idle::new());
+            addr_of_mut!((*p).saver_drawn).write(false);
+            addr_of_mut!((*p).saver_frames).write(saver::REDRAW_FRAMES);
             addr_of_mut!((*p).toast).write(busy::ToastTimer::new());
             addr_of_mut!((*p).status).write(StatusCache::new());
             addr_of_mut!((*p).clock).write(animation::UiClock::new());
@@ -775,6 +810,19 @@ impl UiState {
         self.midi = s.midi;
     }
 
+    /// `elapsed_ms` of wall time since the last call, for the screensaver:
+    /// the shells' loops call it beside `step_toast`. `busy`: card work ran
+    /// this frame, so `elapsed_ms` is its blocking time. A prompt, card work
+    /// or that time is the owner's attention, not idleness (and never wakes
+    /// the screen).
+    pub fn step_idle(&mut self, elapsed_ms: u32, busy: bool) {
+        if busy || self.prompt_open() || self.card_pending() {
+            self.idle.hold();
+            return;
+        }
+        self.idle.tick(elapsed_ms, self.theme.saver.ms());
+    }
+
     /// Once a frame: the toast, `elapsed_ms` after the last frame.
     pub fn step_toast(&mut self, elapsed_ms: u32) -> busy::ToastStep {
         self.toast.step(elapsed_ms)
@@ -828,6 +876,9 @@ impl UiState {
     /// matrix), and the page's values snap.
     fn go(&mut self, to: Location) {
         let from = self.loc;
+        if from.browse().is_none() && to.browse().is_some() {
+            self.lib.entered();
+        }
         self.loc = to;
         if let Some(s) = to.settings() {
             let prev = match from.settings() {
@@ -1099,14 +1150,13 @@ impl UiState {
     /// its pages.
     fn load_sound(&mut self, part: PartId, b: Browse) {
         let cursor = b.cursor();
-        // Init entries follow the pool slots.
-        let from = browser::slot_at(cursor).map(PartFrom::Slot).or_else(|| {
-            cursor
-                .checked_sub(MAX_SOUNDS)
-                .and_then(|j| browser::INIT_TYPES.get(j))
-                .map(|&e| PartFrom::Init(e))
-        });
-        let Some(from) = from else { return };
+        // The init entries lead the pool slots; DRUM's is not built yet.
+        let from = match browser::entry_at(cursor) {
+            Some(browser::Entry::Slot(s)) => PartFrom::Slot(s),
+            Some(browser::Entry::Init(e)) => PartFrom::Init(e),
+            Some(browser::Entry::Drum) => return self.notice(Line::new(browser::DRUM_TOAST)),
+            None => return,
+        };
         // An empty slot has nothing to ask about.
         if let PartFrom::Slot(s) = from
             && self.project.pool().get(s).is_none()
@@ -1137,6 +1187,19 @@ impl UiState {
         if let Err(e) = self.project.replace_part(c) {
             return self.error(Line::new(prompt::refused(&e)));
         }
+        self.landed(part, was);
+    }
+
+    /// SAVE PART FIRST's replace, then what the save left Stale.
+    fn replace_then(&mut self, c: Confirmed<PartSource>, stale: Option<Ask>) {
+        self.replace(c);
+        if let Some(x) = stale {
+            self.ask(x);
+        }
+    }
+
+    /// After `part`'s Sound was replaced: from the Sound rung, its pages.
+    fn landed(&mut self, part: PartId, was: EngineType) {
         match self.loc.browse() {
             Some(_) => self.go(Location::part_home(
                 part,
@@ -1146,26 +1209,23 @@ impl UiState {
         }
     }
 
-    /// SAVE PART FIRST: the save `save` picks, then the replace it was
-    /// asked for. With none, the prompt stays.
-    fn save_first<A: Guarded<Confirms = PartSource>>(
+    /// SAVE PART FIRST: the save `save` picks, then `then` with the
+    /// replace it was asked for. With none, the prompt stays.
+    fn save_first<R: PartTarget, A: Guarded<Confirms = R>>(
         &mut self,
-        ask: Asked<PartSource, A>,
+        ask: Asked<R, A>,
         save: fn(&Offer) -> Option<project::PartAction>,
-        again: impl Fn(Asked<PartSource, A>) -> Ask,
+        again: impl Fn(Asked<R, A>) -> Ask,
+        then: fn(&mut UiState, Confirmed<R>, Option<Ask>),
     ) {
-        let Some(a) = save(&Offer::of(&self.project, ask.source().part)) else {
-            self.error(prompt::pool_full(self.pool_full(ask.source().part)));
+        let part = ask.source().part();
+        let Some(a) = save(&Offer::of(&self.project, part)) else {
+            self.error(prompt::pool_full(self.pool_full(part)));
             return self.ask(again(ask));
         };
         let stale = self.save_sound(a);
         match ask.save_then(&self.project, self.template) {
-            Ok(c) => {
-                self.replace(c);
-                if let Some(x) = stale {
-                    self.ask(x);
-                }
-            }
+            Ok(c) => then(self, c, stale),
             Err(ask) => self.ask(again(ask)),
         }
     }
@@ -1260,6 +1320,7 @@ impl UiState {
                 }
             }
             Act::PartClear => self.clear_part(),
+            Act::SaveToLibrary => self.name_for_library(self.active_part, None),
             // `part_cmd`'s.
             Act::PartReload => {}
             Act::SceneClear => self.ask_scene(false, |a| Ask::ClearScene(a, prompt::Choice::new())),
@@ -1561,6 +1622,44 @@ impl UiState {
         }
     }
 
+    /// NAMING's title, if open.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn naming_title_for_test(&self) -> Option<&'static str> {
+        match &self.modal {
+            Some(Modal::Naming(f, _)) => Some(f.title()),
+            _ => None,
+        }
+    }
+
+    /// LOAD PROJECT's listing asked for, as its row asks.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn queue_load_list_for_test(&mut self) {
+        self.queue(Job::List(Screen::LoadProject));
+    }
+
+    /// Card work is queued for `card_work`.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn job_queued_for_test(&self) -> bool {
+        self.job.is_some()
+    }
+
+    /// SOURCE has card work queued.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn src_busy_for_test(&self) -> bool {
+        self.src.busy()
+    }
+
+    /// SOURCE turned on `part` with no card listed: its listing asked for.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn start_source_list_for_test(&mut self, part: PartId) {
+        self.turn_source(part, 1);
+    }
+
     /// NAMING on `at` for the loaded project (`None`) or Part `part`'s Sound.
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
@@ -1609,9 +1708,12 @@ impl UiState {
         match a {
             Answered::ReplacePart(r, to) => match r {
                 Reply::Confirmed(c) => self.replace(c),
-                Reply::SaveFirst(ask) => {
-                    self.save_first(ask, Offer::first_save, |x| Ask::ReplacePart(x, to))
-                }
+                Reply::SaveFirst(ask) => self.save_first(
+                    ask,
+                    Offer::first_save,
+                    |x| Ask::ReplacePart(x, to),
+                    UiState::replace_then,
+                ),
                 Reply::Cancel => {}
             },
             Answered::ReloadPart(r, s) => match r {
@@ -1620,8 +1722,19 @@ impl UiState {
                     // Over its own slot, the reload would undo nothing and
                     // leave the slot's other Parts Stale.
                     let new_slot = |o: &Offer| o.get(PartCmd::NewSlot);
-                    self.save_first(ask, new_slot, |x| Ask::ReloadPart(x, s))
+                    let again = |x| Ask::ReloadPart(x, s);
+                    self.save_first(ask, new_slot, again, UiState::replace_then)
                 }
+                Reply::Cancel => {}
+            },
+            Answered::LoadLibrary(r) => match r {
+                Reply::Confirmed(c) => self.queue(Job::LibraryLoad(c)),
+                Reply::SaveFirst(ask) => self.save_first(
+                    ask,
+                    Offer::first_save,
+                    Ask::LoadLibrary,
+                    UiState::queue_library,
+                ),
                 Reply::Cancel => {}
             },
             Answered::UpdateStale(reverts, a) => {
@@ -1752,14 +1865,38 @@ impl UiState {
             Done::Named(NamingFor::SaveAs(fresh, then), name) => {
                 self.queue(Job::Named(SaveAs { fresh, name, then }))
             }
-            Done::Cancelled | Done::Answered(_) => {}
+            Done::Named(NamingFor::SaveToLibrary(part, back), name) => {
+                if let Some(b) = back {
+                    self.go(Location::sound_at(part, b));
+                }
+                self.queue(Job::LibrarySave(part, name))
+            }
+            Done::Cancelled(NamingFor::SaveToLibrary(part, Some(b))) => {
+                self.go(Location::sound_at(part, b))
+            }
+            Done::Cancelled(_) | Done::Answered(_) => {}
         }
     }
 
-    /// Card work for `card_work`: one a frame, the first asked.
+    /// Card work for `card_work`: one a frame, the first asked; none
+    /// beside a library load or a SOURCE card job.
     fn queue(&mut self, j: Job) {
-        if self.job.is_none() {
+        if self.job.is_none() && !self.lib.busy() && !self.src.busy() {
             self.job = Some(j);
+        }
+    }
+
+    /// SOURCE turned on `part`: none while a library load is pending.
+    fn turn_source(&mut self, part: PartId, delta: i8) {
+        if !self.lib.busy() {
+            self.src.turn(&mut self.project, part, delta);
+        }
+    }
+
+    /// MIX + PLUS on SOURCE's card row: none while a library load is pending.
+    fn load_source(&mut self, part: PartId) {
+        if !self.lib.busy() {
+            self.src.load(&mut self.project, part);
         }
     }
 
@@ -1917,6 +2054,11 @@ impl UiState {
         }
     }
 
+    /// SETTINGS > TUNING for the audio thread, in the same publish.
+    pub fn publish_tune(&self, out: &mut AudioShared) {
+        out.tune = self.midi.tune;
+    }
+
     /// ORBIT's settings for the audio thread, into a slot of its triple
     /// buffer, in the same publish as the Parts.
     pub fn publish_orbit(&self, out: &mut OrbitShared) {
@@ -1998,6 +2140,11 @@ impl UiState {
     /// Process one frame of input: navigation + encoder deltas, then
     /// ORBIT's commands flushed for the frame's publish.
     pub fn handle_input(&mut self, controls: &impl Controls) {
+        if self.idle.touch(any_turn(controls), any_down(controls)) == saver::Touch::Swallow {
+            // A held key still ages.
+            self.jog_pass(controls.now_ms().0);
+            return;
+        }
         let rev = self.project.rev();
         self.input(controls);
         self.jog_pass(controls.now_ms().0);
@@ -2077,6 +2224,13 @@ impl UiState {
             }
             return;
         }
+        // So does a library load: nothing else starts on the card.
+        if self.lib.busy() {
+            if presses.menu.is_some() {
+                self.cancel_library();
+            }
+            return;
+        }
         if let Some(m) = self.modal.take() {
             if !part_key(controls) {
                 self.modal_input(m, controls, &presses);
@@ -2097,9 +2251,12 @@ impl UiState {
                 break;
             }
             if let (Some((p, b)), NavKey::Edit) = (self.loc.browse(), k) {
-                match controls.edges(ButtonId::Mix).down {
-                    true => self.save_part(p),
-                    false => self.load_sound(p, b),
+                // MIX + EDIT saves to the source the tab shows.
+                match (self.lib.tab, controls.edges(ButtonId::Mix).down) {
+                    (Tab::Project, true) => self.save_part(p),
+                    (Tab::Project, false) => self.load_sound(p, b),
+                    (Tab::Library, true) => self.name_for_library(p, Some(b)),
+                    (Tab::Library, false) => self.library_edit(p, b),
                 }
                 continue;
             }
@@ -2143,13 +2300,28 @@ impl UiState {
 
         if let Some((p, b)) = self.loc.browse() {
             let mix = controls.edges(ButtonId::Mix).down;
-            if mix && controls.button_state(ButtonId::Minus) == ButtonState::Pressed {
+            let project = self.lib.tab == Tab::Project;
+            if project && mix && controls.button_state(ButtonId::Minus) == ButtonState::Pressed {
                 self.ask_clear_slot(b);
             }
             if self.modal.is_some() {
                 return;
             }
-            let moved = browser::input(controls, b);
+            // B turns between the tabs.
+            let tab = match controls.encoder_delta(EncoderId::B) {
+                0 => self.lib.tab,
+                d if d > 0 => Tab::Library,
+                _ => Tab::Project,
+            };
+            if tab != self.lib.tab {
+                self.browser_dirty = true;
+                self.lib.entered();
+            }
+            self.lib.tab = tab;
+            let moved = match tab {
+                Tab::Project => browser::input(controls, b),
+                Tab::Library => browser::input_library(controls, b, library::rows(self.lib.page())),
+            };
             if moved != b {
                 self.loc = Location::sound_at(p, moved);
                 self.browser_dirty = true;
@@ -2213,7 +2385,7 @@ impl UiState {
                     continue;
                 }
                 if let View::Source(_) = v {
-                    self.src.turn(&mut self.project, at, delta);
+                    self.turn_source(at, delta);
                     continue;
                 }
                 // A jack moves its cable, never only its param (spec § 2).
@@ -2297,7 +2469,7 @@ impl UiState {
                 );
                 // MIX + PLUS on a card row loads it (spec § 3).
                 if plus && on_source {
-                    self.src.load(&mut self.project, at);
+                    self.load_source(at);
                 } else if plus {
                     // Unbound slots prime nothing; non-modulatable params are
                     // refused. Report the outcome in the focus band (#21):
@@ -2358,9 +2530,12 @@ impl UiState {
 
     /// Advance animations one frame: a `Pacer`'s, at `UI_FPS`.
     pub fn update(&mut self, _: animation::UiTick) {
+        self.saver_frames = self.saver_frames.saturating_add(1);
+        self.saver_drawn |= self.idle.asleep();
         // A pending source hole closes when nothing above it sounds; never
         // under a load staging in the gap.
-        if !self.src.loading() {
+        // Nor under a library load's staging or scratch.
+        if !self.src.loading() && !self.lib.busy() {
             self.project.sources_pass();
         }
         self.refresh_status();
@@ -2472,6 +2647,20 @@ impl UiState {
         self.render_with_audio(display, perf, None, scope);
     }
 
+    /// The screensaver, if the screen is asleep: drawn and `true`.
+    fn draw_saver<D>(&self, display: &mut D, scope: &[f32; SCOPE_LEN]) -> bool
+    where
+        D: embedded_graphics::draw_target::DrawTarget<
+                Color = embedded_graphics::pixelcolor::Rgb565,
+            >,
+    {
+        let asleep = self.idle.asleep();
+        if asleep {
+            saver::draw(display, scope, &saver::Readout::capture(scope));
+        }
+        asleep
+    }
+
     /// Render full screen with `scope` as the live output and `audio` behind
     /// SYSTEM › ABOUT and DIAGNOSTICS › AUDIO LOAD.
     pub fn render_with_audio<D>(
@@ -2485,23 +2674,36 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             >,
     {
+        if self.draw_saver(display, scope) {
+            return;
+        }
         if let Some((part, b)) = self.loc.browse() {
             let _ = display.clear(theme::BG);
-            let (cursor, scroll) = (b.cursor(), b.scroll());
-            browser::draw(
-                display,
-                &self.project,
-                part,
-                cursor,
-                scroll,
-                self.theme.hints,
-                self.refusal(),
-            );
+            self.draw_browser(display, part, b);
             self.draw_prompt(display);
             return;
         }
         self.renderer
             .draw_with_def(display, &self.frame(perf, audio, scope));
+    }
+
+    /// The Sound rung's browser, on the tab B picked.
+    fn draw_browser<D>(&self, d: &mut D, part: PartId, b: Browse)
+    where
+        D: embedded_graphics::draw_target::DrawTarget<
+                Color = embedded_graphics::pixelcolor::Rgb565,
+            >,
+    {
+        let view = match self.lib.tab {
+            Tab::Project => browser::BrowserView::Project,
+            Tab::Library => browser::BrowserView::Library(&self.lib, &self.lib.this),
+        };
+        let (cursor, scroll) = match self.lib.tab {
+            Tab::Project => (b.cursor(), b.scroll()),
+            Tab::Library => (b.lib_cursor(), b.lib_scroll()),
+        };
+        let (hints, refusal) = (self.theme.hints, self.refusal());
+        browser::draw(d, &self.project, view, part, cursor, scroll, hints, refusal);
     }
 
     /// The open prompt's panel, if any, over the Sound rung.
@@ -2682,6 +2884,7 @@ impl UiState {
                 self.prime_status,
             )
             .with_set(region::quantize(self.renderer.set[f.focus].current()))
+            .with_gauge(shown.map_or(0, |g| g.outside_key()))
             .with_text(
                 f.orbit_focus
                     .as_ref()
@@ -2803,6 +3006,23 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             > + chimera_hal::ChimeraDisplay,
     {
+        // Asleep: the screensaver alone, ~7 Hz, the whole screen.
+        if self.idle.asleep() {
+            let mut flush_list = [(0u16, 0u16); region::MAX_REGIONS];
+            if self.saver_frames >= saver::REDRAW_FRAMES {
+                self.saver_frames = 0;
+                self.saver_drawn = true;
+                self.draw_saver(display, scope);
+                flush_list[0] = (0, chimera_hal::SCREEN_HEIGHT);
+            }
+            return flush_list;
+        }
+        // Awake again: every region and the browser redraw over it.
+        if core::mem::take(&mut self.saver_drawn) {
+            self.saver_frames = saver::REDRAW_FRAMES;
+            self.region_set.prev_screen = None;
+            self.browser_dirty = true;
+        }
         let hints_moved = self.hints_moved();
         // The Sound rung's browser: one flush region, redrawn only while
         // dirty (opened, cursor/scroll moved; #7).
@@ -2811,16 +3031,7 @@ impl UiState {
             if self.browser_dirty || hints_moved {
                 let fb = display.pixel_buffer();
                 Renderer::clear_region_fb(fb, 0, chimera_hal::SCREEN_HEIGHT);
-                let (cursor, scroll) = (b.cursor(), b.scroll());
-                browser::draw(
-                    display,
-                    &self.project,
-                    part,
-                    cursor,
-                    scroll,
-                    self.theme.hints,
-                    self.refusal(),
-                );
+                self.draw_browser(display, part, b);
                 self.draw_prompt(display);
                 // Invalidate region set so normal layout forces full rebuild on exit
                 self.region_set.prev_screen = None;
@@ -2918,6 +3129,21 @@ fn part_key(c: &impl Controls) -> bool {
         && PART_BUTTONS
             .iter()
             .any(|&b| c.button_state(b) == ButtonState::Pressed)
+}
+
+/// An encoder moved this frame.
+fn any_turn(controls: &impl Controls) -> bool {
+    ALL_ENCODERS.iter().any(|&e| controls.encoder_delta(e) != 0)
+}
+
+/// A button went down or is held down.
+fn any_down(controls: &impl Controls) -> bool {
+    ALL_BUTTONS.iter().any(|&b| {
+        matches!(
+            controls.button_state(b),
+            ButtonState::Pressed | ButtonState::Held
+        )
+    })
 }
 
 /// Whether `controls` reports an encoder turn or a button press this frame —
