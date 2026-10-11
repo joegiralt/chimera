@@ -33,6 +33,7 @@ fn every_part_slot_resolves_to_a_spec() {
                 | SlotBinding::EnvPanel(..)
                 | SlotBinding::LfoPanel(..)
                 | SlotBinding::ModalPanel(..)
+                | SlotBinding::ReverbPanel(..)
                 | SlotBinding::Machine(_)
                 | SlotBinding::Source => {}
                 SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
@@ -129,6 +130,7 @@ fn all_chains_holds_every_reachable_chain() {
             engines: [engine; 6],
             dyn_rows: 0,
             orbit: OrbitCx::NONE,
+            rev: chimera_core::dsp::reverb::ReverbType::Quad,
         };
         let (chain, _) = l.page(&cx).unwrap();
         assert!(

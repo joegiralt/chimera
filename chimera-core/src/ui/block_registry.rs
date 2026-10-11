@@ -19,6 +19,7 @@ use crate::ui::block_def::{
 };
 use crate::ui::midi_settings::MidiSettings;
 use crate::ui::page::{PageLayout, ValFmt};
+use crate::ui::reverb_panel::RevPage;
 use crate::ui::settings::leaves::{
     ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, LIVE_SNAP_LEAF, OUTPUTS_LEAF,
     POOL_LEAF, SYNC_LEAF, THEME_LEAF, TUNING_LEAF,
@@ -320,15 +321,55 @@ pub static EFX: BlockDef = BlockDef {
     short: "REV",
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Reverb)),
+    // TYPE · the TYPE's four knobs · MIX (reverb TYPEs spec § Pages):
+    // the level always in the same place.
     params: [
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::GRIT),
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::TIME),
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::DAMPING),
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::SIZE),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::TYPE),
+        ParamSlot::reverb_panel(RevPage::Main, 0),
+        ParamSlot::reverb_panel(RevPage::Main, 1),
+        ParamSlot::reverb_panel(RevPage::Main, 2),
+        ParamSlot::reverb_panel(RevPage::Main, 3),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::MIX),
-        EMPTY,
     ],
 };
+
+/// REV › MORE: PRE-DLY · DAMP, SHAPE or CURVE · SMEAR · RATE · SYNC, by
+/// the TYPE's panel; QUAD shows RATE only.
+pub static EFX_MORE: BlockDef = BlockDef {
+    id: 96,
+    name: "Reverb More",
+    short: "MORE",
+    layout: PageLayout::CellGrid,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Reverb)),
+    params: [
+        ParamSlot::reverb_panel(RevPage::More, 0),
+        ParamSlot::reverb_panel(RevPage::More, 1),
+        ParamSlot::reverb_panel(RevPage::More, 2),
+        ParamSlot::reverb_panel(RevPage::More, 3),
+        ParamSlot::reverb_panel(RevPage::More, 4),
+        ParamSlot::reverb_panel(RevPage::More, 5),
+    ],
+};
+
+/// REV › MORE 2: HALL's DENSITY (ADR 0095 § HALL, as built); empty
+/// under the other TYPEs.
+pub static EFX_MORE2: BlockDef = BlockDef {
+    id: 97,
+    name: "Reverb More 2",
+    short: "MOR2",
+    layout: PageLayout::CellGrid,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Reverb)),
+    params: [
+        ParamSlot::reverb_panel(RevPage::More2, 0),
+        ParamSlot::reverb_panel(RevPage::More2, 1),
+        ParamSlot::reverb_panel(RevPage::More2, 2),
+        ParamSlot::reverb_panel(RevPage::More2, 3),
+        ParamSlot::reverb_panel(RevPage::More2, 4),
+        ParamSlot::reverb_panel(RevPage::More2, 5),
+    ],
+};
+
+static EFX_SUB_PAGES: [&BlockDef; 2] = [&EFX_MORE, &EFX_MORE2];
 
 pub static CHORUS: BlockDef = BlockDef {
     id: 18,
@@ -650,7 +691,7 @@ static MIXER_CHANNEL_BLOCKS: &[ChainBlock] = &[
     ChainBlock::page(&SENDS),
     ChainBlock::page(&CHORUS),
     ChainBlock::with_subs(&DELAY, &DELAY_SUB_PAGES),
-    ChainBlock::page(&EFX),
+    ChainBlock::with_subs(&EFX, &EFX_SUB_PAGES),
     #[cfg(feature = "master-tape")]
     ChainBlock::page(&TAPE),
     ChainBlock::with_subs(&MASTER, &MASTER_SUB_PAGES),
@@ -980,7 +1021,7 @@ pub static DEMO_GLYPH_RINGS: BlockDef = BlockDef {
 };
 
 /// GLYPH: CUBE, the reverb cube (the reverb specs carry it): a SIZE,
-/// b TIME, c DAMP, d MIX, e GRIT, each emphasised when focused.
+/// b TIME, c DAMP, d MIX, e SMEAR, f RATE, each emphasised when focused.
 pub static DEMO_GLYPH_CUBE: BlockDef = BlockDef {
     id: 77,
     name: "Glyph: Cube",
@@ -992,8 +1033,8 @@ pub static DEMO_GLYPH_CUBE: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Reverb, ReverbParams::TIME),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::DAMPING),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::MIX),
-        ParamSlot::param(BlockRef::Reverb, ReverbParams::GRIT),
-        EMPTY,
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::SMEAR),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::RATE),
     ],
 };
 

@@ -14,6 +14,7 @@ use chimera_core::dsp::chorus::ChorusParams;
 use chimera_core::dsp::ease::{Ease, ease_coeff, step_of};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::limiter::OUTPUT_GAIN;
+use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::ring::{first_reflection, size_step};
 use chimera_core::hw::{DAC_PAIRS, MAX_PARTS, MAX_VOICES};
 use chimera_core::instrument::{
@@ -34,7 +35,9 @@ use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 /// bus's own cost folded in: the smallest `cpu_hz` whose `SampleBudget`
 /// rounds up to at least `FxBus::COST + voice_share` (`for_cpu` truncates).
 const fn budget_for(voice_share: u32) -> SampleBudget {
-    SampleBudget::for_cpu(((FxBus::COST.0 + voice_share) as u64 * 480_000).div_ceil(7) as u32)
+    // The bus and the knobs, reserved (ADR 0116).
+    let reserved = FxBus::COST.0 + Knobs::RESERVE.0;
+    SampleBudget::for_cpu(((reserved + voice_share) as u64 * 480_000).div_ceil(7) as u32)
 }
 
 /// The voices' share before the FX diet (7,000 − 3,310). After the diet
@@ -57,9 +60,15 @@ fn factory_voice_cost(i: usize) -> u32 {
 /// margin, so a future change to the cost model can't silently flip which
 /// slot the note lands on.
 fn morph_pad_plus_sqr_bass_budget() -> SampleBudget {
-    // And the two Parts' knobs (ADR 0112).
+    // And the two Parts' knobs (ADR 0112), and the glide each voice's
+    // filter runs while the swapped Sound's knobs settle: admission counts
+    // it, shedding doesn't (ADR 0117).
+    let glide = chimera_core::dsp::filter::FilterKind::Svf.glide_cost().0;
     budget_for(
-        (MAX_VOICES as u32 - 2) * factory_voice_cost(6) + factory_voice_cost(5) + 2 * Knobs::COST.0,
+        (MAX_VOICES as u32 - 2) * factory_voice_cost(6)
+            + factory_voice_cost(5)
+            + 2 * Knobs::COST.0
+            + (MAX_VOICES as u32 - 1) * glide,
     )
 }
 
@@ -185,6 +194,7 @@ fn mix_parts_alone_is_renders_mix() {
         &mut MixState::default(),
         &mut fx,
         &shared,
+        Tempo::DEFAULT,
         SR,
         &mut out,
     );
@@ -249,7 +259,7 @@ fn mix_parts_reference(
         }
     }
     let mut ret = Stereo::SILENT;
-    fx.process(sends, &shared.fx, SR, &mut ret);
+    fx.process(sends, &shared.fx, Tempo::DEFAULT, SR, &mut ret);
     for (i, (&l, &r)) in ret.l.iter().zip(&ret.r).enumerate() {
         out[0][2 * i] += l;
         out[0][2 * i + 1] += r;
@@ -319,7 +329,15 @@ fn mix_parts_is_bit_identical_to_the_reference() {
             _ => [false; MAX_PARTS],
         };
         let scope = mix_parts(
-            &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
+            &buses,
+            &written,
+            &mut sends,
+            &mut pans,
+            &mut fx,
+            &shared,
+            Tempo::DEFAULT,
+            SR,
+            &mut out,
         );
         let scope_ref = mix_parts_reference(
             &buses,
@@ -371,7 +389,7 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
         let bus = *rig.inst.part_bus(0);
         let mut sends = [[0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], bus.map(|s| s * SEND)];
         let mut ret = Stereo::SILENT;
-        fx.process(&mut sends, &shared.fx, SR, &mut ret);
+        fx.process(&mut sends, &shared.fx, Tempo::DEFAULT, SR, &mut ret);
         let (l, r) = lr(&rig.out()[0]);
         assert_eq!(
             (l, r),
@@ -477,7 +495,7 @@ fn refused_notes_are_counted_and_silent() {
     let mut rig = Rig::rev_v();
     let mut perf = Performance::new();
     for p in PartId::ALL {
-        *perf.edit(p).sound = chimera_core::factory::factory_sound(7).unwrap();
+        **perf.edit(p).sound = chimera_core::factory::factory_sound(7).unwrap();
     }
     let mut shared = AudioShared::from_performance(&perf);
     for p in 0..MAX_PARTS {
@@ -538,7 +556,7 @@ fn two_parts() -> Vec<f32> {
 
 fn two_parts_perf() -> Performance {
     let mut perf = Performance::new();
-    *perf.edit(PartId::ALL[1]).sound = Sound::init(EngineType::Modal);
+    **perf.edit(PartId::ALL[1]).sound = Sound::init(EngineType::Modal);
     perf.edit(PartId::ALL[1]).mix.output = DacPair::P2;
     perf.edit(PartId::ALL[1]).mix.pan = 0.5;
     perf
@@ -581,7 +599,7 @@ const CHORD_FULL: [u8; MAX_VOICES] = [48, 52, 55, 60, 64, 67, 72, 76];
 
 fn factory(i: usize) -> Performance {
     let mut perf = Performance::new();
-    *perf.edit(PartId::ALL[0]).sound =
+    **perf.edit(PartId::ALL[0]).sound =
         chimera_core::factory::factory_sound(i).expect("factory Sound");
     perf
 }
@@ -631,7 +649,10 @@ fn a_six_note_tx_epiano_chord_stays_in_budget() {
 
 #[test]
 fn the_test_budget_keeps_the_pre_diet_voice_share() {
-    assert_eq!(BUDGET.as_cost().0, FxBus::COST.0 + VOICE_SHARE);
+    assert_eq!(
+        BUDGET.as_cost().0,
+        FxBus::COST.0 + Knobs::RESERVE.0 + VOICE_SHARE
+    );
 }
 
 /// ADR 0040: on rev V a light patch (SAW LEAD, 555) plays every voice of the
@@ -690,7 +711,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // then the free ring on release (ADR 0062).
     ("two_parts_two_pairs", 0x99176e24a041d1ea),
     ("reverb_send_off", 0xfd4ac36e6db74819), // ADR 0049 INIT, then the ADR 0050 output trim
-    ("reverb_send_on", 0x2c87fc35ea4c734d),  // ADR 0049 INIT, then the ADR 0050 output trim
+    ("reverb_send_on", 0x815a3b73b4db0061),  // ADR 0049 INIT, then the ADR 0050 output trim
     ("six_voice_chord", 0x38adad839982e05d), // ADR 0049 INIT, then the ADR 0050 output trim
                                              // Every row re-recorded for ADR 0109's master gain and soft knee.
 ];
@@ -708,7 +729,7 @@ const PRE_LIMITER: &[(&str, u64)] = &[
     // then the free ring on release (ADR 0062).
     ("two_parts_two_pairs", 0x39011cff1c61c20f),
     ("reverb_send_off", 0xfa51f05d4383455d),
-    ("reverb_send_on", 0x6f59ef333f7b5956),
+    ("reverb_send_on", 0x6c4f0bdf615a9cd5),
     ("six_voice_chord", 0x5132735055c0c78d),
 ];
 
@@ -1172,7 +1193,7 @@ fn a_note_on_with_a_patch_edit_is_judged_at_the_new_cost() {
 fn a_note_on_waits_out_a_fade_before_stealing_a_held_note() {
     let perf = |lead: usize| {
         let mut p = factory(lead);
-        *p.edit(PartId::ALL[1]).sound = chimera_core::factory::factory_sound(5).unwrap(); // SQR BASS
+        **p.edit(PartId::ALL[1]).sound = chimera_core::factory::factory_sound(5).unwrap(); // SQR BASS
         AudioShared::from_performance(&p)
     };
     let (light, heavy) = (perf(4), perf(6)); // SAW LEAD fills the pool, MORPH PAD two short
@@ -1216,7 +1237,7 @@ fn a_note_on_waits_out_a_fade_before_stealing_a_held_note() {
 fn a_shed_waiting_note_counts_as_refused() {
     let perf = |lead: usize, other: usize| {
         let mut p = factory(lead);
-        *p.edit(PartId::ALL[1]).sound = chimera_core::factory::factory_sound(other).unwrap();
+        **p.edit(PartId::ALL[1]).sound = chimera_core::factory::factory_sound(other).unwrap();
         AudioShared::from_performance(&p)
     };
     let mut rig = Rig::new();
@@ -1246,7 +1267,7 @@ fn a_shed_waiting_note_counts_as_refused() {
 #[test]
 fn a_steal_from_another_part_fades_on_the_old_bus() {
     let mut p = factory(4); // SAW LEAD on both Parts
-    *p.edit(PartId::ALL[1]).sound = chimera_core::factory::factory_sound(4).unwrap();
+    **p.edit(PartId::ALL[1]).sound = chimera_core::factory::factory_sound(4).unwrap();
     let shared = AudioShared::from_performance(&p);
     let mut rig = Rig::new();
     for n in CHORD6 {
@@ -1273,7 +1294,7 @@ fn a_steal_from_another_part_fades_on_the_old_bus() {
 fn full_pool(mode: PartMode) -> (Rig, AudioShared) {
     let mut p = factory(4);
     for q in [1, 2] {
-        *p.edit(PartId::ALL[q]).sound = chimera_core::factory::factory_sound(4).unwrap();
+        **p.edit(PartId::ALL[q]).sound = chimera_core::factory::factory_sound(4).unwrap();
     }
     p.edit(PartId::ALL[1]).mix.mode = mode;
     let shared = AudioShared::from_performance(&p);
@@ -1343,7 +1364,15 @@ fn the_tape_is_on_pair_1_only() {
         let mut blocks = Vec::new();
         for _ in 0..32 {
             mix_parts(
-                &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
+                &buses,
+                &written,
+                &mut sends,
+                &mut pans,
+                &mut fx,
+                &shared,
+                Tempo::DEFAULT,
+                SR,
+                &mut out,
             );
             blocks.push(*out.out());
         }
@@ -1383,7 +1412,15 @@ fn the_master_comp_ducks_pair_2_with_pair_1() {
         let mut energy = 0.0f32;
         for b in 0..128 {
             mix_parts(
-                &buses, &written, &mut sends, &mut pans, &mut fx, &shared, SR, &mut out,
+                &buses,
+                &written,
+                &mut sends,
+                &mut pans,
+                &mut fx,
+                &shared,
+                Tempo::DEFAULT,
+                SR,
+                &mut out,
             );
             if b >= 64 {
                 energy += out.out()[1].iter().map(|s| s * s).sum::<f32>();
@@ -1530,4 +1567,33 @@ fn a_restrike_reuses_its_string_and_nothing_clicks() {
         let c = common::clicks(&w);
         assert!(c.is_empty(), "{what}: {:?}", &c[..c.len().min(20)]);
     }
+}
+
+/// The voice budget reserves the set reverb TYPE's cost over QUAD's (which
+/// `FxBus::COST` holds): a pool (with the Part's knobs) that just fits under QUAD sheds a voice
+/// when the TYPE becomes ROOM, and keeps all of them if it stays QUAD.
+#[test]
+fn the_voice_budget_reserves_the_reverb_types_cost() {
+    use chimera_core::dsp::reverb::ReverbType;
+    let init = AudioShared::default();
+    let p = &init.parts[0];
+    let voice = chimera_core::dsp::voice::Voice::cost(&p.params, &p.mod_state).0;
+    let sheds = |kind: ReverbType| {
+        let mut rig = Rig::with_budget(budget_for(
+            6 * voice + chimera_core::dsp::knobs::Knobs::COST.0 + 10,
+        ));
+        for n in 0..6 {
+            rig.note_on(0, 48 + n);
+        }
+        rig.render(2);
+        assert_eq!(rig.inst.sounding(), 6, "six fit under QUAD");
+        rig.shared.fx.reverb.kind = kind;
+        rig.render(60);
+        6 - rig.inst.sounding()
+    };
+    assert_eq!(sheds(ReverbType::Quad), 0);
+    assert!(
+        sheds(ReverbType::Room) >= 1,
+        "ROOM's 168 a sample sheds one"
+    );
 }

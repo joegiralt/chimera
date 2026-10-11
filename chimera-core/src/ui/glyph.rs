@@ -5,8 +5,12 @@ use crate::block::ValFmt;
 use crate::dsp::algo::waves::{WAVE_LEN, WaveId};
 use crate::dsp::chorus::ChorusMode;
 use crate::dsp::clampf;
+use crate::dsp::rev::sync::{FoldState, Tempo};
+use crate::dsp::reverb::{EngineKnobs, RevSync, ReverbParams, ReverbType, knobs};
 
-pub use chimera_engine::glyph::{BRAID_PARAMS, CUBE_PARAMS, CompositeId, FocusGlyph, RINGS_PARAMS};
+pub use chimera_engine::glyph::{
+    BRAID_PARAMS, CUBE_PARAMS, CompositeId, FocusGlyph, REVERB_PARAMS, RINGS_PARAMS,
+};
 
 /// What the focus band draws, with its inputs.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -32,8 +36,10 @@ pub enum Gauge {
     Braid(Braid),
     /// The delay's rings (`CompositeId::DelayRings`).
     Rings(Rings),
-    /// The reverb's cube (`CompositeId::ReverbCube`).
+    /// The reverb's cube (`CompositeId::Reverb`), under QUAD.
     Cube(Cube),
+    /// The reverb's TAIL (`CompositeId::Reverb`), under the other TYPEs.
+    Tail(Tail),
 }
 
 /// A staff note's accidental.
@@ -115,17 +121,19 @@ pub enum CubePart {
     Time,
     Damp,
     Mix,
-    Grit,
+    Smear,
+    Rate,
 }
 
 impl CubePart {
     /// In `CUBE_PARAMS`' order.
-    pub const ALL: [CubePart; 5] = [
+    pub const ALL: [CubePart; 6] = [
         CubePart::Size,
         CubePart::Time,
         CubePart::Damp,
         CubePart::Mix,
-        CubePart::Grit,
+        CubePart::Smear,
+        CubePart::Rate,
     ];
 }
 
@@ -141,22 +149,25 @@ pub struct Cube {
     pub damp: f32,
     /// Edge weight.
     pub mix: f32,
-    /// The lo-fi dirt: edges crackle.
-    pub grit: f32,
+    /// The random wander: the far edges jitter, slowly.
+    pub smear: f32,
+    /// How often the jitter moves.
+    pub rate: f32,
     pub focus: Option<CubePart>,
     pub frame: u32,
 }
 
 impl Cube {
     /// From `CUBE_PARAMS`' set values, normalized.
-    pub fn from_set(set: [f32; 5], focus: Option<CubePart>, frame: u32) -> Self {
+    pub fn from_set(set: [f32; 6], focus: Option<CubePart>, frame: u32) -> Self {
         let n = |i: usize| clampf(set[i], 0.0, 1.0);
         Self {
             size: n(0),
             time: n(1),
             damp: n(2),
             mix: n(3),
-            grit: n(4),
+            smear: n(4),
+            rate: n(5),
             focus,
             frame,
         }
@@ -208,6 +219,151 @@ impl RingsPart {
         RingsPart::Sat,
         RingsPart::Rev,
     ];
+}
+
+/// TAIL's columns.
+pub const TAIL_COLS: usize = 60;
+
+/// TAIL's x axis, ms: the TYPE's own range, so a turn always moves it.
+pub fn tail_span_ms(t: ReverbType) -> f32 {
+    match t {
+        ReverbType::Quad | ReverbType::Reverse => 2_000.0,
+        ReverbType::Room => 1_500.0,
+        ReverbType::Hall => 10_000.0,
+        ReverbType::Bloom => 12_000.0,
+        ReverbType::Gate => 1_400.0,
+    }
+}
+
+/// TAIL's range: 48 dB under the peak is the floor.
+const TAIL_DB: f32 = 48.0;
+
+/// `x`'s triangle, 0 at whole numbers, 1 halfway: `x` ≥ 0.
+fn tri(x: f32) -> f32 {
+    1.0 - libm::fabsf(2.0 * (x - x as u32 as f32) - 1.0)
+}
+
+/// The TYPE's energy envelope, from set values only (spec § Glyph): each
+/// of `TAIL_COLS` columns over `tail_span_ms`, its level in 1/255ths of
+/// 48 dB, 255 the peak.
+/// - GATE: a PRE-DLY gap, a plateau sloped by SHAPE, a cliff at LENGTH,
+///   then the TAIL, dimmed by DAMP.
+/// - REVERSE: silence to ONSET, a ramp rising by CURVE to the hit at
+///   LENGTH that cuts dead, its echoes under REGEN.
+/// - The others: an exponential fall at their RT60.
+///
+/// TONE dims it (6 dB at its darkest), DENSITY notches it between taps,
+/// and SMEAR ripples it at RATE.
+#[inline(never)]
+pub fn tail_shape(t: ReverbType, k: &EngineKnobs) -> [u8; TAIL_COLS] {
+    let span = tail_span_ms(t);
+    let len = k.length_ms.max(1.0);
+    let fall = -60.0e-3 / k.rt60_s.max(0.01);
+    let curve = libm::fabsf(k.shape_db);
+    // DENSITY: GATE's missing taps; REVERSE's sparse allpasses.
+    let notch = match t {
+        ReverbType::Reverse => (0.7 - k.diffuse_g).max(0.0) * 12.0,
+        _ => (12.0 - k.taps).max(0.0) * 0.75,
+    };
+    // GATE's DAMP: its TAIL darker, up to 6 dB at 2 kHz.
+    let damped = 6.0 * clampf((12_000.0 - k.damp_hz) / 10_000.0, 0.0, 1.0);
+    let db = |x: f32| 6.02 * crate::dsp::rev::parts::lg2(x);
+    let echo = if k.regen > 0.0 { db(k.regen) } else { -TAIL_DB };
+    let tail = if k.tail > 0.0 {
+        db(k.tail) - curve - 12.0
+    } else {
+        -2.0 * TAIL_DB
+    };
+    let dim = 6.0 * clampf((10_000.0 - k.tone_hz) / 7_500.0, 0.0, 1.0);
+    let mut out = [0u8; TAIL_COLS];
+    for (c, o) in out.iter_mut().enumerate() {
+        let ms = (c as f32 + 0.5) * span / TAIL_COLS as f32;
+        // GATE's PRE-DLY shifts the burst; REVERSE's ONSET opens a gap
+        // inside it.
+        let shift = if t == ReverbType::Gate {
+            k.predelay_ms
+        } else {
+            0.0
+        };
+        let x = (ms - shift).max(0.0) / len;
+        let pass = x as u32;
+        let at = x - pass as f32;
+        let tap = notch * tri(11.0 * at);
+        let level = match t {
+            ReverbType::Gate if ms < shift => -2.0 * TAIL_DB,
+            ReverbType::Gate if pass == 0 => -curve * at - tap,
+            ReverbType::Gate => tail - damped + fall * (ms - shift - len),
+            ReverbType::Reverse if at * len < k.predelay_ms => -2.0 * TAIL_DB,
+            // The hit: the column under LENGTH.
+            ReverbType::Reverse if at > 1.0 - 0.6 * span / TAIL_COLS as f32 / len => {
+                pass as f32 * echo
+            }
+            ReverbType::Reverse => pass as f32 * echo - 9.0 - curve * (1.0 - at) - tap,
+            // ROOM and HALL: a pre-delay gap, then the fall.
+            ReverbType::Room | ReverbType::Hall if ms < k.predelay_ms => -2.0 * TAIL_DB,
+            ReverbType::Room | ReverbType::Hall => fall * (ms - k.predelay_ms),
+            ReverbType::Quad | ReverbType::Bloom => fall * ms,
+        };
+        let ripple = 3.0 * k.smear_ms * (2.0 * tri(4e-3 * k.rate_hz * ms) - 1.0);
+        *o = (clampf((level - dim + ripple) / TAIL_DB + 1.0, 0.0, 1.0) * 255.0 + 0.5) as u8;
+    }
+    out
+}
+
+/// The reverb's TAIL: `tail_shape` as a polyline, the focused knob's part
+/// in the accent, and a playhead crossing it at the TYPE's real time.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tail {
+    pub shape: [u8; TAIL_COLS],
+    /// The columns drawn in the accent, `from..to`.
+    pub accent: (u8, u8),
+    /// The playhead's column, if it is on the shape.
+    pub head: Option<u8>,
+}
+
+impl Tail {
+    /// From `REVERB_PARAMS`' set values (normalized) under TYPE `t`, the
+    /// focused one's index in them, and the UI clock's `frame` (20 fps).
+    #[inline(never)]
+    pub fn from_set(t: ReverbType, set: [f32; 11], focus: Option<usize>, frame: u32) -> Self {
+        let p = ReverbParams {
+            kind: t,
+            size: set[0],
+            time: set[1],
+            damping: set[2],
+            mix: set[3],
+            smear: set[4],
+            rate: set[5],
+            tone: set[6],
+            diffuse: set[7],
+            predelay: set[8],
+            shape: set[9],
+            sync: RevSync::Off,
+            density: set[10],
+        };
+        // Unsynced: the set values alone, at the default tempo.
+        let k = knobs(&p, Tempo::DEFAULT, &mut FoldState(0));
+        let span = tail_span_ms(t);
+        let n = TAIL_COLS as f32;
+        let edge = clampf(k.length_ms / span * n, 0.0, n) as u8;
+        let all = TAIL_COLS as u8;
+        let accent = match focus {
+            // LENGTH, DENSITY, SHAPE: the burst.
+            Some(0 | 7 | 9) => (0, edge),
+            // TAIL, REGEN: what follows it.
+            Some(1) => (edge, all),
+            Some(_) => (0, all),
+            None => (0, 0),
+        };
+        // A pass over the span, then 0.4 s at rest, at 20 fps.
+        let at = (frame % ((span as u32 + 400) / 50)) as f32 * 50.0;
+        let head = (at < span).then(|| (at / span * n) as u8);
+        Self {
+            shape: tail_shape(t, &k),
+            accent,
+            head,
+        }
+    }
 }
 
 /// The delay's echoes as rings spreading from a source dot, one per
@@ -403,7 +559,7 @@ pub fn gauge(
         ) as u8)),
         FocusGlyph::Composite(CompositeId::ChorusBraid) => composite(CompositeId::ChorusBraid),
         FocusGlyph::Composite(CompositeId::DelayRings) => composite(CompositeId::DelayRings),
-        FocusGlyph::Composite(CompositeId::ReverbCube) => composite(CompositeId::ReverbCube),
+        FocusGlyph::Composite(CompositeId::Reverb) => composite(CompositeId::Reverb),
         FocusGlyph::Arc => Gauge::Arc { value, bipolar },
     }
 }
@@ -419,7 +575,7 @@ impl Gauge {
             | Gauge::Crossfader { .. }
             | Gauge::Staff { .. }
             | Gauge::Wave(_) => false,
-            Gauge::Braid(_) | Gauge::Rings(_) | Gauge::Cube(_) => true,
+            Gauge::Braid(_) | Gauge::Rings(_) | Gauge::Cube(_) | Gauge::Tail(_) => true,
         }
     }
 }

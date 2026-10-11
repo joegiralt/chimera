@@ -277,7 +277,7 @@ impl Project {
                 };
             }
             PartFrom::Init(e) => {
-                part.sound = Sound::init(e);
+                *part.sound = Sound::init(e);
                 part.origin = Origin::Init(e);
             }
         }

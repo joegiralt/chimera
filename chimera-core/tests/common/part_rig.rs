@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
@@ -25,6 +26,8 @@ pub struct Rig {
     scope: ScopeWriter,
     /// Part 1's TAPE source, if it has one (`with_source`).
     src: Option<OneSource>,
+    /// The UI side of the knobs, as a shell keeps it (ADR 0115).
+    knobs: Box<KnobPublisher>,
 }
 
 impl Rig {
@@ -40,7 +43,7 @@ impl Rig {
     pub fn new(sounds: [Sound; 2]) -> Self {
         let (mut p, t) = Project::boxed();
         for (part, s) in PartId::ALL.into_iter().zip(sounds) {
-            *p.edit_part(part).sound = s;
+            **p.edit_part(part).sound = s;
         }
         let mut r = Self {
             p,
@@ -54,13 +57,14 @@ impl Rig {
             dac: Box::new(DacBlocks::new()),
             scope: super::scope_writer(),
             src: None,
+            knobs: Box::new(KnobPublisher::new()),
         };
         r.publish();
         r
     }
 
     fn publish(&mut self) {
-        self.shared.update_from_project(&self.p, 0);
+        self.shared.update_from_project(&self.p, 0, &mut self.knobs);
         if let Some(s) = &self.src {
             self.shared.parts[0].source = Some(s.id);
         }

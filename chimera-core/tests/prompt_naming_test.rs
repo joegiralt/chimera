@@ -93,7 +93,7 @@ fn asking_on(go: impl FnOnce(&mut UiState)) -> (UiState, chimera_core::preset::S
     init_part(&mut ui, PartId::ALL[0]);
     go(&mut ui);
     ui.params_mut().filter.cutoff *= 0.5;
-    let before = ui.project().part(PartId::ALL[0]).sound.clone();
+    let before = chimera_core::preset::Sound::clone(&ui.project().part(PartId::ALL[0]).sound);
     let src = PartSource {
         part: PartId::ALL[0],
         from: PartFrom::Slot(SlotId::ALL[4]),

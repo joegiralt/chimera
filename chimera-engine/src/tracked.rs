@@ -1,6 +1,6 @@
-//! A published value that says when it may have changed (ADR 0112): the
-//! Part's knobs look at a Sound again only then, so a settled Part costs a
-//! compare a block, not a read of every knob.
+//! A value that says when it may have changed (ADR 0112, 0115): each
+//! Part's Sound is one, so the Part's knobs look at a Sound again only when
+//! that Sound was written, not on any edit to the Project.
 
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -9,32 +9,28 @@ use core::sync::atomic::{AtomicU32, Ordering};
 /// (until 2³² of them), whichever copy draws it.
 static SERIAL: AtomicU32 = AtomicU32::new(1);
 
-/// Where a published value came from: the load epoch and the Project
-/// revision it was published at (every `&mut` path to a Project bumps its
-/// revision), or, for a value built fresh or written since (a test's or the
-/// bench's; the shells only publish), a serial no other value has. Equal
+/// A value's serial: drawn when it was made or last written, so no other
+/// value has it, and copied with it (a publish carries its Sound's). Equal
 /// stamps, equal values. Only this crate can name one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stamp {
-    epoch: u32,
-    rev: u32,
     serial: u32,
 }
 
 impl Stamp {
-    pub(crate) const fn new(epoch: u32, rev: u32) -> Self {
-        Self {
-            epoch,
-            rev,
-            serial: 0,
-        }
-    }
+    /// No value's: serials start at 1.
+    pub(crate) const NONE: Self = Self { serial: 0 };
 
-    /// One no other value has had: a publish with no Project behind it.
-    pub(crate) fn unique() -> Self {
-        Self {
-            serial: SERIAL.fetch_add(1, Ordering::Relaxed),
-            ..Self::default()
+    /// One no other value has had: never `NONE`'s 0, which a wrap would
+    /// otherwise hand out. A wrap takes 2³² draws, a write each: past it,
+    /// a Sound unwritten for all of them could meet its own serial again
+    /// and a change go unseen; at a write a frame, over two years.
+    fn unique() -> Self {
+        loop {
+            let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
+            if serial != 0 {
+                return Self { serial };
+            }
         }
     }
 }
@@ -111,7 +107,7 @@ mod tests {
 
     #[test]
     fn copies_written_apart_never_share_a_stamp() {
-        let a = Tracked::new(0u8, Stamp::new(3, 7));
+        let a = Tracked::fresh(0u8);
         let (mut b, mut c) = (a.clone(), a.clone());
         assert_eq!(b.stamp(), c.stamp());
         (*b, *c) = (1, 2);
