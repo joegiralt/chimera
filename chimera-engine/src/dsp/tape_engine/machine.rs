@@ -2,7 +2,7 @@
 //! labels the shared params its own way, dims what it ignores and has its
 //! own defaults, so a player is nudged toward what it does (Elektron
 //! Digitakt II, as the owner cites it; Octatrack manual OS 1.25,
-//! § Machines). START, END, TAPE, AGE and SPACE read the same everywhere.
+//! § Machines). START, END, TAPE and AGE read the same everywhere.
 //! The UI writes a machine's defaults when MODEL changes (Task 15), never
 //! on load; the neutral stays LOOP's.
 

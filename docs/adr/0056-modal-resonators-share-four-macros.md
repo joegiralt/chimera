@@ -78,8 +78,8 @@ note-on, so nothing could modulate a string's character.
   exciter (`EXCITER_NAMES`): PLUCK (STRING, SYMP) EXCITE and COLOR; STRIKE
   (BANK) EXCITE and BURST; BOW (BOWED) FORCE and SPEED. Its map node reads
   EXC.
-- The home page (RES) is MODEL, STRUCTURE, BRIGHT, DAMP, POS and SPACE
-  (the Part's reverb send). The model page, named for the model (STRING,
+- The home page (RES) is MODEL, STRUCTURE, BRIGHT, DAMP and POS
+  (SPACE, the Part's reverb send, was dropped: [0120](0120-modal-and-tape-pages-drop-space.md)). The model page, named for the model (STRING,
   SYMP, BANK, BOWED), holds BODY, ENS DEPTH, ENS RATE, ENS MIX, COUPLE,
   HALO and MODES (`page_cells(ModalPage::Model, _)`); EXCITE left it for
   EXC. Its cell labels are STRUCT, ENS.D, ENS.R and ENS.M. FDBK, STIFF,

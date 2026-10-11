@@ -122,7 +122,7 @@ per model.
 | ![](modal_exc_bank.png) | EXC (BANK) | STRIKE exciter: EXCITE, BURST |
 | ![](modal_exc_bowed.png) | EXC (BOWED) | BOW exciter: FORCE, SPEED |
 | ![](modal_symp_exc.png) | EXC (SYMP) | PLUCK exciter for the sympathetic set |
-| ![](modal_home.png) | RES (STRING) | Home: MODEL, the four macros, SPACE |
+| ![](modal_home.png) | RES (STRING) | Home: MODEL, the four macros |
 | ![](modal_bank_res.png) | RES (BANK) | MODEL BANK |
 | ![](modal_home_bowed.png) | RES (BOWED) | MODEL BOWED: STRUCT dims |
 | ![](modal_symp_res.png) | RES (SYMP) | MODEL SYMP |

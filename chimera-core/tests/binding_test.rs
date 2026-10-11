@@ -157,7 +157,7 @@ fn part_pages_display_like_before() {
                 ("BRIGHT", Uni),
                 ("DAMP", Uni),
                 ("POS", Uni),
-                ("SPACE", Uni),
+                ("--", Uni),
             ],
         ),
         (

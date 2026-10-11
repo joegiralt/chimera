@@ -375,7 +375,7 @@ The models below become Digitakt-style **machines**: each labels the shared para
 | The model page (id 94), named for its model: LOOP, REV, PING, WAVE, SCRUB, STRCH | as named | SIZE on every model, then: LOOP, REV: XFADE · PING: XFADE (dimmed) · WAVE: nothing more · SCRUB: XFADE, DRAG · STRCH: TYPE | none |
 | PIT (ADR 0042), a sub-page of DECK | PIT | PITCH, FINE, STEAL, GLIDE TIME | none |
 
-- **The home page is MODAL's RES pattern exactly:** MODEL, the four macros, then SPACE (the Part's reverb send). Owner question 1 of the first draft is closed: #279's four macros fit.
+- (superseded in part 2026-10-11, ADR 0120: SPACE is removed; that cell is empty) **The home page is MODAL's RES pattern exactly:** MODEL, the four macros, then SPACE (the Part's reverb send). Owner question 1 of the first draft is closed: #279's four macros fit.
 - Block ids 92–94 follow main's highest (91). They are checked against the other branches when built.
 - **A control the model ignores is dimmed,** with its matrix column, from one `tape_engine::reads` table, as MODAL's `modal::reads` does. PING-PONG and STRETCH dim XFADE.
 - **The strip** is how a page shows what it does to the sound: a 216 × 40 px view of the window, the source's min/max per column in `MID`, with START and END marks. Over it, per model:
