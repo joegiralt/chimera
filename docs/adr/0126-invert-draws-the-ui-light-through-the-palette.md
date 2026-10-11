@@ -12,10 +12,12 @@ the display shell; every screen golden (ADR 0011) hashes that palette.
 - `ThemeSettings.invert` (THEME param 5, `INVERT` OFF/ON, stored in SYSTEM
   like the others; an older SYSTEM reads OFF).
 - ON, the shell maps every framebuffer pixel (`Palette::map_raw`): BG, ACCENT,
-  ACCENT_SOFT, WARN and ALERT by exact match; every other colour by a
-  luminance flip that keeps hue (`flip_raw`). A neutral grey of level c
-  becomes 31 - c, so INK is near black, FAINT a light grey, and flipping twice
-  is the identity on greys. The renderer, the goldens and dark mode are
+  ACCENT_SOFT, WARN and ALERT by exact match; every other pixel by a
+  bitwise NOT. A grey of level c becomes 31 - c, so INK is near black, FAINT
+  a light grey, and flipping twice is the identity. NOT only suits greys, so
+  `light_golden_test` asserts every colour on every screen is a theme token
+  or a neutral grey; a new hard-coded colour fails it (all five coloured
+  tokens are exact swaps). The renderer, the goldens and dark mode are
   untouched; light goldens (`light_golden_test`) hash the mapped render.
 - BLACK in light mode lifts nothing: the ground is the dark ground at the
   same BLACK, bit-flipped. -2 is white, +4 about `#e7e7e7`.
@@ -31,12 +33,16 @@ the display shell; every screen golden (ADR 0011) hashes that palette.
 ## Alternatives considered
 - **A light palette in the renderer** (consts read through a global): the
   churn ADR 0033 rejected, and it would move every dark golden.
-- **Bitwise NOT of every pixel**: greys mirror, but teal turns rose and
-  yellow turns blue.
+- **A hue-keeping luminance flip** for non-grey pixels: no pixel needs it
+  (the guard test), and it cost about 200 B of code.
+- **NOT with no exact swaps**: greys mirror, but teal turns rose and red
+  turns cyan, hence the swaps.
 
 ## Consequences
 Toggling INVERT reflushes the whole screen once (~25 ms), as ACCENT does. The
-light map costs a few compares and a multiply per pixel on a flush (dark
-mode keeps its three compares). Antialiased blends of accent over ground
-are not exact matches and take the luminance flip, so their edge pixels
-differ slightly from the accent.
+flush branches on INVERT once per 256-pixel chunk (`Palette::map_into`); dark
+keeps its three compares a pixel, light adds two compares and a NOT, about
+1.5 ms over a full-screen flush estimated (76,800 px, ~10 cycles at 480 MHz)
+against ~25 ms of SPI. An antialiased blend of accent over ground would not
+be an exact match and would be NOTed to a wrong hue; the guard test keeps
+the renderer from drawing one.

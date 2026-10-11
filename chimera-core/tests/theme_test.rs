@@ -465,3 +465,16 @@ fn the_splash_palette_is_dark_mode() {
     let yellow = raw(Rgb565::new(241 >> 3, 229 >> 2, 121 >> 3));
     assert_eq!(splash.map_raw(yellow), yellow);
 }
+
+/// `LIGHT_FLOOR` (231) is the darkest light ground, BLACK +4: (28, 57, 28)
+/// expands to #e7e7e7 in 8 bits.
+#[test]
+fn the_light_floor_is_the_darkest_light_ground() {
+    let floor = ground_light(Black::new(Black::MAX));
+    assert_eq!(floor, Rgb565::new(28, 57, 28));
+    let ch = |v: u8, bits: u32| (v as u32) << (8 - bits) | (v as u32) >> (2 * bits - 8);
+    assert_eq!(
+        (ch(floor.r(), 5), ch(floor.g(), 6), ch(floor.b(), 5)),
+        (231, 231, 231)
+    );
+}

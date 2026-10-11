@@ -234,13 +234,34 @@ impl Palette {
         from_raw(self.map_raw(raw(c)))
     }
 
-    /// `map` on a raw framebuffer pixel. Out of line: the display, the
-    /// console shot and the desktop each flush through it.
+    /// `map` on one raw framebuffer pixel (tests, the desktop). Flushes use
+    /// `map_into`, which branches on INVERT once per call, not per pixel.
     #[inline(never)]
     pub fn map_raw(&self, px: u16) -> u16 {
         if self.invert {
-            return self.light_raw(px);
+            self.light_raw(px)
+        } else {
+            self.dark_raw(px)
         }
+    }
+
+    /// `src` through the palette as big-endian bytes into `dst` (two a pixel).
+    /// INVERT off costs the three compares it always did.
+    pub fn map_into(&self, src: &[u16], dst: &mut [u8]) {
+        let put = |d: &mut [u8; 2], v: u16| *d = v.to_be_bytes();
+        if self.invert {
+            for (d, &p) in dst.as_chunks_mut::<2>().0.iter_mut().zip(src) {
+                put(d, self.light_raw(p));
+            }
+        } else {
+            for (d, &p) in dst.as_chunks_mut::<2>().0.iter_mut().zip(src) {
+                put(d, self.dark_raw(p));
+            }
+        }
+    }
+
+    #[inline]
+    fn dark_raw(&self, px: u16) -> u16 {
         if px == raw(theme::ACCENT) {
             raw(self.accent)
         } else if px == raw(theme::ACCENT_SOFT) {

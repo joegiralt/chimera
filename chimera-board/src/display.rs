@@ -82,11 +82,7 @@ where
         let _ = self.cs.set_low();
         let mut bytes = [0u8; 512];
         for chunk in self.fb[start..end].chunks(256) {
-            for (i, &pixel) in chunk.iter().enumerate() {
-                let [hi, lo] = self.palette.map_raw(pixel).to_be_bytes();
-                bytes[i * 2] = hi;
-                bytes[i * 2 + 1] = lo;
-            }
+            self.palette.map_into(chunk, &mut bytes);
             let _ = self.spi.write(&bytes[..chunk.len() * 2]);
         }
         let _ = self.cs.set_high();
