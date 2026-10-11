@@ -50,9 +50,10 @@ pub const MIN_INC: f32 = 1e-6;
 const TRI_PEAK: f32 = R * 1.732_050_8;
 const TAU: f32 = core::f32::consts::TAU;
 
-/// `sin x` for |x| ≤ π within 6.1·10⁻⁶ (f32): an odd degree-9 polynomial,
+/// `sin x` for |x| ≤ π within 6.4·10⁻⁶ (f32): an odd degree-9 polynomial,
 /// least-squares weighted toward minimax. One argument reduction serves
-/// both the phase (`2π(φ − ½)`) and the fold (|g·sin| ≤ 3).
+/// both the phase (`φ − ½`, in turns: `ST`) and the fold (|g·sin| ≤ 3
+/// radians, under ½ turn).
 const S: [f32; 5] = [
     0.999_979_4,
     -0.166_624_38,
@@ -61,20 +62,34 @@ const S: [f32; 5] = [
     2.147_865_6e-6,
 ];
 
+/// `S` with 2π folded in (each `S[k]·(2π)^(2k+1)`, rounded once): the
+/// polynomial in turns, so the phase needs no multiply by 2π.
+const ST: [f32; 5] = {
+    let t = core::f64::consts::TAU;
+    let (mut c, mut tp, mut k) = ([0.0f32; 5], t, 0);
+    while k < 5 {
+        c[k] = (S[k] as f64 * tp) as f32;
+        tp *= t * t;
+        k += 1;
+    }
+    c
+};
+
+/// `sin 2πx` for |x| ≤ ½ turn (`S`'s polynomial in turns).
 #[inline(always)]
 fn psin(x: f32) -> f32 {
     // Estrin's split of the Horner chain: one multiply-add fewer
     let (x2, x4) = (x * x, (x * x) * (x * x));
-    let lo = S[0] + x2 * S[1];
-    let hi = S[2] + x2 * S[3] + x4 * S[4];
+    let lo = ST[0] + x2 * ST[1];
+    let hi = ST[2] + x2 * ST[3] + x4 * ST[4];
     x * (lo + x4 * hi)
 }
 
-/// `psin`'s derivative.
+/// `psin`'s derivative, a turn.
 #[inline(always)]
 fn dpsin(x: f32) -> f32 {
     let x2 = x * x;
-    S[0] + x2 * (3.0 * S[1] + x2 * (5.0 * S[2] + x2 * (7.0 * S[3] + x2 * (9.0 * S[4]))))
+    ST[0] + x2 * (3.0 * ST[1] + x2 * (5.0 * ST[2] + x2 * (7.0 * ST[3] + x2 * (9.0 * ST[4]))))
 }
 
 /// An `f32` in 0..=1; NaN is 0.
@@ -132,11 +147,12 @@ impl Wave {
     #[inline(always)]
     fn consts(self, sh: &Shaped, x: f32) -> [f32; 3] {
         match self {
-            // y = −x·g·((1 − s)·P + s·psin(g'·P)), P = psin(2π(φ − ½)) = −sin 2πφ
+            // y = −x·g·((1 − s)·P + s·psin(g'·P)), P = psin(φ − ½) = −sin 2πφ,
+            // g' = (1 + 2s)/2π (turns)
             Wave::Sine => [
                 -x * sh.sine_g * (1.0 - sh.fold),
                 -x * sh.sine_g * sh.fold,
-                1.0 + 2.0 * sh.fold,
+                (1.0 + 2.0 * sh.fold) * (1.0 / TAU),
             ],
             Wave::Tri => {
                 let w = sh.tri_w;
@@ -273,7 +289,7 @@ impl Kind for Sine {
 
     #[inline(always)]
     fn value(c: [f32; 3], p: f32, _: [f32; 2], _: f32) -> f32 {
-        let q = psin(TAU * (p - 0.5));
+        let q = psin(p - 0.5);
         c[0] * q + c[1] * psin(c[2] * q)
     }
 
@@ -283,15 +299,15 @@ impl Kind for Sine {
 
     #[inline(always)]
     fn slope(c: [f32; 3], p: f32, _: [f32; 2]) -> f32 {
-        let th = TAU * (p - 0.5);
-        TAU * dpsin(th) * (c[0] + c[1] * c[2] * dpsin(c[2] * psin(th)))
+        let th = p - 0.5;
+        dpsin(th) * (c[0] + c[1] * c[2] * dpsin(c[2] * psin(th)))
     }
 
     fn value_slope(c: [f32; 3], p: f32, _: [f32; 2]) -> (f32, f32) {
-        let th = TAU * (p - 0.5);
+        let th = p - 0.5;
         let q = psin(th);
         let y = c[0] * q + c[1] * psin(c[2] * q);
-        let d = TAU * dpsin(th) * (c[0] + c[1] * c[2] * dpsin(c[2] * q));
+        let d = dpsin(th) * (c[0] + c[1] * c[2] * dpsin(c[2] * q));
         (y, d)
     }
 }
