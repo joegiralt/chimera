@@ -18,6 +18,7 @@ use screen::*;
 // Re-recorded for ADR 0057: every Part and mixer header reads
 // `PART n · SOUND` or `· MIX`; the mixer recipes open on SENDS. The Algo
 // screens again for ADR 0063: INIT's VOL 45 and RR 5.
+// amp_vel_*, modal_amp, mixer_sends, mixer_out_p2 again: send and SYM hints.
 // SETTINGS crumbs again for ORBIT (plan Task 10): they always clear its
 // beat dot, so three paths drop their first part.
 const GOLDENS: &[(&str, u64)] = &[
@@ -82,8 +83,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("lfo_func", 0x60ec706c0ecfc450),
     // Re-recorded: AMP is the sends over FOLD, VEL, MIX, SYM one page down (sends Task 5);
     // mod_matrix_wide primes FOLD and MIX on their new cells.
-    ("amp_vel_dimmed", 0x0a0c82c553ac1086),
-    ("amp_vel_live", 0x9489af0bd7841342),
+    ("amp_vel_dimmed", 0xe4f7cd9ac611053b),
+    ("amp_vel_live", 0xf3ce4cc3246f4673),
     ("amp_sym", 0xe833d5db249ae1b9),
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
@@ -109,14 +110,14 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_home_bowed", 0x997c6d6606b0dd7c),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_amp", 0x18866d46d2e58eaf),
+    ("modal_amp", 0x8ac5c00a7c8b7b27),
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it, the screens are as before.
     #[cfg(not(feature = "master-tape"))]
     ("mixer_part", 0x24ee8f61ddea9047),
     // mixer_sends, mixer_out_p2 re-recorded: the sends are the Sound's OUT block (ADR 0123).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_sends", 0x37b85f76ea901bdc),
+    ("mixer_sends", 0xe04acfd7821d85d9),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay", 0xc697f9d549cfb496),
     // TYPE first, the panel's units, and REV › MORE (reverb TYPEs T6);
@@ -187,7 +188,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_master_level", 0x38d97b4c60a9a7a4),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_out_p2", 0x0e56a40216caf7af),
+    ("mixer_out_p2", 0x61706e98c91f5477),
     #[cfg(feature = "master-tape")]
     ("mixer_out_p2", 0x010fae34cf537021),
     ("algo_out_p3", 0x3e91d6b588f4ebfa),

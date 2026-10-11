@@ -8,11 +8,17 @@
 mod common;
 mod screen;
 
-use chimera_core::addr::Op;
+use chimera_core::addr::{BlockRef, Op, ParamAddr};
+use chimera_core::block::ParamId;
+use chimera_core::dsp::chorus::{self, ChorusMode};
+use chimera_core::dsp::reverb::ReverbType;
 use chimera_core::orbit::RingIdx;
 use chimera_core::orbit::scene::Target;
+use chimera_core::params::ParamSnapshot;
+use chimera_core::params::{FolderParams, OutParams};
 use chimera_core::project::PartId;
 use chimera_core::ui::block_def::BlockDef;
+use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::hint::{self, Gesture, Hint};
 use chimera_core::ui::mod_grid::{self, MatrixState};
 use chimera_core::ui::orbit::draw::{
@@ -35,7 +41,7 @@ fn band(ui: &UiState, def: &BlockDef, slot: usize) -> (String, Hint) {
         Some(fo) => (fo.label.as_str().into(), fo.hint),
         None => (
             view(def, slot, &ctx).label().into(),
-            view(def, slot, &ctx).hint(),
+            view(def, slot, &ctx).hint(&ctx),
         ),
     }
 }
@@ -257,7 +263,11 @@ fn route_knobs_name_the_delete() {
         let ctx = SlotCtx::read(ui.params(), Op::A);
         for &(def, slot, label) in cells {
             let v = view(def, slot, &ctx);
-            assert_eq!((v.label(), v.hint()), (label, mod_grid::DELETE), "{kind:?}");
+            assert_eq!(
+                (v.label(), v.hint(&ctx)),
+                (label, mod_grid::DELETE),
+                "{kind:?}"
+            );
         }
     }
 }
@@ -593,5 +603,82 @@ fn source_hints_fit() {
             chimera_core::ui::source_cell::tracking(wont.as_str()),
         );
         assert!(t <= w, "{}: {t}", wont.as_str());
+    }
+}
+
+fn out_hint(block: BlockRef, id: ParamId, ctx: &SlotCtx) -> Hint {
+    let def = &reg::FOLDER;
+    let i = (0..def.params.len())
+        .find(|&i| view(def, i, ctx).addr() == Some(ParamAddr::new(block, id)))
+        .expect("cell on AMP");
+    view(def, i, ctx).hint(ctx)
+}
+
+fn ctx0() -> SlotCtx {
+    SlotCtx::read(&ParamSnapshot::default(), Op::A)
+}
+
+#[test]
+fn reverb_hint_names_the_type() {
+    for t in ReverbType::ALL {
+        let c = SlotCtx { rev: t, ..ctx0() };
+        assert_eq!(
+            out_hint(BlockRef::Out, OutParams::SEND3, &c),
+            &[Gesture("REVERB ▸", ReverbType::NAMES[t.index()])][..]
+        );
+    }
+}
+
+#[test]
+fn chorus_hint_names_the_mode() {
+    for (i, name) in chorus::MODE_NAMES.iter().enumerate() {
+        let c = SlotCtx {
+            chorus: ChorusMode::from_u8(i as u8),
+            ..ctx0()
+        };
+        assert_eq!(
+            out_hint(BlockRef::Out, OutParams::SEND1, &c),
+            &[Gesture("CHORUS ▸", name)][..]
+        );
+    }
+    assert!(out_hint(BlockRef::Out, OutParams::SEND2, &ctx0()).is_empty());
+}
+
+#[test]
+fn fold_vel_mix_hint_sym() {
+    let want: Hint = &[Gesture("EDIT ▾", "SYM")];
+    let c = ctx0();
+    for (b, p) in [
+        (BlockRef::Folder, FolderParams::FOLD),
+        (BlockRef::Out, OutParams::VCA_VEL),
+        (BlockRef::Folder, FolderParams::MIX),
+    ] {
+        assert_eq!(out_hint(b, p, &c), want);
+    }
+}
+
+#[test]
+fn hints_draw() {
+    let mut c = ctx0();
+    let mut all = vec![];
+    for t in ReverbType::ALL {
+        c.rev = t;
+        all.push(out_hint(BlockRef::Out, OutParams::SEND3, &c));
+    }
+    for i in 0..4 {
+        c.chorus = ChorusMode::from_u8(i);
+        all.push(out_hint(BlockRef::Out, OutParams::SEND1, &c));
+    }
+    all.push(out_hint(BlockRef::Folder, FolderParams::FOLD, &c));
+    for h in all {
+        for g in h {
+            assert!(
+                (g.0.to_owned() + g.1)
+                    .chars()
+                    .all(|ch| ch.is_ascii() || ch == '▸' || ch == '▾'),
+                "{h:?}"
+            );
+        }
+        assert!(hint::width(h) <= theme::CONTENT_W, "{h:?}");
     }
 }

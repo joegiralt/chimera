@@ -739,13 +739,17 @@ fn mix_minus_on_a_route_view_deletes_its_route() {
     let ctx = SlotCtx::read(ui.params(), chimera_core::addr::Op::A);
     for i in [1, 3] {
         assert_eq!(
-            view::view(&FILTER_MOD, i, &ctx).hint(),
+            view::view(&FILTER_MOD, i, &ctx).hint(&ctx),
             mod_grid::DELETE,
             "{i}"
         );
     }
     for i in [4, 5] {
-        assert_eq!(view::view(&FILTER, i, &ctx).hint(), mod_grid::DELETE, "{i}");
+        assert_eq!(
+            view::view(&FILTER, i, &ctx).hint(&ctx),
+            mod_grid::DELETE,
+            "{i}"
+        );
     }
     back_to_flt(&mut ui, false);
     feed(&mut ui, Input::turn(EncoderId::F, 1)); // FM2
