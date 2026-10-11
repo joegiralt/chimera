@@ -307,6 +307,9 @@ pub const COST_XOR: Cost = Cost(630);
 /// BITS: 155.1 + 148.0 + 55.7 + 79.6 + 82.0 + 95.
 pub const COST_BITS: Cost = Cost(620);
 
+/// A MODE duck's gain over one block, if one runs.
+type Gain = Option<&'static [f32; BLOCK_SIZE]>;
+
 /// The MODE duck's length each way, two blocks.
 const DUCK: usize = 2 * BLOCK_SIZE;
 
@@ -340,6 +343,17 @@ static DUCK_DOWN: [[f32; BLOCK_SIZE]; 2] = {
             k += 1;
         }
         g[j / BLOCK_SIZE][j % BLOCK_SIZE] = (0.5 + 0.5 * sum) as f32;
+        j += 1;
+    }
+    g
+};
+
+/// The duck's gain on its way up, `1 − DUCK_DOWN`.
+static DUCK_UP: [[f32; BLOCK_SIZE]; 2] = {
+    let mut g = DUCK_DOWN;
+    let mut j = 0;
+    while j < DUCK {
+        g[j / BLOCK_SIZE][j % BLOCK_SIZE] = 1.0 - g[j / BLOCK_SIZE][j % BLOCK_SIZE];
         j += 1;
     }
     g
@@ -658,77 +672,69 @@ impl VaEngine {
             Duck::Steady if p.mode != self.playing => Duck::Down(0),
             d => d,
         };
+        // the duck's gain this block, applied in the operator's loop
+        let gain = match duck {
+            Duck::Steady => None,
+            Duck::Down(b) => Some(&DUCK_DOWN[usize::from(b & 1)]),
+            Duck::Up(b) => Some(&DUCK_UP[usize::from(b & 1)]),
+        };
         match self.playing {
-            VaMode::Mix => self.render_mix(out, &l),
-            VaMode::Sync => self.render_sync(out, &l),
-            VaMode::Ring => self.render_ring(out, &l),
-            VaMode::Xor => self.render_xor(out, &l),
+            VaMode::Mix => self.render_mix(out, &l, gain),
+            VaMode::Sync => self.render_sync(out, &l, gain),
+            VaMode::Ring => self.render_ring(out, &l, gain),
+            VaMode::Xor => self.render_xor(out, &l, gain),
             VaMode::Bits => {
                 self.crusher.set(unit(p.amount));
-                self.render_bits(out, &l)
+                self.render_bits(out, &l, gain)
             }
         }
         self.duck = match duck {
             Duck::Steady => Duck::Steady,
-            Duck::Down(b) => {
-                let g = &DUCK_DOWN[usize::from(b & 1)];
-                for (y, g) in out.iter_mut().zip(g) {
-                    *y *= g;
-                }
-                if b == 0 {
-                    Duck::Down(1)
-                } else {
-                    self.playing = p.mode;
-                    Duck::Up(0)
-                }
+            Duck::Down(0) => Duck::Down(1),
+            Duck::Down(_) => {
+                self.playing = p.mode;
+                Duck::Up(0)
             }
-            Duck::Up(b) => {
-                let g = &DUCK_DOWN[usize::from(b & 1)];
-                for (y, g) in out.iter_mut().zip(g) {
-                    *y *= 1.0 - g;
-                }
-                if b == 0 { Duck::Up(1) } else { Duck::Steady }
-            }
+            Duck::Up(0) => Duck::Up(1),
+            Duck::Up(_) => Duck::Steady,
         };
     }
 
     #[inline(never)]
-    fn render_mix(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes) {
-        self.run(out, l, VaMode::Mix);
+    fn render_mix(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
+        self.run(out, l, VaMode::Mix, gain);
     }
 
     #[inline(never)]
-    fn render_sync(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes) {
-        self.run(out, l, VaMode::Sync);
+    fn render_sync(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
+        self.run(out, l, VaMode::Sync, gain);
     }
 
     #[inline(never)]
-    fn render_ring(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes) {
-        self.run(out, l, VaMode::Ring);
+    fn render_ring(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
+        self.run(out, l, VaMode::Ring, gain);
     }
 
     #[inline(never)]
-    fn render_xor(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes) {
-        self.run(out, l, VaMode::Xor);
+    fn render_xor(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
+        self.run(out, l, VaMode::Xor, gain);
     }
 
     #[inline(never)]
-    fn render_bits(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes) {
-        self.run(out, l, VaMode::Bits);
+    fn render_bits(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
+        self.run(out, l, VaMode::Bits, gain);
     }
 
     /// One block in `mode`, a constant in each caller, so each mode's loop
     /// is its own (the count sees each). OSC 1 renders into `out` with its
     /// wraps, OSC 2 beside it (synced to them in SYNC), then the operator,
-    /// the sub and the chain gain run over both.
+    /// the sub, the chain gain and a duck's gain run over both.
     #[inline(always)]
-    fn run(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, mode: VaMode) {
+    fn run(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, mode: VaMode, gain: Gain) {
         let Self {
             osc: [o1, o2],
             stab,
             jit,
-            sub,
-            crusher,
             osc2: b,
             wraps: wr,
             ..
@@ -743,6 +749,30 @@ impl VaEngine {
         } else {
             o2.render::<BLOCK_SIZE, false, false>(b, wr, &l.osc[1], &mut jit[1], &mut draw);
         }
+        // a loop of its own while the duck runs (the count bills it)
+        match gain {
+            Some(g) => self.operator::<true>(out, l, mode, g),
+            None => self.operator::<false>(out, l, mode, &DUCK_UP[1]),
+        }
+    }
+
+    /// The operator, the sub and the chain gain over both oscillators'
+    /// block, times `g` when `DUCKED`.
+    #[inline(always)]
+    fn operator<const DUCKED: bool>(
+        &mut self,
+        out: &mut [f32; BLOCK_SIZE],
+        l: &Lanes,
+        mode: VaMode,
+        g: &[f32; BLOCK_SIZE],
+    ) {
+        let Self {
+            sub,
+            crusher,
+            osc2: b,
+            wraps: wr,
+            ..
+        } = self;
         let (mut x, dx) = l.amount;
         let (mut k, dk) = l.k;
         let (s0, ds) = l.sub;
@@ -771,7 +801,8 @@ impl VaEngine {
                     VaMode::Bits => q * crusher.process_scaled(a + b, liq),
                 };
                 let sv = s.step(wr[i]);
-                out[i] = (c + sl * sv) * n;
+                let y = (c + sl * sv) * n;
+                out[i] = if DUCKED { y * g[i] } else { y };
                 n += dn;
                 dn += ddn;
             }};
