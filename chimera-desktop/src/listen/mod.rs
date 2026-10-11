@@ -961,6 +961,70 @@ pub fn page(rows: &[(TapeModel, &Src)]) -> String {
     PAGE.replace("<!--SECTIONS-->", &out)
 }
 
+/// One render on a `rows_page` row: its label, its WAV (relative to the
+/// page) and a measurement line.
+#[derive(Clone, Debug)]
+pub struct Player {
+    pub label: String,
+    pub file: String,
+    pub info: String,
+}
+
+/// A row of a `rows_page`: a title, text lines (flagged lines stand out),
+/// a player per render. A private row goes in the PRIVATE section.
+#[derive(Clone, Debug)]
+pub struct Row {
+    pub title: String,
+    pub lines: Vec<(String, bool)>,
+    pub players: Vec<Player>,
+    pub private: bool,
+}
+
+const ROWS_PAGE: &str = include_str!("rows.html");
+
+/// A static listening page over any rows (the factory Sounds'), each
+/// render a plain `<audio>` player: the folder publishes as it is. Private
+/// rows get their own PRIVATE section, only when there are any.
+pub fn rows_page(title: &str, intro: &str, rows: &[Row]) -> String {
+    let mut out = String::new();
+    for (private, head) in [(false, "SOUNDS"), (true, "PRIVATE")] {
+        let mut it = rows.iter().filter(|r| r.private == private).peekable();
+        if it.peek().is_none() {
+            continue;
+        }
+        let class = if private { " class=\"private\"" } else { "" };
+        let _ = writeln!(out, "<section{class}><h2>{head}</h2>");
+        for r in it {
+            let _ = write!(
+                out,
+                "<article class=\"track\"><div class=\"meta\"><h3>{}</h3></div><div class=\"lines\">",
+                esc(&r.title)
+            );
+            for (l, flag) in &r.lines {
+                let c = if *flag { " class=\"flag\"" } else { "" };
+                let _ = write!(out, "<p{c}>{}</p>", esc(l));
+            }
+            out.push_str("</div>\n");
+            for p in &r.players {
+                let _ = writeln!(
+                    out,
+                    "<div class=\"player\"><div class=\"label\"><b>{}</b><span>{}</span></div>\
+                     <audio controls preload=\"none\" src=\"{}\"></audio></div>",
+                    esc(&p.label),
+                    esc(&p.info),
+                    esc(&p.file)
+                );
+            }
+            out.push_str("</article>\n");
+        }
+        out.push_str("</section>\n");
+    }
+    ROWS_PAGE
+        .replace("<!--TITLE-->", &esc(title))
+        .replace("<!--INTRO-->", &esc(intro))
+        .replace("<!--SECTIONS-->", &out)
+}
+
 /// The WAVs' ends fade over 10 ms, so a player stopping there never clicks.
 const FADE: usize = 480;
 
@@ -1100,6 +1164,28 @@ mod tests {
             html.matches("rel=\"noopener noreferrer\"").count(),
             rows.len()
         );
+    }
+
+    #[test]
+    fn rows_page_escapes_and_parts_private() {
+        let row = |t: &str, private| Row {
+            title: t.into(),
+            lines: vec![("A & B".into(), false), ("by ear".into(), true)],
+            players: vec![Player {
+                label: "LONG".into(),
+                file: "renders/S9100002-long.wav".into(),
+                info: "-11.0 LUFS".into(),
+            }],
+            private,
+        };
+        let html = rows_page("T", "I", &[row("<PAD>", false)]);
+        assert!(html.contains("&lt;PAD&gt;") && html.contains("A &amp; B"));
+        assert!(html.contains("src=\"renders/S9100002-long.wav\""));
+        assert!(html.contains("<p class=\"flag\">by ear</p>"));
+        assert!(html.contains(">SOUNDS<") && !html.contains("PRIVATE"));
+        let html = rows_page("T", "I", &[row("A", false), row("P", true)]);
+        assert!(html.contains("<section class=\"private\"><h2>PRIVATE</h2>"));
+        assert_eq!(html.matches("<audio").count(), 2);
     }
 
     #[test]

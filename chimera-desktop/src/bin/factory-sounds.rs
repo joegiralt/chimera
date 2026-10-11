@@ -1,13 +1,17 @@
 //! `just factory-sounds`: the public factory Sounds (spec § 3, ADR 0134)
 //! from `tools/factory-sounds/` into `target/factory-sounds/public/`.
-//! `factory-sounds fmt` rewrites each Source with its display comments.
+//! `factory-sounds fmt [--level]` rewrites each Source with its display
+//! comments (`--level`: each `trim` centred on −11 LUFS). `factory-sounds
+//! qa [--wav]` renders and gates every Sound (spec § 4) into the ledger:
+//! `report.txt`; with `--wav` the renders and, when all pass,
+//! `listening.html`.
 
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
 use chimera_core::storage::BuildStamp;
 use chimera_desktop::factory_sounds::build::{self, SOUND_FILES};
-use chimera_desktop::factory_sounds::source;
+use chimera_desktop::factory_sounds::{qa, source};
 
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -16,8 +20,19 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let r = match args.first().map(String::as_str) {
         None | Some("build") => run_build(),
-        Some("fmt") => run_fmt(),
-        Some(a) => Err(format!("factory-sounds [build | fmt], not {a}")),
+        Some("fmt") => match args.get(1).map(String::as_str) {
+            None => run_fmt(false),
+            Some("--level") => run_fmt(true),
+            Some(a) => Err(format!("fmt [--level], not {a}")),
+        },
+        Some("qa") => match args.get(1).map(String::as_str) {
+            None => run_qa(false),
+            Some("--wav") => run_qa(true),
+            Some(a) => Err(format!("qa [--wav], not {a}")),
+        },
+        Some(a) => Err(format!(
+            "factory-sounds [build | fmt [--level] | qa [--wav]], not {a}"
+        )),
     };
     match r {
         Ok(()) => ExitCode::SUCCESS,
@@ -77,11 +92,12 @@ fn run_build() -> Result<(), String> {
     Ok(())
 }
 
-fn run_fmt() -> Result<(), String> {
+fn run_fmt(level: bool) -> Result<(), String> {
     for f in SOUND_FILES {
         let p = dir().join(f);
         let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-        source::parse(&text, f)?;
+        let all = source::parse(&text, f)?;
+        let text = if level { levelled(&text, &all)? } else { text };
         let canon = source::fmt(&text);
         if canon != text {
             std::fs::write(&p, &canon).map_err(|e| format!("{}: {e}", p.display()))?;
@@ -89,4 +105,44 @@ fn run_fmt() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// `text` with each Source's `trim` centred on −11 LUFS: measured, trimmed,
+/// measured again (the limiter bends a loud first guess). Placeholders and
+/// Sounds levelled by ear keep theirs.
+fn levelled(text: &str, all: &[source::Source]) -> Result<String, String> {
+    let mut trims = Vec::new();
+    for s in all
+        .iter()
+        .filter(|s| !s.placeholder && s.level_by_ear.is_none())
+    {
+        let mut t = s.clone();
+        for _ in 0..2 {
+            t.trim = qa::level_trim(&t, qa::level_lufs(&t)?)?;
+        }
+        println!("{} trim {:+.1} dB", s.name.as_str(), t.trim);
+        trims.push((s, t.trim));
+    }
+    Ok(source::set_trims(text, &trims))
+}
+
+/// Every Sound rendered and gated into the ledger; fails unless all pass.
+fn run_qa(wav: bool) -> Result<(), String> {
+    let all: Vec<_> = build::sources(&dir())?
+        .into_iter()
+        .filter(|s| !s.placeholder)
+        .collect();
+    source::check(&all)?;
+    let reports = all.iter().map(qa::gates).collect::<Result<Vec<_>, _>>()?;
+    let bands: Vec<_> = reports.iter().map(|r| r.bands).collect();
+    let samey = qa::samey(&bands);
+    let ledger = qa::ledger()?;
+    let pass = qa::write(&ledger, &reports, &samey, wav)?;
+    print!("{}", qa::report_text(&reports, &samey));
+    println!("{}", ledger.display());
+    if pass {
+        Ok(())
+    } else {
+        Err("a gate failed: see report.txt".into())
+    }
 }

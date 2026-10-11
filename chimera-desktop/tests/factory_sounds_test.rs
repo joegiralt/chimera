@@ -383,3 +383,372 @@ fn trim_out_of_range_fails() {
     assert!(source::trimmed(0.8, -200.0).is_ok_and(|t| t >= 0.0));
     run(&base_with(11, r#"trim = "+1.9""#)).unwrap();
 }
+
+// ---- QA before UAT (spec § 4) ----
+
+use chimera_core::part::PartMode;
+use chimera_desktop::factory_sounds::qa::{self, Check, Gate, Plan, Verdict};
+use chimera_desktop::factory_sounds::source::Script;
+
+const SR: f32 = 48_000.0;
+
+fn hz(n: u8) -> f32 {
+    440.0 * 2f32.powf((n as f32 - 69.0) / 12.0)
+}
+
+fn sine(f: f32, amp: f32, secs: f32) -> Vec<f32> {
+    (0..(secs * SR) as usize)
+        .map(|i| amp * (std::f32::consts::TAU * f * i as f32 / SR).sin())
+        .collect()
+}
+
+/// Deterministic white noise, ±`amp`.
+fn noise(amp: f32, secs: f32) -> Vec<f32> {
+    let mut s = 0x2545_f491_u32;
+    (0..(secs * SR) as usize)
+        .map(|_| {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            amp * (s as f32 / u32::MAX as f32 * 2.0 - 1.0)
+        })
+        .collect()
+}
+
+#[test]
+fn scripts_follow_the_spec() {
+    let notes = |p: &Plan| p.hits.iter().map(|h| h.note).collect::<Vec<_>>();
+    let held = |p: &Plan| p.hits.iter().map(|h| h.off - h.on).collect::<Vec<_>>();
+    let v100 = |p: &Plan| p.hits.iter().all(|h| h.vel == 100);
+
+    let bass = qa::plan(Script::Bass, 36);
+    assert_eq!(notes(&bass), [36]);
+    assert_eq!(held(&bass), [0.3]);
+    assert_eq!(bass.secs, 0.3 + 1.5);
+    assert!(v100(&bass));
+
+    let stab = qa::plan(Script::Stab, 36);
+    assert_eq!(notes(&stab), [48, 52, 55, 59], "C3 E3 G3 B3");
+    assert!(held(&stab).iter().all(|&h| h == 0.25) && v100(&stab));
+    assert!(stab.hits.iter().all(|h| h.on == 0.0));
+
+    let short = qa::plan(Script::Short, 36);
+    assert_eq!(notes(&short), [60], "C4");
+    assert_eq!(held(&short), [0.08]);
+
+    let long = qa::plan(Script::Long, 48);
+    assert_eq!(notes(&long), [48]);
+    assert_eq!(held(&long), [2.0]);
+    assert_eq!(long.secs, 4.0);
+
+    let tex = qa::plan(Script::Texture, 48);
+    assert_eq!(tex.hits.len(), 16);
+    for (i, h) in tex.hits.iter().enumerate() {
+        assert!(
+            (h.on - i as f32 * 0.125).abs() < 1e-6,
+            "sixteenths at 120 BPM"
+        );
+        assert!(h.off <= h.on + 0.125);
+    }
+    let (lo, hi) = (
+        tex.hits.iter().map(|h| h.note).min().unwrap(),
+        tex.hits.iter().map(|h| h.note).max().unwrap(),
+    );
+    assert_eq!((lo, hi), (48, 72), "two octaves from home");
+    assert_eq!(tex.hits[0].vel, 40);
+    assert_eq!(tex.hits[15].vel, 127);
+    assert!(tex.hits.windows(2).all(|w| w[0].vel <= w[1].vel));
+
+    let glide = qa::plan(Script::Glide, 60);
+    assert_eq!(notes(&glide), [36, 43, 48], "C2 G2 C3");
+    assert_eq!(glide.mode, Some(PartMode::Mono));
+    assert!(
+        glide.hits.windows(2).all(|w| w[1].on < w[0].off),
+        "overlapping"
+    );
+    for s in [
+        Script::Bass,
+        Script::Stab,
+        Script::Short,
+        Script::Long,
+        Script::Texture,
+    ] {
+        assert_eq!(qa::plan(s, 48).mode, None, "{s:?} plays the demo mode");
+    }
+}
+
+#[test]
+fn loudness_gate() {
+    for l in [-11.0, -9.0, -13.0] {
+        assert_eq!(qa::loudness(l, None), Verdict::Pass, "{l}");
+    }
+    for l in [-8.9, -13.1, -30.0, f32::NAN] {
+        assert_eq!(qa::loudness(l, None), Verdict::Fail, "{l}");
+    }
+    assert!(matches!(
+        qa::loudness(-20.0, Some("a soft pad under the lead")),
+        Verdict::Exempt(why) if why.contains("soft pad")
+    ));
+}
+
+#[test]
+fn limiter_gate() {
+    assert_eq!(qa::limiter(0.9, false), Verdict::Pass);
+    assert_eq!(qa::limiter(1.1, false), Verdict::Fail);
+    assert_eq!(qa::limiter(2.9, true), Verdict::Pass);
+    assert_eq!(qa::limiter(3.1, true), Verdict::Fail);
+}
+
+#[test]
+fn click_dc_finite_gate() {
+    // A sine from a zero crossing: no click.
+    let clean = sine(220.0, 0.3, 1.0);
+    assert_eq!(qa::clicks(&clean, &[0]).1, Verdict::Pass);
+    let mut click = clean.clone();
+    click[24_000] += 0.2;
+    assert_eq!(qa::clicks(&click, &[0]).1, Verdict::Fail, "a click");
+    let dc: Vec<f32> = clean.iter().map(|v| v + 0.002).collect();
+    assert_eq!(qa::clicks(&dc, &[0]).1, Verdict::Fail, "DC over -60 dBFS");
+    let mut nan = clean.clone();
+    nan[100] = f32::NAN;
+    assert_eq!(qa::clicks(&nan, &[0]).1, Verdict::Fail, "not finite");
+}
+
+#[test]
+fn aliasing_gate() {
+    for n in [84u8, 96] {
+        let f0 = hz(n);
+        // A band-limited saw: harmonics only.
+        let saw: Vec<f32> = (0..96_000)
+            .map(|i| {
+                let t = i as f32 / SR;
+                (1..)
+                    .take_while(|&k| k as f32 * f0 < 20_000.0)
+                    .map(|k| (std::f32::consts::TAU * k as f32 * f0 * t).sin() / k as f32)
+                    .sum::<f32>()
+                    * 0.2
+            })
+            .collect();
+        let (db, v) = qa::aliasing(&saw, f0, true);
+        assert_eq!(v, Verdict::Pass, "C{}: {db:.1} dB", n / 12 - 1);
+        // An alias 30 dB down, between harmonics.
+        let bad: Vec<f32> = saw
+            .iter()
+            .zip(sine(f0 * 1.37, 0.2 * 0.0316, 2.0))
+            .map(|(a, b)| a + b)
+            .collect();
+        let (db, v) = qa::aliasing(&bad, f0, true);
+        assert_eq!(v, Verdict::Fail, "{db:.1} dB");
+        assert!(matches!(
+            qa::aliasing(&bad, f0, false).1,
+            Verdict::Exempt(_)
+        ));
+    }
+}
+
+#[test]
+fn tail_gate() {
+    // Off at 1 s; silent by 2 s.
+    let mut x = sine(220.0, 0.3, 1.0);
+    x.extend(
+        sine(220.0, 0.3, 1.0)
+            .iter()
+            .enumerate()
+            .map(|(i, v)| v * (-(i as f32) / 8_000.0).exp()),
+    );
+    x.extend(vec![0.0; 96_000]);
+    assert_eq!(qa::tail(&x, 48_000, 2.0).1, Verdict::Pass);
+    // A hum that never stops.
+    let hum = sine(50.0, 0.01, 5.0);
+    let (db, v) = qa::tail(&hum, 48_000, 2.0);
+    assert_eq!(v, Verdict::Fail, "{db}");
+    // Still ringing at the limit fails; a render too short to reach it too.
+    assert_eq!(qa::tail(&x, 48_000, 0.5).1, Verdict::Fail);
+    assert_eq!(qa::tail(&x[..96_000], 48_000, 2.0).1, Verdict::Fail);
+
+    // MODAL keeps ringing: 10 s; anything else its release plus 2 s.
+    let modal = source::parse(&BASE.replace("\"VA\"", "\"MODAL\""), "m.toml").unwrap();
+    let snd = source::to_sound(&modal[0]).unwrap();
+    assert_eq!(qa::tail_within(&modal[0], &snd), 10.0);
+    let va = source::parse(BASE, "v.toml").unwrap();
+    let snd = source::to_sound(&va[0]).unwrap();
+    let w = qa::tail_within(&va[0], &snd);
+    assert!(
+        (2.0..3.0).contains(&w),
+        "VA's neutral release (300 ms) + 2 s: {w}"
+    );
+}
+
+#[test]
+fn tap_gate() {
+    let a = noise(0.3, 1.0);
+    // The same noise, its top lowpassed away (a one-pole at ~500 Hz).
+    let mut y = 0.0;
+    let dull: Vec<f32> = a
+        .iter()
+        .map(|&v| {
+            y += 0.065 * (v - y);
+            y
+        })
+        .collect();
+    let (ba, bd) = (qa::erb_bands(&a), qa::erb_bands(&dull));
+    let err = qa::spectral_error(&ba, &bd);
+    assert_eq!(qa::tap(err), Verdict::Pass, "{err:.1} dB");
+    let same = qa::erb_bands(&a.iter().map(|v| v * 1.05).collect::<Vec<_>>());
+    let err = qa::spectral_error(&ba, &same);
+    assert_eq!(
+        qa::tap(err),
+        Verdict::Fail,
+        "{err:.1} dB: the tap is inaudible"
+    );
+}
+
+#[test]
+fn samey_flags_pair_within_3db_on_32_erb() {
+    let a = noise(0.3, 1.0);
+    let b: Vec<f32> = a.iter().map(|v| v * 1.1).collect(); // +0.8 dB
+    let c = sine(440.0, 0.3, 1.0);
+    let bands: Vec<[f32; 32]> = [&a, &b, &c].iter().map(|x| qa::erb_bands(x)).collect();
+    assert_eq!(bands[0].len(), qa::ERB_BANDS);
+    assert_eq!(qa::samey(&bands), vec![(0, 1)]);
+    // 4 dB louder everywhere is not samey.
+    let d: Vec<f32> = a.iter().map(|v| v * 1.585).collect();
+    assert!(qa::samey(&[bands[0], qa::erb_bands(&d)]).is_empty());
+}
+
+/// A Report for `BASE` without rendering: one `long` render and gates.
+fn report(pass: bool, private: bool) -> qa::Report {
+    let s = &source::parse(BASE, "r.toml").unwrap()[0];
+    qa::Report {
+        id: s.id,
+        name: s.name.as_str().into(),
+        note: s.note.as_str().into(),
+        demo: s.demo,
+        edits: private.then(|| "filter: 2040 instead of open".into()),
+        private,
+        gates: vec![Gate {
+            check: Check::Loudness,
+            value: if pass { -11.0 } else { -20.0 },
+            verdict: if pass { Verdict::Pass } else { Verdict::Fail },
+        }],
+        renders: vec![qa::Render {
+            script: Script::Long,
+            mono: sine(220.0, 0.2, 0.5),
+            lufs: -11.0,
+            peak_dbfs: -14.0,
+        }],
+        bands: [0.0; 32],
+    }
+}
+
+fn scratch_ledger(name: &str) -> std::path::PathBuf {
+    let d = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&d);
+    d
+}
+
+#[test]
+fn page_only_when_all_pass() {
+    let d = scratch_ledger("ledger-page");
+    assert!(qa::write(&d, &[report(true, false)], &[], true).unwrap());
+    let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
+    assert!(page.contains("TEST PAD") && page.contains("A TEST PAD: SLOW FILTER"));
+    assert!(page.contains("POLY") && page.contains("-11.0 LUFS"));
+    assert!(
+        page.contains("\"renders/S9100002-long.wav\""),
+        "relative paths"
+    );
+    assert!(d.join("renders/S9100002-long.wav").is_file());
+    assert!(
+        !page.contains("PRIVATE"),
+        "no private section without ports"
+    );
+    assert!(d.join("report.txt").is_file());
+    assert!(!d.join("index.html").exists(), "never index.html");
+
+    // Ports render into their own section, with their edits.
+    assert!(qa::write(&d, &[report(true, false), report(true, true)], &[], true).unwrap());
+    let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
+    assert!(page.contains("PRIVATE") && page.contains("filter: 2040 instead of open"));
+
+    // One failing gate: the report, and no page (an old one is removed).
+    assert!(!qa::write(&d, &[report(true, false), report(false, false)], &[], true).unwrap());
+    assert!(!d.join("listening.html").exists());
+    let txt = std::fs::read_to_string(d.join("report.txt")).unwrap();
+    assert!(txt.contains("FAIL") && txt.contains("S9100002"), "{txt}");
+}
+
+#[test]
+fn ledger_never_tmp() {
+    let tmp = std::env::temp_dir();
+    for bad in [
+        "/tmp/showcase".into(),
+        "/tmp/scratch-1000/x/scratchpad/ledger".into(),
+        tmp.join("ledger"),
+        "~/../../tmp/x".into(),
+        "relative/ledger".into(),
+    ] {
+        let p: std::path::PathBuf = bad;
+        assert!(qa::checked_ledger(&p).is_err(), "{}", p.display());
+    }
+    let ok = "~/dev/chimera/.superpowers/ledgers/showcase";
+    assert_eq!(
+        qa::checked_ledger(ok.as_ref()).unwrap(),
+        std::path::PathBuf::from(ok)
+    );
+    // `write` refuses one too.
+    assert!(qa::write("/tmp/showcase-qa".as_ref(), &[], &[], false).is_err());
+}
+
+#[test]
+fn fmt_level_writes_trim() {
+    let s = source::parse(BASE, "b.toml").unwrap();
+    // 1.5 dB under the reference: +1.5 dB on top of the written 0.
+    let t = qa::level_trim(&s[0], -12.5).unwrap();
+    assert!((t - 1.5).abs() < 0.05, "{t}");
+    let out = source::set_trims(BASE, &[(&s[0], t)]);
+    assert!(out.contains("trim = \"1.5\""), "{out}");
+    assert_eq!(source::parse(&out, "b.toml").unwrap()[0].trim, 1.5);
+    // No trim line yet: one is added inside the table.
+    let bare = BASE.replace("trim = \"0\"\n", "");
+    let b = source::parse(&bare, "b.toml").unwrap();
+    let two = format!(
+        "{bare}\n{}",
+        bare.replace("S9100002", "S9100003")
+            .replace("TEST PAD", "TEST TWO")
+    );
+    let both = source::parse(&two, "b.toml").unwrap();
+    let out = source::set_trims(&two, &[(&both[0], -1.5), (&both[1], 0.5)]);
+    let got = source::parse(&out, "b.toml").unwrap();
+    assert_eq!((got[0].trim, got[1].trim), (-1.5, 0.5), "{out}");
+    assert_eq!(b[0].trim_line, 0);
+    // Past OUT LEVEL's range: fails naming the Source's line, never clips.
+    let e = qa::level_trim(&s[0], -30.0).unwrap_err();
+    assert!(e.contains("b.toml:11:") && e.contains("OUT LEVEL"), "{e}");
+}
+
+#[test]
+fn gates_render_through_the_instrument() {
+    let s = &source::parse(BASE, "g.toml").unwrap()[0];
+    let long = qa::render(s, Script::Long).unwrap();
+    assert_eq!(long.len(), 4 * 48_000, "48 kHz, the script's length");
+    assert!(long.iter().all(|v| v.is_finite()));
+    assert!(
+        long.iter().fold(0f32, |m, v| m.max(v.abs())) > 0.01,
+        "it sounds"
+    );
+    let r = qa::gates(s).unwrap();
+    let scripts: Vec<Script> = r.renders.iter().map(|x| x.script).collect();
+    assert_eq!(scripts, [Script::Long, Script::Texture]);
+    let has = |c: Check| r.gates.iter().any(|g| g.check == c);
+    assert!(has(Check::Loudness) && has(Check::Tail) && has(Check::Limiter(None)));
+    assert!(has(Check::Clicks(Script::Texture)) && has(Check::Limiter(Some(Script::Texture))));
+    assert!(
+        has(Check::Aliasing(84)) && has(Check::Aliasing(96)),
+        "VA is harmonic"
+    );
+    assert!(!has(Check::Tap), "no tap routes");
+    for g in &r.gates {
+        println!("{:?} {:.2} {:?}", g.check, g.value, g.verdict);
+    }
+}

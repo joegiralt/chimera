@@ -605,3 +605,33 @@ pub fn file_bytes(s: &Source, stamp: &BuildStamp) -> Result<Vec<u8>, String> {
     .map_err(|e| format!("{}: {e:?}", s.at(s.id_line)))?;
     Ok(sink.0)
 }
+
+/// `text` with each Source's `trim` line set to its new value (one place
+/// after the point), or added after the table's last value line.
+pub fn set_trims(text: &str, trims: &[(&Source, f32)]) -> String {
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    let mut by_table: Vec<_> = trims.to_vec();
+    // Last table first: an added line shifts only the lines after it.
+    by_table.sort_by_key(|(s, _)| std::cmp::Reverse(s.id_line));
+    for (s, t) in by_table {
+        let l = format!("trim = \"{t:.1}\"");
+        if s.trim_line > 0 {
+            lines[s.trim_line - 1] = l;
+            continue;
+        }
+        let last = lines[s.id_line..]
+            .iter()
+            .take_while(|x| !x.trim_start().starts_with("[["))
+            .enumerate()
+            .filter(|(_, x)| value_line(x.trim()).is_some())
+            .map(|(i, _)| s.id_line + i)
+            .last()
+            .unwrap_or(s.id_line - 1);
+        lines.insert(last + 1, l);
+    }
+    let mut out = lines.join("\n");
+    if text.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}

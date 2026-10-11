@@ -16,6 +16,7 @@ subprocess. It never enters the firmware build.
 | `mv-start [TYPE …]` | Each TYPE's START against its source program (ROOM #5, BLOOM #45), judged as `mv-verify` judges a fit. Exits 1 on any FAIL. |
 | `mv-ab TYPE` | Reference and TYPE at its fitted knobs on the listening set, RMS-matched. |
 | `mv-structure PROG …` | A program's injections, allpasses and taps, read from the decompiled listing. |
+| `stim DIR` | The listening set as mono 24-bit WAVs, `DIR/<name>.wav`: what the factory effects demos play through the FX bus. |
 
 `chimera-utils devices` lists the devices and their knobs.
 

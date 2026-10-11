@@ -4,4 +4,5 @@
 //! pure; `build` reads and writes the files.
 
 pub mod build;
+pub mod qa;
 pub mod source;

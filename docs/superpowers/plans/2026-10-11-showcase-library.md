@@ -19,7 +19,7 @@
 - Peek: `LIB_PEEK` 64 → 128 B.
 - Ids: user `S0000001`–`S8999999`; TAPE factory `S9000001`–`S9099999`; showcase `S9100001`–`S9199999`; ports reserved `S9100010`–`S9100025`. Demo projects `P0000001`–`P0000009`; a project save allocates `max(top, 9) + 1`.
 - **Ports are private:** no bank file, conversion, Yamaha voice name or port Source (mutated or not) is ever tracked or staged. Port Sources live in `$CHIMERA_TX_PORTS` (default (private notes)); banks in `$CHIMERA_TX_BANKS`; private builds in `target/factory-sounds/private/`. Yamaha TX81Z factory banks only.
-- Renders, `report.txt`, `index.html` and `listening.md` go in (private notes) (`$CHIMERA_SHOWCASE_LEDGER` overrides). Never `/tmp` or the scratchpad.
+- Renders, `report.txt`, `listening.html` and `listening.md` go in (private notes) (`$CHIMERA_SHOWCASE_LEDGER` overrides). Never `/tmp` or the scratchpad.
 - UI copy is exact: `PROJECT  LIBRARY  FACTORY  B ◂▸`, `NO FACTORY SOUNDS`, `EDIT LOADS · +0.3K`, `WON'T FIT`, `COMING SOON`, `FACTORY · 0.1.0 1A2B3C4D`, `‹ PREVIOUS`, `NEXT ›`. Tab names are never abbreviated (full-word labels).
 - No `unsafe` without `// SAFETY:`; no allocation or blocking on the audio side; card I/O only in `card_work`, behind BUSY.
 - Touch `chimera-engine/src/lib.rs` before `chimera-core` tests after an engine change.
@@ -160,7 +160,7 @@
 - Consumes: `listen::{write_wav, lufs, qa}`, the headless `Instrument` path `loudness_test` uses.
 - Produces: `qa::render(&Source, Script) -> Vec<f32>` (48 kHz); `qa::gates(&Source) -> Report` (per gate: value, pass); `qa::ledger() -> PathBuf` (`$CHIMERA_SHOWCASE_LEDGER` else (private notes)); `fmt --level` writes `trim`.
 
-- [ ] **Step 1: Failing tests:** scripts `bass`, `stab`, `short`, `long`, `texture`, `glide` have the spec § 4 durations and notes; `loudness_gate` (−11 LUFS ± 2 LU at home note v100 held 1 s, unless `level = "by ear: …"`); `limiter_gate` (≤ 1 dB single, ≤ 3 dB `stab`); `click_dc_finite_gate`; `aliasing_gate` (≥ 40 dB at C6 and C7, harmonic Sounds only); `tail_gate` (−90 dBFS by release + 2 s; MODAL 10 s); `tap_gate` (≥ 6 dB spectral error with vs without tap); `samey_flags_pair_within_3db_on_32_erb`; `index_only_when_all_pass`; `ledger_never_tmp` (rejects a ledger path under `/tmp` or the scratchpad); `stim_writes_listening_set` (hats, snare WAVs).
+- [ ] **Step 1: Failing tests:** scripts `bass`, `stab`, `short`, `long`, `texture`, `glide` have the spec § 4 durations and notes; `loudness_gate` (−11 LUFS ± 2 LU at home note v100 held 1 s, unless `level = "by ear: …"`); `limiter_gate` (≤ 1 dB single, ≤ 3 dB `stab`); `click_dc_finite_gate`; `aliasing_gate` (≥ 40 dB at C6 and C7, harmonic Sounds only); `tail_gate` (−90 dBFS by release + 2 s; MODAL 10 s); `tap_gate` (≥ 6 dB spectral error with vs without tap); `samey_flags_pair_within_3db_on_32_erb`; `page_only_when_all_pass`; `ledger_never_tmp` (rejects a ledger path under `/tmp` or the scratchpad); `stim_writes_listening_set` (hats, snare WAVs).
 - [ ] **Step 2–4:** Fail, implement, pass. The page lists name, description, demo mode, a player per render, LUFS, peak, `edits`; private ports in their own PRIVATE section.
 - [ ] **Step 5:** Commit `factory-sounds qa: render gates and the listening page in the ledger`.
 
@@ -227,7 +227,7 @@ Content work, judged by Task 8's gates and the owner's page, not by unit tests. 
 
 ### Task 15: QA pass, owner listening, UAT
 
-- [ ] **Step 1:** Full `just factory-sounds qa --private`; `index.html` in the ledger; publish it as a private artifact for the owner, with renders alongside.
+- [ ] **Step 1:** Full `just factory-sounds qa --private`; `listening.html` in the ledger; publish it as a private artifact for the owner, with renders alongside.
 - [ ] **Step 2:** The owner writes verdicts in the ledger's `listening.md`; fix the Sources (at least two rounds expected); re-QA.
 - [ ] **Step 3:** `just put-factory-sounds` (public) and, for the owner's unit only, `just put-factory-sounds target/factory-sounds/private`, for the Sounds the owner kept.
 - [ ] **Step 4:** `just check` green; flash and AXI deltas for the branch in one line.
