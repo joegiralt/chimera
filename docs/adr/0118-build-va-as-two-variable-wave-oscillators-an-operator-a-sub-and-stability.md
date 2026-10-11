@@ -1,7 +1,7 @@
 # 0118. Build VA as two variable-wave oscillators, an operator, a sub and STABILITY
 
 - **Status:** Proposed
-- **Deciders:** owner (the spec approval, 2026-10-09), firmware
+- **Deciders:** owner (the spec approval, 2026-10-09; WAVE's reach and SYNC's master ceiling, 2026-10-11), firmware
 - **Amends:** [0056](0056-modal-resonators-share-four-macros.md) (its cost-counting method; VA gets its own, point 9)
 
 ## Context
@@ -24,13 +24,15 @@ The VA engine slot was a stub with a draft of eleven one-per-voice models (#130-
 8. **Defaults.** VA's filter default is the 2040 (LP24, VOICE REV2) per accepted ADR 0096. The neutral fixture maps its `kind:` line per engine (`default_for`) instead of appending a row per engine as ADR 0096 says: one text, no existing line changed.
 9. **VA count method (amends ADR 0056).** The bill is ADR 0056's arithmetic (instructions x 1.46 x 1.1, plus 12 for each `vdiv`/`vsqrt`) on the release ELF disassembled by `llvm-objdump`; the scripts are `bills2.py` and `count.py` (round 3's copies in (private notes)):
    - each oscillator role (OSC 1, OSC 2 plain, the SYNC slave) bills its dearest wave pair: the cheapest round of the pair loop with no event, plus each branch's side at its event rate;
-   - event rates are per edge, at the maximum increment 0.45 a sample, each stretched by the half-cent jitter: the wrap 0.45; an edge forward 0.45 + 0.225/64; an edge backward 0.225/64; a sync reset 0.45;
+   - event rates are per edge, at the maximum increment 0.45 a sample (SYNC's master 0.25, point 12), each stretched by the half-cent jitter: the wrap at the top increment; an edge forward the top + 0.225/64; an edge backward 0.225/64; a sync reset at the master's top;
    - the operator bills its MODE's loop (the biggest: the MODE duck's variant, its gain a load and a multiply a sample) every block, though the duck runs only the 4 blocks after a MODE edit; the sub's flips at 0.45;
    - block work (/64) is the dearest straight path through `VaEngine::render` and its MODE's `render_*`; `VarOsc::render`'s run loop is jump-threaded per pair, so its steady block is the dearest way through exactly one run;
-   - the worst case is two WAVE segment crossings per oscillator per block, each billed as a whole extra run (its straight path, both segment-end lerps inlined), the round of `VarOsc::render` between two runs and `run_end`; a crossing block's peak bound splits at the anchors once per oscillator. The inlined lerps also sit on the steady run's straight path, an over-bill;
+   - the worst case is one WAVE segment crossing per oscillator per block (point 11), billed as a whole extra run (its straight path, both segment-end lerps inlined), the round of `VarOsc::render` between two runs and `run_end`; a crossing block's peak bound splits at the anchors once per oscillator. The inlined lerps also sit on the steady run's straight path, an over-bill;
    - exclusions: `Stability::prepare` (runs on a sample-rate change only) and `end_shape` (tests only);
    - bills round up to 10, LP24's 95 carried in each engine term.
-10. **The honest bills** (cycles a sample, LP24 included; round 3, 2026-10-11): MIX 530, SYNC 640, RING 530, XOR 550, BITS 530 (they were 610, 720, 620, 630, 620). MIX, RING and BITS fit 7 voices on rev V and 6 on rev Y (7 beside ORBIT or the master tape); XOR fits 7 and 5; SYNC 6 and 5 (6 beside ORBIT or the tape). ADR 0040's six voices on rev Y is **met for MIX, RING and BITS, and unmet for XOR and SYNC**; the rest of the cost work is tracked in private issue #444 and the per-Sound billing in private issue #448. Admission refuses gracefully, so the shortfall costs voices, not overruns.
+10. **The honest bills** (cycles a sample, LP24 included; round 3 with points 11 and 12, 2026-10-11): MIX 510, SYNC 570, RING 520, XOR 530, BITS 520 (they were 610, 720, 620, 630, 620). MIX, RING and BITS fit 8 voices on rev V and 6 on rev Y (7 beside ORBIT or the master tape); XOR 7 and 6; SYNC 7 and 5 (7 beside ORBIT, 6 beside the tape). ADR 0040's six voices on rev Y is **met in every MODE but SYNC**; the rest of the cost work is tracked in private issue #444 and the per-Sound billing in private issue #448. Admission refuses gracefully, so the shortfall costs voices, not overruns.
+11. **WAVE's reach (owner, 2026-10-11).** A block's WAVE ramp crosses one segment boundary (⅓ or ⅔) at most: asked past a second it stops just short of it, the rest carried into the next block (`osc::wave_reach`, applied to the ramp's target, so the ramp itself never snaps). *Audibly:* a jump end to end lands in two blocks (2.7 ms) instead of one, passing through the middle segment; WAVE modulation faster than one segment a block (an audio-rate LFO at full depth) lags and swings narrower. *Why:* a segment crossing costs a whole extra run, and two a block were the bill's worst case; one a block takes 21 cycles off every MODE (crossings 51.5 → 30.2) and puts XOR inside rev Y's 636.
+12. **SYNC's master ceiling (owner, 2026-10-11).** While SYNC plays or is coming (the duck down), OSC 1's pitch stops at 12 kHz (`SYNC_MASTER_HZ`, 0.25 a sample at 48 kHz), ramped like any pitch, so it eases in and out under the MODE duck. *Audibly:* a SYNC master asked above 12 kHz plays 12 kHz (only past note 126 or with PITCH/CRSE pushing it there); the slave and the other MODEs are untouched. *Why:* the slave's resets and the master's events bill at the master's top increment; 0.45 → 0.25 takes about 80 cycles off SYNC (720 → 570 with point 11 and round 3), which still leaves SYNC at 5 voices on rev Y.
 
 ## Alternatives considered
 - **The 09-27 draft's eleven one-per-voice models.** Kept as later macro-oscillator candidates; #130-#136 and #219 are re-scoped to that list.
@@ -42,7 +44,7 @@ The VA engine slot was a stub with a draft of eleven one-per-voice models (#130-
 ## Consequences
 - One voice shape covers MIX, SYNC, RING, XOR and BITS; every wave plays at one level, so MODE and SHAPE changes do not jump in loudness.
 - STAB 1 is a bit-exact, repeatable sound; below 1 each take is alive.
-- VA meets the goal in MIX, RING and BITS (6 on rev Y); XOR and SYNC get 5 on rev Y.
+- VA meets the goal in every MODE but SYNC (6 on rev Y; SYNC 5), with two audible limits the owner approved: WAVE's reach (point 11) and SYNC's 12 kHz master (point 12).
 - The desktop simulator builds with `test-support`, so it runs the logging `apply` and carries the edge log in each `VarOsc`: the same sound (`Correction::On`, no skip), not the firmware's code byte for byte.
 - Follow-ups: a 4-point kernel if a gate tightens (private issue #451); BITS ADAA if UAT finds BITS harsh (private issue #452); a WAVE morph scope glyph (private issue #450); on-unit bench rows per MODE and the owner's listening pass at ship.
 
