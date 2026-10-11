@@ -418,6 +418,11 @@ fn noise_band_laws() {
         let v = two_pole_variance(w);
         assert!((v - 1.0).abs() < 1e-4, "{w} {v}");
     }
+    // Stable at any WIDTH: finite, c in (0, 1].
+    for w in [0.0, 1e-6, 0.01, -500.0, 1e9, f32::INFINITY, f32::NAN] {
+        let (c, k_n) = noise_coef(w, SR as f32);
+        assert!(c > 0.0 && c <= 1.0 && k_n.is_finite(), "{w} {c} {k_n}");
+    }
     // 20 s of a 20 Hz band holds too few independent samples for 1 %.
     for w in [500.0, 4000.0] {
         let r = steady_two_pole_rms(w, 0x1234);

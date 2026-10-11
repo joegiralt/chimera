@@ -18,8 +18,10 @@ const CORNER: f32 = 0.777;
 /// `1 − e^(−2π·f_lp/sr)`, and the input gain that gives the second pole
 /// unit RMS from uniform noise in [−1, 1) (variance 1/3).
 pub fn noise_coef(width: f32, sr: f32) -> (f32, f32) {
-    let c = 1.0 - exp2(-TAU * CORNER * width.max(0.0) / sr * LOG2_E);
-    let c = clampf(c, f32::MIN_POSITIVE, 1.0);
+    // WIDTH held to ≥ 1 Hz (NaN too), under every stored WIDTH, so c stays
+    // far from 0 and k_n finite.
+    let width = clampf(width, 1.0, f32::MAX);
+    let c = 1.0 - exp2(-TAU * CORNER * width / sr * LOG2_E);
     let a = 1.0 - c;
     // √3 / (c²·√((1 + a²)/(1 − a²)³)), with 1 − a² = c(2 − c).
     let t = 2.0 - c;
