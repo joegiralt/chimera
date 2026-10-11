@@ -18,7 +18,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("flt_clean", 0xcc4a729ff4ba5faf),
     ("settings_top", 0xf1655533215f4e4b),
     ("settings_personal_theme", 0x3a2a9ae7815335b2),
-    ("sound_browser", 0xd28868c97d12c55a),
+    ("sound_browser", 0x3cb32fa9ee41e238),
     ("toast_exfat", 0xd8ee278545272c31),
 ];
 
