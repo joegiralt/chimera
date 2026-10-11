@@ -24,7 +24,7 @@ bench-stress = ["bench"]
 # ORBIT: its block's cost and phases.
 bench-orbit = ["bench", "orbit"]
 # TAPE COLD: each machine's cold-cache voice.
-bench-tape = ["bench"]
+bench-tape = ["bench", "chimera-core/tape"]
 # The filter probes, linked though nothing calls them, for
 # `tools/loop_count.py`'s static counts: the shipping build plus them,
 # `default` included, as the bench sets are built without it.
