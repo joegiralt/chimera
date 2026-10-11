@@ -13,6 +13,7 @@ use chimera_core::dsp::modal::{ResonatorMode, SymPool};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::ParamSnapshot;
+use chimera_core::project::PartId;
 use chimera_core::source_table::GateView;
 use chimera_core::tracked::Tracked;
 use chimera_core::voice_alloc::VoiceIdx;
@@ -44,6 +45,8 @@ pub struct Rig {
     pub pool: Box<SymPool>,
     /// What a TAPE note latches.
     pub src: Src,
+    /// The Part the voice plays (VA's seed): Part 1 unless a test moves it.
+    pub part: PartId,
     /// The knobs of the one-voice Part `render_glided` plays.
     knobs: Knobs,
 }
@@ -53,13 +56,19 @@ pub struct Rig {
 macro_rules! with_ctx {
     ($rig:expr, |$v:ident, $ctx:ident, $id:ident| $body:expr) => {{
         let Rig {
-            voice, pool, src, ..
+            voice,
+            pool,
+            src,
+            part,
+            ..
         } = $rig;
+        let part = *part;
         let $v = voice;
         let mut run = |$id: Option<chimera_core::project::SourceId>, view: &GateView<'_>| {
             let $ctx = &mut EngineCtx {
                 sym: &mut **pool,
                 src: view,
+                part,
             };
             $body
         };
@@ -101,6 +110,7 @@ impl Rig {
             voice: unsafe { raw.assume_init() },
             pool: SymPool::boxed(),
             src,
+            part: PartId::ALL[0],
             knobs: Knobs::UNPRIMED,
         }
     }

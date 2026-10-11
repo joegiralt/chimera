@@ -18,6 +18,7 @@ fn engines() -> Vec<(String, Performance, Option<Vec<u8>>)> {
     let mut v = vec![
         ("ALGO INIT".to_string(), init_perf(EngineType::Algo), None),
         ("MODAL INIT".to_string(), init_perf(EngineType::Modal), None),
+        ("VA INIT".to_string(), init_perf(EngineType::Va), None),
     ];
     let mut t = init_perf(EngineType::Tape);
     tape_model(&mut t, 0, TapeModel::Loop);
@@ -95,7 +96,7 @@ fn a_single_init_note_reaches_the_target() {
     let algo = db(peak_of(&init_perf(EngineType::Algo), &[(0, C4)], 100, None));
     println!("ALGO INIT C4 v100: {algo:.1} dBFS");
     assert!((-12.5..=-8.0).contains(&algo), "{algo}");
-    for (name, perf, src) in engines().into_iter().take(3) {
+    for (name, perf, src) in engines().into_iter().take(4) {
         let p = db(peak_of(&perf, &[(0, C4)], 100, src.as_deref()));
         assert!((-12.5..=db(CEILING)).contains(&p), "{name}: {p:.1}");
     }

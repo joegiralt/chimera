@@ -169,14 +169,15 @@ fn a_new_sound_has_the_default_routes() {
         assert_eq!(s.mod_state.num_dests(), 0);
         assert_eq!(s.mod_state.routes_into(CUTOFF_ADDR), DEFAULT_BITS, "{ct:?}");
         assert!((0..MAX_MOD_SOURCES).all(|src| s.mod_state.fixed_amount(src, FixedCol::Freq) == 0));
-        // TAPE's loop has no end: its INIT routes ENV 1 into VCA too.
-        let vca = if ct == EngineType::Tape {
+        // TAPE's loop and VA's tone have no end: their INIT routes ENV 1
+        // into VCA too.
+        let vca = if matches!(ct, EngineType::Tape | EngineType::Va) {
             1 << ModSource::Env1.index()
         } else {
             0
         };
         assert_eq!(s.mod_state.fixed_present(FixedCol::Vca), vca, "{ct:?}");
-        if ct == EngineType::Tape {
+        if vca != 0 {
             assert_eq!(
                 s.mod_state
                     .fixed_amount(ModSource::Env1.index(), FixedCol::Vca),

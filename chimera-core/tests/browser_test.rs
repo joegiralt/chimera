@@ -133,7 +133,7 @@ fn init_rows_end_the_list_and_load() {
     feed(&mut ui, Input::press(ButtonId::Edit)); // the last of the INIT rows
     assert_eq!(
         ui.project().part(PartId::ALL[1]).sound.engine(),
-        EngineType::Tape
+        EngineType::Va
     );
 }
 

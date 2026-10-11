@@ -199,16 +199,17 @@ const GOLDENS: &[(&str, u64)] = &[
     // plan Task 6); and its refusal. Then the merge with filter-types: a
     // Sound is smaller (fixed columns, no registry entry).
     ("sound_browser", 0x326bd7e09bbaa590),
-    ("sound_browser_pool_full", 0x559fd223dfe911ae),
+    // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
+    ("sound_browser_pool_full", 0x34346aed44aed19f),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     ("library_empty", 0xa94e4a6edf448c09),
     ("library_no_card", 0xa7957021c5215364),
-    ("library_sounds", 0x9862f2a4b75c51c5),
-    ("library_this_build", 0x70a9cbf404b9c7b6),
+    ("library_sounds", 0x4897d8acceef0dad),
+    ("library_this_build", 0x3328020a1de3a32e),
     ("library_cut_short", 0x8a79ffdc4d4088a5),
     ("library_older", 0x0f93617bc5fec63b),
-    ("library_newer", 0x3c91470cc1bc14fc),
+    ("library_newer", 0x8f897d5fdeff8d94),
     ("library_wont_fit", 0xc7ac05813f4eb639),
     ("library_pool_full", 0xac5879c734797884),
     ("library_naming", 0xab3925136bf27a0f),
@@ -217,8 +218,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_midi_sync", 0x0e26ce69d0f54980),
     ("settings_system_diag_aud_load", 0x0d5edcdc4826225e),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
-    // sparser with the fixed columns (11 · 2.0K, 158K free).
-    ("settings_project_pool", 0x4b4c1b086f6263c8),
+    // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.
+    ("settings_project_pool", 0xc96d14eba15c42a4),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).

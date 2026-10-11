@@ -57,6 +57,7 @@ fn fundamental_hz(s: &[f32]) -> f32 {
 fn bound(p: &ParamSnapshot) -> f32 {
     match p.engine() {
         EngineType::Modal => out_gain(p.modal.mode),
+        EngineType::Va => chimera_core::dsp::va::VA_OUT_GAIN,
         _ => 1.0,
     }
 }
@@ -115,6 +116,19 @@ fn modal_is_finite_bounded_audible() {
 #[test]
 fn modal_is_pitched() {
     assert_pitched(Case::ModalInit);
+}
+
+#[test]
+fn va_is_finite_bounded_audible() {
+    assert_finite_bounded_audible(Case::VaInit);
+}
+#[test]
+fn va_is_silent_after_note_off() {
+    assert_silent_after_note_off(Case::VaInit);
+}
+#[test]
+fn va_is_pitched() {
+    assert_pitched(Case::VaInit);
 }
 
 /// Windowed RMS of the Modal engine's post-note-off tail: `off_blocks` blocks

@@ -51,6 +51,8 @@ pub enum BlockRef {
     Modal,
     /// TAPE's engine (`TapeEngineParams`). `Tape` is the master stage.
     TapeEngine,
+    /// VA's engine (`VaParams`).
+    Va,
     /// The Algo engine's voice-level parameters (`AlgoParams`).
     Algo,
     /// One Algo operator (`AlgoOpParams`).
@@ -95,7 +97,7 @@ pub enum BlockRef {
 }
 
 impl BlockRef {
-    pub const ALL: [BlockRef; 34] = [
+    pub const ALL: [BlockRef; 35] = [
         BlockRef::Modal,
         BlockRef::Algo,
         BlockRef::AlgoOp(Op::A),
@@ -130,6 +132,7 @@ impl BlockRef {
         BlockRef::OrbitRing(RingIdx::ALL[4]),
         BlockRef::Midi,
         BlockRef::TapeEngine,
+        BlockRef::Va,
     ];
 
     /// The block type's spec table (static; no instance needed).
@@ -137,6 +140,7 @@ impl BlockRef {
         match self {
             BlockRef::Modal => &crate::dsp::modal::MODAL_SPECS,
             BlockRef::TapeEngine => &crate::dsp::tape_engine::TAPE_ENGINE_SPECS,
+            BlockRef::Va => &crate::dsp::va::VA_SPECS,
             BlockRef::Algo => &crate::dsp::algo::params::ALGO_SPECS,
             BlockRef::AlgoOp(_) => &crate::dsp::algo::params::ALGO_OP_SPECS,
             BlockRef::Drive => &crate::params::DRIVE_SPECS,
@@ -166,6 +170,7 @@ impl BlockRef {
         match self {
             BlockRef::Modal
             | BlockRef::TapeEngine
+            | BlockRef::Va
             | BlockRef::Algo
             | BlockRef::AlgoOp(_)
             | BlockRef::Drive
@@ -197,6 +202,7 @@ impl BlockRef {
     pub const fn voice_reads(self) -> bool {
         match self {
             BlockRef::Modal
+            | BlockRef::Va
             | BlockRef::Algo
             | BlockRef::AlgoOp(_)
             | BlockRef::Drive

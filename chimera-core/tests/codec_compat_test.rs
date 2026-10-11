@@ -41,6 +41,8 @@ fn sources() -> Vec<(String, Sound)> {
     v.push(("init_tape.snd".into(), Sound::init(EngineType::Tape)));
     // A library Sound (library spec): factory 0 behind a `Build` record.
     v.push((LIBRARY_FIXTURE.into(), factory_sound(0).unwrap()));
+    // VA's INIT as VA Task 10 saved it: engine code 3 frozen.
+    v.push(("init_va.snd".into(), Sound::init(EngineType::Va)));
     v
 }
 
@@ -202,6 +204,8 @@ const FIXTURE_BYTES: &[(&str, usize, u64)] = &[
     // Written sparse (pool Task 2), at TAPE Task 12.
     ("init_tape.snd", 160, 0xc6205acfbcaf2836),
     ("library_1.snd", 257, 0xa89d3e8a322ca1fa),
+    // Written sparse, at VA Task 10.
+    ("init_va.snd", 151, 0x63ec203363dcfe8c),
 ];
 
 /// Every v1 `.snd` fixture, `library_1.snd` included, loads through the
@@ -519,6 +523,8 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     ("init_tape.snd", 0xcaf4315437e08679),
     // Factory 0's render: the stamp changes no sound.
     ("library_1.snd", 0x2b0219df38902ede),
+    // On the rig's second of saw, at VA Task 10.
+    ("init_va.snd", 0x3739e2ecc6befaf5),
 ];
 
 #[test]
@@ -548,6 +554,16 @@ fn init_tape_fixture_pins_engine_code_2() {
     let s = decode(&fixture("init_tape.snd")).unwrap();
     assert_eq!(s.engine(), EngineType::Tape);
     assert!(s.bits_eq(&Sound::init(EngineType::Tape)));
+}
+
+/// VA's engine code is 3 for good: the frozen INIT loads as VA.
+#[test]
+fn init_va_fixture_pins_engine_code_3() {
+    use chimera_core::block::DiskCode;
+    assert_eq!(EngineType::Va.disk_code(), 3);
+    let s = decode(&fixture("init_va.snd")).unwrap();
+    assert_eq!(s.engine(), EngineType::Va);
+    assert!(s.bits_eq(&Sound::init(EngineType::Va)));
 }
 
 /// Every v1 file, saved before STEAL (#254), steals CUT.

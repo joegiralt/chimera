@@ -909,5 +909,6 @@ pub fn chain_def_for(engine: EngineType) -> &'static ChainDef2 {
         EngineType::Algo => &block_registry::ALGO_CHAIN,
         EngineType::Modal => &MODAL_PLUCK_CHAIN,
         EngineType::Tape => &block_registry::TAPE_CHAIN,
+        EngineType::Va => &block_registry::VA_CHAIN,
     }
 }

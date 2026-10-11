@@ -908,6 +908,8 @@ pub enum EngineType {
     Modal = 1,
     /// The sample engine (ADR 0093): `dsp::tape_engine`.
     Tape = 2,
+    /// The virtual analog: `dsp::va`.
+    Va = 3,
 }
 
 impl DiskCode for EngineType {
@@ -916,6 +918,7 @@ impl DiskCode for EngineType {
             EngineType::Algo => 0,
             EngineType::Modal => 1,
             EngineType::Tape => 2,
+            EngineType::Va => 3,
         }
     }
 
@@ -924,6 +927,7 @@ impl DiskCode for EngineType {
             EngineType::Algo => "ALGO",
             EngineType::Modal => "MODAL",
             EngineType::Tape => "TAPE",
+            EngineType::Va => "VA",
         }
     }
 
@@ -932,6 +936,7 @@ impl DiskCode for EngineType {
             0 => Some(EngineType::Algo),
             1 => Some(EngineType::Modal),
             2 => Some(EngineType::Tape),
+            3 => Some(EngineType::Va),
             _ => None,
         }
     }
@@ -940,7 +945,12 @@ impl DiskCode for EngineType {
 impl EngineType {
     /// Every engine. Tests iterate this; see `engines_test.rs` for the
     /// exhaustive-match guard that makes a new variant a compile error there.
-    pub const ALL: [EngineType; 3] = [EngineType::Algo, EngineType::Modal, EngineType::Tape];
+    pub const ALL: [EngineType; 4] = [
+        EngineType::Algo,
+        EngineType::Modal,
+        EngineType::Tape,
+        EngineType::Va,
+    ];
 
     /// Short display label for the engine and its chain.
     pub fn label(self) -> &'static str {
@@ -948,6 +958,7 @@ impl EngineType {
             EngineType::Algo => "Algo",
             EngineType::Modal => "Modal",
             EngineType::Tape => "Tape",
+            EngineType::Va => "VA",
         }
     }
 }
@@ -1374,6 +1385,7 @@ pub struct ParamSnapshot {
     pub algo: crate::dsp::algo::params::AlgoParams,
     pub modal: crate::dsp::modal::ModalParams,
     pub tape: crate::dsp::tape_engine::TapeEngineParams,
+    pub va: crate::dsp::va::VaParams,
     pub lfos: [crate::dsp::lfo::LfoParams; 3],
     pub out: OutParams,
     pub pitch: PitchParams,
@@ -1414,6 +1426,7 @@ impl BlockRead for ParamSnapshot {
         Some(match b {
             BlockRef::Modal => &self.modal,
             BlockRef::TapeEngine => &self.tape,
+            BlockRef::Va => &self.va,
             BlockRef::Algo => &self.algo,
             BlockRef::AlgoOp(op) => &self.algo.ops[op.index()],
             BlockRef::Drive => &self.drive,
@@ -1444,6 +1457,7 @@ impl Blocks for ParamSnapshot {
         Some(match b {
             BlockRef::Modal => &mut self.modal,
             BlockRef::TapeEngine => &mut self.tape,
+            BlockRef::Va => &mut self.va,
             BlockRef::Algo => &mut self.algo,
             BlockRef::AlgoOp(op) => &mut self.algo.ops[op.index()],
             BlockRef::Drive => &mut self.drive,
@@ -1490,6 +1504,7 @@ impl Default for ParamSnapshot {
             algo: crate::dsp::algo::params::AlgoParams::default(),
             modal: crate::dsp::modal::ModalParams::default(),
             tape: crate::dsp::tape_engine::TapeEngineParams::default(),
+            va: crate::dsp::va::VaParams::default(),
             lfos: [crate::dsp::lfo::LfoParams::default(); 3],
             out: OutParams::default(),
             pitch: PitchParams::default(),

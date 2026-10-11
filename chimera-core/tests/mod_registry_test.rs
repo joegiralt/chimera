@@ -107,6 +107,7 @@ fn registry_accepts_exactly_the_modulatable_addresses() {
             accepted += addr.modulatable() as usize;
         }
     }
-    // + ENV n LEVEL, TIME, RISE, FALL, SHAPE; VCA; PITCH, FINE; Modal's macros
-    assert_eq!(accepted, 17 + 3 * 5 + 1 + 2 + 4);
+    // + ENV n LEVEL, TIME, RISE, FALL, SHAPE; VCA; PITCH, FINE; Modal's macros;
+    // VA's eleven
+    assert_eq!(accepted, 17 + 3 * 5 + 1 + 2 + 4 + 11);
 }
