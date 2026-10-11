@@ -4,7 +4,8 @@ use chimera_core::params::EngineType;
 use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, MODAL_1};
 use chimera_core::ui::nav::{
-    Column, Location, MixPage, NavCtx, NavKey, OrbitCx, PageAt, Recall, Step, chain_def_for,
+    Column, Location, MixPage, NavCtx, NavKey, OrbitCx, PageAt, PartChain, Recall, Step,
+    chain_def_for,
 };
 use chimera_core::ui::settings::{Act, Kind, MANAGE_COMMANDS, PART_ROW, Screen, row_at, rows};
 
@@ -12,7 +13,7 @@ const P: [PartId; 6] = PartId::ALL;
 
 fn cx() -> NavCtx {
     NavCtx {
-        engines: [EngineType::Algo; 6],
+        chains: [PartChain::Algo; 6],
         dyn_rows: 0,
         orbit: OrbitCx::NONE,
         rev: chimera_core::dsp::reverb::ReverbType::Quad,
@@ -131,7 +132,7 @@ fn settings_from_is_never_settings() {
     };
     for _ in 0..10_000 {
         let mut cx = cx();
-        cx.engines[(rand() % 6) as usize] = EngineType::Modal;
+        cx.chains[(rand() % 6) as usize] = PartChain::Modal;
         cx.dyn_rows = (rand() % 4) as u8;
         let mut r = Recall::new();
         let mut l = Location::home(&cx);
@@ -192,7 +193,7 @@ fn part_key_toggles_and_restores() {
 
     key(&mut l, NavKey::Part(P[0]), &cx, &mut r);
     key(&mut l, NavKey::MixPart(P[0]), &cx, &mut r);
-    cx.engines[0] = EngineType::Modal;
+    cx.chains[0] = PartChain::Modal;
     key(&mut l, NavKey::Part(P[0]), &cx, &mut r);
     assert_eq!(
         l,
@@ -221,7 +222,7 @@ fn part_key_restores_only_from_its_own_mixer() {
 
 fn bn_lands_on(e: EngineType) -> PageAt {
     let mut cx = cx();
-    cx.engines[2] = e;
+    cx.chains[2] = PartChain::base(e);
     let mut r = Recall::new();
     let froms = [
         Location::home(&cx),
@@ -534,7 +535,7 @@ fn closing_settings_resolves_the_page_for_a_new_engine() {
     let mut r = Recall::new();
     let mut l = Location::pages(P[0], at(5, 0));
     key(&mut l, NavKey::MenuTap, &cx, &mut r);
-    cx.engines[0] = EngineType::Modal;
+    cx.chains[0] = PartChain::Modal;
     key(&mut l, NavKey::Edit, &cx, &mut r); // PROJECT
     key(&mut l, NavKey::MenuTap, &cx, &mut r);
     key(&mut l, NavKey::MenuTap, &cx, &mut r);

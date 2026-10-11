@@ -465,6 +465,18 @@ impl ChainDef2 {
         })
     }
 
+    /// The page showing the def `id`, if the chain has it.
+    pub fn locate(&self, id: u16) -> Option<PageAt> {
+        self.blocks.iter().enumerate().find_map(|(node, b)| {
+            let sub = if b.def.id == id {
+                0
+            } else {
+                1 + b.sub_pages.iter().position(|d| d.id == id)?
+            };
+            self.page(node, sub)
+        })
+    }
+
     /// The def at `at`, if `at` is on this chain.
     pub fn def_at(&self, at: PageAt) -> Option<&'static BlockDef> {
         self.active_def(at.node as usize, at.sub as usize)
@@ -507,4 +519,13 @@ impl ChainDef2 {
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
     }
+}
+
+/// `at` on `from`, kept on `to` by page id. A page gone falls to its
+/// node's first; a node gone, to `to`'s home.
+pub fn refocus(from: &ChainDef2, at: PageAt, to: &ChainDef2) -> PageAt {
+    from.def_at(at)
+        .and_then(|d| to.locate(d.id))
+        .or_else(|| to.page(at.node as usize, 0))
+        .unwrap_or_else(|| to.home())
 }
