@@ -36,7 +36,10 @@ fn off(ch: u8, note: u8) -> NoteEvent {
 fn budget(cost: u32) -> SampleBudget {
     // And the knobs, reserved beside the bus (ADR 0116).
     let reserved = FxBus::COST.0 + Knobs::RESERVE.0;
-    SampleBudget::for_cpu(((reserved + cost) as u64 * 480_000).div_ceil(7) as u32)
+    SampleBudget::for_cpu(
+        ((reserved + cost) as u64 * 4_800_000)
+            .div_ceil(chimera_core::hw::AUDIO_BUDGET_PERCENT as u64) as u32,
+    )
 }
 
 use chimera_core::dsp::knobs::Knobs;

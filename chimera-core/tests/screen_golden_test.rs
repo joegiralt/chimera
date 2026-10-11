@@ -203,7 +203,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: a fresh project's footer drops NEW (#286).
     ("settings_personal_theme", 0xc35039e65219cdc2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
-    ("settings_system_diag_aud_load", 0x0d5edcdc4826225e),
+    ("settings_system_diag_aud_load", 0x0063331a51f3da0e),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns (11 · 2.0K, 158K free).
     ("settings_project_pool", 0x4b4c1b086f6263c8),

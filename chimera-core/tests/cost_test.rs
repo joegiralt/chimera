@@ -613,7 +613,7 @@ fn mod_routing_bills_slide_for_a_rebuilt_slot() {
     );
 }
 
-/// What the 7,000-cycle budget allows with the FX bus (the whole bus at
+/// What the 7,500-cycle budget allows with the FX bus (the whole bus at
 /// its worst) running: as many voices of each engine's default Sound as
 /// fit, up to `MAX_VOICES`.
 #[test]
@@ -937,8 +937,8 @@ const TAPE: bool = cfg!(feature = "master-tape");
 /// 1,188 of 2026-10-04 and the reverb's tail gate; 1,494 with the master
 /// tape) and the modulator pool's floor (`ModRouting::BASE`, 47) added,
 /// the costliest patch gets six voices on rev V (6 × 915 + 1,204 = 6,694
-/// ≤ 7,000; a seventh would be 7,609), and five on rev Y ((5,833 − 1,204)
-/// / 915 = 5.06; four with the tape),
+/// ≤ 7,500; a seventh would be 7,609), and five on rev Y ((6,250 − 1,204)
+/// / 915 = 5.5; (6,250 − 1,494) / 915 = 5.2 with the tape),
 /// without FOLD or DRIVE, at LP24 (its SVF term 0). ADR 0040: the budget,
 /// not the eight-voice pool, is what stops it.
 #[test]
@@ -952,48 +952,50 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!(FxBus::COST.0, bus, "{:?}", FxBus::COST);
     assert_eq!(voices_at(CPU_HZ_REV_V, &p), 6);
     assert_eq!(MAX_VOICES, 8, "the budget stops it short of the pool");
-    assert_eq!(voices_at(CPU_HZ_REV_Y, &p), if TAPE { 4 } else { 5 });
+    assert_eq!(voices_at(CPU_HZ_REV_Y, &p), 5);
     // ADR 0091: while ORBIT plays, its own block (171) and a five-note
     // burst (857) are reserved beside the bus: five on rev V
-    // ((7,000 − 2,208) / 915 = 5.2; four with the tape). Stopped, six.
+    // ((7,500 − 2,232) / 915 = 5.8; (7,500 − 2,522) / 915 = 5.4 with the tape).
+    // Stopped, six.
     use chimera_core::instrument::Instrument;
     use chimera_core::orbit::runner::OrbitRunner;
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
     let playing = FxBus::COST.0 + Instrument::BURST.0 + OrbitRunner::COST.0;
-    assert_eq!((budget - playing) / 915, if TAPE { 4 } else { 5 });
+    assert_eq!((budget - playing) / 915, 5);
     // With the folder on, unrouted (45, ADR 0060): 960, six on rev V and
-    // four on rev Y (five and four with the tape); the drive stage too
-    // (1,017): five on rev V, four on rev Y, with the tape too. No factory
-    // Sound does either with this shape.
+    // five on rev Y (six and four with the tape); the drive stage too
+    // (1,017): six on rev V, four on rev Y (five and four with the tape).
+    // No factory Sound does either with this shape.
     let fits = |hz, voice: u32| (SampleBudget::for_cpu(hz).as_cost().0 - FxBus::COST.0) / voice;
     let fold = plain + Voice::FOLD_COST.0;
-    let want = if TAPE { (5, 4) } else { (6, 4) };
+    let want = if TAPE { (6, 4) } else { (6, 5) };
     assert_eq!((fits(CPU_HZ_REV_V, fold), fits(CPU_HZ_REV_Y, fold)), want);
     let both = fold + Voice::DRIVE_COST.0;
-    assert_eq!((fits(CPU_HZ_REV_V, both), fits(CPU_HZ_REV_Y, both)), (5, 4));
+    let want = if TAPE { (5, 4) } else { (6, 4) };
+    assert_eq!((fits(CPU_HZ_REV_V, both), fits(CPU_HZ_REV_Y, both)), want);
 }
 
-/// Spec § Intent and ADR 0031, 0040: billed as it plays (its routes, FOLD
-/// and DRIVE in; all at LP24) beside the bus alone, every factory Sound
-/// fits six voices on rev V and five on rev Y; the TX and single-oscillator
-/// Sounds all eight on rev V (seven with the master tape for the TX).
-/// That is what ORBIT stopped admits. ADR 0091: while ORBIT plays, its own
-/// block (171) and a five-note burst (857) are reserved too: on rev V the
-/// TX Sounds get six, MORPH PAD and MORPH KEYS five, SAW LEAD and SQR BASS
-/// eight (seven with the tape).
+/// Spec § Intent and ADR 0031, 0040, 0124: billed as it plays (its routes,
+/// FOLD and DRIVE in; all at LP24) beside the bus alone, every factory Sound
+/// fits six voices on rev V at 75 % and five on rev Y; the TX and
+/// single-oscillator Sounds all eight, MORPH PAD and KEYS seven (six with
+/// the master tape). That is what ORBIT stopped admits. ADR 0091: while ORBIT
+/// plays, its own block (171) and a five-note burst (857) are reserved too:
+/// on rev V the TX Sounds get seven, MORPH six, SAW LEAD and SQR BASS eight
+/// (with the tape: seven, seven, six, seven; MORPH five).
 #[test]
 fn every_factory_sound_gets_at_least_six_voices_on_rev_v() {
     use chimera_core::instrument::Instrument;
     use chimera_core::orbit::runner::OrbitRunner;
     const FITS: [u32; 8] = if TAPE {
-        [7, 7, 7, 7, 8, 8, 6, 6]
-    } else {
         [8, 8, 8, 8, 8, 8, 6, 6]
+    } else {
+        [8, 8, 8, 8, 8, 8, 7, 7]
     };
     const ORBIT: [u32; 8] = if TAPE {
-        [6, 6, 6, 6, 7, 7, 5, 5]
+        [7, 7, 6, 7, 8, 8, 5, 5]
     } else {
-        [6, 6, 6, 6, 8, 8, 5, 5]
+        [7, 7, 7, 7, 8, 8, 6, 6]
     };
     for i in 0..8 {
         let s = chimera_core::factory::factory_sound(i).unwrap();
@@ -1193,13 +1195,12 @@ fn modal_bills_each_model() {
     for (p, billed, voices, taped) in [
         (sound(String, 0.0, 0.0), 330, (8, 8), (8, 8)),
         (sound(String, 0.3, 0.0), 410, (8, 8), (8, 8)),
-        (sound(String, 0.3, 0.5), 550, (8, 7), (8, 6)),
-        (sound(Bowed, 0.3, 0.5), 640, (8, 6), (7, 6)),
-        (sound(Sympathetic, 0.0, 0.0), 470, (8, 8), (8, 7)),
-        (sound(Sympathetic, 0.3, 0.0), 550, (8, 7), (8, 6)),
-        // One fewer on rev Y since the reverb's tail low-pass (+16).
-        (sound(Sympathetic, 0.3, 0.5), 690, (7, 5), (7, 5)),
-        (sound(Modal, 0.3, 0.5), 1_840, (3, 2), (2, 2)),
+        (sound(String, 0.3, 0.5), 550, (8, 7), (8, 7)),
+        (sound(Bowed, 0.3, 0.5), 640, (8, 6), (8, 6)),
+        (sound(Sympathetic, 0.0, 0.0), 470, (8, 8), (8, 8)),
+        (sound(Sympathetic, 0.3, 0.0), 550, (8, 7), (8, 7)),
+        (sound(Sympathetic, 0.3, 0.5), 690, (8, 6), (7, 6)),
+        (sound(Modal, 0.3, 0.5), 1_840, (3, 2), (3, 2)),
     ] {
         let (rev_v, rev_y) = if cfg!(feature = "master-tape") {
             taped
@@ -1419,12 +1420,10 @@ fn orbit_and_a_burst_fit_beside_what_renders() {
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
     for keys_first in [true, false] {
         let (voices, most, kept) = stress(keys_first, STRESS_BLOCKS);
-        // Six keys first, none stolen or shed once ORBIT starts; a block
-        // after, five voices beside ORBIT's reserve. On the `master-tape`
-        // bus five either way since the reverb's tail low-pass (+16).
-        let six = keys_first && !TAPE;
-        assert_eq!(voices, if six { 6 } else { 5 }, "{keys_first}");
-        assert!(kept || !six, "a key stolen or shed");
+        // All six keys sound (none stolen or shed once ORBIT starts, when
+        // down first, without the `master-tape` bus), either way.
+        assert_eq!(voices, 6, "{keys_first}");
+        assert!(kept || !(keys_first && !TAPE), "a key stolen or shed");
         let room = match keys_first {
             true => 0,
             false => Instrument::BURST.0 + OrbitRunner::COST.0,
@@ -1503,16 +1502,16 @@ fn tape_bills_each_model() {
             v - RESERVED_TAPE,
         ]
     };
-    assert_eq!(rooms, [4_984, 3_817, 4_813, 4_674]);
+    assert_eq!(rooms, [5_484, 4_234, 5_313, 5_174]);
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     let on = |q| ParamAddr::new(BlockRef::TapeEngine, q);
     // Model, bill, voices with TAPE and AGE off, with both.
     for (model, bill, off, both) in [
-        (Loop, 450, [8, 7, 8, 8], [8, 6, 8, 8]),
-        (PingPong, 490, [8, 6, 8, 8], [8, 6, 7, 7]),
-        (Scrub, 480, [8, 6, 8, 8], [8, 6, 7, 7]),
-        (Transwave, 400, [8, 7, 8, 8], [8, 7, 8, 8]),
-        (Stretch, 450, [8, 7, 8, 8], [8, 6, 8, 8]),
+        (Loop, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
+        (PingPong, 490, [8, 7, 8, 8], [8, 6, 8, 8]),
+        (Scrub, 480, [8, 7, 8, 8], [8, 7, 8, 8]),
+        (Transwave, 400, [8, 8, 8, 8], [8, 8, 8, 8]),
+        (Stretch, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
         (Oneshot, 230, [8, 8, 8, 8], [8, 8, 8, 8]),
         (Tron, 230, [8, 8, 8, 8], [8, 8, 8, 8]),
     ] {
@@ -1613,8 +1612,8 @@ fn vibrato_costs_no_level_heads() {
 fn the_reverb_type_is_paid_for_by_admission() {
     use chimera_core::dsp::rev::{SWITCH_BILLED, extra_cost};
     use chimera_core::dsp::reverb::ReverbType as T;
-    // Rev Y's budget leaves QUAD five A16 ∪ A17 voices and 70 to spare:
-    // BLOOM's extra (206) takes one.
+    // Rev Y's budget leaves QUAD five A16 ∪ A17 voices and 487 to spare:
+    // BLOOM's extra (206) fits.
     let rig = || common::InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_Y));
     let held = |kind: T| {
         let mut r = rig();
@@ -1630,9 +1629,13 @@ fn the_reverb_type_is_paid_for_by_admission() {
     let (quad, bloom) = (held(T::Quad), held(T::Bloom));
     eprintln!("admitted on rev Y: QUAD {quad}, BLOOM {bloom}");
     assert!(extra_cost(T::Bloom) > Cost(0));
-    assert_eq!(quad, if TAPE { 4 } else { 5 });
-    // With the master tape QUAD's four leave 683 spare: BLOOM fits too.
-    assert_eq!(bloom, 4, "BLOOM {bloom} vs QUAD {quad}");
+    assert_eq!(quad, 5);
+    // With the master tape QUAD's five leave 197 spare: BLOOM takes one.
+    assert_eq!(
+        bloom,
+        if TAPE { 4 } else { 5 },
+        "BLOOM {bloom} vs QUAD {quad}"
+    );
 
     // QUAD → BLOOM → HALL → QUAD → ROOM mid-play: never more voices than
     // the TYPE's budget holds once the switch and its fades are over.

@@ -25,7 +25,7 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0017](0017-prime-status-feedback.md) | MIX+PLUS reports its outcome in place, until the next input | Accepted; hint text superseded by [0086](0086-every-gesture-shows-a-contextual-hint-in-the-focus-band.md) |
 | [0018](0018-fm-alg4-follows-tx81z.md) | FM algorithm 4 follows the TX81Z, not p81z | Superseded by 0022 |
 | [0019](0019-note-input-per-source-queues.md) | One parser and one single-producer queue per note source | Accepted |
-| [0020](0020-audio-clocking-and-output.md) | Clock the chip by silicon revision; derive the cycle budget from it | Accepted; DTCM stack clause superseded in part by 0025 |
+| [0020](0020-audio-clocking-and-output.md) | Clock the chip by silicon revision; derive the cycle budget from it | Accepted; DTCM stack clause superseded in part by 0025; 70 % figure superseded by [0124](0124-audio-gets-75-percent-of-the-cpu.md) |
 | [0021](0021-take-once-triple-buffer.md) | Audio↔UI shared state uses a take-once triple buffer | Accepted |
 | [0022](0022-one-algorithmic-engine.md) | One algorithmic six-operator engine replaces Pizza, FM and VA | Accepted; VCA note superseded in part by [0035](0035-every-connection-is-a-matrix-route.md); superseded in part by [0060](0060-one-dc-blocker-per-voice.md) |
 | [0023](0023-waves-from-our-own-recipes.md) | The waves come from our own recipes | Accepted |
@@ -122,3 +122,4 @@ New ADRs use [`0000-template.md`](0000-template.md) and take the next number.
 | [0117](0117-a-knob-glide-steps-the-filter-and-bills-admission-only.md) | A knob glide steps the filter, fold and drive four times a block on the steady loop (routes and taps keep the per-sample path); its residual cost bills admission, never shedding | Proposed |
 | [0120](0120-modal-and-tape-pages-drop-space.md) | MODAL and TAPE pages drop SPACE; the reverb send lives on SENDS only (supersedes in part 0093) | Accepted |
 | [0121](0121-smear-is-bounded-by-the-pitch-it-plays-and-rate-runs-to-2-hz.md) | SMEAR's bound is the pitch a held tone plays (P95 ≤ 15 cents at RATE's top, every TYPE and SIZE); RATE runs 0.1 → 2 Hz on every TYPE from 0.95 Hz; SMEAR scales its depth linearly to the cap; new depths per TYPE (amends 0095 and 0085) | Proposed |
+| [0124](0124-audio-gets-75-percent-of-the-cpu.md) | Audio gets 75% of the CPU (7,500 cycles a sample on rev V); admission still bills worst case; 80% waits on project-load and save timing at that share (supersedes in part 0020) | Accepted |
