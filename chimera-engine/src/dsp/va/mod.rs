@@ -28,21 +28,6 @@ use stability::{JITTER_CENTS, Seed, Stability, depth};
 #[cfg(any(test, feature = "test-support"))]
 use {osc::Correction, stability::Character};
 
-/// One of the two oscillators: the index into `VaParams`' pairs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OscId {
-    One = 0,
-    Two = 1,
-}
-
-impl OscId {
-    pub const ALL: [OscId; 2] = [OscId::One, OscId::Two];
-
-    pub const fn index(self) -> usize {
-        self as usize
-    }
-}
-
 /// How the two oscillators combine.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u8)]
@@ -101,7 +86,7 @@ impl DiskCode for VaMode {
     }
 }
 
-/// The VA Sound's parameters; pairs are indexed by `OscId::index`.
+/// The VA Sound's parameters; each pair is OSC 1's, then OSC 2's.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VaParams {
     pub wave: [f32; 2],
@@ -558,7 +543,6 @@ impl VaEngine {
             (self.playing, self.duck) = (p.mode, Duck::Steady);
         }
         if self.seeded != Some(part) {
-            debug_assert!(self.voice.index() < 256);
             self.stab
                 .seed(Seed::of(part.index() as u32, self.voice.index() as u32));
             self.seeded = Some(part);

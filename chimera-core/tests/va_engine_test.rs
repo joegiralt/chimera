@@ -368,13 +368,16 @@ fn pair_base(m0: VaMode, m1: VaMode) -> VaParams {
     }
 }
 
-const PAIRS: [(VaMode, VaMode); 6] = [
+/// The MIX/SYNC/RING matrix, and XOR → BITS (the same duck; one pair
+/// closes the matrix at the cost of a constant).
+const PAIRS: [(VaMode, VaMode); 7] = [
     (VaMode::Mix, VaMode::Sync),
     (VaMode::Mix, VaMode::Ring),
     (VaMode::Sync, VaMode::Mix),
     (VaMode::Sync, VaMode::Ring),
     (VaMode::Ring, VaMode::Mix),
     (VaMode::Ring, VaMode::Sync),
+    (VaMode::Xor, VaMode::Bits),
 ];
 const AT: usize = 20;
 

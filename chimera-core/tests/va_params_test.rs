@@ -2,7 +2,7 @@
 
 use chimera_core::addr::BlockRef;
 use chimera_core::block::{Block, Change, DiskCode, Motion, ParamId, Smoothing};
-use chimera_core::dsp::va::{OscId, VA_SPECS, VaMode, VaParams};
+use chimera_core::dsp::va::{VA_SPECS, VaMode, VaParams};
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
@@ -31,7 +31,6 @@ fn neutral_is_the_spec() {
         (p.mode, p.amount, p.sub, p.stability),
         (VaMode::Mix, 0.5, 0.0, 1.0)
     );
-    assert_eq!(OscId::ALL.map(OscId::index), [0, 1]);
 }
 
 #[test]

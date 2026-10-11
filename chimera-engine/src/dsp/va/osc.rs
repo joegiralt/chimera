@@ -232,16 +232,10 @@ impl Pair {
     /// run starting on it extrapolates its lines from the sample before).
     fn consts(self, m: Morph, inc: f32) -> ([f32; 6], [f32; 4]) {
         let (a, b) = self.waves();
-        let f = 3.0 * m.wave.get() - self as usize as f32;
         let mut sh = Shaped::ZERO;
         sh.fill(a, m.shape.get(), inc);
         sh.fill(b, m.shape.get(), inc);
-        let (ca, cb) = (a.consts(&sh, 1.0 - f), b.consts(&sh, f));
-        let (pa, pb) = (a.pos(&sh), b.pos(&sh));
-        (
-            [ca[0], ca[1], ca[2], cb[0], cb[1], cb[2]],
-            [pa[0], pa[1], pb[0], pb[1]],
-        )
+        at(a, b, &sh, 3.0 * m.wave.get() - self as usize as f32)
     }
 }
 
@@ -303,12 +297,8 @@ impl Kind for Sine {
         dpsin(th) * (c[0] + c[1] * c[2] * dpsin(c[2] * psin(th)))
     }
 
-    fn value_slope(c: [f32; 3], p: f32, _: [f32; 2]) -> (f32, f32) {
-        let th = p - 0.5;
-        let q = psin(th);
-        let y = c[0] * q + c[1] * psin(c[2] * q);
-        let d = dpsin(th) * (c[0] + c[1] * c[2] * dpsin(c[2] * q));
-        (y, d)
+    fn value_slope(c: [f32; 3], p: f32, u: [f32; 2]) -> (f32, f32) {
+        (Self::value(c, p, u, 0.0), Self::slope(c, p, u))
     }
 }
 
@@ -961,8 +951,8 @@ impl VarOsc {
     }
 
     /// Every wave's SHAPE constants at the end of the block on `r` (`n`
-    /// samples), kept for `render`, and the block's peak bound: the larger
-    /// of its two ends' (`peak_bound`'s, from the same constants).
+    /// samples), kept for `render`, and the block's peak bound (`bound`:
+    /// WAVE's path split at every anchor it passes).
     pub fn begin(&mut self, r: &Ramps, n: usize) -> f32 {
         self.ends(Shaped::all(Unit::new(val(r.shape, n)).get(), val(r.inc, n)));
         self.next_ok = true;

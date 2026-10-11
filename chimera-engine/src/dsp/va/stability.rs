@@ -223,7 +223,7 @@ impl Stability {
 
     /// The cents for the cycle a wrap starts.
     pub fn jitter(&mut self, d: f32) -> f32 {
-        let x = xorshift(&mut self.rng[3]);
+        let x = uni(self.jitter_word() as u32);
         if d == 0.0 { 0.0 } else { JITTER_CENTS * d * x }
     }
 
