@@ -101,7 +101,7 @@ It was refreshed 2026-10-11 against main 4473f0a1.
   - stage named paths only, never `docs/chimera-ui-ux-spec.md` or `chimera.bin`;
   - follow-ups go in GitHub issues, referenced by URL.
 - **ADRs:** `0000-template.md`, `Proposed`, with a README row; never edit an accepted ADR.
-  - On 2026-10-11 the highest number on any branch is 0127 (`screensaver`); 0123 is `sound-sends`' and 0124 is `audio-share-75`'s. So this plan's are **ADR P** (Phase 0, expected 0128) and **ADR F** (formant, expected 0129).
+  - On 2026-10-11 the highest number on any branch is 0127 (`screensaver`); 0123 is `sound-sends`', 0124 is `audio-share-75`'s, 0128 is reserved by `midi-bend-sustain` and 0129 is `va-glyphs`' (PR #473). So this plan's are **ADR P** (Phase 0, expected 0130) and **ADR F** (formant, expected 0131).
   - Before writing each, list `docs/adr/` on `main` and on every open branch (`git for-each-ref refs/heads` then `git ls-tree`), take the next free number, and use it in the file name and README.
 
 ## Review Focus

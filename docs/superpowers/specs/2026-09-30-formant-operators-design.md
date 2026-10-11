@@ -38,7 +38,7 @@ This spec adds a voiced kind, FRMT, and an unvoiced kind, NOIS, to Algo's WAVE l
 - VOWEL, FRMT and BW are mod destinations;
 - the pages adapt: a patch with no formant operator shows the same pages and cells as today, apart from one dimmed cell (§ 6);
 - every test in § Tests passes, and old patches load and sound bit for bit as before;
-- its ADR is written (the next free number; 0127 is the highest on any branch on 2026-10-11, so expect 0129, after Phase 0's 0128);
+- its ADR is written (the next free number; 0127 is the highest on any branch on 2026-10-11, 0128 is reserved by `midi-bend-sustain` and 0129 is `va-glyphs`', so expect 0131, after Phase 0's 0130);
 - the three demo clips have passed the owner's UAT;
 - the chip bench's formant rows are measured at the ship flash.
 
@@ -823,7 +823,7 @@ Three new factory Sounds. The clips render from them, so what the owner approves
 
 ## ADR
 
-The next free ADR number when it is written. On 2026-10-11 the highest on any branch is 0127 (`screensaver`); 0123 is reserved by `sound-sends` and 0124 is `audio-share-75`'s, so expect 0129, after Phase 0's 0128: "Formant operators are Algo operator kinds, after the FS1R patent". It records:
+The next free ADR number when it is written. On 2026-10-11 the highest on any branch is 0127 (`screensaver`); 0123 is reserved by `sound-sends` and 0124 is `audio-share-75`'s, 0128 is reserved by `midi-bend-sustain` and 0129 is `va-glyphs`' (PR #473), so expect 0131, after Phase 0's 0130: "Formant operators are Algo operator kinds, after the FS1R patent". It records:
 
 - **Provenance:** the split above, including FSVR's measured skirt law, and FSVR's GPL status.
 - **Kinds:** `OpKind`, the WAVE codes, and VOWEL SLOT.
