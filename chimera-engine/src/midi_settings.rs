@@ -58,6 +58,7 @@ impl Block for MidiSettings {
         &MIDI_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::SYNC => self.sync as u8 as f32,
@@ -65,6 +66,7 @@ impl Block for MidiSettings {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         if id == Self::SYNC {
             self.sync = SyncMode::ALL[(v as usize).min(SyncMode::ALL.len() - 1)];

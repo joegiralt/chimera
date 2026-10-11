@@ -251,6 +251,7 @@ impl Block for FilterParams {
         crate::block::find_spec(self.specs(), id)
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::CUTOFF => self.cutoff,
@@ -273,6 +274,7 @@ impl Block for FilterParams {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::CUTOFF => self.cutoff = v,
@@ -623,6 +625,7 @@ impl Block for EnvParams {
         &ENV_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::ATTACK => self.attack,
@@ -648,6 +651,7 @@ impl Block for EnvParams {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::ATTACK => self.attack = v,
@@ -785,6 +789,7 @@ impl Block for DriveParams {
         &DRIVE_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::DRIVE => self.drive,
@@ -794,6 +799,7 @@ impl Block for DriveParams {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::DRIVE => self.drive = v,
@@ -873,6 +879,7 @@ impl Block for FolderParams {
         &FOLDER_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::FOLD => self.fold,
@@ -882,6 +889,7 @@ impl Block for FolderParams {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::FOLD => self.fold = v,
@@ -1047,6 +1055,7 @@ impl Block for OutParams {
         &OUT_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::VOLUME => self.volume,
@@ -1057,6 +1066,7 @@ impl Block for OutParams {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::VOLUME => self.volume = v,
@@ -1294,6 +1304,7 @@ impl Block for PitchParams {
         &PITCH_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::PITCH => self.pitch,
@@ -1305,6 +1316,7 @@ impl Block for PitchParams {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::PITCH => self.pitch = v,

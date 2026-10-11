@@ -351,6 +351,7 @@ impl Block for PartParams {
         &PART_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::CHANNEL => self.channel.get() as f32,
@@ -367,6 +368,7 @@ impl Block for PartParams {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::CHANNEL => self.channel = MidiChannel::clamped(v as u8),

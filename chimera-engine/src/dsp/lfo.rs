@@ -261,6 +261,7 @@ impl Block for LfoParams {
         &LFO_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::RATE => self.rate,
@@ -278,6 +279,7 @@ impl Block for LfoParams {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::RATE => self.rate = v,

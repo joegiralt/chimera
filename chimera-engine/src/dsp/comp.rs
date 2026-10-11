@@ -213,6 +213,7 @@ impl Block for CompParams {
         &COMP_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::THRESH => self.thresh,
@@ -225,6 +226,7 @@ impl Block for CompParams {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::THRESH => self.thresh = v,

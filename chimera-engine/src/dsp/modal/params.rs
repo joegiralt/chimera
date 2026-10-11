@@ -436,6 +436,7 @@ impl Block for ModalParams {
         &MODAL_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::MODE => self.mode as u8 as f32,
@@ -459,6 +460,7 @@ impl Block for ModalParams {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::MODE => self.mode = ResonatorMode::from_u8(v as u8),

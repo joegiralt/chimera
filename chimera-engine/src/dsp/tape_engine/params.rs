@@ -399,6 +399,7 @@ impl Block for TapeEngineParams {
         &TAPE_ENGINE_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::MODEL => self.model.index() as f32,
@@ -420,6 +421,7 @@ impl Block for TapeEngineParams {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
             Self::MODEL => self.model = TapeModel::from_index(v as u8),

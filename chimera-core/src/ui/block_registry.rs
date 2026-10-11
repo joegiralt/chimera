@@ -50,7 +50,7 @@ pub static MODAL_EXC: BlockDef = BlockDef {
     ],
 };
 
-/// Home: MODEL, the four macros, and SPACE, the Part's REV send.
+/// Home: MODEL and the four macros.
 pub static MODAL_1: BlockDef = BlockDef {
     id: 2,
     name: "Modal",
@@ -63,7 +63,7 @@ pub static MODAL_1: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Modal, ModalParams::BRIGHT),
         ParamSlot::param(BlockRef::Modal, ModalParams::DAMP),
         ParamSlot::param(BlockRef::Modal, ModalParams::POS),
-        ParamSlot::param(BlockRef::Part, PartParams::SEND_REVERB).with_label("SPACE"),
+        EMPTY,
     ],
 };
 
@@ -105,7 +105,7 @@ pub static TAPE_SRC: BlockDef = BlockDef {
     ],
 };
 
-/// DECK, the home: MODAL's RES shape, MODEL, the four macros and SPACE;
+/// DECK, the home: MODAL's RES shape, MODEL, the four macros;
 /// POSITION and MOTION as the machine labels them.
 pub static TAPE_DECK: BlockDef = BlockDef {
     id: 94,
@@ -119,7 +119,7 @@ pub static TAPE_DECK: BlockDef = BlockDef {
         ParamSlot::machine(MachineSlot::Motion),
         ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::TAPE),
         ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::AGE),
-        ParamSlot::param(BlockRef::Part, PartParams::SEND_REVERB).with_label("SPACE"),
+        EMPTY,
     ],
 };
 

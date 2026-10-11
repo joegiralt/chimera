@@ -65,7 +65,7 @@ EXC shows the exciter each model already has. Its header is named after the exci
 
 - **MODEL** is a named enum: BANK, STRING, SYMP, BOWED. A change is a switch (exclusive-state spec § 3): the Part's voices fade and rebuild, and the new model plays from the next note.
 - **STRUCTURE, BRIGHT, DAMP, POS** are modulatable. They are read every block from the modulated values and eased between blocks; none snaps. POS on STRING and SYMP takes effect at the next pluck, because the pluck comb shapes the excitation.
-- **SPACE** addresses the Part's existing reverb send. It is the same value as the send elsewhere, not a copy.
+- (superseded 2026-10-11, ADR 0120: SPACE is removed; the send lives on SENDS only) **SPACE** addresses the Part's existing reverb send. It is the same value as the send elsewhere, not a copy.
 - (amended 2026-09-30, owner) RES is purely the resonator: MODEL, STRUCTURE, BRIGHT, DAMP, POS and SPACE. BOWED reads BRIGHT, DAMP and POS; only STRUCTURE stays dimmed on it until step B.
 
 ### Model page (MDL2), by model

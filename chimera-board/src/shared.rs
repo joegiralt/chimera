@@ -36,14 +36,14 @@ pub fn take_scope() -> Option<(Writer<ScopeFrame>, Reader<ScopeFrame>)> {
 static mut WAVES_DTCM: MaybeUninit<Waves> = MaybeUninit::uninit();
 static WAVES_TAKEN: AtomicBool = AtomicBool::new(false);
 
-/// Copies the wave tables from flash into DTCM and reads them from there.
-pub fn copy_waves() {
+/// Renders the wave tables into DTCM and reads them from there (ADR 0122).
+pub fn build_waves() {
     if WAVES_TAKEN.swap(true, Ordering::AcqRel) {
         return;
     }
     // SAFETY: the flag lets exactly one caller past, so this is the only
     // reference to `WAVES_DTCM` ever made.
-    waves::copy_into(unsafe { &mut *addr_of_mut!(WAVES_DTCM) });
+    waves::render_into(unsafe { &mut *addr_of_mut!(WAVES_DTCM) });
 }
 
 // `UiState` is ~27 KB: it lives in AXI, not in `main`'s frame on the
