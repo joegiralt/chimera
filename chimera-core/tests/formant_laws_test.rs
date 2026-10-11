@@ -8,9 +8,12 @@ use chimera_core::dsp::algo::formant::{
     BRACKET_FLOOR, NYQUIST_HZ, R_REF, Skirt, cycles_to_phase, formant_law, lane_peak, rho,
     width_floor, window,
 };
-use chimera_core::dsp::algo::kinds::OpKind;
+use chimera_core::dsp::algo::kinds::{Kinds, OpKind};
 use chimera_core::dsp::algo::noise::{
     NOISE_CLAMP, NOISE_GAIN, noise_coef, noise_edge, noise_seed, res_mix,
+};
+use chimera_core::dsp::algo::vowel::{
+    Formant, VOWEL_HZ, VOWEL_OCT, VowelSlot, fc_hz, resolve_slots, vowel_delta,
 };
 use chimera_core::dsp::algo::waves::WaveId;
 use common::SR;
@@ -485,4 +488,63 @@ fn print_curves() {
     };
     rows("RHO", RHO_NODES, &|m| &m.rho_grid);
     rows("PEAK", PEAK_NODES, &|m| &m.peak_grid);
+}
+
+#[test]
+fn fc_law_is_exact() {
+    let a = 72.0;
+    assert!((fc_hz(a, 50.0, None, 50.0, 72.0) - 1131.4).abs() / 1131.4 < 1e-3);
+    for (key, note, want) in [
+        (0.0, 48.0, 800.0),
+        (100.0, 48.0, 400.0),
+        (100.0, 72.0, 1600.0),
+        (50.0, 60.0, 800.0),
+    ] {
+        assert!((fc_hz(a, 50.0, None, key, note) - want).abs() / want < 1e-3);
+    }
+    for (v, row) in [0.0, 25.0, 50.0, 75.0, 100.0].into_iter().zip(VOWEL_HZ) {
+        for (s, hz) in [Formant::F1, Formant::F2, Formant::F3].into_iter().zip(row) {
+            let want = 800.0 * hz / VOWEL_HZ[2][s as usize];
+            assert!((fc_hz(a, v, Some(s), 0.0, 60.0) - want).abs() / want < 1e-3);
+        }
+    }
+    assert_eq!(fc_hz(0.0, 100.0, Some(Formant::F1), 100.0, 0.0), 20.0);
+}
+
+#[test]
+fn vowel_table_is_peterson_barney_on_the_u_o_a_e_i_path() {
+    for v in 0..5 {
+        for s in 0..3 {
+            assert!((VOWEL_OCT[v][s] - (VOWEL_HZ[v][s] / VOWEL_HZ[2][s]).log2()).abs() < 1e-6);
+        }
+    }
+    assert_eq!(VOWEL_OCT[2], [0.0; 3]);
+    assert!((vowel_delta(Formant::F2, 75.0) - (1840.0f32 / 1090.0).log2()).abs() < 1e-6);
+    assert!((vowel_delta(Formant::F2, 62.5) - 0.5 * (1840.0f32 / 1090.0).log2()).abs() < 1e-6);
+}
+
+#[test]
+fn vowel_slots_resolve() {
+    use Formant::{F1, F2, F3};
+    use OpKind::{Noise, Table};
+    use VowelSlot::{Auto, Off};
+    let t = Table(WaveId::W1);
+    let fm = OpKind::Formant;
+    let k = Kinds::new([t, fm, t, Noise, Noise, t]);
+    assert_eq!(
+        resolve_slots(&k, [Auto; 6]),
+        [None, Some(F1), None, Some(F2), Some(F3), None]
+    );
+    let k = Kinds::new([fm, fm, Noise, Noise, Noise, t]);
+    assert_eq!(resolve_slots(&k, [Auto; 6])[3..5], [None, None]);
+    let k = Kinds::new([fm, fm, Noise, Noise, t, t]);
+    let f1 = VowelSlot::F1;
+    assert_eq!(
+        resolve_slots(&k, [f1, f1, Auto, Auto, Auto, Auto])[..4],
+        [Some(F1), Some(F1), Some(F1), Some(F2)]
+    );
+    assert_eq!(
+        resolve_slots(&k, [Off, Auto, Auto, Auto, Auto, Auto])[..2],
+        [None, Some(F1)]
+    );
 }

@@ -13,7 +13,7 @@ pub const BRACKET_FLOOR: f32 = 0.05;
 pub const NYQUIST_HZ: f32 = 24_000.0;
 
 /// FC's floor.
-const FC_MIN: f32 = 20.0;
+pub(super) const FC_MIN: f32 = 20.0;
 
 /// The width floor `B_min = K_3·f0/2`: SKIRT 3's span in two periods, the
 /// same at every SKIRT.
