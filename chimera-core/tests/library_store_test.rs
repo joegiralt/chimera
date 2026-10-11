@@ -268,6 +268,25 @@ fn peek_refuses_other_kinds_and_unknown_engines() {
     );
 }
 
+/// A later build grows `Build` (spec § Files): the stamp still reads.
+#[test]
+fn peek_reads_the_stamp_of_a_grown_build() {
+    use chimera_core::storage::RecordTag;
+    let base = stamped_named(&factory_sound(0).unwrap(), "BASS-1");
+    let at = 28 + 5;
+    assert_eq!(base[at..at + 2], RecordTag::Build.code().to_le_bytes());
+    let old_len = usize::from(u16::from_le_bytes([base[at + 2], base[at + 3]]));
+    for grown in [30usize, 40] {
+        let mut f = base[..at + 4 + old_len].to_vec();
+        f[at + 2..at + 4].copy_from_slice(&(grown as u16).to_le_bytes());
+        f.resize(at + 4 + grown, 0);
+        // Whole-file length with a trailer: only `file_len` matters to a peek.
+        let len = (f.len() + 4) as u32;
+        let p = peek_library(&f[..f.len().min(LIB_PEEK)], len).unwrap();
+        assert_eq!(p.stamp, Some(ST), "{grown} B Build");
+    }
+}
+
 #[test]
 fn peek_never_panics_on_cut_input() {
     let f = stamped_named(&factory_sound(0).unwrap(), "BASS-1");

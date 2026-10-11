@@ -29,7 +29,7 @@ Testers save a good patch, update the firmware and come back to it, or carry a S
 
 ## Consequences
 - flash: 116540 B free (-34004); AXI: 39236 B free (-3032), against origin/main (150544 B and 42268 B free), `chimera-stm32` release.
-- A Sound saved on a newer build loads on an older one, with unknown params skipped and counted. A param retired with its id listed counts 0; a migrated or translated one counts 0.
+- This build loads Sounds saved on newer builds (older pre-library builds are not claimed), with unknown params skipped and counted. A param retired with its id listed counts 0; a migrated or translated one counts 0.
 - Desktop QA (headless, a scratch build with one param's id and default moved under a migration and another dropped) loaded a saved Sound back with the toast and a non-silent render.
 - The library adds nothing to the audio side; card I/O runs only on the UI loop behind BUSY.
 - On the chip, at ship: one page's listing time with 500 files, and the owner's save-on-one-build, load-on-the-next UAT.

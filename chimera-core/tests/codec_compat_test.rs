@@ -17,8 +17,8 @@ use chimera_core::project::{
     Origin, PartFrom, PartId, PartSource, PartStatus, Project, SlotId, part_block, part_status,
 };
 use chimera_core::storage::{
-    BuildStamp, FileError, FileKind, Generation, Header, MIGRATIONS, TRANSLATIONS, decode_block,
-    encode_library_sound, sound_crc, write_file,
+    BuildStamp, Card, FileError, FileKind, Generation, Header, MIGRATIONS, TRANSLATIONS,
+    decode_block, encode_library_sound, sound_crc, write_file,
 };
 use chimera_hal::BLOCK_SIZE;
 use common::codec_util::{
@@ -203,6 +203,38 @@ const FIXTURE_BYTES: &[(&str, usize, u64)] = &[
     ("init_tape.snd", 160, 0xc6205acfbcaf2836),
     ("library_1.snd", 257, 0xa89d3e8a322ca1fa),
 ];
+
+/// Every v1 `.snd` fixture, `library_1.snd` included, loads through the
+/// library read (`LibraryDecoder` under `load_ab_in_place`) to the Sound
+/// the plain decode gives.
+#[test]
+fn v1_fixtures_load_through_the_library_path() {
+    use chimera_core::storage::{LibId, LibraryDecoder, Side, library_file, load_ab_in_place};
+    use chimera_hal::store::{Dir, Store};
+    use chimera_hal::testkit::MemStore;
+
+    let id = LibId::new(1).unwrap();
+    for (name, _) in sources() {
+        let bytes = fixture(&name);
+        let mut st = MemStore::new(1);
+        let vol = st.mount().unwrap();
+        st.make_dir(vol, Dir::Chimera).unwrap();
+        st.make_dir(vol, Dir::Sounds).unwrap();
+        st.write(vol, library_file(id).side(Side::A), &mut |w| w.put(&bytes))
+            .unwrap();
+        let mut got = Sound::neutral(EngineType::Algo);
+        let mut d = LibraryDecoder::new(&mut got);
+        Card::new()
+            .run(&mut st, |s, r| {
+                load_ab_in_place(s, r, library_file(id), &mut d)
+            })
+            .unwrap()
+            .result
+            .unwrap();
+        assert_eq!(d.skips(), 0, "{name}");
+        assert!(got.bits_eq(&decode(&bytes).unwrap()), "{name}");
+    }
+}
 
 /// `system.sys`'s length and FNV-1a.
 const SYSTEM_FIXTURE_BYTES: (usize, u64) = (65, 0xf544fe6fdcbdda8c);

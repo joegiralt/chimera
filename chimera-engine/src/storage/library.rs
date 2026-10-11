@@ -216,15 +216,16 @@ pub struct Peek {
     pub needs_newer: bool,
 }
 
-/// The record at `at`: its tag and payload, when whole in `b` and before
-/// the CRC trailer of a `file_len` file.
+/// The record at `at`: its tag and payload, when whole in the file (before
+/// the CRC trailer of a `file_len` file). The payload is cut at the end of
+/// `b`: a record grown by a later build still shows its leading bytes.
 fn record_at(b: &[u8], at: usize, file_len: u32) -> Option<(u16, &[u8])> {
     let h = b.get(at..at + 4)?;
     let len = usize::from(u16::from_le_bytes([h[2], h[3]]));
     let end = at + 4 + len;
     let whole = end + super::frame::TRAILER_LEN <= file_len as usize;
     whole
-        .then(|| b.get(at + 4..end))
+        .then(|| b.get(at + 4..end.min(b.len())))
         .flatten()
         .map(|p| (u16::from_le_bytes([h[0], h[1]]), p))
 }

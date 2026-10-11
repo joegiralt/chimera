@@ -17,7 +17,7 @@ use crate::params::EngineType;
 use crate::preset::MAX_SOUNDS;
 use crate::project::arena::Cost;
 use crate::project::{Line, PartId, Pool, Project, SlotId};
-use crate::storage::{BuildStamp, HEADER_LEN, TRAILER_LEN};
+use crate::storage::{BUILD_LEN, BuildStamp, HEADER_LEN, TRAILER_LEN};
 use crate::ui::components;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
@@ -152,9 +152,9 @@ pub const SAVE_TO_LIBRARY: Gesture<'static> = Gesture("MIX + EDIT", "SAVES TO LI
 pub const STAMP_Y: i32 = CLEAR_Y;
 
 /// A listed file's cost in the pool: its bytes less the frame and the
-/// Sound's fixed 25 B, plus the 16 B entry header; a granule a row.
+/// `Build` record (head + payload), plus the 16 B entry header; a granule a row.
 pub fn entry_cost(len: u32) -> Cost {
-    let body = (len as usize).saturating_sub(HEADER_LEN + TRAILER_LEN + 25);
+    let body = (len as usize).saturating_sub(HEADER_LEN + TRAILER_LEN + 4 + BUILD_LEN);
     Cost::of(body + 16)
 }
 
