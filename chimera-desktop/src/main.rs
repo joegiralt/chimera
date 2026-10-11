@@ -141,7 +141,8 @@ fn main() {
         }
         // Card work the keys asked for, under BUSY; a load publishes
         // once the audio acks, or the timeout passes.
-        if ui.card_pending() {
+        let busy = ui.card_pending();
+        if busy {
             let (y0, y1) = draw_busy(&mut display);
             display.flush_region(y0, y1);
         }
@@ -154,7 +155,10 @@ fn main() {
         ui.card_work(cx, &LOAD_LINK, |swap, u| {
             let deadline = Instant::now() + Duration::from_millis(LOAD_ACK_TIMEOUT_MS.into());
             let _ = swap.settle(&LOAD_LINK, || Instant::now() < deadline);
-            audio.update(u.project(), LOAD_LINK.epoch(), |o| u.publish_orbit(o));
+            audio.update(u.project(), LOAD_LINK.epoch(), |b| {
+                u.publish_orbit(&mut b.orbit);
+                u.publish_tune(b);
+            });
         });
         // Leaving SETTINGS syncs SYSTEM; a toast says how it went.
         ui.sync_system(&mut sync, &mut card, &mut store, &mut settings);
@@ -164,12 +168,16 @@ fn main() {
         }
 
         // Push every Part, the FX and ORBIT to the audio thread.
-        audio.update(ui.project(), LOAD_LINK.epoch(), |o| ui.publish_orbit(o));
+        audio.update(ui.project(), LOAD_LINK.epoch(), |b| {
+            ui.publish_orbit(&mut b.orbit);
+            ui.publish_tune(b);
+        });
 
         ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
         let now = Instant::now();
         let toast_ms = now.duration_since(toast_at).as_millis() as u32;
         toast_at = now;
+        ui.step_idle(toast_ms, busy);
         if let ToastStep::Show(text) = ui.step_toast(toast_ms) {
             draw_toast(&mut display, text.as_str());
         }

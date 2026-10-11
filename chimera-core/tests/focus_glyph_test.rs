@@ -87,6 +87,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Va", "SUB", LEVEL),
     ("Comp", "MAKEUP", LEVEL),
     ("Comp", "MIX", LEVEL),
+    ("Comp", "VOL", LEVEL),
     // The chorus, all four params: the braid.
     ("Chorus", "MODE", BRAID),
     ("Chorus", "RATE", BRAID),
@@ -128,6 +129,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Theme", "ACCENT", NONE),
     ("Theme", "HINTS", SWITCH),
     ("Theme", "INVERT", SWITCH),
+    ("Theme", "SAVER", NONE),
     ("Midi", "SYNC", NONE),
     ("OrbitChords", "KEY", NONE),
     ("OrbitChords", "SCALE", NONE),

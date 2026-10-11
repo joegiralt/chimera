@@ -257,6 +257,7 @@ fn with_view(v: &mut Rig, f: impl FnOnce(&mut Voice, &mut EngineCtx<'_>)) {
             sym: pool,
             src: &view,
             part: chimera_core::project::PartId::ALL[0],
+            tune: 0.0,
         },
     );
 }
@@ -314,6 +315,7 @@ fn no_source_unlatches_the_last() {
             sym: &mut sym,
             src: &view,
             part: chimera_core::project::PartId::ALL[0],
+            tune: 0.0,
         };
         if let Some(latched) = on {
             v.note_on(c4(), Velocity::DEFAULT, p, latched.then_some(id), ctx);
@@ -342,6 +344,7 @@ fn a_sounding_note_bills_its_latched_model() {
         sym: &mut sym,
         src: &view,
         part: chimera_core::project::PartId::ALL[0],
+        tune: 0.0,
     };
     slot.note_on(c4(), Velocity::DEFAULT, &s.params, SR, Some(id), ctx);
     assert_eq!(slot.playing_cost(), Some(COST_LOOP));
@@ -420,6 +423,7 @@ fn a_note_waiting_a_fade_plays_its_source() {
             sym: &mut sym,
             src: &view,
             part: chimera_core::project::PartId::ALL[0],
+            tune: 0.0,
         };
         if let Some(id) = on {
             v.note_on(c4(), Velocity::DEFAULT, p, Some(id), ctx);

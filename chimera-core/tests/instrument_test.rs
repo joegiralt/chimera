@@ -274,7 +274,7 @@ fn mix_parts_reference(
         }
     }
     fx.master(out, &shared.fx, SR);
-    fx.limit(dac, SR);
+    fx.limit(dac, &shared.fx, SR);
     scope
 }
 

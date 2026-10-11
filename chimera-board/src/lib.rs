@@ -528,6 +528,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         let now = controls::ticks();
         let elapsed_ms = now.wrapping_sub(last_tick) * 1_000 / controls::CONTROLS_HZ;
         last_tick = now;
+        ui.step_idle(elapsed_ms, busy);
         let toast = ui.step_toast(elapsed_ms);
         if toast == ToastStep::Ended || busy {
             // The toast or BUSY covered rows the dirty regions don't know about.
@@ -602,6 +603,7 @@ fn publish(
 ) {
     b.update_from_project(ui.project(), LOAD_LINK.epoch(), knobs);
     orbit::publish(ui, b);
+    ui.publish_tune(b);
 }
 
 /// The audio's latest stats with the stack's high-water mark, as the

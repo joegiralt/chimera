@@ -42,6 +42,9 @@ pub struct EngineCtx<'a> {
     pub sym: &'a mut SymPool,
     pub src: &'a GateView<'a>,
     pub part: PartId,
+    /// SETTINGS > TUNING in semitones, eased (`Instrument`): added to the
+    /// pitch offset of every engine.
+    pub tune: f32,
 }
 
 impl SlotKind {
@@ -297,7 +300,7 @@ impl EngineSlot {
         ctx: &mut EngineCtx<'_>,
     ) {
         debug_assert_eq!(p.engine(), self.kind().engine());
-        self.set_pitch(p);
+        self.set_pitch(p, ctx.tune);
         let pool = &mut *ctx.sym;
         match (self, p.pitch.steal_glide()) {
             (Self::Algo(a), None) => a.note_on(note, vel, &p.algo, sample_rate),
@@ -434,7 +437,7 @@ impl EngineSlot {
         taps: &mut TapRows,
     ) {
         debug_assert_eq!(p.engine(), self.kind().engine());
-        self.set_pitch(p);
+        self.set_pitch(p, ctx.tune);
         match self {
             Self::Algo(a) => a.render(out, &p.algo, live, sample_rate, taps),
             Self::Modal(m) => m.render(out, &p.modal, sample_rate, ctx.sym),
@@ -443,13 +446,16 @@ impl EngineSlot {
         }
     }
 
-    /// `p`'s pitch offset (ADR 0042) to the engine about to play.
-    fn set_pitch(&mut self, p: &ParamSnapshot) {
+    /// `p`'s pitch offset (ADR 0042) plus the unit's TUNING, `tune`
+    /// semitones, to the engine about to play: the one path every engine's
+    /// pitch takes. `+ 0.0` leaves the offset's bits as they were.
+    fn set_pitch(&mut self, p: &ParamSnapshot, tune: f32) {
+        let st = p.pitch.semitones() + tune;
         match self {
-            Self::Algo(a) => a.set_pitch(p.pitch.semitones()),
-            Self::Modal(m) => m.set_pitch(p.pitch.ratio()),
-            Self::Tape(t) => t.set_pitch(p.pitch.semitones() * 100.0),
-            Self::Va(v) => v.set_pitch(p.pitch.semitones() * 100.0),
+            Self::Algo(a) => a.set_pitch(st),
+            Self::Modal(m) => m.set_pitch(crate::params::PitchParams::ratio_of(st)),
+            Self::Tape(t) => t.set_pitch(st * 100.0),
+            Self::Va(v) => v.set_pitch(st * 100.0),
         }
     }
 
