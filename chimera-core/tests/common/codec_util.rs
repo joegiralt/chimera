@@ -190,6 +190,7 @@ pub fn system_midi_fixture_settings() -> SystemSettings {
     SystemSettings {
         midi: MidiSettings {
             sync: chimera_core::orbit::clock::SyncMode::Int,
+            tune: 0,
         },
         theme: ThemeSettings {
             bright: Bright::new(55),

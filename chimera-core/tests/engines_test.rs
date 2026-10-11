@@ -29,6 +29,7 @@ fn ctx<'a>(sym: &'a mut SymPool, src: &'a GateView<'a>) -> EngineCtx<'a> {
         sym,
         src,
         part: chimera_core::project::PartId::ALL[0],
+        tune: 0.0,
     }
 }
 

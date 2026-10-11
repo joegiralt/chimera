@@ -1218,7 +1218,11 @@ impl PitchParams {
     /// The frequency ratio, exactly 1 at no offset (no maths: the goldens);
     /// `fast_exp2`, within 0.1 cent, as it runs every block.
     pub fn ratio(&self) -> f32 {
-        let st = self.semitones();
+        Self::ratio_of(self.semitones())
+    }
+
+    /// The ratio of `st` semitones.
+    pub fn ratio_of(st: f32) -> f32 {
         if st == 0.0 {
             1.0
         } else {

@@ -24,6 +24,7 @@ fn settings() -> SystemSettings {
     SystemSettings {
         midi: MidiSettings {
             sync: SyncMode::Int,
+            tune: -37,
         },
         theme: ThemeSettings {
             bright: Bright::new(40),

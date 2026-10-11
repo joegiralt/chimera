@@ -233,17 +233,12 @@ fn test_page_from_location_demo() {
 }
 
 /// Spec §5: a SETTINGS leaf gets its own page (it used to alias an engine
-/// page). TUNING is not slot-bound yet; THEME is.
+/// page). TUNING and THEME are slot-bound.
 #[test]
 fn test_settings_leaves_have_their_own_page() {
-    assert_eq!(
-        key(leaf(&["AUDIO ROUTING", "TUNING"]), Op::A),
-        PageKey::Legacy(PageId::System(reg::SYS_TUNING.id))
-    );
-    assert!(matches!(
-        key(leaf(&["PERSONALIZE", "THEME"]), Op::A),
-        PageKey::Part { .. }
-    ));
+    for path in [["AUDIO ROUTING", "TUNING"], ["PERSONALIZE", "THEME"]] {
+        assert!(matches!(key(leaf(&path), Op::A), PageKey::Part { .. }));
+    }
 }
 
 // -- BlockDef registry: format coverage --

@@ -146,7 +146,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master", 0x56a92de14c3c7d2f),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master_level", 0x46ef06da0f464e86),
+    ("mixer_master_level", 0xe699d6651832774d),
     #[cfg(feature = "master-tape")]
     ("mixer_part", 0x91b06a3780c2bbb5),
     #[cfg(feature = "master-tape")]
@@ -181,7 +181,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_master", 0x3a5be1b8bfc87215),
     #[cfg(feature = "master-tape")]
-    ("mixer_master_level", 0x38d97b4c60a9a7a4),
+    ("mixer_master_level", 0xfa809f321d216a97),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_out_p2", 0xc657c44494c829ac),
     #[cfg(feature = "master-tape")]

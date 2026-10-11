@@ -1191,6 +1191,7 @@ mod tests {
             sym: &mut pool,
             src: &none,
             part: crate::project::PartId::ALL[0],
+            tune: 0.0,
         };
         let mut v = Voice::new(chimera_hal::SAMPLE_RATE);
         v.note_on(MidiNote::A4, Velocity::DEFAULT, &p, None, ctx);
