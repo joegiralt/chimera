@@ -1250,19 +1250,11 @@ impl VarOsc {
             p = p1;
         }
         (self.phase, self.held, self.h, *jit) = (p, held, h, j);
-        for (base, w) in [(0, A::EDGES), (2, B::EDGES)] {
-            if w {
-                let e = self.slot_at(base).min(2);
-                self.since[e] = [u[base], u[base + 1]];
+        for (base, w) in [(0, A::WAVE), (2, B::WAVE)] {
+            if let Some(e) = w.edge_slot() {
+                self.since[e.min(2)] = [u[base], u[base + 1]];
             }
         }
-    }
-
-    /// The edge slot of the live pair's wave at run index `base` (0 or 2).
-    fn slot_at(&self, base: usize) -> usize {
-        let (a, b) = self.pair.map_or((Wave::Sine, Wave::Sine), Pair::waves);
-        let w = if base == 0 { a } else { b };
-        w.edge_slot().unwrap_or(0)
     }
 
     /// Edge `e` of wave `K`, `u` the phase since it (`t0` samples before
