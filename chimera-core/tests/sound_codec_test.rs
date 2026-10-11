@@ -393,7 +393,15 @@ fn a_block_record_twice_is_corrupt() {
 fn neutral_is_a_contract() {
     let golden = include_str!("fixtures/neutral_v1.txt");
     for e in EngineType::ALL {
-        let want = golden.replace("engine: ENGINE,", &format!("engine: {e:?},"));
+        let want = golden
+            .replace("engine: ENGINE,", &format!("engine: {e:?},"))
+            .replace(
+                "kind: Svf,",
+                &format!(
+                    "kind: {:?},",
+                    chimera_core::dsp::filter::FilterKind::default_for(e)
+                ),
+            );
         let got = format!("{:#?}\n", Sound::neutral(e));
         assert!(
             got == want,
@@ -562,9 +570,14 @@ fn sparse_sizes() {
     // neutral (ADR 0063): RR on six operators and OUT LEVEL, a one-param
     // block each.
     // TAPE's INIT routes ENV 1 into VCA: one fixed-column route more, 4 B.
+    // VA's too, and its FINE2 and STAB: one block of two params, 15 B.
     for e in EngineType::ALL {
-        let vca = if e == EngineType::Tape { 4 } else { 0 };
-        assert_eq!(cost(&encode(&Sound::init(e))), 46 + 7 * 10 + vca, "{e:?}");
+        let more = match e {
+            EngineType::Algo | EngineType::Modal => 0,
+            EngineType::Tape => 4,
+            EngineType::Va => 4 + 15,
+        };
+        assert_eq!(cost(&encode(&Sound::init(e))), 46 + 7 * 10 + more, "{e:?}");
     }
 }
 
@@ -634,10 +647,10 @@ fn worst(e: EngineType) -> (Sound, usize) {
     (s, stuck)
 }
 
-/// 16 + 5 (`Engine`) + 20 × 5 (block heads) + 224 × 5 (params) + 164
+/// 16 + 5 (`Engine`) + 21 × 5 (block heads) + 236 × 5 (params) + 164
 /// (`Registry`) + 37 (`ModDests`) + 644 (`Routes`, the fixed columns'
 /// among them) + 36 (`TapRoutes`) + 14 (`SourceRef`) + 148 (`ZoneTune`,
-/// 24 zones) = 2 284 B, less 5 B for each param that has nowhere to move.
+/// 24 zones) = 2 349 B, less 5 B for each param that has nowhere to move.
 /// A new param moves it: raise
 /// `MAX_SOUND_COST` with it.
 #[test]
@@ -650,6 +663,6 @@ fn sparse_bound() {
         assert!(c <= MAX_SOUND_COST, "{e:?} {c}");
         most = most.max(c + 5 * stuck);
     }
-    assert_eq!(most, 2284);
+    assert_eq!(most, 2349);
     assert_eq!(MAX_SOUND_COST, most.next_multiple_of(16));
 }

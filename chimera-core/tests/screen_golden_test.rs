@@ -199,14 +199,15 @@ const GOLDENS: &[(&str, u64)] = &[
     // plan Task 6); and its refusal. Then the merge with filter-types: a
     // Sound is smaller (fixed columns, no registry entry).
     ("sound_browser", 0x1ed65ccfb138def3),
-    ("sound_browser_pool_full", 0x668867219454d099),
+    // pool_full re-recorded: MAX_SOUND_COST 2288 → 2352 (VA params).
+    ("sound_browser_pool_full", 0x9bebdfa46e75c0a0),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     ("settings_personal_theme", 0xc35039e65219cdc2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
     ("settings_system_diag_aud_load", 0x0063331a51f3da0e),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
-    // sparser with the fixed columns (11 · 2.0K, 158K free).
-    ("settings_project_pool", 0x4b4c1b086f6263c8),
+    // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.
+    ("settings_project_pool", 0xc96d14eba15c42a4),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).

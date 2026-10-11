@@ -334,6 +334,16 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
             ],
         ),
     ),
+    // Recorded at VA Task 10: INIT at VA_OUT_GAIN 3.631 (ADR 0109).
+    (
+        "va_init",
+        (
+            0x76d0cc4ee3a2b5ea,
+            [
+                0, 1035272866, 1057410541, 3194645776, 3211538673, 3211139739, 0, 0,
+            ],
+        ),
+    ),
 ];
 
 /// TAPE through one voice on INIT (ENV 1 into VCA), each model and LOOP

@@ -36,6 +36,8 @@ fn sources() -> Vec<(String, Sound)> {
     v.push(("init_modal.snd".into(), v1_init(EngineType::Modal)));
     // TAPE's INIT as TAPE Task 12 saved it: engine code 2 frozen (ADR 0045).
     v.push(("init_tape.snd".into(), Sound::init(EngineType::Tape)));
+    // VA's INIT as VA Task 10 saved it: engine code 3 frozen.
+    v.push(("init_va.snd".into(), Sound::init(EngineType::Va)));
     v
 }
 
@@ -177,6 +179,8 @@ const FIXTURE_BYTES: &[(&str, usize, u64)] = &[
     ("init_modal.snd", 1159, 0xd122f91342eff62a),
     // Written sparse (pool Task 2), at TAPE Task 12.
     ("init_tape.snd", 160, 0xc6205acfbcaf2836),
+    // Written sparse, at VA Task 10.
+    ("init_va.snd", 151, 0x63ec203363dcfe8c),
 ];
 
 /// `system.sys`'s length and FNV-1a.
@@ -460,6 +464,8 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     // (#385), then CLEAN's ACCURATE tan, exact divides, k law and trims
     // (#57, ADR 0096).
     ("init_tape.snd", 0xcaf4315437e08679),
+    // On the rig's second of saw, at VA Task 10.
+    ("init_va.snd", 0x3739e2ecc6befaf5),
 ];
 
 #[test]
@@ -489,6 +495,16 @@ fn init_tape_fixture_pins_engine_code_2() {
     let s = decode(&fixture("init_tape.snd")).unwrap();
     assert_eq!(s.engine(), EngineType::Tape);
     assert!(s.bits_eq(&Sound::init(EngineType::Tape)));
+}
+
+/// VA's engine code is 3 for good: the frozen INIT loads as VA.
+#[test]
+fn init_va_fixture_pins_engine_code_3() {
+    use chimera_core::block::DiskCode;
+    assert_eq!(EngineType::Va.disk_code(), 3);
+    let s = decode(&fixture("init_va.snd")).unwrap();
+    assert_eq!(s.engine(), EngineType::Va);
+    assert!(s.bits_eq(&Sound::init(EngineType::Va)));
 }
 
 /// Every v1 file, saved before STEAL (#254), steals CUT.

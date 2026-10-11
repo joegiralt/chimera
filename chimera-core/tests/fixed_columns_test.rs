@@ -187,8 +187,8 @@ fn init_routes_live_in_fixed_freq() {
         for c in [FixedCol::Q, FixedCol::Fold] {
             assert_eq!(m.fixed_present(c), 0);
         }
-        // TAPE's loop has no end: ENV 1 into VCA ends its note.
-        let vca = if e == EngineType::Tape {
+        // TAPE's loop and VA's tone have no end: ENV 1 into VCA ends the note.
+        let vca = if matches!(e, EngineType::Tape | EngineType::Va) {
             1 << ModSource::Env1.index()
         } else {
             0
