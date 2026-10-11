@@ -108,6 +108,12 @@ fn amp_and_sends_are_one_value() {
 
 #[test]
 fn sym_is_one_edit_down() {
+    use chimera_core::addr::Op;
+    use chimera_core::params::FolderParams;
+    use chimera_core::params::ParamSnapshot;
+    use chimera_core::ui::block_def::slot_addr;
+    use chimera_core::ui::view::SlotCtx;
+    let ctx = SlotCtx::read(&ParamSnapshot::default(), Op::A);
     let mut seen = 0;
     for ct in EngineType::ALL {
         let c = chain_def_for(ct);
@@ -115,6 +121,8 @@ fn sym_is_one_edit_down() {
             seen += 1;
             assert_eq!(b.sub_page_count(), 2, "{ct:?}");
             assert_eq!(b.active_def(1).id, 98, "{ct:?}");
+            let sym = ParamAddr::new(BlockRef::Folder, FolderParams::SYMMETRY);
+            assert_eq!(slot_addr(b.active_def(1), 0, &ctx), Some(sym), "{ct:?}");
         }
     }
     assert!(seen >= 4);

@@ -111,9 +111,10 @@ fn exciter_page_follows_the_model() {
     assert_eq!(p.modal.force, force + 1.0 / 128.0);
 }
 
-/// The reverb send lives on SENDS only (ADR 0120): RES and DECK carry none.
+/// The reverb send lives on SENDS and AMP only (ADR 0120): no engine home
+/// page (RES, DECK) carries it.
 #[test]
-fn reverb_send_is_on_sends_only() {
+fn reverb_send_is_on_sends_and_amp_only() {
     let rev = ParamAddr::new(BlockRef::Out, OutParams::SEND3);
     let ctx = SlotCtx::read(&ParamSnapshot::default(), Op::A);
     for def in [&reg::MODAL_1, &reg::TAPE_DECK] {
@@ -122,6 +123,13 @@ fn reverb_send_is_on_sends_only() {
         }
     }
     assert_eq!(slot_addr(&reg::SENDS, 2, &ctx), Some(rev));
+    for (k, send) in [OutParams::SEND1, OutParams::SEND2, OutParams::SEND3]
+        .into_iter()
+        .enumerate()
+    {
+        let want = Some(ParamAddr::new(BlockRef::Out, send));
+        assert_eq!(slot_addr(&reg::FOLDER, k, &ctx), want, "AMP {k}");
+    }
 }
 
 #[test]
