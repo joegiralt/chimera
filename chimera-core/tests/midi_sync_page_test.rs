@@ -39,6 +39,7 @@ fn sync_page_edits_what_orbit_is_sent() {
 
     ui.set_midi(MidiSettings {
         sync: SyncMode::Int,
+        ..MidiSettings::DEFAULT
     });
     assert_eq!(published(&ui), SyncMode::Int);
 }
@@ -86,7 +87,10 @@ fn sync_value_names_and_order_agree() {
     };
     assert_eq!(names.len(), SyncMode::ALL.len());
     for (i, &m) in SyncMode::ALL.iter().enumerate() {
-        let mut s = MidiSettings { sync: m };
+        let mut s = MidiSettings {
+            sync: m,
+            ..MidiSettings::DEFAULT
+        };
         assert_eq!(s.get(MidiSettings::SYNC), i as f32, "{m:?}");
         assert_eq!(names[i], m.disk_ident(), "{m:?}");
         s.sync = SyncMode::ALL[(i + 1) % SyncMode::ALL.len()];

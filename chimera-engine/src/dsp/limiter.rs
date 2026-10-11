@@ -104,6 +104,11 @@ impl DacBlocks {
         &self.blocks[self.out]
     }
 
+    /// The last block out, to scale after the limiter (`MasterOut`).
+    pub(crate) fn out_mut(&mut self) -> &mut Pairs {
+        &mut self.blocks[self.out]
+    }
+
     /// The last block in, before any gain: the pairs as the mix summed them.
     pub fn input(&self) -> &Pairs {
         &self.blocks[self.out ^ 1]

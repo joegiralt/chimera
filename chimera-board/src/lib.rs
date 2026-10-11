@@ -602,6 +602,7 @@ fn publish(
 ) {
     b.update_from_project(ui.project(), LOAD_LINK.epoch(), knobs);
     orbit::publish(ui, b);
+    ui.publish_tune(b);
 }
 
 /// The audio's latest stats with the stack's high-water mark, as the

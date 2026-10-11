@@ -154,7 +154,10 @@ fn main() {
         ui.card_work(cx, &LOAD_LINK, |swap, u| {
             let deadline = Instant::now() + Duration::from_millis(LOAD_ACK_TIMEOUT_MS.into());
             let _ = swap.settle(&LOAD_LINK, || Instant::now() < deadline);
-            audio.update(u.project(), LOAD_LINK.epoch(), |o| u.publish_orbit(o));
+            audio.update(u.project(), LOAD_LINK.epoch(), |b| {
+                u.publish_orbit(&mut b.orbit);
+                u.publish_tune(b);
+            });
         });
         // Leaving SETTINGS syncs SYSTEM; a toast says how it went.
         ui.sync_system(&mut sync, &mut card, &mut store, &mut settings);
@@ -164,7 +167,10 @@ fn main() {
         }
 
         // Push every Part, the FX and ORBIT to the audio thread.
-        audio.update(ui.project(), LOAD_LINK.epoch(), |o| ui.publish_orbit(o));
+        audio.update(ui.project(), LOAD_LINK.epoch(), |b| {
+            ui.publish_orbit(&mut b.orbit);
+            ui.publish_tune(b);
+        });
 
         ui.render_with_scope(&mut display, &perf.stats, scope_r.read());
         let now = Instant::now();

@@ -57,6 +57,7 @@ use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::dsp::reverb::KnobMemory;
 use crate::dsp::tape_engine::{Heads, TapeEngineParams, TapeModel};
 use crate::in_place::uninit_at;
+use crate::instrument::AudioShared;
 use crate::instrument::PartHeads;
 use crate::mod_path::{LABEL_LEN, RegistryError};
 use crate::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
@@ -2028,6 +2029,11 @@ impl UiState {
         {
             self.go(o.custom().into());
         }
+    }
+
+    /// SETTINGS > TUNING for the audio thread, in the same publish.
+    pub fn publish_tune(&self, out: &mut AudioShared) {
+        out.tune = self.midi.tune;
     }
 
     /// ORBIT's settings for the audio thread, into a slot of its triple
