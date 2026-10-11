@@ -437,6 +437,7 @@ fn max_tempo_32_steps_fits_events() {
         drain.drain(|s, e| match e {
             InEvent::Rt(rt) => r.rt(s.index(), rt),
             InEvent::Note(n) => panic!("only clock was sent: {n:?}"),
+            InEvent::Bend(_) | InEvent::Sustain(_) => panic!("only clock was sent"),
         });
         let before = r.view().pos;
         step(&mut r, steps, &mut fired);

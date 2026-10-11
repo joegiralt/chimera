@@ -93,10 +93,27 @@ impl RealTime {
     ];
 }
 
-/// What a note queue carries: notes and real-time, in the order they came.
+/// A channel's pitch-bend wheel: -8192..=8191, 0 at rest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BendEvent {
+    pub channel: MidiChannel,
+    pub value: i16,
+}
+
+/// A channel's sustain pedal (CC 64): down at 64 and above.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SustainEvent {
+    pub channel: MidiChannel,
+    pub down: bool,
+}
+
+/// What a note queue carries: notes, the two performance controls the
+/// Parts take (bend and sustain) and real-time, in the order they came.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InEvent {
     Note(NoteEvent),
+    Bend(BendEvent),
+    Sustain(SustainEvent),
     Rt(RealTime),
 }
 
@@ -112,11 +129,17 @@ impl From<RealTime> for InEvent {
     }
 }
 
-/// Bits 18..21: 0 a note, else 1 + the `RealTime`'s index.
+/// Bits 18..21: 0 a note, 1 + the `RealTime`'s index, then bend, sustain.
 const KIND_SHIFT: u32 = 18;
+const KIND_BEND: usize = RealTime::ALL.len() + 1;
+const KIND_SUSTAIN: usize = KIND_BEND + 1;
+const _: () = assert!(KIND_SUSTAIN < 8);
+/// The CC that is the sustain pedal.
+const CC_SUSTAIN: u8 = 64;
 
 impl InEvent {
-    /// Notes and real-time; CC and pitch bend are not queued.
+    /// Notes, pitch bend, the sustain pedal and real-time. Every other CC
+    /// is the Part's MIDI map's (#247), never a global chart: not queued.
     pub fn from_midi(msg: MidiMessage) -> Option<Self> {
         Some(match msg {
             MidiMessage::NoteOn {
@@ -137,7 +160,18 @@ impl InEvent {
             MidiMessage::Start => InEvent::Rt(RealTime::Start),
             MidiMessage::Continue => InEvent::Rt(RealTime::Continue),
             MidiMessage::Stop => InEvent::Rt(RealTime::Stop),
-            MidiMessage::ControlChange { .. } | MidiMessage::PitchBend { .. } => return None,
+            MidiMessage::PitchBend { channel, value } => {
+                InEvent::Bend(BendEvent { channel, value })
+            }
+            MidiMessage::ControlChange {
+                channel,
+                cc: CC_SUSTAIN,
+                value,
+            } => InEvent::Sustain(SustainEvent {
+                channel,
+                down: value >= 64,
+            }),
+            MidiMessage::ControlChange { .. } => return None,
         })
     }
 
@@ -146,12 +180,29 @@ impl InEvent {
         match self {
             InEvent::Note(n) => n.pack(),
             InEvent::Rt(rt) => (rt as u32 + 1) << KIND_SHIFT,
+            InEvent::Bend(b) => {
+                let v = (b.value.clamp(-8192, 8191) + 8192) as u32;
+                b.channel.get() as u32 | (v << 4) | ((KIND_BEND as u32) << KIND_SHIFT)
+            }
+            InEvent::Sustain(p) => {
+                p.channel.get() as u32
+                    | ((p.down as u32) << 4)
+                    | ((KIND_SUSTAIN as u32) << KIND_SHIFT)
+            }
         }
     }
 
     fn unpack(bits: u32) -> Option<Self> {
         match (bits >> KIND_SHIFT) as usize {
             0 => NoteEvent::unpack(bits).map(InEvent::Note),
+            KIND_BEND => Some(InEvent::Bend(BendEvent {
+                channel: MidiChannel::new((bits & 0xF) as u8)?,
+                value: ((bits >> 4) & 0x3FFF) as i16 - 8192,
+            })),
+            KIND_SUSTAIN => Some(InEvent::Sustain(SustainEvent {
+                channel: MidiChannel::new((bits & 0xF) as u8)?,
+                down: bits & 0x10 != 0,
+            })),
             k => RealTime::ALL.get(k - 1).copied().map(InEvent::Rt),
         }
     }
@@ -213,7 +264,7 @@ impl NoteQueue {
     }
 
     /// Producer side. `false`: the queue was full and the event was dropped,
-    /// or it wasn't a note-off and only `NOTE_OFF_RESERVE` slots were free.
+    /// or it wasn't a note-off (or pedal up) and only `NOTE_OFF_RESERVE` slots were free.
     ///
     /// Ordering: `tail` is read back `Relaxed` since only this thread ever
     /// writes it. `head` is `Acquire`, pairing with `pop`'s `Release` store
@@ -226,12 +277,13 @@ impl NoteQueue {
         let tail = self.tail.load(Ordering::Relaxed);
         let head = self.head.load(Ordering::Acquire);
         // A velocity-0 note-on is an `Off` already (`unpack`, `from_midi`).
+        // A pedal up is let through as well: dropped, it holds notes.
         let note_off = matches!(
             ev,
             InEvent::Note(NoteEvent {
                 kind: NoteKind::Off,
                 ..
-            })
+            }) | InEvent::Sustain(SustainEvent { down: false, .. })
         );
         let limit = NOTE_QUEUE_LEN - if note_off { 0 } else { NOTE_OFF_RESERVE };
         if tail.wrapping_sub(head) as usize >= limit {

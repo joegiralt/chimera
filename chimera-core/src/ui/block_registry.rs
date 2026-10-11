@@ -723,7 +723,7 @@ pub static VA_CHAIN: ChainDef2 =
 // Mixer channel strip
 // ---------------------------------------------------------------------------
 
-/// A Part's MIDI channel, mode, output, level and pan (spec § UI).
+/// A Part's MIDI channel, mode, output, level, pan and pitch-bend range (spec § UI).
 pub static PART: BlockDef = BlockDef {
     id: 27,
     name: "Part",
@@ -736,7 +736,7 @@ pub static PART: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Part, PartParams::OUTPUT),
         ParamSlot::param(BlockRef::Part, PartParams::LEVEL),
         ParamSlot::param(BlockRef::Part, PartParams::PAN),
-        EMPTY,
+        ParamSlot::param(BlockRef::Part, PartParams::BEND),
     ],
 };
 

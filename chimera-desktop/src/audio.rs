@@ -241,6 +241,8 @@ impl Engine {
                         runner.live(n);
                         inst.handle_with(n, shared, reads);
                     }
+                    InEvent::Bend(b) => inst.bend(b),
+                    InEvent::Sustain(p) => inst.sustain(p),
                     InEvent::Rt(rt) => runner.realtime(src.index(), rt, now),
                 });
                 runner.block_with(inst, shared, reads);

@@ -20,7 +20,7 @@ fn ev(ch: u8, note: u8, vel: u8) -> NoteEvent {
 }
 
 #[test]
-fn only_notes_and_real_time_are_queued() {
+fn notes_bend_pedal_and_real_time_are_queued() {
     let c = MidiChannel::new(4).unwrap();
     let n = MidiNote::new(60).unwrap();
     let on = MidiMessage::NoteOn {
@@ -43,13 +43,83 @@ fn only_notes_and_real_time_are_queued() {
         }),
         None
     );
+    // Pitch bend and the pedal are queued; every other CC is the Part's
+    // MIDI map's (#247).
     assert_eq!(
         InEvent::from_midi(MidiMessage::PitchBend {
             channel: c,
-            value: 0
+            value: -8192
         }),
-        None
+        Some(InEvent::Bend(chimera_core::note_queue::BendEvent {
+            channel: c,
+            value: -8192
+        }))
     );
+    for (value, down) in [(0, false), (63, false), (64, true), (127, true)] {
+        assert_eq!(
+            InEvent::from_midi(MidiMessage::ControlChange {
+                channel: c,
+                cc: 64,
+                value
+            }),
+            Some(InEvent::Sustain(chimera_core::note_queue::SustainEvent {
+                channel: c,
+                down
+            }))
+        );
+    }
+    for cc in [0, 1, 7, 10, 63, 65, 120, 123] {
+        assert_eq!(
+            InEvent::from_midi(MidiMessage::ControlChange {
+                channel: c,
+                cc,
+                value: 100
+            }),
+            None,
+            "CC {cc}"
+        );
+    }
+}
+
+#[test]
+fn bend_and_pedal_survive_the_queue_and_a_pedal_up_has_the_reserve() {
+    use chimera_core::note_queue::{BendEvent, NOTE_OFF_RESERVE, NOTE_QUEUE_LEN, SustainEvent};
+    let c = MidiChannel::new(9).unwrap();
+    let q = NoteQueue::new();
+    let (mut tx, mut rx) = q.split().unwrap();
+    for value in [-8192, -1, 0, 1, 8191] {
+        assert!(tx.push(InEvent::Bend(BendEvent { channel: c, value })));
+        assert_eq!(
+            rx.pop(),
+            Some(InEvent::Bend(BendEvent { channel: c, value }))
+        );
+    }
+    for down in [true, false] {
+        assert!(tx.push(InEvent::Sustain(SustainEvent { channel: c, down })));
+        assert_eq!(
+            rx.pop(),
+            Some(InEvent::Sustain(SustainEvent { channel: c, down }))
+        );
+    }
+    // Full but for the reserve: a bend is dropped, a pedal up is not.
+    for _ in 0..NOTE_QUEUE_LEN - NOTE_OFF_RESERVE {
+        assert!(tx.push(InEvent::Bend(BendEvent {
+            channel: c,
+            value: 5
+        })));
+    }
+    assert!(!tx.push(InEvent::Bend(BendEvent {
+        channel: c,
+        value: 5
+    })));
+    assert!(!tx.push(InEvent::Sustain(SustainEvent {
+        channel: c,
+        down: true
+    })));
+    assert!(tx.push(InEvent::Sustain(SustainEvent {
+        channel: c,
+        down: false
+    })));
 }
 
 #[test]
