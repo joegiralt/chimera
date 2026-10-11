@@ -1,5 +1,7 @@
 //! The formant budget, derived from the cost model so that ADR 0026's
-//! four-voice floor holds for the costliest Sound (never typed in).
+//! four-voice floor holds for the costliest table Sound under the reference
+//! heavy routing (`ModRouting::HEAVY`; never typed in). Runtime admission
+//! still bills each voice's real cost.
 
 use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::engine::AlgoEngine;

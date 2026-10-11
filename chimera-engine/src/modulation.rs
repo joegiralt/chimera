@@ -550,9 +550,11 @@ impl ModRouting {
     /// LEVEL less A VCA and `DEST_FIRST`.
     pub const LEVEL: Cost = Cost(10);
 
-    /// The costliest routing: ENV B in BURST on the VCA with its LEVEL
+    /// ADR 0026's reference heavy routing (formant spec § 1), not the
+    /// maximum `cost` can bill: ENV B in BURST on the VCA with its LEVEL
     /// routed, a TIME route, the 16 registry columns and Q after FREQ's
     /// `DEST_FIRST`, three FUNC LFOs. `CURVE` is not in it: BURST replaces it.
+    /// More VCA sources or slides bill more; admission bills the real cost.
     pub const HEAVY: Cost = Cost(
         Self::BASE.0
             + Self::CLAMP.0
