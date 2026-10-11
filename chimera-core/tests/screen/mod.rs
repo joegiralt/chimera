@@ -22,7 +22,7 @@ use chimera_core::preset::Sound;
 use chimera_core::project::SlotId;
 use chimera_core::project::{
     LoadLink, PartFrom, PartId, PartSource, Project, ProjectFile, ProjectNote, ProjectSource,
-    ReplaceGuard, SaveTo, new_project_id, save_project,
+    ReplaceGuard, SaveTo, save_project,
 };
 use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
@@ -502,13 +502,28 @@ impl<'u> Rig<'u> {
     }
 }
 
+/// The id above the highest on the card, demo range included: these tests
+/// keep small ids on screen, which a real save's floor (10) would not.
+pub fn next_low(_: &mut Card, s: &mut MemStore) -> ProjectFile {
+    use chimera_hal::store::{Dir, Store};
+    let vol = s.mount().unwrap();
+    let mut top = 0;
+    let _ = s.list(vol, Dir::Projects, &mut |f, _| {
+        let n = f.stem()[1..]
+            .iter()
+            .fold(0, |n, d| n * 10 + u32::from(d - b'0'));
+        top = top.max(n);
+    });
+    ProjectFile::for_test(chimera_core::storage::ProjectId::new(top + 1).unwrap(), vol)
+}
+
 /// A project named `n` saved to the card at its next id.
 pub fn put(s: &mut MemStore, n: &str) -> ProjectFile {
     let mut card = Card::new();
     let (mut p, _) = Project::boxed();
     p.set_name(ProjectName::new(n).unwrap());
-    let fresh = new_project_id(&mut card, s).out.unwrap();
-    let f = fresh.file();
+    let f = next_low(&mut card, s);
+    let fresh = chimera_core::project::FreshFile::for_test(f);
     assert!(matches!(
         save_project(&mut card, s, &mut p, SaveTo::Fresh(fresh)).out,
         ProjectNote::Saved(_)

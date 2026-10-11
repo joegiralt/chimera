@@ -204,6 +204,7 @@ impl Rig {
         save_library_sound(&mut Card::new(), &mut self.st.inner, s, s.name, &ST)
             .out
             .unwrap()
+            .into()
     }
 
     /// `bytes` as `S<id>.A`.

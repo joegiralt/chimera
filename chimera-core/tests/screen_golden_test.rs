@@ -232,7 +232,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_orbit_save_to", 0xa4d2405ea9f09bf6),
     ("settings_load", 0x34b0bd576d341497),
     ("settings_prompt_load", 0xc47d45b862dea1e3),
-    ("settings_naming", 0x3ad617885a99ddf2),
+    ("settings_naming", 0xc4298c7a6a0c5b5a),
     // Every ORBIT page again for Task 16: the map gains SCN.
     // ORBIT's RHYTHM, CHRD and CUSTOM (plan Task 9); Task 10's header,
     // `SCENE n`, and the beat dot on the playing ones.

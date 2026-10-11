@@ -478,7 +478,7 @@ fn prompt(k: AskKind, ui: &mut UiState) {
         AskKind::NameExists => {
             // The name SAVE AS proposes, taken.
             let mut s = MemStore::new(1);
-            put(&mut s, "drift-002");
+            put(&mut s, "drift-010");
             let mut r = Rig::new(ui, s);
             r.ui.project_mut()
                 .set_name(ProjectName::new("SKETCH").unwrap());

@@ -154,8 +154,8 @@ fn put(s: &mut MemStore, n: &str) -> ProjectFile {
     let mut card = Card::new();
     let (mut p, _) = Project::boxed();
     p.set_name(name(n));
-    let fresh = new_project_id(&mut card, s).out.unwrap();
-    let f = fresh.file();
+    let f = screen::next_low(&mut card, s);
+    let fresh = chimera_core::project::FreshFile::for_test(f);
     assert!(matches!(
         save_project(&mut card, s, &mut p, SaveTo::Fresh(fresh)).out,
         ProjectNote::Saved(_)
@@ -301,7 +301,7 @@ fn save_then_load_on_new_names_first_and_cancel_aborts() {
     r.tap(ButtonId::Edit);
     assert!(r.ui.prompt_open());
     r.tap(ButtonId::Seq);
-    assert_eq!(r.ui.naming().unwrap().text(), "DRIFT-002");
+    assert_eq!(r.ui.naming().unwrap().text(), "DRIFT-010");
     // Cancelled: no save, no load.
     r.tap(ButtonId::Menu);
     assert!(r.ui.naming().is_none());
@@ -318,7 +318,7 @@ fn save_then_load_on_new_names_first_and_cancel_aborts() {
     assert_eq!(r.swaps, 1);
     let all = listed(&mut r.s);
     assert_eq!(all.len(), 2);
-    assert_eq!(all[1].name, Some(name("DRIFT-002")));
+    assert_eq!(all[1].name, Some(name("DRIFT-010")));
 }
 
 #[test]
@@ -338,23 +338,23 @@ fn save_as_names_and_saves() {
     r.edit();
     r.feed(Input::press(ButtonId::Plus));
     r.tap(ButtonId::Edit);
-    assert_eq!(r.ui.naming().unwrap().text(), "ACID-001");
+    assert_eq!(r.ui.naming().unwrap().text(), "DRIFT-010");
     r.tap(ButtonId::Seq);
     assert_eq!(r.toast(), "SAVED");
     r.ui.update(UiTick::for_test());
     assert_eq!(r.ui.project_status(), ProjectStatus::Saved);
-    assert_eq!(r.ui.project().meta().name(), name("ACID-001"));
+    assert_eq!(r.ui.project().meta().name(), name("DRIFT-010"));
     r.tap(ButtonId::Menu);
     r.tap(ButtonId::Menu);
     r.open_load();
-    assert_eq!(r.labels(), ["01 ACID-001", "+ CREATE NEW"]);
+    assert_eq!(r.labels(), ["10 DRIFT-010", "+ CREATE NEW"]);
     assert_eq!(r.ui.load_row(0).unwrap().note, Some(LOADED));
 }
 
-/// SAVE AS where the card already has `drift-002`, the name proposed.
+/// SAVE AS where the card already has `drift-010`, the name proposed.
 fn name_taken() -> (Rig, ProjectFile) {
     let mut s = MemStore::new(1);
-    let taken = put(&mut s, "drift-002");
+    let taken = put(&mut s, "drift-010");
     let mut r = Rig::new(s);
     modify(&mut r, "SKETCH");
     r.tap(ButtonId::Menu);
@@ -372,7 +372,7 @@ fn name_exists_keep_both_and_overwrite() {
     r.tap(ButtonId::Seq);
     let all = listed(&mut r.s);
     assert_eq!(all.len(), 2, "KEEP BOTH");
-    assert_eq!(all[1].name, Some(name("DRIFT-002")));
+    assert_eq!(all[1].name, Some(name("DRIFT-010")));
 
     let (mut r, taken) = name_taken();
     r.turn(1);
@@ -382,7 +382,7 @@ fn name_exists_keep_both_and_overwrite() {
     assert_eq!(r.ui.project().meta().file(), Some(taken));
     let crc = project_crc(r.ui.project());
     assert_eq!(project_crc(&read_back(&mut r.s, taken)), crc);
-    assert_eq!(all[0].name, Some(name("DRIFT-002")));
+    assert_eq!(all[0].name, Some(name("DRIFT-010")));
 }
 
 #[test]
@@ -409,7 +409,7 @@ fn quick_save_on_new_opens_save_as() {
     r.hold(ButtonId::Menu);
     assert_ne!(r.ui.location(), home);
     assert_eq!(r.ui.location(), Location::settings_at(&[0], 1));
-    assert_eq!(r.ui.naming().unwrap().text(), "ACID-001");
+    assert_eq!(r.ui.naming().unwrap().text(), "DRIFT-010");
     // Cancelled, it stays on the list.
     r.tap(ButtonId::Menu);
     assert_eq!(r.ui.location(), Location::settings_at(&[0], 1));
@@ -422,12 +422,12 @@ fn quick_save_on_new_opens_save_as() {
 fn save_as_takes_the_id_free_when_named() {
     let mut r = Rig::new(MemStore::new(1));
     r.hold(ButtonId::Menu);
-    assert_eq!(r.ui.naming().unwrap().text(), "ACID-001");
+    assert_eq!(r.ui.naming().unwrap().text(), "DRIFT-010");
     let taken = put(&mut r.s, "BETA");
     r.tap(ButtonId::Seq);
     assert_eq!(r.toast(), "SAVED");
     let f = r.ui.project().meta().file().unwrap();
-    assert_eq!(f.id().get(), taken.id().get() + 1);
+    assert_eq!((taken.id().get(), f.id().get()), (1, 10));
     assert_eq!(listed(&mut r.s).len(), 2);
 }
 
@@ -476,7 +476,7 @@ fn card_changed_then_save_as() {
     r.hold(ButtonId::Menu);
     assert_eq!(r.question(), "CARD CHANGED");
     r.tap(ButtonId::Seq);
-    assert_eq!(r.ui.naming().unwrap().text(), "ACID-001");
+    assert_eq!(r.ui.naming().unwrap().text(), "DRIFT-010");
     r.tap(ButtonId::Seq);
     let vol = r.vol();
     let file = r.ui.project().meta().file().unwrap();
@@ -514,7 +514,7 @@ fn relist_after_every_operation() {
     r.tap(ButtonId::Seq);
     r.tap(ButtonId::Seq);
     assert_eq!(r.ui.location(), Location::settings_at(&[0, 0], 0));
-    assert_eq!(r.labels(), ["01 ACID-001", "+ CREATE NEW"]);
+    assert_eq!(r.labels(), ["10 DRIFT-010", "+ CREATE NEW"]);
 }
 
 #[test]
@@ -596,11 +596,11 @@ fn save_then_load_refused_save_keeps_the_project() {
     // SAVE AS on the new card; BETA was listed on the old one, so the
     // load is still refused.
     r.tap(ButtonId::Seq);
-    assert_eq!(r.ui.naming().unwrap().text(), "ACID-001");
+    assert_eq!(r.ui.naming().unwrap().text(), "DRIFT-010");
     r.tap(ButtonId::Seq);
     let vol = r.vol();
     assert_eq!(r.ui.project().meta().file().map(|f| f.vol()), Some(vol));
-    assert_eq!(r.ui.project().meta().name(), name("ACID-001"));
+    assert_eq!(r.ui.project().meta().name(), name("DRIFT-010"));
     assert_eq!(r.swaps, 1);
     assert!(r.toast().starts_with("CARD CHANGED"));
 }
@@ -617,7 +617,7 @@ fn save_then_load_on_new_refused_keeps_the_name() {
     r.open_load();
     r.tap(ButtonId::Edit);
     r.tap(ButtonId::Seq);
-    assert_eq!(r.ui.naming().unwrap().text(), "DRIFT-002");
+    assert_eq!(r.ui.naming().unwrap().text(), "DRIFT-010");
     r.s.swap(2);
     r.tap(ButtonId::Seq);
     assert_eq!(r.question(), "CARD CHANGED");

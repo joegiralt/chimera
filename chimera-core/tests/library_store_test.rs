@@ -10,11 +10,14 @@ use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::test_support::FullOnWrite;
-use chimera_core::project::{LibNote, LibPage, PageAt, list_library, save_library_sound};
+use chimera_core::project::{
+    LibNote, LibPage, PROJECT_DEMO_TOP, PageAt, list_library, list_projects, new_project_id,
+    save_library_sound,
+};
 use chimera_core::storage::{
     BuildStamp, Card, FileError, FileKind, Generation, Header, ID_WINDOW, LIB_PEEK, LibId, NextId,
-    SoundDecoder, encode_library_sound, encode_sound, lib_id, library_file, load_ab, next_user_id,
-    peek_library, write_file,
+    Note, SoundDecoder, UserId, encode_library_sound, encode_sound, lib_id, library_file, load_ab,
+    next_user_id, peek_library, write_file,
 };
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
@@ -93,7 +96,9 @@ fn first(st: &mut MemStore, name: &str, n: usize) -> Vec<u8> {
 }
 
 fn save_named<S: Store>(st: &mut S, s: &Sound, name: &str) -> Result<LibId, LibNote> {
-    save_library_sound(&mut Card::new(), st, s, SoundName::new(name).unwrap(), &ST).out
+    save_library_sound(&mut Card::new(), st, s, SoundName::new(name).unwrap(), &ST)
+        .out
+        .map(LibId::from)
 }
 
 fn save<S: Store>(st: &mut S) -> Result<LibId, LibNote> {
@@ -187,7 +192,7 @@ fn next_user_id_scans_windows_and_runs_out() {
     t[1] = 0b1111_1011;
     assert_eq!(
         next_user_id(LibId::USER_MAX, 1, &t),
-        NextId::Id(LibId::new(11).unwrap())
+        NextId::Id(UserId::new(11).unwrap())
     );
     assert_eq!(
         next_user_id(LibId::USER_MAX, LibId::USER_MAX - 7, &full),
@@ -535,4 +540,97 @@ fn an_unknown_engine_lists_greyed_with_its_name_and_stamp() {
     assert_eq!(e.err, Some(FileError::NeedsNewerFirmware));
     assert_eq!(e.seen.name.unwrap().as_str(), "BASS-1");
     assert_eq!((e.engine, e.stamp), (None, Some(ST)));
+}
+
+/// A project pair stub: the allocators read names only.
+fn project_stub(st: &mut MemStore, n: u32) {
+    let v = st.mount().unwrap();
+    let _ = st.make_dir(v, Dir::Chimera);
+    let _ = st.make_dir(v, Dir::Projects);
+    let name = format!("P{n:07}");
+    let f = FileName::new(Dir::Projects, name.as_bytes(), b"A").unwrap();
+    st.write(v, f, &mut |s: &mut dyn ByteSink| s.put(b"x"))
+        .unwrap();
+}
+
+/// What both allocation sites hand a new project, given the ids on the card.
+fn next_project(present: &[u32]) -> (u32, u32) {
+    let mut st = MemStore::new(1);
+    for &n in present {
+        project_stub(&mut st, n);
+    }
+    let by_new = new_project_id(&mut Card::new(), &mut st).out.unwrap();
+    let by_list = list_projects(&mut Card::new(), &mut st, &mut |_| {})
+        .fresh
+        .unwrap();
+    (by_new.file().id().get(), by_list.file().id().get())
+}
+
+#[test]
+fn save_on_empty_card_writes_p0000010() {
+    assert_eq!(PROJECT_DEMO_TOP, 9);
+    assert_eq!(next_project(&[]), (10, 10));
+}
+
+#[test]
+fn save_with_p0000003_present_writes_p0000010() {
+    assert_eq!(next_project(&[3]), (10, 10));
+}
+
+#[test]
+fn save_with_p0000012_present_writes_p0000013() {
+    assert_eq!(next_project(&[12]), (13, 13));
+}
+
+#[test]
+fn lib_id_parse_splits_user_from_factory() {
+    assert!(matches!(LibId::parse("S0000012"), Some(LibId::User(_))));
+    assert!(matches!(LibId::parse("S9100001"), Some(LibId::Factory(_))));
+    for bad in [
+        "S9000000",
+        "S0000000",
+        "P0000012",
+        "S000012",
+        "S00000123",
+        "s0000012",
+        "S000001x",
+    ] {
+        assert_eq!(LibId::parse(bad), None, "{bad}");
+    }
+    assert_eq!(UserId::new(9_000_001), None);
+    assert!(chimera_core::storage::FactoryId::new(8_999_999).is_none());
+}
+
+/// Review Focus 3: a factory Sound loaded then saved is a user file, no Note.
+#[test]
+fn factory_load_then_save_is_user_without_note() {
+    let mut st = MemStore::new(1);
+    let v = st.mount().unwrap();
+    st.make_dir(v, Dir::Chimera).unwrap();
+    st.make_dir(v, Dir::Sounds).unwrap();
+    let mut snd = factory_sound(0).unwrap();
+    snd.name = SoundName::new("SHOWCASE").unwrap();
+    let note = Note::new("A DESCRIBED SOUND").unwrap();
+    let bytes = file_of(&snd, "SHOWCASE", &mut |w| {
+        encode_library_sound(&snd, &ST, Some(&note), w)
+    });
+    let fid = LibId::parse("S9100001").unwrap();
+    assert!(fid.is_factory());
+    let name = FileName::new(Dir::Sounds, &fid.stem(), b"A").unwrap();
+    st.write(v, name, &mut |s: &mut dyn ByteSink| s.put(&bytes))
+        .unwrap();
+    let len = len_of(&mut st, "S9100001.A");
+    let p = peek_library(&first(&mut st, "S9100001.A", LIB_PEEK), len).unwrap();
+    assert_eq!(p.note, Some(note), "the factory file carries its Note");
+
+    let loaded = load_sound(&mut st, fid);
+    let id = save_library_sound(&mut Card::new(), &mut st, &loaded, loaded.name, &ST)
+        .out
+        .unwrap();
+    assert_eq!(id.get(), 1);
+    assert!(!LibId::from(id).is_factory());
+    let n = format!("S{:07}.A", id.get());
+    let len = len_of(&mut st, &n);
+    let p = peek_library(&first(&mut st, &n, LIB_PEEK), len).unwrap();
+    assert_eq!(p.note, None);
 }

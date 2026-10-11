@@ -39,6 +39,7 @@ pub use pool::{EncodedSound, Pool, PoolFull};
 pub use sources::{
     Absence, Purged, SOURCE_HEAD, SourceEntry, SourceId, SourceRef, Unused, Users, source_users,
 };
+pub use store::PROJECT_DEMO_TOP;
 #[cfg(feature = "card-put")]
 pub use store::peek_entry;
 pub use store::still_over;

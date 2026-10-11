@@ -160,31 +160,89 @@ pub fn encode_library_sound(
     encode_sound_body(s, w)
 }
 
-/// A library Sound's number: `S#######`. User ids are 1..=8_999_999,
-/// factory ids 9_000_001..=9_999_999; a save never takes a factory one.
+/// A user Sound's number, 1..=8_999_999: the only kind a save can take.
+///
+/// ```compile_fail,E0308
+/// # use chimera_engine::storage::{FactoryId, UserId};
+/// fn takes_user(_: UserId) {}
+/// takes_user(FactoryId::new(9_100_001).unwrap());
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct LibId(u32);
+pub struct UserId(u32);
+
+impl UserId {
+    pub fn new(n: u32) -> Option<UserId> {
+        (1..=LibId::USER_MAX).contains(&n).then_some(UserId(n))
+    }
+
+    pub fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// A factory Sound's number, 9_000_001..=9_999_999: installed, never saved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FactoryId(u32);
+
+impl FactoryId {
+    pub fn new(n: u32) -> Option<FactoryId> {
+        (LibId::FACTORY_MIN..=9_999_999)
+            .contains(&n)
+            .then_some(FactoryId(n))
+    }
+
+    pub fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// A library Sound's number: `S#######`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LibId {
+    User(UserId),
+    Factory(FactoryId),
+}
+
+impl From<UserId> for LibId {
+    fn from(id: UserId) -> LibId {
+        LibId::User(id)
+    }
+}
 
 impl LibId {
     pub const USER_MAX: u32 = 8_999_999;
     pub const FACTORY_MIN: u32 = 9_000_001;
 
     pub fn new(n: u32) -> Option<LibId> {
-        ((1..=9_999_999).contains(&n) && n != 9_000_000).then_some(LibId(n))
+        UserId::new(n)
+            .map(LibId::User)
+            .or_else(|| FactoryId::new(n).map(LibId::Factory))
+    }
+
+    /// `S` and 7 digits, nothing else.
+    pub fn parse(s: &str) -> Option<LibId> {
+        let digits = s.strip_prefix('S')?;
+        if digits.len() != 7 || !digits.bytes().all(|d| d.is_ascii_digit()) {
+            return None;
+        }
+        LibId::new(digits.parse().ok()?)
     }
 
     pub fn get(self) -> u32 {
-        self.0
+        match self {
+            LibId::User(u) => u.0,
+            LibId::Factory(f) => f.0,
+        }
     }
 
     pub fn is_factory(self) -> bool {
-        self.0 >= Self::FACTORY_MIN
+        matches!(self, LibId::Factory(_))
     }
 
     /// `S` and 7 digits.
     pub fn stem(self) -> [u8; 8] {
         let mut s = [b'S'; 8];
-        let mut n = self.0;
+        let mut n = self.get();
         for d in s[1..].iter_mut().rev() {
             *d = b'0' + (n % 10) as u8;
             n /= 10;
@@ -213,7 +271,7 @@ pub const ID_WINDOW: u32 = 4096;
 
 #[derive(Debug, PartialEq)]
 pub enum NextId {
-    Id(LibId),
+    Id(UserId),
     /// The window had none: scan the one at this base.
     Scan(u32),
     NoIds,
@@ -223,14 +281,11 @@ pub enum NextId {
 /// at `window_base` (bit i is id `window_base + i`), else the next window.
 pub fn next_user_id(top: u32, window_base: u32, taken: &[u8; 512]) -> NextId {
     if top < LibId::USER_MAX {
-        return LibId::new(top + 1).map_or(NextId::NoIds, NextId::Id);
+        return UserId::new(top + 1).map_or(NextId::NoIds, NextId::Id);
     }
     let clear = (0..ID_WINDOW).find(|&i| taken[i as usize / 8] >> (i % 8) & 1 == 0);
     if let Some(i) = clear {
-        return match LibId::new(window_base + i) {
-            Some(id) if id.get() <= LibId::USER_MAX => NextId::Id(id),
-            _ => NextId::NoIds,
-        };
+        return UserId::new(window_base + i).map_or(NextId::NoIds, NextId::Id);
     }
     let next = window_base + ID_WINDOW;
     if next > LibId::USER_MAX {

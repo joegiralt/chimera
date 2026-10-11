@@ -62,6 +62,7 @@ fn save_named<S: Store>(st: &mut S, s: &Sound, name: &str) -> LibId {
     save_library_sound(&mut Card::new(), st, s, SoundName::new(name).unwrap(), &ST)
         .out
         .unwrap()
+        .into()
 }
 
 /// The listed row of `id`.

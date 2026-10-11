@@ -26,6 +26,14 @@ pub fn project_file(id: ProjectId) -> AbFile {
     AbFile::new(Dir::Projects, &id.stem()).expect("P + 7 digits is a stem")
 }
 
+/// Demo projects own `P0000001`-`P0000009`; a save never takes one.
+pub const PROJECT_DEMO_TOP: u32 = 9;
+
+/// The id a new project takes: above the highest on the card and the demos.
+fn next_project_id(top: u32) -> Option<ProjectId> {
+    ProjectId::new(top.max(PROJECT_DEMO_TOP) + 1)
+}
+
 /// A `P#######.A` or `.B` name's id.
 fn file_id(f: FileName) -> Option<ProjectId> {
     let (&[b'P', ref digits @ ..], b"A" | b"B") = (f.stem(), f.ext()) else {
@@ -151,7 +159,7 @@ pub fn new_project_id<S: Store>(
     });
     let (result, event) = split(run);
     let out = match result {
-        Ok((top, vol)) => ProjectId::new(top + 1)
+        Ok((top, vol)) => next_project_id(top)
             .map(|id| FreshFile(ProjectFile::new(id, vol)))
             .ok_or(ProjectNote::NoIds),
         Err(e) => Err(card_note(e, None)),
@@ -800,7 +808,7 @@ pub fn list_projects<S: Store>(
         }
         Ok((
             ids.more,
-            ProjectId::new(ids.top + 1).map(|id| FreshFile(ProjectFile::new(id, vol))),
+            next_project_id(ids.top).map(|id| FreshFile(ProjectFile::new(id, vol))),
         ))
     });
     match run {

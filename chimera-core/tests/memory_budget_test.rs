@@ -190,9 +190,10 @@ fn ui_state_rest_under_4k() {
     // TYPEs' knob memory, 108 B, and the cells' text keys); 3 KB the
     // library's page, 48 rows of 60 B, and a pending load (its source
     // streams in the SOURCE cell's slot); 16 B the screensaver's (its idle
-    // timer and redraw count).
+    // timer and redraw count); 168 B the library page's `LibId` enum (a tag
+    // beside each row's id, Task 3).
     assert!(
-        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072 + 16,
+        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072 + 16 + 168,
         "UiState grew to {rest} B besides its Project"
     );
 }

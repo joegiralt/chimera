@@ -17,9 +17,9 @@ use crate::params::EngineType;
 use crate::preset::Sound;
 use crate::storage::{
     BuildStamp, Card, CardFault, FileError, Generation, HEADER_LEN, ID_WINDOW, LIB_PEEK, LibId,
-    LibraryDecoder, LoadError, NextId, Peek, SaveError, Side, SideState, SoundCheck, check_file,
-    encode_library_sound, held_for_file_len, lib_id, library_file, load_ab_in_place, next_user_id,
-    peek_library, save_ab, sound_crc, source_file,
+    LibraryDecoder, LoadError, NextId, Peek, SaveError, Side, SideState, SoundCheck, UserId,
+    check_file, encode_library_sound, held_for_file_len, lib_id, library_file, load_ab_in_place,
+    next_user_id, peek_library, save_ab, sound_crc, source_file,
 };
 
 /// What a library operation says to the screen.
@@ -78,7 +78,7 @@ fn window<S: Store>(
 }
 
 /// The next free user id: `top + 1` from one pass, else the lowest gap.
-fn free_id<S: Store>(s: &mut S, r: &crate::storage::Ready) -> Result<LibId, LibNote> {
+fn free_id<S: Store>(s: &mut S, r: &crate::storage::Ready) -> Result<UserId, LibNote> {
     let mut top = 0;
     s.list(r.volume(), Dir::Sounds, &mut |f, _| {
         if let Some(id) = lib_id(f).filter(|id| !id.is_factory()) {
@@ -109,12 +109,12 @@ pub fn save_library_sound<S: Store>(
     s: &Sound,
     name: SoundName,
     stamp: &BuildStamp,
-) -> CardOut<Result<LibId, LibNote>> {
+) -> CardOut<Result<UserId, LibNote>> {
     let run = card.run(store, |st, r| {
         st.make_dir(r.volume(), Dir::Chimera)?;
         st.make_dir(r.volume(), Dir::Sounds)?;
         let id = free_id(st, r)?;
-        let file = library_file(id);
+        let file = library_file(id.into());
         let saved = save_ab(st, r, file, &mut SoundCheck::new(), Some(name), &mut |w| {
             encode_library_sound(s, stamp, None, w)
         })
