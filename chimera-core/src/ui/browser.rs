@@ -30,32 +30,66 @@ use crate::ui::theme;
 
 /// Rows on screen.
 pub const VISIBLE_ROWS: usize = 8;
-/// One init Sound per engine, in `EngineType::ALL` order, then the DRUM
-/// row (an engine not built yet), then the pool's slots.
-pub const INIT_TYPES: [EngineType; EngineType::ALL.len()] = EngineType::ALL;
+/// One init Sound per engine a player picks, then the engines coming
+/// soon, then the pool's slots.
+pub const INIT_TYPES: [EngineType; EngineType::PLAYABLE.len()] = EngineType::PLAYABLE;
 pub const INITS: usize = INIT_TYPES.len();
-/// The DRUM row's entry.
-pub const DRUM: usize = INITS;
 /// The rows above slot 1.
-pub const HEAD: usize = INITS + 1;
+pub const HEAD: usize = INITS + Soon::ALL.len();
 pub const TOTAL_ENTRIES: usize = HEAD + MAX_SOUNDS;
-/// What DRUM's row says in place of an engine tag.
-pub const DRUM_SOON: &str = "COMING SOON";
-/// DRUM's toast on a load.
-pub const DRUM_TOAST: &str = "DRUM: COMING SOON";
+/// What a coming-soon row says in place of an engine tag.
+pub const SOON_TAG: &str = "COMING SOON";
+
+/// An engine listed but not playable yet: its row, and a pool Sound of
+/// it, read COMING SOON, and EDIT only toasts (ADR 0132).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Soon {
+    /// Until its rework (#476).
+    Tape,
+    /// Until the DRUM engine exists.
+    Drum,
+}
+
+impl Soon {
+    pub const ALL: [Soon; 2] = [Soon::Tape, Soon::Drum];
+
+    /// Its row's entry, under the INIT rows.
+    pub const fn entry(self) -> usize {
+        INITS + self as usize
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Soon::Tape => "TAPE",
+            Soon::Drum => "DRUM",
+        }
+    }
+
+    /// Its toast on a load.
+    pub const fn toast(self) -> &'static str {
+        match self {
+            Soon::Tape => "TAPE: COMING SOON",
+            Soon::Drum => "DRUM: COMING SOON",
+        }
+    }
+
+    /// The engine a pool Sound can't load on yet: TAPE's.
+    pub fn of(engine: EngineType) -> Option<Soon> {
+        (engine == EngineType::Tape).then_some(Soon::Tape)
+    }
+}
 
 /// What a list entry is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Entry {
     Init(EngineType),
-    /// Inert until the DRUM engine exists.
-    Drum,
+    Soon(Soon),
     Slot(SlotId),
 }
 
 /// The Sound rung's browser: each tab's cursor and first row shown. Only
 /// `input`, `input_library` and a listing's landing move them; PROJECT
-/// opens on slot 1, the INIT and DRUM rows just above, LIBRARY at its top.
+/// opens on slot 1, the INIT and coming-soon rows just above, LIBRARY at its top.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Browse {
     cursor: u8,
@@ -132,15 +166,15 @@ pub fn slot_at(entry: usize) -> Option<SlotId> {
 
 /// The entry at `entry`; `None` past the list.
 pub fn entry_at(entry: usize) -> Option<Entry> {
-    if entry == DRUM {
-        return Some(Entry::Drum);
+    if let Some(&s) = entry.checked_sub(INITS).and_then(|i| Soon::ALL.get(i)) {
+        return Some(Entry::Soon(s));
     }
     init_at(entry)
         .map(Entry::Init)
         .or_else(|| slot_at(entry).map(Entry::Slot))
 }
 
-/// The engine of the INIT row at `entry`; `None` for DRUM and the pool's slots.
+/// The engine of the INIT row at `entry`; `None` for the rest.
 pub fn init_at(entry: usize) -> Option<EngineType> {
     INIT_TYPES.get(entry).copied()
 }
@@ -662,17 +696,23 @@ where
             let _ = slot.write_str("INIT");
             (components::upper(engine.label()), Some(engine), None)
         }
-        Some(Entry::Drum) => {
+        Some(Entry::Soon(s)) => {
             let _ = slot.write_str("INIT");
             let mut name = FmtBuf::new();
-            let _ = name.write_str("DRUM");
+            let _ = name.write_str(s.label());
             (name, None, None)
         }
         None => return,
     };
+    let soon = match entry_at(entry) {
+        Some(Entry::Soon(s)) => Some(s),
+        _ => chain.and_then(Soon::of),
+    };
+    // A pool Sound of a coming-soon engine reads like its INIT row: its
+    // cost would sit under the wider tag.
+    let cost = cost.filter(|_| soon.is_none());
     let saved = cost.is_some();
-    let drum = entry_at(entry) == Some(Entry::Drum);
-    let empty = chain.is_none() && !drum;
+    let empty = chain.is_none() && soon.is_none();
     if selected {
         draw::pill(d, 8, y - 16, 224, 22, theme::ACCENT);
     }
@@ -704,9 +744,12 @@ where
             theme::INK2
         };
         // A long name stops short of the cost, or of the tag.
-        let room = match cost {
-            Some(c) => COST_RIGHT - draw::text_width(&theme::FONT_LABEL, c.kib_label().as_str(), 0),
-            None => TAG_RIGHT - TAG_ROOM,
+        let room = match (cost, soon) {
+            (Some(c), _) => {
+                COST_RIGHT - draw::text_width(&theme::FONT_LABEL, c.kib_label().as_str(), 0)
+            }
+            (None, Some(_)) => TAG_RIGHT - draw::text_width(&theme::FONT_LABEL, SOON_TAG, 0),
+            (None, None) => TAG_RIGHT - TAG_ROOM,
         } - NAME_GAP
             - NAME_X;
         let shown = clip(&theme::FONT_VALUE, name.as_str(), room);
@@ -716,9 +759,9 @@ where
         let label = c.kib_label();
         draw::text_right(d, &theme::FONT_LABEL, label.as_str(), COST_RIGHT, y, dim, 0);
     }
-    if let Some(engine) = chain {
-        tag(d, engine, y, dim);
-    } else if drum {
-        draw::text_right(d, &theme::FONT_LABEL, DRUM_SOON, TAG_RIGHT, y, dim, 0);
+    match (soon, chain) {
+        (Some(_), _) => draw::text_right(d, &theme::FONT_LABEL, SOON_TAG, TAG_RIGHT, y, dim, 0),
+        (None, Some(engine)) => tag(d, engine, y, dim),
+        (None, None) => {}
     }
 }

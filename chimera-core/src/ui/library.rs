@@ -8,6 +8,7 @@ use core::fmt::Write;
 use chimera_hal::store::{Dir, Store, StoreError, VolumeId};
 
 use crate::name::SoundName;
+use crate::params::EngineType;
 use crate::project::{
     AdoptError, CardOut, Confirmed, LibEntry, LibNote, LibPage, LibRead, LibraryPart, Line, PageAt,
     PartId, PartSet, ReplaceError, ReplaceGuard, SlotId, SourceNeed, Staged, list_library,
@@ -53,6 +54,9 @@ pub struct LibState {
     /// SAVE PART FIRST's Stale Parts and slot: asked about once the load
     /// it ran before ends, not under it.
     after: Option<(PartSet, SlotId)>,
+    /// TAPE Sounds listed: only the tests of TAPE's load set it, as no
+    /// player reaches one until its rework (ADR 0132).
+    pub(crate) tape: bool,
 }
 
 impl LibState {
@@ -64,6 +68,7 @@ impl LibState {
         tab: Tab::Project,
         this: about_page::THIS,
         after: None,
+        tape: false,
     };
 
     /// A load is pending: no other card work starts.
@@ -249,6 +254,10 @@ impl UiState {
     /// from.
     pub(crate) fn lib_list<S: Store>(&mut self, card: &mut Card, store: &mut S, at: PageAt) {
         let CardOut { out, event } = list_library(card, store, at, &mut self.lib.page);
+        // TAPE is coming soon (ADR 0132): its Sounds stay on the card, unlisted.
+        if !self.lib.tape {
+            self.lib.page.retain(|e| e.engine != Some(EngineType::Tape));
+        }
         self.saw(event);
         // The rows just read are the new card's: its event is no news.
         // A failure is listed too, as its row, so it isn't retried a pass.

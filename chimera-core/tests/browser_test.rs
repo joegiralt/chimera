@@ -6,7 +6,7 @@ use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::{PartFrom, PartId, PartSource, Project, ReplaceGuard, SlotId};
 use chimera_core::ui::browser::{
-    self, DRUM, DRUM_TOAST, Entry, HEAD, INIT_TYPES, INITS, SCROLL_TOP, SCROLL_X, TOTAL_ENTRIES,
+    self, Entry, HEAD, INIT_TYPES, INITS, SCROLL_TOP, SCROLL_X, SOON_TAG, Soon, TOTAL_ENTRIES,
     VISIBLE_ROWS, row_y,
 };
 use chimera_core::ui::nav::{Browse, Location, MixPage};
@@ -115,7 +115,8 @@ fn init_rows_lead_the_list_and_load() {
         ui.location(),
         Location::sound_at(PartId::ALL[1], Browse::of(HEAD as u8, 0))
     );
-    feed(&mut ui, Input::turn(EncoderId::A, -2)); // the last of the INIT rows
+    let up = (HEAD - INITS + 1) as i8;
+    feed(&mut ui, Input::turn(EncoderId::A, -up)); // the last of the INIT rows
     let fb = render_ui(&ui);
     assert_eq!(fb.at(120, row_y(INITS - 1) - 5), theme::ACCENT);
     feed(&mut ui, Input::press(ButtonId::Edit));
@@ -149,8 +150,16 @@ fn entries_split_into_init_rows_then_slots() {
     }
     assert_eq!(browser::slot_at(HEAD), Some(SlotId::ALL[0]));
     assert!(browser::init_at(HEAD).is_none());
-    assert!(browser::slot_at(DRUM).is_none() && browser::init_at(DRUM).is_none());
-    assert_eq!(browser::entry_at(DRUM), Some(Entry::Drum));
+    for s in Soon::ALL {
+        let e = s.entry();
+        assert!((INITS..HEAD).contains(&e), "{s:?} under the INITs");
+        assert!(browser::slot_at(e).is_none() && browser::init_at(e).is_none());
+        assert_eq!(browser::entry_at(e), Some(Entry::Soon(s)));
+    }
+    assert!(
+        !INIT_TYPES.contains(&EngineType::Tape),
+        "TAPE is coming soon"
+    );
     assert_eq!(
         browser::entry_at(INITS - 1),
         Some(Entry::Init(INIT_TYPES[INITS - 1]))
@@ -214,16 +223,23 @@ fn rows_tag_their_engine_in_full() {
     for (i, e) in EngineType::ALL.into_iter().enumerate() {
         p.pool_store(SlotId::ALL[i], &Sound::init(e)).unwrap();
     }
-    // Cursor off every shown row: INIT rows 0-3, DRUM, then slots.
+    // Cursor off every shown row: the INIT rows, the soon rows, then slots.
     let fb = drawn(&p, 20, 0);
-    for (i, e) in EngineType::ALL.into_iter().enumerate() {
+    for (i, e) in INIT_TYPES.into_iter().enumerate() {
         assert!(tag_px(&fb, i, e.label()), "INIT row {i}");
     }
-    let fb = drawn(&p, 20, INITS); // DRUM at the top, the slots under it
+    let soons = Soon::ALL.len();
+    let fb = drawn(&p, 20, INITS + soons - 1); // the last soon row, the slots under it
     for (i, e) in EngineType::ALL.into_iter().enumerate() {
-        assert!(tag_px(&fb, 1 + i, e.label()), "slot row {i}");
+        // A pool Sound of a coming-soon engine says so, not its engine.
+        let label = if e == EngineType::Tape {
+            SOON_TAG
+        } else {
+            e.label()
+        };
+        assert!(tag_px(&fb, 1 + i, label), "slot row {i}");
     }
-    assert!(!tag_px(&fb, 0, "MODAL"), "the tags differ");
+    assert!(!tag_px(&fb, 1, "MODAL"), "the tags differ");
 }
 
 fn render_ui(ui: &chimera_core::ui::UiState) -> Fb {
@@ -472,7 +488,7 @@ fn ink_in_row(fb: &Fb, y: i32, c: embedded_graphics::pixelcolor::Rgb565) -> bool
 fn library_rows_tag_their_engine_in_full() {
     use chimera_core::ui::components;
     let mut st = MemStore::new(1);
-    for e in EngineType::ALL {
+    for e in EngineType::PLAYABLE {
         let s = Sound::init(e);
         let n = SoundName::new("X").unwrap();
         save_library_sound(&mut Card::new(), &mut st, &s, n, &this())
@@ -480,7 +496,7 @@ fn library_rows_tag_their_engine_in_full() {
             .unwrap();
     }
     let fb = render_ui(&library_ui(st));
-    for (i, e) in EngineType::ALL.into_iter().rev().enumerate() {
+    for (i, e) in EngineType::PLAYABLE.into_iter().rev().enumerate() {
         let (y, color) = (row_y(i), if i == 0 { theme::BG } else { theme::MID });
         let mut want = Fb::new();
         let _ = embedded_graphics::draw_target::DrawTarget::clear(&mut want, theme::BG);
@@ -601,71 +617,144 @@ fn a_sound_that_wont_fit_previews_in_alert_and_says_so() {
     assert!(alert, "WON'T FIT in ALERT");
 }
 
-/// DRUM sits after the INIT rows, in INIT's shade, saying it is coming.
+/// The coming-soon rows sit after the INIT rows, in INIT's shade, saying
+/// they are coming.
 #[test]
-fn the_drum_row_follows_the_inits_and_says_coming_soon() {
-    let fb = drawn(&empty(), HEAD, 0);
-    assert!(row_has(&fb, DRUM, theme::INK2), "DRUM named like an INIT");
-    assert!(!row_has(&fb, DRUM, theme::INK));
-    // Its note sits right-aligned, clear of the name.
-    let y = row_y(DRUM);
-    let note_px =
-        |fb: &Fb, x0, x1| (y - 12..y + 2).any(|yy| (x0..x1).any(|x| fb.at(x, yy) == theme::MID));
-    assert!(note_px(
-        &fb,
-        browser::TAG_RIGHT - 80,
-        browser::TAG_RIGHT + 1
-    ));
-    let w = chimera_core::ui::draw::text_width(&theme::FONT_LABEL, browser::DRUM_SOON, 0);
+fn the_soon_rows_follow_the_inits_and_say_coming_soon() {
+    let w = chimera_core::ui::draw::text_width(&theme::FONT_LABEL, SOON_TAG, 0);
     assert!(browser::TAG_RIGHT - w > 52 + 4 * 14, "{w}");
-    // Selected, it is the accent pill like any row.
-    let fb = drawn(&empty(), DRUM, 0);
-    assert_eq!(fb.at(120, row_y(DRUM) - 5), theme::ACCENT);
+    for s in Soon::ALL {
+        let row = s.entry();
+        let fb = drawn(&empty(), HEAD, 0);
+        assert!(row_has(&fb, row, theme::INK2), "{s:?} named like an INIT");
+        assert!(!row_has(&fb, row, theme::INK));
+        // Its note sits right-aligned, clear of the name.
+        let y = row_y(row);
+        let note_px = |fb: &Fb, x0, x1| {
+            (y - 12..y + 2).any(|yy| (x0..x1).any(|x| fb.at(x, yy) == theme::MID))
+        };
+        assert!(note_px(
+            &fb,
+            browser::TAG_RIGHT - 80,
+            browser::TAG_RIGHT + 1
+        ));
+        // Selected, it is the accent pill like any row.
+        let fb = drawn(&empty(), row, 0);
+        assert_eq!(fb.at(120, row_y(row) - 5), theme::ACCENT);
+    }
 }
 
-/// Loading DRUM changes nothing but a toast; the cursor starts on slot 1.
-#[test]
-fn loading_drum_is_a_no_op() {
-    let mut ui = chimera_core::ui::UiState::new();
-    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
-    let part = PartId::ALL[1];
-    let engine = ui.project().part(part).sound.engine();
-    feed(&mut ui, Input::turn(EncoderId::A, -1));
-    assert_eq!(
-        ui.location(),
-        Location::sound_at(part, Browse::of(DRUM as u8, 0))
-    );
-    feed(&mut ui, Input::press(ButtonId::Edit));
-    assert_eq!(ui.project().part(part).sound.engine(), engine);
-    assert!(!ui.prompt_open());
-    assert_eq!(
-        ui.location().browse().map(|(p, b)| (p, b.cursor())),
-        Some((part, DRUM))
-    );
-    assert!(chimera_core::ui::busy::toast_fits(DRUM_TOAST));
+fn toast(ui: &mut chimera_core::ui::UiState) -> String {
+    match ui.step_toast(0) {
+        chimera_core::ui::busy::ToastStep::Show(l) => l.as_str().into(),
+        s => panic!("no toast: {s:?}"),
+    }
 }
 
-/// Clear and save on DRUM act on nothing.
+/// Loading a coming-soon row changes nothing but its toast; the cursor
+/// stays on it.
 #[test]
-fn clear_and_save_never_act_on_the_drum_row() {
+fn loading_a_soon_row_is_a_no_op() {
+    for s in Soon::ALL {
+        let mut ui = chimera_core::ui::UiState::new();
+        feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
+        let part = PartId::ALL[1];
+        let before = ui.project().part(part).sound.clone();
+        feed(
+            &mut ui,
+            Input::turn(EncoderId::A, s.entry() as i8 - HEAD as i8),
+        );
+        assert_eq!(
+            ui.location(),
+            Location::sound_at(part, Browse::of(s.entry() as u8, 0))
+        );
+        feed(&mut ui, Input::press(ButtonId::Edit));
+        assert!(ui.project().part(part).sound.bits_eq(&before), "{s:?}");
+        assert!(!ui.prompt_open());
+        assert_eq!(
+            ui.location().browse().map(|(p, b)| (p, b.cursor())),
+            Some((part, s.entry()))
+        );
+        assert_eq!(toast(&mut ui), s.toast(), "{s:?}");
+        assert!(chimera_core::ui::busy::toast_fits(s.toast()));
+    }
+}
+
+/// A TAPE Sound in the pool (an old project's) reads COMING SOON, with no
+/// cost under the tag, and loading it only toasts.
+#[test]
+fn a_tape_slot_reads_coming_soon_and_never_loads() {
     let mut ui = chimera_core::ui::UiState::new();
-    let filled = |ui: &chimera_core::ui::UiState| {
-        SlotId::ALL
-            .iter()
-            .filter(|&&s| ui.project().pool().get(s).is_some())
-            .count()
-    };
-    let before = filled(&ui);
+    let slot = SlotId::ALL[20];
+    let mut tape = Sound::init(EngineType::Tape);
+    tape.name = SoundName::new("REEL").unwrap();
+    ui.project_mut().pool_store(slot, &tape).unwrap();
+    let row = HEAD + slot.index();
+    let fb = drawn(ui.project(), HEAD, row + 1 - VISIBLE_ROWS);
+    let vis = VISIBLE_ROWS - 1;
+    assert!(row_has(&fb, vis, theme::INK2), "named in INIT's shade");
+    assert!(!row_has(&fb, vis, theme::INK), "not as a saved Sound");
     feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B1));
-    feed(
-        &mut ui,
-        Input::turn(EncoderId::A, -(HEAD as i8) + DRUM as i8),
-    );
-    assert_eq!(ui.location().browse().map(|(_, b)| b.cursor()), Some(DRUM));
-    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
+    let part = PartId::ALL[0];
+    let before = ui.project().part(part).sound.clone();
+    feed(&mut ui, Input::turn(EncoderId::A, slot.index() as i8));
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    assert!(ui.project().part(part).sound.bits_eq(&before));
     assert!(!ui.prompt_open());
-    assert_eq!(filled(&ui), before);
-    let fb = drawn(ui.project(), DRUM, 0);
-    assert!(!text_in_row_at(&fb, browser::CLEAR_Y));
-    assert!(browser::slot_at(DRUM).is_none());
+    assert_eq!(toast(&mut ui), Soon::Tape.toast());
+    assert_eq!(ui.location().browse().map(|(_, b)| b.cursor()), Some(row));
+}
+
+/// Clear and save on a soon row act on nothing.
+#[test]
+fn clear_and_save_never_act_on_a_soon_row() {
+    for s in Soon::ALL {
+        let mut ui = chimera_core::ui::UiState::new();
+        let filled = |ui: &chimera_core::ui::UiState| {
+            SlotId::ALL
+                .iter()
+                .filter(|&&s| ui.project().pool().get(s).is_some())
+                .count()
+        };
+        let before = filled(&ui);
+        feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+        feed(
+            &mut ui,
+            Input::turn(EncoderId::A, s.entry() as i8 - HEAD as i8),
+        );
+        assert_eq!(
+            ui.location().browse().map(|(_, b)| b.cursor()),
+            Some(s.entry())
+        );
+        feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
+        assert!(!ui.prompt_open());
+        assert_eq!(filled(&ui), before);
+        let fb = drawn(ui.project(), s.entry(), 0);
+        assert!(!text_in_row_at(&fb, browser::CLEAR_Y));
+        assert!(browser::slot_at(s.entry()).is_none());
+    }
+}
+
+/// LIBRARY never lists a TAPE Sound (ADR 0132): one beside a VA Sound
+/// draws as the VA Sound alone.
+#[test]
+fn library_lists_no_tape_sound() {
+    let with = |engines: &[EngineType]| {
+        let mut st = MemStore::new(1);
+        for &e in engines {
+            let n = SoundName::new(e.label()).unwrap();
+            save_library_sound(&mut Card::new(), &mut st, &Sound::init(e), n, &this())
+                .out
+                .unwrap();
+        }
+        render_ui(&library_ui(st)).px
+    };
+    let va = with(&[EngineType::Va]);
+    assert_eq!(with(&[EngineType::Va, EngineType::Tape]), va);
+    assert_eq!(with(&[EngineType::Tape, EngineType::Va]), va);
+    assert_ne!(
+        with(&[EngineType::Va, EngineType::Modal]),
+        va,
+        "a row draws"
+    );
 }

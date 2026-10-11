@@ -168,8 +168,10 @@ impl Rig {
         self.feed(Input::turn(e, d));
     }
 
-    /// Part 1's Sound rung, the LIBRARY tab.
+    /// Part 1's Sound rung, the LIBRARY tab, TAPE Sounds listed (no
+    /// player sees them: ADR 0132).
     fn open_library(&mut self) {
+        self.ui.list_tape_for_test();
         self.feed(Input::chord(ButtonId::Edit, ButtonId::B1));
         self.turn(EncoderId::B, 1);
         assert_eq!(self.ui.lib_tab(), Tab::Library);

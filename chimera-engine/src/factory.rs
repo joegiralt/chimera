@@ -1,6 +1,7 @@
-//! The factory bank: eight Algo Sounds and an INIT per engine, kept as the
-//! pool's own bytes in `factory.bin` so NEW copies them, no decode. The
-//! authored Sounds below check the blob (`GOLDEN_RECORD=1` rewrites it).
+//! The factory bank: eight Algo Sounds and an INIT per playable engine
+//! (`EngineType::PLAYABLE`: no TAPE, ADR 0132), kept as the pool's own
+//! bytes in `factory.bin` so NEW copies them, no decode. The authored
+//! Sounds below check the blob (`GOLDEN_RECORD=1` rewrites it).
 //!
 //! Blob: a `u16` count, then per entry a `u16` length and that many bytes,
 //! the padded name and the records `encode_sound` writes. All little-endian.

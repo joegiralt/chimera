@@ -176,7 +176,7 @@ fn blob_matches_authored() {
     use chimera_core::project::EncodedSound;
     let authored: Vec<Sound> = (0..FACTORY_LEN)
         .map(|i| authored_sound(i).unwrap())
-        .chain(EngineType::ALL.map(Sound::init))
+        .chain(EngineType::PLAYABLE.map(Sound::init))
         .collect();
     if std::env::var_os("GOLDEN_RECORD").is_some() {
         let mut blob = (authored.len() as u16).to_le_bytes().to_vec();
