@@ -70,7 +70,7 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
     let (mut p, t) = Project::boxed();
     for s in SlotId::ALL
         .into_iter()
-        .skip(FACTORY_LEN + EngineType::ALL.len())
+        .skip(FACTORY_LEN + EngineType::PLAYABLE.len())
     {
         let i = s.index();
         let mut sound = match i % 3 {

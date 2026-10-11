@@ -443,14 +443,17 @@ fn live_snap_leaf_edits_the_active_part() {
 fn part_snap_default_is_neutral() {
     let d = PartParams::default();
     assert_eq!((d.snap, d.held), (LiveSnap::Off, Held::Stay));
-    // A whole PART block, less ids 8 and 9.
+    // A whole PART block, less ids 8 and 9 (and BEND, 10).
     let mut buf = chimera_core::storage::RecordBuf::new();
     encode_block(BlockRef::Part, &d, None, &mut buf);
     let old: Vec<u8> = {
         let b = buf.as_slice();
         let mut v = vec![b[0]];
         for e in b[1..].chunks(5) {
-            if e[0] != PartParams::SNAP.0 && e[0] != PartParams::HELD.0 {
+            if ![PartParams::SNAP, PartParams::HELD, PartParams::BEND]
+                .map(|i| i.0)
+                .contains(&e[0])
+            {
                 v.extend_from_slice(e);
             }
         }
@@ -463,6 +466,7 @@ fn part_snap_default_is_neutral() {
         let mix = &mut p.edit_part(id).mix;
         mix.snap = LiveSnap::Chord;
         mix.held = Held::Resnap;
+        mix.bend = 12;
     }
     let f = std::fs::read(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v1/project.prj"),
@@ -472,6 +476,7 @@ fn part_snap_default_is_neutral() {
     for id in PartId::ALL {
         let m = p.part(id).mix;
         assert_eq!((m.snap, m.held), (LiveSnap::Off, Held::Stay), "{id:?}");
+        assert_eq!(m.bend, chimera_core::part::INIT_BEND, "{id:?}");
     }
     // And the old block alone, decoded into a fresh Part.
     let mut fresh = PartParams::for_part(0);

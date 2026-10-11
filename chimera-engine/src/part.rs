@@ -4,7 +4,9 @@
 //! One `Block`, so it gets pages and snap like any other.
 
 use crate::MidiChannel;
-use crate::block::{Block, Change, DiskCode, ParamId, ParamSpec, Smoothing, ValFmt, apply_code};
+use crate::block::{
+    Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
+};
 use crate::orbit::ring::SnapTo;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -191,7 +193,14 @@ pub struct PartParams {
     pub pan: f32,
     pub snap: LiveSnap,
     pub held: Held,
+    /// Pitch-bend range, whole semitones each way, 0..=`MAX_BEND`.
+    pub bend: u8,
 }
+
+/// The widest BEND: two octaves.
+pub const MAX_BEND: u8 = 24;
+/// BEND's default: the usual two semitones.
+pub const INIT_BEND: u8 = 2;
 
 impl PartParams {
     pub const CHANNEL: ParamId = ParamId(0);
@@ -201,6 +210,7 @@ impl PartParams {
     pub const PAN: ParamId = ParamId(4);
     pub const SNAP: ParamId = ParamId(8);
     pub const HELD: ParamId = ParamId(9);
+    pub const BEND: ParamId = ParamId(10);
 
     /// Part `index` (0-based) listens on channel `index`, Poly, output P1,
     /// level 0.8, centre pan, its keys as played.
@@ -213,6 +223,7 @@ impl PartParams {
             pan: 0.0,
             snap: LiveSnap::Off,
             held: Held::Stay,
+            bend: INIT_BEND,
         }
     }
 }
@@ -224,7 +235,7 @@ impl Default for PartParams {
 }
 
 /// Nothing here is modulatable: the mixer applies these, not the voice (ADR 0010).
-pub static PART_SPECS: [ParamSpec; 7] = [
+pub static PART_SPECS: [ParamSpec; 8] = [
     ParamSpec::choice(0, "CH", ValFmt::OneBased(15), 15.0, 0.0, Change::Snap).ident("CH"),
     ParamSpec::choice(
         1,
@@ -291,6 +302,18 @@ pub static PART_SPECS: [ParamSpec; 7] = [
     )
     .ident("HELD")
     .glyph(crate::glyph::FocusGlyph::None),
+    // The audio glides the wheel's reach itself (`Instrument::ease_bend`).
+    ParamSpec::stepped(
+        10,
+        "BEND",
+        ValFmt::Int(MAX_BEND),
+        0.0,
+        MAX_BEND as f32,
+        INIT_BEND as f32,
+        false,
+        Motion::Continuous(Smoothing::Own),
+    )
+    .ident("BEND"),
 ];
 
 /// 0 to 15 as text: CH's values by channel number (the byte is the
@@ -315,6 +338,7 @@ impl Block for PartParams {
             Self::PAN => self.pan,
             Self::SNAP => self.snap as u8 as f32,
             Self::HELD => self.held as u8 as f32,
+            Self::BEND => f32::from(self.bend),
             _ => 0.0,
         }
     }
@@ -332,6 +356,7 @@ impl Block for PartParams {
                 self.snap = LiveSnap::ALL[i];
             }
             Self::HELD => self.held = Held::ALL[(v as usize).min(Held::ALL.len() - 1)],
+            Self::BEND => self.bend = crate::dsp::clampf(v, 0.0, f32::from(MAX_BEND)) as u8,
             _ => {}
         }
     }

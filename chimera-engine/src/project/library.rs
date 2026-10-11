@@ -200,6 +200,22 @@ impl LibPage {
         &self.entries[..usize::from(self.len)]
     }
 
+    /// Only the rows `keep` takes, in order.
+    pub fn retain(&mut self, keep: impl Fn(&LibEntry) -> bool) {
+        let len = usize::from(self.len);
+        let mut n = 0;
+        for i in 0..len {
+            let e = self.entries[i];
+            if e.as_ref().is_none_or(&keep) {
+                self.entries[n] = e;
+                n += 1;
+            }
+        }
+        self.entries[n..len].fill(None);
+        // At most `len`, a `u8`.
+        self.len = n as u8;
+    }
+
     pub fn position(&self, id: LibId) -> Option<usize> {
         self.entries()
             .iter()

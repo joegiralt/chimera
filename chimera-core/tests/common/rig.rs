@@ -139,6 +139,11 @@ impl Rig {
         with_ctx!(self, |v, ctx, _id| v.render(out, params, mods, ctx))
     }
 
+    /// The one-voice Part's pitch bend, semitones, landed.
+    pub fn set_bend(&mut self, semitones: f32) {
+        self.knobs.ease_bend(semitones, None);
+    }
+
     /// `render` as the voice of a one-voice Part: its knobs glide (ADR 0112).
     pub fn render_glided(
         &mut self,

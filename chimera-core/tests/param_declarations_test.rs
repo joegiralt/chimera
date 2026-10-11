@@ -349,4 +349,6 @@ const OWN_OUTSIDE: &[&str] = &[
     // The Part's pan × LEVEL gains, `Ease`.
     "Part LEVEL",
     "Part PAN",
+    // The wheel's reach, glided as a knob (`Instrument::ease_bend`).
+    "Part BEND",
 ];

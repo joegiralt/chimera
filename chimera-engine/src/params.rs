@@ -952,6 +952,11 @@ impl EngineType {
         EngineType::Va,
     ];
 
+    /// The engines a player picks: the browser's INIT rows and NEW's INIT
+    /// Sounds. TAPE waits for its rework (#476, ADR 0132): it reads COMING
+    /// SOON, and a project's TAPE Part loads as INIT VA.
+    pub const PLAYABLE: [EngineType; 3] = [EngineType::Algo, EngineType::Modal, EngineType::Va];
+
     /// Short display label for the engine and its chain.
     pub fn label(self) -> &'static str {
         match self {
