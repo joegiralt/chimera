@@ -123,6 +123,7 @@ macro_rules! table {
             Shot   (Colours) => "shot",   "the screen in THEME's colours; shot raw: canonical",
             Dfu    (NoArg)   => "dfu",    "restart into the ROM loader for just flash",
             Sweep  (NoArg)   => "sweep",  "the lost-cluster sweep at the next boot: restarts into it",
+            Flash  (NoArg)   => "flash",  "flash controller and bank 2, read only",
             $($card)*
         }
     };
@@ -255,5 +256,7 @@ pub use sound_file::*;
 mod fault;
 #[cfg(feature = "fault-inject")]
 pub use fault::*;
+mod flash;
+pub use flash::*;
 mod nocard;
 pub use nocard::NoCard;

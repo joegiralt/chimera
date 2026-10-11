@@ -169,7 +169,7 @@ fn a_line_split_anywhere_parses_once() {
 fn the_table_is_the_one_list() {
     let names: Vec<_> = Command::ALL.iter().map(|c| c.name()).collect();
     let mut want = vec![
-        "help", "status", "stats", "bench", "card", "shot", "dfu", "sweep",
+        "help", "status", "stats", "bench", "card", "shot", "dfu", "sweep", "flash",
     ];
     if cfg!(feature = "card-put") {
         want.extend(["ls", "put", "rm", "get"]);

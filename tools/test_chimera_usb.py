@@ -182,6 +182,15 @@ class Tool(unittest.TestCase):
             r = run_tool(["status"], u.target)
         self.assertEqual((r.returncode, r.stdout), (0, b"firmware 0.1.0 release\n"))
 
+    def test_flash_prints_the_registers(self):
+        body = b"acr 00000037 latency 7 wrhighfreq 3\npeek 08100000 ffffffff erased\n"
+        with FakeUnit({b"flash\n": body + b"OK\n"}) as u:
+            r = run_tool(["flash"], u.target)
+        self.assertEqual((r.returncode, r.stdout), (0, body))
+
+    def test_help_names_flash(self):
+        self.assertIn("chimera-usb.py flash ", tool.__doc__)
+
     def test_err_goes_to_stderr_and_exits_1(self):
         with FakeUnit({b"stats\n": b"ERR stats is not in this build\n"}) as u:
             r = run_tool(["stats"], u.target)

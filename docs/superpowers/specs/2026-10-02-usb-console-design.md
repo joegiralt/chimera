@@ -78,6 +78,7 @@ card    SD speed and streams, a chord playing; clean (bench builds)
 shot    the screen in THEME's colours; shot raw: canonical
 dfu     restart into the ROM loader for just flash
 sweep   the lost-cluster sweep at the next boot: restarts into it
+flash   flash controller and bank 2, read only
 ls      files and sizes in PROJECTS; ls tapes, ls sounds: theirs
 put     a project, Sound or source: <path> <size> <crc32> [--over]
 rm      a library Sound's pair: /CHIMERA/SOUNDS/S#######
@@ -229,6 +230,27 @@ Refusals, with nothing written:
 - `ERR sweep: the card has no /CHIMERA, nothing to sweep`.
 - `ERR sweep: <card error>`.
 - `ERR sweep is not in this build` on the desktop.
+
+**`flash`**
+
+```
+acr 00000037 latency 7 wrhighfreq 3
+optcr 00000001 optlock 1 optstart 0 mer 0 swap_bank 0
+optsr_cur 1bc6aaf0 rdp 0 swap_bank 0 iwdg sw bor off nrst_stop 1 nrst_stby 1 fz_iwdg_stop 0 fz_iwdg_sdby 1 st_ram 0 security 0 io_hslv 0 optchangeerr 0 opt_busy 0
+boot_cur 1ff00800 add0 08000000 add1 1ff00000
+cr1 00000031 lock 1 pg 0 ser 0 ber 0 psize 3 fw 0 start 0 snb 0
+sr1 00000000 bsy 0 wbne 0 qw 0 crc_busy 0 eop 0 crcend 0 errors -
+wpsn_cur1r 000000ff protected -
+prar_cur1 000000ff pcrop none dme 0
+scar_cur1 000000ff secure none dme 0
+cr2 …, sr2 …, wpsn_cur2r …, prar_cur2 …, scar_cur2 … as bank 1's
+peek 08100000 ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff erased
+peek 08180000 ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff erased
+sr1_after … sr2_after …, as sr1
+OK
+```
+
+The flash controller's state for bank 2 (RM0433 § 4.9, the bank-2 design's Phase 0a), each register's raw word then its fields. Read only: nothing is written, unlocked or erased, and the option bytes are untouched. `protected` lists the sectors whose WRPS bit is 0; `pcrop` and `secure` give an area's first and last byte, or `none` when START > END. `peek` is the first 32 bytes at bank 2's start and at the stock bootloader's slot, `erased` when all are 0xFF. The register lines go out before the peek, and `sr*_after` shows any ECC error the peek raised. The desktop answers `ERR flash is not in this build`.
 
 **`fault dma <1|2>`** (builds with `fault-inject` only; never shipping, orbit or bench)
 

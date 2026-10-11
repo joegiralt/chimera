@@ -76,6 +76,14 @@ pub trait Unit {
     /// The OTG and PWR registers now: `status`'s `usb_regs` line, last
     /// before `OK`. `None`: no line.
     fn usb_regs(&self) -> Option<UsbRegs>;
+    /// The flash controller's registers. `None`: not in this build.
+    fn flash_regs(&self) -> Option<super::FlashRegs> {
+        None
+    }
+    /// `PEEK_AT`'s words, read after `flash_regs`' lines are out.
+    fn flash_peek(&self) -> Option<super::FlashPeek> {
+        None
+    }
     /// Provokes the fault, once `OK` is not yet out. `None`: not in this build.
     #[cfg(feature = "fault-inject")]
     fn fault(&mut self, _: super::FaultArg) -> Option<()> {
@@ -188,6 +196,15 @@ pub fn answer(
                 };
                 return writeln!(t, "ERR sweep: {why}").map_err(|fmt::Error| Stalled);
             }
+        },
+        // The registers go out before the peek: a read of bank 2 that
+        // faults still leaves them on the host.
+        Ok(r @ Request::Flash(NoArg)) => match unit.flash_regs() {
+            None => Err(Why::Absent(r.command())),
+            Some(regs) => Ok(super::write_flash_regs(&regs, &mut t).and_then(|()| {
+                unit.flash_peek()
+                    .map_or(Ok(()), |p| super::write_flash_peek(&p, &mut t))
+            })),
         },
         #[cfg(feature = "fault-inject")]
         Ok(r @ Request::Fault(super::FaultArg::Ndtr)) => unit

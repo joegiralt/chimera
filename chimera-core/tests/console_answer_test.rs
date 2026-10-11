@@ -1,8 +1,8 @@
 use chimera_core::boot::{BootAction, BootSeen, UsbRegs};
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::console::{
-    CardAnswer, CardFail, CardSpeed, Colours, Command, Console, Frame, NoArg, Out, Request,
-    SHOT_HEADER, Stalled, Stats, SweepAsk, Unit, answer,
+    CardAnswer, CardFail, CardSpeed, Colours, Command, Console, FlashPeek, FlashRegs, Frame, NoArg,
+    Out, Request, SHOT_HEADER, Stalled, Stats, SweepAsk, Unit, answer,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::reset::ResetCause;
@@ -38,6 +38,7 @@ struct Fake {
     sweep_ask: Option<SweepAsk>,
     sweeps: usize,
     usb_regs: Option<UsbRegs>,
+    flash: Option<(FlashRegs, FlashPeek)>,
     forgotten: usize,
 }
 
@@ -57,6 +58,7 @@ impl Fake {
             sweep_ask: None,
             sweeps: 0,
             usb_regs: None,
+            flash: None,
             forgotten: 0,
         }
     }
@@ -98,6 +100,12 @@ impl Unit for Fake {
     }
     fn usb_regs(&self) -> Option<UsbRegs> {
         self.usb_regs
+    }
+    fn flash_regs(&self) -> Option<FlashRegs> {
+        self.flash.map(|f| f.0)
+    }
+    fn flash_peek(&self) -> Option<FlashPeek> {
+        self.flash.map(|f| f.1)
     }
     type Files = chimera_core::console::NoCard;
     fn files(&mut self) -> Option<&mut Self::Files> {
@@ -150,6 +158,7 @@ fn help_is_the_specs_text() {
          shot    the screen in THEME's colours; shot raw: canonical\n\
          dfu     restart into the ROM loader for just flash\n\
          sweep   the lost-cluster sweep at the next boot: restarts into it\n\
+         flash   flash controller and bank 2, read only\n\
          ls      files and sizes in PROJECTS; ls tapes, ls sounds: theirs\n\
          put     a project, Sound or source: <path> <size> <crc32> [--over]\n\
          rm      a library Sound's pair: /CHIMERA/SOUNDS/S#######\n\
@@ -806,4 +815,23 @@ fn rm_without_a_card_forgets_nothing() {
         "ERR rm is not in this build\n"
     );
     assert_eq!(u.forgotten, 0);
+}
+
+#[test]
+fn flash_is_absent_off_the_chip() {
+    assert_eq!(
+        ask(&mut Fake::new(), "flash\n"),
+        "ERR flash is not in this build\n"
+    );
+}
+
+#[test]
+fn flash_registers_then_peek_then_ok() {
+    let mut u = Fake::new();
+    u.flash = Some((FlashRegs::default(), FlashPeek::default()));
+    let a = ask(&mut u, "flash\n");
+    let keys: Vec<_> = a.lines().map(|l| l.split(' ').next().unwrap()).collect();
+    assert_eq!(keys.first(), Some(&"acr"));
+    assert!(keys.iter().position(|k| *k == "scar_cur2") < keys.iter().position(|k| *k == "peek"));
+    assert_eq!(&keys[keys.len() - 3..], ["sr1_after", "sr2_after", "OK"]);
 }

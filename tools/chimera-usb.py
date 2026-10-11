@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Talk to your Chimera over USB: status for bug reports, screenshots, files onto the card.
 
-    python3 chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu, sweep,
+    python3 chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu, sweep, flash,
                                                    ls [tapes|sounds], rm|get /CHIMERA/SOUNDS/S#######
     python3 chimera-usb.py put <local> <remote> [--over]
                                                    a project file onto the card as /CHIMERA/PROJECTS/P#######.A,
@@ -9,6 +9,7 @@
                                                    or a TAPE source as /CHIMERA/TAPES/<CRC>.SRC, in checked chunks
                                                    (<remote> ending in / takes the local name; /CHIMERA/SOUNDS/ takes
                                                    `ls sounds`' top user id + 1)
+    python3 chimera-usb.py flash             the flash controller's registers and bank 2's first bytes, read only
     python3 chimera-usb.py to-dfu            the unit into ROM DFU, to flash it
     python3 chimera-usb.py wait-console [s]  wait (default 10 s) for the console on the bus
 

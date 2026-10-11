@@ -4,8 +4,8 @@
 
 use chimera_core::boot::{BootSeen, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep, wait_until};
 use chimera_core::console::{
-    AnswerClock, CardAnswer, CardArg, Console, Frame, LoopTimer, Out, Request, Served, Stalled,
-    Stats, SweepAsk, Unit, answer, serial_hex,
+    AnswerClock, BankRegs, CardAnswer, CardArg, Console, FlashPeek, FlashRegs, Frame, LoopTimer,
+    Out, PEEK_AT, Request, Served, Stalled, Stats, SweepAsk, Unit, answer, serial_hex,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::triple::Reader;
@@ -511,6 +511,14 @@ impl Unit for ChipUnit<'_> {
         Some(regs())
     }
 
+    fn flash_regs(&self) -> Option<FlashRegs> {
+        Some(flash_regs())
+    }
+
+    fn flash_peek(&self) -> Option<FlashPeek> {
+        Some(flash_peek())
+    }
+
     fn forget_library(&mut self) {
         self.forget = true;
     }
@@ -629,6 +637,47 @@ pub fn regs() -> UsbRegs {
         gintsts: g.gintsts.read().bits(),
         dsts: d.dsts.read().bits(),
         pwr_cr3: pwr.cr3.read().bits(),
+    }
+}
+
+/// The flash controller's registers, read only: nothing here writes,
+/// unlocks or touches the option bytes.
+fn flash_regs() -> FlashRegs {
+    // SAFETY: plain reads of FLASH's fixed registers; none has a read side
+    // effect (the SR flags clear only through CCR writes).
+    let f = unsafe { &*pac::FLASH::ptr() };
+    let bank = |b: &pac::flash::BANK| BankRegs {
+        cr: b.cr.read().bits(),
+        sr: b.sr.read().bits(),
+        prar_cur: b.prar_cur.read().bits(),
+        scar_cur: b.scar_cur.read().bits(),
+        wpsn_cur: b.wpsn_curr.read().bits(),
+    };
+    FlashRegs {
+        acr: f.acr.read().bits(),
+        optcr: f.optcr().read().bits(),
+        optsr_cur: f.optsr_cur().read().bits(),
+        boot_cur: f.boot_curr().read().bits(),
+        banks: [bank(f.bank1()), bank(f.bank2())],
+    }
+}
+
+/// `PEEK_AT`'s first 32 bytes, then SR1 and SR2: an ECC error the reads
+/// raised shows there.
+fn flash_peek() -> FlashPeek {
+    let mut words = [[0u32; 8]; 2];
+    for (row, &at) in words.iter_mut().zip(&PEEK_AT) {
+        for (k, w) in (0u32..).zip(row.iter_mut()) {
+            // SAFETY: an aligned word inside the chip's 2 MB of flash
+            // (0x08000000..0x08200000), always mapped; a load never
+            // programs or erases it.
+            *w = unsafe { core::ptr::read_volatile((at + 4 * k) as *const u32) };
+        }
+    }
+    let r = flash_regs();
+    FlashPeek {
+        words,
+        sr_after: r.banks.map(|b| b.sr),
     }
 }
 
