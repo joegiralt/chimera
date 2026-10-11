@@ -1,10 +1,21 @@
 # Flash bank 2: room to grow: Design
 
-- **Status:** Draft: options for owner review
+- **Status:** Approved 2026-10-11 (owner: "lets go with all you suggestions"); decisions below
 - **Date:** 2026-10-11
 - **Issue:** private issue #460 (post-alpha)
 - **Builds on:** ADR 0092 (console `put`), ADR 0108 (fast audio, small rest), ADR 0122 (WAVES at boot), ADR 0132 (TAPE out of the firmware for alpha), (private notes) (the 2026-10-07 ROM DFU hang), (private notes) (bootloader 1.09)
 - **Chip:** STM32H753VI (stock `bootloader/STM32H753VITX_FLASH.ld`), rev V. It has 2 MB of flash in two 1 MB banks of eight 128 KB sectors. CLAUDE.md's "H750, 128KB" line is stale.
+
+## Owner decisions (2026-10-11)
+
+1. **Two files per release:** `chimera-<v>.bin` through the usual DFU route, plus `chimera-<v>.bk2`, put over USB by one tool command, which the unit then installs itself.
+2. **Auto-install:** a staged bank-2 file that exactly matches the running firmware installs at boot without asking, behind a `DON'T POWER OFF` screen.
+3. **Audio during a write:** ALGO, MODAL and VA keep playing (read-while-write); only TAPE is silent. Phase 0b must show no overruns; if it does, the writer mutes everything instead.
+4. **TAPE Parts while bank 2 is closed:** kept silent and labelled, never converted, so a stale bank 2 never costs data. ADR 0132's lossy load is superseded when bank 2 lands.
+5. **Phase 0 go:** 0a (read-only option bytes) first, then 0b (Chimera erases and programs bank-2 sector 0, with a timeout and an SR2 dump).
+6. **The slots at 0x08180000 / 0x081C0000 (bank-2 sectors 4–7) stay untouched for good.** Bank 2 is 0x08100000–0x0817FFFF.
+7. **SWD:** not needed. The design works without it.
+8. **The label:** `NEEDS UPDATE` (full words, no "bank" jargon), with the release notes saying which file to install.
 
 ## Open questions for the owner
 
