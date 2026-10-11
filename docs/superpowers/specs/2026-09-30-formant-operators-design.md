@@ -409,13 +409,13 @@ The operator produces one raw grain signal, `y = Σ lanes W(x) · sin(c')`, time
   - `p_q` runs over FC·L in [0, 16] and is **1.0** past it, not flat. `p` tends to 1, so p̂ never underestimates the peak.
 
 **Level held, measured by a host probe of the exact one-period synthesis:**
-- Across the level-held domain the level matches R within 0.01 dB at every SKIRT:
+- Across the level-held domain the level matches R within 0.02 dB (0.1 dB at C4 with BW 4 kHz, from the linear ρ table; Task 7 measured) at every SKIRT:
   - C3 with FC 1 kHz and BW up to 2 kHz;
   - C4 with BW up to 4 kHz;
   - C2 with BW up to 500 Hz;
   - C5 with FC 270–300 Hz, where the first draft lost 3–5 dB.
 - The peak stays under 1.0 there (0.3–0.92).
-- **Past the level-held domain**, where wide BW meets low notes, the ceiling holds the peak at 1.0 and the level falls by the excess crest: −2.2 dB at C2 with BW 2 kHz, and −5.9 dB at C3 with BW 10 kHz.
+- **Past the level-held domain**, where wide BW meets low notes, the ceiling holds the peak at 1.0 and the level falls by the excess crest: −2.2 dB at C2 with BW 2 kHz, and −5.3 dB at C3 with BW 10 kHz (the edge law narrows BW_eff to 8.7 kHz there; Task 7 measured).
 - **Two small effects remain:**
   - Where D > 1 (SKIRT ≥ 1 near the floor), overlapping lanes add a ripple as FC moves against the harmonics. It is about ±0.5 dB at SKIRT 1 and negligible above.
   - When FC falls under about BW/4, the bracket's 0.05 floor binds and the level falls. The formant is then mostly cancelled at 0 Hz.
