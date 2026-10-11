@@ -135,7 +135,8 @@ fn the_engine_operators_are_the_reference() {
                             VaMode::Xor => {
                                 // each word, read back through a XOR with 0
                                 let word = |v: f32| {
-                                    (xor16_scaled(v, 0.0, 32767.0 / p, p) * 32768.0 / p).round() as i32
+                                    (xor16_scaled(v, 0.0, 32767.0 / p, p) * 32768.0 / p).round()
+                                        as i32
                                 };
                                 let refw = |v: f32| (v / p * 32767.0) as i32;
                                 for v in [a, b] {
@@ -158,7 +159,10 @@ fn the_engine_operators_are_the_reference() {
             }
         }
     }
-    println!("BITS off by a level at {} of {} points", bits_off.0, bits_off.1);
+    println!(
+        "BITS off by a level at {} of {} points",
+        bits_off.0, bits_off.1
+    );
     assert!(bits_off.0 * 100 <= bits_off.1, "{bits_off:?}");
 }
 

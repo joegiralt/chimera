@@ -161,7 +161,11 @@ impl Operator {
     /// Once a block, from the oscillators' peak bounds and the crusher.
     #[inline(always)]
     pub fn new(mode: VaMode, pk: Peaks, crush: &Crusher) -> Self {
-        let scale = if matches!(mode, VaMode::Ring | VaMode::Xor) { 2.0 } else { 1.0 };
+        let scale = if matches!(mode, VaMode::Ring | VaMode::Xor) {
+            2.0
+        } else {
+            1.0
+        };
         let p = pk.a.max(pk.b);
         let q = 0.5 * (pk.a + pk.b);
         Self {

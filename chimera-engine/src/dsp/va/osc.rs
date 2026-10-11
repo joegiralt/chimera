@@ -572,7 +572,9 @@ fn run_end(r: &Ramps, pair: Pair, i0: usize, n: usize) -> usize {
     let k = pair as usize + usize::from(step > 0.0);
     // sample i plays j = i + 1: the first j past the edge (`as` saturates,
     // NaN to 0); max/min, not clamp: no assert (and no panic path) in audio
-    (((THIRDS[k.min(3)] - from) / step) as usize).max(i0 + 1).min(n)
+    (((THIRDS[k.min(3)] - from) / step) as usize)
+        .max(i0 + 1)
+        .min(n)
 }
 
 /// The pair `a`, `b`'s constants and places from SHAPE constants `sh`,
@@ -936,11 +938,19 @@ impl VarOsc {
         let (mut pair, last, up) = (seg(r, 0), seg(r, N - 1), r.wave.1 > 0.0);
         let mut i0 = 0;
         while i0 < N {
-            let i1 = if pair == last { N } else { run_end(r, pair, i0, N) };
+            let i1 = if pair == last {
+                N
+            } else {
+                run_end(r, pair, i0, N)
+            };
             let span = (i0, i1);
             match pair {
-                Pair::SineTri => self.run::<Sine, Tri, N, REC, SYNC>(&blk, span, r, out, wr, jit, draw),
-                Pair::TriSaw => self.run::<Tri, Saw, N, REC, SYNC>(&blk, span, r, out, wr, jit, draw),
+                Pair::SineTri => {
+                    self.run::<Sine, Tri, N, REC, SYNC>(&blk, span, r, out, wr, jit, draw)
+                }
+                Pair::TriSaw => {
+                    self.run::<Tri, Saw, N, REC, SYNC>(&blk, span, r, out, wr, jit, draw)
+                }
                 Pair::SawPulse => {
                     self.run::<Saw, Pulse, N, REC, SYNC>(&blk, span, r, out, wr, jit, draw)
                 }
@@ -1039,9 +1049,7 @@ impl VarOsc {
         let (c0, p0) = match self.pair {
             Some(q) if q == pair => (self.c, self.pos),
             None => (c1, p1),
-            Some(_) => {
-                at_lerp::<A, B>(ends, i0 as f32 * RECIP[n.min(RECIP.len() - 1)], weight(i0))
-            }
+            Some(_) => at_lerp::<A, B>(ends, i0 as f32 * RECIP[n.min(RECIP.len() - 1)], weight(i0)),
         };
         (self.pair, self.c, self.pos) = (Some(pair), c1, p1);
         (run.rinc, run.inc, run.dinc) = (blk.rinc, val(r.inc, i0), r.inc.1);
@@ -1389,7 +1397,10 @@ pub struct Sub {
 }
 
 impl Sub {
-    pub const NEW: Self = Self { level: R, held: 0.0 };
+    pub const NEW: Self = Self {
+        level: R,
+        held: 0.0,
+    };
 
     /// +R, the corrector cleared.
     pub fn reset(&mut self) {
