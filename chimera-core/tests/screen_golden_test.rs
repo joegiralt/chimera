@@ -217,7 +217,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: INVERT in cell F (ADR 0126).
     ("settings_personal_theme", 0x69eb789acb0d98db),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
-    ("settings_system_diag_aud_load", 0x0d5edcdc4826225e),
+    ("settings_system_diag_aud_load", 0x0063331a51f3da0e),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.
     ("settings_project_pool", 0xc96d14eba15c42a4),

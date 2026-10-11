@@ -9,7 +9,7 @@ mod common;
 use chimera_core::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::knobs::{KNOBS, KnobPublisher};
-use chimera_core::hw::{MAX_PARTS, SampleBudget};
+use chimera_core::hw::{AUDIO_BUDGET_PERCENT, MAX_PARTS, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams};
@@ -290,7 +290,7 @@ fn the_knobs_are_reserved_once() {
     let voice = Voice::cost(&part.params, &part.mod_state).0;
     let need = FxBus::COST.0 + Knobs::RESERVE.0 + voice + Knobs::COST.0;
     for (cost, admitted) in [(need, 1), (need - 1, 0)] {
-        let hz = (cost as u64 * 480_000).div_ceil(7) as u32;
+        let hz = (cost as u64 * 4_800_000).div_ceil(AUDIO_BUDGET_PERCENT as u64) as u32;
         *r.inst = Instrument::new(SAMPLE_RATE, SampleBudget::for_cpu(hz));
         r.key(0, true);
         assert_eq!(r.playing(), admitted, "budget {cost}");
