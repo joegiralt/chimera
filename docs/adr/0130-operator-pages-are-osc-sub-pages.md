@@ -9,7 +9,7 @@ The formant operators need a page per operator: WAVE, COARSE, FINE, LEVEL, FDBK 
 ## Decision
 - OP1–OP6 are sub-pages of OSC, after the twelve group pages (sub 13–18). EDIT and SEQ step through them like any sub-page, and EDIT wraps from OP6 to OSC (ADR 0081). There is no new gesture: B*n* stays Part *n*.
 - The twelve group pages are unchanged.
-- Each OP page binds its six cells to its own operator (`ALGO_OP_PAGES`, ids 98–103; labels per the full-word rule, FDBK for FEEDBACK). The band draws the envelope with `viz::op_env` and the wave as an inset with `glyph::wave_trace`. Every colour is a theme token (ADR 0126).
+- Each OP page binds its six cells to its own operator (`ALGO_OP_PAGES`, ids 100–105; labels per the full-word rule, FDBK for FEEDBACK). The band draws the envelope with `viz::op_env` and the wave as an inset with `glyph::wave_trace`. Every colour is a theme token (ADR 0126).
 - Page focus is kept by `BlockDef.id`, not by position: `ChainDef2::locate`, `refocus` and `Location::rechained` re-find the page when the sub-row or the Part's chain changes.
 - #37's hold gesture is dropped. Its playhead dot, gang edit, LEVEL SCALE and living diagram stay in #37.
 
