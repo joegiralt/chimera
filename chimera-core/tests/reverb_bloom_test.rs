@@ -486,6 +486,8 @@ fn band_rt60_over(p: &ReverbParams, fc: f32, rt60_s: f32) -> f32 {
     let mut e: Vec<f64> = Vec::new();
     for seed in 0..4 {
         let (rv, pc) = (fresh(p), RefCell::new(*p));
+        // The engine's decay, not the tail gate's last 35 dB.
+        rv.borrow_mut().tail_gate_off();
         let mut n = Noise(0x1234 + seed);
         let (l, r) = run(
             &mut bus(&rv, &pc),

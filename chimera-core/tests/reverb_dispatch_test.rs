@@ -88,13 +88,13 @@ fn render_bus(smear: bool) -> Vec<f32> {
 
 const GOLDENS: &[(&str, u64)] = &[
     // SMEAR walking (T5), then the tail gate (reverb sizzle).
-    ("quad_sweep_48k", 0xf23acbd96b22742f),
-    ("quad_sweep_44k1", 0x0ef83ab86b605b97),
-    ("quad_bus", 0x40b11b1ee1c1d2af),
+    ("quad_sweep_48k", 0xab9d2a3c84cd4b2e),
+    ("quad_sweep_44k1", 0x0bbe937497613230),
+    ("quad_bus", 0x16f29c1d9525d754),
     // a2abe82f at GRIT 0, then the tail gate.
-    ("quad_sweep_48k_smear_0", 0xaa55704c28c3f876),
-    ("quad_sweep_44k1_smear_0", 0x4b25114736127fb7),
-    ("quad_bus_smear_0", 0x1c0c99be22416e4f),
+    ("quad_sweep_48k_smear_0", 0x4b57df50438ebfe2),
+    ("quad_sweep_44k1_smear_0", 0x06605a040e651bca),
+    ("quad_bus_smear_0", 0x36b57272cbec8047),
 ];
 
 #[test]

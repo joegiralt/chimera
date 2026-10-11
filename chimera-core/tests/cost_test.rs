@@ -933,12 +933,12 @@ fn a16_a17() -> AlgoParams {
 /// some counts below are one fewer.
 const TAPE: bool = cfg!(feature = "master-tape");
 
-/// FX diet spec § Intent and ADR 0031: with the bus at 1,193 (BUS+V
-/// 1,188 of 2026-10-04 and the reverb's tail gate; 1,490 with the master
+/// FX diet spec § Intent and ADR 0031: with the bus at 1,204 (BUS+V
+/// 1,188 of 2026-10-04 and the reverb's tail gate; 1,494 with the master
 /// tape) and the modulator pool's floor (`ModRouting::BASE`, 47) added,
-/// the costliest patch gets six voices on rev V (6 × 915 + 1,193 = 6,683
-/// ≤ 7,000; a seventh would be 7,598), and five on rev Y ((5,833 − 1,193)
-/// / 915 = 5.07; four with the tape),
+/// the costliest patch gets six voices on rev V (6 × 915 + 1,204 = 6,694
+/// ≤ 7,000; a seventh would be 7,609), and five on rev Y ((5,833 − 1,204)
+/// / 915 = 5.06; four with the tape),
 /// without FOLD or DRIVE, at LP24 (its SVF term 0). ADR 0040: the budget,
 /// not the eight-voice pool, is what stops it.
 #[test]
@@ -948,7 +948,7 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!(Voice::CHAIN_COST.0 + ModRouting::BASE.0 + cost(&p), 915);
     let plain = 915 + LP24.0;
     assert_eq!(cost(&costliest()), cost(&p), "no pair has more links");
-    let bus = if TAPE { 1_490 } else { 1_193 };
+    let bus = if TAPE { 1_494 } else { 1_204 };
     assert_eq!(FxBus::COST.0, bus, "{:?}", FxBus::COST);
     assert_eq!(voices_at(CPU_HZ_REV_V, &p), 6);
     assert_eq!(MAX_VOICES, 8, "the budget stops it short of the pool");
@@ -1197,7 +1197,8 @@ fn modal_bills_each_model() {
         (sound(Bowed, 0.3, 0.5), 640, (8, 6), (7, 6)),
         (sound(Sympathetic, 0.0, 0.0), 470, (8, 8), (8, 7)),
         (sound(Sympathetic, 0.3, 0.0), 550, (8, 7), (8, 6)),
-        (sound(Sympathetic, 0.3, 0.5), 690, (7, 6), (7, 5)),
+        // One fewer on rev Y since the reverb's tail low-pass (+16).
+        (sound(Sympathetic, 0.3, 0.5), 690, (7, 5), (7, 5)),
         (sound(Modal, 0.3, 0.5), 1_840, (3, 2), (2, 2)),
     ] {
         let (rev_v, rev_y) = if cfg!(feature = "master-tape") {
@@ -1419,10 +1420,11 @@ fn orbit_and_a_burst_fit_beside_what_renders() {
     for keys_first in [true, false] {
         let (voices, most, kept) = stress(keys_first, STRESS_BLOCKS);
         // Six keys first, none stolen or shed once ORBIT starts; a block
-        // after, five voices beside ORBIT's reserve. The counts come out
-        // the same on the `master-tape` bus, so the assert takes no cfg.
-        assert_eq!(voices, if keys_first { 6 } else { 5 }, "{keys_first}");
-        assert!(kept || !keys_first, "a key stolen or shed");
+        // after, five voices beside ORBIT's reserve. On the `master-tape`
+        // bus five either way since the reverb's tail low-pass (+16).
+        let six = keys_first && !TAPE;
+        assert_eq!(voices, if six { 6 } else { 5 }, "{keys_first}");
+        assert!(kept || !six, "a key stolen or shed");
         let room = match keys_first {
             true => 0,
             false => Instrument::BURST.0 + OrbitRunner::COST.0,

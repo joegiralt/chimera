@@ -341,7 +341,7 @@ impl Reverb {
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         // SAFETY: the arena and half-bands are integer and float arrays and
-        // integers; `tail` two floats; `state` is `EngineState`, whose
+        // integers; `tail` floats and a `bool`; `state` is `EngineState`, whose
         // variant 0 is `Quad` and every field of every variant an integer,
         // a float or a `bool` (`false`); `kind` and `phase` are `repr(u8)` enums whose 0 is
         // `Quad` and `Running`, `latched` floats and two `repr(u8)` enums
@@ -359,6 +359,13 @@ impl Reverb {
         };
         r.wander = QUAD_WANDERS;
         r
+    }
+
+    /// Take the tail gate out of the path from now on: the RT60 tests read
+    /// the engine's own decay, not the gate's last 35 dB.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn tail_gate_off(&mut self) {
+        self.tail.off = true;
     }
 
     /// Hold every wander at its centre from now on: SMEAR's reads sit `D`
@@ -680,7 +687,7 @@ impl Reverb {
             }
         }
         // MIX's ease × the tail gate's, one ramp.
-        let (g0, g1) = self.tail.step(&lr, tail_knee(self.kind));
+        let (g0, g1) = self.tail.step(&mut lr, self.kind);
         let (from, to) = (from * g0, to * g1);
         self.up_l.process(&lr[0], &mut out.l);
         self.up_r.process(&lr[1], &mut out.r);
@@ -733,11 +740,24 @@ where
     (paths, d1)
 }
 
-/// Each TYPE's `TailGate` knee, the return's |l| + |r| block peak in ring
-/// LSBs: about 16 dB over its storage floor, the i16 return against a
-/// float-line one (0.6–0.9 LSB RMS a side; BLOOM's 15 normalised allpasses
-/// each hand theirs back × 1/(1 − g), 2.3). Over it the return is
-/// untouched: at TIME 1, MIX 1, no TYPE's moves while above −45 dBFS.
+/// Each TYPE's storage floor as `TailGate`'s envelope reads it (|l| + |r|
+/// block peak, ring LSBs): the noise its i16 lines add while a tail
+/// plays, measured as the 4–16 kHz band that scales up 12 dB when the
+/// send drops 12 (QUAD −69, ROOM −74, HALL −67 dBFS in band at MIX 1), and
+/// for BLOOM against a float-line render (2.3 LSB RMS a side: its 15
+/// normalised allpasses each hand theirs back × 1/(1 − g)).
+pub fn tail_floor(t: ReverbType) -> f32 {
+    match t {
+        ReverbType::Quad => 9.0,
+        ReverbType::Room => 9.5,
+        ReverbType::Hall => 4.0,
+        ReverbType::Bloom => 11.0,
+        ReverbType::Gate | ReverbType::Reverse => 4.0,
+    }
+}
+
+/// Each TYPE's `TailGate` knee, |l| + |r| as `tail_floor`: where the
+/// noise-only end fades (as first set, so the tail is no shorter).
 pub fn tail_knee(t: ReverbType) -> f32 {
     match t {
         ReverbType::Bloom => 72.0,
@@ -745,27 +765,48 @@ pub fn tail_knee(t: ReverbType) -> f32 {
     }
 }
 
-/// A downward expander on the return, in ring LSBs: the i16 lines'
-/// quantising is a floor of noise, half of it over 4 kHz, where a damped
-/// tail has nothing; a long tail meeting it ends in that noise alone, a
-/// sizzle. Under the knee the return goes as its envelope's fourth power
-/// (5:1), so the noise fades with the tail; over it, untouched. Its ramp
-/// rides MIX's: 3 instructions a sample, the envelope (`FxBus::COST`).
-/// Zero bytes are a fresh gate.
+/// The return's last 35 dB over its storage floor (`tail_floor`): the
+/// lines' noise is white, half of it over 4 kHz, where a damped tail has
+/// nothing, so a dark late tail 25 dB over it already hisses. A two-pole
+/// low-pass follows the tail down, its coefficient the envelope over
+/// `OPEN` floors (open, untouched, above; about 1.5 kHz at the least),
+/// so the tail's 4–16 kHz share stays within 9 dB of its body's; under
+/// the knee (`tail_knee`) the return goes as the envelope's fourth power
+/// (5:1), and the noise-only end fades. Both close on a ramp across the
+/// block (the gain on MIX's) and open at once, on a return that was under
+/// the floor. 19 instructions a ring sample (`FxBus::COST`). Zero bytes
+/// are a fresh gate.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailGate {
     /// The block peak of |l| + |r|: instant up, falling by `RELEASE`.
     env: f32,
     /// Last block's gain.
     g: f32,
+    /// Last block's low-pass coefficient, 1 open.
+    a: f32,
+    /// Each side's two low-pass states.
+    y: [[f32; 2]; 2],
+    /// Out of the path (tests: the engine's own decay).
+    off: bool,
 }
 
 impl TailGate {
     /// The envelope's fall a block: τ 50 ms at 48 kHz.
     const RELEASE: f32 = 0.026;
+    /// Where the low-pass opens fully: 35 dB over the floor.
+    pub const OPEN: f32 = 56.0;
+    /// The low-pass's lowest coefficient: about 1.5 kHz at 24 kHz, so the
+    /// tail's own body is no shorter.
+    const A_MIN: f32 = 0.32;
 
     pub const fn new() -> Self {
-        Self { env: 0.0, g: 0.0 }
+        Self {
+            env: 0.0,
+            g: 0.0,
+            a: 0.0,
+            y: [[0.0; 2]; 2],
+            off: false,
+        }
     }
 
     /// The gain at envelope `env`: 1 from `knee`, (env / `knee`)⁴ under.
@@ -775,9 +816,18 @@ impl TailGate {
         x2 * x2
     }
 
-    /// This block's gain ramp `(from, to)` for the return `lr`: from
-    /// last block's, so it never snaps.
-    pub fn step(&mut self, lr: &[[f32; HALF]; 2], knee: f32) -> (f32, f32) {
+    /// The low-pass coefficient at envelope `e` over the floor: 1 from
+    /// `OPEN`, e / `OPEN` under, `A_MIN` at least.
+    pub fn coef(e: f32) -> f32 {
+        clampf(e * (1.0 / Self::OPEN), Self::A_MIN, 1.0)
+    }
+
+    /// Low-passes the return `lr` in place and gives this block's gain
+    /// ramp `(from, to)`.
+    pub fn step(&mut self, lr: &mut [[f32; HALF]; 2], t: ReverbType) -> (f32, f32) {
+        if self.off {
+            return (1.0, 1.0);
+        }
         let [l, r] = lr;
         let pk = l
             .iter()
@@ -788,9 +838,31 @@ impl TailGate {
         } else {
             self.env + Self::RELEASE * (pk - self.env)
         };
-        let g = (self.g, Self::gain(self.env, knee));
-        self.g = g.1;
-        g
+        // Opening is instant (a hit after a gap keeps its edge: what came
+        // before it was under the floor); closing ramps across the block.
+        let a1 = Self::coef(self.env / tail_floor(t));
+        let a0 = if a1 > self.a { a1 } else { self.a };
+        self.a = a1;
+        if a0 == 1.0 && a1 == 1.0 {
+            // Open: the state follows, so closing starts where it is.
+            self.y = [[l[HALF - 1]; 2], [r[HALF - 1]; 2]];
+        } else {
+            let da = step_of((a0, a1), HALF);
+            let [mut yl, mut yr] = self.y;
+            for (i, (x, z)) in l.iter_mut().zip(r.iter_mut()).enumerate() {
+                let a = at(a0, da, i);
+                yl[0] += a * (*x - yl[0]);
+                yl[1] += a * (yl[0] - yl[1]);
+                yr[0] += a * (*z - yr[0]);
+                yr[1] += a * (yr[0] - yr[1]);
+                (*x, *z) = (yl[1], yr[1]);
+            }
+            self.y = [yl, yr];
+        }
+        let g1 = Self::gain(self.env, tail_knee(t));
+        let g0 = if g1 > self.g { g1 } else { self.g };
+        self.g = g1;
+        (g0, g1)
     }
 }
 

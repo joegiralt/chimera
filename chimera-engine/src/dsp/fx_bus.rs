@@ -96,9 +96,9 @@ impl FxBus {
     /// Without the tape it is the BUS+V row as read: BUS with six voices
     /// rendered between its blocks, its eases running.
     #[cfg(not(feature = "master-tape"))]
-    pub const COST: Cost = Cost(1193); // BUS+V 1188, measured 2026-10-04, bench, rev V at 480 MHz, 2431fedc (BUS 1118: six A16+17 voices' cache traffic between its blocks); + 4.8 the reverb's TailGate (3 instructions a sample, ADR 0056), rounded up
+    pub const COST: Cost = Cost(1204); // BUS+V 1188, measured 2026-10-04, bench, rev V at 480 MHz, 2431fedc (BUS 1118: six A16+17 voices' cache traffic between its blocks); + 15.3 the reverb's TailGate (9.5 instructions a sample, ADR 0056), rounded up
     #[cfg(feature = "master-tape")]
-    pub const COST: Cost = Cost(1490); // BUS 1468, measured 2026-09-29, bench, rev V at 480 MHz, 87c2930 (tape in); + 10.4 (ADR 0061) + 4.8 the reverb's TailGate (ADR 0056) = 1483.2; rounded up
+    pub const COST: Cost = Cost(1494); // BUS 1468, measured 2026-09-29, bench, rev V at 480 MHz, 87c2930 (tape in); + 10.4 (ADR 0061) + 15.3 the reverb's TailGate (ADR 0056) = 1493.7; rounded up
 
     pub fn new() -> Self {
         Self {
