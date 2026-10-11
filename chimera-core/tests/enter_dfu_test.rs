@@ -114,6 +114,7 @@ fn the_theme_is_saved_before_the_restart() {
         accent: Accent::Lime,
         black: Black::new(1),
         hints: false,
+        invert: false,
     };
     let mut ui = Box::new(UiState::new());
     let mut sys = Sys::new();

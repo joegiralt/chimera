@@ -360,8 +360,11 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     ui.boot_project(&mut card, store, settings.last_project);
     ui.note_sweep(&swept);
     // The splash again in the card's theme; it stays up until PART 1.
+    // The Yellow Sign ignores INVERT (`splash_palette`).
+    display.set_palette(chimera_core::ui::theme_settings::splash_palette(&theme));
     let _ = chimera_core::ui::splash::draw(&mut display);
     display.flush();
+    display.set_palette(palette(&theme));
     marker.stage(BootStage::Card);
     let perf = PerfTracker::new();
     // The audio's one source reader, taken once the boot's source passes
