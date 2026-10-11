@@ -17,6 +17,8 @@ static FILTER_PROBES: &[FilterProbe] = &[
     filter::probe::clean_probe::<2, true>,
     filter::probe::clean_probe::<7, false>,
     filter::probe::clean_probe::<7, true>,
+    filter::probe::clean_stepped_probe::<2>,
+    filter::probe::clean_stepped_probe::<7>,
 ];
 
 /// CLEAN's other steady modes (LP1, LP2, BP2, BP4, HP4, NOTCH1).
@@ -39,6 +41,8 @@ static K2040_PROBES: &[K2040Probe] = &[
     filter::probe::k2040_probe::<filter::k2040::voice::Rev2, true>,
     filter::probe::k2040_probe::<filter::k2040::voice::Exp, false>,
     filter::probe::k2040_probe::<filter::k2040::voice::Exp, true>,
+    filter::probe::k2040_stepped_probe::<filter::k2040::voice::Rev2>,
+    filter::probe::k2040_stepped_probe::<filter::k2040::voice::Exp>,
 ];
 
 /// DIRTY's probes, one a mode: LP2, BP2, HP2 and NOTCH1 (`DIRTY_MODES`).
@@ -65,6 +69,8 @@ static LADDER_PROBES: &[LadderProbe] = &[
     filter::probe::ladder_probe::<0, false>,
     filter::probe::ladder_probe::<2, false>,
     filter::probe::ladder_probe::<3, false>,
+    filter::probe::ladder_stepped_probe::<1>,
+    filter::probe::ladder_stepped_probe::<4>,
 ];
 
 /// The taps' pass over a moving block's `g` and `k`, shared by every type.

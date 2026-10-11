@@ -5,6 +5,7 @@
 
 use chimera_core::audio_out::to_dac;
 use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, DacOut, Instrument};
 use chimera_core::note_queue::{
@@ -44,6 +45,8 @@ pub struct DesktopAudio {
     /// The computer keyboard's note source.
     keys: NoteProducer<'static>,
     shared_audio: Writer<AudioShared>,
+    /// The UI side of the knobs: every publish's delta (ADR 0115).
+    knobs: Box<KnobPublisher>,
     clamp_log: ClampLog,
     #[cfg(feature = "midi")]
     _midi: Option<midir::MidiInputConnection<()>>,
@@ -87,6 +90,7 @@ impl DesktopAudio {
             .build_output_stream(
                 &config.into(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    flush_denormals();
                     let shared = shared_reader.read();
                     let solo = audio.solo.load(Ordering::Relaxed);
                     // A load's waits scale with this period (ADR 0099).
@@ -127,6 +131,7 @@ impl DesktopAudio {
             shared,
             keys,
             shared_audio,
+            knobs: Box::new(KnobPublisher::new()),
             clamp_log: ClampLog::default(),
         }
     }
@@ -136,8 +141,9 @@ impl DesktopAudio {
     /// triple buffer, and report any mixdown frames clamped since the last
     /// call.
     pub fn update(&mut self, project: &Project, epoch: u32, orbit: impl FnOnce(&mut OrbitShared)) {
+        let knobs = &mut self.knobs;
         self.shared_audio.publish(|b| {
-            b.update_from_project(project, epoch);
+            b.update_from_project(project, epoch, knobs);
             orbit(&mut b.orbit);
         });
         let clamped = self.shared.clamped.swap(0, Ordering::Relaxed);
@@ -336,6 +342,41 @@ fn connect_midi(mut notes: NoteProducer<'static>) -> Option<midir::MidiInputConn
         )
         .map_err(|e| eprintln!("MIDI connect failed: {e}"))
         .ok()
+}
+
+/// Subnormals flush to zero on this thread, as the firmware's FPSCR FZ
+/// and DN have them: f32 state (the reverb's allpasses, its dampers)
+/// decays to exactly 0 on both, never sits in subnormals on the host.
+/// Every callback, as it costs two instructions and cpal may move threads.
+#[inline(always)]
+fn flush_denormals() {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // FTZ (bit 15) and DAZ (bit 6).
+        const FTZ_DAZ: u32 = 0x8040;
+        let mut csr: u32 = 0;
+        // SAFETY: STMXCSR and LDMXCSR read and write this thread's SSE
+        // control register through `csr`, a live local; setting FTZ and
+        // DAZ changes only subnormal results and operands, and keeps the
+        // rounding mode and exception masks as they were.
+        unsafe {
+            core::arch::asm!("stmxcsr [{0}]", in(reg) &mut csr, options(nostack));
+            csr |= FTZ_DAZ;
+            core::arch::asm!("ldmxcsr [{0}]", in(reg) &csr, options(nostack, readonly));
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        // FZ (bit 24).
+        // SAFETY: MRS and MSR read and write this thread's FPCR; setting
+        // FZ changes only subnormal results and operands, and keeps the
+        // rounding mode and traps as they were.
+        unsafe {
+            let fpcr: u64;
+            core::arch::asm!("mrs {0}, fpcr", out(reg) fpcr, options(nomem, nostack));
+            core::arch::asm!("msr fpcr, {0}", in(reg) fpcr | (1 << 24), options(nomem, nostack));
+        }
+    }
 }
 
 #[cfg(test)]

@@ -200,10 +200,14 @@ impl Ctx {
                 plus(ui, node);
             }
         }
+        let def = self.chain().active_def(node, sub).unwrap();
+        // REV › MORE 2 shows only under HALL (its DENSITY): TYPE → HALL.
+        if def.id == chimera_core::ui::block_registry::EFX_MORE2.id {
+            feed(ui, Input::turn(EncoderId::A, 2));
+        }
         for _ in 0..sub {
             feed(ui, Input::press(ButtonId::Edit));
         }
-        let def = self.chain().active_def(node, sub).unwrap();
         assert_eq!(page_def_id(ui), def.id, "{self:?} {node} {sub}");
     }
 }

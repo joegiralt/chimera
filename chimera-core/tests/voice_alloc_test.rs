@@ -536,3 +536,23 @@ fn cost_pct_is_the_booked_share_of_the_budget() {
         "saturates"
     );
 }
+
+/// ADR 0117: a knob glide's extra counts toward admission but never sheds.
+#[test]
+fn a_glide_bills_admission_but_never_sheds() {
+    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V);
+    let each = Cost(budget.as_cost().0 / MAX_VOICES as u32);
+    let mut a = Allocator::new(budget);
+    for k in 0..MAX_VOICES as u8 {
+        on(&mut a, 0, Poly, 40 + k);
+    }
+    for v in 0..MAX_VOICES {
+        a.recost(v, each);
+    }
+    assert!(a.shed(Cost::ZERO).is_none(), "fits at the steady bill");
+    for v in 0..MAX_VOICES {
+        a.recost_with_glide(v, each, Cost(50));
+    }
+    assert!(a.shed(Cost::ZERO).is_none(), "a glide sheds nothing");
+    assert!(a.sounding_cost().0 > budget.as_cost().0, "but it is billed");
+}

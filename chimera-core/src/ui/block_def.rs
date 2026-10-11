@@ -87,6 +87,9 @@ pub enum SlotBinding {
     Machine(MachineSlot),
     /// TAPE's SOURCE: the Sound's `SourceRef`, not a param.
     Source,
+    /// Cell k of REV's knobs 1–4 or of REV › MORE, per the reverb's TYPE
+    /// (`reverb_panel::knob`).
+    ReverbPanel(crate::ui::reverb_panel::RevPage, u8),
     /// A param of the ORBIT ring the location selects.
     SelectedRing(ParamId),
     /// One of ORBIT's own cells.
@@ -193,6 +196,13 @@ impl ParamSlot {
         }
     }
 
+    pub const fn reverb_panel(page: crate::ui::reverb_panel::RevPage, k: u8) -> Self {
+        Self {
+            binding: SlotBinding::ReverbPanel(page, k),
+            label_override: None,
+        }
+    }
+
     pub const fn orbit(cell: crate::ui::orbit::OrbitCell) -> Self {
         Self {
             binding: SlotBinding::Orbit(cell),
@@ -224,6 +234,7 @@ impl ParamSlot {
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
             | SlotBinding::ModalPanel(..)
+            | SlotBinding::ReverbPanel(..)
             | SlotBinding::Machine(_)
             | SlotBinding::Source => None,
         }
@@ -241,6 +252,7 @@ impl ParamSlot {
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
             | SlotBinding::ModalPanel(..)
+            | SlotBinding::ReverbPanel(..)
             | SlotBinding::Machine(_) => "--",
             SlotBinding::Source => "SOURCE",
             SlotBinding::SelectOp => "OP",
@@ -259,6 +271,7 @@ impl ParamSlot {
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
             | SlotBinding::ModalPanel(..)
+            | SlotBinding::ReverbPanel(..)
             | SlotBinding::Machine(_)
             | SlotBinding::Source => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),

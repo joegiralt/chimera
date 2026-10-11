@@ -507,7 +507,7 @@ impl ProjectCheck {
                 {
                     self.costs_mut().part_used |= 1 << k;
                 }
-                let staged = target.map(|t| &mut t.perf.parts[n.index()].sound);
+                let staged = target.map(|t| &mut *t.perf.parts[n.index()].sound);
                 self.sound.step(e, staged)
             }
         }
@@ -631,7 +631,7 @@ impl ProjectCheck {
             self.parts = self.parts.with(n);
             if let Some(t) = target {
                 let part = &mut t.perf.parts[n.index()];
-                part.sound = Sound::neutral(EngineType::Algo);
+                *part.sound = Sound::neutral(EngineType::Algo);
                 part.mix = PartParams::for_part(n.index());
                 part.origin = Origin::Init(EngineType::Algo);
             }
@@ -693,7 +693,7 @@ impl ProjectCheck {
                 (None, None) => self.sound.finish(None),
             },
             Context::Part(n) => {
-                let staged = target.map(|t| &mut t.perf.parts[n.index()].sound);
+                let staged = target.map(|t| &mut *t.perf.parts[n.index()].sound);
                 self.sound.finish(staged)
             }
             Context::None | Context::Fx | Context::Orbit => Ok(()),

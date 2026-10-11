@@ -15,6 +15,7 @@ use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::filter::{FILTER_LEVEL_COST, Filter, FilterMods};
 use crate::dsp::gate::AmpGate;
+use crate::dsp::knobs::Gliding;
 use crate::dsp::knobs::Knobs;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modal::{ResonatorMode, SymPool};
@@ -208,6 +209,12 @@ impl Voice {
     /// Unrouted, only the UI moves them: brief, in the headroom (ADR 0061).
     pub const DRIVE_RAMP_COST: Cost = Cost(23);
 
+    /// A knob glide's fold and drive blocks: four steady loops' prologues,
+    /// a few instructions each, no divide: under 1 a sample, billed 1
+    /// (ADR 0117).
+    pub const FOLD_GLIDE_COST: Cost = Cost(1);
+    pub const DRIVE_GLIDE_COST: Cost = Cost(1);
+
     /// Cycles/sample of a voice playing `p` under `mods`.
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         EngineSlot::cost(p, mods)
@@ -234,6 +241,44 @@ impl Voice {
             + when(moving, kind.move_cost())
             + when(shaped, TAP_SHAPE_COST)
             + when(Self::level_may_open(p, mods), kind.level_cost())
+    }
+
+    /// What a Part's gliding knobs add to a voice playing `p` (ADR 0117): a
+    /// glide steps the filter, fold and drive coefficients a few times a
+    /// block, each step on the steady loop, over the steady bill. Nothing
+    /// for a path a route or tap already bills moving. Admission counts it;
+    /// shedding doesn't.
+    pub fn glide_extra(p: &ParamSnapshot, mods: &ModState, g: Gliding) -> Cost {
+        if g == Gliding::default() {
+            return Cost::ZERO;
+        }
+        let algo = p.engine() == EngineType::Algo;
+        let taps = |c| algo && p.taps.moving(c);
+        let filter_moves = taps(FixedCol::Freq)
+            || taps(FixedCol::Q)
+            || mods.fixed_moves(FixedCol::Freq)
+            || mods.fixed_moves(FixedCol::Q);
+        let (fold, drive) = Self::stage_runs(p, mods);
+        let routed = |block, ps: [ParamId; 3]| {
+            ps.iter()
+                .any(|&q| mods.moves_addr(ParamAddr::new(block, q)))
+        };
+        let fold_ramps = routed(
+            BlockRef::Folder,
+            [
+                FolderParams::FOLD,
+                FolderParams::SYMMETRY,
+                FolderParams::MIX,
+            ],
+        ) || taps(FixedCol::Fold);
+        let drive_ramps = routed(
+            BlockRef::Drive,
+            [DriveParams::DRIVE, DriveParams::TONE, DriveParams::MIX],
+        );
+        let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
+        when(g.filter && !filter_moves, p.filter.kind().glide_cost())
+            + when(g.fold && fold && !fold_ramps, Self::FOLD_GLIDE_COST)
+            + when(g.drive && drive && !drive_ramps, Self::DRIVE_GLIDE_COST)
     }
 
     /// LEVEL's gate can open: stored over ½, or routed.
@@ -959,8 +1004,33 @@ impl Voice {
             })
         };
 
+        // A stage glides when no route moves its settings at audio rate:
+        // then only a knob does, in steps (ADR 0117). Asked only of a
+        // moving stage: the scans cost a steady block nothing.
+        let routed = |block, ps: [ParamId; 3]| {
+            ps.iter()
+                .any(|&q| mod_state.moves_addr(ParamAddr::new(block, q)))
+        };
+        let drive_glide = || {
+            !routed(
+                BlockRef::Drive,
+                [DriveParams::DRIVE, DriveParams::TONE, DriveParams::MIX],
+            )
+        };
+        let fold_glide = || {
+            !routed(
+                BlockRef::Folder,
+                [
+                    FolderParams::FOLD,
+                    FolderParams::SYMMETRY,
+                    FolderParams::MIX,
+                ],
+            )
+        };
+
         // 2. Drive, gated as it's billed.
-        self.drive.process(output, &m.drive, drive_on);
+        self.drive
+            .process_glide(output, &m.drive, drive_on, drive_glide);
 
         // 3. Filter
         let mods = FilterMods {
@@ -968,12 +1038,20 @@ impl Voice {
                 .moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL)),
             freq: lane(FixedCol::Freq),
             q: lane(FixedCol::Q),
+            // A route moves g and k at audio rate; without one, only a
+            // knob's glide does.
+            glide: !mod_state.filter_routed(),
         };
         self.filter_clip = self.filter.process(output, &m.filter, sample_rate, &mods);
 
         // 4. Wavefolder
-        self.folder
-            .process(output, &m.folder, fold_on, lane(FixedCol::Fold).as_ref());
+        self.folder.process_glide(
+            output,
+            &m.folder,
+            fold_on,
+            lane(FixedCol::Fold).as_ref(),
+            fold_glide,
+        );
 
         // 5. The tap-VCA, AM to ring, before the blocker: a tap correlated
         // with the signal leaves a DC, which the blocker takes.

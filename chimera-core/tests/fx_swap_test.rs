@@ -12,6 +12,7 @@ use chimera_core::dsp::chorus::{CHORUS_SPECS, ChorusParams};
 use chimera_core::dsp::comp::{COMP_SPECS, CompParams};
 use chimera_core::dsp::delay::{DELAY_SPECS, DelayParams};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
+use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::{REVERB_SPECS, ReverbParams};
 use chimera_core::dsp::tape::{TAPE_SPECS, TapeParams};
 use chimera_core::dsp::voice::Voice;
@@ -72,7 +73,7 @@ fn render(sig: Sig, a: &FxParams, b: &FxParams) -> Sides {
         let x: [f32; BLOCK_SIZE] = core::array::from_fn(|i| send(sig, n0 + i));
         let mut sends = [x; FX_SENDS];
         let mut ret = Stereo::SILENT;
-        bus.process(&mut sends, p, SR, &mut ret);
+        bus.process(&mut sends, p, Tempo::DEFAULT, SR, &mut ret);
         let mut out = [[0.0f32; 2 * BLOCK_SIZE]; DAC_PAIRS];
         for i in 0..BLOCK_SIZE {
             (out[0][2 * i], out[0][2 * i + 1]) = (ret.l[i], ret.r[i]);
@@ -196,11 +197,18 @@ fn project_a() -> FxParams {
             rev_send: 0.3,
         },
         reverb: ReverbParams {
-            grit: 0.3,
             time: 0.7,
             damping: 0.3,
             size: 0.5,
             mix: 0.7,
+            // Not 0.3. NEW → A's swapped step at +0 ms is 0.0536 at every
+            // SMEAR: SMEAR reaches the return only after a stage pass, so
+            // the swap itself does not see it. The A-only reference does
+            // vary with SMEAR, and at 0.3 its own step there is 0.027,
+            // just under half: a coincidence of the reference.
+            smear: 0.5,
+            rate: 0.5,
+            ..Default::default()
         },
         comp: CompParams {
             thresh: 0.5,
@@ -238,11 +246,13 @@ fn project_b() -> FxParams {
             rev_send: 0.0,
         },
         reverb: ReverbParams {
-            grit: 0.8,
             time: 0.4,
             damping: 0.7,
             size: 0.9,
             mix: 0.4,
+            smear: 0.8,
+            rate: 0.9,
+            ..Default::default()
         },
         comp: CompParams {
             thresh: 0.3,

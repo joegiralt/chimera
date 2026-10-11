@@ -27,7 +27,7 @@ fn engines() -> Vec<(String, Performance, Option<Vec<u8>>)> {
         let mut p = Performance::new();
         let s = chimera_core::factory::factory_sound(i).unwrap();
         let name = s.name.as_str().to_string();
-        *p.edit(PartId::ALL[0]).sound = s;
+        **p.edit(PartId::ALL[0]).sound = s;
         v.push((format!("F{i} {name}"), p, None));
     }
     v
@@ -41,7 +41,7 @@ pub fn dense() -> (Performance, Vec<(usize, u8)>) {
     for k in 0..6 {
         let s = chimera_core::factory::factory_sound(k).unwrap();
         let e = p.edit(PartId::ALL[k]);
-        *e.sound = s;
+        **e.sound = s;
         e.mix.channel = ch(k as u8);
         e.mix.sends = [0.6; 3];
         e.mix.output = chimera_core::part::DacPair::ALL[k % 3];
@@ -237,7 +237,7 @@ fn render_demo() {
     let tag = std::env::var("LOUDNESS_TAG").unwrap();
     let sound = |i: usize| {
         let mut p = Performance::new();
-        *p.edit(PartId::ALL[0]).sound = chimera_core::factory::factory_sound(i).unwrap();
+        **p.edit(PartId::ALL[0]).sound = chimera_core::factory::factory_sound(i).unwrap();
         p
     };
     let (mut dense, notes) = dense();

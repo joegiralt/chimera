@@ -753,11 +753,11 @@ pub fn fmt_route_effect(buf: &mut FmtBuf, spec: &crate::block::ParamSpec, amount
         crate::block::OffsetLaw::Octaves(_) if amount == 0 => {
             let _ = buf.write_str("0 oct");
         }
-        crate::block::OffsetLaw::Octaves(n) => crate::ui::fmt::fixed(buf, off * n, 1, "oct"),
+        crate::block::OffsetLaw::Octaves(n) => crate::ui::fmt::fixed(buf, off * n, 1, " oct"),
         crate::block::OffsetLaw::Semitones(_) if amount == 0 => {
             let _ = buf.write_str("0 st");
         }
-        crate::block::OffsetLaw::Semitones(n) => crate::ui::fmt::fixed(buf, off * n, 1, "st"),
+        crate::block::OffsetLaw::Semitones(n) => crate::ui::fmt::fixed(buf, off * n, 1, " st"),
         crate::block::OffsetLaw::Cents(n) => {
             let _ = write!(buf, "{} ct", libm::roundf(off * n) as i32);
         }

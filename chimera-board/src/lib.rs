@@ -109,10 +109,10 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     let _ = checked.seen();
 
     // `dfu::after_reset` read RCC_RSR and cleared it for the next reset.
-    #[cfg(not(feature = "sd-probe"))]
+    #[cfg(all(not(feature = "sd-probe"), feature = "usb-console"))]
     let seen = checked.seen();
     #[cfg(not(feature = "sd-probe"))]
-    let reset_cause = ResetCause::from_rsr(seen.rsr);
+    let reset_cause = checked.cause();
 
     cache::enable_d2_sram();
     let rev = clocks::read_rev(&dp.DBGMCU);
@@ -388,7 +388,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     controls::enable();
 
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
-    let (mut shared_w, shared_r) =
+    let (mut shared_w, shared_r, knobs) =
         shared::take_audio(ui.project().perf()).expect("audio buffer taken once");
     // Without MIDI DIN or `card` nothing takes a producer.
     #[cfg_attr(
@@ -415,8 +415,13 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     marker.stage(BootStage::Audio);
 
     // The console's `card`: the measurement over the card, its chord on
-    // the `CARD` note source.
-    #[cfg(all(feature = "bench", feature = "usb-console"))]
+    // the `CARD` note source. Not in ORBIT's bench builds, nor the master
+    // tape's: with it they no longer fit FLASH, or AXI's margin.
+    #[cfg(all(
+        feature = "bench",
+        feature = "usb-console",
+        not(any(feature = "orbit", feature = "master-tape"))
+    ))]
     let mut card_bench = card_speed::take(
         producers
             .take(shared::CARD)
@@ -450,9 +455,16 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         // The snapshot point: every path through the last iteration flushed.
         #[cfg(feature = "usb-console")]
         tend_usb(&mut usb, ui, &marker, &clocks, clk.cpu_hz, &mut usb_snap);
-        #[cfg(all(feature = "usb-console", feature = "bench"))]
+        #[cfg(all(
+            feature = "usb-console",
+            feature = "bench",
+            not(any(feature = "orbit", feature = "master-tape"))
+        ))]
         let card_run: usb::CardRun = &mut |arg, s, store| Some(card_bench.answer(arg, store, s));
-        #[cfg(all(feature = "usb-console", not(feature = "bench")))]
+        #[cfg(all(
+            feature = "usb-console",
+            any(not(feature = "bench"), feature = "orbit", feature = "master-tape")
+        ))]
         let card_run: usb::CardRun = &mut |_, _, _| None;
         #[cfg(feature = "usb-console")]
         if let Some(restart) = usb.up().and_then(|u| {
@@ -464,7 +476,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             match restart {
                 usb::Restart::Dfu(asked) => dfu::enter(&marker, dfu::DfuFrom::Console(asked)),
                 // The boot it restarts into sweeps, the arena's gap free.
-                usb::Restart::Sweep(_) => cortex_m::peripheral::SCB::sys_reset(),
+                usb::Restart::Sweep(_) => marker.reset(),
             }
         }
         controls.snapshot();
@@ -494,7 +506,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             let _ = swap.settle(&LOAD_LINK, || {
                 controls::ticks().wrapping_sub(t0) < LOAD_ACK_TICKS
             });
-            shared_w.publish(|b| publish(b, u));
+            shared_w.publish(|b| publish(b, u, knobs));
         });
         // Leaving SETTINGS syncs SYSTEM, with no overlay first: a save is
         // quicker than BUSY can be read. A toast says how it went.
@@ -507,7 +519,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             // ORBIT's beat on the front-panel LED; off when it is stopped.
             orbit.beat(ui);
         }
-        shared_w.publish(|b| publish(b, ui));
+        shared_w.publish(|b| publish(b, ui, knobs));
         let stats = audio_stats(stats_r.as_mut());
         // Read after the card work; the toast's first step ignores it.
         let now = controls::ticks();
@@ -580,8 +592,12 @@ fn tend_usb(
 /// load's, one copy in flash.
 #[cfg(not(feature = "sd-probe"))]
 #[inline(never)]
-fn publish(b: &mut chimera_core::instrument::AudioShared, ui: &chimera_core::ui::UiState) {
-    b.update_from_project(ui.project(), LOAD_LINK.epoch());
+fn publish(
+    b: &mut chimera_core::instrument::AudioShared,
+    ui: &chimera_core::ui::UiState,
+    knobs: &mut chimera_core::dsp::knobs::KnobPublisher,
+) {
+    b.update_from_project(ui.project(), LOAD_LINK.epoch(), knobs);
     orbit::publish(ui, b);
 }
 

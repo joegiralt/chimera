@@ -155,7 +155,7 @@ pub fn run(
 /// peak-normalised to 0.9 as the importer holds a source, at 48 kHz.
 pub fn chimera_source(slot: usize) -> Vec<u8> {
     let mut perf = Performance::new();
-    *perf.edit(PartId::ALL[0]).sound =
+    **perf.edit(PartId::ALL[0]).sound =
         chimera_core::factory::factory_sound(slot).expect("factory Sound");
     let r = run(&perf, &[(0, 48)], 100, 700, 750, None);
     let left: Vec<f32> = r.out[0][2 * BLOCK_SIZE * 2..]
@@ -177,7 +177,7 @@ pub fn tape_model(perf: &mut Performance, part: usize, m: TapeModel) {
 
 pub fn init_perf(engine: EngineType) -> Performance {
     let mut perf = Performance::new();
-    *perf.edit(PartId::ALL[0]).sound = Sound::init(engine);
+    **perf.edit(PartId::ALL[0]).sound = Sound::init(engine);
     perf
 }
 

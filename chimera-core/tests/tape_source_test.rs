@@ -6,6 +6,7 @@
 mod common;
 
 use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::dsp::tape_engine::params::TapeModel;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Shape};
 use chimera_core::dsp::voice::Voice;
@@ -394,12 +395,13 @@ fn tuning_lives_in_the_sound() {
         put_source(&mut st, label, &data);
         let (mut p, _) = Project::boxed();
         p.source_absent(label.sref).unwrap();
-        *p.edit_part(PartId::ALL[0]).sound = s.clone();
+        **p.edit_part(PartId::ALL[0]).sound = s.clone();
         let (q, note) = round_trip(&mut st, &mut p);
         assert_eq!(note, None);
         assert_eq!(q.part(PartId::ALL[0]).sound.params.tape.root, 6_100.0);
         let mut r = Rig::of(&q);
-        r.shared.update_from_project(&q, 0);
+        r.shared
+            .update_from_project(&q, 0, &mut KnobPublisher::new());
         let mut out = r.block(&[r.on(0, 60)]).to_vec();
         for _ in 0..8 {
             out.extend(r.block(&[]));
@@ -432,7 +434,7 @@ fn project_round_trip_carries_no_audio() {
     put_source(&mut st, &h, &data);
     let (mut p, _) = Project::boxed();
     p.source_absent(h.sref).unwrap();
-    *p.edit_part(PartId::ALL[0]).sound = s.clone();
+    **p.edit_part(PartId::ALL[0]).sound = s.clone();
     let (q, _) = round_trip(&mut st, &mut p);
     assert_eq!(
         q.part(PartId::ALL[0]).sound.source.map(|t| t.r),
@@ -453,11 +455,12 @@ fn project_round_trip_carries_no_audio() {
     let mut bare = MemStore::new(1);
     let (mut p, _) = Project::boxed();
     p.source_absent(h.sref).unwrap();
-    *p.edit_part(PartId::ALL[0]).sound = s;
+    **p.edit_part(PartId::ALL[0]).sound = s;
     let (q, note) = round_trip(&mut bare, &mut p);
     assert_eq!(note, Some(ProjectNote::SourcesMissing(1)));
     let mut r = Rig::of(&q);
-    r.shared.update_from_project(&q, 0);
+    r.shared
+        .update_from_project(&q, 0, &mut KnobPublisher::new());
     let id = q.pool().find_source(h.sref).expect("the ref kept");
     assert_eq!(r.shared.parts[0].source, Some(id));
     assert!(r.refuses(0), "absent");
