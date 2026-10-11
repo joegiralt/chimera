@@ -9,6 +9,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::algorithms::{ALGORITHMS, AlgoId, plan};
 use crate::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
 use crate::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
+use crate::dsp::algo::kinds::OpKind;
 use crate::dsp::algo::math::exp2;
 use crate::dsp::algo::morph::{Morph, carrier_norm, incoming};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
@@ -167,6 +168,9 @@ impl AlgoEngine {
     pub const COST_OP: Cost = Cost(60); // measured 2026-09-27, bench, rev V at 480 MHz
     pub const COST_LINK: Cost = Cost(8); // measured 2026-09-27, bench, rev V at 480 MHz
     pub const COST_FEEDBACK: Cost = Cost(1); // measured 2026-09-27, bench, rev V at 480 MHz
+    pub const COST_FRMT_ONE: Cost = Cost(90); // estimate, ADR 0056's method; bench at ship
+    pub const COST_FRMT: Cost = Cost(130); // estimate, ADR 0056's method; bench at ship
+    pub const COST_NOIS: Cost = Cost(70); // estimate, ADR 0056's method; bench at ship
 
     /// A voice's cycles/sample from its patch's shape (spec addendum). An
     /// operator is priced when its LEVEL is above 0 or has a mod route
@@ -178,17 +182,23 @@ impl AlgoEngine {
     pub const fn cost(p: &AlgoParams, level_routed: &[bool; OPS]) -> Cost {
         let a = &ALGORITHMS[AlgoId::clamped(p.alg_a).get() as usize];
         let b = &ALGORITHMS[AlgoId::clamped(p.alg_b).get() as usize];
-        let (mut active, mut feedback, mut i) = (0u8, 0, 0);
+        let (mut active, mut feedback, mut ops, mut i) = (0u8, 0, 0, 0);
         while i < OPS {
             if p.ops[i].level > 0 || level_routed[i] {
                 active |= 1 << i;
-                if p.ops[i].feedback > 0 {
+                let kind = OpKind::clamped(p.ops[i].wave);
+                ops += match kind {
+                    OpKind::Table(_) => Self::COST_OP.0,
+                    OpKind::Formant => Self::COST_FRMT.0,
+                    OpKind::Noise => Self::COST_NOIS.0,
+                };
+                if p.ops[i].feedback > 0 && !matches!(kind, OpKind::Noise) {
                     feedback += 1;
                 }
             }
             i += 1;
         }
-        let (ops, mut links, mut i) = (active.count_ones(), 0, 0);
+        let (mut links, mut i) = (0, 0);
         while i < OPS {
             links += ((a.mods[i] | b.mods[i]) & active).count_ones();
             i += 1;
@@ -196,12 +206,7 @@ impl AlgoEngine {
         if links > MAX_EDGES as u32 {
             links = MAX_EDGES as u32;
         }
-        Cost(
-            Self::COST_BASE.0
-                + ops * Self::COST_OP.0
-                + links * Self::COST_LINK.0
-                + feedback * Self::COST_FEEDBACK.0,
-        )
+        Cost(Self::COST_BASE.0 + ops + links * Self::COST_LINK.0 + feedback * Self::COST_FEEDBACK.0)
     }
 
     /// The ops the kernel runs next block: gain off zero where the last

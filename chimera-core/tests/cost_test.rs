@@ -3,16 +3,19 @@
 
 mod common;
 
+use chimera_core::budget::{FORMANT_N, HEAVY_OVERHEAD};
 use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::engine::AlgoEngine;
+use chimera_core::dsp::algo::kinds::{OpKind, fits};
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::plan::OPS;
+use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::engines::EngineSlot;
 use chimera_core::dsp::filter::ladder::{LADDER_COST, LADDER_MOVE_COST};
 use chimera_core::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
-use chimera_core::hw::{CPU_HZ_REV_V, CPU_HZ_REV_Y, Cost, MAX_VOICES, SampleBudget};
+use chimera_core::hw::{CPU_HZ_REV_V, CPU_HZ_REV_Y, Cost, FLOOR_VOICES, MAX_VOICES, SampleBudget};
 use chimera_core::instrument::{AudioShared, NoteOrigin};
 use chimera_core::modulation::{FixedCol, ModRouting, ModSource, ModState, VCA};
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -1726,4 +1729,104 @@ fn the_reverb_type_is_paid_for_by_admission() {
         r.render(SWITCH_BILLED as usize + 40);
         assert!(r.inst.cost_pct() <= 100, "{kind:?}: {}%", r.inst.cost_pct());
     }
+}
+
+/// The costliest routing, as `ModRouting::HEAVY` names it: ENV 2 (B, BURST)
+/// on the VCA with its LEVEL routed and a TIME route, FREQ and Q, 16
+/// registry columns (the filter's LEVEL among them; no FOLD or DRIVE
+/// param), LFOs 1-3 FUNC; LP24 SVF.
+fn heavy_routes() -> (ParamSnapshot, ModState) {
+    use chimera_core::addr::{BlockRef, Op, ParamAddr};
+    use chimera_core::dsp::algo::params::AlgoOpParams;
+    use chimera_core::dsp::modulator::{EnvSlot, EnvType, FuncMode, LfoType};
+    use chimera_core::params::{EnvParams, FilterParams};
+    let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+    (p.envelopes[1].env_type, p.envelopes[1].func.mode) = (EnvType::B, FuncMode::Burst);
+    for l in p.lfos.iter_mut().take(3) {
+        l.lfo_type = LfoType::Func;
+    }
+    let mut ms = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
+    assert!(ms.set_route_addr(ModSource::Env2.index(), VCA, 127));
+    for a in [FixedCol::Freq, FixedCol::Q] {
+        assert!(ms.set_route_addr(ModSource::Lfo1.index(), a.addr(), 64));
+    }
+    let mut regs = vec![
+        ParamAddr::new(BlockRef::Env(EnvSlot::Env2), EnvParams::LEVEL),
+        ParamAddr::new(BlockRef::Env(EnvSlot::Env2), EnvParams::TIME),
+        ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL),
+    ];
+    for op in [Op::A, Op::B, Op::C, Op::D, Op::E, Op::F] {
+        for q in [
+            AlgoOpParams::LEVEL,
+            AlgoOpParams::FEEDBACK,
+            AlgoOpParams::DETUNE,
+            AlgoOpParams::FINE,
+        ] {
+            regs.push(ParamAddr::new(BlockRef::AlgoOp(op), q));
+        }
+    }
+    regs.extend([
+        ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH),
+        ParamAddr::new(BlockRef::Out, chimera_core::params::OutParams::VOLUME),
+        ParamAddr::new(BlockRef::Env(EnvSlot::Env2), EnvParams::RISE),
+        ParamAddr::new(BlockRef::Env(EnvSlot::Env2), EnvParams::FALL),
+        ParamAddr::new(BlockRef::Env(EnvSlot::Env2), EnvParams::SHAPE),
+        ParamAddr::new(BlockRef::Env(EnvSlot::Env1), EnvParams::LEVEL),
+        ParamAddr::new(BlockRef::Env(EnvSlot::Env3), EnvParams::LEVEL),
+    ]);
+    regs.retain(|a| a.modulatable());
+    regs.truncate(16);
+    for a in regs {
+        assert!(ms.set_route_addr(ModSource::Lfo2.index(), a, 64), "{a:?}");
+    }
+    assert_eq!(ms.num_dests(), 16);
+    (p, ms)
+}
+
+#[test]
+fn heavy_routes_bill_their_named_sum() {
+    let (p, mods) = heavy_routes();
+    assert_eq!(ModRouting::cost(&p, &mods), ModRouting::HEAVY);
+    assert_eq!(
+        Voice::cost(&p, &mods).0 - EngineSlot::cost(&p, &mods).0,
+        HEAVY_OVERHEAD.0
+    );
+}
+
+fn a16_a17_with(k: [OpKind; OPS]) -> AlgoParams {
+    let mut p = AlgoParams::default();
+    (p.alg_a, p.alg_b) = (AlgoId::A16.get(), AlgoId::A17.get());
+    for (op, kind) in p.ops.iter_mut().zip(k) {
+        (op.wave, op.level, op.feedback) = (kind.code(), 99, 1);
+    }
+    p
+}
+
+#[test]
+fn formant_budget_keeps_four_voices() {
+    let kinds = [OpKind::Table(WaveId::W1), OpKind::Formant, OpKind::Noise];
+    for code in 0..3usize.pow(6) {
+        let k: [OpKind; OPS] = core::array::from_fn(|i| kinds[code / 3usize.pow(i as u32) % 3]);
+        let p = a16_a17_with(k);
+        let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
+        let v = |bus: Cost| {
+            (budget - bus.0) / (AlgoEngine::cost(&p, &[false; OPS]).0 + HEAVY_OVERHEAD.0)
+        };
+        if fits(&k) {
+            assert!(
+                v(FxBus::COST_TAPE) >= FLOOR_VOICES && v(FxBus::COST_NO_TAPE) >= FLOOR_VOICES,
+                "{k:?}"
+            );
+        }
+    }
+    let mut over = [OpKind::Table(WaveId::W1); OPS];
+    for slot in over.iter_mut().take(FORMANT_N as usize + 1) {
+        *slot = OpKind::Formant;
+    }
+    let p = a16_a17_with(over);
+    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
+    assert!(
+        (budget - FxBus::COST_TAPE.0) / (AlgoEngine::cost(&p, &[false; OPS]).0 + HEAVY_OVERHEAD.0)
+            < FLOOR_VOICES
+    );
 }

@@ -550,6 +550,21 @@ impl ModRouting {
     /// LEVEL less A VCA and `DEST_FIRST`.
     pub const LEVEL: Cost = Cost(10);
 
+    /// The costliest routing: ENV B in BURST on the VCA with its LEVEL
+    /// routed, a TIME route, the 16 registry columns and Q after FREQ's
+    /// `DEST_FIRST`, three FUNC LFOs. `CURVE` is not in it: BURST replaces it.
+    pub const HEAVY: Cost = Cost(
+        Self::BASE.0
+            + Self::CLAMP.0
+            + Self::ENV_B.0
+            + Self::BURST.0
+            + Self::LEVEL.0
+            + Self::SLIDE.0
+            + Self::DEST_FIRST.0
+            + 17 * Self::DEST.0
+            + 3 * Self::FUNC.0,
+    );
+
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         let slide = EnvSlot::ALL
             .iter()

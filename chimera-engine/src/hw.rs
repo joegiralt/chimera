@@ -9,6 +9,8 @@ pub use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 pub const MAX_VOICES: usize = 8;
 pub const MAX_PARTS: usize = 6;
 pub const DAC_PAIRS: usize = 3;
+/// Voices the heaviest Sound must still allow (ADR 0026).
+pub const FLOOR_VOICES: u32 = 4;
 
 pub const CPU_HZ_REV_V: u32 = 480_000_000;
 pub const CPU_HZ_REV_Y: u32 = 400_000_000;
