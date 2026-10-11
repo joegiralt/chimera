@@ -91,8 +91,8 @@ use library::Tab;
 use midi_settings::MidiSettings;
 use mod_grid::MatrixState;
 use nav::{
-    Browse, Column, ListAt, Location, NavCtx, NavKey, OrbitAct, OrbitCx, OrbitKey, Recall, Rung,
-    SettingsAt, Step,
+    Browse, Column, ListAt, Location, NavCtx, NavKey, OrbitAct, OrbitCx, OrbitKey, PartChain,
+    Recall, Rung, SettingsAt, Step,
 };
 use page::{PageKey, PageLayout};
 use perf::PerfStats;
@@ -600,28 +600,31 @@ impl UiState {
         }
     }
 
-    /// The active Part's engine, before a replace (`project_replaced`).
+    /// The active Part's engine, before a replace.
     fn active_engine(&self) -> EngineType {
         self.project.part(self.active_part).sound.engine()
+    }
+
+    /// The active Part's chain, before a replace (`project_replaced`).
+    fn active_chain(&self) -> PartChain {
+        PartChain::of(&self.project.part(self.active_part).sound)
     }
 
     /// After a load or a boot replaced the project: the active Part's
     /// engine and matrix, the page, and its values snapped, not lerped
     /// (projects spec § Loading while playing: the voice fade covers it).
-    /// Its pages go home when its engine is no longer `was` (ADR 0066).
-    fn project_replaced(&mut self, was: EngineType) {
+    /// Its pages go home when its engine is no longer `was`'s (ADR 0066),
+    /// else keep the page by id.
+    fn project_replaced(&mut self, was: PartChain) {
         self.src.forget();
         let part = self.active_part;
         let cx = self.cx();
-        if let (Some((c, at)), Some(p)) = (self.loc.page(&cx), self.loc.part())
+        if let (Some(_), Some(p)) = (self.loc.page(&cx), self.loc.part())
             && self.loc.settings().is_none()
             && !self.loc.on_mixer()
             && self.loc.browse().is_none()
         {
-            let engine = cx.engines[p.index()];
-            if engine != was || c.def_at(at).is_none() {
-                self.loc = Location::part_home(p, engine);
-            }
+            self.loc = self.loc.rechained(p, was, &cx);
         }
         self.load_matrix(part);
         self.enter_page();
@@ -635,7 +638,7 @@ impl UiState {
         store: &mut S,
         last: Option<ProjectId>,
     ) {
-        let was = self.active_engine();
+        let was = self.active_chain();
         let note = project::boot_project(card, store, last, &mut self.project);
         self.show_note_or_skipped(note);
         self.orbit.booted(self.project.orbit_mut());
@@ -724,7 +727,7 @@ impl UiState {
         link: &LoadLink,
         publish: impl FnOnce(Swap, &UiState) -> R,
     ) -> (Option<R>, Option<CardEvent>) {
-        let was = self.active_engine();
+        let was = self.active_chain();
         let out = project::load_project(cx.card, cx.store, &mut self.project, go, link);
         // Refused after the bump (ADR 0099): the project is as it was, so
         // nothing past the publish runs.
@@ -1160,7 +1163,7 @@ impl UiState {
     /// refused one says why and stays.
     fn replace(&mut self, c: Confirmed<PartSource>) {
         let part = c.target().part;
-        let was = self.active_engine();
+        let was = self.active_chain();
         if let Err(e) = self.project.replace_part(c) {
             return self.error(Line::new(prompt::refused(&e)));
         }
@@ -1176,7 +1179,7 @@ impl UiState {
     }
 
     /// After `part`'s Sound was replaced: from the Sound rung, its pages.
-    fn landed(&mut self, part: PartId, was: EngineType) {
+    fn landed(&mut self, part: PartId, was: PartChain) {
         match self.loc.browse() {
             Some(_) => self.go(Location::part_home(
                 part,
@@ -2336,6 +2339,7 @@ impl UiState {
         } else {
             let at = self.active_part;
             let before = self.ctx();
+            let chain = PartChain::of(&self.project.part(at).sound);
             for (i, &enc) in ALL_ENCODERS.iter().enumerate() {
                 let delta = controls.encoder_delta(enc);
                 if delta == 0 {
@@ -2414,6 +2418,13 @@ impl UiState {
                     (PageKey::Legacy(p), false) => p.apply_encoder(i, delta, params),
                 }
             }
+            // An edit may change the Part's chain: keep the page by id.
+            let def = if PartChain::of(&self.project.part(at).sound) == chain {
+                def
+            } else {
+                self.loc = self.loc.rechained(at, chain, &self.cx());
+                self.page_def()
+            };
             // A KIND, TYPE or operator change re-seeds the page's animators: a lerp
             // between two parameters' values would draw a meaningless sweep.
             // A machine's cells on DECK stay the same params: its defaults
@@ -3159,7 +3170,7 @@ fn page_values(page: PageKey, def: &BlockDef, params: &impl BlockRead, ctx: &Slo
 fn nav_cx(project: &Project) -> NavCtx {
     let live = project.orbit().live();
     NavCtx {
-        engines: PartId::ALL.map(|p| project.part(p).sound.engine()),
+        chains: PartId::ALL.map(|p| PartChain::of(&project.part(p).sound)),
         rev: project.perf().fx.reverb.kind,
         dyn_rows: 0,
         orbit: OrbitCx {

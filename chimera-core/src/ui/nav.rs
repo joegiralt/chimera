@@ -4,8 +4,9 @@
 use crate::hw::MAX_PARTS;
 use crate::orbit::{RINGS, RingIdx};
 use crate::params::EngineType;
+use crate::preset::Sound;
 use crate::project::PartId;
-use crate::ui::block_def::{ChainDef2, Move};
+use crate::ui::block_def::{ChainDef2, Move, refocus};
 use crate::ui::block_registry::{
     self, ALGO_CHAIN, CHORUS, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART, MODAL_PLUCK_CHAIN,
 };
@@ -480,7 +481,7 @@ impl Outside {
 
 #[derive(Clone, Copy, Debug)]
 struct SoundPage {
-    engine: EngineType,
+    chain: PartChain,
     at: PageAt,
 }
 
@@ -528,7 +529,7 @@ impl Recall {
         match from.0 {
             Loc::Pages(p, at) => {
                 self.pages[p.index()] = Some(SoundPage {
-                    engine: cx.engine(p),
+                    chain: cx.chain(p),
                     at,
                 })
             }
@@ -553,11 +554,13 @@ impl Recall {
         }
     }
 
-    /// Part n's pages left, if on the same engine; else its home.
+    /// Part n's pages left, kept by page id if on the same engine; else
+    /// its home.
     fn pages_of(&self, p: PartId, cx: &NavCtx) -> PageAt {
+        let now = cx.chain(p);
         match self.pages[p.index()] {
-            Some(s) if s.engine == cx.engine(p) => s.at,
-            _ => chain_def_for(cx.engine(p)).home(),
+            Some(s) if s.chain.engine() == now.engine() => refocus(s.chain.def(), s.at, now.def()),
+            _ => now.def().home(),
         }
     }
 
@@ -584,7 +587,7 @@ impl Recall {
 }
 
 pub struct NavCtx {
-    pub engines: [EngineType; MAX_PARTS],
+    pub chains: [PartChain; MAX_PARTS],
     /// The reverb's TYPE: REV › MORE 2 shows only under a TYPE with cells
     /// there (HALL's DENSITY).
     pub rev: crate::dsp::reverb::ReverbType,
@@ -594,8 +597,50 @@ pub struct NavCtx {
 }
 
 impl NavCtx {
-    fn engine(&self, p: PartId) -> EngineType {
-        self.engines[p.index()]
+    fn chain(&self, p: PartId) -> PartChain {
+        self.chains[p.index()]
+    }
+}
+
+/// A Part's page chain: its engine's, picked per Sound.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PartChain {
+    Algo,
+    Modal,
+    Tape,
+    Va,
+}
+
+impl PartChain {
+    pub fn of(sound: &Sound) -> PartChain {
+        Self::base(sound.engine())
+    }
+
+    pub fn base(engine: EngineType) -> PartChain {
+        match engine {
+            EngineType::Algo => PartChain::Algo,
+            EngineType::Modal => PartChain::Modal,
+            EngineType::Tape => PartChain::Tape,
+            EngineType::Va => PartChain::Va,
+        }
+    }
+
+    pub fn def(self) -> &'static ChainDef2 {
+        match self {
+            PartChain::Algo => &block_registry::ALGO_CHAIN,
+            PartChain::Modal => &MODAL_PLUCK_CHAIN,
+            PartChain::Tape => &block_registry::TAPE_CHAIN,
+            PartChain::Va => &block_registry::VA_CHAIN,
+        }
+    }
+
+    pub fn engine(self) -> EngineType {
+        match self {
+            PartChain::Algo => EngineType::Algo,
+            PartChain::Modal => EngineType::Modal,
+            PartChain::Tape => EngineType::Tape,
+            PartChain::Va => EngineType::Va,
+        }
     }
 }
 
@@ -633,12 +678,31 @@ impl Location {
     /// Part 1's pages on its engine's home.
     pub fn home(cx: &NavCtx) -> Location {
         let p = PartId::ALL[0];
-        Self::part_home(p, cx.engine(p))
+        Self::part_home(p, cx.chain(p).engine())
     }
 
     /// Part `p`'s pages on `engine`'s home.
     pub fn part_home(p: PartId, engine: EngineType) -> Location {
         Location(Loc::Pages(p, chain_def_for(engine).home()))
+    }
+
+    /// Part `p`'s pages after its chain was `was`: the page kept by id on
+    /// the same engine, else home. Other places stay.
+    pub fn rechained(self, p: PartId, was: PartChain, cx: &NavCtx) -> Location {
+        match self.0 {
+            Loc::Pages(q, at) if q == p => {
+                let now = cx.chain(p);
+                Location(Loc::Pages(
+                    p,
+                    if was.engine() == now.engine() {
+                        refocus(was.def(), at, now.def())
+                    } else {
+                        now.def().home()
+                    },
+                ))
+            }
+            _ => self,
+        }
     }
 
     /// Any page of Part `p`: tests only.
@@ -744,7 +808,7 @@ impl Location {
             (Orbit(_), _) => Step::Stay,
             (Pages(p, _), NavKey::Part(n)) if p == n => go(r.mix_entry(n)),
             (Part(p, _) | Fx(p, _), NavKey::Part(n)) if p == n => go(Pages(n, r.pages_of(n, cx))),
-            (_, NavKey::Part(n)) => go(Pages(n, chain_def_for(cx.engine(n)).home())),
+            (_, NavKey::Part(n)) => go(Pages(n, cx.chain(n).def().home())),
             (Part(_, m), NavKey::MixPart(n)) => go(Part(n, m)),
             (Fx(_, at), NavKey::MixPart(n)) => go(Fx(n, at)),
             (_, NavKey::MixPart(n)) => go(r.mix_entry(n)),
@@ -757,8 +821,9 @@ impl Location {
             },
             (_, NavKey::MenuTap) => Step::Go(Location::settings_at(&[], 0)),
             (Settings(s), k) => s.step(k, cx),
-            (Pages(p, at), k) => page_step(chain_def_for(cx.engine(p)), at, k)
-                .map_or(Step::Stay, |at| go(Pages(p, at))),
+            (Pages(p, at), k) => {
+                page_step(cx.chain(p).def(), at, k).map_or(Step::Stay, |at| go(Pages(p, at)))
+            }
             (Part(p, m), NavKey::Plus) => go(mix_walk(p, m, 1)),
             (Part(p, m), NavKey::Minus) => go(mix_walk(p, m, -1)),
             (Part(p, _), NavKey::Edit) => go(Sound(p, Browse::default())),
@@ -778,7 +843,7 @@ impl Location {
     /// The chain page shown; `None` on lists, Screens and the Sound rung.
     pub fn page(self, cx: &NavCtx) -> Option<(&'static ChainDef2, PageAt)> {
         match self.0 {
-            Loc::Pages(p, at) => Some((chain_def_for(cx.engine(p)), at)),
+            Loc::Pages(p, at) => Some((cx.chain(p).def(), at)),
             Loc::Part(_, m) => Some((&MIXER_CHANNEL_CHAIN, m.page())),
             Loc::Fx(_, at) => Some((&MIXER_CHANNEL_CHAIN, at)),
             Loc::Settings(s) => s.at_leaf().map(|l| (l.chain(), l.chain().home())),
@@ -905,10 +970,5 @@ fn mix_loc(n: PartId, at: PageAt) -> Loc {
 
 /// The static chain definition for an engine.
 pub fn chain_def_for(engine: EngineType) -> &'static ChainDef2 {
-    match engine {
-        EngineType::Algo => &block_registry::ALGO_CHAIN,
-        EngineType::Modal => &MODAL_PLUCK_CHAIN,
-        EngineType::Tape => &block_registry::TAPE_CHAIN,
-        EngineType::Va => &block_registry::VA_CHAIN,
-    }
+    PartChain::base(engine).def()
 }

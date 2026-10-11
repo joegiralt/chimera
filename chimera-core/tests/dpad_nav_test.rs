@@ -10,8 +10,8 @@ use chimera_core::ui::block_def::ChainDef2;
 use chimera_core::ui::block_def::Move;
 use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART};
 use chimera_core::ui::nav::{
-    Column, Location, MixPage, NavCtx, NavKey, OrbitAt, OrbitCx, OrbitKey, PageAt, Recall, Step,
-    chain_def_for,
+    Column, Location, MixPage, NavCtx, NavKey, OrbitAt, OrbitCx, OrbitKey, PageAt, PartChain,
+    Recall, Step, chain_def_for,
 };
 use chimera_core::ui::orbit::ORBIT_CHAIN;
 use chimera_core::ui::settings::{Kind, rows};
@@ -27,7 +27,7 @@ const FX_FIRST: usize = if MIXER_HOME > MIXER_PART {
 
 fn cx(engine: EngineType) -> NavCtx {
     NavCtx {
-        engines: [engine; 6],
+        chains: [PartChain::base(engine); 6],
         dyn_rows: 3,
         orbit: OrbitCx::NONE,
         // HALL: every FX sub-page shows, REV › MORE 2 (DENSITY) too.
