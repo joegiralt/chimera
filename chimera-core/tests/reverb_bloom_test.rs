@@ -417,15 +417,15 @@ fn smeared(p: ReverbParams, frozen: bool) -> impl FnMut(&Blk) -> (Blk, Blk) {
 
 /// SMEAR at 1 and RATE 1 at SWELL 0 (L 0.29 s), DECAY 1: the three
 /// longest allpasses each on its own wander. Every pass within 25 cents of
-/// the frozen wander's pitch, no drift over 4/RATE, no vibrato. D is 0.24 %
-/// of L, the cap, and the engine holds a deeper ask to it.
+/// the frozen wander's pitch, no drift over 4/RATE, no vibrato. D is 0.12 %
+/// of L, the cap (ADR 0121), and the engine holds a deeper ask to it.
 #[test]
 fn bloom_smear_is_bounded_without_drift_or_vibrato() {
     let mut p = params(1.0);
     (p.smear, p.rate, p.size, p.time, p.predelay) = (1.0, 1.0, 0.0, 1.0, 0.0);
     let k = knobs_120(&p);
     assert!(
-        (k.smear_ms - 0.0024 * k.length_ms).abs() < 1e-4,
+        (k.smear_ms - 0.0012 * k.length_ms).abs() < 1e-4,
         "D {} of L {}",
         k.smear_ms,
         k.length_ms
@@ -443,7 +443,7 @@ fn bloom_smear_is_bounded_without_drift_or_vibrato() {
     for (a, b) in e.smear() {
         for x in [a, b] {
             assert!(
-                (0.0..=2.0 * 0.0024 * trip + 1e-3).contains(&x),
+                (0.0..=2.0 * 0.0012 * trip + 1e-3).contains(&x),
                 "{x} of {trip}"
             );
         }

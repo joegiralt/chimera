@@ -87,9 +87,9 @@ fn render_bus(smear: bool) -> Vec<f32> {
 }
 
 const GOLDENS: &[(&str, u64)] = &[
-    ("quad_sweep_48k", 0x30ce15233183a0b4),  // SMEAR walking (T5)
-    ("quad_sweep_44k1", 0x85b675fbe09af4bc), // SMEAR walking (T5)
-    ("quad_bus", 0x68e250f8b69070e6),        // SMEAR walking (T5)
+    ("quad_sweep_48k", 0x00e72b19052cdd28), // SMEAR walking (T5), ADR 0121
+    ("quad_sweep_44k1", 0x1a5ea6b8dc8b1ce9), // SMEAR walking (T5), ADR 0121
+    ("quad_bus", 0x7f01e09008a95ca3),       // SMEAR walking (T5), ADR 0121
     ("quad_sweep_48k_smear_0", 0x384f412e20e5c6e5), // a2abe82f at GRIT 0
     ("quad_sweep_44k1_smear_0", 0x7b4cd2df097e08f8), // a2abe82f at GRIT 0
     ("quad_bus_smear_0", 0x4822e99505baa61a), // a2abe82f at GRIT 0

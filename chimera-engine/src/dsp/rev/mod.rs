@@ -21,7 +21,7 @@ use crate::dsp::Stereo;
 use crate::dsp::clampf;
 use crate::dsp::ease::{Ease, Gate, at, ease_coeff, step_of};
 use crate::dsp::halfband::{Decimator, HALF, Interpolator};
-use crate::dsp::reverb::{ReverbParams, ReverbType, knobs, ranges};
+use crate::dsp::reverb::{ReverbParams, ReverbType, knobs};
 use crate::dsp::ring::{FULL_SCALE, STAGES, WET_GAIN, smear_depth, smear_hz};
 use crate::hw::Cost;
 use arena::ReverbArena;
@@ -574,7 +574,11 @@ impl Reverb {
         self.dec.process(send, &mut u);
         let mut lr = [[0.0f32; HALF]; 2];
         let fs = sample_rate as f32 * 0.5;
-        let rate = if p.rate.is_nan() { 0.5 } else { p.rate };
+        let rate = if p.rate.is_nan() {
+            crate::dsp::reverb::RATE_DEFAULT
+        } else {
+            p.rate
+        };
         if !self.wanders_set || self.wanders_rate != rate.to_bits() {
             (self.wanders_rate, self.wanders_set) = (rate.to_bits(), true);
             let hz = kn.map_or_else(|| smear_hz(rate), |k| k.rate_hz);
@@ -627,7 +631,7 @@ impl Reverb {
             EngineState::Burst(b) => {
                 // Its two smeared decorrelators sit outside every loop:
                 // no SIZE crossfade to rest for, no cap.
-                let full = ranges(self.kind).map_or(0.0, |r| r.smear_ms) * burst::PER_MS;
+                let full = kn.map_or(0.0, |k| k.smear_full_ms) * burst::PER_MS;
                 let (d0, d1) = (s0 * full, s1 * full);
                 b.set_smear(core::array::from_fn(|k| {
                     (d0 * (1.0 + x0[k]), d1 * (1.0 + x1[k]))
@@ -640,7 +644,7 @@ impl Reverb {
                 // One wander a loop, its smeared allpass outside every
                 // crossfade, as HALL's.
                 let kn = kn.unwrap_or_default();
-                let full = kn.smear_ms * room::PER_MS;
+                let full = kn.smear_full_ms * room::PER_MS;
                 let (d0, d1) = (s0 * full, s1 * full);
                 e.set_smear(core::array::from_fn(|k| {
                     (d0 * (1.0 + x0[k]), d1 * (1.0 + x1[k]))
@@ -653,7 +657,7 @@ impl Reverb {
             EngineState::Bloom(e) => {
                 // One wander a smeared allpass, the three in one loop.
                 let kn = kn.unwrap_or_default();
-                let full = kn.smear_ms * bloom::PER_MS;
+                let full = kn.smear_full_ms * bloom::PER_MS;
                 let (d0, d1) = (s0 * full, s1 * full);
                 e.set_smear(core::array::from_fn(|k| {
                     (d0 * (1.0 + x0[k]), d1 * (1.0 + x1[k]))
@@ -699,7 +703,7 @@ impl Reverb {
 }
 
 /// HALL's block: its two smeared allpasses' offsets at D =
-/// `kn.smear_ms` × SMEAR's ease `s`, from the wanders' `x`, then the
+/// `kn.smear_full_ms` × SMEAR's ease `s`, from the wanders' `x`, then the
 /// engine. Its smeared allpasses never crossfade: no SIZE move to rest
 /// for. The cap is in the knobs, and each loop's in the engine. Returns
 /// the paths and the depth `Reverb` reports.
@@ -716,7 +720,7 @@ fn run_loop<const L: usize, const S: usize>(
 where
     LoopEngine<L, S>: Layout<L, S>,
 {
-    let full = kn.smear_ms * loop_engine::PER_MS;
+    let full = kn.smear_full_ms * loop_engine::PER_MS;
     let (d0, d1) = (s0 * full, s1 * full);
     e.set_smear(core::array::from_fn(|k| {
         (d0 * (1.0 + x0[k]), d1 * (1.0 + x1[k]))

@@ -355,6 +355,8 @@ The bound, stated per pass and cumulatively, for every TYPE:
 | SMEAR on BURST's decorrelators (outside every loop) | single pass only: ≤ 22 cents at ±1 ms and 2 Hz | not fed back, so no accumulation |
 
 **The SMEAR bound.**
+> ADR [0121](../../adr/0121-smear-is-bounded-by-the-pitch-it-plays-and-rate-runs-to-2-hz.md) (2026-10-11) changes this. The bound is the pitch a held tone plays, measured: at SMEAR 1 and RATE's top, ≤ 15 cents (P95 of four probes' centroid) on every TYPE and SIZE. The worst-case excursion below no longer sets a depth. RATE is 0.1 → 2 Hz on every TYPE from 0.95 Hz, SMEAR scales its depth linearly to the cap, and each TYPE's depth is ADR 0121's.
+
 - **Why there is a bound.** A line that drifts inside a loop can only stretch the circulating content by its own excursion. Over any number of passes, a component's frequency stays within the ratio `L / (L − E)`, where E is the loop's total peak-to-peak excursion and L its round trip.
 - **Worst case.** The lines drift independently, so the worst case is all of them at their extremes together. Then E = Σ 2D over the loop's smeared lines.
 - **The cap.** E ≤ 1.45 % of L, which gives 1200·log2(1/(1 − 0.0145)) ≈ **25 cents**:

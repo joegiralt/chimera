@@ -1,6 +1,6 @@
 # 0085. The master reverb picks a TYPE: QUAD plus ROOM, HALL, GATE, REVERSE and BLOOM
 
-- **Status:** Proposed; superseded in part by [0095](0095-every-reverb-type-matches-its-midiverb-ii-presets.md) (ROOM's and BLOOM's designs, the provenance rule for structure numbers, and the ±30 % A/B pass); supersedes in part [0028](0028-one-alesis-style-reverb.md) (its "one reverb", "TYPE retires" and GRIT, which leaves the reverb); amends [0067](0067-focus-glyphs.md) (the reverb composite)
+- **Status:** Proposed; superseded in part by [0095](0095-every-reverb-type-matches-its-midiverb-ii-presets.md) (ROOM's and BLOOM's designs, the provenance rule for structure numbers, and the ±30 % A/B pass); supersedes in part [0028](0028-one-alesis-style-reverb.md) (its "one reverb", "TYPE retires" and GRIT, which leaves the reverb); amends [0067](0067-focus-glyphs.md) (the reverb composite); SMEAR's bound and depths amended by [0121](0121-smear-is-bounded-by-the-pitch-it-plays-and-rate-runs-to-2-hz.md)
 - **Deciders:** project owner. The rulings are those of 2026-10-03 on #343 and these of 2026-10-04:
   - QUAD stays exactly as it is, and keeps its name;
   - modulation is deferred to #345;

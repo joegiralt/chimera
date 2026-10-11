@@ -334,7 +334,7 @@ const _: () = assert!({
     TONE_RAMP_HZ < TONE_OPEN_HZ && at - TONE_RAMP_HZ < 1.0 && TONE_RAMP_HZ - at < 1.0
 });
 
-/// SMEAR's cap, a share of the loop (§ The SMEAR bound).
+/// SMEAR's cap, a share of the loop (ADR 0121).
 const SMEAR_CAP: f32 = crate::dsp::reverb::ROOM.smear_cap;
 
 const FITS: () = assert!(

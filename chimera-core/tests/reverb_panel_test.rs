@@ -247,10 +247,10 @@ fn labels_and_values_fit_their_cells() {
         }
     }
     for want in [
-        "663ms", "1.9s", "6.1k", "OFF", "0.22Hz", "40ms", "800ms", "0.80s", "2.5k", "12.0",
-        "-18dB", "30dB", "2.00Hz", "1.0ms", "16s", "80ms", "137ms", "0.20s", "2.0s", "0.50",
-        "0.75", "0.45", "0.70", "10k", "90", "50ms", "0.7ms", "1.00Hz", "10s", "120ms", "600ms",
-        "11k", "1.5k", "125ms", "2.0ms", "1.50Hz", "TIME", "1/32T", "1/4", "1/2T", "1/4D", "0",
+        "663ms", "1.9s", "6.1k", "OFF", "0.10Hz", "40ms", "800ms", "0.80s", "2.5k", "12.0",
+        "-18dB", "30dB", "2.00Hz", "2.4ms", "16s", "80ms", "137ms", "0.20s", "2.0s", "0.50",
+        "0.75", "0.45", "0.70", "10k", "90", "50ms", "0.6ms", "0.95Hz", "10s", "120ms", "600ms",
+        "11k", "1.5k", "125ms", "1.5ms", "0.45Hz", "TIME", "1/32T", "1/4", "1/2T", "1/4D", "0",
         "1/128", "1/16", "▾1/8", "▴1/16T", "▾1/256", "▾1/192", "▾3/256", "▾32 BT", "▴1 BT", "8 BT",
     ] {
         assert!(seen.iter().any(|s| s == want), "no cell shows {want}");
@@ -374,7 +374,7 @@ fn cells_read_their_starting_values() {
             (P::PREDELAY, "9ms"),
             (P::DAMPING, "2.0k"),
             (P::SMEAR, "OFF"),
-            (P::RATE, "0.45Hz"),
+            (P::RATE, "0.95Hz"),
         ],
     );
     // Program 40's: ONSET on PRE-DLY's slot, DENSITY the allpasses' g.
@@ -388,7 +388,7 @@ fn cells_read_their_starting_values() {
             (P::SHAPE, "33dB"),
             (P::PREDELAY, "89ms"),
             (P::SMEAR, "OFF"),
-            (P::RATE, "0.45Hz"),
+            (P::RATE, "0.95Hz"),
         ],
     );
     let p = ReverbParams::default().with_type(ReverbType::Room, &KnobMemory::new());
@@ -401,7 +401,7 @@ fn cells_read_their_starting_values() {
         (P::PREDELAY, "4ms"),
         (P::DAMPING, "4.5k"),
         (P::SMEAR, "OFF"),
-        (P::RATE, "0.32Hz"),
+        (P::RATE, "0.95Hz"),
         (P::SHAPE, "57"),
     ] {
         assert_eq!(text(id, &p).as_str(), w, "ROOM {id:?}");
@@ -415,7 +415,7 @@ fn cells_read_their_starting_values() {
         (P::DIFFUSE, "0.48"),
         (P::PREDELAY, "17ms"),
         (P::SMEAR, "OFF"),
-        (P::RATE, "0.13Hz"),
+        (P::RATE, "0.95Hz"),
     ] {
         assert_eq!(text(id, &b).as_str(), w, "BLOOM {id:?}");
     }
@@ -453,7 +453,7 @@ fn cells_read_their_starting_values() {
         (P::DAMPING, "3.2k"),
         (P::PREDELAY, "7ms"),
         (P::SMEAR, "OFF"),
-        (P::RATE, "0.30Hz"),
+        (P::RATE, "0.95Hz"),
         (P::SHAPE, "107ms"),
         (P::DENSITY, "4.0"),
     ] {

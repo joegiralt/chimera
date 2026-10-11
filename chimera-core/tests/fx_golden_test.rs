@@ -405,7 +405,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // GRIT out (reverb TYPEs T5): SMEAR 0 is the T4 reference's GRIT 0.
     ("reverb_ring", 0xd17b7769e13816bf),
     ("reverb_ring_max_size", 0x83591bf24cab49f6),
-    ("reverb_ring_smear", 0xa7e01c103cc02150),
+    ("reverb_ring_smear", 0xbd62f98a27b55457), // SMEAR's depths and RATE (ADR 0121)
     // ROOM v2 (ADR 0095, reverb TYPEs T9b), on program 5's knobs; HALL on
     // the LOOP engine (T10).
     ("rev_room", 0x97b4651629782f42),
@@ -420,7 +420,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("rev_room_mv11", 0x193920776227df0d),
     ("rev_room_mv14", 0x7f3146738ce901c8),
     ("rev_hall", 0x9dd9185914bf8172),
-    ("rev_hall_plate", 0xd134183733a58b32),
+    ("rev_hall_plate", 0xc16ebf2b274f362f), // SMEAR's depths and RATE (ADR 0121)
     // HALL at each MidiVerb II program's fitted knobs (`MV2_HALL`, T10b);
     // START is program 23's, so `rev_hall` and `rev_hall_mv23` agree.
     ("rev_hall_mv07", 0x16c24851e5d19cf8),
