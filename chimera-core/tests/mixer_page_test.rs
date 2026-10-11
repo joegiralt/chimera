@@ -182,7 +182,7 @@ fn fx_encoders_step_like_before() {
     // QUAD's SIZE ticks its table step through the UI's panel turn
     // (`the_reverb_pages_turn_by_the_panel`).
     turn_def(&reg::EFX_MORE, 3, 2, &mut perf);
-    assert!((perf.fx.reverb.rate - (0.5 + 2.0 / 128.0)).abs() < 1e-6);
+    assert!((perf.fx.reverb.rate - (0.75 + 2.0 / 128.0)).abs() < 1e-6);
     turn_def(&reg::DELAY, 3, 64, &mut perf);
     assert_eq!(perf.fx.delay.rev_send, 0.5);
     turn_def(&reg::DELAY_CHAR, 0, 1, &mut perf);
@@ -463,7 +463,8 @@ fn the_reverb_pages_turn_by_the_panel() {
     ui.handle_input(&MockControls::new().button(ButtonId::Edit, ButtonState::Pressed));
     assert_eq!(ui.page_def().id, reg::EFX_MORE.id);
     turn(&mut ui, EncoderId::D, 4);
-    assert!((rev(&ui).rate - (0.5 + 4.0 / 128.0)).abs() < 1e-6);
+    // QUAD's knobs came back through `KnobMemory`'s 1/65 534 steps.
+    assert!((rev(&ui).rate - (0.75 + 4.0 / 128.0)).abs() < 1e-4);
 }
 
 #[test]

@@ -201,9 +201,15 @@ const TAIL_RD: [usize; 2] = [I.0[1] - TAIL_D, I.0[2] - TAIL_AP];
 const NOM: [f32; 2] = [FLINES[DEC + 1] as f32, FLINES[DEC + 2] as f32];
 /// Ring samples a millisecond.
 pub const PER_MS: f32 = FS / 1000.0;
-/// SMEAR's deepest D, ring samples: GATE's and REVERSE's 1 ms. Its reads
-/// only shorten, by 2D at most.
-pub const SMEAR_MAX: f32 = crate::dsp::reverb::GATE.smear_ms * PER_MS;
+/// SMEAR's deepest D, ring samples: the deeper of GATE's and REVERSE's.
+/// Its reads only shorten, by 2D at most.
+pub const SMEAR_MAX: f32 = {
+    let (g, r) = (
+        crate::dsp::reverb::GATE.smear_ms,
+        crate::dsp::reverb::REVERSE.smear_ms,
+    );
+    (if g > r { g } else { r }) * PER_MS
+};
 const _: () = assert!(NOM[0] - 2.0 * SMEAR_MAX >= 2.0);
 const _: () = assert!(NOM[1] - 2.0 * SMEAR_MAX >= 2.0);
 /// A tap's shortest read: the line's floor (`parts::heads`).

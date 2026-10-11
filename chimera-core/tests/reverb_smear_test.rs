@@ -175,7 +175,7 @@ fn quad_smear_reads_only_shorten_and_respect_the_cap() {
 
 // ── pitch ──
 
-/// QUAD at SMEAR 1, RATE 1 (1 Hz), SIZE 0, TIME 1 (a long tail), MIX 1.
+/// QUAD at SMEAR 1, RATE 1 (2 Hz), SIZE 0, TIME 1 (a long tail), MIX 1.
 fn smeared_quad(frozen: bool) -> (Box<Reverb>, ReverbParams) {
     let p = ReverbParams {
         time: 1.0,
@@ -198,12 +198,11 @@ fn quad_smear_has_no_vibrato_and_no_drift() {
     let (mut still, p) = smeared_quad(true);
     let f_ref = tail_pitch_hz(&mut |s| tick(&mut still, &p, s));
     let (mut rv, p) = smeared_quad(false);
-    check_smear_bound(&mut |s| tick(&mut rv, &p, s), trip_s(0.0), f_ref, 1.0);
+    check_smear_bound(&mut |s| tick(&mut rv, &p, s), trip_s(0.0), f_ref, 2.0);
 }
 
-/// QUAD's defaults but RATE 1 (1 Hz). At the default RATE (0.22 Hz) the
-/// wander is slow enough that it spreads the −20 dB width by 1.5× only
-/// (1.5 → 2.2 Hz; 1.7× at −30 dB): a slow wash, by design.
+/// QUAD's defaults but RATE 1 (2 Hz). `reverb_smear_depth_test` judges
+/// every TYPE at the default RATE (ADR 0121).
 #[test]
 fn smear_spreads_a_held_tone() {
     // A held 1 kHz tone, steady from 1.5 s, over 8 s (Welch, 2.7 s

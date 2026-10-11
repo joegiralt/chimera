@@ -116,7 +116,7 @@ impl Default for ReverbParams {
             predelay: 0.0,
             shape: 0.2,
             smear: 0.0,
-            rate: 0.5,
+            rate: RATE_DEFAULT,
             sync: RevSync::Off,
             density: DENSITY_DEFAULT,
         }
@@ -127,6 +127,10 @@ impl Default for ReverbParams {
 /// DENSITY loads with this, HALL's starting taps (program 23's, 4.04 a
 /// side).
 pub const DENSITY_DEFAULT: f32 = 0.207298;
+
+/// RATE where a Sound or a TYPE sets none: 0.95 Hz on every TYPE's
+/// 0.1 → 2 Hz law (ADR 0121), where SMEAR's motion reads as a chorus.
+pub const RATE_DEFAULT: f32 = 0.75;
 
 /// The slots a TYPE change writes, in `KnobMemory`'s order.
 const KNOB_SLOTS: [ParamId; 10] = [
@@ -151,12 +155,12 @@ const KNOB_SLOTS: [ParamId; 10] = [
 /// 400), SMEAR 0 as the unit's; each fitted on the Rust render.
 #[rustfmt::skip]
 const START: [[f32; 10]; 6] = [
-    [0.5, 0.3, 0.5, 0.3, 0.4, 0.0, 0.2, 0.0, 0.5, DENSITY_DEFAULT],
-    [0.718, 0.426, 0.644, 0.0, 0.0, 0.085, 0.634, 0.0, 0.5, DENSITY_DEFAULT],
-    [0.300266, 0.626335, 0.921878, 0.012, 0.383327, 0.058513, 0.878866, 0.0, 0.4, DENSITY_DEFAULT],
-    [0.948, 0.3, 0.705, 0.578, 0.165, 0.132, 0.2, 0.0, 0.4, DENSITY_DEFAULT],
-    [0.633, 1.0, 0.585, 0.383, 0.341, 0.116, 0.742, 0.0, 0.5, DENSITY_DEFAULT],
-    [0.0, 0.3, 0.692, 0.136, 0.899, 0.593, 0.601, 0.0, 0.5, DENSITY_DEFAULT],
+    [0.5, 0.3, 0.5, 0.3, 0.4, 0.0, 0.2, 0.0, RATE_DEFAULT, DENSITY_DEFAULT],
+    [0.718, 0.426, 0.644, 0.0, 0.0, 0.085, 0.634, 0.0, RATE_DEFAULT, DENSITY_DEFAULT],
+    [0.300266, 0.626335, 0.921878, 0.012, 0.383327, 0.058513, 0.878866, 0.0, RATE_DEFAULT, DENSITY_DEFAULT],
+    [0.948, 0.3, 0.705, 0.578, 0.165, 0.132, 0.2, 0.0, RATE_DEFAULT, DENSITY_DEFAULT],
+    [0.633, 1.0, 0.585, 0.383, 0.341, 0.116, 0.742, 0.0, RATE_DEFAULT, DENSITY_DEFAULT],
+    [0.0, 0.3, 0.692, 0.136, 0.899, 0.593, 0.601, 0.0, RATE_DEFAULT, DENSITY_DEFAULT],
 ];
 
 /// Whether `t` writes `KNOB_SLOTS[i]` on a TYPE change.
@@ -229,8 +233,10 @@ pub struct EngineKnobs {
     pub rt60_s: f32,
     /// The in-loop damper, Hz.
     pub damp_hz: f32,
-    /// SMEAR's depth D, ms, as it plays.
+    /// SMEAR's depth D, ms, as it plays: SMEAR × `smear_full_ms`.
     pub smear_ms: f32,
+    /// D at SMEAR 1, ms: the engine scales it by SMEAR's ease.
+    pub smear_full_ms: f32,
     pub rate_hz: f32,
     /// TONE: the input one-pole's corner, Hz.
     pub tone_hz: f32,
@@ -362,13 +368,15 @@ pub struct Ranges {
     pub shape_db: (f32, f32),
     pub burst: Burst,
     pub diffused: Diffused,
-    /// SMEAR's depth at 1, ms, `lin`, capped at `smear_cap` of the loop
-    /// (§ The SMEAR bound; the decorrelators sit in none: ∞).
+    /// SMEAR's depth at 1, ms, capped at `smear_cap` of the loop (the
+    /// decorrelators sit in none: ∞); SMEAR scales the capped depth,
+    /// `lin`. Each TYPE's pair holds a held tone within 15 cents (P95) at
+    /// RATE's top (ADR 0121).
     pub smear_ms: f32,
     pub smear_cap: f32,
     /// The in-loop damper's corner, Hz, `exp` (0: none).
     pub damp_hz: Exp,
-    /// RATE, Hz, `exp`.
+    /// RATE, Hz, `exp`: 0.1 → 2 Hz on every TYPE (ADR 0121).
     pub rate_hz: Exp,
 }
 
@@ -397,7 +405,7 @@ pub const GATE: Ranges = Ranges {
     shape_db: (0.0, -30.0),
     burst: Burst::Gate,
     diffused: Diffused::OfDensity(1.5),
-    smear_ms: 1.0,
+    smear_ms: 0.85,
     smear_cap: f32::INFINITY,
     damp_hz: Exp::new(12_000.0, 2_000.0),
     rate_hz: Exp::new(0.1, 2.0),
@@ -414,6 +422,7 @@ pub const REVERSE: Ranges = Ranges {
     shape_db: (0.0, 55.0),
     burst: Burst::Reverse,
     diffused: Diffused::Full,
+    smear_ms: 2.4,
     damp_hz: NO_DAMP,
     ..GATE
 };
@@ -439,10 +448,10 @@ pub const ROOM: Ranges = Ranges {
     shape_db: (0.0, 90.0),
     burst: Burst::Gate,
     diffused: Diffused::Full,
-    smear_ms: 1.0,
-    smear_cap: 0.0072,
+    smear_ms: 1.65,
+    smear_cap: 0.014,
     damp_hz: Exp::new(10_000.0, 1_500.0),
-    rate_hz: Exp::new(0.1, 1.0),
+    rate_hz: Exp::new(0.1, 2.0),
 };
 
 /// BLOOM (ADR 0095 § BLOOM): SWELL is the cascade's length, `exp` over
@@ -461,10 +470,10 @@ pub const BLOOM: Ranges = Ranges {
     diffuse_g: (0.45, 0.65),
     predelay_ms: (0.0, 125.0),
     shape_db: (0.0, 0.0),
-    smear_ms: 2.0,
-    smear_cap: 0.0024,
+    smear_ms: 0.66,
+    smear_cap: 0.0012,
     damp_hz: NO_DAMP,
-    rate_hz: Exp::new(0.05, 0.5),
+    rate_hz: Exp::new(0.1, 2.0),
     ..ROOM
 };
 
@@ -485,10 +494,10 @@ pub const HALL: Ranges = Ranges {
         rt60_s: Exp::new(0.8, 16.0),
     },
     predelay_ms: (0.0, 125.0),
-    smear_ms: 2.0,
-    smear_cap: 0.0036,
+    smear_ms: 0.6,
+    smear_cap: 0.0011,
     damp_hz: Exp::new(14_000.0, 1_300.0),
-    rate_hz: Exp::new(0.1, 1.5),
+    rate_hz: Exp::new(0.1, 2.0),
     ..ROOM
 };
 
@@ -685,7 +694,8 @@ fn quad_knobs(p: &ReverbParams) -> EngineKnobs {
         rt60_s: ring::rt60(c.time, step, 24_000.0),
         damp_hz: damp_hz(c.damp),
         // `ring::smear_depth`'s law, on the trip already summed.
-        smear_ms: unit(p.smear) * 0.0018 * length_ms,
+        smear_ms: unit(p.smear) * ring::SMEAR_SHARE * length_ms,
+        smear_full_ms: ring::SMEAR_SHARE * length_ms,
         rate_hz: ring::smear_hz(p.rate),
         ..EngineKnobs::default()
     }
@@ -716,10 +726,13 @@ fn row_knobs(r: &Ranges, p: &ReverbParams) -> EngineKnobs {
             (rt, 0.0, g)
         }
     };
+    // Scaled to the cap, not cut at it: the whole travel means something.
+    let smear_full_ms = r.smear_ms.min(r.smear_cap * length_ms);
     EngineKnobs {
         length_ms,
         rt60_s,
-        smear_ms: (r.smear_ms * unit(p.smear)).min(r.smear_cap * length_ms),
+        smear_ms: unit(p.smear) * smear_full_ms,
+        smear_full_ms,
         rate_hz: exp_law(r.rate_hz, p.rate),
         tone_hz: r.tone_at(p.tone),
         tail,
@@ -967,7 +980,7 @@ pub static REVERB_SPECS: [ParamSpec; 13] = [
         ValFmt::Uni,
         0.0,
         1.0,
-        0.5,
+        RATE_DEFAULT,
         1.0 / 128.0,
         false,
         Smoothing::Own,

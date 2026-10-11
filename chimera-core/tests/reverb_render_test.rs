@@ -385,7 +385,7 @@ const BURST_SETTINGS: [(chimera_core::dsp::reverb::ReverbType, [Setting; 3]); 4]
                 ),
                 (
                     "plate",
-                    "the plate corner: SIZE 0 (120 ms, the plate zone: DIFFUSE 0.75, TONE 10 kHz, PRE-DLY 0), DECAY 1.9 s, DAMP 9.1 kHz, SMEAR 0.43 ms, RATE 0.51 Hz",
+                    "the plate corner: SIZE 0 (120 ms, the plate zone: DIFFUSE 0.75, TONE 10 kHz, PRE-DLY 0), DECAY 1.9 s, DAMP 9.1 kHz, SMEAR 0.07 ms, RATE 0.60 Hz",
                     |p| {
                         (
                             p.size, p.time, p.tone, p.diffuse, p.damping, p.predelay, p.smear,
