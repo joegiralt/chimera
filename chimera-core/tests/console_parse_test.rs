@@ -172,7 +172,7 @@ fn the_table_is_the_one_list() {
         "help", "status", "stats", "bench", "card", "shot", "dfu", "sweep",
     ];
     if cfg!(feature = "card-put") {
-        want.extend(["ls", "put"]);
+        want.extend(["ls", "put", "rm", "get"]);
     }
     assert_eq!(names, want);
     for c in Command::ALL {
@@ -240,7 +240,6 @@ fn put_takes_a_project_path_a_size_and_a_crc() {
         "put /CHIMERA//PROJECTS/P0000014.A 1 0",
         "put /CHIMERA/PROJECTS/ 1 0",
         "put /CHIMERA 1 0",
-        "put /CHIMERA/SOUNDS/S0000001.A 1 0",
         "put /CHIMERA/SYSTEM.A 1 0",
         "put /CHIMERA/PROJECTS/P0000014.A 4294967296 0",
         "put /CHIMERA/PROJECTS/P0000014.A 1 -1",
@@ -312,6 +311,84 @@ fn ls_takes_tapes_or_nothing() {
     assert_eq!(one("ls TAPES\n"), Ok(Request::Ls(LsArg::Tapes)));
     assert_eq!(one("ls /CHIMERA\n"), Err(Refusal::Arguments(Command::Ls)));
     assert_eq!(one("ls tapes x\n"), Err(Refusal::Arguments(Command::Ls)));
+}
+
+#[cfg(feature = "card-put")]
+fn parse_line(l: &[u8]) -> Result<Request, Refusal> {
+    feed(&mut Console::new(), &[l, b"\n"].concat())
+        .pop()
+        .unwrap()
+}
+
+/// SOUNDS paths, any case; nothing outside `/CHIMERA/SOUNDS/` parses.
+#[cfg(feature = "card-put")]
+#[test]
+fn sound_paths_parse_and_others_refuse() {
+    use chimera_core::storage::LibId;
+    let id = |n| LibId::new(n).unwrap();
+    assert_eq!(
+        parse_line(b"put /chimera/sounds/s0000012.a 120 deadbeef"),
+        Ok(Request::Put(PutArg {
+            to: PutTo::Sound {
+                id: id(12),
+                over: false
+            },
+            size: 120,
+            crc: 0xDEAD_BEEF,
+            resume: false,
+        }))
+    );
+    assert!(matches!(
+        parse_line(b"put /CHIMERA/SOUNDS/S0000012.B 120 deadbeef --over"),
+        Ok(Request::Put(PutArg {
+            to: PutTo::Sound { over: true, .. },
+            ..
+        }))
+    ));
+    assert!(matches!(
+        parse_line(b"put /CHIMERA/SOUNDS/S9000001.A 120 deadbeef"),
+        Ok(Request::Put(PutArg {
+            to: PutTo::Sound { .. },
+            ..
+        }))
+    ));
+    assert_eq!(
+        parse_line(b"rm /chimera/sounds/s0000001"),
+        Ok(Request::Rm(SoundArg(id(1))))
+    );
+    assert_eq!(
+        parse_line(b"GET /CHIMERA/SOUNDS/S9000001"),
+        Ok(Request::Get(SoundArg(id(9_000_001))))
+    );
+    for bad in [
+        &b"rm /CHIMERA/SOUNDS/../PROJECTS/P0000001"[..],
+        b"rm //CHIMERA/SOUNDS/S0000001",
+        b"rm /CHIMERA//SOUNDS/S0000001",
+        b"rm /CHIMERA/PROJECTS/P0000001",
+        b"rm SOUNDS/S0000001",
+        b"rm /CHIMERA/SOUNDS/S000001",
+        b"rm /CHIMERA/SOUNDS/S0000000",
+        b"rm /CHIMERA/SOUNDS/S9000000",
+        b"rm /CHIMERA/SOUNDS/S0000001 x",
+        b"rm",
+        b"get /CHIMERA/SOUNDS/S0000001.A",
+        b"put /CHIMERA/SOUNDS/S0000001 1 0",
+        b"put /CHIMERA/SOUNDS/S0000001.C 1 0",
+        b"put /CHIMERA/SOUNDS/../S0000001.A 1 0",
+        b"put /CHIMERA/SOUNDS/S0000001.A 1 0 --over --over",
+        b"put /CHIMERA/PROJECTS/P0000001.A 1 0 --over",
+        b"put /CHIMERA/SOUNDS/S0000001.A 1 0 --OVERS",
+    ] {
+        assert!(
+            matches!(parse_line(bad), Err(Refusal::Arguments(_))),
+            "{}",
+            String::from_utf8_lossy(bad)
+        );
+    }
+    assert_eq!(parse_line(b"ls sounds"), Ok(Request::Ls(LsArg::Sounds)));
+    assert_eq!(parse_line(b"LS SOUNDS"), Ok(Request::Ls(LsArg::Sounds)));
+    let longest = "put /CHIMERA/SOUNDS/S0000001.A 1048576 ffffffff --over";
+    assert!(longest.len() <= MAX_LINE);
 }
 
 #[cfg(not(feature = "card-put"))]

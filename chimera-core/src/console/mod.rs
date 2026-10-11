@@ -110,7 +110,8 @@ macro_rules! commands {
     };
 }
 
-/// The table: one row per command. `ls` and `put` only with `card-put`.
+/// The table: one row per command. `ls`, `put`, `rm` and `get` only with
+/// `card-put`.
 macro_rules! table {
     ($($card:tt)*) => {
         commands! {
@@ -129,14 +130,18 @@ macro_rules! table {
 
 #[cfg(all(feature = "card-put", feature = "fault-inject"))]
 table! {
-    Ls     (LsArg)   => "ls",     "project files on the card, sizes; ls tapes: the sources",
-    Put    (PutArg)  => "put",    "a project or source onto the card: <path> <size> <crc32>",
+    Ls     (LsArg)   => "ls",     "files and sizes in PROJECTS; ls tapes, ls sounds: theirs",
+    Put    (PutArg)  => "put",    "a project, Sound or source: <path> <size> <crc32> [--over]",
+    Rm     (SoundArg) => "rm",    "a library Sound's pair: /CHIMERA/SOUNDS/S#######",
+    Get    (SoundArg) => "get",   "a library Sound's file, base64: /CHIMERA/SOUNDS/S#######",
     Fault  (FaultArg) => "fault",  "DMA fault test: fault dma <1|2>, fault ndtr (fault-inject builds)",
 }
 #[cfg(all(feature = "card-put", not(feature = "fault-inject")))]
 table! {
-    Ls     (LsArg)   => "ls",     "project files on the card, sizes; ls tapes: the sources",
-    Put    (PutArg)  => "put",    "a project or source onto the card: <path> <size> <crc32>",
+    Ls     (LsArg)   => "ls",     "files and sizes in PROJECTS; ls tapes, ls sounds: theirs",
+    Put    (PutArg)  => "put",    "a project, Sound or source: <path> <size> <crc32> [--over]",
+    Rm     (SoundArg) => "rm",    "a library Sound's pair: /CHIMERA/SOUNDS/S#######",
+    Get    (SoundArg) => "get",   "a library Sound's file, base64: /CHIMERA/SOUNDS/S#######",
 }
 #[cfg(all(not(feature = "card-put"), feature = "fault-inject"))]
 table! {
@@ -242,6 +247,10 @@ pub use card::*;
 mod put;
 #[cfg(feature = "card-put")]
 pub use put::*;
+#[cfg(feature = "card-put")]
+mod sound_file;
+#[cfg(feature = "card-put")]
+pub use sound_file::*;
 #[cfg(feature = "fault-inject")]
 mod fault;
 #[cfg(feature = "fault-inject")]

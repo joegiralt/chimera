@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
 """Read the unit over its USB console (or the desktop sim's socket).
 
-    python3 tools/chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu, sweep, ls [tapes]
-    python3 tools/chimera-usb.py put <local> <remote>  a project file onto the card as /CHIMERA/PROJECTS/P#######.A,
-                                                       or a TAPE source as /CHIMERA/TAPES/<CRC>.SRC, in checked chunks
-                                                       (<remote> ending in / takes the local name)
+    python3 tools/chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu, sweep,
+                                                   ls [tapes|sounds], rm|get /CHIMERA/SOUNDS/S#######
+    python3 tools/chimera-usb.py put <local> <remote> [--over]
+                                                   a project file onto the card as /CHIMERA/PROJECTS/P#######.A,
+                                                   a library Sound as /CHIMERA/SOUNDS/S#######.A (--over replaces one there),
+                                                   or a TAPE source as /CHIMERA/TAPES/<CRC>.SRC, in checked chunks
+                                                   (<remote> ending in / takes the local name; /CHIMERA/SOUNDS/ takes
+                                                   `ls sounds`' top user id + 1)
     python3 tools/chimera-usb.py to-dfu            the unit into ROM DFU, for just flash
     python3 tools/chimera-usb.py wait-console [s]  wait (default 10 s) for the console on the bus
 
 Exit 0 on OK, 1 on ERR (to stderr) or 2 s of silence (60 s before `card`'s
-first line: it measures before it answers; 15 s before `ls`'s and
-`sweep`'s, 35 s before `put`'s). Bodies go to stdout; `shot` writes a PNG and prints its
-path; `put` shows its progress on stderr and never retries (a source
-already on the card answers `OK PRESENT`, so a re-run is the retry). Standard
-library only.
+first line: it measures before it answers; 15 s before `ls`'s, `rm`'s,
+`get`'s and `sweep`'s, 35 s before `put`'s). Bodies go to stdout; `shot` writes a PNG and prints its
+path; `put` shows its progress on stderr and never retries a failure (a source
+already on the card answers `OK PRESENT`, so a re-run is the retry). `ERR busy`
+(the unit's card work pending) is retried: 5 tries, 200 ms apart, doubling.
+Standard library only.
 
 Environment: CHIMERA_USB picks the target (unset: /dev/chimera if present,
 else /dev/ttyACM0; `sim`: the desktop sim; `tcp:HOST:PORT`; else a device
@@ -47,6 +52,10 @@ PUT_MAX = 1 << 20  # chimera-core/src/console/put.rs PUT_MAX_BYTES
 PUT_LINE = 48  # bytes a data line carries: 64 base64 characters
 PUT_CHUNK = 256 * 1024  # chimera-core/src/console/put.rs PUT_CHUNK_BYTES: a source's chunk
 TAPES = "/CHIMERA/TAPES/"
+SOUNDS = "/CHIMERA/SOUNDS/"
+USER_MAX = 8_999_999  # chimera-engine/src/storage/library.rs LibId::USER_MAX
+BUSY_TRIES = 5
+BUSY_WAIT_S = 0.2  # doubling after each `ERR busy`
 DRAIN_S = 0.05
 MAX_SHOT = 1 << 20  # well over 240 x 320 x 2; a garbled header can't ask for gigabytes
 UDEV_HINT = "sudo cp tools/70-chimera.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger"
@@ -211,17 +220,38 @@ def answer(conn: Conn, first=SILENCE_S) -> tuple:
             body += rd.exactly(Shot.declared_length(ln))
 
 
+def is_busy(status, body) -> bool:
+    return status is Status.ERR and body == b"ERR busy"
+
+
+def retry_busy(ask, sleep=time.sleep) -> tuple:
+    """`ask()` until it isn't `ERR busy`: `BUSY_TRIES` tries at most, waiting
+    `BUSY_WAIT_S` and doubling between them. The last answer."""
+    wait = BUSY_WAIT_S
+    for _ in range(BUSY_TRIES - 1):
+        status, body = ask()
+        if not is_busy(status, body):
+            return status, body
+        sleep(wait)
+        wait *= 2
+    return ask()
+
+
 def first_wait(line: str) -> float:
     """How long a request's first byte may take."""
-    waits = {"card": CARD_WAIT_S, "ls": LS_WAIT_S, "sweep": SWEEP_WAIT_S}
+    waits = {"card": CARD_WAIT_S, "ls": LS_WAIT_S, "rm": LS_WAIT_S, "get": LS_WAIT_S, "sweep": SWEEP_WAIT_S}
     return waits.get((line.split() or [""])[0], SILENCE_S)
 
 
 def request(conn: Conn, line) -> tuple:
-    """`send`, then `answer`."""
-    send(conn, line)
+    """`send`, then `answer`, again while the unit says `ERR busy`."""
     text = line if isinstance(line, str) else line.decode(errors="replace")
-    return answer(conn, first_wait(text.lower()))
+
+    def ask():
+        send(conn, line)
+        return answer(conn, first_wait(text.lower()))
+
+    return retry_busy(ask)
 
 
 class BadShot(Exception):
@@ -255,7 +285,26 @@ def send_lines(conn: Conn, data: bytes, base: int, total: int, progress):
         progress(base, total)
 
 
-def put(conn: Conn, data: bytes, remote: str, progress=lambda sent, total: None) -> tuple:
+def next_sound(conn: Conn) -> str:
+    """`ls sounds`' top user id + 1, as `/CHIMERA/SOUNDS/S#######.A`; the
+    first id on a card with no SOUNDS. Raises PutRefused."""
+    status, body = request(conn, "ls sounds")
+    if status is Status.ERR and body != b"ERR ls: FILE NOT FOUND":
+        raise PutRefused(body.decode(errors="replace"))
+    top = 0
+    for ln in body.decode(errors="replace").splitlines() if status is Status.OK else []:
+        name = ln.split(" ", 1)[0].upper()
+        stem, _, ext = name.partition(".")
+        if len(stem) == 8 and stem[0] == "S" and stem[1:].isdigit() and ext in ("A", "B"):
+            n = int(stem[1:])
+            if n <= USER_MAX:
+                top = max(top, n)
+    if top >= USER_MAX:
+        raise PutRefused("put: no Sound ids left above S%07d" % top)
+    return "%sS%07d.A" % (SOUNDS, top + 1)
+
+
+def put(conn: Conn, data: bytes, remote: str, progress=lambda sent, total: None, over=False) -> tuple:
     """`put <remote> <size> <crc32>`, the data once the unit says READY,
     then its OK or ERR as `answer` gives it; (OK, b"PRESENT") for a source
     already on the card. A source goes in `PUT_CHUNK` chunks, each ended by
@@ -264,7 +313,7 @@ def put(conn: Conn, data: bytes, remote: str, progress=lambda sent, total: None)
     Vanished or PutRefused."""
     if len(data) > PUT_MAX:
         raise PutRefused("%d bytes: put takes at most %d" % (len(data), PUT_MAX))
-    send(conn, "put %s %d %08x" % (remote, len(data), zlib.crc32(data)))
+    send(conn, "put %s %d %08x%s" % (remote, len(data), zlib.crc32(data), " --over" if over else ""))
     rd = Reader(conn, PUT_WAIT_S)
     first = rd.line()
     if first == b"ERR" or first.startswith(b"ERR "):
@@ -296,16 +345,20 @@ def show_progress(sent, total):
     print("\rput: %3d%% %d of %d bytes" % (pct, sent, total), end="", file=sys.stderr, flush=True)
 
 
-def put_file(t: Target, local: str, remote: str) -> int:
-    """`put` with progress on stderr: 0 on OK, 1 with the reason."""
+def put_file(t: Target, local: str, remote: str, over=False) -> int:
+    """`put` with progress on stderr, again while the unit is busy: 0 on
+    OK, 1 with the reason."""
     try:
         data = pathlib.Path(local).read_bytes()
     except OSError as e:
         return fail("put: %s: %s" % (local, e.strerror or e))
-    remote = remote_path(local, remote)
     conn = open_conn(t)
     try:
-        status, body = put(conn, data, remote, show_progress)
+        if remote.upper() == SOUNDS:
+            remote = next_sound(conn)
+        else:
+            remote = remote_path(local, remote)
+        status, body = retry_busy(lambda: put(conn, data, remote, show_progress, over))
     except PutRefused as e:
         return fail(str(e))
     except NoAnswer:
@@ -485,9 +538,10 @@ def main(argv, env) -> int:
     if argv[0] == "wait-console":
         return wait_console(env, float(argv[1]) if len(argv) > 1 else 10.0)
     if argv[0] == "put":
-        if len(argv) != 3:
-            return fail("put takes <local> <remote>")
-        return put_file(t, argv[1], argv[2])
+        over = argv[3:] == ["--over"]
+        if len(argv) != 3 and not over:
+            return fail("put takes <local> <remote> [--over]")
+        return put_file(t, argv[1], argv[2], over)
     conn = open_conn(t)
     try:
         status, body = request(conn, " ".join(argv))

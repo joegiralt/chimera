@@ -198,9 +198,21 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the pool meter, row costs, the hints' bytes (sound-pool
     // plan Task 6); and its refusal. Then the merge with filter-types: a
     // Sound is smaller (fixed columns, no registry entry).
-    ("sound_browser", 0x1ed65ccfb138def3),
-    // pool_full re-recorded: MAX_SOUND_COST 2288 → 2352 (VA params).
-    ("sound_browser_pool_full", 0x9bebdfa46e75c0a0),
+    ("sound_browser", 0x326bd7e09bbaa590),
+    // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
+    ("sound_browser_pool_full", 0x34346aed44aed19f),
+    // The browser's title is its tabs and the Part (library plan Task 7); then
+    // the LIBRARY tab: each Sound's build, its pages, what won't fit.
+    ("library_empty", 0xa94e4a6edf448c09),
+    ("library_no_card", 0xa7957021c5215364),
+    ("library_sounds", 0x4897d8acceef0dad),
+    ("library_this_build", 0x3328020a1de3a32e),
+    ("library_cut_short", 0x8a79ffdc4d4088a5),
+    ("library_older", 0x0f93617bc5fec63b),
+    ("library_newer", 0x8f897d5fdeff8d94),
+    ("library_wont_fit", 0xc7ac05813f4eb639),
+    ("library_pool_full", 0xac5879c734797884),
+    ("library_naming", 0xab3925136bf27a0f),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     ("settings_personal_theme", 0xc35039e65219cdc2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),

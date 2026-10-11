@@ -63,6 +63,8 @@ pub enum Act {
     PartRename,
     PartClear,
     PartReload,
+    /// NAMING, then the active Part's Sound to the library.
+    SaveToLibrary,
     /// ORBIT's CLEAR and RELOAD FROM PROJ, on the playing scene.
     SceneClear,
     SceneReload,
@@ -103,13 +105,30 @@ static PROJECT: [Row; 5] = [
 ];
 
 /// The active Part's list: its crumb is `PART n`.
-pub static PART: [Row; 5] = [
+pub static PART: [Row; 6] = [
     row("RENAME", Kind::Act(Act::PartRename)),
     row("CLEAR", Kind::Act(Act::PartClear)),
     crumb("SAVE TO PROJ", "SAVE TO", Kind::Screen(Screen::SaveToProj)),
     crumb("RELOAD FROM PROJ", "RELOAD", Kind::Act(Act::PartReload)),
     crumb("LIVE SNAP", "SNAP", Leaf(&LIVE_SNAP_LEAF)),
+    crumb(
+        "SAVE TO LIBRARY",
+        "SAVE TO LIB",
+        Kind::Act(Act::SaveToLibrary),
+    ),
 ];
+
+/// PART's SAVE TO LIBRARY row, found at compile time.
+pub const SAVE_TO_LIB_ROW: u8 = {
+    let mut j = 0;
+    loop {
+        assert!(j < PART.len(), "no SAVE TO LIBRARY under PART");
+        if matches!(PART[j].kind, Kind::Act(Act::SaveToLibrary)) {
+            break j as u8;
+        }
+        j += 1;
+    }
+};
 
 /// The playing scene's list: its crumb is `SCENE n`.
 #[cfg(feature = "orbit")]

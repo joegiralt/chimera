@@ -68,6 +68,8 @@ where
 pub const MIDDOT: char = '·';
 /// A 3×5 chevron: a row that opens more.
 pub const CHEVRON: char = '›';
+/// Its mirror: a row that opens the page before.
+pub const CHEVRON_LEFT: char = '‹';
 /// A filled dot, r = 2: the loaded one.
 pub const BULLET: char = '●';
 /// A hollow dot, r = 2.
@@ -81,7 +83,7 @@ pub const DOWN: char = '▾';
 fn mark_adv(ch: char) -> Option<i32> {
     match ch {
         MIDDOT => Some(3),
-        CHEVRON => Some(5),
+        CHEVRON | CHEVRON_LEFT => Some(5),
         BULLET | RING => Some(6),
         LEFT | RIGHT => Some(4),
         UP | DOWN => Some(5),
@@ -99,6 +101,10 @@ where
         CHEVRON => {
             line(d, x, y - 6, x + 2, y - 4, color, 1);
             line(d, x + 2, y - 4, x, y - 2, color, 1);
+        }
+        CHEVRON_LEFT => {
+            line(d, x + 2, y - 6, x, y - 4, color, 1);
+            line(d, x, y - 4, x + 2, y - 2, color, 1);
         }
         BULLET => dot(d, x + 2, y - 4, 2, color),
         RING => ring(d, x + 2, y - 4, 2, color, 1),

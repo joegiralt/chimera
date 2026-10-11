@@ -26,4 +26,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "peek_library"
+path = "fuzz_targets/peek_library.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]

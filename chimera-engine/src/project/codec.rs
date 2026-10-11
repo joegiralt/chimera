@@ -460,6 +460,11 @@ impl ProjectCheck {
         match (tag, self.context) {
             (ReadTag::Known(t), _) if t.is_orbit() => self.orbit(t, p, target, stage),
             (ReadTag::Unknown(_), Context::Orbit) => Ok(()),
+            // Informational, skipped wherever it lands (Slot and Part reach
+            // `SoundCheck`, which skips it too).
+            (ReadTag::Known(RecordTag::Build), Context::None | Context::Fx | Context::Orbit) => {
+                Ok(())
+            }
             (ReadTag::Known(_), Context::Orbit) => Err(FileError::Corrupt),
             (ReadTag::Known(RecordTag::PoolSource), Context::Fx) => self.pool_source(p, target),
             (ReadTag::Known(RecordTag::PoolSource), _) => Err(FileError::Corrupt),
@@ -487,6 +492,7 @@ impl ProjectCheck {
                     TRANSLATIONS,
                     mix.as_mut().map(|m| m as &mut dyn Blocks),
                 )
+                .map(drop)
             }
             (ReadTag::Known(RecordTag::Origin), Context::Part(n)) => {
                 if core::mem::replace(&mut self.origin, true) {
@@ -664,6 +670,7 @@ impl ProjectCheck {
             TRANSLATIONS,
             fx.as_mut().map(|f| f as &mut dyn Blocks),
         )
+        .map(drop)
     }
 
     /// Ends a `Slot` or `Part`: its Sound's `finish`, which adds the routes.

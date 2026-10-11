@@ -436,10 +436,12 @@ class PutUnit:
     `silent` says nothing after READY. Also answers `ls` with `listing`.
     A TAPES path takes its data in chunks, each ended by `end <crc32>` and
     answered `ACK <bytes so far>`, or `ERR put: chunk` at the chunk
-    `bad_chunk` names; `present` answers `OK PRESENT` before any data."""
+    `bad_chunk` names; `present` answers `OK PRESENT` before any data.
+    The first `busy` puts answer `ERR busy`."""
 
-    def __init__(self, refuse=None, after=None, silent=False, listing=b"OK\n", present=False, bad_chunk=None):
+    def __init__(self, refuse=None, after=None, silent=False, listing=b"OK\n", present=False, bad_chunk=None, busy=0):
         self.refuse, self.after, self.silent, self.listing = refuse, after, silent, listing
+        self.busy = busy
         self.present, self.bad_chunk = present, bad_chunk
         self.requests, self.data, self.ends = [], b"", []
         self.server = socket.create_server(("127.0.0.1", 0))
@@ -477,6 +479,10 @@ class PutUnit:
                     if words[:1] == [b"ls"]:
                         conn.sendall(self.listing)
                     if words[:1] != [b"put"]:
+                        continue
+                    if self.busy:
+                        self.busy -= 1
+                        conn.sendall(b"ERR busy\n")
                         continue
                     if self.refuse:
                         conn.sendall(self.refuse)
@@ -647,6 +653,8 @@ class Put(unittest.TestCase):
     def test_ls_prints_the_listing_and_waits_for_the_card(self):
         self.assertEqual(tool.first_wait("ls"), tool.LS_WAIT_S)
         self.assertEqual(tool.first_wait("sweep"), tool.SWEEP_WAIT_S)
+        self.assertEqual(tool.first_wait("rm /CHIMERA/SOUNDS/S0000001"), tool.LS_WAIT_S)
+        self.assertEqual(tool.first_wait("get /chimera/sounds/s0000001"), tool.LS_WAIT_S)
         self.assertGreaterEqual(tool.SWEEP_WAIT_S, 1.5 + 10)
         self.assertEqual(tool.first_wait("status"), tool.SILENCE_S)
         with PutUnit(listing=b"P0000014.A 130000\nOK\n") as u:
@@ -654,6 +662,67 @@ class Put(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout, b"P0000014.A 130000\n")
         self.assertEqual(u.requests, [b"ls"])
+
+    def test_busy_is_retried(self):
+        f = self.local("S.A", b"q" * 300)
+        with PutUnit(busy=2) as u:
+            start = time.monotonic()
+            r = run_tool(["put", f, "/CHIMERA/SOUNDS/S0000003.A"], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(sum(1 for x in u.requests if x.startswith(b"put ")), 3)
+        self.assertEqual(u.data, b"q" * 300)
+        self.assertGreaterEqual(time.monotonic() - start, 0.2 + 0.4, "200 ms, doubling")
+
+    def test_busy_gives_up_after_five_tries(self):
+        f = self.local("S.A", b"q" * 30)
+        saved = tool.BUSY_WAIT_S
+        tool.BUSY_WAIT_S = 0.01
+        try:
+            with PutUnit(busy=9) as u:
+                conn = tool.Conn(tool.target({"CHIMERA_USB": u.target}))
+                try:
+                    status, body = tool.retry_busy(lambda: tool.put(conn, b"q" * 30, "/CHIMERA/SOUNDS/S0000003.A"))
+                finally:
+                    conn.close()
+        finally:
+            tool.BUSY_WAIT_S = saved
+        self.assertIs(status, tool.Status.ERR)
+        self.assertEqual(body, b"ERR busy")
+        self.assertEqual(sum(1 for x in u.requests if x.startswith(b"put ")), tool.BUSY_TRIES)
+        self.assertEqual(tool.BUSY_TRIES, 5)
+
+    def test_a_request_is_retried_while_busy(self):
+        replies = [b"ERR busy\n", b"S0000001.A 120\nOK\n"]
+
+        class Next:
+            def __contains__(self, _):
+                return bool(replies)
+
+            def __getitem__(self, _):
+                return replies[0]
+
+        with FakeUnit(Next(), on_answer=lambda: replies.pop(0)) as u:
+            r = run_tool(["ls", "sounds"], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, b"S0000001.A 120\n")
+        self.assertEqual(u.requests, [b"ls sounds\n"] * 2)
+
+    def test_a_sound_takes_the_top_user_id_plus_one(self):
+        f = self.local("bass.snd", b"s" * 200)
+        listing = b"S0000002.A 200\nS0000007.B 200\nS0000007.A 200\nS9000001.A 200\nREADME 2\nOK\n"
+        with PutUnit(listing=listing) as u:
+            r = run_tool(["put", f, "/chimera/sounds/"], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(u.requests[0], b"ls sounds")
+        self.assertTrue(u.requests[1].startswith(b"put /CHIMERA/SOUNDS/S0000008.A 200 "), u.requests)
+        self.assertEqual(r.stdout, b"/CHIMERA/SOUNDS/S0000008.A 200\n")
+
+    def test_a_sound_onto_an_empty_card_is_the_first_id(self):
+        f = self.local("bass.snd", b"s" * 20)
+        with PutUnit(listing=b"ERR ls: FILE NOT FOUND\n") as u:
+            r = run_tool(["put", f, "/CHIMERA/SOUNDS/"], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(u.requests[1].startswith(b"put /CHIMERA/SOUNDS/S0000001.A 20 "), u.requests)
 
 
 if __name__ == "__main__":

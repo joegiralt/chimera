@@ -78,8 +78,10 @@ card    SD speed and streams, a chord playing; clean (bench builds)
 shot    the screen in THEME's colours; shot raw: canonical
 dfu     restart into the ROM loader for just flash
 sweep   the lost-cluster sweep at the next boot: restarts into it
-ls      project files on the card, sizes; ls tapes: the sources
-put     a project or source onto the card: <path> <size> <crc32>
+ls      files and sizes in PROJECTS; ls tapes, ls sounds: theirs
+put     a project, Sound or source: <path> <size> <crc32> [--over]
+rm      a library Sound's pair: /CHIMERA/SOUNDS/S#######
+get     a library Sound's file, base64: /CHIMERA/SOUNDS/S#######
 OK
 ```
 

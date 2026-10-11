@@ -22,12 +22,13 @@ use chimera_core::preset::Sound;
 use chimera_core::project::test_support::{confirm_overwrite, full_dense, same, save_at};
 use chimera_core::project::{
     PartId, Project, ProjectDecoder, ProjectNote, clear_project, list_projects, project_crc,
-    project_file,
+    project_file, save_library_sound,
 };
+use chimera_core::storage::LoadError;
 use chimera_core::storage::{
-    Card, CardError, CardEvent, FileKind, Generation, Header, InPlaceError, ProjectId, RecordTag,
-    RecordWriter, SaveError, Side, SoundCheck, SoundDecoder, encode_sound, load_ab,
-    load_ab_in_place, save_ab, write_file,
+    BuildStamp, Card, CardError, CardEvent, FileKind, Generation, Header, InPlaceError, LibId,
+    ProjectId, RecordTag, RecordWriter, SaveError, Side, SoundCheck, SoundDecoder, encode_sound,
+    library_file, load_ab, load_ab_in_place, save_ab, write_file,
 };
 use chimera_hal::store::{ByteSink, Dir, FileName, Store, StoreError};
 use image::{Cut, CutDisk, FatEntry, RamDisk, Tear, fat_check, with_clusters};
@@ -609,4 +610,62 @@ fn project_clear_cut_keeps_a_generation() {
         loaded[0],
         loaded[1]
     );
+}
+
+const STAMP: BuildStamp = BuildStamp::new("0.1.0", "02e440e2", false);
+
+fn save_library_on(s: &mut Probed<CutDisk>) -> Result<LibId, chimera_core::project::LibNote> {
+    let snd = sound(1);
+    save_library_sound(&mut Card::new(), s, &snd, snd.name, &STAMP).out
+}
+
+/// A library save cut or torn at every block: no `S0000001.A`, a file that
+/// fails to load, or the Sound whole; never another Sound.
+#[test]
+fn library_save_cut_at_every_block_never_loads_wrong() {
+    let base = slot(with_clusters(CLUSTERS, 0xC0DE));
+    ab::make_dir(&base);
+    let before = copy(&base.inner);
+    let blocks = {
+        let dry = slot(copy(&before));
+        let mut s = probed(&dry);
+        assert_eq!(save_library_on(&mut s).unwrap().get(), 1);
+        let n = dry.writes.get();
+        assert!(n >= 3, "{n} writes");
+        n
+    };
+    let want = sound(1);
+    let (mut whole, mut failed, mut absent) = (0, 0, 0);
+    let cuts = (0..blocks).map(Cut::After).chain(
+        (0..blocks).flat_map(|k| [Tear::HalfOld, Tear::Garbage].map(|t| Cut::TornAfter(k, t))),
+    );
+    for cut in cuts {
+        let what = format!("library save, {cut:?}");
+        let disk = slot(copy(&before));
+        disk.cut.set(cut);
+        assert!(save_library_on(&mut probed(&disk)).is_err(), "{what}");
+        disk.cut.set(Cut::Never);
+        // A torn directory block is noise: only a clean cut keeps the FAT sane.
+        if let Cut::After(_) = cut {
+            let r = fat_check(&disk.inner);
+            assert!(
+                r.cross_linked.is_empty() && r.short.is_empty(),
+                "{what}: {r:?}"
+            );
+        }
+        let mut t = Sound::neutral(EngineType::Algo);
+        let id = LibId::new(1).unwrap();
+        let got = ab::op(&mut probed(&disk), |s, r| {
+            load_ab(s, r, library_file(id), &mut SoundDecoder::new(&mut t))
+        });
+        match got {
+            Ok(_) => {
+                assert!(t.bits_eq(&want), "{what}: loaded another Sound");
+                whole += 1;
+            }
+            Err(LoadError::Missing) => absent += 1,
+            Err(_) => failed += 1,
+        }
+    }
+    println!("library cuts: {whole} whole, {failed} refused, {absent} absent");
 }

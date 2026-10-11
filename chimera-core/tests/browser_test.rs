@@ -36,7 +36,16 @@ fn drawn(p: &Project, cursor: usize, scroll: usize) -> Fb {
     use embedded_graphics::draw_target::DrawTarget;
     let mut fb = Fb::new();
     let _ = fb.clear(theme::BG);
-    browser::draw(&mut fb, p, PartId::ALL[0], cursor, scroll, true, None);
+    browser::draw(
+        &mut fb,
+        p,
+        browser::BrowserView::Project,
+        PartId::ALL[0],
+        cursor,
+        scroll,
+        true,
+        None,
+    );
     assert_eq!(fb.oob, 0);
     fb
 }
@@ -264,4 +273,204 @@ fn a_long_name_clears_its_cost() {
     let name_end = *cols(theme::INK).last().expect("the name");
     let cost_start = *cols(theme::MID).first().expect("the cost");
     assert!(name_end < cost_start, "{name_end} < {cost_start}");
+}
+
+// LIBRARY tab (library spec § Browser).
+
+use chimera_core::name::SoundName;
+use chimera_core::project::save_library_sound;
+use chimera_core::storage::{BuildStamp, Card};
+use chimera_core::ui::UiState;
+use chimera_core::ui::browser::{
+    EMPTY_LIBRARY, SAVE_TO_LIBRARY, STAMP_Y, entry_cost, load_words, stamp_words,
+};
+use chimera_core::ui::draw;
+use chimera_core::ui::hint::{self, Gesture};
+use chimera_core::ui::theme_settings::ThemeSettings;
+use chimera_hal::store::Store;
+use chimera_hal::testkit::MemStore;
+
+fn this() -> BuildStamp {
+    BuildStamp::new("0.1.0", "02e440e2", false)
+}
+
+#[test]
+fn stamp_words_forms() {
+    let this = this();
+    assert_eq!(
+        stamp_words(Some(BuildStamp::new("0.1.0", "aabbccdd", true)), &this).as_str(),
+        "SAVED ON 0.1.0 AABBCCDD+"
+    );
+    assert_eq!(
+        stamp_words(Some(this), &this).as_str(),
+        "SAVED ON THIS BUILD"
+    );
+    assert_eq!(stamp_words(None, &this).as_str(), "NO STAMP");
+    let dev = BuildStamp::new("0.1.0", "dev", false);
+    assert_eq!(
+        stamp_words(Some(dev), &dev).as_str(),
+        "SAVED ON 0.1.0 DEV",
+        "a dev build names no commit"
+    );
+}
+
+#[test]
+fn the_new_lines_fit_216_px() {
+    assert!(hint::width(&[SAVE_TO_LIBRARY]) <= 216);
+    let wide = stamp_words(Some(BuildStamp::new("10.10.10", "wwwwwwww", true)), &this());
+    let w = draw::text_width(&theme::FONT_LABEL, wide.as_str(), theme::LABEL_TRACKING);
+    assert!(w <= 216, "{w}");
+    let words = load_words(Some(chimera_core::project::arena::Cost::of(160 * 1024)));
+    assert!(hint::width(&[Gesture("EDIT", words.as_str())]) <= 216);
+}
+
+#[test]
+fn a_library_row_costs_its_file_less_the_frame_plus_a_granule() {
+    use chimera_core::storage::{HEADER_LEN, TRAILER_LEN};
+    let len = 1_000u32;
+    let want = (len as usize - HEADER_LEN - TRAILER_LEN - 25 + 16).div_ceil(16) * 16;
+    assert_eq!(entry_cost(len).bytes() as usize, want);
+    assert_eq!(entry_cost(0).bytes(), 16, "short files saturate");
+}
+
+fn saved(st: &mut MemStore, name: &str, stamp: &BuildStamp) {
+    let mut s = chimera_core::preset::Sound::init(EngineType::Algo);
+    // Dense, so its preview is wider than a pixel of the meter.
+    chimera_core::project::test_support::dense(&mut s, 3);
+    let n = SoundName::new(name).unwrap();
+    save_library_sound(&mut Card::new(), st, &s, n, stamp)
+        .out
+        .unwrap();
+}
+
+/// Part 1's LIBRARY tab on `st`, listed, the cursor at the top.
+fn library_ui(st: MemStore) -> Box<UiState> {
+    let mut ui = Box::new(UiState::new());
+    let mut r = Rig::new(&mut ui, st);
+    r.feed(Input::chord(ButtonId::Edit, ButtonId::B1));
+    r.feed(Input::turn(EncoderId::B, 1));
+    r.feed(Input::turn(EncoderId::B, 0));
+    drop(r);
+    ui
+}
+
+fn text_in_row_at(fb: &Fb, y: i32) -> bool {
+    (y - 9..y + 2).any(|yy| (12..230).any(|x| fb.at(x, yy) != theme::BG))
+}
+
+#[test]
+fn line_three_draws_with_hints_off() {
+    let mut st = MemStore::new(1);
+    saved(&mut st, "ONE", &BuildStamp::new("0.1.0", "aabbccdd", false));
+    let mut ui = library_ui(st);
+    assert!(text_in_row_at(&render_ui(&ui), STAMP_Y), "hints on");
+    ui.set_theme(ThemeSettings {
+        hints: false,
+        ..ThemeSettings::DEFAULT
+    });
+    let fb = render_ui(&ui);
+    assert!(text_in_row_at(&fb, STAMP_Y), "the stamp is information");
+    assert!(!text_in_row_at(&fb, browser::HINT_Y), "the hints are off");
+}
+
+/// `c` among the pixels of the row at baseline `y`, short of its right edge.
+fn ink_in_row(fb: &Fb, y: i32, c: embedded_graphics::pixelcolor::Rgb565) -> bool {
+    (y - 12..y + 2).any(|yy| (12..230).any(|x| fb.at(x, yy) == c))
+}
+
+#[test]
+fn the_empty_library_is_one_dimmed_row() {
+    assert_eq!(EMPTY_LIBRARY, "NO SOUNDS YET");
+    let mut gone = MemStore::new(1);
+    gone.eject();
+    for st in [MemStore::new(1), gone] {
+        let fb = render_ui(&library_ui(st));
+        let y = row_y(0);
+        assert!(!ink_in_row(&fb, y, theme::ACCENT), "no selection pill");
+        assert!(
+            ink_in_row(&fb, y, theme::MID),
+            "the words in the dim colour"
+        );
+        assert!(!ink_in_row(&fb, y, theme::INK), "not a live row");
+        assert!(!text_in_row_at(&fb, STAMP_Y), "no row, no stamp");
+    }
+}
+
+#[test]
+fn a_newer_firmware_row_is_greyed_with_its_name_and_message() {
+    use chimera_core::storage::{HEADER_LEN, TRAILER_LEN};
+    let mut st = MemStore::new(1);
+    saved(&mut st, "FUTURE", &this());
+    // An engine code this build doesn't know: the peek has no CRC.
+    let v = st.mount().unwrap();
+    let f = chimera_hal::store::FileName::new(
+        chimera_hal::store::Dir::Sounds,
+        &chimera_core::storage::LibId::new(1).unwrap().stem(),
+        b"A",
+    )
+    .unwrap();
+    let mut bytes = Vec::new();
+    struct Take<'a>(&'a mut Vec<u8>);
+    impl chimera_hal::store::ReadSink for Take<'_> {
+        fn begin(&mut self, _: u32) -> core::ops::ControlFlow<()> {
+            core::ops::ControlFlow::Continue(())
+        }
+        fn chunk(&mut self, b: &[u8]) -> core::ops::ControlFlow<()> {
+            self.0.extend_from_slice(b);
+            core::ops::ControlFlow::Continue(())
+        }
+    }
+    st.read(v, f, &mut Take(&mut bytes)).unwrap();
+    assert!(bytes.len() > HEADER_LEN + TRAILER_LEN);
+    bytes[HEADER_LEN + 4] = 0xEE; // Engine's payload
+    st.write(v, f, &mut |w: &mut dyn chimera_hal::store::ByteSink| {
+        w.put(&bytes)
+    })
+    .unwrap();
+    let fb = render_ui(&library_ui(st));
+    let y = row_y(0);
+    // Selected: BG ink on the pill, the name left and the message right.
+    assert!(
+        ink_in_row(&fb, y, theme::BG),
+        "name and message on the pill"
+    );
+    let msg = "NEEDS NEWER FIRMWARE";
+    let w = draw::text_width(&theme::FONT_LABEL, msg, 0);
+    let left = 18 + draw::text_width(&theme::FONT_VALUE, "FUTURE", 0);
+    let ink = (230 - w..230).any(|x| (y - 12..y + 2).any(|yy| fb.at(x, yy) == theme::BG));
+    assert!(ink, "the message at the right edge");
+    assert!(left < 230 - w, "name and message fit side by side");
+    let none = (232..240).all(|x| fb.at(x, y) != theme::INK);
+    assert!(none);
+}
+
+#[test]
+fn a_sound_row_names_its_engine_and_cost_and_previews_in_the_meter() {
+    let mut st = MemStore::new(1);
+    saved(&mut st, "WARM BASS", &this());
+    let ui = library_ui(st);
+    let fb = render_ui(&ui);
+    assert!(row_has(&fb, 0, theme::BG), "name on the pill");
+    let preview = (12..228).any(|x| fb.at(x, browser::METER_Y) == theme::ACCENT);
+    assert!(preview, "the selected row previewed in ACCENT");
+}
+
+#[test]
+fn a_sound_that_wont_fit_previews_in_alert_and_says_so() {
+    let mut st = MemStore::new(1);
+    saved(&mut st, "BIG", &this());
+    let mut ui = Box::new(UiState::new());
+    chimera_core::project::test_support::set_free_to(
+        ui.project_mut(),
+        chimera_core::project::arena::Cost::of(16),
+    );
+    let mut r = Rig::new(&mut ui, st);
+    r.feed(Input::chord(ButtonId::Edit, ButtonId::B1));
+    r.feed(Input::turn(EncoderId::B, 1));
+    drop(r);
+    let fb = render_ui(&ui);
+    assert!((12..228).any(|x| fb.at(x, browser::METER_Y) == theme::ALERT));
+    let alert = (12..228)
+        .any(|x| (browser::HINT_Y - 9..browser::HINT_Y).any(|y| fb.at(x, y) == theme::ALERT));
+    assert!(alert, "WON'T FIT in ALERT");
 }
