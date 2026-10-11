@@ -7,8 +7,8 @@ use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode};
+use chimera_core::params::OutParams;
 use chimera_core::params::{EngineType, ParamSnapshot};
-use chimera_core::part::PartParams;
 use chimera_core::ui::block_def::{BlockDef, ParamSlot, VizType, slot_addr};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::page::PageLayout;
@@ -114,7 +114,7 @@ fn exciter_page_follows_the_model() {
 /// The reverb send lives on SENDS only (ADR 0120): RES and DECK carry none.
 #[test]
 fn reverb_send_is_on_sends_only() {
-    let rev = ParamAddr::new(BlockRef::Part, PartParams::SEND_REVERB);
+    let rev = ParamAddr::new(BlockRef::Out, OutParams::SEND3);
     let ctx = SlotCtx::read(&ParamSnapshot::default(), Op::A);
     for def in [&reg::MODAL_1, &reg::TAPE_DECK] {
         for k in 0..6 {

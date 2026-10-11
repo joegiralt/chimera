@@ -117,7 +117,7 @@ fn chord(
         shared.parts[0].params.out.volume = 0.8;
     }
     shared.parts[0].mix.level = level;
-    shared.parts[0].mix.sends = [send; 3];
+    shared.parts[0].params.out.sends = [send; 3];
     shared.fx = fx_params;
     // Rev V, or with the master tape (where ALGO INIT plays seven since
     // ADR 0060) a budget for all eight.

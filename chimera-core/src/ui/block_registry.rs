@@ -747,9 +747,9 @@ pub static SENDS: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow(FxFlow::Sends),
     params: [
-        ParamSlot::param(BlockRef::Part, PartParams::SEND_CHORUS),
-        ParamSlot::param(BlockRef::Part, PartParams::SEND_DELAY),
-        ParamSlot::param(BlockRef::Part, PartParams::SEND_REVERB),
+        ParamSlot::param(BlockRef::Out, OutParams::SEND1),
+        ParamSlot::param(BlockRef::Out, OutParams::SEND2),
+        ParamSlot::param(BlockRef::Out, OutParams::SEND3),
         EMPTY,
         EMPTY,
         EMPTY,

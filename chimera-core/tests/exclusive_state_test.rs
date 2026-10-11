@@ -246,7 +246,7 @@ fn other_parts_are_untouched_by_a_switch() {
     shared.parts[0].mix.level = 0.0;
     *shared.parts[1].params = string();
     shared.parts[1].mix.level = 0.0;
-    shared.parts[1].mix.sends = [0.5; 3];
+    shared.parts[1].params.out.sends = [0.5; 3];
     shared.fx.reverb.mix = 0.5;
     let mut switched = shared.clone();
     *switched.parts[0].params = ParamSnapshot::for_engine(EngineType::Modal);

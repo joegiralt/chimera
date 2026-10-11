@@ -56,9 +56,9 @@ fn mix_b1_then_c_turns_the_reverb_send_not_out() {
     mix(&mut ui, ButtonId::B1);
     feed(&mut ui, Input::turn(EncoderId::C, 1));
     settle(&mut ui);
-    let p = &ui.project().part(PartId::ALL[0]).mix;
-    assert!(p.sends[2] > 0.0, "REV moved");
-    assert_eq!(p.output, DacPair::P1, "OUT stays P1");
+    let p = ui.project().part(PartId::ALL[0]);
+    assert!(p.sound.params.out.sends[2] > 0.0, "REV moved");
+    assert_eq!(p.mix.output, DacPair::P1, "OUT stays P1");
 }
 
 #[test]

@@ -224,15 +224,17 @@ impl Param {
 
     /// Whether the parameter is shared, not the Sound's: FX, mix, MIDI.
     pub fn performance(&self) -> bool {
-        matches!(
-            self.block,
-            BlockRef::Chorus
-                | BlockRef::Delay
-                | BlockRef::Reverb
-                | BlockRef::Tape
-                | BlockRef::Comp
-                | BlockRef::Part
-        )
+        // The sends are the Sound's, but the mixer eases them: shared state, as MIX was.
+        (self.block == BlockRef::Out && OutParams::SENDS.contains(&self.spec.id))
+            || matches!(
+                self.block,
+                BlockRef::Chorus
+                    | BlockRef::Delay
+                    | BlockRef::Reverb
+                    | BlockRef::Tape
+                    | BlockRef::Comp
+                    | BlockRef::Part
+            )
     }
 
     /// Whether `patch` has this parameter at all (Algo's on Algo, Modal's

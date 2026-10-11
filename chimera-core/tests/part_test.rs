@@ -3,7 +3,7 @@
 use chimera_core::MidiChannel;
 use chimera_core::block::Block;
 use chimera_core::hw::MAX_PARTS;
-use chimera_core::part::{DacPair, PartMode, PartParams};
+use chimera_core::part::{DacPair, PART_SPECS, PartMode, PartParams};
 use chimera_core::preset::Performance;
 
 #[test]
@@ -23,7 +23,7 @@ fn performance_defaults_per_part() {
         let m = &part.mix;
         assert_eq!(m.channel.get() as usize, n);
         assert_eq!((m.mode, m.output), (PartMode::Poly, DacPair::P1));
-        assert_eq!((m.level, m.pan, m.sends), (0.8, 0.0, [0.0; 3]));
+        assert_eq!((m.level, m.pan), (0.8, 0.0));
     }
     assert_eq!(perf.parts().len(), MAX_PARTS);
 }
@@ -38,8 +38,6 @@ fn enum_params_round_trip_through_the_block() {
     assert_eq!(m.output.index(), 2);
     m.set(PartParams::CHANNEL, 99.0); // clamps to the spec's max
     assert_eq!(m.channel.get(), 15);
-    m.nudge(PartParams::SEND_REVERB, 3);
-    assert_eq!(m.sends[2], 3.0 / 128.0);
 }
 
 /// ADR 0010: level, pan and sends are applied by the mixer, not read by the
@@ -47,4 +45,10 @@ fn enum_params_round_trip_through_the_block() {
 #[test]
 fn no_part_param_is_modulatable() {
     assert!(PartParams::default().specs().iter().all(|s| !s.modulatable));
+}
+
+/// The sends moved to the Sound's OUT block (ADR 0123): PART's 5-7 are gone.
+#[test]
+fn part_has_no_sends() {
+    assert!(PART_SPECS.iter().all(|s| ![5, 6, 7].contains(&s.id.0)));
 }

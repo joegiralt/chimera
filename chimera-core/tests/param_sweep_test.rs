@@ -55,14 +55,17 @@ impl Case {
     }
 
     fn bench(&self) -> Bench {
-        let mut mix = PartParams::default();
         let fx = if self.wet {
-            mix.sends = [0.5; 3];
             fx_on()
         } else {
             FxParams::default()
         };
-        Bench::new(self.patch, mix, fx)
+        let mut b = Bench::new(self.patch, PartParams::default(), fx);
+        if self.wet {
+            // After the patch: it is the Sound that carries the sends.
+            b.edit_sound(|s| s.params.out.sends = [0.5; 3]);
+        }
+        b
     }
 
     fn values(&self) -> Vec<f32> {
@@ -813,7 +816,12 @@ fn out_moves_the_part_to_its_pair() {
             // Sends low enough that the return stays under the limiter's
             // knee (ADR 0109): its gain is linked across pairs, so where it
             // bent, a layout would move it.
-            b.perf.edit(chimera_core::project::PartId::ALL[0]).mix.sends = [0.03; 3];
+            b.perf
+                .edit(chimera_core::project::PartId::ALL[0])
+                .sound
+                .params
+                .out
+                .sends = [0.03; 3];
             b.set(&out, pair);
             let mut t = Tape::default();
             for blk in 0..400 {
@@ -1106,19 +1114,19 @@ fn jumps_never_click() {
             FAST,
         ),
         (
-            find(BlockRef::Part, PartParams::SEND_CHORUS),
+            find(BlockRef::Out, OutParams::SEND1),
             Patch::Probe,
             true,
             FAST,
         ),
         (
-            find(BlockRef::Part, PartParams::SEND_DELAY),
+            find(BlockRef::Out, OutParams::SEND2),
             Patch::Probe,
             true,
             FAST,
         ),
         (
-            find(BlockRef::Part, PartParams::SEND_REVERB),
+            find(BlockRef::Out, OutParams::SEND3),
             Patch::Probe,
             true,
             FAST,

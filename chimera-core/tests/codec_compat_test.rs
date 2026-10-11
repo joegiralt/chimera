@@ -156,10 +156,6 @@ fn write_v1_fixtures() {
             println!("    &{:?},", values(&p.part(id).mix));
         }
     }
-    let sends = encode_project(&sends_fixture_project());
-    if write_fixture(SENDS_FIXTURE, &sends) {
-        println!("sends ({}, {:#018x}),", sends.len(), fnv1a_bytes(&sends));
-    }
     for (name, s) in sources() {
         let bytes = written(&name, &s);
         if !write_fixture(&name, &bytes) {
@@ -257,26 +253,10 @@ const PROJECT_FIXTURE: &str = "project.prj";
 const PROJECT_FIXTURE_BYTES: (usize, u64) = (20624, 0x12b9dada0b932378);
 
 /// The project written before the sends moved to the Sound: they sit in the
-/// Part's mix (PART 5-7). Task 3 reads it to test the migration.
+/// Part's mix (PART 5-7). Task 3 reads it to test the migration. Written once:
+/// Part 0 sends `[0.25, 0.5, 0.75]`; Part 1 (a Modal INIT) `[0.5, 0, 0]`; the
+/// rest none; the FX as NEW. Its writer left with PART 5-7.
 const SENDS_FIXTURE: &str = "sends.prj";
-
-/// Part 0 sends `[0.25, 0.5, 0.75]`; Part 1 (a Modal INIT) `[0.5, 0, 0]`;
-/// Parts 2-5 none; the FX as NEW.
-fn sends_fixture_project() -> Box<Project> {
-    let (mut p, t) = Project::boxed();
-    load(
-        &mut p,
-        t,
-        PartSource {
-            part: PartId::ALL[1],
-            from: PartFrom::Init(EngineType::Modal),
-        },
-    )
-    .unwrap();
-    p.edit_part(PartId::ALL[0]).mix.sends = [0.25, 0.5, 0.75];
-    p.edit_part(PartId::ALL[1]).mix.sends = [0.5, 0.0, 0.0];
-    p
-}
 
 /// `sends.prj`'s length and FNV-1a.
 const SENDS_FIXTURE_BYTES: (usize, u64) = (5353, 0x59724696eec3ac6d);

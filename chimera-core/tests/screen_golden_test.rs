@@ -111,8 +111,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // (ADR 0055); with it, the screens are as before.
     #[cfg(not(feature = "master-tape"))]
     ("mixer_part", 0x24ee8f61ddea9047),
+    // mixer_sends, mixer_out_p2 re-recorded: the sends are the Sound's OUT block (ADR 0123).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_sends", 0xdf3aab7c23ee0c31),
+    ("mixer_sends", 0x37b85f76ea901bdc),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay", 0x57508228791992f2),
     // TYPE first, the panel's units, and REV › MORE (reverb TYPEs T6);
@@ -150,7 +151,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_part", 0x91b06a3780c2bbb5),
     #[cfg(feature = "master-tape")]
-    ("mixer_sends", 0xcf97b892a7d5a933),
+    ("mixer_sends", 0xa0553c50ec8dd15a),
     // DLY's branch hides REV's label it ran into (TAPE Task 15).
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay", 0x6bfad50017562c25),
@@ -183,9 +184,9 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_master_level", 0x38d97b4c60a9a7a4),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_out_p2", 0xc657c44494c829ac),
+    ("mixer_out_p2", 0x0e56a40216caf7af),
     #[cfg(feature = "master-tape")]
-    ("mixer_out_p2", 0x23ca28848fded48a),
+    ("mixer_out_p2", 0x010fae34cf537021),
     ("algo_out_p3", 0x3e91d6b588f4ebfa),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).

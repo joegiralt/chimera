@@ -387,7 +387,7 @@ pub fn mix_parts(
     let k = ease_coeff(sample_rate);
     for (p, part) in shared.parts.iter().enumerate() {
         let (gl, gr) = mix.pan_gains(p, part.mix.pan);
-        let [s0, s1, s2] = part.mix.sends;
+        let [s0, s1, s2] = part.params.out.sends;
         let to = [gl * part.mix.level, gr * part.mix.level, s0, s1, s2];
         let eases = &mut mix.gains[p];
         // A part with no voices this block has a silent bus: nothing to

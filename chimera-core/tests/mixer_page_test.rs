@@ -147,7 +147,10 @@ fn sends_page_edits_the_part_sends() {
     let mut ui = UiState::new();
     open_mixer(&mut ui, ButtonId::B3); // SENDS
     turn(&mut ui, EncoderId::C, 64); // reverb send
-    assert_eq!(ui.project().part(PartId::ALL[2]).mix.sends, [0.0, 0.0, 0.5]);
+    assert_eq!(
+        ui.project().part(PartId::ALL[2]).sound.params.out.sends,
+        [0.0, 0.0, 0.5]
+    );
 }
 
 fn turn_def(def: &BlockDef, slot: usize, delta: i8, perf: &mut Performance) {
