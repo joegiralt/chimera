@@ -268,29 +268,29 @@ pub const VA_CHAIN_GAIN: f32 = 1.0 / (R * 1.732_050_8);
 pub const VA_OUT_GAIN: f32 = 3.631;
 
 /// Cycles a sample per MODE by ADR 0056's count on the release ELF (instr ×
-/// 1.46 × 1.1, + 12 a `vdiv`/`vsqrt`; Task 9b's scripts). Each oscillator
+/// 1.46 × 1.1, + 12 a `vdiv`/`vsqrt`; ADR 0118's scripts). Each oscillator
 /// bills its dearest wave pair, constants lerped and SHAPE and WAVE moving:
 /// its loop's round with no event, + 0.45 of its wrap's side, + each edge's
 /// crossing side at 0.45 + 0.225/64 a sample (backward 0.225/64), all
 /// stretched by the jitter's half cent; the SYNC slave + 0.45 of a reset.
-/// Then the operator loop (sub flips at 0.45), the steady block's work ÷ 64
-/// (the duck's loop at its 4 trips) and two WAVE segment crossings an
-/// oscillator every block (an audio-rate LFO on WAVE), each an extra run
-/// with its share of the render loop, plus the crossing block's split peak
-/// bound, and LP24's 95. Each line: OSC 1 (TRI/SAW) + OSC 2 + operator +
-/// block + crossings + 95.
+/// Then the operator loop (its ducking variant; sub flips at 0.45), the
+/// steady block's work ÷ 64 and two WAVE segment crossings an oscillator
+/// every block (an audio-rate LFO on WAVE), each an extra run with its share
+/// of the render loop, plus the crossing block's split peak bound, and
+/// LP24's 95. Each line: OSC 1 (TRI/SAW) + OSC 2 + operator and sub + block
+/// + crossings + 95.
 ///
-/// MIX: 155.1 + 148.0 (TRI/SAW) + 41.6 + 79.2 + 82.0 + 95.
-pub const COST_MIX: Cost = Cost(610);
-/// SYNC: 155.1 + 255.9 (SINE/TRI slave: a reset's 204.0 × 0.45) + 41.6 +
-/// 83.1 + 83.5 + 95.
-pub const COST_SYNC: Cost = Cost(720);
-/// RING: 155.1 + 148.0 + 51.7 + 79.3 + 82.0 + 95.
-pub const COST_RING: Cost = Cost(620);
-/// XOR: 155.1 + 148.0 + 66.1 + 79.8 + 82.0 + 95.
-pub const COST_XOR: Cost = Cost(630);
-/// BITS: 155.1 + 148.0 + 55.7 + 79.6 + 82.0 + 95.
-pub const COST_BITS: Cost = Cost(620);
+/// MIX: 140.6 + 134.4 (TRI/SAW) + 35.8 + 64.9 + 51.5 + 95.
+pub const COST_MIX: Cost = Cost(530);
+/// SYNC: 140.6 + 245.6 (SINE/TRI slave: a reset's 197.5 × 0.45) + 35.8 +
+/// 68.3 + 53.6 + 95.
+pub const COST_SYNC: Cost = Cost(640);
+/// RING: 140.6 + 134.4 + 42.2 + 65.7 + 51.5 + 95.
+pub const COST_RING: Cost = Cost(530);
+/// XOR: 140.6 + 134.4 + 53.5 + 66.8 + 51.5 + 95.
+pub const COST_XOR: Cost = Cost(550);
+/// BITS: 140.6 + 134.4 + 42.2 + 65.8 + 51.5 + 95.
+pub const COST_BITS: Cost = Cost(530);
 
 /// A MODE duck's gain over one block, if one runs.
 type Gain = Option<&'static [f32; BLOCK_SIZE]>;

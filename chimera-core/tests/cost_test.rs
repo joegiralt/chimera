@@ -1566,8 +1566,8 @@ fn va_sound(mode: chimera_core::dsp::va::VaMode) -> ParamSnapshot {
 /// the voices each is admitted beside the reserve on the four rooms (rev V,
 /// rev Y, rev V with ORBIT, rev V with the master tape), INIT's 2040 REV2
 /// (+15) and the chain and routing (83) on top. ADR 0040's done-when is six
-/// on each: met on rev V in every MODE; rev Y gets five (SYNC four) once
-/// WAVE crossings at an LFO's worst are billed (Task 9b report).
+/// on each: met on rev V in every MODE, and on rev Y in MIX, RING and BITS;
+/// XOR and SYNC get five on rev Y (ADR 0118, round 3).
 #[test]
 fn va_bills_each_mode() {
     use chimera_core::dsp::va::VaMode::{Bits, Mix, Ring, Sync, Xor};
@@ -1584,11 +1584,11 @@ fn va_bills_each_mode() {
     assert_eq!(rooms, [4_984, 3_817, 4_813, 4_674]);
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     for (mode, bill, voices) in [
-        (Mix, 610, [7, 5, 6, 6]),
-        (Sync, 720, [6, 4, 5, 5]),
-        (Ring, 620, [6, 5, 6, 6]),
-        (Xor, 630, [6, 5, 6, 6]),
-        (Bits, 620, [6, 5, 6, 6]),
+        (Mix, 530, [7, 6, 7, 7]),
+        (Sync, 640, [6, 5, 6, 6]),
+        (Ring, 530, [7, 6, 7, 7]),
+        (Xor, 550, [7, 5, 7, 7]),
+        (Bits, 530, [7, 6, 7, 7]),
     ] {
         let p = va_sound(mode);
         assert_eq!(
