@@ -121,7 +121,7 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     let ccdr = usb::route_kernel_clock(ccdr);
     cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
     #[cfg(not(feature = "sd-probe"))]
-    shared::copy_waves();
+    shared::build_waves();
 
     let gpioa = dp.GPIOA.split(ccdr.peripheral.GPIOA);
     let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);

@@ -1,6 +1,6 @@
 use chimera_waves::{
-    MAX_HARMONIC, MIPS, RECIPES, Recipe, Shape, WAVE_LEN, emit_rust, mip_harmonics, render,
-    spectrum,
+    MAX_HARMONIC, MIPS, RECIPES, Recipe, Shape, WAVE_COUNT, WAVE_LEN, Waves, emit_rust,
+    mip_harmonics, render, render_all, spectrum,
 };
 use std::f64::consts::{PI, TAU};
 
@@ -22,8 +22,8 @@ fn naive(r: &Recipe) -> Vec<f64> {
     }
 }
 
-fn mean(mip: &[i16; WAVE_LEN]) -> f64 {
-    mip.iter().map(|&v| v as f64).sum::<f64>() / WAVE_LEN as f64 / 32767.0
+fn mean(mip: &[i16; WAVE_LEN + 1]) -> f64 {
+    mip[..WAVE_LEN].iter().map(|&v| v as f64).sum::<f64>() / WAVE_LEN as f64 / 32767.0
 }
 
 #[test]
@@ -108,7 +108,38 @@ fn each_mip_keeps_half_the_harmonics_of_the_one_before() {
 
 #[test]
 fn the_emitted_source_declares_both_tables() {
-    let src = emit_rust();
+    let src = emit_rust(true);
     assert!(src.contains("pub static WAVE_NAMES: &[&str; 16]"));
     assert!(src.contains("pub static WAVES: [[[i16; 257]; 8]; 16]"));
+}
+
+#[test]
+fn without_tables_the_source_declares_only_the_names() {
+    let src = emit_rust(false);
+    assert!(src.contains("pub static WAVE_NAMES: &[&str; 16]"));
+    assert!(!src.contains("WAVES"));
+}
+
+/// FNV-1a 64 of every table's little-endian bytes, in `Waves` order.
+fn fnv(w: &Waves) -> u64 {
+    w.iter()
+        .flatten()
+        .flatten()
+        .flat_map(|v| v.to_le_bytes())
+        .fold(0xcbf2_9ce4_8422_2325, |h, b| {
+            (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
+        })
+}
+
+/// The boot render (ADR 0122) is the flash table it replaced, bit for bit:
+/// the hash of the tables the std generator (glibc trig, one call per
+/// harmonic) wrote at 07160052.
+#[test]
+fn the_render_is_the_old_flash_table_bit_for_bit() {
+    let mut w: Box<Waves> = Box::new([[[0; WAVE_LEN + 1]; MIPS]; WAVE_COUNT]);
+    render_all(&mut w);
+    assert_eq!(fnv(&w), 0xd604_a35c_e951_d762);
+    for t in w.iter().flatten() {
+        assert_eq!(t[WAVE_LEN], t[0]);
+    }
 }

@@ -11,8 +11,12 @@ edition.workspace = true
 chimera-hal = { path = "../chimera-hal" }
 chimera-theory = { path = "../chimera-theory" }
 libm = "0.2"
+chimera-waves = { path = "../chimera-waves" }
 
 [features]
+# The wave tables rendered into RAM at boot (`waves::render_into`), not
+# shipped in flash (ADR 0122). The firmware's; a host keeps the static.
+boot-waves = []
 # The console's `ls` and `put` (ADR 0092): project files onto the card.
 card-put = []
 # The master tape stage on DAC pair 1 (ADR 0055: off the chain by default;
@@ -45,7 +49,7 @@ loom = "0.7"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
 
 [build-dependencies]
-chimera-waves = { path = "../chimera-waves" }
+chimera-waves = { path = "../chimera-waves", features = ["emit"] }
 
 [dev-dependencies]
 chimera-engine = { path = ".", features = ["test-support", "source-writer", "smear-probe", "clamp-probe"] }
