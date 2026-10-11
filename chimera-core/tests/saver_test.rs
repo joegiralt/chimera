@@ -261,6 +261,25 @@ fn a_detuned_pair_measures_between_the_two_inside_the_pair() {
     }
 }
 
+/// A strong 5th harmonic adds rising crossings just short of each
+/// period: measure used to re-find one forever and freeze the UI loop.
+/// Bounded by a timeout, so a hang fails instead of hanging the suite.
+#[test]
+fn rising_crossings_short_of_the_period_never_hang() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for k in 0..120 {
+            let hz = 300.0 + k as f32 * 23.0;
+            let _ = saver::measure(&wave(hz, |p| sine(p) + 1.2 * sine(5.0 * p)));
+        }
+        let _ = tx.send(());
+    });
+    assert!(
+        rx.recv_timeout(std::time::Duration::from_secs(5)).is_ok(),
+        "measure hung"
+    );
+}
+
 #[test]
 fn silence_dc_and_noise_measure_nothing() {
     assert_eq!(saver::measure(&[0.0; SCOPE_LEN]), None);
