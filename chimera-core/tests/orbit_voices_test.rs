@@ -22,7 +22,10 @@ fn ring(i: u8) -> NoteOrigin {
 /// folded in (`instrument_test.rs`), so the pool's eight voices fit with or
 /// without `master-tape`.
 const fn budget_for(voice_share: u32) -> SampleBudget {
-    SampleBudget::for_cpu(((FxBus::COST.0 + voice_share) as u64 * 480_000).div_ceil(7) as u32)
+    SampleBudget::for_cpu(
+        ((FxBus::COST.0 + voice_share) as u64 * 4_800_000)
+            .div_ceil(chimera_core::hw::AUDIO_BUDGET_PERCENT as u64) as u32,
+    )
 }
 
 /// Room for eight voices of the Parts' default Sounds.

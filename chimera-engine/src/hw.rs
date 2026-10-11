@@ -13,8 +13,8 @@ pub const DAC_PAIRS: usize = 3;
 pub const CPU_HZ_REV_V: u32 = 480_000_000;
 pub const CPU_HZ_REV_Y: u32 = 400_000_000;
 
-/// 30% is left for UI, MIDI and interrupt overhead.
-pub const AUDIO_BUDGET_PERCENT: u32 = 70;
+/// 25% is left for UI, MIDI and interrupt overhead (ADR 0124).
+pub const AUDIO_BUDGET_PERCENT: u32 = 75;
 
 // No `Default`: a rev Y chip must never silently get the 480 MHz budget.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

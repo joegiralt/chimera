@@ -1486,7 +1486,7 @@ fn report(sw: &Sweep) -> String {
         .count();
     let _ = writeln!(
         s,
-        "Budget {budget} cycles/sample (rev V, 70 %), {} of it reserved for the FX bus. Cases \
+        "Budget {budget} cycles/sample (rev V, 75 %), {} of it reserved for the FX bus. Cases \
          billed over the budget without shedding: {over}. Cases whose chord got fewer than {} \
          voices: {short}.\n",
         FxBus::COST.0,
