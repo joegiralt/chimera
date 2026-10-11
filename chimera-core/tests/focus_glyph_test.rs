@@ -42,6 +42,7 @@ const CUBE: FocusGlyph = FocusGlyph::Composite(CompositeId::Reverb);
 const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     // Word choices: the word is the value, there is no amount to gauge.
     ("Modal", "MODE", NONE),
+    ("Va", "MODE", NONE),
     ("TapeEngine", "MODEL", NONE),
     ("TapeEngine", "TYPE", NONE),
     ("TapeEngine", "SLICE", NONE),
@@ -80,6 +81,8 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Part", "DLY", LEVEL),
     ("Part", "REV", LEVEL),
     ("Tape", "MIX", LEVEL),
+    ("Va", "AMOUNT", XF),
+    ("Va", "SUB", LEVEL),
     ("Comp", "MAKEUP", LEVEL),
     ("Comp", "MIX", LEVEL),
     // The chorus, all four params: the braid.

@@ -619,3 +619,36 @@ fn a_moved_gap_fails_the_load() {
     assert_eq!(rig.ui.project().pool().find_source(h.sref), None);
     assert_eq!(rig.band(), READ_FAILED);
 }
+
+/// Library spec § Load: the last chunk stages the source and says what
+/// it is; only `adopt` publishes it.
+#[test]
+fn the_last_chunk_does_not_publish_before_adopt() {
+    use chimera_core::ui::source_cell::{SourceLoad, StagedStep};
+    let (h, d) = choir();
+    let mut rig = Rig::new(&[choir()]);
+    let srcs = rig.ui.project().pool().source_count();
+    let mut l = SourceLoad::start(rig.ui.project_mut(), h.sref.crc, file_len(&h)).unwrap();
+    let ui = &mut rig.ui;
+    let last = loop {
+        let step = rig
+            .card
+            .run(&mut rig.s, |s, r| {
+                Ok::<_, StoreError>(l.step_staged(s, r, ui.project_mut()))
+            })
+            .unwrap()
+            .result
+            .unwrap();
+        if step != StagedStep::More {
+            break step;
+        }
+    };
+    let StagedStep::Staged(need) = last else {
+        panic!("{last:?}");
+    };
+    assert_eq!((need.r, need.held), (h.sref, held(&h, &d).len()));
+    assert!(need.readable());
+    let pool = rig.ui.project().pool();
+    assert_eq!(pool.source_count(), srcs);
+    assert_eq!(pool.find_source(h.sref), None);
+}

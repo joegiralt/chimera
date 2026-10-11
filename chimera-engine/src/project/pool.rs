@@ -405,7 +405,7 @@ impl Pool {
         Ok(s)
     }
 
-    fn free_source(&self) -> Option<SourceId> {
+    pub(in crate::project) fn free_source(&self) -> Option<SourceId> {
         SourceId::ALL
             .into_iter()
             .find(|s| matches!(self.sources.slots[s.index()], SrcSlot::Empty))
@@ -642,6 +642,11 @@ impl Pool {
     /// The load's scratch Sound.
     pub(in crate::project) fn scratch(&mut self) -> &mut Sound {
         &mut self.scratch
+    }
+
+    /// The scratch Sound, as the last load left it.
+    pub(in crate::project) fn scratch_ref(&self) -> &Sound {
+        &self.scratch
     }
 
     /// `store` of the scratch Sound.

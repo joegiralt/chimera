@@ -82,6 +82,23 @@ fn part_crumb_names_the_active_part() {
     );
 }
 
+/// PART's sixth row: SAVE TO LIBRARY, its NAMING crumbed SAVE TO LIB.
+#[test]
+fn part_list_ends_with_save_to_library() {
+    use chimera_core::ui::settings::view::Crumb;
+    use chimera_core::ui::settings::{Act, Kind, SAVE_TO_LIB_ROW, rows};
+    let part = rows(&[PART_ROW]);
+    assert_eq!(part.len(), 6);
+    assert_eq!(SAVE_TO_LIB_ROW, 5);
+    let r = part[5];
+    assert_eq!((r.label, r.crumb), ("SAVE TO LIBRARY", "SAVE TO LIB"));
+    assert!(matches!(r.kind, Kind::Act(Act::SaveToLibrary)));
+    let mut c = Crumbs::of(&[PART_ROW], P2, S1);
+    c.push(Crumb::Name("SAVE TO LIB"));
+    // Too wide whole: SETTINGS gives way to the dots.
+    assert_eq!(format!("{c}"), ".. › PART 2 › SAVE TO LIB");
+}
+
 /// ORBIT's list crumb is `SCENE n`, the playing scene, as PART's is
 /// `PART n`: short enough that SAVE TO keeps it at the breadcrumb's width,
 /// left of the beat dot.
@@ -255,7 +272,7 @@ fn every_breadcrumb_clears_the_dots() {
         let base = Crumbs::of(path, PartId::ALL[5], scene);
         // A crumb for each row from the top, and one for NAMING's.
         let naming: &[&str] = if path.len() + 2 <= 6 {
-            &["RENAME", "SAVE AS"]
+            &["RENAME", "SAVE AS", "SAVE TO LIB"]
         } else {
             &[]
         };

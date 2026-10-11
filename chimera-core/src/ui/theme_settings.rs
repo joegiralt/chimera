@@ -312,7 +312,7 @@ pub fn palette(t: &ThemeSettings) -> Palette {
 }
 
 /// The palette for the boot splash: `t` with light mode off, so the Yellow
-/// Sign stays yellow with a dark ink (ADR 0122).
+/// Sign stays yellow with a dark ink (ADR 0126).
 pub fn splash_palette(t: &ThemeSettings) -> Palette {
     palette(&ThemeSettings {
         invert: false,

@@ -1,4 +1,4 @@
-# 0122. INVERT draws the UI light through the palette (extends 0033)
+# 0126. INVERT draws the UI light through the palette (extends 0033)
 
 - **Status:** Proposed
 - **Deciders:** project owner

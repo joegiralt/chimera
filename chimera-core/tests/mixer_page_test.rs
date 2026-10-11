@@ -496,33 +496,27 @@ fn mixer_part_dirty_render_equals_full_render() {
     }
 }
 
-/// The sound browser's title names what it loads and the Part it loads
-/// into: "LOAD SOUND → PART 2" for Part 2.
+/// The sound browser's title keeps the Part on screen: `· P2` for Part 2,
+/// the tabs on its left the same for every Part.
 #[test]
 fn sound_browser_title_names_the_part() {
     use chimera_core::project::Project;
-    use chimera_core::ui::{browser, components, theme};
+    use chimera_core::ui::{browser, theme};
     use embedded_graphics::draw_target::DrawTarget;
 
-    // `draw` expects a screen cleared to the ground.
-    let mut got = screen::Fb::new();
-    let _ = got.clear(theme::BG);
-    browser::draw(
-        &mut got,
-        &Project::boxed().0,
-        PartId::ALL[1],
-        0,
-        0,
-        true,
-        None,
-    );
-    let mut want = screen::Fb::new();
-    let _ = want.clear(theme::BG);
-    components::title_to(&mut want, "LOAD SOUND", "PART 2");
-    assert!(
-        got.px[..28 * 240] == want.px[..28 * 240],
-        "title is LOAD SOUND → PART 2"
-    );
+    let (p, _) = Project::boxed();
+    let band = |part: usize| {
+        // `draw` expects a screen cleared to the ground.
+        let mut fb = screen::Fb::new();
+        let _ = fb.clear(theme::BG);
+        let v = browser::BrowserView::Project;
+        browser::draw(&mut fb, &p, v, PartId::ALL[part], 0, 0, true, None);
+        fb.px[..28 * 240].to_vec()
+    };
+    let (one, two) = (band(0), band(1));
+    let left = |b: &[u16]| -> Vec<u16> { b.chunks(240).flat_map(|r| r[..140].to_vec()).collect() };
+    assert_eq!(left(&one), left(&two), "the tabs are the same");
+    assert_ne!(one, two, "the Part's mark differs");
 }
 
 /// The PART page shows CH as 1–16 (stored 0–15), MODE as MONO/POLY and OUT

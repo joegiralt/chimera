@@ -10,7 +10,7 @@ use core::marker::PhantomData;
 use crate::boot::RomDfu;
 use crate::orbit::RINGS;
 use crate::project::{
-    DeleteTarget, OverwriteTarget, PartSource, ProjectSource, SceneSlot, Witnessed,
+    DeleteTarget, LibraryPart, OverwriteTarget, PartSource, ProjectSource, SceneSlot, Witnessed,
 };
 
 /// A key's press: a tap acts on release, a hold fires once while down.
@@ -76,6 +76,7 @@ macro_rules! answers {
 answers!(LoadAnswer { SaveThenLoad, LoadAnyway, Cancel } Three);
 answers!(ReplaceAnswer { SavePartFirst, Replace, Cancel } Three);
 answers!(ReloadAnswer { SavePartFirst, Reload, Cancel } Three);
+answers!(LibraryAnswer { SavePartFirst, Replace, Cancel } Three);
 answers!(
     /// `Update`'s pill names the Parts: `UPDATE P4`, `UPDATE ALL`.
     AlsoUsesAnswer { Update, Leave } Two
@@ -178,6 +179,7 @@ macro_rules! commits {
 commits!(
     ReplaceAnswer => Replace, PartSource;
     ReloadAnswer => Reload, PartSource;
+    LibraryAnswer => Replace, LibraryPart;
     LoadAnswer => LoadAnyway, ProjectSource;
     DeleteAnswer => Delete, DeleteTarget;
     ClearAnswer => Clear, OverwriteTarget;
@@ -195,6 +197,10 @@ impl Guarded for ReplaceAnswer {
 
 impl Guarded for ReloadAnswer {
     const SAVE_FIRST: Self = ReloadAnswer::SavePartFirst;
+}
+
+impl Guarded for LibraryAnswer {
+    const SAVE_FIRST: Self = LibraryAnswer::SavePartFirst;
 }
 
 impl Guarded for LoadAnswer {

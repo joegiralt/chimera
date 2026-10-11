@@ -1,5 +1,5 @@
 //! SETTINGS › PERSONALIZE › THEME: backlight, panel gamma, accent and
-//! ground (ADR 0033), light mode (ADR 0122), and whether focus bands show gesture hints (ADR
+//! ground (ADR 0033), light mode (ADR 0126), and whether focus bands show gesture hints (ADR
 //! 0086).
 //!
 //! The values, their disk codes and the THEME block; what they look like
@@ -340,6 +340,7 @@ impl Block for ThemeSettings {
         &THEME_SPECS
     }
 
+    #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
             Self::BRIGHT => self.bright.index() as f32,
@@ -352,6 +353,7 @@ impl Block for ThemeSettings {
         }
     }
 
+    #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         let i = v as u8;
         match id {

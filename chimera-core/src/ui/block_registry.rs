@@ -11,6 +11,7 @@ use crate::dsp::reverb::ReverbParams;
 #[cfg(feature = "master-tape")]
 use crate::dsp::tape::TapeParams;
 use crate::dsp::tape_engine::TapeEngineParams;
+use crate::dsp::va::VaParams;
 use crate::modulation::{MAX_MOD_SOURCES, ModSource};
 use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
 use crate::part::PartParams;
@@ -136,6 +137,59 @@ pub static TAPE_MODEL: BlockDef = BlockDef {
         ParamSlot::machine(MachineSlot::Page(3)),
         ParamSlot::machine(MachineSlot::Page(4)),
         ParamSlot::machine(MachineSlot::Page(5)),
+    ],
+};
+
+// ---------------------------------------------------------------------------
+// VA engine pages (spec § Pages): VA, then OSC 1 and OSC 2 beneath it
+// ---------------------------------------------------------------------------
+
+/// VA, the home. Ids 87-89: free, under the focus table's top.
+pub static VA_HOME: BlockDef = BlockDef {
+    id: 87,
+    name: "VA",
+    short: "VA",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Va, VaParams::WAVE1),
+        ParamSlot::param(BlockRef::Va, VaParams::WAVE2),
+        ParamSlot::param(BlockRef::Va, VaParams::MODE),
+        ParamSlot::param(BlockRef::Va, VaParams::AMOUNT).with_label("AMNT"),
+        ParamSlot::param(BlockRef::Va, VaParams::SUB),
+        ParamSlot::param(BlockRef::Va, VaParams::STAB),
+    ],
+};
+
+pub static VA_OSC1: BlockDef = BlockDef {
+    id: 88,
+    name: "Osc 1",
+    short: "OSC1",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Va, VaParams::CRSE1).with_label("CRSE"),
+        ParamSlot::param(BlockRef::Va, VaParams::FINE1).with_label("FINE"),
+        ParamSlot::param(BlockRef::Va, VaParams::SHAPE1).with_label("SHAPE"),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+pub static VA_OSC2: BlockDef = BlockDef {
+    id: 89,
+    name: "Osc 2",
+    short: "OSC2",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Va, VaParams::CRSE2).with_label("CRSE"),
+        ParamSlot::param(BlockRef::Va, VaParams::FINE2).with_label("FINE"),
+        ParamSlot::param(BlockRef::Va, VaParams::SHAPE2).with_label("SHAPE"),
+        EMPTY,
+        EMPTY,
+        EMPTY,
     ],
 };
 
@@ -647,6 +701,24 @@ static TAPE_BLOCKS: [ChainBlock; 6] = [
 pub static TAPE_CHAIN: ChainDef2 =
     ChainDef2::new("Tape", &TAPE_BLOCKS, &PART_MOD_SOURCES).with_home_def(&TAPE_DECK);
 
+static VA_SUB_PAGES: [&BlockDef; 3] = [&VA_OSC1, &VA_OSC2, &PITCH];
+
+/// VA · DRV · FLT · AMP · MOD: the voice chain behind VA's node.
+static VA_BLOCKS: [ChainBlock; 5] = [
+    ChainBlock::with_subs(&VA_HOME, &VA_SUB_PAGES),
+    ChainBlock::page(&DRIVE),
+    ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
+    ChainBlock::page(&FOLDER),
+    ChainBlock {
+        def: &MOD_MATRIX,
+        sub_pages: &MOD_SUB_PAGES,
+        map: Some("MOD"),
+    },
+];
+
+pub static VA_CHAIN: ChainDef2 =
+    ChainDef2::new("VA", &VA_BLOCKS, &PART_MOD_SOURCES).with_home_def(&VA_HOME);
+
 // ---------------------------------------------------------------------------
 // Mixer channel strip
 // ---------------------------------------------------------------------------
@@ -1093,10 +1165,11 @@ pub static DEMO_BLOCKS: [ChainBlock; 15] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 14] = [
+const FIXED: [&ChainDef2; 15] = [
     &ALGO_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &TAPE_CHAIN,
+    &VA_CHAIN,
     &MIXER_CHANNEL_CHAIN,
     CHANNELS_LEAF.chain(),
     SYNC_LEAF.chain(),

@@ -31,17 +31,24 @@ impl Sound {
         // The default routes (spec § 2): ENV 1, LFO 1 and NOTE → FREQ, the
         // fixed CUTOFF column, at 0, on every engine (a kind that wants
         // keytracking on a new Sound sets NOTE's here). The registry stays
-        // empty. A TAPE loop has no end: ENV 1 into VCA ends its note.
+        // empty. A TAPE loop or a VA tone has no end: ENV 1 into VCA ends
+        // its note. VA's INIT detunes OSC 2 and breathes a little (spec
+        // § Voice and engine).
         let mut mod_state = ModState::with_sources(MAX_MOD_SOURCES);
         for s in [ModSource::Env1, ModSource::Lfo1, ModSource::Note] {
             mod_state.set_fixed(s.index(), FixedCol::Freq, 0);
         }
-        if engine == EngineType::Tape {
+        if matches!(engine, EngineType::Tape | EngineType::Va) {
             mod_state.set_fixed(ModSource::Env1.index(), FixedCol::Vca, 127);
+        }
+        let mut params = ParamSnapshot::for_engine(engine);
+        if engine == EngineType::Va {
+            params.va.fine[1] = 6.0;
+            params.va.stability = 0.7;
         }
         Self {
             name: Self::init_name(),
-            params: ParamSnapshot::for_engine(engine),
+            params,
             mod_state,
             dest_registry: ModDestRegistry::new(),
             source: None,

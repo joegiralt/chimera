@@ -323,7 +323,7 @@ fn input_dismisses_the_toast() {
     assert_eq!(ui.step_toast(16), ToastStep::Idle);
 }
 
-// --- INVERT (ADR 0122) ---
+// --- INVERT (ADR 0126) ---
 
 use chimera_core::ui::theme_settings::{
     ALERT_LIGHT, WARN_LIGHT, accent_light, ground_light, splash_palette,

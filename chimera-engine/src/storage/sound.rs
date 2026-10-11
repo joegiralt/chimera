@@ -29,9 +29,9 @@ const _: () = assert!(MAX_REGISTRY_DESTS * REGISTRY_ENTRY_LEN <= MAX_RECORD_LEN)
 
 /// The most a Sound costs in the pool: its 16 B name and its sparse records
 /// with every param off neutral, a full registry, every route and tap, a
-/// `SourceRef` and a 24-zone `ZoneTune` (2 284 B for 224 params), rounded
+/// `SourceRef` and a 24-zone `ZoneTune` (2 349 B for 236 params), rounded
 /// up to 16 B. `sparse_bound` pins it.
-pub const MAX_SOUND_COST: usize = 2288;
+pub const MAX_SOUND_COST: usize = 2352;
 
 impl Sound {
     /// The frozen base a file decodes onto: every param at its v1 default,
@@ -89,6 +89,11 @@ fn addr_of(block: u8, id: u8) -> Option<ParamAddr> {
 /// `Routes`, and its `SourceRef` and `ZoneTune` if it has them.
 pub fn encode_sound(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     w.put(RecordTag::Engine, &[s.engine().disk_code()])?;
+    encode_sound_body(s, w)
+}
+
+/// Everything `encode_sound` writes after `Engine`.
+pub(crate) fn encode_sound_body(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
     // One buffer for every record: this frame is charged to each pointer
     // call (ADR 0025's stack check), so it holds one, not one per record.
     let mut r = RecordBuf::new();
@@ -180,6 +185,8 @@ const fn once_bit(tag: RecordTag) -> u8 {
         RecordTag::SourceRef => 1 << 5,
         RecordTag::ZoneTune => 1 << 6,
         RecordTag::TapRoutes => 1 << 7,
+        // Skipped before `once` is asked.
+        RecordTag::Build => 0,
         // A project's own records: refused before `once` is asked.
         RecordTag::Slot
         | RecordTag::Part
@@ -215,6 +222,8 @@ pub struct SoundCheck {
     /// The Filter block record held FM3 IN and QM IN: else `infer_jacks`.
     had_fm3: bool,
     had_qm: bool,
+    /// Entries pass 2 dropped from this file; 0 in pass 1.
+    skips: u16,
 }
 
 impl SoundCheck {
@@ -233,7 +242,19 @@ impl SoundCheck {
             routes_len: 0,
             had_fm3: false,
             had_qm: false,
+            skips: 0,
         }
+    }
+
+    /// Entries lost: a record, param, enum code, route or destination this
+    /// firmware doesn't know and no migration or retirement covers. Counted
+    /// in pass 2 only, so zero until it has run.
+    pub fn skips(&self) -> u16 {
+        self.skips
+    }
+
+    fn skip(&mut self, n: u16) {
+        self.skips = self.skips.saturating_add(n);
     }
 }
 
@@ -304,11 +325,7 @@ impl SoundCheck {
     /// `Engine`, one we write once read twice, or a project's record.
     /// `Bounds`: a payload of the wrong shape, or more entries than the
     /// Sound holds. `WrongKind`: not a Sound file.
-    pub(crate) fn step(
-        &mut self,
-        e: Event<'_>,
-        staged: Option<&mut Sound>,
-    ) -> Result<(), FileError> {
+    pub fn step(&mut self, e: Event<'_>, staged: Option<&mut Sound>) -> Result<(), FileError> {
         let (tag, p) = match e {
             Event::Header(h) => {
                 if h.kind != FileKind::Sound {
@@ -320,10 +337,16 @@ impl SoundCheck {
                 self.blocks = ByteSet::new();
                 self.routes_len = 0;
                 (self.had_fm3, self.had_qm) = (false, false);
+                self.skips = 0;
                 return Ok(());
             }
             Event::Record(ReadTag::Known(tag), p) => (tag, p),
-            Event::Record(ReadTag::Unknown(_), _) if self.engine => return Ok(()),
+            Event::Record(ReadTag::Unknown(_), _) if self.engine => {
+                if staged.is_some() {
+                    self.skip(1);
+                }
+                return Ok(());
+            }
             Event::Record(ReadTag::Unknown(_), _) => return Err(FileError::Corrupt),
         };
         if matches!(
@@ -336,6 +359,10 @@ impl SoundCheck {
         // Engine first, and once.
         if (tag == RecordTag::Engine) == self.engine {
             return Err(FileError::Corrupt);
+        }
+        // Informational: any build, any repeat, any length.
+        if tag == RecordTag::Build {
+            return Ok(());
         }
         let once = match tag {
             RecordTag::Block => p.first().is_none_or(|&b| self.blocks.insert(b)),
@@ -357,15 +384,23 @@ impl SoundCheck {
                     self.had_fm3 = has(FilterParams::FM3_IN);
                     self.had_qm = has(FilterParams::QM_IN);
                 }
-                decode_block(
+                let lost = decode_block(
                     p,
                     MIGRATIONS,
                     TRANSLATIONS,
                     staged.map(|s| &mut s.params as &mut dyn Blocks),
-                )
+                )?;
+                self.skip(lost);
+                Ok(())
             }
-            RecordTag::Registry => registry(p, staged),
-            RecordTag::ModDests => mod_dests(p, staged),
+            RecordTag::Registry => {
+                self.skip(registry(p, staged)?);
+                Ok(())
+            }
+            RecordTag::ModDests => {
+                self.skip(mod_dests(p, staged)?);
+                Ok(())
+            }
             RecordTag::Routes => {
                 if !p.len().is_multiple_of(ROUTE_LEN) || p.len() / ROUTE_LEN > MAX_ROUTES {
                     return Err(FileError::Bounds);
@@ -375,7 +410,10 @@ impl SoundCheck {
                 Ok(())
             }
             RecordTag::LastProject => Ok(()),
-            RecordTag::TapRoutes => tap_routes(p, staged.map(|s| &mut s.params.taps)),
+            RecordTag::TapRoutes => {
+                self.skip(tap_routes(p, staged.map(|s| &mut s.params.taps))?);
+                Ok(())
+            }
             RecordTag::SourceRef => {
                 let r = SourceRef::from_bytes(p).ok_or(FileError::Bounds)?;
                 if let Some(s) = staged {
@@ -408,20 +446,23 @@ impl SoundCheck {
             | RecordTag::SourceHead
             | RecordTag::SourceData
             | RecordTag::SourceZones => Err(FileError::Corrupt),
+            RecordTag::Build => Ok(()),
         }
     }
 
     /// `Corrupt` without an Engine record. Adds the routes to `staged`.
-    pub(crate) fn finish(&mut self, staged: Option<&mut Sound>) -> Result<(), FileError> {
+    pub fn finish(&mut self, staged: Option<&mut Sound>) -> Result<(), FileError> {
         if !self.engine {
             return Err(FileError::Corrupt);
         }
         if let Some(s) = staged {
             let m = &mut s.mod_state;
             let (routes, _) = self.routes[..self.routes_len].as_chunks::<ROUTE_LEN>();
+            let mut lost = 0;
             for &[src, block, id, amount] in routes {
                 let (Some(src), Some(addr)) = (ModSource::from_disk_code(src), addr_of(block, id))
                 else {
+                    lost += 1;
                     continue;
                 };
                 // A fixed column's route lands there; any other finds or
@@ -429,6 +470,7 @@ impl SoundCheck {
                 m.set_route_addr(src.index(), addr, amount as i8);
             }
             infer_jacks(&mut s.params.filter, m, !self.had_fm3, !self.had_qm);
+            self.skip(lost);
         }
         Ok(())
     }
@@ -465,14 +507,16 @@ fn infer_jacks(f: &mut FilterParams, m: &ModState, fm3: bool, qm: bool) {
 }
 
 /// `(Jack code, dest block code, dest param id, amount)` entries. An entry
-/// that isn't a tap into a fixed column is dropped; a partial one is
-/// `Bounds`.
-fn tap_routes(p: &[u8], staged: Option<&mut TapRoutes>) -> Result<(), FileError> {
+/// that isn't a tap into a fixed column is dropped, and counted if its
+/// address is unknown; a partial one is `Bounds`.
+fn tap_routes(p: &[u8], staged: Option<&mut TapRoutes>) -> Result<u16, FileError> {
     let (entries, []) = p.as_chunks::<ROUTE_LEN>() else {
         return Err(FileError::Bounds);
     };
+    let mut lost = 0;
     if let Some(t) = staged {
         for &[jack, block, id, amount] in entries {
+            lost += u16::from(addr_of(block, id).is_none());
             if let Some(Jack::Tap(op)) = Jack::from_disk_code(jack)
                 && let Some(c) = addr_of(block, id).and_then(FixedCol::of)
             {
@@ -480,29 +524,33 @@ fn tap_routes(p: &[u8], staged: Option<&mut TapRoutes>) -> Result<(), FileError>
             }
         }
     }
-    Ok(())
+    Ok(lost)
 }
 
-fn registry(p: &[u8], staged: Option<&mut Sound>) -> Result<(), FileError> {
+/// The entries dropped for an address this firmware lacks.
+fn registry(p: &[u8], staged: Option<&mut Sound>) -> Result<u16, FileError> {
     let (entries, []) = p.as_chunks::<REGISTRY_ENTRY_LEN>() else {
         return Err(FileError::Bounds);
     };
     if entries.len() > MAX_REGISTRY_DESTS {
         return Err(FileError::Bounds);
     }
+    let mut lost = 0;
     if let Some(s) = staged {
         for &[block, id, ref label @ ..] in entries {
             let Some(addr) = addr_of(block, id) else {
+                lost += 1;
                 continue;
             };
             // Refused when not modulatable or a fixed column's: skipped.
             let _ = s.dest_registry.add(addr, *label);
         }
     }
-    Ok(())
+    Ok(lost)
 }
 
-fn mod_dests(p: &[u8], staged: Option<&mut Sound>) -> Result<(), FileError> {
+/// The destinations dropped for an address this firmware lacks.
+fn mod_dests(p: &[u8], staged: Option<&mut Sound>) -> Result<u16, FileError> {
     let (&sources, dests) = p.split_first().ok_or(FileError::Bounds)?;
     let (dests, []) = dests.as_chunks::<2>() else {
         return Err(FileError::Bounds);
@@ -510,9 +558,13 @@ fn mod_dests(p: &[u8], staged: Option<&mut Sound>) -> Result<(), FileError> {
     if dests.len() > MAX_MOD_DESTS {
         return Err(FileError::Bounds);
     }
+    let mut lost = 0;
     if let Some(s) = staged {
         let mut m = ModState::with_sources(sources.into());
         for &[block, id] in dests {
+            if addr_of(block, id).is_none() {
+                lost += 1;
+            }
             // `push` refuses one that isn't modulatable, or is a fixed
             // column's (its routes load there): skipped. One
             // already there (DRIVE's beside LEVEL's) is not added twice.
@@ -524,5 +576,5 @@ fn mod_dests(p: &[u8], staged: Option<&mut Sound>) -> Result<(), FileError> {
         }
         s.mod_state = m;
     }
-    Ok(())
+    Ok(lost)
 }

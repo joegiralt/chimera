@@ -1,4 +1,4 @@
-//! Light-mode screen goldens (ADR 0122): a handful of the dark goldens'
+//! Light-mode screen goldens (ADR 0126): a handful of the dark goldens'
 //! cases, drawn by the unchanged renderer and pushed through INVERT's
 //! palette (TEAL, BLACK -2) as the display shell does. Dark goldens live in
 //! `screen_golden_test`; these add to them and never replace one.
@@ -18,7 +18,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("flt_clean", 0xcc4a729ff4ba5faf),
     ("settings_top", 0xf1655533215f4e4b),
     ("settings_personal_theme", 0x3a2a9ae7815335b2),
-    ("sound_browser", 0x67afa2252dd8fa6c),
+    ("sound_browser", 0xd28868c97d12c55a),
     ("toast_exfat", 0xd8ee278545272c31),
 ];
 
@@ -60,7 +60,7 @@ fn light_screens_are_mostly_white() {
     }
 }
 
-/// The audit behind ADR 0122: every colour on every screen is a theme
+/// The audit behind ADR 0126: every colour on every screen is a theme
 /// token or a warm grey, so light mode's bitwise flip and five exact
 /// swaps cover it. A new hard-coded colour fails here.
 #[test]

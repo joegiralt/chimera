@@ -242,6 +242,7 @@ pub fn part_block<'a>(
         | BlockRef::Tempo => None,
         BlockRef::Modal
         | BlockRef::TapeEngine
+        | BlockRef::Va
         | BlockRef::Algo
         | BlockRef::AlgoOp(_)
         | BlockRef::Drive
@@ -276,6 +277,7 @@ pub fn part_block_mut<'a>(
         | BlockRef::Tempo => None,
         BlockRef::Modal
         | BlockRef::TapeEngine
+        | BlockRef::Va
         | BlockRef::Algo
         | BlockRef::AlgoOp(_)
         | BlockRef::Drive

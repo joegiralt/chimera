@@ -317,8 +317,10 @@ impl Usb {
     /// answers at most one request: `Some` for a `dfu` the host was told
     /// `OK` to. A `card` runs `card` first, so its seconds come before the
     /// answer's clock starts; so does `sweep`'s request, whose `OK` is
-    /// a restart into the sweep. `ls` and `put` work on `store`. Out of line:
-    /// inlined, its buffers took `synth`'s frame past the 8 KB check.
+    /// a restart into the sweep. `ls`, `put`, `rm` and `get` work on
+    /// `store`; a Sound `put` or `rm` drops the library's page after its
+    /// answer. Out of line: inlined, its buffers took `synth`'s frame past
+    /// the 8 KB check.
     #[inline(never)]
     pub fn service(
         &mut self,
@@ -386,6 +388,7 @@ impl Usb {
                 sweep: *sweep,
                 sweep_ask,
                 files: store,
+                forget: false,
             };
             let out = &mut UsbOut {
                 dev,
@@ -395,7 +398,11 @@ impl Usb {
             // A stalled answer just stops: the host tool resyncs on its next request.
             let sent = answer(req, unit, out).and_then(|()| out.flush());
             self.last = Served::Answered;
-            let restart = match (unit.dfu, sweep_ask) {
+            let dfu = unit.dfu;
+            if unit.forget {
+                ui.forget_library();
+            }
+            let restart = match (dfu, sweep_ask) {
                 (true, _) => Restart::Dfu(DfuAsked(())),
                 (false, Some(SweepAsk::Requested)) => Restart::Sweep(SweepAsked(())),
                 _ => return None,
@@ -436,6 +443,9 @@ struct ChipUnit<'a> {
         allow(dead_code)
     )]
     files: &'a mut SdStore,
+    /// A Sound `put` or `rm` reached the card: the library's page goes
+    /// once the answer is out.
+    forget: bool,
 }
 
 impl Unit for ChipUnit<'_> {
@@ -499,6 +509,10 @@ impl Unit for ChipUnit<'_> {
 
     fn usb_regs(&self) -> Option<UsbRegs> {
         Some(regs())
+    }
+
+    fn forget_library(&mut self) {
+        self.forget = true;
     }
 
     #[cfg(all(feature = "card-put", not(feature = "bench")))]

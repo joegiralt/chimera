@@ -635,7 +635,7 @@ fn a_system_from_before_hints_shows_them() {
     }
 }
 
-/// A SYSTEM from before INVERT, either v1 fixture, is dark (ADR 0122).
+/// A SYSTEM from before INVERT, either v1 fixture, is dark (ADR 0126).
 #[test]
 fn a_system_from_before_invert_is_dark() {
     for name in [SYSTEM_FIXTURE, SYSTEM_MIDI_FIXTURE] {
