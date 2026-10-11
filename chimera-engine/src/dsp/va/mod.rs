@@ -23,7 +23,7 @@ use crate::hw::Cost;
 use crate::project::PartId;
 use crate::voice_alloc::VoiceIdx;
 use combine::{Crusher, Operator, Peaks, ring_gain};
-use osc::{NO_WRAP, R, Ramps, Sub, VarOsc};
+use osc::{NO_WRAP, R, Ramps, Sub, VarOsc, wave_reach};
 use stability::{JITTER_CENTS, Seed, Stability, depth};
 #[cfg(any(test, feature = "test-support"))]
 use {osc::Correction, stability::Character};
@@ -272,25 +272,30 @@ pub const VA_OUT_GAIN: f32 = 3.631;
 /// bills its dearest wave pair, constants lerped and SHAPE and WAVE moving:
 /// its loop's round with no event, + 0.45 of its wrap's side, + each edge's
 /// crossing side at 0.45 + 0.225/64 a sample (backward 0.225/64), all
-/// stretched by the jitter's half cent; the SYNC slave + 0.45 of a reset.
+/// stretched by the jitter's half cent; the SYNC slave + its resets.
 /// Then the operator loop (its ducking variant; sub flips at 0.45), the
-/// steady block's work ÷ 64 and two WAVE segment crossings an oscillator
-/// every block (an audio-rate LFO on WAVE), each an extra run with its share
-/// of the render loop, plus the crossing block's split peak bound, and
-/// LP24's 95. Each line: OSC 1 (TRI/SAW) + OSC 2 + operator and sub + block
-/// + crossings + 95.
+/// steady block's work ÷ 64 and one WAVE segment crossing an oscillator
+/// every block (WAVE's reach, `wave_reach`), an extra run with its share of
+/// the render loop, plus the crossing block's split peak bound, and LP24's
+/// 95. In SYNC the master's events and the slave's resets run at its 12 kHz
+/// ceiling, 0.25 a sample. Each line: OSC 1 (TRI/SAW) + OSC 2 + operator
+/// and sub + block + crossings + 95.
 ///
-/// MIX: 140.6 + 134.4 (TRI/SAW) + 35.8 + 64.9 + 51.5 + 95.
-pub const COST_MIX: Cost = Cost(530);
-/// SYNC: 140.6 + 245.6 (SINE/TRI slave: a reset's 197.5 × 0.45) + 35.8 +
-/// 68.3 + 53.6 + 95.
-pub const COST_SYNC: Cost = Cost(640);
-/// RING: 140.6 + 134.4 + 42.2 + 65.7 + 51.5 + 95.
-pub const COST_RING: Cost = Cost(530);
-/// XOR: 140.6 + 134.4 + 53.5 + 66.8 + 51.5 + 95.
-pub const COST_XOR: Cost = Cost(550);
-/// BITS: 140.6 + 134.4 + 42.2 + 65.8 + 51.5 + 95.
-pub const COST_BITS: Cost = Cost(530);
+/// MIX: 140.6 + 134.4 (TRI/SAW) + 35.8 + 67.0 + 30.2 + 95.
+pub const COST_MIX: Cost = Cost(510);
+/// SYNC: 122.7 (master at 12 kHz) + 206.1 (SINE/TRI slave: a reset's 197.5
+/// × 0.25) + 35.8 + 70.4 + 31.2 + 95.
+pub const COST_SYNC: Cost = Cost(570);
+/// RING: 140.6 + 134.4 + 42.2 + 67.7 + 30.2 + 95.
+pub const COST_RING: Cost = Cost(520);
+/// XOR: 140.6 + 134.4 + 53.5 + 68.9 + 30.2 + 95.
+pub const COST_XOR: Cost = Cost(530);
+/// BITS: 140.6 + 134.4 + 42.2 + 67.9 + 30.2 + 95.
+pub const COST_BITS: Cost = Cost(520);
+
+/// SYNC's master pitch ceiling (owner, 2026-10-11; ADR 0118): it bounds the
+/// slave's resets at a quarter of the sample rate.
+pub const SYNC_MASTER_HZ: f32 = 12_000.0;
 
 /// A MODE duck's gain over one block, if one runs.
 type Gain = Option<&'static [f32; BLOCK_SIZE]>;
@@ -670,17 +675,38 @@ impl VaEngine {
             d,
         };
         let mut pk = [0.0f32; 2];
-        for k in 0..2 {
-            let (_, li) = lane(&mut self.inc[k], self.osc[k].inc_for(hz[k]));
-            let (_, lw) = lane(&mut self.wave[k], unit(p.wave[k]));
-            let (_, ls) = lane(&mut self.shape[k], unit(p.shape[k]));
-            l.osc[k] = Ramps {
-                inc: li,
-                wave: lw,
-                shape: ls,
-            };
-            pk[k] = self.osc[k].begin(&l.osc[k], BLOCK_SIZE);
+        // SYNC's master stops at 12 kHz: while SYNC plays or is coming (the
+        // duck down), so the cap ramps in and out under the duck
+        let sync = p.mode == VaMode::Sync || self.playing == VaMode::Sync;
+        let hz = [
+            if sync && hz[0] > SYNC_MASTER_HZ {
+                SYNC_MASTER_HZ
+            } else {
+                hz[0]
+            },
+            hz[1],
+        ];
+        // each oscillator's lanes (a macro: two straight copies, so the
+        // count bills both; a loop here stays rolled)
+        macro_rules! lanes {
+            ($k:expr) => {{
+                let k = $k;
+                let (_, li) = lane(&mut self.inc[k], self.osc[k].inc_for(hz[k]));
+                // one WAVE segment edge a block at most, the rest carried on
+                let w = unit(p.wave[k]);
+                let w = wave_reach(self.wave[k].value().unwrap_or(w), w);
+                let (_, lw) = lane(&mut self.wave[k], w);
+                let (_, ls) = lane(&mut self.shape[k], unit(p.shape[k]));
+                l.osc[k] = Ramps {
+                    inc: li,
+                    wave: lw,
+                    shape: ls,
+                };
+                pk[k] = self.osc[k].begin(&l.osc[k], BLOCK_SIZE);
+            }};
         }
+        lanes!(0);
+        lanes!(1);
         l.pk = Peaks { a: pk[0], b: pk[1] };
         let k = self.ring_k.step(ring_gain(l.pk));
         l.k = (k.0, step_of(k, BLOCK_SIZE));
@@ -851,6 +877,13 @@ impl VaEngine {
     #[cfg(any(test, feature = "test-support"))]
     pub fn character(&self) -> Option<Character> {
         self.seeded.map(|_| self.stab.character())
+    }
+
+    /// Each oscillator's WAVE where the last block's ramp ended (`None`
+    /// before a fresh note's first block).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn wave_now(&self) -> [Option<f32>; 2] {
+        [self.wave[0].value(), self.wave[1].value()]
     }
 
     /// The last block's RING gain ramp, from and to.

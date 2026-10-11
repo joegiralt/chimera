@@ -409,6 +409,155 @@ fn mode_changes_never_click() {
     println!("worst {:.0}% of the limit at {}", 100.0 * worst.0, worst.1);
 }
 
+/// WAVE's ramp crosses one segment edge a block at most, the rest carried
+/// into the next (ADR 0118): a jump end to end lands in two blocks, passing
+/// through the middle segment; driven end to end every block it swings
+/// between the ends' reach. Neither clicks against the anchors held, and a
+/// drive that stops lands within two blocks.
+#[test]
+fn wave_driven_end_to_end_lands_in_two_blocks_without_a_click() {
+    let mid = |v: f32| (1.0 / 3.0..2.0 / 3.0).contains(&v);
+    let mut worst = (0.0f64, String::new());
+    for note in [A4, A3] {
+        for k in 0..2 {
+            let base = VaParams {
+                amount: k as f32,
+                ..sine()
+            };
+            let anchors: Vec<_> = ANCHORS
+                .iter()
+                .map(|&w| {
+                    let mut p = base;
+                    p.wave[k] = w;
+                    held(note, p, 2 * AT)
+                })
+                .collect();
+            for (w0, w1) in [(0.0, 1.0), (1.0, 0.0)] {
+                // the jump: through the middle segment, then home
+                with_engine(|e| {
+                    let mut p = base;
+                    p.wave[k] = w0;
+                    e.hold();
+                    e.note_on(note, &p, part(0), SR);
+                    run(e, &mut p, AT, |_, _| {});
+                    p.wave[k] = w1;
+                    run(e, &mut p, 1, |_, _| {});
+                    let first = e.wave_now()[k].unwrap();
+                    assert!(mid(first), "{w0} → {w1}: block 1 at {first}");
+                    run(e, &mut p, 1, |_, _| {});
+                    assert_eq!(e.wave_now()[k], Some(w1), "{w0} → {w1}: block 2");
+                });
+                let y = take(note, base, 2 * AT, |b, p| {
+                    p.wave[k] = if b < AT { w0 } else { w1 }
+                });
+                let (d, lim) = click(&y, &anchors);
+                let at = format!("note {note} WAVE{} {w0} → {w1}", k + 1);
+                println!(
+                    "{at}: Δ² {d:.3e} / limit {lim:.3e} ({:.0}%)",
+                    100.0 * d / lim
+                );
+                assert!(d <= lim, "{at}: {d} > {lim}");
+                if d / lim > worst.0 {
+                    worst = (d / lim, at);
+                }
+            }
+            // driven end to end every block, then held at 1
+            let drive = |b: usize| {
+                if b < AT {
+                    0.0
+                } else if b < 2 * AT {
+                    (b % 2) as f32
+                } else {
+                    1.0
+                }
+            };
+            with_engine(|e| {
+                let mut p = base;
+                e.hold();
+                e.note_on(note, &p, part(0), SR);
+                for b in 0..2 * AT + 2 {
+                    p.wave[k] = drive(b);
+                    run(e, &mut p, 1, |_, _| {});
+                    if b >= AT && b < 2 * AT {
+                        let v = e.wave_now()[k].unwrap();
+                        assert!(v == 0.0 || mid(v), "block {b}: {v}");
+                    }
+                }
+                assert_eq!(
+                    e.wave_now()[k],
+                    Some(1.0),
+                    "the drive stops: home in 2 blocks"
+                );
+            });
+            let y = take(note, base, 3 * AT, |b, p| p.wave[k] = drive(b));
+            let (d, lim) = click(&y, &anchors);
+            let at = format!("note {note} WAVE{} every block", k + 1);
+            println!(
+                "{at}: Δ² {d:.3e} / limit {lim:.3e} ({:.0}%)",
+                100.0 * d / lim
+            );
+            assert!(d <= lim, "{at}: {d} > {lim}");
+            if d / lim > worst.0 {
+                worst = (d / lim, at);
+            }
+        }
+    }
+    println!("worst {:.0}% of the limit at {}", 100.0 * worst.0, worst.1);
+}
+
+/// SYNC's master stops at 12 kHz (ADR 0118): asked for 16.7 kHz it plays
+/// 12 kHz, so the synced wave repeats every 4 samples, as a master asked
+/// for 20 kHz does (the same bits); a pitch rising through the ceiling
+/// stays finite, peak-safe and click-free against the two held.
+#[test]
+fn sync_master_stops_at_12k() {
+    let base = VaParams {
+        mode: VaMode::Sync,
+        coarse: [0, 7],
+        ..sine()
+    };
+    let at = |cents: f32| {
+        with_engine(|e| {
+            let mut p = base;
+            e.set_pitch(cents);
+            e.hold();
+            e.note_on(120, &p, part(0), SR);
+            run(e, &mut p, AT, |_, _| {})
+        })
+    };
+    // C9 is 8372 Hz: +1200 cents asks 16.7 kHz, +1500 cents 19.9 kHz
+    let (y, z) = (at(1200.0), at(1500.0));
+    assert_eq!(y, z, "both at the ceiling");
+    let tail = &y[y.len() - 4 * B..];
+    let period = (4..tail.len())
+        .map(|n| (tail[n] - tail[n - 4]).abs())
+        .fold(0.0f32, f32::max);
+    println!("SYNC master at the ceiling: |y[n] − y[n − 4]| ≤ {period:.1e}");
+    assert!(period <= 1e-5, "{period}");
+    // rising through the ceiling, a block at a time
+    let held: Vec<_> = [0.0, 1200.0].map(at).into();
+    let y = with_engine(|e| {
+        let mut p = base;
+        e.hold();
+        e.note_on(120, &p, part(0), SR);
+        let mut y = Vec::new();
+        for b in 0..2 * AT {
+            e.set_pitch(1200.0 * (b as f32 / AT as f32).min(1.0));
+            y.extend(run(e, &mut p, 1, |_, _| {}));
+        }
+        y
+    });
+    assert!(y.iter().all(|v| v.is_finite()));
+    let pk = peak(&y) * VA_CHAIN_GAIN;
+    let (d, lim) = click(&y, &held);
+    println!(
+        "rising through 12 kHz: peak {pk:.3}, Δ² {d:.3e} / limit {lim:.3e} ({:.0}%)",
+        100.0 * d / lim
+    );
+    assert!(pk <= 0.95, "{pk}");
+    assert!(d <= lim, "{d} > {lim}");
+}
+
 #[test]
 fn the_duck_is_two_blocks_each_way() {
     let g_down = |j: usize| 0.5 * (1.0 + (std::f64::consts::PI * (j + 1) as f64 / 128.0).cos());
@@ -688,7 +837,7 @@ fn steal_glide_glides() {
 
 #[test]
 fn bills_follow_the_mode() {
-    let bills = [530, 640, 530, 550, 530];
+    let bills = [510, 570, 520, 530, 520];
     assert!(VaEngine::mode_cost(VaMode::Sync) > VaEngine::mode_cost(VaMode::Mix));
     for (mode, bill) in VaMode::ALL.into_iter().zip(bills) {
         assert_eq!(VaEngine::mode_cost(mode), Cost(bill), "{mode:?}");

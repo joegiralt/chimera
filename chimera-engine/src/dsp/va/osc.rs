@@ -560,6 +560,24 @@ fn seg(r: &Ramps, i: usize) -> Pair {
 /// WAVE's segment edges, `k/3`.
 const THIRDS: [f32; 4] = [0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0];
 
+/// How far a block's WAVE ramp may go from `from` toward `to`: across one
+/// segment edge at most (owner, 2026-10-11; ADR 0118). Past a second edge it
+/// stops just short of it, and the rest is the next block's: WAVE never
+/// snaps, a jump end to end lands in two blocks, and an oscillator crosses
+/// one edge a block at most.
+pub fn wave_reach(from: f32, to: f32) -> f32 {
+    let (k0, k1) = (Pair::of(3.0 * from) as usize, Pair::of(3.0 * to) as usize);
+    if k1 > k0 + 1 {
+        // up from the first segment: short of 2/3 (inside the second)
+        to.min(THIRDS[2] - 1e-6)
+    } else if k0 > k1 + 1 {
+        // down from the third: 1/3 itself is in the second
+        to.max(THIRDS[1])
+    } else {
+        to
+    }
+}
+
 /// The end of the run on `pair` from `i0` in an `n`-sample block that
 /// leaves it: the first sample past the segment's edge. WAVE's ramp is
 /// linear, so the crossing is solved for, and the solve is the split: a
@@ -963,6 +981,7 @@ impl VarOsc {
     /// Every wave's SHAPE constants at the end of the block on `r` (`n`
     /// samples), kept for `render`, and the block's peak bound (`bound`:
     /// WAVE's path split at every anchor it passes).
+    #[inline(never)]
     pub fn begin(&mut self, r: &Ramps, n: usize) -> f32 {
         self.ends(Shaped::all(Unit::new(val(r.shape, n)).get(), val(r.inc, n)));
         self.next_ok = true;
