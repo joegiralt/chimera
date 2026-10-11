@@ -378,6 +378,8 @@ pub struct ProjectCheck {
     /// value in it defaulted, or no ORBIT records at all (ADR 0078). A save
     /// would write other bytes, so the load is not Saved.
     lossy: bool,
+    /// Pass 2 read a Sound's operator kinds past the formant budget as W1.
+    over: bool,
 }
 
 const _: () = assert!(SlotId::ALL.len() <= u128::BITS as usize);
@@ -406,6 +408,7 @@ impl ProjectCheck {
             origin: false,
             origins: [ReadOrigin::Missing; MAX_PARTS],
             lossy: false,
+            over: false,
         }
     }
 
@@ -530,7 +533,7 @@ impl ProjectCheck {
         (self.context, self.parts) = (Context::None, PartSet::EMPTY);
         (self.fx, self.fx_blocks, self.mix, self.origin) = (false, 0, false, false);
         self.origins = [ReadOrigin::Missing; MAX_PARTS];
-        self.lossy = false;
+        (self.lossy, self.over) = (false, false);
     }
 
     fn costs(&self) -> &Costs {
@@ -675,6 +678,18 @@ impl ProjectCheck {
 
     /// Ends a `Slot` or `Part`: its Sound's `finish`, which adds the routes.
     fn close(
+        &mut self,
+        target: Option<&mut Project>,
+        stage: Option<&mut Sound>,
+    ) -> Result<(), FileError> {
+        let r = self.close_sound(target, stage);
+        // A kind read as W1: a save would write other bytes.
+        self.over |= self.sound.over_budget();
+        self.lossy |= self.over;
+        r
+    }
+
+    fn close_sound(
         &mut self,
         target: Option<&mut Project>,
         stage: Option<&mut Sound>,
@@ -882,6 +897,12 @@ impl<'a> ProjectDecoder<'a> {
     /// than a save would write (ADR 0078). The load is then not Saved.
     pub fn lossy(&self) -> bool {
         self.check.lossy
+    }
+
+    /// After pass 2: a Sound's operator kinds past the formant budget read
+    /// as W1 (`SoundCheck::over_budget`).
+    pub fn over_budget(&self) -> bool {
+        self.check.over
     }
 }
 
