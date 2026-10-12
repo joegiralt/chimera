@@ -43,6 +43,7 @@ home = "C3"
 FILTER.CUTOFF = "1200"
 mod.LFO1 = "FILTER.CUTOFF +20"
 trim = "0"
+mod.ENV1 = "OUT.VCA +127"
 "#;
 
 /// `BASE` with line `n` (1-based) replaced by `with`.
@@ -227,13 +228,13 @@ fn unroutable_destination() {
 #[test]
 fn duplicate_id() {
     let two = format!("{BASE}\n{}", BASE.replace("TEST PAD\"", "OTHER PAD\""));
-    fails(&two, 14, "S9100002");
+    fails(&two, 15, "S9100002");
 }
 
 #[test]
 fn duplicate_name() {
     let two = format!("{BASE}\n{}", BASE.replace("S9100002", "S9100003"));
-    fails(&two, 15, "TEST PAD");
+    fails(&two, 16, "TEST PAD");
 }
 
 #[test]
@@ -281,7 +282,7 @@ fn public_refuses_from() {
     let ported = format!("{BASE}from = \"tx81z 1a2b3c4d #12\"\nedits = \"filter: 2040\"\n");
     // Parses (the private build reads it), but the public set refuses it.
     source::parse(&ported, "bad.toml").unwrap();
-    fails(&ported, 12, "from");
+    fails(&ported, 13, "from");
 }
 
 #[test]
@@ -302,7 +303,7 @@ fn placeholder_skipped() {
         "{BASE}\n{}status = \"placeholder\"\n",
         BASE.replace("S9100002", "S9100003")
     );
-    fails(&clash, 15, "TEST PAD");
+    fails(&clash, 16, "TEST PAD");
 }
 
 /// `fmt`'s comment for `key` in `text`.
@@ -827,7 +828,8 @@ fn listening_renders_are_wet_and_gates_dry() {
 #[test]
 fn env1_attack_shapes_the_level_only_through_a_vca_route() {
     let early = |extra: &str| {
-        let s = &source::parse(&format!("{BASE}{extra}"), "e.toml").unwrap()[0];
+        let bare = BASE.replace("mod.ENV1 = \"OUT.VCA +127\"\n", "");
+        let s = &source::parse(&format!("{bare}{extra}"), "e.toml").unwrap()[0];
         let x = qa::dry(s, Script::Long).unwrap();
         rms(&x, 2_400, 14_400) // 50-300 ms
     };
@@ -843,6 +845,41 @@ fn env1_attack_shapes_the_level_only_through_a_vca_route() {
         slow < fast * 0.25,
         "routed: a 4 s attack is quieter early ({slow} vs {fast})"
     );
+}
+
+#[test]
+fn va_without_vca_envelope_fails() {
+    // Drop the VCA envelope (line 12): the id line is named.
+    let none: String = BASE
+        .lines()
+        .filter(|l| !l.starts_with("mod.ENV1"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fails(&none, 2, "OUT.VCA");
+    // Velocity alone on the VCA is still organ-gated; so is a zero amount.
+    fails(
+        &none.replace("trim = \"0\"", "mod.VEL = \"OUT.VCA +40\""),
+        2,
+        "OUT.VCA",
+    );
+    fails(&base_with(12, r#"mod.ENV1 = "OUT.VCA +0""#), 2, "OUT.VCA");
+}
+
+#[test]
+fn va_with_vca_envelope_passes_and_others_are_exempt() {
+    run(BASE).unwrap();
+    run(&base_with(12, r#"mod.ENV2 = "OUT.VCA +90""#)).unwrap();
+    // ALGO and MODAL own their amplitude; a placeholder is not built.
+    let no_env = |extra: &str| {
+        BASE.lines()
+            .filter(|l| !l.starts_with("mod.ENV1"))
+            .chain(std::iter::once(extra))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    run(&no_env("").replace("engine = \"VA\"", "engine = \"ALGO\"")).unwrap();
+    run(&no_env("").replace("engine = \"VA\"", "engine = \"MODAL\"")).unwrap();
+    run(&no_env("status = \"placeholder\"")).unwrap();
 }
 
 /// `fmt --level` centres and trim-checks the dry Sound, as the gates

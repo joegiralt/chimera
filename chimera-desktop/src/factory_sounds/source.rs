@@ -336,6 +336,20 @@ fn routes(v: &str, line: usize) -> Result<Vec<Route>, String> {
 /// Ids unique and names unique across every Source, placeholders included.
 pub fn check(all: &[Source]) -> Result<(), String> {
     for (i, s) in all.iter().enumerate() {
+        // A VA Sound owns no amplitude of its own: without an ENV on the VCA
+        // it is organ-gated, flat while held. ALGO and MODAL shape their own.
+        let vca_env = s.mods.iter().any(|(src, rs)| {
+            matches!(src, ModSource::Env1 | ModSource::Env2 | ModSource::Env3)
+                && rs
+                    .iter()
+                    .any(|r| FixedCol::of(r.dest) == Some(FixedCol::Vca) && r.amount != 0)
+        });
+        if s.engine == EngineType::Va && !s.placeholder && !vca_env {
+            return Err(format!(
+                "{}: a VA Sound needs an ENV routed to OUT.VCA (mod.ENV1 = \"OUT.VCA +127\")",
+                s.at(s.id_line)
+            ));
+        }
         if let Some(o) = all[..i].iter().find(|o| o.id == s.id) {
             return Err(format!(
                 "{}: id S{} is {}'s too",
