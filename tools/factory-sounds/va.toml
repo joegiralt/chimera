@@ -382,3 +382,80 @@ mod.LFO1 = "PITCH.FINE +5"
 mod.LFO2 = "VA.WAVE1 +25, VA.SHAPE1 +25"
 mod.VEL = "FILTER.CUTOFF +30"
 trim = "2.0"
+
+# Late-90s IDM set (with fm.toml and modal.toml): bit-crushed XOR grit.
+# harmonic "no": XOR folds by design; its held C6/C7 read 16-17 dB
+# harmonic over inharmonic, so the spectrum is not harmonic.
+[[sound]]
+id = "S9100040"
+name = "XOR GRIT"
+engine = "VA"
+note = "XOR MODE: LFO WARBLES THE GRIT"
+demo = "poly"
+plays = "long texture"
+home = "C3"
+phrase = "lead"
+harmonic = "no"
+OUT.LEVEL = "0.25"  # 32
+ENV1.ATK = "0.12"  # 5.6 ms
+ENV1.DEC = "0.5"  # 187 ms
+ENV1.SUS = "0.7"  # 70%
+ENV1.REL = "0.45"  # 126 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.MODE = "XOR"
+VA.AMOUNT = "0.4"  # 51
+VA.CRSE2 = "12"  # +12
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "2200"  # 2.20 kHz
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.38"  # 72 ms
+ENV2.SUS = "0"  # 0%
+mod.ENV2 = "VA.AMOUNT +50, PITCH.FINE +25"
+LFO1.RATE = "6.5"  # 41
+LFO1.SHAPE = "TRIANGLE"
+mod.LFO1 = "VA.AMOUNT +30"
+LFO2.RATE = "0.25"  # 2
+mod.LFO2 = "VA.SHAPE1 +40, FILTER.CUTOFF +25"
+mod.VEL = "VA.AMOUNT +20, FILTER.CUTOFF +20"
+level = "by ear: set low so v127 texture stays under 1 dB of limiting"
+trim = "2.0"
+
+# Ring-mod blips: two sines a tritone apart (inharmonic); ENV 2 zaps the
+# partner's pitch. Saws clicked 17x.
+[[sound]]
+id = "S9100041"
+name = "RING BLIPS"
+engine = "VA"
+note = "TRITONE RING-MOD ZAPS"
+demo = "poly"
+plays = "short long texture"
+home = "C3"
+phrase = "wonky"
+harmonic = "no"
+OUT.LEVEL = "0.25"  # 32
+ENV1.ATK = "0.15"  # 7.2 ms
+ENV1.DEC = "0.45"  # 126 ms
+ENV1.SUS = "0.55"  # 55%
+ENV1.REL = "0.3"  # 38 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.MODE = "RING"
+VA.WAVE1 = "0"
+VA.WAVE2 = "0"
+VA.CRSE2 = "6"  # +6
+VA.AMOUNT = "0.5"  # 64
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "2500"  # 2.50 kHz
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.36"  # 61 ms
+ENV2.SUS = "0"  # 0%
+mod.ENV2 = "VA.FINE2 +60, PITCH.FINE +20, FILTER.CUTOFF +40"
+LFO1.RATE = "7"  # 44
+LFO1.SYNC = "RETRIG"
+LFO1.SHAPE = "SINE"
+mod.LFO1 = "VA.AMOUNT +25"
+LFO2.RATE = "0.3"  # 2
+mod.LFO2 = "VA.FINE2 +30"
+mod.VEL = "VA.AMOUNT +20, FILTER.CUTOFF +25"
+level = "by ear: set low so v127 texture blips stay under 1 dB of limiting"
+trim = "1.0"
+

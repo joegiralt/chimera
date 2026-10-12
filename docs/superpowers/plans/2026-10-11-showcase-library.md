@@ -233,4 +233,4 @@ Content work, judged by Task 8's gates and the owner's page, not by unit tests. 
 - [ ] **Step 4:** `just check` green; flash and AXI deltas for the branch in one line.
 - [ ] **Step 5:** Commit any Source fixes `Showcase: fixes from the listening round`.
 
-**Deferred (after #243):** fill `S9100028`–`S9100030`, re-run QA for them. **After #410 clears:** a new ADR supersedes 0134's port rule; ports move into `tools/factory-sounds/fm.toml` and the guard narrows to banks and voice names.
+**Deferred (after #243):** fill `S9100028`–`S9100030`, re-run QA for them. **After #410 clears:** a new ADR supersedes 0134's port rule; ports move into `tools/factory-sounds/fm.toml` and the guard narrows to banks and voice names. **Formant placeholders lean IDM (owner):** `S9100028`–`S9100030` (VOWEL CHOIR, TALK BASS, FORMANT LEAD) follow the late-90s IDM set (`S9100038`–`S9100043`): a talking FM bass whose vowel sweeps, a robotic formant lead with VOWEL on an LFO, and a breathy choir. They stay placeholders until formant-ops (#243, three-voice formant patches) merges; then each gets a phrase audition, the same gates and a listening round.

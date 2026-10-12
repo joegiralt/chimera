@@ -108,3 +108,41 @@ LFO2.SHAPE = "SINE"
 mod.LFO2 = "FILTER.CUTOFF +45"
 level = "by ear: set low so a 4-note chord with its reverb stays at or under 3 dB of limiting"
 trim = "-6.5"
+
+# Late-90s IDM set (with fm.toml and va.toml): short struck bars, glitchy,
+# into the delay. The 4 kHz cutoff tames the strike's click: without it
+# the strikes limited 7 dB at -19 LUFS.
+[[sound]]
+id = "S9100042"
+name = "GLITCH BARS"
+engine = "MODAL"
+note = "SHORT STRUCK BARS INTO DELAY"
+demo = "poly"
+plays = "short long texture"
+home = "C4"
+phrase = "arp"
+MODAL.MODE = "MODAL"
+MODAL.STRUCTURE = "0.25"  # 32
+MODAL.BRIGHT = "0.5"  # 64
+MODAL.DAMP = "0.7"  # 89
+MODAL.POS = "0.2"  # 25
+MODAL.BURST = "0.05"  # 6
+MODAL.EXCITE = "0.8"  # 102
+FILTER.CUTOFF = "4000"  # 4.00 kHz
+OUT.LEVEL = "1"  # 127
+OUT.SEND2 = "0.3"  # 38
+LFO1.RATE = "3.5"  # 22
+LFO1.SHAPE = "SINE"
+mod.LFO1 = "MODAL.STRUCTURE +20"
+LFO2.RATE = "0.5"  # 3
+LFO2.SHAPE = "TRIANGLE"
+mod.LFO2 = "MODAL.POS +40"
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.35"  # 57 ms
+ENV2.SUS = "0"  # 0%
+mod.ENV2 = "PITCH.FINE +40"
+# Velocity also sets the strike: EXCITE is read at note-on (vel x EXCITE).
+mod.VEL = "MODAL.BRIGHT +45, MODAL.DAMP -20"
+level = "by ear: set low so v127 texture strikes stay under 1 dB of limiting"
+trim = "-3.0"
+

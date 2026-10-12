@@ -128,3 +128,195 @@ demo = "poly"
 plays = "long"
 home = "C3"
 status = "placeholder"
+
+# The late-90s IDM set (S9100038-43, with va.toml and modal.toml): in the
+# manner of Plaid, Jega and Proswell, named here only.
+
+# Plaid-style detuned glass mallet: two 2-op stacks a few cents apart, the
+# inharmonic modulators (3.46, 7.07) decaying fast for the strike.
+[[sound]]
+id = "S9100038"
+name = "GLASS MALLET"
+engine = "ALGO"
+note = "LFO MORPHS TWO DETUNED BELLS"
+demo = "poly"
+plays = "short long texture"
+home = "C4"
+phrase = "arp"
+harmonic = "no"
+ALGO.ALG_A = "T5"
+ALGO.ALG_B = "A1"
+ALGO.MORPH = "40"
+OP_A.DETUN = "-3"
+OP_A.LEVEL = "99"
+OP_A.VEL = "3"
+OP_A.D1R = "6"
+OP_A.D1L = "11"
+OP_A.D2R = "2"
+OP_A.RR = "7"
+OP_B.CRSE = "12"  # 3.46
+OP_B.LEVEL = "72"
+OP_B.VEL = "6"
+OP_B.D1R = "14"
+OP_B.D1L = "4"
+OP_B.D2R = "4"
+OP_B.RR = "8"
+OP_C.DETUN = "3"  # +3
+OP_C.LEVEL = "99"
+OP_C.VEL = "3"
+OP_C.D1R = "7"
+OP_C.D1L = "10"
+OP_C.D2R = "2"
+OP_C.RR = "7"
+OP_D.CRSE = "23"  # 7.07
+OP_D.LEVEL = "60"
+OP_D.VEL = "5"
+OP_D.D1R = "18"
+OP_D.D1L = "2"
+OP_D.D2R = "6"
+OP_D.RR = "8"
+LFO1.RATE = "6"  # 38
+LFO1.SHAPE = "TRIANGLE"
+mod.LFO1 = "OP_B.LEVEL +12"
+LFO2.RATE = "0.3"  # 2
+LFO2.SHAPE = "SINE"
+mod.LFO2 = "ALGO.MORPH +40"
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.35"  # 57 ms
+ENV2.SUS = "0"  # 0%
+mod.ENV2 = "PITCH.FINE +30, OP_D.LEVEL +15"
+mod.VEL = "OP_B.LEVEL +20, OP_D.LEVEL +20"
+OUT.SEND1 = "0.25"  # 32
+OUT.LEVEL = "1"  # 127
+trim = "-4.6"
+level = "by ear: set low so v127 texture strikes stay under 1 dB of limiting"
+
+# Jega-style rubber bass: a 2-op squelch over a 0.50 sine; the
+# modulator's own fast decay, ENV 2 and a 5 Hz LFO move the index. Poly:
+# on a MONO Part the legato retrigger clicked (glide 5-16x).
+[[sound]]
+id = "S9100039"
+name = "RUBBER BASS"
+engine = "ALGO"
+note = "ENVELOPES SQUELCH FM INDEX"
+demo = "poly"
+plays = "bass texture"
+home = "C2"
+phrase = "wonky"
+harmonic = "yes"
+ALGO.ALG_A = "T5"
+ALGO.ALG_B = "T5"
+OP_A.LEVEL = "99"
+OP_A.VEL = "3"
+OP_A.D1R = "4"
+OP_A.D1L = "14"
+OP_A.D2R = "2"
+OP_A.RR = "7"
+OP_B.LEVEL = "85"
+OP_B.VEL = "6"
+OP_B.D1R = "16"
+OP_B.D1L = "6"
+OP_B.D2R = "2"
+OP_B.RR = "7"
+OP_C.CRSE = "0"  # 0.50
+OP_C.LEVEL = "99"
+OP_C.D1R = "4"
+OP_C.D1L = "12"
+OP_C.RR = "7"
+OP_D.LEVEL = "0"
+OP_E.LEVEL = "80"
+OP_E.D1R = "4"
+OP_E.D1L = "13"
+OP_E.RR = "7"
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1400"  # 1.40 kHz
+FILTER.LEVEL = "0.75"  # 95
+FILTER.RESO = "0.45"  # 57
+ENV2.ATK = "0.1"  # 4.7 ms
+ENV2.DEC = "0.4"  # 84 ms
+ENV2.SUS = "0"  # 0%
+mod.ENV2 = "OP_B.LEVEL +30, FILTER.CUTOFF +45, PITCH.FINE +90"
+LFO1.RATE = "5"  # 32
+LFO1.SHAPE = "SINE"
+mod.LFO1 = "OP_B.LEVEL +18"
+LFO2.RATE = "0.4"  # 2
+mod.LFO2 = "FILTER.CUTOFF +15"
+mod.VEL = "OP_B.LEVEL +25, FILTER.CUTOFF +20"
+OUT.LEVEL = "1"  # 127
+trim = "-2.0"
+level = "by ear: set low so v127 texture stays under 1 dB of limiting"
+
+# A melancholic detuned FM pad: three stacks slightly apart, slow attacks,
+# the pitch, index and algorithm drifting on slow LFOs. Each
+# modulator shares its carrier's DETUN: a 1.00 modulator on a detuned
+# 1.00 carrier puts a sideband near 0 Hz (DC -33 dB).
+[[sound]]
+id = "S9100043"
+name = "COLD DRIFT"
+engine = "ALGO"
+note = "DETUNED FM PAD THAT DRIFTS"
+demo = "poly"
+plays = "long stab"
+home = "C3"
+phrase = "pad"
+harmonic = "yes"
+ALGO.ALG_A = "T5"
+ALGO.ALG_B = "T8"
+ALGO.MORPH = "50"
+OP_A.DETUN = "-2"
+OP_A.LEVEL = "95"
+OP_A.VEL = "2"
+OP_A.AR = "14"
+OP_A.D1R = "3"
+OP_A.D1L = "12"
+OP_A.D2R = "1"
+OP_A.RR = "6"
+OP_B.DETUN = "-2"
+OP_B.LEVEL = "55"
+OP_B.VEL = "4"
+OP_B.AR = "12"
+OP_B.D1R = "2"
+OP_B.D1L = "10"
+OP_B.RR = "6"
+OP_C.CRSE = "8"  # 2.00
+OP_C.DETUN = "3"  # +3
+OP_C.LEVEL = "85"
+OP_C.VEL = "2"
+OP_C.AR = "13"
+OP_C.D1R = "3"
+OP_C.D1L = "12"
+OP_C.RR = "6"
+OP_D.DETUN = "3"  # +3
+OP_D.LEVEL = "45"
+OP_D.AR = "10"
+OP_D.RR = "6"
+OP_E.CRSE = "0"  # 0.50
+OP_E.DETUN = "1"  # +1
+OP_E.LEVEL = "80"
+OP_E.AR = "15"
+OP_E.D1L = "13"
+OP_E.RR = "6"
+OP_F.LEVEL = "30"
+OP_F.AR = "12"
+OP_F.RR = "6"
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1500"  # 1.50 kHz
+ENV2.SPEED = "SLOW"
+ENV2.ATK = "0.55"  # 1.2 s
+ENV2.SUS = "0.6"  # 60%
+mod.ENV2 = "FILTER.CUTOFF +35"
+LFO1.RATE = "0.13"  # 1
+LFO1.SHAPE = "SINE"
+mod.LFO1 = "PITCH.FINE +6"
+LFO2.RATE = "0.21"  # 1
+LFO2.SHAPE = "TRIANGLE"
+mod.LFO2 = "OP_B.LEVEL +20, OP_D.LEVEL -15"
+LFO3.RATE = "0.07"  # 0
+LFO3.SHAPE = "SINE"
+mod.LFO3 = "ALGO.MORPH +50"
+mod.VEL = "OP_B.LEVEL +20, FILTER.CUTOFF +15"
+OUT.SEND3 = "0.1"  # 13
+OUT.LEVEL = "1"  # 127
+level = "by ear: set low so a 4-note chord stays at or under 3 dB of limiting"
+trim = "-6.0"
+
