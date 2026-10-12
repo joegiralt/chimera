@@ -437,7 +437,7 @@ impl UiState {
     /// toast; a refusal changes nothing.
     fn lib_adopt(&mut self, go: Confirmed<LibraryPart>, read: LibRead, staged: Option<Staged>) {
         let part = go.target().part;
-        let was = self.active_engine();
+        let was = self.active_chain();
         match self.project.adopt(go, staged) {
             Ok(a) => {
                 self.landed(part, was);

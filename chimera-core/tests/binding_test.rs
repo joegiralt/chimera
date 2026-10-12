@@ -6,7 +6,7 @@ use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use chimera_core::ui::block_registry as reg;
-use chimera_core::ui::nav::chain_def_for;
+use chimera_core::ui::nav::{PartChain, chain_def_for};
 use chimera_core::ui::page::ValFmt;
 use chimera_core::ui::view::{SlotCtx, view};
 
@@ -127,7 +127,7 @@ fn all_chains_holds_every_reachable_chain() {
     at.extend(ls.into_iter().map(|l| (EngineType::Algo, l)));
     for (engine, l) in at {
         let cx = NavCtx {
-            engines: [engine; 6],
+            chains: [PartChain::base(engine); 6],
             dyn_rows: 0,
             orbit: OrbitCx::NONE,
             rev: chimera_core::dsp::reverb::ReverbType::Quad,

@@ -275,7 +275,9 @@ fn every_page_walk() {
 #[test]
 fn representative_pages_walk() {
     let enc = [EncoderId::A, EncoderId::E];
-    walk(Context::Part(EngineType::Algo), 2, &enc, |_, sub| sub <= 1);
+    walk(Context::Part(EngineType::Algo), 2, &enc, |_, sub| {
+        sub <= 1 || sub >= 13
+    });
     walk(Context::Mixer(0), 2, &enc, |_, _| true);
     walk(Context::Fx, 2, &enc, |_, sub| sub == 0);
     let leaf =
