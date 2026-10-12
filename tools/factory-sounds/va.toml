@@ -104,8 +104,8 @@ LFO1.RATE = "3"  # 19
 LFO1.SYNC = "RETRIG"
 mod.LFO1 = "VA.SHAPE1 +60, VA.SHAPE2 +60"
 mod.VEL = "FOLDER.FOLD +20"
-level = "by ear: velocity Sound, texture DC past -60 dBFS above this"
-trim = "1"
+level = "by ear: velocity Sound, centred so v127 stays under the limiter"
+trim = "4.0"
 
 [[sound]]
 id = "S9100005"
@@ -130,8 +130,7 @@ ENV2.SUS = "0"  # 0%
 mod.ENV1 = "OUT.VCA +127, FILTER.CUTOFF +40"
 mod.ENV2 = "VA.AMOUNT +50, FILTER.CUTOFF +30"
 mod.VEL = "FOLDER.FOLD +60"
-level = "by ear: velocity Sound, texture DC past -60 dBFS above this"
-trim = "-3.5"
+trim = "2.7"
 
 [[sound]]
 id = "S9100006"
@@ -204,7 +203,7 @@ ENV2.LEVEL = "0.3"  # 38
 mod.ENV1 = "OUT.VCA +127, FILTER.CUTOFF +40"
 mod.ENV2 = "VA.CRSE2 +50"
 mod.VEL = "ENV2.LEVEL +90"
-trim = "-0.0"
+trim = "0.0"
 
 [[sound]]
 id = "S9100009"
