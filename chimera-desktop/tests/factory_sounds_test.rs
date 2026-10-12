@@ -1466,9 +1466,9 @@ fn phrases_carry_what_they_show() {
     );
     assert!(
         (0..qa::PHRASE_STEPS)
-            .step_by(4)
+            .step_by(16)
             .any(|b| arp.iter().all(|x| x.at != b)),
-        "a rest on a downbeat"
+        "a rest on a bar's downbeat"
     );
     assert!(arp.len() <= 40, "clear, not dense: {}", arp.len());
     let mut chords: Vec<u8> = qa::phrase_notes(Phrase::Pad).iter().map(|x| x.at).collect();

@@ -127,7 +127,7 @@ MODAL.BRIGHT = "0.5"  # 64
 MODAL.DAMP = "0.7"  # 89
 MODAL.POS = "0.2"  # 25
 MODAL.BURST = "0.05"  # 6
-MODAL.EXCITE = "0.8"  # 102
+MODAL.EXCITE = "0.5"  # 64
 FILTER.CUTOFF = "4000"  # 4.00 kHz
 OUT.LEVEL = "1"  # 127
 OUT.SEND2 = "0.3"  # 38
@@ -143,6 +143,6 @@ ENV2.SUS = "0"  # 0%
 mod.ENV2 = "PITCH.FINE +40"
 # Velocity also sets the strike: EXCITE is read at note-on (vel x EXCITE).
 mod.VEL = "MODAL.BRIGHT +45, MODAL.DAMP -20"
-level = "by ear: set low so v127 texture strikes stay under 1 dB of limiting"
+level = "by ear: set low so the arp phrase's strikes with the delay stay under 1 dB of limiting"
 trim = "-3.0"
 

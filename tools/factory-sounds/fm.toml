@@ -193,7 +193,8 @@ level = "by ear: set low so v127 texture strikes stay under 1 dB of limiting"
 
 # Jega-style rubber bass: a 2-op squelch over a 0.50 sine; the
 # modulator's own fast decay, ENV 2 and a 5 Hz LFO move the index. Poly:
-# on a MONO Part the legato retrigger clicked (glide 5-16x).
+# on a MONO Part the legato retrigger clicked (glide 5-16x):
+# private issue #486
 [[sound]]
 id = "S9100039"
 name = "RUBBER BASS"
@@ -248,13 +249,13 @@ level = "by ear: set low so v127 texture stays under 1 dB of limiting"
 
 # A melancholic detuned FM pad: three stacks slightly apart, slow attacks,
 # the pitch, index and algorithm drifting on slow LFOs. Each
-# modulator shares its carrier's DETUN: a 1.00 modulator on a detuned
+# modulator shares its carrier's DETUN (op 6 its op 5's): a 1.00 modulator on a detuned
 # 1.00 carrier puts a sideband near 0 Hz (DC -33 dB).
 [[sound]]
 id = "S9100043"
-name = "COLD DRIFT"
+name = "LAST LIGHT"
 engine = "ALGO"
-note = "DETUNED FM PAD THAT DRIFTS"
+note = "DETUNED FM PAD THAT WANDERS"
 demo = "poly"
 plays = "long stab"
 home = "C3"
@@ -296,6 +297,7 @@ OP_E.LEVEL = "80"
 OP_E.AR = "15"
 OP_E.D1L = "13"
 OP_E.RR = "6"
+OP_F.DETUN = "1"  # +1
 OP_F.LEVEL = "30"
 OP_F.AR = "12"
 OP_F.RR = "6"
@@ -317,6 +319,6 @@ mod.LFO3 = "ALGO.MORPH +50"
 mod.VEL = "OP_B.LEVEL +20, FILTER.CUTOFF +15"
 OUT.SEND3 = "0.1"  # 13
 OUT.LEVEL = "1"  # 127
-level = "by ear: set low so a 4-note chord stays at or under 3 dB of limiting"
-trim = "-6.0"
+level = "by ear: set low so a 4-note chord with its reverb stays at or under 3 dB of limiting"
+trim = "-7.3"
 
