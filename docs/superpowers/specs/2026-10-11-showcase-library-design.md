@@ -140,7 +140,7 @@ Effects demos: each project's Parts play `stab` and `short` through every reverb
 | Loudness | `loudness_test`'s protocol: the home note at v100, held 1 s, P1. The result must be −11 LUFS ± 2 LU (ADR 0109's reference). `fmt --level` sets `trim` to centre it. A Sound kept off-centre by ear says `level = "by ear: <reason>"` |
 | Limiter | A single note: at most 1 dB of gain reduction. `stab`: at most 3 dB |
 | Clicks | `listen::qa`'s click ratio at every note-on, note-off and render edge. DC under −60 dBFS. Finite output |
-| Aliasing | For harmonic Sounds (VA, and ports whose ratios are integer): `long` at C6 and C7, with inharmonic energy at least 40 dB under the harmonic energy. Bells, vocal and MODAL are exempt, and are marked for listening |
+| Aliasing | For harmonic Sounds: `long` at C6 and C7, with inharmonic energy at least 40 dB under the harmonic energy. The Source's `harmonic = "yes" \| "no"` decides; it defaults to yes for VA and no for ALGO and MODAL, so integer-ratio ALGO (the FM vocal Sounds, ports with integer ratios) opts in. A Sound marked no (bells, MODAL) is exempt and marked for listening |
 | Tails | Silent (−90 dBFS) within the release plus 2 s, or 10 s for MODAL, which keeps ringing after note-off |
 | Tap | The vocal Sounds: the render with the tap differs from one without it by at least 6 dB of spectral error, so the op 5 or op 6 route is audible |
 | Samey | No two Sounds' `long` renders within 3 dB on all 32 ERB bands (the importer spec's spectral metric). A pair that fails is reported for a by-ear verdict |
@@ -253,8 +253,8 @@ Which TX81Z voice each starts from is chosen at the porting step, by the nearest
 | Id | Name | Model | Description | Modulation |
 |---|---|---|---|---|
 | 31 | NYLON | STRING | PLUCKED STRING; POSITION FOLLOWS NOTE | NOTE → POS; VELOCITY → BRIGHT |
-| 32 | GAMELAN | BANK | STRUCK BARS; VELOCITY SETS BRIGHT | VELOCITY → BRIGHT and EXCITE; LFO 1 slow → DAMP |
-| 33 | CELLO SWELL | BOWED | ENV 2 PRESSES THE BOW | ENV 2 → FORCE; LFO 1 → SPEED |
+| 32 | GAMELAN | BANK | HARDER STRIKES RING BRIGHTER | VELOCITY → BRIGHT (and the strike itself: EXCITE is read at note-on, scaled by velocity, not routable); LFO 1 slow → DAMP; LFO 2 → BRIGHT and STRUCT (shimmer) |
+| 33 | CELLO SWELL | BOWED | ENV 2 SWELLS THE BOWED TONE | ENV 2 → BRIGHT and FREQ (FORCE is not a mod destination); LFO 2 → POS (SPEED is not a mod destination); LFO 1 → FINE (vibrato) |
 | 34 | SITAR DRONE | SYMP | SYMPATHETIC STRINGS RING ON | STRUCT fixed; COUPLE and HALO high; reverb send |
 
 **What's missing, and how each Sound still delivers:**
