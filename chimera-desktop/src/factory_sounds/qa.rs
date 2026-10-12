@@ -156,7 +156,7 @@ pub const PHRASE_STEPS: u8 = 64;
 /// The bars `p` spans, in sixteenths.
 pub const fn phrase_steps(p: Phrase) -> u8 {
     match p {
-        Phrase::Sweep => SWEEP_FIGURE_STEPS * SWEEP_REPEATS,
+        Phrase::Sweep => SWEEP_STEPS,
         _ => PHRASE_STEPS,
     }
 }
@@ -378,59 +378,166 @@ pub const WONKY_PHRASE: [PhraseNote; 30] = [
     n(0, 62, 2, 104),
 ];
 
-/// `sweep`'s figure: two bars.
-pub const SWEEP_FIGURE_STEPS: u8 = 32;
-/// Six figures: twelve bars, 24 s at 120 BPM (the last note-off at 23.6 s).
-/// That holds one whole cycle (a rise and a fall) of an LFO at 0.05 Hz
-/// (20 s), the slow end of the owner's 0.05–0.1 Hz, with two bars over.
-/// Eight bars (16 s) would hold a cycle only from 0.0625 Hz up; sixteen
-/// (32 s) would not fit `PhraseNote`'s sixteenths in a `u8` and add 8 s
-/// to every `qa` run. `source::sweep_hz` refuses a slower LFO.
-pub const SWEEP_REPEATS: u8 = 6;
-/// The fastest LFO a `sweep` Sound may open its filter with (owner: a very
-/// slow sweep, 0.05 to 0.1 Hz).
+/// `sweep`'s length, in sixteenths: twelve bars, 24 s at 120 BPM.
+pub const SWEEP_STEPS: u8 = 192;
+/// The slowest swell `sweeps` takes: an ENV's rise, s.
+pub const SWEEP_MIN_RISE_S: f32 = 1.0;
+/// The fastest LFO a `sweep` Sound may swell with (owner: a very slow
+/// sweep, 0.05 to 0.1 Hz).
 pub const SWEEP_MAX_HZ: f32 = 0.1;
+/// The least route depth that is heard as a swell (±16 ≈ 1.3 octaves).
+pub const SWEEP_MIN_DEPTH: u8 = 16;
 
-/// In the manner of Radiohead – "Everything In Its Right Place" (rhythm
-/// and contour only, not transcribed), written fresh: one minor-seventh
-/// keys chord stabbed on a syncopated two-bar rhythm over a held root, the
-/// same every time, so all that moves is the slow filter (and velocity:
-/// accents 70 to 108). Every pitch sounds on the first downbeat and is
-/// re-struck while it still rings, so each voice is taken back and its
-/// free-running LFO stays in phase with the others: one sweep.
-#[rustfmt::skip]
-pub const SWEEP_FIGURE: [PhraseNote; 34] = [
-    // The held root, then i7 stabbed in 3 + 3 + 4 + 2 + 4.
-    n(-12, 0, 14, 96),
-    n(0, 0, 2, 104), n(7, 0, 2, 100), n(10, 0, 2, 102), n(15, 0, 2, 104),
-    n(0, 3, 2, 76), n(7, 3, 2, 72), n(10, 3, 2, 74), n(15, 3, 2, 76),
-    n(0, 6, 3, 92), n(7, 6, 3, 88), n(10, 6, 3, 90), n(15, 6, 3, 92),
-    n(0, 10, 1, 74), n(7, 10, 1, 70), n(10, 10, 1, 72), n(15, 10, 1, 74),
-    n(0, 12, 3, 86), n(7, 12, 3, 82), n(10, 12, 3, 84), n(15, 12, 3, 86),
-    // The root again, then a longer answer: 3 + 5 + 8.
-    n(-12, 16, 14, 90),
-    n(0, 16, 2, 108), n(7, 16, 2, 104), n(10, 16, 2, 106), n(15, 16, 2, 108),
-    n(0, 19, 4, 80), n(7, 19, 4, 76), n(10, 19, 4, 78), n(15, 19, 4, 80),
-    n(0, 24, 5, 96), n(7, 24, 5, 92), n(10, 24, 5, 94), n(15, 24, 5, 96),
+/// In the manner of Radiohead – "Everything In Its Right Place" (harmony
+/// and contour only, not transcribed), written fresh: three open minor
+/// chords, i7 – ♭VImaj7 – ♭VII7, each struck whole and held four bars
+/// (7.9 s) over its root, so a slow envelope on the cutoff swells each one
+/// open and closed. Every voice of a chord starts its envelope together:
+/// honest as played, whatever the voices did before. Common tones (the
+/// fifth and the minor third above the octave) are re-struck at each change.
+pub const SWEEP_PHRASE: [PhraseNote; 15] = [
+    // i7
+    n(-12, 0, 63, 96),
+    n(0, 0, 63, 92),
+    n(7, 0, 63, 88),
+    n(10, 0, 63, 90),
+    n(15, 0, 63, 94),
+    // ♭VImaj7, softer
+    n(-16, 64, 63, 84),
+    n(-4, 64, 63, 80),
+    n(7, 64, 63, 76),
+    n(12, 64, 63, 78),
+    n(15, 64, 63, 82),
+    // ♭VII7, the loudest: velocity opens it further
+    n(-14, 128, 63, 112),
+    n(-2, 128, 63, 108),
+    n(5, 128, 63, 104),
+    n(8, 128, 63, 106),
+    n(14, 128, 63, 110),
 ];
 
-/// `SWEEP_FIGURE`, `SWEEP_REPEATS` times end to end.
-pub const SWEEP_PHRASE: [PhraseNote; SWEEP_FIGURE.len() * SWEEP_REPEATS as usize] = {
-    const F: usize = SWEEP_FIGURE.len();
-    let mut out = [n(0, 0, 1, 1); F * SWEEP_REPEATS as usize];
-    let mut k = 0;
-    while k < out.len() {
-        let f = SWEEP_FIGURE[k % F];
-        out[k] = n(
-            f.step,
-            f.at + (k / F) as u8 * SWEEP_FIGURE_STEPS,
-            f.len,
-            f.vel,
+/// How a `sweep` Sound swells its filter (`sweep`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Swell {
+    /// A SLOW envelope: its rise and its fall, s.
+    Env { rise_s: f32, fall_s: f32 },
+    /// A free-running LFO, Hz.
+    Lfo { hz: f32 },
+}
+
+/// Every built `sweep` Sound's swell (`sweep`).
+pub fn sweeps(all: &[Source]) -> Result<(), String> {
+    all.iter()
+        .filter(|s| !s.placeholder && s.phrase == Some(Phrase::Sweep))
+        .try_for_each(|s| sweep(s).map(|_| ()))
+}
+
+/// The swell a `sweep` Source plays its held chords through, on
+/// FILTER.CUTOFF at ±`SWEEP_MIN_DEPTH` or more: either ENV 2 or 3, type A at
+/// SLOW, rising `SWEEP_MIN_RISE_S` or longer, sustaining at 50 % or under,
+/// its rise and fall spanning half to all of the shortest chord; or a SINE
+/// or TRIANGLE, CLASSIC, FREE LFO at `SWEEP_MAX_HZ` or slower whose cycle
+/// the phrase holds, with an ENV 1 release that bridges the phrase's
+/// longest gap (so a re-struck voice keeps its LFO). Else the id line fails.
+pub fn sweep(s: &Source) -> Result<Swell, String> {
+    use chimera_core::dsp::lfo::LfoShape;
+    use chimera_core::dsp::modulator::{EnvSpeed, LfoType};
+    let snd = patch(s)?;
+    let notes = phrase_notes(Phrase::Sweep);
+    let secs = |steps: u8| steps as f32 * SIXTEENTH_S;
+    let chord = secs(notes.iter().map(|x| x.len).min().unwrap_or(0));
+    let played = phrase_secs(Phrase::Sweep);
+    // A pitch's longest wait from its note-off to its next strike.
+    let gap = notes
+        .iter()
+        .filter_map(|x| {
+            notes
+                .iter()
+                .find(|y| y.step == x.step && y.at > x.at)
+                .map(|y| secs(y.at.saturating_sub(x.at + x.len)))
+        })
+        .fold(0.0, f32::max);
+    let env1 = &snd.params.envelopes[EnvSlot::Env1.index()];
+    let release = match env1.env_type {
+        EnvType::A => speed_ranges(env1.speed).dec_rel.at(env1.release),
+        EnvType::B => B_TIME.at(env1.func.fall),
+    };
+    let mut why = Vec::new();
+    for (src, rs) in &s.mods {
+        let Some(amt) = rs
+            .iter()
+            .find(|r| r.dest == FixedCol::Freq.addr())
+            .map(|r| r.amount)
+        else {
+            continue;
+        };
+        let name = src.name();
+        if amt.unsigned_abs() < SWEEP_MIN_DEPTH {
+            why.push(format!("{name}: depth {amt:+} under ±{SWEEP_MIN_DEPTH}"));
+            continue;
+        }
+        let lfo = match src {
+            ModSource::Env2 | ModSource::Env3 => {
+                let slot = src.env_slot().expect("an ENV source");
+                let e = &snd.params.envelopes[slot.index()];
+                if e.env_type != EnvType::A || e.speed != EnvSpeed::Slow {
+                    why.push(format!("{name}: not a SLOW type A envelope"));
+                    continue;
+                }
+                let r = speed_ranges(e.speed);
+                let (rise_s, fall_s) = (r.attack.at(e.attack), r.dec_rel.at(e.decay));
+                if rise_s < SWEEP_MIN_RISE_S {
+                    why.push(format!("{name}: rises in {rise_s:.1} s"));
+                } else if e.sustain > 0.5 {
+                    why.push(format!("{name}: sustains at {:.0} %", e.sustain * 100.0));
+                } else if !(chord / 2.0..=chord).contains(&(rise_s + fall_s)) {
+                    why.push(format!(
+                        "{name}: rise and fall {:.1} s, not within the {chord:.1} s chord's half to whole",
+                        rise_s + fall_s
+                    ));
+                } else {
+                    return Ok(Swell::Env { rise_s, fall_s });
+                }
+                continue;
+            }
+            ModSource::Lfo1 => 0,
+            ModSource::Lfo2 => 1,
+            ModSource::Lfo3 => 2,
+            _ => continue,
+        };
+        let l = &snd.params.lfos[lfo];
+        let smooth = matches!(
+            LfoShape::from_u8(l.shape),
+            LfoShape::Sine | LfoShape::Triangle
         );
-        k += 1;
+        if l.lfo_type != LfoType::Classic || l.sync != 0 || !smooth {
+            why.push(format!("{name}: not a FREE SINE or TRIANGLE"));
+        } else if l.rate > SWEEP_MAX_HZ {
+            why.push(format!(
+                "{name}: {} Hz is faster than {SWEEP_MAX_HZ} Hz",
+                l.rate
+            ));
+        } else if 1.0 / l.rate > played {
+            why.push(format!(
+                "{name}: its cycle ({:.1} s) is longer than the phrase ({played} s)",
+                1.0 / l.rate
+            ));
+        } else if release < gap {
+            why.push(format!(
+                "{name}: ENV 1's release ({release:.2} s) does not bridge the phrase's {gap} s gap"
+            ));
+        } else {
+            return Ok(Swell::Lfo { hz: l.rate });
+        }
     }
-    out
-};
+    Err(format!(
+        "{}: a sweep Sound needs a slow swell on FILTER.CUTOFF (a SLOW ENV 2 or 3 over each chord, \
+         or a FREE SINE or TRIANGLE LFO at {SWEEP_MAX_HZ} Hz or slower){}{}",
+        s.at(s.id_line),
+        if why.is_empty() { "" } else { ": " },
+        why.join("; ")
+    ))
+}
 
 /// A phrase's notes.
 pub const fn phrase_notes(p: Phrase) -> &'static [PhraseNote] {
@@ -1335,8 +1442,8 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source
         "Factory Sounds · listening",
         "Every Sound that is ready: APPROVED (passed your listening round), NEW (not yet heard), \
          and the PLACEHOLDERS still to come. Each plays over a phrase (BASS, LEAD, PAD, ARP or \
-         WONKY, four bars; SWEEP, twelve, while a slow LFO opens and closes the filter; on its \
-         demo mode), then under its render scripts, offline through the real \
+         WONKY, four bars; SWEEP, twelve, three held chords each swelling the filter open and \
+         closed; on its demo mode), then under its render scripts, offline through the real \
          Instrument (Part 1, P1); a render marked WITH plays its sends through NEW's effects. The \
          phrase is for your ear, not a gate. Under each Sound, what it is, read from the Sound \
          itself. Every gate passed (measured dry) or is marked for your ear: the lines in colour.",

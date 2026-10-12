@@ -60,6 +60,7 @@ fn base_with(n: usize, with: &str) -> String {
 fn run(text: &str) -> Result<Vec<source::Source>, String> {
     let s = source::parse(text, "bad.toml")?;
     source::check(&s)?;
+    chimera_desktop::factory_sounds::qa::sweeps(&s)?;
     source::public(&s)?;
     for x in &s {
         source::to_sound(x)?;
@@ -173,6 +174,7 @@ fn trim_moves_the_output_level() {
 fn every_committed_source_builds() {
     let s = build::sources(std::path::Path::new(SOURCES)).unwrap();
     source::check(&s).unwrap();
+    chimera_desktop::factory_sounds::qa::sweeps(&s).unwrap();
     source::public(&s).unwrap();
     let (files, man) = build::files(&s, &STAMP).unwrap();
     assert_eq!(files.len(), man.sounds.len());
@@ -388,7 +390,7 @@ fn trim_out_of_range_fails() {
 // ---- QA before UAT (spec § 4) ----
 
 use chimera_core::part::PartMode;
-use chimera_desktop::factory_sounds::qa::{self, Audition, Check, Gate, PhraseNote, Plan, Verdict};
+use chimera_desktop::factory_sounds::qa::{self, Audition, Check, Gate, Plan, Verdict};
 use chimera_desktop::factory_sounds::source::{Phrase, Script};
 
 const SR: f32 = 48_000.0;
@@ -1476,52 +1478,17 @@ fn phrases_carry_what_they_show() {
         "a rest on a bar's downbeat"
     );
     assert!(arp.len() <= 40, "clear, not dense: {}", arp.len());
-    // `sweep`: one keys figure repeated, so only the filter moves.
+    // `sweep`: two or three long chords, each struck whole (every note at
+    // once, held together), so one envelope start swells each chord.
     let sw = qa::phrase_notes(Phrase::Sweep);
-    let fig = &qa::SWEEP_FIGURE;
-    assert!(
-        fig.iter().all(|x| x.at + x.len <= qa::SWEEP_FIGURE_STEPS),
-        "the figure fits its bars"
-    );
-    assert_eq!(sw.len() % fig.len(), 0);
-    assert!(
-        sw.len() / fig.len() >= 4,
-        "repeated: {}",
-        sw.len() / fig.len()
-    );
-    for (k, x) in sw.iter().enumerate() {
-        let f = fig[k % fig.len()];
-        let shift = (k / fig.len()) as u8 * qa::SWEEP_FIGURE_STEPS;
-        assert_eq!(
-            *x,
-            PhraseNote {
-                at: f.at + shift,
-                ..f
-            },
-            "note {k}"
-        );
-    }
-    // Stabs: three or more notes struck together.
-    assert!(
-        fig.iter()
-            .any(|a| fig.iter().filter(|b| b.at == a.at).count() >= 3),
-        "chord stabs"
-    );
-    let sv: Vec<u8> = fig.iter().map(|x| x.vel).collect();
-    assert!(
-        sv.iter().max().unwrap() - sv.iter().min().unwrap() >= 30,
-        "accents for the velocity routes"
-    );
-    // Every pitch is struck on the first downbeat and re-struck while it
-    // still rings (within half a second), so the voice is taken back and
-    // its free-running LFO stays in phase with the others: one sweep, not
-    // a smear of voices at different cutoffs.
-    for x in sw {
-        assert!(sw.iter().any(|y| y.at == 0 && y.step == x.step), "{x:?}");
-        if let Some(next) = sw.iter().find(|y| y.step == x.step && y.at > x.at) {
-            let rest = next.at as i16 - (x.at + x.len) as i16;
-            assert!(rest <= 4, "{x:?} rests too long");
-        }
+    let mut starts: Vec<u8> = sw.iter().map(|x| x.at).collect();
+    starts.dedup();
+    assert!((2..=3).contains(&starts.len()), "{starts:?}");
+    for at in starts {
+        let chord: Vec<_> = sw.iter().filter(|x| x.at == at).collect();
+        assert!(chord.len() >= 3, "a chord at {at}");
+        assert!(chord.iter().all(|x| x.len == chord[0].len), "held together");
+        assert!(chord[0].len >= 32, "held long: {}", chord[0].len);
     }
     let mut chords: Vec<u8> = qa::phrase_notes(Phrase::Pad).iter().map(|x| x.at).collect();
     chords.dedup();
@@ -1553,44 +1520,61 @@ fn phrase_parses_and_a_va_sound_needs_one() {
     assert_eq!(run(&algo).unwrap()[0].phrase, Some(Phrase::Pad));
 }
 
-/// A `sweep` Sound needs a smooth (SINE or TRIANGLE), free-running LFO on
-/// the cutoff, no faster than `SWEEP_MAX_HZ`, whose whole cycle (one rise
-/// and fall) the phrase plays through; else the build fails on its id line.
+/// A `sweep` Sound needs a slow swell on the cutoff: a SLOW ENV over each
+/// chord, or a slow smooth free LFO whose cycle the phrase holds, at ±16
+/// or deeper; else the build fails on its id line.
 #[test]
-fn a_sweep_needs_a_slow_smooth_lfo_its_phrase_holds() {
+fn a_sweep_needs_a_slow_swell_its_phrase_holds() {
     let sweep = |extra: &str| format!("{}\n{extra}\n", base_with(13, r#"phrase = "sweep""#));
-    // BASE's LFO 1 runs at the 1 Hz default: a wobble, not a sweep.
+    // BASE's LFO 1 runs at the 1 Hz default: a wobble, not a swell.
     fails(&sweep(""), 2, "sweep");
-    run(&sweep(r#"LFO1.RATE = "0.05""#)).unwrap();
-    run(&sweep("LFO1.RATE = \"0.1\"\nLFO1.SHAPE = \"TRIANGLE\"")).unwrap();
-    // A cycle longer than the phrase never comes back down.
+    // ENV 2 at SLOW: rises 3.7 s, falls 3.3 s, within the 7.9 s chord.
+    let env = |atk: &str, sus: &str, amt: &str, speed: &str| {
+        sweep(&format!(
+            "ENV2.SPEED = \"{speed}\"\nENV2.ATK = \"{atk}\"\nENV2.DEC = \"0.62\"\n\
+             ENV2.SUS = \"{sus}\"\nmod.ENV2 = \"FILTER.CUTOFF {amt}\""
+        ))
+    };
+    let ok = qa::sweep(&run(&env("0.68", "0", "+40", "SLOW")).unwrap()[0]).unwrap();
+    assert!(
+        matches!(ok, qa::Swell::Env { rise_s, .. } if rise_s > 3.0),
+        "{ok:?}"
+    );
+    // A closing swell (negative depth) counts too.
+    run(&env("0.68", "0", "-40", "SLOW")).unwrap();
+    fails(&env("0.68", "0", "+10", "SLOW"), 2, "depth");
+    fails(&env("0.68", "0", "+40", "MED"), 2, "SLOW");
+    fails(&env("0.3", "0", "+40", "SLOW"), 2, "rises in");
+    fails(&env("0.68", "1", "+40", "SLOW"), 2, "sustains");
+    fails(&env("0.8", "0", "+40", "SLOW"), 2, "rise and fall");
+    // The LFO path.
+    let lfo = |hz: &str, extra: &str| {
+        sweep(&format!(
+            "LFO1.RATE = \"{hz}\"\nENV1.REL = \"0.5\"\n{extra}"
+        ))
+    };
+    assert_eq!(
+        qa::sweep(&run(&lfo("0.05", "")).unwrap()[0]).unwrap(),
+        qa::Swell::Lfo { hz: 0.05 }
+    );
+    run(&lfo("0.1", "LFO1.SHAPE = \"TRIANGLE\"")).unwrap();
     let slow = 0.9 / qa::phrase_secs(Phrase::Sweep);
-    fails(&sweep(&format!("LFO1.RATE = \"{slow}\"")), 2, "cycle");
-    // Stepped, or restarted by each note.
+    fails(&lfo(&slow.to_string(), ""), 2, "cycle");
+    fails(&lfo("0.05", "LFO1.SHAPE = \"SQUARE\""), 2, "FREE SINE");
+    fails(&lfo("0.05", "LFO1.SYNC = \"RETRIG\""), 2, "FREE SINE");
     fails(
-        &sweep("LFO1.RATE = \"0.05\"\nLFO1.SHAPE = \"SQUARE\""),
+        &lfo("0.05", "").replace("FILTER.CUTOFF +20", "FILTER.CUTOFF +10"),
         2,
-        "sweep",
+        "depth",
     );
     fails(
-        &sweep("LFO1.RATE = \"0.05\"\nLFO1.SYNC = \"RETRIG\""),
+        &lfo("0.05", "ENV1.SPEED = \"FAST\"").replace("ENV1.REL = \"0.5\"", "ENV1.REL = \"0\""),
         2,
-        "sweep",
+        "release",
     );
-    // No LFO on the cutoff at all.
-    let none = sweep(r#"LFO1.RATE = "0.05""#).replace("mod.LFO1 = \"FILTER.CUTOFF +20\"", "");
+    // No swell on the cutoff at all.
+    let none = lfo("0.05", "").replace("mod.LFO1 = \"FILTER.CUTOFF +20\"", "");
     fails(&none, 2, "sweep");
-    // The committed sweep Sounds: the render holds a full cycle.
-    for s in build::sources(std::path::Path::new(SOURCES)).unwrap() {
-        if s.phrase != Some(Phrase::Sweep) || s.placeholder {
-            continue;
-        }
-        let hz = source::sweep_hz(&s).unwrap();
-        let plan = qa::phrase_plan(Phrase::Sweep, s.home);
-        let notes_end = plan.hits.iter().map(|h| h.off).fold(0f32, f32::max);
-        assert!(1.0 / hz <= notes_end, "{}: {hz} Hz", s.name.as_str());
-        assert!(hz <= qa::SWEEP_MAX_HZ);
-    }
 }
 
 #[test]

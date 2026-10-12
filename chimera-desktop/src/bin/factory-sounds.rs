@@ -137,6 +137,7 @@ fn run_qa(wav: bool) -> Result<(), String> {
         .into_iter()
         .partition(|s| s.placeholder);
     source::check(&all)?;
+    qa::sweeps(&all)?;
     let reports = all.iter().map(qa::gates).collect::<Result<Vec<_>, _>>()?;
     let bands: Vec<_> = reports.iter().map(|r| r.bands).collect();
     let samey = qa::samey(&bands);

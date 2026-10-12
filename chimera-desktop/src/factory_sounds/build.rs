@@ -86,10 +86,11 @@ pub fn files(all: &[Source], stamp: &BuildStamp) -> Result<(Vec<File>, Manifest)
 }
 
 /// The public set from `dir` into `out` (emptied first): parse, check
-/// (ids, names, descriptions, routes), refuse ports, build.
+/// (ids, names, descriptions, routes, a sweep's swell), refuse ports, build.
 pub fn public(dir: &Path, out: &Path, stamp: &BuildStamp) -> Result<Manifest, String> {
     let all = sources(dir)?;
     source::check(&all)?;
+    super::qa::sweeps(&all)?;
     source::public(&all)?;
     let (files, man) = files(&all, stamp)?;
     let io = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());

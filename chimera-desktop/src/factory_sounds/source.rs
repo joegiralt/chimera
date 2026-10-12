@@ -74,8 +74,8 @@ pub enum Phrase {
     Arp,
     /// A wonky melodic bassline: odd accents, legato slides.
     Wonky,
-    /// One keys figure repeated over twelve bars while a slow LFO opens and
-    /// closes the filter (`check` holds its cycle to the phrase).
+    /// Long held chords over twelve bars, each swelling the filter open and
+    /// closed (`qa::sweeps` holds the swell to the phrase).
     Sweep,
 }
 
@@ -167,7 +167,7 @@ impl Badge {
 }
 
 impl Source {
-    fn at(&self, line: usize) -> String {
+    pub fn at(&self, line: usize) -> String {
         format!("{}:{line}", self.file)
     }
 
@@ -427,55 +427,6 @@ fn routes(v: &str, line: usize) -> Result<Vec<Route>, String> {
         .collect()
 }
 
-/// A `sweep` Sound's filter LFO rate, Hz: a SINE or TRIANGLE, CLASSIC,
-/// free-running (never restarted by a note, so the chords' voices sweep
-/// together) LFO on FILTER.CUTOFF, no faster than `qa::SWEEP_MAX_HZ`, whose
-/// whole cycle (one rise and fall) the phrase plays through.
-pub fn sweep_hz(s: &Source) -> Result<f32, String> {
-    use super::qa::{SWEEP_MAX_HZ, phrase_secs};
-    use chimera_core::dsp::lfo::LfoShape;
-    use chimera_core::dsp::modulator::LfoType;
-    let cutoff = valid_addr("FILTER", "CUTOFF")
-        .expect("FILTER CUTOFF is stored")
-        .addr();
-    let snd = patch(s)?;
-    let played = phrase_secs(Phrase::Sweep);
-    let slow: Vec<f32> = s
-        .mods
-        .iter()
-        .filter(|(_, rs)| rs.iter().any(|r| r.dest == cutoff && r.amount != 0))
-        .filter_map(|(src, _)| match src {
-            ModSource::Lfo1 => Some(0),
-            ModSource::Lfo2 => Some(1),
-            ModSource::Lfo3 => Some(2),
-            _ => None,
-        })
-        .map(|i| &snd.params.lfos[i])
-        .filter(|l| {
-            l.lfo_type == LfoType::Classic
-                && l.sync == 0
-                && matches!(
-                    LfoShape::from_u8(l.shape),
-                    LfoShape::Sine | LfoShape::Triangle
-                )
-                && l.rate <= SWEEP_MAX_HZ
-        })
-        .map(|l| l.rate)
-        .collect();
-    match slow.iter().find(|&&hz| 1.0 / hz <= played) {
-        Some(&hz) => Ok(hz),
-        None if !slow.is_empty() => Err(format!(
-            "{}: the sweep LFO's cycle ({:.1} s) is longer than the sweep phrase ({played} s)",
-            s.at(s.id_line),
-            1.0 / slow[0]
-        )),
-        None => Err(format!(
-            "{}: a sweep Sound needs a SINE or TRIANGLE LFO, FREE, on FILTER.CUTOFF at {SWEEP_MAX_HZ} Hz or slower",
-            s.at(s.id_line)
-        )),
-    }
-}
-
 /// Ids unique and names unique across every Source, placeholders included.
 pub fn check(all: &[Source]) -> Result<(), String> {
     for (i, s) in all.iter().enumerate() {
@@ -499,9 +450,6 @@ pub fn check(all: &[Source]) -> Result<(), String> {
                 "{}: a VA Sound needs a phrase (phrase = \"bass\", \"lead\", \"pad\", \"arp\", \"wonky\" or \"sweep\")",
                 s.at(s.id_line)
             ));
-        }
-        if !s.placeholder && s.phrase == Some(Phrase::Sweep) {
-            sweep_hz(s)?;
         }
         if s.placeholder && s.approved.is_some() {
             return Err(format!(
