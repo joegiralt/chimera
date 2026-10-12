@@ -667,10 +667,10 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 5] = [
 pub static MODAL_PLUCK_CHAIN: ChainDef2 =
     ChainDef2::new("Modal Pluck", &MODAL_PLUCK_BLOCKS, &PART_MOD_SOURCES).with_home_def(&MODAL_1);
 
-/// WAVE is the OSC node's home; FINE's DETUNE and the five ENV stages sit
-/// right after their group (sub-pages are one level deep), then OP1–OP6.
 pub use crate::ui::op_page::ALGO_OP_PAGES;
 
+/// WAVE is the OSC node's home; FINE's DETUNE and the five ENV stages sit
+/// right after their group (sub-pages are one level deep), then OP1–OP6.
 static ALGO_OSC_SUB_PAGES: [&BlockDef; 18] = [
     &ALGO_COARSE,
     &ALGO_FINE,

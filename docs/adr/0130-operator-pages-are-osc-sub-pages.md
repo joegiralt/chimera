@@ -11,7 +11,7 @@ The formant operators need a page per operator: WAVE, COARSE, FINE, LEVEL, FDBK 
 - The twelve group pages are unchanged.
 - Each OP page binds its six cells to its own operator (`ALGO_OP_PAGES`, ids 100–105; labels per the full-word rule, FDBK for FEEDBACK). The band draws the envelope with `viz::op_env` and the wave as an inset with `glyph::wave_trace`. Every colour is a theme token (ADR 0126).
 - Page focus is kept by `BlockDef.id`, not by position: `ChainDef2::locate`, `refocus` and `Location::rechained` re-find the page when the sub-row or the Part's chain changes.
-- #37's hold gesture is dropped. Its playhead dot, gang edit, LEVEL SCALE and living diagram stay in #37.
+- #37's hold gesture is not part of this change: it stays in #37, with the playhead dot, gang edit, LEVEL SCALE and living diagram.
 
 ## Alternatives considered
 - A hold or chord gesture into an operator page (#37): a new hidden gesture, and B*n* already means Part *n*.
@@ -25,4 +25,4 @@ The formant operators need a page per operator: WAVE, COARSE, FINE, LEVEL, FDBK 
 
 ## Sources
 - ADR 0081 (D-pad), ADR 0126 (theme), ADR 0070 (WAVE glyph).
-- Commit f34c5b51 (focus by id); issue #37.
+- The commit "Page focus is kept by page id; the Part's chain is picked per Sound" (focus by id); issue #37.
