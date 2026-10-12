@@ -31,8 +31,7 @@ LFO3.RATE = "0.2"  # 1
 mod.LFO3 = "VA.SHAPE1 +30, VA.SHAPE2 -30"
 mod.VEL = "VA.WAVE2 +20"
 level = "by ear: set low so a 4-note chord stays at or under 3 dB of limiting"
-trim = "-4.5"
-
+trim = "-4.0"
 
 [[sound]]
 id = "S9100002"
@@ -57,16 +56,15 @@ FILTER.CUTOFF = "2400"  # 2.40 kHz
 ENV2.SPEED = "SLOW"
 ENV2.ATK = "0.55"  # 1.2 s
 ENV2.SUS = "1"  # 100%
-LFO3.SHAPE = "RANDOM"
-LFO3.RATE = "6"  # 38
+LFO3.SHAPE = "SINE"
+LFO3.RATE = "2.5"  # 16
 mod.ENV2 = "VA.WAVE1 +85, VA.WAVE2 +85"
 mod.LFO3 = "VA.SHAPE1 +20"
 LFO1.RATE = "0.17"  # 1
 LFO1.SHAPE = "TRIANGLE"
 mod.LFO1 = "FILTER.CUTOFF +35, VA.SHAPE2 +30"
 level = "by ear: set low so a 4-note chord stays at or under 3 dB of limiting"
-trim = "-6.0"
-
+trim = "-4.9"
 
 [[sound]]
 id = "S9100003"
@@ -97,7 +95,6 @@ mod.ENV3 = "PITCH.FINE +5, VA.SHAPE1 +25"
 mod.LFO2 = "VA.WAVE2 +20"
 LFO2.RATE = "0.4"  # 2
 trim = "-1.9"
-
 
 [[sound]]
 id = "S9100004"
@@ -181,7 +178,9 @@ ENV2.DEC = "0.38"  # 72 ms
 ENV2.SUS = "0"  # 0%
 LFO1.RATE = "2"  # 13
 mod.ENV2 = "FILTER.CUTOFF +40"
-trim = "3.8"
+trim = "3.9"
+mod.LFO1 = "VA.WAVE1 +25"
+
 [[sound]]
 id = "S9100007"
 name = "FIFTH SLIDE"
@@ -202,14 +201,12 @@ VA.SUB = "0.3"  # 38
 PITCH.STEAL = "GLIDE"
 PITCH.GLIDE_TIME = "0.63"  # 120 ms
 FILTER.KIND = "2040"
-FILTER.CUTOFF = "1500"  # 1.50 kHz
+FILTER.CUTOFF = "1800"  # 1.80 kHz
 LFO1.RATE = "0.3"  # 2
-LFO2.RATE = "1.5"  # 9
-ENV2.DEC = "0.45"  # 126 ms
-ENV2.SUS = "0.2"  # 20%
+LFO2.RATE = "0.4"  # 2
 mod.LFO1 = "VA.AMOUNT +50"
-mod.LFO2 = "FILTER.CUTOFF +30, VA.SUB +20"
-trim = "0.3"
+mod.LFO2 = "FILTER.CUTOFF +30"
+trim = "-0.5"
 
 [[sound]]
 id = "S9100008"
@@ -241,7 +238,8 @@ mod.LFO1 = "PITCH.FINE +5"
 mod.LFO2 = "VA.CRSE2 +6"
 mod.VEL = "ENV2.LEVEL +90"
 trim = "0.5"
-level = "by ear: set low so v127 texture stays under the limiter"
+level = "by ear: set low so v127 texture stays at or under 1 dB of limiting"
+
 [[sound]]
 id = "S9100009"
 name = "RING LEAD"
@@ -254,7 +252,7 @@ phrase = "lead"
 OUT.LEVEL = "0.25"  # 32
 ENV1.ATK = "0.25"  # 17 ms
 ENV1.SUS = "0.8"  # 80%
-ENV1.REL = "0.55"  # 279 ms
+ENV1.REL = "0.4"  # 84 ms
 mod.ENV1 = "OUT.VCA +127"
 VA.MODE = "RING"
 VA.WAVE1 = "0.4"  # 51
@@ -268,12 +266,12 @@ LFO2.RATE = "0.35"  # 2
 ENV2.ATK = "0.4"  # 60 ms
 ENV2.DEC = "0.5"  # 187 ms
 ENV2.SUS = "0.5"  # 50%
-mod.VEL = "VA.AMOUNT +45, FILTER.CUTOFF +30"
+mod.VEL = "VA.AMOUNT +25, FILTER.CUTOFF +15"
 mod.LFO1 = "PITCH.FINE +5"
 mod.LFO2 = "VA.WAVE1 +25, VA.SHAPE2 +30"
 mod.ENV2 = "FILTER.CUTOFF +35"
-trim = "0.2"
-level = "by ear: set low so v127 texture stays under the limiter"
+trim = "2.6"
+level = "by ear: set low so v127 texture stays at or under 1 dB of limiting"
 [[sound]]
 id = "S9100035"
 name = "SOFT FLUTE"
@@ -319,24 +317,25 @@ OUT.LEVEL = "0.25"  # 32
 OUT.SEND1 = "0.4"  # 51
 ENV1.ATK = "0.12"  # 5.6 ms
 ENV1.SUS = "0.9"  # 90%
-ENV1.REL = "0.5"  # 187 ms
+ENV1.REL = "0.4"
 mod.ENV1 = "OUT.VCA +127"
-VA.FINE2 = "5"  # +5
+VA.FINE2 = "3"  # +3
+VA.CRSE2 = "12"  # +12
 VA.SUB = "0.35"  # 44
-VA.STAB = "0.6"  # 76
 FILTER.KIND = "2040"
-FILTER.CUTOFF = "1800"  # 1.80 kHz
-ENV2.ATK = "0.35"  # 39 ms
+FILTER.CUTOFF = "3500"  # 3.50 kHz
+ENV2.ATK = "0.2"  # 11 ms
 ENV2.DEC = "0.55"  # 279 ms
 ENV2.SUS = "0.5"  # 50%
-LFO1.RATE = "0.4"  # 2
+LFO1.RATE = "0.9"  # 6
 LFO2.RATE = "5"  # 32
 mod.ENV2 = "FILTER.CUTOFF +45"
-mod.LFO1 = "VA.SHAPE1 +35, VA.SHAPE2 -35"
+mod.LFO1 = "VA.SHAPE1 +35, VA.WAVE2 +20"
 mod.LFO2 = "PITCH.FINE +3"
 mod.VEL = "FILTER.CUTOFF +35, VA.SUB +30"
-trim = "-0.8"
-level = "by ear: set low so v127 texture stays under the limiter"
+trim = "-0.9"
+level = "by ear: set low so v127 texture stays at or under 1 dB of limiting"
+
 [[sound]]
 id = "S9100037"
 name = "SOLO PORTA"
