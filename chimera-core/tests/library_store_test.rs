@@ -584,8 +584,15 @@ fn save_with_p0000012_present_writes_p0000013() {
 
 #[test]
 fn lib_id_parse_splits_user_from_factory() {
-    assert!(matches!(LibId::parse("S0000012"), Some(LibId::User(_))));
-    assert!(matches!(LibId::parse("S9100001"), Some(LibId::Factory(_))));
+    use chimera_core::storage::LibKind;
+    assert!(matches!(
+        LibId::parse("S0000012").map(LibId::kind),
+        Some(LibKind::User(_))
+    ));
+    assert!(matches!(
+        LibId::parse("S9100001").map(LibId::kind),
+        Some(LibKind::Factory(_))
+    ));
     for bad in [
         "S9000000",
         "S0000000",

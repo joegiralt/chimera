@@ -190,16 +190,27 @@ impl FactoryId {
     }
 }
 
-/// A library Sound's number: `S#######`.
+/// A library Sound's number: `S#######`, a user or a factory id by construction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum LibId {
+#[repr(transparent)]
+pub struct LibId(u32);
+
+/// Which side of the split a `LibId` is on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LibKind {
     User(UserId),
     Factory(FactoryId),
 }
 
 impl From<UserId> for LibId {
     fn from(id: UserId) -> LibId {
-        LibId::User(id)
+        LibId(id.0)
+    }
+}
+
+impl From<FactoryId> for LibId {
+    fn from(id: FactoryId) -> LibId {
+        LibId(id.0)
     }
 }
 
@@ -209,8 +220,8 @@ impl LibId {
 
     pub fn new(n: u32) -> Option<LibId> {
         UserId::new(n)
-            .map(LibId::User)
-            .or_else(|| FactoryId::new(n).map(LibId::Factory))
+            .map(LibId::from)
+            .or_else(|| FactoryId::new(n).map(LibId::from))
     }
 
     /// `S` and 7 digits, nothing else.
@@ -223,14 +234,19 @@ impl LibId {
     }
 
     pub fn get(self) -> u32 {
-        match self {
-            LibId::User(u) => u.0,
-            LibId::Factory(f) => f.0,
+        self.0
+    }
+
+    pub fn kind(self) -> LibKind {
+        if self.is_factory() {
+            LibKind::Factory(FactoryId(self.0))
+        } else {
+            LibKind::User(UserId(self.0))
         }
     }
 
     pub fn is_factory(self) -> bool {
-        matches!(self, LibId::Factory(_))
+        self.0 >= LibId::FACTORY_MIN
     }
 
     /// `S` and 7 digits.
@@ -257,7 +273,7 @@ pub fn library_file(id: LibId) -> AbFile {
 /// let _ = user_file(FactoryId::new(9_100_001).unwrap());
 /// ```
 pub fn user_file(id: UserId) -> AbFile {
-    library_file(LibId::User(id))
+    library_file(id.into())
 }
 
 /// A `S#######.A` or `.B` in `SOUNDS`.

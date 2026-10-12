@@ -12,8 +12,8 @@ use chimera_core::params::EngineType;
 use chimera_core::part::PartMode;
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
-    BuildStamp, DiskValue, FactoryId, FileKind, Generation, Header, LibId, Note, ValidAddr,
-    encode_library_sound, read_value, write_file,
+    BuildStamp, DiskValue, FactoryId, FileKind, Generation, Header, LibId, LibKind, Note,
+    ValidAddr, encode_library_sound, read_value, write_file,
 };
 use chimera_core::taps::TapOp;
 use chimera_core::ui::draw::text_width;
@@ -165,8 +165,8 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
     };
 
     let (id_line, v) = need("id")?;
-    let id = match LibId::parse(v) {
-        Some(LibId::Factory(f)) if SHOWCASE_IDS.contains(&f.get()) => f,
+    let id = match LibId::parse(v).map(LibId::kind) {
+        Some(LibKind::Factory(f)) if SHOWCASE_IDS.contains(&f.get()) => f,
         _ => return Err(at(id_line, format!("id {v} is outside S9100001-S9199999"))),
     };
     let (name_line, v) = need("name")?;
