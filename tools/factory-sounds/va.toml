@@ -465,42 +465,42 @@ trim = "1.0"
 
 # Prophet-5-style set: two detuned oscillators into the 2040 four-pole
 # low-pass and its envelope, a little STABILITY drift, and poly-mod-like
-# motion (ENV 2 and slow LFOs into WAVE and SHAPE). Brass chords that
-# swell through the filter.
+# motion (the filter envelope into osc 1's pitch or osc 2's wave). Brass:
+# saw over a detuned pulse (a P5 has no sub), the filter swelling over
+# ~400 ms to a moderate sustain while ENV 2 bends osc 1 sharp and back, the
+# P5's filter-envelope-to-osc-A poly-mod.
 [[sound]]
 id = "S9100044"
 name = "WARM BRASS"
 engine = "VA"
-note = "ENV 2 SWELLS BRASS CHORDS"
+note = "ENV 2 BENDS OSC 1 IN THE SWELL"
 demo = "poly"
 plays = "long stab"
 home = "C3"
 phrase = "pad"
 OUT.LEVEL = "0.25"  # 32
 OUT.SEND3 = "0.1"  # 13
-ENV1.ATK = "0.4"  # 60 ms
+ENV1.ATK = "0.5"  # 141 ms
 ENV1.SUS = "0.9"  # 90%
 ENV1.REL = "0.6"  # 415 ms
 mod.ENV1 = "OUT.VCA +127"
-VA.FINE2 = "4"  # +4
-VA.SUB = "0.2"  # 25
-VA.STAB = "0.6"  # 76
+VA.WAVE2 = "0.95"  # 121
+VA.FINE2 = "7"  # +7
+VA.STAB = "0.5"  # 64
 FILTER.KIND = "2040"
-FILTER.CUTOFF = "550"  # 550 Hz
-FILTER.RESO = "0.15"  # 19
-ENV2.ATK = "0.5"  # 141 ms
+FILTER.CUTOFF = "650"  # 650 Hz
+FILTER.RESO = "0.2"  # 25
+ENV2.ATK = "0.62"  # 393 ms
 ENV2.DEC = "0.6"  # 415 ms
-ENV2.SUS = "0.55"  # 55%
+ENV2.SUS = "0.4"  # 40%
 ENV2.REL = "0.6"  # 415 ms
-mod.ENV2 = "FILTER.CUTOFF +45, VA.SHAPE1 +25"
-LFO1.RATE = "0.25"  # 2
-mod.LFO1 = "VA.FINE2 +6"
-LFO3.RATE = "0.12"  # 1
-LFO3.SHAPE = "TRIANGLE"
-mod.LFO3 = "VA.WAVE2 +15"
-mod.VEL = "FILTER.CUTOFF +30, ENV2.LEVEL +40"
+mod.ENV2 = "FILTER.CUTOFF +38, VA.FINE1 +10"
+LFO1.RATE = "0.3"  # 2
+LFO1.SHAPE = "TRIANGLE"
+mod.LFO1 = "VA.SHAPE2 +20"
+mod.VEL = "FILTER.CUTOFF +25"
 level = "by ear: set low so a 4-note chord with its reverb stays at or under 3 dB of limiting"
-trim = "-2.5"
+trim = "0.8"
 
 # Prophet-5 poly-mod keys: ENV 2 plucks the filter and bends osc 2's wave
 # (the filter envelope into oscillator B), a slow LFO widens the pulse.
@@ -541,39 +541,40 @@ trim = "-0.3"
 
 # The slow swell, in the manner of Radiohead's "Everything In Its Right
 # Place" (style only; the sweep phrase is original): Prophet-5-style keys
-# whose resonant 2040 a 0.05 Hz sine LFO sweeps once in ten bars (opens
-# for 2.5, closes for 5 to its darkest, opens 2.5 back). The LFO is FREE,
-# so the re-struck voices sweep in phase. Its steepest change is about a
-# cent of cutoff per block, which the 2040 ramps per sample: never zippered.
+# whose 2040 a SLOW ENV 2 swells open over 3.6 s and closed over 3.3 s on
+# each held chord. Every voice of a chord starts the envelope together, so
+# it swells as played (a FREE LFO's phase is per voice: it smears). The
+# envelope is continuous and the 2040 ramps its cutoff per sample: never
+# zippered.
 [[sound]]
 id = "S9100046"
 name = "SLOW TIDE"
 engine = "VA"
-note = "LFO OPENS THE FILTER FOR BARS"
+note = "ENV 2 SWELLS EACH CHORD OPEN"
 demo = "poly"
 plays = "long stab"
 home = "C3"
 phrase = "sweep"
 OUT.LEVEL = "0.25"  # 32
 OUT.SEND3 = "0.12"  # 15
-ENV1.ATK = "0.12"  # 5.6 ms
-ENV1.DEC = "0.6"  # 415 ms
-ENV1.SUS = "0.6"  # 60%
+ENV1.ATK = "0.3"  # 26 ms
+ENV1.SUS = "0.9"  # 90%
 ENV1.REL = "0.65"  # 617 ms
 mod.ENV1 = "OUT.VCA +127"
 VA.WAVE2 = "0.85"  # 108
 VA.FINE2 = "5"  # +5
 VA.STAB = "0.55"  # 70
 FILTER.KIND = "2040"
-FILTER.CUTOFF = "700"  # 700 Hz
-FILTER.RESO = "0.45"  # 57
-LFO1.RATE = "0.05"  # 0
-LFO1.SHAPE = "SINE"
-mod.LFO1 = "FILTER.CUTOFF +32"
-ENV2.ATK = "0"  # 2.0 ms
-ENV2.DEC = "0.5"  # 187 ms
+FILTER.CUTOFF = "600"  # 600 Hz
+FILTER.RESO = "0.25"  # 32
+ENV2.SPEED = "SLOW"
+ENV2.ATK = "0.68"  # 3.6 s
+ENV2.DEC = "0.62"  # 3.3 s
 ENV2.SUS = "0"  # 0%
-mod.ENV2 = "FILTER.CUTOFF +15"
+ENV2.REL = "0.5"  # 1.3 s
+mod.ENV2 = "FILTER.CUTOFF +32"
+LFO1.RATE = "0.3"  # 2
+mod.LFO1 = "VA.FINE2 +6"
 LFO2.RATE = "0.13"  # 1
 mod.LFO2 = "VA.SHAPE2 +30"
 LFO3.RATE = "0.08"  # 0
@@ -581,4 +582,4 @@ LFO3.SHAPE = "TRIANGLE"
 mod.LFO3 = "VA.WAVE1 +15"
 mod.VEL = "FILTER.CUTOFF +20, VA.WAVE2 -15"
 level = "by ear: set low so a 4-note chord with its reverb stays at or under 3 dB of limiting"
-trim = "1.2"
+trim = "-1.2"
