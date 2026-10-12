@@ -64,22 +64,34 @@ impl Script {
 
 /// The phrase a Sound is auditioned over on the owner's page (`qa`'s
 /// phrase tables): a listening render, never a gate. Every VA Sound names
-/// one (`phrase = "bass" | "lead" | "pad"`).
+/// one (`phrase = "bass" | "lead" | "pad" | "arp" | "wonky"`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phrase {
     Bass,
     Lead,
     Pad,
+    /// A syncopated arpeggio / broken-beat lead figure.
+    Arp,
+    /// A wonky melodic bassline: odd accents, legato slides.
+    Wonky,
 }
 
 impl Phrase {
-    pub const ALL: [Phrase; 3] = [Phrase::Bass, Phrase::Lead, Phrase::Pad];
+    pub const ALL: [Phrase; 5] = [
+        Phrase::Bass,
+        Phrase::Lead,
+        Phrase::Pad,
+        Phrase::Arp,
+        Phrase::Wonky,
+    ];
 
     pub const fn word(self) -> &'static str {
         match self {
             Phrase::Bass => "bass",
             Phrase::Lead => "lead",
             Phrase::Pad => "pad",
+            Phrase::Arp => "arp",
+            Phrase::Wonky => "wonky",
         }
     }
 }
@@ -234,12 +246,9 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
                     .ok_or_else(|| at(line, format!("trim {v}: dB")))?;
             }
             "phrase" => {
-                s.phrase = Some(
-                    Phrase::ALL
-                        .into_iter()
-                        .find(|p| p.word() == v)
-                        .ok_or_else(|| at(line, format!("phrase {v}: bass, lead or pad")))?,
-                )
+                s.phrase = Some(Phrase::ALL.into_iter().find(|p| p.word() == v).ok_or_else(
+                    || at(line, format!("phrase {v}: bass, lead, pad, arp or wonky")),
+                )?)
             }
             "harmonic" => {
                 s.harmonic = match v.as_str() {
@@ -397,7 +406,7 @@ pub fn check(all: &[Source]) -> Result<(), String> {
         // The owner auditions every VA Sound over a phrase (`qa`).
         if s.engine == EngineType::Va && !s.placeholder && s.phrase.is_none() {
             return Err(format!(
-                "{}: a VA Sound needs a phrase (phrase = \"bass\", \"lead\" or \"pad\")",
+                "{}: a VA Sound needs a phrase (phrase = \"bass\", \"lead\", \"pad\", \"arp\" or \"wonky\")",
                 s.at(s.id_line)
             ));
         }

@@ -1090,6 +1090,36 @@ fn phrases_carry_what_they_show() {
     assert!(overlaps(Phrase::Lead) >= 2, "a couple of slides");
     assert!(lead.iter().any(|x| x.len >= 8), "a held note for vibrato");
     assert!(lead.iter().any(|x| x.len <= 2), "and short ones");
+    // `wonky`: a melodic bassline with odd accents and a couple of slides.
+    let wonky = qa::phrase_notes(Phrase::Wonky);
+    assert!(overlaps(Phrase::Wonky) >= 2, "a couple of legato slides");
+    let wv: Vec<u8> = wonky.iter().map(|x| x.vel).collect();
+    assert!(
+        wv.iter().max().unwrap() - wv.iter().min().unwrap() >= 40,
+        "odd accents"
+    );
+    assert!(
+        wonky.iter().any(|x| x.at % 4 != 0 && x.vel >= 110),
+        "an accent off the beat"
+    );
+    // `arp`: syncopated, and clear rather than dense.
+    let arp = qa::phrase_notes(Phrase::Arp);
+    assert!(
+        arp.iter().filter(|x| x.at % 2 == 1).count() >= 6,
+        "onsets on the off-sixteenths"
+    );
+    assert!(
+        arp.iter()
+            .any(|x| x.at % 4 != 0 && (x.at / 4) != ((x.at + x.len - 1) / 4)),
+        "a note pushed off the beat and tied across it"
+    );
+    assert!(
+        (0..qa::PHRASE_STEPS)
+            .step_by(4)
+            .any(|b| arp.iter().all(|x| x.at != b)),
+        "a rest on a downbeat"
+    );
+    assert!(arp.len() <= 40, "clear, not dense: {}", arp.len());
     let mut chords: Vec<u8> = qa::phrase_notes(Phrase::Pad).iter().map(|x| x.at).collect();
     chords.dedup();
     assert!((2..=4).contains(&chords.len()), "{chords:?}");
@@ -1106,7 +1136,7 @@ fn phrase_parses_and_a_va_sound_needs_one() {
         let s = run(&base_with(13, &format!("phrase = \"{}\"", p.word()))).unwrap();
         assert_eq!(s[0].phrase, Some(p));
     }
-    fails(&base_with(13, r#"phrase = "arp""#), 13, "phrase arp");
+    fails(&base_with(13, r#"phrase = "jazz""#), 13, "phrase jazz");
     // A VA Sound without one fails on its id line.
     let none = BASE.replace("phrase = \"pad\"\n", "");
     fails(&none, 2, "phrase");

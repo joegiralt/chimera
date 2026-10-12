@@ -79,7 +79,7 @@ note = "MONO PART: 80 MS GLIDE, SUB BENEATH"
 demo = "mono"                     # the Part MODE for renders and demo projects
 plays = "bass texture glide"      # render scripts (§ 4)
 home = "C2"                       # level and aliasing note
-phrase = "bass"                   # the listening phrase (§ 4): bass, lead or pad
+phrase = "bass"                   # the listening phrase (§ 4): bass, lead, pad, arp or wonky
 VA.WAVE1 = "0.667"                # SAW
 VA.SUB = "0.45"
 PITCH.STEAL = "GLIDE"
@@ -128,6 +128,8 @@ Stamp: `Build` carries the version and the commit the Sources were built from; t
 | `bass` | A bouncy syncopated bassline with octave jumps, notes held into the next (glides on a MONO Part) and velocities 68 to 124 |
 | `lead` | A melodic line of long and short notes, legato slides, and a held note of 1.6 s for vibrato and filter motion |
 | `pad` | Four held chords, one a bar |
+| `arp` | A syncopated arpeggio grouped in threes across the bar, pushed onto the off-sixteenths and tied over the beat; short notes, no overlaps, velocities 70 to 120 |
+| `wonky` | A wonky melodic bassline with wide leaps, accents off the beat (velocities 68 to 124) and five notes held into the next (slides on a MONO Part) |
 
 The phrase plays on the Sound's demo mode, with its sends, as a stereo WAV. It is a listening render, not a gate: its limiter reading is shown and flagged over the 3 dB chord bar for `pad` and the 1 dB bar otherwise. A phrase that is not finite fails the run. The scripts above stay the gates.
 

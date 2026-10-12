@@ -275,12 +275,97 @@ pub const PAD_PHRASE: [PhraseNote; 16] = [
     n(14, 48, 16, 86),
 ];
 
+/// In the manner of Plaid – the broken, interlocking arpeggios of "Not for
+/// Threes" and "Rest Proof Clockwork" (rhythm/contour only, not
+/// transcribed), written fresh: a minor-ninth arpeggio grouped in threes
+/// across the 4/4 (3+3+3+2…), pushed onto the off-sixteenths and tied over
+/// the beat, with a rest on bar 2's downbeat. i – i – ♭VI – ♭VII climbing
+/// home to the octave-plus-fifth. Twenty-five short notes, no overlaps, so
+/// each note's envelope and velocity (70 to 120) are heard alone.
+pub const ARP_PHRASE: [PhraseNote; 25] = [
+    // i, in threes, pushed across beat 4
+    n(0, 0, 2, 110),
+    n(7, 3, 1, 84),
+    n(14, 6, 2, 100),
+    n(10, 9, 1, 80),
+    n(15, 11, 3, 112),
+    n(12, 14, 1, 76),
+    // i, answered off the downbeat
+    n(0, 17, 1, 92),
+    n(7, 19, 2, 104),
+    n(10, 22, 1, 78),
+    n(14, 23, 3, 108),
+    n(7, 27, 1, 82),
+    n(3, 29, 2, 100),
+    n(5, 31, 1, 70),
+    // ♭VI
+    n(-4, 32, 2, 112),
+    n(3, 35, 1, 84),
+    n(10, 38, 2, 100),
+    n(7, 41, 1, 80),
+    n(12, 43, 3, 114),
+    n(8, 46, 1, 76),
+    // ♭VII, climbing home
+    n(-2, 49, 1, 92),
+    n(5, 51, 2, 104),
+    n(10, 54, 1, 80),
+    n(14, 55, 3, 110),
+    n(17, 59, 1, 86),
+    n(19, 61, 3, 120),
+];
+
+/// In the manner of Jega – the rubbery, lurching basslines of "Spectrum" –
+/// and Proswell – a melodic bass that stutters then slides (rhythm/contour
+/// only, not transcribed), written fresh. A minor line around i – i – ♭VI –
+/// ♭VII with wide leaps (octave, minor ninth down to the fifth, a tritone),
+/// accents landing off the beat (velocities 68 to 124) and five notes held
+/// into the next: slides on a MONO Part.
+pub const WONKY_PHRASE: [PhraseNote; 30] = [
+    n(0, 0, 3, 112),
+    n(0, 3, 2, 74),
+    n(12, 5, 1, 120),
+    // A slide down from the minor seventh to the fifth.
+    n(10, 6, 4, 88),
+    n(7, 9, 3, 96),
+    n(-5, 13, 2, 124),
+    n(-2, 15, 1, 70),
+    n(0, 16, 2, 100),
+    n(3, 19, 1, 118),
+    n(0, 20, 2, 80),
+    n(15, 22, 1, 90),
+    // A slide down from the ninth to the octave.
+    n(13, 23, 4, 100),
+    n(12, 26, 2, 84),
+    // The tritone, accented, sliding to the fourth.
+    n(6, 29, 3, 116),
+    n(5, 31, 1, 68),
+    n(-4, 32, 3, 110),
+    n(8, 35, 1, 72),
+    n(-4, 37, 2, 122),
+    n(-1, 40, 1, 76),
+    // A slide down from the minor third to the flat second.
+    n(3, 41, 4, 94),
+    n(1, 44, 2, 104),
+    n(-4, 47, 1, 70),
+    n(-2, 48, 2, 108),
+    n(10, 50, 1, 74),
+    n(-2, 51, 3, 120),
+    n(5, 54, 1, 82),
+    // A slide from the fifth home.
+    n(7, 55, 5, 98),
+    n(0, 59, 2, 124),
+    n(12, 61, 1, 80),
+    n(0, 62, 2, 104),
+];
+
 /// A phrase's notes.
 pub const fn phrase_notes(p: Phrase) -> &'static [PhraseNote] {
     match p {
         Phrase::Bass => &BASS_PHRASE,
         Phrase::Lead => &LEAD_PHRASE,
         Phrase::Pad => &PAD_PHRASE,
+        Phrase::Arp => &ARP_PHRASE,
+        Phrase::Wonky => &WONKY_PHRASE,
     }
 }
 
@@ -1117,7 +1202,7 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)]) -> String {
         .collect();
     listen::rows_page(
         "Factory Sounds · listening",
-        "Each Sound over a four-bar phrase (BASS, LEAD or PAD, on its demo mode), then under \
+        "Each Sound over a four-bar phrase (BASS, LEAD, PAD, ARP or WONKY, on its demo mode), then under \
          its render scripts, played offline through the real Instrument (Part 1, P1); a render \
          marked WITH plays its sends through NEW's effects. The phrase is for your ear, not a \
          gate. \
