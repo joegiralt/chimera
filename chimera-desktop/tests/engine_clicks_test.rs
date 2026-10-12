@@ -177,3 +177,58 @@ fn algo_mono_legato_does_not_click() {
         }
     }
 }
+
+/// Up two octaves of a major seventh and back: the factory-sounds QA's
+/// `texture`, sixteenths at 120 BPM, velocity 40 rising to 127.
+fn texture(home: u8) -> Vec<Hit> {
+    const STEPS: [u8; 16] = [0, 4, 7, 11, 12, 16, 19, 23, 24, 23, 19, 16, 12, 11, 7, 4];
+    STEPS
+        .iter()
+        .enumerate()
+        .map(|(i, &d)| {
+            let on = i as f32 * 0.125;
+            hit(
+                on,
+                on + 0.1,
+                home + d,
+                40 + (87.0 * i as f32 / 15.0).round() as u8,
+            )
+        })
+        .collect()
+}
+
+/// The showcase's FADED HYMN (S9100002) dry: VA sines ENV 2 sweeps toward
+/// saws, a 2 s release.
+fn faded_hymn(release: f32) -> Sound {
+    let mut s = Sound::neutral(EngineType::Va);
+    let p = &mut s.params;
+    p.out.volume = 0.25;
+    let e1 = &mut p.envelopes[0];
+    (e1.attack, e1.sustain, e1.release) = (0.65, 1.0, release);
+    (p.va.wave, p.va.stability) = ([0.0; 2], 0.5);
+    p.filter.set_kind(FilterKind::K2040);
+    p.filter.cutoff = 2400.0;
+    let e2 = &mut p.envelopes[1];
+    (e2.speed, e2.attack, e2.sustain) = (chimera_core::dsp::modulator::EnvSpeed::Slow, 0.55, 1.0);
+    p.lfos[2].shape = 4;
+    p.lfos[2].rate = 6.0;
+    let va = |id| ParamAddr::new(BlockRef::Va, id);
+    use chimera_core::dsp::va::VaParams as V;
+    let vca = ParamAddr::new(BlockRef::Out, chimera_core::params::OutParams::VCA);
+    route(&mut s, ModSource::Env1, vca, 127);
+    route(&mut s, ModSource::Env2, va(V::WAVE1), 85);
+    route(&mut s, ModSource::Env2, va(V::WAVE2), 85);
+    route(&mut s, ModSource::Lfo3, va(V::SHAPE1), 20);
+    s
+}
+
+/// #483: FADED HYMN's `texture` at REL 0.8 (9.8× in the QA) and 0.5. Its
+/// sixteenths re-strike keys still ringing at a new velocity, and AMP's VEL
+/// stepped the VCA by their ratio.
+#[test]
+fn va_restrike_at_a_new_velocity_does_not_click() {
+    for rel in [0.5, 0.8] {
+        let r = ratio(&faded_hymn(rel), PartMode::Poly, &texture(48), 3.5);
+        assert!(r <= CLICK_RATIO, "REL {rel}: {r:.2}×");
+    }
+}

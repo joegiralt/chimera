@@ -95,6 +95,9 @@ pub struct Voice {
     active: bool,
     last_note: MidiNote,
     last_velocity: Velocity,
+    /// The velocity the VCA's VEL played last block: a re-strike's ramps
+    /// from it (#483).
+    vca_velocity: Velocity,
     /// The source the last note, or the one waiting, plays (TAPE).
     last_source: Option<SourceId>,
     /// Samples left of a fade-out (`kill`, a switch); 0 when not
@@ -454,6 +457,7 @@ impl Voice {
                 active: false,
                 last_note: MidiNote::A4,
                 last_velocity: Velocity::DEFAULT,
+                vca_velocity: Velocity::DEFAULT,
                 last_source: None,
                 fade: 0,
                 after_fade: AfterFade::Idle,
@@ -645,6 +649,7 @@ impl Voice {
             self.envs = [Envelope::new(); 3];
             self.mod_values = [0.0; MAX_MOD_SOURCES];
             self.tap_amt = [[0; 4]; 2];
+            self.vca_velocity = velocity;
         }
         self.retrigger = true;
         self.gate.restart();
@@ -1118,10 +1123,22 @@ impl Voice {
                 }
             }
             Some(gain) => {
-                let vel = 1.0 - m.out.vca_vel + m.out.vca_vel * self.last_velocity.unit();
+                let amp = |v: Velocity| 1.0 - m.out.vca_vel + m.out.vca_vel * v.unit();
+                let (was, vel) = (amp(self.vca_velocity), amp(self.last_velocity));
+                self.vca_velocity = self.last_velocity;
                 let k = volume * vel;
                 #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
-                if dv == 0.0 {
+                if was != vel {
+                    // A re-strike or steal of a sounding voice at another
+                    // velocity: AMP's VEL ramps with OUT LEVEL, one ramp,
+                    // never a step (#483); a multiply a sample fewer than
+                    // OUT LEVEL's ramp below, so the bill stands.
+                    let r = (v.0 * was, k);
+                    let (from, step) = (r.0, step_of(r, BLOCK_SIZE));
+                    for (i, (sample, g)) in output.iter_mut().zip(gain).enumerate() {
+                        *sample *= at(from, step, i) * g.max(0.0).min(1.0);
+                    }
+                } else if dv == 0.0 {
                     for (sample, g) in output.iter_mut().zip(gain) {
                         *sample *= k * g.max(0.0).min(1.0);
                     }
