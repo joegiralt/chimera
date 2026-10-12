@@ -22,9 +22,11 @@ use screen::*;
 // SETTINGS crumbs again for ORBIT (plan Task 10): they always clear its
 // beat dot, so three paths drop their first part.
 const GOLDENS: &[(&str, u64)] = &[
-    ("engine_algo", 0x29fa1ef579c4a0e7),
-    ("algo_alg", 0xb73321ba103c1886),
-    ("algo_alg_morph_dimmed", 0xd8e8a78a528ad3b4),
+    ("engine_algo", 0xa9a6098facb32ac7),
+    ("algo_alg", 0xb7c030542ba09c26),
+    ("algo_alg_morph_dimmed", 0xfca52441a17accdc),
+    // VOWEL takes ALGO's sixth cell, dimmed with no formant; FRM page.
+    ("algo_formant_page", 0xce80a582bc73514e),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
     ("mod_matrix_morph_inert", 0xc540d682384b1445),
@@ -195,7 +197,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_out_p2", 0xc7fad296ace82da3),
     #[cfg(feature = "master-tape")]
     ("mixer_out_p2", 0x97c6eb559ffe4f95),
-    ("algo_out_p3", 0x3e91d6b588f4ebfa),
+    ("algo_out_p3", 0x11f7f3a7094ddbca),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
     ("mod_matrix", 0x7fac5633d604d50c),

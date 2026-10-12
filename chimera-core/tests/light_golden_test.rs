@@ -14,7 +14,8 @@ use chimera_core::ui::theme_settings::{Accent, Black, ThemeSettings, palette};
 use screen::*;
 
 const GOLDENS: &[(&str, u64)] = &[
-    ("engine_algo", 0xe39774d6e124e6a1),
+    ("engine_algo", 0x7cf6cb36ae4d4e91),
+    ("algo_formant_page", 0x6095fa77c712dbab),
     ("algo_op_page_3", 0x380578a757df3272),
     ("algo_op_page_3_turned", 0x4e60271ac64ddbc1),
     ("flt_clean", 0xcc4a729ff4ba5faf),

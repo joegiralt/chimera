@@ -4,6 +4,7 @@
 
 use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
 use crate::block::Block;
+use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::tape_engine::machine::defaults;
 use crate::dsp::tape_engine::{TapeEngineParams, TapeModel};
 use crate::ui::block_def::{BlockDef, SlotBinding, slot_addr};
@@ -86,7 +87,12 @@ pub fn snap_under(def: &BlockDef, slot: usize, delta: i8, params: &mut impl Bloc
         && let Some(mut b) = params.block_mut(a.block)
     {
         let before = b.get(a.param);
-        b.snap(a.param, delta);
+        if matches!(a.block, BlockRef::AlgoOp(_)) && a.param == AlgoOpParams::WAVE {
+            // The last kind the budget allows, as a turn steps to it.
+            b.nudge(a.param, delta.signum() * i8::MAX);
+        } else {
+            b.snap(a.param, delta);
+        }
         machine_edit(a, before, &mut *b);
     }
 }

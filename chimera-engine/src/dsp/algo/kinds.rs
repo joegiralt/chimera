@@ -1,9 +1,11 @@
 //! What an operator is: one of the wave tables, a formant or a noise band.
 //! WAVE's stored code is the kind's code (ADR 0045).
 
+use crate::block::ParamId;
 use crate::budget::{FORMANT_BUDGET, FORMANT_BUDGET_FRMT};
 use crate::dsp::algo::algorithms::{ALGORITHMS, AlgoId};
 use crate::dsp::algo::engine::AlgoEngine;
+use crate::dsp::algo::params::AlgoOpParams as P;
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::algo::waves::{WAVE_COUNT, WAVE_IDENTS, WAVE_NAMES, WaveId};
 
@@ -200,6 +202,23 @@ impl Kinds {
         }
         true
     }
+}
+
+/// Whether an operator of `kind` reads `id`: the one table for dimming.
+/// A table ignores the formant params; a band ignores pitch (its centre is
+/// FRMT) and, as noise, the grain's SKIRT and KEY; a formant has no RES.
+pub const fn reads(kind: OpKind, id: ParamId) -> bool {
+    !matches!(
+        (kind, id),
+        (
+            OpKind::Table(_),
+            P::FRMT | P::BW | P::SKIRT | P::KEY | P::RES | P::VSLOT
+        ) | (OpKind::Formant, P::RES)
+            | (
+                OpKind::Noise,
+                P::SKIRT | P::KEY | P::COARSE | P::FINE | P::DETUNE | P::FEEDBACK
+            )
+    )
 }
 
 /// Where an encoder turn of WAVE lands.

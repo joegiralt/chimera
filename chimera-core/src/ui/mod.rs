@@ -1406,13 +1406,20 @@ impl UiState {
     /// A WAVE or ALG turn steps over a kind or an algorithm the formant
     /// budget refuses: say so.
     #[inline(never)]
-    fn formant_full(&mut self, at: PartId, a: ParamAddr, delta: i8) {
+    fn formant_full(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) {
         let p = &self.project.part(at).sound.params.algo;
         let skipped = match a.block {
             BlockRef::AlgoOp(op) if a.param == AlgoOpParams::WAVE => {
-                step_kind(p.kinds(), p.linked(), op.index(), delta).skipped
+                let d = if shift {
+                    delta.signum() * i8::MAX
+                } else {
+                    delta
+                };
+                step_kind(p.kinds(), p.linked(), op.index(), d).skipped
             }
-            BlockRef::Algo if matches!(a.param, AlgoParams::ALG_A | AlgoParams::ALG_B) => {
+            BlockRef::Algo
+                if !shift && matches!(a.param, AlgoParams::ALG_A | AlgoParams::ALG_B) =>
+            {
                 step_alg(p, a.param, delta).skipped
             }
             _ => false,
@@ -1649,6 +1656,14 @@ impl UiState {
     #[doc(hidden)]
     pub fn load_for_test(&mut self, src: PartSource) {
         self.guarded_part(src, ReplaceTo::Init)
+    }
+
+    /// The active Part's Sound was replaced under `was`'s chain: what a
+    /// load does after it (`project_replaced`).
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn replaced_for_test(&mut self, was: PartChain) {
+        self.project_replaced(was)
     }
 
     /// LIBRARY lists TAPE Sounds, for the tests of their load.
@@ -2475,8 +2490,8 @@ impl UiState {
                     *rev = reverb_panel::turn(rev, a.param, delta, &mut self.rev_knobs, tempo);
                     continue;
                 }
-                if !shift && let Some(a) = v.addr() {
-                    self.formant_full(at, a, delta);
+                if let Some(a) = v.addr() {
+                    self.formant_full(at, a, delta, shift);
                 }
                 let params = &mut UiBlocks {
                     project: &mut self.project,
@@ -2499,7 +2514,11 @@ impl UiState {
             let def = if PartChain::of(&self.project.part(at).sound) == chain {
                 def
             } else {
+                let from = self.loc;
                 self.loc = self.loc.rechained(at, chain, &self.cx());
+                if self.loc != from {
+                    self.enter_page();
+                }
                 self.page_def()
             };
             // A KIND, TYPE or operator change re-seeds the page's animators: a lerp
@@ -2892,6 +2911,16 @@ impl UiState {
         (place, at.0, at.1)
     }
 
+    /// 1 while the shown Part's chain has FRM: the map's sub-row changes
+    /// under a page that stays put.
+    fn formant_key(&self) -> u8 {
+        let on = self
+            .loc
+            .part()
+            .is_some_and(|p| PartChain::of(&self.project.part(p).sound) == PartChain::AlgoFormant);
+        u8::from(on)
+    }
+
     /// Snapshot of what region `kind` shows; a region redraws when it changes.
     /// `shown` is the focus band's gauge this frame (`Renderer::shown_gauge`).
     fn region_data(
@@ -2987,7 +3016,7 @@ impl UiState {
                 node,
                 sub,
                 region::quantize(self.renderer.branch_scroll.current()),
-                f.ctx.model as u8 | f.ctx.tape.index() << 4,
+                f.ctx.model as u8 | f.ctx.tape.index() << 4 | self.formant_key() << 7,
             ),
             RegionKind::Grid => RegionData::grid_with_value(
                 self.matrix_state.sel_row as u8,

@@ -72,10 +72,9 @@ pub enum SlotBinding {
     /// The operator selector itself.
     SelectOp,
     /// Mixer/System/Demo pages, still driven by `PageId`.
-    Legacy {
-        label: &'static str,
-        fmt: ValFmt,
-    },
+    /// Its label is the slot's override; the format sits out of line, so
+    /// the slot (one of 600-odd statics) stays small.
+    Legacy(&'static ValFmt),
     /// Knob `k` of the Sound's filter type's panel (`filter_panel::knob`):
     /// 0–4 FLT's knobs 2–6, 5–10 FLT › MOD's cells.
     FilterPanel(u8),
@@ -149,10 +148,10 @@ impl ParamSlot {
         }
     }
 
-    pub const fn legacy(label: &'static str, fmt: ValFmt) -> Self {
+    pub const fn legacy(label: &'static str, fmt: &'static ValFmt) -> Self {
         Self {
-            binding: SlotBinding::Legacy { label, fmt },
-            label_override: None,
+            binding: SlotBinding::Legacy(fmt),
+            label_override: Some(label),
         }
     }
 
@@ -231,7 +230,7 @@ impl ParamSlot {
             SlotBinding::Empty
             | SlotBinding::Orbit(_)
             | SlotBinding::SelectOp
-            | SlotBinding::Legacy { .. }
+            | SlotBinding::Legacy(_)
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
@@ -255,10 +254,10 @@ impl ParamSlot {
             | SlotBinding::LfoPanel(..)
             | SlotBinding::ModalPanel(..)
             | SlotBinding::ReverbPanel(..)
+            | SlotBinding::Legacy(_)
             | SlotBinding::Machine(_) => "--",
             SlotBinding::Source => "SOURCE",
             SlotBinding::SelectOp => "OP",
-            SlotBinding::Legacy { label, .. } => label,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::SelectedRing(_) => {
                 self.spec().map_or("??", |s| s.label)
             }
@@ -277,7 +276,7 @@ impl ParamSlot {
             | SlotBinding::Machine(_)
             | SlotBinding::Source => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
-            SlotBinding::Legacy { fmt, .. } => fmt,
+            SlotBinding::Legacy(fmt) => *fmt,
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::SelectedRing(_) => {
                 self.spec().map_or(ValFmt::Uni, |s| s.fmt)
             }

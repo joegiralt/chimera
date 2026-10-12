@@ -5,6 +5,7 @@ mod screen;
 
 use chimera_core::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use chimera_core::block::{ParamSpec, Smoothing, ValFmt};
+use chimera_core::dsp::algo::kinds::OpKind;
 use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::dsp::algo::waves::{WAVE_COUNT, WAVE_LEN, WaveId};
 use chimera_core::dsp::lfo::LfoParams;
@@ -19,7 +20,7 @@ use chimera_core::ui::block_def::{BlockDef, slot_addr};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::glyph::{
     Accidental, Braid, CompositeId, FocusGlyph, Gauge, Reads, Rings, StaffNote, VaGlyph, VaOsc,
-    anim_key, gauge, wave_trace,
+    anim_key, gauge, kind_trace, wave_trace,
 };
 use chimera_core::ui::page::{PageId, PageKey, PageLayout};
 use chimera_core::ui::region::{RegionData, RegionKind};
@@ -358,8 +359,8 @@ fn each_glyph_maps_to_its_gauge() {
                 ticks: 8,
             },
             FocusGlyph::Crossfader => Gauge::Crossfader { value: 0.25 },
-            // Index 31.75 of 127, past the last wave: clamped to it.
-            FocusGlyph::Wave => Gauge::Wave(WaveId::SSAW),
+            // Index 31.75 of 127, past the last kind: clamped to NOISE.
+            FocusGlyph::Wave => Gauge::Wave(OpKind::Noise),
             // A built composite: whatever its inputs make of it.
             FocusGlyph::Composite(CompositeId::ChorusBraid) => Gauge::Switch { on: 9.0 },
             FocusGlyph::Composite(CompositeId::DelayRings) => Gauge::Switch { on: 8.0 },
@@ -568,6 +569,40 @@ fn glyph_wave_page_traces_each_wave() {
         assert!(!seen.contains(&scope), "{}: a scope of its own", w.name());
         seen.push(scope);
     }
+}
+
+/// WAVE's gauge reads the kind: codes 16 and 17 are a grain and a band,
+/// not SSAW; a table keeps `wave_trace`.
+#[test]
+fn wave_gauge_follows_the_kind() {
+    let addr = ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::WAVE);
+    let fmt = addr.spec().unwrap().fmt;
+    let at = |code: f32| {
+        gauge(FocusGlyph::Wave, code / fmt.max_int() as f32, fmt, |_| {
+            Gauge::None
+        })
+    };
+    assert_eq!(at(15.0), Gauge::Wave(OpKind::Table(WaveId::SSAW)));
+    assert_eq!(at(16.0), Gauge::Wave(OpKind::Formant));
+    assert_eq!(at(17.0), Gauge::Wave(OpKind::Noise));
+    const N: usize = 55;
+    let half = 19;
+    let (g, n) = (
+        kind_trace::<N>(OpKind::Formant, half),
+        kind_trace::<N>(OpKind::Noise, half),
+    );
+    assert_eq!(
+        kind_trace::<N>(OpKind::Table(WaveId::SQR), half),
+        wave_trace::<N>(WaveId::SQR, half)
+    );
+    assert_ne!(g, wave_trace::<N>(WaveId::SSAW, half));
+    assert_ne!(g, n);
+    for t in [g, n] {
+        assert!(t.iter().all(|y| y.abs() <= half));
+        assert!(t.iter().any(|y| y.abs() >= half - 2), "fills the scope");
+    }
+    assert_eq!((g[0], g[N - 1]), (0, 0), "a grain starts and ends closed");
+    assert!(!at(16.0).animates() && !at(17.0).animates());
 }
 
 /// A level bar's ticks: one per step for a few steps, else 8.

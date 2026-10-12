@@ -504,8 +504,14 @@ impl<'u> Rig<'u> {
 
 /// A project named `n` saved to the card at its next id.
 pub fn put(s: &mut MemStore, n: &str) -> ProjectFile {
+    put_with(s, n, |_| {})
+}
+
+/// `put`, with `edit` run on the new project first.
+pub fn put_with(s: &mut MemStore, n: &str, edit: impl FnOnce(&mut Project)) -> ProjectFile {
     let mut card = Card::new();
     let (mut p, _) = Project::boxed();
+    edit(&mut p);
     p.set_name(ProjectName::new(n).unwrap());
     let fresh = new_project_id(&mut card, s).out.unwrap();
     let f = fresh.file();
@@ -911,11 +917,13 @@ pub fn to_level_page(ui: &mut UiState) {
 pub fn to_osc_sub(ui: &mut UiState, def: &chimera_core::ui::block_def::BlockDef) {
     use chimera_core::ui::block_registry::ALGO_CHAIN;
     let subs = ALGO_CHAIN.blocks[osc_node()].sub_pages;
-    let n = subs
-        .iter()
-        .position(|d| d.id == def.id)
-        .expect("an OSC sub-page")
-        + 1;
+    let n = subs.iter().position(|d| d.id == def.id).map_or_else(
+        || {
+            assert_eq!(def.id, chimera_core::ui::block_registry::ALGO_FORMANT.id);
+            1
+        },
+        |i| i + 1,
+    );
     while ui.page_def().id != def.id {
         let before = ui.page_def().id;
         feed(ui, Input::press(ButtonId::Edit));
@@ -1148,6 +1156,18 @@ pub const CASES: &[ScreenCase] = &[
         init_part(ui, PartId::ALL[0]);
         to_osc(ui);
         feed(ui, Input::turn(EncoderId::B, 5)); // operator 2's wave, a few steps in
+    }),
+    // Operators 5 and 6 are formants, so OSC gains FRM; the table ones dim.
+    ("algo_formant_page", |ui| {
+        use chimera_core::dsp::algo::kinds::OpKind;
+        init_part(ui, PartId::ALL[0]);
+        let algo = &mut ui.project_mut().edit_part(PartId::ALL[0]).sound.params.algo;
+        for op in 4..6 {
+            algo.try_set_kind(op, OpKind::Formant).unwrap();
+        }
+        to_osc(ui);
+        to_osc_sub(ui, &chimera_core::ui::block_registry::ALGO_FORMANT);
+        feed(ui, Input::turn(EncoderId::E, 9)); // operator 5 FRMT
     }),
     ("algo_level", |ui| {
         init_part(ui, PartId::ALL[0]);

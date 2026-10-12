@@ -68,7 +68,7 @@ impl PageId {
         if def
             .params
             .iter()
-            .any(|s| !matches!(s.binding, SlotBinding::Legacy { .. } | SlotBinding::Empty))
+            .any(|s| !matches!(s.binding, SlotBinding::Legacy(_) | SlotBinding::Empty))
         {
             return None;
         }

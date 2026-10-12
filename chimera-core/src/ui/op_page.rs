@@ -4,6 +4,7 @@
 
 use crate::addr::{BlockRef, Op};
 use crate::dsp::algo::env::EnvRates;
+use crate::dsp::algo::formant::{Skirt, window};
 use crate::dsp::algo::params::AlgoOpParams as P;
 use crate::dsp::algo::waves::WaveId;
 use crate::ui::block_def::{BlockDef, ParamSlot, VizType};
@@ -88,4 +89,14 @@ pub fn key(r: EnvRates, wave: WaveId) -> u32 {
         | u32::from(r.d2r) << 8
         | u32::from(r.d1l) << 4
         | u32::from(r.rr)
+}
+
+/// One grain at `s`: its window times a sine of `fc_l` cycles across it
+/// (FC·L), 64 points to ±127.
+pub fn grain_curve(s: Skirt, fc_l: f32) -> [i8; 64] {
+    core::array::from_fn(|i| {
+        let x = i as f32 / 63.0;
+        let y = window(x, s) * libm::sinf(core::f32::consts::TAU * fc_l * x);
+        libm::roundf(y * 127.0) as i8
+    })
 }

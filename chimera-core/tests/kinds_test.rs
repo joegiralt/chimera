@@ -32,6 +32,7 @@ use chimera_core::storage::{
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry::ALGO_OP_PAGES;
 use chimera_core::ui::busy::ToastStep;
+use chimera_core::ui::nav::PartChain;
 use chimera_hal::EncoderId;
 
 #[test]
@@ -246,7 +247,9 @@ fn test_ui_with(s: &Sound) -> TestUi {
 
 impl TestUi {
     fn load(&mut self, s: &Sound) {
+        let was = PartChain::of(self.sound());
         **self.0.project_mut().edit_part(PartId::ALL[0]).sound = s.clone();
+        self.0.replaced_for_test(was);
     }
 
     /// ALG A (`side` 0) or B (1) turned `delta` on Part 1's ALG page; the
@@ -275,6 +278,17 @@ impl TestUi {
         screen::to_osc_sub(&mut self.0, &ALGO_OP_PAGES[op.index()]);
         self.0.step_toast(60_000);
         screen::feed(&mut self.0, screen::Input::turn(EncoderId::A, delta));
+        self.0.step_toast(0)
+    }
+
+    /// `turn_wave` with MIX held: the snap path.
+    fn snap_wave(&mut self, op: Op, delta: i8) -> ToastStep {
+        screen::to_osc_sub(&mut self.0, &ALGO_OP_PAGES[op.index()]);
+        self.0.step_toast(60_000);
+        screen::feed(
+            &mut self.0,
+            screen::Input::turn(EncoderId::A, delta).and_held(chimera_hal::ButtonId::Mix),
+        );
         self.0.step_toast(0)
     }
 
@@ -408,6 +422,30 @@ fn every_write_path_checks_the_budget() {
     );
     assert!(full > 100, "the budget was reached: {full}");
     assert!(toasts > 0, "the WAVE cell toasts a refused kind");
+}
+
+/// Shift+turn on WAVE runs to the last kind the budget allows and toasts
+/// the ones it stepped over, as a turn does; it never overspends.
+#[test]
+fn shift_turn_on_wave_steps_over_refused_kinds_and_toasts() {
+    let mut s = Sound::init(EngineType::Algo);
+    let n = FORMANT_N as usize;
+    for i in 0..n {
+        s.params.algo.try_set_kind(i, OpKind::Formant).unwrap();
+    }
+    let mut ui = test_ui_with(&s);
+    let op = Op::ALL[n];
+    let t = ui.snap_wave(op, 1);
+    assert_eq!(t, ToastStep::Show(Line::new("FORMANT BUDGET FULL")));
+    let to = ui.sound().params.algo.kinds().get(n);
+    assert_ne!(to, OpKind::Formant, "FRMT refused");
+    assert!(fits_all(&ui.sound().params.algo));
+    // Down from there: to the first table, over whatever is refused.
+    ui.snap_wave(op, -1);
+    assert_eq!(
+        ui.sound().params.algo.kinds().get(n),
+        OpKind::Table(WaveId::W1)
+    );
 }
 
 #[test]

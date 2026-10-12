@@ -4,6 +4,7 @@
 
 use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use crate::block::ValFmt;
+use crate::dsp::algo::kinds;
 use crate::dsp::algo::params::AlgoParams;
 use crate::dsp::chorus::{ChorusMode, ChorusParams, MODE_NAMES};
 use crate::dsp::filter::FilterKind;
@@ -530,7 +531,10 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
         // ORBIT's pages draw and turn their own cells.
         SlotBinding::Orbit(c) => View::Orbit(c),
         SlotBinding::SelectOp => View::SelectOp,
-        SlotBinding::Legacy { label, fmt } => View::Legacy { label, fmt },
+        SlotBinding::Legacy(fmt) => View::Legacy {
+            label: slot.label(),
+            fmt: *fmt,
+        },
         // SPD: a type-B slot's SPEED and HOLD read TYPE B (spec § UI).
         SlotBinding::Param(ParamAddr {
             block: BlockRef::Env(s),
@@ -678,6 +682,10 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
             let (a, b) = sound.params.algo.algs();
             a == b
         }
+        // VOWEL moves formants and noise bands only.
+        (BlockRef::Algo, AlgoParams::VOWEL) => !sound.params.algo.kinds().any_formant(),
+        // What the operator's kind ignores (formant spec § 6).
+        (BlockRef::AlgoOp(op), id) => !kinds::reads(sound.params.algo.kinds().get(op.index()), id),
         // What MODEL ignores (spec § 1 Dimming).
         (BlockRef::Modal, id) => !modal::reads(sound.params.modal.mode, id),
         // What the machine ignores (spec § 3).
