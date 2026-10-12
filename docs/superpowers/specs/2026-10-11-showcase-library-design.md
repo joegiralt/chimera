@@ -79,6 +79,7 @@ note = "MONO PART: 80 MS GLIDE, SUB BENEATH"
 demo = "mono"                     # the Part MODE for renders and demo projects
 plays = "bass texture glide"      # render scripts (§ 4)
 home = "C2"                       # level and aliasing note
+phrase = "bass"                   # the listening phrase (§ 4): bass, lead or pad
 VA.WAVE1 = "0.667"                # SAW
 VA.SUB = "0.45"
 PITCH.STEAL = "GLIDE"
@@ -119,6 +120,16 @@ Stamp: `Build` carries the version and the commit the Sources were built from; t
 | `long` | The home note, held 2 s, then released for 2 s (motion, drift, loudness) |
 | `texture` | 16 sixteenth notes at 120 BPM over two octaves, at velocities 40 to 127 (velocity response) |
 | `glide` | Overlapping C2, G2, C3, played on a MONO Part (the glide Sounds) |
+
+**Phrases** (owner, round 1: a render under a second does not show a Sound). Each Sound is auditioned first over a four-bar phrase at 120 BPM, picked by its `phrase` key; a VA Source without one fails the build, and ALGO and MODAL may use any or none. The phrases are original, written in the manner of famous basslines and leads (rhythm and contour only, never transcribed), as pure note tables in `qa` (pitch from the home note, start and length in sixteenths, velocity):
+
+| Phrase | Notes |
+|---|---|
+| `bass` | A bouncy syncopated bassline with octave jumps, notes held into the next (glides on a MONO Part) and velocities 68 to 124 |
+| `lead` | A melodic line of long and short notes, legato slides, and a held note of 1.6 s for vibrato and filter motion |
+| `pad` | Four held chords, one a bar |
+
+The phrase plays on the Sound's demo mode, with its sends, as a stereo WAV. It is a listening render, not a gate: its limiter reading is shown and flagged over the 3 dB chord bar for `pad` and the 1 dB bar otherwise. A phrase that is not finite fails the run. The scripts above stay the gates.
 
 Effects demos: each project's Parts play `stab` and `short` through every reverb TYPE (QUAD, ROOM, HALL, BLOOM, GATE, REVERSE), CHORUS I, II and I+II, and the delay. Then `chimera-utils stim`'s hats and snare go through the same FX bus.
 

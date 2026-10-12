@@ -2,7 +2,8 @@
 //! the real `Instrument` (as `loudness_test` plays a scene: Part 1, P1,
 //! after the limiter), measured dry (its sends at 0) by pure gates over
 //! the sample buffers; the listening renders carry its sends through the
-//! FX bus at NEW's settings. Then `report.txt` and the owner's
+//! FX bus at NEW's settings, the first of them a four-bar phrase (a
+//! listening render, never a gate). Then `report.txt` and the owner's
 //! `listening.html` with the renders, all in the ledger folder. `write`
 //! is the only I/O.
 
@@ -30,7 +31,7 @@ use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
 
-use super::source::{Script, Source, patch, to_sound, trimmed};
+use super::source::{Phrase, Script, Source, patch, to_sound, trimmed};
 use crate::listen::{self, CLICK_RATIO, Player, Row, qa_takes};
 
 const SR: f32 = SAMPLE_RATE as f32;
@@ -143,6 +144,157 @@ pub fn plan(s: Script, home: u8) -> Plan {
             secs: 1.4 + TAIL_S,
             mode: Some(PartMode::Mono),
         },
+    }
+}
+
+/// A sixteenth at the phrases' 120 BPM, s.
+pub const SIXTEENTH_S: f32 = 0.125;
+/// A phrase's length, in sixteenths: four bars of 4/4.
+pub const PHRASE_STEPS: u8 = 64;
+/// After a phrase's last note-off: a pad's release rings out.
+const PHRASE_TAIL_S: f32 = 3.0;
+
+/// One note of a phrase: semitones from the Sound's home note, its start
+/// and length in sixteenths, its velocity. A note that runs past the next
+/// one's start overlaps it: on a MONO Part, a legato slide (glide).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PhraseNote {
+    pub step: i8,
+    pub at: u8,
+    pub len: u8,
+    pub vel: u8,
+}
+
+const fn n(step: i8, at: u8, len: u8, vel: u8) -> PhraseNote {
+    PhraseNote { step, at, len, vel }
+}
+
+/// In the manner of an early-80s synth-pop octave bassline (the bouncing
+/// root-and-octave sixteenths of Eurodisco and new wave), written fresh:
+/// a minor i–i–♭VI–♭VII, syncopated pushes on the off-sixteenths, octave
+/// jumps, a few notes held into the next (slides on MONO), and accents
+/// from 68 to 124 so velocity routes move.
+pub const BASS_PHRASE: [PhraseNote; 37] = [
+    // i
+    n(0, 0, 2, 120),
+    n(12, 2, 1, 70),
+    n(0, 3, 2, 100),
+    n(0, 6, 1, 84),
+    n(12, 7, 3, 110),
+    n(7, 9, 2, 90),
+    n(10, 11, 1, 72),
+    n(12, 12, 3, 104),
+    n(0, 14, 2, 96),
+    // i, answered
+    n(0, 16, 2, 124),
+    n(12, 18, 1, 68),
+    n(0, 19, 1, 92),
+    n(3, 20, 2, 100),
+    n(0, 22, 1, 80),
+    n(12, 23, 2, 112),
+    n(10, 25, 3, 88),
+    n(7, 27, 2, 96),
+    n(12, 28, 1, 70),
+    n(0, 29, 3, 108),
+    // ♭VI
+    n(-4, 32, 2, 120),
+    n(8, 34, 1, 72),
+    n(-4, 35, 2, 98),
+    n(-4, 38, 1, 82),
+    n(8, 39, 3, 112),
+    n(3, 41, 2, 90),
+    n(-4, 43, 1, 76),
+    n(8, 44, 2, 104),
+    n(-4, 46, 2, 94),
+    // ♭VII, sliding home
+    n(-2, 48, 2, 122),
+    n(10, 50, 1, 70),
+    n(-2, 51, 2, 100),
+    n(5, 54, 1, 86),
+    n(10, 55, 3, 114),
+    n(12, 57, 2, 96),
+    n(10, 59, 1, 74),
+    n(7, 60, 3, 100),
+    n(0, 62, 2, 118),
+];
+
+/// In the manner of an 80s Italo / synth-pop lead hook (a singable minor
+/// line answered by itself, ending on a long held top note), written
+/// fresh: long and short notes, three legato slides, and a held note of
+/// thirteen sixteenths (1.6 s) where vibrato and filter motion show.
+pub const LEAD_PHRASE: [PhraseNote; 21] = [
+    n(7, 0, 3, 100),
+    n(10, 3, 1, 84),
+    n(12, 4, 6, 110),
+    n(10, 10, 2, 90),
+    n(7, 12, 4, 96),
+    n(5, 16, 2, 92),
+    n(7, 18, 1, 80),
+    // A slide up into the fifth, then down home.
+    n(3, 19, 5, 104),
+    n(5, 23, 3, 96),
+    n(7, 26, 2, 90),
+    n(0, 28, 4, 100),
+    n(12, 32, 2, 112),
+    n(15, 34, 2, 104),
+    n(14, 36, 1, 86),
+    n(12, 37, 3, 98),
+    n(10, 39, 2, 92),
+    n(12, 41, 3, 108),
+    // Slides into the held top note.
+    n(7, 44, 5, 96),
+    n(12, 48, 13, 116),
+    n(10, 61, 1, 80),
+    n(7, 62, 2, 90),
+];
+
+/// In the manner of an 80s new-wave synth pad (slow minor changes, each
+/// chord a bar, voiced open with common tones held across), written
+/// fresh: i – ♭VImaj7 – ♭III – ♭VII, each held its full bar.
+pub const PAD_PHRASE: [PhraseNote; 16] = [
+    n(0, 0, 16, 92),
+    n(7, 0, 16, 88),
+    n(12, 0, 16, 88),
+    n(15, 0, 16, 84),
+    n(-4, 16, 16, 92),
+    n(7, 16, 16, 86),
+    n(12, 16, 16, 88),
+    n(15, 16, 16, 84),
+    n(-9, 32, 16, 92),
+    n(7, 32, 16, 86),
+    n(10, 32, 16, 88),
+    n(15, 32, 16, 84),
+    n(-2, 48, 16, 94),
+    n(5, 48, 16, 88),
+    n(10, 48, 16, 88),
+    n(14, 48, 16, 86),
+];
+
+/// A phrase's notes.
+pub const fn phrase_notes(p: Phrase) -> &'static [PhraseNote] {
+    match p {
+        Phrase::Bass => &BASS_PHRASE,
+        Phrase::Lead => &LEAD_PHRASE,
+        Phrase::Pad => &PAD_PHRASE,
+    }
+}
+
+/// `p` from `home` at 120 BPM, on the Sound's demo mode (so a MONO Part
+/// glides), then `PHRASE_TAIL_S`.
+pub fn phrase_plan(p: Phrase, home: u8) -> Plan {
+    let hits: Vec<Hit> = phrase_notes(p)
+        .iter()
+        .map(|x| {
+            let note = (home as i16 + x.step as i16).clamp(0, 127) as u8;
+            let at = |steps: u8| steps as f32 * SIXTEENTH_S;
+            hit(at(x.at), at(x.at + x.len), note, x.vel)
+        })
+        .collect();
+    let end = hits.iter().map(|h| h.off).fold(0.0, f32::max);
+    Plan {
+        hits,
+        secs: end + PHRASE_TAIL_S,
+        mode: None,
     }
 }
 
@@ -507,6 +659,41 @@ pub fn samey(bands: &[[f32; ERB_BANDS]]) -> Vec<(usize, usize)> {
     v
 }
 
+/// What a listening render plays: the Sound's phrase, or a render script.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Audition {
+    Phrase(Phrase),
+    Script(Script),
+}
+
+impl Audition {
+    /// Its WAV's name: `phrase-bass`, or the script's word.
+    fn slug(self) -> String {
+        match self {
+            Audition::Phrase(p) => format!("phrase-{}", p.word()),
+            Audition::Script(s) => s.word().into(),
+        }
+    }
+
+    /// The player's label: `BASS PHRASE`, `LONG`.
+    fn label(self) -> String {
+        match self {
+            Audition::Phrase(p) => format!("{} PHRASE", p.word().to_uppercase()),
+            Audition::Script(s) => s.word().to_uppercase(),
+        }
+    }
+
+    /// The bar its limiter reading is flagged over: a pad's chords (as
+    /// `stab`) 3 dB, else 1 dB.
+    pub fn bar(self) -> f32 {
+        match self {
+            Audition::Phrase(Phrase::Pad) => LIMIT_CHORD_DB,
+            Audition::Phrase(_) => LIMIT_SINGLE_DB,
+            Audition::Script(s) => limiter_bar(Some(s)),
+        }
+    }
+}
+
 /// What a gate checked.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Check {
@@ -520,6 +707,9 @@ pub enum Check {
     Aliasing(u8),
     Tail,
     Tap,
+    /// The phrase render holds no NaN or infinity (the count of samples
+    /// that are not finite).
+    Finite(Phrase),
 }
 
 impl Check {
@@ -533,6 +723,7 @@ impl Check {
             Check::Aliasing(n) => format!("aliasing C{}", n / 12 - 1),
             Check::Tail => "tail".into(),
             Check::Tap => "tap".into(),
+            Check::Finite(p) => format!("finite {} phrase", p.word()),
         }
     }
 
@@ -544,6 +735,7 @@ impl Check {
             Check::Dc(_) => "dB rel",
             Check::Aliasing(_) | Check::Tap => "dB",
             Check::Tail => "dBFS",
+            Check::Finite(_) => "bad",
         }
     }
 }
@@ -555,18 +747,18 @@ pub struct Gate {
     pub verdict: Verdict,
 }
 
-/// One script's render, for the page: P1 as heard, interleaved stereo.
+/// One listening render, for the page: P1 as heard, interleaved stereo.
 #[derive(Clone, Debug)]
 pub struct Render {
-    pub script: Script,
+    pub audition: Audition,
     pub stereo: Vec<f32>,
     pub lufs: f32,
     /// Left and right.
     pub peak_dbfs: [f32; 2],
     /// The effects heard on it (its sends), full words: empty when dry.
     pub with: Vec<&'static str>,
-    /// A wet render's limiting, dB: information, not a gate (the gates
-    /// measure dry).
+    /// A wet render's limiting, and always the phrase's, dB: information,
+    /// not a gate (the gates measure dry).
     pub limited_db: Option<f32>,
 }
 
@@ -593,8 +785,8 @@ impl Report {
         self.gates.iter().all(|g| g.verdict != Verdict::Fail)
     }
 
-    fn wav(&self, s: Script) -> String {
-        format!("renders/S{}-{}.wav", self.id.get(), s.word())
+    fn wav(&self, a: Audition) -> String {
+        format!("renders/S{}-{}.wav", self.id.get(), a.slug())
     }
 
     fn lufs(&self) -> Option<f32> {
@@ -602,6 +794,25 @@ impl Report {
             .iter()
             .find(|g| g.check == Check::Loudness)
             .map(|g| g.value)
+    }
+}
+
+/// A take as the page plays it, with its peaks and LUFS.
+fn heard(audition: Audition, t: Take, with: &[&'static str], limited_db: Option<f32>) -> Render {
+    let peak = |c: usize| {
+        db(t.stereo
+            .iter()
+            .skip(c)
+            .step_by(2)
+            .fold(0f32, |m, v| m.max(v.abs())))
+    };
+    Render {
+        audition,
+        lufs: listen::lufs(&t.stereo),
+        peak_dbfs: [peak(0), peak(1)],
+        with: with.to_vec(),
+        limited_db,
+        stereo: t.stereo,
     }
 }
 
@@ -657,6 +868,15 @@ pub fn gates(src: &Source) -> Result<Report, String> {
     gate(Check::Tail, tail(&t.mono(), held + LATE, within));
 
     let mut renders = Vec::new();
+    // The phrase first, as heard (its sends on): for the ear, not a gate,
+    // but it must be finite.
+    if let Some(ph) = src.phrase {
+        let t = play(&wet, src.demo, &phrase_plan(ph, src.home));
+        let bad = t.stereo.iter().filter(|v| !v.is_finite()).count();
+        gate(Check::Finite(ph), (bad as f32, verdict(bad == 0)));
+        let r = t.reduced_db;
+        renders.push(heard(Audition::Phrase(ph), t, &with, Some(r)));
+    }
     let mut dry_long = None;
     for &s in &src.plays {
         let p = plan(s, src.home);
@@ -682,21 +902,7 @@ pub fn gates(src: &Source) -> Result<Report, String> {
             let r = w.reduced_db;
             (w, Some(r))
         };
-        let peak = |c: usize| {
-            db(t.stereo
-                .iter()
-                .skip(c)
-                .step_by(2)
-                .fold(0f32, |m, v| m.max(v.abs())))
-        };
-        renders.push(Render {
-            script: s,
-            lufs: listen::lufs(&t.stereo),
-            peak_dbfs: [peak(0), peak(1)],
-            with: with.clone(),
-            limited_db,
-            stereo: t.stereo,
-        });
+        renders.push(heard(Audition::Script(s), t, &with, limited_db));
     }
 
     // `long`'s held part, past the attack.
@@ -875,7 +1081,7 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)]) -> String {
                     .renders
                     .iter()
                     .map(|x| {
-                        let bar = limiter_bar(Some(x.script));
+                        let bar = x.audition.bar();
                         let over = x.limited_db.is_some_and(|d| d > bar);
                         let limited = x.limited_db.map_or(String::new(), |d| {
                             let past = if over {
@@ -886,11 +1092,11 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)]) -> String {
                             format!(" · limiter {d:.1} dB{past}")
                         });
                         Player {
-                            label: std::iter::once(x.script.word().to_uppercase())
+                            label: std::iter::once(x.audition.label())
                                 .chain(x.with.iter().map(|w| format!("WITH {w}")))
                                 .collect::<Vec<_>>()
                                 .join(" "),
-                            file: r.wav(x.script),
+                            file: r.wav(x.audition),
                             info: format!(
                                 "{:.1} LUFS · peak L {:.1} · R {:.1} dBFS{limited}",
                                 x.lufs, x.peak_dbfs[0], x.peak_dbfs[1]
@@ -905,8 +1111,10 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)]) -> String {
         .collect();
     listen::rows_page(
         "Factory Sounds · listening",
-        "Each Sound under its render scripts, played offline through the real Instrument \
-         (Part 1, P1); a render marked WITH plays its sends through NEW's effects. \
+        "Each Sound over a four-bar phrase (BASS, LEAD or PAD, on its demo mode), then under \
+         its render scripts, played offline through the real Instrument (Part 1, P1); a render \
+         marked WITH plays its sends through NEW's effects. The phrase is for your ear, not a \
+         gate. \
          Every gate passed (measured dry) or is marked for your ear: the lines in colour.",
         &rows,
     )
@@ -933,7 +1141,7 @@ pub fn write(
         std::fs::create_dir_all(&r).map_err(|e| err(&r, e))?;
         for rep in reports {
             for x in &rep.renders {
-                listen::write_wav_stereo(&dir.join(rep.wav(x.script)), &x.stereo)?;
+                listen::write_wav_stereo(&dir.join(rep.wav(x.audition)), &x.stereo)?;
             }
         }
     }

@@ -44,6 +44,7 @@ FILTER.CUTOFF = "1200"
 mod.LFO1 = "FILTER.CUTOFF +20"
 trim = "0"
 mod.ENV1 = "OUT.VCA +127"
+phrase = "pad"
 "#;
 
 /// `BASE` with line `n` (1-based) replaced by `with`.
@@ -228,13 +229,13 @@ fn unroutable_destination() {
 #[test]
 fn duplicate_id() {
     let two = format!("{BASE}\n{}", BASE.replace("TEST PAD\"", "OTHER PAD\""));
-    fails(&two, 15, "S9100002");
+    fails(&two, 16, "S9100002");
 }
 
 #[test]
 fn duplicate_name() {
     let two = format!("{BASE}\n{}", BASE.replace("S9100002", "S9100003"));
-    fails(&two, 16, "TEST PAD");
+    fails(&two, 17, "TEST PAD");
 }
 
 #[test]
@@ -282,7 +283,7 @@ fn public_refuses_from() {
     let ported = format!("{BASE}from = \"tx81z 1a2b3c4d #12\"\nedits = \"filter: 2040\"\n");
     // Parses (the private build reads it), but the public set refuses it.
     source::parse(&ported, "bad.toml").unwrap();
-    fails(&ported, 13, "from");
+    fails(&ported, 14, "from");
 }
 
 #[test]
@@ -303,7 +304,7 @@ fn placeholder_skipped() {
         "{BASE}\n{}status = \"placeholder\"\n",
         BASE.replace("S9100002", "S9100003")
     );
-    fails(&clash, 16, "TEST PAD");
+    fails(&clash, 17, "TEST PAD");
 }
 
 /// `fmt`'s comment for `key` in `text`.
@@ -387,8 +388,8 @@ fn trim_out_of_range_fails() {
 // ---- QA before UAT (spec § 4) ----
 
 use chimera_core::part::PartMode;
-use chimera_desktop::factory_sounds::qa::{self, Check, Gate, Plan, Verdict};
-use chimera_desktop::factory_sounds::source::Script;
+use chimera_desktop::factory_sounds::qa::{self, Audition, Check, Gate, Plan, Verdict};
+use chimera_desktop::factory_sounds::source::{Phrase, Script};
 
 const SR: f32 = 48_000.0;
 
@@ -651,7 +652,7 @@ fn report(pass: bool, private: bool) -> qa::Report {
             verdict: if pass { Verdict::Pass } else { Verdict::Fail },
         }],
         renders: vec![qa::Render {
-            script: Script::Long,
+            audition: Audition::Script(Script::Long),
             stereo: stereo(&sine(220.0, 0.2, 0.5), &sine(330.0, 0.1, 0.5)),
             lufs: -11.0,
             peak_dbfs: [-14.0, -20.0],
@@ -765,8 +766,23 @@ fn gates_render_through_the_instrument() {
         "it sounds"
     );
     let r = qa::gates(s).unwrap();
-    let scripts: Vec<Script> = r.renders.iter().map(|x| x.script).collect();
-    assert_eq!(scripts, [Script::Long, Script::Texture]);
+    let heard: Vec<Audition> = r.renders.iter().map(|x| x.audition).collect();
+    assert_eq!(
+        heard,
+        [
+            Audition::Phrase(Phrase::Pad),
+            Audition::Script(Script::Long),
+            Audition::Script(Script::Texture)
+        ],
+        "the phrase first"
+    );
+    let phrase = &r.renders[0];
+    assert_eq!(
+        phrase.stereo.len(),
+        2 * (11 * 48_000),
+        "8 s of phrase + 3 s"
+    );
+    assert!(phrase.limited_db.is_some(), "its limiter always shown");
     let has = |c: Check| r.gates.iter().any(|g| g.check == c);
     assert!(has(Check::Loudness) && has(Check::Tail) && has(Check::Limiter(None)));
     assert!(has(Check::Clicks(Script::Texture)) && has(Check::Limiter(Some(Script::Texture))));
@@ -777,6 +793,10 @@ fn gates_render_through_the_instrument() {
     assert!(
         has(Check::Dc(100)) && has(Check::Dc(127)),
         "DC on the held note"
+    );
+    assert!(
+        has(Check::Finite(Phrase::Pad)),
+        "a NaN phrase fails the run"
     );
     assert!(!has(Check::Tap), "no tap routes");
 }
@@ -942,7 +962,7 @@ fn listening_page_is_stereo_and_honest() {
     });
     // A wet render the limiter worked past the single-note bar.
     r.renders.push(qa::Render {
-        script: Script::Texture,
+        audition: Audition::Script(Script::Texture),
         stereo: stereo(&sine(220.0, 0.2, 0.5), &sine(220.0, 0.2, 0.5)),
         lufs: -10.0,
         peak_dbfs: [-3.0, -3.5],
@@ -999,4 +1019,153 @@ fn held_dc_reads_whole_cycles_of_each_note() {
     assert_eq!(verdict, Verdict::Pass, "{v:.1} dB");
     let (v, verdict) = qa::held_dc(&note(0.05 * 0.3 / 2f32.sqrt()), &[hit]);
     assert_eq!(verdict, Verdict::Fail, "{v:.1} dB");
+}
+
+// ---- Phrase auditions ----
+
+/// Every phrase lies within its four bars, each note sounding, and stays
+/// inside MIDI from any plausible home note (C1 to C6).
+#[test]
+fn phrases_fit_four_bars_and_midi() {
+    for p in Phrase::ALL {
+        let notes = qa::phrase_notes(p);
+        assert!(!notes.is_empty(), "{p:?}");
+        for x in notes {
+            assert!(
+                x.len >= 1 && x.at + x.len <= qa::PHRASE_STEPS,
+                "{p:?} {x:?}"
+            );
+            assert!((1..=127).contains(&x.vel), "{p:?} {x:?}");
+            for home in 24i16..=84 {
+                let m = home + x.step as i16;
+                assert!((0..=127).contains(&m), "{p:?} {x:?} from {home}");
+            }
+        }
+        let plan = qa::phrase_plan(p, 36);
+        assert_eq!(plan.hits.len(), notes.len());
+        assert_eq!(plan.mode, None, "the Sound's demo mode, so MONO glides");
+        for (h, x) in plan.hits.iter().zip(notes) {
+            assert_eq!(h.note as i16, 36 + x.step as i16);
+            assert!((h.on - x.at as f32 * qa::SIXTEENTH_S).abs() < 1e-6);
+            assert!((h.off - (x.at + x.len) as f32 * qa::SIXTEENTH_S).abs() < 1e-6);
+            assert_eq!(h.vel, x.vel);
+        }
+        let end = plan.hits.iter().map(|h| h.off).fold(0f32, f32::max);
+        assert!(
+            (7.0..=8.0).contains(&end),
+            "about four bars at 120 BPM: {end}"
+        );
+        assert!(plan.secs > end, "a tail after it");
+    }
+}
+
+/// A note held past the next one's start: on a MONO Part, a glide.
+fn overlaps(p: Phrase) -> usize {
+    let n = qa::phrase_notes(p);
+    n.iter()
+        .zip(&n[1..])
+        .filter(|(a, b)| b.at > a.at && b.at < a.at + a.len)
+        .count()
+}
+
+#[test]
+fn phrases_carry_what_they_show() {
+    assert!(overlaps(Phrase::Bass) >= 1, "legato for the glide");
+    let vels: Vec<u8> = qa::phrase_notes(Phrase::Bass)
+        .iter()
+        .map(|x| x.vel)
+        .collect();
+    assert!(
+        vels.iter().max().unwrap() - vels.iter().min().unwrap() >= 40,
+        "velocity routes are heard"
+    );
+    assert!(
+        qa::phrase_notes(Phrase::Bass)
+            .iter()
+            .any(|x| x.step.abs() >= 12),
+        "octave jumps"
+    );
+    let lead = qa::phrase_notes(Phrase::Lead);
+    assert!(overlaps(Phrase::Lead) >= 2, "a couple of slides");
+    assert!(lead.iter().any(|x| x.len >= 8), "a held note for vibrato");
+    assert!(lead.iter().any(|x| x.len <= 2), "and short ones");
+    let mut chords: Vec<u8> = qa::phrase_notes(Phrase::Pad).iter().map(|x| x.at).collect();
+    chords.dedup();
+    assert!((2..=4).contains(&chords.len()), "{chords:?}");
+    assert!(
+        qa::phrase_notes(Phrase::Pad).iter().all(|x| x.len >= 8),
+        "held chords"
+    );
+}
+
+#[test]
+fn phrase_parses_and_a_va_sound_needs_one() {
+    assert_eq!(run(BASE).unwrap()[0].phrase, Some(Phrase::Pad));
+    for p in Phrase::ALL {
+        let s = run(&base_with(13, &format!("phrase = \"{}\"", p.word()))).unwrap();
+        assert_eq!(s[0].phrase, Some(p));
+    }
+    fails(&base_with(13, r#"phrase = "arp""#), 13, "phrase arp");
+    // A VA Sound without one fails on its id line.
+    let none = BASE.replace("phrase = \"pad\"\n", "");
+    fails(&none, 2, "phrase");
+    // ALGO and MODAL may use any or none; a placeholder is not built.
+    run(&none.replace("engine = \"VA\"", "engine = \"ALGO\"")).unwrap();
+    run(&none.replace("engine = \"VA\"", "engine = \"MODAL\"")).unwrap();
+    run(&format!("{none}status = \"placeholder\"\n")).unwrap();
+    let algo = base_with(4, r#"engine = "ALGO""#);
+    assert_eq!(run(&algo).unwrap()[0].phrase, Some(Phrase::Pad));
+}
+
+#[test]
+fn page_plays_the_phrase_first_and_flags_its_limiter() {
+    let d = scratch_ledger("ledger-phrase");
+    let phrase = |p: Phrase, limited: f32| qa::Render {
+        audition: Audition::Phrase(p),
+        stereo: stereo(&sine(220.0, 0.2, 0.5), &sine(220.0, 0.2, 0.5)),
+        lufs: -12.0,
+        peak_dbfs: [-6.0, -6.0],
+        with: vec!["CHORUS"],
+        limited_db: Some(limited),
+    };
+    let mut r = report(true, false);
+    r.renders.insert(0, phrase(Phrase::Pad, 2.5));
+    assert!(qa::write(&d, &[r.clone()], &[], true).unwrap());
+    assert!(d.join("renders/S9100002-phrase-pad.wav").is_file());
+    let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
+    let (ph, long) = (
+        page.find("PAD PHRASE WITH CHORUS").expect("its label"),
+        page.find(">LONG").expect("the long render"),
+    );
+    assert!(ph < long, "the phrase plays first");
+    assert!(page.contains("limiter 2.5 dB") && !page.contains("over the"));
+    // A pad over the 3 dB chord bar; a bass over the 1 dB bar.
+    r.renders[0] = phrase(Phrase::Pad, 3.4);
+    qa::write(&d, &[r.clone()], &[], true).unwrap();
+    let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
+    assert!(page.contains("limiter 3.4 dB, over the 3 dB bar"), "{page}");
+    r.renders[0] = phrase(Phrase::Bass, 1.4);
+    qa::write(&d, &[r], &[], true).unwrap();
+    let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
+    assert!(page.contains("BASS PHRASE WITH CHORUS"));
+    assert!(page.contains("limiter 1.4 dB, over the 1 dB bar"), "{page}");
+}
+
+#[test]
+fn a_phrase_that_is_not_finite_fails() {
+    let g = |bad: f32| Gate {
+        check: Check::Finite(Phrase::Lead),
+        value: bad,
+        verdict: if bad == 0.0 {
+            Verdict::Pass
+        } else {
+            Verdict::Fail
+        },
+    };
+    let mut r = report(true, false);
+    r.gates.push(g(0.0));
+    assert!(r.passes());
+    r.gates.push(g(3.0));
+    assert!(!r.passes());
+    assert!(qa::report_text(&[r], &[]).contains("finite lead phrase"));
 }

@@ -62,6 +62,28 @@ impl Script {
     }
 }
 
+/// The phrase a Sound is auditioned over on the owner's page (`qa`'s
+/// phrase tables): a listening render, never a gate. Every VA Sound names
+/// one (`phrase = "bass" | "lead" | "pad"`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phrase {
+    Bass,
+    Lead,
+    Pad,
+}
+
+impl Phrase {
+    pub const ALL: [Phrase; 3] = [Phrase::Bass, Phrase::Lead, Phrase::Pad];
+
+    pub const fn word(self) -> &'static str {
+        match self {
+            Phrase::Bass => "bass",
+            Phrase::Lead => "lead",
+            Phrase::Pad => "pad",
+        }
+    }
+}
+
 /// A route into a destination the matrix (or a tap) reaches, with the
 /// 1-based line it was written on.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -82,6 +104,8 @@ pub struct Source {
     pub note: Note,
     pub demo: PartMode,
     pub plays: Vec<Script>,
+    /// The phrase it is auditioned over; a VA Sound must name one.
+    pub phrase: Option<Phrase>,
     /// The MIDI note its level and aliasing are measured at (C4 = 60).
     pub home: u8,
     /// `(line, param, value)` in file order; a value resolves in `patch`,
@@ -181,6 +205,7 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
         note,
         demo,
         plays,
+        phrase: None,
         home,
         params: Vec::new(),
         mods: Vec::new(),
@@ -203,6 +228,14 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
                     .ok()
                     .filter(|t| t.is_finite())
                     .ok_or_else(|| at(line, format!("trim {v}: dB")))?;
+            }
+            "phrase" => {
+                s.phrase = Some(
+                    Phrase::ALL
+                        .into_iter()
+                        .find(|p| p.word() == v)
+                        .ok_or_else(|| at(line, format!("phrase {v}: bass, lead or pad")))?,
+                )
             }
             "from" => s.from = Some((line, v.clone())),
             "edits" => s.edits = Some(v.clone()),
@@ -347,6 +380,13 @@ pub fn check(all: &[Source]) -> Result<(), String> {
         if s.engine == EngineType::Va && !s.placeholder && !vca_env {
             return Err(format!(
                 "{}: a VA Sound needs an ENV routed to OUT.VCA (mod.ENV1 = \"OUT.VCA +127\")",
+                s.at(s.id_line)
+            ));
+        }
+        // The owner auditions every VA Sound over a phrase (`qa`).
+        if s.engine == EngineType::Va && !s.placeholder && s.phrase.is_none() {
+            return Err(format!(
+                "{}: a VA Sound needs a phrase (phrase = \"bass\", \"lead\" or \"pad\")",
                 s.at(s.id_line)
             ));
         }
