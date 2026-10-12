@@ -6,7 +6,7 @@
 ## Context
 #243 asks for FS1R-style formant synthesis in the Algo engine: voiced bands (FRMT) and unvoiced noise bands (NOIS) that sit in an algorithm beside table operators and modulate and are modulated like them. The design is `docs/superpowers/specs/2026-09-30-formant-operators-design.md`.
 
-The hard part is cost. ADR 0026 promises four voices for every Sound that can be built, under its heavy-route worst case. A formant operator costs two to six times a table operator, and its cost depends on whether anything modulates it. The counted terms (below) can't hold even two linked formants at four voices, and at three voices they hold one linked formant or four unlinked ones.
+The hard part is cost. ADR 0026 promises four voices for every Sound that can be built, under its heavy-route worst case. A formant operator costs two to six times a table operator, and its cost depends on whether anything modulates it. The counted terms (below) can't hold even two linked formants at four voices, and at three voices they hold one linked formant or three unlinked ones.
 
 ## Decision
 
@@ -25,12 +25,14 @@ Counted on the `bench-algo` ELF by ADR 0056's method (`tools/loop_count.py`; the
 
 | Term | Cycles a sample |
 |---|---|
-| `COST_FRMT` (SKIRT 1–3, no link in: spans between grain starts) | 190 |
+| `COST_FRMT` (SKIRT 1–3, no link in: spans between grain starts) | 220 |
 | `COST_FRMT_LINKED` (SKIRT 1–3, a link in: the moving loop) | 380 |
-| `COST_FRMT_ONE` / `COST_FRMT_ONE_LINKED` (SKIRT 0, one lane) | 180 / 370 |
+| `COST_FRMT_ONE` / `COST_FRMT_ONE_LINKED` (SKIRT 0, one lane) | 210 / 380 |
 | `COST_NOIS` | 80 |
 | `COST_FRMT_MOVE` (the laws taken afresh each block) | 40, on every FRMT |
 
+- **Each term is its worst block for a grain clock up to C8** (MIDI 108, 4,186 Hz): `SPANS_COVERED` = ⌈64·4186/48000⌉ + 1 = 7 spans a block unlinked, 7 fires linked. A span adds 276 instructions (the span path with its fire, 93, and the block path, 183: an upper bound), a fire 47. So `<0, S3>` = 60 + 85.1 + 48.5 + 19.9 → 220, `<0, S0>` → 210, `<1, S3>` = 60 + 290.7 + 8.3 + 19.9 → 380, `<1, S0>` → 380. A typical 2.2 spans a block gave 190/180/380/370; MIDI 127 runs 18.
+- **Past C8, per voice.** A formant voice whose pitch can reach past C8 pays `AlgoEngine::high_note_extra` at admission and in every recost: each priced FRMT's spans (fires) past 7 at its grain clock, 276 (47) instructions each, by ADR 0056's cycles. The reach is the note with TRNSP, the PITCH offset, TUNING up, the bend's range, every PITCH route at full swing, a glide steal's start, and the operator's COARSE and FINE (FINE at its top where a route moves it), with DETUNE at its top always.
 - `COST_FRMT_MOVE` is billed always, as Modal bills its pitch (#437): the pitch wheel or a glide steal moves any voice's laws with no route to see.
 - `AlgoEngine::cost` bills a FRMT `frmt_cost(skirt, linked)`: its lanes plus the moving term. `COST_FEEDBACK` is billed for table and FRMT operators with FDBK, never for NOIS.
 
@@ -51,14 +53,15 @@ Counted on the `bench-algo` ELF by ADR 0056's method (`tools/loop_count.py`; the
   ```
 
   832 is the costliest table Sound (A16 ∪ A17, six operators with FDBK).
-- **The rule:** `Σ charge(kind, linked) ≤` the budget of the Sound's floor. A FRMT charges 360 linked and 170 unlinked; a NOIS 20.
-  - `FORMANT_N` (linked) = ⌊698/360⌋ = **1**; `FORMANT_N_UNLINKED` = ⌊698/170⌋ = **4**. One linked FRMT and two unlinked are 700, 2 over.
-  - The demo Sounds are on A1 (no links), so they keep the spec's voicings: CHOIR three FRMT and a NOIS (530), TALK BASS a sine and three FRMT (510), BREATH two NOIS (40, four voices).
+- **The rule:** `Σ charge(kind, linked) ≤` the budget of the Sound's floor. A FRMT charges 360 linked and 200 unlinked; a NOIS 20.
+  - `FORMANT_N` (linked) = ⌊698/360⌋ = **1**; `FORMANT_N_UNLINKED` = ⌊698/200⌋ = **3**. One linked FRMT and one unlinked fit (560); with two unlinked it is 760.
+  - The demo Sounds are on A1 (no links), so they keep the spec's voicings: CHOIR three FRMT and a NOIS (620), TALK BASS a sine and three FRMT (600), BREATH two NOIS (40, four voices).
 - **Only a patch within budget can be built.** `Kinds::new` checks its kinds unlinked at compile time; `AlgoParams::new` checks them on its algorithms. The writes are `try_set_kind` and `try_set_algs`, and every path goes through them: WAVE and ALG A/B block writes, `set_enum_code`, the decoder, the UI encoders and the param sweep.
 - **An edit that would overspend is refused** and changes nothing. WAVE's and ALG A/B's encoders step over refused kinds and algorithms, and the cell toasts FORMANT BUDGET FULL.
 - **A load past the budget degrades:** Sounds write ALG A and B before their operators, so the file's algorithm lands first and each operator after it is checked in order; a kind that doesn't fit stays the base's W1. An algorithm that arrives after its operators and would link into a full patch keeps the base's. Either way the load says FORMANT BUDGET FULL.
 
 ### Laws recorded here
+- **Held laws.** A formant's per-block law is kept while its inputs hold (`LawKey`): every played FRMT, BW, LEVEL, FINE, DETUNE and FDBK, VOWEL, MORPH, pitch, slide, rate, note, TRNSP and the COARSEs. The latched slots, KEY, SKIRT, the kinds the engine runs and its plan change only at a note-on, a kind swap or a plan change, and each drops the key where it writes. So a WAVE spin or an ALG edit under a held note retakes the law, bit for bit the law taken afresh every block (`held_laws_follow_kind_swaps_and_alg_edits`).
 - **The grain delay is divide-free:** `o = rest + h·g`, `h` half the slack, `g = f(pm/(3h) + β) − β` with `f(v) = v(3 − v²)/2` on v held to [−1, 1]. It stays inside the slack, C¹ onto both ends, slope ½ at rest (`(1 − v²)/2` ≤ ½); the reset grain (β = −1) opens at once and only delays. Worst modulated alias case −66.7 dB (`158 A3 99`, SKIRT 0); odd mean 2.58e-5 (bound 1e-4).
 - **PM depth cap:** the links' share `k = min(clamp((24 kHz − FC − m_q·B_min)/reach, 0, 1), DELAY_SLEW·f0/dev)`, `DELAY_SLEW` 4, ramped per sample into the delay and the carrier. It holds ratio-1 PM into a formant to about 0.64 cycles (LEVEL 76 and up sound alike); 8 would allow 1.27 with 3.7 dB less alias margin.
 - **NOIS links are outside the slew bound.** Noise is left out of `dev`, so a full-level NOIS link can move the delay faster than `DELAY_SLEW`. Its sidebands are noise, so no tonal alias.
@@ -77,7 +80,7 @@ ADR 0022's destination list (spec § 7); ADR 0026's cost terms, with its floor k
 - **One FRMT for alpha:** no vowels.
 
 ## Consequences
-- Up to four formant carriers per Sound, or one formant a modulator reaches; mixes in between by the rule.
+- Up to three formant carriers per Sound, or one formant a modulator reaches; mixes in between by the rule.
 - An ALG A or B edit can be refused, which a table-only Sound never sees.
 - Task 15 completes this ADR with the bench rows (FRMT0, FRMT3, FRMT PM, NOIS, FRMT MAX, CHOIR), and the chip bench confirms the counted terms at ship.
 
