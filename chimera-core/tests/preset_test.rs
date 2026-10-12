@@ -7,7 +7,7 @@ use chimera_core::project::{
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::browser::HEAD;
-use chimera_core::ui::nav::{Browse, NavCtx, OrbitCx};
+use chimera_core::ui::nav::{Browse, NavCtx, OrbitCx, PartChain};
 use chimera_core::ui::page::PageKey;
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 
@@ -112,7 +112,7 @@ fn performance_has_six_parts_playing_sounds() {
 /// The node of the page shown.
 fn node(ui: &UiState) -> usize {
     let cx = NavCtx {
-        engines: [EngineType::Algo; 6],
+        chains: [PartChain::Algo; 6],
         dyn_rows: 0,
         orbit: OrbitCx::NONE,
         rev: chimera_core::dsp::reverb::ReverbType::Quad,

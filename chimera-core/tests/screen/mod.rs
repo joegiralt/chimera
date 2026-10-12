@@ -1201,6 +1201,22 @@ pub const CASES: &[ScreenCase] = &[
         }
         feed(ui, Input::turn(EncoderId::D, 3));
     }),
+    // OP3's page on INIT: its envelope and wave in the band.
+    ("algo_op_page_3", |ui| {
+        use chimera_core::ui::block_registry::ALGO_OP_PAGES;
+        init_part(ui, PartId::ALL[0]);
+        to_osc(ui);
+        to_osc_sub(ui, &ALGO_OP_PAGES[2]);
+    }),
+    // The same with its LEVEL cell mid-turn: the UI hears no held note
+    // until #37, so the band has no playhead to show.
+    ("algo_op_page_3_turned", |ui| {
+        use chimera_core::ui::block_registry::ALGO_OP_PAGES;
+        init_part(ui, PartId::ALL[0]);
+        to_osc(ui);
+        to_osc_sub(ui, &ALGO_OP_PAGES[2]);
+        feed(ui, Input::turn(EncoderId::D, -20));
+    }),
     ("bigviz_filter", |ui| {
         plus(ui, 3);
         feed(ui, Input::turn(EncoderId::C, 80)); // resonance

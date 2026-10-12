@@ -8,7 +8,8 @@ use chimera_core::params::EngineType;
 use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::{ALGO_CHAIN, FILTER};
 use chimera_core::ui::nav::{
-    Location, MixPage, NavCtx, NavKey, OrbitAct, OrbitAt, OrbitCx, OrbitKey, Outside, Recall, Step,
+    Location, MixPage, NavCtx, NavKey, OrbitAct, OrbitAt, OrbitCx, OrbitKey, Outside, PartChain,
+    Recall, Step,
 };
 use chimera_core::ui::orbit::{CHRD_NODE, ORB_NODE, ORBIT_CHAIN, RING_NODE};
 use chimera_core::ui::settings::rows;
@@ -18,7 +19,7 @@ const R: [RingIdx; 5] = RingIdx::ALL;
 
 fn cx() -> NavCtx {
     NavCtx {
-        engines: [EngineType::Algo; 6],
+        chains: [PartChain::Algo; 6],
         dyn_rows: 0,
         orbit: OrbitCx::NONE,
         rev: chimera_core::dsp::reverb::ReverbType::Quad,
@@ -191,7 +192,7 @@ fn cross_lands_on_the_target_part() {
 
     // After an engine change it lands on the engine's home.
     key(&mut l, NavKey::SeqHold, &cx, &mut r);
-    cx.engines[3] = EngineType::Modal;
+    cx.chains[3] = PartChain::Modal;
     okey(&mut l, OrbitKey::Cross(R[1]), &cx, &mut r);
     assert_eq!(l, Location::part_home(P[3], EngineType::Modal));
 
@@ -320,7 +321,7 @@ fn outside_is_never_orbit_or_settings() {
     };
     for _ in 0..10_000 {
         let mut cx = cx();
-        cx.engines[(rand() % 6) as usize] = EngineType::Modal;
+        cx.chains[(rand() % 6) as usize] = PartChain::Modal;
         cx.orbit.targets = R.map(|_| P[(rand() % 6) as usize]);
         let mut r = Recall::new();
         let mut l = Location::home(&cx);
