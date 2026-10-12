@@ -708,15 +708,208 @@ fn a_failing_sound_is_skipped_from_the_page() {
     // One failing Sound: off the page, named in the report; the rest stay.
     let mut bad = report(false, false);
     bad.name = "BAD PAD".into();
+    bad.id = source::parse(&BASE.replace("S9100002", "S9100003"), "b.toml").unwrap()[0].id;
+    // An old render of it, from a run when it passed.
+    std::fs::write(d.join("renders/S9100003-long.wav"), b"old").unwrap();
     assert!(!qa::write(&d, &[report(true, false), bad], &[], &[], true).unwrap());
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     assert!(
-        page.contains("TEST PAD") && !page.contains("BAD PAD"),
+        page.contains("<h3>TEST PAD") && !page.contains("<h3>BAD PAD"),
         "{page}"
     );
     let txt = std::fs::read_to_string(d.join("report.txt")).unwrap();
-    assert!(txt.contains("FAIL") && txt.contains("S9100002"), "{txt}");
-    assert!(txt.contains("off the page: S9100002 BAD PAD"), "{txt}");
+    assert!(txt.contains("FAIL") && txt.contains("S9100003"), "{txt}");
+    assert!(txt.contains("off the page: S9100003 BAD PAD"), "{txt}");
+    assert!(
+        page.contains("Off the page (a gate failed, see report.txt): S9100003 BAD PAD"),
+        "the page names what it left off: {page}"
+    );
+    assert!(page.contains("class=\"flag\">Off the page"), "flagged");
+    // Its old renders are not published as current.
+    assert!(
+        !d.join("renders/S9100003-long.wav").exists(),
+        "a dropped Sound's WAV removed"
+    );
+    assert!(!page.contains("S9100003-long.wav"));
+    assert!(
+        d.join("renders/S9100002-long.wav").is_file(),
+        "the passing one's stays"
+    );
+
+    // A failing run without --wav removes the old page: it could show the
+    // failing Sound as passed.
+    assert!(qa::write(&d, &[report(true, false)], &[], &[], true).unwrap());
+    assert!(d.join("listening.html").is_file());
+    assert!(!qa::write(&d, &[report(false, false)], &[], &[], false).unwrap());
+    assert!(!d.join("listening.html").exists(), "no stale page");
+}
+
+/// Every committed Source's "what it is" facts.
+fn committed_facts() -> Vec<(String, String)> {
+    build::sources(std::path::Path::new(SOURCES))
+        .unwrap()
+        .iter()
+        .filter(|s| !s.placeholder)
+        .flat_map(|s| {
+            about::of(s)
+                .unwrap()
+                .into_iter()
+                .flat_map(|(label, lines)| std::iter::once(label.to_string()).chain(lines))
+                .map(|l| (s.name.as_str().to_string(), l))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+#[test]
+fn no_fact_falls_back_to_a_question_mark() {
+    for (name, l) in committed_facts() {
+        assert!(!l.contains('?'), "{name}: {l}");
+    }
+}
+
+/// No short word leaks onto the page: every word of every committed
+/// Sound's facts is a full word (or a number, unit or the unit's own
+/// name for a thing: 2040, LP4, REV2, T5), and none is a short word the
+/// tables spell out.
+#[test]
+fn facts_use_full_words() {
+    const KNOWN: &[&str] = &[
+        "ENGINE",
+        "VIRTUAL",
+        "ANALOG",
+        "MODAL",
+        "FM",
+        "ALGO",
+        "FILTER",
+        "MODULATED",
+        "WAVE",
+        "MODE",
+        "MIX",
+        "SYNC",
+        "RING",
+        "BITS",
+        "XOR",
+        "BLEND",
+        "SUB",
+        "STABILITY",
+        "OSC",
+        "COARSE",
+        "FINE",
+        "SHAPE",
+        "CUTOFF",
+        "RESONANCE",
+        "FREQUENCY",
+        "LEVEL",
+        "CLEAN",
+        "LADDER",
+        "DIRTY",
+        "LP4",
+        "REV2",
+        "EXP",
+        "ENV",
+        "LFO",
+        "ATTACK",
+        "DECAY",
+        "SUSTAIN",
+        "RELEASE",
+        "HOLD",
+        "RISE",
+        "FALL",
+        "LINEAR",
+        "LOGARITHMIC",
+        "EXPONENTIAL",
+        "SINE",
+        "TRIANGLE",
+        "SAW",
+        "SQUARE",
+        "RANDOM",
+        "RATE",
+        "RETRIG",
+        "FUNC",
+        "VCA",
+        "FOLD",
+        "VELOCITY",
+        "NOTE",
+        "PITCH",
+        "OUT",
+        "OP",
+        "AUDIO",
+        "RATIO",
+        "OFF",
+        "CARRIERS",
+        "MODULATORS",
+        "ALGORITHM",
+        "MORPH",
+        "TOWARD",
+        "MODEL",
+        "EXCITER",
+        "STRING",
+        "BANK",
+        "BOWED",
+        "SYMPATHETIC",
+        "PLUCK",
+        "STRIKE",
+        "BOW",
+        "EXCITE",
+        "COLOR",
+        "BURST",
+        "FORCE",
+        "SPEED",
+        "STRUCTURE",
+        "BRIGHTNESS",
+        "DAMPING",
+        "POSITION",
+        "MONO",
+        "PART",
+        "GLIDE",
+        "OVERLAPPING",
+        "NOTES",
+        "SLIDE",
+        "THE",
+        "OSCILLATORS",
+        "DRIFT",
+        "HOLDS",
+        "THEM",
+        "STEADY",
+        "SHARP",
+        "HALF",
+        "CYCLE",
+        "DOUBLED",
+        "PULSE",
+        "TILTED",
+        "ROUNDED",
+        "SOFT",
+        "MS",
+        "S",
+        "HZ",
+        "KHZ",
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T6",
+        "T7",
+        "T8",
+    ];
+    let mut odd = std::collections::BTreeSet::new();
+    for (name, l) in committed_facts() {
+        for w in l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '.')) {
+            let w = w.trim_matches('.');
+            let alg =
+                w.len() > 1 && w.starts_with('A') && w[1..].bytes().all(|b| b.is_ascii_digit());
+            let number = w.parse::<f32>().is_ok();
+            if w.is_empty() || number || alg || w == "2040" {
+                continue;
+            }
+            let short = about::WORDS.iter().chain(&about::VALUES).any(|x| x.0 == w);
+            if short || !KNOWN.contains(&w.to_uppercase().as_str()) {
+                odd.insert(format!("{w} ({name})"));
+            }
+        }
+    }
+    assert!(odd.is_empty(), "short or unknown words: {odd:?}");
 }
 
 /// The "what it is" lines, flattened.
@@ -770,7 +963,7 @@ fn what_it_is_lists_an_algo_sounds_carriers() {
     assert!(t.contains("ENGINE: FM ALGO"), "{t}");
     assert!(t.contains("ALGORITHM T5"), "{t}");
     assert!(
-        t.contains("CARRIERS: OP 1 ") && t.contains("OP 3 (off)") && t.contains(", OP 5 "),
+        t.contains("CARRIERS: OP 1 ") && t.contains("OP 3 (OFF)") && t.contains(", OP 5 "),
         "{t}"
     );
     assert!(t.contains("MODULATORS: OP 2 → OP 1 "), "{t}");
@@ -781,7 +974,10 @@ fn what_it_is_lists_an_algo_sounds_carriers() {
 fn a_tap_route_reads_audio_rate() {
     let algo = BASE.replace("engine = \"VA\"", "engine = \"ALGO\"");
     let t = about_text(&format!("{algo}tap.OP5 = \"FILTER.CUTOFF +45\"\n"));
-    assert!(t.contains("OP 5 → FILTER FREQ +45 (audio rate)"), "{t}");
+    assert!(
+        t.contains("OP 5 → FILTER FREQUENCY +45 (audio rate)"),
+        "{t}"
+    );
 }
 
 #[test]
@@ -988,6 +1184,9 @@ fn listening_renders_are_wet_and_gates_dry() {
     // The page marks the wet render.
     assert_eq!(gw.renders[0].with, ["CHORUS"]);
     assert!(gd.renders[0].with.is_empty());
+    // On the page whatever this unlevelled Sound's loudness reads.
+    let mut gw = gw;
+    gw.gates.retain(|g| g.verdict != Verdict::Fail);
     let page = qa::page(&[gw], &[], &[]);
     assert!(page.contains("LONG WITH CHORUS"), "full words");
     let all = &source::parse(

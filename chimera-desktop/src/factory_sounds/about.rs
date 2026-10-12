@@ -28,8 +28,9 @@ use super::source::{Source, to_sound};
 /// A labelled fact and its lines: `("FILTER", ["2040 · LP4 · …"])`.
 pub type Fact = (&'static str, Vec<String>);
 
-/// The unit's short words, spelled out where a page has the room.
-const WORDS: [(&str, &str); 18] = [
+/// The unit's short label words, spelled out where a page has the room
+/// (the specs carry no longer label).
+pub const WORDS: [(&str, &str); 17] = [
     ("AMNT", "BLEND"),
     ("STAB", "STABILITY"),
     ("CRSE", "COARSE"),
@@ -47,7 +48,30 @@ const WORDS: [(&str, &str); 18] = [
     ("ENS.R", "ENSEMBLE RATE"),
     ("ENS.M", "ENSEMBLE MIX"),
     ("TRNSP", "TRANSPOSE"),
+];
+
+/// The unit's short value words (a curve, an operator's wave), spelled
+/// out word by word in any value.
+pub const VALUES: [(&str, &str); 19] = [
+    ("LIN", "LINEAR"),
+    ("LOG", "LOGARITHMIC"),
+    ("EXP", "EXPONENTIAL"),
     ("SYMP", "SYMPATHETIC"),
+    ("TRI", "TRIANGLE"),
+    ("SQR", "SQUARE"),
+    ("W1", "SINE"),
+    ("W2", "SHARP SINE"),
+    ("W3", "HALF-WAVE SINE"),
+    ("W4", "HALF-WAVE SHARP SINE"),
+    ("W5", "HALF-CYCLE SINE"),
+    ("W6", "HALF-CYCLE SHARP SINE"),
+    ("W7", "HALF-CYCLE DOUBLED SINE"),
+    ("W8", "HALF-CYCLE DOUBLED SHARP SINE"),
+    ("P25", "PULSE 25%"),
+    ("P12", "PULSE 12.5%"),
+    ("TSAW", "TILTED SAW"),
+    ("RSQR", "ROUNDED SQUARE"),
+    ("SSAW", "SOFT SAW"),
 ];
 
 /// `WAVE1` → `WAVE 1`, `AMNT` → `BLEND`.
@@ -59,6 +83,14 @@ fn full(label: &str) -> String {
     } else {
         format!("{word} {n}")
     }
+}
+
+/// A shown value with its short words spelled out: `LIN` → `LINEAR`.
+fn spelled(v: &str) -> String {
+    v.split(' ')
+        .map(|t| VALUES.iter().find(|w| w.0 == t).map_or(t, |w| w.1))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn text(v: f32, fmt: ValFmt) -> String {
@@ -74,7 +106,7 @@ fn get(snd: &Sound, a: ParamAddr) -> f32 {
 /// `a`'s value as the unit shows it on `snd`'s pages.
 fn shown(snd: &Sound, ctx: &SlotCtx, a: ParamAddr) -> String {
     match (a.spec(), shown_fmt(a, ctx)) {
-        (Some(spec), Some(fmt)) => text(spec.normalize(get(snd, a)), fmt),
+        (Some(spec), Some(fmt)) => spelled(&text(spec.normalize(get(snd, a)), fmt)),
         _ => "?".into(),
     }
 }
@@ -143,7 +175,8 @@ fn dest(a: ParamAddr) -> String {
 /// A tap's column: the filter's FREQ or Q, or the VCA or FOLD.
 fn column(c: FixedCol) -> String {
     match c {
-        FixedCol::Freq | FixedCol::Q => format!("FILTER {}", c.tag()),
+        FixedCol::Freq => "FILTER FREQUENCY".into(),
+        FixedCol::Q => "FILTER RESONANCE".into(),
         _ => c.tag().into(),
     }
 }
@@ -283,15 +316,15 @@ fn filter(snd: &Sound, ctx: &SlotCtx) -> String {
     v.join(" · ")
 }
 
-/// An operator's wave, ratio and level, `(SAW 1.00, LEVEL 99)`, or
-/// `(off)` at level 0.
+/// An operator's wave, ratio and level, `(SAW, RATIO 1.00, LEVEL 99)`, or
+/// `(OFF)` at level 0.
 fn op(snd: &Sound, ctx: &SlotCtx, o: Op) -> String {
     let at = |id| ParamAddr::new(BlockRef::AlgoOp(o), id);
     if get(snd, at(AlgoOpParams::LEVEL)) == 0.0 {
-        return "(off)".into();
+        return "(OFF)".into();
     }
     format!(
-        "({} {}, LEVEL {})",
+        "({}, RATIO {}, LEVEL {})",
         shown(snd, ctx, at(AlgoOpParams::WAVE)),
         shown(snd, ctx, at(AlgoOpParams::COARSE)),
         shown(snd, ctx, at(AlgoOpParams::LEVEL))
@@ -328,7 +361,7 @@ fn engine(snd: &Sound, ctx: &SlotCtx) -> Vec<Fact> {
                 .collect();
             let model = format!(
                 "MODEL {} · EXCITER {}: {}",
-                full(&shown(snd, ctx, m(ModalParams::MODE))),
+                shown(snd, ctx, m(ModalParams::MODE)),
                 EXCITER_NAMES[mode as usize],
                 exc.join(" · ")
             );

@@ -1141,13 +1141,15 @@ pub fn report_text(reports: &[Report], samey: &[(usize, usize)]) -> String {
 }
 
 /// The owner's page: every Sound that passes, badged APPROVED or NEW,
-/// then each placeholder. Per Sound its name, description, demo mode,
+/// then each placeholder; a Sound a gate failed is named in a flagged
+/// OFF THE PAGE row. Per Sound its name, description, demo mode,
 /// LUFS, `edits`, exemptions and samey pairs to judge by ear, what it is
 /// (`about`), and a player per render with its LUFS and peak.
 pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source]) -> String {
     let mut sounds: Vec<(Badge, Row)> = reports
         .iter()
         .enumerate()
+        .filter(|(_, r)| r.passes())
         .map(|(i, r)| {
             let mut lines = vec![(r.note.clone(), false)];
             let lufs = r.lufs().map_or(String::new(), |l| {
@@ -1229,7 +1231,32 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source
     }));
     // APPROVED, then NEW, then the placeholders; Source order within each.
     sounds.sort_by_key(|(b, _)| *b);
-    let rows: Vec<Row> = sounds.into_iter().map(|(_, r)| r).collect();
+    let mut rows: Vec<Row> = sounds.into_iter().map(|(_, r)| r).collect();
+    let off: Vec<(String, bool)> = reports
+        .iter()
+        .filter(|r| !r.passes())
+        .map(|r| {
+            let l = format!(
+                "Off the page (a gate failed, see report.txt): S{} {}",
+                r.id.get(),
+                r.name
+            );
+            (l, true)
+        })
+        .collect();
+    if !off.is_empty() {
+        rows.insert(
+            0,
+            Row {
+                title: "OFF THE PAGE".into(),
+                badge: None,
+                lines: off,
+                facts: Vec::new(),
+                players: Vec::new(),
+                private: false,
+            },
+        );
+    }
     listen::rows_page(
         "Factory Sounds · listening",
         "Every Sound that is ready: APPROVED (passed your listening round), NEW (not yet heard), \
@@ -1244,8 +1271,9 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source
 
 /// Into `dir` (checked as a ledger): `report.txt`, naming each Sound a
 /// failing gate keeps off the page; with `wav`, each passing Sound's
-/// renders as `renders/S<id>-<script>.wav` and `listening.html` (the
-/// passing Sounds and the placeholders). True when every Sound passes.
+/// renders as `renders/S<id>-<script>.wav` (a failing one's old renders
+/// removed) and `listening.html`. A failing run without `wav` removes an
+/// old page. True when every Sound passes.
 pub fn write(
     dir: &Path,
     reports: &[Report],
@@ -1268,26 +1296,36 @@ pub fn write(
     }
     let path = dir.join("report.txt");
     std::fs::write(&path, txt).map_err(|e| err(&path, e))?;
+    let html = dir.join("listening.html");
     if wav {
-        // The page's Sounds, and the samey pairs among them.
-        let shown: Vec<usize> = (0..reports.len())
-            .filter(|&i| reports[i].passes())
-            .collect();
-        let on: Vec<Report> = shown.iter().map(|&i| reports[i].clone()).collect();
-        let at = |i: usize| shown.iter().position(|&j| j == i);
-        let pairs: Vec<(usize, usize)> = samey
-            .iter()
-            .filter_map(|&(a, b)| Some((at(a)?, at(b)?)))
-            .collect();
         let r = dir.join("renders");
         std::fs::create_dir_all(&r).map_err(|e| err(&r, e))?;
-        for rep in &on {
-            for x in &rep.renders {
-                listen::write_wav_stereo(&dir.join(rep.wav(x.audition)), &x.stereo)?;
+        for rep in reports {
+            if rep.passes() {
+                for x in &rep.renders {
+                    listen::write_wav_stereo(&dir.join(rep.wav(x.audition)), &x.stereo)?;
+                }
+                continue;
+            }
+            // A Sound off the page leaves no old render to pass as current.
+            let stale = format!("S{}-", rep.id.get());
+            for e in std::fs::read_dir(&r).map_err(|e| err(&r, e))? {
+                let p = e.map_err(|e| err(&r, e))?.path();
+                if p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with(&stale) && n.ends_with(".wav"))
+                {
+                    std::fs::remove_file(&p).map_err(|e| err(&p, e))?;
+                }
             }
         }
-        let html = dir.join("listening.html");
-        std::fs::write(&html, page(&on, &pairs, placeholders)).map_err(|e| err(&html, e))?;
+        std::fs::write(&html, page(reports, samey, placeholders)).map_err(|e| err(&html, e))?;
+    } else if !pass {
+        // An old page could show a now failing Sound as passed.
+        match std::fs::remove_file(&html) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(err(&html, e)),
+            _ => {}
+        }
     }
     Ok(pass)
 }
