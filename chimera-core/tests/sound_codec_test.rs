@@ -683,7 +683,10 @@ fn sends_round_trip_and_cost_nothing_at_zero() {
     let h = header(&s);
     let st = BuildStamp::new("0.1.0", "02e440e2", false);
     let mut sink = VecSink(Vec::new());
-    write_file(&mut sink, &h, &mut |w| encode_library_sound(&s, &st, None, w)).unwrap();
+    write_file(&mut sink, &h, &mut |w| {
+        encode_library_sound(&s, &st, None, w)
+    })
+    .unwrap();
     let back = decode(&sink.0).unwrap();
     assert!(back.bits_eq(&s));
     assert_eq!(back.params.out.sends, [0.25, 0.5, 1.0]);
