@@ -369,7 +369,6 @@ fn fmt_reads_as_the_page_draws() {
         )
     );
     assert!(func.ends_with("Hz"), "{func}");
-    println!("LFO1.RATE # {rate}; ENV2.RISE # {rise}; LFO2.RISE # {func}");
 }
 
 #[test]
@@ -510,15 +509,13 @@ fn limiter_gate() {
 }
 
 #[test]
-fn click_dc_finite_gate() {
+fn click_and_finite_gate() {
     // A sine from a zero crossing: no click.
     let clean = sine(220.0, 0.3, 1.0);
     assert_eq!(qa::clicks(&clean, &[0]).1, Verdict::Pass);
     let mut click = clean.clone();
     click[24_000] += 0.2;
     assert_eq!(qa::clicks(&click, &[0]).1, Verdict::Fail, "a click");
-    let dc: Vec<f32> = clean.iter().map(|v| v + 0.002).collect();
-    assert_eq!(qa::clicks(&dc, &[0]).1, Verdict::Fail, "DC over -60 dBFS");
     let mut nan = clean.clone();
     nan[100] = f32::NAN;
     assert_eq!(qa::clicks(&nan, &[0]).1, Verdict::Fail, "not finite");
@@ -655,11 +652,13 @@ fn report(pass: bool, private: bool) -> qa::Report {
         }],
         renders: vec![qa::Render {
             script: Script::Long,
-            mono: sine(220.0, 0.2, 0.5),
+            stereo: stereo(&sine(220.0, 0.2, 0.5), &sine(330.0, 0.1, 0.5)),
             lufs: -11.0,
-            peak_dbfs: -14.0,
+            peak_dbfs: [-14.0, -20.0],
             with: Vec::new(),
+            limited_db: None,
         }],
+        long_lufs: Some(-12.3),
         bands: [0.0; 32],
     }
 }
@@ -769,6 +768,10 @@ fn gates_render_through_the_instrument() {
     assert!(
         has(Check::Aliasing(84)) && has(Check::Aliasing(96)),
         "VA is harmonic"
+    );
+    assert!(
+        has(Check::Dc(100)) && has(Check::Dc(127)),
+        "DC on the held note"
     );
     assert!(!has(Check::Tap), "no tap routes");
 }
@@ -889,4 +892,106 @@ fn level_lufs_is_dry() {
     let wet = &source::parse(&format!("{BASE}OUT.SEND3 = \"1\"\n"), "w.toml").unwrap()[0];
     let dry = &source::parse(BASE, "d.toml").unwrap()[0];
     assert_eq!(qa::level_lufs(wet).unwrap(), qa::level_lufs(dry).unwrap());
+}
+
+/// Interleaved stereo from two channels.
+fn stereo(l: &[f32], r: &[f32]) -> Vec<f32> {
+    l.iter().zip(r).flat_map(|(&a, &b)| [a, b]).collect()
+}
+
+/// DC is judged against the signal over the held part, per channel: a
+/// quieter Sound, or more tail silence, never hides it.
+#[test]
+fn dc_gate_is_relative_per_channel_over_the_held_part() {
+    let n = 48_000;
+    let s = sine(220.0, 0.3, 1.0);
+    let clean = stereo(&s, &s);
+    assert_eq!(qa::dc(&clean, 0, n).1, Verdict::Pass);
+    // 5 % of the RMS (-26 dB) on the left only.
+    let off = 0.05 * 0.3 / 2f32.sqrt();
+    let left: Vec<f32> = s.iter().map(|v| v + off).collect();
+    let bad = stereo(&left, &s);
+    let (v, verdict) = qa::dc(&bad, 0, n);
+    assert_eq!(verdict, Verdict::Fail, "{v:.1} dB");
+    assert!((v + 26.0).abs() < 0.5, "{v:.1}");
+    // Turned down 40 dB: the same verdict (the old absolute -60 dBFS passed it).
+    let quiet: Vec<f32> = bad.iter().map(|v| v * 0.01).collect();
+    assert_eq!(qa::dc(&quiet, 0, n).1, Verdict::Fail);
+    // Ten seconds of silence after it: judged over the held part only.
+    let mut long = bad.clone();
+    long.resize(bad.len() + 2 * 480_000, 0.0);
+    assert_eq!(qa::dc(&long, 0, n).1, Verdict::Fail);
+    // Under the bar passes.
+    let ok: Vec<f32> = s.iter().map(|v| v + 0.1 * off).collect();
+    assert_eq!(qa::dc(&stereo(&ok, &s), 0, n).1, Verdict::Pass);
+}
+
+#[test]
+fn listening_page_is_stereo_and_honest() {
+    let d = scratch_ledger("ledger-stereo");
+    let mut r = report(true, false);
+    r.gates.push(Gate {
+        check: Check::Tail,
+        value: -240.0,
+        verdict: Verdict::Pass,
+    });
+    // A wet render the limiter worked past the single-note bar.
+    r.renders.push(qa::Render {
+        script: Script::Texture,
+        stereo: stereo(&sine(220.0, 0.2, 0.5), &sine(220.0, 0.2, 0.5)),
+        lufs: -10.0,
+        peak_dbfs: [-3.0, -3.5],
+        with: vec!["REVERB"],
+        limited_db: Some(2.4),
+    });
+    assert!(qa::write(&d, &[r], &[], true).unwrap());
+    let w = hound::WavReader::open(d.join("renders/S9100002-long.wav")).unwrap();
+    assert_eq!(w.spec().channels, 2, "the listening WAVs keep their width");
+    assert_eq!(w.len(), 2 * 24_000);
+    let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
+    assert!(page.contains("peak L -14.0 · R -20.0 dBFS"), "per channel");
+    assert!(page.contains("level (1 s, dry) -11.0 LUFS"));
+    assert!(page.contains("long (dry) -12.3 LUFS"));
+    assert!(page.contains("TEXTURE WITH REVERB"));
+    assert!(page.contains("limiter 2.4 dB, over the 1 dB bar"), "{page}");
+    assert!(page.contains("class=\"flag\""), "flagged visibly");
+    assert!(page.contains("or is marked for your ear"), "honest intro");
+    assert!(!page.contains("Every gate passed,"));
+    let txt = std::fs::read_to_string(d.join("report.txt")).unwrap();
+    assert!(txt.contains("silent") && !txt.contains("-240"), "{txt}");
+}
+
+/// A short low note: a partial cycle is not an offset, a real one is.
+#[test]
+fn held_dc_reads_whole_cycles_of_each_note() {
+    let hit = qa::Hit {
+        on: 0.0,
+        off: 0.08,
+        note: 36,
+        vel: 100,
+    };
+    // The render is a block late (the limiter's lookahead).
+    let note = |dc: f32| {
+        let mut x = vec![0.0; 64];
+        x.extend(sine(hz(60) * 1.07, 0.3, 0.08).iter().map(|v| v + dc));
+        x.resize(48_000, 0.0);
+        stereo(&x, &x)
+    };
+    let clean = note(0.0);
+    let span = &clean
+        .iter()
+        .step_by(2)
+        .skip(64)
+        .take(3_840)
+        .copied()
+        .collect::<Vec<f32>>();
+    let mean = span.iter().sum::<f32>() / 3_840.0;
+    assert!(
+        20.0 * (mean.abs() / (0.3 / 2f32.sqrt())).log10() > -40.0,
+        "the plain mean is fooled"
+    );
+    let (v, verdict) = qa::held_dc(&clean, &[hit]);
+    assert_eq!(verdict, Verdict::Pass, "{v:.1} dB");
+    let (v, verdict) = qa::held_dc(&note(0.05 * 0.3 / 2f32.sqrt()), &[hit]);
+    assert_eq!(verdict, Verdict::Fail, "{v:.1} dB");
 }

@@ -968,6 +968,8 @@ pub struct Player {
     pub label: String,
     pub file: String,
     pub info: String,
+    /// The info line stands out (a measurement for the ear).
+    pub flag: bool,
 }
 
 /// A row of a `rows_page`: a title, text lines (flagged lines stand out),
@@ -1008,9 +1010,10 @@ pub fn rows_page(title: &str, intro: &str, rows: &[Row]) -> String {
             for p in &r.players {
                 let _ = writeln!(
                     out,
-                    "<div class=\"player\"><div class=\"label\"><b>{}</b><span>{}</span></div>\
+                    "<div class=\"player\"><div class=\"label\"><b>{}</b><span{}>{}</span></div>\
                      <audio controls preload=\"none\" src=\"{}\"></audio></div>",
                     esc(&p.label),
+                    if p.flag { " class=\"flag\"" } else { "" },
                     esc(&p.info),
                     esc(&p.file)
                 );
@@ -1030,17 +1033,27 @@ const FADE: usize = 480;
 
 /// `x` as a 48 kHz, 16-bit mono WAV, its end faded over `FADE`.
 pub fn write_wav(path: &std::path::Path, x: &[f32]) -> Result<(), String> {
+    write_wav_ch(path, x, 1)
+}
+
+/// `x`, interleaved stereo, as a 48 kHz, 16-bit stereo WAV, its end faded
+/// over `FADE` frames.
+pub fn write_wav_stereo(path: &std::path::Path, x: &[f32]) -> Result<(), String> {
+    write_wav_ch(path, x, 2)
+}
+
+fn write_wav_ch(path: &std::path::Path, x: &[f32], channels: u16) -> Result<(), String> {
     let spec = hound::WavSpec {
-        channels: 1,
+        channels,
         sample_rate: SAMPLE_RATE,
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
     let err = |e: hound::Error| format!("{}: {e}", path.display());
     let mut w = hound::WavWriter::create(path, spec).map_err(err)?;
-    let n = x.len();
+    let (n, ch) = (x.len(), channels as usize);
     for (i, &s) in x.iter().enumerate() {
-        let fade = ((n - i) as f32 / FADE as f32).min(1.0);
+        let fade = ((n - i).div_ceil(ch) as f32 / FADE as f32).min(1.0);
         let v = chimera_core::dsp::clampf(s * fade, -1.0, 1.0) * 32_767.0;
         w.write_sample(v.round() as i16).map_err(err)?;
     }
@@ -1175,6 +1188,7 @@ mod tests {
                 label: "LONG".into(),
                 file: "renders/S9100002-long.wav".into(),
                 info: "-11.0 LUFS".into(),
+                flag: false,
             }],
             private,
         };

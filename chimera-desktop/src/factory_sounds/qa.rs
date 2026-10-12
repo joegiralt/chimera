@@ -43,12 +43,20 @@ pub const LOUDNESS_LU: f32 = 2.0;
 /// Gain reduction a single note may take, and the chord `stab`.
 pub const LIMIT_SINGLE_DB: f32 = 1.0;
 pub const LIMIT_CHORD_DB: f32 = 3.0;
-/// A render's mean must sit under this.
-pub const DC_DBFS: f32 = -60.0;
+/// DC on a held note against the note, per channel (`dc_db`): an offset
+/// of 1 % of the RMS. Its step at note-on and note-off sits 40 dB under
+/// the note (masked; subsonic) and costs under 0.1 dB of headroom; a wave
+/// a fold or crush shifts by 3 % of its RMS reads -30 dB. The nine VA
+/// Sounds' held notes read -43 (GLIDE BASS at v127) to -108 dB.
+pub const DC_REL_DB: f32 = -40.0;
+/// What counts as DC: energy under this.
+const DC_HZ: f64 = 10.0;
 /// Harmonic over inharmonic energy, at C6 and C7.
 pub const ALIAS_DB: f32 = 40.0;
 /// Silence, and how long past the release it may take to get there.
 pub const TAIL_DBFS: f32 = -90.0;
+/// At or under this a measured peak is digital silence (`db`'s floor).
+const SILENT_FLOOR_DB: f32 = -200.0;
 pub const TAIL_GRACE_S: f32 = 2.0;
 /// MODAL rings on past note-off (Rings): its own limit.
 pub const MODAL_TAIL_S: f32 = 10.0;
@@ -156,6 +164,13 @@ impl Take {
     }
 }
 
+thread_local! {
+    /// The scope every `play` writes (the UI's, unread here): one buffer per
+    /// thread, allocated once, not one leaked per render.
+    static SCOPE: std::cell::RefCell<ScopeWriter> =
+        std::cell::RefCell::new(ScopeWriter::new(Box::leak(Box::new(scope_buffer())).split().0));
+}
+
 /// `plan` played by `snd` on Part 1 in `mode`, offline at 48 kHz through
 /// `Instrument`: what `loudness_test`'s scenes measure.
 fn play(snd: &Sound, mode: PartMode, plan: &Plan) -> Take {
@@ -169,41 +184,42 @@ fn play(snd: &Sound, mode: PartMode, plan: &Plan) -> Take {
         SampleBudget::for_cpu(u32::MAX),
     ));
     let (mut fx, mut dac) = (Box::new(FxBus::new()), Box::new(DacBlocks::new()));
-    let mut scope = ScopeWriter::new(Box::leak(Box::new(scope_buffer())).split().0);
-    let channel = shared.parts[0].mix.channel;
-    let ev = |note: u8, kind| NoteEvent {
-        channel,
-        note: MidiNote::new(note).expect("a MIDI note"),
-        kind,
-    };
-    let energy = |p: &[f32]| p.iter().map(|v| v * v).sum::<f32>();
-    let mut t = Take {
-        stereo: Vec::new(),
-        reduced_db: 0.0,
-    };
-    let mut prev_in = 0.0f32;
-    for b in 0..block(plan.secs) {
-        for h in plan.hits.iter().filter(|h| block(h.off) == b) {
-            inst.handle_with(ev(h.note, NoteKind::Off), &shared, &GateView::empty());
+    SCOPE.with_borrow_mut(|scope| {
+        let channel = shared.parts[0].mix.channel;
+        let ev = |note: u8, kind| NoteEvent {
+            channel,
+            note: MidiNote::new(note).expect("a MIDI note"),
+            kind,
+        };
+        let energy = |p: &[f32]| p.iter().map(|v| v * v).sum::<f32>();
+        let mut t = Take {
+            stereo: Vec::new(),
+            reduced_db: 0.0,
+        };
+        let mut prev_in = 0.0f32;
+        for b in 0..block(plan.secs) {
+            for h in plan.hits.iter().filter(|h| block(h.off) == b) {
+                inst.handle_with(ev(h.note, NoteKind::Off), &shared, &GateView::empty());
+            }
+            for h in plan.hits.iter().filter(|h| block(h.on) == b) {
+                let v = Velocity::new(h.vel).expect("a velocity");
+                inst.handle_with(ev(h.note, NoteKind::On(v)), &shared, &GateView::empty());
+            }
+            inst.render_with(&mut fx, &mut dac, &shared, scope, &GateView::empty());
+            let out = &dac.out()[0];
+            // The block out against the block in before it, over the rest gain.
+            if prev_in > 1e-12 {
+                let gr = 20.0
+                    * ((energy(out) / prev_in).sqrt() / OUTPUT_GAIN)
+                        .max(1e-9)
+                        .log10();
+                t.reduced_db = t.reduced_db.max(-gr);
+            }
+            prev_in = energy(&dac.input()[0]);
+            t.stereo.extend_from_slice(out);
         }
-        for h in plan.hits.iter().filter(|h| block(h.on) == b) {
-            let v = Velocity::new(h.vel).expect("a velocity");
-            inst.handle_with(ev(h.note, NoteKind::On(v)), &shared, &GateView::empty());
-        }
-        inst.render_with(&mut fx, &mut dac, &shared, &mut scope, &GateView::empty());
-        let out = &dac.out()[0];
-        // The block out against the block in before it, over the rest gain.
-        if prev_in > 1e-12 {
-            let gr = 20.0
-                * ((energy(out) / prev_in).sqrt() / OUTPUT_GAIN)
-                    .max(1e-9)
-                    .log10();
-            t.reduced_db = t.reduced_db.max(-gr);
-        }
-        prev_in = energy(&dac.input()[0]);
-        t.stereo.extend_from_slice(out);
-    }
-    t
+        t
+    })
 }
 
 /// The listening render: the Source's Sound played under `s` at 48 kHz,
@@ -264,25 +280,70 @@ pub fn loudness(lufs: f32, by_ear: Option<&str>) -> Verdict {
 /// The most gain reduction the limiter took under `script` (`None`: the
 /// level render): 1 dB for a single note, 3 dB for `stab`.
 pub fn limiter(reduced_db: f32, script: Option<Script>) -> Verdict {
-    let bar = if matches!(script, Some(Script::Stab)) {
+    verdict(reduced_db <= limiter_bar(script))
+}
+
+/// The limiter gate's bar under `script`.
+pub fn limiter_bar(script: Option<Script>) -> f32 {
+    if matches!(script, Some(Script::Stab)) {
         LIMIT_CHORD_DB
     } else {
         LIMIT_SINGLE_DB
-    };
-    verdict(reduced_db <= bar)
+    }
 }
 
 /// `listen::qa`'s click ratio over the whole render (note-offs and edges
-/// included), each note-on in `onsets` judged as a take's onset; finite;
-/// DC under −60 dBFS. The value is the click ratio.
+/// included), each note-on in `onsets` judged as a take's onset; finite
+/// and sounding. The value is the click ratio.
 pub fn clicks(x: &[f32], onsets: &[usize]) -> (f32, Verdict) {
     let q = qa_takes(x, onsets);
-    let mean = x.iter().sum::<f32>() / x.len().max(1) as f32;
-    let dc_ok = mean.is_finite() && db(mean.abs()) < DC_DBFS;
     (
         q.click_ratio,
-        verdict(q.passes() && dc_ok && q.click_ratio <= CLICK_RATIO),
+        verdict(q.passes() && q.click_ratio <= CLICK_RATIO),
     )
+}
+
+/// DC against the signal: each channel's energy under `DC_HZ` (and in the
+/// window's main lobe, 4 bins) over frames `from..to` of interleaved stereo
+/// (the held part), against the window's whole energy, dB; the worse
+/// channel. A Blackman-Harris window (sidelobes at −92 dB) keeps a partial
+/// cycle of a note from reading as an offset. Turning a Sound down, or a
+/// long silent tail, changes nothing: what counts is the offset as a share
+/// of what is playing.
+pub fn dc_db(stereo: &[f32], from: usize, to: usize) -> f32 {
+    let frames = stereo.len() / 2;
+    let (from, to) = (from.min(frames), to.min(frames));
+    (0..2)
+        .map(|c| {
+            let x: Vec<f32> = stereo[2 * from..2 * to]
+                .iter()
+                .skip(c)
+                .step_by(2)
+                .copied()
+                .collect();
+            let (p, bin) = spectrum(&x, true);
+            let k = ((DC_HZ / bin) as usize).max(4).min(p.len() - 1);
+            // One side of the spectrum: each bin but 0 counts twice.
+            let side = |r: &[f64]| r.iter().sum::<f64>() * 2.0;
+            let low = p[0] + side(&p[1..=k]);
+            let all = p[0] + side(&p[1..]);
+            (10.0 * (low.max(1e-24) / all.max(1e-24)).log10()) as f32
+        })
+        .fold(f32::NEG_INFINITY, f32::max)
+}
+
+/// `dc` over the span `hits` hold, the first note-on to the last
+/// note-off, in a render of them (a block late).
+pub fn held_dc(stereo: &[f32], hits: &[Hit]) -> (f32, Verdict) {
+    let on = hits.iter().map(|h| block(h.on)).min().unwrap_or(0);
+    let off = hits.iter().map(|h| block(h.off)).max().unwrap_or(0);
+    dc(stereo, on * BLOCK_SIZE + LATE, off * BLOCK_SIZE + LATE)
+}
+
+/// No audible DC offset: `dc_db` at most `DC_REL_DB`.
+pub fn dc(stereo: &[f32], from: usize, to: usize) -> (f32, Verdict) {
+    let v = dc_db(stereo, from, to);
+    (v, verdict(v.is_finite() && v <= DC_REL_DB))
 }
 
 /// `x`'s power spectrum under a 4-term Blackman-Harris window (sidelobes
@@ -453,6 +514,8 @@ pub enum Check {
     /// The level render (`None`) or a script's.
     Limiter(Option<Script>),
     Clicks(Script),
+    /// A held home note at this velocity.
+    Dc(u8),
     /// At this note.
     Aliasing(u8),
     Tail,
@@ -466,6 +529,7 @@ impl Check {
             Check::Limiter(None) => "limiter level".into(),
             Check::Limiter(Some(s)) => format!("limiter {}", s.word()),
             Check::Clicks(s) => format!("clicks {}", s.word()),
+            Check::Dc(v) => format!("DC v{v}"),
             Check::Aliasing(n) => format!("aliasing C{}", n / 12 - 1),
             Check::Tail => "tail".into(),
             Check::Tap => "tap".into(),
@@ -477,6 +541,7 @@ impl Check {
             Check::Loudness => "LUFS",
             Check::Limiter(_) => "dB GR",
             Check::Clicks(_) => "x",
+            Check::Dc(_) => "dB rel",
             Check::Aliasing(_) | Check::Tap => "dB",
             Check::Tail => "dBFS",
         }
@@ -490,15 +555,19 @@ pub struct Gate {
     pub verdict: Verdict,
 }
 
-/// One script's render, for the page.
+/// One script's render, for the page: P1 as heard, interleaved stereo.
 #[derive(Clone, Debug)]
 pub struct Render {
     pub script: Script,
-    pub mono: Vec<f32>,
+    pub stereo: Vec<f32>,
     pub lufs: f32,
-    pub peak_dbfs: f32,
+    /// Left and right.
+    pub peak_dbfs: [f32; 2],
     /// The effects heard on it (its sends), full words: empty when dry.
     pub with: Vec<&'static str>,
+    /// A wet render's limiting, dB: information, not a gate (the gates
+    /// measure dry).
+    pub limited_db: Option<f32>,
 }
 
 /// A Sound's QA: every gate, every render, and its `long` render's ERB
@@ -514,6 +583,8 @@ pub struct Report {
     pub private: bool,
     pub gates: Vec<Gate>,
     pub renders: Vec<Render>,
+    /// The dry `long` render's LUFS, beside the level figure.
+    pub long_lufs: Option<f32>,
     pub bands: [f32; ERB_BANDS],
 }
 
@@ -571,6 +642,18 @@ pub fn gates(src: &Source) -> Result<Report, String> {
         Check::Limiter(None),
         (t.reduced_db, limiter(t.reduced_db, None)),
     );
+    // DC where an offset would sit: the held home note, at v100 and at
+    // v127 (velocity drives a fold or a bit crush harder).
+    gate(Check::Dc(100), held_dc(&t.stereo, &level.hits));
+    let hard = Plan {
+        hits: vec![hit(0.0, LEVEL_HOLD_S, src.home, 127)],
+        secs: LEVEL_HOLD_S + 0.05,
+        mode: None,
+    };
+    gate(
+        Check::Dc(127),
+        held_dc(&play(&snd, src.demo, &hard).stereo, &hard.hits),
+    );
     gate(Check::Tail, tail(&t.mono(), held + LATE, within));
 
     let mut renders = Vec::new();
@@ -590,22 +673,29 @@ pub fn gates(src: &Source) -> Result<Report, String> {
             .collect();
         gate(Check::Clicks(s), clicks(&mono, &onsets));
         if s == Script::Long {
-            dry_long = Some(mono.clone());
+            dry_long = Some((mono, listen::lufs(&t.stereo)));
         }
-        let (t, mono) = if with.is_empty() {
-            (t, mono)
+        let (t, limited_db) = if with.is_empty() {
+            (t, None)
         } else {
             let w = play(&wet, src.demo, &p);
-            let m = w.mono();
-            (w, m)
+            let r = w.reduced_db;
+            (w, Some(r))
         };
-        let peak = mono.iter().fold(0f32, |m, v| m.max(v.abs()));
+        let peak = |c: usize| {
+            db(t.stereo
+                .iter()
+                .skip(c)
+                .step_by(2)
+                .fold(0f32, |m, v| m.max(v.abs())))
+        };
         renders.push(Render {
             script: s,
             lufs: listen::lufs(&t.stereo),
-            peak_dbfs: db(peak),
-            mono,
+            peak_dbfs: [peak(0), peak(1)],
             with: with.clone(),
+            limited_db,
+            stereo: t.stereo,
         });
     }
 
@@ -621,9 +711,12 @@ pub fn gates(src: &Source) -> Result<Report, String> {
         gate(Check::Aliasing(n), aliasing(&x, hz(n), harmonic));
     }
 
-    let long = match dry_long {
+    let (long, long_lufs) = match dry_long {
         Some(x) => x,
-        None => play(&snd, src.demo, &plan(Script::Long, src.home)).mono(),
+        None => {
+            let t = play(&snd, src.demo, &plan(Script::Long, src.home));
+            (t.mono(), listen::lufs(&t.stereo))
+        }
     };
     if !src.taps.is_empty() {
         let mut bare = snd.clone();
@@ -642,6 +735,7 @@ pub fn gates(src: &Source) -> Result<Report, String> {
         private: src.from.is_some(),
         gates,
         renders,
+        long_lufs: Some(long_lufs),
         bands: erb_bands(&long),
     })
 }
@@ -712,11 +806,16 @@ pub fn report_text(reports: &[Report], samey: &[(usize, usize)]) -> String {
                 Verdict::Fail => "FAIL".to_string(),
                 Verdict::Exempt(why) => format!("EXEMPT ({why})"),
             };
+            // A tail at the dB floor is silence, not a number.
+            let value = if g.check == Check::Tail && g.value <= SILENT_FLOOR_DB {
+                "silent".to_string()
+            } else {
+                format!("{:.2}", g.value)
+            };
             let _ = writeln!(
                 o,
-                "  {:<18} {:>8.2} {:<6} {v}",
+                "  {:<18} {value:>8} {:<6} {v}",
                 g.check.label(),
-                g.value,
                 g.check.unit()
             );
         }
@@ -747,11 +846,14 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)]) -> String {
         .enumerate()
         .map(|(i, r)| {
             let mut lines = vec![(r.note.clone(), false)];
-            let lufs = r
-                .lufs()
-                .map_or(String::new(), |l| format!(" · {l:.1} LUFS"));
+            let lufs = r.lufs().map_or(String::new(), |l| {
+                format!(" · level (1 s, dry) {l:.1} LUFS")
+            });
+            let long = r
+                .long_lufs
+                .map_or(String::new(), |l| format!(" · long (dry) {l:.1} LUFS"));
             lines.push((
-                format!("S{} · {}{lufs}", r.id.get(), r.demo.disk_ident()),
+                format!("S{} · {}{lufs}{long}", r.id.get(), r.demo.disk_ident()),
                 false,
             ));
             if let Some(e) = &r.edits {
@@ -772,13 +874,29 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)]) -> String {
                 players: r
                     .renders
                     .iter()
-                    .map(|x| Player {
-                        label: std::iter::once(x.script.word().to_uppercase())
-                            .chain(x.with.iter().map(|w| format!("WITH {w}")))
-                            .collect::<Vec<_>>()
-                            .join(" "),
-                        file: r.wav(x.script),
-                        info: format!("{:.1} LUFS · peak {:.1} dBFS", x.lufs, x.peak_dbfs),
+                    .map(|x| {
+                        let bar = limiter_bar(Some(x.script));
+                        let over = x.limited_db.is_some_and(|d| d > bar);
+                        let limited = x.limited_db.map_or(String::new(), |d| {
+                            let past = if over {
+                                format!(", over the {bar} dB bar")
+                            } else {
+                                String::new()
+                            };
+                            format!(" · limiter {d:.1} dB{past}")
+                        });
+                        Player {
+                            label: std::iter::once(x.script.word().to_uppercase())
+                                .chain(x.with.iter().map(|w| format!("WITH {w}")))
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                            file: r.wav(x.script),
+                            info: format!(
+                                "{:.1} LUFS · peak L {:.1} · R {:.1} dBFS{limited}",
+                                x.lufs, x.peak_dbfs[0], x.peak_dbfs[1]
+                            ),
+                            flag: over,
+                        }
                     })
                     .collect(),
                 private: r.private,
@@ -789,7 +907,7 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)]) -> String {
         "Factory Sounds · listening",
         "Each Sound under its render scripts, played offline through the real Instrument \
          (Part 1, P1); a render marked WITH plays its sends through NEW's effects. \
-         Every gate passed, measured dry; lines in colour are for your ear.",
+         Every gate passed (measured dry) or is marked for your ear: the lines in colour.",
         &rows,
     )
 }
@@ -815,7 +933,7 @@ pub fn write(
         std::fs::create_dir_all(&r).map_err(|e| err(&r, e))?;
         for rep in reports {
             for x in &rep.renders {
-                listen::write_wav(&dir.join(rep.wav(x.script)), &x.mono)?;
+                listen::write_wav_stereo(&dir.join(rep.wav(x.script)), &x.stereo)?;
             }
         }
     }
