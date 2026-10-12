@@ -35,6 +35,7 @@ enum Jump {
     Level(usize, f32),
     Morph(f32),
     Pitch(f32),
+    Vowel(f32),
 }
 
 #[derive(Clone, Debug)]
@@ -50,6 +51,7 @@ impl Jumps {
                 Jump::Feedback(i, v) => live.feedback[i] = v,
                 Jump::Level(i, v) => live.level[i] = v,
                 Jump::Morph(v) => live.morph = v,
+                Jump::Vowel(v) => live.vowel = v,
                 Jump::Pitch(st) if at == b => e.set_pitch(st),
                 Jump::Pitch(_) => {}
             }
@@ -59,7 +61,7 @@ impl Jumps {
 
 /// A random patch of table, FRMT and NOIS operators at random SKIRT, BW,
 /// FRMT, FDBK and LEVELs, on random algorithms (so PM links), with BW,
-/// FRMT, FDBK, LEVEL, MORPH and pitch jumps.
+/// FRMT, FDBK, LEVEL, MORPH, VOWEL and pitch jumps.
 fn random_formant_case(seed: u32) -> (AlgoParams, u8, usize, Jumps) {
     let mut r = Rng(seed.wrapping_mul(0x9e37_79b9) | 1);
     let mut p = AlgoParams::single(WaveId::W1);
@@ -92,12 +94,13 @@ fn random_formant_case(seed: u32) -> (AlgoParams, u8, usize, Jumps) {
             r.below(blocks as u32) as usize,
             r.below(OPS as u32) as usize,
         );
-        let j = match r.below(6) {
+        let j = match r.below(7) {
             0 => Jump::Bw(i, r.below(217) as f32),
             1 => Jump::Frmt(i, r.below(169) as f32),
             2 => Jump::Feedback(i, r.below(8) as f32),
             3 => Jump::Level(i, r.below(100) as f32),
             4 => Jump::Morph(r.below(100) as f32),
+            5 => Jump::Vowel(r.below(101) as f32),
             _ => Jump::Pitch(r.below(25) as f32 - 12.0),
         };
         jumps.push((at, j));

@@ -11,7 +11,7 @@ use chimera_core::dsp::algo::kinds::OpKind;
 use chimera_core::dsp::algo::morph::{Morph, carrier_norm};
 use chimera_core::dsp::algo::params::{AlgoParams, frmt_hz};
 use chimera_core::dsp::algo::tx::patch_gain;
-use chimera_core::dsp::algo::vowel::{Formant, VOWEL_OCT, VowelSlot, fc_hz};
+use chimera_core::dsp::algo::vowel::{Formant, VOWEL_HZ, VOWEL_OCT, VowelSlot, fc_hz};
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::dc_blocker::DcBlocker;
 use chimera_core::dsp::voice::DC_HZ;
@@ -581,4 +581,88 @@ fn grains_stay_odd_under_pm() {
     let out = render_algo(&modded(4, 99, 34, 0, 1), C5, 800); // FC ≈ 267 Hz at C5
     let m = mean(&out[BLOCK_SIZE * 100..]);
     assert!(m.abs() < 1e-4, "{m}");
+}
+
+/// BW 72 (160 Hz): at the brief's 120 (640 Hz) U's and I's F1, 300 and
+/// 270 Hz, sit under a grain's half cycle at C2, which `grain_fc` can't
+/// read (NaN); the law places them within 9 cents at 72.
+#[test]
+fn vowel_places_each_operator_on_its_vowel() {
+    for (v, row) in [0u8, 25, 50, 75, 100].into_iter().zip(VOWEL_HZ) {
+        for (i, s) in [VowelSlot::F1, VowelSlot::F2, VowelSlot::F3]
+            .into_iter()
+            .enumerate()
+        {
+            let mut p = one(OpKind::Formant, AlgoParams::default().ops[i].frmt, 72, 0);
+            (p.ops[0].vslot, p.vowel) = (s.code(), v);
+            let fc = grain_fc(&render_algo(&p, C2, 400)[BLOCK_SIZE * 50..]);
+            let cents = 1200.0 * (fc / row[i]).log2();
+            assert!(cents.abs() < 50.0, "{v} {s:?}: {cents:+.1} cents");
+        }
+    }
+}
+
+#[test]
+fn a_slot_edit_while_held_moves_nothing_until_the_next_note() {
+    let mut p = one(OpKind::Formant, 83, 120, 0);
+    (p.ops[0].vslot, p.vowel) = (VowelSlot::F2.code(), 100);
+    let (out, _) = render_algo_with(&p, C2, 400, |b, p, _, _| {
+        if b == 200 {
+            p.ops[0].vslot = VowelSlot::Off.code()
+        }
+    });
+    let held = grain_fc(&out[BLOCK_SIZE * 300..]);
+    let before = grain_fc(&out[BLOCK_SIZE * 100..BLOCK_SIZE * 200]);
+    assert!((held / before - 1.0).abs() < 0.01, "{held} {before}");
+}
+
+#[test]
+fn level_holds_across_the_vowels_at_c5() {
+    for s in 0..4u8 {
+        for v in [0u8, 25, 50, 75, 100] {
+            let mut p = one(OpKind::Formant, 69, 72, s);
+            (p.ops[0].vslot, p.vowel) = (VowelSlot::F1.code(), v);
+            let l = level_db_vs_r(&render_algo(&p, C5, 400)[BLOCK_SIZE * 100..]);
+            assert!(l.abs() < 0.5, "{s} {v}: {l:+.2} dB");
+        }
+    }
+}
+
+#[test]
+fn vowel_sweeps_do_not_click() {
+    for kind in [OpKind::Formant, OpKind::Noise] {
+        let mut p = one(kind, 83, 72, 1);
+        p.ops[0].vslot = VowelSlot::F2.code();
+        // 50 ms
+        let (sweep, _) = render_algo_with(&p, C3, 300, |b, _, live, _| {
+            live.vowel = (b as f32 * 100.0 / 37.5).min(100.0)
+        });
+        // 4 Hz square
+        let (jump, _) = render_algo_with(&p, C3, 750, |b, _, live, _| {
+            live.vowel = if (b / 94) % 2 == 0 { 0.0 } else { 100.0 }
+        });
+        assert!(
+            common::clicks(&sweep).is_empty() && common::clicks(&jump).is_empty(),
+            "{kind:?}"
+        );
+    }
+}
+
+#[test]
+fn bw_square_lfo_never_cuts_a_grain() {
+    let (_, cuts) = render_algo_with(&one(OpKind::Formant, 80, 0, 1), A3, 750, |b, _, live, _| {
+        live.bw[0] = if (b / 7) % 2 == 0 { 0.0 } else { 144.0 }
+    });
+    assert_eq!(cuts, 0);
+}
+
+#[test]
+fn a_route_into_a_table_operators_frmt_does_nothing() {
+    let p = AlgoParams::default();
+    let (a, _) = render_algo_with(&p, C3, 200, |_, _, _, _| {});
+    let (b, _) = render_algo_with(&p, C3, 200, |b, _, live, _| {
+        live.frmt[0] = (b % 168) as f32;
+        live.bw[0] = 216.0;
+    });
+    assert_eq!(a, b);
 }

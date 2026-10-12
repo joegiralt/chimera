@@ -8,7 +8,9 @@ use chimera_core::dsp::algo::plan::OPS;
 use chimera_core::dsp::algo::tx::{detune_at, ratio_at};
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::factory::{Demo, demo_sound};
+use chimera_core::modulation::MAX_MOD_SOURCES;
 use chimera_core::part::PartParams;
+use chimera_core::preset::Sound;
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use common::formant::{off_grid_db, render_algo};
 use common::sweep::{BPS, Bench, Patch, Tape};
@@ -55,8 +57,13 @@ fn phrase(d: Demo) -> (Vec<Note>, usize) {
 /// `d` played through the sweep's `Bench` (the real `Instrument`, FX and
 /// limiter), with the block of every note event.
 fn render_phrase(d: Demo) -> (Tape, Vec<(usize, bool)>) {
+    render_sound(d, demo_sound(d))
+}
+
+/// As `render_phrase`, playing `sound` on `d`'s phrase.
+fn render_sound(d: Demo, sound: Sound) -> (Tape, Vec<(usize, bool)>) {
     let mut bench = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
-    bench.edit_sound(|s| *s = demo_sound(d));
+    bench.edit_sound(|s| *s = sound);
     let (notes, end) = phrase(d);
     let mut events: Vec<(usize, bool)> = notes
         .iter()
@@ -94,6 +101,25 @@ fn demo_clips_are_clean() {
                 "{name}: click at block {e}"
             );
         }
+    }
+}
+
+/// CHOIR's LFO 1 and TALK BASS's ENV 2 move VOWEL in the clips: muting
+/// the route changes the phrase.
+#[test]
+fn demo_vowels_move() {
+    for d in [Demo::Choir, Demo::TalkBass] {
+        let mut still = demo_sound(d);
+        for src in 0..MAX_MOD_SOURCES {
+            still.mod_state.set_amount(src, 0, 0);
+        }
+        let (a, _) = render_phrase(d);
+        let (b, _) = render_sound(d, still);
+        let diff = a.out[0]
+            .iter()
+            .zip(&b.out[0])
+            .fold(0.0f32, |m, (x, y)| m.max((x - y).abs()));
+        assert!(diff > 1e-3, "{d:?}: VOWEL's route changes nothing ({diff})");
     }
 }
 

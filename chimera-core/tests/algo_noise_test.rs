@@ -195,6 +195,66 @@ fn width_jumps_do_not_burst() {
     assert!(db <= 1.0);
 }
 
+/// The band plays the live CENTRE, WIDTH and VOWEL, as a route or a knob
+/// on its way sets them (Task 12), not the stored ones.
+#[test]
+fn the_band_follows_live_centre_width_and_vowel() {
+    let mut p = nois(80, 48, 0);
+    p.ops[0].vslot = chimera_core::dsp::algo::vowel::VowelSlot::F2.code();
+    p.vowel = 50;
+    let (out, _) = render_algo_with(&p, 48, 3000, |_, _, live, _| {
+        (live.frmt[0], live.bw[0], live.vowel) = (104.0, 111.0, 100.0)
+    });
+    let (peak_hz, width_hz) = band_peak_and_width(&out[BLOCK_SIZE * 10..]);
+    let want = chimera_core::dsp::algo::vowel::fc_hz(
+        104.0,
+        100.0,
+        Some(chimera_core::dsp::algo::vowel::Formant::F2),
+        0.0,
+        0.0,
+    );
+    assert!((peak_hz / want - 1.0).abs() < 0.05, "{peak_hz} vs {want}");
+    assert!((width_hz / bw_hz(111.0) - 1.0).abs() < 0.15, "{width_hz}");
+}
+
+/// A square LFO on WIDTH, 3,948 Hz and 20 Hz at 4 Hz, rescales only new
+/// noise: Task 9's ruled statistic over 64 jumps (8 seeds × 8), the 10 ms
+/// after each 183 → 0 jump holds no more energy than the settled 20 Hz
+/// band, +1 dB, and never a sample past full scale.
+#[test]
+fn width_square_lfo_does_not_burst() {
+    const HALF: usize = 94;
+    let (mut jump, mut steady) = (0.0f64, 0.0f64);
+    for v in VoiceIdx::ALL {
+        let (out, _) = render_algo_with(&nois(104, 183, 0), 48, 16 * HALF, |b, _, live, e| {
+            if b == 0 {
+                e.seed(v);
+            }
+            live.bw[0] = if (b / HALF).is_multiple_of(2) {
+                183.0
+            } else {
+                0.0
+            };
+        });
+        assert!(out.iter().all(|x| x.abs() <= 1.0));
+        let energy = |a: usize, n: usize| {
+            out[a..a + n]
+                .iter()
+                .map(|&x| f64::from(x) * f64::from(x))
+                .sum::<f64>()
+                / n as f64
+        };
+        for j in (HALF..16 * HALF).step_by(2 * HALF) {
+            jump += energy(j * BLOCK_SIZE, SR as usize / 100);
+            // Settled: 60 blocks (80 ms) on.
+            steady += energy((j + 60) * BLOCK_SIZE, (HALF - 60) * BLOCK_SIZE);
+        }
+    }
+    let db = 10.0 * (jump / steady).log10();
+    println!("10 ms after a jump: {db:+.2} dB over the settled band");
+    assert!(db <= 1.0);
+}
+
 #[test]
 fn repeated_notes_do_not_repeat_their_noise() {
     let mut e = AlgoEngine::new();

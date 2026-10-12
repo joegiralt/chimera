@@ -117,13 +117,12 @@ impl AlgoLive {
         c.slot(addr).map(|s| *s)
     }
 
-    /// Takes a mod offset aimed at MORPH or a LEVEL (`false` for any other
-    /// destination, which the voice applies to its blocks as before).
+    /// Takes a mod offset aimed at one of these: MORPH, VOWEL, a LEVEL,
+    /// FRMT or BW, the modulatable ones (`false` for any other destination,
+    /// which the voice applies to its blocks as before).
     pub fn offset(&mut self, addr: ParamAddr, off: f32) -> bool {
-        let slot = match (addr.block, addr.param) {
-            (BlockRef::Algo, AlgoParams::MORPH) => &mut self.morph,
-            (BlockRef::AlgoOp(op), AlgoOpParams::LEVEL) => &mut self.level[op.index()],
-            _ => return false,
+        let Some(slot) = self.slot(addr) else {
+            return false;
         };
         if let Some(s) = addr.spec() {
             *slot = clampf(*slot + off * (s.max - s.min), s.min, s.max);
@@ -260,12 +259,12 @@ impl LawBlock {
 const LAW_KEY: usize = 6 * OPS + 8;
 type LawKey = [u32; LAW_KEY];
 
-/// A NOIS operator's band law, from stored values only: its centre and
-/// WIDTH, the poles' `(c, k)` and the upper-edge fade. `key` packs FRMT,
-/// BW, VOWEL and the slot it was taken at.
+/// A NOIS operator's band law: its centre and WIDTH, the poles' `(c, k)`
+/// and the upper-edge fade. `key` holds FRMT, BW and VOWEL as played and
+/// the slot it was taken at.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct NoiseLaw {
-    key: u32,
+    key: [u32; 4],
     band: (f32, f32),
     coef: (f32, f32),
     edge: f32,
@@ -273,7 +272,7 @@ struct NoiseLaw {
 
 impl NoiseLaw {
     const STALE: NoiseLaw = NoiseLaw {
-        key: u32::MAX,
+        key: [u32::MAX; 4],
         band: (0.0, 0.0),
         coef: WHITE,
         edge: 0.0,
@@ -385,7 +384,10 @@ impl AlgoEngine {
     pub const COST_FRMT: Cost = Cost(220); // counted, ADR 0056's method, 5901f08e, 7 spans
     pub const COST_FRMT_ONE_LINKED: Cost = Cost(380); // counted, ADR 0056's method, 5901f08e, 7 fires
     pub const COST_FRMT_LINKED: Cost = Cost(380); // counted, ADR 0056's method, 5901f08e, 7 fires
-    pub const COST_NOIS: Cost = Cost(80); // counted, ADR 0056's method, 3f403ae2 + task-11b-opt WIP
+    // The loop 75 (3f403ae2 + task-11b-opt WIP) and its band law taken
+    // afresh every block (`take_noise_law` 213 instructions and 5 divides
+    // or roots, 6.3): a route or a knob on its way moves it any block.
+    pub const COST_NOIS: Cost = Cost(85); // counted, ADR 0056's method, Task 12
     /// A formant law taken afresh (`take_laws` 876 instructions and 18
     /// divides, `LawBlock::new` 113 and 6, `formant_fc` 126 and 1). Billed
     /// on every FRMT, as Modal bills its pitch (#437): the pitch wheel or a
@@ -598,7 +600,7 @@ impl AlgoEngine {
                 self.kinds[i] = p.kinds().get(i);
                 match self.kinds[i] {
                     OpKind::Noise => {
-                        (self.noise_c[i], self.noise_k[i]) = self.noise_law(p, i, sr).coef;
+                        (self.noise_c[i], self.noise_k[i]) = self.noise_law(&live, i, sr).coef;
                     }
                     OpKind::Table(_) => {
                         self.mip[i] = self.mip_target(p, &live, cycles, sr, m, &level, i)
@@ -615,7 +617,7 @@ impl AlgoEngine {
                 (self.c_ratio[i], self.pm_k[i]) = (b.ratio, b.law.pm);
                 self.peak[i] = Peak::at(&b.law, &b.drive);
             }
-            self.gain[i] = self.target_gain(&live, p, i, sr);
+            self.gain[i] = self.target_gain(&live, i, sr);
         }
         self.active = true;
         self.held = true;
@@ -766,7 +768,7 @@ impl AlgoEngine {
         let mut peak = self.peak;
         self.formant_blocks(p, live, cycles, sr);
         let ops: [OpBlock; OPS] = core::array::from_fn(|i| {
-            let gain_to = self.target_gain(live, p, i, sr) * self.op_duck(i);
+            let gain_to = self.target_gain(live, i, sr) * self.op_duck(i);
             if let Some(b) = &self.laws[i] {
                 view[i] = (b.law.fc, b.law.bw_eff);
                 let (o, end) = self.formant_block(i, b, gain_to);
@@ -912,33 +914,42 @@ impl AlgoEngine {
     /// faded at the top of the band; a formant's peak-referenced (`g_m`),
     /// faded at the edge, its carrier's `g_c / g_m` in the carrier weight.
     /// `g_m` is the kernel's (`Peak`), so a formant's is LEVEL's at the edge.
-    /// A noise operator's band law takes its stored values afresh only
-    /// when they move.
-    fn target_gain(&mut self, live: &AlgoLive, p: &AlgoParams, i: usize, sr: f32) -> f32 {
+    /// A noise operator's band law is taken afresh only when it moves.
+    fn target_gain(&mut self, live: &AlgoLive, i: usize, sr: f32) -> f32 {
         let g = self.level_gain(live, i);
         match (self.kinds[i], &self.laws[i]) {
             (OpKind::Formant, Some(b)) => g * b.law.edge,
-            (OpKind::Noise, _) => g * NOISE_GAIN * self.noise_law(p, i, sr).edge,
+            (OpKind::Noise, _) => g * NOISE_GAIN * self.noise_law(live, i, sr).edge,
             _ => g * SAMPLE_SCALE,
         }
     }
 
-    /// Noise operator `i`'s band law: taken afresh when FRMT, BW, VOWEL
-    /// or its slot moved (stored values: only an edit moves them).
-    fn noise_law(&mut self, p: &AlgoParams, i: usize, sr: f32) -> NoiseLaw {
-        let o = &p.ops[i];
+    /// Noise operator `i`'s band law: taken afresh when FRMT, BW or VOWEL
+    /// as played, or its slot, moved.
+    fn noise_law(&mut self, live: &AlgoLive, i: usize, sr: f32) -> NoiseLaw {
         let slot = self.latch[i].slot.map_or(0, |s| s as u32 + 1);
-        let key = u32::from_le_bytes([o.frmt, o.bw, p.vowel, slot as u8]);
+        let key = [
+            live.frmt[i].to_bits(),
+            live.bw[i].to_bits(),
+            live.vowel.to_bits(),
+            slot,
+        ];
         if self.noise[i].key != key {
-            let band = self.noise_band(p, i);
-            self.noise[i] = NoiseLaw {
-                key,
-                band,
-                coef: noise_coef(band.1, sr),
-                edge: noise_edge(band.0, band.1),
-            };
+            self.noise[i] = self.take_noise_law(live, i, sr, key);
         }
         self.noise[i]
+    }
+
+    /// Noise operator `i`'s band law taken afresh: the moving path.
+    #[cfg_attr(feature = "probe", inline(never))]
+    fn take_noise_law(&self, live: &AlgoLive, i: usize, sr: f32, key: [u32; 4]) -> NoiseLaw {
+        let band = self.noise_band(live, i);
+        NoiseLaw {
+            key,
+            band,
+            coef: noise_coef(band.1, sr),
+            edge: noise_edge(band.0, band.1),
+        }
     }
 
     /// Every formant operator's law block this block, in `laws`: taken
@@ -1097,17 +1108,10 @@ impl AlgoEngine {
     }
 
     /// A noise operator's centre and WIDTH, Hz: CENTRE on its latched
-    /// vowel slot, with no KEY (spec § 4); stored FRMT, BW and VOWEL.
-    fn noise_band(&self, p: &AlgoParams, i: usize) -> (f32, f32) {
-        let o = &p.ops[i];
-        let fc = fc_hz(
-            f32::from(o.frmt),
-            f32::from(p.vowel),
-            self.latch[i].slot,
-            0.0,
-            0.0,
-        );
-        (fc, bw_hz(f32::from(o.bw)))
+    /// vowel slot, with no KEY (spec § 4); FRMT, BW and VOWEL as played.
+    fn noise_band(&self, live: &AlgoLive, i: usize) -> (f32, f32) {
+        let fc = fc_hz(live.frmt[i], live.vowel, self.latch[i].slot, 0.0, 0.0);
+        (fc, bw_hz(live.bw[i]))
     }
 
     fn adopt_alg(&mut self, p: &AlgoParams) {

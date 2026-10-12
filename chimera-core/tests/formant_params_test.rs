@@ -44,7 +44,11 @@ fn formant_params_follow_the_spec() {
         (ALGO_SPECS[4].id.0, ALGO_SPECS[4].ident, ALGO_SPECS[4].max),
         (4, "VOWEL", 100.0)
     );
-    assert!(ALGO_OP_SPECS[13..].iter().all(|s| !s.modulatable) && !ALGO_SPECS[4].modulatable);
+    // FRMT, BW and VOWEL are mod destinations (Task 12); the rest are read
+    // at note-on.
+    let m: Vec<_> = ALGO_OP_SPECS[13..].iter().map(|s| s.modulatable).collect();
+    assert_eq!(m, [true, true, false, false, false, false]);
+    assert!(ALGO_SPECS[4].modulatable);
 }
 
 #[test]

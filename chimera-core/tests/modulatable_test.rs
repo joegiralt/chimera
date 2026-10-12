@@ -5,8 +5,10 @@ mod common;
 use common::{Rig, routes};
 
 use chimera_core::addr::{BlockRef, ParamAddr};
+use chimera_core::budget::FORMANT_N_UNLINKED;
 use chimera_core::dsp::algo::algorithms::AlgoId;
-use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::kinds::OpKind;
+use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::modulator::EnvType;
 use chimera_core::mod_path::ModDestRegistry;
@@ -57,6 +59,43 @@ fn recipe(addr: ParamAddr) -> ParamSnapshot {
     p
 }
 
+/// The bases `addr` is checked on: `recipe`'s, or for the formant
+/// operators' FRMT and BW, operator *n* as FRMT and again as NOIS, and for
+/// VOWEL, operators 1 and 2 FRMT and 3 FRMT if the budget holds three (else
+/// NOIS), on A1 (no links).
+fn recipes(addr: ParamAddr) -> Vec<ParamSnapshot> {
+    let formant = |kinds: &[(usize, OpKind)]| {
+        let mut p = recipe(addr);
+        p.algo.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
+        for &(i, k) in kinds {
+            p.algo.try_set_kind(i, k).unwrap();
+        }
+        p
+    };
+    match (addr.block, addr.param) {
+        (BlockRef::AlgoOp(op), AlgoOpParams::FRMT | AlgoOpParams::BW) => {
+            let n = op.index();
+            vec![
+                formant(&[(n, OpKind::Formant)]),
+                formant(&[(n, OpKind::Noise)]),
+            ]
+        }
+        (BlockRef::Algo, AlgoParams::VOWEL) => {
+            let third = if FORMANT_N_UNLINKED >= 3 {
+                OpKind::Formant
+            } else {
+                OpKind::Noise
+            };
+            vec![formant(&[
+                (0, OpKind::Formant),
+                (1, OpKind::Formant),
+                (2, third),
+            ])]
+        }
+        _ => vec![recipe(addr)],
+    }
+}
+
 /// Note 60 held 100 blocks, then released. `repluck`: again at block 50,
 /// so Modal's POS is heard at its next pluck.
 fn render(params: &ParamSnapshot, mod_state: &ModState, repluck: bool) -> Vec<f32> {
@@ -87,23 +126,26 @@ fn every_modulatable_param_audibly_changes_output() {
             if !addr.modulatable() {
                 continue;
             }
-            let base = recipe(addr);
-            let repluck = block == BlockRef::Modal;
-            let dry = render(&base, &routes(addr, 0), repluck);
-            let wet = render(&base, &routes(addr, 127), repluck);
-            let diff = dry
-                .iter()
-                .zip(&wet)
-                .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
-            assert!(
-                diff > 1e-4,
-                "{block:?}.{}: LFO route changes nothing (max diff {diff})",
-                spec.label
-            );
+            for (case, base) in recipes(addr).iter().enumerate() {
+                let repluck = block == BlockRef::Modal;
+                let dry = render(base, &routes(addr, 0), repluck);
+                let wet = render(base, &routes(addr, 127), repluck);
+                let diff = dry
+                    .iter()
+                    .zip(&wet)
+                    .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
+                assert!(
+                    diff > 1e-4,
+                    "{block:?}.{} case {case}: LFO route changes nothing (max diff {diff})",
+                    spec.label
+                );
+            }
             checked += 1;
         }
     }
-    assert_eq!(checked, 17 + 3 * 5 + 1 + 2 + 4 + 11); // + VCA; PITCH, FINE; Modal's macros; VA's
+    // + VCA; PITCH, FINE; Modal's macros; VA's; FRMT and BW per operator,
+    // VOWEL.
+    assert_eq!(checked, 17 + 3 * 5 + 1 + 2 + 4 + 11 + 2 * 6 + 1);
 }
 
 /// #188: ENV 2 → MORPH is heard on the INIT Sound, whose ALG B differs

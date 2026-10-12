@@ -28,7 +28,7 @@ Counted on the `bench-algo` ELF by ADR 0056's method (`tools/loop_count.py`; the
 | `COST_FRMT` (SKIRT 1–3, no link in: spans between grain starts) | 220 |
 | `COST_FRMT_LINKED` (SKIRT 1–3, a link in: the moving loop) | 380 |
 | `COST_FRMT_ONE` / `COST_FRMT_ONE_LINKED` (SKIRT 0, one lane) | 210 / 380 |
-| `COST_NOIS` | 80 |
+| `COST_NOIS` (the loop 75, and its band law taken afresh each block, 6.3: Task 12) | 85 |
 | `COST_FRMT_MOVE` (the laws taken afresh each block) | 40, on every FRMT |
 
 - **Each term is its worst block for a grain clock up to C8** (MIDI 108, 4,186 Hz): `SPANS_COVERED` = ⌈64·4186/48000⌉ + 1 = 7 spans a block unlinked, 7 fires linked. A span adds 276 instructions (the span path with its fire, 93, and the block path, 183: an upper bound), a fire 47. So `<0, S3>` = 60 + 85.1 + 48.5 + 19.9 → 220, `<0, S0>` → 210, `<1, S3>` = 60 + 290.7 + 8.3 + 19.9 → 380, `<1, S0>` → 380. A typical 2.2 spans a block gave 190/180/380/370; MIDI 127 runs 18.
@@ -53,9 +53,9 @@ Counted on the `bench-algo` ELF by ADR 0056's method (`tools/loop_count.py`; the
   ```
 
   832 is the costliest table Sound (A16 ∪ A17, six operators with FDBK).
-- **The rule:** `Σ charge(kind, linked) ≤` the budget of the Sound's floor. A FRMT charges 360 linked and 200 unlinked; a NOIS 20.
+- **The rule:** `Σ charge(kind, linked) ≤` the budget of the Sound's floor. A FRMT charges 360 linked and 200 unlinked; a NOIS 25.
   - `FORMANT_N` (linked) = ⌊698/360⌋ = **1**; `FORMANT_N_UNLINKED` = ⌊698/200⌋ = **3**. One linked FRMT and one unlinked fit (560); with two unlinked it is 760.
-  - The demo Sounds are on A1 (no links), so they keep the spec's voicings: CHOIR three FRMT and a NOIS (620), TALK BASS a sine and three FRMT (600), BREATH two NOIS (40, four voices).
+  - The demo Sounds are on A1 (no links), so they keep the spec's voicings: CHOIR three FRMT and a NOIS (625), TALK BASS a sine and three FRMT (600), BREATH two NOIS (50, four voices).
 - **Only a patch within budget can be built.** `Kinds::new` checks its kinds unlinked at compile time; `AlgoParams::new` checks them on its algorithms. The writes are `try_set_kind` and `try_set_algs`, and every path goes through them: WAVE and ALG A/B block writes, `set_enum_code`, the decoder, the UI encoders and the param sweep.
 - **An edit that would overspend is refused** and changes nothing. WAVE's and ALG A/B's encoders step over refused kinds and algorithms, and the cell toasts FORMANT BUDGET FULL.
 - **A load past the budget degrades:** Sounds write ALG A and B before their operators, so the file's algorithm lands first and each operator after it is checked in order; a kind that doesn't fit stays the base's W1. An algorithm that arrives after its operators and would link into a full patch keeps the base's. Either way the load says FORMANT BUDGET FULL.

@@ -268,10 +268,11 @@ pub static ALGO_OP_SPECS: [ParamSpec; 19] = [
         0.0,
         168.0,
         72.0,
-        false,
+        true,
         Motion::Continuous(Smoothing::KNOB),
     )
-    .ident("FRMT"),
+    .ident("FRMT")
+    .short("FRMT"),
     ParamSpec::stepped(
         14,
         "BW",
@@ -282,7 +283,7 @@ pub static ALGO_OP_SPECS: [ParamSpec; 19] = [
         0.0,
         216.0,
         72.0,
-        false,
+        true,
         Motion::Continuous(Smoothing::KNOB),
     )
     .ident("BW"),
@@ -733,10 +734,11 @@ pub static ALGO_SPECS: [ParamSpec; 5] = [
         0.0,
         100.0,
         INIT_VOWEL as f32,
-        false,
+        true,
         Motion::Continuous(Smoothing::KNOB),
     )
-    .ident("VOWEL"),
+    .ident("VOWEL")
+    .short("VOWL"),
 ];
 
 const _: () = assert!(ALGO_SPECS[0].max as usize == ALGO_COUNT - 1);

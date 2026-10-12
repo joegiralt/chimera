@@ -412,8 +412,20 @@ mod authored {
         named(name, p)
     }
 
-    /// Operators 5 and 6 are unused; the VOWEL motion (LFO 1 across O to A
-    /// on CHOIR, ENV 2 to A on TALK BASS) joins when VOWEL is modulatable.
+    /// `s` with `src` routed into VOWEL by `amount`: VOWEL moves
+    /// `amount / 127 · 100` at the source's full swing.
+    fn vowel_route(mut s: Sound, src: ModSource, amount: i8) -> Sound {
+        let vowel = ParamAddr::new(BlockRef::Algo, AlgoParams::VOWEL);
+        s.dest_registry
+            .add(vowel, *b"ALGVOWEL")
+            .expect("VOWEL is modulatable");
+        let d = s.mod_state.push(vowel).expect("a free column");
+        s.mod_state.set_amount(src.index(), d, amount);
+        s
+    }
+
+    /// Operators 5 and 6 are unused. VOWEL moves: LFO 1 slowly across O–A
+    /// on CHOIR, ENV 2 from U to A and back on TALK BASS (spec § Demo clips).
     pub fn demo_sound(d: Demo) -> Sound {
         let few = FORMANT_N_UNLINKED < 3;
         match d {
@@ -449,7 +461,10 @@ mod authored {
                         band(30, F3, W_3K, S_F3, pad),
                     ]
                 };
-                demo("CHOIR", CHOIR_KINDS, 37, ops)
+                // 37 ± 12.6: O (25) to A (50) and back, every 4 s.
+                let mut s = vowel_route(demo("CHOIR", CHOIR_KINDS, 37, ops), ModSource::Lfo1, 16);
+                s.params.lfos[0].rate = 0.25;
+                s
             }
             Demo::TalkBass => {
                 let hit = [31, 8];
@@ -477,7 +492,11 @@ mod authored {
                     band(99, F2, W_FMT, slots[1], hit),
                     last,
                 ];
-                demo("TALK BASS", TALK_KINDS, 0, ops)
+                // ENV 2 to A (50.4) and down to U again under the held note:
+                // "wow".
+                let mut s = vowel_route(demo("TALK BASS", TALK_KINDS, 0, ops), ModSource::Env2, 64);
+                s.params.envelopes[1].sustain = 0.0;
+                s
             }
             Demo::Breath => {
                 let slow = [10, 6];
