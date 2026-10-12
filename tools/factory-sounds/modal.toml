@@ -1,1 +1,104 @@
 # The MODAL showcase Sounds (spec § 7): `[[sound]]` Sources as in va.toml.
+
+[[sound]]
+id = "S9100031"
+name = "NYLON"
+engine = "MODAL"
+note = "PLUCK POSITION FOLLOWS NOTE"
+demo = "poly"
+plays = "long short"
+home = "C3"
+phrase = "lead"
+MODAL.MODE = "STRING"
+MODAL.BRIGHT = "0.3"  # 38
+MODAL.DAMP = "0.85"  # 108
+MODAL.POS = "0.3"  # 38
+MODAL.COLOR = "0.6"  # 76
+MODAL.BODY = "0.5"  # 64
+MODAL.E.DPT = "0.3"  # 38
+MODAL.E.MIX = "0.3"  # 38
+mod.NOTE = "MODAL.POS +40"
+mod.VEL = "MODAL.BRIGHT +50"
+LFO1.RATE = "0.3"  # 2
+LFO1.SHAPE = "TRIANGLE"
+mod.LFO1 = "MODAL.BRIGHT +25, MODAL.POS +20"
+level = "by ear: set low so the pluck's attack stays under 1 dB of limiting"
+OUT.LEVEL = "1"  # 127
+trim = "0"
+
+[[sound]]
+id = "S9100032"
+name = "GAMELAN"
+engine = "MODAL"
+note = "HARDER STRIKES RING BRIGHTER"
+demo = "poly"
+plays = "long short"
+home = "C4"
+phrase = "lead"
+MODAL.MODE = "MODAL"
+MODAL.STRUCTURE = "0.6"  # 76
+MODAL.BRIGHT = "0.1"  # 13
+MODAL.DAMP = "0.9"  # 114
+MODAL.BURST = "0.1"  # 13
+MODAL.EXCITE = "0.35"  # 44
+FILTER.CUTOFF = "5000"  # 5.00 kHz
+mod.VEL = "MODAL.BRIGHT +40"
+LFO1.RATE = "0.2"  # 1
+LFO1.SHAPE = "SINE"
+mod.LFO1 = "MODAL.DAMP +30"
+level = "by ear: set low so the strike stays under 1 dB of limiting"
+trim = "0"
+
+[[sound]]
+id = "S9100033"
+name = "CELLO SWELL"
+engine = "MODAL"
+note = "ENV 2 PRESSES THE BOW"
+demo = "poly"
+plays = "long texture"
+home = "C3"
+phrase = "lead"
+MODAL.MODE = "BOWED"
+MODAL.FORCE = "0.6"  # 76
+MODAL.DAMP = "0.6"  # 76
+MODAL.SPEED = "0.5"  # 64
+MODAL.BRIGHT = "0.6"  # 76
+ENV2.ATK = "0.5"  # 141 ms
+ENV2.SUS = "0.7"  # 70%
+ENV2.REL = "0.5"  # 187 ms
+mod.ENV2 = "MODAL.BRIGHT +70, FILTER.CUTOFF +40"
+LFO1.RATE = "5"  # 32
+mod.LFO1 = "PITCH.FINE +3"
+LFO2.RATE = "0.3"  # 2
+mod.LFO2 = "MODAL.POS +45"
+mod.VEL = "MODAL.BRIGHT +30"
+trim = "-6.6"
+
+[[sound]]
+id = "S9100034"
+name = "SITAR DRONE"
+engine = "MODAL"
+note = "SYMPATHETIC STRINGS RING ON"
+demo = "poly"
+plays = "long stab"
+home = "C3"
+phrase = "pad"
+MODAL.MODE = "SYMPATHETIC"
+MODAL.STRUCTURE = "0.4"  # 51
+MODAL.COUPLE = "0.8"  # 102
+MODAL.HALO = "0.8"  # 102
+MODAL.DAMP = "0.7"  # 89
+MODAL.COLOR = "0.3"  # 38
+MODAL.EXCITE = "0.4"  # 51
+MODAL.BRIGHT = "0.5"  # 64
+OUT.SEND3 = "0.1"  # 13
+mod.VEL = "MODAL.BRIGHT +40"
+LFO1.RATE = "0.15"  # 1
+LFO1.SHAPE = "TRIANGLE"
+mod.LFO1 = "MODAL.POS +60, MODAL.BRIGHT +40"
+FILTER.CUTOFF = "2500"  # 2.50 kHz
+LFO2.RATE = "0.12"  # 1
+LFO2.SHAPE = "SINE"
+mod.LFO2 = "FILTER.CUTOFF +45"
+level = "by ear: set low so a 4-note chord stays at or under 3 dB of limiting"
+trim = "-5.4"

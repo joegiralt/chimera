@@ -2,3 +2,127 @@
 # `[[sound]]` Sources as in va.toml, plus tap.OP5 and tap.OP6 for ALGO's
 # audio-rate filter routes. Never a `from` line: the TX81Z ports are
 # private and live in $CHIMERA_TX_PORTS.
+
+[[sound]]
+id = "S9100026"
+name = "VOWEL BUZZ"
+engine = "ALGO"
+note = "OP 5 SWEEPS 2040 AT AUDIO RATE"
+demo = "poly"
+plays = "long texture"
+home = "C3"
+phrase = "lead"
+harmonic = "yes"
+ALGO.ALG_A = "T5"
+ALGO.ALG_B = "T5"
+OP_A.WAVE = "SAW"
+OP_A.LEVEL = "99"
+OP_A.VEL = "4"
+OP_A.RR = "9"
+OP_B.LEVEL = "40"
+OP_B.VEL = "5"
+OP_C.LEVEL = "0"
+OP_D.LEVEL = "0"
+OP_E.LEVEL = "50"
+OP_E.RR = "9"
+OP_F.CRSE = "8"  # 2.00
+OP_F.LEVEL = "35"
+FILTER.KIND = "2040"
+FILTER.MODE = "LP24"
+FILTER.VOICE = "REV2"
+FILTER.CUTOFF = "1000"  # 1.00 kHz
+FILTER.RESO = "0.85"  # 108
+FILTER.LEVEL = "0.65"  # 83
+tap.OP5 = "FILTER.CUTOFF +45"
+ENV2.ATK = "0.3"  # 26 ms
+ENV2.DEC = "0.55"  # 279 ms
+ENV2.SUS = "0.2"  # 20%
+mod.ENV2 = "OP_E.LEVEL +70"
+LFO1.RATE = "0.7"  # 4
+LFO1.SHAPE = "TRIANGLE"
+mod.LFO1 = "OP_E.LEVEL +45, OP_F.LEVEL +50"
+LFO2.RATE = "5.5"  # 35
+mod.LFO2 = "PITCH.FINE +3"
+LFO3.RATE = "0.13"  # 1
+LFO3.SHAPE = "SINE"
+mod.LFO3 = "OP_F.LEVEL +15"
+OUT.LEVEL = "1"  # 127
+level = "by ear: set low so v127 texture stays under 1 dB of limiting"
+trim = "-1.0"
+mod.VEL = "FILTER.CUTOFF +20"
+mod.NOTE = "OP_E.LEVEL -40"
+
+[[sound]]
+id = "S9100027"
+name = "THROAT SING"
+engine = "ALGO"
+note = "OP 6 ON FILTER FREQ AND Q"
+demo = "poly"
+plays = "long texture"
+home = "C3"
+phrase = "lead"
+harmonic = "yes"
+ALGO.ALG_A = "A6"
+ALGO.ALG_B = "A6"
+OP_A.LEVEL = "99"
+OP_A.VEL = "4"
+OP_A.RR = "9"
+OP_B.LEVEL = "60"
+OP_B.CRSE = "8"  # 2.00
+OP_C.LEVEL = "0"
+OP_D.LEVEL = "0"
+OP_E.LEVEL = "40"
+OP_E.VEL = "5"
+OP_F.CRSE = "8"  # 2.00
+OP_F.LEVEL = "60"
+FILTER.KIND = "2040"
+FILTER.MODE = "LP24"
+FILTER.VOICE = "REV2"
+FILTER.CUTOFF = "1200"  # 1.20 kHz
+FILTER.RESO = "0.75"  # 95
+tap.OP6 = "FILTER.CUTOFF +40, FILTER.RESO +20"
+LFO1.RATE = "0.45"  # 3
+LFO1.SHAPE = "SINE"
+mod.LFO1 = "OP_F.LEVEL +60"
+LFO2.RATE = "0.3"  # 2
+LFO2.SHAPE = "TRIANGLE"
+mod.LFO2 = "FILTER.CUTOFF +20"
+mod.VEL = "OP_E.LEVEL +20"
+mod.NOTE = "OP_E.LEVEL -100, OP_F.LEVEL -127, FILTER.RESO -20, FILTER.CUTOFF -50"
+ENV2.ATK = "0.4"  # 60 ms
+ENV2.DEC = "0.6"  # 415 ms
+ENV2.SUS = "0.3"  # 30%
+mod.ENV2 = "OP_F.LEVEL +45, FILTER.CUTOFF +45"
+FILTER.LEVEL = "0.65"  # 83
+OUT.LEVEL = "1"  # 127
+trim = "-0.9"
+
+[[sound]]
+id = "S9100028"
+name = "VOWEL CHOIR"
+engine = "ALGO"
+note = "FORMANT CHOIR: COMING SOON"
+demo = "poly"
+plays = "long"
+home = "C3"
+status = "placeholder"
+
+[[sound]]
+id = "S9100029"
+name = "TALK BASS"
+engine = "ALGO"
+note = "FORMANT BASS: COMING SOON"
+demo = "poly"
+plays = "bass"
+home = "C2"
+status = "placeholder"
+
+[[sound]]
+id = "S9100030"
+name = "FORMANT LEAD"
+engine = "ALGO"
+note = "FORMANT LEAD: COMING SOON"
+demo = "poly"
+plays = "long"
+home = "C3"
+status = "placeholder"
