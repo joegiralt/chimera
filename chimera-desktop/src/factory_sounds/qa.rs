@@ -753,7 +753,7 @@ pub fn level_trim(src: &Source, lufs: f32) -> Result<f32, String> {
         src.id_line
     };
     trimmed(level, t).map_err(|m| format!("{}:{line}: {} {m}", src.file, src.name.as_str()))?;
-    Ok(t)
+    Ok(t + 0.0) // never -0.0
 }
 
 /// The level render's LUFS (`fmt --level` centres it).

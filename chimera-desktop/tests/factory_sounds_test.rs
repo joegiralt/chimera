@@ -744,6 +744,11 @@ fn fmt_level_writes_trim() {
     let got = source::parse(&out, "b.toml").unwrap();
     assert_eq!((got[0].trim, got[1].trim), (-1.5, 0.5), "{out}");
     assert_eq!(b[0].trim_line, 0);
+    // A trim that rounds to nothing is written 0.0, never -0.0.
+    assert_eq!(
+        format!("{:.1}", qa::level_trim(&s[0], -10.98).unwrap()),
+        "0.0"
+    );
     // Past OUT LEVEL's range: fails naming the Source's line, never clips.
     let e = qa::level_trim(&s[0], -30.0).unwrap_err();
     assert!(e.contains("b.toml:11:") && e.contains("OUT LEVEL"), "{e}");

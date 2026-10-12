@@ -97,8 +97,13 @@ fn run_fmt(level: bool) -> Result<(), String> {
         let p = dir().join(f);
         let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
         let all = source::parse(&text, f)?;
-        let text = if level { levelled(&text, &all)? } else { text };
-        let canon = source::fmt(&text);
+        let levelled = if level {
+            levelled(&text, &all)?
+        } else {
+            text.clone()
+        };
+        // Against the file as read: a new trim alone is a change too.
+        let canon = source::fmt(&levelled);
         if canon != text {
             std::fs::write(&p, &canon).map_err(|e| format!("{}: {e}", p.display()))?;
             println!("{f}");
