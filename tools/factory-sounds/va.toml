@@ -462,3 +462,123 @@ mod.VEL = "VA.AMOUNT +20, FILTER.CUTOFF +25"
 level = "by ear: set low so v127 texture blips stay under 1 dB of limiting"
 trim = "1.0"
 
+
+# Prophet-5-style set: two detuned oscillators into the 2040 four-pole
+# low-pass and its envelope, a little STABILITY drift, and poly-mod-like
+# motion (ENV 2 and slow LFOs into WAVE and SHAPE). Brass chords that
+# swell through the filter.
+[[sound]]
+id = "S9100044"
+name = "WARM BRASS"
+engine = "VA"
+note = "ENV 2 SWELLS BRASS CHORDS"
+demo = "poly"
+plays = "long stab"
+home = "C3"
+phrase = "pad"
+OUT.LEVEL = "0.25"  # 32
+OUT.SEND3 = "0.1"  # 13
+ENV1.ATK = "0.4"  # 60 ms
+ENV1.SUS = "0.9"  # 90%
+ENV1.REL = "0.6"  # 415 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.FINE2 = "4"  # +4
+VA.SUB = "0.2"  # 25
+VA.STAB = "0.6"  # 76
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "550"  # 550 Hz
+FILTER.RESO = "0.15"  # 19
+ENV2.ATK = "0.5"  # 141 ms
+ENV2.DEC = "0.6"  # 415 ms
+ENV2.SUS = "0.55"  # 55%
+ENV2.REL = "0.6"  # 415 ms
+mod.ENV2 = "FILTER.CUTOFF +45, VA.SHAPE1 +25"
+LFO1.RATE = "0.25"  # 2
+mod.LFO1 = "VA.FINE2 +6"
+LFO3.RATE = "0.12"  # 1
+LFO3.SHAPE = "TRIANGLE"
+mod.LFO3 = "VA.WAVE2 +15"
+mod.VEL = "FILTER.CUTOFF +30, ENV2.LEVEL +40"
+level = "by ear: set low so a 4-note chord with its reverb stays at or under 3 dB of limiting"
+trim = "-2.5"
+
+# Prophet-5 poly-mod keys: ENV 2 plucks the filter and bends osc 2's wave
+# (the filter envelope into oscillator B), a slow LFO widens the pulse.
+[[sound]]
+id = "S9100045"
+name = "PULSE KEYS"
+engine = "VA"
+note = "ENV 2 PLUCKS PULSE AND FILTER"
+demo = "poly"
+plays = "long texture"
+home = "C3"
+phrase = "arp"
+OUT.LEVEL = "0.5"  # 64
+OUT.SEND2 = "0.2"  # 25
+ENV1.ATK = "0.1"  # 4.7 ms
+ENV1.DEC = "0.55"  # 279 ms
+ENV1.SUS = "0.7"  # 70%
+ENV1.REL = "0.5"  # 187 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0.9"  # 114
+VA.FINE2 = "3"  # +3
+VA.STAB = "0.7"  # 89
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1200"  # 1.20 kHz
+FILTER.RESO = "0.15"  # 19
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.5"  # 187 ms
+ENV2.SUS = "0.1"  # 10%
+mod.ENV2 = "FILTER.CUTOFF +28, VA.WAVE2 +20"
+LFO1.RATE = "0.2"  # 1
+LFO1.SHAPE = "TRIANGLE"
+mod.LFO1 = "VA.SHAPE1 +35"
+LFO2.RATE = "0.11"  # 1
+mod.LFO2 = "VA.FINE2 +8"
+mod.VEL = "FILTER.CUTOFF +12, VA.WAVE1 -15"
+level = "by ear: set low so v127 texture stays at or under 1 dB of limiting"
+trim = "-0.3"
+
+# The slow swell, in the manner of Radiohead's "Everything In Its Right
+# Place" (style only; the sweep phrase is original): Prophet-5-style keys
+# whose resonant 2040 a 0.05 Hz sine LFO sweeps once in ten bars (opens
+# for 2.5, closes for 5 to its darkest, opens 2.5 back). The LFO is FREE,
+# so the re-struck voices sweep in phase. Its steepest change is about a
+# cent of cutoff per block, which the 2040 ramps per sample: never zippered.
+[[sound]]
+id = "S9100046"
+name = "SLOW TIDE"
+engine = "VA"
+note = "LFO OPENS THE FILTER FOR BARS"
+demo = "poly"
+plays = "long stab"
+home = "C3"
+phrase = "sweep"
+OUT.LEVEL = "0.25"  # 32
+OUT.SEND3 = "0.12"  # 15
+ENV1.ATK = "0.12"  # 5.6 ms
+ENV1.DEC = "0.6"  # 415 ms
+ENV1.SUS = "0.6"  # 60%
+ENV1.REL = "0.65"  # 617 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE2 = "0.85"  # 108
+VA.FINE2 = "5"  # +5
+VA.STAB = "0.55"  # 70
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "700"  # 700 Hz
+FILTER.RESO = "0.45"  # 57
+LFO1.RATE = "0.05"  # 0
+LFO1.SHAPE = "SINE"
+mod.LFO1 = "FILTER.CUTOFF +32"
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.5"  # 187 ms
+ENV2.SUS = "0"  # 0%
+mod.ENV2 = "FILTER.CUTOFF +15"
+LFO2.RATE = "0.13"  # 1
+mod.LFO2 = "VA.SHAPE2 +30"
+LFO3.RATE = "0.08"  # 0
+LFO3.SHAPE = "TRIANGLE"
+mod.LFO3 = "VA.WAVE1 +15"
+mod.VEL = "FILTER.CUTOFF +20, VA.WAVE2 -15"
+level = "by ear: set low so a 4-note chord with its reverb stays at or under 3 dB of limiting"
+trim = "1.2"
