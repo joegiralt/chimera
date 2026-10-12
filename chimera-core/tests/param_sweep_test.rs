@@ -127,7 +127,10 @@ fn patches(p: &Param, quick: bool) -> Vec<(Patch, bool)> {
             .into_iter()
             .filter(|s| matches!(s, Patch::ModalInit(_)) || *s == Patch::BusyModal)
             .collect(),
-        (BlockRef::Algo | BlockRef::AlgoOp(_), true) => vec![Patch::BusyAlgo],
+        (BlockRef::Algo | BlockRef::AlgoOp(_), true) => vec![Patch::BusyAlgo, Patch::Formant],
+        (BlockRef::Algo | BlockRef::AlgoOp(_), false) => {
+            SOUNDS.into_iter().chain([Patch::Formant]).collect()
+        }
         (_, true) => vec![Patch::BusyAlgo, Patch::BusyModal],
         (_, false) => SOUNDS.to_vec(),
     };
@@ -249,9 +252,6 @@ fn silences(c: &Case) -> Option<&'static str> {
              all silent ends (engine.rs `active`): raising LEVEL later doesn't revive the held \
              note",
         );
-    }
-    if c.is_op(AlgoOpParams::WAVE) && c.any(|v| v == 16.0) {
-        return Some("formant kind before its kernel: FRMT is silent until Task 10");
     }
     if c.is_op(AlgoOpParams::AR) && c.any(|v| v == 0.0) {
         return Some("AR 0 never attacks (the TX81Z's rate 0)");
@@ -876,18 +876,22 @@ fn levels_are_safe() {
     }
 }
 
-/// The formant fixture at C3 (Ruling 11): heard, safe, and its level
-/// printed against the reference (pinned from Task 10).
+/// The formant fixture at C3 (Ruling 11): heard, safe, and at the level
+/// recorded when FRMT first sounded (Task 10), ±1.5 dB.
 #[test]
-#[ignore = "joins in Task 10, when FRMT sounds"]
 fn formant_fixture_level() {
     let l = level(Patch::Formant, &[48], 100, BPS);
-    println!(
-        "FORMANT: {:+.2} dB vs the reference",
-        l.lufs - REFERENCE_LUFS
-    );
+    println!("FORMANT: {:.2} LUFS", l.lufs);
     assert!(l.peak.iter().all(|&p| within_ceiling(p)) && l.rms[0] > SILENT_RMS);
+    assert!(
+        (l.lufs - FORMANT_LUFS).abs() <= 1.5,
+        "FORMANT at {:.2} LUFS, recorded {FORMANT_LUFS}",
+        l.lufs
+    );
 }
+
+/// The formant fixture's level at C3, LUFS, as Task 10 measured it.
+const FORMANT_LUFS: f32 = -22.16;
 
 /// ADR 0109's reference: ADR 0063's factory median (−22 LUFS) plus the
 /// master gain's +10.97 dB. ALGO INIT's C4 at velocity 100 on P1, LUFS.

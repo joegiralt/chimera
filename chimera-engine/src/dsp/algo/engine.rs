@@ -8,10 +8,12 @@ use core::ptr::addr_of_mut;
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::algorithms::{ALGORITHMS, AlgoId, plan};
 use crate::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
-use crate::dsp::algo::formant::{NYQUIST_HZ, Skirt, cycles_to_phase};
-use crate::dsp::algo::kernel::{Kernel, KernelBlock, KindBlock, NoiseBlock, OpBlock, SAMPLE_SCALE};
+use crate::dsp::algo::formant::{FormantLaw, NYQUIST_HZ, Skirt, cycles_to_phase, formant_law};
+use crate::dsp::algo::kernel::{
+    FormantBlock, Kernel, KernelBlock, KindBlock, NoiseBlock, OpBlock, SAMPLE_SCALE,
+};
 use crate::dsp::algo::kinds::{Kinds, OpKind};
-use crate::dsp::algo::math::exp2;
+use crate::dsp::algo::math::{exp2, log2};
 use crate::dsp::algo::morph::{Morph, carrier_norm, incoming};
 use crate::dsp::algo::noise::{NOISE_GAIN, noise_coef, noise_edge, res_mix};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, bw_hz};
@@ -42,8 +44,7 @@ pub struct AlgoLive {
     pub detune: [f32; OPS],
     pub feedback: [f32; OPS],
     pub velocity: [f32; OPS],
-    /// The formant operators' glided settings (the kernels read them from
-    /// Task 10).
+    /// The formant operators' glided settings.
     pub frmt: [f32; OPS],
     pub bw: [f32; OPS],
     pub vowel: f32,
@@ -192,13 +193,16 @@ pub struct AlgoEngine {
     noise_c: [f32; OPS],
     noise_k: [f32; OPS],
     mix: [(f32, f32); OPS],
+    /// The carrier-weight ramps' starts: each formant operator's last
+    /// `g_c / g_m`.
+    c_ratio: [f32; OPS],
     /// The last block's `(fc, bw_eff)` of each formant or noise operator.
     view: [(f32, f32); OPS],
 }
 
 crate::in_place::field_list!(AlgoEngine => AlgoEngine {
     kernel, env, plan, plan_key, kinds, rates, gain, mip, morph, norm, swap, note, pitch, slide,
-    velocity, active, held, latch, noise_c, noise_k, mix, view,
+    velocity, active, held, latch, noise_c, noise_k, mix, c_ratio, view,
 });
 
 #[cfg(any(test, feature = "test-support"))]
@@ -208,8 +212,8 @@ impl Default for AlgoEngine {
     }
 }
 
-/// The table an operator reads: W1 under a formant kind, whose gain is 0
-/// until its kernel (Task 10).
+/// The table an operator reads: W1 under a formant kind, which reads its
+/// own lane.
 const fn table_of(k: OpKind) -> WaveId {
     match k {
         OpKind::Table(w) => w,
@@ -311,6 +315,7 @@ impl AlgoEngine {
             addr_of_mut!((*p).noise_c).write([WHITE.0; OPS]);
             addr_of_mut!((*p).noise_k).write([WHITE.1; OPS]);
             addr_of_mut!((*p).mix).write([OpLatch::INIT.mix; OPS]);
+            addr_of_mut!((*p).c_ratio).write([1.0; OPS]);
             addr_of_mut!((*p).view).write([(0.0, 0.0); OPS]);
             slot.assume_init_mut()
         }
@@ -359,7 +364,11 @@ impl AlgoEngine {
                 self.kernel.reset(i, p.kinds().get(i));
                 self.kinds[i] = p.kinds().get(i);
                 (self.noise_c[i], self.noise_k[i]) = noise_coef(self.noise_band(p, i).1, sr);
-                self.gain[i] = self.target_gain(p, &live, i);
+                if self.kinds[i] == OpKind::Formant {
+                    let law = self.formant(p, &live, cycles, sr, i);
+                    self.c_ratio[i] = law.g_c / law.g_m;
+                }
+                self.gain[i] = self.target_gain(p, &live, cycles, sr, i);
                 self.mip[i] = self.mip_target(p, &live, cycles, sr, m, &level, i);
             }
             self.env[i].note_on(EnvCoefs::new(self.rates[i], note, sr));
@@ -426,6 +435,13 @@ impl AlgoEngine {
         self.active
     }
 
+    /// Restarts so far that found their lane's window open: 0 by
+    /// construction (spec § 3).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn grain_cuts(&self) -> u32 {
+        self.kernel.grain_cuts()
+    }
+
     /// Every operator's noise from `voice`'s seeds: once, as the slot is
     /// built, never at a note-on.
     pub fn seed(&mut self, voice: VoiceIdx) {
@@ -480,13 +496,42 @@ impl AlgoEngine {
         let level = level_gains(live);
         let cycles = self.cycles(p, sr);
         let mips: [(usize, f32, f32); OPS] = core::array::from_fn(|i| {
-            mip_step(
-                self.mip[i],
-                self.mip_target(p, live, cycles, sr, m, &level, i),
-            )
+            // A formant reads no table: its mip holds.
+            let to = if self.kinds[i] == OpKind::Formant {
+                self.mip[i]
+            } else {
+                self.mip_target(p, live, cycles, sr, m, &level, i)
+            };
+            mip_step(self.mip[i], to)
         });
+        let mut view = self.view;
         let ops: [OpBlock; OPS] = core::array::from_fn(|i| {
-            let gain_to = self.target_gain(p, live, i) * self.op_duck(i);
+            if self.kinds[i] == OpKind::Formant {
+                let law = self.formant(p, live, cycles, sr, i);
+                view[i] = (law.fc, law.bw_eff);
+                let c = op_cycles(cycles, p, live, i);
+                // c ≤ ½: under 2^31.
+                let inc = (c * 4_294_967_296.0) as u32;
+                let shift = law.fc / (c * sr);
+                return OpBlock {
+                    inc,
+                    gain_from: self.gain[i],
+                    gain_to: self.level_gain(live, i) * law.g_m * law.edge * self.op_duck(i),
+                    // Task 11 takes FDBK to the carrier.
+                    feedback: 0.0,
+                    kind: KindBlock::Formant(FormantBlock {
+                        inv_inc: 1.0 / inc.max(1) as f32,
+                        inc_c: cycles_to_phase(law.fc / sr),
+                        inv_d: 1.0 / law.d,
+                        slack: law.slack,
+                        shift,
+                        c0: cycles_to_phase(-law.d * shift * 0.5),
+                        c_ratio: (self.c_ratio[i], law.g_c / law.g_m),
+                        skirt: self.latch[i].skirt,
+                    }),
+                };
+            }
+            let gain_to = self.target_gain(p, live, cycles, sr, i) * self.op_duck(i);
             if self.kinds[i] == OpKind::Noise {
                 let (fc, w) = self.noise_band(p, i);
                 let (c, k) = noise_coef(w, sr);
@@ -529,13 +574,18 @@ impl AlgoEngine {
             norm_to: norm,
         };
         self.kernel.render(&blk, &mut self.env, out, taps);
+        self.view = view;
         for (i, o) in ops.iter().enumerate() {
             self.gain[i] = o.gain_to;
             self.mip[i] = mips[i].0 as f32 + mips[i].2;
             self.mix[i] = self.latch[i].mix;
-            if let KindBlock::Noise(n) = o.kind {
-                (self.noise_c[i], self.noise_k[i]) = (n.c.1, n.k.1);
-                self.view[i] = self.noise_band(p, i);
+            match o.kind {
+                KindBlock::Noise(n) => {
+                    (self.noise_c[i], self.noise_k[i]) = (n.c.1, n.k.1);
+                    self.view[i] = self.noise_band(p, i);
+                }
+                KindBlock::Formant(f) => self.c_ratio[i] = f.c_ratio.1,
+                KindBlock::Table { .. } => {}
             }
         }
         (self.morph, self.norm) = (m.get(), norm);
@@ -581,19 +631,57 @@ impl AlgoEngine {
         mip_position(bandwidth)
     }
 
-    /// A table's in sample units; a noise band's at the −12 dB reference,
-    /// faded at the top of the band; 0 for a formant operator until its
-    /// kernel (Task 10).
-    fn target_gain(&self, p: &AlgoParams, live: &AlgoLive, i: usize) -> f32 {
+    /// LEVEL's gain after VELOCITY.
+    fn level_gain(&self, live: &AlgoLive, i: usize) -> f32 {
         let vel = clampf(live.velocity[i], 0.0, 7.0) * (1.0 - self.velocity) * VELOCITY_STEPS;
-        let g = level_gain(live.level[i] - vel);
+        level_gain(live.level[i] - vel)
+    }
+
+    /// A table's in sample units; a noise band's at the −12 dB reference,
+    /// faded at the top of the band; a formant's peak-referenced (`g_m`),
+    /// faded at the edge, its carrier's `g_c / g_m` in the carrier weight.
+    fn target_gain(&self, p: &AlgoParams, live: &AlgoLive, cycles: f32, sr: f32, i: usize) -> f32 {
+        let g = self.level_gain(live, i);
         match self.kinds[i] {
             OpKind::Table(_) => g * SAMPLE_SCALE,
             OpKind::Noise => {
                 let (fc, w) = self.noise_band(p, i);
                 g * NOISE_GAIN * noise_edge(fc, w)
             }
-            OpKind::Formant => 0.0,
+            OpKind::Formant => {
+                let law = self.formant(p, live, cycles, sr, i);
+                g * law.g_m * law.edge
+            }
+        }
+    }
+
+    /// A formant operator's law this block (spec § 3): its pitch is the
+    /// grain clock's, FC from FRMT, VOWEL and KEY on its latched slot, KEY
+    /// and SKIRT. A kind swapped in under a held note keeps the slot and
+    /// SKIRT latched at the note-on until the next one.
+    fn formant(
+        &self,
+        p: &AlgoParams,
+        live: &AlgoLive,
+        cycles: f32,
+        sr: f32,
+        i: usize,
+    ) -> FormantLaw {
+        let l = &self.latch[i];
+        let fc = fc_hz(live.frmt[i], live.vowel, l.slot, l.key, self.key_pitch(p));
+        let f0 = op_cycles(cycles, p, live, i) * sr;
+        formant_law(f0, fc, bw_hz(live.bw[i]), l.skirt)
+    }
+
+    /// The pitch KEY follows, semitones: the note, TRNSP, the voice's
+    /// offset and a glide's slide (spec § 3).
+    fn key_pitch(&self, p: &AlgoParams) -> f32 {
+        let st = self.note.get() as f32 + p.transpose as f32 + self.pitch;
+        let slide = self.slide.value();
+        if slide == 1.0 {
+            st
+        } else {
+            st + 12.0 * log2(slide)
         }
     }
 

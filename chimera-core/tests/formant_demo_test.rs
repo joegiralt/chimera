@@ -3,10 +3,14 @@
 
 mod common;
 
+use chimera_core::dsp::algo::kinds::OpKind;
+use chimera_core::dsp::algo::plan::OPS;
+use chimera_core::dsp::algo::tx::{detune_at, ratio_at};
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::factory::{Demo, demo_sound};
 use chimera_core::part::PartParams;
-use chimera_hal::SAMPLE_RATE;
+use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
+use common::formant::{off_grid_db, render_algo};
 use common::sweep::{BPS, Bench, Patch, Tape};
 
 const DEMOS: [(Demo, &str); 3] = [
@@ -91,6 +95,29 @@ fn demo_clips_are_clean() {
             );
         }
     }
+}
+
+/// CHOIR's chord root, A3, held on the engine: its FRMT operators' energy
+/// off their own harmonics is under −60 dB. A detuned operator brings its
+/// own grid; the NOIS operators are muted, as noise is on no grid.
+#[test]
+fn demo_clips_do_not_alias() {
+    let mut p = demo_sound(Demo::Choir).params.algo;
+    let mut grid = Vec::new();
+    for i in 0..OPS {
+        let kind = p.kinds().get(i);
+        let o = &mut p.ops[i];
+        if kind == OpKind::Formant && o.level > 0 {
+            let f0 = 220.0 * ratio_at(o.coarse, f32::from(o.fine)) * detune_at(f32::from(o.detune));
+            grid.extend((1..).map(|k| k as f32 * f0).take_while(|&h| h < 24_000.0));
+        } else {
+            o.level = 0;
+        }
+    }
+    assert!(!grid.is_empty(), "CHOIR has a FRMT operator");
+    let out = render_algo(&p, 57, 800);
+    let off = off_grid_db(&out[BLOCK_SIZE * 400..], &grid);
+    assert!(off < -60.0, "{off} dB off the grid");
 }
 
 /// A 48 kHz 16-bit stereo WAV: the 44-byte header, written by hand.

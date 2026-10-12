@@ -3,9 +3,12 @@
 
 use chimera_core::MidiNote;
 use chimera_core::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
+use chimera_core::dsp::algo::formant::{Skirt, cycles_to_phase, window};
 use chimera_core::dsp::algo::kernel::{
-    Kernel, KernelBlock, KindBlock, NoiseBlock, OpBlock, PM_CYCLES, SAMPLE_SCALE, sine,
+    FormantBlock, Kernel, KernelBlock, KindBlock, NoiseBlock, OpBlock, PM_CYCLES, SAMPLE_SCALE,
+    sine,
 };
+use chimera_core::dsp::algo::kinds::OpKind;
 use chimera_core::dsp::algo::math::clampf;
 use chimera_core::dsp::algo::noise::{NOISE_CLAMP, noise_seed};
 use chimera_core::dsp::algo::plan::{EvalPlan, OPS, blend};
@@ -268,6 +271,41 @@ fn a_union_of_more_than_fifteen_links_is_capped() {
     assert_eq!(EvalPlan::build(&a, 1, &b, 1).edge_count(), 15);
 }
 
+/// A formant lane, latched at its start.
+#[derive(Clone, Copy)]
+struct Grain {
+    c: u32,
+    inv_d: f32,
+    slack: f32,
+    o_base: f32,
+    shift: f32,
+    live: bool,
+}
+
+/// A formant operator's two lanes.
+#[derive(Clone, Copy)]
+struct Grains {
+    lanes: [Grain; 2],
+    newest: usize,
+    fire_now: bool,
+}
+
+const DEAD: Grain = Grain {
+    c: 0,
+    inv_d: 0.0,
+    slack: 0.0,
+    o_base: 0.0,
+    shift: 0.0,
+    live: false,
+};
+
+/// Both lanes closed, the next wrap firing lane 0.
+const CLOSED: Grains = Grains {
+    lanes: [DEAD; 2],
+    newest: 1,
+    fire_now: false,
+};
+
 /// The kernel restated sample by sample, operation for operation, so a
 /// faster kernel must match it bit for bit. `one_sample_fb` swaps the
 /// two-sample feedback average for the last sample only.
@@ -278,6 +316,9 @@ struct Model {
     rng: [u32; OPS],
     /// Each noise operator's poles, `(y1, y2)`.
     poles: [(f32, f32); OPS],
+    /// Each formant operator's lanes. The kernel keeps one kind's state
+    /// per operator, so running one kind closes the other's.
+    grains: [Grains; OPS],
     one_sample_fb: bool,
 }
 
@@ -289,8 +330,17 @@ impl Model {
             hist: [0.0; OPS],
             rng: core::array::from_fn(|op| noise_seed(0, op)),
             poles: [(0.0, 0.0); OPS],
+            grains: [CLOSED; OPS],
             one_sample_fb: false,
         }
+    }
+
+    /// As `Kernel::reset`: a formant fires its first grain at once.
+    fn reset(&mut self, op: usize, kind: OpKind) {
+        (self.phase[op], self.out[op], self.hist[op]) = (0, 0.0, 0.0);
+        self.poles[op] = (0.0, 0.0);
+        self.grains[op] = CLOSED;
+        self.grains[op].fire_now = kind == OpKind::Formant;
     }
 
     fn render(&mut self, blk: &KernelBlock, env: &mut [OpEnv; OPS], out: &mut [f32; BLOCK_SIZE]) {
@@ -308,12 +358,16 @@ impl Model {
         let mut gain: [f32; OPS] = core::array::from_fn(|i| blk.ops[i].gain_from);
         let mut xfade: [f32; OPS] = core::array::from_fn(|i| match blk.ops[i].kind {
             KindBlock::Table { xfade_from, .. } => xfade_from,
-            KindBlock::Noise(_) => 0.0,
+            KindBlock::Noise(_) | KindBlock::Formant(_) => 0.0,
+        });
+        let mut c_ratio: [f32; OPS] = core::array::from_fn(|i| match blk.ops[i].kind {
+            KindBlock::Formant(f) => f.c_ratio.0,
+            _ => 1.0,
         });
         // c, g = c·k, α, β.
         let mut nz: [[f32; 4]; OPS] = core::array::from_fn(|i| match blk.ops[i].kind {
             KindBlock::Noise(n) => [n.c.0, n.c.0 * n.k.0, n.alpha.0, n.beta.0],
-            KindBlock::Table { .. } => [0.0; 4],
+            KindBlock::Table { .. } | KindBlock::Formant(_) => [0.0; 4],
         });
         let mut carrier: [f32; OPS] =
             core::array::from_fn(|i| blend(plan.carrier_a[i], plan.carrier_b[i], blk.morph_from));
@@ -326,7 +380,7 @@ impl Model {
                 let prev = self.out[op];
                 let fb = match o.kind {
                     KindBlock::Table { .. } => o.feedback * 0.5 * UNITS,
-                    KindBlock::Noise(_) => 0.0,
+                    KindBlock::Noise(_) | KindBlock::Formant(_) => 0.0,
                 };
                 let mut pm = if self.one_sample_fb {
                     fb * (prev + prev)
@@ -337,8 +391,16 @@ impl Model {
                     pm += w[e] * self.out[edges[e].src as usize];
                     w[e] += dw[e];
                 }
-                self.phase[op] = self.phase[op].wrapping_add(o.inc);
-                let p = self.phase[op].wrapping_add((pm as i32 as u32) << 8);
+                let (ph, wrapped) = self.phase[op].overflowing_add(o.inc);
+                self.phase[op] = ph;
+                let pm_phase = (pm as i32 as u32) << 8;
+                let p = ph.wrapping_add(pm_phase);
+                let silent = o.gain_from == 0.0 && o.gain_to == 0.0;
+                // A silent operator's formant lanes close, whatever it plays.
+                if silent {
+                    self.grains[op] = CLOSED;
+                }
+                let mut weight = carrier[op];
                 let y = match o.kind {
                     KindBlock::Table {
                         lo,
@@ -358,11 +420,61 @@ impl Model {
                         y
                     }
                     // Silent all block: no noise drawn, the poles still.
-                    KindBlock::Noise(_) if o.gain_from == 0.0 && o.gain_to == 0.0 => {
+                    KindBlock::Noise(_) if silent => {
                         env[op].step();
                         0.0
                     }
+                    // Silent all block: its lanes closed, a reset's fire
+                    // dropped, the clock running.
+                    KindBlock::Formant(_) if silent => {
+                        env[op].step();
+                        self.grains[op] = CLOSED;
+                        0.0
+                    }
+                    KindBlock::Formant(f) => {
+                        self.poles[op] = (0.0, 0.0);
+                        let st = &mut self.grains[op];
+                        if wrapped || st.fire_now {
+                            let k = 1 - st.newest;
+                            let fire = st.fire_now;
+                            let e = ph as f32 * f.inv_inc;
+                            st.lanes[k] = Grain {
+                                c: f.c0.wrapping_add((e * f.inc_c as f32) as u32),
+                                inv_d: f.inv_d,
+                                slack: f.slack,
+                                o_base: if fire { 0.0 } else { f.slack * 0.5 },
+                                shift: f.shift,
+                                live: true,
+                            };
+                            st.newest = k;
+                            st.fire_now = false;
+                        }
+                        let t_new = ph as f32 * (1.0 / 4_294_967_296.0);
+                        let mut y = 0.0f32;
+                        for k in 0..2 {
+                            let newest = st.newest;
+                            let g = &mut st.lanes[k];
+                            if g.live {
+                                let t = if k == newest { t_new } else { 1.0 + t_new };
+                                let o = clampf(g.o_base, 0.0, g.slack);
+                                let x = (t - o) * g.inv_d;
+                                if x >= 1.0 {
+                                    g.live = false;
+                                } else if x > 0.0 {
+                                    let c =
+                                        g.c.wrapping_add(pm_phase)
+                                            .wrapping_sub(cycles_to_phase(o * g.shift));
+                                    y += window(x, f.skirt) * sine(c);
+                                }
+                                g.c = g.c.wrapping_add(f.inc_c);
+                            }
+                        }
+                        weight = carrier[op] * c_ratio[op];
+                        c_ratio[op] += (f.c_ratio.1 - f.c_ratio.0) * STEP;
+                        y * env[op].step() * gain[op]
+                    }
                     KindBlock::Noise(n) => {
+                        self.grains[op] = CLOSED;
                         let [c, g, alpha, beta] = nz[op];
                         let r = &mut self.rng[op];
                         *r ^= *r << 13;
@@ -388,7 +500,7 @@ impl Model {
                 gain[op] += (o.gain_to - o.gain_from) * STEP;
                 self.hist[op] = prev;
                 self.out[op] = y;
-                acc += carrier[op] * y;
+                acc += weight * y;
                 carrier[op] += (plan.carrier_b[op] - plan.carrier_a[op]) * dm;
             }
             *s = acc * norm;
@@ -453,8 +565,22 @@ fn random_ops(
         to_xfade[i] = rng.unit();
         let inc = rng.next() >> 4;
         let feedback = FEEDBACK_CYCLES[rng.below(8) as usize];
-        // A quarter of the operators are noise, which ignores FEEDBACK.
-        let kind = if rng.below(4) == 0 {
+        // A quarter of the operators are noise and a quarter formants,
+        // which ignore FEEDBACK.
+        let pick = rng.below(4);
+        let kind = if pick == 1 {
+            let d = 0.1 + 1.9 * rng.unit();
+            KindBlock::Formant(FormantBlock {
+                inv_inc: 1.0 / inc.max(1) as f32,
+                inc_c: rng.next() >> 1,
+                inv_d: 1.0 / d,
+                slack: 2.0 - d,
+                shift: 200.0 * rng.unit(),
+                c0: rng.next(),
+                c_ratio: (2.0 * rng.unit(), 2.0 * rng.unit()),
+                skirt: Skirt::from_code(rng.below(4) as u8),
+            })
+        } else if pick == 0 {
             let mut ramp = |lo: f32, hi: f32| {
                 let mut v = || lo + (hi - lo) * rng.unit();
                 (v(), v())
@@ -523,6 +649,18 @@ fn kernel_matches_model(seed: u32, acyclic: bool, one_sample_fb: bool) -> bool {
             for (x, y) in env_k.iter_mut().zip(env_m.iter_mut()) {
                 x.note_off();
                 y.note_off();
+            }
+        }
+        // An eighth of the operators start afresh as their kind.
+        for (op, o) in ops.iter().enumerate() {
+            if rng.below(8) == 0 {
+                let kind = match o.kind {
+                    KindBlock::Formant(_) => OpKind::Formant,
+                    KindBlock::Noise(_) => OpKind::Noise,
+                    KindBlock::Table { .. } => OpKind::Table(WaveId::W1),
+                };
+                k.reset(op, kind);
+                m.reset(op, kind);
             }
         }
         k.render(&blk, &mut env_k, &mut a, &mut TapRows::new([false; 2]));

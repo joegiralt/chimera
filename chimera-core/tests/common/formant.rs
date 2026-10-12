@@ -45,7 +45,7 @@ pub fn render_algo_with(
         e.render(&mut blk, &p, &live, SR, &mut TapRows::new([false; 2]));
         out.extend_from_slice(&blk);
     }
-    (out, 0)
+    (out, e.grain_cuts())
 }
 
 /// Operator 1 alone as `kind` on A1: LEVEL 99, KEY 0, VSLOT OFF.

@@ -1,6 +1,7 @@
 //! The per-sample loop: six phase-modulation operators on an `EvalPlan`.
 
 use crate::dsp::algo::env::{EnvRun, OpEnv};
+use crate::dsp::algo::formant::{Skirt, cycles_to_phase};
 use crate::dsp::algo::kinds::OpKind;
 use crate::dsp::algo::math::clampf;
 use crate::dsp::algo::noise::{NOISE_CLAMP, noise_seed};
@@ -38,6 +39,30 @@ pub enum KindBlock {
         xfade_to: f32,
     },
     Noise(NoiseBlock),
+    Formant(FormantBlock),
+}
+
+/// A formant operator's grain law this block (spec § 3). A grain that
+/// starts in the block latches it; the clock is the operator's `inc`.
+#[derive(Clone, Copy, Debug)]
+pub struct FormantBlock {
+    /// `1 / inc`.
+    pub inv_inc: f32,
+    /// FC per sample; FC < 24 kHz, so < 2^31.
+    pub inc_c: u32,
+    /// The window's length's reciprocal, per period.
+    pub inv_d: f32,
+    /// `2 − D`, periods: what a grain's delay may take.
+    pub slack: f32,
+    /// FC / f0: carrier cycles per period of delay.
+    pub shift: f32,
+    /// `cycles_to_phase(−D·shift/2)`: the carrier's zero sits at the
+    /// window's centre.
+    pub c0: u32,
+    /// `g_c / g_m`, ramped into the carrier weight.
+    pub c_ratio: (f32, f32),
+    /// The latched SKIRT.
+    pub skirt: Skirt,
 }
 
 /// A noise band's settings, each `(from, to)`, ramped across the block
@@ -56,6 +81,7 @@ pub struct NoiseBlock {
 enum KindState {
     Table,
     Noise { y1: f32, y2: f32 },
+    Formant(FormantState),
 }
 
 impl KindState {
@@ -63,9 +89,57 @@ impl KindState {
     fn poles(self) -> (f32, f32) {
         match self {
             KindState::Noise { y1, y2 } => (y1, y2),
-            KindState::Table => (0.0, 0.0),
+            KindState::Table | KindState::Formant(_) => (0.0, 0.0),
         }
     }
+
+    /// The lanes: closed on any state but a formant's.
+    fn grains(self) -> FormantState {
+        match self {
+            KindState::Formant(f) => f,
+            KindState::Table | KindState::Noise { .. } => FormantState::CLOSED,
+        }
+    }
+}
+
+/// A formant lane: one grain, latched at its start (Ruling 5).
+#[derive(Clone, Copy, Debug)]
+struct Grain {
+    c: u32,
+    inv_d: f32,
+    slack: f32,
+    /// The delay before PM, periods: `slack/2`, or 0 for the reset grain.
+    o_base: f32,
+    shift: f32,
+    live: bool,
+}
+
+/// Two lanes, alternating: each wrap restarts the one that fired less
+/// recently, two periods after its last start.
+#[derive(Clone, Copy, Debug)]
+struct FormantState {
+    lanes: [Grain; 2],
+    newest: u8,
+    /// Fire lane 0 on the next sample, at no delay (I2): set by `reset`,
+    /// with the phase at 0.
+    fire_now: bool,
+}
+
+impl FormantState {
+    const DEAD: Grain = Grain {
+        c: 0,
+        inv_d: 0.0,
+        slack: 0.0,
+        o_base: 0.0,
+        shift: 0.0,
+        live: false,
+    };
+
+    const CLOSED: FormantState = FormantState {
+        lanes: [Self::DEAD; 2],
+        newest: 1,
+        fire_now: false,
+    };
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -89,6 +163,9 @@ pub struct Kernel {
     /// Each operator's xorshift state: seeded per voice, never reset.
     rng: [u32; OPS],
     state: [KindState; OPS],
+    /// Restarts that found their lane's window still open.
+    #[cfg(any(test, feature = "test-support"))]
+    cuts: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -117,6 +194,7 @@ enum Src {
         hi: &'static Table,
     },
     Noise(Noise),
+    Formant(Grains),
 }
 
 impl Default for Kernel {
@@ -133,6 +211,8 @@ impl Kernel {
             hist: [0.0; OPS],
             rng: [0; OPS],
             state: [KindState::Table; OPS],
+            #[cfg(any(test, feature = "test-support"))]
+            cuts: 0,
         };
         k.seed(0);
         k
@@ -148,15 +228,26 @@ impl Kernel {
     }
 
     /// Operator `op` starts afresh as `kind`, closed: noise's poles at 0,
-    /// its generator running on.
+    /// its generator running on; a formant's lanes closed, its first grain
+    /// firing on the next sample.
     pub fn reset(&mut self, op: usize, kind: OpKind) {
         self.phase[op] = 0;
         self.out[op] = 0.0;
         self.hist[op] = 0.0;
         self.state[op] = match kind {
             OpKind::Noise => KindState::Noise { y1: 0.0, y2: 0.0 },
-            OpKind::Table(_) | OpKind::Formant => KindState::Table,
+            OpKind::Formant => KindState::Formant(FormantState {
+                fire_now: true,
+                ..FormantState::CLOSED
+            }),
+            OpKind::Table(_) => KindState::Table,
         };
+    }
+
+    /// Restarts so far that found their lane's window open.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn grain_cuts(&self) -> u32 {
+        self.cuts
     }
 
     /// `blk.plan` must come from `EvalPlan::build` unchanged; see `EvalPlan`.
@@ -216,6 +307,12 @@ impl Kernel {
             if let KindBlock::Noise(nb) = &blk.ops[a].kind {
                 let links: [Option<Link>; 5] = core::array::from_fn(|i| (i < n).then(|| link(i)));
                 self.noise_op(blk, a, dm, nb, &links, &mut env[a], &mut rest[0], out);
+                k += 1;
+                continue;
+            }
+            if let KindBlock::Formant(fb) = &blk.ops[a].kind {
+                let links: [Option<Link>; 5] = core::array::from_fn(|i| (i < n).then(|| link(i)));
+                self.formant_op(blk, a, dm, fb, &links, &mut env[a], &mut rest[0], out);
                 k += 1;
                 continue;
             }
@@ -359,6 +456,78 @@ impl Kernel {
         self.keep_noise(op, &x);
     }
 
+    /// A formant operator's block: its links summed first, in the order
+    /// `tick` adds them, then `run_formant` at the latched SKIRT. Out of
+    /// line, so its row stays off the callers' frames; the link count is a
+    /// loop, so SKIRT alone picks a variant (four, not 24).
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn formant_op(
+        &mut self,
+        blk: &KernelBlock,
+        op: usize,
+        dm: f32,
+        fb: &FormantBlock,
+        links: &[Option<Link>; 5],
+        env: &mut OpEnv,
+        dst: &mut [f32; BLOCK_SIZE],
+        acc: &mut [f32; BLOCK_SIZE],
+    ) {
+        let mut pm = [0.0f32; BLOCK_SIZE];
+        for mut l in links.iter().flatten().copied() {
+            for (p, &x) in pm.iter_mut().zip(l.src) {
+                *p += l.w * x;
+                l.w += l.dw;
+            }
+        }
+        let mut x = self.formant_lane(blk, op, dm, fb);
+        match fb.skirt {
+            Skirt::S0 => run_formant::<0>(&mut x, &pm, env, dst, acc),
+            Skirt::S1 => run_formant::<1>(&mut x, &pm, env, dst, acc),
+            Skirt::S2 => run_formant::<2>(&mut x, &pm, env, dst, acc),
+            Skirt::S3 => run_formant::<3>(&mut x, &pm, env, dst, acc),
+        }
+        self.keep_formant(op, &x);
+    }
+
+    #[inline(always)]
+    fn formant_lane(
+        &self,
+        blk: &KernelBlock,
+        op: usize,
+        dm: f32,
+        fb: &FormantBlock,
+    ) -> FormantLane {
+        let (plan, o) = (blk.plan, &blk.ops[op]);
+        FormantLane {
+            phase: self.phase[op],
+            inc: o.inc,
+            gain: o.gain_from,
+            dgain: (o.gain_to - o.gain_from) * STEP,
+            carrier: blend(plan.carrier_a[op], plan.carrier_b[op], blk.morph_from),
+            dcarrier: (plan.carrier_b[op] - plan.carrier_a[op]) * dm,
+            prev: self.out[op],
+            hist: self.hist[op],
+            g: Grains::new(self.state[op].grains(), fb),
+        }
+    }
+
+    #[inline(always)]
+    fn keep_formant(&mut self, op: usize, st: &FormantLane) {
+        self.phase[op] = st.phase;
+        self.out[op] = st.prev;
+        self.hist[op] = st.hist;
+        self.keep_grains(op, &st.g);
+    }
+
+    fn keep_grains(&mut self, op: usize, g: &Grains) {
+        self.state[op] = KindState::Formant(g.st);
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.cuts += g.cuts;
+        }
+    }
+
     #[inline(always)]
     fn keep_noise(&mut self, op: usize, st: &NoiseState) {
         self.phase[op] = st.phase;
@@ -373,8 +542,12 @@ impl Kernel {
     }
 
     /// An operator silent all block outputs zeros (its row stays 0), so
-    /// only its phase and envelope move; the output is unchanged.
+    /// only its phase and envelope move; the output is unchanged. A
+    /// formant's lanes close, and a reset's first grain waits for the wrap.
     fn idle(&mut self, o: &OpBlock, op: usize, env: &mut OpEnv) {
+        if let KindState::Formant(f) = &mut self.state[op] {
+            *f = FormantState::CLOSED;
+        }
         let mut run = env.run();
         for _ in 0..BLOCK_SIZE {
             run.step(env);
@@ -432,6 +605,9 @@ impl Kernel {
                     Src::Noise(Noise::new(self.rng[op], self.state[op].poles(), nb)),
                     0.0,
                 ),
+                KindBlock::Formant(fb) => {
+                    (Src::Formant(Grains::new(self.state[op].grains(), fb)), 0.0)
+                }
             };
             Lane {
                 op,
@@ -489,8 +665,10 @@ impl Kernel {
                 self.phase[l.op] = l.phase;
                 self.hist[l.op] = l.hist;
                 env[l.op] = l.env;
-                if let Src::Noise(n) = &l.src {
-                    self.keep_poles(l.op, n);
+                match &l.src {
+                    Src::Noise(n) => self.keep_poles(l.op, n),
+                    Src::Formant(g) => self.keep_grains(l.op, g),
+                    Src::Table { .. } => {}
                 }
             }
         }
@@ -521,9 +699,11 @@ impl Kernel {
             pm += w[e] * self.out[src[e] as usize & 7];
             w[e] += dw[e];
         }
-        l.phase = l.phase.wrapping_add(l.inc);
-        let p = l.phase.wrapping_add((pm as i32 as u32) << 8);
-        let y = match &mut l.src {
+        let (ph, wrapped) = l.phase.overflowing_add(l.inc);
+        l.phase = ph;
+        let pm_phase = (pm as i32 as u32) << 8;
+        let p = ph.wrapping_add(pm_phase);
+        let (y, weight) = match &mut l.src {
             Src::Table {
                 xfade,
                 dxfade,
@@ -532,14 +712,20 @@ impl Kernel {
             } => {
                 let y = read(lo, hi, *xfade, p) * l.env.step() * l.gain;
                 *xfade += *dxfade;
-                y
+                (y, l.carrier)
             }
-            Src::Noise(n) => n.tone(p) * l.env.step() * l.gain,
+            Src::Noise(n) => (n.tone(p) * l.env.step() * l.gain, l.carrier),
+            Src::Formant(g) => {
+                let y = g.tick_at(ph, wrapped, pm_phase) * l.env.step() * l.gain;
+                let weight = l.carrier * g.c_ratio;
+                g.c_ratio += g.dc_ratio;
+                (y, weight)
+            }
         };
         l.gain += l.dgain;
         l.hist = prev;
         self.out[l.op & 7] = y;
-        let c = l.carrier * y;
+        let c = weight * y;
         l.carrier += l.dcarrier;
         c
     }
@@ -564,8 +750,8 @@ fn is_table(o: &OpBlock) -> bool {
     matches!(o.kind, KindBlock::Table { .. })
 }
 
-/// A table operator's tables and crossfade; W1 for noise, which reads its
-/// own lane.
+/// A table operator's tables and crossfade; W1 for noise and formants,
+/// which read their own lanes.
 #[inline(always)]
 fn tables(o: &OpBlock) -> (&'static Table, &'static Table, f32, f32) {
     match o.kind {
@@ -575,7 +761,7 @@ fn tables(o: &OpBlock) -> (&'static Table, &'static Table, f32, f32) {
             xfade_from,
             xfade_to,
         } => (lo, hi, xfade_from, xfade_to),
-        KindBlock::Noise(_) => {
+        KindBlock::Noise(_) | KindBlock::Formant(_) => {
             let w = WaveId::W1.table(0);
             (w, w, 0.0, 0.0)
         }
@@ -676,6 +862,161 @@ fn run_noise(
         dst[s] = y;
         acc[s] += x.carrier * y;
         x.carrier += x.dcarrier;
+    }
+    *st = x;
+    env.store(run);
+}
+
+/// A formant operator's lanes running one block: its latched state, the
+/// block's law for grains that start in it, and the carrier ratio's ramp.
+#[derive(Clone, Copy)]
+struct Grains {
+    st: FormantState,
+    b: FormantBlock,
+    c_ratio: f32,
+    dc_ratio: f32,
+    sine: &'static Table,
+    #[cfg(any(test, feature = "test-support"))]
+    cuts: u32,
+}
+
+impl Grains {
+    fn new(st: FormantState, b: &FormantBlock) -> Self {
+        Grains {
+            st,
+            b: *b,
+            c_ratio: b.c_ratio.0,
+            dc_ratio: (b.c_ratio.1 - b.c_ratio.0) * STEP,
+            sine: WaveId::W1.table(0),
+            #[cfg(any(test, feature = "test-support"))]
+            cuts: 0,
+        }
+    }
+
+    /// `tick` at the latched SKIRT, chosen per sample (`render_samples`,
+    /// the delayed plans' path): out of line, so one copy of the four
+    /// serves every lane.
+    #[inline(never)]
+    fn tick_at(&mut self, ph: u32, wrapped: bool, pm_phase: u32) -> f32 {
+        match self.b.skirt {
+            Skirt::S0 => self.tick::<0>(ph, wrapped, pm_phase),
+            Skirt::S1 => self.tick::<1>(ph, wrapped, pm_phase),
+            Skirt::S2 => self.tick::<2>(ph, wrapped, pm_phase),
+            Skirt::S3 => self.tick::<3>(ph, wrapped, pm_phase),
+        }
+    }
+
+    /// One sample of both lanes, the raw grain signal (spec § 3): `ph` is
+    /// the unmodulated clock after this sample's step, `wrapped` whether
+    /// the step carried, `pm_phase` the links' PM into the carrier.
+    #[inline(always)]
+    fn tick<const S: u8>(&mut self, ph: u32, wrapped: bool, pm_phase: u32) -> f32 {
+        // Periods since the newest lane's start.
+        let t_new = ph as f32 * (1.0 / 4_294_967_296.0);
+        let st = &mut self.st;
+        if wrapped || st.fire_now {
+            let k = 1 - (st.newest as usize & 1);
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                let g = &st.lanes[k];
+                let x = (2.0 + t_new - clampf(g.o_base, 0.0, g.slack)) * g.inv_d;
+                if g.live && crate::dsp::algo::formant::window(x, Skirt::from_code(S)) > 1e-6 {
+                    self.cuts += 1;
+                }
+            }
+            let b = &self.b;
+            let fire = st.fire_now;
+            // Samples since the wrap, or since the reset's phase 0 (`idle`
+            // drops a fire it doesn't run): at most 1, so the carrier's
+            // zero sits at the window's centre on the reset grain too (e = 0
+            // would lag it a sample and lift a narrow grain's peak past 1).
+            let e = ph as f32 * b.inv_inc;
+            st.lanes[k] = Grain {
+                // e ≤ 1 and inc_c < 2^31: e·inc_c < 2^32, in u32's range.
+                c: b.c0.wrapping_add((e * b.inc_c as f32) as u32),
+                inv_d: b.inv_d,
+                slack: b.slack,
+                o_base: if fire { 0.0 } else { b.slack * 0.5 },
+                shift: b.shift,
+                live: true,
+            };
+            st.newest = k as u8;
+            st.fire_now = false;
+        }
+        let newest = st.newest as usize;
+        let mut y = 0.0f32;
+        for (k, g) in st.lanes.iter_mut().enumerate() {
+            if g.live {
+                let t = if k == newest { t_new } else { 1.0 + t_new };
+                let o = clampf(g.o_base, 0.0, g.slack);
+                let x = (t - o) * g.inv_d;
+                if x >= 1.0 {
+                    g.live = false;
+                } else if x > 0.0 {
+                    let c =
+                        g.c.wrapping_add(pm_phase)
+                            .wrapping_sub(cycles_to_phase(o * g.shift));
+                    y += bell::<S>(x) * sine_at(self.sine, c);
+                }
+                g.c = g.c.wrapping_add(self.b.inc_c);
+            }
+        }
+        y
+    }
+}
+
+/// `window(x, S)` on (0, 1), its squarings straight-line per SKIRT.
+#[inline(always)]
+fn bell<const S: u8>(x: f32) -> f32 {
+    let mut u = 4.0 * x * (1.0 - x);
+    u *= u;
+    if S >= 1 {
+        u *= u;
+    }
+    if S >= 2 {
+        u *= u;
+    }
+    if S >= 3 {
+        u *= u;
+    }
+    u
+}
+
+#[derive(Clone, Copy)]
+struct FormantLane {
+    phase: u32,
+    inc: u32,
+    gain: f32,
+    dgain: f32,
+    carrier: f32,
+    dcarrier: f32,
+    prev: f32,
+    hist: f32,
+    g: Grains,
+}
+
+/// A formant operator's block, as `run_one` renders a table's: `pm`, its
+/// links' sum, into the carrier only (Task 11 adds the grain delay and
+/// feedback).
+fn run_formant<const S: u8>(
+    st: &mut FormantLane,
+    pm: &[f32; BLOCK_SIZE],
+    env: &mut OpEnv,
+    dst: &mut [f32; BLOCK_SIZE],
+    acc: &mut [f32; BLOCK_SIZE],
+) {
+    let (mut x, mut run) = (*st, env.run());
+    for s in 0..BLOCK_SIZE {
+        let (ph, wrapped) = x.phase.overflowing_add(x.inc);
+        x.phase = ph;
+        let y = x.g.tick::<S>(ph, wrapped, (pm[s] as i32 as u32) << 8) * run.step(env) * x.gain;
+        x.gain += x.dgain;
+        x.hist = x.prev;
+        x.prev = y;
+        dst[s] = y;
+        acc[s] += x.carrier * x.g.c_ratio * y;
+        x.carrier += x.dcarrier;
+        x.g.c_ratio += x.g.dc_ratio;
     }
     *st = x;
     env.store(run);
