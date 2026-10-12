@@ -258,6 +258,8 @@ pub struct AudioStart<'a> {
     pub shared: chimera_core::triple::Reader<chimera_core::instrument::AudioShared>,
     pub notes: chimera_core::note_queue::NoteDrain<'static, { shared::NOTE_SOURCES }>,
     pub scope: chimera_core::triple::Writer<chimera_core::scope::ScopeFrame>,
+    /// The voices' formant views, once a block, for the OP pages.
+    pub formant: chimera_core::triple::Writer<chimera_core::dsp::algo::engine::FormantViews>,
     pub orbit: orbit::Runner,
     pub sources: chimera_core::source_table::AudioToken,
     #[cfg(feature = "midi-din")]
@@ -391,6 +393,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     controls::enable();
 
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
+    let (formant_w, mut formant_r) = shared::take_formant().expect("formant views taken once");
     let (mut shared_w, shared_r, knobs) =
         shared::take_audio(ui.project().perf()).expect("audio buffer taken once");
     // Without MIDI DIN or `card` nothing takes a producer.
@@ -407,6 +410,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         shared: shared_r,
         notes,
         scope: scope_w,
+        formant: formant_w,
         orbit: orbit_runner,
         sources,
         #[cfg(feature = "midi-din")]
@@ -485,6 +489,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         controls.snapshot();
         // ORBIT's latest view: the pages draw it, the drift is absorbed.
         orbit.see(ui);
+        // The OP pages' band: the edited Part's newest voice.
+        ui.set_formant_views(formant_r.read());
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
         // SYSTEM synced first: a THEME change made in this visit is kept.

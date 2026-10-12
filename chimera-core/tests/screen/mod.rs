@@ -693,6 +693,35 @@ pub fn init_part(ui: &mut UiState, p: PartId) {
     ui.project_mut().replace_part(c).expect("INIT loads");
 }
 
+/// `note` held on Part 1's channel for `blocks` blocks through a real
+/// `Instrument` on the UI's Performance, and the voices' formant views
+/// handed to the UI, as the shells do each frame.
+pub fn hold_note(ui: &mut UiState, note: u8, blocks: usize) {
+    use chimera_core::dsp::fx_bus::FxBus;
+    use chimera_core::instrument::DacBlocks;
+    use chimera_core::note_queue::{NoteEvent, NoteKind};
+    use chimera_core::scope::{ScopeWriter, scope_buffer};
+    let shared = Box::new(AudioShared::from_performance(ui.project().perf()));
+    let mut inst = Box::new(Instrument::new(
+        chimera_hal::SAMPLE_RATE,
+        SampleBudget::for_cpu(CPU_HZ_REV_V),
+    ));
+    let (mut fx, mut dac) = (Box::new(FxBus::new()), Box::new(DacBlocks::new()));
+    let mut scope = ScopeWriter::new(Box::leak(Box::new(scope_buffer())).split().0);
+    inst.handle(
+        NoteEvent {
+            channel: ui.project().part(PartId::ALL[0]).mix.channel,
+            note: chimera_core::MidiNote::new(note).unwrap(),
+            kind: NoteKind::On(chimera_core::Velocity::new(100).unwrap()),
+        },
+        &shared,
+    );
+    for _ in 0..blocks {
+        inst.render(&mut fx, &mut dac, &shared, &mut scope);
+    }
+    ui.set_formant_views(&inst.formant_views());
+}
+
 /// Hold SEQ into ORBIT, then B`n`'s tap: RING `n`'s RHYTHM.
 pub fn to_ring(ui: &mut UiState, n: usize) {
     hold(ui, ButtonId::Seq);
@@ -1212,6 +1241,31 @@ pub const CASES: &[ScreenCase] = &[
         init_part(ui, PartId::ALL[0]);
         to_osc(ui);
         to_osc_sub(ui, &ALGO_OP_PAGES[2]);
+    }),
+    // OP2 a formant under a held C3: its cells, and the live grain with its
+    // FC and BW_eff as the voice plays them.
+    ("algo_op_page_frmt", |ui| {
+        use chimera_core::dsp::algo::kinds::OpKind;
+        use chimera_core::ui::block_registry::ALGO_OP_PAGES;
+        init_part(ui, PartId::ALL[0]);
+        let algo = &mut ui.project_mut().edit_part(PartId::ALL[0]).sound.params.algo;
+        algo.try_set_kind(1, OpKind::Formant).unwrap();
+        to_osc(ui);
+        to_osc_sub(ui, &ALGO_OP_PAGES[1]);
+        hold_note(ui, 48, 75);
+    }),
+    // OP3 a noise band, no note: its cells, and the bell at the stored
+    // centre (C4).
+    ("algo_op_page_nois", |ui| {
+        use chimera_core::dsp::algo::kinds::OpKind;
+        use chimera_core::ui::block_registry::ALGO_OP_PAGES;
+        init_part(ui, PartId::ALL[0]);
+        let algo = &mut ui.project_mut().edit_part(PartId::ALL[0]).sound.params.algo;
+        algo.try_set_kind(2, OpKind::Noise).unwrap();
+        to_osc(ui);
+        to_osc_sub(ui, &ALGO_OP_PAGES[2]);
+        feed(ui, Input::turn(EncoderId::C, 24)); // WIDTH
+        feed(ui, Input::turn(EncoderId::D, 30)); // RES
     }),
     // The same with its LEVEL cell mid-turn: the UI hears no held note
     // until #37, so the band has no playhead to show.

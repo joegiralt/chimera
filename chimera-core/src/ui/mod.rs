@@ -54,6 +54,7 @@ use chimera_hal::{
 use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks, Op, ParamAddr};
 use crate::block::Block;
 use crate::boot::RomDfu;
+use crate::dsp::algo::engine::{FormantView, FormantViews};
 use crate::dsp::algo::kinds::step_kind;
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, step_alg};
 use crate::dsp::lfo::Lfo;
@@ -291,6 +292,9 @@ pub struct UiState {
     overview: tape_strip::Overview,
     heads: Heads,
     heads_from: &'static PartHeads,
+    /// The edited Part's newest voice's formant view, as the audio last
+    /// published it: what an OP page's band draws.
+    formant: FormantView,
     /// TAPE's SOURCE cell: the card's rows, the heads, a load, the
     /// per-source memory.
     src: source_cell::SourceCell,
@@ -380,6 +384,7 @@ crate::in_place::field_list!(UiState => UiState {
     overview,
     heads,
     heads_from,
+    formant,
     src,
     lib,
     clip,
@@ -444,6 +449,7 @@ impl UiState {
             addr_of_mut!((*p).overview).write(tape_strip::Overview::EMPTY);
             addr_of_mut!((*p).heads).write(Heads::NONE);
             addr_of_mut!((*p).heads_from).write(&crate::instrument::HEADS);
+            addr_of_mut!((*p).formant).write(FormantView::NONE);
             addr_of_mut!((*p).src).write(source_cell::SourceCell::NEW);
             addr_of_mut!((*p).lib).write(library::LibState::NEW);
             addr_of_mut!((*p).browser_dirty).write(false);
@@ -2157,6 +2163,16 @@ impl UiState {
         self.orbit.sync(v, &mut self.project);
     }
 
+    /// The audio's latest formant views: the edited Part's is kept.
+    pub fn set_formant_views(&mut self, v: &FormantViews) {
+        self.formant = v[self.active_part.index()];
+    }
+
+    /// What an OP page's band draws from: the edited Part's newest voice.
+    pub fn formant_view(&self) -> &FormantView {
+        &self.formant
+    }
+
     /// The front-panel LED: lit on ORBIT's beat, off when it is stopped.
     pub fn led(&self) -> bool {
         self.led.on()
@@ -2876,6 +2892,7 @@ impl UiState {
             orbit,
             strip: &self.overview,
             heads: self.heads,
+            formant: &self.formant,
         }
     }
 

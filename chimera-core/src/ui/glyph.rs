@@ -186,7 +186,7 @@ const BAND: [i8; 64] = {
 };
 
 /// 64 points to ±127, across `N` points to ±`half`.
-fn resample<const N: usize>(c: &[i8; 64], half: i32) -> [i32; N] {
+pub fn resample<const N: usize>(c: &[i8; 64], half: i32) -> [i32; N] {
     core::array::from_fn(|i| (i32::from(c[i * 63 / (N - 1).max(1)]) * half + 63) / 127)
 }
 

@@ -396,6 +396,22 @@ impl Bench {
         self.shared.update_from(&self.perf, 0);
     }
 
+    /// Part 1's Sound as published.
+    pub fn sound(&self) -> &Sound {
+        &self.perf.part(PartId::ALL[0]).sound
+    }
+
+    /// One block, its output dropped.
+    pub fn block(&mut self) {
+        self.inst
+            .render(&mut self.fx, &mut self.dac, &self.shared, &mut self.scope);
+    }
+
+    /// Each Part's formant view as the shells publish it after a block.
+    pub fn formant_views(&self) -> chimera_core::dsp::algo::engine::FormantViews {
+        self.inst.formant_views()
+    }
+
     pub fn get(&mut self, p: &Param) -> f32 {
         self.perf
             .edit(PartId::ALL[0])

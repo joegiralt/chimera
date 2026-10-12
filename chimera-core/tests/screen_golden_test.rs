@@ -39,6 +39,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // New: OP3's page (ADR 0130), the band's envelope and wave, and with
     // its LEVEL cell turned.
     ("algo_op_page_3", 0x9163b212ffb7d498),
+    ("algo_op_page_frmt", 0x0e81db6502484c4a),
+    ("algo_op_page_nois", 0xc2dd1c771908672e),
     ("algo_op_page_3_turned", 0xaccb7a7bc6d895b1),
     // The ENV stages' band draws the focused operator's envelope (#311).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).

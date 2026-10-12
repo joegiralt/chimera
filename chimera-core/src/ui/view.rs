@@ -4,8 +4,9 @@
 
 use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use crate::block::ValFmt;
-use crate::dsp::algo::kinds;
-use crate::dsp::algo::params::AlgoParams;
+use crate::dsp::algo::kinds::{self, OpKind};
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
+use crate::dsp::algo::plan::OPS;
 use crate::dsp::chorus::{ChorusMode, ChorusParams, MODE_NAMES};
 use crate::dsp::filter::FilterKind;
 use crate::dsp::lfo::LfoParams;
@@ -32,6 +33,7 @@ use crate::ui::fmt::FmtBuf;
 use crate::ui::glyph::FocusGlyph;
 use crate::ui::hint::{self, Gesture, Hint};
 use crate::ui::mod_panel::{self, PanelSlot};
+use crate::ui::op_page;
 use crate::ui::orbit::OrbitCell;
 use crate::ui::reverb_panel;
 
@@ -85,6 +87,8 @@ pub struct SlotCtx {
     pub ring: RingIdx,
     /// ORBIT's clock: BPM is inert while MIDI leads.
     pub clock: ClockSource,
+    /// Each operator's kind: which cells its OP page shows.
+    pub op_kinds: [OpKind; OPS],
 }
 
 impl SlotCtx {
@@ -122,6 +126,8 @@ impl SlotCtx {
             plate: in_plate_zone(&rev),
             ring: RingIdx::ALL[0],
             clock: ClockSource::Internal,
+            op_kinds: Op::ALL
+                .map(|op| OpKind::clamped(get(BlockRef::AlgoOp(op), AlgoOpParams::WAVE) as u8)),
         }
     }
 
@@ -587,6 +593,16 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
                     let addr = ParamAddr::new(BlockRef::Modal, id);
                     addr.spec()
                         .map_or(View::Empty, |s| param(addr, s.label, s.fmt))
+                }
+                _ => View::Empty,
+            }
+        }
+        SlotBinding::OpPanel(op, k) => {
+            match op_page::page_cells(ctx.op_kinds[op.index()]).get(usize::from(k)) {
+                Some(&Some((id, label))) => {
+                    let addr = ParamAddr::new(BlockRef::AlgoOp(op), id);
+                    addr.spec()
+                        .map_or(View::Empty, |s| param(addr, label, s.fmt))
                 }
                 _ => View::Empty,
             }

@@ -10,7 +10,7 @@ use crate::dsp::algo::algorithms::{ALGORITHMS, AlgoId, plan};
 use crate::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
 use crate::dsp::algo::formant::{
     Drive, FormantLaw, GrainPm, NYQUIST_HZ, PeakRamp, Skirt, cycles_to_phase, delay_scale,
-    formant_law_pm, peak_bound, peak_ramp,
+    formant_law, formant_law_pm, peak_bound, peak_ramp,
 };
 use crate::dsp::algo::kernel::{
     FormantBlock, Kernel, KernelBlock, KindBlock, NoiseBlock, OpBlock, PM_CYCLES, SAMPLE_SCALE,
@@ -30,6 +30,66 @@ use crate::dsp::glide::Glide;
 use crate::hw::{BLOCK_SIZE, Cost, SAMPLE_RATE};
 use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
+
+/// What an OP page's band draws of a voice (plan Ruling 8): each formant
+/// and noise operator's FC and BW_eff, Hz, as its last block took them.
+/// All zeros, so a buffer of them is `.bss`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FormantView {
+    pub fc: [f32; OPS],
+    pub bw_eff: [f32; OPS],
+    /// A voice of the Part sounds; else the view is the stored params'.
+    pub sounding: bool,
+}
+
+/// Each Part's view: the audio publishes them all, the UI reads the
+/// edited Part's.
+pub type FormantViews = [FormantView; crate::hw::MAX_PARTS];
+
+impl FormantView {
+    pub const NONE: FormantView = FormantView {
+        fc: [0.0; OPS],
+        bw_eff: [0.0; OPS],
+        sounding: false,
+    };
+
+    /// A voice's view, sounding.
+    pub fn live(v: [(f32, f32); OPS]) -> FormantView {
+        FormantView {
+            fc: v.map(|o| o.0),
+            bw_eff: v.map(|o| o.1),
+            sounding: true,
+        }
+    }
+
+    /// `p` with no voice (spec § 6): each operator's FC and BW_eff at C4,
+    /// VOWEL and its slot as stored; at C4 KEY moves nothing.
+    pub fn resting(p: &AlgoParams) -> FormantView {
+        const C4_HZ: f32 = 261.625_58;
+        let vslot = core::array::from_fn(|i| {
+            VowelSlot::from_code(p.ops[i].vslot).unwrap_or(VowelSlot::Off)
+        });
+        let slots = resolve_slots(&p.kinds(), vslot);
+        let vowel = f32::from(p.vowel);
+        let mut v = FormantView::NONE;
+        for (i, o) in p.ops.iter().enumerate() {
+            let fc = fc_hz(f32::from(o.frmt), vowel, slots[i], 0.0, 0.0);
+            let bw = bw_hz(f32::from(o.bw));
+            (v.fc[i], v.bw_eff[i]) = match p.kinds().get(i) {
+                OpKind::Formant => {
+                    let f0 = C4_HZ
+                        * ratio_at(o.coarse, f32::from(o.fine))
+                        * detune_at(f32::from(o.detune));
+                    let law = formant_law(f0, fc, bw, Skirt::from_code(o.skirt));
+                    (law.fc, law.bw_eff)
+                }
+                OpKind::Noise => (fc, bw),
+                OpKind::Table(_) => (0.0, 0.0),
+            };
+        }
+        v
+    }
+}
 
 /// LEVEL steps (3 dB) one VELOCITY step takes off at velocity 0.
 const VELOCITY_STEPS: f32 = 4.0;
@@ -707,7 +767,7 @@ impl AlgoEngine {
     }
 
     /// The formant and noise operators' last `(fc, bw_eff)`, Hz.
-    pub fn view(&self) -> [(f32, f32); OPS] {
+    pub fn formant_view(&self) -> [(f32, f32); OPS] {
         self.view
     }
 

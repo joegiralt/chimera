@@ -190,9 +190,9 @@ fn ui_state_rest_under_4k() {
     // TYPEs' knob memory, 108 B, and the cells' text keys); 3 KB the
     // library's page, 48 rows of 60 B, and a pending load (its source
     // streams in the SOURCE cell's slot); 16 B the screensaver's (its idle
-    // timer and redraw count).
+    // timer and redraw count); 52 B the OP pages' formant view.
     assert!(
-        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072 + 16,
+        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072 + 16 + 52,
         "UiState grew to {rest} B besides its Project"
     );
 }
@@ -289,8 +289,9 @@ fn arena_needs_the_delay() {
     );
 }
 
-/// D2 holds the voices' Instrument, the DMA rings' reserve and the UI's
-/// knob publisher (ADR 0115), and keeps room: the figure ADR 0115 records.
+/// D2 holds the voices' Instrument, the DMA rings' reserve, the UI's knob
+/// publisher (ADR 0115) and the formant views, and keeps room: the figure
+/// ADR 0115 records.
 #[test]
 fn d2_holds_the_knob_publisher() {
     use chimera_core::dsp::knobs::KnobPublisher;
@@ -299,10 +300,11 @@ fn d2_holds_the_knob_publisher() {
         size_of::<KnobPublisher>(),
     );
     assert_eq!(knobs, hw::D2_KNOBS);
-    let used = inst + hw::D2_DMA_RESERVE + knobs;
+    let used = inst + hw::D2_DMA_RESERVE + knobs + hw::D2_FORMANT;
     eprintln!(
-        "D2: Instrument {inst} + DMA reserve {} + knobs {knobs} = {used} B, {} B free",
+        "D2: Instrument {inst} + DMA reserve {} + knobs {knobs} + formant views {} = {used} B, {} B free",
         hw::D2_DMA_RESERVE,
+        hw::D2_FORMANT,
         hw::D2_SRAM - used
     );
     assert!(used <= hw::D2_SRAM);

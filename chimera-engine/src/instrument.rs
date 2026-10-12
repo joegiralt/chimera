@@ -2,6 +2,7 @@
 //! what the audio thread reads from the UI, and the voice pool that renders
 //! every Part into the three DAC pairs.
 
+use crate::dsp::algo::engine::{FormantView, FormantViews};
 use crate::dsp::clampf;
 use core::cmp::Reverse;
 use core::mem::{MaybeUninit, size_of};
@@ -1586,6 +1587,35 @@ impl Instrument {
         }
         // The block is over: the next may carry other patches.
         self.costed = 0;
+    }
+
+    /// Each Part's newest sounding Algo voice's formant view (plan Ruling
+    /// 8), not `sounding` where none does: the shells publish them once a
+    /// block, and the OP page draws the edited Part's. Into `out`, the
+    /// buffer's slot, and out of line: the audio interrupt stays small.
+    #[inline(never)]
+    pub fn formant_views_into(&self, out: &mut FormantViews) {
+        let mut age = [None; MAX_PARTS];
+        *out = [FormantView::NONE; MAX_PARTS];
+        for (v, s) in self.alloc.slots().iter().enumerate() {
+            if s.is_free() || !self.voices[v].is_active() {
+                continue;
+            }
+            let p = self.sounding[v] as usize % MAX_PARTS;
+            if let Some(f) = self.voices[v].formant_view()
+                && age[p].is_none_or(|a| s.age() >= a)
+            {
+                age[p] = Some(s.age());
+                out[p] = FormantView::live(f);
+            }
+        }
+    }
+
+    /// `formant_views_into` by value: the tests'.
+    pub fn formant_views(&self) -> FormantViews {
+        let mut out = [FormantView::NONE; MAX_PARTS];
+        self.formant_views_into(&mut out);
+        out
     }
 
     /// The strip's heads (spec § 3): each Part's newest voice playing

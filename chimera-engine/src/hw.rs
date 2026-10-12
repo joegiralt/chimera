@@ -63,9 +63,13 @@ pub const D2_DMA_RESERVE: usize = 8 * 1024;
 /// The UI's knob publisher, kept in D2 beside the voices on the board, not
 /// in AXI, which the bench builds hold within 8 KiB of full (ADR 0115).
 pub const D2_KNOBS: usize = core::mem::size_of::<crate::dsp::knobs::KnobPublisher>();
-/// `[Voice; MAX_VOICES]` lives in D2 beside the DMA buffers and the knob
-/// publisher.
-pub const VOICE_RAM_BUDGET: usize = D2_SRAM - D2_DMA_RESERVE - D2_KNOBS;
+/// The voices' formant views to the OP pages, a triple buffer in D2 beside
+/// the knobs, for the same reason.
+pub const D2_FORMANT: usize =
+    core::mem::size_of::<crate::triple::TripleBuffer<crate::dsp::algo::engine::FormantViews>>();
+/// `[Voice; MAX_VOICES]` lives in D2 beside the DMA buffers, the knob
+/// publisher and the formant views.
+pub const VOICE_RAM_BUDGET: usize = D2_SRAM - D2_DMA_RESERVE - D2_KNOBS - D2_FORMANT;
 /// A `Voice` less its `EngineSlot`: the chain, modulators and bookkeeping
 /// (ADR 0051, 2,048 B; ADR 0101 raises it to 2,112 for the 2040's state;
 /// 2,176 for the formant operators' 13 glided settings in `AlgoLive`, which

@@ -4,8 +4,10 @@ use core::ptr::addr_of_mut;
 use core::sync::atomic::AtomicU8;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use chimera_core::dsp::algo::engine::{FormantView, FormantViews};
 use chimera_core::dsp::algo::waves::{self, Waves};
 use chimera_core::dsp::knobs::KnobPublisher;
+use chimera_core::hw::MAX_PARTS;
 use chimera_core::instrument::AudioShared;
 use chimera_core::note_queue::NoteSources;
 #[cfg(any(feature = "midi-din", feature = "bench"))]
@@ -143,6 +145,23 @@ pub fn take_orbit() -> Option<(Writer<OrbitView>, Reader<OrbitView>)> {
     // reference to `ORBIT` ever made.
     let slot = unsafe { &mut *addr_of_mut!(ORBIT) };
     Some(TripleBuffer::init_in_place(slot, OrbitView::default).split())
+}
+
+// The voices' formant views, from the audio to the OP pages: in D2, not
+// AXI, which the ORBIT build fills to its margin (ADR 0087), as `KNOBS`.
+// NOLOAD: built at `take_formant`.
+#[unsafe(link_section = ".ram_d2")]
+static mut FORMANT: MaybeUninit<TripleBuffer<FormantViews>> = MaybeUninit::uninit();
+static FORMANT_TAKEN: AtomicBool = AtomicBool::new(false);
+
+pub fn take_formant() -> Option<(Writer<FormantViews>, Reader<FormantViews>)> {
+    if FORMANT_TAKEN.swap(true, Ordering::AcqRel) {
+        return None;
+    }
+    // SAFETY: the flag lets exactly one caller past, so this is the only
+    // reference to `FORMANT` ever made.
+    let slot = unsafe { &mut *addr_of_mut!(FORMANT) };
+    Some(TripleBuffer::init_in_place(slot, || [FormantView::NONE; MAX_PARTS]).split())
 }
 
 // What the audio interrupt (`chimera-stm32`) and this side both touch:

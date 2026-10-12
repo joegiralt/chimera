@@ -36,7 +36,7 @@ fn every_part_slot_resolves_to_a_spec() {
                 | SlotBinding::ReverbPanel(..)
                 | SlotBinding::Machine(_)
                 | SlotBinding::Source => {}
-                SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
+                SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::OpPanel(..) => {
                     assert!(slot.spec().is_some(), "{} slot {i}: no spec", def.name)
                 }
                 SlotBinding::Legacy(_) => {

@@ -366,6 +366,14 @@ impl Voice {
         AlgoEngine::high_note_extra(&p.algo, &mods.algo_levels_routed(), &fine_top, hz)
     }
 
+    /// An Algo voice's formant and noise operators' last `(fc, bw_eff)`.
+    pub fn formant_view(&self) -> Option<[(f32, f32); crate::dsp::algo::plan::OPS]> {
+        match &self.slot {
+            EngineSlot::Algo(a) => Some(a.formant_view()),
+            _ => None,
+        }
+    }
+
     /// A glide steal's ratio now on an Algo voice, 1 otherwise.
     pub fn algo_slide(&self) -> f32 {
         match &self.slot {

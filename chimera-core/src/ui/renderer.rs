@@ -9,7 +9,6 @@ use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use crate::block::find_spec;
 use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::params::AlgoOpParams;
-use crate::dsp::algo::waves::WaveId;
 use crate::dsp::modulator::{EnvType, HoldPos};
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
 use crate::dsp::va::osc::{Morph, Unit};
@@ -105,6 +104,8 @@ pub struct Frame<'a> {
     /// TAPE's strip: the active Part's source, and its newest note's heads.
     pub strip: &'a crate::ui::tape_strip::Overview,
     pub heads: crate::dsp::tape_engine::Heads,
+    /// The edited Part's newest voice's formant view (OP pages).
+    pub formant: &'a crate::dsp::algo::engine::FormantView,
 }
 
 impl Frame<'_> {
@@ -344,18 +345,20 @@ impl Renderer {
                 }
             }
             VizType::OpPage(op) => {
-                let (rates, wave) = Self::op_page(f, op);
-                crate::ui::op_page::draw_band(display, rates, wave);
+                let (rates, inset) = Self::op_page(f, op);
+                crate::ui::op_page::draw_band(display, rates, inset);
             }
             _ => viz::live_output(display, f.scope),
         }
     }
 
-    /// An OP page's operator: its stored envelope and wave.
-    fn op_page(f: &Frame, op: Op) -> (EnvRates, WaveId) {
+    /// An OP page's operator: its stored envelope and its kind's inset.
+    fn op_page(f: &Frame, op: Op) -> (EnvRates, crate::ui::op_page::Inset) {
         let algo = &f.parts[f.active_part.index()].sound.params.algo;
-        let kind = algo.kinds().get(op.index());
-        (algo.ops[op.index()].rates(), WaveId::clamped(kind.code()))
+        (
+            algo.ops[op.index()].rates(),
+            crate::ui::op_page::Inset::of(algo, f.formant, op),
+        )
     }
 
     /// The active Part's machine and its TAPE params, this page's as its
@@ -507,8 +510,8 @@ impl Renderer {
                     ([0; 6], key)
                 }
                 VizType::OpPage(op) => {
-                    let (r, w) = Self::op_page(f, op);
-                    ([0; 6], crate::ui::op_page::key(r, w))
+                    let (r, inset) = Self::op_page(f, op);
+                    ([0; 6], crate::ui::op_page::key(r, inset))
                 }
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
