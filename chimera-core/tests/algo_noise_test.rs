@@ -9,13 +9,17 @@ use chimera_core::dsp::algo::kinds::OpKind;
 use chimera_core::dsp::algo::params::{AlgoParams, bw_hz, frmt_hz};
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::hw::Cost;
+use chimera_core::modulation::ModState;
+use chimera_core::params::EngineType;
+use chimera_core::preset::Sound;
 use chimera_core::taps::TapRows;
 use chimera_core::voice_alloc::VoiceIdx;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::formant::{harmonic_db, level_db_vs_r, one, render_algo, render_algo_with};
+use common::rig::Src;
 use common::sweep::power;
-use common::{SR, VEL, rms};
+use common::{Rig, SR, VEL, rms};
 
 fn nois(frmt: u8, bw: u8, res: u8) -> AlgoParams {
     let mut p = one(OpKind::Noise, frmt, bw, 1);
@@ -242,13 +246,24 @@ fn kind_swaps_under_a_held_note_do_not_click() {
 
 #[test]
 fn a_res_change_on_retrigger_ramps() {
-    let mut e = AlgoEngine::new();
-    let mut p = nois(104, 111, 0);
+    // Two engines alike to the retrigger, one struck again at RES 100.
+    let p = nois(104, 111, 0);
+    let mut tone = p;
+    tone.ops[0].res = 100;
+    let (mut e, mut same) = (AlgoEngine::new(), AlgoEngine::new());
     let a = play_note(&mut e, &p, 48, 40);
-    p.ops[0].res = 100;
+    play_note(&mut same, &p, 48, 40);
     // A retrigger, without release.
-    let b = play_note_held(&mut e, &p, 48, 40);
-    assert!(common::clicks(&[a, b].concat()).is_empty());
+    let b = play_note_held(&mut e, &tone, 48, 40);
+    let kept = play_note_held(&mut same, &p, 48, 40);
+    assert!(common::clicks(&[a, b.clone()].concat()).is_empty());
+    // What RES changed starts at nothing and grows across the first block:
+    // a snap would put it all on the first samples.
+    let d: Vec<f32> = b.iter().zip(&kept).map(|(x, y)| (x - y).abs()).collect();
+    let peak = |r: &[f32]| r.iter().fold(0.0f32, |m, &x| m.max(x));
+    let (start, block) = (peak(&d[..4]), peak(&d[..BLOCK_SIZE]));
+    println!("RES change: first 4 samples {start:.4}, first block {block:.4}");
+    assert!(block > 0.01 && start < 0.25 * block);
 }
 
 /// Ruling 7: SKIRT latches at note-on on an idle operator, so a FRMT
@@ -269,4 +284,69 @@ fn a_latched_skirt_bills_over_a_stored_zero() {
     // Struck again while sounding: the latch holds.
     play_note_held(&mut e, &p, 48, 2);
     assert_ne!(e.held_skirt_extra(&p), Cost::ZERO);
+}
+
+/// Spec § 4: each voice's noise is its own from boot. Voices built as the
+/// Instrument builds them (`Voice::init_in_place` with their id) play one
+/// NOIS patch differently, and the same id alike.
+#[test]
+fn boot_built_voices_play_their_own_noise() {
+    let mut s = Sound::init(EngineType::Algo);
+    s.params.algo = nois(104, 111, 0);
+    let play = |v: usize| {
+        let mut r = Rig::at(SR, VoiceIdx::ALL[v], Src::None);
+        r.note_on(
+            MidiNote::new(48).unwrap(),
+            Velocity::new(VEL).unwrap(),
+            &s.params,
+        );
+        let mut out = Vec::new();
+        let mut blk = [0.0; BLOCK_SIZE];
+        for _ in 0..20 {
+            r.render(&mut blk, &s.params, &ModState::new());
+            out.extend_from_slice(&blk);
+        }
+        assert!(out.iter().any(|x| x.abs() > 1e-3));
+        out
+    };
+    assert_eq!(play(1), play(1));
+    assert_ne!(play(0), play(1));
+}
+
+/// Spec § 8: a kind swapped in starts closed, a NOIS's poles at 0. At
+/// WIDTH 20 Hz the poles take about 10 ms to open, so the 4 ms after each
+/// swap back into NOIS (its old poles still in the kernel without the
+/// reset) hold far less than the band does settled.
+#[test]
+fn a_swapped_in_noise_starts_closed() {
+    const EVERY: usize = 75;
+    let (out, _) = render_algo_with(
+        &one(OpKind::Table(WaveId::W1), 104, 0, 1),
+        48,
+        8 * EVERY,
+        |b, p, _, _| {
+            if b > 0 && b % EVERY == 0 {
+                let k = if p.kinds().get(0) == OpKind::Noise {
+                    OpKind::Table(WaveId::W1)
+                } else {
+                    OpKind::Noise
+                };
+                p.try_set_kind(0, k).unwrap();
+            }
+        },
+    );
+    let energy = |a: usize, b: usize| {
+        let x = &out[a * BLOCK_SIZE..b * BLOCK_SIZE];
+        x.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / x.len() as f64
+    };
+    // Into NOIS at 75, 225, 375 and 525: ducked that block, rising the
+    // next. From 225 on the kernel has played noise before.
+    let (mut opening, mut settled) = (0.0, 0.0);
+    for s in [225, 375, 525] {
+        opening += energy(s + 1, s + 4);
+        settled += energy(s + 40, s + EVERY);
+    }
+    let db = 10.0 * (opening / settled).log10();
+    println!("4 ms after a swap into NOIS: {db:+.1} dB against the settled band");
+    assert!(db < -10.0);
 }

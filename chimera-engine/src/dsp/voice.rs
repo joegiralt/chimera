@@ -419,7 +419,12 @@ impl Voice {
             addr_of_mut!((*p).sample_rate).write(sample_rate);
             addr_of_mut!((*p).rebuilds).write(0);
             Self::init_chain(p);
-            slot.assume_init_mut()
+            let v = slot.assume_init_mut();
+            // Its own noise from boot, not the lone slot's voice 0.
+            if let EngineSlot::Algo(a) = &mut v.slot {
+                a.seed(id);
+            }
+            v
         }
     }
 
