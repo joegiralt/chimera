@@ -123,6 +123,22 @@ This spec adds a voiced kind, FRMT, and an unvoiced kind, NOIS, to Algo's WAVE l
 
 ### The formant budget
 
+> **Amended 2026-10-12 (owner; Task 11b; ADR 0131).** What follows this box is the 2026-09-30 design, kept for its derivation. What ships:
+>
+> - **Counted terms, never estimates** (§ 9): `COST_FRMT` 190 unlinked / 380 linked, `COST_FRMT_ONE` 180 / 370, `COST_NOIS` 80, and `COST_FRMT_MOVE` 40 billed on every FRMT, as Modal bills its pitch (#437).
+> - **The three-voice floor (owner).** A Sound holding a FRMT keeps three voices on the reference heavy routing (`ModRouting::HEAVY`); every other Sound keeps ADR 0026's four. Both budgets are derived, never typed in:
+>
+>   ```
+>   share = 7,500 (rev V, 75 %) − 1,494 (bus with the tape) = 6,006
+>   FORMANT_BUDGET      = 6,006/4 − 472 − 832 = 197   tables and NOIS
+>   FORMANT_BUDGET_FRMT = 6,006/3 − 472 − 832 = 698   a Sound with a FRMT
+>   ```
+>
+> - **Per-algorithm billing.** A FRMT is billed linked only when an operator in the patch's algorithm modulates it (`Linked::of(ALG A, ALG B)`, its incoming links); otherwise unlinked. Under MORPH the plan runs both algorithms' links at once, so `Linked` is their union: each operator bills at the heavier of the two. FDBK on the FRMT itself is not a link: it drives the carrier's phase only, never the grain delay.
+> - **Charges** (`OpKind::charge(linked)`, cost − `COST_OP`, SKIRT at its worst): FRMT 360 linked, 170 unlinked; NOIS 20; a table 0. So `FORMANT_N` = ⌊698/360⌋ = 1 linked and `FORMANT_N_UNLINKED` = ⌊698/170⌋ = 4 unlinked; one linked and two unlinked (700) are refused.
+> - **The demo Sounds sit on A1** (no links), so CHOIR and TALK BASS keep their three-formant voicings (530 and 510).
+> - **Every write checks the pair.** `AlgoParams` holds kinds and ALG A/B privately: `try_set_kind` and `try_set_algs` refuse an edit that would overspend. ALG A and B's encoders step over refused algorithms and toast FORMANT BUDGET FULL, as WAVE's do. A load writes ALG A and B before the operators, so each operator is checked on the file's algorithm, in order, and an excess kind loads as W1; the load says so.
+
 **The floor's worst case.** This is ADR 0026's convention: LP24 on the clean SVF (steady bill 0), no FOLD, DRIVE or ALGO taps (ADR 0096), and A16 ∪ A17's 12 links. On top of that, **heavy routes and the master tape**:
 
 - **Heavy routes (refreshed 2026-10-11).** The 2026-09-30 case is priced on today's model. In 2026-09-30's matrix, "all 16 destinations" included CUTOFF. Since filter-types (ADR 0096), CUTOFF and RES are fixed columns (FREQ and Q) beside 16 registry columns, and a route into them bills the filter's moving path. So the case is:
@@ -373,6 +389,23 @@ SKIRT's constants, measured on the host and pinned by tests:
   - With no PM the delay is a constant s/2, which is inaudible.
   - When D is near 2 (SKIRT 3 on the floor) the slack is near 0, so PM moves the carrier only.
 - **Feedback** goes to the carrier phase only (§ 2).
+
+**The delay law as built (amended, Tasks 11 and 11b; ADR 0131).** The hard clamp above aliased at ordinary depths, so the delay saturates smoothly, with no divide:
+
+```
+h  = s/2                               half the slack, periods
+f(v) = v·(3 − v²)/2,  v held to [−1, 1]   odd, slope 3/2 at 0, flat onto ±1
+g  = f(pm/(3h) + β) − β                β = 0 a running grain, −1 the reset grain
+o  = rest + h·g                        rest = h (running), 0 (reset)
+```
+
+- `1/(3h)` is latched per grain, so no sample divides.
+- The delay stays inside [0, s] and lands on both ends C¹. Its slope in `pm` is `(1 − v²)/2` ≤ ½: ½ at rest, not 1, because measured, the modulated alias cases sit 1–11 dB lower at ½.
+- A running grain moves both ways from h, odd about it, reaching the ends at |pm| = 3h. The reset grain opens at once and only delays, reaching the slack at pm = 6h.
+- Window and carrier still shift together (`c' = c + pm − o·FC/f0`), so every grain stays odd.
+- **Measured:** the worst modulated alias case (`158 A3 99`, SKIRT 0, `a_modulated_high_formant_does_not_alias`) is −66.7 dB, against −64.0 for the first smooth law; the odd mean (`grains_stay_odd_under_pm`) is 2.58e-5 under its 1e-4 bound.
+- **The depth cap.** The links' PM is scaled by a share `k = min(clamp((24 kHz − FC − m_q·B_min)/reach, 0, 1), DELAY_SLEW·f0/dev)`, `DELAY_SLEW` = 4, ramped per sample into both the delay and the carrier. It holds a ratio-1 modulator to about 0.64 cycles of PM into a formant. NOIS links are left out of `dev`, so they sit outside the slew bound: their sidebands are noise.
+- **Cost.** With no link (FDBK alone included) a FRMT renders in spans between grain starts, bit-exact against the per-sample path; with a link it runs the moving loop. So a FRMT is billed linked or unlinked by its algorithm (§ 1's amendment, § 9).
 
 ### Frequency: FRMT, VOWEL and KEY
 
@@ -628,6 +661,8 @@ The table is in path order, from dark to bright round the vowel triangle:
 | **NOIS:** the dropped read (−13); xorshift 3, convert 2, the `k_n` ramp and scale 2, two poles 4, the clamp 2, + β 1, product 1; per block about 1 cycle | +2 → 60 + 3.2 + 1 = 64 → **70** |
 
 ### Terms
+
+> **Amended 2026-10-12 (Task 11b; ADR 0131): counted, not estimated.** Recounted on the `bench-algo` ELF with `tools/loop_count.py` (the kernel's loops are kept out of line there by the `span-count` feature, and only there): `COST_FRMT` 190, `COST_FRMT_ONE` 180 (no link in: spans between grain starts); `COST_FRMT_LINKED` 380, `COST_FRMT_ONE_LINKED` 370 (a link in: the moving loop); `COST_NOIS` 80; `COST_FRMT_MOVE` 40 (`take_laws`, `LawBlock::new` and `formant_fc` per block), billed on every FRMT. `AlgoEngine::cost` bills a FRMT `frmt_cost(SKIRT, linked)`, linked from `Linked::of(ALG A, ALG B)`, the same function the budget charges. The estimates below are history. The chip bench confirms the counts at ship (Task 15).
 
 - `COST_FRMT_ONE = 90`, for SKIRT 0. With the floor, SKIRT 0's window is at most 0.88 periods, so the two lanes never sound at once.
 - `COST_FRMT = 130`, for SKIRT 1–3, where the lanes can overlap.
