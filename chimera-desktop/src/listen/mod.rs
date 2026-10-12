@@ -972,12 +972,15 @@ pub struct Player {
     pub flag: bool,
 }
 
-/// A row of a `rows_page`: a title, text lines (flagged lines stand out),
-/// a player per render. A private row goes in the PRIVATE section.
+/// A row of a `rows_page`: a title and its badge, text lines (flagged
+/// lines stand out), labelled facts, a player per render. A private row
+/// goes in the PRIVATE section.
 #[derive(Clone, Debug)]
 pub struct Row {
     pub title: String,
+    pub badge: Option<&'static str>,
     pub lines: Vec<(String, bool)>,
+    pub facts: Vec<(&'static str, Vec<String>)>,
     pub players: Vec<Player>,
     pub private: bool,
 }
@@ -997,9 +1000,16 @@ pub fn rows_page(title: &str, intro: &str, rows: &[Row]) -> String {
         let class = if private { " class=\"private\"" } else { "" };
         let _ = writeln!(out, "<section{class}><h2>{head}</h2>");
         for r in it {
+            let badge = r.badge.map_or(String::new(), |b| {
+                format!(
+                    " <span class=\"badge {}\">{}</span>",
+                    esc(&b.to_lowercase()),
+                    esc(b)
+                )
+            });
             let _ = write!(
                 out,
-                "<article class=\"track\"><div class=\"meta\"><h3>{}</h3></div><div class=\"lines\">",
+                "<article class=\"track\"><div class=\"meta\"><h3>{}{badge}</h3></div><div class=\"lines\">",
                 esc(&r.title)
             );
             for (l, flag) in &r.lines {
@@ -1007,6 +1017,16 @@ pub fn rows_page(title: &str, intro: &str, rows: &[Row]) -> String {
                 let _ = write!(out, "<p{c}>{}</p>", esc(l));
             }
             out.push_str("</div>\n");
+            if !r.facts.is_empty() {
+                out.push_str("<dl class=\"facts\">");
+                for (label, lines) in &r.facts {
+                    let _ = write!(out, "<dt>{}</dt>", esc(label));
+                    for l in lines {
+                        let _ = write!(out, "<dd>{}</dd>", esc(l));
+                    }
+                }
+                out.push_str("</dl>\n");
+            }
             for p in &r.players {
                 let _ = writeln!(
                     out,
@@ -1182,6 +1202,8 @@ mod tests {
     #[test]
     fn rows_page_escapes_and_parts_private() {
         let row = |t: &str, private| Row {
+            badge: None,
+            facts: Vec::new(),
             title: t.into(),
             lines: vec![("A & B".into(), false), ("by ear".into(), true)],
             players: vec![Player {

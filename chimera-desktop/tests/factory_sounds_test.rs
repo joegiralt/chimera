@@ -16,7 +16,7 @@ use chimera_core::ui::mod_panel;
 use chimera_core::ui::theme::{CONTENT_W, FONT_LABEL, LABEL_TRACKING};
 use chimera_core::ui::view::{EnvKind, LfoKind};
 use chimera_core::{params::EngineType, preset::Sound};
-use chimera_desktop::factory_sounds::{build, source};
+use chimera_desktop::factory_sounds::{about, build, source};
 use chimera_hal::store::{Dir, FileName, Store};
 use chimera_hal::testkit::MemStore;
 
@@ -661,6 +661,8 @@ fn report(pass: bool, private: bool) -> qa::Report {
         }],
         long_lufs: Some(-12.3),
         bands: [0.0; 32],
+        badge: s.badge(),
+        about: about::of(s).unwrap(),
     }
 }
 
@@ -671,9 +673,9 @@ fn scratch_ledger(name: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn page_only_when_all_pass() {
+fn a_failing_sound_is_skipped_from_the_page() {
     let d = scratch_ledger("ledger-page");
-    assert!(qa::write(&d, &[report(true, false)], &[], true).unwrap());
+    assert!(qa::write(&d, &[report(true, false)], &[], &[], true).unwrap());
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     assert!(page.contains("TEST PAD") && page.contains("A TEST PAD: SLOW FILTER"));
     assert!(page.contains("POLY") && page.contains("-11.0 LUFS"));
@@ -690,15 +692,165 @@ fn page_only_when_all_pass() {
     assert!(!d.join("index.html").exists(), "never index.html");
 
     // Ports render into their own section, with their edits.
-    assert!(qa::write(&d, &[report(true, false), report(true, true)], &[], true).unwrap());
+    assert!(
+        qa::write(
+            &d,
+            &[report(true, false), report(true, true)],
+            &[],
+            &[],
+            true
+        )
+        .unwrap()
+    );
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     assert!(page.contains("PRIVATE") && page.contains("filter: 2040 instead of open"));
 
-    // One failing gate: the report, and no page (an old one is removed).
-    assert!(!qa::write(&d, &[report(true, false), report(false, false)], &[], true).unwrap());
-    assert!(!d.join("listening.html").exists());
+    // One failing Sound: off the page, named in the report; the rest stay.
+    let mut bad = report(false, false);
+    bad.name = "BAD PAD".into();
+    assert!(!qa::write(&d, &[report(true, false), bad], &[], &[], true).unwrap());
+    let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
+    assert!(
+        page.contains("TEST PAD") && !page.contains("BAD PAD"),
+        "{page}"
+    );
     let txt = std::fs::read_to_string(d.join("report.txt")).unwrap();
     assert!(txt.contains("FAIL") && txt.contains("S9100002"), "{txt}");
+    assert!(txt.contains("off the page: S9100002 BAD PAD"), "{txt}");
+}
+
+/// The "what it is" lines, flattened.
+fn about_text(text: &str) -> String {
+    let s = &run(text).unwrap()[0];
+    about::of(s)
+        .unwrap()
+        .into_iter()
+        .map(|(label, lines)| format!("{label}: {}", lines.join(" | ")))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn what_it_is_names_a_va_sounds_wave_mode_and_filter() {
+    let t = about_text(&format!(
+        "{BASE}VA.MODE = \"RING\"\nVA.WAVE1 = \"0.4\"\nFILTER.KIND = \"2040\"\nFILTER.RESO = \"0.3\"\nVA.STAB = \"0.6\"\nmod.VEL = \"FOLDER.FOLD +12\"\nENV2.ATK = \"0.3\"\nmod.ENV2 = \"VA.WAVE1 +48\"\n"
+    ));
+    assert!(t.contains("ENGINE: VIRTUAL ANALOG"), "{t}");
+    assert!(t.contains("WAVE 1 51 · WAVE 2"), "{t}");
+    assert!(
+        t.contains("MODE RING") && t.contains("BLEND") && t.contains("STABILITY 76"),
+        "{t}"
+    );
+    assert!(
+        t.contains("FILTER: 2040 · LP4 · REV2 · CUTOFF 1.20 kHz · RESONANCE 38"),
+        "{t}"
+    );
+    // Each route in plain words, its modulator as the unit shows it.
+    assert!(
+        t.contains("LFO 1 (SINE, RATE 6 = 1 Hz) → CUTOFF +20"),
+        "{t}"
+    );
+    assert!(t.contains("ENV 2 (ATTACK 26 ms"), "{t}");
+    assert!(t.contains(") → WAVE 1 +48"), "{t}");
+    assert!(
+        about_text(&format!("{BASE}mod.LFO2 = \"VA.FINE2 +10\"\n")).contains("→ OSC 2 FINE +10"),
+        "an oscillator's cell by its OSC page"
+    );
+    assert!(t.contains("VELOCITY → FOLD +12"), "{t}");
+    assert!(t.contains("→ VCA +127"), "{t}");
+    assert!(t.contains("STABILITY 76: the oscillators drift"), "{t}");
+}
+
+#[test]
+fn what_it_is_lists_an_algo_sounds_carriers() {
+    let algo = BASE.replace("engine = \"VA\"", "engine = \"ALGO\"");
+    let t = about_text(&format!(
+        "{algo}ALGO.ALG_A = \"T5\"\nALGO.ALG_B = \"T5\"\nOP_C.LEVEL = \"0\"\n"
+    ));
+    assert!(t.contains("ENGINE: FM ALGO"), "{t}");
+    assert!(t.contains("ALGORITHM T5"), "{t}");
+    assert!(
+        t.contains("CARRIERS: OP 1 ") && t.contains("OP 3 (off)") && t.contains(", OP 5 "),
+        "{t}"
+    );
+    assert!(t.contains("MODULATORS: OP 2 → OP 1 "), "{t}");
+    assert!(t.contains("OP 6 → OP 5 "), "{t}");
+}
+
+#[test]
+fn a_tap_route_reads_audio_rate() {
+    let algo = BASE.replace("engine = \"VA\"", "engine = \"ALGO\"");
+    let t = about_text(&format!("{algo}tap.OP5 = \"FILTER.CUTOFF +45\"\n"));
+    assert!(t.contains("OP 5 → FILTER FREQ +45 (audio rate)"), "{t}");
+}
+
+#[test]
+fn what_it_is_names_a_modal_sounds_model_and_exciter() {
+    let modal = BASE
+        .replace("engine = \"VA\"", "engine = \"MODAL\"")
+        .replace("mod.ENV1 = \"OUT.VCA +127\"\n", "");
+    let t = about_text(&format!(
+        "{modal}MODAL.MODE = \"SYMPATHETIC\"\nMODAL.EXCITE = \"0.4\"\nmod.NOTE = \"MODAL.POS +40\"\n"
+    ));
+    assert!(t.contains("ENGINE: MODAL"), "{t}");
+    assert!(
+        t.contains("MODEL SYMPATHETIC · EXCITER PLUCK: EXCITE 51"),
+        "{t}"
+    );
+    assert!(t.contains("NOTE → POSITION +40"), "{t}");
+}
+
+#[test]
+fn glide_and_mono_read_as_modulation() {
+    let t = about_text(&format!(
+        "{}PITCH.STEAL = \"GLIDE\"\nPITCH.GLIDE_TIME = \"0.5765\"\n",
+        BASE.replace("demo = \"poly\"", "demo = \"mono\"")
+    ));
+    assert!(t.contains("MONO PART, GLIDE 80 ms"), "{t}");
+}
+
+#[test]
+fn badges_follow_the_source_and_a_placeholder_has_no_players() {
+    let approved = &run(&format!("{BASE}approved = \"round 2\"\n")).unwrap()[0];
+    assert_eq!(approved.badge(), source::Badge::Approved);
+    assert_eq!(approved.approved.as_deref(), Some("round 2"));
+    let new = &run(BASE).unwrap()[0];
+    assert_eq!(new.badge(), source::Badge::New);
+    let ph = &source::parse(
+        &(BASE
+            .replace("S9100002", "S9100028")
+            .replace("TEST PAD", "VOWEL CHOIR")
+            .replace("A TEST PAD: SLOW FILTER", "FORMANT CHOIR: COMING SOON")
+            + "status = \"placeholder\"\n"),
+        "p.toml",
+    )
+    .unwrap()[0];
+    assert_eq!(ph.badge(), source::Badge::Placeholder);
+    fails(
+        &format!("{BASE}status = \"placeholder\"\napproved = \"round 2\"\n"),
+        2,
+        "a placeholder has no Sound to approve",
+    );
+    fails(&format!("{BASE}approved = \"\"\n"), 14, "approved");
+
+    let mut a = report(true, false);
+    a.badge = source::Badge::Approved;
+    a.name = "OLD PAD".into();
+    let page = qa::page(&[report(true, false), a], &[], std::slice::from_ref(ph));
+    let at = |w: &str| page.find(w).unwrap_or_else(|| panic!("{w}: {page}"));
+    assert!(at("OLD PAD") < at("TEST PAD"), "approved first");
+    assert!(at("TEST PAD") < at("VOWEL CHOIR"), "placeholders last");
+    assert!(
+        page.contains(">NEW<") && page.contains(">PLACEHOLDER<"),
+        "{page}"
+    );
+    let tail = &page[at("VOWEL CHOIR")..];
+    assert!(tail.contains("waits on the formant engine"), "{page}");
+    assert!(!tail.contains("<audio"), "a placeholder has no players");
+    assert!(
+        page.contains("ENGINE") && page.contains("VIRTUAL ANALOG"),
+        "what it is"
+    );
 }
 
 #[test]
@@ -720,7 +872,7 @@ fn ledger_never_tmp() {
         std::path::PathBuf::from(ok)
     );
     // `write` refuses one too.
-    assert!(qa::write("/tmp/showcase-qa".as_ref(), &[], &[], false).is_err());
+    assert!(qa::write("/tmp/showcase-qa".as_ref(), &[], &[], &[], false).is_err());
 }
 
 #[test]
@@ -836,7 +988,7 @@ fn listening_renders_are_wet_and_gates_dry() {
     // The page marks the wet render.
     assert_eq!(gw.renders[0].with, ["CHORUS"]);
     assert!(gd.renders[0].with.is_empty());
-    let page = qa::page(&[gw], &[]);
+    let page = qa::page(&[gw], &[], &[]);
     assert!(page.contains("LONG WITH CHORUS"), "full words");
     let all = &source::parse(
         &format!("{BASE}OUT.SEND1 = \"0.1\"\nOUT.SEND2 = \"0.1\"\nOUT.SEND3 = \"0.1\"\n"),
@@ -969,7 +1121,7 @@ fn listening_page_is_stereo_and_honest() {
         with: vec!["REVERB"],
         limited_db: Some(2.4),
     });
-    assert!(qa::write(&d, &[r], &[], true).unwrap());
+    assert!(qa::write(&d, &[r], &[], &[], true).unwrap());
     let w = hound::WavReader::open(d.join("renders/S9100002-long.wav")).unwrap();
     assert_eq!(w.spec().channels, 2, "the listening WAVs keep their width");
     assert_eq!(w.len(), 2 * 24_000);
@@ -1161,7 +1313,7 @@ fn page_plays_the_phrase_first_and_flags_its_limiter() {
     };
     let mut r = report(true, false);
     r.renders.insert(0, phrase(Phrase::Pad, 2.5));
-    assert!(qa::write(&d, &[r.clone()], &[], true).unwrap());
+    assert!(qa::write(&d, &[r.clone()], &[], &[], true).unwrap());
     assert!(d.join("renders/S9100002-phrase-pad.wav").is_file());
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     let (ph, long) = (
@@ -1172,11 +1324,11 @@ fn page_plays_the_phrase_first_and_flags_its_limiter() {
     assert!(page.contains("limiter 2.5 dB") && !page.contains("over the"));
     // A pad over the 3 dB chord bar; a bass over the 1 dB bar.
     r.renders[0] = phrase(Phrase::Pad, 3.4);
-    qa::write(&d, &[r.clone()], &[], true).unwrap();
+    qa::write(&d, &[r.clone()], &[], &[], true).unwrap();
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     assert!(page.contains("limiter 3.4 dB, over the 3 dB bar"), "{page}");
     r.renders[0] = phrase(Phrase::Bass, 1.4);
-    qa::write(&d, &[r], &[], true).unwrap();
+    qa::write(&d, &[r], &[], &[], true).unwrap();
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     assert!(page.contains("BASS PHRASE WITH CHORUS"));
     assert!(page.contains("limiter 1.4 dB, over the 1 dB bar"), "{page}");

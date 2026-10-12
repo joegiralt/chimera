@@ -3,6 +3,7 @@
 //! built into card files through the firmware's own encoder. `source` is
 //! pure; `build` reads and writes the files.
 
+pub mod about;
 pub mod build;
 pub mod qa;
 pub mod source;

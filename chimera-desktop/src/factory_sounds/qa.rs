@@ -31,7 +31,8 @@ use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
 
-use super::source::{Phrase, Script, Source, patch, to_sound, trimmed};
+use super::about::{self, Fact};
+use super::source::{Badge, Phrase, Script, Source, patch, to_sound, trimmed};
 use crate::listen::{self, CLICK_RATIO, Player, Row, qa_takes};
 
 const SR: f32 = SAMPLE_RATE as f32;
@@ -869,6 +870,9 @@ pub struct Report {
     /// The dry `long` render's LUFS, beside the level figure.
     pub long_lufs: Option<f32>,
     pub bands: [f32; ERB_BANDS],
+    pub badge: Badge,
+    /// What it is (`about`), from the built Sound.
+    pub about: Vec<Fact>,
 }
 
 impl Report {
@@ -1034,6 +1038,8 @@ pub fn gates(src: &Source) -> Result<Report, String> {
         renders,
         long_lufs: Some(long_lufs),
         bands: erb_bands(&long),
+        badge: src.badge(),
+        about: about::of(src)?,
     })
 }
 
@@ -1134,11 +1140,12 @@ pub fn report_text(reports: &[Report], samey: &[(usize, usize)]) -> String {
     o
 }
 
-/// The owner's page: per Sound its name, description, demo mode, LUFS,
-/// `edits`, exemptions and samey pairs to judge by ear, and a player per
-/// render with its LUFS and peak.
-pub fn page(reports: &[Report], samey: &[(usize, usize)]) -> String {
-    let rows: Vec<Row> = reports
+/// The owner's page: every Sound that passes, badged APPROVED or NEW,
+/// then each placeholder. Per Sound its name, description, demo mode,
+/// LUFS, `edits`, exemptions and samey pairs to judge by ear, what it is
+/// (`about`), and a player per render with its LUFS and peak.
+pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source]) -> String {
+    let mut sounds: Vec<(Badge, Row)> = reports
         .iter()
         .enumerate()
         .map(|(i, r)| {
@@ -1165,9 +1172,11 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)]) -> String {
                 let other = &reports[if a == i { b } else { a }].name;
                 lines.push((format!("samey with {other}: by ear"), true));
             }
-            Row {
+            let row = Row {
                 title: r.name.clone(),
+                badge: Some(r.badge.word()),
                 lines,
+                facts: r.about.clone(),
                 players: r
                     .renders
                     .iter()
@@ -1197,53 +1206,88 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)]) -> String {
                     })
                     .collect(),
                 private: r.private,
-            }
+            };
+            (r.badge, row)
         })
         .collect();
+    sounds.extend(placeholders.iter().map(|s| {
+        let row = Row {
+            title: s.name.as_str().into(),
+            badge: Some(Badge::Placeholder.word()),
+            lines: vec![
+                (s.note.as_str().into(), false),
+                (
+                    format!("S{}: waits on the formant engine", s.id.get()),
+                    false,
+                ),
+            ],
+            facts: Vec::new(),
+            players: Vec::new(),
+            private: false,
+        };
+        (Badge::Placeholder, row)
+    }));
+    // APPROVED, then NEW, then the placeholders; Source order within each.
+    sounds.sort_by_key(|(b, _)| *b);
+    let rows: Vec<Row> = sounds.into_iter().map(|(_, r)| r).collect();
     listen::rows_page(
         "Factory Sounds · listening",
-        "Each Sound over a four-bar phrase (BASS, LEAD, PAD, ARP or WONKY, on its demo mode), then under \
-         its render scripts, played offline through the real Instrument (Part 1, P1); a render \
-         marked WITH plays its sends through NEW's effects. The phrase is for your ear, not a \
-         gate. \
-         Every gate passed (measured dry) or is marked for your ear: the lines in colour.",
+        "Every Sound that is ready: APPROVED (passed your listening round), NEW (not yet heard), \
+         and the PLACEHOLDERS still to come. Each plays over a four-bar phrase (BASS, LEAD, PAD, \
+         ARP or WONKY, on its demo mode), then under its render scripts, offline through the real \
+         Instrument (Part 1, P1); a render marked WITH plays its sends through NEW's effects. The \
+         phrase is for your ear, not a gate. Under each Sound, what it is, read from the Sound \
+         itself. Every gate passed (measured dry) or is marked for your ear: the lines in colour.",
         &rows,
     )
 }
 
-/// Into `dir` (checked as a ledger): `report.txt`; with `wav`, each render
-/// as `renders/S<id>-<script>.wav` and, when every Sound passes,
-/// `listening.html`. A failing run removes an old page. True when every
-/// Sound passes.
+/// Into `dir` (checked as a ledger): `report.txt`, naming each Sound a
+/// failing gate keeps off the page; with `wav`, each passing Sound's
+/// renders as `renders/S<id>-<script>.wav` and `listening.html` (the
+/// passing Sounds and the placeholders). True when every Sound passes.
 pub fn write(
     dir: &Path,
     reports: &[Report],
     samey: &[(usize, usize)],
+    placeholders: &[Source],
     wav: bool,
 ) -> Result<bool, String> {
     let dir = checked_ledger(dir)?;
     let err = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
     std::fs::create_dir_all(&dir).map_err(|e| err(&dir, e))?;
     let pass = reports.iter().all(Report::passes);
-    let txt = dir.join("report.txt");
-    std::fs::write(&txt, report_text(reports, samey)).map_err(|e| err(&txt, e))?;
+    let mut txt = report_text(reports, samey);
+    for r in reports.iter().filter(|r| !r.passes()) {
+        let _ = writeln!(
+            txt,
+            "off the page: S{} {} (a gate failed)",
+            r.id.get(),
+            r.name
+        );
+    }
+    let path = dir.join("report.txt");
+    std::fs::write(&path, txt).map_err(|e| err(&path, e))?;
     if wav {
+        // The page's Sounds, and the samey pairs among them.
+        let shown: Vec<usize> = (0..reports.len())
+            .filter(|&i| reports[i].passes())
+            .collect();
+        let on: Vec<Report> = shown.iter().map(|&i| reports[i].clone()).collect();
+        let at = |i: usize| shown.iter().position(|&j| j == i);
+        let pairs: Vec<(usize, usize)> = samey
+            .iter()
+            .filter_map(|&(a, b)| Some((at(a)?, at(b)?)))
+            .collect();
         let r = dir.join("renders");
         std::fs::create_dir_all(&r).map_err(|e| err(&r, e))?;
-        for rep in reports {
+        for rep in &on {
             for x in &rep.renders {
                 listen::write_wav_stereo(&dir.join(rep.wav(x.audition)), &x.stereo)?;
             }
         }
-    }
-    let html = dir.join("listening.html");
-    if !pass {
-        match std::fs::remove_file(&html) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(err(&html, e)),
-            _ => {}
-        }
-    } else if wav {
-        std::fs::write(&html, page(reports, samey)).map_err(|e| err(&html, e))?;
+        let html = dir.join("listening.html");
+        std::fs::write(&html, page(&on, &pairs, placeholders)).map_err(|e| err(&html, e))?;
     }
     Ok(pass)
 }

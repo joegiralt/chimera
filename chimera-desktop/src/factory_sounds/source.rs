@@ -139,11 +139,39 @@ pub struct Source {
     pub level_by_ear: Option<String>,
     /// Reserves its id and name; never built.
     pub placeholder: bool,
+    /// `approved = "round 2"`: the owner's listening round that passed it.
+    pub approved: Option<String>,
+}
+
+/// Where a Source stands with the owner, as the listening page badges it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Badge {
+    Approved,
+    New,
+    Placeholder,
+}
+
+impl Badge {
+    pub const fn word(self) -> &'static str {
+        match self {
+            Badge::Approved => "APPROVED",
+            Badge::New => "NEW",
+            Badge::Placeholder => "PLACEHOLDER",
+        }
+    }
 }
 
 impl Source {
     fn at(&self, line: usize) -> String {
         format!("{}:{line}", self.file)
+    }
+
+    pub fn badge(&self) -> Badge {
+        match (self.placeholder, &self.approved) {
+            (true, _) => Badge::Placeholder,
+            (false, Some(_)) => Badge::Approved,
+            (false, None) => Badge::New,
+        }
     }
 }
 
@@ -232,6 +260,7 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
         edits: None,
         level_by_ear: None,
         placeholder: false,
+        approved: None,
     };
     for (line, k, v) in e.iter().filter(|x| !HEAD.contains(&x.1.as_str())) {
         let line = *line;
@@ -265,6 +294,8 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
                     .ok_or_else(|| at(line, format!("level {v}: by ear: <why>")))?;
                 s.level_by_ear = Some(why.trim().into());
             }
+            "approved" if !v.trim().is_empty() => s.approved = Some(v.clone()),
+            "approved" => return Err(at(line, "approved: the round, e.g. \"round 2\"".into())),
             "status" if v == "placeholder" => s.placeholder = true,
             "status" => return Err(at(line, format!("status {v}: placeholder"))),
             _ => {
@@ -407,6 +438,12 @@ pub fn check(all: &[Source]) -> Result<(), String> {
         if s.engine == EngineType::Va && !s.placeholder && s.phrase.is_none() {
             return Err(format!(
                 "{}: a VA Sound needs a phrase (phrase = \"bass\", \"lead\", \"pad\", \"arp\" or \"wonky\")",
+                s.at(s.id_line)
+            ));
+        }
+        if s.placeholder && s.approved.is_some() {
+            return Err(format!(
+                "{}: a placeholder has no Sound to approve",
                 s.at(s.id_line)
             ));
         }

@@ -3,8 +3,8 @@
 //! `factory-sounds fmt [--level]` rewrites each Source with its display
 //! comments (`--level`: each `trim` centred on −11 LUFS). `factory-sounds
 //! qa [--wav]` renders and gates every Sound (spec § 4) into the ledger:
-//! `report.txt`; with `--wav` the renders and, when all pass,
-//! `listening.html`.
+//! `report.txt`; with `--wav` the renders and `listening.html` (every
+//! passing Sound, badged, and the placeholders).
 
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
@@ -133,16 +133,15 @@ fn levelled(text: &str, all: &[source::Source]) -> Result<String, String> {
 
 /// Every Sound rendered and gated into the ledger; fails unless all pass.
 fn run_qa(wav: bool) -> Result<(), String> {
-    let all: Vec<_> = build::sources(&dir())?
+    let (placeholders, all): (Vec<_>, Vec<_>) = build::sources(&dir())?
         .into_iter()
-        .filter(|s| !s.placeholder)
-        .collect();
+        .partition(|s| s.placeholder);
     source::check(&all)?;
     let reports = all.iter().map(qa::gates).collect::<Result<Vec<_>, _>>()?;
     let bands: Vec<_> = reports.iter().map(|r| r.bands).collect();
     let samey = qa::samey(&bands);
     let ledger = qa::ledger()?;
-    let pass = qa::write(&ledger, &reports, &samey, wav)?;
+    let pass = qa::write(&ledger, &reports, &samey, &placeholders, wav)?;
     print!("{}", qa::report_text(&reports, &samey));
     println!("{}", ledger.display());
     if pass {
