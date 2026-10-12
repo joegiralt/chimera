@@ -46,7 +46,7 @@ pub struct FormantLaw {
 
 /// The law at pitch `f0`, carrier `fc` and width `bw` (Hz).
 pub fn formant_law(f0: f32, fc: f32, bw: f32, s: Skirt) -> FormantLaw {
-    formant_law_pm(f0, fc, bw, s, 0.0, false)
+    formant_law_pm(f0, fc, bw, s, Drive::NONE)
 }
 
 /// How far PM spreads a formant above FC, Hz: `dev`, a plain carrier's
@@ -80,29 +80,56 @@ pub fn grain_delay(o_base: f32, slack: f32, pm: f32) -> f32 {
     }
 }
 
-/// `formant_law` under the links' PM of peak deviation `dev` (Hz, as a
-/// plain carrier's): the links' PM is scaled by `pm` so `FC + m_q·B_min +
-/// pm·pm_reach` stays under Nyquist and the delay moves at most
-/// `DELAY_SLEW` periods a period (`pm·dev/f0`); the band narrows toward
-/// `B_min` to make the room. The output never fades for PM, only at the
-/// edge, as without it. A `driven` operator (any feedback or PM) can have
-/// its carrier's crest moved onto the window's centre, so its carrier
-/// ceiling takes p̂ = 1.
-pub fn formant_law_pm(f0: f32, fc: f32, bw: f32, s: Skirt, dev: f32, driven: bool) -> FormantLaw {
+/// What drives a formant's carrier phase this block (spec § 3): the links'
+/// PM as a plain carrier's peak deviation `dev` (Hz) and its peak `depth`
+/// (cycles), and the feedback's peak (cycles).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Drive {
+    pub dev: f32,
+    pub depth: f32,
+    pub feedback: f32,
+}
+
+impl Drive {
+    pub const NONE: Drive = Drive {
+        dev: 0.0,
+        depth: 0.0,
+        feedback: 0.0,
+    };
+}
+
+/// The grain signal's peak with its carrier displaced by up to `phi`
+/// cycles against the window: each of `lanes` lanes can gain at most
+/// `2π·phi` (`|sin(c + δ) − sin c| ≤ |δ|`), so `p̂ + lanes·2π·phi`, at most
+/// 1. Continuous in `phi`: no step as feedback or PM rises from 0.
+pub fn driven_peak(p_hat: f32, lanes: f32, phi: f32) -> f32 {
+    (p_hat + lanes * core::f32::consts::TAU * phi).min(1.0)
+}
+
+/// `formant_law` under `drive`: the links' PM is scaled by `pm` so `FC +
+/// m_q·B_min + pm·pm_reach` stays under Nyquist and the delay moves at
+/// most `DELAY_SLEW` periods a period (`pm·dev/f0`); the band narrows
+/// toward `B_min` only as far as the room needs. The output never fades
+/// for PM, only at the edge, as without it. Feedback and the scaled PM
+/// move the carrier against its window (the delay moves both together),
+/// so both gains are referenced to `driven_peak`: the signal still peaks
+/// at most 1 as a modulator and as a carrier.
+pub fn formant_law_pm(f0: f32, fc: f32, bw: f32, s: Skirt, drive: Drive) -> FormantLaw {
     let b_min = width_floor(f0);
     let m = s.m_q();
-    let reach = pm_reach(dev, f0, fc);
-    let pm = if dev > 0.0 {
-        clampf((NYQUIST_HZ - fc - m * b_min) / reach, 0.0, 1.0).min(DELAY_SLEW * f0 / dev)
+    let reach = pm_reach(drive.dev, f0, fc);
+    let pm = if drive.dev > 0.0 {
+        clampf((NYQUIST_HZ - fc - m * b_min) / reach, 0.0, 1.0).min(DELAY_SLEW * f0 / drive.dev)
     } else {
         1.0
     };
     let top = NYQUIST_HZ - pm * reach;
-    // A scaled depth leaves exactly `B_min`: no rounding into the fade.
+    let room = (top - fc) / m;
+    // A scaled depth leaves at least `B_min`: no rounding into the fade.
     let room = if pm > 0.0 && pm < 1.0 {
-        b_min
+        room.max(b_min)
     } else {
-        (top - fc) / m
+        room
     };
     let (fc, bw_eff, edge) = if room >= b_min {
         (fc, sqrt(bw * bw + b_min * b_min).min(room), 1.0)
@@ -115,7 +142,11 @@ pub fn formant_law_pm(f0: f32, fc: f32, bw: f32, s: Skirt, dev: f32, driven: boo
     let l = s.k() / bw_eff;
     let d = l * f0;
     let lanes = if d > 1.0 { 2.0 } else { 1.0 };
-    let p_hat = (lane_peak(s, fc * l) * lanes).min(1.0);
+    let p_hat = driven_peak(
+        (lane_peak(s, fc * l) * lanes).min(1.0),
+        lanes,
+        drive.feedback + pm * drive.depth,
+    );
     let bracket = (1.0 - rho(s, 2.0 * fc * l)).max(BRACKET_FLOOR);
     FormantLaw {
         fc,
@@ -123,7 +154,7 @@ pub fn formant_law_pm(f0: f32, fc: f32, bw: f32, s: Skirt, dev: f32, driven: boo
         d,
         slack: 2.0 - d,
         g_m: 1.0 / p_hat,
-        g_c: (R_REF / sqrt(d * s.c_q() * bracket)).min(if driven { 1.0 } else { 1.0 / p_hat }),
+        g_c: (R_REF / sqrt(d * s.c_q() * bracket)).min(1.0 / p_hat),
         edge,
         pm,
     }

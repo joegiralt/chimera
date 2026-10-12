@@ -5,8 +5,8 @@
 mod common;
 
 use chimera_core::dsp::algo::formant::{
-    BRACKET_FLOOR, DELAY_SLEW, NYQUIST_HZ, R_REF, Skirt, cycles_to_phase, formant_law,
-    formant_law_pm, grain_delay, lane_peak, pm_reach, rho, width_floor, window,
+    BRACKET_FLOOR, DELAY_SLEW, Drive, NYQUIST_HZ, R_REF, Skirt, cycles_to_phase, driven_peak,
+    formant_law, formant_law_pm, grain_delay, lane_peak, pm_reach, rho, width_floor, window,
 };
 use chimera_core::dsp::algo::kinds::{Kinds, OpKind};
 use chimera_core::dsp::algo::noise::{
@@ -400,7 +400,7 @@ fn pm_is_scaled_never_the_output() {
     let m = Skirt::S0.m_q();
     let b = width_floor(C3);
     for (fc, bw) in [(1000.0, 500.0), (8000.0, 10_000.0), (20_000.0, 0.0)] {
-        let l = formant_law_pm(C3, fc, bw, Skirt::S0, 0.0, false);
+        let l = formant_law_pm(C3, fc, bw, Skirt::S0, Drive::NONE);
         assert_eq!(l, formant_law(C3, fc, bw, Skirt::S0));
         assert_eq!(l.pm, 1.0);
     }
@@ -408,7 +408,7 @@ fn pm_is_scaled_never_the_output() {
     let fc = 8000.0;
     let dev = 0.5 * C3;
     let reach = pm_reach(dev, C3, fc);
-    let l = formant_law_pm(C3, fc, 10_000.0, Skirt::S0, dev, false);
+    let l = formant_law_pm(C3, fc, 10_000.0, Skirt::S0, pm(dev));
     assert!(l.pm == 1.0 && l.edge == 1.0);
     assert!((l.bw_eff - (NYQUIST_HZ - reach - fc) / m).abs() < 5.0);
     // Too little room: the share that leaves exactly `B_min`, at full level.
@@ -416,7 +416,7 @@ fn pm_is_scaled_never_the_output() {
     let lever = fc / C3 - 1.0;
     for over in [2.0f32, 10.0] {
         let dev = over * spare / lever;
-        let l = formant_law_pm(C3, fc, 10_000.0, Skirt::S0, dev, false);
+        let l = formant_law_pm(C3, fc, 10_000.0, Skirt::S0, pm(dev));
         let want = (1.0 / over).min(DELAY_SLEW * C3 / dev);
         assert!(
             (l.pm / want - 1.0).abs() < 1e-4,
@@ -427,11 +427,11 @@ fn pm_is_scaled_never_the_output() {
     }
     // Fast PM on a low formant: the slew binds, `pm·dev = DELAY_SLEW·f0`.
     let dev = 20.0 * C3;
-    let l = formant_law_pm(C3, 300.0, 500.0, Skirt::S1, dev, false);
+    let l = formant_law_pm(C3, 300.0, 500.0, Skirt::S1, pm(dev));
     assert!((l.pm * dev / C3 - DELAY_SLEW).abs() < 1e-4, "{}", l.pm);
     // In the edge's fade already: no PM at all, the fade as without it.
     let fc = NYQUIST_HZ - m * 0.75 * b;
-    let l = formant_law_pm(C3, fc, 0.0, Skirt::S0, 1000.0, false);
+    let l = formant_law_pm(C3, fc, 0.0, Skirt::S0, pm(1000.0));
     assert_eq!(l.pm, 0.0);
     assert_eq!(l.edge, formant_law(C3, fc, 0.0, Skirt::S0).edge);
 }
@@ -461,16 +461,70 @@ fn the_grain_delay_saturates_smoothly() {
     }
 }
 
-/// Driven by feedback or PM, the carrier ceiling takes p̂ = 1: a short
-/// grain's carrier gain is capped at 1, a long grain's is unchanged.
+/// PM of deviation `dev` (Hz) and no depth: the band and share only.
+fn pm(dev: f32) -> Drive {
+    Drive { dev, ..Drive::NONE }
+}
+
+/// When only the slew binds there is room to spare, so the band keeps the
+/// user's BW: no snap to `B_min` at the threshold.
 #[test]
-fn a_driven_carrier_is_capped_at_one() {
-    let free = formant_law(A3, 100.0, 10_000.0, Skirt::S0);
-    let driven = formant_law_pm(A3, 100.0, 10_000.0, Skirt::S0, 0.0, true);
-    assert!(free.g_c > 1.0 && driven.g_c == 1.0 && driven.g_m == free.g_m);
-    let free = formant_law(A3, 1000.0, 500.0, Skirt::S1);
-    let driven = formant_law_pm(A3, 1000.0, 500.0, Skirt::S1, 0.0, true);
-    assert_eq!(free, driven);
+fn the_slew_alone_keeps_the_band() {
+    for bw in [0.0f32, 500.0, 2000.0] {
+        let dev = 20.0 * A3;
+        let l = formant_law_pm(A3, 1000.0, bw, Skirt::S1, pm(dev));
+        assert!(l.pm < 1.0 && (l.pm * dev / A3 - DELAY_SLEW).abs() < 1e-4);
+        let free = formant_law(A3, 1000.0, bw, Skirt::S1);
+        assert_eq!(l.bw_eff, free.bw_eff, "{bw}");
+        // Just under and just over the threshold: the same band.
+        for f in [0.999f32, 1.001] {
+            let d = DELAY_SLEW * A3 * f;
+            assert_eq!(
+                formant_law_pm(A3, 1000.0, bw, Skirt::S1, pm(d)).bw_eff,
+                free.bw_eff
+            );
+        }
+    }
+}
+
+/// The peak reference rises with the carrier's displacement, `p̂ +
+/// lanes·2π·phi` up to 1: no step from 0, and both gains follow it, so the
+/// signal peaks at most 1 as modulator and as carrier.
+#[test]
+fn drive_moves_the_peak_reference_continuously() {
+    assert_eq!(driven_peak(0.3, 1.0, 0.0), 0.3);
+    assert!((driven_peak(0.3, 2.0, 0.01) - (0.3 + 0.04 * core::f32::consts::PI)).abs() < 1e-6);
+    assert_eq!(driven_peak(0.3, 1.0, 5.0), 1.0);
+    // Short grains (BW 10 kHz at A3, p̂ well under 1): FDBK and depth from 0.
+    for (fc, bw, s) in [(100.0, 10_000.0, Skirt::S0), (1000.0, 500.0, Skirt::S1)] {
+        let free = formant_law(A3, fc, bw, s);
+        let at = |feedback: f32, depth: f32| {
+            formant_law_pm(
+                A3,
+                fc,
+                bw,
+                s,
+                Drive {
+                    dev: depth * A3,
+                    depth,
+                    feedback,
+                },
+            )
+        };
+        assert_eq!(at(0.0, 0.0), free);
+        let eps = at(1e-8, 0.0);
+        assert!((eps.g_c / free.g_c - 1.0).abs() < 1e-4 && (eps.g_m / free.g_m - 1.0).abs() < 1e-4);
+        let eps = at(0.0, 1e-8);
+        assert!((eps.g_c / free.g_c - 1.0).abs() < 1e-4 && (eps.g_m / free.g_m - 1.0).abs() < 1e-4);
+        // Monotone: more drive, never more gain; full drive references 1.
+        let mut last = free.g_m;
+        for k in 1..=40 {
+            let g = at(k as f32 * 0.005, 0.0).g_m;
+            assert!(g <= last);
+            last = g;
+        }
+        assert!(at(2.0, 0.0).g_m == 1.0 && at(2.0, 0.0).g_c <= 1.0);
+    }
 }
 
 /// The two poles' output variance at `x = k_n·n` from uniform `n` in

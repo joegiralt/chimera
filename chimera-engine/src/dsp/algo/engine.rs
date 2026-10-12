@@ -8,7 +8,9 @@ use core::ptr::addr_of_mut;
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::algorithms::{ALGORITHMS, AlgoId, plan};
 use crate::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
-use crate::dsp::algo::formant::{FormantLaw, NYQUIST_HZ, Skirt, cycles_to_phase, formant_law_pm};
+use crate::dsp::algo::formant::{
+    Drive, FormantLaw, NYQUIST_HZ, Skirt, cycles_to_phase, formant_law_pm,
+};
 use crate::dsp::algo::kernel::{
     FormantBlock, Kernel, KernelBlock, KindBlock, NoiseBlock, OpBlock, PM_CYCLES, SAMPLE_SCALE,
 };
@@ -705,9 +707,8 @@ impl AlgoEngine {
         let l = &self.latch[i];
         let fc = self.formant_fc(p, live, i);
         let f0 = op_cycles(cycles, p, live, i) * sr;
-        let dev = self.pm_deviation(p, live, cycles, sr, i, fade);
-        let driven = dev > 0.0 || feedback_cycles(live.feedback[i]) > 0.0;
-        formant_law_pm(f0, fc, bw_hz(live.bw[i]), l.skirt, dev, driven)
+        let drive = self.drive(p, live, cycles, sr, i, fade);
+        formant_law_pm(f0, fc, bw_hz(live.bw[i]), l.skirt, drive)
     }
 
     /// A formant operator's FC before its law: FRMT, VOWEL and KEY on its
@@ -717,11 +718,13 @@ impl AlgoEngine {
         fc_hz(live.frmt[i], live.vowel, l.slot, l.key, self.key_pitch(p))
     }
 
-    /// The peak deviation, Hz, the links into operator `i` would give a
-    /// plain carrier at full envelope: Σ 2π·`PM_CYCLES`·weight·LEVEL·fade·
-    /// f_m, with f_m each source's top: a table's pitch, a formant's FC;
-    /// `fade` a formant source's edge. Noise sources don't count.
-    fn pm_deviation(
+    /// What drives operator `i`'s carrier at full envelope: its FDBK, and
+    /// its links' PM as depth (Σ `PM_CYCLES`·weight·LEVEL·fade, cycles) and
+    /// as a plain carrier's deviation (the same, times 2π·f_m: a table's
+    /// pitch, a formant's FC). `fade` is a formant source's edge. Noise
+    /// counts in the depth, not the deviation: its sidebands are noise, and
+    /// folding them is no alias.
+    fn drive(
         &self,
         p: &AlgoParams,
         live: &AlgoLive,
@@ -729,24 +732,28 @@ impl AlgoEngine {
         sr: f32,
         i: usize,
         fade: &[f32; OPS],
-    ) -> f32 {
+    ) -> Drive {
         let m = Morph::from_param(live.morph).get();
         let plan = &self.plan;
-        let mut dev = 0.0f32;
+        let (mut dev, mut depth) = (0.0f32, 0.0f32);
         for e in &plan.edges[..plan.edge_count()] {
             if e.dst as usize != i {
                 continue;
             }
             let src = e.src as usize % OPS;
-            let top = match self.kinds[src] {
+            let d = blend(e.a, e.b, m) * level_gain(live.level[src]) * fade[src];
+            depth += d;
+            dev += d * match self.kinds[src] {
                 OpKind::Table(_) => op_cycles(cycles, p, live, src) * sr,
                 OpKind::Formant => self.formant_fc(p, live, src),
-                // Noise's sidebands are noise: folding them is no alias.
-                OpKind::Noise => continue,
+                OpKind::Noise => 0.0,
             };
-            dev += blend(e.a, e.b, m) * level_gain(live.level[src]) * fade[src] * top;
         }
-        dev * core::f32::consts::TAU * PM_CYCLES
+        Drive {
+            dev: dev * core::f32::consts::TAU * PM_CYCLES,
+            depth: depth * PM_CYCLES,
+            feedback: feedback_cycles(live.feedback[i]),
+        }
     }
 
     /// The pitch KEY follows, semitones: the note, TRNSP, the voice's

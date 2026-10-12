@@ -404,22 +404,55 @@ fn pm_enters_grain_and_carrier() {
     assert!(side > -30.0, "{side}");
 }
 
+/// Operator 6's peak, dB, FRMT 80 at LEVEL 70 and FDBK `fb` into op 5
+/// under T1, at each BW step.
+fn modulator_peaks(fb: u8) -> Vec<f32> {
+    [0u8, 36, 72, 108, 144, 180, 216]
+        .map(|bw| {
+            let mut p = AlgoParams::single(WaveId::W1);
+            (p.ops[0].level, p.ops[4].level) = (0, 99);
+            p.try_set_kind(5, OpKind::Formant).unwrap();
+            let o = &mut p.ops[5];
+            (o.frmt, o.bw, o.level, o.feedback) = (80, bw, 70, fb);
+            db(op6_peak(&p, A3, 400, 100))
+        })
+        .into()
+}
+
+fn spread(v: &[f32]) -> f32 {
+    let (lo, hi) = v
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+    hi - lo
+}
+
 #[test]
 fn bw_does_not_change_modulation_depth() {
     // The modulator's own peak, op 6's tap into op 5 under T1: a carrier's
     // output can't give peak depth back (Task 11 ruling).
-    let idx = |bw: u8| {
-        let mut p = AlgoParams::single(WaveId::W1);
-        (p.ops[0].level, p.ops[4].level) = (0, 99);
-        p.try_set_kind(5, OpKind::Formant).unwrap();
-        (p.ops[5].frmt, p.ops[5].bw, p.ops[5].level) = (80, bw, 70);
-        db(op6_peak(&p, A3, 400, 100))
-    };
-    let v: Vec<f32> = [0u8, 36, 72, 108, 144, 180, 216].map(idx).into();
-    let (lo, hi) = v
-        .iter()
-        .fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
-    assert!(hi - lo < 0.5, "{v:?}");
+    let v = modulator_peaks(0);
+    assert!(spread(&v) < 0.5, "{v:?}");
+    // ADR F: under its own FDBK the peak is referenced to the drive's bound,
+    // which short grains don't reach: a regression bound, measured 16.92 dB.
+    let v = modulator_peaks(5);
+    assert!(spread(&v) < 17.0, "{v:?}");
+    assert!(v.iter().all(|&p| p <= 0.0), "{v:?}");
+}
+
+/// FDBK and a modulator's LEVEL glided up from 0 on short grains, where
+/// the peak reference moves most: the gains follow continuously.
+#[test]
+fn drive_glides_do_not_click() {
+    for bw in [72u8, 144] {
+        let (out, cuts) = render_algo_with(&modded(4, 0, 80, bw, 1), A3, 600, |b, _, live, _| {
+            let t = b as f32 / 300.0;
+            live.feedback[0] = 3.0 * t.min(1.0);
+            live.level[1] = 60.0 * chimera_core::dsp::clampf(t - 1.0, 0.0, 1.0);
+        });
+        assert_eq!(cuts, 0, "{bw}");
+        assert!(common::clicks(&out).is_empty(), "{bw}");
+        assert!(out.iter().all(|x| x.abs() <= 1.0), "{bw}");
+    }
 }
 
 #[test]
