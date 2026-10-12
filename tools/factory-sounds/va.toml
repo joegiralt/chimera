@@ -465,15 +465,15 @@ trim = "1.0"
 
 # Prophet-5-style set: two detuned oscillators into the 2040 four-pole
 # low-pass and its envelope, a little STABILITY drift, and poly-mod-like
-# motion (the filter envelope into osc 1's pitch or osc 2's wave). Brass:
-# saw over a detuned pulse (a P5 has no sub), the filter swelling over
-# ~400 ms to a moderate sustain while ENV 2 bends osc 1 sharp and back, the
-# P5's filter-envelope-to-osc-A poly-mod.
+# motion (an envelope into osc 1's pitch or osc 2's wave). Brass: saw over
+# a detuned pulse (a P5 has no sub), the filter swelling over ~400 ms to a
+# moderate sustain, while a fast ENV 3 (sustain 0) bends osc 1 about 30
+# cents sharp at each attack and back: the P5's poly-mod brass blip.
 [[sound]]
 id = "S9100044"
 name = "WARM BRASS"
 engine = "VA"
-note = "ENV 2 BENDS OSC 1 IN THE SWELL"
+note = "ENV 3 BLIPS OSC 1 AS IT SWELLS"
 demo = "poly"
 plays = "long stab"
 home = "C3"
@@ -494,13 +494,17 @@ ENV2.ATK = "0.62"  # 393 ms
 ENV2.DEC = "0.6"  # 415 ms
 ENV2.SUS = "0.4"  # 40%
 ENV2.REL = "0.6"  # 415 ms
-mod.ENV2 = "FILTER.CUTOFF +38, VA.FINE1 +10"
+mod.ENV2 = "FILTER.CUTOFF +38"
+ENV3.ATK = "0"
+ENV3.DEC = "0.45"  # 57
+ENV3.SUS = "0"
+mod.ENV3 = "VA.FINE1 +38"
 LFO1.RATE = "0.3"  # 2
 LFO1.SHAPE = "TRIANGLE"
 mod.LFO1 = "VA.SHAPE2 +20"
 mod.VEL = "FILTER.CUTOFF +25"
 level = "by ear: set low so a 4-note chord with its reverb stays at or under 3 dB of limiting"
-trim = "0.8"
+trim = "0.4"
 
 # Prophet-5 poly-mod keys: ENV 2 plucks the filter and bends osc 2's wave
 # (the filter envelope into oscillator B), a slow LFO widens the pulse.
@@ -581,5 +585,5 @@ LFO3.RATE = "0.08"  # 0
 LFO3.SHAPE = "TRIANGLE"
 mod.LFO3 = "VA.WAVE1 +15"
 mod.VEL = "FILTER.CUTOFF +20, VA.WAVE2 -15"
-level = "by ear: set low so a 4-note chord with its reverb stays at or under 3 dB of limiting"
+level = "by ear: the 1 s level render hears the swell still closed; set low so the open 5-note sweep chord with its reverb stays at or under 3 dB of limiting"
 trim = "-1.2"

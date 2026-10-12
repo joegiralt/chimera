@@ -389,8 +389,9 @@ pub const SWEEP_MAX_HZ: f32 = 0.1;
 pub const SWEEP_MIN_DEPTH: u8 = 16;
 
 /// In the manner of Radiohead – "Everything In Its Right Place" (harmony
-/// and contour only, not transcribed), written fresh: three open minor
-/// chords, i7 – ♭VImaj7 – ♭VII7, each struck whole and held four bars
+/// and contour only, not transcribed), written fresh: three open-voiced
+/// chords in a minor key, i7 – ♭VImaj7 – ♭VII7 (from C: Cm7, A♭maj7,
+/// B♭7), each struck whole and held four bars
 /// (7.9 s) over its root, so a slow envelope on the cutoff swells each one
 /// open and closed. Every voice of a chord starts its envelope together:
 /// honest as played, whatever the voices did before. Common tones (the
