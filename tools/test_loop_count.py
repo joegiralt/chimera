@@ -110,6 +110,34 @@ class LoopCount(unittest.TestCase):
         with self.assertRaises(SystemExit):
             lc.count(dis, "probe_fn")
 
+    def test_a_cold_call_is_off_the_hot_loop(self):
+        # The envelope's stage change: out of line after the loop, back into
+        # its middle. That span is dropped; its instructions are per block.
+        dis = DIS.replace(
+            " 8000116:      \tbne\t0x8000104 <chimera::probe_fn+0x4> @ imm = #-0x16\n",
+            " 8000116:      \tbne\t0x8000104 <chimera::probe_fn+0x4> @ imm = #-0x16\n"
+            " 8000118:      \tb\t0x8000124 <chimera::probe_fn+0x24>\n"
+            " 800011a:      \tbl\t0x8000400 <<chimera_engine::dsp::algo::env::OpEnv>::stage_end>\n"
+            " 800011e:      \tb\t0x8000108 <chimera::probe_fn+0x8>\n",
+        ) + " 8000124:      \tpop\t{r7, pc}\n"
+        c = lc.count(dis, "probe_fn")
+        self.assertEqual([l["loop_instr"] for l in c["loops"]], [6])
+        self.assertEqual(c["block_instr"], 3 + 3)
+
+    def test_a_back_edge_with_no_way_round_is_not_a_loop(self):
+        # Entered past its head from outside; from the head every path
+        # leaves backwards: an outer loop's tail, not an inner loop.
+        dis = DIS + (
+            " 8000118:      \tldr\tr0, [sp]\n"
+            " 800011a:      \tb\t0x8000100 <chimera::probe_fn>\n"
+            " 800011c:      \tnop\n"
+            " 8000120:      \tcmp\tr1, r2\n"
+            " 8000122:      \tbhs\t0x8000118 <chimera::probe_fn+0x18>\n"
+            " 8000124:      \tpop\t{r7, pc}\n"
+        )
+        c = lc.count(dis, "probe_fn")
+        self.assertEqual([l["loop_instr"] for l in c["loops"]], [6])
+
     def test_an_unrolled_loop_has_its_stride(self):
         # Four samples a time round: a byte offset stepped by 16, compared
         # with 0x100.

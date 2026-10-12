@@ -2132,7 +2132,7 @@ fn hold_notes(inst: &mut Instrument, shared: &AudioShared, part: usize) {
 #[inline(never)]
 fn algo_pair(a: AlgoId, b: AlgoId) -> ParamSnapshot {
     let mut p = algo(a, ALL, 7);
-    (p.algo.alg_b, p.algo.morph) = (b.get(), 64);
+    p.algo = AlgoParams::new(a, b, 64, p.algo.kinds(), p.algo.ops);
     p
 }
 

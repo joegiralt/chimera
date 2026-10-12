@@ -29,8 +29,8 @@ fn recipe(addr: ParamAddr) -> ParamSnapshot {
     p.lfos[0].rate = 5.0; // swings both ways within the render
     match block {
         BlockRef::Algo | BlockRef::AlgoOp(_) => {
-            p.algo.alg_a = AlgoId::A1.get();
-            p.algo.alg_b = AlgoId::A17.get();
+            p.algo.try_set_algs(AlgoId::A1, p.algo.algs().1).unwrap();
+            p.algo.try_set_algs(p.algo.algs().0, AlgoId::A17).unwrap();
             p.algo.morph = 64;
             for (i, op) in p.algo.ops.iter_mut().enumerate() {
                 (op.level, op.coarse) = (80, [4, 8, 10, 13, 16, 19][i]);

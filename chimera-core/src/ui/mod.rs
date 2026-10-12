@@ -55,7 +55,7 @@ use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks, Op, Para
 use crate::block::Block;
 use crate::boot::RomDfu;
 use crate::dsp::algo::kinds::step_kind;
-use crate::dsp::algo::params::AlgoOpParams;
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, step_alg};
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::dsp::reverb::KnobMemory;
@@ -1403,18 +1403,21 @@ impl UiState {
         });
     }
 
-    /// A WAVE turn steps over a kind the formant budget refuses: say so.
+    /// A WAVE or ALG turn steps over a kind or an algorithm the formant
+    /// budget refuses: say so.
     #[inline(never)]
     fn formant_full(&mut self, at: PartId, a: ParamAddr, delta: i8) {
-        if let BlockRef::AlgoOp(op) = a.block
-            && a.param == AlgoOpParams::WAVE
-            && step_kind(
-                self.project.part(at).sound.params.algo.kinds(),
-                op.index(),
-                delta,
-            )
-            .skipped
-        {
+        let p = &self.project.part(at).sound.params.algo;
+        let skipped = match a.block {
+            BlockRef::AlgoOp(op) if a.param == AlgoOpParams::WAVE => {
+                step_kind(p.kinds(), p.linked(), op.index(), delta).skipped
+            }
+            BlockRef::Algo if matches!(a.param, AlgoParams::ALG_A | AlgoParams::ALG_B) => {
+                step_alg(p, a.param, delta).skipped
+            }
+            _ => false,
+        };
+        if skipped {
             self.error(Line::new(prompt::FORMANT_FULL));
         }
     }

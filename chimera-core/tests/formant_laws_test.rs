@@ -5,8 +5,9 @@
 mod common;
 
 use chimera_core::dsp::algo::formant::{
-    BRACKET_FLOOR, DELAY_SLEW, Drive, NYQUIST_HZ, R_REF, Skirt, cycles_to_phase, driven_peak,
-    formant_law, formant_law_pm, grain_delay, lane_peak, pm_reach, rho, width_floor, window,
+    BRACKET_FLOOR, DELAY_SLEW, Drive, GrainPm, NYQUIST_HZ, R_REF, Skirt, cycles_to_phase,
+    delay_phase, delay_scale, delay_shape, driven_peak, formant_law, formant_law_pm, grain_delay,
+    lane_peak, peak_ramp, peak_track, pm_reach, rho, width_floor, window,
 };
 use chimera_core::dsp::algo::kinds::{Kinds, OpKind};
 use chimera_core::dsp::algo::noise::{
@@ -436,27 +437,59 @@ fn pm_is_scaled_never_the_output() {
     assert_eq!(l.edge, formant_law(C3, fc, 0.0, Skirt::S0).edge);
 }
 
-/// The grain delay is smooth onto [0, s]: `s/2` at rest with slope 1,
-/// never outside, odd about its rest; the reset grain's 0 at rest, delay
-/// only, flat at 0.
+/// The grain delay is smooth onto [0, s] with no divide: `s/2` at rest
+/// with slope ½, never outside, odd about its rest, flat where it lands on
+/// either end; the reset grain's 0 at rest, delay only, flat at 0.
 #[test]
 fn the_grain_delay_saturates_smoothly() {
+    let delay = |g: &GrainPm, pm: f32| grain_delay(g.rest, g.h, g.moved(pm));
     for s in [0.0f32, 0.1, 0.9, 1.6] {
         let h = s / 2.0;
-        assert_eq!(grain_delay(h, s, 0.0), h);
-        assert_eq!(grain_delay(0.0, s, 0.0), 0.0);
+        let (run, reset) = (GrainPm::new(s, false), GrainPm::new(s, true));
+        assert_eq!(delay(&run, 0.0), h);
+        assert_eq!(delay(&reset, 0.0), 0.0);
         for k in -400..=400 {
             let pm = k as f32 * 0.05;
-            let o = grain_delay(h, s, pm);
+            let o = delay(&run, pm);
             assert!((0.0..=s).contains(&o), "{s} {pm}: {o}");
-            assert!((o - h + (grain_delay(h, s, -pm) - h)).abs() < 1e-6);
-            let r = grain_delay(0.0, s, pm);
+            assert!((o - h + (delay(&run, -pm) - h)).abs() < 1e-6);
+            let r = delay(&reset, pm);
             assert!((0.0..=s).contains(&r) && (pm > 0.0 || r == 0.0));
         }
         if s > 0.0 {
             let e = 1e-3 * h;
-            assert!(((grain_delay(h, s, e) - h) / e - 1.0).abs() < 2e-3);
-            assert!(grain_delay(0.0, s, 1e-3 * s) < 1e-5 * s);
+            assert!(((delay(&run, e) - h) / e - 0.5).abs() < 2e-3);
+            assert!(delay(&reset, 1e-3 * s) < 1e-5 * s);
+            // Landing on the ends, at `|pm| = 3h` (the reset grain's 6h): flat.
+            let near = 3.0 * h * (1.0 - 1e-3);
+            assert!(s - delay(&run, near) < 1e-5 * s && delay(&run, -near) < 1e-5 * s);
+            assert_eq!((delay(&run, 4.0 * h), delay(&run, -4.0 * h)), (s, 0.0));
+            assert!(s - delay(&reset, 2.0 * near) < 1e-5 * s);
+        }
+    }
+    // The shape itself: ±1 exactly at and past ±1, NaN held.
+    assert_eq!(
+        (delay_shape(1.0), delay_shape(-1.0), delay_shape(7.0)),
+        (1.0, -1.0, 1.0)
+    );
+    assert_eq!(delay_shape(f32::NAN), -1.0);
+}
+
+/// The PM-moved part of the carrier's offset, `h·shift·g` cycles as a
+/// phase, in integer steps: off `cycles_to_phase` by at most `m`'s
+/// rounding over `g`'s 2²² steps (2⁻¹¹ of a cycle) and one step of `m`.
+#[test]
+fn the_delay_phase_tracks_the_offset() {
+    for (h, shift) in [(0.05f32, 0.5f32), (0.5, 3.7), (1.0, 120.0), (0.9, 1200.0)] {
+        let m = delay_scale(h, shift);
+        for k in -64..=128 {
+            let f = k as f32 / 64.0;
+            let want = cycles_to_phase(h * shift * f);
+            let err = delay_phase(f, m).wrapping_sub(want) as i32;
+            assert!(
+                err.unsigned_abs() <= (1 << 21) + m,
+                "{h} {shift} {f}: {err}"
+            );
         }
     }
 }
@@ -525,6 +558,35 @@ fn drive_moves_the_peak_reference_continuously() {
         }
         assert!(at(2.0, 0.0).g_m == 1.0 && at(2.0, 0.0).g_c <= 1.0);
     }
+}
+
+/// The modulator gain's ramp from one block's peak bound `u0` to the
+/// next's `u1`: never over `1/min(1, u)` along the bound's line, so a
+/// stepped drive can't pass peak 1; from the last gain, and at the new one
+/// by the block's end unless the bound falls over 4× in it.
+#[test]
+fn the_peak_ramp_never_passes_the_bound() {
+    let us = [0.002f32, 0.05, 0.3, 0.7, 0.99, 1.0, 1.4, 6.0];
+    let h = |u: f32| 1.0 / u.min(1.0);
+    for &u0 in &us {
+        for &u1 in &us {
+            let r = peak_ramp(h(u0), u0, u1);
+            let (mut g, mut u) = (r.g, r.u);
+            assert_eq!(g, h(u0));
+            for s in 0..64 {
+                let bound = h(u0 + (u1 - u0) * s as f32 / 64.0);
+                assert!(g <= bound * (1.0 + 1e-5), "{u0}→{u1} at {s}: {g} > {bound}");
+                u += r.du;
+                g = peak_track(g, u, r.floor);
+            }
+            if u0 <= 4.0 * u1 {
+                assert!((g / h(u1) - 1.0).abs() < 1e-2, "{u0}→{u1} ends at {g}");
+            }
+        }
+    }
+    // Steady: the gain holds.
+    let r = peak_ramp(2.0, 0.5, 0.5);
+    assert_eq!(peak_track(r.g, r.u + r.du, r.floor), 2.0);
 }
 
 /// The two poles' output variance at `x = k_n·n` from uniform `n` in

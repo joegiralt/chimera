@@ -50,7 +50,8 @@ fn render(p: &AlgoParams, note: u8, blocks: usize) -> Vec<f32> {
 /// Six sounding operators at distinct integer ratios, each on its own wave.
 fn stack(a: AlgoId, b: AlgoId, morph: u8) -> AlgoParams {
     let mut p = AlgoParams::default();
-    (p.alg_a, p.alg_b, p.morph) = (a.get(), b.get(), morph);
+    p.try_set_algs(a, b).unwrap();
+    p.morph = morph;
     for (i, o) in p.ops.iter_mut().enumerate() {
         *o = AlgoOpParams {
             level: 99,
@@ -188,7 +189,7 @@ fn an_algorithm_change_ducks_the_whole_output() {
     let p = stack(AlgoId::T1, AlgoId::T1, 0);
     let out = render_with(&p, 60, 100, 30, |b, p| {
         if b == 10 {
-            (p.alg_a, p.alg_b) = (AlgoId::A1.get(), AlgoId::A1.get());
+            p.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
         }
     });
     let blk = |b: usize| &out[b * BLOCK_SIZE..(b + 1) * BLOCK_SIZE];
@@ -255,7 +256,15 @@ fn extreme_parameter_bytes_render_finite_and_bounded() {
         vslot: 255,
     };
     let mut p = AlgoParams::default();
-    (p.alg_a, p.alg_b, p.morph, p.transpose, p.ops) = (255, 255, 255, i8::MAX, [op; 6]);
+    (p.morph, p.transpose, p.ops) = (255, i8::MAX, [op; 6]);
+    use chimera_core::block::Block;
+    p.write(AlgoParams::ALG_A, 255.0);
+    p.write(AlgoParams::ALG_B, 255.0);
+    assert_eq!(
+        p.get(AlgoParams::ALG_A),
+        255.0,
+        "stored raw; the engine clamps"
+    );
     p.vowel = 255;
     for i in 0..6 {
         p.try_set_kind(i, OpKind::Table(WaveId::SSAW)).unwrap();
@@ -500,7 +509,7 @@ fn a_retrigger_adopts_an_idle_operators_new_wave_without_a_duck() {
 fn a_one_block_morph_away_from_the_only_sounding_carrier_does_not_end_the_note() {
     // Operator 5 carries in T1 but not in A17; operator 1 is silent.
     let mut p = AlgoParams::default();
-    p.alg_b = AlgoId::A17.get();
+    p.try_set_algs(p.algs().0, AlgoId::A17).unwrap();
     (p.ops[0].level, p.ops[4].level) = (0, 99);
     let mut e = AlgoEngine::new();
     e.note_on(MidiNote::A4, Velocity::DEFAULT, &p, SR);
@@ -526,7 +535,7 @@ fn a_one_block_morph_away_from_the_only_sounding_carrier_does_not_end_the_note()
 #[test]
 fn a_held_note_survives_a_morph_sweep_to_silence_and_frees_after_release() {
     let mut p = AlgoParams::default();
-    p.alg_b = AlgoId::A17.get();
+    p.try_set_algs(p.algs().0, AlgoId::A17).unwrap();
     for (i, op) in p.ops.iter_mut().enumerate() {
         op.level = if i == 4 { 99 } else { 0 };
     }
@@ -597,7 +606,8 @@ fn a_lone_carrier_is_equally_loud_under_every_algorithm() {
     let level: Vec<f64> = (0..ALGO_COUNT as u8)
         .map(|a| {
             let mut p = one;
-            (p.alg_a, p.alg_b) = (a, a);
+            p.try_set_algs(AlgoId::clamped(a), AlgoId::clamped(a))
+                .unwrap();
             rms_db(&render(&p, 57, 100)[3200..])
         })
         .collect();
@@ -631,7 +641,8 @@ fn init_algorithms_differ() {
     let c: Vec<f64> = (0..ALGO_COUNT as u8)
         .map(|a| {
             let mut p = AlgoParams::default();
-            (p.alg_a, p.alg_b) = (a, a);
+            p.try_set_algs(AlgoId::clamped(a), AlgoId::clamped(a))
+                .unwrap();
             centroid(&render(&p, 57, 7200 / BLOCK_SIZE + 1)[2400..7200], 220.0)
         })
         .collect();
@@ -687,7 +698,7 @@ fn the_output_scale_is_continuous_as_a_carrier_fades_out() {
 #[test]
 fn a_soft_note_never_makes_another_carrier_louder() {
     let mut p = AlgoParams::default();
-    (p.alg_a, p.alg_b) = (AlgoId::A1.get(), AlgoId::A1.get());
+    p.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
     (p.ops[1].coarse, p.ops[1].level, p.ops[1].velocity) = (8, 20, 7);
     let loud = a4_rms(&render_with(&p, 69, 127, 60, |_, _| {}));
     let soft = a4_rms(&render_with(&p, 69, 1, 60, |_, _| {}));

@@ -3,10 +3,10 @@
 
 mod common;
 
-use chimera_core::budget::{FORMANT_N, HEAVY_OVERHEAD};
-use chimera_core::dsp::algo::algorithms::AlgoId;
+use chimera_core::budget::{FORMANT_N, FORMANT_N_UNLINKED, HEAVY_OVERHEAD};
+use chimera_core::dsp::algo::algorithms::{ALGO_COUNT, AlgoId};
 use chimera_core::dsp::algo::engine::AlgoEngine;
-use chimera_core::dsp::algo::kinds::{OpKind, fits};
+use chimera_core::dsp::algo::kinds::{Linked, OpKind, fits};
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::plan::OPS;
 use chimera_core::dsp::algo::waves::WaveId;
@@ -15,7 +15,9 @@ use chimera_core::dsp::filter::ladder::{LADDER_COST, LADDER_MOVE_COST};
 use chimera_core::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
-use chimera_core::hw::{CPU_HZ_REV_V, CPU_HZ_REV_Y, Cost, FLOOR_VOICES, MAX_VOICES, SampleBudget};
+use chimera_core::hw::{
+    CPU_HZ_REV_V, CPU_HZ_REV_Y, Cost, FLOOR_VOICES, FLOOR_VOICES_FORMANT, MAX_VOICES, SampleBudget,
+};
 use chimera_core::instrument::{AudioShared, NoteOrigin};
 use chimera_core::modulation::{FixedCol, ModRouting, ModSource, ModState, VCA};
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -35,7 +37,8 @@ fn voice_cost(e: EngineType) -> Cost {
 /// feedback.
 fn worst() -> AlgoParams {
     let mut p = AlgoParams::default();
-    (p.alg_a, p.alg_b, p.morph) = (AlgoId::A14.get(), AlgoId::A22.get(), 64);
+    p.try_set_algs(AlgoId::A14, AlgoId::A22).unwrap();
+    p.morph = 64;
     for op in p.ops.iter_mut() {
         (op.level, op.feedback) = (99, 7);
     }
@@ -654,7 +657,7 @@ fn the_worst_case_is_the_sum_of_its_terms() {
 fn the_model_bills_every_bench_row_high() {
     let row = |alg: AlgoId, lit: &[usize], fb: u8| {
         let mut p = AlgoParams::default();
-        (p.alg_a, p.alg_b) = (alg.get(), alg.get());
+        p.try_set_algs(alg, alg).unwrap();
         for (i, op) in p.ops.iter_mut().enumerate() {
             (op.level, op.feedback) = (if lit.contains(&i) { 99 } else { 0 }, fb);
         }
@@ -899,7 +902,8 @@ fn costliest() -> AlgoParams {
     let mut best = (0, p);
     for a in 0..32u8 {
         for b in 0..32u8 {
-            (p.alg_a, p.alg_b) = (a, b);
+            p.try_set_algs(AlgoId::clamped(a), AlgoId::clamped(b))
+                .unwrap();
             if cost(&p) > best.0 {
                 best = (cost(&p), p);
             }
@@ -933,7 +937,7 @@ fn a_one_operator_patch_gets_every_voice() {
 /// 0026's costliest shape.
 fn a16_a17() -> AlgoParams {
     let mut p = worst();
-    (p.alg_a, p.alg_b) = (AlgoId::A16.get(), AlgoId::A17.get());
+    p.try_set_algs(AlgoId::A16, AlgoId::A17).unwrap();
     p
 }
 
@@ -1044,7 +1048,8 @@ fn cost_is_monotonic_in_operators_links_and_feedback() {
     for a in 0..32u8 {
         for b in 0..32u8 {
             let mut p = base;
-            (p.alg_a, p.alg_b) = (a, b);
+            p.try_set_algs(AlgoId::clamped(a), AlgoId::clamped(b))
+                .unwrap();
             for op in p.ops.iter_mut() {
                 (op.level, op.feedback) = (0, 0);
             }
@@ -1062,9 +1067,9 @@ fn cost_is_monotonic_in_operators_links_and_feedback() {
     // a superset of links in A never costs less.
     let mut p = worst();
     for (from, to) in [(AlgoId::A1, AlgoId::A2), (AlgoId::A2, AlgoId::A3)] {
-        (p.alg_a, p.alg_b) = (from.get(), from.get());
+        p.try_set_algs(from, from).unwrap();
         let fewer = cost(&p);
-        p.alg_a = to.get();
+        p.try_set_algs(to, p.algs().1).unwrap();
         assert!(cost(&p) > fewer, "{from:?} to {to:?}");
     }
 }
@@ -1075,7 +1080,7 @@ fn cost_is_monotonic_in_operators_links_and_feedback() {
 #[test]
 fn links_are_priced_by_their_active_target() {
     let mut all = worst();
-    (all.alg_a, all.alg_b) = (AlgoId::A17.get(), AlgoId::A17.get());
+    all.try_set_algs(AlgoId::A17, AlgoId::A17).unwrap();
     for op in all.ops.iter_mut() {
         op.feedback = 0;
     }
@@ -1807,9 +1812,12 @@ fn heavy_routes_bill_their_named_sum() {
     );
 }
 
-fn a16_a17_with(k: [OpKind; OPS]) -> AlgoParams {
+/// `k` on ALG `a` and `b` at MORPH 64, every operator at LEVEL 99 and
+/// FDBK 1.
+fn algs_with(a: AlgoId, b: AlgoId, k: [OpKind; OPS]) -> AlgoParams {
     let mut p = AlgoParams::default();
-    (p.alg_a, p.alg_b) = (AlgoId::A16.get(), AlgoId::A17.get());
+    p.try_set_algs(a, b).unwrap();
+    p.morph = 64;
     for (i, kind) in k.into_iter().enumerate() {
         (p.ops[i].level, p.ops[i].feedback) = (99, 1);
         p.try_set_kind(i, kind).unwrap();
@@ -1817,31 +1825,136 @@ fn a16_a17_with(k: [OpKind; OPS]) -> AlgoParams {
     p
 }
 
+fn a16_a17_with(k: [OpKind; OPS]) -> AlgoParams {
+    algs_with(AlgoId::A16, AlgoId::A17, k)
+}
+
+/// Voices of `p` at the heavy routing, with the tape and without.
+fn voices(p: &AlgoParams) -> (u32, u32) {
+    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
+    let v =
+        |bus: Cost| (budget - bus.0) / (AlgoEngine::cost(p, &[false; OPS]).0 + HEAVY_OVERHEAD.0);
+    (v(FxBus::COST_TAPE), v(FxBus::COST_NO_TAPE))
+}
+
+/// Every kind mix the budget holds on each pair in `pairs`, at LEVEL 99
+/// and FDBK 1, at the heavy routing, with and without the tape: at least
+/// `floor` voices.
+fn floor_holds(frmt: bool, floor: u32, pairs: &[(AlgoId, AlgoId)]) {
+    let kinds = [OpKind::Table(WaveId::W1), OpKind::Formant, OpKind::Noise];
+    let mut seen = 0;
+    for &(a, b) in pairs {
+        let l = Linked::of(a, b);
+        for code in 0..3usize.pow(6) {
+            let k: [OpKind; OPS] = core::array::from_fn(|i| kinds[code / 3usize.pow(i as u32) % 3]);
+            if k.contains(&OpKind::Formant) != frmt || !fits(&k, l) {
+                continue;
+            }
+            seen += 1;
+            let (tape, no_tape) = voices(&algs_with(a, b, k));
+            assert!(tape >= floor && no_tape >= floor, "{a:?} {b:?} {k:?}");
+        }
+    }
+    assert!(seen > 0);
+}
+
+/// ADR 0026's floor for Sounds of tables and noise bands.
 #[test]
 fn formant_budget_keeps_four_voices() {
-    let kinds = [OpKind::Table(WaveId::W1), OpKind::Formant, OpKind::Noise];
-    for code in 0..3usize.pow(6) {
-        let k: [OpKind; OPS] = core::array::from_fn(|i| kinds[code / 3usize.pow(i as u32) % 3]);
-        if !fits(&k) {
-            continue; // `Kinds` can't hold it
-        }
-        let p = a16_a17_with(k);
-        let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
-        let v = |bus: Cost| {
-            (budget - bus.0) / (AlgoEngine::cost(&p, &[false; OPS]).0 + HEAVY_OVERHEAD.0)
-        };
-        assert!(
-            v(FxBus::COST_TAPE) >= FLOOR_VOICES && v(FxBus::COST_NO_TAPE) >= FLOOR_VOICES,
-            "{k:?}"
-        );
-    }
-    // One FRMT past the budget breaks the floor: N formants, plus one more's
-    // charge (cost is additive per operator).
-    let mut at_n = [OpKind::Table(WaveId::W1); OPS];
-    for slot in at_n.iter_mut().take(FORMANT_N as usize) {
+    floor_holds(false, FLOOR_VOICES, &[(AlgoId::A16, AlgoId::A17)]);
+}
+
+/// Every pair of algorithms, unordered (`Linked` and the cost are the
+/// union of both).
+fn all_pairs() -> Vec<(AlgoId, AlgoId)> {
+    let ids = || (0..ALGO_COUNT as u8).map(AlgoId::clamped);
+    ids()
+        .flat_map(|a| {
+            ids()
+                .filter(move |b| b.get() >= a.get())
+                .map(move |b| (a, b))
+        })
+        .collect()
+}
+
+/// The owner's three-voice floor (2026-10-12) for Sounds with a FRMT, on
+/// every algorithm pair: a FRMT bills linked where either algorithm links
+/// into it. One FRMT past what the budget holds breaks it.
+#[test]
+fn formant_budget_keeps_three_voices() {
+    floor_holds(true, FLOOR_VOICES_FORMANT, &all_pairs());
+    let t = OpKind::Table(WaveId::W1);
+    // Linked: FRMT on operator 1 of A16 ∪ A17 (modulated); one more is over.
+    let mut at_n = [t; OPS];
+    at_n[0] = OpKind::Formant;
+    assert_eq!(FORMANT_N, 1);
+    let over =
+        AlgoEngine::cost(&a16_a17_with(at_n), &[false; OPS]).0 + OpKind::Formant.charge(true);
+    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
+    assert!((budget - FxBus::COST_TAPE.0) / (over + HEAVY_OVERHEAD.0) < FLOOR_VOICES_FORMANT);
+    // Unlinked, on A1: `FORMANT_N_UNLINKED` carriers, then one more.
+    let mut at_n = [t; OPS];
+    for slot in at_n.iter_mut().take(FORMANT_N_UNLINKED as usize) {
         *slot = OpKind::Formant;
     }
-    let over = AlgoEngine::cost(&a16_a17_with(at_n), &[false; OPS]).0 + OpKind::Formant.charge();
-    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
-    assert!((budget - FxBus::COST_TAPE.0) / (over + HEAVY_OVERHEAD.0) < FLOOR_VOICES);
+    let p = algs_with(AlgoId::A1, AlgoId::A1, at_n);
+    assert!(voices(&p).0 >= FLOOR_VOICES_FORMANT);
+    let over = AlgoEngine::cost(&p, &[false; OPS]).0 + OpKind::Formant.charge(false);
+    assert!((budget - FxBus::COST_TAPE.0) / (over + HEAVY_OVERHEAD.0) < FLOOR_VOICES_FORMANT);
+}
+
+/// A FRMT bills its counted lanes, linked when ALG A or B runs a link into
+/// it, and its law moving always: the pitch wheel and a glide steal move
+/// it with no route to see, as Modal's pitch (#437).
+#[test]
+fn a_formant_bills_its_lanes_and_its_moving_law() {
+    use chimera_core::dsp::algo::algorithms::ALGORITHMS;
+    let t = [OpKind::Table(WaveId::W1); OPS];
+    let base = cost(&a16_a17_with(t));
+    let (a, b) = (
+        &ALGORITHMS[AlgoId::A16.get() as usize],
+        &ALGORITHMS[AlgoId::A17.get() as usize],
+    );
+    let modded = (0..OPS).fold(0u8, |m, i| m | a.mods[i] | b.mods[i]);
+    let l = Linked::of(AlgoId::A16, AlgoId::A17);
+    let (mut linked_seen, mut unlinked_seen) = (false, false);
+    for op in 0..OPS {
+        let linked = modded & (1 << op) != 0;
+        assert_eq!(l.has(op), linked);
+        linked_seen |= linked;
+        unlinked_seen |= !linked;
+        for skirt in [0, 3] {
+            let mut k = t;
+            k[op] = OpKind::Formant;
+            let mut p = a16_a17_with(k);
+            p.ops[op].skirt = skirt;
+            let lanes = match (skirt == 0, linked) {
+                (true, false) => AlgoEngine::COST_FRMT_ONE,
+                (false, false) => AlgoEngine::COST_FRMT,
+                (true, true) => AlgoEngine::COST_FRMT_ONE_LINKED,
+                (false, true) => AlgoEngine::COST_FRMT_LINKED,
+            };
+            assert_eq!(
+                cost(&p) - base,
+                lanes.0 + AlgoEngine::COST_FRMT_MOVE.0 - AlgoEngine::COST_OP.0,
+                "op {op} skirt {skirt}"
+            );
+            // Unrouted, the slot bills just that.
+            let mut s = ParamSnapshot::for_engine(EngineType::Algo);
+            s.algo = p;
+            assert_eq!(
+                EngineSlot::cost(&s, &ModState::new()),
+                AlgoEngine::cost(&p, &UNROUTED)
+            );
+        }
+    }
+    assert!(linked_seen && unlinked_seen);
+    // Selecting a FRMT is never billed below its counted worst case.
+    for linked in [false, true] {
+        assert_eq!(
+            OpKind::Formant.charge(linked) + AlgoEngine::COST_OP.0,
+            AlgoEngine::frmt_cost(1, linked)
+        );
+    }
+    assert!(OpKind::Formant.charge(true) + AlgoEngine::COST_OP.0 >= AlgoEngine::COST_FRMT_LINKED.0);
 }

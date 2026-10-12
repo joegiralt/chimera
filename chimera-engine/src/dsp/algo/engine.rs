@@ -9,7 +9,8 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::algorithms::{ALGORITHMS, AlgoId, plan};
 use crate::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
 use crate::dsp::algo::formant::{
-    Drive, FormantLaw, NYQUIST_HZ, Skirt, cycles_to_phase, formant_law_pm,
+    Drive, FormantLaw, GrainPm, NYQUIST_HZ, PeakRamp, Skirt, cycles_to_phase, delay_scale,
+    formant_law_pm, peak_bound, peak_ramp,
 };
 use crate::dsp::algo::kernel::{
     FormantBlock, Kernel, KernelBlock, KindBlock, NoiseBlock, OpBlock, PM_CYCLES, SAMPLE_SCALE,
@@ -150,6 +151,132 @@ impl OpLatch {
     };
 }
 
+/// A formant operator's drive at the end of the last block, where the
+/// next block's peak bound starts: FDBK's cycles, the links' depth, the
+/// lanes, the bound (`peak_bound`) and the modulator gain under it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Peak {
+    feedback: f32,
+    depth: f32,
+    lanes: f32,
+    bound: f32,
+    gm: f32,
+}
+
+impl Peak {
+    const INIT: Peak = Peak {
+        feedback: 0.0,
+        depth: 0.0,
+        lanes: 1.0,
+        bound: 1.0,
+        gm: 1.0,
+    };
+
+    /// Settled at `law` under `drive`: its `g_m`.
+    fn at(law: &FormantLaw, drive: &Drive) -> Peak {
+        let bound = peak_bound(law.p_hat, law.lanes, drive.feedback + law.pm * drive.depth);
+        Peak {
+            feedback: drive.feedback,
+            depth: drive.depth,
+            lanes: law.lanes,
+            bound,
+            gm: 1.0 / bound.min(1.0),
+        }
+    }
+
+    /// The block's modulator-gain ramp from here to `law` under `drive`,
+    /// and where it ends. Across the block the feedback ramps, the PM share
+    /// ramps from `k` and the sources' LEVELs from the last depth, so the
+    /// carrier's displacement stays under the line to the bound at the
+    /// larger share, depth and lane count: settled, exactly `g_m`.
+    fn next(&self, k: f32, law: &FormantLaw, drive: &Drive) -> (PeakRamp, Peak) {
+        let phi = drive.feedback + k.max(law.pm) * self.depth.max(drive.depth);
+        let bound = peak_bound(law.p_hat, self.lanes.max(law.lanes), phi);
+        let end = Peak {
+            feedback: drive.feedback,
+            depth: drive.depth,
+            lanes: law.lanes,
+            bound,
+            gm: 1.0 / bound.min(1.0),
+        };
+        (peak_ramp(self.gm, self.bound, bound), end)
+    }
+}
+
+/// Each formant operator's law and drive this block.
+type Laws = [Option<(FormantLaw, Drive)>; OPS];
+
+/// A formant operator's law, its drive and what its block takes from them
+/// beyond the ramps: kept while the law's inputs hold (`LawKey`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LawBlock {
+    law: FormantLaw,
+    drive: Drive,
+    inc: u32,
+    inv_inc: f32,
+    inc_c: u32,
+    inv_d: f32,
+    pm: GrainPm,
+    m: u32,
+    c0: [u32; 2],
+    /// `g_c / g_m`.
+    ratio: f32,
+}
+
+impl LawBlock {
+    /// At `c` cycles a sample (the operator's pitch) and rate `sr`.
+    #[cfg_attr(feature = "probe", inline(never))]
+    fn new(law: FormantLaw, drive: Drive, c: f32, sr: f32) -> LawBlock {
+        // c ≤ ½: under 2^31.
+        let inc = (c * 4_294_967_296.0) as u32;
+        let shift = law.fc / (c * sr);
+        let pm = GrainPm::new(law.slack, false);
+        LawBlock {
+            law,
+            drive,
+            inc,
+            inv_inc: 1.0 / inc.max(1) as f32,
+            inc_c: cycles_to_phase(law.fc / sr),
+            inv_d: 1.0 / law.d,
+            pm,
+            m: delay_scale(pm.h, shift),
+            c0: [
+                cycles_to_phase(-shift),
+                cycles_to_phase(-law.d * shift * 0.5),
+            ],
+            ratio: law.g_c / law.g_m,
+        }
+    }
+}
+
+/// Every input of the formant laws a block can move, as bits: each
+/// operator's FRMT, BW, LEVEL, FINE, DETUNE and FDBK as played, VOWEL,
+/// MORPH, the pitch offset, the glide's slide and the rate, the note,
+/// TRNSP and the COARSEs. The latched slots, KEY and SKIRT, the kinds and
+/// the plan move only at a note-on or a swap, which drop the key.
+const LAW_KEY: usize = 6 * OPS + 8;
+type LawKey = [u32; LAW_KEY];
+
+/// A NOIS operator's band law, from stored values only: its centre and
+/// WIDTH, the poles' `(c, k)` and the upper-edge fade. `key` packs FRMT,
+/// BW, VOWEL and the slot it was taken at.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct NoiseLaw {
+    key: u32,
+    band: (f32, f32),
+    coef: (f32, f32),
+    edge: f32,
+}
+
+impl NoiseLaw {
+    const STALE: NoiseLaw = NoiseLaw {
+        key: u32::MAX,
+        band: (0.0, 0.0),
+        coef: WHITE,
+        edge: 0.0,
+    };
+}
+
 /// `noise_coef` at an unbounded WIDTH: white noise at unit RMS.
 const WHITE: (f32, f32) = (1.0, 1.732_050_8);
 
@@ -201,13 +328,22 @@ pub struct AlgoEngine {
     /// The PM-depth ramps' starts: each formant operator's last share of
     /// its links' PM.
     pm_k: [f32; OPS],
+    /// Each formant operator's drive where the last block left it.
+    peak: [Peak; OPS],
     /// The last block's `(fc, bw_eff)` of each formant or noise operator.
     view: [(f32, f32); OPS],
+    /// The formant laws' inputs when they were taken (`None`: to take),
+    /// and each formant operator's law block from them.
+    law_key: Option<LawKey>,
+    laws: [Option<LawBlock>; OPS],
+    /// Each noise operator's band law, kept while its stored values hold.
+    noise: [NoiseLaw; OPS],
 }
 
 crate::in_place::field_list!(AlgoEngine => AlgoEngine {
     kernel, env, plan, plan_key, kinds, rates, gain, mip, morph, norm, swap, note, pitch, slide,
-    velocity, active, held, latch, noise_c, noise_k, mix, c_ratio, pm_k, view,
+    velocity, active, held, latch, noise_c, noise_k, mix, c_ratio, pm_k, peak, view, law_key,
+    laws, noise,
 });
 
 #[cfg(any(test, feature = "test-support"))]
@@ -233,9 +369,31 @@ impl AlgoEngine {
     pub const COST_OP: Cost = Cost(60); // measured 2026-09-27, bench, rev V at 480 MHz
     pub const COST_LINK: Cost = Cost(8); // measured 2026-09-27, bench, rev V at 480 MHz
     pub const COST_FEEDBACK: Cost = Cost(1); // measured 2026-09-27, bench, rev V at 480 MHz
-    pub const COST_FRMT_ONE: Cost = Cost(90); // estimate, ADR 0056's method; bench at ship
-    pub const COST_FRMT: Cost = Cost(130); // estimate, ADR 0056's method; bench at ship
-    pub const COST_NOIS: Cost = Cost(70); // estimate, ADR 0056's method; bench at ship
+    // Counted on the bench-algo ELF with tools/loop_count.py: a SKIRT 1–3
+    // FRMT's two lanes in spans (`<0, S3>`), one lane at SKIRT 0
+    // (`<0, S0>`), and with links the moving loop (`<1, S3>`, `<1, S0>`).
+    pub const COST_FRMT_ONE: Cost = Cost(180); // counted, ADR 0056's method, 3f403ae2 + task-11b-opt WIP
+    pub const COST_FRMT: Cost = Cost(190); // counted, ADR 0056's method, 3f403ae2 + task-11b-opt WIP
+    pub const COST_FRMT_ONE_LINKED: Cost = Cost(370); // counted, ADR 0056's method, 3f403ae2 + task-11b-opt WIP
+    pub const COST_FRMT_LINKED: Cost = Cost(380); // counted, ADR 0056's method, 3f403ae2 + task-11b-opt WIP
+    pub const COST_NOIS: Cost = Cost(80); // counted, ADR 0056's method, 3f403ae2 + task-11b-opt WIP
+    /// A formant law taken afresh (`take_laws` 876 instructions and 18
+    /// divides, `LawBlock::new` 113 and 6, `formant_fc` 126 and 1). Billed
+    /// on every FRMT, as Modal bills its pitch (#437): the pitch wheel or a
+    /// glide steal can move any voice's laws with no route to see.
+    pub const COST_FRMT_MOVE: Cost = Cost(40); // counted, ADR 0056's method, 3f403ae2 + task-11b-opt WIP
+
+    /// A priced FRMT operator: its lanes (one at SKIRT 0), with links or
+    /// without, and its laws moving.
+    pub const fn frmt_cost(skirt: u8, linked: bool) -> u32 {
+        let lanes = match (skirt == 0, linked) {
+            (true, false) => Self::COST_FRMT_ONE.0,
+            (false, false) => Self::COST_FRMT.0,
+            (true, true) => Self::COST_FRMT_ONE_LINKED.0,
+            (false, true) => Self::COST_FRMT_LINKED.0,
+        };
+        lanes + Self::COST_FRMT_MOVE.0
+    }
 
     /// A voice's cycles/sample from its patch's shape (spec addendum). An
     /// operator is priced when its LEVEL is above 0 or has a mod route
@@ -245,8 +403,11 @@ impl AlgoEngine {
     /// this: a LEVEL ramping down to 0 still runs, and an ALG edit renders
     /// the old plan through its duck block. The 30% reserve absorbs it.
     pub const fn cost(p: &AlgoParams, level_routed: &[bool; OPS]) -> Cost {
-        let a = &ALGORITHMS[AlgoId::clamped(p.alg_a).get() as usize];
-        let b = &ALGORITHMS[AlgoId::clamped(p.alg_b).get() as usize];
+        let (a, b) = p.algs();
+        let (a, b) = (&ALGORITHMS[a.get() as usize], &ALGORITHMS[b.get() as usize]);
+        // A formant with a link in runs its linked path (`Linked`, as the
+        // budget bills it).
+        let linked = p.linked();
         let (mut active, mut feedback, mut ops, mut i) = (0u8, 0, 0, 0);
         while i < OPS {
             if p.ops[i].level > 0 || level_routed[i] {
@@ -254,9 +415,7 @@ impl AlgoEngine {
                 let kind = p.kinds().get(i);
                 ops += match kind {
                     OpKind::Table(_) => Self::COST_OP.0,
-                    // SKIRT 0 keeps one lane open at a time.
-                    OpKind::Formant if p.ops[i].skirt == 0 => Self::COST_FRMT_ONE.0,
-                    OpKind::Formant => Self::COST_FRMT.0,
+                    OpKind::Formant => Self::frmt_cost(p.ops[i].skirt, linked.has(i)),
                     OpKind::Noise => Self::COST_NOIS.0,
                 };
                 if p.ops[i].feedback > 0 && !matches!(kind, OpKind::Noise) {
@@ -322,7 +481,11 @@ impl AlgoEngine {
             addr_of_mut!((*p).mix).write([OpLatch::INIT.mix; OPS]);
             addr_of_mut!((*p).c_ratio).write([1.0; OPS]);
             addr_of_mut!((*p).pm_k).write([1.0; OPS]);
+            addr_of_mut!((*p).peak).write([Peak::INIT; OPS]);
             addr_of_mut!((*p).view).write([(0.0, 0.0); OPS]);
+            addr_of_mut!((*p).law_key).write(None);
+            addr_of_mut!((*p).laws).write([None; OPS]);
+            addr_of_mut!((*p).noise).write([NoiseLaw::STALE; OPS]);
             slot.assume_init_mut()
         }
     }
@@ -360,6 +523,9 @@ impl AlgoEngine {
             VowelSlot::from_code(p.ops[i].vslot).unwrap_or(VowelSlot::Off)
         });
         let slots = resolve_slots(&p.kinds(), vslot);
+        // Slots, KEY, SKIRT, kinds and plan may all have moved: every law
+        // is taken afresh.
+        (self.law_key, self.noise) = (None, [NoiseLaw::STALE; OPS]);
         let mut idle = [false; OPS];
         for i in 0..OPS {
             self.rates[i] = p.ops[i].rates();
@@ -371,18 +537,26 @@ impl AlgoEngine {
                 l.skirt = Skirt::from_code(o.skirt);
                 self.kernel.reset(i, p.kinds().get(i));
                 self.kinds[i] = p.kinds().get(i);
-                (self.noise_c[i], self.noise_k[i]) = noise_coef(self.noise_band(p, i).1, sr);
-                self.mip[i] = self.mip_target(p, &live, cycles, sr, m, &level, i);
+                match self.kinds[i] {
+                    OpKind::Noise => {
+                        (self.noise_c[i], self.noise_k[i]) = self.noise_law(p, i, sr).coef;
+                    }
+                    OpKind::Table(_) => {
+                        self.mip[i] = self.mip_target(p, &live, cycles, sr, m, &level, i)
+                    }
+                    OpKind::Formant => {}
+                }
             }
             self.env[i].note_on(EnvCoefs::new(self.rates[i], note, sr));
         }
         // Every kind set first: a formant's PM depth reads its sources'.
-        let laws = self.formant_laws(p, &live, cycles, sr);
+        self.formant_blocks(p, &live, cycles, sr);
         for i in (0..OPS).filter(|&i| idle[i]) {
-            if let Some(law) = &laws[i] {
-                (self.c_ratio[i], self.pm_k[i]) = (law.g_c / law.g_m, law.pm);
+            if let Some(b) = &self.laws[i] {
+                (self.c_ratio[i], self.pm_k[i]) = (b.ratio, b.law.pm);
+                self.peak[i] = Peak::at(&b.law, &b.drive);
             }
-            self.gain[i] = self.target_gain(p, &live, i, &laws);
+            self.gain[i] = self.target_gain(&live, p, i, sr);
         }
         self.active = true;
         self.held = true;
@@ -453,6 +627,19 @@ impl AlgoEngine {
         self.kernel.grain_cuts()
     }
 
+    /// Formant operators render on the kernel's per-sample reference.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn formants_per_sample(&mut self) {
+        self.kernel.formants_per_sample();
+    }
+
+    /// The next block takes every formant and noise law afresh, as if each
+    /// input had moved.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn retake_laws(&mut self) {
+        (self.law_key, self.noise) = (None, [NoiseLaw::STALE; OPS]);
+    }
+
     /// Every operator's noise from `voice`'s seeds: once, as the slot is
     /// built, never at a note-on.
     pub fn seed(&mut self, voice: VoiceIdx) {
@@ -471,14 +658,17 @@ impl AlgoEngine {
         if !self.active {
             return Cost::ZERO;
         }
-        let n = (0..OPS)
-            .filter(|&i| {
-                self.kinds[i] == OpKind::Formant
-                    && self.latch[i].skirt != Skirt::S0
-                    && p.ops[i].skirt == 0
-            })
-            .count() as u32;
-        Cost(n * (Self::COST_FRMT.0 - Self::COST_FRMT_ONE.0))
+        let l = p.linked();
+        Cost(
+            (0..OPS)
+                .filter(|&i| {
+                    self.kinds[i] == OpKind::Formant
+                        && self.latch[i].skirt != Skirt::S0
+                        && p.ops[i].skirt == 0
+                })
+                .map(|i| Self::frmt_cost(1, l.has(i)) - Self::frmt_cost(0, l.has(i)))
+                .sum(),
+        )
     }
 
     pub fn render(
@@ -506,46 +696,31 @@ impl AlgoEngine {
         let m = Morph::from_param(live.morph);
         let level = level_gains(live);
         let cycles = self.cycles(p, sr);
-        let mips: [(usize, f32, f32); OPS] = core::array::from_fn(|i| {
-            // A formant reads no table: its mip holds.
-            let to = if self.kinds[i] == OpKind::Formant {
-                self.mip[i]
-            } else {
-                self.mip_target(p, live, cycles, sr, m, &level, i)
-            };
-            mip_step(self.mip[i], to)
+        // Only a table reads a table: the others' mips hold.
+        let mips: [(usize, f32, f32); OPS] = core::array::from_fn(|i| match self.kinds[i] {
+            OpKind::Table(_) => mip_step(
+                self.mip[i],
+                self.mip_target(p, live, cycles, sr, m, &level, i),
+            ),
+            OpKind::Formant | OpKind::Noise => (0, 0.0, 0.0),
         });
         let mut view = self.view;
-        let laws = self.formant_laws(p, live, cycles, sr);
+        let mut peak = self.peak;
+        self.formant_blocks(p, live, cycles, sr);
         let ops: [OpBlock; OPS] = core::array::from_fn(|i| {
-            if let Some(law) = laws[i] {
-                view[i] = (law.fc, law.bw_eff);
-                let c = op_cycles(cycles, p, live, i);
-                // c ≤ ½: under 2^31.
-                let inc = (c * 4_294_967_296.0) as u32;
-                let shift = law.fc / (c * sr);
-                return OpBlock {
-                    inc,
-                    gain_from: self.gain[i],
-                    gain_to: self.level_gain(live, i) * law.g_m * law.edge * self.op_duck(i),
-                    feedback: feedback_cycles(live.feedback[i]),
-                    kind: KindBlock::Formant(FormantBlock {
-                        inv_inc: 1.0 / inc.max(1) as f32,
-                        inc_c: cycles_to_phase(law.fc / sr),
-                        inv_d: 1.0 / law.d,
-                        slack: law.slack,
-                        shift,
-                        c0: cycles_to_phase(-law.d * shift * 0.5),
-                        c_ratio: (self.c_ratio[i], law.g_c / law.g_m),
-                        pm: (self.pm_k[i], law.pm),
-                        skirt: self.latch[i].skirt,
-                    }),
-                };
+            let gain_to = self.target_gain(live, p, i, sr) * self.op_duck(i);
+            if let Some(b) = &self.laws[i] {
+                view[i] = (b.law.fc, b.law.bw_eff);
+                let (o, end) = self.formant_block(i, b, gain_to);
+                peak[i] = end;
+                return o;
             }
-            let gain_to = self.target_gain(p, live, i, &laws) * self.op_duck(i);
             if self.kinds[i] == OpKind::Noise {
-                let (fc, w) = self.noise_band(p, i);
-                let (c, k) = noise_coef(w, sr);
+                let NoiseLaw {
+                    band: (fc, _),
+                    coef: (c, k),
+                    ..
+                } = self.noise[i];
                 let mix = (self.mix[i], self.latch[i].mix);
                 return OpBlock {
                     // FC/sr ≤ ½ at any rate ≥ 48 kHz; wrapping besides.
@@ -585,18 +760,17 @@ impl AlgoEngine {
             norm_to: norm,
         };
         self.kernel.render(&blk, &mut self.env, out, taps);
-        self.view = view;
+        (self.view, self.peak) = (view, peak);
         for (i, o) in ops.iter().enumerate() {
             self.gain[i] = o.gain_to;
-            self.mip[i] = mips[i].0 as f32 + mips[i].2;
             self.mix[i] = self.latch[i].mix;
             match o.kind {
                 KindBlock::Noise(n) => {
                     (self.noise_c[i], self.noise_k[i]) = (n.c.1, n.k.1);
-                    self.view[i] = self.noise_band(p, i);
+                    self.view[i] = self.noise[i].band;
                 }
                 KindBlock::Formant(f) => (self.c_ratio[i], self.pm_k[i]) = (f.c_ratio.1, f.pm.1),
-                KindBlock::Table { .. } => {}
+                KindBlock::Table { .. } => self.mip[i] = mips[i].0 as f32 + mips[i].2,
             }
         }
         (self.morph, self.norm) = (m.get(), norm);
@@ -615,6 +789,34 @@ impl AlgoEngine {
         };
         self.active = (0..OPS)
             .any(|i| heard(i) && (live.patch[i] > 0.0 || live.routed[i]) && !self.env[i].is_idle());
+    }
+
+    /// Formant operator `i`'s block from its law block `b`: the ramps from
+    /// where the last block left them, and where its drive ends.
+    #[cfg_attr(feature = "probe", inline(never))]
+    fn formant_block(&self, i: usize, b: &LawBlock, gain_to: f32) -> (OpBlock, Peak) {
+        let (gm, end) = self.peak[i].next(self.pm_k[i], &b.law, &b.drive);
+        let o = OpBlock {
+            inc: b.inc,
+            gain_from: self.gain[i],
+            gain_to,
+            feedback: b.drive.feedback,
+            kind: KindBlock::Formant(FormantBlock {
+                inv_inc: b.inv_inc,
+                inc_c: b.inc_c,
+                inv_d: b.inv_d,
+                h: b.pm.h,
+                inv_h: b.pm.inv_h,
+                m: b.m,
+                c0: b.c0,
+                c_ratio: (self.c_ratio[i], b.ratio),
+                pm: (self.pm_k[i], b.law.pm),
+                feedback: (self.peak[i].feedback, b.drive.feedback),
+                gm,
+                skirt: self.latch[i].skirt,
+            }),
+        };
+        (o, end)
     }
 
     /// Cycles per sample of a ratio-1 operator.
@@ -651,47 +853,112 @@ impl AlgoEngine {
     /// A table's in sample units; a noise band's at the −12 dB reference,
     /// faded at the top of the band; a formant's peak-referenced (`g_m`),
     /// faded at the edge, its carrier's `g_c / g_m` in the carrier weight.
-    fn target_gain(
-        &self,
-        p: &AlgoParams,
-        live: &AlgoLive,
-        i: usize,
-        laws: &[Option<FormantLaw>; OPS],
-    ) -> f32 {
+    /// `g_m` is the kernel's (`Peak`), so a formant's is LEVEL's at the edge.
+    /// A noise operator's band law takes its stored values afresh only
+    /// when they move.
+    fn target_gain(&mut self, live: &AlgoLive, p: &AlgoParams, i: usize, sr: f32) -> f32 {
         let g = self.level_gain(live, i);
-        match (self.kinds[i], &laws[i]) {
-            (OpKind::Formant, Some(law)) => g * law.g_m * law.edge,
-            (OpKind::Noise, _) => {
-                let (fc, w) = self.noise_band(p, i);
-                g * NOISE_GAIN * noise_edge(fc, w)
-            }
+        match (self.kinds[i], &self.laws[i]) {
+            (OpKind::Formant, Some(b)) => g * b.law.edge,
+            (OpKind::Noise, _) => g * NOISE_GAIN * self.noise_law(p, i, sr).edge,
             _ => g * SAMPLE_SCALE,
         }
+    }
+
+    /// Noise operator `i`'s band law: taken afresh when FRMT, BW, VOWEL
+    /// or its slot moved (stored values: only an edit moves them).
+    fn noise_law(&mut self, p: &AlgoParams, i: usize, sr: f32) -> NoiseLaw {
+        let o = &p.ops[i];
+        let slot = self.latch[i].slot.map_or(0, |s| s as u32 + 1);
+        let key = u32::from_le_bytes([o.frmt, o.bw, p.vowel, slot as u8]);
+        if self.noise[i].key != key {
+            let band = self.noise_band(p, i);
+            self.noise[i] = NoiseLaw {
+                key,
+                band,
+                coef: noise_coef(band.1, sr),
+                edge: noise_edge(band.0, band.1),
+            };
+        }
+        self.noise[i]
+    }
+
+    /// Every formant operator's law block this block, in `laws`: taken
+    /// afresh only when an input moved since the last (Task 11b); held,
+    /// the last. None for any other kind.
+    fn formant_blocks(&mut self, p: &AlgoParams, live: &AlgoLive, cycles: f32, sr: f32) {
+        if !self.kinds.contains(&OpKind::Formant) {
+            self.laws = [None; OPS];
+            return;
+        }
+        let key = self.law_key(p, live, sr);
+        // Word by word, no call: the held path's test.
+        let held = self
+            .law_key
+            .as_ref()
+            .is_some_and(|k| k.iter().zip(&key).fold(0, |d, (a, b)| d | (a ^ b)) == 0);
+        if !held {
+            self.take_laws(p, live, cycles, sr);
+            self.law_key = Some(key);
+        }
+    }
+
+    /// The formant laws taken afresh: the moving path.
+    #[cfg_attr(feature = "probe", inline(never))]
+    fn take_laws(&mut self, p: &AlgoParams, live: &AlgoLive, cycles: f32, sr: f32) {
+        let laws = self.formant_laws(p, live, cycles, sr);
+        self.laws = core::array::from_fn(|i| {
+            laws[i].map(|(law, drive)| LawBlock::new(law, drive, op_cycles(cycles, p, live, i), sr))
+        });
+    }
+
+    /// `LawKey` now.
+    fn law_key(&self, p: &AlgoParams, live: &AlgoLive, sr: f32) -> LawKey {
+        let mut k = [0u32; LAW_KEY];
+        let ops = [
+            &live.frmt,
+            &live.bw,
+            &live.level,
+            &live.fine,
+            &live.detune,
+            &live.feedback,
+        ];
+        for (row, a) in k.as_chunks_mut::<OPS>().0.iter_mut().zip(ops) {
+            for (w, v) in row.iter_mut().zip(a) {
+                *w = v.to_bits();
+            }
+        }
+        let c = |i: usize| p.ops[i].coarse;
+        k[6 * OPS..].copy_from_slice(&[
+            live.vowel.to_bits(),
+            live.morph.to_bits(),
+            self.pitch.to_bits(),
+            self.slide.value().to_bits(),
+            sr.to_bits(),
+            u32::from_le_bytes([self.note.get(), p.transpose as u8, c(0), c(1)]),
+            u32::from_le_bytes([c(2), c(3), c(4), c(5)]),
+            0,
+        ]);
+        k
     }
 
     /// Every formant operator's law this block, in the plan's order, so a
     /// source faded at its edge carries its fade into its destinations' PM
     /// depth; a source the order hasn't reached counts at full.
-    fn formant_laws(
-        &self,
-        p: &AlgoParams,
-        live: &AlgoLive,
-        cycles: f32,
-        sr: f32,
-    ) -> [Option<FormantLaw>; OPS] {
+    fn formant_laws(&self, p: &AlgoParams, live: &AlgoLive, cycles: f32, sr: f32) -> Laws {
         let (mut laws, mut fade) = ([None; OPS], [1.0f32; OPS]);
         for &op in &self.plan.order {
             let i = op as usize % OPS;
             if self.kinds[i] == OpKind::Formant {
-                let law = self.formant(p, live, cycles, sr, i, &fade);
+                let (law, drive) = self.formant(p, live, cycles, sr, i, &fade);
                 fade[i] = law.edge;
-                laws[i] = Some(law);
+                laws[i] = Some((law, drive));
             }
         }
         laws
     }
 
-    /// A formant operator's law this block (spec § 3): its pitch is the
+    /// A formant operator's law and drive this block (spec § 3): its pitch is the
     /// grain clock's, FC from FRMT, VOWEL and KEY on its latched slot, KEY
     /// and SKIRT. A kind swapped in under a held note keeps the slot and
     /// SKIRT latched at the note-on until the next one.
@@ -703,12 +970,15 @@ impl AlgoEngine {
         sr: f32,
         i: usize,
         fade: &[f32; OPS],
-    ) -> FormantLaw {
+    ) -> (FormantLaw, Drive) {
         let l = &self.latch[i];
         let fc = self.formant_fc(p, live, i);
         let f0 = op_cycles(cycles, p, live, i) * sr;
         let drive = self.drive(p, live, cycles, sr, i, fade);
-        formant_law_pm(f0, fc, bw_hz(live.bw[i]), l.skirt, drive)
+        (
+            formant_law_pm(f0, fc, bw_hz(live.bw[i]), l.skirt, drive),
+            drive,
+        )
     }
 
     /// A formant operator's FC before its law: FRMT, VOWEL and KEY on its
@@ -736,7 +1006,7 @@ impl AlgoEngine {
         let m = Morph::from_param(live.morph).get();
         let plan = &self.plan;
         let (mut dev, mut depth) = (0.0f32, 0.0f32);
-        for e in &plan.edges[..plan.edge_count()] {
+        for e in plan.edges.iter().take(plan.edge_count()) {
             if e.dst as usize != i {
                 continue;
             }
@@ -783,7 +1053,7 @@ impl AlgoEngine {
     }
 
     fn adopt_alg(&mut self, p: &AlgoParams) {
-        let key = (AlgoId::clamped(p.alg_a), AlgoId::clamped(p.alg_b));
+        let key = p.algs();
         if key != self.plan_key {
             self.plan = plan(key.0, key.1);
             self.plan_key = key;
@@ -794,7 +1064,7 @@ impl AlgoEngine {
         if self.swap != Swap::Idle {
             return;
         }
-        let alg = (AlgoId::clamped(p.alg_a), AlgoId::clamped(p.alg_b)) != self.plan_key;
+        let alg = p.algs() != self.plan_key;
         let kinds = (0..OPS).fold(0u8, |m, i| {
             if p.kinds().get(i) != self.kinds[i] {
                 m | 1 << i

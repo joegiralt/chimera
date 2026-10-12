@@ -5,7 +5,7 @@ use crate::block::{Block, Change, Motion, ParamId, ParamSpec, Smoothing, ValFmt}
 use crate::dsp::algo::algorithms::{ALGO_COUNT, ALGO_IDENTS, ALGO_NAMES, AlgoId};
 use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::kinds::{
-    Kinds, OP_KIND_COUNT, OP_KIND_IDENTS, OP_KIND_NAMES, OpKind, OverBudget, step_kind,
+    Kinds, Linked, OP_KIND_COUNT, OP_KIND_IDENTS, OP_KIND_NAMES, OpKind, OverBudget, step_kind,
 };
 use crate::dsp::algo::math::exp2;
 use crate::dsp::algo::plan::OPS;
@@ -525,7 +525,7 @@ impl Block for OpViewMut<'_> {
     /// WAVE steps over the kinds the budget refuses (`step_kind`).
     fn nudge(&mut self, id: ParamId, delta: i8) {
         if id == AlgoOpParams::WAVE {
-            let to = step_kind(self.p.kinds, self.op, delta).to;
+            let to = step_kind(self.p.kinds, self.p.linked(), self.op, delta).to;
             let _ = self.p.try_set_kind(self.op, to);
         } else if let Some(s) = self.spec(id) {
             self.write(id, s.nudged(self.get(id), delta));
@@ -535,8 +535,10 @@ impl Block for OpViewMut<'_> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AlgoParams {
-    pub alg_a: u8,
-    pub alg_b: u8,
+    /// Private, as `kinds`: an algorithm that would link into a FRMT past
+    /// the budget is refused (`try_set_algs`).
+    alg_a: u8,
+    alg_b: u8,
     pub morph: u8,
     pub transpose: i8,
     /// 0–100 over U O A E I (`ValFmt::Vowel`).
@@ -595,7 +597,8 @@ impl AlgoParams {
         Self::new(AlgoId::T1, AlgoId::T1, 0, Kinds::tables(w), ops)
     }
 
-    /// TRNSP 0.
+    /// TRNSP 0. Panics unless `kinds` fit on `alg_a` and `alg_b`, so a
+    /// `const` recipe is checked at compile time.
     pub const fn new(
         alg_a: AlgoId,
         alg_b: AlgoId,
@@ -603,6 +606,10 @@ impl AlgoParams {
         kinds: Kinds,
         ops: [AlgoOpParams; OPS],
     ) -> Self {
+        assert!(
+            kinds.fit(Linked::of(alg_a, alg_b)),
+            "over the formant budget"
+        );
         Self {
             alg_a: alg_a.get(),
             alg_b: alg_b.get(),
@@ -618,10 +625,44 @@ impl AlgoParams {
         self.kinds
     }
 
+    /// ALG A and B, an out-of-range code read as the last algorithm.
+    pub const fn algs(&self) -> (AlgoId, AlgoId) {
+        (AlgoId::clamped(self.alg_a), AlgoId::clamped(self.alg_b))
+    }
+
+    /// The operators ALG A or B links into.
+    pub const fn linked(&self) -> Linked {
+        let (a, b) = self.algs();
+        Linked::of(a, b)
+    }
+
     /// The one write of an operator's kind: refused, it changes nothing.
     pub fn try_set_kind(&mut self, op: usize, kind: OpKind) -> Result<(), OverBudget> {
-        self.kinds = self.kinds.with(op, kind)?;
+        self.kinds = self.kinds.with(op, kind, self.linked())?;
         Ok(())
+    }
+
+    /// The one write of ALG A and B: refused when the links it adds would
+    /// overspend the formant budget, and then it changes nothing.
+    pub fn try_set_algs(&mut self, a: AlgoId, b: AlgoId) -> Result<(), OverBudget> {
+        self.set_codes(a.get(), b.get())
+    }
+
+    /// Raw codes, as a block write stores them (the engine clamps).
+    fn set_codes(&mut self, a: u8, b: u8) -> Result<(), OverBudget> {
+        let l = Linked::of(AlgoId::clamped(a), AlgoId::clamped(b));
+        if !self.kinds.fit(l) {
+            return Err(OverBudget);
+        }
+        (self.alg_a, self.alg_b) = (a, b);
+        Ok(())
+    }
+
+    fn set_side(&mut self, id: ParamId, code: u8) -> Result<(), OverBudget> {
+        match id {
+            Self::ALG_A => self.set_codes(code, self.alg_b),
+            _ => self.set_codes(self.alg_a, code),
+        }
     }
 
     pub fn op(&self, op: Op) -> OpView<'_> {
@@ -722,8 +763,9 @@ impl Block for AlgoParams {
     #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
-            Self::ALG_A => self.alg_a = v as u8,
-            Self::ALG_B => self.alg_b = v as u8,
+            Self::ALG_A | Self::ALG_B => {
+                let _ = self.set_side(id, v as u8);
+            }
             Self::MORPH => self.morph = v as u8,
             Self::TRANSPOSE => self.transpose = v as i8,
             Self::VOWEL => self.vowel = v as u8,
@@ -751,14 +793,54 @@ impl Block for AlgoParams {
     }
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
-        let Some(alg) = AlgoId::from_index(code) else {
-            return false;
-        };
-        match id {
-            Self::ALG_A => self.alg_a = alg.get(),
-            Self::ALG_B => self.alg_b = alg.get(),
-            _ => return false,
-        }
-        true
+        AlgoId::from_index(code).is_some()
+            && matches!(id, Self::ALG_A | Self::ALG_B)
+            && self.set_side(id, code).is_ok()
     }
+
+    /// ALG A and B step over the algorithms the budget refuses (`step_alg`).
+    fn nudge(&mut self, id: ParamId, delta: i8) {
+        if matches!(id, Self::ALG_A | Self::ALG_B) {
+            let to = step_alg(self, id, delta).to;
+            let _ = self.set_side(id, to.get());
+        } else if let Some(s) = self.spec(id) {
+            self.write(id, s.nudged(self.get(id), delta));
+        }
+    }
+}
+
+/// Where an encoder turn of ALG A or B lands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AlgStep {
+    pub to: AlgoId,
+    /// A refused algorithm was met on the way: the cell toasts.
+    pub skipped: bool,
+}
+
+/// `|delta|` algorithms on from ALG A's or B's (`id`) that the budget
+/// allows with `p`'s kinds, in `delta`'s direction, stopping at the ends.
+pub fn step_alg(p: &AlgoParams, id: ParamId, delta: i8) -> AlgStep {
+    let (a, b) = p.algs();
+    let mut s = AlgStep {
+        to: if id == AlgoParams::ALG_A { a } else { b },
+        skipped: false,
+    };
+    let (mut code, mut left) = (i16::from(s.to.get()), delta.unsigned_abs());
+    while left > 0 {
+        code += i16::from(delta.signum());
+        let Some(next) = u8::try_from(code).ok().and_then(AlgoId::from_index) else {
+            break;
+        };
+        let l = if id == AlgoParams::ALG_A {
+            Linked::of(next, b)
+        } else {
+            Linked::of(a, next)
+        };
+        if p.kinds.fit(l) {
+            (s.to, left) = (next, left - 1);
+        } else {
+            s.skipped = true;
+        }
+    }
+    s
 }

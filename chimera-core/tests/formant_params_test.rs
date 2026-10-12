@@ -186,25 +186,35 @@ fn every_new_label_fits_a_cell() {
 
 #[test]
 fn skirt_0_bills_the_one_lane_term() {
+    use chimera_core::dsp::algo::algorithms::AlgoId;
     let cost = |p: &AlgoParams| AlgoEngine::cost(p, &[false; OPS]).0;
-    let mut p = AlgoParams::single(WaveId::W1);
-    let table = cost(&p);
-    p.try_set_kind(0, OpKind::Formant).unwrap();
-    p.ops[0].skirt = 0;
-    assert_eq!(
-        cost(&p),
-        table - AlgoEngine::COST_OP.0 + AlgoEngine::COST_FRMT_ONE.0
-    );
-    p.ops[0].skirt = 1;
-    assert_eq!(
-        cost(&p),
-        table - AlgoEngine::COST_OP.0 + AlgoEngine::COST_FRMT.0
-    );
+    // T1 links 2 → 1; A1 links nothing.
+    for (alg, linked) in [(AlgoId::T1, true), (AlgoId::A1, false)] {
+        let mut p = AlgoParams::single(WaveId::W1);
+        p.try_set_algs(alg, alg).unwrap();
+        let table = cost(&p);
+        p.try_set_kind(0, OpKind::Formant).unwrap();
+        assert_eq!(p.linked().has(0), linked);
+        let (one, two) = if linked {
+            (
+                AlgoEngine::COST_FRMT_ONE_LINKED,
+                AlgoEngine::COST_FRMT_LINKED,
+            )
+        } else {
+            (AlgoEngine::COST_FRMT_ONE, AlgoEngine::COST_FRMT)
+        };
+        let move_ = AlgoEngine::COST_FRMT_MOVE.0;
+        p.ops[0].skirt = 0;
+        assert_eq!(cost(&p), table - AlgoEngine::COST_OP.0 + one.0 + move_);
+        p.ops[0].skirt = 1;
+        assert_eq!(cost(&p), table - AlgoEngine::COST_OP.0 + two.0 + move_);
+    }
 }
 
 #[test]
 fn the_demo_sounds_fit_the_budget() {
     for d in [Demo::Choir, Demo::TalkBass, Demo::Breath] {
-        assert!(fits(&demo_sound(d).params.algo.kinds().all()));
+        let p = demo_sound(d).params.algo;
+        assert!(fits(&p.kinds().all(), p.linked()));
     }
 }

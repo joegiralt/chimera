@@ -68,7 +68,7 @@ pub use authored::{Demo, authored_sound, demo_sound};
 mod authored {
     use super::*;
     use crate::addr::{BlockRef, ParamAddr};
-    use crate::budget::FORMANT_N;
+    use crate::budget::FORMANT_N_UNLINKED;
     use crate::dsp::algo::algorithms::AlgoId;
     use crate::dsp::algo::kinds::{Kinds, OpKind};
     use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, INIT_FRMT};
@@ -349,7 +349,7 @@ mod authored {
     }
 
     /// The formant demo Sounds (spec § Demo clips), the voicing by
-    /// `FORMANT_N`.
+    /// `FORMANT_N_UNLINKED`: each is on A1, so no FRMT has a link into it.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Demo {
         Choir,
@@ -362,12 +362,12 @@ mod authored {
     const W1_: OpKind = OpKind::Table(WaveId::W1);
 
     // CHOIR: three FRMT and a NOIS, else two FRMT and two NOIS.
-    const CHOIR_KINDS: Kinds = if FORMANT_N >= 3 {
+    const CHOIR_KINDS: Kinds = if FORMANT_N_UNLINKED >= 3 {
         Kinds::new([FRMT, FRMT, FRMT, NOIS, W1_, W1_])
     } else {
         Kinds::new([NOIS, FRMT, FRMT, NOIS, W1_, W1_])
     };
-    const TALK_KINDS: Kinds = if FORMANT_N >= 3 {
+    const TALK_KINDS: Kinds = if FORMANT_N_UNLINKED >= 3 {
         Kinds::new([W1_, FRMT, FRMT, FRMT, W1_, W1_])
     } else {
         Kinds::new([W1_, FRMT, FRMT, NOIS, W1_, W1_])
@@ -415,7 +415,7 @@ mod authored {
     /// Operators 5 and 6 are unused; the VOWEL motion (LFO 1 across O to A
     /// on CHOIR, ENV 2 to A on TALK BASS) joins when VOWEL is modulatable.
     pub fn demo_sound(d: Demo) -> Sound {
-        let few = FORMANT_N < 3;
+        let few = FORMANT_N_UNLINKED < 3;
         match d {
             Demo::Choir => {
                 let pad = [14, 7];

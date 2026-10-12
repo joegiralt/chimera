@@ -674,7 +674,10 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
         // A single-mode kind shows its mode fixed (spec § 7).
         (BlockRef::Filter, FilterParams::MODE) => sound.params.filter.kind().modes().len() == 1,
         // MORPH blends ALG A into ALG B: one algorithm, nothing to blend (#188).
-        (BlockRef::Algo, AlgoParams::MORPH) => sound.params.algo.alg_a == sound.params.algo.alg_b,
+        (BlockRef::Algo, AlgoParams::MORPH) => {
+            let (a, b) = sound.params.algo.algs();
+            a == b
+        }
         // What MODEL ignores (spec § 1 Dimming).
         (BlockRef::Modal, id) => !modal::reads(sound.params.modal.mode, id),
         // What the machine ignores (spec § 3).

@@ -7,7 +7,6 @@ use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
 use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use crate::block::find_spec;
-use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::algo::waves::WaveId;
@@ -320,8 +319,8 @@ impl Renderer {
                     .expect("ALG page binds MORPH");
                 viz::algo_diagram(
                     display,
-                    AlgoId::clamped(algo.alg_a).algorithm(),
-                    AlgoId::clamped(algo.alg_b).algorithm(),
+                    algo.algs().0.algorithm(),
+                    algo.algs().1.algorithm(),
                     self.anim[slot].current(),
                 );
             }
@@ -481,7 +480,7 @@ impl Renderer {
                     let q = region::quantize_values(&self.anim);
                     (
                         [0, 0, q[2], 0, 0, 0],
-                        (algo.alg_a as u32) << 8 | algo.alg_b as u32,
+                        (algo.algs().0.get() as u32) << 8 | algo.algs().1.get() as u32,
                     )
                 }
                 // ORBIT's own key: `orbit_viz_key`.

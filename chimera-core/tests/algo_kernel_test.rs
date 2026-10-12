@@ -3,7 +3,9 @@
 
 use chimera_core::MidiNote;
 use chimera_core::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
-use chimera_core::dsp::algo::formant::{Skirt, cycles_to_phase, grain_delay, window};
+use chimera_core::dsp::algo::formant::{
+    GrainPm, PeakRamp, Skirt, delay_phase, grain_delay, window,
+};
 use chimera_core::dsp::algo::kernel::{
     FormantBlock, Kernel, KernelBlock, KindBlock, NoiseBlock, OpBlock, PM_CYCLES, SAMPLE_SCALE,
     sine,
@@ -276,9 +278,8 @@ fn a_union_of_more_than_fifteen_links_is_capped() {
 struct Grain {
     c: u32,
     inv_d: f32,
-    slack: f32,
-    o_base: f32,
-    shift: f32,
+    pm: GrainPm,
+    m: u32,
     live: bool,
 }
 
@@ -293,9 +294,13 @@ struct Grains {
 const DEAD: Grain = Grain {
     c: 0,
     inv_d: 0.0,
-    slack: 0.0,
-    o_base: 0.0,
-    shift: 0.0,
+    pm: GrainPm {
+        rest: 0.0,
+        h: 0.0,
+        inv_h: 0.0,
+        beta: 0.0,
+    },
+    m: 0,
     live: false,
 };
 
@@ -368,6 +373,15 @@ impl Model {
             KindBlock::Formant(f) => f.pm.0,
             _ => 1.0,
         });
+        // A formant's FDBK weight and modulator gain, ramped.
+        let mut f_fb: [f32; OPS] = core::array::from_fn(|i| match blk.ops[i].kind {
+            KindBlock::Formant(f) => f.feedback.0 * 0.5 * UNITS,
+            _ => 0.0,
+        });
+        let mut gm: [(f32, f32); OPS] = core::array::from_fn(|i| match blk.ops[i].kind {
+            KindBlock::Formant(f) => (f.gm.g, f.gm.u),
+            _ => (1.0, 1.0),
+        });
         // c, g = c·k, α, β.
         let mut nz: [[f32; 4]; OPS] = core::array::from_fn(|i| match blk.ops[i].kind {
             KindBlock::Noise(n) => [n.c.0, n.c.0 * n.k.0, n.alpha.0, n.beta.0],
@@ -405,7 +419,9 @@ impl Model {
                     KindBlock::Formant(f) => {
                         let pm = pm * pm_k[op];
                         pm_k[op] += (f.pm.1 - f.pm.0) * STEP;
-                        let fb = o.feedback * 0.5 * UNITS * (prev + self.hist[op]);
+                        let fb = f_fb[op] * (prev + self.hist[op]);
+                        f_fb[op] +=
+                            (f.feedback.1 * 0.5 * UNITS - f.feedback.0 * 0.5 * UNITS) * STEP;
                         (pm * (1.0 / UNITS), ((pm + fb) as i32 as u32) << 8)
                     }
                     _ => (0.0, pm_phase),
@@ -454,11 +470,15 @@ impl Model {
                             let fire = st.fire_now;
                             let e = ph as f32 * f.inv_inc;
                             st.lanes[k] = Grain {
-                                c: f.c0.wrapping_add((e * f.inc_c as f32) as u32),
+                                c: f.c0[fire as usize].wrapping_add((e * f.inc_c as f32) as u32),
                                 inv_d: f.inv_d,
-                                slack: f.slack,
-                                o_base: if fire { 0.0 } else { f.slack * 0.5 },
-                                shift: f.shift,
+                                pm: GrainPm {
+                                    rest: if fire { 0.0 } else { f.h },
+                                    h: f.h,
+                                    inv_h: f.inv_h,
+                                    beta: if fire { -1.0 } else { 0.0 },
+                                },
+                                m: f.m,
                                 live: true,
                             };
                             st.newest = k;
@@ -470,15 +490,16 @@ impl Model {
                             let newest = st.newest;
                             let g = &mut st.lanes[k];
                             if g.live {
-                                let t = if k == newest { t_new } else { 1.0 + t_new };
-                                let o = grain_delay(g.o_base, g.slack, pm_cycles);
-                                let x = (t - o) * g.inv_d;
+                                let older = if k == newest { 0.0 } else { 1.0 };
+                                let sat = g.pm.moved(pm_cycles);
+                                let x = (t_new - (grain_delay(g.pm.rest, g.pm.h, sat) - older))
+                                    * g.inv_d;
                                 if x >= 1.0 {
                                     g.live = false;
                                 } else if x > 0.0 {
                                     let c =
                                         g.c.wrapping_add(pm_carrier)
-                                            .wrapping_sub(cycles_to_phase(o * g.shift));
+                                            .wrapping_sub(delay_phase(sat, g.m));
                                     y += window(x, f.skirt) * sine(c);
                                 }
                                 g.c = g.c.wrapping_add(f.inc_c);
@@ -486,7 +507,10 @@ impl Model {
                         }
                         weight = carrier[op] * c_ratio[op];
                         c_ratio[op] += (f.c_ratio.1 - f.c_ratio.0) * STEP;
-                        y * env[op].step() * gain[op]
+                        let (g, u) = gm[op];
+                        let u = u + f.gm.du;
+                        gm[op] = ((g * (2.0 - u * g)).max(f.gm.floor), u);
+                        y * env[op].step() * gain[op] * g
                     }
                     KindBlock::Noise(n) => {
                         self.grains[op] = CLOSED;
@@ -585,15 +609,29 @@ fn random_ops(
         let pick = rng.below(4);
         let kind = if pick == 1 {
             let d = 0.1 + 1.9 * rng.unit();
+            let pm = GrainPm::new(2.0 - d, false);
             KindBlock::Formant(FormantBlock {
                 inv_inc: 1.0 / inc.max(1) as f32,
                 inc_c: rng.next() >> 1,
                 inv_d: 1.0 / d,
-                slack: 2.0 - d,
-                shift: 200.0 * rng.unit(),
-                c0: rng.next(),
+                h: pm.h,
+                inv_h: pm.inv_h,
+                m: rng.next(),
+                c0: [rng.next(), rng.next()],
                 c_ratio: (2.0 * rng.unit(), 2.0 * rng.unit()),
                 pm: (rng.unit(), rng.unit()),
+                feedback: (
+                    FEEDBACK_CYCLES[rng.below(8) as usize],
+                    FEEDBACK_CYCLES[rng.below(8) as usize],
+                ),
+                // A bound that stays positive across the block, as
+                // `peak_bound`'s does.
+                gm: PeakRamp {
+                    g: 1.0 + 3.0 * rng.unit(),
+                    u: 0.7 + 0.5 * rng.unit(),
+                    du: 0.01 * (rng.unit() - 0.5),
+                    floor: 1.0 + rng.unit(),
+                },
                 skirt: Skirt::from_code(rng.below(4) as u8),
             })
         } else if pick == 0 {

@@ -1,7 +1,8 @@
 //! What an operator is: one of the wave tables, a formant or a noise band.
 //! WAVE's stored code is the kind's code (ADR 0045).
 
-use crate::budget::FORMANT_BUDGET;
+use crate::budget::{FORMANT_BUDGET, FORMANT_BUDGET_FRMT};
+use crate::dsp::algo::algorithms::{ALGORITHMS, AlgoId};
 use crate::dsp::algo::engine::AlgoEngine;
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::algo::waves::{WAVE_COUNT, WAVE_IDENTS, WAVE_NAMES, WaveId};
@@ -67,30 +68,71 @@ impl OpKind {
         !matches!(self, OpKind::Table(_))
     }
 
-    /// What the kind draws from the formant budget: its cost over a table's.
-    pub const fn charge(self) -> u32 {
+    /// What the kind draws from the formant budget: its cost over a
+    /// table's at its worst SKIRT, with a link into it or without.
+    pub const fn charge(self, linked: bool) -> u32 {
         match self {
             OpKind::Table(_) => 0,
-            OpKind::Formant => AlgoEngine::COST_FRMT.0 - AlgoEngine::COST_OP.0,
+            OpKind::Formant => AlgoEngine::frmt_cost(1, linked) - AlgoEngine::COST_OP.0,
             OpKind::Noise => AlgoEngine::COST_NOIS.0 - AlgoEngine::COST_OP.0,
         }
     }
 }
 
-pub const fn spend(k: &[OpKind; OPS]) -> u32 {
+/// The operators an algorithm pair links into: bit `i`, operator `i + 1`
+/// has a modulator. FDBK isn't a link: it drives only the carrier's phase,
+/// never a FRMT's grain delay (spec § 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Linked(u8);
+
+impl Linked {
+    pub const NONE: Linked = Linked(0);
+
+    /// Into either of ALG A and B: the plan runs both algorithms' edges at
+    /// every MORPH, so each operator bills at the heavier of the two.
+    pub const fn of(a: AlgoId, b: AlgoId) -> Linked {
+        let (a, b) = (&ALGORITHMS[a.get() as usize], &ALGORITHMS[b.get() as usize]);
+        let (mut m, mut i) = (0u8, 0);
+        while i < OPS {
+            m |= a.mods[i] | b.mods[i];
+            i += 1;
+        }
+        Linked(m)
+    }
+
+    pub const fn has(self, op: usize) -> bool {
+        self.0 & (1 << op) != 0
+    }
+}
+
+pub const fn spend(k: &[OpKind; OPS], l: Linked) -> u32 {
     let (mut s, mut i) = (0, 0);
     while i < OPS {
-        s += k[i].charge();
+        s += k[i].charge(l.has(i));
         i += 1;
     }
     s
 }
 
-pub const fn fits(k: &[OpKind; OPS]) -> bool {
-    spend(k) <= FORMANT_BUDGET.0
+/// Within the budget of its floor under `l`: three voices with a FRMT,
+/// else four.
+pub const fn fits(k: &[OpKind; OPS], l: Linked) -> bool {
+    let (mut frmt, mut i) = (false, 0);
+    while i < OPS {
+        frmt |= matches!(k[i], OpKind::Formant);
+        i += 1;
+    }
+    spend(k, l)
+        <= if frmt {
+            FORMANT_BUDGET_FRMT.0
+        } else {
+            FORMANT_BUDGET.0
+        }
 }
 
-/// The six operators' kinds, within the formant budget by construction.
+/// The six operators' kinds, within the formant budget on some algorithm
+/// (one with no links into them) by construction; `AlgoParams` holds them
+/// within it on its own ALG A and B.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Kinds([OpKind; OPS]);
 
@@ -101,7 +143,8 @@ pub struct OverBudget;
 impl Kinds {
     pub const TABLE: Kinds = Kinds([OpKind::Table(WaveId::W1); OPS]);
 
-    /// Panics unless `k` fits, so a `const` is checked at compile time:
+    /// Panics unless `k` fits unlinked, so a `const` is checked at compile
+    /// time:
     ///
     /// ```compile_fail
     /// use chimera_engine::dsp::algo::kinds::{Kinds, OpKind};
@@ -109,7 +152,7 @@ impl Kinds {
     /// let _ = K;
     /// ```
     pub const fn new(k: [OpKind; OPS]) -> Kinds {
-        assert!(fits(&k), "over the formant budget");
+        assert!(fits(&k, Linked::NONE), "over the formant budget");
         Kinds(k)
     }
 
@@ -131,10 +174,10 @@ impl Kinds {
         self.0
     }
 
-    pub fn with(self, op: usize, kind: OpKind) -> Result<Kinds, OverBudget> {
+    pub fn with(self, op: usize, kind: OpKind, l: Linked) -> Result<Kinds, OverBudget> {
         let mut k = self.0;
         k[op] = kind;
-        if fits(&k) {
+        if fits(&k, l) {
             Ok(Kinds(k))
         } else {
             Err(OverBudget)
@@ -143,6 +186,19 @@ impl Kinds {
 
     pub fn any_formant(&self) -> bool {
         self.0.iter().any(|k| k.is_formant())
+    }
+
+    /// Tables alone charge nothing, so they fit without reading the
+    /// budget, which the costliest table Sound defines.
+    pub const fn fit(&self, l: Linked) -> bool {
+        let mut i = 0;
+        while i < OPS {
+            if self.0[i].is_formant() {
+                return fits(&self.0, l);
+            }
+            i += 1;
+        }
+        true
     }
 }
 
@@ -154,9 +210,9 @@ pub struct KindStep {
     pub skipped: bool,
 }
 
-/// `|delta|` allowed kinds on from operator `op`'s, in `delta`'s direction,
-/// stopping at codes 0 and 17.
-pub fn step_kind(k: Kinds, op: usize, delta: i8) -> KindStep {
+/// `|delta|` allowed kinds on from operator `op`'s under `l`, in `delta`'s
+/// direction, stopping at codes 0 and 17.
+pub fn step_kind(k: Kinds, l: Linked, op: usize, delta: i8) -> KindStep {
     let mut s = KindStep {
         to: k.get(op),
         skipped: false,
@@ -167,7 +223,7 @@ pub fn step_kind(k: Kinds, op: usize, delta: i8) -> KindStep {
         let Some(next) = u8::try_from(code).ok().and_then(OpKind::from_code) else {
             break;
         };
-        if k.with(op, next).is_ok() {
+        if k.with(op, next, l).is_ok() {
             (s.to, left) = (next, left - 1);
         } else {
             s.skipped = true;

@@ -64,7 +64,7 @@ pub enum Patch {
     /// Operator 1 alone on the triangle: smooth, so any step in it stands out.
     Probe,
     /// Formant and noise operators on A1, at LEVEL 99: three FRMT and a
-    /// NOIS, else two and two (`FORMANT_N`). Played at C3.
+    /// NOIS, else two and two (`FORMANT_N_UNLINKED`: A1 links nothing). Played at C3.
     Formant,
 }
 
@@ -140,7 +140,7 @@ impl Patch {
                 const F: OpKind = OpKind::Formant;
                 const N: OpKind = OpKind::Noise;
                 const W1: OpKind = OpKind::Table(chimera_core::dsp::algo::waves::WaveId::W1);
-                const KINDS: Kinds = if chimera_core::budget::FORMANT_N >= 3 {
+                const KINDS: Kinds = if chimera_core::budget::FORMANT_N_UNLINKED >= 3 {
                     Kinds::new([F, F, F, N, W1, W1])
                 } else {
                     Kinds::new([F, F, N, N, W1, W1])

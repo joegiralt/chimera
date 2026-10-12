@@ -30,10 +30,32 @@ pub fn render_algo_with(
     p: &AlgoParams,
     note: u8,
     blocks: usize,
+    each_block: impl FnMut(usize, &mut AlgoParams, &mut AlgoLive, &mut AlgoEngine),
+) -> (Vec<f32>, u32) {
+    render(AlgoEngine::new(), p, note, blocks, each_block)
+}
+
+/// As `render_algo_with`, every formant operator on the per-sample
+/// reference path (`formant_tick_ref`) in place of its spans.
+pub fn render_algo_ref(
+    p: &AlgoParams,
+    note: u8,
+    blocks: usize,
+    each_block: impl FnMut(usize, &mut AlgoParams, &mut AlgoLive, &mut AlgoEngine),
+) -> (Vec<f32>, u32) {
+    let mut e = AlgoEngine::new();
+    e.formants_per_sample();
+    render(e, p, note, blocks, each_block)
+}
+
+fn render(
+    mut e: AlgoEngine,
+    p: &AlgoParams,
+    note: u8,
+    blocks: usize,
     mut each_block: impl FnMut(usize, &mut AlgoParams, &mut AlgoLive, &mut AlgoEngine),
 ) -> (Vec<f32>, u32) {
     let mut p = *p;
-    let mut e = AlgoEngine::new();
     e.note_on(
         MidiNote::new(note).unwrap(),
         Velocity::new(VEL).unwrap(),
@@ -54,7 +76,7 @@ pub fn render_algo_with(
 /// Operator 1 alone as `kind` on A1: LEVEL 99, KEY 0, VSLOT OFF.
 pub fn one(kind: OpKind, frmt: u8, bw: u8, skirt: u8) -> AlgoParams {
     let mut p = AlgoParams::single(WaveId::W1);
-    (p.alg_a, p.alg_b) = (AlgoId::A1.get(), AlgoId::A1.get());
+    p.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
     p.try_set_kind(0, kind).unwrap();
     let o = &mut p.ops[0];
     (o.frmt, o.bw, o.skirt, o.key) = (frmt, bw, skirt, 0);
@@ -237,7 +259,7 @@ pub fn steps_10ms_db(x: &[f32]) -> Vec<f32> {
 /// The peak of `p`'s one carrier before `carrier_norm`, held at `note`
 /// for 4 s: the output over the norm, which `p`'s LEVELs and MORPH set.
 pub fn carrier_peak_before_norm(p: &AlgoParams, note: u8) -> f32 {
-    let (a, b) = (AlgoId::clamped(p.alg_a), AlgoId::clamped(p.alg_b));
+    let (a, b) = p.algs();
     let plan = plan(a, b);
     let m = Morph::from_param(f32::from(p.morph));
     let carriers = (0..OPS)

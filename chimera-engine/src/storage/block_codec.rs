@@ -3,8 +3,9 @@
 
 use crate::addr::{BlockRef, BlockViewMut, Blocks};
 use crate::block::{Block, ParamId};
+use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::kinds::OpKind;
-use crate::dsp::algo::params::AlgoOpParams;
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 
 use super::codes::{
     DiskValue, Migration, RETIRED, RETIRED_BLOCKS, RETIRED_CODES, Retired, Translation, ValidAddr,
@@ -71,8 +72,10 @@ fn same(a: DiskValue, b: DiskValue) -> bool {
 /// Returns the entries lost, counted only with a `target`: an unknown block
 /// code, an unknown id, or an enum code refused, none of them retired or
 /// migrated. A block the target doesn't hold counts nothing. An operator
-/// kind the formant budget refuses isn't lost: it keeps the target's kind,
-/// and `refused_kind` says so.
+/// kind, or an algorithm linking into one, that the formant budget refuses
+/// isn't lost: it keeps the target's, and `refused_kind` says so. Sounds
+/// write ALG A and B before their operators (`BlockRef::ALL`), so a FRMT
+/// the file's algorithm can't hold degrades to the base's table kind.
 pub fn decode_block(
     payload: &[u8],
     migrations: &[Migration],
@@ -150,9 +153,12 @@ pub fn decode_block(
             Some(DiskValue::Code(c)) if !blk.set_enum_code(s.id, c) => {
                 if RETIRED_CODES.contains(&(code, s.id.0, c)) {
                     retired.put_code(s.id, c);
-                } else if matches!(blk, BlockViewMut::Op(_))
+                } else if (matches!(blk, BlockViewMut::Op(_))
                     && s.id == AlgoOpParams::WAVE
-                    && OpKind::from_code(c).is_some()
+                    && OpKind::from_code(c).is_some())
+                    || (b == BlockRef::Algo
+                        && matches!(s.id, AlgoParams::ALG_A | AlgoParams::ALG_B)
+                        && AlgoId::from_index(c).is_some())
                 {
                     out.refused_kind = true;
                 } else {

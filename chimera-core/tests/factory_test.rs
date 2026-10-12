@@ -88,8 +88,8 @@ fn the_morph_showcases_morph() {
     for i in [6, 7] {
         let s = factory_sound(i).unwrap();
         assert_ne!(
-            s.params.algo.alg_a,
-            s.params.algo.alg_b,
+            s.params.algo.algs().0,
+            s.params.algo.algs().1,
             "{}",
             s.name.as_str()
         );

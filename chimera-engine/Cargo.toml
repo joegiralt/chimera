@@ -34,6 +34,9 @@ test-support = []
 source-writer = []
 # Bench-only phase stamps inside ORBIT's block and the note handling.
 probe = []
+# The ALGO kernel's span and lane loops out of line, each its own symbol,
+# for `tools/loop_count.py`: the bench-algo ELF only (flash).
+span-count = []
 # The filter's static-cost probes (`dsp::filter::probe`) alone, for
 # `tools/loop_count.py`: none of `probe`'s stamps.
 filter-probe = []

@@ -42,6 +42,10 @@ pub struct FormantLaw {
     /// The share of the links' PM the formant takes: what keeps its
     /// spread under Nyquist (`formant_law_pm`); 1 with none.
     pub pm: f32,
+    /// The undriven peak, `(p_q·lanes).min(1)`, and the lanes open at once:
+    /// what `peak_bound` raises by the drive.
+    pub p_hat: f32,
+    pub lanes: f32,
 }
 
 /// The law at pitch `f0`, carrier `fc` and width `bw` (Hz).
@@ -63,21 +67,73 @@ pub fn pm_reach(dev: f32, f0: f32, fc: f32) -> f32 {
 /// under −60 dB off the grid, and 1 kHz at LEVEL 99 under −78).
 pub const DELAY_SLEW: f32 = 4.0;
 
-/// A grain's delay, periods, under the links' PM `pm` (cycles): smooth (C¹)
-/// onto [0, `slack`], so no kink folds. A grain delays by `slack/2` and PM
-/// moves it as `h·(1 + u/(1 + |u|))`, `u = pm/h`: slope 1 at rest, never
-/// past either end. The reset grain (`o_base` 0) opens at once and PM only
-/// delays it, `s·p²/(s² + p²)` with `p = max(pm, 0)`.
+/// The delay law's saturation: `v` held to [−1, 1], then `v(3 − v²)/2`.
+/// Odd, slope 3/2 at 0 and 0 at ±1, where it lands on ±1 exactly: C¹,
+/// and no divide. NaN holds to −1.
 #[inline(always)]
-pub fn grain_delay(o_base: f32, slack: f32, pm: f32) -> f32 {
-    if o_base > 0.0 {
-        let a = if pm < 0.0 { -pm } else { pm };
-        o_base + o_base * pm / (o_base + a)
-    } else {
-        let p = if pm > 0.0 { pm } else { 0.0 };
-        let d = slack * slack + p * p;
-        if d > 0.0 { slack * p * p / d } else { 0.0 }
+pub fn delay_shape(v: f32) -> f32 {
+    // Compare and select: `f32::max`'s NaN rule costs the M7 more.
+    let v = if v > -1.0 { v } else { -1.0 };
+    let v = if v < 1.0 { v } else { 1.0 };
+    v * (1.5 - 0.5 * (v * v))
+}
+
+/// A grain's PM terms (spec § 3), latched at its start: its delay at
+/// rest, half its slack `h`, the scale `1/(3h)` (0 where `h` is) and the
+/// bias: 0 for a grain at rest mid-slack (delay `h`), −1 for the reset
+/// grain, which opens at once (delay 0).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GrainPm {
+    pub rest: f32,
+    pub h: f32,
+    pub inv_h: f32,
+    pub beta: f32,
+}
+
+impl GrainPm {
+    pub fn new(slack: f32, reset: bool) -> GrainPm {
+        let h = slack * 0.5;
+        GrainPm {
+            rest: if reset { 0.0 } else { h },
+            h,
+            inv_h: if h > 0.0 { 1.0 / (3.0 * h) } else { 0.0 },
+            beta: if reset { -1.0 } else { 0.0 },
+        }
     }
+
+    /// How far the links' PM `pm` (cycles) moves the delay from rest, in
+    /// `h`: `g = delay_shape(pm/(3h) + β) − β`, so the delay `rest + h·g`
+    /// stays on [0, 2h] = [0, slack], C¹ onto both ends, its slope in `pm`
+    /// `(1 − v²)/2` ≤ ½. A grain moves both ways from `h`, odd about it,
+    /// landing at `|pm| = 3h`; the reset grain only later, from 0 with
+    /// slope 0, landing at `pm = 6h`. Slope ½ at rest, not 1: measured,
+    /// the modulated alias cases sit 1–11 dB lower (task 11b).
+    #[inline(always)]
+    pub fn moved(&self, pm: f32) -> f32 {
+        delay_shape(pm * self.inv_h + self.beta) - self.beta
+    }
+}
+
+/// A grain's delay, periods, moved `g` from `rest` (`GrainPm::moved`).
+#[inline(always)]
+pub fn grain_delay(rest: f32, h: f32, g: f32) -> f32 {
+    rest + h * g
+}
+
+/// `h·shift·g` cycles as a phase, by `m = delay_scale(h, shift)`: `g`
+/// in 2⁻²¹ steps (|g| ≤ 2, in `i32`), times `m`, wrapping. The part of
+/// the delay's carrier offset that PM moves; at rest it is 0, and the
+/// grain's start holds the rest.
+#[inline(always)]
+pub fn delay_phase(g: f32, m: u32) -> u32 {
+    ((g * 2_097_152.0) as i32 as u32).wrapping_mul(m)
+}
+
+/// `h·shift` cycles over 2²¹ as a phase, rounded: `delay_phase`'s
+/// scale. Held under 2³² first (an `h·shift` of 2²¹ cycles, far past any
+/// FC over f0), so the cast is in range.
+pub fn delay_scale(h: f32, shift: f32) -> u32 {
+    clampf(h * shift * 2048.0 + 0.5, 0.0, 4_294_967_040.0) as u32
 }
 
 /// What drives a formant's carrier phase this block (spec § 3): the links'
@@ -103,7 +159,51 @@ impl Drive {
 /// `2π·phi` (`|sin(c + δ) − sin c| ≤ |δ|`), so `p̂ + lanes·2π·phi`, at most
 /// 1. Continuous in `phi`: no step as feedback or PM rises from 0.
 pub fn driven_peak(p_hat: f32, lanes: f32, phi: f32) -> f32 {
-    (p_hat + lanes * core::f32::consts::TAU * phi).min(1.0)
+    peak_bound(p_hat, lanes, phi).min(1.0)
+}
+
+/// `driven_peak` before its ceiling: the bound a block's drive ramps along.
+pub fn peak_bound(p_hat: f32, lanes: f32, phi: f32) -> f32 {
+    p_hat + lanes * core::f32::consts::TAU * phi
+}
+
+/// The modulator gain across a block, tracking `1/min(1, u)` as the peak
+/// bound `u` runs linearly from `u` by `du` a sample: `g` at the first
+/// sample, then `peak_track` toward each sample's bound, never under
+/// `floor`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PeakRamp {
+    pub g: f32,
+    pub u: f32,
+    pub du: f32,
+    pub floor: f32,
+}
+
+/// The modulator gain's ramp from `g_from` (the last block's) as the peak
+/// bound runs linearly from `u0` to `u1` (`peak_bound`) across the block:
+/// never over `h = 1/min(1, u)`, so a stepped drive can't pass peak 1
+/// (a linear gain ramp lies over `h`, which is convex), and from the old
+/// gain to the new with no step. `floor` is the quieter end's gain: `h`
+/// is monotone, so never over it.
+pub fn peak_ramp(g_from: f32, u0: f32, u1: f32) -> PeakRamp {
+    const STEP: f32 = 1.0 / crate::hw::BLOCK_SIZE as f32;
+    PeakRamp {
+        g: g_from,
+        u: u0,
+        du: (u1 - u0) * STEP,
+        floor: g_from.min(1.0 / u1.min(1.0)),
+    }
+}
+
+/// One Newton step of `g` toward `1/u`, held at `floor`: `g(2 − u·g)` is
+/// never over `1/u` (`1/u − g(2 − ug) = u(g − 1/u)² ≥ 0`), and the error
+/// squares each sample, so `g` tracks a moving bound from under it with no
+/// divide. Where `u ≥ 1` the floor is 1 and holds it.
+#[inline(always)]
+pub fn peak_track(g: f32, u: f32, floor: f32) -> f32 {
+    // Compare and select: `f32::max`'s NaN rule costs the M7 seven.
+    let g = g * (2.0 - u * g);
+    if g > floor { g } else { floor }
 }
 
 /// `formant_law` under `drive`: the links' PM is scaled by `pm` so `FC +
@@ -142,11 +242,8 @@ pub fn formant_law_pm(f0: f32, fc: f32, bw: f32, s: Skirt, drive: Drive) -> Form
     let l = s.k() / bw_eff;
     let d = l * f0;
     let lanes = if d > 1.0 { 2.0 } else { 1.0 };
-    let p_hat = driven_peak(
-        (lane_peak(s, fc * l) * lanes).min(1.0),
-        lanes,
-        drive.feedback + pm * drive.depth,
-    );
+    let p_hat0 = (lane_peak(s, fc * l) * lanes).min(1.0);
+    let p_hat = driven_peak(p_hat0, lanes, drive.feedback + pm * drive.depth);
     let bracket = (1.0 - rho(s, 2.0 * fc * l)).max(BRACKET_FLOOR);
     FormantLaw {
         fc,
@@ -157,6 +254,8 @@ pub fn formant_law_pm(f0: f32, fc: f32, bw: f32, s: Skirt, drive: Drive) -> Form
         g_c: (R_REF / sqrt(d * s.c_q() * bracket)).min(1.0 / p_hat),
         edge,
         pm,
+        p_hat: p_hat0,
+        lanes,
     }
 }
 

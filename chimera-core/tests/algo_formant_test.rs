@@ -3,11 +3,14 @@
 
 mod common;
 
-use chimera_core::budget::FORMANT_N;
+use chimera_core::budget::FORMANT_N_UNLINKED;
 use chimera_core::dsp::algo::algorithms::AlgoId;
+use chimera_core::dsp::algo::engine::AlgoLive;
 use chimera_core::dsp::algo::formant::{NYQUIST_HZ, Skirt, formant_law, width_floor};
 use chimera_core::dsp::algo::kinds::OpKind;
+use chimera_core::dsp::algo::morph::{Morph, carrier_norm};
 use chimera_core::dsp::algo::params::{AlgoParams, frmt_hz};
+use chimera_core::dsp::algo::tx::patch_gain;
 use chimera_core::dsp::algo::vowel::{Formant, VOWEL_OCT, VowelSlot, fc_hz};
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::dc_blocker::DcBlocker;
@@ -335,10 +338,10 @@ fn formant_extremes_stay_finite() {
 #[test]
 fn retrigger_on_a_sounding_formant_voice_does_not_click() {
     let mut p = AlgoParams::default();
-    for i in 0..FORMANT_N.min(3) as usize {
+    p.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
+    for i in 0..FORMANT_N_UNLINKED.min(3) as usize {
         p.try_set_kind(i, OpKind::Formant).unwrap();
     }
-    p.alg_a = AlgoId::A1.get();
     let (out, cuts) = render_algo_with(&p, C3, 400, |b, _, _, e| {
         if b == 188 {
             // 250 ms
@@ -374,9 +377,46 @@ fn kind_swaps_under_a_held_note_do_not_click() {
 /// and `level`.
 fn modded(ratio_coarse: u8, level: u8, frmt: u8, bw: u8, s: u8) -> AlgoParams {
     let mut p = one(OpKind::Formant, frmt, bw, s);
-    p.alg_a = AlgoId::T1.get(); // op 2 → op 1
+    p.try_set_algs(AlgoId::T1, p.algs().1).unwrap(); // op 2 → op 1
     (p.ops[1].coarse, p.ops[1].level) = (ratio_coarse, level);
     p
+}
+
+/// Operator 1's peak before the output scale, with `step` run from block
+/// 20 on: a drive stepped between blocks, as a square LFO steps it.
+fn stepped_peak(p: &AlgoParams, note: u8, step: impl Fn(&mut AlgoLive)) -> f32 {
+    let plan = chimera_core::dsp::algo::algorithms::plan(AlgoId::T1, AlgoId::T1);
+    let gains = core::array::from_fn(|i| patch_gain(f32::from(p.ops[i].level)));
+    let norm = carrier_norm(&plan, Morph::from_param(0.0), &gains);
+    let (out, cuts) = render_algo_with(p, note, 60, |b, _, live, _| {
+        if b >= 20 {
+            step(live);
+        }
+    });
+    assert_eq!(cuts, 0);
+    out.iter().fold(0.0f32, |m, x| m.max(x.abs())) / norm
+}
+
+#[test]
+fn a_stepped_drive_keeps_the_peak() {
+    let mut worst = (0.0f32, String::new());
+    for note in [C2, A3, C5] {
+        for frmt in [0u8, 80, 140] {
+            for bw in [0u8, 72, 144, 216] {
+                for s in 0..4u8 {
+                    let p = modded(4, 0, frmt, bw, s);
+                    let fdbk = stepped_peak(&p, note, |l| l.feedback[0] = 7.0);
+                    let level = stepped_peak(&p, note, |l| l.level[1] = 99.0);
+                    for (what, v) in [("FDBK 0→7", fdbk), ("LEVEL 0→99", level)] {
+                        if v > worst.0 {
+                            worst = (v, format!("{what} n{note} F{frmt} B{bw} S{s}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(worst.0 <= 1.0, "peak {} at {}", worst.0, worst.1);
 }
 
 #[test]
@@ -432,7 +472,7 @@ fn bw_does_not_change_modulation_depth() {
     // output can't give peak depth back (Task 11 ruling).
     let v = modulator_peaks(0);
     assert!(spread(&v) < 0.5, "{v:?}");
-    // ADR F: under its own FDBK the peak is referenced to the drive's bound,
+    // ADR 0131: under its own FDBK the peak is referenced to the drive's bound,
     // which short grains don't reach: a regression bound, measured 16.92 dB.
     let v = modulator_peaks(5);
     assert!(spread(&v) < 17.0, "{v:?}");
@@ -499,7 +539,7 @@ fn a_modulated_high_formant_does_not_alias() {
 #[test]
 fn formant_operators_are_stable() {
     let mut p = AlgoParams::default();
-    p.alg_a = AlgoId::A17.get();
+    p.try_set_algs(AlgoId::A17, p.algs().1).unwrap();
     p.try_set_kind(0, OpKind::Formant).unwrap();
     for o in &mut p.ops {
         (o.level, o.feedback, o.frmt, o.bw, o.skirt) = (99, 7, 168, 216, 3);
@@ -521,8 +561,10 @@ fn formant_operators_are_stable() {
 
 #[test]
 fn morph_across_a_formant_carrier_is_smooth() {
+    // T5's 2 → 1 with nothing into 2: FRMT 1 linked and FRMT 2 not fit
+    // the budget (T1's 3 → 2 would link both).
     let mut p = one(OpKind::Formant, 80, 72, 1);
-    (p.alg_a, p.alg_b) = (AlgoId::T1.get(), AlgoId::A1.get());
+    p.try_set_algs(AlgoId::T5, AlgoId::A1).unwrap();
     p.try_set_kind(1, OpKind::Formant).unwrap();
     // LEVEL 50: at 90, plain FM alone trips `clicks` (Task 11 ruling).
     p.ops[1].level = 50;

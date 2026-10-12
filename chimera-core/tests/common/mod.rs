@@ -169,7 +169,7 @@ pub const MORPH: ParamAddr = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
 pub fn tx_patch(alg: AlgoId) -> ParamSnapshot {
     let mut p = init_params(EngineType::Algo);
     p.algo = AlgoParams::single(WaveId::W1);
-    (p.algo.alg_a, p.algo.alg_b) = (alg.get(), alg.get());
+    p.algo.try_set_algs(alg, alg).unwrap();
     let ops = [
         (WaveId::W1, 4, 99, 0),
         (WaveId::W1, 8, 70, 0),
@@ -188,7 +188,8 @@ pub fn tx_patch(alg: AlgoId) -> ParamSnapshot {
 /// Six sines at ratios 1–6 between A1 and A17, MORPH halfway.
 pub fn morph_patch() -> ParamSnapshot {
     let mut p = init_params(EngineType::Algo);
-    (p.algo.alg_a, p.algo.alg_b, p.algo.morph) = (AlgoId::A1.get(), AlgoId::A17.get(), 64);
+    p.algo.try_set_algs(AlgoId::A1, AlgoId::A17).unwrap();
+    p.algo.morph = 64;
     for (i, o) in p.algo.ops.iter_mut().enumerate() {
         (o.coarse, o.level) = ([4, 8, 10, 13, 16, 19][i], 80);
     }

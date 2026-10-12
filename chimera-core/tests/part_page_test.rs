@@ -255,7 +255,12 @@ fn algo_pages_edit_every_operator_and_the_algorithm() {
     turn(&reg::ALGO_ALG, 2, 64, &mut p);
     turn(&reg::ALGO_ALG, 3, -30, &mut p);
     assert_eq!(
-        (p.algo.alg_a, p.algo.alg_b, p.algo.morph, p.algo.transpose),
+        (
+            p.algo.algs().0.get(),
+            p.algo.algs().1.get(),
+            p.algo.morph,
+            p.algo.transpose
+        ),
         (21, 29, 64, -24)
     );
     snap(&reg::ALGO_ALG, 2, 1, &mut p); // MIX + turn snaps MORPH like any Uni value

@@ -314,7 +314,8 @@ fn sine(hz: f32, n: usize) -> f32 {
 fn algo(alg: u8, ops: &[(usize, u8, u8)]) -> Sound {
     let mut s = Sound::init(EngineType::Algo);
     s.params.algo = AlgoParams::single(WaveId::W1);
-    (s.params.algo.alg_a, s.params.algo.alg_b) = (alg, alg);
+    let alg = chimera_core::dsp::algo::algorithms::AlgoId::clamped(alg);
+    s.params.algo.try_set_algs(alg, alg).unwrap();
     for &(i, c, l) in ops {
         (s.params.algo.ops[i].coarse, s.params.algo.ops[i].level) = (c, l);
     }

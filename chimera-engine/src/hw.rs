@@ -11,6 +11,9 @@ pub const MAX_PARTS: usize = 6;
 pub const DAC_PAIRS: usize = 3;
 /// Voices the heaviest Sound must still allow (ADR 0026).
 pub const FLOOR_VOICES: u32 = 4;
+/// Voices a Sound with a formant operator must still allow (owner,
+/// 2026-10-12).
+pub const FLOOR_VOICES_FORMANT: u32 = 3;
 
 pub const CPU_HZ_REV_V: u32 = 480_000_000;
 pub const CPU_HZ_REV_Y: u32 = 400_000_000;
@@ -66,7 +69,7 @@ pub const VOICE_RAM_BUDGET: usize = D2_SRAM - D2_DMA_RESERVE - D2_KNOBS;
 /// A `Voice` less its `EngineSlot`: the chain, modulators and bookkeeping
 /// (ADR 0051, 2,048 B; ADR 0101 raises it to 2,112 for the 2040's state;
 /// 2,176 for the formant operators' 13 glided settings in `AlgoLive`, which
-/// ADR F records).
+/// ADR 0131 records).
 pub const VOICE_CHAIN_BYTES: usize = 2176;
 
 /// Framebuffer: 240 × 320 RGB565, one static in AXI (`chimera-board/src/display.rs`).

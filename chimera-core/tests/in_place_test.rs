@@ -46,7 +46,8 @@ fn every_engine_and_every_effect() -> AudioShared {
     *s.parts[0].params = tri();
     *s.parts[1].params = ParamSnapshot::for_engine(EngineType::Algo);
     let a = &mut s.parts[1].params.algo;
-    (a.alg_a, a.alg_b, a.morph) = (AlgoId::A14.get(), AlgoId::A22.get(), 64);
+    a.try_set_algs(AlgoId::A14, AlgoId::A22).unwrap();
+    a.morph = 64;
     for i in 0..6 {
         let op = &mut a.ops[i];
         (op.coarse, op.level, op.feedback) = ([4, 8, 10, 13, 16, 19][i], 99, 7);

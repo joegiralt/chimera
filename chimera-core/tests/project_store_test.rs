@@ -696,22 +696,29 @@ fn an_old_tape_project_loads_its_tape_parts_as_init_va() {
 /// room): the excess loads as W1, the load says so, and is not Saved.
 #[test]
 fn an_over_budget_part_loads_its_excess_as_w1_and_says_so() {
-    use chimera_core::budget::FORMANT_N;
+    use chimera_core::budget::FORMANT_N_UNLINKED;
+    use chimera_core::dsp::algo::algorithms::AlgoId;
     use chimera_core::dsp::algo::kinds::OpKind::{Formant, Noise, Table};
     use chimera_core::dsp::algo::waves::WaveId;
-    assert_eq!(FORMANT_N, 2, "the file below is 2 FRMT + 4 NOIS");
+    assert_eq!(
+        FORMANT_N_UNLINKED, 4,
+        "the file below is 3 FRMT + 3 NOIS on A1"
+    );
     let (mut src, _) = Project::boxed();
     let algo = &mut src.edit_part(PartId::ALL[0]).sound.params.algo;
-    for (i, k) in [Formant, Formant, Noise, Noise, Noise, Noise]
+    algo.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
+    for (i, k) in [Formant, Formant, Formant, Noise, Noise, Noise]
         .into_iter()
         .enumerate()
     {
         algo.try_set_kind(i, k).unwrap();
     }
-    // OP_C's WAVE, NOIS (17) to FRMT (16): three formants.
+    // OP_D's WAVE, NOIS (17) to FRMT (16): four formants and two noise
+    // bands, 4·170 + 2·20 = 720 > 698. Operators load in order, so the
+    // fourth FRMT fits and the noise bands after it load W1.
     let mut bytes = encode_project(&src);
     let at: Vec<usize> = (0..bytes.len() - 6)
-        .filter(|&i| bytes[i..i + 6] == [5, 0, 17, 0, 0, 0])
+        .filter(|&i| bytes[i..i + 6] == [6, 0, 17, 0, 0, 0])
         .collect();
     assert_eq!(at.len(), 1);
     bytes[at[0] + 2] = 16;
@@ -730,7 +737,14 @@ fn an_over_budget_part_loads_its_excess_as_w1_and_says_so() {
     );
     assert_eq!(
         q.part(PartId::ALL[0]).sound.params.algo.kinds().all(),
-        [Formant, Formant, Table(WaveId::W1), Noise, Noise, Noise]
+        [
+            Formant,
+            Formant,
+            Formant,
+            Formant,
+            Table(WaveId::W1),
+            Table(WaveId::W1)
+        ]
     );
     assert_ne!(
         project_status(&q, t),
