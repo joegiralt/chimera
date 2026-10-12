@@ -49,6 +49,10 @@ const _: () = assert!(
 /// stage, −0.26 dB at 20 Hz, settled in 0.1 s.
 pub const DC_HZ: f32 = 5.0;
 
+/// An engine that ends with the voice past this (−80 dB) would end on a
+/// step: the DC blocker's tail after a fast release (#487).
+const END_STEP: f32 = 1.0e-4;
+
 /// Complete voice signal chain:
 /// [Engine] → [Drive] → [Filter] → [Wavefolder] → [tap-VCA] → [DC blocker] → [VCA]
 /// Modulators: three envelopes, three LFOs
@@ -1075,6 +1079,17 @@ impl Voice {
         // 7. The VCA, after the blocker, with the engine's output gain,
         // ramped (never snap).
         let v = self.volume.step(m.out.volume * self.slot.out_gain());
+        // The engine ended this block on a step: the VCA's own ramp takes
+        // the voice to 0 over it, no work added. A ringing filter fades
+        // below (#374).
+        let v = if !self.slot.is_active()
+            && !self.filter.rings()
+            && libm::fabsf(output[BLOCK_SIZE - 1]) * v.1 > END_STEP
+        {
+            (v.0, 0.0)
+        } else {
+            v
+        };
         let (volume, dv) = (v.1, step_of(v, BLOCK_SIZE));
         // The block's last routed gain, × AMP's VEL: whether the lifetime
         // check below ends the voice through a fade.
