@@ -10,10 +10,14 @@ use chimera_core::dsp::algo::kinds::OpKind;
 use chimera_core::dsp::algo::params::{AlgoParams, frmt_hz};
 use chimera_core::dsp::algo::vowel::{Formant, VOWEL_OCT, VowelSlot, fc_hz};
 use chimera_core::dsp::algo::waves::WaveId;
+use chimera_core::dsp::dc_blocker::DcBlocker;
+use chimera_core::dsp::voice::DC_HZ;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::formant::{
-    grain_fc, level_db_vs_r, off_grid_db, one, render_algo, render_algo_with, spectrum_db,
+    carrier_peak_before_norm, db, fundamental_cents, grain_fc, harmonic_db, level_db_vs_r, mean,
+    off_grid_db, one, op6_peak, render_algo, render_algo_with, sideband_energy_db, spectrum_db,
+    steps_10ms_db,
 };
 use common::{SR, rms};
 use std::f64::consts::TAU;
@@ -27,10 +31,6 @@ const C5: u8 = 72;
 
 fn f0(n: u8) -> f32 {
     440.0 * 2f32.powf((n as f32 - 69.0) / 12.0)
-}
-
-fn db(x: f32) -> f32 {
-    20.0 * x.log10()
 }
 
 /// FRMT and the VOWEL that put operator 1's FC at `fc` Hz exactly: FRMT
@@ -368,4 +368,142 @@ fn kind_swaps_under_a_held_note_do_not_click() {
         },
     );
     assert!(common::clicks(&out).is_empty());
+}
+
+/// Operator 1 FRMT under T1, operator 2 its modulator at `ratio_coarse`
+/// and `level`.
+fn modded(ratio_coarse: u8, level: u8, frmt: u8, bw: u8, s: u8) -> AlgoParams {
+    let mut p = one(OpKind::Formant, frmt, bw, s);
+    p.alg_a = AlgoId::T1.get(); // op 2 → op 1
+    (p.ops[1].coarse, p.ops[1].level) = (ratio_coarse, level);
+    p
+}
+
+#[test]
+fn pm_never_cuts_a_grain() {
+    for c in [4u8, 8] {
+        // ratio 1, ratio 2
+        for s in 0..4u8 {
+            let (out, cuts) = render_algo_with(&modded(c, 99, 80, 72, s), A3, 400, |_, _, _, _| {});
+            // No `clicks`: full-level PM is bright, which it hears (Task 11 ruling).
+            assert_eq!(cuts, 0, "{c} {s}");
+            assert!(out.iter().all(|x| x.abs() <= 1.0), "{c} {s}");
+        }
+    }
+}
+
+#[test]
+fn pm_enters_grain_and_carrier() {
+    let mut p = modded(4, 83, 80, 0, 0); // about 1 cycle of PM
+    // FRMT at ratio 2, so the ratio-1 sidebands fall between its harmonics.
+    p.ops[0].coarse = 8;
+    let out = render_algo(&p, A3, 800);
+    let held = &out[BLOCK_SIZE * 100..];
+    // Sidebands round the harmonics.
+    let side = sideband_energy_db(held, 440.0, 220.0);
+    assert!(side > -30.0, "{side}");
+}
+
+#[test]
+fn bw_does_not_change_modulation_depth() {
+    // The modulator's own peak, op 6's tap into op 5 under T1: a carrier's
+    // output can't give peak depth back (Task 11 ruling).
+    let idx = |bw: u8| {
+        let mut p = AlgoParams::single(WaveId::W1);
+        (p.ops[0].level, p.ops[4].level) = (0, 99);
+        p.try_set_kind(5, OpKind::Formant).unwrap();
+        (p.ops[5].frmt, p.ops[5].bw, p.ops[5].level) = (80, bw, 70);
+        db(op6_peak(&p, A3, 400, 100))
+    };
+    let v: Vec<f32> = [0u8, 36, 72, 108, 144, 180, 216].map(idx).into();
+    let (lo, hi) = v
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+    assert!(hi - lo < 0.5, "{v:?}");
+}
+
+#[test]
+fn feedback_moves_the_formant_not_the_pitch() {
+    let mut p = one(OpKind::Formant, 80, 72, 1);
+    let a = render_algo(&p, A3, 400);
+    // FDBK 5: 7 is chaotic, so no pitch reads to 0.1 cent (Task 11 ruling).
+    p.ops[0].feedback = 5;
+    let b = render_algo(&p, A3, 400);
+    let c = fundamental_cents(&b, 220.0);
+    assert!(c.abs() < 0.1, "{c} cents");
+    // The harmonic nearest 2·FC: between harmonics only noise would read.
+    let h = (2.0 * frmt_hz(80.0) / 220.0).round() * 220.0;
+    let at = |x: &[f32]| harmonic_db(&x[BLOCK_SIZE * 50..], h);
+    assert!(at(&b) - at(&a) >= 6.0, "{} vs {}", at(&b), at(&a));
+}
+
+#[test]
+fn a_modulated_high_formant_does_not_alias() {
+    // FC ≈ 5 kHz: A3 at LEVEL 99, C3 at 60, 70 and 83; FC 1 kHz at A3 and
+    // C3, LEVEL 83 and 99 (Task 11 rulings).
+    for (frmt, n, level) in [
+        (158u8, A3, 99u8),
+        (158, C3, 60),
+        (158, C3, 70),
+        (158, C3, 83),
+        (80, A3, 83),
+        (80, C3, 83),
+        (80, A3, 99),
+        (80, C3, 99),
+    ] {
+        let p = modded(4, level, frmt, 72, 0);
+        let out = render_algo(&p, n, 800);
+        // PM at ratio 1 stays on the harmonic grid.
+        let grid: Vec<f32> = (1..)
+            .map(|k| k as f32 * f0(n))
+            .take_while(|&h| h < 24_000.0)
+            .collect();
+        let off = off_grid_db(&out[BLOCK_SIZE * 100..], &grid);
+        assert!(off < -60.0, "{frmt} {n} {level}: {off}");
+    }
+}
+
+#[test]
+fn formant_operators_are_stable() {
+    let mut p = AlgoParams::default();
+    p.alg_a = AlgoId::A17.get();
+    p.try_set_kind(0, OpKind::Formant).unwrap();
+    for o in &mut p.ops {
+        (o.level, o.feedback, o.frmt, o.bw, o.skirt) = (99, 7, 168, 216, 3);
+    }
+    let out = render_algo(&p, C3, 30 * 750);
+    assert!(out.iter().all(|x| x.is_finite()));
+    // DC after the voice's 5 Hz blocker (ADR 0060), which removes an
+    // engine's: FDBK skews each grain, so the raw output isn't DC-free.
+    let mut dc = DcBlocker::new(DC_HZ, SR);
+    let blocked: Vec<f32> = out.iter().map(|&x| dc.process(x)).collect();
+    let m = mean(&blocked[blocked.len() - 480_000..]);
+    assert!(m.abs() < 1e-3, "{m} (raw {})", mean(&out));
+    // 10 s against 10 s: this chaotic chain's 1 s RMS wanders (Task 11 ruling).
+    let (last, first) = (rms(&out[out.len() - 480_000..]), rms(&out[48_000..528_000]));
+    assert!(first > 0.0 && db(last / first) < 0.5, "{first} {last}");
+    let peak = carrier_peak_before_norm(&p, C3);
+    assert!(peak <= 1.0, "{peak}");
+}
+
+#[test]
+fn morph_across_a_formant_carrier_is_smooth() {
+    let mut p = one(OpKind::Formant, 80, 72, 1);
+    (p.alg_a, p.alg_b) = (AlgoId::T1.get(), AlgoId::A1.get());
+    p.try_set_kind(1, OpKind::Formant).unwrap();
+    // LEVEL 50: at 90, plain FM alone trips `clicks` (Task 11 ruling).
+    p.ops[1].level = 50;
+    let (out, _) = render_algo_with(&p, C3, 750, |b, _, live, _| {
+        live.morph = (b as f32 / 750.0 * 127.0).min(127.0)
+    });
+    assert!(common::clicks(&out).is_empty());
+    let steps = steps_10ms_db(&out);
+    assert!(steps.iter().all(|d| d.abs() <= 1.0), "{steps:?}");
+}
+
+#[test]
+fn grains_stay_odd_under_pm() {
+    let out = render_algo(&modded(4, 99, 34, 0, 1), C5, 800); // FC ≈ 267 Hz at C5
+    let m = mean(&out[BLOCK_SIZE * 100..]);
+    assert!(m.abs() < 1e-4, "{m}");
 }

@@ -5,8 +5,8 @@
 mod common;
 
 use chimera_core::dsp::algo::formant::{
-    BRACKET_FLOOR, NYQUIST_HZ, R_REF, Skirt, cycles_to_phase, formant_law, lane_peak, rho,
-    width_floor, window,
+    BRACKET_FLOOR, DELAY_SLEW, NYQUIST_HZ, R_REF, Skirt, cycles_to_phase, formant_law,
+    formant_law_pm, grain_delay, lane_peak, pm_reach, rho, width_floor, window,
 };
 use chimera_core::dsp::algo::kinds::{Kinds, OpKind};
 use chimera_core::dsp::algo::noise::{
@@ -379,6 +379,98 @@ fn the_edge_narrows_then_fades() {
             < 1e-6
     );
     assert!((formant_law(C3, NYQUIST_HZ - m * 0.75 * b, 0.0, Skirt::S0).edge - 0.5).abs() < 0.01);
+}
+
+/// PM's reach is the plain deviation levered by the grain delay, `|FC/f0 −
+/// 1|`, never under 1 (the clamped delay leaves the carrier its own PM).
+#[test]
+fn pm_reach_levers_the_deviation() {
+    assert_eq!(pm_reach(0.0, 220.0, 9600.0), 0.0);
+    assert!((pm_reach(100.0, 220.0, 2200.0) - 900.0).abs() < 1e-2);
+    assert_eq!(pm_reach(100.0, 220.0, 330.0), 100.0);
+    assert_eq!(pm_reach(100.0, 440.0, 220.0), 100.0);
+}
+
+/// Under PM the links' share `pm` keeps `FC + m_q·B_min + pm·reach` under
+/// Nyquist, the band narrowed to `B_min`, and the delay's slew under
+/// `DELAY_SLEW`; the output never fades for PM, only at the edge. No PM is
+/// `formant_law`, at a share of 1.
+#[test]
+fn pm_is_scaled_never_the_output() {
+    let m = Skirt::S0.m_q();
+    let b = width_floor(C3);
+    for (fc, bw) in [(1000.0, 500.0), (8000.0, 10_000.0), (20_000.0, 0.0)] {
+        let l = formant_law_pm(C3, fc, bw, Skirt::S0, 0.0, false);
+        assert_eq!(l, formant_law(C3, fc, bw, Skirt::S0));
+        assert_eq!(l.pm, 1.0);
+    }
+    // Slow PM with room to spare: the full depth, the band under the reach.
+    let fc = 8000.0;
+    let dev = 0.5 * C3;
+    let reach = pm_reach(dev, C3, fc);
+    let l = formant_law_pm(C3, fc, 10_000.0, Skirt::S0, dev, false);
+    assert!(l.pm == 1.0 && l.edge == 1.0);
+    assert!((l.bw_eff - (NYQUIST_HZ - reach - fc) / m).abs() < 5.0);
+    // Too little room: the share that leaves exactly `B_min`, at full level.
+    let spare = NYQUIST_HZ - fc - m * b;
+    let lever = fc / C3 - 1.0;
+    for over in [2.0f32, 10.0] {
+        let dev = over * spare / lever;
+        let l = formant_law_pm(C3, fc, 10_000.0, Skirt::S0, dev, false);
+        let want = (1.0 / over).min(DELAY_SLEW * C3 / dev);
+        assert!(
+            (l.pm / want - 1.0).abs() < 1e-4,
+            "{over}: {} vs {want}",
+            l.pm
+        );
+        assert!(l.edge == 1.0 && l.bw_eff >= b - 1e-3);
+    }
+    // Fast PM on a low formant: the slew binds, `pm·dev = DELAY_SLEW·f0`.
+    let dev = 20.0 * C3;
+    let l = formant_law_pm(C3, 300.0, 500.0, Skirt::S1, dev, false);
+    assert!((l.pm * dev / C3 - DELAY_SLEW).abs() < 1e-4, "{}", l.pm);
+    // In the edge's fade already: no PM at all, the fade as without it.
+    let fc = NYQUIST_HZ - m * 0.75 * b;
+    let l = formant_law_pm(C3, fc, 0.0, Skirt::S0, 1000.0, false);
+    assert_eq!(l.pm, 0.0);
+    assert_eq!(l.edge, formant_law(C3, fc, 0.0, Skirt::S0).edge);
+}
+
+/// The grain delay is smooth onto [0, s]: `s/2` at rest with slope 1,
+/// never outside, odd about its rest; the reset grain's 0 at rest, delay
+/// only, flat at 0.
+#[test]
+fn the_grain_delay_saturates_smoothly() {
+    for s in [0.0f32, 0.1, 0.9, 1.6] {
+        let h = s / 2.0;
+        assert_eq!(grain_delay(h, s, 0.0), h);
+        assert_eq!(grain_delay(0.0, s, 0.0), 0.0);
+        for k in -400..=400 {
+            let pm = k as f32 * 0.05;
+            let o = grain_delay(h, s, pm);
+            assert!((0.0..=s).contains(&o), "{s} {pm}: {o}");
+            assert!((o - h + (grain_delay(h, s, -pm) - h)).abs() < 1e-6);
+            let r = grain_delay(0.0, s, pm);
+            assert!((0.0..=s).contains(&r) && (pm > 0.0 || r == 0.0));
+        }
+        if s > 0.0 {
+            let e = 1e-3 * h;
+            assert!(((grain_delay(h, s, e) - h) / e - 1.0).abs() < 2e-3);
+            assert!(grain_delay(0.0, s, 1e-3 * s) < 1e-5 * s);
+        }
+    }
+}
+
+/// Driven by feedback or PM, the carrier ceiling takes p̂ = 1: a short
+/// grain's carrier gain is capped at 1, a long grain's is unchanged.
+#[test]
+fn a_driven_carrier_is_capped_at_one() {
+    let free = formant_law(A3, 100.0, 10_000.0, Skirt::S0);
+    let driven = formant_law_pm(A3, 100.0, 10_000.0, Skirt::S0, 0.0, true);
+    assert!(free.g_c > 1.0 && driven.g_c == 1.0 && driven.g_m == free.g_m);
+    let free = formant_law(A3, 1000.0, 500.0, Skirt::S1);
+    let driven = formant_law_pm(A3, 1000.0, 500.0, Skirt::S1, 0.0, true);
+    assert_eq!(free, driven);
 }
 
 /// The two poles' output variance at `x = k_n·n` from uniform `n` in

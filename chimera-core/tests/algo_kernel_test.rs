@@ -3,7 +3,7 @@
 
 use chimera_core::MidiNote;
 use chimera_core::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
-use chimera_core::dsp::algo::formant::{Skirt, cycles_to_phase, window};
+use chimera_core::dsp::algo::formant::{Skirt, cycles_to_phase, grain_delay, window};
 use chimera_core::dsp::algo::kernel::{
     FormantBlock, Kernel, KernelBlock, KindBlock, NoiseBlock, OpBlock, PM_CYCLES, SAMPLE_SCALE,
     sine,
@@ -364,6 +364,10 @@ impl Model {
             KindBlock::Formant(f) => f.c_ratio.0,
             _ => 1.0,
         });
+        let mut pm_k: [f32; OPS] = core::array::from_fn(|i| match blk.ops[i].kind {
+            KindBlock::Formant(f) => f.pm.0,
+            _ => 1.0,
+        });
         // c, g = c·k, α, β.
         let mut nz: [[f32; 4]; OPS] = core::array::from_fn(|i| match blk.ops[i].kind {
             KindBlock::Noise(n) => [n.c.0, n.c.0 * n.k.0, n.alpha.0, n.beta.0],
@@ -395,6 +399,17 @@ impl Model {
                 self.phase[op] = ph;
                 let pm_phase = (pm as i32 as u32) << 8;
                 let p = ph.wrapping_add(pm_phase);
+                // A formant's links, at the block's share, delay its grains;
+                // its feedback joins them in the carrier only.
+                let (pm_cycles, pm_carrier) = match o.kind {
+                    KindBlock::Formant(f) => {
+                        let pm = pm * pm_k[op];
+                        pm_k[op] += (f.pm.1 - f.pm.0) * STEP;
+                        let fb = o.feedback * 0.5 * UNITS * (prev + self.hist[op]);
+                        (pm * (1.0 / UNITS), ((pm + fb) as i32 as u32) << 8)
+                    }
+                    _ => (0.0, pm_phase),
+                };
                 let silent = o.gain_from == 0.0 && o.gain_to == 0.0;
                 // A silent operator's formant lanes close, whatever it plays.
                 if silent {
@@ -456,13 +471,13 @@ impl Model {
                             let g = &mut st.lanes[k];
                             if g.live {
                                 let t = if k == newest { t_new } else { 1.0 + t_new };
-                                let o = clampf(g.o_base, 0.0, g.slack);
+                                let o = grain_delay(g.o_base, g.slack, pm_cycles);
                                 let x = (t - o) * g.inv_d;
                                 if x >= 1.0 {
                                     g.live = false;
                                 } else if x > 0.0 {
                                     let c =
-                                        g.c.wrapping_add(pm_phase)
+                                        g.c.wrapping_add(pm_carrier)
                                             .wrapping_sub(cycles_to_phase(o * g.shift));
                                     y += window(x, f.skirt) * sine(c);
                                 }
@@ -565,8 +580,8 @@ fn random_ops(
         to_xfade[i] = rng.unit();
         let inc = rng.next() >> 4;
         let feedback = FEEDBACK_CYCLES[rng.below(8) as usize];
-        // A quarter of the operators are noise and a quarter formants,
-        // which ignore FEEDBACK.
+        // A quarter of the operators are noise, which ignores FEEDBACK, and
+        // a quarter formants, which take it into the carrier.
         let pick = rng.below(4);
         let kind = if pick == 1 {
             let d = 0.1 + 1.9 * rng.unit();
@@ -578,6 +593,7 @@ fn random_ops(
                 shift: 200.0 * rng.unit(),
                 c0: rng.next(),
                 c_ratio: (2.0 * rng.unit(), 2.0 * rng.unit()),
+                pm: (rng.unit(), rng.unit()),
                 skirt: Skirt::from_code(rng.below(4) as u8),
             })
         } else if pick == 0 {

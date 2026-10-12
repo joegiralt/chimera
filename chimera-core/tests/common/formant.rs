@@ -1,12 +1,15 @@
 //! The formant operators' render fixtures and measures (spec § 3–5).
 
 use super::filter_ref::fft;
-use super::{SR, VEL, goertzel, rms};
-use chimera_core::dsp::algo::algorithms::AlgoId;
+use super::{SR, VEL, fundamental_hz, goertzel, rms};
+use chimera_core::dsp::algo::algorithms::{AlgoId, plan};
 use chimera_core::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use chimera_core::dsp::algo::formant::{R_REF, Skirt, formant_law};
 use chimera_core::dsp::algo::kinds::OpKind;
+use chimera_core::dsp::algo::morph::{Morph, carrier_norm};
 use chimera_core::dsp::algo::params::AlgoParams;
+use chimera_core::dsp::algo::plan::{OPS, blend};
+use chimera_core::dsp::algo::tx::patch_gain;
 use chimera_core::dsp::algo::vowel::VowelSlot;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::taps::TapRows;
@@ -108,15 +111,15 @@ pub fn spectrum_db(x: &[f32], n: usize) -> Vec<f32> {
         .collect()
 }
 
-/// The energy farther than ±2 bins of an 8,192-point analysis (±11.7 Hz)
-/// from every `grid` frequency, dB re the total. Hann's first sidelobe
-/// (−31 dB) lies past ±2 bins, so this reads 2¹⁴ samples under a 4-term
-/// Blackman–Harris instead: its ±4-bin main lobe is the same ±11.7 Hz, its
-/// sidelobes −92 dB.
-pub fn off_grid_db(x: &[f32], grid: &[f32]) -> f32 {
+/// The analysis mask, Hz: ±2 bins of an 8,192-point analysis (±11.7 Hz).
+const MASK_HZ: f64 = 2.0 * 48_000.0 / 8192.0;
+
+/// The power of 2¹⁴ samples of `x` in bins 0..N/2, with the bin width:
+/// under a 4-term Blackman–Harris, whose ±4-bin main lobe is `MASK_HZ` and
+/// sidelobes −92 dB (Hann's first, −31 dB, would lie past ±2 bins).
+fn bh_power(x: &[f32]) -> (Vec<f64>, f64) {
     const N: usize = 1 << 14;
-    const MASK_HZ: f64 = 2.0 * 48_000.0 / 8192.0;
-    assert!(x.len() >= N, "off_grid_db reads {N} samples");
+    assert!(x.len() >= N, "the analysis reads {N} samples");
     let mut re: Vec<f64> = x[..N]
         .iter()
         .enumerate()
@@ -129,17 +132,122 @@ pub fn off_grid_db(x: &[f32], grid: &[f32]) -> f32 {
         .collect();
     let mut im = vec![0.0; N];
     fft(&mut re, &mut im);
-    let bin = f64::from(SR) / N as f64;
-    let (mut total, mut off) = (0.0, 0.0);
-    for k in 0..N / 2 {
-        let pw = re[k] * re[k] + im[k] * im[k];
-        total += pw;
-        let f = k as f64 * bin;
-        if grid.iter().all(|&g| (f - f64::from(g)).abs() > MASK_HZ) {
-            off += pw;
+    let pw = (0..N / 2).map(|k| re[k] * re[k] + im[k] * im[k]).collect();
+    (pw, f64::from(SR) / N as f64)
+}
+
+/// Whether `f` lies within the mask of any of `grid`.
+fn near(f: f64, grid: &[f64]) -> bool {
+    grid.iter().any(|&g| (f - g).abs() <= MASK_HZ)
+}
+
+fn power_db(part: f64, whole: f64) -> f32 {
+    (10.0 * (part / whole).max(1e-30).log10()) as f32
+}
+
+/// The energy farther than `MASK_HZ` from every `grid` frequency, dB re
+/// the total.
+pub fn off_grid_db(x: &[f32], grid: &[f32]) -> f32 {
+    let grid: Vec<f64> = grid.iter().map(|&g| f64::from(g)).collect();
+    let (pw, bin) = bh_power(x);
+    let off: f64 = (0..pw.len())
+        .filter(|&k| !near(k as f64 * bin, &grid))
+        .map(|k| pw[k])
+        .sum();
+    power_db(off, pw.iter().sum())
+}
+
+/// The energy of the sidebands `k·f0 ± fm` that a modulator at `fm` puts
+/// round `f0`'s harmonics, dB re the total: the lines within the mask of a
+/// sideband and not of a harmonic. A modulator whose `fm` is a multiple of
+/// `f0` puts every sideband on a harmonic, where it can't be told apart.
+pub fn sideband_energy_db(x: &[f32], f0: f32, fm: f32) -> f32 {
+    let (f0, fm) = (f64::from(f0), f64::from(fm));
+    let harmonics: Vec<f64> = (0..)
+        .map(|k| k as f64 * f0)
+        .take_while(|&h| h < 24_000.0)
+        .collect();
+    let sidebands: Vec<f64> = harmonics
+        .iter()
+        .flat_map(|&h| [h - fm, h + fm])
+        .filter(|&f| f > 0.0 && f < 24_000.0 && !near(f, &harmonics))
+        .collect();
+    assert!(
+        !sidebands.is_empty(),
+        "fm {fm} Hz puts every sideband on a harmonic of {f0} Hz"
+    );
+    let (pw, bin) = bh_power(x);
+    let side: f64 = (0..pw.len())
+        .filter(|&k| near(k as f64 * bin, &sidebands))
+        .map(|k| pw[k])
+        .sum();
+    power_db(side, pw.iter().sum())
+}
+
+/// Operator 6's output peak, its tap row, over blocks `from..blocks` of
+/// `note` held: a modulator's depth, which the carrier can't give back.
+pub fn op6_peak(p: &AlgoParams, note: u8, blocks: usize, from: usize) -> f32 {
+    let mut e = AlgoEngine::new();
+    e.note_on(
+        MidiNote::new(note).unwrap(),
+        Velocity::new(VEL).unwrap(),
+        p,
+        SR,
+    );
+    let (mut blk, mut peak) = ([0.0; BLOCK_SIZE], 0.0f32);
+    for b in 0..blocks {
+        let mut taps = TapRows::new([false, true]);
+        e.render(&mut blk, p, &AlgoLive::from_params(p), SR, &mut taps);
+        if b >= from {
+            peak = taps.rows().unwrap()[1]
+                .iter()
+                .fold(peak, |m, x| m.max(x.abs()));
         }
     }
-    (10.0 * (off / total).max(1e-30).log10()) as f32
+    peak
+}
+
+/// The mean, summed in f64.
+pub fn mean(x: &[f32]) -> f32 {
+    (x.iter().map(|&v| f64::from(v)).sum::<f64>() / x.len() as f64) as f32
+}
+
+/// An amplitude ratio in dB.
+pub fn db(x: f32) -> f32 {
+    20.0 * x.log10()
+}
+
+/// `x`'s fundamental near `hz` (`common::fundamental_hz`), cents re `hz`.
+pub fn fundamental_cents(x: &[f32], hz: f32) -> f32 {
+    (1200.0 * (fundamental_hz(x, f64::from(hz)) / f64::from(hz)).log2()) as f32
+}
+
+/// The level's steps: 40 ms windows' RMS, each against the one 10 ms
+/// before, dB. A 10 ms window holds one or two grains at C3, so its RMS
+/// alternates with the window's phase, not the level (Task 11 ruling).
+pub fn steps_10ms_db(x: &[f32]) -> Vec<f32> {
+    let (win, hop) = (SR as usize / 25, SR as usize / 100);
+    let w: Vec<f32> = (0..=x.len().saturating_sub(win))
+        .step_by(hop)
+        .map(|i| rms(&x[i..i + win]))
+        .collect();
+    w.windows(2).map(|p| db(p[1] / p[0])).collect()
+}
+
+/// The peak of `p`'s one carrier before `carrier_norm`, held at `note`
+/// for 4 s: the output over the norm, which `p`'s LEVELs and MORPH set.
+pub fn carrier_peak_before_norm(p: &AlgoParams, note: u8) -> f32 {
+    let (a, b) = (AlgoId::clamped(p.alg_a), AlgoId::clamped(p.alg_b));
+    let plan = plan(a, b);
+    let m = Morph::from_param(f32::from(p.morph));
+    let carriers = (0..OPS)
+        .filter(|&i| blend(plan.carrier_a[i], plan.carrier_b[i], m.get()) > 0.0)
+        .count();
+    assert_eq!(carriers, 1, "one carrier at the MORPH, so the output is it");
+    let gains: [f32; OPS] = core::array::from_fn(|i| patch_gain(f32::from(p.ops[i].level)));
+    let norm = carrier_norm(&plan, m, &gains);
+    let out = render_algo(p, note, 4 * 750);
+    out.iter().fold(0.0f32, |m, x| m.max(x.abs())) / norm
 }
 
 /// `common::goertzel`'s magnitude at `hz`, dB.

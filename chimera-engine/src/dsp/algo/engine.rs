@@ -8,9 +8,9 @@ use core::ptr::addr_of_mut;
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::algorithms::{ALGORITHMS, AlgoId, plan};
 use crate::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
-use crate::dsp::algo::formant::{FormantLaw, NYQUIST_HZ, Skirt, cycles_to_phase, formant_law};
+use crate::dsp::algo::formant::{FormantLaw, NYQUIST_HZ, Skirt, cycles_to_phase, formant_law_pm};
 use crate::dsp::algo::kernel::{
-    FormantBlock, Kernel, KernelBlock, KindBlock, NoiseBlock, OpBlock, SAMPLE_SCALE,
+    FormantBlock, Kernel, KernelBlock, KindBlock, NoiseBlock, OpBlock, PM_CYCLES, SAMPLE_SCALE,
 };
 use crate::dsp::algo::kinds::{Kinds, OpKind};
 use crate::dsp::algo::math::{exp2, log2};
@@ -196,13 +196,16 @@ pub struct AlgoEngine {
     /// The carrier-weight ramps' starts: each formant operator's last
     /// `g_c / g_m`.
     c_ratio: [f32; OPS],
+    /// The PM-depth ramps' starts: each formant operator's last share of
+    /// its links' PM.
+    pm_k: [f32; OPS],
     /// The last block's `(fc, bw_eff)` of each formant or noise operator.
     view: [(f32, f32); OPS],
 }
 
 crate::in_place::field_list!(AlgoEngine => AlgoEngine {
     kernel, env, plan, plan_key, kinds, rates, gain, mip, morph, norm, swap, note, pitch, slide,
-    velocity, active, held, latch, noise_c, noise_k, mix, c_ratio, view,
+    velocity, active, held, latch, noise_c, noise_k, mix, c_ratio, pm_k, view,
 });
 
 #[cfg(any(test, feature = "test-support"))]
@@ -316,6 +319,7 @@ impl AlgoEngine {
             addr_of_mut!((*p).noise_k).write([WHITE.1; OPS]);
             addr_of_mut!((*p).mix).write([OpLatch::INIT.mix; OPS]);
             addr_of_mut!((*p).c_ratio).write([1.0; OPS]);
+            addr_of_mut!((*p).pm_k).write([1.0; OPS]);
             addr_of_mut!((*p).view).write([(0.0, 0.0); OPS]);
             slot.assume_init_mut()
         }
@@ -354,24 +358,29 @@ impl AlgoEngine {
             VowelSlot::from_code(p.ops[i].vslot).unwrap_or(VowelSlot::Off)
         });
         let slots = resolve_slots(&p.kinds(), vslot);
+        let mut idle = [false; OPS];
         for i in 0..OPS {
             self.rates[i] = p.ops[i].rates();
             let o = &p.ops[i];
             let l = &mut self.latch[i];
             (l.slot, l.key, l.mix) = (slots[i], f32::from(o.key), res_mix(o.res));
             if self.env[i].is_idle() {
+                idle[i] = true;
                 l.skirt = Skirt::from_code(o.skirt);
                 self.kernel.reset(i, p.kinds().get(i));
                 self.kinds[i] = p.kinds().get(i);
                 (self.noise_c[i], self.noise_k[i]) = noise_coef(self.noise_band(p, i).1, sr);
-                if self.kinds[i] == OpKind::Formant {
-                    let law = self.formant(p, &live, cycles, sr, i);
-                    self.c_ratio[i] = law.g_c / law.g_m;
-                }
-                self.gain[i] = self.target_gain(p, &live, cycles, sr, i);
                 self.mip[i] = self.mip_target(p, &live, cycles, sr, m, &level, i);
             }
             self.env[i].note_on(EnvCoefs::new(self.rates[i], note, sr));
+        }
+        // Every kind set first: a formant's PM depth reads its sources'.
+        let laws = self.formant_laws(p, &live, cycles, sr);
+        for i in (0..OPS).filter(|&i| idle[i]) {
+            if let Some(law) = &laws[i] {
+                (self.c_ratio[i], self.pm_k[i]) = (law.g_c / law.g_m, law.pm);
+            }
+            self.gain[i] = self.target_gain(p, &live, i, &laws);
         }
         self.active = true;
         self.held = true;
@@ -505,9 +514,9 @@ impl AlgoEngine {
             mip_step(self.mip[i], to)
         });
         let mut view = self.view;
+        let laws = self.formant_laws(p, live, cycles, sr);
         let ops: [OpBlock; OPS] = core::array::from_fn(|i| {
-            if self.kinds[i] == OpKind::Formant {
-                let law = self.formant(p, live, cycles, sr, i);
+            if let Some(law) = laws[i] {
                 view[i] = (law.fc, law.bw_eff);
                 let c = op_cycles(cycles, p, live, i);
                 // c ≤ ½: under 2^31.
@@ -517,8 +526,7 @@ impl AlgoEngine {
                     inc,
                     gain_from: self.gain[i],
                     gain_to: self.level_gain(live, i) * law.g_m * law.edge * self.op_duck(i),
-                    // Task 11 takes FDBK to the carrier.
-                    feedback: 0.0,
+                    feedback: feedback_cycles(live.feedback[i]),
                     kind: KindBlock::Formant(FormantBlock {
                         inv_inc: 1.0 / inc.max(1) as f32,
                         inc_c: cycles_to_phase(law.fc / sr),
@@ -527,11 +535,12 @@ impl AlgoEngine {
                         shift,
                         c0: cycles_to_phase(-law.d * shift * 0.5),
                         c_ratio: (self.c_ratio[i], law.g_c / law.g_m),
+                        pm: (self.pm_k[i], law.pm),
                         skirt: self.latch[i].skirt,
                     }),
                 };
             }
-            let gain_to = self.target_gain(p, live, cycles, sr, i) * self.op_duck(i);
+            let gain_to = self.target_gain(p, live, i, &laws) * self.op_duck(i);
             if self.kinds[i] == OpKind::Noise {
                 let (fc, w) = self.noise_band(p, i);
                 let (c, k) = noise_coef(w, sr);
@@ -584,7 +593,7 @@ impl AlgoEngine {
                     (self.noise_c[i], self.noise_k[i]) = (n.c.1, n.k.1);
                     self.view[i] = self.noise_band(p, i);
                 }
-                KindBlock::Formant(f) => self.c_ratio[i] = f.c_ratio.1,
+                KindBlock::Formant(f) => (self.c_ratio[i], self.pm_k[i]) = (f.c_ratio.1, f.pm.1),
                 KindBlock::Table { .. } => {}
             }
         }
@@ -640,19 +649,44 @@ impl AlgoEngine {
     /// A table's in sample units; a noise band's at the −12 dB reference,
     /// faded at the top of the band; a formant's peak-referenced (`g_m`),
     /// faded at the edge, its carrier's `g_c / g_m` in the carrier weight.
-    fn target_gain(&self, p: &AlgoParams, live: &AlgoLive, cycles: f32, sr: f32, i: usize) -> f32 {
+    fn target_gain(
+        &self,
+        p: &AlgoParams,
+        live: &AlgoLive,
+        i: usize,
+        laws: &[Option<FormantLaw>; OPS],
+    ) -> f32 {
         let g = self.level_gain(live, i);
-        match self.kinds[i] {
-            OpKind::Table(_) => g * SAMPLE_SCALE,
-            OpKind::Noise => {
+        match (self.kinds[i], &laws[i]) {
+            (OpKind::Formant, Some(law)) => g * law.g_m * law.edge,
+            (OpKind::Noise, _) => {
                 let (fc, w) = self.noise_band(p, i);
                 g * NOISE_GAIN * noise_edge(fc, w)
             }
-            OpKind::Formant => {
-                let law = self.formant(p, live, cycles, sr, i);
-                g * law.g_m * law.edge
+            _ => g * SAMPLE_SCALE,
+        }
+    }
+
+    /// Every formant operator's law this block, in the plan's order, so a
+    /// source faded at its edge carries its fade into its destinations' PM
+    /// depth; a source the order hasn't reached counts at full.
+    fn formant_laws(
+        &self,
+        p: &AlgoParams,
+        live: &AlgoLive,
+        cycles: f32,
+        sr: f32,
+    ) -> [Option<FormantLaw>; OPS] {
+        let (mut laws, mut fade) = ([None; OPS], [1.0f32; OPS]);
+        for &op in &self.plan.order {
+            let i = op as usize % OPS;
+            if self.kinds[i] == OpKind::Formant {
+                let law = self.formant(p, live, cycles, sr, i, &fade);
+                fade[i] = law.edge;
+                laws[i] = Some(law);
             }
         }
+        laws
     }
 
     /// A formant operator's law this block (spec § 3): its pitch is the
@@ -666,11 +700,53 @@ impl AlgoEngine {
         cycles: f32,
         sr: f32,
         i: usize,
+        fade: &[f32; OPS],
     ) -> FormantLaw {
         let l = &self.latch[i];
-        let fc = fc_hz(live.frmt[i], live.vowel, l.slot, l.key, self.key_pitch(p));
+        let fc = self.formant_fc(p, live, i);
         let f0 = op_cycles(cycles, p, live, i) * sr;
-        formant_law(f0, fc, bw_hz(live.bw[i]), l.skirt)
+        let dev = self.pm_deviation(p, live, cycles, sr, i, fade);
+        let driven = dev > 0.0 || feedback_cycles(live.feedback[i]) > 0.0;
+        formant_law_pm(f0, fc, bw_hz(live.bw[i]), l.skirt, dev, driven)
+    }
+
+    /// A formant operator's FC before its law: FRMT, VOWEL and KEY on its
+    /// latched slot.
+    fn formant_fc(&self, p: &AlgoParams, live: &AlgoLive, i: usize) -> f32 {
+        let l = &self.latch[i];
+        fc_hz(live.frmt[i], live.vowel, l.slot, l.key, self.key_pitch(p))
+    }
+
+    /// The peak deviation, Hz, the links into operator `i` would give a
+    /// plain carrier at full envelope: Σ 2π·`PM_CYCLES`·weight·LEVEL·fade·
+    /// f_m, with f_m each source's top: a table's pitch, a formant's FC;
+    /// `fade` a formant source's edge. Noise sources don't count.
+    fn pm_deviation(
+        &self,
+        p: &AlgoParams,
+        live: &AlgoLive,
+        cycles: f32,
+        sr: f32,
+        i: usize,
+        fade: &[f32; OPS],
+    ) -> f32 {
+        let m = Morph::from_param(live.morph).get();
+        let plan = &self.plan;
+        let mut dev = 0.0f32;
+        for e in &plan.edges[..plan.edge_count()] {
+            if e.dst as usize != i {
+                continue;
+            }
+            let src = e.src as usize % OPS;
+            let top = match self.kinds[src] {
+                OpKind::Table(_) => op_cycles(cycles, p, live, src) * sr,
+                OpKind::Formant => self.formant_fc(p, live, src),
+                // Noise's sidebands are noise: folding them is no alias.
+                OpKind::Noise => continue,
+            };
+            dev += blend(e.a, e.b, m) * level_gain(live.level[src]) * fade[src] * top;
+        }
+        dev * core::f32::consts::TAU * PM_CYCLES
     }
 
     /// The pitch KEY follows, semitones: the note, TRNSP, the voice's

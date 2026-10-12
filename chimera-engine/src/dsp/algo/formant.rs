@@ -39,19 +39,77 @@ pub struct FormantLaw {
     pub g_c: f32,
     /// The gain fade where even `B_min` reaches past Nyquist.
     pub edge: f32,
+    /// The share of the links' PM the formant takes: what keeps its
+    /// spread under Nyquist (`formant_law_pm`); 1 with none.
+    pub pm: f32,
 }
 
 /// The law at pitch `f0`, carrier `fc` and width `bw` (Hz).
 pub fn formant_law(f0: f32, fc: f32, bw: f32, s: Skirt) -> FormantLaw {
+    formant_law_pm(f0, fc, bw, s, 0.0, false)
+}
+
+/// How far PM spreads a formant above FC, Hz: `dev`, a plain carrier's
+/// peak deviation (Σ 2π·cycles·f_m over the links), levered by the grain
+/// delay. While the delay is inside the slack the carrier's net PM is
+/// `pm·(1 − FC/f0)`; clamped, it is `pm`: so `|FC/f0 − 1|`, at least 1.
+pub fn pm_reach(dev: f32, f0: f32, fc: f32) -> f32 {
+    dev * (fc / f0 - 1.0).abs().max(1.0)
+}
+
+/// The fastest the grain delay may move, periods per period: the window
+/// read `x = (t − o)/D` then runs between 3× backwards and 5× forwards, so
+/// its spread stays bounded (Task 11 ruling; measured, every case ≥ 4 dB
+/// under −60 dB off the grid, and 1 kHz at LEVEL 99 under −78).
+pub const DELAY_SLEW: f32 = 4.0;
+
+/// A grain's delay, periods, under the links' PM `pm` (cycles): smooth (C¹)
+/// onto [0, `slack`], so no kink folds. A grain delays by `slack/2` and PM
+/// moves it as `h·(1 + u/(1 + |u|))`, `u = pm/h`: slope 1 at rest, never
+/// past either end. The reset grain (`o_base` 0) opens at once and PM only
+/// delays it, `s·p²/(s² + p²)` with `p = max(pm, 0)`.
+#[inline(always)]
+pub fn grain_delay(o_base: f32, slack: f32, pm: f32) -> f32 {
+    if o_base > 0.0 {
+        let a = if pm < 0.0 { -pm } else { pm };
+        o_base + o_base * pm / (o_base + a)
+    } else {
+        let p = if pm > 0.0 { pm } else { 0.0 };
+        let d = slack * slack + p * p;
+        if d > 0.0 { slack * p * p / d } else { 0.0 }
+    }
+}
+
+/// `formant_law` under the links' PM of peak deviation `dev` (Hz, as a
+/// plain carrier's): the links' PM is scaled by `pm` so `FC + m_q·B_min +
+/// pm·pm_reach` stays under Nyquist and the delay moves at most
+/// `DELAY_SLEW` periods a period (`pm·dev/f0`); the band narrows toward
+/// `B_min` to make the room. The output never fades for PM, only at the
+/// edge, as without it. A `driven` operator (any feedback or PM) can have
+/// its carrier's crest moved onto the window's centre, so its carrier
+/// ceiling takes p̂ = 1.
+pub fn formant_law_pm(f0: f32, fc: f32, bw: f32, s: Skirt, dev: f32, driven: bool) -> FormantLaw {
     let b_min = width_floor(f0);
     let m = s.m_q();
-    let room = (NYQUIST_HZ - fc) / m;
+    let reach = pm_reach(dev, f0, fc);
+    let pm = if dev > 0.0 {
+        clampf((NYQUIST_HZ - fc - m * b_min) / reach, 0.0, 1.0).min(DELAY_SLEW * f0 / dev)
+    } else {
+        1.0
+    };
+    let top = NYQUIST_HZ - pm * reach;
+    // A scaled depth leaves exactly `B_min`: no rounding into the fade.
+    let room = if pm > 0.0 && pm < 1.0 {
+        b_min
+    } else {
+        (top - fc) / m
+    };
     let (fc, bw_eff, edge) = if room >= b_min {
         (fc, sqrt(bw * bw + b_min * b_min).min(room), 1.0)
     } else {
         let h = b_min / 2.0;
         let edge = clampf((room - h) / h, 0.0, 1.0);
-        (fc.min(NYQUIST_HZ - m * h), b_min, edge)
+        (fc.min(top - m * h), b_min, edge)
     };
     let fc = fc.max(FC_MIN);
     let l = s.k() / bw_eff;
@@ -65,8 +123,9 @@ pub fn formant_law(f0: f32, fc: f32, bw: f32, s: Skirt) -> FormantLaw {
         d,
         slack: 2.0 - d,
         g_m: 1.0 / p_hat,
-        g_c: (R_REF / sqrt(d * s.c_q() * bracket)).min(1.0 / p_hat),
+        g_c: (R_REF / sqrt(d * s.c_q() * bracket)).min(if driven { 1.0 } else { 1.0 / p_hat }),
         edge,
+        pm,
     }
 }
 

@@ -1,7 +1,7 @@
 //! The per-sample loop: six phase-modulation operators on an `EvalPlan`.
 
 use crate::dsp::algo::env::{EnvRun, OpEnv};
-use crate::dsp::algo::formant::{Skirt, cycles_to_phase};
+use crate::dsp::algo::formant::{Skirt, cycles_to_phase, grain_delay};
 use crate::dsp::algo::kinds::OpKind;
 use crate::dsp::algo::math::clampf;
 use crate::dsp::algo::noise::{NOISE_CLAMP, noise_seed};
@@ -23,7 +23,8 @@ pub struct OpBlock {
     /// `SAMPLE_SCALE` included on a table.
     pub gain_from: f32,
     pub gain_to: f32,
-    /// `FEEDBACK_CYCLES` of the operator's setting; noise ignores it.
+    /// `FEEDBACK_CYCLES` of the operator's setting; noise ignores it, and
+    /// a formant takes it into its carrier only.
     pub feedback: f32,
     pub kind: KindBlock,
 }
@@ -61,6 +62,9 @@ pub struct FormantBlock {
     pub c0: u32,
     /// `g_c / g_m`, ramped into the carrier weight.
     pub c_ratio: (f32, f32),
+    /// The share of the links' PM taken, ramped: into both the grain delay
+    /// and the carrier, so the delay law holds at the reduced depth.
+    pub pm: (f32, f32),
     /// The latched SKIRT.
     pub skirt: Skirt,
 }
@@ -508,7 +512,7 @@ impl Kernel {
             dcarrier: (plan.carrier_b[op] - plan.carrier_a[op]) * dm,
             prev: self.out[op],
             hist: self.hist[op],
-            g: Grains::new(self.state[op].grains(), fb),
+            g: Grains::new(self.state[op].grains(), fb, o.feedback),
         }
     }
 
@@ -605,9 +609,10 @@ impl Kernel {
                     Src::Noise(Noise::new(self.rng[op], self.state[op].poles(), nb)),
                     0.0,
                 ),
-                KindBlock::Formant(fb) => {
-                    (Src::Formant(Grains::new(self.state[op].grains(), fb)), 0.0)
-                }
+                KindBlock::Formant(fb) => (
+                    Src::Formant(Grains::new(self.state[op].grains(), fb, o.feedback)),
+                    0.0,
+                ),
             };
             Lane {
                 op,
@@ -715,8 +720,12 @@ impl Kernel {
                 (y, l.carrier)
             }
             Src::Noise(n) => (n.tone(p) * l.env.step() * l.gain, l.carrier),
+            // `pm` is the links' alone: the lane's feedback is 0.
             Src::Formant(g) => {
-                let y = g.tick_at(ph, wrapped, pm_phase) * l.env.step() * l.gain;
+                let pm = g.links(pm);
+                let pm_c = pm + g.feedback * (prev + l.hist);
+                let y =
+                    g.tick_at(ph, wrapped, pm, (pm_c as i32 as u32) << 8) * l.env.step() * l.gain;
                 let weight = l.carrier * g.c_ratio;
                 g.c_ratio += g.dc_ratio;
                 (y, weight)
@@ -873,53 +882,71 @@ fn run_noise(
 struct Grains {
     st: FormantState,
     b: FormantBlock,
+    /// FDBK into the carrier, as a table's into its phase.
+    feedback: f32,
     c_ratio: f32,
     dc_ratio: f32,
+    pm_k: f32,
+    dpm_k: f32,
     sine: &'static Table,
     #[cfg(any(test, feature = "test-support"))]
     cuts: u32,
 }
 
 impl Grains {
-    fn new(st: FormantState, b: &FormantBlock) -> Self {
+    fn new(st: FormantState, b: &FormantBlock, feedback: f32) -> Self {
         Grains {
             st,
             b: *b,
+            feedback: feedback * 0.5 * PHASE_UNITS,
             c_ratio: b.c_ratio.0,
             dc_ratio: (b.c_ratio.1 - b.c_ratio.0) * STEP,
+            pm_k: b.pm.0,
+            dpm_k: (b.pm.1 - b.pm.0) * STEP,
             sine: WaveId::W1.table(0),
             #[cfg(any(test, feature = "test-support"))]
             cuts: 0,
         }
     }
 
+    /// The links' PM `pm` at this sample's share; the share steps on.
+    #[inline(always)]
+    fn links(&mut self, pm: f32) -> f32 {
+        let p = pm * self.pm_k;
+        self.pm_k += self.dpm_k;
+        p
+    }
+
     /// `tick` at the latched SKIRT, chosen per sample (`render_samples`,
     /// the delayed plans' path): out of line, so one copy of the four
     /// serves every lane.
     #[inline(never)]
-    fn tick_at(&mut self, ph: u32, wrapped: bool, pm_phase: u32) -> f32 {
+    fn tick_at(&mut self, ph: u32, wrapped: bool, pm: f32, pm_phase: u32) -> f32 {
         match self.b.skirt {
-            Skirt::S0 => self.tick::<0>(ph, wrapped, pm_phase),
-            Skirt::S1 => self.tick::<1>(ph, wrapped, pm_phase),
-            Skirt::S2 => self.tick::<2>(ph, wrapped, pm_phase),
-            Skirt::S3 => self.tick::<3>(ph, wrapped, pm_phase),
+            Skirt::S0 => self.tick::<0>(ph, wrapped, pm, pm_phase),
+            Skirt::S1 => self.tick::<1>(ph, wrapped, pm, pm_phase),
+            Skirt::S2 => self.tick::<2>(ph, wrapped, pm, pm_phase),
+            Skirt::S3 => self.tick::<3>(ph, wrapped, pm, pm_phase),
         }
     }
 
     /// One sample of both lanes, the raw grain signal (spec § 3): `ph` is
     /// the unmodulated clock after this sample's step, `wrapped` whether
-    /// the step carried, `pm_phase` the links' PM into the carrier.
+    /// the step carried, `pm` the links' PM (`PHASE_UNITS` a cycle), which
+    /// delays each grain within its slack, and `pm_phase` the links' PM
+    /// and the feedback, into the carrier.
     #[inline(always)]
-    fn tick<const S: u8>(&mut self, ph: u32, wrapped: bool, pm_phase: u32) -> f32 {
+    fn tick<const S: u8>(&mut self, ph: u32, wrapped: bool, pm: f32, pm_phase: u32) -> f32 {
         // Periods since the newest lane's start.
         let t_new = ph as f32 * (1.0 / 4_294_967_296.0);
+        let pm_cycles = pm * (1.0 / PHASE_UNITS);
         let st = &mut self.st;
         if wrapped || st.fire_now {
             let k = 1 - (st.newest as usize & 1);
             #[cfg(any(test, feature = "test-support"))]
             {
                 let g = &st.lanes[k];
-                let x = (2.0 + t_new - clampf(g.o_base, 0.0, g.slack)) * g.inv_d;
+                let x = (2.0 + t_new - grain_delay(g.o_base, g.slack, pm_cycles)) * g.inv_d;
                 if g.live && crate::dsp::algo::formant::window(x, Skirt::from_code(S)) > 1e-6 {
                     self.cuts += 1;
                 }
@@ -948,7 +975,9 @@ impl Grains {
         for (k, g) in st.lanes.iter_mut().enumerate() {
             if g.live {
                 let t = if k == newest { t_new } else { 1.0 + t_new };
-                let o = clampf(g.o_base, 0.0, g.slack);
+                // Delayed, never advanced, never past the slack: no grain
+                // is cut at any PM depth.
+                let o = grain_delay(g.o_base, g.slack, pm_cycles);
                 let x = (t - o) * g.inv_d;
                 if x >= 1.0 {
                     g.live = false;
@@ -996,8 +1025,8 @@ struct FormantLane {
 }
 
 /// A formant operator's block, as `run_one` renders a table's: `pm`, its
-/// links' sum, into the carrier only (Task 11 adds the grain delay and
-/// feedback).
+/// links' sum at the block's share, delays the grains and joins the
+/// feedback in the carrier.
 fn run_formant<const S: u8>(
     st: &mut FormantLane,
     pm: &[f32; BLOCK_SIZE],
@@ -1009,7 +1038,9 @@ fn run_formant<const S: u8>(
     for s in 0..BLOCK_SIZE {
         let (ph, wrapped) = x.phase.overflowing_add(x.inc);
         x.phase = ph;
-        let y = x.g.tick::<S>(ph, wrapped, (pm[s] as i32 as u32) << 8) * run.step(env) * x.gain;
+        let pm = x.g.links(pm[s]);
+        let pm_c = pm + x.g.feedback * (x.prev + x.hist);
+        let y = x.g.tick::<S>(ph, wrapped, pm, (pm_c as i32 as u32) << 8) * run.step(env) * x.gain;
         x.gain += x.dgain;
         x.hist = x.prev;
         x.prev = y;
