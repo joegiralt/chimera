@@ -844,3 +844,12 @@ fn env1_attack_shapes_the_level_only_through_a_vca_route() {
         "routed: a 4 s attack is quieter early ({slow} vs {fast})"
     );
 }
+
+/// `fmt --level` centres and trim-checks the dry Sound, as the gates
+/// measure it: sends change nothing.
+#[test]
+fn level_lufs_is_dry() {
+    let wet = &source::parse(&format!("{BASE}OUT.SEND3 = \"1\"\n"), "w.toml").unwrap()[0];
+    let dry = &source::parse(BASE, "d.toml").unwrap()[0];
+    assert_eq!(qa::level_lufs(wet).unwrap(), qa::level_lufs(dry).unwrap());
+}

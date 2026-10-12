@@ -206,9 +206,9 @@ fn play(snd: &Sound, mode: PartMode, plan: &Plan) -> Take {
     t
 }
 
-/// The Source's Sound played under `s` at 48 kHz, mono `(L + R)/2`.
-/// The listening render: the Sound as authored, its sends (if any) through
-/// the FX bus at NEW's settings (`Performance::new`).
+/// The listening render: the Source's Sound played under `s` at 48 kHz,
+/// mono `(L + R)/2`, its sends (if any) through the FX bus at NEW's
+/// settings (`Performance::new`).
 pub fn render(src: &Source, s: Script) -> Result<Vec<f32>, String> {
     Ok(play(&to_sound(src)?, src.demo, &plan(s, src.home)).mono())
 }
@@ -664,7 +664,7 @@ pub fn level_trim(src: &Source, lufs: f32) -> Result<f32, String> {
 
 /// The level render's LUFS (`fmt --level` centres it).
 pub fn level_lufs(src: &Source) -> Result<f32, String> {
-    let snd = to_sound(src)?;
+    let snd = dried(&to_sound(src)?);
     let level = Plan {
         hits: vec![hit(0.0, LEVEL_HOLD_S, src.home, 100)],
         secs: LEVEL_HOLD_S + 0.05,
