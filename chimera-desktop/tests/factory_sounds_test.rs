@@ -1170,3 +1170,37 @@ fn a_phrase_that_is_not_finite_fails() {
     assert!(!r.passes());
     assert!(qa::report_text(&[r], &[]).contains("finite lead phrase"));
 }
+
+/// `harmonic` picks the aliasing gate: an ALGO Source defaults to exempt
+/// (inharmonic ratios), and one marked `harmonic = "yes"` (integer-ratio
+/// FM) runs it.
+#[test]
+fn harmonic_flag_picks_the_aliasing_gate() {
+    let algo = BASE.replace("engine = \"VA\"", "engine = \"ALGO\"");
+    let alias = |text: &str| {
+        let s = &run(text).unwrap()[0];
+        qa::gates(s)
+            .unwrap()
+            .gates
+            .into_iter()
+            .find(|g| g.check == Check::Aliasing(96))
+            .expect("an aliasing line")
+            .verdict
+    };
+    assert!(
+        matches!(alias(&algo), Verdict::Exempt(why) if why.contains("inharmonic")),
+        "ALGO is exempt by default"
+    );
+    let ran = alias(&format!("{algo}\nharmonic = \"yes\"\n"));
+    assert!(
+        !matches!(ran, Verdict::Exempt(_)),
+        "marked harmonic: {ran:?}"
+    );
+    let va_no = alias(&format!("{BASE}harmonic = \"no\"\n"));
+    assert!(matches!(va_no, Verdict::Exempt(_)), "VA marked inharmonic");
+    fails(
+        &format!("{BASE}harmonic = \"maybe\"\n"),
+        14,
+        "harmonic maybe",
+    );
+}

@@ -108,6 +108,9 @@ pub struct Source {
     pub phrase: Option<Phrase>,
     /// The MIDI note its level and aliasing are measured at (C4 = 60).
     pub home: u8,
+    /// `harmonic = "yes" | "no"`: a harmonic spectrum runs the aliasing
+    /// gate. VA's default is yes; ALGO's and MODAL's no (bells, modes).
+    pub harmonic: bool,
     /// `(line, param, value)` in file order; a value resolves in `patch`,
     /// where an enum's ident may hang on another param (MODE on KIND).
     pub params: Vec<(usize, ValidAddr, String)>,
@@ -207,6 +210,7 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
         plays,
         phrase: None,
         home,
+        harmonic: engine == EngineType::Va,
         params: Vec::new(),
         mods: Vec::new(),
         taps: Vec::new(),
@@ -236,6 +240,13 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
                         .find(|p| p.word() == v)
                         .ok_or_else(|| at(line, format!("phrase {v}: bass, lead or pad")))?,
                 )
+            }
+            "harmonic" => {
+                s.harmonic = match v.as_str() {
+                    "yes" => true,
+                    "no" => false,
+                    _ => return Err(at(line, format!("harmonic {v}: yes or no"))),
+                }
             }
             "from" => s.from = Some((line, v.clone())),
             "edits" => s.edits = Some(v.clone()),

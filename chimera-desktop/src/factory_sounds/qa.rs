@@ -556,8 +556,9 @@ fn harmonic_db(x: &[f32], f0: f32) -> f32 {
 }
 
 /// For a harmonic Sound, `x` (a held note at `f0`) keeps inharmonic
-/// energy 40 dB under the harmonic. Bells, vocal and MODAL are exempt
-/// and marked for listening.
+/// energy 40 dB under the harmonic. A Source marked `harmonic = "no"`
+/// (ALGO's and MODAL's default: bells, modes) is exempt and marked for
+/// listening.
 pub fn aliasing(x: &[f32], f0: f32, harmonic: bool) -> (f32, Verdict) {
     if !harmonic {
         return (
@@ -912,7 +913,7 @@ pub fn gates(src: &Source) -> Result<Report, String> {
 
     // `long`'s held part, past the attack.
     let held_part = |x: &[f32]| x[(0.25 * SR) as usize..(2.0 * SR) as usize].to_vec();
-    let harmonic = src.engine == EngineType::Va;
+    let harmonic = src.harmonic;
     for n in ALIAS_NOTES {
         let x = if harmonic {
             held_part(&play(&snd, src.demo, &plan(Script::Long, n)).mono())
