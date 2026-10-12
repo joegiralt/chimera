@@ -1195,7 +1195,7 @@ pub const CASES: &[ScreenCase] = &[
     }),
     // The same with its LEVEL cell mid-turn: the UI hears no held note
     // until #37, so the band has no playhead to show.
-    ("algo_op_page_3_held", |ui| {
+    ("algo_op_page_3_turned", |ui| {
         use chimera_core::ui::block_registry::ALGO_OP_PAGES;
         init_part(ui, PartId::ALL[0]);
         to_osc(ui);
