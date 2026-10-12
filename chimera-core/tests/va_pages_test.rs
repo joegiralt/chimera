@@ -100,7 +100,7 @@ fn va_pages_have_no_gestures() {
     let c = ctx();
     for def in [&VA_HOME, &VA_OSC1, &VA_OSC2] {
         for i in 0..6 {
-            assert!(view::view(def, i, &c).hint() == hint::NONE);
+            assert!(view::view(def, i, &c).hint(&c) == hint::NONE);
         }
     }
 }

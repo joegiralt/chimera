@@ -257,7 +257,7 @@ fn stimuli() {
 /// A fresh bus with only the reverb on: QUAD's defaults, MIX 1, SMEAR
 /// `smear` (through the ids, so either build takes it).
 fn bus(smear: f32) -> (Box<FxBus>, FxParams) {
-    let mut fx = FxParams::default();
+    let mut fx = FxParams::OFF;
     fx.reverb.mix = 1.0;
     fx.reverb.write(ParamId(5), 0.0);
     fx.reverb.write(ParamId(11), smear);
@@ -463,7 +463,7 @@ fn render_bursts() {
                 continue;
             }
             for (tag, what, set) in settings {
-                let mut fx = FxParams::default();
+                let mut fx = FxParams::OFF;
                 fx.reverb = fx.reverb.with_type(kind, &KnobMemory::new());
                 fx.reverb.mix = 1.0;
                 set(&mut fx.reverb);

@@ -1338,12 +1338,12 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("amp_vel_dimmed", |ui| {
         plus(ui, 4);
-        feed(ui, Input::turn(EncoderId::A, 20)); // FOLD
-        feed(ui, Input::turn(EncoderId::D, 1)); // VEL focused, dimmed
+        feed(ui, Input::turn(EncoderId::D, 20)); // FOLD
+        feed(ui, Input::turn(EncoderId::E, 1)); // VEL focused, dimmed
     }),
     ("amp_vel_live", |ui| {
         plus(ui, 4);
-        feed(ui, Input::turn(EncoderId::D, 1));
+        feed(ui, Input::turn(EncoderId::E, 1));
         prime(ui); // VEL primes the VCA: a permanent column, ALREADY ROUTED
         plus(ui, 1);
         to_matrix(ui); // ENV1 → FREQ
@@ -1351,6 +1351,11 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::B, 2)); // VCA, the third fixed column
         feed(ui, Input::turn(EncoderId::E, 100)); // E2 → VCA
         feed(ui, Input::press(ButtonId::Minus)); // back to AMP: VEL live
+    }),
+    ("amp_sym", |ui| {
+        plus(ui, 4);
+        feed(ui, Input::press(ButtonId::Edit)); // AMP › SYM
+        feed(ui, Input::turn(EncoderId::A, 10)); // SYM
     }),
     ("algo_pitch", |ui| {
         to_pitch(ui, EngineType::Algo);
@@ -1651,7 +1656,7 @@ pub const CASES: &[ScreenCase] = &[
     ("mod_matrix", mod_matrix),
     ("mod_matrix_wide", |ui| {
         mod_matrix(ui);
-        // DRV's three knobs, FLT's C, and B and C where FOLD is: eight
+        // DRV's three knobs, FLT's C, and FOLD and MIX on AMP: eight
         // columns.
         for _ in 0..3 {
             feed(ui, Input::press(ButtonId::Minus)); // → DRV
@@ -1666,7 +1671,7 @@ pub const CASES: &[ScreenCase] = &[
         plus(ui, 1);
         prime_all(ui, &[EncoderId::C]);
         plus(ui, 1);
-        prime_all(ui, &[EncoderId::B, EncoderId::C]);
+        prime_all(ui, &[EncoderId::D, EncoderId::F]);
         plus(ui, 1);
         to_matrix(ui);
         feed(ui, Input::turn(EncoderId::B, 5)); // col 5: scrolled one, `<` and `>`

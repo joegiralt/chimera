@@ -156,6 +156,10 @@ pub const RETIRED: &[(u8, u8)] = &[
     (10, 2),
     // The reverb's GRIT (reverb TYPEs spec § GRIT is retired).
     (22, 5),
+    // PART's sends moved to OUT (ADR 0123).
+    (25, 5),
+    (25, 6),
+    (25, 7),
 ];
 
 /// Block codes that are gone for good (each of its params is in `RETIRED`).

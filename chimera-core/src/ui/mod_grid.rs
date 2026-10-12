@@ -1092,8 +1092,7 @@ mod tests {
     use super::*;
     use crate::dsp::modal::{ModalParams, ResonatorMode};
     use crate::mod_path::ModDestRegistry;
-    use crate::params::EngineType;
-    use crate::part::PartParams;
+    use crate::params::{EngineType, OutParams};
     use crate::preset::Sound;
     use crate::ui::view::dimmed;
 
@@ -1113,7 +1112,7 @@ mod tests {
         for id in MACROS.into_iter().skip(1).chain([ModalParams::MODE]) {
             assert!(!dimmed(modal(id), &s), "{id:?}");
         }
-        let space = ParamAddr::new(BlockRef::Part, PartParams::SEND_REVERB);
+        let space = ParamAddr::new(BlockRef::Out, OutParams::SEND3);
         assert!(!dimmed(space, &s));
 
         let mut reg = ModDestRegistry::new();

@@ -299,6 +299,10 @@ const OWN_IN_SOUND: &[&str] = &[
     "Lfo(Lfo3) RATE",
     "Lfo(Lfo3) RISE",
     "Lfo(Lfo3) FALL",
+    // OUT's sends: the mixer's ease (`MixState`), as the Part's gains.
+    "Out CHORUS",
+    "Out DELAY",
+    "Out REVERB",
 ];
 
 /// The bus, mixer and master: each eases its own settings (ADR 0061).
@@ -342,12 +346,9 @@ const OWN_OUTSIDE: &[&str] = &[
     // The master VOL and PAN, `Ease`d after the limiter (`MasterOut`).
     "Comp VOL",
     "Comp PAN",
-    // The Part's pan × LEVEL gains and sends, `Ease`.
+    // The Part's pan × LEVEL gains, `Ease`.
     "Part LEVEL",
     "Part PAN",
-    "Part CHR",
-    "Part DLY",
-    "Part REV",
     // The wheel's reach, glided as a knob (`Instrument::ease_bend`).
     "Part BEND",
 ];

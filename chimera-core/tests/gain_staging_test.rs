@@ -117,7 +117,7 @@ fn chord(
         shared.parts[0].params.out.volume = 0.8;
     }
     shared.parts[0].mix.level = level;
-    shared.parts[0].mix.sends = [send; 3];
+    shared.parts[0].params.out.sends = [send; 3];
     shared.fx = fx_params;
     // Rev V, or with the master tape (where ALGO INIT plays seven since
     // ADR 0060) a budget for all eight.
@@ -209,16 +209,10 @@ fn only_final_limiter_is_nonlinear() {
         // The same products `mix_parts` hoists.
         let (gl, gr) = (gl * level, gr * level);
         let (mut bus, mut out) = (Vec::new(), Vec::new());
-        chord(
-            Voices::Init,
-            FxParams::default(),
-            level,
-            0.0,
-            |inst, _, dac| {
-                bus.extend_from_slice(inst.part_bus(0));
-                out.extend_from_slice(&dac.out()[0]);
-            },
-        );
+        chord(Voices::Init, FxParams::OFF, level, 0.0, |inst, _, dac| {
+            bus.extend_from_slice(inst.part_bus(0));
+            out.extend_from_slice(&dac.out()[0]);
+        });
         let over = bus
             .iter()
             .position(|&b| (b * gl).abs() > THRESHOLD || (b * gr).abs() > THRESHOLD);

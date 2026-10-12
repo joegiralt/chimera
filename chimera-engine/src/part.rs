@@ -1,13 +1,12 @@
 //! A Part's mix settings (instrument-core spec § Data model): the MIDI
-//! channel it listens on, Mono/Poly, the DAC pair it plays out of, level,
-//! pan and FX sends, and how its played keys follow ORBIT (SNAP, HELD).
+//! channel it listens on, Mono/Poly, the DAC pair it plays out of, level
+//! and pan, and how its played keys follow ORBIT (SNAP, HELD).
 //! One `Block`, so it gets pages and snap like any other.
 
 use crate::MidiChannel;
 use crate::block::{
     Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
 };
-use crate::dsp::fx_bus::FX_SENDS;
 use crate::orbit::ring::SnapTo;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -192,8 +191,6 @@ pub struct PartParams {
     pub level: f32,
     /// -1 (left) .. 1 (right)
     pub pan: f32,
-    /// Chorus, delay, reverb (`FxBus` order), 0..1 each.
-    pub sends: [f32; FX_SENDS],
     pub snap: LiveSnap,
     pub held: Held,
     /// Pitch-bend range, whole semitones each way, 0..=`MAX_BEND`.
@@ -211,15 +208,12 @@ impl PartParams {
     pub const OUTPUT: ParamId = ParamId(2);
     pub const LEVEL: ParamId = ParamId(3);
     pub const PAN: ParamId = ParamId(4);
-    pub const SEND_CHORUS: ParamId = ParamId(5);
-    pub const SEND_DELAY: ParamId = ParamId(6);
-    pub const SEND_REVERB: ParamId = ParamId(7);
     pub const SNAP: ParamId = ParamId(8);
     pub const HELD: ParamId = ParamId(9);
     pub const BEND: ParamId = ParamId(10);
 
     /// Part `index` (0-based) listens on channel `index`, Poly, output P1,
-    /// level 0.8, centre pan, no sends, its keys as played.
+    /// level 0.8, centre pan, its keys as played.
     pub fn for_part(index: usize) -> Self {
         Self {
             channel: MidiChannel::clamped(index as u8),
@@ -227,7 +221,6 @@ impl PartParams {
             output: DacPair::P1,
             level: 0.8,
             pan: 0.0,
-            sends: [0.0; FX_SENDS],
             snap: LiveSnap::Off,
             held: Held::Stay,
             bend: INIT_BEND,
@@ -242,7 +235,7 @@ impl Default for PartParams {
 }
 
 /// Nothing here is modulatable: the mixer applies these, not the voice (ADR 0010).
-pub static PART_SPECS: [ParamSpec; 11] = [
+pub static PART_SPECS: [ParamSpec; 8] = [
     ParamSpec::choice(0, "CH", ValFmt::OneBased(15), 15.0, 0.0, Change::Snap).ident("CH"),
     ParamSpec::choice(
         1,
@@ -289,45 +282,6 @@ pub static PART_SPECS: [ParamSpec; 11] = [
         Smoothing::Own,
     )
     .ident("PAN"),
-    ParamSpec::continuous(
-        5,
-        "CHR",
-        ValFmt::Uni,
-        0.0,
-        1.0,
-        0.0,
-        1.0 / 128.0,
-        false,
-        Smoothing::Own,
-    )
-    .ident("CHR")
-    .glyph(crate::glyph::FocusGlyph::LevelBar),
-    ParamSpec::continuous(
-        6,
-        "DLY",
-        ValFmt::Uni,
-        0.0,
-        1.0,
-        0.0,
-        1.0 / 128.0,
-        false,
-        Smoothing::Own,
-    )
-    .ident("DLY")
-    .glyph(crate::glyph::FocusGlyph::LevelBar),
-    ParamSpec::continuous(
-        7,
-        "REV",
-        ValFmt::Uni,
-        0.0,
-        1.0,
-        0.0,
-        1.0 / 128.0,
-        false,
-        Smoothing::Own,
-    )
-    .ident("REV")
-    .glyph(crate::glyph::FocusGlyph::LevelBar),
     ParamSpec::choice(
         8,
         "SNAP",
@@ -382,9 +336,6 @@ impl Block for PartParams {
             Self::OUTPUT => self.output as u8 as f32,
             Self::LEVEL => self.level,
             Self::PAN => self.pan,
-            Self::SEND_CHORUS => self.sends[0],
-            Self::SEND_DELAY => self.sends[1],
-            Self::SEND_REVERB => self.sends[2],
             Self::SNAP => self.snap as u8 as f32,
             Self::HELD => self.held as u8 as f32,
             Self::BEND => f32::from(self.bend),
@@ -400,9 +351,6 @@ impl Block for PartParams {
             Self::OUTPUT => self.output = DacPair::from_u8(v as u8),
             Self::LEVEL => self.level = v,
             Self::PAN => self.pan = v,
-            Self::SEND_CHORUS => self.sends[0] = v,
-            Self::SEND_DELAY => self.sends[1] = v,
-            Self::SEND_REVERB => self.sends[2] = v,
             Self::SNAP => {
                 let i = (v as usize).min(LiveSnap::ALL.len() - 1);
                 self.snap = LiveSnap::ALL[i];

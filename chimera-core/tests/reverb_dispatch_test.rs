@@ -71,7 +71,7 @@ fn render_bus(smear: bool) -> Vec<f32> {
     let mut n = Noise(0x9abc_def0);
     let mut out = Vec::with_capacity(2 * BLOCKS * BLOCK_SIZE);
     for b in 0..BLOCKS {
-        let mut fx = FxParams::default();
+        let mut fx = FxParams::OFF;
         (fx.reverb, _) = sweep(b, smear);
         fx.reverb.mix = if (300..400).contains(&b) { 0.0 } else { 0.4 };
         (fx.delay.time_ms, fx.delay.feedback, fx.delay.mix) = (180.0, 0.5, 0.3);

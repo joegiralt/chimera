@@ -132,8 +132,8 @@ fn no_reverb_cell_has_a_hint() {
     for t in ALL {
         for def in [&reg::EFX, &reg::EFX_MORE] {
             for k in 0..6 {
-                assert!(view(def, k, &ctx(t)).hint().is_empty(), "{t:?} {k}");
-                assert_eq!(view(def, k, &ctx(t)).hint(), hint::NONE);
+                assert!(view(def, k, &ctx(t)).hint(&ctx(t)).is_empty(), "{t:?} {k}");
+                assert_eq!(view(def, k, &ctx(t)).hint(&ctx(t)), hint::NONE);
             }
         }
     }

@@ -336,7 +336,7 @@ fn retune_tape(
         held,
         ..PartParams::default()
     };
-    let mut b = Bench::new(patch, mix, FxParams::default());
+    let mut b = Bench::new(patch, mix, FxParams::OFF);
     b.harmony(Some(from));
     let mut t = Tape::default();
     let mut glide = Vec::new();
@@ -459,7 +459,7 @@ fn part_snap_default_is_neutral() {
         }
         v
     };
-    assert_eq!(old.len(), 1 + 5 * 8);
+    assert_eq!(old.len(), 1 + 5 * 5);
     // The v1 project fixture, written before them, into Parts that snapped.
     let (mut p, _) = Project::boxed();
     for id in PartId::ALL {
