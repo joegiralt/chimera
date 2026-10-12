@@ -388,10 +388,16 @@ impl ModState {
     /// Operators whose LEVEL has a route with a nonzero amount: a LEVEL of
     /// 0 there may still sound.
     pub fn algo_levels_routed(&self) -> [bool; OPS] {
+        self.algo_routed(&[AlgoOpParams::LEVEL])
+    }
+
+    /// Operators with a route of nonzero amount into any of `params`.
+    #[inline(never)]
+    pub fn algo_routed(&self, params: &[crate::block::ParamId]) -> [bool; OPS] {
         let mut routed = [false; OPS];
         for d in 0..self.num_dests.min(MAX_MOD_DESTS) {
             if let BlockRef::AlgoOp(op) = self.dests[d].block
-                && self.dests[d].param == AlgoOpParams::LEVEL
+                && params.contains(&self.dests[d].param)
                 && (0..self.num_sources).any(|s| self.amounts[s][d] != 0)
             {
                 routed[op.index()] = true;

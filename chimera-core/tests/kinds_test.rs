@@ -143,14 +143,14 @@ fn linked_is_the_union_of_both_algorithms_links() {
 }
 
 #[test]
-fn unlinked_formant_carriers_fit_four_at_three_voices() {
-    assert_eq!(FORMANT_N_UNLINKED, 4);
+fn unlinked_formant_carriers_fit_three_at_three_voices() {
+    assert_eq!(FORMANT_N_UNLINKED, 3);
     let mut p = AlgoParams::default();
     p.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
-    for i in 0..4 {
+    for i in 0..3 {
         p.try_set_kind(i, OpKind::Formant).unwrap();
     }
-    assert_eq!(p.try_set_kind(4, OpKind::Formant), Err(OverBudget));
+    assert_eq!(p.try_set_kind(3, OpKind::Formant), Err(OverBudget));
 }
 
 #[test]
@@ -161,13 +161,13 @@ fn one_linked_formant_fits_and_two_do_not() {
     p.try_set_algs(AlgoId::T1, AlgoId::T1).unwrap();
     p.try_set_kind(0, OpKind::Formant).unwrap();
     assert_eq!(p.try_set_kind(1, OpKind::Formant), Err(OverBudget));
-    // Linked and unlinked share the budget: 1 linked + 1 unlinked fits,
-    // 1 linked + 2 unlinked doesn't (360 + 2·170 = 700 > 698).
+    // Linked and unlinked share the budget: 1 linked + 1 unlinked fits
+    // (560), 1 linked + 2 unlinked doesn't (760 > 698).
     p.try_set_kind(3, OpKind::Formant).unwrap();
     assert_eq!(p.try_set_kind(5, OpKind::Formant), Err(OverBudget));
-    assert_eq!(
-        OpKind::Formant.charge(true) + 2 * OpKind::Formant.charge(false),
-        FORMANT_BUDGET_FRMT.0 + 2
+    assert!(OpKind::Formant.charge(true) + OpKind::Formant.charge(false) <= FORMANT_BUDGET_FRMT.0);
+    assert!(
+        OpKind::Formant.charge(true) + 2 * OpKind::Formant.charge(false) > FORMANT_BUDGET_FRMT.0
     );
 }
 
@@ -552,10 +552,10 @@ fn a_file_s_algorithm_degrades_the_formants_it_cannot_hold() {
 fn the_alg_encoder_steps_over_refused_algorithms() {
     let mut p = AlgoParams::default();
     p.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
-    for i in 0..4 {
+    for i in 0..3 {
         p.try_set_kind(i, OpKind::Formant).unwrap();
     }
-    // Past A1 every algorithm links into one of operators 1–4; T8, just
+    // Past A1 every algorithm links into one of operators 1–3; T8, just
     // before it, links only 6 → 5.
     for side in [AlgoParams::ALG_A, AlgoParams::ALG_B] {
         let s = step_alg(&p, side, 1);
@@ -594,7 +594,7 @@ fn the_alg_encoder_steps_over_refused_algorithms() {
 fn an_alg_edit_adding_a_link_to_a_full_patch_is_refused() {
     let mut s = Sound::init(EngineType::Algo);
     s.params.algo.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
-    for i in 0..4 {
+    for i in 0..3 {
         s.params.algo.try_set_kind(i, OpKind::Formant).unwrap();
     }
     let mut ui = test_ui_with(&s);

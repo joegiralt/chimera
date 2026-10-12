@@ -784,6 +784,7 @@ static ZEROS: [f32; BLOCK_SIZE] = [0.0; BLOCK_SIZE];
 
 /// The links' PM, summed in the order `tick` adds them, from 0.0: the
 /// first link's term is its sum's start, so no row is cleared first.
+#[inline(never)]
 fn link_sum(links: &[Option<Link>; 5]) -> [f32; BLOCK_SIZE] {
     let mut ls = links.iter().flatten().copied();
     let Some(mut l) = ls.next() else {

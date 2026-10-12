@@ -547,7 +547,7 @@ fn level_billed(p: &ParamSnapshot, mods: &ModState) -> bool {
 
 /// The most cents PITCH's and FINE's routes can move a note, every source
 /// at full swing.
-fn pitch_reach(mods: &ModState) -> f32 {
+pub(crate) fn pitch_reach(mods: &ModState) -> f32 {
     [PitchParams::PITCH, PitchParams::FINE]
         .into_iter()
         .map(|q| {

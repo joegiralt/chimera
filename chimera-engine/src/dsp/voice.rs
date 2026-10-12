@@ -6,13 +6,15 @@ use chimera_hal::BLOCK_SIZE;
 use crate::addr::{BlockRef, Blocks, ParamAddr};
 use crate::block::{ParamId, apply_offset};
 use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
-use crate::dsp::algo::params::AlgoParams;
+use crate::dsp::algo::kinds::OpKind;
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::dc_blocker::DcBlocker;
 use crate::dsp::drive::Drive;
 use crate::dsp::ease::{Ramp, at, step_of};
 use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
+use crate::dsp::fast_exp2;
 use crate::dsp::filter::{FILTER_LEVEL_COST, Filter, FilterMods};
 use crate::dsp::gate::AmpGate;
 use crate::dsp::knobs::Gliding;
@@ -333,6 +335,43 @@ impl Voice {
                 .0
                 .saturating_sub(AlgoEngine::cost(&p.algo, &routed).0),
         )
+    }
+
+    /// A formant voice past the C8 grain clock the FRMT terms cover: the
+    /// spans its reachable pitch adds (`AlgoEngine::high_note_extra`). The
+    /// reach is `note` with TRNSP, the PITCH offset, TUNING (`tune_cents`
+    /// up only), the bend's range, every PITCH route at full swing, and a
+    /// glide steal's start (`slide`, its ratio, 1 at rest).
+    #[inline(never)]
+    pub fn high_note_extra(
+        p: &ParamSnapshot,
+        mods: &ModState,
+        bend: u8,
+        tune_cents: i8,
+        note: MidiNote,
+        slide: f32,
+    ) -> Cost {
+        if p.engine() != EngineType::Algo || !p.algo.kinds().all().contains(&OpKind::Formant) {
+            return Cost::ZERO;
+        }
+        let st = f32::from(note.get())
+            + f32::from(p.algo.transpose)
+            + p.pitch.semitones()
+            + f32::from(tune_cents.max(0)) / 100.0
+            + f32::from(bend)
+            + crate::dsp::engines::pitch_reach(mods) / 100.0
+            - 69.0;
+        let hz = 440.0 * fast_exp2(st / 12.0) * slide.max(1.0);
+        let fine_top = mods.algo_routed(&[AlgoOpParams::FINE]);
+        AlgoEngine::high_note_extra(&p.algo, &mods.algo_levels_routed(), &fine_top, hz)
+    }
+
+    /// A glide steal's ratio now on an Algo voice, 1 otherwise.
+    pub fn algo_slide(&self) -> f32 {
+        match &self.slot {
+            EngineSlot::Algo(a) => a.slide(),
+            _ => 1.0,
+        }
     }
 
     /// What this voice's sounding note costs over `p`'s stored model

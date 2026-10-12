@@ -898,7 +898,8 @@ impl Instrument {
                     let t1 = crate::probe::now();
                     // A Part's first voice brings its knobs (ADR 0112).
                     let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
-                    let cost = self.costs[p] + if first { Knobs::COST } else { Cost::ZERO };
+                    let knobs = if first { Knobs::COST } else { Cost::ZERO };
+                    let cost = self.costs[p] + knobs + self.high_note(p, shared, note);
                     let reserved = self.reserved();
                     let origins = &self.note_origin;
                     let Some(v) = self
@@ -1294,9 +1295,20 @@ impl Instrument {
             if let Some(p) = self.alloc.slots()[v].part() {
                 let p = p as usize % MAX_PARTS;
                 let part = &shared.parts[p];
+                let high = self.alloc.slots()[v].note().map_or(Cost::ZERO, |n| {
+                    Voice::high_note_extra(
+                        &part.params,
+                        &part.mod_state,
+                        part.mix.bend,
+                        shared.tune,
+                        n,
+                        self.voices[v].algo_slide(),
+                    )
+                });
                 let held = self.voices[v].held_model_extra(&part.params)
                     + self.voices[v].held_level_extra(&part.params, &part.mod_state)
-                    + self.voices[v].held_ops_extra(&part.params, &part.mod_state);
+                    + self.voices[v].held_ops_extra(&part.params, &part.mod_state)
+                    + high;
                 let first = !core::mem::replace(&mut knobs[p], true);
                 let k = if first { Knobs::COST } else { Cost::ZERO };
                 self.alloc
@@ -1312,6 +1324,32 @@ impl Instrument {
         {
             self.shed(v);
         }
+    }
+
+    /// A new formant note's spans past C8 on Part `p`, judged at a glide
+    /// steal's start too: any of the Part's sounding voices may be taken,
+    /// so its highest note and largest slide.
+    #[inline(never)]
+    fn high_note(&self, p: usize, shared: &AudioShared, note: MidiNote) -> Cost {
+        let part = &shared.parts[p];
+        let (mut top, mut slide) = (note.get(), 1.0f32);
+        if part.params.pitch.steal_glide().is_some() {
+            for v in 0..MAX_VOICES {
+                let s = self.alloc.slots()[v];
+                if s.part() == Some(p as u8) {
+                    top = top.max(s.note().map_or(0, MidiNote::get));
+                    slide = slide.max(self.voices[v].algo_slide());
+                }
+            }
+        }
+        Voice::high_note_extra(
+            &part.params,
+            &part.mod_state,
+            part.mix.bend,
+            shared.tune,
+            MidiNote::new(top).unwrap_or(note),
+            slide,
+        )
     }
 
     /// Voice `v`, marked dying, fades out: a note waiting for it is dropped

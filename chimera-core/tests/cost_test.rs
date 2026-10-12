@@ -1958,3 +1958,124 @@ fn a_formant_bills_its_lanes_and_its_moving_law() {
     }
     assert!(OpKind::Formant.charge(true) + AlgoEngine::COST_OP.0 >= AlgoEngine::COST_FRMT_LINKED.0);
 }
+
+/// The FRMT terms cover the worst block of a grain clock up to C8: seven
+/// spans (fires, linked). C7 runs four, MIDI 127 eighteen.
+#[test]
+fn the_frmt_terms_cover_spans_up_to_c8() {
+    let hz = |n: f32| 440.0 * 2f32.powf((n - 69.0) / 12.0);
+    assert_eq!(AlgoEngine::spans(hz(108.0)), AlgoEngine::SPANS_COVERED);
+    assert_eq!(AlgoEngine::SPANS_COVERED, 7);
+    assert_eq!(AlgoEngine::spans(hz(96.0)), 4);
+    assert_eq!(AlgoEngine::spans(hz(127.0)), 18);
+    assert_eq!(AlgoEngine::spans(0.0), 1);
+    assert_eq!(AlgoEngine::spans(1e9), 65);
+}
+
+/// A formant voice whose pitch can reach past C8 pays its extra spans per
+/// voice: none at C8, ADR 0056's cycles past it; a linked FRMT pays its
+/// fires. Bend, TRNSP, TUNING, PITCH routes, a glide's start and a routed
+/// FINE all raise the reach.
+#[test]
+fn a_formant_voice_past_c8_pays_its_extra_spans() {
+    use chimera_core::MidiNote;
+    use chimera_core::addr::{BlockRef, Op, ParamAddr};
+    use chimera_core::dsp::algo::params::AlgoOpParams;
+    let note = |n| MidiNote::new(n).unwrap();
+    let mut s = ParamSnapshot::for_engine(EngineType::Algo);
+    s.algo = AlgoParams::single(WaveId::W1);
+    s.algo.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
+    s.algo.try_set_kind(0, OpKind::Formant).unwrap();
+    let m = ModState::new();
+    let x = |s: &ParamSnapshot, m: &ModState, bend, tune, n, slide| {
+        Voice::high_note_extra(s, m, bend, tune, note(n), slide).0
+    };
+    assert_eq!(x(&s, &m, 0, 0, 108, 1.0), 0);
+    // MIDI 127, unlinked: 11 spans past, 276 instructions each.
+    let over = (11 * 276 * 1606u32).div_ceil(64_000);
+    assert_eq!(x(&s, &m, 0, 0, 127, 1.0), over);
+    // Each reach past C8 bills.
+    // Each reach past C8 bills (MIDI 111 already runs a span more).
+    let base = x(&s, &m, 0, 0, 111, 1.0);
+    assert!(base > 0);
+    assert!(x(&s, &m, 12, 0, 111, 1.0) > base, "bend");
+    assert!(x(&s, &m, 0, 100, 111, 1.0) > base, "tune");
+    assert_eq!(
+        x(&s, &m, 0, -100, 111, 1.0),
+        base,
+        "tune down never lowers it"
+    );
+    assert!(
+        x(&s, &m, 0, 0, 111, 2.0) > base,
+        "a glide from an octave up"
+    );
+    let mut t = s.clone();
+    t.algo.transpose = 12;
+    assert!(x(&t, &m, 0, 0, 111, 1.0) > base, "TRNSP");
+    let mut c = s.clone();
+    c.algo.ops[0].coarse = 8;
+    assert!(x(&c, &m, 0, 0, 111, 1.0) > base, "COARSE");
+    let mut routed = ModState::from_registry(&chimera_core::mod_path::ModDestRegistry::new(), 8);
+    let fine = ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::FINE);
+    if fine.modulatable() {
+        assert!(routed.set_route_addr(ModSource::Lfo1.index(), fine, 64));
+        assert!(x(&s, &routed, 0, 0, 111, 1.0) > base, "FINE route");
+    }
+    // Linked (T1 links 2 → 1): the fires, 47 instructions each.
+    let mut l = s.clone();
+    l.algo.try_set_algs(AlgoId::T1, AlgoId::T1).unwrap();
+    assert_eq!(
+        x(&l, &m, 0, 0, 127, 1.0),
+        (11 * 47 * 1606u32).div_ceil(64_000)
+    );
+    // Not a formant Sound: nothing.
+    let t = ParamSnapshot::for_engine(EngineType::Algo);
+    assert_eq!(x(&t, &m, 24, 0, 127, 4.0), 0);
+}
+
+/// Admission and the per-block recost both bill a formant voice's spans
+/// past C8: a CHOIR note at MIDI 127 books its extra over one at 60, and
+/// keeps it while it sounds.
+#[test]
+fn a_high_formant_note_is_booked_its_extra_spans() {
+    use chimera_core::factory::{Demo, demo_sound};
+    let booked = |n: u8| {
+        let mut r = common::InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_V));
+        let s = demo_sound(Demo::Choir);
+        (*r.shared.parts[0].params, *r.shared.parts[0].mod_state) = (s.params, s.mod_state);
+        let ch = r.shared.parts[0].mix.channel.get();
+        r.note_on(ch, n);
+        let at_on = r
+            .inst
+            .allocator()
+            .slots()
+            .iter()
+            .map(|s| s.cost().0)
+            .sum::<u32>();
+        r.render(2);
+        let held = r
+            .inst
+            .allocator()
+            .slots()
+            .iter()
+            .map(|s| s.cost().0)
+            .sum::<u32>();
+        (at_on, held)
+    };
+    let (low, low_held) = booked(60);
+    let (high, high_held) = booked(127);
+    let p = demo_sound(Demo::Choir);
+    let shared = AudioShared::default();
+    let extra = Voice::high_note_extra(
+        &p.params,
+        &p.mod_state,
+        shared.parts[0].mix.bend,
+        0,
+        chimera_core::MidiNote::new(127).unwrap(),
+        1.0,
+    )
+    .0;
+    assert!(extra > 0);
+    assert_eq!(high - low, extra);
+    assert_eq!(high_held - low_held, extra);
+}

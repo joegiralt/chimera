@@ -21,11 +21,13 @@ use crate::dsp::algo::morph::{Morph, carrier_norm, incoming};
 use crate::dsp::algo::noise::{NOISE_GAIN, noise_coef, noise_edge, res_mix};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, bw_hz};
 use crate::dsp::algo::plan::{EvalPlan, MAX_EDGES, OPS, blend};
-use crate::dsp::algo::tx::{detune_at, feedback_cycles, level_gain, patch_gain, ratio_at};
+use crate::dsp::algo::tx::{
+    DETUNE_CENTS, detune_at, feedback_cycles, level_gain, patch_gain, ratio_at,
+};
 use crate::dsp::algo::vowel::{Formant, VowelSlot, fc_hz, resolve_slots};
 use crate::dsp::algo::waves::{WaveId, mip_position, mip_step};
 use crate::dsp::glide::Glide;
-use crate::hw::{BLOCK_SIZE, Cost};
+use crate::hw::{BLOCK_SIZE, Cost, SAMPLE_RATE};
 use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
 
@@ -252,8 +254,9 @@ impl LawBlock {
 /// Every input of the formant laws a block can move, as bits: each
 /// operator's FRMT, BW, LEVEL, FINE, DETUNE and FDBK as played, VOWEL,
 /// MORPH, the pitch offset, the glide's slide and the rate, the note,
-/// TRNSP and the COARSEs. The latched slots, KEY and SKIRT, the kinds and
-/// the plan move only at a note-on or a swap, which drop the key.
+/// TRNSP and the COARSEs. The latched slots, KEY and SKIRT, the kinds the
+/// engine runs and its plan (the links) move only at a note-on, a swap or
+/// a plan change, which each drop the key where they write.
 const LAW_KEY: usize = 6 * OPS + 8;
 type LawKey = [u32; LAW_KEY];
 
@@ -362,6 +365,9 @@ const fn table_of(k: OpKind) -> WaveId {
     }
 }
 
+/// DETUNE's top ratio, +3 steps.
+const DETUNE_TOP: f32 = exp2(3.0 * DETUNE_CENTS / 1200.0);
+
 impl AlgoEngine {
     // Cycles/sample terms of `cost`, solved from the bench rows and rounded
     // up. The mip crossfade always runs, so it is in `COST_OP`.
@@ -371,17 +377,70 @@ impl AlgoEngine {
     pub const COST_FEEDBACK: Cost = Cost(1); // measured 2026-09-27, bench, rev V at 480 MHz
     // Counted on the bench-algo ELF with tools/loop_count.py: a SKIRT 1–3
     // FRMT's two lanes in spans (`<0, S3>`), one lane at SKIRT 0
-    // (`<0, S0>`), and with links the moving loop (`<1, S3>`, `<1, S0>`).
-    pub const COST_FRMT_ONE: Cost = Cost(180); // counted, ADR 0056's method, 3f403ae2 + task-11b-opt WIP
-    pub const COST_FRMT: Cost = Cost(190); // counted, ADR 0056's method, 3f403ae2 + task-11b-opt WIP
-    pub const COST_FRMT_ONE_LINKED: Cost = Cost(370); // counted, ADR 0056's method, 3f403ae2 + task-11b-opt WIP
-    pub const COST_FRMT_LINKED: Cost = Cost(380); // counted, ADR 0056's method, 3f403ae2 + task-11b-opt WIP
+    // (`<0, S0>`), and with links the moving loop (`<1, S3>`, `<1, S0>`),
+    // each at its worst block for a grain clock up to `SPAN_TOP_HZ`:
+    // `SPANS_COVERED` spans (fires, linked). A higher clock pays
+    // `high_note_extra` per voice.
+    pub const COST_FRMT_ONE: Cost = Cost(210); // counted, ADR 0056's method, 5901f08e, 7 spans
+    pub const COST_FRMT: Cost = Cost(220); // counted, ADR 0056's method, 5901f08e, 7 spans
+    pub const COST_FRMT_ONE_LINKED: Cost = Cost(380); // counted, ADR 0056's method, 5901f08e, 7 fires
+    pub const COST_FRMT_LINKED: Cost = Cost(380); // counted, ADR 0056's method, 5901f08e, 7 fires
     pub const COST_NOIS: Cost = Cost(80); // counted, ADR 0056's method, 3f403ae2 + task-11b-opt WIP
     /// A formant law taken afresh (`take_laws` 876 instructions and 18
     /// divides, `LawBlock::new` 113 and 6, `formant_fc` 126 and 1). Billed
     /// on every FRMT, as Modal bills its pitch (#437): the pitch wheel or a
     /// glide steal can move any voice's laws with no route to see.
     pub const COST_FRMT_MOVE: Cost = Cost(40); // counted, ADR 0056's method, 3f403ae2 + task-11b-opt WIP
+
+    /// The grain clock the FRMT terms cover: C8, MIDI 108.
+    pub const SPAN_TOP_HZ: f32 = 4186.009;
+    /// Spans a block at it, the worst block: ⌈64·4186/48000⌉ + 1. A linked
+    /// FRMT's fires are as many (the wraps and the note-on's).
+    pub const SPANS_COVERED: u32 = 7;
+    /// Instructions a span adds with no link (`run_formant`'s span path 93
+    /// with the fire, and its block path 183, an upper bound) and a fire
+    /// with one (`Grains::fire` 42 and its call 5): counted, 5901f08e.
+    const SPAN_INSTR: u32 = 276;
+    const FIRE_INSTR: u32 = 47;
+
+    /// Spans (fires) at grain clock `hz` in the worst block.
+    pub fn spans(hz: f32) -> u32 {
+        let per = (hz.max(0.0) * BLOCK_SIZE as f32 / SAMPLE_RATE as f32).min(BLOCK_SIZE as f32);
+        let whole = per as u32;
+        whole + u32::from(per > whole as f32) + 1
+    }
+
+    /// What a voice whose pitch can reach `top_hz` (note, TRNSP, bend,
+    /// routes and a glide's start, before the operators' ratios) costs over
+    /// the static terms: each priced FRMT's spans past `SPANS_COVERED` at
+    /// its grain clock, ADR 0056's cycles a sample, rounded up. `fine_top`
+    /// marks an operator whose FINE a route moves: its ratio at FINE's top.
+    /// DETUNE is billed at its top always.
+    pub fn high_note_extra(
+        p: &AlgoParams,
+        priced: &[bool; OPS],
+        fine_top: &[bool; OPS],
+        top_hz: f32,
+    ) -> Cost {
+        let l = p.linked();
+        let instr: u32 = (0..OPS)
+            .filter(|&i| p.kinds().get(i) == OpKind::Formant && (priced[i] || p.ops[i].level > 0))
+            .map(|i| {
+                let o = &p.ops[i];
+                let fine = if fine_top[i] { 15.0 } else { f32::from(o.fine) };
+                // DETUNE at its top: a few cents, never worth a lookup.
+                let hz = top_hz * ratio_at(o.coarse, fine) * DETUNE_TOP;
+                let over = Self::spans(hz).saturating_sub(Self::SPANS_COVERED);
+                over * if l.has(i) {
+                    Self::FIRE_INSTR
+                } else {
+                    Self::SPAN_INSTR
+                }
+            })
+            .sum();
+        // instr · 1.46 · 1.1 / 64, rounded up.
+        Cost((instr * 1606).div_ceil(64_000))
+    }
 
     /// A priced FRMT operator: its lanes (one at SKIRT 0), with links or
     /// without, and its laws moving.
@@ -597,8 +656,7 @@ impl AlgoEngine {
         self.slide.toward(1.0);
     }
 
-    /// The glide steal's ratio now, 1 at rest: for the tests.
-    #[cfg(any(test, feature = "test-support"))]
+    /// The glide steal's ratio now, 1 at rest.
     pub fn slide(&self) -> f32 {
         self.slide.value()
     }
@@ -888,7 +946,7 @@ impl AlgoEngine {
     /// the last. None for any other kind.
     fn formant_blocks(&mut self, p: &AlgoParams, live: &AlgoLive, cycles: f32, sr: f32) {
         if !self.kinds.contains(&OpKind::Formant) {
-            self.laws = [None; OPS];
+            (self.laws, self.law_key) = ([None; OPS], None);
             return;
         }
         let key = self.law_key(p, live, sr);
@@ -1056,7 +1114,7 @@ impl AlgoEngine {
         let key = p.algs();
         if key != self.plan_key {
             self.plan = plan(key.0, key.1);
-            self.plan_key = key;
+            (self.plan_key, self.law_key) = (key, None);
         }
     }
 
@@ -1091,7 +1149,7 @@ impl AlgoEngine {
                         if old.is_formant() || new.is_formant() {
                             self.kernel.reset(i, new);
                         }
-                        self.kinds[i] = new;
+                        (self.kinds[i], self.law_key) = (new, None);
                     }
                 }
                 Swap::Rising

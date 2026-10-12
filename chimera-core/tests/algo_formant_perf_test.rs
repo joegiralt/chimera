@@ -158,3 +158,58 @@ fn held_laws_are_the_laws_taken_afresh() {
         );
     }
 }
+
+/// The held laws follow a kind swap and an ALG edit under a held note,
+/// bit for bit the laws taken afresh: a WAVE spin W1 → FRMT → W1 → FRMT, a
+/// second FRMT added, ALG A1 → T1, and a FRMT to a table while another
+/// stays.
+#[test]
+fn held_laws_follow_kind_swaps_and_alg_edits() {
+    type Edit = fn(&mut AlgoParams);
+    let edits: [(usize, Edit); 9] = [
+        (10, |p| p.try_set_kind(0, OpKind::Formant).unwrap()),
+        (20, |p| {
+            p.try_set_kind(0, OpKind::Table(WaveId::W1)).unwrap()
+        }),
+        (30, |p| p.try_set_kind(0, OpKind::Formant).unwrap()),
+        // T5 links 2 → 1 and nothing into 2: FRMT 1 linked, FRMT 2 not.
+        (40, |p| p.try_set_algs(AlgoId::T5, AlgoId::A1).unwrap()),
+        (55, |p| p.try_set_kind(1, OpKind::Formant).unwrap()),
+        (70, |p| {
+            p.try_set_kind(1, OpKind::Table(WaveId::W1)).unwrap()
+        }),
+        (80, |p| p.try_set_algs(AlgoId::T1, AlgoId::A1).unwrap()),
+        (95, |p| p.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap()),
+        (105, |p| p.try_set_kind(2, OpKind::Formant).unwrap()),
+    ];
+    for note in [36u8, 57, 72] {
+        let mut p = AlgoParams::single(WaveId::W1);
+        p.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
+        for o in &mut p.ops[..3] {
+            o.level = 99;
+        }
+        p.ops[1].coarse = 8;
+        p.ops[2].frmt = 120;
+        let edit = |b: usize, p: &mut AlgoParams| {
+            for (at, e) in &edits {
+                if *at == b {
+                    e(p);
+                }
+            }
+        };
+        let (kept, _) = render_algo_with(&p, note, 120, |b, p, _, _| edit(b, p));
+        let (fresh, _) = render_algo_with(&p, note, 120, |b, p, _, e| {
+            edit(b, p);
+            e.retake_laws();
+        });
+        let peak = |x: &[f32]| x.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(
+            kept.iter()
+                .zip(&fresh)
+                .all(|(a, b)| a.to_bits() == b.to_bits()),
+            "note {note}: kept peak {} fresh {}",
+            peak(&kept),
+            peak(&fresh)
+        );
+    }
+}
