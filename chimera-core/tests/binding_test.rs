@@ -196,12 +196,12 @@ fn part_pages_display_like_before() {
         (
             &reg::FOLDER,
             [
+                ("CHORUS", Uni),
+                ("DELAY", Uni),
+                ("REVERB", Uni),
                 ("FOLD", Uni),
-                ("SYM", Bi),
-                ("MIX", Bi),
                 ("VEL", Uni),
-                ("--", Uni),
-                ("--", Uni),
+                ("MIX", Bi),
             ],
         ),
         (

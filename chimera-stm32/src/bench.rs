@@ -1603,9 +1603,9 @@ impl Rig<'_> {
         let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
         // Every effect off but the row's: the boot project's FX would sit
         // in MIX and every row less it.
-        shared.fx = FxParams::default();
+        shared.fx = FxParams::OFF;
         for (i, part) in shared.parts.iter_mut().enumerate() {
-            part.mix.sends = [0.5; FX_SENDS];
+            part.params.out.sends = [0.5; FX_SENDS];
             // One Part to a channel: only Part 1 plays the notes.
             part.mix.channel = MidiChannel::clamped(i as u8);
         }
@@ -1686,14 +1686,13 @@ impl Rig<'_> {
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
         let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
-        shared.fx = FxParams::default();
+        shared.fx = FxParams::OFF;
         let (sound, knobs) = loading();
         let mut count = [Loads::NONE; MAX_PARTS];
         // Each Part's Sound published as a load is, through the knobs'
         // publisher (ADR 0115): NEW's, and A16 ∪ A17 on Part 6.
         for (i, part) in shared.parts.iter_mut().enumerate() {
             part.mix = PartParams::for_part(i);
-            part.mix.sends = [0.5; FX_SENDS];
         }
         for (p, count) in count.iter_mut().enumerate() {
             let new = NEW_PARTS.get(p).and_then(|s| factory_sound(s.index()));
@@ -1702,6 +1701,7 @@ impl Rig<'_> {
             if p == MAX_PARTS - 1 {
                 sound.params = a16_a17();
             }
+            sound.params.out.sends = [0.5; FX_SENDS];
             *count = count.next();
             shared.publish_sound(p, sound, *count, knobs);
         }
@@ -1827,9 +1827,9 @@ impl Rig<'_> {
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
         let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
-        shared.fx = FxParams::default();
+        shared.fx = FxParams::OFF;
         for (i, part) in shared.parts.iter_mut().enumerate() {
-            part.mix.sends = [0.5; FX_SENDS];
+            part.params.out.sends = [0.5; FX_SENDS];
             part.mix.channel = MidiChannel::clamped(i as u8);
         }
         *shared.parts[0].params = a16_a17();

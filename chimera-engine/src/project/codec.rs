@@ -24,7 +24,8 @@ use chimera_hal::store::{Dir, Store, StoreError};
 
 use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks};
 use crate::block::{Block, DiskCode};
-use crate::dsp::fx_bus::FxParams;
+use crate::dsp::clampf;
+use crate::dsp::fx_bus::{FX_SENDS, FxParams};
 use crate::hw::MAX_PARTS;
 use crate::name::SoundName;
 use crate::orbit::records::{encode_new_orbit, encode_orbit, read as read_orbit};
@@ -32,9 +33,9 @@ use crate::params::EngineType;
 use crate::part::PartParams;
 use crate::preset::Sound;
 use crate::storage::{
-    Check, DecodeInPlace, Event, FileError, FileKind, LoadError, MIGRATIONS, ReadTag, Ready,
-    RecordBuf, RecordTag, RecordWriter, SoundCheck, TRANSLATIONS, decode_block, encode_block,
-    encode_sound, listed_zones, records_crc, source_file,
+    Check, DecodeInPlace, ENTRY_LEN, Event, FileError, FileKind, LoadError, MIGRATIONS, ReadTag,
+    Ready, RecordBuf, RecordTag, RecordWriter, SoundCheck, TRANSLATIONS, decode_block,
+    encode_block, encode_sound, listed_zones, records_crc, source_file,
 };
 
 use super::arena::{ARENA_BYTES, Cost, MAX_SOURCES};
@@ -60,6 +61,29 @@ const PART_CODE: u8 = match BlockRef::Part.disk_code() {
     Some(c) => c,
     None => panic!("PART is stored"),
 };
+
+/// The sends the Part's mix held before ADR 0123 (PART ids 5-7).
+const OLD_SEND_IDS: [u8; FX_SENDS] = [5, 6, 7];
+
+/// A PART payload's old sends: non-finite as 0, the rest in 0..=1; `None`
+/// when it holds none.
+fn old_sends(payload: &[u8]) -> Option<[f32; FX_SENDS]> {
+    let mut out = [0.0; FX_SENDS];
+    let mut any = false;
+    for e in payload.get(1..)?.chunks(ENTRY_LEN) {
+        let [id, a, b, c, d] = *e else { continue };
+        if let Some(k) = OLD_SEND_IDS.iter().position(|&x| x == id) {
+            let v = f32::from_le_bytes([a, b, c, d]);
+            out[k] = if v.is_finite() {
+                clampf(v, 0.0, 1.0)
+            } else {
+                0.0
+            };
+            any = true;
+        }
+    }
+    any.then_some(out)
+}
 
 /// A `Slot` or `Part` payload: the index, then the padded name.
 const CONTEXT_LEN: usize = 1 + 16;
@@ -374,6 +398,8 @@ pub struct ProjectCheck {
     mix: bool,
     origin: bool,
     origins: [ReadOrigin; MAX_PARTS],
+    /// The open Part's pre-ADR-0123 sends (PART ids 5-7), for its Sound.
+    old_sends: Option<[f32; FX_SENDS]>,
     /// Pass 2 took less than the file holds: an ORBIT record skipped or a
     /// value in it defaulted, or no ORBIT records at all (ADR 0078). A save
     /// would write other bytes, so the load is not Saved.
@@ -409,6 +435,7 @@ impl ProjectCheck {
             origins: [ReadOrigin::Missing; MAX_PARTS],
             lossy: false,
             over: false,
+            old_sends: None,
         }
     }
 
@@ -488,6 +515,11 @@ impl ProjectCheck {
                 if core::mem::replace(&mut self.mix, true) {
                     return Err(FileError::Corrupt);
                 }
+                if let Some(s) = old_sends(p) {
+                    self.old_sends = Some(s);
+                    // All 0 moves nothing; every old file holds the ids.
+                    self.lossy |= s != [0.0; FX_SENDS];
+                }
                 let mut mix = target.map(|t| MixBlocks(&mut t.perf.parts[n.index()].mix));
                 decode_block(
                     p,
@@ -533,6 +565,7 @@ impl ProjectCheck {
         (self.context, self.parts) = (Context::None, PartSet::EMPTY);
         (self.fx, self.fx_blocks, self.mix, self.origin) = (false, 0, false, false);
         self.origins = [ReadOrigin::Missing; MAX_PARTS];
+        self.old_sends = None;
         (self.lossy, self.over) = (false, false);
     }
 
@@ -645,6 +678,7 @@ impl ProjectCheck {
                 part.origin = Origin::Init(EngineType::Algo);
             }
             (self.mix, self.origin) = (false, false);
+            self.old_sends = None;
             self.context = Context::Part(n);
         }
         self.sound = SoundCheck::begin(Some(name));
@@ -715,8 +749,16 @@ impl ProjectCheck {
                 (None, None) => self.sound.finish(None),
             },
             Context::Part(n) => {
-                let staged = target.map(|t| &mut *t.perf.parts[n.index()].sound);
-                self.sound.finish(staged)
+                let mut part = target.map(|t| &mut t.perf.parts[n.index()]);
+                let staged = part.as_mut().map(|p| &mut *p.sound);
+                self.sound.finish(staged)?;
+                // ADR 0123: a Sound with no sends takes the Part's old ones.
+                if let (Some(s), Some(p)) = (self.old_sends.take(), part)
+                    && p.sound.params.out.sends == [0.0; FX_SENDS]
+                {
+                    p.sound.params.out.sends = s;
+                }
+                Ok(())
             }
             Context::None | Context::Fx | Context::Orbit => Ok(()),
         }

@@ -512,7 +512,10 @@ fn retired_never_live() {
             (1, 7),
             (1, 8),
             (10, 2),
-            (22, 5)
+            (22, 5),
+            (25, 5),
+            (25, 6),
+            (25, 7)
         ]
     );
     // TAPE's MODEL REVERSE (#369): LOOP with END before START.

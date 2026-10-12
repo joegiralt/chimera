@@ -631,7 +631,7 @@ impl Renderer {
             look(f, f.focus),
             f.prime_status,
         );
-        hint::focus(display, f.hint(view.hint()));
+        hint::focus(display, f.hint(view.hint(&f.ctx)));
         if let View::Source(view::SourceState::Card { cost, free, .. }) = view {
             crate::ui::source_cell::draw_card_row(display, f.pool, cost, free, f.hints);
         }

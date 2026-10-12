@@ -43,15 +43,12 @@ pub fn dense() -> (Performance, Vec<(usize, u8)>) {
         let e = p.edit(PartId::ALL[k]);
         **e.sound = s;
         e.mix.channel = ch(k as u8);
-        e.mix.sends = [0.6; 3];
+        e.sound.params.out.sends = [0.6; 3];
         e.mix.output = chimera_core::part::DacPair::ALL[k % 3];
         for n in CHORD {
             notes.push((k, n + 12 * (k as u8 % 2)));
         }
     }
-    p.fx.chorus.mix = 0.5;
-    p.fx.delay.mix = 0.5;
-    p.fx.reverb.mix = 0.5;
     (p, notes)
 }
 
@@ -110,7 +107,7 @@ fn issue_193_scenes_stay_under_full_scale() {
     let mut rev = init_perf(EngineType::Algo);
     rev.fx.reverb.mix = 0.5;
     rev.fx.reverb.time = 0.7;
-    rev.edit(PartId::ALL[0]).mix.sends[2] = 0.5;
+    rev.edit(PartId::ALL[0]).sound.params.out.sends[2] = 0.5;
     let mut morph = init_perf(EngineType::Algo);
     morph.edit(PartId::ALL[0]).sound.params.algo.morph = 127;
     for (what, perf) in [("REV 0.5", rev), ("MORPH B", morph)] {

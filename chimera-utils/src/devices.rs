@@ -180,7 +180,7 @@ fn reverb_values(r: &ReverbParams) -> [f32; 10] {
 pub fn render_reverb(t: ReverbType, v: &[f32], x: &[f32]) -> Vec<f32> {
     let mut fx = FxParams {
         reverb: start_params(t),
-        ..FxParams::default()
+        ..FxParams::OFF
     };
     fx.reverb.mix = 1.0;
     let r = &mut fx.reverb;

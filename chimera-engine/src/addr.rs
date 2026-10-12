@@ -76,7 +76,7 @@ pub enum BlockRef {
     Tape,
     Comp,
     /// A Part's mix settings (`PartParams`): channel, mode, output, level,
-    /// pan, sends.
+    /// pan, SNAP, HELD.
     Part,
     /// SETTINGS › PERSONALIZE › THEME (`ThemeSettings`): held by the UI,
     /// not a Sound.

@@ -16,7 +16,7 @@ use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
 use crate::dsp::Stereo;
-use crate::dsp::chorus::{ChorusParams, JunoChorus};
+use crate::dsp::chorus::{ChorusMode, ChorusParams, JunoChorus};
 use crate::dsp::comp::{CompParams, MasterComp};
 use crate::dsp::delay::{DelayParams, TapeDelay};
 use crate::dsp::ease::{Ease, ease_coeff};
@@ -47,16 +47,39 @@ pub struct FxParams {
     pub comp: CompParams,
 }
 
+impl FxParams {
+    /// New: every return at unity, chorus on Juno I (sends spec § 4).
+    pub const DEFAULT: Self = Self {
+        chorus: ChorusParams::DEFAULT,
+        delay: DelayParams::DEFAULT,
+        reverb: ReverbParams::DEFAULT,
+        tape: TapeParams::DEFAULT,
+        comp: CompParams::DEFAULT,
+    };
+
+    /// Every return silent (chorus OFF, MIX 0), the rest as default: for
+    /// tests and bench rows that measure the dry path.
+    pub const OFF: Self = Self {
+        chorus: ChorusParams {
+            mode: ChorusMode::Off as u8,
+            mix: 0.0,
+            ..ChorusParams::DEFAULT
+        },
+        delay: DelayParams {
+            mix: 0.0,
+            ..DelayParams::DEFAULT
+        },
+        reverb: ReverbParams {
+            mix: 0.0,
+            ..ReverbParams::DEFAULT
+        },
+        ..Self::DEFAULT
+    };
+}
+
 impl Default for FxParams {
-    /// Everything off.
     fn default() -> Self {
-        Self {
-            chorus: ChorusParams::default(),
-            delay: DelayParams::default(),
-            reverb: ReverbParams::default(),
-            tape: TapeParams::default(),
-            comp: CompParams::default(),
-        }
+        Self::DEFAULT
     }
 }
 

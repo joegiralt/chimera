@@ -18,6 +18,7 @@ use screen::*;
 // Re-recorded for ADR 0057: every Part and mixer header reads
 // `PART n · SOUND` or `· MIX`; the mixer recipes open on SENDS. The Algo
 // screens again for ADR 0063: INIT's VOL 45 and RR 5.
+// amp_vel_*, modal_amp, mixer_sends, mixer_out_p2 again: send and SYM hints.
 // SETTINGS crumbs again for ORBIT (plan Task 10): they always clear its
 // beat dot, so three paths drop their first part.
 const GOLDENS: &[(&str, u64)] = &[
@@ -85,8 +86,11 @@ const GOLDENS: &[(&str, u64)] = &[
     ("spd", 0x96c5fde07700d7dc),
     ("lfo_classic", 0x3136c2e044ecb304),
     ("lfo_func", 0x60ec706c0ecfc450),
-    ("amp_vel_dimmed", 0x496ba84d34eb9c06),
-    ("amp_vel_live", 0x07fe7ee2b28245d6),
+    // Re-recorded: AMP is the sends over FOLD, VEL, MIX, SYM one page down (sends Task 5);
+    // mod_matrix_wide primes FOLD and MIX on their new cells.
+    ("amp_vel_dimmed", 0xe4f7cd9ac611053b),
+    ("amp_vel_live", 0xf3ce4cc3246f4673),
+    ("amp_sym", 0xe833d5db249ae1b9),
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
     ("algo_pitch", 0x58e8a368827c4a5f),
@@ -111,43 +115,44 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_home_bowed", 0x997c6d6606b0dd7c),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_amp", 0x126f578eb867adcf),
+    ("modal_amp", 0x44e231e2a0f622db),
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it, the screens are as before.
     #[cfg(not(feature = "master-tape"))]
     ("mixer_part", 0xcb00285b98360434),
+    // mixer_sends, mixer_out_p2 re-recorded: the sends are the Sound's OUT block (ADR 0123).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_sends", 0xdf3aab7c23ee0c31),
+    ("mixer_sends", 0xe04acfd7821d85d9),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay", 0x57508228791992f2),
+    ("mixer_fx_delay", 0xc697f9d549cfb496),
     // TYPE first, the panel's units, and REV › MORE (reverb TYPEs T6);
     // the REV pages re-recorded for RATE's default and law (ADR 0121).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb", 0x511aff474332e012),
+    ("mixer_fx_reverb", 0xd63df29d1fff7b34),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_more", 0x75d670f5545caa06),
+    ("mixer_fx_reverb_more", 0x9e7e4d1cddac9c0c),
     // HALL (its SIZE cell PLATE at SIZE 0) and GATE, each page (T10);
     // MORE re-recorded: the SYNC cell, and GATE's synced LENGTH (T12).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_hall", 0xfc941630851b83be),
+    ("mixer_fx_reverb_hall", 0xee42abcf28055f52),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_hall_more", 0x294f0d43d2e8e2bf),
     // HALL re-recorded as fitted (T10b): its knobs, SPREAD, MORE 2's DENSITY.
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_hall_more2", 0x17b7da341482dcdf),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate", 0x20ce834959d730b0),
+    ("mixer_fx_reverb_gate", 0x1959301cfa1bfc54),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_gate_more", 0x286d4c6b82bbf6ed),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate_sync", 0x8a41594bb680ee68),
+    ("mixer_fx_reverb_gate_sync", 0x7cbc1d7b8d07ecac),
     // BLOOM, each page (T11).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_bloom", 0x508fea4a2cbf10ed),
+    ("mixer_fx_reverb_bloom", 0x89b262d8d8284309),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_bloom_more", 0xb8c9a258c854705b),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_char", 0xc6fd6e6be7eb22e8),
+    ("mixer_fx_delay_char", 0x7479f1fb3a9df4bc),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master", 0x56a92de14c3c7d2f),
     #[cfg(not(feature = "master-tape"))]
@@ -155,32 +160,32 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_part", 0x3dc63406465fad8e),
     #[cfg(feature = "master-tape")]
-    ("mixer_sends", 0xcf97b892a7d5a933),
+    ("mixer_sends", 0x5a0a0f6caea9f67b),
     // DLY's branch hides REV's label it ran into (TAPE Task 15).
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay", 0x6bfad50017562c25),
+    ("mixer_fx_delay", 0x364b8608736dd631),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb", 0x4a284e675148ec1d),
+    ("mixer_fx_reverb", 0xec89096986df2f47),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_more", 0x5112307c2ebf2d6d),
+    ("mixer_fx_reverb_more", 0xf5795852136e2c13),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall", 0xa14653a47fb15291),
+    ("mixer_fx_reverb_hall", 0x2d7e131c9a01535d),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_hall_more", 0x009f09dbbd885180),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_hall_more2", 0xd28a6bad16b350c0),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate", 0x588ed520be572fdb),
+    ("mixer_fx_reverb_gate", 0x0908875e4470c3a7),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_gate_more", 0xc5297468f739990e),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate_sync", 0x189823bdfed79d53),
+    ("mixer_fx_reverb_gate_sync", 0x1ae7fa73664a157f),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_bloom", 0x9aa85a2e46eeed12),
+    ("mixer_fx_reverb_bloom", 0x4653d819fbea6cd6),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_bloom_more", 0xc730d8e88bc28db4),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_char", 0x8efda1c817189d8f),
+    ("mixer_fx_delay_char", 0xf907b08d9f6706ab),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", 0xe4642868fa275a5c),
     #[cfg(feature = "master-tape")]
@@ -188,14 +193,14 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_master_level", 0xfa809f321d216a97),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_out_p2", 0xc657c44494c829ac),
+    ("mixer_out_p2", 0xc7fad296ace82da3),
     #[cfg(feature = "master-tape")]
-    ("mixer_out_p2", 0x23ca28848fded48a),
+    ("mixer_out_p2", 0x97c6eb559ffe4f95),
     ("algo_out_p3", 0x3e91d6b588f4ebfa),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
     ("mod_matrix", 0x7fac5633d604d50c),
-    ("mod_matrix_wide", 0xeeb753551d0d9d1c),
+    ("mod_matrix_wide", 0x2d53cf82f2c6856c),
     // OP5 → FREQ, the cursor on OP5's X cell and its hint; MODAL's eight
     // rows of 17 (Task 17).
     ("mod_matrix_algo_taps", 0x5a2a634ad30444b4),

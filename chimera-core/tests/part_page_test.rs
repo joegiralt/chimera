@@ -7,8 +7,8 @@ use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode};
+use chimera_core::params::OutParams;
 use chimera_core::params::{EngineType, ParamSnapshot};
-use chimera_core::part::PartParams;
 use chimera_core::ui::block_def::{BlockDef, ParamSlot, VizType, slot_addr};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::page::PageLayout;
@@ -111,10 +111,11 @@ fn exciter_page_follows_the_model() {
     assert_eq!(p.modal.force, force + 1.0 / 128.0);
 }
 
-/// The reverb send lives on SENDS only (ADR 0120): RES and DECK carry none.
+/// The reverb send lives on SENDS and AMP only (ADR 0120): no engine home
+/// page (RES, DECK) carries it.
 #[test]
-fn reverb_send_is_on_sends_only() {
-    let rev = ParamAddr::new(BlockRef::Part, PartParams::SEND_REVERB);
+fn reverb_send_is_on_sends_and_amp_only() {
+    let rev = ParamAddr::new(BlockRef::Out, OutParams::SEND3);
     let ctx = SlotCtx::read(&ParamSnapshot::default(), Op::A);
     for def in [&reg::MODAL_1, &reg::TAPE_DECK] {
         for k in 0..6 {
@@ -122,6 +123,13 @@ fn reverb_send_is_on_sends_only() {
         }
     }
     assert_eq!(slot_addr(&reg::SENDS, 2, &ctx), Some(rev));
+    for (k, send) in [OutParams::SEND1, OutParams::SEND2, OutParams::SEND3]
+        .into_iter()
+        .enumerate()
+    {
+        let want = Some(ParamAddr::new(BlockRef::Out, send));
+        assert_eq!(slot_addr(&reg::FOLDER, k, &ctx), want, "AMP {k}");
+    }
 }
 
 #[test]
@@ -152,8 +160,8 @@ fn drive_filter_folder_pages() {
     turn(&reg::FILTER, 3, 20, &mut p);
     assert_eq!(p.filter.mode(), FilterMode::Phaser, "clamps at the last");
 
-    assert_eq!(read(&reg::FOLDER, &p), [0.0, 0.5, 0.5, 1.0, 0.0, 0.0]);
-    turn(&reg::FOLDER, 0, 4, &mut p);
+    assert_eq!(read(&reg::FOLDER, &p), [0.0, 0.0, 0.0, 0.0, 1.0, 0.5]);
+    turn(&reg::FOLDER, 3, 4, &mut p);
     assert_eq!(p.folder.fold, 4.0 / 128.0);
 }
 

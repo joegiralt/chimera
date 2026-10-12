@@ -36,7 +36,7 @@ fn filtered(mut s: Sound, kind: FilterKind, voice: K2040Voice, cutoff: f32, res:
 }
 
 fn bench(s: Sound) -> Bench {
-    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::OFF);
     b.edit_sound(|x| *x = s);
     b
 }

@@ -70,7 +70,10 @@ fn bend_defaults_to_two_semitones_and_clamps_to_its_range() {
         assert_eq!(m.bend, want);
         assert_eq!(m.get(PartParams::BEND), f32::from(want));
     }
-    let spec = &chimera_core::part::PART_SPECS[usize::from(PartParams::BEND.0)];
+    let spec = chimera_core::part::PART_SPECS
+        .iter()
+        .find(|s| s.id == PartParams::BEND)
+        .unwrap();
     assert_eq!((spec.min, spec.max, spec.default), (0.0, 24.0, 2.0));
     assert_eq!(spec.label, "BEND");
     assert_eq!(MAX_BEND, 24);

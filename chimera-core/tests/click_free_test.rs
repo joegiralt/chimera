@@ -28,7 +28,7 @@ fn check_no_clicks(
     let mut voice = Rig::new(SR);
     let mut reverb = Box::new(Reverb::new());
     let mut params = ParamSnapshot::default();
-    let mut rv = FxParams::default().reverb;
+    let mut rv = FxParams::OFF.reverb;
     setup(&mut params, &mut rv);
 
     voice.note_on(

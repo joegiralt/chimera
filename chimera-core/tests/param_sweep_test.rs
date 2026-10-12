@@ -56,14 +56,13 @@ impl Case {
     }
 
     fn bench(&self) -> Bench {
-        let mut mix = PartParams::default();
-        let fx = if self.wet {
-            mix.sends = [0.5; 3];
-            fx_on()
-        } else {
-            FxParams::default()
-        };
-        Bench::new(self.patch, mix, fx)
+        let fx = if self.wet { fx_on() } else { FxParams::OFF };
+        let mut b = Bench::new(self.patch, PartParams::default(), fx);
+        if self.wet {
+            // After the patch: it is the Sound that carries the sends.
+            b.edit_sound(|s| s.params.out.sends = [0.5; 3]);
+        }
+        b
     }
 
     fn values(&self) -> Vec<f32> {
@@ -443,7 +442,7 @@ fn a_self_oscillating_filter_dies_with_its_note() {
         Patch::ModalInit(ResonatorMode::Bowed),
         Patch::ModalInit(ResonatorMode::Sympathetic),
     ] {
-        let mut b = Bench::new(patch, PartParams::default(), FxParams::default());
+        let mut b = Bench::new(patch, PartParams::default(), FxParams::OFF);
         b.set(&find(BlockRef::Filter, FilterParams::RESONANCE), 1.0);
         let mut t = Tape::default();
         for blk in 0..30_000 {
@@ -820,7 +819,12 @@ fn out_moves_the_part_to_its_pair() {
             // Sends low enough that the return stays under the limiter's
             // knee (ADR 0109): its gain is linked across pairs, so where it
             // bent, a layout would move it.
-            b.perf.edit(chimera_core::project::PartId::ALL[0]).mix.sends = [0.03; 3];
+            b.perf
+                .edit(chimera_core::project::PartId::ALL[0])
+                .sound
+                .params
+                .out
+                .sends = [0.03; 3];
             b.set(&out, pair);
             let mut t = Tape::default();
             for blk in 0..400 {
@@ -967,7 +971,7 @@ const MAX_STRING_GR_DB: f32 = 15.0;
 /// after 0.5 s falls 60 dB in about 1.1 s, 0.8 to 1.5 s.
 #[test]
 fn algo_init_releases_in_about_a_second() {
-    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::OFF);
     let mut t = Tape::default();
     b.note(60, Some(100));
     for blk in 0..2 * BPS {
@@ -1014,7 +1018,7 @@ fn find(block: BlockRef, id: ParamId) -> Param {
 /// so pair 1 doesn't step as the voice frees (ADR 0060).
 #[test]
 fn the_folder_sym_puts_no_dc_on_the_dac() {
-    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::OFF);
     b.set(&find(BlockRef::Folder, FolderParams::FOLD), 0.5);
     b.set(&find(BlockRef::Folder, FolderParams::SYMMETRY), 0.0);
     let mut t = Tape::default();
@@ -1130,19 +1134,19 @@ fn jumps_never_click() {
             FAST,
         ),
         (
-            find(BlockRef::Part, PartParams::SEND_CHORUS),
+            find(BlockRef::Out, OutParams::SEND1),
             Patch::Probe,
             true,
             FAST,
         ),
         (
-            find(BlockRef::Part, PartParams::SEND_DELAY),
+            find(BlockRef::Out, OutParams::SEND2),
             Patch::Probe,
             true,
             FAST,
         ),
         (
-            find(BlockRef::Part, PartParams::SEND_REVERB),
+            find(BlockRef::Out, OutParams::SEND3),
             Patch::Probe,
             true,
             FAST,
@@ -1273,7 +1277,7 @@ fn drive_jumps_never_click_at_any_tone() {
 /// holds neither the voice nor its bill (23 s before Task 17).
 #[test]
 fn a_silent_operator_frees_the_voice() {
-    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::OFF);
     b.set(&find(BlockRef::AlgoOp(Op::B), AlgoOpParams::RR), 1.0);
     let mut t = Tape::default();
     for blk in 0..1500 {

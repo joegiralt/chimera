@@ -33,7 +33,7 @@ fn algo(a: AlgoId, b: AlgoId, m: u8) -> Sound {
 /// Held `s` over `ticks.len()` blocks, MORPH nudged by each block's ticks:
 /// the MORPH each block played (a fraction of the range) and the output.
 fn turn(s: Sound, ticks: &[i8]) -> (Vec<f32>, Tape) {
-    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::OFF);
     b.edit_sound(|x| *x = s);
     b.note(57, Some(100));
     let mut t = Tape::default();
