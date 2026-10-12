@@ -64,7 +64,7 @@ impl Script {
 
 /// The phrase a Sound is auditioned over on the owner's page (`qa`'s
 /// phrase tables): a listening render, never a gate. Every VA Sound names
-/// one (`phrase = "bass" | "lead" | "pad" | "arp" | "wonky"`).
+/// one (`phrase = "bass" | "lead" | "pad" | "arp" | "wonky" | "sweep"`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phrase {
     Bass,
@@ -74,15 +74,19 @@ pub enum Phrase {
     Arp,
     /// A wonky melodic bassline: odd accents, legato slides.
     Wonky,
+    /// One keys figure repeated over twelve bars while a slow LFO opens and
+    /// closes the filter (`check` holds its cycle to the phrase).
+    Sweep,
 }
 
 impl Phrase {
-    pub const ALL: [Phrase; 5] = [
+    pub const ALL: [Phrase; 6] = [
         Phrase::Bass,
         Phrase::Lead,
         Phrase::Pad,
         Phrase::Arp,
         Phrase::Wonky,
+        Phrase::Sweep,
     ];
 
     pub const fn word(self) -> &'static str {
@@ -92,6 +96,7 @@ impl Phrase {
             Phrase::Pad => "pad",
             Phrase::Arp => "arp",
             Phrase::Wonky => "wonky",
+            Phrase::Sweep => "sweep",
         }
     }
 }
@@ -276,7 +281,12 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
             }
             "phrase" => {
                 s.phrase = Some(Phrase::ALL.into_iter().find(|p| p.word() == v).ok_or_else(
-                    || at(line, format!("phrase {v}: bass, lead, pad, arp or wonky")),
+                    || {
+                        at(
+                            line,
+                            format!("phrase {v}: bass, lead, pad, arp, wonky or sweep"),
+                        )
+                    },
                 )?)
             }
             "harmonic" => {
@@ -417,6 +427,55 @@ fn routes(v: &str, line: usize) -> Result<Vec<Route>, String> {
         .collect()
 }
 
+/// A `sweep` Sound's filter LFO rate, Hz: a SINE or TRIANGLE, CLASSIC,
+/// free-running (never restarted by a note, so the chords' voices sweep
+/// together) LFO on FILTER.CUTOFF, no faster than `qa::SWEEP_MAX_HZ`, whose
+/// whole cycle (one rise and fall) the phrase plays through.
+pub fn sweep_hz(s: &Source) -> Result<f32, String> {
+    use super::qa::{SWEEP_MAX_HZ, phrase_secs};
+    use chimera_core::dsp::lfo::LfoShape;
+    use chimera_core::dsp::modulator::LfoType;
+    let cutoff = valid_addr("FILTER", "CUTOFF")
+        .expect("FILTER CUTOFF is stored")
+        .addr();
+    let snd = patch(s)?;
+    let played = phrase_secs(Phrase::Sweep);
+    let slow: Vec<f32> = s
+        .mods
+        .iter()
+        .filter(|(_, rs)| rs.iter().any(|r| r.dest == cutoff && r.amount != 0))
+        .filter_map(|(src, _)| match src {
+            ModSource::Lfo1 => Some(0),
+            ModSource::Lfo2 => Some(1),
+            ModSource::Lfo3 => Some(2),
+            _ => None,
+        })
+        .map(|i| &snd.params.lfos[i])
+        .filter(|l| {
+            l.lfo_type == LfoType::Classic
+                && l.sync == 0
+                && matches!(
+                    LfoShape::from_u8(l.shape),
+                    LfoShape::Sine | LfoShape::Triangle
+                )
+                && l.rate <= SWEEP_MAX_HZ
+        })
+        .map(|l| l.rate)
+        .collect();
+    match slow.iter().find(|&&hz| 1.0 / hz <= played) {
+        Some(&hz) => Ok(hz),
+        None if !slow.is_empty() => Err(format!(
+            "{}: the sweep LFO's cycle ({:.1} s) is longer than the sweep phrase ({played} s)",
+            s.at(s.id_line),
+            1.0 / slow[0]
+        )),
+        None => Err(format!(
+            "{}: a sweep Sound needs a SINE or TRIANGLE LFO, FREE, on FILTER.CUTOFF at {SWEEP_MAX_HZ} Hz or slower",
+            s.at(s.id_line)
+        )),
+    }
+}
+
 /// Ids unique and names unique across every Source, placeholders included.
 pub fn check(all: &[Source]) -> Result<(), String> {
     for (i, s) in all.iter().enumerate() {
@@ -437,9 +496,12 @@ pub fn check(all: &[Source]) -> Result<(), String> {
         // The owner auditions every VA Sound over a phrase (`qa`).
         if s.engine == EngineType::Va && !s.placeholder && s.phrase.is_none() {
             return Err(format!(
-                "{}: a VA Sound needs a phrase (phrase = \"bass\", \"lead\", \"pad\", \"arp\" or \"wonky\")",
+                "{}: a VA Sound needs a phrase (phrase = \"bass\", \"lead\", \"pad\", \"arp\", \"wonky\" or \"sweep\")",
                 s.at(s.id_line)
             ));
+        }
+        if !s.placeholder && s.phrase == Some(Phrase::Sweep) {
+            sweep_hz(s)?;
         }
         if s.placeholder && s.approved.is_some() {
             return Err(format!(

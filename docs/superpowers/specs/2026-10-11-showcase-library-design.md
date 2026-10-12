@@ -79,7 +79,7 @@ note = "MONO PART: 80 MS GLIDE, SUB BENEATH"
 demo = "mono"                     # the Part MODE for renders and demo projects
 plays = "bass texture glide"      # render scripts (§ 4)
 home = "C2"                       # level and aliasing note
-phrase = "bass"                   # the listening phrase (§ 4): bass, lead, pad, arp or wonky
+phrase = "bass"                   # the listening phrase (§ 4): bass, lead, pad, arp, wonky or sweep
 VA.WAVE1 = "0.667"                # SAW
 VA.SUB = "0.45"
 PITCH.STEAL = "GLIDE"
@@ -121,7 +121,7 @@ Stamp: `Build` carries the version and the commit the Sources were built from; t
 | `texture` | 16 sixteenth notes at 120 BPM over two octaves, at velocities 40 to 127 (velocity response) |
 | `glide` | Overlapping C2, G2, C3, played on a MONO Part (the glide Sounds) |
 
-**Phrases** (owner, round 1: a render under a second does not show a Sound). Each Sound is auditioned first over a four-bar phrase at 120 BPM, picked by its `phrase` key; a VA Source without one fails the build, and ALGO and MODAL may use any or none. The phrases are original, written in the manner of famous basslines and leads (rhythm and contour only, never transcribed), as pure note tables in `qa` (pitch from the home note, start and length in sixteenths, velocity):
+**Phrases** (owner, round 1: a render under a second does not show a Sound). Each Sound is auditioned first over a four-bar phrase (`sweep`: twelve) at 120 BPM, picked by its `phrase` key; a VA Source without one fails the build, and ALGO and MODAL may use any or none. The phrases are original, written in the manner of famous basslines and leads (rhythm and contour only, never transcribed), as pure note tables in `qa` (pitch from the home note, start and length in sixteenths, velocity):
 
 | Phrase | Notes |
 |---|---|
@@ -130,8 +130,9 @@ Stamp: `Build` carries the version and the commit the Sources were built from; t
 | `pad` | Four held chords, one a bar |
 | `arp` | A syncopated arpeggio grouped in threes across the bar, pushed onto the off-sixteenths and tied over the beat; short notes, no overlaps, velocities 70 to 120 |
 | `wonky` | A wonky melodic bassline with wide leaps, accents off the beat (velocities 68 to 124) and five notes held into the next (slides on a MONO Part) |
+| `sweep` | One two-bar keys figure (syncopated minor-seventh stabs over a held root, accents 70 to 108) repeated over twelve bars (24 s), while a slow LFO opens and closes the filter. Twelve bars hold one whole cycle at 0.05 Hz; the build refuses a `sweep` Sound without a SINE or TRIANGLE, FREE LFO on FILTER.CUTOFF at 0.1 Hz or slower whose cycle the phrase holds. Every pitch sounds on the first downbeat and is re-struck while it rings, so the voices' LFOs sweep in phase |
 
-The phrase plays on the Sound's demo mode, with its sends, as a stereo WAV. It is a listening render, not a gate: its limiter reading is shown and flagged over the 3 dB chord bar for `pad` and the 1 dB bar otherwise. A phrase that is not finite fails the run. The scripts above stay the gates.
+The phrase plays on the Sound's demo mode, with its sends, as a stereo WAV. It is a listening render, not a gate: its limiter reading is shown and flagged over the 3 dB chord bar for `pad` and `sweep` and the 1 dB bar otherwise. A phrase that is not finite fails the run. The scripts above stay the gates.
 
 Effects demos: each project's Parts play `stab` and `short` through every reverb TYPE (QUAD, ROOM, HALL, BLOOM, GATE, REVERSE), CHORUS I, II and I+II, and the delay. Then `chimera-utils stim`'s hats and snare go through the same FX bus.
 

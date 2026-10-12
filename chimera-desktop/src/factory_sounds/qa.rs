@@ -2,7 +2,7 @@
 //! the real `Instrument` (as `loudness_test` plays a scene: Part 1, P1,
 //! after the limiter), measured dry (its sends at 0) by pure gates over
 //! the sample buffers; the listening renders carry its sends through the
-//! FX bus at NEW's settings, the first of them a four-bar phrase (a
+//! FX bus at NEW's settings, the first of them a phrase (a
 //! listening render, never a gate). Then `report.txt` and the owner's
 //! `listening.html` with the renders, all in the ledger folder. `write`
 //! is the only I/O.
@@ -150,8 +150,27 @@ pub fn plan(s: Script, home: u8) -> Plan {
 
 /// A sixteenth at the phrases' 120 BPM, s.
 pub const SIXTEENTH_S: f32 = 0.125;
-/// A phrase's length, in sixteenths: four bars of 4/4.
+/// A phrase's length, in sixteenths: four bars of 4/4 (`sweep`'s twelve).
 pub const PHRASE_STEPS: u8 = 64;
+
+/// The bars `p` spans, in sixteenths.
+pub const fn phrase_steps(p: Phrase) -> u8 {
+    match p {
+        Phrase::Sweep => SWEEP_FIGURE_STEPS * SWEEP_REPEATS,
+        _ => PHRASE_STEPS,
+    }
+}
+
+/// When `p`'s last note ends, s.
+pub fn phrase_secs(p: Phrase) -> f32 {
+    let end = phrase_notes(p)
+        .iter()
+        .map(|x| x.at + x.len)
+        .max()
+        .unwrap_or(0);
+    end as f32 * SIXTEENTH_S
+}
+
 /// After a phrase's last note-off: a pad's release rings out.
 const PHRASE_TAIL_S: f32 = 3.0;
 
@@ -359,6 +378,60 @@ pub const WONKY_PHRASE: [PhraseNote; 30] = [
     n(0, 62, 2, 104),
 ];
 
+/// `sweep`'s figure: two bars.
+pub const SWEEP_FIGURE_STEPS: u8 = 32;
+/// Six figures: twelve bars, 24 s at 120 BPM (the last note-off at 23.6 s).
+/// That holds one whole cycle (a rise and a fall) of an LFO at 0.05 Hz
+/// (20 s), the slow end of the owner's 0.05–0.1 Hz, with two bars over.
+/// Eight bars (16 s) would hold a cycle only from 0.0625 Hz up; sixteen
+/// (32 s) would not fit `PhraseNote`'s sixteenths in a `u8` and add 8 s
+/// to every `qa` run. `source::sweep_hz` refuses a slower LFO.
+pub const SWEEP_REPEATS: u8 = 6;
+/// The fastest LFO a `sweep` Sound may open its filter with (owner: a very
+/// slow sweep, 0.05 to 0.1 Hz).
+pub const SWEEP_MAX_HZ: f32 = 0.1;
+
+/// In the manner of Radiohead – "Everything In Its Right Place" (rhythm
+/// and contour only, not transcribed), written fresh: one minor-seventh
+/// keys chord stabbed on a syncopated two-bar rhythm over a held root, the
+/// same every time, so all that moves is the slow filter (and velocity:
+/// accents 70 to 108). Every pitch sounds on the first downbeat and is
+/// re-struck while it still rings, so each voice is taken back and its
+/// free-running LFO stays in phase with the others: one sweep.
+#[rustfmt::skip]
+pub const SWEEP_FIGURE: [PhraseNote; 34] = [
+    // The held root, then i7 stabbed in 3 + 3 + 4 + 2 + 4.
+    n(-12, 0, 14, 96),
+    n(0, 0, 2, 104), n(7, 0, 2, 100), n(10, 0, 2, 102), n(15, 0, 2, 104),
+    n(0, 3, 2, 76), n(7, 3, 2, 72), n(10, 3, 2, 74), n(15, 3, 2, 76),
+    n(0, 6, 3, 92), n(7, 6, 3, 88), n(10, 6, 3, 90), n(15, 6, 3, 92),
+    n(0, 10, 1, 74), n(7, 10, 1, 70), n(10, 10, 1, 72), n(15, 10, 1, 74),
+    n(0, 12, 3, 86), n(7, 12, 3, 82), n(10, 12, 3, 84), n(15, 12, 3, 86),
+    // The root again, then a longer answer: 3 + 5 + 8.
+    n(-12, 16, 14, 90),
+    n(0, 16, 2, 108), n(7, 16, 2, 104), n(10, 16, 2, 106), n(15, 16, 2, 108),
+    n(0, 19, 4, 80), n(7, 19, 4, 76), n(10, 19, 4, 78), n(15, 19, 4, 80),
+    n(0, 24, 5, 96), n(7, 24, 5, 92), n(10, 24, 5, 94), n(15, 24, 5, 96),
+];
+
+/// `SWEEP_FIGURE`, `SWEEP_REPEATS` times end to end.
+pub const SWEEP_PHRASE: [PhraseNote; SWEEP_FIGURE.len() * SWEEP_REPEATS as usize] = {
+    const F: usize = SWEEP_FIGURE.len();
+    let mut out = [n(0, 0, 1, 1); F * SWEEP_REPEATS as usize];
+    let mut k = 0;
+    while k < out.len() {
+        let f = SWEEP_FIGURE[k % F];
+        out[k] = n(
+            f.step,
+            f.at + (k / F) as u8 * SWEEP_FIGURE_STEPS,
+            f.len,
+            f.vel,
+        );
+        k += 1;
+    }
+    out
+};
+
 /// A phrase's notes.
 pub const fn phrase_notes(p: Phrase) -> &'static [PhraseNote] {
     match p {
@@ -367,6 +440,7 @@ pub const fn phrase_notes(p: Phrase) -> &'static [PhraseNote] {
         Phrase::Pad => &PAD_PHRASE,
         Phrase::Arp => &ARP_PHRASE,
         Phrase::Wonky => &WONKY_PHRASE,
+        Phrase::Sweep => &SWEEP_PHRASE,
     }
 }
 
@@ -775,11 +849,11 @@ impl Audition {
         }
     }
 
-    /// The bar its limiter reading is flagged over: a pad's chords (as
-    /// `stab`) 3 dB, else 1 dB.
+    /// The bar its limiter reading is flagged over: a pad's or sweep's
+    /// chords (as `stab`) 3 dB, else 1 dB.
     pub fn bar(self) -> f32 {
         match self {
-            Audition::Phrase(Phrase::Pad) => LIMIT_CHORD_DB,
+            Audition::Phrase(Phrase::Pad | Phrase::Sweep) => LIMIT_CHORD_DB,
             Audition::Phrase(_) => LIMIT_SINGLE_DB,
             Audition::Script(s) => limiter_bar(Some(s)),
         }
@@ -1260,8 +1334,9 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source
     listen::rows_page(
         "Factory Sounds · listening",
         "Every Sound that is ready: APPROVED (passed your listening round), NEW (not yet heard), \
-         and the PLACEHOLDERS still to come. Each plays over a four-bar phrase (BASS, LEAD, PAD, \
-         ARP or WONKY, on its demo mode), then under its render scripts, offline through the real \
+         and the PLACEHOLDERS still to come. Each plays over a phrase (BASS, LEAD, PAD, ARP or \
+         WONKY, four bars; SWEEP, twelve, while a slow LFO opens and closes the filter; on its \
+         demo mode), then under its render scripts, offline through the real \
          Instrument (Part 1, P1); a render marked WITH plays its sends through NEW's effects. The \
          phrase is for your ear, not a gate. Under each Sound, what it is, read from the Sound \
          itself. Every gate passed (measured dry) or is marked for your ear: the lines in colour.",

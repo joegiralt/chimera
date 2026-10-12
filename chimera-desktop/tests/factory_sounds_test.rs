@@ -388,7 +388,7 @@ fn trim_out_of_range_fails() {
 // ---- QA before UAT (spec § 4) ----
 
 use chimera_core::part::PartMode;
-use chimera_desktop::factory_sounds::qa::{self, Audition, Check, Gate, Plan, Verdict};
+use chimera_desktop::factory_sounds::qa::{self, Audition, Check, Gate, PhraseNote, Plan, Verdict};
 use chimera_desktop::factory_sounds::source::{Phrase, Script};
 
 const SR: f32 = 48_000.0;
@@ -1374,16 +1374,19 @@ fn held_dc_reads_whole_cycles_of_each_note() {
 
 // ---- Phrase auditions ----
 
-/// Every phrase lies within its four bars, each note sounding, and stays
-/// inside MIDI from any plausible home note (C1 to C6).
+/// Every phrase lies within its bars (four; `sweep` 8 to 16), each note
+/// sounding, and stays inside MIDI from any plausible home note (C1 to C6).
 #[test]
-fn phrases_fit_four_bars_and_midi() {
+fn phrases_fit_their_bars_and_midi() {
+    assert_eq!(qa::phrase_steps(Phrase::Bass), qa::PHRASE_STEPS);
+    assert!((8 * 16..=16 * 16).contains(&(qa::phrase_steps(Phrase::Sweep) as u16)));
     for p in Phrase::ALL {
         let notes = qa::phrase_notes(p);
+        let steps = qa::phrase_steps(p);
         assert!(!notes.is_empty(), "{p:?}");
         for x in notes {
             assert!(
-                x.len >= 1 && x.at + x.len <= qa::PHRASE_STEPS,
+                x.len >= 1 && x.at as u16 + x.len as u16 <= steps as u16,
                 "{p:?} {x:?}"
             );
             assert!((1..=127).contains(&x.vel), "{p:?} {x:?}");
@@ -1402,10 +1405,12 @@ fn phrases_fit_four_bars_and_midi() {
             assert_eq!(h.vel, x.vel);
         }
         let end = plan.hits.iter().map(|h| h.off).fold(0f32, f32::max);
+        let bars = steps as f32 * qa::SIXTEENTH_S;
         assert!(
-            (7.0..=8.0).contains(&end),
-            "about four bars at 120 BPM: {end}"
+            (bars - 1.0..=bars).contains(&end),
+            "{p:?}: its bars at 120 BPM: {end}"
         );
+        assert_eq!(qa::phrase_secs(p), end);
         assert!(plan.secs > end, "a tail after it");
     }
 }
@@ -1471,6 +1476,53 @@ fn phrases_carry_what_they_show() {
         "a rest on a bar's downbeat"
     );
     assert!(arp.len() <= 40, "clear, not dense: {}", arp.len());
+    // `sweep`: one keys figure repeated, so only the filter moves.
+    let sw = qa::phrase_notes(Phrase::Sweep);
+    let fig = &qa::SWEEP_FIGURE;
+    assert!(
+        fig.iter().all(|x| x.at + x.len <= qa::SWEEP_FIGURE_STEPS),
+        "the figure fits its bars"
+    );
+    assert_eq!(sw.len() % fig.len(), 0);
+    assert!(
+        sw.len() / fig.len() >= 4,
+        "repeated: {}",
+        sw.len() / fig.len()
+    );
+    for (k, x) in sw.iter().enumerate() {
+        let f = fig[k % fig.len()];
+        let shift = (k / fig.len()) as u8 * qa::SWEEP_FIGURE_STEPS;
+        assert_eq!(
+            *x,
+            PhraseNote {
+                at: f.at + shift,
+                ..f
+            },
+            "note {k}"
+        );
+    }
+    // Stabs: three or more notes struck together.
+    assert!(
+        fig.iter()
+            .any(|a| fig.iter().filter(|b| b.at == a.at).count() >= 3),
+        "chord stabs"
+    );
+    let sv: Vec<u8> = fig.iter().map(|x| x.vel).collect();
+    assert!(
+        sv.iter().max().unwrap() - sv.iter().min().unwrap() >= 30,
+        "accents for the velocity routes"
+    );
+    // Every pitch is struck on the first downbeat and re-struck while it
+    // still rings (within half a second), so the voice is taken back and
+    // its free-running LFO stays in phase with the others: one sweep, not
+    // a smear of voices at different cutoffs.
+    for x in sw {
+        assert!(sw.iter().any(|y| y.at == 0 && y.step == x.step), "{x:?}");
+        if let Some(next) = sw.iter().find(|y| y.step == x.step && y.at > x.at) {
+            let rest = next.at as i16 - (x.at + x.len) as i16;
+            assert!(rest <= 4, "{x:?} rests too long");
+        }
+    }
     let mut chords: Vec<u8> = qa::phrase_notes(Phrase::Pad).iter().map(|x| x.at).collect();
     chords.dedup();
     assert!((2..=4).contains(&chords.len()), "{chords:?}");
@@ -1484,7 +1536,9 @@ fn phrases_carry_what_they_show() {
 fn phrase_parses_and_a_va_sound_needs_one() {
     assert_eq!(run(BASE).unwrap()[0].phrase, Some(Phrase::Pad));
     for p in Phrase::ALL {
-        let s = run(&base_with(13, &format!("phrase = \"{}\"", p.word()))).unwrap();
+        // A slow LFO 1 on the cutoff, as `sweep` needs.
+        let with = format!("phrase = \"{}\"\nLFO1.RATE = \"0.05\"", p.word());
+        let s = run(&base_with(13, &with)).unwrap();
         assert_eq!(s[0].phrase, Some(p));
     }
     fails(&base_with(13, r#"phrase = "jazz""#), 13, "phrase jazz");
@@ -1497,6 +1551,46 @@ fn phrase_parses_and_a_va_sound_needs_one() {
     run(&format!("{none}status = \"placeholder\"\n")).unwrap();
     let algo = base_with(4, r#"engine = "ALGO""#);
     assert_eq!(run(&algo).unwrap()[0].phrase, Some(Phrase::Pad));
+}
+
+/// A `sweep` Sound needs a smooth (SINE or TRIANGLE), free-running LFO on
+/// the cutoff, no faster than `SWEEP_MAX_HZ`, whose whole cycle (one rise
+/// and fall) the phrase plays through; else the build fails on its id line.
+#[test]
+fn a_sweep_needs_a_slow_smooth_lfo_its_phrase_holds() {
+    let sweep = |extra: &str| format!("{}\n{extra}\n", base_with(13, r#"phrase = "sweep""#));
+    // BASE's LFO 1 runs at the 1 Hz default: a wobble, not a sweep.
+    fails(&sweep(""), 2, "sweep");
+    run(&sweep(r#"LFO1.RATE = "0.05""#)).unwrap();
+    run(&sweep("LFO1.RATE = \"0.1\"\nLFO1.SHAPE = \"TRIANGLE\"")).unwrap();
+    // A cycle longer than the phrase never comes back down.
+    let slow = 0.9 / qa::phrase_secs(Phrase::Sweep);
+    fails(&sweep(&format!("LFO1.RATE = \"{slow}\"")), 2, "cycle");
+    // Stepped, or restarted by each note.
+    fails(
+        &sweep("LFO1.RATE = \"0.05\"\nLFO1.SHAPE = \"SQUARE\""),
+        2,
+        "sweep",
+    );
+    fails(
+        &sweep("LFO1.RATE = \"0.05\"\nLFO1.SYNC = \"RETRIG\""),
+        2,
+        "sweep",
+    );
+    // No LFO on the cutoff at all.
+    let none = sweep(r#"LFO1.RATE = "0.05""#).replace("mod.LFO1 = \"FILTER.CUTOFF +20\"", "");
+    fails(&none, 2, "sweep");
+    // The committed sweep Sounds: the render holds a full cycle.
+    for s in build::sources(std::path::Path::new(SOURCES)).unwrap() {
+        if s.phrase != Some(Phrase::Sweep) || s.placeholder {
+            continue;
+        }
+        let hz = source::sweep_hz(&s).unwrap();
+        let plan = qa::phrase_plan(Phrase::Sweep, s.home);
+        let notes_end = plan.hits.iter().map(|h| h.off).fold(0f32, f32::max);
+        assert!(1.0 / hz <= notes_end, "{}: {hz} Hz", s.name.as_str());
+        assert!(hz <= qa::SWEEP_MAX_HZ);
+    }
 }
 
 #[test]
