@@ -1,14 +1,16 @@
 //! QA before UAT (spec § 4): each factory Sound played headlessly through
 //! the real `Instrument` (as `loudness_test` plays a scene: Part 1, P1,
-//! after the limiter, FX off), measured by pure gates over the sample
-//! buffers, then `report.txt` and the owner's `listening.html` with the
-//! renders, all in the ledger folder. `write` is the only I/O.
+//! after the limiter), measured dry (its sends at 0) by pure gates over
+//! the sample buffers; the listening renders carry its sends through the
+//! FX bus at NEW's settings. Then `report.txt` and the owner's
+//! `listening.html` with the renders, all in the ledger folder. `write`
+//! is the only I/O.
 
 use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
 
 use chimera_core::block::DiskCode;
-use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
 use chimera_core::dsp::limiter::OUTPUT_GAIN;
 use chimera_core::dsp::modulator::law::{B_TIME, speed_ranges};
 use chimera_core::dsp::modulator::{EnvSlot, EnvType};
@@ -205,8 +207,33 @@ fn play(snd: &Sound, mode: PartMode, plan: &Plan) -> Take {
 }
 
 /// The Source's Sound played under `s` at 48 kHz, mono `(L + R)/2`.
+/// The listening render: the Sound as authored, its sends (if any) through
+/// the FX bus at NEW's settings (`Performance::new`).
 pub fn render(src: &Source, s: Script) -> Result<Vec<f32>, String> {
     Ok(play(&to_sound(src)?, src.demo, &plan(s, src.home)).mono())
+}
+
+/// `render` with the Sound's sends at 0: what the gates measure, so levels
+/// compare with ADR 0109's whatever the effects add.
+pub fn dry(src: &Source, s: Script) -> Result<Vec<f32>, String> {
+    Ok(play(&dried(&to_sound(src)?), src.demo, &plan(s, src.home)).mono())
+}
+
+/// `snd` with its sends (ADR 0123) at 0.
+fn dried(snd: &Sound) -> Sound {
+    let mut d = snd.clone();
+    d.params.out.sends = [0.0; FX_SENDS];
+    d
+}
+
+/// The effects `snd`'s sends feed, in `FxBus` order, by their full names.
+pub fn heard_through(snd: &Sound) -> Vec<&'static str> {
+    ["CHORUS", "DELAY", "REVERB"]
+        .into_iter()
+        .zip(snd.params.out.sends)
+        .filter(|&(_, s)| s > 0.0)
+        .map(|(n, _)| n)
+        .collect()
 }
 
 /// A gate's outcome.
@@ -470,6 +497,8 @@ pub struct Render {
     pub mono: Vec<f32>,
     pub lufs: f32,
     pub peak_dbfs: f32,
+    /// The effects heard on it (its sends), full words: empty when dry.
+    pub with: Vec<&'static str>,
 }
 
 /// A Sound's QA: every gate, every render, and its `long` render's ERB
@@ -511,7 +540,10 @@ fn hz(n: u8) -> f32 {
 
 /// Every gate on `src`, through the renders its gates and `plays` need.
 pub fn gates(src: &Source) -> Result<Report, String> {
-    let snd = to_sound(src)?;
+    // Every gate plays dry; the page's renders carry the sends.
+    let wet = to_sound(src)?;
+    let with = heard_through(&wet);
+    let snd = dried(&wet);
     let within = tail_within(src, &snd);
     let mut gates = Vec::new();
     let mut gate = |check, (value, verdict)| {
@@ -542,6 +574,7 @@ pub fn gates(src: &Source) -> Result<Report, String> {
     gate(Check::Tail, tail(&t.mono(), held + LATE, within));
 
     let mut renders = Vec::new();
+    let mut dry_long = None;
     for &s in &src.plays {
         let p = plan(s, src.home);
         let t = play(&snd, src.demo, &p);
@@ -556,12 +589,23 @@ pub fn gates(src: &Source) -> Result<Report, String> {
             .map(|h| block(h.on) * BLOCK_SIZE + LATE)
             .collect();
         gate(Check::Clicks(s), clicks(&mono, &onsets));
+        if s == Script::Long {
+            dry_long = Some(mono.clone());
+        }
+        let (t, mono) = if with.is_empty() {
+            (t, mono)
+        } else {
+            let w = play(&wet, src.demo, &p);
+            let m = w.mono();
+            (w, m)
+        };
         let peak = mono.iter().fold(0f32, |m, v| m.max(v.abs()));
         renders.push(Render {
             script: s,
             lufs: listen::lufs(&t.stereo),
             peak_dbfs: db(peak),
             mono,
+            with: with.clone(),
         });
     }
 
@@ -577,9 +621,9 @@ pub fn gates(src: &Source) -> Result<Report, String> {
         gate(Check::Aliasing(n), aliasing(&x, hz(n), harmonic));
     }
 
-    let long = match renders.iter().find(|r| r.script == Script::Long) {
-        Some(r) => r.mono.clone(),
-        None => render(src, Script::Long)?,
+    let long = match dry_long {
+        Some(x) => x,
+        None => play(&snd, src.demo, &plan(Script::Long, src.home)).mono(),
     };
     if !src.taps.is_empty() {
         let mut bare = snd.clone();
@@ -729,7 +773,10 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)]) -> String {
                     .renders
                     .iter()
                     .map(|x| Player {
-                        label: x.script.word().to_uppercase(),
+                        label: std::iter::once(x.script.word().to_uppercase())
+                            .chain(x.with.iter().map(|w| format!("WITH {w}")))
+                            .collect::<Vec<_>>()
+                            .join(" "),
                         file: r.wav(x.script),
                         info: format!("{:.1} LUFS · peak {:.1} dBFS", x.lufs, x.peak_dbfs),
                     })
@@ -741,7 +788,8 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)]) -> String {
     listen::rows_page(
         "Factory Sounds · listening",
         "Each Sound under its render scripts, played offline through the real Instrument \
-         (Part 1, P1, FX off). Every gate passed; lines in colour are for your ear.",
+         (Part 1, P1); a render marked WITH plays its sends through NEW's effects. \
+         Every gate passed, measured dry; lines in colour are for your ear.",
         &rows,
     )
 }

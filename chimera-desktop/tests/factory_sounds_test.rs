@@ -657,6 +657,7 @@ fn report(pass: bool, private: bool) -> qa::Report {
             mono: sine(220.0, 0.2, 0.5),
             lufs: -11.0,
             peak_dbfs: -14.0,
+            with: Vec::new(),
         }],
         bands: [0.0; 32],
     }
@@ -769,4 +770,77 @@ fn gates_render_through_the_instrument() {
         "VA is harmonic"
     );
     assert!(!has(Check::Tap), "no tap routes");
+}
+
+// ---- Sends (ADR 0123) and ENV 1's attack ----
+
+/// RMS of `x[a..b]`.
+fn rms(x: &[f32], a: usize, b: usize) -> f32 {
+    (x[a..b].iter().map(|v| v * v).sum::<f32>() / (b - a) as f32).sqrt()
+}
+
+#[test]
+fn sends_parse_by_frozen_idents() {
+    let t = format!("{BASE}OUT.SEND1 = \"0.5\"\nOUT.SEND2 = \"0.25\"\nOUT.SEND3 = \"1\"\n");
+    let s = run(&t).unwrap();
+    let snd = source::to_sound(&s[0]).unwrap();
+    assert_eq!(snd.params.out.sends, [0.5, 0.25, 1.0]);
+}
+
+#[test]
+fn listening_renders_are_wet_and_gates_dry() {
+    let wet_src = &source::parse(&format!("{BASE}OUT.SEND1 = \"0.8\"\n"), "w.toml").unwrap()[0];
+    let dry_src = &source::parse(BASE, "d.toml").unwrap()[0];
+    // The listening render plays the Sound's sends through NEW's FX bus.
+    let wet = qa::render(wet_src, Script::Long).unwrap();
+    assert!(
+        wet != qa::dry(wet_src, Script::Long).unwrap(),
+        "CHORUS is heard"
+    );
+    assert!(
+        qa::dry(wet_src, Script::Long).unwrap() == qa::render(dry_src, Script::Long).unwrap(),
+        "dry is the Sound with its sends at 0"
+    );
+    // The gates measure dry: the same values as the Sound without sends.
+    let (gw, gd) = (qa::gates(wet_src).unwrap(), qa::gates(dry_src).unwrap());
+    assert_eq!(gw.gates, gd.gates);
+    // The page marks the wet render.
+    assert_eq!(gw.renders[0].with, ["CHORUS"]);
+    assert!(gd.renders[0].with.is_empty());
+    let page = qa::page(&[gw], &[]);
+    assert!(page.contains("LONG WITH CHORUS"), "full words");
+    let all = &source::parse(
+        &format!("{BASE}OUT.SEND1 = \"0.1\"\nOUT.SEND2 = \"0.1\"\nOUT.SEND3 = \"0.1\"\n"),
+        "a.toml",
+    )
+    .unwrap()[0];
+    assert_eq!(
+        qa::gates(all).unwrap().renders[0].with,
+        ["CHORUS", "DELAY", "REVERB"]
+    );
+}
+
+/// The VA author's report, "ENV1.ATK had no effect": a Source starts from
+/// `Sound::neutral`, which routes nothing into the VCA (INIT routes ENV 1
+/// at +127). With only VEL → VCA the VCA's gain is VEL's, flat while the
+/// key is held, so ENV 1 shapes nothing; with ENV 1 → VCA its attack does.
+#[test]
+fn env1_attack_shapes_the_level_only_through_a_vca_route() {
+    let early = |extra: &str| {
+        let s = &source::parse(&format!("{BASE}{extra}"), "e.toml").unwrap()[0];
+        let x = qa::dry(s, Script::Long).unwrap();
+        rms(&x, 2_400, 14_400) // 50-300 ms
+    };
+    let vel = "mod.VEL = \"OUT.VCA +40\"\n";
+    assert_eq!(
+        early(vel),
+        early(&format!("{vel}ENV1.ATK = \"0.9\"\n")),
+        "no route: no effect"
+    );
+    let env = "mod.ENV1 = \"OUT.VCA +127\"\n";
+    let (fast, slow) = (early(env), early(&format!("{env}ENV1.ATK = \"0.9\"\n")));
+    assert!(
+        slow < fast * 0.25,
+        "routed: a 4 s attack is quieter early ({slow} vs {fast})"
+    );
 }
