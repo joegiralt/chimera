@@ -338,8 +338,11 @@ impl Voice {
     /// What this voice's sounding note costs over `p`'s stored model
     /// (#183): Modal's MODE and MODES and TAPE's MODEL are fixed per note,
     /// so an edit under a sounding voice is billed at the costlier of the
-    /// two.
+    /// two; so is an ALGO operator's SKIRT (`held_skirt_extra`).
     pub fn held_model_extra(&self, p: &ParamSnapshot) -> Cost {
+        if let EngineSlot::Algo(a) = &self.slot {
+            return a.held_skirt_extra(&p.algo);
+        }
         self.slot.playing_cost().map_or(Cost::ZERO, |held| {
             Cost(held.0.saturating_sub(self.slot.model_cost(p).0))
         })

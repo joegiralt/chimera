@@ -3,10 +3,14 @@
 
 use chimera_core::MidiNote;
 use chimera_core::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
-use chimera_core::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, PM_CYCLES, SAMPLE_SCALE};
+use chimera_core::dsp::algo::kernel::{
+    Kernel, KernelBlock, KindBlock, NoiseBlock, OpBlock, PM_CYCLES, SAMPLE_SCALE, sine,
+};
+use chimera_core::dsp::algo::math::clampf;
+use chimera_core::dsp::algo::noise::{NOISE_CLAMP, noise_seed};
 use chimera_core::dsp::algo::plan::{EvalPlan, OPS, blend};
 use chimera_core::dsp::algo::tx::FEEDBACK_CYCLES;
-use chimera_core::dsp::algo::waves::{MIP0_TOP_HZ, WaveId, mip_position};
+use chimera_core::dsp::algo::waves::{MIP0_TOP_HZ, Table, WaveId, mip_position};
 use chimera_core::taps::TapRows;
 use chimera_hal::BLOCK_SIZE;
 
@@ -27,10 +31,16 @@ fn op(hz: f32, gain: f32, wave: WaveId) -> OpBlock {
         gain_from: gain * SAMPLE_SCALE,
         gain_to: gain * SAMPLE_SCALE,
         feedback: 0.0,
-        lo: wave.table(0),
-        hi: wave.table(0),
-        xfade_from: 0.0,
-        xfade_to: 0.0,
+        kind: table(wave.table(0), wave.table(0), 0.0, 0.0),
+    }
+}
+
+fn table(lo: &'static Table, hi: &'static Table, xfade_from: f32, xfade_to: f32) -> KindBlock {
+    KindBlock::Table {
+        lo,
+        hi,
+        xfade_from,
+        xfade_to,
     }
 }
 
@@ -137,10 +147,7 @@ fn the_crossfade_ends_are_its_two_mips() {
     let with = |lo: WaveId, hi: WaveId, xfade: f32| {
         let mut ops = silent();
         ops[0] = OpBlock {
-            lo: lo.table(0),
-            hi: hi.table(0),
-            xfade_from: xfade,
-            xfade_to: xfade,
+            kind: table(lo.table(0), hi.table(0), xfade, xfade),
             ..op(300.0, 1.0, WaveId::W1)
         };
         render(&plan, ops, 10)
@@ -226,10 +233,7 @@ fn the_crossfade_ramps_across_the_block() {
     let with = |from: f32, to: f32| {
         let mut ops = silent();
         ops[0] = OpBlock {
-            lo: WaveId::W1.table(0),
-            hi: WaveId::SAW.table(0),
-            xfade_from: from,
-            xfade_to: to,
+            kind: table(WaveId::W1.table(0), WaveId::SAW.table(0), from, to),
             ..op(300.0, 1.0, WaveId::W1)
         };
         render(&plan, ops, 1)
@@ -271,6 +275,9 @@ struct Model {
     phase: [u32; OPS],
     out: [f32; OPS],
     hist: [f32; OPS],
+    rng: [u32; OPS],
+    /// Each noise operator's poles, `(y1, y2)`.
+    poles: [(f32, f32); OPS],
     one_sample_fb: bool,
 }
 
@@ -280,6 +287,8 @@ impl Model {
             phase: [0; OPS],
             out: [0.0; OPS],
             hist: [0.0; OPS],
+            rng: core::array::from_fn(|op| noise_seed(0, op)),
+            poles: [(0.0, 0.0); OPS],
             one_sample_fb: false,
         }
     }
@@ -297,7 +306,15 @@ impl Model {
             .collect();
         let dw: Vec<f32> = edges.iter().map(|e| (e.b - e.a) * dm * pm_scale).collect();
         let mut gain: [f32; OPS] = core::array::from_fn(|i| blk.ops[i].gain_from);
-        let mut xfade: [f32; OPS] = core::array::from_fn(|i| blk.ops[i].xfade_from);
+        let mut xfade: [f32; OPS] = core::array::from_fn(|i| match blk.ops[i].kind {
+            KindBlock::Table { xfade_from, .. } => xfade_from,
+            KindBlock::Noise(_) => 0.0,
+        });
+        // c, g = c·k, α, β.
+        let mut nz: [[f32; 4]; OPS] = core::array::from_fn(|i| match blk.ops[i].kind {
+            KindBlock::Noise(n) => [n.c.0, n.c.0 * n.k.0, n.alpha.0, n.beta.0],
+            KindBlock::Table { .. } => [0.0; 4],
+        });
         let mut carrier: [f32; OPS] =
             core::array::from_fn(|i| blend(plan.carrier_a[i], plan.carrier_b[i], blk.morph_from));
         let mut norm = blk.norm_from;
@@ -307,7 +324,10 @@ impl Model {
                 let op = plan.order[k] as usize;
                 let o = &blk.ops[op];
                 let prev = self.out[op];
-                let fb = o.feedback * 0.5 * UNITS;
+                let fb = match o.kind {
+                    KindBlock::Table { .. } => o.feedback * 0.5 * UNITS,
+                    KindBlock::Noise(_) => 0.0,
+                };
                 let mut pm = if self.one_sample_fb {
                     fb * (prev + prev)
                 } else {
@@ -319,16 +339,53 @@ impl Model {
                 }
                 self.phase[op] = self.phase[op].wrapping_add(o.inc);
                 let p = self.phase[op].wrapping_add((pm as i32 as u32) << 8);
-                let i = (p >> 24) as usize;
-                let j = (i + 1) % 256;
-                let f = (p & 0x00ff_ffff) as f32 * (1.0 / UNITS);
-                let (l0, l1) = (o.lo[i] as f32, o.lo[j] as f32);
-                let (h0, h1) = (o.hi[i] as f32, o.hi[j] as f32);
-                let a = l0 + (l1 - l0) * f;
-                let read = a + (h0 + (h1 - h0) * f - a) * xfade[op];
-                let y = read * env[op].step() * gain[op];
+                let y = match o.kind {
+                    KindBlock::Table {
+                        lo,
+                        hi,
+                        xfade_from,
+                        xfade_to,
+                    } => {
+                        let i = (p >> 24) as usize;
+                        let j = (i + 1) % 256;
+                        let f = (p & 0x00ff_ffff) as f32 * (1.0 / UNITS);
+                        let (l0, l1) = (lo[i] as f32, lo[j] as f32);
+                        let (h0, h1) = (hi[i] as f32, hi[j] as f32);
+                        let a = l0 + (l1 - l0) * f;
+                        let read = a + (h0 + (h1 - h0) * f - a) * xfade[op];
+                        let y = read * env[op].step() * gain[op];
+                        xfade[op] += (xfade_to - xfade_from) * STEP;
+                        y
+                    }
+                    // Silent all block: no noise drawn, the poles still.
+                    KindBlock::Noise(_) if o.gain_from == 0.0 && o.gain_to == 0.0 => {
+                        env[op].step();
+                        0.0
+                    }
+                    KindBlock::Noise(n) => {
+                        let [c, g, alpha, beta] = nz[op];
+                        let r = &mut self.rng[op];
+                        *r ^= *r << 13;
+                        *r ^= *r >> 17;
+                        *r ^= *r << 5;
+                        let x = g * (*r as i32 as f32 * (1.0 / 2_147_483_648.0));
+                        let (y1, y2) = &mut self.poles[op];
+                        *y1 += x - c * *y1;
+                        *y2 += c * (*y1 - *y2);
+                        let y = (alpha * clampf(*y2, -NOISE_CLAMP, NOISE_CLAMP) + beta)
+                            * sine(p)
+                            * env[op].step()
+                            * gain[op];
+                        nz[op] = [
+                            c + (n.c.1 - n.c.0) * STEP,
+                            g + (n.c.1 * n.k.1 - n.c.0 * n.k.0) * STEP,
+                            alpha + (n.alpha.1 - n.alpha.0) * STEP,
+                            beta + (n.beta.1 - n.beta.0) * STEP,
+                        ];
+                        y
+                    }
+                };
                 gain[op] += (o.gain_to - o.gain_from) * STEP;
-                xfade[op] += (o.xfade_to - o.xfade_from) * STEP;
                 self.hist[op] = prev;
                 self.out[op] = y;
                 acc += carrier[op] * y;
@@ -394,15 +451,29 @@ fn random_ops(
             rng.unit() * SAMPLE_SCALE
         };
         to_xfade[i] = rng.unit();
+        let inc = rng.next() >> 4;
+        let feedback = FEEDBACK_CYCLES[rng.below(8) as usize];
+        // A quarter of the operators are noise, which ignores FEEDBACK.
+        let kind = if rng.below(4) == 0 {
+            let mut ramp = |lo: f32, hi: f32| {
+                let mut v = || lo + (hi - lo) * rng.unit();
+                (v(), v())
+            };
+            KindBlock::Noise(NoiseBlock {
+                c: ramp(0.001, 1.0),
+                k: ramp(0.0, 40.0),
+                alpha: ramp(0.0, 1.0),
+                beta: ramp(0.0, 1.0),
+            })
+        } else {
+            table(wave.table(mip), wave.table(mip + 1), xfades[i], to_xfade[i])
+        };
         OpBlock {
-            inc: rng.next() >> 4,
+            inc,
             gain_from: gains[i],
             gain_to: to_gain[i],
-            feedback: FEEDBACK_CYCLES[rng.below(8) as usize],
-            lo: wave.table(mip),
-            hi: wave.table(mip + 1),
-            xfade_from: xfades[i],
-            xfade_to: to_xfade[i],
+            feedback,
+            kind,
         }
     });
     (ops, to_gain, to_xfade)

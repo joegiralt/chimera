@@ -27,7 +27,7 @@ use chimera_engine::addr::{BlockRef, ParamAddr};
 use chimera_engine::audio_out::{DacSample, interleave};
 use chimera_engine::dsp::algo::algorithms::AlgoId;
 use chimera_engine::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
-use chimera_engine::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
+use chimera_engine::dsp::algo::kernel::{Kernel, KernelBlock, KindBlock, OpBlock, SAMPLE_SCALE};
 use chimera_engine::dsp::algo::kinds::Kinds;
 use chimera_engine::dsp::algo::params::AlgoParams;
 use chimera_engine::dsp::algo::plan::{EvalPlan, OPS};
@@ -1972,6 +1972,40 @@ fn show_phases(rec: &mut Recorder<'_, impl ChimeraDisplay>, rows: &[(&str, Phase
     rec.flush();
 }
 
+// `time_kernel`'s plan, voices and blocks: in D2, as the audio's voices
+// are, and off its frame (the stack check's 8 KB). NOLOAD, so garbage at
+// boot: sound because each is `MaybeUninit` and `time_kernel` writes every
+// element (`fill`) before any read.
+#[unsafe(link_section = ".ram_d2.voices")]
+static mut KERNEL_PLAN: MaybeUninit<EvalPlan> = MaybeUninit::uninit();
+#[unsafe(link_section = ".ram_d2.voices")]
+static mut KERNELS: MaybeUninit<[Kernel; MAX_VOICES]> = MaybeUninit::uninit();
+#[unsafe(link_section = ".ram_d2.voices")]
+static mut KERNEL_ENVS: MaybeUninit<[[OpEnv; OPS]; MAX_VOICES]> = MaybeUninit::uninit();
+#[unsafe(link_section = ".ram_d2.voices")]
+static mut KERNEL_BLOCKS: MaybeUninit<[KernelBlock<'static>; MAX_VOICES]> = MaybeUninit::uninit();
+
+/// Every element of `*slot` from `f`, written in place, one at a time: the
+/// array is never built on the caller's stack.
+///
+/// # Safety
+///
+/// `slot` is valid and aligned, and nothing else references it until the
+/// returned reference is dropped.
+unsafe fn fill<T, const N: usize>(
+    slot: *mut MaybeUninit<[T; N]>,
+    mut f: impl FnMut(usize) -> T,
+) -> &'static mut [T; N] {
+    let p = slot.cast::<T>();
+    for i in 0..N {
+        // SAFETY: `i < N`, inside the array `slot` holds; per the contract
+        // no one else is looking.
+        unsafe { p.add(i).write(f(i)) };
+    }
+    // SAFETY: every element was written above.
+    unsafe { &mut *slot.cast::<[T; N]>() }
+}
+
 /// Spec § Budget worst case, one kernel per voice: six operators, all with
 /// feedback, six distinct waves crossfading mips `v` and `v + 1` in voice `v`
 /// (the top mip clamps: about 21 KB of tables at six voices, all 64 KB at
@@ -1983,12 +2017,16 @@ fn show_phases(rec: &mut Recorder<'_, impl ChimeraDisplay>, rows: &[(&str, Phase
 fn time_kernel() -> u32 {
     const A14: [u8; OPS] = [0, 0, 0b11, 0b11, 0b100, 0b1000];
     const A22: [u8; OPS] = [0, 0b1, 0b1, 0b10, 0b100, 0b1_1000];
-    let plan = black_box(EvalPlan::build(
-        black_box(&A14),
-        black_box(0b11),
-        black_box(&A22),
-        black_box(0b1),
-    ));
+    // SAFETY: the bench is the only user of these statics, `time_kernel`
+    // their only writer, one run at a time and before the audio starts;
+    // each reference below is the only one, and dies with this call.
+    let plan: &'static EvalPlan =
+        unsafe { &mut *addr_of_mut!(KERNEL_PLAN) }.write(black_box(EvalPlan::build(
+            black_box(&A14),
+            black_box(0b11),
+            black_box(&A22),
+            black_box(0b1),
+        )));
     let rates = EnvRates {
         ar: 31,
         d1r: 0,
@@ -1997,48 +2035,58 @@ fn time_kernel() -> u32 {
         rr: 8,
         rs: 0,
     };
-    let mut kernels = [Kernel::new(); MAX_VOICES];
-    let mut envs = [[OpEnv::IDLE; OPS]; MAX_VOICES];
-    for (v, env) in envs.iter_mut().enumerate() {
-        let note = MidiNote::new(48 + 5 * v as u8).unwrap_or(MidiNote::A4);
-        for e in env.iter_mut() {
-            e.note_on(EnvCoefs::new(rates, note, SAMPLE_RATE as f32));
-        }
-    }
-    let blocks: [KernelBlock; MAX_VOICES] = black_box(core::array::from_fn(|v| KernelBlock {
-        plan: &plan,
-        ops: core::array::from_fn(|i| {
-            let wave = WAVES[(i + v) % OPS];
-            OpBlock {
-                inc: (i as u32 + 1) * (11_600_000 + 2_000_000 * v as u32),
-                gain_from: 0.9 * SAMPLE_SCALE,
-                gain_to: 0.8 * SAMPLE_SCALE,
-                feedback: FEEDBACK_CYCLES[7],
-                lo: wave.table(v),
-                hi: wave.table(v + 1),
-                xfade_from: 0.4,
-                xfade_to: 0.6,
+    // SAFETY: as `plan`'s.
+    let kernels = unsafe { fill(addr_of_mut!(KERNELS), |_| Kernel::new()) };
+    // SAFETY: as `plan`'s.
+    let envs = unsafe {
+        fill(addr_of_mut!(KERNEL_ENVS), |v| {
+            let note = MidiNote::new(48 + 5 * v as u8).unwrap_or(MidiNote::A4);
+            let mut env = [OpEnv::IDLE; OPS];
+            for e in env.iter_mut() {
+                e.note_on(EnvCoefs::new(rates, note, SAMPLE_RATE as f32));
             }
-        }),
-        morph_from: 0.45,
-        morph_to: 0.55,
-        norm_from: 0.7,
-        norm_to: 0.7,
-    }));
+            env
+        })
+    };
+    // SAFETY: as `plan`'s.
+    let blocks = black_box(unsafe {
+        fill(addr_of_mut!(KERNEL_BLOCKS), |v| KernelBlock {
+            plan,
+            ops: core::array::from_fn(|i| {
+                let wave = WAVES[(i + v) % OPS];
+                OpBlock {
+                    inc: (i as u32 + 1) * (11_600_000 + 2_000_000 * v as u32),
+                    gain_from: 0.9 * SAMPLE_SCALE,
+                    gain_to: 0.8 * SAMPLE_SCALE,
+                    feedback: FEEDBACK_CYCLES[7],
+                    kind: KindBlock::Table {
+                        lo: wave.table(v),
+                        hi: wave.table(v + 1),
+                        xfade_from: 0.4,
+                        xfade_to: 0.6,
+                    },
+                }
+            }),
+            morph_from: 0.45,
+            morph_to: 0.55,
+            norm_from: 0.7,
+            norm_to: 0.7,
+        })
+    });
     let mut out = [0.0f32; BLOCK_SIZE];
     // No tap wanted: the rows go untouched, as on a tap-free Sound.
     let mut taps = chimera_engine::taps::TapRows::new([false; 2]);
     let mut run = |kernels: &mut [Kernel; MAX_VOICES], envs: &mut [[OpEnv; OPS]; MAX_VOICES]| {
-        for ((k, env), blk) in kernels.iter_mut().zip(envs.iter_mut()).zip(&blocks) {
+        for ((k, env), blk) in kernels.iter_mut().zip(envs.iter_mut()).zip(blocks.iter()) {
             k.render(black_box(blk), env, &mut out, &mut taps);
         }
     };
     for _ in 0..WARM_BLOCKS {
-        run(&mut kernels, &mut envs);
+        run(kernels, envs);
     }
     let start = DWT::cycle_count();
     for _ in 0..TIMED_BLOCKS {
-        run(&mut kernels, &mut envs);
+        run(kernels, envs);
     }
     let cycles = DWT::cycle_count().wrapping_sub(start);
     black_box(&out);

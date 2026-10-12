@@ -8,16 +8,20 @@ use core::ptr::addr_of_mut;
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::algorithms::{ALGORITHMS, AlgoId, plan};
 use crate::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
-use crate::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
+use crate::dsp::algo::formant::{NYQUIST_HZ, Skirt, cycles_to_phase};
+use crate::dsp::algo::kernel::{Kernel, KernelBlock, KindBlock, NoiseBlock, OpBlock, SAMPLE_SCALE};
 use crate::dsp::algo::kinds::{Kinds, OpKind};
 use crate::dsp::algo::math::exp2;
 use crate::dsp::algo::morph::{Morph, carrier_norm, incoming};
-use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
+use crate::dsp::algo::noise::{NOISE_GAIN, noise_coef, noise_edge, res_mix};
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, bw_hz};
 use crate::dsp::algo::plan::{EvalPlan, MAX_EDGES, OPS, blend};
 use crate::dsp::algo::tx::{detune_at, feedback_cycles, level_gain, patch_gain, ratio_at};
+use crate::dsp::algo::vowel::{Formant, VowelSlot, fc_hz, resolve_slots};
 use crate::dsp::algo::waves::{WaveId, mip_position, mip_step};
 use crate::dsp::glide::Glide;
 use crate::hw::{BLOCK_SIZE, Cost};
+use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
 
 /// LEVEL steps (3 dB) one VELOCITY step takes off at velocity 0.
@@ -122,6 +126,30 @@ impl AlgoLive {
     }
 }
 
+/// What an operator holds from its note-on (spec § 7): SKIRT only when it
+/// was idle, so a retrigger never changes an open grain's exponent
+/// (Ruling 7).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OpLatch {
+    pub skirt: Skirt,
+    pub slot: Option<Formant>,
+    pub key: f32,
+    /// RES's `(α, β)`.
+    pub mix: (f32, f32),
+}
+
+impl OpLatch {
+    const INIT: OpLatch = OpLatch {
+        skirt: Skirt::S1,
+        slot: None,
+        key: 0.0,
+        mix: (1.0, 0.0),
+    };
+}
+
+/// `noise_coef` at an unbounded WIDTH: white noise at unit RMS.
+const WHITE: (f32, f32) = (1.0, 1.732_050_8);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Swap {
     Idle,
@@ -158,11 +186,19 @@ pub struct AlgoEngine {
     active: bool,
     /// Key down since the last note-on: every carrier holds the voice.
     held: bool,
+    latch: [OpLatch; OPS],
+    /// The noise ramps' starts: the last block's poles' coefficient and
+    /// input gain, and RES's `(α, β)`.
+    noise_c: [f32; OPS],
+    noise_k: [f32; OPS],
+    mix: [(f32, f32); OPS],
+    /// The last block's `(fc, bw_eff)` of each formant or noise operator.
+    view: [(f32, f32); OPS],
 }
 
 crate::in_place::field_list!(AlgoEngine => AlgoEngine {
     kernel, env, plan, plan_key, kinds, rates, gain, mip, morph, norm, swap, note, pitch, slide,
-    velocity, active, held,
+    velocity, active, held, latch, noise_c, noise_k, mix, view,
 });
 
 #[cfg(any(test, feature = "test-support"))]
@@ -172,8 +208,8 @@ impl Default for AlgoEngine {
     }
 }
 
-/// The table an operator reads: W1 under a formant or noise kind, whose
-/// gain is 0.
+/// The table an operator reads: W1 under a formant kind, whose gain is 0
+/// until its kernel (Task 10).
 const fn table_of(k: OpKind) -> WaveId {
     match k {
         OpKind::Table(w) => w,
@@ -271,6 +307,11 @@ impl AlgoEngine {
             addr_of_mut!((*p).velocity).write(1.0);
             addr_of_mut!((*p).active).write(false);
             addr_of_mut!((*p).held).write(false);
+            addr_of_mut!((*p).latch).write([OpLatch::INIT; OPS]);
+            addr_of_mut!((*p).noise_c).write([WHITE.0; OPS]);
+            addr_of_mut!((*p).noise_k).write([WHITE.1; OPS]);
+            addr_of_mut!((*p).mix).write([OpLatch::INIT.mix; OPS]);
+            addr_of_mut!((*p).view).write([(0.0, 0.0); OPS]);
             slot.assume_init_mut()
         }
     }
@@ -304,12 +345,21 @@ impl AlgoEngine {
             self.norm = carrier_norm(&self.plan, m, &patch_gains(&live));
         }
         let cycles = self.cycles(p, sr);
+        let vslot = core::array::from_fn(|i| {
+            VowelSlot::from_code(p.ops[i].vslot).unwrap_or(VowelSlot::Off)
+        });
+        let slots = resolve_slots(&p.kinds(), vslot);
         for i in 0..OPS {
             self.rates[i] = p.ops[i].rates();
+            let o = &p.ops[i];
+            let l = &mut self.latch[i];
+            (l.slot, l.key, l.mix) = (slots[i], f32::from(o.key), res_mix(o.res));
             if self.env[i].is_idle() {
-                self.kernel.reset(i);
+                l.skirt = Skirt::from_code(o.skirt);
+                self.kernel.reset(i, p.kinds().get(i));
                 self.kinds[i] = p.kinds().get(i);
-                self.gain[i] = self.target_gain(&live, i);
+                (self.noise_c[i], self.noise_k[i]) = noise_coef(self.noise_band(p, i).1, sr);
+                self.gain[i] = self.target_gain(p, &live, i);
                 self.mip[i] = self.mip_target(p, &live, cycles, sr, m, &level, i);
             }
             self.env[i].note_on(EnvCoefs::new(self.rates[i], note, sr));
@@ -376,6 +426,34 @@ impl AlgoEngine {
         self.active
     }
 
+    /// Every operator's noise from `voice`'s seeds: once, as the slot is
+    /// built, never at a note-on.
+    pub fn seed(&mut self, voice: VoiceIdx) {
+        self.kernel.seed(voice.index() as u8);
+    }
+
+    /// The formant and noise operators' last `(fc, bw_eff)`, Hz.
+    pub fn view(&self) -> [(f32, f32); OPS] {
+        self.view
+    }
+
+    /// Ruling 7: a sounding FRMT operator latched at SKIRT ≥ 1 runs two
+    /// lanes where a stored SKIRT 0 bills one; the difference, per
+    /// operator.
+    pub fn held_skirt_extra(&self, p: &AlgoParams) -> Cost {
+        if !self.active {
+            return Cost::ZERO;
+        }
+        let n = (0..OPS)
+            .filter(|&i| {
+                self.kinds[i] == OpKind::Formant
+                    && self.latch[i].skirt != Skirt::S0
+                    && p.ops[i].skirt == 0
+            })
+            .count() as u32;
+        Cost(n * (Self::COST_FRMT.0 - Self::COST_FRMT_ONE.0))
+    }
+
     pub fn render(
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
@@ -408,16 +486,37 @@ impl AlgoEngine {
             )
         });
         let ops: [OpBlock; OPS] = core::array::from_fn(|i| {
+            let gain_to = self.target_gain(p, live, i) * self.op_duck(i);
+            if self.kinds[i] == OpKind::Noise {
+                let (fc, w) = self.noise_band(p, i);
+                let (c, k) = noise_coef(w, sr);
+                let mix = (self.mix[i], self.latch[i].mix);
+                return OpBlock {
+                    // FC/sr ≤ ½ at any rate ≥ 48 kHz; wrapping besides.
+                    inc: cycles_to_phase(fc.min(NYQUIST_HZ) / sr),
+                    gain_from: self.gain[i],
+                    gain_to,
+                    feedback: 0.0,
+                    kind: KindBlock::Noise(NoiseBlock {
+                        c: (self.noise_c[i], c),
+                        k: (self.noise_k[i], k),
+                        alpha: (mix.0.0, mix.1.0),
+                        beta: (mix.0.1, mix.1.1),
+                    }),
+                };
+            }
             let (lo, xfade_from, xfade_to) = mips[i];
             OpBlock {
                 inc: (op_cycles(cycles, p, live, i) * 4_294_967_296.0) as u32,
                 gain_from: self.gain[i],
-                gain_to: self.target_gain(live, i) * self.op_duck(i),
+                gain_to,
                 feedback: feedback_cycles(live.feedback[i]),
-                lo: table_of(self.kinds[i]).table(lo),
-                hi: table_of(self.kinds[i]).table(lo + 1),
-                xfade_from,
-                xfade_to,
+                kind: KindBlock::Table {
+                    lo: table_of(self.kinds[i]).table(lo),
+                    hi: table_of(self.kinds[i]).table(lo + 1),
+                    xfade_from,
+                    xfade_to,
+                },
             }
         });
         let norm = carrier_norm(&self.plan, m, &patch_gains(live)) * self.alg_duck();
@@ -433,6 +532,11 @@ impl AlgoEngine {
         for (i, o) in ops.iter().enumerate() {
             self.gain[i] = o.gain_to;
             self.mip[i] = mips[i].0 as f32 + mips[i].2;
+            self.mix[i] = self.latch[i].mix;
+            if let KindBlock::Noise(n) = o.kind {
+                (self.noise_c[i], self.noise_k[i]) = (n.c.1, n.k.1);
+                self.view[i] = self.noise_band(p, i);
+            }
         }
         (self.morph, self.norm) = (m.get(), norm);
         self.finish_swap(p);
@@ -477,14 +581,34 @@ impl AlgoEngine {
         mip_position(bandwidth)
     }
 
-    /// 0 for a formant or noise operator: silent until its kernel (Tasks 9
-    /// and 10).
-    fn target_gain(&self, live: &AlgoLive, i: usize) -> f32 {
-        if self.kinds[i].is_formant() {
-            return 0.0;
-        }
+    /// A table's in sample units; a noise band's at the −12 dB reference,
+    /// faded at the top of the band; 0 for a formant operator until its
+    /// kernel (Task 10).
+    fn target_gain(&self, p: &AlgoParams, live: &AlgoLive, i: usize) -> f32 {
         let vel = clampf(live.velocity[i], 0.0, 7.0) * (1.0 - self.velocity) * VELOCITY_STEPS;
-        level_gain(live.level[i] - vel) * SAMPLE_SCALE
+        let g = level_gain(live.level[i] - vel);
+        match self.kinds[i] {
+            OpKind::Table(_) => g * SAMPLE_SCALE,
+            OpKind::Noise => {
+                let (fc, w) = self.noise_band(p, i);
+                g * NOISE_GAIN * noise_edge(fc, w)
+            }
+            OpKind::Formant => 0.0,
+        }
+    }
+
+    /// A noise operator's centre and WIDTH, Hz: CENTRE on its latched
+    /// vowel slot, with no KEY (spec § 4); stored FRMT, BW and VOWEL.
+    fn noise_band(&self, p: &AlgoParams, i: usize) -> (f32, f32) {
+        let o = &p.ops[i];
+        let fc = fc_hz(
+            f32::from(o.frmt),
+            f32::from(p.vowel),
+            self.latch[i].slot,
+            0.0,
+            0.0,
+        );
+        (fc, bw_hz(f32::from(o.bw)))
     }
 
     fn adopt_alg(&mut self, p: &AlgoParams) {
@@ -518,9 +642,15 @@ impl AlgoEngine {
                 if alg {
                     self.adopt_alg(p);
                 }
-                for (i, k) in self.kinds.iter_mut().enumerate() {
+                for i in 0..OPS {
+                    let (old, new) = (self.kinds[i], p.kinds().get(i));
                     if kinds & (1 << i) != 0 {
-                        *k = p.kinds().get(i);
+                        // A table to a table runs on; any other kind starts
+                        // closed, under the duck.
+                        if old.is_formant() || new.is_formant() {
+                            self.kernel.reset(i, new);
+                        }
+                        self.kinds[i] = new;
                     }
                 }
                 Swap::Rising

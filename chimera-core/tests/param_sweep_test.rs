@@ -250,8 +250,8 @@ fn silences(c: &Case) -> Option<&'static str> {
              note",
         );
     }
-    if c.is_op(AlgoOpParams::WAVE) && c.any(|v| v >= 16.0) {
-        return Some("formant kind before its kernel: FRMT and NOISE are silent (Tasks 9 and 10)");
+    if c.is_op(AlgoOpParams::WAVE) && c.any(|v| v == 16.0) {
+        return Some("formant kind before its kernel: FRMT is silent until Task 10");
     }
     if c.is_op(AlgoOpParams::AR) && c.any(|v| v == 0.0) {
         return Some("AR 0 never attacks (the TX81Z's rate 0)");
@@ -874,6 +874,19 @@ fn levels_are_safe() {
             assert!(l.rms[0] > SILENT_RMS, "{} sounds", p.name());
         }
     }
+}
+
+/// The formant fixture at C3 (Ruling 11): heard, safe, and its level
+/// printed against the reference (pinned from Task 10).
+#[test]
+#[ignore = "joins in Task 10, when FRMT sounds"]
+fn formant_fixture_level() {
+    let l = level(Patch::Formant, &[48], 100, BPS);
+    println!(
+        "FORMANT: {:+.2} dB vs the reference",
+        l.lufs - REFERENCE_LUFS
+    );
+    assert!(l.peak.iter().all(|&p| within_ceiling(p)) && l.rms[0] > SILENT_RMS);
 }
 
 /// ADR 0109's reference: ADR 0063's factory median (−22 LUFS) plus the

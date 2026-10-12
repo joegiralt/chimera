@@ -43,6 +43,8 @@ pub fn noise_edge(fc: f32, width: f32) -> f32 {
 
 /// Operator `op`'s xorshift seed in voice `voice`: nonzero and distinct
 /// for every voice and operator (an odd multiplier is a bijection).
-pub fn noise_seed(voice: u8, op: usize) -> u32 {
-    ((u32::from(voice) << 8 | (op as u32 & 0xff)) + 1).wrapping_mul(0x9e37_79b9)
+pub const fn noise_seed(voice: u8, op: usize) -> u32 {
+    ((voice as u32) << 8 | (op as u32 & 0xff))
+        .wrapping_add(1)
+        .wrapping_mul(0x9e37_79b9)
 }

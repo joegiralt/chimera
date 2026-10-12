@@ -1,8 +1,11 @@
 //! The per-sample loop: six phase-modulation operators on an `EvalPlan`.
 
 use crate::dsp::algo::env::{EnvRun, OpEnv};
+use crate::dsp::algo::kinds::OpKind;
+use crate::dsp::algo::math::clampf;
+use crate::dsp::algo::noise::{NOISE_CLAMP, noise_seed};
 use crate::dsp::algo::plan::{EvalPlan, MAX_EDGES, OPS, blend};
-use crate::dsp::algo::waves::{Table, WAVE_LEN};
+use crate::dsp::algo::waves::{Table, WAVE_LEN, WaveId};
 use crate::hw::BLOCK_SIZE;
 use crate::taps::{TapOp, TapRows};
 
@@ -14,18 +17,55 @@ pub const SAMPLE_SCALE: f32 = 1.0 / 32_767.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct OpBlock {
-    /// 2^32 is one cycle.
+    /// 2^32 is one cycle: the pitch, or a noise band's centre.
     pub inc: u32,
-    /// `SAMPLE_SCALE` included.
+    /// `SAMPLE_SCALE` included on a table.
     pub gain_from: f32,
     pub gain_to: f32,
-    /// `FEEDBACK_CYCLES` of the operator's setting.
+    /// `FEEDBACK_CYCLES` of the operator's setting; noise ignores it.
     pub feedback: f32,
-    pub lo: &'static Table,
-    pub hi: &'static Table,
-    /// The weight of `hi`, ramped across the block like the gain.
-    pub xfade_from: f32,
-    pub xfade_to: f32,
+    pub kind: KindBlock,
+}
+
+/// What the operator plays this block, by kind.
+#[derive(Clone, Copy, Debug)]
+pub enum KindBlock {
+    Table {
+        lo: &'static Table,
+        hi: &'static Table,
+        /// The weight of `hi`, ramped across the block like the gain.
+        xfade_from: f32,
+        xfade_to: f32,
+    },
+    Noise(NoiseBlock),
+}
+
+/// A noise band's settings, each `(from, to)`, ramped across the block
+/// (spec § 4): the poles' coefficient `c`, their input gain `k`, and the
+/// noise and tone weights `alpha` and `beta`.
+#[derive(Clone, Copy, Debug)]
+pub struct NoiseBlock {
+    pub c: (f32, f32),
+    pub k: (f32, f32),
+    pub alpha: (f32, f32),
+    pub beta: (f32, f32),
+}
+
+/// Each operator's own state beyond its phase.
+#[derive(Clone, Copy, Debug)]
+enum KindState {
+    Table,
+    Noise { y1: f32, y2: f32 },
+}
+
+impl KindState {
+    /// The poles: closed (0) on any state but noise's.
+    fn poles(self) -> (f32, f32) {
+        match self {
+            KindState::Noise { y1, y2 } => (y1, y2),
+            KindState::Table => (0.0, 0.0),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -46,6 +86,9 @@ pub struct Kernel {
     out: [f32; 8],
     /// The output before that, for feedback averaged over two samples.
     hist: [f32; OPS],
+    /// Each operator's xorshift state: seeded per voice, never reset.
+    rng: [u32; OPS],
+    state: [KindState; OPS],
 }
 
 #[derive(Clone, Copy)]
@@ -59,12 +102,21 @@ struct Lane {
     dcarrier: f32,
     feedback: f32,
     hist: f32,
-    xfade: f32,
-    dxfade: f32,
-    lo: &'static Table,
-    hi: &'static Table,
+    src: Src,
     edges: (usize, usize),
     env: OpEnv,
+}
+
+/// What a lane reads: its tables or its noise.
+#[derive(Clone, Copy)]
+enum Src {
+    Table {
+        xfade: f32,
+        dxfade: f32,
+        lo: &'static Table,
+        hi: &'static Table,
+    },
+    Noise(Noise),
 }
 
 impl Default for Kernel {
@@ -75,17 +127,36 @@ impl Default for Kernel {
 
 impl Kernel {
     pub const fn new() -> Self {
-        Self {
+        let mut k = Self {
             phase: [0; OPS],
             out: [0.0; 8],
             hist: [0.0; OPS],
+            rng: [0; OPS],
+            state: [KindState::Table; OPS],
+        };
+        k.seed(0);
+        k
+    }
+
+    /// Every operator's noise from voice `voice`'s seeds.
+    pub const fn seed(&mut self, voice: u8) {
+        let mut op = 0;
+        while op < OPS {
+            self.rng[op] = noise_seed(voice, op);
+            op += 1;
         }
     }
 
-    pub fn reset(&mut self, op: usize) {
+    /// Operator `op` starts afresh as `kind`, closed: noise's poles at 0,
+    /// its generator running on.
+    pub fn reset(&mut self, op: usize, kind: OpKind) {
         self.phase[op] = 0;
         self.out[op] = 0.0;
         self.hist[op] = 0.0;
+        self.state[op] = match kind {
+            OpKind::Noise => KindState::Noise { y1: 0.0, y2: 0.0 },
+            OpKind::Table(_) | OpKind::Formant => KindState::Table,
+        };
     }
 
     /// `blk.plan` must come from `EvalPlan::build` unchanged; see `EvalPlan`.
@@ -142,9 +213,18 @@ impl Kernel {
                     src: &done[pos[e.src as usize]],
                 }
             };
+            if let KindBlock::Noise(nb) = &blk.ops[a].kind {
+                let links: [Option<Link>; 5] = core::array::from_fn(|i| (i < n).then(|| link(i)));
+                self.noise_op(blk, a, dm, nb, &links, &mut env[a], &mut rest[0], out);
+                k += 1;
+                continue;
+            }
             let mut x = self.lane(blk, a, dm);
-            let pair =
-                k + 1 < OPS && n <= 2 && !silent(&blk.ops[plan.order[k + 1] as usize % OPS]) && {
+            let pair = k + 1 < OPS
+                && n <= 2
+                && is_table(&blk.ops[plan.order[k + 1] as usize % OPS])
+                && !silent(&blk.ops[plan.order[k + 1] as usize % OPS])
+                && {
                     let m = plan.starts[k + 2].saturating_sub(plan.starts[k + 1]) as usize;
                     let from_a = plan.edges[plan.starts[k + 1] as usize..]
                         .iter()
@@ -213,9 +293,11 @@ impl Kernel {
         }
     }
 
+    /// A table operator's lane (`render_ops` sends noise to `noise_lane`).
     #[inline(always)]
     fn lane(&self, blk: &KernelBlock, op: usize, dm: f32) -> OpState {
         let (plan, o) = (blk.plan, &blk.ops[op]);
+        let (lo, hi, xfade_from, xfade_to) = tables(o);
         OpState {
             phase: self.phase[op],
             inc: o.inc,
@@ -226,11 +308,68 @@ impl Kernel {
             feedback: o.feedback * 0.5 * PHASE_UNITS,
             prev: self.out[op],
             hist: self.hist[op],
-            xfade: o.xfade_from,
-            dxfade: (o.xfade_to - o.xfade_from) * STEP,
-            lo: o.lo,
-            hi: o.hi,
+            xfade: xfade_from,
+            dxfade: (xfade_to - xfade_from) * STEP,
+            lo,
+            hi,
         }
+    }
+
+    #[inline(always)]
+    fn noise_lane(&self, blk: &KernelBlock, op: usize, dm: f32, nb: &NoiseBlock) -> NoiseState {
+        let (plan, o) = (blk.plan, &blk.ops[op]);
+        NoiseState {
+            phase: self.phase[op],
+            inc: o.inc,
+            gain: o.gain_from,
+            dgain: (o.gain_to - o.gain_from) * STEP,
+            carrier: blend(plan.carrier_a[op], plan.carrier_b[op], blk.morph_from),
+            dcarrier: (plan.carrier_b[op] - plan.carrier_a[op]) * dm,
+            prev: self.out[op],
+            hist: self.hist[op],
+            n: Noise::new(self.rng[op], self.state[op].poles(), nb),
+        }
+    }
+
+    /// A noise operator's block: its links summed first, in the order
+    /// `tick` adds them, then `run_noise`. Out of line, so its row stays
+    /// off the callers' frames.
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn noise_op(
+        &mut self,
+        blk: &KernelBlock,
+        op: usize,
+        dm: f32,
+        nb: &NoiseBlock,
+        links: &[Option<Link>; 5],
+        env: &mut OpEnv,
+        dst: &mut [f32; BLOCK_SIZE],
+        acc: &mut [f32; BLOCK_SIZE],
+    ) {
+        let mut pm = [0.0f32; BLOCK_SIZE];
+        for mut l in links.iter().flatten().copied() {
+            for (p, &x) in pm.iter_mut().zip(l.src) {
+                *p += l.w * x;
+                l.w += l.dw;
+            }
+        }
+        let mut x = self.noise_lane(blk, op, dm, nb);
+        run_noise(&mut x, &pm, env, dst, acc);
+        self.keep_noise(op, &x);
+    }
+
+    #[inline(always)]
+    fn keep_noise(&mut self, op: usize, st: &NoiseState) {
+        self.phase[op] = st.phase;
+        self.out[op] = st.prev;
+        self.hist[op] = st.hist;
+        self.keep_poles(op, &st.n);
+    }
+
+    fn keep_poles(&mut self, op: usize, n: &Noise) {
+        self.rng[op] = n.rng;
+        self.state[op] = KindState::Noise { y1: n.y1, y2: n.y2 };
     }
 
     /// An operator silent all block outputs zeros (its row stays 0), so
@@ -274,6 +413,26 @@ impl Kernel {
         let mut lanes: [Lane; OPS] = core::array::from_fn(|k| {
             let op = plan.order[k] as usize % OPS;
             let o = &blk.ops[op];
+            let (src, feedback) = match &o.kind {
+                &KindBlock::Table {
+                    lo,
+                    hi,
+                    xfade_from,
+                    xfade_to,
+                } => (
+                    Src::Table {
+                        xfade: xfade_from,
+                        dxfade: (xfade_to - xfade_from) * STEP,
+                        lo,
+                        hi,
+                    },
+                    o.feedback * 0.5 * PHASE_UNITS,
+                ),
+                KindBlock::Noise(nb) => (
+                    Src::Noise(Noise::new(self.rng[op], self.state[op].poles(), nb)),
+                    0.0,
+                ),
+            };
             Lane {
                 op,
                 phase: self.phase[op],
@@ -282,12 +441,9 @@ impl Kernel {
                 dgain: (o.gain_to - o.gain_from) * STEP,
                 carrier: blend(plan.carrier_a[op], plan.carrier_b[op], blk.morph_from),
                 dcarrier: (plan.carrier_b[op] - plan.carrier_a[op]) * dm,
-                feedback: o.feedback * 0.5 * PHASE_UNITS,
+                feedback,
                 hist: self.hist[op],
-                xfade: o.xfade_from,
-                dxfade: (o.xfade_to - o.xfade_from) * STEP,
-                lo: o.lo,
-                hi: o.hi,
+                src,
                 edges: (plan.starts[k] as usize, plan.starts[k + 1] as usize),
                 env: env[op],
             }
@@ -333,6 +489,9 @@ impl Kernel {
                 self.phase[l.op] = l.phase;
                 self.hist[l.op] = l.hist;
                 env[l.op] = l.env;
+                if let Src::Noise(n) = &l.src {
+                    self.keep_poles(l.op, n);
+                }
             }
         }
     }
@@ -364,9 +523,20 @@ impl Kernel {
         }
         l.phase = l.phase.wrapping_add(l.inc);
         let p = l.phase.wrapping_add((pm as i32 as u32) << 8);
-        let y = read(l.lo, l.hi, l.xfade, p) * l.env.step() * l.gain;
+        let y = match &mut l.src {
+            Src::Table {
+                xfade,
+                dxfade,
+                lo,
+                hi,
+            } => {
+                let y = read(lo, hi, *xfade, p) * l.env.step() * l.gain;
+                *xfade += *dxfade;
+                y
+            }
+            Src::Noise(n) => n.tone(p) * l.env.step() * l.gain,
+        };
         l.gain += l.dgain;
-        l.xfade += l.dxfade;
         l.hist = prev;
         self.out[l.op & 7] = y;
         let c = l.carrier * y;
@@ -388,6 +558,127 @@ fn tap_sample(y: f32) -> f32 {
 
 fn silent(o: &OpBlock) -> bool {
     o.gain_from == 0.0 && o.gain_to == 0.0
+}
+
+fn is_table(o: &OpBlock) -> bool {
+    matches!(o.kind, KindBlock::Table { .. })
+}
+
+/// A table operator's tables and crossfade; W1 for noise, which reads its
+/// own lane.
+#[inline(always)]
+fn tables(o: &OpBlock) -> (&'static Table, &'static Table, f32, f32) {
+    match o.kind {
+        KindBlock::Table {
+            lo,
+            hi,
+            xfade_from,
+            xfade_to,
+        } => (lo, hi, xfade_from, xfade_to),
+        KindBlock::Noise(_) => {
+            let w = WaveId::W1.table(0);
+            (w, w, 0.0, 0.0)
+        }
+    }
+}
+
+/// A noise operator's generator, poles and ramps (spec § 4). The input
+/// gain ramps as `g = c·k`, the first pole's real gain: ramping `k` alone
+/// would scale wide noise by a narrow band's `k` mid-ramp, a burst the
+/// poles then hold (+9 dB over 10 ms, 4 kHz to 20 Hz).
+#[derive(Clone, Copy)]
+struct Noise {
+    rng: u32,
+    y1: f32,
+    y2: f32,
+    c: f32,
+    dc: f32,
+    g: f32,
+    dg: f32,
+    alpha: f32,
+    dalpha: f32,
+    beta: f32,
+    dbeta: f32,
+    sine: &'static Table,
+}
+
+impl Noise {
+    fn new(rng: u32, (y1, y2): (f32, f32), b: &NoiseBlock) -> Self {
+        let d = |(from, to): (f32, f32)| (to - from) * STEP;
+        Noise {
+            rng,
+            y1,
+            y2,
+            c: b.c.0,
+            dc: d(b.c),
+            g: b.c.0 * b.k.0,
+            dg: d((b.c.0 * b.k.0, b.c.1 * b.k.1)),
+            alpha: b.alpha.0,
+            dalpha: d(b.alpha),
+            beta: b.beta.0,
+            dbeta: d(b.beta),
+            sine: WaveId::W1.table(0),
+        }
+    }
+
+    /// One sample of band noise and tone, ring-modulated by the centre's
+    /// sine at phase `p`: scaled before the poles, clamped after them.
+    #[inline(always)]
+    fn tone(&mut self, p: u32) -> f32 {
+        let mut r = self.rng;
+        r ^= r << 13;
+        r ^= r >> 17;
+        r ^= r << 5;
+        self.rng = r;
+        let x = self.g * (r as i32 as f32 * (1.0 / 2_147_483_648.0));
+        self.y1 += x - self.c * self.y1;
+        self.y2 += self.c * (self.y1 - self.y2);
+        let y = (self.alpha * clampf(self.y2, -NOISE_CLAMP, NOISE_CLAMP) + self.beta)
+            * sine_at(self.sine, p);
+        self.g += self.dg;
+        self.c += self.dc;
+        self.alpha += self.dalpha;
+        self.beta += self.dbeta;
+        y
+    }
+}
+
+#[derive(Clone, Copy)]
+struct NoiseState {
+    phase: u32,
+    inc: u32,
+    gain: f32,
+    dgain: f32,
+    carrier: f32,
+    dcarrier: f32,
+    prev: f32,
+    hist: f32,
+    n: Noise,
+}
+
+/// A noise operator's block, as `run_one` renders a table's: `pm`, its
+/// links' sum, into the centre's phase; no feedback.
+fn run_noise(
+    st: &mut NoiseState,
+    pm: &[f32; BLOCK_SIZE],
+    env: &mut OpEnv,
+    dst: &mut [f32; BLOCK_SIZE],
+    acc: &mut [f32; BLOCK_SIZE],
+) {
+    let (mut x, mut run) = (*st, env.run());
+    for s in 0..BLOCK_SIZE {
+        x.phase = x.phase.wrapping_add(x.inc);
+        let p = x.phase.wrapping_add((pm[s] as i32 as u32) << 8);
+        let y = x.n.tone(p) * run.step(env) * x.gain;
+        x.gain += x.dgain;
+        x.hist = x.prev;
+        x.prev = y;
+        dst[s] = y;
+        acc[s] += x.carrier * y;
+        x.carrier += x.dcarrier;
+    }
+    *st = x;
+    env.store(run);
 }
 
 #[derive(Clone, Copy)]
@@ -513,6 +804,18 @@ fn pair(t: &Table, i: usize) -> (f32, f32) {
     // target (Cortex-M7 included) allows.
     let w = unsafe { t.as_ptr().add(i).cast::<u32>().read_unaligned() };
     (w as u16 as i16 as f32, (w as i32 >> 16) as f32)
+}
+
+/// W1 at mip 0, interpolated, at unit scale: a noise band's centre.
+pub fn sine(p: u32) -> f32 {
+    sine_at(WaveId::W1.table(0), p)
+}
+
+#[inline(always)]
+fn sine_at(t: &Table, p: u32) -> f32 {
+    let f = (p & 0x00ff_ffff) as f32 * (1.0 / PHASE_UNITS);
+    let (a, b) = pair(t, (p >> 24) as usize);
+    (a + (b - a) * f) * SAMPLE_SCALE
 }
 
 #[inline(always)]
