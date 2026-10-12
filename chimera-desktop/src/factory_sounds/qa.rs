@@ -169,11 +169,12 @@ const fn n(step: i8, at: u8, len: u8, vel: u8) -> PhraseNote {
     PhraseNote { step, at, len, vel }
 }
 
-/// In the manner of an early-80s synth-pop octave bassline (the bouncing
-/// root-and-octave sixteenths of Eurodisco and new wave), written fresh:
-/// a minor i–i–♭VI–♭VII, syncopated pushes on the off-sixteenths, octave
-/// jumps, a few notes held into the next (slides on MONO), and accents
-/// from 68 to 124 so velocity routes move.
+/// In the manner of Giorgio Moroder / Donna Summer – "I Feel Love" and
+/// Human League – "Don't You Want Me" (rhythm/contour only, not
+/// transcribed): the bouncing root-and-octave sixteenths of Eurodisco and
+/// synth-pop, written fresh. A minor i–i–♭VI–♭VII, syncopated pushes on
+/// the off-sixteenths, octave jumps, seven notes held into the next (slides
+/// on MONO), and accents from 68 to 124 so velocity routes move.
 pub const BASS_PHRASE: [PhraseNote; 37] = [
     // i
     n(0, 0, 2, 120),
@@ -218,10 +219,12 @@ pub const BASS_PHRASE: [PhraseNote; 37] = [
     n(0, 62, 2, 118),
 ];
 
-/// In the manner of an 80s Italo / synth-pop lead hook (a singable minor
-/// line answered by itself, ending on a long held top note), written
-/// fresh: long and short notes, three legato slides, and a held note of
-/// thirteen sixteenths (1.6 s) where vibrato and filter motion show.
+/// In the manner of Harold Faltermeyer – "Axel F" and Jan Hammer –
+/// "Crockett's Theme" (rhythm/contour only, not transcribed): a singable
+/// minor synth lead answered by itself, ending on a long held top note,
+/// written fresh. Long and short notes, three legato slides, and a held
+/// note of thirteen sixteenths (1.6 s) where vibrato and filter motion
+/// show.
 pub const LEAD_PHRASE: [PhraseNote; 21] = [
     n(7, 0, 3, 100),
     n(10, 3, 1, 84),
@@ -230,7 +233,7 @@ pub const LEAD_PHRASE: [PhraseNote; 21] = [
     n(7, 12, 4, 96),
     n(5, 16, 2, 92),
     n(7, 18, 1, 80),
-    // A slide up into the fifth, then down home.
+    // A slide up from the minor third to the fourth, then down home.
     n(3, 19, 5, 104),
     n(5, 23, 3, 96),
     n(7, 26, 2, 90),
@@ -238,19 +241,21 @@ pub const LEAD_PHRASE: [PhraseNote; 21] = [
     n(12, 32, 2, 112),
     n(15, 34, 2, 104),
     n(14, 36, 1, 86),
+    // A slide down from the octave to the minor seventh.
     n(12, 37, 3, 98),
     n(10, 39, 2, 92),
     n(12, 41, 3, 108),
-    // Slides into the held top note.
+    // A slide up from the fifth into the held top note.
     n(7, 44, 5, 96),
     n(12, 48, 13, 116),
     n(10, 61, 1, 80),
     n(7, 62, 2, 90),
 ];
 
-/// In the manner of an 80s new-wave synth pad (slow minor changes, each
-/// chord a bar, voiced open with common tones held across), written
-/// fresh: i – ♭VImaj7 – ♭III – ♭VII, each held its full bar.
+/// In the manner of Tears for Fears – "Mad World" and Ultravox – "Vienna"
+/// (rhythm/contour only, not transcribed): slow minor changes, a chord a
+/// bar, voiced open with common tones re-struck at each change, written
+/// fresh. i – ♭VImaj7 – ♭III – ♭VII, each held its full bar.
 pub const PAD_PHRASE: [PhraseNote; 16] = [
     n(0, 0, 16, 92),
     n(7, 0, 16, 88),

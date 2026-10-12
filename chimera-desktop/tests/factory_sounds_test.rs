@@ -1079,10 +1079,11 @@ fn phrases_carry_what_they_show() {
         vels.iter().max().unwrap() - vels.iter().min().unwrap() >= 40,
         "velocity routes are heard"
     );
+    let bass = qa::phrase_notes(Phrase::Bass);
     assert!(
-        qa::phrase_notes(Phrase::Bass)
-            .iter()
-            .any(|x| x.step.abs() >= 12),
+        bass.iter()
+            .zip(&bass[1..])
+            .any(|(a, b)| (a.step - b.step).abs() >= 12),
         "octave jumps"
     );
     let lead = qa::phrase_notes(Phrase::Lead);
