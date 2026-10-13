@@ -13,14 +13,15 @@
 //! `--private` (any command) also reads the TX81Z port Sources in
 //! `$CHIMERA_TX_PORTS` (spec § 3, § 6; never in the repo): the build puts
 //! them in `target/factory-sounds/private/` only, `fmt` rewrites them
-//! there, and `qa` pages them under PRIVATE.
+//! there, and `qa` pages them under PRIVATE in their own ledger
+//! (`build::private_qa_ledger`), never the public one.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use chimera_core::storage::BuildStamp;
 use chimera_desktop::factory_sounds::build::{self, SOUND_FILES};
-use chimera_desktop::factory_sounds::{project, qa, source};
+use chimera_desktop::factory_sounds::{qa, run, source};
 
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -38,9 +39,19 @@ fn main() -> ExitCode {
             [l] if l == "--level" => run_fmt(true, ports.as_deref()),
             _ => Err(format!("{USAGE}, not {}", args.join(" "))),
         },
-        Some("qa") => {
-            qa_args(&args[1..]).and_then(|(wav, base)| run_qa(wav, base, ports.as_deref()))
-        }
+        Some("qa") => qa_args(&args[1..]).and_then(|(wav, base)| {
+            let private = ports.as_deref().map(|p| run::Private {
+                ports: p,
+                ledger: build::private_qa_ledger(),
+            });
+            run::qa(&run::Qa {
+                dir: &dir(),
+                ledger: qa::ledger()?,
+                private,
+                wav,
+                baseline: base.as_deref(),
+            })
+        }),
         _ => Err(format!("{USAGE}, not {}", args.join(" "))),
     };
     match r {
@@ -106,12 +117,12 @@ fn run_build(ports: Option<&Path>) -> Result<(), String> {
         let man = build::private(&dir(), p, &root, &stamp()?, None)?;
         list(&man, &build::ports(p)?)?;
         println!(
-            "{} private ports from {}, built {}\n{}\nedits not verified against the banks in {} until the TX81Z importer (#302)",
+            "{} private ports from {}, built {}\n{}\n{}",
             man.sounds.len(),
             p.display(),
             man.stamp,
             root.join("private").display(),
-            build::banks_dir(std::env::var_os(build::BANKS_VAR)).display()
+            build::unverified(&build::banks_dir(std::env::var_os(build::BANKS_VAR)))
         );
     }
     Ok(())
@@ -186,119 +197,4 @@ fn qa_args(args: &[String]) -> Result<(bool, Option<PathBuf>), String> {
         }
     }
     Ok((wav, base))
-}
-
-/// Every Sound rendered and gated into the ledger; fails unless all pass.
-/// With a baseline, each APPROVED Sound's renders are compared against it
-/// first (`qa::compare`).
-/// `--private` adds the ports (`build::sounds`), paged under PRIVATE.
-fn run_qa(wav: bool, baseline: Option<PathBuf>, ports: Option<&Path>) -> Result<(), String> {
-    let (placeholders, all): (Vec<_>, Vec<_>) = build::sounds(&dir(), ports)?
-        .into_iter()
-        .partition(|s| s.is_placeholder());
-    qa::sweeps(&all)?;
-    let mut reports = all.iter().map(qa::gates).collect::<Result<Vec<_>, _>>()?;
-    if let Some(dir) = &baseline {
-        if !dir.is_dir() {
-            return Err(format!("baseline {}: not a directory", dir.display()));
-        }
-        for (r, s) in reports.iter_mut().zip(&all) {
-            qa::compare(r, dir)?;
-            qa::voice_cause(r, s)?;
-        }
-    }
-    let bands: Vec<_> = reports.iter().map(|r| r.bands).collect();
-    let samey = qa::samey(&bands);
-    let ledger = qa::ledger()?;
-    // The demos hold public Sounds only (spec § 5).
-    let public: Vec<_> = all.iter().filter(|s| s.from.is_none()).cloned().collect();
-    let (demos, unheard) = demo_reports(&public, &ledger)?;
-    let pass = qa::write(&ledger, &reports, &samey, &placeholders, &demos, wav)?;
-    print!("{}", qa::report_text(&reports, &samey));
-    print!("{}", qa::demo_text(&demos));
-    println!("{}", ledger.display());
-    match (unheard, pass) {
-        (Some(gap), _) => Err(gap),
-        (None, true) => Ok(()),
-        (None, false) => Err("a gate failed: see report.txt".into()),
-    }
-}
-
-/// Each demo project rendered and gated (`qa::demo_gates`), a held one
-/// reported unrendered (`qa::held_report`), plus the effects no demo
-/// plays, held or not (`project::coverage`), which fail the run after
-/// every gate is heard; one only held demos play is pending. None: none.
-type Demos = (Vec<qa::DemoReport>, Option<String>);
-fn demo_reports(sounds: &[source::Source], ledger: &Path) -> Result<Demos, String> {
-    let demos = build::demos(&dir())?;
-    if demos.is_empty() {
-        return Ok((Vec::new(), None));
-    }
-    project::check(&demos, sounds)?;
-    let cov = project::coverage(&demos, sounds)?;
-    let unheard = (!cov.unheard.is_empty()).then(|| {
-        let words: Vec<String> = cov.unheard.iter().map(|e| e.label()).collect();
-        format!(
-            "{}: no demo setting plays {} (fx. or hear. lines)",
-            project::FILE,
-            words.join(", ")
-        )
-    });
-    let stims = if demos.iter().any(|d| d.held.is_none()) {
-        Some(stims(&ledger.join("stimuli"))?)
-    } else {
-        None
-    };
-    let reports = demos
-        .iter()
-        .map(|d| match &stims {
-            Some(s) if d.held.is_none() => qa::demo_gates(d, sounds, s),
-            _ => qa::held_report(d, sounds, &cov),
-        })
-        .collect::<Result<_, _>>()?;
-    Ok((reports, unheard))
-}
-
-/// `chimera-utils stim`'s hats and snare from `dir`, written there first
-/// when missing.
-fn stims(dir: &Path) -> Result<qa::Stims, String> {
-    let wav = |n: &str| dir.join(format!("{n}.wav"));
-    if !wav("hats").is_file() || !wav("snare").is_file() {
-        let ok = Command::new("cargo")
-            .args([
-                "run",
-                "-q",
-                "--profile",
-                "utils",
-                "-p",
-                "chimera-utils",
-                "--",
-                "stim",
-            ])
-            .arg(dir)
-            .current_dir(ROOT)
-            .status()
-            .map_err(|e| format!("chimera-utils stim: {e}"))?
-            .success();
-        if !ok {
-            return Err("chimera-utils stim failed".into());
-        }
-    }
-    let read = |n: &str| -> Result<Vec<f32>, String> {
-        let p = wav(n);
-        let err = |e: hound::Error| format!("{}: {e}", p.display());
-        let r = hound::WavReader::open(&p).map_err(err)?;
-        let spec = r.spec();
-        if spec.channels != 1 || spec.sample_rate != 48_000 {
-            return Err(format!("{}: not mono at 48 kHz", p.display()));
-        }
-        let full = (1i64 << (spec.bits_per_sample - 1)) as f32;
-        r.into_samples::<i32>()
-            .map(|v| v.map(|v| v as f32 / full).map_err(err))
-            .collect()
-    };
-    Ok(qa::Stims {
-        hats: read("hats")?,
-        snare: read("snare")?,
-    })
 }

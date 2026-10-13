@@ -7,4 +7,5 @@ pub mod about;
 pub mod build;
 pub mod project;
 pub mod qa;
+pub mod run;
 pub mod source;

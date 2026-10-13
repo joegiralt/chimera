@@ -210,17 +210,31 @@ fn write_set(
 pub const PORTS_VAR: &str = "CHIMERA_TX_PORTS";
 /// Where the TX81Z banks live, for the edits check (spec § 6).
 pub const BANKS_VAR: &str = "CHIMERA_TX_BANKS";
-const DEFAULT_PORTS: &str = "~/dev/chimera/.superpowers/ledgers/showcase/ports";
-const DEFAULT_BANKS: &str = "~/dev/chimera/.superpowers/ledgers/showcase/banks";
+/// Everything private by default: `ports/`, `banks/` and `qa/`, a sibling
+/// of the showcase ledger, which is published (never a port in it).
+pub const PRIVATE_LEDGER: &str = "~/dev/chimera/.superpowers/ledgers/showcase-private";
 
-/// `$CHIMERA_TX_PORTS` (`var`), else the showcase ledger's `ports/`.
+/// `$CHIMERA_TX_PORTS` (`var`), else `PRIVATE_LEDGER/ports`.
 pub fn ports_dir(var: Option<OsString>) -> PathBuf {
-    var.map_or_else(|| PathBuf::from(DEFAULT_PORTS), PathBuf::from)
+    var.map_or_else(|| Path::new(PRIVATE_LEDGER).join("ports"), PathBuf::from)
 }
 
-/// `$CHIMERA_TX_BANKS` (`var`), else the showcase ledger's `banks/`.
+/// `$CHIMERA_TX_BANKS` (`var`), else `PRIVATE_LEDGER/banks`.
 pub fn banks_dir(var: Option<OsString>) -> PathBuf {
-    var.map_or_else(|| PathBuf::from(DEFAULT_BANKS), PathBuf::from)
+    var.map_or_else(|| Path::new(PRIVATE_LEDGER).join("banks"), PathBuf::from)
+}
+
+/// `qa --private`'s ledger: `PRIVATE_LEDGER/qa`.
+pub fn private_qa_ledger() -> PathBuf {
+    Path::new(PRIVATE_LEDGER).join("qa")
+}
+
+/// What a private run says until the importer verifies `edits`.
+pub fn unverified(banks: &Path) -> String {
+    format!(
+        "edits not verified against the banks in {} until the TX81Z importer (#302)",
+        banks.display()
+    )
 }
 
 /// The port Source files in `dir` (`*.toml`), by name; none, or no
@@ -287,7 +301,8 @@ pub trait EditsCheck {
     fn verify(&self, port: &Source) -> Result<(), String>;
 }
 
-/// The ports into `<root>/private/` (emptied first) and nowhere else:
+/// The ports into `<root>/private/` (removed before anything is checked)
+/// and nowhere else:
 /// `CHIMERA/SOUNDS/S91000xx.A` and `manifest.json`. Checked with the
 /// public Sources in `dir` (ids and names unique across both), and each
 /// against its bank by `edits` when one is given.
@@ -298,6 +313,14 @@ pub fn private(
     stamp: &BuildStamp,
     edits: Option<&dyn EditsCheck>,
 ) -> Result<Manifest, String> {
+    // A failed build leaves no old set behind to install.
+    let out = root.join("private");
+    match std::fs::remove_dir_all(&out) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            return Err(format!("{}: {e}", out.display()));
+        }
+        _ => {}
+    }
     let all = sounds(dir, Some(ports))?;
     let ported: Vec<Source> = all.into_iter().filter(|s| s.from.is_some()).collect();
     super::qa::sweeps(&ported)?;
@@ -307,6 +330,6 @@ pub fn private(
         }
     }
     let (files, man) = files(&ported, stamp)?;
-    write_set(&root.join("private"), &files, None, &man)?;
+    write_set(&out, &files, None, &man)?;
     Ok(man)
 }

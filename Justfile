@@ -53,8 +53,9 @@ factory-tapes *args:
 # CHIMERA/PROJECTS/P000000n.A, and manifest.json). Refuses a port Source.
 # `just factory-sounds fmt` writes each value's display comment.
 # `--private` (with build, fmt or qa) also reads the TX81Z ports in
-# $CHIMERA_TX_PORTS (default the showcase ledger's ports/, never the repo):
-# built into target/factory-sounds/private/ only, paged under PRIVATE.
+# $CHIMERA_TX_PORTS (default ledgers/showcase-private/ports/, never the
+# repo): built into target/factory-sounds/private/ only; qa pages them in
+# showcase-private/qa/, never the published showcase/.
 factory-sounds *args:
     cargo run -q --release -p chimera-desktop --bin factory-sounds -- {{args}}
 

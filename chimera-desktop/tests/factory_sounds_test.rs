@@ -16,7 +16,7 @@ use chimera_core::ui::mod_panel;
 use chimera_core::ui::theme::{CONTENT_W, FONT_LABEL, LABEL_TRACKING};
 use chimera_core::ui::view::{EnvKind, LfoKind};
 use chimera_core::{params::EngineType, preset::Sound};
-use chimera_desktop::factory_sounds::{about, build, source};
+use chimera_desktop::factory_sounds::{about, build, run, source};
 use chimera_hal::store::{Dir, FileName, Store};
 use chimera_hal::testkit::MemStore;
 
@@ -300,6 +300,8 @@ fn public_refuses_from() {
     // Parses (the private build reads it), but the public set refuses it.
     source::parse(&ported, "bad.toml").unwrap();
     fails(&ported, 14, "from");
+    // An `edits` line alone is a port's hint too.
+    fails(&format!("{BASE}edits = \"filter: 2040\"\n"), 14, "edits");
 }
 
 #[test]
@@ -795,20 +797,32 @@ fn a_failing_sound_is_skipped_from_the_page() {
     assert!(d.join("report.txt").is_file());
     assert!(!d.join("index.html").exists(), "never index.html");
 
-    // Ports render into their own section, with their edits.
+    // The public ledger refuses a port; ports page in their own ledger,
+    // under PRIVATE, their edits flagged unverified.
+    let e = qa::write(
+        &d,
+        &[report(true, false), report(true, true)],
+        &[],
+        &[],
+        &[],
+        true,
+    )
+    .unwrap_err();
+    assert!(e.contains("S9100002") && e.contains("private"), "{e}");
+    let pd = scratch_ledger("ledger-page-private");
+    assert!(qa::write_private(&pd, &[report(true, true)], &[], true).unwrap());
+    let page = std::fs::read_to_string(pd.join("listening.html")).unwrap();
+    assert!(page.contains("<h2>PRIVATE</h2>"), "{page}");
     assert!(
-        qa::write(
-            &d,
-            &[report(true, false), report(true, true)],
-            &[],
-            &[],
-            &[],
-            true
-        )
-        .unwrap()
+        page.contains(
+            "<p class=\"flag\">edits: filter: 2040 instead of open (not verified against its bank until the TX81Z importer, #302)</p>"
+        ),
+        "{page}"
     );
-    let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
-    assert!(page.contains("PRIVATE") && page.contains("filter: 2040 instead of open"));
+    assert!(
+        qa::write_private(&pd, &[report(true, false)], &[], true).is_err(),
+        "the private ledger holds ports only"
+    );
 
     // One failing Sound: off the page, named in the report; the rest stay.
     let mut bad = report(false, false);
@@ -3088,15 +3102,20 @@ fn private_never_writes_public_dir() {
     std::fs::write(root.join("private/CHIMERA/SOUNDS/S9100011.A"), "stale").unwrap();
     build::private(&public, &ports, &root, &STAMP, None).unwrap();
     assert!(!root.join("private/CHIMERA/SOUNDS/S9100011.A").exists());
+    // A failed build leaves no old set to install.
+    std::fs::write(ports.join("one.toml"), port_with(13, "# no edits")).unwrap();
+    build::private(&public, &ports, &root, &STAMP, None).unwrap_err();
+    assert!(!root.join("private").exists());
+    assert!(root.join("public/manifest.json").is_file());
 }
 
 #[test]
-fn private_unset_env_is_a_clear_error() {
-    // Unset, it is the showcase ledger's ports/.
-    assert_eq!(
-        build::ports_dir(None),
-        std::path::Path::new("~/dev/chimera/.superpowers/ledgers/showcase/ports")
-    );
+fn private_missing_ports_dir_names_the_var() {
+    // Unset, every private default is under the one private ledger.
+    let private = std::path::Path::new(build::PRIVATE_LEDGER);
+    assert_eq!(build::ports_dir(None), private.join("ports"));
+    assert_eq!(build::banks_dir(None), private.join("banks"));
+    assert_eq!(build::private_qa_ledger(), private.join("qa"));
     assert_eq!(
         build::ports_dir(Some("/x/ports".into())),
         std::path::Path::new("/x/ports")
@@ -3129,30 +3148,63 @@ fn private_unset_env_is_a_clear_error() {
     );
 }
 
+/// `PORT_IDS`' WAVs in `renders/` under `ledger`.
+fn port_wavs(ledger: &std::path::Path) -> Vec<String> {
+    std::fs::read_dir(ledger.join("renders"))
+        .map(|d| {
+            d.filter_map(|e| e.ok()?.file_name().into_string().ok())
+                .filter(|n| {
+                    n.get(1..8)
+                        .and_then(|id| id.parse::<u32>().ok())
+                        .is_some_and(|id| chimera_desktop::privacy::PORT_IDS.contains(&id))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[test]
-fn private_section_only_with_private() {
-    let (public, ports) = port_dirs("private-section");
-    let page = |all: &[source::Source]| {
-        // Unlevelled test Sounds: their failing gates aside, as paged.
-        let reports: Vec<_> = all
-            .iter()
-            .map(|s| {
-                let mut r = qa::gates(s).unwrap();
-                r.gates.retain(|g| g.verdict != Verdict::Fail);
-                r
-            })
-            .collect();
-        qa::page(&reports, &[], &[], &[])
-    };
-    let without = build::sounds(&public, None).unwrap();
-    assert_eq!(without.len(), 1);
-    let p = page(&without);
-    assert!(!p.contains("PRIVATE") && !p.contains("PORT ONE"), "{p}");
-    let with = build::sounds(&public, Some(&ports)).unwrap();
-    assert_eq!(with.len(), 2);
-    let p = page(&with);
-    let at = p.find("<h2>PRIVATE</h2>").expect("a PRIVATE section");
-    assert!(p[at..].contains("PORT ONE"), "the port under PRIVATE");
-    assert!(!p[..at].contains("PORT ONE"));
-    assert!(p.contains("edits: filter: 2040 instead of open"));
+fn private_qa_stays_in_its_ledger() {
+    let (public, ports) = port_dirs("private-qa");
+    // Levelled, so both pass and render.
+    for (p, f) in [(&public, "va.toml"), (&ports, "one.toml")] {
+        let text = std::fs::read_to_string(p.join(f)).unwrap();
+        let all = source::parse(&text, f).unwrap();
+        std::fs::write(p.join(f), qa::levelled(&text, &all).unwrap()).unwrap();
+    }
+    let pub_ledger = scratch_ledger("private-qa-public");
+    let priv_ledger = scratch_ledger("private-qa-private");
+    // A port's render left in the public ledger by an older run.
+    std::fs::create_dir_all(pub_ledger.join("renders")).unwrap();
+    std::fs::write(pub_ledger.join("renders/S9100010-long.wav"), b"old").unwrap();
+    let r = run::qa(&run::Qa {
+        dir: &public,
+        ledger: pub_ledger.clone(),
+        private: Some(run::Private {
+            ports: &ports,
+            ledger: priv_ledger.clone(),
+        }),
+        wav: true,
+        baseline: None,
+    });
+    // The public ledger: never a port.
+    assert_eq!(port_wavs(&pub_ledger), Vec::<String>::new());
+    for f in ["listening.html", "report.txt"] {
+        let t = std::fs::read_to_string(pub_ledger.join(f)).unwrap();
+        assert!(
+            !t.contains("PRIVATE") && !t.contains("PORT ONE") && !t.contains("S9100010"),
+            "{f}: {t}"
+        );
+        assert!(t.contains("TEST PAD"), "{f}: {t}");
+    }
+    // The private ledger: the ports, under PRIVATE, and nothing public.
+    let page = std::fs::read_to_string(priv_ledger.join("listening.html")).unwrap();
+    let txt = std::fs::read_to_string(priv_ledger.join("report.txt")).unwrap();
+    assert!(txt.contains("S9100010 PORT ONE  PRIVATE  PASS"), "{txt}");
+    assert!(!txt.contains("TEST PAD") && !page.contains("TEST PAD"));
+    let at = page.find("<h2>PRIVATE</h2>").expect("a PRIVATE section");
+    assert!(page[at..].contains("PORT ONE"));
+    assert!(page.contains("not verified against its bank"));
+    assert!(!port_wavs(&priv_ledger).is_empty());
+    r.unwrap();
 }

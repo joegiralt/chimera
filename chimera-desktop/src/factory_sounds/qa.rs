@@ -36,6 +36,7 @@ use super::about::{self, Fact};
 use super::project::{self, Coverage, Demo, DemoId, Setting};
 use super::source::{self, Badge, Phrase, Round, Script, Source, patch, to_sound, trimmed};
 use crate::listen::{self, Player, Row, Section, qa_takes};
+use crate::privacy::PORT_IDS;
 
 const SR: f32 = SAMPLE_RATE as f32;
 
@@ -1790,7 +1791,11 @@ pub fn page(
                 false,
             ));
             if let Some(e) = &r.edits {
-                lines.push((format!("edits: {e}"), false));
+                lines.push(if r.private {
+                    (format!("edits: {e} ({EDITS_UNVERIFIED})"), true)
+                } else {
+                    (format!("edits: {e}"), false)
+                });
             }
             for g in &r.gates {
                 if let Verdict::Exempt(why) = &g.verdict {
@@ -1928,8 +1933,71 @@ pub fn page(
 /// Sound's renders as `renders/S<id>-<script>.wav` and each passing
 /// demo's as `renders/P<id>-<setting>-<take>.wav` (a failing one's old
 /// renders removed), and `listening.html`. A failing run without `wav`
-/// removes an old page. True when every Sound and demo passes.
+/// removes an old page. True when every Sound and demo passes. The
+/// public ledger: it refuses a port, and with `wav` removes any render of
+/// a `PORT_IDS` id (it is published).
 pub fn write(
+    dir: &Path,
+    reports: &[Report],
+    samey: &[(usize, usize)],
+    placeholders: &[Source],
+    demos: &[DemoReport],
+    wav: bool,
+) -> Result<bool, String> {
+    if let Some(r) = reports.iter().find(|r| r.private) {
+        return Err(format!(
+            "S{} {}: a private port; the public ledger refuses it (qa --private)",
+            r.id.get(),
+            r.name
+        ));
+    }
+    if wav {
+        // A backstop: no port's render stays in the published ledger.
+        let r = checked_ledger(dir)?.join("renders");
+        match std::fs::read_dir(&r) {
+            Ok(entries) => {
+                for e in entries {
+                    let p = e.map_err(|e| format!("{}: {e}", r.display()))?.path();
+                    let port = p
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .filter(|n| n.ends_with(".wav"))
+                        .and_then(|n| n.strip_prefix('S')?.get(..7)?.parse::<u32>().ok())
+                        .is_some_and(|id| PORT_IDS.contains(&id));
+                    if port {
+                        std::fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+                    }
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("{}: {e}", r.display())),
+        }
+    }
+    write_ledger(dir, reports, samey, placeholders, demos, wav)
+}
+
+/// The ports' own ledger (`qa --private`): ports only, no placeholders or
+/// demos; else as `write`.
+pub fn write_private(
+    dir: &Path,
+    reports: &[Report],
+    samey: &[(usize, usize)],
+    wav: bool,
+) -> Result<bool, String> {
+    if let Some(r) = reports.iter().find(|r| !r.private) {
+        return Err(format!(
+            "S{} {}: not a port; the private ledger holds ports only",
+            r.id.get(),
+            r.name
+        ));
+    }
+    write_ledger(dir, reports, samey, &[], &[], wav)
+}
+
+/// What a port's `edits` line says until the importer checks it.
+pub const EDITS_UNVERIFIED: &str = "not verified against its bank until the TX81Z importer, #302";
+
+fn write_ledger(
     dir: &Path,
     reports: &[Report],
     samey: &[(usize, usize)],
