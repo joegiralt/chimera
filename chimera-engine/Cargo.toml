@@ -66,3 +66,4 @@ chimera-waves = { path = "../chimera-waves", features = ["emit"] }
 [dev-dependencies]
 chimera-engine = { path = ".", features = ["test-support", "source-writer", "smear-probe", "clamp-probe", "tape"] }
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
+proptest = { version = "1", default-features = false, features = ["std"] }

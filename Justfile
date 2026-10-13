@@ -29,6 +29,18 @@ tape file *args:
     shift
     cargo run -q -p chimera-desktop --bin chimera-import -- tape "{{ if file =~ '^/' { file } else { invocation_directory() / file } }}" "$@"
 
+# A TX81Z bank's voices to private port Sources (showcase spec § 6):
+# `just import-tx <bank.syx> [--voices 1,4,9-12] [--out DIR]` writes
+# <voice>.toml and import-report.txt into DIR (default $CHIMERA_TX_PORTS,
+# ledgers/showcase-private/ports/), never a Yamaha voice name. Refuses a
+# DIR inside a git work tree unless git ignores it.
+[positional-arguments]
+import-tx bank *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
+    cargo run -q -p chimera-desktop --bin chimera-import -- tx "{{ if bank =~ '^/' { bank } else { invocation_directory() / bank } }}" "$@"
+
 # The TAPE factory set (spec § 7) into target/tapes-v1/: every .SRC, the
 # factory TAPE Sounds (S9000001.A …), manifest.json and cc0-originals.zip
 # (each original with its licence). CC0 originals come from

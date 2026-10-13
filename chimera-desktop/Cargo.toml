@@ -16,6 +16,7 @@ embedded-graphics-core = "0.4"
 hound = "3.5"
 rubato = { version = "5.0", default-features = false }
 rustfft = "6"
+sha2 = "0.10"
 
 [features]
 default = ["midi"]

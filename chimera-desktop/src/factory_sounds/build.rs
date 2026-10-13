@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use chimera_core::storage::{BuildStamp, FactoryId};
 
 use super::project::{self, Demo, DemoId};
-use super::source::{self, Source};
+use chimera_core::preset::Sound;
+
+use super::source::{self, Edit, Source};
 
 /// The Sound Sources, in curated order (spec § 2: VA, FM, MODAL).
 /// `projects.toml` holds the demo projects.
@@ -301,6 +303,73 @@ pub trait EditsCheck {
     fn verify(&self, port: &Source) -> Result<(), String>;
 }
 
+/// What `edits` compares for category `e`: the Sound's lines (`source::
+/// lines`), each route one item (`mod.ENV2>FILTER.CUTOFF`, its amount),
+/// kept when the category owns the key.
+///
+/// | Category | Keys |
+/// |---|---|
+/// | filter | `FILTER.*`; any route or tap into `FILTER.*` |
+/// | fold | `FOLDER.*`; any route or tap into `FOLDER.*` |
+/// | LFO | `LFO1-3.*`; every `mod.LFO1-3` route |
+/// | envelope | each op's AR, D1R, D1L, D2R, RR, RS; `ENV1-3.*`; every `mod.ENV1-3` route |
+/// | effects | `DRIVE.*`, `CHORUS.*`, `DELAY.*`, `REVERB.*`, `TAPE.*`, `COMP.*`, `OUT.SEND1-3` |
+/// | formant | `OP_E.*`, `OP_F.*`, `ALGO.VOWEL`; `tap.OP5`/`tap.OP6`; any route into `OP_E`/`OP_F` |
+pub fn category(snd: &Sound, e: Edit) -> Vec<(String, String)> {
+    let mut items = Vec::new();
+    for l in source::lines(snd) {
+        let Some((k, v)) = l.split_once(" = ") else {
+            continue;
+        };
+        let v = v.trim_matches('"');
+        if k.starts_with("mod.") || k.starts_with("tap.") {
+            for r in v.split(", ") {
+                if let Some((dest, amount)) = r.rsplit_once(' ') {
+                    items.push((format!("{k}>{dest}"), amount.to_string()));
+                }
+            }
+        } else {
+            items.push((k.to_string(), v.to_string()));
+        }
+    }
+    items.retain(|(k, _)| owns(e, k));
+    items
+}
+
+/// Category `e` owns `key` (a param, or `mod.SRC>DEST` / `tap.OPn>DEST`).
+fn owns(e: Edit, key: &str) -> bool {
+    let (src, dest) = key.split_once('>').unwrap_or(("", key));
+    let block = dest.split('.').next().unwrap_or("");
+    let param = dest.split('.').nth(1).unwrap_or("");
+    let routed = !src.is_empty();
+    match e {
+        Edit::Filter => block == "FILTER",
+        Edit::Fold => block == "FOLDER",
+        Edit::Lfo if routed => src.starts_with("mod.LFO"),
+        Edit::Lfo => block.starts_with("LFO"),
+        Edit::Envelope if routed => src.starts_with("mod.ENV"),
+        Edit::Envelope => {
+            block.starts_with("ENV")
+                || (block.starts_with("OP_")
+                    && ["AR", "D1R", "D1L", "D2R", "RR", "RS"].contains(&param))
+        }
+        Edit::Effects => {
+            ["DRIVE", "CHORUS", "DELAY", "REVERB", "TAPE", "COMP"].contains(&block)
+                || (block == "OUT" && param.starts_with("SEND"))
+        }
+        Edit::Formant => {
+            matches!(block, "OP_E" | "OP_F")
+                || dest == "ALGO.VOWEL"
+                || matches!(src, "tap.OP5" | "tap.OP6")
+        }
+    }
+}
+
+/// Every port's `edits` against its bank, before anything is built.
+pub fn verify(ports: &[Source], check: &dyn EditsCheck) -> Result<(), String> {
+    ports.iter().try_for_each(|p| check.verify(p))
+}
+
 /// The ports into `<root>/private/` (removed before anything is checked)
 /// and nowhere else:
 /// `CHIMERA/SOUNDS/S91000xx.A` and `manifest.json`. Checked with the
@@ -325,9 +394,7 @@ pub fn private(
     let ported: Vec<Source> = all.into_iter().filter(|s| s.from.is_some()).collect();
     super::qa::sweeps(&ported)?;
     if let Some(check) = edits {
-        for p in &ported {
-            check.verify(p)?;
-        }
+        verify(&ported, check)?;
     }
     let (files, man) = files(&ported, stamp)?;
     write_set(&out, &files, None, &man)?;

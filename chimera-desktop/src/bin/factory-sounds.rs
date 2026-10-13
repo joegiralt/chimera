@@ -12,7 +12,8 @@
 //! `<dir>`, flagged AUDIO CHANGED over −40 dB.
 //! `--private` (any command) also reads the TX81Z port Sources in
 //! `$CHIMERA_TX_PORTS` (spec § 3, § 6; never in the repo): the build puts
-//! them in `target/factory-sounds/private/` only, `fmt` rewrites them
+//! them in `target/factory-sounds/private/` only, each port's `edits`
+//! verified against its bank in `$CHIMERA_TX_BANKS` first; `fmt` rewrites them
 //! there, and `qa` pages them under PRIVATE in their own ledger
 //! (`build::private_qa_ledger`), never the public one.
 
@@ -22,6 +23,7 @@ use std::process::{Command, ExitCode};
 use chimera_core::storage::BuildStamp;
 use chimera_desktop::factory_sounds::build::{self, SOUND_FILES};
 use chimera_desktop::factory_sounds::{qa, run, source};
+use chimera_desktop::import::tx81z::BankEdits;
 
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -98,9 +100,13 @@ fn stamp() -> Result<BuildStamp, String> {
 
 fn run_build(ports: Option<&Path>) -> Result<(), String> {
     let root = PathBuf::from(ROOT).join("target/factory-sounds");
-    // The ports read and checked before anything is written.
+    // The ports read, checked and their edits verified against the banks
+    // ($CHIMERA_TX_BANKS) before anything is written.
+    let banks = BankEdits::new(build::banks_dir(std::env::var_os(build::BANKS_VAR)));
     if let Some(p) = ports {
-        build::sounds(&dir(), Some(p))?;
+        let all = build::sounds(&dir(), Some(p))?;
+        let ported: Vec<_> = all.into_iter().filter(|s| s.from.is_some()).collect();
+        build::verify(&ported, &banks)?;
     }
     let out = root.join("public");
     let man = build::public(&dir(), &out, &stamp()?)?;
@@ -114,15 +120,15 @@ fn run_build(ports: Option<&Path>) -> Result<(), String> {
         out.display()
     );
     if let Some(p) = ports {
-        let man = build::private(&dir(), p, &root, &stamp()?, None)?;
+        let man = build::private(&dir(), p, &root, &stamp()?, Some(&banks))?;
         list(&man, &build::ports(p)?)?;
         println!(
-            "{} private ports from {}, built {}\n{}\n{}",
+            "{} private ports from {}, edits verified against {}, built {}\n{}",
             man.sounds.len(),
             p.display(),
+            banks.dir.display(),
             man.stamp,
-            root.join("private").display(),
-            build::unverified(&build::banks_dir(std::env::var_os(build::BANKS_VAR)))
+            root.join("private").display()
         );
     }
     Ok(())
