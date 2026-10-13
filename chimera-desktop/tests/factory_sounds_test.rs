@@ -482,10 +482,11 @@ fn scripts_follow_the_spec() {
 
 #[test]
 fn loudness_gate() {
-    // Inside −11 ± 2 LU passes, whether or not a level is pinned.
+    // Inside −11 ± 2 LU passes unpinned; a pin wins, so one drifted into
+    // the band fails.
     for l in [-11.0, -9.0, -13.0] {
         assert_eq!(qa::loudness(l, None), Verdict::Pass, "{l}");
-        assert_eq!(qa::loudness(l, Some((-16.2, "soft"))), Verdict::Pass, "{l}");
+        assert_eq!(qa::loudness(l, Some((-16.2, "soft"))), Verdict::Fail, "{l}");
     }
     for l in [-8.9, -13.1, -30.0, f32::NAN] {
         assert_eq!(qa::loudness(l, None), Verdict::Fail, "{l}");
@@ -538,15 +539,20 @@ fn a_pinned_level_parses_and_one_inside_the_band_fails() {
 #[test]
 fn fmt_level_keeps_pinned_and_approved_levels() {
     let pinned = format!("{BASE}level = \"by ear -20.0: soft\"\n");
-    let crc = source::crc(&run(BASE).unwrap()[0]).unwrap();
-    let approved = format!("{BASE}approved = \"round 3 {crc:08X}\"\n")
+    let two = BASE
         .replace("S9100002", "S9100003")
         .replace("TEST PAD\"", "TEST TWO\"");
+    let crc = source::approval_crc(&run(&two).unwrap()[0]).unwrap();
+    let approved = format!("{two}approved = \"round 3 {crc:08X}\"\n");
     let free = BASE
         .replace("S9100002", "S9100004")
         .replace("TEST PAD\"", "TEST THREE\"")
         .replace("trim = \"0\"", "trim = \"-6\"");
-    let text = format!("{pinned}\n{approved}\n{free}");
+    // Approved, but changed since: shown NEW, so centred.
+    let stale = format!("{free}approved = \"round 3 00000000\"\n")
+        .replace("S9100004", "S9100005")
+        .replace("TEST THREE\"", "TEST FOUR\"");
+    let text = format!("{pinned}\n{approved}\n{free}\n{stale}");
     let all = source::parse(&text, "b.toml").unwrap();
     let out = qa::levelled(&text, &all).unwrap();
     let got = source::parse(&out, "b.toml").unwrap();
@@ -554,6 +560,7 @@ fn fmt_level_keeps_pinned_and_approved_levels() {
     assert_eq!(got[0].level, all[0].level);
     assert_eq!(got[1].trim, 0.0, "approved: never re-centred");
     assert_ne!(got[2].trim, -6.0, "the free one is centred");
+    assert_ne!(got[3].trim, -6.0, "a changed approval is centred");
 }
 
 #[test]
@@ -1072,7 +1079,7 @@ fn glide_and_mono_read_as_modulation() {
 
 #[test]
 fn badges_follow_the_source_and_a_placeholder_has_no_players() {
-    let crc = source::crc(&run(BASE).unwrap()[0]).unwrap();
+    let crc = source::approval_crc(&run(BASE).unwrap()[0]).unwrap();
     let approved = &run(&format!("{BASE}approved = \"round 2 {crc:08X}\"\n")).unwrap()[0];
     assert_eq!(approved.badge(crc), source::Badge::Approved);
     let new = &run(BASE).unwrap()[0];
@@ -1116,7 +1123,7 @@ fn badges_follow_the_source_and_a_placeholder_has_no_players() {
 #[test]
 fn approval_binds_to_the_sounds_crc() {
     use source::{Badge, Round, Status};
-    let crc = source::crc(&run(BASE).unwrap()[0]).unwrap();
+    let crc = source::approval_crc(&run(BASE).unwrap()[0]).unwrap();
     let line = format!("approved = \"round 2 {crc:08X}\"\n");
     let ok = &run(&format!("{BASE}{line}")).unwrap()[0];
     assert_eq!(
@@ -1127,7 +1134,7 @@ fn approval_binds_to_the_sounds_crc() {
         }
     );
     assert_eq!(
-        source::crc(ok).unwrap(),
+        source::approval_crc(ok).unwrap(),
         crc,
         "approved adds nothing to the Sound"
     );
@@ -1136,7 +1143,7 @@ fn approval_binds_to_the_sounds_crc() {
     // One param edited since: still builds, demoted to NEW and flagged.
     let edited = format!("{BASE}{line}").replace("\"1200\"", "\"1300\"");
     let ed = &run(&edited).unwrap()[0];
-    let now = source::crc(ed).unwrap();
+    let now = source::approval_crc(ed).unwrap();
     assert_ne!(now, crc);
     assert_eq!(
         (ed.badge(now), ed.changed(now)),
@@ -1161,10 +1168,29 @@ fn approval_binds_to_the_sounds_crc() {
         "{txt}"
     );
 
-    // The manifest records the same CRC.
+    // What the owner heard is bound too: the demo mode, home note,
+    // scripts and phrase each demote it alone.
+    for (from, to) in [
+        ("demo = \"poly\"", "demo = \"mono\""),
+        ("home = \"C3\"", "home = \"C2\""),
+        ("plays = \"long texture\"", "plays = \"long\""),
+        ("phrase = \"pad\"", "phrase = \"lead\""),
+    ] {
+        let s = &run(&format!("{BASE}{line}").replace(from, to)).unwrap()[0];
+        assert_eq!(source::crc(s).unwrap(), source::crc(ok).unwrap(), "{to}");
+        let now = source::approval_crc(s).unwrap();
+        assert_eq!(
+            (s.badge(now), s.changed(now)),
+            (Badge::New, Some(Round(2))),
+            "{to}"
+        );
+    }
+
+    // The manifest records the Sound's own sound_crc.
     let (_, man) = build::files(std::slice::from_ref(ok), &STAMP).unwrap();
-    assert_eq!(man.sounds[0].sound, crc);
-    assert!(man.json().contains(&format!("\"sound\": \"{crc:08X}\"")));
+    let sound = source::crc(ok).unwrap();
+    assert_eq!(man.sounds[0].sound, sound);
+    assert!(man.json().contains(&format!("\"sound\": \"{sound:08X}\"")));
 
     // A bad format fails at its line.
     for bad in [
@@ -1176,9 +1202,28 @@ fn approval_binds_to_the_sounds_crc() {
         "round 2 1A2B3C4G".into(),
         "2 1A2B3C4D".into(),
         "round two 1A2B3C4D".into(),
+        "round +2 1A2B3C4D".into(),
+        "round 0 1A2B3C4D".into(),
     ] {
         fails(&format!("{BASE}approved = \"{bad}\"\n"), 14, "approved");
     }
+}
+
+#[test]
+fn manifest_crc_is_each_files_trailer() {
+    let two = format!(
+        "{BASE}\n{}",
+        BASE.replace("S9100002", "S9100003")
+            .replace("TEST PAD\"", "TEST TWO\"")
+            .replace("\"1200\"", "\"900\"")
+    );
+    let s = run(&two).unwrap();
+    let (files, man) = build::files(&s, &STAMP).unwrap();
+    for (f, e) in files.iter().zip(&man.sounds) {
+        let t = &f.1[f.1.len() - 4..];
+        assert_eq!(e.crc, u32::from_le_bytes(t.try_into().unwrap()), "{}", f.0);
+    }
+    assert_ne!(man.sounds[0].crc, man.sounds[1].crc);
 }
 
 #[test]

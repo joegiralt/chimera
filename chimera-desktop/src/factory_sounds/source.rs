@@ -12,7 +12,7 @@ use chimera_core::params::EngineType;
 use chimera_core::part::PartMode;
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
-    BuildStamp, DiskValue, FactoryId, FileKind, Generation, Header, LibId, LibKind, Note,
+    BuildStamp, Crc32, DiskValue, FactoryId, FileKind, Generation, Header, LibId, LibKind, Note,
     ValidAddr, encode_library_sound, read_value, sound_crc, write_file,
 };
 use chimera_core::taps::TapOp;
@@ -173,8 +173,8 @@ impl core::fmt::Display for Round {
 }
 
 /// Where a Source stands: a placeholder (reserves its id and name, never
-/// built), NEW, or approved in a round as the Sound whose `sound_crc` was
-/// `crc` (`approved = "round 2 1A2B3C4D"`).
+/// built), NEW, or approved in a round as heard with `approval_crc` `crc`
+/// (`approved = "round 2 1A2B3C4D"`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
     Placeholder,
@@ -228,16 +228,42 @@ impl Source {
     }
 }
 
-/// The built Sound's `sound_crc` (what `approved` names, and the manifest
-/// records).
+/// The built Sound's `sound_crc` (the manifest's `sound`).
 pub fn crc(s: &Source) -> Result<u32, String> {
     Ok(sound_crc(&to_sound(s)?))
+}
+
+/// What `approved` binds: what the owner heard. CRC-32 over the Sound's
+/// `sound_crc` (4 bytes, little-endian), then the render-shaping fields
+/// as text, `demo=poly\nhome=48\nplays=long texture\nphrase=pad\n`
+/// (`phrase=-` without one). Changing any of them demotes the Sound.
+pub fn approval_crc(s: &Source) -> Result<u32, String> {
+    let plays: Vec<&str> = s.plays.iter().map(|p| p.word()).collect();
+    let text = format!(
+        "demo={}\nhome={}\nplays={}\nphrase={}\n",
+        match s.demo {
+            PartMode::Mono => "mono",
+            PartMode::Poly => "poly",
+        },
+        s.home,
+        plays.join(" "),
+        s.phrase.map_or("-", Phrase::word)
+    );
+    let mut c = Crc32::new();
+    c.update(&crc(s)?.to_le_bytes());
+    c.update(text.as_bytes());
+    Ok(c.finish())
 }
 
 /// `round <n> <CRC>`, the CRC 8 uppercase hex digits.
 fn approval(v: &str) -> Option<Status> {
     let (round, hex) = v.rsplit_once(' ')?;
-    let n = round.strip_prefix("round ")?.parse::<u8>().ok()?;
+    let n = round
+        .strip_prefix("round ")
+        .filter(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))?
+        .parse::<u8>()
+        .ok()
+        .filter(|&n| n > 0)?;
     let ok = hex.len() == 8 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'A'..=b'F'));
     Some(Status::Approved {
         round: Round(n),

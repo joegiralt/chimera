@@ -4,7 +4,7 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use chimera_core::storage::{BuildStamp, Crc32, FactoryId};
+use chimera_core::storage::{BuildStamp, FactoryId};
 
 use super::source::{self, Source};
 
@@ -17,7 +17,7 @@ pub const SOUND_FILES: [&str; 3] = ["va.toml", "fm.toml", "modal.toml"];
 pub struct Entry {
     pub id: FactoryId,
     pub name: String,
-    /// The file's CRC.
+    /// The file's CRC trailer.
     pub crc: u32,
     pub size: usize,
     /// The Sound's `sound_crc`, which `approved` names.
@@ -75,12 +75,17 @@ pub fn files(all: &[Source], stamp: &BuildStamp) -> Result<(Vec<File>, Manifest)
     let mut sounds = Vec::new();
     for s in all.iter().filter(|s| !s.is_placeholder()) {
         let bytes = source::file_bytes(s, stamp)?;
-        let mut crc = Crc32::new();
-        crc.update(&bytes);
+        // The file's own trailer: the CRC of everything before it, as the
+        // card checks it (hashing the trailer too gives the CRC residue).
+        let trailer = bytes.len().checked_sub(4).map(|i| &bytes[i..]);
+        let crc = trailer
+            .and_then(|t| t.try_into().ok())
+            .map(u32::from_le_bytes)
+            .ok_or_else(|| format!("{}: no CRC trailer", s.at(s.id_line)))?;
         sounds.push(Entry {
             id: s.id,
             name: s.name.as_str().into(),
-            crc: crc.finish(),
+            crc,
             size: bytes.len(),
             sound: source::crc(s)?,
         });

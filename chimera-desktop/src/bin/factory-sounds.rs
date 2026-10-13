@@ -74,9 +74,17 @@ fn stamp() -> Result<BuildStamp, String> {
 fn run_build() -> Result<(), String> {
     let out = PathBuf::from(ROOT).join("target/factory-sounds/public");
     let man = build::public(&dir(), &out, &stamp()?)?;
+    let all = build::sources(&dir())?;
     for e in &man.sounds {
+        // What an `approved` line names for it now.
+        let heard = all
+            .iter()
+            .find(|s| s.id == e.id)
+            .map(source::approval_crc)
+            .transpose()?
+            .unwrap_or_default();
         println!(
-            "S{}.A  {:<16} {:>5} B  {:08X}  sound {:08X}",
+            "S{}.A  {:<16} {:>5} B  {:08X}  sound {:08X}  approval {heard:08X}",
             e.id.get(),
             e.name,
             e.size,

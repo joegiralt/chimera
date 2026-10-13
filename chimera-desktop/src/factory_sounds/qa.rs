@@ -25,14 +25,14 @@ use chimera_core::preset::Sound;
 use chimera_core::project::{PartId, Performance};
 use chimera_core::scope::{ScopeWriter, scope_buffer};
 use chimera_core::source_table::GateView;
-use chimera_core::storage::{FactoryId, sound_crc};
+use chimera_core::storage::FactoryId;
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
 
 use super::about::{self, Fact};
-use super::source::{self, Badge, Phrase, Round, Script, Source, Status, patch, to_sound, trimmed};
+use super::source::{self, Badge, Phrase, Round, Script, Source, patch, to_sound, trimmed};
 use crate::listen::{self, CLICK_RATIO, Player, Row, qa_takes};
 
 const SR: f32 = SAMPLE_RATE as f32;
@@ -692,18 +692,16 @@ fn db(x: f32) -> f32 {
     20.0 * x.max(1e-12).log10()
 }
 
-/// The home note at v100 held 1 s, LUFS: −11 ± 2 LU passes; outside it, a
-/// level pinned by ear `(lufs, why)` holds within `PIN_LU` of its value
-/// (marked for the ear), and fails once it moves.
+/// The home note at v100 held 1 s, LUFS: −11 ± 2 LU passes; a level
+/// pinned by ear `(lufs, why)` instead holds within `PIN_LU` of its value
+/// (marked for the ear), and fails once it moves, even into the band.
 pub fn loudness(lufs: f32, pin: Option<(f32, &str)>) -> Verdict {
-    if (lufs - REFERENCE_LUFS).abs() <= LOUDNESS_LU {
-        return Verdict::Pass;
-    }
     match pin {
+        None => verdict((lufs - REFERENCE_LUFS).abs() <= LOUDNESS_LU),
         Some((p, why)) if (lufs - p).abs() <= PIN_LU => {
             Verdict::Exempt(format!("level by ear {p:.1}: {why}"))
         }
-        _ => Verdict::Fail,
+        Some(_) => Verdict::Fail,
     }
 }
 
@@ -1108,7 +1106,7 @@ fn hz(n: u8) -> f32 {
 pub fn gates(src: &Source) -> Result<Report, String> {
     // Every gate plays dry; the page's renders carry the sends.
     let wet = to_sound(src)?;
-    let crc = sound_crc(&wet);
+    let crc = source::approval_crc(src)?;
     let with = heard_through(&wet);
     let snd = dried(&wet);
     let within = tail_within(src, &snd);
@@ -1255,14 +1253,14 @@ pub fn level_trim(src: &Source, lufs: f32) -> Result<f32, String> {
 
 /// `text` with each Source's `trim` centred on −11 LUFS (`fmt --level`):
 /// measured, trimmed, measured again (the limiter bends a loud first
-/// guess). Placeholders, approved Sounds and levels pinned by ear keep
-/// theirs.
+/// guess). Only Sounds shown NEW: placeholders, approved Sounds and
+/// levels pinned by ear keep theirs.
 pub fn levelled(text: &str, all: &[Source]) -> Result<String, String> {
     let mut trims = Vec::new();
-    for s in all
-        .iter()
-        .filter(|s| s.status == Status::New && s.level.is_none())
-    {
+    for s in all.iter().filter(|s| s.level.is_none()) {
+        if s.badge(source::approval_crc(s)?) != Badge::New {
+            continue;
+        }
         let mut t = s.clone();
         for _ in 0..2 {
             t.trim = level_trim(&t, level_lufs(&t)?)?;
