@@ -2,6 +2,8 @@
 //! array with no heap. `Mappable` is the whitelist type, so an address a CC
 //! may not drive (FX, ORBIT, settings) can never be stored.
 
+pub mod ramp;
+
 pub use crate::midi_in::Cc;
 
 use crate::addr::{BlockRef, ParamAddr};
