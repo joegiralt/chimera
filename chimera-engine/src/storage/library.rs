@@ -1,6 +1,7 @@
 //! The build a library Sound was saved on (library spec § Files).
 
 use core::fmt;
+use core::num::NonZeroU8;
 
 use chimera_hal::store::{Dir, FileName, StoreError};
 
@@ -114,11 +115,13 @@ impl fmt::Display for BuildStamp {
 /// A factory Sound's description: 1-40 B of `A`-`Z`, `0`-`9`, space and
 /// `. , ' - + / : ( ) & %`. Width is the host's check (`draw::text_width`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Note([u8; Note::MAX], u8);
+pub struct Note([u8; Note::MAX], NonZeroU8);
 
 impl Note {
     pub const MAX: usize = 40;
 
+    /// A description to write: `None` for any character outside the set.
+    /// A stored one is read leniently (`peek_library`).
     pub fn new(t: &str) -> Option<Note> {
         let ok =
             |c: u8| c.is_ascii_uppercase() || c.is_ascii_digit() || b" .,'-+/:()&%".contains(&c);
@@ -129,19 +132,21 @@ impl Note {
 
     /// A stored payload, leniently: 1-40 B, a byte outside 0x20-0x7E as `?`.
     fn parse(p: &[u8]) -> Option<Note> {
-        if p.is_empty() || p.len() > Self::MAX {
+        if p.len() > Self::MAX {
             return None;
         }
+        // 1..=40: a `u8`.
+        let len = NonZeroU8::new(p.len() as u8)?;
         let mut b = [0; Self::MAX];
         for (o, &c) in b.iter_mut().zip(p) {
             *o = if (0x20..0x7F).contains(&c) { c } else { b'?' };
         }
-        Some(Note(b, p.len() as u8))
+        Some(Note(b, len))
     }
 
     pub fn as_str(&self) -> &str {
         // Printable ASCII by construction.
-        core::str::from_utf8(&self.0[..usize::from(self.1)]).unwrap_or("?")
+        core::str::from_utf8(&self.0[..usize::from(self.1.get())]).unwrap_or("?")
     }
 }
 
@@ -238,6 +243,7 @@ impl LibId {
     }
 
     pub fn kind(self) -> LibKind {
+        // In range by construction: every `LibId` came from a `UserId` or a `FactoryId`.
         if self.is_factory() {
             LibKind::Factory(FactoryId(self.0))
         } else {
@@ -332,10 +338,11 @@ pub struct Peek {
     pub needs_newer: bool,
 }
 
-/// The record at `at`: its tag and payload, when whole in the file (before
-/// the CRC trailer of a `file_len` file). The payload is cut at the end of
-/// `b`: a record grown by a later build still shows its leading bytes.
-fn record_at(b: &[u8], at: usize, file_len: u32) -> Option<(u16, &[u8])> {
+/// The record at `at`: its tag, payload and where the next record starts
+/// (from its declared length), when whole in the file (before the CRC
+/// trailer of a `file_len` file). The payload is cut at the end of `b`: a
+/// record grown by a later build still shows its leading bytes.
+fn record_at(b: &[u8], at: usize, file_len: u32) -> Option<(u16, &[u8], usize)> {
     let h = b.get(at..at + 4)?;
     let len = usize::from(u16::from_le_bytes([h[2], h[3]]));
     let end = at + 4 + len;
@@ -343,11 +350,11 @@ fn record_at(b: &[u8], at: usize, file_len: u32) -> Option<(u16, &[u8])> {
     whole
         .then(|| b.get(at + 4..end.min(b.len())))
         .flatten()
-        .map(|p| (u16::from_le_bytes([h[0], h[1]]), p))
+        .map(|p| (u16::from_le_bytes([h[0], h[1]]), p, end))
 }
 
-/// A library Sound's header, engine and stamp from its first `LIB_PEEK`
-/// bytes; no CRC check.
+/// A library Sound's header, engine, stamp and description (`Note`) from
+/// its first `LIB_PEEK` bytes; no CRC check.
 pub fn peek_library(b: &[u8], file_len: u32) -> Result<Peek, FileError> {
     let head: &[u8; HEADER_LEN] = b
         .get(..HEADER_LEN)
@@ -366,7 +373,7 @@ pub fn peek_library(b: &[u8], file_len: u32) -> Result<Peek, FileError> {
         note: None,
         needs_newer: false,
     };
-    if let Some((tag, p)) = record_at(b, HEADER_LEN, file_len)
+    if let Some((tag, p, next)) = record_at(b, HEADER_LEN, file_len)
         && tag == RecordTag::Engine.code()
     {
         let &[code] = p else {
@@ -374,13 +381,14 @@ pub fn peek_library(b: &[u8], file_len: u32) -> Result<Peek, FileError> {
         };
         peek.engine = EngineType::from_disk_code(code);
         peek.needs_newer = peek.engine.is_none();
-        peek.stamp = record_at(b, HEADER_LEN + 5, file_len)
-            .filter(|&(t, _)| t == RecordTag::Build.code())
-            .and_then(|(_, p)| BuildStamp::parse(p));
-        // Third, straight after `Build`; anything else is not a description.
-        peek.note = record_at(b, HEADER_LEN + 5 + 4 + BUILD_LEN, file_len)
-            .filter(|&(t, _)| t == RecordTag::Note.code())
-            .and_then(|(_, p)| Note::parse(p));
+        let build = record_at(b, next, file_len).filter(|&(t, ..)| t == RecordTag::Build.code());
+        peek.stamp = build.and_then(|(_, p, _)| BuildStamp::parse(p));
+        // Third, straight after `Build` at its declared length (a later
+        // build's longer one included); anything else is not a description.
+        peek.note = build
+            .and_then(|(.., next)| record_at(b, next, file_len))
+            .filter(|&(t, ..)| t == RecordTag::Note.code())
+            .and_then(|(_, p, _)| Note::parse(p));
     }
     Ok(peek)
 }

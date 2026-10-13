@@ -207,21 +207,29 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the pool meter, row costs, the hints' bytes (sound-pool
     // plan Task 6); and its refusal. Then the merge with filter-types: a
     // Sound is smaller (fixed columns, no registry entry).
-    ("sound_browser", 0x874eaa34493bb6ca),
+    // Then, with the library_* screens: FACTORY joins the title and B ◂▸
+    // moves to hint line 1 (showcase Task 4).
+    ("sound_browser", 0x2ac01248d9ebb6b2),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
-    ("sound_browser_pool_full", 0xa66982256a3e11d9),
+    ("sound_browser_pool_full", 0x670687c8121bfcc1),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
-    ("library_empty", 0xa94e4a6edf448c09),
-    ("library_no_card", 0xa7957021c5215364),
-    ("library_sounds", 0xbdd7b70b99cd94dd),
-    ("library_this_build", 0xcf33aa71b7f402e2),
-    ("library_cut_short", 0xd797a54b3cebf09d),
-    ("library_older", 0xddc7ed0f09a1592b),
-    ("library_newer", 0xfa0990aa288420a4),
-    ("library_wont_fit", 0x46253d45450aded1),
-    ("library_pool_full", 0x6660706bd8a9d80c),
+    ("library_empty", 0xdf219682ac1a29c9),
+    ("library_no_card", 0xf92da8b42d895e74),
+    ("library_sounds", 0xe736237f4677321d),
+    ("library_this_build", 0xc0b6072f135e386a),
+    ("library_cut_short", 0xaae193824d9a64cd),
+    ("library_older", 0x11a9980a5b5a2593),
+    ("library_newer", 0xaa56e3ee8ad23474),
+    ("library_wont_fit", 0xaa10337731ecbe31),
+    ("library_pool_full", 0x457042dff20636e4),
     ("library_naming", 0xab3925136bf27a0f),
+    // The FACTORY tab: a row's description on line 2, the set's build on
+    // line 3; empty, no card, and a stray TAPE file greyed COMING SOON.
+    ("factory_described", 0xa8b6420a9b6a0a6d),
+    ("factory_empty", 0xf629751facd4b473),
+    ("factory_no_card", 0x48fe4add0d997206),
+    ("factory_coming_soon", 0x4cc27787521e8a97),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     // Re-recorded: INVERT in cell F (ADR 0126).
     ("settings_personal_theme", 0x69eb789acb0d98db),

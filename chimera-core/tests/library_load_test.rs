@@ -17,8 +17,8 @@ use chimera_core::project::arena::Cost;
 use chimera_core::project::test_support::{scratch_of, set_free_to};
 use chimera_core::project::{
     Absence, AdoptError, Adopted, Confirmed, LibFile, LibNote, LibPage, LibRead, LibraryPart,
-    PageAt, PartId, PartStatus, Project, ReplaceError, ReplaceGuard, SourceNeed, SourceRef, Staged,
-    TemplateCrc, list_library, part_status, read_library_sound, save_library_sound,
+    PageAt, PartId, PartStatus, Project, ReplaceError, ReplaceGuard, Shelf, SourceNeed, SourceRef,
+    Staged, TemplateCrc, list_library, part_status, read_library_sound, save_library_sound,
 };
 use chimera_core::storage::{
     BuildStamp, Card, FileError, FileKind, Generation, HEADER_LEN, Header, LibId, RecordTag,
@@ -68,7 +68,7 @@ fn save_named<S: Store>(st: &mut S, s: &Sound, name: &str) -> LibId {
 /// The listed row of `id`.
 fn listed(st: &mut MemStore, id: LibId) -> LibFile {
     let mut p = Box::new(LibPage::EMPTY);
-    list_library(&mut Card::new(), st, PageAt::Newest, &mut p)
+    list_library(&mut Card::new(), st, Shelf::User, PageAt::First, &mut p)
         .out
         .unwrap();
     let e = p.entries().iter().flatten().find(|e| e.id == id).unwrap();

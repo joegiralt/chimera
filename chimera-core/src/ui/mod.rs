@@ -88,7 +88,7 @@ use components::Head;
 use filter_panel::{JackSlot, RouteView};
 use fmt::FmtBuf;
 use hold::{HoldGates, Press};
-use library::Tab;
+use library::BrowserTab as Tab;
 use midi_settings::MidiSettings;
 use mod_grid::MatrixState;
 use nav::{
@@ -443,7 +443,7 @@ impl UiState {
             addr_of_mut!((*p).heads).write(Heads::NONE);
             addr_of_mut!((*p).heads_from).write(&crate::instrument::HEADS);
             addr_of_mut!((*p).src).write(source_cell::SourceCell::NEW);
-            addr_of_mut!((*p).lib).write(library::LibState::NEW);
+            library::LibState::init_in_place(uninit_at(addr_of_mut!((*p).lib)));
             addr_of_mut!((*p).browser_dirty).write(false);
             addr_of_mut!((*p).page).write(page);
             addr_of_mut!((*p).sel_op).write(Op::A);
@@ -2279,12 +2279,14 @@ impl UiState {
                 break;
             }
             if let (Some((p, b)), NavKey::Edit) = (self.loc.browse(), k) {
-                // MIX + EDIT saves to the source the tab shows.
+                // MIX + EDIT saves to the source the tab shows; FACTORY
+                // is read-only.
                 match (self.lib.tab, controls.edges(ButtonId::Mix).down) {
                     (Tab::Project, true) => self.save_part(p),
                     (Tab::Project, false) => self.load_sound(p, b),
                     (Tab::Library, true) => self.name_for_library(p, Some(b)),
-                    (Tab::Library, false) => self.library_edit(p, b),
+                    (Tab::Library | Tab::Factory, false) => self.library_edit(p, b),
+                    (Tab::Factory, true) => {}
                 }
                 continue;
             }
@@ -2336,11 +2338,7 @@ impl UiState {
                 return;
             }
             // B turns between the tabs.
-            let tab = match controls.encoder_delta(EncoderId::B) {
-                0 => self.lib.tab,
-                d if d > 0 => Tab::Library,
-                _ => Tab::Project,
-            };
+            let tab = self.lib.tab.turned(controls.encoder_delta(EncoderId::B));
             if tab != self.lib.tab {
                 self.browser_dirty = true;
                 self.lib.entered();
@@ -2348,7 +2346,9 @@ impl UiState {
             self.lib.tab = tab;
             let moved = match tab {
                 Tab::Project => browser::input(controls, b),
-                Tab::Library => browser::input_library(controls, b, library::rows(self.lib.page())),
+                Tab::Library | Tab::Factory => {
+                    browser::input_library(controls, b, library::rows(self.lib.page()))
+                }
             };
             if moved != b {
                 self.loc = Location::sound_at(p, moved);
@@ -2730,13 +2730,13 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             >,
     {
-        let view = match self.lib.tab {
-            Tab::Project => browser::BrowserView::Project,
-            Tab::Library => browser::BrowserView::Library(&self.lib, &self.lib.this),
-        };
-        let (cursor, scroll) = match self.lib.tab {
-            Tab::Project => (b.cursor(), b.scroll()),
-            Tab::Library => (b.lib_cursor(), b.lib_scroll()),
+        let (view, cursor, scroll) = match self.lib.tab {
+            Tab::Project => (browser::BrowserView::Project, b.cursor(), b.scroll()),
+            Tab::Library | Tab::Factory => (
+                browser::BrowserView::Library(&self.lib, &self.lib.this),
+                b.lib_cursor(),
+                b.lib_scroll(),
+            ),
         };
         let (hints, refusal) = (self.theme.hints, self.refusal());
         browser::draw(d, &self.project, view, part, cursor, scroll, hints, refusal);

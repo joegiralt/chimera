@@ -21,7 +21,7 @@ use chimera_core::storage::{
 };
 use chimera_core::ui::UiState;
 use chimera_core::ui::busy::ToastStep;
-use chimera_core::ui::library::Tab;
+use chimera_core::ui::library::BrowserTab as Tab;
 use chimera_core::ui::nav::Location;
 use chimera_core::ui::settings::part::Offer;
 use chimera_core::ui::settings::prompt::LibraryAnswer;
@@ -45,6 +45,8 @@ struct Counted {
     hide_tapes: usize,
     /// Reads past this many fail with `Io`.
     fail_after: usize,
+    /// Writes and deletes so far.
+    writes: usize,
 }
 
 impl Store for Counted {
@@ -88,9 +90,11 @@ impl Store for Counted {
         f: FileName,
         b: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
     ) -> Result<u32, StoreError> {
+        self.writes += 1;
         self.inner.write(v, f, b)
     }
     fn delete(&mut self, v: VolumeId, f: FileName) -> Result<(), StoreError> {
+        self.writes += 1;
         self.inner.delete(v, f)
     }
     fn make_dir(&mut self, v: VolumeId, d: Dir) -> Result<(), StoreError> {
@@ -118,6 +122,7 @@ impl Rig {
             tapes: 0,
             hide_tapes: usize::MAX,
             fail_after: usize::MAX,
+            writes: 0,
         };
         let mut card = Card::new();
         let (sync, set, _) = SystemSync::boot(&mut card, &mut st);
@@ -175,6 +180,20 @@ impl Rig {
         self.feed(Input::chord(ButtonId::Edit, ButtonId::B1));
         self.turn(EncoderId::B, 1);
         assert_eq!(self.ui.lib_tab(), Tab::Library);
+    }
+
+    /// Part 1's Sound rung, the FACTORY tab.
+    fn open_factory(&mut self) {
+        self.feed(Input::chord(ButtonId::Edit, ButtonId::B1));
+        self.turn(EncoderId::B, 2);
+        assert_eq!(self.ui.lib_tab(), Tab::Factory);
+    }
+
+    /// The listed page's ids, in its order, and its paging rows.
+    fn page(&self) -> (Vec<u32>, bool, bool) {
+        let p = self.ui.library_page_for_test().expect("listed");
+        let ids = p.entries().iter().flatten().map(|e| e.id.get()).collect();
+        (ids, p.prev, p.next)
     }
 
     fn toast(&mut self) -> String {
@@ -966,4 +985,201 @@ mod console_edits {
         assert_eq!(r.cursor_id(), Some(id.get()));
         loaded_neither(&r, &old, &new);
     }
+}
+
+/// `s` as an installed factory file's bytes, described by `note`.
+fn described(s: &Sound, note: &str) -> Vec<u8> {
+    let h = Header {
+        kind: FileKind::Sound,
+        generation: Generation::FIRST,
+        name: Some(s.name),
+    };
+    let note = chimera_core::storage::Note::new(note).unwrap();
+    let mut sink = VecSink(Vec::new());
+    write_file(&mut sink, &h, &mut |w| {
+        encode_library_sound(s, &ST, Some(&note), w)
+    })
+    .unwrap();
+    sink.0
+}
+
+/// Review Focus 2: LIBRARY lists user ids only, FACTORY factory ids only,
+/// both by parse; FACTORY lowest id first.
+#[test]
+fn tabs_partition_ids() {
+    let mut r = Rig::new();
+    let s = factory_sound(0);
+    for id in [5, 9_150_000, 9_100_001] {
+        r.put_raw(id, &stamped(&s));
+    }
+    r.open_library();
+    r.work();
+    assert_eq!(r.page(), (vec![5], false, false));
+    r.turn(EncoderId::B, 1);
+    assert_eq!(r.ui.lib_tab(), Tab::Factory);
+    assert!(r.ui.card_pending(), "FACTORY lists again: one page static");
+    r.work();
+    assert_eq!(r.page(), (vec![9_100_001, 9_150_000], false, false));
+    r.turn(EncoderId::B, -1);
+    r.work();
+    assert_eq!(r.page().0, vec![5]);
+}
+
+/// MIX + EDIT and MIX + MINUS do nothing in FACTORY: no NAMING, no
+/// prompt, nothing written.
+#[test]
+fn factory_mix_edit_and_mix_minus_write_nothing() {
+    let mut r = Rig::new();
+    r.put_raw(
+        9_100_001,
+        &described(&factory_sound(0), "A DESCRIBED SOUND"),
+    );
+    r.open_factory();
+    r.work();
+    let writes = r.st.writes;
+    r.feed(Input::chord(ButtonId::Mix, ButtonId::Edit));
+    assert_eq!(r.ui.naming_title_for_test(), None);
+    r.feed(Input::chord(ButtonId::Mix, ButtonId::Minus));
+    assert!(!r.ui.prompt_open());
+    r.work();
+    assert_eq!(r.st.writes, writes);
+    assert_eq!(r.sounds(), vec![9_100_001]);
+}
+
+/// EDIT in FACTORY is LIBRARY's load: the guard asks about an edited Part,
+/// then `adopt`.
+#[test]
+fn factory_load_goes_through_guard_and_adopt() {
+    let mut r = Rig::new();
+    r.put_raw(
+        9_100_001,
+        &described(&factory_sound(2), "A DESCRIBED SOUND"),
+    );
+    r.edit_part();
+    r.open_factory();
+    r.work();
+    r.press(ButtonId::Edit);
+    assert_eq!(r.ui.prompt_kind_for_test(), Some(AskKind::LoadLibrary));
+    r.answer(LibraryAnswer::Replace);
+    let slot = r.ui.project().pool().first_free().unwrap();
+    r.work();
+    assert_eq!(r.toast(), format!("LOADED TO SLOT {}", slot.index() + 1));
+    let p = r.ui.project();
+    assert!(p.pool().get(slot).unwrap().matches(&factory_sound(2)));
+    assert_eq!(part_status(p.part(P1), p.pool()), PartStatus::Clean);
+}
+
+/// A stray TAPE factory file: listed, and EDIT only says COMING SOON.
+#[test]
+fn factory_tape_row_greyed_says_coming_soon() {
+    let mut r = Rig::new();
+    let mut s = Sound::init(EngineType::Tape);
+    s.name = SoundName::new("OLD TAPE").unwrap();
+    r.put_raw(9_000_001, &stamped(&s));
+    r.open_factory();
+    r.work();
+    assert_eq!(r.page().0, vec![9_000_001]);
+    let counts = r.counts();
+    r.press(ButtonId::Edit);
+    assert!(!r.ui.prompt_open());
+    assert!(!r.ui.card_pending());
+    assert_eq!(r.toast(), "TAPE: COMING SOON");
+    assert_eq!(r.counts(), counts);
+}
+
+/// 48 to a page, lowest id first: `NEXT ›` turns to the last 2, whose page
+/// has `‹ PREVIOUS`.
+#[test]
+fn factory_pages_48() {
+    let mut r = Rig::new();
+    let bytes = stamped(&factory_sound(0));
+    for i in 1..=50 {
+        r.put_raw(9_100_000 + i, &bytes);
+    }
+    r.open_factory();
+    r.work();
+    let (ids, prev, next) = r.page();
+    assert_eq!(
+        (ids.len(), ids[0], ids[47], prev, next),
+        (48, 9_100_001, 9_100_048, false, true)
+    );
+    r.turn(EncoderId::A, 48);
+    assert_eq!(r.cursor_id(), None, "on NEXT ›");
+    r.press(ButtonId::Edit);
+    r.work();
+    assert_eq!(r.page(), (vec![9_100_049, 9_100_050], true, false));
+    assert_eq!(
+        r.cursor_id(),
+        Some(9_100_049),
+        "lands on the page's first Sound"
+    );
+    r.turn(EncoderId::A, -2);
+    r.press(ButtonId::Edit);
+    r.work();
+    let (ids, prev, next) = r.page();
+    assert_eq!(
+        (ids.len(), ids[0], prev, next),
+        (48, 9_100_001, false, true)
+    );
+    assert_eq!(
+        r.cursor_id(),
+        Some(9_100_048),
+        "lands on the page's last Sound"
+    );
+}
+
+/// The title's three tabs in full and `· P8` fit `CONTENT_W`; with
+/// `B ◂▸` they run past it, so the mark is on hint line 1.
+#[test]
+fn title_fits_content_w() {
+    use chimera_core::ui::{browser, draw, theme};
+    let part = draw::text_width(&theme::FONT_LABEL, "· P8", 0);
+    let used = browser::title_tabs_end() - theme::MARGIN_X + browser::TITLE_GAP + part;
+    assert!(
+        used <= theme::CONTENT_W,
+        "{used} px of {}",
+        theme::CONTENT_W
+    );
+    let turn = draw::text_width(&theme::FONT_LABEL, browser::TURN, theme::LABEL_TRACKING);
+    assert!(
+        used + browser::TITLE_GAP + turn > theme::CONTENT_W,
+        "B ◂▸ would fit the title"
+    );
+}
+
+/// A byte outside 0x20-0x7E in a stored `Note` draws as `?`.
+#[test]
+fn note_unprintable_draws_question_mark() {
+    let draw_with = |b: u8| {
+        let mut r = Rig::new();
+        let mut f = described(&factory_sound(0), "ABXC");
+        let at = f.windows(4).position(|w| w == b"ABXC").unwrap();
+        f[at + 2] = b;
+        fix_crc(&mut f);
+        r.put_raw(9_100_001, &f);
+        r.open_factory();
+        r.work();
+        screen::render_ui(&r.ui).px
+    };
+    let unprintable = draw_with(0x01);
+    assert!(unprintable == draw_with(b'?'), "0x01 draws as ?");
+    assert!(unprintable != draw_with(b'X'), "the description is drawn");
+}
+
+/// The description is information: drawn with THEME's HINTS off too.
+#[test]
+fn factory_description_draws_with_hints_off() {
+    use chimera_core::ui::theme_settings::ThemeSettings;
+    let draw_with = |note: &str| {
+        let mut r = Rig::new();
+        r.put_raw(9_100_001, &described(&factory_sound(0), note));
+        r.ui.set_theme(ThemeSettings {
+            hints: false,
+            ..ThemeSettings::DEFAULT
+        });
+        r.open_factory();
+        r.work();
+        screen::render_ui(&r.ui).px
+    };
+    assert!(draw_with("ONE DESCRIPTION") != draw_with("ANOTHER ONE"));
 }

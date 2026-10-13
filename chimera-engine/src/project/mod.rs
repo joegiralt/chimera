@@ -27,7 +27,8 @@ pub(crate) use ids::bounded_index;
 pub use ids::{PartId, PartSet, SlotId};
 pub use library::{
     AdoptError, Adopted, LibEntry, LibFile, LibNote, LibPage, LibRead, LibSeen, LibraryPart,
-    PageAt, SourceNeed, Staged, list_library, read_library_sound, save_library_sound,
+    PageAt, RowDetail, Shelf, SourceNeed, Staged, list_library, read_library_sound,
+    save_library_sound,
 };
 pub use marks::{
     ActionRefused, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, StatusCache,

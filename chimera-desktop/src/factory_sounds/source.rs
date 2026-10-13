@@ -16,10 +16,9 @@ use chimera_core::storage::{
     ValidAddr, encode_library_sound, read_value, sound_crc, write_file,
 };
 use chimera_core::taps::TapOp;
-use chimera_core::ui::draw::text_width;
+use chimera_core::ui::browser::{NOTE_W, note_width};
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::ui::mod_grid::block_tag;
-use chimera_core::ui::theme::{CONTENT_W, FONT_LABEL, LABEL_TRACKING};
 use chimera_core::ui::view::{SlotCtx, shown_fmt};
 use chimera_hal::store::{ByteSink, StoreError};
 
@@ -474,13 +473,13 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
 }
 
 /// A description: `Note`'s characters and 1-40 B, and it fits the FACTORY
-/// tab's line (`CONTENT_W` in `FONT_LABEL`, as the firmware draws it).
+/// tab's line, measured as the firmware draws it (`browser::note_width`).
 fn description(v: &str) -> Result<Note, String> {
     let n = Note::new(v)
         .ok_or_else(|| format!("note {v:?}: 1-40 of A-Z, 0-9, space and . , ' - + / : ( ) & %"))?;
-    let w = text_width(&FONT_LABEL, v, LABEL_TRACKING);
-    if w > CONTENT_W {
-        return Err(format!("note {v:?} is {w} px wide, past {CONTENT_W}"));
+    let w = note_width(v);
+    if w > NOTE_W {
+        return Err(format!("note {v:?} is {w} px wide, past {NOTE_W}"));
     }
     Ok(n)
 }

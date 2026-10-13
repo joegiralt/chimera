@@ -1,23 +1,26 @@
-//! The Sound rung's LIBRARY tab (library spec § Browser, § Load): the page
-//! as listed, the tab B turns, and a load in flight. A pending load holds
-//! the pool's scratch and maybe its staging, so while it waits no other
-//! card work starts.
+//! The Sound rung's LIBRARY and FACTORY tabs (library spec § Browser,
+//! § Load; showcase spec § 2): the page as listed, the tab B turns, and a
+//! load in flight. A pending load holds the pool's scratch and maybe its
+//! staging, so while it waits no other card work starts.
 
 use core::fmt::Write;
+use core::mem::MaybeUninit;
+use core::ptr::addr_of_mut;
 
 use chimera_hal::store::{Dir, Store, StoreError, VolumeId};
 
+use crate::in_place::uninit_at;
 use crate::name::SoundName;
 use crate::params::EngineType;
 use crate::project::{
     AdoptError, CardOut, Confirmed, LibEntry, LibNote, LibPage, LibRead, LibraryPart, Line, PageAt,
-    PartId, PartSet, ReplaceError, ReplaceGuard, SlotId, SourceNeed, Staged, list_library,
+    PartId, PartSet, ReplaceError, ReplaceGuard, Shelf, SlotId, SourceNeed, Staged, list_library,
     read_library_sound, save_library_sound,
 };
 use crate::storage::{BuildStamp, Card, LibId, held_for_file_len, source_file};
 use crate::ui::UiState;
 use crate::ui::about_page;
-use crate::ui::browser::Browse;
+use crate::ui::browser::{Browse, Soon};
 use crate::ui::busy::Toast;
 use crate::ui::nav::{ListAt, Location};
 use crate::ui::settings::job::Job;
@@ -28,9 +31,43 @@ use crate::ui::source_cell::{READ_FAILED, SOURCE_MISSING, SourceLoad, StagedStep
 
 /// What the Sound rung lists: kept for the session, PROJECT at boot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Tab {
+pub enum BrowserTab {
     Project,
     Library,
+    /// The installed factory Sounds: read-only.
+    Factory,
+}
+
+impl BrowserTab {
+    pub const ALL: [BrowserTab; 3] = [
+        BrowserTab::Project,
+        BrowserTab::Library,
+        BrowserTab::Factory,
+    ];
+
+    /// Its title, in full.
+    pub const fn label(self) -> &'static str {
+        match self {
+            BrowserTab::Project => "PROJECT",
+            BrowserTab::Library => "LIBRARY",
+            BrowserTab::Factory => "FACTORY",
+        }
+    }
+
+    /// The card shelf it lists; PROJECT lists the pool.
+    pub const fn shelf(self) -> Option<Shelf> {
+        match self {
+            BrowserTab::Project => None,
+            BrowserTab::Library => Some(Shelf::User),
+            BrowserTab::Factory => Some(Shelf::Factory),
+        }
+    }
+
+    /// `d` tabs along for B's turn, stopping at each end.
+    pub fn turned(self, d: i8) -> BrowserTab {
+        let i = (self as usize).saturating_add_signed(isize::from(d));
+        BrowserTab::ALL[i.min(BrowserTab::ALL.len() - 1)]
+    }
 }
 
 /// A library load between its read and `adopt`: the confirmation and
@@ -48,7 +85,7 @@ pub struct LibState {
     /// on the next tab or rung entry.
     err: Option<LibNote>,
     pub(crate) load: Option<PendingLoad>,
-    pub(crate) tab: Tab,
+    pub(crate) tab: BrowserTab,
     /// The build line 3 compares stamps with.
     pub(crate) this: BuildStamp,
     /// SAVE PART FIRST's Stale Parts and slot: asked about once the load
@@ -60,34 +97,62 @@ pub struct LibState {
 }
 
 impl LibState {
-    pub(crate) const NEW: LibState = LibState {
-        page: LibPage::EMPTY,
-        listed: false,
-        err: None,
-        load: None,
-        tab: Tab::Project,
-        this: about_page::THIS,
-        after: None,
-        tape: false,
-    };
+    /// PROJECT, nothing listed, written in place: the page a row at a
+    /// time (`LibPage::init_in_place`), so its empty image isn't in flash.
+    pub(crate) fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` comes from `slot`: non-null, aligned and exclusively
+        // ours. `addr_of_mut!` takes each field's place without a
+        // reference; `uninit_at` views the page's place as `MaybeUninit`,
+        // which never asserts it initialised, and `LibPage::init_in_place`
+        // writes all of it. Every other field is written exactly once with
+        // a valid value, so the whole state is initialised before
+        // `assume_init_mut` makes the first reference to it.
+        unsafe {
+            LibPage::init_in_place(uninit_at(addr_of_mut!((*p).page)));
+            addr_of_mut!((*p).listed).write(false);
+            addr_of_mut!((*p).err).write(None);
+            addr_of_mut!((*p).load).write(None);
+            addr_of_mut!((*p).tab).write(BrowserTab::Project);
+            addr_of_mut!((*p).this).write(about_page::THIS);
+            addr_of_mut!((*p).after).write(None);
+            addr_of_mut!((*p).tape).write(false);
+            slot.assume_init_mut()
+        }
+    }
 
     /// A load is pending: no other card work starts.
     pub fn busy(&self) -> bool {
         self.load.is_some()
     }
 
-    /// The page goes: listed again when LIBRARY is next on screen.
+    /// The page goes: listed again when LIBRARY or FACTORY is next on screen.
     pub fn forget(&mut self) {
         self.listed = false;
     }
 
+    /// The one page static is the tab's: listed, and of its shelf.
+    fn current(&self) -> bool {
+        self.listed && self.tab.shelf() == Some(self.page.shelf)
+    }
+
+    pub fn tab(&self) -> BrowserTab {
+        self.tab
+    }
+
     pub fn page(&self) -> Option<&LibPage> {
-        self.listed.then_some(&self.page)
+        self.current().then_some(&self.page)
     }
 
     /// Why the page on screen is empty: the card couldn't be listed.
     pub fn err(&self) -> Option<LibNote> {
-        self.err.filter(|_| self.listed)
+        self.err.filter(|_| self.current())
+    }
+
+    /// A row of an engine coming soon: greyed, and EDIT only says so.
+    /// LIBRARY never lists one but under TAPE's load tests.
+    pub fn soon(&self, e: &LibEntry) -> Option<Soon> {
+        e.engine.and_then(Soon::of).filter(|_| !self.tape)
     }
 
     /// A failed listing is tried again: LIBRARY entered anew.
@@ -98,22 +163,23 @@ impl LibState {
     }
 }
 
-/// A LIBRARY row.
+/// A LIBRARY or FACTORY row.
 #[derive(Clone, Copy, Debug)]
 pub enum LibRow<'a> {
-    /// `‹ NEWER`: the page above.
-    Newer,
+    /// `‹ NEWER` or `‹ PREVIOUS`: the page above.
+    Prev,
     Sound(&'a LibEntry),
-    /// `OLDER ›`: the page below.
-    Older,
-    /// `NO SOUNDS YET`, or an unreadable card: EDIT does nothing.
+    /// `OLDER ›` or `NEXT ›`: the page below.
+    Next,
+    /// `NO SOUNDS YET`, `NO FACTORY SOUNDS`, or an unreadable card: EDIT
+    /// does nothing.
     Empty,
 }
 
 /// How many rows the page shows: at least one.
 pub fn rows(page: Option<&LibPage>) -> usize {
     let Some(p) = page else { return 1 };
-    let n = usize::from(p.newer) + p.entries().len() + usize::from(p.older);
+    let n = usize::from(p.prev) + p.entries().len() + usize::from(p.next);
     n.max(1)
 }
 
@@ -122,21 +188,21 @@ pub fn row(page: Option<&LibPage>, i: usize) -> LibRow<'_> {
     let Some(p) = page else {
         return LibRow::Empty;
     };
-    let first = usize::from(p.newer);
+    let first = usize::from(p.prev);
     let n = p.entries().len();
     match i {
-        0 if p.newer => LibRow::Newer,
+        0 if p.prev => LibRow::Prev,
         i if i >= first && i < first + n => p.entries()[i - first]
             .as_ref()
             .map_or(LibRow::Empty, LibRow::Sound),
-        i if p.older && i == first + n => LibRow::Older,
+        i if p.next && i == first + n => LibRow::Next,
         _ => LibRow::Empty,
     }
 }
 
 /// The first and last Sound rows: where a page lands the cursor.
 pub fn sound_rows(page: &LibPage) -> (usize, usize) {
-    let first = usize::from(page.newer);
+    let first = usize::from(page.prev);
     (first, first + page.entries().len().saturating_sub(1))
 }
 
@@ -157,7 +223,7 @@ const SAVE_TO_LIB_LIST: ListAt = ListAt::at(&[PART_ROW], SAVE_TO_LIB_ROW);
 
 impl UiState {
     /// The Sound rung's tab.
-    pub fn lib_tab(&self) -> Tab {
+    pub fn lib_tab(&self) -> BrowserTab {
         self.lib.tab
     }
 
@@ -167,31 +233,35 @@ impl UiState {
         self.lib.forget();
     }
 
-    /// LIBRARY on screen with no page: listed on the next pass.
+    /// LIBRARY or FACTORY on screen with no page of its own: listed on the
+    /// next pass.
     pub(crate) fn wants_lib_list(&self) -> bool {
-        self.lib.tab == Tab::Library
-            && !self.lib.listed
+        self.lib.tab.shelf().is_some()
+            && !self.lib.current()
             && !self.lib.busy()
             && self.loc.browse().is_some()
     }
 
-    /// EDIT on a LIBRARY row of Part `part`'s browser.
+    /// EDIT on a LIBRARY or FACTORY row of Part `part`'s browser.
     pub(crate) fn library_edit(&mut self, part: PartId, b: Browse) {
         let page = self.lib.page();
         let first = page.and_then(|p| p.entries().iter().flatten().next().map(|e| e.id));
         let last = page.and_then(|p| p.entries().iter().flatten().last().map(|e| e.id));
         let entry = match row(page, b.lib_cursor()) {
-            LibRow::Newer => {
-                return self.queue_opt(first.map(|id| Job::LibraryList(PageAt::Above(id))));
+            LibRow::Prev => {
+                return self.queue_opt(first.map(|id| Job::LibraryList(PageAt::Before(id))));
             }
-            LibRow::Older => {
-                return self.queue_opt(last.map(|id| Job::LibraryList(PageAt::Below(id))));
+            LibRow::Next => {
+                return self.queue_opt(last.map(|id| Job::LibraryList(PageAt::After(id))));
             }
             LibRow::Empty => return,
             LibRow::Sound(e) => *e,
         };
         if let Some(e) = entry.err {
             return self.error(Line::new(e.message()));
+        }
+        if let Some(s) = self.lib.soon(&entry) {
+            return self.notice(Line::new(s.toast()));
         }
         let Some(file) = self.lib.page.file(&entry) else {
             return;
@@ -249,13 +319,15 @@ impl UiState {
         }
     }
 
-    /// Page `at` read into the cache; on the browser, the cursor lands on
-    /// it: the top for the newest, else the Sound nearest where it came
-    /// from.
+    /// Page `at` of the tab's shelf read into the one page static; on the
+    /// browser, the cursor lands on it: the top for the first, else the
+    /// Sound nearest where it came from.
     pub(crate) fn lib_list<S: Store>(&mut self, card: &mut Card, store: &mut S, at: PageAt) {
-        let CardOut { out, event } = list_library(card, store, at, &mut self.lib.page);
-        // TAPE is coming soon (ADR 0132): its Sounds stay on the card, unlisted.
-        if !self.lib.tape {
+        let shelf = self.lib.tab.shelf().unwrap_or(Shelf::User);
+        let CardOut { out, event } = list_library(card, store, shelf, at, &mut self.lib.page);
+        // TAPE is coming soon (ADR 0132): its Sounds stay on the card,
+        // unlisted in LIBRARY; a stray factory one lists greyed.
+        if shelf == Shelf::User && !self.lib.tape {
             self.lib.page.retain(|e| e.engine != Some(EngineType::Tape));
         }
         self.saw(event);
@@ -267,9 +339,9 @@ impl UiState {
             let page = &self.lib.page;
             let (first, last) = sound_rows(page);
             let to = match at {
-                PageAt::Newest => 0,
-                PageAt::Below(_) => first,
-                PageAt::Above(_) => last,
+                PageAt::First => 0,
+                PageAt::After(_) => first,
+                PageAt::Before(_) => last,
             };
             // A new page: its scroll starts at the top, not the last page's.
             let n = rows(Some(page));
@@ -300,7 +372,7 @@ impl UiState {
                 // On the browser, the page holding it, the cursor on it:
                 // page 1 for a top + 1 id. Elsewhere, LIBRARY lists anew.
                 self.loc.browse()?;
-                let at = LibId::new(id.get() + 1).map_or(PageAt::Newest, PageAt::Below);
+                let at = LibId::new(id.get() + 1).map_or(PageAt::First, PageAt::After);
                 Some(Job::LibraryList(at))
             }
             Err(n) => {
@@ -462,6 +534,13 @@ impl UiState {
     #[doc(hidden)]
     pub fn set_this_build_for_test(&mut self, this: BuildStamp) {
         self.lib.this = this;
+    }
+
+    /// The page on screen, if listed.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn library_page_for_test(&self) -> Option<&LibPage> {
+        self.lib.page()
     }
 
     /// The row under LIBRARY's cursor, as its id.

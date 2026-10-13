@@ -181,6 +181,20 @@ fn every_committed_source_builds() {
     assert!(man.json().starts_with('{'));
 }
 
+/// Spec § 8: every committed description fits FACTORY's line as drawn.
+#[test]
+fn every_committed_description_fits_the_drawn_width() {
+    use chimera_core::ui::browser::{NOTE_W, note_width};
+    let s = build::sources(std::path::Path::new(SOURCES)).unwrap();
+    let wide: Vec<_> = s
+        .iter()
+        .map(|s| (s.note.as_str(), note_width(s.note.as_str())))
+        .filter(|&(_, w)| w > NOTE_W)
+        .collect();
+    assert!(wide.is_empty(), "past {NOTE_W} px: {wide:?}");
+    assert!(!s.is_empty());
+}
+
 #[test]
 fn unknown_ident() {
     fails(&base_with(9, r#"FILTER.FREQ = "1200""#), 9, "FILTER.FREQ");

@@ -20,8 +20,13 @@ const GOLDENS: &[(&str, u64)] = &[
     ("flt_clean", 0xcc4a729ff4ba5faf),
     ("settings_top", 0xf1655533215f4e4b),
     ("settings_personal_theme", 0x3a2a9ae7815335b2),
-    ("sound_browser", 0x0abf8314bdac75ec),
+    // Re-recorded: FACTORY joins the title, B ◂▸ moves to hint line 1.
+    ("sound_browser", 0x4d6906af130d5f08),
     ("toast_exfat", 0xd8ee278545272c31),
+    ("factory_described", 0x4758596262c0874f),
+    ("factory_empty", 0x1c8ff002a5b7f1bf),
+    ("factory_no_card", 0xa63a9f2f42b50fa3),
+    ("factory_coming_soon", 0x4e6fff96e85a6fde),
 ];
 
 fn light(name: &str) -> Fb {

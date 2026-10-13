@@ -126,7 +126,7 @@ impl UiState {
             let _ = self.relist(cx.card, cx.store);
         }
         if self.wants_lib_list() {
-            self.lib_list(cx.card, cx.store, PageAt::Newest);
+            self.lib_list(cx.card, cx.store, PageAt::First);
         }
         out
     }

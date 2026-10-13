@@ -11,7 +11,7 @@ use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::test_support::FullOnWrite;
 use chimera_core::project::{
-    LibNote, LibPage, PROJECT_DEMO_TOP, PageAt, list_library, list_projects, new_project_id,
+    LibNote, LibPage, PROJECT_DEMO_TOP, PageAt, Shelf, list_library, list_projects, new_project_id,
     save_library_sound,
 };
 use chimera_core::storage::{
@@ -292,6 +292,23 @@ fn peek_reads_the_stamp_of_a_grown_build() {
     }
 }
 
+/// A later build's longer `Build` moves the `Note`: the peek finds it at
+/// `Build`'s declared length, not at this build's.
+#[test]
+fn peek_reads_the_note_after_a_grown_build() {
+    use chimera_core::storage::RecordTag;
+    let note = Note::new("AFTER A LONGER BUILD").unwrap();
+    let base = file_of(&Sound::init(EngineType::Algo), "GROWN", &mut |w| {
+        w.put(RecordTag::Engine, &[0])?;
+        let mut build = ST.to_bytes().to_vec();
+        build.resize(build.len() + 6, 0);
+        w.put(RecordTag::Build, &build)?;
+        w.put(RecordTag::Note, note.as_str().as_bytes())
+    });
+    let p = peek_library(&base[..base.len().min(LIB_PEEK)], base.len() as u32).unwrap();
+    assert_eq!((p.stamp, p.note), (Some(ST), Some(note)));
+}
+
 #[test]
 fn peek_never_panics_on_cut_input() {
     let f = stamped_named(&factory_sound(0).unwrap(), "BASS-1");
@@ -370,13 +387,15 @@ fn chimera_only() -> MemStore {
 
 fn list<S: Store>(st: &mut S, at: PageAt) -> Box<LibPage> {
     let mut p = Box::new(LibPage::EMPTY);
-    list_library(&mut Card::new(), st, at, &mut p).out.unwrap();
+    list_library(&mut Card::new(), st, Shelf::User, at, &mut p)
+        .out
+        .unwrap();
     p
 }
 
 fn list_err<S: Store>(st: &mut S) -> LibNote {
     let mut p = Box::new(LibPage::EMPTY);
-    list_library(&mut Card::new(), st, PageAt::Newest, &mut p)
+    list_library(&mut Card::new(), st, Shelf::User, PageAt::First, &mut p)
         .out
         .unwrap_err()
 }
@@ -467,21 +486,21 @@ impl Store for Counting {
 #[test]
 fn a_hundred_sounds_page_48_48_4_newest_first() {
     let mut st = card_with_sounds(1..=100);
-    let p1 = list(&mut st, PageAt::Newest);
+    let p1 = list(&mut st, PageAt::First);
     assert_eq!(
-        (ids(&p1)[..3].to_vec(), ids(&p1).len(), p1.newer, p1.older),
+        (ids(&p1)[..3].to_vec(), ids(&p1).len(), p1.prev, p1.next),
         (vec![100, 99, 98], 48, false, true)
     );
-    let p2 = list(&mut st, PageAt::Below(LibId::new(53).unwrap()));
+    let p2 = list(&mut st, PageAt::After(LibId::new(53).unwrap()));
     assert_eq!(
-        (ids(&p2)[0], ids(&p2).len(), p2.newer, p2.older),
+        (ids(&p2)[0], ids(&p2).len(), p2.prev, p2.next),
         (52, 48, true, true)
     );
-    let p3 = list(&mut st, PageAt::Below(LibId::new(5).unwrap()));
-    assert_eq!((ids(&p3), p3.older), (vec![4, 3, 2, 1], false));
-    let up = list(&mut st, PageAt::Above(LibId::new(52).unwrap()));
-    assert_eq!((ids(&up)[47], ids(&up)[0], up.older), (53, 100, true));
-    assert!(!up.newer);
+    let p3 = list(&mut st, PageAt::After(LibId::new(5).unwrap()));
+    assert_eq!((ids(&p3), p3.next), (vec![4, 3, 2, 1], false));
+    let up = list(&mut st, PageAt::Before(LibId::new(52).unwrap()));
+    assert_eq!((ids(&up)[47], ids(&up)[0], up.next), (53, 100, true));
+    assert!(!up.prev);
     assert_eq!(up.position(LibId::new(100).unwrap()), Some(0));
 }
 
@@ -492,7 +511,7 @@ fn factory_and_foreign_names_are_never_listed_or_opened() {
         put(&mut st, n, &[0; 40]);
     }
     let mut st = Counting::new(st);
-    let p = list(&mut st, PageAt::Newest);
+    let p = list(&mut st, PageAt::First);
     assert_eq!(ids(&p), vec![1]);
     assert_eq!(st.reads(), vec!["S0000001.A"]);
 }
@@ -500,7 +519,7 @@ fn factory_and_foreign_names_are_never_listed_or_opened() {
 #[test]
 fn only_seen_sides_are_read() {
     let mut st = Counting::new(card_with_sounds(1..=10));
-    list(&mut st, PageAt::Newest);
+    list(&mut st, PageAt::First);
     assert_eq!(st.reads().len(), 10);
     assert!(st.reads().iter().all(|n| n.ends_with(".A")));
 }
@@ -510,7 +529,7 @@ fn bad_sides_list_with_their_errors() {
     let mut st = card_with_sounds(1..=2);
     truncate(&mut st, "S0000001.A", 0);
     set_version(&mut st, "S0000002.A", 2);
-    let p = list(&mut st, PageAt::Newest);
+    let p = list(&mut st, PageAt::First);
     assert_eq!(entry(&p, 1).err, Some(FileError::Truncated));
     assert_eq!(entry(&p, 1).seen.name, None);
     assert_eq!(entry(&p, 2).err, Some(FileError::NeedsNewerFirmware));
@@ -518,7 +537,7 @@ fn bad_sides_list_with_their_errors() {
 
 #[test]
 fn no_sounds_dir_is_an_empty_page() {
-    assert!(ids(&list(&mut chimera_only(), PageAt::Newest)).is_empty());
+    assert!(ids(&list(&mut chimera_only(), PageAt::First)).is_empty());
 }
 
 #[test]
@@ -535,11 +554,11 @@ fn an_unknown_engine_lists_greyed_with_its_name_and_stamp() {
         b[32] = 0x7F;
         b
     });
-    let p = list(&mut st, PageAt::Newest);
+    let p = list(&mut st, PageAt::First);
     let e = entry(&p, 1);
     assert_eq!(e.err, Some(FileError::NeedsNewerFirmware));
     assert_eq!(e.seen.name.unwrap().as_str(), "BASS-1");
-    assert_eq!((e.engine, e.stamp), (None, Some(ST)));
+    assert_eq!((e.engine, e.stamp()), (None, Some(ST)));
 }
 
 /// A project pair stub: the allocators read names only.
@@ -640,4 +659,53 @@ fn factory_load_then_save_is_user_without_note() {
     let len = len_of(&mut st, &n);
     let p = peek_library(&first(&mut st, &n, LIB_PEEK), len).unwrap();
     assert_eq!(p.note, None);
+}
+
+/// A factory row keeps its description, not its stamp: the page keeps one
+/// set stamp, its first described row's. A user row keeps its stamp.
+#[test]
+fn factory_rows_keep_notes_and_the_page_one_set_stamp() {
+    let mut st = MemStore::new(1);
+    let v = st.mount().unwrap();
+    st.make_dir(v, Dir::Chimera).unwrap();
+    st.make_dir(v, Dir::Sounds).unwrap();
+    let snd = factory_sound(0).unwrap();
+    let other = BuildStamp::new("0.0.9", "aaaaaaaa", false);
+    let note = Note::new("A DESCRIBED SOUND").unwrap();
+    for (id, stamp, note) in [
+        ("S9000001", other, None),
+        ("S9100001", ST, Some(&note)),
+        ("S0000001", ST, None),
+    ] {
+        let bytes = file_of(&snd, "SOUND", &mut |w| {
+            encode_library_sound(&snd, &stamp, note, w)
+        });
+        let name = FileName::new(Dir::Sounds, id.as_bytes(), b"A").unwrap();
+        st.write(v, name, &mut |s: &mut dyn ByteSink| s.put(&bytes))
+            .unwrap();
+    }
+    let mut p = Box::new(LibPage::EMPTY);
+    list_library(
+        &mut Card::new(),
+        &mut st,
+        Shelf::Factory,
+        PageAt::First,
+        &mut p,
+    )
+    .out
+    .unwrap();
+    let rows: Vec<_> = p
+        .entries()
+        .iter()
+        .flatten()
+        .map(|e| (e.stamp(), e.note()))
+        .collect();
+    assert_eq!(rows, vec![(None, None), (None, Some(note))]);
+    assert_eq!(
+        p.set_stamp,
+        Some(ST),
+        "the described row's, not the stray file's"
+    );
+    let user = list(&mut st, PageAt::First);
+    assert_eq!(entry(&user, 1).stamp(), Some(ST));
 }

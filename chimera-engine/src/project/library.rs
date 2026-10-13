@@ -1,7 +1,9 @@
 //! The Sound library on the card (library spec § Save): a Part's Sound to
 //! `/CHIMERA/SOUNDS/S#######.A`, stamped with the build.
 
+use core::mem::MaybeUninit;
 use core::ops::ControlFlow;
+use core::ptr::addr_of_mut;
 
 use chimera_hal::store::{Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 
@@ -17,9 +19,9 @@ use crate::params::EngineType;
 use crate::preset::Sound;
 use crate::storage::{
     BuildStamp, Card, CardFault, FileError, Generation, HEADER_LEN, ID_WINDOW, LIB_PEEK, LibId,
-    LibraryDecoder, LoadError, NextId, Peek, SaveError, Side, SideState, SoundCheck, UserId,
-    check_file, encode_library_sound, held_for_file_len, lib_id, library_file, load_ab_in_place,
-    next_user_id, peek_library, save_ab, sound_crc, source_file, user_file,
+    LibKind, LibraryDecoder, LoadError, NextId, Note, Peek, SaveError, Side, SideState, SoundCheck,
+    UserId, check_file, encode_library_sound, held_for_file_len, lib_id, library_file,
+    load_ab_in_place, next_user_id, peek_library, save_ab, sound_crc, source_file, user_file,
 };
 
 /// What a library operation says to the screen.
@@ -164,26 +166,83 @@ pub struct LibEntry {
     pub id: LibId,
     pub seen: LibSeen,
     pub engine: Option<EngineType>,
-    pub stamp: Option<BuildStamp>,
+    /// Its stamp or its description, by the id's kind.
+    pub detail: RowDetail,
     /// That side's size.
     pub len: u32,
     pub err: Option<FileError>,
 }
 
-/// Which page: the newest, or the 48 just below / above an id.
+/// What a row keeps besides its name, by its id's kind: a user Sound's
+/// stamp (LIBRARY's line 3 compares it), a factory Sound's description
+/// (FACTORY's line 2; its line 3 is the page's one set stamp).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum PageAt {
-    Newest,
-    Below(LibId),
-    Above(LibId),
+pub enum RowDetail {
+    Stamp(Option<BuildStamp>),
+    #[cfg(not(feature = "probe"))]
+    Note(Option<Note>),
+    /// A bench image (never shipped) keeps no descriptions: its 8 KiB AXI
+    /// margin (ADR 0087) has no room for 48 of them.
+    #[cfg(feature = "probe")]
+    Factory,
 }
 
-/// One page of the library, user ids highest first.
+impl LibEntry {
+    pub fn stamp(&self) -> Option<BuildStamp> {
+        match self.detail {
+            RowDetail::Stamp(s) => s,
+            _ => None,
+        }
+    }
+
+    pub fn note(&self) -> Option<Note> {
+        match self.detail {
+            #[cfg(not(feature = "probe"))]
+            RowDetail::Note(n) => n,
+            _ => None,
+        }
+    }
+}
+
+/// Which ids a page lists, and in what order: the player's newest first,
+/// the factory's lowest (the curated order) first. Each by `LibId::kind`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shelf {
+    User,
+    Factory,
+}
+
+impl Shelf {
+    /// `id`'s place down this shelf's pages, if it is on it.
+    fn rank(self, id: LibId) -> Option<u32> {
+        match (self, id.kind()) {
+            (Shelf::User, LibKind::User(u)) => Some(LibId::USER_MAX - u.get()),
+            (Shelf::Factory, LibKind::Factory(f)) => Some(f.get()),
+            _ => None,
+        }
+    }
+}
+
+/// Which page, in the shelf's order: the first, or the 48 just after /
+/// before an id.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PageAt {
+    First,
+    After(LibId),
+    Before(LibId),
+}
+
+/// One page of a shelf, in its order.
 pub struct LibPage {
     entries: [Option<LibEntry>; MAX_LISTED],
     len: u8,
-    pub newer: bool,
-    pub older: bool,
+    /// A page before this one, and one after.
+    pub prev: bool,
+    pub next: bool,
+    pub shelf: Shelf,
+    /// FACTORY's set stamp: its first described row's build (a stray
+    /// file from another set, as TAPE's, has no description).
+    pub set_stamp: Option<BuildStamp>,
     pub vol: Option<VolumeId>,
 }
 
@@ -191,10 +250,41 @@ impl LibPage {
     pub const EMPTY: LibPage = LibPage {
         entries: [None; MAX_LISTED],
         len: 0,
-        newer: false,
-        older: false,
+        prev: false,
+        next: false,
+        shelf: Shelf::User,
+        set_stamp: None,
         vol: None,
     };
+
+    /// `EMPTY`, written in place a row at a time: a `const` page would put
+    /// its 48-row image in flash for the copy (about 3.8 KB).
+    pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
+        let p = slot.as_mut_ptr();
+        // SAFETY: `p` comes from `slot`, so it is non-null, aligned for
+        // `LibPage` and exclusively ours. `addr_of_mut!` takes each field's
+        // place without making a reference, so no `&`/`&mut` to the page or
+        // a field exists before `assume_init_mut`. The rows' array is
+        // `[Option<LibEntry>; MAX_LISTED]`: cast to its element type it is
+        // aligned, and `add(i)` for `i < MAX_LISTED` stays inside it. Every
+        // field (each of the 48 rows, `len`, `prev`, `next`, `shelf`,
+        // `set_stamp`, `vol`) is written exactly once with a valid value;
+        // padding needs no init. A `const` page written whole is the safe
+        // form, but it copies a 48-row image kept in flash.
+        unsafe {
+            let rows = addr_of_mut!((*p).entries).cast::<Option<LibEntry>>();
+            for i in 0..MAX_LISTED {
+                rows.add(i).write(None);
+            }
+            addr_of_mut!((*p).len).write(0);
+            addr_of_mut!((*p).prev).write(false);
+            addr_of_mut!((*p).next).write(false);
+            addr_of_mut!((*p).shelf).write(Shelf::User);
+            addr_of_mut!((*p).set_stamp).write(None);
+            addr_of_mut!((*p).vol).write(None);
+            slot.assume_init_mut()
+        }
+    }
 
     pub fn entries(&self) -> &[Option<LibEntry>] {
         &self.entries[..usize::from(self.len)]
@@ -232,15 +322,15 @@ impl LibPage {
     }
 }
 
-/// A listed id and the sizes of its two sides.
-type Sized = (LibId, [Option<u32>; 2]);
+/// A listed id's rank on its shelf, the id, and the sizes of its two sides.
+type Sized = (u32, LibId, [Option<u32>; 2]);
 
-/// What one directory pass found: the `MAX_LISTED` user ids nearest `at`,
-/// ascending, with their sides' sizes.
+/// What one directory pass found: the `MAX_LISTED` ids nearest `at`, by
+/// rank ascending, with their sides' sizes.
 struct Near {
     ids: [Sized; MAX_LISTED],
     len: usize,
-    /// Below: keep the highest. Above: keep the lowest.
+    /// Before: keep the highest ranks. Else: keep the lowest.
     high: bool,
     /// Ids beyond the kept ones, on the far side from `at`.
     more: bool,
@@ -249,26 +339,27 @@ struct Near {
 }
 
 impl Near {
-    fn see(&mut self, at: PageAt, id: LibId, side: usize, size: u32) {
+    /// `at` is its id's rank (`First`'s none).
+    fn see(&mut self, at: PageAt, at_rank: u32, n: u32, id: LibId, side: usize, size: u32) {
         let (lo, hi) = match at {
-            PageAt::Newest => (0, LibId::USER_MAX + 1),
-            PageAt::Below(x) => (0, x.get()),
-            PageAt::Above(x) => (x.get() + 1, LibId::USER_MAX + 1),
+            PageAt::First => (0, u32::MAX),
+            PageAt::After(_) => (at_rank.saturating_add(1), u32::MAX),
+            PageAt::Before(_) => (0, at_rank),
         };
-        let n = id.get();
         if !(lo..hi).contains(&n) {
             self.back |= match at {
-                PageAt::Below(_) => n >= hi,
-                PageAt::Above(_) => n < lo,
-                PageAt::Newest => false,
+                PageAt::After(_) => n < lo,
+                PageAt::Before(_) => n >= hi,
+                PageAt::First => false,
             };
             return;
         }
-        match self.ids[..self.len].binary_search_by_key(&id, |s| s.0) {
-            Ok(i) => self.ids[i].1[side] = Some(size),
+        match self.ids[..self.len].binary_search_by_key(&n, |s| s.0) {
+            Ok(i) => self.ids[i].2[side] = Some(size),
             Err(at) => {
                 let mut sizes = [None; 2];
                 sizes[side] = Some(size);
+                let new = (n, id, sizes);
                 if self.len == MAX_LISTED {
                     self.more = true;
                     if self.high {
@@ -276,17 +367,17 @@ impl Near {
                             return;
                         }
                         self.ids.copy_within(1..at, 0);
-                        self.ids[at - 1] = (id, sizes);
+                        self.ids[at - 1] = new;
                     } else {
                         if at == MAX_LISTED {
                             return;
                         }
                         self.ids.copy_within(at..MAX_LISTED - 1, at + 1);
-                        self.ids[at] = (id, sizes);
+                        self.ids[at] = new;
                     }
                 } else {
                     self.ids.copy_within(at..self.len, at + 1);
-                    self.ids[at] = (id, sizes);
+                    self.ids[at] = new;
                     self.len += 1;
                 }
             }
@@ -343,8 +434,12 @@ fn peek_side<S: Store>(
 
 /// An id's row from its sides, `project::store::entry`'s rule: a side that
 /// needs newer firmware is the error even beside a readable one; else the
-/// newer readable side; else the first error.
-fn lib_entry(id: LibId, sides: [Option<(Result<Peek, FileError>, u32)>; 2]) -> LibEntry {
+/// newer readable side; else the first error. With it, that side's stamp,
+/// which a factory row doesn't keep.
+fn lib_entry(
+    id: LibId,
+    sides: [Option<(Result<Peek, FileError>, u32)>; 2],
+) -> (LibEntry, Option<BuildStamp>) {
     let mut best: Option<(&Peek, u32)> = None;
     let mut err = None;
     let mut nnf = false;
@@ -362,14 +457,21 @@ fn lib_entry(id: LibId, sides: [Option<(Result<Peek, FileError>, u32)>; 2]) -> L
             }
         }
     }
-    LibEntry {
+    let stamp = best.and_then(|(p, _)| p.stamp);
+    let e = LibEntry {
         id,
         seen: LibSeen {
             generation: best.map(|(p, _)| p.generation),
             name: best.and_then(|(p, _)| p.name),
         },
         engine: best.and_then(|(p, _)| p.engine),
-        stamp: best.and_then(|(p, _)| p.stamp),
+        detail: match id.kind() {
+            LibKind::User(_) => RowDetail::Stamp(stamp),
+            #[cfg(not(feature = "probe"))]
+            LibKind::Factory(_) => RowDetail::Note(best.and_then(|(p, _)| p.note)),
+            #[cfg(feature = "probe")]
+            LibKind::Factory(_) => RowDetail::Factory,
+        },
         len: best.map_or(0, |(_, l)| l),
         err: if nnf {
             Some(FileError::NeedsNewerFirmware)
@@ -378,7 +480,8 @@ fn lib_entry(id: LibId, sides: [Option<(Result<Peek, FileError>, u32)>; 2]) -> L
         } else {
             err
         },
-    }
+    };
+    (e, stamp)
 }
 
 /// An id's row from the sides of the sizes listed: the one rule the
@@ -389,7 +492,7 @@ fn peek_pair<S: Store>(
     vol: VolumeId,
     id: LibId,
     sizes: [Option<u32>; 2],
-) -> Result<LibEntry, StoreError> {
+) -> Result<(LibEntry, Option<BuildStamp>), StoreError> {
     let file = library_file(id);
     let mut sides = [None, None];
     for (i, side) in [Side::A, Side::B].into_iter().enumerate() {
@@ -402,45 +505,61 @@ fn peek_pair<S: Store>(
     Ok(lib_entry(id, sides))
 }
 
-/// The page of user Sounds at `at`, highest id first, into `out` in place:
-/// one directory pass, then a peek of each seen side of the kept ids.
+/// The page of `shelf`'s Sounds at `at`, in its order, into `out` in
+/// place: one directory pass, then a peek of each seen side of the kept ids.
 pub fn list_library<S: Store>(
     card: &mut Card,
     store: &mut S,
+    shelf: Shelf,
     at: PageAt,
     out: &mut LibPage,
 ) -> CardOut<Result<(), LibNote>> {
     out.len = 0;
-    out.newer = false;
-    out.older = false;
+    out.prev = false;
+    out.next = false;
+    out.shelf = shelf;
+    out.set_stamp = None;
     out.vol = None;
+    let at_rank = match at {
+        PageAt::First => None,
+        PageAt::After(x) | PageAt::Before(x) => shelf.rank(x),
+    };
+    // An id off the shelf names no place on it: its first page.
+    let (at, at_rank) = at_rank.map_or((PageAt::First, 0), |r| (at, r));
     let run = card.run(store, |s, r| {
         let vol = r.volume();
         out.vol = Some(vol);
         let mut near = Near {
-            ids: [(LibId::new(1).unwrap(), [None; 2]); MAX_LISTED],
+            ids: [(0, LibId::new(1).unwrap(), [None; 2]); MAX_LISTED],
             len: 0,
-            high: !matches!(at, PageAt::Above(_)),
+            high: matches!(at, PageAt::Before(_)),
             more: false,
             back: false,
         };
         match s.list(vol, Dir::Sounds, &mut |f, size| {
-            if let Some(id) = lib_id(f).filter(|id| !id.is_factory()) {
+            if let Some(id) = lib_id(f)
+                && let Some(n) = shelf.rank(id)
+            {
                 let side = usize::from(f.ext() == b"B");
-                near.see(at, id, side, size);
+                near.see(at, at_rank, n, id, side, size);
             }
         }) {
             Ok(()) | Err(StoreError::NotFound) => {}
             Err(e) => return Err(e.into()),
         }
-        for &(id, sizes) in near.ids[..near.len].iter().rev() {
-            out.entries[usize::from(out.len)] = Some(peek_pair(s, vol, id, sizes)?);
+        for &(_, id, sizes) in &near.ids[..near.len] {
+            let (e, stamp) = peek_pair(s, vol, id, sizes)?;
+            // A bench image has no descriptions: its first row's stamp.
+            if out.set_stamp.is_none() && (e.note().is_some() || cfg!(feature = "probe")) {
+                out.set_stamp = stamp;
+            }
+            out.entries[usize::from(out.len)] = Some(e);
             out.len += 1;
         }
-        (out.newer, out.older) = match at {
-            PageAt::Newest => (false, near.more),
-            PageAt::Below(_) => (near.back, near.more),
-            PageAt::Above(_) => (near.more, near.back),
+        (out.prev, out.next) = match at {
+            PageAt::First => (false, near.more),
+            PageAt::After(_) => (near.back, near.more),
+            PageAt::Before(_) => (near.more, near.back),
         };
         Ok(())
     });
@@ -575,7 +694,7 @@ pub fn read_library_sound<S: Store>(
             Ok(()) | Err(StoreError::NotFound) => {}
             Err(e) => return Err(e.into()),
         }
-        let now = peek_pair(s, vol, file.id, sizes)?;
+        let (now, _) = peek_pair(s, vol, file.id, sizes)?;
         if now.seen.generation.is_none() && now.err.is_none() {
             return Ok(Err(LibNote::Gone));
         }
