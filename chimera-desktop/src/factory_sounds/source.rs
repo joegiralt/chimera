@@ -370,7 +370,10 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
     let (id_line, v) = need("id")?;
     let id = match LibId::parse(v).map(LibId::kind) {
         Some(LibKind::Factory(f)) if RETIRED_IDS.contains(&f.get()) => {
-            return Err(at(id_line, format!("id {v} is retired and never reassigned")));
+            return Err(at(
+                id_line,
+                format!("id {v} is retired and never reassigned"),
+            ));
         }
         Some(LibKind::Factory(f)) if SHOWCASE_IDS.contains(&f.get()) => f,
         _ => return Err(at(id_line, format!("id {v} is outside S9100001-S9199999"))),
