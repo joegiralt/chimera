@@ -4,7 +4,9 @@
 
 use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use crate::block::ValFmt;
-use crate::dsp::algo::params::AlgoParams;
+use crate::dsp::algo::kinds::{self, OpKind};
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
+use crate::dsp::algo::plan::OPS;
 use crate::dsp::chorus::{ChorusMode, ChorusParams, MODE_NAMES};
 use crate::dsp::filter::FilterKind;
 use crate::dsp::lfo::LfoParams;
@@ -31,6 +33,7 @@ use crate::ui::fmt::FmtBuf;
 use crate::ui::glyph::FocusGlyph;
 use crate::ui::hint::{self, Gesture, Hint};
 use crate::ui::mod_panel::{self, PanelSlot};
+use crate::ui::op_page;
 use crate::ui::orbit::OrbitCell;
 use crate::ui::reverb_panel;
 
@@ -84,6 +87,8 @@ pub struct SlotCtx {
     pub ring: RingIdx,
     /// ORBIT's clock: BPM is inert while MIDI leads.
     pub clock: ClockSource,
+    /// Each operator's kind: which cells its OP page shows.
+    pub op_kinds: [OpKind; OPS],
 }
 
 impl SlotCtx {
@@ -121,6 +126,8 @@ impl SlotCtx {
             plate: in_plate_zone(&rev),
             ring: RingIdx::ALL[0],
             clock: ClockSource::Internal,
+            op_kinds: Op::ALL
+                .map(|op| OpKind::clamped(get(BlockRef::AlgoOp(op), AlgoOpParams::WAVE) as u8)),
         }
     }
 
@@ -354,7 +361,6 @@ impl SourceState {
 
 /// `frames` at `rate` in seconds, to a tenth: `1.5 S`.
 fn seconds(buf: &mut FmtBuf, rate: u16, frames: u32) {
-    use core::fmt::Write;
     let rate = u64::from(rate.max(1));
     let tenths = (u64::from(frames) * 10 + rate / 2) / rate;
     let _ = write!(buf, "{}.{} S", tenths / 10, tenths % 10);
@@ -530,7 +536,10 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
         // ORBIT's pages draw and turn their own cells.
         SlotBinding::Orbit(c) => View::Orbit(c),
         SlotBinding::SelectOp => View::SelectOp,
-        SlotBinding::Legacy { label, fmt } => View::Legacy { label, fmt },
+        SlotBinding::Legacy(fmt) => View::Legacy {
+            label: slot.label(),
+            fmt: *fmt,
+        },
         // SPD: a type-B slot's SPEED and HOLD read TYPE B (spec § UI).
         SlotBinding::Param(ParamAddr {
             block: BlockRef::Env(s),
@@ -583,6 +592,16 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
                     let addr = ParamAddr::new(BlockRef::Modal, id);
                     addr.spec()
                         .map_or(View::Empty, |s| param(addr, s.label, s.fmt))
+                }
+                _ => View::Empty,
+            }
+        }
+        SlotBinding::OpPanel(op, k) => {
+            match op_page::page_cells(ctx.op_kinds[op.index()]).get(usize::from(k)) {
+                Some(&Some((id, label))) => {
+                    let addr = ParamAddr::new(BlockRef::AlgoOp(op), id);
+                    addr.spec()
+                        .map_or(View::Empty, |s| param(addr, label, s.fmt))
                 }
                 _ => View::Empty,
             }
@@ -692,7 +711,14 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
         // A single-mode kind shows its mode fixed (spec § 7).
         (BlockRef::Filter, FilterParams::MODE) => sound.params.filter.kind().modes().len() == 1,
         // MORPH blends ALG A into ALG B: one algorithm, nothing to blend (#188).
-        (BlockRef::Algo, AlgoParams::MORPH) => sound.params.algo.alg_a == sound.params.algo.alg_b,
+        (BlockRef::Algo, AlgoParams::MORPH) => {
+            let (a, b) = sound.params.algo.algs();
+            a == b
+        }
+        // VOWEL moves formants and noise bands only.
+        (BlockRef::Algo, AlgoParams::VOWEL) => !sound.params.algo.kinds().any_formant(),
+        // What the operator's kind ignores (formant spec § 6).
+        (BlockRef::AlgoOp(op), id) => !kinds::reads(sound.params.algo.kinds().get(op.index()), id),
         // What MODEL ignores (spec § 1 Dimming).
         (BlockRef::Modal, id) => !modal::reads(sound.params.modal.mode, id),
         // What the machine ignores (spec § 3).

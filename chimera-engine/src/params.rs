@@ -1,4 +1,4 @@
-use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
+use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks, ParamAddr};
 use crate::block::{
     Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
 };
@@ -1485,13 +1485,14 @@ impl ParamSnapshot {
 /// (spec §2). UI and modulation go through this; DSP reads fields. The FX
 /// and the mix settings belong to the Performance and Part, not the Sound.
 impl BlockRead for ParamSnapshot {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        Some(match b {
+    #[inline(never)]
+    fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
+        Some(BlockView::Plain(match b {
             BlockRef::Modal => &self.modal,
             BlockRef::TapeEngine => &self.tape,
             BlockRef::Va => &self.va,
             BlockRef::Algo => &self.algo,
-            BlockRef::AlgoOp(op) => &self.algo.ops[op.index()],
+            BlockRef::AlgoOp(op) => return Some(BlockView::Op(self.algo.op(op))),
             BlockRef::Drive => &self.drive,
             BlockRef::Filter => &self.filter,
             BlockRef::Folder => &self.folder,
@@ -1511,18 +1512,19 @@ impl BlockRead for ParamSnapshot {
             | BlockRef::OrbitChords
             | BlockRef::OrbitRing(_)
             | BlockRef::Tempo => return None,
-        })
+        }))
     }
 }
 
 impl Blocks for ParamSnapshot {
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
-        Some(match b {
+    #[inline(never)]
+    fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
+        Some(BlockViewMut::Plain(match b {
             BlockRef::Modal => &mut self.modal,
             BlockRef::TapeEngine => &mut self.tape,
             BlockRef::Va => &mut self.va,
             BlockRef::Algo => &mut self.algo,
-            BlockRef::AlgoOp(op) => &mut self.algo.ops[op.index()],
+            BlockRef::AlgoOp(op) => return Some(BlockViewMut::Op(self.algo.op_mut(op))),
             BlockRef::Drive => &mut self.drive,
             BlockRef::Filter => &mut self.filter,
             BlockRef::Folder => &mut self.folder,
@@ -1542,7 +1544,7 @@ impl Blocks for ParamSnapshot {
             | BlockRef::OrbitChords
             | BlockRef::OrbitRing(_)
             | BlockRef::Tempo => return None,
-        })
+        }))
     }
 }
 

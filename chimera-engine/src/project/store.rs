@@ -385,11 +385,13 @@ struct Loaded {
     sounds: u8,
     sources: u8,
     missing: u8,
+    over: bool,
 }
 
 impl Loaded {
     /// `LOADED · a SOUNDS, b SRC DIDN'T FIT` when any didn't, else
-    /// `LOADED · n SRC MISSING` when any is.
+    /// `LOADED · n SRC MISSING` when any is, else `FORMANT BUDGET FULL`
+    /// when a kind was read as W1.
     fn note(&self) -> Option<ProjectNote> {
         if self.sounds > 0 || self.sources > 0 {
             return Some(ProjectNote::DidntFit {
@@ -397,7 +399,10 @@ impl Loaded {
                 sources: self.sources,
             });
         }
-        (self.missing > 0).then_some(ProjectNote::SourcesMissing(self.missing))
+        if self.missing > 0 {
+            return Some(ProjectNote::SourcesMissing(self.missing));
+        }
+        self.over.then_some(ProjectNote::FormantFull)
     }
 }
 
@@ -419,7 +424,7 @@ fn load_into<S: Store>(
     let read = load_ab_in_place(s, r, project_file(id), &mut d);
     *swap = d.take_swap();
     let (lossy, to_read, (sounds, sources)) = (d.lossy(), d.to_read(), d.dropped());
-    let unlisted = d.missing();
+    let (unlisted, over) = (d.missing(), d.over_budget());
     read?;
     let (missed, unread) = read_sources(s, r, p, to_read);
     Ok(Loaded {
@@ -427,6 +432,7 @@ fn load_into<S: Store>(
         sounds,
         sources: sources.saturating_add(missed),
         missing: unlisted.saturating_add(unread),
+        over,
     })
 }
 

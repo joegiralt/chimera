@@ -2,10 +2,10 @@
 //! So are `Sound::neutral`'s values: a sparse Sound omits each param at
 //! neutral (ADR 0087), and `neutral_is_a_contract` pins them.
 
-use chimera_core::addr::{BlockRef, Blocks, Op};
+use chimera_core::addr::{BlockRef, BlockViewMut, Blocks, Op};
 use chimera_core::block::{Block, DiskCode, ParamId, ValFmt};
 use chimera_core::dsp::algo::algorithms::{ALGO_IDENTS, ALGO_NAMES};
-use chimera_core::dsp::algo::waves::{WAVE_IDENTS, WAVE_NAMES};
+use chimera_core::dsp::algo::kinds::{OP_KIND_IDENTS, OP_KIND_NAMES};
 use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, FuncMode, LfoForm};
@@ -45,8 +45,8 @@ impl Bank {
         }
     }
 
-    fn block(&mut self, b: BlockRef) -> &mut dyn Block {
-        match b {
+    fn block(&mut self, b: BlockRef) -> BlockViewMut<'_> {
+        BlockViewMut::Plain(match b {
             BlockRef::Chorus => &mut self.fx.chorus,
             BlockRef::Delay => &mut self.fx.delay,
             BlockRef::Reverb => &mut self.fx.reverb,
@@ -57,8 +57,8 @@ impl Bank {
             BlockRef::Midi => &mut self.midi,
             BlockRef::OrbitChords => &mut self.scene.chords,
             BlockRef::OrbitRing(r) => &mut self.scene.rings[r.get() as usize],
-            b => self.snap.block_mut(b).expect("a Sound block"),
-        }
+            b => return self.snap.block_mut(b).expect("a Sound block"),
+        })
     }
 }
 
@@ -93,7 +93,7 @@ fn table() -> Vec<String> {
                 continue;
             }
             for v in 0..=s.max as u8 {
-                let blk = bank.block(b);
+                let mut blk = bank.block(b);
                 blk.set(s.id, f32::from(v));
                 let c = blk.enum_code(s.id).expect("an Enum has a code");
                 let ident = blk.enum_ident(s.id).expect("an Enum has an ident");
@@ -106,7 +106,7 @@ fn table() -> Vec<String> {
             // MODE through TYPE: every built kind's modes, not only CLEAN's.
             if (b, s.id) == (BlockRef::Filter, FilterParams::MODE) {
                 for k in FilterKind::BUILT {
-                    let blk = bank.block(b);
+                    let mut blk = bank.block(b);
                     assert!(blk.set_enum_code(FilterParams::KIND, k.disk_code()));
                     for (v, label) in k.mode_labels().iter().enumerate() {
                         blk.set(s.id, v as f32);
@@ -241,7 +241,7 @@ fn idents_are_tokens_and_unique() {
             }
             let mut values: Vec<&str> = Vec::new();
             for v in 0..=s.max as u8 {
-                let blk = bank.block(b);
+                let mut blk = bank.block(b);
                 blk.set(s.id, f32::from(v));
                 let i = blk.enum_ident(s.id).expect("an Enum has an ident");
                 assert!(is_token(i), "{b:?} {} value {v}: {i:?}", s.ident);
@@ -257,16 +257,16 @@ fn idents_are_tokens_and_unique() {
 /// label tables the UI shows.
 #[test]
 fn wave_and_algo_idents_are_their_own_tables() {
-    assert_eq!(WAVE_IDENTS.len(), WAVE_NAMES.len());
+    assert_eq!(OP_KIND_IDENTS.len(), OP_KIND_NAMES.len());
     assert_eq!(ALGO_IDENTS.len(), ALGO_NAMES.len());
     let mut bank = Bank::new();
-    for (i, want) in WAVE_IDENTS.iter().enumerate() {
-        let blk = bank.block(BlockRef::AlgoOp(Op::A));
+    for (i, want) in OP_KIND_IDENTS.iter().enumerate() {
+        let mut blk = bank.block(BlockRef::AlgoOp(Op::A));
         blk.set(ParamId(0), i as f32);
         assert_eq!(blk.enum_ident(ParamId(0)), Some(*want));
     }
     for (i, want) in ALGO_IDENTS.iter().enumerate() {
-        let blk = bank.block(BlockRef::Algo);
+        let mut blk = bank.block(BlockRef::Algo);
         blk.set(ParamId(1), i as f32);
         assert_eq!(blk.enum_ident(ParamId(1)), Some(*want));
     }
@@ -321,7 +321,7 @@ fn load(b: BlockRef, from: &mut Bank) -> Bank {
     let mut to = Bank::new();
     for a in ValidAddr::of_block(b) {
         let id = a.spec().id;
-        match read_value(from.block(b), a) {
+        match read_value(&*from.block(b), a) {
             DiskValue::Code(c) => {
                 assert!(
                     to.block(b).set_enum_code(id, c),
@@ -416,7 +416,7 @@ fn unknown_mode_code_keeps_every_form() {
 #[test]
 fn non_enum_params_have_no_code() {
     let mut bank = Bank::new();
-    let blk = bank.block(BlockRef::Filter);
+    let mut blk = bank.block(BlockRef::Filter);
     assert_eq!(blk.enum_code(FilterParams::CUTOFF), None);
     assert!(!blk.set_enum_code(FilterParams::CUTOFF, 1));
 }
@@ -435,7 +435,7 @@ fn unknown_code_writes_nothing() {
             .map(|a| a.spec())
         {
             let mut bank = Bank::new();
-            let blk = bank.block(b);
+            let mut blk = bank.block(b);
             let was = blk.get(s.id);
             assert!(!blk.set_enum_code(s.id, 250), "{b:?} {}", s.label);
             assert!(!blk.set_enum_code(s.id, 200), "{b:?} {}", s.label);

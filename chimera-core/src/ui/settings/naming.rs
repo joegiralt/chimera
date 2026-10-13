@@ -2,8 +2,6 @@
 //! A–Z, C cycles 0–9, space and `-`, D toggles case, E deletes. F's tags
 //! come with plan 3. SEQ saves, MENU cancels.
 
-use core::fmt::Write;
-
 use chimera_hal::{Controls, EncoderId};
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;

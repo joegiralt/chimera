@@ -691,3 +691,84 @@ fn an_old_tape_project_loads_its_tape_parts_as_init_va() {
     let pooled = q.pool().get(slot).expect("the pool keeps it");
     assert_eq!(pooled.engine(), EngineType::Tape);
 }
+
+/// A Part's kinds past the formant budget (a file from a build with more
+/// room): the excess loads as W1, the load says so, and is not Saved.
+#[test]
+fn an_over_budget_part_loads_its_excess_as_w1_and_says_so() {
+    use chimera_core::budget::FORMANT_N_UNLINKED;
+    use chimera_core::dsp::algo::algorithms::AlgoId;
+    use chimera_core::dsp::algo::kinds::OpKind::{Formant, Noise, Table};
+    use chimera_core::dsp::algo::waves::WaveId;
+    assert_eq!(
+        FORMANT_N_UNLINKED, 3,
+        "the file below is 3 FRMT + 2 NOIS on A1"
+    );
+    let (mut src, _) = Project::boxed();
+    let algo = &mut src.edit_part(PartId::ALL[0]).sound.params.algo;
+    algo.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
+    for (i, k) in [Formant, Formant, Formant, Noise, Noise, Table(WaveId::W1)]
+        .into_iter()
+        .enumerate()
+    {
+        algo.try_set_kind(i, k).unwrap();
+    }
+    // OP_D's WAVE, NOIS (17) to FRMT (16): four formants, 4·200 > 659.
+    // Operators load in order, so the fourth loads W1 and the noise band
+    // after it fits.
+    // The pool's CHOIR and BREATH hold NOIS on OP_D too, and the pool goes
+    // before the Parts: Part 1's is the last.
+    let mut bytes = encode_project(&src);
+    let at = (0..bytes.len() - 6)
+        .rfind(|&i| bytes[i..i + 6] == [6, 0, 17, 0, 0, 0])
+        .unwrap();
+    bytes[at + 2] = 16;
+    fix_crc(&mut bytes);
+
+    let mut s = MemStore::new(1);
+    let mut card = Card::new();
+    let link = LoadLink::new();
+    both_sides(&mut s, &bytes);
+    let (mut q, t) = Project::boxed();
+    let out = load_file(&mut card, &mut s, &mut q, t, id(1), &link);
+    assert_eq!(out.note, Some(ProjectNote::FormantFull));
+    assert_eq!(
+        ProjectNote::FormantFull.line().as_str(),
+        "FORMANT BUDGET FULL"
+    );
+    assert_eq!(
+        q.part(PartId::ALL[0]).sound.params.algo.kinds().all(),
+        [
+            Formant,
+            Formant,
+            Formant,
+            Table(WaveId::W1),
+            Noise,
+            Table(WaveId::W1)
+        ]
+    );
+    assert_ne!(
+        project_status(&q, t),
+        ProjectStatus::Saved,
+        "a save writes other bytes"
+    );
+}
+
+/// A Part legal whole but over the floor in operator order (A17, NOIS on
+/// 1–5 before op 6's FRMT) loads as saved, with no note.
+#[test]
+fn a_part_that_fits_whole_loads_as_saved() {
+    let (mut src, _) = Project::boxed();
+    **src.edit_part(PartId::ALL[0]).sound = common::formant::frmt_last();
+    let bytes = encode_project(&src);
+    let mut s = MemStore::new(1);
+    both_sides(&mut s, &bytes);
+    let (mut q, t) = Project::boxed();
+    let out = load_file(&mut Card::new(), &mut s, &mut q, t, id(1), &LoadLink::new());
+    assert_eq!(out.note, None);
+    assert_eq!(
+        q.part(PartId::ALL[0]).sound.params.algo.kinds().all(),
+        common::formant::FRMT_LAST
+    );
+    assert_eq!(project_status(&q, t), ProjectStatus::Saved);
+}

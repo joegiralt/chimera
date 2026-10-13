@@ -5,7 +5,6 @@
 
 use chimera_core::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use chimera_core::block::ValFmt;
-use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::lfo::LfoParams;
 use chimera_core::dsp::modal::{EXCITER_NAMES, ModalPage, ModalParams, page_cells};
@@ -393,11 +392,11 @@ fn engine(snd: &Sound, ctx: &SlotCtx) -> Vec<Fact> {
             vec![("MODAL", vec![model, macros.join(" · ")])]
         }
         EngineType::Algo => {
-            let al = &snd.params.algo;
-            let alg = AlgoId::clamped(al.alg_a).algorithm();
+            let (alg_a, alg_b) = snd.params.algo.algs();
+            let alg = alg_a.algorithm();
             let a = |id| ParamAddr::new(BlockRef::Algo, id);
             let mut head = format!("ALGORITHM {}", shown(snd, ctx, a(AlgoParams::ALG_A)));
-            if al.alg_b != al.alg_a {
+            if alg_b != alg_a {
                 head += &format!(
                     ", MORPH {} toward {}",
                     shown(snd, ctx, a(AlgoParams::MORPH)),

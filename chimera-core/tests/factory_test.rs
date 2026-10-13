@@ -1,4 +1,5 @@
-//! Spec § Replacing the old engines: a bank of eight Algo Sounds that plays.
+//! Spec § Replacing the old engines: a bank of eight Algo Sounds that
+//! plays, and the four formant demos after them (spec § Demo clips).
 
 mod common;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
@@ -51,7 +52,7 @@ fn highpass_rms(samples: &[f32], sample_rate: f32, cutoff_hz: f32) -> f32 {
 }
 
 #[test]
-fn eight_algo_sounds_with_distinct_names() {
+fn twelve_sounds_with_distinct_names() {
     let names: Vec<String> = (0..FACTORY_LEN)
         .map(|i| {
             let s = factory_sound(i).unwrap();
@@ -59,9 +60,11 @@ fn eight_algo_sounds_with_distinct_names() {
             s.name.as_str().to_string()
         })
         .collect();
-    for (i, n) in names.iter().enumerate() {
-        assert!(!n.is_empty() && !names[..i].contains(n), "{n}");
-    }
+    let mut u = names.clone();
+    u.sort();
+    u.dedup();
+    assert_eq!((FACTORY_LEN, u.len()), (12, 12));
+    assert_eq!(&names[8..], ["CHOIR", "TALK BASS", "BREATH", "VOX"]);
     assert!(factory_sound(FACTORY_LEN).is_none());
 }
 
@@ -88,8 +91,8 @@ fn the_morph_showcases_morph() {
     for i in [6, 7] {
         let s = factory_sound(i).unwrap();
         assert_ne!(
-            s.params.algo.alg_a,
-            s.params.algo.alg_b,
+            s.params.algo.algs().0,
+            s.params.algo.algs().1,
             "{}",
             s.name.as_str()
         );

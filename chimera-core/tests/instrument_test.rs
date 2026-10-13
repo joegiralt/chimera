@@ -688,7 +688,8 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
     use chimera_core::dsp::algo::algorithms::AlgoId;
     let mut shared = AudioShared::default();
     let a = &mut shared.parts[0].params.algo;
-    (a.alg_a, a.alg_b, a.morph) = (AlgoId::A16.get(), AlgoId::A17.get(), 64);
+    a.try_set_algs(AlgoId::A16, AlgoId::A17).unwrap();
+    a.morph = 64;
     for op in a.ops.iter_mut() {
         (op.level, op.feedback) = (99, 7);
     }

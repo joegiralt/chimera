@@ -52,6 +52,16 @@ impl Drop for Scratch {
 /// A WAV's samples as f64, channels averaged (integers at 1/2^(bits−1), as
 /// soundfile reads them), and its rate.
 pub fn read_wav(path: &Path) -> Result<(Vec<f64>, u32), String> {
+    let (chans, sr) = read_channels(path)?;
+    let n = chans.len() as f64;
+    let x = (0..chans[0].len())
+        .map(|i| chans.iter().map(|c| c[i]).sum::<f64>() / n)
+        .collect();
+    Ok((x, sr))
+}
+
+/// A WAV's channels, each as f64 (as `read_wav` scales them), and its rate.
+pub fn read_channels(path: &Path) -> Result<(Vec<Vec<f64>>, u32), String> {
     let mut r = hound::WavReader::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let spec = r.spec();
     let ch = spec.channels as usize;
@@ -78,11 +88,11 @@ pub fn read_wav(path: &Path) -> Result<(Vec<f64>, u32), String> {
         }
     }
     .map_err(|e| format!("{}: {e}", path.display()))?;
-    let x = raw
-        .chunks_exact(ch)
-        .map(|f| f.iter().sum::<f64>() / ch as f64)
+    let whole = &raw[..raw.len() / ch * ch];
+    let chans = (0..ch)
+        .map(|c| whole.iter().skip(c).step_by(ch).copied().collect())
         .collect();
-    Ok((x, spec.sample_rate))
+    Ok((chans, spec.sample_rate))
 }
 
 pub fn write_f32(path: &Path, x: &[f32], sr: u32) -> Result<(), String> {

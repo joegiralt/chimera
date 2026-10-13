@@ -2,6 +2,8 @@
 //! per parameter on its spec (`ParamSpec::glyph`), ARC by default.
 
 use crate::block::ValFmt;
+use crate::dsp::algo::formant::Skirt;
+use crate::dsp::algo::kinds::OpKind;
 use crate::dsp::algo::waves::{WAVE_LEN, WaveId};
 use crate::dsp::chorus::ChorusMode;
 use crate::dsp::clampf;
@@ -34,8 +36,8 @@ pub enum Gauge {
     /// A notehead `step` diatonic steps above the staff's middle line
     /// (fractional while it eases), with its `accidental`.
     Staff { step: f32, accidental: Accidental },
-    /// The scope, tracing `wave_trace` of this wave.
-    Wave(WaveId),
+    /// The scope, tracing `kind_trace` of this operator kind.
+    Wave(OpKind),
     /// The chorus braid (`CompositeId::ChorusBraid`).
     Braid(Braid),
     /// The delay's rings (`CompositeId::DelayRings`).
@@ -130,6 +132,62 @@ pub fn wave_trace<const N: usize>(wave: WaveId, half: i32) -> [i32; N] {
         let s = table[i * WAVE_LEN / (N - 1).max(1)] as i32;
         (s * half + (1 << 14)) >> 15
     })
+}
+
+/// FRMT's grain: SKIRT 1 at 4 cycles. The cells that move it are on the
+/// operator page; WAVE only names the kind.
+const GRAIN_SKIRT: Skirt = Skirt::S1;
+const GRAIN_CYCLES: f32 = 4.0;
+
+/// `kind`'s scope trace across `N` points, up positive: a table's wave, a
+/// FRMT's grain, a NOIS's fixed band of noise (a seeded walk, smoothed).
+pub fn kind_trace<const N: usize>(kind: OpKind, half: i32) -> [i32; N] {
+    match kind {
+        OpKind::Table(w) => wave_trace(w, half),
+        OpKind::Formant => resample(
+            &crate::ui::op_page::grain_curve(GRAIN_SKIRT, GRAIN_CYCLES),
+            half,
+        ),
+        OpKind::Noise => resample(&BAND, half),
+    }
+}
+
+/// NOIS's band: a seeded walk smoothed by a three-tap average, scaled so
+/// its peak is ±127. A constant, so the gauge runs no generator.
+const BAND: [i8; 64] = {
+    let (mut raw, mut r, mut i) = ([0i32; 64], 0x2545_f491u32, 0);
+    while i < 64 {
+        r = r.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        raw[i] = (r >> 24) as i32 - 128;
+        i += 1;
+    }
+    let (mut sm, mut peak) = ([0i32; 64], 1);
+    i = 0;
+    while i < 64 {
+        let (a, c) = (
+            if i == 0 { 0 } else { i - 1 },
+            if i == 63 { 63 } else { i + 1 },
+        );
+        sm[i] = raw[a] + raw[i] + raw[c];
+        peak = if sm[i].abs() > peak {
+            sm[i].abs()
+        } else {
+            peak
+        };
+        i += 1;
+    }
+    let mut out = [0i8; 64];
+    i = 0;
+    while i < 64 {
+        out[i] = (sm[i] * 127 / peak) as i8;
+        i += 1;
+    }
+    out
+};
+
+/// 64 points to ±127, across `N` points to ±`half`.
+pub fn resample<const N: usize>(c: &[i8; 64], half: i32) -> [i32; N] {
+    core::array::from_fn(|i| (i32::from(c[i * 63 / (N - 1).max(1)]) * half + 63) / 127)
 }
 
 /// `ys` scaled so the largest is `half` px (rounded), up positive; a
@@ -671,7 +729,7 @@ pub fn gauge(
             let n = fmt.max_int() as f32 / 2.0;
             staff(value * 2.0 * n - n)
         }
-        FocusGlyph::Wave => Gauge::Wave(WaveId::clamped(libm::roundf(
+        FocusGlyph::Wave => Gauge::Wave(OpKind::clamped(libm::roundf(
             clampf(value, 0.0, 1.0) * fmt.max_int() as f32,
         ) as u8)),
         FocusGlyph::Composite(id) => outside(Reads::Composite(id)),

@@ -21,10 +21,14 @@ use screen::*;
 // amp_vel_*, modal_amp, mixer_sends, mixer_out_p2 again: send and SYM hints.
 // SETTINGS crumbs again for ORBIT (plan Task 10): they always clear its
 // beat dot, so three paths drop their first part.
+// The pool, library and TAPE-source screens again for CHOIR, TALK BASS,
+// BREATH and VOX in the bank: the pool bar counts their bytes.
 const GOLDENS: &[(&str, u64)] = &[
-    ("engine_algo", 0x29fa1ef579c4a0e7),
-    ("algo_alg", 0xb73321ba103c1886),
-    ("algo_alg_morph_dimmed", 0xd8e8a78a528ad3b4),
+    ("engine_algo", 0xa9a6098facb32ac7),
+    ("algo_alg", 0xb7c030542ba09c26),
+    ("algo_alg_morph_dimmed", 0xfca52441a17accdc),
+    // VOWEL takes ALGO's sixth cell, dimmed with no formant; FRM page.
+    ("algo_formant_page", 0xce80a582bc73514e),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
     ("mod_matrix_morph_inert", 0xc540d682384b1445),
@@ -37,6 +41,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // New: OP3's page (ADR 0130), the band's envelope and wave, and with
     // its LEVEL cell turned.
     ("algo_op_page_3", 0x9163b212ffb7d498),
+    ("algo_op_page_frmt", 0x0e81db6502484c4a),
+    ("algo_op_page_nois", 0xc2dd1c771908672e),
     ("algo_op_page_3_turned", 0xaccb7a7bc6d895b1),
     // The ENV stages' band draws the focused operator's envelope (#311).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
@@ -195,7 +201,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_out_p2", 0xc7fad296ace82da3),
     #[cfg(feature = "master-tape")]
     ("mixer_out_p2", 0x97c6eb559ffe4f95),
-    ("algo_out_p3", 0x3e91d6b588f4ebfa),
+    ("algo_out_p3", 0x11f7f3a7094ddbca),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
     ("mod_matrix", 0x7fac5633d604d50c),
@@ -209,27 +215,30 @@ const GOLDENS: &[(&str, u64)] = &[
     // Sound is smaller (fixed columns, no registry entry).
     // Then, with the library_* screens: FACTORY joins the title and B ◂▸
     // moves to hint line 1 (showcase Task 4).
-    ("sound_browser", 0x2ac01248d9ebb6b2),
+    ("sound_browser", 0xf7e66011d5bc81cf),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
-    ("sound_browser_pool_full", 0x670687c8121bfcc1),
+    // Then pool_full: 2352 → 2544 (the formant fields).
+    ("sound_browser_pool_full", 0x50cd17a996f2bcd1),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
-    ("library_empty", 0xdf219682ac1a29c9),
-    ("library_no_card", 0xf92da8b42d895e74),
-    ("library_sounds", 0xe736237f4677321d),
-    ("library_this_build", 0xc0b6072f135e386a),
-    ("library_cut_short", 0xaae193824d9a64cd),
-    ("library_older", 0x11a9980a5b5a2593),
-    ("library_newer", 0xaa56e3ee8ad23474),
-    ("library_wont_fit", 0xaa10337731ecbe31),
-    ("library_pool_full", 0x457042dff20636e4),
+    // Merged: FACTORY in the title (showcase) beside the formant cost.
+    ("library_empty", 0xd8911862d45ce624),
+    ("library_no_card", 0x218eef0844392199),
+    ("library_sounds", 0xdc882e59a6e21180),
+    ("library_this_build", 0xa62ccc16346d2ee7),
+    ("library_cut_short", 0xea7a836399cd9490),
+    ("library_older", 0x5fb33a7812bd7e76),
+    ("library_newer", 0xd2b82a42a181f799),
+    ("library_wont_fit", 0x7f169bc1cf90d811),
+    ("library_pool_full", 0x5952ab4362815584),
     ("library_naming", 0xab3925136bf27a0f),
     // The FACTORY tab: a row's description on line 2, the set's build on
     // line 3; empty, no card, and a stray TAPE file greyed COMING SOON.
-    ("factory_described", 0xa8b6420a9b6a0a6d),
-    ("factory_empty", 0xf629751facd4b473),
-    ("factory_no_card", 0x48fe4add0d997206),
-    ("factory_coming_soon", 0x4cc27787521e8a97),
+    // Re-recorded on the merge: the pool meter at the formant cost.
+    ("factory_described", 0x7d264187d1992630),
+    ("factory_empty", 0xf843b91189d17dd6),
+    ("factory_no_card", 0xd1d5f8fc5b4c10ab),
+    ("factory_coming_soon", 0xf147edaf8d91db32),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     // Re-recorded: INVERT in cell F (ADR 0126).
     ("settings_personal_theme", 0x69eb789acb0d98db),
@@ -237,7 +246,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_system_diag_aud_load", 0x0063331a51f3da0e),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.
-    ("settings_project_pool", 0x4b4c1b086f6263c8),
+    ("settings_project_pool", 0x35e2e90ad183c692),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).
@@ -308,8 +317,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_strip_pingpong_reversed", 0x78c6bdd24e2b2eb8),
     ("tape_strip_tron_idle", 0x1e78eb2f30e3b43d),
     ("tape_src_pool", 0x5cc2849e855b0b0e),
-    ("tape_src_card", 0xfdc516336deb965f),
-    ("tape_src_wont_fit", 0x33e55fa0fbeb043d),
+    ("tape_src_card", 0xc230900451dccbe7),
+    ("tape_src_wont_fit", 0xc85ecb33c5d416cd),
     ("tape_src_loaded", 0x6e6533e2a42a05d2),
     ("tape_src_read_failed", 0x60b02af140ccd019),
     ("busy", 0x198544cd36863145),

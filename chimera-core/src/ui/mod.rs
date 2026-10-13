@@ -51,9 +51,12 @@ use chimera_hal::{
     ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, EncoderId, PART_BUTTONS,
 };
 
-use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
+use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks, Op, ParamAddr};
 use crate::block::Block;
 use crate::boot::RomDfu;
+use crate::dsp::algo::engine::{FormantView, FormantViews};
+use crate::dsp::algo::kinds::step_kind;
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, step_alg};
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::dsp::reverb::KnobMemory;
@@ -289,6 +292,9 @@ pub struct UiState {
     overview: tape_strip::Overview,
     heads: Heads,
     heads_from: &'static PartHeads,
+    /// The edited Part's newest voice's formant view, as the audio last
+    /// published it: what an OP page's band draws.
+    formant: FormantView,
     /// TAPE's SOURCE cell: the card's rows, the heads, a load, the
     /// per-source memory.
     src: source_cell::SourceCell,
@@ -378,6 +384,7 @@ crate::in_place::field_list!(UiState => UiState {
     overview,
     heads,
     heads_from,
+    formant,
     src,
     lib,
     clip,
@@ -442,6 +449,7 @@ impl UiState {
             addr_of_mut!((*p).overview).write(tape_strip::Overview::EMPTY);
             addr_of_mut!((*p).heads).write(Heads::NONE);
             addr_of_mut!((*p).heads_from).write(&crate::instrument::HEADS);
+            addr_of_mut!((*p).formant).write(FormantView::NONE);
             addr_of_mut!((*p).src).write(source_cell::SourceCell::NEW);
             library::LibState::init_in_place(uninit_at(addr_of_mut!((*p).lib)));
             addr_of_mut!((*p).browser_dirty).write(false);
@@ -1401,6 +1409,32 @@ impl UiState {
         });
     }
 
+    /// A WAVE or ALG turn steps over a kind or an algorithm the formant
+    /// budget refuses: say so.
+    #[inline(never)]
+    fn formant_full(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) {
+        let p = &self.project.part(at).sound.params.algo;
+        let skipped = match a.block {
+            BlockRef::AlgoOp(op) if a.param == AlgoOpParams::WAVE => {
+                let d = if shift {
+                    delta.signum() * i8::MAX
+                } else {
+                    delta
+                };
+                step_kind(p.kinds(), p.linked(), op.index(), d).skipped
+            }
+            BlockRef::Algo
+                if !shift && matches!(a.param, AlgoParams::ALG_A | AlgoParams::ALG_B) =>
+            {
+                step_alg(p, a.param, delta).skipped
+            }
+            _ => false,
+        };
+        if skipped {
+            self.error(Line::new(prompt::FORMANT_FULL));
+        }
+    }
+
     /// The keys this frame, in order: MENU, B*n*, PLUS and MINUS, SEQ, EDIT,
     /// then encoder A on a list. With MIX down, PLUS and MINUS are MIX's
     /// own (prime, delete), never a move.
@@ -1628,6 +1662,14 @@ impl UiState {
     #[doc(hidden)]
     pub fn load_for_test(&mut self, src: PartSource) {
         self.guarded_part(src, ReplaceTo::Init)
+    }
+
+    /// The active Part's Sound was replaced under `was`'s chain: what a
+    /// load does after it (`project_replaced`).
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn replaced_for_test(&mut self, was: PartChain) {
+        self.project_replaced(was)
     }
 
     /// LIBRARY lists TAPE Sounds, for the tests of their load.
@@ -2121,6 +2163,16 @@ impl UiState {
         self.orbit.sync(v, &mut self.project);
     }
 
+    /// The audio's latest formant views: the edited Part's is kept.
+    pub fn set_formant_views(&mut self, v: &FormantViews) {
+        self.formant = v[self.active_part.index()];
+    }
+
+    /// What an OP page's band draws from: the edited Part's newest voice.
+    pub fn formant_view(&self) -> &FormantView {
+        &self.formant
+    }
+
     /// The front-panel LED: lit on ORBIT's beat, off when it is stopped.
     pub fn led(&self) -> bool {
         self.led.on()
@@ -2454,6 +2506,9 @@ impl UiState {
                     *rev = reverb_panel::turn(rev, a.param, delta, &mut self.rev_knobs, tempo);
                     continue;
                 }
+                if let Some(a) = v.addr() {
+                    self.formant_full(at, a, delta, shift);
+                }
                 let params = &mut UiBlocks {
                     project: &mut self.project,
                     part: at,
@@ -2475,7 +2530,11 @@ impl UiState {
             let def = if PartChain::of(&self.project.part(at).sound) == chain {
                 def
             } else {
+                let from = self.loc;
                 self.loc = self.loc.rechained(at, chain, &self.cx());
+                if self.loc != from {
+                    self.enter_page();
+                }
                 self.page_def()
             };
             // A KIND, TYPE or operator change re-seeds the page's animators: a lerp
@@ -2833,6 +2892,7 @@ impl UiState {
             orbit,
             strip: &self.overview,
             heads: self.heads,
+            formant: &self.formant,
         }
     }
 
@@ -2866,6 +2926,16 @@ impl UiState {
             .page(&self.cx())
             .map_or((0, 0), |(_, at)| (at.node(), at.sub()));
         (place, at.0, at.1)
+    }
+
+    /// 1 while the shown Part's chain has FRM: the map's sub-row changes
+    /// under a page that stays put.
+    fn formant_key(&self) -> u8 {
+        let on = self
+            .loc
+            .part()
+            .is_some_and(|p| PartChain::of(&self.project.part(p).sound) == PartChain::AlgoFormant);
+        u8::from(on)
     }
 
     /// Snapshot of what region `kind` shows; a region redraws when it changes.
@@ -2963,7 +3033,7 @@ impl UiState {
                 node,
                 sub,
                 region::quantize(self.renderer.branch_scroll.current()),
-                f.ctx.model as u8 | f.ctx.tape.index() << 4,
+                f.ctx.model as u8 | f.ctx.tape.index() << 4 | self.formant_key() << 7,
             ),
             RegionKind::Grid => RegionData::grid_with_value(
                 self.matrix_state.sel_row as u8,
@@ -3216,31 +3286,32 @@ fn read_block<'a>(
     part: PartId,
     (theme, midi): (&'a ThemeSettings, &'a MidiSettings),
     b: BlockRef,
-) -> Option<&'a dyn Block> {
+) -> Option<BlockView<'a>> {
     let song = project.orbit();
+    let plain = |b: &'a dyn Block| Some(BlockView::Plain(b));
     match b {
-        BlockRef::Theme => Some(theme),
-        BlockRef::Midi => Some(midi),
-        BlockRef::PartMix(p) => Some(project.read_part(p).mix),
-        BlockRef::OrbitChords => Some(&song.live().chords),
-        BlockRef::OrbitRing(r) => Some(&song.live().rings[r.get() as usize]),
-        BlockRef::Tempo => Some(&song.bpm),
+        BlockRef::Theme => plain(theme),
+        BlockRef::Midi => plain(midi),
+        BlockRef::PartMix(p) => plain(project.read_part(p).mix),
+        BlockRef::OrbitChords => plain(&song.live().chords),
+        BlockRef::OrbitRing(r) => plain(&song.live().rings[r.get() as usize]),
+        BlockRef::Tempo => plain(&song.bpm),
         _ => project.read_part(part).block(b),
     }
 }
 
 impl BlockRead for UiBlocks<'_> {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+    fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
         read_block(self.project, self.part, (self.theme, self.midi), b)
     }
 }
 
 impl Blocks for UiBlocks<'_> {
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
+    fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
         match b {
-            BlockRef::Theme => Some(self.theme),
-            BlockRef::Midi => Some(self.midi),
-            BlockRef::PartMix(p) => Some(self.project.edit_part(p).mix),
+            BlockRef::Theme => Some(BlockViewMut::Plain(self.theme)),
+            BlockRef::Midi => Some(BlockViewMut::Plain(self.midi)),
+            BlockRef::PartMix(p) => Some(BlockViewMut::Plain(self.project.edit_part(p).mix)),
             // A scene's params change through `OrbitSong::edit`, which
             // writes its slot too (ADR 0083): never from here. A caller
             // naming one is a bug the tests catch; release reads nothing.
@@ -3248,7 +3319,7 @@ impl Blocks for UiBlocks<'_> {
                 debug_assert!(false, "{b:?} edits through OrbitSong::edit");
                 None
             }
-            BlockRef::Tempo => Some(&mut self.project.orbit_mut().bpm),
+            BlockRef::Tempo => Some(BlockViewMut::Plain(&mut self.project.orbit_mut().bpm)),
             _ => {
                 let PartEdit { sound, mix, fx } = self.project.edit_part(self.part);
                 part_block_mut(sound, mix, fx, b)
@@ -3258,7 +3329,7 @@ impl Blocks for UiBlocks<'_> {
 }
 
 impl BlockRead for UiRead<'_> {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+    fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
         read_block(self.project, self.part, (self.theme, self.midi), b)
     }
 }

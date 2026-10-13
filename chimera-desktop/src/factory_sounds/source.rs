@@ -625,11 +625,11 @@ pub fn patch(s: &Source) -> Result<Sound, String> {
     let mut snd = Sound::neutral(s.engine);
     snd.name = s.name;
     for (line, a, v) in &s.params {
-        let blk = snd
+        let mut blk = snd
             .params
             .block_mut(a.addr().block)
             .expect("valid_addr takes Sound blocks only");
-        set(blk, *a, v).map_err(|m| format!("{}: {m}", s.at(*line)))?;
+        set(&mut *blk, *a, v).map_err(|m| format!("{}: {m}", s.at(*line)))?;
     }
     for (src, routes) in &s.mods {
         for r in routes {
@@ -738,7 +738,7 @@ pub fn lines(snd: &Sound) -> Vec<String> {
             continue;
         };
         for a in ValidAddr::of_block(b) {
-            let text = match (read_value(blk, a), read_value(base, a)) {
+            let text = match (read_value(&*blk, a), read_value(&*base, a)) {
                 (DiskValue::Real(x), DiskValue::Real(y)) if x.to_bits() == y.to_bits() => continue,
                 (DiskValue::Code(x), DiskValue::Code(y)) if x == y => continue,
                 (DiskValue::Real(x), _) => format!("{x}"),

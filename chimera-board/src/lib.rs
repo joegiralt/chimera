@@ -258,6 +258,8 @@ pub struct AudioStart<'a> {
     pub shared: chimera_core::triple::Reader<chimera_core::instrument::AudioShared>,
     pub notes: chimera_core::note_queue::NoteDrain<'static, { shared::NOTE_SOURCES }>,
     pub scope: chimera_core::triple::Writer<chimera_core::scope::ScopeFrame>,
+    /// The voices' formant views, once a block, for the OP pages.
+    pub formant: chimera_core::triple::Writer<chimera_core::dsp::algo::engine::FormantViews>,
     pub orbit: orbit::Runner,
     pub sources: chimera_core::source_table::AudioToken,
     #[cfg(feature = "midi-din")]
@@ -279,6 +281,29 @@ pub struct Shell {
         &mut chimera_core::project::Project,
         &mut chimera_core::source_table::AudioToken,
     ) -> &'static str,
+}
+
+/// The bench's text and flush, built here with the UI's (ADR 0108):
+/// called from chimera-stm32, `draw::text` and `flush` would be built
+/// again there, at its opt-level.
+#[cfg(feature = "bench")]
+pub mod bench_screen {
+    use super::Display;
+    use chimera_core::ui::{draw, theme};
+    use chimera_hal::ChimeraDisplay;
+    use embedded_graphics::pixelcolor::Rgb565;
+
+    /// `s` in the value face in INK, or with `label` in the label face.
+    pub fn text(d: &mut Display, label: Option<Rgb565>, s: &str, (x, y): (i32, i32)) {
+        match label {
+            None => draw::text(d, &theme::FONT_VALUE, s, x, y, theme::INK),
+            Some(c) => draw::text(d, &theme::FONT_LABEL, s, x, y, c),
+        };
+    }
+
+    pub fn flush(d: &mut Display) {
+        d.flush();
+    }
 }
 
 #[cfg(not(feature = "sd-probe"))]
@@ -391,6 +416,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     controls::enable();
 
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
+    let (formant_w, mut formant_r) = shared::take_formant().expect("formant views taken once");
     let (mut shared_w, shared_r, knobs) =
         shared::take_audio(ui.project().perf()).expect("audio buffer taken once");
     // Without MIDI DIN or `card` nothing takes a producer.
@@ -407,6 +433,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         shared: shared_r,
         notes,
         scope: scope_w,
+        formant: formant_w,
         orbit: orbit_runner,
         sources,
         #[cfg(feature = "midi-din")]
@@ -485,6 +512,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         controls.snapshot();
         // ORBIT's latest view: the pages draw it, the drift is absorbed.
         orbit.see(ui);
+        // The OP pages' band: the edited Part's newest voice.
+        ui.set_formant_views(formant_r.read());
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
         // SYSTEM synced first: a THEME change made in this visit is kept.

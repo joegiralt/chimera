@@ -2,7 +2,7 @@
 
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::block::ParamId;
-use chimera_core::dsp::algo::params::AlgoOpParams;
+use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use chimera_core::ui::block_registry as reg;
@@ -36,10 +36,10 @@ fn every_part_slot_resolves_to_a_spec() {
                 | SlotBinding::ReverbPanel(..)
                 | SlotBinding::Machine(_)
                 | SlotBinding::Source => {}
-                SlotBinding::Param(_) | SlotBinding::SelectedOp(_) => {
+                SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::OpPanel(..) => {
                     assert!(slot.spec().is_some(), "{} slot {i}: no spec", def.name)
                 }
-                SlotBinding::Legacy { .. } => {
+                SlotBinding::Legacy(_) => {
                     panic!("{} slot {i}: Part pages must not be Legacy", def.name)
                 }
                 SlotBinding::SelectedRing(_) | SlotBinding::Orbit(_) => {
@@ -113,30 +113,34 @@ fn all_chains_holds_every_reachable_chain() {
     let mut at = Vec::new();
     for engine in EngineType::ALL {
         at.push((
-            engine,
+            PartChain::base(engine),
             Location::pages(PartId::ALL[0], chain_def_for(engine).home()),
         ));
     }
     at.push((
-        EngineType::Algo,
+        PartChain::AlgoFormant,
+        Location::pages(PartId::ALL[0], PartChain::AlgoFormant.def().home()),
+    ));
+    at.push((
+        PartChain::Algo,
         Location::mixer(PartId::ALL[0], MixPage::Sends),
     ));
     let mut ls = Vec::new();
     leaves(&mut Vec::new(), &mut ls);
     assert!(!ls.is_empty());
-    at.extend(ls.into_iter().map(|l| (EngineType::Algo, l)));
-    for (engine, l) in at {
+    at.extend(ls.into_iter().map(|l| (PartChain::Algo, l)));
+    for (chain, l) in at {
         let cx = NavCtx {
-            chains: [PartChain::base(engine); 6],
+            chains: [chain; 6],
             dyn_rows: 0,
             orbit: OrbitCx::NONE,
             rev: chimera_core::dsp::reverb::ReverbType::Quad,
         };
-        let (chain, _) = l.page(&cx).unwrap();
+        let (def, _) = l.page(&cx).unwrap();
         assert!(
-            reg::ALL_CHAINS.iter().any(|c| core::ptr::eq(*c, chain)),
+            reg::ALL_CHAINS.iter().any(|c| core::ptr::eq(*c, def)),
             "{}",
-            chain.name
+            def.name
         );
     }
 }
@@ -275,7 +279,10 @@ fn slot_addr_resolves_fixed_bindings() {
     let on = |op| SlotCtx::read(&ParamSnapshot::default(), op);
     assert_eq!(slot_addr(&reg::ALGO_LEVEL, 3, &on(Op::A)), level(Op::D));
     assert_eq!(slot_addr(&reg::ALGO_LEVEL, 3, &on(Op::F)), level(Op::D));
-    assert_eq!(slot_addr(&reg::ALGO_ALG, 5, &ctx()), None); // empty
+    assert_eq!(
+        slot_addr(&reg::ALGO_ALG, 5, &ctx()),
+        Some(ParamAddr::new(BlockRef::Algo, AlgoParams::VOWEL))
+    );
     assert_eq!(slot_addr(&reg::DEMO_WAVES, 0, &ctx()), None); // legacy
     assert_eq!(slot_addr(&reg::ALGO_ALG, 9, &ctx()), None); // out of range
 }
@@ -288,9 +295,10 @@ fn ctx() -> SlotCtx {
 /// would silently edit the wrong operator's sound.
 #[test]
 fn group_pages_bind_each_column_to_its_operator() {
-    let pages: [(&BlockDef, ParamId); 2] = [
+    let pages: [(&BlockDef, ParamId); 3] = [
         (&reg::ALGO_WAVE, AlgoOpParams::WAVE),
         (&reg::ALGO_LEVEL, AlgoOpParams::LEVEL),
+        (&reg::ALGO_FORMANT, AlgoOpParams::FRMT),
     ];
     for (def, id) in pages {
         for (i, op) in Op::ALL.into_iter().enumerate() {

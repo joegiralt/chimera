@@ -412,6 +412,11 @@ impl<'a> LibraryDecoder<'a> {
     pub fn skips(&self) -> u16 {
         self.check.skips()
     }
+
+    /// `SoundCheck::over_budget`.
+    pub fn over_budget(&self) -> bool {
+        self.check.over_budget()
+    }
 }
 
 impl Check for LibraryDecoder<'_> {

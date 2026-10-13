@@ -58,6 +58,10 @@ def _function(disasm, symbol):
 
 
 CALL = re.compile(r"^blx?(?:\.w)?$")
+# Callees off the hot path: the envelope's stage change runs once a stage.
+# A back-edge span that only calls these is its out-of-line path, not a
+# loop; its instructions count per block.
+COLD = ("OpEnv>::stage_end",)
 COND = "eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le"
 BRANCH = re.compile(rf"^(?:b({COND})?|cbn?z)(?:\.[wn])?$")
 
@@ -90,11 +94,24 @@ def _loops(body):
         b = _branch(op, args)
         if b and lo <= b[0] < addr <= hi:
             edges[b[0]] = max(edges.get(b[0], addr), addr)
-    spans = list(edges.items())
+    spans = [s for s in edges.items() if _round(body, s)]
     return sorted(
         s for s in spans
         if not any(o != s and s[0] <= o[0] and o[1] <= s[1] for o in spans)
     )
+
+
+def _round(body, span):
+    """Whether `span` is a loop: some path from its head comes round, and
+    it calls more than `COLD`. Not one: an outer loop's tail entered from
+    outside the span (the head's every path leaves), or a cold call's
+    out-of-line path back into a loop; their instructions are per block."""
+    head, edge = span
+    ins = [x for x in body if head <= x[0] <= edge]
+    called = [args for _, op, args in ins if CALL.match(op)]
+    if called and all(any(c in args for c in COLD) for args in called):
+        return False
+    return _paths(ins, head) is not None
 
 
 def _paths(ins, head):

@@ -130,7 +130,7 @@ pub fn check_project_decode(bytes: &[u8], target: &mut Project) -> bool {
         };
         for b in blocks.into_iter().take(n) {
             let blk = part_block(&part.sound, &part.mix, fx, b).expect("a Part or FX block");
-            check_block(b, blk);
+            check_block(b, &*blk);
         }
         if let Origin::Slot {
             slot,
@@ -294,7 +294,7 @@ pub fn check_block(b: BlockRef, blk: &dyn Block) {
 pub fn check_sound(s: &Sound) {
     for b in BlockRef::ALL {
         if let Some(blk) = s.params.block(b) {
-            check_block(b, blk);
+            check_block(b, &*blk);
         }
     }
     assert!(SoundName::from_padded(&s.name.padded()).is_ok());

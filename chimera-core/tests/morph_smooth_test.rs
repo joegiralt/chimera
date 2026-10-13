@@ -23,8 +23,14 @@ const RANGE: f32 = Morph::STORED_MAX;
 /// A held ALGO INIT-style Sound on `a` → `b`, MORPH `m`.
 fn algo(a: AlgoId, b: AlgoId, m: u8) -> Sound {
     let mut s = Sound::init(EngineType::Algo);
-    s.params.algo.alg_a = a.get();
-    s.params.algo.alg_b = b.get();
+    s.params
+        .algo
+        .try_set_algs(a, s.params.algo.algs().1)
+        .unwrap();
+    s.params
+        .algo
+        .try_set_algs(s.params.algo.algs().0, b)
+        .unwrap();
     s.params.algo.morph = m;
     s.params.envelopes[0].sustain = 1.0;
     s

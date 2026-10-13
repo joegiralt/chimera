@@ -68,7 +68,7 @@ impl PageId {
         if def
             .params
             .iter()
-            .any(|s| !matches!(s.binding, SlotBinding::Legacy { .. } | SlotBinding::Empty))
+            .any(|s| !matches!(s.binding, SlotBinding::Legacy(_) | SlotBinding::Empty))
         {
             return None;
         }
@@ -103,7 +103,7 @@ impl PageId {
     /// Apply an encoder delta: `delta` ticks of the bound param's spec step.
     pub fn apply_encoder(&self, idx: usize, delta: i8, params: &mut impl Blocks) {
         if let Some(a) = self.binding(idx)
-            && let Some(b) = params.block_mut(a.block)
+            && let Some(mut b) = params.block_mut(a.block)
         {
             b.nudge(a.param, delta);
         }
@@ -112,7 +112,7 @@ impl PageId {
     /// Shift+encoder: snap to the coarse points of the bound param's format.
     pub fn snap_encoder(&self, idx: usize, delta: i8, params: &mut impl Blocks) {
         if let Some(a) = self.binding(idx)
-            && let Some(b) = params.block_mut(a.block)
+            && let Some(mut b) = params.block_mut(a.block)
         {
             b.snap(a.param, delta);
         }

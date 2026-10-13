@@ -67,6 +67,14 @@ impl<T> TripleBuffer<T> {
             slot.assume_init_mut()
         }
     }
+
+    /// The first slot of a buffer not built yet, as scratch for one `T`
+    /// until `init_slots_in_place` builds it.
+    pub fn first_slot(slot: &mut MaybeUninit<Self>) -> &mut MaybeUninit<T> {
+        // SAFETY: as in `init_slots_in_place`, the first slot is a `T` in
+        // the live, unaliased `slot`, and is borrowed only as long as it.
+        unsafe { uninit_at(addr_of_mut!((*slot.as_mut_ptr()).slots).cast::<T>()) }
+    }
 }
 
 impl<T: 'static> TripleBuffer<T> {

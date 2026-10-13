@@ -605,6 +605,8 @@ impl SourceNeed {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LibRead {
     pub skips: u16,
+    /// Operator kinds past the formant budget, read as W1.
+    pub over: bool,
     pub source: Option<SourceNeed>,
 }
 
@@ -718,12 +720,16 @@ pub fn read_library_sound<S: Store>(
                 };
             }
         }
-        let skips = d.skips();
+        let (skips, over) = (d.skips(), d.over_budget());
         let source = match p.pool.scratch_ref().source_ref() {
             Some(sr) => source_need(s, vol, p, sr)?,
             None => None,
         };
-        Ok(Ok(LibRead { skips, source }))
+        Ok(Ok(LibRead {
+            skips,
+            over,
+            source,
+        }))
     });
     let (out, event) = split(run);
     CardOut {

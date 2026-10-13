@@ -108,6 +108,6 @@ fn registry_accepts_exactly_the_modulatable_addresses() {
         }
     }
     // + ENV n LEVEL, TIME, RISE, FALL, SHAPE; VCA; PITCH, FINE; Modal's macros;
-    // VA's eleven
-    assert_eq!(accepted, 17 + 3 * 5 + 1 + 2 + 4 + 11);
+    // VA's eleven; each operator's FRMT and BW, and VOWEL
+    assert_eq!(accepted, 17 + 3 * 5 + 1 + 2 + 4 + 11 + 2 * 6 + 1);
 }

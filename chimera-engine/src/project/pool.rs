@@ -449,8 +449,9 @@ impl Pool {
     /// `within` says so (it answers within two blocks), and on an ack close
     /// that hole and every one above it. A nack (a voice holds a moving id) or a timeout moves
     /// nothing. The gate is open again on return, always. True when a
-    /// hole closed.
-    pub(in crate::project) fn source_pass(&mut self, within: impl FnMut() -> bool) -> bool {
+    /// hole closed. Through `dyn`, so every caller shares one copy.
+    #[inline(never)]
+    pub(in crate::project) fn source_pass(&mut self, within: &mut dyn FnMut() -> bool) -> bool {
         self.drain_retired();
         let table = self.table();
         // The lowest hole nothing at or above sounds: a voice low in the
@@ -494,8 +495,7 @@ impl Pool {
     /// `source_pass` against the pool's clock: `GATE_ACK_TIMEOUT_MS`, or
     /// one look with no clock.
     pub(in crate::project) fn source_pass_timed(&mut self) -> bool {
-        let within = deadline(self.clock, GATE_ACK_TIMEOUT_MS);
-        self.source_pass(within)
+        self.source_pass(&mut deadline(self.clock, GATE_ACK_TIMEOUT_MS))
     }
 
     /// Whether the audio has `acked` a load's kill and no voice holds a

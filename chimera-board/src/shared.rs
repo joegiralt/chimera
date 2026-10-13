@@ -4,8 +4,10 @@ use core::ptr::addr_of_mut;
 use core::sync::atomic::AtomicU8;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use chimera_core::dsp::algo::engine::{FormantView, FormantViews};
 use chimera_core::dsp::algo::waves::{self, Waves};
 use chimera_core::dsp::knobs::KnobPublisher;
+use chimera_core::hw::MAX_PARTS;
 use chimera_core::instrument::AudioShared;
 use chimera_core::note_queue::NoteSources;
 #[cfg(any(feature = "midi-din", feature = "bench"))]
@@ -76,6 +78,30 @@ pub fn take_ui() -> Option<&'static mut UiState> {
 static mut AUDIO: MaybeUninit<TripleBuffer<AudioShared>> = MaybeUninit::uninit();
 static AUDIO_TAKEN: AtomicBool = AtomicBool::new(false);
 
+/// `AUDIO`'s first slot, lent to the bench, which runs before
+/// `take_audio`: its `AudioShared` needs no 7 KB of AXI of its own.
+///
+/// # Safety
+/// At most once, and only before `take_audio`, which builds every slot;
+/// the reference must be gone by then. Both orders are asserted: a second
+/// call, or one after `take_audio`, panics.
+#[cfg(feature = "bench")]
+pub unsafe fn bench_audio() -> &'static mut MaybeUninit<AudioShared> {
+    static BENCH_TAKEN: AtomicBool = AtomicBool::new(false);
+    assert!(
+        !BENCH_TAKEN.swap(true, Ordering::AcqRel),
+        "bench_audio twice"
+    );
+    assert!(
+        !AUDIO_TAKEN.load(Ordering::Acquire),
+        "bench_audio after take_audio"
+    );
+    // SAFETY: the asserts let one call past, before `take_audio`, so this
+    // is the only reference to `AUDIO` yet; the caller drops it before
+    // `take_audio` makes its own.
+    TripleBuffer::first_slot(unsafe { &mut *addr_of_mut!(AUDIO) })
+}
+
 // The UI side of the knobs, beside the writer it publishes through (ADR
 // 0115): 2.2 KB of the UI's, in D2, not AXI, which the bench builds hold
 // within 8 KiB of full (ADR 0087). NOLOAD: written at `take_audio`.
@@ -102,7 +128,7 @@ pub fn take_audio(
     // reference to `KNOBS` ever made; `write` initialises it whole.
     let knobs = unsafe { &mut *addr_of_mut!(KNOBS) }.write(KnobPublisher::new());
     // SAFETY: the flag lets exactly one caller past, so this is the only
-    // reference to `AUDIO` ever made.
+    // live reference to `AUDIO`: the bench's (`bench_audio`) is gone.
     let slot = unsafe { &mut *addr_of_mut!(AUDIO) };
     // SAFETY: `AudioShared::init_in_place` writes every field of each slot,
     // one Part at a time, so no whole `AudioShared` is ever on the stack.
@@ -130,6 +156,23 @@ pub fn take_orbit() -> Option<(Writer<OrbitView>, Reader<OrbitView>)> {
     // reference to `ORBIT` ever made.
     let slot = unsafe { &mut *addr_of_mut!(ORBIT) };
     Some(TripleBuffer::init_in_place(slot, OrbitView::default).split())
+}
+
+// The voices' formant views, from the audio to the OP pages: in D2, not
+// AXI, which the ORBIT build fills to its margin (ADR 0087), as `KNOBS`.
+// NOLOAD: built at `take_formant`.
+#[unsafe(link_section = ".ram_d2")]
+static mut FORMANT: MaybeUninit<TripleBuffer<FormantViews>> = MaybeUninit::uninit();
+static FORMANT_TAKEN: AtomicBool = AtomicBool::new(false);
+
+pub fn take_formant() -> Option<(Writer<FormantViews>, Reader<FormantViews>)> {
+    if FORMANT_TAKEN.swap(true, Ordering::AcqRel) {
+        return None;
+    }
+    // SAFETY: the flag lets exactly one caller past, so this is the only
+    // reference to `FORMANT` ever made.
+    let slot = unsafe { &mut *addr_of_mut!(FORMANT) };
+    Some(TripleBuffer::init_in_place(slot, || [FormantView::NONE; MAX_PARTS]).split())
 }
 
 // What the audio interrupt (`chimera-stm32`) and this side both touch:

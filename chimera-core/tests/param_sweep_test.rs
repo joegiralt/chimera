@@ -126,7 +126,10 @@ fn patches(p: &Param, quick: bool) -> Vec<(Patch, bool)> {
             .into_iter()
             .filter(|s| matches!(s, Patch::ModalInit(_)) || *s == Patch::BusyModal)
             .collect(),
-        (BlockRef::Algo | BlockRef::AlgoOp(_), true) => vec![Patch::BusyAlgo],
+        (BlockRef::Algo | BlockRef::AlgoOp(_), true) => vec![Patch::BusyAlgo, Patch::Formant],
+        (BlockRef::Algo | BlockRef::AlgoOp(_), false) => {
+            SOUNDS.into_iter().chain([Patch::Formant]).collect()
+        }
         (_, true) => vec![Patch::BusyAlgo, Patch::BusyModal],
         (_, false) => SOUNDS.to_vec(),
     };
@@ -877,6 +880,23 @@ fn levels_are_safe() {
     }
 }
 
+/// The formant fixture at C3 (Ruling 11): heard, safe, and at the level
+/// recorded when FRMT first sounded (Task 10), ±1.5 dB.
+#[test]
+fn formant_fixture_level() {
+    let l = level(Patch::Formant, &[48], 100, BPS);
+    println!("FORMANT: {:.2} LUFS", l.lufs);
+    assert!(l.peak.iter().all(|&p| within_ceiling(p)) && l.rms[0] > SILENT_RMS);
+    assert!(
+        (l.lufs - FORMANT_LUFS).abs() <= 1.5,
+        "FORMANT at {:.2} LUFS, recorded {FORMANT_LUFS}",
+        l.lufs
+    );
+}
+
+/// The formant fixture's level at C3, LUFS, as Task 10 measured it.
+const FORMANT_LUFS: f32 = -22.16;
+
 /// ADR 0109's reference: ADR 0063's factory median (−22 LUFS) plus the
 /// master gain's +10.97 dB. ALGO INIT's C4 at velocity 100 on P1, LUFS.
 const REFERENCE_LUFS: f32 = -11.0;
@@ -941,6 +961,32 @@ fn modal_models_match_the_loudness_reference() {
         }
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// CHOIR, TALK BASS, BREATH and VOX (factory 8–11): one C4 at velocity 100
+/// on P1 within ±0.5 dB of its measured LUFS; their chord at velocity 127
+/// under the ceiling, losing at most `MAX_CHORD_LIMITED_DB` to the limiter.
+#[test]
+fn formant_sounds_meet_the_loudness_reference() {
+    // Ruling 9, resolved (owner, 2026-10-13): the demos may ship ~4 dB under
+    // REFERENCE_LUFS at VOL max (CHOIR −3.0, BREATH −3.3 dB).
+    const MEASURED: [f32; 4] = [-14.00, -10.90, -14.26, -11.70];
+    for (i, want) in (8..12u8).zip(MEASURED) {
+        let l = level(Patch::Factory(i), &[60], 100, BPS);
+        println!(
+            "F{i}: {:.2} LUFS ({:+.2} vs reference)",
+            l.lufs,
+            l.lufs - REFERENCE_LUFS
+        );
+        assert!((l.lufs - want).abs() <= 0.5, "F{i}: {:.2} LUFS", l.lufs);
+        let c = level(Patch::Factory(i), &CHORD, 127, BPS);
+        println!("  chord at 127: {:.2} dB limited", c.limited_db);
+        assert!(
+            c.limited_db <= MAX_CHORD_LIMITED_DB && c.peak.iter().all(|&p| within_ceiling(p)),
+            "F{i}: chord limited {:.2} dB",
+            c.limited_db
+        );
+    }
 }
 
 /// STRING's peak rule: its eight-note chord at velocity 127 takes at most

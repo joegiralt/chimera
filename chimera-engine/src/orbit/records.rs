@@ -219,7 +219,7 @@ pub(crate) fn read(tag: RecordTag, p: &[u8], song: Option<&mut OrbitSong>) -> bo
                 return false;
             };
             s.block(b)
-                .is_some_and(|blk| block_payload(at, b, blk).as_slice() == p)
+                .is_some_and(|blk| block_payload(at, b, &*blk).as_slice() == p)
         }
         RecordTag::OrbitNotes => notes(p, song),
         RecordTag::OrbitChord => chord(p, song),

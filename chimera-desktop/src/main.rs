@@ -8,12 +8,14 @@ mod midi;
 mod qa;
 
 use chimera_core::console::Served;
+use chimera_core::dsp::algo::engine::FormantView;
 use chimera_core::orbit::runner::orbit_buffer;
 use chimera_core::project::arena::{ARENA_BYTES, ArenaWriter};
 use chimera_core::project::{LOAD_ACK_TIMEOUT_MS, LOAD_LINK};
 use chimera_core::scope::scope_buffer;
 use chimera_core::source_table::{SOURCE_TABLE, SourceTable};
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
+use chimera_core::triple::TripleBuffer;
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::Pacer;
 use chimera_core::ui::busy::{ToastStep, draw_busy, draw_toast};
@@ -48,7 +50,10 @@ fn main() {
     let mut controls = DesktopControls::new();
     let (scope_w, mut scope_r) = Box::leak(Box::new(scope_buffer())).split();
     let (orbit_w, mut orbit_r) = Box::leak(Box::new(orbit_buffer())).split();
-    let mut audio = audio::DesktopAudio::new(scope_w, orbit_w);
+    let no_views = [FormantView::NONE; chimera_core::hw::MAX_PARTS];
+    let (formant_w, mut formant_r) =
+        Box::leak(Box::new(TripleBuffer::new(no_views, no_views, no_views))).split();
+    let mut audio = audio::DesktopAudio::new(scope_w, orbit_w, formant_w);
 
     let mut ui = UiState::with_arena(leaked_arena(&SOURCE_TABLE));
     ui.project_mut().set_gate_clock(gate_ms);
@@ -131,6 +136,8 @@ fn main() {
 
         // ORBIT's latest view: the pages draw it, the drift is absorbed.
         ui.set_orbit_view(orbit_r.read());
+        // The OP pages' band: the edited Part's newest voice.
+        ui.set_formant_views(formant_r.read());
         // UI framework handles navigation + encoder -> param binding
         ui.handle_input(&controls);
         if ui

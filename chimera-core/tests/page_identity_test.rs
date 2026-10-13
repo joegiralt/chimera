@@ -81,3 +81,50 @@ fn the_mixer_round_trip_returns_by_identity() {
     let (c, at) = l.page(&cx).unwrap();
     assert_eq!(c.def_at(at).unwrap().id, ALGO_DETUNE.id);
 }
+
+/// The Part's pages kept by identity when its chain gains FRM meanwhile
+/// (a different list: the position shifts, the page does not).
+#[test]
+fn the_mixer_round_trip_keeps_the_page_across_a_formant_edit() {
+    let mut cx = cx();
+    let detune = PartChain::Algo.def().locate(ALGO_DETUNE.id).unwrap();
+    let mut r = Recall::new();
+    let mut l = Location::pages(P1, detune);
+    go(&mut l, NavKey::Part(P1), &cx, &mut r);
+    cx.chains[1] = PartChain::AlgoFormant;
+    go(&mut l, NavKey::Part(P1), &cx, &mut r);
+    let (c, at) = l.page(&cx).unwrap();
+    assert_eq!(c.def_at(at).unwrap().id, ALGO_DETUNE.id);
+    assert_ne!(at, detune, "FRM shifted it");
+    // And back, with FRM gone while away.
+    go(&mut l, NavKey::Part(P1), &cx, &mut r);
+    cx.chains[1] = PartChain::Algo;
+    go(&mut l, NavKey::Part(P1), &cx, &mut r);
+    let (c, at) = l.page(&cx).unwrap();
+    assert_eq!(c.def_at(at).unwrap().id, ALGO_DETUNE.id);
+}
+
+#[test]
+fn rechained_keeps_the_page_across_the_algo_chains() {
+    let cx = NavCtx {
+        chains: [PartChain::AlgoFormant; 6],
+        ..cx()
+    };
+    let was = PartChain::Algo;
+    let detune = was.def().locate(ALGO_DETUNE.id).unwrap();
+    let l = Location::pages(P1, detune).rechained(P1, was, &cx);
+    let (c, at) = l.page(&cx).unwrap();
+    assert_eq!(c.def_at(at).unwrap().id, ALGO_DETUNE.id);
+    // Off a page FRM-less chains lack, the node's first.
+    let frm = PartChain::AlgoFormant
+        .def()
+        .locate(chimera_core::ui::block_registry::ALGO_FORMANT.id)
+        .unwrap();
+    let cx = NavCtx {
+        chains: [PartChain::Algo; 6],
+        ..cx
+    };
+    let l = Location::pages(P1, frm).rechained(P1, PartChain::AlgoFormant, &cx);
+    let (c, at) = l.page(&cx).unwrap();
+    assert_eq!(c.def_at(at).unwrap().id, ALGO_WAVE.id);
+}

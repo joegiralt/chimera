@@ -44,7 +44,12 @@ fn on_flt(ct: EngineType) -> UiState {
     load_init(&mut ui, ct);
     let p = ui.params_mut();
     p.filter.cutoff = 2000.0;
-    p.algo.ops[0].wave = WaveId::SAW.get();
+    p.algo
+        .try_set_kind(
+            0,
+            chimera_core::dsp::algo::kinds::OpKind::Table(WaveId::SAW),
+        )
+        .unwrap();
     for _ in 0..flt_node(ct) {
         feed(&mut ui, Input::press(ButtonId::Plus));
     }
