@@ -2091,6 +2091,39 @@ fn a_high_formant_note_is_booked_its_extra_spans() {
     assert_eq!(high_held - low_held, extra);
 }
 
+/// Recost takes a Part's reach once a block (`HighNote::of`) and each
+/// voice's extra from it: the bill `Voice::high_note_extra` gives alone.
+#[test]
+fn a_part_s_high_note_reach_bills_each_voice_as_alone() {
+    use chimera_core::MidiNote;
+    use chimera_core::dsp::voice::HighNote;
+    use chimera_core::factory::{Demo, demo_sound};
+    let mut linked = demo_sound(Demo::Choir);
+    linked.params.algo = AlgoParams::single(WaveId::W1);
+    linked
+        .params
+        .algo
+        .try_set_algs(AlgoId::T1, AlgoId::T1)
+        .unwrap();
+    linked.params.algo.try_set_kind(0, OpKind::Formant).unwrap();
+    linked.params.algo.ops[0].coarse = 3;
+    let table = chimera_core::preset::Sound::init(EngineType::Algo);
+    for s in [demo_sound(Demo::Choir), linked, table] {
+        for (bend, tune) in [(0, 0), (12, 100), (2, -100)] {
+            let h = HighNote::of(&s.params, &s.mod_state, bend, tune);
+            for n in [0, 60, 108, 111, 120, 127] {
+                for slide in [0.5, 1.0, 2.0] {
+                    let note = MidiNote::new(n).unwrap();
+                    let alone =
+                        Voice::high_note_extra(&s.params, &s.mod_state, bend, tune, note, slide);
+                    let part = h.map_or(chimera_core::hw::Cost::ZERO, |h| h.extra(note, slide));
+                    assert_eq!(part, alone, "{n} {slide} {bend} {tune}");
+                }
+            }
+        }
+    }
+}
+
 /// The costliest Algo patch the formant budget admits (ADR 0131): every
 /// kind mix with a FRMT on every algorithm pair, at LEVEL 99 and FDBK 1.
 fn frmt_max() -> AlgoParams {
@@ -2149,11 +2182,13 @@ fn formant_costs_bill_by_kind() {
         ("TALK BASS", d(Demo::TalkBass)),
         ("MAX", worst),
     ] {
-        let y = ((SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - FxBus::COST.0)
-            / (cost(&p) + light))
-            .min(MAX_VOICES as u32);
+        let y = |bus: chimera_core::hw::Cost| {
+            ((SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - bus.0) / (cost(&p) + light))
+                .min(MAX_VOICES as u32)
+        };
+        let (y, y_tape) = (y(FxBus::COST), y(FxBus::COST_TAPE));
         println!(
-            "{name}: cost {} | rev V {} / rev Y {y} | heavy {}",
+            "{name}: cost {} | rev V {} / rev Y {y} ({y_tape} with the tape) | heavy {}",
             cost(&p),
             voices_with(&p, FxBus::COST, light).min(MAX_VOICES as u32),
             voices_with(&p, FxBus::COST_TAPE, floor)

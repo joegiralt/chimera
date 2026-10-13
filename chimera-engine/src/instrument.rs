@@ -20,7 +20,7 @@ use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
 use crate::dsp::rev::RevBill;
 use crate::dsp::rev::sync::Tempo;
 use crate::dsp::tape_engine::{Heads, TapeEngine};
-use crate::dsp::voice::Voice;
+use crate::dsp::voice::{HighNote, Voice};
 use crate::hw::{Cost, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SampleBudget, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
 use crate::modulation::ModState;
@@ -611,7 +611,10 @@ impl Instrument {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the voices and the pool are
         // built in place and the rest (the largest, `buses`, is 1.5 KB)
-        // written once by value before `assume_init_mut`.
+        // written once by value before `assume_init_mut`. `voices` and
+        // `knobs` are arrays, so the `cast` to their element keeps their
+        // layout and `add(i)` for `i` below their length (`MAX_VOICES`,
+        // `MAX_PARTS`) stays inside the field; each element is written once.
         unsafe {
             let voices = addr_of_mut!((*p).voices).cast::<Voice>();
             for (v, id) in VoiceIdx::ALL.into_iter().enumerate() {
@@ -1290,27 +1293,27 @@ impl Instrument {
         (self.costed, self.costings) = (at, self.costings.wrapping_add(1));
         #[cfg(feature = "probe")]
         crate::probe::acc(8, crate::probe::now().wrapping_sub(t0));
-        // A sounding Part's knobs, once: on its first voice (ADR 0112).
+        // A sounding Part's knobs and formant reach, once: on its first
+        // voice (ADR 0112, ADR 0131).
         let mut knobs = [false; MAX_PARTS];
+        let mut reach: [Option<HighNote>; MAX_PARTS] = [None; MAX_PARTS];
         for v in 0..MAX_VOICES {
             if let Some(p) = self.alloc.slots()[v].part() {
                 let p = p as usize % MAX_PARTS;
                 let part = &shared.parts[p];
-                let high = self.alloc.slots()[v].note().map_or(Cost::ZERO, |n| {
-                    Voice::high_note_extra(
-                        &part.params,
-                        &part.mod_state,
-                        part.mix.bend,
-                        shared.tune,
-                        n,
-                        self.voices[v].algo_slide(),
-                    )
-                });
+                let first = !core::mem::replace(&mut knobs[p], true);
+                if first {
+                    reach[p] =
+                        HighNote::of(&part.params, &part.mod_state, part.mix.bend, shared.tune);
+                }
+                let high = match (self.alloc.slots()[v].note(), reach[p]) {
+                    (Some(n), Some(h)) => h.extra(n, self.voices[v].algo_slide()),
+                    _ => Cost::ZERO,
+                };
                 let held = self.voices[v].held_model_extra(&part.params)
                     + self.voices[v].held_level_extra(&part.params, &part.mod_state)
                     + self.voices[v].held_ops_extra(&part.params, &part.mod_state)
                     + high;
-                let first = !core::mem::replace(&mut knobs[p], true);
                 let k = if first { Knobs::COST } else { Cost::ZERO };
                 self.alloc
                     .recost_with_glide(v, costs[p] + held + k, glides[p]);

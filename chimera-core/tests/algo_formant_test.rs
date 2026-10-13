@@ -512,8 +512,8 @@ fn feedback_moves_the_formant_not_the_pitch() {
 
 #[test]
 fn a_modulated_high_formant_does_not_alias() {
-    // FC ≈ 5 kHz: A3 at LEVEL 99, C3 at 60, 70 and 83; FC 1 kHz at A3 and
-    // C3, LEVEL 83 and 99 (Task 11 rulings).
+    // FRMT 158 (FC ≈ 9.6 kHz): A3 at LEVEL 99, C3 at 60, 70 and 83; FRMT
+    // 80 (1 kHz) at A3 and C3, LEVEL 83 and 99 (Task 11 rulings).
     for (frmt, n, level) in [
         (158u8, A3, 99u8),
         (158, C3, 60),
@@ -665,4 +665,45 @@ fn a_route_into_a_table_operators_frmt_does_nothing() {
         live.bw[0] = 216.0;
     });
     assert_eq!(a, b);
+}
+
+/// A kind swapped in under a held note starts closed (plan Review Focus
+/// 1): its ramps (carrier ratio, PM share, peak, noise band) start from
+/// its new law, as an idle operator's do at a note-on, not from whatever
+/// the operator last ran.
+#[test]
+fn a_swapped_in_kind_starts_from_its_new_law() {
+    use chimera_core::dsp::algo::engine::AlgoEngine;
+    // Op 2 into op 1 at full level, so the FRMT's PM share is capped.
+    let mut p = modded(0, 99, 80, 72, 1);
+    p.try_set_kind(0, OpKind::Table(WaveId::W1)).unwrap();
+    for to in [OpKind::Formant, OpKind::Noise] {
+        let mut want = p;
+        want.try_set_kind(0, to).unwrap();
+        let mut fresh = AlgoEngine::new();
+        fresh.note_on(
+            MidiNote::new(C3).unwrap(),
+            Velocity::new(common::VEL).unwrap(),
+            &want,
+            common::SR,
+        );
+        let seeded = fresh.ramp_starts(0);
+        let mut got = None;
+        render_algo_with(&p, C3, 40, |b, q, live, e| {
+            if b == 20 {
+                q.try_set_kind(0, to).unwrap();
+                *live = AlgoLive::from_params(q);
+            }
+            // Block 20 ducks and swaps; 21 rises from the seeds.
+            if b == 21 {
+                got = Some(e.ramp_starts(0));
+            }
+        });
+        let got = got.unwrap();
+        let near = |a: f32, b: f32| (a - b).abs() <= 1e-6 * b.abs().max(1.0);
+        assert!(
+            got.iter().zip(seeded).all(|(&a, b)| near(a, b)),
+            "{to:?}: {got:?} vs {seeded:?}"
+        );
+    }
 }

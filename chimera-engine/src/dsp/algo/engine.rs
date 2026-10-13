@@ -478,34 +478,14 @@ impl AlgoEngine {
 
     /// What a voice whose pitch can reach `top_hz` (note, TRNSP, bend,
     /// routes and a glide's start, before the operators' ratios) costs over
-    /// the static terms: each priced FRMT's spans past `SPANS_COVERED` at
-    /// its grain clock, ADR 0056's cycles a sample, rounded up. `fine_top`
-    /// marks an operator whose FINE a route moves: its ratio at FINE's top.
-    /// DETUNE is billed at its top always.
+    /// the static terms: `SpanReach::of(..).extra(top_hz)`.
     pub fn high_note_extra(
         p: &AlgoParams,
         priced: &[bool; OPS],
         fine_top: &[bool; OPS],
         top_hz: f32,
     ) -> Cost {
-        let l = p.linked();
-        let instr: u32 = (0..OPS)
-            .filter(|&i| p.kinds().get(i) == OpKind::Formant && (priced[i] || p.ops[i].level > 0))
-            .map(|i| {
-                let o = &p.ops[i];
-                let fine = if fine_top[i] { 15.0 } else { f32::from(o.fine) };
-                // DETUNE at its top: a few cents, never worth a lookup.
-                let hz = top_hz * ratio_at(o.coarse, fine) * DETUNE_TOP;
-                let over = Self::spans(hz).saturating_sub(Self::SPANS_COVERED);
-                over * if l.has(i) {
-                    Self::FIRE_INSTR
-                } else {
-                    Self::SPAN_INSTR
-                }
-            })
-            .sum();
-        // instr · 1.46 · 1.1 / 64, rounded up.
-        Cost((instr * 1606).div_ceil(64_000))
+        SpanReach::of(p, priced, fine_top).extra(top_hz)
     }
 
     /// A priced FRMT operator: its lanes (SKIRT 0's spans or moving loop
@@ -670,25 +650,17 @@ impl AlgoEngine {
                 l.skirt = Skirt::from_code(o.skirt);
                 self.kernel.reset(i, p.kinds().get(i));
                 self.kinds[i] = p.kinds().get(i);
-                match self.kinds[i] {
-                    OpKind::Noise => {
-                        (self.noise_c[i], self.noise_k[i]) = self.noise_law(&live, i, sr).coef;
-                    }
-                    OpKind::Table(_) => {
-                        self.mip[i] = self.mip_target(p, &live, cycles, sr, m, &level, i)
-                    }
-                    OpKind::Formant => {}
+                if let OpKind::Table(_) = self.kinds[i] {
+                    self.mip[i] = self.mip_target(p, &live, cycles, sr, m, &level, i)
                 }
             }
             self.env[i].note_on(EnvCoefs::new(self.rates[i], note, sr));
         }
         // Every kind set first: a formant's PM depth reads its sources'.
         self.formant_blocks(p, &live, cycles, sr);
-        for i in (0..OPS).filter(|&i| idle[i]) {
-            if let Some(b) = &self.laws[i] {
-                (self.c_ratio[i], self.pm_k[i]) = (b.ratio, b.law.pm);
-                self.peak[i] = Peak::at(&b.law, &b.drive);
-            }
+        let idle = (0..OPS).fold(0u8, |m, i| m | u8::from(idle[i]) << i);
+        self.seed_ramps(&live, sr, idle);
+        for i in (0..OPS).filter(|&i| idle & (1 << i) != 0) {
             self.gain[i] = self.target_gain(&live, i, sr);
         }
         self.active = true;
@@ -770,6 +742,19 @@ impl AlgoEngine {
     #[cfg(any(test, feature = "test-support"))]
     pub fn retake_laws(&mut self) {
         (self.law_key, self.noise) = (None, [NoiseLaw::STALE; OPS]);
+    }
+
+    /// Operator `i`'s ramp starts for the next block: the carrier ratio,
+    /// the PM share, the peak's `g_m` and the noise band's coefficients.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn ramp_starts(&self, i: usize) -> [f32; 5] {
+        [
+            self.c_ratio[i],
+            self.pm_k[i],
+            self.peak[i].gm,
+            self.noise_c[i],
+            self.noise_k[i],
+        ]
     }
 
     /// Every operator's noise from `voice`'s seeds: once, as the slot is
@@ -906,7 +891,7 @@ impl AlgoEngine {
             }
         }
         (self.morph, self.norm) = (m.get(), norm);
-        self.finish_swap(p);
+        self.finish_swap(p, live, cycles, sr);
         // A held key: a carrier of either algorithm holds the voice, so no
         // MORPH, by hand or by route, ends a held note (58b35e9). Released:
         // only a carrier heard at the MORPH does, unless a route may bring
@@ -1205,27 +1190,49 @@ impl AlgoEngine {
         }
     }
 
-    fn finish_swap(&mut self, p: &AlgoParams) {
-        self.swap = match self.swap {
-            Swap::Ducking { alg, kinds } => {
-                if alg {
-                    self.adopt_alg(p);
-                }
-                for i in 0..OPS {
-                    let (old, new) = (self.kinds[i], p.kinds().get(i));
-                    if kinds & (1 << i) != 0 {
-                        // A table to a table runs on; any other kind starts
-                        // closed, under the duck.
-                        if old.is_formant() || new.is_formant() {
-                            self.kernel.reset(i, new);
-                        }
-                        (self.kinds[i], self.law_key) = (new, None);
-                    }
-                }
-                Swap::Rising
-            }
-            Swap::Rising | Swap::Idle => Swap::Idle,
+    /// The duck's end: the new plan and kinds in, each swapped-in formant
+    /// or noise band starting closed, its ramps seeded from its new law as
+    /// an idle operator's are at `note_on`. The laws are taken here, so the
+    /// next block holds them.
+    fn finish_swap(&mut self, p: &AlgoParams, live: &AlgoLive, cycles: f32, sr: f32) {
+        let Swap::Ducking { alg, kinds } = self.swap else {
+            self.swap = Swap::Idle;
+            return;
         };
+        if alg {
+            self.adopt_alg(p);
+        }
+        for i in (0..OPS).filter(|&i| kinds & (1 << i) != 0) {
+            let (old, new) = (self.kinds[i], p.kinds().get(i));
+            // A table to a table runs on; any other kind starts closed,
+            // under the duck.
+            if old.is_formant() || new.is_formant() {
+                self.kernel.reset(i, new);
+            }
+            (self.kinds[i], self.law_key) = (new, None);
+        }
+        self.formant_blocks(p, live, cycles, sr);
+        self.seed_ramps(live, sr, kinds);
+        self.swap = Swap::Rising;
+    }
+
+    /// The operators in `ops` start closed: a formant's ramps (carrier
+    /// ratio, PM share, peak) from its law in `laws`, a noise band's from
+    /// its band law. Out of line: `note_on`'s and the swap's one copy.
+    #[inline(never)]
+    fn seed_ramps(&mut self, live: &AlgoLive, sr: f32, ops: u8) {
+        for i in (0..OPS).filter(|&i| ops & (1 << i) != 0) {
+            match (self.kinds[i], &self.laws[i]) {
+                (OpKind::Formant, Some(b)) => {
+                    (self.c_ratio[i], self.pm_k[i]) = (b.ratio, b.law.pm);
+                    self.peak[i] = Peak::at(&b.law, &b.drive);
+                }
+                (OpKind::Noise, _) => {
+                    (self.noise_c[i], self.noise_k[i]) = self.noise_law(live, i, sr).coef;
+                }
+                _ => {}
+            }
+        }
     }
 
     fn op_duck(&self, i: usize) -> f32 {
@@ -1240,6 +1247,59 @@ impl AlgoEngine {
             Swap::Ducking { alg: true, .. } => 0.0,
             _ => 1.0,
         }
+    }
+}
+
+/// A Sound's priced FRMT operators' ratios to the voice's pitch, and what
+/// a span past `SPANS_COVERED` costs each: taken once per Part a block, so
+/// a voice's own reach is a span count an operator.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpanReach {
+    /// 0: not a priced FRMT.
+    ratio: [f32; OPS],
+    instr: [u32; OPS],
+}
+
+impl SpanReach {
+    /// Each priced FRMT's ratio at FINE's top where a route moves it
+    /// (`fine_top`), and DETUNE at its top always: a few cents, never
+    /// worth a lookup.
+    pub fn of(p: &AlgoParams, priced: &[bool; OPS], fine_top: &[bool; OPS]) -> Self {
+        let l = p.linked();
+        let mut r = SpanReach {
+            ratio: [0.0; OPS],
+            instr: [0; OPS],
+        };
+        for i in 0..OPS {
+            let o = &p.ops[i];
+            if p.kinds().get(i) != OpKind::Formant || !(priced[i] || o.level > 0) {
+                continue;
+            }
+            let fine = if fine_top[i] { 15.0 } else { f32::from(o.fine) };
+            r.ratio[i] = ratio_at(o.coarse, fine) * DETUNE_TOP;
+            r.instr[i] = if l.has(i) {
+                AlgoEngine::FIRE_INSTR
+            } else {
+                AlgoEngine::SPAN_INSTR
+            };
+        }
+        r
+    }
+
+    /// Each priced FRMT's spans past `SPANS_COVERED` at its grain clock
+    /// for a voice reaching `top_hz`, ADR 0056's cycles a sample, rounded
+    /// up.
+    pub fn extra(&self, top_hz: f32) -> Cost {
+        let instr: u32 = (0..OPS)
+            .filter(|&i| self.instr[i] > 0)
+            .map(|i| {
+                let over = AlgoEngine::spans(top_hz * self.ratio[i])
+                    .saturating_sub(AlgoEngine::SPANS_COVERED);
+                over * self.instr[i]
+            })
+            .sum();
+        // instr · 1.46 · 1.1 / 64, rounded up.
+        Cost((instr * 1606).div_ceil(64_000))
     }
 }
 

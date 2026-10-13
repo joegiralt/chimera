@@ -5,7 +5,7 @@ use chimera_hal::BLOCK_SIZE;
 
 use crate::addr::{BlockRef, Blocks, ParamAddr};
 use crate::block::{ParamId, apply_offset};
-use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
+use crate::dsp::algo::engine::{AlgoEngine, AlgoLive, SpanReach};
 use crate::dsp::algo::kinds::OpKind;
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
@@ -338,11 +338,7 @@ impl Voice {
     }
 
     /// A formant voice past the C8 grain clock the FRMT terms cover: the
-    /// spans its reachable pitch adds (`AlgoEngine::high_note_extra`). The
-    /// reach is `note` with TRNSP, the PITCH offset, TUNING (`tune_cents`
-    /// up only), the bend's range, every PITCH route at full swing, and a
-    /// glide steal's start (`slide`, its ratio, 1 at rest).
-    #[inline(never)]
+    /// spans its reachable pitch adds (`HighNote`).
     pub fn high_note_extra(
         p: &ParamSnapshot,
         mods: &ModState,
@@ -351,19 +347,7 @@ impl Voice {
         note: MidiNote,
         slide: f32,
     ) -> Cost {
-        if p.engine() != EngineType::Algo || !p.algo.kinds().all().contains(&OpKind::Formant) {
-            return Cost::ZERO;
-        }
-        let st = f32::from(note.get())
-            + f32::from(p.algo.transpose)
-            + p.pitch.semitones()
-            + f32::from(tune_cents.max(0)) / 100.0
-            + f32::from(bend)
-            + crate::dsp::engines::pitch_reach(mods) / 100.0
-            - 69.0;
-        let hz = 440.0 * fast_exp2(st / 12.0) * slide.max(1.0);
-        let fine_top = mods.algo_routed(&[AlgoOpParams::FINE]);
-        AlgoEngine::high_note_extra(&p.algo, &mods.algo_levels_routed(), &fine_top, hz)
+        HighNote::of(p, mods, bend, tune_cents).map_or(Cost::ZERO, |h| h.extra(note, slide))
     }
 
     /// An Algo voice's formant and noise operators' last `(fc, bw_eff)`.
@@ -1216,6 +1200,46 @@ impl Voice {
                 self.reset(params, false, ctx.sym);
             }
         }
+    }
+}
+
+/// A formant Sound's reach past the C8 grain clock (`AlgoEngine::
+/// high_note_extra`), less the note: a Part's, taken once a block (its
+/// route scans); each voice's extra is then a `fast_exp2` and a span count
+/// an operator (ADR 0131's fixed work).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HighNote {
+    /// Semitones over the note from A4: TRNSP, the PITCH offset, TUNING
+    /// (up only), the bend's range and every PITCH route at full swing.
+    st: f32,
+    reach: SpanReach,
+}
+
+impl HighNote {
+    /// `None`: no FRMT to bill.
+    #[inline(never)]
+    pub fn of(p: &ParamSnapshot, mods: &ModState, bend: u8, tune_cents: i8) -> Option<HighNote> {
+        if p.engine() != EngineType::Algo || !p.algo.kinds().all().contains(&OpKind::Formant) {
+            return None;
+        }
+        let st = f32::from(p.algo.transpose)
+            + p.pitch.semitones()
+            + f32::from(tune_cents.max(0)) / 100.0
+            + f32::from(bend)
+            + crate::dsp::engines::pitch_reach(mods) / 100.0
+            - 69.0;
+        let fine_top = mods.algo_routed(&[AlgoOpParams::FINE]);
+        Some(HighNote {
+            st,
+            reach: SpanReach::of(&p.algo, &mods.algo_levels_routed(), &fine_top),
+        })
+    }
+
+    /// A voice at `note`, gliding from `slide` (its ratio, 1 at rest).
+    pub fn extra(&self, note: MidiNote, slide: f32) -> Cost {
+        let st = f32::from(note.get()) + self.st;
+        self.reach
+            .extra(440.0 * fast_exp2(st / 12.0) * slide.max(1.0))
     }
 }
 

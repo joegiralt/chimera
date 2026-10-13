@@ -55,8 +55,10 @@ pub fn formant_law(f0: f32, fc: f32, bw: f32, s: Skirt) -> FormantLaw {
 
 /// How far PM spreads a formant above FC, Hz: `dev`, a plain carrier's
 /// peak deviation (Σ 2π·cycles·f_m over the links), levered by the grain
-/// delay. While the delay is inside the slack the carrier's net PM is
-/// `pm·(1 − FC/f0)`; clamped, it is `pm`: so `|FC/f0 − 1|`, at least 1.
+/// delay. The links' PM, scaled by the share `k`, moves the delay at a
+/// slope `s` from ½ at rest to 0 at the slack's ends (`delay_shape`, no
+/// hard clamp), so the carrier's net PM is `pm·(1 − s·FC/f0)`; for `s` in
+/// [0, ½] that is at most `pm·max(1, |FC/f0 − 1|)`, the lever here.
 pub fn pm_reach(dev: f32, f0: f32, fc: f32) -> f32 {
     dev * (fc / f0 - 1.0).abs().max(1.0)
 }
