@@ -3,7 +3,7 @@
 //! channel maps to it, its value never applied. Every refusal says why in
 //! the band; a nav key cancels.
 
-#![cfg(feature = "midi-learn")]
+#![cfg(feature = "midi-map")]
 
 mod screen;
 

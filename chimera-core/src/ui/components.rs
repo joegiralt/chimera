@@ -312,7 +312,7 @@ pub fn focus_band<D>(
         }
         Some(status) => {
             let text;
-            let status = if cfg!(feature = "midi-learn") {
+            let status = if cfg!(feature = "midi-map") {
                 text = status.text(label);
                 text.as_str()
             } else {
@@ -356,7 +356,7 @@ where
     D: DrawTarget<Color = Rgb565>,
 {
     let text;
-    let label = if cfg!(feature = "midi-learn") {
+    let label = if cfg!(feature = "midi-map") {
         text = status.text(label);
         text.as_str()
     } else {
@@ -387,7 +387,7 @@ where
 /// past the row (learn's `CC 3 ON CH 2, PART ON CH 1`).
 pub fn status_font(s: &str) -> &'static FontRenderer {
     // Only learn's words run long.
-    if !cfg!(feature = "midi-learn")
+    if !cfg!(feature = "midi-map")
         || draw::text_width(&theme::FONT_VALUE, s, theme::LABEL_TRACKING) <= theme::CONTENT_W
     {
         &theme::FONT_VALUE

@@ -89,7 +89,7 @@ fn mark_adv(ch: char) -> Option<i32> {
         BULLET | RING => Some(6),
         LEFT | RIGHT => Some(4),
         UP | DOWN => Some(5),
-        ARROW if cfg!(feature = "midi-learn") => Some(7),
+        ARROW if cfg!(feature = "midi-map") => Some(7),
         _ => None,
     }
 }
@@ -110,7 +110,7 @@ where
             line(d, x, y - 4, x + 2, y - 2, color, 1);
         }
         BULLET => dot(d, x + 2, y - 4, 2, color),
-        ARROW if cfg!(feature = "midi-learn") => {
+        ARROW if cfg!(feature = "midi-map") => {
             fill_rect(d, x, y - 4, 6, 1, color);
             line(d, x + 3, y - 6, x + 5, y - 4, color, 1);
             line(d, x + 5, y - 4, x + 3, y - 2, color, 1);

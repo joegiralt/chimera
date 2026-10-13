@@ -8,9 +8,11 @@ use chimera_hal::Ms;
 
 use super::UiState;
 use super::part_page::Edit;
-use crate::addr::ParamAddr;
+use crate::addr::{BlockRef, ParamAddr};
 use crate::block::Motion;
 use crate::dsp::knobs::MOVES;
+use crate::dsp::tape_engine::machine::defaults;
+use crate::dsp::tape_engine::{TapeEngineParams, TapeModel};
 use crate::hw::MAX_PARTS;
 use crate::midi_in::CcEvent;
 use crate::midi_map::ramp::{Ramp, bin, budget};
@@ -20,14 +22,20 @@ use crate::project::{Loads, PartId, Project};
 /// No bin heard since a load or the hand: the stored value's.
 const NO_BIN: u8 = u8::MAX;
 
-/// Each Part's entries' ramps and last bins, its budget cursor, and the
-/// Sound loads they were heard on; the hand's knob moves this pass.
-/// ~1.6 KB.
+/// Each Part's entries' ramps, last bins and waiting bins, its budget
+/// cursor, the Sound loads they were heard on, the entries the hand
+/// turned and the knob writes left this pass; the hand's knob moves this
+/// pass. ~1.8 KB.
 pub struct CcState {
     ramps: [[Ramp; MAP_LEN]; MAX_PARTS],
     bins: [[u8; MAP_LEN]; MAX_PARTS],
+    /// A stepped entry's bin that found no room: it goes first next pass.
+    pend: [[u8; MAP_LEN]; MAX_PARTS],
     cursor: [u8; MAX_PARTS],
     loads: [Loads; MAX_PARTS],
+    /// Entries the hand turned this pass: no CC moves them till the next.
+    handed: [u16; MAX_PARTS],
+    room: [u8; MAX_PARTS],
     last: Ms,
     hand: u8,
 }
@@ -43,8 +51,11 @@ impl CcState {
         Self {
             ramps: [[Ramp::rest(0.0); MAP_LEN]; MAX_PARTS],
             bins: [[NO_BIN; MAP_LEN]; MAX_PARTS],
+            pend: [[NO_BIN; MAP_LEN]; MAX_PARTS],
             cursor: [0; MAX_PARTS],
             loads: [Loads::NONE; MAX_PARTS],
+            handed: [0; MAX_PARTS],
+            room: [0; MAX_PARTS],
             last: Ms(0),
             hand: 0,
         }
@@ -67,6 +78,7 @@ impl CcState {
         let i = p.index();
         self.ramps[i] = [Ramp::rest(0.0); MAP_LEN];
         self.bins[i] = [NO_BIN; MAP_LEN];
+        self.pend[i] = [NO_BIN; MAP_LEN];
         self.cursor[i] = 0;
     }
 
@@ -83,12 +95,21 @@ fn stored(project: &Project, p: PartId, a: ParamAddr) -> Option<f32> {
 }
 
 /// Glided by the Part's knobs: counted by the publish (`KNOBS`).
+fn knob(a: ParamAddr) -> bool {
+    a.spec().and_then(|s| s.motion().knob()).is_some()
+}
+
 fn is_knob(e: &MapEntry) -> bool {
-    e.target
-        .addr()
-        .spec()
-        .and_then(|s| s.motion().knob())
-        .is_some()
+    knob(e.target.addr())
+}
+
+const MODEL: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL);
+
+/// The knob writes a MODEL change to `m` makes besides MODEL's own: its
+/// machine's defaults (`part_page::edit`).
+pub(super) fn model_writes(m: TapeModel) -> u8 {
+    let k = defaults(m).filter(|&(id, _)| knob(ParamAddr::new(BlockRef::TapeEngine, id)));
+    k.count() as u8
 }
 
 impl UiState {
@@ -97,15 +118,26 @@ impl UiState {
     pub fn hear_ccs(&mut self, ccs: impl Iterator<Item = CcEvent>, now: Ms) {
         let elapsed = now.since(self.cc.last);
         self.cc.last = now;
-        // Ramps first: one heard now starts now, not `elapsed` ago.
+        // Waiting bins first, then ramps: one heard now starts now, not
+        // `elapsed` ago. Per pass is per publish: writes need a ms to
+        // pass, and the ms clock's 2 ms tick outlasts a 1.33 ms block, so
+        // the audio never takes two passes' writes in one block.
         for p in PartId::ALL {
             self.cc_reset_on_load(p);
+            let hand = if p == self.active_part {
+                self.cc.hand
+            } else {
+                0
+            };
+            // One kept for a key's edit (a route deleted or primed).
+            self.cc.room[p.index()] = (MOVES as u8 - 1).saturating_sub(hand);
+            self.cc_pending(p);
             if elapsed > 0 {
                 self.cc_step(p, elapsed);
             }
         }
         for ev in ccs {
-            #[cfg(feature = "midi-learn")]
+            #[cfg(feature = "midi-map")]
             if self.learn_cc(ev) {
                 continue;
             }
@@ -113,12 +145,52 @@ impl UiState {
                 if self.project.part(p).mix.channel != ev.channel {
                     continue;
                 }
-                let map = self.project.part(p).sound.map;
-                for (j, e) in map.targets_of(ev.cc) {
+                let (map, handed) = (self.project.part(p).sound.map, self.cc.handed[p.index()]);
+                // The hand beats a CC in its pass (spec § 5).
+                for (j, e) in map.targets_of(ev.cc).filter(|&(j, _)| handed >> j & 1 == 0) {
                     self.cc_hear(p, j, e, ev.value, now);
                 }
             }
         }
+        self.cc.handed = [0; MAX_PARTS];
+    }
+
+    /// Part `p`'s waiting bins, as far as this pass has room.
+    fn cc_pending(&mut self, p: PartId) {
+        let (i, map) = (p.index(), self.project.part(p).sound.map);
+        let engine = self.project.part(p).sound.params.engine();
+        for (j, e) in map.entries().iter().enumerate() {
+            let to = self.cc.pend[i][j];
+            if to != NO_BIN && e.target.live(engine) {
+                self.cc_bin(p, j, e.target.addr(), u16::from(to));
+            }
+        }
+    }
+
+    /// Entry `j`'s stepped target `a` on Part `p` to bin `to` through the
+    /// edit path, if this pass has room for its knob writes (a MODEL's
+    /// defaults too); else it waits for the next, as a ramp does.
+    fn cc_bin(&mut self, p: PartId, j: usize, a: ParamAddr, to: u16) {
+        let i = p.index();
+        self.cc.pend[i][j] = NO_BIN;
+        let (Some(spec), Some(was)) = (a.spec(), stored(&self.project, p, a)) else {
+            return;
+        };
+        let at = (was - spec.min + 0.5) as u16;
+        let d = (i32::from(to) - i32::from(at)).clamp(-127, 127) as i8;
+        if d == 0 {
+            return;
+        }
+        let mut cost = u8::from(knob(a));
+        if a == MODEL {
+            cost += model_writes(TapeModel::from_index((spec.min + f32::from(to)) as u8));
+        }
+        if cost > self.cc.room[i] {
+            self.cc.pend[i][j] = to as u8;
+            return;
+        }
+        self.cc.room[i] -= cost;
+        self.edit_addr(p, a, d, false);
     }
 
     /// A new Sound (a load, NEW, Revert, CLEAR): every ramp rests, its
@@ -154,11 +226,10 @@ impl UiState {
                 } else {
                     u16::from(*last)
                 };
-                let to = bin(v, steps, e.min, e.max, cur);
-                *last = to.min(u16::from(NO_BIN) - 1) as u8;
-                let d = (i32::from(to) - i32::from(at)).clamp(-127, 127) as i8;
-                if to != cur && d != 0 {
-                    self.edit_addr(p, a, d, false);
+                let to = bin(v, steps, e.min, e.max, cur).min(u16::from(NO_BIN) - 1);
+                *last = to as u8;
+                if to != cur {
+                    self.cc_bin(p, j, a, to);
                 }
             }
             Motion::Continuous(_) => {
@@ -174,9 +245,8 @@ impl UiState {
     }
 
     /// Part `p`'s moving ramps, `elapsed` ms on: every non-knob one, and
-    /// round-robin as many knobs as fit the publish beside the hand's
-    /// moves and one kept for a key's edit (a route deleted or primed).
-    /// The rest keep their ramp and go first next pass.
+    /// round-robin as many knobs as the pass has room for. The rest keep
+    /// their ramp and go first next pass.
     fn cc_step(&mut self, p: PartId, elapsed: u32) {
         let i = p.index();
         let map: MidiMap = self.project.part(p).sound.map;
@@ -199,17 +269,9 @@ impl UiState {
             }
         }
         let mut cursor = usize::from(self.cc.cursor[i]);
-        let hand = if p == self.active_part {
-            self.cc.hand
-        } else {
-            0
-        };
-        // Per pass is per publish: writes need a ms to pass, and the ms
-        // clock's 2 ms tick outlasts a 1.33 ms block, so the audio never
-        // takes two passes' writes in one block.
-        let cap = (MOVES - 1).saturating_sub(usize::from(hand));
-        let pick = budget(&due, &mut cursor, cap);
+        let pick = budget(&due, &mut cursor, usize::from(self.cc.room[i]));
         self.cc.cursor[i] = cursor as u8;
+        self.cc.room[i] -= pick.iter().filter(|&&b| b).count() as u8;
         for (j, e) in map.entries().iter().enumerate() {
             if !(pick[j] || own[j]) {
                 continue;
@@ -227,15 +289,20 @@ impl UiState {
         }
     }
 
-    /// The hand wins: a turn of `a` on Part `p` stops its ramp (its
-    /// next CC starts from the turned value) and its next bin starts from
-    /// the stored one.
+    /// The hand wins: a turn of `a` on Part `p` stops its ramp and drops
+    /// its waiting bin, no CC moves it this pass, and its next CC starts
+    /// from the turned value, its next bin from the stored one.
     pub(super) fn cc_hand(&mut self, p: PartId, a: ParamAddr) {
+        if !cfg!(feature = "midi-map") {
+            return;
+        }
         let i = p.index();
         let map = &self.project.part(p).sound.map;
         if let Some(j) = map.entries().iter().position(|e| e.target.addr() == a) {
             self.cc.ramps[i][j].cancel(0.0);
             self.cc.bins[i][j] = NO_BIN;
+            self.cc.pend[i][j] = NO_BIN;
+            self.cc.handed[i] |= 1 << j;
         }
     }
 }

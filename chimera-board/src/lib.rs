@@ -524,8 +524,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
         // Mapped CCs, in the room the hand's moves left. No bench run plays
-        // a controller, as none writes the card (card-put).
-        #[cfg(all(feature = "midi-din", not(feature = "bench")))]
+        // a controller: bench firmware leaves the MIDI map out (FLASH, #507).
+        #[cfg(all(feature = "midi-din", feature = "midi-map"))]
         ui.hear_ccs(cc_din.drain(), controls::now_ms());
         // SYSTEM synced first: a THEME change made in this visit is kept.
         if let Some(yes) = ui.take_dfu_synced(&mut sync, &mut card, store, &mut settings) {

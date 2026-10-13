@@ -110,7 +110,7 @@ fn focus_band_shows_the_last_touched_slot() {
         None,
     );
     // MORPH maps: its hint offers MIX + SEQ's learn.
-    if cfg!(feature = "midi-learn") {
+    if cfg!(feature = "midi-map") {
         chimera_core::ui::hint::focus(&mut want, &[chimera_core::ui::view::LEARN]);
     }
     assert!(

@@ -4,6 +4,8 @@
 //! the knobs. A `UiState` is published to a real `Instrument` as the
 //! shells do: one publish a pass, the audio's blocks between.
 
+#![cfg(feature = "midi-map")]
+
 mod common;
 mod screen;
 
@@ -597,4 +599,98 @@ fn new_ends_every_ramp() {
     b.passes(20);
     assert_eq!(b.stored(P1, CUTOFF), c);
     assert_eq!(b.ui.project().rev(), rev, "nothing written");
+}
+
+/// The hand beats a CC in its pass (spec § 5): a turn and its param's CC
+/// in one pass, the turned value stands and nothing ramps or steps; the
+/// next pass's CC applies.
+#[test]
+fn hand_beats_a_cc_in_its_pass() {
+    let mut b = Bench::algo();
+    b.map(P1, 74, CUTOFF);
+    b.map(P1, 75, TYPE);
+    b.go_to_page(FILTER.id);
+    let (cut0, type0) = (b.stored(P1, CUTOFF), b.stored(P1, TYPE));
+    let ccs = vec![b.ev(P1, 74, 127)];
+    b.pass_with(
+        ccs,
+        Some(Input::turn(EncoderId::B, -3)),
+        PASS_MS,
+        PASS_BLOCKS,
+    );
+    let cut = b.stored(P1, CUTOFF);
+    assert!(cut < cut0, "B turned CUTOFF down");
+    let ccs = vec![b.ev(P1, 75, 127)];
+    b.pass_with(
+        ccs,
+        Some(Input::turn(EncoderId::A, 1)),
+        PASS_MS,
+        PASS_BLOCKS,
+    );
+    let kind = b.stored(P1, TYPE);
+    assert_ne!(kind, type0, "A turned TYPE");
+    assert_ne!(kind, spec(TYPE).max, "short of where the CC points");
+    b.passes(20);
+    assert_eq!(b.stored(P1, CUTOFF), cut, "no ramp from the pass's CC");
+    assert_eq!(b.stored(P1, TYPE), kind, "no step from the pass's CC");
+    b.pass(&[(74, 0), (75, 0)]);
+    b.passes(40);
+    assert_eq!(b.stored(P1, CUTOFF), spec(CUTOFF).min, "the next CC ramps");
+    assert_eq!(b.stored(P1, TYPE), spec(TYPE).min, "the next CC steps");
+}
+
+const MODEL: ParamAddr = ParamAddr::new(
+    BlockRef::TapeEngine,
+    chimera_core::dsp::tape_engine::TapeEngineParams::MODEL,
+);
+
+/// TAPE MODEL changing every pass, by a mapped CC and by the hand, beside
+/// ramping CC knobs: a MODEL's defaults count, so no publish carries more
+/// than `MOVES - 1` knob moves, and the knobs still arrive.
+#[test]
+fn model_changes_never_overflow_a_publish() {
+    use chimera_core::ui::block_registry::TAPE_DECK;
+    let mut b = Bench::new(Sound::init(EngineType::Tape));
+    let knobs: Vec<&Knob> = KNOBS
+        .iter()
+        .filter(|k| {
+            k.spec.kind == ParamKind::Continuous
+                && k.addr.block != BlockRef::TapeEngine
+                && k.addr.block.voice_reads()
+                && Mappable::new(k.addr).is_some_and(|m| m.live(EngineType::Tape))
+        })
+        .take(8)
+        .collect();
+    assert!(knobs.len() >= 5);
+    for (i, k) in knobs.iter().enumerate() {
+        b.map(P1, 20 + i as u8, k.addr);
+        let s = b.ui.project_mut().edit_part(P1).sound;
+        let mut blk = s.params.block_mut(k.addr.block).unwrap();
+        blk.set(k.addr.param, k.spec.denormalize(0.0));
+    }
+    b.map(P1, 30, MODEL);
+    b.publish();
+    b.most = 0;
+    b.go_to_page(TAPE_DECK.id);
+    let n = 400;
+    for t in 0..=n {
+        let v = (127 * t / n) as u8;
+        let mut ccs: Vec<_> = (0..knobs.len())
+            .map(|i| b.ev(P1, 20 + i as u8, v))
+            .collect();
+        // STRETCH and PING-PONG: two knob defaults differ.
+        ccs.push(b.ev(P1, 30, if t % 2 == 0 { 64 } else { 127 }));
+        // The hand turns MODEL every third pass, the CC the others.
+        let turn = (t % 3 == 0).then(|| Input::turn(EncoderId::A, if t % 2 == 0 { 1 } else { -1 }));
+        b.pass_with(ccs, turn, PASS_MS, PASS_BLOCKS);
+        assert!(
+            (b.most as usize) < MOVES,
+            "pass {t}: a publish of {} moves",
+            b.most
+        );
+    }
+    b.passes(300);
+    for k in &knobs {
+        assert_eq!(b.place(P1, k.addr), 1.0, "{:?} arrives", k.addr);
+    }
 }

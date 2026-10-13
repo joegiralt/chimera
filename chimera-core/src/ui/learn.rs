@@ -10,9 +10,9 @@ use super::view::{self, View};
 use super::{PrimeStatus, UiState};
 use crate::MidiChannel;
 use crate::midi_in::Cc;
-#[cfg(feature = "midi-learn")]
+#[cfg(feature = "midi-map")]
 use crate::midi_in::CcEvent;
-#[cfg(feature = "midi-learn")]
+#[cfg(feature = "midi-map")]
 use crate::midi_map::Mappable;
 use crate::project::PartId;
 use crate::ui::fmt::FmtBuf;
@@ -30,10 +30,10 @@ pub enum Learn {
 
 impl Learn {
     /// Armed: on which Part, and the last refusal. Never without
-    /// `midi-learn`, so every path past the arm folds away.
+    /// `midi-map`, so every path past the arm folds away.
     pub fn armed(self) -> Option<(PartId, Option<LearnNote>)> {
         match self {
-            Learn::Armed { part, note } if cfg!(feature = "midi-learn") => Some((part, note)),
+            Learn::Armed { part, note } if cfg!(feature = "midi-map") => Some((part, note)),
             _ => None,
         }
     }
@@ -85,7 +85,7 @@ impl UiState {
     }
 
     /// The focused cell's param, if a CC may drive it.
-    #[cfg(feature = "midi-learn")]
+    #[cfg(feature = "midi-map")]
     fn learn_target(&self) -> Option<Mappable> {
         view::view(self.page_def(), self.focused_slot(), &self.ctx())
             .addr()
@@ -94,7 +94,7 @@ impl UiState {
 
     /// What the focus band says in the value's place: learn's while armed.
     pub(super) fn band_status(&self) -> Option<PrimeStatus> {
-        #[cfg(feature = "midi-learn")]
+        #[cfg(feature = "midi-map")]
         if let Some((_, note)) = self.learn.armed() {
             let not = || self.learn_target().is_none();
             return Some(PrimeStatus::Learn(
@@ -113,8 +113,8 @@ impl UiState {
 
     /// MIX + SEQ: arms on a Part's page, never in SETTINGS; cancels when
     /// armed.
-    #[cfg(feature = "midi-learn")]
-    #[cfg_attr(feature = "midi-learn", inline(never))]
+    #[cfg(feature = "midi-map")]
+    #[cfg_attr(feature = "midi-map", inline(never))]
     pub(super) fn toggle_learn(&mut self) {
         let on_page = self.loc.settings().is_none() && self.loc.page(&self.cx()).is_some();
         self.learn = match self.learn {
@@ -128,7 +128,7 @@ impl UiState {
 
     /// Armed, a turn moves the focus and never a value. `true` when armed.
     /// Out of line: `input` is big enough.
-    #[cfg_attr(feature = "midi-learn", inline(never))]
+    #[cfg_attr(feature = "midi-map", inline(never))]
     pub(super) fn learn_turns(&mut self, c: &impl Controls) -> bool {
         let Some((part, _)) = self.learn.armed() else {
             return false;
@@ -146,7 +146,7 @@ impl UiState {
     /// A CC heard while armed. On the Part's channel and free, it maps the
     /// focused cell and is consumed (`true`): its value is never applied.
     /// A refusal is said and the CC heard on as usual.
-    #[cfg(feature = "midi-learn")]
+    #[cfg(feature = "midi-map")]
     pub(super) fn learn_cc(&mut self, ev: CcEvent) -> bool {
         let Some((part, _)) = self.learn.armed() else {
             return false;

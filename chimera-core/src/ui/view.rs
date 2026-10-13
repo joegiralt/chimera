@@ -481,7 +481,7 @@ impl View {
             Some(a) if matches!(a.block, BlockRef::OrbitRing(_)) && a.param == SceneRing::MUTE => {
                 MUTE_HINT
             }
-            Some(a) if cfg!(feature = "midi-learn") && Mappable::new(a).is_some() => LEARN_HINT,
+            Some(a) if cfg!(feature = "midi-map") && Mappable::new(a).is_some() => LEARN_HINT,
             _ => hint::NONE,
         }
     }

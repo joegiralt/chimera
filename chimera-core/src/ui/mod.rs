@@ -192,7 +192,7 @@ pub enum PrimeStatus {
     /// FM3 IN or QM IN passed a source whose cell another route holds.
     SourceInUse,
     /// MIDI learn, armed (`None`: nothing heard) or just done.
-    #[cfg(feature = "midi-learn")]
+    #[cfg(feature = "midi-map")]
     Learn(Option<learn::LearnNote>),
 }
 
@@ -205,19 +205,19 @@ impl PrimeStatus {
             PrimeStatus::NotModulatable => "NOT MODULATABLE",
             PrimeStatus::Full => "MATRIX FULL",
             PrimeStatus::SourceInUse => "SOURCE IN USE",
-            #[cfg(feature = "midi-learn")]
+            #[cfg(feature = "midi-map")]
             PrimeStatus::Learn(_) => "",
         }
     }
 
     /// The band's words on the cell labelled `label`.
-    #[cfg_attr(not(feature = "midi-learn"), allow(unused_variables))]
+    #[cfg_attr(not(feature = "midi-map"), allow(unused_variables))]
     pub fn text(self, label: &str) -> FmtBuf {
         let mut b = FmtBuf::new();
         match self {
-            #[cfg(feature = "midi-learn")]
+            #[cfg(feature = "midi-map")]
             PrimeStatus::Learn(Some(n)) => n.text(label, &mut b),
-            #[cfg(feature = "midi-learn")]
+            #[cfg(feature = "midi-map")]
             PrimeStatus::Learn(None) => learn::armed_text(label, &mut b),
             s => {
                 let _ = core::fmt::Write::write_str(&mut b, s.label());
@@ -1501,7 +1501,7 @@ impl UiState {
         if presses.seq == Some(Press::Tap) {
             push(NavKey::SeqTap);
         }
-        if cfg!(feature = "midi-learn") && mix && pressed(ButtonId::Seq) {
+        if cfg!(feature = "midi-map") && mix && pressed(ButtonId::Seq) {
             push(NavKey::MixSeq);
         }
         #[cfg(feature = "orbit")]
@@ -2258,17 +2258,26 @@ impl UiState {
         if self.idle.touch(any_turn(controls), any_down(controls)) == saver::Touch::Swallow {
             // A held key still ages.
             let jog = self.jog_pass(controls.now_ms().0);
-            self.cc.hand(u8::from(jog));
+            if cfg!(feature = "midi-map") {
+                self.cc.hand(u8::from(jog));
+            }
             return;
         }
         let rev = self.project.rev();
+        let model = |ui: &Self| ui.project.part(ui.active_part).sound.params.tape.model;
+        let was = model(self);
         self.input(controls);
         let jog = self.jog_pass(controls.now_ms().0);
-        // Knob moves the hand may have made: a turn or the reel, each one.
-        let turns = ALL_ENCODERS
-            .iter()
-            .filter(|&&e| controls.encoder_delta(e) != 0);
-        self.cc.hand(turns.count() as u8 + u8::from(jog));
+        // Knob moves the hand may have made: a turn or the reel, each one,
+        // and a new MODEL's defaults. Only CCs spend what is left.
+        if cfg!(feature = "midi-map") {
+            let turns = ALL_ENCODERS
+                .iter()
+                .filter(|&&e| controls.encoder_delta(e) != 0);
+            let now = model(self);
+            let defaults = if now != was { cc::model_writes(now) } else { 0 };
+            self.cc.hand(turns.count() as u8 + u8::from(jog) + defaults);
+        }
         // A save or clear moves the browser's hints, costs and meter.
         self.browser_dirty |= self.loc.browse().is_some() && self.project.rev() != rev;
         self.flush_orbit();
@@ -2374,7 +2383,7 @@ impl UiState {
             }
             // MIX + SEQ arms or cancels learn; any other nav key cancels it.
             if k == NavKey::MixSeq {
-                #[cfg(feature = "midi-learn")]
+                #[cfg(feature = "midi-map")]
                 self.toggle_learn();
                 continue;
             }
