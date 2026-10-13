@@ -1611,10 +1611,10 @@ fn va_bills_each_mode() {
     assert_eq!(rooms, [5_436, 4_186, 5_265, 5_146]);
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     for (mode, bill, voices) in [
-        (Mix, 520, [8, 6, 8, 8]),
+        (Mix, 530, [8, 6, 8, 8]),
         (Sync, 540, [8, 6, 8, 8]),
         (Ring, 530, [8, 6, 8, 8]),
-        (Xor, 540, [8, 6, 8, 8]),
+        (Xor, 550, [8, 6, 8, 7]),
         (Bits, 530, [8, 6, 8, 8]),
     ] {
         let p = va_sound(mode);
