@@ -19,7 +19,7 @@ use chimera_core::dsp::algo::plan::OPS;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::filter::{CLEAN_MOVE_COST, FILTER_LEVEL_COST};
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::dsp::voice::Voice;
+use chimera_core::dsp::voice::{HighNote, Voice};
 use chimera_core::hw::{CPU_HZ_REV_V, FLOOR_VOICES, FLOOR_VOICES_FORMANT, SampleBudget};
 use chimera_core::modulation::ModRouting;
 use chimera_core::params::EngineType;
@@ -59,7 +59,10 @@ fn the_budget_is_derived_from_the_cost_model() {
     assert_eq!(FORMANT_BUDGET.0, bus / FLOOR_VOICES - heavy - table);
     assert_eq!(
         FORMANT_BUDGET_FRMT.0,
-        bus / FLOOR_VOICES_FORMANT - heavy - table
+        (bus - HighNote::PART_COST.0) / FLOOR_VOICES_FORMANT
+            - heavy
+            - table
+            - HighNote::VOICE_COST.0
     );
     let (linked, unlinked) = (OpKind::Formant.charge(true), OpKind::Formant.charge(false));
     assert_eq!(
@@ -171,7 +174,7 @@ fn one_linked_formant_fits_and_two_do_not() {
     p.try_set_kind(0, OpKind::Formant).unwrap();
     assert_eq!(p.try_set_kind(1, OpKind::Formant), Err(OverBudget));
     // Linked and unlinked share the budget: 1 linked + 1 unlinked fits
-    // (590), 1 linked + 2 unlinked doesn't (790 > 698).
+    // (590), 1 linked + 2 unlinked doesn't (790 > 667).
     p.try_set_kind(3, OpKind::Formant).unwrap();
     assert_eq!(p.try_set_kind(5, OpKind::Formant), Err(OverBudget));
     assert!(OpKind::Formant.charge(true) + OpKind::Formant.charge(false) <= FORMANT_BUDGET_FRMT.0);

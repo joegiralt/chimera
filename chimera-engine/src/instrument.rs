@@ -903,7 +903,7 @@ impl Instrument {
                     // A Part's first voice brings its knobs (ADR 0112).
                     let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
                     let knobs = if first { Knobs::COST } else { Cost::ZERO };
-                    let cost = self.costs[p] + knobs + self.high_note(p, shared, note);
+                    let cost = self.costs[p] + knobs + self.high_note(p, shared, note, first);
                     let reserved = self.reserved();
                     let origins = &self.note_origin;
                     let Some(v) = self
@@ -1307,7 +1307,7 @@ impl Instrument {
                         HighNote::of(&part.params, &part.mod_state, part.mix.bend, shared.tune);
                 }
                 let high = match (self.alloc.slots()[v].note(), reach[p]) {
-                    (Some(n), Some(h)) => h.extra(n, self.voices[v].algo_slide()),
+                    (Some(n), Some(h)) => h.bill(n, self.voices[v].algo_slide(), first),
                     _ => Cost::ZERO,
                 };
                 let held = self.voices[v].held_model_extra(&part.params)
@@ -1330,11 +1330,12 @@ impl Instrument {
         }
     }
 
-    /// A new formant note's spans past C8 on Part `p`, judged at a glide
-    /// steal's start too: any of the Part's sounding voices may be taken,
-    /// so its highest note and largest slide.
+    /// A new formant note's reach on Part `p` (`HighNote::bill`, the
+    /// Part's term on its `first` voice), its spans past C8 judged at a
+    /// glide steal's start too: any of the Part's sounding voices may be
+    /// taken, so its highest note and largest slide.
     #[inline(never)]
-    fn high_note(&self, p: usize, shared: &AudioShared, note: MidiNote) -> Cost {
+    fn high_note(&self, p: usize, shared: &AudioShared, note: MidiNote, first: bool) -> Cost {
         let part = &shared.parts[p];
         let (mut top, mut slide) = (note.get(), 1.0f32);
         if part.params.pitch.steal_glide().is_some() {
@@ -1346,14 +1347,10 @@ impl Instrument {
                 }
             }
         }
-        Voice::high_note_extra(
-            &part.params,
-            &part.mod_state,
-            part.mix.bend,
-            shared.tune,
-            MidiNote::new(top).unwrap_or(note),
-            slide,
-        )
+        HighNote::of(&part.params, &part.mod_state, part.mix.bend, shared.tune)
+            .map_or(Cost::ZERO, |h| {
+                h.bill(MidiNote::new(top).unwrap_or(note), slide, first)
+            })
     }
 
     /// Voice `v`, marked dying, fades out: a note waiting for it is dropped

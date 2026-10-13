@@ -1216,6 +1216,18 @@ pub struct HighNote {
 }
 
 impl HighNote {
+    /// Recost's reach on a formant Part, once a block on its first voice,
+    /// ADR 0056's count on the bench-algo ELF (2026-10-13): `of` 483
+    /// instructions and 9 divides at six FRMTs, `pitch_reach`'s two scans
+    /// and swings and both `algo_routed` scans, 16 dests at 109 at most,
+    /// 8 sources at 23 twice: ~2,700 instructions, 9 divides, 4,445 cycles
+    /// a block: 69.5, rounded up.
+    pub const PART_COST: Cost = Cost(70);
+
+    /// Each formant voice's `extra`: 206 instructions and 7 divides at six
+    /// FRMTs, ~215 with recost's glue, 430 cycles a block: 6.7, rounded up.
+    pub const VOICE_COST: Cost = Cost(7);
+
     /// `None`: no FRMT to bill.
     #[inline(never)]
     pub fn of(p: &ParamSnapshot, mods: &ModState, bend: u8, tune_cents: i8) -> Option<HighNote> {
@@ -1240,6 +1252,13 @@ impl HighNote {
         let st = f32::from(note.get()) + self.st;
         self.reach
             .extra(440.0 * fast_exp2(st / 12.0) * slide.max(1.0))
+    }
+
+    /// What a voice at `note` is billed for the reach: its `extra` and
+    /// `VOICE_COST`, and on the Part's `first` voice `PART_COST`.
+    pub fn bill(&self, note: MidiNote, slide: f32, first: bool) -> Cost {
+        let part = if first { Self::PART_COST } else { Cost::ZERO };
+        self.extra(note, slide) + Self::VOICE_COST + part
     }
 }
 

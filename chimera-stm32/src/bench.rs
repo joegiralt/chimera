@@ -185,10 +185,10 @@ const FORMANT: [RoutingRow; FORMANT_ROWS] = [
         STILL,
     ),
     // The costliest patch the budget admits (`frmt_max` in cost_test):
-    // T1 ∪ A16, a linked FRMT on 3, the unlinked one on 6, three NOIS.
+    // T1 ∪ A16, a linked FRMT on 2, the unlinked one on 6, two NOIS.
     (
         "FRMT MAX",
-        |p| *p.params = kinds(AlgoId::T1, AlgoId::A16, [N, N, F, N, T, F], ALL, 1),
+        |p| *p.params = kinds(AlgoId::T1, AlgoId::A16, [N, F, T, N, T, F], ALL, 1),
         STILL,
     ),
     ("CHOIR", choir, STILL),

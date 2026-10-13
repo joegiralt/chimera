@@ -1835,11 +1835,28 @@ fn a16_a17_with(k: [OpKind; OPS]) -> AlgoParams {
     algs_with(AlgoId::A16, AlgoId::A17, k)
 }
 
+/// Recost's reach on a Sound with a FRMT (ADR 0131): its Part's term
+/// and its voices' each.
+fn reach(p: &AlgoParams) -> (u32, u32) {
+    use chimera_core::dsp::voice::HighNote;
+    if p.kinds().all().contains(&OpKind::Formant) {
+        (HighNote::PART_COST.0, HighNote::VOICE_COST.0)
+    } else {
+        (0, 0)
+    }
+}
+
+/// Voices of `p` beside `bus` with `extra` over its engine each, and its
+/// formant reach.
+fn voices_beside(p: &AlgoParams, bus: Cost, extra: u32) -> u32 {
+    let (part, voice) = reach(p);
+    (SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - bus.0 - part)
+        / (AlgoEngine::cost(p, &[false; OPS]).0 + extra + voice)
+}
+
 /// Voices of `p` at the heavy routing, with the tape and without.
 fn voices(p: &AlgoParams) -> (u32, u32) {
-    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
-    let v =
-        |bus: Cost| (budget - bus.0) / (AlgoEngine::cost(p, &[false; OPS]).0 + HEAVY_OVERHEAD.0);
+    let v = |bus: Cost| voices_beside(p, bus, HEAVY_OVERHEAD.0);
     (v(FxBus::COST_TAPE), v(FxBus::COST_NO_TAPE))
 }
 
@@ -1897,7 +1914,10 @@ fn formant_budget_keeps_three_voices() {
     let over =
         AlgoEngine::cost(&a16_a17_with(at_n), &[false; OPS]).0 + OpKind::Formant.charge(true);
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
-    assert!((budget - FxBus::COST_TAPE.0) / (over + HEAVY_OVERHEAD.0) < FLOOR_VOICES_FORMANT);
+    let (part, voice) = reach(&a16_a17_with(at_n));
+    let floor =
+        |over: u32| (budget - FxBus::COST_TAPE.0 - part) / (over + HEAVY_OVERHEAD.0 + voice);
+    assert!(floor(over) < FLOOR_VOICES_FORMANT);
     // Unlinked, on A1: `FORMANT_N_UNLINKED` carriers, then one more.
     let mut at_n = [t; OPS];
     for slot in at_n.iter_mut().take(FORMANT_N_UNLINKED as usize) {
@@ -1906,7 +1926,7 @@ fn formant_budget_keeps_three_voices() {
     let p = algs_with(AlgoId::A1, AlgoId::A1, at_n);
     assert!(voices(&p).0 >= FLOOR_VOICES_FORMANT);
     let over = AlgoEngine::cost(&p, &[false; OPS]).0 + OpKind::Formant.charge(false);
-    assert!((budget - FxBus::COST_TAPE.0) / (over + HEAVY_OVERHEAD.0) < FLOOR_VOICES_FORMANT);
+    assert!(floor(over) < FLOOR_VOICES_FORMANT);
 }
 
 /// A FRMT bills its counted lanes, linked when ALG A or B runs a link into
@@ -2124,6 +2144,57 @@ fn a_part_s_high_note_reach_bills_each_voice_as_alone() {
     }
 }
 
+/// Recost's formant reach is billed at its count (ADR 0131): a formant
+/// Part's `HighNote::PART_COST` once, on its first voice (as its knobs),
+/// and `HighNote::VOICE_COST` on each voice, the same at admission and at
+/// the recost after; a table Part pays neither.
+#[test]
+fn a_formant_part_bills_its_reach_once_and_each_voice() {
+    use chimera_core::dsp::knobs::Knobs;
+    use chimera_core::dsp::voice::HighNote;
+    use chimera_core::factory::{Demo, demo_sound};
+    let mut linked = demo_sound(Demo::Choir);
+    linked.params.algo = AlgoParams::single(WaveId::W1);
+    linked
+        .params
+        .algo
+        .try_set_algs(AlgoId::T1, AlgoId::T1)
+        .unwrap();
+    linked.params.algo.try_set_kind(0, OpKind::Formant).unwrap();
+    let table = chimera_core::preset::Sound::init(EngineType::Algo);
+    for (s, frmt) in [
+        (demo_sound(Demo::Choir), true),
+        (linked, true),
+        (table, false),
+    ] {
+        let mut r = common::InstRig::with_budget(SampleBudget::for_cpu(CPU_HZ_REV_V));
+        (*r.shared.parts[0].params, *r.shared.parts[0].mod_state) = (s.params, s.mod_state);
+        r.shared.parts[0].params.envelopes[0].sustain = 1.0;
+        let ch = r.shared.parts[0].mix.channel.get();
+        let voice = Voice::cost(&r.shared.parts[0].params, &r.shared.parts[0].mod_state).0;
+        let (part_term, voice_term) = if frmt {
+            (HighNote::PART_COST.0, HighNote::VOICE_COST.0)
+        } else {
+            (0, 0)
+        };
+        let bill = |r: &common::InstRig| {
+            r.inst
+                .allocator()
+                .slots()
+                .iter()
+                .map(|s| s.cost().0)
+                .sum::<u32>()
+        };
+        for (k, n) in [48u8, 52, 55].into_iter().enumerate() {
+            r.note_on(ch, n);
+            let want = (k as u32 + 1) * (voice + voice_term) + Knobs::COST.0 + part_term;
+            assert_eq!(bill(&r), want, "admission, {} voices, frmt {frmt}", k + 1);
+            r.render(2);
+            assert_eq!(bill(&r), want, "recost, {} voices, frmt {frmt}", k + 1);
+        }
+    }
+}
+
 /// The costliest Algo patch the formant budget admits (ADR 0131): every
 /// kind mix with a FRMT on every algorithm pair, at LEVEL 99 and FDBK 1.
 fn frmt_max() -> AlgoParams {
@@ -2147,7 +2218,7 @@ fn frmt_max() -> AlgoParams {
 
 /// Voices of `p` on rev V beside `bus`, with `extra` over its engine.
 fn voices_with(p: &AlgoParams, bus: Cost, extra: u32) -> u32 {
-    (SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - bus.0) / (cost(p) + extra)
+    voices_beside(p, bus, extra)
 }
 
 /// ADR 0131: each kind bills its counted term, and the costliest patch
@@ -2166,10 +2237,10 @@ fn formant_costs_bill_by_kind() {
     let t = OpKind::Table(WaveId::W1);
     let (f, n) = (OpKind::Formant, OpKind::Noise);
     // The bench's FRMT MAX row (five other pairs with A16 tie it): T1 ∪
-    // A16, a linked FRMT on 3, the unlinked one on 6, NOIS on 1, 2 and 4.
+    // A16, a linked FRMT on 2, the unlinked one on 6, NOIS on 1 and 4.
     assert_eq!(
         cost(&worst),
-        cost(&algs_with(AlgoId::T1, AlgoId::A16, [n, n, f, n, t, f]))
+        cost(&algs_with(AlgoId::T1, AlgoId::A16, [n, f, t, n, t, f]))
     );
     let floor = HEAVY_OVERHEAD.0;
     for bus in [FxBus::COST_TAPE, FxBus::COST_NO_TAPE] {
@@ -2182,8 +2253,10 @@ fn formant_costs_bill_by_kind() {
         ("TALK BASS", d(Demo::TalkBass)),
         ("MAX", worst),
     ] {
+        let (part, voice) = reach(&p);
         let y = |bus: chimera_core::hw::Cost| {
-            ((SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - bus.0) / (cost(&p) + light))
+            ((SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - bus.0 - part)
+                / (cost(&p) + light + voice))
                 .min(MAX_VOICES as u32)
         };
         let (y, y_tape) = (y(FxBus::COST), y(FxBus::COST_TAPE));

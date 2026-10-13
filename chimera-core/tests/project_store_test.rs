@@ -713,7 +713,7 @@ fn an_over_budget_part_loads_its_excess_as_w1_and_says_so() {
     {
         algo.try_set_kind(i, k).unwrap();
     }
-    // OP_D's WAVE, NOIS (17) to FRMT (16): four formants, 4·200 > 698.
+    // OP_D's WAVE, NOIS (17) to FRMT (16): four formants, 4·200 > 667.
     // Operators load in order, so the fourth loads W1 and the noise bands
     // after it fit.
     let mut bytes = encode_project(&src);
