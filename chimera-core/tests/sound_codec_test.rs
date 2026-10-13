@@ -591,6 +591,9 @@ fn sparse_sizes() {
             "{e:?}"
         );
     }
+    // INIT as it ships: the default map's eleven entries and the wheel's
+    // vibrato (spec § 9).
+    assert_eq!(encode(&Sound::init(EngineType::Algo)).len(), 217);
 }
 
 /// `neutral(e)` with every stored param that can move at another value, a

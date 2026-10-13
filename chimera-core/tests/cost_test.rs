@@ -1404,7 +1404,7 @@ fn stress(keys_first: bool, blocks: usize) -> (usize, u32, bool) {
     for (i, part) in r.shared.parts.iter_mut().enumerate() {
         part.mix = PartParams::for_part(i);
         let s = NEW_PARTS.get(i).and_then(|s| factory_sound(s.index()));
-        let s = s.unwrap_or_else(|| chimera_core::preset::Sound::plain_init(EngineType::Algo));
+        let s = s.unwrap_or_else(|| chimera_core::preset::Sound::init(EngineType::Algo));
         (*part.params, *part.mod_state) = (s.params, s.mod_state);
     }
     *r.shared.parts[5].params = a16_a17_sound();
