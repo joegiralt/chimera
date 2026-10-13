@@ -2,9 +2,11 @@
 //! from `tools/factory-sounds/` into `target/factory-sounds/public/`.
 //! `factory-sounds fmt [--level]` rewrites each Source with its display
 //! comments (`--level`: each `trim` centred on −11 LUFS). `factory-sounds
-//! qa [--wav]` renders and gates every Sound (spec § 4) into the ledger:
-//! `report.txt`; with `--wav` the renders and `listening.html` (every
-//! passing Sound, badged, and the placeholders).
+//! qa [--wav] [--baseline <dir>]` renders and gates every Sound (spec § 4)
+//! into the ledger: `report.txt`; with `--wav` the renders and
+//! `listening.html` (every passing Sound, badged, and the placeholders);
+//! with `--baseline` each APPROVED Sound's renders against the WAVs in
+//! `<dir>`, flagged AUDIO CHANGED over −40 dB.
 
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
@@ -25,13 +27,9 @@ fn main() -> ExitCode {
             Some("--level") => run_fmt(true),
             Some(a) => Err(format!("fmt [--level], not {a}")),
         },
-        Some("qa") => match args.get(1).map(String::as_str) {
-            None => run_qa(false),
-            Some("--wav") => run_qa(true),
-            Some(a) => Err(format!("qa [--wav], not {a}")),
-        },
+        Some("qa") => qa_args(&args[1..]).and_then(|(wav, base)| run_qa(wav, base)),
         Some(a) => Err(format!(
-            "factory-sounds [build | fmt [--level] | qa [--wav]], not {a}"
+            "factory-sounds [build | fmt [--level] | qa [--wav] [--baseline <dir>]], not {a}"
         )),
     };
     match r {
@@ -121,14 +119,38 @@ fn run_fmt(level: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// `qa`'s flags: `--wav`, and `--baseline <dir>`.
+fn qa_args(args: &[String]) -> Result<(bool, Option<PathBuf>), String> {
+    let (mut wav, mut base) = (false, None);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--wav" => wav = true,
+            "--baseline" => base = Some(PathBuf::from(it.next().ok_or("--baseline <dir>")?)),
+            a => return Err(format!("qa [--wav] [--baseline <dir>], not {a}")),
+        }
+    }
+    Ok((wav, base))
+}
+
 /// Every Sound rendered and gated into the ledger; fails unless all pass.
-fn run_qa(wav: bool) -> Result<(), String> {
+/// With a baseline, each APPROVED Sound's renders are compared against it
+/// first (`qa::compare`).
+fn run_qa(wav: bool, baseline: Option<PathBuf>) -> Result<(), String> {
     let (placeholders, all): (Vec<_>, Vec<_>) = build::sources(&dir())?
         .into_iter()
         .partition(|s| s.is_placeholder());
     source::check(&all)?;
     qa::sweeps(&all)?;
-    let reports = all.iter().map(qa::gates).collect::<Result<Vec<_>, _>>()?;
+    let mut reports = all.iter().map(qa::gates).collect::<Result<Vec<_>, _>>()?;
+    if let Some(dir) = &baseline {
+        if !dir.is_dir() {
+            return Err(format!("baseline {}: not a directory", dir.display()));
+        }
+        for r in &mut reports {
+            qa::compare(r, dir)?;
+        }
+    }
     let bands: Vec<_> = reports.iter().map(|r| r.bands).collect();
     let samey = qa::samey(&bands);
     let ledger = qa::ledger()?;

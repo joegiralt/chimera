@@ -33,7 +33,7 @@ use rustfft::num_complex::Complex;
 
 use super::about::{self, Fact};
 use super::source::{self, Badge, Phrase, Round, Script, Source, patch, to_sound, trimmed};
-use crate::listen::{self, CLICK_RATIO, Player, Row, qa_takes};
+use crate::listen::{self, Player, Row, qa_takes};
 
 const SR: f32 = SAMPLE_RATE as f32;
 
@@ -722,13 +722,17 @@ pub fn limiter_bar(script: Option<Script>) -> f32 {
 
 /// `listen::qa`'s click ratio over the whole render (note-offs and edges
 /// included), each note-on in `onsets` judged as a take's onset; finite
-/// and sounding. The value is the click ratio.
-pub fn clicks(x: &[f32], onsets: &[usize]) -> (f32, Verdict) {
+/// and sounding. The value is the click ratio. A Sound `exempt` by
+/// `listen::click_exempt` is left to the ear for the ratio (Exempt, with
+/// its reason), never for being finite and sounding.
+pub fn clicks(x: &[f32], onsets: &[usize], exempt: Option<&str>) -> (f32, Verdict) {
     let q = qa_takes(x, onsets);
-    (
-        q.click_ratio,
-        verdict(q.passes() && q.click_ratio <= CLICK_RATIO),
-    )
+    let v = match exempt {
+        Some(why) if q.sounds() => Verdict::Exempt(why.into()),
+        Some(_) => Verdict::Fail,
+        None => verdict(q.passes()),
+    };
+    (q.click_ratio, v)
 }
 
 /// DC against the signal: each channel's energy under `DC_HZ` (and in the
@@ -1060,6 +1064,84 @@ pub struct Report {
     pub changed: Option<Round>,
     /// What it is (`about`), from the built Sound.
     pub about: Vec<Fact>,
+    /// An APPROVED Sound's renders against `--baseline` (`compare`).
+    pub baseline: Option<Baseline>,
+}
+
+/// A render whose residual against its baseline is over this was changed
+/// by the engine, not by its Source: re-listen.
+pub const AUDIO_CHANGED_DB: f32 = -40.0;
+/// The page's line for it; the badge stays.
+pub const AUDIO_CHANGED: &str = "AUDIO CHANGED BY ENGINE UPDATE: re-listen";
+
+/// A Sound's renders against the baseline's.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Baseline {
+    /// The render with the largest residual, and it, dB.
+    pub worst: Option<(Audition, f32)>,
+    /// Renders with no baseline WAV: not compared.
+    pub missing: Vec<Audition>,
+}
+
+impl Baseline {
+    /// The worst render, when it is over `AUDIO_CHANGED_DB`.
+    pub fn changed(&self) -> Option<(Audition, f32)> {
+        self.worst.filter(|&(_, db)| db > AUDIO_CHANGED_DB)
+    }
+}
+
+/// `new − old` against `old`, dB (energy over energy: the RMS ratio), the
+/// two aligned sample for sample as written and the shorter padded with
+/// silence. Identical: −∞.
+pub fn residual_db(new: &[f32], old: &[f32]) -> f32 {
+    let at = |x: &[f32], i: usize| x.get(i).copied().unwrap_or(0.0) as f64;
+    let diff: f64 = (0..new.len().max(old.len()))
+        .map(|i| (at(new, i) - at(old, i)).powi(2))
+        .sum();
+    if diff == 0.0 {
+        return f32::NEG_INFINITY;
+    }
+    let base: f64 = old.iter().map(|&v| (v as f64).powi(2)).sum();
+    (10.0 * (diff / base).log10()) as f32
+}
+
+/// An APPROVED Sound's renders, as `write` writes them, against the WAVs
+/// of the same names in `dir` (`--baseline`), into `r.baseline`; any other
+/// Sound is not compared. A missing WAV is noted, not flagged.
+pub fn compare(r: &mut Report, dir: &Path) -> Result<(), String> {
+    if r.badge != Badge::Approved {
+        r.baseline = None;
+        return Ok(());
+    }
+    let mut b = Baseline {
+        worst: None,
+        missing: Vec::new(),
+    };
+    let unit = |v: i16| v as f32 / 32_767.0;
+    for x in &r.renders {
+        let p = dir.join(r.file(x.audition));
+        if !p.is_file() {
+            b.missing.push(x.audition);
+            continue;
+        }
+        let err = |e: hound::Error| format!("{}: {e}", p.display());
+        let w = hound::WavReader::open(&p).map_err(err)?;
+        if w.spec().channels != 2 || w.spec().bits_per_sample != 16 {
+            return Err(format!("{}: not 16-bit stereo", p.display()));
+        }
+        let old: Vec<f32> = w
+            .into_samples::<i16>()
+            .map(|v| v.map(unit))
+            .collect::<Result<_, _>>()
+            .map_err(err)?;
+        let new: Vec<f32> = listen::wav_samples(&x.stereo, 2).map(unit).collect();
+        let db = residual_db(&new, &old);
+        if b.worst.is_none_or(|(_, w)| db > w) {
+            b.worst = Some((x.audition, db));
+        }
+    }
+    r.baseline = Some(b);
+    Ok(())
 }
 
 impl Report {
@@ -1068,7 +1150,11 @@ impl Report {
     }
 
     fn wav(&self, a: Audition) -> String {
-        format!("renders/S{}-{}.wav", self.id.get(), a.slug())
+        format!("renders/{}", self.file(a))
+    }
+
+    fn file(&self, a: Audition) -> String {
+        format!("S{}-{}.wav", self.id.get(), a.slug())
     }
 
     fn lufs(&self) -> Option<f32> {
@@ -1110,6 +1196,7 @@ pub fn gates(src: &Source) -> Result<Report, String> {
     let with = heard_through(&wet);
     let snd = dried(&wet);
     let within = tail_within(src, &snd);
+    let exempt = listen::click_exempt(&snd);
     let mut gates = Vec::new();
     let mut gate = |check, (value, verdict)| {
         gates.push(Gate {
@@ -1177,7 +1264,7 @@ pub fn gates(src: &Source) -> Result<Report, String> {
             .iter()
             .map(|h| block(h.on) * BLOCK_SIZE + LATE)
             .collect();
-        gate(Check::Clicks(s), clicks(&mono, &onsets));
+        gate(Check::Clicks(s), clicks(&mono, &onsets, exempt));
         if s == Script::Long {
             dry_long = Some((mono, listen::lufs(&t.stereo)));
         }
@@ -1232,6 +1319,7 @@ pub fn gates(src: &Source) -> Result<Report, String> {
         badge: src.badge(crc),
         changed: src.changed(crc),
         about: about::of(src)?,
+        baseline: None,
     })
 }
 
@@ -1318,6 +1406,23 @@ pub fn report_text(reports: &[Report], samey: &[(usize, usize)]) -> String {
         if let Some(round) = r.changed {
             let _ = writeln!(o, "  {}", changed_line(round));
         }
+        if let Some(b) = &r.baseline {
+            match (b.changed(), b.worst) {
+                (Some((a, db)), _) => {
+                    let _ = writeln!(o, "  {AUDIO_CHANGED} (worst {db:.1} dB: {})", a.slug());
+                }
+                (None, Some((a, db))) if db.is_finite() => {
+                    let _ = writeln!(o, "  baseline: worst residual {db:.1} dB: {}", a.slug());
+                }
+                (None, Some(_)) => {
+                    let _ = writeln!(o, "  baseline: identical");
+                }
+                (None, None) => {}
+            }
+            for &a in &b.missing {
+                let _ = writeln!(o, "  baseline: no {}, not compared", r.file(a));
+            }
+        }
         for g in &r.gates {
             let v = match &g.verdict {
                 Verdict::Pass => "PASS".to_string(),
@@ -1344,6 +1449,17 @@ pub fn report_text(reports: &[Report], samey: &[(usize, usize)]) -> String {
             "samey: {} and {}, within {SAMEY_DB} dB on all {ERB_BANDS} ERB bands: by ear",
             reports[i].name, reports[j].name
         );
+    }
+    for r in reports {
+        if let Some((a, db)) = r.baseline.as_ref().and_then(Baseline::changed) {
+            let _ = writeln!(
+                o,
+                "audio changed by engine update: S{} {}, worst {db:.1} dB: {}",
+                r.id.get(),
+                r.name,
+                a.slug()
+            );
+        }
     }
     let pass = reports.iter().all(Report::passes);
     let _ = writeln!(
@@ -1374,6 +1490,9 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source
             let mut lines = vec![(r.note.clone(), false)];
             if let Some(round) = r.changed {
                 lines.push((changed_line(round), true));
+            }
+            if r.baseline.as_ref().and_then(Baseline::changed).is_some() {
+                lines.push((AUDIO_CHANGED.into(), true));
             }
             let lufs = r.lufs().map_or(String::new(), |l| {
                 format!(" · level (1 s, dry) {l:.1} LUFS")

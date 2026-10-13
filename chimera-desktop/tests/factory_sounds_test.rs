@@ -598,13 +598,13 @@ fn limiter_gate() {
 fn click_and_finite_gate() {
     // A sine from a zero crossing: no click.
     let clean = sine(220.0, 0.3, 1.0);
-    assert_eq!(qa::clicks(&clean, &[0]).1, Verdict::Pass);
+    assert_eq!(qa::clicks(&clean, &[0], None).1, Verdict::Pass);
     let mut click = clean.clone();
     click[24_000] += 0.2;
-    assert_eq!(qa::clicks(&click, &[0]).1, Verdict::Fail, "a click");
+    assert_eq!(qa::clicks(&click, &[0], None).1, Verdict::Fail, "a click");
     let mut nan = clean.clone();
     nan[100] = f32::NAN;
-    assert_eq!(qa::clicks(&nan, &[0]).1, Verdict::Fail, "not finite");
+    assert_eq!(qa::clicks(&nan, &[0], None).1, Verdict::Fail, "not finite");
 }
 
 #[test]
@@ -749,6 +749,7 @@ fn report(pass: bool, private: bool) -> qa::Report {
         badge: source::Badge::New,
         changed: None,
         about: about::of(s).unwrap(),
+        baseline: None,
     }
 }
 
@@ -1850,5 +1851,120 @@ fn harmonic_flag_picks_the_aliasing_gate() {
         &format!("{BASE}harmonic = \"maybe\"\n"),
         14,
         "harmonic maybe",
+    );
+}
+
+/// The click gates a Sound's `Clicks` rows.
+fn click_gates(r: &qa::Report) -> Vec<&Gate> {
+    r.gates
+        .iter()
+        .filter(|g| matches!(g.check, Check::Clicks(_)))
+        .collect()
+}
+
+#[test]
+fn a_va_ring_sounds_clicks_are_left_to_the_ear() {
+    use chimera_desktop::listen::{CLICK_RATIO, click_exempt};
+    let mut click = sine(220.0, 0.3, 1.0);
+    click[24_000] += 0.2;
+    let (ratio, v) = qa::clicks(&click, &[0], Some("VA RING: why"));
+    assert!(ratio > CLICK_RATIO, "{ratio}");
+    assert_eq!(v, Verdict::Exempt("VA RING: why".into()));
+    // Exempt from the bar, not from being finite.
+    let mut nan = click.clone();
+    nan[100] = f32::NAN;
+    assert_eq!(qa::clicks(&nan, &[0], Some("why")).1, Verdict::Fail);
+
+    let ring = &run(&format!("{BASE}VA.MODE = \"RING\"\n")).unwrap()[0];
+    let why = click_exempt(&source::to_sound(ring).unwrap()).expect("VA RING is exempt");
+    let r = qa::gates(ring).unwrap();
+    let gates = click_gates(&r);
+    assert_eq!(gates.len(), 2, "long and texture");
+    for g in gates {
+        assert_eq!(g.verdict, Verdict::Exempt(why.into()), "{:?}", g.check);
+    }
+    let txt = qa::report_text(std::slice::from_ref(&r), &[]);
+    assert!(txt.contains(&format!("EXEMPT ({why})")), "{txt}");
+    // On the page (its other gates aside: this test Sound is not levelled).
+    let mut shown = r.clone();
+    shown.gates.retain(|g| matches!(g.check, Check::Clicks(_)));
+    let page = qa::page(&[shown], &[], &[]);
+    assert!(
+        page.contains(&format!("class=\"flag\">clicks long: {why}")),
+        "{page}"
+    );
+
+    // A VA in another mode keeps the bar.
+    let saw = qa::gates(&run(BASE).unwrap()[0]).unwrap();
+    assert!(click_gates(&saw).iter().all(|g| g.verdict == Verdict::Pass));
+}
+
+#[test]
+fn residual_against_the_baseline() {
+    let old = sine(220.0, 0.2, 0.5);
+    assert_eq!(qa::residual_db(&old, &old), f32::NEG_INFINITY);
+    // new − old is a tenth of old: −20 dB.
+    let new: Vec<f32> = old.iter().map(|v| v * 1.1).collect();
+    assert!((qa::residual_db(&new, &old) + 20.0).abs() < 0.01);
+    // As written: a longer render's extra counts against silence.
+    let mut longer = old.clone();
+    longer.extend_from_slice(&old);
+    assert!(qa::residual_db(&longer, &old).abs() < 0.01);
+    const { assert!(qa::AUDIO_CHANGED_DB == -40.0) };
+}
+
+#[test]
+fn an_engine_change_flags_an_approved_sound() {
+    use chimera_desktop::listen::write_wav_stereo;
+    let d = scratch_ledger("baseline");
+    std::fs::create_dir_all(&d).unwrap();
+    let wav = d.join("S9100002-long.wav");
+    let mut r = report(true, false);
+    r.badge = source::Badge::Approved;
+    let flagged = |r: &qa::Report| {
+        qa::page(std::slice::from_ref(r), &[], &[])
+            .contains("class=\"flag\">AUDIO CHANGED BY ENGINE UPDATE: re-listen")
+    };
+
+    // The same render: no flag.
+    write_wav_stereo(&wav, &r.renders[0].stereo).unwrap();
+    qa::compare(&mut r, &d).unwrap();
+    let b = r.baseline.clone().expect("compared");
+    assert_eq!(b.changed(), None);
+    assert!(b.missing.is_empty());
+    assert!(!flagged(&r));
+
+    // The baseline at 0.9 of it: −19.1 dB, flagged, still APPROVED.
+    let old: Vec<f32> = r.renders[0].stereo.iter().map(|v| v * 0.9).collect();
+    write_wav_stereo(&wav, &old).unwrap();
+    qa::compare(&mut r, &d).unwrap();
+    let (a, db) = r.baseline.as_ref().unwrap().changed().expect("flagged");
+    assert_eq!(a, Audition::Script(Script::Long));
+    assert!((db + 19.08).abs() < 0.2, "{db}");
+    assert!(flagged(&r));
+    let page = qa::page(std::slice::from_ref(&r), &[], &[]);
+    assert!(page.contains(">APPROVED<"), "the badge stays");
+    let txt = qa::report_text(std::slice::from_ref(&r), &[]);
+    assert!(
+        txt.contains("AUDIO CHANGED BY ENGINE UPDATE: re-listen (worst -19.1 dB: long)"),
+        "{txt}"
+    );
+
+    // A NEW Sound is not compared; without a baseline nothing is.
+    let mut new = report(true, false);
+    qa::compare(&mut new, &d).unwrap();
+    assert!(new.baseline.is_none() && !flagged(&new));
+
+    // No baseline file: no flag, and a note.
+    std::fs::remove_file(&wav).unwrap();
+    qa::compare(&mut r, &d).unwrap();
+    let b = r.baseline.clone().unwrap();
+    assert_eq!(b.changed(), None);
+    assert_eq!(b.missing, vec![Audition::Script(Script::Long)]);
+    assert!(!flagged(&r));
+    let txt = qa::report_text(std::slice::from_ref(&r), &[]);
+    assert!(
+        txt.contains("baseline: no S9100002-long.wav, not compared"),
+        "{txt}"
     );
 }

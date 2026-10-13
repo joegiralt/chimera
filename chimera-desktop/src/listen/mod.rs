@@ -776,10 +776,12 @@ pub fn qa_takes(x: &[f32], takes: &[usize]) -> Qa {
 impl Qa {
     /// Finite, sounding, at or under 0 dBFS, and click-free.
     pub fn passes(&self) -> bool {
-        self.non_finite == 0
-            && self.peak_dbfs > SILENT_DBFS
-            && self.peak_dbfs <= 0.0
-            && self.click_ratio <= CLICK_RATIO
+        self.sounds() && self.click_ratio <= CLICK_RATIO
+    }
+
+    /// Finite, sounding and at or under 0 dBFS: all but the click bar.
+    pub fn sounds(&self) -> bool {
+        self.non_finite == 0 && self.peak_dbfs > SILENT_DBFS && self.peak_dbfs <= 0.0
     }
 }
 
@@ -1086,13 +1088,20 @@ fn write_wav_ch(path: &std::path::Path, x: &[f32], channels: u16) -> Result<(), 
     };
     let err = |e: hound::Error| format!("{}: {e}", path.display());
     let mut w = hound::WavWriter::create(path, spec).map_err(err)?;
-    let (n, ch) = (x.len(), channels as usize);
-    for (i, &s) in x.iter().enumerate() {
-        let fade = ((n - i).div_ceil(ch) as f32 / FADE as f32).min(1.0);
-        let v = chimera_core::dsp::clampf(s * fade, -1.0, 1.0) * 32_767.0;
-        w.write_sample(v.round() as i16).map_err(err)?;
+    for v in wav_samples(x, channels) {
+        w.write_sample(v).map_err(err)?;
     }
     w.finalize().map_err(err)
+}
+
+/// `x`'s samples as `write_wav_ch` writes them: the end faded over `FADE`
+/// frames of `channels`, clamped, 16-bit.
+pub fn wav_samples(x: &[f32], channels: u16) -> impl Iterator<Item = i16> + '_ {
+    let (n, ch) = (x.len(), channels as usize);
+    x.iter().enumerate().map(move |(i, &s)| {
+        let fade = ((n - i).div_ceil(ch) as f32 / FADE as f32).min(1.0);
+        (chimera_core::dsp::clampf(s * fade, -1.0, 1.0) * 32_767.0).round() as i16
+    })
 }
 
 /// Ungated BS.1770 loudness of an interleaved stereo run at 48 kHz, as
