@@ -130,13 +130,14 @@ pub fn demos(dir: &Path) -> Result<Vec<Demo>, String> {
     }
 }
 
-/// Each demo as its project file (`P0000001.A`) and its manifest entry,
-/// its Sounds from `all`. Pure: `public` writes them.
+/// Each demo but a held one as its project file (`P0000001.A`) and its
+/// manifest entry, its Sounds from `all`; all checked. Pure: `public`
+/// writes them.
 pub fn demo_files(demos: &[Demo], all: &[Source]) -> Result<(Vec<File>, Vec<DemoEntry>), String> {
     project::check(demos, all)?;
     let mut files = Vec::new();
     let mut entries = Vec::new();
-    for d in demos {
+    for d in demos.iter().filter(|d| d.held.is_none()) {
         let bytes = project::file_bytes(&*project::build(d, all)?)?;
         entries.push(DemoEntry {
             id: d.id,

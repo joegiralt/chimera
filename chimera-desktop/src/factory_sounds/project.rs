@@ -6,6 +6,8 @@
 //! pool slot with its own sends (ADR 0123); a Part not named stays NEW's.
 //! `try` is the release notes' "what to try", and `hear.BLOCK.PARAM =
 //! "A, B"` adds a render setting per value, so QA plays what it invites.
+//! `held = "<reason>"` keeps a demo out of the build and the renders, still
+//! checked; what only held demos play is pending, not unheard.
 //! Pure but for `build`'s leaked arena: text in, `Demo`, project out.
 
 use chimera_core::MidiChannel;
@@ -89,6 +91,8 @@ pub struct Demo {
     /// `fx` with one `hear` value set, a setting per value.
     pub hear: Vec<FxParams>,
     pub parts: Vec<DemoPart>,
+    /// `held`: why it waits, unbuilt and unrendered (an issue, say).
+    pub held: Option<String>,
 }
 
 /// What QA must hear across the demos (spec § 4): each reverb TYPE, each
@@ -169,7 +173,7 @@ pub fn parse(text: &str) -> Result<Vec<Demo>, String> {
         .collect()
 }
 
-const HEAD: [&str; 3] = ["id", "name", "try"];
+const HEAD: [&str; 4] = ["id", "name", "try", "held"];
 
 fn at(line: usize, msg: String) -> String {
     format!("{FILE}:{line}: {msg}")
@@ -194,6 +198,13 @@ fn demo(header: usize, e: &[(usize, String, String)]) -> Result<Demo, String> {
     let name =
         ProjectName::new(v).map_err(|_| at(name_line, format!("name {v}: not a project name")))?;
     let tries = need("try")?.1.to_string();
+    let held = match need("held") {
+        Ok((line, v)) if v.trim().is_empty() => {
+            return Err(at(line, "held: give the reason".into()));
+        }
+        Ok((_, v)) => Some(v.to_string()),
+        Err(_) => None,
+    };
 
     let mut fx = FxParams::DEFAULT;
     let mut hear = Vec::new();
@@ -262,6 +273,7 @@ fn demo(header: usize, e: &[(usize, String, String)]) -> Result<Demo, String> {
         fx,
         hear: settings,
         parts,
+        held,
     })
 }
 
@@ -408,16 +420,52 @@ pub fn settings(d: &Demo, sounds: &[Source]) -> Result<Vec<Setting>, String> {
         .collect())
 }
 
-/// The effects no demo's settings play, in `Effect::ALL` order.
-pub fn unheard(demos: &[Demo], sounds: &[Source]) -> Result<Vec<Effect>, String> {
-    let mut seen = Vec::new();
-    for d in demos {
-        seen.extend(settings(d, sounds)?.into_iter().flat_map(|s| s.heard));
+/// What the demos play of `Effect::ALL`, in its order: `unheard` by any
+/// demo (a failure), and `pending` on held demos alone (each with them).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Coverage {
+    pub unheard: Vec<Effect>,
+    pub pending: Vec<(Effect, Vec<DemoId>)>,
+}
+
+impl Coverage {
+    /// `pending: REVERB HALL (held: P0000001)`, one per pending effect.
+    pub fn pending_lines(&self) -> Vec<String> {
+        self.pending
+            .iter()
+            .map(|(e, ids)| {
+                let ids: Vec<String> = ids.iter().map(|i| i.stem()).collect();
+                format!("pending: {} (held: {})", e.label(), ids.join(", "))
+            })
+            .collect()
     }
-    Ok(Effect::ALL
-        .into_iter()
-        .filter(|e| !seen.contains(e))
-        .collect())
+}
+
+/// Each effect against every demo's settings, held ones apart.
+pub fn coverage(demos: &[Demo], sounds: &[Source]) -> Result<Coverage, String> {
+    let mut live = Vec::new();
+    let mut held: Vec<(DemoId, Vec<Effect>)> = Vec::new();
+    for d in demos {
+        let seen = settings(d, sounds)?.into_iter().flat_map(|s| s.heard);
+        match d.held {
+            None => live.extend(seen),
+            Some(_) => held.push((d.id, seen.collect())),
+        }
+    }
+    let mut c = Coverage::default();
+    for e in Effect::ALL.into_iter().filter(|e| !live.contains(e)) {
+        let ids: Vec<DemoId> = held
+            .iter()
+            .filter(|h| h.1.contains(&e))
+            .map(|h| h.0)
+            .collect();
+        if ids.is_empty() {
+            c.unheard.push(e);
+        } else {
+            c.pending.push((e, ids));
+        }
+    }
+    Ok(c)
 }
 
 /// `d` on NEW's template: its name and FX, then each Part loaded from a

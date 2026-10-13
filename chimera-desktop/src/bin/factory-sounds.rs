@@ -173,9 +173,10 @@ fn run_qa(wav: bool, baseline: Option<PathBuf>) -> Result<(), String> {
     }
 }
 
-/// Each demo project rendered and gated (`qa::demo_gates`), plus the
-/// effects no demo plays (`project::unheard`), which fail the run after
-/// every gate is heard; none: none.
+/// Each demo project rendered and gated (`qa::demo_gates`), a held one
+/// reported unrendered (`qa::held_report`), plus the effects no demo
+/// plays, held or not (`project::coverage`), which fail the run after
+/// every gate is heard; one only held demos play is pending. None: none.
 type Demos = (Vec<qa::DemoReport>, Option<String>);
 fn demo_reports(sounds: &[source::Source], ledger: &Path) -> Result<Demos, String> {
     let demos = build::demos(&dir())?;
@@ -183,19 +184,26 @@ fn demo_reports(sounds: &[source::Source], ledger: &Path) -> Result<Demos, Strin
         return Ok((Vec::new(), None));
     }
     project::check(&demos, sounds)?;
-    let gaps = project::unheard(&demos, sounds)?;
-    let unheard = (!gaps.is_empty()).then(|| {
-        let words: Vec<String> = gaps.iter().map(|e| e.label()).collect();
+    let cov = project::coverage(&demos, sounds)?;
+    let unheard = (!cov.unheard.is_empty()).then(|| {
+        let words: Vec<String> = cov.unheard.iter().map(|e| e.label()).collect();
         format!(
             "{}: no demo setting plays {} (fx. or hear. lines)",
             project::FILE,
             words.join(", ")
         )
     });
-    let stims = stims(&ledger.join("stimuli"))?;
+    let stims = if demos.iter().any(|d| d.held.is_none()) {
+        Some(stims(&ledger.join("stimuli"))?)
+    } else {
+        None
+    };
     let reports = demos
         .iter()
-        .map(|d| qa::demo_gates(d, sounds, &stims))
+        .map(|d| match &stims {
+            Some(s) if d.held.is_none() => qa::demo_gates(d, sounds, s),
+            _ => qa::held_report(d, sounds, &cov),
+        })
         .collect::<Result<_, _>>()?;
     Ok((reports, unheard))
 }

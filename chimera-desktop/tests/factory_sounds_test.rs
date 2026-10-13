@@ -2369,8 +2369,8 @@ fn demo_render_plan_hears_every_effect() {
     let demos = project::parse(&spec_demos()).unwrap();
     project::check(&demos, &sounds).unwrap();
     assert_eq!(
-        project::unheard(&demos, &sounds).unwrap(),
-        Vec::<Effect>::new()
+        project::coverage(&demos, &sounds).unwrap(),
+        project::Coverage::default()
     );
 
     // Each setting (its own FX, then one per `hear` value) plays every
@@ -2399,7 +2399,9 @@ fn demo_render_plan_hears_every_effect() {
         .filter(|l| !l.starts_with("hear."))
         .map(|l| format!("{l}\n"))
         .collect();
-    let gaps = project::unheard(&project::parse(&bare).unwrap(), &sounds).unwrap();
+    let gaps = project::coverage(&project::parse(&bare).unwrap(), &sounds)
+        .unwrap()
+        .unheard;
     let words: Vec<String> = gaps.iter().map(|e| e.label()).collect();
     assert_eq!(
         words,
@@ -2613,4 +2615,117 @@ fn reverse_and_gate_settings_leave_clicks_to_the_ear() {
             .all(|v| !matches!(v, Verdict::Exempt(_))),
         "ROOM stays click-gated"
     );
+}
+
+/// The spec's demos with P1 and P2 held.
+fn held_demos() -> String {
+    spec_demos()
+        .replace(
+            "name = \"REVERB ROOMS\"\n",
+            "name = \"REVERB ROOMS\"\nheld = \"#499: HALL and BLOOM tails jump at block edges\"\n",
+        )
+        .replace(
+            "name = \"REVERB BLOOM\"\n",
+            "name = \"REVERB BLOOM\"\nheld = \"#499: HALL and BLOOM tails jump at block edges\"\n",
+        )
+}
+
+/// A held demo is checked like any other but neither built, listed nor
+/// rendered; what only it plays is pending, not unheard.
+#[test]
+fn held_demos_are_checked_not_built_and_their_effects_pend() {
+    use project::Effect;
+    let sounds = demo_sounds();
+    let demos = project::parse(&held_demos()).unwrap();
+    assert!(
+        demos[0]
+            .held
+            .as_deref()
+            .is_some_and(|h| h.starts_with("#499"))
+    );
+    assert!(demos[2].held.is_none());
+    let (files, entries) = build::demo_files(&demos, &sounds).unwrap();
+    let names: Vec<&str> = files.iter().map(|f| f.0.as_str()).collect();
+    assert_eq!(names, ["P0000003.A", "P0000004.A"]);
+    let ids: Vec<String> = entries.iter().map(|e| e.id.stem()).collect();
+    assert_eq!(ids, ["P0000003", "P0000004"]);
+
+    // Still checked: a held demo's unknown Sound fails at its line.
+    let bad = held_demos().replacen("part.1 = \"TEST PAD", "part.1 = \"NO SUCH", 1);
+    let e = build::demo_files(&project::parse(&bad).unwrap(), &sounds).unwrap_err();
+    assert!(e.contains("no Sound named NO SUCH"), "{e}");
+    // An empty reason fails at its line.
+    let e = project::parse(&held_demos().replacen(
+        "held = \"#499: HALL and BLOOM tails jump at block edges\"",
+        "held = \" \"",
+        1,
+    ))
+    .unwrap_err();
+    assert!(
+        e.contains("projects.toml:4:") && e.contains("reason"),
+        "{e}"
+    );
+
+    let cov = project::coverage(&demos, &sounds).unwrap();
+    assert!(cov.unheard.is_empty(), "{cov:?}");
+    assert_eq!(
+        cov.pending_lines(),
+        [
+            "pending: REVERB QUAD (held: P0000001)",
+            "pending: REVERB ROOM (held: P0000001)",
+            "pending: REVERB HALL (held: P0000001)",
+            "pending: REVERB BLOOM (held: P0000002)",
+            "pending: REVERB REVERSE (held: P0000002)",
+        ]
+    );
+
+    // Held or not, an effect no demo plays still fails.
+    let no_bloom: String = held_demos()
+        .split("[[project]]")
+        .filter(|t| !t.contains("REVERB BLOOM"))
+        .collect::<Vec<_>>()
+        .join("[[project]]");
+    let cov = project::coverage(&project::parse(&no_bloom).unwrap(), &sounds).unwrap();
+    assert_eq!(
+        cov.unheard,
+        [
+            Effect::Reverb(ReverbType::Bloom),
+            Effect::Reverb(ReverbType::Reverse)
+        ]
+    );
+    assert_eq!(cov.pending.len(), 3);
+
+    // On the page and in report.txt: HELD with its reason, its pending
+    // lines, and no render; the run passes.
+    let cov = project::coverage(&demos, &sounds).unwrap();
+    let held = qa::held_report(&demos[0], &sounds, &cov).unwrap();
+    assert!(held.renders.is_empty() && held.gates.is_empty());
+    let d = scratch_ledger("ledger-held");
+    assert!(qa::write(&d, &[report(true, false)], &[], &[], &[held], true).unwrap());
+    let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
+    assert!(page.contains("<h2>DEMO PROJECTS</h2>"), "{page}");
+    assert!(
+        page.contains("REVERB ROOMS <span class=\"badge held\">HELD</span>"),
+        "{page}"
+    );
+    assert!(page.contains("Held: #499: HALL and BLOOM tails jump at block edges"));
+    assert!(page.contains("pending: REVERB HALL (held: P0000001)"));
+    let txt = std::fs::read_to_string(d.join("report.txt")).unwrap();
+    assert!(
+        txt.contains(
+            "P0000001 REVERB ROOMS  HELD (#499: HALL and BLOOM tails jump at block edges)"
+        ),
+        "{txt}"
+    );
+    assert!(
+        txt.contains("pending: REVERB QUAD (held: P0000001)"),
+        "{txt}"
+    );
+    assert!(txt.contains("1 demo projects: all pass (1 held)"), "{txt}");
+    let wavs = std::fs::read_dir(d.join("renders"))
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.starts_with("P0000001-"))
+        .count();
+    assert_eq!(wavs, 0);
 }

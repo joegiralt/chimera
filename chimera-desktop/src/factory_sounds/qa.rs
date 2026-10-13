@@ -34,7 +34,7 @@ use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
 
 use super::about::{self, Fact};
-use super::project::{self, Demo, DemoId, Setting};
+use super::project::{self, Coverage, Demo, DemoId, Setting};
 use super::source::{self, Badge, Phrase, Round, Script, Source, patch, to_sound, trimmed};
 use crate::listen::{self, Player, Row, Section, qa_takes};
 
@@ -1899,7 +1899,7 @@ pub fn write(
             }
         }
         for d in demos {
-            if d.passes() {
+            if d.passes() && d.held.is_none() {
                 for x in &d.renders {
                     listen::write_wav_stereo(&r.join(d.file(x)), &x.stereo)?;
                 }
@@ -2016,9 +2016,19 @@ pub struct DemoReport {
     pub settings: Vec<String>,
     pub gates: Vec<DemoGate>,
     pub renders: Vec<DemoRender>,
+    /// Held (`project::Demo::held`): no gates, no renders.
+    pub held: Option<Held>,
+}
+
+/// A held demo: why, and the `Coverage::pending_lines` naming it.
+#[derive(Clone, Debug)]
+pub struct Held {
+    pub reason: String,
+    pub pending: Vec<String>,
 }
 
 impl DemoReport {
+    /// A held demo has no gate to fail.
     pub fn passes(&self) -> bool {
         self.gates.iter().all(|g| g.verdict != Verdict::Fail)
     }
@@ -2124,28 +2134,17 @@ fn sounding(x: &[f32]) -> &[f32] {
 pub fn demo_gates(d: &Demo, sounds: &[Source], stims: &Stims) -> Result<DemoReport, String> {
     let project = project::build(d, sounds)?;
     let settings = project::settings(d, sounds)?;
+    let parts = part_lines(d, sounds)?;
     let mut sends = [0.0f32; FX_SENDS];
-    let mut parts = Vec::new();
     let mut exempt = Vec::new();
     for p in &d.parts {
-        let src = sounds
-            .iter()
-            .find(|s| s.name.as_str() == p.sound)
-            .expect("project::build found it");
+        let src = demo_source(p, sounds);
         let snd = to_sound(src)?;
         for (m, v) in sends.iter_mut().zip(snd.params.out.sends) {
             *m = m.max(v);
         }
         // Each Part's click exemption and home note.
         exempt.push((p.part, listen::click_exempt(&snd), src.home));
-        parts.push(format!(
-            "PART {} · {} ({}) · {} · CH {}",
-            p.part.index() + 1,
-            p.sound,
-            src.badge(source::approval_crc(src)?).word(),
-            p.mode.disk_ident(),
-            p.channel.get() + 1
-        ));
     }
     let mut perf = Performance::new();
     for p in PartId::ALL {
@@ -2224,14 +2223,89 @@ pub fn demo_gates(d: &Demo, sounds: &[Source], stims: &Stims) -> Result<DemoRepo
         settings: settings.iter().map(heard_words).collect(),
         gates,
         renders,
+        held: None,
     })
+}
+
+/// A checked demo's Part Source (`project::check` found it).
+fn demo_source<'a>(p: &project::DemoPart, sounds: &'a [Source]) -> &'a Source {
+    sounds
+        .iter()
+        .find(|s| s.name.as_str() == p.sound)
+        .expect("project::check found it")
+}
+
+/// `PART 1 · NYLON (APPROVED) · POLY · CH 1`, per Part.
+fn part_lines(d: &Demo, sounds: &[Source]) -> Result<Vec<String>, String> {
+    d.parts
+        .iter()
+        .map(|p| {
+            let src = demo_source(p, sounds);
+            Ok(format!(
+                "PART {} · {} ({}) · {} · CH {}",
+                p.part.index() + 1,
+                p.sound,
+                src.badge(source::approval_crc(src)?).word(),
+                p.mode.disk_ident(),
+                p.channel.get() + 1
+            ))
+        })
+        .collect()
+}
+
+/// A held demo's report: what it holds and would play, why it waits and
+/// what of `cov` waits on it; nothing rendered.
+pub fn held_report(d: &Demo, sounds: &[Source], cov: &Coverage) -> Result<DemoReport, String> {
+    let reason = d.held.clone().ok_or("held_report on a demo not held")?;
+    let pending = Coverage {
+        unheard: Vec::new(),
+        pending: cov
+            .pending
+            .iter()
+            .filter(|(_, ids)| ids.contains(&d.id))
+            .cloned()
+            .collect(),
+    }
+    .pending_lines();
+    Ok(DemoReport {
+        id: d.id,
+        name: d.name.as_str().into(),
+        tries: d.tries.clone(),
+        parts: part_lines(d, sounds)?,
+        settings: project::settings(d, sounds)?
+            .iter()
+            .map(heard_words)
+            .collect(),
+        gates: Vec::new(),
+        renders: Vec::new(),
+        held: Some(Held { reason, pending }),
+    })
+}
+
+/// Every held demo's pending lines, once each, in order.
+fn pending_lines(demos: &[DemoReport]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for l in demos
+        .iter()
+        .filter_map(|d| d.held.as_ref())
+        .flat_map(|h| &h.pending)
+    {
+        if !out.contains(l) {
+            out.push(l.clone());
+        }
+    }
+    out
 }
 
 /// `report.txt`'s demo lines: each project's gates by setting.
 pub fn demo_text(demos: &[DemoReport]) -> String {
     let mut o = String::new();
     for d in demos {
-        let ok = if d.passes() { "PASS" } else { "FAIL" };
+        let ok = match (&d.held, d.passes()) {
+            (Some(h), _) => format!("HELD ({})", h.reason),
+            (None, true) => "PASS".into(),
+            (None, false) => "FAIL".into(),
+        };
         let _ = writeln!(o, "{} {}  {ok}", d.id.stem(), d.name);
         for (i, s) in d.settings.iter().enumerate() {
             let _ = writeln!(o, "  setting {}: {s}", i + 1);
@@ -2251,21 +2325,35 @@ pub fn demo_text(demos: &[DemoReport]) -> String {
             }
         }
     }
+    for l in pending_lines(demos) {
+        let _ = writeln!(o, "{l}");
+    }
     if !demos.is_empty() {
         let pass = demos.iter().all(DemoReport::passes);
+        let held = demos.iter().filter(|d| d.held.is_some()).count();
         let _ = writeln!(
             o,
-            "{} demo projects: {}",
+            "{} demo projects: {}{}",
             demos.len(),
-            if pass { "all pass" } else { "FAIL" }
+            if pass { "all pass" } else { "FAIL" },
+            if held > 0 {
+                format!(" ({held} held)")
+            } else {
+                String::new()
+            }
         );
     }
     o
 }
 
-/// A passing demo's row in the DEMO PROJECTS section.
+/// A passing demo's row in the DEMO PROJECTS section; a held one badged
+/// HELD with its reason and what waits on it.
 fn demo_row(d: &DemoReport) -> Row {
     let mut lines = vec![(format!("What to try: {}", d.tries), false)];
+    if let Some(h) = &d.held {
+        lines.push((format!("Held: {}", h.reason), true));
+        lines.extend(h.pending.iter().map(|l| (l.clone(), true)));
+    }
     lines.push((d.id.stem(), false));
     lines.extend(d.parts.iter().map(|p| (p.clone(), false)));
     for g in &d.gates {
@@ -2275,7 +2363,7 @@ fn demo_row(d: &DemoReport) -> Row {
     }
     Row {
         title: d.name.clone(),
-        badge: None,
+        badge: d.held.as_ref().map(|_| "HELD"),
         lines,
         facts: Vec::new(),
         players: d
