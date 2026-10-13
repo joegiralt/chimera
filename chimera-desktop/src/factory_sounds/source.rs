@@ -943,22 +943,24 @@ pub fn lines(snd: &Sound) -> Vec<String> {
 
 /// Canonical text: each numeric param line ends `  # <display value>`, as
 /// the unit's page draws it for that Sound (an LFO's RATE by its TYPE's
-/// panel, `view::shown_fmt`); every other line is kept. Comments are
-/// ignored on read, so this changes no Sound, and a second run changes
-/// nothing. A table that doesn't build is left as written.
-pub fn fmt(text: &str) -> String {
-    let tables = lined_tables(text, "").unwrap_or_default();
+/// panel, `view::shown_fmt`), then the author's own comment, if any;
+/// every other line is kept. Comments are ignored on read, so this changes
+/// no Sound, and a second run changes nothing. Text whose tables don't
+/// parse, or a `[[sound]]` that doesn't build, is refused, naming the line.
+pub fn fmt(text: &str, file: &str) -> Result<String, String> {
     // Each table's header line and the page context of its patched Sound.
-    let ctx: Vec<(usize, Option<SlotCtx>)> = tables
-        .iter()
-        .map(|t| {
-            let snd = (t.kind == "sound")
-                .then(|| sound("", t.line, &t.entries).and_then(|s| patch(&s)).ok())
-                .flatten();
-            (t.line, snd.map(|s| SlotCtx::read(&s.params, Op::A)))
-        })
-        .collect();
-    text.lines()
+    let mut ctx: Vec<(usize, Option<SlotCtx>)> = Vec::new();
+    for t in lined_tables(text, file)? {
+        let c = if t.kind == "sound" {
+            let snd = patch(&sound(file, t.line, &t.entries)?)?;
+            Some(SlotCtx::read(&snd.params, Op::A))
+        } else {
+            None
+        };
+        ctx.push((t.line, c));
+    }
+    Ok(text
+        .lines()
         .enumerate()
         .map(|(n, l)| {
             let c = ctx.iter().rev().find(|t| t.0 <= n + 1).and_then(|t| t.1);
@@ -966,21 +968,45 @@ pub fn fmt(text: &str) -> String {
                 .unwrap_or_else(|| l.to_string())
                 + "\n"
         })
-        .collect()
+        .collect())
 }
 
+/// A param line's display comment, then the author's: a comment whose
+/// first part reads as one of the param's values (`displays`) is the old
+/// display, replaced; anything else is the author's, kept.
 fn fmt_line(line: &str, ctx: &SlotCtx) -> Option<String> {
-    let (k, v, _) = value_line(line.trim())?;
+    let (k, v, comment) = value_line(line.trim())?;
     let (block, param) = k.split_once('.')?;
     let a = valid_addr(block, param).filter(|a| !a.coded())?;
-    let mut b = FmtBuf::new();
-    let shown = shown_fmt(a.addr(), ctx)?;
-    fmt_val(&mut b, page_value(a.spec(), v.parse().ok()?, shown), shown);
-    Some(match b.as_str() {
-        "" => format!("{k} = \"{v}\""),
-        shown if shown == v => format!("{k} = \"{v}\""),
-        shown => format!("{k} = \"{v}\"  # {shown}"),
-    })
+    let fmt = shown_fmt(a.addr(), ctx)?;
+    let show = |x: f32| {
+        let mut b = FmtBuf::new();
+        fmt_val(&mut b, page_value(a.spec(), x, fmt), fmt);
+        b.as_str().to_string()
+    };
+    let shown = show(v.parse().ok()?);
+    let c = comment.unwrap_or("").trim();
+    let (first, rest) = c
+        .split_once('#')
+        .map_or((c, ""), |(f, r)| (f.trim(), r.trim()));
+    let old = !first.is_empty() && (first == shown || displays(a.spec(), first, show));
+    let note = if old { rest } else { c };
+    let mut out = format!("{k} = \"{v}\"");
+    if !shown.is_empty() && shown != v {
+        out += &format!("  # {shown}");
+    }
+    if !note.is_empty() {
+        out += &format!("  # {note}");
+    }
+    Some(out)
+}
+
+/// `text` is what `show` writes for some stored value of `spec`: a display
+/// comment from before the value changed. Sampled finer than any display
+/// resolves.
+fn displays(spec: &ParamSpec, text: &str, show: impl Fn(f32) -> String) -> bool {
+    const STEPS: u32 = 1 << 16;
+    (0..=STEPS).any(|i| show(spec.min + (spec.max - spec.min) * i as f32 / STEPS as f32) == text)
 }
 
 /// What `fmt_val` reads for stored `v`: the normalised value, but the

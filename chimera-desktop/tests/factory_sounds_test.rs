@@ -134,8 +134,8 @@ fn golden_builds_to_committed_bytes() {
 #[test]
 fn fmt_is_idempotent() {
     let g = golden();
-    let once = source::fmt(&g);
-    assert_eq!(source::fmt(&once), once);
+    let once = source::fmt(&g, "golden.toml").unwrap();
+    assert_eq!(source::fmt(&once, "golden.toml").unwrap(), once);
     // A display comment on a value line, ignored on read.
     let cut = once
         .lines()
@@ -144,6 +144,56 @@ fn fmt_is_idempotent() {
     assert!(cut.contains("  # "), "{cut}");
     let crc = |t: &str| sound_crc(&source::to_sound(&source::parse(t, "g").unwrap()[0]).unwrap());
     assert_eq!(crc(&once), crc(&g));
+}
+
+/// Every committed Source is `fmt`'s canonical text: each raw value
+/// carries its display.
+#[test]
+fn every_committed_source_is_canonical() {
+    for f in build::SOUND_FILES {
+        let text = std::fs::read_to_string(format!("{SOURCES}/{f}")).unwrap();
+        let canon = source::fmt(&text, f).unwrap();
+        let first = text.lines().zip(canon.lines()).position(|(a, b)| a != b);
+        assert_eq!(
+            canon, text,
+            "{f}: line {first:?}: run `just factory-sounds fmt`"
+        );
+    }
+}
+
+/// An author's comment on a param line stays, after the display; a stale
+/// display is refreshed, never kept beside the new one.
+#[test]
+fn fmt_keeps_author_comments() {
+    let line = |t: &str| {
+        let f = source::fmt(t, "t.toml").unwrap();
+        assert_eq!(source::fmt(&f, "t.toml").unwrap(), f, "idempotent");
+        f.lines().nth(8).unwrap().to_string()
+    };
+    let cut = |c: &str| base_with(9, &format!("FILTER.CUTOFF = \"1200\"{c}"));
+    assert_eq!(
+        line(&cut("  # opens on the swell")),
+        "FILTER.CUTOFF = \"1200\"  # 1.20 kHz  # opens on the swell"
+    );
+    assert_eq!(
+        line(&cut("  # 2.40 kHz  # opens")),
+        "FILTER.CUTOFF = \"1200\"  # 1.20 kHz  # opens"
+    );
+    assert_eq!(
+        line(&cut("  # 2.40 kHz")),
+        "FILTER.CUTOFF = \"1200\"  # 1.20 kHz"
+    );
+    assert_eq!(line(&cut("")), "FILTER.CUTOFF = \"1200\"  # 1.20 kHz");
+}
+
+/// A Source whose tables don't parse, or whose Sound doesn't build, is
+/// left as written: `fmt` names the line and strips nothing.
+#[test]
+fn fmt_refuses_a_source_that_does_not_build() {
+    let e = source::fmt(&base_with(9, r#"FILTER.CUTOFF = "1e9""#), "bad.toml").unwrap_err();
+    assert!(e.contains("bad.toml:9:"), "{e}");
+    let e = source::fmt(&base_with(9, "FILTER.CUTOFF = 1200"), "bad.toml").unwrap_err();
+    assert!(e.contains("bad.toml:9:"), "{e}");
 }
 
 #[test]
@@ -335,7 +385,7 @@ fn placeholder_skipped() {
 
 /// `fmt`'s comment for `key` in `text`.
 fn comment(text: &str, key: &str) -> String {
-    let f = source::fmt(text);
+    let f = source::fmt(text, "t.toml").unwrap();
     let l = f.lines().find(|l| l.starts_with(key)).unwrap();
     l.split("  # ").nth(1).unwrap_or("").to_string()
 }

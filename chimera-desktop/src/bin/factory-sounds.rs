@@ -184,7 +184,7 @@ fn run_fmt(level: bool, ports: Option<&Path>, banks: &BankEdits) -> Result<(), S
             text.clone()
         };
         // Against the file as read: a new trim alone is a change too.
-        let canon = source::fmt(&levelled);
+        let canon = source::fmt(&levelled, &f)?;
         if canon != text {
             std::fs::write(&p, &canon).map_err(|e| format!("{}: {e}", p.display()))?;
             println!("{}", p.display());
