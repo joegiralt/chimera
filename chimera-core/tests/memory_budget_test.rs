@@ -202,9 +202,10 @@ fn ui_state_rest_under_4k() {
     // TYPEs' knob memory, 108 B, and the cells' text keys); 3 KB the
     // library's page, 48 rows of 60 B, and a pending load (its source
     // streams in the SOURCE cell's slot); 16 B the screensaver's (its idle
-    // timer and redraw count); 52 B the OP pages' formant view.
+    // timer and redraw count); 52 B the OP pages' formant view; 48 B bank
+    // 2's status (its version and seal, ADR 0137).
     assert!(
-        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072 + 16 + 52,
+        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072 + 16 + 52 + 48,
         "UiState grew to {rest} B besides its Project"
     );
 }

@@ -277,6 +277,9 @@ pub struct UiState {
     job: Option<Job>,
     /// The card as `sync_system` last saw it, for ABOUT.
     card: Card,
+    /// Bank 2 as the boot judged it; `None` where there is none (the
+    /// desktop).
+    bank2: Option<crate::bank2::Bank2Status>,
     /// ORBIT's transport and the runner's last view.
     orbit: orbit::OrbitUi,
     /// The front-panel LED: ORBIT's beat.
@@ -376,6 +379,7 @@ crate::in_place::field_list!(UiState => UiState {
     listing,
     job,
     card,
+    bank2,
     orbit,
     led,
     dfu,
@@ -472,6 +476,7 @@ impl UiState {
             addr_of_mut!((*p).listing).write(Listing::new());
             addr_of_mut!((*p).job).write(None);
             addr_of_mut!((*p).card).write(Card::new());
+            addr_of_mut!((*p).bank2).write(None);
             addr_of_mut!((*p).clip).write([ClipHold::default(); crate::hw::MAX_PARTS]);
             addr_of_mut!((*p).orbit).write(orbit::OrbitUi::new());
             addr_of_mut!((*p).led).write(led::Led::OFF);
@@ -544,6 +549,16 @@ impl UiState {
     /// The theme SYSTEM held, set at boot before the first frame.
     pub fn set_theme(&mut self, t: ThemeSettings) {
         self.theme = t;
+    }
+
+    /// Bank 2 as the boot judged it (ADR 0137), set before the first
+    /// frame; a later change redraws in full.
+    pub fn set_bank2(&mut self, s: crate::bank2::Bank2Status) {
+        self.bank2 = Some(s);
+    }
+
+    pub fn bank2(&self) -> Option<crate::bank2::Bank2Status> {
+        self.bank2
     }
 
     /// SETTINGS › MIDI CONFIG as last edited.
@@ -2884,6 +2899,7 @@ impl UiState {
             pool: self.project.pool(),
             audio,
             card: self.card,
+            bank2: self.bank2,
             master_gr_db: crate::meter::MASTER_GR.read(),
             clip: self.clip[self.active_part.index()].fill(),
             rev_clock: crate::meter::rev_clock(),

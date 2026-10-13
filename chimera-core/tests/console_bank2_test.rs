@@ -317,27 +317,36 @@ fn stat_peeks_every_image_word() {
     assert!(s.ends_with("readback matches\n"));
 }
 
-/// The shell names only bank 2's own registers: never the option bytes,
+/// The shells name only bank 2's own registers: never the option bytes,
 /// bank 1's key or control register, bank erase or mass erase.
 #[test]
 fn the_shell_never_names_bank_1_or_the_option_bytes() {
-    let src = include_str!("../../chimera-board/src/bank2.rs").to_ascii_lowercase();
-    for no in [
-        "optkeyr",
-        "optcr",
-        "optsr",
-        "_prg",
-        "bank1",
-        ".ber(",
-        ".mer(",
-        "keyr1",
-        "cr1",
-        "0x5200_2004",
-        "0x5200_200c",
-        "0x52002004",
-        "0x5200200c",
-    ] {
-        assert!(!src.contains(no), "chimera-board/src/bank2.rs names {no}");
+    let files = [
+        (
+            "bank2_spike.rs",
+            include_str!("../../chimera-board/src/bank2_spike.rs"),
+        ),
+        ("bank2.rs", include_str!("../../chimera-board/src/bank2.rs")),
+    ];
+    for (name, src) in files {
+        let src = src.to_ascii_lowercase();
+        for no in [
+            "optkeyr",
+            "optcr",
+            "optsr",
+            "_prg",
+            "bank1",
+            ".ber(",
+            ".mer(",
+            "keyr1",
+            "cr1",
+            "0x5200_2004",
+            "0x5200_200c",
+            "0x52002004",
+            "0x5200200c",
+        ] {
+            assert!(!src.contains(no), "chimera-board/src/{name} names {no}");
+        }
+        assert!(src.contains("bank2()"), "{name}");
     }
-    assert!(src.contains("bank2()"));
 }

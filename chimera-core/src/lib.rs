@@ -16,5 +16,6 @@ pub use chimera_engine::{
     project, reset, scope, source_table, storage, sym_alloc, taps, tracked, triple, voice_alloc,
 };
 
+pub mod bank2;
 pub mod console;
 pub mod ui;

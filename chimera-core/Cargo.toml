@@ -6,6 +6,8 @@ edition.workspace = true
 [dependencies]
 chimera-engine = { path = "../chimera-engine" }
 chimera-hal = { path = "../chimera-hal" }
+# Bank 2's verdict, for `status` and ABOUT (ADR 0137).
+chimera-image = { path = "../chimera-image" }
 chimera-theory = { path = "../chimera-theory" }
 libm = "0.2"
 embedded-graphics = "0.8"

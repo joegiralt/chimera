@@ -259,6 +259,7 @@ dependencies = [
  "chimera-core",
  "chimera-engine",
  "chimera-hal",
+ "chimera-image",
  "chimera-theory",
  "embedded-graphics",
  "embedded-graphics-core",

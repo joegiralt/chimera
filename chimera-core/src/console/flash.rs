@@ -23,14 +23,14 @@ pub struct FlashRegs {
     pub banks: [BankRegs; 2],
 }
 
-/// Where `FlashPeek`'s words come from: bank 2's start, and the stock
-/// bootloader's slot in bank-2 sector 4.
-pub const PEEK_AT: [u32; 2] = [0x0810_0000, 0x0818_0000];
+/// Where `FlashPeek`'s words come from: bank 2's start. The bootloader's
+/// slot at 0x08180000 is never read: the MPU makes it no-access (ADR 0137).
+pub const PEEK_AT: u32 = 0x0810_0000;
 
-/// The first 32 bytes at each `PEEK_AT`, then SR1 and SR2 read after them.
+/// The first 32 bytes at `PEEK_AT`, then SR1 and SR2 read after them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FlashPeek {
-    pub words: [[u32; 8]; 2],
+    pub words: [u32; 8],
     pub sr_after: [u32; 2],
 }
 
@@ -195,15 +195,13 @@ pub fn write_flash_regs(r: &FlashRegs, w: &mut impl Write) -> fmt::Result {
     Ok(())
 }
 
-/// `flash`'s peek lines: each address's words, erased or not, then SR1
-/// and SR2 after the reads.
+/// `flash`'s peek lines: the words, erased or not, then SR1 and SR2 after
+/// the reads.
 pub fn write_flash_peek(p: &FlashPeek, w: &mut impl Write) -> fmt::Result {
-    for (at, words) in PEEK_AT.iter().zip(&p.words) {
-        write!(w, "peek {at:08x}")?;
-        words.iter().try_for_each(|x| write!(w, " {x:08x}"))?;
-        let erased = words.iter().all(|&x| x == u32::MAX);
-        writeln!(w, " {}", if erased { "erased" } else { "written" })?;
-    }
+    write!(w, "peek {PEEK_AT:08x}")?;
+    p.words.iter().try_for_each(|x| write!(w, " {x:08x}"))?;
+    let erased = p.words.iter().all(|&x| x == u32::MAX);
+    writeln!(w, " {}", if erased { "erased" } else { "written" })?;
     let [sr1, sr2] = p.sr_after;
     write_sr("sr1_after", sr1, w)?;
     write_sr("sr2_after", sr2, w)

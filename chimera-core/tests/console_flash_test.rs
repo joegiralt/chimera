@@ -159,21 +159,25 @@ fn bank2_protected_swapped_and_stuck_erasing() {
 #[test]
 fn peek_says_erased_or_written() {
     let mut p = FlashPeek {
-        words: [[u32::MAX; 8]; 2],
+        words: [u32::MAX; 8],
         sr_after: [0, 1 << 25],
     };
-    p.words[1][7] = 0xffff_fffe;
+    let ff = " ffffffff".repeat(8);
     let mut s = String::new();
     write_flash_peek(&p, &mut s).unwrap();
-    let ff = " ffffffff".repeat(8);
     assert_eq!(
         s,
         format!(
             "peek 08100000{ff} erased\n\
-             peek 08180000{} fffffffe written\n\
              sr1_after 00000000 bsy 0 wbne 0 qw 0 crc_busy 0 eop 0 crcend 0 errors -\n\
-             sr2_after 02000000 bsy 0 wbne 0 qw 0 crc_busy 0 eop 0 crcend 0 errors sneccerr\n",
-            " ffffffff".repeat(7)
+             sr2_after 02000000 bsy 0 wbne 0 qw 0 crc_busy 0 eop 0 crcend 0 errors sneccerr\n"
         )
     );
+    p.words[7] = 0xffff_fffe;
+    let mut s = String::new();
+    write_flash_peek(&p, &mut s).unwrap();
+    assert!(s.starts_with(&format!(
+        "peek 08100000{} fffffffe written\n",
+        " ffffffff".repeat(7)
+    )));
 }

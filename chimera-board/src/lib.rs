@@ -5,8 +5,9 @@
 //! there.
 #![no_std]
 
-#[cfg(feature = "bank2-spike")]
 pub mod bank2;
+#[cfg(feature = "bank2-spike")]
+pub mod bank2_spike;
 pub mod cache;
 #[cfg(all(feature = "bench", feature = "usb-console"))]
 pub mod card_speed;
@@ -100,6 +101,8 @@ pub struct Board {
 #[cfg(not(feature = "sd-probe"))]
 struct SynthParts {
     reset_cause: ResetCause,
+    /// Bank 2 as the boot judged it: ABOUT and `status`.
+    bank2: chimera_core::bank2::Bank2Status,
     led: stm32h7xx_hal::gpio::PE1<Output<PushPull>>,
     beat_led: orbit::BeatLed,
     backlight: Backlight,
@@ -140,6 +143,9 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     #[cfg(feature = "usb-console")]
     let ccdr = usb::route_kernel_clock(ccdr);
     cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
+    // Bank 2 judged before anything could call into it (ADR 0137).
+    #[cfg(not(feature = "sd-probe"))]
+    let bank2 = bank2::boot_judge();
     #[cfg(not(feature = "sd-probe"))]
     shared::build_waves();
 
@@ -221,6 +227,7 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
         #[cfg(not(feature = "sd-probe"))]
         synth: SynthParts {
             reset_cause,
+            bank2,
             led,
             beat_led,
             backlight,
@@ -344,6 +351,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         synth:
             SynthParts {
                 reset_cause,
+                bank2,
                 mut led,
                 beat_led,
                 mut backlight,
@@ -360,6 +368,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
 
     let mut controls = Stm32Controls::new();
     let ui = shared::take_ui().expect("UI state taken once");
+    ui.set_bank2(bank2);
     ui.project_mut().set_gate_clock(gate_ms);
 
     // Start-up, in order, behind the splash until PART 1 can be drawn:

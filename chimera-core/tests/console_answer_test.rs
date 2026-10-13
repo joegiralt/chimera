@@ -366,6 +366,15 @@ fn status_is_its_lines_then_ok() {
 }
 
 #[test]
+fn status_says_how_bank2_judged() {
+    let mut u = Fake::new();
+    u.ui.set_bank2(chimera_core::bank2::Bank2Status::Empty);
+    let a = ask(&mut u, "status\n");
+    assert!(a.contains("\nbank2 empty\n"), "{a}");
+    assert!(a.ends_with("OK\n"));
+}
+
+#[test]
 fn the_chips_status_ends_with_its_boot_line() {
     let mut u = Fake::new();
     let seen = BootSeen {

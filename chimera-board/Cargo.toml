@@ -25,13 +25,13 @@ sweep-free = []
 fault-inject = ["usb-console", "chimera-core/fault-inject"]
 bank2-spike = ["usb-console", "chimera-core/bank2-spike"]
 # Bank 1's seal of the bank-2 image it was linked with (ADR 0137).
-bank2 = ["dep:chimera-image"]
+bank2 = []
 
 [dependencies]
 chimera-core = { path = "../chimera-core", default-features = false, features = ["stamp", "boot-waves"] }
 chimera-hal = { path = "../chimera-hal" }
 chimera-fat = { path = "../chimera-fat" }
-chimera-image = { path = "../chimera-image", optional = true }
+chimera-image = { path = "../chimera-image" }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 # As `chimera-stm32`'s: the rev V register definitions.
 stm32h7xx-hal = { version = "0.16", features = ["stm32h750v", "rt"] }

@@ -81,6 +81,8 @@ pub struct Frame<'a> {
     pub audio: Option<&'a AudioStats>,
     /// The card as last seen, for ABOUT.
     pub card: crate::storage::Card,
+    /// Bank 2 as the boot judged it, for ABOUT.
+    pub bank2: Option<crate::bank2::Bank2Status>,
     /// The master compressor's gain reduction, dB (MST's GR meter).
     pub master_gr_db: f32,
     /// The active Part's LEVEL LED fill (`ClipHold`); 0 is dark.
@@ -263,7 +265,7 @@ impl Renderer {
                 let ratio = RATIOS[((a(1) * 7.0 + 0.5) as usize).min(RATIOS.len() - 1)];
                 viz::compressor(display, -40.0 + 40.0 * a(0), ratio, f.master_gr_db);
             }
-            VizType::About => crate::ui::about_page::draw_viz(display),
+            VizType::About => crate::ui::about_page::draw_viz(display, f.bank2.as_ref()),
             VizType::Orbit => orbit::orb(display, &f.orbit, f.ctx.ring),
             VizType::OrbitCircle => orbit::circle(display, &f.orbit, self.orbit_cursor.current()),
             VizType::EnvSpeed => {
@@ -516,11 +518,12 @@ impl Renderer {
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
             PageLayout::BigViz => {
-                // The GR meter redraws every 0.25 dB.
+                // The GR meter redraws every 0.25 dB; ABOUT on bank 2's word.
                 let gr = match f.def.viz {
                     VizType::CompressorCurve => {
                         (clampf(f.master_gr_db, 0.0, viz::GR_RANGE_DB) * 4.0) as u32
                     }
+                    VizType::About => f.bank2.map_or(0, |b| 1 + b.is_open() as u32),
                     _ => 0,
                 };
                 (

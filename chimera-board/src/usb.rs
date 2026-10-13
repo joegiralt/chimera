@@ -381,7 +381,7 @@ impl Usb {
             // The spike's erase or program runs here, seconds at most,
             // before the answer's clock starts.
             #[cfg(feature = "bank2-spike")]
-            let b2 = crate::bank2::run(&req, cpu_hz);
+            let b2 = crate::bank2_spike::run(&req, cpu_hz);
             let unit = &mut ChipUnit {
                 ui: &*ui,
                 stats,
@@ -531,8 +531,9 @@ impl Unit for ChipUnit<'_> {
         Some(flash_regs())
     }
 
+    /// `None` while region 2 is `Closed`: the load would fault.
     fn flash_peek(&self) -> Option<FlashPeek> {
-        Some(flash_peek())
+        crate::bank2::mpu().readable().then(flash_peek)
     }
 
     fn forget_library(&mut self) {
@@ -681,14 +682,12 @@ fn flash_regs() -> FlashRegs {
 /// `PEEK_AT`'s first 32 bytes, then SR1 and SR2: an ECC error the reads
 /// raised shows there.
 fn flash_peek() -> FlashPeek {
-    let mut words = [[0u32; 8]; 2];
-    for (row, &at) in words.iter_mut().zip(&PEEK_AT) {
-        for (k, w) in (0u32..).zip(row.iter_mut()) {
-            // SAFETY: an aligned word inside the chip's 2 MB of flash
-            // (0x08000000..0x08200000), always mapped; a load never
-            // programs or erases it.
-            *w = unsafe { core::ptr::read_volatile((at + 4 * k) as *const u32) };
-        }
+    let mut words = [0u32; 8];
+    for (k, w) in (0u32..).zip(words.iter_mut()) {
+        // SAFETY: an aligned word of bank-2 sector 0, which MPU region 2
+        // maps readable (the caller checked `bank2::mpu()`); a load never
+        // programs or erases it.
+        *w = unsafe { core::ptr::read_volatile((PEEK_AT + 4 * k) as *const u32) };
     }
     let r = flash_regs();
     FlashPeek {
