@@ -28,12 +28,12 @@ The owner approved its eleven recommendations on 2026-10-13. Spec: `docs/superpo
   - Stepped targets are binned with ±2 counts of hysteresis and stepped through the encoder's edit path, so budget refusals and crossfades hold.
   - Equal repeats are ignored, and a ±1 reversal within 50 ms is a dead band.
 - **Channel.** Per Part, with no omni. Parts sharing a channel each apply their own map.
-- **The MIDI MAP page.** It is a `Screen` under SETTINGS › PART, drawn by the SETTINGS list renderer. Rows read `CC 74  CUTOFF  0–255`. A, B, C and D set the row, CC, MIN and MAX; MIX+MINUS deletes. Entries for another engine are kept and dimmed.
+- **The MIDI MAP page.** It is a `Screen` at SETTINGS › PART › MIDI MAP (owner ruling, 2026-10-13), drawn by the SETTINGS list renderer. Rows read `CC 74  CUTOFF  0–255`. A, B, C and D set the row, CC, MIN and MAX; MIX+MINUS deletes. Entries for another engine are kept and dimmed.
 - **The default map.** INIT and every factory Sound carry it explicitly as data:
   - 74 CUTOFF, 71 RESONANCE;
   - 7/10 Part LEVEL/PAN;
   - 91 SEND3 (reverb), 93 SEND1 (chorus);
-  - 1 LFO1 DEPTH, with LFO1 → PITCH primed at 0 in INIT;
+  - 1 LFO1 DEPTH, with INIT's LFO1 DEPTH at 0 and LFO1 → PITCH at amount 2 (±0.38 semitone), so the wheel plays vibrato from 0 out of the box (owner ruling, 2026-10-13). INIT's LFO1 → CUTOFF route stays at 0, but every LFO1 route on INIT now sounds only as far as the wheel is up;
   - 16–19 the engine's four macros.
 - **Latency.** Alpha accepts UI-loop latency. A sample-accurate audio-side path is post-alpha.
 - **Superseded in part:**

@@ -22,6 +22,11 @@ The owner approved all eleven of the review's recommendations as written:
 10. **CC 120/121/123 are fixed now, as a separate alpha issue.** That work is in progress on branch `all-notes-off`, outside this spec.
 11. **Flash: ~5–8 KB is approved.** #460 (bank 2) is the next lever.
 
+**The owner's two rulings on § 14 (2026-10-13, with the plan's approval):**
+
+1. **Mod-wheel vibrato out of the box.** INIT sets LFO1 DEPTH to 0 and routes LFO1 → PITCH at amount 2 (±0.38 semitone at DEPTH 1). CC 1 → LFO1 DEPTH brings the vibrato in from 0. See § 9.
+2. **MIDI MAP lives at SETTINGS › PART › MIDI MAP** (§ 8, confirmed).
+
 **Record tag (correction in the ruling):** the map's Sound record is **`MidiMap`, `0x001E`**, not critical. `0x001C` is `Build` on main. `0x001D` is `Note` on `showcase-library` (`chimera-engine/src/storage/record.rs:104`). No other branch or worktree defines a tag past `0x001C` (checked 2026-10-13 across every local and remote branch and the seven worktrees). `0x0C`–`0x0F` stay reserved for the project's own records (library spec line 60).
 
 ## 1. Transport: a CC ring per source
@@ -167,7 +172,11 @@ It refuses everything else: CH, MODE, OUTPUT, BEND, SNAP and HELD on the Part, `
 | 16–19, TAPE | none (COMING SOON, ADR 0132) |
 
 - **Size:** 11 entries, a 59 B record.
-- **CC 1 → LFO1 DEPTH, "with LFO1 → PITCH routed at 0 in INIT"** (ruling 9). INIT primes PITCH as a registry destination and routes LFO1 → PITCH at 0, so a player dials the vibrato amount once and the wheel then plays it. **See § 13 item 5:** as approved, the wheel gives no vibrato out of the box.
+- **CC 1 → LFO1 DEPTH: mod-wheel vibrato out of the box** (owner ruling, 2026-10-13, superseding the "routed at 0" form).
+  - INIT sets **LFO1 DEPTH = 0** and primes `ParamAddr(Pitch, PitchParams::PITCH)` as a registry destination with **LFO1 → PITCH at amount 2**. PITCH's offset law is `Semitones(24)`, so amount 2 is 2/127 × 24 ≈ **±0.38 semitone** at DEPTH 1 (amount 1 would be ±0.19). The wheel at 0 gives no vibrato; full wheel gives a classic vibrato.
+  - **What changes for INIT's LFO1 → FREQ (CUTOFF) route:** it stays at amount 0, so at rest nothing changes. But DEPTH scales every LFO1 route, so a player who later dials LFO1 → CUTOFF (or any LFO1 route) hears it only as far as DEPTH (the wheel) is up. LFO1 is the wheel's LFO on INIT; LFO2 and LFO3 keep DEPTH 1 for free-running modulation.
+  - **At rest INIT sounds the same.** The LFO's output is `raw × DEPTH` = 0 (`dsp/lfo.rs:531`), every LFO1 route's sum is ±0.0, and the voice skips an offset of 0 (`dsp/voice.rs:1019`). INIT's render with the wheel at 0 is bit-identical to before (Task 8 pins it).
+  - The factory Sounds keep their own LFO1 DEPTH and routes; they get only the map, so the wheel jumps DEPTH on first touch (§ 5).
 - **Factory Sounds on main** are the 12 built-ins in `factory.bin` (`chimera-engine/src/factory.rs:15`: 8 ALGO and the 4 formant demos), plus INIT per playable engine. Each carries the default map. `GOLDEN_RECORD=1` regenerates the blob.
 - **Factory Sounds on `showcase-library`** are TOML Sources built by the `factory-sounds` tool: 15 public on the card, plus the private TX81Z ports. After both branches merge, the tool writes `default_for(engine)` into every Source it builds unless the Source states its own `map`. The ports, built by the same tool, get it too. See the plan's coordination task.
 
@@ -234,7 +243,7 @@ Every other file:line the review cites matches main. These did not:
    - INIT's LFO1 route goes to the fixed FREQ column, which is **filter CUTOFF**, not pitch (`modulation.rs:41-43`, `preset.rs:38-40`).
    - LFO DEPTH defaults to 1.0 (`dsp/lfo.rs:172-183`).
    - A route at 0 gives no vibrato at any DEPTH.
-   - § 9 builds what was approved: CC 1 → LFO1 DEPTH, and LFO1 → PITCH primed at 0. The owner question is below.
+   - **Resolved by the owner (2026-10-13):** INIT's LFO1 DEPTH is 0 and LFO1 → PITCH is at amount 2, so the wheel plays vibrato from 0 (§ 9).
 6. **"The 32 factory Sounds" is out of date.** Main's NEW holds 12 built-ins plus the INITs. The showcase set lives on the card (§ 9).
 7. **`knobs.rs:737` is `:738-739`.** The hold-gate citation is `hold.rs:113-114`, not `:99-111`.
 8. **M2 (CC 120/121/123) is already in progress** on `all-notes-off` (worktree `chimera-notesoff`, uncommitted). It edits `InEvent::from_midi`, so § 1's `route` is built on top of it, whichever lands second rebases.
@@ -245,9 +254,7 @@ Every other file:line the review cites matches main. These did not:
    - The new ADR supersedes those in part.
    - `reverb_panel::label` stays: it is used by the panel.
 
-## 14. Open for the owner
+## 14. Resolved by the owner (2026-10-13)
 
-- **Vibrato on the wheel** (§ 13 item 5). As approved, INIT keeps LFO1 DEPTH 1 and routes LFO1 → PITCH at 0, so the wheel moves nothing until the player sets a route amount.
-  - The alternative: INIT sets LFO1 DEPTH 0 and LFO1 → PITCH at about ±0.3 semitone, for vibrato out of the box. But then any new LFO1 route is silent until DEPTH or the wheel is raised.
-  - The plan builds the approved form, and the alternative is a two-line change.
-- **MIDI MAP's place** (§ 8): SETTINGS › PART › MIDI MAP. Confirm, or name a mixer-rung page (which would be a new page type).
+- **Vibrato on the wheel** (§ 13 item 5): out of the box. INIT's LFO1 DEPTH is 0 and LFO1 → PITCH is at amount 2 (§ 9). The cost the owner accepted: any new LFO1 route on INIT is silent until DEPTH or the wheel is raised.
+- **MIDI MAP's place** (§ 8): SETTINGS › PART › MIDI MAP, confirmed.
