@@ -1,8 +1,8 @@
 //! Mapped CCs move the Sound in the UI (spec §§ 5-7): through the
 //! encoder's edit path, ramped over the gap between CCs, and never more
-//! than `MOVES − 1` knob writes a Part a pass, so a publish never lands
+//! than `MOVES − 1` knob moves in flight a Part, so the audio never lands
 //! the knobs. A `UiState` is published to a real `Instrument` as the
-//! shells do: one publish a pass, the audio's blocks between.
+//! shells do: one publish a pass, the audio's blocks between, or none.
 
 #![cfg(feature = "midi-map")]
 
@@ -60,7 +60,8 @@ fn spec(a: ParamAddr) -> &'static ParamSpec {
 }
 
 /// A UI, published each pass to an `Instrument`, with the most knob moves
-/// any one publish of Part 1 carried.
+/// of Part 1 the audio took in one block, and whether it has taken the
+/// last publish.
 struct Bench {
     ui: Box<UiState>,
     shared: Box<AudioShared>,
@@ -72,6 +73,7 @@ struct Bench {
     now: u32,
     seen: u32,
     most: u32,
+    taken: bool,
 }
 
 impl Bench {
@@ -97,9 +99,10 @@ impl Bench {
             now: 1_000,
             seen: 0,
             most: 0,
+            taken: true,
         };
         b.publish();
-        b.most = 0;
+        b.reset_most();
         b
     }
 
@@ -133,12 +136,26 @@ impl Bench {
         if let Some(i) = input {
             feed(&mut self.ui, i);
         }
-        self.ui.hear_ccs(ccs.into_iter(), Ms(self.now));
+        self.ui.hear_ccs(ccs.into_iter(), Ms(self.now), self.taken);
         self.publish();
         for _ in 0..blocks {
-            self.inst
-                .render(&mut self.fx, &mut self.dac, &self.shared, &mut self.scope);
+            self.render();
         }
+    }
+
+    /// One audio block: it takes the publish, every move since it last did.
+    fn render(&mut self) {
+        let c = self.shared.parts[0].knobs.count();
+        self.most = self.most.max(c.wrapping_sub(self.seen));
+        (self.seen, self.taken) = (c, true);
+        self.inst
+            .render(&mut self.fx, &mut self.dac, &self.shared, &mut self.scope);
+    }
+
+    /// As if the audio had taken every move so far: the count starts now.
+    fn reset_most(&mut self) {
+        self.seen = self.shared.parts[0].knobs.count();
+        self.most = 0;
     }
 
     /// One 4 ms pass, Part 1's CCs `(cc, value)`.
@@ -156,9 +173,7 @@ impl Bench {
     fn publish(&mut self) {
         self.shared
             .update_from_project(self.ui.project(), 0, &mut self.knobs);
-        let c = self.shared.parts[0].knobs.count();
-        self.most = self.most.max(c.wrapping_sub(self.seen));
-        self.seen = c;
+        self.taken = false;
     }
 
     fn note(&mut self) {
@@ -169,8 +184,7 @@ impl Bench {
         };
         self.inst.handle(ev, &self.shared);
         for _ in 0..200 {
-            self.inst
-                .render(&mut self.fx, &mut self.dac, &self.shared, &mut self.scope);
+            self.render();
         }
     }
 
@@ -259,7 +273,7 @@ fn sweep(hands: &[EncoderId]) {
     f.resonance = spec(RESO).denormalize(0.5);
     b.publish();
     b.note();
-    b.most = 0;
+    b.reset_most();
     b.go_to_page(FILTER.id);
     let mut steps = vec![0.0f32; knobs.len()];
     let mut last: Vec<f32> = knobs.iter().map(|k| b.played(k.addr)).collect();
@@ -280,8 +294,7 @@ fn sweep(hands: &[EncoderId]) {
             .fold(Input::default(), |i, &e| i.and_turn(e, d));
         b.pass_with(ccs, Some(turn), PASS_MS, 0);
         for _ in 0..PASS_BLOCKS {
-            b.inst
-                .render(&mut b.fx, &mut b.dac, &b.shared, &mut b.scope);
+            b.render();
             for (i, k) in knobs.iter().enumerate() {
                 let now = b.played(k.addr);
                 steps[i] = steps[i].max((now - last[i]).abs());
@@ -346,20 +359,21 @@ fn slow_cc74_step_bound() {
     assert!(most <= 0.03, "{most} octave in a pass");
 }
 
+/// A block each 1 ms pass: the audio takes each publish.
 #[test]
 fn p_lock_crosses_in_floor() {
     let mut b = Bench::algo();
     b.map(P1, 74, CUTOFF);
-    b.pass_with(vec![b.ev(P1, 74, 0)], None, 1, 0);
+    b.pass_with(vec![b.ev(P1, 74, 0)], None, 1, 1);
     for _ in 0..1_000 {
-        b.pass_with(vec![], None, 1, 0);
+        b.pass_with(vec![], None, 1, 1);
     }
     assert_eq!(b.place(P1, CUTOFF), 0.0);
-    b.pass_with(vec![b.ev(P1, 74, 100)], None, 1, 0);
+    b.pass_with(vec![b.ev(P1, 74, 100)], None, 1, 1);
     let to = spec(CUTOFF).denormalize(place_of(100));
     let mut ms = 0;
     while b.stored(P1, CUTOFF) != to {
-        b.pass_with(vec![], None, 1, 0);
+        b.pass_with(vec![], None, 1, 1);
         ms += 1;
         assert!(ms <= 15, "not there in 15 ms");
     }
@@ -521,10 +535,10 @@ fn ring_keeps_the_last_value() {
     }
     assert_eq!(ring.dropped(), 10);
     b.now += PASS_MS;
-    b.ui.hear_ccs(ring.drain(), Ms(b.now));
+    b.ui.hear_ccs(ring.drain(), Ms(b.now), true);
     ring.push(b.ev(P1, 74, 5));
     b.now += PASS_MS;
-    b.ui.hear_ccs(ring.drain(), Ms(b.now));
+    b.ui.hear_ccs(ring.drain(), Ms(b.now), true);
     for _ in 0..40 {
         b.pass(&[]);
     }
@@ -670,7 +684,7 @@ fn model_changes_never_overflow_a_publish() {
     }
     b.map(P1, 30, MODEL);
     b.publish();
-    b.most = 0;
+    b.reset_most();
     b.go_to_page(TAPE_DECK.id);
     let n = 400;
     for t in 0..=n {
@@ -693,4 +707,203 @@ fn model_changes_never_overflow_a_publish() {
     for k in &knobs {
         assert_eq!(b.place(P1, k.addr), 1.0, "{:?} arrives", k.addr);
     }
+}
+
+/// The audio takes every move published since it last took one: two UI
+/// passes with no block between, the hand turning in the second, then a
+/// block. The CCs left room for what was in flight, so the block never
+/// takes more than `MOVES`.
+#[test]
+fn two_passes_in_one_block_never_overflow() {
+    let mut b = Bench::algo();
+    let knobs = eight_knobs();
+    for (i, k) in knobs.iter().enumerate() {
+        b.map(P1, 20 + i as u8, k.addr);
+    }
+    b.go_to_page(FILTER.id);
+    b.publish();
+    b.note();
+    b.reset_most();
+    for v in [0, 127, 0] {
+        // Heard, so the next passes' ramps write every knob.
+        let ccs = (0..knobs.len())
+            .map(|i| b.ev(P1, 20 + i as u8, v))
+            .collect();
+        b.pass_with(ccs, None, PASS_MS, PASS_BLOCKS);
+        b.pass_with(vec![], None, PASS_MS, 0);
+        let turn = Input::turn(EncoderId::B, 1);
+        b.pass_with(vec![], Some(turn), PASS_MS, 0);
+        b.render();
+        assert!(b.most as usize <= MOVES, "a block took {} moves", b.most);
+        assert!(b.most as usize >= MOVES - 1, "the budget is spent");
+    }
+}
+
+/// A CC in the pass that queues a LOAD (spec § 1): dropped, so the load's
+/// witness holds and the project loads.
+#[test]
+fn a_cc_beside_a_queued_load_is_dropped() {
+    let mut s = MemStore::new(1);
+    let f = screen::put(&mut s, "NEXT");
+    let mut ui = Box::new(UiState::new());
+    let ch = ui.project().part(P1).mix.channel;
+    let ev = |v| CcEvent {
+        channel: ch,
+        cc: Cc::new(74).unwrap(),
+        value: v,
+    };
+    // INIT's CC 74 heard: CUTOFF ramps from the next pass.
+    ui.hear_ccs(core::iter::once(ev(0)), Ms(1_000), true);
+    let mut r = screen::Rig::new(&mut ui, s);
+    r.to(&["PROJECT", "LOAD PROJECT"]);
+    let l = r.ui.listing();
+    let i = (0..l.len())
+        .find(|&i| l.entry(i).unwrap().file() == f)
+        .expect("listed");
+    r.bar_to(i);
+    // As the shells: the key queues the load, the CCs, then the card.
+    screen::tap(r.ui, ButtonId::Edit);
+    assert!(r.ui.job_queued_for_test());
+    r.ui.hear_ccs(core::iter::once(ev(127)), Ms(1_010), true);
+    r.work();
+    assert_eq!(r.ui.project().meta().file(), Some(f), "loaded");
+}
+
+/// A CC steps op A's WAVE off FRMT on the active Part: the chain loses
+/// its FRMT page, and the page is kept by id as the same encoder turn
+/// keeps it.
+#[test]
+fn a_stepped_cc_keeps_the_page_as_a_turn_does() {
+    use chimera_core::midi_map::ramp::bin;
+    let on_op_a = || {
+        let mut s = Sound::plain_init(EngineType::Algo);
+        s.params.algo.try_set_kind(0, OpKind::Formant).unwrap();
+        let mut b = Bench::new(s);
+        screen::to_osc(&mut b.ui);
+        screen::to_osc_sub(&mut b.ui, &ALGO_OP_PAGES[0]);
+        b
+    };
+    let kind = |b: &Bench| b.ui.project().part(P1).sound.params.algo.kinds().get(0);
+    let chain = |b: &Bench| PartChain::of(&b.ui.project().part(P1).sound);
+    let mut turned = on_op_a();
+    assert_eq!(chain(&turned), PartChain::AlgoFormant);
+    feed(&mut turned.ui, Input::turn(EncoderId::A, -1));
+    assert_eq!(chain(&turned), PartChain::Algo, "FRMT's page gone");
+    let mut cc = on_op_a();
+    cc.map(P1, 31, WAVE_A);
+    let s = spec(WAVE_A);
+    let steps = (s.max - s.min) as u16 + 1;
+    let at = (cc.stored(P1, WAVE_A) - s.min) as u16;
+    let v = (0..=127u8)
+        .find(|&v| bin(v, steps, 0, 255, at) == at - 1)
+        .unwrap();
+    cc.pass(&[(31, v)]);
+    assert_eq!(kind(&cc), kind(&turned));
+    assert_eq!(cc.ui.page_def().id, ALGO_OP_PAGES[0].id, "kept by id");
+    assert_eq!(cc.ui.location(), turned.ui.location());
+    assert_eq!(cc.ui.page(), turned.ui.page());
+}
+
+/// `a` on Part 1 from where it rests to CC `cc`'s top: ramped over passes,
+/// never a jump, and there.
+fn ramps_up(b: &mut Bench, cc: u8, a: ParamAddr) {
+    let mut was = b.place(P1, a);
+    assert!(was < 1.0, "{a:?} rests below the top");
+    b.pass(&[(cc, 127)]);
+    let mut steps = 0;
+    while b.place(P1, a) < 1.0 {
+        b.pass(&[]);
+        let now = b.place(P1, a);
+        assert!(now >= was, "{a:?} never backs off");
+        assert!(now - was < 0.5, "{a:?} jumped {} in a pass", now - was);
+        steps += usize::from(now > was);
+        was = now;
+        assert!(steps < 40, "{a:?} never arrives");
+    }
+    assert!(steps >= 3, "{a:?} in {steps} steps: a jump, not a ramp");
+}
+
+/// INIT's default map (spec § 9): LEVEL, PAN, the sends and the wheel's
+/// DEPTH each ramp to their CC.
+#[test]
+fn init_default_map_moves_its_targets() {
+    use chimera_core::dsp::lfo::LfoParams;
+    use chimera_core::dsp::modulator::LfoSlot;
+    use chimera_core::params::OutParams;
+    use chimera_core::part::PartParams;
+    let mut b = Bench::new(Sound::init(EngineType::Algo));
+    b.note();
+    for (cc, a) in [
+        (7, ParamAddr::new(BlockRef::Part, PartParams::LEVEL)),
+        (10, ParamAddr::new(BlockRef::Part, PartParams::PAN)),
+        (91, ParamAddr::new(BlockRef::Out, OutParams::SEND3)),
+        (93, ParamAddr::new(BlockRef::Out, OutParams::SEND1)),
+        (
+            1,
+            ParamAddr::new(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::DEPTH),
+        ),
+    ] {
+        ramps_up(&mut b, cc, a);
+    }
+}
+
+/// MIX + SEQ, then a turn moves the focus to cell `i`: armed on it.
+fn arm_on(b: &mut Bench, i: usize) {
+    use chimera_core::ui::learn::Learn;
+    feed(
+        &mut b.ui,
+        Input::chord(ButtonId::Mix, ButtonId::Seq).at(10_000),
+    );
+    feed(
+        &mut b.ui,
+        Input::release(ButtonId::Seq)
+            .and_held(ButtonId::Mix)
+            .at(10_100),
+    );
+    feed(&mut b.ui, Input::release(ButtonId::Mix).at(10_133));
+    let e = [
+        EncoderId::A,
+        EncoderId::B,
+        EncoderId::C,
+        EncoderId::D,
+        EncoderId::E,
+        EncoderId::F,
+    ][i];
+    feed(&mut b.ui, Input::turn(e, 1));
+    assert!(matches!(b.ui.learn(), Learn::Armed { .. }));
+    assert_eq!(b.ui.focused_slot(), i);
+}
+
+/// Learn end to end on a MODAL and an ALGO cell: armed on the cell, its
+/// CC maps it, and the CC then ramps it.
+#[test]
+fn learned_cells_ramp() {
+    use chimera_core::ui::block_registry::{ALGO_LEVEL, MODAL_1};
+    let bright = ParamAddr::new(BlockRef::Modal, ModalParams::BRIGHT);
+    let mut b = Bench::new(Sound::init(EngineType::Modal));
+    b.go_to_page(MODAL_1.id);
+    arm_on(&mut b, 2);
+    b.pass(&[(40, 0)]);
+    let map = b.ui.project().part(P1).sound.map;
+    assert!(
+        map.targets_of(Cc::new(40).unwrap())
+            .any(|(_, e)| e.target.addr() == bright)
+    );
+    b.passes(20);
+    ramps_up(&mut b, 40, bright);
+
+    let level = ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::LEVEL);
+    let mut b = Bench::new(Sound::init(EngineType::Algo));
+    screen::to_osc(&mut b.ui);
+    screen::to_osc_sub(&mut b.ui, &ALGO_LEVEL);
+    arm_on(&mut b, 0);
+    b.pass(&[(41, 0)]);
+    let map = b.ui.project().part(P1).sound.map;
+    assert!(
+        map.targets_of(Cc::new(41).unwrap())
+            .any(|(_, e)| e.target.addr() == level)
+    );
+    b.pass(&[(41, 0)]);
+    b.passes(20);
+    ramps_up(&mut b, 41, level);
 }

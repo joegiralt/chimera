@@ -73,7 +73,7 @@ fn cc(ui: &mut UiState, channel: MidiChannel, n: u8, value: u8, at: u32) {
         cc: Cc::new(n).unwrap(),
         value,
     };
-    ui.hear_ccs(core::iter::once(ev), Ms(at));
+    ui.hear_ccs(core::iter::once(ev), Ms(at), true);
 }
 
 fn stored(ui: &UiState, a: ParamAddr) -> f32 {
@@ -251,6 +251,18 @@ fn learn_cancels_on_nav() {
         assert_eq!(ui.project().part(P1).sound.map, map, "{i}: not learned");
         assert_ne!(stored(&ui, RESO), was, "{i}: applied");
     }
+}
+
+/// MENU held (quick save) is a key like the others: it cancels.
+#[test]
+fn menu_hold_cancels_learn() {
+    let mut ui = on_cutoff();
+    mix_seq(&mut ui);
+    assert!(armed(&ui));
+    feed(&mut ui, Input::press(Menu).at(20_000));
+    feed(&mut ui, Input::held(Menu).at(21_000));
+    assert!(ui.job_queued_for_test(), "the quick save asked");
+    assert_eq!(ui.learn(), Learn::Off);
 }
 
 #[cfg(feature = "orbit")]

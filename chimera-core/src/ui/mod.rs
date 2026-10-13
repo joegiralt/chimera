@@ -1455,6 +1455,46 @@ impl UiState {
         self.edit_in(part, a, how)
     }
 
+    /// After an edit of Part `at`, whose chain was `chain` and slots read
+    /// `before` on page `def`: the page kept by id, the animators re-seeded
+    /// and the page identity refreshed. The page it is now on.
+    fn after_edit(
+        &mut self,
+        at: PartId,
+        chain: PartChain,
+        before: SlotCtx,
+        def: &'static BlockDef,
+    ) -> &'static BlockDef {
+        // An edit may change the Part's chain: keep the page by id.
+        let def = if PartChain::of(&self.project.part(at).sound) == chain {
+            def
+        } else {
+            let from = self.loc;
+            self.loc = self.loc.rechained(at, chain, &self.cx());
+            if self.loc != from {
+                self.enter_page();
+            }
+            self.page_def()
+        };
+        // A KIND, TYPE or operator change re-seeds the page's animators: a lerp
+        // between two parameters' values would draw a meaningless sweep.
+        // A machine's cells on DECK stay the same params: its defaults
+        // glide in.
+        let now = self.ctx();
+        if now
+            != (SlotCtx {
+                tape: now.tape,
+                ..before
+            })
+        {
+            let values = self.display_values();
+            self.renderer.snap_to_current(values);
+        }
+        // The operator selection is part of the page identity.
+        self.page = PageKey::from_location(self.loc, def, self.sel_op);
+        def
+    }
+
     /// `part_page::edit` on Part `part`'s blocks.
     fn edit_in(&mut self, part: PartId, a: ParamAddr, how: part_page::Edit) -> bool {
         let params = &mut UiBlocks {
@@ -2381,6 +2421,8 @@ impl UiState {
             self.closed();
         }
         if presses.menu == Some(Press::Hold) {
+            // A key like any other: it cancels learn (spec § 4).
+            self.learn = learn::Learn::Off;
             self.quick_save();
         }
         if self.loc.orbit().is_some() {
@@ -2621,33 +2663,7 @@ impl UiState {
                     self.cc_hand(at, a);
                 }
             }
-            // An edit may change the Part's chain: keep the page by id.
-            let def = if PartChain::of(&self.project.part(at).sound) == chain {
-                def
-            } else {
-                let from = self.loc;
-                self.loc = self.loc.rechained(at, chain, &self.cx());
-                if self.loc != from {
-                    self.enter_page();
-                }
-                self.page_def()
-            };
-            // A KIND, TYPE or operator change re-seeds the page's animators: a lerp
-            // between two parameters' values would draw a meaningless sweep.
-            // A machine's cells on DECK stay the same params: its defaults
-            // glide in.
-            let now = self.ctx();
-            if now
-                != (SlotCtx {
-                    tape: now.tape,
-                    ..before
-                })
-            {
-                let values = self.display_values();
-                self.renderer.snap_to_current(values);
-            }
-            // The operator selection is part of the page identity.
-            self.page = PageKey::from_location(self.loc, def, self.sel_op);
+            let def = self.after_edit(at, chain, before, def);
 
             // MIX + Plus/Minus: prime/un-prime parameter for modulation
             if shift {

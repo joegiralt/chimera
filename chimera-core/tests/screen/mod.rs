@@ -426,7 +426,7 @@ impl<'u> Rig<'u> {
         }
     }
 
-    fn work(&mut self) {
+    pub fn work(&mut self) {
         let link = &self.link;
         let cx = CardCx {
             card: &mut self.card,

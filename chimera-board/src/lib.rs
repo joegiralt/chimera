@@ -526,7 +526,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         // Mapped CCs, in the room the hand's moves left. No bench run plays
         // a controller: bench firmware leaves the MIDI map out (FLASH, #507).
         #[cfg(all(feature = "midi-din", feature = "midi-map"))]
-        ui.hear_ccs(cc_din.drain(), controls::now_ms());
+        ui.hear_ccs(cc_din.drain(), controls::now_ms(), shared_w.taken());
         // SYSTEM synced first: a THEME change made in this visit is kept.
         if let Some(yes) = ui.take_dfu_synced(&mut sync, &mut card, store, &mut settings) {
             dfu::enter(&marker, dfu::DfuFrom::Menu(yes));

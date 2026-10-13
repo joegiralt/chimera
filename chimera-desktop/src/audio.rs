@@ -164,6 +164,12 @@ impl DesktopAudio {
         }
     }
 
+    /// The audio thread has taken the last `update`.
+    #[cfg(feature = "midi")]
+    pub fn taken(&self) -> bool {
+        self.shared_audio.taken()
+    }
+
     /// Push a note-on onto the keyboard's queue.
     pub fn note_on(&mut self, channel: MidiChannel, note: MidiNote, velocity: Velocity) {
         self.keys.push(NoteEvent {

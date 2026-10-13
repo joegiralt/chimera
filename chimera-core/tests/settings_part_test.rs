@@ -653,11 +653,11 @@ mod midi_map {
             cc: Cc::new(74).unwrap(),
             value: v,
         };
-        ui.hear_ccs(core::iter::once(ev(0)), Ms(100));
-        ui.hear_ccs(core::iter::once(ev(127)), Ms(200));
+        ui.hear_ccs(core::iter::once(ev(0)), Ms(100), true);
+        ui.hear_ccs(core::iter::once(ev(127)), Ms(200), true);
         turn(&mut ui, EncoderId::D, -50);
         let was = ui.project().part(P[0]).sound.params.filter.cutoff;
-        ui.hear_ccs(core::iter::empty(), Ms(300));
+        ui.hear_ccs(core::iter::empty(), Ms(300), true);
         assert_eq!(ui.project().part(P[0]).sound.params.filter.cutoff, was);
     }
 }

@@ -145,6 +145,7 @@ fn main() {
         ui.hear_ccs(
             audio::MIDI_CCS.drain(),
             chimera_hal::Controls::now_ms(&controls),
+            audio.taken(),
         );
         if ui
             .take_dfu_synced(&mut sync, &mut card, &mut store, &mut settings)

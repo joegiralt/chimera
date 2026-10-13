@@ -1,12 +1,13 @@
 //! Mapped CCs move the Sound (spec §§ 5-7): each Part's map heard on its
 //! channel, continuous targets ramped over the gap between CCs, stepped
 //! ones binned through the encoder's edit path, and only as many knob
-//! writes a Part a pass as the hand left room for, so a publish never
-//! overflows.
+//! writes a Part as the moves still in flight to the audio leave room
+//! for, so the audio never takes more than `MOVES` at once.
 
 use chimera_hal::Ms;
 
 use super::UiState;
+use super::nav::PartChain;
 use super::part_page::Edit;
 use crate::addr::{BlockRef, ParamAddr};
 use crate::block::Motion;
@@ -24,8 +25,9 @@ const NO_BIN: u8 = u8::MAX;
 
 /// Each Part's entries' ramps, last bins and waiting bins, its budget
 /// cursor, the Sound loads they were heard on, the entries the hand
-/// turned and the knob writes left this pass; the hand's knob moves this
-/// pass. ~1.8 KB.
+/// turned, the knob writes left this pass and the knob moves published
+/// since the audio last took a publish; the hand's knob moves this pass.
+/// ~1.8 KB.
 pub struct CcState {
     ramps: [[Ramp; MAP_LEN]; MAX_PARTS],
     bins: [[u8; MAP_LEN]; MAX_PARTS],
@@ -36,8 +38,12 @@ pub struct CcState {
     /// Entries the hand turned this pass: no CC moves them till the next.
     handed: [u16; MAX_PARTS],
     room: [u8; MAX_PARTS],
+    /// Knob moves published since the audio last took a publish.
+    flight: [u8; MAX_PARTS],
     last: Ms,
     hand: u8,
+    /// A stepped CC moved the active Part this pass.
+    stepped: bool,
 }
 
 impl Default for CcState {
@@ -56,17 +62,20 @@ impl CcState {
             loads: [Loads::NONE; MAX_PARTS],
             handed: [0; MAX_PARTS],
             room: [0; MAX_PARTS],
+            flight: [0; MAX_PARTS],
             last: Ms(0),
             hand: 0,
+            stepped: false,
         }
     }
 
     /// A new project: no ramp or bin survives it.
     pub(super) fn clear(&mut self) {
-        let (last, hand) = (self.last, self.hand);
+        let (last, hand, flight) = (self.last, self.hand, self.flight);
         *self = Self {
             last,
             hand,
+            flight,
             ..Self::new()
         };
     }
@@ -115,28 +124,41 @@ pub(super) fn model_writes(m: TapeModel) -> u8 {
 impl UiState {
     /// Each Part's ramps `now` on, then this pass's CCs (spec §§ 5-7).
     /// After `handle_input`, before the publish: the hand's moves are in.
-    pub fn hear_ccs(&mut self, ccs: impl Iterator<Item = CcEvent>, now: Ms) {
+    /// `taken`: the audio has taken the last publish (`Writer::taken`).
+    /// Card work waiting drops them (spec § 1): a write now would refuse
+    /// the load or adopt its witness confirmed.
+    pub fn hear_ccs(&mut self, ccs: impl Iterator<Item = CcEvent>, now: Ms, taken: bool) {
         let elapsed = now.since(self.cc.last);
         self.cc.last = now;
+        let busy = self.job.is_some() || self.lib.busy() || self.src.busy();
+        let at = self.active_part;
+        let chain = PartChain::of(&self.project.part(at).sound);
+        let (before, rev) = (self.ctx(), self.project.rev());
+        // The audio takes every move published since it last took one, over
+        // however many passes: two can read the ms clock microseconds apart
+        // (one a redraw held up). So the room is what the moves in flight,
+        // the hand's this pass among them, leave.
+        if taken {
+            self.cc.flight = [0; MAX_PARTS];
+        }
         // Waiting bins first, then ramps: one heard now starts now, not
-        // `elapsed` ago. Per pass is per publish: writes need a ms to
-        // pass, and the ms clock's 2 ms tick outlasts a 1.33 ms block, so
-        // the audio never takes two passes' writes in one block.
+        // `elapsed` ago.
         for p in PartId::ALL {
-            self.cc_reset_on_load(p);
-            let hand = if p == self.active_part {
-                self.cc.hand
-            } else {
-                0
-            };
+            let i = p.index();
+            let hand = if p == at { self.cc.hand } else { 0 };
+            self.cc.flight[i] = self.cc.flight[i].saturating_add(hand);
             // One kept for a key's edit (a route deleted or primed).
-            self.cc.room[p.index()] = (MOVES as u8 - 1).saturating_sub(hand);
+            self.cc.room[i] = (MOVES as u8 - 1).saturating_sub(self.cc.flight[i]);
+            if busy {
+                continue;
+            }
+            self.cc_reset_on_load(p);
             self.cc_pending(p);
             if elapsed > 0 {
                 self.cc_step(p, elapsed);
             }
         }
-        for ev in ccs {
+        for ev in ccs.filter(|_| !busy) {
             #[cfg(feature = "midi-map")]
             if self.learn_cc(ev) {
                 continue;
@@ -152,7 +174,16 @@ impl UiState {
                 }
             }
         }
+        for (f, r) in self.cc.flight.iter_mut().zip(self.cc.room) {
+            *f = (*f).max(MOVES as u8 - 1) - r;
+        }
         self.cc.handed = [0; MAX_PARTS];
+        // The page follows a stepped CC on the active Part as a turn's.
+        if core::mem::take(&mut self.cc.stepped) && self.loc.page(&self.cx()).is_some() {
+            self.after_edit(at, chain, before, self.page_def());
+        }
+        // A CC on a browsed Part moves its cost and meter hints.
+        self.browser_dirty |= self.loc.browse().is_some() && self.project.rev() != rev;
     }
 
     /// Part `p`'s waiting bins, as far as this pass has room.
@@ -190,7 +221,7 @@ impl UiState {
             return;
         }
         self.cc.room[i] -= cost;
-        self.edit_addr(p, a, d, false);
+        self.cc.stepped |= self.edit_addr(p, a, d, false) && p == self.active_part;
     }
 
     /// A new Sound (a load, NEW, Revert, CLEAR): every ramp rests, its
