@@ -80,11 +80,16 @@ bank2-split elf out:
     rust-objcopy -R .bank2 -O binary {{elf}} {{out}}.bin
     just check-bin-size {{out}}.bin
     rm -f {{out}}.bk2
-    if rust-objdump -h {{elf}} | awk '$2 == ".bank2" && $3 != "00000000" { f = 1 } END { exit !f }'; then
+    sections=$(rust-objdump -h {{elf}})
+    syms=$(rust-nm {{elf}})
+    if awk '$2 == ".bank2" && $3 != "00000000" { f = 1 } END { exit !f }' <<< "$sections"; then
+        ver="$(cargo pkgid -p chimera-stm32 | sed 's/.*[#@]//') $(git rev-parse --short=8 HEAD)"
         rust-objcopy -j .bank2 -O binary {{elf}} {{out}}.bk2
         {{utils}} door-check {{elf}}
-        {{utils}} bank2-seal {{elf}} {{out}}.bin {{out}}.bk2 --version "$(cargo pkgid -p chimera-stm32 | sed 's/.*[#@]//') $(git rev-parse --short=8 HEAD)"
+        {{utils}} bank2-seal {{elf}} {{out}}.bin {{out}}.bk2 --version "$ver"
         just check-bin-paths {{out}}.bk2
+    elif grep -qw BANK2_SEAL <<< "$syms"; then
+        echo "bank 1 expects a bank 2 but the ELF has none" >&2; exit 1
     fi
 
 # The bank-2 phase 0b spike (DEVELOPER): the ORBIT firmware plus the

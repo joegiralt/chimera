@@ -120,3 +120,8 @@ fn door_check_flags_forbidden_relocation() {
 fn door_check_refuses_no_relocs() {
     assert!(bank2::door_hits(&elf_with(b".bank2", false)).is_err());
 }
+
+#[test]
+fn door_check_refuses_garbage() {
+    assert!(bank2::door_hits(b"not an elf").is_err());
+}

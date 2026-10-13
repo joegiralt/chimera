@@ -121,7 +121,8 @@ pub fn door_hits(elf: &[u8]) -> Result<Vec<String>, String> {
                 }
                 RelocationTarget::Section(x) => {
                     let a = f.section_by_index(x).map_or(0, |t| t.address());
-                    (".bank2".to_string(), a, Some(x))
+                    let n = f.section_by_index(x).ok().and_then(|t| t.name().ok());
+                    (n.unwrap_or("?").to_string(), a, Some(x))
                 }
                 _ => {
                     return Err(format!(
