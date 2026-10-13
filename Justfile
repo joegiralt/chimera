@@ -76,7 +76,9 @@ bank2-split elf out:
     rust-objcopy -R .bank2 -O binary {{elf}} {{out}}.bin
     just check-bin-size {{out}}.bin
     rm -f {{out}}.bk2
-    if rust-objdump -h {{elf}} | awk '$2 == ".bank2" && $3 != "00000000" { f = 1 } END { exit !f }'; then rust-objcopy -j .bank2 -O binary {{elf}} {{out}}.bk2; fi
+    rust-objdump -h {{elf}} > {{out}}.sections
+    if awk '$2 == ".bank2" && $3 != "00000000" { f = 1 } END { exit !f }' {{out}}.sections; then rust-objcopy -j .bank2 -O binary {{elf}} {{out}}.bk2; fi
+    rm {{out}}.sections
 
 # The bank-2 phase 0b spike (DEVELOPER): the ORBIT firmware plus the
 # console's b2erase, b2prog, b2call and b2stat, which erase and program

@@ -16,7 +16,9 @@ pub const PROBE_ADDS: u32 = 42;
 /// `__bank2_door` is this).
 pub const DOOR_ADDR: u32 = BANK2_BASE + HEADER_LEN;
 
-/// The door table: what bank 1 may call or read in bank 2.
+/// The door table: what bank 1 may call or read in bank 2. Reached only
+/// inside `DoorCell::with`: never copy `probe` or `table` out of it, they
+/// point into bank 2, which an install erases.
 #[repr(C)]
 pub struct Bank2Door {
     pub magic: u32,
@@ -70,7 +72,10 @@ impl DoorCell {
     /// Opens on a judged door at this link's `DOOR_ADDR`; a door anywhere
     /// else (a header the seal does not cover, gone wrong) leaves it closed.
     /// True if open.
-    pub fn open(&self, d: &Door) -> bool {
+    ///
+    /// # Safety
+    /// `d` was opened with this build's seal (`chimera_board::bank2_seal()`).
+    pub unsafe fn open(&self, d: &Door) -> bool {
         let ok = d.door_addr() == DOOR_ADDR;
         self.0
             .store(if ok { DOOR_ADDR } else { 0 }, Ordering::Release);
@@ -85,19 +90,23 @@ impl DoorCell {
         self.0.load(Ordering::Acquire) != 0
     }
 
-    pub fn get(&self) -> Option<&'static Bank2Door> {
+    /// `f` on the door table, `None` closed. Nothing borrowed from the
+    /// table may leave `f` (see `Bank2Door`); nothing closes the cell or
+    /// writes bank 2 while `f` runs.
+    pub fn with<R>(&self, f: impl FnOnce(&Bank2Door) -> R) -> Option<R> {
         let a = self.0.load(Ordering::Acquire);
         if a == 0 {
             return None;
         }
         // SAFETY: only `open` stores a nonzero `a`, and only `DOOR_ADDR`
-        // from a `Door`, which only `Door::open` makes: a `Good` verdict for
-        // this build's seal, read live from this chip's bank 2
+        // from a `Door` its caller vouched was opened with this build's
+        // seal: a `Good` verdict read live from this chip's bank 2
         // (`Bank2Memory`'s contract). The seal is the hash of this link's
         // `.bk2` body, so that body is in bank 2, and at `DOOR_ADDR` (its
         // `__bank2_door`, linker-asserted) is its `DOOR`: a `Bank2Door`,
-        // aligned, in flash nothing writes while the cell is open.
-        Some(unsafe { &*(a as usize as *const Bank2Door) })
+        // aligned. The borrow ends with `f`, and bank 2 is written only
+        // with the cell closed, so it never outlives the image.
+        Some(f(unsafe { &*(a as usize as *const Bank2Door) }))
     }
 }
 

@@ -49,7 +49,7 @@ use stm32h7xx_hal::{pac, prelude::*, spi};
 #[cfg(feature = "bank2")]
 #[unsafe(no_mangle)]
 #[used]
-pub static BANK2_SEAL: [u8; 8] = *b"UNSEALED";
+static BANK2_SEAL: [u8; 8] = *b"UNSEALED";
 
 /// `BANK2_SEAL` as flash holds it, `None` unsealed.
 #[cfg(feature = "bank2")]

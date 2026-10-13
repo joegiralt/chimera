@@ -1,6 +1,6 @@
 //! The bank-1 state of the door: closed until a judged `Door` at this link's
 //! door address opens it. A host has no bank 2, so nothing here is ever
-//! dereferenced: `get` is only called closed.
+//! dereferenced: `with` is only called closed.
 
 use chimera_engine::bank2::{DOOR_ADDR, DoorCell};
 use chimera_image::crc::Crc32;
@@ -18,10 +18,16 @@ impl ImageRead for Mem {
 }
 
 // SAFETY: a test stand-in, not a chip: its `Door`s only open and close the
-// cell here, and no test calls `get` while one is open.
+// cell here, and no test calls `with` while one is open.
 unsafe impl Bank2Memory for Mem {}
 
 const SEAL: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+
+/// Opens `c` on a door at `door_off`.
+fn open(c: &DoorCell, door_off: u32) -> bool {
+    // SAFETY: the door was judged against `SEAL`, the stand-in build's seal.
+    unsafe { c.open(&door(door_off)) }
+}
 
 fn door(door_off: u32) -> Door {
     let body = vec![0x5A; 1024];
@@ -48,26 +54,26 @@ fn door_addr_follows_the_header() {
 fn starts_closed() {
     let c = DoorCell::new();
     assert!(!c.is_open());
-    assert!(c.get().is_none());
+    assert!(c.with(|_| ()).is_none());
 }
 
 #[test]
 fn opens_on_this_links_door_and_closes() {
     let c = DoorCell::new();
-    assert!(c.open(&door(0x100)));
+    assert!(open(&c, 0x100));
     assert!(c.is_open());
     c.close();
     assert!(!c.is_open());
-    assert!(c.get().is_none());
+    assert!(c.with(|_| ()).is_none());
 }
 
 #[test]
 fn a_door_elsewhere_stays_closed() {
     let c = DoorCell::new();
-    assert!(!c.open(&door(0x200)));
+    assert!(!open(&c, 0x200));
     assert!(!c.is_open());
-    assert!(c.get().is_none());
-    assert!(c.open(&door(0x100)));
-    assert!(!c.open(&door(0x200)));
+    assert!(c.with(|_| ()).is_none());
+    assert!(open(&c, 0x100));
+    assert!(!open(&c, 0x200));
     assert!(!c.is_open());
 }
