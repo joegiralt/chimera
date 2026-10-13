@@ -420,7 +420,7 @@ LFO2.RATE = "0.25"  # 2
 mod.LFO2 = "VA.SHAPE1 +40"
 mod.VEL = "FILTER.CUTOFF +20"
 mod.NOTE = "VA.AMOUNT -127"
-trim = "4.1"
+trim = "4.0"
 
 # Ring-mod blips: two sines a tritone apart (inharmonic); ENV 2 zaps the
 # partner's pitch. Saws clicked 17x. POLY: on a MONO Part with glide the
