@@ -64,7 +64,7 @@ use crate::dsp::tape_engine::{Heads, TapeEngineParams, TapeModel};
 use crate::in_place::uninit_at;
 use crate::instrument::AudioShared;
 use crate::instrument::PartHeads;
-use crate::mod_path::{LABEL_LEN, RegistryError};
+use crate::mod_path::RegistryError;
 use crate::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::ProjectName;
 use crate::orbit::RingIdx;
@@ -1124,39 +1124,6 @@ impl UiState {
     /// params are bound but not modulatable, so the registry refuses them.
     fn current_param_addr(&self) -> Option<ParamAddr> {
         slot_addr(self.page_def(), self.focused_slot(), &self.ctx()).map(prime_target)
-    }
-
-    /// 8-byte matrix column label for a primed destination: `O<n> ` + spec
-    /// label for operator params, else the address's block tag (≤ 3 chars,
-    /// `mod_grid::block_tag` — the page can be a sub-page with a different
-    /// short name, e.g. FLT › MOD for the filter's LEVEL) + the slot label.
-    fn mod_label(&self, addr: ParamAddr) -> [u8; LABEL_LEN] {
-        let def = self.page_def();
-        let op_prefix;
-        let (prefix, name): (&[u8], &str) = match addr.block {
-            BlockRef::AlgoOp(op) => {
-                op_prefix = [b'O', b'1' + op.index() as u8, b' '];
-                (&op_prefix, addr.spec().map_or("", |s| s.label))
-            }
-            BlockRef::Env(s) => {
-                op_prefix = [b'E', b'1' + s.index() as u8, b' '];
-                (&op_prefix, addr.spec().map_or("", |s| s.label))
-            }
-            _ if addr == crate::modulation::VCA => (b"OUT ".as_slice(), "VCA"),
-            _ => {
-                let short = mod_grid::block_tag(addr.block).as_bytes();
-                (
-                    &short[..short.len().min(3)],
-                    view::view(def, self.focused_slot(), &self.ctx()).label(),
-                )
-            }
-        };
-        let mut label = [0u8; LABEL_LEN];
-        label[..prefix.len()].copy_from_slice(prefix);
-        let rest = name.as_bytes();
-        let rlen = rest.len().min(LABEL_LEN - prefix.len());
-        label[prefix.len()..prefix.len() + rlen].copy_from_slice(&rest[..rlen]);
-        label
     }
 
     /// EDIT on the Sound rung: the entry under the cursor into `part`, then
@@ -2580,7 +2547,7 @@ impl UiState {
                     {
                         self.prime_status = Some(PrimeStatus::NotModulatable);
                     } else if let Some(addr) = self.current_param_addr() {
-                        let label = self.mod_label(addr);
+                        let label = mod_grid::dest_label(addr);
                         let sound = self.project.edit_part(at).sound;
                         self.prime_status = Some(if sound.dest_registry.is_primed(addr) {
                             PrimeStatus::AlreadyRouted

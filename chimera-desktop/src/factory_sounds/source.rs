@@ -5,7 +5,6 @@
 
 use chimera_core::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
 use chimera_core::block::{Block, DiskCode, ParamSpec, ValFmt};
-use chimera_core::mod_path::LABEL_LEN;
 use chimera_core::modulation::{FixedCol, ModSource};
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
@@ -18,7 +17,7 @@ use chimera_core::storage::{
 use chimera_core::taps::TapOp;
 use chimera_core::ui::browser::{NOTE_W, note_width};
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
-use chimera_core::ui::mod_grid::block_tag;
+use chimera_core::ui::mod_grid::dest_label;
 use chimera_core::ui::view::{SlotCtx, shown_fmt};
 use chimera_hal::store::{ByteSink, StoreError};
 
@@ -797,7 +796,7 @@ pub fn patch(s: &Source) -> Result<Sound, String> {
             let fail = |m: &str| format!("{}: {} {m}", s.at(r.line), ident(r.dest));
             if FixedCol::of(r.dest).is_none() {
                 snd.dest_registry
-                    .add(r.dest, label(r.dest))
+                    .add(r.dest, dest_label(r.dest))
                     .map_err(|e| fail(&format!("{e:?}")))?;
             }
             if !snd.mod_state.set_route_addr(src.index(), r.dest, r.amount) {
@@ -870,22 +869,6 @@ pub(crate) fn set(blk: &mut dyn Block, a: ValidAddr, v: &str) -> Result<(), Stri
         ));
     }
     Ok(())
-}
-
-/// A registry column's 8-byte label as priming spells it: `O5 LEVEL`,
-/// `E2 DEC`, else the block's tag and the param's label.
-fn label(a: ParamAddr) -> [u8; LABEL_LEN] {
-    let spec = ValidAddr::find(a.block, a.param).map_or("", |v| v.spec().label);
-    let prefix: String = match a.block {
-        BlockRef::AlgoOp(op) => format!("O{} ", op.index() + 1),
-        BlockRef::Env(e) => format!("E{} ", e.index() + 1),
-        b => block_tag(b).chars().take(3).chain([' ']).collect(),
-    };
-    let mut l = [0u8; LABEL_LEN];
-    for (o, c) in l.iter_mut().zip(format!("{prefix}{spec}").bytes()) {
-        *o = c;
-    }
-    l
 }
 
 /// The Sound's param, route and tap lines, canonical: each param off
