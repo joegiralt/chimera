@@ -630,8 +630,10 @@ pub const SILENT_DBFS: f32 = -80.0;
 /// Detector values at or under this are not clicks (−60 dBFS).
 const FLOOR: f32 = 1e-3;
 
-/// How far a click looks for its peers: ±21 ms, a period down to 47 Hz.
-const REACH: usize = 1_024;
+/// How far a click looks for its peers: ±64 ms, a period down to 15.6
+/// Hz, C1's sub (C0, 16.4 Hz). ±1024 (47 Hz) read a low sub's edges, one a
+/// period, as clicks (#485).
+const REACH: usize = 3_072;
 
 /// Samples about a candidate that its own click spreads into.
 const OWN: usize = 2;
@@ -1222,6 +1224,24 @@ mod tests {
         let x = take(false);
         let q = qa_takes(&x, &[4_800]);
         assert!(!q.passes(), "{q:?}");
+    }
+
+    /// A sub's period, 30 Hz here, is past the old ±1024-sample reach (47
+    /// Hz): its edges, one a period, read as clicks (#485). A train of the
+    /// same small bump every 1600 samples is a tone, not a click.
+    #[test]
+    fn a_low_periodic_edge_passes() {
+        let x: Vec<f32> = (0..48_000)
+            .map(|i| {
+                let k = (i % 1_600) as f32;
+                if k < 6.0 {
+                    0.25 * (1.0 - (std::f32::consts::TAU * k / 6.0).cos())
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        assert!(qa(&x).passes(), "{:?}", qa(&x));
     }
 
     #[test]
