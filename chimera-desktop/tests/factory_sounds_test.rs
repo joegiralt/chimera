@@ -296,7 +296,7 @@ fn placeholder_skipped() {
             .replace("TEST PAD\"", "VOCAL TWO\"")
     );
     let s = run(&two).unwrap();
-    assert!(s[1].placeholder);
+    assert_eq!(s[1].status, source::Status::Placeholder);
     let (files, man) = build::files(&s, &STAMP).unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(man.sounds.len(), 1);
@@ -482,16 +482,78 @@ fn scripts_follow_the_spec() {
 
 #[test]
 fn loudness_gate() {
+    // Inside −11 ± 2 LU passes, whether or not a level is pinned.
     for l in [-11.0, -9.0, -13.0] {
         assert_eq!(qa::loudness(l, None), Verdict::Pass, "{l}");
+        assert_eq!(qa::loudness(l, Some((-16.2, "soft"))), Verdict::Pass, "{l}");
     }
     for l in [-8.9, -13.1, -30.0, f32::NAN] {
         assert_eq!(qa::loudness(l, None), Verdict::Fail, "{l}");
     }
-    assert!(matches!(
-        qa::loudness(-20.0, Some("a soft pad under the lead")),
-        Verdict::Exempt(why) if why.contains("soft pad")
-    ));
+    // A pinned level holds within ±1 LU of its value, for the ear.
+    for l in [-16.2, -15.3, -17.1] {
+        assert!(
+            matches!(
+                qa::loudness(l, Some((-16.2, "a soft pad under the lead"))),
+                Verdict::Exempt(why) if why.contains("by ear -16.2") && why.contains("soft pad")
+            ),
+            "{l}"
+        );
+    }
+    // It fails once it moves.
+    for l in [-15.1, -17.3, f32::NAN] {
+        assert_eq!(qa::loudness(l, Some((-16.2, "soft"))), Verdict::Fail, "{l}");
+    }
+}
+
+#[test]
+fn a_pinned_level_parses_and_one_inside_the_band_fails() {
+    let s = &run(&format!("{BASE}level = \"by ear -16.2: a soft pad\"\n")).unwrap()[0];
+    let pin = s.level.as_ref().unwrap();
+    assert_eq!(
+        (pin.line, pin.lufs, pin.why.as_str()),
+        (14, -16.2, "a soft pad")
+    );
+    assert!(run(BASE).unwrap()[0].level.is_none());
+    // The old unpinned form, a bad number, no reason.
+    for bad in [
+        "by ear: soft",
+        "by ear x: soft",
+        "by ear -16.2:",
+        "by ear -16.2 soft",
+    ] {
+        fails(&format!("{BASE}level = \"{bad}\"\n"), 14, "level");
+    }
+    // Pinned inside the band: pointless, so drop it.
+    for inside in ["-11.0", "-13.0", "-9.0", "-12.4"] {
+        fails(
+            &format!("{BASE}level = \"by ear {inside}: soft\"\n"),
+            14,
+            "drop",
+        );
+    }
+    run(&format!("{BASE}level = \"by ear -13.1: soft\"\n")).unwrap();
+}
+
+#[test]
+fn fmt_level_keeps_pinned_and_approved_levels() {
+    let pinned = format!("{BASE}level = \"by ear -20.0: soft\"\n");
+    let crc = source::crc(&run(BASE).unwrap()[0]).unwrap();
+    let approved = format!("{BASE}approved = \"round 3 {crc:08X}\"\n")
+        .replace("S9100002", "S9100003")
+        .replace("TEST PAD\"", "TEST TWO\"");
+    let free = BASE
+        .replace("S9100002", "S9100004")
+        .replace("TEST PAD\"", "TEST THREE\"")
+        .replace("trim = \"0\"", "trim = \"-6\"");
+    let text = format!("{pinned}\n{approved}\n{free}");
+    let all = source::parse(&text, "b.toml").unwrap();
+    let out = qa::levelled(&text, &all).unwrap();
+    let got = source::parse(&out, "b.toml").unwrap();
+    assert_eq!(got[0].trim, 0.0, "pinned: never re-centred");
+    assert_eq!(got[0].level, all[0].level);
+    assert_eq!(got[1].trim, 0.0, "approved: never re-centred");
+    assert_ne!(got[2].trim, -6.0, "the free one is centred");
 }
 
 #[test]
@@ -663,7 +725,8 @@ fn report(pass: bool, private: bool) -> qa::Report {
         }],
         long_lufs: Some(-12.3),
         bands: [0.0; 32],
-        badge: s.badge(),
+        badge: source::Badge::New,
+        changed: None,
         about: about::of(s).unwrap(),
     }
 }
@@ -751,7 +814,7 @@ fn committed_facts() -> Vec<(String, String)> {
     build::sources(std::path::Path::new(SOURCES))
         .unwrap()
         .iter()
-        .filter(|s| !s.placeholder)
+        .filter(|s| s.status != source::Status::Placeholder)
         .flat_map(|s| {
             about::of(s)
                 .unwrap()
@@ -1009,11 +1072,11 @@ fn glide_and_mono_read_as_modulation() {
 
 #[test]
 fn badges_follow_the_source_and_a_placeholder_has_no_players() {
-    let approved = &run(&format!("{BASE}approved = \"round 2\"\n")).unwrap()[0];
-    assert_eq!(approved.badge(), source::Badge::Approved);
-    assert_eq!(approved.approved.as_deref(), Some("round 2"));
+    let crc = source::crc(&run(BASE).unwrap()[0]).unwrap();
+    let approved = &run(&format!("{BASE}approved = \"round 2 {crc:08X}\"\n")).unwrap()[0];
+    assert_eq!(approved.badge(crc), source::Badge::Approved);
     let new = &run(BASE).unwrap()[0];
-    assert_eq!(new.badge(), source::Badge::New);
+    assert_eq!(new.badge(crc), source::Badge::New);
     let ph = &source::parse(
         &(BASE
             .replace("S9100002", "S9100028")
@@ -1023,13 +1086,12 @@ fn badges_follow_the_source_and_a_placeholder_has_no_players() {
         "p.toml",
     )
     .unwrap()[0];
-    assert_eq!(ph.badge(), source::Badge::Placeholder);
+    assert_eq!(ph.badge(0), source::Badge::Placeholder);
     fails(
-        &format!("{BASE}status = \"placeholder\"\napproved = \"round 2\"\n"),
-        2,
+        &format!("{BASE}status = \"placeholder\"\napproved = \"round 2 {crc:08X}\"\n"),
+        15,
         "a placeholder has no Sound to approve",
     );
-    fails(&format!("{BASE}approved = \"\"\n"), 14, "approved");
 
     let mut a = report(true, false);
     a.badge = source::Badge::Approved;
@@ -1049,6 +1111,74 @@ fn badges_follow_the_source_and_a_placeholder_has_no_players() {
         page.contains("ENGINE") && page.contains("VIRTUAL ANALOG"),
         "what it is"
     );
+}
+
+#[test]
+fn approval_binds_to_the_sounds_crc() {
+    use source::{Badge, Round, Status};
+    let crc = source::crc(&run(BASE).unwrap()[0]).unwrap();
+    let line = format!("approved = \"round 2 {crc:08X}\"\n");
+    let ok = &run(&format!("{BASE}{line}")).unwrap()[0];
+    assert_eq!(
+        ok.status,
+        Status::Approved {
+            round: Round(2),
+            crc
+        }
+    );
+    assert_eq!(
+        source::crc(ok).unwrap(),
+        crc,
+        "approved adds nothing to the Sound"
+    );
+    assert_eq!((ok.badge(crc), ok.changed(crc)), (Badge::Approved, None));
+
+    // One param edited since: still builds, demoted to NEW and flagged.
+    let edited = format!("{BASE}{line}").replace("\"1200\"", "\"1300\"");
+    let ed = &run(&edited).unwrap()[0];
+    let now = source::crc(ed).unwrap();
+    assert_ne!(now, crc);
+    assert_eq!(
+        (ed.badge(now), ed.changed(now)),
+        (Badge::New, Some(Round(2)))
+    );
+    let mut r = qa::gates(ed).unwrap();
+    assert_eq!((r.badge, r.changed), (Badge::New, Some(Round(2))));
+    // BASE is not levelled: only a passing Sound is paged.
+    r.gates.retain(|g| g.verdict != Verdict::Fail);
+    let page = qa::page(std::slice::from_ref(&r), &[], &[]);
+    assert!(
+        page.contains("class=\"flag\">CHANGED SINCE ROUND 2: re-listen"),
+        "{page}"
+    );
+    assert!(
+        page.contains(">NEW<") && !page.contains(">APPROVED<"),
+        "{page}"
+    );
+    let txt = qa::report_text(&[r], &[]);
+    assert!(
+        txt.contains("S9100002 TEST PAD") && txt.contains("CHANGED SINCE ROUND 2: re-listen"),
+        "{txt}"
+    );
+
+    // The manifest records the same CRC.
+    let (_, man) = build::files(std::slice::from_ref(ok), &STAMP).unwrap();
+    assert_eq!(man.sounds[0].sound, crc);
+    assert!(man.json().contains(&format!("\"sound\": \"{crc:08X}\"")));
+
+    // A bad format fails at its line.
+    for bad in [
+        "".to_string(),
+        "round 2".into(),
+        "round 2 1a2b3c4d".into(),
+        "round 2 1A2B3C4".into(),
+        "round 2 1A2B3C4D5".into(),
+        "round 2 1A2B3C4G".into(),
+        "2 1A2B3C4D".into(),
+        "round two 1A2B3C4D".into(),
+    ] {
+        fails(&format!("{BASE}approved = \"{bad}\"\n"), 14, "approved");
+    }
 }
 
 #[test]

@@ -25,23 +25,21 @@ use chimera_core::preset::Sound;
 use chimera_core::project::{PartId, Performance};
 use chimera_core::scope::{ScopeWriter, scope_buffer};
 use chimera_core::source_table::GateView;
-use chimera_core::storage::FactoryId;
+use chimera_core::storage::{FactoryId, sound_crc};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
 
 use super::about::{self, Fact};
-use super::source::{Badge, Phrase, Script, Source, patch, to_sound, trimmed};
+use super::source::{self, Badge, Phrase, Round, Script, Source, Status, patch, to_sound, trimmed};
 use crate::listen::{self, CLICK_RATIO, Player, Row, qa_takes};
 
 const SR: f32 = SAMPLE_RATE as f32;
 
-/// ADR 0109's reference (ADR 0063's at the master gain): ALGO INIT's C4
-/// at velocity 100 on P1.
-pub const REFERENCE_LUFS: f32 = -11.0;
-/// The loudness gate's half-width.
-pub const LOUDNESS_LU: f32 = 2.0;
+pub use super::source::{LOUDNESS_LU, REFERENCE_LUFS};
+/// How far a level pinned by ear may move.
+pub const PIN_LU: f32 = 1.0;
 /// Gain reduction a single note may take, and the chord `stab`.
 pub const LIMIT_SINGLE_DB: f32 = 1.0;
 pub const LIMIT_CHORD_DB: f32 = 3.0;
@@ -429,7 +427,7 @@ pub enum Swell {
 /// Every built `sweep` Sound's swell (`sweep`).
 pub fn sweeps(all: &[Source]) -> Result<(), String> {
     all.iter()
-        .filter(|s| !s.placeholder && s.phrase == Some(Phrase::Sweep))
+        .filter(|s| !s.is_placeholder() && s.phrase == Some(Phrase::Sweep))
         .try_for_each(|s| sweep(s).map(|_| ()))
 }
 
@@ -694,11 +692,18 @@ fn db(x: f32) -> f32 {
     20.0 * x.max(1e-12).log10()
 }
 
-/// The home note at v100 held 1 s, LUFS: −11 ± 2 LU, unless set by ear.
-pub fn loudness(lufs: f32, by_ear: Option<&str>) -> Verdict {
-    match by_ear {
-        Some(why) => Verdict::Exempt(format!("level by ear: {why}")),
-        None => verdict((lufs - REFERENCE_LUFS).abs() <= LOUDNESS_LU),
+/// The home note at v100 held 1 s, LUFS: −11 ± 2 LU passes; outside it, a
+/// level pinned by ear `(lufs, why)` holds within `PIN_LU` of its value
+/// (marked for the ear), and fails once it moves.
+pub fn loudness(lufs: f32, pin: Option<(f32, &str)>) -> Verdict {
+    if (lufs - REFERENCE_LUFS).abs() <= LOUDNESS_LU {
+        return Verdict::Pass;
+    }
+    match pin {
+        Some((p, why)) if (lufs - p).abs() <= PIN_LU => {
+            Verdict::Exempt(format!("level by ear {p:.1}: {why}"))
+        }
+        _ => Verdict::Fail,
     }
 }
 
@@ -1053,6 +1058,8 @@ pub struct Report {
     pub long_lufs: Option<f32>,
     pub bands: [f32; ERB_BANDS],
     pub badge: Badge,
+    /// Approved in this round, but the Sound has changed since: NEW again.
+    pub changed: Option<Round>,
     /// What it is (`about`), from the built Sound.
     pub about: Vec<Fact>,
 }
@@ -1101,6 +1108,7 @@ fn hz(n: u8) -> f32 {
 pub fn gates(src: &Source) -> Result<Report, String> {
     // Every gate plays dry; the page's renders carry the sends.
     let wet = to_sound(src)?;
+    let crc = sound_crc(&wet);
     let with = heard_through(&wet);
     let snd = dried(&wet);
     let within = tail_within(src, &snd);
@@ -1124,7 +1132,10 @@ pub fn gates(src: &Source) -> Result<Report, String> {
     let lufs = listen::lufs(&t.stereo[2 * LATE..2 * (LATE + held)]);
     gate(
         Check::Loudness,
-        (lufs, loudness(lufs, src.level_by_ear.as_deref())),
+        (
+            lufs,
+            loudness(lufs, src.level.as_ref().map(|p| (p.lufs, p.why.as_str()))),
+        ),
     );
     gate(
         Check::Limiter(None),
@@ -1220,7 +1231,8 @@ pub fn gates(src: &Source) -> Result<Report, String> {
         renders,
         long_lufs: Some(long_lufs),
         bands: erb_bands(&long),
-        badge: src.badge(),
+        badge: src.badge(crc),
+        changed: src.changed(crc),
         about: about::of(src)?,
     })
 }
@@ -1239,6 +1251,26 @@ pub fn level_trim(src: &Source, lufs: f32) -> Result<f32, String> {
     };
     trimmed(level, t).map_err(|m| format!("{}:{line}: {} {m}", src.file, src.name.as_str()))?;
     Ok(t + 0.0) // never -0.0
+}
+
+/// `text` with each Source's `trim` centred on −11 LUFS (`fmt --level`):
+/// measured, trimmed, measured again (the limiter bends a loud first
+/// guess). Placeholders, approved Sounds and levels pinned by ear keep
+/// theirs.
+pub fn levelled(text: &str, all: &[Source]) -> Result<String, String> {
+    let mut trims = Vec::new();
+    for s in all
+        .iter()
+        .filter(|s| s.status == Status::New && s.level.is_none())
+    {
+        let mut t = s.clone();
+        for _ in 0..2 {
+            t.trim = level_trim(&t, level_lufs(&t)?)?;
+        }
+        println!("{} trim {:+.1} dB", s.name.as_str(), t.trim);
+        trims.push((s, t.trim));
+    }
+    Ok(source::set_trims(text, &trims))
 }
 
 /// The level render's LUFS (`fmt --level` centres it).
@@ -1285,6 +1317,9 @@ pub fn report_text(reports: &[Report], samey: &[(usize, usize)]) -> String {
         let ok = if r.passes() { "PASS" } else { "FAIL" };
         let private = if r.private { "  PRIVATE" } else { "" };
         let _ = writeln!(o, "S{} {}{private}  {ok}", r.id.get(), r.name);
+        if let Some(round) = r.changed {
+            let _ = writeln!(o, "  {}", changed_line(round));
+        }
         for g in &r.gates {
             let v = match &g.verdict {
                 Verdict::Pass => "PASS".to_string(),
@@ -1322,6 +1357,11 @@ pub fn report_text(reports: &[Report], samey: &[(usize, usize)]) -> String {
     o
 }
 
+/// An approved Sound whose CRC no longer matches.
+fn changed_line(round: Round) -> String {
+    format!("CHANGED SINCE {round}: re-listen")
+}
+
 /// The owner's page: every Sound that passes, badged APPROVED or NEW,
 /// then each placeholder; a Sound a gate failed is named in a flagged
 /// OFF THE PAGE row. Per Sound its name, description, demo mode,
@@ -1334,6 +1374,9 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source
         .filter(|(_, r)| r.passes())
         .map(|(i, r)| {
             let mut lines = vec![(r.note.clone(), false)];
+            if let Some(round) = r.changed {
+                lines.push((changed_line(round), true));
+            }
             let lufs = r.lufs().map_or(String::new(), |l| {
                 format!(" · level (1 s, dry) {l:.1} LUFS")
             });

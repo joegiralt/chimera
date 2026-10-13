@@ -76,11 +76,12 @@ fn run_build() -> Result<(), String> {
     let man = build::public(&dir(), &out, &stamp()?)?;
     for e in &man.sounds {
         println!(
-            "S{}.A  {:<16} {:>5} B  {:08X}",
+            "S{}.A  {:<16} {:>5} B  {:08X}  sound {:08X}",
             e.id.get(),
             e.name,
             e.size,
-            e.crc
+            e.crc,
+            e.sound
         );
     }
     println!(
@@ -98,7 +99,7 @@ fn run_fmt(level: bool) -> Result<(), String> {
         let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
         let all = source::parse(&text, f)?;
         let levelled = if level {
-            levelled(&text, &all)?
+            qa::levelled(&text, &all)?
         } else {
             text.clone()
         };
@@ -112,30 +113,11 @@ fn run_fmt(level: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// `text` with each Source's `trim` centred on −11 LUFS: measured, trimmed,
-/// measured again (the limiter bends a loud first guess). Placeholders and
-/// Sounds levelled by ear keep theirs.
-fn levelled(text: &str, all: &[source::Source]) -> Result<String, String> {
-    let mut trims = Vec::new();
-    for s in all
-        .iter()
-        .filter(|s| !s.placeholder && s.level_by_ear.is_none())
-    {
-        let mut t = s.clone();
-        for _ in 0..2 {
-            t.trim = qa::level_trim(&t, qa::level_lufs(&t)?)?;
-        }
-        println!("{} trim {:+.1} dB", s.name.as_str(), t.trim);
-        trims.push((s, t.trim));
-    }
-    Ok(source::set_trims(text, &trims))
-}
-
 /// Every Sound rendered and gated into the ledger; fails unless all pass.
 fn run_qa(wav: bool) -> Result<(), String> {
     let (placeholders, all): (Vec<_>, Vec<_>) = build::sources(&dir())?
         .into_iter()
-        .partition(|s| s.placeholder);
+        .partition(|s| s.is_placeholder());
     source::check(&all)?;
     qa::sweeps(&all)?;
     let reports = all.iter().map(qa::gates).collect::<Result<Vec<_>, _>>()?;

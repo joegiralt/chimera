@@ -17,8 +17,11 @@ pub const SOUND_FILES: [&str; 3] = ["va.toml", "fm.toml", "modal.toml"];
 pub struct Entry {
     pub id: FactoryId,
     pub name: String,
+    /// The file's CRC.
     pub crc: u32,
     pub size: usize,
+    /// The Sound's `sound_crc`, which `approved` names.
+    pub sound: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -33,12 +36,13 @@ impl Manifest {
         for (i, e) in self.sounds.iter().enumerate() {
             let _ = write!(
                 j,
-                "{}\n  {{\"id\": \"S{}\", \"name\": \"{}\", \"crc\": \"{:08X}\", \"size\": {}}}",
+                "{}\n  {{\"id\": \"S{}\", \"name\": \"{}\", \"crc\": \"{:08X}\", \"size\": {}, \"sound\": \"{:08X}\"}}",
                 if i == 0 { "" } else { "," },
                 e.id.get(),
                 e.name,
                 e.crc,
-                e.size
+                e.size,
+                e.sound
             );
         }
         j.push_str("\n]}\n");
@@ -69,7 +73,7 @@ pub type File = (String, Vec<u8>);
 pub fn files(all: &[Source], stamp: &BuildStamp) -> Result<(Vec<File>, Manifest), String> {
     let mut files = Vec::new();
     let mut sounds = Vec::new();
-    for s in all.iter().filter(|s| !s.placeholder) {
+    for s in all.iter().filter(|s| !s.is_placeholder()) {
         let bytes = source::file_bytes(s, stamp)?;
         let mut crc = Crc32::new();
         crc.update(&bytes);
@@ -78,6 +82,7 @@ pub fn files(all: &[Source], stamp: &BuildStamp) -> Result<(Vec<File>, Manifest)
             name: s.name.as_str().into(),
             crc: crc.finish(),
             size: bytes.len(),
+            sound: source::crc(s)?,
         });
         files.push((format!("S{}.A", s.id.get()), bytes));
     }

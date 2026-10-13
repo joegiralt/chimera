@@ -13,7 +13,7 @@ use chimera_core::part::PartMode;
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
     BuildStamp, DiskValue, FactoryId, FileKind, Generation, Header, LibId, LibKind, Note,
-    ValidAddr, encode_library_sound, read_value, write_file,
+    ValidAddr, encode_library_sound, read_value, sound_crc, write_file,
 };
 use chimera_core::taps::TapOp;
 use chimera_core::ui::draw::text_width;
@@ -25,6 +25,12 @@ use chimera_hal::store::{ByteSink, StoreError};
 
 use crate::listen::{lined_tables, value_line};
 use crate::privacy::PORT_IDS;
+
+/// ADR 0109's reference (ADR 0063's at the master gain): ALGO INIT's C4
+/// at velocity 100 on P1.
+pub const REFERENCE_LUFS: f32 = -11.0;
+/// The loudness gate's half-width.
+pub const LOUDNESS_LU: f32 = 2.0;
 
 /// The showcase's id block (ADR 0133); TAPE's is below it.
 pub const SHOWCASE_IDS: core::ops::RangeInclusive<u32> = 9_100_001..=9_199_999;
@@ -140,12 +146,40 @@ pub struct Source {
     /// Provenance, ports only: `(line, "tx81z <bank sha> #<voice>")`.
     pub from: Option<(usize, String)>,
     pub edits: Option<String>,
-    /// `level = "by ear: …"`: the loudness gate's exemption, and why.
-    pub level_by_ear: Option<String>,
-    /// Reserves its id and name; never built.
-    pub placeholder: bool,
-    /// `approved = "round 2"`: the owner's listening round that passed it.
-    pub approved: Option<String>,
+    /// `level = "by ear -16.2: <why>"`: a level set off-centre by ear,
+    /// pinned to its LUFS.
+    pub level: Option<ByEar>,
+    pub status: Status,
+}
+
+/// A level set by ear (`level = "by ear -16.2: <why>"`): the loudness gate
+/// holds it within `qa::PIN_LU` of `lufs`. One inside the −11 ± 2 LU band
+/// is pointless and fails `check`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ByEar {
+    pub line: usize,
+    pub lufs: f32,
+    pub why: String,
+}
+
+/// The owner's listening round: `round 2`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Round(pub u8);
+
+impl core::fmt::Display for Round {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "ROUND {}", self.0)
+    }
+}
+
+/// Where a Source stands: a placeholder (reserves its id and name, never
+/// built), NEW, or approved in a round as the Sound whose `sound_crc` was
+/// `crc` (`approved = "round 2 1A2B3C4D"`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+    Placeholder,
+    New,
+    Approved { round: Round, crc: u32 },
 }
 
 /// Where a Source stands with the owner, as the listening page badges it.
@@ -171,13 +205,54 @@ impl Source {
         format!("{}:{line}", self.file)
     }
 
-    pub fn badge(&self) -> Badge {
-        match (self.placeholder, &self.approved) {
-            (true, _) => Badge::Placeholder,
-            (false, Some(_)) => Badge::Approved,
-            (false, None) => Badge::New,
+    pub fn is_placeholder(&self) -> bool {
+        self.status == Status::Placeholder
+    }
+
+    /// Its badge, the Sound now built having `crc`: APPROVED only while
+    /// it is the Sound approved.
+    pub fn badge(&self, crc: u32) -> Badge {
+        match self.status {
+            Status::Placeholder => Badge::Placeholder,
+            Status::Approved { crc: c, .. } if c == crc => Badge::Approved,
+            _ => Badge::New,
         }
     }
+
+    /// The round it was approved in, when the Sound has changed since.
+    pub fn changed(&self, crc: u32) -> Option<Round> {
+        match self.status {
+            Status::Approved { round, crc: c } if c != crc => Some(round),
+            _ => None,
+        }
+    }
+}
+
+/// The built Sound's `sound_crc` (what `approved` names, and the manifest
+/// records).
+pub fn crc(s: &Source) -> Result<u32, String> {
+    Ok(sound_crc(&to_sound(s)?))
+}
+
+/// `round <n> <CRC>`, the CRC 8 uppercase hex digits.
+fn approval(v: &str) -> Option<Status> {
+    let (round, hex) = v.rsplit_once(' ')?;
+    let n = round.strip_prefix("round ")?.parse::<u8>().ok()?;
+    let ok = hex.len() == 8 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'A'..=b'F'));
+    Some(Status::Approved {
+        round: Round(n),
+        crc: u32::from_str_radix(hex, 16).ok().filter(|_| ok)?,
+    })
+}
+
+/// `by ear <LUFS>: <why>`.
+fn by_ear(v: &str, line: usize) -> Option<ByEar> {
+    let (lufs, why) = v.strip_prefix("by ear ")?.split_once(':')?;
+    Some(ByEar {
+        line,
+        lufs: lufs.parse::<f32>().ok().filter(|l| l.is_finite())?,
+        why: Some(why.trim()).filter(|w| !w.is_empty())?.into(),
+    })
 }
 
 /// Every `[[sound]]` in `text`; each error names `file:line`.
@@ -263,10 +338,11 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
         trim_line: 0,
         from: None,
         edits: None,
-        level_by_ear: None,
-        placeholder: false,
-        approved: None,
+        level: None,
+        status: Status::New,
     };
+    let mut placeholder = false;
+    let mut approved = None;
     for (line, k, v) in e.iter().filter(|x| !HEAD.contains(&x.1.as_str())) {
         let line = *line;
         let unknown = || at(line, format!("unknown key {k}"));
@@ -299,14 +375,23 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
             "from" => s.from = Some((line, v.clone())),
             "edits" => s.edits = Some(v.clone()),
             "level" => {
-                let why = v
-                    .strip_prefix("by ear:")
-                    .ok_or_else(|| at(line, format!("level {v}: by ear: <why>")))?;
-                s.level_by_ear = Some(why.trim().into());
+                s.level = Some(
+                    by_ear(v, line)
+                        .ok_or_else(|| at(line, format!("level {v}: \"by ear <LUFS>: <why>\"")))?,
+                )
             }
-            "approved" if !v.trim().is_empty() => s.approved = Some(v.clone()),
-            "approved" => return Err(at(line, "approved: the round, e.g. \"round 2\"".into())),
-            "status" if v == "placeholder" => s.placeholder = true,
+            "approved" => {
+                let st = approval(v).ok_or_else(|| {
+                    at(
+                        line,
+                        format!(
+                            "approved {v}: \"round <n> <CRC>\", the CRC 8 uppercase hex digits"
+                        ),
+                    )
+                })?;
+                approved = Some((line, st));
+            }
+            "status" if v == "placeholder" => placeholder = true,
             "status" => return Err(at(line, format!("status {v}: placeholder"))),
             _ => {
                 let (head, rest) = k.split_once('.').ok_or_else(unknown)?;
@@ -351,6 +436,14 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
             }
         }
     }
+    s.status = match (placeholder, approved) {
+        (true, Some((line, _))) => {
+            return Err(at(line, "a placeholder has no Sound to approve".into()));
+        }
+        (true, None) => Status::Placeholder,
+        (false, Some((_, st))) => st,
+        (false, None) => Status::New,
+    };
     Ok(s)
 }
 
@@ -438,23 +531,26 @@ pub fn check(all: &[Source]) -> Result<(), String> {
                     .iter()
                     .any(|r| FixedCol::of(r.dest) == Some(FixedCol::Vca) && r.amount != 0)
         });
-        if s.engine == EngineType::Va && !s.placeholder && !vca_env {
+        if s.engine == EngineType::Va && !s.is_placeholder() && !vca_env {
             return Err(format!(
                 "{}: a VA Sound needs an ENV routed to OUT.VCA (mod.ENV1 = \"OUT.VCA +127\")",
                 s.at(s.id_line)
             ));
         }
         // The owner auditions every VA Sound over a phrase (`qa`).
-        if s.engine == EngineType::Va && !s.placeholder && s.phrase.is_none() {
+        if s.engine == EngineType::Va && !s.is_placeholder() && s.phrase.is_none() {
             return Err(format!(
                 "{}: a VA Sound needs a phrase (phrase = \"bass\", \"lead\", \"pad\", \"arp\", \"wonky\" or \"sweep\")",
                 s.at(s.id_line)
             ));
         }
-        if s.placeholder && s.approved.is_some() {
+        if let Some(pin) = &s.level
+            && (pin.lufs - REFERENCE_LUFS).abs() <= LOUDNESS_LU
+        {
             return Err(format!(
-                "{}: a placeholder has no Sound to approve",
-                s.at(s.id_line)
+                "{}: level by ear {}: inside {REFERENCE_LUFS} ± {LOUDNESS_LU} LU the gate passes it anyway; drop the line",
+                s.at(pin.line),
+                pin.lufs
             ));
         }
         if let Some(o) = all[..i].iter().find(|o| o.id == s.id) {
