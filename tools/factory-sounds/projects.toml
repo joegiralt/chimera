@@ -12,10 +12,29 @@
 # Each Part carries its Sound's own sends (ADR 0123). `qa` plays every
 # setting, and every reverb TYPE, CHORUS mode and the delay must be heard
 # across the demos.
-#
-# P0000001 REVERB ROOMS and P0000002 REVERB BLOOM wait on
-# private issue #499 (HALL and BLOOM tails
-# step at block edges); until then QUAD, ROOM, HALL and BLOOM go unheard.
+# `held = "<reason>"` keeps a demo checked but unbuilt and unrendered;
+# what only held demos play is reported pending.
+
+[[project]]
+id = "P0000001"
+name = "REVERB ROOMS"
+held = "#499: HALL and BLOOM tails jump at block edges"
+try = "Turn TYPE through QUAD, ROOM and HALL"
+fx.REVERB.TYPE = "ROOM"
+hear.REVERB.TYPE = "QUAD, HALL"
+part.1 = "LAST LIGHT, POLY, CH 1"
+part.2 = "SITAR DRONE, POLY, CH 2"
+
+[[project]]
+id = "P0000002"
+name = "REVERB BLOOM"
+held = "#499: HALL and BLOOM tails jump at block edges"
+try = "Hold slow chords, then turn TYPE to REVERSE"
+fx.REVERB.TYPE = "BLOOM"
+fx.REVERB.TIME = "0.75"
+hear.REVERB.TYPE = "REVERSE"
+part.1 = "FADED HYMN, POLY, CH 1"
+part.2 = "SLOW TIDE, POLY, CH 2"
 
 [[project]]
 id = "P0000003"
