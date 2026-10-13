@@ -5,6 +5,7 @@
 
 use chimera_core::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use chimera_core::block::ValFmt;
+use chimera_core::dsp::algo::kinds::OpKind;
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::lfo::LfoParams;
 use chimera_core::dsp::modal::{EXCITER_NAMES, ModalPage, ModalParams, page_cells};
@@ -29,8 +30,9 @@ pub type Fact = (&'static str, Vec<String>);
 
 /// The unit's short label words, spelled out where a page has the room
 /// (the specs carry no longer label).
-pub const WORDS: [(&str, &str); 17] = [
+pub const WORDS: [(&str, &str); 18] = [
     ("AMNT", "BLEND"),
+    ("BW", "BANDWIDTH"),
     ("STAB", "STABILITY"),
     ("CRSE", "COARSE"),
     ("RESO", "RESONANCE"),
@@ -51,7 +53,9 @@ pub const WORDS: [(&str, &str); 17] = [
 
 /// The unit's short value words (a curve, an operator's wave), spelled
 /// out word by word in any value.
-pub const VALUES: [(&str, &str); 19] = [
+pub const VALUES: [(&str, &str); 21] = [
+    ("FRMT", "FORMANT"),
+    ("NOIS", "NOISE"),
     ("LIN", "LINEAR"),
     ("LOG", "LOGARITHMIC"),
     ("EXP", "EXPONENTIAL"),
@@ -105,6 +109,10 @@ fn get(snd: &Sound, a: ParamAddr) -> f32 {
 /// `a`'s value as the unit shows it on `snd`'s pages.
 fn shown(snd: &Sound, ctx: &SlotCtx, a: ParamAddr) -> String {
     match (a.spec(), shown_fmt(a, ctx)) {
+        // These two read the stored value, as the renderer gives them.
+        (Some(_), Some(fmt @ (ValFmt::LogHz { .. } | ValFmt::Vowel))) => {
+            spelled(&text(get(snd, a), fmt))
+        }
         (Some(spec), Some(fmt)) => spelled(&text(spec.normalize(get(snd, a)), fmt)),
         _ => "?".into(),
     }
@@ -343,6 +351,15 @@ fn op(snd: &Sound, ctx: &SlotCtx, o: Op) -> String {
     if get(snd, at(AlgoOpParams::LEVEL)) == 0.0 {
         return "(OFF)".into();
     }
+    if snd.params.algo.kinds().get(o.index()) == OpKind::Formant {
+        return format!(
+            "(FORMANT {}, BANDWIDTH {}, RATIO {}, LEVEL {})",
+            shown(snd, ctx, at(AlgoOpParams::FRMT)),
+            shown(snd, ctx, at(AlgoOpParams::BW)),
+            shown(snd, ctx, at(AlgoOpParams::COARSE)),
+            shown(snd, ctx, at(AlgoOpParams::LEVEL))
+        );
+    }
     format!(
         "({}, RATIO {}, LEVEL {})",
         shown(snd, ctx, at(AlgoOpParams::WAVE)),
@@ -402,6 +419,10 @@ fn engine(snd: &Sound, ctx: &SlotCtx) -> Vec<Fact> {
                     shown(snd, ctx, a(AlgoParams::MORPH)),
                     shown(snd, ctx, a(AlgoParams::ALG_B))
                 );
+            }
+            // Every slotted formant operator follows VOWEL.
+            if snd.params.algo.kinds().any_formant() {
+                head += &format!(" · VOWEL {}", shown(snd, ctx, a(AlgoParams::VOWEL)));
             }
             let carriers: Vec<String> = Op::ALL
                 .into_iter()

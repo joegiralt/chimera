@@ -981,6 +981,16 @@ fn facts_use_full_words() {
         "T6",
         "T7",
         "T8",
+        // The formant operators (ADR 0131), and VOWEL's five vowels.
+        "FORMANT",
+        "BANDWIDTH",
+        "NOISE",
+        "VOWEL",
+        "U",
+        "O",
+        "A",
+        "E",
+        "I",
     ];
     let mut odd = std::collections::BTreeSet::new();
     for (name, l) in committed_facts() {
@@ -1057,6 +1067,27 @@ fn what_it_is_lists_an_algo_sounds_carriers() {
     );
     assert!(t.contains("MODULATORS: OP 2 → OP 1 "), "{t}");
     assert!(t.contains("OP 6 → OP 5 "), "{t}");
+}
+
+/// A FRMT operator reads by its formant and width, and the head names
+/// the VOWEL every slotted operator follows (ADR 0131).
+#[test]
+fn what_it_is_names_formant_operators_and_the_vowel() {
+    let algo = BASE.replace("engine = \"VA\"", "engine = \"ALGO\"");
+    let t = about_text(&format!(
+        "{algo}ALGO.ALG_A = \"T5\"\nALGO.ALG_B = \"T5\"\nALGO.VOWEL = \"25\"\nOP_E.WAVE = \"FRMT\"\nOP_E.LEVEL = \"90\"\nOP_E.FRMT = \"69\"\nOP_E.BW = \"72\"\nmod.LFO2 = \"ALGO.VOWEL +30, OP_E.BW +10\"\n"
+    ));
+    assert!(t.contains("ALGORITHM T5 · VOWEL O"), "{t}");
+    assert!(
+        t.contains("OP 5 (FORMANT 734 Hz, BANDWIDTH 160 Hz, RATIO 1.00, LEVEL "),
+        "{t}"
+    );
+    assert!(
+        t.contains("→ VOWEL +30") && t.contains("OP 5 BANDWIDTH +10"),
+        "{t}"
+    );
+    let table = about_text(&format!("{algo}ALGO.ALG_A = \"T5\"\nALGO.ALG_B = \"T5\"\n"));
+    assert!(!table.contains("VOWEL"), "no formant, no vowel: {table}");
 }
 
 #[test]
