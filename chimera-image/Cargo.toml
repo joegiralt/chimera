@@ -1,0 +1,9 @@
+[package]
+name = "chimera-image"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Bank 2's header, seal, judgement and the Door token: pure, no_std, no
+# dependencies. The CRC-32 lives here so the card files and the image share it.
+[dependencies]

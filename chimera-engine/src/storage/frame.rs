@@ -2,7 +2,7 @@
 
 use crate::name::Name;
 
-use super::crc::Crc32;
+use super::Crc32;
 use super::record::{CRITICAL, MAX_RECORD_LEN, ReadTag, RecordTag};
 
 pub const MAGIC: [u8; 4] = *b"CHIM";

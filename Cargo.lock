@@ -279,6 +279,7 @@ version = "0.1.0"
 dependencies = [
  "chimera-engine",
  "chimera-hal",
+ "chimera-image",
  "chimera-theory",
  "chimera-waves",
  "libm",
@@ -301,6 +302,10 @@ version = "0.1.0"
 dependencies = [
  "embedded-graphics-core",
 ]
+
+[[package]]
+name = "chimera-image"
+version = "0.1.0"
 
 [[package]]
 name = "chimera-stm32"

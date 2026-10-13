@@ -2,7 +2,7 @@
 
 use chimera_hal::store::{ByteSink, StoreError};
 
-use super::crc::Crc32;
+use super::Crc32;
 use super::frame::Header;
 
 /// The largest payload a known record may have; the framer buffers one.
