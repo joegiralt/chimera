@@ -107,13 +107,31 @@ pub struct SustainEvent {
     pub down: bool,
 }
 
-/// What a note queue carries: notes, the two performance controls the
-/// Parts take (bend and sustain) and real-time, in the order they came.
+/// The channel-mode messages (CC 120, 121, 123) a Part obeys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChannelMode {
+    /// CC 120: fade everything out now.
+    SoundOff,
+    /// CC 121: bend to centre, pedal up.
+    ResetControllers,
+    /// CC 123: let go of every held key (the pedal still holds).
+    NotesOff,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChannelModeEvent {
+    pub channel: MidiChannel,
+    pub mode: ChannelMode,
+}
+
+/// What a note queue carries: notes, the performance controls the Parts
+/// take (bend, sustain, channel mode) and real-time, in the order they came.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InEvent {
     Note(NoteEvent),
     Bend(BendEvent),
     Sustain(SustainEvent),
+    Mode(ChannelModeEvent),
     Rt(RealTime),
 }
 
@@ -133,9 +151,13 @@ impl From<RealTime> for InEvent {
 const KIND_SHIFT: u32 = 18;
 const KIND_BEND: usize = RealTime::ALL.len() + 1;
 const KIND_SUSTAIN: usize = KIND_BEND + 1;
-const _: () = assert!(KIND_SUSTAIN < 8);
+const KIND_MODE: usize = KIND_SUSTAIN + 1;
+const _: () = assert!(KIND_MODE < 8);
 /// The CC that is the sustain pedal.
 const CC_SUSTAIN: u8 = 64;
+const CC_SOUND_OFF: u8 = 120;
+const CC_RESET: u8 = 121;
+const CC_NOTES_OFF: u8 = 123;
 
 impl InEvent {
     /// Notes, pitch bend, the sustain pedal and real-time. Every other CC
@@ -171,6 +193,18 @@ impl InEvent {
                 channel,
                 down: value >= 64,
             }),
+            MidiMessage::ControlChange { channel, cc, .. }
+                if matches!(cc, CC_SOUND_OFF | CC_RESET | CC_NOTES_OFF) =>
+            {
+                InEvent::Mode(ChannelModeEvent {
+                    channel,
+                    mode: match cc {
+                        CC_SOUND_OFF => ChannelMode::SoundOff,
+                        CC_RESET => ChannelMode::ResetControllers,
+                        _ => ChannelMode::NotesOff,
+                    },
+                })
+            }
             MidiMessage::ControlChange { .. } => return None,
         })
     }
@@ -183,6 +217,9 @@ impl InEvent {
             InEvent::Bend(b) => {
                 let v = (b.value.clamp(-8192, 8191) + 8192) as u32;
                 b.channel.get() as u32 | (v << 4) | ((KIND_BEND as u32) << KIND_SHIFT)
+            }
+            InEvent::Mode(m) => {
+                m.channel.get() as u32 | ((m.mode as u32) << 4) | ((KIND_MODE as u32) << KIND_SHIFT)
             }
             InEvent::Sustain(p) => {
                 p.channel.get() as u32
@@ -202,6 +239,15 @@ impl InEvent {
             KIND_SUSTAIN => Some(InEvent::Sustain(SustainEvent {
                 channel: MidiChannel::new((bits & 0xF) as u8)?,
                 down: bits & 0x10 != 0,
+            })),
+            KIND_MODE => Some(InEvent::Mode(ChannelModeEvent {
+                channel: MidiChannel::new((bits & 0xF) as u8)?,
+                mode: match (bits >> 4) & 3 {
+                    0 => ChannelMode::SoundOff,
+                    1 => ChannelMode::ResetControllers,
+                    2 => ChannelMode::NotesOff,
+                    _ => return None,
+                },
             })),
             k => RealTime::ALL.get(k - 1).copied().map(InEvent::Rt),
         }
@@ -277,13 +323,15 @@ impl NoteQueue {
         let tail = self.tail.load(Ordering::Relaxed);
         let head = self.head.load(Ordering::Acquire);
         // A velocity-0 note-on is an `Off` already (`unpack`, `from_midi`).
-        // A pedal up is let through as well: dropped, it holds notes.
+        // A pedal up and a channel-mode message are let through as well:
+        // dropped, they leave notes stuck.
         let note_off = matches!(
             ev,
             InEvent::Note(NoteEvent {
                 kind: NoteKind::Off,
                 ..
             }) | InEvent::Sustain(SustainEvent { down: false, .. })
+                | InEvent::Mode(_)
         );
         let limit = NOTE_QUEUE_LEN - if note_off { 0 } else { NOTE_OFF_RESERVE };
         if tail.wrapping_sub(head) as usize >= limit {

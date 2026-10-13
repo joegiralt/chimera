@@ -56,6 +56,13 @@ fn word(channel: u8, key: u8) -> usize {
     (channel as usize & 15) * 4 + (key as usize >> 5 & 3)
 }
 
+/// Nothing is held on `channel`.
+pub fn clear_channel(channel: u8) {
+    for w in &HELD[(channel as usize & 15) * 4..][..4] {
+        w.store(0, Ordering::Relaxed);
+    }
+}
+
 /// Nothing is held: the voices were killed, or no voice holds a key (a
 /// lost note-off).
 pub fn clear_held() {

@@ -286,6 +286,7 @@ impl OrbitRig {
                     }
                     InEvent::Bend(b) => self.inst.bend(b),
                     InEvent::Sustain(p) => self.inst.sustain(p),
+                    InEvent::Mode(m) => self.inst.channel_mode(m),
                     InEvent::Rt(rt) => self.runner.realtime(src, rt, now),
                 }
             }
