@@ -602,23 +602,30 @@ thread_local! {
 /// FX bus, with or without the master tape): every render plays the voices
 /// the unit can, stealing past them.
 pub const UNIT_BUDGET: SampleBudget = SampleBudget::for_cpu(CPU_HZ_REV_V);
+/// The chip `UNIT_BUDGET` is, as the page and report name it.
+pub const UNIT_REV: &str = "rev V (480 MHz)";
 
 /// `plan` played by `snd` on Part 1 in `mode`, offline at 48 kHz through
 /// `Instrument`: what `loudness_test`'s scenes measure.
 fn play(snd: &Sound, mode: PartMode, plan: &Plan) -> Take {
+    play_at(snd, mode, plan, UNIT_BUDGET)
+}
+
+/// `play` at `budget`.
+fn play_at(snd: &Sound, mode: PartMode, plan: &Plan, budget: SampleBudget) -> Take {
     let mut perf = Performance::new();
     let e = perf.edit(PartId::ALL[0]);
     **e.sound = snd.clone();
     e.mix.mode = plan.mode.unwrap_or(mode);
     let channel = perf.part(PartId::ALL[0]).mix.channel;
-    play_on(&perf, channel, plan)
+    play_on(&perf, channel, plan, budget)
 }
 
 /// `plan` played on `channel` of `perf`, every Part and the FX bus as
 /// set: the Parts on that channel sound.
-fn play_on(perf: &Performance, channel: MidiChannel, plan: &Plan) -> Take {
+fn play_on(perf: &Performance, channel: MidiChannel, plan: &Plan, budget: SampleBudget) -> Take {
     let shared = Box::new(AudioShared::from_performance(perf));
-    let mut inst = Box::new(Instrument::new(SAMPLE_RATE, UNIT_BUDGET));
+    let mut inst = Box::new(Instrument::new(SAMPLE_RATE, budget));
     let mut fx = Box::new(FxBus::new());
     let ev = |note: u8, kind| NoteEvent {
         channel,
@@ -688,6 +695,40 @@ fn voices_of(snd: &Sound, mode: PartMode) -> usize {
 /// The most voices sounding at once while `src` plays `s`.
 pub fn most_voices(src: &Source, s: Script) -> Result<usize, String> {
     Ok(play(&dried(&to_sound(src)?), src.demo, &plan(s, src.home)).voices)
+}
+
+/// `a` played as the page plays it, at `budget`: its most voices at once.
+fn voices_at(src: &Source, a: Audition, budget: SampleBudget) -> Result<usize, String> {
+    let p = match a {
+        Audition::Phrase(ph) => phrase_plan(ph, src.home),
+        Audition::Script(sc) => plan(sc, src.home),
+    };
+    Ok(play_at(&to_sound(src)?, src.demo, &p, budget).voices)
+}
+
+/// `src`'s render `a` sounds more voices at once at an unlimited budget
+/// than at the unit's: the voice budget changed it.
+pub fn over_budget(src: &Source, a: Audition) -> Result<bool, String> {
+    Ok(voices_at(src, a, SampleBudget::for_cpu(u32::MAX))? > voices_at(src, a, UNIT_BUDGET)?)
+}
+
+/// After `compare`: a changed Sound's voice budget is a cause only when a
+/// render of it is proven `over_budget`.
+pub fn voice_cause(r: &mut Report, src: &Source) -> Result<(), String> {
+    let Some(b) = r.baseline.as_mut() else {
+        return Ok(());
+    };
+    b.voice_budget = None;
+    if b.changed().is_none() {
+        return Ok(());
+    }
+    for x in &r.renders {
+        if over_budget(src, x.audition)? {
+            b.voice_budget = Some(r.voices);
+            break;
+        }
+    }
+    Ok(())
 }
 
 /// The listening render: the Source's Sound played under `s` at 48 kHz,
@@ -1219,9 +1260,8 @@ pub struct Baseline {
     pub missing: Vec<Audition>,
     /// What its change bisects to (`CAUSES`), each with its residual.
     pub causes: Vec<(EngineChange, f32)>,
-    /// A changed render that played the unit's whole voice count: the
-    /// voices the unit plays (`UNIT_BUDGET`; the baseline rendered past
-    /// it).
+    /// The voices the unit plays, when the voice budget is proven a cause
+    /// (`voice_cause`).
     pub voice_budget: Option<usize>,
 }
 
@@ -1310,9 +1350,6 @@ pub fn compare(r: &mut Report, dir: &Path) -> Result<(), String> {
             .map_err(err)?;
         let new: Vec<f32> = listen::wav_samples(&x.stereo, 2).map(unit).collect();
         let db = residual_db(&new, &old);
-        if db > AUDIO_CHANGED_DB && r.voices < MAX_VOICES && x.voices >= r.voices {
-            b.voice_budget = Some(r.voices);
-        }
         if b.worst.is_none_or(|(_, w)| db > w) {
             b.worst = Some((x.audition, db));
         }
@@ -1626,6 +1663,7 @@ pub fn report_text(reports: &[Report], samey: &[(usize, usize)]) -> String {
         let ok = if r.passes() { "PASS" } else { "FAIL" };
         let private = if r.private { "  PRIVATE" } else { "" };
         let _ = writeln!(o, "S{} {}{private}  {ok}", r.id.get(), r.name);
+        let _ = writeln!(o, "  voices on the unit: {} ({UNIT_REV})", r.voices);
         if let Some(round) = r.changed {
             let _ = writeln!(o, "  {}", changed_line(round));
         }
@@ -1743,7 +1781,12 @@ pub fn page(
                 .long_lufs
                 .map_or(String::new(), |l| format!(" · long (dry) {l:.1} LUFS"));
             lines.push((
-                format!("S{} · {}{lufs}{long}", r.id.get(), r.demo.disk_ident()),
+                format!(
+                    "S{} · {} · {} VOICES{lufs}{long}",
+                    r.id.get(),
+                    r.demo.disk_ident(),
+                    r.voices
+                ),
                 false,
             ));
             if let Some(e) = &r.edits {
@@ -1860,7 +1903,9 @@ pub fn page(
          closed; on its demo mode), then under its render scripts, offline through the real \
          Instrument (Part 1, P1); a render marked WITH plays its sends through NEW's effects. The \
          phrase is for your ear, not a gate. Under each Sound, what it is, read from the Sound \
-         itself. Every gate passed (measured dry) or is marked for your ear: the lines in colour.{}{}",
+         itself. Every gate passed (measured dry) or is marked for your ear: the lines in colour. \
+         Every render plays the voices the unit gives the Sound, stealing past them; VOICES is \
+         that count on {UNIT_REV}.{}{}",
         if demos.is_empty() {
             ""
         } else {
@@ -2217,7 +2262,7 @@ pub fn demo_gates(d: &Demo, sounds: &[Source], stims: &Stims) -> Result<DemoRepo
                         .iter()
                         .map(|h| block(h.on) * BLOCK_SIZE + LATE)
                         .collect();
-                    (play_on(&perf, ch, &p), on, ex)
+                    (play_on(&perf, ch, &p, UNIT_BUDGET), on, ex)
                 }
                 DemoTake::Hats | DemoTake::Snare => {
                     let x = sounding(if take == DemoTake::Hats {

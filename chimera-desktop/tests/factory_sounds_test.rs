@@ -1104,11 +1104,7 @@ fn renders_steal_at_the_units_voice_budget() {
     use chimera_core::hw::MAX_VOICES;
     use chimera_desktop::factory_sounds::qa;
     use chimera_desktop::factory_sounds::source::Script;
-    let algo = BASE.replace("engine = \"VA\"", "engine = \"ALGO\"");
-    let heavy = &run(&format!(
-        "{algo}ALGO.ALG_A = \"A1\"\nALGO.ALG_B = \"A1\"\nOP_A.WAVE = \"FRMT\"\nOP_B.WAVE = \"FRMT\"\nOP_C.WAVE = \"FRMT\"\nOP_D.LEVEL = \"99\"\nOP_E.LEVEL = \"99\"\nOP_F.LEVEL = \"99\"\nFILTER.KIND = \"2040\"\nmod.LFO2 = \"OP_A.FRMT +10, OP_B.FRMT +10, OP_C.BW +10, ALGO.VOWEL +20\"\nmod.ENV2 = \"FILTER.CUTOFF +20, OP_A.LEVEL +10\"\n"
-    ))
-    .unwrap()[0];
+    let heavy = &heavy_frmt();
     let n = qa::unit_voices(heavy).unwrap();
     assert!(
         n < MAX_VOICES,
@@ -1128,7 +1124,7 @@ fn renders_steal_at_the_units_voice_budget() {
 fn what_it_is_names_formant_operators_and_the_vowel() {
     let algo = BASE.replace("engine = \"VA\"", "engine = \"ALGO\"");
     let t = about_text(&format!(
-        "{algo}ALGO.ALG_A = \"T5\"\nALGO.ALG_B = \"T5\"\nALGO.VOWEL = \"25\"\nOP_E.WAVE = \"FRMT\"\nOP_E.LEVEL = \"90\"\nOP_E.FRMT = \"69\"\nOP_E.BW = \"72\"\nOP_E.VSLOT = \"F2\"\nOP_C.WAVE = \"NOIS\"\nOP_C.FRMT = \"123\"\nmod.LFO2 = \"ALGO.VOWEL +30, OP_E.BW +10\"\n"
+        "{algo}ALGO.ALG_A = \"T5\"\nALGO.ALG_B = \"T5\"\nALGO.VOWEL = \"25\"\nOP_E.WAVE = \"FRMT\"\nOP_E.LEVEL = \"90\"\nOP_E.FRMT = \"69\"\nOP_E.BW = \"72\"\nOP_E.VSLOT = \"F2\"\nOP_C.WAVE = \"NOIS\"\nOP_C.FRMT = \"123\"\nOP_C.RES = \"40\"\nmod.LFO2 = \"ALGO.VOWEL +30, OP_E.BW +10\"\n"
     ));
     assert!(t.contains("ALGORITHM T5 · VOWEL O"), "{t}");
     assert!(
@@ -1139,9 +1135,10 @@ fn what_it_is_names_formant_operators_and_the_vowel() {
         t.contains("→ VOWEL +30") && t.contains("OP 5 BANDWIDTH +10"),
         "{t}"
     );
-    // A noise band reads by its band; it has no pitch, so no RATIO.
+    // A noise band reads by its band and its vowel slot (its centre
+    // follows VOWEL), and RES when set; it has no pitch, so no RATIO.
     assert!(
-        t.contains("OP 3 (NOISE 3.49 kHz, WIDTH 160 Hz, LEVEL "),
+        t.contains("OP 3 (NOISE 3.49 kHz, WIDTH 160 Hz, SLOT AUTO, RESONANCE 40, LEVEL "),
         "{t}"
     );
     let table = about_text(&format!("{algo}ALGO.ALG_A = \"T5\"\nALGO.ALG_B = \"T5\"\n"));
@@ -2011,28 +2008,63 @@ fn residual_against_the_baseline() {
     const { assert!(qa::AUDIO_CHANGED_DB == -40.0) };
 }
 
-/// A changed render that played all the voices the unit gives the Sound
-/// names the voice budget as its cause; one under it doesn't.
+/// The heavily routed three-FRMT Source `renders_steal_…` plays.
+fn heavy_frmt() -> source::Source {
+    let algo = BASE.replace("engine = \"VA\"", "engine = \"ALGO\"");
+    run(&format!(
+        "{algo}ALGO.ALG_A = \"A1\"\nALGO.ALG_B = \"A1\"\nOP_A.WAVE = \"FRMT\"\nOP_B.WAVE = \"FRMT\"\nOP_C.WAVE = \"FRMT\"\nOP_D.LEVEL = \"99\"\nOP_E.LEVEL = \"99\"\nOP_F.LEVEL = \"99\"\nFILTER.KIND = \"2040\"\nmod.LFO2 = \"OP_A.FRMT +10, OP_B.FRMT +10, OP_C.BW +10, ALGO.VOWEL +20\"\nmod.ENV2 = \"FILTER.CUTOFF +20, OP_A.LEVEL +10\"\n"
+    ))
+    .unwrap()
+    .remove(0)
+}
+
+/// The voice budget is a changed render's cause only when proven: the same
+/// render at an unlimited budget sounds more voices than the unit's did.
 #[test]
-fn a_render_at_the_voice_budget_names_it() {
+fn the_voice_budget_cause_is_proven() {
     use chimera_desktop::listen::write_wav_stereo;
+    let heavy = heavy_frmt();
+    let light = run(BASE).unwrap().remove(0);
+    let stab = Audition::Script(Script::Stab);
+    assert!(qa::over_budget(&heavy, stab).unwrap(), "its stab steals");
+    assert!(!qa::over_budget(&light, stab).unwrap());
+    assert!(!qa::over_budget(&heavy, Audition::Script(Script::Long)).unwrap());
+
     let d = scratch_ledger("voice-budget");
     std::fs::create_dir_all(&d).unwrap();
     let mut r = report_approved();
     r.voices = 3;
-    r.renders[0].voices = 3;
+    r.renders[0].audition = stab;
     let old: Vec<f32> = r.renders[0].stereo.iter().map(|v| v * 0.9).collect();
-    write_wav_stereo(&d.join("S9100002-long.wav"), &old).unwrap();
-    qa::compare(&mut r, &d).unwrap();
-    let txt = qa::report_text(std::slice::from_ref(&r), &[]);
+    write_wav_stereo(&d.join("S9100002-stab.wav"), &old).unwrap();
+    let cause = |r: &mut qa::Report, s: &source::Source| {
+        qa::compare(r, &d).unwrap();
+        qa::voice_cause(r, s).unwrap();
+        qa::report_text(std::slice::from_ref(r), &[])
+    };
+    let txt = cause(&mut r, &heavy);
     assert!(
         txt.contains("voice budget: the unit plays 3 voices"),
         "{txt}"
     );
-    r.renders[0].voices = 2;
-    qa::compare(&mut r, &d).unwrap();
+    let txt = cause(&mut r, &light);
+    assert!(
+        txt.contains("AUDIO CHANGED") && !txt.contains("voice budget"),
+        "{txt}"
+    );
+}
+
+/// Each Sound's voice count on the unit, in report.txt and on the page.
+#[test]
+fn the_voice_count_is_printed() {
+    let r = report(true, false);
     let txt = qa::report_text(std::slice::from_ref(&r), &[]);
-    assert!(!txt.contains("voice budget"), "{txt}");
+    assert!(txt.contains("voices on the unit: 8"), "{txt}");
+    let page = qa::page(std::slice::from_ref(&r), &[], &[], &[]);
+    assert!(
+        page.contains("8 VOICES") && page.contains("rev V (480 MHz)"),
+        "{page}"
+    );
 }
 
 #[test]

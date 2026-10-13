@@ -359,11 +359,18 @@ fn op(snd: &Sound, ctx: &SlotCtx, o: Op) -> String {
             );
         }
         // A noise band has no pitch: its centre and width, no RATIO.
+        // Its centre follows VOWEL by its slot; RES blends in a tone.
         OpKind::Noise => {
+            let res = if get(snd, at(AlgoOpParams::RES)) == 0.0 {
+                String::new()
+            } else {
+                format!(", RESONANCE {}", shown(snd, ctx, at(AlgoOpParams::RES)))
+            };
             return format!(
-                "(NOISE {}, WIDTH {}, LEVEL {})",
+                "(NOISE {}, WIDTH {}, SLOT {}{res}, LEVEL {})",
                 shown(snd, ctx, at(AlgoOpParams::FRMT)),
                 shown(snd, ctx, at(AlgoOpParams::BW)),
+                shown(snd, ctx, at(AlgoOpParams::VSLOT)),
                 shown(snd, ctx, at(AlgoOpParams::LEVEL))
             );
         }

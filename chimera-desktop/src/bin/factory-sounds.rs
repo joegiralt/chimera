@@ -154,8 +154,9 @@ fn run_qa(wav: bool, baseline: Option<PathBuf>) -> Result<(), String> {
         if !dir.is_dir() {
             return Err(format!("baseline {}: not a directory", dir.display()));
         }
-        for r in &mut reports {
+        for (r, s) in reports.iter_mut().zip(&all) {
             qa::compare(r, dir)?;
+            qa::voice_cause(r, s)?;
         }
     }
     let bands: Vec<_> = reports.iter().map(|r| r.bands).collect();
