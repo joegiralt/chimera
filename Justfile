@@ -186,7 +186,9 @@ release version *flags:
         echo "chimera-usb.py leaks a private reference" >&2; exit 1
     fi
     # The factory set: the public build's CHIMERA/ + manifest.json, nothing
-    # private (FACTORY_PUBLIC overrides the dir, and skips the fresh build).
+    # private (FACTORY_PUBLIC overrides the dir and skips the fresh build, --dry-run only).
+    # A real release always builds fresh; the override is for --dry-run tests only.
+    [ -z "${FACTORY_PUBLIC:-}" ] || [ $dry = 1 ] || { echo "FACTORY_PUBLIC is for --dry-run only: a release packs a fresh build" >&2; exit 1; }
     if [ -z "${FACTORY_PUBLIC:-}" ]; then just factory-sounds; fi
     pub=${FACTORY_PUBLIC:-target/factory-sounds/public}
     [ -d "$pub/CHIMERA" ] && [ -f "$pub/manifest.json" ] || { echo "no factory set in $pub: just factory-sounds" >&2; exit 1; }
