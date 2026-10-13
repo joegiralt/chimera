@@ -14,12 +14,12 @@
 //! no longer fits FLASH beside the synth. What an area leaves out is dead
 //! here; clippy checks every area at once.
 
-use core::fmt::Write;
 use core::hint::black_box;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use chimera_board::{Display, bench_screen};
 use chimera_core::console::Report;
 use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::{draw, theme};
@@ -77,7 +77,6 @@ use chimera_engine::{
     project::Loads,
     tracked::Tracked,
 };
-use chimera_hal::ChimeraDisplay;
 use cortex_m::peripheral::DWT;
 use embedded_graphics_core::pixelcolor::Rgb565;
 
@@ -799,7 +798,7 @@ struct Rig<'p> {
 // Not inlined, so its frame never adds to `main`'s.
 #[inline(never)]
 pub fn run(
-    display: &mut impl ChimeraDisplay,
+    display: &mut Display,
     clocks: Clocks,
     (project, sources): (&mut Project, &mut AudioToken),
     report: &mut Text,
@@ -853,7 +852,7 @@ const AREAS: [(bool, &str); 6] = [
 ];
 
 /// The build's areas, its silicon and clock: the report's first line.
-fn title(rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
+fn title(rec: &mut Recorder<'_>, clocks: Clocks) {
     rec.clear();
     let mut line = FmtBuf::new();
     let _ = write!(line, "BENCH");
@@ -883,7 +882,7 @@ fn algo_pages(
         ScopeWriter,
     ),
     project: &Project,
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
+    rec: &mut Recorder<'_>,
     proj_crc: u32,
 ) {
     let mut rig = Rig {
@@ -915,7 +914,7 @@ fn algo_pages(
 
 /// The ALGO screen: each patch at 1..8 voices, the kernel and the FX bus.
 #[cfg(feature = "bench-algo")]
-fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
+fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     let mut rows = [Counts::default(); ROWS];
     for (row, &(_, patch, low, step)) in rows.iter_mut().zip(&PATCHES) {
         for n in 1..=MAX_VOICES {
@@ -953,7 +952,7 @@ fn time_rows(rig: &mut Rig<'_>, rows: &[RoutingRow], counts: &mut [Counts], (low
 
 /// The ROUTING screens, `ROUTING_PAGE` rows each.
 #[cfg(feature = "bench-routing")]
-fn routing_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
+fn routing_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     let mut routing = [Counts::default(); ROUTING_ROWS];
     time_rows(rig, &ROUTING, &mut routing, (36, 12));
     let pages = ROUTING
@@ -1269,7 +1268,7 @@ fn tape_page(
     (inst_slot, fx_slot, shared_slot): Slots<'_>,
     (scope, sources): (&mut ScopeWriter, &mut AudioToken),
     project: &mut Project,
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
+    rec: &mut Recorder<'_>,
 ) {
     let rig = &mut TapeRig {
         inst_slot,
@@ -1316,12 +1315,7 @@ fn tape_page(
 /// CRC. Out of `run`, so its frame stays under the stack check's 8 KB.
 #[cfg(feature = "bench-memory")]
 #[inline(never)]
-fn memory_page(
-    rig: &mut Rig<'_>,
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
-    clocks: Clocks,
-    proj_crc: u32,
-) {
+fn memory_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks, proj_crc: u32) {
     let rebuild = time_rebuild();
     // A4 after A4, the default Sound: the lines clear a loop each.
     let sym = |p: &mut PartAudio| modal(p, ResonatorMode::Sympathetic);
@@ -1343,7 +1337,7 @@ fn memory_page(
 /// under the stack check's 8 KB.
 #[cfg(feature = "bench-stress")]
 #[inline(never)]
-fn stress_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
+fn stress_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     chimera_engine::probe::set_clock(DWT::cycle_count);
     let ((s1, sp1), (s2, sp2)) = (
         rig.stress(true, worst_reverb, &[], false),
@@ -1367,7 +1361,7 @@ fn stress_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, 
 /// under the stack check's 8 KB.
 #[cfg(feature = "bench-stress")]
 #[inline(never)]
-fn reverb_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
+fn reverb_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     chimera_engine::probe::set_clock(DWT::cycle_count);
     let mix = rig.time_bus(FX[0].1);
     let rev: [u32; REV_ROWS] = core::array::from_fn(|i| rig.time_bus(REV[i].1));
@@ -1398,7 +1392,7 @@ fn reverb_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, 
 /// stays under the stack check's 8 KB.
 #[cfg(feature = "bench-orbit")]
 #[inline(never)]
-fn orbit_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
+fn orbit_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     chimera_engine::probe::set_clock(DWT::cycle_count);
     let ((mean, worst), [ow, ow1, omean]) = rig.time_orbit();
     rec.clear();
@@ -2018,7 +2012,7 @@ impl Phases {
     }
 }
 
-fn show_phases(rec: &mut Recorder<'_, impl ChimeraDisplay>, rows: &[(&str, Phases)]) {
+fn show_phases(rec: &mut Recorder<'_>, rows: &[(&str, Phases)]) {
     rec.clear();
     rec.heading("ORBIT PHASES");
     let mut line = FmtBuf::new();
@@ -2232,12 +2226,12 @@ enum Face {
 
 /// The bench's screen and its report together: text can only be drawn by
 /// recording it, so `bench` reads exactly what the screens showed.
-struct Recorder<'a, D> {
-    display: &'a mut D,
+struct Recorder<'a> {
+    display: &'a mut Display,
     report: &'a mut Text,
 }
 
-impl<D: ChimeraDisplay> Recorder<'_, D> {
+impl Recorder<'_> {
     /// A new screen.
     fn clear(&mut self) {
         draw::fill_rect(
@@ -2253,24 +2247,24 @@ impl<D: ChimeraDisplay> Recorder<'_, D> {
     /// The screen's title, recorded as the report's heading.
     fn heading(&mut self, text: &str) {
         self.report.heading(text);
-        draw::text(self.display, &theme::FONT_VALUE, text, 4, 16, theme::INK);
+        bench_screen::text(self.display, None, text, (4, 16));
     }
 
-    fn line(&mut self, face: Face, text: &str, (x, y): (i32, i32)) {
+    fn line(&mut self, face: Face, text: &str, at: (i32, i32)) {
         let display = &mut *self.display;
         self.report.drawn(text, |t| match face {
-            Face::Value => draw::text(display, &theme::FONT_VALUE, t, x, y, theme::INK),
-            Face::Label(c) => draw::text(display, &theme::FONT_LABEL, t, x, y, c),
+            Face::Value => bench_screen::text(display, None, t, at),
+            Face::Label(c) => bench_screen::text(display, Some(c), t, at),
         });
     }
 
     fn flush(&mut self) {
-        self.display.flush();
+        bench_screen::flush(self.display);
     }
 }
 
 fn show(
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
+    rec: &mut Recorder<'_>,
     clocks: Clocks,
     rows: &[Counts; ROWS],
     kernel: u32,
@@ -2322,7 +2316,7 @@ fn show(
 /// a line as the FX screen's, then STRESS's and REV SWITCH MAX's costliest
 /// blocks against their budget.
 fn show_reverb(
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
+    rec: &mut Recorder<'_>,
     rev: &[u32; REV_ROWS],
     mix: u32,
     bus_v: u32,
@@ -2381,12 +2375,7 @@ fn show_reverb(
 
 /// A screen of `rows`' labels and their counts under `heading`: a ROUTING
 /// page or FORMANT.
-fn show_rows(
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
-    heading: &str,
-    rows: &[RoutingRow],
-    counts: &[Counts],
-) {
+fn show_rows(rec: &mut Recorder<'_>, heading: &str, rows: &[RoutingRow], counts: &[Counts]) {
     rec.clear();
     let mut line = FmtBuf::new();
     rec.heading(heading);
@@ -2399,7 +2388,7 @@ fn show_rows(
 /// The sizes behind the D2 budget, the exclusive state's two timings and
 /// the project CRC's.
 fn show_memory(
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
+    rec: &mut Recorder<'_>,
     (rebuild, proj_crc): (u32, u32),
     note_on: u32,
     (lowest, dark, light): (u32, u32, u32),
@@ -2434,7 +2423,7 @@ fn show_memory(
 /// (a knob turned on every Part every block); each run's knobs' ease, the
 /// most in any block and in its costliest block; and what the bill
 /// counted at its costliest block (first, after, LOAD 6, LOAD 1-5, MOVE).
-fn show_stress(rec: &mut Recorder<'_, impl ChimeraDisplay>, runs: [Stress; 5], budget: u32) {
+fn show_stress(rec: &mut Recorder<'_>, runs: [Stress; 5], budget: u32) {
     let [s1, s2, l1, l5, mv] = runs;
     rec.clear();
     rec.heading("STRESS");
@@ -2463,10 +2452,7 @@ fn show_stress(rec: &mut Recorder<'_, impl ChimeraDisplay>, runs: [Stress; 5], b
 }
 
 /// `lines` down the screen, 22 px apart, and flushed.
-fn show_lines<'a>(
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
-    lines: impl Iterator<Item = core::fmt::Arguments<'a>>,
-) {
+fn show_lines<'a>(rec: &mut Recorder<'_>, lines: impl Iterator<Item = core::fmt::Arguments<'a>>) {
     let mut line = FmtBuf::new();
     for (i, args) in lines.enumerate() {
         line.clear();
@@ -2478,13 +2464,7 @@ fn show_lines<'a>(
 
 /// `label`'s per-voice cost (`Counts::per_voice`), with the voices that
 /// sounded when fewer than all, and its count at each voice count.
-fn voice_row(
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
-    line: &mut FmtBuf,
-    y: i32,
-    label: &str,
-    counts: &Counts,
-) {
+fn voice_row(rec: &mut Recorder<'_>, line: &mut FmtBuf, y: i32, label: &str, counts: &Counts) {
     line.clear();
     let _ = write!(line, "{label} /VOICE {}", counts.per_voice());
     if counts.spans < MAX_VOICES {

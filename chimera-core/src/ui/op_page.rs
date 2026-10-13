@@ -213,7 +213,6 @@ where
 /// Whole Hz under 1 kHz, then kHz to a tenth, then whole kHz: the
 /// readout's room.
 fn hz_short(buf: &mut FmtBuf, hz: f32) -> core::fmt::Result {
-    use core::fmt::Write;
     let hz = libm::roundf(hz) as u32;
     let tenths = (hz + 50) / 100;
     match hz {

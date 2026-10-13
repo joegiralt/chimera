@@ -361,7 +361,6 @@ impl SourceState {
 
 /// `frames` at `rate` in seconds, to a tenth: `1.5 S`.
 fn seconds(buf: &mut FmtBuf, rate: u16, frames: u32) {
-    use core::fmt::Write;
     let rate = u64::from(rate.max(1));
     let tenths = (u64::from(frames) * 10 + rate / 2) / rate;
     let _ = write!(buf, "{}.{} S", tenths / 10, tenths % 10);

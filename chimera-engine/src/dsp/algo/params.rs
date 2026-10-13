@@ -490,7 +490,7 @@ impl Block for OpViewMut<'_> {
     #[inline(never)]
     fn set(&mut self, id: ParamId, v: f32) {
         if let Some(s) = self.spec(id) {
-            self.write(id, s.quantize(v));
+            self.write(id, s.quantized(v));
         }
     }
 

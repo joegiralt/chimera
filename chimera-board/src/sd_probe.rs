@@ -3,7 +3,6 @@
 //! mount and a `/CHIMERA` listing, a 16 KB write/read/delete at two clocks,
 //! and the RAM sizes plan 1 re-measures. Then halts, LED on.
 
-use core::fmt::Write as _;
 use core::ops::ControlFlow;
 
 use chimera_core::hw::VOICE_RAM_BUDGET;

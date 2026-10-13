@@ -84,7 +84,6 @@ pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
 /// `x` to `places` decimals (none: a whole number), then `unit` as given,
 /// in integers: `{:.1}` would link core's float formatting, several KB.
 pub(crate) fn fixed(buf: &mut FmtBuf, x: f32, places: u32, unit: &str) {
-    use core::fmt::Write;
     let k = 10i32.pow(places);
     let n = libm::roundf(x * k as f32) as i32;
     let sign = if n < 0 { "-" } else { "" };
@@ -100,7 +99,6 @@ pub(crate) fn fixed(buf: &mut FmtBuf, x: f32, places: u32, unit: &str) {
 
 /// Whole Hz under 1 kHz, then kHz to 3 figures.
 fn hz_text(buf: &mut FmtBuf, hz: i32) {
-    use core::fmt::Write;
     if hz < 1000 {
         let _ = write!(buf, "{hz} Hz");
     } else if hz < 9995 {

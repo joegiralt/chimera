@@ -387,6 +387,13 @@ impl ParamSpec {
         }
     }
 
+    /// `quantize` out of line, for every `Block::set` (UI input): inlined,
+    /// each impl's `set`, and each `snap` with it, carried a copy.
+    #[inline(never)]
+    pub fn quantized(&self, v: f32) -> f32 {
+        self.quantize(v)
+    }
+
     /// `v` mapped to 0..1 over the range, by the tick's law.
     #[inline(never)]
     pub fn normalize(&self, v: f32) -> f32 {
@@ -618,7 +625,7 @@ pub trait Block {
     /// UI input: clamps to `min..=max`; Stepped/Enum round to nearest.
     fn set(&mut self, id: ParamId, v: f32) {
         if let Some(s) = self.spec(id) {
-            self.write(id, s.quantize(v));
+            self.write(id, s.quantized(v));
         }
     }
 

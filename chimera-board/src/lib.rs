@@ -283,6 +283,29 @@ pub struct Shell {
     ) -> &'static str,
 }
 
+/// The bench's text and flush, built here with the UI's (ADR 0108):
+/// called from chimera-stm32, `draw::text` and `flush` would be built
+/// again there, at its opt-level.
+#[cfg(feature = "bench")]
+pub mod bench_screen {
+    use super::Display;
+    use chimera_core::ui::{draw, theme};
+    use chimera_hal::ChimeraDisplay;
+    use embedded_graphics::pixelcolor::Rgb565;
+
+    /// `s` in the value face in INK, or with `label` in the label face.
+    pub fn text(d: &mut Display, label: Option<Rgb565>, s: &str, (x, y): (i32, i32)) {
+        match label {
+            None => draw::text(d, &theme::FONT_VALUE, s, x, y, theme::INK),
+            Some(c) => draw::text(d, &theme::FONT_LABEL, s, x, y, c),
+        };
+    }
+
+    pub fn flush(d: &mut Display) {
+        d.flush();
+    }
+}
+
 #[cfg(not(feature = "sd-probe"))]
 pub fn synth(board: Board, shell: Shell) -> ! {
     use chimera_core::boot::BootStage;
