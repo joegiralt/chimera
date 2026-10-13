@@ -6,6 +6,7 @@ use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::dsp::va::VaMode;
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::modulation::{FixedCol, ModSource};
@@ -230,5 +231,57 @@ fn va_restrike_at_a_new_velocity_does_not_click() {
     for rel in [0.5, 0.8] {
         let r = ratio(&faded_hymn(rel), PartMode::Poly, &texture(48), 3.5);
         assert!(r <= CLICK_RATIO, "REL {rel}: {r:.2}×");
+    }
+}
+
+/// The showcase's GLIDE BASS (S9100006) with SHAPE1 at 0.3: VA saws, SUB
+/// 0.2, a MONO GLIDE steal of 80 ms, the 2040 swept by ENV 2, LFO 1 on
+/// WAVE1.
+fn glide_bass(shape: f32, sub: f32) -> Sound {
+    let mut s = Sound::neutral(EngineType::Va);
+    let p = &mut s.params;
+    p.out.volume = 0.25;
+    let e1 = &mut p.envelopes[0];
+    (e1.attack, e1.decay, e1.sustain, e1.release) = (0.1, 0.42, 0.7, 0.3);
+    (p.va.shape[0], p.va.sub, p.va.stability) = (shape, sub, 0.2);
+    (p.pitch.steal, p.pitch.glide_time) = (Steal::Glide, 0.5765);
+    p.filter.set_kind(FilterKind::K2040);
+    p.filter.cutoff = 1000.0;
+    let e2 = &mut p.envelopes[1];
+    (e2.decay, e2.sustain) = (0.38, 0.0);
+    p.lfos[0].rate = 2.0;
+    use chimera_core::dsp::va::VaParams as V;
+    let vca = ParamAddr::new(BlockRef::Out, chimera_core::params::OutParams::VCA);
+    let cut = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
+    route(&mut s, ModSource::Env1, vca, 127);
+    route(&mut s, ModSource::Env2, cut, 40);
+    route(
+        &mut s,
+        ModSource::Lfo1,
+        ParamAddr::new(BlockRef::Va, V::WAVE1),
+        25,
+    );
+    s
+}
+
+/// #485: a MONO glide with SHAPE1 above 0 and SUB above 0 read 6.77× (SUB
+/// 0: 1.91×). The shaped saw's main edge sits s²/8 of a cycle before the
+/// wrap, where the sub flipped: a narrow notch each cycle. The sub now flips
+/// at the shaped edge; in SYNC at the louder of the master's edge and the
+/// slave's reset (AMOUNT 0: 30× at the wrap; 1: 7× at the edge).
+#[test]
+fn va_shaped_glide_with_sub_does_not_click() {
+    for shape in [0.3, 0.6, 1.0] {
+        for sub in [0.2, 0.5] {
+            let r = ratio(&glide_bass(shape, sub), PartMode::Mono, &GLIDE, 2.0);
+            assert!(r <= CLICK_RATIO, "SHAPE1 {shape} SUB {sub}: {r:.2}×");
+        }
+    }
+    for amount in [0.0, 0.45, 0.55, 1.0] {
+        let mut s = glide_bass(0.3, 0.2);
+        let va = &mut s.params.va;
+        (va.mode, va.amount, va.coarse[1]) = (VaMode::Sync, amount, 7);
+        let r = ratio(&s, PartMode::Mono, &GLIDE, 2.0);
+        assert!(r <= CLICK_RATIO, "SYNC AMOUNT {amount}: {r:.2}×");
     }
 }

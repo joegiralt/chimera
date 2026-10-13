@@ -530,12 +530,23 @@ pub enum Correction {
     Off,
 }
 
-/// One sample: the output, one sample late, and `t`, the samples since
-/// the phase wrapped, if it wrapped this sample.
+/// One sample: the output, one sample late; `t`, the samples since the
+/// phase wrapped, if it wrapped this sample; and `t` since it passed the
+/// sub's flip place, if it did.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tick {
     pub out: f32,
     pub wrap: Option<f32>,
+    pub flip: Option<f32>,
+}
+
+/// Where the sub flips at SHAPE constants `sh`: the saw's main edge,
+/// `1 − s²/8` (#485). At SHAPE 0 it is the wrap, 1 exactly; above it the
+/// edge comes before the wrap, and a sub flipped at the wrap left a notch
+/// between the two steps every cycle.
+#[inline(always)]
+fn flip_place(sh: &Shaped) -> f32 {
+    1.0 + sh.saw_e1
 }
 
 /// An oscillator's settings over a block, each a ramp `(from, step)`:
@@ -545,6 +556,17 @@ pub struct Ramps {
     pub inc: (f32, f32),
     pub wave: (f32, f32),
     pub shape: (f32, f32),
+}
+
+/// The edge the sub flips with (ADR 0118 point 13).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SubEdge {
+    /// The shaped saw's main edge (`flip_place`): the wrap at SHAPE 0.
+    #[default]
+    Saw,
+    /// The wrap: SYNC's slave resets there, and where AMOUNT has the slave
+    /// louder than the master (½ or more) the sub flips with it.
+    Wrap,
 }
 
 /// A ramp's value `j` samples in: sample `i` is `j = i + 1`, 0 the one
@@ -726,6 +748,10 @@ struct Blk {
     rinc: f32,
     /// Each wave's value and slope at phase 0, unit weight (SYNC).
     zero: [(f32, f32); 4],
+    /// The sub's flip place (`flip_place`) mid-block: held a block, so the
+    /// loop pays no lerp; a SHAPE moving a whole unit in one block puts it
+    /// at most 1/16 of a cycle off the saw's edge, a SHAPE LFO a hair.
+    flip: f32,
 }
 
 /// "No wrap" in a wrap buffer (a wrap's `t` is in 0..=1).
@@ -835,6 +861,10 @@ pub struct VarOsc {
     live: u8,
     /// The pulse's level, 0 or 1.
     h: f32,
+    /// The phase has passed the sub's flip place this cycle.
+    flipped: bool,
+    /// The edge the sub flips with (the engine sets it a block).
+    sub_at: SubEdge,
     /// Every wave's constants at the block's start and end (`begin` moves
     /// the end to the start, then fills the end); the end is current if
     /// `sh_ok`, this block's if `next_ok`.
@@ -865,6 +895,8 @@ impl VarOsc {
         since: [[0.0; 2]; 3],
         live: 0,
         h: 0.0,
+        flipped: false,
+        sub_at: SubEdge::Saw,
         sh: [Shaped::ZERO; 2],
         sh_ok: false,
         next_ok: false,
@@ -894,6 +926,7 @@ impl VarOsc {
         self.phase = 0.0;
         self.held = 0.0;
         self.live = 0;
+        self.flipped = false;
         self.pair = None;
         self.sh_ok = false;
     }
@@ -907,6 +940,21 @@ impl VarOsc {
 
     pub fn phase(&self) -> f32 {
         self.phase
+    }
+
+    /// Whether the phase has passed the sub's flip place this cycle (the
+    /// carry keeps it with the phase).
+    pub fn flipped(&self) -> bool {
+        self.flipped
+    }
+
+    pub fn set_flipped(&mut self, f: bool) {
+        self.flipped = f;
+    }
+
+    /// The edge the sub flips with from the next block on.
+    pub fn set_sub_edge(&mut self, e: SubEdge) {
+        self.sub_at = e;
     }
 
     /// Jumps the phase (wrapped into 0..1; NaN is 0). The jump itself is
@@ -937,23 +985,27 @@ impl VarOsc {
             shape: (m.shape.get(), 0.0),
         };
         let mut out = [0.0f32];
-        let mut wr = [sync.map_or(NO_WRAP, |t| clampf(t, 0.0, 1.0))];
-        self.render::<1, true, true>(&mut out, &mut wr, &r, &mut 1.0, &mut || 1.0);
+        let mut mk = [[sync.map_or(NO_WRAP, |t| clampf(t, 0.0, 1.0)), NO_WRAP]];
+        self.render::<1, true, true, true>(&mut out, &mut mk, &r, &mut 1.0, &mut || 1.0);
+        let [wr, fl] = mk[0];
         Tick {
             out: out[0],
-            wrap: (wr[0] >= 0.0).then_some(wr[0]),
+            wrap: (wr >= 0.0).then_some(wr),
+            flip: (fl >= 0.0).then_some(fl),
         }
     }
 
-    /// `N` samples into `out`, one sample late. `REC` writes each sample's
-    /// wrap `t` (else `NO_WRAP`) into `wr`; `SYNC` restarts the phase at
-    /// each `t` it reads there first. `jit` scales the increment; `draw`
+    /// `N` samples into `out`, one sample late. Each sample's marks `mk`
+    /// are its wrap `t` and its pass of the sub's flip place (`NO_WRAP` for
+    /// none), side by side so a SYNC master clears both with one store:
+    /// `REC` writes the wrap, `FLIP` the flip; `SYNC` restarts the phase at
+    /// each wrap it reads there first. `jit` scales the increment; `draw`
     /// gives the next at each wrap (STABILITY's jitter).
     #[inline(never)]
-    pub fn render<const N: usize, const REC: bool, const SYNC: bool>(
+    pub fn render<const N: usize, const REC: bool, const SYNC: bool, const FLIP: bool>(
         &mut self,
         out: &mut [f32; N],
-        wr: &mut [f32; N],
+        mk: &mut [[f32; 2]; N],
         r: &Ramps,
         jit: &mut f32,
         draw: &mut impl FnMut() -> f32,
@@ -986,13 +1038,13 @@ impl VarOsc {
             let span = (i0, i1);
             match pair {
                 Pair::SineTri => {
-                    self.run::<Sine, Tri, N, REC, SYNC>(&blk, span, r, out, wr, jit, draw)
+                    self.run::<Sine, Tri, N, REC, SYNC, FLIP>(&blk, span, r, out, mk, jit, draw)
                 }
                 Pair::TriSaw => {
-                    self.run::<Tri, Saw, N, REC, SYNC>(&blk, span, r, out, wr, jit, draw)
+                    self.run::<Tri, Saw, N, REC, SYNC, FLIP>(&blk, span, r, out, mk, jit, draw)
                 }
                 Pair::SawPulse => {
-                    self.run::<Saw, Pulse, N, REC, SYNC>(&blk, span, r, out, wr, jit, draw)
+                    self.run::<Saw, Pulse, N, REC, SYNC, FLIP>(&blk, span, r, out, mk, jit, draw)
                 }
             }
             i0 = i1;
@@ -1043,6 +1095,10 @@ impl VarOsc {
             rate: [[(0.0, 0.0); 2]; 3],
             rinc: 1.0 / ie,
             zero: [(0.0, 0.0); 4],
+            flip: match self.sub_at {
+                SubEdge::Saw => 0.5 * (flip_place(sh0) + flip_place(sh1)),
+                SubEdge::Wrap => 1.0,
+            },
         };
         for (e, w) in [Wave::Tri, Wave::Saw, Wave::Pulse].into_iter().enumerate() {
             let (p0, p1) = (w.pos(sh0), w.pos(sh1));
@@ -1181,18 +1237,30 @@ impl VarOsc {
     /// its per-sample loop.
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
-    fn run<A: Kind, B: Kind, const N: usize, const REC: bool, const SYNC: bool>(
+    fn run<
+        A: Kind,
+        B: Kind,
+        const N: usize,
+        const REC: bool,
+        const SYNC: bool,
+        const FLIP: bool,
+    >(
         &mut self,
         blk: &Blk,
         (i0, i1): (usize, usize),
         r: &Ramps,
         out: &mut [f32; N],
-        wr: &mut [f32; N],
+        mk: &mut [[f32; 2]; N],
         jit: &mut f32,
         draw: &mut impl FnMut() -> f32,
     ) {
         let run = self.setup::<A, B, SYNC>(blk, (i0, i1), r, N);
         let (mut p, mut held, mut h, mut j) = (self.phase, self.held, self.h, *jit);
+        // the next event's place (`FLIP` only): the sub's flip place until
+        // the phase passes it this cycle, then the wrap. The place is 1
+        // exactly at SHAPE 0, so the flip is the wrap, bit for bit
+        let (th, mut done) = (blk.flip, self.flipped);
+        let mut g = if FLIP && !done { th } else { 1.0 };
         let (mut c, mut u, od, rcp, ar) = (run.c, run.u, run.od, run.rcp, run.ar);
         let (mut inc, dinc) = (run.inc, run.dinc);
         // each edge's phase since it moves with the phase and against its
@@ -1215,15 +1283,23 @@ impl VarOsc {
             // -0.0: `y + acc` is `y` itself when nothing crossed
             let mut acc = -0.0f32;
             // a lone `tick` both reads a sync and writes its wrap here
-            let t = if SYNC { wr[i] } else { NO_WRAP };
-            if REC {
-                wr[i] = NO_WRAP;
+            let t = if SYNC { mk[i][0] } else { NO_WRAP };
+            if REC && FLIP {
+                mk[i] = [NO_WRAP; 2];
+            } else if REC {
+                mk[i][0] = NO_WRAP;
+            } else if FLIP {
+                mk[i][1] = NO_WRAP;
             }
             let p1 = if SYNC && t >= 0.0 {
                 // the reset `t` samples ago, in time order: own edges up to
                 // it, the reset, own edges after it (below, as any sample's)
                 let dp = ie * (1.0 - t);
                 let pre = p + dp;
+                // the flip up to the reset (the reset starts a new cycle)
+                if FLIP && !done && pre >= g {
+                    mk[i][1] = clampf(t + (pre - g) * run.rinc, 0.0, 1.0);
+                }
                 for (k, u) in u.iter_mut().enumerate() {
                     if edged(k) {
                         *u += dp - od[k];
@@ -1254,9 +1330,13 @@ impl VarOsc {
                 }
                 if pre >= 1.0 {
                     if REC {
-                        wr[i] = clampf(t + (pre - 1.0) * run.rinc, 0.0, 1.0);
+                        mk[i][0] = clampf(t + (pre - 1.0) * run.rinc, 0.0, 1.0);
                     }
                     j = draw();
+                }
+                // the cycle restarts at the reset
+                if FLIP {
+                    (done, g) = (false, th);
                 }
                 // each edge's phase at 0 is `u − φ⁻` mod 1 (`u` and the
                 // wrapped φ⁻ are in 0..1); phase 0 itself is no edge
@@ -1283,12 +1363,24 @@ impl VarOsc {
                 p1
             } else {
                 let mut q = p + ie;
-                if q >= 1.0 {
-                    q -= 1.0;
-                    if REC {
-                        wr[i] = (q * run.rinc).min(1.0);
+                // `g` is never past the wrap: short of it, neither event (one
+                // compare on the way with none)
+
+                if q >= g {
+                    if FLIP && !done {
+                        mk[i][1] = ((q - g) * run.rinc).min(1.0);
+                        (done, g) = (true, 1.0);
                     }
-                    j = draw();
+                    if q >= 1.0 {
+                        q -= 1.0;
+                        if REC {
+                            mk[i][0] = (q * run.rinc).min(1.0);
+                        }
+                        if FLIP {
+                            (done, g) = (false, th);
+                        }
+                        j = draw();
+                    }
                 }
                 for (k, u) in u.iter_mut().enumerate() {
                     if edged(k) {
@@ -1318,6 +1410,9 @@ impl VarOsc {
             p = p1;
         }
         (self.phase, self.held, self.h, *jit) = (p, held, h, j);
+        if FLIP {
+            self.flipped = done;
+        }
         for (base, w) in [(0, A::WAVE), (2, B::WAVE)] {
             if let Some(e) = w.edge_slot() {
                 self.since[e.min(2)] = [u[base], u[base + 1]];
@@ -1434,8 +1529,10 @@ impl VarOsc {
     }
 }
 
-/// The sub: a square of ±R one octave under OSC 1, flipped at each of its
-/// wraps and BLEP-corrected, one sample late like the oscillators.
+/// The sub: a square of ±R one octave under OSC 1, flipped where OSC 1's
+/// phase passes its flip place each cycle (the shaped saw's main edge,
+/// `flip_place`; the wrap at SHAPE 0) and BLEP-corrected, one sample late
+/// like the oscillators.
 #[derive(Clone, Copy, Debug)]
 pub struct Sub {
     /// The level, R or −R.
@@ -1454,22 +1551,22 @@ impl Sub {
         *self = Self::NEW;
     }
 
-    /// One sample; `wrap` is OSC 1's wrap `t` samples ago (`NO_WRAP` for
-    /// none).
+    /// One sample; `flip` is OSC 1's flip `t` samples ago (`Tick::flip`;
+    /// `None` for none).
     #[inline(always)]
-    pub fn tick(&mut self, wrap: Option<f32>) -> f32 {
-        self.step(wrap.map_or(NO_WRAP, |t| clampf(t, 0.0, 1.0)))
+    pub fn tick(&mut self, flip: Option<f32>) -> f32 {
+        self.step(flip.map_or(NO_WRAP, |t| clampf(t, 0.0, 1.0)))
     }
 
-    /// `tick` on a wrap buffer's entry.
+    /// `tick` on a flip buffer's entry.
     #[inline(always)]
-    pub fn step(&mut self, wrap: f32) -> f32 {
+    pub fn step(&mut self, flip: f32) -> f32 {
         let mut out = self.held;
-        if wrap >= 0.0 {
+        if flip >= 0.0 {
             // `blep_into` of the step 2·level: its half is the level
             self.level = -self.level;
-            let (h, u) = (self.level, 1.0 - wrap);
-            out += h * (wrap * wrap);
+            let (h, u) = (self.level, 1.0 - flip);
+            out += h * (flip * flip);
             self.held = self.level - h * (u * u);
         } else {
             self.held = self.level;

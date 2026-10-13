@@ -319,21 +319,54 @@ fn ring_passes_the_alias_gate_detuned() {
     println!("worst {:.2} dB at {}", worst.0, worst.1);
 }
 
-/// The sub under a master at `hz`, with the master's wrap ticks.
+/// The sub under a master at `hz`, with the master's flip ticks (its
+/// wraps, at SHAPE 0).
 fn sub_under(hz: f32, n: usize) -> (Vec<f32>, Vec<usize>) {
     let (mut m, mut sub) = (osc(Correction::On), Sub::NEW);
     let inc = m.inc_for(hz);
     let mut wraps = Vec::new();
     let y = (0..n)
         .map(|i| {
-            let wrap = m.tick(inc, morph(0.0, 0.0), None).wrap;
-            if wrap.is_some() {
+            let flip = m.tick(inc, morph(0.0, 0.0), None).flip;
+            if flip.is_some() {
                 wraps.push(i);
             }
-            sub.tick(wrap)
+            sub.tick(flip)
         })
         .collect();
     (y, wraps)
+}
+
+/// #485: the sub flips once a cycle where the shaped saw's main edge is,
+/// `1 − s²/8` of a cycle, so the two steps coincide; at SHAPE 0 that is
+/// the wrap, bit for bit.
+#[test]
+fn sub_flips_at_the_shaped_saw_edge() {
+    let inc = 0.0123;
+    for s in [0.0f32, 0.3, 0.6, 1.0] {
+        let mut m = osc(Correction::On);
+        let place = 1.0 - s * s / 8.0;
+        let (mut flips, mut wraps, mut worst) = (0usize, 0usize, 0f32);
+        for _ in 0..4_000 {
+            let p = m.phase();
+            let t = m.tick(inc, morph(2.0 / 3.0, s), None);
+            if s == 0.0 {
+                assert_eq!(t.flip.map(f32::to_bits), t.wrap.map(f32::to_bits));
+            }
+            wraps += usize::from(t.wrap.is_some());
+            if let Some(f) = t.flip {
+                flips += 1;
+                // `f` samples back from the unwrapped phase is the place
+                worst = worst.max((p + inc - f * inc - place).abs());
+            }
+        }
+        println!("SHAPE {s}: {flips} flips, {wraps} wraps, place within {worst:.1e}");
+        assert!(
+            flips.abs_diff(wraps) <= 1,
+            "SHAPE {s}: {flips} flips, {wraps} wraps"
+        );
+        assert!(worst < 1e-5, "SHAPE {s}: {worst}");
+    }
 }
 
 #[test]
