@@ -265,6 +265,14 @@ fn id_outside_range() {
 }
 
 #[test]
+fn retired_ids_refused() {
+    for id in ["S9100028", "S9100029", "S9100030"] {
+        fails(&base_with(2, &format!("id = \"{id}\"")), 2, "retired");
+    }
+    run(&base_with(2, "id = \"S9100031\"")).unwrap();
+}
+
+#[test]
 fn public_refuses_port_id() {
     for id in ["S9100010", "S9100025"] {
         fails(&base_with(2, &format!("id = \"{id}\"")), 2, id);
@@ -1201,7 +1209,7 @@ fn badges_follow_the_source_and_a_placeholder_has_no_players() {
     assert_eq!(new.badge(crc), source::Badge::New);
     let ph = &source::parse(
         &(BASE
-            .replace("S9100002", "S9100028")
+            .replace("S9100002", "S9100090")
             .replace("TEST PAD", "VOWEL CHOIR")
             .replace("A TEST PAD: SLOW FILTER", "FORMANT CHOIR: COMING SOON")
             + "status = \"placeholder\"\n"),
@@ -2409,7 +2417,7 @@ fn demo_part_private_sound_fails() {
     let from = source::parse(
         &format!(
             "{}from = \"tx81z 0123abcd #1\"\n",
-            BASE.replace("S9100002", "S9100030")
+            BASE.replace("S9100002", "S9100090")
                 .replace("TEST PAD\"", "FROM ONE\"")
         ),
         "ports.toml",

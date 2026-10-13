@@ -250,7 +250,7 @@ Which TX81Z voice each starts from is chosen at the porting step, by the nearest
 | 26 | VOWEL BUZZ | OP 5 SWEEPS THE 2040 AT AUDIO RATE | T-algorithm, op 5 a carrier at ratio 1.00 (the buzz) tapped to FREQ; ENV 2 → op 5 LEVEL moves the vowel; Q high |
 | 27 | THROAT SING | OP 6 ON FILTER FREQ AND Q | A6 (6 → 5 → 1): op 6 at ratio 2.00 tapped to FREQ and Q; LFO 1 slow → op 6 LEVEL (overtone singing) |
 
-**Formant placeholders, `S9100028`–`S9100030`** (`status = "placeholder"`, filled when #243 lands): VOWEL CHOIR, TALK BASS, FORMANT LEAD. Their descriptions are written with their Sounds.
+**Formant placeholders, `S9100028`–`S9100030`** (VOWEL CHOIR, TALK BASS, FORMANT LEAD): retired by the owner 2026-10-13, removed from the Sources and the page. The ids are never reassigned: `source::parse` refuses them.
 
 **MODAL, `S9100031`–`S9100034`.** Note-off never damps MODAL (it rings like Rings).
 
@@ -290,7 +290,7 @@ Which TX81Z voice each starts from is chosen at the porting step, by the nearest
 9. **MODAL 4**, then **the 4 demo projects**.
 10. **QA pass**, then **the owner's listening page**, then fixes. Then put the set on the unit for UAT.
 11. **Release:** `factory-v1.zip` (public set only) and install notes (USB console, or bootloader SD-card-access copy) in the public releases repo, with `put-factory-sounds` for the unit.
-12. **After #243:** fill the formant placeholders and re-run the QA pass for them.
+12. **After #243:** (formant placeholders retired 2026-10-13; nothing to fill.)
 
 **ADRs:**
 - **0133**, "Factory Sounds list in a read-only FACTORY tab and carry a one-line description": the `Note` record `0x001D`; the factory id blocks (TAPE `S9000001`–`S9099999`, showcase `S9100001`–`S9199999`); `UserId`/`FactoryId`; the FACTORY tab; the reserved demo project ids `P0000001`–`P0000009`. It amends 0119.

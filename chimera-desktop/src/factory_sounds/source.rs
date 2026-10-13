@@ -32,6 +32,8 @@ pub const REFERENCE_LUFS: f32 = -11.0;
 pub const LOUDNESS_LU: f32 = 2.0;
 
 /// The showcase's id block (ADR 0133); TAPE's is below it.
+/// Formant placeholders the owner retired: never reassigned.
+const RETIRED_IDS: core::ops::RangeInclusive<u32> = 9_100_028..=9_100_030;
 pub const SHOWCASE_IDS: core::ops::RangeInclusive<u32> = 9_100_001..=9_199_999;
 
 /// A render script (spec § 4); the QA task plays them.
@@ -367,6 +369,9 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
 
     let (id_line, v) = need("id")?;
     let id = match LibId::parse(v).map(LibId::kind) {
+        Some(LibKind::Factory(f)) if RETIRED_IDS.contains(&f.get()) => {
+            return Err(at(id_line, format!("id {v} is retired and never reassigned")));
+        }
         Some(LibKind::Factory(f)) if SHOWCASE_IDS.contains(&f.get()) => f,
         _ => return Err(at(id_line, format!("id {v} is outside S9100001-S9199999"))),
     };
