@@ -10,8 +10,8 @@ use chimera_hal::BLOCK_SIZE;
 use super::super::phrase::plan;
 use super::super::project::{self, Coverage, Demo, DemoId, Setting};
 use super::super::source::{self, Script, Source, to_sound};
-use super::measure::{LIMIT_CHORD_DB, Verdict, clicks, verdict};
-use super::render::{LATE, UNIT_BUDGET, block, play_on, play_stim};
+use super::measure::{LIMIT_CHORD_DB, Verdict, clicks, finite, verdict};
+use super::render::{LATE, UNIT_BUDGET, note_ons, play_on, play_stim};
 use super::{Audition, SR, heard};
 use crate::listen;
 
@@ -221,12 +221,7 @@ pub fn demo_gates(d: &Demo, sounds: &[Source], stims: &Stims) -> Result<DemoRepo
                     let mut p = plan(script, home);
                     p.secs += DEMO_TAIL_S;
                     let ch = perf.part(part).mix.channel;
-                    let on: Vec<usize> = p
-                        .hits
-                        .iter()
-                        .map(|h| block(h.on) * BLOCK_SIZE + LATE)
-                        .collect();
-                    (play_on(&perf, ch, &p, UNIT_BUDGET), on, ex)
+                    (play_on(&perf, ch, &p, UNIT_BUDGET), note_ons(&p), ex)
                 }
                 DemoTake::Hats | DemoTake::Snare => {
                     let x = sounding(if take == DemoTake::Hats {
@@ -243,7 +238,6 @@ pub fn demo_gates(d: &Demo, sounds: &[Source], stims: &Stims) -> Result<DemoRepo
                     (play_stim(&s.fx, sends, x, secs), on, None)
                 }
             };
-            let bad = t.stereo.iter().filter(|v| !v.is_finite()).count();
             let mut gate = |check, (value, verdict)| {
                 gates.push(DemoGate {
                     setting: i,
@@ -252,7 +246,7 @@ pub fn demo_gates(d: &Demo, sounds: &[Source], stims: &Stims) -> Result<DemoRepo
                     verdict,
                 })
             };
-            gate(DemoCheck::Finite(take), (bad as f32, verdict(bad == 0)));
+            gate(DemoCheck::Finite(take), finite(&t.stereo));
             gate(DemoCheck::Clicks(take), clicks(&t.mono(), &onset, ex));
             gate(
                 DemoCheck::Limiter(take),

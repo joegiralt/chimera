@@ -195,6 +195,13 @@ impl FactoryId {
     }
 }
 
+/// `S9100001`: always seven digits, by its range.
+impl core::fmt::Display for FactoryId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "S{}", self.0)
+    }
+}
+
 /// A library Sound's number: `S#######`, a user or a factory id by construction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]

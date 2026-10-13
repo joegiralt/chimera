@@ -46,7 +46,7 @@ pub fn report_text(reports: &[Report], samey: &[(usize, usize)]) -> String {
     for r in reports {
         let ok = if r.passes() { "PASS" } else { "FAIL" };
         let private = if r.private { "  PRIVATE" } else { "" };
-        let _ = writeln!(o, "S{} {}{private}  {ok}", r.id.get(), r.name);
+        let _ = writeln!(o, "{} {}{private}  {ok}", r.id, r.name);
         let _ = writeln!(o, "  voices on the unit: {} ({UNIT_REV})", r.voices);
         if let Some(round) = r.changed {
             let _ = writeln!(o, "  {}", changed_line(round));
@@ -72,11 +72,7 @@ pub fn report_text(reports: &[Report], samey: &[(usize, usize)]) -> String {
             }
         }
         for g in &r.gates {
-            let v = match &g.verdict {
-                Verdict::Pass => "PASS".to_string(),
-                Verdict::Fail => "FAIL".to_string(),
-                Verdict::Exempt(why) => format!("EXEMPT ({why})"),
-            };
+            let v = &g.verdict;
             // A tail at the dB floor is silence, not a number.
             let value = if g.check == Check::Tail && g.value <= SILENT_FLOOR_DB {
                 "silent".to_string()
@@ -102,8 +98,8 @@ pub fn report_text(reports: &[Report], samey: &[(usize, usize)]) -> String {
         if let Some((a, db)) = r.baseline.as_ref().and_then(Baseline::changed) {
             let _ = writeln!(
                 o,
-                "audio changed by engine update: S{} {}, worst {db:.1} dB: {}",
-                r.id.get(),
+                "audio changed by engine update: {} {}, worst {db:.1} dB: {}",
+                r.id,
                 r.name,
                 a.slug()
             );
@@ -166,8 +162,8 @@ pub fn page(
                 .map_or(String::new(), |l| format!(" · long (dry) {l:.1} LUFS"));
             lines.push((
                 format!(
-                    "S{} · {} · {} VOICES{lufs}{long}",
-                    r.id.get(),
+                    "{} · {} · {} VOICES{lufs}{long}",
+                    r.id,
                     r.demo.disk_ident(),
                     r.voices
                 ),
@@ -234,10 +230,7 @@ pub fn page(
             badge: Some(Badge::Placeholder.word()),
             lines: vec![
                 (s.note.as_str().into(), false),
-                (
-                    format!("S{}: waits on the formant engine", s.id.get()),
-                    false,
-                ),
+                (format!("{}: waits on the formant engine", s.id), false),
             ],
             facts: Vec::new(),
             players: Vec::new(),
@@ -259,7 +252,7 @@ pub fn page(
     let off: Vec<(String, bool)> = reports
         .iter()
         .filter(|r| !r.passes())
-        .map(|r| off_line(format!("S{} {}", r.id.get(), r.name)))
+        .map(|r| off_line(format!("{} {}", r.id, r.name)))
         .chain(
             demos
                 .iter()
@@ -325,34 +318,40 @@ pub fn write(
 ) -> Result<bool, String> {
     if let Some(r) = reports.iter().find(|r| r.private) {
         return Err(format!(
-            "S{} {}: a private port; the public ledger refuses it (qa --private)",
-            r.id.get(),
-            r.name
+            "{} {}: a private port; the public ledger refuses it (qa --private)",
+            r.id, r.name
         ));
     }
     if wav {
         // A backstop: no port's render stays in the published ledger.
-        let r = checked_ledger(dir)?.join("renders");
-        match std::fs::read_dir(&r) {
-            Ok(entries) => {
-                for e in entries {
-                    let p = e.map_err(|e| format!("{}: {e}", r.display()))?.path();
-                    let port = p
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .filter(|n| n.ends_with(".wav"))
-                        .and_then(|n| n.strip_prefix('S')?.get(..7)?.parse::<u32>().ok())
-                        .is_some_and(|id| PORT_IDS.contains(&id));
-                    if port {
-                        std::fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-                    }
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("{}: {e}", r.display())),
-        }
+        remove_wavs(&checked_ledger(dir)?.join("renders"), |n| {
+            n.strip_prefix('S')
+                .and_then(|n| n.get(..7)?.parse::<u32>().ok())
+                .is_some_and(|id| PORT_IDS.contains(&id))
+        })?;
     }
     write_ledger(dir, reports, samey, placeholders, demos, wav)
+}
+
+/// Each `*.wav` in `dir` whose name `gone` picks, removed; no `dir`, none.
+fn remove_wavs(dir: &Path, gone: impl Fn(&str) -> bool) -> Result<(), String> {
+    let err = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(err(dir, e)),
+    };
+    for e in entries {
+        let p = e.map_err(|e| err(dir, e))?.path();
+        let pick = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with(".wav") && gone(n));
+        if pick {
+            std::fs::remove_file(&p).map_err(|e| err(&p, e))?;
+        }
+    }
+    Ok(())
 }
 
 /// The ports' own ledger (`qa --private`): ports only, no placeholders or
@@ -365,9 +364,8 @@ pub fn write_private(
 ) -> Result<bool, String> {
     if let Some(r) = reports.iter().find(|r| !r.private) {
         return Err(format!(
-            "S{} {}: not a port; the private ledger holds ports only",
-            r.id.get(),
-            r.name
+            "{} {}: not a port; the private ledger holds ports only",
+            r.id, r.name
         ));
     }
     write_ledger(dir, reports, samey, &[], &[], wav)
@@ -388,12 +386,7 @@ fn write_ledger(
     let mut txt = report_text(reports, samey);
     txt.push_str(&demo_text(demos));
     for r in reports.iter().filter(|r| !r.passes()) {
-        let _ = writeln!(
-            txt,
-            "off the page: S{} {} (a gate failed)",
-            r.id.get(),
-            r.name
-        );
+        let _ = writeln!(txt, "off the page: {} {} (a gate failed)", r.id, r.name);
     }
     for d in demos.iter().filter(|d| !d.passes()) {
         let _ = writeln!(
@@ -411,25 +404,14 @@ fn write_ledger(
         std::fs::create_dir_all(&r).map_err(|e| err(&r, e))?;
         // A Sound or demo off the page leaves no old render to pass as
         // current.
-        let unrender = |stale: String| -> Result<(), String> {
-            for e in std::fs::read_dir(&r).map_err(|e| err(&r, e))? {
-                let p = e.map_err(|e| err(&r, e))?.path();
-                if p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with(&stale) && n.ends_with(".wav"))
-                {
-                    std::fs::remove_file(&p).map_err(|e| err(&p, e))?;
-                }
-            }
-            Ok(())
-        };
+        let unrender = |stale: String| remove_wavs(&r, |n| n.starts_with(&stale));
         for rep in reports {
             if rep.passes() {
                 for x in &rep.renders {
                     listen::write_wav_stereo(&dir.join(rep.wav(x.audition)), &x.stereo)?;
                 }
             } else {
-                unrender(format!("S{}-", rep.id.get()))?;
+                unrender(format!("{}-", rep.id))?;
             }
         }
         for d in demos {
@@ -481,11 +463,7 @@ pub fn demo_text(demos: &[DemoReport]) -> String {
         for (i, s) in d.settings.iter().enumerate() {
             let _ = writeln!(o, "  setting {}: {s}", i + 1);
             for g in d.gates.iter().filter(|g| g.setting == i) {
-                let v = match &g.verdict {
-                    Verdict::Pass => "PASS".to_string(),
-                    Verdict::Fail => "FAIL".to_string(),
-                    Verdict::Exempt(why) => format!("EXEMPT ({why})"),
-                };
+                let v = &g.verdict;
                 let _ = writeln!(
                     o,
                     "    {:<22} {:>8.2} {:<6} {v}",

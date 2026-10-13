@@ -15,7 +15,7 @@ pub mod render;
 use chimera_core::hw::SampleBudget;
 use chimera_core::part::PartMode;
 use chimera_core::storage::FactoryId;
-use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
+use chimera_hal::SAMPLE_RATE;
 
 use super::about::{self, Fact};
 use super::phrase::{Plan, hit, phrase_plan, plan};
@@ -24,10 +24,10 @@ use crate::listen;
 use baseline::Baseline;
 use measure::{
     ALIAS_NOTES, ERB_BANDS, LIMIT_CHORD_DB, LIMIT_SINGLE_DB, REFERENCE_LUFS, TAIL_WINDOW_S,
-    Verdict, aliasing, clicks, db, erb_bands, held_dc, limiter, limiter_bar, loudness,
-    spectral_error, tail, tail_within, tap, verdict,
+    Verdict, aliasing, clicks, db, erb_bands, finite, held_dc, limiter, limiter_bar, loudness,
+    spectral_error, tail, tail_within, tap,
 };
-use render::{LATE, Take, UNIT_BUDGET, block, dried, heard_through, play, play_at, voices_of};
+use render::{LATE, Take, UNIT_BUDGET, dried, heard_through, note_ons, play, play_at, voices_of};
 
 const SR: f32 = SAMPLE_RATE as f32;
 
@@ -212,7 +212,7 @@ impl Report {
     }
 
     pub(super) fn file(&self, a: Audition) -> String {
-        format!("S{}-{}.wav", self.id.get(), a.slug())
+        format!("{}-{}.wav", self.id, a.slug())
     }
 
     fn lufs(&self) -> Option<f32> {
@@ -247,6 +247,22 @@ fn hz(n: u8) -> f32 {
     440.0 * 2f32.powf((n as f32 - 69.0) / 12.0)
 }
 
+/// The home note at `vel`, held `LEVEL_HOLD_S`, then `tail` s: the level
+/// render and its kin.
+fn held_note(home: u8, vel: u8, tail: f32) -> Plan {
+    Plan {
+        hits: vec![hit(0.0, LEVEL_HOLD_S, home, vel)],
+        secs: LEVEL_HOLD_S + tail,
+        mode: None,
+    }
+}
+
+/// A `held_note` take's LUFS over the held note (a block late).
+fn held_lufs(t: &Take) -> f32 {
+    let held = (LEVEL_HOLD_S * SR) as usize;
+    listen::lufs(&t.stereo[2 * LATE..2 * (LATE + held)])
+}
+
 /// Every gate on `src`, through the renders its gates and `plays` need.
 pub fn gates(src: &Source) -> Result<Report, String> {
     // Every gate plays dry; the page's renders carry the sends.
@@ -266,14 +282,9 @@ pub fn gates(src: &Source) -> Result<Report, String> {
     };
 
     // The level render: the home note at v100, held 1 s, then its tail.
-    let level = Plan {
-        hits: vec![hit(0.0, LEVEL_HOLD_S, src.home, 100)],
-        secs: LEVEL_HOLD_S + within + 2.0 * TAIL_WINDOW_S,
-        mode: None,
-    };
+    let level = held_note(src.home, 100, within + 2.0 * TAIL_WINDOW_S);
     let t = play(&snd, src.demo, &level);
-    let held = (LEVEL_HOLD_S * SR) as usize;
-    let lufs = listen::lufs(&t.stereo[2 * LATE..2 * (LATE + held)]);
+    let lufs = held_lufs(&t);
     gate(
         Check::Loudness,
         (
@@ -288,24 +299,22 @@ pub fn gates(src: &Source) -> Result<Report, String> {
     // DC where an offset would sit: the held home note, at v100 and at
     // v127 (velocity drives a fold or a bit crush harder).
     gate(Check::Dc(100), held_dc(&t.stereo, &level.hits));
-    let hard = Plan {
-        hits: vec![hit(0.0, LEVEL_HOLD_S, src.home, 127)],
-        secs: LEVEL_HOLD_S + 0.05,
-        mode: None,
-    };
+    let hard = held_note(src.home, 127, 0.05);
     gate(
         Check::Dc(127),
         held_dc(&play(&snd, src.demo, &hard).stereo, &hard.hits),
     );
-    gate(Check::Tail, tail(&t.mono(), held + LATE, within));
+    gate(
+        Check::Tail,
+        tail(&t.mono(), (LEVEL_HOLD_S * SR) as usize + LATE, within),
+    );
 
     let mut renders = Vec::new();
     // The phrase first, as heard (its sends on): for the ear, not a gate,
     // but it must be finite.
     if let Some(ph) = src.phrase {
         let t = play(&wet, src.demo, &phrase_plan(ph, src.home));
-        let bad = t.stereo.iter().filter(|v| !v.is_finite()).count();
-        gate(Check::Finite(ph), (bad as f32, verdict(bad == 0)));
+        gate(Check::Finite(ph), finite(&t.stereo));
         let r = t.reduced_db;
         renders.push(heard(Audition::Phrase(ph), t, &with, Some(r)));
     }
@@ -318,12 +327,7 @@ pub fn gates(src: &Source) -> Result<Report, String> {
             Check::Limiter(Some(s)),
             (t.reduced_db, limiter(t.reduced_db, Some(s))),
         );
-        let onsets: Vec<usize> = p
-            .hits
-            .iter()
-            .map(|h| block(h.on) * BLOCK_SIZE + LATE)
-            .collect();
-        gate(Check::Clicks(s), clicks(&mono, &onsets, exempt));
+        gate(Check::Clicks(s), clicks(&mono, &note_ons(&p), exempt));
         if s == Script::Long {
             dry_long = Some((mono, listen::lufs(&t.stereo)));
         }
@@ -451,12 +455,7 @@ pub fn backed_off(
 /// (`gates`, dry).
 pub fn over_limit(src: &Source) -> Result<bool, String> {
     let snd = dried(&to_sound(src)?);
-    let level = Plan {
-        hits: vec![hit(0.0, LEVEL_HOLD_S, src.home, 100)],
-        secs: LEVEL_HOLD_S + 0.05,
-        mode: None,
-    };
-    let mut takes = vec![(None, level)];
+    let mut takes = vec![(None, held_note(src.home, 100, 0.05))];
     takes.extend(src.plays.iter().map(|&s| (Some(s), plan(s, src.home))));
     Ok(takes
         .iter()
@@ -466,12 +465,9 @@ pub fn over_limit(src: &Source) -> Result<bool, String> {
 /// The level render's LUFS (`fmt --level` centres it).
 pub fn level_lufs(src: &Source) -> Result<f32, String> {
     let snd = dried(&to_sound(src)?);
-    let level = Plan {
-        hits: vec![hit(0.0, LEVEL_HOLD_S, src.home, 100)],
-        secs: LEVEL_HOLD_S + 0.05,
-        mode: None,
-    };
-    let t = play(&snd, src.demo, &level);
-    let held = (LEVEL_HOLD_S * SR) as usize;
-    Ok(listen::lufs(&t.stereo[2 * LATE..2 * (LATE + held)]))
+    Ok(held_lufs(&play(
+        &snd,
+        src.demo,
+        &held_note(src.home, 100, 0.05),
+    )))
 }

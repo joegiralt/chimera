@@ -53,9 +53,9 @@ impl Manifest {
         for (i, e) in self.sounds.iter().enumerate() {
             let _ = write!(
                 j,
-                "{}\n  {{\"id\": \"S{}\", \"name\": \"{}\", \"crc\": \"{:08X}\", \"size\": {}, \"sound\": \"{:08X}\"}}",
+                "{}\n  {{\"id\": \"{}\", \"name\": \"{}\", \"crc\": \"{:08X}\", \"size\": {}, \"sound\": \"{:08X}\"}}",
                 if i == 0 { "" } else { "," },
-                e.id.get(),
+                e.id,
                 e.name,
                 e.crc,
                 e.size,
@@ -111,7 +111,7 @@ pub fn files(all: &[Source], stamp: &BuildStamp) -> Result<(Vec<File>, Manifest)
             size: bytes.len(),
             sound: source::crc(s)?,
         });
-        files.push((format!("S{}.A", s.id.get()), bytes));
+        files.push((format!("{}.A", s.id), bytes));
     }
     let stamp = *stamp;
     Ok((

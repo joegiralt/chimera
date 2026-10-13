@@ -2193,7 +2193,7 @@ fn bisected_causes_name_the_change_and_coherent_ones_lead() {
     other.id = source::parse(&BASE.replace("S9100002", "S9100003"), "b.toml").unwrap()[0].id;
     for r in [&drift, &other] {
         let old: Vec<f32> = r.renders[0].stereo.iter().map(|v| v * 0.9).collect();
-        write_wav_stereo(&d.join(format!("S{}-long.wav", r.id.get())), &old).unwrap();
+        write_wav_stereo(&d.join(format!("{}-long.wav", r.id)), &old).unwrap();
     }
     std::fs::write(
         d.join("causes.txt"),

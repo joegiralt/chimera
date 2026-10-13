@@ -625,6 +625,8 @@ fn lib_id_parse_splits_user_from_factory() {
     }
     assert_eq!(UserId::new(9_000_001), None);
     assert!(chimera_core::storage::FactoryId::new(8_999_999).is_none());
+    let f = chimera_core::storage::FactoryId::new(9_100_001).unwrap();
+    assert_eq!(f.to_string(), "S9100001");
 }
 
 /// Review Focus 3: a factory Sound loaded then saved is a user file, no Note.

@@ -150,12 +150,8 @@ fn list(man: &build::Manifest, all: &[source::Source]) -> Result<(), String> {
             .transpose()?
             .unwrap_or_default();
         println!(
-            "S{}.A  {:<16} {:>5} B  {:08X}  sound {:08X}  approval {heard:08X}",
-            e.id.get(),
-            e.name,
-            e.size,
-            e.crc,
-            e.sound
+            "{}.A  {:<16} {:>5} B  {:08X}  sound {:08X}  approval {heard:08X}",
+            e.id, e.name, e.size, e.crc, e.sound
         );
     }
     for e in &man.projects {

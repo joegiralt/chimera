@@ -24,6 +24,15 @@ use super::SR;
 /// The limiter's lookahead: the output is a block late.
 pub(super) const LATE: usize = BLOCK_SIZE;
 
+/// Where each of `p`'s notes starts sounding in its take: its block,
+/// a block late (the limiter).
+pub(super) fn note_ons(p: &Plan) -> Vec<usize> {
+    p.hits
+        .iter()
+        .map(|h| block(h.on) * BLOCK_SIZE + LATE)
+        .collect()
+}
+
 /// The block an instant falls in.
 pub(super) fn block(t: f32) -> usize {
     (t * SR / BLOCK_SIZE as f32).round() as usize

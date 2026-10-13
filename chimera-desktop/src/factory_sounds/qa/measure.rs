@@ -61,6 +61,17 @@ pub enum Verdict {
     Exempt(String),
 }
 
+/// As `report.txt` writes it: `PASS`, `FAIL`, `EXEMPT (<why>)`.
+impl std::fmt::Display for Verdict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Verdict::Pass => f.write_str("PASS"),
+            Verdict::Fail => f.write_str("FAIL"),
+            Verdict::Exempt(why) => write!(f, "EXEMPT ({why})"),
+        }
+    }
+}
+
 pub(super) fn verdict(ok: bool) -> Verdict {
     if ok { Verdict::Pass } else { Verdict::Fail }
 }
@@ -95,6 +106,13 @@ pub fn limiter_bar(script: Option<Script>) -> f32 {
     } else {
         LIMIT_SINGLE_DB
     }
+}
+
+/// No NaN or infinity in `x`: the value is the count of samples that are
+/// not finite.
+pub fn finite(x: &[f32]) -> (f32, Verdict) {
+    let bad = x.iter().filter(|v| !v.is_finite()).count();
+    (bad as f32, verdict(bad == 0))
 }
 
 /// `listen::qa`'s click ratio over the whole render (note-offs and edges

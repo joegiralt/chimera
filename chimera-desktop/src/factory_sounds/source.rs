@@ -667,9 +667,9 @@ pub fn check(all: &[Source]) -> Result<(), String> {
         }
         if let Some(o) = all[..i].iter().find(|o| o.id == s.id) {
             return Err(format!(
-                "{}: id S{} is {}'s too",
+                "{}: id {} is {}'s too",
                 s.at(s.id_line),
-                s.id.get(),
+                s.id,
                 o.at(o.id_line)
             ));
         }
@@ -704,9 +704,9 @@ pub fn public(all: &[Source]) -> Result<(), String> {
         }
         if PORT_IDS.contains(&s.id.get()) {
             return Err(format!(
-                "{}: id S{} is reserved for the private ports",
+                "{}: id {} is reserved for the private ports",
                 s.at(s.id_line),
-                s.id.get()
+                s.id
             ));
         }
     }
@@ -755,8 +755,8 @@ pub fn ports(all: &[Source]) -> Result<(), String> {
         let at = |m: &str| Err(format!("{}: {m}", s.at(s.id_line)));
         if !PORT_IDS.contains(&s.id.get()) {
             return at(&format!(
-                "id S{} is outside the ports' S{}-S{}",
-                s.id.get(),
+                "id {} is outside the ports' S{}-S{}",
+                s.id,
                 PORT_IDS.start(),
                 PORT_IDS.end()
             ));
