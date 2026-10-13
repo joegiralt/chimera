@@ -75,12 +75,17 @@ utils := "cargo run -q --profile utils -p chimera-utils --"
 # The ELF's two banks: <out>.bin (bank 1, never .bank2) and, with bank 2's
 # section, <out>.bk2. A build without `bank2` has an empty .bank2: no .bk2.
 bank2-split elf out:
+    #!/usr/bin/env bash
+    set -euo pipefail
     rust-objcopy -R .bank2 -O binary {{elf}} {{out}}.bin
     just check-bin-size {{out}}.bin
     rm -f {{out}}.bk2
-    rust-objdump -h {{elf}} > {{out}}.sections
-    if awk '$2 == ".bank2" && $3 != "00000000" { f = 1 } END { exit !f }' {{out}}.sections; then rust-objcopy -j .bank2 -O binary {{elf}} {{out}}.bk2; {{utils}} bank2-seal {{elf}} {{out}}.bin {{out}}.bk2 --version "$(cargo pkgid -p chimera-stm32 | sed 's/.*[#@]//') $(git rev-parse --short=8 HEAD)"; {{utils}} door-check {{elf}}; just check-bin-paths {{out}}.bk2; fi
-    rm {{out}}.sections
+    if rust-objdump -h {{elf}} | awk '$2 == ".bank2" && $3 != "00000000" { f = 1 } END { exit !f }'; then
+        rust-objcopy -j .bank2 -O binary {{elf}} {{out}}.bk2
+        {{utils}} door-check {{elf}}
+        {{utils}} bank2-seal {{elf}} {{out}}.bin {{out}}.bk2 --version "$(cargo pkgid -p chimera-stm32 | sed 's/.*[#@]//') $(git rev-parse --short=8 HEAD)"
+        just check-bin-paths {{out}}.bk2
+    fi
 
 # The bank-2 phase 0b spike (DEVELOPER): the ORBIT firmware plus the
 # console's b2erase, b2prog, b2call and b2stat, which erase and program

@@ -47,18 +47,23 @@ fn seal_round_trip() {
 #[test]
 fn seal_refuses_missing_placeholder() {
     let (mut bin, mut bk2) = fake();
+    let (b0, k0) = (bin.clone(), bk2.clone());
     assert!(bank2::seal_images(&mut bin, 0, &mut bk2, 256, "v").is_err());
-    let before = bk2.clone();
+    assert_eq!((&bin, &bk2), (&b0, &k0));
     bank2::seal_images(&mut bin, 100, &mut bk2, 256, "v").unwrap();
-    // Sealed twice: the placeholder is gone.
+    // Sealed twice: the placeholder is gone, and the refusal changes nothing.
+    let (b1, k1) = (bin.clone(), bk2.clone());
     assert!(bank2::seal_images(&mut bin, 100, &mut bk2, 256, "v").is_err());
-    assert_ne!(before, bk2);
+    assert_eq!((&bin, &bk2), (&b1, &k1));
+    assert_ne!(k0, k1);
 }
 
 #[test]
 fn seal_refuses_bad_inputs() {
     let (mut bin, mut bk2) = fake();
     assert!(bank2::seal_images(&mut bin, 100, &mut bk2, 256, &"x".repeat(33)).is_err());
+    assert!(bank2::seal_images(&mut bin, 100, &mut bk2, 256, "v\u{e9}").is_err());
+    assert!(bank2::seal_images(&mut bin, 100, &mut bk2, 256, "v\n").is_err());
     assert!(bank2::seal_images(&mut bin, 100, &mut bk2, 4, "v").is_err());
     bk2[0] = 0;
     assert!(bank2::seal_images(&mut bin, 100, &mut bk2, 256, "v").is_err());

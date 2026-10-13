@@ -17,8 +17,10 @@ pub fn seal_images(
     door_off: u32,
     version: &str,
 ) -> Result<Seal, String> {
-    if version.len() > 32 {
-        return Err(format!("version `{version}` is over 32 bytes"));
+    if version.len() > 32 || !version.bytes().all(|c| (0x20..0x7F).contains(&c)) {
+        return Err(format!(
+            "version `{version}` is not 32 printable ASCII bytes"
+        ));
     }
     let slot = bin
         .get(seal_off..seal_off + 8)
@@ -103,24 +105,38 @@ pub fn door_hits(elf: &[u8]) -> Result<Vec<String>, String> {
             continue;
         }
         for (off, r) in s.relocations() {
-            let (name, inside) = match r.target() {
+            let (name, addr, defined_in) = match r.target() {
                 RelocationTarget::Symbol(i) => {
-                    let Ok(sym) = f.symbol_by_index(i) else {
-                        continue;
+                    let sym = f.symbol_by_index(i).map_err(|e| {
+                        format!("{}: unreadable symbol: {e}", s.name().unwrap_or("?"))
+                    })?;
+                    let name = sym
+                        .name()
+                        .map_err(|e| format!("unreadable symbol name: {e}"))?;
+                    let sec = match sym.section() {
+                        SymbolSection::Section(x) => Some(x),
+                        _ => None,
                     };
-                    let into = match sym.section() {
-                        SymbolSection::Section(x) => Some(x) == b2,
-                        SymbolSection::Absolute => range.contains(&sym.address()),
-                        _ => false,
-                    };
-                    (sym.name().unwrap_or("?").to_string(), into)
+                    (name.to_string(), sym.address(), sec)
                 }
-                RelocationTarget::Section(x) => (".bank2".to_string(), Some(x) == b2),
-                _ => continue,
+                RelocationTarget::Section(x) => {
+                    let a = f.section_by_index(x).map_or(0, |t| t.address());
+                    (".bank2".to_string(), a, Some(x))
+                }
+                _ => {
+                    return Err(format!(
+                        "{}+{off:#x}: unexpected relocation target",
+                        s.name().unwrap_or("?")
+                    ));
+                }
             };
-            if inside {
-                let sec = s.name().unwrap_or("?");
-                hits.push(format!("{sec}+{off:#x} -> {name}"));
+            // A linked ELF has addresses; an object file only has sections.
+            if defined_in == b2 && b2.is_some() || range.contains(&addr) {
+                let site = s.address() + off;
+                hits.push(format!(
+                    "{} @{site:#010x} -> {name} @{addr:#010x}",
+                    s.name().unwrap_or("?")
+                ));
             }
         }
     }
