@@ -363,10 +363,18 @@ fn git(dir: &Path, args: &[&str]) {
 fn out_in_work_tree_refused() {
     let repo = scratch("tx-guard-refused");
     git(&repo, &["init", "-q"]);
-    let e = map::out_allowed(&repo.join("tools/ports")).unwrap_err();
-    assert!(e.contains("work tree") && e.contains("check-ignore"), "{e}");
-    let e = map::out_allowed(&repo).unwrap_err();
-    assert!(e.contains("work tree"), "{e}");
+    let want = |p: &Path| {
+        format!(
+            "{}: {}; ports stay out of the repo",
+            p.display(),
+            map::NOT_IGNORED
+        )
+    };
+    let p = repo.join("tools/ports");
+    assert_eq!(map::out_allowed(&p).unwrap_err(), want(&p));
+    std::fs::create_dir_all(repo.join("tools")).unwrap();
+    assert_eq!(map::out_allowed(&p).unwrap_err(), want(&p));
+    assert_eq!(map::out_allowed(&repo).unwrap_err(), want(&repo));
 }
 
 #[test]
@@ -623,7 +631,7 @@ fn out_guard_refuses_a_dotdot_bypass() {
     std::fs::create_dir_all(repo.join("tools")).unwrap();
     // Lexically under the ignored `.private/`, really `tools/ports`.
     let e = map::out_allowed(&repo.join(".private/a/../../tools/ports")).unwrap_err();
-    assert!(e.contains("work tree"), "{e}");
+    assert!(e.contains(map::NOT_IGNORED), "{e}");
     // `..` past what exists can't be resolved: refused.
     let e = map::out_allowed(&repo.join(".private/new/../../tools")).unwrap_err();
     assert!(e.contains(".."), "{e}");
@@ -676,6 +684,57 @@ fn an_existing_port_is_kept_without_force() {
     );
 }
 
+/// A quiet operator with deep key scaling and deep AM: the base clamps
+/// at 0, so both routes shrink; no key and no LFO phase rises above OUT.
+#[test]
+fn low_out_never_rises_above_the_source() {
+    let route = |r: &str, dest: &str| -> f32 {
+        r.split(", ")
+            .find_map(|x| x.strip_prefix(dest))
+            .map_or(0.0, |a| a.trim().parse().unwrap())
+    };
+    for out in [0u8, 5, 20, 40, 64, 99] {
+        let mut v = plain();
+        v.ops[0].out = Ranged::new(out);
+        v.ops[0].ls = Ranged::new(99);
+        v.ops[0].ame = true;
+        v.amd = Ranged::new(99);
+        v.ams = Ranged::new(3);
+        let (snd, losses) = sound(&v);
+        let base: f32 = val(&snd, "OP_A", "LEVEL").parse().unwrap();
+        let am = route(&routes(&snd, "LFO1"), "OP_A.LEVEL");
+        let ls = route(&routes(&snd, "NOTE"), "OP_A.LEVEL");
+        assert!(base >= 0.0 && am >= 0.0 && ls <= 0.0);
+        for n in 24..=96 {
+            for lfo in [-1.0f32, 0.0, 1.0] {
+                let at =
+                    base + am / 127.0 * lfo * 99.0 + ls / 127.0 * (n as f32 - 60.0) / 120.0 * 99.0;
+                assert!(
+                    at <= f32::from(out) + 1e-3,
+                    "OUT {out} note {n} lfo {lfo}: {at}"
+                );
+            }
+        }
+        let k = kinds(&losses);
+        assert_eq!(k, [LossKind::AmpMod, LossKind::KeyLevel], "OUT {out}");
+        assert!(
+            losses[0].detail.contains("under OUT"),
+            "{}",
+            losses[0].detail
+        );
+        assert!(losses[1].detail.contains("C7") && losses[1].detail.contains("under OUT"));
+        if out < 64 {
+            assert!(
+                losses.iter().all(|l| l.detail.contains("depth cut to")),
+                "OUT {out}: {losses:?}"
+            );
+        }
+    }
+    let h = map::headroom(20.0, 64.0, 127.0);
+    assert_eq!(h.base, 0.0);
+    assert!(h.am + 0.3 * h.ls <= 20.0 / 99.0 * 127.0);
+}
+
 /// TX81Z LS only attenuates: the NOTE route never lifts LEVEL above OUT
 /// over C1-C7 (importer spec § 6.5).
 #[test]
@@ -696,7 +755,11 @@ fn key_level_never_boosts() {
             );
         }
         assert_eq!(kinds(&losses), [LossKind::KeyLevel]);
-        assert!(losses[0].detail.contains("worst"), "{}", losses[0].detail);
+        assert!(
+            losses[0].detail.contains("under OUT"),
+            "{}",
+            losses[0].detail
+        );
         assert!(losses[0].detail.contains("dB"), "{}", losses[0].detail);
     }
 }

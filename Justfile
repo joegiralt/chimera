@@ -422,10 +422,11 @@ flash-sd-probe:
 
 # Coverage-guided fuzz of the Sound and project decoders, the library peek, seeded with the
 # v1 fixtures and NEW, so ORBIT's records are in the corpus from the start,
-# and of the TAPE importer's WAV reader, seeded with small WAVs, and the
-# TX81Z bank parser and map, from an empty corpus (never a real bank)
+# and of the TAPE importer's WAV reader, seeded with small WAVs; the TX81Z
+# bank parser and map first, from an empty corpus (never a real bank)
 # (needs nightly and cargo-fuzz)
 fuzz:
+    cd chimera-desktop/fuzz && cargo +nightly fuzz run parse_tx -- -max_total_time=300
     mkdir -p chimera-core/fuzz/corpus/decode_sound chimera-core/fuzz/corpus/decode_project
     cp chimera-core/tests/fixtures/v1/*.snd chimera-core/fuzz/corpus/decode_sound/
     cp chimera-core/tests/fixtures/v1/project.prj chimera-core/fuzz/corpus/decode_project/
@@ -434,7 +435,6 @@ fuzz:
     mkdir -p chimera-desktop/fuzz/corpus/read_wav
     cp chimera-desktop/fuzz/seeds/read_wav/*.wav chimera-desktop/fuzz/corpus/read_wav/
     cd chimera-desktop/fuzz && cargo +nightly fuzz run read_wav -- -max_total_time=300
-    cd chimera-desktop/fuzz && cargo +nightly fuzz run parse_tx -- -max_total_time=300
 
 # chimera-utils (ADR 0098): Chimera's DSP against external references, on
 # the host, built in the `utils` profile. Paths from the environment

@@ -162,6 +162,31 @@ fn port_name(from: &str) -> String {
     format!("PORT {} {n:02}", sha.to_ascii_uppercase())
 }
 
+/// An operator's base LEVEL and its AM (LFO, ±1) and key-level (NOTE,
+/// +0.3 at C1) route amounts, so that base plus every swing stays at or
+/// under `out`. When `out` can't hold both swings above 0, both amounts
+/// shrink in proportion and the base is 0.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Headroom {
+    pub base: f32,
+    pub am: f32,
+    pub ls: f32,
+}
+
+pub fn headroom(out: f32, am: f32, ls: f32) -> Headroom {
+    let need = |am: f32, ls: f32| (am + 0.3 * ls) / 127.0 * 99.0;
+    let (mut am, mut ls) = (am, ls);
+    if need(am, ls) > out {
+        let k = out / need(am, ls);
+        (am, ls) = ((am * k).floor(), (ls * k).floor());
+    }
+    Headroom {
+        base: (out - need(am, ls)).floor().max(0.0),
+        am,
+        ls,
+    }
+}
+
 /// The voice as a Source's text, and what it loses.
 pub fn to_text(v: &Voice, from: &str) -> (String, Vec<Loss>) {
     let mut losses = Vec::new();
@@ -260,12 +285,14 @@ pub fn to_text(v: &Voice, from: &str) -> (String, Vec<Loss>) {
             (i32::from(o.det.get()) - 3).to_string(),
         );
         // LS only attenuates; NOTE is (n - 60)/120, so the negative route
-        // lifts LEVEL below C4. The base drops by the lift at C1, the fit
-        // span's bottom, so no key rises above the source (§ 6.5).
+        // lifts LEVEL below C4, up to 0.3 of its swing at C1 (the fit span's
+        // bottom). AM swings both ways. The base drops by both, so no key
+        // and no LFO phase rises above OUT (§ 6.5, § 6.6).
         let ls = (o.ls.get() > 0).then(|| (f32::from(o.ls.get()) / 99.0 * 127.0).round().max(1.0));
-        let lift = ls.map_or(0.0, |a| (a / 127.0 * 0.3 * 99.0).ceil());
-        let level = (f32::from(o.out.get()) - half - lift).round().max(0.0);
-        line(&format!("{p}.LEVEL"), level.to_string());
+        let am_a = am.then(|| clampf((half / 99.0 * 127.0).round(), 1.0, 127.0));
+        let out = f32::from(o.out.get());
+        let room = headroom(out, am_a.unwrap_or(0.0), ls.unwrap_or(0.0));
+        line(&format!("{p}.LEVEL"), room.base.to_string());
         line(&format!("{p}.AR"), o.ar.get().to_string());
         line(&format!("{p}.D1R"), o.d1r.get().to_string());
         line(&format!("{p}.D1L"), o.d1l.get().to_string());
@@ -275,22 +302,38 @@ pub fn to_text(v: &Voice, from: &str) -> (String, Vec<Loss>) {
         line(&format!("{p}.VEL"), o.kvs.get().to_string());
         let fdbk = if i == 3 { v.fbl.get() } else { 0 };
         line(&format!("{p}.FDBK"), fdbk.to_string());
+        let under = |x: f32| (out - x) * LEVEL_DB;
+        let cut = |was: Option<f32>, now: f32| match was {
+            Some(w) if now < w => format!("; depth cut to {:.0} % by OUT {out}", now / w * 100.0),
+            _ => String::new(),
+        };
         if am {
-            let amount = clampf((half / 99.0 * 127.0).round(), 1.0, 127.0);
-            lfo_routes.push(format!("{p}.LEVEL +{amount}"));
-            lose(Some(i), LossKind::AmpMod, format!("{am_db:.1} dB, bipolar"));
+            if room.am > 0.0 {
+                lfo_routes.push(format!("{p}.LEVEL +{}", room.am));
+            }
+            lose(
+                Some(i),
+                LossKind::AmpMod,
+                format!(
+                    "{am_db:.1} dB, bipolar; its base {:.1} dB under OUT{}",
+                    under(room.base),
+                    cut(am_a, room.am)
+                ),
+            );
         }
-        if let Some(amount) = ls {
-            note_routes.push(format!("{p}.LEVEL -{amount}"));
-            let fall = lift + amount / 127.0 * 0.3 * 99.0;
+        if ls.is_some() {
+            if room.ls > 0.0 {
+                note_routes.push(format!("{p}.LEVEL -{}", room.ls));
+            }
             lose(
                 Some(i),
                 LossKind::KeyLevel,
                 format!(
-                    "LS {} -> {:.1} dB/oct, never above the source; worst -{:.1} dB at C7",
+                    "LS {} -> {:.1} dB/oct, never above OUT; C7 {:.1} dB under OUT{}",
                     o.ls.get(),
-                    amount / 127.0 * 7.4,
-                    fall * LEVEL_DB
+                    room.ls / 127.0 * 7.4,
+                    under(room.base - room.ls / 127.0 * 0.3 * 99.0),
+                    cut(ls, room.ls)
                 ),
             );
         }
@@ -489,8 +532,18 @@ pub fn out_allowed(out: &Path) -> Result<(), String> {
             Ok(())
         };
     }
-    // Each folder from `real` up, as a folder (`dir/`): 0 ignored, 1 not.
-    for p in real.ancestors() {
+    let top = git(&base, &["rev-parse", "--show-toplevel"])
+        .filter(|o| o.status.success())
+        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()));
+    let Some(top) = top else {
+        return refuse("git can't name its work tree's top");
+    };
+    // Each folder from `real` up to the top, as a folder (`dir/`): 0
+    // ignored, 1 not.
+    for p in real
+        .ancestors()
+        .take_while(|p| p.starts_with(&top) && *p != top)
+    {
         let mut d = p.as_os_str().to_owned();
         d.push("/");
         match git(&base, &["check-ignore", "-q", &d.to_string_lossy()])
@@ -501,8 +554,11 @@ pub fn out_allowed(out: &Path) -> Result<(), String> {
             _ => return refuse("git check-ignore failed inside a work tree"),
         }
     }
-    refuse("inside a git work tree and not ignored (git check-ignore)")
+    refuse(NOT_IGNORED)
 }
+
+/// The guard's refusal of a folder git would track.
+pub const NOT_IGNORED: &str = "inside a git work tree and not ignored (git check-ignore)";
 
 /// What the report ends with: a raw port is not yet a Sound to build.
 pub const RAW_PORTS: &str = "raw ports carry no edits: mutate each, add its edits line and renumber its id (S9100010-S9100025) before --private builds it";
