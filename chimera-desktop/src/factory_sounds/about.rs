@@ -242,27 +242,48 @@ fn modulator(snd: &Sound, ctx: &SlotCtx, src: ModSource) -> String {
     }
 }
 
+/// Where `src` routes in `snd`'s matrix, with each amount (none at 0).
+fn dests(snd: &Sound, src: ModSource) -> Vec<(ParamAddr, i8)> {
+    let m = &snd.mod_state;
+    let (i, bit) = (src.index(), 1 << src.index());
+    if i >= m.num_sources() {
+        return Vec::new();
+    }
+    let fixed = FixedCol::ALL
+        .into_iter()
+        .filter(|&c| m.fixed_present(c) & bit != 0)
+        .map(|c| (c.addr(), m.fixed_amount(i, c)));
+    let reg = (0..m.num_dests())
+        .filter(|&d| m.present(d) & bit != 0)
+        .map(|d| (m.dest(d), m.amount(i, d)));
+    fixed.chain(reg).filter(|&(_, a)| a != 0).collect()
+}
+
+/// Each routed CLASSIC LFO at SYNC FREE, which plays its Part's clock
+/// (ADR 0135): `LFO 2 on CUTOFF`, `LFO 1 on OSC 1 SHAPE, OSC 2 SHAPE`.
+pub fn free_lfos(snd: &Sound) -> Vec<String> {
+    let ctx = SlotCtx::read(&snd.params, Op::A);
+    LfoSlot::ALL
+        .into_iter()
+        .filter(|l| ctx.lfos[l.index()] == LfoKind::Classic && snd.params.lfos[l.index()].sync == 0)
+        .filter_map(|l| {
+            let to: Vec<String> = dests(snd, ModSource::of_lfo(l))
+                .into_iter()
+                .map(|(d, _)| dest(d))
+                .collect();
+            (!to.is_empty()).then(|| format!("LFO {} on {}", l.index() + 1, to.join(", ")))
+        })
+        .collect()
+}
+
 /// Every matrix route, a source a line, then each tap, STABILITY's drift
 /// and the Part's glide.
 fn routes(snd: &Sound, ctx: &SlotCtx, demo: PartMode) -> Vec<String> {
     use ModSource::*;
-    let m = &snd.mod_state;
     let mut out = Vec::new();
     for src in [Env1, Env2, Env3, Lfo1, Lfo2, Lfo3, Vel, Note] {
-        let (i, bit) = (src.index(), 1 << src.index());
-        if i >= m.num_sources() {
-            continue;
-        }
-        let fixed = FixedCol::ALL
+        let to: Vec<String> = dests(snd, src)
             .into_iter()
-            .filter(|&c| m.fixed_present(c) & bit != 0)
-            .map(|c| (c.addr(), m.fixed_amount(i, c)));
-        let reg = (0..m.num_dests())
-            .filter(|&d| m.present(d) & bit != 0)
-            .map(|d| (m.dest(d), m.amount(i, d)));
-        let to: Vec<String> = fixed
-            .chain(reg)
-            .filter(|&(_, a)| a != 0)
             .map(|(d, a)| format!("{} {a:+}", dest(d)))
             .collect();
         if !to.is_empty() {

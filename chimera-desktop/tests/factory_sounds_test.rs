@@ -750,6 +750,7 @@ fn report(pass: bool, private: bool) -> qa::Report {
         changed: None,
         about: about::of(s).unwrap(),
         baseline: None,
+        free_lfos: about::free_lfos(&source::to_sound(s).unwrap()),
     }
 }
 
@@ -1966,5 +1967,98 @@ fn an_engine_change_flags_an_approved_sound() {
     assert!(
         txt.contains("baseline: no S9100002-long.wav, not compared"),
         "{txt}"
+    );
+}
+
+#[test]
+fn free_lfos_name_their_routes() {
+    let snd = |t: &str| source::to_sound(&run(t).unwrap()[0]).unwrap();
+    assert_eq!(about::free_lfos(&snd(BASE)), vec!["LFO 1 on CUTOFF"]);
+    let retrig = format!("{BASE}LFO1.SYNC = \"RETRIG\"\n");
+    assert!(
+        about::free_lfos(&snd(&retrig)).is_empty(),
+        "RETRIG runs its own"
+    );
+}
+
+#[test]
+fn bisected_causes_name_the_change_and_coherent_ones_lead() {
+    use chimera_desktop::listen::write_wav_stereo;
+    let d = scratch_ledger("causes");
+    std::fs::create_dir_all(&d).unwrap();
+    // Two approved Sounds, each 0.9 of its baseline (-19.1 dB).
+    let mut drift = report(true, false);
+    drift.badge = source::Badge::Approved;
+    let mut other = drift.clone();
+    other.name = "OTHER PAD".into();
+    other.id = source::parse(&BASE.replace("S9100002", "S9100003"), "b.toml").unwrap()[0].id;
+    for r in [&drift, &other] {
+        let old: Vec<f32> = r.renders[0].stereo.iter().map(|v| v * 0.9).collect();
+        write_wav_stereo(&d.join(format!("S{}-long.wav", r.id.get())), &old).unwrap();
+    }
+    std::fs::write(
+        d.join("causes.txt"),
+        "# id, then each change it bisects to and its residual\nS9100002 #489 -14.6\nS9100003 #485 -24.1 #489 -3.0\n",
+    )
+    .unwrap();
+    qa::compare(&mut drift, &d).unwrap();
+    qa::compare(&mut other, &d).unwrap();
+    let lines = drift.baseline.as_ref().unwrap().lines(&drift.free_lfos);
+    assert_eq!(
+        lines,
+        vec![
+            "AUDIO CHANGED BY ENGINE UPDATE: re-listen".to_string(),
+            "LFO MOTION CHANGED -14.6 dB: #489 FREE LFO 1 on CUTOFF now runs on the Part clock"
+                .into(),
+        ]
+    );
+    let lines = other.baseline.as_ref().unwrap().lines(&other.free_lfos);
+    assert!(
+        lines.contains(
+            &"TIMBRE CHANGED -24.1 dB: #485 the sub flips at the shaped saw's edge".into()
+        ),
+        "{lines:?}"
+    );
+    assert!(lines.contains(
+        &"LFO MOTION CHANGED -3.0 dB: #489 FREE LFO 1 on CUTOFF now runs on the Part clock".into()
+    ));
+
+    // Both coherent: Source order. A near-0 dB cause alone goes after.
+    let mut near = drift.clone();
+    near.name = "NEAR PAD".into();
+    near.baseline.as_mut().unwrap().causes[0].1 = -2.0;
+    let page = qa::page(&[near.clone(), other.clone(), drift.clone()], &[], &[]);
+    let at = |w: &str| page.find(w).unwrap_or_else(|| panic!("{w}: {page}"));
+    assert!(at("<h3>OTHER PAD") < at("<h3>TEST PAD"), "Source order");
+    assert!(at("<h3>TEST PAD") < at("<h3>NEAR PAD"), "coherent first");
+    assert!(page.contains("class=\"flag\">LFO MOTION CHANGED -14.6 dB"));
+    assert!(
+        page.contains("coherent drift, not timbre"),
+        "the page says what it measures"
+    );
+    let txt = qa::report_text(&[near, other, drift], &[]);
+    assert!(txt.contains("TIMBRE CHANGED -24.1 dB: #485"), "{txt}");
+    assert!(txt.contains("coherent drift, not timbre"), "{txt}");
+
+    // A change the tool does not know fails at its line.
+    std::fs::write(d.join("causes.txt"), "S9100002 #999 -3.0\n").unwrap();
+    let e = qa::compare(&mut report_approved(), &d).unwrap_err();
+    assert!(e.contains("causes.txt:1"), "{e}");
+}
+
+fn report_approved() -> qa::Report {
+    let mut r = report(true, false);
+    r.badge = source::Badge::Approved;
+    r
+}
+
+#[test]
+fn a_trim_backs_off_until_the_limiter_passes() {
+    // Over the bar above 3.85 dB: 4.1 steps down to 3.8.
+    assert_eq!(qa::backed_off(4.1, |t| Ok(t > 3.85)).unwrap(), 3.8);
+    assert_eq!(qa::backed_off(4.1, |_| Ok(false)).unwrap(), 4.1);
+    assert!(
+        qa::backed_off(4.1, |_| Ok(true)).is_err(),
+        "never past 6 dB"
     );
 }

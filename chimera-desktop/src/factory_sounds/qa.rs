@@ -1066,6 +1066,8 @@ pub struct Report {
     pub about: Vec<Fact>,
     /// An APPROVED Sound's renders against `--baseline` (`compare`).
     pub baseline: Option<Baseline>,
+    /// Its routed FREE LFOs (`about::free_lfos`), for a #489 cause.
+    pub free_lfos: Vec<String>,
 }
 
 /// A render whose residual against its baseline is over this was changed
@@ -1074,6 +1076,91 @@ pub const AUDIO_CHANGED_DB: f32 = -40.0;
 /// The page's line for it; the badge stays.
 pub const AUDIO_CHANGED: &str = "AUDIO CHANGED BY ENGINE UPDATE: re-listen";
 
+/// A residual at or under this still nulls: the same waveform, moved
+/// (coherent drift), and its size says how far. Near 0 dB the takes no
+/// longer null at all (a re-phased LFO decorrelates them), so the size
+/// says nothing. Between the two clusters #495 left: -6 to +3 dB, and
+/// -12.6 to -39.4 dB. It measures coherent drift, not timbre.
+pub const COHERENT_DB: f32 = -11.0;
+/// What the page and `report.txt` say the residual measures.
+pub const RESIDUAL_NOTE: &str = "AUDIO CHANGED compares each render with the baseline's: its \
+     residual measures coherent drift, not timbre (near 0 dB the takes no longer null at all).";
+/// The bisect evidence beside the baseline WAVs: `S<id>` and, for each
+/// engine change its residual bisects to, `#<issue> <dB>`; `#` comments.
+pub const CAUSES: &str = "causes.txt";
+
+/// An engine change a Sound's residual bisects to (`CAUSES`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EngineChange {
+    /// #485: the VA sub flips at the shaped saw's edge.
+    SubFlip,
+    /// #489: FREE LFOs play their Part's clock (ADR 0135).
+    LfoClock,
+}
+
+impl EngineChange {
+    fn parse(w: &str) -> Option<Self> {
+        match w {
+            "#485" => Some(Self::SubFlip),
+            "#489" => Some(Self::LfoClock),
+            _ => None,
+        }
+    }
+
+    /// Its page line at `db`, naming the Sound's `free_lfos` for #489.
+    fn line(self, db: f32, free_lfos: &[String]) -> String {
+        match self {
+            Self::SubFlip => {
+                format!("TIMBRE CHANGED {db:.1} dB: #485 the sub flips at the shaped saw's edge")
+            }
+            Self::LfoClock => {
+                let (lfos, verb) = match free_lfos {
+                    [] => ("its LFOs".to_string(), "run"),
+                    [one] => (one.clone(), "runs"),
+                    many => (many.join(" and "), "run"),
+                };
+                format!(
+                    "LFO MOTION CHANGED {db:.1} dB: #489 FREE {lfos} now {verb} on the Part clock"
+                )
+            }
+        }
+    }
+}
+
+/// `text` (a `CAUSES` file) for the Sound `id`: each change and its
+/// residual. A bad line fails with its number.
+pub fn causes(text: &str, id: u32) -> Result<Vec<(EngineChange, f32)>, String> {
+    let mut out = Vec::new();
+    for (n, l) in text.lines().enumerate() {
+        // `#` starts a comment only at the line's start: `#485` is a word.
+        if l.trim_start().starts_with('#') {
+            continue;
+        }
+        let words: Vec<&str> = l.split_whitespace().collect();
+        let bad = |why: &str| Err(format!("{CAUSES}:{}: {why}", n + 1));
+        let Some((first, rest)) = words.split_first() else {
+            continue;
+        };
+        let Some(sid) = first.strip_prefix('S').and_then(|v| v.parse::<u32>().ok()) else {
+            return bad("an S<id> first");
+        };
+        if rest.is_empty() || rest.len() % 2 != 0 {
+            return bad("each change with its residual: #<issue> <dB>");
+        }
+        let mut these = Vec::new();
+        for p in rest.chunks(2) {
+            let (Some(c), Ok(db)) = (EngineChange::parse(p[0]), p[1].parse::<f32>()) else {
+                return bad(&format!("{} {}: not #485 or #489 and a dB", p[0], p[1]));
+            };
+            these.push((c, db));
+        }
+        if sid == id {
+            out = these;
+        }
+    }
+    Ok(out)
+}
+
 /// A Sound's renders against the baseline's.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Baseline {
@@ -1081,12 +1168,34 @@ pub struct Baseline {
     pub worst: Option<(Audition, f32)>,
     /// Renders with no baseline WAV: not compared.
     pub missing: Vec<Audition>,
+    /// What its change bisects to (`CAUSES`), each with its residual.
+    pub causes: Vec<(EngineChange, f32)>,
 }
 
 impl Baseline {
     /// The worst render, when it is over `AUDIO_CHANGED_DB`.
     pub fn changed(&self) -> Option<(Audition, f32)> {
         self.worst.filter(|&(_, db)| db > AUDIO_CHANGED_DB)
+    }
+
+    /// Changed, and some of it still nulls (`COHERENT_DB`): heard first.
+    pub fn coherent(&self) -> bool {
+        let still = |db: f32| db > AUDIO_CHANGED_DB && db <= COHERENT_DB;
+        match (self.changed(), self.causes.as_slice()) {
+            (None, _) => false,
+            (Some((_, db)), []) => still(db),
+            (Some(_), c) => c.iter().any(|&(_, db)| still(db)),
+        }
+    }
+
+    /// The page's flagged lines: `AUDIO_CHANGED`, then each cause.
+    pub fn lines(&self, free_lfos: &[String]) -> Vec<String> {
+        if self.changed().is_none() {
+            return Vec::new();
+        }
+        std::iter::once(AUDIO_CHANGED.to_string())
+            .chain(self.causes.iter().map(|&(c, db)| c.line(db, free_lfos)))
+            .collect()
     }
 }
 
@@ -1113,9 +1222,16 @@ pub fn compare(r: &mut Report, dir: &Path) -> Result<(), String> {
         r.baseline = None;
         return Ok(());
     }
+    let read = |p: &Path| std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()));
+    let c = dir.join(CAUSES);
     let mut b = Baseline {
         worst: None,
         missing: Vec::new(),
+        causes: if c.is_file() {
+            causes(&read(&c)?, r.id.get()).map_err(|e| format!("{}/{e}", dir.display()))?
+        } else {
+            Vec::new()
+        },
     };
     let unit = |v: i16| v as f32 / 32_767.0;
     for x in &r.renders {
@@ -1320,6 +1436,7 @@ pub fn gates(src: &Source) -> Result<Report, String> {
         changed: src.changed(crc),
         about: about::of(src)?,
         baseline: None,
+        free_lfos: about::free_lfos(&wet),
     })
 }
 
@@ -1341,7 +1458,7 @@ pub fn level_trim(src: &Source, lufs: f32) -> Result<f32, String> {
 
 /// `text` with each Source's `trim` centred on −11 LUFS (`fmt --level`):
 /// measured, trimmed, measured again (the limiter bends a loud first
-/// guess). Only Sounds shown NEW: placeholders, approved Sounds and
+/// guess), then `backed_off` while a limiter gate would fail. Only Sounds shown NEW: placeholders, approved Sounds and
 /// levels pinned by ear keep theirs.
 pub fn levelled(text: &str, all: &[Source]) -> Result<String, String> {
     let mut trims = Vec::new();
@@ -1353,10 +1470,53 @@ pub fn levelled(text: &str, all: &[Source]) -> Result<String, String> {
         for _ in 0..2 {
             t.trim = level_trim(&t, level_lufs(&t)?)?;
         }
+        t.trim = backed_off(t.trim, |trim| {
+            let mut u = t.clone();
+            u.trim = trim;
+            over_limit(&u)
+        })?;
         println!("{} trim {:+.1} dB", s.name.as_str(), t.trim);
         trims.push((s, t.trim));
     }
     Ok(source::set_trims(text, &trims))
+}
+
+/// How far `backed_off` may go: 6 dB.
+const BACK_OFF_STEPS: u8 = 60;
+
+/// `trim` stepped down 0.1 dB at a time while `over` it (a limiter gate
+/// would fail): the smallest cut that passes. Refused past 6 dB.
+pub fn backed_off(
+    trim: f32,
+    mut over: impl FnMut(f32) -> Result<bool, String>,
+) -> Result<f32, String> {
+    let tenths = (trim * 10.0).round();
+    for k in 0..=BACK_OFF_STEPS {
+        let t = (tenths - k as f32) / 10.0 + 0.0;
+        if !over(t)? {
+            return Ok(t);
+        }
+    }
+    Err(format!(
+        "trim {trim:+.1}: still over the limiter's bar {} dB down",
+        BACK_OFF_STEPS / 10
+    ))
+}
+
+/// Some limiter gate on `src` fails: the level render's, or a script's
+/// (`gates`, dry).
+pub fn over_limit(src: &Source) -> Result<bool, String> {
+    let snd = dried(&to_sound(src)?);
+    let level = Plan {
+        hits: vec![hit(0.0, LEVEL_HOLD_S, src.home, 100)],
+        secs: LEVEL_HOLD_S + 0.05,
+        mode: None,
+    };
+    let mut takes = vec![(None, level)];
+    takes.extend(src.plays.iter().map(|&s| (Some(s), plan(s, src.home))));
+    Ok(takes
+        .iter()
+        .any(|(s, p)| limiter(play(&snd, src.demo, p).reduced_db, *s) == Verdict::Fail))
 }
 
 /// The level render's LUFS (`fmt --level` centres it).
@@ -1410,6 +1570,9 @@ pub fn report_text(reports: &[Report], samey: &[(usize, usize)]) -> String {
             match (b.changed(), b.worst) {
                 (Some((a, db)), _) => {
                     let _ = writeln!(o, "  {AUDIO_CHANGED} (worst {db:.1} dB: {})", a.slug());
+                    for l in b.lines(&r.free_lfos).iter().skip(1) {
+                        let _ = writeln!(o, "  {l}");
+                    }
                 }
                 (None, Some((a, db))) if db.is_finite() => {
                     let _ = writeln!(o, "  baseline: worst residual {db:.1} dB: {}", a.slug());
@@ -1461,6 +1624,9 @@ pub fn report_text(reports: &[Report], samey: &[(usize, usize)]) -> String {
             );
         }
     }
+    if any_changed(reports) {
+        let _ = writeln!(o, "{RESIDUAL_NOTE}");
+    }
     let pass = reports.iter().all(Report::passes);
     let _ = writeln!(
         o,
@@ -1469,6 +1635,13 @@ pub fn report_text(reports: &[Report], samey: &[(usize, usize)]) -> String {
         if pass { "all pass" } else { "FAIL" }
     );
     o
+}
+
+/// Some Sound's audio changed since the baseline.
+fn any_changed(reports: &[Report]) -> bool {
+    reports
+        .iter()
+        .any(|r| r.baseline.as_ref().and_then(Baseline::changed).is_some())
 }
 
 /// An approved Sound whose CRC no longer matches.
@@ -1482,7 +1655,7 @@ fn changed_line(round: Round) -> String {
 /// LUFS, `edits`, exemptions and samey pairs to judge by ear, what it is
 /// (`about`), and a player per render with its LUFS and peak.
 pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source]) -> String {
-    let mut sounds: Vec<(Badge, Row)> = reports
+    let mut sounds: Vec<((bool, Badge), Row)> = reports
         .iter()
         .enumerate()
         .filter(|(_, r)| r.passes())
@@ -1491,8 +1664,8 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source
             if let Some(round) = r.changed {
                 lines.push((changed_line(round), true));
             }
-            if r.baseline.as_ref().and_then(Baseline::changed).is_some() {
-                lines.push((AUDIO_CHANGED.into(), true));
+            if let Some(b) = &r.baseline {
+                lines.extend(b.lines(&r.free_lfos).into_iter().map(|l| (l, true)));
             }
             let lufs = r.lufs().map_or(String::new(), |l| {
                 format!(" · level (1 s, dry) {l:.1} LUFS")
@@ -1551,7 +1724,8 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source
                     .collect(),
                 private: r.private,
             };
-            (r.badge, row)
+            let coherent = r.baseline.as_ref().is_some_and(Baseline::coherent);
+            ((!coherent, r.badge), row)
         })
         .collect();
     sounds.extend(placeholders.iter().map(|s| {
@@ -1569,9 +1743,10 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source
             players: Vec::new(),
             private: false,
         };
-        (Badge::Placeholder, row)
+        ((true, Badge::Placeholder), row)
     }));
-    // APPROVED, then NEW, then the placeholders; Source order within each.
+    // A coherent engine change first (heard first), then APPROVED, NEW and
+    // the placeholders; Source order within each.
     sounds.sort_by_key(|(b, _)| *b);
     let mut rows: Vec<Row> = sounds.into_iter().map(|(_, r)| r).collect();
     let off: Vec<(String, bool)> = reports
@@ -1599,17 +1774,21 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source
             },
         );
     }
-    listen::rows_page(
-        "Factory Sounds · listening",
+    let intro = format!(
         "Every Sound that is ready: APPROVED (passed your listening round), NEW (not yet heard), \
          and the PLACEHOLDERS still to come. Each plays over a phrase (BASS, LEAD, PAD, ARP or \
          WONKY, four bars; SWEEP, twelve, three held chords each swelling the filter open and \
          closed; on its demo mode), then under its render scripts, offline through the real \
          Instrument (Part 1, P1); a render marked WITH plays its sends through NEW's effects. The \
          phrase is for your ear, not a gate. Under each Sound, what it is, read from the Sound \
-         itself. Every gate passed (measured dry) or is marked for your ear: the lines in colour.",
-        &rows,
-    )
+         itself. Every gate passed (measured dry) or is marked for your ear: the lines in colour.{}",
+        if any_changed(reports) {
+            format!(" {RESIDUAL_NOTE}")
+        } else {
+            String::new()
+        }
+    );
+    listen::rows_page("Factory Sounds · listening", &intro, &rows)
 }
 
 /// Into `dir` (checked as a ledger): `report.txt`, naming each Sound a
