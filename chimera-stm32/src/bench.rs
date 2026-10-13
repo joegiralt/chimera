@@ -71,6 +71,7 @@ use chimera_engine::voice_alloc::VoiceIdx;
 use chimera_engine::{MidiChannel, MidiNote, Velocity};
 use chimera_engine::{
     dsp::knobs::{KnobPublisher, Knobs},
+    dsp::lfo::LfoClock,
     project::Loads,
     tracked::Tracked,
 };
@@ -1791,7 +1792,8 @@ impl Rig<'_> {
                     #[cfg(not(feature = "orbit"))]
                     let orbit = 0;
                     let rev = extra_cost(shared.fx.reverb.kind).0;
-                    let reserved = FxBus::COST.0 + rev + Knobs::RESERVE.0 + orbit;
+                    let reserved =
+                        FxBus::COST.0 + rev + Knobs::RESERVE.0 + LfoClock::RESERVE.0 + orbit;
                     billed = (inst.allocator().sounding_cost().0 + reserved) * BLOCK_SIZE as u32;
                 }
                 worst = worst.max(c);

@@ -15,6 +15,7 @@ use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, SlotKind};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::knobs::{Gliding, KnobDelta, KnobPublisher, Knobs, Pace};
+use crate::dsp::lfo::LfoClock;
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
 use crate::dsp::rev::RevBill;
 use crate::dsp::rev::sync::Tempo;
@@ -557,6 +558,8 @@ pub struct Instrument {
     /// Each Part's knobs, eased (ADR 0112), and the Part's loads they
     /// last saw.
     knobs: [(Knobs, Loads); MAX_PARTS],
+    /// Each Part's FREE LFO phases (ADR 0135), stepped every block.
+    lfo_clocks: [LfoClock; MAX_PARTS],
     /// How they move: glide, or land (`land_knobs`).
     knob_pace: Pace,
     /// The reverb's reserve from the budget this block, and its tracker.
@@ -581,7 +584,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, pedal, sustained, bend_k, knobs, knob_pace, rev_extra, rev_bill, tune_ease, tune });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -646,6 +649,7 @@ impl Instrument {
                 sample_rate,
             ));
             addr_of_mut!((*p).knobs).write([(Knobs::UNPRIMED, Loads::NONE); MAX_PARTS]);
+            addr_of_mut!((*p).lfo_clocks).write([LfoClock::ZERO; MAX_PARTS]);
             addr_of_mut!((*p).knob_pace).write(Pace::Glide(sample_rate));
             addr_of_mut!((*p).rev_extra).write(Cost::ZERO);
             addr_of_mut!((*p).rev_bill).write(RevBill::new());
@@ -683,14 +687,15 @@ impl Instrument {
     }
 
     /// Spent outside the pool each block, so a new voice must fit beside
-    /// it: the FX bus, the reverb TYPE's extra, the knobs' reads, and while
+    /// it: the FX bus, the reverb TYPE's extra, the knobs' reads, the LFO
+    /// clocks (ADR 0135), and while
     /// ORBIT plays its own block and a burst of note-ons (ADR 0091). It plays exactly while it hands a harmony.
     fn reserved(&self) -> Cost {
         let orbit = match self.harmony {
             Some(_) => OrbitRunner::COST + Self::BURST,
             None => Cost::ZERO,
         };
-        FxBus::COST + self.rev_extra + Knobs::RESERVE + orbit
+        FxBus::COST + self.rev_extra + Knobs::RESERVE + LfoClock::RESERVE + orbit
     }
 
     /// Voices that ring a pool set, at most `SYM_SLOTS`: for the bench,
@@ -1299,12 +1304,13 @@ impl Instrument {
                     .recost_with_glide(v, costs[p] + held + k, glides[p]);
             }
         }
-        // Only the bus, the reverb's extra and the knobs' reads: ORBIT's
+        // Only the bus, the reverb's extra, the knobs' reads and the LFO
+        // clocks: ORBIT's
         // reserve refuses new voices, it never fades out sounding ones
         // (ADR 0091).
         while let Some(v) = self
             .alloc
-            .shed(FxBus::COST + self.rev_extra + Knobs::RESERVE)
+            .shed(FxBus::COST + self.rev_extra + Knobs::RESERVE + LfoClock::RESERVE)
         {
             self.shed(v);
         }
@@ -1482,6 +1488,7 @@ impl Instrument {
                 &part.params,
                 &part.mod_state,
                 &self.knobs[p].0,
+                Some(&self.lfo_clocks[p]),
                 ctx,
             );
             clip[p] = clip[p].max(self.voices[v].filter_clip());
@@ -1510,6 +1517,8 @@ impl Instrument {
         // 6. Waiting notes whose voices went idle this block start, oldest
         //    first, behind any the budget still queues.
         self.start_waiting(shared, src);
+        // 7. Every Part's LFO clock steps a block, playing or not.
+        self.step_lfo_clocks(shared);
 
         self.publish_heads();
         self.clear_left = SYM_CLEAR_BUDGET;
@@ -1544,6 +1553,17 @@ impl Instrument {
         }
         // The block is over: the next may carry other patches.
         self.costed = 0;
+    }
+
+    /// Every Part's FREE LFO clock a block on, at its stored RATEs (ADR
+    /// 0135; the LFOs are not modulation targets). Never inlined: its
+    /// count is `LfoClock::RESERVE`'s.
+    #[inline(never)]
+    fn step_lfo_clocks(&mut self, shared: &AudioShared) {
+        let step = BLOCK_SIZE as f32 / self.sample_rate as f32;
+        for (c, part) in self.lfo_clocks.iter_mut().zip(&shared.parts) {
+            c.advance(&part.params.lfos, step);
+        }
     }
 
     /// The strip's heads (spec § 3): each Part's newest voice playing

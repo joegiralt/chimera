@@ -4,6 +4,7 @@
 
 mod common;
 use chimera_core::dsp::knobs::Knobs;
+use chimera_core::dsp::lfo::LfoClock;
 use chimera_core::project::PartId;
 use common::{SR, peak};
 
@@ -36,7 +37,7 @@ use chimera_core::hw::{AUDIO_BUDGET_PERCENT, CPU_HZ_REV_V, SampleBudget};
 /// rounds up to at least `FxBus::COST + voice_share` (`for_cpu` truncates).
 const fn budget_for(voice_share: u32) -> SampleBudget {
     // The bus and the knobs, reserved (ADR 0116).
-    let reserved = FxBus::COST.0 + Knobs::RESERVE.0;
+    let reserved = FxBus::COST.0 + Knobs::RESERVE.0 + LfoClock::RESERVE.0;
     SampleBudget::for_cpu(
         ((reserved + voice_share) as u64 * 4_800_000).div_ceil(AUDIO_BUDGET_PERCENT as u64) as u32,
     )
@@ -656,7 +657,7 @@ fn a_six_note_tx_epiano_chord_stays_in_budget() {
 fn the_test_budget_keeps_the_pre_diet_voice_share() {
     assert_eq!(
         BUDGET.as_cost().0,
-        FxBus::COST.0 + Knobs::RESERVE.0 + VOICE_SHARE
+        FxBus::COST.0 + Knobs::RESERVE.0 + LfoClock::RESERVE.0 + VOICE_SHARE
     );
 }
 

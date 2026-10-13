@@ -5,6 +5,7 @@
 mod common;
 
 use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::dsp::lfo::LfoClock;
 use chimera_core::dsp::modal::{ResonatorMode, out_gain};
 use chimera_core::dsp::note_to_freq;
 use chimera_core::dsp::voice::Voice;
@@ -35,7 +36,7 @@ fn off(ch: u8, note: u8) -> NoteEvent {
 /// A budget with room for `voices` voices of `cost` beside the whole FX bus.
 fn budget(cost: u32) -> SampleBudget {
     // And the knobs, reserved beside the bus (ADR 0116).
-    let reserved = FxBus::COST.0 + Knobs::RESERVE.0;
+    let reserved = FxBus::COST.0 + Knobs::RESERVE.0 + LfoClock::RESERVE.0;
     SampleBudget::for_cpu(
         ((reserved + cost) as u64 * 4_800_000)
             .div_ceil(chimera_core::hw::AUDIO_BUDGET_PERCENT as u64) as u32,
