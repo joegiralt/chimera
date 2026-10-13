@@ -18,7 +18,7 @@
 [[project]]
 id = "P0000001"
 name = "REVERB ROOMS"
-held = "#499: HALL and BLOOM tails jump at block edges"
+held = "#499: HALL, BLOOM and REVERSE tails jump at block edges"
 try = "Turn TYPE through QUAD, ROOM and HALL"
 fx.REVERB.TYPE = "ROOM"
 hear.REVERB.TYPE = "QUAD, HALL"
@@ -28,7 +28,7 @@ part.2 = "SITAR DRONE, POLY, CH 2"
 [[project]]
 id = "P0000002"
 name = "REVERB BLOOM"
-held = "#499: HALL and BLOOM tails jump at block edges"
+held = "#499: HALL, BLOOM and REVERSE tails jump at block edges"
 try = "Hold slow chords, then turn TYPE to REVERSE"
 fx.REVERB.TYPE = "BLOOM"
 fx.REVERB.TIME = "0.75"
