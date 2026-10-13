@@ -70,6 +70,8 @@ firmware-orbit:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit
     just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-orbit
 
+utils := "cargo run -q --profile utils -p chimera-utils --"
+
 # The ELF's two banks: <out>.bin (bank 1, never .bank2) and, with bank 2's
 # section, <out>.bk2. A build without `bank2` has an empty .bank2: no .bk2.
 bank2-split elf out:
@@ -77,7 +79,7 @@ bank2-split elf out:
     just check-bin-size {{out}}.bin
     rm -f {{out}}.bk2
     rust-objdump -h {{elf}} > {{out}}.sections
-    if awk '$2 == ".bank2" && $3 != "00000000" { f = 1 } END { exit !f }' {{out}}.sections; then rust-objcopy -j .bank2 -O binary {{elf}} {{out}}.bk2; fi
+    if awk '$2 == ".bank2" && $3 != "00000000" { f = 1 } END { exit !f }' {{out}}.sections; then rust-objcopy -j .bank2 -O binary {{elf}} {{out}}.bk2; {{utils}} bank2-seal {{elf}} {{out}}.bin {{out}}.bk2 --version "$(cargo pkgid -p chimera-stm32 | sed 's/.*[#@]//') $(git rev-parse --short=8 HEAD)"; {{utils}} door-check {{elf}}; just check-bin-paths {{out}}.bk2; fi
     rm {{out}}.sections
 
 # The bank-2 phase 0b spike (DEVELOPER): the ORBIT firmware plus the
@@ -436,7 +438,6 @@ fuzz:
 # the host, built in the `utils` profile. Paths from the environment
 # (chimera-utils/README.md); outputs in target/mv. Flags such as --jobs N go
 # after the arguments.
-utils := "cargo run -q --profile utils -p chimera-utils --"
 
 # REF (a program on the contract, or midiverb) vs a Chimera DEVICE
 ab ref device *knobs:
