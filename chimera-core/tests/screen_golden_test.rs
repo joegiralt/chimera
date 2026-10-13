@@ -31,7 +31,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_formant_page", 0xd7abbf43c79496b6),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
-    ("mod_matrix_morph_inert", 0xc540d682384b1445),
+    ("mod_matrix_morph_inert", 0x27f70ba2fbed39e1),
     // Re-recorded: WAVE shows its scope (#310).
     ("algo_wave", 0x9723d55078a3689a),
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
@@ -102,11 +102,11 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the EXC node (plan Task 13).
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("modal_pitch", 0x2c3931d3412a4487),
+    ("modal_pitch", 0x6b8da28409bba9d8),
     // PIT on TAPE, SNAP MUSICAL: PITCH +19 in three clicks (TAPE Task 12b);
     // again for Task 15: PIT hangs under DECK.
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("tape_pitch_musical", 0xb144d3ed98d4871b),
+    ("tape_pitch_musical", 0x04460b03eba3c630),
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_exc", 0x3dcb3e058d83de73),
     // Re-recorded: the EXC node (plan Task 13).
@@ -208,8 +208,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mod_matrix_wide", 0x2d53cf82f2c6856c),
     // OP5 → FREQ, the cursor on OP5's X cell and its hint; MODAL's eight
     // rows of 17 (Task 17).
-    ("mod_matrix_algo_taps", 0x5a2a634ad30444b4),
-    ("mod_matrix_modal", 0xff6ac1e21a0ccc52),
+    ("mod_matrix_algo_taps", 0x96eee5ae9fa3f7bc),
+    ("mod_matrix_modal", 0x1fb996901f31f57a),
     // Re-recorded: the pool meter, row costs, the hints' bytes (sound-pool
     // plan Task 6); and its refusal. Then the merge with filter-types: a
     // Sound is smaller (fixed columns, no registry entry).
@@ -246,7 +246,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_system_diag_aud_load", 0x0063331a51f3da0e),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.
-    ("settings_project_pool", 0x35e2e90ad183c692),
+    ("settings_project_pool", 0x0c71ec47cf18008d),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).
@@ -317,8 +317,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_strip_pingpong_reversed", 0x7bb33060d124e1c8),
     ("tape_strip_tron_idle", 0x2e9a7c033cdd056d),
     ("tape_src_pool", 0x5cc2849e855b0b0e),
-    ("tape_src_card", 0xc230900451dccbe7),
-    ("tape_src_wont_fit", 0xc85ecb33c5d416cd),
+    ("tape_src_card", 0x2851ad3cea608bdf),
+    ("tape_src_wont_fit", 0x7a0855b2f56038bd),
     ("tape_src_loaded", 0x6e6533e2a42a05d2),
     ("tape_src_read_failed", 0x60b02af140ccd019),
     ("busy", 0x198544cd36863145),

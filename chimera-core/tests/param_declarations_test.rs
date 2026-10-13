@@ -41,7 +41,7 @@ fn sound(a: ParamAddr) -> (Sound, Option<Vec<u8>>) {
         BlockRef::Va => EngineType::Va,
         _ => EngineType::Algo,
     };
-    let mut s = Sound::init(engine);
+    let mut s = Sound::plain_init(engine);
     s.params.envelopes[0].sustain = 1.0;
     let mut src = None;
     match a.block {
@@ -95,7 +95,7 @@ fn run(
     blocks: usize,
     mut at: impl FnMut(&mut Rig, usize),
 ) -> Vec<Vec<u32>> {
-    let other = Sound::init(EngineType::Algo);
+    let other = Sound::plain_init(EngineType::Algo);
     let mut r = match src {
         Some(h) => Rig::with_source([s, other], &h),
         None => Rig::new([s, other]),

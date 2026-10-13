@@ -1,6 +1,7 @@
 //! The per-Part MIDI map's types (spec §§ 2-3): the whitelist, learn, the
 //! place law and the reserved CCs.
 
+mod common;
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::lfo::LfoParams;
@@ -157,4 +158,121 @@ fn cc_reserved() {
     want.extend(96..=101);
     want.extend(120..=127);
     assert_eq!(reserved, want);
+}
+
+#[test]
+fn default_map_entries_are_mappable() {
+    use chimera_core::midi_map::default_for;
+    use chimera_core::params::EngineType;
+    for (e, n) in [
+        (EngineType::Algo, 11),
+        (EngineType::Modal, 11),
+        (EngineType::Va, 11),
+        (EngineType::Tape, 7),
+    ] {
+        let m = default_for(e);
+        assert_eq!(m.len(), n, "{e:?}");
+        for x in m.entries() {
+            assert!(Mappable::new(x.target.addr()).is_some());
+            assert_eq!((x.min, x.max), (0, 255), "{e:?}");
+        }
+    }
+    let ccs: Vec<u8> = default_for(EngineType::Modal)
+        .entries()
+        .iter()
+        .map(|x| x.cc.get())
+        .collect();
+    assert_eq!(ccs, [74, 71, 7, 10, 91, 93, 1, 16, 17, 18, 19]);
+}
+
+/// INIT before the wheel: DEPTH 1, no PITCH route.
+fn old_init(
+    e: chimera_core::params::EngineType,
+) -> (
+    chimera_core::params::ParamSnapshot,
+    chimera_core::modulation::ModState,
+) {
+    use chimera_core::modulation::{FixedCol, MAX_MOD_SOURCES, ModSource, ModState};
+    use chimera_core::params::EngineType;
+    let mut m = ModState::with_sources(MAX_MOD_SOURCES);
+    for s in [ModSource::Env1, ModSource::Lfo1, ModSource::Note] {
+        m.set_fixed(s.index(), FixedCol::Freq, 0);
+    }
+    if matches!(e, EngineType::Tape | EngineType::Va) {
+        m.set_fixed(ModSource::Env1.index(), FixedCol::Vca, 127);
+    }
+    let mut p = chimera_core::preset::Sound::init(e).params;
+    p.lfos[0].depth = 1.0;
+    (p, m)
+}
+
+#[test]
+fn init_wheel_vibrato() {
+    use chimera_core::modulation::ModSource;
+    use chimera_core::params::{EngineType, PitchParams};
+    use chimera_core::preset::Sound;
+    let pitch = ParamAddr::new(BlockRef::Pitch, PitchParams::PITCH);
+    for e in [
+        EngineType::Algo,
+        EngineType::Modal,
+        EngineType::Tape,
+        EngineType::Va,
+    ] {
+        let s = Sound::init(e);
+        assert_eq!(s.params.lfos[0].depth, 0.0, "{e:?}");
+        assert!(s.dest_registry.is_primed(pitch), "{e:?}");
+        let d = s.mod_state.find(pitch).expect("a PITCH column");
+        assert_eq!(s.mod_state.amount(ModSource::Lfo1.index(), d), 2, "{e:?}");
+        // The wheel at rest: bit-identical to INIT before the wheel.
+        let (op, om) = old_init(e);
+        let (new, old) = (
+            common::render_sound(&s.params, &s.mod_state),
+            common::render_sound(&op, &om),
+        );
+        assert!(
+            new.iter()
+                .zip(&old)
+                .all(|(a, b)| a.to_bits() == b.to_bits()),
+            "{e:?} changed at rest"
+        );
+    }
+}
+
+/// With DEPTH 1 on ALGO INIT, 4 Hz: the fundamental in 100 ms Hann windows
+/// every 12.5 ms (`fundamental_hz`, 0.05 cent) swings about +-38 cents; the
+/// window's own smoothing at 4 Hz costs ~5 % (measured +-34.7).
+#[test]
+fn init_wheel_vibrato_swing() {
+    use chimera_core::params::EngineType;
+    use chimera_core::preset::Sound;
+    use chimera_hal::BLOCK_SIZE;
+    let mut s = Sound::init(EngineType::Algo);
+    s.params.lfos[0].depth = 1.0;
+    s.params.lfos[0].rate = 4.0;
+    let mut v = common::Rig::new(chimera_hal::SAMPLE_RATE);
+    v.note_on(
+        chimera_core::MidiNote::new(60).unwrap(),
+        chimera_core::Velocity::new(100).unwrap(),
+        &s.params,
+    );
+    let mut out = Vec::new();
+    let mut b = [0.0f32; BLOCK_SIZE];
+    while out.len() < 48_000 * 3 / 2 {
+        v.render(&mut b, &s.params, &s.mod_state);
+        out.extend_from_slice(&b);
+    }
+    let f0 = 261.6256f64;
+    let cents: Vec<f64> = out[4800..]
+        .windows(4800)
+        .step_by(600)
+        .map(|w| 1200.0 * (common::fundamental_hz(w, f0) / f0).log2())
+        .collect();
+    let (lo, hi) = cents
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(l, h), &c| (l.min(c), h.max(c)));
+    let amp = (hi - lo) / 2.0;
+    assert!(
+        (32.0..=40.0).contains(&amp),
+        "swing +-{amp} cents, {cents:?}"
+    );
 }

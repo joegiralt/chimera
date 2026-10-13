@@ -34,12 +34,10 @@ fn on_cutoff() -> Box<UiState> {
     let mut ui = Box::new(UiState::new());
     let was = PartChain::of(&ui.project().part(P1).sound);
     screen::init_part(&mut ui, P1);
-    ui.project_mut()
-        .edit_part(P1)
-        .sound
-        .params
-        .filter
-        .set_kind(FilterKind::K2040);
+    let sound = ui.project_mut().edit_part(P1).sound;
+    sound.params.filter.set_kind(FilterKind::K2040);
+    // Learning starts from an empty map, not INIT's default one.
+    sound.map = chimera_core::midi_map::MidiMap::EMPTY;
     ui.replaced_for_test(was);
     for _ in 0..12 {
         if ui.page_def().id == FILTER.id {

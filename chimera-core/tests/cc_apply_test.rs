@@ -104,7 +104,7 @@ impl Bench {
     }
 
     fn algo() -> Self {
-        Self::new(Sound::init(EngineType::Algo))
+        Self::new(Sound::plain_init(EngineType::Algo))
     }
 
     fn ch(&self, p: PartId) -> MidiChannel {
@@ -318,7 +318,7 @@ fn cc_sweep_under_two_hands_never_overflows() {
 
 #[test]
 fn slow_cc74_step_bound() {
-    let mut s = Sound::init(EngineType::Va);
+    let mut s = Sound::plain_init(EngineType::Va);
     s.params.filter.cutoff = spec(CUTOFF).min;
     s.params.filter.resonance =
         0.8 * spec(ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE)).max;
@@ -388,7 +388,7 @@ fn stepped_cc_hysteresis() {
 /// Operator A at FRMT and every other at NOISE: the budget is full, so
 /// A's WAVE up from FRMT is refused, and stays.
 fn budget_full() -> Sound {
-    let mut s = Sound::init(EngineType::Algo);
+    let mut s = Sound::plain_init(EngineType::Algo);
     s.params.algo.try_set_kind(0, OpKind::Formant).unwrap();
     for i in 1..OPS {
         s.params.algo.try_set_kind(i, OpKind::Noise).unwrap();
@@ -473,12 +473,12 @@ fn ramps_reset_on_load() {
 
 #[test]
 fn dead_entries_after_engine_switch() {
-    let mut b = Bench::new(Sound::init(EngineType::Modal));
+    let mut b = Bench::new(Sound::plain_init(EngineType::Modal));
     b.map(P1, 40, STRUCTURE);
     let map = b.ui.project().part(P1).sound.map;
     let swap = |b: &mut Bench, e| {
         let s = b.ui.project_mut().edit_part(P1).sound;
-        **s = Sound::init(e);
+        **s = Sound::plain_init(e);
         s.map = map;
     };
     swap(&mut b, EngineType::Algo);
@@ -650,7 +650,7 @@ const MODEL: ParamAddr = ParamAddr::new(
 #[test]
 fn model_changes_never_overflow_a_publish() {
     use chimera_core::ui::block_registry::TAPE_DECK;
-    let mut b = Bench::new(Sound::init(EngineType::Tape));
+    let mut b = Bench::new(Sound::plain_init(EngineType::Tape));
     let knobs: Vec<&Knob> = KNOBS
         .iter()
         .filter(|k| {

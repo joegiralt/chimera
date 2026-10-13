@@ -24,6 +24,8 @@ const FADE_BLOCKS: usize = Voice::FADE as usize / BLOCK_SIZE;
 fn modal(mode: ResonatorMode) -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Modal);
     p.modal.mode = mode;
+    // The Parts carry INIT's wheel route: LFO 1 at its rest.
+    p.lfos[0].depth = 0.0;
     p
 }
 

@@ -81,11 +81,16 @@ fn record_end(f: &[u8], tag: RecordTag) -> usize {
     o[i + 1]
 }
 
+/// Without the default map, so `PLAIN` stays what the encoder wrote then.
 fn sounds() -> Vec<Sound> {
     let mut v: Vec<_> = (0..FACTORY_LEN)
-        .map(|i| factory_sound(i).unwrap())
+        .map(|i| {
+            let mut s = factory_sound(i).unwrap();
+            s.map = chimera_core::midi_map::MidiMap::EMPTY;
+            s
+        })
         .collect();
-    v.extend([EngineType::Algo, EngineType::Modal, EngineType::Tape].map(Sound::init));
+    v.extend([EngineType::Algo, EngineType::Modal, EngineType::Tape].map(Sound::plain_init));
     v
 }
 

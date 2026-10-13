@@ -1,9 +1,9 @@
-use crate::addr::{BlockRead, BlockRef};
-use crate::midi_map::MidiMap;
+use crate::addr::{BlockRead, BlockRef, ParamAddr};
+use crate::midi_map::{MidiMap, default_for};
 use crate::mod_path::ModDestRegistry;
 use crate::modulation::{FixedCol, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::SoundName;
-use crate::params::{EngineType, ParamSnapshot};
+use crate::params::{EngineType, ParamSnapshot, PitchParams};
 use crate::project::SourceRef;
 use crate::storage::{SourceHead, TapeSource, ZoneTune};
 
@@ -31,6 +31,23 @@ impl Sound {
     // Out of line: inlined into its dozen callers it cost ~15 KB of flash.
     #[inline(never)]
     pub fn init(engine: EngineType) -> Self {
+        let mut s = Self::plain_init(engine);
+        s.map = default_for(engine);
+        // The wheel's vibrato (spec § 9): LFO 1 DEPTH is the wheel, at rest
+        // 0, and LFO 1 → PITCH at 2 is ±0.38 semitone at DEPTH 1.
+        s.params.lfos[0].depth = 0.0;
+        let pitch = ParamAddr::new(BlockRef::Pitch, PitchParams::PITCH);
+        let lfo1 = ModSource::Lfo1.index();
+        if s.dest_registry.add(pitch, *b"PITCH\0\0\0").is_ok() {
+            s.mod_state.set_route_addr(lfo1, pitch, 2);
+        }
+        s
+    }
+
+    /// INIT without the wheel or the map: the base the factory Sounds are
+    /// authored on, with LFO 1 at DEPTH 1.
+    #[inline(never)]
+    pub fn plain_init(engine: EngineType) -> Self {
         // The default routes (spec § 2): ENV 1, LFO 1 and NOTE → FREQ, the
         // fixed CUTOFF column, at 0, on every engine (a kind that wants
         // keytracking on a new Sound sets NOTE's here). The registry stays

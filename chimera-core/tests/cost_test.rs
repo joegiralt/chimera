@@ -383,7 +383,7 @@ fn mod_routing_bills_the_spec_shape() {
     use chimera_core::dsp::modulator::{EnvType, FuncMode};
     let p = ParamSnapshot::for_engine(EngineType::Algo);
     let defaults =
-        chimera_core::preset::Sound::init(chimera_core::params::EngineType::Algo).mod_state;
+        chimera_core::preset::Sound::plain_init(chimera_core::params::EngineType::Algo).mod_state;
     assert_eq!(M::cost(&p, &defaults), M::BASE);
     assert_eq!(
         M::cost(&p, &routed(&[ModSource::Env2])),
@@ -441,7 +441,7 @@ fn mod_routing_bills_each_routed_destination() {
     let p = ParamSnapshot::for_engine(EngineType::Algo);
     let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
     let level = |s| ParamAddr::new(BlockRef::Env(s), EnvParams::LEVEL);
-    let mut ms = chimera_core::preset::Sound::init(EngineType::Algo).mod_state;
+    let mut ms = chimera_core::preset::Sound::plain_init(EngineType::Algo).mod_state;
     ms.set_route_addr(ModSource::Lfo3.index(), fold, 0);
     assert_eq!(M::cost(&p, &ms), M::BASE, "amount 0");
     let l = ms.push(level(EnvSlot::Env1)).unwrap();
@@ -1404,7 +1404,7 @@ fn stress(keys_first: bool, blocks: usize) -> (usize, u32, bool) {
     for (i, part) in r.shared.parts.iter_mut().enumerate() {
         part.mix = PartParams::for_part(i);
         let s = NEW_PARTS.get(i).and_then(|s| factory_sound(s.index()));
-        let s = s.unwrap_or_else(|| chimera_core::preset::Sound::init(EngineType::Algo));
+        let s = s.unwrap_or_else(|| chimera_core::preset::Sound::plain_init(EngineType::Algo));
         (*part.params, *part.mod_state) = (s.params, s.mod_state);
     }
     *r.shared.parts[5].params = a16_a17_sound();
@@ -2143,7 +2143,7 @@ fn a_part_s_high_note_reach_bills_each_voice_as_alone() {
         .unwrap();
     linked.params.algo.try_set_kind(0, OpKind::Formant).unwrap();
     linked.params.algo.ops[0].coarse = 3;
-    let table = chimera_core::preset::Sound::init(EngineType::Algo);
+    let table = chimera_core::preset::Sound::plain_init(EngineType::Algo);
     for s in [demo_sound(Demo::Choir), linked, table] {
         for (bend, tune) in [(0, 0), (12, 100), (2, -100)] {
             let h = HighNote::of(&s.params, &s.mod_state, bend, tune);
@@ -2177,7 +2177,7 @@ fn a_formant_part_bills_its_reach_once_and_each_voice() {
         .try_set_algs(AlgoId::T1, AlgoId::T1)
         .unwrap();
     linked.params.algo.try_set_kind(0, OpKind::Formant).unwrap();
-    let table = chimera_core::preset::Sound::init(EngineType::Algo);
+    let table = chimera_core::preset::Sound::plain_init(EngineType::Algo);
     for (s, frmt) in [
         (demo_sound(Demo::Choir), true),
         (linked, true),

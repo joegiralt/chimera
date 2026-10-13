@@ -517,7 +517,8 @@ fn sparse_byte_identity() {
     // and INIT's sparse form decodes the same.
     for i in 0..8 {
         let full = v1_fixture(&format!("factory_{i}.snd"));
-        let s = factory_sound(i).unwrap();
+        let mut s = factory_sound(i).unwrap();
+        s.map = chimera_core::midi_map::MidiMap::EMPTY; // the old files predate it
         assert_eq!(cost(&full), 1143 + 16 * usize::from(i == 6), "{i}");
         assert_eq!(encode(&decode(&full).unwrap()), encode(&s), "{i}");
     }
@@ -570,8 +571,8 @@ fn sparse_sizes() {
     // The table Sounds, then the formant demos, whose routes, LFOs and
     // envelopes add about 200 B.
     let (table, demos) = costs.split_at(8);
-    assert!(table.iter().all(|c| (141..=261).contains(c)), "{costs:?}");
-    assert!(demos.iter().all(|c| (400..=480).contains(c)), "{costs:?}");
+    assert!(table.iter().all(|c| (200..=320).contains(c)), "{costs:?}");
+    assert!(demos.iter().all(|c| (459..=539).contains(c)), "{costs:?}");
     // 46 B of name, Engine, an empty Registry, ModDests and Routes (its
     // three fixed-FREQ routes), and 70 B for the values INIT moved off
     // neutral (ADR 0063): RR on six operators and OUT LEVEL, a one-param
@@ -584,7 +585,11 @@ fn sparse_sizes() {
             EngineType::Tape => 4,
             EngineType::Va => 4 + 15,
         };
-        assert_eq!(cost(&encode(&Sound::init(e))), 46 + 7 * 10 + more, "{e:?}");
+        assert_eq!(
+            cost(&encode(&Sound::plain_init(e))),
+            46 + 7 * 10 + more,
+            "{e:?}"
+        );
     }
 }
 
@@ -700,7 +705,7 @@ fn sends_round_trip_and_cost_nothing_at_zero() {
     assert_eq!(back.params.out.sends, [0.25, 0.5, 1.0]);
 
     // Sends at 0 write nothing: INIT's bytes are the old encoder's.
-    let init = Sound::init(EngineType::Algo);
+    let init = Sound::plain_init(EngineType::Algo);
     let plain = encode(&init);
     // Pinned from the encoder before the sends moved: length and CRC.
     assert_eq!(
@@ -778,7 +783,7 @@ fn empty_map_writes_no_record() {
         let b = encode(&Sound::neutral(e));
         assert_eq!((b.len(), &b[b.len() - 4..]), (50, &crc[..]), "{e:?}");
     }
-    let init = encode(&Sound::init(EngineType::Algo));
+    let init = encode(&Sound::plain_init(EngineType::Algo));
     assert_eq!(
         (init.len(), init[init.len() - 4..].to_vec()),
         (132, vec![87, 103, 46, 253])

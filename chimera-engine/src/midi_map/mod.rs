@@ -7,7 +7,13 @@ pub mod ramp;
 pub use crate::midi_in::Cc;
 
 use crate::addr::{BlockRef, ParamAddr};
-use crate::params::EngineType;
+use crate::block::ParamId;
+use crate::dsp::algo::params::AlgoParams;
+use crate::dsp::lfo::LfoParams;
+use crate::dsp::modal::ModalParams;
+use crate::dsp::modulator::LfoSlot;
+use crate::dsp::va::VaParams;
+use crate::params::{DriveParams, EngineType, FilterParams, FolderParams, OutParams};
 use crate::part::PartParams;
 
 /// A `ParamAddr` a CC may drive: a Sound's own, stored, non-patching
@@ -163,4 +169,79 @@ impl MidiMap {
             .enumerate()
             .filter(move |(_, e)| e.cc == cc)
     }
+}
+
+/// Spec § 9, in learn order: CC and target. Then 16-19 per engine.
+const COMMON: [(u8, BlockRef, ParamId); 7] = [
+    (74, BlockRef::Filter, FilterParams::CUTOFF),
+    (71, BlockRef::Filter, FilterParams::RESONANCE),
+    (7, BlockRef::Part, PartParams::LEVEL),
+    (10, BlockRef::Part, PartParams::PAN),
+    (91, BlockRef::Out, OutParams::SEND3),
+    (93, BlockRef::Out, OutParams::SEND1),
+    (1, BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::DEPTH),
+];
+
+/// ALGO, MODAL, VA; TAPE has none (ADR 0132).
+const MACROS: [[(BlockRef, ParamId); 4]; 3] = [
+    [
+        (BlockRef::Algo, AlgoParams::MORPH),
+        (BlockRef::Algo, AlgoParams::VOWEL),
+        (BlockRef::Drive, DriveParams::DRIVE),
+        (BlockRef::Folder, FolderParams::FOLD),
+    ],
+    [
+        (BlockRef::Modal, ModalParams::STRUCTURE),
+        (BlockRef::Modal, ModalParams::BRIGHT),
+        (BlockRef::Modal, ModalParams::DAMP),
+        (BlockRef::Modal, ModalParams::POS),
+    ],
+    [
+        (BlockRef::Va, VaParams::AMOUNT),
+        (BlockRef::Va, VaParams::SHAPE1),
+        (BlockRef::Va, VaParams::SHAPE2),
+        (BlockRef::Va, VaParams::SUB),
+    ],
+];
+
+const fn default_map(macros: &[(BlockRef, ParamId)]) -> MidiMap {
+    let mut m = MidiMap::EMPTY;
+    let mut i = 0;
+    while i < COMMON.len() + macros.len() {
+        let (cc, b, p) = if i < COMMON.len() {
+            COMMON[i]
+        } else {
+            let (b, p) = macros[i - COMMON.len()];
+            ((16 + i - COMMON.len()) as u8, b, p)
+        };
+        if let (Some(cc), Some(target)) = (Cc::new(cc), Mappable::new(ParamAddr::new(b, p))) {
+            m.entries[i] = MapEntry {
+                cc,
+                target,
+                min: 0,
+                max: 255,
+            };
+            m.len += 1;
+        }
+        i += 1;
+    }
+    m
+}
+
+/// ALGO, MODAL, VA, TAPE: built at compile time.
+static DEFAULTS: [MidiMap; 4] = [
+    default_map(&MACROS[0]),
+    default_map(&MACROS[1]),
+    default_map(&MACROS[2]),
+    default_map(&[]),
+];
+
+/// The map INIT and the factory Sounds ship with (spec § 9).
+pub fn default_for(e: EngineType) -> MidiMap {
+    DEFAULTS[match e {
+        EngineType::Algo => 0,
+        EngineType::Modal => 1,
+        EngineType::Va => 2,
+        EngineType::Tape => 3,
+    }]
 }

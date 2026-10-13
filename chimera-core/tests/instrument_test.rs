@@ -864,7 +864,7 @@ fn sound_change_mid_chord_stays_in_budget() {
     assert!(a.sounding_cost() + FxBus::COST <= budget.as_cost());
     let modal = Voice::cost(
         &ParamSnapshot::for_engine(EngineType::Modal),
-        &ModState::new(),
+        &shared.parts[0].mod_state,
     );
     let expected =
         ((budget.as_cost().0 - FxBus::COST.0 - Knobs::COST.0) / modal.0).min(held as u32);
