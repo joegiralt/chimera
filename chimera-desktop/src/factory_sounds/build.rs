@@ -231,14 +231,6 @@ pub fn private_qa_ledger() -> PathBuf {
     Path::new(PRIVATE_LEDGER).join("qa")
 }
 
-/// What a private run says until the importer verifies `edits`.
-pub fn unverified(banks: &Path) -> String {
-    format!(
-        "edits not verified against the banks in {} until the TX81Z importer (#302)",
-        banks.display()
-    )
-}
-
 /// The port Source files in `dir` (`*.toml`), by name; none, or no
 /// `dir`, is an error naming `$CHIMERA_TX_PORTS`.
 pub fn port_files(dir: &Path) -> Result<Vec<PathBuf>, String> {

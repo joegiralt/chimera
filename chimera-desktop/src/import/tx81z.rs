@@ -12,7 +12,7 @@
 //! are left free for the mutation. What can't be mapped logs one `Loss`.
 
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use chimera_core::addr::BlockRef;
@@ -37,6 +37,9 @@ pub enum LossKind {
     FixedSubaudio,
     /// A fixed-derived ratio capped below Nyquist at note 108.
     Nyquist,
+    /// Every operator fixed: the voice plays its sound at the reference
+    /// key and transposes away from it.
+    AllFixed,
     EgShift,
     RevRate,
     LfoDelay,
@@ -59,6 +62,7 @@ impl LossKind {
             LossKind::FixedFreq => "fixed-freq",
             LossKind::FixedSubaudio => "fixed-subaudio",
             LossKind::Nyquist => "nyquist",
+            LossKind::AllFixed => "all-fixed",
             LossKind::EgShift => "eg-shift",
             LossKind::RevRate => "rev-rate",
             LossKind::LfoDelay => "lfo-delay",
@@ -98,27 +102,21 @@ impl std::fmt::Display for Loss {
 
 const OPS: [&str; 6] = ["OP_A", "OP_B", "OP_C", "OP_D", "OP_E", "OP_F"];
 
-/// LFO speed, LFS 0-99 → Hz: exponential from 0.06 to 47 Hz. A placeholder
-/// for the measured table (importer spec § 6.6, § 8.5's ymfm A/B).
-fn lfo_hz(lfs: u8) -> f32 {
+/// LFO speed, LFS 0-99 → Hz: PROVISIONAL, an exponential from 0.06 to
+/// 47 Hz standing in for the TX81Z's own SPEED → Hz chart (importer spec
+/// § 6.6), which replaces it once entered from the owner's manual.
+pub fn lfo_hz(lfs: u8) -> f32 {
     0.06 * (47.0f32 / 0.06).powf(f32::from(lfs) / 99.0)
 }
 
-/// Pitch depth at PMD 99 by PMS, semitones (msfa's `pitchmodsenstab`
-/// shape over an octave; Apache-2.0). Calibrated by § 8.5.
-const PMS_ST: [f32; 8] = [
-    0.0,
-    12.0 * 10.0 / 255.0,
-    12.0 * 20.0 / 255.0,
-    12.0 * 33.0 / 255.0,
-    12.0 * 55.0 / 255.0,
-    12.0 * 92.0 / 255.0,
-    12.0 * 153.0 / 255.0,
-    12.0,
-];
+/// Pitch depth at full PMD by PMS, cents: the OPM family's (YM2151
+/// application manual's PMS table; ymfm's OPM/OPZ, BSD-3-Clause, the
+/// importer spec's TX81Z reference). PROVISIONAL until § 8.5's A/B.
+pub const PMS_CENTS: [f32; 8] = [0.0, 5.0, 10.0, 20.0, 50.0, 100.0, 400.0, 700.0];
 
-/// Amplitude depth at AMD 99 by AMS, dB. Approximate (logged `amp-mod`).
-const AMS_DB: [f32; 4] = [0.0, 6.0, 12.0, 24.0];
+/// Amplitude depth at full AMD by AMS, dB: the OPM family's (same
+/// sources). PROVISIONAL, and approximate anyway (logged `amp-mod`).
+pub const AMS_DB: [f32; 4] = [0.0, 23.9, 47.8, 95.6];
 
 /// One LEVEL step, dB (`tx::LEVEL_GAIN`).
 const LEVEL_DB: f32 = 0.75;
@@ -135,18 +133,25 @@ fn fixed_hz(fixrg: u8, crs: u8, fine: u8) -> f32 {
     (steps << fixrg) as f32
 }
 
+/// Every grid point (CRSE, FINE) and its `tx::ratio`.
+fn grid() -> impl Iterator<Item = (u8, u8, f32)> {
+    (0..64u8).flat_map(|c| (0..16u8).map(move |f| (c, f, tx::ratio(c, f))))
+}
+
+/// The largest grid ratio at or under `top`.
+fn largest_under(top: f32) -> (u8, u8) {
+    grid()
+        .filter(|g| g.2 <= top)
+        .max_by(|a, b| a.2.total_cmp(&b.2))
+        .map_or((0, 0), |g| (g.0, g.1))
+}
+
 /// The grid point (CRSE, FINE) whose `tx::ratio` is nearest `r` in pitch.
 fn nearest(r: f32) -> (u8, u8) {
-    let mut best = (0, 0, f32::MAX);
-    for c in 0..64u8 {
-        for f in 0..16u8 {
-            let d = (tx::ratio(c, f) / r).log2().abs();
-            if d < best.2 {
-                best = (c, f, d);
-            }
-        }
-    }
-    (best.0, best.1)
+    let off = |g: &(u8, u8, f32)| (g.2 / r).log2().abs();
+    grid()
+        .min_by(|a, b| off(a).total_cmp(&off(b)))
+        .map_or((0, 0), |g| (g.0, g.1))
 }
 
 /// `tx81z <8 hex> #<n>` → the Sound's name, `PORT 1A2B3C4D 05`.
@@ -201,7 +206,7 @@ pub fn to_text(v: &Voice, from: &str) -> (String, Vec<Loss>) {
     });
 
     // The LFO: its depths as routes, the AM's half-depth off each LEVEL.
-    let pm_st = f32::from(v.pmd.get()) / 99.0 * PMS_ST[usize::from(v.pms.get())];
+    let pm_st = f32::from(v.pmd.get()) / 99.0 * PMS_CENTS[usize::from(v.pms.get())] / 100.0;
     let am_db = f32::from(v.amd.get()) / 99.0 * AMS_DB[usize::from(v.ams.get())];
     let am_steps = am_db / LEVEL_DB;
     let mut lfo_routes = Vec::new();
@@ -217,7 +222,11 @@ pub fn to_text(v: &Voice, from: &str) -> (String, Vec<Loss>) {
             let top = 24_000.0 / note_hz(108.0);
             let sub = r < 0.5;
             r = r.max(0.5);
-            let (c, f) = nearest(r.min(top));
+            let (c, f) = if r > top {
+                largest_under(top)
+            } else {
+                nearest(r)
+            };
             lose(
                 Some(i),
                 LossKind::FixedFreq,
@@ -250,7 +259,12 @@ pub fn to_text(v: &Voice, from: &str) -> (String, Vec<Loss>) {
             &format!("{p}.DETUN"),
             (i32::from(o.det.get()) - 3).to_string(),
         );
-        let level = (f32::from(o.out.get()) - half).round().max(0.0);
+        // LS only attenuates; NOTE is (n - 60)/120, so the negative route
+        // lifts LEVEL below C4. The base drops by the lift at C1, the fit
+        // span's bottom, so no key rises above the source (§ 6.5).
+        let ls = (o.ls.get() > 0).then(|| (f32::from(o.ls.get()) / 99.0 * 127.0).round().max(1.0));
+        let lift = ls.map_or(0.0, |a| (a / 127.0 * 0.3 * 99.0).ceil());
+        let level = (f32::from(o.out.get()) - half - lift).round().max(0.0);
         line(&format!("{p}.LEVEL"), level.to_string());
         line(&format!("{p}.AR"), o.ar.get().to_string());
         line(&format!("{p}.D1R"), o.d1r.get().to_string());
@@ -266,13 +280,18 @@ pub fn to_text(v: &Voice, from: &str) -> (String, Vec<Loss>) {
             lfo_routes.push(format!("{p}.LEVEL +{amount}"));
             lose(Some(i), LossKind::AmpMod, format!("{am_db:.1} dB, bipolar"));
         }
-        if o.ls.get() > 0 {
-            let amount = (f32::from(o.ls.get()) / 99.0 * 127.0).round().max(1.0);
+        if let Some(amount) = ls {
             note_routes.push(format!("{p}.LEVEL -{amount}"));
+            let fall = lift + amount / 127.0 * 0.3 * 99.0;
             lose(
                 Some(i),
                 LossKind::KeyLevel,
-                format!("LS {} -> {:.1} dB/oct", o.ls.get(), amount / 127.0 * 7.4),
+                format!(
+                    "LS {} -> {:.1} dB/oct, never above the source; worst -{:.1} dB at C7",
+                    o.ls.get(),
+                    amount / 127.0 * 7.4,
+                    fall * LEVEL_DB
+                ),
             );
         }
         if o.egsft.get() > 0 {
@@ -282,6 +301,13 @@ pub fn to_text(v: &Voice, from: &str) -> (String, Vec<Loss>) {
         if o.ebs.get() > 0 {
             controllers.push(format!("op{} EBS {}", i + 1, o.ebs.get()));
         }
+    }
+    if v.ops.iter().all(|o| o.fix) {
+        lose(
+            None,
+            LossKind::AllFixed,
+            format!("every operator fixed: its own pitch at key {key} only"),
+        );
     }
     for p in &OPS[4..] {
         line(&format!("{p}.LEVEL"), "0".into());
@@ -419,53 +445,95 @@ pub fn voices_arg(s: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-fn git(dir: &Path, args: &[&str]) -> Option<bool> {
+fn git(dir: &Path, args: &[&str]) -> Option<std::process::Output> {
     Command::new("git")
         .arg("-C")
         .arg(dir)
         .args(args)
         .output()
         .ok()
-        .map(|o| o.status.success())
 }
 
 /// `--out`'s guard: refused inside a git work tree unless git ignores it
 /// (or a folder above it), so a port can't land where it could be staged.
+/// The deepest folder that exists is resolved (symlinks, `..`); what is
+/// left may not climb. Inside a repo, a git that can't answer refuses.
 pub fn out_allowed(out: &Path) -> Result<(), String> {
-    let out = std::path::absolute(out).map_err(|e| format!("{}: {e}", out.display()))?;
-    let Some(base) = out.ancestors().find(|p| p.is_dir()) else {
-        return Ok(());
-    };
-    if git(base, &["rev-parse", "--is-inside-work-tree"]) != Some(true) {
-        return Ok(());
-    }
-    // Each folder from `out` up, as a folder (`dir/`), until one is ignored.
-    let ignored = out.ancestors().any(|p| {
-        let mut d = p.as_os_str().to_owned();
-        d.push("/");
-        git(base, &["check-ignore", "-q", &d.to_string_lossy()]) == Some(true)
-    });
-    if ignored {
-        Ok(())
-    } else {
+    let refuse = |why: &str| {
         Err(format!(
-            "{}: inside a git work tree and not ignored (git check-ignore); ports stay out of the repo",
+            "{}: {why}; ports stay out of the repo",
             out.display()
         ))
+    };
+    let abs = std::path::absolute(out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let Some(base) = abs.ancestors().find(|p| p.is_dir()) else {
+        return refuse("no folder above it");
+    };
+    let rest = abs.strip_prefix(base).unwrap_or(Path::new(""));
+    if rest.components().any(|c| c == Component::ParentDir) {
+        return refuse("`..` past the folders that exist");
     }
+    let base = base
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", base.display()))?;
+    let real = base.join(rest);
+    let in_repo = base.ancestors().any(|p| p.join(".git").exists());
+    let tree = git(&base, &["rev-parse", "--is-inside-work-tree"]);
+    let inside = tree
+        .as_ref()
+        .is_some_and(|o| o.status.success() && o.stdout.trim_ascii() == b"true");
+    if !inside {
+        return if in_repo {
+            refuse("inside a git repo, and git can't say whether it is in its work tree")
+        } else {
+            Ok(())
+        };
+    }
+    // Each folder from `real` up, as a folder (`dir/`): 0 ignored, 1 not.
+    for p in real.ancestors() {
+        let mut d = p.as_os_str().to_owned();
+        d.push("/");
+        match git(&base, &["check-ignore", "-q", &d.to_string_lossy()])
+            .and_then(|o| o.status.code())
+        {
+            Some(0) => return Ok(()),
+            Some(1) => {}
+            _ => return refuse("git check-ignore failed inside a work tree"),
+        }
+    }
+    refuse("inside a git work tree and not ignored (git check-ignore)")
 }
 
+/// What the report ends with: a raw port is not yet a Sound to build.
+pub const RAW_PORTS: &str = "raw ports carry no edits: mutate each, add its edits line and renumber its id (S9100010-S9100025) before --private builds it";
+
 /// `chimera-import tx`: `voices` (all when empty) of the bank at `bank`
-/// into `out` as `<n>.toml`, and `import-report.txt`. Returns the report.
-pub fn import(bank: &Path, voices: &[u8], out: &Path) -> Result<String, String> {
+/// into `out` as `<n>.toml`, and `import-report.txt`; an existing
+/// `<n>.toml` (a port being mutated) only with `force`. Returns the report.
+pub fn import(bank: &Path, voices: &[u8], out: &Path, force: bool) -> Result<String, String> {
     out_allowed(out)?;
     let bytes = std::fs::read(bank).map_err(|e| format!("{}: {e}", bank.display()))?;
     let parsed = parse(&bytes).map_err(|e| format!("{}: {e:?}", bank.display()))?;
     let id = bank_id(&bytes);
     let all: Vec<u8> = (1..=32).collect();
     let voices = if voices.is_empty() { &all } else { voices };
+    let there: Vec<String> = voices
+        .iter()
+        .map(|n| format!("{n}.toml"))
+        .filter(|f| out.join(f).exists())
+        .collect();
+    if !force && !there.is_empty() {
+        return Err(format!(
+            "{}: {} already there; --force overwrites (a mutation is lost)",
+            out.display(),
+            there.join(", ")
+        ));
+    }
     std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
-    let mut report = format!("tx81z {id}: {} voices\n", voices.len());
+    let mut report = format!(
+        "tx81z {id}: {} voices\nLFO speed: a provisional curve until the manual's SPEED chart\n",
+        voices.len()
+    );
     if let Some(c) = parsed.checksum {
         let _ = writeln!(
             report,
@@ -481,6 +549,8 @@ pub fn import(bank: &Path, voices: &[u8], out: &Path) -> Result<String, String> 
         report.push_str(&report_line(n, &losses, parsed.warn[i]));
         report.push('\n');
     }
+    report.push_str(RAW_PORTS);
+    report.push('\n');
     let p = out.join("import-report.txt");
     std::fs::write(&p, &report).map_err(|e| format!("{}: {e}", p.display()))?;
     Ok(report)

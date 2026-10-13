@@ -122,8 +122,8 @@ impl Voice {
 /// Stored position `i` holds OP`STORED[i]`.
 const STORED: [usize; 4] = [4, 2, 3, 1];
 
-/// What reading a voice changed: bytes masked or clamped (names, PR/PL and
-/// 84-127 aside), and DX11/V50 extra data in 84-127.
+/// What reading a voice changed: bytes masked or clamped (the name's
+/// included; PR/PL and 84-127 aside), and DX11/V50 extra data in 84-127.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Warn {
     pub adjusted: u8,
@@ -150,8 +150,10 @@ pub enum ParseError {
     Size(usize),
     /// Not `F0 43 0n`, or no `F7` at the end.
     Header,
-    /// A format byte other than VMEM's, or a byte count other than 4096.
+    /// A format byte other than VMEM's.
     Format(u8),
+    /// A byte count (header bytes 4-5) other than 4096's `20 00`.
+    ByteCount(u8, u8),
 }
 
 /// A VMEM bank; refused only for its size, header or format.
@@ -166,7 +168,7 @@ pub fn parse(bytes: &[u8]) -> Result<Bank, ParseError> {
         return Err(ParseError::Format(bytes[3]));
     }
     if bytes[4..HEAD] != [0x20, 0x00] {
-        return Err(ParseError::Format(FORMAT));
+        return Err(ParseError::ByteCount(bytes[4], bytes[5]));
     }
     let payload = &bytes[HEAD..HEAD + VOICES * VOICE_LEN];
     let expected = checksum(payload);

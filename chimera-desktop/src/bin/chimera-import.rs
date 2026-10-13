@@ -15,33 +15,34 @@ use std::process::ExitCode;
 
 const USAGE: &str = "usage: chimera-import tape <file.wav> [--rate 24k] [--root C3] \
                      [--transwave <cycle> [--top 1024] [--frames 32]] [--name CHOIR] [--channel mix|L|R]\n\
-                     \x20      chimera-import tx <bank.syx> [--voices 1,4,9-12] [--out DIR]";
+                     \x20      chimera-import tx <bank.syx> [--voices 1,4,9-12] [--out DIR] [--force]";
 
-/// `tx <bank> [--voices LIST] [--out DIR]`.
-fn tx_args(rest: &[String]) -> Result<(PathBuf, Vec<u8>, PathBuf), String> {
-    let (mut bank, mut voices, mut out) = (None, Vec::new(), None);
+/// `tx <bank> [--voices LIST] [--out DIR] [--force]`.
+fn tx_args(rest: &[String]) -> Result<(PathBuf, Vec<u8>, PathBuf, bool), String> {
+    let (mut bank, mut voices, mut out, mut force) = (None, Vec::new(), None, false);
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--voices" => voices = tx81z::voices_arg(it.next().ok_or("--voices LIST")?)?,
             "--out" => out = Some(PathBuf::from(it.next().ok_or("--out DIR")?)),
+            "--force" => force = true,
             f if bank.is_none() && !f.starts_with("--") => bank = Some(PathBuf::from(f)),
             f => return Err(format!("tx: {f}?")),
         }
     }
     let out = out.unwrap_or_else(|| build::ports_dir(std::env::var_os(build::PORTS_VAR)));
-    Ok((bank.ok_or("tx <bank.syx>")?, voices, out))
+    Ok((bank.ok_or("tx <bank.syx>")?, voices, out, force))
 }
 
 fn tx(rest: &[String]) -> ExitCode {
-    let (bank, voices, out) = match tx_args(rest) {
+    let (bank, voices, out, force) = match tx_args(rest) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("chimera-import: {e}\n{USAGE}");
             return ExitCode::from(2);
         }
     };
-    match tx81z::import(&bank, &voices, &out) {
+    match tx81z::import(&bank, &voices, &out, force) {
         Ok(report) => {
             print!("{report}");
             println!("{}", out.display());

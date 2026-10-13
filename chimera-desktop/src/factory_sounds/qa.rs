@@ -1791,11 +1791,7 @@ pub fn page(
                 false,
             ));
             if let Some(e) = &r.edits {
-                lines.push(if r.private {
-                    (format!("edits: {e} ({EDITS_UNVERIFIED})"), true)
-                } else {
-                    (format!("edits: {e}"), false)
-                });
+                lines.push((format!("edits: {e}"), false));
             }
             for g in &r.gates {
                 if let Verdict::Exempt(why) = &g.verdict {
@@ -1993,9 +1989,6 @@ pub fn write_private(
     }
     write_ledger(dir, reports, samey, &[], &[], wav)
 }
-
-/// What a port's `edits` line says until the importer checks it.
-pub const EDITS_UNVERIFIED: &str = "not verified against its bank until the TX81Z importer, #302";
 
 fn write_ledger(
     dir: &Path,

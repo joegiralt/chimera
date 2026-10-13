@@ -10,10 +10,12 @@ use super::{build, project, qa};
 
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
 
-/// `--private`: the port Sources' folder, and the ledger their QA goes to.
+/// `--private`: the port Sources' folder, the ledger their QA goes to,
+/// and the check each port's `edits` passes first (`BankEdits`).
 pub struct Private<'a> {
     pub ports: &'a Path,
     pub ledger: PathBuf,
+    pub edits: &'a dyn build::EditsCheck,
 }
 
 /// One `qa` run.
@@ -36,6 +38,9 @@ pub fn qa(run: &Qa) -> Result<(), String> {
             .into_iter()
             .partition(|s| s.is_placeholder());
     let (ported, public): (Vec<_>, Vec<_>) = all.into_iter().partition(|s| s.from.is_some());
+    if let Some(p) = &run.private {
+        build::verify(&ported, p.edits)?;
+    }
     let (reports, samey) = gated(&public, run.baseline)?;
     let (demos, unheard) = demo_reports(run.dir, &public, &run.ledger)?;
     let mut pass = qa::write(
@@ -53,11 +58,7 @@ pub fn qa(run: &Qa) -> Result<(), String> {
         let (reports, samey) = gated(&ported, None)?;
         pass &= qa::write_private(&p.ledger, &reports, &samey, run.wav)?;
         print!("{}", qa::report_text(&reports, &samey));
-        println!(
-            "{}\n{}",
-            build::unverified(&build::banks_dir(std::env::var_os(build::BANKS_VAR))),
-            p.ledger.display()
-        );
+        println!("{}", p.ledger.display());
     }
     match (unheard, pass) {
         (Some(gap), _) => Err(gap),

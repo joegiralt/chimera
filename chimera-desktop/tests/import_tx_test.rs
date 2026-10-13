@@ -585,6 +585,25 @@ fn edits_verified() {
         .unwrap();
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(!o.status.success() && err.contains("filter"), "{err}");
+    // fmt and qa verify first too, and write nothing.
+    let before = std::fs::read_to_string(ports.join("4.toml")).unwrap();
+    for args in [&["fmt", "--private"][..], &["qa", "--private"]] {
+        let o = Command::new(env!("CARGO_BIN_EXE_factory-sounds"))
+            .args(args)
+            .env(build::PORTS_VAR, &ports)
+            .env(build::BANKS_VAR, &banks)
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(
+            !o.status.success() && err.contains("edits names filter"),
+            "{args:?}: {err}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(ports.join("4.toml")).unwrap(),
+        before
+    );
     // Changed, it builds.
     std::fs::write(
         ports.join("4.toml"),
@@ -593,4 +612,168 @@ fn edits_verified() {
     .unwrap();
     let man = build::private(&public, &ports, &root, &STAMP, Some(&check)).unwrap();
     assert_eq!(man.sounds.len(), 1);
+}
+
+#[test]
+fn out_guard_refuses_a_dotdot_bypass() {
+    let repo = scratch("tx-guard-dotdot");
+    git(&repo, &["init", "-q"]);
+    std::fs::write(repo.join(".gitignore"), ".private/\n").unwrap();
+    std::fs::create_dir_all(repo.join(".private/a")).unwrap();
+    std::fs::create_dir_all(repo.join("tools")).unwrap();
+    // Lexically under the ignored `.private/`, really `tools/ports`.
+    let e = map::out_allowed(&repo.join(".private/a/../../tools/ports")).unwrap_err();
+    assert!(e.contains("work tree"), "{e}");
+    // `..` past what exists can't be resolved: refused.
+    let e = map::out_allowed(&repo.join(".private/new/../../tools")).unwrap_err();
+    assert!(e.contains(".."), "{e}");
+    map::out_allowed(&repo.join(".private/a/../b")).unwrap();
+}
+
+#[test]
+fn out_guard_fails_closed_on_a_git_error() {
+    let repo = scratch("tx-guard-broken");
+    // A `.git` git can't read: inside a repo, so refused, not allowed.
+    std::fs::write(repo.join(".git"), "gitdir: /nonexistent/chimera-tx-guard\n").unwrap();
+    let e = map::out_allowed(&repo.join("ports")).unwrap_err();
+    assert!(e.contains("git"), "{e}");
+}
+
+#[test]
+fn an_existing_port_is_kept_without_force() {
+    let d = scratch("tx-force");
+    let (bank, _) = bank_file(&d, &bank());
+    let out = d.join("ports");
+    let run = |force: bool| {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_chimera-import"));
+        c.args(["tx", bank.to_str().unwrap(), "--voices", "1,2"])
+            .args(["--out", out.to_str().unwrap()]);
+        if force {
+            c.arg("--force");
+        }
+        c.output().unwrap()
+    };
+    let o = run(false);
+    assert!(o.status.success());
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        stdout.contains("edits") && stdout.contains("renumber"),
+        "{stdout}"
+    );
+    std::fs::write(out.join("2.toml"), "mutated").unwrap();
+    let o = run(false);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(err.contains("2.toml") && err.contains("--force"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(out.join("2.toml")).unwrap(),
+        "mutated"
+    );
+    assert!(run(true).status.success());
+    assert_ne!(
+        std::fs::read_to_string(out.join("2.toml")).unwrap(),
+        "mutated"
+    );
+}
+
+/// TX81Z LS only attenuates: the NOTE route never lifts LEVEL above OUT
+/// over C1-C7 (importer spec § 6.5).
+#[test]
+fn key_level_never_boosts() {
+    for ls in [1u8, 40, 99] {
+        let mut v = plain();
+        v.ops[1].ls = Ranged::new(ls);
+        let (snd, losses) = sound(&v);
+        let base: f32 = val(&snd, "OP_B", "LEVEL").parse().unwrap();
+        let r = routes(&snd, "NOTE");
+        let amount: f32 = r.rsplit_once(' ').unwrap().1.parse().unwrap();
+        assert!(amount < 0.0, "{r}");
+        for n in 24..=96 {
+            let off = amount / 127.0 * (n as f32 - 60.0) / 120.0 * 99.0;
+            assert!(
+                base + off <= f32::from(v.ops[1].out.get()) + 1e-3,
+                "LS {ls} at note {n}: {base} + {off}"
+            );
+        }
+        assert_eq!(kinds(&losses), [LossKind::KeyLevel]);
+        assert!(losses[0].detail.contains("worst"), "{}", losses[0].detail);
+        assert!(losses[0].detail.contains("dB"), "{}", losses[0].detail);
+    }
+}
+
+#[test]
+fn a_fixed_ratio_past_nyquist_is_capped_and_logged() {
+    let mut v = plain();
+    v.alg = Ranged::new(0);
+    // A fixed modulator at FIXRG 7: (16 × 15) × 128 = 30 720 Hz, key 60.
+    v.ops[1].fix = true;
+    v.ops[1].fixrg = Ranged::new(7);
+    v.ops[1].crs = Ranged::new(60);
+    let (snd, losses) = sound(&v);
+    assert_eq!(kinds(&losses), [LossKind::FixedFreq, LossKind::Nyquist]);
+    let crse: u8 = val(&snd, "OP_B", "CRSE").parse().unwrap();
+    let fine: u8 = val(&snd, "OP_B", "FINE").parse().unwrap();
+    let top = 24_000.0 / (440.0 * 2f32.powf((108.0 - 69.0) / 12.0));
+    let r = tx::ratio(crse, fine);
+    assert!(r <= top, "{r} under {top}");
+    // The largest grid ratio at or under the cap.
+    let best = (0..64u8)
+        .flat_map(|c| (0..16u8).map(move |f| tx::ratio(c, f)))
+        .filter(|&x| x <= top)
+        .fold(0.0f32, f32::max);
+    assert_eq!(r, best);
+}
+
+#[test]
+fn an_all_fixed_voice_says_so() {
+    let mut v = plain();
+    for op in &mut v.ops {
+        op.fix = true;
+        op.fixrg = Ranged::new(1);
+        op.crs = Ranged::new(32);
+    }
+    let losses = sound(&v).1;
+    let all: Vec<_> = losses
+        .iter()
+        .filter(|l| l.kind == LossKind::AllFixed)
+        .collect();
+    assert_eq!(all.len(), 1, "{losses:?}");
+    assert!(all[0].detail.contains("key"), "{}", all[0].detail);
+    v.ops[3].fix = false;
+    assert!(!sound(&v).1.iter().any(|l| l.kind == LossKind::AllFixed));
+}
+
+#[test]
+fn rate_and_level_tables_are_monotonic() {
+    let hz: Vec<f32> = (0..100u8).map(map::lfo_hz).collect();
+    assert!(hz.windows(2).all(|w| w[0] < w[1]), "LFO speed");
+    assert!(map::PMS_CENTS.windows(2).all(|w| w[0] < w[1]));
+    assert!(map::AMS_DB.windows(2).all(|w| w[0] < w[1]));
+    assert_eq!(
+        map::PMS_CENTS,
+        [0.0, 5.0, 10.0, 20.0, 50.0, 100.0, 400.0, 700.0]
+    );
+    assert_eq!(map::AMS_DB, [0.0, 23.9, 47.8, 95.6]);
+    assert!(tx::LEVEL_GAIN.windows(2).all(|w| w[0] < w[1]));
+    assert!(tx::COARSE.windows(2).all(|w| w[0] < w[1]));
+    for c in 0..64u8 {
+        let r: Vec<f32> = (0..16u8).map(|f| tx::ratio(c, f)).collect();
+        assert!(r.windows(2).all(|w| w[0] <= w[1]), "CRSE {c}");
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig {
+        failure_persistence: None,
+        cases: 64,
+        ..Default::default()
+    })]
+
+    /// Any 128 bytes read as a voice map to a Source that parses.
+    #[test]
+    fn any_voice_maps_to_a_source(raw in proptest::collection::vec(proptest::prelude::any::<u8>(), 128)) {
+        let v = Voice::unpack(&raw.try_into().unwrap());
+        let (s, _) = map::to_source(&v, FROM);
+        source::patch(&s).unwrap();
+    }
 }

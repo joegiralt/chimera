@@ -798,7 +798,7 @@ fn a_failing_sound_is_skipped_from_the_page() {
     assert!(!d.join("index.html").exists(), "never index.html");
 
     // The public ledger refuses a port; ports page in their own ledger,
-    // under PRIVATE, their edits flagged unverified.
+    // under PRIVATE, with their edits.
     let e = qa::write(
         &d,
         &[report(true, false), report(true, true)],
@@ -814,9 +814,7 @@ fn a_failing_sound_is_skipped_from_the_page() {
     let page = std::fs::read_to_string(pd.join("listening.html")).unwrap();
     assert!(page.contains("<h2>PRIVATE</h2>"), "{page}");
     assert!(
-        page.contains(
-            "<p class=\"flag\">edits: filter: 2040 instead of open (not verified against its bank until the TX81Z importer, #302)</p>"
-        ),
+        page.contains("edits: filter: 2040 instead of open<") && !page.contains("not verified"),
         "{page}"
     );
     assert!(
@@ -3177,12 +3175,28 @@ fn private_qa_stays_in_its_ledger() {
     // A port's render left in the public ledger by an older run.
     std::fs::create_dir_all(pub_ledger.join("renders")).unwrap();
     std::fs::write(pub_ledger.join("renders/S9100010-long.wav"), b"old").unwrap();
+    // A port whose edits its bank refutes fails before anything renders.
+    let e = run::qa(&run::Qa {
+        dir: &public,
+        ledger: pub_ledger.clone(),
+        private: Some(run::Private {
+            ports: &ports,
+            ledger: priv_ledger.clone(),
+            edits: &Edits(Err("one.toml:13: edits names filter".into())),
+        }),
+        wav: true,
+        baseline: None,
+    })
+    .unwrap_err();
+    assert!(e.contains("edits names filter"), "{e}");
+    assert!(!priv_ledger.join("report.txt").exists());
     let r = run::qa(&run::Qa {
         dir: &public,
         ledger: pub_ledger.clone(),
         private: Some(run::Private {
             ports: &ports,
             ledger: priv_ledger.clone(),
+            edits: &Edits(Ok(())),
         }),
         wav: true,
         baseline: None,
@@ -3204,7 +3218,17 @@ fn private_qa_stays_in_its_ledger() {
     assert!(!txt.contains("TEST PAD") && !page.contains("TEST PAD"));
     let at = page.find("<h2>PRIVATE</h2>").expect("a PRIVATE section");
     assert!(page[at..].contains("PORT ONE"));
-    assert!(page.contains("not verified against its bank"));
+    assert!(page.contains("edits: filter: 2040 instead of open"));
+    assert!(!page.contains("not verified"));
     assert!(!port_wavs(&priv_ledger).is_empty());
     r.unwrap();
+}
+
+/// An `EditsCheck` answering `self.0` for every port.
+struct Edits(Result<(), String>);
+
+impl build::EditsCheck for Edits {
+    fn verify(&self, _: &source::Source) -> Result<(), String> {
+        self.0.clone()
+    }
 }

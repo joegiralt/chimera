@@ -24,8 +24,8 @@ pub mod factory;
 pub mod fmt_buf;
 pub mod glyph;
 pub mod hw;
-/// The in-place constructors' helpers, also `chimera-core`'s `UiState`'s.
 pub mod import;
+/// The in-place constructors' helpers, also `chimera-core`'s `UiState`'s.
 pub mod in_place;
 pub mod instrument;
 pub mod meter;

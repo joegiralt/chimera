@@ -278,6 +278,7 @@ dependencies = [
  "hound",
  "midir",
  "minifb",
+ "proptest",
  "rubato",
  "rustfft",
  "sha2",

@@ -12,10 +12,10 @@
 //! `<dir>`, flagged AUDIO CHANGED over −40 dB.
 //! `--private` (any command) also reads the TX81Z port Sources in
 //! `$CHIMERA_TX_PORTS` (spec § 3, § 6; never in the repo): the build puts
-//! them in `target/factory-sounds/private/` only, each port's `edits`
-//! verified against its bank in `$CHIMERA_TX_BANKS` first; `fmt` rewrites them
+//! them in `target/factory-sounds/private/` only, `fmt` rewrites them
 //! there, and `qa` pages them under PRIVATE in their own ledger
-//! (`build::private_qa_ledger`), never the public one.
+//! (`build::private_qa_ledger`), never the public one. Each command first
+//! verifies every port's `edits` against its bank in `$CHIMERA_TX_BANKS`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -34,17 +34,19 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (private, args): (Vec<_>, Vec<_>) = args.into_iter().partition(|a| a == "--private");
     let ports = (!private.is_empty()).then(ports);
+    let banks = BankEdits::new(build::banks_dir(std::env::var_os(build::BANKS_VAR)));
     let r = match args.first().map(String::as_str) {
-        None | Some("build") if args.len() <= 1 => run_build(ports.as_deref()),
+        None | Some("build") if args.len() <= 1 => run_build(ports.as_deref(), &banks),
         Some("fmt") => match args.get(1..).unwrap_or_default() {
-            [] => run_fmt(false, ports.as_deref()),
-            [l] if l == "--level" => run_fmt(true, ports.as_deref()),
+            [] => run_fmt(false, ports.as_deref(), &banks),
+            [l] if l == "--level" => run_fmt(true, ports.as_deref(), &banks),
             _ => Err(format!("{USAGE}, not {}", args.join(" "))),
         },
         Some("qa") => qa_args(&args[1..]).and_then(|(wav, base)| {
             let private = ports.as_deref().map(|p| run::Private {
                 ports: p,
                 ledger: build::private_qa_ledger(),
+                edits: &banks,
             });
             run::qa(&run::Qa {
                 dir: &dir(),
@@ -98,15 +100,10 @@ fn stamp() -> Result<BuildStamp, String> {
     ))
 }
 
-fn run_build(ports: Option<&Path>) -> Result<(), String> {
+fn run_build(ports: Option<&Path>, banks: &BankEdits) -> Result<(), String> {
     let root = PathBuf::from(ROOT).join("target/factory-sounds");
-    // The ports read, checked and their edits verified against the banks
-    // ($CHIMERA_TX_BANKS) before anything is written.
-    let banks = BankEdits::new(build::banks_dir(std::env::var_os(build::BANKS_VAR)));
     if let Some(p) = ports {
-        let all = build::sounds(&dir(), Some(p))?;
-        let ported: Vec<_> = all.into_iter().filter(|s| s.from.is_some()).collect();
-        build::verify(&ported, &banks)?;
+        verified(p, banks)?;
     }
     let out = root.join("public");
     let man = build::public(&dir(), &out, &stamp()?)?;
@@ -120,7 +117,7 @@ fn run_build(ports: Option<&Path>) -> Result<(), String> {
         out.display()
     );
     if let Some(p) = ports {
-        let man = build::private(&dir(), p, &root, &stamp()?, Some(&banks))?;
+        let man = build::private(&dir(), p, &root, &stamp()?, Some(banks))?;
         list(&man, &build::ports(p)?)?;
         println!(
             "{} private ports from {}, edits verified against {}, built {}\n{}",
@@ -132,6 +129,14 @@ fn run_build(ports: Option<&Path>) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+/// The ports read, checked and their edits verified against the banks
+/// (`$CHIMERA_TX_BANKS`), before a run writes anything.
+fn verified(ports: &Path, banks: &BankEdits) -> Result<(), String> {
+    let all = build::sounds(&dir(), Some(ports))?;
+    let ported: Vec<_> = all.into_iter().filter(|s| s.from.is_some()).collect();
+    build::verify(&ported, banks)
 }
 
 /// A line per built Sound and demo project.
@@ -161,9 +166,10 @@ fn list(man: &build::Manifest, all: &[source::Source]) -> Result<(), String> {
 
 /// Each public Source file, then with `--private` each port's, in its
 /// canonical text.
-fn run_fmt(level: bool, ports: Option<&Path>) -> Result<(), String> {
+fn run_fmt(level: bool, ports: Option<&Path>, banks: &BankEdits) -> Result<(), String> {
     let mut files: Vec<PathBuf> = SOUND_FILES.iter().map(|f| dir().join(f)).collect();
     if let Some(p) = ports {
+        verified(p, banks)?;
         files.extend(build::port_files(p)?);
     }
     for p in files {

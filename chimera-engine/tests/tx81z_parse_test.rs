@@ -214,7 +214,7 @@ fn wrong_size_header_or_format_refused() {
     assert_eq!(parse(&b), Err(ParseError::Format(0x09)));
     let mut b = good;
     b[4] = 0x10;
-    assert_eq!(parse(&b), Err(ParseError::Format(0x04)));
+    assert_eq!(parse(&b), Err(ParseError::ByteCount(0x10, 0x00)));
     // Any MIDI channel is a TX81Z bank.
     let mut b = good;
     b[2] = 0x0F;
@@ -273,8 +273,24 @@ fn extra_bytes_warn() {
 }
 
 proptest! {
+    // No `.proptest-regressions` files in the repo.
+    #![proptest_config(ProptestConfig { failure_persistence: None, ..ProptestConfig::default() })]
+
+    /// A valid header, then any 4096 B of voices, any checksum and `F7`.
     #[test]
-    fn parse_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..5000)) {
+    fn parse_never_panics(
+        payload in proptest::collection::vec(any::<u8>(), 4096),
+        sum in any::<u8>(),
+    ) {
+        let mut b = vec![0xF0, 0x43, 0x00, 0x04, 0x20, 0x00];
+        b.extend_from_slice(&payload);
+        b.extend_from_slice(&[sum, 0xF7]);
+        prop_assert_eq!(b.len(), BANK_LEN);
+        prop_assert!(parse(&b).is_ok(), "a TX81Z header always parses");
+    }
+
+    #[test]
+    fn parse_never_panics_on_any_bytes(bytes in proptest::collection::vec(any::<u8>(), 0..5000)) {
         let _ = parse(&bytes);
     }
 
