@@ -4,7 +4,7 @@
 //! out; the files are `build`'s.
 
 use chimera_core::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
-use chimera_core::block::{Block, DiskCode};
+use chimera_core::block::{Block, DiskCode, ParamSpec, ValFmt};
 use chimera_core::mod_path::LABEL_LEN;
 use chimera_core::modulation::{FixedCol, ModSource};
 use chimera_core::name::SoundName;
@@ -814,12 +814,21 @@ fn fmt_line(line: &str, ctx: &SlotCtx) -> Option<String> {
     let a = valid_addr(block, param).filter(|a| !a.coded())?;
     let mut b = FmtBuf::new();
     let shown = shown_fmt(a.addr(), ctx)?;
-    fmt_val(&mut b, a.spec().normalize(v.parse().ok()?), shown);
+    fmt_val(&mut b, page_value(a.spec(), v.parse().ok()?, shown), shown);
     Some(match b.as_str() {
         "" => format!("{k} = \"{v}\""),
         shown if shown == v => format!("{k} = \"{v}\""),
         shown => format!("{k} = \"{v}\"  # {shown}"),
     })
+}
+
+/// What `fmt_val` reads for stored `v`: the normalised value, but the
+/// stored one for FORMANT, BW and VOWEL, as the renderer gives them.
+pub(crate) fn page_value(spec: &ParamSpec, v: f32, fmt: ValFmt) -> f32 {
+    match fmt {
+        ValFmt::LogHz { .. } | ValFmt::Vowel => v,
+        _ => spec.normalize(v),
+    }
 }
 
 pub(crate) struct VecSink(pub Vec<u8>);

@@ -347,6 +347,20 @@ fn on_panel(panel: &mod_panel::ModPanel, id: ParamId, spec_of: &[ParamSpec], v: 
     b.as_str().to_string()
 }
 
+/// FORMANT, BW and VOWEL read their stored value, as the renderer
+/// gives them (`ValFmt::LogHz`, `ValFmt::Vowel`).
+#[test]
+fn fmt_reads_formant_hz_and_the_vowel_letter() {
+    let algo = BASE.replace("engine = \"VA\"", "engine = \"ALGO\"");
+    let t = format!(
+        "{algo}ALGO.VOWEL = \"25\"\nOP_E.WAVE = \"FRMT\"\nOP_E.FRMT = \"83\"\nOP_E.BW = \"96\"\n"
+    );
+    run(&t).unwrap();
+    assert_eq!(comment(&t, "ALGO.VOWEL"), "O");
+    assert_eq!(comment(&t, "OP_E.FRMT"), "1.10 kHz");
+    assert_eq!(comment(&t, "OP_E.BW"), "320 Hz");
+}
+
 #[test]
 fn fmt_reads_as_the_page_draws() {
     // CLASSIC LFO RATE, and a type-B ENV's RISE (its RATE under LFO).

@@ -23,7 +23,7 @@ use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::ui::mod_panel::{PanelSlot, env_panel};
 use chimera_core::ui::view::{LfoKind, SlotCtx, dimmed, shown_fmt};
 
-use super::source::{Source, to_sound};
+use super::source::{Source, page_value, to_sound};
 
 /// A labelled fact and its lines: `("FILTER", ["2040 · LP4 · …"])`.
 pub type Fact = (&'static str, Vec<String>);
@@ -109,11 +109,7 @@ fn get(snd: &Sound, a: ParamAddr) -> f32 {
 /// `a`'s value as the unit shows it on `snd`'s pages.
 fn shown(snd: &Sound, ctx: &SlotCtx, a: ParamAddr) -> String {
     match (a.spec(), shown_fmt(a, ctx)) {
-        // These two read the stored value, as the renderer gives them.
-        (Some(_), Some(fmt @ (ValFmt::LogHz { .. } | ValFmt::Vowel))) => {
-            spelled(&text(get(snd, a), fmt))
-        }
-        (Some(spec), Some(fmt)) => spelled(&text(spec.normalize(get(snd, a)), fmt)),
+        (Some(spec), Some(fmt)) => spelled(&text(page_value(spec, get(snd, a), fmt), fmt)),
         _ => "?".into(),
     }
 }
