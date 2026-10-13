@@ -16,8 +16,7 @@ use chimera_core::dsp::limiter::OUTPUT_GAIN;
 use chimera_core::dsp::modulator::law::{B_TIME, speed_ranges};
 use chimera_core::dsp::modulator::{EnvSlot, EnvType};
 use chimera_core::dsp::rev::sync::Tempo;
-use chimera_core::hw::MAX_PARTS;
-use chimera_core::hw::SampleBudget;
+use chimera_core::hw::{CPU_HZ_REV_V, MAX_PARTS, MAX_VOICES, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument, MixState, mix_parts};
 use chimera_core::modulation::{FixedCol, ModSource};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
@@ -582,6 +581,8 @@ fn block(t: f32) -> usize {
 struct Take {
     stereo: Vec<f32>,
     reduced_db: f32,
+    /// The most voices sounding at once.
+    voices: usize,
 }
 
 impl Take {
@@ -596,6 +597,11 @@ thread_local! {
     static SCOPE: std::cell::RefCell<ScopeWriter> =
         std::cell::RefCell::new(ScopeWriter::new(Box::leak(Box::new(scope_buffer())).split().0));
 }
+
+/// The shipping unit's budget (rev V; `Instrument` reserves the build's
+/// FX bus, with or without the master tape): every render plays the voices
+/// the unit can, stealing past them.
+pub const UNIT_BUDGET: SampleBudget = SampleBudget::for_cpu(CPU_HZ_REV_V);
 
 /// `plan` played by `snd` on Part 1 in `mode`, offline at 48 kHz through
 /// `Instrument`: what `loudness_test`'s scenes measure.
@@ -612,10 +618,7 @@ fn play(snd: &Sound, mode: PartMode, plan: &Plan) -> Take {
 /// set: the Parts on that channel sound.
 fn play_on(perf: &Performance, channel: MidiChannel, plan: &Plan) -> Take {
     let shared = Box::new(AudioShared::from_performance(perf));
-    let mut inst = Box::new(Instrument::new(
-        SAMPLE_RATE,
-        SampleBudget::for_cpu(u32::MAX),
-    ));
+    let mut inst = Box::new(Instrument::new(SAMPLE_RATE, UNIT_BUDGET));
     let mut fx = Box::new(FxBus::new());
     let ev = |note: u8, kind| NoteEvent {
         channel,
@@ -632,22 +635,24 @@ fn play_on(perf: &Performance, channel: MidiChannel, plan: &Plan) -> Take {
                 inst.handle_with(ev(h.note, NoteKind::On(v)), &shared, &GateView::empty());
             }
             inst.render_with(&mut fx, dac, &shared, scope, &GateView::empty());
+            inst.sounding()
         })
     })
 }
 
 /// `blocks` blocks, each rendered into the DAC by `render`, kept as P1
 /// after the limiter, with the most gain reduction it took.
-fn metered(blocks: usize, mut render: impl FnMut(usize, &mut DacBlocks)) -> Take {
+fn metered(blocks: usize, mut render: impl FnMut(usize, &mut DacBlocks) -> usize) -> Take {
     let mut dac = Box::new(DacBlocks::new());
     let energy = |p: &[f32]| p.iter().map(|v| v * v).sum::<f32>();
     let mut t = Take {
         stereo: Vec::new(),
         reduced_db: 0.0,
+        voices: 0,
     };
     let mut prev_in = 0.0f32;
     for b in 0..blocks {
-        render(b, &mut dac);
+        t.voices = t.voices.max(render(b, &mut dac));
         let out = &dac.out()[0];
         // The block out against the block in before it, over the rest gain.
         if prev_in > 1e-12 {
@@ -661,6 +666,28 @@ fn metered(blocks: usize, mut render: impl FnMut(usize, &mut DacBlocks)) -> Take
         t.stereo.extend_from_slice(out);
     }
     t
+}
+
+/// The most voices the unit sounds for `src` on its own Part: eight notes
+/// struck together and held 1 s (a note past the budget steals or waits).
+pub fn unit_voices(src: &Source) -> Result<usize, String> {
+    Ok(voices_of(&dried(&to_sound(src)?), src.demo))
+}
+
+fn voices_of(snd: &Sound, mode: PartMode) -> usize {
+    let held = Plan {
+        hits: (0..MAX_VOICES as u8)
+            .map(|i| hit(0.0, 1.0, 48 + 2 * i, 100))
+            .collect(),
+        secs: 1.0,
+        mode: Some(mode),
+    };
+    play(snd, mode, &held).voices
+}
+
+/// The most voices sounding at once while `src` plays `s`.
+pub fn most_voices(src: &Source, s: Script) -> Result<usize, String> {
+    Ok(play(&dried(&to_sound(src)?), src.demo, &plan(s, src.home)).voices)
 }
 
 /// The listening render: the Source's Sound played under `s` at 48 kHz,
@@ -1059,6 +1086,8 @@ pub struct Render {
     /// A wet render's limiting, and always the phrase's, dB: information,
     /// not a gate (the gates measure dry).
     pub limited_db: Option<f32>,
+    /// The most voices it sounded at once (`UNIT_BUDGET`).
+    pub voices: usize,
 }
 
 /// A Sound's QA: every gate, every render, and its `long` render's ERB
@@ -1086,6 +1115,8 @@ pub struct Report {
     pub baseline: Option<Baseline>,
     /// Its routed FREE LFOs (`about::free_lfos`), for a #489 cause.
     pub free_lfos: Vec<String>,
+    /// The voices the unit sounds for it (`unit_voices`).
+    pub voices: usize,
 }
 
 /// A render whose residual against its baseline is over this was changed
@@ -1188,6 +1219,10 @@ pub struct Baseline {
     pub missing: Vec<Audition>,
     /// What its change bisects to (`CAUSES`), each with its residual.
     pub causes: Vec<(EngineChange, f32)>,
+    /// A changed render that played the unit's whole voice count: the
+    /// voices the unit plays (`UNIT_BUDGET`; the baseline rendered past
+    /// it).
+    pub voice_budget: Option<usize>,
 }
 
 impl Baseline {
@@ -1213,6 +1248,10 @@ impl Baseline {
         }
         std::iter::once(AUDIO_CHANGED.to_string())
             .chain(self.causes.iter().map(|&(c, db)| c.line(db, free_lfos)))
+            .chain(
+                self.voice_budget
+                    .map(|n| format!("voice budget: the unit plays {n} voices")),
+            )
             .collect()
     }
 }
@@ -1250,6 +1289,7 @@ pub fn compare(r: &mut Report, dir: &Path) -> Result<(), String> {
         } else {
             Vec::new()
         },
+        voice_budget: None,
     };
     let unit = |v: i16| v as f32 / 32_767.0;
     for x in &r.renders {
@@ -1270,6 +1310,9 @@ pub fn compare(r: &mut Report, dir: &Path) -> Result<(), String> {
             .map_err(err)?;
         let new: Vec<f32> = listen::wav_samples(&x.stereo, 2).map(unit).collect();
         let db = residual_db(&new, &old);
+        if db > AUDIO_CHANGED_DB && r.voices < MAX_VOICES && x.voices >= r.voices {
+            b.voice_budget = Some(r.voices);
+        }
         if b.worst.is_none_or(|(_, w)| db > w) {
             b.worst = Some((x.audition, db));
         }
@@ -1314,6 +1357,7 @@ fn heard(audition: Audition, t: Take, with: &[&'static str], limited_db: Option<
         peak_dbfs: [peak(0), peak(1)],
         with: with.to_vec(),
         limited_db,
+        voices: t.voices,
         stereo: t.stereo,
     }
 }
@@ -1455,6 +1499,7 @@ pub fn gates(src: &Source) -> Result<Report, String> {
         about: about::of(src)?,
         baseline: None,
         free_lfos: about::free_lfos(&wet),
+        voices: voices_of(&snd, src.demo),
     })
 }
 
@@ -2117,6 +2162,7 @@ fn play_stim(fx_params: &FxParams, sends: [f32; FX_SENDS], x: &[f32], secs: f32)
             SAMPLE_RATE,
             dac,
         );
+        0
     })
 }
 

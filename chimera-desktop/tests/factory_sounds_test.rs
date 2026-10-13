@@ -757,6 +757,7 @@ fn report(pass: bool, private: bool) -> qa::Report {
             peak_dbfs: [-14.0, -20.0],
             with: Vec::new(),
             limited_db: None,
+            voices: 1,
         }],
         long_lufs: Some(-12.3),
         bands: [0.0; 32],
@@ -765,6 +766,7 @@ fn report(pass: bool, private: bool) -> qa::Report {
         about: about::of(s).unwrap(),
         baseline: None,
         free_lfos: about::free_lfos(&source::to_sound(s).unwrap()),
+        voices: 8,
     }
 }
 
@@ -995,25 +997,34 @@ fn facts_use_full_words() {
         "T6",
         "T7",
         "T8",
-        // The formant operators (ADR 0131), and VOWEL's five vowels.
+        // The formant operators (ADR 0131): kinds, cells and slots.
         "FORMANT",
         "BANDWIDTH",
+        "WIDTH",
         "NOISE",
         "VOWEL",
-        "U",
-        "O",
-        "A",
-        "E",
-        "I",
+        "SLOT",
+        "AUTO",
+        "F1",
+        "F2",
+        "F3",
     ];
+    // VOWEL's five vowels, by letter: a word only after VOWEL.
+    const VOWELS: &[&str] = &["U", "O", "A", "E", "I"];
     let mut odd = std::collections::BTreeSet::new();
     for (name, l) in committed_facts() {
+        let mut prev = "";
         for w in l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '.')) {
             let w = w.trim_matches('.');
+            if w.is_empty() {
+                continue;
+            }
+            let after = std::mem::replace(&mut prev, w);
             let alg =
                 w.len() > 1 && w.starts_with('A') && w[1..].bytes().all(|b| b.is_ascii_digit());
             let number = w.parse::<f32>().is_ok();
-            if w.is_empty() || number || alg || w == "2040" {
+            let vowel = after == "VOWEL" && VOWELS.contains(&w);
+            if number || alg || vowel || w == "2040" {
                 continue;
             }
             let short = about::WORDS.iter().chain(&about::VALUES).any(|x| x.0 == w);
@@ -1083,21 +1094,54 @@ fn what_it_is_lists_an_algo_sounds_carriers() {
     assert!(t.contains("OP 6 → OP 5 "), "{t}");
 }
 
+/// The renders play the unit's voice budget (rev V, the build's bus, as
+/// `Instrument` admits): a Sound past its voice count steals or waits, so
+/// eight held notes of a heavily routed three-FRMT Sound sound fewer than
+/// eight, and its 4-note stab fewer than four, where the render budget of
+/// old (`u32::MAX`) played them all.
+#[test]
+fn renders_steal_at_the_units_voice_budget() {
+    use chimera_core::hw::MAX_VOICES;
+    use chimera_desktop::factory_sounds::qa;
+    use chimera_desktop::factory_sounds::source::Script;
+    let algo = BASE.replace("engine = \"VA\"", "engine = \"ALGO\"");
+    let heavy = &run(&format!(
+        "{algo}ALGO.ALG_A = \"A1\"\nALGO.ALG_B = \"A1\"\nOP_A.WAVE = \"FRMT\"\nOP_B.WAVE = \"FRMT\"\nOP_C.WAVE = \"FRMT\"\nOP_D.LEVEL = \"99\"\nOP_E.LEVEL = \"99\"\nOP_F.LEVEL = \"99\"\nFILTER.KIND = \"2040\"\nmod.LFO2 = \"OP_A.FRMT +10, OP_B.FRMT +10, OP_C.BW +10, ALGO.VOWEL +20\"\nmod.ENV2 = \"FILTER.CUTOFF +20, OP_A.LEVEL +10\"\n"
+    ))
+    .unwrap()[0];
+    let n = qa::unit_voices(heavy).unwrap();
+    assert!(
+        n < MAX_VOICES,
+        "eight held notes of a heavy three-FRMT Sound: {n}"
+    );
+    let stab = qa::most_voices(heavy, Script::Stab).unwrap();
+    assert!(
+        stab < 4 && stab <= n,
+        "its 4-note stab sounds {stab} of {n}"
+    );
+    assert_eq!(qa::unit_voices(&run(BASE).unwrap()[0]).unwrap(), MAX_VOICES);
+}
+
 /// A FRMT operator reads by its formant and width, and the head names
 /// the VOWEL every slotted operator follows (ADR 0131).
 #[test]
 fn what_it_is_names_formant_operators_and_the_vowel() {
     let algo = BASE.replace("engine = \"VA\"", "engine = \"ALGO\"");
     let t = about_text(&format!(
-        "{algo}ALGO.ALG_A = \"T5\"\nALGO.ALG_B = \"T5\"\nALGO.VOWEL = \"25\"\nOP_E.WAVE = \"FRMT\"\nOP_E.LEVEL = \"90\"\nOP_E.FRMT = \"69\"\nOP_E.BW = \"72\"\nmod.LFO2 = \"ALGO.VOWEL +30, OP_E.BW +10\"\n"
+        "{algo}ALGO.ALG_A = \"T5\"\nALGO.ALG_B = \"T5\"\nALGO.VOWEL = \"25\"\nOP_E.WAVE = \"FRMT\"\nOP_E.LEVEL = \"90\"\nOP_E.FRMT = \"69\"\nOP_E.BW = \"72\"\nOP_E.VSLOT = \"F2\"\nOP_C.WAVE = \"NOIS\"\nOP_C.FRMT = \"123\"\nmod.LFO2 = \"ALGO.VOWEL +30, OP_E.BW +10\"\n"
     ));
     assert!(t.contains("ALGORITHM T5 · VOWEL O"), "{t}");
     assert!(
-        t.contains("OP 5 (FORMANT 734 Hz, BANDWIDTH 160 Hz, RATIO 1.00, LEVEL "),
+        t.contains("OP 5 (FORMANT 734 Hz, BANDWIDTH 160 Hz, SLOT F2, RATIO 1.00, LEVEL "),
         "{t}"
     );
     assert!(
         t.contains("→ VOWEL +30") && t.contains("OP 5 BANDWIDTH +10"),
+        "{t}"
+    );
+    // A noise band reads by its band; it has no pitch, so no RATIO.
+    assert!(
+        t.contains("OP 3 (NOISE 3.49 kHz, WIDTH 160 Hz, LEVEL "),
         "{t}"
     );
     let table = about_text(&format!("{algo}ALGO.ALG_A = \"T5\"\nALGO.ALG_B = \"T5\"\n"));
@@ -1563,6 +1607,7 @@ fn listening_page_is_stereo_and_honest() {
         peak_dbfs: [-3.0, -3.5],
         with: vec!["REVERB"],
         limited_db: Some(2.4),
+        voices: 1,
     });
     assert!(qa::write(&d, &[r], &[], &[], &[], true).unwrap());
     let w = hound::WavReader::open(d.join("renders/S9100002-long.wav")).unwrap();
@@ -1829,6 +1874,7 @@ fn page_plays_the_phrase_first_and_flags_its_limiter() {
         peak_dbfs: [-6.0, -6.0],
         with: vec!["CHORUS"],
         limited_db: Some(limited),
+        voices: 1,
     };
     let mut r = report(true, false);
     r.renders.insert(0, phrase(Phrase::Pad, 2.5));
@@ -1963,6 +2009,30 @@ fn residual_against_the_baseline() {
     longer.extend_from_slice(&old);
     assert!(qa::residual_db(&longer, &old).abs() < 0.01);
     const { assert!(qa::AUDIO_CHANGED_DB == -40.0) };
+}
+
+/// A changed render that played all the voices the unit gives the Sound
+/// names the voice budget as its cause; one under it doesn't.
+#[test]
+fn a_render_at_the_voice_budget_names_it() {
+    use chimera_desktop::listen::write_wav_stereo;
+    let d = scratch_ledger("voice-budget");
+    std::fs::create_dir_all(&d).unwrap();
+    let mut r = report_approved();
+    r.voices = 3;
+    r.renders[0].voices = 3;
+    let old: Vec<f32> = r.renders[0].stereo.iter().map(|v| v * 0.9).collect();
+    write_wav_stereo(&d.join("S9100002-long.wav"), &old).unwrap();
+    qa::compare(&mut r, &d).unwrap();
+    let txt = qa::report_text(std::slice::from_ref(&r), &[]);
+    assert!(
+        txt.contains("voice budget: the unit plays 3 voices"),
+        "{txt}"
+    );
+    r.renders[0].voices = 2;
+    qa::compare(&mut r, &d).unwrap();
+    let txt = qa::report_text(std::slice::from_ref(&r), &[]);
+    assert!(!txt.contains("voice budget"), "{txt}");
 }
 
 #[test]

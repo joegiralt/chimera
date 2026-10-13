@@ -347,14 +347,27 @@ fn op(snd: &Sound, ctx: &SlotCtx, o: Op) -> String {
     if get(snd, at(AlgoOpParams::LEVEL)) == 0.0 {
         return "(OFF)".into();
     }
-    if snd.params.algo.kinds().get(o.index()) == OpKind::Formant {
-        return format!(
-            "(FORMANT {}, BANDWIDTH {}, RATIO {}, LEVEL {})",
-            shown(snd, ctx, at(AlgoOpParams::FRMT)),
-            shown(snd, ctx, at(AlgoOpParams::BW)),
-            shown(snd, ctx, at(AlgoOpParams::COARSE)),
-            shown(snd, ctx, at(AlgoOpParams::LEVEL))
-        );
+    match snd.params.algo.kinds().get(o.index()) {
+        OpKind::Formant => {
+            return format!(
+                "(FORMANT {}, BANDWIDTH {}, SLOT {}, RATIO {}, LEVEL {})",
+                shown(snd, ctx, at(AlgoOpParams::FRMT)),
+                shown(snd, ctx, at(AlgoOpParams::BW)),
+                shown(snd, ctx, at(AlgoOpParams::VSLOT)),
+                shown(snd, ctx, at(AlgoOpParams::COARSE)),
+                shown(snd, ctx, at(AlgoOpParams::LEVEL))
+            );
+        }
+        // A noise band has no pitch: its centre and width, no RATIO.
+        OpKind::Noise => {
+            return format!(
+                "(NOISE {}, WIDTH {}, LEVEL {})",
+                shown(snd, ctx, at(AlgoOpParams::FRMT)),
+                shown(snd, ctx, at(AlgoOpParams::BW)),
+                shown(snd, ctx, at(AlgoOpParams::LEVEL))
+            );
+        }
+        OpKind::Table(_) => {}
     }
     format!(
         "({}, RATIO {}, LEVEL {})",
