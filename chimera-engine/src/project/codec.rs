@@ -22,7 +22,7 @@
 
 use chimera_hal::store::{Dir, Store, StoreError};
 
-use crate::addr::{BlockRead, BlockRef, Blocks};
+use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks};
 use crate::block::{Block, DiskCode};
 use crate::dsp::clampf;
 use crate::dsp::fx_bus::{FX_SENDS, FxParams};
@@ -106,22 +106,22 @@ fn fx_block(fx: &FxParams, b: BlockRef) -> Option<&dyn Block> {
 struct FxBlocks<'a>(&'a mut FxParams);
 
 impl BlockRead for FxBlocks<'_> {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        fx_block(self.0, b)
+    fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
+        fx_block(self.0, b).map(BlockView::Plain)
     }
 }
 
 impl Blocks for FxBlocks<'_> {
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
+    fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
         let fx = &mut *self.0;
-        Some(match b {
+        Some(BlockViewMut::Plain(match b {
             BlockRef::Chorus => &mut fx.chorus,
             BlockRef::Delay => &mut fx.delay,
             BlockRef::Reverb => &mut fx.reverb,
             BlockRef::Tape => &mut fx.tape,
             BlockRef::Comp => &mut fx.comp,
             _ => return None,
-        })
+        }))
     }
 }
 
@@ -129,14 +129,14 @@ impl Blocks for FxBlocks<'_> {
 struct MixBlocks<'a>(&'a mut PartParams);
 
 impl BlockRead for MixBlocks<'_> {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        (b == BlockRef::Part).then_some(&*self.0 as &dyn Block)
+    fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
+        (b == BlockRef::Part).then_some(BlockView::Plain(&*self.0))
     }
 }
 
 impl Blocks for MixBlocks<'_> {
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
-        (b == BlockRef::Part).then_some(&mut *self.0 as &mut dyn Block)
+    fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
+        (b == BlockRef::Part).then_some(BlockViewMut::Plain(&mut *self.0))
     }
 }
 
@@ -404,6 +404,8 @@ pub struct ProjectCheck {
     /// value in it defaulted, or no ORBIT records at all (ADR 0078). A save
     /// would write other bytes, so the load is not Saved.
     lossy: bool,
+    /// Pass 2 read a Sound's operator kinds past the formant budget as W1.
+    over: bool,
 }
 
 const _: () = assert!(SlotId::ALL.len() <= u128::BITS as usize);
@@ -432,6 +434,7 @@ impl ProjectCheck {
             origin: false,
             origins: [ReadOrigin::Missing; MAX_PARTS],
             lossy: false,
+            over: false,
             old_sends: None,
         }
     }
@@ -563,7 +566,7 @@ impl ProjectCheck {
         (self.fx, self.fx_blocks, self.mix, self.origin) = (false, 0, false, false);
         self.origins = [ReadOrigin::Missing; MAX_PARTS];
         self.old_sends = None;
-        self.lossy = false;
+        (self.lossy, self.over) = (false, false);
     }
 
     fn costs(&self) -> &Costs {
@@ -709,6 +712,18 @@ impl ProjectCheck {
 
     /// Ends a `Slot` or `Part`: its Sound's `finish`, which adds the routes.
     fn close(
+        &mut self,
+        target: Option<&mut Project>,
+        stage: Option<&mut Sound>,
+    ) -> Result<(), FileError> {
+        let r = self.close_sound(target, stage);
+        // A kind read as W1: a save would write other bytes.
+        self.over |= self.sound.over_budget();
+        self.lossy |= self.over;
+        r
+    }
+
+    fn close_sound(
         &mut self,
         target: Option<&mut Project>,
         stage: Option<&mut Sound>,
@@ -924,6 +939,12 @@ impl<'a> ProjectDecoder<'a> {
     /// than a save would write (ADR 0078). The load is then not Saved.
     pub fn lossy(&self) -> bool {
         self.check.lossy
+    }
+
+    /// After pass 2: a Sound's operator kinds past the formant budget read
+    /// as W1 (`SoundCheck::over_budget`).
+    pub fn over_budget(&self) -> bool {
+        self.check.over
     }
 }
 

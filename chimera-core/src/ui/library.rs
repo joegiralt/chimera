@@ -443,6 +443,8 @@ impl UiState {
                 self.landed(part, was);
                 if matches!(staged, Some(Staged::Missing(_))) {
                     self.error(Line::new(SOURCE_MISSING));
+                } else if read.over {
+                    self.error(Line::new(prompt::FORMANT_FULL));
                 } else if read.skips > 0 {
                     self.notice(Line::new(SKIPPED));
                 } else {
@@ -504,6 +506,7 @@ impl UiState {
             go,
             read: LibRead {
                 skips: 0,
+                over: false,
                 source: None,
             },
         });

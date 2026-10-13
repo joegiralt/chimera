@@ -3,6 +3,7 @@
 //! factory-sounds QA's click metric, against its `CLICK_RATIO`.
 
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
+use chimera_core::dsp::algo::algorithms::AlgoId;
 use chimera_core::dsp::algo::params::AlgoOpParams;
 use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::fx_bus::FxBus;
@@ -114,7 +115,7 @@ fn route(s: &mut Sound, src: ModSource, a: ParamAddr, amt: i8) {
 fn rubber_bass() -> Sound {
     let mut s = Sound::neutral(EngineType::Algo);
     let p = &mut s.params;
-    (p.algo.alg_a, p.algo.alg_b) = (4, 4);
+    p.algo.try_set_algs(AlgoId::T5, AlgoId::T5).unwrap();
     let o = &mut p.algo.ops;
     (o[0].level, o[0].velocity, o[0].d1r, o[0].d1l, o[0].d2r) = (99, 3, 4, 14, 2);
     (o[1].level, o[1].velocity, o[1].d1r, o[1].d1l, o[1].d2r) = (82, 6, 16, 6, 2);

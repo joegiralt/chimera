@@ -388,10 +388,16 @@ impl ModState {
     /// Operators whose LEVEL has a route with a nonzero amount: a LEVEL of
     /// 0 there may still sound.
     pub fn algo_levels_routed(&self) -> [bool; OPS] {
+        self.algo_routed(&[AlgoOpParams::LEVEL])
+    }
+
+    /// Operators with a route of nonzero amount into any of `params`.
+    #[inline(never)]
+    pub fn algo_routed(&self, params: &[crate::block::ParamId]) -> [bool; OPS] {
         let mut routed = [false; OPS];
         for d in 0..self.num_dests.min(MAX_MOD_DESTS) {
             if let BlockRef::AlgoOp(op) = self.dests[d].block
-                && self.dests[d].param == AlgoOpParams::LEVEL
+                && params.contains(&self.dests[d].param)
                 && (0..self.num_sources).any(|s| self.amounts[s][d] != 0)
             {
                 routed[op.index()] = true;
@@ -549,6 +555,23 @@ impl ModRouting {
     /// LEVEL, whose peak then ramps across each block (`add_ramped`): A
     /// LEVEL less A VCA and `DEST_FIRST`.
     pub const LEVEL: Cost = Cost(10);
+
+    /// ADR 0026's reference heavy routing (formant spec § 1), not the
+    /// maximum `cost` can bill: ENV B in BURST on the VCA with its LEVEL
+    /// routed, a TIME route, the 16 registry columns and Q after FREQ's
+    /// `DEST_FIRST`, three FUNC LFOs. `CURVE` is not in it: BURST replaces it.
+    /// More VCA sources or slides bill more; admission bills the real cost.
+    pub const HEAVY: Cost = Cost(
+        Self::BASE.0
+            + Self::CLAMP.0
+            + Self::ENV_B.0
+            + Self::BURST.0
+            + Self::LEVEL.0
+            + Self::SLIDE.0
+            + Self::DEST_FIRST.0
+            + 17 * Self::DEST.0
+            + 3 * Self::FUNC.0,
+    );
 
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         let slide = EnvSlot::ALL

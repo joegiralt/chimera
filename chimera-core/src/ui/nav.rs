@@ -606,6 +606,8 @@ impl NavCtx {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PartChain {
     Algo,
+    /// ALGO with a FORMANT page: an operator is a formant or noise band.
+    AlgoFormant,
     Modal,
     Tape,
     Va,
@@ -613,7 +615,10 @@ pub enum PartChain {
 
 impl PartChain {
     pub fn of(sound: &Sound) -> PartChain {
-        Self::base(sound.engine())
+        match Self::base(sound.engine()) {
+            PartChain::Algo if sound.params.algo.kinds().any_formant() => PartChain::AlgoFormant,
+            c => c,
+        }
     }
 
     pub fn base(engine: EngineType) -> PartChain {
@@ -628,6 +633,7 @@ impl PartChain {
     pub fn def(self) -> &'static ChainDef2 {
         match self {
             PartChain::Algo => &block_registry::ALGO_CHAIN,
+            PartChain::AlgoFormant => &block_registry::ALGO_FORMANT_CHAIN,
             PartChain::Modal => &MODAL_PLUCK_CHAIN,
             PartChain::Tape => &block_registry::TAPE_CHAIN,
             PartChain::Va => &block_registry::VA_CHAIN,
@@ -636,7 +642,7 @@ impl PartChain {
 
     pub fn engine(self) -> EngineType {
         match self {
-            PartChain::Algo => EngineType::Algo,
+            PartChain::Algo | PartChain::AlgoFormant => EngineType::Algo,
             PartChain::Modal => EngineType::Modal,
             PartChain::Tape => EngineType::Tape,
             PartChain::Va => EngineType::Va,

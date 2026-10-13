@@ -114,6 +114,9 @@ pub enum ProjectNote {
     /// A load whose sources weren't all on the card whole: their refs are
     /// kept, their Parts silent. The project loaded.
     SourcesMissing(u8),
+    /// A load read operator kinds past the formant budget as W1. The
+    /// project loaded.
+    FormantFull,
 }
 
 /// `msg: subject`. Past `LINE_LEN` the message gives way, so the name or
@@ -176,6 +179,7 @@ impl ProjectNote {
                 write!(l, "LOADED \u{b7} {sounds} SOUNDS, {sources} SRC DIDN'T FIT")
             }
             ProjectNote::SourcesMissing(n) => write!(l, "LOADED \u{b7} {n} SRC MISSING"),
+            ProjectNote::FormantFull => l.write_str("FORMANT BUDGET FULL"),
         };
         l
     }

@@ -275,7 +275,8 @@ pub const VA_OUT_GAIN: f32 = 3.631;
 /// 1.46 × 1.1, + 12 a `vdiv`/`vsqrt`; ADR 0118's scripts). Each oscillator
 /// bills its dearest wave pair, constants lerped and SHAPE and WAVE moving:
 /// its loop's round with no event, + 0.45 of its wrap's side (OSC 1: its
-/// one gate to the sub's flip and the wrap, taken twice a cycle, #485), +
+/// one gate to the sub's flip and the wrap, taken twice a cycle, #485; it
+/// records its wraps in every MODE, one instance for flash), +
 /// each edge's crossing side at 0.45 + 0.225/64 a sample (backward
 /// 0.225/64), all stretched by the jitter's half cent; the SYNC slave + its
 /// resets. Then the operator loop (its ducking variant; sub flips at 0.45),
@@ -286,16 +287,16 @@ pub const VA_OUT_GAIN: f32 = 3.631;
 /// ceiling, 7/48 a sample. Each line: OSC 1 (TRI/SAW) + OSC 2 + operator
 /// and sub + block + crossings + 95 (2026-10-13, ADR 0118 point 13).
 ///
-/// MIX: 153.7 + 134.4 (TRI/SAW) + 36.2 + 68.0 + 29.9 + 95.
-pub const COST_MIX: Cost = Cost(520);
+/// MIX: 158.2 + 134.4 (TRI/SAW) + 36.2 + 68.0 + 29.9 + 95.
+pub const COST_MIX: Cost = Cost(530);
 /// SYNC: 121.7 (master at 7 kHz) + 183.7 (SINE/TRI slave: a reset's 197.5
 /// × 7/48) + 36.2 + 71.5 + 31.0 + 95.
 pub const COST_SYNC: Cost = Cost(540);
-/// RING: 153.7 + 134.4 + 42.6 + 68.7 + 29.9 + 95.
+/// RING: 158.2 + 134.4 + 42.6 + 68.7 + 29.9 + 95.
 pub const COST_RING: Cost = Cost(530);
-/// XOR: 153.7 + 134.4 + 53.9 + 69.9 + 29.9 + 95.
-pub const COST_XOR: Cost = Cost(540);
-/// BITS: 153.7 + 134.4 + 42.6 + 68.8 + 29.9 + 95.
+/// XOR: 158.2 + 134.4 + 53.9 + 69.9 + 29.9 + 95.
+pub const COST_XOR: Cost = Cost(550);
+/// BITS: 158.2 + 134.4 + 42.6 + 68.8 + 29.9 + 95.
 pub const COST_BITS: Cost = Cost(530);
 
 /// SYNC's master pitch ceiling, A8 − 10 cents (owner, 2026-10-11; ADR 0118
@@ -793,7 +794,7 @@ impl VaEngine {
 
     /// One block in `mode`, a constant in each caller, so each mode's loop
     /// is its own (the count sees each). OSC 1 renders into `out` with its
-    /// sub flips (and its wraps in SYNC), OSC 2 beside it (synced to the
+    /// sub flips and its wraps, OSC 2 beside it (synced to the
     /// wraps in SYNC), then the operator, the sub, the chain gain and a
     /// duck's gain run over both.
     #[inline(always)]
@@ -810,13 +811,13 @@ impl VaEngine {
         // 1 at d = 0 (STAB 1)
         let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
         let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
-        // OSC 1 marks its sub flips, and in SYNC its wraps: the slave
-        // resets at the wraps (ADR 0118 point 13)
+        // OSC 1 marks its sub flips and its wraps, one instance for every
+        // MODE (flash): only SYNC's slave reads the wraps, resetting at
+        // them (ADR 0118 point 13)
+        o1.render::<BLOCK_SIZE, true, false, true>(out, mk, &l.osc[0], &mut jit[0], &mut draw);
         if mode == VaMode::Sync {
-            o1.render::<BLOCK_SIZE, true, false, true>(out, mk, &l.osc[0], &mut jit[0], &mut draw);
             o2.render::<BLOCK_SIZE, false, true, false>(b, mk, &l.osc[1], &mut jit[1], &mut draw);
         } else {
-            o1.render::<BLOCK_SIZE, false, false, true>(out, mk, &l.osc[0], &mut jit[0], &mut draw);
             o2.render::<BLOCK_SIZE, false, false, false>(b, mk, &l.osc[1], &mut jit[1], &mut draw);
         }
         // a loop of its own while the duck runs (the count bills it)

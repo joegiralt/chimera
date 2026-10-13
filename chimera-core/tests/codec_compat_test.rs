@@ -9,7 +9,7 @@ use chimera_core::addr::BlockRef;
 use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::modal::{BankModes, ResonatorMode, damp_for, damp_from_v1_decay};
 use chimera_core::dsp::note_to_freq;
-use chimera_core::factory::{FACTORY_LEN, factory_sound};
+use chimera_core::factory::factory_sound;
 use chimera_core::name::{ProjectName, SoundName};
 use chimera_core::params::{EngineType, FilterParams, OutParams, ParamSnapshot};
 use chimera_core::preset::Sound;
@@ -30,9 +30,13 @@ use common::{
     SR, assert_stable, fnv1a, fundamental_hz, octave_clear, play_modal, play_modal_at, render_sound,
 };
 
+/// The factory Sounds the v1 fixtures were written from: the eight before
+/// the formant demos joined the bank.
+const V1_FACTORY: usize = 8;
+
 /// The v1 corpus: name, and the Sound it was written from.
 fn sources() -> Vec<(String, Sound)> {
-    let mut v: Vec<_> = (0..FACTORY_LEN)
+    let mut v: Vec<_> = (0..V1_FACTORY)
         .map(|i| (format!("factory_{i}.snd"), factory_sound(i).unwrap()))
         .collect();
     v.push(("init_algo.snd".into(), v1_init(EngineType::Algo)));
@@ -148,7 +152,7 @@ fn write_v1_fixtures() {
             println!(
                 "    ({}, &{:?}),",
                 b.disk_code().unwrap(),
-                values(blk.unwrap())
+                values(&*blk.unwrap())
             );
         }
         println!("mix");
@@ -436,7 +440,7 @@ fn project_fixture_loads() {
     assert_eq!(p.meta().name().as_str(), "FIXTURE");
 
     let slot = |i: usize| p.pool().get(SlotId::ALL[i]).map(|e| e.to_sound());
-    for i in 0..FACTORY_LEN {
+    for i in 0..V1_FACTORY {
         let want = decode(&fixture(&format!("factory_{i}.snd"))).unwrap();
         assert!(slot(i).unwrap().bits_eq(&want), "slot {i}");
     }
@@ -477,7 +481,7 @@ fn project_fixture_loads() {
     for (b, &(code, pinned)) in FX_BLOCKS.into_iter().zip(PROJECT_FIXTURE_FX) {
         assert_eq!(b.disk_code(), Some(code));
         let blk = part_block(&first.sound, &first.mix, &p.perf().fx, b).unwrap();
-        assert_values(blk, pinned, b.disk_ident().unwrap());
+        assert_values(&*blk, pinned, b.disk_ident().unwrap());
     }
     assert_eq!(p.perf().fx.delay.mix, 0.3);
 }
@@ -560,6 +564,29 @@ fn v1_fixtures_render_identically() {
     }
 }
 
+/// The formant fields (spec § 10) load at INIT's values from files that
+/// never stored them, and the sound is bit for bit as before.
+#[test]
+fn old_patches_load_unchanged() {
+    for (i, &(name, want)) in FIXTURE_RENDERS.iter().take(V1_FACTORY).enumerate() {
+        assert_eq!(name, format!("factory_{i}.snd"));
+        let d = decode(&fixture(name)).unwrap();
+        let a = &d.params.algo;
+        assert_eq!(a.ops.map(|o| o.frmt), [69, 83, 111, 123, 123, 123]);
+        assert!(
+            a.ops
+                .iter()
+                .all(|o| (o.bw, o.skirt, o.key, o.res, o.vslot) == (72, 1, 0, 0, 0))
+        );
+        assert_eq!(a.vowel, 50);
+        assert_eq!(
+            fnv1a(&render_sound(&d.params, &d.mod_state)),
+            want,
+            "{name}"
+        );
+    }
+}
+
 /// TAPE's engine code is 2 for good (ADR 0045): the frozen INIT loads as
 /// TAPE, with its ENV 1 into VCA (`bits_eq` holds while INIT is unchanged;
 /// the render row is the lasting pin).
@@ -599,9 +626,19 @@ fn v1_fixtures_steal_cut() {
 /// lasting one.
 #[test]
 fn v1_fixtures_equal_factory() {
-    for i in 0..FACTORY_LEN {
+    for i in 0..V1_FACTORY {
         let d = decode(&fixture(&format!("factory_{i}.snd"))).unwrap();
         assert!(d.bits_eq(&factory_sound(i).unwrap()), "factory_{i}");
+    }
+}
+
+/// CHOIR, TALK BASS, BREATH and VOX (factory 8–11) encode and decode bit
+/// for bit.
+#[test]
+fn formant_sounds_round_trip() {
+    for i in 8..12 {
+        let s = factory_sound(i).unwrap();
+        assert!(decode(&encode(&s)).unwrap().bits_eq(&s), "F{i}");
     }
 }
 

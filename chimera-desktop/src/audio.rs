@@ -4,6 +4,7 @@
 //! three DAC pairs to the speakers.
 
 use chimera_core::audio_out::to_dac;
+use chimera_core::dsp::algo::engine::FormantViews;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
@@ -53,7 +54,11 @@ pub struct DesktopAudio {
 }
 
 impl DesktopAudio {
-    pub fn new(scope: Writer<ScopeFrame>, orbit: Writer<OrbitView>) -> Self {
+    pub fn new(
+        scope: Writer<ScopeFrame>,
+        orbit: Writer<OrbitView>,
+        formant: Writer<FormantViews>,
+    ) -> Self {
         let host = cpal::default_host();
         let device = host.default_output_device().expect("no output device");
         let config = stereo_48k(&device).unwrap_or_else(|| {
@@ -83,6 +88,7 @@ impl DesktopAudio {
 
         let sources = SOURCE_TABLE.reader().expect("the source reader, once");
         let mut engine = Engine::new(sample_rate, orbit, sources);
+        let mut formant = formant;
         let mut block_pos = BLOCK_SIZE;
         let mut scope = ScopeWriter::new(scope);
 
@@ -100,6 +106,8 @@ impl DesktopAudio {
                     for frame in data.chunks_mut(channels) {
                         if block_pos >= BLOCK_SIZE {
                             engine.block(&LOAD_LINK, &mut drain, shared, &mut scope);
+                            let inst = &*engine.inst;
+                            formant.publish(|v| inst.formant_views_into(v));
                             block_pos = 0;
                         }
                         let ((l, r), clamped) = stereo_frame(engine.dac.out(), solo, block_pos);

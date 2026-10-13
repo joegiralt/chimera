@@ -4,7 +4,7 @@
 mod common;
 
 use chimera_core::addr::{BlockRead, BlockRef, Blocks};
-use chimera_core::block::{Block, ParamId};
+use chimera_core::block::ParamId;
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::sync::Tempo;
@@ -89,14 +89,14 @@ fn quad_at_smear_0_is_the_t4_reference() {
 struct One<'a>(&'a mut ReverbParams);
 
 impl BlockRead for One<'_> {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        (b == BlockRef::Reverb).then_some(&*self.0 as &dyn Block)
+    fn block(&self, b: BlockRef) -> Option<chimera_core::addr::BlockView<'_>> {
+        (b == BlockRef::Reverb).then_some(chimera_core::addr::BlockView::Plain(&*self.0))
     }
 }
 
 impl Blocks for One<'_> {
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
-        (b == BlockRef::Reverb).then_some(&mut *self.0 as &mut dyn Block)
+    fn block_mut(&mut self, b: BlockRef) -> Option<chimera_core::addr::BlockViewMut<'_>> {
+        (b == BlockRef::Reverb).then_some(chimera_core::addr::BlockViewMut::Plain(&mut *self.0))
     }
 }
 

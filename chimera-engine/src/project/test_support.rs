@@ -127,7 +127,7 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
 pub fn dense(s: &mut Sound, seed: u64) {
     let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
     for b in BlockRef::ALL {
-        let Some(blk) = s.params.block_mut(b) else {
+        let Some(mut blk) = s.params.block_mut(b) else {
             continue;
         };
         for sp in blk.specs().iter().filter(|sp| sp.stored) {
@@ -868,7 +868,7 @@ fn filler(k: usize) -> Sound {
     let mut s = Sound::neutral(EngineType::Algo);
     let mut n = 0;
     for b in BlockRef::ALL {
-        let Some(blk) = s.params.block_mut(b) else {
+        let Some(mut blk) = s.params.block_mut(b) else {
             continue;
         };
         for sp in blk

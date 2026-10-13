@@ -6,6 +6,7 @@ use chimera_board::shared::NOTE_SOURCES;
 #[cfg(feature = "perf-probe")]
 use chimera_board::shared::{COST_PCT, VOICES};
 use chimera_engine::audio_out::{Half, interleave};
+use chimera_engine::dsp::algo::engine::FormantViews;
 use chimera_engine::dsp::fx_bus::FxBus;
 use chimera_engine::hw::{BLOCK_SIZE, SAMPLE_RATE, SampleBudget};
 use chimera_engine::instrument::{AudioShared, DacBlocks, Instrument};
@@ -32,6 +33,8 @@ struct Engine {
     shared: Reader<AudioShared>,
     notes: NoteDrain<'static, NOTE_SOURCES>,
     scope: ScopeWriter,
+    /// The voices' formant views, once a block, for the OP pages.
+    formant: Writer<FormantViews>,
     dac: DacBlocks,
     /// Holds the note queues through a project load (ADR 0046).
     gate: LoadGate,
@@ -59,6 +62,7 @@ pub fn init(
     shared: Reader<AudioShared>,
     notes: NoteDrain<'static, NOTE_SOURCES>,
     scope: Writer<ScopeFrame>,
+    formant: Writer<FormantViews>,
     orbit: chimera_board::orbit::Runner,
     mut sources: AudioToken,
 ) {
@@ -79,6 +83,7 @@ pub fn init(
             shared,
             notes,
             scope: ScopeWriter::new(scope),
+            formant,
             dac: DacBlocks::new(),
             gate: LoadGate::new(),
             orbit,
@@ -127,6 +132,8 @@ pub fn render_half(half: Half) {
             }
         });
     e.orbit.publish();
+    let inst = &*e.inst;
+    e.formant.publish(|v| inst.formant_views_into(v));
     #[cfg(feature = "perf-probe")]
     {
         VOICES.store(e.inst.sounding() as u8, Ordering::Relaxed);

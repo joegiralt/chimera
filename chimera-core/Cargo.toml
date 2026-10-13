@@ -37,6 +37,8 @@ test-support = ["chimera-engine/test-support"]
 source-writer = ["chimera-engine/source-writer"]
 # Bench-only phase stamps inside ORBIT's block and the note handling.
 probe = ["chimera-engine/probe"]
+# The ALGO kernel's loops out of line for `tools/loop_count.py`.
+span-count = ["chimera-engine/span-count"]
 # The filter's static-cost probes (`dsp::filter::probe`) alone, for
 # `tools/loop_count.py`: none of `probe`'s stamps.
 filter-probe = ["chimera-engine/filter-probe"]

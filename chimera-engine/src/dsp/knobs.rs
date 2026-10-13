@@ -126,6 +126,7 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
             (offset_of!(P, modal) + f, Kind::F32)
         }
         BlockRef::Algo if id == AlgoParams::MORPH.0 => (offset_of!(P, algo.morph), Kind::U8),
+        BlockRef::Algo if id == AlgoParams::VOWEL.0 => (offset_of!(P, algo.vowel), Kind::U8),
         BlockRef::AlgoOp(op) => {
             let (f, kind) = if id == AlgoOpParams::FINE.0 {
                 (offset_of!(AlgoOpParams, fine), Kind::U8)
@@ -137,6 +138,10 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
                 (offset_of!(AlgoOpParams, feedback), Kind::U8)
             } else if id == AlgoOpParams::VELOCITY.0 {
                 (offset_of!(AlgoOpParams, velocity), Kind::U8)
+            } else if id == AlgoOpParams::FRMT.0 {
+                (offset_of!(AlgoOpParams, frmt), Kind::U8)
+            } else if id == AlgoOpParams::BW.0 {
+                (offset_of!(AlgoOpParams, bw), Kind::U8)
             } else {
                 panic!("an ALGO op knob without a field")
             };
@@ -805,7 +810,7 @@ impl Knobs {
         for i in self.moving.iter() {
             let (a, v) = (KNOBS[i].addr, KNOBS[i].spec.denormalize(self.v[i]));
             if !live.set(a, v)
-                && let Some(b) = p.block_mut(a.block)
+                && let Some(mut b) = p.block_mut(a.block)
             {
                 b.write(a.param, v);
             }

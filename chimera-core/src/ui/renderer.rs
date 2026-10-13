@@ -7,10 +7,8 @@ use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
 use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use crate::block::find_spec;
-use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::params::AlgoOpParams;
-use crate::dsp::algo::waves::WaveId;
 use crate::dsp::modulator::{EnvType, HoldPos};
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
 use crate::dsp::va::osc::{Morph, Unit};
@@ -106,6 +104,8 @@ pub struct Frame<'a> {
     /// TAPE's strip: the active Part's source, and its newest note's heads.
     pub strip: &'a crate::ui::tape_strip::Overview,
     pub heads: crate::dsp::tape_engine::Heads,
+    /// The edited Part's newest voice's formant view (OP pages).
+    pub formant: &'a crate::dsp::algo::engine::FormantView,
 }
 
 impl Frame<'_> {
@@ -320,8 +320,8 @@ impl Renderer {
                     .expect("ALG page binds MORPH");
                 viz::algo_diagram(
                     display,
-                    AlgoId::clamped(algo.alg_a).algorithm(),
-                    AlgoId::clamped(algo.alg_b).algorithm(),
+                    algo.algs().0.algorithm(),
+                    algo.algs().1.algorithm(),
                     self.anim[slot].current(),
                 );
             }
@@ -345,17 +345,20 @@ impl Renderer {
                 }
             }
             VizType::OpPage(op) => {
-                let (rates, wave) = Self::op_page(f, op);
-                crate::ui::op_page::draw_band(display, rates, wave);
+                let (rates, inset) = Self::op_page(f, op);
+                crate::ui::op_page::draw_band(display, rates, inset);
             }
             _ => viz::live_output(display, f.scope),
         }
     }
 
-    /// An OP page's operator: its stored envelope and wave.
-    fn op_page(f: &Frame, op: Op) -> (EnvRates, WaveId) {
-        let o = &f.parts[f.active_part.index()].sound.params.algo.ops[op.index()];
-        (o.rates(), WaveId::clamped(o.wave))
+    /// An OP page's operator: its stored envelope and its kind's inset.
+    fn op_page(f: &Frame, op: Op) -> (EnvRates, crate::ui::op_page::Inset) {
+        let algo = &f.parts[f.active_part.index()].sound.params.algo;
+        (
+            algo.ops[op.index()].rates(),
+            crate::ui::op_page::Inset::of(algo, f.formant, op),
+        )
     }
 
     /// The active Part's machine and its TAPE params, this page's as its
@@ -480,7 +483,7 @@ impl Renderer {
                     let q = region::quantize_values(&self.anim);
                     (
                         [0, 0, q[2], 0, 0, 0],
-                        (algo.alg_a as u32) << 8 | algo.alg_b as u32,
+                        (algo.algs().0.get() as u32) << 8 | algo.algs().1.get() as u32,
                     )
                 }
                 // ORBIT's own key: `orbit_viz_key`.
@@ -507,8 +510,8 @@ impl Renderer {
                     ([0; 6], key)
                 }
                 VizType::OpPage(op) => {
-                    let (r, w) = Self::op_page(f, op);
-                    ([0; 6], crate::ui::op_page::key(r, w))
+                    let (r, inset) = Self::op_page(f, op);
+                    ([0; 6], crate::ui::op_page::key(r, inset))
                 }
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
@@ -854,7 +857,7 @@ fn stored_set<const N: usize>(stored: &impl BlockRead, addrs: [ParamAddr; N]) ->
 struct Stored<'f, 'a>(&'f Frame<'a>);
 
 impl BlockRead for Stored<'_, '_> {
-    fn block(&self, b: crate::addr::BlockRef) -> Option<&dyn crate::block::Block> {
+    fn block(&self, b: crate::addr::BlockRef) -> Option<crate::addr::BlockView<'_>> {
         let p = &self.0.parts[self.0.active_part.index()];
         crate::project::part_block(&p.sound, &p.mix, self.0.fx, b)
     }
@@ -960,7 +963,16 @@ fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
         }
         None => {
             let mut buf = FmtBuf::new();
-            fmt::fmt_val(&mut buf, v, view.fmt());
+            let fmt = view.fmt();
+            // These two read the stored value (`ValFmt::LogHz`).
+            let v = match (fmt, view.addr().and_then(|a| a.spec())) {
+                (
+                    crate::ui::page::ValFmt::LogHz { .. } | crate::ui::page::ValFmt::Vowel,
+                    Some(s),
+                ) => s.denormalize(v),
+                _ => v,
+            };
+            fmt::fmt_val(&mut buf, v, fmt);
             buf
         }
     }

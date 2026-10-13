@@ -3,8 +3,7 @@
 
 use chimera_hal::store::{Dir, Store, StoreError, VolumeId};
 
-use crate::addr::{BlockRead, BlockRef, Blocks};
-use crate::block::Block;
+use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks};
 use crate::midi_settings::MidiSettings;
 use crate::theme_settings::ThemeSettings;
 
@@ -64,20 +63,20 @@ pub fn body_crc(s: &SystemSettings) -> u32 {
 struct SystemBlocks<'a>(&'a mut SystemSettings);
 
 impl BlockRead for SystemBlocks<'_> {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+    fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
         match b {
-            BlockRef::Theme => Some(&self.0.theme),
-            BlockRef::Midi => Some(&self.0.midi),
+            BlockRef::Theme => Some(BlockView::Plain(&self.0.theme)),
+            BlockRef::Midi => Some(BlockView::Plain(&self.0.midi)),
             _ => None,
         }
     }
 }
 
 impl Blocks for SystemBlocks<'_> {
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
+    fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
         match b {
-            BlockRef::Theme => Some(&mut self.0.theme),
-            BlockRef::Midi => Some(&mut self.0.midi),
+            BlockRef::Theme => Some(BlockViewMut::Plain(&mut self.0.theme)),
+            BlockRef::Midi => Some(BlockViewMut::Plain(&mut self.0.midi)),
             _ => None,
         }
     }

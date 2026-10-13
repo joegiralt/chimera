@@ -12,7 +12,7 @@ use super::runner::{Capture, Captured, OrbitView};
 use super::walk::{Pool, Walk};
 use super::{MAX_POOL, MAX_SEGS, RINGS, RingIdx};
 use crate::Velocity;
-use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
+use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks, ParamAddr};
 use crate::block::{
     Block, Change, DiskCode, Motion, OFF_ON, ParamId, ParamSpec, ValFmt, apply_code,
 };
@@ -497,7 +497,7 @@ impl OrbitSong {
     #[inline(never)]
     pub fn turn(&mut self, a: ParamAddr, delta: i8, snap: bool) {
         self.edit(&mut |s| {
-            if let Some(b) = s.block_mut(a.block) {
+            if let Some(mut b) = s.block_mut(a.block) {
                 if snap {
                     b.snap(a.param, delta);
                 } else {
@@ -702,20 +702,20 @@ pub const STORED_LIVE: u8 = SCENES as u8;
 
 /// A scene's blocks, as an `OrbitBlock` record reaches them.
 impl BlockRead for Scene {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+    fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
         match b {
-            BlockRef::OrbitChords => Some(&self.chords),
-            BlockRef::OrbitRing(r) => Some(&self.rings[r.get() as usize]),
+            BlockRef::OrbitChords => Some(BlockView::Plain(&self.chords)),
+            BlockRef::OrbitRing(r) => Some(BlockView::Plain(&self.rings[r.get() as usize])),
             _ => None,
         }
     }
 }
 
 impl Blocks for Scene {
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
+    fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
         match b {
-            BlockRef::OrbitChords => Some(&mut self.chords),
-            BlockRef::OrbitRing(r) => Some(&mut self.rings[r.get() as usize]),
+            BlockRef::OrbitChords => Some(BlockViewMut::Plain(&mut self.chords)),
+            BlockRef::OrbitRing(r) => Some(BlockViewMut::Plain(&mut self.rings[r.get() as usize])),
             _ => None,
         }
     }

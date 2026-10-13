@@ -478,6 +478,10 @@ pub const NO_UNUSED: &str = "NO UNUSED SOURCES";
 /// A save with every slot taken.
 pub const POOL_FULL: &str = "POOL FULL";
 
+/// A WAVE turn stepped over a formant or noise kind the budget refuses, or
+/// a load read one as W1.
+pub const FORMANT_FULL: &str = "FORMANT BUDGET FULL";
+
 /// What a save the arena has no room for needs: `NEEDS 1.2K, 0.4K FREE`,
 /// the line under `POOL_FULL`.
 pub fn pool_needs(f: PoolFull) -> Line {

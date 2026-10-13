@@ -1,6 +1,6 @@
 //! The Parts and the shared FX: what the audio plays.
 
-use crate::addr::{BlockRead, BlockRef, Blocks};
+use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks};
 use crate::block::Block;
 use crate::dsp::fx_bus::FxParams;
 use crate::hw::MAX_PARTS;
@@ -187,13 +187,13 @@ pub struct PartEdit<'a> {
 }
 
 impl BlockRead for PartEdit<'_> {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+    fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
         part_block(self.sound, self.mix, self.fx, b)
     }
 }
 
 impl Blocks for PartEdit<'_> {
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
+    fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
         part_block_mut(self.sound, self.mix, self.fx, b)
     }
 }
@@ -208,13 +208,13 @@ pub struct PartRead<'a> {
 
 impl<'a> PartRead<'a> {
     /// `BlockRead::block`, for as long as the Part is borrowed, not the view.
-    pub fn block(&self, b: BlockRef) -> Option<&'a dyn Block> {
+    pub fn block(&self, b: BlockRef) -> Option<BlockView<'a>> {
         part_block(self.sound, self.mix, self.fx, b)
     }
 }
 
 impl BlockRead for PartRead<'_> {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+    fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
         PartRead::block(self, b)
     }
 }
@@ -226,14 +226,15 @@ pub fn part_block<'a>(
     mix: &'a PartParams,
     fx: &'a FxParams,
     b: BlockRef,
-) -> Option<&'a dyn Block> {
+) -> Option<BlockView<'a>> {
+    let plain = |b: &'a dyn Block| Some(BlockView::Plain(b));
     match b {
-        BlockRef::Chorus => Some(&fx.chorus),
-        BlockRef::Delay => Some(&fx.delay),
-        BlockRef::Reverb => Some(&fx.reverb),
-        BlockRef::Tape => Some(&fx.tape),
-        BlockRef::Comp => Some(&fx.comp),
-        BlockRef::Part => Some(mix),
+        BlockRef::Chorus => plain(&fx.chorus),
+        BlockRef::Delay => plain(&fx.delay),
+        BlockRef::Reverb => plain(&fx.reverb),
+        BlockRef::Tape => plain(&fx.tape),
+        BlockRef::Comp => plain(&fx.comp),
+        BlockRef::Part => plain(mix),
         BlockRef::Theme
         | BlockRef::Midi
         | BlockRef::PartMix(_)
@@ -261,14 +262,15 @@ pub fn part_block_mut<'a>(
     mix: &'a mut PartParams,
     fx: &'a mut FxParams,
     b: BlockRef,
-) -> Option<&'a mut dyn Block> {
+) -> Option<BlockViewMut<'a>> {
+    let plain = |b: &'a mut dyn Block| Some(BlockViewMut::Plain(b));
     match b {
-        BlockRef::Chorus => Some(&mut fx.chorus),
-        BlockRef::Delay => Some(&mut fx.delay),
-        BlockRef::Reverb => Some(&mut fx.reverb),
-        BlockRef::Tape => Some(&mut fx.tape),
-        BlockRef::Comp => Some(&mut fx.comp),
-        BlockRef::Part => Some(mix),
+        BlockRef::Chorus => plain(&mut fx.chorus),
+        BlockRef::Delay => plain(&mut fx.delay),
+        BlockRef::Reverb => plain(&mut fx.reverb),
+        BlockRef::Tape => plain(&mut fx.tape),
+        BlockRef::Comp => plain(&mut fx.comp),
+        BlockRef::Part => plain(mix),
         BlockRef::Theme
         | BlockRef::Midi
         | BlockRef::PartMix(_)

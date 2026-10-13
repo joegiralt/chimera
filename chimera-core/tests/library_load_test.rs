@@ -297,6 +297,7 @@ fn a_read_counts_no_skips_and_needs_no_source() {
         read(&mut st, &mut p, file).unwrap(),
         LibRead {
             skips: 0,
+            over: false,
             source: None
         }
     );
@@ -555,4 +556,24 @@ fn a_read_not_on_the_card_stores_absent_never_empty() {
         .unwrap();
     let id = p.pool().find_source(need.r).unwrap();
     assert_eq!(p.pool().absence(id), Some(Absence::NotOnCard));
+}
+
+/// A Sound legal whole but over the floor in operator order reads whole.
+#[test]
+fn a_sound_that_fits_whole_reads_whole() {
+    let mut s = common::formant::frmt_last();
+    s.name = SoundName::new("FRMT LAST").unwrap();
+    let (mut p, mut st, file) = saved(s);
+    assert_eq!(
+        read(&mut st, &mut p, file).unwrap(),
+        LibRead {
+            skips: 0,
+            over: false,
+            source: None
+        }
+    );
+    assert_eq!(
+        scratch_of(&p).params.algo.kinds().all(),
+        common::formant::FRMT_LAST
+    );
 }

@@ -447,7 +447,7 @@ where
         Gauge::LevelBar { value, ticks } => level_bar(d, value, ticks),
         Gauge::Crossfader { value } => crossfader(d, value, theme::XF_W),
         Gauge::Staff { step, accidental } => staff(d, step, accidental),
-        Gauge::Wave(w) => scope(d, &glyph::wave_trace::<SCOPE_N>(w, SCOPE_HALF)),
+        Gauge::Wave(k) => scope(d, &glyph::kind_trace::<SCOPE_N>(k, SCOPE_HALF)),
         Gauge::VaWave(m) => scope(d, &glyph::va_wave_trace::<SCOPE_N>(m, SCOPE_HALF)),
         Gauge::VaMix(v) => scope(d, &glyph::va_mix_trace::<VA_MIX_N>(&v, SCOPE_HALF)),
         Gauge::Blend { value, mode } => {

@@ -204,6 +204,19 @@ fn a_note_on_param_waits_for_the_next_note() {
 /// Note-on params this test's patches can't make heard, and why: each is
 /// covered where its feature is set up.
 const NOT_HEARD_HERE: &[&str] = &[
+    // Read by the formant kernels (Task 10): silent until then.
+    "AlgoOp(A) KEY",
+    "AlgoOp(A) RES",
+    "AlgoOp(B) KEY",
+    "AlgoOp(B) RES",
+    "AlgoOp(C) KEY",
+    "AlgoOp(C) RES",
+    "AlgoOp(D) KEY",
+    "AlgoOp(D) RES",
+    "AlgoOp(E) KEY",
+    "AlgoOp(E) RES",
+    "AlgoOp(F) KEY",
+    "AlgoOp(F) RES",
     // At a steal under STEAL GLIDE: steal_glide_test.
     "Pitch TIME",
 ];

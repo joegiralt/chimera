@@ -5,14 +5,16 @@ use chimera_hal::BLOCK_SIZE;
 
 use crate::addr::{BlockRef, Blocks, ParamAddr};
 use crate::block::{ParamId, apply_offset};
-use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
-use crate::dsp::algo::params::AlgoParams;
+use crate::dsp::algo::engine::{AlgoEngine, AlgoLive, SpanReach};
+use crate::dsp::algo::kinds::OpKind;
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::dc_blocker::DcBlocker;
 use crate::dsp::drive::Drive;
 use crate::dsp::ease::{Ramp, at, step_of};
 use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
+use crate::dsp::fast_exp2;
 use crate::dsp::filter::{FILTER_LEVEL_COST, Filter, FilterMods};
 use crate::dsp::gate::AmpGate;
 use crate::dsp::knobs::Gliding;
@@ -342,11 +344,43 @@ impl Voice {
         )
     }
 
+    /// A formant voice past the C8 grain clock the FRMT terms cover: the
+    /// spans its reachable pitch adds (`HighNote`).
+    pub fn high_note_extra(
+        p: &ParamSnapshot,
+        mods: &ModState,
+        bend: u8,
+        tune_cents: i8,
+        note: MidiNote,
+        slide: f32,
+    ) -> Cost {
+        HighNote::of(p, mods, bend, tune_cents).map_or(Cost::ZERO, |h| h.extra(note, slide))
+    }
+
+    /// An Algo voice's formant and noise operators' last `(fc, bw_eff)`.
+    pub fn formant_view(&self) -> Option<[(f32, f32); crate::dsp::algo::plan::OPS]> {
+        match &self.slot {
+            EngineSlot::Algo(a) => Some(a.formant_view()),
+            _ => None,
+        }
+    }
+
+    /// A glide steal's ratio now on an Algo voice, 1 otherwise.
+    pub fn algo_slide(&self) -> f32 {
+        match &self.slot {
+            EngineSlot::Algo(a) => a.slide(),
+            _ => 1.0,
+        }
+    }
+
     /// What this voice's sounding note costs over `p`'s stored model
     /// (#183): Modal's MODE and MODES and TAPE's MODEL are fixed per note,
     /// so an edit under a sounding voice is billed at the costlier of the
-    /// two.
+    /// two; so is an ALGO operator's SKIRT (`held_skirt_extra`).
     pub fn held_model_extra(&self, p: &ParamSnapshot) -> Cost {
+        if let EngineSlot::Algo(a) = &self.slot {
+            return a.held_skirt_extra(&p.algo);
+        }
         self.slot.playing_cost().map_or(Cost::ZERO, |held| {
             Cost(held.0.saturating_sub(self.slot.model_cost(p).0))
         })
@@ -423,7 +457,12 @@ impl Voice {
             addr_of_mut!((*p).sample_rate).write(sample_rate);
             addr_of_mut!((*p).rebuilds).write(0);
             Self::init_chain(p);
-            slot.assume_init_mut()
+            let v = slot.assume_init_mut();
+            // Its own noise from boot, not the lone slot's voice 0.
+            if let EngineSlot::Algo(a) = &mut v.slot {
+                a.seed(id);
+            }
+            v
         }
     }
 
@@ -963,9 +1002,9 @@ impl Voice {
                 let off = knobs.fixed_sum(mod_state, c, &mod_values);
                 let a = c.addr();
                 if off != 0.0
-                    && let Some(blk) = m.block_mut(a.block)
+                    && let Some(mut blk) = m.block_mut(a.block)
                 {
-                    apply_offset(blk, a.param, off);
+                    apply_offset(&mut *blk, a.param, off);
                 }
             }
             let mut next = [EnvMods::NONE; 3];
@@ -982,8 +1021,8 @@ impl Voice {
                         continue;
                     }
                     // Modulatable addresses are always Sound blocks (`voice_reads`).
-                    if let Some(blk) = m.block_mut(a.block) {
-                        apply_offset(blk, a.param, off);
+                    if let Some(mut blk) = m.block_mut(a.block) {
+                        apply_offset(&mut *blk, a.param, off);
                     }
                 }
             }
@@ -1205,6 +1244,65 @@ impl Voice {
                 self.reset(params, false, ctx.sym);
             }
         }
+    }
+}
+
+/// A formant Sound's reach past the C8 grain clock (`AlgoEngine::
+/// high_note_extra`), less the note: a Part's, taken once a block (its
+/// route scans); each voice's extra is then a `fast_exp2` and a span count
+/// an operator (ADR 0131's fixed work).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HighNote {
+    /// Semitones over the note from A4: TRNSP, the PITCH offset, TUNING
+    /// (up only), the bend's range and every PITCH route at full swing.
+    st: f32,
+    reach: SpanReach,
+}
+
+impl HighNote {
+    /// Recost's reach on a formant Part, once a block on its first voice,
+    /// ADR 0056's count on the bench-algo ELF (2026-10-13): `of` 483
+    /// instructions and 9 divides at six FRMTs, `pitch_reach`'s two scans
+    /// and swings and both `algo_routed` scans, 16 dests at 109 at most,
+    /// 8 sources at 23 twice: ~2,700 instructions, 9 divides, 4,445 cycles
+    /// a block: 69.5, rounded up.
+    pub const PART_COST: Cost = Cost(70);
+
+    /// Each formant voice's `extra`: 206 instructions and 7 divides at six
+    /// FRMTs, ~215 with recost's glue, 430 cycles a block: 6.7, rounded up.
+    pub const VOICE_COST: Cost = Cost(7);
+
+    /// `None`: no FRMT to bill.
+    #[inline(never)]
+    pub fn of(p: &ParamSnapshot, mods: &ModState, bend: u8, tune_cents: i8) -> Option<HighNote> {
+        if p.engine() != EngineType::Algo || !p.algo.kinds().all().contains(&OpKind::Formant) {
+            return None;
+        }
+        let st = f32::from(p.algo.transpose)
+            + p.pitch.semitones()
+            + f32::from(tune_cents.max(0)) / 100.0
+            + f32::from(bend)
+            + crate::dsp::engines::pitch_reach(mods) / 100.0
+            - 69.0;
+        let fine_top = mods.algo_routed(&[AlgoOpParams::FINE]);
+        Some(HighNote {
+            st,
+            reach: SpanReach::of(&p.algo, &mods.algo_levels_routed(), &fine_top),
+        })
+    }
+
+    /// A voice at `note`, gliding from `slide` (its ratio, 1 at rest).
+    pub fn extra(&self, note: MidiNote, slide: f32) -> Cost {
+        let st = f32::from(note.get()) + self.st;
+        self.reach
+            .extra(440.0 * fast_exp2(st / 12.0) * slide.max(1.0))
+    }
+
+    /// What a voice at `note` is billed for the reach: its `extra` and
+    /// `VOICE_COST`, and on the Part's `first` voice `PART_COST`.
+    pub fn bill(&self, note: MidiNote, slide: f32, first: bool) -> Cost {
+        let part = if first { Self::PART_COST } else { Cost::ZERO };
+        self.extra(note, slide) + Self::VOICE_COST + part
     }
 }
 

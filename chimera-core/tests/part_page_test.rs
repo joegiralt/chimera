@@ -245,7 +245,7 @@ fn algo_pages_edit_every_operator_and_the_algorithm() {
     for slot in 0..6 {
         turn(&reg::ALGO_WAVE, slot, 1 + slot as i8, &mut p);
     }
-    assert_eq!(p.algo.ops.map(|o| o.wave), [1, 2, 3, 4, 5, 6]);
+    assert_eq!(p.algo.kinds().all().map(|k| k.code()), [1, 2, 3, 4, 5, 6]);
     turn(&reg::ALGO_LEVEL, 5, 40, &mut p);
     assert_eq!(p.algo.ops[5].level, 40);
     turn(&reg::ALGO_LEVEL, 0, 5, &mut p);
@@ -255,7 +255,12 @@ fn algo_pages_edit_every_operator_and_the_algorithm() {
     turn(&reg::ALGO_ALG, 2, 64, &mut p);
     turn(&reg::ALGO_ALG, 3, -30, &mut p);
     assert_eq!(
-        (p.algo.alg_a, p.algo.alg_b, p.algo.morph, p.algo.transpose),
+        (
+            p.algo.algs().0.get(),
+            p.algo.algs().1.get(),
+            p.algo.morph,
+            p.algo.transpose
+        ),
         (21, 29, 64, -24)
     );
     snap(&reg::ALGO_ALG, 2, 1, &mut p); // MIX + turn snaps MORPH like any Uni value
@@ -265,31 +270,38 @@ fn algo_pages_edit_every_operator_and_the_algorithm() {
 #[test]
 fn the_osc_node_has_every_operator_parameter() {
     use chimera_core::dsp::algo::params::ALGO_OP_SPECS;
-    use chimera_core::ui::block_def::SlotBinding;
     let block = reg::ALGO_CHAIN
         .blocks
         .iter()
         .find(|b| b.def.id == reg::ALGO_WAVE.id)
         .unwrap();
+    use chimera_core::dsp::algo::kinds::OpKind;
     let mut edited = Vec::new();
-    for sub in 0..block.sub_page_count() {
-        let def = block.active_def(sub);
-        for (i, slot) in def.params.iter().enumerate() {
-            let SlotBinding::Param(a) = slot.binding else {
-                panic!("{} slot {i}", def.name)
-            };
-            // A group page runs one parameter across the operators; an OP
-            // page runs its own operator's parameters.
-            let op = if sub < 13 {
-                Op::ALL[i]
-            } else {
-                Op::ALL[sub - 13]
-            };
-            assert_eq!(a.block, BlockRef::AlgoOp(op), "{} slot {i}", def.name);
-            edited.push(a.param);
+    // Every kind's cells: an OP page shows its operator's kind's.
+    for kind in [OpKind::Table(WaveId::W1), OpKind::Formant, OpKind::Noise] {
+        let ctx = SlotCtx {
+            op_kinds: [kind; 6],
+            ..SlotCtx::read(&ParamSnapshot::default(), Op::A)
+        };
+        for sub in 0..block.sub_page_count() {
+            let def = block.active_def(sub);
+            for i in 0..def.params.len() {
+                let Some(a) = view(def, i, &ctx).addr() else {
+                    panic!("{} slot {i}", def.name)
+                };
+                // A group page runs one parameter across the operators; an
+                // OP page runs its own operator's parameters.
+                let op = if sub < 13 {
+                    Op::ALL[i]
+                } else {
+                    Op::ALL[sub - 13]
+                };
+                assert_eq!(a.block, BlockRef::AlgoOp(op), "{} slot {i}", def.name);
+                edited.push(a.param);
+            }
         }
     }
-    for s in &ALGO_OP_SPECS {
+    for s in ALGO_OP_SPECS {
         assert!(edited.contains(&s.id), "{} has no page", s.label);
     }
     let names: Vec<&str> = (0..block.sub_page_count())

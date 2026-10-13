@@ -3,7 +3,6 @@
 //! Sounds compact at once; a freed source is a pending hole until nothing
 //! that would move is sounding.
 
-use core::fmt::Write as _;
 use core::ptr::NonNull;
 
 use crate::fmt_buf::FmtBuf;

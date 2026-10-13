@@ -191,10 +191,9 @@ fn taps_on_algo() {
     );
 }
 
-fn op(wave: WaveId, coarse: u8, env: [u8; 5], feedback: u8) -> AlgoOpParams {
+fn op(wave: WaveId, coarse: u8, env: [u8; 5], feedback: u8) -> (WaveId, AlgoOpParams) {
     let [ar, d1r, d1l, d2r, rr] = env;
-    AlgoOpParams {
-        wave: wave.get(),
+    let o = AlgoOpParams {
         coarse,
         level: 99,
         ar,
@@ -204,12 +203,13 @@ fn op(wave: WaveId, coarse: u8, env: [u8; 5], feedback: u8) -> AlgoOpParams {
         rr,
         feedback,
         ..AlgoOpParams::default()
-    }
+    };
+    (wave, o)
 }
 
-fn voice_of(o: AlgoOpParams) -> Sound {
+fn voice_of((wave, o): (WaveId, AlgoOpParams)) -> Sound {
     let mut s = Sound::init(EngineType::Algo);
-    s.params.algo = AlgoParams::single(WaveId::W1);
+    s.params.algo = AlgoParams::single(wave);
     s.params.algo.ops[0] = o;
     s
 }

@@ -121,9 +121,9 @@ Sound {
             alg_b: 8,
             morph: 0,
             transpose: 0,
+            vowel: 50,
             ops: [
                 AlgoOpParams {
-                    wave: 0,
                     coarse: 4,
                     fine: 0,
                     detune: 0,
@@ -136,9 +136,14 @@ Sound {
                     rate_scale: 0,
                     feedback: 0,
                     velocity: 0,
+                    frmt: 69,
+                    bw: 72,
+                    skirt: 1,
+                    key: 0,
+                    res: 0,
+                    vslot: 0,
                 },
                 AlgoOpParams {
-                    wave: 0,
                     coarse: 4,
                     fine: 0,
                     detune: 0,
@@ -151,9 +156,14 @@ Sound {
                     rate_scale: 0,
                     feedback: 0,
                     velocity: 0,
+                    frmt: 83,
+                    bw: 72,
+                    skirt: 1,
+                    key: 0,
+                    res: 0,
+                    vslot: 0,
                 },
                 AlgoOpParams {
-                    wave: 0,
                     coarse: 4,
                     fine: 0,
                     detune: 0,
@@ -166,9 +176,14 @@ Sound {
                     rate_scale: 0,
                     feedback: 0,
                     velocity: 0,
+                    frmt: 111,
+                    bw: 72,
+                    skirt: 1,
+                    key: 0,
+                    res: 0,
+                    vslot: 0,
                 },
                 AlgoOpParams {
-                    wave: 0,
                     coarse: 4,
                     fine: 0,
                     detune: 0,
@@ -181,9 +196,14 @@ Sound {
                     rate_scale: 0,
                     feedback: 0,
                     velocity: 0,
+                    frmt: 123,
+                    bw: 72,
+                    skirt: 1,
+                    key: 0,
+                    res: 0,
+                    vslot: 0,
                 },
                 AlgoOpParams {
-                    wave: 0,
                     coarse: 4,
                     fine: 0,
                     detune: 0,
@@ -196,9 +216,14 @@ Sound {
                     rate_scale: 0,
                     feedback: 0,
                     velocity: 0,
+                    frmt: 123,
+                    bw: 72,
+                    skirt: 1,
+                    key: 0,
+                    res: 0,
+                    vslot: 0,
                 },
                 AlgoOpParams {
-                    wave: 0,
                     coarse: 4,
                     fine: 0,
                     detune: 0,
@@ -211,8 +236,48 @@ Sound {
                     rate_scale: 0,
                     feedback: 0,
                     velocity: 0,
+                    frmt: 123,
+                    bw: 72,
+                    skirt: 1,
+                    key: 0,
+                    res: 0,
+                    vslot: 0,
                 },
             ],
+            kinds: Kinds(
+                [
+                    Table(
+                        WaveId(
+                            0,
+                        ),
+                    ),
+                    Table(
+                        WaveId(
+                            0,
+                        ),
+                    ),
+                    Table(
+                        WaveId(
+                            0,
+                        ),
+                    ),
+                    Table(
+                        WaveId(
+                            0,
+                        ),
+                    ),
+                    Table(
+                        WaveId(
+                            0,
+                        ),
+                    ),
+                    Table(
+                        WaveId(
+                            0,
+                        ),
+                    ),
+                ],
+            ),
         },
         modal: ModalParams {
             mode: String,
