@@ -593,3 +593,42 @@ mod.LFO3 = "VA.WAVE1 +15"
 mod.VEL = "FILTER.CUTOFF +20, VA.WAVE2 -15"
 level = "by ear -20.1: the 1 s level render hears the swell still closed; set low so the open 5-note sweep chord with its reverb stays at or under 3 dB of limiting"
 trim = "-1.2"
+
+# Two sines a few cents apart (a slow beat), crushed by BITS: ENV 2 starts
+# each note at AMOUNT near full crush (16·8^-x bits) and relaxes it to
+# clean over about a second. Filter fully open. harmonic "no": BITS is
+# quantising, alias-exempt by design (ADR 0118).
+[[sound]]
+id = "S9100053"
+name = "BIT BLOOM"
+engine = "VA"
+note = "CRUSHED SINES MELT TO CLEAN"
+demo = "poly"
+plays = "long stab"
+home = "C3"
+phrase = "pad"
+harmonic = "no"
+OUT.LEVEL = "0.25"  # 32
+OUT.SEND3 = "0.15"  # 19
+ENV1.ATK = "0.15"  # 7.2 ms
+ENV1.DEC = "0.6"  # 415 ms
+ENV1.SUS = "0.8"  # 80%
+ENV1.REL = "0.7"  # 919 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0"
+VA.WAVE2 = "0"
+VA.FINE2 = "3"  # +3
+VA.MODE = "BITS"
+VA.AMOUNT = "0"
+FILTER.CUTOFF = "20000"  # 20.0 kHz
+ENV2.SPEED = "SLOW"
+ENV2.ATK = "0"  # 9.3 ms
+ENV2.DEC = "0.5"  # 1.3 s
+ENV2.SUS = "0"  # 0%
+mod.ENV2 = "VA.AMOUNT +127"
+mod.VEL = "VA.AMOUNT +15"
+LFO1.RATE = "0.15"  # 1
+LFO1.SHAPE = "SINE"
+mod.LFO1 = "PITCH.FINE +3"
+level = "by ear -16.5: set low so the pad phrase's chords with their reverb stay at or under 3 dB of limiting"
+trim = "-5.0"
