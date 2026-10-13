@@ -245,6 +245,52 @@ fn every_committed_description_fits_the_drawn_width() {
     assert!(!s.is_empty());
 }
 
+/// What the build used to take silently now fails at its line.
+#[test]
+fn another_engines_param_or_route_fails() {
+    fails(&base_with(9, r#"ALGO.MORPH = "0.5""#), 9, "ALGO.MORPH");
+    fails(
+        &base_with(10, r#"mod.LFO1 = "MODAL.BRIGHT +20""#),
+        10,
+        "MODAL.BRIGHT",
+    );
+}
+
+#[test]
+fn a_destination_twice_in_one_line_fails() {
+    let t = base_with(10, r#"mod.LFO1 = "FILTER.CUTOFF +20, FILTER.CUTOFF -5""#);
+    fails(&t, 10, "FILTER.CUTOFF twice");
+}
+
+#[test]
+fn an_amount_of_zero_fails() {
+    fails(
+        &base_with(10, r#"mod.LFO1 = "FILTER.CUTOFF 0""#),
+        10,
+        "FILTER.CUTOFF 0",
+    );
+}
+
+#[test]
+fn an_envelope_closing_the_vca_fails() {
+    fails(
+        &base_with(12, r#"mod.ENV1 = "OUT.VCA -127""#),
+        12,
+        "OUT.VCA -127",
+    );
+}
+
+#[test]
+fn a_home_note_is_spelled_as_the_unit_spells_it() {
+    for bad in ["B#3", "E#3", "C+3", "C#+3", "C 3", "C"] {
+        fails(&base_with(8, &format!("home = \"{bad}\"")), 8, bad);
+    }
+    for (good, n) in [("C3", 48), ("C#3", 49), ("B3", 59), ("C-1", 0), ("G9", 127)] {
+        let s = source::parse(&base_with(8, &format!("home = \"{good}\"")), "t").unwrap();
+        assert_eq!(s[0].home, n, "{good}");
+    }
+}
+
 #[test]
 fn unknown_ident() {
     fails(&base_with(9, r#"FILTER.FREQ = "1200""#), 9, "FILTER.FREQ");
@@ -1613,13 +1659,14 @@ fn va_without_vca_envelope_fails() {
         .collect::<Vec<_>>()
         .join("\n");
     fails(&none, 2, "OUT.VCA");
-    // Velocity alone on the VCA is still organ-gated; so is a zero amount.
+    // Velocity alone on the VCA is still organ-gated; a zero amount fails
+    // at its own line.
     fails(
         &none.replace("trim = \"0\"", "mod.VEL = \"OUT.VCA +40\""),
         2,
         "OUT.VCA",
     );
-    fails(&base_with(12, r#"mod.ENV1 = "OUT.VCA +0""#), 2, "OUT.VCA");
+    fails(&base_with(12, r#"mod.ENV1 = "OUT.VCA +0""#), 12, "OUT.VCA +0");
 }
 
 #[test]

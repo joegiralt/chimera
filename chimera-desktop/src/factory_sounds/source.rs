@@ -506,14 +506,25 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
             "status" => return Err(at(line, format!("status {v}: placeholder"))),
             _ => {
                 let (head, rest) = k.split_once('.').ok_or_else(unknown)?;
-                let r = || routes(v, line).map_err(|m| at(line, m));
+                let r = || routes(v, line, engine).map_err(|m| at(line, m));
                 match head {
                     "mod" => {
                         let src = ModSource::ALL
                             .into_iter()
                             .find(|m| m.disk_ident() == rest)
                             .ok_or_else(unknown)?;
-                        s.mods.push((src, r()?));
+                        let rs = r()?;
+                        // An ENV into the VCA opens it: a negative amount
+                        // would close it on every note.
+                        if src.env_slot().is_some()
+                            && let Some(x) = rs.iter().find(|x| x.dest == FixedCol::Vca.addr() && x.amount < 0)
+                        {
+                            return Err(at(
+                                line,
+                                format!("OUT.VCA {}: an ENV into the VCA opens it (+1..+127)", x.amount),
+                            ));
+                        }
+                        s.mods.push((src, rs));
                     }
                     "tap" => {
                         let op = TapOp::ALL
@@ -541,6 +552,7 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
                     }
                     _ => {
                         let a = valid_addr(head, rest).ok_or_else(unknown)?;
+                        other_engine(a.addr(), engine).map_err(|m| at(line, m))?;
                         s.params.push((line, a, v.clone()));
                     }
                 }
@@ -570,7 +582,8 @@ fn description(v: &str) -> Result<Note, String> {
     Ok(n)
 }
 
-/// `C4` is 60, as the firmware names notes; `C#-1` is 1.
+/// `C4` is 60, as the firmware names notes; `C#-1` is 1. A sharp on E or
+/// B, or a `+` or space in the octave, is not a note.
 fn note_number(v: &str) -> Option<u8> {
     let mut c = v.chars();
     let pc = match c.next()? {
@@ -585,6 +598,13 @@ fn note_number(v: &str) -> Option<u8> {
     };
     let rest = c.as_str();
     let (sharp, oct) = rest.strip_prefix('#').map_or((0, rest), |o| (1, o));
+    let digits = oct.strip_prefix('-').unwrap_or(oct);
+    if (sharp == 1 && matches!(pc, 4 | 11))
+        || digits.is_empty()
+        || !digits.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
     let n = (oct.parse::<i32>().ok()? + 1) * 12 + pc + sharp;
     u8::try_from(n).ok().filter(|&n| n <= 127)
 }
@@ -598,6 +618,45 @@ fn valid_addr(block: &str, param: &str) -> Option<ValidAddr> {
     ValidAddr::of_block(b).find(|a| a.spec().ident == param)
 }
 
+/// `a` is `engine`'s to set: every Sound holds each engine's block, but
+/// only its own engine reads it.
+fn other_engine(a: ParamAddr, engine: EngineType) -> Result<(), String> {
+    let owner = match a.block {
+        BlockRef::Va => Some(EngineType::Va),
+        BlockRef::Algo | BlockRef::AlgoOp(_) => Some(EngineType::Algo),
+        BlockRef::Modal => Some(EngineType::Modal),
+        BlockRef::TapeEngine => Some(EngineType::Tape),
+        BlockRef::Drive
+        | BlockRef::Filter
+        | BlockRef::Folder
+        | BlockRef::Env(_)
+        | BlockRef::Lfo(_)
+        | BlockRef::Out
+        | BlockRef::Pitch
+        | BlockRef::Chorus
+        | BlockRef::Delay
+        | BlockRef::Reverb
+        | BlockRef::Tape
+        | BlockRef::Comp
+        | BlockRef::Part
+        | BlockRef::PartMix(_)
+        | BlockRef::Theme
+        | BlockRef::Midi
+        | BlockRef::OrbitChords
+        | BlockRef::OrbitRing(_)
+        | BlockRef::Tempo => None,
+    };
+    match owner {
+        Some(o) if o != engine => Err(format!(
+            "{}: a {} param; this Sound is {}",
+            ident(a),
+            o.disk_ident(),
+            engine.disk_ident()
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// `BLOCK.PARAM`.
 fn ident(a: ParamAddr) -> String {
     let p = ValidAddr::find(a.block, a.param).map_or("?", |v| v.spec().ident);
@@ -605,30 +664,38 @@ fn ident(a: ParamAddr) -> String {
 }
 
 /// `DEST ±amount, …`: each destination a matrix column takes (a fixed
-/// column or a modulatable param), amounts −127…127.
-fn routes(v: &str, line: usize) -> Result<Vec<Route>, String> {
-    v.split(',')
-        .map(|r| {
-            let r = r.trim();
-            let (d, a) = r
-                .rsplit_once(' ')
-                .ok_or_else(|| format!("route {r:?}: DEST ±amount"))?;
-            let dest = d
-                .split_once('.')
-                .and_then(|(b, p)| valid_addr(b, p))
-                .ok_or_else(|| format!("unknown destination {d}"))?
-                .addr();
-            if FixedCol::of(dest).is_none() && !dest.modulatable() {
-                return Err(format!("{d} is not a mod destination"));
-            }
-            let amount = a
-                .parse::<i8>()
-                .ok()
-                .filter(|&a| a != i8::MIN)
-                .ok_or_else(|| format!("{d} {a}: amount -127..+127"))?;
-            Ok(Route { line, dest, amount })
-        })
-        .collect()
+/// column or a modulatable param of `engine`'s), once, amounts −127…127
+/// but 0.
+fn routes(v: &str, line: usize, engine: EngineType) -> Result<Vec<Route>, String> {
+    let mut out: Vec<Route> = Vec::new();
+    for r in v.split(',') {
+        let r = r.trim();
+        let (d, a) = r
+            .rsplit_once(' ')
+            .ok_or_else(|| format!("route {r:?}: DEST ±amount"))?;
+        let dest = d
+            .split_once('.')
+            .and_then(|(b, p)| valid_addr(b, p))
+            .ok_or_else(|| format!("unknown destination {d}"))?
+            .addr();
+        if FixedCol::of(dest).is_none() && !dest.modulatable() {
+            return Err(format!("{d} is not a mod destination"));
+        }
+        other_engine(dest, engine)?;
+        let amount = a
+            .parse::<i8>()
+            .ok()
+            .filter(|&a| a != i8::MIN)
+            .ok_or_else(|| format!("{d} {a}: amount -127..+127"))?;
+        if amount == 0 {
+            return Err(format!("{d} {a}: an amount of 0 routes nothing"));
+        }
+        if out.iter().any(|x| x.dest == dest) {
+            return Err(format!("{d} twice in one line"));
+        }
+        out.push(Route { line, dest, amount });
+    }
+    Ok(out)
 }
 
 /// Ids unique and names unique across every Source, placeholders included.
