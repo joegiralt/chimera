@@ -309,7 +309,18 @@ impl Allocator {
     /// none is re-struck, retriggered or stolen while it fades. Not counted:
     /// nothing was refused.
     pub fn kill_all(&mut self) {
-        for s in self.slots.iter_mut().filter(|s| !s.is_free() && !s.dying()) {
+        for v in 0..MAX_VOICES {
+            self.kill(v);
+        }
+    }
+
+    /// One slot dying, as `kill_all` does (CC 120).
+    pub fn kill(&mut self, voice: usize) {
+        if let Some(s) = self
+            .slots
+            .get_mut(voice)
+            .filter(|s| !s.is_free() && !s.dying())
+        {
             self.sheds = self.sheds.wrapping_add(1);
             s.dying = Some(self.sheds);
         }
