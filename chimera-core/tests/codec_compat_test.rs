@@ -687,6 +687,19 @@ fn unknown_non_critical_skipped() {
     }
 }
 
+/// An old build, which has no `MidiMap`, skips its tag as unknown
+/// non-critical (spec § 2): here the tag, with a payload no entry fits.
+#[test]
+fn midi_map_tag_is_non_critical() {
+    for (name, s) in sources() {
+        let f = fixture(&name);
+        for at in after_engine(&f) {
+            let d = decode(&with_record(&f, at, 0x001E, 40)).unwrap();
+            assert!(d.bits_eq(&s), "{name} at {at}");
+        }
+    }
+}
+
 #[test]
 fn unknown_critical_greys() {
     for (name, _) in sources() {
