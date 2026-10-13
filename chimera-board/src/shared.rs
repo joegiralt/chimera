@@ -9,6 +9,8 @@ use chimera_core::dsp::algo::waves::{self, Waves};
 use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::hw::MAX_PARTS;
 use chimera_core::instrument::AudioShared;
+#[cfg(feature = "midi-din")]
+use chimera_core::midi_in::CcRing;
 use chimera_core::note_queue::NoteSources;
 #[cfg(any(feature = "midi-din", feature = "bench"))]
 use chimera_core::note_queue::SourceId;
@@ -173,6 +175,27 @@ pub fn take_formant() -> Option<(Writer<FormantViews>, Reader<FormantViews>)> {
     // reference to `FORMANT` ever made.
     let slot = unsafe { &mut *addr_of_mut!(FORMANT) };
     Some(TripleBuffer::init_in_place(slot, || [FormantView::NONE; MAX_PARTS]).split())
+}
+
+// MIDI DIN's CC ring (MIDI map spec § 1), the USART1 ISR's to push and
+// the UI's to drain: in D2, not AXI, which the ORBIT build fills to its
+// margin (ADR 0087), as `FORMANT`. NOLOAD: built at `take_cc_din`.
+#[cfg(feature = "midi-din")]
+#[unsafe(link_section = ".ram_d2")]
+static mut CC_DIN: MaybeUninit<CcRing> = MaybeUninit::uninit();
+#[cfg(feature = "midi-din")]
+static CC_DIN_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// The DIN CC ring, built empty; once. Both ends share the reference.
+#[cfg(feature = "midi-din")]
+pub fn take_cc_din() -> Option<&'static CcRing> {
+    if CC_DIN_TAKEN.swap(true, Ordering::AcqRel) {
+        return None;
+    }
+    // SAFETY: the flag lets exactly one caller past, so this is the only
+    // reference to `CC_DIN` ever made; `write` initialises it before any
+    // read, and from then on it is only shared.
+    Some(unsafe { (*addr_of_mut!(CC_DIN)).write(CcRing::new()) })
 }
 
 // What the audio interrupt (`chimera-stm32`) and this side both touch:

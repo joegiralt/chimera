@@ -264,6 +264,9 @@ pub struct AudioStart<'a> {
     pub sources: chimera_core::source_table::AudioToken,
     #[cfg(feature = "midi-din")]
     pub din: chimera_core::note_queue::NoteProducer<'static>,
+    /// MIDI DIN's CCs: the ISR pushes, the UI drains (MIDI map spec § 1).
+    #[cfg(feature = "midi-din")]
+    pub din_ccs: &'static chimera_core::midi_in::CcRing,
 }
 
 /// The binary's audio side, which the start-up calls at its steps. Plain
@@ -425,6 +428,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         allow(unused_mut, unused_variables)
     )]
     let (mut producers, notes) = shared::NOTES.split().expect("note sources split once");
+    #[cfg(feature = "midi-din")]
+    let cc_din = shared::take_cc_din().expect("DIN CC ring taken once");
     let (orbit_runner, mut orbit) = orbit::take(beat_led);
     (shell.start_audio)(AudioStart {
         nvic: &mut cp.NVIC,
@@ -440,6 +445,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         din: producers
             .take(shared::DIN)
             .expect("DIN producer taken once"),
+        #[cfg(feature = "midi-din")]
+        din_ccs: cc_din,
     });
 
     marker.stage(BootStage::Audio);
