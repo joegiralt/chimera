@@ -2,8 +2,10 @@
 # by `just factory-sounds` (ADR 0134). Keys are the frozen idents of
 # chimera-core/tests/fixtures/disk_codes_v1.txt: id, name, engine, note,
 # demo, plays, home, BLOCK.PARAM, mod.<SOURCE>, trim; status =
-# "placeholder" reserves an id and name. Never a `from` line: ports are
-# private.
+# "placeholder" reserves an id and name; approved = "round <n> <CRC>"
+# binds the owner's round to the Sound's sound_crc; level = "by ear
+# <LUFS>: <why>" pins a level outside -11 +- 2. Never a `from` line:
+# ports are private.
 
 [[sound]]
 id = "S9100001"
@@ -14,7 +16,7 @@ demo = "poly"
 plays = "long texture stab"
 home = "C3"
 phrase = "pad"
-approved = "round 2"
+approved = "round 2 C3515839"
 OUT.LEVEL = "0.25"  # 32
 ENV1.ATK = "0.6"  # 331 ms
 ENV1.SUS = "0.85"  # 85%
@@ -31,7 +33,7 @@ mod.LFO2 = "FILTER.CUTOFF +30"
 LFO3.RATE = "0.2"  # 1
 mod.LFO3 = "VA.SHAPE1 +30, VA.SHAPE2 -30"
 mod.VEL = "VA.WAVE2 +20"
-level = "by ear: set low so a 4-note chord stays at or under 3 dB of limiting"
+level = "by ear -15.9: set low so a 4-note chord stays at or under 3 dB of limiting"
 trim = "-4.0"
 
 [[sound]]
@@ -43,7 +45,7 @@ demo = "poly"
 plays = "long stab"
 home = "C3"
 phrase = "pad"
-approved = "round 2"
+approved = "round 2 AE54EEE8"
 OUT.LEVEL = "0.25"  # 32
 ENV1.ATK = "0.65"  # 507 ms
 ENV1.SUS = "1"  # 100%
@@ -65,7 +67,7 @@ mod.LFO3 = "VA.SHAPE1 +20"
 LFO1.RATE = "0.17"  # 1
 LFO1.SHAPE = "TRIANGLE"
 mod.LFO1 = "FILTER.CUTOFF +35, VA.SHAPE2 +30"
-level = "by ear: set low so a 4-note chord stays at or under 3 dB of limiting"
+level = "by ear -15.9: set low so a 4-note chord stays at or under 3 dB of limiting"
 trim = "-4.9"
 
 [[sound]]
@@ -77,7 +79,7 @@ demo = "poly"
 plays = "long texture"
 home = "C3"
 phrase = "lead"
-approved = "round 2"
+approved = "round 2 9A6E5ABC"
 OUT.LEVEL = "0.25"  # 32
 ENV1.ATK = "0.4"  # 60 ms
 ENV1.SUS = "1"  # 100%
@@ -108,7 +110,7 @@ demo = "mono"
 plays = "bass texture"
 home = "C2"
 phrase = "bass"
-approved = "round 2"
+approved = "round 2 A0D4C023"
 OUT.LEVEL = "0.5"  # 64
 ENV1.ATK = "0.1"  # 4.7 ms
 ENV1.SUS = "1"  # 100%
@@ -138,7 +140,7 @@ demo = "mono"
 plays = "bass texture short"
 home = "C2"
 phrase = "bass"
-approved = "round 2"
+approved = "round 2 47053FC0"
 OUT.LEVEL = "0.25"  # 32
 ENV1.ATK = "0.15"  # 7.2 ms
 ENV1.DEC = "0.45"  # 126 ms
@@ -167,7 +169,7 @@ demo = "mono"
 plays = "bass glide"
 home = "C2"
 phrase = "bass"
-approved = "round 2"
+approved = "round 2 20A05E25"
 OUT.LEVEL = "0.25"  # 32
 ENV1.ATK = "0.1"  # 4.7 ms
 ENV1.DEC = "0.42"  # 99 ms
@@ -196,7 +198,7 @@ demo = "mono"
 plays = "bass glide"
 home = "C2"
 phrase = "bass"
-approved = "round 2"
+approved = "round 2 4486E647"
 OUT.LEVEL = "0.25"  # 32
 ENV1.ATK = "0.12"  # 5.6 ms
 ENV1.SUS = "1"  # 100%
@@ -224,7 +226,7 @@ demo = "poly"
 plays = "short long texture"
 home = "C3"
 phrase = "lead"
-approved = "round 2"
+approved = "round 2 A9013F60"
 OUT.LEVEL = "0.25"  # 32
 ENV1.ATK = "0.15"  # 7.2 ms
 ENV1.DEC = "0.5"  # 187 ms
@@ -246,7 +248,6 @@ mod.LFO1 = "PITCH.FINE +5"
 mod.LFO2 = "VA.CRSE2 +6"
 mod.VEL = "ENV2.LEVEL +90"
 trim = "0.5"
-level = "by ear: set low so v127 texture stays at or under 1 dB of limiting"
 
 [[sound]]
 id = "S9100009"
@@ -257,7 +258,7 @@ demo = "poly"
 plays = "long texture"
 home = "C4"
 phrase = "lead"
-approved = "round 2"
+approved = "round 2 6F6D1E10"
 OUT.LEVEL = "0.25"  # 32
 ENV1.ATK = "0.25"  # 17 ms
 ENV1.SUS = "0.8"  # 80%
@@ -280,7 +281,6 @@ mod.LFO1 = "PITCH.FINE +5"
 mod.LFO2 = "VA.WAVE1 +25, VA.SHAPE2 +30"
 mod.ENV2 = "FILTER.CUTOFF +35"
 trim = "2.6"
-level = "by ear: set low so v127 texture stays at or under 1 dB of limiting"
 [[sound]]
 id = "S9100035"
 name = "SOFT FLUTE"
@@ -290,7 +290,7 @@ demo = "poly"
 plays = "long texture"
 home = "C4"
 phrase = "lead"
-approved = "round 2"
+approved = "round 2 E028CE81"
 OUT.LEVEL = "0.25"  # 32
 ENV1.ATK = "0.3"  # 26 ms
 ENV1.SUS = "0.9"  # 90%
@@ -323,7 +323,7 @@ demo = "poly"
 plays = "long texture"
 home = "C3"
 phrase = "lead"
-approved = "round 2"
+approved = "round 2 D138C4EF"
 OUT.LEVEL = "0.25"  # 32
 OUT.SEND1 = "0.4"  # 51
 ENV1.ATK = "0.12"  # 5.6 ms
@@ -345,7 +345,6 @@ mod.LFO1 = "VA.SHAPE1 +35, VA.WAVE2 +20"
 mod.LFO2 = "PITCH.FINE +3"
 mod.VEL = "FILTER.CUTOFF +35, VA.SUB +30"
 trim = "-0.9"
-level = "by ear: set low so v127 texture stays at or under 1 dB of limiting"
 
 [[sound]]
 id = "S9100037"
@@ -356,7 +355,7 @@ demo = "mono"
 plays = "long texture"
 home = "C3"
 phrase = "lead"
-approved = "round 2"
+approved = "round 2 1F62B26E"
 OUT.LEVEL = "0.25"  # 32
 OUT.SEND2 = "0.3"  # 38
 ENV1.ATK = "0.15"  # 7.2 ms
@@ -396,6 +395,7 @@ demo = "poly"
 plays = "long texture"
 home = "C3"
 phrase = "lead"
+approved = "round 3 041967BA"
 harmonic = "yes"
 OUT.LEVEL = "0.25"  # 32
 ENV1.ATK = "0.12"  # 5.6 ms
@@ -434,6 +434,7 @@ demo = "poly"
 plays = "short long texture"
 home = "C3"
 phrase = "wonky"
+approved = "round 3 9BE4003B"
 harmonic = "no"
 OUT.LEVEL = "0.25"  # 32
 ENV1.ATK = "0.15"  # 7.2 ms
@@ -459,7 +460,7 @@ mod.LFO1 = "VA.AMOUNT +25"
 LFO2.RATE = "0.3"  # 2
 mod.LFO2 = "VA.FINE2 +30"
 mod.VEL = "VA.AMOUNT +20, FILTER.CUTOFF +25"
-level = "by ear: set low so v127 texture blips stay under 1 dB of limiting"
+level = "by ear -16.7: set low so v127 texture blips stay under 1 dB of limiting"
 trim = "1.0"
 
 
@@ -478,6 +479,7 @@ demo = "poly"
 plays = "long stab"
 home = "C3"
 phrase = "pad"
+approved = "round 3 2C9F0F22"
 OUT.LEVEL = "0.25"  # 32
 OUT.SEND3 = "0.1"  # 13
 ENV1.ATK = "0.5"  # 141 ms
@@ -503,7 +505,7 @@ LFO1.RATE = "0.3"  # 2
 LFO1.SHAPE = "TRIANGLE"
 mod.LFO1 = "VA.SHAPE2 +20"
 mod.VEL = "FILTER.CUTOFF +25"
-level = "by ear: set low so a 4-note chord with its reverb stays at or under 3 dB of limiting"
+level = "by ear -16.2: set low so a 4-note chord with its reverb stays at or under 3 dB of limiting"
 trim = "0.4"
 
 # Prophet-5 poly-mod keys: ENV 2 plucks the filter and bends osc 2's wave
@@ -517,6 +519,7 @@ demo = "poly"
 plays = "long texture"
 home = "C3"
 phrase = "arp"
+approved = "round 3 BA8FC2C9"
 OUT.LEVEL = "0.5"  # 64
 OUT.SEND2 = "0.2"  # 25
 ENV1.ATK = "0.1"  # 4.7 ms
@@ -540,7 +543,6 @@ mod.LFO1 = "VA.SHAPE1 +35"
 LFO2.RATE = "0.11"  # 1
 mod.LFO2 = "VA.FINE2 +8"
 mod.VEL = "FILTER.CUTOFF +12, VA.WAVE1 -15"
-level = "by ear: set low so v127 texture stays at or under 1 dB of limiting"
 trim = "-0.3"
 
 # The slow swell, in the manner of Radiohead's "Everything In Its Right
@@ -559,6 +561,7 @@ demo = "poly"
 plays = "long stab"
 home = "C3"
 phrase = "sweep"
+approved = "round 3 1151B599"
 OUT.LEVEL = "0.25"  # 32
 OUT.SEND3 = "0.12"  # 15
 ENV1.ATK = "0.3"  # 26 ms
@@ -585,5 +588,5 @@ LFO3.RATE = "0.08"  # 0
 LFO3.SHAPE = "TRIANGLE"
 mod.LFO3 = "VA.WAVE1 +15"
 mod.VEL = "FILTER.CUTOFF +20, VA.WAVE2 -15"
-level = "by ear: the 1 s level render hears the swell still closed; set low so the open 5-note sweep chord with its reverb stays at or under 3 dB of limiting"
+level = "by ear -20.1: the 1 s level render hears the swell still closed; set low so the open 5-note sweep chord with its reverb stays at or under 3 dB of limiting"
 trim = "-1.2"

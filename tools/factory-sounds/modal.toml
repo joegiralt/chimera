@@ -9,6 +9,7 @@ demo = "poly"
 plays = "long short"
 home = "C3"
 phrase = "lead"
+approved = "round 3 78B83A11"
 MODAL.MODE = "STRING"
 MODAL.BRIGHT = "0.3"  # 38
 MODAL.DAMP = "0.7"  # 89
@@ -22,7 +23,7 @@ mod.VEL = "MODAL.BRIGHT +50"
 LFO1.RATE = "0.3"  # 2
 LFO1.SHAPE = "TRIANGLE"
 mod.LFO1 = "MODAL.BRIGHT +25, MODAL.POS +20"
-level = "by ear: set low so the lead phrase's plucks stay near 1 dB of limiting"
+level = "by ear -18.5: set low so the lead phrase's plucks stay near 1 dB of limiting"
 OUT.LEVEL = "1"  # 127
 trim = "-3.0"
 
@@ -35,6 +36,7 @@ demo = "poly"
 plays = "long short texture"
 home = "C4"
 phrase = "lead"
+approved = "round 3 B5E75FCE"
 MODAL.MODE = "MODAL"
 MODAL.STRUCTURE = "0.6"  # 76
 MODAL.BRIGHT = "0.1"  # 13
@@ -50,7 +52,7 @@ mod.LFO1 = "MODAL.DAMP +30"
 LFO2.RATE = "0.35"  # 2
 LFO2.SHAPE = "SINE"
 mod.LFO2 = "MODAL.BRIGHT +25, MODAL.STRUCTURE +8"
-level = "by ear: set low so v127 texture strikes stay under 1 dB of limiting"
+level = "by ear -16.8: set low so v127 texture strikes stay under 1 dB of limiting"
 trim = "-3.8"
 
 [[sound]]
@@ -62,6 +64,7 @@ demo = "poly"
 plays = "long texture"
 home = "C3"
 phrase = "lead"
+approved = "round 3 28FC79C9"
 MODAL.MODE = "BOWED"
 MODAL.FORCE = "0.6"  # 76
 MODAL.DAMP = "0.6"  # 76
@@ -89,6 +92,7 @@ demo = "poly"
 plays = "long stab"
 home = "C3"
 phrase = "pad"
+approved = "round 3 5EB7869C"
 MODAL.MODE = "SYMPATHETIC"
 MODAL.STRUCTURE = "0.4"  # 51
 MODAL.COUPLE = "0.7"  # 89
@@ -106,7 +110,7 @@ FILTER.CUTOFF = "2500"  # 2.50 kHz
 LFO2.RATE = "0.12"  # 1
 LFO2.SHAPE = "SINE"
 mod.LFO2 = "FILTER.CUTOFF +45"
-level = "by ear: set low so a 4-note chord with its reverb stays at or under 3 dB of limiting"
+level = "by ear -23.1: set low so a 4-note chord with its reverb stays at or under 3 dB of limiting"
 trim = "-6.5"
 
 # Late-90s IDM set (with fm.toml and va.toml): short struck bars, glitchy,
@@ -121,6 +125,7 @@ demo = "poly"
 plays = "short long texture"
 home = "C4"
 phrase = "arp"
+approved = "round 3 D15713DD"
 MODAL.MODE = "MODAL"
 MODAL.STRUCTURE = "0.25"  # 32
 MODAL.BRIGHT = "0.5"  # 64
@@ -143,6 +148,6 @@ ENV2.SUS = "0"  # 0%
 mod.ENV2 = "PITCH.FINE +40"
 # Velocity also sets the strike: EXCITE is read at note-on (vel x EXCITE).
 mod.VEL = "MODAL.BRIGHT +45, MODAL.DAMP -20"
-level = "by ear: set low so the arp phrase's strikes with the delay stay under 1 dB of limiting"
+level = "by ear -22.1: set low so the arp phrase's strikes with the delay stay under 1 dB of limiting"
 trim = "-3.0"
 

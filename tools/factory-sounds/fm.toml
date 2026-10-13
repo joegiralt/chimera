@@ -12,6 +12,7 @@ demo = "poly"
 plays = "long texture"
 home = "C3"
 phrase = "lead"
+approved = "round 3 106FBAE1"
 harmonic = "yes"
 ALGO.ALG_A = "T5"
 ALGO.ALG_B = "T5"
@@ -47,7 +48,7 @@ LFO3.RATE = "0.13"  # 1
 LFO3.SHAPE = "SINE"
 mod.LFO3 = "OP_F.LEVEL +15"
 OUT.LEVEL = "1"  # 127
-level = "by ear: set low so v127 texture stays under 1 dB of limiting"
+level = "by ear -13.7: set low so v127 texture stays under 1 dB of limiting"
 trim = "-1.0"
 mod.VEL = "FILTER.CUTOFF +20"
 mod.NOTE = "OP_E.LEVEL -40"
@@ -61,6 +62,7 @@ demo = "poly"
 plays = "long texture"
 home = "C3"
 phrase = "lead"
+approved = "round 3 873DE7BF"
 harmonic = "yes"
 ALGO.ALG_A = "A6"
 ALGO.ALG_B = "A6"
@@ -96,7 +98,6 @@ ENV2.SUS = "0.3"  # 30%
 mod.ENV2 = "OP_F.LEVEL +45, FILTER.CUTOFF +45"
 FILTER.LEVEL = "0.7"  # 89
 OUT.LEVEL = "1"  # 127
-level = "by ear: set low so v127 texture stays under 1 dB of limiting"
 trim = "-1.0"
 
 [[sound]]
@@ -143,6 +144,7 @@ demo = "poly"
 plays = "short long texture"
 home = "C4"
 phrase = "arp"
+approved = "round 3 F19F48A2"
 harmonic = "no"
 ALGO.ALG_A = "T5"
 ALGO.ALG_B = "A1"
@@ -189,22 +191,25 @@ mod.VEL = "OP_B.LEVEL +20, OP_D.LEVEL +20"
 OUT.SEND1 = "0.25"  # 32
 OUT.LEVEL = "1"  # 127
 trim = "-4.6"
-level = "by ear: set low so v127 texture strikes stay under 1 dB of limiting"
+level = "by ear -14.9: set low so v127 texture strikes stay under 1 dB of limiting"
 
 # Jega-style rubber bass: a 2-op squelch over a 0.50 sine; the
-# modulator's own fast decay, ENV 2 and a 5 Hz LFO move the index. Poly:
-# on a MONO Part the legato retrigger clicked (glide 5-16x):
-# private issue #486
+# modulator's own fast decay, ENV 2 and a 5 Hz LFO move the index. Mono
+# with a 31 ms glide since #486's legato retrigger click was fixed
+# (private issue #486): the wonky phrase's
+# held notes slide instead of stacking (its limiting 1.8 dB poly, 0.7 mono).
 [[sound]]
 id = "S9100039"
 name = "RUBBER BASS"
 engine = "ALGO"
-note = "ENVELOPES SQUELCH FM INDEX"
-demo = "poly"
-plays = "bass texture"
+note = "MONO PART: SQUELCHY FM SLIDES"
+demo = "mono"
+plays = "bass glide texture"
 home = "C2"
 phrase = "wonky"
 harmonic = "yes"
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.45"  # 31 ms
 ALGO.ALG_A = "T5"
 ALGO.ALG_B = "T5"
 OP_A.LEVEL = "99"
@@ -245,7 +250,7 @@ mod.LFO2 = "FILTER.CUTOFF +15"
 mod.VEL = "OP_B.LEVEL +25, FILTER.CUTOFF +20"
 OUT.LEVEL = "1"  # 127
 trim = "-2.0"
-level = "by ear: set low so v127 texture stays under 1 dB of limiting"
+level = "by ear -15.5: set low so v127 texture stays under 1 dB of limiting"
 
 # A melancholic detuned FM pad: three stacks slightly apart, slow attacks,
 # the pitch, index and algorithm drifting on slow LFOs. Each
@@ -260,6 +265,7 @@ demo = "poly"
 plays = "long stab"
 home = "C3"
 phrase = "pad"
+approved = "round 3 B9A3093F"
 harmonic = "yes"
 ALGO.ALG_A = "T5"
 ALGO.ALG_B = "T8"
@@ -319,6 +325,6 @@ mod.LFO3 = "ALGO.MORPH +50"
 mod.VEL = "OP_B.LEVEL +20, FILTER.CUTOFF +15"
 OUT.SEND3 = "0.1"  # 13
 OUT.LEVEL = "1"  # 127
-level = "by ear: set low so a 4-note chord with its reverb stays at or under 3 dB of limiting"
+level = "by ear -17.3: set low so a 4-note chord with its reverb stays at or under 3 dB of limiting"
 trim = "-7.3"
 
