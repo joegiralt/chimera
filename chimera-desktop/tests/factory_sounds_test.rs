@@ -3397,3 +3397,37 @@ impl build::EditsCheck for Edits {
         self.0.clone()
     }
 }
+
+/// `qa --private` never writes into the published ledger: a private
+/// ledger that is it, inside it, or a link into it is refused before
+/// anything is read or rendered.
+#[test]
+fn the_private_ledger_is_never_the_published_one() {
+    let (public, ports) = port_dirs("private-guard");
+    let pub_ledger = scratch_ledger("private-guard-public");
+    std::fs::create_dir_all(&pub_ledger).unwrap();
+    let link = scratch_ledger("private-guard-link");
+    std::os::unix::fs::symlink(&pub_ledger, &link).unwrap();
+    for bad in [
+        pub_ledger.clone(),
+        pub_ledger.join("qa"),
+        link.clone(),
+        link.join("qa"),
+    ] {
+        let e = run::qa(&run::Qa {
+            dir: &public,
+            ledger: pub_ledger.clone(),
+            private: Some(run::Private {
+                ports: &ports,
+                ledger: bad.clone(),
+                edits: &Edits(Ok(())),
+            }),
+            wav: true,
+            baseline: None,
+        })
+        .unwrap_err();
+        assert!(e.contains("published"), "{}: {e}", bad.display());
+        assert!(!pub_ledger.join("report.txt").exists(), "nothing written");
+    }
+    let _ = std::fs::remove_file(&link);
+}

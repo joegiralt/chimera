@@ -32,8 +32,18 @@ pub struct Qa<'a> {
 }
 
 /// Every public Sound and demo rendered and gated into the public ledger,
-/// then with `--private` the ports into theirs; fails unless all pass.
+/// then with `--private` the ports into theirs; fails unless all pass. A
+/// private ledger at or inside the published one is refused first.
 pub fn qa(run: &Qa) -> Result<(), String> {
+    if let Some(p) = &run.private
+        && resolved(&p.ledger).starts_with(resolved(&run.ledger))
+    {
+        return Err(format!(
+            "private ledger {}: inside the published ledger {}; ports never go there",
+            p.ledger.display(),
+            run.ledger.display()
+        ));
+    }
     let (placeholders, all): (Vec<_>, Vec<_>) =
         build::sounds(run.dir, run.private.as_ref().map(|p| p.ports))?
             .into_iter()
@@ -65,6 +75,16 @@ pub fn qa(run: &Qa) -> Result<(), String> {
         (Some(gap), _) => Err(gap),
         (None, true) => Ok(()),
         (None, false) => Err("a gate failed: see report.txt".into()),
+    }
+}
+
+/// `p` with every link resolved as far as it exists (a ledger may not
+/// yet): the existing part canonical, the rest as written.
+fn resolved(p: &Path) -> PathBuf {
+    match (p.canonicalize(), p.parent(), p.file_name()) {
+        (Ok(c), _, _) => c,
+        (Err(_), Some(dir), Some(name)) => resolved(dir).join(name),
+        _ => p.to_path_buf(),
     }
 }
 
