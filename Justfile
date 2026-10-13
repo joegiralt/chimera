@@ -49,7 +49,8 @@ factory-tapes *args:
 # The public factory Sounds (spec § 3, ADR 0134): tools/factory-sounds/'s
 # Sources parsed, checked (ids, names, descriptions, routes) and built
 # through the firmware's encoder into target/factory-sounds/public/
-# (CHIMERA/SOUNDS/S91xxxxx.A and manifest.json). Refuses a port Source.
+# (CHIMERA/SOUNDS/S91xxxxx.A, the demo projects from projects.toml as
+# CHIMERA/PROJECTS/P000000n.A, and manifest.json). Refuses a port Source.
 # `just factory-sounds fmt` writes each value's display comment.
 factory-sounds *args:
     cargo run -q --release -p chimera-desktop --bin factory-sounds -- {{args}}

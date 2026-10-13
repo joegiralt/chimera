@@ -11,12 +11,14 @@ use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
 
 use chimera_core::block::DiskCode;
-use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
+use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use chimera_core::dsp::limiter::OUTPUT_GAIN;
 use chimera_core::dsp::modulator::law::{B_TIME, speed_ranges};
 use chimera_core::dsp::modulator::{EnvSlot, EnvType};
+use chimera_core::dsp::rev::sync::Tempo;
+use chimera_core::hw::MAX_PARTS;
 use chimera_core::hw::SampleBudget;
-use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
+use chimera_core::instrument::{AudioShared, DacBlocks, Instrument, MixState, mix_parts};
 use chimera_core::modulation::{FixedCol, ModSource};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::EngineType;
@@ -26,14 +28,15 @@ use chimera_core::project::{PartId, Performance};
 use chimera_core::scope::{ScopeWriter, scope_buffer};
 use chimera_core::source_table::GateView;
 use chimera_core::storage::FactoryId;
-use chimera_core::{MidiNote, Velocity};
+use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
 
 use super::about::{self, Fact};
+use super::project::{self, Demo, DemoId, Setting};
 use super::source::{self, Badge, Phrase, Round, Script, Source, patch, to_sound, trimmed};
-use crate::listen::{self, Player, Row, qa_takes};
+use crate::listen::{self, Player, Row, Section, qa_takes};
 
 const SR: f32 = SAMPLE_RATE as f32;
 
@@ -601,26 +604,26 @@ fn play(snd: &Sound, mode: PartMode, plan: &Plan) -> Take {
     let e = perf.edit(PartId::ALL[0]);
     **e.sound = snd.clone();
     e.mix.mode = plan.mode.unwrap_or(mode);
-    let shared = Box::new(AudioShared::from_performance(&perf));
+    let channel = perf.part(PartId::ALL[0]).mix.channel;
+    play_on(&perf, channel, plan)
+}
+
+/// `plan` played on `channel` of `perf`, every Part and the FX bus as
+/// set: the Parts on that channel sound.
+fn play_on(perf: &Performance, channel: MidiChannel, plan: &Plan) -> Take {
+    let shared = Box::new(AudioShared::from_performance(perf));
     let mut inst = Box::new(Instrument::new(
         SAMPLE_RATE,
         SampleBudget::for_cpu(u32::MAX),
     ));
-    let (mut fx, mut dac) = (Box::new(FxBus::new()), Box::new(DacBlocks::new()));
+    let mut fx = Box::new(FxBus::new());
+    let ev = |note: u8, kind| NoteEvent {
+        channel,
+        note: MidiNote::new(note).expect("a MIDI note"),
+        kind,
+    };
     SCOPE.with_borrow_mut(|scope| {
-        let channel = shared.parts[0].mix.channel;
-        let ev = |note: u8, kind| NoteEvent {
-            channel,
-            note: MidiNote::new(note).expect("a MIDI note"),
-            kind,
-        };
-        let energy = |p: &[f32]| p.iter().map(|v| v * v).sum::<f32>();
-        let mut t = Take {
-            stereo: Vec::new(),
-            reduced_db: 0.0,
-        };
-        let mut prev_in = 0.0f32;
-        for b in 0..block(plan.secs) {
+        metered(block(plan.secs), |b, dac| {
             for h in plan.hits.iter().filter(|h| block(h.off) == b) {
                 inst.handle_with(ev(h.note, NoteKind::Off), &shared, &GateView::empty());
             }
@@ -628,21 +631,36 @@ fn play(snd: &Sound, mode: PartMode, plan: &Plan) -> Take {
                 let v = Velocity::new(h.vel).expect("a velocity");
                 inst.handle_with(ev(h.note, NoteKind::On(v)), &shared, &GateView::empty());
             }
-            inst.render_with(&mut fx, &mut dac, &shared, scope, &GateView::empty());
-            let out = &dac.out()[0];
-            // The block out against the block in before it, over the rest gain.
-            if prev_in > 1e-12 {
-                let gr = 20.0
-                    * ((energy(out) / prev_in).sqrt() / OUTPUT_GAIN)
-                        .max(1e-9)
-                        .log10();
-                t.reduced_db = t.reduced_db.max(-gr);
-            }
-            prev_in = energy(&dac.input()[0]);
-            t.stereo.extend_from_slice(out);
-        }
-        t
+            inst.render_with(&mut fx, dac, &shared, scope, &GateView::empty());
+        })
     })
+}
+
+/// `blocks` blocks, each rendered into the DAC by `render`, kept as P1
+/// after the limiter, with the most gain reduction it took.
+fn metered(blocks: usize, mut render: impl FnMut(usize, &mut DacBlocks)) -> Take {
+    let mut dac = Box::new(DacBlocks::new());
+    let energy = |p: &[f32]| p.iter().map(|v| v * v).sum::<f32>();
+    let mut t = Take {
+        stereo: Vec::new(),
+        reduced_db: 0.0,
+    };
+    let mut prev_in = 0.0f32;
+    for b in 0..blocks {
+        render(b, &mut dac);
+        let out = &dac.out()[0];
+        // The block out against the block in before it, over the rest gain.
+        if prev_in > 1e-12 {
+            let gr = 20.0
+                * ((energy(out) / prev_in).sqrt() / OUTPUT_GAIN)
+                    .max(1e-9)
+                    .log10();
+            t.reduced_db = t.reduced_db.max(-gr);
+        }
+        prev_in = energy(&dac.input()[0]);
+        t.stereo.extend_from_slice(out);
+    }
+    t
 }
 
 /// The listening render: the Source's Sound played under `s` at 48 kHz,
@@ -1650,11 +1668,17 @@ fn changed_line(round: Round) -> String {
 }
 
 /// The owner's page: every Sound that passes, badged APPROVED or NEW,
-/// then each placeholder; a Sound a gate failed is named in a flagged
-/// OFF THE PAGE row. Per Sound its name, description, demo mode,
+/// then each placeholder, then each passing demo project under DEMO
+/// PROJECTS; a Sound or demo a gate failed is named in a flagged OFF THE
+/// PAGE row. Per Sound its name, description, demo mode,
 /// LUFS, `edits`, exemptions and samey pairs to judge by ear, what it is
 /// (`about`), and a player per render with its LUFS and peak.
-pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source]) -> String {
+pub fn page(
+    reports: &[Report],
+    samey: &[(usize, usize)],
+    placeholders: &[Source],
+    demos: &[DemoReport],
+) -> String {
     let mut sounds: Vec<((bool, Badge), Row)> = reports
         .iter()
         .enumerate()
@@ -1722,7 +1746,11 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source
                         }
                     })
                     .collect(),
-                private: r.private,
+                section: if r.private {
+                    Section::Private
+                } else {
+                    Section::Sounds
+                },
             };
             let coherent = r.baseline.as_ref().is_some_and(Baseline::coherent);
             ((!coherent, r.badge), row)
@@ -1741,7 +1769,7 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source
             ],
             facts: Vec::new(),
             players: Vec::new(),
-            private: false,
+            section: Section::Sounds,
         };
         ((true, Badge::Placeholder), row)
     }));
@@ -1749,17 +1777,23 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source
     // the placeholders; Source order within each.
     sounds.sort_by_key(|(b, _)| *b);
     let mut rows: Vec<Row> = sounds.into_iter().map(|(_, r)| r).collect();
+    rows.extend(demos.iter().filter(|d| d.passes()).map(demo_row));
+    let off_line = |what: String| {
+        (
+            format!("Off the page (a gate failed, see report.txt): {what}"),
+            true,
+        )
+    };
     let off: Vec<(String, bool)> = reports
         .iter()
         .filter(|r| !r.passes())
-        .map(|r| {
-            let l = format!(
-                "Off the page (a gate failed, see report.txt): S{} {}",
-                r.id.get(),
-                r.name
-            );
-            (l, true)
-        })
+        .map(|r| off_line(format!("S{} {}", r.id.get(), r.name)))
+        .chain(
+            demos
+                .iter()
+                .filter(|d| !d.passes())
+                .map(|d| off_line(format!("{} {}", d.id.stem(), d.name))),
+        )
         .collect();
     if !off.is_empty() {
         rows.insert(
@@ -1770,7 +1804,7 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source
                 lines: off,
                 facts: Vec::new(),
                 players: Vec::new(),
-                private: false,
+                section: Section::Sounds,
             },
         );
     }
@@ -1781,7 +1815,15 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source
          closed; on its demo mode), then under its render scripts, offline through the real \
          Instrument (Part 1, P1); a render marked WITH plays its sends through NEW's effects. The \
          phrase is for your ear, not a gate. Under each Sound, what it is, read from the Sound \
-         itself. Every gate passed (measured dry) or is marked for your ear: the lines in colour.{}",
+         itself. Every gate passed (measured dry) or is marked for your ear: the lines in colour.{}{}",
+        if demos.is_empty() {
+            ""
+        } else {
+            " Under DEMO PROJECTS, each effects demo: every Part's STAB and SHORT on its \
+             channel, then the HATS and SNARE stimuli, through the project's own effects and \
+             each setting its \"what to try\" invites, offline through the real Instrument and \
+             mixer."
+        },
         if any_changed(reports) {
             format!(" {RESIDUAL_NOTE}")
         } else {
@@ -1791,23 +1833,26 @@ pub fn page(reports: &[Report], samey: &[(usize, usize)], placeholders: &[Source
     listen::rows_page("Factory Sounds · listening", &intro, &rows)
 }
 
-/// Into `dir` (checked as a ledger): `report.txt`, naming each Sound a
-/// failing gate keeps off the page; with `wav`, each passing Sound's
-/// renders as `renders/S<id>-<script>.wav` (a failing one's old renders
-/// removed) and `listening.html`. A failing run without `wav` removes an
-/// old page. True when every Sound passes.
+/// Into `dir` (checked as a ledger): `report.txt`, naming each Sound or
+/// demo a failing gate keeps off the page; with `wav`, each passing
+/// Sound's renders as `renders/S<id>-<script>.wav` and each passing
+/// demo's as `renders/P<id>-<setting>-<take>.wav` (a failing one's old
+/// renders removed), and `listening.html`. A failing run without `wav`
+/// removes an old page. True when every Sound and demo passes.
 pub fn write(
     dir: &Path,
     reports: &[Report],
     samey: &[(usize, usize)],
     placeholders: &[Source],
+    demos: &[DemoReport],
     wav: bool,
 ) -> Result<bool, String> {
     let dir = checked_ledger(dir)?;
     let err = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
     std::fs::create_dir_all(&dir).map_err(|e| err(&dir, e))?;
-    let pass = reports.iter().all(Report::passes);
+    let pass = reports.iter().all(Report::passes) && demos.iter().all(DemoReport::passes);
     let mut txt = report_text(reports, samey);
+    txt.push_str(&demo_text(demos));
     for r in reports.iter().filter(|r| !r.passes()) {
         let _ = writeln!(
             txt,
@@ -1816,21 +1861,23 @@ pub fn write(
             r.name
         );
     }
+    for d in demos.iter().filter(|d| !d.passes()) {
+        let _ = writeln!(
+            txt,
+            "off the page: {} {} (a gate failed)",
+            d.id.stem(),
+            d.name
+        );
+    }
     let path = dir.join("report.txt");
     std::fs::write(&path, txt).map_err(|e| err(&path, e))?;
     let html = dir.join("listening.html");
     if wav {
         let r = dir.join("renders");
         std::fs::create_dir_all(&r).map_err(|e| err(&r, e))?;
-        for rep in reports {
-            if rep.passes() {
-                for x in &rep.renders {
-                    listen::write_wav_stereo(&dir.join(rep.wav(x.audition)), &x.stereo)?;
-                }
-                continue;
-            }
-            // A Sound off the page leaves no old render to pass as current.
-            let stale = format!("S{}-", rep.id.get());
+        // A Sound or demo off the page leaves no old render to pass as
+        // current.
+        let unrender = |stale: String| -> Result<(), String> {
             for e in std::fs::read_dir(&r).map_err(|e| err(&r, e))? {
                 let p = e.map_err(|e| err(&r, e))?.path();
                 if p.file_name()
@@ -1840,8 +1887,28 @@ pub fn write(
                     std::fs::remove_file(&p).map_err(|e| err(&p, e))?;
                 }
             }
+            Ok(())
+        };
+        for rep in reports {
+            if rep.passes() {
+                for x in &rep.renders {
+                    listen::write_wav_stereo(&dir.join(rep.wav(x.audition)), &x.stereo)?;
+                }
+            } else {
+                unrender(format!("S{}-", rep.id.get()))?;
+            }
         }
-        std::fs::write(&html, page(reports, samey, placeholders)).map_err(|e| err(&html, e))?;
+        for d in demos {
+            if d.passes() {
+                for x in &d.renders {
+                    listen::write_wav_stereo(&r.join(d.file(x)), &x.stereo)?;
+                }
+            } else {
+                unrender(format!("{}-", d.id.stem()))?;
+            }
+        }
+        std::fs::write(&html, page(reports, samey, placeholders, demos))
+            .map_err(|e| err(&html, e))?;
     } else if !pass {
         // An old page could show a now failing Sound as passed.
         match std::fs::remove_file(&html) {
@@ -1850,4 +1917,374 @@ pub fn write(
         }
     }
     Ok(pass)
+}
+
+// ── the demo projects' renders (spec § 4, § 5) ──
+
+/// What a demo render plays: a Part's script on its channel, or a
+/// listening stimulus into the FX bus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DemoTake {
+    Part(PartId, Script),
+    Hats,
+    Snare,
+}
+
+impl DemoTake {
+    /// Its WAV name's end: `part1-stab`, `hats`.
+    fn slug(self) -> String {
+        match self {
+            DemoTake::Part(p, s) => format!("part{}-{}", p.index() + 1, s.word()),
+            DemoTake::Hats => "hats".into(),
+            DemoTake::Snare => "snare".into(),
+        }
+    }
+
+    fn label(self) -> String {
+        match self {
+            DemoTake::Part(p, s) => format!("PART {} {}", p.index() + 1, s.word().to_uppercase()),
+            DemoTake::Hats => "HATS".into(),
+            DemoTake::Snare => "SNARE".into(),
+        }
+    }
+}
+
+/// What a demo gate checked, on which take.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DemoCheck {
+    /// The count of samples that are not finite.
+    Finite(DemoTake),
+    Clicks(DemoTake),
+    Limiter(DemoTake),
+}
+
+impl DemoCheck {
+    fn label(self) -> String {
+        let (what, t) = match self {
+            DemoCheck::Finite(t) => ("finite", t),
+            DemoCheck::Clicks(t) => ("clicks", t),
+            DemoCheck::Limiter(t) => ("limiter", t),
+        };
+        format!("{what} {}", t.label().to_lowercase())
+    }
+
+    fn unit(self) -> &'static str {
+        match self {
+            DemoCheck::Finite(_) => "bad",
+            DemoCheck::Clicks(_) => "x",
+            DemoCheck::Limiter(_) => "dB GR",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DemoGate {
+    /// The setting (`project::settings`) it played under.
+    pub setting: usize,
+    pub check: DemoCheck,
+    pub value: f32,
+    pub verdict: Verdict,
+}
+
+/// `chimera-utils stim`'s hats and snare, mono at 48 kHz.
+#[derive(Clone, Debug)]
+pub struct Stims {
+    pub hats: Vec<f32>,
+    pub snare: Vec<f32>,
+}
+
+/// One demo render, P1 as heard, interleaved stereo.
+#[derive(Clone, Debug)]
+pub struct DemoRender {
+    pub setting: usize,
+    pub take: DemoTake,
+    pub stereo: Vec<f32>,
+    pub lufs: f32,
+    pub peak_dbfs: [f32; 2],
+    pub limited_db: f32,
+}
+
+/// A demo project's QA: what it holds, its settings, gates and renders.
+#[derive(Clone, Debug)]
+pub struct DemoReport {
+    pub id: DemoId,
+    pub name: String,
+    pub tries: String,
+    /// `PART 1 · NYLON (APPROVED) · POLY · CH 1`.
+    pub parts: Vec<String>,
+    /// Each setting's effects heard, in full words.
+    pub settings: Vec<String>,
+    pub gates: Vec<DemoGate>,
+    pub renders: Vec<DemoRender>,
+}
+
+impl DemoReport {
+    pub fn passes(&self) -> bool {
+        self.gates.iter().all(|g| g.verdict != Verdict::Fail)
+    }
+
+    fn file(&self, r: &DemoRender) -> String {
+        format!("{}-{}-{}.wav", self.id.stem(), r.setting + 1, r.take.slug())
+    }
+}
+
+/// A demo render's room past its last note, for a long reverb's tail.
+const DEMO_TAIL_S: f32 = 4.0;
+
+/// Each setting plays every Part's `stab` and `short`, then the hats and
+/// the snare.
+pub fn demo_takes(d: &Demo) -> Vec<DemoTake> {
+    d.parts
+        .iter()
+        .flat_map(|p| [Script::Stab, Script::Short].map(|s| DemoTake::Part(p.part, s)))
+        .chain([DemoTake::Hats, DemoTake::Snare])
+        .collect()
+}
+
+/// A setting's effects, as the page names them.
+fn heard_words(s: &Setting) -> String {
+    if s.heard.is_empty() {
+        return "no effect heard".into();
+    }
+    s.heard
+        .iter()
+        .map(|e| e.label())
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// Where a stimulus starts sounding: after 10 ms or more under −80 dBFS.
+fn onsets(x: &[f32]) -> Vec<usize> {
+    let gap = (0.01 * SR) as usize;
+    let mut quiet = gap;
+    let mut out = Vec::new();
+    for (i, v) in x.iter().enumerate() {
+        if v.abs() < 1e-4 {
+            quiet += 1;
+            continue;
+        }
+        if quiet >= gap {
+            out.push(i);
+        }
+        quiet = 0;
+    }
+    out
+}
+
+/// `x` straight onto Part 1's bus through the mixer (`mix_parts`): its
+/// pair, its `sends` into the FX bus as `perf` sets it, then the master
+/// section and the limiter. Block 0 is silent, so every gain lands first.
+fn play_stim(fx_params: &FxParams, sends: [f32; FX_SENDS], x: &[f32], secs: f32) -> Take {
+    let mut perf = Performance::new();
+    perf.fx = *fx_params;
+    let mut snd = Sound::neutral(EngineType::Va);
+    snd.params.out.sends = sends;
+    **perf.edit(PartId::ALL[0]).sound = snd;
+    let shared = Box::new(AudioShared::from_performance(&perf));
+    let mut fx = Box::new(FxBus::new());
+    let mut mix = MixState::default();
+    let mut buses = Box::new([[0.0f32; BLOCK_SIZE]; MAX_PARTS]);
+    let mut sends_buf = [[0.0f32; BLOCK_SIZE]; FX_SENDS];
+    metered(block(secs) + 1, |b, dac| {
+        let from = b.saturating_sub(1) * BLOCK_SIZE;
+        let mut written = [false; MAX_PARTS];
+        written[0] = b > 0;
+        buses[0] = core::array::from_fn(|i| {
+            if b > 0 {
+                x.get(from + i).copied().unwrap_or(0.0)
+            } else {
+                0.0
+            }
+        });
+        mix_parts(
+            &buses,
+            &written,
+            &mut sends_buf,
+            &mut mix,
+            &mut fx,
+            &shared,
+            Tempo::DEFAULT,
+            SAMPLE_RATE,
+            dac,
+        );
+    })
+}
+
+/// `x` without its trailing silence.
+fn sounding(x: &[f32]) -> &[f32] {
+    let end = x.iter().rposition(|v| *v != 0.0).map_or(0, |i| i + 1);
+    &x[..end]
+}
+
+/// Every setting of `d` (`project::settings`) played: each Part's `stab`
+/// and `short` on its channel through the project as built, then the hats
+/// and the snare into the same FX bus at the Parts' most send per effect.
+/// Gates: finite, clicks, and the limiter at the chord bar (3 dB).
+pub fn demo_gates(d: &Demo, sounds: &[Source], stims: &Stims) -> Result<DemoReport, String> {
+    let project = project::build(d, sounds)?;
+    let settings = project::settings(d, sounds)?;
+    let mut sends = [0.0f32; FX_SENDS];
+    let mut parts = Vec::new();
+    let mut exempt = Vec::new();
+    for p in &d.parts {
+        let src = sounds
+            .iter()
+            .find(|s| s.name.as_str() == p.sound)
+            .expect("project::build found it");
+        let snd = to_sound(src)?;
+        for (m, v) in sends.iter_mut().zip(snd.params.out.sends) {
+            *m = m.max(v);
+        }
+        exempt.push((p.part, listen::click_exempt(&snd)));
+        parts.push(format!(
+            "PART {} · {} ({}) · {} · CH {}",
+            p.part.index() + 1,
+            p.sound,
+            src.badge(source::approval_crc(src)?).word(),
+            p.mode.disk_ident(),
+            p.channel.get() + 1
+        ));
+    }
+    let mut perf = Performance::new();
+    for p in PartId::ALL {
+        let e = perf.edit(p);
+        **e.sound = (*project.part(p).sound).clone();
+        *e.mix = project.part(p).mix;
+    }
+    let mut gates = Vec::new();
+    let mut renders = Vec::new();
+    for (i, s) in settings.iter().enumerate() {
+        perf.fx = s.fx;
+        for take in demo_takes(d) {
+            let (t, onset, ex) = match take {
+                DemoTake::Part(part, script) => {
+                    let mut p = plan(script, 60);
+                    p.secs += DEMO_TAIL_S;
+                    let ch = perf.part(part).mix.channel;
+                    let on: Vec<usize> = p
+                        .hits
+                        .iter()
+                        .map(|h| block(h.on) * BLOCK_SIZE + LATE)
+                        .collect();
+                    let ex = exempt.iter().find(|e| e.0 == part).and_then(|e| e.1);
+                    (play_on(&perf, ch, &p), on, ex)
+                }
+                DemoTake::Hats | DemoTake::Snare => {
+                    let x = sounding(if take == DemoTake::Hats {
+                        &stims.hats
+                    } else {
+                        &stims.snare
+                    });
+                    let secs = x.len() as f32 / SR + DEMO_TAIL_S;
+                    // Block 0 silent, and the limiter's block late.
+                    let on = onsets(x)
+                        .into_iter()
+                        .map(|o| o + BLOCK_SIZE + LATE)
+                        .collect();
+                    (play_stim(&s.fx, sends, x, secs), on, None)
+                }
+            };
+            let bad = t.stereo.iter().filter(|v| !v.is_finite()).count();
+            let mut gate = |check, (value, verdict)| {
+                gates.push(DemoGate {
+                    setting: i,
+                    check,
+                    value,
+                    verdict,
+                })
+            };
+            gate(DemoCheck::Finite(take), (bad as f32, verdict(bad == 0)));
+            gate(DemoCheck::Clicks(take), clicks(&t.mono(), &onset, ex));
+            gate(
+                DemoCheck::Limiter(take),
+                (t.reduced_db, verdict(t.reduced_db <= LIMIT_CHORD_DB)),
+            );
+            let r = heard(Audition::Script(Script::Stab), t, &[], None);
+            renders.push(DemoRender {
+                setting: i,
+                take,
+                lufs: r.lufs,
+                peak_dbfs: r.peak_dbfs,
+                limited_db: gates.last().map_or(0.0, |g| g.value),
+                stereo: r.stereo,
+            });
+        }
+    }
+    Ok(DemoReport {
+        id: d.id,
+        name: d.name.as_str().into(),
+        tries: d.tries.clone(),
+        parts,
+        settings: settings.iter().map(heard_words).collect(),
+        gates,
+        renders,
+    })
+}
+
+/// `report.txt`'s demo lines: each project's gates by setting.
+pub fn demo_text(demos: &[DemoReport]) -> String {
+    let mut o = String::new();
+    for d in demos {
+        let ok = if d.passes() { "PASS" } else { "FAIL" };
+        let _ = writeln!(o, "{} {}  {ok}", d.id.stem(), d.name);
+        for (i, s) in d.settings.iter().enumerate() {
+            let _ = writeln!(o, "  setting {}: {s}", i + 1);
+            for g in d.gates.iter().filter(|g| g.setting == i) {
+                let v = match &g.verdict {
+                    Verdict::Pass => "PASS".to_string(),
+                    Verdict::Fail => "FAIL".to_string(),
+                    Verdict::Exempt(why) => format!("EXEMPT ({why})"),
+                };
+                let _ = writeln!(
+                    o,
+                    "    {:<22} {:>8.2} {:<6} {v}",
+                    g.check.label(),
+                    g.value,
+                    g.check.unit()
+                );
+            }
+        }
+    }
+    if !demos.is_empty() {
+        let pass = demos.iter().all(DemoReport::passes);
+        let _ = writeln!(
+            o,
+            "{} demo projects: {}",
+            demos.len(),
+            if pass { "all pass" } else { "FAIL" }
+        );
+    }
+    o
+}
+
+/// A passing demo's row in the DEMO PROJECTS section.
+fn demo_row(d: &DemoReport) -> Row {
+    let mut lines = vec![(format!("What to try: {}", d.tries), false)];
+    lines.push((d.id.stem(), false));
+    lines.extend(d.parts.iter().map(|p| (p.clone(), false)));
+    for g in &d.gates {
+        if let Verdict::Exempt(why) = &g.verdict {
+            lines.push((format!("{}: {why}", g.check.label()), true));
+        }
+    }
+    Row {
+        title: d.name.clone(),
+        badge: None,
+        lines,
+        facts: Vec::new(),
+        players: d
+            .renders
+            .iter()
+            .map(|r| Player {
+                label: format!("{} · {}", r.take.label(), d.settings[r.setting]),
+                file: format!("renders/{}", d.file(r)),
+                info: format!(
+                    "{:.1} LUFS · peak L {:.1} · R {:.1} dBFS · limiter {:.1} dB",
+                    r.lufs, r.peak_dbfs[0], r.peak_dbfs[1], r.limited_db
+                ),
+                flag: false,
+            })
+            .collect(),
+        section: Section::Demos,
+    }
 }

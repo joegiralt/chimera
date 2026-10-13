@@ -763,7 +763,7 @@ fn scratch_ledger(name: &str) -> std::path::PathBuf {
 #[test]
 fn a_failing_sound_is_skipped_from_the_page() {
     let d = scratch_ledger("ledger-page");
-    assert!(qa::write(&d, &[report(true, false)], &[], &[], true).unwrap());
+    assert!(qa::write(&d, &[report(true, false)], &[], &[], &[], true).unwrap());
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     assert!(page.contains("TEST PAD") && page.contains("A TEST PAD: SLOW FILTER"));
     assert!(page.contains("POLY") && page.contains("-11.0 LUFS"));
@@ -786,6 +786,7 @@ fn a_failing_sound_is_skipped_from_the_page() {
             &[report(true, false), report(true, true)],
             &[],
             &[],
+            &[],
             true
         )
         .unwrap()
@@ -799,7 +800,7 @@ fn a_failing_sound_is_skipped_from_the_page() {
     bad.id = source::parse(&BASE.replace("S9100002", "S9100003"), "b.toml").unwrap()[0].id;
     // An old render of it, from a run when it passed.
     std::fs::write(d.join("renders/S9100003-long.wav"), b"old").unwrap();
-    assert!(!qa::write(&d, &[report(true, false), bad], &[], &[], true).unwrap());
+    assert!(!qa::write(&d, &[report(true, false), bad], &[], &[], &[], true).unwrap());
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     assert!(
         page.contains("<h3>TEST PAD") && !page.contains("<h3>BAD PAD"),
@@ -826,9 +827,9 @@ fn a_failing_sound_is_skipped_from_the_page() {
 
     // A failing run without --wav removes the old page: it could show the
     // failing Sound as passed.
-    assert!(qa::write(&d, &[report(true, false)], &[], &[], true).unwrap());
+    assert!(qa::write(&d, &[report(true, false)], &[], &[], &[], true).unwrap());
     assert!(d.join("listening.html").is_file());
-    assert!(!qa::write(&d, &[report(false, false)], &[], &[], false).unwrap());
+    assert!(!qa::write(&d, &[report(false, false)], &[], &[], &[], false).unwrap());
     assert!(!d.join("listening.html").exists(), "no stale page");
 }
 
@@ -1119,7 +1120,12 @@ fn badges_follow_the_source_and_a_placeholder_has_no_players() {
     let mut a = report(true, false);
     a.badge = source::Badge::Approved;
     a.name = "OLD PAD".into();
-    let page = qa::page(&[report(true, false), a], &[], std::slice::from_ref(ph));
+    let page = qa::page(
+        &[report(true, false), a],
+        &[],
+        std::slice::from_ref(ph),
+        &[],
+    );
     let at = |w: &str| page.find(w).unwrap_or_else(|| panic!("{w}: {page}"));
     assert!(at("OLD PAD") < at("TEST PAD"), "approved first");
     assert!(at("TEST PAD") < at("VOWEL CHOIR"), "placeholders last");
@@ -1169,7 +1175,7 @@ fn approval_binds_to_the_sounds_crc() {
     assert_eq!((r.badge, r.changed), (Badge::New, Some(Round(2))));
     // BASE is not levelled: only a passing Sound is paged.
     r.gates.retain(|g| g.verdict != Verdict::Fail);
-    let page = qa::page(std::slice::from_ref(&r), &[], &[]);
+    let page = qa::page(std::slice::from_ref(&r), &[], &[], &[]);
     assert!(
         page.contains("class=\"flag\">CHANGED SINCE ROUND 2: re-listen"),
         "{page}"
@@ -1261,7 +1267,7 @@ fn ledger_never_tmp() {
         std::path::PathBuf::from(ok)
     );
     // `write` refuses one too.
-    assert!(qa::write("/tmp/showcase-qa".as_ref(), &[], &[], &[], false).is_err());
+    assert!(qa::write("/tmp/showcase-qa".as_ref(), &[], &[], &[], &[], false).is_err());
 }
 
 #[test]
@@ -1380,7 +1386,7 @@ fn listening_renders_are_wet_and_gates_dry() {
     // On the page whatever this unlevelled Sound's loudness reads.
     let mut gw = gw;
     gw.gates.retain(|g| g.verdict != Verdict::Fail);
-    let page = qa::page(&[gw], &[], &[]);
+    let page = qa::page(&[gw], &[], &[], &[]);
     assert!(page.contains("LONG WITH CHORUS"), "full words");
     let all = &source::parse(
         &format!("{BASE}OUT.SEND1 = \"0.1\"\nOUT.SEND2 = \"0.1\"\nOUT.SEND3 = \"0.1\"\n"),
@@ -1513,7 +1519,7 @@ fn listening_page_is_stereo_and_honest() {
         with: vec!["REVERB"],
         limited_db: Some(2.4),
     });
-    assert!(qa::write(&d, &[r], &[], &[], true).unwrap());
+    assert!(qa::write(&d, &[r], &[], &[], &[], true).unwrap());
     let w = hound::WavReader::open(d.join("renders/S9100002-long.wav")).unwrap();
     assert_eq!(w.spec().channels, 2, "the listening WAVs keep their width");
     assert_eq!(w.len(), 2 * 24_000);
@@ -1781,7 +1787,7 @@ fn page_plays_the_phrase_first_and_flags_its_limiter() {
     };
     let mut r = report(true, false);
     r.renders.insert(0, phrase(Phrase::Pad, 2.5));
-    assert!(qa::write(&d, &[r.clone()], &[], &[], true).unwrap());
+    assert!(qa::write(&d, &[r.clone()], &[], &[], &[], true).unwrap());
     assert!(d.join("renders/S9100002-phrase-pad.wav").is_file());
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     let (ph, long) = (
@@ -1792,11 +1798,11 @@ fn page_plays_the_phrase_first_and_flags_its_limiter() {
     assert!(page.contains("limiter 2.5 dB") && !page.contains("over the"));
     // A pad over the 3 dB chord bar; a bass over the 1 dB bar.
     r.renders[0] = phrase(Phrase::Pad, 3.4);
-    qa::write(&d, &[r.clone()], &[], &[], true).unwrap();
+    qa::write(&d, &[r.clone()], &[], &[], &[], true).unwrap();
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     assert!(page.contains("limiter 3.4 dB, over the 3 dB bar"), "{page}");
     r.renders[0] = phrase(Phrase::Bass, 1.4);
-    qa::write(&d, &[r], &[], &[], true).unwrap();
+    qa::write(&d, &[r], &[], &[], &[], true).unwrap();
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     assert!(page.contains("BASS PHRASE WITH CHORUS"));
     assert!(page.contains("limiter 1.4 dB, over the 1 dB bar"), "{page}");
@@ -1889,7 +1895,7 @@ fn a_va_ring_sounds_clicks_are_left_to_the_ear() {
     // On the page (its other gates aside: this test Sound is not levelled).
     let mut shown = r.clone();
     shown.gates.retain(|g| matches!(g.check, Check::Clicks(_)));
-    let page = qa::page(&[shown], &[], &[]);
+    let page = qa::page(&[shown], &[], &[], &[]);
     assert!(
         page.contains(&format!("class=\"flag\">clicks long: {why}")),
         "{page}"
@@ -1923,7 +1929,7 @@ fn an_engine_change_flags_an_approved_sound() {
     let mut r = report(true, false);
     r.badge = source::Badge::Approved;
     let flagged = |r: &qa::Report| {
-        qa::page(std::slice::from_ref(r), &[], &[])
+        qa::page(std::slice::from_ref(r), &[], &[], &[])
             .contains("class=\"flag\">AUDIO CHANGED BY ENGINE UPDATE: re-listen")
     };
 
@@ -1943,7 +1949,7 @@ fn an_engine_change_flags_an_approved_sound() {
     assert_eq!(a, Audition::Script(Script::Long));
     assert!((db + 19.08).abs() < 0.2, "{db}");
     assert!(flagged(&r));
-    let page = qa::page(std::slice::from_ref(&r), &[], &[]);
+    let page = qa::page(std::slice::from_ref(&r), &[], &[], &[]);
     assert!(page.contains(">APPROVED<"), "the badge stays");
     let txt = qa::report_text(std::slice::from_ref(&r), &[]);
     assert!(
@@ -2027,7 +2033,7 @@ fn bisected_causes_name_the_change_and_coherent_ones_lead() {
     let mut near = drift.clone();
     near.name = "NEAR PAD".into();
     near.baseline.as_mut().unwrap().causes[0].1 = -2.0;
-    let page = qa::page(&[near.clone(), other.clone(), drift.clone()], &[], &[]);
+    let page = qa::page(&[near.clone(), other.clone(), drift.clone()], &[], &[], &[]);
     let at = |w: &str| page.find(w).unwrap_or_else(|| panic!("{w}: {page}"));
     assert!(at("<h3>OTHER PAD") < at("<h3>TEST PAD"), "Source order");
     assert!(at("<h3>TEST PAD") < at("<h3>NEAR PAD"), "coherent first");
@@ -2061,4 +2067,430 @@ fn a_trim_backs_off_until_the_limiter_passes() {
         qa::backed_off(4.1, |_| Ok(true)).is_err(),
         "never past 6 dB"
     );
+}
+
+// ── demo projects (spec § 5) ──
+
+use chimera_core::MidiChannel;
+use chimera_core::dsp::chorus::ChorusMode;
+use chimera_core::dsp::reverb::ReverbType;
+use chimera_core::project::{Origin, PartId, Project, ProjectCheck, ProjectDecoder};
+use chimera_core::storage::{Check as _, DecodeInPlace, Framer};
+use chimera_desktop::factory_sounds::project;
+
+/// Two public Sounds a demo names: TEST PAD (into the reverb) and TEST TWO
+/// (into the chorus and the delay).
+fn demo_sounds() -> Vec<source::Source> {
+    let two = BASE
+        .replace("S9100002", "S9100003")
+        .replace("TEST PAD\"", "TEST TWO\"")
+        .replace("\"1200\"", "\"900\"");
+    // Trimmed under the chord bar, as a levelled Sound is.
+    run(
+        &format!("{BASE}OUT.SEND3 = \"0.5\"\n\n{two}OUT.SEND1 = \"0.6\"\nOUT.SEND2 = \"0.4\"\n")
+            .replace("trim = \"0\"", "trim = \"-18\""),
+    )
+    .unwrap()
+}
+
+/// A valid demo; each bad test changes one line.
+const DEMO: &str = r#"[[project]]
+id = "P0000001"
+name = "REVERB ROOMS"
+try = "Turn TYPE through QUAD, ROOM and HALL"
+fx.REVERB.TYPE = "ROOM"
+part.1 = "TEST PAD, POLY, CH 1"
+part.2 = "TEST TWO, POLY, CH 2"
+"#;
+
+fn demo_with(n: usize, with: &str) -> String {
+    DEMO.lines()
+        .enumerate()
+        .map(|(i, l)| if i + 1 == n { with } else { l })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Parse, check against `sounds` and build, as `build::public` runs them.
+fn run_demo(text: &str, sounds: &[source::Source]) -> Result<Vec<u8>, String> {
+    let demos = project::parse(text)?;
+    project::check(&demos, sounds)?;
+    let (files, _) = build::demo_files(&demos, sounds)?;
+    Ok(files.into_iter().next().expect("one demo").1)
+}
+
+fn demo_fails(text: &str, sounds: &[source::Source], line: usize, what: &str) {
+    let e = run_demo(text, sounds).expect_err("a bad demo must fail");
+    assert!(
+        e.contains(&format!("projects.toml:{line}:")) && e.contains(what),
+        "want projects.toml:{line} naming {what}, got: {e}"
+    );
+}
+
+/// The project file read back as a load reads it: checked, then applied.
+fn decoded(bytes: &[u8]) -> Box<Project> {
+    let (mut p, _) = Project::boxed();
+    let mut f = Framer::new(bytes.len() as u32).unwrap();
+    let mut c = ProjectCheck::new();
+    f.push(bytes, &mut |e| c.event(e)).unwrap();
+    f.finish().unwrap();
+    c.end().unwrap();
+    let mut f = Framer::new(bytes.len() as u32).unwrap();
+    let mut d = ProjectDecoder::new_for_test(&mut p);
+    f.push(bytes, &mut |e| d.apply(e)).unwrap();
+    f.finish().unwrap();
+    DecodeInPlace::finish(&mut d).unwrap();
+    p
+}
+
+#[test]
+fn demo_round_trips() {
+    let sounds = demo_sounds();
+    let bytes = run_demo(DEMO, &sounds).unwrap();
+    let (files, entries) = build::demo_files(&project::parse(DEMO).unwrap(), &sounds).unwrap();
+    assert_eq!(files[0].0, "P0000001.A");
+    assert_eq!(entries[0].name, "REVERB ROOMS");
+    let p = decoded(&bytes);
+    assert_eq!(p.meta().name().as_str(), "REVERB ROOMS");
+    assert_eq!(p.perf().fx.reverb.kind, ReverbType::Room);
+    for (i, s) in sounds.iter().enumerate() {
+        let part = p.part(PartId::ALL[i]);
+        let want = source::to_sound(s).unwrap();
+        assert_eq!(part.sound.name.as_str(), s.name.as_str(), "Part {}", i + 1);
+        // The Part carries the Sound whole, its own sends with it.
+        assert_eq!(sound_crc(&part.sound), sound_crc(&want), "Part {}", i + 1);
+        assert_eq!(part.sound.params.out.sends, want.params.out.sends);
+        assert_eq!(part.mix.channel, MidiChannel::new(i as u8).unwrap());
+        assert_eq!(part.mix.mode, PartMode::Poly);
+        // From a pool slot, as a library load leaves it.
+        assert!(
+            matches!(part.origin(), Origin::Slot { .. }),
+            "Part {}",
+            i + 1
+        );
+    }
+}
+
+#[test]
+fn demo_part_unknown_sound_fails() {
+    let sounds = demo_sounds();
+    demo_fails(
+        &demo_with(7, "part.2 = \"NO SUCH, POLY, CH 2\""),
+        &sounds,
+        7,
+        "NO SUCH",
+    );
+    // A placeholder has no Sound to hold.
+    let ph = run(&format!(
+        "{}status = \"placeholder\"\n",
+        BASE.replace("S9100002", "S9100004")
+            .replace("TEST PAD\"", "LATER PAD\"")
+    ))
+    .unwrap();
+    let all: Vec<_> = sounds.iter().cloned().chain(ph).collect();
+    demo_fails(
+        &demo_with(6, "part.1 = \"LATER PAD, POLY, CH 1\""),
+        &all,
+        6,
+        "LATER PAD",
+    );
+    for (bad, what) in [
+        ("part.2 = \"TEST TWO, POLY\"", "CH"),
+        ("part.2 = \"TEST TWO, STEREO, CH 2\"", "POLY or MONO"),
+        ("part.2 = \"TEST TWO, POLY, CH 17\"", "CH 1-16"),
+        ("part.7 = \"TEST TWO, POLY, CH 2\"", "part.1-part.6"),
+        ("part.1 = \"TEST TWO, POLY, CH 2\"", "part.1 twice"),
+    ] {
+        demo_fails(&demo_with(7, bad), &sounds, 7, what);
+    }
+    demo_fails(
+        &demo_with(5, "fx.REVERB.KIND = \"ROOM\""),
+        &sounds,
+        5,
+        "fx.REVERB.KIND",
+    );
+    demo_fails(
+        &demo_with(5, "fx.REVERB.TYPE = \"CAVE\""),
+        &sounds,
+        5,
+        "CAVE",
+    );
+    demo_fails(
+        &demo_with(5, "fx.FILTER.CUTOFF = \"900\""),
+        &sounds,
+        5,
+        "fx.FILTER",
+    );
+    demo_fails(&demo_with(4, "# no try"), &sounds, 1, "try");
+}
+
+#[test]
+fn demo_part_private_sound_fails() {
+    let mut sounds = demo_sounds();
+    // A port's id (`privacy::PORT_IDS`), however it got into the list.
+    let port = run(&BASE
+        .replace("S9100002", "S9100010")
+        .replace("TEST PAD\"", "PORT ONE\""));
+    assert!(port.is_err(), "the public build refuses the port itself");
+    let port = source::parse(
+        &BASE
+            .replace("S9100002", "S9100010")
+            .replace("TEST PAD\"", "PORT ONE\""),
+        "ports.toml",
+    )
+    .unwrap();
+    sounds.extend(port);
+    demo_fails(
+        &demo_with(7, "part.2 = \"PORT ONE, POLY, CH 2\""),
+        &sounds,
+        7,
+        "private",
+    );
+    // So is any Source with a `from` line.
+    let mut from = source::parse(
+        &BASE
+            .replace("S9100002", "S9100030")
+            .replace("TEST PAD\"", "FROM ONE\""),
+        "ports.toml",
+    )
+    .unwrap();
+    from[0].from = Some((9, "tx81z 0123abcd #1".into()));
+    sounds.extend(from);
+    demo_fails(
+        &demo_with(7, "part.2 = \"FROM ONE, POLY, CH 2\""),
+        &sounds,
+        7,
+        "private",
+    );
+}
+
+#[test]
+fn demo_id_outside_1_to_9_fails() {
+    let sounds = demo_sounds();
+    for bad in ["P0000000", "P0000010", "P0000099", "S9100001", "P1"] {
+        demo_fails(
+            &demo_with(2, &format!("id = \"{bad}\"")),
+            &sounds,
+            2,
+            "P0000001-P0000009",
+        );
+    }
+    // Two demos on one id: the second fails at its id.
+    demo_fails(
+        &format!("{DEMO}\n{}", DEMO.replace("REVERB ROOMS", "OTHER ROOMS")),
+        &sounds,
+        10,
+        "P0000001",
+    );
+    run_demo(&demo_with(2, "id = \"P0000009\""), &sounds).unwrap();
+}
+
+#[test]
+fn mono_part_mode_set() {
+    let sounds = demo_sounds();
+    let p =
+        decoded(&run_demo(&demo_with(7, "part.2 = \"TEST TWO, MONO, CH 3\""), &sounds).unwrap());
+    let two = p.part(PartId::ALL[1]);
+    assert_eq!(two.mix.mode, PartMode::Mono);
+    assert_eq!(two.mix.channel, MidiChannel::new(2).unwrap());
+    assert_eq!(p.part(PartId::ALL[0]).mix.mode, PartMode::Poly);
+}
+
+#[test]
+fn manifest_lists_each_demo_with_its_trailer_crc() {
+    let sounds = demo_sounds();
+    let two = format!(
+        "{DEMO}\n{}",
+        DEMO.replace("P0000001", "P0000002")
+            .replace("REVERB ROOMS", "REVERB BLOOM")
+            .replace("\"ROOM\"", "\"BLOOM\"")
+    );
+    let demos = project::parse(&two).unwrap();
+    let (files, entries) = build::demo_files(&demos, &sounds).unwrap();
+    let (_, mut man) = build::files(&sounds, &STAMP).unwrap();
+    man.projects = entries;
+    let json = man.json();
+    for (f, e) in files.iter().zip(&man.projects) {
+        let crc = u32::from_le_bytes(f.1[f.1.len() - 4..].try_into().unwrap());
+        assert_eq!(e.crc, crc, "{}", f.0);
+        let line = format!(
+            "{{\"id\": \"{}\", \"name\": \"{}\", \"crc\": \"{crc:08X}\"}}",
+            &f.0[..8],
+            e.name
+        );
+        assert!(json.contains(&line), "{line} in {json}");
+    }
+    assert!(json.contains("\"projects\": ["), "{json}");
+    assert_ne!(man.projects[0].crc, man.projects[1].crc);
+}
+
+/// The spec's four demos (§ 5), each `hear` line a "what to try".
+fn spec_demos() -> String {
+    r#"[[project]]
+id = "P0000001"
+name = "REVERB ROOMS"
+try = "Turn TYPE through QUAD, ROOM and HALL"
+fx.REVERB.TYPE = "ROOM"
+hear.REVERB.TYPE = "QUAD, HALL"
+part.1 = "TEST PAD, POLY, CH 1"
+
+[[project]]
+id = "P0000002"
+name = "REVERB BLOOM"
+try = "Turn TYPE to REVERSE"
+fx.REVERB.TYPE = "BLOOM"
+hear.REVERB.TYPE = "REVERSE"
+part.1 = "TEST PAD, POLY, CH 1"
+
+[[project]]
+id = "P0000003"
+name = "REVERB GATE"
+try = "Gated percussive tails"
+fx.REVERB.TYPE = "GATE"
+part.1 = "TEST PAD, POLY, CH 1"
+
+[[project]]
+id = "P0000004"
+name = "CHORUS DELAY"
+try = "CHORUS I, II and I+II; delay feedback"
+fx.CHORUS.MODE = "JUNO_BOTH"
+hear.CHORUS.MODE = "JUNO_I, JUNO_II"
+part.1 = "TEST TWO, POLY, CH 1"
+part.2 = "TEST TWO, MONO, CH 2"
+"#
+    .into()
+}
+
+#[test]
+fn demo_render_plan_hears_every_effect() {
+    use project::Effect;
+    let sounds = demo_sounds();
+    let demos = project::parse(&spec_demos()).unwrap();
+    project::check(&demos, &sounds).unwrap();
+    assert_eq!(
+        project::unheard(&demos, &sounds).unwrap(),
+        Vec::<Effect>::new()
+    );
+
+    // Each setting (its own FX, then one per `hear` value) plays every
+    // Part's stab and short, then the hats and the snare.
+    let one = &demos[0];
+    let settings = project::settings(one, &sounds).unwrap();
+    assert_eq!(settings.len(), 3);
+    assert_eq!(settings[0].heard, vec![Effect::Reverb(ReverbType::Room)]);
+    assert_eq!(settings[1].heard, vec![Effect::Reverb(ReverbType::Quad)]);
+    assert_eq!(settings[2].heard, vec![Effect::Reverb(ReverbType::Hall)]);
+    let takes = qa::demo_takes(&demos[3]);
+    assert_eq!(takes.len(), 2 * 2 + 2);
+    assert!(takes.contains(&qa::DemoTake::Part(PartId::ALL[1], Script::Stab)));
+    assert!(takes.contains(&qa::DemoTake::Part(PartId::ALL[1], Script::Short)));
+    assert!(takes.contains(&qa::DemoTake::Hats));
+    assert!(takes.contains(&qa::DemoTake::Snare));
+    let four = project::settings(&demos[3], &sounds).unwrap();
+    assert_eq!(
+        four[0].heard,
+        vec![Effect::Chorus(ChorusMode::JunoBoth), Effect::Delay]
+    );
+
+    // Without the `hear` lines, what goes unheard is named in full words.
+    let bare: String = spec_demos()
+        .lines()
+        .filter(|l| !l.starts_with("hear."))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    let gaps = project::unheard(&project::parse(&bare).unwrap(), &sounds).unwrap();
+    let words: Vec<String> = gaps.iter().map(|e| e.label()).collect();
+    assert_eq!(
+        words,
+        [
+            "REVERB QUAD",
+            "REVERB HALL",
+            "REVERB REVERSE",
+            "CHORUS I",
+            "CHORUS II"
+        ]
+    );
+    // An effect nobody sends to is not heard, whatever its TYPE.
+    let dry = demo_with(6, "part.1 = \"TEST TWO, POLY, CH 1\"");
+    let d = project::parse(&dry.replace("part.2 = \"TEST TWO, POLY, CH 2\"", "")).unwrap();
+    let s = project::settings(&d[0], &sounds).unwrap();
+    assert!(
+        !s[0].heard.contains(&Effect::Reverb(ReverbType::Room)),
+        "{:?}",
+        s[0].heard
+    );
+    // A `hear` value that is not one fails at its line.
+    demo_fails(
+        &format!("{DEMO}hear.REVERB.TYPE = \"QUAD, CAVE\"\n"),
+        &sounds,
+        8,
+        "CAVE",
+    );
+}
+
+#[test]
+fn demo_renders_gate_and_sit_on_the_page() {
+    let sounds = demo_sounds();
+    let demos = project::parse(DEMO).unwrap();
+    // A 50 ms Hann-windowed burst: smooth at both ends, as a stimulus is.
+    let burst = |hz: f32| -> Vec<f32> {
+        let n = 2_400;
+        let mut x: Vec<f32> = (0..n)
+            .map(|i| {
+                let w = 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / n as f32).cos();
+                0.25 * w * (std::f32::consts::TAU * hz * i as f32 / 48_000.0).sin()
+            })
+            .collect();
+        x.resize(24_000, 0.0);
+        x
+    };
+    let stims = qa::Stims {
+        hats: burst(5_000.0),
+        snare: burst(200.0),
+    };
+    let r = qa::demo_gates(&demos[0], &sounds, &stims).unwrap();
+    assert!(r.passes(), "{:#?}", r.gates);
+    // Each Part's stab and short and the two stimuli, through its own FX.
+    assert_eq!(r.renders.len(), 2 * 2 + 2);
+    assert!(r.gates.iter().any(
+        |g| g.check == qa::DemoCheck::Limiter(qa::DemoTake::Part(PartId::ALL[0], Script::Stab))
+    ));
+    let d = scratch_ledger("ledger-demo");
+    assert!(
+        qa::write(
+            &d,
+            &[report(true, false)],
+            &[],
+            &[],
+            std::slice::from_ref(&r),
+            true
+        )
+        .unwrap()
+    );
+    let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
+    assert!(page.contains("<h2>DEMO PROJECTS</h2>"), "{page}");
+    assert!(page.contains("Turn TYPE through QUAD, ROOM and HALL"));
+    assert!(
+        page.contains("PART 1 · TEST PAD (NEW) · POLY · CH 1"),
+        "{page}"
+    );
+    assert!(
+        page.contains("REVERB ROOM"),
+        "the setting heard, in full words"
+    );
+    let wavs: Vec<_> = std::fs::read_dir(d.join("renders"))
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.starts_with("P0000001-"))
+        .collect();
+    assert_eq!(wavs.len(), 6, "{wavs:?}");
+    let txt = std::fs::read_to_string(d.join("report.txt")).unwrap();
+    assert!(txt.contains("P0000001 REVERB ROOMS  PASS"), "{txt}");
+
+    // A failing project render keeps it off the page and fails the run.
+    let mut bad = r.clone();
+    bad.gates[0].verdict = Verdict::Fail;
+    assert!(!qa::write(&d, &[report(true, false)], &[], &[], &[bad], true).unwrap());
+    let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
+    assert!(!page.contains("Turn TYPE through"), "{page}");
 }

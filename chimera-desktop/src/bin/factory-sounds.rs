@@ -1,19 +1,22 @@
 //! `just factory-sounds`: the public factory Sounds (spec § 3, ADR 0134)
-//! from `tools/factory-sounds/` into `target/factory-sounds/public/`.
+//! and the demo projects (spec § 5) from `tools/factory-sounds/` into
+//! `target/factory-sounds/public/`.
 //! `factory-sounds fmt [--level]` rewrites each Source with its display
 //! comments (`--level`: each `trim` centred on −11 LUFS). `factory-sounds
 //! qa [--wav] [--baseline <dir>]` renders and gates every Sound (spec § 4)
-//! into the ledger: `report.txt`; with `--wav` the renders and
-//! `listening.html` (every passing Sound, badged, and the placeholders);
+//! and every demo project in `projects.toml` (spec § 5: each setting's
+//! Parts, then `chimera-utils stim`'s hats and snare, through its FX) into
+//! the ledger: `report.txt`; with `--wav` the renders and `listening.html`
+//! (every passing Sound, badged, the placeholders and the demos);
 //! with `--baseline` each APPROVED Sound's renders against the WAVs in
 //! `<dir>`, flagged AUDIO CHANGED over −40 dB.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use chimera_core::storage::BuildStamp;
 use chimera_desktop::factory_sounds::build::{self, SOUND_FILES};
-use chimera_desktop::factory_sounds::{qa, source};
+use chimera_desktop::factory_sounds::{project, qa, source};
 
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -90,9 +93,13 @@ fn run_build() -> Result<(), String> {
             e.sound
         );
     }
+    for e in &man.projects {
+        println!("{}.A  {:<16}  {:08X}", e.id.stem(), e.name, e.crc);
+    }
     println!(
-        "{} Sounds, built {}\n{}",
+        "{} Sounds, {} demo projects, built {}\n{}",
         man.sounds.len(),
+        man.projects.len(),
         man.stamp,
         out.display()
     );
@@ -154,12 +161,82 @@ fn run_qa(wav: bool, baseline: Option<PathBuf>) -> Result<(), String> {
     let bands: Vec<_> = reports.iter().map(|r| r.bands).collect();
     let samey = qa::samey(&bands);
     let ledger = qa::ledger()?;
-    let pass = qa::write(&ledger, &reports, &samey, &placeholders, wav)?;
+    let demos = demo_reports(&all, &ledger)?;
+    let pass = qa::write(&ledger, &reports, &samey, &placeholders, &demos, wav)?;
     print!("{}", qa::report_text(&reports, &samey));
+    print!("{}", qa::demo_text(&demos));
     println!("{}", ledger.display());
     if pass {
         Ok(())
     } else {
         Err("a gate failed: see report.txt".into())
     }
+}
+
+/// Each demo project rendered and gated (`qa::demo_gates`), once every
+/// effect is heard across them (`project::unheard`); none: none.
+fn demo_reports(sounds: &[source::Source], ledger: &Path) -> Result<Vec<qa::DemoReport>, String> {
+    let demos = build::demos(&dir())?;
+    if demos.is_empty() {
+        return Ok(Vec::new());
+    }
+    project::check(&demos, sounds)?;
+    let gaps = project::unheard(&demos, sounds)?;
+    if !gaps.is_empty() {
+        let words: Vec<String> = gaps.iter().map(|e| e.label()).collect();
+        return Err(format!(
+            "{}: no demo setting plays {} (fx. or hear. lines)",
+            project::FILE,
+            words.join(", ")
+        ));
+    }
+    let stims = stims(&ledger.join("stimuli"))?;
+    demos
+        .iter()
+        .map(|d| qa::demo_gates(d, sounds, &stims))
+        .collect()
+}
+
+/// `chimera-utils stim`'s hats and snare from `dir`, written there first
+/// when missing.
+fn stims(dir: &Path) -> Result<qa::Stims, String> {
+    let wav = |n: &str| dir.join(format!("{n}.wav"));
+    if !wav("hats").is_file() || !wav("snare").is_file() {
+        let ok = Command::new("cargo")
+            .args([
+                "run",
+                "-q",
+                "--profile",
+                "utils",
+                "-p",
+                "chimera-utils",
+                "--",
+                "stim",
+            ])
+            .arg(dir)
+            .current_dir(ROOT)
+            .status()
+            .map_err(|e| format!("chimera-utils stim: {e}"))?
+            .success();
+        if !ok {
+            return Err("chimera-utils stim failed".into());
+        }
+    }
+    let read = |n: &str| -> Result<Vec<f32>, String> {
+        let p = wav(n);
+        let err = |e: hound::Error| format!("{}: {e}", p.display());
+        let r = hound::WavReader::open(&p).map_err(err)?;
+        let spec = r.spec();
+        if spec.channels != 1 || spec.sample_rate != 48_000 {
+            return Err(format!("{}: not mono at 48 kHz", p.display()));
+        }
+        let full = (1i64 << (spec.bits_per_sample - 1)) as f32;
+        r.into_samples::<i32>()
+            .map(|v| v.map(|v| v as f32 / full).map_err(err))
+            .collect()
+    };
+    Ok(qa::Stims {
+        hats: read("hats")?,
+        snare: read("snare")?,
+    })
 }

@@ -134,7 +134,7 @@ Stamp: `Build` carries the version and the commit the Sources were built from; t
 
 The phrase plays on the Sound's demo mode, with its sends, as a stereo WAV. It is a listening render, not a gate: its limiter reading is shown and flagged over the 3 dB chord bar for `pad` and `sweep` and the 1 dB bar otherwise. A phrase that is not finite fails the run. The scripts above stay the gates.
 
-Effects demos: each project's Parts play `stab` and `short` through every reverb TYPE (QUAD, ROOM, HALL, BLOOM, GATE, REVERSE), CHORUS I, II and I+II, and the delay. Then `chimera-utils stim`'s hats and snare go through the same FX bus.
+Effects demos: each project's Parts play `stab` and `short` on their channels through the project's own FX and each `hear` setting (§ 5), so that across the demos every reverb TYPE (QUAD, ROOM, HALL, BLOOM, GATE, REVERSE), CHORUS I, II and I+II, and the delay is heard. Then `chimera-utils stim`'s hats and snare go through the same FX bus, at the Parts' most send per effect.
 
 **Gates**, each printed per Sound in `report.txt`:
 
@@ -170,6 +170,7 @@ part.2 = "GAMELAN, POLY, CH 2"
 | P0000003 | REVERB GATE | REVERB GATE | GROWL BASS, RING LEAD, VOWEL BUZZ | Gated percussive tails |
 | P0000004 | CHORUS DELAY | CHORUS I+II, delay 3/16 | TAPE DRIFT, GLIDE BASS (MONO), FIFTH SLIDE (MONO) | CHORUS I, II and I+II; delay feedback |
 
+- **Keys.** `try` is the "What to try" line (required; the release notes and the listening page show it). `hear.<BLOCK>.<PARAM> = "QUAD, HALL"` adds a QA render setting per value over the project's own FX, so QA plays what `try` invites. A Part not named stays NEW's. `qa` refuses a demo set in which any reverb TYPE, CHORUS mode or the delay goes unheard (an effect is heard when some Part's own send reaches it and its return is up). Each setting's takes are gated finite, clicks, and limiter ≤ 3 dB, and listed under DEMO PROJECTS on the page.
 - **Public Sounds only.** A demo project never holds a port, so the demos ship in the public set (the build refuses a `part.n` naming a private Sound). They may be recast with ports after #410.
 - **Players find them** at the top of SETTINGS › LOAD PROJECT, where they list first. Their names are their content. The release notes give the "What to try" column.
 - **Ids.** `P0000001`–`P0000009` are reserved. `ProjectId`'s save allocation becomes `max(top, 9) + 1` (one line), so a new user project never takes a demo id. A player may save over a demo (it is an ordinary project); `put-factory-sounds` restores it.

@@ -1,2 +1,14 @@
-# The effects demo projects, P0000001-P0000009 (spec § 5): `[[project]]`
-# tables, built by `just factory-sounds` once the demo build lands.
+# The effects demo projects, P0000001-P0000009 (spec § 5), built by
+# `just factory-sounds` into CHIMERA/PROJECTS/P000000n.A on NEW's template:
+#
+#   [[project]]
+#   id = "P0000001"
+#   name = "REVERB ROOMS"
+#   try = "Turn TYPE through QUAD, ROOM and HALL"   # the release notes' line
+#   fx.REVERB.TYPE = "ROOM"                         # FX by frozen idents
+#   hear.REVERB.TYPE = "QUAD, HALL"                 # a QA setting per value
+#   part.1 = "NYLON, POLY, CH 1"                    # a public Sound by name
+#
+# Each Part carries its Sound's own sends (ADR 0123). `qa` plays every
+# setting, and every reverb TYPE, CHORUS mode and the delay must be heard
+# across the demos.

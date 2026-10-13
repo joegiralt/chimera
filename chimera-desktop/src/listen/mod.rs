@@ -989,9 +989,31 @@ pub struct Player {
     pub flag: bool,
 }
 
+/// A `rows_page` section, in page order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Section {
+    Sounds,
+    /// The effects demo projects (spec § 5).
+    Demos,
+    /// The private ports.
+    Private,
+}
+
+impl Section {
+    pub const ALL: [Section; 3] = [Section::Sounds, Section::Demos, Section::Private];
+
+    fn heading(self) -> &'static str {
+        match self {
+            Section::Sounds => "SOUNDS",
+            Section::Demos => "DEMO PROJECTS",
+            Section::Private => "PRIVATE",
+        }
+    }
+}
+
 /// A row of a `rows_page`: a title and its badge, text lines (flagged
-/// lines stand out), labelled facts, a player per render. A private row
-/// goes in the PRIVATE section.
+/// lines stand out), labelled facts, a player per render, and the section
+/// it goes in.
 #[derive(Clone, Debug)]
 pub struct Row {
     pub title: String,
@@ -999,23 +1021,27 @@ pub struct Row {
     pub lines: Vec<(String, bool)>,
     pub facts: Vec<(&'static str, Vec<String>)>,
     pub players: Vec<Player>,
-    pub private: bool,
+    pub section: Section,
 }
 
 const ROWS_PAGE: &str = include_str!("rows.html");
 
 /// A static listening page over any rows (the factory Sounds'), each
-/// render a plain `<audio>` player: the folder publishes as it is. Private
-/// rows get their own PRIVATE section, only when there are any.
+/// render a plain `<audio>` player: the folder publishes as it is. Each
+/// section shows only when it has rows.
 pub fn rows_page(title: &str, intro: &str, rows: &[Row]) -> String {
     let mut out = String::new();
-    for (private, head) in [(false, "SOUNDS"), (true, "PRIVATE")] {
-        let mut it = rows.iter().filter(|r| r.private == private).peekable();
+    for section in Section::ALL {
+        let mut it = rows.iter().filter(|r| r.section == section).peekable();
         if it.peek().is_none() {
             continue;
         }
-        let class = if private { " class=\"private\"" } else { "" };
-        let _ = writeln!(out, "<section{class}><h2>{head}</h2>");
+        let class = if section == Section::Private {
+            " class=\"private\""
+        } else {
+            ""
+        };
+        let _ = writeln!(out, "<section{class}><h2>{}</h2>", section.heading());
         for r in it {
             let badge = r.badge.map_or(String::new(), |b| {
                 format!(
@@ -1225,7 +1251,7 @@ mod tests {
 
     #[test]
     fn rows_page_escapes_and_parts_private() {
-        let row = |t: &str, private| Row {
+        let row = |t: &str, private: bool| Row {
             badge: None,
             facts: Vec::new(),
             title: t.into(),
@@ -1236,7 +1262,11 @@ mod tests {
                 info: "-11.0 LUFS".into(),
                 flag: false,
             }],
-            private,
+            section: if private {
+                Section::Private
+            } else {
+                Section::Sounds
+            },
         };
         let html = rows_page("T", "I", &[row("<PAD>", false)]);
         assert!(html.contains("&lt;PAD&gt;") && html.contains("A &amp; B"));

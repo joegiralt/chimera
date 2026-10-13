@@ -679,7 +679,7 @@ pub fn trimmed(level: f32, trim: f32) -> Result<f32, String> {
 
 /// `v` into `a`: an enum by its ident, else a number the block holds
 /// exactly (never clamped or rounded: a Source says what the card stores).
-fn set(blk: &mut dyn Block, a: ValidAddr, v: &str) -> Result<(), String> {
+pub(crate) fn set(blk: &mut dyn Block, a: ValidAddr, v: &str) -> Result<(), String> {
     let id = a.spec().id;
     let key = ident(a.addr());
     if a.coded() {
@@ -822,7 +822,7 @@ fn fmt_line(line: &str, ctx: &SlotCtx) -> Option<String> {
     })
 }
 
-struct VecSink(Vec<u8>);
+pub(crate) struct VecSink(pub Vec<u8>);
 
 impl ByteSink for VecSink {
     fn put(&mut self, b: &[u8]) -> Result<(), StoreError> {
