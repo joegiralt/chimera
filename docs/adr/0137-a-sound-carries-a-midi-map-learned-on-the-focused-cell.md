@@ -52,7 +52,7 @@ The owner approved its eleven recommendations on 2026-10-13. Spec: `docs/superpo
 
 ## Consequences
 - **Flash** is ~5–8 KB, under the ~40 KB escalation line the owner accepted. #460 (bank 2) is the next lever.
-- **RAM** is ~2.5 KB UI-side. `AudioShared` is unchanged.
+- **RAM** is ~2.5 KB UI-side. `AudioShared` is unchanged. `UiState` moved from AXI to D2 to fund the map's AXI (ORBIT's headroom was 244 B).
 - **Every Sound record context** carries the map with no project code. Older builds skip it.
 - **MIX+SEQ in ORBIT** no longer saves the scene. It does nothing.
 - **Sequencer p-locks** reach the Part a UI iteration late, and smear when legato. This is filed post-alpha.

@@ -50,8 +50,11 @@ pub fn build_waves() {
     waves::render_into(unsafe { &mut *addr_of_mut!(WAVES_DTCM) });
 }
 
-// `UiState` is ~27 KB: it lives in AXI, not in `main`'s frame on the
-// ~63.75 KB DTCM stack (ADR 0025).
+// `UiState` is ~27 KB: it lives in D2, not in `main`'s frame on the
+// ~63.75 KB DTCM stack (ADR 0025), nor in AXI, which the MIDI map's 96 B a
+// Sound filled to the margin (ADR 0087, 0136). NOLOAD: built in place by
+// `take_ui`. D2 is cacheable apart from the 4 KB DMA window (`cache.rs`).
+#[unsafe(link_section = ".ram_d2")]
 static mut UI: MaybeUninit<UiState> = MaybeUninit::uninit();
 static UI_TAKEN: AtomicBool = AtomicBool::new(false);
 
