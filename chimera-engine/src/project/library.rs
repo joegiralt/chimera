@@ -223,6 +223,9 @@ pub struct LibPage {
     pub vol: Option<VolumeId>,
 }
 
+// `init_in_place` writes each field: a new one fails to build here first.
+crate::in_place::field_list!(LibPage => LibPage { entries, len, prev, next, shelf, set_stamp, vol });
+
 impl LibPage {
     pub const EMPTY: LibPage = LibPage {
         entries: [None; MAX_LISTED],
@@ -245,8 +248,8 @@ impl LibPage {
         // `[Option<LibEntry>; MAX_LISTED]`: cast to its element type it is
         // aligned, and `add(i)` for `i < MAX_LISTED` stays inside it. Every
         // field (each of the 48 rows, `len`, `prev`, `next`, `shelf`,
-        // `set_stamp`, `vol`) is written exactly once with a valid value;
-        // padding needs no init. A `const` page written whole is the safe
+        // `set_stamp`, `vol`, all `field_list!` above names) is written
+        // exactly once with a valid value; padding needs no init. A `const` page written whole is the safe
         // form, but it copies a 48-row image kept in flash.
         unsafe {
             let rows = addr_of_mut!((*p).entries).cast::<Option<LibEntry>>();

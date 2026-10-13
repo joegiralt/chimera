@@ -109,6 +109,11 @@ pub struct LibState {
     pub(crate) tape: bool,
 }
 
+// `init_in_place` writes each field: a new one fails to build here first.
+crate::in_place::field_list!(LibState => LibState {
+    page, listed, described, err, load, tab, this, after, tape
+});
+
 impl LibState {
     /// PROJECT, nothing listed, written in place: the page a row at a
     /// time (`LibPage::init_in_place`), so its empty image isn't in flash.
@@ -118,9 +123,10 @@ impl LibState {
         // ours. `addr_of_mut!` takes each field's place without a
         // reference; `uninit_at` views the page's place as `MaybeUninit`,
         // which never asserts it initialised, and `LibPage::init_in_place`
-        // writes all of it. Every other field is written exactly once with
-        // a valid value, so the whole state is initialised before
-        // `assume_init_mut` makes the first reference to it.
+        // writes all of it. Every other field (`field_list!` above names
+        // them all) is written exactly once with a valid value, so the
+        // whole state is initialised before `assume_init_mut` makes the
+        // first reference to it.
         unsafe {
             LibPage::init_in_place(uninit_at(addr_of_mut!((*p).page)));
             addr_of_mut!((*p).listed).write(false);
