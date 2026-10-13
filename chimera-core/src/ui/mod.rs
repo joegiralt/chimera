@@ -17,6 +17,7 @@ pub mod glyph;
 pub mod hint;
 pub mod hold;
 pub mod jog;
+pub mod learn;
 pub mod led;
 pub mod library;
 pub mod meter;
@@ -190,10 +191,13 @@ pub enum PrimeStatus {
     Full,
     /// FM3 IN or QM IN passed a source whose cell another route holds.
     SourceInUse,
+    /// MIDI learn, armed (`None`: nothing heard) or just done.
+    #[cfg(feature = "midi-learn")]
+    Learn(Option<learn::LearnNote>),
 }
 
 impl PrimeStatus {
-    /// The word(s) shown in the focus band.
+    /// A MIX+PLUS outcome's word(s); learn's are `text`'s.
     pub fn label(self) -> &'static str {
         match self {
             PrimeStatus::Added => "ADDED",
@@ -201,7 +205,25 @@ impl PrimeStatus {
             PrimeStatus::NotModulatable => "NOT MODULATABLE",
             PrimeStatus::Full => "MATRIX FULL",
             PrimeStatus::SourceInUse => "SOURCE IN USE",
+            #[cfg(feature = "midi-learn")]
+            PrimeStatus::Learn(_) => "",
         }
+    }
+
+    /// The band's words on the cell labelled `label`.
+    #[cfg_attr(not(feature = "midi-learn"), allow(unused_variables))]
+    pub fn text(self, label: &str) -> FmtBuf {
+        let mut b = FmtBuf::new();
+        match self {
+            #[cfg(feature = "midi-learn")]
+            PrimeStatus::Learn(Some(n)) => n.text(label, &mut b),
+            #[cfg(feature = "midi-learn")]
+            PrimeStatus::Learn(None) => learn::armed_text(label, &mut b),
+            s => {
+                let _ = core::fmt::Write::write_str(&mut b, s.label());
+            }
+        }
+        b
     }
 }
 
@@ -308,6 +330,8 @@ pub struct UiState {
     rev_knobs: KnobMemory,
     /// Mapped CCs: each Part's ramps, bins and budget cursor.
     cc: cc::CcState,
+    /// MIX+SEQ's MIDI learn (spec § 4).
+    learn: learn::Learn,
 }
 
 /// How long the LEVEL LED takes to fall from a peak to dark.
@@ -393,6 +417,7 @@ crate::in_place::field_list!(UiState => UiState {
     clip,
     rev_knobs,
     cc,
+    learn,
 });
 
 #[cfg(any(test, feature = "test-support"))]
@@ -482,6 +507,7 @@ impl UiState {
             addr_of_mut!((*p).dfu).write(None);
             addr_of_mut!((*p).rev_knobs).write(KnobMemory::new());
             addr_of_mut!((*p).cc).write(cc::CcState::new());
+            addr_of_mut!((*p).learn).write(learn::Learn::Off);
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui
@@ -896,6 +922,7 @@ impl UiState {
     /// matrix), and the page's values snap.
     fn go(&mut self, to: Location) {
         let from = self.loc;
+        self.learn = learn::Learn::Off;
         if from.browse().is_none() && to.browse().is_some() {
             self.lib.entered();
         }
@@ -1473,6 +1500,9 @@ impl UiState {
         }
         if presses.seq == Some(Press::Tap) {
             push(NavKey::SeqTap);
+        }
+        if cfg!(feature = "midi-learn") && mix && pressed(ButtonId::Seq) {
+            push(NavKey::MixSeq);
         }
         #[cfg(feature = "orbit")]
         if presses.seq == Some(Press::Hold) {
@@ -2342,6 +2372,13 @@ impl UiState {
             if self.job.is_some() || self.modal.is_some() {
                 break;
             }
+            // MIX + SEQ arms or cancels learn; any other nav key cancels it.
+            if k == NavKey::MixSeq {
+                #[cfg(feature = "midi-learn")]
+                self.toggle_learn();
+                continue;
+            }
+            self.learn = learn::Learn::Off;
             if let (Some((p, b)), NavKey::Edit) = (self.loc.browse(), k) {
                 // MIX + EDIT saves to the source the tab shows; FACTORY
                 // is read-only.
@@ -2421,6 +2458,9 @@ impl UiState {
             return;
         }
         if self.loc.page(&self.cx()).is_none() {
+            return;
+        }
+        if self.learn_turns(controls) {
             return;
         }
 
@@ -2908,7 +2948,7 @@ impl UiState {
             orbit_dot: self.orbit.anim.dot(),
             parts: self.project.perf().parts(),
             active_part: self.active_part,
-            prime_status: self.prime_status,
+            prime_status: self.band_status(),
             pool: self.project.pool(),
             audio,
             card: self.card,
@@ -3015,7 +3055,7 @@ impl UiState {
                     qvalues[f.focus]
                 },
                 renderer::look(f, f.focus),
-                self.prime_status,
+                f.prime_status,
             )
             .with_set(region::quantize(self.renderer.set[f.focus].current()))
             .with_gauge(shown.map_or(0, |g| g.outside_key()))
@@ -3033,7 +3073,7 @@ impl UiState {
                 let (values, live) = self.renderer.viz_inputs(f);
                 // BigViz pages have no focus band: their viz carries the
                 // prime status instead.
-                let status = self
+                let status = f
                     .prime_status
                     .filter(|_| f.def.layout == PageLayout::BigViz);
                 RegionData::viz_with_status(self.page, values, live, status)

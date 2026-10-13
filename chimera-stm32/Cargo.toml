@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free"]
+default = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-learn"]
 midi-din = ["chimera-board/midi-din"]
 perf-probe = ["chimera-board/perf-probe"]
 # The bench on the unit, one area a build: all of it no longer fits FLASH
@@ -36,6 +36,9 @@ sd-probe = ["chimera-board/sd-probe"]
 master-tape = ["chimera-core/master-tape", "chimera-board/master-tape"]
 # ORBIT, the ring sequencer: SEQ hold opens it, the audio block runs it.
 orbit = ["chimera-core/orbit", "chimera-board/orbit"]
+# MIDI learn: MIX + SEQ maps a CC to the focused cell (#247). Bench
+# firmware leaves it out: FLASH (#507).
+midi-learn = ["chimera-board/midi-learn"]
 # The USB console (ADR 0068): CDC-ACM on the OTG FS port, polled from the UI
 # loop, its interrupt never unmasked.
 usb-console = ["chimera-board/usb-console"]

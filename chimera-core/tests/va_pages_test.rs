@@ -10,7 +10,7 @@ use chimera_core::preset::Sound;
 use chimera_core::ui::block_def::BlockDef;
 use chimera_core::ui::block_registry::{PITCH, VA_CHAIN, VA_HOME, VA_OSC1, VA_OSC2};
 use chimera_core::ui::view::{self, SlotCtx};
-use chimera_core::ui::{draw, hint, nav, theme};
+use chimera_core::ui::{draw, nav, theme};
 use chimera_hal::ButtonId;
 use screen::{load_init, page_def_id, tap};
 
@@ -100,7 +100,9 @@ fn va_pages_have_no_gestures() {
     let c = ctx();
     for def in [&VA_HOME, &VA_OSC1, &VA_OSC2] {
         for i in 0..6 {
-            assert!(view::view(def, i, &c).hint(&c) == hint::NONE);
+            // MIX + SEQ's learn, every mappable cell's, and no other.
+            let h = view::view(def, i, &c).hint(&c);
+            assert!(h.iter().all(|g| *g == view::LEARN));
         }
     }
 }

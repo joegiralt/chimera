@@ -60,6 +60,16 @@ impl CcState {
         };
     }
 
+    /// Part `p`'s ramps at rest, bins and cursor cleared: its map changed
+    /// (a learn, a load), and they are indexed by entry.
+    #[inline]
+    pub(super) fn reset_part(&mut self, p: PartId) {
+        let i = p.index();
+        self.ramps[i] = [Ramp::rest(0.0); MAP_LEN];
+        self.bins[i] = [NO_BIN; MAP_LEN];
+        self.cursor[i] = 0;
+    }
+
     /// The knob moves the hand made this pass, at most: its turns and the
     /// reel's (`handle_input`), which the CC writes after it leave room for.
     pub(super) fn hand(&mut self, moves: u8) {
@@ -95,6 +105,10 @@ impl UiState {
             }
         }
         for ev in ccs {
+            #[cfg(feature = "midi-learn")]
+            if self.learn_cc(ev) {
+                continue;
+            }
             for p in PartId::ALL {
                 if self.project.part(p).mix.channel != ev.channel {
                     continue;
@@ -114,8 +128,7 @@ impl UiState {
         let (i, loads) = (p.index(), self.project.part(p).loads());
         if loads != self.cc.loads[i] {
             self.cc.loads[i] = loads;
-            self.cc.bins[i] = [NO_BIN; MAP_LEN];
-            self.cc.ramps[i] = [Ramp::rest(0.0); MAP_LEN];
+            self.cc.reset_part(p);
         }
     }
 
