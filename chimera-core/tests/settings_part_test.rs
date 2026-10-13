@@ -477,3 +477,177 @@ fn sound_rung_load_never_replaces_without_an_answer() {
             .bits_eq(&ui.project().pool().get(S3).unwrap().to_sound())
     );
 }
+
+/// SETTINGS › PART › MIDI MAP (#247, spec § 8).
+#[cfg(feature = "midi-map")]
+mod midi_map {
+    use super::*;
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::modal::ModalParams;
+    use chimera_core::midi_in::Cc;
+    use chimera_core::midi_map::{MapEntry, Mappable, MidiMap};
+    use chimera_core::params::FilterParams;
+
+    const MIDI_MAP_ROW: usize = 6;
+
+    fn entry(cc: u8, block: BlockRef, id: chimera_core::block::ParamId) -> MapEntry {
+        MapEntry {
+            cc: Cc::new(cc).unwrap(),
+            target: Mappable::new(ParamAddr::new(block, id)).unwrap(),
+            min: 0,
+            max: 255,
+        }
+    }
+
+    fn cutoff(cc: u8) -> MapEntry {
+        entry(cc, BlockRef::Filter, FilterParams::CUTOFF)
+    }
+
+    /// Part 1 on INIT with `entries`, and the page open.
+    fn page(entries: &[MapEntry]) -> UiState {
+        let mut ui = UiState::new();
+        let mut m = MidiMap::EMPTY;
+        for e in entries {
+            m.learn(e.cc, e.target).unwrap();
+        }
+        ui.project_mut().edit_part(P[0]).sound.map = m;
+        part_row(&mut ui, P[0], MIDI_MAP_ROW);
+        feed(&mut ui, Input::press(ButtonId::Edit));
+        assert_eq!(
+            ui.location(),
+            Location::settings_at(screen_path(Screen::MidiMap), 0)
+        );
+        ui
+    }
+
+    fn map(ui: &UiState) -> MidiMap {
+        ui.project().part(P[0]).sound.map
+    }
+
+    fn turn(ui: &mut UiState, e: EncoderId, d: i8) {
+        feed(ui, Input::turn(e, d));
+    }
+
+    fn text(ui: &UiState, i: usize) -> (String, String, RowLook) {
+        let r = ui.map_band().row(i);
+        (r.label.as_str().into(), r.range.as_str().into(), r.look)
+    }
+
+    #[test]
+    fn midi_map_lists_rows() {
+        // INIT's filter is the 2040, whose cell reads FREQ for CUTOFF (ADR 0085).
+        let structure = entry(16, BlockRef::Modal, ModalParams::STRUCTURE);
+        let ui = page(&[cutoff(74), structure]);
+        assert_eq!(
+            ui.project().part(P[0]).sound.params.engine(),
+            EngineType::Algo
+        );
+        assert_eq!(
+            text(&ui, 0),
+            ("CC 74  FREQ".into(), "0-255".into(), RowLook::Normal)
+        );
+        let (label, _, look) = text(&ui, 1);
+        assert_eq!(label, "CC 16  - STRUCT");
+        assert_eq!(look, RowLook::Dimmed);
+    }
+
+    #[test]
+    fn midi_map_edits() {
+        let mut ui = page(&[cutoff(74), cutoff_b(63)]);
+        let c0 = crc(&ui, P[0]);
+        turn(&mut ui, EncoderId::B, 1);
+        assert_eq!(map(&ui).entries()[0].cc.get(), 75);
+        assert_ne!(crc(&ui, P[0]), c0);
+        assert_eq!(status(&ui, P[0]), PartStatus::Edited);
+
+        // Row 1, CC 63: PLUS skips the reserved 64.
+        feed(&mut ui, Input::press(ButtonId::Plus));
+        turn(&mut ui, EncoderId::B, 1);
+        assert_eq!(map(&ui).entries()[1].cc.get(), 65);
+        turn(&mut ui, EncoderId::B, -1);
+        assert_eq!(map(&ui).entries()[1].cc.get(), 63);
+        // A duplicate is allowed: row 1 onto row 0's 75.
+        turn(&mut ui, EncoderId::B, 11);
+        assert_eq!(map(&ui).entries()[1].cc.get(), 75);
+    }
+
+    fn cutoff_b(cc: u8) -> MapEntry {
+        entry(cc, BlockRef::Filter, FilterParams::RESONANCE)
+    }
+
+    #[test]
+    fn midi_map_cc_clamps_at_the_ends() {
+        let mut ui = page(&[cutoff(1)]);
+        turn(&mut ui, EncoderId::B, -3); // 0 is bank select
+        assert_eq!(map(&ui).entries()[0].cc.get(), 1);
+        let mut ui = page(&[cutoff(119)]);
+        turn(&mut ui, EncoderId::B, 3); // 120-127 are channel mode
+        assert_eq!(map(&ui).entries()[0].cc.get(), 119);
+    }
+
+    #[test]
+    fn midi_map_range_clamps_and_inverts() {
+        let mut ui = page(&[cutoff(74)]);
+        let c0 = crc(&ui, P[0]);
+        turn(&mut ui, EncoderId::D, -10);
+        assert_eq!(map(&ui).entries()[0].max, 245);
+        assert_eq!(text(&ui, 0).1, "0-245");
+        assert_ne!(crc(&ui, P[0]), c0);
+        // C up to 250: min above max is an inverted range.
+        turn(&mut ui, EncoderId::C, 125);
+        turn(&mut ui, EncoderId::C, 125);
+        assert_eq!(map(&ui).entries()[0].min, 250);
+        assert_eq!(text(&ui, 0).1, "250-245");
+        // Clamps, never wraps.
+        turn(&mut ui, EncoderId::C, 127);
+        assert_eq!(map(&ui).entries()[0].min, 255);
+        turn(&mut ui, EncoderId::D, -127);
+        turn(&mut ui, EncoderId::D, -127);
+        assert_eq!(map(&ui).entries()[0].max, 0);
+    }
+
+    #[test]
+    fn midi_map_delete_confirms() {
+        let mut ui = page(&[cutoff(74), cutoff_b(20)]);
+        feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
+        let (q, r) = ui.prompt_words_for_test().expect("a prompt");
+        assert_eq!((q.as_str(), r.as_str()), ("DELETE CC 74?", "FREQ"));
+        answer(&mut ui, 1); // CANCEL
+        assert_eq!(map(&ui).len(), 2);
+        feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
+        answer(&mut ui, 0); // DELETE
+        assert_eq!(map(&ui).len(), 1);
+        assert_eq!(map(&ui).entries()[0].cc.get(), 20);
+        assert_eq!(status(&ui, P[0]), PartStatus::Edited);
+    }
+
+    #[test]
+    fn midi_map_empty() {
+        let mut ui = page(&[]);
+        assert_eq!(map(&ui).len(), 0);
+        // Nothing to edit or delete.
+        turn(&mut ui, EncoderId::B, 1);
+        feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
+        assert!(!ui.prompt_open());
+        assert_eq!(map(&ui).len(), 0);
+    }
+
+    #[test]
+    fn midi_map_edit_stops_a_moving_ramp() {
+        use chimera_core::MidiChannel;
+        use chimera_core::midi_in::CcEvent;
+        use chimera_hal::Ms;
+        let mut ui = page(&[cutoff(74)]);
+        let ev = |v| CcEvent {
+            channel: MidiChannel::new(0).unwrap(),
+            cc: Cc::new(74).unwrap(),
+            value: v,
+        };
+        ui.hear_ccs(core::iter::once(ev(0)), Ms(100));
+        ui.hear_ccs(core::iter::once(ev(127)), Ms(200));
+        turn(&mut ui, EncoderId::D, -50);
+        let was = ui.project().part(P[0]).sound.params.filter.cutoff;
+        ui.hear_ccs(core::iter::empty(), Ms(300));
+        assert_eq!(ui.project().part(P[0]).sound.params.filter.cutoff, was);
+    }
+}

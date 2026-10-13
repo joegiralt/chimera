@@ -407,6 +407,25 @@ fn every_prompt_fits() {
         check(ReloadScene { scene });
     }
     check(EnterDfu);
+    #[cfg(feature = "midi-map")]
+    {
+        use chimera_core::addr::{BlockRef, ParamAddr};
+        use chimera_core::midi_in::Cc;
+        use chimera_core::midi_map::{MapEntry, Mappable};
+        use chimera_core::params::FilterParams;
+        use chimera_core::ui::settings::midi_map::MapDelete;
+        let target = Mappable::new(ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF));
+        check(MapDelete {
+            part: PartId::ALL[0],
+            entry: MapEntry {
+                cc: Cc::new(127).unwrap(),
+                target: target.unwrap(),
+                min: 0,
+                max: 255,
+            },
+            label: "RESONANCE",
+        });
+    }
     let two = AlsoUses {
         first: p4,
         more: PartSet::EMPTY.with(PartId::ALL[4]),

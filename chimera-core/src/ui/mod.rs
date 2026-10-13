@@ -899,6 +899,8 @@ impl UiState {
             Screen::SaveToProj => SAVE_ROWS.len(),
             #[cfg(feature = "orbit")]
             Screen::SceneSaveTo => SceneIdx::ALL.len(),
+            #[cfg(feature = "midi-map")]
+            Screen::MidiMap => self.project.part(self.active_part).sound.map.len(),
         }
     }
 
@@ -1620,6 +1622,8 @@ impl UiState {
             loaded: self.project.meta().file(),
             part: (at.path().first() == Some(&PART_ROW))
                 .then(|| PartBand::of(&self.project, self.active_part)),
+            #[cfg(feature = "midi-map")]
+            map: (at.screen() == Some(Screen::MidiMap)).then(|| self.map_band()),
             scene: self.project.orbit().current(),
             orbit: self.orbit_band(at),
         }
@@ -1863,6 +1867,12 @@ impl UiState {
                             self.notice(l);
                         }
                     }
+                }
+            }
+            #[cfg(feature = "midi-map")]
+            Answered::MapDelete(d, a) => {
+                if a.picked() == Some(prompt::DeleteAnswer::Delete) {
+                    self.map_deleted(d.part, d.entry);
                 }
             }
             Answered::LoadProject { reply, to, clear } => match reply {
@@ -2408,6 +2418,10 @@ impl UiState {
                 Step::Screen(s @ (Screen::LoadProject | Screen::ManageProjects)) => {
                     self.queue(Job::List(s))
                 }
+                #[cfg(feature = "midi-map")]
+                Step::Screen(Screen::MidiMap) => {
+                    self.go(Location::settings_at(screen_path(Screen::MidiMap), 0))
+                }
                 Step::Screen(Screen::SaveToProj) => {
                     self.go(Location::settings_at(screen_path(Screen::SaveToProj), 0))
                 }
@@ -2425,6 +2439,8 @@ impl UiState {
                             self.run_part_cmd(c);
                         }
                     }
+                    #[cfg(feature = "midi-map")]
+                    (Some(Screen::MidiMap), _) => {}
                     #[cfg(feature = "orbit")]
                     (Some(Screen::SceneSaveTo), Some(s)) => {
                         if let Some(&n) = SceneIdx::ALL.get(s.row() as usize) {
@@ -2465,6 +2481,10 @@ impl UiState {
                 self.browser_dirty = true;
             }
             return;
+        }
+        #[cfg(feature = "midi-map")]
+        if self.screen() == Some(Screen::MidiMap) {
+            return self.map_input(controls);
         }
         if self.loc.page(&self.cx()).is_none() {
             return;
