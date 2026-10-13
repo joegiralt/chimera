@@ -540,11 +540,7 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
             label: slot.label(),
             fmt: *fmt,
         },
-        // SPD: a type-B slot's SPEED and HOLD read TYPE B (spec § UI).
-        SlotBinding::Param(ParamAddr {
-            block: BlockRef::Env(s),
-            param: EnvParams::SPEED | EnvParams::HOLD_POS,
-        }) if matches!(ctx.envs[s.index()], EnvKind::B(_)) => View::Text {
+        SlotBinding::Param(addr) if reads_type_b(addr, ctx) => View::Text {
             label: slot.label(),
             text: "TYPE B",
         },
@@ -673,10 +669,25 @@ pub fn is_reverb_panel(def: &BlockDef, i: usize) -> bool {
     )
 }
 
+/// SPD: a type-B slot's SPEED and HOLD read TYPE B, not a value (spec §
+/// UI): no format, on the page or the host.
+fn reads_type_b(addr: ParamAddr, ctx: &SlotCtx) -> bool {
+    match addr.block {
+        BlockRef::Env(s) => {
+            matches!(addr.param, EnvParams::SPEED | EnvParams::HOLD_POS)
+                && matches!(ctx.envs[s.index()], EnvKind::B(_))
+        }
+        _ => false,
+    }
+}
+
 /// The format `addr` reads in under `ctx`: its modulator panel's cell for
 /// an ENV or LFO param on that kind's page, else its spec's (a filter MODE
 /// by KIND). One source for the pages and the host's `factory-sounds fmt`.
 pub fn shown_fmt(addr: ParamAddr, ctx: &SlotCtx) -> Option<ValFmt> {
+    if reads_type_b(addr, ctx) {
+        return None;
+    }
     let panel = match addr.block {
         BlockRef::Env(s) => Some(mod_panel::env_panel(ctx.envs[s.index()])),
         BlockRef::Lfo(s) => Some(mod_panel::lfo_panel(ctx.lfos[s.index()])),
