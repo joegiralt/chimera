@@ -704,3 +704,49 @@ mod.VEL = "ALGO.VOWEL +100, OP_E.LEVEL +15, OP_F.LEVEL +10"
 mod.NOTE = "ALGO.VOWEL +127, OP_E.LEVEL -127, OP_F.LEVEL -127, OP_C.LEVEL -127"
 OUT.LEVEL = "1"  # 127
 trim = "-5.3"
+
+# FM acid (S9100060, with va.toml's set): op 6, a sine, modulates op 1 on
+# A2, one mono voice with a short glide. The index is the squelch's first
+# half: ENV 2 snaps it down each note, an S&H LFO (8 Hz: a sixteenth at 120
+# BPM, no LFO tempo sync) steps it and velocity pushes it; the LADDER then
+# squelches the result as the other acid Sounds'. FM Parts have the filter,
+# so the cutoff envelope is the same one.
+[[sound]]
+id = "S9100060"
+name = "ACID FM"
+engine = "ALGO"
+note = "SINE FM INTO LADDER"
+demo = "mono"
+plays = "bass short glide"
+home = "C2"
+phrase = "acid"
+harmonic = "yes"
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.45"  # 31 ms
+ALGO.ALG_A = "A2"
+ALGO.ALG_B = "A2"
+OP_A.LEVEL = "99"
+OP_A.VEL = "2"
+OP_A.D1R = "4"
+OP_A.D1L = "13"
+OP_A.RR = "10"
+OP_F.LEVEL = "50"
+OP_F.VEL = "3"
+OP_F.D1R = "16"
+OP_F.D1L = "9"
+OP_F.RR = "10"
+FILTER.KIND = "LADDER"
+FILTER.CUTOFF = "500"  # 500 Hz
+FILTER.RESO = "0.5"  # 64
+FILTER.LEVEL = "0.78"  # 99
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.4"  # 84 ms
+ENV2.SUS = "0"  # 0%
+ENV2.LEVEL = "0.55"  # 70
+mod.ENV2 = "FILTER.CUTOFF +42, OP_F.LEVEL +40"
+LFO1.RATE = "8"  # 51
+LFO1.SHAPE = "RANDOM"
+mod.LFO1 = "OP_F.LEVEL +14"
+mod.VEL = "ENV2.LEVEL +70, FILTER.CUTOFF +12, OP_F.LEVEL +18"
+OUT.LEVEL = "1"  # 127
+trim = "-1.4"
