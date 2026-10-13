@@ -1075,6 +1075,7 @@ fn facts_use_full_words() {
         "LADDER",
         "DIRTY",
         "LP4",
+        "LP2",
         "REV2",
         "EXP",
         "ENV",
@@ -1916,6 +1917,28 @@ fn phrases_carry_what_they_show() {
     assert!(
         wonky.iter().any(|x| x.at % 4 != 0 && x.vel >= 110),
         "an accent off the beat"
+    );
+    // `acid`: mostly sixteenths, accented, with several slides and a rest.
+    let acid = phrase::phrase_notes(Phrase::Acid);
+    assert!(overlaps(Phrase::Acid) >= 6, "slides");
+    assert!(
+        acid.iter().filter(|x| x.len == 1).count() >= acid.len() / 2,
+        "mostly single sixteenths"
+    );
+    let av: Vec<u8> = acid.iter().map(|x| x.vel).collect();
+    assert!(
+        av.iter().max().unwrap() - av.iter().min().unwrap() >= 40,
+        "accents"
+    );
+    assert!(
+        acid.iter().any(|x| x.at % 4 != 0 && x.vel >= 110),
+        "an accent off the beat"
+    );
+    assert!(
+        acid.iter()
+            .zip(&acid[1..])
+            .any(|(a, b)| (a.step - b.step).abs() >= 12),
+        "octave jumps"
     );
     // `arp`: syncopated, and clear rather than dense.
     let arp = phrase::phrase_notes(Phrase::Arp);

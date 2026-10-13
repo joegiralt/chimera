@@ -70,7 +70,7 @@ impl Script {
 
 /// The phrase a Sound is auditioned over on the owner's page (`qa`'s
 /// phrase tables): a listening render, never a gate. Every VA Sound names
-/// one (`phrase = "bass" | "lead" | "pad" | "arp" | "wonky" | "sweep"`).
+/// one (`phrase = "bass" | "lead" | "pad" | "arp" | "wonky" | "acid" | "sweep"`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phrase {
     Bass,
@@ -80,18 +80,21 @@ pub enum Phrase {
     Arp,
     /// A wonky melodic bassline: odd accents, legato slides.
     Wonky,
+    /// A sixteenth-note acid line: accents, rests, slides on a MONO Part.
+    Acid,
     /// Long held chords over twelve bars, each swelling the filter open and
     /// closed (`phrase::sweeps` holds the swell to the phrase).
     Sweep,
 }
 
 impl Phrase {
-    pub const ALL: [Phrase; 6] = [
+    pub const ALL: [Phrase; 7] = [
         Phrase::Bass,
         Phrase::Lead,
         Phrase::Pad,
         Phrase::Arp,
         Phrase::Wonky,
+        Phrase::Acid,
         Phrase::Sweep,
     ];
 
@@ -102,6 +105,7 @@ impl Phrase {
             Phrase::Pad => "pad",
             Phrase::Arp => "arp",
             Phrase::Wonky => "wonky",
+            Phrase::Acid => "acid",
             Phrase::Sweep => "sweep",
         }
     }

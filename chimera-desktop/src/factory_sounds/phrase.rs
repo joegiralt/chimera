@@ -308,6 +308,78 @@ pub const WONKY_PHRASE: [PhraseNote; 30] = [
     n(0, 62, 2, 104),
 ];
 
+/// In the manner of Phuture – "Acid Tracks" and Hardfloor's acid lines
+/// (rhythm/contour only, not transcribed), written fresh: a minor 303
+/// sequence of mostly single sixteenths with rests, accents (velocity 70 to
+/// 126) on the downbeats and the off-sixteenths, octave jumps, and thirteen
+/// notes held into the next: slides on a MONO Part. A minor i, ♭VI, ♭VII,
+/// home on the root.
+pub const ACID_PHRASE: [PhraseNote; 48] = [
+    // i
+    n(0, 0, 1, 122),
+    n(0, 1, 1, 72),
+    n(12, 2, 1, 88),
+    n(0, 3, 2, 104),
+    // A slide up from the root to the minor seventh.
+    n(10, 4, 2, 90),
+    n(7, 7, 2, 110),
+    // A slide down from the fifth to the fourth.
+    n(5, 8, 1, 70),
+    n(0, 10, 1, 118),
+    n(3, 11, 2, 92),
+    // A slide down from the minor third to the root.
+    n(0, 12, 2, 84),
+    n(12, 14, 1, 126),
+    // i, answered
+    n(0, 16, 1, 124),
+    n(12, 17, 1, 74),
+    n(0, 18, 1, 90),
+    n(0, 19, 1, 70),
+    n(15, 20, 2, 112),
+    // A slide down from the minor tenth to the octave.
+    n(13, 21, 2, 96),
+    n(12, 23, 1, 80),
+    n(10, 24, 3, 104),
+    // A slide down from the minor seventh to the fifth.
+    n(7, 25, 2, 92),
+    n(7, 28, 1, 70),
+    n(5, 29, 2, 118),
+    // A slide down from the fourth to the minor third.
+    n(3, 30, 2, 90),
+    // ♭VI
+    n(-4, 32, 1, 122),
+    n(-4, 33, 1, 70),
+    n(8, 34, 1, 92),
+    n(-4, 35, 2, 100),
+    // A slide up from the sixth below to the minor seventh below.
+    n(-2, 36, 2, 88),
+    n(8, 38, 1, 110),
+    n(7, 39, 1, 72),
+    n(3, 40, 3, 102),
+    // A slide up from the minor third to the fourth.
+    n(5, 41, 2, 94),
+    n(-4, 43, 1, 126),
+    n(-4, 44, 1, 76),
+    n(8, 45, 2, 106),
+    // A slide down from the minor sixth to the fifth.
+    n(7, 46, 2, 86),
+    // ♭VII, climbing home
+    n(-2, 48, 1, 120),
+    n(10, 49, 1, 72),
+    n(-2, 50, 1, 84),
+    n(-2, 51, 2, 110),
+    // A slide up from the minor seventh below to the root.
+    n(0, 52, 3, 96),
+    n(7, 54, 2, 100),
+    n(12, 56, 1, 124),
+    n(10, 57, 1, 74),
+    n(7, 58, 2, 92),
+    // A slide down from the fifth to the fourth to the minor third.
+    n(5, 59, 2, 86),
+    n(3, 60, 1, 80),
+    n(0, 62, 2, 126),
+];
+
 /// `sweep`'s length, in sixteenths: twelve bars, 24 s at 120 BPM.
 pub const SWEEP_STEPS: u8 = 192;
 /// The slowest swell `sweeps` takes: an ENV's rise, s.
@@ -478,6 +550,7 @@ pub const fn phrase_notes(p: Phrase) -> &'static [PhraseNote] {
         Phrase::Pad => &PAD_PHRASE,
         Phrase::Arp => &ARP_PHRASE,
         Phrase::Wonky => &WONKY_PHRASE,
+        Phrase::Acid => &ACID_PHRASE,
         Phrase::Sweep => &SWEEP_PHRASE,
     }
 }
