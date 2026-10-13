@@ -91,19 +91,24 @@ put-factory-tapes dir="target/tapes-v1":
 # alpha firmware saved user projects from P0000001, and the demos land on
 # P0000001-P0000009, so this refuses, naming them, if any of those is on
 # the card, unless `--replace-demos`. `just factory-sounds` builds `dir`.
-# CHIMERA_USB overrides the console command (the refusal test stubs it).
+# A card without PROJECTS lists nothing. CHIMERA_USB_CMD overrides the
+# console command (tools/test_put_factory_sounds.py stubs it); CHIMERA_USB
+# still picks the port, as everywhere.
 put-factory-sounds dir="target/factory-sounds/public" *flags:
     #!/usr/bin/env bash
     set -euo pipefail
     shopt -s nullglob
-    USB=${CHIMERA_USB:-"python3 tools/chimera-usb.py"}
+    USB=${CHIMERA_USB_CMD:-"python3 tools/chimera-usb.py"}
     replace=0
     for f in {{flags}}; do
         case $f in --replace-demos) replace=1;; *) echo "unknown flag $f" >&2; exit 1;; esac
     done
     sounds=("{{dir}}"/CHIMERA/SOUNDS/*.A); projects=("{{dir}}"/CHIMERA/PROJECTS/*.A)
     [ ${#sounds[@]} -gt 0 ] && [ ${#projects[@]} -gt 0 ] || { echo "no factory set in {{dir}}: just factory-sounds" >&2; exit 1; }
-    listing=$($USB ls)
+    listing=$($USB ls 2>&1) || case $listing in
+        *"FILE NOT FOUND"*) listing="";;
+        *) printf '%s\n' "$listing" >&2; exit 1;;
+    esac
     taken=$(printf '%s\n' "$listing" | grep -E '^P000000[1-9]\.[AB] ' | cut -d' ' -f1 | cut -d. -f1 | sort -u | tr '\n' ' ' || true)
     if [ -n "$taken" ] && [ $replace = 0 ]; then
         echo "the card already has projects ${taken}: the demos would replace them." >&2
