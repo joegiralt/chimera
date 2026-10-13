@@ -9,15 +9,18 @@ use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 use super::prompt::{Choice, DeleteAnswer, Prompt};
 use super::view::RowLook;
 use super::{Ask, Screen, screen_path};
-use crate::addr::ParamAddr;
 use crate::midi_in::Cc;
-use crate::midi_map::{MAP_LEN, MapEntry, MidiMap};
+use crate::midi_map::{MapEntry, MidiMap};
 use crate::params::EngineType;
 use crate::project::{Line, PartId};
 use crate::ui::UiState;
 use crate::ui::fmt::FmtBuf;
-use crate::ui::nav::{Location, PartChain};
-use crate::ui::view::view;
+use crate::ui::nav::Location;
+
+/// The target's spec label.
+pub fn name(e: &MapEntry) -> &'static str {
+    e.target.addr().spec().map_or("??", |s| s.label)
+}
 
 /// A row as the list draws it.
 pub struct MapRow {
@@ -28,11 +31,12 @@ pub struct MapRow {
     pub look: RowLook,
 }
 
-/// `e`, its target's cell label `name`, on a Part playing `engine`:
+/// `e`, its target's spec label, on a Part playing `engine`:
 /// dimmed when that engine doesn't read it. (The font has no dashes.)
-pub fn row(e: &MapEntry, name: &str, engine: EngineType) -> MapRow {
+pub fn row(e: &MapEntry, engine: EngineType) -> MapRow {
     let live = e.target.live(engine);
     let (mut label, mut range) = (FmtBuf::new(), FmtBuf::new());
+    let name = name(e);
     let dead = if live { "" } else { "- " };
     let _ = write!(label, "CC {:<3} {dead}{name}", e.cc.get());
     let _ = write!(range, "{}-{}", e.min, e.max);
@@ -47,17 +51,16 @@ pub fn row(e: &MapEntry, name: &str, engine: EngineType) -> MapRow {
     }
 }
 
-/// The active Part's map with its rows' cell labels, for the bands.
+/// The active Part's map for the bands.
 #[derive(Clone, Copy)]
 pub struct MapBand {
     pub map: MidiMap,
     engine: EngineType,
-    labels: [&'static str; MAP_LEN],
 }
 
 impl MapBand {
     pub fn row(&self, i: usize) -> MapRow {
-        row(&self.map.entries()[i], self.labels[i], self.engine)
+        row(&self.map.entries()[i], self.engine)
     }
 }
 
@@ -97,6 +100,7 @@ impl Prompt for MapDelete {
 
 impl UiState {
     /// A key on the page: B sets the CC, C MIN, D MAX; MIX+MINUS deletes.
+    #[inline(never)]
     pub(in crate::ui) fn map_input(&mut self, c: &impl Controls) {
         let p = self.active_part;
         let (map, Some(at)) = (self.project.part(p).sound.map, self.loc.settings()) else {
@@ -107,11 +111,10 @@ impl UiState {
             return;
         };
         if c.edges(ButtonId::Mix).down && c.button_state(ButtonId::Minus) == ButtonState::Pressed {
-            let label = self.cell_label(e.target.addr());
             let ask = MapDelete {
                 part: p,
                 entry: e,
-                label,
+                label: name(&e),
             };
             return self.ask(Ask::MapDelete(ask, Choice::new()));
         }
@@ -129,41 +132,12 @@ impl UiState {
         }
     }
 
-    /// The cell label of `a` on the active Part's pages: what learn shows
-    /// in the band, full-word and TYPE-aware. A param on no page (LEVEL,
-    /// PAN) has the spec's.
-    pub fn cell_label(&self, a: ParamAddr) -> &'static str {
-        let ctx = self.ctx();
-        // The Part's own pages first; a dead entry's are another engine's.
-        let own = PartChain::of(&self.project.part(self.active_part).sound);
-        let chains = [
-            own,
-            PartChain::Algo,
-            PartChain::Modal,
-            PartChain::Tape,
-            PartChain::Va,
-        ];
-        let pages = chains
-            .into_iter()
-            .flat_map(|c| c.def().blocks)
-            .flat_map(|b| core::iter::once(b.def).chain(b.sub_pages.iter().copied()));
-        pages
-            .flat_map(|def| (0..def.params.len()).map(move |i| view(def, i, &ctx)))
-            .find(|v| v.addr() == Some(a))
-            .map_or_else(|| a.spec().map_or("??", |s| s.label), |v| v.label())
-    }
-
     /// The active Part's map as the page draws it.
     pub fn map_band(&self) -> MapBand {
         let s = &self.project.part(self.active_part).sound;
-        let mut labels = [""; MAP_LEN];
-        for (l, e) in labels.iter_mut().zip(s.map.entries()) {
-            *l = self.cell_label(e.target.addr());
-        }
         MapBand {
             map: s.map,
             engine: s.params.engine(),
-            labels,
         }
     }
 
@@ -175,6 +149,7 @@ impl UiState {
 
     /// DELETE answered: drop the entry (found by target, as the map may
     /// not have moved but the row did), and keep the bar on a row.
+    #[inline(never)]
     pub(in crate::ui) fn map_deleted(&mut self, p: PartId, e: MapEntry) {
         let mut m = self.project.part(p).sound.map;
         let Some(i) = m.entries().iter().position(|x| x.target == e.target) else {

@@ -2439,8 +2439,6 @@ impl UiState {
                             self.run_part_cmd(c);
                         }
                     }
-                    #[cfg(feature = "midi-map")]
-                    (Some(Screen::MidiMap), _) => {}
                     #[cfg(feature = "orbit")]
                     (Some(Screen::SceneSaveTo), Some(s)) => {
                         if let Some(&n) = SceneIdx::ALL.get(s.row() as usize) {

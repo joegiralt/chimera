@@ -847,7 +847,17 @@ impl Bands<'_> {
             #[cfg(feature = "orbit")]
             (Some(Screen::SceneSaveTo), _) => return legend(LegendFor::Action, false),
             #[cfg(feature = "midi-map")]
-            (Some(Screen::MidiMap), _) => return legend(LegendFor::Map, false),
+            (Some(Screen::MidiMap), _) => {
+                let rows = self.map.is_some_and(|m| !m.map.is_empty());
+                return legend(
+                    if rows {
+                        LegendFor::Map
+                    } else {
+                        LegendFor::Dimmed
+                    },
+                    false,
+                );
+            }
             (_, Some(Column::Projects)) => return legend(LegendFor::ManageList, false),
             (_, Some(Column::Command(n))) => return legend(self.command_legend(n), false),
             _ => {}

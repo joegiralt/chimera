@@ -535,7 +535,6 @@ mod midi_map {
 
     #[test]
     fn midi_map_lists_rows() {
-        // INIT's filter is the 2040, whose cell reads FREQ for CUTOFF (ADR 0085).
         let structure = entry(16, BlockRef::Modal, ModalParams::STRUCTURE);
         let ui = page(&[cutoff(74), structure]);
         assert_eq!(
@@ -544,7 +543,7 @@ mod midi_map {
         );
         assert_eq!(
             text(&ui, 0),
-            ("CC 74  FREQ".into(), "0-255".into(), RowLook::Normal)
+            ("CC 74  CUTOFF".into(), "0-255".into(), RowLook::Normal)
         );
         let (label, _, look) = text(&ui, 1);
         assert_eq!(label, "CC 16  - STRUCT");
@@ -569,6 +568,16 @@ mod midi_map {
         // A duplicate is allowed: row 1 onto row 0's 75.
         turn(&mut ui, EncoderId::B, 11);
         assert_eq!(map(&ui).entries()[1].cc.get(), 75);
+        // Range edits dirty it too.
+        let c1 = crc(&ui, P[0]);
+        turn(&mut ui, EncoderId::C, 5);
+        turn(&mut ui, EncoderId::D, -5);
+        assert_eq!(
+            (map(&ui).entries()[1].min, map(&ui).entries()[1].max),
+            (5, 250)
+        );
+        assert_ne!(crc(&ui, P[0]), c1);
+        assert_eq!(status(&ui, P[0]), PartStatus::Edited);
     }
 
     fn cutoff_b(cc: u8) -> MapEntry {
@@ -598,6 +607,7 @@ mod midi_map {
         turn(&mut ui, EncoderId::C, 125);
         assert_eq!(map(&ui).entries()[0].min, 250);
         assert_eq!(text(&ui, 0).1, "250-245");
+        assert_eq!(status(&ui, P[0]), PartStatus::Edited);
         // Clamps, never wraps.
         turn(&mut ui, EncoderId::C, 127);
         assert_eq!(map(&ui).entries()[0].min, 255);
@@ -611,7 +621,7 @@ mod midi_map {
         let mut ui = page(&[cutoff(74), cutoff_b(20)]);
         feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
         let (q, r) = ui.prompt_words_for_test().expect("a prompt");
-        assert_eq!((q.as_str(), r.as_str()), ("DELETE CC 74?", "FREQ"));
+        assert_eq!((q.as_str(), r.as_str()), ("DELETE CC 74?", "CUTOFF"));
         answer(&mut ui, 1); // CANCEL
         assert_eq!(map(&ui).len(), 2);
         feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));

@@ -24,6 +24,16 @@ const RESERVED: [u8; 19] = [
     0, 6, 32, 38, 64, 96, 97, 98, 99, 100, 101, 120, 121, 122, 123, 124, 125, 126, 127,
 ];
 
+/// `RESERVED` as bits, so a test is one shift.
+const RESERVED_MASK: u128 = {
+    let (mut m, mut i) = (0, 0);
+    while i < RESERVED.len() {
+        m |= 1u128 << RESERVED[i];
+        i += 1;
+    }
+    m
+};
+
 impl Cc {
     pub const fn new(n: u8) -> Option<Self> {
         if n <= 127 { Some(Self(n)) } else { None }
@@ -34,7 +44,7 @@ impl Cc {
     }
 
     pub fn is_reserved(self) -> bool {
-        RESERVED.contains(&self.0)
+        RESERVED_MASK >> self.0 & 1 != 0
     }
 }
 
