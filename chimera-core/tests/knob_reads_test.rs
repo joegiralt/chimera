@@ -9,6 +9,7 @@ mod common;
 use chimera_core::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::knobs::{KNOBS, KnobPublisher};
+use chimera_core::dsp::lfo::LfoClock;
 use chimera_core::hw::{AUDIO_BUDGET_PERCENT, MAX_PARTS, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
@@ -264,7 +265,7 @@ fn skipped_publishes_lose_nothing() {
                 let k = &KNOBS[(skip * 7 + round * 3 + e * 5) % KNOBS.len()];
                 {
                     let s = r.p.edit_part(PartId::ALL[0]).sound;
-                    let b = s.params.block_mut(k.addr.block).unwrap();
+                    let mut b = s.params.block_mut(k.addr.block).unwrap();
                     let v = k.spec.denormalize(0.2 + 0.1 * ((e + round) % 6) as f32);
                     b.set(k.addr.param, k.spec.quantize(v));
                 }
@@ -288,7 +289,7 @@ fn the_knobs_are_reserved_once() {
     r.publish();
     let part = &r.shared.parts[0];
     let voice = Voice::cost(&part.params, &part.mod_state).0;
-    let need = FxBus::COST.0 + Knobs::RESERVE.0 + voice + Knobs::COST.0;
+    let need = FxBus::COST.0 + Knobs::RESERVE.0 + LfoClock::RESERVE.0 + voice + Knobs::COST.0;
     for (cost, admitted) in [(need, 1), (need - 1, 0)] {
         let hz = (cost as u64 * 4_800_000).div_ceil(AUDIO_BUDGET_PERCENT as u64) as u32;
         *r.inst = Instrument::new(SAMPLE_RATE, SampleBudget::for_cpu(hz));
@@ -365,7 +366,7 @@ fn a_block_takes_at_most_a_window_of_moves() {
         .filter(|k| matches!(k.addr.block, BlockRef::Modal | BlockRef::Filter));
     for (i, k) in mods.enumerate() {
         let s = r.p.edit_part(PartId::ALL[0]).sound;
-        let b = s.params.block_mut(k.addr.block).unwrap();
+        let mut b = s.params.block_mut(k.addr.block).unwrap();
         let v = k.spec.quantize(k.spec.denormalize(0.13 + 0.07 * i as f32));
         b.set(k.addr.param, v);
         r.publish();

@@ -4,6 +4,7 @@
 
 mod common;
 use chimera_core::dsp::knobs::Knobs;
+use chimera_core::dsp::lfo::LfoClock;
 use chimera_core::project::PartId;
 use common::{SR, peak};
 
@@ -36,7 +37,7 @@ use chimera_core::hw::{AUDIO_BUDGET_PERCENT, CPU_HZ_REV_V, SampleBudget};
 /// rounds up to at least `FxBus::COST + voice_share` (`for_cpu` truncates).
 const fn budget_for(voice_share: u32) -> SampleBudget {
     // The bus and the knobs, reserved (ADR 0116).
-    let reserved = FxBus::COST.0 + Knobs::RESERVE.0;
+    let reserved = FxBus::COST.0 + Knobs::RESERVE.0 + LfoClock::RESERVE.0;
     SampleBudget::for_cpu(
         ((reserved + voice_share) as u64 * 4_800_000).div_ceil(AUDIO_BUDGET_PERCENT as u64) as u32,
     )
@@ -175,7 +176,7 @@ fn mix_parts_alone_is_renders_mix() {
     let mut rig = Rig::new();
     let mut shared = AudioShared::default();
     shared.parts[0].mix.pan = 0.3;
-    shared.parts[0].mix.sends = [0.2, 0.3, 0.4];
+    shared.parts[0].params.out.sends = [0.2, 0.3, 0.4];
     shared.fx.delay.mix = 0.5;
     rig.inst.handle(on(0, 60), &shared);
     rig.block(&shared);
@@ -224,7 +225,7 @@ fn mix_parts_reference(
     let mut moving = Vec::new();
     for (p, part) in shared.parts.iter().enumerate() {
         let (gl, gr) = pan_gains(part.mix.pan);
-        let [s0, s1, s2] = part.mix.sends;
+        let [s0, s1, s2] = part.params.out.sends;
         let to = [gl * part.mix.level, gr * part.mix.level, s0, s1, s2];
         if !written[p] {
             for (e, &t) in eases[p].iter_mut().zip(&to) {
@@ -315,7 +316,7 @@ fn mix_parts_is_bit_identical_to_the_reference() {
                 part.mix.pan = rnd() * 2.4 - 1.2;
             }
             part.mix.level = rnd();
-            part.mix.sends = [rnd(), rnd(), rnd()];
+            part.params.out.sends = [rnd(), rnd(), rnd()];
             part.mix.output = pairs[(rnd() * 3.0) as usize % 3];
         }
         let buses: [[f32; BLOCK_SIZE]; MAX_PARTS] = core::array::from_fn(|_| {
@@ -382,7 +383,7 @@ fn fx_send_puts_no_dry_signal_on_pair_1() {
     shared.fx.reverb.time = 0.7;
     shared.parts[0].mix.output = DacPair::P3;
     shared.parts[0].mix.pan = -1.0;
-    shared.parts[0].mix.sends[2] = SEND;
+    shared.parts[0].params.out.sends[2] = SEND;
     let mut fx = Box::new(FxBus::new());
     rig.inst.handle(on(0, 60), &shared);
     let mut last = Stereo::SILENT;
@@ -428,7 +429,7 @@ fn the_chorus_returns_stereo_on_pair_1() {
         mix: 1.0,
     };
     shared.parts[0].mix.output = DacPair::P3;
-    shared.parts[0].mix.sends = [1.0, 0.0, 0.0];
+    shared.parts[0].params.out.sends = [1.0, 0.0, 0.0];
     rig.inst.handle(on(0, 60), &shared);
     let (mut l, mut r) = (Vec::new(), Vec::new());
     for _ in 0..100 {
@@ -583,7 +584,7 @@ fn reverb_perf(send: f32) -> Performance {
     let mut perf = sine_perf();
     perf.fx.reverb.mix = 0.5;
     perf.fx.reverb.time = 0.7;
-    perf.edit(PartId::ALL[0]).mix.sends[2] = send;
+    perf.edit(PartId::ALL[0]).sound.params.out.sends[2] = send;
     perf
 }
 
@@ -656,7 +657,7 @@ fn a_six_note_tx_epiano_chord_stays_in_budget() {
 fn the_test_budget_keeps_the_pre_diet_voice_share() {
     assert_eq!(
         BUDGET.as_cost().0,
-        FxBus::COST.0 + Knobs::RESERVE.0 + VOICE_SHARE
+        FxBus::COST.0 + Knobs::RESERVE.0 + LfoClock::RESERVE.0 + VOICE_SHARE
     );
 }
 
@@ -687,7 +688,8 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
     use chimera_core::dsp::algo::algorithms::AlgoId;
     let mut shared = AudioShared::default();
     let a = &mut shared.parts[0].params.algo;
-    (a.alg_a, a.alg_b, a.morph) = (AlgoId::A16.get(), AlgoId::A17.get(), 64);
+    a.try_set_algs(AlgoId::A16, AlgoId::A17).unwrap();
+    a.morph = 64;
     for op in a.ops.iter_mut() {
         (op.level, op.feedback) = (99, 7);
     }
@@ -1600,4 +1602,50 @@ fn the_voice_budget_reserves_the_reverb_types_cost() {
         sheds(ReverbType::Room) >= 1,
         "ROOM's 168 a sample sheds one"
     );
+}
+
+/// A Sound load moves its sends through the mixer's ease: the send bus
+/// glides to the new amount, never snapping (ADR 0123).
+#[test]
+fn a_sound_load_eases_its_sends() {
+    use chimera_core::dsp::knobs::KnobPublisher;
+    use chimera_core::project::Loads;
+    use chimera_core::tracked::Tracked;
+    let mut shared = AudioShared::default();
+    let mut knobs = Box::new(KnobPublisher::new());
+    let buses = [[1.0f32; BLOCK_SIZE]; MAX_PARTS];
+    let mut written = [false; MAX_PARTS];
+    written[0] = true;
+    let (mut fx, mut mix) = (Box::new(FxBus::new()), MixState::default());
+    let mut out = Box::new(DacBlocks::new());
+    let mut block = |shared: &AudioShared| {
+        let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
+        mix_parts(
+            &buses,
+            &written,
+            &mut sends,
+            &mut mix,
+            &mut fx,
+            shared,
+            Tempo::DEFAULT,
+            SR,
+            &mut out,
+        );
+        sends[2][BLOCK_SIZE - 1]
+    };
+    for _ in 0..4 {
+        assert_eq!(block(&shared), 0.0);
+    }
+    let mut s = Tracked::fresh(Sound::init(EngineType::Algo));
+    s.params.out.sends = [1.0; FX_SENDS];
+    shared.publish_sound(0, &s, Loads::NONE.next(), &mut knobs);
+    let first = block(&shared);
+    assert!(first > 0.0 && first < 0.5, "eases in, not a snap: {first}");
+    // The mixer's ease is a 20 ms one-pole (EASE_S): 99 % takes 5 time constants.
+    let blocks_in_100_ms = SR as usize / 10 / BLOCK_SIZE;
+    let last = (0..blocks_in_100_ms)
+        .map(|_| block(&shared))
+        .last()
+        .unwrap();
+    assert!(last >= 0.99, "reached within 100 ms: {last}");
 }

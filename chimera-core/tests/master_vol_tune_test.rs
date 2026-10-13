@@ -263,20 +263,20 @@ fn tune_zero_is_the_untuned_bits() {
 struct One(MidiSettings, CompParams);
 
 impl chimera_core::addr::BlockRead for One {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
+    fn block(&self, b: BlockRef) -> Option<chimera_core::addr::BlockView<'_>> {
         match b {
-            BlockRef::Midi => Some(&self.0),
-            BlockRef::Comp => Some(&self.1),
+            BlockRef::Midi => Some(chimera_core::addr::BlockView::Plain(&self.0)),
+            BlockRef::Comp => Some(chimera_core::addr::BlockView::Plain(&self.1)),
             _ => None,
         }
     }
 }
 
 impl chimera_core::addr::Blocks for One {
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
+    fn block_mut(&mut self, b: BlockRef) -> Option<chimera_core::addr::BlockViewMut<'_>> {
         match b {
-            BlockRef::Midi => Some(&mut self.0),
-            BlockRef::Comp => Some(&mut self.1),
+            BlockRef::Midi => Some(chimera_core::addr::BlockViewMut::Plain(&mut self.0)),
+            BlockRef::Comp => Some(chimera_core::addr::BlockViewMut::Plain(&mut self.1)),
             _ => None,
         }
     }

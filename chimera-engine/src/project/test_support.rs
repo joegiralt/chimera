@@ -102,6 +102,7 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
     }
     let e = p.edit_part(PartId::ALL[1]);
     e.sound.params.filter.set(FilterParams::RESONANCE, 0.6);
+    e.sound.params.out.set(OutParams::SEND2, 0.4);
     e.sound.name = SoundName::new("RENAMED").expect("a valid name");
     p.edit_part(PartId::ALL[3])
         .sound
@@ -110,7 +111,6 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
         .set(OutParams::VOLUME, 0.25);
     let mix = p.edit_part(PartId::ALL[2]).mix;
     mix.set(PartParams::PAN, -0.5);
-    mix.set(PartParams::SEND_DELAY, 0.4);
     mix.set(PartParams::LEVEL, 0.6);
     let fx = p.edit_fx();
     fx.delay.mix = 0.3;
@@ -127,7 +127,7 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
 pub fn dense(s: &mut Sound, seed: u64) {
     let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
     for b in BlockRef::ALL {
-        let Some(blk) = s.params.block_mut(b) else {
+        let Some(mut blk) = s.params.block_mut(b) else {
             continue;
         };
         for sp in blk.specs().iter().filter(|sp| sp.stored) {
@@ -868,7 +868,7 @@ fn filler(k: usize) -> Sound {
     let mut s = Sound::neutral(EngineType::Algo);
     let mut n = 0;
     for b in BlockRef::ALL {
-        let Some(blk) = s.params.block_mut(b) else {
+        let Some(mut blk) = s.params.block_mut(b) else {
             continue;
         };
         for sp in blk

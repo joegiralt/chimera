@@ -4,6 +4,7 @@
 
 use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
 use crate::block::Block;
+use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::tape_engine::machine::defaults;
 use crate::dsp::tape_engine::{TapeEngineParams, TapeModel};
 use crate::ui::block_def::{BlockDef, SlotBinding, slot_addr};
@@ -55,11 +56,11 @@ pub fn apply_under(
     {
         *sel_op = sel_op.nudged(delta);
     } else if let Some(a) = slot_addr(def, slot, ctx)
-        && let Some(b) = params.block_mut(a.block)
+        && let Some(mut b) = params.block_mut(a.block)
     {
         let before = b.get(a.param);
         b.nudge(a.param, delta);
-        machine_edit(a, before, b);
+        machine_edit(a, before, &mut *b);
     }
 }
 
@@ -83,10 +84,15 @@ pub fn snap_encoder(def: &BlockDef, slot: usize, delta: i8, params: &mut impl Bl
 /// `snap_encoder` under `ctx`.
 pub fn snap_under(def: &BlockDef, slot: usize, delta: i8, params: &mut impl Blocks, ctx: &SlotCtx) {
     if let Some(a) = slot_addr(def, slot, ctx)
-        && let Some(b) = params.block_mut(a.block)
+        && let Some(mut b) = params.block_mut(a.block)
     {
         let before = b.get(a.param);
-        b.snap(a.param, delta);
-        machine_edit(a, before, b);
+        if matches!(a.block, BlockRef::AlgoOp(_)) && a.param == AlgoOpParams::WAVE {
+            // The last kind the budget allows, as a turn steps to it.
+            b.nudge(a.param, delta.signum() * i8::MAX);
+        } else {
+            b.snap(a.param, delta);
+        }
+        machine_edit(a, before, &mut *b);
     }
 }

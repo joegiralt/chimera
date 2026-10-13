@@ -10,8 +10,8 @@ use chimera_core::ui::block_def::ChainDef2;
 use chimera_core::ui::block_def::Move;
 use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART};
 use chimera_core::ui::nav::{
-    Column, Location, MixPage, NavCtx, NavKey, OrbitAt, OrbitCx, OrbitKey, PageAt, Recall, Step,
-    chain_def_for,
+    Column, Location, MixPage, NavCtx, NavKey, OrbitAt, OrbitCx, OrbitKey, PageAt, PartChain,
+    Recall, Step, chain_def_for,
 };
 use chimera_core::ui::orbit::ORBIT_CHAIN;
 use chimera_core::ui::settings::{Kind, rows};
@@ -27,7 +27,7 @@ const FX_FIRST: usize = if MIXER_HOME > MIXER_PART {
 
 fn cx(engine: EngineType) -> NavCtx {
     NavCtx {
-        engines: [engine; 6],
+        chains: [PartChain::base(engine); 6],
         dyn_rows: 3,
         orbit: OrbitCx::NONE,
         // HALL: every FX sub-page shows, REV › MORE 2 (DENSITY) too.
@@ -399,4 +399,28 @@ fn mix_minus_in_library_clears_nothing() {
     assert_eq!(ui.prompt_kind_for_test(), None);
     assert!(ui.project().pool().get(slot).is_some(), "slot kept");
     assert_eq!(ui.project().pool().used(), used);
+}
+
+/// AMP's EDIT goes down to SYM and round again (sends spec § 3).
+#[test]
+fn edit_on_amp_goes_to_sym_and_wraps() {
+    use chimera_core::ui::block_registry::{FOLDER, FOLDER_SYM};
+    let cx = cx(EngineType::Algo);
+    let c = chain_def_for(EngineType::Algo);
+    let n = (0..c.len())
+        .find(|&n| c.active_def(n, 0).is_some_and(|d| d.id == FOLDER.id))
+        .unwrap();
+    let (amp, sym) = (c.page(n, 0).unwrap(), c.page(n, 1).unwrap());
+    assert_eq!(c.active_def(n, 1).unwrap().id, FOLDER_SYM.id);
+    let mut r = Recall::new();
+    let l = Location::pages(P[0], amp);
+    assert_eq!(
+        l.step(NavKey::Edit, &cx, &mut r),
+        Step::Go(Location::pages(P[0], sym))
+    );
+    let l = Location::pages(P[0], sym);
+    assert_eq!(
+        l.step(NavKey::Edit, &cx, &mut r),
+        Step::Go(Location::pages(P[0], amp))
+    );
 }

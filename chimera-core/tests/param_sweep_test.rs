@@ -56,14 +56,13 @@ impl Case {
     }
 
     fn bench(&self) -> Bench {
-        let mut mix = PartParams::default();
-        let fx = if self.wet {
-            mix.sends = [0.5; 3];
-            fx_on()
-        } else {
-            FxParams::default()
-        };
-        Bench::new(self.patch, mix, fx)
+        let fx = if self.wet { fx_on() } else { FxParams::OFF };
+        let mut b = Bench::new(self.patch, PartParams::default(), fx);
+        if self.wet {
+            // After the patch: it is the Sound that carries the sends.
+            b.edit_sound(|s| s.params.out.sends = [0.5; 3]);
+        }
+        b
     }
 
     fn values(&self) -> Vec<f32> {
@@ -127,7 +126,10 @@ fn patches(p: &Param, quick: bool) -> Vec<(Patch, bool)> {
             .into_iter()
             .filter(|s| matches!(s, Patch::ModalInit(_)) || *s == Patch::BusyModal)
             .collect(),
-        (BlockRef::Algo | BlockRef::AlgoOp(_), true) => vec![Patch::BusyAlgo],
+        (BlockRef::Algo | BlockRef::AlgoOp(_), true) => vec![Patch::BusyAlgo, Patch::Formant],
+        (BlockRef::Algo | BlockRef::AlgoOp(_), false) => {
+            SOUNDS.into_iter().chain([Patch::Formant]).collect()
+        }
         (_, true) => vec![Patch::BusyAlgo, Patch::BusyModal],
         (_, false) => SOUNDS.to_vec(),
     };
@@ -440,7 +442,7 @@ fn a_self_oscillating_filter_dies_with_its_note() {
         Patch::ModalInit(ResonatorMode::Bowed),
         Patch::ModalInit(ResonatorMode::Sympathetic),
     ] {
-        let mut b = Bench::new(patch, PartParams::default(), FxParams::default());
+        let mut b = Bench::new(patch, PartParams::default(), FxParams::OFF);
         b.set(&find(BlockRef::Filter, FilterParams::RESONANCE), 1.0);
         let mut t = Tape::default();
         for blk in 0..30_000 {
@@ -817,7 +819,12 @@ fn out_moves_the_part_to_its_pair() {
             // Sends low enough that the return stays under the limiter's
             // knee (ADR 0109): its gain is linked across pairs, so where it
             // bent, a layout would move it.
-            b.perf.edit(chimera_core::project::PartId::ALL[0]).mix.sends = [0.03; 3];
+            b.perf
+                .edit(chimera_core::project::PartId::ALL[0])
+                .sound
+                .params
+                .out
+                .sends = [0.03; 3];
             b.set(&out, pair);
             let mut t = Tape::default();
             for blk in 0..400 {
@@ -872,6 +879,23 @@ fn levels_are_safe() {
         }
     }
 }
+
+/// The formant fixture at C3 (Ruling 11): heard, safe, and at the level
+/// recorded when FRMT first sounded (Task 10), ±1.5 dB.
+#[test]
+fn formant_fixture_level() {
+    let l = level(Patch::Formant, &[48], 100, BPS);
+    println!("FORMANT: {:.2} LUFS", l.lufs);
+    assert!(l.peak.iter().all(|&p| within_ceiling(p)) && l.rms[0] > SILENT_RMS);
+    assert!(
+        (l.lufs - FORMANT_LUFS).abs() <= 1.5,
+        "FORMANT at {:.2} LUFS, recorded {FORMANT_LUFS}",
+        l.lufs
+    );
+}
+
+/// The formant fixture's level at C3, LUFS, as Task 10 measured it.
+const FORMANT_LUFS: f32 = -22.16;
 
 /// ADR 0109's reference: ADR 0063's factory median (−22 LUFS) plus the
 /// master gain's +10.97 dB. ALGO INIT's C4 at velocity 100 on P1, LUFS.
@@ -939,6 +963,32 @@ fn modal_models_match_the_loudness_reference() {
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
+/// CHOIR, TALK BASS, BREATH and VOX (factory 8–11): one C4 at velocity 100
+/// on P1 within ±0.5 dB of its measured LUFS; their chord at velocity 127
+/// under the ceiling, losing at most `MAX_CHORD_LIMITED_DB` to the limiter.
+#[test]
+fn formant_sounds_meet_the_loudness_reference() {
+    // Ruling 9, resolved (owner, 2026-10-13): the demos may ship ~4 dB under
+    // REFERENCE_LUFS at VOL max (CHOIR −3.0, BREATH −3.3 dB).
+    const MEASURED: [f32; 4] = [-14.00, -10.90, -14.26, -11.70];
+    for (i, want) in (8..12u8).zip(MEASURED) {
+        let l = level(Patch::Factory(i), &[60], 100, BPS);
+        println!(
+            "F{i}: {:.2} LUFS ({:+.2} vs reference)",
+            l.lufs,
+            l.lufs - REFERENCE_LUFS
+        );
+        assert!((l.lufs - want).abs() <= 0.5, "F{i}: {:.2} LUFS", l.lufs);
+        let c = level(Patch::Factory(i), &CHORD, 127, BPS);
+        println!("  chord at 127: {:.2} dB limited", c.limited_db);
+        assert!(
+            c.limited_db <= MAX_CHORD_LIMITED_DB && c.peak.iter().all(|&p| within_ceiling(p)),
+            "F{i}: chord limited {:.2} dB",
+            c.limited_db
+        );
+    }
+}
+
 /// STRING's peak rule: its eight-note chord at velocity 127 takes at most
 /// this much gain reduction, dB.
 const MAX_STRING_GR_DB: f32 = 15.0;
@@ -947,7 +997,7 @@ const MAX_STRING_GR_DB: f32 = 15.0;
 /// after 0.5 s falls 60 dB in about 1.1 s, 0.8 to 1.5 s.
 #[test]
 fn algo_init_releases_in_about_a_second() {
-    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::OFF);
     let mut t = Tape::default();
     b.note(60, Some(100));
     for blk in 0..2 * BPS {
@@ -994,7 +1044,7 @@ fn find(block: BlockRef, id: ParamId) -> Param {
 /// so pair 1 doesn't step as the voice frees (ADR 0060).
 #[test]
 fn the_folder_sym_puts_no_dc_on_the_dac() {
-    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::OFF);
     b.set(&find(BlockRef::Folder, FolderParams::FOLD), 0.5);
     b.set(&find(BlockRef::Folder, FolderParams::SYMMETRY), 0.0);
     let mut t = Tape::default();
@@ -1110,19 +1160,19 @@ fn jumps_never_click() {
             FAST,
         ),
         (
-            find(BlockRef::Part, PartParams::SEND_CHORUS),
+            find(BlockRef::Out, OutParams::SEND1),
             Patch::Probe,
             true,
             FAST,
         ),
         (
-            find(BlockRef::Part, PartParams::SEND_DELAY),
+            find(BlockRef::Out, OutParams::SEND2),
             Patch::Probe,
             true,
             FAST,
         ),
         (
-            find(BlockRef::Part, PartParams::SEND_REVERB),
+            find(BlockRef::Out, OutParams::SEND3),
             Patch::Probe,
             true,
             FAST,
@@ -1253,7 +1303,7 @@ fn drive_jumps_never_click_at_any_tone() {
 /// holds neither the voice nor its bill (23 s before Task 17).
 #[test]
 fn a_silent_operator_frees_the_voice() {
-    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::OFF);
     b.set(&find(BlockRef::AlgoOp(Op::B), AlgoOpParams::RR), 1.0);
     let mut t = Tape::default();
     for blk in 0..1500 {

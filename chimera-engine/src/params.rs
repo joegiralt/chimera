@@ -1,4 +1,4 @@
-use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
+use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks, ParamAddr};
 use crate::block::{
     Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
 };
@@ -977,6 +977,9 @@ pub struct OutParams {
     pub vca: f32,
     /// AMP's VEL: the VCA's velocity sensitivity, 0..1.
     pub vca_vel: f32,
+    /// Chorus, delay, reverb sends (`FxBus` order), 0..1 each: the Sound's
+    /// own, eased by the mixer (ADR 0123).
+    pub sends: [f32; crate::dsp::fx_bus::FX_SENDS],
 }
 
 /// INIT's OUT LEVEL: ALGO INIT's C4 at velocity 100 at the factory median,
@@ -990,6 +993,7 @@ impl Default for OutParams {
             pan: 0.0,
             vca: 0.0,
             vca_vel: 1.0,
+            sends: [0.0; crate::dsp::fx_bus::FX_SENDS],
         }
     }
 }
@@ -999,11 +1003,16 @@ impl OutParams {
     pub const PAN: ParamId = ParamId(1);
     pub const VCA: ParamId = ParamId(2);
     pub const VCA_VEL: ParamId = ParamId(3);
+    pub const SEND1: ParamId = ParamId(4);
+    pub const SEND2: ParamId = ParamId(5);
+    pub const SEND3: ParamId = ParamId(6);
+    pub const SENDS: [ParamId; crate::dsp::fx_bus::FX_SENDS] =
+        [Self::SEND1, Self::SEND2, Self::SEND3];
 }
 
 /// Volume and VEL are read by `Voice`'s VCA every block, VCA is a hidden
 /// destination; pan is not used by `Voice`.
-pub static OUT_SPECS: [ParamSpec; 4] = [
+pub static OUT_SPECS: [ParamSpec; 7] = [
     ParamSpec::continuous(
         0,
         "LEVEL",
@@ -1053,6 +1062,45 @@ pub static OUT_SPECS: [ParamSpec; 4] = [
         Smoothing::KNOB,
     )
     .ident("VEL"),
+    ParamSpec::continuous(
+        4,
+        "CHORUS",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("SEND1")
+    .glyph(crate::glyph::FocusGlyph::LevelBar),
+    ParamSpec::continuous(
+        5,
+        "DELAY",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("SEND2")
+    .glyph(crate::glyph::FocusGlyph::LevelBar),
+    ParamSpec::continuous(
+        6,
+        "REVERB",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("SEND3")
+    .glyph(crate::glyph::FocusGlyph::LevelBar),
 ];
 
 impl Block for OutParams {
@@ -1067,6 +1115,9 @@ impl Block for OutParams {
             Self::PAN => self.pan,
             Self::VCA => self.vca,
             Self::VCA_VEL => self.vca_vel,
+            Self::SEND1 => self.sends[0],
+            Self::SEND2 => self.sends[1],
+            Self::SEND3 => self.sends[2],
             _ => 0.0,
         }
     }
@@ -1078,6 +1129,9 @@ impl Block for OutParams {
             Self::PAN => self.pan = v,
             Self::VCA => self.vca = v,
             Self::VCA_VEL => self.vca_vel = v,
+            Self::SEND1 => self.sends[0] = v,
+            Self::SEND2 => self.sends[1] = v,
+            Self::SEND3 => self.sends[2] = v,
             _ => {}
         }
     }
@@ -1431,13 +1485,14 @@ impl ParamSnapshot {
 /// (spec §2). UI and modulation go through this; DSP reads fields. The FX
 /// and the mix settings belong to the Performance and Part, not the Sound.
 impl BlockRead for ParamSnapshot {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        Some(match b {
+    #[inline(never)]
+    fn block(&self, b: BlockRef) -> Option<BlockView<'_>> {
+        Some(BlockView::Plain(match b {
             BlockRef::Modal => &self.modal,
             BlockRef::TapeEngine => &self.tape,
             BlockRef::Va => &self.va,
             BlockRef::Algo => &self.algo,
-            BlockRef::AlgoOp(op) => &self.algo.ops[op.index()],
+            BlockRef::AlgoOp(op) => return Some(BlockView::Op(self.algo.op(op))),
             BlockRef::Drive => &self.drive,
             BlockRef::Filter => &self.filter,
             BlockRef::Folder => &self.folder,
@@ -1457,18 +1512,19 @@ impl BlockRead for ParamSnapshot {
             | BlockRef::OrbitChords
             | BlockRef::OrbitRing(_)
             | BlockRef::Tempo => return None,
-        })
+        }))
     }
 }
 
 impl Blocks for ParamSnapshot {
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
-        Some(match b {
+    #[inline(never)]
+    fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>> {
+        Some(BlockViewMut::Plain(match b {
             BlockRef::Modal => &mut self.modal,
             BlockRef::TapeEngine => &mut self.tape,
             BlockRef::Va => &mut self.va,
             BlockRef::Algo => &mut self.algo,
-            BlockRef::AlgoOp(op) => &mut self.algo.ops[op.index()],
+            BlockRef::AlgoOp(op) => return Some(BlockViewMut::Op(self.algo.op_mut(op))),
             BlockRef::Drive => &mut self.drive,
             BlockRef::Filter => &mut self.filter,
             BlockRef::Folder => &mut self.folder,
@@ -1488,7 +1544,7 @@ impl Blocks for ParamSnapshot {
             | BlockRef::OrbitChords
             | BlockRef::OrbitRing(_)
             | BlockRef::Tempo => return None,
-        })
+        }))
     }
 }
 

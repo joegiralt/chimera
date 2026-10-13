@@ -6,7 +6,7 @@ mod common;
 mod screen;
 
 use chimera_core::addr::BlockRef;
-use chimera_core::block::Block;
+
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
@@ -336,7 +336,7 @@ fn retune_tape(
         held,
         ..PartParams::default()
     };
-    let mut b = Bench::new(patch, mix, FxParams::default());
+    let mut b = Bench::new(patch, mix, FxParams::OFF);
     b.harmony(Some(from));
     let mut t = Tape::default();
     let mut glide = Vec::new();
@@ -459,7 +459,7 @@ fn part_snap_default_is_neutral() {
         }
         v
     };
-    assert_eq!(old.len(), 1 + 5 * 8);
+    assert_eq!(old.len(), 1 + 5 * 5);
     // The v1 project fixture, written before them, into Parts that snapped.
     let (mut p, _) = Project::boxed();
     for id in PartId::ALL {
@@ -488,13 +488,13 @@ fn part_snap_default_is_neutral() {
 struct One<'a>(&'a mut PartParams);
 
 impl chimera_core::addr::BlockRead for One<'_> {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        (b == BlockRef::Part).then_some(&*self.0 as &dyn Block)
+    fn block(&self, b: BlockRef) -> Option<chimera_core::addr::BlockView<'_>> {
+        (b == BlockRef::Part).then_some(chimera_core::addr::BlockView::Plain(&*self.0))
     }
 }
 
 impl chimera_core::addr::Blocks for One<'_> {
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
-        (b == BlockRef::Part).then_some(&mut *self.0 as &mut dyn Block)
+    fn block_mut(&mut self, b: BlockRef) -> Option<chimera_core::addr::BlockViewMut<'_>> {
+        (b == BlockRef::Part).then_some(chimera_core::addr::BlockViewMut::Plain(&mut *self.0))
     }
 }

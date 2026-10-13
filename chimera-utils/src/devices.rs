@@ -4,7 +4,7 @@
 use chimera_core::MidiNote;
 use chimera_core::dsp::Stereo;
 use chimera_core::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
-use chimera_core::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
+use chimera_core::dsp::algo::kernel::{Kernel, KernelBlock, KindBlock, OpBlock, SAMPLE_SCALE};
 use chimera_core::dsp::algo::plan::{EvalPlan, OPS};
 use chimera_core::dsp::algo::waves::{WAVE_IDENTS, WaveId, mip_position};
 use chimera_core::dsp::filter::{Filter, FilterMode, FilterMods, level_from_drive};
@@ -180,7 +180,7 @@ fn reverb_values(r: &ReverbParams) -> [f32; 10] {
 pub fn render_reverb(t: ReverbType, v: &[f32], x: &[f32]) -> Vec<f32> {
     let mut fx = FxParams {
         reverb: start_params(t),
-        ..FxParams::default()
+        ..FxParams::OFF
     };
     fx.reverb.mix = 1.0;
     let r = &mut fx.reverb;
@@ -254,20 +254,24 @@ fn render_op(v: &[f32], len: usize) -> Vec<f32> {
         gain_from: 0.0,
         gain_to: 0.0,
         feedback: 0.0,
-        lo: wave.table(0),
-        hi: wave.table(0),
-        xfade_from: 0.0,
-        xfade_to: 0.0,
+        kind: KindBlock::Table {
+            lo: wave.table(0),
+            hi: wave.table(0),
+            xfade_from: 0.0,
+            xfade_to: 0.0,
+        },
     };
     let mut ops = [silent; OPS];
     ops[0] = OpBlock {
         inc: (hz as f64 / crate::SR * 4_294_967_296.0) as u32,
         gain_from: level * SAMPLE_SCALE,
         gain_to: level * SAMPLE_SCALE,
-        lo: wave.table(lo),
-        hi: wave.table(lo + 1),
-        xfade_from: pos - lo as f32,
-        xfade_to: pos - lo as f32,
+        kind: KindBlock::Table {
+            lo: wave.table(lo),
+            hi: wave.table(lo + 1),
+            xfade_from: pos - lo as f32,
+            xfade_to: pos - lo as f32,
+        },
         ..silent
     };
     let plan = EvalPlan::build(&NONE, 1, &NONE, 1);

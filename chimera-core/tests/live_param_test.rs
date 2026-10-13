@@ -371,8 +371,15 @@ fn sine(p: &mut ParamSnapshot) {
 
 #[test]
 fn test_algo_wave_change_mid_note() {
-    let (_, _, before, after) =
-        render_with_param_change(sine, |p| p.algo.ops[0].wave = WaveId::SAW.get(), 8, 8);
+    let (_, _, before, after) = render_with_param_change(
+        sine,
+        |p| {
+            let saw = chimera_core::dsp::algo::kinds::OpKind::Table(WaveId::SAW);
+            p.algo.try_set_kind(0, saw).unwrap()
+        },
+        8,
+        8,
+    );
     let f0 = 261.6;
     let h_before = harmonic_energy(&before, f0);
     let h_after = harmonic_energy(&after, f0);

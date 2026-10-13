@@ -2,6 +2,7 @@
 //! and SENDS pages and the shared FX pages, all bound through slot bindings.
 
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
+use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::part::{DacPair, PartMode, PartParams};
 use chimera_core::preset::Performance;
 use chimera_core::project::PartId;
@@ -147,7 +148,10 @@ fn sends_page_edits_the_part_sends() {
     let mut ui = UiState::new();
     open_mixer(&mut ui, ButtonId::B3); // SENDS
     turn(&mut ui, EncoderId::C, 64); // reverb send
-    assert_eq!(ui.project().part(PartId::ALL[2]).mix.sends, [0.0, 0.0, 0.5]);
+    assert_eq!(
+        ui.project().part(PartId::ALL[2]).sound.params.out.sends,
+        [0.0, 0.0, 0.5]
+    );
 }
 
 fn turn_def(def: &BlockDef, slot: usize, delta: i8, perf: &mut Performance) {
@@ -169,6 +173,7 @@ fn bound(def: &BlockDef) -> Vec<Option<ParamAddr>> {
 #[test]
 fn fx_encoders_step_like_before() {
     let mut perf = Performance::new();
+    perf.fx = FxParams::OFF;
     turn_def(&reg::DELAY, 0, 2, &mut perf);
     assert_eq!(perf.fx.delay.time_ms, 375.0 + 2.0 * 8.0);
     turn_def(&reg::CHORUS, 0, 5, &mut perf);

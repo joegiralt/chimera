@@ -34,8 +34,15 @@ impl FmtBuf {
     /// `args` written out, cut at 32 bytes.
     pub fn of(args: core::fmt::Arguments<'_>) -> Self {
         let mut b = Self::new();
-        let _ = core::fmt::Write::write_fmt(&mut b, args);
+        let _ = b.write_fmt(args);
         b
+    }
+
+    /// `write!` finds this before `fmt::Write`'s provided method, so every
+    /// crate calls this one copy instead of building its own.
+    #[inline(never)]
+    pub fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) -> core::fmt::Result {
+        core::fmt::write(self, args)
     }
 }
 

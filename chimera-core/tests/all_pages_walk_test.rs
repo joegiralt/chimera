@@ -16,12 +16,16 @@
 
 mod screen;
 
+use chimera_core::dsp::algo::kinds::OpKind;
 use chimera_core::params::EngineType;
+use chimera_core::project::PartId;
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_def::ChainDef2;
-use chimera_core::ui::block_registry::{MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART};
+use chimera_core::ui::block_registry::{
+    ALGO_FORMANT_CHAIN, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART,
+};
 use chimera_core::ui::nav::chain_def_for;
 use chimera_core::ui::perf::PerfStats;
 use chimera_hal::{ButtonId, EncoderId};
@@ -49,6 +53,8 @@ const B: [ButtonId; 6] = [
 enum Context {
     /// Part 1 with `EngineType`'s init Sound loaded.
     Part(EngineType),
+    /// Part 1 on ALGO with operator 1 a formant: the chain has FRM.
+    Formant,
     /// MIX + B<n> (0-based): its PART and SENDS.
     Mixer(usize),
     /// The shared FX, from Part 6's SENDS.
@@ -61,6 +67,7 @@ impl Context {
     fn chain(self) -> &'static ChainDef2 {
         match self {
             Context::Part(e) => chain_def_for(e),
+            Context::Formant => &ALGO_FORMANT_CHAIN,
             Context::Mixer(_) | Context::Fx => &MIXER_CHANNEL_CHAIN,
             Context::Leaf(i) => leaves()[i].of.chain(),
         }
@@ -78,7 +85,12 @@ impl Context {
     /// Drive the UI to `node`, `sub` through the real controls.
     fn reach(self, ui: &mut UiState, node: usize, sub: usize) {
         match self {
-            Context::Part(_) => {
+            Context::Part(_) | Context::Formant => {
+                if let Context::Formant = self {
+                    // The last page's encoders may have turned every FRM away.
+                    let sound = &mut ui.project_mut().edit_part(PartId::ALL[0]).sound;
+                    let _ = sound.params.algo.try_set_kind(0, OpKind::Formant);
+                }
                 feed(ui, Input::press(ButtonId::B2));
                 feed(ui, Input::press(ButtonId::B1));
                 for _ in 0..self.chain().len() {
@@ -106,8 +118,14 @@ impl Context {
 
     fn start(self) -> UiState {
         let mut ui = UiState::new();
-        if let Context::Part(engine) = self {
-            load_init(&mut ui, engine);
+        match self {
+            Context::Part(engine) => load_init(&mut ui, engine),
+            Context::Formant => {
+                load_init(&mut ui, EngineType::Algo);
+                let sound = &mut ui.project_mut().edit_part(PartId::ALL[0]).sound;
+                sound.params.algo.try_set_kind(0, OpKind::Formant).unwrap();
+            }
+            _ => {}
         }
         ui
     }
@@ -248,6 +266,7 @@ fn every_context() -> Vec<Context> {
         .iter()
         .map(|&engine| Context::Part(engine))
         .collect();
+    all.push(Context::Formant);
     all.extend((0..6).map(Context::Mixer));
     all.push(Context::Fx);
     all.extend((0..leaves().len()).map(Context::Leaf));
@@ -275,7 +294,10 @@ fn every_page_walk() {
 #[test]
 fn representative_pages_walk() {
     let enc = [EncoderId::A, EncoderId::E];
-    walk(Context::Part(EngineType::Algo), 2, &enc, |_, sub| sub <= 1);
+    walk(Context::Part(EngineType::Algo), 2, &enc, |_, sub| {
+        sub <= 1 || sub >= 13
+    });
+    walk(Context::Formant, 2, &enc, |_, sub| sub <= 2 || sub >= 14);
     walk(Context::Mixer(0), 2, &enc, |_, _| true);
     walk(Context::Fx, 2, &enc, |_, sub| sub == 0);
     let leaf =

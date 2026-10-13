@@ -132,8 +132,8 @@ fn no_reverb_cell_has_a_hint() {
     for t in ALL {
         for def in [&reg::EFX, &reg::EFX_MORE] {
             for k in 0..6 {
-                assert!(view(def, k, &ctx(t)).hint().is_empty(), "{t:?} {k}");
-                assert_eq!(view(def, k, &ctx(t)).hint(), hint::NONE);
+                assert!(view(def, k, &ctx(t)).hint(&ctx(t)).is_empty(), "{t:?} {k}");
+                assert_eq!(view(def, k, &ctx(t)).hint(&ctx(t)), hint::NONE);
             }
         }
     }
@@ -287,8 +287,8 @@ fn every_type_shows_its_own_panel() {
     use chimera_core::block::Block as _;
     struct One(ReverbParams);
     impl BlockRead for One {
-        fn block(&self, b: BlockRef) -> Option<&dyn chimera_core::block::Block> {
-            (b == BlockRef::Reverb).then_some(&self.0 as &dyn chimera_core::block::Block)
+        fn block(&self, b: BlockRef) -> Option<chimera_core::addr::BlockView<'_>> {
+            (b == BlockRef::Reverb).then_some(chimera_core::addr::BlockView::Plain(&self.0))
         }
     }
     for t in ALL {
@@ -485,8 +485,8 @@ fn hall_size_cell_reads_plate_in_its_zone() {
     use chimera_core::addr::BlockRead;
     struct One(ReverbParams);
     impl BlockRead for One {
-        fn block(&self, b: BlockRef) -> Option<&dyn chimera_core::block::Block> {
-            (b == BlockRef::Reverb).then_some(&self.0 as &dyn chimera_core::block::Block)
+        fn block(&self, b: BlockRef) -> Option<chimera_core::addr::BlockView<'_>> {
+            (b == BlockRef::Reverb).then_some(chimera_core::addr::BlockView::Plain(&self.0))
         }
     }
     let w = |s: &str| draw::text_width(&theme::FONT_LABEL, s, theme::LABEL_TRACKING);

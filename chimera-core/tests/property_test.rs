@@ -65,11 +65,16 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     p.modal.modes = BankModes::from_index(rng.u8(3));
 
     // Algo params (release 8–15 so a note ends inside the note-off property's window)
-    p.algo.alg_a = rng.u8(31);
-    p.algo.alg_b = rng.u8(31);
+    use chimera_core::dsp::algo::algorithms::AlgoId;
+    let a = AlgoId::clamped(rng.u8(31));
+    p.algo.try_set_algs(a, AlgoId::clamped(rng.u8(31))).unwrap();
     p.algo.morph = rng.u8(127);
-    for op in p.algo.ops.iter_mut() {
-        op.wave = rng.u8(15);
+    for i in 0..6 {
+        let w = chimera_core::dsp::algo::waves::WaveId::from_index(rng.u8(15)).unwrap();
+        p.algo
+            .try_set_kind(i, chimera_core::dsp::algo::kinds::OpKind::Table(w))
+            .unwrap();
+        let op = &mut p.algo.ops[i];
         op.coarse = rng.u8(63);
         op.fine = rng.u8(15);
         op.level = rng.u8(99);

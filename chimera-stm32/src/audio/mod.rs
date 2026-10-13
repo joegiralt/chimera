@@ -25,6 +25,7 @@ pub fn start(a: AudioStart<'_>) {
         a.shared,
         a.notes,
         a.scope,
+        a.formant,
         a.orbit,
         a.sources,
     );

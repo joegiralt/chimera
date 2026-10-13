@@ -325,12 +325,54 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     ),
     // Then CLEAN's ACCURATE tan and exact divides (#57).
     // Then CLEAN's k law and trims (ADR 0096).
+    // Then the voice-end fade past −80 dB (#487): its DC blocker's tail,
+    // −69 dB, ramps out over the last block instead of cutting.
     (
         "factory_7",
         (
-            0xcabe755163058e15,
+            0x13448df1ea3c0499,
             [
                 974638215, 1046941265, 1045727262, 999705034, 1033284198, 1032940907, 3133150842, 0,
+            ],
+        ),
+    ),
+    // The formant demo Sounds (spec § Demo clips): CHOIR, TALK BASS, BREATH
+    // and VOX.
+    (
+        "factory_8",
+        (
+            0xb7c2d51dd428a7ff,
+            [
+                809965482, 3130400255, 1016199384, 3141166119, 3193279306, 3194216468, 1011502379,
+                992344631,
+            ],
+        ),
+    ),
+    (
+        "factory_9",
+        (
+            0xb7a92a3c9dc1ebcd,
+            [
+                886063688, 3196596643, 995166492, 3194522173, 3191499730, 3179660908, 3126563674, 0,
+            ],
+        ),
+    ),
+    (
+        "factory_10",
+        (
+            0x5404971f6c4c2a98,
+            [
+                837617169, 1017595293, 3179822900, 1032463702, 1044536702, 1044567220, 999749922,
+                959177971,
+            ],
+        ),
+    ),
+    (
+        "factory_11",
+        (
+            0xdf9ed2c6c9e93e8b,
+            [
+                944192553, 1056497071, 1053643610, 1031344620, 3173882710, 3173425415, 0, 0,
             ],
         ),
     ),
@@ -443,17 +485,21 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
             ],
         ),
     ),
+    // Re-recorded for the voice-end fade past −80 dB (#487): the slice
+    // ended on a −39 dB step, now ramped out over the last block.
     (
         "tape_oneshot_slice7",
         (
-            0xc41c0d00d48f38ab,
+            0x66b4834f036719a1,
             [0, 1050811635, 1053320054, 0, 0, 0, 0, 0],
         ),
     ),
+    // Re-recorded for the voice-end fade past −80 dB (#487): the tape ran
+    // out on a −39 dB step, now ramped out over the last block.
     (
         "tape_tron_held",
         (
-            0x13b073997afb0f10,
+            0xe90f31aa5cb2475e,
             [
                 0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
                 1032249790,

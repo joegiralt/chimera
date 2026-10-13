@@ -4,7 +4,7 @@
 mod screen;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
-use chimera_core::dsp::algo::algorithms::ALGO_COUNT;
+use chimera_core::dsp::algo::algorithms::{ALGO_COUNT, AlgoId};
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::params::EngineType;
@@ -25,7 +25,10 @@ fn morph_is_dimmed_iff_alg_a_equals_alg_b() {
     );
     for a in 0..ALGO_COUNT as u8 {
         for b in 0..ALGO_COUNT as u8 {
-            (s.params.algo.alg_a, s.params.algo.alg_b) = (a, b);
+            s.params
+                .algo
+                .try_set_algs(AlgoId::clamped(a), AlgoId::clamped(b))
+                .unwrap();
             assert_eq!(view::dimmed(MORPH, &s), a == b, "{a} {b}");
         }
     }
@@ -35,9 +38,10 @@ fn morph_is_dimmed_iff_alg_a_equals_alg_b() {
 #[test]
 fn priming_morph_is_refused_while_it_is_dimmed() {
     let mut ui = UiState::new();
-    let (a, b) = (ui.params().algo.alg_a, ui.params().algo.alg_b);
+    let (a, b) = ui.params().algo.algs();
+    let (a, b) = (a.get(), b.get());
     feed(&mut ui, Input::turn(EncoderId::B, a as i8 - b as i8)); // ALG B = ALG A
-    assert_eq!(ui.params().algo.alg_b, a);
+    assert_eq!(ui.params().algo.algs().1.get(), a);
     feed(&mut ui, Input::turn(EncoderId::C, 10)); // focus MORPH; ignored
     assert_eq!(ui.params().algo.morph, 0);
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
@@ -60,7 +64,8 @@ fn a_route_into_morph_is_inert_while_a_equals_b() {
     let mut m = MatrixState::new();
     m.rebuild_dests_from_registry(&reg);
     assert_eq!(inert_dests(&m, &s), 0);
-    s.params.algo.alg_b = s.params.algo.alg_a;
+    let a = s.params.algo.algs().0;
+    s.params.algo.try_set_algs(a, a).unwrap();
     assert_eq!(
         inert_dests(&m, &s),
         1 << FIXED_COLS,

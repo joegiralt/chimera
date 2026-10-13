@@ -10,8 +10,9 @@ use chimera_core::dsp::Stereo;
 use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::{KnobMemory, ReverbParams, ReverbType};
+use chimera_hal::BLOCK_SIZE;
 use common::SR;
-use common::rev::{MS, run, tone};
+use common::rev::{MS, Noise, run, tone};
 
 fn rms(x: &[f32]) -> f64 {
     (x.iter().map(|&v| v as f64 * v as f64).sum::<f64>() / x.len() as f64).sqrt()
@@ -130,4 +131,62 @@ fn a_dark_tail_stays_dark() {
         e
     });
     assert!(worst.iter().all(|&e| e <= 9.0), "{worst:.1?} dB");
+}
+
+/// Every TYPE's return after a 30 ms noise stab at `amp`, 8 s.
+fn stab(t: ReverbType, amp: f32) -> Vec<f32> {
+    let p = ReverbParams {
+        mix: 1.0,
+        ..ReverbParams::default().with_type(t, &KnobMemory::new())
+    };
+    let mut rv = Box::new(Reverb::of_type(t));
+    let mut n = Noise(7);
+    run(
+        &mut |send| {
+            let mut out = Stereo::SILENT;
+            rv.process(send, &p, 1.0, Tempo::DEFAULT, SR, &mut out);
+            (out.l, out.r)
+        },
+        &mut |i| {
+            let v = n.next();
+            if i < 30 * MS { amp * v } else { 0.0 }
+        },
+        8.0,
+    )
+    .0
+}
+
+/// The worst block edge: its |x[i+1] − 2x[i] + x[i−1]| over the largest
+/// in-block one within ±2 blocks, past the onset. With the sample.
+fn edge_ratio(x: &[f32]) -> (f32, usize) {
+    let d2: Vec<f32> = (1..x.len() - 1)
+        .map(|i| (x[i + 1] - 2.0 * x[i] + x[i - 1]).abs())
+        .collect();
+    // d2[j] bends about x[j + 1]: the edge x[i − 1] → x[i] is d2[i − 2], d2[i − 1].
+    (20..d2.len() / BLOCK_SIZE - 3)
+        .map(|b| b * BLOCK_SIZE)
+        .filter_map(|i| {
+            let peer = (i - 2 * BLOCK_SIZE..i + 2 * BLOCK_SIZE)
+                .filter(|j| (3..BLOCK_SIZE - 2).contains(&((j + 1) % BLOCK_SIZE)))
+                .map(|j| d2[j])
+                .fold(0.0f32, f32::max);
+            (peer > 1e-7).then(|| (d2[i - 2].max(d2[i - 1]) / peer, i))
+        })
+        .fold((0.0, 0), |m, r| if r.0 > m.0 { r } else { m })
+}
+
+/// No tail bends harder at a block edge than within its blocks by more
+/// than the listen QA's click bar (3×): `TailGate`'s gain ramps up as it
+/// ramps down, snapping only on an onset. Opening at once stepped HALL
+/// 3.4×, BLOOM 14.5×, QUAD 4.9× and REVERSE 3.5× (#499).
+#[test]
+fn a_tail_never_steps_on_a_block_edge() {
+    for t in ReverbType::ALL {
+        for amp in [0.5, 0.05, 0.01] {
+            let (r, at) = edge_ratio(&stab(t, amp));
+            let name = ReverbType::NAMES[t.index()];
+            println!("{name} {amp}: {r:.2}× at {at}");
+            assert!(r <= 3.0, "{name} at {amp}: {r:.2}× at sample {at}");
+        }
+    }
 }

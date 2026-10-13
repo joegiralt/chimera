@@ -29,9 +29,9 @@ const _: () = assert!(MAX_REGISTRY_DESTS * REGISTRY_ENTRY_LEN <= MAX_RECORD_LEN)
 
 /// The most a Sound costs in the pool: its 16 B name and its sparse records
 /// with every param off neutral, a full registry, every route and tap, a
-/// `SourceRef` and a 24-zone `ZoneTune` (2 349 B for 236 params), rounded
+/// `SourceRef` and a 24-zone `ZoneTune` (2 549 B for 276 params), rounded
 /// up to 16 B. `sparse_bound` pins it.
-pub const MAX_SOUND_COST: usize = 2352;
+pub const MAX_SOUND_COST: usize = 2560;
 
 impl Sound {
     /// The frozen base a file decodes onto: every param at its v1 default,
@@ -104,7 +104,7 @@ pub(crate) fn encode_sound_body(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(
     for b in BlockRef::ALL {
         if let Some(blk) = s.params.block(b) {
             r.clear();
-            if encode_block(b, blk, neutral.block(b), &mut r) > 0 {
+            if encode_block(b, &*blk, neutral.block(b).as_deref(), &mut r) > 0 {
                 w.put(RecordTag::Block, r.as_slice())?;
             }
         }
@@ -224,7 +224,20 @@ pub struct SoundCheck {
     had_qm: bool,
     /// Entries pass 2 dropped from this file; 0 in pass 1.
     skips: u16,
+    /// Pass 2's codes the formant budget refused in file order, the first
+    /// `n_refused`, retried at `finish`: the budget's floor rises with a
+    /// FRMT, so a Sound that fits whole needn't fit operator by operator.
+    refused: [Refused; REFUSED],
+    n_refused: usize,
+    /// Pass 2 refused an operator kind over the formant budget.
+    over: bool,
 }
+
+/// A code refused, and where: its block's disk code and its id.
+type Refused = [u8; 3];
+
+/// Six operators' WAVE, and ALG A and B.
+const REFUSED: usize = crate::dsp::algo::plan::OPS + 2;
 
 impl SoundCheck {
     pub fn new() -> Self {
@@ -243,6 +256,9 @@ impl SoundCheck {
             had_fm3: false,
             had_qm: false,
             skips: 0,
+            refused: [[0; 3]; REFUSED],
+            n_refused: 0,
+            over: false,
         }
     }
 
@@ -251,6 +267,12 @@ impl SoundCheck {
     /// in pass 2 only, so zero until it has run.
     pub fn skips(&self) -> u16 {
         self.skips
+    }
+
+    /// Pass 2 decoded an operator kind past the formant budget as W1 (no
+    /// firmware writes one).
+    pub fn over_budget(&self) -> bool {
+        self.over
     }
 
     fn skip(&mut self, n: u16) {
@@ -291,6 +313,13 @@ impl<'a> SoundDecoder<'a> {
             target,
             staged: Sound::neutral(EngineType::Algo),
         }
+    }
+}
+
+impl SoundDecoder<'_> {
+    /// `SoundCheck::over_budget`.
+    pub fn over_budget(&self) -> bool {
+        self.check.over_budget()
     }
 }
 
@@ -338,6 +367,8 @@ impl SoundCheck {
                 self.routes_len = 0;
                 (self.had_fm3, self.had_qm) = (false, false);
                 self.skips = 0;
+                self.n_refused = 0;
+                self.over = false;
                 return Ok(());
             }
             Event::Record(ReadTag::Known(tag), p) => (tag, p),
@@ -384,13 +415,18 @@ impl SoundCheck {
                     self.had_fm3 = has(FilterParams::FM3_IN);
                     self.had_qm = has(FilterParams::QM_IN);
                 }
-                let lost = decode_block(
+                let a = decode_block(
                     p,
                     MIGRATIONS,
                     TRANSLATIONS,
                     staged.map(|s| &mut s.params as &mut dyn Blocks),
                 )?;
-                self.skip(lost);
+                self.skip(a.count);
+                for (id, c) in a.refused.into_iter().flatten() {
+                    if let Some(r) = self.refused.get_mut(self.n_refused) {
+                        (*r, self.n_refused) = ([p[0], id.0, c], self.n_refused + 1);
+                    }
+                }
                 Ok(())
             }
             RecordTag::Registry => {
@@ -450,12 +486,29 @@ impl SoundCheck {
         }
     }
 
-    /// `Corrupt` without an Engine record. Adds the routes to `staged`.
+    /// `Corrupt` without an Engine record. Retries the refused codes on
+    /// `staged` until none lands, the rest over budget; adds the routes.
     pub fn finish(&mut self, staged: Option<&mut Sound>) -> Result<(), FileError> {
         if !self.engine {
             return Err(FileError::Corrupt);
         }
         if let Some(s) = staged {
+            // Each pass lands one at least, or none will: `REFUSED` passes.
+            let n = self.n_refused.min(REFUSED);
+            for _ in 0..REFUSED {
+                for r in &mut self.refused[..n] {
+                    let [b, id, c] = *r;
+                    if let Some(b) = BlockRef::from_disk_code(b)
+                        && s.params
+                            .block_mut(b)
+                            .is_some_and(|mut blk| blk.set_enum_code(ParamId(id), c))
+                    {
+                        // No block has code 0: never retried.
+                        r[0] = 0;
+                    }
+                }
+            }
+            self.over = self.refused[..n].iter().any(|r| r[0] != 0);
             let m = &mut s.mod_state;
             let (routes, _) = self.routes[..self.routes_len].as_chunks::<ROUTE_LEN>();
             let mut lost = 0;

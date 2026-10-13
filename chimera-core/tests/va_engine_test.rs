@@ -607,9 +607,9 @@ fn a_block_never_starts_a_third_run() {
             wave: (w0, (w1 - w0) / B as f32),
             shape: (0.3, 0.0),
         };
-        let (mut out, mut wr) = ([0.0f32; B], [NO_WRAP; B]);
+        let (mut out, mut mk) = ([0.0f32; B], [[NO_WRAP; 2]; B]);
         o.begin(&r, B);
-        o.render::<B, false, false>(&mut out, &mut wr, &r, &mut 1.0, &mut || 1.0);
+        o.render::<B, false, false, false>(&mut out, &mut mk, &r, &mut 1.0, &mut || 1.0);
         assert_eq!(o.runs(), 2, "{w0} → {w1}");
         assert!(
             out.iter().all(|v| v.is_finite() && v.abs() < 1.0),
@@ -893,7 +893,7 @@ fn steal_glide_glides() {
 
 #[test]
 fn bills_follow_the_mode() {
-    let bills = [510, 530, 510, 530, 510];
+    let bills = [530, 540, 530, 550, 530];
     assert!(VaEngine::mode_cost(VaMode::Sync) > VaEngine::mode_cost(VaMode::Mix));
     for (mode, bill) in VaMode::ALL.into_iter().zip(bills) {
         assert_eq!(VaEngine::mode_cost(mode), Cost(bill), "{mode:?}");

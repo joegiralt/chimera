@@ -137,7 +137,7 @@ fn fnv1a(b: &[u8]) -> u64 {
 /// Each `sounds()` file's length and FNV-1a, captured from `encode_sound`
 /// before the `Build` split (the v1 fixtures predate sparse encoding, so
 /// they are not today's bytes): factory, then INIT ALGO, MODAL, TAPE.
-const PLAIN: [(usize, u64); 11] = [
+const PLAIN: [(usize, u64); 15] = [
     (232, 0xe22c8733f1bd63f2),
     (207, 0x25b03ccc5f0f0232),
     (222, 0x9230ae34f69000cc),
@@ -146,6 +146,11 @@ const PLAIN: [(usize, u64); 11] = [
     (162, 0x34123d7b02c3b0b6),
     (268, 0x972b0812999ae0b4),
     (277, 0xdae80c8f09d402aa),
+    // CHOIR, TALK BASS, BREATH and VOX, captured when they joined the bank.
+    (483, 0xa1b270a0d6ed7e9a),
+    (438, 0x35c8685593322b14),
+    (446, 0xc543fd314e7a61a9),
+    (454, 0x6d802ef9fe3b7b71),
     (132, 0x91e8cb92bf5162e0),
     (132, 0x8575cbc8307a58e3),
     (136, 0x82a8213584981303),

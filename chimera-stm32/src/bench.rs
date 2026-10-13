@@ -14,12 +14,12 @@
 //! no longer fits FLASH beside the synth. What an area leaves out is dead
 //! here; clippy checks every area at once.
 
-use core::fmt::Write;
 use core::hint::black_box;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use chimera_board::{Display, bench_screen};
 use chimera_core::console::Report;
 use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::{draw, theme};
@@ -27,8 +27,9 @@ use chimera_engine::addr::{BlockRef, ParamAddr};
 use chimera_engine::audio_out::{DacSample, interleave};
 use chimera_engine::dsp::algo::algorithms::AlgoId;
 use chimera_engine::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
-use chimera_engine::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
-use chimera_engine::dsp::algo::params::AlgoParams;
+use chimera_engine::dsp::algo::kernel::{Kernel, KernelBlock, KindBlock, OpBlock, SAMPLE_SCALE};
+use chimera_engine::dsp::algo::kinds::{Kinds, OpKind};
+use chimera_engine::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_engine::dsp::algo::plan::{EvalPlan, OPS};
 use chimera_engine::dsp::algo::tx::FEEDBACK_CYCLES;
 use chimera_engine::dsp::algo::waves::WaveId;
@@ -45,6 +46,8 @@ use chimera_engine::dsp::reverb::ReverbType;
 use chimera_engine::dsp::tape_engine::read::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape};
 use chimera_engine::dsp::tape_engine::{StretchType, TapeModel, wave};
 use chimera_engine::dsp::voice::Voice;
+#[cfg(feature = "bench-algo")]
+use chimera_engine::factory::{Demo, demo_sound};
 use chimera_engine::factory::{FACTORY_LEN, factory_sound};
 use chimera_engine::hw::{
     BLOCK_SIZE, BlockBudget, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget, VOICE_RAM_BUDGET,
@@ -71,10 +74,10 @@ use chimera_engine::voice_alloc::VoiceIdx;
 use chimera_engine::{MidiChannel, MidiNote, Velocity};
 use chimera_engine::{
     dsp::knobs::{KnobPublisher, Knobs},
+    dsp::lfo::LfoClock,
     project::Loads,
     tracked::Tracked,
 };
-use chimera_hal::ChimeraDisplay;
 use cortex_m::peripheral::DWT;
 use embedded_graphics_core::pixelcolor::Rgb565;
 
@@ -166,6 +169,71 @@ fn ladder_op() -> ParamSnapshot {
     p.filter.set_kind(FilterKind::Ladder);
     p
 }
+
+/// The FORMANT screen's rows (ADR 0131): each term's case at 1..8 voices,
+/// notes C2 up in tenths (to A♯7: the terms cover grain clocks to C8).
+const FORMANT_ROWS: usize = 6;
+const FORMANT: [RoutingRow; FORMANT_ROWS] = [
+    // One FRMT on A1, BW 0: the spans at SKIRT 0 and at SKIRT 3.
+    ("FRMT0", |p| *p.params = frmt(0), STILL),
+    ("FRMT3", |p| *p.params = frmt(3), STILL),
+    // FRMT3 under a full ratio-1 sine (T1's 2 → 1): the moving loop.
+    ("FRMT PM", |p| *p.params = frmt_pm(), STILL),
+    (
+        "NOIS",
+        |p| *p.params = kinds(AlgoId::A1, AlgoId::A1, [N, T, T, T, T, T], 0b1, 0),
+        STILL,
+    ),
+    // The costliest patch the budget admits (`frmt_max` in cost_test):
+    // T1 ∪ A16, a linked FRMT on 2, the unlinked one on 6, two NOIS.
+    (
+        "FRMT MAX",
+        |p| *p.params = kinds(AlgoId::T1, AlgoId::A16, [N, F, T, N, T, F], ALL, 1),
+        STILL,
+    ),
+    ("CHOIR", choir, STILL),
+];
+const F: OpKind = OpKind::Formant;
+const N: OpKind = OpKind::Noise;
+const T: OpKind = OpKind::Table(WaveId::W1);
+
+/// `k` on `a` ∪ `b` at MORPH 64, as `algo` lights and feeds them; formant
+/// and noise bands at ratio 1, so each voice's grain clock is its note.
+#[inline(never)]
+fn kinds(a: AlgoId, b: AlgoId, k: [OpKind; OPS], lit: u8, feedback: u8) -> ParamSnapshot {
+    let mut p = algo(a, lit, feedback);
+    for (o, k) in p.algo.ops.iter_mut().zip(k) {
+        if k.is_formant() {
+            o.coarse = AlgoOpParams::DEFAULT.coarse;
+        }
+    }
+    p.algo = AlgoParams::new(a, b, 64, Kinds::new(k), p.algo.ops);
+    p
+}
+
+/// One FRMT on A1 at SKIRT `skirt`, BW 0.
+fn frmt(skirt: u8) -> ParamSnapshot {
+    let mut p = kinds(AlgoId::A1, AlgoId::A1, [F, T, T, T, T, T], 0b1, 0);
+    (p.algo.ops[0].skirt, p.algo.ops[0].bw) = (skirt, 0);
+    p
+}
+
+/// FRMT3 on T1, operator 2 a sine at ratio 1 and LEVEL 99 into it.
+fn frmt_pm() -> ParamSnapshot {
+    let mut p = kinds(AlgoId::T1, AlgoId::T1, [F, T, T, T, T, T], 0b11, 0);
+    (p.algo.ops[0].skirt, p.algo.ops[0].bw) = (3, 0);
+    p.algo.ops[1].coarse = AlgoOpParams::DEFAULT.coarse;
+    p
+}
+
+/// The CHOIR demo Sound, its VOWEL route in.
+#[cfg(feature = "bench-algo")]
+fn choir(p: &mut PartAudio) {
+    let s = demo_sound(Demo::Choir);
+    (*p.params, *p.mod_state) = (s.params, s.mod_state);
+}
+#[cfg(not(feature = "bench-algo"))]
+fn choir(_: &mut PartAudio) {}
 
 /// Label and per-block FX setup of each FX row. Every row runs the same
 /// noise through `mix_parts`, six Parts written, no voices. MIX is the mix
@@ -686,8 +754,6 @@ fn mods(p: &mut PartAudio) {
 // cacheable, out of AXI's margin: the bench's scope is never timed.
 #[unsafe(link_section = ".ram_d2")]
 static mut SCOPE: MaybeUninit<TripleBuffer<ScopeFrame>> = MaybeUninit::uninit();
-// A static, not a local: `AudioShared` is 3 KB (ADR 0020).
-static mut SHARED: MaybeUninit<AudioShared> = MaybeUninit::uninit();
 // SAFETY: ".ram_d2.voices" is NOLOAD, so this holds garbage at boot; sound
 // because it is `MaybeUninit` and `time_rebuild` builds it in place before
 // any read. In D2 with the `Instrument`, as a voice's slot is.
@@ -733,7 +799,7 @@ struct Rig<'p> {
 // Not inlined, so its frame never adds to `main`'s.
 #[inline(never)]
 pub fn run(
-    display: &mut impl ChimeraDisplay,
+    display: &mut Display,
     clocks: Clocks,
     (project, sources): (&mut Project, &mut AudioToken),
     report: &mut Text,
@@ -746,12 +812,12 @@ pub fn run(
     title(rec, clocks);
     // SAFETY: the bench runs once from `main`, before `engine::init` and
     // before any interrupt is unmasked, so it is the only user of the
-    // engine's slots and of its own statics; its references are gone when it
-    // returns, before `engine::init` takes the slots.
+    // engine's slots, the audio buffer's and its own statics; its references
+    // are gone when it returns, before `take_audio` and `engine::init`.
     let (inst_slot, fx_slot, shared_slot, scope_w) = unsafe {
         let (i, f) = engine::slots();
         let (w, _unread) = (&mut *addr_of_mut!(SCOPE)).write(scope_buffer()).split();
-        (i, f, &mut *addr_of_mut!(SHARED), w)
+        (i, f, chimera_board::shared::bench_audio(), w)
     };
     #[cfg_attr(not(feature = "bench-tape"), allow(unused_mut))]
     let mut scope = ScopeWriter::new(scope_w);
@@ -787,7 +853,7 @@ const AREAS: [(bool, &str); 6] = [
 ];
 
 /// The build's areas, its silicon and clock: the report's first line.
-fn title(rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
+fn title(rec: &mut Recorder<'_>, clocks: Clocks) {
     rec.clear();
     let mut line = FmtBuf::new();
     let _ = write!(line, "BENCH");
@@ -817,7 +883,7 @@ fn algo_pages(
         ScopeWriter,
     ),
     project: &Project,
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
+    rec: &mut Recorder<'_>,
     proj_crc: u32,
 ) {
     let mut rig = Rig {
@@ -849,7 +915,7 @@ fn algo_pages(
 
 /// The ALGO screen: each patch at 1..8 voices, the kernel and the FX bus.
 #[cfg(feature = "bench-algo")]
-fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
+fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     let mut rows = [Counts::default(); ROWS];
     for (row, &(_, patch, low, step)) in rows.iter_mut().zip(&PATCHES) {
         for n in 1..=MAX_VOICES {
@@ -860,13 +926,15 @@ fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clo
     let fx: [u32; FX_ROWS] = core::array::from_fn(|i| rig.time_bus(FX[i].1));
     let kernel = time_kernel();
     show(rec, clocks, &rows, kernel, &fx);
+    hold(clocks);
+    let mut formant = [Counts::default(); FORMANT_ROWS];
+    time_rows(rig, &FORMANT, &mut formant, (36, 10));
+    show_rows(rec, "FORMANT", &FORMANT, &formant);
 }
 
-/// The ROUTING screens, `ROUTING_PAGE` rows each.
-#[cfg(feature = "bench-routing")]
-fn routing_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
-    let mut routing = [Counts::default(); ROUTING_ROWS];
-    for (row, &(_, part, each)) in routing.iter_mut().zip(&ROUTING) {
+/// Each of `rows` at 1..8 voices, notes `low` up by `step`.
+fn time_rows(rig: &mut Rig<'_>, rows: &[RoutingRow], counts: &mut [Counts], (low, step): (u8, u8)) {
+    for (row, &(_, part, each)) in counts.iter_mut().zip(rows) {
         for n in 1..=MAX_VOICES {
             let timed = rig.time(
                 &|s| {
@@ -875,17 +943,27 @@ fn routing_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>,
                 },
                 &|s, b| each(&mut s.parts[0], b),
                 n,
-                36,
-                12,
+                low,
+                step,
             );
             row.add(n, timed);
         }
     }
+}
+
+/// The ROUTING screens, `ROUTING_PAGE` rows each.
+#[cfg(feature = "bench-routing")]
+fn routing_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
+    let mut routing = [Counts::default(); ROUTING_ROWS];
+    time_rows(rig, &ROUTING, &mut routing, (36, 12));
     let pages = ROUTING
         .chunks(ROUTING_PAGE)
         .zip(routing.chunks(ROUTING_PAGE));
+    let total = ROUTING_ROWS.div_ceil(ROUTING_PAGE);
     for (page, (labels, counts)) in pages.enumerate() {
-        show_routing(rec, page, labels, counts);
+        let mut heading = FmtBuf::new();
+        let _ = write!(heading, "ROUTING {}/{total}", page + 1);
+        show_rows(rec, heading.as_str(), labels, counts);
         hold(clocks);
     }
 }
@@ -1191,7 +1269,7 @@ fn tape_page(
     (inst_slot, fx_slot, shared_slot): Slots<'_>,
     (scope, sources): (&mut ScopeWriter, &mut AudioToken),
     project: &mut Project,
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
+    rec: &mut Recorder<'_>,
 ) {
     let rig = &mut TapeRig {
         inst_slot,
@@ -1238,12 +1316,7 @@ fn tape_page(
 /// CRC. Out of `run`, so its frame stays under the stack check's 8 KB.
 #[cfg(feature = "bench-memory")]
 #[inline(never)]
-fn memory_page(
-    rig: &mut Rig<'_>,
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
-    clocks: Clocks,
-    proj_crc: u32,
-) {
+fn memory_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks, proj_crc: u32) {
     let rebuild = time_rebuild();
     // A4 after A4, the default Sound: the lines clear a loop each.
     let sym = |p: &mut PartAudio| modal(p, ResonatorMode::Sympathetic);
@@ -1265,7 +1338,7 @@ fn memory_page(
 /// under the stack check's 8 KB.
 #[cfg(feature = "bench-stress")]
 #[inline(never)]
-fn stress_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
+fn stress_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     chimera_engine::probe::set_clock(DWT::cycle_count);
     let ((s1, sp1), (s2, sp2)) = (
         rig.stress(true, worst_reverb, &[], false),
@@ -1289,7 +1362,7 @@ fn stress_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, 
 /// under the stack check's 8 KB.
 #[cfg(feature = "bench-stress")]
 #[inline(never)]
-fn reverb_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
+fn reverb_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     chimera_engine::probe::set_clock(DWT::cycle_count);
     let mix = rig.time_bus(FX[0].1);
     let rev: [u32; REV_ROWS] = core::array::from_fn(|i| rig.time_bus(REV[i].1));
@@ -1320,7 +1393,7 @@ fn reverb_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, 
 /// stays under the stack check's 8 KB.
 #[cfg(feature = "bench-orbit")]
 #[inline(never)]
-fn orbit_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
+fn orbit_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     chimera_engine::probe::set_clock(DWT::cycle_count);
     let ((mean, worst), [ow, ow1, omean]) = rig.time_orbit();
     rec.clear();
@@ -1604,9 +1677,9 @@ impl Rig<'_> {
         let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
         // Every effect off but the row's: the boot project's FX would sit
         // in MIX and every row less it.
-        shared.fx = FxParams::default();
+        shared.fx = FxParams::OFF;
         for (i, part) in shared.parts.iter_mut().enumerate() {
-            part.mix.sends = [0.5; FX_SENDS];
+            part.params.out.sends = [0.5; FX_SENDS];
             // One Part to a channel: only Part 1 plays the notes.
             part.mix.channel = MidiChannel::clamped(i as u8);
         }
@@ -1687,14 +1760,13 @@ impl Rig<'_> {
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
         let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
-        shared.fx = FxParams::default();
+        shared.fx = FxParams::OFF;
         let (sound, knobs) = loading();
         let mut count = [Loads::NONE; MAX_PARTS];
         // Each Part's Sound published as a load is, through the knobs'
         // publisher (ADR 0115): NEW's, and A16 ∪ A17 on Part 6.
         for (i, part) in shared.parts.iter_mut().enumerate() {
             part.mix = PartParams::for_part(i);
-            part.mix.sends = [0.5; FX_SENDS];
         }
         for (p, count) in count.iter_mut().enumerate() {
             let new = NEW_PARTS.get(p).and_then(|s| factory_sound(s.index()));
@@ -1703,6 +1775,7 @@ impl Rig<'_> {
             if p == MAX_PARTS - 1 {
                 sound.params = a16_a17();
             }
+            sound.params.out.sends = [0.5; FX_SENDS];
             *count = count.next();
             shared.publish_sound(p, sound, *count, knobs);
         }
@@ -1791,7 +1864,8 @@ impl Rig<'_> {
                     #[cfg(not(feature = "orbit"))]
                     let orbit = 0;
                     let rev = extra_cost(shared.fx.reverb.kind).0;
-                    let reserved = FxBus::COST.0 + rev + Knobs::RESERVE.0 + orbit;
+                    let reserved =
+                        FxBus::COST.0 + rev + Knobs::RESERVE.0 + LfoClock::RESERVE.0 + orbit;
                     billed = (inst.allocator().sounding_cost().0 + reserved) * BLOCK_SIZE as u32;
                 }
                 worst = worst.max(c);
@@ -1828,9 +1902,9 @@ impl Rig<'_> {
         let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
         let fx = FxBus::init_in_place(self.fx_slot);
         let shared = AudioShared::init_in_place(self.shared_slot, self.perf);
-        shared.fx = FxParams::default();
+        shared.fx = FxParams::OFF;
         for (i, part) in shared.parts.iter_mut().enumerate() {
-            part.mix.sends = [0.5; FX_SENDS];
+            part.params.out.sends = [0.5; FX_SENDS];
             part.mix.channel = MidiChannel::clamped(i as u8);
         }
         *shared.parts[0].params = a16_a17();
@@ -1940,7 +2014,7 @@ impl Phases {
     }
 }
 
-fn show_phases(rec: &mut Recorder<'_, impl ChimeraDisplay>, rows: &[(&str, Phases)]) {
+fn show_phases(rec: &mut Recorder<'_>, rows: &[(&str, Phases)]) {
     rec.clear();
     rec.heading("ORBIT PHASES");
     let mut line = FmtBuf::new();
@@ -1973,6 +2047,40 @@ fn show_phases(rec: &mut Recorder<'_, impl ChimeraDisplay>, rows: &[(&str, Phase
     rec.flush();
 }
 
+// `time_kernel`'s plan, voices and blocks: in D2, as the audio's voices
+// are, and off its frame (the stack check's 8 KB). NOLOAD, so garbage at
+// boot: sound because each is `MaybeUninit` and `time_kernel` writes every
+// element (`fill`) before any read.
+#[unsafe(link_section = ".ram_d2.voices")]
+static mut KERNEL_PLAN: MaybeUninit<EvalPlan> = MaybeUninit::uninit();
+#[unsafe(link_section = ".ram_d2.voices")]
+static mut KERNELS: MaybeUninit<[Kernel; MAX_VOICES]> = MaybeUninit::uninit();
+#[unsafe(link_section = ".ram_d2.voices")]
+static mut KERNEL_ENVS: MaybeUninit<[[OpEnv; OPS]; MAX_VOICES]> = MaybeUninit::uninit();
+#[unsafe(link_section = ".ram_d2.voices")]
+static mut KERNEL_BLOCKS: MaybeUninit<[KernelBlock<'static>; MAX_VOICES]> = MaybeUninit::uninit();
+
+/// Every element of `*slot` from `f`, written in place, one at a time: the
+/// array is never built on the caller's stack.
+///
+/// # Safety
+///
+/// `slot` is valid and aligned, and nothing else references it until the
+/// returned reference is dropped.
+unsafe fn fill<T, const N: usize>(
+    slot: *mut MaybeUninit<[T; N]>,
+    mut f: impl FnMut(usize) -> T,
+) -> &'static mut [T; N] {
+    let p = slot.cast::<T>();
+    for i in 0..N {
+        // SAFETY: `i < N`, inside the array `slot` holds; per the contract
+        // no one else is looking.
+        unsafe { p.add(i).write(f(i)) };
+    }
+    // SAFETY: every element was written above.
+    unsafe { &mut *slot.cast::<[T; N]>() }
+}
+
 /// Spec § Budget worst case, one kernel per voice: six operators, all with
 /// feedback, six distinct waves crossfading mips `v` and `v + 1` in voice `v`
 /// (the top mip clamps: about 21 KB of tables at six voices, all 64 KB at
@@ -1984,12 +2092,16 @@ fn show_phases(rec: &mut Recorder<'_, impl ChimeraDisplay>, rows: &[(&str, Phase
 fn time_kernel() -> u32 {
     const A14: [u8; OPS] = [0, 0, 0b11, 0b11, 0b100, 0b1000];
     const A22: [u8; OPS] = [0, 0b1, 0b1, 0b10, 0b100, 0b1_1000];
-    let plan = black_box(EvalPlan::build(
-        black_box(&A14),
-        black_box(0b11),
-        black_box(&A22),
-        black_box(0b1),
-    ));
+    // SAFETY: the bench is the only user of these statics, `time_kernel`
+    // their only writer, one run at a time and before the audio starts;
+    // each reference below is the only one, and dies with this call.
+    let plan: &'static EvalPlan =
+        unsafe { &mut *addr_of_mut!(KERNEL_PLAN) }.write(black_box(EvalPlan::build(
+            black_box(&A14),
+            black_box(0b11),
+            black_box(&A22),
+            black_box(0b1),
+        )));
     let rates = EnvRates {
         ar: 31,
         d1r: 0,
@@ -1998,48 +2110,58 @@ fn time_kernel() -> u32 {
         rr: 8,
         rs: 0,
     };
-    let mut kernels = [Kernel::new(); MAX_VOICES];
-    let mut envs = [[OpEnv::IDLE; OPS]; MAX_VOICES];
-    for (v, env) in envs.iter_mut().enumerate() {
-        let note = MidiNote::new(48 + 5 * v as u8).unwrap_or(MidiNote::A4);
-        for e in env.iter_mut() {
-            e.note_on(EnvCoefs::new(rates, note, SAMPLE_RATE as f32));
-        }
-    }
-    let blocks: [KernelBlock; MAX_VOICES] = black_box(core::array::from_fn(|v| KernelBlock {
-        plan: &plan,
-        ops: core::array::from_fn(|i| {
-            let wave = WAVES[(i + v) % OPS];
-            OpBlock {
-                inc: (i as u32 + 1) * (11_600_000 + 2_000_000 * v as u32),
-                gain_from: 0.9 * SAMPLE_SCALE,
-                gain_to: 0.8 * SAMPLE_SCALE,
-                feedback: FEEDBACK_CYCLES[7],
-                lo: wave.table(v),
-                hi: wave.table(v + 1),
-                xfade_from: 0.4,
-                xfade_to: 0.6,
+    // SAFETY: as `plan`'s.
+    let kernels = unsafe { fill(addr_of_mut!(KERNELS), |_| Kernel::new()) };
+    // SAFETY: as `plan`'s.
+    let envs = unsafe {
+        fill(addr_of_mut!(KERNEL_ENVS), |v| {
+            let note = MidiNote::new(48 + 5 * v as u8).unwrap_or(MidiNote::A4);
+            let mut env = [OpEnv::IDLE; OPS];
+            for e in env.iter_mut() {
+                e.note_on(EnvCoefs::new(rates, note, SAMPLE_RATE as f32));
             }
-        }),
-        morph_from: 0.45,
-        morph_to: 0.55,
-        norm_from: 0.7,
-        norm_to: 0.7,
-    }));
+            env
+        })
+    };
+    // SAFETY: as `plan`'s.
+    let blocks = black_box(unsafe {
+        fill(addr_of_mut!(KERNEL_BLOCKS), |v| KernelBlock {
+            plan,
+            ops: core::array::from_fn(|i| {
+                let wave = WAVES[(i + v) % OPS];
+                OpBlock {
+                    inc: (i as u32 + 1) * (11_600_000 + 2_000_000 * v as u32),
+                    gain_from: 0.9 * SAMPLE_SCALE,
+                    gain_to: 0.8 * SAMPLE_SCALE,
+                    feedback: FEEDBACK_CYCLES[7],
+                    kind: KindBlock::Table {
+                        lo: wave.table(v),
+                        hi: wave.table(v + 1),
+                        xfade_from: 0.4,
+                        xfade_to: 0.6,
+                    },
+                }
+            }),
+            morph_from: 0.45,
+            morph_to: 0.55,
+            norm_from: 0.7,
+            norm_to: 0.7,
+        })
+    });
     let mut out = [0.0f32; BLOCK_SIZE];
     // No tap wanted: the rows go untouched, as on a tap-free Sound.
     let mut taps = chimera_engine::taps::TapRows::new([false; 2]);
     let mut run = |kernels: &mut [Kernel; MAX_VOICES], envs: &mut [[OpEnv; OPS]; MAX_VOICES]| {
-        for ((k, env), blk) in kernels.iter_mut().zip(envs.iter_mut()).zip(&blocks) {
+        for ((k, env), blk) in kernels.iter_mut().zip(envs.iter_mut()).zip(blocks.iter()) {
             k.render(black_box(blk), env, &mut out, &mut taps);
         }
     };
     for _ in 0..WARM_BLOCKS {
-        run(&mut kernels, &mut envs);
+        run(kernels, envs);
     }
     let start = DWT::cycle_count();
     for _ in 0..TIMED_BLOCKS {
-        run(&mut kernels, &mut envs);
+        run(kernels, envs);
     }
     let cycles = DWT::cycle_count().wrapping_sub(start);
     black_box(&out);
@@ -2054,11 +2176,12 @@ const ALL: u8 = 0b11_1111;
 #[inline(never)]
 fn algo(alg: AlgoId, lit: u8, feedback: u8) -> ParamSnapshot {
     let mut p = snapshot(EngineType::Algo);
-    (p.algo.alg_a, p.algo.alg_b, p.algo.morph) = (alg.get(), alg.get(), 0);
-    for (i, op) in p.algo.ops.iter_mut().enumerate() {
+    for i in 0..OPS {
         let level = if lit & (1 << i) != 0 { 99 } else { 0 };
-        (op.wave, op.coarse, op.level, op.feedback) = (WAVES[i].get(), COARSE[i], level, feedback);
+        let op = &mut p.algo.ops[i];
+        (op.coarse, op.level, op.feedback) = (COARSE[i], level, feedback);
     }
+    p.algo = AlgoParams::new(alg, alg, 0, Kinds::tables(WAVES), p.algo.ops);
     p
 }
 
@@ -2084,7 +2207,7 @@ fn hold_notes(inst: &mut Instrument, shared: &AudioShared, part: usize) {
 #[inline(never)]
 fn algo_pair(a: AlgoId, b: AlgoId) -> ParamSnapshot {
     let mut p = algo(a, ALL, 7);
-    (p.algo.alg_b, p.algo.morph) = (b.get(), 64);
+    p.algo = AlgoParams::new(a, b, 64, p.algo.kinds(), p.algo.ops);
     p
 }
 
@@ -2105,12 +2228,12 @@ enum Face {
 
 /// The bench's screen and its report together: text can only be drawn by
 /// recording it, so `bench` reads exactly what the screens showed.
-struct Recorder<'a, D> {
-    display: &'a mut D,
+struct Recorder<'a> {
+    display: &'a mut Display,
     report: &'a mut Text,
 }
 
-impl<D: ChimeraDisplay> Recorder<'_, D> {
+impl Recorder<'_> {
     /// A new screen.
     fn clear(&mut self) {
         draw::fill_rect(
@@ -2126,24 +2249,24 @@ impl<D: ChimeraDisplay> Recorder<'_, D> {
     /// The screen's title, recorded as the report's heading.
     fn heading(&mut self, text: &str) {
         self.report.heading(text);
-        draw::text(self.display, &theme::FONT_VALUE, text, 4, 16, theme::INK);
+        bench_screen::text(self.display, None, text, (4, 16));
     }
 
-    fn line(&mut self, face: Face, text: &str, (x, y): (i32, i32)) {
+    fn line(&mut self, face: Face, text: &str, at: (i32, i32)) {
         let display = &mut *self.display;
         self.report.drawn(text, |t| match face {
-            Face::Value => draw::text(display, &theme::FONT_VALUE, t, x, y, theme::INK),
-            Face::Label(c) => draw::text(display, &theme::FONT_LABEL, t, x, y, c),
+            Face::Value => bench_screen::text(display, None, t, at),
+            Face::Label(c) => bench_screen::text(display, Some(c), t, at),
         });
     }
 
     fn flush(&mut self) {
-        self.display.flush();
+        bench_screen::flush(self.display);
     }
 }
 
 fn show(
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
+    rec: &mut Recorder<'_>,
     clocks: Clocks,
     rows: &[Counts; ROWS],
     kernel: u32,
@@ -2195,7 +2318,7 @@ fn show(
 /// a line as the FX screen's, then STRESS's and REV SWITCH MAX's costliest
 /// blocks against their budget.
 fn show_reverb(
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
+    rec: &mut Recorder<'_>,
     rev: &[u32; REV_ROWS],
     mix: u32,
     bus_v: u32,
@@ -2252,18 +2375,12 @@ fn show_reverb(
     rec.flush();
 }
 
-/// ROUTING screen `page` (from 0): `rows`' labels and their counts.
-fn show_routing(
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
-    page: usize,
-    rows: &[RoutingRow],
-    counts: &[Counts],
-) {
+/// A screen of `rows`' labels and their counts under `heading`: a ROUTING
+/// page or FORMANT.
+fn show_rows(rec: &mut Recorder<'_>, heading: &str, rows: &[RoutingRow], counts: &[Counts]) {
     rec.clear();
     let mut line = FmtBuf::new();
-    let pages = ROUTING_ROWS.div_ceil(ROUTING_PAGE);
-    let _ = write!(line, "ROUTING {}/{pages}", page + 1);
-    rec.heading(line.as_str());
+    rec.heading(heading);
     for (i, (&(label, ..), c)) in rows.iter().zip(counts).enumerate() {
         voice_row(rec, &mut line, 46 + i as i32 * ROW_H, label, c);
     }
@@ -2273,7 +2390,7 @@ fn show_routing(
 /// The sizes behind the D2 budget, the exclusive state's two timings and
 /// the project CRC's.
 fn show_memory(
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
+    rec: &mut Recorder<'_>,
     (rebuild, proj_crc): (u32, u32),
     note_on: u32,
     (lowest, dark, light): (u32, u32, u32),
@@ -2308,7 +2425,7 @@ fn show_memory(
 /// (a knob turned on every Part every block); each run's knobs' ease, the
 /// most in any block and in its costliest block; and what the bill
 /// counted at its costliest block (first, after, LOAD 6, LOAD 1-5, MOVE).
-fn show_stress(rec: &mut Recorder<'_, impl ChimeraDisplay>, runs: [Stress; 5], budget: u32) {
+fn show_stress(rec: &mut Recorder<'_>, runs: [Stress; 5], budget: u32) {
     let [s1, s2, l1, l5, mv] = runs;
     rec.clear();
     rec.heading("STRESS");
@@ -2337,10 +2454,7 @@ fn show_stress(rec: &mut Recorder<'_, impl ChimeraDisplay>, runs: [Stress; 5], b
 }
 
 /// `lines` down the screen, 22 px apart, and flushed.
-fn show_lines<'a>(
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
-    lines: impl Iterator<Item = core::fmt::Arguments<'a>>,
-) {
+fn show_lines<'a>(rec: &mut Recorder<'_>, lines: impl Iterator<Item = core::fmt::Arguments<'a>>) {
     let mut line = FmtBuf::new();
     for (i, args) in lines.enumerate() {
         line.clear();
@@ -2352,13 +2466,7 @@ fn show_lines<'a>(
 
 /// `label`'s per-voice cost (`Counts::per_voice`), with the voices that
 /// sounded when fewer than all, and its count at each voice count.
-fn voice_row(
-    rec: &mut Recorder<'_, impl ChimeraDisplay>,
-    line: &mut FmtBuf,
-    y: i32,
-    label: &str,
-    counts: &Counts,
-) {
+fn voice_row(rec: &mut Recorder<'_>, line: &mut FmtBuf, y: i32, label: &str, counts: &Counts) {
     line.clear();
     let _ = write!(line, "{label} /VOICE {}", counts.per_voice());
     if counts.spans < MAX_VOICES {

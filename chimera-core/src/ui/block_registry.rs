@@ -245,14 +245,33 @@ pub static FOLDER: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
+        ParamSlot::param(BlockRef::Out, OutParams::SEND1),
+        ParamSlot::param(BlockRef::Out, OutParams::SEND2),
+        ParamSlot::param(BlockRef::Out, OutParams::SEND3),
         ParamSlot::param(BlockRef::Folder, FolderParams::FOLD),
-        ParamSlot::param(BlockRef::Folder, FolderParams::SYMMETRY),
-        ParamSlot::param(BlockRef::Folder, FolderParams::MIX),
         ParamSlot::param(BlockRef::Out, OutParams::VCA_VEL),
+        ParamSlot::param(BlockRef::Folder, FolderParams::MIX),
+    ],
+};
+
+/// AMP › SYM: the fold symmetry, one EDIT down (sends spec § 3).
+pub static FOLDER_SYM: BlockDef = BlockDef {
+    id: 98,
+    name: "Symmetry",
+    short: "SYM",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Folder, FolderParams::SYMMETRY),
+        EMPTY,
+        EMPTY,
+        EMPTY,
         EMPTY,
         EMPTY,
     ],
 };
+
+static AMP_SUB_PAGES: [&BlockDef; 1] = [&FOLDER_SYM];
 
 // ---------------------------------------------------------------------------
 // Filter
@@ -595,6 +614,9 @@ pub static ALGO_RR: BlockDef = env_group(53, "Env RR", "RR", AlgoOpParams::RR);
 pub static ALGO_RATE_SCALE: BlockDef = group(54, "Rate Scale", "RS", AlgoOpParams::RATE_SCALE);
 pub static ALGO_FEEDBACK: BlockDef = group(55, "Feedback", "FBK", AlgoOpParams::FEEDBACK);
 
+/// One FRMT per operator, on OSC while any operator is a formant.
+pub static ALGO_FORMANT: BlockDef = group(106, "Formant", "FRM", AlgoOpParams::FRMT);
+
 pub static ALGO_ALG: BlockDef = BlockDef {
     id: 43,
     name: "Algorithm",
@@ -607,7 +629,7 @@ pub static ALGO_ALG: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Algo, AlgoParams::MORPH),
         ParamSlot::param(BlockRef::Algo, AlgoParams::TRANSPOSE),
         ParamSlot::param(BlockRef::Out, OutParams::VOLUME).with_label("VOL"),
-        EMPTY,
+        ParamSlot::param(BlockRef::Algo, AlgoParams::VOWEL),
     ],
 };
 
@@ -636,7 +658,7 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 5] = [
     ChainBlock::page(&MODAL_EXC),
     ChainBlock::with_subs(&MODAL_1, &MODAL_SUB_PAGES),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::page(&FOLDER),
+    ChainBlock::with_subs(&FOLDER, &AMP_SUB_PAGES),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -648,9 +670,11 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 5] = [
 pub static MODAL_PLUCK_CHAIN: ChainDef2 =
     ChainDef2::new("Modal Pluck", &MODAL_PLUCK_BLOCKS, &PART_MOD_SOURCES).with_home_def(&MODAL_1);
 
+pub use crate::ui::op_page::ALGO_OP_PAGES;
+
 /// WAVE is the OSC node's home; FINE's DETUNE and the five ENV stages sit
-/// right after their group (sub-pages are one level deep).
-static ALGO_OSC_SUB_PAGES: [&BlockDef; 12] = [
+/// right after their group (sub-pages are one level deep), then OP1–OP6.
+static ALGO_OSC_SUB_PAGES: [&BlockDef; 18] = [
     &ALGO_COARSE,
     &ALGO_FINE,
     &ALGO_DETUNE,
@@ -663,7 +687,24 @@ static ALGO_OSC_SUB_PAGES: [&BlockDef; 12] = [
     &ALGO_RR,
     &ALGO_RATE_SCALE,
     &ALGO_FEEDBACK,
+    &ALGO_OP_PAGES[0],
+    &ALGO_OP_PAGES[1],
+    &ALGO_OP_PAGES[2],
+    &ALGO_OP_PAGES[3],
+    &ALGO_OP_PAGES[4],
+    &ALGO_OP_PAGES[5],
 ];
+
+/// `ALGO_OSC_SUB_PAGES` with the FORMANT page first.
+static ALGO_FORMANT_OSC_SUB_PAGES: [&BlockDef; 19] = {
+    let mut a = [&ALGO_FORMANT; 19];
+    let mut i = 0;
+    while i < 18 {
+        a[i + 1] = ALGO_OSC_SUB_PAGES[i];
+        i += 1;
+    }
+    a
+};
 
 /// ALGO is the engine's home: first on the map, where entering the chain lands.
 static ALGO_BLOCKS: [ChainBlock; 6] = [
@@ -671,7 +712,7 @@ static ALGO_BLOCKS: [ChainBlock; 6] = [
     ChainBlock::with_subs(&ALGO_WAVE, &ALGO_OSC_SUB_PAGES),
     ChainBlock::page(&DRIVE),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::page(&FOLDER),
+    ChainBlock::with_subs(&FOLDER, &AMP_SUB_PAGES),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -680,6 +721,21 @@ static ALGO_BLOCKS: [ChainBlock; 6] = [
 ];
 
 pub static ALGO_CHAIN: ChainDef2 = ChainDef2::new("Algo", &ALGO_BLOCKS, &PART_MOD_SOURCES);
+
+static ALGO_FORMANT_BLOCKS: [ChainBlock; 6] = {
+    let mut b = [ALGO_BLOCKS[0]; 6];
+    let mut i = 1;
+    while i < 6 {
+        b[i] = ALGO_BLOCKS[i];
+        i += 1;
+    }
+    b[1] = ChainBlock::with_subs(&ALGO_WAVE, &ALGO_FORMANT_OSC_SUB_PAGES);
+    b
+};
+
+/// ALGO's chain while an operator is a formant or a noise band.
+pub static ALGO_FORMANT_CHAIN: ChainDef2 =
+    ChainDef2::new("Algo", &ALGO_FORMANT_BLOCKS, &PART_MOD_SOURCES);
 
 static TAPE_SUB_PAGES: [&BlockDef; 2] = [&TAPE_MODEL, &PITCH];
 
@@ -690,7 +746,7 @@ static TAPE_BLOCKS: [ChainBlock; 6] = [
     ChainBlock::with_subs(&TAPE_DECK, &TAPE_SUB_PAGES),
     ChainBlock::page(&DRIVE),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::page(&FOLDER),
+    ChainBlock::with_subs(&FOLDER, &AMP_SUB_PAGES),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -709,7 +765,7 @@ static VA_BLOCKS: [ChainBlock; 5] = [
     ChainBlock::with_subs(&VA_HOME, &VA_SUB_PAGES),
     ChainBlock::page(&DRIVE),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::page(&FOLDER),
+    ChainBlock::with_subs(&FOLDER, &AMP_SUB_PAGES),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -748,9 +804,9 @@ pub static SENDS: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow(FxFlow::Sends),
     params: [
-        ParamSlot::param(BlockRef::Part, PartParams::SEND_CHORUS),
-        ParamSlot::param(BlockRef::Part, PartParams::SEND_DELAY),
-        ParamSlot::param(BlockRef::Part, PartParams::SEND_REVERB),
+        ParamSlot::param(BlockRef::Out, OutParams::SEND1),
+        ParamSlot::param(BlockRef::Out, OutParams::SEND2),
+        ParamSlot::param(BlockRef::Out, OutParams::SEND3),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -793,7 +849,7 @@ pub static SYS_TUNING: BlockDef = BlockDef {
     viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Midi, MidiSettings::TUNE),
-        ParamSlot::legacy("SCALE", ValFmt::Int(2)),
+        ParamSlot::legacy("SCALE", &ValFmt::Int(2)),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -862,12 +918,12 @@ pub static SYS_ABOUT: BlockDef = BlockDef {
     viz: VizType::About,
     // Read-only: `about_page` fills them.
     params: [
-        ParamSlot::legacy("VERSION", ValFmt::Int(0)),
-        ParamSlot::legacy("BUILD", ValFmt::Int(0)),
-        ParamSlot::legacy("REV", ValFmt::Int(0)),
-        ParamSlot::legacy("CLOCK", ValFmt::Int(0)),
-        ParamSlot::legacy("RESET", ValFmt::Int(0)),
-        ParamSlot::legacy("CARD", ValFmt::Int(0)),
+        ParamSlot::legacy("VERSION", &ValFmt::Int(0)),
+        ParamSlot::legacy("BUILD", &ValFmt::Int(0)),
+        ParamSlot::legacy("REV", &ValFmt::Int(0)),
+        ParamSlot::legacy("CLOCK", &ValFmt::Int(0)),
+        ParamSlot::legacy("RESET", &ValFmt::Int(0)),
+        ParamSlot::legacy("CARD", &ValFmt::Int(0)),
     ],
 };
 
@@ -878,12 +934,12 @@ pub static SYS_AUDIO: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::AudioStats,
     params: [
-        ParamSlot::legacy("LOAD", ValFmt::Int(0)),
-        ParamSlot::legacy("PEAK", ValFmt::Int(0)),
-        ParamSlot::legacy("OVER", ValFmt::Int(0)),
-        ParamSlot::legacy("DROPS", ValFmt::Int(0)),
-        ParamSlot::legacy("DESYNC", ValFmt::Int(0)),
-        ParamSlot::legacy("STACK", ValFmt::Int(0)),
+        ParamSlot::legacy("LOAD", &ValFmt::Int(0)),
+        ParamSlot::legacy("PEAK", &ValFmt::Int(0)),
+        ParamSlot::legacy("OVER", &ValFmt::Int(0)),
+        ParamSlot::legacy("DROPS", &ValFmt::Int(0)),
+        ParamSlot::legacy("DESYNC", &ValFmt::Int(0)),
+        ParamSlot::legacy("STACK", &ValFmt::Int(0)),
     ],
 };
 
@@ -896,10 +952,10 @@ pub static SYS_POOL: BlockDef = BlockDef {
     viz: VizType::Pool,
     // Read-only: `pool_page` fills them.
     params: [
-        ParamSlot::legacy("SOUNDS", ValFmt::Int(0)),
-        ParamSlot::legacy("SOURCES", ValFmt::Int(0)),
-        ParamSlot::legacy("FREE", ValFmt::Int(0)),
-        ParamSlot::legacy("PENDING", ValFmt::Int(0)),
+        ParamSlot::legacy("SOUNDS", &ValFmt::Int(0)),
+        ParamSlot::legacy("SOURCES", &ValFmt::Int(0)),
+        ParamSlot::legacy("FREE", &ValFmt::Int(0)),
+        ParamSlot::legacy("PENDING", &ValFmt::Int(0)),
         EMPTY,
         EMPTY,
     ],
@@ -916,12 +972,12 @@ pub static DEMO_WAVES: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("CLIP", ValFmt::Uni),
-        ParamSlot::legacy("WAVE", ValFmt::Uni),
-        ParamSlot::legacy("PW", ValFmt::Uni),
-        ParamSlot::legacy("FOLD", ValFmt::Uni),
-        ParamSlot::legacy("TILT", ValFmt::Bi),
-        ParamSlot::legacy("SYM", ValFmt::Bi),
+        ParamSlot::legacy("CLIP", &ValFmt::Uni),
+        ParamSlot::legacy("WAVE", &ValFmt::Uni),
+        ParamSlot::legacy("PW", &ValFmt::Uni),
+        ParamSlot::legacy("FOLD", &ValFmt::Uni),
+        ParamSlot::legacy("TILT", &ValFmt::Bi),
+        ParamSlot::legacy("SYM", &ValFmt::Bi),
     ],
 };
 
@@ -932,12 +988,12 @@ pub static DEMO_SHAPES: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("ARC", ValFmt::Uni),
-        ParamSlot::legacy("LEVEL", ValFmt::Uni),
-        ParamSlot::legacy("PAN", ValFmt::Bi),
-        ParamSlot::legacy("D/W", ValFmt::Bi),
-        ParamSlot::legacy("CUBE", ValFmt::Uni),
-        ParamSlot::legacy("STACK", ValFmt::Uni),
+        ParamSlot::legacy("ARC", &ValFmt::Uni),
+        ParamSlot::legacy("LEVEL", &ValFmt::Uni),
+        ParamSlot::legacy("PAN", &ValFmt::Bi),
+        ParamSlot::legacy("D/W", &ValFmt::Bi),
+        ParamSlot::legacy("CUBE", &ValFmt::Uni),
+        ParamSlot::legacy("STACK", &ValFmt::Uni),
     ],
 };
 
@@ -948,12 +1004,12 @@ pub static DEMO_MOTION: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("RIPPL", ValFmt::Uni),
-        ParamSlot::legacy("BURST", ValFmt::Uni),
-        ParamSlot::legacy("ORBIT", ValFmt::Uni),
-        ParamSlot::legacy("SCATR", ValFmt::Uni),
-        ParamSlot::legacy("BOUNC", ValFmt::Bi),
-        ParamSlot::legacy("PULSE", ValFmt::Uni),
+        ParamSlot::legacy("RIPPL", &ValFmt::Uni),
+        ParamSlot::legacy("BURST", &ValFmt::Uni),
+        ParamSlot::legacy("ORBIT", &ValFmt::Uni),
+        ParamSlot::legacy("SCATR", &ValFmt::Uni),
+        ParamSlot::legacy("BOUNC", &ValFmt::Bi),
+        ParamSlot::legacy("PULSE", &ValFmt::Uni),
     ],
 };
 
@@ -973,10 +1029,10 @@ pub static DEMO_FM: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::legacy("ALGO", ValFmt::Int(7)),
-        ParamSlot::legacy("LOOP", ValFmt::Uni),
-        ParamSlot::legacy("SPIRL", ValFmt::Uni),
-        ParamSlot::legacy("WAVE", ValFmt::Uni),
+        ParamSlot::legacy("ALGO", &ValFmt::Int(7)),
+        ParamSlot::legacy("LOOP", &ValFmt::Uni),
+        ParamSlot::legacy("SPIRL", &ValFmt::Uni),
+        ParamSlot::legacy("WAVE", &ValFmt::Uni),
         EMPTY,
         EMPTY,
     ],
@@ -1184,8 +1240,9 @@ pub static DEMO_BLOCKS: [ChainBlock; 15] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 16] = [
+const FIXED: [&ChainDef2; 17] = [
     &ALGO_CHAIN,
+    &ALGO_FORMANT_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &TAPE_CHAIN,
     &VA_CHAIN,

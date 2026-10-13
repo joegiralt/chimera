@@ -437,12 +437,14 @@ impl UiState {
     /// toast; a refusal changes nothing.
     fn lib_adopt(&mut self, go: Confirmed<LibraryPart>, read: LibRead, staged: Option<Staged>) {
         let part = go.target().part;
-        let was = self.active_engine();
+        let was = self.active_chain();
         match self.project.adopt(go, staged) {
             Ok(a) => {
                 self.landed(part, was);
                 if matches!(staged, Some(Staged::Missing(_))) {
                     self.error(Line::new(SOURCE_MISSING));
+                } else if read.over {
+                    self.error(Line::new(prompt::FORMANT_FULL));
                 } else if read.skips > 0 {
                     self.notice(Line::new(SKIPPED));
                 } else {
@@ -504,6 +506,7 @@ impl UiState {
             go,
             read: LibRead {
                 skips: 0,
+                over: false,
                 source: None,
             },
         });

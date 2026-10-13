@@ -9,7 +9,7 @@ use chimera_core::addr::BlockRef;
 use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::modal::{BankModes, ResonatorMode, damp_for, damp_from_v1_decay};
 use chimera_core::dsp::note_to_freq;
-use chimera_core::factory::{FACTORY_LEN, factory_sound};
+use chimera_core::factory::factory_sound;
 use chimera_core::name::{ProjectName, SoundName};
 use chimera_core::params::{EngineType, FilterParams, OutParams, ParamSnapshot};
 use chimera_core::preset::Sound;
@@ -30,9 +30,13 @@ use common::{
     SR, assert_stable, fnv1a, fundamental_hz, octave_clear, play_modal, play_modal_at, render_sound,
 };
 
+/// The factory Sounds the v1 fixtures were written from: the eight before
+/// the formant demos joined the bank.
+const V1_FACTORY: usize = 8;
+
 /// The v1 corpus: name, and the Sound it was written from.
 fn sources() -> Vec<(String, Sound)> {
-    let mut v: Vec<_> = (0..FACTORY_LEN)
+    let mut v: Vec<_> = (0..V1_FACTORY)
         .map(|i| (format!("factory_{i}.snd"), factory_sound(i).unwrap()))
         .collect();
     v.push(("init_algo.snd".into(), v1_init(EngineType::Algo)));
@@ -148,7 +152,7 @@ fn write_v1_fixtures() {
             println!(
                 "    ({}, &{:?}),",
                 b.disk_code().unwrap(),
-                values(blk.unwrap())
+                values(&*blk.unwrap())
             );
         }
         println!("mix");
@@ -251,6 +255,21 @@ const PROJECT_FIXTURE: &str = "project.prj";
 
 /// `project.prj`'s length and FNV-1a.
 const PROJECT_FIXTURE_BYTES: (usize, u64) = (20624, 0x12b9dada0b932378);
+
+/// The project written before the sends moved to the Sound: they sit in the
+/// Part's mix (PART 5-7). Task 3 reads it to test the migration. Written once:
+/// Part 0 sends `[0.25, 0.5, 0.75]`; Part 1 (a Modal INIT) `[0.5, 0, 0]`; the
+/// rest none; the FX as NEW. Its writer left with PART 5-7.
+const SENDS_FIXTURE: &str = "sends.prj";
+
+/// `sends.prj`'s length and FNV-1a.
+const SENDS_FIXTURE_BYTES: (usize, u64) = (5353, 0x59724696eec3ac6d);
+
+#[test]
+fn sends_fixture_is_frozen() {
+    let f = fixture(SENDS_FIXTURE);
+    assert_eq!((f.len(), fnv1a_bytes(&f)), SENDS_FIXTURE_BYTES);
+}
 
 /// INIT as NEW's pool held it when `project.prj` was written: OUT LEVEL
 /// 45/128 and every operator's RR 5 (ADR 0063).
@@ -421,7 +440,7 @@ fn project_fixture_loads() {
     assert_eq!(p.meta().name().as_str(), "FIXTURE");
 
     let slot = |i: usize| p.pool().get(SlotId::ALL[i]).map(|e| e.to_sound());
-    for i in 0..FACTORY_LEN {
+    for i in 0..V1_FACTORY {
         let want = decode(&fixture(&format!("factory_{i}.snd"))).unwrap();
         assert!(slot(i).unwrap().bits_eq(&want), "slot {i}");
     }
@@ -462,7 +481,7 @@ fn project_fixture_loads() {
     for (b, &(code, pinned)) in FX_BLOCKS.into_iter().zip(PROJECT_FIXTURE_FX) {
         assert_eq!(b.disk_code(), Some(code));
         let blk = part_block(&first.sound, &first.mix, &p.perf().fx, b).unwrap();
-        assert_values(blk, pinned, b.disk_ident().unwrap());
+        assert_values(&*blk, pinned, b.disk_ident().unwrap());
     }
     assert_eq!(p.perf().fx.delay.mix, 0.3);
 }
@@ -508,7 +527,8 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     // Then the voice-end fade (ADR 0096): SQR BASS's −65 dB filter tail.
     ("factory_5.snd", 0xdb1cd08add369508),
     ("factory_6.snd", 0x144e8d10ce6ac51e),
-    ("factory_7.snd", 0xcabe755163058e15),
+    // Then the voice-end fade past −80 dB (#487): its −69 dB DC tail.
+    ("factory_7.snd", 0x13448df1ea3c0499),
     ("init_algo.snd", 0x889c731ceb1c7089),
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
     // then Task 18's DAMP make-up and relative silence (ADR 0056),
@@ -538,6 +558,29 @@ fn v1_fixtures_render_identically() {
         let s = decode(&fixture(name)).unwrap();
         assert_eq!(
             fnv1a(&render_sound(&s.params, &s.mod_state)),
+            want,
+            "{name}"
+        );
+    }
+}
+
+/// The formant fields (spec § 10) load at INIT's values from files that
+/// never stored them, and the sound is bit for bit as before.
+#[test]
+fn old_patches_load_unchanged() {
+    for (i, &(name, want)) in FIXTURE_RENDERS.iter().take(V1_FACTORY).enumerate() {
+        assert_eq!(name, format!("factory_{i}.snd"));
+        let d = decode(&fixture(name)).unwrap();
+        let a = &d.params.algo;
+        assert_eq!(a.ops.map(|o| o.frmt), [69, 83, 111, 123, 123, 123]);
+        assert!(
+            a.ops
+                .iter()
+                .all(|o| (o.bw, o.skirt, o.key, o.res, o.vslot) == (72, 1, 0, 0, 0))
+        );
+        assert_eq!(a.vowel, 50);
+        assert_eq!(
+            fnv1a(&render_sound(&d.params, &d.mod_state)),
             want,
             "{name}"
         );
@@ -583,9 +626,19 @@ fn v1_fixtures_steal_cut() {
 /// lasting one.
 #[test]
 fn v1_fixtures_equal_factory() {
-    for i in 0..FACTORY_LEN {
+    for i in 0..V1_FACTORY {
         let d = decode(&fixture(&format!("factory_{i}.snd"))).unwrap();
         assert!(d.bits_eq(&factory_sound(i).unwrap()), "factory_{i}");
+    }
+}
+
+/// CHOIR, TALK BASS, BREATH and VOX (factory 8–11) encode and decode bit
+/// for bit.
+#[test]
+fn formant_sounds_round_trip() {
+    for i in 8..12 {
+        let s = factory_sound(i).unwrap();
+        assert!(decode(&encode(&s)).unwrap().bits_eq(&s), "F{i}");
     }
 }
 

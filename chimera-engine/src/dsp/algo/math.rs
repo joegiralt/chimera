@@ -54,3 +54,13 @@ pub fn inv_sqrt(x: f32) -> f32 {
     let y = y * (1.5 - 0.5 * x * y * y);
     y * (1.5 - 0.5 * x * y * y)
 }
+
+/// `sqrt(x)`, near full `f32` precision: `inv_sqrt` and one Newton step.
+/// 0 for `x ≤ 0` and NaN.
+pub fn sqrt(x: f32) -> f32 {
+    if x.is_nan() || x <= 0.0 {
+        return 0.0;
+    }
+    let y = x * inv_sqrt(x);
+    0.5 * (y + x / y)
+}

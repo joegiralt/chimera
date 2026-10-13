@@ -16,6 +16,7 @@ subprocess. It never enters the firmware build.
 | `mv-start [TYPE …]` | Each TYPE's START against its source program (ROOM #5, BLOOM #45), judged as `mv-verify` judges a fit. Exits 1 on any FAIL. |
 | `mv-ab TYPE` | Reference and TYPE at its fitted knobs on the listening set, RMS-matched. |
 | `mv-structure PROG …` | A program's injections, allpasses and taps, read from the decompiled listing. |
+| `voice-stats WAV …` | Measures any 48 kHz WAVs, ours or a reference's, the same way: loudness, vibrato, drift, breath share, formants, vowel motion and brightness, one row each. `--json PATH` writes the rows as JSON too. |
 
 `chimera-utils devices` lists the devices and their knobs.
 
@@ -111,6 +112,28 @@ through every ±0.001 nudge (ADR 0095).
 - **response error:** the largest |Δ| in dB per octave. For an effect it is |Pxy|/Pxx on noise. For a source it is the output spectrum. Bins 60 dB under the reference's peak are skipped;
 - **THD:** harmonics 2–10, on a 1 kHz sine for an effect, on the output for a source;
 - **spectral centroid.**
+
+**Voice** (`voice.rs`, `voice-stats`), on an 85 ms Hann STFT with a
+5.3 ms hop:
+- **LUFS:** BS.1770-4 gated integrated loudness, over every channel;
+- **vibrato and drift:** tonal peaks (20 dB over the 15th percentile of
+  the ±280 Hz round them) tracked frame to frame by their phase-vocoder
+  frequency. Each track of 0.4 s or more is split at a 0.4 s triangular
+  average (about 1 Hz). The fast part's RMS is the vibrato in cents, at the
+  rate where its spectrum peaks; the slow part's RMS is the drift.
+  Detuned partials beating inside one bin read as movement, as they are
+  heard;
+- **breath share:** the energy off the steady tonal peaks, 80 Hz–12 kHz.
+  A noise band 200 Hz wide reads 0.9; a band 50 Hz wide is nearly a tone;
+- **formants:** every 200 ms window's spectral envelope (its tonal peaks
+  joined, smoothed as wide as the harmonics are apart), and its peaks over
+  150 Hz–5 kHz standing 3 dB over their valleys, within 35 dB of the top:
+  the median count, the first three's Hz and −3 dB widths;
+- **vowel motion:** the 5–95 % range of the envelope's centroid and of its
+  800 Hz–3 kHz peak, and the envelope's shape change every 250 ms (dB RMS,
+  level removed);
+- **level movement:** 50 ms RMS against its 0.5 s average, dB;
+- **brightness:** the long-term spectrum's 2–5 kHz over its 150 Hz–1 kHz.
 
 ## The listening set
 

@@ -5,7 +5,7 @@ mod common;
 use common::SR;
 
 use chimera_core::dsp::Stereo;
-use chimera_core::dsp::chorus::{ChorusParams, JunoChorus};
+use chimera_core::dsp::chorus::{ChorusMode, ChorusParams, JunoChorus};
 use chimera_core::dsp::delay::{DelayParams, TapeDelay};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use chimera_core::dsp::rev::Reverb;
@@ -31,10 +31,10 @@ fn mono(mut x: [f32; BLOCK_SIZE], f: impl FnOnce(&mut [f32; BLOCK_SIZE])) -> Ste
     Stereo { l: x, r: x }
 }
 
-/// Defaults match the old `ParamSnapshot` FX: everything off.
+/// `OFF` is everything off; the other defaults are the default's.
 #[test]
-fn defaults_are_all_off() {
-    let p = FxParams::default();
+fn off_is_all_off() {
+    let p = FxParams::OFF;
     assert!(!p.chorus.is_on() && !p.delay.is_on() && !p.reverb.is_on());
     assert_eq!(p.reverb.mix, 0.0);
     assert_eq!(p.delay.time_ms, 375.0);
@@ -46,13 +46,7 @@ fn effects_that_are_off_return_nothing() {
     let mut bus = Box::new(FxBus::new());
     let mut sends = [burst(); FX_SENDS];
     let mut ret = full();
-    bus.process(
-        &mut sends,
-        &FxParams::default(),
-        Tempo::DEFAULT,
-        SR,
-        &mut ret,
-    );
+    bus.process(&mut sends, &FxParams::OFF, Tempo::DEFAULT, SR, &mut ret);
     assert_eq!(ret, Stereo::SILENT);
 }
 
@@ -73,12 +67,12 @@ fn return_is_each_effects_wet_output() {
             mix: 0.5,
             ..DelayParams::default()
         },
-        ..FxParams::default()
+        ..FxParams::OFF
     };
     p.reverb.mix = 0.5;
     p.reverb.time = 0.7;
     for slot in 0..FX_SENDS {
-        let mut params = FxParams::default();
+        let mut params = FxParams::OFF;
         match slot {
             0 => params.chorus = p.chorus,
             1 => params.delay = p.delay,
@@ -132,7 +126,7 @@ fn return_is_each_effects_wet_output() {
 /// return, however loud the send.
 #[test]
 fn reverb_return_is_silent_before_its_first_reflection() {
-    let mut p = FxParams::default();
+    let mut p = FxParams::OFF;
     p.reverb.mix = 0.5;
     let mut bus = Box::new(FxBus::new());
     for b in 0..first_reflection(size_step(p.reverb.size)) / BLOCK_SIZE {
@@ -148,7 +142,7 @@ fn reverb_return_is_silent_before_its_first_reflection() {
 /// The bus's left return: a burst into the delay for the first 8 blocks
 /// (into the reverb too when `own`), REV SEND `send(block)`.
 fn with_rev_send(blocks: usize, own: bool, send: impl Fn(usize) -> f32) -> Vec<f32> {
-    let mut p = FxParams::default();
+    let mut p = FxParams::OFF;
     (p.delay.time_ms, p.delay.feedback, p.delay.mix) = (120.0, 0.5, 0.5);
     p.reverb.mix = 0.5;
     let mut bus = Box::new(FxBus::new());
@@ -170,7 +164,7 @@ fn with_rev_send(blocks: usize, own: bool, send: impl Fn(usize) -> f32) -> Vec<f
 /// alone.
 #[test]
 fn rev_send_0_leaves_the_reverb_its_own_send() {
-    let mut p = FxParams::default();
+    let mut p = FxParams::OFF;
     (p.delay.time_ms, p.delay.feedback, p.delay.mix) = (120.0, 0.5, 0.5);
     p.reverb.mix = 0.5;
     let mut bus = Box::new(FxBus::new());
@@ -214,7 +208,7 @@ fn rev_send_raises_the_reverbs_energy() {
 /// of it to the reverb.
 #[test]
 fn rev_send_feeds_nothing_while_the_delay_is_off() {
-    let mut p = FxParams::default();
+    let mut p = FxParams::OFF;
     (p.delay.rev_send, p.reverb.mix) = (1.0, 0.5);
     let mut bus = Box::new(FxBus::new());
     for b in 0..first_reflection(size_step(p.reverb.size)) / BLOCK_SIZE + 64 {
@@ -255,7 +249,7 @@ fn a_rev_send_jump_does_not_click() {
 #[test]
 fn smear_changes_the_return() {
     let render = |smear: f32| {
-        let mut p = FxParams::default();
+        let mut p = FxParams::OFF;
         (p.reverb.mix, p.reverb.smear, p.reverb.rate) = (0.5, smear, 1.0);
         let mut bus = Box::new(FxBus::new());
         let mut out = Vec::new();
@@ -275,7 +269,7 @@ fn smear_changes_the_return() {
 /// leaves every pair untouched, bit for bit.
 #[test]
 fn the_master_section_is_off_by_default() {
-    let p = FxParams::default();
+    let p = FxParams::OFF;
     assert!(!p.tape.is_on());
     assert!(!p.comp.is_on());
     let mut out: [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS] =
@@ -294,7 +288,7 @@ fn the_master_section_is_off_by_default() {
 /// reverb's ring have long let the burst go, and the return stays silent.
 #[test]
 fn an_effect_at_mix_0_never_replays_a_stale_tail() {
-    let mut p = FxParams::default();
+    let mut p = FxParams::OFF;
     p.chorus.mode = 3;
     (p.delay.time_ms, p.delay.feedback) = (400.0, 0.0);
     (p.reverb.time, p.reverb.size) = (0.3, 0.5);
@@ -324,7 +318,7 @@ fn an_effect_at_mix_0_never_replays_a_stale_tail() {
 /// no step at the switch.
 #[test]
 fn an_effect_switched_off_fades_its_return() {
-    let mut p = FxParams::default();
+    let mut p = FxParams::OFF;
     p.delay.mix = 0.5;
     (p.delay.time_ms, p.delay.feedback) = (20.0, 0.0);
     let mut bus = Box::new(FxBus::new());
@@ -344,4 +338,33 @@ fn an_effect_switched_off_fades_its_return() {
     let steps = rets[at - 1..].windows(2).map(|w| (w[1] - w[0]).abs());
     assert!(steps.fold(0.0f32, f32::max) < 0.005);
     assert!(rets[at + BLOCK_SIZE] > 0.05, "a fade, not a cut");
+}
+
+/// A new project's returns are at unity: a send is all it takes to hear an
+/// effect (sends spec § 4).
+#[test]
+fn new_returns_are_audible() {
+    let p = FxParams::default();
+    assert_eq!(p.chorus.mode, ChorusMode::JunoI as u8);
+    assert_eq!((p.chorus.mix, p.delay.mix, p.reverb.mix), (1.0, 1.0, 1.0));
+    let o = FxParams::OFF;
+    assert_eq!(o.chorus.mode, ChorusMode::Off as u8);
+    assert_eq!((o.chorus.mix, o.delay.mix, o.reverb.mix), (0.0, 0.0, 0.0));
+    assert!(!o.chorus.is_on() && !o.delay.is_on() && !o.reverb.is_on());
+}
+
+/// A NEW project, Part 0 playing INIT on pair 3 with only a reverb send:
+/// pair 1 carries the return, above -60 dBFS inside half a second.
+#[test]
+fn a_send_on_new_is_heard() {
+    use common::scene::{db, init_perf, run};
+    let mut perf = init_perf(chimera_core::params::EngineType::Algo);
+    let e = perf.edit(chimera_core::project::PartId::ALL[0]);
+    e.mix.output = chimera_core::part::DacPair::P3;
+    e.sound.params.out.sends = [0.0, 0.0, 0.5];
+    let blocks = 24_000 / BLOCK_SIZE;
+    let r = run(&perf, &[(0, 60)], 100, blocks, blocks, None);
+    let p1 = &r.out[0];
+    let rms = (p1.iter().map(|x| x * x).sum::<f32>() / p1.len() as f32).sqrt();
+    assert!(db(rms) > -60.0, "{} dBFS", db(rms));
 }

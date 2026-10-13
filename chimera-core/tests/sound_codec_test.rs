@@ -12,9 +12,9 @@ use chimera_core::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModStat
 use chimera_core::params::{EngineType, FilterParams, ParamSnapshot, PitchParams};
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
-    Check, Decode, FileError, FileKind, Framer, Generation, HEADER_LEN, Header, MAX_SOUND_COST,
-    Migration, RecordBuf, RecordTag, SoundDecoder, TRAILER_LEN, ValidAddr, decode_block,
-    encode_block, encode_sound, write_file,
+    BuildStamp, Check, Decode, FileError, FileKind, Framer, Generation, HEADER_LEN, Header,
+    MAX_SOUND_COST, Migration, RecordBuf, RecordTag, SoundDecoder, TRAILER_LEN, ValidAddr,
+    decode_block, encode_block, encode_library_sound, encode_sound, write_file,
 };
 use chimera_hal::store::{ByteSink, StoreError};
 use common::XorShift;
@@ -68,7 +68,7 @@ fn decode(bytes: &[u8]) -> Result<Sound, FileError> {
 
 fn block(b: BlockRef, s: &Sound) -> Vec<u8> {
     let mut r = RecordBuf::new();
-    encode_block(b, s.params.block(b).unwrap(), None, &mut r);
+    encode_block(b, &*s.params.block(b).unwrap(), None, &mut r);
     r.as_slice().to_vec()
 }
 
@@ -287,11 +287,11 @@ fn block_payload_shape_is_checked() {
     assert_eq!(decode_block(&dup, &[], &[], None), Err(FileError::Corrupt));
     // Unknown block codes and param ids are skipped, and counted.
     assert_eq!(
-        decode_block(&[200, 1, 0, 0, 0, 0], &[], &[], Some(&mut p)),
+        decode_block(&[200, 1, 0, 0, 0, 0], &[], &[], Some(&mut p)).map(|a| a.count),
         Ok(1)
     );
     assert_eq!(
-        decode_block(&[10, 99, 0, 0, 0, 0], &[], &[], Some(&mut p)),
+        decode_block(&[10, 99, 0, 0, 0, 0], &[], &[], Some(&mut p)).map(|a| a.count),
         Ok(1)
     );
 }
@@ -329,7 +329,7 @@ fn unit(rng: &mut XorShift) -> f32 {
 fn random_sound(e: EngineType, rng: &mut XorShift) -> Sound {
     let mut s = Sound::neutral(e);
     for b in BlockRef::ALL {
-        let Some(blk) = s.params.block_mut(b) else {
+        let Some(mut blk) = s.params.block_mut(b) else {
             continue;
         };
         for a in ValidAddr::of_block(b) {
@@ -510,9 +510,10 @@ fn sparse_byte_identity() {
         let f = encode(&s);
         assert_eq!(encode(&decode(&f).unwrap()), f, "{}", s.name.as_str());
     }
-    // The old encoder's full files: a factory one re-encodes to its
-    // Sound's sparse bytes, and INIT's sparse form decodes the same.
-    for i in 0..FACTORY_LEN {
+    // The old encoder's full files (the eight table Sounds, from before the
+    // formant demos): a factory one re-encodes to its Sound's sparse bytes,
+    // and INIT's sparse form decodes the same.
+    for i in 0..8 {
         let full = v1_fixture(&format!("factory_{i}.snd"));
         let s = factory_sound(i).unwrap();
         assert_eq!(cost(&full), 1143 + 16 * usize::from(i == 6), "{i}");
@@ -564,7 +565,11 @@ fn sparse_sizes() {
         .map(|i| cost(&encode(&factory_sound(i).unwrap())))
         .collect();
     println!("factory: {costs:?}");
-    assert!(costs.iter().all(|c| (141..=261).contains(c)), "{costs:?}");
+    // The table Sounds, then the formant demos, whose routes, LFOs and
+    // envelopes add about 200 B.
+    let (table, demos) = costs.split_at(8);
+    assert!(table.iter().all(|c| (141..=261).contains(c)), "{costs:?}");
+    assert!(demos.iter().all(|c| (400..=480).contains(c)), "{costs:?}");
     // 46 B of name, Engine, an empty Registry, ModDests and Routes (its
     // three fixed-FREQ routes), and 70 B for the values INIT moved off
     // neutral (ADR 0063): RR on six operators and OUT LEVEL, a one-param
@@ -589,7 +594,7 @@ fn worst(e: EngineType) -> (Sound, usize) {
     let mut s = Sound::neutral(e);
     let mut stuck = 0;
     for b in BlockRef::ALL {
-        let Some(blk) = s.params.block_mut(b) else {
+        let Some(mut blk) = s.params.block_mut(b) else {
             continue;
         };
         let base = neutral.params.block(b).unwrap();
@@ -647,10 +652,10 @@ fn worst(e: EngineType) -> (Sound, usize) {
     (s, stuck)
 }
 
-/// 16 + 5 (`Engine`) + 21 × 5 (block heads) + 236 × 5 (params) + 164
+/// 16 + 5 (`Engine`) + 21 × 5 (block heads) + 276 × 5 (params) + 164
 /// (`Registry`) + 37 (`ModDests`) + 644 (`Routes`, the fixed columns'
 /// among them) + 36 (`TapRoutes`) + 14 (`SourceRef`) + 148 (`ZoneTune`,
-/// 24 zones) = 2 349 B, less 5 B for each param that has nowhere to move.
+/// 24 zones) = 2 549 B, less 5 B for each param that has nowhere to move.
 /// A new param moves it: raise
 /// `MAX_SOUND_COST` with it.
 #[test]
@@ -663,6 +668,43 @@ fn sparse_bound() {
         assert!(c <= MAX_SOUND_COST, "{e:?} {c}");
         most = most.max(c + 5 * stuck);
     }
-    assert_eq!(most, 2349);
+    assert_eq!(most, 2549);
     assert_eq!(MAX_SOUND_COST, most.next_multiple_of(16));
+}
+
+/// The sends live on the Sound's OUT block (ADR 0123): they round-trip, in
+/// a plain file and in a library one, and at 0 write nothing.
+#[test]
+fn sends_round_trip_and_cost_nothing_at_zero() {
+    let mut s = Sound::init(EngineType::Algo);
+    s.params.out.sends = [0.25, 0.5, 1.0];
+    assert_round_trip(&s);
+    assert_eq!(
+        decode(&encode(&s)).unwrap().params.out.sends,
+        [0.25, 0.5, 1.0]
+    );
+
+    // The library save and load.
+    let h = header(&s);
+    let st = BuildStamp::new("0.1.0", "02e440e2", false);
+    let mut sink = VecSink(Vec::new());
+    write_file(&mut sink, &h, &mut |w| encode_library_sound(&s, &st, w)).unwrap();
+    let back = decode(&sink.0).unwrap();
+    assert!(back.bits_eq(&s));
+    assert_eq!(back.params.out.sends, [0.25, 0.5, 1.0]);
+
+    // Sends at 0 write nothing: INIT's bytes are the old encoder's.
+    let init = Sound::init(EngineType::Algo);
+    let plain = encode(&init);
+    // Pinned from the encoder before the sends moved: length and CRC.
+    assert_eq!(
+        (plain.len(), plain[plain.len() - 4..].to_vec()),
+        (132, vec![87, 103, 46, 253])
+    );
+    let mut lib = VecSink(Vec::new());
+    write_file(&mut lib, &header(&init), &mut |w| {
+        encode_library_sound(&init, &st, w)
+    })
+    .unwrap();
+    assert_eq!(decode(&lib.0).unwrap().params.out.sends, [0.0; 3]);
 }

@@ -8,6 +8,7 @@ use chimera_core::dsp::comp::CompParams;
 use chimera_core::dsp::delay::DelayParams;
 use chimera_core::dsp::fx_bus::{FxBus, FxParams};
 use chimera_core::dsp::knobs::Knobs;
+use chimera_core::dsp::lfo::LfoClock;
 use chimera_core::dsp::limiter::{CEILING, KNEE, LOOKAHEAD, Limiter, OUTPUT_GAIN, THRESHOLD};
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::ReverbParams;
@@ -117,13 +118,13 @@ fn chord(
         shared.parts[0].params.out.volume = 0.8;
     }
     shared.parts[0].mix.level = level;
-    shared.parts[0].mix.sends = [send; 3];
+    shared.parts[0].params.out.sends = [send; 3];
     shared.fx = fx_params;
     // Rev V, or with the master tape (where ALGO INIT plays seven since
     // ADR 0060) a budget for all eight.
     let voice = Voice::cost(&shared.parts[0].params, &shared.parts[0].mod_state).0;
     // And the Part's knobs (ADR 0112).
-    let reserved = FxBus::COST.0 + Knobs::RESERVE.0;
+    let reserved = FxBus::COST.0 + Knobs::RESERVE.0 + LfoClock::RESERVE.0;
     let eight = ((reserved + 8 * voice + Knobs::COST.0) as u64 * 4_800_000)
         .div_ceil(chimera_core::hw::AUDIO_BUDGET_PERCENT as u64) as u32;
     let mut inst = Box::new(Instrument::new(
@@ -209,16 +210,10 @@ fn only_final_limiter_is_nonlinear() {
         // The same products `mix_parts` hoists.
         let (gl, gr) = (gl * level, gr * level);
         let (mut bus, mut out) = (Vec::new(), Vec::new());
-        chord(
-            Voices::Init,
-            FxParams::default(),
-            level,
-            0.0,
-            |inst, _, dac| {
-                bus.extend_from_slice(inst.part_bus(0));
-                out.extend_from_slice(&dac.out()[0]);
-            },
-        );
+        chord(Voices::Init, FxParams::OFF, level, 0.0, |inst, _, dac| {
+            bus.extend_from_slice(inst.part_bus(0));
+            out.extend_from_slice(&dac.out()[0]);
+        });
         let over = bus
             .iter()
             .position(|&b| (b * gl).abs() > THRESHOLD || (b * gr).abs() > THRESHOLD);

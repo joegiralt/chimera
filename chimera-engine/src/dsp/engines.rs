@@ -128,8 +128,15 @@ impl EngineSlot {
     /// `kind.resting()`, in place: a slot is built holding no lease.
     pub fn init_in_place(slot: &mut MaybeUninit<Self>, kind: SlotKind) -> &mut Self {
         match kind.resting() {
-            // SAFETY: `AlgoEngine::init_in_place` writes every field.
-            SlotKind::Algo => unsafe { Self::init_algo(slot, AlgoEngine::init_in_place) },
+            // SAFETY: `AlgoEngine::init_in_place` writes every field. A lone
+            // slot is voice 0's.
+            SlotKind::Algo => unsafe {
+                Self::init_algo(slot, |a| {
+                    let a = AlgoEngine::init_in_place(a);
+                    a.seed(VoiceIdx::ALL[0]);
+                    a
+                })
+            },
             // SAFETY: `ModalEngine::init_in_place` writes every field.
             SlotKind::Modal(mode) => unsafe {
                 Self::init_modal(slot, |m| {
@@ -213,11 +220,17 @@ impl EngineSlot {
     }
 
     /// `kind`; Sympathetic with `lease`'s halo, or bare without one; TAPE on
-    /// `voice`'s strip; VA on `voice`'s seed, where its last note left off.
+    /// `voice`'s strip; VA on `voice`'s seed, where its last note left off;
+    /// ALGO's noise on `voice`'s seeds.
     fn build(&mut self, kind: SlotKind, lease: Option<Lease>, voice: VoiceIdx) {
         match kind {
-            // SAFETY: `AlgoEngine::init_in_place` writes every field.
-            SlotKind::Algo => unsafe { self.rebuild_algo(AlgoEngine::init_in_place) },
+            SlotKind::Algo => {
+                // SAFETY: `AlgoEngine::init_in_place` writes every field.
+                unsafe { self.rebuild_algo(AlgoEngine::init_in_place) };
+                if let Self::Algo(a) = self {
+                    a.seed(voice);
+                }
+            }
             // SAFETY: `ModalEngine::init_in_place` writes every field.
             SlotKind::Modal(ResonatorMode::Sympathetic) => unsafe {
                 let halo = lease.map_or(Halo::Bare, Halo::Full);
@@ -534,7 +547,7 @@ fn level_billed(p: &ParamSnapshot, mods: &ModState) -> bool {
 
 /// The most cents PITCH's and FINE's routes can move a note, every source
 /// at full swing.
-fn pitch_reach(mods: &ModState) -> f32 {
+pub(crate) fn pitch_reach(mods: &ModState) -> f32 {
     [PitchParams::PITCH, PitchParams::FINE]
         .into_iter()
         .map(|q| {

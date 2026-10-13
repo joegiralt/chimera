@@ -5,19 +5,21 @@ use chimera_hal::BLOCK_SIZE;
 
 use crate::addr::{BlockRef, Blocks, ParamAddr};
 use crate::block::{ParamId, apply_offset};
-use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
-use crate::dsp::algo::params::AlgoParams;
+use crate::dsp::algo::engine::{AlgoEngine, AlgoLive, SpanReach};
+use crate::dsp::algo::kinds::OpKind;
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::dc_blocker::DcBlocker;
 use crate::dsp::drive::Drive;
 use crate::dsp::ease::{Ramp, at, step_of};
 use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
+use crate::dsp::fast_exp2;
 use crate::dsp::filter::{FILTER_LEVEL_COST, Filter, FilterMods};
 use crate::dsp::gate::AmpGate;
 use crate::dsp::knobs::Gliding;
 use crate::dsp::knobs::Knobs;
-use crate::dsp::lfo::Lfo;
+use crate::dsp::lfo::{Lfo, LfoClock};
 use crate::dsp::modal::{ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::wavefolder::Wavefolder;
@@ -48,6 +50,10 @@ const _: () = assert!(
 /// The voice's DC blocker corner (ADR 0060): after the last nonlinear
 /// stage, −0.26 dB at 20 Hz, settled in 0.1 s.
 pub const DC_HZ: f32 = 5.0;
+
+/// An engine that ends with the voice past this (−80 dB) would end on a
+/// step: the DC blocker's tail after a fast release (#487).
+const END_STEP: f32 = 1.0e-4;
 
 /// Complete voice signal chain:
 /// [Engine] → [Drive] → [Filter] → [Wavefolder] → [tap-VCA] → [DC blocker] → [VCA]
@@ -91,6 +97,9 @@ pub struct Voice {
     active: bool,
     last_note: MidiNote,
     last_velocity: Velocity,
+    /// The velocity the VCA's VEL played last block: a re-strike's ramps
+    /// from it (#483).
+    vca_velocity: Velocity,
     /// The source the last note, or the one waiting, plays (TAPE).
     last_source: Option<SourceId>,
     /// Samples left of a fade-out (`kill`, a switch); 0 when not
@@ -335,11 +344,43 @@ impl Voice {
         )
     }
 
+    /// A formant voice past the C8 grain clock the FRMT terms cover: the
+    /// spans its reachable pitch adds (`HighNote`).
+    pub fn high_note_extra(
+        p: &ParamSnapshot,
+        mods: &ModState,
+        bend: u8,
+        tune_cents: i8,
+        note: MidiNote,
+        slide: f32,
+    ) -> Cost {
+        HighNote::of(p, mods, bend, tune_cents).map_or(Cost::ZERO, |h| h.extra(note, slide))
+    }
+
+    /// An Algo voice's formant and noise operators' last `(fc, bw_eff)`.
+    pub fn formant_view(&self) -> Option<[(f32, f32); crate::dsp::algo::plan::OPS]> {
+        match &self.slot {
+            EngineSlot::Algo(a) => Some(a.formant_view()),
+            _ => None,
+        }
+    }
+
+    /// A glide steal's ratio now on an Algo voice, 1 otherwise.
+    pub fn algo_slide(&self) -> f32 {
+        match &self.slot {
+            EngineSlot::Algo(a) => a.slide(),
+            _ => 1.0,
+        }
+    }
+
     /// What this voice's sounding note costs over `p`'s stored model
     /// (#183): Modal's MODE and MODES and TAPE's MODEL are fixed per note,
     /// so an edit under a sounding voice is billed at the costlier of the
-    /// two.
+    /// two; so is an ALGO operator's SKIRT (`held_skirt_extra`).
     pub fn held_model_extra(&self, p: &ParamSnapshot) -> Cost {
+        if let EngineSlot::Algo(a) = &self.slot {
+            return a.held_skirt_extra(&p.algo);
+        }
         self.slot.playing_cost().map_or(Cost::ZERO, |held| {
             Cost(held.0.saturating_sub(self.slot.model_cost(p).0))
         })
@@ -416,7 +457,12 @@ impl Voice {
             addr_of_mut!((*p).sample_rate).write(sample_rate);
             addr_of_mut!((*p).rebuilds).write(0);
             Self::init_chain(p);
-            slot.assume_init_mut()
+            let v = slot.assume_init_mut();
+            // Its own noise from boot, not the lone slot's voice 0.
+            if let EngineSlot::Algo(a) = &mut v.slot {
+                a.seed(id);
+            }
+            v
         }
     }
 
@@ -450,6 +496,7 @@ impl Voice {
                 active: false,
                 last_note: MidiNote::A4,
                 last_velocity: Velocity::DEFAULT,
+                vca_velocity: Velocity::DEFAULT,
                 last_source: None,
                 fade: 0,
                 after_fade: AfterFade::Idle,
@@ -522,6 +569,12 @@ impl Voice {
     #[cfg(any(test, feature = "test-support"))]
     pub fn slot(&self) -> &EngineSlot {
         &self.slot
+    }
+
+    /// LFO `s`'s phase: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn lfo_phase(&self, s: LfoSlot) -> f32 {
+        self.lfos[s.index()].phase()
     }
 
     /// The sounding (or last) note's velocity.
@@ -641,6 +694,7 @@ impl Voice {
             self.envs = [Envelope::new(); 3];
             self.mod_values = [0.0; MAX_MOD_SOURCES];
             self.tap_amt = [[0; 4]; 2];
+            self.vca_velocity = velocity;
         }
         self.retrigger = true;
         self.gate.restart();
@@ -823,17 +877,20 @@ impl Voice {
         mod_state: &ModState,
         ctx: &mut EngineCtx<'_>,
     ) {
-        self.render_knobs(output, params, mod_state, &Knobs::UNPRIMED, ctx);
+        self.render_knobs(output, params, mod_state, &Knobs::UNPRIMED, None, ctx);
     }
 
     /// One block of `params` with its Part's `knobs` in place of the stored
-    /// values they glide (ADR 0112), and of the FREQ/Q amounts.
+    /// values they glide (ADR 0112), and of the FREQ/Q amounts. Its FREE
+    /// LFOs play the Part's `clock` (ADR 0135); without one (a voice on its
+    /// own) they run their own phase.
     pub fn render_knobs(
         &mut self,
         output: &mut [f32; BLOCK_SIZE],
         params: &ParamSnapshot,
         mod_state: &ModState,
         knobs: &Knobs,
+        clock: Option<&LfoClock>,
         ctx: &mut EngineCtx<'_>,
     ) {
         let sample_rate = self.sample_rate();
@@ -908,8 +965,11 @@ impl Voice {
             );
         }
         for (s, lfo) in LfoSlot::ALL.iter().zip(self.lfos.iter_mut()) {
-            mod_values[ModSource::of_lfo(*s).index()] =
-                lfo.run_block(&src.lfos[s.index()], sample_rate);
+            let p = &src.lfos[s.index()];
+            if let Some(c) = clock {
+                lfo.follow(p, c.phases()[s.index()]);
+            }
+            mod_values[ModSource::of_lfo(*s).index()] = lfo.run_block(p, sample_rate);
         }
         mod_values[ModSource::Vel.index()] = self.last_velocity.unit();
         mod_values[ModSource::Note.index()] = note_source(self.last_note);
@@ -942,9 +1002,9 @@ impl Voice {
                 let off = knobs.fixed_sum(mod_state, c, &mod_values);
                 let a = c.addr();
                 if off != 0.0
-                    && let Some(blk) = m.block_mut(a.block)
+                    && let Some(mut blk) = m.block_mut(a.block)
                 {
-                    apply_offset(blk, a.param, off);
+                    apply_offset(&mut *blk, a.param, off);
                 }
             }
             let mut next = [EnvMods::NONE; 3];
@@ -961,8 +1021,8 @@ impl Voice {
                         continue;
                     }
                     // Modulatable addresses are always Sound blocks (`voice_reads`).
-                    if let Some(blk) = m.block_mut(a.block) {
-                        apply_offset(blk, a.param, off);
+                    if let Some(mut blk) = m.block_mut(a.block) {
+                        apply_offset(&mut *blk, a.param, off);
                     }
                 }
             }
@@ -1075,6 +1135,17 @@ impl Voice {
         // 7. The VCA, after the blocker, with the engine's output gain,
         // ramped (never snap).
         let v = self.volume.step(m.out.volume * self.slot.out_gain());
+        // The engine ended this block on a step: the VCA's own ramp takes
+        // the voice to 0 over it, no work added. A ringing filter fades
+        // below (#374).
+        let v = if !self.slot.is_active()
+            && !self.filter.rings()
+            && libm::fabsf(output[BLOCK_SIZE - 1]) * v.1 > END_STEP
+        {
+            (v.0, 0.0)
+        } else {
+            v
+        };
         let (volume, dv) = (v.1, step_of(v, BLOCK_SIZE));
         // The block's last routed gain, × AMP's VEL: whether the lifetime
         // check below ends the voice through a fade.
@@ -1103,10 +1174,22 @@ impl Voice {
                 }
             }
             Some(gain) => {
-                let vel = 1.0 - m.out.vca_vel + m.out.vca_vel * self.last_velocity.unit();
+                let amp = |v: Velocity| 1.0 - m.out.vca_vel + m.out.vca_vel * v.unit();
+                let (was, vel) = (amp(self.vca_velocity), amp(self.last_velocity));
+                self.vca_velocity = self.last_velocity;
                 let k = volume * vel;
                 #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
-                if dv == 0.0 {
+                if was != vel {
+                    // A re-strike or steal of a sounding voice at another
+                    // velocity: AMP's VEL ramps with OUT LEVEL, one ramp,
+                    // never a step (#483); a multiply a sample fewer than
+                    // OUT LEVEL's ramp below, so the bill stands.
+                    let r = (v.0 * was, k);
+                    let (from, step) = (r.0, step_of(r, BLOCK_SIZE));
+                    for (i, (sample, g)) in output.iter_mut().zip(gain).enumerate() {
+                        *sample *= at(from, step, i) * g.max(0.0).min(1.0);
+                    }
+                } else if dv == 0.0 {
                     for (sample, g) in output.iter_mut().zip(gain) {
                         *sample *= k * g.max(0.0).min(1.0);
                     }
@@ -1161,6 +1244,65 @@ impl Voice {
                 self.reset(params, false, ctx.sym);
             }
         }
+    }
+}
+
+/// A formant Sound's reach past the C8 grain clock (`AlgoEngine::
+/// high_note_extra`), less the note: a Part's, taken once a block (its
+/// route scans); each voice's extra is then a `fast_exp2` and a span count
+/// an operator (ADR 0131's fixed work).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HighNote {
+    /// Semitones over the note from A4: TRNSP, the PITCH offset, TUNING
+    /// (up only), the bend's range and every PITCH route at full swing.
+    st: f32,
+    reach: SpanReach,
+}
+
+impl HighNote {
+    /// Recost's reach on a formant Part, once a block on its first voice,
+    /// ADR 0056's count on the bench-algo ELF (2026-10-13): `of` 483
+    /// instructions and 9 divides at six FRMTs, `pitch_reach`'s two scans
+    /// and swings and both `algo_routed` scans, 16 dests at 109 at most,
+    /// 8 sources at 23 twice: ~2,700 instructions, 9 divides, 4,445 cycles
+    /// a block: 69.5, rounded up.
+    pub const PART_COST: Cost = Cost(70);
+
+    /// Each formant voice's `extra`: 206 instructions and 7 divides at six
+    /// FRMTs, ~215 with recost's glue, 430 cycles a block: 6.7, rounded up.
+    pub const VOICE_COST: Cost = Cost(7);
+
+    /// `None`: no FRMT to bill.
+    #[inline(never)]
+    pub fn of(p: &ParamSnapshot, mods: &ModState, bend: u8, tune_cents: i8) -> Option<HighNote> {
+        if p.engine() != EngineType::Algo || !p.algo.kinds().all().contains(&OpKind::Formant) {
+            return None;
+        }
+        let st = f32::from(p.algo.transpose)
+            + p.pitch.semitones()
+            + f32::from(tune_cents.max(0)) / 100.0
+            + f32::from(bend)
+            + crate::dsp::engines::pitch_reach(mods) / 100.0
+            - 69.0;
+        let fine_top = mods.algo_routed(&[AlgoOpParams::FINE]);
+        Some(HighNote {
+            st,
+            reach: SpanReach::of(&p.algo, &mods.algo_levels_routed(), &fine_top),
+        })
+    }
+
+    /// A voice at `note`, gliding from `slide` (its ratio, 1 at rest).
+    pub fn extra(&self, note: MidiNote, slide: f32) -> Cost {
+        let st = f32::from(note.get()) + self.st;
+        self.reach
+            .extra(440.0 * fast_exp2(st / 12.0) * slide.max(1.0))
+    }
+
+    /// What a voice at `note` is billed for the reach: its `extra` and
+    /// `VOICE_COST`, and on the Part's `first` voice `PART_COST`.
+    pub fn bill(&self, note: MidiNote, slide: f32, first: bool) -> Cost {
+        let part = if first { Self::PART_COST } else { Cost::ZERO };
+        self.extra(note, slide) + Self::VOICE_COST + part
     }
 }
 

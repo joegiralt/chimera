@@ -85,6 +85,11 @@ struct RateTables {
 
 const SR: f32 = crate::hw::SAMPLE_RATE as f32;
 
+/// A retrigger's fastest attack, 0 to 1 (#486): 2 ms, the shortest that
+/// reads click-free on a MONO legato bass at every glide time.
+pub const RETRIGGER_SECONDS: f32 = 0.002;
+const RETRIGGER_ADD: f32 = 1.0 / (RETRIGGER_SECONDS * SR);
+
 static TABLES: RateTables = {
     let mut t = RateTables {
         attack_add: [0.0; RATES],
@@ -208,9 +213,18 @@ impl OpEnv {
         },
     };
 
-    /// Attacks from the current level, so a retrigger never clicks.
+    /// Attacks from the current level, so a retrigger never clicks: a
+    /// sounding operator's attack takes at least `RETRIGGER_SECONDS` a full
+    /// scale (#486), where AR 31's 12 samples would step its level mid-wave.
+    /// A note from silence keeps its snap.
     pub fn note_on(&mut self, coefs: EnvCoefs) {
-        self.coefs = coefs;
+        self.coefs = match self.stage {
+            Stage::Idle => coefs,
+            _ => EnvCoefs {
+                attack_add: coefs.attack_add.min(RETRIGGER_ADD),
+                ..coefs
+            },
+        };
         self.enter(Stage::Attack);
     }
 

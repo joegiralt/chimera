@@ -70,7 +70,10 @@ fn bend_defaults_to_two_semitones_and_clamps_to_its_range() {
         assert_eq!(m.bend, want);
         assert_eq!(m.get(PartParams::BEND), f32::from(want));
     }
-    let spec = &chimera_core::part::PART_SPECS[usize::from(PartParams::BEND.0)];
+    let spec = chimera_core::part::PART_SPECS
+        .iter()
+        .find(|s| s.id == PartParams::BEND)
+        .unwrap();
     assert_eq!((spec.min, spec.max, spec.default), (0.0, 24.0, 2.0));
     assert_eq!(spec.label, "BEND");
     assert_eq!(MAX_BEND, 24);
@@ -360,4 +363,130 @@ fn bend_round_trips_through_a_project_and_an_old_file_reads_the_default() {
     for id in PartId::ALL {
         assert_eq!(old.part(id).mix.bend, INIT_BEND);
     }
+}
+
+// ---- channel mode: CC 120, 121, 123 (#501) ----
+
+use chimera_core::note_queue::{ChannelMode, ChannelModeEvent, InEvent};
+
+fn mode(rig: &mut InstRig, c: u8, mode: ChannelMode) {
+    rig.inst.channel_mode(ChannelModeEvent {
+        channel: ch(c),
+        mode,
+    });
+}
+
+#[test]
+fn channel_mode_ccs_reach_the_queue_as_events() {
+    use chimera_hal::MidiMessage;
+    for (cc, want) in [
+        (120, ChannelMode::SoundOff),
+        (121, ChannelMode::ResetControllers),
+        (123, ChannelMode::NotesOff),
+    ] {
+        let m = MidiMessage::ControlChange {
+            channel: ch(3),
+            cc,
+            value: 0,
+        };
+        assert_eq!(
+            InEvent::from_midi(m),
+            Some(InEvent::Mode(ChannelModeEvent {
+                channel: ch(3),
+                mode: want
+            }))
+        );
+    }
+}
+
+#[test]
+fn all_notes_off_releases_its_channel_only() {
+    let mut rig = rev_v();
+    rig.note_on(0, 60);
+    rig.note_on(1, 62);
+    mode(&mut rig, 0, ChannelMode::NotesOff);
+    assert_eq!(held(&rig), 1, "channel 1 still holds");
+    mode(&mut rig, 1, ChannelMode::NotesOff);
+    assert_eq!(held(&rig), 0);
+}
+
+#[test]
+fn all_notes_off_under_the_pedal_holds_until_it_is_up() {
+    let mut rig = rev_v();
+    pedal(&mut rig, 0, true);
+    rig.note_on(0, 60);
+    rig.note_on(0, 64);
+    mode(&mut rig, 0, ChannelMode::NotesOff);
+    rig.render(50);
+    assert_eq!(held(&rig), 2, "the pedal holds both voices");
+    pedal(&mut rig, 0, false);
+    assert_eq!(held(&rig), 0);
+}
+
+#[test]
+fn modal_rings_on_after_all_notes_off() {
+    let mut rig = rev_v();
+    *rig.shared.parts[0].params = init_params(EngineType::Modal);
+    rig.note_on(0, 60);
+    rig.render(20);
+    mode(&mut rig, 0, ChannelMode::NotesOff);
+    assert_eq!(held(&rig), 0);
+    rig.render(20);
+    assert!(rig.inst.sounding() > 0);
+}
+
+#[test]
+fn all_sound_off_fades_its_channel_without_a_click() {
+    let mut rig = rev_v();
+    *rig.shared.parts[1].params = tri();
+    rig.note_on(0, 60);
+    rig.note_on(1, 60);
+    rig.render(100);
+    let mut out = Vec::new();
+    for _ in 0..4 {
+        rig.render(1);
+        out.extend_from_slice(rig.inst.part_bus(0));
+    }
+    mode(&mut rig, 0, ChannelMode::SoundOff);
+    for _ in 0..20 {
+        rig.render(1);
+        out.extend_from_slice(rig.inst.part_bus(0));
+    }
+    assert!(
+        common::clicks(&out).is_empty(),
+        "{:?}",
+        common::clicks(&out)
+    );
+    assert!(
+        out[out.len() - 256..].iter().all(|x| x.abs() < 1e-6),
+        "silent"
+    );
+    assert_eq!(held(&rig), 1, "channel 1 plays on");
+    assert!(rig.inst.part_bus(1).iter().any(|x| x.abs() > 1e-3));
+    // Silent within the fade: the first block already ramps down.
+    let mut late = rev_v();
+    late.note_on(0, 60);
+    late.render(100);
+    mode(&mut late, 0, ChannelMode::SoundOff);
+    late.render(3);
+    assert!(late.inst.part_bus(0).iter().all(|x| x.abs() < 1e-6));
+}
+
+#[test]
+fn reset_controllers_centres_the_bend_and_lifts_the_pedal_on_its_channel() {
+    let mut rig = rev_v();
+    rig.note_on(0, 60);
+    rig.note_on(1, 60);
+    wheel(&mut rig, 0, 8191);
+    wheel(&mut rig, 1, 8191);
+    pedal(&mut rig, 0, true);
+    pedal(&mut rig, 1, true);
+    rig.note_off(0, 60);
+    rig.note_off(1, 60);
+    rig.render(400);
+    mode(&mut rig, 0, ChannelMode::ResetControllers);
+    rig.render(400);
+    assert_eq!(held(&rig), 1, "channel 0's pedal is up, 1's is down");
+    assert!(rig.inst.bend_of(0).abs() < 1e-3);
+    assert!((rig.inst.bend_of(1) - 2.0).abs() < 1e-3);
 }

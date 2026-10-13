@@ -21,7 +21,7 @@ use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 /// LEVEL 90, so the carrier power is above 1 and the scale is live.
 fn two_carriers() -> AlgoParams {
     let mut p = AlgoParams::default();
-    (p.alg_a, p.alg_b) = (AlgoId::A1.get(), AlgoId::A1.get());
+    p.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
     for o in &mut p.ops[2..] {
         o.level = 0;
     }

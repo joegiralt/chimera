@@ -7,8 +7,8 @@ use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode};
+use chimera_core::params::OutParams;
 use chimera_core::params::{EngineType, ParamSnapshot};
-use chimera_core::part::PartParams;
 use chimera_core::ui::block_def::{BlockDef, ParamSlot, VizType, slot_addr};
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::page::PageLayout;
@@ -111,10 +111,11 @@ fn exciter_page_follows_the_model() {
     assert_eq!(p.modal.force, force + 1.0 / 128.0);
 }
 
-/// The reverb send lives on SENDS only (ADR 0120): RES and DECK carry none.
+/// The reverb send lives on SENDS and AMP only (ADR 0120): no engine home
+/// page (RES, DECK) carries it.
 #[test]
-fn reverb_send_is_on_sends_only() {
-    let rev = ParamAddr::new(BlockRef::Part, PartParams::SEND_REVERB);
+fn reverb_send_is_on_sends_and_amp_only() {
+    let rev = ParamAddr::new(BlockRef::Out, OutParams::SEND3);
     let ctx = SlotCtx::read(&ParamSnapshot::default(), Op::A);
     for def in [&reg::MODAL_1, &reg::TAPE_DECK] {
         for k in 0..6 {
@@ -122,6 +123,13 @@ fn reverb_send_is_on_sends_only() {
         }
     }
     assert_eq!(slot_addr(&reg::SENDS, 2, &ctx), Some(rev));
+    for (k, send) in [OutParams::SEND1, OutParams::SEND2, OutParams::SEND3]
+        .into_iter()
+        .enumerate()
+    {
+        let want = Some(ParamAddr::new(BlockRef::Out, send));
+        assert_eq!(slot_addr(&reg::FOLDER, k, &ctx), want, "AMP {k}");
+    }
 }
 
 #[test]
@@ -152,8 +160,8 @@ fn drive_filter_folder_pages() {
     turn(&reg::FILTER, 3, 20, &mut p);
     assert_eq!(p.filter.mode(), FilterMode::Phaser, "clamps at the last");
 
-    assert_eq!(read(&reg::FOLDER, &p), [0.0, 0.5, 0.5, 1.0, 0.0, 0.0]);
-    turn(&reg::FOLDER, 0, 4, &mut p);
+    assert_eq!(read(&reg::FOLDER, &p), [0.0, 0.0, 0.0, 0.0, 1.0, 0.5]);
+    turn(&reg::FOLDER, 3, 4, &mut p);
     assert_eq!(p.folder.fold, 4.0 / 128.0);
 }
 
@@ -237,7 +245,7 @@ fn algo_pages_edit_every_operator_and_the_algorithm() {
     for slot in 0..6 {
         turn(&reg::ALGO_WAVE, slot, 1 + slot as i8, &mut p);
     }
-    assert_eq!(p.algo.ops.map(|o| o.wave), [1, 2, 3, 4, 5, 6]);
+    assert_eq!(p.algo.kinds().all().map(|k| k.code()), [1, 2, 3, 4, 5, 6]);
     turn(&reg::ALGO_LEVEL, 5, 40, &mut p);
     assert_eq!(p.algo.ops[5].level, 40);
     turn(&reg::ALGO_LEVEL, 0, 5, &mut p);
@@ -247,7 +255,12 @@ fn algo_pages_edit_every_operator_and_the_algorithm() {
     turn(&reg::ALGO_ALG, 2, 64, &mut p);
     turn(&reg::ALGO_ALG, 3, -30, &mut p);
     assert_eq!(
-        (p.algo.alg_a, p.algo.alg_b, p.algo.morph, p.algo.transpose),
+        (
+            p.algo.algs().0.get(),
+            p.algo.algs().1.get(),
+            p.algo.morph,
+            p.algo.transpose
+        ),
         (21, 29, 64, -24)
     );
     snap(&reg::ALGO_ALG, 2, 1, &mut p); // MIX + turn snaps MORPH like any Uni value
@@ -257,29 +270,38 @@ fn algo_pages_edit_every_operator_and_the_algorithm() {
 #[test]
 fn the_osc_node_has_every_operator_parameter() {
     use chimera_core::dsp::algo::params::ALGO_OP_SPECS;
-    use chimera_core::ui::block_def::SlotBinding;
     let block = reg::ALGO_CHAIN
         .blocks
         .iter()
         .find(|b| b.def.id == reg::ALGO_WAVE.id)
         .unwrap();
+    use chimera_core::dsp::algo::kinds::OpKind;
     let mut edited = Vec::new();
-    for sub in 0..block.sub_page_count() {
-        let def = block.active_def(sub);
-        for (i, slot) in def.params.iter().enumerate() {
-            let SlotBinding::Param(a) = slot.binding else {
-                panic!("{} slot {i}", def.name)
-            };
-            assert_eq!(
-                a.block,
-                BlockRef::AlgoOp(Op::ALL[i]),
-                "{} slot {i}",
-                def.name
-            );
-            edited.push(a.param);
+    // Every kind's cells: an OP page shows its operator's kind's.
+    for kind in [OpKind::Table(WaveId::W1), OpKind::Formant, OpKind::Noise] {
+        let ctx = SlotCtx {
+            op_kinds: [kind; 6],
+            ..SlotCtx::read(&ParamSnapshot::default(), Op::A)
+        };
+        for sub in 0..block.sub_page_count() {
+            let def = block.active_def(sub);
+            for i in 0..def.params.len() {
+                let Some(a) = view(def, i, &ctx).addr() else {
+                    panic!("{} slot {i}", def.name)
+                };
+                // A group page runs one parameter across the operators; an
+                // OP page runs its own operator's parameters.
+                let op = if sub < 13 {
+                    Op::ALL[i]
+                } else {
+                    Op::ALL[sub - 13]
+                };
+                assert_eq!(a.block, BlockRef::AlgoOp(op), "{} slot {i}", def.name);
+                edited.push(a.param);
+            }
         }
     }
-    for s in &ALGO_OP_SPECS {
+    for s in ALGO_OP_SPECS {
         assert!(edited.contains(&s.id), "{} has no page", s.label);
     }
     let names: Vec<&str> = (0..block.sub_page_count())
@@ -288,7 +310,8 @@ fn the_osc_node_has_every_operator_parameter() {
     assert_eq!(
         names,
         [
-            "OSC", "CRS", "FIN", "DET", "LVL", "VEL", "AR", "D1R", "D1L", "D2R", "RR", "RS", "FBK"
+            "OSC", "CRS", "FIN", "DET", "LVL", "VEL", "AR", "D1R", "D1L", "D2R", "RR", "RS", "FBK",
+            "OP1", "OP2", "OP3", "OP4", "OP5", "OP6"
         ]
     );
 }

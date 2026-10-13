@@ -44,7 +44,12 @@ fn on_flt(ct: EngineType) -> UiState {
     load_init(&mut ui, ct);
     let p = ui.params_mut();
     p.filter.cutoff = 2000.0;
-    p.algo.ops[0].wave = WaveId::SAW.get();
+    p.algo
+        .try_set_kind(
+            0,
+            chimera_core::dsp::algo::kinds::OpKind::Table(WaveId::SAW),
+        )
+        .unwrap();
     for _ in 0..flt_node(ct) {
         feed(&mut ui, Input::press(ButtonId::Plus));
     }
@@ -739,13 +744,17 @@ fn mix_minus_on_a_route_view_deletes_its_route() {
     let ctx = SlotCtx::read(ui.params(), chimera_core::addr::Op::A);
     for i in [1, 3] {
         assert_eq!(
-            view::view(&FILTER_MOD, i, &ctx).hint(),
+            view::view(&FILTER_MOD, i, &ctx).hint(&ctx),
             mod_grid::DELETE,
             "{i}"
         );
     }
     for i in [4, 5] {
-        assert_eq!(view::view(&FILTER, i, &ctx).hint(), mod_grid::DELETE, "{i}");
+        assert_eq!(
+            view::view(&FILTER, i, &ctx).hint(&ctx),
+            mod_grid::DELETE,
+            "{i}"
+        );
     }
     back_to_flt(&mut ui, false);
     feed(&mut ui, Input::turn(EncoderId::F, 1)); // FM2
@@ -875,7 +884,7 @@ fn saw_bench() -> common::sweep::Bench {
     use chimera_core::dsp::fx_bus::FxParams;
     use chimera_core::part::PartParams;
     use common::sweep::{Bench, Patch};
-    let mut b = Bench::new(Patch::Probe, PartParams::default(), FxParams::default());
+    let mut b = Bench::new(Patch::Probe, PartParams::default(), FxParams::OFF);
     b.edit_sound(|s| {
         s.params.algo = chimera_core::dsp::algo::params::AlgoParams::single(WaveId::SAW);
         s.params.filter.cutoff = 900.0;

@@ -4,6 +4,7 @@
 mod common;
 use chimera_core::dsp::algo::algorithms::{ALGO_COUNT, AlgoId};
 use chimera_core::dsp::algo::engine::{AlgoEngine, AlgoLive};
+use chimera_core::dsp::algo::kinds::OpKind;
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::algo::waves::{WaveId, mip_step};
 use chimera_core::taps::TapRows;
@@ -48,30 +49,34 @@ fn render(p: &AlgoParams, note: u8, blocks: usize) -> Vec<f32> {
 
 /// Six sounding operators at distinct integer ratios, each on its own wave.
 fn stack(a: AlgoId, b: AlgoId, morph: u8) -> AlgoParams {
-    let mut p = AlgoParams {
-        alg_a: a.get(),
-        alg_b: b.get(),
-        morph,
-        ..AlgoParams::default()
-    };
+    let mut p = AlgoParams::default();
+    p.try_set_algs(a, b).unwrap();
+    p.morph = morph;
     for (i, o) in p.ops.iter_mut().enumerate() {
         *o = AlgoOpParams {
             level: 99,
             coarse: [4, 8, 10, 13, 16, 19][i],
-            wave: i as u8,
             feedback: 3,
             ..AlgoOpParams::default()
         };
+    }
+    for i in 0..6 {
+        p.try_set_kind(i, table(i as u8)).unwrap();
     }
     p
 }
 
 fn sines(p: AlgoParams, level: u8) -> AlgoParams {
     let mut p = p;
-    for o in p.ops.iter_mut() {
-        (o.wave, o.feedback, o.level) = (WaveId::W1.get(), 0, level);
+    for i in 0..6 {
+        (p.ops[i].feedback, p.ops[i].level) = (0, level);
+        p.try_set_kind(i, OpKind::Table(WaveId::W1)).unwrap();
     }
     p
+}
+
+fn table(code: u8) -> OpKind {
+    OpKind::Table(WaveId::from_index(code).unwrap())
 }
 
 fn rms_db(s: &[f32]) -> f64 {
@@ -163,7 +168,7 @@ fn a_level_change_ramps_instead_of_stepping() {
 fn a_wave_change_ducks_swaps_and_returns() {
     let out = render_with(&AlgoParams::default(), 60, 100, 30, |b, p| {
         if b == 10 {
-            p.ops[0].wave = WaveId::SQR.get();
+            p.try_set_kind(0, OpKind::Table(WaveId::SQR)).unwrap();
         }
     });
     let blk = |b: usize| &out[b * BLOCK_SIZE..(b + 1) * BLOCK_SIZE];
@@ -184,7 +189,7 @@ fn an_algorithm_change_ducks_the_whole_output() {
     let p = stack(AlgoId::T1, AlgoId::T1, 0);
     let out = render_with(&p, 60, 100, 30, |b, p| {
         if b == 10 {
-            (p.alg_a, p.alg_b) = (AlgoId::A1.get(), AlgoId::A1.get());
+            p.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
         }
     });
     let blk = |b: usize| &out[b * BLOCK_SIZE..(b + 1) * BLOCK_SIZE];
@@ -196,7 +201,7 @@ fn an_algorithm_change_ducks_the_whole_output() {
 fn a_wave_change_every_block_recovers_when_it_stops() {
     let out = render_with(&AlgoParams::default(), 60, 100, 40, |b, p| {
         if b < 20 {
-            p.ops[0].wave = (b % 16) as u8;
+            p.try_set_kind(0, table((b % 16) as u8)).unwrap();
         }
     });
     assert!(out.iter().all(|x| x.is_finite()));
@@ -231,7 +236,6 @@ fn retrigger_on_a_sounding_voice_does_not_click() {
 #[test]
 fn extreme_parameter_bytes_render_finite_and_bounded() {
     let op = AlgoOpParams {
-        wave: 255,
         coarse: 255,
         fine: 255,
         detune: i8::MIN,
@@ -244,24 +248,35 @@ fn extreme_parameter_bytes_render_finite_and_bounded() {
         rate_scale: 255,
         feedback: 255,
         velocity: 255,
+        frmt: 255,
+        bw: 255,
+        skirt: 255,
+        key: 255,
+        res: 255,
+        vslot: 255,
     };
-    let p = AlgoParams {
-        alg_a: 255,
-        alg_b: 255,
-        morph: 255,
-        transpose: i8::MAX,
-        ops: [op; 6],
-    };
+    let mut p = AlgoParams::default();
+    (p.morph, p.transpose, p.ops) = (255, i8::MAX, [op; 6]);
+    use chimera_core::block::Block;
+    p.write(AlgoParams::ALG_A, 255.0);
+    p.write(AlgoParams::ALG_B, 255.0);
+    assert_eq!(
+        p.get(AlgoParams::ALG_A),
+        255.0,
+        "stored raw; the engine clamps"
+    );
+    p.vowel = 255;
+    for i in 0..6 {
+        p.try_set_kind(i, OpKind::Table(WaveId::SSAW)).unwrap();
+    }
     let out = render(&p, 127, 50);
     assert!(out.iter().all(|x| x.is_finite() && x.abs() <= 6f32.sqrt()));
 }
 
 #[test]
 fn the_highest_note_and_ratio_stay_finite() {
-    let mut p = AlgoParams {
-        transpose: 24,
-        ..AlgoParams::default()
-    };
+    let mut p = AlgoParams::default();
+    p.transpose = 24;
     (p.ops[0].coarse, p.ops[0].fine) = (63, 15);
     let out = render(&p, 127, 50);
     assert!(out.iter().all(|x| x.is_finite() && x.abs() <= 1.0));
@@ -303,7 +318,7 @@ fn a_release_ends_the_voice_and_a_silent_carrier_does_not_hold_it() {
 #[test]
 fn single_puts_operator_1_alone_on_a_wave() {
     let p = AlgoParams::single(WaveId::SAW);
-    assert_eq!(p.ops[0].wave, WaveId::SAW.get());
+    assert_eq!(p.kinds().get(0), OpKind::Table(WaveId::SAW));
     assert_eq!(p.ops[0].level, 99);
     assert!(p.ops[1..].iter().all(|o| o.level == 0));
     assert_eq!(AlgoLive::from_params(&p).level[0], 99.0);
@@ -459,7 +474,7 @@ fn a_retrigger_adopts_an_idle_operators_new_wave_without_a_duck() {
     let mut p = AlgoParams::default();
     (p.ops[4].level, p.ops[4].d1r, p.ops[4].d1l) = (99, 31, 0);
     let mut q = p;
-    q.ops[4].wave = WaveId::SQR.get();
+    q.try_set_kind(4, OpKind::Table(WaveId::SQR)).unwrap();
     let play = |first: &AlgoParams| {
         let mut e = AlgoEngine::new();
         let mut blk = [0.0; BLOCK_SIZE];
@@ -493,10 +508,8 @@ fn a_retrigger_adopts_an_idle_operators_new_wave_without_a_duck() {
 #[test]
 fn a_one_block_morph_away_from_the_only_sounding_carrier_does_not_end_the_note() {
     // Operator 5 carries in T1 but not in A17; operator 1 is silent.
-    let mut p = AlgoParams {
-        alg_b: AlgoId::A17.get(),
-        ..AlgoParams::default()
-    };
+    let mut p = AlgoParams::default();
+    p.try_set_algs(p.algs().0, AlgoId::A17).unwrap();
     (p.ops[0].level, p.ops[4].level) = (0, 99);
     let mut e = AlgoEngine::new();
     e.note_on(MidiNote::A4, Velocity::DEFAULT, &p, SR);
@@ -521,10 +534,8 @@ fn a_one_block_morph_away_from_the_only_sounding_carrier_does_not_end_the_note()
 /// A17) and back never ends the note; released, the voice frees.
 #[test]
 fn a_held_note_survives_a_morph_sweep_to_silence_and_frees_after_release() {
-    let mut p = AlgoParams {
-        alg_b: AlgoId::A17.get(),
-        ..AlgoParams::default()
-    };
+    let mut p = AlgoParams::default();
+    p.try_set_algs(p.algs().0, AlgoId::A17).unwrap();
     for (i, op) in p.ops.iter_mut().enumerate() {
         op.level = if i == 4 { 99 } else { 0 };
     }
@@ -594,11 +605,9 @@ fn a_lone_carrier_is_equally_loud_under_every_algorithm() {
     let one = AlgoParams::single(WaveId::W1);
     let level: Vec<f64> = (0..ALGO_COUNT as u8)
         .map(|a| {
-            let p = AlgoParams {
-                alg_a: a,
-                alg_b: a,
-                ..one
-            };
+            let mut p = one;
+            p.try_set_algs(AlgoId::clamped(a), AlgoId::clamped(a))
+                .unwrap();
             rms_db(&render(&p, 57, 100)[3200..])
         })
         .collect();
@@ -631,11 +640,9 @@ fn centroid(s: &[f32], f0: f64) -> f64 {
 fn init_algorithms_differ() {
     let c: Vec<f64> = (0..ALGO_COUNT as u8)
         .map(|a| {
-            let p = AlgoParams {
-                alg_a: a,
-                alg_b: a,
-                ..AlgoParams::default()
-            };
+            let mut p = AlgoParams::default();
+            p.try_set_algs(AlgoId::clamped(a), AlgoId::clamped(a))
+                .unwrap();
             centroid(&render(&p, 57, 7200 / BLOCK_SIZE + 1)[2400..7200], 220.0)
         })
         .collect();
@@ -691,7 +698,7 @@ fn the_output_scale_is_continuous_as_a_carrier_fades_out() {
 #[test]
 fn a_soft_note_never_makes_another_carrier_louder() {
     let mut p = AlgoParams::default();
-    (p.alg_a, p.alg_b) = (AlgoId::A1.get(), AlgoId::A1.get());
+    p.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
     (p.ops[1].coarse, p.ops[1].level, p.ops[1].velocity) = (8, 20, 7);
     let loud = a4_rms(&render_with(&p, 69, 127, 60, |_, _| {}));
     let soft = a4_rms(&render_with(&p, 69, 1, 60, |_, _| {}));

@@ -3,6 +3,7 @@
 //! cells or reordering blocks never remaps a mod route.
 
 use crate::block::{Block, ParamId, ParamSpec, find_spec};
+use crate::dsp::algo::params::{OpView, OpViewMut};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::orbit::RingIdx;
 
@@ -75,7 +76,7 @@ pub enum BlockRef {
     Tape,
     Comp,
     /// A Part's mix settings (`PartParams`): channel, mode, output, level,
-    /// pan, sends.
+    /// pan, SNAP, HELD.
     Part,
     /// SETTINGS › PERSONALIZE › THEME (`ThemeSettings`): held by the UI,
     /// not a Sound.
@@ -279,15 +280,63 @@ impl ParamAddr {
     }
 }
 
+/// A block as `BlockRead::block` lends it: an operator through its
+/// guard (`OpView`), so WAVE reads its kind; any other block as itself.
+pub enum BlockView<'a> {
+    Plain(&'a dyn Block),
+    Op(OpView<'a>),
+}
+
+/// `BlockView`, writable: an operator's WAVE writes go through the formant
+/// budget (`OpViewMut`).
+pub enum BlockViewMut<'a> {
+    Plain(&'a mut dyn Block),
+    Op(OpViewMut<'a>),
+}
+
+impl<'a> core::ops::Deref for BlockView<'a> {
+    type Target = dyn Block + 'a;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        match self {
+            BlockView::Plain(b) => *b,
+            BlockView::Op(o) => o,
+        }
+    }
+}
+
+impl<'a> core::ops::Deref for BlockViewMut<'a> {
+    type Target = dyn Block + 'a;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        match self {
+            BlockViewMut::Plain(b) => &**b,
+            BlockViewMut::Op(o) => o,
+        }
+    }
+}
+
+impl core::ops::DerefMut for BlockViewMut<'_> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            BlockViewMut::Plain(b) => &mut **b,
+            BlockViewMut::Op(o) => o,
+        }
+    }
+}
+
 /// The read half of `Blocks`, for code that only reads: a page's values, a
 /// frame. A `BlockRead` alone can't be written through.
 pub trait BlockRead {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block>;
+    fn block(&self, b: BlockRef) -> Option<BlockView<'_>>;
 }
 
 /// Resolves block addresses to values (spec § Data model). A Sound's
 /// `ParamSnapshot` holds the voice blocks; a Part view (`PartEdit`) adds the
 /// shared FX. `None`: the address is not held here.
 pub trait Blocks: BlockRead {
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block>;
+    fn block_mut(&mut self, b: BlockRef) -> Option<BlockViewMut<'_>>;
 }

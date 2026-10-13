@@ -4,10 +4,14 @@
 pub mod algorithms;
 pub mod engine;
 pub mod env;
+pub mod formant;
 pub mod kernel;
+pub mod kinds;
 pub mod math;
 pub mod morph;
+pub mod noise;
 pub mod params;
 pub mod plan;
 pub mod tx;
+pub mod vowel;
 pub mod waves;

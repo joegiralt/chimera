@@ -4,7 +4,10 @@
 
 use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use crate::block::ValFmt;
-use crate::dsp::algo::params::AlgoParams;
+use crate::dsp::algo::kinds::{self, OpKind};
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
+use crate::dsp::algo::plan::OPS;
+use crate::dsp::chorus::{ChorusMode, ChorusParams, MODE_NAMES};
 use crate::dsp::filter::FilterKind;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::{self, ModalParams, ResonatorMode};
@@ -19,7 +22,7 @@ use crate::name::SoundName;
 use crate::orbit::RingIdx;
 use crate::orbit::clock::ClockSource;
 use crate::orbit::scene::SceneRing;
-use crate::params::{EnvParams, FilterParams, OutParams};
+use crate::params::{EnvParams, FilterParams, FolderParams, OutParams};
 use crate::preset::Sound;
 use crate::project::arena::Cost;
 use crate::project::{Absence, Pool};
@@ -30,6 +33,7 @@ use crate::ui::fmt::FmtBuf;
 use crate::ui::glyph::FocusGlyph;
 use crate::ui::hint::{self, Gesture, Hint};
 use crate::ui::mod_panel::{self, PanelSlot};
+use crate::ui::op_page;
 use crate::ui::orbit::OrbitCell;
 use crate::ui::reverb_panel;
 
@@ -73,6 +77,8 @@ pub struct SlotCtx {
     pub unpitched: bool,
     /// TAPE's SOURCE as SRC reads it.
     pub src: SourceState,
+    /// The chorus MODE the CHORUS send hints.
+    pub chorus: ChorusMode,
     /// The reverb panel REV and REV › MORE show (`reverb_panel::shown`).
     pub rev: ReverbType,
     /// HALL's SIZE sits in its plate zone: the SIZE cell reads `PLATE`.
@@ -81,6 +87,8 @@ pub struct SlotCtx {
     pub ring: RingIdx,
     /// ORBIT's clock: BPM is inert while MIDI leads.
     pub clock: ClockSource,
+    /// Each operator's kind: which cells its OP page shows.
+    pub op_kinds: [OpKind; OPS],
 }
 
 impl SlotCtx {
@@ -94,6 +102,7 @@ impl SlotCtx {
         };
         Self {
             sel_op,
+            chorus: ChorusMode::from_u8(get(BlockRef::Chorus, ChorusParams::MODE) as u8),
             kind: FilterKind::from_index(get(BlockRef::Filter, FilterParams::KIND)),
             envs: EnvSlot::ALL.map(|s| {
                 let at = |id| get(BlockRef::Env(s), id);
@@ -117,6 +126,8 @@ impl SlotCtx {
             plate: in_plate_zone(&rev),
             ring: RingIdx::ALL[0],
             clock: ClockSource::Internal,
+            op_kinds: Op::ALL
+                .map(|op| OpKind::clamped(get(BlockRef::AlgoOp(op), AlgoOpParams::WAVE) as u8)),
         }
     }
 
@@ -144,6 +155,15 @@ impl SlotCtx {
         Self {
             rev: reverb_panel::shown(rev.kind),
             plate: in_plate_zone(rev),
+            ..self
+        }
+    }
+
+    /// This context under the project chorus `fx` (a Sound's params hold
+    /// no FX): the mode the CHORUS send hints.
+    pub fn on_chorus(self, fx: &ChorusParams) -> Self {
+        Self {
+            chorus: ChorusMode::from_u8(fx.mode),
             ..self
         }
     }
@@ -341,7 +361,6 @@ impl SourceState {
 
 /// `frames` at `rate` in seconds, to a tenth: `1.5 S`.
 fn seconds(buf: &mut FmtBuf, rate: u16, frames: u32) {
-    use core::fmt::Write;
     let rate = u64::from(rate.max(1));
     let tenths = (u64::from(frames) * 10 + rate / 2) / rate;
     let _ = write!(buf, "{}.{} S", tenths / 10, tenths % 10);
@@ -437,11 +456,27 @@ impl View {
     /// MIX + B*n*, which mutes any ring from anywhere in ORBIT. ORBIT's
     /// own cells give theirs through their focus. A route view's: MIX +
     /// MINUS deletes its route.
-    pub fn hint(&self) -> Hint {
+    pub fn hint(&self, ctx: &SlotCtx) -> Hint {
         if let View::Route { .. } = self {
             return crate::ui::mod_grid::DELETE;
         }
         match self.addr() {
+            Some(ParamAddr {
+                block: BlockRef::Out,
+                param,
+            }) if param == OutParams::SEND3 => REV_HINTS[ctx.rev.index()],
+            Some(ParamAddr {
+                block: BlockRef::Out,
+                param,
+            }) if param == OutParams::SEND1 => CHORUS_HINTS[ctx.chorus as usize],
+            Some(ParamAddr {
+                block: BlockRef::Folder,
+                param,
+            }) if param == FolderParams::FOLD || param == FolderParams::MIX => SYM_HINT,
+            Some(ParamAddr {
+                block: BlockRef::Out,
+                param,
+            }) if param == OutParams::VCA_VEL => SYM_HINT,
             Some(a) if matches!(a.block, BlockRef::OrbitRing(_)) && a.param == SceneRing::MUTE => {
                 MUTE_HINT
             }
@@ -449,6 +484,24 @@ impl View {
         }
     }
 }
+
+const SYM_HINT: Hint = &[Gesture("EDIT ▾", "SYM")];
+
+const REV_HINTS: [Hint; 6] = [
+    &[Gesture("REVERB ▸", ReverbType::NAMES[0])],
+    &[Gesture("REVERB ▸", ReverbType::NAMES[1])],
+    &[Gesture("REVERB ▸", ReverbType::NAMES[2])],
+    &[Gesture("REVERB ▸", ReverbType::NAMES[3])],
+    &[Gesture("REVERB ▸", ReverbType::NAMES[4])],
+    &[Gesture("REVERB ▸", ReverbType::NAMES[5])],
+];
+
+const CHORUS_HINTS: [Hint; 4] = [
+    &[Gesture("CHORUS ▸", MODE_NAMES[0])],
+    &[Gesture("CHORUS ▸", MODE_NAMES[1])],
+    &[Gesture("CHORUS ▸", MODE_NAMES[2])],
+    &[Gesture("CHORUS ▸", MODE_NAMES[3])],
+];
 
 const MUTE_HINT: Hint = &[Gesture("MIX + B1-5", "MUTES THAT RING")];
 
@@ -483,7 +536,10 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
         // ORBIT's pages draw and turn their own cells.
         SlotBinding::Orbit(c) => View::Orbit(c),
         SlotBinding::SelectOp => View::SelectOp,
-        SlotBinding::Legacy { label, fmt } => View::Legacy { label, fmt },
+        SlotBinding::Legacy(fmt) => View::Legacy {
+            label: slot.label(),
+            fmt: *fmt,
+        },
         // SPD: a type-B slot's SPEED and HOLD read TYPE B (spec § UI).
         SlotBinding::Param(ParamAddr {
             block: BlockRef::Env(s),
@@ -536,6 +592,16 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
                     let addr = ParamAddr::new(BlockRef::Modal, id);
                     addr.spec()
                         .map_or(View::Empty, |s| param(addr, s.label, s.fmt))
+                }
+                _ => View::Empty,
+            }
+        }
+        SlotBinding::OpPanel(op, k) => {
+            match op_page::page_cells(ctx.op_kinds[op.index()]).get(usize::from(k)) {
+                Some(&Some((id, label))) => {
+                    let addr = ParamAddr::new(BlockRef::AlgoOp(op), id);
+                    addr.spec()
+                        .map_or(View::Empty, |s| param(addr, label, s.fmt))
                 }
                 _ => View::Empty,
             }
@@ -627,7 +693,14 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
         // A single-mode kind shows its mode fixed (spec § 7).
         (BlockRef::Filter, FilterParams::MODE) => sound.params.filter.kind().modes().len() == 1,
         // MORPH blends ALG A into ALG B: one algorithm, nothing to blend (#188).
-        (BlockRef::Algo, AlgoParams::MORPH) => sound.params.algo.alg_a == sound.params.algo.alg_b,
+        (BlockRef::Algo, AlgoParams::MORPH) => {
+            let (a, b) = sound.params.algo.algs();
+            a == b
+        }
+        // VOWEL moves formants and noise bands only.
+        (BlockRef::Algo, AlgoParams::VOWEL) => !sound.params.algo.kinds().any_formant(),
+        // What the operator's kind ignores (formant spec § 6).
+        (BlockRef::AlgoOp(op), id) => !kinds::reads(sound.params.algo.kinds().get(op.index()), id),
         // What MODEL ignores (spec § 1 Dimming).
         (BlockRef::Modal, id) => !modal::reads(sound.params.modal.mode, id),
         // What the machine ignores (spec § 3).

@@ -4,7 +4,7 @@
 
 mod common;
 
-use chimera_core::factory::factory_sound;
+use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::name::ProjectName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
@@ -181,7 +181,7 @@ fn init_origin_never_stale() {
     let a = PartId::ALL[1];
     assert_eq!(status(&p, a), PartStatus::Clean);
     // The INIT slot changes under it.
-    p.pool_store(SlotId::ALL[8], &factory_sound(0).unwrap())
+    p.pool_store(SlotId::ALL[FACTORY_LEN], &factory_sound(0).unwrap())
         .unwrap();
     assert_eq!(status(&p, a), PartStatus::Clean);
     edit(&mut p, a, 0.5);
@@ -219,7 +219,7 @@ fn edited_part_never_stale_after_reload() {
         kinds(part_actions(&q, a)),
         [
             PartActionKind::OverSlot(s),
-            PartActionKind::NewSlot(SlotId::ALL[11]),
+            PartActionKind::NewSlot(SlotId::ALL[FACTORY_LEN + 3]),
             PartActionKind::Revert(s),
         ]
     );
@@ -280,7 +280,7 @@ fn actions_offer_only_what_applies() {
     use PartActionKind::{NewSlot, OverSlot, Revert};
     let (mut p, t) = Project::boxed();
     let s = SlotId::ALL[0];
-    let free = SlotId::ALL[11];
+    let free = SlotId::ALL[FACTORY_LEN + 3];
     let [
         clean_init,
         clean_slot,
@@ -435,7 +435,6 @@ fn an_action_from_before_a_load_is_gone() {
 /// moved, edited and put back, a slot that was dense.
 #[test]
 fn marks_compare_encodings() {
-    use chimera_core::factory::FACTORY_LEN;
     use chimera_core::name::SoundName;
     use chimera_core::project::test_support::dense;
     let mut x: u64 = 0x005E_ED0F_C1EA;

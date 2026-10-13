@@ -2,6 +2,7 @@
 //! what the audio thread reads from the UI, and the voice pool that renders
 //! every Part into the three DAC pairs.
 
+use crate::dsp::algo::engine::{FormantView, FormantViews};
 use crate::dsp::clampf;
 use core::cmp::Reverse;
 use core::mem::{MaybeUninit, size_of};
@@ -15,15 +16,18 @@ use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, SlotKind};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::knobs::{Gliding, KnobDelta, KnobPublisher, Knobs, Pace};
+use crate::dsp::lfo::LfoClock;
 use crate::dsp::modal::{ResonatorMode, SYM_NOTE_ON_CLEAR_MAX, SymPool};
 use crate::dsp::rev::RevBill;
 use crate::dsp::rev::sync::Tempo;
 use crate::dsp::tape_engine::{Heads, TapeEngine};
-use crate::dsp::voice::Voice;
+use crate::dsp::voice::{HighNote, Voice};
 use crate::hw::{Cost, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SampleBudget, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
 use crate::modulation::ModState;
-use crate::note_queue::{BendEvent, NoteEvent, NoteKind, SustainEvent};
+use crate::note_queue::{
+    BendEvent, ChannelMode, ChannelModeEvent, NoteEvent, NoteKind, SustainEvent,
+};
 use crate::orbit::RingIdx;
 use crate::orbit::ring::Harmony;
 use crate::orbit::runner::{OrbitRunner, OrbitShared};
@@ -392,7 +396,7 @@ pub fn mix_parts(
     let k = ease_coeff(sample_rate);
     for (p, part) in shared.parts.iter().enumerate() {
         let (gl, gr) = mix.pan_gains(p, part.mix.pan);
-        let [s0, s1, s2] = part.mix.sends;
+        let [s0, s1, s2] = part.params.out.sends;
         let to = [gl * part.mix.level, gr * part.mix.level, s0, s1, s2];
         let eases = &mut mix.gains[p];
         // A part with no voices this block has a silent bus: nothing to
@@ -557,6 +561,8 @@ pub struct Instrument {
     /// Each Part's knobs, eased (ADR 0112), and the Part's loads they
     /// last saw.
     knobs: [(Knobs, Loads); MAX_PARTS],
+    /// Each Part's FREE LFO phases (ADR 0135), stepped every block.
+    lfo_clocks: [LfoClock; MAX_PARTS],
     /// How they move: glide, or land (`land_knobs`).
     knob_pace: Pace,
     /// The reverb's reserve from the budget this block, and its tracker.
@@ -581,7 +587,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, pedal, sustained, bend_k, knobs, knob_pace, rev_extra, rev_bill, tune_ease, tune });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -595,7 +601,7 @@ impl Instrument {
     /// chord comes a note a millisecond, spread over blocks. Re-measured
     /// with `OrbitRunner::COST`: their sum must cover ORBIT's cold first
     /// block (65,387 at 785a028a).
-    pub const BURST: Cost = Cost(857); // 5 note-ons in one block, 54,810 (ORBIT's first block, every voice cold; its own work 10,577, under `OrbitRunner::COST`, so the pair covers the 65,387 block), measured 2026-10-05, bench ORBIT PHASES, rev V at 480 MHz, 785a028a; / 64, rounded up
+    pub const BURST: Cost = Cost(859); // 5 note-ons in one block, 54,810 (ORBIT's first block, every voice cold; its own work 10,577, under `OrbitRunner::COST`, so the pair covers the 65,387 block), measured 2026-10-05, bench ORBIT PHASES, rev V at 480 MHz, 785a028a; + ALGO's retrigger floor (#486), 3 instructions an operator, 90 × 1.46 × 1.1 = 145 by ADR 0056's count; / 64, rounded up
 
     pub fn new(sample_rate: u32, budget: SampleBudget) -> Self {
         // SAFETY: `init_in_place` writes every field of the slot.
@@ -610,7 +616,10 @@ impl Instrument {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; the voices and the pool are
         // built in place and the rest (the largest, `buses`, is 1.5 KB)
-        // written once by value before `assume_init_mut`.
+        // written once by value before `assume_init_mut`. `voices` and
+        // `knobs` are arrays, so the `cast` to their element keeps their
+        // layout and `add(i)` for `i` below their length (`MAX_VOICES`,
+        // `MAX_PARTS`) stays inside the field; each element is written once.
         unsafe {
             let voices = addr_of_mut!((*p).voices).cast::<Voice>();
             for (v, id) in VoiceIdx::ALL.into_iter().enumerate() {
@@ -645,7 +654,12 @@ impl Instrument {
                 crate::block::GlideMs::KNOB,
                 sample_rate,
             ));
-            addr_of_mut!((*p).knobs).write([(Knobs::UNPRIMED, Loads::NONE); MAX_PARTS]);
+            // A Part at a time: the whole array by value is 5 KB of stack.
+            let knobs = addr_of_mut!((*p).knobs).cast::<(Knobs, Loads)>();
+            for i in 0..MAX_PARTS {
+                knobs.add(i).write((Knobs::UNPRIMED, Loads::NONE));
+            }
+            addr_of_mut!((*p).lfo_clocks).write([LfoClock::ZERO; MAX_PARTS]);
             addr_of_mut!((*p).knob_pace).write(Pace::Glide(sample_rate));
             addr_of_mut!((*p).rev_extra).write(Cost::ZERO);
             addr_of_mut!((*p).rev_bill).write(RevBill::new());
@@ -683,14 +697,15 @@ impl Instrument {
     }
 
     /// Spent outside the pool each block, so a new voice must fit beside
-    /// it: the FX bus, the reverb TYPE's extra, the knobs' reads, and while
+    /// it: the FX bus, the reverb TYPE's extra, the knobs' reads, the LFO
+    /// clocks (ADR 0135), and while
     /// ORBIT plays its own block and a burst of note-ons (ADR 0091). It plays exactly while it hands a harmony.
     fn reserved(&self) -> Cost {
         let orbit = match self.harmony {
             Some(_) => OrbitRunner::COST + Self::BURST,
             None => Cost::ZERO,
         };
-        FxBus::COST + self.rev_extra + Knobs::RESERVE + orbit
+        FxBus::COST + self.rev_extra + crate::budget::CONTROL_RESERVE + orbit
     }
 
     /// Voices that ring a pool set, at most `SYM_SLOTS`: for the bench,
@@ -894,7 +909,8 @@ impl Instrument {
                     let t1 = crate::probe::now();
                     // A Part's first voice brings its knobs (ADR 0112).
                     let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
-                    let cost = self.costs[p] + if first { Knobs::COST } else { Cost::ZERO };
+                    let knobs = if first { Knobs::COST } else { Cost::ZERO };
+                    let cost = self.costs[p] + knobs + self.high_note(p, shared, note, first);
                     let reserved = self.reserved();
                     let origins = &self.note_origin;
                     let Some(v) = self
@@ -1070,6 +1086,52 @@ impl Instrument {
                 self.sustained[v] = false;
                 if self.alloc.slots()[v].held() && self.held_keys[v].is_empty() {
                     self.let_go(v);
+                }
+            }
+        }
+    }
+
+    /// CC 120, 121, 123 on a channel's Parts.
+    pub fn channel_mode(&mut self, ev: ChannelModeEvent) {
+        let ch = ev.channel;
+        match ev.mode {
+            ChannelMode::ResetControllers => {
+                self.bend(BendEvent {
+                    channel: ch,
+                    value: 0,
+                });
+                self.sustain(SustainEvent {
+                    channel: ch,
+                    down: false,
+                });
+            }
+            ChannelMode::NotesOff => {
+                crate::played::clear_channel(ch.get());
+                for v in 0..MAX_VOICES {
+                    if self.alloc.slots()[v].held()
+                        && self.note_channel[v] == ch
+                        && self.note_origin[v] == NoteOrigin::Live
+                        && !self.held_keys[v].is_empty()
+                    {
+                        self.held_keys[v] = NoteSet::EMPTY;
+                        if self.pedal_down(ch) {
+                            self.sustained[v] = true;
+                        } else {
+                            self.let_go(v);
+                        }
+                    }
+                }
+            }
+            ChannelMode::SoundOff => {
+                crate::played::clear_channel(ch.get());
+                for v in 0..MAX_VOICES {
+                    if !self.alloc.slots()[v].is_free() && self.note_channel[v] == ch {
+                        self.held_keys[v] = NoteSet::EMPTY;
+                        self.sustained[v] = false;
+                        self.resnap_to[v] = None;
+                        self.alloc.kill(v);
+                        self.shed(v);
+                    }
                 }
             }
         }
@@ -1284,30 +1346,65 @@ impl Instrument {
         (self.costed, self.costings) = (at, self.costings.wrapping_add(1));
         #[cfg(feature = "probe")]
         crate::probe::acc(8, crate::probe::now().wrapping_sub(t0));
-        // A sounding Part's knobs, once: on its first voice (ADR 0112).
+        // A sounding Part's knobs and formant reach, once: on its first
+        // voice (ADR 0112, ADR 0131).
         let mut knobs = [false; MAX_PARTS];
+        let mut reach: [Option<HighNote>; MAX_PARTS] = [None; MAX_PARTS];
         for v in 0..MAX_VOICES {
             if let Some(p) = self.alloc.slots()[v].part() {
                 let p = p as usize % MAX_PARTS;
                 let part = &shared.parts[p];
+                let first = !core::mem::replace(&mut knobs[p], true);
+                if first {
+                    reach[p] =
+                        HighNote::of(&part.params, &part.mod_state, part.mix.bend, shared.tune);
+                }
+                let high = match (self.alloc.slots()[v].note(), reach[p]) {
+                    (Some(n), Some(h)) => h.bill(n, self.voices[v].algo_slide(), first),
+                    _ => Cost::ZERO,
+                };
                 let held = self.voices[v].held_model_extra(&part.params)
                     + self.voices[v].held_level_extra(&part.params, &part.mod_state)
-                    + self.voices[v].held_ops_extra(&part.params, &part.mod_state);
-                let first = !core::mem::replace(&mut knobs[p], true);
+                    + self.voices[v].held_ops_extra(&part.params, &part.mod_state)
+                    + high;
                 let k = if first { Knobs::COST } else { Cost::ZERO };
                 self.alloc
                     .recost_with_glide(v, costs[p] + held + k, glides[p]);
             }
         }
-        // Only the bus, the reverb's extra and the knobs' reads: ORBIT's
+        // Only the bus, the reverb's extra, the knobs' reads and the LFO
+        // clocks: ORBIT's
         // reserve refuses new voices, it never fades out sounding ones
         // (ADR 0091).
         while let Some(v) = self
             .alloc
-            .shed(FxBus::COST + self.rev_extra + Knobs::RESERVE)
+            .shed(FxBus::COST + self.rev_extra + crate::budget::CONTROL_RESERVE)
         {
             self.shed(v);
         }
+    }
+
+    /// A new formant note's reach on Part `p` (`HighNote::bill`, the
+    /// Part's term on its `first` voice), its spans past C8 judged at a
+    /// glide steal's start too: any of the Part's sounding voices may be
+    /// taken, so its highest note and largest slide.
+    #[inline(never)]
+    fn high_note(&self, p: usize, shared: &AudioShared, note: MidiNote, first: bool) -> Cost {
+        let part = &shared.parts[p];
+        let (mut top, mut slide) = (note.get(), 1.0f32);
+        if part.params.pitch.steal_glide().is_some() {
+            for v in 0..MAX_VOICES {
+                let s = self.alloc.slots()[v];
+                if s.part() == Some(p as u8) {
+                    top = top.max(s.note().map_or(0, MidiNote::get));
+                    slide = slide.max(self.voices[v].algo_slide());
+                }
+            }
+        }
+        HighNote::of(&part.params, &part.mod_state, part.mix.bend, shared.tune)
+            .map_or(Cost::ZERO, |h| {
+                h.bill(MidiNote::new(top).unwrap_or(note), slide, first)
+            })
     }
 
     /// Voice `v`, marked dying, fades out: a note waiting for it is dropped
@@ -1482,6 +1579,7 @@ impl Instrument {
                 &part.params,
                 &part.mod_state,
                 &self.knobs[p].0,
+                Some(&self.lfo_clocks[p]),
                 ctx,
             );
             clip[p] = clip[p].max(self.voices[v].filter_clip());
@@ -1510,6 +1608,8 @@ impl Instrument {
         // 6. Waiting notes whose voices went idle this block start, oldest
         //    first, behind any the budget still queues.
         self.start_waiting(shared, src);
+        // 7. Every Part's LFO clock steps a block, playing or not.
+        self.step_lfo_clocks(shared);
 
         self.publish_heads();
         self.clear_left = SYM_CLEAR_BUDGET;
@@ -1544,6 +1644,46 @@ impl Instrument {
         }
         // The block is over: the next may carry other patches.
         self.costed = 0;
+    }
+
+    /// Each Part's newest sounding Algo voice's formant view (plan Ruling
+    /// 8), not `sounding` where none does: the shells publish them once a
+    /// block, and the OP page draws the edited Part's. Into `out`, the
+    /// buffer's slot, and out of line: the audio interrupt stays small.
+    #[inline(never)]
+    pub fn formant_views_into(&self, out: &mut FormantViews) {
+        let mut age = [None; MAX_PARTS];
+        *out = [FormantView::NONE; MAX_PARTS];
+        for (v, s) in self.alloc.slots().iter().enumerate() {
+            if s.is_free() || !self.voices[v].is_active() {
+                continue;
+            }
+            let p = self.sounding[v] as usize % MAX_PARTS;
+            if let Some(f) = self.voices[v].formant_view()
+                && age[p].is_none_or(|a| s.age() >= a)
+            {
+                age[p] = Some(s.age());
+                out[p] = FormantView::live(f);
+            }
+        }
+    }
+
+    /// `formant_views_into` by value: the tests'.
+    pub fn formant_views(&self) -> FormantViews {
+        let mut out = [FormantView::NONE; MAX_PARTS];
+        self.formant_views_into(&mut out);
+        out
+    }
+
+    /// Every Part's FREE LFO clock a block on, at its stored RATEs (ADR
+    /// 0135; the LFOs are not modulation targets). Never inlined: its
+    /// count is `LfoClock::RESERVE`'s.
+    #[inline(never)]
+    fn step_lfo_clocks(&mut self, shared: &AudioShared) {
+        let step = BLOCK_SIZE as f32 / self.sample_rate as f32;
+        for (c, part) in self.lfo_clocks.iter_mut().zip(&shared.parts) {
+            c.advance(&part.params.lfos, step);
+        }
     }
 
     /// The strip's heads (spec § 3): each Part's newest voice playing

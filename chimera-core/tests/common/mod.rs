@@ -8,6 +8,7 @@
 
 pub mod codec_util;
 pub mod filter_ref;
+pub mod formant;
 pub mod golden;
 pub mod inst_rig;
 pub mod orbit;
@@ -27,6 +28,7 @@ pub use rig::Rig;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::algo::algorithms::AlgoId;
+use chimera_core::dsp::algo::kinds::OpKind;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxBus;
@@ -82,7 +84,7 @@ pub enum Case {
     AlgoMorphSweep,
     /// Algo init; engine switched to Modal at block ON_BLOCKS / 2 (mid-note).
     AlgoToModalSwitch,
-    /// Factory Sound `i` (0–7) as the bank builds it, its own matrix included.
+    /// Factory Sound `i` (0–11) as the bank builds it, its own matrix included.
     Factory(u8),
 }
 
@@ -90,7 +92,7 @@ static TX_NAMES: [&str; 8] = [
     "algo_t1", "algo_t2", "algo_t3", "algo_t4", "algo_t5", "algo_t6", "algo_t7", "algo_t8",
 ];
 
-static FACTORY_NAMES: [&str; 8] = [
+static FACTORY_NAMES: [&str; 12] = [
     "factory_0",
     "factory_1",
     "factory_2",
@@ -99,10 +101,14 @@ static FACTORY_NAMES: [&str; 8] = [
     "factory_5",
     "factory_6",
     "factory_7",
+    "factory_8",
+    "factory_9",
+    "factory_10",
+    "factory_11",
 ];
 
 impl Case {
-    pub const ALL: [Case; 25] = [
+    pub const ALL: [Case; 29] = [
         Case::ModalInit,
         Case::ModalLfoCutoff,
         Case::ModalSympathetic,
@@ -127,6 +133,10 @@ impl Case {
         Case::Factory(5),
         Case::Factory(6),
         Case::Factory(7),
+        Case::Factory(8),
+        Case::Factory(9),
+        Case::Factory(10),
+        Case::Factory(11),
         Case::VaInit,
     ];
 
@@ -142,7 +152,7 @@ impl Case {
             Case::AlgoMorphStatic => "algo_morph_static",
             Case::AlgoMorphSweep => "algo_morph_sweep",
             Case::AlgoToModalSwitch => "algo_to_modal_switch",
-            Case::Factory(i) => FACTORY_NAMES[i as usize % 8],
+            Case::Factory(i) => FACTORY_NAMES[i as usize % 12],
         }
     }
 }
@@ -167,16 +177,18 @@ pub const MORPH: ParamAddr = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
 pub fn tx_patch(alg: AlgoId) -> ParamSnapshot {
     let mut p = init_params(EngineType::Algo);
     p.algo = AlgoParams::single(WaveId::W1);
-    (p.algo.alg_a, p.algo.alg_b) = (alg.get(), alg.get());
+    p.algo.try_set_algs(alg, alg).unwrap();
     let ops = [
         (WaveId::W1, 4, 99, 0),
         (WaveId::W1, 8, 70, 0),
         (WaveId::W2, 4, 80, 0),
         (WaveId::W1, 13, 60, 4),
     ];
-    for (o, (wave, coarse, level, feedback)) in p.algo.ops.iter_mut().zip(ops) {
-        (o.wave, o.coarse, o.level, o.feedback) = (wave.get(), coarse, level, feedback);
+    for (i, (wave, coarse, level, feedback)) in ops.into_iter().enumerate() {
+        let o = &mut p.algo.ops[i];
+        (o.coarse, o.level, o.feedback) = (coarse, level, feedback);
         (o.d1r, o.d1l, o.d2r) = (6, 10, 2);
+        p.algo.try_set_kind(i, OpKind::Table(wave)).unwrap();
     }
     p
 }
@@ -184,7 +196,8 @@ pub fn tx_patch(alg: AlgoId) -> ParamSnapshot {
 /// Six sines at ratios 1–6 between A1 and A17, MORPH halfway.
 pub fn morph_patch() -> ParamSnapshot {
     let mut p = init_params(EngineType::Algo);
-    (p.algo.alg_a, p.algo.alg_b, p.algo.morph) = (AlgoId::A1.get(), AlgoId::A17.get(), 64);
+    p.algo.try_set_algs(AlgoId::A1, AlgoId::A17).unwrap();
+    p.algo.morph = 64;
     for (i, o) in p.algo.ops.iter_mut().enumerate() {
         (o.coarse, o.level) = ([4, 8, 10, 13, 16, 19][i], 80);
     }

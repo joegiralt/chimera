@@ -258,7 +258,7 @@ fn tap_routes_moving_and_wanted() {
 // ---- Task 14: capture and the four per-sample destinations (spec § 6) ----
 
 use chimera_core::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
-use chimera_core::dsp::algo::kernel::{Kernel, KernelBlock, OpBlock, SAMPLE_SCALE};
+use chimera_core::dsp::algo::kernel::{Kernel, KernelBlock, KindBlock, OpBlock, SAMPLE_SCALE};
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::plan::{EvalPlan, OPS};
 use chimera_core::dsp::algo::waves::WaveId;
@@ -314,7 +314,8 @@ fn sine(hz: f32, n: usize) -> f32 {
 fn algo(alg: u8, ops: &[(usize, u8, u8)]) -> Sound {
     let mut s = Sound::init(EngineType::Algo);
     s.params.algo = AlgoParams::single(WaveId::W1);
-    (s.params.algo.alg_a, s.params.algo.alg_b) = (alg, alg);
+    let alg = chimera_core::dsp::algo::algorithms::AlgoId::clamped(alg);
+    s.params.algo.try_set_algs(alg, alg).unwrap();
     for &(i, c, l) in ops {
         (s.params.algo.ops[i].coarse, s.params.algo.ops[i].level) = (c, l);
     }
@@ -767,10 +768,12 @@ fn op(hz: f32, gain: f32) -> OpBlock {
         gain_from: gain * SAMPLE_SCALE,
         gain_to: gain * SAMPLE_SCALE,
         feedback: 0.0,
-        lo: WaveId::W1.table(0),
-        hi: WaveId::W1.table(0),
-        xfade_from: 0.0,
-        xfade_to: 0.0,
+        kind: KindBlock::Table {
+            lo: WaveId::W1.table(0),
+            hi: WaveId::W1.table(0),
+            xfade_from: 0.0,
+            xfade_to: 0.0,
+        },
     }
 }
 

@@ -25,14 +25,18 @@ pub struct TapeParams {
     pub mix: f32,
 }
 
+impl TapeParams {
+    pub const DEFAULT: Self = Self {
+        drive: 0.0,
+        tone: 0.5,
+        wow: 0.0,
+        mix: 0.0,
+    };
+}
+
 impl Default for TapeParams {
     fn default() -> Self {
-        Self {
-            drive: 0.0,
-            tone: 0.5,
-            wow: 0.0,
-            mix: 0.0,
-        }
+        Self::DEFAULT
     }
 }
 

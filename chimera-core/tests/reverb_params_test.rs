@@ -21,14 +21,15 @@ use common::rev::{Noise, blocks, knobs_120};
 struct Fx<'a>(&'a mut FxParams);
 
 impl BlockRead for Fx<'_> {
-    fn block(&self, b: BlockRef) -> Option<&dyn Block> {
-        (b == BlockRef::Reverb).then_some(&self.0.reverb as &dyn Block)
+    fn block(&self, b: BlockRef) -> Option<chimera_core::addr::BlockView<'_>> {
+        (b == BlockRef::Reverb).then_some(chimera_core::addr::BlockView::Plain(&self.0.reverb))
     }
 }
 
 impl Blocks for Fx<'_> {
-    fn block_mut(&mut self, b: BlockRef) -> Option<&mut dyn Block> {
-        (b == BlockRef::Reverb).then_some(&mut self.0.reverb as &mut dyn Block)
+    fn block_mut(&mut self, b: BlockRef) -> Option<chimera_core::addr::BlockViewMut<'_>> {
+        (b == BlockRef::Reverb)
+            .then_some(chimera_core::addr::BlockViewMut::Plain(&mut self.0.reverb))
     }
 }
 

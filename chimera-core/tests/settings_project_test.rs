@@ -744,12 +744,12 @@ fn pool_leaf_lists_breakdown() {
     let text = |i: usize| texts[i].as_ref().map(|t| t.as_str().to_string());
     let labels = SYS_POOL.params.map(|p| p.label());
     assert_eq!(labels[..4], ["SOUNDS", "SOURCES", "FREE", "PENDING"]);
-    assert_eq!(text(0).as_deref(), Some("11 · 2.0K"));
+    assert_eq!(text(0).as_deref(), Some("15 · 3.8K"));
     assert_eq!(text(1).as_deref(), Some("0 · 0.0K"));
     assert_eq!(
         text(2).as_deref(),
-        Some("158K"),
-        "floored: 2.0K + 158K ≤ 160K"
+        Some("156K"),
+        "floored: 3.8K + 156K ≤ 160K"
     );
     assert_eq!(text(3), None, "no PENDING with none pending");
     let fb = screen::render_ui(&ui);

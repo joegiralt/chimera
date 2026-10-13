@@ -16,6 +16,7 @@ pub mod addr;
 pub mod audio_out;
 pub mod block;
 pub mod boot;
+pub mod budget;
 pub mod clock_plan;
 pub mod confirm;
 pub mod dsp;

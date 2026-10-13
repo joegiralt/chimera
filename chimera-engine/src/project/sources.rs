@@ -252,8 +252,8 @@ impl Project {
 
     /// `sources_pass`, waiting for the audio while `within` says so: tests,
     /// and the bench, which answers the gate itself.
-    pub fn sources_pass_with(&mut self, within: impl FnMut() -> bool) -> bool {
-        let moved = self.pool.source_pass(within);
+    pub fn sources_pass_with(&mut self, mut within: impl FnMut() -> bool) -> bool {
+        let moved = self.pool.source_pass(&mut within);
         if moved {
             self.bump();
         }

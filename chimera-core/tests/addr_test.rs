@@ -110,6 +110,7 @@ fn modulatable_addresses_are_exactly_the_spec_list() {
         ParamAddr::new(BlockRef::Pitch, PitchParams::FINE),
     ];
     want.push(ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH));
+    want.push(ParamAddr::new(BlockRef::Algo, AlgoParams::VOWEL));
     for id in [
         ModalParams::STRUCTURE,
         ModalParams::BRIGHT,
@@ -134,7 +135,9 @@ fn modulatable_addresses_are_exactly_the_spec_list() {
         want.push(ParamAddr::new(BlockRef::Va, id));
     }
     for op in Op::ALL {
-        want.push(ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL));
+        for id in [AlgoOpParams::LEVEL, AlgoOpParams::FRMT, AlgoOpParams::BW] {
+            want.push(ParamAddr::new(BlockRef::AlgoOp(op), id));
+        }
     }
     for s in EnvSlot::ALL {
         for id in [

@@ -12,8 +12,9 @@ perf-probe = ["chimera-board/perf-probe"]
 # `--no-default-features`: the shipping set less the console's `put`
 # (`card-put`, ~7 KB), which no bench run needs, so ORBIT's areas fit.
 bench = ["perf-probe", "chimera-core/probe", "chimera-board/bench", "midi-din", "usb-console"]
-# ALGO's patches, the FX bus and the kernel.
-bench-algo = ["bench"]
+# ALGO's patches, the FX bus, the kernel and FORMANT's rows; its ELF is the one
+# `tools/loop_count.py` counts the kernel's loops on.
+bench-algo = ["bench", "chimera-core/span-count", "chimera-engine/demo-sounds"]
 # ROUTING: the matrix, filter types, taps and MODAL's rows.
 bench-routing = ["bench"]
 # MEMORY: sizes, a rebuild, MODAL's note-ons, the project CRC.

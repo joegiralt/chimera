@@ -39,6 +39,8 @@ pub enum VizType {
     OrbitScenes,
     /// ALGO's AR · D1R · D1L · D2R · RR: the focused operator's envelope.
     OpEnv,
+    /// OP1–OP6: the operator's envelope, with its wave inset.
+    OpPage(Op),
     /// TAPE's SRC and DECK: the source, the machine's part of it, the heads.
     Strip,
 }
@@ -70,10 +72,9 @@ pub enum SlotBinding {
     /// The operator selector itself.
     SelectOp,
     /// Mixer/System/Demo pages, still driven by `PageId`.
-    Legacy {
-        label: &'static str,
-        fmt: ValFmt,
-    },
+    /// Its label is the slot's override; the format sits out of line, so
+    /// the slot (one of 600-odd statics) stays small.
+    Legacy(&'static ValFmt),
     /// Knob `k` of the Sound's filter type's panel (`filter_panel::knob`):
     /// 0–4 FLT's knobs 2–6, 5–10 FLT › MOD's cells.
     FilterPanel(u8),
@@ -83,6 +84,8 @@ pub enum SlotBinding {
     LfoPanel(crate::dsp::modulator::LfoSlot, u8),
     /// Cell k of EXC or MDL2, per MODEL (`modal::page_cells`).
     ModalPanel(crate::dsp::modal::ModalPage, u8),
+    /// Cell k of operator `op`'s OP page, per its kind (`op_page::page_cells`).
+    OpPanel(Op, u8),
     /// A TAPE cell the machine labels (spec § 3, `tape_engine::machine`).
     Machine(MachineSlot),
     /// TAPE's SOURCE: the Sound's `SourceRef`, not a param.
@@ -147,10 +150,10 @@ impl ParamSlot {
         }
     }
 
-    pub const fn legacy(label: &'static str, fmt: ValFmt) -> Self {
+    pub const fn legacy(label: &'static str, fmt: &'static ValFmt) -> Self {
         Self {
-            binding: SlotBinding::Legacy { label, fmt },
-            label_override: None,
+            binding: SlotBinding::Legacy(fmt),
+            label_override: Some(label),
         }
     }
 
@@ -178,6 +181,13 @@ impl ParamSlot {
     pub const fn modal_panel(page: crate::dsp::modal::ModalPage, k: u8) -> Self {
         Self {
             binding: SlotBinding::ModalPanel(page, k),
+            label_override: None,
+        }
+    }
+
+    pub const fn op_panel(op: Op, k: u8) -> Self {
+        Self {
+            binding: SlotBinding::OpPanel(op, k),
             label_override: None,
         }
     }
@@ -226,10 +236,15 @@ impl ParamSlot {
             SlotBinding::SelectedRing(id) => {
                 find_spec(BlockRef::OrbitRing(RingIdx::ALL[0]).specs(), id)
             }
+            // Out of context: a table operator's cell (views resolve the kind).
+            SlotBinding::OpPanel(op, k) => {
+                let (id, _) = crate::ui::op_page::table_cell(k)?;
+                find_spec(BlockRef::AlgoOp(op).specs(), id)
+            }
             SlotBinding::Empty
             | SlotBinding::Orbit(_)
             | SlotBinding::SelectOp
-            | SlotBinding::Legacy { .. }
+            | SlotBinding::Legacy(_)
             | SlotBinding::FilterPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
@@ -253,10 +268,11 @@ impl ParamSlot {
             | SlotBinding::LfoPanel(..)
             | SlotBinding::ModalPanel(..)
             | SlotBinding::ReverbPanel(..)
+            | SlotBinding::Legacy(_)
             | SlotBinding::Machine(_) => "--",
             SlotBinding::Source => "SOURCE",
             SlotBinding::SelectOp => "OP",
-            SlotBinding::Legacy { label, .. } => label,
+            SlotBinding::OpPanel(_, k) => crate::ui::op_page::table_cell(k).map_or("--", |c| c.1),
             SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::SelectedRing(_) => {
                 self.spec().map_or("??", |s| s.label)
             }
@@ -275,10 +291,11 @@ impl ParamSlot {
             | SlotBinding::Machine(_)
             | SlotBinding::Source => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),
-            SlotBinding::Legacy { fmt, .. } => fmt,
-            SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::SelectedRing(_) => {
-                self.spec().map_or(ValFmt::Uni, |s| s.fmt)
-            }
+            SlotBinding::Legacy(fmt) => *fmt,
+            SlotBinding::Param(_)
+            | SlotBinding::SelectedOp(_)
+            | SlotBinding::SelectedRing(_)
+            | SlotBinding::OpPanel(..) => self.spec().map_or(ValFmt::Uni, |s| s.fmt),
         }
     }
 }
@@ -465,6 +482,18 @@ impl ChainDef2 {
         })
     }
 
+    /// The page showing the def `id`, if the chain has it.
+    pub fn locate(&self, id: u16) -> Option<PageAt> {
+        self.blocks.iter().enumerate().find_map(|(node, b)| {
+            let sub = if b.def.id == id {
+                0
+            } else {
+                1 + b.sub_pages.iter().position(|d| d.id == id)?
+            };
+            self.page(node, sub)
+        })
+    }
+
     /// The def at `at`, if `at` is on this chain.
     pub fn def_at(&self, at: PageAt) -> Option<&'static BlockDef> {
         self.active_def(at.node as usize, at.sub as usize)
@@ -507,4 +536,13 @@ impl ChainDef2 {
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
     }
+}
+
+/// `at` on `from`, kept on `to` by page id. A page gone falls to its
+/// node's first; a node gone, to `to`'s home.
+pub fn refocus(from: &ChainDef2, at: PageAt, to: &ChainDef2) -> PageAt {
+    from.def_at(at)
+        .and_then(|d| to.locate(d.id))
+        .or_else(|| to.page(at.node as usize, 0))
+        .unwrap_or_else(|| to.home())
 }

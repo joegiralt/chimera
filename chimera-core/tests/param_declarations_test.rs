@@ -204,6 +204,19 @@ fn a_note_on_param_waits_for_the_next_note() {
 /// Note-on params this test's patches can't make heard, and why: each is
 /// covered where its feature is set up.
 const NOT_HEARD_HERE: &[&str] = &[
+    // Read by the formant kernels (Task 10): silent until then.
+    "AlgoOp(A) KEY",
+    "AlgoOp(A) RES",
+    "AlgoOp(B) KEY",
+    "AlgoOp(B) RES",
+    "AlgoOp(C) KEY",
+    "AlgoOp(C) RES",
+    "AlgoOp(D) KEY",
+    "AlgoOp(D) RES",
+    "AlgoOp(E) KEY",
+    "AlgoOp(E) RES",
+    "AlgoOp(F) KEY",
+    "AlgoOp(F) RES",
     // At a steal under STEAL GLIDE: steal_glide_test.
     "Pitch TIME",
 ];
@@ -299,6 +312,10 @@ const OWN_IN_SOUND: &[&str] = &[
     "Lfo(Lfo3) RATE",
     "Lfo(Lfo3) RISE",
     "Lfo(Lfo3) FALL",
+    // OUT's sends: the mixer's ease (`MixState`), as the Part's gains.
+    "Out CHORUS",
+    "Out DELAY",
+    "Out REVERB",
 ];
 
 /// The bus, mixer and master: each eases its own settings (ADR 0061).
@@ -342,12 +359,9 @@ const OWN_OUTSIDE: &[&str] = &[
     // The master VOL and PAN, `Ease`d after the limiter (`MasterOut`).
     "Comp VOL",
     "Comp PAN",
-    // The Part's pan × LEVEL gains and sends, `Ease`.
+    // The Part's pan × LEVEL gains, `Ease`.
     "Part LEVEL",
     "Part PAN",
-    "Part CHR",
-    "Part DLY",
-    "Part REV",
     // The wheel's reach, glided as a knob (`Instrument::ease_bend`).
     "Part BEND",
 ];
