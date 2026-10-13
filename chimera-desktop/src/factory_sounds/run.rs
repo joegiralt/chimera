@@ -5,8 +5,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use super::qa::{self, baseline, demo, measure, page};
 use super::source::Source;
-use super::{build, project, qa};
+use super::{build, phrase, project};
 
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
 
@@ -43,7 +44,7 @@ pub fn qa(run: &Qa) -> Result<(), String> {
     }
     let (reports, samey) = gated(&public, run.baseline)?;
     let (demos, unheard) = demo_reports(run.dir, &public, &run.ledger)?;
-    let mut pass = qa::write(
+    let mut pass = page::write(
         &run.ledger,
         &reports,
         &samey,
@@ -51,13 +52,13 @@ pub fn qa(run: &Qa) -> Result<(), String> {
         &demos,
         run.wav,
     )?;
-    print!("{}", qa::report_text(&reports, &samey));
-    print!("{}", qa::demo_text(&demos));
+    print!("{}", page::report_text(&reports, &samey));
+    print!("{}", page::demo_text(&demos));
     println!("{}", run.ledger.display());
     if let Some(p) = &run.private {
         let (reports, samey) = gated(&ported, None)?;
-        pass &= qa::write_private(&p.ledger, &reports, &samey, run.wav)?;
-        print!("{}", qa::report_text(&reports, &samey));
+        pass &= page::write_private(&p.ledger, &reports, &samey, run.wav)?;
+        print!("{}", page::report_text(&reports, &samey));
         println!("{}", p.ledger.display());
     }
     match (unheard, pass) {
@@ -68,30 +69,30 @@ pub fn qa(run: &Qa) -> Result<(), String> {
 }
 
 /// Each Sound's gates (with a baseline, each APPROVED Sound's renders
-/// compared against it, `qa::compare`), and the samey pairs among them.
+/// compared against it, `baseline::compare`), and the samey pairs among them.
 type Gated = (Vec<qa::Report>, Vec<(usize, usize)>);
 fn gated(all: &[Source], baseline: Option<&Path>) -> Result<Gated, String> {
-    qa::sweeps(all)?;
+    phrase::sweeps(all)?;
     let mut reports = all.iter().map(qa::gates).collect::<Result<Vec<_>, _>>()?;
     if let Some(dir) = baseline {
         if !dir.is_dir() {
             return Err(format!("baseline {}: not a directory", dir.display()));
         }
         for (r, s) in reports.iter_mut().zip(all) {
-            qa::compare(r, dir)?;
+            baseline::compare(r, dir)?;
             qa::voice_cause(r, s)?;
         }
     }
     let bands: Vec<_> = reports.iter().map(|r| r.bands).collect();
-    let samey = qa::samey(&bands);
+    let samey = measure::samey(&bands);
     Ok((reports, samey))
 }
 
-/// Each demo project rendered and gated (`qa::demo_gates`), a held one
-/// reported unrendered (`qa::held_report`), plus the effects no demo
+/// Each demo project rendered and gated (`demo::demo_gates`), a held one
+/// reported unrendered (`demo::held_report`), plus the effects no demo
 /// plays, held or not (`project::coverage`), which fail the run after
 /// every gate is heard; one only held demos play is pending. None: none.
-type Demos = (Vec<qa::DemoReport>, Option<String>);
+type Demos = (Vec<demo::DemoReport>, Option<String>);
 fn demo_reports(dir: &Path, sounds: &[Source], ledger: &Path) -> Result<Demos, String> {
     let demos = build::demos(dir)?;
     if demos.is_empty() {
@@ -115,8 +116,8 @@ fn demo_reports(dir: &Path, sounds: &[Source], ledger: &Path) -> Result<Demos, S
     let reports = demos
         .iter()
         .map(|d| match &stims {
-            Some(s) if d.held.is_none() => qa::demo_gates(d, sounds, s),
-            _ => qa::held_report(d, sounds, &cov),
+            Some(s) if d.held.is_none() => demo::demo_gates(d, sounds, s),
+            _ => demo::held_report(d, sounds, &cov),
         })
         .collect::<Result<_, _>>()?;
     Ok((reports, unheard))
@@ -124,7 +125,7 @@ fn demo_reports(dir: &Path, sounds: &[Source], ledger: &Path) -> Result<Demos, S
 
 /// `chimera-utils stim`'s hats and snare from `dir`, written there first
 /// when missing.
-fn stims(dir: &Path) -> Result<qa::Stims, String> {
+fn stims(dir: &Path) -> Result<demo::Stims, String> {
     let wav = |n: &str| dir.join(format!("{n}.wav"));
     if !wav("hats").is_file() || !wav("snare").is_file() {
         let ok = Command::new("cargo")
@@ -160,7 +161,7 @@ fn stims(dir: &Path) -> Result<qa::Stims, String> {
             .map(|v| v.map(|v| v as f32 / full).map_err(err))
             .collect()
     };
-    Ok(qa::Stims {
+    Ok(demo::Stims {
         hats: read("hats")?,
         snare: read("snare")?,
     })

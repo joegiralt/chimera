@@ -167,7 +167,7 @@ fn trailer(bytes: &[u8]) -> Option<u32> {
 pub fn public(dir: &Path, out: &Path, stamp: &BuildStamp) -> Result<Manifest, String> {
     let all = sources(dir)?;
     source::check(&all)?;
-    super::qa::sweeps(&all)?;
+    super::phrase::sweeps(&all)?;
     source::public(&all)?;
     let (files, mut man) = files(&all, stamp)?;
     let (projects, entries) = demo_files(&demos(dir)?, &all)?;
@@ -384,7 +384,7 @@ pub fn private(
     }
     let all = sounds(dir, Some(ports))?;
     let ported: Vec<Source> = all.into_iter().filter(|s| s.from.is_some()).collect();
-    super::qa::sweeps(&ported)?;
+    super::phrase::sweeps(&ported)?;
     if let Some(check) = edits {
         verify(&ported, check)?;
     }

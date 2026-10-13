@@ -50,7 +50,7 @@ fn main() -> ExitCode {
             });
             run::qa(&run::Qa {
                 dir: &dir(),
-                ledger: qa::ledger()?,
+                ledger: qa::page::ledger()?,
                 private,
                 wav,
                 baseline: base.as_deref(),

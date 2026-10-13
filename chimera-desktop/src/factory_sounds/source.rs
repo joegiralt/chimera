@@ -82,7 +82,7 @@ pub enum Phrase {
     /// A wonky melodic bassline: odd accents, legato slides.
     Wonky,
     /// Long held chords over twelve bars, each swelling the filter open and
-    /// closed (`qa::sweeps` holds the swell to the phrase).
+    /// closed (`phrase::sweeps` holds the swell to the phrase).
     Sweep,
 }
 
@@ -210,7 +210,7 @@ pub struct Edits {
 }
 
 /// A level set by ear (`level = "by ear -16.2: <why>"`): the loudness gate
-/// holds it within `qa::PIN_LU` of `lufs`. One inside the −11 ± 2 LU band
+/// holds it within `measure::PIN_LU` of `lufs`. One inside the −11 ± 2 LU band
 /// is pointless and fails `check`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ByEar {

@@ -60,7 +60,7 @@ fn base_with(n: usize, with: &str) -> String {
 fn run(text: &str) -> Result<Vec<source::Source>, String> {
     let s = source::parse(text, "bad.toml")?;
     source::check(&s)?;
-    chimera_desktop::factory_sounds::qa::sweeps(&s)?;
+    chimera_desktop::factory_sounds::phrase::sweeps(&s)?;
     source::public(&s)?;
     for x in &s {
         source::to_sound(x)?;
@@ -174,7 +174,7 @@ fn trim_moves_the_output_level() {
 fn every_committed_source_builds() {
     let s = build::sources(std::path::Path::new(SOURCES)).unwrap();
     source::check(&s).unwrap();
-    chimera_desktop::factory_sounds::qa::sweeps(&s).unwrap();
+    chimera_desktop::factory_sounds::phrase::sweeps(&s).unwrap();
     source::public(&s).unwrap();
     let (files, man) = build::files(&s, &STAMP).unwrap();
     assert_eq!(files.len(), man.sounds.len());
@@ -428,7 +428,11 @@ fn trim_out_of_range_fails() {
 // ---- QA before UAT (spec § 4) ----
 
 use chimera_core::part::PartMode;
-use chimera_desktop::factory_sounds::qa::{self, Audition, Check, Gate, Plan, Verdict};
+use chimera_desktop::factory_sounds::phrase::{self, Plan};
+use chimera_desktop::factory_sounds::qa::measure::{self, Verdict};
+use chimera_desktop::factory_sounds::qa::{
+    self, Audition, Check, Gate, baseline, demo, page, render,
+};
 use chimera_desktop::factory_sounds::source::{Phrase, Script};
 
 const SR: f32 = 48_000.0;
@@ -462,27 +466,27 @@ fn scripts_follow_the_spec() {
     let held = |p: &Plan| p.hits.iter().map(|h| h.off - h.on).collect::<Vec<_>>();
     let v100 = |p: &Plan| p.hits.iter().all(|h| h.vel == 100);
 
-    let bass = qa::plan(Script::Bass, 36);
+    let bass = phrase::plan(Script::Bass, 36);
     assert_eq!(notes(&bass), [36]);
     assert_eq!(held(&bass), [0.3]);
     assert_eq!(bass.secs, 0.3 + 1.5);
     assert!(v100(&bass));
 
-    let stab = qa::plan(Script::Stab, 36);
+    let stab = phrase::plan(Script::Stab, 36);
     assert_eq!(notes(&stab), [48, 52, 55, 59], "C3 E3 G3 B3");
     assert!(held(&stab).iter().all(|&h| h == 0.25) && v100(&stab));
     assert!(stab.hits.iter().all(|h| h.on == 0.0));
 
-    let short = qa::plan(Script::Short, 36);
+    let short = phrase::plan(Script::Short, 36);
     assert_eq!(notes(&short), [60], "C4");
     assert_eq!(held(&short), [0.08]);
 
-    let long = qa::plan(Script::Long, 48);
+    let long = phrase::plan(Script::Long, 48);
     assert_eq!(notes(&long), [48]);
     assert_eq!(held(&long), [2.0]);
     assert_eq!(long.secs, 4.0);
 
-    let tex = qa::plan(Script::Texture, 48);
+    let tex = phrase::plan(Script::Texture, 48);
     assert_eq!(tex.hits.len(), 16);
     for (i, h) in tex.hits.iter().enumerate() {
         assert!(
@@ -500,7 +504,7 @@ fn scripts_follow_the_spec() {
     assert_eq!(tex.hits[15].vel, 127);
     assert!(tex.hits.windows(2).all(|w| w[0].vel <= w[1].vel));
 
-    let glide = qa::plan(Script::Glide, 60);
+    let glide = phrase::plan(Script::Glide, 60);
     assert_eq!(notes(&glide), [36, 43, 48], "C2 G2 C3");
     assert_eq!(glide.mode, Some(PartMode::Mono));
     assert!(
@@ -514,7 +518,7 @@ fn scripts_follow_the_spec() {
         Script::Long,
         Script::Texture,
     ] {
-        assert_eq!(qa::plan(s, 48).mode, None, "{s:?} plays the demo mode");
+        assert_eq!(phrase::plan(s, 48).mode, None, "{s:?} plays the demo mode");
     }
 }
 
@@ -523,17 +527,21 @@ fn loudness_gate() {
     // Inside −11 ± 2 LU passes unpinned; a pin wins, so one drifted into
     // the band fails.
     for l in [-11.0, -9.0, -13.0] {
-        assert_eq!(qa::loudness(l, None), Verdict::Pass, "{l}");
-        assert_eq!(qa::loudness(l, Some((-16.2, "soft"))), Verdict::Fail, "{l}");
+        assert_eq!(measure::loudness(l, None), Verdict::Pass, "{l}");
+        assert_eq!(
+            measure::loudness(l, Some((-16.2, "soft"))),
+            Verdict::Fail,
+            "{l}"
+        );
     }
     for l in [-8.9, -13.1, -30.0, f32::NAN] {
-        assert_eq!(qa::loudness(l, None), Verdict::Fail, "{l}");
+        assert_eq!(measure::loudness(l, None), Verdict::Fail, "{l}");
     }
     // A pinned level holds within ±1 LU of its value, for the ear.
     for l in [-16.2, -15.3, -17.1] {
         assert!(
             matches!(
-                qa::loudness(l, Some((-16.2, "a soft pad under the lead"))),
+                measure::loudness(l, Some((-16.2, "a soft pad under the lead"))),
                 Verdict::Exempt(why) if why.contains("by ear -16.2") && why.contains("soft pad")
             ),
             "{l}"
@@ -541,7 +549,11 @@ fn loudness_gate() {
     }
     // It fails once it moves.
     for l in [-15.1, -17.3, f32::NAN] {
-        assert_eq!(qa::loudness(l, Some((-16.2, "soft"))), Verdict::Fail, "{l}");
+        assert_eq!(
+            measure::loudness(l, Some((-16.2, "soft"))),
+            Verdict::Fail,
+            "{l}"
+        );
     }
 }
 
@@ -610,25 +622,33 @@ fn limiter_gate() {
         Some(Script::Bass),
         Some(Script::Texture),
     ] {
-        assert_eq!(qa::limiter(0.9, s), Verdict::Pass, "{s:?}");
-        assert_eq!(qa::limiter(1.1, s), Verdict::Fail, "{s:?}");
+        assert_eq!(measure::limiter(0.9, s), Verdict::Pass, "{s:?}");
+        assert_eq!(measure::limiter(1.1, s), Verdict::Fail, "{s:?}");
     }
     // `stab`, the chord: 3 dB.
-    assert_eq!(qa::limiter(2.9, Some(Script::Stab)), Verdict::Pass);
-    assert_eq!(qa::limiter(3.1, Some(Script::Stab)), Verdict::Fail);
+    assert_eq!(measure::limiter(2.9, Some(Script::Stab)), Verdict::Pass);
+    assert_eq!(measure::limiter(3.1, Some(Script::Stab)), Verdict::Fail);
 }
 
 #[test]
 fn click_and_finite_gate() {
     // A sine from a zero crossing: no click.
     let clean = sine(220.0, 0.3, 1.0);
-    assert_eq!(qa::clicks(&clean, &[0], None).1, Verdict::Pass);
+    assert_eq!(measure::clicks(&clean, &[0], None).1, Verdict::Pass);
     let mut click = clean.clone();
     click[24_000] += 0.2;
-    assert_eq!(qa::clicks(&click, &[0], None).1, Verdict::Fail, "a click");
+    assert_eq!(
+        measure::clicks(&click, &[0], None).1,
+        Verdict::Fail,
+        "a click"
+    );
     let mut nan = clean.clone();
     nan[100] = f32::NAN;
-    assert_eq!(qa::clicks(&nan, &[0], None).1, Verdict::Fail, "not finite");
+    assert_eq!(
+        measure::clicks(&nan, &[0], None).1,
+        Verdict::Fail,
+        "not finite"
+    );
 }
 
 #[test]
@@ -646,7 +666,7 @@ fn aliasing_gate() {
                     * 0.2
             })
             .collect();
-        let (db, v) = qa::aliasing(&saw, f0, true);
+        let (db, v) = measure::aliasing(&saw, f0, true);
         assert_eq!(v, Verdict::Pass, "C{}: {db:.1} dB", n / 12 - 1);
         // An alias 30 dB down, between harmonics.
         let bad: Vec<f32> = saw
@@ -654,10 +674,10 @@ fn aliasing_gate() {
             .zip(sine(f0 * 1.37, 0.2 * 0.0316, 2.0))
             .map(|(a, b)| a + b)
             .collect();
-        let (db, v) = qa::aliasing(&bad, f0, true);
+        let (db, v) = measure::aliasing(&bad, f0, true);
         assert_eq!(v, Verdict::Fail, "{db:.1} dB");
         assert!(matches!(
-            qa::aliasing(&bad, f0, false).1,
+            measure::aliasing(&bad, f0, false).1,
             Verdict::Exempt(_)
         ));
     }
@@ -674,22 +694,22 @@ fn tail_gate() {
             .map(|(i, v)| v * (-(i as f32) / 8_000.0).exp()),
     );
     x.extend(vec![0.0; 96_000]);
-    assert_eq!(qa::tail(&x, 48_000, 2.0).1, Verdict::Pass);
+    assert_eq!(measure::tail(&x, 48_000, 2.0).1, Verdict::Pass);
     // A hum that never stops.
     let hum = sine(50.0, 0.01, 5.0);
-    let (db, v) = qa::tail(&hum, 48_000, 2.0);
+    let (db, v) = measure::tail(&hum, 48_000, 2.0);
     assert_eq!(v, Verdict::Fail, "{db}");
     // Still ringing at the limit fails; a render too short to reach it too.
-    assert_eq!(qa::tail(&x, 48_000, 0.5).1, Verdict::Fail);
-    assert_eq!(qa::tail(&x[..96_000], 48_000, 2.0).1, Verdict::Fail);
+    assert_eq!(measure::tail(&x, 48_000, 0.5).1, Verdict::Fail);
+    assert_eq!(measure::tail(&x[..96_000], 48_000, 2.0).1, Verdict::Fail);
 
     // MODAL keeps ringing: 10 s; anything else its release plus 2 s.
     let modal = source::parse(&BASE.replace("\"VA\"", "\"MODAL\""), "m.toml").unwrap();
     let snd = source::to_sound(&modal[0]).unwrap();
-    assert_eq!(qa::tail_within(&modal[0], &snd), 10.0);
+    assert_eq!(measure::tail_within(&modal[0], &snd), 10.0);
     let va = source::parse(BASE, "v.toml").unwrap();
     let snd = source::to_sound(&va[0]).unwrap();
-    let w = qa::tail_within(&va[0], &snd);
+    let w = measure::tail_within(&va[0], &snd);
     assert!(
         (2.0..3.0).contains(&w),
         "VA's neutral release (300 ms) + 2 s: {w}"
@@ -699,13 +719,13 @@ fn tail_gate() {
     let env2 = format!("{BASE}ENV2.REL = \"0.9\"\nmod.ENV2 = \"OUT.VCA +127\"\n");
     let s = source::parse(&env2, "e.toml").unwrap();
     let snd = source::to_sound(&s[0]).unwrap();
-    let w = qa::tail_within(&s[0], &snd);
+    let w = measure::tail_within(&s[0], &snd);
     assert!((6.0..7.0).contains(&w), "ENV 2's 4.5 s + 2 s: {w}");
     // An ENV 2 not routed to the VCA does not count.
     let free = format!("{BASE}ENV2.REL = \"0.9\"\n");
     let s = source::parse(&free, "e.toml").unwrap();
     let snd = source::to_sound(&s[0]).unwrap();
-    assert!(qa::tail_within(&s[0], &snd) < 3.0);
+    assert!(measure::tail_within(&s[0], &snd) < 3.0);
 }
 
 #[test]
@@ -720,13 +740,13 @@ fn tap_gate() {
             y
         })
         .collect();
-    let (ba, bd) = (qa::erb_bands(&a), qa::erb_bands(&dull));
-    let err = qa::spectral_error(&ba, &bd);
-    assert_eq!(qa::tap(err), Verdict::Pass, "{err:.1} dB");
-    let same = qa::erb_bands(&a.iter().map(|v| v * 1.05).collect::<Vec<_>>());
-    let err = qa::spectral_error(&ba, &same);
+    let (ba, bd) = (measure::erb_bands(&a), measure::erb_bands(&dull));
+    let err = measure::spectral_error(&ba, &bd);
+    assert_eq!(measure::tap(err), Verdict::Pass, "{err:.1} dB");
+    let same = measure::erb_bands(&a.iter().map(|v| v * 1.05).collect::<Vec<_>>());
+    let err = measure::spectral_error(&ba, &same);
     assert_eq!(
-        qa::tap(err),
+        measure::tap(err),
         Verdict::Fail,
         "{err:.1} dB: the tap is inaudible"
     );
@@ -737,12 +757,12 @@ fn samey_flags_pair_within_3db_on_32_erb() {
     let a = noise(0.3, 1.0);
     let b: Vec<f32> = a.iter().map(|v| v * 1.1).collect(); // +0.8 dB
     let c = sine(440.0, 0.3, 1.0);
-    let bands: Vec<[f32; 32]> = [&a, &b, &c].iter().map(|x| qa::erb_bands(x)).collect();
-    assert_eq!(bands[0].len(), qa::ERB_BANDS);
-    assert_eq!(qa::samey(&bands), vec![(0, 1)]);
+    let bands: Vec<[f32; 32]> = [&a, &b, &c].iter().map(|x| measure::erb_bands(x)).collect();
+    assert_eq!(bands[0].len(), measure::ERB_BANDS);
+    assert_eq!(measure::samey(&bands), vec![(0, 1)]);
     // 4 dB louder everywhere is not samey.
     let d: Vec<f32> = a.iter().map(|v| v * 1.585).collect();
-    assert!(qa::samey(&[bands[0], qa::erb_bands(&d)]).is_empty());
+    assert!(measure::samey(&[bands[0], measure::erb_bands(&d)]).is_empty());
 }
 
 /// A Report for `BASE` without rendering: one `long` render and gates.
@@ -789,7 +809,7 @@ fn scratch_ledger(name: &str) -> std::path::PathBuf {
 #[test]
 fn a_failing_sound_is_skipped_from_the_page() {
     let d = scratch_ledger("ledger-page");
-    assert!(qa::write(&d, &[report(true, false)], &[], &[], &[], true).unwrap());
+    assert!(page::write(&d, &[report(true, false)], &[], &[], &[], true).unwrap());
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     assert!(page.contains("TEST PAD") && page.contains("A TEST PAD: SLOW FILTER"));
     assert!(page.contains("POLY") && page.contains("-11.0 LUFS"));
@@ -807,7 +827,7 @@ fn a_failing_sound_is_skipped_from_the_page() {
 
     // The public ledger refuses a port; ports page in their own ledger,
     // under PRIVATE, with their edits.
-    let e = qa::write(
+    let e = page::write(
         &d,
         &[report(true, false), report(true, true)],
         &[],
@@ -818,7 +838,7 @@ fn a_failing_sound_is_skipped_from_the_page() {
     .unwrap_err();
     assert!(e.contains("S9100002") && e.contains("private"), "{e}");
     let pd = scratch_ledger("ledger-page-private");
-    assert!(qa::write_private(&pd, &[report(true, true)], &[], true).unwrap());
+    assert!(page::write_private(&pd, &[report(true, true)], &[], true).unwrap());
     let page = std::fs::read_to_string(pd.join("listening.html")).unwrap();
     assert!(page.contains("<h2>PRIVATE</h2>"), "{page}");
     assert!(
@@ -826,7 +846,7 @@ fn a_failing_sound_is_skipped_from_the_page() {
         "{page}"
     );
     assert!(
-        qa::write_private(&pd, &[report(true, false)], &[], true).is_err(),
+        page::write_private(&pd, &[report(true, false)], &[], true).is_err(),
         "the private ledger holds ports only"
     );
 
@@ -836,7 +856,7 @@ fn a_failing_sound_is_skipped_from_the_page() {
     bad.id = source::parse(&BASE.replace("S9100002", "S9100003"), "b.toml").unwrap()[0].id;
     // An old render of it, from a run when it passed.
     std::fs::write(d.join("renders/S9100003-long.wav"), b"old").unwrap();
-    assert!(!qa::write(&d, &[report(true, false), bad], &[], &[], &[], true).unwrap());
+    assert!(!page::write(&d, &[report(true, false), bad], &[], &[], &[], true).unwrap());
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     assert!(
         page.contains("<h3>TEST PAD") && !page.contains("<h3>BAD PAD"),
@@ -863,9 +883,9 @@ fn a_failing_sound_is_skipped_from_the_page() {
 
     // A failing run without --wav removes the old page: it could show the
     // failing Sound as passed.
-    assert!(qa::write(&d, &[report(true, false)], &[], &[], &[], true).unwrap());
+    assert!(page::write(&d, &[report(true, false)], &[], &[], &[], true).unwrap());
     assert!(d.join("listening.html").is_file());
-    assert!(!qa::write(&d, &[report(false, false)], &[], &[], &[], false).unwrap());
+    assert!(!page::write(&d, &[report(false, false)], &[], &[], &[], false).unwrap());
     assert!(!d.join("listening.html").exists(), "no stale page");
 }
 
@@ -1122,20 +1142,22 @@ fn what_it_is_lists_an_algo_sounds_carriers() {
 #[test]
 fn renders_steal_at_the_units_voice_budget() {
     use chimera_core::hw::MAX_VOICES;
-    use chimera_desktop::factory_sounds::qa;
     use chimera_desktop::factory_sounds::source::Script;
     let heavy = &heavy_frmt();
-    let n = qa::unit_voices(heavy).unwrap();
+    let n = render::unit_voices(heavy).unwrap();
     assert!(
         n < MAX_VOICES,
         "eight held notes of a heavy three-FRMT Sound: {n}"
     );
-    let stab = qa::most_voices(heavy, Script::Stab).unwrap();
+    let stab = render::most_voices(heavy, Script::Stab).unwrap();
     assert!(
         stab < 4 && stab <= n,
         "its 4-note stab sounds {stab} of {n}"
     );
-    assert_eq!(qa::unit_voices(&run(BASE).unwrap()[0]).unwrap(), MAX_VOICES);
+    assert_eq!(
+        render::unit_voices(&run(BASE).unwrap()[0]).unwrap(),
+        MAX_VOICES
+    );
 }
 
 /// A FRMT operator reads by its formant and width, and the head names
@@ -1226,7 +1248,7 @@ fn badges_follow_the_source_and_a_placeholder_has_no_players() {
     let mut a = report(true, false);
     a.badge = source::Badge::Approved;
     a.name = "OLD PAD".into();
-    let page = qa::page(
+    let page = page::page(
         &[report(true, false), a],
         &[],
         std::slice::from_ref(ph),
@@ -1281,7 +1303,7 @@ fn approval_binds_to_the_sounds_crc() {
     assert_eq!((r.badge, r.changed), (Badge::New, Some(Round(2))));
     // BASE is not levelled: only a passing Sound is paged.
     r.gates.retain(|g| g.verdict != Verdict::Fail);
-    let page = qa::page(std::slice::from_ref(&r), &[], &[], &[]);
+    let page = page::page(std::slice::from_ref(&r), &[], &[], &[]);
     assert!(
         page.contains("class=\"flag\">CHANGED SINCE ROUND 2: re-listen"),
         "{page}"
@@ -1290,7 +1312,7 @@ fn approval_binds_to_the_sounds_crc() {
         page.contains(">NEW<") && !page.contains(">APPROVED<"),
         "{page}"
     );
-    let txt = qa::report_text(&[r], &[]);
+    let txt = page::report_text(&[r], &[]);
     assert!(
         txt.contains("S9100002 TEST PAD") && txt.contains("CHANGED SINCE ROUND 2: re-listen"),
         "{txt}"
@@ -1365,15 +1387,15 @@ fn ledger_never_tmp() {
         "relative/ledger".into(),
     ] {
         let p: std::path::PathBuf = bad;
-        assert!(qa::checked_ledger(&p).is_err(), "{}", p.display());
+        assert!(page::checked_ledger(&p).is_err(), "{}", p.display());
     }
     let ok = "~/dev/chimera/.superpowers/ledgers/showcase";
     assert_eq!(
-        qa::checked_ledger(ok.as_ref()).unwrap(),
+        page::checked_ledger(ok.as_ref()).unwrap(),
         std::path::PathBuf::from(ok)
     );
     // `write` refuses one too.
-    assert!(qa::write("/tmp/showcase-qa".as_ref(), &[], &[], &[], &[], false).is_err());
+    assert!(page::write("/tmp/showcase-qa".as_ref(), &[], &[], &[], &[], false).is_err());
 }
 
 #[test]
@@ -1411,7 +1433,7 @@ fn fmt_level_writes_trim() {
 #[test]
 fn gates_render_through_the_instrument() {
     let s = &source::parse(BASE, "g.toml").unwrap()[0];
-    let long = qa::render(s, Script::Long).unwrap();
+    let long = render::render(s, Script::Long).unwrap();
     assert_eq!(long.len(), 4 * 48_000, "48 kHz, the script's length");
     assert!(long.iter().all(|v| v.is_finite()));
     assert!(
@@ -1474,13 +1496,14 @@ fn listening_renders_are_wet_and_gates_dry() {
     let wet_src = &source::parse(&format!("{BASE}OUT.SEND1 = \"0.8\"\n"), "w.toml").unwrap()[0];
     let dry_src = &source::parse(BASE, "d.toml").unwrap()[0];
     // The listening render plays the Sound's sends through NEW's FX bus.
-    let wet = qa::render(wet_src, Script::Long).unwrap();
+    let wet = render::render(wet_src, Script::Long).unwrap();
     assert!(
-        wet != qa::dry(wet_src, Script::Long).unwrap(),
+        wet != render::dry(wet_src, Script::Long).unwrap(),
         "CHORUS is heard"
     );
     assert!(
-        qa::dry(wet_src, Script::Long).unwrap() == qa::render(dry_src, Script::Long).unwrap(),
+        render::dry(wet_src, Script::Long).unwrap()
+            == render::render(dry_src, Script::Long).unwrap(),
         "dry is the Sound with its sends at 0"
     );
     // The gates measure dry: the same values as the Sound without sends.
@@ -1492,7 +1515,7 @@ fn listening_renders_are_wet_and_gates_dry() {
     // On the page whatever this unlevelled Sound's loudness reads.
     let mut gw = gw;
     gw.gates.retain(|g| g.verdict != Verdict::Fail);
-    let page = qa::page(&[gw], &[], &[], &[]);
+    let page = page::page(&[gw], &[], &[], &[]);
     assert!(page.contains("LONG WITH CHORUS"), "full words");
     let all = &source::parse(
         &format!("{BASE}OUT.SEND1 = \"0.1\"\nOUT.SEND2 = \"0.1\"\nOUT.SEND3 = \"0.1\"\n"),
@@ -1514,7 +1537,7 @@ fn env1_attack_shapes_the_level_only_through_a_vca_route() {
     let early = |extra: &str| {
         let bare = BASE.replace("mod.ENV1 = \"OUT.VCA +127\"\n", "");
         let s = &source::parse(&format!("{bare}{extra}"), "e.toml").unwrap()[0];
-        let x = qa::dry(s, Script::Long).unwrap();
+        let x = render::dry(s, Script::Long).unwrap();
         rms(&x, 2_400, 14_400) // 50-300 ms
     };
     let vel = "mod.VEL = \"OUT.VCA +40\"\n";
@@ -1587,24 +1610,24 @@ fn dc_gate_is_relative_per_channel_over_the_held_part() {
     let n = 48_000;
     let s = sine(220.0, 0.3, 1.0);
     let clean = stereo(&s, &s);
-    assert_eq!(qa::dc(&clean, 0, n).1, Verdict::Pass);
+    assert_eq!(measure::dc(&clean, 0, n).1, Verdict::Pass);
     // 5 % of the RMS (-26 dB) on the left only.
     let off = 0.05 * 0.3 / 2f32.sqrt();
     let left: Vec<f32> = s.iter().map(|v| v + off).collect();
     let bad = stereo(&left, &s);
-    let (v, verdict) = qa::dc(&bad, 0, n);
+    let (v, verdict) = measure::dc(&bad, 0, n);
     assert_eq!(verdict, Verdict::Fail, "{v:.1} dB");
     assert!((v + 26.0).abs() < 0.5, "{v:.1}");
     // Turned down 40 dB: the same verdict (the old absolute -60 dBFS passed it).
     let quiet: Vec<f32> = bad.iter().map(|v| v * 0.01).collect();
-    assert_eq!(qa::dc(&quiet, 0, n).1, Verdict::Fail);
+    assert_eq!(measure::dc(&quiet, 0, n).1, Verdict::Fail);
     // Ten seconds of silence after it: judged over the held part only.
     let mut long = bad.clone();
     long.resize(bad.len() + 2 * 480_000, 0.0);
-    assert_eq!(qa::dc(&long, 0, n).1, Verdict::Fail);
+    assert_eq!(measure::dc(&long, 0, n).1, Verdict::Fail);
     // Under the bar passes.
     let ok: Vec<f32> = s.iter().map(|v| v + 0.1 * off).collect();
-    assert_eq!(qa::dc(&stereo(&ok, &s), 0, n).1, Verdict::Pass);
+    assert_eq!(measure::dc(&stereo(&ok, &s), 0, n).1, Verdict::Pass);
 }
 
 #[test]
@@ -1626,7 +1649,7 @@ fn listening_page_is_stereo_and_honest() {
         limited_db: Some(2.4),
         voices: 1,
     });
-    assert!(qa::write(&d, &[r], &[], &[], &[], true).unwrap());
+    assert!(page::write(&d, &[r], &[], &[], &[], true).unwrap());
     let w = hound::WavReader::open(d.join("renders/S9100002-long.wav")).unwrap();
     assert_eq!(w.spec().channels, 2, "the listening WAVs keep their width");
     assert_eq!(w.len(), 2 * 24_000);
@@ -1646,7 +1669,7 @@ fn listening_page_is_stereo_and_honest() {
 /// A short low note: a partial cycle is not an offset, a real one is.
 #[test]
 fn held_dc_reads_whole_cycles_of_each_note() {
-    let hit = qa::Hit {
+    let hit = phrase::Hit {
         on: 0.0,
         off: 0.08,
         note: 36,
@@ -1672,9 +1695,9 @@ fn held_dc_reads_whole_cycles_of_each_note() {
         20.0 * (mean.abs() / (0.3 / 2f32.sqrt())).log10() > -40.0,
         "the plain mean is fooled"
     );
-    let (v, verdict) = qa::held_dc(&clean, &[hit]);
+    let (v, verdict) = measure::held_dc(&clean, &[hit]);
     assert_eq!(verdict, Verdict::Pass, "{v:.1} dB");
-    let (v, verdict) = qa::held_dc(&note(0.05 * 0.3 / 2f32.sqrt()), &[hit]);
+    let (v, verdict) = measure::held_dc(&note(0.05 * 0.3 / 2f32.sqrt()), &[hit]);
     assert_eq!(verdict, Verdict::Fail, "{v:.1} dB");
 }
 
@@ -1684,11 +1707,11 @@ fn held_dc_reads_whole_cycles_of_each_note() {
 /// sounding, and stays inside MIDI from any plausible home note (C1 to C6).
 #[test]
 fn phrases_fit_their_bars_and_midi() {
-    assert_eq!(qa::phrase_steps(Phrase::Bass), qa::PHRASE_STEPS);
-    assert!((8 * 16..=16 * 16).contains(&(qa::phrase_steps(Phrase::Sweep) as u16)));
+    assert_eq!(phrase::phrase_steps(Phrase::Bass), phrase::PHRASE_STEPS);
+    assert!((8 * 16..=16 * 16).contains(&(phrase::phrase_steps(Phrase::Sweep) as u16)));
     for p in Phrase::ALL {
-        let notes = qa::phrase_notes(p);
-        let steps = qa::phrase_steps(p);
+        let notes = phrase::phrase_notes(p);
+        let steps = phrase::phrase_steps(p);
         assert!(!notes.is_empty(), "{p:?}");
         for x in notes {
             assert!(
@@ -1701,29 +1724,29 @@ fn phrases_fit_their_bars_and_midi() {
                 assert!((0..=127).contains(&m), "{p:?} {x:?} from {home}");
             }
         }
-        let plan = qa::phrase_plan(p, 36);
+        let plan = phrase::phrase_plan(p, 36);
         assert_eq!(plan.hits.len(), notes.len());
         assert_eq!(plan.mode, None, "the Sound's demo mode, so MONO glides");
         for (h, x) in plan.hits.iter().zip(notes) {
             assert_eq!(h.note as i16, 36 + x.step as i16);
-            assert!((h.on - x.at as f32 * qa::SIXTEENTH_S).abs() < 1e-6);
-            assert!((h.off - (x.at + x.len) as f32 * qa::SIXTEENTH_S).abs() < 1e-6);
+            assert!((h.on - x.at as f32 * phrase::SIXTEENTH_S).abs() < 1e-6);
+            assert!((h.off - (x.at + x.len) as f32 * phrase::SIXTEENTH_S).abs() < 1e-6);
             assert_eq!(h.vel, x.vel);
         }
         let end = plan.hits.iter().map(|h| h.off).fold(0f32, f32::max);
-        let bars = steps as f32 * qa::SIXTEENTH_S;
+        let bars = steps as f32 * phrase::SIXTEENTH_S;
         assert!(
             (bars - 1.0..=bars).contains(&end),
             "{p:?}: its bars at 120 BPM: {end}"
         );
-        assert_eq!(qa::phrase_secs(p), end);
+        assert_eq!(phrase::phrase_secs(p), end);
         assert!(plan.secs > end, "a tail after it");
     }
 }
 
 /// A note held past the next one's start: on a MONO Part, a glide.
 fn overlaps(p: Phrase) -> usize {
-    let n = qa::phrase_notes(p);
+    let n = phrase::phrase_notes(p);
     n.iter()
         .zip(&n[1..])
         .filter(|(a, b)| b.at > a.at && b.at < a.at + a.len)
@@ -1733,7 +1756,7 @@ fn overlaps(p: Phrase) -> usize {
 #[test]
 fn phrases_carry_what_they_show() {
     assert!(overlaps(Phrase::Bass) >= 1, "legato for the glide");
-    let vels: Vec<u8> = qa::phrase_notes(Phrase::Bass)
+    let vels: Vec<u8> = phrase::phrase_notes(Phrase::Bass)
         .iter()
         .map(|x| x.vel)
         .collect();
@@ -1741,19 +1764,19 @@ fn phrases_carry_what_they_show() {
         vels.iter().max().unwrap() - vels.iter().min().unwrap() >= 40,
         "velocity routes are heard"
     );
-    let bass = qa::phrase_notes(Phrase::Bass);
+    let bass = phrase::phrase_notes(Phrase::Bass);
     assert!(
         bass.iter()
             .zip(&bass[1..])
             .any(|(a, b)| (a.step - b.step).abs() >= 12),
         "octave jumps"
     );
-    let lead = qa::phrase_notes(Phrase::Lead);
+    let lead = phrase::phrase_notes(Phrase::Lead);
     assert!(overlaps(Phrase::Lead) >= 2, "a couple of slides");
     assert!(lead.iter().any(|x| x.len >= 8), "a held note for vibrato");
     assert!(lead.iter().any(|x| x.len <= 2), "and short ones");
     // `wonky`: a melodic bassline with odd accents and a couple of slides.
-    let wonky = qa::phrase_notes(Phrase::Wonky);
+    let wonky = phrase::phrase_notes(Phrase::Wonky);
     assert!(overlaps(Phrase::Wonky) >= 2, "a couple of legato slides");
     let wv: Vec<u8> = wonky.iter().map(|x| x.vel).collect();
     assert!(
@@ -1765,7 +1788,7 @@ fn phrases_carry_what_they_show() {
         "an accent off the beat"
     );
     // `arp`: syncopated, and clear rather than dense.
-    let arp = qa::phrase_notes(Phrase::Arp);
+    let arp = phrase::phrase_notes(Phrase::Arp);
     assert!(
         arp.iter().filter(|x| x.at % 2 == 1).count() >= 6,
         "onsets on the off-sixteenths"
@@ -1776,7 +1799,7 @@ fn phrases_carry_what_they_show() {
         "a note pushed off the beat and tied across it"
     );
     assert!(
-        (0..qa::PHRASE_STEPS)
+        (0..phrase::PHRASE_STEPS)
             .step_by(16)
             .any(|b| arp.iter().all(|x| x.at != b)),
         "a rest on a bar's downbeat"
@@ -1784,7 +1807,7 @@ fn phrases_carry_what_they_show() {
     assert!(arp.len() <= 40, "clear, not dense: {}", arp.len());
     // `sweep`: two or three long chords, each struck whole (every note at
     // once, held together), so one envelope start swells each chord.
-    let sw = qa::phrase_notes(Phrase::Sweep);
+    let sw = phrase::phrase_notes(Phrase::Sweep);
     let mut starts: Vec<u8> = sw.iter().map(|x| x.at).collect();
     starts.dedup();
     assert!((2..=3).contains(&starts.len()), "{starts:?}");
@@ -1794,11 +1817,14 @@ fn phrases_carry_what_they_show() {
         assert!(chord.iter().all(|x| x.len == chord[0].len), "held together");
         assert!(chord[0].len >= 32, "held long: {}", chord[0].len);
     }
-    let mut chords: Vec<u8> = qa::phrase_notes(Phrase::Pad).iter().map(|x| x.at).collect();
+    let mut chords: Vec<u8> = phrase::phrase_notes(Phrase::Pad)
+        .iter()
+        .map(|x| x.at)
+        .collect();
     chords.dedup();
     assert!((2..=4).contains(&chords.len()), "{chords:?}");
     assert!(
-        qa::phrase_notes(Phrase::Pad).iter().all(|x| x.len >= 8),
+        phrase::phrase_notes(Phrase::Pad).iter().all(|x| x.len >= 8),
         "held chords"
     );
 }
@@ -1839,9 +1865,9 @@ fn a_sweep_needs_a_slow_swell_its_phrase_holds() {
              ENV2.SUS = \"{sus}\"\nmod.ENV2 = \"FILTER.CUTOFF {amt}\""
         ))
     };
-    let ok = qa::sweep(&run(&env("0.68", "0", "+40", "SLOW")).unwrap()[0]).unwrap();
+    let ok = phrase::sweep(&run(&env("0.68", "0", "+40", "SLOW")).unwrap()[0]).unwrap();
     assert!(
-        matches!(ok, qa::Swell::Env { rise_s, .. } if rise_s > 3.0),
+        matches!(ok, phrase::Swell::Env { rise_s, .. } if rise_s > 3.0),
         "{ok:?}"
     );
     // A closing swell (negative depth) counts too.
@@ -1858,11 +1884,11 @@ fn a_sweep_needs_a_slow_swell_its_phrase_holds() {
         ))
     };
     assert_eq!(
-        qa::sweep(&run(&lfo("0.05", "")).unwrap()[0]).unwrap(),
-        qa::Swell::Lfo { hz: 0.05 }
+        phrase::sweep(&run(&lfo("0.05", "")).unwrap()[0]).unwrap(),
+        phrase::Swell::Lfo { hz: 0.05 }
     );
     run(&lfo("0.1", "LFO1.SHAPE = \"TRIANGLE\"")).unwrap();
-    let slow = 0.9 / qa::phrase_secs(Phrase::Sweep);
+    let slow = 0.9 / phrase::phrase_secs(Phrase::Sweep);
     fails(&lfo(&slow.to_string(), ""), 2, "cycle");
     fails(&lfo("0.05", "LFO1.SHAPE = \"SQUARE\""), 2, "FREE SINE");
     fails(&lfo("0.05", "LFO1.SYNC = \"RETRIG\""), 2, "FREE SINE");
@@ -1895,7 +1921,7 @@ fn page_plays_the_phrase_first_and_flags_its_limiter() {
     };
     let mut r = report(true, false);
     r.renders.insert(0, phrase(Phrase::Pad, 2.5));
-    assert!(qa::write(&d, &[r.clone()], &[], &[], &[], true).unwrap());
+    assert!(page::write(&d, &[r.clone()], &[], &[], &[], true).unwrap());
     assert!(d.join("renders/S9100002-phrase-pad.wav").is_file());
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     let (ph, long) = (
@@ -1906,11 +1932,11 @@ fn page_plays_the_phrase_first_and_flags_its_limiter() {
     assert!(page.contains("limiter 2.5 dB") && !page.contains("over the"));
     // A pad over the 3 dB chord bar; a bass over the 1 dB bar.
     r.renders[0] = phrase(Phrase::Pad, 3.4);
-    qa::write(&d, &[r.clone()], &[], &[], &[], true).unwrap();
+    page::write(&d, &[r.clone()], &[], &[], &[], true).unwrap();
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     assert!(page.contains("limiter 3.4 dB, over the 3 dB bar"), "{page}");
     r.renders[0] = phrase(Phrase::Bass, 1.4);
-    qa::write(&d, &[r], &[], &[], &[], true).unwrap();
+    page::write(&d, &[r], &[], &[], &[], true).unwrap();
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     assert!(page.contains("BASS PHRASE WITH CHORUS"));
     assert!(page.contains("limiter 1.4 dB, over the 1 dB bar"), "{page}");
@@ -1932,7 +1958,7 @@ fn a_phrase_that_is_not_finite_fails() {
     assert!(r.passes());
     r.gates.push(g(3.0));
     assert!(!r.passes());
-    assert!(qa::report_text(&[r], &[]).contains("finite lead phrase"));
+    assert!(page::report_text(&[r], &[]).contains("finite lead phrase"));
 }
 
 /// `harmonic` picks the aliasing gate: an ALGO Source defaults to exempt
@@ -1982,13 +2008,13 @@ fn a_va_ring_sounds_clicks_are_left_to_the_ear() {
     use chimera_desktop::listen::{CLICK_RATIO, click_exempt};
     let mut click = sine(220.0, 0.3, 1.0);
     click[24_000] += 0.2;
-    let (ratio, v) = qa::clicks(&click, &[0], Some("VA RING: why"));
+    let (ratio, v) = measure::clicks(&click, &[0], Some("VA RING: why"));
     assert!(ratio > CLICK_RATIO, "{ratio}");
     assert_eq!(v, Verdict::Exempt("VA RING: why".into()));
     // Exempt from the bar, not from being finite.
     let mut nan = click.clone();
     nan[100] = f32::NAN;
-    assert_eq!(qa::clicks(&nan, &[0], Some("why")).1, Verdict::Fail);
+    assert_eq!(measure::clicks(&nan, &[0], Some("why")).1, Verdict::Fail);
 
     let ring = &run(&format!("{BASE}VA.MODE = \"RING\"\n")).unwrap()[0];
     let why = click_exempt(&source::to_sound(ring).unwrap()).expect("VA RING is exempt");
@@ -1998,12 +2024,12 @@ fn a_va_ring_sounds_clicks_are_left_to_the_ear() {
     for g in gates {
         assert_eq!(g.verdict, Verdict::Exempt(why.into()), "{:?}", g.check);
     }
-    let txt = qa::report_text(std::slice::from_ref(&r), &[]);
+    let txt = page::report_text(std::slice::from_ref(&r), &[]);
     assert!(txt.contains(&format!("EXEMPT ({why})")), "{txt}");
     // On the page (its other gates aside: this test Sound is not levelled).
     let mut shown = r.clone();
     shown.gates.retain(|g| matches!(g.check, Check::Clicks(_)));
-    let page = qa::page(&[shown], &[], &[], &[]);
+    let page = page::page(&[shown], &[], &[], &[]);
     assert!(
         page.contains(&format!("class=\"flag\">clicks long: {why}")),
         "{page}"
@@ -2017,15 +2043,15 @@ fn a_va_ring_sounds_clicks_are_left_to_the_ear() {
 #[test]
 fn residual_against_the_baseline() {
     let old = sine(220.0, 0.2, 0.5);
-    assert_eq!(qa::residual_db(&old, &old), f32::NEG_INFINITY);
+    assert_eq!(baseline::residual_db(&old, &old), f32::NEG_INFINITY);
     // new − old is a tenth of old: −20 dB.
     let new: Vec<f32> = old.iter().map(|v| v * 1.1).collect();
-    assert!((qa::residual_db(&new, &old) + 20.0).abs() < 0.01);
+    assert!((baseline::residual_db(&new, &old) + 20.0).abs() < 0.01);
     // As written: a longer render's extra counts against silence.
     let mut longer = old.clone();
     longer.extend_from_slice(&old);
-    assert!(qa::residual_db(&longer, &old).abs() < 0.01);
-    const { assert!(qa::AUDIO_CHANGED_DB == -40.0) };
+    assert!(baseline::residual_db(&longer, &old).abs() < 0.01);
+    const { assert!(baseline::AUDIO_CHANGED_DB == -40.0) };
 }
 
 /// The heavily routed three-FRMT Source `renders_steal_…` plays.
@@ -2058,9 +2084,9 @@ fn the_voice_budget_cause_is_proven() {
     let old: Vec<f32> = r.renders[0].stereo.iter().map(|v| v * 0.9).collect();
     write_wav_stereo(&d.join("S9100002-stab.wav"), &old).unwrap();
     let cause = |r: &mut qa::Report, s: &source::Source| {
-        qa::compare(r, &d).unwrap();
+        baseline::compare(r, &d).unwrap();
         qa::voice_cause(r, s).unwrap();
-        qa::report_text(std::slice::from_ref(r), &[])
+        page::report_text(std::slice::from_ref(r), &[])
     };
     let txt = cause(&mut r, &heavy);
     assert!(
@@ -2078,9 +2104,9 @@ fn the_voice_budget_cause_is_proven() {
 #[test]
 fn the_voice_count_is_printed() {
     let r = report(true, false);
-    let txt = qa::report_text(std::slice::from_ref(&r), &[]);
+    let txt = page::report_text(std::slice::from_ref(&r), &[]);
     assert!(txt.contains("voices on the unit: 8"), "{txt}");
-    let page = qa::page(std::slice::from_ref(&r), &[], &[], &[]);
+    let page = page::page(std::slice::from_ref(&r), &[], &[], &[]);
     assert!(
         page.contains("8 VOICES") && page.contains("rev V (480 MHz)"),
         "{page}"
@@ -2096,13 +2122,13 @@ fn an_engine_change_flags_an_approved_sound() {
     let mut r = report(true, false);
     r.badge = source::Badge::Approved;
     let flagged = |r: &qa::Report| {
-        qa::page(std::slice::from_ref(r), &[], &[], &[])
+        page::page(std::slice::from_ref(r), &[], &[], &[])
             .contains("class=\"flag\">AUDIO CHANGED BY ENGINE UPDATE: re-listen")
     };
 
     // The same render: no flag.
     write_wav_stereo(&wav, &r.renders[0].stereo).unwrap();
-    qa::compare(&mut r, &d).unwrap();
+    baseline::compare(&mut r, &d).unwrap();
     let b = r.baseline.clone().expect("compared");
     assert_eq!(b.changed(), None);
     assert!(b.missing.is_empty());
@@ -2111,14 +2137,14 @@ fn an_engine_change_flags_an_approved_sound() {
     // The baseline at 0.9 of it: −19.1 dB, flagged, still APPROVED.
     let old: Vec<f32> = r.renders[0].stereo.iter().map(|v| v * 0.9).collect();
     write_wav_stereo(&wav, &old).unwrap();
-    qa::compare(&mut r, &d).unwrap();
+    baseline::compare(&mut r, &d).unwrap();
     let (a, db) = r.baseline.as_ref().unwrap().changed().expect("flagged");
     assert_eq!(a, Audition::Script(Script::Long));
     assert!((db + 19.08).abs() < 0.2, "{db}");
     assert!(flagged(&r));
-    let page = qa::page(std::slice::from_ref(&r), &[], &[], &[]);
+    let page = page::page(std::slice::from_ref(&r), &[], &[], &[]);
     assert!(page.contains(">APPROVED<"), "the badge stays");
-    let txt = qa::report_text(std::slice::from_ref(&r), &[]);
+    let txt = page::report_text(std::slice::from_ref(&r), &[]);
     assert!(
         txt.contains("AUDIO CHANGED BY ENGINE UPDATE: re-listen (worst -19.1 dB: long)"),
         "{txt}"
@@ -2126,17 +2152,17 @@ fn an_engine_change_flags_an_approved_sound() {
 
     // A NEW Sound is not compared; without a baseline nothing is.
     let mut new = report(true, false);
-    qa::compare(&mut new, &d).unwrap();
+    baseline::compare(&mut new, &d).unwrap();
     assert!(new.baseline.is_none() && !flagged(&new));
 
     // No baseline file: no flag, and a note.
     std::fs::remove_file(&wav).unwrap();
-    qa::compare(&mut r, &d).unwrap();
+    baseline::compare(&mut r, &d).unwrap();
     let b = r.baseline.clone().unwrap();
     assert_eq!(b.changed(), None);
     assert_eq!(b.missing, vec![Audition::Script(Script::Long)]);
     assert!(!flagged(&r));
-    let txt = qa::report_text(std::slice::from_ref(&r), &[]);
+    let txt = page::report_text(std::slice::from_ref(&r), &[]);
     assert!(
         txt.contains("baseline: no S9100002-long.wav, not compared"),
         "{txt}"
@@ -2174,8 +2200,8 @@ fn bisected_causes_name_the_change_and_coherent_ones_lead() {
         "# id, then each change it bisects to and its residual\nS9100002 #489 -14.6\nS9100003 #485 -24.1 #489 -3.0\n",
     )
     .unwrap();
-    qa::compare(&mut drift, &d).unwrap();
-    qa::compare(&mut other, &d).unwrap();
+    baseline::compare(&mut drift, &d).unwrap();
+    baseline::compare(&mut other, &d).unwrap();
     let lines = drift.baseline.as_ref().unwrap().lines(&drift.free_lfos);
     assert_eq!(
         lines,
@@ -2200,7 +2226,7 @@ fn bisected_causes_name_the_change_and_coherent_ones_lead() {
     let mut near = drift.clone();
     near.name = "NEAR PAD".into();
     near.baseline.as_mut().unwrap().causes[0].1 = -2.0;
-    let page = qa::page(&[near.clone(), other.clone(), drift.clone()], &[], &[], &[]);
+    let page = page::page(&[near.clone(), other.clone(), drift.clone()], &[], &[], &[]);
     let at = |w: &str| page.find(w).unwrap_or_else(|| panic!("{w}: {page}"));
     assert!(at("<h3>OTHER PAD") < at("<h3>TEST PAD"), "Source order");
     assert!(at("<h3>TEST PAD") < at("<h3>NEAR PAD"), "coherent first");
@@ -2209,13 +2235,13 @@ fn bisected_causes_name_the_change_and_coherent_ones_lead() {
         page.contains("coherent drift, not timbre"),
         "the page says what it measures"
     );
-    let txt = qa::report_text(&[near, other, drift], &[]);
+    let txt = page::report_text(&[near, other, drift], &[]);
     assert!(txt.contains("TIMBRE CHANGED -24.1 dB: #485"), "{txt}");
     assert!(txt.contains("coherent drift, not timbre"), "{txt}");
 
     // A change the tool does not know fails at its line.
     std::fs::write(d.join("causes.txt"), "S9100002 #999 -3.0\n").unwrap();
-    let e = qa::compare(&mut report_approved(), &d).unwrap_err();
+    let e = baseline::compare(&mut report_approved(), &d).unwrap_err();
     assert!(e.contains("causes.txt:1"), "{e}");
 }
 
@@ -2549,12 +2575,12 @@ fn demo_render_plan_hears_every_effect() {
     assert_eq!(settings[0].heard, vec![Effect::Reverb(ReverbType::Room)]);
     assert_eq!(settings[1].heard, vec![Effect::Reverb(ReverbType::Quad)]);
     assert_eq!(settings[2].heard, vec![Effect::Reverb(ReverbType::Hall)]);
-    let takes = qa::demo_takes(&demos[3]);
+    let takes = demo::demo_takes(&demos[3]);
     assert_eq!(takes.len(), 2 * 2 + 2);
-    assert!(takes.contains(&qa::DemoTake::Part(PartId::ALL[1], Script::Stab)));
-    assert!(takes.contains(&qa::DemoTake::Part(PartId::ALL[1], Script::Short)));
-    assert!(takes.contains(&qa::DemoTake::Hats));
-    assert!(takes.contains(&qa::DemoTake::Snare));
+    assert!(takes.contains(&demo::DemoTake::Part(PartId::ALL[1], Script::Stab)));
+    assert!(takes.contains(&demo::DemoTake::Part(PartId::ALL[1], Script::Short)));
+    assert!(takes.contains(&demo::DemoTake::Hats));
+    assert!(takes.contains(&demo::DemoTake::Snare));
     let four = project::settings(&demos[3], &sounds).unwrap();
     assert_eq!(
         four[0].heard,
@@ -2615,20 +2641,21 @@ fn demo_renders_gate_and_sit_on_the_page() {
         x.resize(24_000, 0.0);
         x
     };
-    let stims = qa::Stims {
+    let stims = demo::Stims {
         hats: burst(5_000.0),
         snare: burst(200.0),
     };
-    let r = qa::demo_gates(&demos[0], &sounds, &stims).unwrap();
+    let r = demo::demo_gates(&demos[0], &sounds, &stims).unwrap();
     assert!(r.passes(), "{:#?}", r.gates);
     // Each Part's stab and short and the two stimuli, through its own FX.
     assert_eq!(r.renders.len(), 2 * 2 + 2);
-    assert!(r.gates.iter().any(
-        |g| g.check == qa::DemoCheck::Limiter(qa::DemoTake::Part(PartId::ALL[0], Script::Stab))
-    ));
+    assert!(
+        r.gates.iter().any(|g| g.check
+            == demo::DemoCheck::Limiter(demo::DemoTake::Part(PartId::ALL[0], Script::Stab)))
+    );
     let d = scratch_ledger("ledger-demo");
     assert!(
-        qa::write(
+        page::write(
             &d,
             &[report(true, false)],
             &[],
@@ -2661,7 +2688,7 @@ fn demo_renders_gate_and_sit_on_the_page() {
     // A failing project render keeps it off the page and fails the run.
     let mut bad = r.clone();
     bad.gates[0].verdict = Verdict::Fail;
-    assert!(!qa::write(&d, &[report(true, false)], &[], &[], &[bad], true).unwrap());
+    assert!(!page::write(&d, &[report(true, false)], &[], &[], &[bad], true).unwrap());
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     assert!(!page.contains("Turn TYPE through"), "{page}");
 }
@@ -2746,7 +2773,7 @@ fn a_sound_already_in_the_pool_takes_no_new_slot() {
 #[test]
 fn reverse_and_gate_settings_are_click_gated() {
     let sounds = demo_sounds();
-    let stims = qa::Stims {
+    let stims = demo::Stims {
         hats: vec![0.0; 4_800],
         snare: vec![0.0; 4_800],
     };
@@ -2758,11 +2785,11 @@ fn reverse_and_gate_settings_are_click_gated() {
             heard.iter().any(|e| e.label() == format!("REVERB {kind}")),
             "{kind}: {heard:?}"
         );
-        let clicks: Vec<_> = qa::demo_gates(d, &sounds, &stims)
+        let clicks: Vec<_> = demo::demo_gates(d, &sounds, &stims)
             .unwrap()
             .gates
             .into_iter()
-            .filter(|g| matches!(g.check, qa::DemoCheck::Clicks(qa::DemoTake::Part(..))))
+            .filter(|g| matches!(g.check, demo::DemoCheck::Clicks(demo::DemoTake::Part(..))))
             .map(|g| g.verdict)
             .collect();
         assert!(!clicks.is_empty(), "{kind}");
@@ -2853,10 +2880,10 @@ fn held_demos_are_checked_not_built_and_their_effects_pend() {
     // On the page and in report.txt: HELD with its reason, its pending
     // lines, and no render; the run passes.
     let cov = project::coverage(&demos, &sounds).unwrap();
-    let held = qa::held_report(&demos[0], &sounds, &cov).unwrap();
+    let held = demo::held_report(&demos[0], &sounds, &cov).unwrap();
     assert!(held.renders.is_empty() && held.gates.is_empty());
     let d = scratch_ledger("ledger-held");
-    assert!(qa::write(&d, &[report(true, false)], &[], &[], &[held], true).unwrap());
+    assert!(page::write(&d, &[report(true, false)], &[], &[], &[held], true).unwrap());
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     assert!(page.contains("<h2>DEMO PROJECTS</h2>"), "{page}");
     assert!(
