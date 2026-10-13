@@ -161,40 +161,43 @@ fn run_qa(wav: bool, baseline: Option<PathBuf>) -> Result<(), String> {
     let bands: Vec<_> = reports.iter().map(|r| r.bands).collect();
     let samey = qa::samey(&bands);
     let ledger = qa::ledger()?;
-    let demos = demo_reports(&all, &ledger)?;
+    let (demos, unheard) = demo_reports(&all, &ledger)?;
     let pass = qa::write(&ledger, &reports, &samey, &placeholders, &demos, wav)?;
     print!("{}", qa::report_text(&reports, &samey));
     print!("{}", qa::demo_text(&demos));
     println!("{}", ledger.display());
-    if pass {
-        Ok(())
-    } else {
-        Err("a gate failed: see report.txt".into())
+    match (unheard, pass) {
+        (Some(gap), _) => Err(gap),
+        (None, true) => Ok(()),
+        (None, false) => Err("a gate failed: see report.txt".into()),
     }
 }
 
-/// Each demo project rendered and gated (`qa::demo_gates`), once every
-/// effect is heard across them (`project::unheard`); none: none.
-fn demo_reports(sounds: &[source::Source], ledger: &Path) -> Result<Vec<qa::DemoReport>, String> {
+/// Each demo project rendered and gated (`qa::demo_gates`), plus the
+/// effects no demo plays (`project::unheard`), which fail the run after
+/// every gate is heard; none: none.
+type Demos = (Vec<qa::DemoReport>, Option<String>);
+fn demo_reports(sounds: &[source::Source], ledger: &Path) -> Result<Demos, String> {
     let demos = build::demos(&dir())?;
     if demos.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     }
     project::check(&demos, sounds)?;
     let gaps = project::unheard(&demos, sounds)?;
-    if !gaps.is_empty() {
+    let unheard = (!gaps.is_empty()).then(|| {
         let words: Vec<String> = gaps.iter().map(|e| e.label()).collect();
-        return Err(format!(
+        format!(
             "{}: no demo setting plays {} (fx. or hear. lines)",
             project::FILE,
             words.join(", ")
-        ));
-    }
+        )
+    });
     let stims = stims(&ledger.join("stimuli"))?;
-    demos
+    let reports = demos
         .iter()
         .map(|d| qa::demo_gates(d, sounds, &stims))
-        .collect()
+        .collect::<Result<_, _>>()?;
+    Ok((reports, unheard))
 }
 
 /// `chimera-utils stim`'s hats and snare from `dir`, written there first

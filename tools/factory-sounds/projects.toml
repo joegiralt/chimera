@@ -12,3 +12,26 @@
 # Each Part carries its Sound's own sends (ADR 0123). `qa` plays every
 # setting, and every reverb TYPE, CHORUS mode and the delay must be heard
 # across the demos.
+#
+# P0000001 REVERB ROOMS and P0000002 REVERB BLOOM wait on
+# private issue #499 (HALL and BLOOM tails
+# step at block edges); until then QUAD, ROOM, HALL and BLOOM go unheard.
+
+[[project]]
+id = "P0000003"
+name = "REVERB GATE"
+try = "Play short stabs: the gate cuts every tail, echoes too"
+fx.REVERB.TYPE = "GATE"
+fx.DELAY.REV = "0.5"
+part.1 = "WARM BRASS, POLY, CH 1"
+part.2 = "SOLO PORTA, MONO, CH 2"
+
+[[project]]
+id = "P0000004"
+name = "CHORUS DELAY"
+try = "Turn CHORUS through I, II and I+II; raise the delay feedback"
+fx.CHORUS.MODE = "JUNO_BOTH"
+fx.CHORUS.MIX = "0.75"
+hear.CHORUS.MODE = "JUNO_I, JUNO_II"
+part.1 = "TAPE DRIFT, POLY, CH 1"
+part.2 = "SOLO PORTA, MONO, CH 2"
