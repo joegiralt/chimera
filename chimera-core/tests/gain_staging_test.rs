@@ -8,6 +8,7 @@ use chimera_core::dsp::comp::CompParams;
 use chimera_core::dsp::delay::DelayParams;
 use chimera_core::dsp::fx_bus::{FxBus, FxParams};
 use chimera_core::dsp::knobs::Knobs;
+use chimera_core::dsp::lfo::LfoClock;
 use chimera_core::dsp::limiter::{CEILING, KNEE, LOOKAHEAD, Limiter, OUTPUT_GAIN, THRESHOLD};
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::ReverbParams;
@@ -123,7 +124,7 @@ fn chord(
     // ADR 0060) a budget for all eight.
     let voice = Voice::cost(&shared.parts[0].params, &shared.parts[0].mod_state).0;
     // And the Part's knobs (ADR 0112).
-    let reserved = FxBus::COST.0 + Knobs::RESERVE.0;
+    let reserved = FxBus::COST.0 + Knobs::RESERVE.0 + LfoClock::RESERVE.0;
     let eight = ((reserved + 8 * voice + Knobs::COST.0) as u64 * 4_800_000)
         .div_ceil(chimera_core::hw::AUDIO_BUDGET_PERCENT as u64) as u32;
     let mut inst = Box::new(Instrument::new(

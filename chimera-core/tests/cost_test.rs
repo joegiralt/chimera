@@ -1473,12 +1473,13 @@ fn a_refused_note_on_does_not_recost() {
 }
 
 /// ADR 0091's reserve beside the voices: the bus's 1,204, the knobs' 14
-/// (ADR 0116) and a note-on burst's 836 (1,494 + 14 + 836 with the master
-/// tape), 171 more while ORBIT plays. Spec § 5's admission table is counted
+/// (ADR 0116), the LFO clocks' 10 (ADR 0135) and a note-on burst's 836
+/// (1,494 + 14 + 10 + 836 with the master tape), 171 more while ORBIT
+/// plays. Spec § 5's admission table is counted
 /// against it.
 // ponytail: literal until `Instrument::RESERVED` (orbit-budget) merges.
-const RESERVED: u32 = 2_054;
-const RESERVED_TAPE: u32 = 2_344;
+const RESERVED: u32 = 2_064;
+const RESERVED_TAPE: u32 = 2_354;
 const ORBIT_COST: u32 = 171;
 
 /// A matrix with `routes` (source, destination, amount) and nothing else;
@@ -1522,7 +1523,7 @@ fn tape_bills_each_model() {
             v - RESERVED_TAPE,
         ]
     };
-    assert_eq!(rooms, [5_446, 4_196, 5_275, 5_156]);
+    assert_eq!(rooms, [5_436, 4_186, 5_265, 5_146]);
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     let on = |q| ParamAddr::new(BlockRef::TapeEngine, q);
     // Model, bill, voices with TAPE and AGE off, with both.
@@ -1599,7 +1600,7 @@ fn va_bills_each_mode() {
             v - RESERVED_TAPE,
         ]
     };
-    assert_eq!(rooms, [5_446, 4_196, 5_275, 5_156]);
+    assert_eq!(rooms, [5_436, 4_186, 5_265, 5_146]);
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     for (mode, bill, voices) in [
         (Mix, 520, [8, 6, 8, 8]),

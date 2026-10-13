@@ -330,6 +330,44 @@ impl Block for LfoParams {
     }
 }
 
+/// A Part's phase clock for its three LFO slots (ADR 0135): what a
+/// CLASSIC FREE LFO plays on every voice of the Part, so they move together
+/// whenever their notes started. Each phase integrates its RATE, so a RATE
+/// change moves the speed, never the phase.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LfoClock {
+    phase: [f32; 3],
+}
+
+impl LfoClock {
+    pub const ZERO: Self = Self { phase: [0.0; 3] };
+
+    /// What the clocks cost, cycles a sample, reserved beside the bus (ADR
+    /// 0135), by ADR 0056's count on the release ELF: every Part's step
+    /// (`Instrument::step_lfo_clocks`, 172 instructions and the call, one
+    /// `vdiv`: 173 × 1.46 × 1.1 + 12 = 289.8 a block) and every voice's
+    /// three LFOs taking their phase (26 instructions, 41.8 a block, × 8):
+    /// 624.1 a block, 9.75 a sample, rounded up.
+    pub const RESERVE: crate::hw::Cost = crate::hw::Cost(10);
+
+    /// Each slot's phase at the block's start, in 0..1.
+    pub fn phases(&self) -> [f32; 3] {
+        self.phase
+    }
+
+    /// One block on: each phase by its RATE × `step` (a block's seconds,
+    /// `BLOCK_SIZE / sample_rate`), wrapped.
+    #[inline]
+    pub fn advance(&mut self, lfos: &[LfoParams; 3], step: f32) {
+        for (p, l) in self.phase.iter_mut().zip(lfos) {
+            *p += l.rate * step;
+            if *p >= 1.0 {
+                *p -= 1.0;
+            }
+        }
+    }
+}
+
 /// LFO state.
 #[derive(Clone, Copy, Debug)]
 pub struct Lfo {
@@ -429,6 +467,15 @@ impl Lfo {
         out
     }
 
+    /// A CLASSIC FREE LFO plays its Part's clock: `phase` is the clock's
+    /// for its slot, this block (ADR 0135). RETRIG and FUNC run their own.
+    #[inline]
+    pub fn follow(&mut self, p: &LfoParams, phase: f32) {
+        if p.lfo_type == LfoType::Classic && p.sync == 0 {
+            self.phase = phase;
+        }
+    }
+
     /// Reset phase (called on note-on if sync mode)
     pub fn retrigger(&mut self, phase_offset: f32) {
         self.phase = phase_offset;
@@ -437,6 +484,12 @@ impl Lfo {
     /// Get current output without advancing
     pub fn current(&self) -> f32 {
         self.output
+    }
+
+    /// The phase, 0..1: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn phase(&self) -> f32 {
+        self.phase
     }
 
     /// Advance LFO by one block and return the output value.
