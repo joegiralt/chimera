@@ -1,4 +1,5 @@
 use crate::addr::{BlockRead, BlockRef};
+use crate::midi_map::MidiMap;
 use crate::mod_path::ModDestRegistry;
 use crate::modulation::{FixedCol, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::SoundName;
@@ -22,6 +23,8 @@ pub struct Sound {
     /// A TAPE Sound's source: a reference, never audio (ADR 0087), and a
     /// zone set's tuning, copied at pick (spec § 8).
     pub source: Option<TapeSource>,
+    /// CC -> param mappings (MIDI map spec § 2). Empty is neutral.
+    pub map: MidiMap,
 }
 
 impl Sound {
@@ -52,6 +55,7 @@ impl Sound {
             mod_state,
             dest_registry: ModDestRegistry::new(),
             source: None,
+            map: MidiMap::EMPTY,
         }
     }
 
@@ -97,5 +101,6 @@ impl Sound {
             && self.mod_state.bits_eq(&o.mod_state)
             && self.dest_registry.bits_eq(&o.dest_registry)
             && self.source == o.source
+            && self.map == o.map
     }
 }

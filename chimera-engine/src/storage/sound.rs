@@ -6,6 +6,7 @@ use chimera_hal::store::StoreError;
 use super::{SourceRef, TapeSource, ZoneTune};
 use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use crate::block::{DiskCode, ParamId};
+use crate::midi_map::MidiMap;
 use crate::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS, ModDestRegistry};
 use crate::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::SoundName;
@@ -49,6 +50,7 @@ impl Sound {
             mod_state: ModState::with_sources(MAX_MOD_SOURCES),
             dest_registry: ModDestRegistry::new(),
             source: None,
+            map: MidiMap::EMPTY,
         }
     }
 }
