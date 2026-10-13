@@ -698,7 +698,10 @@ fn routes(v: &str, line: usize, engine: EngineType) -> Result<Vec<Route>, String
     Ok(out)
 }
 
-/// Ids unique and names unique across every Source, placeholders included.
+/// The set's walls, placeholders included: ids and names unique; every
+/// VA Sound but a placeholder with an ENV opening the VCA and a phrase; a
+/// level pinned by ear only outside the −11 ± 2 LU band. Each error names
+/// its line.
 pub fn check(all: &[Source]) -> Result<(), String> {
     for (i, s) in all.iter().enumerate() {
         // A VA Sound owns no amplitude of its own: without an ENV on the VCA

@@ -27,7 +27,8 @@ pub struct Entry {
     /// The file's CRC trailer.
     pub crc: u32,
     pub size: usize,
-    /// The Sound's `sound_crc`, which `approved` names.
+    /// The Sound's `sound_crc` (`source::crc`); `approved` names its
+    /// `approval_crc`, which binds the render-shaping fields too.
     pub sound: u32,
 }
 

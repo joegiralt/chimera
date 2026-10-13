@@ -198,8 +198,11 @@ pub(super) fn spectrum(x: &[f32], windowed: bool) -> (Vec<f64>, f64) {
     (p, SR as f64 / n as f64)
 }
 
-/// A modulator's sidebands (an LFO on CUTOFF or pitch, up to 25 Hz) sit
-/// this close to their harmonic: not aliases.
+/// A modulator's sidebands sit this close to their harmonic: not aliases.
+/// Empirical, not derived: 25 Hz holds the slow LFOs (vibrato, filter
+/// drift) the factory Sounds route to CUTOFF or pitch. A faster LFO, or a
+/// detune past 5 cents at C6/C7, puts sidebands past it and can fail the
+/// gate on a clean Sound: mark such a Source `harmonic = "no"` for the ear.
 pub(super) const SIDEBAND_HZ: f64 = 25.0;
 
 /// Harmonic over inharmonic energy, dB, for a note at `f0`: a bin is
