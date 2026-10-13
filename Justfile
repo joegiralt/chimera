@@ -83,7 +83,9 @@ bank2-split elf out:
     sections=$(rust-objdump -h {{elf}})
     syms=$(rust-nm {{elf}})
     if awk '$2 == ".bank2" && $3 != "00000000" { f = 1 } END { exit !f }' <<< "$sections"; then
-        ver="$(cargo pkgid -p chimera-stm32 | sed 's/.*[#@]//') $(git rev-parse --short=8 HEAD)"
+        pkg=$(cargo pkgid -p chimera-stm32)
+        hash=$(git rev-parse --short=8 HEAD)
+        ver="${pkg##*[#@]} $hash"
         rust-objcopy -j .bank2 -O binary {{elf}} {{out}}.bk2
         {{utils}} door-check {{elf}}
         {{utils}} bank2-seal {{elf}} {{out}}.bin {{out}}.bk2 --version "$ver"

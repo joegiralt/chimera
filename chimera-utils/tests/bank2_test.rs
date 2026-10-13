@@ -64,6 +64,9 @@ fn seal_refuses_bad_inputs() {
     assert!(bank2::seal_images(&mut bin, 100, &mut bk2, 256, &"x".repeat(33)).is_err());
     assert!(bank2::seal_images(&mut bin, 100, &mut bk2, 256, "v\u{e9}").is_err());
     assert!(bank2::seal_images(&mut bin, 100, &mut bk2, 256, "v\n").is_err());
+    for v in ["", " 75222a81", "0.1.0 "] {
+        assert!(bank2::seal_images(&mut bin, 100, &mut bk2, 256, v).is_err());
+    }
     assert!(bank2::seal_images(&mut bin, 100, &mut bk2, 4, "v").is_err());
     bk2[0] = 0;
     assert!(bank2::seal_images(&mut bin, 100, &mut bk2, 256, "v").is_err());

@@ -17,7 +17,11 @@ pub fn seal_images(
     door_off: u32,
     version: &str,
 ) -> Result<Seal, String> {
-    if version.len() > 32 || !version.bytes().all(|c| (0x20..0x7F).contains(&c)) {
+    if version.is_empty()
+        || version != version.trim()
+        || version.len() > 32
+        || !version.bytes().all(|c| (0x20..0x7F).contains(&c))
+    {
         return Err(format!(
             "version `{version}` is not 32 printable ASCII bytes"
         ));
