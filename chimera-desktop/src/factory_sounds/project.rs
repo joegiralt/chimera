@@ -126,21 +126,6 @@ impl Effect {
             Effect::Delay => "DELAY".into(),
         }
     }
-
-    /// Why a render that hears this leaves its clicks to the ear: REVERSE
-    /// cuts each reversed swell off at its window's end, and GATE closes
-    /// on each tail. That edge is the effect, not a fault.
-    pub fn click_exempt(self) -> Option<&'static str> {
-        match self {
-            Effect::Reverb(ReverbType::Reverse) => {
-                Some("REVERB REVERSE: each reversed swell ends on an edge, the effect itself")
-            }
-            Effect::Reverb(ReverbType::Gate) => {
-                Some("REVERB GATE: the gate closes on each tail, the effect itself")
-            }
-            _ => None,
-        }
-    }
 }
 
 /// A render setting: the FX it plays through, and what of them is heard.
@@ -148,13 +133,6 @@ impl Effect {
 pub struct Setting {
     pub fx: FxParams,
     pub heard: Vec<Effect>,
-}
-
-impl Setting {
-    /// The first heard effect's `click_exempt`, if any.
-    pub fn click_exempt(&self) -> Option<&'static str> {
-        self.heard.iter().find_map(|e| e.click_exempt())
-    }
 }
 
 /// Every `[[project]]` in `text`; each error names `projects.toml:line`.

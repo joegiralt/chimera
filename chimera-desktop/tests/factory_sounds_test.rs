@@ -2573,48 +2573,35 @@ fn a_sound_already_in_the_pool_takes_no_new_slot() {
     assert_eq!(slot(0), slot(1));
 }
 
-/// REVERSE and GATE end each swell or tail on an edge: that edge is the
-/// effect, so a setting that hears either leaves its clicks to the ear,
-/// by TYPE, with the reason. Every other setting stays click-gated.
+/// No reverb TYPE leaves a demo's clicks to the ear: REVERSE's and
+/// GATE's edges ramp since #499, so their takes are click-gated like ROOM's.
 #[test]
-fn reverse_and_gate_settings_leave_clicks_to_the_ear() {
-    use project::Effect;
-    for e in Effect::ALL {
-        let edged = matches!(
-            e,
-            Effect::Reverb(ReverbType::Reverse) | Effect::Reverb(ReverbType::Gate)
-        );
-        assert_eq!(e.click_exempt().is_some(), edged, "{e:?}");
-    }
+fn reverse_and_gate_settings_are_click_gated() {
     let sounds = demo_sounds();
     let stims = qa::Stims {
         hats: vec![0.0; 4_800],
         snare: vec![0.0; 4_800],
     };
-    let clicks = |text: &str| {
-        let d = &project::parse(text).unwrap()[0];
-        qa::demo_gates(d, &sounds, &stims)
+    for kind in ["REVERSE", "GATE", "ROOM"] {
+        let text = demo_with(5, &format!("fx.REVERB.TYPE = \"{kind}\""));
+        let d = &project::parse(&text).unwrap()[0];
+        let heard = &project::settings(d, &sounds).unwrap()[0].heard;
+        assert!(
+            heard.iter().any(|e| e.label() == format!("REVERB {kind}")),
+            "{kind}: {heard:?}"
+        );
+        let clicks: Vec<_> = qa::demo_gates(d, &sounds, &stims)
             .unwrap()
             .gates
             .into_iter()
             .filter(|g| matches!(g.check, qa::DemoCheck::Clicks(qa::DemoTake::Part(..))))
             .map(|g| g.verdict)
-            .collect::<Vec<_>>()
-    };
-    let gate = clicks(&demo_with(5, "fx.REVERB.TYPE = \"GATE\""));
-    assert!(!gate.is_empty());
-    for v in gate {
-        assert!(
-            matches!(&v, Verdict::Exempt(why) if why.starts_with("REVERB GATE")),
-            "{v:?}"
-        );
+            .collect();
+        assert!(!clicks.is_empty(), "{kind}");
+        for v in clicks {
+            assert!(!matches!(v, Verdict::Exempt(_)), "{kind}: {v:?}");
+        }
     }
-    assert!(
-        clicks(DEMO)
-            .iter()
-            .all(|v| !matches!(v, Verdict::Exempt(_))),
-        "ROOM stays click-gated"
-    );
 }
 
 /// The spec's demos with P1 and P2 held.
