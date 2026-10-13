@@ -85,6 +85,34 @@ put-factory-tapes dir="target/tapes-v1":
     [ ${#srcs[@]} -gt 0 ] || { echo "no .SRC in {{dir}}: just factory-tapes" >&2; exit 1; }
     for f in "${srcs[@]}"; do python3 tools/chimera-usb.py put "$f" /CHIMERA/TAPES/; done
 
+# The public factory set onto the unit's card over USB: each Sound with
+# `--over` (a re-run replaces it), each demo project as the unit saves one
+# (`put` takes no `--over` for projects; it saves a new generation). Older
+# alpha firmware saved user projects from P0000001, and the demos land on
+# P0000001-P0000009, so this refuses, naming them, if any of those is on
+# the card, unless `--replace-demos`. `just factory-sounds` builds `dir`.
+# CHIMERA_USB overrides the console command (the refusal test stubs it).
+put-factory-sounds dir="target/factory-sounds/public" *flags:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shopt -s nullglob
+    USB=${CHIMERA_USB:-"python3 tools/chimera-usb.py"}
+    replace=0
+    for f in {{flags}}; do
+        case $f in --replace-demos) replace=1;; *) echo "unknown flag $f" >&2; exit 1;; esac
+    done
+    sounds=("{{dir}}"/CHIMERA/SOUNDS/*.A); projects=("{{dir}}"/CHIMERA/PROJECTS/*.A)
+    [ ${#sounds[@]} -gt 0 ] && [ ${#projects[@]} -gt 0 ] || { echo "no factory set in {{dir}}: just factory-sounds" >&2; exit 1; }
+    listing=$($USB ls)
+    taken=$(printf '%s\n' "$listing" | grep -E '^P000000[1-9]\.[AB] ' | cut -d' ' -f1 | cut -d. -f1 | sort -u | tr '\n' ' ' || true)
+    if [ -n "$taken" ] && [ $replace = 0 ]; then
+        echo "the card already has projects ${taken}: the demos would replace them." >&2
+        echo "back them up (get), or pass --replace-demos to overwrite them." >&2
+        exit 1
+    fi
+    for f in "${sounds[@]}"; do $USB put "$f" /CHIMERA/SOUNDS/"$(basename "$f")" --over; done
+    for f in "${projects[@]}"; do $USB put "$f" /CHIMERA/PROJECTS/"$(basename "$f")"; done
+
 # Build STM32 firmware (release)
 firmware:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
@@ -157,20 +185,45 @@ release version *flags:
     if grep -n -E -e '/home/|/Users/|[A-Za-z0-9._-]+@[A-Za-z0-9-]+\.|https?://|ADR|docs/|chimera-(core|board|engine|desktop|stm32)|\.rs\b|joegiralt' -e "$(id -un)" "$out/chimera-usb.py"; then
         echo "chimera-usb.py leaks a private reference" >&2; exit 1
     fi
-    (cd "$out" && sha256sum chimera-$V.bin chimera-$V-orbit.bin chimera-usb.py > SHA256SUMS)
+    # The factory set: the public build's CHIMERA/ + manifest.json, nothing
+    # private (FACTORY_PUBLIC overrides the dir, and skips the fresh build).
+    if [ -z "${FACTORY_PUBLIC:-}" ]; then just factory-sounds; fi
+    pub=${FACTORY_PUBLIC:-target/factory-sounds/public}
+    [ -d "$pub/CHIMERA" ] && [ -f "$pub/manifest.json" ] || { echo "no factory set in $pub: just factory-sounds" >&2; exit 1; }
+    python3 -I - "$pub" "$out/factory-v1.zip" <<'PY'
+    import sys, pathlib, zipfile
+    src, dst = pathlib.Path(sys.argv[1]), sys.argv[2]
+    names = sorted(p.relative_to(src).as_posix() for p in src.rglob("*") if p.is_file() and (p.parts[len(src.parts)] == "CHIMERA" or p.name == "manifest.json" and p.parent == src))
+    with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as z:
+        for n in names:
+            i = zipfile.ZipInfo(n, (2026, 1, 1, 0, 0, 0)); i.compress_type = zipfile.ZIP_DEFLATED; i.external_attr = 0o644 << 16
+            z.writestr(i, (src / n).read_bytes())
+    PY
+    if python3 -I -m zipfile -l "$out/factory-v1.zip" | grep -E 'S91000(1[0-9]|2[0-5])\.A'; then
+        echo "factory-v1.zip lists a private port id: refusing" >&2; exit 1
+    fi
+    (cd "$out" && sha256sum chimera-$V.bin chimera-$V-orbit.bin chimera-usb.py factory-v1.zip > SHA256SUMS)
     # Nothing private ships: exactly these assets, and none is a private
     # file (the stock bootloader backup, the bootloader, a dev chimera.bin).
-    [ "$(ls "$out" | LC_ALL=C sort | tr '\n' ' ')" = "SHA256SUMS chimera-$V-orbit.bin chimera-$V.bin chimera-usb.py " ] || { echo "unexpected assets in $out" >&2; exit 1; }
+    [ "$(ls "$out" | LC_ALL=C sort | tr '\n' ' ')" = "SHA256SUMS chimera-$V-orbit.bin chimera-$V.bin chimera-usb.py factory-v1.zip " ] || { echo "unexpected assets in $out" >&2; exit 1; }
     for p in preenfm3-bootloader-backup.bin bootloader.bin chimera.bin; do
         [ -f "$p" ] || continue
         h=$(sha256sum "$p" | cut -d' ' -f1)
         if grep -q "$h" "$out/SHA256SUMS"; then echo "asset is $p: refusing" >&2; exit 1; fi
     done
+    # The demo list comes from projects.toml, so the notes never drift from the build.
+    python3 -I - > "$out/demos.md" <<'PY'
+    import tomllib
+    for p in tomllib.load(open("tools/factory-sounds/projects.toml", "rb"))["project"]:
+        if "held" not in p:
+            print("- `%s` %s: %s." % (p["id"], p["name"], p["try"].rstrip(".")))
+    PY
     sed -e "s/@VERSION@/$V/g" -e "s/@COMMIT@/$(git rev-parse --short HEAD)/g" -e "s/@DATE@/$(date -u +%F)/g" \
-        docs/alpha/RELEASE-NOTES.md.tmpl > "$out/RELEASE-NOTES.md"
+        -e "/@DEMOS@/{r $out/demos.md" -e "d}" docs/alpha/RELEASE-NOTES.md.tmpl > "$out/RELEASE-NOTES.md"
+    rm "$out/demos.md"
     ! grep -q '@[A-Z]*@' "$out/RELEASE-NOTES.md" || { echo "unfilled template field" >&2; exit 1; }
-    assets=("$out/chimera-$V.bin" "$out/chimera-$V-orbit.bin" "$out/chimera-usb.py" "$out/SHA256SUMS")
-    echo "assets:"; (cd "$out" && ls -l chimera-$V.bin chimera-$V-orbit.bin chimera-usb.py SHA256SUMS && cat SHA256SUMS)
+    assets=("$out/chimera-$V.bin" "$out/chimera-$V-orbit.bin" "$out/chimera-usb.py" "$out/factory-v1.zip" "$out/SHA256SUMS")
+    echo "assets:"; (cd "$out" && ls -l chimera-$V.bin chimera-$V-orbit.bin chimera-usb.py factory-v1.zip SHA256SUMS && cat SHA256SUMS)
     if [ $dry = 1 ]; then
         echo "dry run: would draft v$V on $REPO with notes $out/RELEASE-NOTES.md"; exit 0
     fi
