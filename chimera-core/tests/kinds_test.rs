@@ -171,7 +171,7 @@ fn one_linked_formant_fits_and_two_do_not() {
     p.try_set_kind(0, OpKind::Formant).unwrap();
     assert_eq!(p.try_set_kind(1, OpKind::Formant), Err(OverBudget));
     // Linked and unlinked share the budget: 1 linked + 1 unlinked fits
-    // (570), 1 linked + 2 unlinked doesn't (770 > 698).
+    // (590), 1 linked + 2 unlinked doesn't (790 > 698).
     p.try_set_kind(3, OpKind::Formant).unwrap();
     assert_eq!(p.try_set_kind(5, OpKind::Formant), Err(OverBudget));
     assert!(OpKind::Formant.charge(true) + OpKind::Formant.charge(false) <= FORMANT_BUDGET_FRMT.0);
@@ -499,7 +499,7 @@ fn an_over_budget_file_decodes_its_excess_as_w1() {
     let file = sound_file_with_kinds(&[16; 6]);
     let (s, over) = decode_sound(&file).unwrap();
     let p = &s.params.algo;
-    // The neutral base's T1 ∪ A1: operators 1 and 4 hold a FRMT (370 +
+    // The neutral base's T1 ∪ A1: operators 1 and 4 hold a FRMT (390 +
     // 200), the rest load W1.
     let k = p.kinds().all();
     assert_eq!(k, greedy([OpKind::Formant; OPS], p.linked()));
@@ -551,7 +551,7 @@ fn a_file_s_algorithm_degrades_the_formants_it_cannot_hold() {
     );
     assert!(over);
     // A11 links into operators 1–4: one FRMT there, then 5 and 6 unlinked
-    // would be 370 + 400 = 770, over.
+    // would be 390 + 400 = 790, over.
     let (s, over) = decode_sound(&sound_file_with_algs(
         AlgoId::A11,
         AlgoId::A11,
@@ -566,7 +566,7 @@ fn a_file_s_algorithm_degrades_the_formants_it_cannot_hold() {
     // Written after its operators (no Sound is), an algorithm that would
     // link into a full patch is refused and reported, never lost.
     // On the neutral base's T1 ∪ A1, FRMT on 1 (linked) and 4 (not) and a NOIS
-    // fit (370 + 200 + 40 = 610); A11 would link 4 too (760).
+    // fit (390 + 200 + 40 = 630); A11 would link 4 too (800).
     let (s, over) = decode_sound(&sound_file_with_algs(
         AlgoId::A11,
         AlgoId::A11,
@@ -764,4 +764,47 @@ fn the_wave_cell_reads_and_writes_the_kind() {
     }
     assert_eq!(s.params.algo.kinds().get(2), OpKind::Noise);
     assert_eq!(chimera_core::dsp::algo::kinds::OP_KIND_NAMES[17], "NOISE");
+}
+
+/// The budget's floor rises with a FRMT, so a patch legal whole can be
+/// over it in operator order: the Sound decodes whole all the same.
+#[test]
+fn a_patch_that_fits_whole_round_trips_whatever_its_order() {
+    use common::formant::{FRMT_LAST, frmt_last};
+    let s = frmt_last();
+    let l = s.params.algo.linked();
+    assert!((0..OPS - 1).all(|i| l.has(i)) && !l.has(OPS - 1));
+    let mut no_frmt = FRMT_LAST;
+    no_frmt[OPS - 1] = OpKind::Table(WaveId::W1);
+    assert!(fits(&FRMT_LAST, l) && !fits(&no_frmt, l));
+    let (d, over) = decode_sound(&common::codec_util::encode(&s)).unwrap();
+    assert!(!over, "nothing refused");
+    assert_eq!(d.params.algo.kinds().all(), FRMT_LAST);
+    assert!(d.bits_eq(&s));
+}
+
+/// Op 6's FRMT moves to every kind the patch fits with whole, and to none
+/// that would leave it over its floor.
+#[test]
+fn a_frmt_steps_to_every_kind_the_whole_patch_fits() {
+    let s = common::formant::frmt_last();
+    let p = &s.params.algo;
+    let (k, l, op) = (p.kinds(), p.linked(), OPS - 1);
+    for c in 0..=17u8 {
+        let to = OpKind::from_code(c).unwrap();
+        let mut whole = k.all();
+        whole[op] = to;
+        assert_eq!(k.with(op, to, l).is_ok(), fits(&whole, l), "{to:?}");
+    }
+    // NOIS on 1–5 alone is over the four-voice floor: op 6 stays FRMT.
+    let st = step_kind(k, l, op, -1);
+    assert_eq!((st.to, st.skipped), (OpKind::Formant, true));
+    // With NOIS on 1–4, every kind fits whole and every step lands.
+    let mut q = *p;
+    q.try_set_kind(4, OpKind::Table(WaveId::W1)).unwrap();
+    for d in -16..=1i8 {
+        let st = step_kind(q.kinds(), l, op, d);
+        assert_eq!(st.to.code() as i16, 16 + i16::from(d), "{d}");
+        assert!(!st.skipped);
+    }
 }

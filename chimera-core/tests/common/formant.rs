@@ -324,3 +324,28 @@ pub fn synth_level(f0: f32, fc: f32, bw: f32, s: Skirt) -> (f32, f32) {
     let r = f64::from(R_REF) / core::f64::consts::SQRT_2;
     ((20.0 * (rms / r).log10()) as f32, peak as f32)
 }
+
+/// A17 links into operators 1–5 and not 6: FRMT on 6 (200) and NOIS on
+/// 1–5 (5·40) spend 400, within the three-voice budget, while NOIS on 1–5
+/// alone (200) is over the four-voice one. Legal whole, never in order.
+pub fn frmt_last() -> chimera_core::preset::Sound {
+    use chimera_core::params::EngineType;
+    let mut s = chimera_core::preset::Sound::neutral(EngineType::Algo);
+    let p = &mut s.params.algo;
+    p.try_set_algs(AlgoId::A17, AlgoId::A17).unwrap();
+    p.try_set_kind(OPS - 1, OpKind::Formant).unwrap();
+    for i in 0..OPS - 1 {
+        p.try_set_kind(i, OpKind::Noise).unwrap();
+    }
+    s
+}
+
+/// `frmt_last`'s kinds.
+pub const FRMT_LAST: [OpKind; OPS] = [
+    OpKind::Noise,
+    OpKind::Noise,
+    OpKind::Noise,
+    OpKind::Noise,
+    OpKind::Noise,
+    OpKind::Formant,
+];

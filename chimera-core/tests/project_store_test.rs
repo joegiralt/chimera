@@ -745,3 +745,22 @@ fn an_over_budget_part_loads_its_excess_as_w1_and_says_so() {
         "a save writes other bytes"
     );
 }
+
+/// A Part legal whole but over the floor in operator order (A17, NOIS on
+/// 1–5 before op 6's FRMT) loads as saved, with no note.
+#[test]
+fn a_part_that_fits_whole_loads_as_saved() {
+    let (mut src, _) = Project::boxed();
+    **src.edit_part(PartId::ALL[0]).sound = common::formant::frmt_last();
+    let bytes = encode_project(&src);
+    let mut s = MemStore::new(1);
+    both_sides(&mut s, &bytes);
+    let (mut q, t) = Project::boxed();
+    let out = load_file(&mut Card::new(), &mut s, &mut q, t, id(1), &LoadLink::new());
+    assert_eq!(out.note, None);
+    assert_eq!(
+        q.part(PartId::ALL[0]).sound.params.algo.kinds().all(),
+        common::formant::FRMT_LAST
+    );
+    assert_eq!(project_status(&q, t), ProjectStatus::Saved);
+}

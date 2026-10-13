@@ -73,9 +73,8 @@ fn same(a: DiskValue, b: DiskValue) -> bool {
 /// code, an unknown id, or an enum code refused, none of them retired or
 /// migrated. A block the target doesn't hold counts nothing. An operator
 /// kind, or an algorithm linking into one, that the formant budget refuses
-/// isn't lost: it keeps the target's, and `refused_kind` says so. Sounds
-/// write ALG A and B before their operators (`BlockRef::ALL`), so a FRMT
-/// the file's algorithm can't hold degrades to the base's table kind.
+/// isn't lost: it keeps the target's, and `refused` names it, for
+/// `SoundCheck` to retry once the whole Sound is in.
 pub fn decode_block(
     payload: &[u8],
     migrations: &[Migration],
@@ -145,6 +144,7 @@ pub fn decode_block(
         }
     }
 
+    let mut refused = [None; 2];
     for (s, v) in specs.iter().zip(vals) {
         match v {
             Some(DiskValue::Real(x)) => blk.set(s.id, x),
@@ -160,7 +160,9 @@ pub fn decode_block(
                         && matches!(s.id, AlgoParams::ALG_A | AlgoParams::ALG_B)
                         && AlgoId::from_index(c).is_some())
                 {
-                    out.refused_kind = true;
+                    if let Some(r) = refused.iter_mut().find(|r| r.is_none()) {
+                        *r = Some((s.id, c));
+                    }
                 } else {
                     *lost += 1;
                 }
@@ -169,6 +171,7 @@ pub fn decode_block(
             None => {}
         }
     }
+    out.refused = refused;
     if retired.any()
         && let Some(t) = translations.iter().find(|t| t.block == code)
     {
@@ -182,8 +185,9 @@ pub fn decode_block(
 pub struct Applied {
     /// Entries lost.
     pub count: u16,
-    /// An operator kind the formant budget refused (`Kinds`).
-    pub refused_kind: bool,
+    /// The operator kind, or ALG A and B, the formant budget refused
+    /// (`Kinds`): the id and its code.
+    pub refused: [Option<(ParamId, u8)>; 2],
 }
 
 /// A set of `u8`s: ids or codes a record may name once.
