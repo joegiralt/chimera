@@ -100,36 +100,6 @@ FILTER.LEVEL = "0.7"  # 89
 OUT.LEVEL = "1"  # 127
 trim = "-1.0"
 
-[[sound]]
-id = "S9100028"
-name = "VOWEL CHOIR"
-engine = "ALGO"
-note = "FORMANT CHOIR: COMING SOON"
-demo = "poly"
-plays = "long"
-home = "C3"
-status = "placeholder"
-
-[[sound]]
-id = "S9100029"
-name = "TALK BASS"
-engine = "ALGO"
-note = "FORMANT BASS: COMING SOON"
-demo = "poly"
-plays = "bass"
-home = "C2"
-status = "placeholder"
-
-[[sound]]
-id = "S9100030"
-name = "FORMANT LEAD"
-engine = "ALGO"
-note = "FORMANT LEAD: COMING SOON"
-demo = "poly"
-plays = "long"
-home = "C3"
-status = "placeholder"
-
 # The late-90s IDM set (S9100038-43, with va.toml and modal.toml): in the
 # manner of Plaid, Jega and Proswell, named here only.
 
@@ -348,6 +318,7 @@ plays = "long stab"
 home = "C3"
 phrase = "pad"
 harmonic = "yes"
+approved = "round 5 68B39C34"
 ALGO.ALG_A = "T5"
 ALGO.ALG_B = "T5"
 ALGO.VOWEL = "0"  # U
@@ -417,6 +388,7 @@ plays = "bass texture"
 home = "C2"
 phrase = "bass"
 harmonic = "yes"
+approved = "round 5 45191822"
 ALGO.ALG_A = "T5"
 ALGO.ALG_B = "T5"
 ALGO.VOWEL = "0"  # U
@@ -481,6 +453,7 @@ plays = "long texture"
 home = "C3"
 phrase = "lead"
 harmonic = "yes"
+approved = "round 5 8596CF50"
 ALGO.ALG_A = "T1"
 ALGO.ALG_B = "T1"
 ALGO.VOWEL = "25"  # O
@@ -545,6 +518,7 @@ plays = "short long texture"
 home = "C4"
 phrase = "arp"
 harmonic = "no"
+approved = "round 5 F94CF272"
 ALGO.ALG_A = "A13"
 ALGO.ALG_B = "A13"
 ALGO.VOWEL = "50"  # A
@@ -614,6 +588,7 @@ plays = "long stab"
 home = "C3"
 phrase = "sweep"
 harmonic = "yes"
+approved = "round 5 8F49B233"
 ALGO.ALG_A = "T7"
 ALGO.ALG_B = "T7"
 ALGO.VOWEL = "0"  # U
@@ -682,6 +657,7 @@ plays = "long texture"
 home = "C3"
 phrase = "wonky"
 harmonic = "yes"
+approved = "round 5 CB859B60"
 ALGO.ALG_A = "A16"
 ALGO.ALG_B = "A16"
 ALGO.VOWEL = "0"  # U
