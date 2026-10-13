@@ -138,14 +138,14 @@ fn main() {
         ui.set_orbit_view(orbit_r.read());
         // The OP pages' band: the edited Part's newest voice.
         ui.set_formant_views(formant_r.read());
-        // Mapped CCs first: a turn this frame wins over them.
+        // UI framework handles navigation + encoder -> param binding
+        ui.handle_input(&controls);
+        // Mapped CCs, in the room the hand's moves left.
         #[cfg(feature = "midi")]
         ui.hear_ccs(
             audio::MIDI_CCS.drain(),
             chimera_hal::Controls::now_ms(&controls),
         );
-        // UI framework handles navigation + encoder -> param binding
-        ui.handle_input(&controls);
         if ui
             .take_dfu_synced(&mut sync, &mut card, &mut store, &mut settings)
             .is_some()

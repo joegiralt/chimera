@@ -668,6 +668,7 @@ impl UiState {
         self.show_note_or_skipped(note);
         self.orbit.booted(self.project.orbit_mut());
         self.rev_knobs.clear();
+        self.cc.clear();
         self.project_replaced(was);
     }
 
@@ -770,6 +771,8 @@ impl UiState {
         // A project stores only its TYPE's knobs (reverb TYPEs spec § A
         // TYPE change loads that TYPE's knobs).
         self.rev_knobs.clear();
+        // Every Part's Sound is new, its `Loads` unmoved: no ramp survives.
+        self.cc.clear();
         self.project_replaced(was);
         // Only a file load sets it: NEW, loaded or fallen back to, has none.
         if let Some(f) = self.project.meta().file() {
@@ -2224,12 +2227,18 @@ impl UiState {
     pub fn handle_input(&mut self, controls: &impl Controls) {
         if self.idle.touch(any_turn(controls), any_down(controls)) == saver::Touch::Swallow {
             // A held key still ages.
-            self.jog_pass(controls.now_ms().0);
+            let jog = self.jog_pass(controls.now_ms().0);
+            self.cc.hand(u8::from(jog));
             return;
         }
         let rev = self.project.rev();
         self.input(controls);
-        self.jog_pass(controls.now_ms().0);
+        let jog = self.jog_pass(controls.now_ms().0);
+        // Knob moves the hand may have made: a turn or the reel, each one.
+        let turns = ALL_ENCODERS
+            .iter()
+            .filter(|&&e| controls.encoder_delta(e) != 0);
+        self.cc.hand(turns.count() as u8 + u8::from(jog));
         // A save or clear moves the browser's hints, costs and meter.
         self.browser_dirty |= self.loc.browse().is_some() && self.project.rev() != rev;
         self.flush_orbit();
@@ -2273,17 +2282,18 @@ impl UiState {
 
     /// SCRUB's reel this pass: POSITION moves at the jog's speed, gliding
     /// to a stop through DRAG once the FINGER is let go.
-    fn jog_pass(&mut self, now_ms: u32) {
+    fn jog_pass(&mut self, now_ms: u32) -> bool {
         let t = self.project.part(self.active_part).sound.params.tape;
         if t.model != TapeModel::Scrub {
             self.jog = jog::Jog::new();
-            return;
+            return false;
         }
         let mv = self.jog.pass(now_ms, t.drag);
         if mv != 0.0 {
             let p = &mut self.project.edit_part(self.active_part).sound.params.tape;
             p.position = crate::dsp::clampf(p.position + mv, 0.0, 1.0);
         }
+        mv != 0.0
     }
 
     fn input(&mut self, controls: &impl Controls) {
@@ -2519,6 +2529,9 @@ impl UiState {
                         p.snap_encoder(i, delta, params);
                     } else {
                         p.apply_encoder(i, delta, params);
+                    }
+                    if let Some(a) = p.binding(i) {
+                        self.cc_hand(at, a);
                     }
                     continue;
                 }

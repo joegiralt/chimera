@@ -22,13 +22,18 @@ use chimera_core::midi_map::Mappable;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams};
 use chimera_core::preset::Sound;
-use chimera_core::project::{Line, PartFrom, PartId, PartSource, PartStatus, part_status};
+use chimera_core::project::{
+    Confirmed, Line, LoadLink, PartFrom, PartId, PartSource, PartStatus, ProjectSource,
+    ProjectStatus, ReplaceGuard, part_status,
+};
 use chimera_core::scope::ScopeWriter;
+use chimera_core::storage::{Card, SystemSync};
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry::{ALGO_OP_PAGES, FILTER};
 use chimera_core::ui::busy::ToastStep;
 use chimera_core::ui::nav::PartChain;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
+use chimera_hal::testkit::MemStore;
 use chimera_hal::{ButtonId, EncoderId, Ms, SAMPLE_RATE};
 use screen::{Input, feed};
 
@@ -37,6 +42,7 @@ const P2: PartId = PartId::ALL[1];
 const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
 const TYPE: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::KIND);
 const WAVE_A: ParamAddr = ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::WAVE);
+const RESO: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE);
 const STRUCTURE: ParamAddr = ParamAddr::new(BlockRef::Modal, ModalParams::STRUCTURE);
 
 /// A UI pass: 4 ms, three 1.33 ms audio blocks.
@@ -121,10 +127,11 @@ impl Bench {
     /// One pass `ms` on: the CCs, a frame of input, a publish, the blocks.
     fn pass_with(&mut self, ccs: Vec<CcEvent>, input: Option<Input>, ms: u32, blocks: usize) {
         self.now += ms;
-        self.ui.hear_ccs(ccs.into_iter(), Ms(self.now));
+        // As the shells: the hand first, then the CCs in the room it left.
         if let Some(i) = input {
             feed(&mut self.ui, i);
         }
+        self.ui.hear_ccs(ccs.into_iter(), Ms(self.now));
         self.publish();
         for _ in 0..blocks {
             self.inst
@@ -213,14 +220,14 @@ fn cc_moves_cutoff() {
     assert_eq!(part_status(p.part(P1), p.pool()), PartStatus::Edited);
 }
 
-/// 8 continuous knobs Part 1's engine reads, CUTOFF aside (the hand's):
-/// every ramp step is a move.
+/// 8 continuous knobs Part 1's engine reads, the filter's aside (the
+/// hand's, on FLT): every ramp step is a move.
 fn eight_knobs() -> Vec<&'static Knob> {
     let k: Vec<_> = KNOBS
         .iter()
         .filter(|k| {
             let m = Mappable::new(k.addr);
-            k.addr != CUTOFF
+            k.addr.block != BlockRef::Filter
                 && k.spec.kind == ParamKind::Continuous
                 && k.addr.block.voice_reads()
                 && m.is_some_and(|m| m.live(EngineType::Algo))
@@ -231,8 +238,10 @@ fn eight_knobs() -> Vec<&'static Knob> {
     k
 }
 
-#[test]
-fn cc_sweep_never_snaps() {
+/// 8 mapped knobs swept 0→127 over 2 s, FLT's `hands` each turned every
+/// pass: no publish overflows, the budget is full, every knob glides and
+/// arrives.
+fn sweep(hands: &[EncoderId]) {
     let mut b = Bench::algo();
     let knobs = eight_knobs();
     for (i, k) in knobs.iter().enumerate() {
@@ -242,9 +251,10 @@ fn cc_sweep_never_snaps() {
         let mut blk = s.params.block_mut(k.addr.block).unwrap();
         blk.set(k.addr.param, k.spec.denormalize(0.0));
     }
-    // CUTOFF mid-range: each hand tick moves it.
-    let c = spec(CUTOFF).denormalize(0.5);
-    b.ui.project_mut().edit_part(P1).sound.params.filter.cutoff = c;
+    // The filter mid-range: each hand tick moves its knob.
+    let f = &mut b.ui.project_mut().edit_part(P1).sound.params.filter;
+    f.cutoff = spec(CUTOFF).denormalize(0.5);
+    f.resonance = spec(RESO).denormalize(0.5);
     b.publish();
     b.note();
     b.most = 0;
@@ -262,12 +272,11 @@ fn cc_sweep_never_snaps() {
                 .collect()
         };
         was = v;
-        // The hand on CUTOFF every pass: the move the budget leaves it.
-        let turn = Input::turn(EncoderId::B, if t % 2 == 0 { 1 } else { -1 });
-        b.now += PASS_MS;
-        b.ui.hear_ccs(ccs.into_iter(), Ms(b.now));
-        feed(&mut b.ui, turn);
-        b.publish();
+        let d = if t % 2 == 0 { 1 } else { -1 };
+        let turn = hands
+            .iter()
+            .fold(Input::default(), |i, &e| i.and_turn(e, d));
+        b.pass_with(ccs, Some(turn), PASS_MS, 0);
         for _ in 0..PASS_BLOCKS {
             b.inst
                 .render(&mut b.fx, &mut b.dac, &b.shared, &mut b.scope);
@@ -278,9 +287,9 @@ fn cc_sweep_never_snaps() {
             }
         }
     }
-    // Full, never over: 5 CC knobs and the hand.
-    assert_eq!(b.most as usize, MOVES, "a publish of {} moves", b.most);
-    b.passes(100);
+    // Full, never over: the CC knobs, the hand's, and one kept for a key.
+    assert_eq!(b.most as usize, MOVES - 1, "a publish of {} moves", b.most);
+    b.passes(200);
     for (i, k) in knobs.iter().enumerate() {
         assert_eq!(b.place(P1, k.addr), 1.0, "{:?} swept to the top", k.addr);
         let bound = 2.0 * (1.0 - coeff(k.tau, SAMPLE_RATE)) * FAST_JUMP;
@@ -292,6 +301,17 @@ fn cc_sweep_never_snaps() {
             steps[i]
         );
     }
+}
+
+#[test]
+fn cc_sweep_never_snaps() {
+    sweep(&[EncoderId::B]);
+}
+
+/// Two knobs turned each pass: the CCs give up a write for each.
+#[test]
+fn cc_sweep_under_two_hands_never_overflows() {
+    sweep(&[EncoderId::B, EncoderId::C]);
 }
 
 #[test]
@@ -512,4 +532,69 @@ fn ring_keeps_the_last_value() {
         "{} != {want}",
         b.place(P1, CUTOFF)
     );
+}
+
+/// `go` loaded as LOAD does, with no audio to settle.
+fn load_project(b: &mut Bench, s: &mut MemStore, go: Confirmed<ProjectSource>) {
+    let mut card = Card::new();
+    let (mut sync, mut set, _) = SystemSync::boot(&mut card, s);
+    let link = LoadLink::new();
+    b.ui.load_project(&mut card, s, &mut sync, &mut set, go, &link, |swap, _| {
+        let _ = swap.settle(&link, || false);
+    });
+}
+
+/// Mid-ramp on CUTOFF, a project whose Part 1 maps CC 74 to RESO
+/// loads: the old ramp writes nothing into it, so it stays Saved.
+#[test]
+fn a_project_load_ends_every_ramp() {
+    let mut s = MemStore::new(1);
+    let f = screen::put_with(&mut s, "MAPPED", |p| {
+        let m = Mappable::new(RESO).unwrap();
+        p.edit_part(P1)
+            .sound
+            .map
+            .learn(Cc::new(74).unwrap(), m)
+            .unwrap();
+    });
+    let mut b = Bench::algo();
+    b.map(P1, 74, CUTOFF);
+    b.pass(&[(74, 0)]);
+    b.pass(&[]);
+    assert!(b.stored(P1, CUTOFF) > spec(CUTOFF).min, "mid-ramp");
+    let go = common::project::confirm_load(b.ui.project(), b.ui.template(), f);
+    load_project(&mut b, &mut s, go);
+    assert_eq!(b.ui.project().meta().file(), Some(f));
+    let (reso, rev) = (b.stored(P1, RESO), b.ui.project().rev());
+    b.passes(20);
+    assert_eq!(b.stored(P1, RESO), reso);
+    assert_eq!(b.ui.project().rev(), rev, "nothing written");
+    assert_eq!(b.ui.project_status(), ProjectStatus::Saved);
+}
+
+/// Mid-ramp, NEW: the next map heard writes nothing until a CC comes.
+#[test]
+fn new_ends_every_ramp() {
+    let mut s = MemStore::new(1);
+    let mut b = Bench::algo();
+    b.map(P1, 74, CUTOFF);
+    b.pass(&[(74, 0)]);
+    b.pass(&[]);
+    assert!(b.stored(P1, CUTOFF) > spec(CUTOFF).min, "mid-ramp");
+    let (p, t) = (b.ui.project(), b.ui.template());
+    let go = ReplaceGuard::check(p, t, ProjectSource::New)
+        .unwrap_or_else(|n| n.into_pending().anyway(p));
+    load_project(&mut b, &mut s, go);
+    let status = b.ui.project_status();
+    let (c, rev) = (b.stored(P1, CUTOFF), b.ui.project().rev());
+    b.passes(20);
+    assert_eq!(b.stored(P1, CUTOFF), c);
+    assert_eq!(b.ui.project().rev(), rev, "nothing written");
+    assert_eq!(b.ui.project_status(), status);
+    // A map on the new Sound, entry 0 again: still no stale ramp.
+    b.map(P1, 74, CUTOFF);
+    let rev = b.ui.project().rev();
+    b.passes(20);
+    assert_eq!(b.stored(P1, CUTOFF), c);
+    assert_eq!(b.ui.project().rev(), rev, "nothing written");
 }

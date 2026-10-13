@@ -184,7 +184,7 @@ fn axi_counts_the_project() {
     );
 }
 
-/// UiState is one AXI static (`chimera-board/src/shared.rs`). Its Project
+/// UiState is one D2 static (`chimera-board/src/shared.rs`). Its Project
 /// is counted on its own in `axi_report`; the rest (navigation, renderer,
 /// regions, focus) is held to a growth tripwire.
 #[test]
@@ -192,7 +192,7 @@ fn ui_state_rest_under_4k() {
     use chimera_core::project::Project;
     let rest = size_of::<chimera_core::ui::UiState>() - size_of::<Project>();
     eprintln!("UiState without its Project = {rest} B");
-    // A growth tripwire, no physical limit: `UiState` is an AXI static
+    // A growth tripwire, no physical limit: `UiState` is a D2 static
     // built in place, never moved or cloned. 512 B of it is TAPE's strip
     // (the overview's 432 B cache and its key, spec § RAM); 2.75 KB its
     // SOURCE cell (a load's `SourceCheck` 1 KB, the 16 heads, the

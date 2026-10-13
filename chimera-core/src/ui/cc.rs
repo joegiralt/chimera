@@ -1,7 +1,8 @@
 //! Mapped CCs move the Sound (spec §§ 5-7): each Part's map heard on its
 //! channel, continuous targets ramped over the gap between CCs, stepped
-//! ones binned through the encoder's edit path, and at most `MOVES − 1`
-//! knob writes a Part a pass, so a publish never overflows.
+//! ones binned through the encoder's edit path, and only as many knob
+//! writes a Part a pass as the hand left room for, so a publish never
+//! overflows.
 
 use chimera_hal::Ms;
 
@@ -20,13 +21,15 @@ use crate::project::{Loads, PartId, Project};
 const NO_BIN: u8 = u8::MAX;
 
 /// Each Part's entries' ramps and last bins, its budget cursor, and the
-/// Sound loads they were heard on. ~1.6 KB.
+/// Sound loads they were heard on; the hand's knob moves this pass.
+/// ~1.6 KB.
 pub struct CcState {
     ramps: [[Ramp; MAP_LEN]; MAX_PARTS],
     bins: [[u8; MAP_LEN]; MAX_PARTS],
     cursor: [u8; MAX_PARTS],
     loads: [Loads; MAX_PARTS],
     last: Ms,
+    hand: u8,
 }
 
 impl Default for CcState {
@@ -43,7 +46,24 @@ impl CcState {
             cursor: [0; MAX_PARTS],
             loads: [Loads::NONE; MAX_PARTS],
             last: Ms(0),
+            hand: 0,
         }
+    }
+
+    /// A new project: no ramp or bin survives it.
+    pub(super) fn clear(&mut self) {
+        let (last, hand) = (self.last, self.hand);
+        *self = Self {
+            last,
+            hand,
+            ..Self::new()
+        };
+    }
+
+    /// The knob moves the hand made this pass, at most: its turns and the
+    /// reel's (`handle_input`), which the CC writes after it leave room for.
+    pub(super) fn hand(&mut self, moves: u8) {
+        self.hand = moves;
     }
 }
 
@@ -63,6 +83,7 @@ fn is_knob(e: &MapEntry) -> bool {
 
 impl UiState {
     /// Each Part's ramps `now` on, then this pass's CCs (spec §§ 5-7).
+    /// After `handle_input`, before the publish: the hand's moves are in.
     pub fn hear_ccs(&mut self, ccs: impl Iterator<Item = CcEvent>, now: Ms) {
         let elapsed = now.since(self.cc.last);
         self.cc.last = now;
@@ -140,8 +161,9 @@ impl UiState {
     }
 
     /// Part `p`'s moving ramps, `elapsed` ms on: every non-knob one, and
-    /// at most `MOVES − 1` knobs, round-robin, so a hand turn still fits
-    /// the publish. The rest keep their ramp and go first next pass.
+    /// round-robin as many knobs as fit the publish beside the hand's
+    /// moves and one kept for a key's edit (a route deleted or primed).
+    /// The rest keep their ramp and go first next pass.
     fn cc_step(&mut self, p: PartId, elapsed: u32) {
         let i = p.index();
         let map: MidiMap = self.project.part(p).sound.map;
@@ -164,7 +186,16 @@ impl UiState {
             }
         }
         let mut cursor = usize::from(self.cc.cursor[i]);
-        let pick = budget(&due, &mut cursor, MOVES - 1);
+        let hand = if p == self.active_part {
+            self.cc.hand
+        } else {
+            0
+        };
+        // Per pass is per publish: writes need a ms to pass, and the ms
+        // clock's 2 ms tick outlasts a 1.33 ms block, so the audio never
+        // takes two passes' writes in one block.
+        let cap = (MOVES - 1).saturating_sub(usize::from(hand));
+        let pick = budget(&due, &mut cursor, cap);
         self.cc.cursor[i] = cursor as u8;
         for (j, e) in map.entries().iter().enumerate() {
             if !(pick[j] || own[j]) {
