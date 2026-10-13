@@ -142,13 +142,69 @@ pub struct Source {
     /// dB on OUT LEVEL, and its line (0: none written).
     pub trim: f32,
     pub trim_line: usize,
-    /// Provenance, ports only: `(line, "tx81z <bank sha> #<voice>")`.
-    pub from: Option<(usize, String)>,
-    pub edits: Option<String>,
+    /// Provenance, ports only (spec § 3): `(line, from)`.
+    pub from: Option<(usize, PortFrom)>,
+    /// What a port changes, by category (ports only).
+    pub edits: Option<Edits>,
     /// `level = "by ear -16.2: <why>"`: a level set off-centre by ear,
     /// pinned to its LUFS.
     pub level: Option<ByEar>,
     pub status: Status,
+}
+
+/// A port's provenance: `from = "tx81z <bank sha-256, first 8 hex> #<voice>"`,
+/// never the Yamaha voice name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PortFrom {
+    /// The bank file's SHA-256, its first 4 bytes.
+    pub bank: u32,
+    /// 1-32, as the TX81Z numbers a bank's voices.
+    pub voice: u8,
+}
+
+/// A category a port's `edits` names (spec § 3; formant by owner
+/// direction 2026-10-13: ops 5-6 as a formant layer).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Edit {
+    Filter,
+    Fold,
+    Lfo,
+    Envelope,
+    Effects,
+    Formant,
+}
+
+impl Edit {
+    pub const ALL: [Edit; 6] = [
+        Edit::Filter,
+        Edit::Fold,
+        Edit::Lfo,
+        Edit::Envelope,
+        Edit::Effects,
+        Edit::Formant,
+    ];
+
+    /// As `edits` writes it, any case.
+    pub const fn word(self) -> &'static str {
+        match self {
+            Edit::Filter => "filter",
+            Edit::Fold => "fold",
+            Edit::Lfo => "lfo",
+            Edit::Envelope => "envelope",
+            Edit::Effects => "effects",
+            Edit::Formant => "formant",
+        }
+    }
+}
+
+/// `edits = "filter: 2040 LP4; lfo: slower"`: at least one category, each
+/// with what changed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Edits {
+    pub line: usize,
+    /// As written, for the page.
+    pub text: String,
+    pub items: Vec<(Edit, String)>,
 }
 
 /// A level set by ear (`level = "by ear -16.2: <why>"`): the loudness gate
@@ -397,8 +453,31 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
                     _ => return Err(at(line, format!("harmonic {v}: yes or no"))),
                 }
             }
-            "from" => s.from = Some((line, v.clone())),
-            "edits" => s.edits = Some(v.clone()),
+            "from" => {
+                s.from = Some((
+                    line,
+                    port_from(v).ok_or_else(|| {
+                        at(
+                            line,
+                            format!("from {v}: \"tx81z <bank sha-256, first 8 hex> #<voice 1-32>\""),
+                        )
+                    })?,
+                ))
+            }
+            "edits" => {
+                s.edits = Some(Edits {
+                    line,
+                    text: v.clone(),
+                    items: edits(v).ok_or_else(|| {
+                        at(
+                            line,
+                            format!(
+                                "edits {v}: \"<category>: <what>; …\", each category filter, fold, LFO, envelope, effects or formant"
+                            ),
+                        )
+                    })?,
+                })
+            }
             "level" => {
                 s.level = Some(
                     by_ear(v, line)
@@ -614,6 +693,73 @@ pub fn public(all: &[Source]) -> Result<(), String> {
                 s.at(s.id_line),
                 s.id.get()
             ));
+        }
+    }
+    Ok(())
+}
+
+/// `tx81z <8 hex> #<1-32>`.
+fn port_from(v: &str) -> Option<PortFrom> {
+    let mut w = v.split(' ');
+    let (tx, sha, voice) = (w.next()?, w.next()?, w.next()?);
+    if tx != "tx81z" || w.next().is_some() || sha.len() != 8 {
+        return None;
+    }
+    let bank = sha
+        .bytes()
+        .all(|b| b.is_ascii_hexdigit())
+        .then(|| u32::from_str_radix(sha, 16).ok())??;
+    let voice = voice.strip_prefix('#')?;
+    let voice = voice
+        .bytes()
+        .all(|b| b.is_ascii_digit())
+        .then(|| voice.parse::<u8>().ok())??;
+    (1..=32)
+        .contains(&voice)
+        .then_some(PortFrom { bank, voice })
+}
+
+/// `<category>: <what>` items split on `;`, none empty.
+fn edits(v: &str) -> Option<Vec<(Edit, String)>> {
+    v.split(';')
+        .map(|item| {
+            let (cat, what) = item.split_once(':')?;
+            let cat = cat.trim().to_ascii_lowercase();
+            let edit = Edit::ALL.into_iter().find(|e| e.word() == cat)?;
+            let what = what.trim();
+            (!what.is_empty()).then(|| (edit, what.to_string()))
+        })
+        .collect()
+}
+
+/// The ports' walls (spec § 3, § 6): each has `from` and `edits`, an id in
+/// `PORT_IDS`, and is neither a placeholder nor approved (ports are
+/// private: the owner's rounds are for the public set).
+pub fn ports(all: &[Source]) -> Result<(), String> {
+    for s in all {
+        let at = |m: &str| Err(format!("{}: {m}", s.at(s.id_line)));
+        if !PORT_IDS.contains(&s.id.get()) {
+            return at(&format!(
+                "id S{} is outside the ports' S{}-S{}",
+                s.id.get(),
+                PORT_IDS.start(),
+                PORT_IDS.end()
+            ));
+        }
+        if s.from.is_none() {
+            return at("a port needs from = \"tx81z <bank sha-256, first 8 hex> #<voice>\"");
+        }
+        if s.edits.is_none() {
+            return at(
+                "a port needs edits = \"<category>: <what>\" (filter, fold, LFO, envelope, effects or formant)",
+            );
+        }
+        match s.status {
+            Status::New => {}
+            Status::Placeholder => return at("a port is never a placeholder"),
+            Status::Approved { .. } => {
+                return at("a port carries no approved line: ports are private");
+            }
         }
     }
     Ok(())

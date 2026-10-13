@@ -10,6 +10,10 @@
 //! (every passing Sound, badged, the placeholders and the demos);
 //! with `--baseline` each APPROVED Sound's renders against the WAVs in
 //! `<dir>`, flagged AUDIO CHANGED over −40 dB.
+//! `--private` (any command) also reads the TX81Z port Sources in
+//! `$CHIMERA_TX_PORTS` (spec § 3, § 6; never in the repo): the build puts
+//! them in `target/factory-sounds/private/` only, `fmt` rewrites them
+//! there, and `qa` pages them under PRIVATE.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -21,19 +25,23 @@ use chimera_desktop::factory_sounds::{project, qa, source};
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+const USAGE: &str = "factory-sounds [build] [--private] | fmt [--level] [--private] | qa [--wav] [--private] [--baseline <dir>]";
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let (private, args): (Vec<_>, Vec<_>) = args.into_iter().partition(|a| a == "--private");
+    let ports = (!private.is_empty()).then(ports);
     let r = match args.first().map(String::as_str) {
-        None | Some("build") => run_build(),
-        Some("fmt") => match args.get(1).map(String::as_str) {
-            None => run_fmt(false),
-            Some("--level") => run_fmt(true),
-            Some(a) => Err(format!("fmt [--level], not {a}")),
+        None | Some("build") if args.len() <= 1 => run_build(ports.as_deref()),
+        Some("fmt") => match args.get(1..).unwrap_or_default() {
+            [] => run_fmt(false, ports.as_deref()),
+            [l] if l == "--level" => run_fmt(true, ports.as_deref()),
+            _ => Err(format!("{USAGE}, not {}", args.join(" "))),
         },
-        Some("qa") => qa_args(&args[1..]).and_then(|(wav, base)| run_qa(wav, base)),
-        Some(a) => Err(format!(
-            "factory-sounds [build | fmt [--level] | qa [--wav] [--baseline <dir>]], not {a}"
-        )),
+        Some("qa") => {
+            qa_args(&args[1..]).and_then(|(wav, base)| run_qa(wav, base, ports.as_deref()))
+        }
+        _ => Err(format!("{USAGE}, not {}", args.join(" "))),
     };
     match r {
         Ok(()) => ExitCode::SUCCESS,
@@ -42,6 +50,11 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `$CHIMERA_TX_PORTS`, else the showcase ledger's `ports/`.
+fn ports() -> PathBuf {
+    build::ports_dir(std::env::var_os(build::PORTS_VAR))
 }
 
 fn dir() -> PathBuf {
@@ -72,10 +85,40 @@ fn stamp() -> Result<BuildStamp, String> {
     ))
 }
 
-fn run_build() -> Result<(), String> {
-    let out = PathBuf::from(ROOT).join("target/factory-sounds/public");
+fn run_build(ports: Option<&Path>) -> Result<(), String> {
+    let root = PathBuf::from(ROOT).join("target/factory-sounds");
+    // The ports read and checked before anything is written.
+    if let Some(p) = ports {
+        build::sounds(&dir(), Some(p))?;
+    }
+    let out = root.join("public");
     let man = build::public(&dir(), &out, &stamp()?)?;
     let all = build::sources(&dir())?;
+    list(&man, &all)?;
+    println!(
+        "{} Sounds, {} demo projects, built {}\n{}",
+        man.sounds.len(),
+        man.projects.len(),
+        man.stamp,
+        out.display()
+    );
+    if let Some(p) = ports {
+        let man = build::private(&dir(), p, &root, &stamp()?, None)?;
+        list(&man, &build::ports(p)?)?;
+        println!(
+            "{} private ports from {}, built {}\n{}\nedits not verified against the banks in {} until the TX81Z importer (#302)",
+            man.sounds.len(),
+            p.display(),
+            man.stamp,
+            root.join("private").display(),
+            build::banks_dir(std::env::var_os(build::BANKS_VAR)).display()
+        );
+    }
+    Ok(())
+}
+
+/// A line per built Sound and demo project.
+fn list(man: &build::Manifest, all: &[source::Source]) -> Result<(), String> {
     for e in &man.sounds {
         // What an `approved` line names for it now.
         let heard = all
@@ -96,21 +139,26 @@ fn run_build() -> Result<(), String> {
     for e in &man.projects {
         println!("{}.A  {:<16}  {:08X}", e.id.stem(), e.name, e.crc);
     }
-    println!(
-        "{} Sounds, {} demo projects, built {}\n{}",
-        man.sounds.len(),
-        man.projects.len(),
-        man.stamp,
-        out.display()
-    );
     Ok(())
 }
 
-fn run_fmt(level: bool) -> Result<(), String> {
-    for f in SOUND_FILES {
-        let p = dir().join(f);
-        let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-        let all = source::parse(&text, f)?;
+/// Each public Source file, then with `--private` each port's, in its
+/// canonical text.
+fn run_fmt(level: bool, ports: Option<&Path>) -> Result<(), String> {
+    let mut files: Vec<PathBuf> = SOUND_FILES.iter().map(|f| dir().join(f)).collect();
+    if let Some(p) = ports {
+        files.extend(build::port_files(p)?);
+    }
+    for p in files {
+        let text = match std::fs::read_to_string(&p) {
+            Ok(t) => t,
+            Err(e) => return Err(format!("{}: {e}", p.display())),
+        };
+        let f = p
+            .file_name()
+            .map(|n| n.to_string_lossy())
+            .unwrap_or_default();
+        let all = source::parse(&text, &f)?;
         let levelled = if level {
             qa::levelled(&text, &all)?
         } else {
@@ -120,7 +168,7 @@ fn run_fmt(level: bool) -> Result<(), String> {
         let canon = source::fmt(&levelled);
         if canon != text {
             std::fs::write(&p, &canon).map_err(|e| format!("{}: {e}", p.display()))?;
-            println!("{f}");
+            println!("{}", p.display());
         }
     }
     Ok(())
@@ -134,7 +182,7 @@ fn qa_args(args: &[String]) -> Result<(bool, Option<PathBuf>), String> {
         match a.as_str() {
             "--wav" => wav = true,
             "--baseline" => base = Some(PathBuf::from(it.next().ok_or("--baseline <dir>")?)),
-            a => return Err(format!("qa [--wav] [--baseline <dir>], not {a}")),
+            a => return Err(format!("{USAGE}, not {a}")),
         }
     }
     Ok((wav, base))
@@ -143,11 +191,11 @@ fn qa_args(args: &[String]) -> Result<(bool, Option<PathBuf>), String> {
 /// Every Sound rendered and gated into the ledger; fails unless all pass.
 /// With a baseline, each APPROVED Sound's renders are compared against it
 /// first (`qa::compare`).
-fn run_qa(wav: bool, baseline: Option<PathBuf>) -> Result<(), String> {
-    let (placeholders, all): (Vec<_>, Vec<_>) = build::sources(&dir())?
+/// `--private` adds the ports (`build::sounds`), paged under PRIVATE.
+fn run_qa(wav: bool, baseline: Option<PathBuf>, ports: Option<&Path>) -> Result<(), String> {
+    let (placeholders, all): (Vec<_>, Vec<_>) = build::sounds(&dir(), ports)?
         .into_iter()
         .partition(|s| s.is_placeholder());
-    source::check(&all)?;
     qa::sweeps(&all)?;
     let mut reports = all.iter().map(qa::gates).collect::<Result<Vec<_>, _>>()?;
     if let Some(dir) = &baseline {
@@ -162,7 +210,9 @@ fn run_qa(wav: bool, baseline: Option<PathBuf>) -> Result<(), String> {
     let bands: Vec<_> = reports.iter().map(|r| r.bands).collect();
     let samey = qa::samey(&bands);
     let ledger = qa::ledger()?;
-    let (demos, unheard) = demo_reports(&all, &ledger)?;
+    // The demos hold public Sounds only (spec § 5).
+    let public: Vec<_> = all.iter().filter(|s| s.from.is_none()).cloned().collect();
+    let (demos, unheard) = demo_reports(&public, &ledger)?;
     let pass = qa::write(&ledger, &reports, &samey, &placeholders, &demos, wav)?;
     print!("{}", qa::report_text(&reports, &samey));
     print!("{}", qa::demo_text(&demos));

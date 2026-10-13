@@ -1,10 +1,12 @@
 //! The public set: every Sound Source in `tools/factory-sounds/` checked
 //! and built into `<out>/CHIMERA/SOUNDS/S91xxxxx.A`, the demo projects in
 //! `projects.toml` into `<out>/CHIMERA/PROJECTS/P000000n.A`, with
-//! `manifest.json`.
+//! `manifest.json`. The private set: the TX81Z port Sources in
+//! `$CHIMERA_TX_PORTS`, never in the repo, into `private/` beside it.
 
+use std::ffi::OsString;
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chimera_core::storage::{BuildStamp, FactoryId};
 
@@ -168,25 +170,143 @@ pub fn public(dir: &Path, out: &Path, stamp: &BuildStamp) -> Result<Manifest, St
     let (files, mut man) = files(&all, stamp)?;
     let (projects, entries) = demo_files(&demos(dir)?, &all)?;
     man.projects = entries;
+    write_set(out, &files, Some(&projects), &man)?;
+    Ok(man)
+}
+
+/// `out` emptied, then its Sounds into `CHIMERA/SOUNDS/`, its projects
+/// (the public set's; the private set has none) into `CHIMERA/PROJECTS/`,
+/// and `manifest.json`.
+fn write_set(
+    out: &Path,
+    sounds: &[File],
+    projects: Option<&[File]>,
+    man: &Manifest,
+) -> Result<(), String> {
     let io = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
     match std::fs::remove_dir_all(out) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(io(out, e)),
     }
-    let sounds = out.join("CHIMERA/SOUNDS");
-    std::fs::create_dir_all(&sounds).map_err(|e| io(&sounds, e))?;
-    for (name, bytes) in &files {
-        let p = sounds.join(name);
-        std::fs::write(&p, bytes).map_err(|e| io(&p, e))?;
-    }
-    let dir = out.join("CHIMERA/PROJECTS");
-    std::fs::create_dir_all(&dir).map_err(|e| io(&dir, e))?;
-    for (name, bytes) in &projects {
-        let p = dir.join(name);
-        std::fs::write(&p, bytes).map_err(|e| io(&p, e))?;
+    let sets = [
+        ("CHIMERA/SOUNDS", Some(sounds)),
+        ("CHIMERA/PROJECTS", projects),
+    ];
+    for (sub, files) in sets.into_iter().filter_map(|(d, f)| Some((d, f?))) {
+        let dir = out.join(sub);
+        std::fs::create_dir_all(&dir).map_err(|e| io(&dir, e))?;
+        for (name, bytes) in files {
+            let p = dir.join(name);
+            std::fs::write(&p, bytes).map_err(|e| io(&p, e))?;
+        }
     }
     let p = out.join("manifest.json");
     std::fs::write(&p, man.json()).map_err(|e| io(&p, e))?;
+    Ok(())
+}
+
+/// Where the port Sources live (spec § 3): never in the repo.
+pub const PORTS_VAR: &str = "CHIMERA_TX_PORTS";
+/// Where the TX81Z banks live, for the edits check (spec § 6).
+pub const BANKS_VAR: &str = "CHIMERA_TX_BANKS";
+const DEFAULT_PORTS: &str = "~/dev/chimera/.superpowers/ledgers/showcase/ports";
+const DEFAULT_BANKS: &str = "~/dev/chimera/.superpowers/ledgers/showcase/banks";
+
+/// `$CHIMERA_TX_PORTS` (`var`), else the showcase ledger's `ports/`.
+pub fn ports_dir(var: Option<OsString>) -> PathBuf {
+    var.map_or_else(|| PathBuf::from(DEFAULT_PORTS), PathBuf::from)
+}
+
+/// `$CHIMERA_TX_BANKS` (`var`), else the showcase ledger's `banks/`.
+pub fn banks_dir(var: Option<OsString>) -> PathBuf {
+    var.map_or_else(|| PathBuf::from(DEFAULT_BANKS), PathBuf::from)
+}
+
+/// The port Source files in `dir` (`*.toml`), by name; none, or no
+/// `dir`, is an error naming `$CHIMERA_TX_PORTS`.
+pub fn port_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let none = |why: String| {
+        format!(
+            "{}: {why} (${PORTS_VAR} names the ports' folder)",
+            dir.display()
+        )
+    };
+    let mut files = std::fs::read_dir(dir)
+        .map_err(|e| none(e.to_string()))?
+        .map(|e| e.map(|e| e.path()).map_err(|e| none(e.to_string())))
+        .filter(|p| {
+            p.as_ref().map_or(true, |p| {
+                p.is_file() && p.extension().is_some_and(|x| x == "toml")
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if files.is_empty() {
+        return Err(none("no port Sources (*.toml)".into()));
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// Every port Source in `dir`, parsed (each error names its file).
+pub fn ports(dir: &Path) -> Result<Vec<Source>, String> {
+    let mut all = Vec::new();
+    for p in port_files(dir)? {
+        let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+        let name = p
+            .file_name()
+            .map(|n| n.to_string_lossy())
+            .unwrap_or_default();
+        all.extend(source::parse(&text, &name)?);
+    }
+    Ok(all)
+}
+
+/// The Sounds a run reads, checked together (unique ids and names): the
+/// public Sources in `dir` behind the public walls, then with `--private`
+/// the ports in `ports` behind theirs.
+pub fn sounds(dir: &Path, ports: Option<&Path>) -> Result<Vec<Source>, String> {
+    let mut all = sources(dir)?;
+    source::public(&all)?;
+    if let Some(p) = ports {
+        let ported = self::ports(p)?;
+        source::ports(&ported)?;
+        all.extend(ported);
+    }
+    source::check(&all)?;
+    Ok(all)
+}
+
+/// Spec § 6 "Edits verified": a port, against its voice re-imported from
+/// its bank (`$CHIMERA_TX_BANKS`), must change something in every
+/// category its `edits` names. The TX81Z importer (#302) implements it;
+/// until one is passed, no build claims the check.
+pub trait EditsCheck {
+    /// Err at the port's `edits` line when it changes nothing in a
+    /// category it names.
+    fn verify(&self, port: &Source) -> Result<(), String>;
+}
+
+/// The ports into `<root>/private/` (emptied first) and nowhere else:
+/// `CHIMERA/SOUNDS/S91000xx.A` and `manifest.json`. Checked with the
+/// public Sources in `dir` (ids and names unique across both), and each
+/// against its bank by `edits` when one is given.
+pub fn private(
+    dir: &Path,
+    ports: &Path,
+    root: &Path,
+    stamp: &BuildStamp,
+    edits: Option<&dyn EditsCheck>,
+) -> Result<Manifest, String> {
+    let all = sounds(dir, Some(ports))?;
+    let ported: Vec<Source> = all.into_iter().filter(|s| s.from.is_some()).collect();
+    super::qa::sweeps(&ported)?;
+    if let Some(check) = edits {
+        for p in &ported {
+            check.verify(p)?;
+        }
+    }
+    let (files, man) = files(&ported, stamp)?;
+    write_set(&root.join("private"), &files, None, &man)?;
     Ok(man)
 }

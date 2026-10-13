@@ -1525,7 +1525,7 @@ pub fn gates(src: &Source) -> Result<Report, String> {
         name: src.name.as_str().into(),
         note: src.note.as_str().into(),
         demo: src.demo,
-        edits: src.edits.clone(),
+        edits: src.edits.as_ref().map(|e| e.text.clone()),
         private: src.from.is_some(),
         gates,
         renders,

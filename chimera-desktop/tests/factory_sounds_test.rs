@@ -2394,14 +2394,15 @@ fn demo_part_private_sound_fails() {
         "private",
     );
     // So is any Source with a `from` line.
-    let mut from = source::parse(
-        &BASE
-            .replace("S9100002", "S9100030")
-            .replace("TEST PAD\"", "FROM ONE\""),
+    let from = source::parse(
+        &format!(
+            "{}from = \"tx81z 0123abcd #1\"\n",
+            BASE.replace("S9100002", "S9100030")
+                .replace("TEST PAD\"", "FROM ONE\"")
+        ),
         "ports.toml",
     )
     .unwrap();
-    from[0].from = Some((9, "tx81z 0123abcd #1".into()));
     sounds.extend(from);
     demo_fails(
         &demo_with(7, "part.2 = \"FROM ONE, POLY, CH 2\""),
@@ -2862,4 +2863,296 @@ fn held_demos_are_checked_not_built_and_their_effects_pend() {
         .filter(|n| n.starts_with("P0000001-"))
         .count();
     assert_eq!(wavs, 0);
+}
+
+// ── the private build (spec § 3 `--private`, § 6) ──
+
+/// A valid port Source; each bad test changes one line.
+const PORT: &str = r#"[[sound]]
+id = "S9100010"
+name = "PORT ONE"
+engine = "VA"
+note = "A PORTED PAD"
+demo = "poly"
+plays = "long"
+home = "C3"
+FILTER.CUTOFF = "1200"
+mod.ENV1 = "OUT.VCA +127"
+phrase = "pad"
+from = "tx81z 1a2b3c4d #12"
+edits = "filter: 2040 instead of open"
+"#;
+
+fn port_with(n: usize, with: &str) -> String {
+    PORT.lines()
+        .enumerate()
+        .map(|(i, l)| if i + 1 == n { with } else { l })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Parse, check and the ports' walls, as `build::sounds` runs them.
+fn port_run(text: &str) -> Result<Vec<source::Source>, String> {
+    let s = source::parse(text, "port.toml")?;
+    source::check(&s)?;
+    source::ports(&s)?;
+    Ok(s)
+}
+
+fn port_fails(text: &str, line: usize, what: &str) {
+    let e = port_run(text).expect_err("a bad port must fail");
+    assert!(
+        e.contains(&format!("port.toml:{line}:")) && e.contains(what),
+        "want port.toml:{line} naming {what}, got: {e}"
+    );
+}
+
+/// An empty dir under the test target (never the real ports dir).
+fn scratch_dir(name: &str) -> std::path::PathBuf {
+    let d = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+/// A ports dir holding `PORT`, and a public dir holding `BASE`.
+fn port_dirs(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let d = scratch_dir(name);
+    let (public, ports) = (d.join("public-sources"), d.join("ports"));
+    std::fs::create_dir_all(&public).unwrap();
+    std::fs::create_dir_all(&ports).unwrap();
+    std::fs::write(public.join("va.toml"), BASE).unwrap();
+    std::fs::write(ports.join("one.toml"), PORT).unwrap();
+    (public, ports)
+}
+
+#[test]
+fn private_requires_from_and_edits() {
+    let s = port_run(PORT).unwrap();
+    assert_eq!(
+        s[0].from.as_ref().map(|(l, f)| (*l, f.bank, f.voice)),
+        Some((12, 0x1a2b3c4d, 12))
+    );
+    port_fails(&port_with(12, "# no from"), 2, "from");
+    port_fails(&port_with(13, "# no edits"), 2, "edits");
+    for bad in [
+        "from = \"tx81z 1a2b3c4 #12\"",
+        "from = \"tx81z 1a2b3c4g #12\"",
+        "from = \"tx81z 1a2b3c4d\"",
+        "from = \"tx81z 1a2b3c4d #0\"",
+        "from = \"tx81z 1a2b3c4d #33\"",
+        "from = \"dx7 1a2b3c4d #12\"",
+        "from = \"tx81z 1a2b3c4d #12 BRASS\"",
+    ] {
+        port_fails(&port_with(12, bad), 12, "from");
+    }
+    // A port is private: never approved, never a placeholder.
+    port_fails(
+        &format!("{PORT}approved = \"round 2 1A2B3C4D\"\n"),
+        2,
+        "approved",
+    );
+    port_fails(
+        &format!("{PORT}status = \"placeholder\"\n"),
+        2,
+        "placeholder",
+    );
+    // Through the build: a port dir with a Source missing `edits` fails.
+    let (public, ports) = port_dirs("private-requires");
+    std::fs::write(ports.join("one.toml"), port_with(13, "# no edits")).unwrap();
+    let root = scratch_dir("private-requires-out");
+    let e = build::private(&public, &ports, &root, &STAMP, None).unwrap_err();
+    assert!(e.contains("one.toml:2:") && e.contains("edits"), "{e}");
+    assert!(!root.join("private").exists());
+    // A port named as a public Sound is refused with the public one.
+    std::fs::write(
+        ports.join("one.toml"),
+        PORT.replace("PORT ONE\"", "TEST PAD\""),
+    )
+    .unwrap();
+    let e = build::private(&public, &ports, &root, &STAMP, None).unwrap_err();
+    assert!(e.contains("TEST PAD") && e.contains("va.toml"), "{e}");
+}
+
+#[test]
+fn private_edits_name_a_category() {
+    for ok in [
+        "edits = \"filter: 2040 instead of open\"",
+        "edits = \"fold: a touch\"",
+        "edits = \"LFO: slower\"",
+        "edits = \"lfo: slower\"",
+        "edits = \"envelope: longer release\"",
+        "edits = \"effects: hall send\"",
+        "edits = \"filter: 2040; lfo: slower; envelope: softer attack\"",
+    ] {
+        let s = port_run(&port_with(13, ok)).unwrap_or_else(|e| panic!("{ok}: {e}"));
+        assert!(!s[0].edits.as_ref().unwrap().items.is_empty());
+    }
+    let s = port_run(&port_with(13, "edits = \"filter: 2040; lfo: slower\"")).unwrap();
+    let e = s[0].edits.as_ref().unwrap();
+    assert_eq!(
+        e.items.iter().map(|(c, _)| *c).collect::<Vec<_>>(),
+        vec![source::Edit::Filter, source::Edit::Lfo]
+    );
+    assert_eq!(e.text, "filter: 2040; lfo: slower");
+    for bad in [
+        "edits = \"\"",
+        "edits = \"warmer\"",
+        "edits = \"texture: warmer\"",
+        "edits = \"filter:\"",
+        "edits = \"filter: 2040; \"",
+        "edits = \"filter: 2040; tone: darker\"",
+    ] {
+        port_fails(&port_with(13, bad), 13, "edits");
+    }
+}
+
+#[test]
+fn private_edits_formant_is_a_category() {
+    let s = port_run(&port_with(13, "edits = \"formant: ops 5-6 sing an A\"")).unwrap();
+    assert_eq!(
+        s[0].edits.as_ref().unwrap().items[0].0,
+        source::Edit::Formant
+    );
+}
+
+#[test]
+fn private_id_must_be_in_port_range() {
+    for id in ["S9100009", "S9100026", "S9100002"] {
+        port_fails(&port_with(2, &format!("id = \"{id}\"")), 2, id);
+    }
+    for id in ["S9100010", "S9100025"] {
+        port_run(&port_with(2, &format!("id = \"{id}\""))).unwrap();
+    }
+    // The public walls still stand: no `from`, no port id.
+    assert!(run(PORT).unwrap_err().contains("from"));
+}
+
+/// Every file under `d`, relative, with its bytes.
+fn tree(d: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+    let mut out = Vec::new();
+    let mut stack = vec![d.to_path_buf()];
+    while let Some(p) = stack.pop() {
+        for e in std::fs::read_dir(&p).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                stack.push(p);
+            } else {
+                out.push((
+                    p.strip_prefix(d).unwrap().into(),
+                    std::fs::read(&p).unwrap(),
+                ));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn private_never_writes_public_dir() {
+    let (public, ports) = port_dirs("private-out");
+    let root = scratch_dir("private-out-root");
+    let pubdir = root.join("public");
+    std::fs::create_dir_all(pubdir.join("CHIMERA/SOUNDS")).unwrap();
+    std::fs::write(pubdir.join("manifest.json"), "public").unwrap();
+    std::fs::write(pubdir.join("CHIMERA/SOUNDS/S9100002.A"), "public").unwrap();
+    let before = (tree(&pubdir), tree(&public), tree(&ports));
+    let man = build::private(&public, &ports, &root, &STAMP, None).unwrap();
+    assert_eq!(
+        man.sounds.iter().map(|e| e.id.get()).collect::<Vec<_>>(),
+        vec![9_100_010]
+    );
+    assert!(man.projects.is_empty());
+    assert_eq!(
+        before,
+        (tree(&pubdir), tree(&public), tree(&ports)),
+        "public/ and the Sources untouched"
+    );
+    let built = tree(&root.join("private"));
+    let names: Vec<_> = built
+        .iter()
+        .map(|(p, _)| p.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["CHIMERA/SOUNDS/S9100010.A", "manifest.json"]);
+    let mut root_entries: Vec<_> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    root_entries.sort();
+    assert_eq!(root_entries, ["private", "public"]);
+    // The built file is the port as a card file.
+    let (files, _) = build::files(&port_run(PORT).unwrap(), &STAMP).unwrap();
+    assert_eq!(built[0].1, files[0].1);
+    // A rebuild empties private/ first.
+    std::fs::write(root.join("private/CHIMERA/SOUNDS/S9100011.A"), "stale").unwrap();
+    build::private(&public, &ports, &root, &STAMP, None).unwrap();
+    assert!(!root.join("private/CHIMERA/SOUNDS/S9100011.A").exists());
+}
+
+#[test]
+fn private_unset_env_is_a_clear_error() {
+    // Unset, it is the showcase ledger's ports/.
+    assert_eq!(
+        build::ports_dir(None),
+        std::path::Path::new("~/dev/chimera/.superpowers/ledgers/showcase/ports")
+    );
+    assert_eq!(
+        build::ports_dir(Some("/x/ports".into())),
+        std::path::Path::new("/x/ports")
+    );
+    // A ports dir that is not there names the variable.
+    let missing = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("no-such-ports");
+    let _ = std::fs::remove_dir_all(&missing);
+    let e = build::ports(&missing).unwrap_err();
+    assert!(
+        e.contains("CHIMERA_TX_PORTS") && e.contains("no-such-ports"),
+        "{e}"
+    );
+    let empty = scratch_dir("empty-ports");
+    let e = build::ports(&empty).unwrap_err();
+    assert!(
+        e.contains("CHIMERA_TX_PORTS") && e.contains("empty-ports"),
+        "{e}"
+    );
+    // The CLI, before it writes anything.
+    let o = std::process::Command::new(env!("CARGO_BIN_EXE_factory-sounds"))
+        .arg("--private")
+        .env("CHIMERA_TX_PORTS", &missing)
+        .output()
+        .unwrap();
+    assert!(!o.status.success());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains("CHIMERA_TX_PORTS") && err.contains("no-such-ports"),
+        "{err}"
+    );
+}
+
+#[test]
+fn private_section_only_with_private() {
+    let (public, ports) = port_dirs("private-section");
+    let page = |all: &[source::Source]| {
+        // Unlevelled test Sounds: their failing gates aside, as paged.
+        let reports: Vec<_> = all
+            .iter()
+            .map(|s| {
+                let mut r = qa::gates(s).unwrap();
+                r.gates.retain(|g| g.verdict != Verdict::Fail);
+                r
+            })
+            .collect();
+        qa::page(&reports, &[], &[], &[])
+    };
+    let without = build::sounds(&public, None).unwrap();
+    assert_eq!(without.len(), 1);
+    let p = page(&without);
+    assert!(!p.contains("PRIVATE") && !p.contains("PORT ONE"), "{p}");
+    let with = build::sounds(&public, Some(&ports)).unwrap();
+    assert_eq!(with.len(), 2);
+    let p = page(&with);
+    let at = p.find("<h2>PRIVATE</h2>").expect("a PRIVATE section");
+    assert!(p[at..].contains("PORT ONE"), "the port under PRIVATE");
+    assert!(!p[..at].contains("PORT ONE"));
+    assert!(p.contains("edits: filter: 2040 instead of open"));
 }

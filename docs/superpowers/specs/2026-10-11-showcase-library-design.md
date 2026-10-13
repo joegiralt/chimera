@@ -92,7 +92,7 @@ trim = "-1.0"                     # dB on the output level, written by `fmt --le
 
 - **Keys** are `<BLOCK>.<PARAM>` by the frozen idents in `chimera-core/tests/fixtures/disk_codes_v1.txt`. Values are stored values or enum idents. A param left out keeps `Sound::neutral`'s value: sparse, as the encoder is.
 - **`mod.<SOURCE>`** lists that matrix row's routes as `DEST ±amount` (amount −127…127). **`tap.OP5`** and **`tap.OP6`** list ALGO's audio-rate filter routes (FREQ, Q, VCA, FOLD). An unroutable destination fails the build with its name.
-- **Provenance** (ports only, so private Sources only): `from = "tx81z <sha256 of the bank, first 8 hex digits> #<voice>"` (never the Yamaha voice name), plus `edits = "filter: …; lfo: …"`, naming at least one of filter, fold, LFO, envelope or effects.
+- **Provenance** (ports only, so private Sources only): `from = "tx81z <sha256 of the bank, first 8 hex digits> #<voice>"` (never the Yamaha voice name), plus `edits = "filter: …; lfo: …"`, naming at least one of filter, fold, LFO, envelope, effects or formant (an ops 5–6 formant layer; owner direction 2026-10-13). A port carries no `approved` line, and its id is in `S9100010`–`S9100025`.
 - **`status = "placeholder"`** reserves an id and name. The build skips it.
 - **`fmt`** rewrites each value line with a trailing comment showing its display value (`# 80 ms`). Comments are ignored on read, so the canonical text round-trips exactly.
 
