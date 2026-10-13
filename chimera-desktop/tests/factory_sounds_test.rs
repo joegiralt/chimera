@@ -985,6 +985,35 @@ fn a_failing_sound_is_skipped_from_the_page() {
     assert!(!d.join("listening.html").exists(), "no stale page");
 }
 
+/// The page and its renders are this run's: a passing run without --wav
+/// leaves no old page, a dropped Sound's WAVs go, and no Sounds at all
+/// fails rather than passing.
+#[test]
+fn the_page_never_outlives_its_run() {
+    let d = scratch_ledger("ledger-lifecycle");
+    assert!(page::write(&d, &[report(true, false)], &[], &[], &[], true).unwrap());
+    // An orphan: the render of a Sound no Source holds any more.
+    std::fs::write(d.join("renders/S9100099-long.wav"), b"old").unwrap();
+    std::fs::write(d.join("renders/P0000009-1-hats.wav"), b"old").unwrap();
+    assert!(page::write(&d, &[report(true, false)], &[], &[], &[], true).unwrap());
+    assert!(
+        !d.join("renders/S9100099-long.wav").exists(),
+        "orphan Sound WAV"
+    );
+    assert!(
+        !d.join("renders/P0000009-1-hats.wav").exists(),
+        "orphan demo WAV"
+    );
+    assert!(d.join("renders/S9100002-long.wav").is_file());
+    // Passing, without --wav: the old page would show old renders.
+    assert!(page::write(&d, &[report(true, false)], &[], &[], &[], false).unwrap());
+    assert!(!d.join("listening.html").exists(), "no stale page");
+    let e = page::write(&d, &[], &[], &[], &[], true).unwrap_err();
+    assert!(e.contains("no Sounds"), "{e}");
+    let e = page::write_private(&d, &[], &[], true).unwrap_err();
+    assert!(e.contains("no Sounds"), "{e}");
+}
+
 /// Every committed Source's "what it is" facts.
 fn committed_facts() -> Vec<(String, String)> {
     build::sources(std::path::Path::new(SOURCES))
@@ -1666,7 +1695,11 @@ fn va_without_vca_envelope_fails() {
         2,
         "OUT.VCA",
     );
-    fails(&base_with(12, r#"mod.ENV1 = "OUT.VCA +0""#), 12, "OUT.VCA +0");
+    fails(
+        &base_with(12, r#"mod.ENV1 = "OUT.VCA +0""#),
+        12,
+        "OUT.VCA +0",
+    );
 }
 
 #[test]

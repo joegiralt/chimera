@@ -14,7 +14,6 @@ use super::measure::{ERB_BANDS, SAMEY_DB, SILENT_FLOOR_DB, Verdict};
 use super::render::UNIT_REV;
 use super::{Check, Report};
 use crate::listen::{self, Player, Row, Section};
-use crate::privacy::PORT_IDS;
 
 /// The ledger folder, refused under `/tmp` (the scratchpad included) or
 /// the system temp dir, or when not absolute or holding `..`: renders and
@@ -303,11 +302,11 @@ pub fn page(
 /// Into `dir` (checked as a ledger): `report.txt`, naming each Sound or
 /// demo a failing gate keeps off the page; with `wav`, each passing
 /// Sound's renders as `renders/S<id>-<script>.wav` and each passing
-/// demo's as `renders/P<id>-<setting>-<take>.wav` (a failing one's old
-/// renders removed), and `listening.html`. A failing run without `wav`
-/// removes an old page. True when every Sound and demo passes. The
-/// public ledger: it refuses a port, and with `wav` removes any render of
-/// a `PORT_IDS` id (it is published).
+/// demo's as `renders/P<id>-<setting>-<take>.wav`, every other WAV there
+/// removed (a failing or dropped Sound's or demo's, and so any port's:
+/// the public ledger is published), and `listening.html`; without `wav`,
+/// no page (an old one would show old renders). True when every Sound and
+/// demo passes; no Sounds at all fails. The public ledger refuses a port.
 pub fn write(
     dir: &Path,
     reports: &[Report],
@@ -321,14 +320,6 @@ pub fn write(
             "{} {}: a private port; the public ledger refuses it (qa --private)",
             r.id, r.name
         ));
-    }
-    if wav {
-        // A backstop: no port's render stays in the published ledger.
-        remove_wavs(&checked_ledger(dir)?.join("renders"), |n| {
-            n.strip_prefix('S')
-                .and_then(|n| n.get(..7)?.parse::<u32>().ok())
-                .is_some_and(|id| PORT_IDS.contains(&id))
-        })?;
     }
     write_ledger(dir, reports, samey, placeholders, demos, wav)
 }
@@ -380,6 +371,9 @@ fn write_ledger(
     wav: bool,
 ) -> Result<bool, String> {
     let dir = checked_ledger(dir)?;
+    if reports.is_empty() {
+        return Err(format!("{}: no Sounds to QA", dir.display()));
+    }
     let err = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
     std::fs::create_dir_all(&dir).map_err(|e| err(&dir, e))?;
     let pass = reports.iter().all(Report::passes) && demos.iter().all(DemoReport::passes);
@@ -399,39 +393,31 @@ fn write_ledger(
     let path = dir.join("report.txt");
     std::fs::write(&path, txt).map_err(|e| err(&path, e))?;
     let html = dir.join("listening.html");
-    if wav {
-        let r = dir.join("renders");
-        std::fs::create_dir_all(&r).map_err(|e| err(&r, e))?;
-        // A Sound or demo off the page leaves no old render to pass as
-        // current.
-        let unrender = |stale: String| remove_wavs(&r, |n| n.starts_with(&stale));
-        for rep in reports {
-            if rep.passes() {
-                for x in &rep.renders {
-                    listen::write_wav_stereo(&dir.join(rep.wav(x.audition)), &x.stereo)?;
-                }
-            } else {
-                unrender(format!("{}-", rep.id))?;
-            }
-        }
-        for d in demos {
-            if d.passes() && d.held.is_none() {
-                for x in &d.renders {
-                    listen::write_wav_stereo(&r.join(d.file(x)), &x.stereo)?;
-                }
-            } else {
-                unrender(format!("{}-", d.id.stem()))?;
-            }
-        }
-        std::fs::write(&html, page(reports, samey, placeholders, demos))
-            .map_err(|e| err(&html, e))?;
-    } else if !pass {
-        // An old page could show a now failing Sound as passed.
-        match std::fs::remove_file(&html) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(err(&html, e)),
-            _ => {}
+    if !wav {
+        return match std::fs::remove_file(&html) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(err(&html, e)),
+            _ => Ok(pass),
+        };
+    }
+    let r = dir.join("renders");
+    std::fs::create_dir_all(&r).map_err(|e| err(&r, e))?;
+    let mut current = Vec::new();
+    for rep in reports.iter().filter(|r| r.passes()) {
+        for x in &rep.renders {
+            let f = rep.file(x.audition);
+            listen::write_wav_stereo(&r.join(&f), &x.stereo)?;
+            current.push(f);
         }
     }
+    for d in demos.iter().filter(|d| d.passes() && d.held.is_none()) {
+        for x in &d.renders {
+            let f = d.file(x);
+            listen::write_wav_stereo(&r.join(&f), &x.stereo)?;
+            current.push(f);
+        }
+    }
+    remove_wavs(&r, |n| !current.iter().any(|c| c == n))?;
+    std::fs::write(&html, page(reports, samey, placeholders, demos)).map_err(|e| err(&html, e))?;
     Ok(pass)
 }
 
