@@ -38,8 +38,10 @@ impl Sound {
         s.params.lfos[0].depth = 0.0;
         let pitch = ParamAddr::new(BlockRef::Pitch, PitchParams::PITCH);
         let lfo1 = ModSource::Lfo1.index();
-        if s.dest_registry.add(pitch, *b"PITCH\0\0\0").is_ok() {
-            s.mod_state.set_route_addr(lfo1, pitch, 2);
+        if s.dest_registry.add(pitch, *b"PITCH\0\0\0").is_ok()
+            && let Some(d) = s.mod_state.push(pitch)
+        {
+            s.mod_state.set_amount(lfo1, d, 2);
         }
         s
     }

@@ -171,77 +171,57 @@ impl MidiMap {
     }
 }
 
-/// Spec § 9, in learn order: CC and target. Then 16-19 per engine.
-const COMMON: [(u8, BlockRef, ParamId); 7] = [
-    (74, BlockRef::Filter, FilterParams::CUTOFF),
-    (71, BlockRef::Filter, FilterParams::RESONANCE),
-    (7, BlockRef::Part, PartParams::LEVEL),
-    (10, BlockRef::Part, PartParams::PAN),
-    (91, BlockRef::Out, OutParams::SEND3),
-    (93, BlockRef::Out, OutParams::SEND1),
-    (1, BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::DEPTH),
-];
-
-/// ALGO, MODAL, VA; TAPE has none (ADR 0132).
-const MACROS: [[(BlockRef, ParamId); 4]; 3] = [
-    [
-        (BlockRef::Algo, AlgoParams::MORPH),
-        (BlockRef::Algo, AlgoParams::VOWEL),
-        (BlockRef::Drive, DriveParams::DRIVE),
-        (BlockRef::Folder, FolderParams::FOLD),
-    ],
-    [
-        (BlockRef::Modal, ModalParams::STRUCTURE),
-        (BlockRef::Modal, ModalParams::BRIGHT),
-        (BlockRef::Modal, ModalParams::DAMP),
-        (BlockRef::Modal, ModalParams::POS),
-    ],
-    [
-        (BlockRef::Va, VaParams::AMOUNT),
-        (BlockRef::Va, VaParams::SHAPE1),
-        (BlockRef::Va, VaParams::SHAPE2),
-        (BlockRef::Va, VaParams::SUB),
-    ],
-];
-
-const fn default_map(macros: &[(BlockRef, ParamId)]) -> MidiMap {
-    let mut m = MidiMap::EMPTY;
-    let mut i = 0;
-    while i < COMMON.len() + macros.len() {
-        let (cc, b, p) = if i < COMMON.len() {
-            COMMON[i]
-        } else {
-            let (b, p) = macros[i - COMMON.len()];
-            ((16 + i - COMMON.len()) as u8, b, p)
-        };
-        if let (Some(cc), Some(target)) = (Cc::new(cc), Mappable::new(ParamAddr::new(b, p))) {
-            m.entries[i] = MapEntry {
-                cc,
-                target,
-                min: 0,
-                max: 255,
-            };
-            m.len += 1;
-        }
-        i += 1;
+const fn ent(cc: u8, b: BlockRef, p: ParamId) -> MapEntry {
+    match (Cc::new(cc), Mappable::new(ParamAddr::new(b, p))) {
+        (Some(cc), Some(target)) => MapEntry {
+            cc,
+            target,
+            min: 0,
+            max: 255,
+        },
+        _ => panic!("a default map entry must be mappable"),
     }
-    m
 }
 
-/// ALGO, MODAL, VA, TAPE: built at compile time.
-static DEFAULTS: [MidiMap; 4] = [
-    default_map(&MACROS[0]),
-    default_map(&MACROS[1]),
-    default_map(&MACROS[2]),
-    default_map(&[]),
-];
+/// Spec § 9: the seven shared entries in learn order, then CCs 16-19 for
+/// ALGO, MODAL and VA (TAPE has none, ADR 0132).
+static DEFAULTS: [MapEntry; 19] = {
+    use BlockRef::{Algo, Drive, Filter, Folder, Lfo, Modal, Out, Part, Va};
+    [
+        ent(74, Filter, FilterParams::CUTOFF),
+        ent(71, Filter, FilterParams::RESONANCE),
+        ent(7, Part, PartParams::LEVEL),
+        ent(10, Part, PartParams::PAN),
+        ent(91, Out, OutParams::SEND3),
+        ent(93, Out, OutParams::SEND1),
+        ent(1, Lfo(LfoSlot::Lfo1), LfoParams::DEPTH),
+        ent(16, Algo, AlgoParams::MORPH),
+        ent(17, Algo, AlgoParams::VOWEL),
+        ent(18, Drive, DriveParams::DRIVE),
+        ent(19, Folder, FolderParams::FOLD),
+        ent(16, Modal, ModalParams::STRUCTURE),
+        ent(17, Modal, ModalParams::BRIGHT),
+        ent(18, Modal, ModalParams::DAMP),
+        ent(19, Modal, ModalParams::POS),
+        ent(16, Va, VaParams::AMOUNT),
+        ent(17, Va, VaParams::SHAPE1),
+        ent(18, Va, VaParams::SHAPE2),
+        ent(19, Va, VaParams::SUB),
+    ]
+};
 
 /// The map INIT and the factory Sounds ship with (spec § 9).
+#[inline(never)]
 pub fn default_for(e: EngineType) -> MidiMap {
-    DEFAULTS[match e {
-        EngineType::Algo => 0,
-        EngineType::Modal => 1,
-        EngineType::Va => 2,
-        EngineType::Tape => 3,
-    }]
+    let own = match e {
+        EngineType::Algo => 7..11,
+        EngineType::Modal => 11..15,
+        EngineType::Va => 15..19,
+        EngineType::Tape => 7..7,
+    };
+    let mut m = MidiMap::EMPTY;
+    m.entries[..7].copy_from_slice(&DEFAULTS[..7]);
+    m.entries[7..7 + own.len()].copy_from_slice(&DEFAULTS[own.clone()]);
+    m.len = 7 + own.len() as u8;
+    m
 }
