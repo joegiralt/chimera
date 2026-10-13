@@ -20,6 +20,8 @@ const AP_RO: u32 = 0b110 << 24;
 const AP_RW: u32 = 0b011 << 24;
 /// TEX 000 C 1 B 0: Normal, write-through, no write-allocate.
 const NORMAL_WT: u32 = 1 << 17;
+/// TEX 001 C 0 B 0: Normal, non-cacheable.
+const NORMAL_NC: u32 = 0b001 << 19;
 /// TEX 000 C 0 B 0.
 const STRONGLY_ORDERED: u32 = 0;
 const SIZE_1M: u32 = 19 << 1;
@@ -27,9 +29,10 @@ const SIZE_512K: u32 = 18 << 1;
 const ENABLE: u32 = 1;
 const BANK2_ALL_RASR: u32 = XN | AP_NONE | STRONGLY_ORDERED | SIZE_1M | ENABLE;
 const _: () = assert!(BANK2_ALL_RASR == 0x1000_0027);
-/// Read-only, never executed: the judge's reads, the console's `flash`.
-pub(crate) const BANK2_READ_RASR: u32 = XN | AP_RO | NORMAL_WT | SIZE_512K | ENABLE;
-const _: () = assert!(BANK2_READ_RASR == 0x1602_0025);
+/// Read-only, never executed, never cached: the judge's reads and the
+/// console's `flash` see the flash itself, with no cache maintenance.
+pub(crate) const BANK2_READ_RASR: u32 = XN | AP_RO | NORMAL_NC | SIZE_512K | ENABLE;
+const _: () = assert!(BANK2_READ_RASR == 0x1608_0025);
 /// Read-write for the flash interface, never cached nor speculated.
 pub(crate) const BANK2_WRITE_RASR: u32 = XN | AP_RW | STRONGLY_ORDERED | SIZE_512K | ENABLE;
 const _: () = assert!(BANK2_WRITE_RASR == 0x1300_0025);

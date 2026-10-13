@@ -9,15 +9,16 @@
 //! program does not stall bank-1 reads), so the watchdog stays kicked by
 //! the tick, not by this loop. Nothing linked lives in bank 2 (memory.x
 //! ends FLASH at 0x08100000), so no interrupt reads it while it is busy.
-//! MPU region 2 is `Write` for an erase or program, `Open` for the call.
+//! MPU region 2 is `Write` (uncached) for an erase or program, `Open` for
+//! the call (`set_mpu` invalidates the whole caches into it); `Read` is
+//! uncached, so no read here needs cache maintenance.
 
 use core::sync::atomic::Ordering;
 
 use chimera_core::console::{
     Audio, B2Answer, CALL_ARG, CCR_CLEAR, CODE_AT, CR_LOCK, CR_PG, CR_SER, CR_START,
     ERASE_TIMEOUT_MS, Fail, IMAGE, IMAGE_WORDS, PATTERN_WORDS, Readback, Refusal, Request, Run,
-    SECTOR_LEN, SECTOR0, WORD_TIMEOUT_MS, busy, code_ok, compare, erase_cr, ms_cycles, program_cr,
-    settle, word_at,
+    WORD_TIMEOUT_MS, busy, code_ok, compare, erase_cr, ms_cycles, program_cr, settle, word_at,
 };
 use cortex_m::peripheral::DWT;
 use stm32h7xx_hal::pac;
@@ -113,24 +114,8 @@ fn wait(start: u32, limit: u32) -> (u32, Option<Fail>) {
     }
 }
 
-/// Drops the D-cache's copy of `len` bytes from `addr`: the next read
-/// comes from the flash.
-fn forget_dcache(addr: u32, len: u32) {
-    // SAFETY: only the SCB's cache maintenance, whose CBP registers are
-    // write-only and stateless; `main` never uses its SCB again after boot
-    // but to reset. Flash is write-through, so no dirty line is lost.
-    let mut cp = unsafe { cortex_m::Peripherals::steal() };
-    // SAFETY: as above; the range is bank-2 sector 0, 32-byte lines.
-    unsafe {
-        cp.SCB
-            .invalidate_dcache_by_address(addr as usize, len as usize)
-    };
-}
-
 /// The image's words as the flash holds them now.
 fn read_image() -> [[u32; 8]; IMAGE_WORDS] {
-    let len = IMAGE_WORDS as u32 * 32;
-    forget_dcache(word_at(0).get(), len);
     let mut got = [[0; 8]; IMAGE_WORDS];
     for (k, row) in got.iter_mut().enumerate() {
         let at = word_at(k).get();
@@ -165,7 +150,6 @@ fn erase(cpu_hz: u32) -> Run {
         }
     };
     let cycles = DWT::cycle_count().wrapping_sub(start);
-    forget_dcache(SECTOR0, SECTOR_LEN);
     Run {
         cr: cr(),
         sr: s,
@@ -230,10 +214,6 @@ fn call() -> Result<u32, Readback> {
     if !code_ok(&words[PATTERN_WORDS]) {
         return Err(compare(&words));
     }
-    // SAFETY: only the I-cache invalidate (stateless CBP), as in
-    // `forget_dcache`.
-    let mut cp = unsafe { cortex_m::Peripherals::steal() };
-    cp.SCB.invalidate_icache();
     // SAFETY: the word at CODE_AT is, read back just now, exactly `CODE`:
     // `adds r0, r0, #42; bx lr`, which reads r0, writes r0 and the flags,
     // and returns. Thumb bit set; AAPCS argument and result in r0.

@@ -15,7 +15,10 @@ const _: () = assert!(BANK2_BASE == crate::cache::BANK2_BASE);
 
 /// FLASH_SR2.DBECCERR: a read hit a double ECC error.
 const SR_DBECCERR: u32 = 1 << 26;
-const LINE: u32 = 32;
+/// FLASH_CCR2's clear bits for SR2's EOP (16) and error flags (17-19,
+/// 21-26) (RM0433 FLASH_CCR).
+const CCR_CLEAR: u32 = 1 << 16 | 0b111 << 17 | 0x3f << 21;
+const _: () = assert!(CCR_CLEAR == 0x07EF_0000);
 
 /// MPU region 2's state over S0-S3; region 1 (no access) is under it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,22 +67,18 @@ pub fn mpu() -> Mpu2 {
     Mpu2::from_u8(STATE.load(Ordering::Acquire))
 }
 
-/// Region 2 to `s`. From the boot or the UI loop only; into `Open`, the
-/// D-cache over S0-S3 and the whole I-cache are invalidated first, so
-/// nothing older than the flash is read or run.
+/// Region 2 to `s`. From the boot or the UI loop only. Into `Open`, the
+/// whole D-cache is cleaned and invalidated (set/way) and the whole
+/// I-cache invalidated first, so nothing older than the flash is read or
+/// run; no cache operation ever names a bank-2 address.
 pub fn set_mpu(s: Mpu2) {
-    // SAFETY: the SCB's cache maintenance (CBP, write-only and stateless)
-    // and the MPU's RBAR/RASR pair, which only the boot and the UI loop
-    // write, never an interrupt; `Board`'s own peripherals never touch
-    // either after `cache::init`.
+    // SAFETY: whole-cache maintenance and the MPU's RBAR/RASR pair. Only the
+    // boot and the UI loop call this, never an interrupt; after
+    // `cache::init`, `Board` never uses its MPU, and its SCB only for
+    // SysTick's priority and to reset, neither of which this touches.
     let mut cp = unsafe { cortex_m::Peripherals::steal() };
     if s == Mpu2::Open {
-        // SAFETY: S0-S3 are mapped write-through (`Read`, `Open`) or
-        // uncached (`Write`): no dirty line to lose. Aligned to whole lines.
-        unsafe {
-            cp.SCB
-                .invalidate_dcache_by_address(BANK2_BASE as usize, BANK2_LEN as usize)
-        };
+        cp.SCB.clean_invalidate_dcache(&mut cp.CPUID);
         cp.SCB.invalidate_icache();
     }
     cortex_m::asm::dsb();
@@ -95,13 +94,24 @@ pub fn set_mpu(s: Mpu2) {
 }
 
 fn bank2() -> &'static pac::flash::BANK {
-    // SAFETY: FLASH's fixed register block; read here, SR2 only.
+    // SAFETY: FLASH's fixed register block; here SR2 is read and CCR2
+    // written, bank 2's own, nothing else.
     unsafe { (*pac::FLASH::ptr()).bank2() }
 }
 
-/// Bank 2 read live: volatile loads, the D-cache's copy dropped first, a
-/// double ECC error in SR2 after them an `Err`. Bounded to S0-S3, and only
-/// while region 2 maps them.
+/// SR2's flags cleared, so an error a read raises is this read's.
+#[cfg_attr(not(feature = "bank2"), allow(dead_code))]
+fn clear_flags() {
+    // SAFETY: CCR2 only clears SR2's flags, one bit each; it starts,
+    // unlocks or erases nothing.
+    bank2().ccr.write(|w| unsafe { w.bits(CCR_CLEAR) });
+}
+
+/// Bank 2 read live: volatile loads through region 2, uncached in `Read`
+/// and `Write`, and in `Open` cached only since the last whole-cache
+/// invalidate (nothing writes bank 2 while it is open); a double ECC error
+/// in SR2 after them is an `Err`. Bounded to S0-S3, and only while region 2
+/// maps them.
 pub struct FlashRead;
 
 impl ImageRead for FlashRead {
@@ -115,15 +125,6 @@ impl ImageRead for FlashRead {
             return Ok(());
         }
         let at = BANK2_BASE + off;
-        let first = at & !(LINE - 1);
-        let last = (BANK2_BASE + end).next_multiple_of(LINE);
-        // SAFETY: whole lines inside S0-S3, mapped write-through or uncached:
-        // nothing dirty to lose.
-        unsafe {
-            cortex_m::Peripherals::steal()
-                .SCB
-                .invalidate_dcache_by_address(first as usize, (last - first) as usize)
-        };
         for (a, b) in (at..).zip(buf.iter_mut()) {
             // SAFETY: `a` is inside S0-S3 (`end <= BANK2_LEN`), which
             // region 2 maps readable (`mpu()`); a load never programs or
@@ -138,7 +139,7 @@ impl ImageRead for FlashRead {
 }
 
 // SAFETY: `read` loads this chip's bank 2 at `BANK2_BASE + off`, live
-// (volatile, its cached lines invalidated first). A double ECC error either
+// (volatile; region 2 uncached, or cached only since bank 2 last changed). A double ECC error either
 // faults (no data returned) or sets SR2.DBECCERR, which is `Err`.
 unsafe impl Bank2Memory for FlashRead {}
 
@@ -154,6 +155,7 @@ pub fn boot_judge() -> Bank2Status {
     let Some(seal) = crate::bank2_seal() else {
         return Bank2Status::Unsealed;
     };
+    clear_flags();
     let door = match Door::open(&mut FlashRead, &seal) {
         Ok(d) => d,
         Err(v) => return Bank2Status::from_verdict(&v),

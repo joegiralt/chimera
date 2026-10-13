@@ -3,9 +3,7 @@
 use core::fmt::{self, Write};
 
 /// Bank 1's state of the door, for the board.
-pub use chimera_engine::bank2::{
-    Bank2Door, DOOR_ADDR, DOOR_CELL, DOOR_MAGIC, DoorCell, PROBE_ADDS, TABLE_LEN,
-};
+pub use chimera_engine::bank2::{DOOR_CELL, DOOR_MAGIC, PROBE_ADDS, TABLE_LEN};
 use chimera_image::Verdict;
 pub use chimera_image::Version;
 

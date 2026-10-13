@@ -6,7 +6,7 @@ use chimera_core::bank2::{Bank2Status, Version};
 use chimera_core::ui::UiState;
 use chimera_core::ui::about_page::viz_lines;
 use chimera_core::ui::perf::PerfStats;
-use chimera_image::{Header, Seal, Verdict};
+use chimera_image::{Header, Verdict};
 use screen::*;
 
 fn line(s: &Bank2Status) -> String {
@@ -82,8 +82,6 @@ fn from_verdict_keeps_what_the_judge_saw() {
     for (v, want) in cases {
         assert_eq!(Bank2Status::from_verdict(&v), want);
     }
-    // The seal the line shows is the image's, which matched this build's.
-    assert!(Seal::new(SEAL).is_some());
 }
 
 #[test]
