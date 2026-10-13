@@ -6,8 +6,8 @@
 #[cfg(all(feature = "test-support", target_os = "none"))]
 compile_error!("test-support is for host tests: it forges confirmations and fresh files");
 
-// `SymPool::boxed`, for tests.
-#[cfg(any(test, feature = "test-support"))]
+// `SymPool::boxed`, for tests; `Project::boxed`, for host tools too.
+#[cfg(any(test, feature = "test-support", feature = "host-project"))]
 extern crate alloc;
 
 pub use chimera_hal::{MidiChannel, MidiNote, Velocity};

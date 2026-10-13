@@ -2288,11 +2288,12 @@ fn demo_id_outside_1_to_9_fails() {
 #[test]
 fn mono_part_mode_set() {
     let sounds = demo_sounds();
+    // CH 7: no Part NEW leaves in place plays there.
     let p =
-        decoded(&run_demo(&demo_with(7, "part.2 = \"TEST TWO, MONO, CH 3\""), &sounds).unwrap());
+        decoded(&run_demo(&demo_with(7, "part.2 = \"TEST TWO, MONO, CH 7\""), &sounds).unwrap());
     let two = p.part(PartId::ALL[1]);
     assert_eq!(two.mix.mode, PartMode::Mono);
-    assert_eq!(two.mix.channel, MidiChannel::new(2).unwrap());
+    assert_eq!(two.mix.channel, MidiChannel::new(6).unwrap());
     assert_eq!(p.part(PartId::ALL[0]).mix.mode, PartMode::Poly);
 }
 
@@ -2493,4 +2494,79 @@ fn demo_renders_gate_and_sit_on_the_page() {
     assert!(!qa::write(&d, &[report(true, false)], &[], &[], &[bad], true).unwrap());
     let page = std::fs::read_to_string(d.join("listening.html")).unwrap();
     assert!(!page.contains("Turn TYPE through"), "{page}");
+}
+
+#[test]
+fn a_part_on_a_channel_new_keeps_fails() {
+    let sounds = demo_sounds();
+    // Part 3 stays NEW's on CH 3: Part 2 there would stack with it.
+    demo_fails(
+        &demo_with(7, "part.2 = \"TEST TWO, MONO, CH 3\""),
+        &sounds,
+        7,
+        "CH 3 is Part 3's",
+    );
+    // Naming Part 3 frees its channel: named Parts may layer.
+    let three = format!(
+        "{}\npart.3 = \"TEST PAD, POLY, CH 2\"\n",
+        demo_with(7, "part.2 = \"TEST TWO, MONO, CH 3\"")
+    );
+    run_demo(&three, &sounds).unwrap();
+}
+
+#[test]
+fn hear_values_are_ones_the_try_line_names() {
+    let sounds = demo_sounds();
+    demo_fails(
+        &format!("{DEMO}hear.REVERB.TYPE = \"QUAD, BLOOM\"\n"),
+        &sounds,
+        8,
+        "does not name BLOOM",
+    );
+    // A CHORUS MODE by its page name: JUNO_BOTH reads I+II.
+    let chorus = DEMO.replace("Turn TYPE through QUAD, ROOM and HALL", "CHORUS I and II");
+    run_demo(
+        &format!("{chorus}hear.CHORUS.MODE = \"JUNO_I, JUNO_II\"\n"),
+        &sounds,
+    )
+    .unwrap();
+    demo_fails(
+        &format!("{chorus}hear.CHORUS.MODE = \"JUNO_BOTH\"\n"),
+        &sounds,
+        8,
+        "does not name I+II",
+    );
+}
+
+#[test]
+fn a_send_under_a_tenth_is_not_heard() {
+    use project::Effect;
+    let fx = chimera_core::dsp::fx_bus::FxParams::DEFAULT;
+    assert!(project::heard(&fx, [0.0, 0.0, 0.09]).is_empty());
+    assert_eq!(
+        project::heard(&fx, [0.0, 0.0, project::MIN_SEND]),
+        vec![Effect::Reverb(ReverbType::Quad)]
+    );
+    let mut off = fx;
+    off.reverb.mix = 0.0;
+    assert!(
+        project::heard(&off, [0.5, 0.0, 0.5])
+            .iter()
+            .all(|e| !matches!(e, Effect::Reverb(_)))
+    );
+}
+
+#[test]
+fn a_sound_already_in_the_pool_takes_no_new_slot() {
+    let sounds = demo_sounds();
+    let one = demo_with(7, "part.2 = \"TEST PAD, POLY, CH 2\"");
+    let p = project::build(&project::parse(&one).unwrap()[0], &sounds).unwrap();
+    let (new, _) = Project::boxed();
+    // Both Parts share TEST PAD's one slot, found by its sound_crc.
+    assert_eq!(p.pool().sound_count(), new.pool().sound_count() + 1);
+    let slot = |i: usize| match p.part(PartId::ALL[i]).origin() {
+        Origin::Slot { slot, .. } => slot,
+        o => panic!("{o:?}"),
+    };
+    assert_eq!(slot(0), slot(1));
 }

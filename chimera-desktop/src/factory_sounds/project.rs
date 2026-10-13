@@ -16,13 +16,13 @@ use chimera_core::dsp::fx_bus::{FX_SENDS, FxParams};
 use chimera_core::dsp::reverb::ReverbType;
 use chimera_core::name::ProjectName;
 use chimera_core::part::PartMode;
-use chimera_core::project::arena::{ARENA_BYTES, ArenaWriter};
+use chimera_core::part::PartParams;
 use chimera_core::project::{
-    PROJECT_DEMO_TOP, PartFrom, PartId, PartSource, Project, ReplaceGuard, SlotId, TemplateCrc,
-    encode_project,
+    PROJECT_DEMO_TOP, PartFrom, PartId, PartSource, Project, ReplaceGuard, SlotId, encode_project,
 };
-use chimera_core::source_table::SourceTable;
-use chimera_core::storage::{FileKind, Generation, Header, ProjectId, ValidAddr, write_file};
+use chimera_core::storage::{
+    FileKind, Generation, Header, ProjectId, ValidAddr, sound_crc, write_file,
+};
 
 use super::source::{self, Source, VecSink};
 use crate::listen::lined_tables;
@@ -190,13 +190,45 @@ fn demo(header: usize, e: &[(usize, String, String)]) -> Result<Demo, String> {
             return Err(unknown());
         }
     }
-    // On the finished FX, whatever the lines' order.
+    // On the finished FX, whatever the lines' order; each value one the
+    // `try` line names, as the unit shows it.
+    let named: Vec<&str> = tries
+        .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
+        .filter(|w| !w.is_empty())
+        .collect();
     let mut settings = Vec::new();
     for (line, a, values) in hear {
         for v in values.split(',').map(str::trim) {
             let mut f = fx;
             set_fx(&mut f, a, v).map_err(|m| at(line, m))?;
+            let shown = shown(&f, a, v);
+            if !named.contains(&shown) {
+                return Err(at(
+                    line,
+                    format!("hear {v}: the try line does not name {shown}"),
+                ));
+            }
             settings.push(f);
+        }
+    }
+    // A Part left as NEW's keeps its channel: a named Part there would
+    // stack with it.
+    for p in &parts {
+        let stays = PartId::ALL.into_iter().find(|&o| {
+            !parts.iter().any(|q| q.part == o)
+                && PartParams::for_part(o.index()).channel == p.channel
+        });
+        if let Some(o) = stays {
+            return Err(at(
+                p.line,
+                format!(
+                    "part.{}: CH {} is Part {}'s, which stays NEW's; name Part {} or pick another channel",
+                    p.part.index() + 1,
+                    p.channel.get() + 1,
+                    o.index() + 1,
+                    o.index() + 1
+                ),
+            ));
         }
     }
     Ok(Demo {
@@ -209,6 +241,15 @@ fn demo(header: usize, e: &[(usize, String, String)]) -> Result<Demo, String> {
         hear: settings,
         parts,
     })
+}
+
+/// `v` as the unit shows it: a CHORUS MODE by its page name (`I+II`).
+fn shown<'a>(fx: &FxParams, a: ValidAddr, v: &'a str) -> &'a str {
+    if a.addr().block == BlockRef::Chorus && a.spec().ident == "MODE" {
+        MODE_NAMES[ChorusMode::from_u8(fx.chorus.mode).disk_code() as usize]
+    } else {
+        v
+    }
 }
 
 /// `BLOCK.PARAM` of an FX block, by its frozen idents.
@@ -303,16 +344,19 @@ fn sound_of<'a>(p: &DemoPart, sounds: &'a [Source]) -> Result<&'a Source, String
     Ok(s)
 }
 
+/// The least send into an effect that counts as hearing it.
+pub const MIN_SEND: f32 = 0.1;
+
 /// What `fx` plays audibly when Parts send `sends` (each effect's most).
-/// An effect is heard when something reaches it and its return is up;
-/// the reverb's send includes the delay's REV SEND.
+/// An effect is heard when `MIN_SEND` or more reaches it, its return is
+/// above 0 and it is on; the reverb's send includes the delay's REV SEND.
 pub fn heard(fx: &FxParams, sends: [f32; FX_SENDS]) -> Vec<Effect> {
     let [chorus, delay, reverb] = sends;
-    let delay_on = delay > 0.0 && fx.delay.mix > 0.0;
-    let reverb_in = reverb > 0.0 || (delay_on && fx.delay.rev_send > 0.0);
+    let delay_on = delay >= MIN_SEND && fx.delay.mix > 0.0;
+    let reverb_in = reverb >= MIN_SEND || (delay_on && fx.delay.rev_send >= MIN_SEND);
     let mode = ChorusMode::from_u8(fx.chorus.mode);
     let mut out = Vec::new();
-    if chorus > 0.0 && fx.chorus.mix > 0.0 && mode != ChorusMode::Off {
+    if chorus >= MIN_SEND && fx.chorus.mix > 0.0 && mode != ChorusMode::Off {
         out.push(Effect::Chorus(mode));
     }
     if delay_on {
@@ -354,39 +398,39 @@ pub fn unheard(demos: &[Demo], sounds: &[Source]) -> Result<Vec<Effect>, String>
         .collect())
 }
 
-/// NEW on the heap, on an arena of its own, leaked (a host build's).
-fn new_project() -> (Box<Project>, TemplateCrc) {
-    let mut raw = Box::<Project>::new_uninit();
-    let arena = ArenaWriter::new(
-        Box::leak(vec![0; ARENA_BYTES].into_boxed_slice()),
-        Box::leak(Box::new(SourceTable::new())),
-    );
-    let t = Project::init_in_place(&mut raw, arena);
-    // SAFETY: `init_in_place` initialised the whole project in the box.
-    (unsafe { raw.assume_init() }, t)
-}
-
 /// `d` on NEW's template: its name and FX, then each Part loaded from a
-/// pool slot holding its Sound (one slot a Sound), with its mode and
-/// channel.
+/// pool slot holding its Sound, with its mode and channel. The slot is
+/// found as a library load finds it (`Project::library_needs`): any slot
+/// already holding the Sound (by `sound_crc`, NEW's own included), else
+/// the first free one, refused unless the arena fits it. The library path
+/// itself starts from a card file, so it is mirrored, not called.
 pub fn build(d: &Demo, sounds: &[Source]) -> Result<Box<Project>, String> {
-    let (mut p, template) = new_project();
+    let (mut p, template) = Project::boxed();
     p.set_name(d.name);
     *p.edit_fx() = d.fx;
-    let mut slots: Vec<(&str, SlotId)> = Vec::new();
     for dp in &d.parts {
         let src = sound_of(dp, sounds)?;
         let snd = source::to_sound(src)?;
         let fail = |m: String| at(dp.line, m);
-        let slot = match slots.iter().find(|x| x.0 == dp.sound) {
-            Some(&(_, s)) => s,
+        let crc = sound_crc(&snd);
+        let held = SlotId::ALL
+            .into_iter()
+            .find(|&s| p.pool().get(s).is_some_and(|e| e.crc() == crc));
+        let slot = match held {
+            Some(s) => s,
             None => {
-                let s = p
-                    .pool()
+                let pool = p.pool();
+                let s = pool
                     .first_free()
-                    .ok_or_else(|| fail("the pool is full".into()))?;
+                    .ok_or_else(|| fail("no free pool slot".into()))?;
+                let needs = pool.needs(s, &snd);
+                if !pool.fits(needs) {
+                    return Err(fail(format!(
+                        "the pool has no room: needs {needs:?}, free {:?}",
+                        pool.free()
+                    )));
+                }
                 p.pool_store(s, &snd).map_err(|e| fail(format!("{e:?}")))?;
-                slots.push((&dp.sound, s));
                 s
             }
         };

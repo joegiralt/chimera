@@ -31,6 +31,8 @@ master-tape = ["chimera-engine/master-tape"]
 # The by-value engine constructors (`AlgoEngine::new`, `ModalEngine::new`,
 # `EngineSlot::new`), for tests only: firmware builds every engine in place.
 test-support = ["chimera-engine/test-support"]
+# `Project::boxed`: NEW on a leaked heap arena, for host tools.
+host-project = ["chimera-engine/host-project"]
 # `write_source`: sources written, verified and sealed on the card (the
 # importer, the desktop, tests); with `card-put`, `put` takes them too
 # (ADR 0106), as the firmware's `card-put` does.

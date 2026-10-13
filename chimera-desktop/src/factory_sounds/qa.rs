@@ -2135,7 +2135,8 @@ pub fn demo_gates(d: &Demo, sounds: &[Source], stims: &Stims) -> Result<DemoRepo
         for (m, v) in sends.iter_mut().zip(snd.params.out.sends) {
             *m = m.max(v);
         }
-        exempt.push((p.part, listen::click_exempt(&snd)));
+        // Each Part's click exemption and home note.
+        exempt.push((p.part, listen::click_exempt(&snd), src.home));
         parts.push(format!(
             "PART {} · {} ({}) · {} · CH {}",
             p.part.index() + 1,
@@ -2158,7 +2159,11 @@ pub fn demo_gates(d: &Demo, sounds: &[Source], stims: &Stims) -> Result<DemoRepo
         for take in demo_takes(d) {
             let (t, onset, ex) = match take {
                 DemoTake::Part(part, script) => {
-                    let mut p = plan(script, 60);
+                    let (ex, home) = exempt
+                        .iter()
+                        .find(|e| e.0 == part)
+                        .map_or((None, 60), |e| (e.1, e.2));
+                    let mut p = plan(script, home);
                     p.secs += DEMO_TAIL_S;
                     let ch = perf.part(part).mix.channel;
                     let on: Vec<usize> = p
@@ -2166,7 +2171,6 @@ pub fn demo_gates(d: &Demo, sounds: &[Source], stims: &Stims) -> Result<DemoRepo
                         .iter()
                         .map(|h| block(h.on) * BLOCK_SIZE + LATE)
                         .collect();
-                    let ex = exempt.iter().find(|e| e.0 == part).and_then(|e| e.1);
                     (play_on(&perf, ch, &p), on, ex)
                 }
                 DemoTake::Hats | DemoTake::Snare => {
@@ -2199,13 +2203,14 @@ pub fn demo_gates(d: &Demo, sounds: &[Source], stims: &Stims) -> Result<DemoRepo
                 DemoCheck::Limiter(take),
                 (t.reduced_db, verdict(t.reduced_db <= LIMIT_CHORD_DB)),
             );
+            let limited_db = t.reduced_db;
             let r = heard(Audition::Script(Script::Stab), t, &[], None);
             renders.push(DemoRender {
                 setting: i,
                 take,
                 lufs: r.lufs,
                 peak_dbfs: r.peak_dbfs,
-                limited_db: gates.last().map_or(0.0, |g| g.value),
+                limited_db,
                 stereo: r.stereo,
             });
         }
