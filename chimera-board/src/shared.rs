@@ -82,12 +82,23 @@ static AUDIO_TAKEN: AtomicBool = AtomicBool::new(false);
 /// `take_audio`: its `AudioShared` needs no 7 KB of AXI of its own.
 ///
 /// # Safety
-/// Only before `take_audio`, which builds every slot; the reference must
-/// be gone by then.
+/// At most once, and only before `take_audio`, which builds every slot;
+/// the reference must be gone by then. Both orders are asserted: a second
+/// call, or one after `take_audio`, panics.
 #[cfg(feature = "bench")]
 pub unsafe fn bench_audio() -> &'static mut MaybeUninit<AudioShared> {
-    debug_assert!(!AUDIO_TAKEN.load(Ordering::Acquire));
-    // SAFETY: the caller's: nothing else references `AUDIO` yet.
+    static BENCH_TAKEN: AtomicBool = AtomicBool::new(false);
+    assert!(
+        !BENCH_TAKEN.swap(true, Ordering::AcqRel),
+        "bench_audio twice"
+    );
+    assert!(
+        !AUDIO_TAKEN.load(Ordering::Acquire),
+        "bench_audio after take_audio"
+    );
+    // SAFETY: the asserts let one call past, before `take_audio`, so this
+    // is the only reference to `AUDIO` yet; the caller drops it before
+    // `take_audio` makes its own.
     TripleBuffer::first_slot(unsafe { &mut *addr_of_mut!(AUDIO) })
 }
 
