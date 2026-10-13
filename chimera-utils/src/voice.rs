@@ -378,6 +378,8 @@ fn pitch_movement(frames: &[Frame]) -> (f64, f64, f64) {
 struct Env {
     db: Vec<f64>,
     level: f64,
+    /// The window's middle, seconds.
+    t: f64,
 }
 
 /// The envelope every 50 ms over 200 ms windows: the window's mean power
@@ -446,6 +448,7 @@ fn envelopes(frames: &[Frame]) -> Vec<Env> {
         out.push(Env {
             db: smooth,
             level: p.iter().sum(),
+            t: ((t + per / 2) * HOP + N / 2) as f64 / SR,
         });
         t += step;
     }
@@ -488,6 +491,15 @@ fn envelope_peaks(db: &[f64]) -> Vec<(f64, f64)> {
                 (bin_hz(k as f64), bin_hz((edge(1) - edge(-1)) as f64))
             })
         })
+        .collect()
+}
+
+/// Each sounding 200 ms window's middle (s) and its envelope's peaks (Hz,
+/// −3 dB width), as `measure` reads them.
+pub fn envelope_tracks(x: &[f64]) -> Vec<(f64, Vec<(f64, f64)>)> {
+    envelopes(&stft(x))
+        .iter()
+        .map(|e| (e.t, envelope_peaks(&e.db)))
         .collect()
 }
 

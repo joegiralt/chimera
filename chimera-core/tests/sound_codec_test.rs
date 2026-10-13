@@ -510,9 +510,10 @@ fn sparse_byte_identity() {
         let f = encode(&s);
         assert_eq!(encode(&decode(&f).unwrap()), f, "{}", s.name.as_str());
     }
-    // The old encoder's full files: a factory one re-encodes to its
-    // Sound's sparse bytes, and INIT's sparse form decodes the same.
-    for i in 0..FACTORY_LEN {
+    // The old encoder's full files (the eight table Sounds, from before the
+    // formant demos): a factory one re-encodes to its Sound's sparse bytes,
+    // and INIT's sparse form decodes the same.
+    for i in 0..8 {
         let full = v1_fixture(&format!("factory_{i}.snd"));
         let s = factory_sound(i).unwrap();
         assert_eq!(cost(&full), 1143 + 16 * usize::from(i == 6), "{i}");
@@ -564,7 +565,11 @@ fn sparse_sizes() {
         .map(|i| cost(&encode(&factory_sound(i).unwrap())))
         .collect();
     println!("factory: {costs:?}");
-    assert!(costs.iter().all(|c| (141..=261).contains(c)), "{costs:?}");
+    // The table Sounds, then the formant demos, whose routes, LFOs and
+    // envelopes add about 200 B.
+    let (table, demos) = costs.split_at(8);
+    assert!(table.iter().all(|c| (141..=261).contains(c)), "{costs:?}");
+    assert!(demos.iter().all(|c| (400..=480).contains(c)), "{costs:?}");
     // 46 B of name, Engine, an empty Registry, ModDests and Routes (its
     // three fixed-FREQ routes), and 70 B for the values INIT moved off
     // neutral (ADR 0063): RR on six operators and OUT LEVEL, a one-param

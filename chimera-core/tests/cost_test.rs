@@ -987,6 +987,19 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     assert_eq!((fits(CPU_HZ_REV_V, both), fits(CPU_HZ_REV_Y, both)), want);
 }
 
+/// CHOIR, TALK BASS, BREATH and VOX (factory 8–11) with their routes,
+/// filters and drive keep the formant floor beside the tape on rev V (ADR
+/// 0131).
+#[test]
+fn formant_sounds_keep_the_floor_with_their_routes() {
+    for i in 8..12 {
+        let s = chimera_core::factory::factory_sound(i).unwrap();
+        let v = (SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - FxBus::COST_TAPE.0)
+            / Voice::cost(&s.params, &s.mod_state).0;
+        assert!(v >= FLOOR_VOICES_FORMANT, "F{i}: {v}");
+    }
+}
+
 /// Spec § Intent and ADR 0031, 0040, 0124: billed as it plays (its routes,
 /// FOLD and DRIVE in; all at LP24) beside the bus alone, every factory Sound
 /// fits six voices on rev V at 75 % and five on rev Y; the TX and
@@ -2232,9 +2245,10 @@ fn voices_with(p: &AlgoParams, bus: Cost, extra: u32) -> u32 {
 fn formant_costs_bill_by_kind() {
     use chimera_core::factory::{Demo, demo_sound};
     let d = |x: Demo| demo_sound(x).params.algo;
+    // BREATH: three unlinked FRMT (SKIRT 2, 1, 1) and a noise band.
     assert_eq!(
         cost(&d(Demo::Breath)),
-        AlgoEngine::COST_BASE.0 + 2 * AlgoEngine::COST_NOIS.0
+        AlgoEngine::COST_BASE.0 + 3 * AlgoEngine::frmt_cost(1, false) + AlgoEngine::COST_NOIS.0
     );
     let worst = frmt_max();
     let t = OpKind::Table(WaveId::W1);
@@ -2254,6 +2268,7 @@ fn formant_costs_bill_by_kind() {
         ("BREATH", d(Demo::Breath)),
         ("CHOIR", d(Demo::Choir)),
         ("TALK BASS", d(Demo::TalkBass)),
+        ("VOX", d(Demo::Vox)),
         ("MAX", worst),
     ] {
         let (part, voice) = reach(&p);

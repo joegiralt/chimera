@@ -12,6 +12,7 @@ mod metrics;
 mod models;
 mod models_burst;
 mod mv;
+mod plot;
 mod reference;
 mod sig;
 mod stim;
@@ -37,6 +38,8 @@ usage: chimera-utils [flags] COMMAND …
   mv-structure PROG …      a program's structure from the decompiled listing
   voice-stats WAV …        loudness, vibrato, drift, breath share, formants and
                            vowel motion of each WAV (with --json PATH, as JSON)
+  voice-plot OUT.svg WAV … waveforms, spectra and envelope-peak tracks side by
+                           side (--at S, --f0 HZ, --periods N, --top HZ)
   model-check hall FITS    the Python model's HALL fits through the Rust model
   model-fit hall TAG [dens=own|fixed:X|KNOB[-][:lo:hi]] [warm=FITS] PROG …
                            fit the proposed HALL model (ADR 0095) to programs
@@ -58,7 +61,10 @@ flags:
   --robust        mv-verify: also nudge every fitted knob ±0.001 (a report)
   --size-worst    mv-fit: score each setting by the worst of it and SIZE ±0.001 (3× slower)
   --no-sources    mv-refs: skip the listening-set renders
-  --json PATH     voice-stats: also write the rows as JSON";
+  --json PATH     voice-stats: also write the rows as JSON
+  --at S, --f0 HZ, --periods N, --top HZ
+                  voice-plot: the moment (default 1), the note (130.81), the
+                  periods shown (3) and the spectrum's top (6000)";
 
 pub struct Config {
     pub out: PathBuf,
@@ -144,6 +150,15 @@ fn run() -> Result<bool, String> {
     let fits = flag("--fits")?.map(PathBuf::from);
     let start = flag("--start")?.map(PathBuf::from);
     let json = flag("--json")?.map(PathBuf::from);
+    let num = |v: Option<String>, d: f64, f: &str| {
+        v.map_or(Ok(d), |v| {
+            v.parse().map_err(|_| format!("{f}: not a number"))
+        })
+    };
+    let at = num(flag("--at")?, 1.0, "--at")?;
+    let f0 = num(flag("--f0")?, 130.81, "--f0")?;
+    let periods = num(flag("--periods")?, 3.0, "--periods")?;
+    let top = num(flag("--top")?, 6_000.0, "--top")?;
     let mut switch = |name: &str| {
         args.iter()
             .position(|a| a == name)
@@ -209,6 +224,9 @@ fn run() -> Result<bool, String> {
         "mv-ab" => mv::ab(&cfg, ty(0)?).map(|_| true),
         "mv-structure" => mv::structure(&cfg, &nums(rest)?).map(|_| true),
         "voice-stats" if !rest.is_empty() => voice::stats(rest, json.as_deref()).map(|_| true),
+        "voice-plot" if rest.len() >= 2 => {
+            plot::plot(&rest[0], &rest[1..], at, f0, periods, top).map(|_| true)
+        }
         "model-check" if rest.len() == 2 && rest[0] == "hall" => {
             models::check(&cfg, std::path::Path::new(&rest[1])).map(|_| true)
         }

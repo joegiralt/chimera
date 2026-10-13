@@ -349,6 +349,8 @@ pub struct Bench {
     fx: Box<FxBus>,
     dac: Box<DacBlocks>,
     scope: ScopeWriter,
+    /// The UI's side of the knobs, for `turn_sound`.
+    knobs: Box<chimera_core::dsp::knobs::KnobPublisher>,
     /// A test's fault injection: `rectify` × |x| added to every output
     /// sample, an offset that follows the signal's envelope.
     pub rectify: f32,
@@ -376,6 +378,7 @@ impl Bench {
             fx: Box::new(FxBus::new()),
             dac: Box::new(DacBlocks::new()),
             scope: super::scope_writer(),
+            knobs: Box::new(chimera_core::dsp::knobs::KnobPublisher::new()),
             rectify: 0.0,
         }
     }
@@ -394,6 +397,16 @@ impl Bench {
     pub fn edit_sound(&mut self, f: impl FnOnce(&mut Sound)) {
         f(self.perf.edit(PartId::ALL[0]).sound);
         self.shared.update_from(&self.perf, 0);
+    }
+
+    /// Part 1's Sound edited by `f` and published as the UI publishes a
+    /// turn (ADR 0115): a knob's change glides, as on the device. The first
+    /// call lands the Sound whole.
+    pub fn turn_sound(&mut self, f: impl FnOnce(&mut Sound)) {
+        f(self.perf.edit(PartId::ALL[0]).sound);
+        let p = self.perf.part(PartId::ALL[0]);
+        self.shared
+            .publish_sound(0, &p.sound, p.loads(), &mut self.knobs);
     }
 
     /// Part 1's Sound as published.
@@ -921,6 +934,14 @@ pub fn db(x: f32) -> f32 {
 /// mean squares summed. Over a sustained window it is the integrated
 /// loudness less the gate, which a held note never trips.
 pub fn lufs(x: &[f32]) -> f32 {
+    let ms = |s: Vec<f64>| s.iter().map(|v| v * v).sum::<f64>() / s.len().max(1) as f64;
+    let (l, r) = k_weighted(x);
+    (-0.691 + 10.0 * (ms(l) + ms(r)).max(1e-20).log10()) as f32
+}
+
+/// Each side of an interleaved stereo run, K-weighted (BS.1770's shelf
+/// and high-pass at 48 kHz).
+fn k_weighted(x: &[f32]) -> (Vec<f64>, Vec<f64>) {
     let biquad = |b: [f64; 3], a: [f64; 2], s: &[f64]| -> Vec<f64> {
         let (mut x1, mut x2, mut y1, mut y2) = (0.0, 0.0, 0.0, 0.0);
         s.iter()
@@ -947,10 +968,33 @@ pub fn lufs(x: &[f32]) -> f32 {
             &s,
         )
     };
-    let ms = |s: Vec<f64>| s.iter().map(|v| v * v).sum::<f64>() / s.len().max(1) as f64;
-    let l = k(x.iter().step_by(2).map(|&v| v as f64).collect());
-    let r = k(x.iter().skip(1).step_by(2).map(|&v| v as f64).collect());
-    (-0.691 + 10.0 * (ms(l) + ms(r)).max(1e-20).log10()) as f32
+    (
+        k(x.iter().step_by(2).map(|&v| v as f64).collect()),
+        k(x.iter().skip(1).step_by(2).map(|&v| v as f64).collect()),
+    )
+}
+
+/// BS.1770-4 integrated loudness of an interleaved stereo run at 48 kHz:
+/// 400 ms blocks at 75 % overlap, gated at −70 LUFS, then at 10 LU under
+/// the mean of what passed: a phrase's gaps and tails don't dilute it.
+pub fn lufs_gated(x: &[f32]) -> f32 {
+    let (l, r) = k_weighted(x);
+    let (n, hop) = (19_200, 4_800);
+    let z: Vec<f64> = (0..l.len().saturating_sub(n) / hop + 1)
+        .map(|i| {
+            let w = i * hop..(i * hop + n).min(l.len());
+            let len = w.len().max(1) as f64;
+            (l[w.clone()].iter().map(|v| v * v).sum::<f64>()
+                + r[w].iter().map(|v| v * v).sum::<f64>())
+                / len
+        })
+        .collect();
+    let loud = |m: f64| -0.691 + 10.0 * m.max(1e-20).log10();
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len().max(1) as f64;
+    let abs: Vec<f64> = z.iter().copied().filter(|&m| loud(m) > -70.0).collect();
+    let gate = loud(mean(&abs)) - 10.0;
+    let rel: Vec<f64> = abs.into_iter().filter(|&m| loud(m) > gate).collect();
+    loud(mean(&rel)) as f32
 }
 
 // ── Levels ─────────────────────────────────────────────────────────────

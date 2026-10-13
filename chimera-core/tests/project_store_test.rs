@@ -716,12 +716,13 @@ fn an_over_budget_part_loads_its_excess_as_w1_and_says_so() {
     // OP_D's WAVE, NOIS (17) to FRMT (16): four formants, 4·200 > 659.
     // Operators load in order, so the fourth loads W1 and the noise band
     // after it fits.
+    // The pool's CHOIR and BREATH hold NOIS on OP_D too, and the pool goes
+    // before the Parts: Part 1's is the last.
     let mut bytes = encode_project(&src);
-    let at: Vec<usize> = (0..bytes.len() - 6)
-        .filter(|&i| bytes[i..i + 6] == [6, 0, 17, 0, 0, 0])
-        .collect();
-    assert_eq!(at.len(), 1);
-    bytes[at[0] + 2] = 16;
+    let at = (0..bytes.len() - 6)
+        .rfind(|&i| bytes[i..i + 6] == [6, 0, 17, 0, 0, 0])
+        .unwrap();
+    bytes[at + 2] = 16;
     fix_crc(&mut bytes);
 
     let mut s = MemStore::new(1);

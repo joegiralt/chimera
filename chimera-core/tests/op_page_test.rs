@@ -3,13 +3,14 @@
 mod common;
 mod screen;
 
-use chimera_core::addr::{BlockRead, BlockRef, Op};
+use chimera_core::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use chimera_core::dsp::algo::formant::Skirt;
 use chimera_core::dsp::algo::kinds::OpKind;
-use chimera_core::dsp::algo::params::AlgoOpParams;
+use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::factory::{Demo, demo_sound};
+use chimera_core::modulation::ModSource;
 use chimera_core::params::EngineType;
 use chimera_core::part::PartParams;
 use chimera_core::preset::Sound;
@@ -255,7 +256,14 @@ impl Live {
 
 #[test]
 fn the_viz_follows_the_live_voice() {
-    let mut w = Live::new(demo_sound(Demo::TalkBass));
+    // TALK BASS with KEY 0 on OP2 and its sample and hold muted: only
+    // ENV 2 moves OP2's FC.
+    let mut s = demo_sound(Demo::TalkBass);
+    s.params.algo.ops[1].key = 0;
+    let vowel = ParamAddr::new(BlockRef::Algo, AlgoParams::VOWEL);
+    let col = s.mod_state.find(vowel).unwrap();
+    s.mod_state.set_amount(ModSource::Lfo1.index(), col, 0);
+    let mut w = Live::new(s);
     let resting = w.viz_fc();
     assert!(!w.ui.formant_view().sounding);
     w.hold_note(36);

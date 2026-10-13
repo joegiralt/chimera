@@ -84,7 +84,7 @@ pub enum Case {
     AlgoMorphSweep,
     /// Algo init; engine switched to Modal at block ON_BLOCKS / 2 (mid-note).
     AlgoToModalSwitch,
-    /// Factory Sound `i` (0–7) as the bank builds it, its own matrix included.
+    /// Factory Sound `i` (0–11) as the bank builds it, its own matrix included.
     Factory(u8),
 }
 
@@ -92,7 +92,7 @@ static TX_NAMES: [&str; 8] = [
     "algo_t1", "algo_t2", "algo_t3", "algo_t4", "algo_t5", "algo_t6", "algo_t7", "algo_t8",
 ];
 
-static FACTORY_NAMES: [&str; 8] = [
+static FACTORY_NAMES: [&str; 12] = [
     "factory_0",
     "factory_1",
     "factory_2",
@@ -101,10 +101,14 @@ static FACTORY_NAMES: [&str; 8] = [
     "factory_5",
     "factory_6",
     "factory_7",
+    "factory_8",
+    "factory_9",
+    "factory_10",
+    "factory_11",
 ];
 
 impl Case {
-    pub const ALL: [Case; 25] = [
+    pub const ALL: [Case; 29] = [
         Case::ModalInit,
         Case::ModalLfoCutoff,
         Case::ModalSympathetic,
@@ -129,6 +133,10 @@ impl Case {
         Case::Factory(5),
         Case::Factory(6),
         Case::Factory(7),
+        Case::Factory(8),
+        Case::Factory(9),
+        Case::Factory(10),
+        Case::Factory(11),
         Case::VaInit,
     ];
 
@@ -144,7 +152,7 @@ impl Case {
             Case::AlgoMorphStatic => "algo_morph_static",
             Case::AlgoMorphSweep => "algo_morph_sweep",
             Case::AlgoToModalSwitch => "algo_to_modal_switch",
-            Case::Factory(i) => FACTORY_NAMES[i as usize % 8],
+            Case::Factory(i) => FACTORY_NAMES[i as usize % 12],
         }
     }
 }

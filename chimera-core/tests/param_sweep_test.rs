@@ -963,6 +963,32 @@ fn modal_models_match_the_loudness_reference() {
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
+/// CHOIR, TALK BASS, BREATH and VOX (factory 8–11): one C4 at velocity 100
+/// on P1 within ±0.5 dB of its measured LUFS; their chord at velocity 127
+/// under the ceiling, losing at most `MAX_CHORD_LIMITED_DB` to the limiter.
+#[test]
+fn formant_sounds_meet_the_loudness_reference() {
+    // Ruling 9, resolved (owner, 2026-10-13): the demos may ship ~4 dB under
+    // REFERENCE_LUFS at VOL max (CHOIR −3.0, BREATH −3.3 dB).
+    const MEASURED: [f32; 4] = [-14.00, -10.90, -14.26, -11.70];
+    for (i, want) in (8..12u8).zip(MEASURED) {
+        let l = level(Patch::Factory(i), &[60], 100, BPS);
+        println!(
+            "F{i}: {:.2} LUFS ({:+.2} vs reference)",
+            l.lufs,
+            l.lufs - REFERENCE_LUFS
+        );
+        assert!((l.lufs - want).abs() <= 0.5, "F{i}: {:.2} LUFS", l.lufs);
+        let c = level(Patch::Factory(i), &CHORD, 127, BPS);
+        println!("  chord at 127: {:.2} dB limited", c.limited_db);
+        assert!(
+            c.limited_db <= MAX_CHORD_LIMITED_DB && c.peak.iter().all(|&p| within_ceiling(p)),
+            "F{i}: chord limited {:.2} dB",
+            c.limited_db
+        );
+    }
+}
+
 /// STRING's peak rule: its eight-note chord at velocity 127 takes at most
 /// this much gain reduction, dB.
 const MAX_STRING_GR_DB: f32 = 15.0;

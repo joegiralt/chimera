@@ -441,3 +441,7 @@ mv-structure +progs:
 # Loudness, vibrato, drift, breath share, formants and vowel motion of WAVs
 voice-stats +wavs:
     {{utils}} voice-stats {{wavs}}
+
+# Waveforms, spectra and envelope-peak tracks of WAVs side by side, as an SVG
+voice-plot out +wavs:
+    {{utils}} voice-plot {{out}} {{wavs}}

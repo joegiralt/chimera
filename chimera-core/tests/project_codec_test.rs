@@ -5,7 +5,7 @@ mod common;
 
 use chimera_core::block::DiskCode;
 use chimera_core::dsp::fx_bus::FxParams;
-use chimera_core::factory::factory_sound;
+use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::name::{ProjectName, SoundName};
 use chimera_core::params::EngineType;
 use chimera_core::part::PartParams;
@@ -315,7 +315,7 @@ fn unknown_or_missing_origins_read_as_init() {
         t,
         PartSource {
             part: PartId::ALL[0],
-            from: PartFrom::Slot(SlotId::ALL[9]),
+            from: PartFrom::Slot(SlotId::ALL[FACTORY_LEN + 1]),
         },
     )
     .unwrap();

@@ -23,7 +23,10 @@ use common::sweep::{BPS, lufs};
 use common::tape::{OneSource, held_plain};
 use common::{Case, render_case, scope_writer};
 
-const OLD_RMS: [[f32; 50]; 8] = [
+/// The factory Sounds before the formant demos joined the bank.
+const V1_FACTORY: usize = 8;
+
+const OLD_RMS: [[f32; 50]; V1_FACTORY] = [
     [
         2.1380855e-1,
         2.4835792e-1,
@@ -461,7 +464,7 @@ fn block_rms(out: &[f32]) -> Vec<f32> {
 /// CLEAN's k law (ADR 0096) gives RES a little more `k` swing: 4 (RES 0.3)
 /// 0.065 dB, 5 (SQR BASS, RES 0.4) 0.73; the others' RES 0 moves k from
 /// 2.01 to 2, within their old allowances.
-const KNOWN: [(usize, f32); 8] = [
+const KNOWN: [(usize, f32); V1_FACTORY] = [
     (0, 0.04),
     (1, 0.03),
     (2, 0.09),
@@ -670,7 +673,7 @@ fn morph_pad_over_its_whole_lfo_sweep() {
 /// set's median crest, where ALGO INIT's sine sits 8 dB over it.
 fn reference_source() -> Vec<u8> {
     let mut r = TapeRig::new(None);
-    let keys = (0..8)
+    let keys = (0..V1_FACTORY)
         .filter_map(factory_sound)
         .find(|s| s.name.as_str() == "MORPH KEYS")
         .unwrap();

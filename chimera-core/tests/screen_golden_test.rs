@@ -21,6 +21,8 @@ use screen::*;
 // amp_vel_*, modal_amp, mixer_sends, mixer_out_p2 again: send and SYM hints.
 // SETTINGS crumbs again for ORBIT (plan Task 10): they always clear its
 // beat dot, so three paths drop their first part.
+// The pool, library and TAPE-source screens again for CHOIR, TALK BASS,
+// BREATH and VOX in the bank: the pool bar counts their bytes.
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xa9a6098facb32ac7),
     ("algo_alg", 0xb7c030542ba09c26),
@@ -211,21 +213,21 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the pool meter, row costs, the hints' bytes (sound-pool
     // plan Task 6); and its refusal. Then the merge with filter-types: a
     // Sound is smaller (fixed columns, no registry entry).
-    ("sound_browser", 0x874eaa34493bb6ca),
+    ("sound_browser", 0x3ab3496b59af0787),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
     // Then pool_full: 2352 → 2544 (the formant fields).
     ("sound_browser_pool_full", 0x941800e328b33329),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
-    ("library_empty", 0xa94e4a6edf448c09),
-    ("library_no_card", 0xa7957021c5215364),
-    ("library_sounds", 0xbdd7b70b99cd94dd),
-    ("library_this_build", 0xcf33aa71b7f402e2),
-    ("library_cut_short", 0xd797a54b3cebf09d),
-    ("library_older", 0xddc7ed0f09a1592b),
-    ("library_newer", 0xfa0990aa288420a4),
-    ("library_wont_fit", 0x46253d45450aded1),
-    ("library_pool_full", 0x6660706bd8a9d80c),
+    ("library_empty", 0x8f0947e1ab171164),
+    ("library_no_card", 0xc5bd9084be465729),
+    ("library_sounds", 0xe5a531230a0d7740),
+    ("library_this_build", 0x7fa3fe94036cbf5f),
+    ("library_cut_short", 0x477c57047c48ef00),
+    ("library_older", 0xb33719429542a20e),
+    ("library_newer", 0x9e00520c336cc869),
+    ("library_wont_fit", 0x9e2e27d171cad731),
+    ("library_pool_full", 0xd9fefa03d3ad18ac),
     ("library_naming", 0xab3925136bf27a0f),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     // Re-recorded: INVERT in cell F (ADR 0126).
@@ -234,7 +236,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_system_diag_aud_load", 0x0063331a51f3da0e),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.
-    ("settings_project_pool", 0x4b4c1b086f6263c8),
+    ("settings_project_pool", 0x35e2e90ad183c692),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).
@@ -305,8 +307,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_strip_pingpong_reversed", 0x78c6bdd24e2b2eb8),
     ("tape_strip_tron_idle", 0x1e78eb2f30e3b43d),
     ("tape_src_pool", 0x5cc2849e855b0b0e),
-    ("tape_src_card", 0xfdc516336deb965f),
-    ("tape_src_wont_fit", 0x33e55fa0fbeb043d),
+    ("tape_src_card", 0xc230900451dccbe7),
+    ("tape_src_wont_fit", 0xc85ecb33c5d416cd),
     ("tape_src_loaded", 0x6e6533e2a42a05d2),
     ("tape_src_read_failed", 0x60b02af140ccd019),
     ("busy", 0x198544cd36863145),

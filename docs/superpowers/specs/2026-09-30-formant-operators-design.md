@@ -809,6 +809,8 @@ Each test fails on the first draft's design or on a plausible bug, or it pins a 
 
 Three new factory Sounds. The clips render from them, so what the owner approves is what ships.
 
+> **Reworked 2026-10-13 (owner: "not much movement or character"; task-16 v3, pending the owner's ear).** The voicings below are the first draft. Measured against FS1R references (FSVR renders, listening and measurement only), the four demo Sounds (VOX added, factory 8–11) are now voiced in `factory.rs`'s `demo_sound`: a third formant near 3 kHz (the draft CHOIR had nothing over 2 kHz), vibrato and drift into PITCH FINE, VOWEL moved per note by ENV 2, an LFO, NOTE or a sample and hold, noise bands for breath and consonant chiffs, drive, the ladder or dirty filter, and effect sends. The gap analysis and A/B page are in the ledger.
+
 - **CHOIR:** a pad on A1, within the budget at N = 3 (3 FRMT at the 120 target and 1 NOIS: 3·60 + 10 = 190 ≤ 197 at 75 %; 6 voices on rev V). At N = 2 it takes the plan's two-formant voicing.
   - Operator 1 is FRMT on slot F1.
   - Operators 2 and 3 are FRMT on slot F2, DETUNE −2 and +2. F2 carries the vowel's identity, and its beating is the most audible, so doubling it gives the choir its width.
@@ -825,6 +827,7 @@ Three new factory Sounds. The clips render from them, so what the owner approves
   - Both are on slot OFF, with slow attack and release.
 - **LEVELs** are set so `factory_test`'s peak ≤ 1.0 holds with `carrier_norm`.
   - Each Sound is measured against the loudness reference, ADR 0063's at ADR 0109's gain (`REFERENCE_LUFS` −11.0 in `param_sweep_test`). Equal RMS isn't equal loudness: formants at 2–4 kHz weigh 2–4 dB louder under K-weighting.
+  - **Resolved (owner, 2026-10-13):** the demo Sounds ship about 4 dB under the reference, as the clean-peaks decision implies: VOL can't reach it with the formant term at R. As reworked (task-16 v3), CHOIR, BREATH and VOX are at VOL 128/128 (−14.00, −14.26 and −11.70 LUFS at C4: −3.0, −3.3 and −0.7 dB), TALK BASS at 95/128 (−10.90, on the reference). `formant_sounds_meet_the_loudness_reference` pins each at its measured LUFS ±0.5 dB, and `demo_clips_are_clean` each phrase's gated BS.1770 loudness at its measured value ±1 dB (CHOIR −8.18, TALK BASS −13.69, BREATH −9.38, VOX −9.44).
 - **The factory bank.** It is `chimera-engine/src/factory.rs`'s `factory.bin` blob, checked against the `authored` Sounds (`blob_matches_authored`; `GOLDEN_RECORD=1` rewrites it).
   - The three Sounds append after the eight (`FACTORY_LEN` 8 to 11), before the INITs.
 - **Rendering.** An `#[ignore]`d host test, `render_formant_demo_clips`, plays a short phrase of each Sound through the `Instrument` and writes 48 kHz WAVs to `target/demo/`, with no new dependency.

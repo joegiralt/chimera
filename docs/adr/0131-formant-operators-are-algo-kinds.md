@@ -88,16 +88,17 @@ Counted on the `bench-algo` ELF by ADR 0056's method (`tools/loop_count.py`; the
 - **WAVE judges the patch it would leave.** In that same patch op 6's FRMT can't step to any kind: without it the five NOIS are over the four-voice floor, so every target is refused and the cell toasts, though the edit removes cost. With one NOIS fewer every target fits and every step lands (`a_frmt_steps_to_every_kind_the_whole_patch_fits`).
 
 ### Voices
-The costliest patch the budget admits (`frmt_max`, every kind mix with a FRMT on every pair, LEVEL 99, FDBK 1) is **T1 ∪ A16**: a linked FRMT on operator 2, the unlinked one on 6, NOIS on 1 (linked) and 4, tables on 3 and 5 (cost 1,472, spend 650 of 667; five other pairs with A16 tie it). Before the reach was billed it was a linked FRMT on 3 and NOIS on 1, 2 and 4 (1,511), now over budget. It is the bench's FRMT MAX row. Printed by `formant_costs_bill_by_kind` (light: `ModRouting::BASE` + `CHAIN_COST` beside the whole bus, capped at the pool's 8; heavy: `HEAVY_OVERHEAD` beside the bus with the tape; a formant Sound's counts include recost's reach):
+The costliest patch the budget admits (`frmt_max`, every kind mix with a FRMT on every pair, LEVEL 99, FDBK 1) is **T1 ∪ A16**: a linked FRMT on operator 2, the unlinked one on 6, NOIS on 1 (linked) and 4, tables on 3 and 5 (cost 1,472, spend 650 of 659; five other pairs with A16 tie it). Before the reach was billed it was a linked FRMT on 3 and NOIS on 1, 2 and 4 (1,511), now over budget. It is the bench's FRMT MAX row. Printed by `formant_costs_bill_by_kind` (light: `ModRouting::BASE` + `CHAIN_COST` beside the whole bus, capped at the pool's 8; heavy: `HEAVY_OVERHEAD` beside the bus with the tape; a formant Sound's counts include recost's reach):
 
 | Sound | Engine cost | Rev V, light | Rev Y, light (with the tape) | Rev V, heavy |
 |---|---|---|---|---|
-| BREATH | 530 | 8 | 8 (7) | 5 |
-| CHOIR | 1,230 | 4 | 3 (3) | 3 |
-| TALK BASS | 1,210 | 4 | 3 (3) | 3 |
-| FRMT MAX | 1,472 | 3 | 3 (3) | 3 |
+| BREATH | 1,230 | 4 | 3 (3) | 3 |
+| CHOIR | 1,310 | 4 | 3 (3) | 3 |
+| TALK BASS | 1,282 | 4 | 3 (3) | 3 |
+| VOX | 1,271 | 4 | 3 (3) | 3 |
+| FRMT MAX | 1,472 | 3 | 3 (2) | 3 |
 
-The floor is rev V's, as ADR 0026's is; on rev Y with the tape the costliest formant patch gets three under light routes (two before the lower budget moved it). ADR 0031's "the costliest patch gets six voices on rev V" still holds for table patches (`the_costliest_table_patch_still_gets_six_voices_on_rev_v`); it never applied to formant Sounds.
+The floor is rev V's, as ADR 0026's is; on rev Y with the tape the costliest formant patch gets two under light routes, once the knobs' and LFO clocks' reserve (24) is billed beside the bus. ADR 0031's "the costliest patch gets six voices on rev V" still holds for table patches (`the_costliest_table_patch_still_gets_six_voices_on_rev_v`); it never applied to formant Sounds.
 
 ### Fixed work outside the voice budget
 The audio interrupt's per-block publishes are fixed work, not billed to voices; the 25 % reserve beside the 75 % share carries them. Counted on the shipping ELF (functions forced out of line for the count only):
@@ -117,6 +118,9 @@ The audio interrupt's per-block publishes are fixed work, not billed to voices; 
 - **Raw DC under FDBK:** −2.28e-3 before the voice's 5 Hz blocker (7.3e-6 after), in `formant_operators_are_stable`'s case: FDBK skews each grain, so the engine's raw output isn't DC-free, and the voice's blocker (ADR 0060) is what removes it.
 - **`VOICE_CHAIN_BYTES` 2,112 → 2,176:** the formant operators' 13 glided settings in `AlgoLive`. `AlgoEngine` is 2,572 B and still fits inside `ModalEngine`'s 4,240, so `EngineSlot` is unchanged; `Voice` is 6,416 B (6,304 on main at 4473f0a1), pinned by `the_algo_engine_still_fits_its_slot`.
 
+### Demo Sound loudness
+**The demo Sounds ship about 4 dB under the loudness reference (owner, 2026-10-13; resolves the plan's Ruling 9).** With the formant term at R = −12 dB and `carrier_norm` normalising LEVEL, VOL tops out short of `REFERENCE_LUFS` (−11.0) for CHOIR and BREATH; the September clean-peaks decision is kept rather than adding makeup gain or a VOL above 1. As reworked against the FS1R references (task-16 v3), CHOIR, BREATH and VOX are at VOL 128/128 (−14.00, −14.26 and −11.70 LUFS at C4: −3.0, −3.3 and −0.7 dB) and TALK BASS at 95/128 (−10.90); CHOIR's, BREATH's and TALK BASS's filter LEVEL sits over unity (0.6, 0.62, 0.65) for the last dB or two. The tests pin each Sound at its measured LUFS ±0.5 dB and each demo phrase's gated BS.1770 loudness at its measured value ±1 dB (CHOIR −8.18, TALK BASS −13.69, BREATH −9.38, VOX −9.44): in a phrase CHOIR's chords are louder than an FM factory Sound on the same progression.
+
 ### Partial supersessions
 - **ADR 0022:** its destination list gains FRMT, BW (per operator) and VOWEL (spec § 7).
 - **ADR 0026:** its cost terms gain the formant and noise kinds, billed per algorithm; its four-voice floor now holds for Sounds of tables and noise bands, and **three** for a Sound holding a FRMT (the owner's decision, 2026-10-12), both under the reference heavy routing.
@@ -126,7 +130,7 @@ The audio interrupt's per-block publishes are fixed work, not billed to voices; 
 - **Bill every FRMT linked** (`Kinds` blind to the algorithm): N = 1 at three voices, and no three-formant vowel.
 - **Bill the moving term only under routes and glides** (ADR 0117-style): linked N = 2, but the pitch wheel and glide steals move laws with no route to see.
 - **Cut 11 more cycles from the linked path:** linked spans cost about 5.5 KB of flash.
-- **Four voices for every Sound:** 197 holds one unlinked FRMT.
+- **Four voices for every Sound:** 191 holds one unlinked FRMT.
 - **One FRMT for alpha:** no vowels.
 
 ## Consequences
