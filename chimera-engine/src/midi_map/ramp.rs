@@ -79,6 +79,11 @@ impl Ramp {
         Some(self.at)
     }
 
+    /// Still heading for its last CC's place.
+    pub const fn moving(&self) -> bool {
+        self.left != 0
+    }
+
     /// The hand wins: rest at `place`.
     pub fn cancel(&mut self, place: f32) {
         (self.at, self.to, self.left) = (place, place, 0);

@@ -7,6 +7,7 @@ pub mod ramp;
 pub use crate::midi_in::Cc;
 
 use crate::addr::{BlockRef, ParamAddr};
+use crate::params::EngineType;
 use crate::part::PartParams;
 
 /// A `ParamAddr` a CC may drive: a Sound's own, stored, non-patching
@@ -31,6 +32,18 @@ impl Mappable {
 
     pub const fn addr(self) -> ParamAddr {
         self.0
+    }
+
+    /// Whether a Part on `e` reads it: an engine's own block only on that
+    /// engine. A dead entry is kept, and a CC to it does nothing (spec § 3).
+    pub fn live(self, e: EngineType) -> bool {
+        match self.0.block {
+            BlockRef::Modal => e == EngineType::Modal,
+            BlockRef::Va => e == EngineType::Va,
+            BlockRef::Algo | BlockRef::AlgoOp(_) => e == EngineType::Algo,
+            BlockRef::TapeEngine => e == EngineType::Tape,
+            _ => true,
+        }
     }
 }
 

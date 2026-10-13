@@ -55,13 +55,39 @@ pub fn apply_under(
         .is_some_and(|s| s.binding == SlotBinding::SelectOp)
     {
         *sel_op = sel_op.nudged(delta);
-    } else if let Some(a) = slot_addr(def, slot, ctx)
-        && let Some(mut b) = params.block_mut(a.block)
-    {
-        let before = b.get(a.param);
-        b.nudge(a.param, delta);
-        machine_edit(a, before, &mut *b);
+    } else if let Some(a) = slot_addr(def, slot, ctx) {
+        edit(params, a, Edit::Nudge(delta));
     }
+}
+
+/// How an edit moves a param: a turn, a MIX+turn, or a mapped CC's value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Edit {
+    Nudge(i8),
+    Snap(i8),
+    To(f32),
+}
+
+/// The one edit path (spec § 6): `a` in `params` moved by `how`, then a
+/// TAPE MODEL change's machine. `true` when the value moved.
+pub fn edit(params: &mut impl Blocks, a: ParamAddr, how: Edit) -> bool {
+    let Some(mut b) = params.block_mut(a.block) else {
+        return false;
+    };
+    let before = b.get(a.param);
+    match how {
+        // The last kind the budget allows, as a turn steps to it.
+        Edit::Snap(d)
+            if matches!(a.block, BlockRef::AlgoOp(_)) && a.param == AlgoOpParams::WAVE =>
+        {
+            b.nudge(a.param, d.signum() * i8::MAX)
+        }
+        Edit::Snap(d) => b.snap(a.param, d),
+        Edit::Nudge(d) => b.nudge(a.param, d),
+        Edit::To(v) => b.set(a.param, v),
+    }
+    machine_edit(a, before, &mut *b);
+    b.get(a.param) != before
 }
 
 /// A MODEL edit on TAPE writes the new machine's defaults (spec § 2
@@ -83,16 +109,7 @@ pub fn snap_encoder(def: &BlockDef, slot: usize, delta: i8, params: &mut impl Bl
 
 /// `snap_encoder` under `ctx`.
 pub fn snap_under(def: &BlockDef, slot: usize, delta: i8, params: &mut impl Blocks, ctx: &SlotCtx) {
-    if let Some(a) = slot_addr(def, slot, ctx)
-        && let Some(mut b) = params.block_mut(a.block)
-    {
-        let before = b.get(a.param);
-        if matches!(a.block, BlockRef::AlgoOp(_)) && a.param == AlgoOpParams::WAVE {
-            // The last kind the budget allows, as a turn steps to it.
-            b.nudge(a.param, delta.signum() * i8::MAX);
-        } else {
-            b.snap(a.param, delta);
-        }
-        machine_edit(a, before, &mut *b);
+    if let Some(a) = slot_addr(def, slot, ctx) {
+        edit(params, a, Edit::Snap(delta));
     }
 }

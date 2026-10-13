@@ -521,6 +521,9 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         orbit.see(ui);
         // The OP pages' band: the edited Part's newest voice.
         ui.set_formant_views(formant_r.read());
+        // Mapped CCs first: a turn this frame wins over them.
+        #[cfg(feature = "midi-din")]
+        ui.hear_ccs(cc_din.drain(), controls::now_ms());
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
         // SYSTEM synced first: a THEME change made in this visit is kept.

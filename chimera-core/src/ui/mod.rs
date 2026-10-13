@@ -6,6 +6,7 @@ pub mod block_def;
 pub mod block_registry;
 pub mod browser;
 pub mod busy;
+mod cc;
 pub mod components;
 pub mod draw;
 pub mod dungeon_map;
@@ -86,7 +87,7 @@ use crate::storage::{ProjectId, SourceRef};
 const SCRUB_FINGER: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::POSITION);
 use block_def::BlockDef;
 use block_def::VizType;
-use block_def::slot_addr;
+use block_def::{SlotBinding, slot_addr};
 use components::Head;
 use filter_panel::{JackSlot, RouteView};
 use fmt::FmtBuf;
@@ -305,6 +306,8 @@ pub struct UiState {
     /// Each reverb TYPE's knobs as last left: a TYPE nudge away and back
     /// loses nothing. RAM only; a project load clears it.
     rev_knobs: KnobMemory,
+    /// Mapped CCs: each Part's ramps, bins and budget cursor.
+    cc: cc::CcState,
 }
 
 /// How long the LEVEL LED takes to fall from a peak to dark.
@@ -389,6 +392,7 @@ crate::in_place::field_list!(UiState => UiState {
     lib,
     clip,
     rev_knobs,
+    cc,
 });
 
 #[cfg(any(test, feature = "test-support"))]
@@ -477,6 +481,7 @@ impl UiState {
             addr_of_mut!((*p).led).write(led::Led::OFF);
             addr_of_mut!((*p).dfu).write(None);
             addr_of_mut!((*p).rev_knobs).write(KnobMemory::new());
+            addr_of_mut!((*p).cc).write(cc::CcState::new());
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui
@@ -1402,6 +1407,33 @@ impl UiState {
         }
     }
 
+    /// The encoder's edit path (spec § 6): `a` on Part `part` turned
+    /// `delta`, or snapped, with the formant budget's refusal said on the
+    /// active Part. A mapped CC's stepped target moves through it too.
+    /// `true` when the value moved.
+    pub fn edit_addr(&mut self, part: PartId, a: ParamAddr, delta: i8, snap: bool) -> bool {
+        if part == self.active_part {
+            self.formant_full(part, a, delta, snap);
+        }
+        let how = if snap {
+            part_page::Edit::Snap(delta)
+        } else {
+            part_page::Edit::Nudge(delta)
+        };
+        self.edit_in(part, a, how)
+    }
+
+    /// `part_page::edit` on Part `part`'s blocks.
+    fn edit_in(&mut self, part: PartId, a: ParamAddr, how: part_page::Edit) -> bool {
+        let params = &mut UiBlocks {
+            project: &mut self.project,
+            part,
+            theme: &mut self.theme,
+            midi: &mut self.midi,
+        };
+        part_page::edit(params, a, how)
+    }
+
     /// The keys this frame, in order: MENU, B*n*, PLUS and MINUS, SEQ, EDIT,
     /// then encoder A on a list. With MIX down, PLUS and MINUS are MIX's
     /// own (prime, delete), never a move.
@@ -2078,6 +2110,9 @@ impl UiState {
             } else {
                 part_page::apply_under(def, i, delta, params, &ctx, &mut self.sel_op);
             }
+            if let Some(a) = slot_addr(def, i, &ctx) {
+                self.cc_hand(self.active_part, a);
+            }
         }
         // SEGS shrunk under an armed segment drops the capture.
         self.orbit.fit(&self.project.orbit().live().chords);
@@ -2473,24 +2508,37 @@ impl UiState {
                     *rev = reverb_panel::turn(rev, a.param, delta, &mut self.rev_knobs, tempo);
                     continue;
                 }
-                if let Some(a) = v.addr() {
-                    self.formant_full(at, a, delta, shift);
+                if let PageKey::Legacy(p) = self.page {
+                    let params = &mut UiBlocks {
+                        project: &mut self.project,
+                        part: at,
+                        theme: &mut self.theme,
+                        midi: &mut self.midi,
+                    };
+                    if shift {
+                        p.snap_encoder(i, delta, params);
+                    } else {
+                        p.apply_encoder(i, delta, params);
+                    }
+                    continue;
                 }
-                let params = &mut UiBlocks {
-                    project: &mut self.project,
+                let read = UiRead {
+                    project: &self.project,
                     part: at,
-                    theme: &mut self.theme,
-                    midi: &mut self.midi,
+                    theme: &self.theme,
+                    midi: &self.midi,
                 };
-                match (self.page, shift) {
-                    (PageKey::Part { .. }, true) => {
-                        part_page::snap_encoder(def, i, delta, params, self.sel_op)
-                    }
-                    (PageKey::Part { .. }, false) => {
-                        part_page::apply_encoder(def, i, delta, params, &mut self.sel_op)
-                    }
-                    (PageKey::Legacy(p), true) => p.snap_encoder(i, delta, params),
-                    (PageKey::Legacy(p), false) => p.apply_encoder(i, delta, params),
+                let ctx = SlotCtx::read(&read, self.sel_op);
+                if !shift
+                    && def
+                        .params
+                        .get(i)
+                        .is_some_and(|s| s.binding == SlotBinding::SelectOp)
+                {
+                    self.sel_op = self.sel_op.nudged(delta);
+                } else if let Some(a) = slot_addr(def, i, &ctx) {
+                    self.edit_addr(at, a, delta, shift);
+                    self.cc_hand(at, a);
                 }
             }
             // An edit may change the Part's chain: keep the page by id.
