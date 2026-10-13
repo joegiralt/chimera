@@ -18,7 +18,7 @@ use chimera_core::project::{PartId, Performance};
 use chimera_core::scope::{ScopeWriter, scope_buffer};
 use chimera_core::source_table::GateView;
 use chimera_core::{MidiNote, Velocity};
-use chimera_desktop::listen::{CLICK_RATIO, qa_takes};
+use chimera_desktop::listen::{CLICK_RATIO, click_exempt, qa_takes};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 
 const SR: f32 = SAMPLE_RATE as f32;
@@ -283,5 +283,31 @@ fn va_shaped_glide_with_sub_does_not_click() {
         (va.mode, va.amount, va.coarse[1]) = (VaMode::Sync, amount, 7);
         let r = ratio(&s, PartMode::Mono, &GLIDE, 2.0);
         assert!(r <= CLICK_RATIO, "SYNC AMOUNT {amount}: {r:.2}×");
+    }
+}
+
+/// INIT VA (two saws, FINE2 +6, the 2040) in `mode`, AMOUNT full.
+fn ring_saws(mode: VaMode) -> Sound {
+    let mut s = Sound::init(EngineType::Va);
+    (s.params.va.mode, s.params.va.amount) = (mode, 1.0);
+    s
+}
+
+/// #488: RING on two saws reads 17× in the showcase QA (8× here, C2's
+/// first cycle). The product of two edged waves pulses where both edges
+/// meet, and the ideal additive-saw reference pulses the same: the owner
+/// keeps it as RING's character (2026-10-13), so the QA's click gate
+/// leaves RING to the ear.
+#[test]
+fn va_ring_is_left_to_the_ear() {
+    let ring = ring_saws(VaMode::Ring);
+    let r = ratio(&ring, PartMode::Poly, &[hit(0.0, 0.8, 36, 100)], 1.2);
+    assert!(
+        r > CLICK_RATIO,
+        "RING's pulse is gone ({r:.2}×): drop the exemption"
+    );
+    assert!(click_exempt(&ring).is_some());
+    for mode in [VaMode::Mix, VaMode::Sync] {
+        assert_eq!(click_exempt(&ring_saws(mode)), None, "{mode:?}");
     }
 }
