@@ -529,7 +529,7 @@ mod.LFO2 = "ALGO.VOWEL +20"
 mod.VEL = "ALGO.VOWEL +25, OP_B.LEVEL +15"
 mod.NOTE = "OP_B.LEVEL -30, OP_C.LEVEL -40"
 OUT.LEVEL = "1"  # 127
-level = "by ear -13.3: the lead phrase limits 1.9 dB wet; op 1 at 99 reaches -11 but halves the vowel's effect"
+level = "by ear -13.3: the lead phrase limits 1.9 dB; op 1 at 99 reaches -11 but halves the vowel's effect"
 trim = "0"
 
 # Talking bell: 3 -> 1 a 1.41 bell; 5 and 6 (F1, F2, grains at 2.00) into
