@@ -777,8 +777,9 @@ pub fn tail_knee(t: ReverbType) -> f32 {
 /// so the tail's 4–16 kHz share stays within 9 dB of its body's; under
 /// the knee (`tail_knee`) the return goes as the envelope's fourth power
 /// (5:1), and the noise-only end fades. Both close on a ramp across the
-/// block (the gain on MIX's) and open at once, on a return that was under
-/// the floor. 19 instructions a ring sample (`FxBus::COST`). Zero bytes
+/// block (the gain on MIX's). The low-pass opens at once, on a return
+/// that was under the floor; the gain opens on a ramp too, at once only
+/// on an onset. 19 instructions a ring sample (`FxBus::COST`). Zero bytes
 /// are a fresh gate.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailGate {
@@ -802,6 +803,9 @@ impl TailGate {
     /// The low-pass's lowest coefficient: about 1.5 kHz at 24 kHz, so the
     /// tail's own body is no shorter.
     const A_MIN: f32 = 0.32;
+    /// An onset: the block's peak over last block's envelope by this
+    /// (18 dB).
+    const ONSET: f32 = 8.0;
 
     pub const fn new() -> Self {
         Self {
@@ -837,6 +841,7 @@ impl TailGate {
             .iter()
             .zip(r.iter())
             .fold(0.0f32, |m, (a, b)| m.max(a.abs() + b.abs()));
+        let prev = self.env;
         self.env = if pk > self.env {
             pk
         } else {
@@ -863,8 +868,12 @@ impl TailGate {
             }
             self.y = [yl, yr];
         }
+        // The gain ramps up as down: snapped, a tail under the knee
+        // stepped on each block edge its peak rose (#499). Only an onset
+        // snaps it, its edge sample at most last block's envelope, an
+        // eighth of the block's own swing.
         let g1 = Self::gain(self.env, tail_knee(t));
-        let g0 = if g1 > self.g { g1 } else { self.g };
+        let g0 = if pk > Self::ONSET * prev { g1 } else { self.g };
         self.g = g1;
         (g0, g1)
     }
