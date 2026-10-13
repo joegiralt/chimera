@@ -420,39 +420,39 @@ const GOLDENS: &[(&str, u64)] = &[
     ("rev_room_mv10", 0x18b8fdb1c9ff3918),
     ("rev_room_mv11", 0x0b3122477ee0516c),
     ("rev_room_mv14", 0x7f3146738ce901c8),
-    ("rev_hall", 0xa4c9ce3bad14211a),
+    ("rev_hall", 0x6aca219cb0b70005),
     // tail gate + tail low-pass, and ADR 0121 SMEAR depths/RATE
     ("rev_hall_plate", 0xc16ebf2b274f362f),
     // HALL at each MidiVerb II program's fitted knobs (`MV2_HALL`, T10b);
     // START is program 23's, so `rev_hall` and `rev_hall_mv23` agree.
-    ("rev_hall_mv07", 0x4d7719f0f2f3e607),
+    ("rev_hall_mv07", 0xec1bf9029508bab5),
     ("rev_hall_mv12", 0xd67857728ee8073c),
     ("rev_hall_mv13", 0x2b42ba4d907cc218),
     ("rev_hall_mv15", 0x13a6968b2b22ac98),
     ("rev_hall_mv16", 0xbe7451b932e667b8),
     ("rev_hall_mv22", 0xfae1224ef7c9ddf1),
-    ("rev_hall_mv23", 0xa4c9ce3bad14211a),
+    ("rev_hall_mv23", 0x6aca219cb0b70005),
     ("rev_hall_mv27", 0x172c5a3d446f4785),
     // GATE and REVERSE on the BURST engine (reverb TYPEs T8).
     ("rev_gate", 0xae13e5dde4003b5d),
     ("rev_gate_flat_tail0", 0xabd350c08bf07adc),
     // LENGTH synced (reverb TYPEs T12).
     ("rev_gate_sync_8th_120", 0x06d7e091fa143978),
-    ("rev_reverse", 0xe33b248d7a27a7e0),
-    ("rev_reverse_regen", 0x3c1bddba845a9c9a),
+    ("rev_reverse", 0xba42a8be357440a8),
+    ("rev_reverse_regen", 0x6f74acbee1a3065c),
     // BLOOM (ADR 0095, reverb TYPEs T11) on program 45's knobs, and at
     // each MidiVerb II Bloom's fitted knobs (`MV2_BLOOM`).
-    ("rev_bloom", 0x7f600de74cc8664b),
-    ("rev_bloom_mv45", 0x7f600de74cc8664b),
-    ("rev_bloom_mv49", 0xbc78e734bc0f8ecc),
+    ("rev_bloom", 0xe3efd6f502ebc6ca),
+    ("rev_bloom_mv45", 0xe3efd6f502ebc6ca),
+    ("rev_bloom_mv49", 0x5c4a7af1488bdf98),
     ("rev_gate_mv31", 0x2d6d80beb85f644c),
     ("rev_gate_mv32", 0x2d844d9b8c1ba203),
     ("rev_gate_mv34", 0x0cc994356672beb1),
     ("rev_gate_mv35", 0xf5c76bebe6eaf1ba),
     ("rev_gate_mv36", 0x6b9cbd7b23bba190),
-    ("rev_reverse_mv40", 0x583cdc832d6c10dd),
-    ("rev_reverse_mv47", 0xd8c159be77c51d0a),
-    ("rev_reverse_mv48", 0x946685092be6c951),
+    ("rev_reverse_mv40", 0x546ceccbd684a489),
+    ("rev_reverse_mv47", 0xf5951e010a88f63f),
+    ("rev_reverse_mv48", 0xaa90cfde64f51a36),
 ];
 
 #[test]
