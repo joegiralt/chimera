@@ -596,7 +596,7 @@ impl Instrument {
     /// chord comes a note a millisecond, spread over blocks. Re-measured
     /// with `OrbitRunner::COST`: their sum must cover ORBIT's cold first
     /// block (65,387 at 785a028a).
-    pub const BURST: Cost = Cost(857); // 5 note-ons in one block, 54,810 (ORBIT's first block, every voice cold; its own work 10,577, under `OrbitRunner::COST`, so the pair covers the 65,387 block), measured 2026-10-05, bench ORBIT PHASES, rev V at 480 MHz, 785a028a; / 64, rounded up
+    pub const BURST: Cost = Cost(859); // 5 note-ons in one block, 54,810 (ORBIT's first block, every voice cold; its own work 10,577, under `OrbitRunner::COST`, so the pair covers the 65,387 block), measured 2026-10-05, bench ORBIT PHASES, rev V at 480 MHz, 785a028a; + ALGO's retrigger floor (#486), 3 instructions an operator, 90 × 1.46 × 1.1 = 145 by ADR 0056's count; / 64, rounded up
 
     pub fn new(sample_rate: u32, budget: SampleBudget) -> Self {
         // SAFETY: `init_in_place` writes every field of the slot.
