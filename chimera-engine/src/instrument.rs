@@ -25,7 +25,9 @@ use crate::dsp::voice::{HighNote, Voice};
 use crate::hw::{Cost, DAC_PAIRS, MAX_PARTS, MAX_VOICES, SampleBudget, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
 use crate::modulation::ModState;
-use crate::note_queue::{BendEvent, NoteEvent, NoteKind, SustainEvent};
+use crate::note_queue::{
+    BendEvent, ChannelMode, ChannelModeEvent, NoteEvent, NoteKind, SustainEvent,
+};
 use crate::orbit::RingIdx;
 use crate::orbit::ring::Harmony;
 use crate::orbit::runner::{OrbitRunner, OrbitShared};
@@ -1084,6 +1086,52 @@ impl Instrument {
                 self.sustained[v] = false;
                 if self.alloc.slots()[v].held() && self.held_keys[v].is_empty() {
                     self.let_go(v);
+                }
+            }
+        }
+    }
+
+    /// CC 120, 121, 123 on a channel's Parts.
+    pub fn channel_mode(&mut self, ev: ChannelModeEvent) {
+        let ch = ev.channel;
+        match ev.mode {
+            ChannelMode::ResetControllers => {
+                self.bend(BendEvent {
+                    channel: ch,
+                    value: 0,
+                });
+                self.sustain(SustainEvent {
+                    channel: ch,
+                    down: false,
+                });
+            }
+            ChannelMode::NotesOff => {
+                crate::played::clear_channel(ch.get());
+                for v in 0..MAX_VOICES {
+                    if self.alloc.slots()[v].held()
+                        && self.note_channel[v] == ch
+                        && self.note_origin[v] == NoteOrigin::Live
+                        && !self.held_keys[v].is_empty()
+                    {
+                        self.held_keys[v] = NoteSet::EMPTY;
+                        if self.pedal_down(ch) {
+                            self.sustained[v] = true;
+                        } else {
+                            self.let_go(v);
+                        }
+                    }
+                }
+            }
+            ChannelMode::SoundOff => {
+                crate::played::clear_channel(ch.get());
+                for v in 0..MAX_VOICES {
+                    if !self.alloc.slots()[v].is_free() && self.note_channel[v] == ch {
+                        self.held_keys[v] = NoteSet::EMPTY;
+                        self.sustained[v] = false;
+                        self.resnap_to[v] = None;
+                        self.alloc.kill(v);
+                        self.shed(v);
+                    }
                 }
             }
         }

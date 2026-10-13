@@ -68,7 +68,7 @@ fn notes_bend_pedal_and_real_time_are_queued() {
             }))
         );
     }
-    for cc in [0, 1, 7, 10, 63, 65, 120, 123] {
+    for cc in [0, 1, 7, 10, 63, 65, 119, 122, 124] {
         assert_eq!(
             InEvent::from_midi(MidiMessage::ControlChange {
                 channel: c,
