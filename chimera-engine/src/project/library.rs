@@ -166,41 +166,18 @@ pub struct LibEntry {
     pub id: LibId,
     pub seen: LibSeen,
     pub engine: Option<EngineType>,
-    /// Its stamp or its description, by the id's kind.
-    pub detail: RowDetail,
+    /// A user Sound's stamp (LIBRARY's line 3 compares it); a factory row
+    /// keeps none, its line 3 the page's one set stamp. Its description is
+    /// peeked for the selected row alone (`peek_note`).
+    stamp: Option<BuildStamp>,
     /// That side's size.
     pub len: u32,
     pub err: Option<FileError>,
 }
 
-/// What a row keeps besides its name, by its id's kind: a user Sound's
-/// stamp (LIBRARY's line 3 compares it), a factory Sound's description
-/// (FACTORY's line 2; its line 3 is the page's one set stamp).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum RowDetail {
-    Stamp(Option<BuildStamp>),
-    #[cfg(not(feature = "probe"))]
-    Note(Option<Note>),
-    /// A bench image (never shipped) keeps no descriptions: its 8 KiB AXI
-    /// margin (ADR 0087) has no room for 48 of them.
-    #[cfg(feature = "probe")]
-    Factory,
-}
-
 impl LibEntry {
     pub fn stamp(&self) -> Option<BuildStamp> {
-        match self.detail {
-            RowDetail::Stamp(s) => s,
-            _ => None,
-        }
-    }
-
-    pub fn note(&self) -> Option<Note> {
-        match self.detail {
-            #[cfg(not(feature = "probe"))]
-            RowDetail::Note(n) => n,
-            _ => None,
-        }
+        self.stamp
     }
 }
 
@@ -435,11 +412,11 @@ fn peek_side<S: Store>(
 /// An id's row from its sides, `project::store::entry`'s rule: a side that
 /// needs newer firmware is the error even beside a readable one; else the
 /// newer readable side; else the first error. With it, that side's stamp,
-/// which a factory row doesn't keep.
+/// which a factory row doesn't keep, and its description.
 fn lib_entry(
     id: LibId,
     sides: [Option<(Result<Peek, FileError>, u32)>; 2],
-) -> (LibEntry, Option<BuildStamp>) {
+) -> (LibEntry, Option<BuildStamp>, Option<Note>) {
     let mut best: Option<(&Peek, u32)> = None;
     let mut err = None;
     let mut nnf = false;
@@ -465,12 +442,9 @@ fn lib_entry(
             name: best.and_then(|(p, _)| p.name),
         },
         engine: best.and_then(|(p, _)| p.engine),
-        detail: match id.kind() {
-            LibKind::User(_) => RowDetail::Stamp(stamp),
-            #[cfg(not(feature = "probe"))]
-            LibKind::Factory(_) => RowDetail::Note(best.and_then(|(p, _)| p.note)),
-            #[cfg(feature = "probe")]
-            LibKind::Factory(_) => RowDetail::Factory,
+        stamp: match id.kind() {
+            LibKind::User(_) => stamp,
+            LibKind::Factory(_) => None,
         },
         len: best.map_or(0, |(_, l)| l),
         err: if nnf {
@@ -481,7 +455,7 @@ fn lib_entry(
             err
         },
     };
-    (e, stamp)
+    (e, stamp, best.and_then(|(p, _)| p.note))
 }
 
 /// An id's row from the sides of the sizes listed: the one rule the
@@ -492,7 +466,7 @@ fn peek_pair<S: Store>(
     vol: VolumeId,
     id: LibId,
     sizes: [Option<u32>; 2],
-) -> Result<(LibEntry, Option<BuildStamp>), StoreError> {
+) -> Result<(LibEntry, Option<BuildStamp>, Option<Note>), StoreError> {
     let file = library_file(id);
     let mut sides = [None, None];
     for (i, side) in [Side::A, Side::B].into_iter().enumerate() {
@@ -548,9 +522,9 @@ pub fn list_library<S: Store>(
             Err(e) => return Err(e.into()),
         }
         for &(_, id, sizes) in &near.ids[..near.len] {
-            let (e, stamp) = peek_pair(s, vol, id, sizes)?;
-            // A bench image has no descriptions: its first row's stamp.
-            if out.set_stamp.is_none() && (e.note().is_some() || cfg!(feature = "probe")) {
+            let (e, stamp, note) = peek_pair(s, vol, id, sizes)?;
+            // The first described row's: a stray file isn't the set's.
+            if out.set_stamp.is_none() && note.is_some() {
                 out.set_stamp = stamp;
             }
             out.entries[usize::from(out.len)] = Some(e);
@@ -672,6 +646,49 @@ fn source_need<S: Store>(
     }))
 }
 
+/// The sizes of `id`'s two sides on `vol`, as the directory has them.
+fn sides_of<S: Store>(s: &mut S, vol: VolumeId, id: LibId) -> Result<[Option<u32>; 2], StoreError> {
+    let mut sizes = [None; 2];
+    match s.list(vol, Dir::Sounds, &mut |f, size| {
+        if lib_id(f) == Some(id) {
+            sizes[usize::from(f.ext() == b"B")] = Some(size);
+        }
+    }) {
+        Ok(()) | Err(StoreError::NotFound) => Ok(sizes),
+        Err(e) => Err(e),
+    }
+}
+
+/// The description of `file`, a listed factory row, peeked as the listing
+/// peeks it: FACTORY keeps the selected row's alone (showcase spec § 1,
+/// Cost). Refused as a load is when the card or the file moved since.
+pub fn peek_note<S: Store>(
+    card: &mut Card,
+    store: &mut S,
+    file: LibFile,
+) -> CardOut<Result<Option<Note>, LibNote>> {
+    let run = card.run(store, |s, r| {
+        let vol = r.volume();
+        if vol != file.vol {
+            return Ok(Err(LibNote::Store(StoreError::VolumeChanged(vol))));
+        }
+        let sizes = sides_of(s, vol, file.id)?;
+        let (now, _, note) = peek_pair(s, vol, file.id, sizes)?;
+        Ok(if now.seen.generation.is_none() && now.err.is_none() {
+            Err(LibNote::Gone)
+        } else if now.seen != file.seen {
+            Err(LibNote::Changed)
+        } else {
+            Ok(note)
+        })
+    });
+    let (out, event) = split(run);
+    CardOut {
+        out: out.and_then(|r| r),
+        event,
+    }
+}
+
 /// `file` decoded into the pool's scratch, nothing else touched: its
 /// sides re-peeked first, so a pair gone or re-written since the listing
 /// refuses. A clobbered scratch is harmless: only `adopt` reads it.
@@ -687,16 +704,8 @@ pub fn read_library_sound<S: Store>(
             return Ok(Err(LibNote::Store(StoreError::VolumeChanged(vol))));
         }
         let ab = library_file(file.id);
-        let mut sizes = [None; 2];
-        match s.list(vol, Dir::Sounds, &mut |f, size| {
-            if lib_id(f) == Some(file.id) {
-                sizes[usize::from(f.ext() == b"B")] = Some(size);
-            }
-        }) {
-            Ok(()) | Err(StoreError::NotFound) => {}
-            Err(e) => return Err(e.into()),
-        }
-        let (now, _) = peek_pair(s, vol, file.id, sizes)?;
+        let sizes = sides_of(s, vol, file.id)?;
+        let (now, _, _) = peek_pair(s, vol, file.id, sizes)?;
         if now.seen.generation.is_none() && now.err.is_none() {
             return Ok(Err(LibNote::Gone));
         }

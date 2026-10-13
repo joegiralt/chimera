@@ -15,9 +15,11 @@ use crate::params::EngineType;
 use crate::project::{
     AdoptError, CardOut, Confirmed, LibEntry, LibNote, LibPage, LibRead, LibraryPart, Line, PageAt,
     PartId, PartSet, ReplaceError, ReplaceGuard, Shelf, SlotId, SourceNeed, Staged, list_library,
-    read_library_sound, save_library_sound,
+    peek_note, read_library_sound, save_library_sound,
 };
-use crate::storage::{BuildStamp, Card, LibId, held_for_file_len, source_file};
+use crate::storage::{
+    BuildStamp, Card, FactoryId, LibId, LibKind, Note, held_for_file_len, source_file,
+};
 use crate::ui::UiState;
 use crate::ui::about_page;
 use crate::ui::browser::{Browse, Soon};
@@ -78,9 +80,20 @@ pub(crate) struct PendingLoad {
     pub read: LibRead,
 }
 
+/// The selected FACTORY row's description, peeked on its own: the one
+/// slot FACTORY keeps, and the factory Sound it belongs to.
+#[derive(Clone, Copy, Debug)]
+struct Described {
+    id: FactoryId,
+    /// `None`: that file has no description, or its peek failed.
+    note: Option<Note>,
+}
+
 pub struct LibState {
     page: LibPage,
     listed: bool,
+    /// The selected FACTORY row's description (showcase spec § 1, Cost).
+    described: Option<Described>,
     /// Why the last listing failed: its row says so until listed again,
     /// on the next tab or rung entry.
     err: Option<LibNote>,
@@ -111,6 +124,7 @@ impl LibState {
         unsafe {
             LibPage::init_in_place(uninit_at(addr_of_mut!((*p).page)));
             addr_of_mut!((*p).listed).write(false);
+            addr_of_mut!((*p).described).write(None);
             addr_of_mut!((*p).err).write(None);
             addr_of_mut!((*p).load).write(None);
             addr_of_mut!((*p).tab).write(BrowserTab::Project);
@@ -149,6 +163,13 @@ impl LibState {
         self.err.filter(|_| self.current())
     }
 
+    /// `e`'s description, once its peek has filled the slot: nothing while
+    /// it loads.
+    pub fn note_of(&self, e: &LibEntry) -> Option<Note> {
+        let d = self.described?;
+        (factory_id(e) == Some(d.id)).then_some(d.note)?
+    }
+
     /// A row of an engine coming soon: greyed, and EDIT only says so.
     /// LIBRARY never lists one but under TAPE's load tests.
     pub fn soon(&self, e: &LibEntry) -> Option<Soon> {
@@ -160,6 +181,14 @@ impl LibState {
         if self.err.is_some() {
             self.forget();
         }
+    }
+}
+
+/// `e`'s id, if a factory Sound's.
+fn factory_id(e: &LibEntry) -> Option<FactoryId> {
+    match e.id.kind() {
+        LibKind::Factory(f) => Some(f),
+        LibKind::User(_) => None,
     }
 }
 
@@ -240,6 +269,51 @@ impl UiState {
             && !self.lib.current()
             && !self.lib.busy()
             && self.loc.browse().is_some()
+    }
+
+    /// The FACTORY row under the cursor, when its description is not the
+    /// one the slot holds: peeked on the next pass, under BUSY.
+    fn undescribed(&self) -> Option<(&LibEntry, FactoryId)> {
+        if self.lib.tab != BrowserTab::Factory || self.lib.busy() {
+            return None;
+        }
+        let (_, b) = self.loc.browse()?;
+        let LibRow::Sound(e) = row(self.lib.page(), b.lib_cursor()) else {
+            return None;
+        };
+        let id = factory_id(e)?;
+        (self.lib.described.map(|d| d.id) != Some(id)).then_some((e, id))
+    }
+
+    pub(crate) fn wants_lib_note(&self) -> bool {
+        self.undescribed().is_some()
+    }
+
+    /// The selected FACTORY row's description into the one slot. A failed
+    /// peek fills it empty, so it isn't retried a pass; a card or file that
+    /// moved drops the page, listed again.
+    pub(crate) fn lib_peek_note<S: Store>(&mut self, card: &mut Card, store: &mut S) {
+        let Some((e, id)) = self.undescribed() else {
+            return;
+        };
+        let Some(file) = self.lib.page.file(e) else {
+            return;
+        };
+        let CardOut { out, event } = peek_note(card, store, file);
+        self.saw(event);
+        let note = match out {
+            Ok(n) => n,
+            Err(n) => {
+                if matches!(
+                    n,
+                    LibNote::Changed | LibNote::Gone | LibNote::Store(StoreError::VolumeChanged(_))
+                ) {
+                    self.lib.forget();
+                }
+                None
+            }
+        };
+        self.lib.described = Some(Described { id, note });
     }
 
     /// EDIT on a LIBRARY or FACTORY row of Part `part`'s browser.
@@ -325,6 +399,8 @@ impl UiState {
     pub(crate) fn lib_list<S: Store>(&mut self, card: &mut Card, store: &mut S, at: PageAt) {
         let shelf = self.lib.tab.shelf().unwrap_or(Shelf::User);
         let CardOut { out, event } = list_library(card, store, shelf, at, &mut self.lib.page);
+        // A new listing may be of other files: each description peeked anew.
+        self.lib.described = None;
         // TAPE is coming soon (ADR 0132): its Sounds stay on the card,
         // unlisted in LIBRARY; a stray factory one lists greyed.
         if shelf == Shelf::User && !self.lib.tape {
@@ -552,6 +628,17 @@ impl UiState {
         let (_, b) = self.loc.browse()?;
         match row(self.lib.page(), b.lib_cursor()) {
             LibRow::Sound(e) => Some(e.id),
+            _ => None,
+        }
+    }
+
+    /// The description FACTORY draws for the row under the cursor.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn factory_note_for_test(&self) -> Option<Note> {
+        let (_, b) = self.loc.browse()?;
+        match row(self.lib.page(), b.lib_cursor()) {
+            LibRow::Sound(e) => self.lib.note_of(e),
             _ => None,
         }
     }

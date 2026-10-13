@@ -12,7 +12,7 @@ use chimera_core::preset::Sound;
 use chimera_core::project::test_support::FullOnWrite;
 use chimera_core::project::{
     LibNote, LibPage, PROJECT_DEMO_TOP, PageAt, Shelf, list_library, list_projects, new_project_id,
-    save_library_sound,
+    peek_note, save_library_sound,
 };
 use chimera_core::storage::{
     BuildStamp, Card, FileError, FileKind, Generation, Header, ID_WINDOW, LIB_PEEK, LibId, NextId,
@@ -661,10 +661,11 @@ fn factory_load_then_save_is_user_without_note() {
     assert_eq!(p.note, None);
 }
 
-/// A factory row keeps its description, not its stamp: the page keeps one
-/// set stamp, its first described row's. A user row keeps its stamp.
+/// A factory row keeps neither its stamp nor its description: the page
+/// keeps one set stamp, its first described row's, and `peek_note` reads
+/// one row's description on its own. A user row keeps its stamp.
 #[test]
-fn factory_rows_keep_notes_and_the_page_one_set_stamp() {
+fn factory_rows_keep_the_page_one_set_stamp_and_peek_one_note() {
     let mut st = MemStore::new(1);
     let v = st.mount().unwrap();
     st.make_dir(v, Dir::Chimera).unwrap();
@@ -694,13 +695,18 @@ fn factory_rows_keep_notes_and_the_page_one_set_stamp() {
     )
     .out
     .unwrap();
-    let rows: Vec<_> = p
-        .entries()
-        .iter()
-        .flatten()
-        .map(|e| (e.stamp(), e.note()))
-        .collect();
-    assert_eq!(rows, vec![(None, None), (None, Some(note))]);
+    let rows: Vec<_> = p.entries().iter().flatten().map(|e| e.stamp()).collect();
+    assert_eq!(rows, vec![None, None]);
+    let peek = |st: &mut MemStore, i: usize| {
+        let e = p.entries()[i].unwrap();
+        peek_note(&mut Card::new(), st, p.file(&e).unwrap()).out
+    };
+    assert_eq!(peek(&mut st, 0), Ok(None), "the stray file has none");
+    assert_eq!(peek(&mut st, 1), Ok(Some(note)));
+    // A file gone since the listing is refused, as a load is.
+    let gone = FileName::new(Dir::Sounds, b"S9100001", b"A").unwrap();
+    st.delete(v, gone).unwrap();
+    assert_eq!(peek(&mut st, 1), Err(LibNote::Gone));
     assert_eq!(
         p.set_stamp,
         Some(ST),

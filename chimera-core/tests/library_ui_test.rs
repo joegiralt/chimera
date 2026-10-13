@@ -1183,3 +1183,35 @@ fn factory_description_draws_with_hints_off() {
     };
     assert!(draw_with("ONE DESCRIPTION") != draw_with("ANOTHER ONE"));
 }
+
+/// FACTORY keeps the selected row's description alone: a scroll queues its
+/// peek (card work, under BUSY), nothing shows while it loads, then the
+/// new row's description.
+#[test]
+fn factory_scroll_peeks_the_selected_description() {
+    let mut r = Rig::new();
+    r.put_raw(9_100_001, &described(&factory_sound(0), "ONE DESCRIPTION"));
+    r.put_raw(9_100_002, &described(&factory_sound(1), "TWO DESCRIPTION"));
+    r.open_factory();
+    r.work();
+    let note = |r: &Rig| r.ui.factory_note_for_test().map(|n| n.as_str().to_string());
+    assert_eq!(note(&r).as_deref(), Some("ONE DESCRIPTION"));
+    assert!(!r.ui.card_pending());
+    r.turn(EncoderId::A, 1);
+    assert_eq!(
+        r.ui.library_cursor_id_for_test().map(|i| i.get()),
+        Some(9_100_002)
+    );
+    assert!(r.ui.card_pending(), "the peek is card work");
+    assert_eq!(note(&r), None, "nothing while it loads");
+    let reads = r.st.reads;
+    r.one_pass();
+    assert!(r.st.reads > reads, "one file peeked");
+    assert_eq!(note(&r).as_deref(), Some("TWO DESCRIPTION"));
+    assert!(!r.ui.card_pending());
+    // Back up: the slot is one, so the first row is peeked again.
+    r.turn(EncoderId::A, -1);
+    assert!(r.ui.card_pending());
+    r.work();
+    assert_eq!(note(&r).as_deref(), Some("ONE DESCRIPTION"));
+}

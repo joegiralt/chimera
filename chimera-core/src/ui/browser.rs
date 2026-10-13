@@ -613,7 +613,7 @@ fn library_body<D>(
     }
     // The description is information: with HINTS off too.
     if let Some(n) = on
-        .and_then(|e| e.note())
+        .and_then(|e| lib.note_of(e))
         .filter(|_| factory && refusal.is_none())
     {
         // `clip` measures as `note_width` does.

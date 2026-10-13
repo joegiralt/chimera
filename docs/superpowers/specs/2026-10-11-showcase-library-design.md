@@ -43,7 +43,7 @@
 
 **Drawing.** In the FACTORY tab, line 2 (`SAVE_Y`, free there because nothing saves) shows the selected row's description in `INK`. It is information, so it draws with HINTS off too. The theme's tokens carry it through INVERT (ADR 0126); no new colour. LIBRARY doesn't draw descriptions in alpha: the unit can't write one, so a user file never has one.
 
-**Cost.** Card Sounds: 0 B of flash for the text. Code: the record, the peek and one line of drawing, estimated under 0.5 KB. RAM: 40 B more per listed entry, 48 entries, about 1.9 KB of AXI. Each is reported in a line (flash rule).
+**Cost.** Card Sounds: 0 B of flash for the text. Code: the record, the peek and one line of drawing, estimated under 0.5 KB. RAM: one description slot, the selected FACTORY row's (a `FactoryId` and its `Note`, 52 B), and the page's one set stamp; rows keep no description, so FACTORY costs about 80 B of AXI, not 48 per-row notes (those, 984 B, put the orbit build 736 B under ADR 0087's margin beside the formant ops). Each is reported in a line (flash rule).
 
 ## 2. The FACTORY tab (#317)
 
@@ -64,7 +64,7 @@
 - **Keys (D-pad rule, ADR 0081):** A scrolls; EDIT loads; SEQ goes up to the Sound rung; MINUS and PLUS move between Parts; MENU leaves.
   - MIX + EDIT and MIX + MINUS do nothing in FACTORY, so there are no hints for them.
 - **Loading** is the LIBRARY load unchanged: the same guard, `LibraryPart` target, dedupe by `sound_crc`, budget, `adopt` and toasts. `LibFile` holds a `FactoryId` or a `UserId`.
-- **Listing:** one directory pass keeps the 48 lowest factory ids above the page's floor, then peeks those. LIBRARY and FACTORY share one page static, keyed by tab and `VolumeId`, so turning between them re-lists (about 0.4 s for 36 files, behind BUSY). A second static would cost about 4.4 KB of AXI to save that wait.
+- **Listing:** one directory pass keeps the 48 lowest factory ids above the page's floor, then peeks those for their names, engines and the set stamp; a row keeps no description. When the FACTORY selection changes, the card work behind BUSY peeks that one file into the description slot; line 2 is empty until the slot is that row's. LIBRARY and FACTORY share one page static, keyed by tab and `VolumeId`, so turning between them re-lists (about 0.4 s for 36 files, behind BUSY). A second static would cost about 4.4 KB of AXI to save that wait.
 
 ## 3. Sources and the `factory-sounds` tool
 

@@ -90,6 +90,7 @@ impl UiState {
             || self.src.busy()
             || self.lib.busy()
             || self.wants_lib_list()
+            || self.wants_lib_note()
     }
 
     /// LOAD or MANAGE on screen over a listing something moved.
@@ -127,6 +128,9 @@ impl UiState {
         }
         if self.wants_lib_list() {
             self.lib_list(cx.card, cx.store, PageAt::First);
+        }
+        if self.wants_lib_note() {
+            self.lib_peek_note(cx.card, cx.store);
         }
         out
     }
