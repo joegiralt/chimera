@@ -157,7 +157,7 @@ impl Rig {
         self.knobs.ease((&p, &m), &KnobDelta::default(), pace);
         let knobs = self.knobs;
         with_ctx!(self, |v, ctx, _id| v
-            .render_knobs(out, params, mods, &knobs, ctx))
+            .render_knobs(out, params, mods, &knobs, None, ctx))
     }
 }
 

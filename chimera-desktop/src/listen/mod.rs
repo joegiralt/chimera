@@ -16,6 +16,7 @@ use chimera_core::dsp::tape_engine::read::{
 use chimera_core::dsp::tape_engine::{
     StretchType, TapeEngine, TapeEngineParams as P, TapeModel, Wow,
 };
+use chimera_core::dsp::va::VaMode;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
@@ -623,6 +624,18 @@ pub struct Qa {
 /// A render passes at most this `click_ratio`: tuned on the LOOP renders
 /// (≤ 1.92) and the test clicks (≥ 4).
 pub const CLICK_RATIO: f32 = 3.0;
+
+/// Why `snd`'s clicks are left to the ear instead of `CLICK_RATIO`, if
+/// they are. VA's RING multiplies two edged waves, and where their edges
+/// meet the product pulses: two saws read 17× at a note's onset (#488).
+/// The ideal additive-saw reference pulses the same, so it is RING's
+/// character, not a fault (owner, 2026-10-13); its DSP is unchanged. Only
+/// RING: XOR and BITS are exempt from the alias gate (ADR 0118 point 3),
+/// not from this one.
+pub fn click_exempt(snd: &Sound) -> Option<&'static str> {
+    (snd.params.engine() == EngineType::Va && snd.params.va.mode == VaMode::Ring)
+        .then_some("VA RING: the product pulses where both edges meet (#488)")
+}
 
 /// A render must be louder than this: silence is a failed render.
 pub const SILENT_DBFS: f32 = -80.0;
