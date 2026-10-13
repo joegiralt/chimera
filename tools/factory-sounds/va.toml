@@ -384,43 +384,45 @@ mod.VEL = "FILTER.CUTOFF +30"
 trim = "2.0"
 
 # Late-90s IDM set (with fm.toml and modal.toml): bit-crushed XOR grit.
-# XOR is memoryless on sample words, so its folding is aliasing: NOTE pulls
-# AMOUNT to 0 by C6/C7, and the cutoff stays off the LFOs (an LFO on
-# CUTOFF read 38 dB at C7). The grit lives in the low and middle octaves.
+# Two squares an octave apart, XORed (MIX of the same reads 6-8 dB less
+# above 4-8 kHz), under a slow FREE triangle that sweeps the cutoff from
+# about 230 Hz to fully open and back every 4 s, coherent across voices.
+# harmonic "no": XOR is bitwise, alias-exempt by design (ADR 0118).
 [[sound]]
 id = "S9100040"
 name = "XOR GRIT"
 engine = "VA"
-note = "XOR MODE: LFO WARBLES THE GRIT"
+note = "SLOW SWEEP OPENS ON XOR GRIT"
 demo = "poly"
 plays = "long texture"
 home = "C3"
 phrase = "lead"
-approved = "round 3 B5CB83EC"
-harmonic = "yes"
-OUT.LEVEL = "0.25"  # 32
+harmonic = "no"
+OUT.LEVEL = "1"  # 127
 ENV1.ATK = "0.12"  # 5.6 ms
 ENV1.DEC = "0.5"  # 187 ms
 ENV1.SUS = "0.7"  # 70%
 ENV1.REL = "0.45"  # 126 ms
 mod.ENV1 = "OUT.VCA +127"
 VA.MODE = "XOR"
-VA.AMOUNT = "0.2"  # 25
+VA.AMOUNT = "0.5"  # 64
 VA.CRSE2 = "12"  # +12
+VA.WAVE1 = "1"  # 127
+VA.WAVE2 = "1"  # 127
 FILTER.KIND = "2040"
-FILTER.CUTOFF = "2200"  # 2.20 kHz
+FILTER.CUTOFF = "2000"  # 2.00 kHz
 ENV2.ATK = "0"  # 2.0 ms
 ENV2.DEC = "0.38"  # 72 ms
 ENV2.SUS = "0"  # 0%
-mod.ENV2 = "VA.AMOUNT +20, PITCH.FINE +25"
+mod.ENV2 = "VA.AMOUNT +30, PITCH.FINE +25"
 LFO1.RATE = "6.5"  # 41
 LFO1.SHAPE = "TRIANGLE"
-mod.LFO1 = "VA.AMOUNT +8"
+mod.LFO1 = "VA.AMOUNT +15"
 LFO2.RATE = "0.25"  # 2
-mod.LFO2 = "VA.SHAPE1 +40"
-mod.VEL = "FILTER.CUTOFF +20"
-mod.NOTE = "VA.AMOUNT -127"
-trim = "4.0"
+LFO2.SHAPE = "TRIANGLE"
+mod.LFO2 = "FILTER.CUTOFF +40, VA.SHAPE1 +40"
+mod.VEL = "VA.AMOUNT +20, FILTER.CUTOFF +20"
+trim = "-1.6"
 
 # Ring-mod blips: two sines a tritone apart (inharmonic); ENV 2 zaps the
 # partner's pitch. Saws clicked 17x. POLY: on a MONO Part with glide the
