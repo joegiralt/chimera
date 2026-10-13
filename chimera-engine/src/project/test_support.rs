@@ -674,14 +674,15 @@ fn list_and_next_id<S: Store>(s: &mut S) {
         p
     };
     for (n, name) in [(1, "ONE"), (2, "TWO"), (5, "FIVE")] {
-        assert!(
+        // The demos' ids below FIRST never move the next one.
+        assert_eq!(
             new_project_id(&mut card, s)
                 .out
                 .expect("an id")
                 .file()
                 .id()
-                .get()
-                <= n.max(FIRST)
+                .get(),
+            FIRST
         );
         saved(save_at(&mut card, s, &mut named(name), n));
     }
