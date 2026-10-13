@@ -534,7 +534,8 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     // Then the voice-end fade (ADR 0096): SQR BASS's −65 dB filter tail.
     ("factory_5.snd", 0xdb1cd08add369508),
     ("factory_6.snd", 0x144e8d10ce6ac51e),
-    ("factory_7.snd", 0xcabe755163058e15),
+    // Then the voice-end fade past −80 dB (#487): its −69 dB DC tail.
+    ("factory_7.snd", 0x13448df1ea3c0499),
     ("init_algo.snd", 0x889c731ceb1c7089),
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
     // then Task 18's DAMP make-up and relative silence (ADR 0056),
