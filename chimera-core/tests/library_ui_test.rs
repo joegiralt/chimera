@@ -1215,3 +1215,55 @@ fn factory_scroll_peeks_the_selected_description() {
     r.work();
     assert_eq!(note(&r).as_deref(), Some("ONE DESCRIPTION"));
 }
+
+/// A row whose page names no volume (so no file) fills the slot empty:
+/// its peek ends, and BUSY with it.
+#[test]
+fn factory_row_with_no_file_fills_the_slot_empty() {
+    let mut r = Rig::new();
+    r.put_raw(9_100_001, &described(&factory_sound(0), "ONE DESCRIPTION"));
+    r.put_raw(9_100_002, &described(&factory_sound(1), "TWO DESCRIPTION"));
+    r.open_factory();
+    r.work();
+    r.ui.drop_library_volume_for_test();
+    r.turn(EncoderId::A, 1);
+    assert!(r.ui.card_pending());
+    let reads = r.st.reads;
+    r.one_pass();
+    assert!(!r.ui.card_pending(), "no BUSY loop");
+    assert_eq!(r.st.reads, reads, "nothing to read");
+    assert_eq!(r.ui.factory_note_for_test(), None);
+}
+
+/// The selected file deleted between the listing and the scroll: its peek
+/// is refused (gone), the page drops and lists again, and it settles: no
+/// peek every pass.
+#[test]
+fn factory_peek_of_a_deleted_file_relists_once() {
+    let mut r = Rig::new();
+    r.put_raw(9_100_001, &described(&factory_sound(0), "ONE DESCRIPTION"));
+    r.put_raw(9_100_002, &described(&factory_sound(1), "TWO DESCRIPTION"));
+    r.open_factory();
+    r.work();
+    assert_eq!(r.page().0, vec![9_100_001, 9_100_002]);
+    let v = r.st.inner.mount().unwrap();
+    let gone = FileName::new(Dir::Sounds, b"S9100002", b"A").unwrap();
+    r.st.inner.delete(v, gone).unwrap();
+    r.turn(EncoderId::A, 1);
+    r.one_pass();
+    assert!(r.ui.library_page_for_test().is_none(), "the page dropped");
+    r.work();
+    assert_eq!(r.page().0, vec![9_100_001], "listed again");
+    assert_eq!(
+        r.ui.factory_note_for_test()
+            .map(|n| n.as_str().to_string())
+            .as_deref(),
+        Some("ONE DESCRIPTION")
+    );
+    let reads = r.st.reads;
+    for _ in 0..3 {
+        r.one_pass();
+    }
+    assert_eq!(r.st.reads, reads, "settled: no peek every pass");
+    assert!(!r.ui.card_pending());
+}

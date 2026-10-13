@@ -659,6 +659,28 @@ fn sides_of<S: Store>(s: &mut S, vol: VolumeId, id: LibId) -> Result<[Option<u32
     }
 }
 
+/// `file` still the row listed, on the card in the slot (`vol`): its
+/// sides re-listed and re-peeked, refused when the card, or the pair,
+/// moved since; with its description. A load and `peek_note` share it.
+fn recheck<S: Store>(
+    s: &mut S,
+    vol: VolumeId,
+    file: LibFile,
+) -> Result<Result<Option<Note>, LibNote>, StoreError> {
+    if vol != file.vol {
+        return Ok(Err(LibNote::Store(StoreError::VolumeChanged(vol))));
+    }
+    let sizes = sides_of(s, vol, file.id)?;
+    let (now, _, note) = peek_pair(s, vol, file.id, sizes)?;
+    Ok(if now.seen.generation.is_none() && now.err.is_none() {
+        Err(LibNote::Gone)
+    } else if now.seen != file.seen {
+        Err(LibNote::Changed)
+    } else {
+        Ok(note)
+    })
+}
+
 /// The description of `file`, a listed factory row, peeked as the listing
 /// peeks it: FACTORY keeps the selected row's alone (showcase spec § 1,
 /// Cost). Refused as a load is when the card or the file moved since.
@@ -667,21 +689,7 @@ pub fn peek_note<S: Store>(
     store: &mut S,
     file: LibFile,
 ) -> CardOut<Result<Option<Note>, LibNote>> {
-    let run = card.run(store, |s, r| {
-        let vol = r.volume();
-        if vol != file.vol {
-            return Ok(Err(LibNote::Store(StoreError::VolumeChanged(vol))));
-        }
-        let sizes = sides_of(s, vol, file.id)?;
-        let (now, _, note) = peek_pair(s, vol, file.id, sizes)?;
-        Ok(if now.seen.generation.is_none() && now.err.is_none() {
-            Err(LibNote::Gone)
-        } else if now.seen != file.seen {
-            Err(LibNote::Changed)
-        } else {
-            Ok(note)
-        })
-    });
+    let run = card.run(store, |s, r| Ok(recheck(s, r.volume(), file)?));
     let (out, event) = split(run);
     CardOut {
         out: out.and_then(|r| r),
@@ -700,18 +708,10 @@ pub fn read_library_sound<S: Store>(
 ) -> CardOut<Result<LibRead, LibNote>> {
     let run = card.run(store, |s, r| {
         let vol = r.volume();
-        if vol != file.vol {
-            return Ok(Err(LibNote::Store(StoreError::VolumeChanged(vol))));
+        if let Err(n) = recheck(s, vol, file)? {
+            return Ok(Err(n));
         }
         let ab = library_file(file.id);
-        let sizes = sides_of(s, vol, file.id)?;
-        let (now, _, _) = peek_pair(s, vol, file.id, sizes)?;
-        if now.seen.generation.is_none() && now.err.is_none() {
-            return Ok(Err(LibNote::Gone));
-        }
-        if now.seen != file.seen {
-            return Ok(Err(LibNote::Changed));
-        }
         let mut d = LibraryDecoder::new(p.pool.scratch());
         match load_ab_in_place(s, r, ab, &mut d) {
             // The newer side failing its CRC leaves the older: not the row.

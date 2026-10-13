@@ -29,7 +29,7 @@
 
 | Rule | Value |
 |---|---|
-| Position | Third, straight after `Build` (`Engine`, `Build`, `Note`, then the rest), so a listing's peek reaches it |
+| Position | Third, straight after `Build` (`Engine`, `Build`, `Note`, then the rest), so a peek (`LIB_PEEK`) reaches it |
 | Length | 40 B at most, **and** it must fit `CONTENT_W` (216 px) in `FONT_LABEL` at `LABEL_TRACKING`, about 34 capitals. The tool checks this with the firmware's own `draw::text_width`; the firmware clips with `clip` anyway |
 | Character set | `A`–`Z`, `0`–`9`, space, and `. , ' - + / : ( ) & %`. The tool refuses anything else; the firmware draws any byte outside 0x20–0x7E as `?`, as `Build` does |
 | Default | None: no record is written. Every existing Sound reads as "no description" |
@@ -37,7 +37,7 @@
 | Older builds | Skip it as an unknown non-critical record (`unknown_non_critical_skipped`), so they load the Sound and say `LOADED · SOME PARAMS SKIPPED` |
 | Projects | Never written in a project. Skipped in every project context, as `Build` is |
 
-**The description stays in the file.** It is read by the listing's peek and drawn in the browser. It is not decoded into `Sound`, the pool or the Part. So `Sound` keeps its shape, the pool arena pays nothing, and a factory Sound loaded and then saved to LIBRARY is the player's own Sound, with no description. A later build can carry it into the pool if players ask for that.
+**The description stays in the file.** It is read by a peek of the selected FACTORY row and drawn in the browser. It is not decoded into `Sound`, the pool or the Part. So `Sound` keeps its shape, the pool arena pays nothing, and a factory Sound loaded and then saved to LIBRARY is the player's own Sound, with no description. A later build can carry it into the pool if players ask for that.
 
 **The peek** grows from 64 B to 128 B: header 28 + `Engine` 5 + `Build` 25 + `Note` 4 + 40 = 102 B. One sector is read either way.
 

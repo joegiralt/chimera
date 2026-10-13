@@ -296,7 +296,9 @@ impl UiState {
         let Some((e, id)) = self.undescribed() else {
             return;
         };
+        // A page with no volume names no file: filled empty, never re-peeked.
         let Some(file) = self.lib.page.file(e) else {
+            self.lib.described = Some(Described { id, note: None });
             return;
         };
         let CardOut { out, event } = peek_note(card, store, file);
@@ -630,6 +632,13 @@ impl UiState {
             LibRow::Sound(e) => Some(e.id),
             _ => None,
         }
+    }
+
+    /// The page as if its volume were never read: its rows name no file.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn drop_library_volume_for_test(&mut self) {
+        self.lib.page.vol = None;
     }
 
     /// The description FACTORY draws for the row under the cursor.
