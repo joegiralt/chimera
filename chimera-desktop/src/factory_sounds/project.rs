@@ -20,11 +20,9 @@ use chimera_core::name::ProjectName;
 use chimera_core::part::PartMode;
 use chimera_core::part::PartParams;
 use chimera_core::project::{
-    PROJECT_DEMO_TOP, PartFrom, PartId, PartSource, Project, ReplaceGuard, SlotId, encode_project,
+    PROJECT_DEMO_TOP, PartFrom, PartId, PartSource, Project, ReplaceGuard, encode_project,
 };
-use chimera_core::storage::{
-    FileKind, Generation, Header, ProjectId, ValidAddr, sound_crc, write_file,
-};
+use chimera_core::storage::{FileKind, Generation, Header, ProjectId, ValidAddr, write_file};
 
 use super::source::{self, Source, VecSink};
 use crate::listen::lined_tables;
@@ -448,10 +446,9 @@ pub fn coverage(demos: &[Demo], sounds: &[Source]) -> Result<Coverage, String> {
 
 /// `d` on NEW's template: its name and FX, then each Part loaded from a
 /// pool slot holding its Sound, with its mode and channel. The slot is
-/// found as a library load finds it (`Project::library_needs`): any slot
+/// found by a library load's own check (`Project::needs_for`): any slot
 /// already holding the Sound (by `sound_crc`, NEW's own included), else
-/// the first free one, refused unless the arena fits it. The library path
-/// itself starts from a card file, so it is mirrored, not called.
+/// the first free one, refused unless the arena fits it.
 pub fn build(d: &Demo, sounds: &[Source]) -> Result<Box<Project>, String> {
     let (mut p, template) = Project::boxed();
     p.set_name(d.name);
@@ -460,26 +457,20 @@ pub fn build(d: &Demo, sounds: &[Source]) -> Result<Box<Project>, String> {
         let src = sound_of(dp, sounds)?;
         let snd = source::to_sound(src)?;
         let fail = |m: String| at(dp.line, m);
-        let crc = sound_crc(&snd);
-        let held = SlotId::ALL
-            .into_iter()
-            .find(|&s| p.pool().get(s).is_some_and(|e| e.crc() == crc));
-        let slot = match held {
-            Some(s) => s,
-            None => {
-                let pool = p.pool();
-                let s = pool
-                    .first_free()
-                    .ok_or_else(|| fail("no free pool slot".into()))?;
-                let needs = pool.needs(s, &snd);
-                if !pool.fits(needs) {
-                    return Err(fail(format!(
-                        "the pool has no room: needs {needs:?}, free {:?}",
-                        pool.free()
-                    )));
-                }
+        let no_slot = || fail("no free pool slot".into());
+        let slot = match p.needs_for(&snd, None) {
+            Ok(Some(s)) => s,
+            Ok(None) => {
+                let s = p.pool().first_free().ok_or_else(no_slot)?;
                 p.pool_store(s, &snd).map_err(|e| fail(format!("{e:?}")))?;
                 s
+            }
+            Err(None) => return Err(no_slot()),
+            Err(Some(full)) => {
+                return Err(fail(format!(
+                    "the pool has no room: needs {:?}, free {:?}",
+                    full.needs, full.free
+                )));
             }
         };
         let to = PartSource {

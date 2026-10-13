@@ -760,15 +760,25 @@ impl Project {
         &self,
         src: Option<SourceNeed>,
     ) -> Result<Option<SlotId>, Option<PoolFull>> {
+        self.needs_for(self.pool.scratch_ref(), src)
+    }
+
+    /// `library_needs` for `snd`: the host's demo build places a Sound as
+    /// a library load would.
+    pub fn needs_for(
+        &self,
+        snd: &Sound,
+        src: Option<SourceNeed>,
+    ) -> Result<Option<SlotId>, Option<PoolFull>> {
         let pool = &self.pool;
-        let crc = sound_crc(pool.scratch_ref());
+        let crc = sound_crc(snd);
         let dedupe = SlotId::ALL
             .into_iter()
             .find(|&s| pool.get(s).is_some_and(|e| e.crc() == crc));
         let mut needs = Cost::default();
         if dedupe.is_none() {
             let slot = pool.first_free().ok_or(None)?;
-            needs = needs + pool.needs(slot, pool.scratch_ref());
+            needs = needs + pool.needs(slot, snd);
         }
         if let Some(src) = src.filter(SourceNeed::readable) {
             match pool.find_source(src.r).and_then(|id| pool.source(id)) {

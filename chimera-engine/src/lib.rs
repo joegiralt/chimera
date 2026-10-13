@@ -5,6 +5,8 @@
 
 #[cfg(all(feature = "test-support", target_os = "none"))]
 compile_error!("test-support is for host tests: it forges confirmations and fresh files");
+#[cfg(all(feature = "host-project", target_os = "none"))]
+compile_error!("host-project is for host tools: it leaks a heap arena per project");
 
 // `SymPool::boxed`, for tests; `Project::boxed`, for host tools too.
 #[cfg(any(test, feature = "test-support", feature = "host-project"))]
