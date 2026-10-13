@@ -15,6 +15,7 @@ mod mv;
 mod reference;
 mod sig;
 mod stim;
+mod voice;
 
 use chimera_core::dsp::reverb::ReverbType;
 use std::path::PathBuf;
@@ -34,6 +35,8 @@ usage: chimera-utils [flags] COMMAND …
   mv-ab TYPE               RMS-matched A/B WAVs on the listening set:
                            snare bass stab sine_short sine_long texture hats
   mv-structure PROG …      a program's structure from the decompiled listing
+  voice-stats WAV …        loudness, vibrato, drift, breath share, formants and
+                           vowel motion of each WAV (with --json PATH, as JSON)
   model-check hall FITS    the Python model's HALL fits through the Rust model
   model-fit hall TAG [dens=own|fixed:X|KNOB[-][:lo:hi]] [warm=FITS] PROG …
                            fit the proposed HALL model (ADR 0095) to programs
@@ -54,7 +57,8 @@ flags:
   --redo          mv-fit: refit presets already fitted, and re-sweep
   --robust        mv-verify: also nudge every fitted knob ±0.001 (a report)
   --size-worst    mv-fit: score each setting by the worst of it and SIZE ±0.001 (3× slower)
-  --no-sources    mv-refs: skip the listening-set renders";
+  --no-sources    mv-refs: skip the listening-set renders
+  --json PATH     voice-stats: also write the rows as JSON";
 
 pub struct Config {
     pub out: PathBuf,
@@ -139,6 +143,7 @@ fn run() -> Result<bool, String> {
     };
     let fits = flag("--fits")?.map(PathBuf::from);
     let start = flag("--start")?.map(PathBuf::from);
+    let json = flag("--json")?.map(PathBuf::from);
     let mut switch = |name: &str| {
         args.iter()
             .position(|a| a == name)
@@ -203,6 +208,7 @@ fn run() -> Result<bool, String> {
         }
         "mv-ab" => mv::ab(&cfg, ty(0)?).map(|_| true),
         "mv-structure" => mv::structure(&cfg, &nums(rest)?).map(|_| true),
+        "voice-stats" if !rest.is_empty() => voice::stats(rest, json.as_deref()).map(|_| true),
         "model-check" if rest.len() == 2 && rest[0] == "hall" => {
             models::check(&cfg, std::path::Path::new(&rest[1])).map(|_| true)
         }
