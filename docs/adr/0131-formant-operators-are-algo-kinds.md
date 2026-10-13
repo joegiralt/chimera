@@ -71,20 +71,20 @@ Counted on the `bench-algo` ELF by ADR 0056's method (`tools/loop_count.py`; the
 - **The floor (owner, 2026-10-12): a Sound holding a FRMT keeps three voices; every other Sound keeps ADR 0026's four.** Both budgets are derived at build time, never typed in:
 
   ```
-  share = SampleBudget(rev V, 75 %) 7,500 − FxBus::COST_TAPE 1,494 = 6,006
-  FORMANT_BUDGET      = 6,006/4 − 472 − 832 = 197   (tables and NOIS)
-  FORMANT_BUDGET_FRMT = (6,006 − 70)/3 − 472 − 832 − 7 = 667   (a Sound with a FRMT)
+  share = SampleBudget(rev V, 75 %) 7,500 − FxBus::COST_TAPE 1,494 − CONTROL_RESERVE 24 = 5,982
+  FORMANT_BUDGET      = 5,982/4 − 472 − 832 = 191   (tables and NOIS)
+  FORMANT_BUDGET_FRMT = (5,982 − 70)/3 − 472 − 832 − 7 = 659   (a Sound with a FRMT)
   ```
 
-  832 is the costliest table Sound (A16 ∪ A17, six operators with FDBK). A Sound with a FRMT also pays recost's reach, 70 a Part and 7 a voice (above), so its budget absorbs both: three voices and the Part's term fit the share.
+  `CONTROL_RESERVE` is what admission reserves beside the bus before any voice: the knobs' settle 14 (ADR 0116) and the LFO clocks 10 (ADR 0135). 832 is the costliest table Sound (A16 ∪ A17, six operators with FDBK). A Sound with a FRMT also pays recost's reach, 70 a Part and 7 a voice (above), so its budget absorbs both: three voices and the Part's term fit the share.
 - **The rule:** `Σ charge(kind, linked) ≤` the budget of the Sound's floor. A FRMT charges 390 linked and 200 unlinked; a NOIS 40 linked and 20 unlinked.
-  - `FORMANT_N` (linked) = ⌊667/390⌋ = **1**; `FORMANT_N_UNLINKED` = ⌊667/200⌋ = **3** (698 before the reach was billed: N unchanged). One linked FRMT and one unlinked fit (590); with two unlinked it is 790.
+  - `FORMANT_N` (linked) = ⌊659/390⌋ = **1**; `FORMANT_N_UNLINKED` = ⌊659/200⌋ = **3** (698 before the reach was billed: N unchanged). One linked FRMT and one unlinked fit (590); with two unlinked it is 790.
   - **Task 11b's outcome, confirmed by Task 15's recount:** the plan's target (a SKIRT 1–3 term ≤ 120, N = 3 at four voices) was not met; the owner's three-voice floor and per-algorithm billing (2026-10-12) took its place, so N = 3 unlinked and the spec's three-formant voicings stand. No two-formant fallback was needed.
   - The demo Sounds are on A1 (no links), so they keep the spec's voicings: CHOIR three FRMT and a NOIS (620), TALK BASS a sine and three FRMT (600), BREATH two NOIS (40, four voices).
-  - A NOIS-only Sound on a heavily linked pair can now hold fewer than six NOIS at four voices (A16 ∪ A17: five linked at 40 and one unlinked is 220 > 197); on A1 six still fit.
+  - A NOIS-only Sound on a heavily linked pair can now hold fewer than six NOIS at four voices (A16 ∪ A17: five linked at 40 and one unlinked is 220 > 191); on A1 six still fit.
 - **Only a patch within budget can be built.** `Kinds::new` checks its kinds unlinked at compile time; `AlgoParams::new` checks them on its algorithms. The writes are `try_set_kind` and `try_set_algs`, and every path goes through them: WAVE and ALG A/B block writes, `set_enum_code`, the decoder, the UI encoders and the param sweep.
 - **An edit that would overspend is refused** and changes nothing. WAVE's and ALG A/B's encoders step over refused kinds and algorithms, and the cell toasts FORMANT BUDGET FULL.
-- **A load past the budget degrades:** Sounds write ALG A and B before their operators, so the file's algorithm lands first and each operator after it is checked in order. The floor rises with a FRMT, so a Sound within budget whole can be over it in operator order (A17, NOIS on 1–5 before a FRMT on 6: 200 > 197 until the FRMT lands, 400 ≤ 667 after). So `SoundCheck` keeps each refused kind or algorithm and retries them once the Sound's last record is in, until none lands: a Sound that fits whole loads whole (`a_patch_that_fits_whole_round_trips_whatever_its_order`, and the project and library loads). What still doesn't fit stays the base's (W1 for a kind), and the load says FORMANT BUDGET FULL.
+- **A load past the budget degrades:** Sounds write ALG A and B before their operators, so the file's algorithm lands first and each operator after it is checked in order. The floor rises with a FRMT, so a Sound within budget whole can be over it in operator order (A17, NOIS on 1–5 before a FRMT on 6: 200 > 191 until the FRMT lands, 400 ≤ 659 after). So `SoundCheck` keeps each refused kind or algorithm and retries them once the Sound's last record is in, until none lands: a Sound that fits whole loads whole (`a_patch_that_fits_whole_round_trips_whatever_its_order`, and the project and library loads). What still doesn't fit stays the base's (W1 for a kind), and the load says FORMANT BUDGET FULL.
 - **WAVE judges the patch it would leave.** In that same patch op 6's FRMT can't step to any kind: without it the five NOIS are over the four-voice floor, so every target is refused and the cell toasts, though the edit removes cost. With one NOIS fewer every target fits and every step lands (`a_frmt_steps_to_every_kind_the_whole_patch_fits`).
 
 ### Voices

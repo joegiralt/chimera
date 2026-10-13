@@ -3,7 +3,7 @@
 
 mod common;
 
-use chimera_core::budget::{FORMANT_N, FORMANT_N_UNLINKED, HEAVY_OVERHEAD};
+use chimera_core::budget::{CONTROL_RESERVE, FORMANT_N, FORMANT_N_UNLINKED, HEAVY_OVERHEAD};
 use chimera_core::dsp::algo::algorithms::{ALGO_COUNT, AlgoId};
 use chimera_core::dsp::algo::engine::AlgoEngine;
 use chimera_core::dsp::algo::kinds::{Linked, OpKind, fits};
@@ -1481,12 +1481,13 @@ fn a_refused_note_on_does_not_recost() {
 }
 
 /// ADR 0091's reserve beside the voices: the bus's 1,204, the knobs' 14
-/// (ADR 0116) and a note-on burst's 836 (1,494 + 14 + 836 with the master
-/// tape), 171 more while ORBIT plays. Spec § 5's admission table is counted
+/// (ADR 0116), the LFO clocks' 10 (ADR 0135) and a note-on burst's 836
+/// (1,494 + 14 + 10 + 836 with the master tape), 171 more while ORBIT
+/// plays. Spec § 5's admission table is counted
 /// against it.
 // ponytail: literal until `Instrument::RESERVED` (orbit-budget) merges.
-const RESERVED: u32 = 2_054;
-const RESERVED_TAPE: u32 = 2_344;
+const RESERVED: u32 = 2_064;
+const RESERVED_TAPE: u32 = 2_354;
 const ORBIT_COST: u32 = 171;
 
 /// A matrix with `routes` (source, destination, amount) and nothing else;
@@ -1530,7 +1531,7 @@ fn tape_bills_each_model() {
             v - RESERVED_TAPE,
         ]
     };
-    assert_eq!(rooms, [5_446, 4_196, 5_275, 5_156]);
+    assert_eq!(rooms, [5_436, 4_186, 5_265, 5_146]);
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     let on = |q| ParamAddr::new(BlockRef::TapeEngine, q);
     // Model, bill, voices with TAPE and AGE off, with both.
@@ -1592,7 +1593,8 @@ fn va_sound(mode: chimera_core::dsp::va::VaMode) -> ParamSnapshot {
 /// rev Y, rev V with ORBIT, rev V with the master tape), INIT's 2040 REV2
 /// (+15) and the chain and routing (83) on top. ADR 0040's done-when is six
 /// on each: met on rev V and rev Y in every MODE, eight on rev V at 75 % (ADR 0124) (ADR 0118: WAVE's reach
-/// and SYNC's master held under 7 kHz, points 11 and 12).
+/// and SYNC's master held under 7 kHz, points 11 and 12; the sub at the
+/// shaped edge, point 13).
 #[test]
 fn va_bills_each_mode() {
     use chimera_core::dsp::va::VaMode::{Bits, Mix, Ring, Sync, Xor};
@@ -1606,14 +1608,14 @@ fn va_bills_each_mode() {
             v - RESERVED_TAPE,
         ]
     };
-    assert_eq!(rooms, [5_446, 4_196, 5_275, 5_156]);
+    assert_eq!(rooms, [5_436, 4_186, 5_265, 5_146]);
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     for (mode, bill, voices) in [
-        (Mix, 510, [8, 6, 8, 8]),
-        (Sync, 530, [8, 6, 8, 8]),
-        (Ring, 510, [8, 6, 8, 8]),
-        (Xor, 530, [8, 6, 8, 8]),
-        (Bits, 510, [8, 6, 8, 8]),
+        (Mix, 520, [8, 6, 8, 8]),
+        (Sync, 540, [8, 6, 8, 8]),
+        (Ring, 530, [8, 6, 8, 8]),
+        (Xor, 540, [8, 6, 8, 8]),
+        (Bits, 530, [8, 6, 8, 8]),
     ] {
         let p = va_sound(mode);
         assert_eq!(
@@ -1850,7 +1852,7 @@ fn reach(p: &AlgoParams) -> (u32, u32) {
 /// formant reach.
 fn voices_beside(p: &AlgoParams, bus: Cost, extra: u32) -> u32 {
     let (part, voice) = reach(p);
-    (SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - bus.0 - part)
+    (SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - bus.0 - CONTROL_RESERVE.0 - part)
         / (AlgoEngine::cost(p, &[false; OPS]).0 + extra + voice)
 }
 
@@ -1915,8 +1917,9 @@ fn formant_budget_keeps_three_voices() {
         AlgoEngine::cost(&a16_a17_with(at_n), &[false; OPS]).0 + OpKind::Formant.charge(true);
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
     let (part, voice) = reach(&a16_a17_with(at_n));
-    let floor =
-        |over: u32| (budget - FxBus::COST_TAPE.0 - part) / (over + HEAVY_OVERHEAD.0 + voice);
+    let floor = |over: u32| {
+        (budget - FxBus::COST_TAPE.0 - CONTROL_RESERVE.0 - part) / (over + HEAVY_OVERHEAD.0 + voice)
+    };
     assert!(floor(over) < FLOOR_VOICES_FORMANT);
     // Unlinked, on A1: `FORMANT_N_UNLINKED` carriers, then one more.
     let mut at_n = [t; OPS];
@@ -2255,7 +2258,7 @@ fn formant_costs_bill_by_kind() {
     ] {
         let (part, voice) = reach(&p);
         let y = |bus: chimera_core::hw::Cost| {
-            ((SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - bus.0 - part)
+            ((SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - bus.0 - CONTROL_RESERVE.0 - part)
                 / (cost(&p) + light + voice))
                 .min(MAX_VOICES as u32)
         };

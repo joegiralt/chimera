@@ -50,7 +50,9 @@ fn op_kind_codes_are_frozen() {
 
 #[test]
 fn the_budget_is_derived_from_the_cost_model() {
-    let bus = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - FxBus::COST_TAPE.0;
+    let bus = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0
+        - FxBus::COST_TAPE.0
+        - chimera_core::budget::CONTROL_RESERVE.0;
     let table = AlgoEngine::COST_BASE.0
         + 12 * AlgoEngine::COST_LINK.0
         + 6 * (AlgoEngine::COST_OP.0 + AlgoEngine::COST_FEEDBACK.0);
@@ -174,7 +176,7 @@ fn one_linked_formant_fits_and_two_do_not() {
     p.try_set_kind(0, OpKind::Formant).unwrap();
     assert_eq!(p.try_set_kind(1, OpKind::Formant), Err(OverBudget));
     // Linked and unlinked share the budget: 1 linked + 1 unlinked fits
-    // (590), 1 linked + 2 unlinked doesn't (790 > 667).
+    // (590), 1 linked + 2 unlinked doesn't (790 > 659).
     p.try_set_kind(3, OpKind::Formant).unwrap();
     assert_eq!(p.try_set_kind(5, OpKind::Formant), Err(OverBudget));
     assert!(OpKind::Formant.charge(true) + OpKind::Formant.charge(false) <= FORMANT_BUDGET_FRMT.0);

@@ -702,20 +702,20 @@ fn an_over_budget_part_loads_its_excess_as_w1_and_says_so() {
     use chimera_core::dsp::algo::waves::WaveId;
     assert_eq!(
         FORMANT_N_UNLINKED, 3,
-        "the file below is 3 FRMT + 3 NOIS on A1"
+        "the file below is 3 FRMT + 2 NOIS on A1"
     );
     let (mut src, _) = Project::boxed();
     let algo = &mut src.edit_part(PartId::ALL[0]).sound.params.algo;
     algo.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
-    for (i, k) in [Formant, Formant, Formant, Noise, Noise, Noise]
+    for (i, k) in [Formant, Formant, Formant, Noise, Noise, Table(WaveId::W1)]
         .into_iter()
         .enumerate()
     {
         algo.try_set_kind(i, k).unwrap();
     }
-    // OP_D's WAVE, NOIS (17) to FRMT (16): four formants, 4·200 > 667.
-    // Operators load in order, so the fourth loads W1 and the noise bands
-    // after it fit.
+    // OP_D's WAVE, NOIS (17) to FRMT (16): four formants, 4·200 > 659.
+    // Operators load in order, so the fourth loads W1 and the noise band
+    // after it fits.
     let mut bytes = encode_project(&src);
     let at: Vec<usize> = (0..bytes.len() - 6)
         .filter(|&i| bytes[i..i + 6] == [6, 0, 17, 0, 0, 0])
@@ -737,7 +737,14 @@ fn an_over_budget_part_loads_its_excess_as_w1_and_says_so() {
     );
     assert_eq!(
         q.part(PartId::ALL[0]).sound.params.algo.kinds().all(),
-        [Formant, Formant, Formant, Table(WaveId::W1), Noise, Noise]
+        [
+            Formant,
+            Formant,
+            Formant,
+            Table(WaveId::W1),
+            Noise,
+            Table(WaveId::W1)
+        ]
     );
     assert_ne!(
         project_status(&q, t),

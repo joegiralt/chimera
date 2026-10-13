@@ -23,7 +23,7 @@ use crate::hw::Cost;
 use crate::project::PartId;
 use crate::voice_alloc::VoiceIdx;
 use combine::{Crusher, Operator, Peaks, ring_gain};
-use osc::{NO_WRAP, R, Ramps, Sub, VarOsc, wave_reach};
+use osc::{NO_WRAP, R, Ramps, Sub, SubEdge, VarOsc, wave_reach};
 use stability::{JITTER_CENTS, Seed, Stability, depth};
 #[cfg(any(test, feature = "test-support"))]
 use {osc::Correction, stability::Character};
@@ -274,28 +274,29 @@ pub const VA_OUT_GAIN: f32 = 3.631;
 /// Cycles a sample per MODE by ADR 0056's count on the release ELF (instr ×
 /// 1.46 × 1.1, + 12 a `vdiv`/`vsqrt`; ADR 0118's scripts). Each oscillator
 /// bills its dearest wave pair, constants lerped and SHAPE and WAVE moving:
-/// its loop's round with no event, + 0.45 of its wrap's side, + each edge's
-/// crossing side at 0.45 + 0.225/64 a sample (backward 0.225/64), all
-/// stretched by the jitter's half cent; the SYNC slave + its resets.
-/// Then the operator loop (its ducking variant; sub flips at 0.45), the
-/// steady block's work ÷ 64 and one WAVE segment crossing an oscillator
+/// its loop's round with no event, + 0.45 of its wrap's side (OSC 1: its
+/// one gate to the sub's flip and the wrap, taken twice a cycle, #485), +
+/// each edge's crossing side at 0.45 + 0.225/64 a sample (backward
+/// 0.225/64), all stretched by the jitter's half cent; the SYNC slave + its
+/// resets. Then the operator loop (its ducking variant; sub flips at 0.45),
+/// the steady block's work ÷ 64 and one WAVE segment crossing an oscillator
 /// every block (WAVE's reach, `wave_reach`), an extra run with its share of
 /// the render loop, plus the crossing block's split peak bound, and LP24's
 /// 95. In SYNC the master's events and the slave's resets run at its 7 kHz
 /// ceiling, 7/48 a sample. Each line: OSC 1 (TRI/SAW) + OSC 2 + operator
-/// and sub + block + crossings + 95.
+/// and sub + block + crossings + 95 (2026-10-13, ADR 0118 point 13).
 ///
-/// MIX: 140.6 + 134.4 (TRI/SAW) + 35.8 + 66.9 + 29.6 + 95.
-pub const COST_MIX: Cost = Cost(510);
-/// SYNC: 113.8 (master at 7 kHz) + 183.7 (SINE/TRI slave: a reset's 197.5
-/// × 7/48) + 35.8 + 70.3 + 30.7 + 95.
-pub const COST_SYNC: Cost = Cost(530);
-/// RING: 140.6 + 134.4 + 42.2 + 67.6 + 29.6 + 95.
-pub const COST_RING: Cost = Cost(510);
-/// XOR: 140.6 + 134.4 + 53.5 + 68.7 + 29.6 + 95.
-pub const COST_XOR: Cost = Cost(530);
-/// BITS: 140.6 + 134.4 + 42.2 + 67.7 + 29.6 + 95.
-pub const COST_BITS: Cost = Cost(510);
+/// MIX: 153.7 + 134.4 (TRI/SAW) + 36.2 + 68.0 + 29.9 + 95.
+pub const COST_MIX: Cost = Cost(520);
+/// SYNC: 121.7 (master at 7 kHz) + 183.7 (SINE/TRI slave: a reset's 197.5
+/// × 7/48) + 36.2 + 71.5 + 31.0 + 95.
+pub const COST_SYNC: Cost = Cost(540);
+/// RING: 153.7 + 134.4 + 42.6 + 68.7 + 29.9 + 95.
+pub const COST_RING: Cost = Cost(530);
+/// XOR: 153.7 + 134.4 + 53.9 + 69.9 + 29.9 + 95.
+pub const COST_XOR: Cost = Cost(540);
+/// BITS: 153.7 + 134.4 + 42.6 + 68.8 + 29.9 + 95.
+pub const COST_BITS: Cost = Cost(530);
 
 /// SYNC's master pitch ceiling, A8 − 10 cents (owner, 2026-10-11; ADR 0118
 /// point 12): it bounds the slave's resets at 7 kHz.
@@ -402,12 +403,14 @@ fn norm((s0, s1): (f32, f32)) -> (f32, f32, f32) {
 }
 
 /// What a voice's VA keeps across the idle slot's rebuild (spec
-/// § Stability, free-run): both phases, the sub's level, the walks and the
-/// seeded character, and whose seed it is.
+/// § Stability, free-run): both phases, the sub's level and whether it
+/// flipped this cycle, the walks and the seeded character, and whose seed
+/// it is.
 #[derive(Clone, Copy)]
 pub(crate) struct VaCarry {
     phase: [f32; 2],
     high: bool,
+    flipped: bool,
     stab: Stability,
     seeded: Option<PartId>,
 }
@@ -437,9 +440,10 @@ pub struct VaEngine {
     /// Each oscillator's cycle factor from its last wrap's jitter.
     jit: [f32; 2],
     /// Scratch, written before it is read every block: OSC 2's block and
-    /// OSC 1's wraps (kept here so no block zeroes them).
+    /// OSC 1's marks, (SYNC) its wraps and its sub flips (kept here so no
+    /// block zeroes them).
     osc2: [f32; BLOCK_SIZE],
-    wraps: [f32; BLOCK_SIZE],
+    marks: [[f32; 2]; BLOCK_SIZE],
     inc: [Ramp; 2],
     wave: [Ramp; 2],
     shape: [Ramp; 2],
@@ -472,7 +476,7 @@ impl VaEngine {
             crusher: Crusher::NEW,
             jit: [1.0; 2],
             osc2: [0.0; BLOCK_SIZE],
-            wraps: [NO_WRAP; BLOCK_SIZE],
+            marks: [[NO_WRAP; 2]; BLOCK_SIZE],
             inc: [Ramp::default(); 2],
             wave: [Ramp::default(); 2],
             shape: [Ramp::default(); 2],
@@ -506,6 +510,7 @@ impl VaEngine {
         VaCarry {
             phase: [self.osc[0].phase(), self.osc[1].phase()],
             high: self.sub.high(),
+            flipped: self.osc[0].flipped(),
             stab: self.stab,
             seeded: self.seeded,
         }
@@ -518,6 +523,7 @@ impl VaEngine {
             o.set_phase(p);
         }
         self.sub.set_high(c.high);
+        self.osc[0].set_flipped(c.flipped);
         (self.stab, self.seeded) = (c.stab, c.seeded);
     }
 
@@ -712,6 +718,15 @@ impl VaEngine {
         lanes!(0);
         lanes!(1);
         l.pk = Peaks { a: pk[0], b: pk[1] };
+        // in SYNC the sub flips with the louder edge, AMOUNT mid-block: the
+        // master's shaped edge, or the slave's reset at the wrap (ADR 0118
+        // point 13). A place between the two notches both (#485)
+        let slave = l.amount.0 + l.amount.1 * (BLOCK_SIZE / 2) as f32 >= 0.5;
+        self.osc[0].set_sub_edge(if self.playing == VaMode::Sync && slave {
+            SubEdge::Wrap
+        } else {
+            SubEdge::Saw
+        });
         let k = self.ring_k.step(ring_gain(l.pk));
         l.k = (k.0, step_of(k, BLOCK_SIZE));
         #[cfg(any(test, feature = "test-support"))]
@@ -778,8 +793,9 @@ impl VaEngine {
 
     /// One block in `mode`, a constant in each caller, so each mode's loop
     /// is its own (the count sees each). OSC 1 renders into `out` with its
-    /// wraps, OSC 2 beside it (synced to them in SYNC), then the operator,
-    /// the sub, the chain gain and a duck's gain run over both.
+    /// sub flips (and its wraps in SYNC), OSC 2 beside it (synced to the
+    /// wraps in SYNC), then the operator, the sub, the chain gain and a
+    /// duck's gain run over both.
     #[inline(always)]
     fn run(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, mode: VaMode, gain: Gain) {
         let Self {
@@ -787,18 +803,21 @@ impl VaEngine {
             stab,
             jit,
             osc2: b,
-            wraps: wr,
+            marks: mk,
             ..
         } = self;
         // a wrap's factor, `1 + jitter(d)·CENT`, from the raw draw: exactly
         // 1 at d = 0 (STAB 1)
         let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
         let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
-        o1.render::<BLOCK_SIZE, true, false>(out, wr, &l.osc[0], &mut jit[0], &mut draw);
+        // OSC 1 marks its sub flips, and in SYNC its wraps: the slave
+        // resets at the wraps (ADR 0118 point 13)
         if mode == VaMode::Sync {
-            o2.render::<BLOCK_SIZE, false, true>(b, wr, &l.osc[1], &mut jit[1], &mut draw);
+            o1.render::<BLOCK_SIZE, true, false, true>(out, mk, &l.osc[0], &mut jit[0], &mut draw);
+            o2.render::<BLOCK_SIZE, false, true, false>(b, mk, &l.osc[1], &mut jit[1], &mut draw);
         } else {
-            o2.render::<BLOCK_SIZE, false, false>(b, wr, &l.osc[1], &mut jit[1], &mut draw);
+            o1.render::<BLOCK_SIZE, false, false, true>(out, mk, &l.osc[0], &mut jit[0], &mut draw);
+            o2.render::<BLOCK_SIZE, false, false, false>(b, mk, &l.osc[1], &mut jit[1], &mut draw);
         }
         // a loop of its own while the duck runs (the count bills it)
         match gain {
@@ -821,7 +840,7 @@ impl VaEngine {
             sub,
             crusher,
             osc2: b,
-            wraps: wr,
+            marks: mk,
             ..
         } = self;
         // RING and XOR run at twice their level (`Operator`), the chain
@@ -842,7 +861,7 @@ impl VaEngine {
                 k += dk;
                 sl += ds;
                 let c = op.at(out[i], b[i], x, k);
-                let sv = s.step(wr[i]);
+                let sv = s.step(mk[i][1]);
                 let y = (c + sl * sv) * n;
                 out[i] = if DUCKED { y * g[i] } else { y };
                 n += dn;

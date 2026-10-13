@@ -19,7 +19,7 @@ use crate::dsp::filter::{FILTER_LEVEL_COST, Filter, FilterMods};
 use crate::dsp::gate::AmpGate;
 use crate::dsp::knobs::Gliding;
 use crate::dsp::knobs::Knobs;
-use crate::dsp::lfo::Lfo;
+use crate::dsp::lfo::{Lfo, LfoClock};
 use crate::dsp::modal::{ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::wavefolder::Wavefolder;
@@ -571,6 +571,12 @@ impl Voice {
         &self.slot
     }
 
+    /// LFO `s`'s phase: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn lfo_phase(&self, s: LfoSlot) -> f32 {
+        self.lfos[s.index()].phase()
+    }
+
     /// The sounding (or last) note's velocity.
     pub fn velocity(&self) -> Velocity {
         self.last_velocity
@@ -871,17 +877,20 @@ impl Voice {
         mod_state: &ModState,
         ctx: &mut EngineCtx<'_>,
     ) {
-        self.render_knobs(output, params, mod_state, &Knobs::UNPRIMED, ctx);
+        self.render_knobs(output, params, mod_state, &Knobs::UNPRIMED, None, ctx);
     }
 
     /// One block of `params` with its Part's `knobs` in place of the stored
-    /// values they glide (ADR 0112), and of the FREQ/Q amounts.
+    /// values they glide (ADR 0112), and of the FREQ/Q amounts. Its FREE
+    /// LFOs play the Part's `clock` (ADR 0135); without one (a voice on its
+    /// own) they run their own phase.
     pub fn render_knobs(
         &mut self,
         output: &mut [f32; BLOCK_SIZE],
         params: &ParamSnapshot,
         mod_state: &ModState,
         knobs: &Knobs,
+        clock: Option<&LfoClock>,
         ctx: &mut EngineCtx<'_>,
     ) {
         let sample_rate = self.sample_rate();
@@ -956,8 +965,11 @@ impl Voice {
             );
         }
         for (s, lfo) in LfoSlot::ALL.iter().zip(self.lfos.iter_mut()) {
-            mod_values[ModSource::of_lfo(*s).index()] =
-                lfo.run_block(&src.lfos[s.index()], sample_rate);
+            let p = &src.lfos[s.index()];
+            if let Some(c) = clock {
+                lfo.follow(p, c.phases()[s.index()]);
+            }
+            mod_values[ModSource::of_lfo(*s).index()] = lfo.run_block(p, sample_rate);
         }
         mod_values[ModSource::Vel.index()] = self.last_velocity.unit();
         mod_values[ModSource::Note.index()] = note_source(self.last_note);
