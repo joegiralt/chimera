@@ -2119,7 +2119,8 @@ fn sounding(x: &[f32]) -> &[f32] {
 /// Every setting of `d` (`project::settings`) played: each Part's `stab`
 /// and `short` on its channel through the project as built, then the hats
 /// and the snare into the same FX bus at the Parts' most send per effect.
-/// Gates: finite, clicks, and the limiter at the chord bar (3 dB).
+/// Gates: finite, clicks (left to the ear under REVERSE and GATE,
+/// `Setting::click_exempt`), and the limiter at the chord bar (3 dB).
 pub fn demo_gates(d: &Demo, sounds: &[Source], stims: &Stims) -> Result<DemoReport, String> {
     let project = project::build(d, sounds)?;
     let settings = project::settings(d, sounds)?;
@@ -2171,7 +2172,7 @@ pub fn demo_gates(d: &Demo, sounds: &[Source], stims: &Stims) -> Result<DemoRepo
                         .iter()
                         .map(|h| block(h.on) * BLOCK_SIZE + LATE)
                         .collect();
-                    (play_on(&perf, ch, &p), on, ex)
+                    (play_on(&perf, ch, &p), on, ex.or(s.click_exempt()))
                 }
                 DemoTake::Hats | DemoTake::Snare => {
                     let x = sounding(if take == DemoTake::Hats {
@@ -2185,7 +2186,7 @@ pub fn demo_gates(d: &Demo, sounds: &[Source], stims: &Stims) -> Result<DemoRepo
                         .into_iter()
                         .map(|o| o + BLOCK_SIZE + LATE)
                         .collect();
-                    (play_stim(&s.fx, sends, x, secs), on, None)
+                    (play_stim(&s.fx, sends, x, secs), on, s.click_exempt())
                 }
             };
             let bad = t.stereo.iter().filter(|v| !v.is_finite()).count();
