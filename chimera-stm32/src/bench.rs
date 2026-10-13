@@ -28,8 +28,8 @@ use chimera_engine::audio_out::{DacSample, interleave};
 use chimera_engine::dsp::algo::algorithms::AlgoId;
 use chimera_engine::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
 use chimera_engine::dsp::algo::kernel::{Kernel, KernelBlock, KindBlock, OpBlock, SAMPLE_SCALE};
-use chimera_engine::dsp::algo::kinds::Kinds;
-use chimera_engine::dsp::algo::params::AlgoParams;
+use chimera_engine::dsp::algo::kinds::{Kinds, OpKind};
+use chimera_engine::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_engine::dsp::algo::plan::{EvalPlan, OPS};
 use chimera_engine::dsp::algo::tx::FEEDBACK_CYCLES;
 use chimera_engine::dsp::algo::waves::WaveId;
@@ -46,6 +46,8 @@ use chimera_engine::dsp::reverb::ReverbType;
 use chimera_engine::dsp::tape_engine::read::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape};
 use chimera_engine::dsp::tape_engine::{StretchType, TapeModel, wave};
 use chimera_engine::dsp::voice::Voice;
+#[cfg(feature = "bench-algo")]
+use chimera_engine::factory::{Demo, demo_sound};
 use chimera_engine::factory::{FACTORY_LEN, factory_sound};
 use chimera_engine::hw::{
     BLOCK_SIZE, BlockBudget, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget, VOICE_RAM_BUDGET,
@@ -167,6 +169,71 @@ fn ladder_op() -> ParamSnapshot {
     p.filter.set_kind(FilterKind::Ladder);
     p
 }
+
+/// The FORMANT screen's rows (ADR 0131): each term's case at 1..8 voices,
+/// notes C2 up in tenths (to A♯7: the terms cover grain clocks to C8).
+const FORMANT_ROWS: usize = 6;
+const FORMANT: [RoutingRow; FORMANT_ROWS] = [
+    // One FRMT on A1, BW 0: the spans at SKIRT 0 and at SKIRT 3.
+    ("FRMT0", |p| *p.params = frmt(0), STILL),
+    ("FRMT3", |p| *p.params = frmt(3), STILL),
+    // FRMT3 under a full ratio-1 sine (T1's 2 → 1): the moving loop.
+    ("FRMT PM", |p| *p.params = frmt_pm(), STILL),
+    (
+        "NOIS",
+        |p| *p.params = kinds(AlgoId::A1, AlgoId::A1, [N, T, T, T, T, T], 0b1, 0),
+        STILL,
+    ),
+    // The costliest patch the budget admits (`frmt_max` in cost_test):
+    // T1 ∪ A16, a linked FRMT on 3, the unlinked one on 6, three NOIS.
+    (
+        "FRMT MAX",
+        |p| *p.params = kinds(AlgoId::T1, AlgoId::A16, [N, N, F, N, T, F], ALL, 1),
+        STILL,
+    ),
+    ("CHOIR", choir, STILL),
+];
+const F: OpKind = OpKind::Formant;
+const N: OpKind = OpKind::Noise;
+const T: OpKind = OpKind::Table(WaveId::W1);
+
+/// `k` on `a` ∪ `b` at MORPH 64, as `algo` lights and feeds them; formant
+/// and noise bands at ratio 1, so each voice's grain clock is its note.
+#[inline(never)]
+fn kinds(a: AlgoId, b: AlgoId, k: [OpKind; OPS], lit: u8, feedback: u8) -> ParamSnapshot {
+    let mut p = algo(a, lit, feedback);
+    for (o, k) in p.algo.ops.iter_mut().zip(k) {
+        if k.is_formant() {
+            o.coarse = AlgoOpParams::DEFAULT.coarse;
+        }
+    }
+    p.algo = AlgoParams::new(a, b, 64, Kinds::new(k), p.algo.ops);
+    p
+}
+
+/// One FRMT on A1 at SKIRT `skirt`, BW 0.
+fn frmt(skirt: u8) -> ParamSnapshot {
+    let mut p = kinds(AlgoId::A1, AlgoId::A1, [F, T, T, T, T, T], 0b1, 0);
+    (p.algo.ops[0].skirt, p.algo.ops[0].bw) = (skirt, 0);
+    p
+}
+
+/// FRMT3 on T1, operator 2 a sine at ratio 1 and LEVEL 99 into it.
+fn frmt_pm() -> ParamSnapshot {
+    let mut p = kinds(AlgoId::T1, AlgoId::T1, [F, T, T, T, T, T], 0b11, 0);
+    (p.algo.ops[0].skirt, p.algo.ops[0].bw) = (3, 0);
+    p.algo.ops[1].coarse = AlgoOpParams::DEFAULT.coarse;
+    p
+}
+
+/// The CHOIR demo Sound, its VOWEL route in.
+#[cfg(feature = "bench-algo")]
+fn choir(p: &mut PartAudio) {
+    let s = demo_sound(Demo::Choir);
+    (*p.params, *p.mod_state) = (s.params, s.mod_state);
+}
+#[cfg(not(feature = "bench-algo"))]
+fn choir(_: &mut PartAudio) {}
 
 /// Label and per-block FX setup of each FX row. Every row runs the same
 /// noise through `mix_parts`, six Parts written, no voices. MIX is the mix
@@ -859,13 +926,15 @@ fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clo
     let fx: [u32; FX_ROWS] = core::array::from_fn(|i| rig.time_bus(FX[i].1));
     let kernel = time_kernel();
     show(rec, clocks, &rows, kernel, &fx);
+    hold(clocks);
+    let mut formant = [Counts::default(); FORMANT_ROWS];
+    time_rows(rig, &FORMANT, &mut formant, (36, 10));
+    show_rows(rec, "FORMANT", &FORMANT, &formant);
 }
 
-/// The ROUTING screens, `ROUTING_PAGE` rows each.
-#[cfg(feature = "bench-routing")]
-fn routing_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
-    let mut routing = [Counts::default(); ROUTING_ROWS];
-    for (row, &(_, part, each)) in routing.iter_mut().zip(&ROUTING) {
+/// Each of `rows` at 1..8 voices, notes `low` up by `step`.
+fn time_rows(rig: &mut Rig<'_>, rows: &[RoutingRow], counts: &mut [Counts], (low, step): (u8, u8)) {
+    for (row, &(_, part, each)) in counts.iter_mut().zip(rows) {
         for n in 1..=MAX_VOICES {
             let timed = rig.time(
                 &|s| {
@@ -874,17 +943,27 @@ fn routing_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>,
                 },
                 &|s, b| each(&mut s.parts[0], b),
                 n,
-                36,
-                12,
+                low,
+                step,
             );
             row.add(n, timed);
         }
     }
+}
+
+/// The ROUTING screens, `ROUTING_PAGE` rows each.
+#[cfg(feature = "bench-routing")]
+fn routing_pages(rig: &mut Rig<'_>, rec: &mut Recorder<'_, impl ChimeraDisplay>, clocks: Clocks) {
+    let mut routing = [Counts::default(); ROUTING_ROWS];
+    time_rows(rig, &ROUTING, &mut routing, (36, 12));
     let pages = ROUTING
         .chunks(ROUTING_PAGE)
         .zip(routing.chunks(ROUTING_PAGE));
+    let total = ROUTING_ROWS.div_ceil(ROUTING_PAGE);
     for (page, (labels, counts)) in pages.enumerate() {
-        show_routing(rec, page, labels, counts);
+        let mut heading = FmtBuf::new();
+        let _ = write!(heading, "ROUTING {}/{total}", page + 1);
+        show_rows(rec, heading.as_str(), labels, counts);
         hold(clocks);
     }
 }
@@ -2300,18 +2379,17 @@ fn show_reverb(
     rec.flush();
 }
 
-/// ROUTING screen `page` (from 0): `rows`' labels and their counts.
-fn show_routing(
+/// A screen of `rows`' labels and their counts under `heading`: a ROUTING
+/// page or FORMANT.
+fn show_rows(
     rec: &mut Recorder<'_, impl ChimeraDisplay>,
-    page: usize,
+    heading: &str,
     rows: &[RoutingRow],
     counts: &[Counts],
 ) {
     rec.clear();
     let mut line = FmtBuf::new();
-    let pages = ROUTING_ROWS.div_ceil(ROUTING_PAGE);
-    let _ = write!(line, "ROUTING {}/{pages}", page + 1);
-    rec.heading(line.as_str());
+    rec.heading(heading);
     for (i, (&(label, ..), c)) in rows.iter().zip(counts).enumerate() {
         voice_row(rec, &mut line, 46 + i as i32 * ROW_H, label, c);
     }

@@ -199,15 +199,20 @@ fn skirt_0_bills_the_one_lane_term() {
         let table = cost(&p);
         p.try_set_kind(0, OpKind::Formant).unwrap();
         assert_eq!(p.linked().has(0), linked);
-        let (one, two) = if linked {
+        let (one, two, moving) = if linked {
             (
                 AlgoEngine::COST_FRMT_ONE_LINKED,
                 AlgoEngine::COST_FRMT_LINKED,
+                AlgoEngine::COST_FRMT_MOVE_LINKED,
             )
         } else {
-            (AlgoEngine::COST_FRMT_ONE, AlgoEngine::COST_FRMT)
+            (
+                AlgoEngine::COST_FRMT_ONE,
+                AlgoEngine::COST_FRMT,
+                AlgoEngine::COST_FRMT_MOVE,
+            )
         };
-        let move_ = AlgoEngine::COST_FRMT_MOVE.0;
+        let move_ = moving.0;
         p.ops[0].skirt = 0;
         assert_eq!(cost(&p), table - AlgoEngine::COST_OP.0 + one.0 + move_);
         p.ops[0].skirt = 1;

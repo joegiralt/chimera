@@ -125,7 +125,7 @@ This spec adds a voiced kind, FRMT, and an unvoiced kind, NOIS, to Algo's WAVE l
 
 > **Amended 2026-10-12 (owner; Task 11b; ADR 0131).** What follows this box is the 2026-09-30 design, kept for its derivation. What ships:
 >
-> - **Counted terms, never estimates** (§ 9): `COST_FRMT` 220 unlinked / 380 linked, `COST_FRMT_ONE` 210 / 380, `COST_NOIS` 85 (amended 2026-10-12, Task 12: its band law, taken afresh each block now that routes and knobs move it, adds 6.3 to the loop's 75), and `COST_FRMT_MOVE` 40 billed on every FRMT, as Modal bills its pitch (#437). Each is the worst block for a grain clock up to C8 (7 spans, or 7 fires linked); a voice that can reach past C8 pays its extra spans at admission (§ 9).
+> - **Counted terms, never estimates** (§ 9; recounted on the final code 2026-10-13, Task 15): `COST_FRMT` 220 unlinked / 390 linked, `COST_FRMT_ONE` 210 / 380, `COST_NOIS` 80 / 100 linked (its band law is taken afresh each block, now that routes and knobs move it), and the moving law `COST_FRMT_MOVE` 40 / 60 linked, billed on every FRMT, as Modal bills its pitch (#437). Each is the worst block for a grain clock up to C8 (7 spans, or 7 fires linked); a voice that can reach past C8 pays its extra spans at admission (§ 9).
 > - **The three-voice floor (owner).** A Sound holding a FRMT keeps three voices on the reference heavy routing (`ModRouting::HEAVY`); every other Sound keeps ADR 0026's four. Both budgets are derived, never typed in:
 >
 >   ```
@@ -134,9 +134,9 @@ This spec adds a voiced kind, FRMT, and an unvoiced kind, NOIS, to Algo's WAVE l
 >   FORMANT_BUDGET_FRMT = 6,006/3 − 472 − 832 = 698   a Sound with a FRMT
 >   ```
 >
-> - **Per-algorithm billing.** A FRMT is billed linked only when an operator in the patch's algorithm modulates it (`Linked::of(ALG A, ALG B)`, its incoming links); otherwise unlinked. Under MORPH the plan runs both algorithms' links at once, so `Linked` is their union: each operator bills at the heavier of the two. FDBK on the FRMT itself is not a link: it drives the carrier's phase only, never the grain delay.
-> - **Charges** (`OpKind::charge(linked)`, cost − `COST_OP`, SKIRT at its worst): FRMT 360 linked, 200 unlinked; NOIS 25; a table 0. So `FORMANT_N` = ⌊698/360⌋ = 1 linked and `FORMANT_N_UNLINKED` = ⌊698/200⌋ = 3 unlinked; one linked and one unlinked fit (560), one linked and two unlinked (760) are refused.
-> - **The demo Sounds sit on A1** (no links), so CHOIR and TALK BASS keep their three-formant voicings (625 and 600).
+> - **Per-algorithm billing.** A FRMT or NOIS is billed linked only when an operator in the patch's algorithm modulates it (`Linked::of(ALG A, ALG B)`, its incoming links); otherwise unlinked. Under MORPH the plan runs both algorithms' links at once, so `Linked` is their union: each operator bills at the heavier of the two. FDBK on the FRMT itself is not a link: it drives the carrier's phase only, never the grain delay.
+> - **Charges** (`OpKind::charge(linked)`, cost − `COST_OP`, SKIRT at its worst): FRMT 390 linked, 200 unlinked; NOIS 40 linked, 20 unlinked; a table 0. So `FORMANT_N` = ⌊698/390⌋ = 1 linked and `FORMANT_N_UNLINKED` = ⌊698/200⌋ = 3 unlinked; one linked and one unlinked fit (590), one linked and two unlinked (790) are refused.
+> - **The demo Sounds sit on A1** (no links), so CHOIR and TALK BASS keep their three-formant voicings (620 and 600); BREATH is 40 of the four-voice 197.
 > - **Every write checks the pair.** `AlgoParams` holds kinds and ALG A/B privately: `try_set_kind` and `try_set_algs` refuse an edit that would overspend. ALG A and B's encoders step over refused algorithms and toast FORMANT BUDGET FULL, as WAVE's do. A load writes ALG A and B before the operators, so each operator is checked on the file's algorithm, in order, and an excess kind loads as W1; the load says so.
 
 **The floor's worst case.** This is ADR 0026's convention: LP24 on the clean SVF (steady bill 0), no FOLD, DRIVE or ALGO taps (ADR 0096), and A16 ∪ A17's 12 links. On top of that, **heavy routes and the master tape**:
@@ -314,7 +314,7 @@ Algo block (`AlgoParams`):
   - So grain starts are exact and never depend on PM (review C2).
 - **Two lanes, A and B, always alternating.** Each holds a window phase `w` and a carrier phase `c`, and a grain start restarts the lane that fired less recently. So each lane restarts every two periods.
   - There is no one-lane mode and no mode switch, so no BW change can cut a grain (review I4).
-  - Each lane is computed only while its window is open. When the window is shorter than a period, at most one lane runs at a time.
+  - Each lane sounds only while its window is open. When the window is shorter than a period, at most one lane sounds at a time. (As built, Task 15: the span path computes both lanes every sample, a closed lane at window 0, so it runs no test; SKIRT 0 differs from 1–3 only by its window's squarings.)
 - **Sub-sample starts.** At a start the lane begins where the wrap put it:
   - `elapsed = phase / inc` samples, from a per-block reciprocal;
   - `w = elapsed · r_w`;
@@ -663,6 +663,8 @@ The table is in path order, from dark to bright round the vowel triangle:
 ### Terms
 
 > **Amended 2026-10-12 (Task 11b; ADR 0131): counted, not estimated.** Recounted on the `bench-algo` ELF with `tools/loop_count.py` (the kernel's loops are kept out of line there by the `span-count` feature, and only there): `COST_FRMT` 220, `COST_FRMT_ONE` 210 (no link in: spans between grain starts); `COST_FRMT_LINKED` 380, `COST_FRMT_ONE_LINKED` 380 (a link in: the moving loop), each at the worst block of a grain clock up to C8, 7 spans (fires), a span 276 instructions and a fire 47. A voice whose reachable pitch (note, TRNSP, PITCH, TUNING up, bend range, PITCH routes at full swing, a glide's start, and the operator's COARSE and FINE, FINE at its top under a route, DETUNE at its top) puts a FRMT's grain clock past C8 pays the spans past 7 per voice at admission and recost (`AlgoEngine::high_note_extra`); `COST_NOIS` 85 (Task 12: the loop 75 and `take_noise_law` 213 instructions and 5 divides or roots a block, 6.3); `COST_FRMT_MOVE` 40 (`take_laws`, `LawBlock::new` and `formant_fc` per block), billed on every FRMT. `AlgoEngine::cost` bills a FRMT `frmt_cost(SKIRT, linked)`, linked from `Linked::of(ALG A, ALG B)`, the same function the budget charges. The estimates below are history. The chip bench confirms the counts at ship (Task 15).
+>
+> **Recounted 2026-10-13 (Task 15; ADR 0131), on the final code.** `COST_FRMT` 220, `COST_FRMT_ONE` 210 (unchanged); `COST_FRMT_LINKED` 380 → **390** (`tick_at`'s longest path, both lanes open, is 167 instructions at SKIRT 3, not the 163 estimated by hand; `link_sum` is out of line); `COST_FRMT_ONE_LINKED` 380; `COST_NOIS` 85 → **80** unlinked and **100** linked (`run_noise::<1>`, the links' sum and `link_sum`'s block: linked NOIS had been counted only at `<0>`); `COST_FRMT_MOVE` 40 unlinked and **60** linked (`take_laws` now writes each law in place, which drops a 624 B copy a block; its 15-edge scan, and with links up to five edge sums, are now counted, not taken once). Each is ADR 0056's method, rounded up to 10. N is unchanged: 1 linked, 3 unlinked. SKIRT 0 is not one lane: the span path computes both lanes every sample, and `COST_FRMT_ONE` is lower only by SKIRT 0's squarings. The counts are from the `bench-algo` ELF, where `Grains::fire` is in line in each span: the shipping build calls it, so the count is conservative there. Details in ADR 0131.
 
 - `COST_FRMT_ONE = 90`, for SKIRT 0. With the floor, SKIRT 0's window is at most 0.88 periods, so the two lanes never sound at once.
 - `COST_FRMT = 130`, for SKIRT 1–3, where the lanes can overlap.
@@ -709,7 +711,7 @@ The counts are at 75 %; brackets show 70 % where it differs. Rows with three FRM
 | **Per voice** | **about 160 B** |
 
 - `AlgoEngine` grows from 700 B to about 860 B (host, main at 4473f0a1). The owner's estimate was about 100 B.
-- The `EngineSlot` (4,248 B) is sized by `ModalEngine` (4,240 B), so `Voice` (6,304 B) and the pool don't grow. `voice_is_its_chain_plus_one_slot` pins that.
+- The `EngineSlot` (4,248 B) is sized by `ModalEngine` (4,240 B), so the slot doesn't grow. `voice_is_its_chain_plus_one_slot` pins that. (As built, Task 15: `AlgoEngine` is 2,572 B and still fits; `Voice` is 6,416 B, 6,304 on main, the chain's formant settings, `VOICE_CHAIN_BYTES` 2,112 → 2,176; `the_algo_engine_still_fits_its_slot` pins both.)
 - No new wave table, and DTCM is untouched: both kinds read W1's mip 0, which is already there.
 - The new constants are all in flash and read per block: the SKIRT arrays (80 B), the `ρ_q` and `p_q` curves (about 1.5 KB), and the vowel table (60 B).
 - **Flash is now the tight resource** (refresh 2026-10-11). About 58 KB is free on main at 4473f0a1, in the 917,504 B firmware area.
@@ -726,10 +728,10 @@ The counts are at 75 %; brackets show 70 % where it differs. Rows with three FRM
 | FRMT3 | one FRMT operator, SKIRT 3, BW 20 Hz | both lanes overlapping |
 | FRMT PM | FRMT3 with a full-level ratio-1 modulator | the delay path |
 | NOIS | one NOIS operator | `COST_NOIS` |
-| FRMT MAX | the worst allowed patch (§ 9) | the budget's worst case |
+| FRMT MAX | the costliest patch the budget admits (Task 15: T1 ∪ A16, a linked FRMT on 3, the unlinked one on 6, NOIS on 1, 2 and 4, a table on 5, FDBK 1; `frmt_max` in cost_test) | the budget's worst case |
 | CHOIR | the CHOIR factory Sound | a real patch |
 
-The rows join the `bench-algo` build, one bench area a build. Claude flashes it and reads the rows over the USB console (`just flash-bench algo`, `just usb bench`).
+The rows join the `bench-algo` build, one bench area a build, on their own FORMANT screen after ALGO's, at notes C2 up in tenths (to A♯7, inside the terms' C8). Claude flashes it and reads the rows over the USB console (`just flash-bench algo`, `just usb bench`).
 
 ## 10. Saving and compatibility
 

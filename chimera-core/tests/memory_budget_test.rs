@@ -68,6 +68,18 @@ fn voice_is_its_chain_plus_one_slot() {
     );
 }
 
+/// A voice, re-read on formant-ops at Task 15 (6,304 B on main at
+/// 4473f0a1): a tripwire, so a growth is seen and accounted.
+const VOICE_SIZE_BEFORE: usize = 6_416;
+
+/// ADR 0131: the formant kinds live in the Algo slot, which still fits
+/// inside Modal's, so they add nothing to `EngineSlot`.
+#[test]
+fn the_algo_engine_still_fits_its_slot() {
+    assert!(size_of::<AlgoEngine>() <= size_of::<ModalEngine>());
+    assert_eq!(size_of::<Voice>(), VOICE_SIZE_BEFORE);
+}
+
 /// ADR 0040, 0056: Modal's string lines hold G1 (MIDI 31, 49.0 Hz) at
 /// 48 kHz, its period's whole samples and the low-pass's two taps, and no
 /// more: F♯1 and lower clamp.

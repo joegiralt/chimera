@@ -61,17 +61,24 @@ fn the_budget_is_derived_from_the_cost_model() {
         FORMANT_BUDGET_FRMT.0,
         bus / FLOOR_VOICES_FORMANT - heavy - table
     );
-    let move_ = AlgoEngine::COST_FRMT_MOVE.0;
     let (linked, unlinked) = (OpKind::Formant.charge(true), OpKind::Formant.charge(false));
     assert_eq!(
         linked,
-        AlgoEngine::COST_FRMT_LINKED.0 + move_ - AlgoEngine::COST_OP.0
+        AlgoEngine::COST_FRMT_LINKED.0 + AlgoEngine::COST_FRMT_MOVE_LINKED.0
+            - AlgoEngine::COST_OP.0
     );
     assert_eq!(
         unlinked,
-        AlgoEngine::COST_FRMT.0 + move_ - AlgoEngine::COST_OP.0
+        AlgoEngine::COST_FRMT.0 + AlgoEngine::COST_FRMT_MOVE.0 - AlgoEngine::COST_OP.0
     );
-    assert_eq!(OpKind::Noise.charge(true), OpKind::Noise.charge(false));
+    assert_eq!(
+        OpKind::Noise.charge(true),
+        AlgoEngine::COST_NOIS_LINKED.0 - AlgoEngine::COST_OP.0
+    );
+    assert_eq!(
+        OpKind::Noise.charge(false),
+        AlgoEngine::COST_NOIS.0 - AlgoEngine::COST_OP.0
+    );
     assert_eq!(FORMANT_N, FORMANT_BUDGET_FRMT.0 / linked);
     assert_eq!(FORMANT_N_UNLINKED, FORMANT_BUDGET_FRMT.0 / unlinked);
     println!(
@@ -82,6 +89,7 @@ fn the_budget_is_derived_from_the_cost_model() {
         unlinked,
         OpKind::Noise.charge(false)
     );
+    println!("nois linked {}", OpKind::Noise.charge(true));
 }
 
 /// `n` FRMT on operators 1–`n`, the rest W1.
@@ -111,13 +119,13 @@ fn the_budget_rule_is_exact() {
     let n = FORMANT_N as usize;
     assert!(fits(&frmts(n), a11));
     assert!(!fits(&frmts(n + 1), a11));
-    // Noise bands alone keep the four-voice budget, links or none.
+    // Noise bands alone keep the four-voice budget, each billed linked
+    // where a link runs into it: six on A1 fit; A11 links four of them.
     for l in [none, a11] {
-        assert_eq!(
-            fits(&[Noise; OPS], l),
-            6 * OpKind::Noise.charge(false) <= FORMANT_BUDGET.0
-        );
+        let spend: u32 = (0..OPS).map(|i| Noise.charge(l.has(i))).sum();
+        assert_eq!(fits(&[Noise; OPS], l), spend <= FORMANT_BUDGET.0);
     }
+    assert!(fits(&[Noise; OPS], none));
 }
 
 /// The operators each algorithm links into, from its table; operator 6
@@ -163,7 +171,7 @@ fn one_linked_formant_fits_and_two_do_not() {
     p.try_set_kind(0, OpKind::Formant).unwrap();
     assert_eq!(p.try_set_kind(1, OpKind::Formant), Err(OverBudget));
     // Linked and unlinked share the budget: 1 linked + 1 unlinked fits
-    // (560), 1 linked + 2 unlinked doesn't (760 > 698).
+    // (570), 1 linked + 2 unlinked doesn't (770 > 698).
     p.try_set_kind(3, OpKind::Formant).unwrap();
     assert_eq!(p.try_set_kind(5, OpKind::Formant), Err(OverBudget));
     assert!(OpKind::Formant.charge(true) + OpKind::Formant.charge(false) <= FORMANT_BUDGET_FRMT.0);
@@ -200,7 +208,7 @@ fn morph_bills_each_operator_at_the_heavier_algorithm() {
     q.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
     assert_eq!(
         ab - AlgoEngine::cost(&q, &all).0,
-        AlgoEngine::COST_FRMT_LINKED.0 - AlgoEngine::COST_FRMT.0 + AlgoEngine::COST_LINK.0
+        AlgoEngine::frmt_cost(1, true) - AlgoEngine::frmt_cost(1, false) + AlgoEngine::COST_LINK.0
     );
 }
 
@@ -491,8 +499,8 @@ fn an_over_budget_file_decodes_its_excess_as_w1() {
     let file = sound_file_with_kinds(&[16; 6]);
     let (s, over) = decode_sound(&file).unwrap();
     let p = &s.params.algo;
-    // The neutral base's T1 ∪ A1: operators 1 and 4 hold a FRMT (360 +
-    // 170), the rest load W1.
+    // The neutral base's T1 ∪ A1: operators 1 and 4 hold a FRMT (370 +
+    // 200), the rest load W1.
     let k = p.kinds().all();
     assert_eq!(k, greedy([OpKind::Formant; OPS], p.linked()));
     assert_eq!(k.iter().filter(|&&x| x == OpKind::Formant).count(), 2);
@@ -543,7 +551,7 @@ fn a_file_s_algorithm_degrades_the_formants_it_cannot_hold() {
     );
     assert!(over);
     // A11 links into operators 1–4: one FRMT there, then 5 and 6 unlinked
-    // would be 360 + 340 = 700, over by 2.
+    // would be 370 + 400 = 770, over.
     let (s, over) = decode_sound(&sound_file_with_algs(
         AlgoId::A11,
         AlgoId::A11,
@@ -558,7 +566,7 @@ fn a_file_s_algorithm_degrades_the_formants_it_cannot_hold() {
     // Written after its operators (no Sound is), an algorithm that would
     // link into a full patch is refused and reported, never lost.
     // On the neutral base's T1 ∪ A1, FRMT on 1 (linked) and 4 (not) and a NOIS
-    // fit (550); A11 would link 4 too (740).
+    // fit (370 + 200 + 40 = 610); A11 would link 4 too (760).
     let (s, over) = decode_sound(&sound_file_with_algs(
         AlgoId::A11,
         AlgoId::A11,

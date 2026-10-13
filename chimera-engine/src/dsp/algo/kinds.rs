@@ -76,7 +76,7 @@ impl OpKind {
         match self {
             OpKind::Table(_) => 0,
             OpKind::Formant => AlgoEngine::frmt_cost(1, linked) - AlgoEngine::COST_OP.0,
-            OpKind::Noise => AlgoEngine::COST_NOIS.0 - AlgoEngine::COST_OP.0,
+            OpKind::Noise => AlgoEngine::nois_cost(linked) - AlgoEngine::COST_OP.0,
         }
     }
 }

@@ -62,9 +62,13 @@ pub fn encode_entry(s: &Sound) -> alloc::vec::Vec<u8> {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub use authored::{Demo, authored_sound, demo_sound};
+pub use authored::authored_sound;
+#[cfg(any(test, feature = "test-support", feature = "demo-sounds"))]
+pub use authored::{Demo, demo_sound};
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "demo-sounds"))]
+// With `demo-sounds` alone only the demos are read.
+#[cfg_attr(not(any(test, feature = "test-support")), allow(dead_code))]
 mod authored {
     use super::*;
     use crate::addr::{BlockRef, ParamAddr};

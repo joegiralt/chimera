@@ -264,9 +264,6 @@ impl Peak {
     }
 }
 
-/// Each formant operator's law and drive this block.
-type Laws = [Option<(FormantLaw, Drive)>; OPS];
-
 /// A formant operator's law, its drive and what its block takes from them
 /// beyond the ramps: kept while the law's inputs hold (`LawKey`).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -434,25 +431,32 @@ impl AlgoEngine {
     pub const COST_OP: Cost = Cost(60); // measured 2026-09-27, bench, rev V at 480 MHz
     pub const COST_LINK: Cost = Cost(8); // measured 2026-09-27, bench, rev V at 480 MHz
     pub const COST_FEEDBACK: Cost = Cost(1); // measured 2026-09-27, bench, rev V at 480 MHz
-    // Counted on the bench-algo ELF with tools/loop_count.py: a SKIRT 1–3
-    // FRMT's two lanes in spans (`<0, S3>`), one lane at SKIRT 0
-    // (`<0, S0>`), and with links the moving loop (`<1, S3>`, `<1, S0>`),
-    // each at its worst block for a grain clock up to `SPAN_TOP_HZ`:
-    // `SPANS_COVERED` spans (fires, linked). A higher clock pays
-    // `high_note_extra` per voice.
-    pub const COST_FRMT_ONE: Cost = Cost(210); // counted, ADR 0056's method, 5901f08e, 7 spans
-    pub const COST_FRMT: Cost = Cost(220); // counted, ADR 0056's method, 5901f08e, 7 spans
-    pub const COST_FRMT_ONE_LINKED: Cost = Cost(380); // counted, ADR 0056's method, 5901f08e, 7 fires
-    pub const COST_FRMT_LINKED: Cost = Cost(380); // counted, ADR 0056's method, 5901f08e, 7 fires
-    // The loop 75 (3f403ae2 + task-11b-opt WIP) and its band law taken
-    // afresh every block (`take_noise_law` 213 instructions and 5 divides
-    // or roots, 6.3): a route or a knob on its way moves it any block.
-    pub const COST_NOIS: Cost = Cost(85); // counted, ADR 0056's method, Task 12
-    /// A formant law taken afresh (`take_laws` 876 instructions and 18
-    /// divides, `LawBlock::new` 113 and 6, `formant_fc` 126 and 1). Billed
-    /// on every FRMT, as Modal bills its pitch (#437): the pitch wheel or a
-    /// glide steal can move any voice's laws with no route to see.
-    pub const COST_FRMT_MOVE: Cost = Cost(40); // counted, ADR 0056's method, 3f403ae2 + task-11b-opt WIP
+    // Counted on the bench-algo ELF with tools/loop_count.py (ADR 0131): a
+    // SKIRT 1–3 FRMT's two lanes in spans (`run_formant::<3>`), SKIRT 0's
+    // (`::<0>`), and with links the moving loop (`run_moving` and
+    // `tick_at`'s longest path), each at its worst block for a grain clock
+    // up to `SPAN_TOP_HZ`: `SPANS_COVERED` spans (fires, linked). A higher
+    // clock pays `high_note_extra` per voice.
+    pub const COST_FRMT_ONE: Cost = Cost(210); // counted, ADR 0056's method, Task 15, 7 spans
+    pub const COST_FRMT: Cost = Cost(220); // counted, ADR 0056's method, Task 15, 7 spans
+    pub const COST_FRMT_ONE_LINKED: Cost = Cost(380); // counted, ADR 0056's method, Task 15, 7 fires
+    pub const COST_FRMT_LINKED: Cost = Cost(390); // counted, ADR 0056's method, Task 15, 7 fires
+    // `run_noise::<0>` (`::<1>` with a link in, its sum and `link_sum`),
+    // `noise_op` and its band law taken afresh every block
+    // (`take_noise_law` 213 instructions and 5 divides or roots): a route
+    // or a knob on its way moves it any block.
+    pub const COST_NOIS: Cost = Cost(80); // counted, ADR 0056's method, Task 15
+    pub const COST_NOIS_LINKED: Cost = Cost(100); // counted, ADR 0056's method, Task 15
+    /// A formant law taken afresh: `take_laws` 507 instructions and 6
+    /// divides, its scan of 15 edges (+105) and its six operators' turns
+    /// (+55), `formant_law_pm` 290 and 10, `LawBlock::new` 113 and 6,
+    /// `formant_fc` 126 and 1 and a 100 B copy. Billed on every FRMT, as
+    /// Modal bills its pitch (#437): the pitch wheel or a glide steal can
+    /// move any voice's laws with no route to see.
+    pub const COST_FRMT_MOVE: Cost = Cost(40); // counted, ADR 0056's method, Task 15
+    /// With links in, `drive` sums up to five edges (four more bodies of
+    /// 140 and 2 divides) and a FRMT source's `formant_fc`.
+    pub const COST_FRMT_MOVE_LINKED: Cost = Cost(60); // counted, ADR 0056's method, Task 15
 
     /// The grain clock the FRMT terms cover: C8, MIDI 108.
     pub const SPAN_TOP_HZ: f32 = 4186.009;
@@ -504,16 +508,24 @@ impl AlgoEngine {
         Cost((instr * 1606).div_ceil(64_000))
     }
 
-    /// A priced FRMT operator: its lanes (one at SKIRT 0), with links or
-    /// without, and its laws moving.
+    /// A priced FRMT operator: its lanes (SKIRT 0's spans or moving loop
+    /// cost less), with links or without, and its laws moving.
     pub const fn frmt_cost(skirt: u8, linked: bool) -> u32 {
-        let lanes = match (skirt == 0, linked) {
-            (true, false) => Self::COST_FRMT_ONE.0,
-            (false, false) => Self::COST_FRMT.0,
-            (true, true) => Self::COST_FRMT_ONE_LINKED.0,
-            (false, true) => Self::COST_FRMT_LINKED.0,
-        };
-        lanes + Self::COST_FRMT_MOVE.0
+        match (skirt == 0, linked) {
+            (true, false) => Self::COST_FRMT_ONE.0 + Self::COST_FRMT_MOVE.0,
+            (false, false) => Self::COST_FRMT.0 + Self::COST_FRMT_MOVE.0,
+            (true, true) => Self::COST_FRMT_ONE_LINKED.0 + Self::COST_FRMT_MOVE_LINKED.0,
+            (false, true) => Self::COST_FRMT_LINKED.0 + Self::COST_FRMT_MOVE_LINKED.0,
+        }
+    }
+
+    /// A priced NOIS operator, with a link in or without.
+    pub const fn nois_cost(linked: bool) -> u32 {
+        if linked {
+            Self::COST_NOIS_LINKED.0
+        } else {
+            Self::COST_NOIS.0
+        }
     }
 
     /// A voice's cycles/sample from its patch's shape (spec addendum). An
@@ -526,8 +538,8 @@ impl AlgoEngine {
     pub const fn cost(p: &AlgoParams, level_routed: &[bool; OPS]) -> Cost {
         let (a, b) = p.algs();
         let (a, b) = (&ALGORITHMS[a.get() as usize], &ALGORITHMS[b.get() as usize]);
-        // A formant with a link in runs its linked path (`Linked`, as the
-        // budget bills it).
+        // A formant or noise band with a link in runs its linked path
+        // (`Linked`, as the budget bills it).
         let linked = p.linked();
         let (mut active, mut feedback, mut ops, mut i) = (0u8, 0, 0, 0);
         while i < OPS {
@@ -537,7 +549,7 @@ impl AlgoEngine {
                 ops += match kind {
                     OpKind::Table(_) => Self::COST_OP.0,
                     OpKind::Formant => Self::frmt_cost(p.ops[i].skirt, linked.has(i)),
-                    OpKind::Noise => Self::COST_NOIS.0,
+                    OpKind::Noise => Self::nois_cost(linked.has(i)),
                 };
                 if p.ops[i].feedback > 0 && !matches!(kind, OpKind::Noise) {
                     feedback += 1;
@@ -1035,10 +1047,20 @@ impl AlgoEngine {
     /// The formant laws taken afresh: the moving path.
     #[cfg_attr(feature = "probe", inline(never))]
     fn take_laws(&mut self, p: &AlgoParams, live: &AlgoLive, cycles: f32, sr: f32) {
-        let laws = self.formant_laws(p, live, cycles, sr);
-        self.laws = core::array::from_fn(|i| {
-            laws[i].map(|(law, drive)| LawBlock::new(law, drive, op_cycles(cycles, p, live, i), sr))
-        });
+        // Each law in place, in the plan's order, so a source faded at its
+        // edge carries its fade into its destinations' PM depth; a source
+        // the order hasn't reached counts at full. (A returned array of
+        // laws cost a 624 B copy a block.)
+        let mut fade = [1.0f32; OPS];
+        self.laws.fill(None);
+        for k in 0..OPS {
+            let i = self.plan.order[k] as usize % OPS;
+            if self.kinds[i] == OpKind::Formant {
+                let (law, drive) = self.formant(p, live, cycles, sr, i, &fade);
+                fade[i] = law.edge;
+                self.laws[i] = Some(LawBlock::new(law, drive, op_cycles(cycles, p, live, i), sr));
+            }
+        }
     }
 
     /// `LawKey` now.
@@ -1069,22 +1091,6 @@ impl AlgoEngine {
             0,
         ]);
         k
-    }
-
-    /// Every formant operator's law this block, in the plan's order, so a
-    /// source faded at its edge carries its fade into its destinations' PM
-    /// depth; a source the order hasn't reached counts at full.
-    fn formant_laws(&self, p: &AlgoParams, live: &AlgoLive, cycles: f32, sr: f32) -> Laws {
-        let (mut laws, mut fade) = ([None; OPS], [1.0f32; OPS]);
-        for &op in &self.plan.order {
-            let i = op as usize % OPS;
-            if self.kinds[i] == OpKind::Formant {
-                let (law, drive) = self.formant(p, live, cycles, sr, i, &fade);
-                fade[i] = law.edge;
-                laws[i] = Some((law, drive));
-            }
-        }
-        laws
     }
 
     /// A formant operator's law and drive this block (spec § 3): its pitch is the

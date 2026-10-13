@@ -1813,14 +1813,20 @@ fn heavy_routes_bill_their_named_sum() {
 }
 
 /// `k` on ALG `a` and `b` at MORPH 64, every operator at LEVEL 99 and
-/// FDBK 1.
+/// FDBK 1. The FRMTs go in first: until one is in, the four-voice budget
+/// holds the noise bands.
 fn algs_with(a: AlgoId, b: AlgoId, k: [OpKind; OPS]) -> AlgoParams {
     let mut p = AlgoParams::default();
     p.try_set_algs(a, b).unwrap();
     p.morph = 64;
-    for (i, kind) in k.into_iter().enumerate() {
-        (p.ops[i].level, p.ops[i].feedback) = (99, 1);
-        p.try_set_kind(i, kind).unwrap();
+    for op in p.ops.iter_mut() {
+        (op.level, op.feedback) = (99, 1);
+    }
+    let order = (0..OPS)
+        .filter(|&i| k[i] == OpKind::Formant)
+        .chain((0..OPS).filter(|&i| k[i] != OpKind::Formant));
+    for i in order {
+        p.try_set_kind(i, k[i]).unwrap();
     }
     p
 }
@@ -1934,9 +1940,14 @@ fn a_formant_bills_its_lanes_and_its_moving_law() {
                 (true, true) => AlgoEngine::COST_FRMT_ONE_LINKED,
                 (false, true) => AlgoEngine::COST_FRMT_LINKED,
             };
+            let moving = if linked {
+                AlgoEngine::COST_FRMT_MOVE_LINKED
+            } else {
+                AlgoEngine::COST_FRMT_MOVE
+            };
             assert_eq!(
                 cost(&p) - base,
-                lanes.0 + AlgoEngine::COST_FRMT_MOVE.0 - AlgoEngine::COST_OP.0,
+                lanes.0 + moving.0 - AlgoEngine::COST_OP.0,
                 "op {op} skirt {skirt}"
             );
             // Unrouted, the slot bills just that.
@@ -2078,4 +2089,112 @@ fn a_high_formant_note_is_booked_its_extra_spans() {
     assert!(extra > 0);
     assert_eq!(high - low, extra);
     assert_eq!(high_held - low_held, extra);
+}
+
+/// The costliest Algo patch the formant budget admits (ADR 0131): every
+/// kind mix with a FRMT on every algorithm pair, at LEVEL 99 and FDBK 1.
+fn frmt_max() -> AlgoParams {
+    let kinds = [OpKind::Table(WaveId::W1), OpKind::Formant, OpKind::Noise];
+    let mut best: Option<(u32, AlgoParams)> = None;
+    for (a, b) in all_pairs() {
+        let l = Linked::of(a, b);
+        for code in 0..3usize.pow(6) {
+            let k: [OpKind; OPS] = core::array::from_fn(|i| kinds[code / 3usize.pow(i as u32) % 3]);
+            if !k.contains(&OpKind::Formant) || !fits(&k, l) {
+                continue;
+            }
+            let p = algs_with(a, b, k);
+            if best.is_none_or(|(c, _)| cost(&p) > c) {
+                best = Some((cost(&p), p));
+            }
+        }
+    }
+    best.unwrap().1
+}
+
+/// Voices of `p` on rev V beside `bus`, with `extra` over its engine.
+fn voices_with(p: &AlgoParams, bus: Cost, extra: u32) -> u32 {
+    (SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - bus.0) / (cost(p) + extra)
+}
+
+/// ADR 0131: each kind bills its counted term, and the costliest patch
+/// the budget admits (the bench's FRMT MAX row) keeps the three-voice
+/// floor at the heavy routing, with the tape and without. The table:
+/// each demo Sound's voices at the light routing beside the whole bus.
+#[test]
+fn formant_costs_bill_by_kind() {
+    use chimera_core::factory::{Demo, demo_sound};
+    let d = |x: Demo| demo_sound(x).params.algo;
+    assert_eq!(
+        cost(&d(Demo::Breath)),
+        AlgoEngine::COST_BASE.0 + 2 * AlgoEngine::COST_NOIS.0
+    );
+    let worst = frmt_max();
+    let t = OpKind::Table(WaveId::W1);
+    let (f, n) = (OpKind::Formant, OpKind::Noise);
+    // The bench's FRMT MAX row (five other pairs with A16 tie it): T1 ∪
+    // A16, a linked FRMT on 3, the unlinked one on 6, NOIS on 1, 2 and 4.
+    assert_eq!(
+        cost(&worst),
+        cost(&algs_with(AlgoId::T1, AlgoId::A16, [n, n, f, n, t, f]))
+    );
+    let floor = HEAVY_OVERHEAD.0;
+    for bus in [FxBus::COST_TAPE, FxBus::COST_NO_TAPE] {
+        assert!(voices_with(&worst, bus, floor) >= FLOOR_VOICES_FORMANT);
+    }
+    let light = ModRouting::BASE.0 + Voice::CHAIN_COST.0;
+    for (name, p) in [
+        ("BREATH", d(Demo::Breath)),
+        ("CHOIR", d(Demo::Choir)),
+        ("TALK BASS", d(Demo::TalkBass)),
+        ("MAX", worst),
+    ] {
+        let y = ((SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - FxBus::COST.0)
+            / (cost(&p) + light))
+            .min(MAX_VOICES as u32);
+        println!(
+            "{name}: cost {} | rev V {} / rev Y {y} | heavy {}",
+            cost(&p),
+            voices_with(&p, FxBus::COST, light).min(MAX_VOICES as u32),
+            voices_with(&p, FxBus::COST_TAPE, floor)
+        );
+    }
+}
+
+/// ADR 0031 holds beside the formant kinds: the costliest table patch
+/// still gets six voices on rev V.
+#[test]
+fn the_costliest_table_patch_still_gets_six_voices_on_rev_v() {
+    let light = ModRouting::BASE.0 + Voice::CHAIN_COST.0;
+    assert!(voices_with(&costliest(), FxBus::COST, light) >= 6);
+}
+
+/// A NOIS with a link in runs `run_noise::<1>` and the links' sum: it
+/// bills its linked term, as a FRMT does.
+#[test]
+fn a_noise_band_bills_its_link() {
+    let t = [OpKind::Table(WaveId::W1); OPS];
+    let base = cost(&a16_a17_with(t));
+    let l = Linked::of(AlgoId::A16, AlgoId::A17);
+    for op in 0..OPS {
+        let mut k = t;
+        k[op] = OpKind::Noise;
+        let term = if l.has(op) {
+            AlgoEngine::COST_NOIS_LINKED
+        } else {
+            AlgoEngine::COST_NOIS
+        };
+        // NOIS takes no feedback.
+        let fb = AlgoEngine::COST_FEEDBACK.0;
+        assert_eq!(
+            cost(&a16_a17_with(k)) + AlgoEngine::COST_OP.0 + fb,
+            base + term.0,
+            "op {op}"
+        );
+        assert_eq!(
+            OpKind::Noise.charge(l.has(op)),
+            term.0 - AlgoEngine::COST_OP.0
+        );
+    }
+    const { assert!(AlgoEngine::COST_NOIS_LINKED.0 > AlgoEngine::COST_NOIS.0) };
 }
