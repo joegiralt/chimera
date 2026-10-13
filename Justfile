@@ -4,8 +4,9 @@
 # the filter probes `tools/loop_count.py` counts. Each is built with
 # `--no-default-features` (the `bench` feature brings back all of the
 # shipping set but the console's `put`; `filter-probes`, `default`).
-bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,orbit bench-orbit bench-tape filter-probes"
-bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit,bench-tape"
+# bench-tape is out until it fits FLASH again (private issue #506).
+bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,orbit bench-orbit filter-probes"
+bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit"
 
 # Build desktop simulator
 desktop:
@@ -59,13 +60,23 @@ put-factory-tapes dir="target/tapes-v1":
     [ ${#srcs[@]} -gt 0 ] || { echo "no .SRC in {{dir}}: just factory-tapes" >&2; exit 1; }
     for f in "${srcs[@]}"; do python3 tools/chimera-usb.py put "$f" /CHIMERA/TAPES/; done
 
-# Build STM32 firmware (release)
+# Build STM32 firmware (release): target/chimera.bin and .bk2
 firmware:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera
 
-# Build STM32 firmware with ORBIT (release)
+# Build STM32 firmware with ORBIT (release): target/chimera-orbit.bin and .bk2
 firmware-orbit:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-orbit
+
+# The ELF's two banks: <out>.bin (bank 1, never .bank2) and, with bank 2's
+# section, <out>.bk2. A build without `bank2` has an empty .bank2: no .bk2.
+bank2-split elf out:
+    rust-objcopy -R .bank2 -O binary {{elf}} {{out}}.bin
+    just check-bin-size {{out}}.bin
+    rm -f {{out}}.bk2
+    if rust-objdump -h {{elf}} | awk '$2 == ".bank2" && $3 != "00000000" { f = 1 } END { exit !f }'; then rust-objcopy -j .bank2 -O binary {{elf}} {{out}}.bk2; fi
 
 # The bank-2 phase 0b spike (DEVELOPER): the ORBIT firmware plus the
 # console's b2erase, b2prog, b2call and b2stat, which erase and program
@@ -73,7 +84,7 @@ firmware-orbit:
 # it: the run sheet does, with the owner present.
 firmware-b2spike:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit,bank2-spike
-    rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-b2spike.bin
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-b2spike
 
 # Release binaries: the shipping firmware and its ORBIT variant with every build
 # path remapped (#413), so no home directory, user name or registry path
@@ -91,9 +102,8 @@ release-bin:
     for v in "" orbit; do
         if [ -n "$v" ]; then f="--features $v"; out=chimera-orbit; else f=""; out=chimera; fi
         cargo build --release -p chimera-stm32 --target $T $f --config "target.$T.rustflags=$flags"
-        rust-objcopy -O binary target/$T/release/chimera-stm32 target/release-bin/$out.bin
+        just bank2-split target/$T/release/chimera-stm32 target/release-bin/$out
         just check-bin-paths target/release-bin/$out.bin
-        just check-bin-size target/release-bin/$out.bin
     done
 
 # Stock bootloader SD flash erases sectors 1..size/128K+1: a .bin of 917,504 B
@@ -338,7 +348,7 @@ flash:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
-    rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera.bin
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera
     python3 tools/chimera-usb.py to-dfu
     log=$(mktemp) && trap 'rm -f "$log"' EXIT
     rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
@@ -360,7 +370,7 @@ flash-bench area extra="":
     features="bench-{{area}}"
     if [ -n "{{extra}}" ]; then features="$features,{{extra}}"; fi
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features "$features"
-    rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench.bin
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench
     python3 tools/chimera-usb.py to-dfu
     log=$(mktemp) && trap 'rm -f "$log"' EXIT
     rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-bench.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
@@ -374,7 +384,7 @@ flash-fault:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features fault-inject
-    rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-fault.bin
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-fault
     python3 tools/chimera-usb.py to-dfu
     log=$(mktemp) && trap 'rm -f "$log"' EXIT
     rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-fault.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
@@ -403,7 +413,7 @@ backup-bootloader:
 # Flash the SD bring-up probe (--no-default-features --features sd-probe) to PreenFM3 via DFU
 flash-sd-probe:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe
-    rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe.bin
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 
 # Coverage-guided fuzz of the Sound and project decoders, the library peek, seeded with the

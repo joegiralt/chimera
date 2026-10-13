@@ -192,3 +192,18 @@ fn crc_known_answer() {
     c.update(b"123456789");
     assert_eq!(c.finish(), 0xCBF4_3926);
 }
+
+#[test]
+fn unsealed_header_is_the_zero_header_committed() {
+    let h = Header {
+        body_len: 0,
+        body_crc: 0,
+        door_off: 0,
+        seal: [0; 8],
+        version: version(""),
+    };
+    assert_eq!(UNSEALED_HEADER, h.to_bytes(true));
+    let mut img = UNSEALED_HEADER.to_vec();
+    img.extend_from_slice(&body(1024));
+    assert_eq!(judged(img, &seal()), Verdict::Corrupt);
+}

@@ -55,6 +55,30 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     )
     .unwrap();
 
+    fs::write(
+        out_dir.join("bank2.x"),
+        r#"
+/* Bank 2's image (ADR 0137): the 256-byte header, the door table after it,
+   then what the door reaches. Inserted before .text so cortex-m-rt's
+   *(.text .text.*) never takes a .bank2.* section. Without `bank2` it is
+   empty and the Justfile makes no .bk2. */
+SECTIONS {
+  .bank2 : ALIGN(32) {
+    KEEP(*(.bank2.header));
+    . = ALIGN(32); __bank2_door = .;
+    KEEP(*(.bank2.door));
+    *(.bank2.text .bank2.text.*);
+    *(.bank2.rodata .bank2.rodata.*);
+    . = ALIGN(32); __bank2_end = .;
+  } > BANK2
+} INSERT BEFORE .text;
+ASSERT(ADDR(.bank2) == 0x08100000, "bank 2 starts at 0x08100000");
+ASSERT(__bank2_end <= 0x08180000, "bank 2 stays clear of bootloader 1.09's slots at 0x08180000");
+ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door follows the 256-byte header");
+"#,
+    )
+    .unwrap();
+
     // The AXI margin: what the UI's stack-free state and the card may still
     // grow into. Shipping keeps 32 KiB; a bench build carries the probe's
     // extra state and keeps 8 KiB (ADR 0087).
@@ -75,6 +99,9 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     println!("cargo:rustc-link-arg=-Tram_d2.x");
     println!("cargo:rustc-link-arg=-Tdtcm.x");
     println!("cargo:rustc-link-arg=-Taxi_margin.x");
+    println!("cargo:rustc-link-arg=-Tbank2.x");
+    // The relocations stay in the ELF: the door check reads them.
+    println!("cargo:rustc-link-arg=--emit-relocs");
     println!("cargo:rerun-if-changed=memory.x");
     println!("cargo:rerun-if-changed=build.rs");
 }

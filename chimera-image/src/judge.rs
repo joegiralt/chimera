@@ -7,7 +7,8 @@ use crate::header::{BANK2_BASE, HEADER_LEN, Header, Seal, Version};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReadFail;
 
-/// Bytes of the image, `off` from the base of bank 2.
+/// Bytes of the image, `off` from the base of bank 2. A read reaching past
+/// the image (`off + buf.len()` beyond its end) is `Err`, never padding.
 pub trait ImageRead {
     fn read(&mut self, off: u32, buf: &mut [u8]) -> Result<(), ReadFail>;
 }
@@ -65,8 +66,10 @@ pub fn judge(img: &mut impl ImageRead, want: &Seal) -> Verdict {
 ///
 /// # Safety
 /// `read(off, ..)` must return the bytes at `BANK2_BASE + off` of the real
-/// bank 2: `Door::open` turns a `Good` verdict on them into an address bank 1
-/// will call.
+/// bank 2, read live from the flash at the call (never a cached or earlier
+/// copy), and a bus fault or ECC error on the way must be `Err(ReadFail)`,
+/// never data: `Door::open` turns a `Good` verdict on them into an address
+/// bank 1 will call.
 pub unsafe trait Bank2Memory: ImageRead {}
 
 /// Proof that bank 2 judged `Good` for this build's seal. The only way in.

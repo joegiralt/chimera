@@ -222,6 +222,7 @@ dependencies = [
  "chimera-core",
  "chimera-fat",
  "chimera-hal",
+ "chimera-image",
  "cortex-m",
  "embedded-graphics",
  "embedded-graphics-core",

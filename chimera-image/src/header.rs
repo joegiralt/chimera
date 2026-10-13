@@ -14,6 +14,28 @@ pub const FORMAT: u16 = 1;
 pub const COMMIT: u32 = 0xB2C0_FFEE;
 pub const COMMIT_OFF: u32 = 0xE0;
 
+/// The header the link puts at 0x08100000: magic, format and the commit
+/// word, the rest zero. The seal tool fills the length, CRC, door, seal and
+/// version; until then it judges `Corrupt`.
+pub const UNSEALED_HEADER: [u8; 256] = {
+    let mut b = [0u8; 256];
+    let mut i = 0;
+    while i < 8 {
+        b[i] = MAGIC[i];
+        i += 1;
+    }
+    let f = FORMAT.to_le_bytes();
+    b[FORMAT_OFF] = f[0];
+    b[FORMAT_OFF + 1] = f[1];
+    let c = COMMIT.to_le_bytes();
+    let mut i = 0;
+    while i < 32 {
+        b[COMMIT_OFF as usize + i] = c[i % 4];
+        i += 1;
+    }
+    b
+};
+
 const FORMAT_OFF: usize = 0x08;
 const FLAGS_OFF: usize = 0x0A;
 const LEN_OFF: usize = 0x0C;

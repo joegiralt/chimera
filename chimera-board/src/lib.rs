@@ -43,6 +43,24 @@ use stm32h7xx_hal::gpio::{Output, PD8, PD9, PD10, PushPull, Speed};
 use stm32h7xx_hal::rcc::CoreClocks;
 use stm32h7xx_hal::{pac, prelude::*, spi};
 
+/// The seal of the bank-2 image this build was linked with: the seal tool
+/// writes it into the `.bin` after the link. A build never sealed keeps
+/// `UNSEALED` and never opens bank 2.
+#[cfg(feature = "bank2")]
+#[unsafe(no_mangle)]
+#[used]
+pub static BANK2_SEAL: [u8; 8] = *b"UNSEALED";
+
+/// `BANK2_SEAL` as flash holds it, `None` unsealed.
+#[cfg(feature = "bank2")]
+pub fn bank2_seal() -> Option<chimera_image::Seal> {
+    // SAFETY: a static's address, aligned and live. Volatile because the
+    // seal tool patches the bytes after the link: the compiler must not fold
+    // the placeholder into the code.
+    let b = unsafe { core::ptr::read_volatile(&raw const BANK2_SEAL) };
+    chimera_image::Seal::new(b)
+}
+
 /// Flush-to-zero and default NaN, in this context (FPSCR) and in every
 /// exception's (FPDSCR, which the audio ISR starts from; it resets to
 /// 0). Tails decaying toward silence then never go denormal, whose

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free"]
+default = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free", "bank2"]
 midi-din = ["chimera-board/midi-din"]
 perf-probe = ["chimera-board/perf-probe"]
 # The bench on the unit, one area a build: all of it no longer fits FLASH
@@ -54,6 +54,9 @@ fault-inject = ["usb-console", "perf-probe", "midi-din", "chimera-board/fault-in
 # `b2stat` erase and program bank-2 sector 0 (0x08100000) only. A developer
 # build on the unit with the owner present; never shipping.
 bank2-spike = ["usb-console", "chimera-board/bank2-spike", "chimera-core/bank2-spike"]
+# Bank 2's section (header and door at 0x08100000, `build.rs`) and bank 1's
+# seal of it (ADR 0137). The Justfile splits the ELF into .bin and .bk2.
+bank2 = ["chimera-engine/bank2", "chimera-board/bank2"]
 
 [dependencies]
 chimera-board = { path = "../chimera-board" }

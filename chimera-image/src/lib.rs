@@ -8,6 +8,6 @@ mod judge;
 
 pub use header::{
     BANK2_BASE, BANK2_LEN, COMMIT, COMMIT_OFF, FLASH_WORD, FORMAT, HEADER_LEN, Header, MAGIC, Seal,
-    Version,
+    UNSEALED_HEADER, Version,
 };
 pub use judge::{Bank2Memory, Door, ImageRead, ReadFail, Verdict, judge};
