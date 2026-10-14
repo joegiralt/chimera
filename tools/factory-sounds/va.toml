@@ -757,7 +757,7 @@ LFO2.RATE = "0.35"  # 2
 LFO2.SHAPE = "TRIANGLE"
 mod.LFO2 = "FILTER.CUTOFF +8"
 mod.VEL = "ENV2.LEVEL +70, FILTER.CUTOFF +8"
-level = "by ear -14.0: set low so the short hit's resonance stays under 1 dB of limiting"
+level = "by ear -13.2: set low so the short hit's resonance stays under 1 dB of limiting"
 trim = "1.2"
 
 # Rubbery acid on triangle waves, an octave tri under: they hold few
