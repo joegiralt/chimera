@@ -8,7 +8,7 @@ use chimera_core::name::ProjectName;
 use chimera_core::part::PartParams;
 use chimera_core::project::{
     LoadLink, Project, ProjectEntry, ProjectFile, ProjectNote, ProjectSource, ProjectStatus,
-    ReplaceGuard, SaveTo, list_projects, load_project, new_project_id, project_crc, save_project,
+    ReplaceGuard, SaveTo, list_projects, load_project, project_crc, save_project,
 };
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
@@ -123,8 +123,8 @@ fn put(s: &mut MemStore, n: &str) -> ProjectFile {
     let mut card = Card::new();
     let (mut p, _) = Project::boxed();
     p.set_name(name(n));
-    let fresh = new_project_id(&mut card, s).out.unwrap();
-    let f = fresh.file();
+    let f = screen::next_low(&mut card, s);
+    let fresh = chimera_core::project::FreshFile::for_test(f);
     assert!(matches!(
         save_project(&mut card, s, &mut p, SaveTo::Fresh(fresh)).out,
         ProjectNote::Saved(_)
@@ -454,14 +454,14 @@ fn clear_own_save_then_load_keeps_the_edits_elsewhere() {
     assert_eq!(r.question(), "START A NEW PROJECT?");
     // SAVE THEN LOAD: SAVE AS, never over the file being cleared.
     r.tap(ButtonId::Seq);
-    assert_eq!(r.ui.naming().unwrap().text(), "PULSE-003");
+    assert_eq!(r.ui.naming().unwrap().text(), "DRIFT-010");
     r.tap(ButtonId::Seq);
     assert!(r.ui.naming().is_none() && !r.ui.prompt_open());
 
     let all = listed(&mut r.s);
     assert_eq!(all.len(), 3);
     let c = all[2].file();
-    assert_eq!(all[2].name, Some(name("PULSE-003")));
+    assert_eq!(all[2].name, Some(name("DRIFT-010")));
     assert_eq!(level(&read_back(&mut r.s, c)), edited);
     assert_ne!(level(&read_back(&mut r.s, a)), edited);
     assert_eq!(project_crc(&read_back(&mut r.s, a)), fresh);

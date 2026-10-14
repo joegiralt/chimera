@@ -68,6 +68,14 @@ pub enum RecordTag {
     /// The build a library Sound was saved on (library spec § Files):
     /// `BuildStamp`, 21 B. Written second, skipped everywhere.
     Build,
+    /// A factory Sound's one-line description (showcase spec § 1, ADR
+    /// 0133): 1-40 B of text. Written third, read by the listing's peek,
+    /// skipped everywhere else.
+    Note,
+    /// A Sound's MIDI map (midi-map spec § 2): 5-byte `(cc, block code,
+    /// param id, min, max)` entries, up to 16, written last and only when
+    /// non-empty. 0x1E: 0x1D is `showcase-library`'s `Note`. Not critical.
+    MidiMap,
 }
 
 impl RecordTag {
@@ -97,6 +105,8 @@ impl RecordTag {
             RecordTag::ZoneTune => 0x001A,
             RecordTag::TapRoutes => 0x001B,
             RecordTag::Build => 0x001C,
+            RecordTag::Note => 0x001D,
+            RecordTag::MidiMap => 0x001E,
         }
     }
 
@@ -126,6 +136,8 @@ impl RecordTag {
             0x001A => RecordTag::ZoneTune,
             0x001B => RecordTag::TapRoutes,
             0x001C => RecordTag::Build,
+            0x001D => RecordTag::Note,
+            0x001E => RecordTag::MidiMap,
             _ => return None,
         })
     }

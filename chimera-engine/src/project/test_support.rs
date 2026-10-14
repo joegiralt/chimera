@@ -606,6 +606,9 @@ fn header_bytes(kind: FileKind, generation: u32, name: &str) -> Vec<u8> {
     v.0
 }
 
+/// The first id a new project takes, above the demos.
+const FIRST: u32 = super::PROJECT_DEMO_TOP + 1;
+
 /// The save, load, list and delete cases every `Store` passes (a
 /// `MemStore`, the desktop's `DirStore`): each on a fresh store.
 pub fn project_store_suite<S: Store>(make: &mut dyn FnMut() -> S) {
@@ -624,7 +627,7 @@ fn save_then_load_is_bit_identical<S: Store>(store: &mut S) {
     let fresh = new_project_id(&mut card, store).out.expect("an id");
     let file = fresh.file();
     let id = file.id();
-    assert_eq!(file, at(store, 1));
+    assert_eq!(file, at(store, FIRST));
     saved(save_project(&mut card, store, &mut p, SaveTo::Fresh(fresh)).out);
     assert_eq!(p.meta().file(), Some(file));
     assert_eq!(p.meta().id(), Some(id));
@@ -650,7 +653,7 @@ fn first_save_makes_the_dirs<S: Store>(make: &mut dyn FnMut() -> S) {
         }
         assert_eq!(
             new_project_id(&mut card, &mut s).out.map(|f| f.file()),
-            Ok(at(&mut s, 1)),
+            Ok(at(&mut s, FIRST)),
             "no PROJECTS"
         );
         assert!(listed(&mut card, &mut s).is_empty());
@@ -671,19 +674,23 @@ fn list_and_next_id<S: Store>(s: &mut S) {
         p
     };
     for (n, name) in [(1, "ONE"), (2, "TWO"), (5, "FIVE")] {
-        assert!(
+        // The demos' ids below FIRST never move the next one.
+        assert_eq!(
             new_project_id(&mut card, s)
                 .out
                 .expect("an id")
                 .file()
                 .id()
-                .get()
-                <= n
+                .get(),
+            FIRST
         );
         saved(save_at(&mut card, s, &mut named(name), n));
     }
-    let six = at(s, 6);
-    assert_eq!(new_project_id(&mut card, s).out.map(|f| f.file()), Ok(six));
+    let first = at(s, FIRST);
+    assert_eq!(
+        new_project_id(&mut card, s).out.map(|f| f.file()),
+        Ok(first)
+    );
     // A second save under a new name: the newer side's name lists.
     saved(save_at(&mut card, s, &mut named("ONE AGAIN"), 1));
     // Headers this firmware refuses, alone or beside a readable side.
@@ -767,8 +774,11 @@ fn delete_rules<S: Store>(s: &mut S) {
         Ok(())
     );
     assert!(listed(&mut card, s).is_empty());
-    let at1 = at(s, 1);
-    assert_eq!(new_project_id(&mut card, s).out.map(|f| f.file()), Ok(at1));
+    let first = at(s, FIRST);
+    assert_eq!(
+        new_project_id(&mut card, s).out.map(|f| f.file()),
+        Ok(first)
+    );
     assert_eq!(
         delete_project(&mut card, s, &fresh, confirm_delete(&two)).out,
         Err(ProjectNote::FileChanged(Subject::File(pid(2)))),
@@ -835,7 +845,7 @@ fn fresh_file_taken_since_is_refused<S: Store>(s: &mut S) {
         ProjectNote::FileChanged(Subject::Name(a.meta().name()))
     );
     assert_eq!(b.meta().file(), None);
-    assert_eq!(entry_of(&mut card, s, 1).name, Some(a.meta().name()));
+    assert_eq!(entry_of(&mut card, s, FIRST).name, Some(a.meta().name()));
 }
 
 fn missing_file<S: Store>(s: &mut S) {

@@ -184,7 +184,7 @@ fn axi_counts_the_project() {
     );
 }
 
-/// UiState is one AXI static (`chimera-board/src/shared.rs`). Its Project
+/// UiState is one D2 static (`chimera-board/src/shared.rs`). Its Project
 /// is counted on its own in `axi_report`; the rest (navigation, renderer,
 /// regions, focus) is held to a growth tripwire.
 #[test]
@@ -192,7 +192,7 @@ fn ui_state_rest_under_4k() {
     use chimera_core::project::Project;
     let rest = size_of::<chimera_core::ui::UiState>() - size_of::<Project>();
     eprintln!("UiState without its Project = {rest} B");
-    // A growth tripwire, no physical limit: `UiState` is an AXI static
+    // A growth tripwire, no physical limit: `UiState` is a D2 static
     // built in place, never moved or cloned. 512 B of it is TAPE's strip
     // (the overview's 432 B cache and its key, spec § RAM); 2.75 KB its
     // SOURCE cell (a load's `SourceCheck` 1 KB, the 16 heads, the
@@ -201,11 +201,17 @@ fn ui_state_rest_under_4k() {
     // on their own, 128 beside TAPE's, padded); 192 B the reverb's (the
     // TYPEs' knob memory, 108 B, and the cells' text keys); 3 KB the
     // library's page, 48 rows of 60 B, and a pending load (its source
-    // streams in the SOURCE cell's slot); 16 B the screensaver's (its idle
-    // timer and redraw count); 52 B the OP pages' formant view; 48 B bank
-    // 2's status (its version and seal, ADR 0137).
+    // streams in the SOURCE cell's slot); 80 B FACTORY's (showcase spec
+    // § 1, Cost): the selected row's description slot, a `FactoryId` and a
+    // `Note`, and the page's one set stamp; 16 B the screensaver's (its idle
+    // timer and redraw count); 52 B the OP pages' formant view; 1,648 B the
+    // MIDI map's CCs (6 Parts × 16 entries' 16 B ramp and bin), and 120 B more
+    // for each entry's waiting bin, the hand's marks and each Part's room a
+    // pass; 48 B bank 2's status (its version and seal, ADR 0137). The focus
+    // memory's 8 B (a slot per page id, the OP pages' ids up to 105, #484)
+    // fit in what `LibId` gave back as a bare u32 instead of a tagged enum.
     assert!(
-        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072 + 16 + 52 + 48,
+        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072 + 80 + 16 + 52 + 1648 + 120 + 48,
         "UiState grew to {rest} B besides its Project"
     );
 }

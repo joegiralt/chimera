@@ -670,3 +670,25 @@ fn slots_past_the_arena_load_in_order() {
     }
     assert!(q.pool().used().bytes() as usize <= ARENA_BYTES);
 }
+
+/// A Part's MIDI map rides its Sound record in a project.
+#[test]
+fn a_part_map_round_trips() {
+    let (mut p, _) = full();
+    let m = {
+        let mut m = chimera_core::midi_map::MidiMap::EMPTY;
+        let t = chimera_core::midi_map::Mappable::new(chimera_core::addr::ParamAddr::new(
+            chimera_core::addr::BlockRef::Part,
+            PartParams::PAN,
+        ))
+        .unwrap();
+        m.learn(chimera_core::midi_map::Cc::new(10).unwrap(), t)
+            .unwrap();
+        m
+    };
+    p.edit_part(PartId::ALL[2]).sound.map = m;
+    let (mut q, _) = Project::boxed();
+    decode(&encode(&p), &mut q).unwrap();
+    same(&p, &q);
+    assert_eq!(q.part(PartId::ALL[2]).sound.map, m);
+}

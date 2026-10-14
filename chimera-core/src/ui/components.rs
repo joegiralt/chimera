@@ -7,6 +7,7 @@ use core::fmt::Write;
 
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
+use u8g2_fonts::FontRenderer;
 
 use crate::dsp::filter::FilterKind;
 use crate::dsp::modal::{EXCITER_NAMES, ModalPage};
@@ -310,10 +311,17 @@ pub fn focus_band<D>(
             );
         }
         Some(status) => {
+            let text;
+            let status = if cfg!(feature = "midi-map") {
+                text = status.text(label);
+                text.as_str()
+            } else {
+                status.label()
+            };
             draw::text_tracked(
                 d,
-                &theme::FONT_VALUE,
-                status.label(),
+                status_font(status),
+                status,
                 theme::MARGIN_X,
                 theme::FOCUS_VALUE_Y,
                 theme::INK,
@@ -343,12 +351,19 @@ pub fn focus_band<D>(
 /// `viz::PLOT_TOP` — above every curve and the touched-value readout, which
 /// is clamped to the plot. The strip behind the text is cleared first so a
 /// curve point at the plot's top edge can't run into the letters.
-pub fn viz_status<D>(d: &mut D, status: PrimeStatus)
+pub fn viz_status<D>(d: &mut D, status: PrimeStatus, label: &str)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let label = status.label();
-    let w = draw::text_width(&theme::FONT_VALUE, label, theme::LABEL_TRACKING);
+    let text;
+    let label = if cfg!(feature = "midi-map") {
+        text = status.text(label);
+        text.as_str()
+    } else {
+        status.label()
+    };
+    let font = status_font(label);
+    let w = draw::text_width(font, label, theme::LABEL_TRACKING);
     draw::fill_rect(
         d,
         theme::MARGIN_X - 2,
@@ -359,13 +374,26 @@ where
     );
     draw::text_tracked(
         d,
-        &theme::FONT_VALUE,
+        font,
         label,
         theme::MARGIN_X,
         theme::BIGVIZ_STATUS_Y,
         theme::INK,
         theme::LABEL_TRACKING,
     );
+}
+
+/// A status's face: the value font, or the bold label's where that runs
+/// past the row (learn's `CC 3 ON CH 2, PART ON CH 1`).
+pub fn status_font(s: &str) -> &'static FontRenderer {
+    // Only learn's words run long.
+    if !cfg!(feature = "midi-map")
+        || draw::text_width(&theme::FONT_VALUE, s, theme::LABEL_TRACKING) <= theme::CONTENT_W
+    {
+        &theme::FONT_VALUE
+    } else {
+        &theme::FONT_LABEL_BOLD
+    }
 }
 
 /// Focus label at `x`; returns where it ends.

@@ -7,3 +7,10 @@
 /chimera.map
 /chimera-card/
 __pycache__/
+*.syx
+*.SYX
+*.bnk
+*.mix
+*.wav
+!/chimera-desktop/fuzz/seeds/**/*.wav
+/tools/factory-sounds/private/

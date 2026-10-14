@@ -353,6 +353,19 @@ pub fn listen(name: &str) -> Option<Vec<f64>> {
     Some(x)
 }
 
+/// The listening set as mono 24-bit WAVs, `<dir>/<name>.wav` (the effects
+/// demos' hats and snare, spec § 4).
+pub fn write_listening(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>, String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    listening()
+        .into_iter()
+        .map(|(name, x)| {
+            let p = dir.join(format!("{name}.wav"));
+            crate::reference::write_pcm24(&p, &x, SR as u32).map(|()| p)
+        })
+        .collect()
+}
+
 /// Every listening stimulus, by name.
 pub fn listening() -> Vec<(&'static str, Vec<f64>)> {
     LISTEN
@@ -576,5 +589,20 @@ mod tests {
             );
         }
         assert!(listen("idm").is_none() && listen("strings").is_none());
+    }
+
+    #[test]
+    fn stim_writes_listening_set() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/stim-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let files = write_listening(&dir).unwrap();
+        assert_eq!(files.len(), LISTEN.len());
+        for name in ["hats", "snare"] {
+            let p = dir.join(format!("{name}.wav"));
+            let r = hound::WavReader::open(&p).unwrap();
+            let s = r.spec();
+            assert_eq!((s.channels, s.sample_rate), (1, SR as u32), "{name}");
+            assert_eq!(r.len() as usize, listen(name).unwrap().len(), "{name}");
+        }
     }
 }

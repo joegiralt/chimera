@@ -6,6 +6,7 @@ pub mod block_def;
 pub mod block_registry;
 pub mod browser;
 pub mod busy;
+mod cc;
 pub mod components;
 pub mod draw;
 pub mod dungeon_map;
@@ -17,6 +18,7 @@ pub mod hint;
 pub mod hold;
 pub mod installing;
 pub mod jog;
+pub mod learn;
 pub mod led;
 pub mod library;
 pub mod meter;
@@ -65,7 +67,7 @@ use crate::dsp::tape_engine::{Heads, TapeEngineParams, TapeModel};
 use crate::in_place::uninit_at;
 use crate::instrument::AudioShared;
 use crate::instrument::PartHeads;
-use crate::mod_path::{LABEL_LEN, RegistryError};
+use crate::mod_path::RegistryError;
 use crate::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::ProjectName;
 use crate::orbit::RingIdx;
@@ -87,12 +89,12 @@ use crate::storage::{ProjectId, SourceRef};
 const SCRUB_FINGER: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::POSITION);
 use block_def::BlockDef;
 use block_def::VizType;
-use block_def::slot_addr;
+use block_def::{SlotBinding, slot_addr};
 use components::Head;
 use filter_panel::{JackSlot, RouteView};
 use fmt::FmtBuf;
 use hold::{HoldGates, Press};
-use library::Tab;
+use library::BrowserTab as Tab;
 use midi_settings::MidiSettings;
 use mod_grid::MatrixState;
 use nav::{
@@ -190,10 +192,13 @@ pub enum PrimeStatus {
     Full,
     /// FM3 IN or QM IN passed a source whose cell another route holds.
     SourceInUse,
+    /// MIDI learn, armed (`None`: nothing heard) or just done.
+    #[cfg(feature = "midi-map")]
+    Learn(Option<learn::LearnNote>),
 }
 
 impl PrimeStatus {
-    /// The word(s) shown in the focus band.
+    /// A MIX+PLUS outcome's word(s); learn's are `text`'s.
     pub fn label(self) -> &'static str {
         match self {
             PrimeStatus::Added => "ADDED",
@@ -201,7 +206,25 @@ impl PrimeStatus {
             PrimeStatus::NotModulatable => "NOT MODULATABLE",
             PrimeStatus::Full => "MATRIX FULL",
             PrimeStatus::SourceInUse => "SOURCE IN USE",
+            #[cfg(feature = "midi-map")]
+            PrimeStatus::Learn(_) => "",
         }
+    }
+
+    /// The band's words on the cell labelled `label`.
+    #[cfg_attr(not(feature = "midi-map"), allow(unused_variables))]
+    pub fn text(self, label: &str) -> FmtBuf {
+        let mut b = FmtBuf::new();
+        match self {
+            #[cfg(feature = "midi-map")]
+            PrimeStatus::Learn(Some(n)) => n.text(label, &mut b),
+            #[cfg(feature = "midi-map")]
+            PrimeStatus::Learn(None) => learn::armed_text(label, &mut b),
+            s => {
+                let _ = core::fmt::Write::write_str(&mut b, s.label());
+            }
+        }
+        b
     }
 }
 
@@ -309,6 +332,10 @@ pub struct UiState {
     /// Each reverb TYPE's knobs as last left: a TYPE nudge away and back
     /// loses nothing. RAM only; a project load clears it.
     rev_knobs: KnobMemory,
+    /// Mapped CCs: each Part's ramps, bins and budget cursor.
+    cc: cc::CcState,
+    /// MIX+SEQ's MIDI learn (spec § 4).
+    learn: learn::Learn,
 }
 
 /// How long the LEVEL LED takes to fall from a peak to dark.
@@ -394,6 +421,8 @@ crate::in_place::field_list!(UiState => UiState {
     lib,
     clip,
     rev_knobs,
+    cc,
+    learn,
 });
 
 #[cfg(any(test, feature = "test-support"))]
@@ -456,7 +485,7 @@ impl UiState {
             addr_of_mut!((*p).heads_from).write(&crate::instrument::HEADS);
             addr_of_mut!((*p).formant).write(FormantView::NONE);
             addr_of_mut!((*p).src).write(source_cell::SourceCell::NEW);
-            addr_of_mut!((*p).lib).write(library::LibState::NEW);
+            library::LibState::init_in_place(uninit_at(addr_of_mut!((*p).lib)));
             addr_of_mut!((*p).browser_dirty).write(false);
             addr_of_mut!((*p).page).write(page);
             addr_of_mut!((*p).sel_op).write(Op::A);
@@ -483,6 +512,8 @@ impl UiState {
             addr_of_mut!((*p).led).write(led::Led::OFF);
             addr_of_mut!((*p).dfu).write(None);
             addr_of_mut!((*p).rev_knobs).write(KnobMemory::new());
+            addr_of_mut!((*p).cc).write(cc::CcState::new());
+            addr_of_mut!((*p).learn).write(learn::Learn::Off);
             let ui = slot.assume_init_mut();
             ui.load_matrix(PartId::ALL[0]);
             ui
@@ -694,6 +725,7 @@ impl UiState {
         self.show_note_or_skipped(note);
         self.orbit.booted(self.project.orbit_mut());
         self.rev_knobs.clear();
+        self.cc.clear();
         self.project_replaced(was);
     }
 
@@ -796,6 +828,8 @@ impl UiState {
         // A project stores only its TYPE's knobs (reverb TYPEs spec § A
         // TYPE change loads that TYPE's knobs).
         self.rev_knobs.clear();
+        // Every Part's Sound is new, its `Loads` unmoved: no ramp survives.
+        self.cc.clear();
         self.project_replaced(was);
         // Only a file load sets it: NEW, loaded or fallen back to, has none.
         if let Some(f) = self.project.meta().file() {
@@ -896,6 +930,8 @@ impl UiState {
             Screen::SaveToProj => SAVE_ROWS.len(),
             #[cfg(feature = "orbit")]
             Screen::SceneSaveTo => SceneIdx::ALL.len(),
+            #[cfg(feature = "midi-map")]
+            Screen::MidiMap => self.project.part(self.active_part).sound.map.len(),
         }
     }
 
@@ -919,6 +955,7 @@ impl UiState {
     /// matrix), and the page's values snap.
     fn go(&mut self, to: Location) {
         let from = self.loc;
+        self.learn = learn::Learn::Off;
         if from.browse().is_none() && to.browse().is_some() {
             self.lib.entered();
         }
@@ -1155,39 +1192,6 @@ impl UiState {
     /// params are bound but not modulatable, so the registry refuses them.
     fn current_param_addr(&self) -> Option<ParamAddr> {
         slot_addr(self.page_def(), self.focused_slot(), &self.ctx()).map(prime_target)
-    }
-
-    /// 8-byte matrix column label for a primed destination: `O<n> ` + spec
-    /// label for operator params, else the address's block tag (≤ 3 chars,
-    /// `mod_grid::block_tag` — the page can be a sub-page with a different
-    /// short name, e.g. FLT › MOD for the filter's LEVEL) + the slot label.
-    fn mod_label(&self, addr: ParamAddr) -> [u8; LABEL_LEN] {
-        let def = self.page_def();
-        let op_prefix;
-        let (prefix, name): (&[u8], &str) = match addr.block {
-            BlockRef::AlgoOp(op) => {
-                op_prefix = [b'O', b'1' + op.index() as u8, b' '];
-                (&op_prefix, addr.spec().map_or("", |s| s.label))
-            }
-            BlockRef::Env(s) => {
-                op_prefix = [b'E', b'1' + s.index() as u8, b' '];
-                (&op_prefix, addr.spec().map_or("", |s| s.label))
-            }
-            _ if addr == crate::modulation::VCA => (b"OUT ".as_slice(), "VCA"),
-            _ => {
-                let short = mod_grid::block_tag(addr.block).as_bytes();
-                (
-                    &short[..short.len().min(3)],
-                    view::view(def, self.focused_slot(), &self.ctx()).label(),
-                )
-            }
-        };
-        let mut label = [0u8; LABEL_LEN];
-        label[..prefix.len()].copy_from_slice(prefix);
-        let rest = name.as_bytes();
-        let rlen = rest.len().min(LABEL_LEN - prefix.len());
-        label[prefix.len()..prefix.len() + rlen].copy_from_slice(&rest[..rlen]);
-        label
     }
 
     /// EDIT on the Sound rung: the entry under the cursor into `part`, then
@@ -1466,6 +1470,73 @@ impl UiState {
         }
     }
 
+    /// The encoder's edit path (spec § 6): `a` on Part `part` turned
+    /// `delta`, or snapped, with the formant budget's refusal said on the
+    /// active Part. A mapped CC's stepped target moves through it too.
+    /// `true` when the value moved.
+    pub fn edit_addr(&mut self, part: PartId, a: ParamAddr, delta: i8, snap: bool) -> bool {
+        if part == self.active_part {
+            self.formant_full(part, a, delta, snap);
+        }
+        let how = if snap {
+            part_page::Edit::Snap(delta)
+        } else {
+            part_page::Edit::Nudge(delta)
+        };
+        self.edit_in(part, a, how)
+    }
+
+    /// After an edit of Part `at`, whose chain was `chain` and slots read
+    /// `before` on page `def`: the page kept by id, the animators re-seeded
+    /// and the page identity refreshed. The page it is now on.
+    fn after_edit(
+        &mut self,
+        at: PartId,
+        chain: PartChain,
+        before: SlotCtx,
+        def: &'static BlockDef,
+    ) -> &'static BlockDef {
+        // An edit may change the Part's chain: keep the page by id.
+        let def = if PartChain::of(&self.project.part(at).sound) == chain {
+            def
+        } else {
+            let from = self.loc;
+            self.loc = self.loc.rechained(at, chain, &self.cx());
+            if self.loc != from {
+                self.enter_page();
+            }
+            self.page_def()
+        };
+        // A KIND, TYPE or operator change re-seeds the page's animators: a lerp
+        // between two parameters' values would draw a meaningless sweep.
+        // A machine's cells on DECK stay the same params: its defaults
+        // glide in.
+        let now = self.ctx();
+        if now
+            != (SlotCtx {
+                tape: now.tape,
+                ..before
+            })
+        {
+            let values = self.display_values();
+            self.renderer.snap_to_current(values);
+        }
+        // The operator selection is part of the page identity.
+        self.page = PageKey::from_location(self.loc, def, self.sel_op);
+        def
+    }
+
+    /// `part_page::edit` on Part `part`'s blocks.
+    fn edit_in(&mut self, part: PartId, a: ParamAddr, how: part_page::Edit) -> bool {
+        let params = &mut UiBlocks {
+            project: &mut self.project,
+            part,
+            theme: &mut self.theme,
+            midi: &mut self.midi,
+        };
+        part_page::edit(params, a, how)
+    }
+
     /// The keys this frame, in order: MENU, B*n*, PLUS and MINUS, SEQ, EDIT,
     /// then encoder A on a list. With MIX down, PLUS and MINUS are MIX's
     /// own (prime, delete), never a move.
@@ -1502,6 +1573,9 @@ impl UiState {
         }
         if presses.seq == Some(Press::Tap) {
             push(NavKey::SeqTap);
+        }
+        if cfg!(feature = "midi-map") && mix && pressed(ButtonId::Seq) {
+            push(NavKey::MixSeq);
         }
         #[cfg(feature = "orbit")]
         if presses.seq == Some(Press::Hold) {
@@ -1619,6 +1693,8 @@ impl UiState {
             loaded: self.project.meta().file(),
             part: (at.path().first() == Some(&PART_ROW))
                 .then(|| PartBand::of(&self.project, self.active_part)),
+            #[cfg(feature = "midi-map")]
+            map: (at.screen() == Some(Screen::MidiMap)).then(|| self.map_band()),
             scene: self.project.orbit().current(),
             orbit: self.orbit_band(at),
         }
@@ -1862,6 +1938,12 @@ impl UiState {
                             self.notice(l);
                         }
                     }
+                }
+            }
+            #[cfg(feature = "midi-map")]
+            Answered::MapDelete(d, a) => {
+                if a.picked() == Some(prompt::DeleteAnswer::Delete) {
+                    self.map_deleted(d.part, d.entry);
                 }
             }
             Answered::LoadProject { reply, to, clear } => match reply {
@@ -2142,6 +2224,9 @@ impl UiState {
             } else {
                 part_page::apply_under(def, i, delta, params, &ctx, &mut self.sel_op);
             }
+            if let Some(a) = slot_addr(def, i, &ctx) {
+                self.cc_hand(self.active_part, a);
+            }
         }
         // SEGS shrunk under an armed segment drops the capture.
         self.orbit.fit(&self.project.orbit().live().chords);
@@ -2253,12 +2338,27 @@ impl UiState {
     pub fn handle_input(&mut self, controls: &impl Controls) {
         if self.idle.touch(any_turn(controls), any_down(controls)) == saver::Touch::Swallow {
             // A held key still ages.
-            self.jog_pass(controls.now_ms().0);
+            let jog = self.jog_pass(controls.now_ms().0);
+            if cfg!(feature = "midi-map") {
+                self.cc.hand(u8::from(jog));
+            }
             return;
         }
         let rev = self.project.rev();
+        let model = |ui: &Self| ui.project.part(ui.active_part).sound.params.tape.model;
+        let was = model(self);
         self.input(controls);
-        self.jog_pass(controls.now_ms().0);
+        let jog = self.jog_pass(controls.now_ms().0);
+        // Knob moves the hand may have made: a turn or the reel, each one,
+        // and a new MODEL's defaults. Only CCs spend what is left.
+        if cfg!(feature = "midi-map") {
+            let turns = ALL_ENCODERS
+                .iter()
+                .filter(|&&e| controls.encoder_delta(e) != 0);
+            let now = model(self);
+            let defaults = if now != was { cc::model_writes(now) } else { 0 };
+            self.cc.hand(turns.count() as u8 + u8::from(jog) + defaults);
+        }
         // A save or clear moves the browser's hints, costs and meter.
         self.browser_dirty |= self.loc.browse().is_some() && self.project.rev() != rev;
         self.flush_orbit();
@@ -2302,17 +2402,18 @@ impl UiState {
 
     /// SCRUB's reel this pass: POSITION moves at the jog's speed, gliding
     /// to a stop through DRAG once the FINGER is let go.
-    fn jog_pass(&mut self, now_ms: u32) {
+    fn jog_pass(&mut self, now_ms: u32) -> bool {
         let t = self.project.part(self.active_part).sound.params.tape;
         if t.model != TapeModel::Scrub {
             self.jog = jog::Jog::new();
-            return;
+            return false;
         }
         let mv = self.jog.pass(now_ms, t.drag);
         if mv != 0.0 {
             let p = &mut self.project.edit_part(self.active_part).sound.params.tape;
             p.position = crate::dsp::clampf(p.position + mv, 0.0, 1.0);
         }
+        mv != 0.0
     }
 
     fn input(&mut self, controls: &impl Controls) {
@@ -2351,6 +2452,8 @@ impl UiState {
             self.closed();
         }
         if presses.menu == Some(Press::Hold) {
+            // A key like any other: it cancels learn (spec § 4).
+            self.learn = learn::Learn::Off;
             self.quick_save();
         }
         if self.loc.orbit().is_some() {
@@ -2361,13 +2464,22 @@ impl UiState {
             if self.job.is_some() || self.modal.is_some() {
                 break;
             }
+            // MIX + SEQ arms or cancels learn; any other nav key cancels it.
+            if k == NavKey::MixSeq {
+                #[cfg(feature = "midi-map")]
+                self.toggle_learn();
+                continue;
+            }
+            self.learn = learn::Learn::Off;
             if let (Some((p, b)), NavKey::Edit) = (self.loc.browse(), k) {
-                // MIX + EDIT saves to the source the tab shows.
+                // MIX + EDIT saves to the source the tab shows; FACTORY
+                // is read-only.
                 match (self.lib.tab, controls.edges(ButtonId::Mix).down) {
                     (Tab::Project, true) => self.save_part(p),
                     (Tab::Project, false) => self.load_sound(p, b),
                     (Tab::Library, true) => self.name_for_library(p, Some(b)),
-                    (Tab::Library, false) => self.library_edit(p, b),
+                    (Tab::Library | Tab::Factory, false) => self.library_edit(p, b),
+                    (Tab::Factory, true) => {}
                 }
                 continue;
             }
@@ -2378,6 +2490,10 @@ impl UiState {
                 Step::Act(a) => self.run_act(a, at),
                 Step::Screen(s @ (Screen::LoadProject | Screen::ManageProjects)) => {
                     self.queue(Job::List(s))
+                }
+                #[cfg(feature = "midi-map")]
+                Step::Screen(Screen::MidiMap) => {
+                    self.go(Location::settings_at(screen_path(Screen::MidiMap), 0))
                 }
                 Step::Screen(Screen::SaveToProj) => {
                     self.go(Location::settings_at(screen_path(Screen::SaveToProj), 0))
@@ -2419,11 +2535,7 @@ impl UiState {
                 return;
             }
             // B turns between the tabs.
-            let tab = match controls.encoder_delta(EncoderId::B) {
-                0 => self.lib.tab,
-                d if d > 0 => Tab::Library,
-                _ => Tab::Project,
-            };
+            let tab = self.lib.tab.turned(controls.encoder_delta(EncoderId::B));
             if tab != self.lib.tab {
                 self.browser_dirty = true;
                 self.lib.entered();
@@ -2431,7 +2543,9 @@ impl UiState {
             self.lib.tab = tab;
             let moved = match tab {
                 Tab::Project => browser::input(controls, b),
-                Tab::Library => browser::input_library(controls, b, library::rows(self.lib.page())),
+                Tab::Library | Tab::Factory => {
+                    browser::input_library(controls, b, library::rows(self.lib.page()))
+                }
             };
             if moved != b {
                 self.loc = Location::sound_at(p, moved);
@@ -2439,7 +2553,14 @@ impl UiState {
             }
             return;
         }
+        #[cfg(feature = "midi-map")]
+        if self.screen() == Some(Screen::MidiMap) {
+            return self.map_input(controls);
+        }
         if self.loc.page(&self.cx()).is_none() {
+            return;
+        }
+        if self.learn_turns(controls) {
             return;
         }
 
@@ -2537,53 +2658,43 @@ impl UiState {
                     *rev = reverb_panel::turn(rev, a.param, delta, &mut self.rev_knobs, tempo);
                     continue;
                 }
-                if let Some(a) = v.addr() {
-                    self.formant_full(at, a, delta, shift);
+                if let PageKey::Legacy(p) = self.page {
+                    let params = &mut UiBlocks {
+                        project: &mut self.project,
+                        part: at,
+                        theme: &mut self.theme,
+                        midi: &mut self.midi,
+                    };
+                    if shift {
+                        p.snap_encoder(i, delta, params);
+                    } else {
+                        p.apply_encoder(i, delta, params);
+                    }
+                    if let Some(a) = p.binding(i) {
+                        self.cc_hand(at, a);
+                    }
+                    continue;
                 }
-                let params = &mut UiBlocks {
-                    project: &mut self.project,
+                let read = UiRead {
+                    project: &self.project,
                     part: at,
-                    theme: &mut self.theme,
-                    midi: &mut self.midi,
+                    theme: &self.theme,
+                    midi: &self.midi,
                 };
-                match (self.page, shift) {
-                    (PageKey::Part { .. }, true) => {
-                        part_page::snap_encoder(def, i, delta, params, self.sel_op)
-                    }
-                    (PageKey::Part { .. }, false) => {
-                        part_page::apply_encoder(def, i, delta, params, &mut self.sel_op)
-                    }
-                    (PageKey::Legacy(p), true) => p.snap_encoder(i, delta, params),
-                    (PageKey::Legacy(p), false) => p.apply_encoder(i, delta, params),
+                let ctx = SlotCtx::read(&read, self.sel_op);
+                if !shift
+                    && def
+                        .params
+                        .get(i)
+                        .is_some_and(|s| s.binding == SlotBinding::SelectOp)
+                {
+                    self.sel_op = self.sel_op.nudged(delta);
+                } else if let Some(a) = slot_addr(def, i, &ctx) {
+                    self.edit_addr(at, a, delta, shift);
+                    self.cc_hand(at, a);
                 }
             }
-            // An edit may change the Part's chain: keep the page by id.
-            let def = if PartChain::of(&self.project.part(at).sound) == chain {
-                def
-            } else {
-                let from = self.loc;
-                self.loc = self.loc.rechained(at, chain, &self.cx());
-                if self.loc != from {
-                    self.enter_page();
-                }
-                self.page_def()
-            };
-            // A KIND, TYPE or operator change re-seeds the page's animators: a lerp
-            // between two parameters' values would draw a meaningless sweep.
-            // A machine's cells on DECK stay the same params: its defaults
-            // glide in.
-            let now = self.ctx();
-            if now
-                != (SlotCtx {
-                    tape: now.tape,
-                    ..before
-                })
-            {
-                let values = self.display_values();
-                self.renderer.snap_to_current(values);
-            }
-            // The operator selection is part of the page identity.
-            self.page = PageKey::from_location(self.loc, def, self.sel_op);
+            let def = self.after_edit(at, chain, before, def);
 
             // MIX + Plus/Minus: prime/un-prime parameter for modulation
             if shift {
@@ -2611,7 +2722,7 @@ impl UiState {
                     {
                         self.prime_status = Some(PrimeStatus::NotModulatable);
                     } else if let Some(addr) = self.current_param_addr() {
-                        let label = self.mod_label(addr);
+                        let label = mod_grid::dest_label(addr);
                         let sound = self.project.edit_part(at).sound;
                         self.prime_status = Some(if sound.dest_registry.is_primed(addr) {
                             PrimeStatus::AlreadyRouted
@@ -2820,13 +2931,13 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             >,
     {
-        let view = match self.lib.tab {
-            Tab::Project => browser::BrowserView::Project,
-            Tab::Library => browser::BrowserView::Library(&self.lib, &self.lib.this),
-        };
-        let (cursor, scroll) = match self.lib.tab {
-            Tab::Project => (b.cursor(), b.scroll()),
-            Tab::Library => (b.lib_cursor(), b.lib_scroll()),
+        let (view, cursor, scroll) = match self.lib.tab {
+            Tab::Project => (browser::BrowserView::Project, b.cursor(), b.scroll()),
+            Tab::Library | Tab::Factory => (
+                browser::BrowserView::Library(&self.lib, &self.lib.this),
+                b.lib_cursor(),
+                b.lib_scroll(),
+            ),
         };
         let (hints, refusal) = (self.theme.hints, self.refusal());
         browser::draw(d, &self.project, view, part, cursor, scroll, hints, refusal);
@@ -2911,7 +3022,7 @@ impl UiState {
             orbit_dot: self.orbit.anim.dot(),
             parts: self.project.perf().parts(),
             active_part: self.active_part,
-            prime_status: self.prime_status,
+            prime_status: self.band_status(),
             pool: self.project.pool(),
             audio,
             card: self.card,
@@ -3019,7 +3130,7 @@ impl UiState {
                     qvalues[f.focus]
                 },
                 renderer::look(f, f.focus),
-                self.prime_status,
+                f.prime_status,
             )
             .with_set(region::quantize(self.renderer.set[f.focus].current()))
             .with_gauge(shown.map_or(0, |g| g.outside_key()))
@@ -3037,7 +3148,7 @@ impl UiState {
                 let (values, live) = self.renderer.viz_inputs(f);
                 // BigViz pages have no focus band: their viz carries the
                 // prime status instead.
-                let status = self
+                let status = f
                     .prime_status
                     .filter(|_| f.def.layout == PageLayout::BigViz);
                 RegionData::viz_with_status(self.page, values, live, status)

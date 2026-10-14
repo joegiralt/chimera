@@ -9,6 +9,8 @@ use chimera_core::dsp::algo::waves::{self, Waves};
 use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::hw::MAX_PARTS;
 use chimera_core::instrument::AudioShared;
+#[cfg(feature = "midi-din")]
+use chimera_core::midi_in::CcRing;
 use chimera_core::note_queue::NoteSources;
 #[cfg(any(feature = "midi-din", feature = "bench"))]
 use chimera_core::note_queue::SourceId;
@@ -48,8 +50,11 @@ pub fn build_waves() {
     waves::render_into(unsafe { &mut *addr_of_mut!(WAVES_DTCM) });
 }
 
-// `UiState` is ~27 KB: it lives in AXI, not in `main`'s frame on the
-// ~63.75 KB DTCM stack (ADR 0025).
+// `UiState` is ~27 KB: it lives in D2, not in `main`'s frame on the
+// ~63.75 KB DTCM stack (ADR 0025), nor in AXI, which the MIDI map's 96 B a
+// Sound filled to the margin (ADR 0087, 0139). NOLOAD: built in place by
+// `take_ui`. D2 is cacheable apart from the 4 KB DMA window (`cache.rs`).
+#[unsafe(link_section = ".ram_d2")]
 static mut UI: MaybeUninit<UiState> = MaybeUninit::uninit();
 static UI_TAKEN: AtomicBool = AtomicBool::new(false);
 
@@ -173,6 +178,27 @@ pub fn take_formant() -> Option<(Writer<FormantViews>, Reader<FormantViews>)> {
     // reference to `FORMANT` ever made.
     let slot = unsafe { &mut *addr_of_mut!(FORMANT) };
     Some(TripleBuffer::init_in_place(slot, || [FormantView::NONE; MAX_PARTS]).split())
+}
+
+// MIDI DIN's CC ring (MIDI map spec § 1), the USART1 ISR's to push and
+// the UI's to drain: in D2, not AXI, which the ORBIT build fills to its
+// margin (ADR 0087), as `FORMANT`. NOLOAD: built at `take_cc_din`.
+#[cfg(feature = "midi-din")]
+#[unsafe(link_section = ".ram_d2")]
+static mut CC_DIN: MaybeUninit<CcRing> = MaybeUninit::uninit();
+#[cfg(feature = "midi-din")]
+static CC_DIN_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// The DIN CC ring, built empty; once. Both ends share the reference.
+#[cfg(feature = "midi-din")]
+pub fn take_cc_din() -> Option<&'static CcRing> {
+    if CC_DIN_TAKEN.swap(true, Ordering::AcqRel) {
+        return None;
+    }
+    // SAFETY: the flag lets exactly one caller past, so this is the only
+    // reference to `CC_DIN` ever made; `write` initialises it before any
+    // read, and from then on it is only shared.
+    Some(unsafe { (*addr_of_mut!(CC_DIN)).write(CcRing::new()) })
 }
 
 // What the audio interrupt (`chimera-stm32`) and this side both touch:

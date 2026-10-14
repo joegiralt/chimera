@@ -27,7 +27,7 @@ use chimera_core::ui::dungeon_map::page_label;
 use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::mod_grid::{block_name, block_tag};
 use chimera_core::ui::view::{self, Models, SlotCtx, SourceState, View};
-use chimera_core::ui::{draw, hint, nav, theme};
+use chimera_core::ui::{draw, nav, theme};
 use chimera_hal::{BLOCK_SIZE, EncoderId};
 use common::tape::{held_plain, held_transwave, saw_with_burst, sine};
 use screen::*;
@@ -526,7 +526,13 @@ fn tape_pages_have_no_other_gestures() {
         for def in [&TAPE_SRC, &TAPE_DECK, &TAPE_MODEL] {
             for i in 0..6 {
                 let v = view::view(def, i, &ctx);
-                assert!(v.hint(&ctx) == hint::NONE, "{m:?} {} {i}", def.short);
+                // MIX + SEQ's learn, every mappable cell's, and no other.
+                let h = v.hint(&ctx);
+                assert!(
+                    h.iter().all(|g| *g == view::LEARN),
+                    "{m:?} {} {i}",
+                    def.short
+                );
             }
         }
     }

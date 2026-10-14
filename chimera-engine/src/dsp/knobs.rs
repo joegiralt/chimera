@@ -393,6 +393,13 @@ pub struct KnobDelta {
 }
 
 impl KnobDelta {
+    /// Moves pushed so far, wrapping; an overflow adds `MOVES + 1`: for
+    /// the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn count(&self) -> u32 {
+        self.count
+    }
+
     /// The moves since `seen` was the count, oldest first; `None` past the
     /// window.
     fn since(&self, seen: u32) -> Option<impl Iterator<Item = KnobMove> + '_> {

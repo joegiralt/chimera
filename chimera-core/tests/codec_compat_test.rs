@@ -17,7 +17,7 @@ use chimera_core::project::{
     Origin, PartFrom, PartId, PartSource, PartStatus, Project, SlotId, part_block, part_status,
 };
 use chimera_core::storage::{
-    BuildStamp, Card, FileError, FileKind, Generation, Header, MIGRATIONS, TRANSLATIONS,
+    BuildStamp, Card, FileError, FileKind, Generation, Header, MIGRATIONS, Note, TRANSLATIONS,
     decode_block, encode_library_sound, sound_crc, write_file,
 };
 use chimera_hal::BLOCK_SIZE;
@@ -34,30 +34,44 @@ use common::{
 /// the formant demos joined the bank.
 const V1_FACTORY: usize = 8;
 
+/// A factory Sound as the frozen files hold it: before the default map.
+fn frozen(i: usize) -> Sound {
+    let mut s = factory_sound(i).unwrap();
+    s.map = chimera_core::midi_map::MidiMap::EMPTY;
+    s
+}
+
 /// The v1 corpus: name, and the Sound it was written from.
 fn sources() -> Vec<(String, Sound)> {
     let mut v: Vec<_> = (0..V1_FACTORY)
-        .map(|i| (format!("factory_{i}.snd"), factory_sound(i).unwrap()))
+        .map(|i| (format!("factory_{i}.snd"), frozen(i)))
         .collect();
     v.push(("init_algo.snd".into(), v1_init(EngineType::Algo)));
     v.push(("init_modal.snd".into(), v1_init(EngineType::Modal)));
     // TAPE's INIT as TAPE Task 12 saved it: engine code 2 frozen (ADR 0045).
-    v.push(("init_tape.snd".into(), Sound::init(EngineType::Tape)));
+    v.push(("init_tape.snd".into(), Sound::plain_init(EngineType::Tape)));
     // A library Sound (library spec): factory 0 behind a `Build` record.
-    v.push((LIBRARY_FIXTURE.into(), factory_sound(0).unwrap()));
+    v.push((LIBRARY_FIXTURE.into(), frozen(0)));
+    // A described one (showcase spec § 1): factory 1 behind `Build` and `Note`.
+    // Not `factory_1.snd`: that name is the frozen v1 file.
+    v.push((DESCRIBED_FIXTURE.into(), frozen(1)));
     // VA's INIT as VA Task 10 saved it: engine code 3 frozen.
-    v.push(("init_va.snd".into(), Sound::init(EngineType::Va)));
+    v.push(("init_va.snd".into(), Sound::plain_init(EngineType::Va)));
     v
 }
 
 /// `library_1.snd`: factory 0, stamped by `encode_library_sound`.
 const LIBRARY_FIXTURE: &str = "library_1.snd";
+/// `described_1.snd`: factory 1, stamped, with a `Note`.
+const DESCRIBED_FIXTURE: &str = "described_1.snd";
 
 /// `name`'s fixture bytes as written: a library Sound carries its stamp.
 fn written(name: &str, s: &Sound) -> Vec<u8> {
-    if name != LIBRARY_FIXTURE {
+    if name != LIBRARY_FIXTURE && name != DESCRIBED_FIXTURE {
         return encode(s);
     }
+    let note = (name == DESCRIBED_FIXTURE)
+        .then(|| Note::new("PLAY SOFT FOR PAD, HARD FOR BRASS").unwrap());
     let h = Header {
         kind: FileKind::Sound,
         generation: Generation::FIRST,
@@ -65,14 +79,17 @@ fn written(name: &str, s: &Sound) -> Vec<u8> {
     };
     let mut sink = VecSink(Vec::new());
     let stamp = BuildStamp::new("0.1.0", "dev", false);
-    write_file(&mut sink, &h, &mut |w| encode_library_sound(s, &stamp, w)).unwrap();
+    write_file(&mut sink, &h, &mut |w| {
+        encode_library_sound(s, &stamp, note.as_ref(), w)
+    })
+    .unwrap();
     sink.0
 }
 
 /// INIT as the v1 fixtures saved it: OUT LEVEL 0.8 and every operator's
 /// RR 8, before ADR 0063 moved them. An old INIT loads as it was saved.
 fn v1_init(engine: EngineType) -> Sound {
-    let mut s = Sound::init(engine);
+    let mut s = Sound::plain_init(engine);
     s.params.out.volume = 0.8;
     for o in &mut s.params.algo.ops {
         o.rr = 8;
@@ -208,6 +225,7 @@ const FIXTURE_BYTES: &[(&str, usize, u64)] = &[
     // Written sparse (pool Task 2), at TAPE Task 12.
     ("init_tape.snd", 160, 0xc6205acfbcaf2836),
     ("library_1.snd", 257, 0xa89d3e8a322ca1fa),
+    ("described_1.snd", 269, 0x893658c9cf138330),
     // Written sparse, at VA Task 10.
     ("init_va.snd", 151, 0x63ec203363dcfe8c),
 ];
@@ -274,7 +292,7 @@ fn sends_fixture_is_frozen() {
 /// INIT as NEW's pool held it when `project.prj` was written: OUT LEVEL
 /// 45/128 and every operator's RR 5 (ADR 0063).
 fn prj_init(engine: EngineType) -> Sound {
-    let mut s = Sound::init(engine);
+    let mut s = Sound::plain_init(engine);
     s.params.out.volume = 45.0 / 128.0;
     for o in &mut s.params.algo.ops {
         o.rr = 5;
@@ -469,9 +487,10 @@ fn project_fixture_loads() {
         assert!(part.sound.bits_eq(&sound), "Part {}", id.index());
         assert_eq!(part.origin(), o, "Part {}", id.index());
         assert_values(&part.mix, PROJECT_FIXTURE_MIX[id.index()], "mix");
+        // An INIT saved before the default map is no longer INIT.
         let status = match id.index() {
-            1 => PartStatus::Edited,
-            _ => PartStatus::Clean,
+            2 => PartStatus::Clean,
+            _ => PartStatus::Edited,
         };
         assert_eq!(part_status(part, p.pool()), status, "Part {}", id.index());
     }
@@ -543,6 +562,8 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     ("init_tape.snd", 0xcaf4315437e08679),
     // Factory 0's render: the stamp changes no sound.
     ("library_1.snd", 0x2b0219df38902ede),
+    // Factory 1's render: the Note changes no sound.
+    ("described_1.snd", 0x0e3d85b43ff9ccf9),
     // On the rig's second of saw, at VA Task 10.
     ("init_va.snd", 0x3739e2ecc6befaf5),
 ];
@@ -596,7 +617,7 @@ fn init_tape_fixture_pins_engine_code_2() {
     assert_eq!(EngineType::Tape.disk_code(), 2);
     let s = decode(&fixture("init_tape.snd")).unwrap();
     assert_eq!(s.engine(), EngineType::Tape);
-    assert!(s.bits_eq(&Sound::init(EngineType::Tape)));
+    assert!(s.bits_eq(&Sound::plain_init(EngineType::Tape)));
 }
 
 /// VA's engine code is 3 for good: the frozen INIT loads as VA.
@@ -606,7 +627,7 @@ fn init_va_fixture_pins_engine_code_3() {
     assert_eq!(EngineType::Va.disk_code(), 3);
     let s = decode(&fixture("init_va.snd")).unwrap();
     assert_eq!(s.engine(), EngineType::Va);
-    assert!(s.bits_eq(&Sound::init(EngineType::Va)));
+    assert!(s.bits_eq(&Sound::plain_init(EngineType::Va)));
 }
 
 /// Every v1 file, saved before STEAL (#254), steals CUT.
@@ -628,7 +649,7 @@ fn v1_fixtures_steal_cut() {
 fn v1_fixtures_equal_factory() {
     for i in 0..V1_FACTORY {
         let d = decode(&fixture(&format!("factory_{i}.snd"))).unwrap();
-        assert!(d.bits_eq(&factory_sound(i).unwrap()), "factory_{i}");
+        assert!(d.bits_eq(&frozen(i)), "factory_{i}");
     }
 }
 
@@ -671,6 +692,19 @@ fn unknown_non_critical_skipped() {
         let before = record_offsets(&f)[0];
         let f = with_record(&f, before, 0x0070, 40);
         assert_eq!(decode_into(&mut t, &f), Err(FileError::Corrupt), "{name}");
+    }
+}
+
+/// An old build, which has no `MidiMap`, skips its tag as unknown
+/// non-critical (spec § 2): here the tag, with a payload no entry fits.
+#[test]
+fn midi_map_tag_is_non_critical() {
+    for (name, s) in sources() {
+        let f = fixture(&name);
+        for at in after_engine(&f) {
+            let d = decode(&with_record(&f, at, 0x001E, 40)).unwrap();
+            assert!(d.bits_eq(&s), "{name} at {at}");
+        }
     }
 }
 

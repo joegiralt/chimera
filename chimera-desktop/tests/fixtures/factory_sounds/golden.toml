@@ -1,0 +1,27 @@
+# The factory-sounds golden (spec § 8): one ALGO Sound with every kind of
+# line. It builds to golden.A under a fixed stamp; GOLDEN_RECORD=1 rewrites.
+
+[[sound]]
+id = "S9100001"
+name = "GOLDEN BELL"
+engine = "ALGO"
+note = "FM BELL: OP 5 TAPS THE FILTER"
+demo = "poly"
+plays = "stab long"
+home = "C4"
+ALGO.ALG_A = "A5"
+ALGO.MORPH = "40"
+OP_A.WAVE = "SAW"
+OP_A.LEVEL = "90"
+OP_E.CRSE = "7"
+FILTER.CUTOFF = "2400"
+FILTER.RESO = "0.3"
+FILTER.KIND = "2040"
+ENV2.DEC = "0.4"
+LFO1.RATE = "0.5"
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.08"
+mod.ENV2 = "FILTER.CUTOFF +48, ALGO.MORPH +20"
+mod.VEL = "OUT.VCA +30"
+tap.OP5 = "FILTER.CUTOFF +40"
+trim = "-1.5"

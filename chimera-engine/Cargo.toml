@@ -33,6 +33,9 @@ master-tape = []
 # The by-value engine constructors (`AlgoEngine::new`, `ModalEngine::new`,
 # `EngineSlot::new`), for tests only: firmware builds every engine in place.
 test-support = []
+# `Project::boxed` and `ArenaWriter::leaked`: NEW on a leaked heap arena,
+# for host tools (the factory demo projects). Never a firmware build.
+host-project = []
 # `write_source`: sources written, verified and sealed on the card. Host
 # only (the importer, the desktop, tests); no firmware build enables it
 # until the lost-cluster sweep frees on the unit (#360).
@@ -68,3 +71,4 @@ chimera-waves = { path = "../chimera-waves", features = ["emit"] }
 [dev-dependencies]
 chimera-engine = { path = ".", features = ["test-support", "source-writer", "smear-probe", "clamp-probe", "tape"] }
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
+proptest = { version = "1", default-features = false, features = ["std"] }

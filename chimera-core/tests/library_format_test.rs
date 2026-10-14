@@ -12,11 +12,12 @@ use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::Project;
 use chimera_core::storage::{
-    BUILD_LEN, BuildStamp, Check, FileError, FileKind, Framer, Generation, HEADER_LEN, Header,
-    RecordTag, SoundCheck, encode_library_sound, write_file,
+    BUILD_LEN, BuildStamp, Check, Event, FileError, FileKind, Framer, Generation, HEADER_LEN,
+    Header, LIB_PEEK, Note, ReadTag, RecordTag, SoundCheck, encode_library_sound, peek_library,
+    write_file,
 };
 use chimera_core::taps::{Jack, TapOp};
-use common::codec_util::{VecSink, decode, encode, fix_crc, record_offsets};
+use common::codec_util::{VecSink, decode, decode_project_lossy, encode, fix_crc, record_offsets};
 use common::project::decode as decode_project;
 
 const ST: BuildStamp = BuildStamp::new("0.1.0", "02e440e2", false);
@@ -29,13 +30,20 @@ fn fixture(name: &str) -> Vec<u8> {
 }
 
 fn stamped(s: &Sound) -> Vec<u8> {
+    written(s, None)
+}
+
+fn written(s: &Sound, note: Option<&Note>) -> Vec<u8> {
     let h = Header {
         kind: FileKind::Sound,
         generation: Generation::FIRST,
         name: Some(s.name),
     };
     let mut sink = VecSink(Vec::new());
-    write_file(&mut sink, &h, &mut |w| encode_library_sound(s, &ST, w)).unwrap();
+    write_file(&mut sink, &h, &mut |w| {
+        encode_library_sound(s, &ST, note, w)
+    })
+    .unwrap();
     sink.0
 }
 
@@ -73,11 +81,16 @@ fn record_end(f: &[u8], tag: RecordTag) -> usize {
     o[i + 1]
 }
 
+/// Without the default map, so `PLAIN` stays what the encoder wrote then.
 fn sounds() -> Vec<Sound> {
     let mut v: Vec<_> = (0..FACTORY_LEN)
-        .map(|i| factory_sound(i).unwrap())
+        .map(|i| {
+            let mut s = factory_sound(i).unwrap();
+            s.map = chimera_core::midi_map::MidiMap::EMPTY;
+            s
+        })
         .collect();
-    v.extend([EngineType::Algo, EngineType::Modal, EngineType::Tape].map(Sound::init));
+    v.extend([EngineType::Algo, EngineType::Modal, EngineType::Tape].map(Sound::plain_init));
     v
 }
 
@@ -417,4 +430,176 @@ fn a_refused_enum_code_counts_and_a_retired_one_does_not() {
     assert_eq!(decode_skips(&bogus), 1);
     let retired = with_block_raw(&tape, 34, 0, 1u32.to_le_bytes());
     assert_eq!(decode_skips(&retired), 0);
+}
+
+// ---- Note (showcase spec § 1, ADR 0133) ----
+
+const NOTE: u16 = 0x001D;
+const TEXT: &str = "PLAY SOFT FOR PAD, HARD FOR BRASS";
+
+fn note(t: &str) -> Note {
+    Note::new(t).expect("a valid note")
+}
+
+fn peeked(f: &[u8]) -> Option<Note> {
+    peek_library(&f[..f.len().min(LIB_PEEK)], f.len() as u32)
+        .unwrap()
+        .note
+}
+
+#[test]
+fn note_tag_is_0x001d_and_not_critical() {
+    assert_eq!(RecordTag::Note.code(), NOTE);
+    assert_eq!(NOTE & 0x8000, 0);
+    assert_eq!(LIB_PEEK, 128);
+}
+
+#[test]
+fn note_round_trips() {
+    let s = factory_sound(0).unwrap();
+    let f = written(&s, Some(&note(TEXT)));
+    assert_eq!(peeked(&f).as_ref().map(Note::as_str), Some(TEXT));
+    let plain = decode(&stamped(&s)).unwrap();
+    let got = decode(&f).unwrap();
+    assert!(got.bits_eq(&plain) && got.bits_eq(&s));
+    assert_eq!(peeked(&stamped(&s)), None);
+}
+
+#[test]
+fn note_sits_third_and_a_full_one_peeks() {
+    let s = factory_sound(0).unwrap();
+    let max = "A".repeat(40);
+    let f = written(&s, Some(&note(&max)));
+    let o = record_offsets(&f);
+    assert_eq!(u16::from_le_bytes([f[o[2]], f[o[2] + 1]]), NOTE);
+    assert_eq!(&f[o[2] + 4..o[3]], max.as_bytes());
+    assert_eq!(peeked(&f).unwrap().as_str(), max);
+}
+
+#[test]
+fn note_41_bytes_ignored() {
+    let s = factory_sound(0).unwrap();
+    let f = written(&s, Some(&note("X")));
+    let f = replace_record(&f, 2, NOTE, &[b'A'; 41]);
+    assert_eq!(peeked(&f), None);
+    assert!(decode(&f).unwrap().bits_eq(&s));
+}
+
+#[test]
+fn note_bad_char_rejected_by_new() {
+    for bad in ["", "lower", "TAB\t", "HASH #", "CAF\u{c9}", &"A".repeat(41)] {
+        assert_eq!(Note::new(bad), None, "{bad:?}");
+    }
+    for ok in ["A", "AZ09 .,'-+/:()&%", &"A".repeat(40)] {
+        assert_eq!(Note::new(ok).unwrap().as_str(), ok);
+    }
+}
+
+#[test]
+fn unprintable_peeked_bytes_read_as_question_marks() {
+    let s = factory_sound(0).unwrap();
+    let f = replace_record(&written(&s, Some(&note("X"))), 2, NOTE, b"A\x07\xFFb");
+    assert_eq!(peeked(&f).unwrap().as_str(), "A??b");
+    let empty = replace_record(&f, 2, NOTE, b"");
+    assert_eq!(peeked(&empty), None);
+}
+
+#[test]
+fn second_or_misplaced_note_ignored() {
+    let s = factory_sound(0).unwrap();
+    // A second one, even straight after the first: the third is read.
+    let f = written(&s, Some(&note("FIRST")));
+    let second = insert_record(&f, record_offsets(&f)[3], NOTE, b"SECOND");
+    assert_eq!(peeked(&second).unwrap().as_str(), "FIRST");
+    assert!(decode(&second).unwrap().bits_eq(&s));
+    // One after Routes, not third.
+    let plain = stamped(&s);
+    let late = insert_record(&plain, record_end(&plain, RecordTag::Routes), NOTE, b"LATE");
+    assert_eq!(peeked(&late), None);
+    assert!(decode(&late).unwrap().bits_eq(&s));
+    // One before Build: Build is then fourth.
+    let early = insert_record(&plain, record_offsets(&plain)[1], NOTE, b"EARLY");
+    assert_eq!(peeked(&early), None);
+    assert!(decode(&early).unwrap().bits_eq(&s));
+}
+
+#[test]
+fn note_before_engine_is_corrupt() {
+    let f = insert_record(&stamped(&factory_sound(0).unwrap()), HEADER_LEN, NOTE, b"X");
+    assert_eq!(decode(&f).unwrap_err(), FileError::Corrupt);
+}
+
+/// Where the first Part's own `Engine` record ends.
+fn part_engine_end(f: &[u8]) -> usize {
+    let o = record_offsets(f);
+    let tag = |i: usize| u16::from_le_bytes([f[o[i]], f[o[i] + 1]]);
+    let part = (0..o.len() - 1).find(|&i| tag(i) == RecordTag::Part.code());
+    let engine = (part.unwrap()..o.len() - 1).find(|&i| tag(i) == RecordTag::Engine.code());
+    o[engine.unwrap() + 1]
+}
+
+#[test]
+fn note_in_project_contexts_skipped() {
+    let p = fixture("project.prj");
+    let base = {
+        let (mut t, _) = Project::boxed();
+        decode_project_lossy(&p, &mut t).unwrap()
+    };
+    // Slot, Part, Fx, and the top level before them.
+    let ats = [
+        record_end(&p, RecordTag::Engine),
+        part_engine_end(&p),
+        record_end(&p, RecordTag::Fx),
+        HEADER_LEN,
+    ];
+    for at in ats {
+        let (mut t, _) = Project::boxed();
+        let f = insert_record(&p, at, NOTE, b"A NOTE");
+        assert_eq!(
+            decode_project_lossy(&f, &mut t),
+            Ok(base),
+            "{at} of {ats:?}"
+        );
+    }
+    let o = fixture("orbit.prj");
+    let f = insert_record(&o, record_end(&o, RecordTag::Orbit), NOTE, b"A NOTE");
+    assert!(loads(&f), "orbit");
+    // Skipped, never counted: a Sound's skip count stays 0 for a Note.
+    let s = stamped(&Sound::init(EngineType::Algo));
+    let f = insert_record(&s, record_end(&s, RecordTag::Routes), NOTE, b"A NOTE");
+    assert_eq!(decode_skips(&f), 0);
+}
+
+#[test]
+fn old_build_skips_note() {
+    // An older build has no 0x001D: it reads it as an unknown non-critical
+    // record, which counts one and loads the Sound.
+    let s = Sound::init(EngineType::Algo);
+    let f = written(&s, Some(&note(TEXT)));
+    assert!(!ReadTag::Unknown(NOTE).critical());
+    let mut c = SoundCheck::new();
+    let mut staged = Sound::neutral(EngineType::Algo);
+    let mut fr = Framer::new(f.len() as u32).unwrap();
+    fr.push(&f, &mut |e| match e {
+        Event::Record(ReadTag::Known(RecordTag::Note), p) => {
+            c.step(Event::Record(ReadTag::Unknown(NOTE), p), Some(&mut staged))
+        }
+        e => c.step(e, Some(&mut staged)),
+    })
+    .unwrap();
+    fr.finish().unwrap();
+    c.finish(Some(&mut staged)).unwrap();
+    assert_eq!(c.skips(), 1);
+    assert!(staged.bits_eq(&s));
+}
+
+#[test]
+fn note_golden() {
+    let f = written(&factory_sound(0).unwrap(), Some(&note("HELLO, WORLD")));
+    let at = record_offsets(&f)[2];
+    assert_eq!(&f[at..at + 4], [0x1D, 0x00, 12, 0x00]);
+    assert_eq!(&f[at + 4..at + 16], b"HELLO, WORLD");
+    // Header 28 + Engine 5 + Build 25, then the Note: inside the peek.
+    assert_eq!(at, HEADER_LEN + 5 + 25);
+    assert!(at + 4 + 40 <= LIB_PEEK);
 }

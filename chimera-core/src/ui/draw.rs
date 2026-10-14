@@ -79,6 +79,8 @@ pub const LEFT: char = '◂';
 pub const RIGHT: char = '▸';
 pub const UP: char = '▴';
 pub const DOWN: char = '▾';
+/// A 6×5 arrow: a CC to the cell it drives.
+pub const ARROW: char = '→';
 
 fn mark_adv(ch: char) -> Option<i32> {
     match ch {
@@ -87,6 +89,7 @@ fn mark_adv(ch: char) -> Option<i32> {
         BULLET | RING => Some(6),
         LEFT | RIGHT => Some(4),
         UP | DOWN => Some(5),
+        ARROW if cfg!(feature = "midi-map") => Some(7),
         _ => None,
     }
 }
@@ -107,6 +110,11 @@ where
             line(d, x, y - 4, x + 2, y - 2, color, 1);
         }
         BULLET => dot(d, x + 2, y - 4, 2, color),
+        ARROW if cfg!(feature = "midi-map") => {
+            fill_rect(d, x, y - 4, 6, 1, color);
+            line(d, x + 3, y - 6, x + 5, y - 4, color, 1);
+            line(d, x + 5, y - 4, x + 3, y - 2, color, 1);
+        }
         RING => ring(d, x + 2, y - 4, 2, color, 1),
         LEFT | RIGHT | UP | DOWN => {
             for i in 0..3 {

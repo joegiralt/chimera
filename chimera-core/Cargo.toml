@@ -20,7 +20,10 @@ u8g2-fonts = "=0.8.0"
 stamp = []
 # Firmware builds only: the wave tables rendered at boot (ADR 0122).
 boot-waves = ["chimera-engine/boot-waves"]
-default = ["orbit", "card-put", "tape"]
+default = ["orbit", "card-put", "tape", "midi-map"]
+# The MIDI map: CC apply, learn and the MIDI MAP page (#247). Bench
+# firmware leaves it out: FLASH (#507).
+midi-map = []
 # The TAPE engine's DSP (ADR 0132): the firmware builds without it.
 tape = ["chimera-engine/tape"]
 # ORBIT, the ring sequencer: SEQ hold opens it. Off, SEQ hold does nothing.
@@ -33,6 +36,8 @@ master-tape = ["chimera-engine/master-tape"]
 # The by-value engine constructors (`AlgoEngine::new`, `ModalEngine::new`,
 # `EngineSlot::new`), for tests only: firmware builds every engine in place.
 test-support = ["chimera-engine/test-support"]
+# `Project::boxed`: NEW on a leaked heap arena, for host tools.
+host-project = ["chimera-engine/host-project"]
 # `write_source`: sources written, verified and sealed on the card (the
 # importer, the desktop, tests); with `card-put`, `put` takes them too
 # (ADR 0106), as the firmware's `card-put` does.

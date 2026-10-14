@@ -130,12 +130,13 @@ fn priming_on_a_part_page_registers_its_address() {
         [ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE)]
     );
     let reg = &ui.project().part(PartId::ALL[0]).sound.dest_registry;
-    assert_eq!(reg.get(0).unwrap().label_str(), "DRVDRIVE");
+    // The spelling a factory Source's route gets too (`dest_label`).
+    assert_eq!(reg.get(0).unwrap().label_str(), "DRV DRIV");
     assert_eq!(ui.mod_state().num_dests(), 1);
 }
 
 /// Review fix round 1: LEVEL lives on FLT › MOD, whose own short is "FMD",
-/// not the filter's tag. `mod_label` must key its prefix off the address's
+/// not the filter's tag. `dest_label` keys its prefix off the address's
 /// block (`mod_grid::block_tag`), not the active page's short name, so
 /// priming it from the sub-page still tags it "FLT".
 #[test]
@@ -148,7 +149,7 @@ fn priming_the_filter_level_from_flt_mode_tags_it_flt() {
         [ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL)]
     );
     let reg = &ui.project().part(PartId::ALL[0]).sound.dest_registry;
-    assert_eq!(reg.get(0).unwrap().label_str(), "FLTLEVEL");
+    assert_eq!(reg.get(0).unwrap().label_str(), "FLT LEVE");
 }
 
 /// Review Focus 1: priming on the Mixer (bound, not modulatable) or System

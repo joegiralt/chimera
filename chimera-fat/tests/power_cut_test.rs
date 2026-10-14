@@ -616,7 +616,9 @@ const STAMP: BuildStamp = BuildStamp::new("0.1.0", "02e440e2", false);
 
 fn save_library_on(s: &mut Probed<CutDisk>) -> Result<LibId, chimera_core::project::LibNote> {
     let snd = sound(1);
-    save_library_sound(&mut Card::new(), s, &snd, snd.name, &STAMP).out
+    save_library_sound(&mut Card::new(), s, &snd, snd.name, &STAMP)
+        .out
+        .map(LibId::from)
 }
 
 /// A library save cut or torn at every block: no `S0000001.A`, a file that

@@ -22,7 +22,7 @@ use chimera_core::preset::Sound;
 use chimera_core::project::SlotId;
 use chimera_core::project::{
     LoadLink, PartFrom, PartId, PartSource, Project, ProjectFile, ProjectNote, ProjectSource,
-    ReplaceGuard, SaveTo, new_project_id, save_project,
+    ReplaceGuard, SaveTo, save_project,
 };
 use chimera_core::reset::ResetCause;
 use chimera_core::scope::SCOPE_LEN;
@@ -209,6 +209,11 @@ impl Input {
     /// This frame with `b` held down too.
     pub fn and_held(mut self, b: ButtonId) -> Self {
         self.buttons.push((b, ButtonState::Held));
+        self
+    }
+    /// This frame with `e` turned `delta` too.
+    pub fn and_turn(mut self, e: EncoderId, delta: i8) -> Self {
+        self.encoders.push((e, delta));
         self
     }
     pub fn turn(e: EncoderId, delta: i8) -> Self {
@@ -421,7 +426,7 @@ impl<'u> Rig<'u> {
         }
     }
 
-    fn work(&mut self) {
+    pub fn work(&mut self) {
         let link = &self.link;
         let cx = CardCx {
             card: &mut self.card,
@@ -502,6 +507,21 @@ impl<'u> Rig<'u> {
     }
 }
 
+/// The id above the highest on the card, demo range included: these tests
+/// keep small ids on screen, which a real save's floor (10) would not.
+pub fn next_low(_: &mut Card, s: &mut MemStore) -> ProjectFile {
+    use chimera_hal::store::{Dir, Store};
+    let vol = s.mount().unwrap();
+    let mut top = 0;
+    let _ = s.list(vol, Dir::Projects, &mut |f, _| {
+        let n = f.stem()[1..]
+            .iter()
+            .fold(0, |n, d| n * 10 + u32::from(d - b'0'));
+        top = top.max(n);
+    });
+    ProjectFile::for_test(chimera_core::storage::ProjectId::new(top + 1).unwrap(), vol)
+}
+
 /// A project named `n` saved to the card at its next id.
 pub fn put(s: &mut MemStore, n: &str) -> ProjectFile {
     put_with(s, n, |_| {})
@@ -513,8 +533,8 @@ pub fn put_with(s: &mut MemStore, n: &str, edit: impl FnOnce(&mut Project)) -> P
     let (mut p, _) = Project::boxed();
     edit(&mut p);
     p.set_name(ProjectName::new(n).unwrap());
-    let fresh = new_project_id(&mut card, s).out.unwrap();
-    let f = fresh.file();
+    let f = next_low(&mut card, s);
+    let fresh = chimera_core::project::FreshFile::for_test(f);
     assert!(matches!(
         save_project(&mut card, s, &mut p, SaveTo::Fresh(fresh)).out,
         ProjectNote::Saved(_)
@@ -1162,6 +1182,75 @@ fn lib_many(n: u32) -> MemStore {
         lib_sound(&mut st, &name, EngineType::Algo, &LIB_THIS);
     }
     st
+}
+
+/// The build a factory set was made on: line 3 of FACTORY.
+const FACTORY_STAMP: chimera_core::storage::BuildStamp =
+    chimera_core::storage::BuildStamp::new("0.1.0", "1a2b3c4d", false);
+
+/// `name` installed as factory file `S<id>.A`, described by `note`.
+pub fn factory_file(st: &mut MemStore, id: u32, name: &str, engine: EngineType, note: &str) {
+    use chimera_core::storage::{
+        FileKind, Generation, Header, LibId, Note, encode_library_sound, write_file,
+    };
+    use chimera_hal::store::{Dir, FileName, Store};
+    let mut s = Sound::init(engine);
+    s.name = chimera_core::name::SoundName::new(name).unwrap();
+    let h = Header {
+        kind: FileKind::Sound,
+        generation: Generation::FIRST,
+        name: Some(s.name),
+    };
+    let note = Note::new(note).unwrap();
+    let v = st.mount().unwrap();
+    let _ = st.make_dir(v, Dir::Chimera);
+    let _ = st.make_dir(v, Dir::Sounds);
+    let id = LibId::new(id).filter(|id| id.is_factory()).unwrap();
+    let f = FileName::new(Dir::Sounds, &id.stem(), b"A").unwrap();
+    st.write(v, f, &mut |k| {
+        write_file(k, &h, &mut |w| {
+            encode_library_sound(&s, &FACTORY_STAMP, Some(&note), w)
+        })
+    })
+    .unwrap();
+}
+
+/// Three showcase Sounds, each described.
+pub fn factory_card() -> MemStore {
+    let mut st = MemStore::new(1);
+    factory_file(
+        &mut st,
+        9_100_001,
+        "NEON BRASS",
+        EngineType::Va,
+        "A PAD SOFT, BRASS PLAYED HARD",
+    );
+    factory_file(
+        &mut st,
+        9_100_002,
+        "VOX CHOIR",
+        EngineType::Algo,
+        "FM VOWELS, SUNG BY VELOCITY",
+    );
+    factory_file(
+        &mut st,
+        9_100_003,
+        "GLASS BAR",
+        EngineType::Modal,
+        "A STRUCK BAR OVER A SLOW SWELL",
+    );
+    st
+}
+
+/// Part 1's FACTORY tab on `st`, listed; `f` drives it from there.
+pub fn factory_tab(ui: &mut UiState, st: MemStore, f: impl FnOnce(&mut Rig)) {
+    library_tab(ui, st, |r| {
+        r.feed(Input::turn(EncoderId::B, 1));
+        for _ in 0..3 {
+            r.feed(Input::turn(EncoderId::A, 0));
+        }
+        f(r)
+    })
 }
 
 /// A pool with one free slot and 16 B: every library Sound won't fit.
@@ -1867,6 +1956,31 @@ pub const CASES: &[ScreenCase] = &[
         library_tab(ui, lib_card(), |r| {
             r.feed(Input::chord(ButtonId::Mix, ButtonId::Edit))
         })
+    }),
+    // FACTORY: three tabs in the title, the row's description on line 2
+    // and the set's stamp on line 3.
+    ("factory_described", |ui| {
+        factory_tab(ui, factory_card(), |_| {})
+    }),
+    ("factory_empty", |ui| {
+        factory_tab(ui, MemStore::new(1), |_| {})
+    }),
+    ("factory_no_card", |ui| {
+        let mut st = MemStore::new(1);
+        st.eject();
+        factory_tab(ui, st, |_| {})
+    }),
+    // A stray TAPE factory file, lowest id first: greyed, COMING SOON.
+    ("factory_coming_soon", |ui| {
+        let mut st = factory_card();
+        factory_file(
+            &mut st,
+            9_000_001,
+            "OLD TAPE",
+            EngineType::Tape,
+            "A TAPE SOUND FROM THE TAPE SET",
+        );
+        factory_tab(ui, st, |_| {})
     }),
     ("settings_personal_theme", |ui| {
         to_leaf(ui, &["PERSONALIZE", "THEME"]);

@@ -61,9 +61,10 @@ fn part_chains_offer_the_eight_sources() {
             "{engine:?}"
         );
         let sound = chimera_core::preset::Sound::init(engine);
-        // The default routes live in the fixed FREQ column.
-        assert_eq!(sound.dest_registry.len(), 0, "{engine:?}");
-        assert_eq!(sound.mod_state.num_dests(), 0, "{engine:?}");
+        // The default routes live in the fixed FREQ column; the registry
+        // holds only the wheel's PITCH (spec § 9).
+        assert_eq!(sound.dest_registry.len(), 1, "{engine:?}");
+        assert_eq!(sound.mod_state.num_dests(), 1, "{engine:?}");
     }
 }
 
@@ -310,4 +311,84 @@ fn group_pages_bind_each_column_to_its_operator() {
             );
         }
     }
+}
+
+/// The host's `factory-sounds fmt` and `about` read a Sound param through
+/// `view::shown_fmt`: every page cell showing one reads in that format,
+/// and a cell that shows text instead (a type-B ENV's SPEED) has none, so
+/// the host writes no display the page doesn't draw.
+#[test]
+fn every_cell_reads_as_shown_fmt() {
+    use chimera_core::addr::BlockRead;
+    use chimera_core::dsp::filter::FilterKind;
+    use chimera_core::dsp::modulator::{EnvForm, EnvSpeed, Func, LfoForm};
+    use chimera_core::preset::Sound;
+    use chimera_core::ui::view::{EnvKind, LfoKind, View, shown_fmt};
+    let neutral = Sound::neutral(EngineType::Algo);
+    let sound_param = |a: ParamAddr| neutral.params.block(a.block).is_some() && a.spec().is_some();
+    let mut envs: Vec<EnvKind> = EnvSpeed::ALL.into_iter().map(EnvKind::A).collect();
+    for f in EnvForm::ALL {
+        envs.extend([EnvKind::B(Func::Env(f)), EnvKind::B(Func::Burst(f))]);
+    }
+    envs.extend(LfoForm::ALL.map(|f| EnvKind::B(Func::Lfo(f))));
+    let lfos: Vec<LfoKind> = core::iter::once(LfoKind::Classic)
+        .chain(LfoForm::ALL.map(LfoKind::Func))
+        .collect();
+    let base = SlotCtx::read(&neutral.params, Op::A);
+    let mut bad = Vec::new();
+    let (mut params, mut texts) = (0, 0);
+    for (&e, &l, &kind) in envs
+        .iter()
+        .flat_map(|e| lfos.iter().map(move |l| (e, l)))
+        .flat_map(|(e, l)| FilterKind::BUILT.iter().map(move |k| (e, l, k)))
+    {
+        let ctx = SlotCtx {
+            envs: [e; 3],
+            lfos: [l; 3],
+            kind,
+            ..base
+        };
+        for chain in reg::ALL_CHAINS {
+            for block in chain.blocks {
+                for def in core::iter::once(block.def).chain(block.sub_pages.iter().copied()) {
+                    for i in 0..def.params.len() {
+                        let (addr, fmt) = match view(def, i, &ctx) {
+                            View::Param { addr, fmt, .. } => (addr, Some(fmt)),
+                            View::Text { .. } => match def.params[i].binding {
+                                SlotBinding::Param(a) => (a, None),
+                                _ => continue,
+                            },
+                            _ => continue,
+                        };
+                        if !sound_param(addr) {
+                            continue;
+                        }
+                        if fmt.is_some() {
+                            params += 1;
+                        } else {
+                            texts += 1;
+                        }
+                        if shown_fmt(addr, &ctx) != fmt {
+                            bad.push(format!(
+                                "{} slot {i} {addr:?} under {e:?} {l:?} {kind:?}: page {fmt:?}, host {:?}",
+                                def.name,
+                                shown_fmt(addr, &ctx)
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    bad.dedup();
+    assert!(
+        params > 0 && texts > 0,
+        "a value cell and a TYPE B cell are checked"
+    );
+    assert!(
+        bad.is_empty(),
+        "{} cells differ:\n{}",
+        bad.len(),
+        bad[..bad.len().min(20)].join("\n")
+    );
 }

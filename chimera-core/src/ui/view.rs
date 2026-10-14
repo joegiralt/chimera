@@ -17,6 +17,7 @@ use crate::dsp::modulator::{
 use crate::dsp::reverb::{ReverbParams, ReverbType, in_plate_zone};
 use crate::dsp::tape_engine::machine::{self, Cell};
 use crate::dsp::tape_engine::{self, TapeEngineParams as T, TapeModel, wave};
+use crate::midi_map::Mappable;
 use crate::modulation::VCA;
 use crate::name::SoundName;
 use crate::orbit::RingIdx;
@@ -455,7 +456,7 @@ impl View {
     /// The gesture hint a param's focus band shows (ADR 0086): MUTE's
     /// MIX + B*n*, which mutes any ring from anywhere in ORBIT. ORBIT's
     /// own cells give theirs through their focus. A route view's: MIX +
-    /// MINUS deletes its route.
+    /// MINUS deletes its route. A mappable param's adds MIX + SEQ's learn.
     pub fn hint(&self, ctx: &SlotCtx) -> Hint {
         if let View::Route { .. } = self {
             return crate::ui::mod_grid::DELETE;
@@ -480,10 +481,16 @@ impl View {
             Some(a) if matches!(a.block, BlockRef::OrbitRing(_)) && a.param == SceneRing::MUTE => {
                 MUTE_HINT
             }
+            Some(a) if cfg!(feature = "midi-map") && Mappable::new(a).is_some() => LEARN_HINT,
             _ => hint::NONE,
         }
     }
 }
+
+/// MIX + SEQ learns a CC on the cell (MIDI map spec § 4): every mappable
+/// cell's hint, but where the cell's own gesture leaves no room on the line.
+pub const LEARN: Gesture<'static> = Gesture("MIX + SEQ", "LEARNS A CC");
+const LEARN_HINT: Hint = &[LEARN];
 
 const SYM_HINT: Hint = &[Gesture("EDIT ▾", "SYM")];
 
@@ -540,11 +547,7 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
             label: slot.label(),
             fmt: *fmt,
         },
-        // SPD: a type-B slot's SPEED and HOLD read TYPE B (spec § UI).
-        SlotBinding::Param(ParamAddr {
-            block: BlockRef::Env(s),
-            param: EnvParams::SPEED | EnvParams::HOLD_POS,
-        }) if matches!(ctx.envs[s.index()], EnvKind::B(_)) => View::Text {
+        SlotBinding::Param(addr) if reads_type_b(addr, ctx) => View::Text {
             label: slot.label(),
             text: "TYPE B",
         },
@@ -671,6 +674,39 @@ pub fn is_reverb_panel(def: &BlockDef, i: usize) -> bool {
         def.params.get(i).map(|s| s.binding),
         Some(SlotBinding::ReverbPanel(..))
     )
+}
+
+/// SPD: a type-B slot's SPEED and HOLD read TYPE B, not a value (spec §
+/// UI): no format, on the page or the host.
+fn reads_type_b(addr: ParamAddr, ctx: &SlotCtx) -> bool {
+    match addr.block {
+        BlockRef::Env(s) => {
+            matches!(addr.param, EnvParams::SPEED | EnvParams::HOLD_POS)
+                && matches!(ctx.envs[s.index()], EnvKind::B(_))
+        }
+        _ => false,
+    }
+}
+
+/// The format `addr` reads in under `ctx`: its modulator panel's cell for
+/// an ENV or LFO param on that kind's page, else its spec's (a filter MODE
+/// by KIND). One source for the pages and the host's `factory-sounds fmt`.
+pub fn shown_fmt(addr: ParamAddr, ctx: &SlotCtx) -> Option<ValFmt> {
+    if reads_type_b(addr, ctx) {
+        return None;
+    }
+    let panel = match addr.block {
+        BlockRef::Env(s) => Some(mod_panel::env_panel(ctx.envs[s.index()])),
+        BlockRef::Lfo(s) => Some(mod_panel::lfo_panel(ctx.lfos[s.index()])),
+        _ => None,
+    };
+    let cell = panel.and_then(|p| {
+        p.slots.iter().flatten().find_map(|c| match *c {
+            PanelSlot::Param { id, fmt, .. } if id == addr.param => Some(fmt),
+            _ => None,
+        })
+    });
+    cell.or_else(|| addr.spec().map(|s| fmt_of(addr, s.fmt, ctx)))
 }
 
 /// Cell `k` of a modulator panel, its params in `block`.
