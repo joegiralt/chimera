@@ -9,6 +9,7 @@
 ## Owner decisions (2026-10-11)
 
 1. **Two files per release:** `chimera-<v>.bin` through the usual DFU route, plus `chimera-<v>.bk2`, put over USB by one tool command, which the unit then installs itself.
+   *Superseded 2026-10-14 (owner: "the installation needs to be one thing… when you install the OS, you should install"): an update is one action, whatever the route. One package per variant, and the first boot of the new firmware installs the `.bk2`. See § 4.*
 2. **Auto-install:** a staged bank-2 file that exactly matches the running firmware installs at boot without asking, behind a `DON'T POWER OFF` screen.
 3. **Audio during a write:** ALGO, MODAL and VA keep playing (read-while-write); only TAPE is silent. Phase 0b must show no overruns; if it does, the writer mutes everything instead.
 4. **TAPE Parts while bank 2 is closed:** kept silent and labelled, never converted, so a stale bank 2 never costs data. ADR 0132's lossy load is superseded when bank 2 lands.
@@ -184,6 +185,23 @@ The fallback, if the bench shows overruns, is a muted master during the write, n
 
 ## 4. Release and install flow for testers
 
+### Superseded 2026-10-14: an update is one action
+
+The owner ruled that an update is one thing for the tester, as on a phone: installing the firmware installs both banks. This replaces decision 1 and the two-step flow below, which stays as history.
+
+**The release** has one package per variant, `chimera-<v>.zip` and `chimera-<v>-orbit.zip`, plus `chimera-usb.py` and a `SHA256SUMS` over the three. Each zip holds exactly the two files to install, `chimera-<v>.bin` and `chimera-<v>.bk2`, plus a one-line `README.txt` and a `SHA256SUMS` over the pair. `just release` asserts the asset list, each zip's members, the sums, the seal pair (`bank2-seal --check`), the bootloader size limit and the path check on what a tester unpacks.
+
+**One flow, two ways to start it.** The tester puts both files where the unit will find them and updates once. The new firmware's first boot does the rest:
+
+1. **By hand.** Enter stock bootloader 1.09's USB disk mode, drag `chimera-<v>.bin` and `chimera-<v>.bk2` onto the card's root, and run the bootloader's update once. The bootloader flashes the `.bin`; it only ever sees one `.bin`.
+2. **Or by the tool.** `python3 chimera-usb.py update chimera-<v>.zip` checks the whole package first (sums, the `.bin` guard, the `.bk2`'s body and its seal in the `.bin`), then stages the `.bk2` at `/CHIMERA/SYSTEM/BANK2.BK2` under the running firmware (`OK staged: needs firmware <v>`, or plain `OK`), flashes the `.bin` by DFU (`0x8020000`, as before), waits up to 90 s for the console, and exits 0 only when `status` shows `bank2 open <v> seal=<the package's seal>` (`OK updated <v>`). A staging failure stops it before the flash. Firmware from before bank 2 refuses the path with its `put` usage line; then the tool flashes first and puts and installs the `.bk2` after, still in one command. `just flash` runs the same function on `target/chimera.{bin,bk2}`.
+
+**The first boot.** When flash isn't already `Good` for this build's seal, the boot looks for a staged file: `/CHIMERA/SYSTEM/BANK2.BK2` first, then up to eight `*.BK2` in the card root, matched by extension because a dragged `chimera-0.2.0.bk2` keeps only a host's short name such as `CHIMER~1.BK2`. It judges each against its own seal and installs the first `Good` behind DON'T POWER OFF (the same `install_with` path and marks as the console's install). Files for other builds are ignored without a word. Nothing is renamed or deleted afterwards: the boot with flash `Good` never reads the card for bank 2, so nothing accumulates beyond what the tester dropped. A failed install leaves the file for the next boot.
+
+Nothing writes below 0x08020000, and the bootloader is unchanged. `bank2 <file.bk2>` stays for developers.
+
+### The original flow (2026-10-11, superseded)
+
 The release keeps `chimera-<v>.bin` (bank 1, the existing DFU route) and adds `chimera-<v>.bk2` (bank 2). `SHA256SUMS` covers both, and the `just release` asset assertion grows from four to five (six with ORBIT's own `.bk2`).
 
 The tester does this:
@@ -205,6 +223,8 @@ There is also a convenience: `chimera-usb.py update chimera-<v>.bin chimera-<v>.
 4. Run the door check.
 5. `to-dfu`, `dfu-util` bank 1, then `wait-console`.
 6. `chimera-usb.py bank2 target/chimera.bk2`, which asks `status` first and skips if the seal is already installed.
+
+*Since 2026-10-14 (§ 4):* steps 5–6 are `chimera-usb.py update target/chimera.bin target/chimera.bk2`, the testers' path: stage, DFU, the first boot installs, `status` checked.
 
 `release-bin` does steps 2–4 per variant and asserts bank-1 size < 917,504.
 
