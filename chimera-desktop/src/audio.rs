@@ -32,6 +32,10 @@ const N_SOURCES: usize = 1;
 const KEYS: SourceId<N_SOURCES> = SourceId::new(0);
 #[cfg(feature = "midi")]
 const MIDI: SourceId<N_SOURCES> = SourceId::new(1);
+/// The MIDI port's CCs (MIDI map spec § 1): its thread pushes, the UI
+/// thread drains.
+#[cfg(feature = "midi")]
+pub static MIDI_CCS: chimera_core::midi_in::CcRing = chimera_core::midi_in::CcRing::new();
 
 /// Shared with the audio callback: `solo` 0 = all pairs, 1..=3 = only that
 /// DAC pair; `clamped` counts mixdown frames the speakers' clamp held.
@@ -158,6 +162,12 @@ impl DesktopAudio {
         if let Some(n) = self.clamp_log.note(clamped, Instant::now()) {
             eprintln!("speakers: {n} frames of the pairs' sum clamped at full scale");
         }
+    }
+
+    /// The audio thread has taken the last `update`.
+    #[cfg(feature = "midi")]
+    pub fn taken(&self) -> bool {
+        self.shared_audio.taken()
     }
 
     /// Push a note-on onto the keyboard's queue.
@@ -322,6 +332,7 @@ fn stereo_frame(dac: &DacOut, solo: u8, i: usize) -> ((f32, f32), bool) {
 /// Through") means the computer keyboard is the only note source.
 #[cfg(feature = "midi")]
 fn connect_midi(mut notes: NoteProducer<'static>) -> Option<midir::MidiInputConnection<()>> {
+    use chimera_core::midi_in::{Routed, route};
     use chimera_hal::midi::MidiParser;
     let input = midir::MidiInput::new("chimera")
         .map_err(|e| eprintln!("MIDI unavailable: {e}"))
@@ -344,8 +355,14 @@ fn connect_midi(mut notes: NoteProducer<'static>) -> Option<midir::MidiInputConn
             "chimera-in",
             move |_stamp, bytes, _| {
                 for &b in bytes {
-                    if let Some(ev) = parser.feed(b).and_then(InEvent::from_midi) {
-                        notes.push(ev);
+                    match parser.feed(b).map(route) {
+                        Some(Routed::Queue(ev)) => {
+                            notes.push(ev);
+                        }
+                        Some(Routed::Cc(ev)) => {
+                            MIDI_CCS.push(ev);
+                        }
+                        _ => {}
                     }
                 }
             },

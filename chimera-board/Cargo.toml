@@ -12,6 +12,9 @@ perf-probe = []
 bench = ["perf-probe"]
 sd-probe = []
 orbit = ["chimera-core/orbit"]
+# The MIDI map: CC apply, learn and the MIDI MAP page (#247). Bench
+# firmware leaves it out: FLASH (#507).
+midi-map = ["chimera-core/midi-map"]
 # The master tape's bench build: it drops the card bench, for AXI (ADR 0087).
 master-tape = []
 usb-console = [

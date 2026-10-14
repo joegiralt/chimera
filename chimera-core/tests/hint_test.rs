@@ -641,7 +641,10 @@ fn chorus_hint_names_the_mode() {
             &[Gesture("CHORUS ▸", name)][..]
         );
     }
-    assert!(out_hint(BlockRef::Out, OutParams::SEND2, &ctx0()).is_empty());
+    assert_eq!(
+        out_hint(BlockRef::Out, OutParams::SEND2, &ctx0()),
+        &[LEARN][..]
+    );
 }
 
 #[test]
@@ -722,4 +725,52 @@ fn chorus_send_hint_follows_the_project_chorus() {
         screen::settle(&mut ui);
         assert!(focus_hint_is(&ui, &[Gesture("CHORUS ▸", "II")]), "mode II");
     }
+}
+
+const LEARN: Gesture = Gesture("MIX + SEQ", "LEARNS A CC");
+
+/// Every mappable cell's hint offers MIX + SEQ's learn (MIDI map spec
+/// § 4) but where the cell's own gesture leaves it no room (REVERB ▸,
+/// CHORUS ▸, EDIT ▾ SYM), every other cell's never, and each fits, under
+/// every reverb TYPE and chorus MODE.
+#[test]
+fn mappable_cells_hint_learn() {
+    use chimera_core::midi_map::Mappable;
+    let mut seen = 0;
+    for chain in reg::ALL_CHAINS {
+        for b in chain.blocks {
+            for def in core::iter::once(b.def).chain(b.sub_pages.iter().copied()) {
+                for t in ReverbType::ALL {
+                    for m in 0..4 {
+                        let c = SlotCtx {
+                            rev: t,
+                            chorus: ChorusMode::from_u8(m),
+                            ..ctx0()
+                        };
+                        for i in 0..def.params.len() {
+                            let v = view(def, i, &c);
+                            let h = v.hint(&c);
+                            let mappable = v.addr().and_then(Mappable::new).is_some();
+                            let crowded = h.len() == 1
+                                && h[0] != LEARN
+                                && hint::width(&[h[0], LEARN]) > theme::CONTENT_W;
+                            assert_eq!(
+                                h.contains(&LEARN),
+                                mappable && !crowded,
+                                "{} {i}: {h:?}",
+                                def.name
+                            );
+                            assert!(
+                                hint::width(h) <= theme::CONTENT_W,
+                                "{h:?}: {}",
+                                hint::width(h)
+                            );
+                            seen += usize::from(mappable);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(seen > 0);
 }

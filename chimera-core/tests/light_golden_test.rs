@@ -14,24 +14,24 @@ use chimera_core::ui::theme_settings::{Accent, Black, ThemeSettings, palette};
 use screen::*;
 
 const GOLDENS: &[(&str, u64)] = &[
-    ("engine_algo", 0x7cf6cb36ae4d4e91),
-    ("algo_formant_page", 0x6095fa77c712dbab),
-    ("algo_op_page_3", 0x380578a757df3272),
-    ("algo_op_page_3_turned", 0x4e60271ac64ddbc1),
-    ("algo_op_page_frmt", 0xbd6f315cbe08dd1c),
-    ("algo_op_page_nois", 0x250a6ac9df874997),
+    ("engine_algo", 0x14f8295d1f5838e9),
+    ("algo_formant_page", 0x5de8238f2dbf43c3),
+    ("algo_op_page_3", 0xb6ac3cd0c290d672),
+    ("algo_op_page_3_turned", 0x3469930dff1a6231),
+    ("algo_op_page_frmt", 0x64614c2f6af9fc1c),
+    ("algo_op_page_nois", 0xa7b8b95e18bf5e17),
     ("flt_clean", 0xcc4a729ff4ba5faf),
     ("settings_top", 0xf1655533215f4e4b),
     ("settings_personal_theme", 0x3a2a9ae7815335b2),
     // Re-recorded: FACTORY joins the title, B ◂▸ moves to hint line 1.
     // Then the formant merge: the pool meter's cost.
-    ("sound_browser", 0xf31114affd5e4164),
+    ("sound_browser", 0x0e534f5f78e5c519),
     ("toast_exfat", 0xd8ee278545272c31),
     // Re-recorded on the formant merge: the pool meter's cost.
-    ("factory_described", 0xf156c95bd722c0f3),
-    ("factory_empty", 0xe0ed61157e6d73c3),
-    ("factory_no_card", 0x44e7d55b3b0d5a3f),
-    ("factory_coming_soon", 0x6c02b7c62f5a5a32),
+    ("factory_described", 0x9b21c1fb883a64a6),
+    ("factory_empty", 0x6d3924c1bafc3003),
+    ("factory_no_card", 0x8f07edc2301da0ff),
+    ("factory_coming_soon", 0x1f4258c50d9f09ce),
 ];
 
 fn light(name: &str) -> Fb {

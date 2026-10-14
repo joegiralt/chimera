@@ -6,6 +6,8 @@ use chimera_hal::store::StoreError;
 use super::{SourceRef, TapeSource, ZoneTune};
 use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use crate::block::{DiskCode, ParamId};
+use crate::midi_in::Cc;
+use crate::midi_map::{MAP_LEN, MapEntry, Mappable, MidiMap};
 use crate::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS, ModDestRegistry};
 use crate::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::SoundName;
@@ -22,6 +24,7 @@ use super::record::{MAX_RECORD_LEN, ReadTag, RecordBuf, RecordTag, RecordWriter}
 
 const REGISTRY_ENTRY_LEN: usize = 2 + LABEL_LEN;
 const ROUTE_LEN: usize = 4;
+const MAP_ENTRY_LEN: usize = 5;
 /// Every source into every registry column and every fixed one.
 const MAX_ROUTES: usize = MAX_MOD_SOURCES * (MAX_MOD_DESTS + FixedCol::ALL.len());
 const _: () = assert!(MAX_ROUTES * ROUTE_LEN <= MAX_RECORD_LEN);
@@ -29,9 +32,9 @@ const _: () = assert!(MAX_REGISTRY_DESTS * REGISTRY_ENTRY_LEN <= MAX_RECORD_LEN)
 
 /// The most a Sound costs in the pool: its 16 B name and its sparse records
 /// with every param off neutral, a full registry, every route and tap, a
-/// `SourceRef` and a 24-zone `ZoneTune` (2 549 B for 276 params), rounded
-/// up to 16 B. `sparse_bound` pins it.
-pub const MAX_SOUND_COST: usize = 2560;
+/// `SourceRef`, a 24-zone `ZoneTune` and a full `MidiMap` (2 549 + 84 =
+/// 2 633 B for 276 params), rounded up to 16 B. `sparse_bound` pins it.
+pub const MAX_SOUND_COST: usize = 2640;
 
 impl Sound {
     /// The frozen base a file decodes onto: every param at its v1 default,
@@ -49,6 +52,7 @@ impl Sound {
             mod_state: ModState::with_sources(MAX_MOD_SOURCES),
             dest_registry: ModDestRegistry::new(),
             source: None,
+            map: MidiMap::EMPTY,
         }
     }
 }
@@ -157,14 +161,23 @@ pub(crate) fn encode_sound_body(s: &Sound, w: &mut RecordWriter<'_>) -> Result<(
         }
         w.put(RecordTag::TapRoutes, r.as_slice())?;
     }
-    let Some(src) = s.source else {
-        return Ok(());
-    };
-    w.put(RecordTag::SourceRef, &src.r.to_bytes())?;
-    match src.tune {
-        Some(t) => w.put(RecordTag::ZoneTune, t.record()),
-        None => Ok(()),
+    if let Some(src) = s.source {
+        w.put(RecordTag::SourceRef, &src.r.to_bytes())?;
+        if let Some(t) = src.tune {
+            w.put(RecordTag::ZoneTune, t.record())?;
+        }
     }
+    if !s.map.is_empty() {
+        r.clear();
+        for e in s.map.entries() {
+            r.u8(e.cc.get());
+            r.bytes(&addr_code(e.target.addr()));
+            r.u8(e.min);
+            r.u8(e.max);
+        }
+        w.put(RecordTag::MidiMap, r.as_slice())?;
+    }
+    Ok(())
 }
 
 /// The CRC of the Sound's padded name, then `encode_sound`'s bytes: equal
@@ -174,7 +187,7 @@ pub fn sound_crc(s: &Sound) -> u32 {
 }
 
 /// A record's bit in `SoundCheck::seen`; `Block` repeats per block code.
-const fn once_bit(tag: RecordTag) -> u8 {
+const fn once_bit(tag: RecordTag) -> u16 {
     match tag {
         RecordTag::Block => 0,
         RecordTag::Engine => 1,
@@ -185,6 +198,7 @@ const fn once_bit(tag: RecordTag) -> u8 {
         RecordTag::SourceRef => 1 << 5,
         RecordTag::ZoneTune => 1 << 6,
         RecordTag::TapRoutes => 1 << 7,
+        RecordTag::MidiMap => 1 << 8,
         // Skipped before `once` is asked.
         RecordTag::Build | RecordTag::Note => 0,
         // A project's own records: refused before `once` is asked.
@@ -214,7 +228,7 @@ pub struct SoundCheck {
     engine: bool,
     /// The records read, so none we write once repeats: a bit per singleton
     /// tag, and the block codes.
-    seen: u8,
+    seen: u16,
     blocks: ByteSet,
     /// Applied at the end, once the `ModDests` they index are known.
     routes: [u8; MAX_RECORD_LEN],
@@ -468,6 +482,10 @@ impl SoundCheck {
                 }
                 Ok(())
             }
+            RecordTag::MidiMap => {
+                self.skip(midi_map(p, staged.map(|s| &mut s.map))?);
+                Ok(())
+            }
             RecordTag::Slot
             | RecordTag::Part
             | RecordTag::Fx
@@ -574,6 +592,43 @@ fn tap_routes(p: &[u8], staged: Option<&mut TapRoutes>) -> Result<u16, FileError
                 && let Some(c) = addr_of(block, id).and_then(FixedCol::of)
             {
                 t.set(op, c, amount as i8);
+            }
+        }
+    }
+    Ok(lost)
+}
+
+/// `(cc, block code, param id, min, max)` entries. One whose address this
+/// firmware lacks, that isn't `Mappable`, or whose CC is reserved or over
+/// 127 is dropped and counted; a duplicate target keeps the last.
+fn midi_map(p: &[u8], staged: Option<&mut MidiMap>) -> Result<u16, FileError> {
+    let (entries, []) = p.as_chunks::<MAP_ENTRY_LEN>() else {
+        return Err(FileError::Bounds);
+    };
+    if entries.len() > MAP_LEN {
+        return Err(FileError::Bounds);
+    }
+    let mut lost = 0;
+    if let Some(m) = staged {
+        for &[cc, block, id, min, max] in entries {
+            let t = addr_of(block, id).and_then(Mappable::new);
+            let Some((cc, target)) = Cc::new(cc).filter(|c| !c.is_reserved()).zip(t) else {
+                lost += 1;
+                continue;
+            };
+            let e = MapEntry {
+                cc,
+                target,
+                min,
+                max,
+            };
+            match m.entries().iter().position(|x| x.target == target) {
+                Some(i) => m.set(i, e),
+                None => {
+                    // At most 16 entries, so there is always room.
+                    let _ = m.learn(cc, target);
+                    m.set(m.len() - 1, e);
+                }
             }
         }
     }

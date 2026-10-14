@@ -773,7 +773,7 @@ Part 4: CH 10  [FM]     → DAC1  (drums on channel 10, summed to main)
 
 This is the critical integration point. Every sequencer automates via CCs. Chimera must respond to CCs predictably.
 
-**Default CC Map (per Part, matches conventions):**
+**Default CC Map (per Part, matches conventions):** Superseded in part by ADR 0139.
 
 | CC | Parameter | Notes |
 |---|---|---|

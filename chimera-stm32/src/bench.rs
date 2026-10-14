@@ -1763,22 +1763,7 @@ impl Rig<'_> {
         shared.fx = FxParams::OFF;
         let (sound, knobs) = loading();
         let mut count = [Loads::NONE; MAX_PARTS];
-        // Each Part's Sound published as a load is, through the knobs'
-        // publisher (ADR 0115): NEW's, and A16 ∪ A17 on Part 6.
-        for (i, part) in shared.parts.iter_mut().enumerate() {
-            part.mix = PartParams::for_part(i);
-        }
-        for (p, count) in count.iter_mut().enumerate() {
-            let new = NEW_PARTS.get(p).and_then(|s| factory_sound(s.index()));
-            let s = new.unwrap_or_else(|| Sound::init(EngineType::Algo));
-            (sound.params, sound.mod_state) = (s.params, s.mod_state);
-            if p == MAX_PARTS - 1 {
-                sound.params = a16_a17();
-            }
-            sound.params.out.sends = [0.5; FX_SENDS];
-            *count = count.next();
-            shared.publish_sound(p, sound, *count, knobs);
-        }
+        publish_new(shared, sound, knobs, &mut count);
         if keys_first {
             hold_notes(inst, shared, MAX_PARTS - 1);
         }
@@ -2482,5 +2467,31 @@ fn voice_row(rec: &mut Recorder<'_>, line: &mut FmtBuf, y: i32, label: &str, cou
             line.as_str(),
             (4 + i as i32 * CELL_W, y + 12),
         );
+    }
+}
+
+/// Each Part's Sound published as a load is, through the knobs' publisher
+/// (ADR 0115): NEW's, and A16 ∪ A17 on Part 6. Out of `Rig::stress`: its
+/// Sounds stay off that frame, under the stack check's 8 KB.
+#[inline(never)]
+fn publish_new(
+    shared: &mut AudioShared,
+    sound: &mut Tracked<Sound>,
+    knobs: &mut KnobPublisher,
+    count: &mut [Loads; MAX_PARTS],
+) {
+    for (i, part) in shared.parts.iter_mut().enumerate() {
+        part.mix = PartParams::for_part(i);
+    }
+    for (p, count) in count.iter_mut().enumerate() {
+        let new = NEW_PARTS.get(p).and_then(|s| factory_sound(s.index()));
+        let s = new.unwrap_or_else(|| Sound::init(EngineType::Algo));
+        (sound.params, sound.mod_state) = (s.params, s.mod_state);
+        if p == MAX_PARTS - 1 {
+            sound.params = a16_a17();
+        }
+        sound.params.out.sends = [0.5; FX_SENDS];
+        *count = count.next();
+        shared.publish_sound(p, sound, *count, knobs);
     }
 }

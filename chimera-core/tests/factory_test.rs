@@ -223,3 +223,22 @@ fn new_is_pristine() {
     let (p, t) = chimera_core::project::Project::boxed();
     assert_eq!(project_status(&p, t), ProjectStatus::Pristine);
 }
+
+#[test]
+fn default_map_on_init_and_factory() {
+    use chimera_core::midi_map::default_for;
+    for e in [
+        EngineType::Algo,
+        EngineType::Modal,
+        EngineType::Tape,
+        EngineType::Va,
+    ] {
+        assert_eq!(Sound::init(e).map, default_for(e), "{e:?}");
+    }
+    for i in 0..FACTORY_LEN {
+        let s = factory_sound(i).unwrap();
+        assert_eq!(s.map, default_for(s.engine()), "{}", s.name.as_str());
+        // They keep their own LFO 1 and routes (spec § 9): DEPTH 1, no PITCH.
+        assert_eq!(s.params.lfos[0].depth, 1.0, "{}", s.name.as_str());
+    }
+}

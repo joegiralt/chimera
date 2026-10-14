@@ -264,6 +264,9 @@ pub struct AudioStart<'a> {
     pub sources: chimera_core::source_table::AudioToken,
     #[cfg(feature = "midi-din")]
     pub din: chimera_core::note_queue::NoteProducer<'static>,
+    /// MIDI DIN's CCs: the ISR pushes, the UI drains (MIDI map spec § 1).
+    #[cfg(feature = "midi-din")]
+    pub din_ccs: &'static chimera_core::midi_in::CcRing,
 }
 
 /// The binary's audio side, which the start-up calls at its steps. Plain
@@ -425,6 +428,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         allow(unused_mut, unused_variables)
     )]
     let (mut producers, notes) = shared::NOTES.split().expect("note sources split once");
+    #[cfg(feature = "midi-din")]
+    let cc_din = shared::take_cc_din().expect("DIN CC ring taken once");
     let (orbit_runner, mut orbit) = orbit::take(beat_led);
     (shell.start_audio)(AudioStart {
         nvic: &mut cp.NVIC,
@@ -440,6 +445,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         din: producers
             .take(shared::DIN)
             .expect("DIN producer taken once"),
+        #[cfg(feature = "midi-din")]
+        din_ccs: cc_din,
     });
 
     marker.stage(BootStage::Audio);
@@ -516,6 +523,10 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         ui.set_formant_views(formant_r.read());
         // Every frame, even idle: a held key must age.
         ui.handle_input(&controls);
+        // Mapped CCs, in the room the hand's moves left. No bench run plays
+        // a controller: bench firmware leaves the MIDI map out (FLASH, #507).
+        #[cfg(all(feature = "midi-din", feature = "midi-map"))]
+        ui.hear_ccs(cc_din.drain(), controls::now_ms(), shared_w.taken());
         // SYSTEM synced first: a THEME change made in this visit is kept.
         if let Some(yes) = ui.take_dfu_synced(&mut sync, &mut card, store, &mut settings) {
             dfu::enter(&marker, dfu::DfuFrom::Menu(yes));

@@ -732,6 +732,9 @@ pub enum LegendFor {
     ManageLater,
     /// LOAD PROJECT's rows.
     Load,
+    /// MIDI MAP's keys.
+    #[cfg(feature = "midi-map")]
+    Map,
 }
 
 impl LegendFor {
@@ -767,6 +770,8 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
         (L::ManageDimmed(Some(Note::LoadToRename)), _) => "LOAD TO RENAME · MENU LIST",
         (L::ManageLater, _) => "LATER · MENU LIST",
         (L::Load, _) => "EDIT LOAD · MENU BACK",
+        #[cfg(feature = "midi-map")]
+        (L::Map, _) => "B CC · C-D RANGE · MIX+MINUS DELETE",
     }
 }
 
@@ -790,6 +795,9 @@ pub struct Bands<'a> {
     pub loaded: Option<ProjectFile>,
     /// In the PART branch, the active Part.
     pub part: Option<PartBand>,
+    /// On MIDI MAP, the active Part's map and engine.
+    #[cfg(feature = "midi-map")]
+    pub map: Option<super::midi_map::MapBand>,
     /// The playing scene, for ORBIT's crumb; its band in the ORBIT branch.
     pub scene: SceneIdx,
     pub orbit: Option<OrbitBand>,
@@ -838,6 +846,18 @@ impl Bands<'_> {
             }
             #[cfg(feature = "orbit")]
             (Some(Screen::SceneSaveTo), _) => return legend(LegendFor::Action, false),
+            #[cfg(feature = "midi-map")]
+            (Some(Screen::MidiMap), _) => {
+                let rows = self.map.is_some_and(|m| !m.map.is_empty());
+                return legend(
+                    if rows {
+                        LegendFor::Map
+                    } else {
+                        LegendFor::Dimmed
+                    },
+                    false,
+                );
+            }
             (_, Some(Column::Projects)) => return legend(LegendFor::ManageList, false),
             (_, Some(Column::Command(n))) => return legend(self.command_legend(n), false),
             _ => {}
@@ -918,10 +938,15 @@ impl Bands<'_> {
             None => ("", [0; 10]),
         };
         let okey = self.orbit.map_or([0xFF; 3], |b| b.key());
+        #[cfg(feature = "midi-map")]
+        let mkey = self.map_key().to_le_bytes();
+        #[cfg(not(feature = "midi-map"))]
+        let mkey = [0; 4];
         settings_key(&[
             pname.as_bytes(),
             &pkey,
             &okey,
+            &mkey,
             self.at.path(),
             &list,
             text.as_bytes(),
@@ -976,6 +1001,10 @@ impl Bands<'_> {
         if let Some(col) = self.at.column() {
             return self.draw_manage(d, col);
         }
+        #[cfg(feature = "midi-map")]
+        if let Some(m) = &self.map {
+            return self.draw_map(d, m);
+        }
         if let Some(b) = &self.part {
             return self.draw_part(d, b);
         }
@@ -990,6 +1019,48 @@ impl Bands<'_> {
             *s = ListRow::of(r);
         }
         draw_list(d, &shown[..n], self.at.row() as usize, self.first);
+    }
+
+    /// MIDI MAP's rows, or the empty page's one.
+    #[cfg(feature = "midi-map")]
+    fn draw_map<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D, m: &super::midi_map::MapBand) {
+        if m.map.is_empty() {
+            // Two rows: the one line outruns the list's width.
+            return draw_rows(d, 2, usize::MAX, 0, |i, f| {
+                f(ListRow {
+                    label: ["NO CCS", "MIX+SEQ ON A CELL"][i],
+                    opens: false,
+                    note: None,
+                    look: RowLook::Dimmed,
+                })
+            });
+        }
+        draw_rows(
+            d,
+            m.map.len(),
+            self.at.row() as usize,
+            self.first,
+            |i, f| {
+                let r = m.row(i);
+                f(ListRow {
+                    label: r.label.as_str(),
+                    opens: false,
+                    note: Some(r.range.as_str()),
+                    look: r.look,
+                })
+            },
+        );
+    }
+
+    /// The map's rows as one number, for the list's region key.
+    #[cfg(feature = "midi-map")]
+    fn map_key(&self) -> u32 {
+        let Some(m) = &self.map else { return 0 };
+        (0..m.map.len()).fold(m.map.len() as u32, |h, i| {
+            let r = m.row(i);
+            let k = settings_key(&[r.label.as_str().as_bytes(), r.range.as_str().as_bytes()]);
+            h.rotate_left(7) ^ k
+        })
     }
 
     /// The PART strip, then PART's rows or SAVE TO PROJ's.

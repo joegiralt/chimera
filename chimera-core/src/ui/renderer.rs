@@ -72,8 +72,8 @@ pub struct Frame<'a> {
     /// Every Part (Mixer overview) and the one being edited.
     pub parts: &'a Parts,
     pub active_part: PartId,
-    /// The last MIX+PLUS outcome, shown in the focus band in place of the
-    /// value readout (issue #21).
+    /// The last MIX+PLUS outcome or MIDI learn's word, shown in the focus
+    /// band in place of the value readout (issue #21).
     pub prime_status: Option<PrimeStatus>,
     /// The project's pool, for PROJECT › POOL.
     pub pool: &'a crate::project::Pool,
@@ -278,7 +278,8 @@ impl Renderer {
             _ => {}
         }
         if let Some(status) = f.prime_status {
-            components::viz_status(display, status);
+            let label = view::view(f.def, f.focus, &f.ctx).label();
+            components::viz_status(display, status, label);
         }
     }
 

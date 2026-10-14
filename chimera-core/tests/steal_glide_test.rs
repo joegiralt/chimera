@@ -86,6 +86,8 @@ fn part(engine: EngineType, mode: Option<ResonatorMode>, steal: Steal) -> AudioS
         p.modal.mode = m;
     }
     p.pitch.steal = steal;
+    // The Parts carry INIT's wheel route: LFO 1 at its rest.
+    p.lfos[0].depth = 0.0;
     *shared.parts[0].params = p;
     shared
 }
