@@ -17,10 +17,11 @@ use chimera_core::dsp::algo::plan::OPS;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::knobs::{KNOBS, Knob, KnobPublisher, MOVES, coeff};
 use chimera_core::dsp::modal::ModalParams;
+use chimera_core::dsp::va::VaParams;
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::midi_in::{CC_RING_LEN, Cc, CcEvent, CcRing};
-use chimera_core::midi_map::Mappable;
+use chimera_core::midi_map::{MapEntry, Mappable};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams};
 use chimera_core::preset::Sound;
@@ -45,6 +46,8 @@ const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF)
 const TYPE: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::KIND);
 const WAVE_A: ParamAddr = ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::WAVE);
 const RESO: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE);
+const WAVE1: ParamAddr = ParamAddr::new(BlockRef::Va, VaParams::WAVE1);
+const VA_MODE: ParamAddr = ParamAddr::new(BlockRef::Va, VaParams::MODE);
 const STRUCTURE: ParamAddr = ParamAddr::new(BlockRef::Modal, ModalParams::STRUCTURE);
 
 /// A UI pass: 4 ms, three 1.33 ms audio blocks.
@@ -234,6 +237,50 @@ fn cc_moves_cutoff() {
     let p = b.ui.project();
     assert_ne!(p.part(P1).sound.stamp(), stamp, "the Sound was written");
     assert_eq!(part_status(p.part(P1), p.pool()), PartStatus::Edited);
+}
+
+/// Hand-speed sweeps to each end of a learned range, then rest: the
+/// stored value lands on the spec's own min and max, not a hair short,
+/// for a continuous target and a stepped one, full and inverted.
+#[test]
+fn swept_ends_reach_min_and_max() {
+    for a in [WAVE1, VA_MODE] {
+        for invert in [false, true] {
+            let mut b = Bench::new(Sound::plain_init(EngineType::Va));
+            b.map(P1, 20, a);
+            if invert {
+                let s = b.ui.project_mut().edit_part(P1).sound;
+                let e = s.map.entries()[0];
+                s.map.set(
+                    0,
+                    MapEntry {
+                        min: 255,
+                        max: 0,
+                        ..e
+                    },
+                );
+            }
+            let (lo, hi) = if invert {
+                (spec(a).max, spec(a).min)
+            } else {
+                (spec(a).min, spec(a).max)
+            };
+            for _ in 0..2 {
+                for v in (0..=100u8).rev() {
+                    b.pass(&[(20, v)]);
+                    b.passes(2);
+                }
+                b.passes(125);
+                assert_eq!(b.stored(P1, a), lo, "{a:?} CC 0, inverted {invert}");
+                for v in 27..=127u8 {
+                    b.pass(&[(20, v)]);
+                    b.passes(2);
+                }
+                b.passes(125);
+                assert_eq!(b.stored(P1, a), hi, "{a:?} CC 127, inverted {invert}");
+            }
+        }
+    }
 }
 
 /// 8 continuous knobs Part 1's engine reads, the filter's aside (the
