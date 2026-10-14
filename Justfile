@@ -177,8 +177,10 @@ release version *flags:
         cp target/release-bin/chimera$v.bin "$d/$n.bin"
         cp target/release-bin/chimera$v.bk2 "$d/$n.bk2"
         printf '%s\n' "Copy $n.bin and $n.bk2 onto the card in the bootloader's USB disk mode, then run its update once." \
+            "First delete any older chimera .bin and .bk2 files from the card." \
             "Or, with the unit on and connected: python3 chimera-usb.py update $n.zip" > "$d/README.txt"
         (cd "$d" && sha256sum "$n.bin" "$n.bk2" > SHA256SUMS)
+        chmod 644 "$d"/*
         touch -d "@$stamp" "$d"/*
         (cd "$d" && TZ=UTC zip -qX "$out/$n.zip" "$n.bin" "$n.bk2" README.txt SHA256SUMS)
         # As a tester unpacks it: exactly these members, whole, one build.

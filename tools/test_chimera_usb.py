@@ -962,8 +962,8 @@ class Update(unittest.TestCase):
                 z.writestr(n, d)
         return str(p)
 
-    def status(self, line):
-        return b"chimera 0.2.0\n" + line + b"\nOK\n"
+    def status(self, line, build=VERSION):
+        return b"firmware 0.2.0 release\nbuild " + build + b"\nprotocol 1\n" + line + b"\nOK\n"
 
     def open_line(self, seal=None):
         return b"bank2 open " + VERSION + b" seal=" + (seal or self.seal).hex().encode()
@@ -1077,6 +1077,28 @@ class Update(unittest.TestCase):
             rc, out, err = self.update(u, [self.package()])
         self.assertEqual(rc, 0, err)
         self.assertIn("OK updated", out)
+
+    def test_exit_1_unless_the_new_firmware_runs(self):
+        for build in (b"0.1.0 11111111", b"", b"0.2.0"):
+            with PutUnit(answers={b"status": self.status(self.open_line(), build)}) as u:
+                rc, out, err = self.update(u, [self.package()])
+            self.assertEqual(rc, 1, build)
+            self.assertIn("isn't the one running", err)
+        # A dirty build's `+` is the same build.
+        with PutUnit(answers={b"status": self.status(self.open_line(), VERSION + b"+")}) as u:
+            rc, out, err = self.update(u, [self.package()])
+        self.assertEqual(rc, 0, err)
+
+    def test_a_damaged_member_is_a_bad_package(self):
+        p = pathlib.Path(self.package())
+        data = bytearray(p.read_bytes())
+        at = data.index(self.bk2[300:340])
+        data[at : at + 40] = bytes(40)
+        p.write_bytes(bytes(data))
+        with PutUnit() as u:
+            rc, out, err = self.update(u, [str(p)])
+        self.assertEqual((rc, u.requests, self.events), (1, [], []))
+        self.assertIn("update:", err)
 
     def test_a_loose_pair_takes_the_same_path(self):
         b = pathlib.Path(self.tmp.name, "chimera.bin")

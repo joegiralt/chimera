@@ -92,6 +92,8 @@ class OneUpdate(unittest.TestCase):
             "check-bin-paths",
             "sha256sum -c --quiet SHA256SUMS",
             "README.txt",
+            "delete any older chimera .bin and .bk2 files",
+            'chmod 644 "$d"/*',
         ):
             self.assertIn(want, body)
         # The zip's members, exactly.

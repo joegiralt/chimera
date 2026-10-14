@@ -734,7 +734,10 @@ def read_package(path: str) -> Package:
         for n, cap in caps.items():
             if infos[n].file_size > cap:
                 raise BadPackage("%s: %s is %d bytes, too big" % (path, n, infos[n].file_size))
-        data = {n: z.read(n) for n in want}
+        try:
+            data = {n: z.read(n) for n in want}
+        except (OSError, zipfile.BadZipFile, zlib.error) as e:
+            raise BadPackage("%s: %s" % (path, getattr(e, "strerror", None) or e))
     listed = {}
     for ln in data["SHA256SUMS"].decode(errors="replace").splitlines():
         h, _, n = ln.partition(" ")
@@ -804,9 +807,10 @@ def stage(t: Target, env, pkg: Package):
 
 
 def updated(t: Target, pkg: Package) -> int:
-    """0 once `status` shows `pkg`'s seal open, else what it shows and 1.
-    The seal, not the version: a release whose .bk2 didn't change keeps
-    the one installed before it, and its version."""
+    """0 once `status` shows the new firmware running (its build line's
+    hash, the .bk2 version's) and `pkg`'s seal open, else what it shows
+    and 1. The seal, not bank 2's version: a release whose .bk2 didn't
+    change keeps the one installed before it, and its version."""
     want = "bank2 open %s seal=%s" % (pkg.version, pkg.seal)
     conn = open_conn(t)
     try:
@@ -818,6 +822,10 @@ def updated(t: Target, pkg: Package) -> int:
     finally:
         conn.close()
     text = body.decode(errors="replace")
+    build = next((ln for ln in text.splitlines() if ln.startswith("build ")), "")
+    hash_ = pkg.version.split()[-1:]
+    if status is Status.OK and (not hash_ or build.rstrip("+").split()[-1:] != hash_):
+        return fail("update: flashed, but status says %r: the new firmware (%s) isn't the one running" % (build or text.strip(), pkg.version))
     got = next((ln for ln in text.splitlines() if ln.startswith("bank2 ")), text.strip())
     if status is Status.OK and got.startswith("bank2 open ") and got.endswith(" seal=" + pkg.seal):
         print("OK updated %s" % pkg.version)

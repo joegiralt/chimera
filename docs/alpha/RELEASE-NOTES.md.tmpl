@@ -15,7 +15,7 @@ Built from source commit `@COMMIT@`, @DATE@.
 
 Pick one file, `chimera-@VERSION@.zip` or the `-orbit` one, and update once:
 
-- **With the bootloader:** unpack the zip, put the unit in the bootloader's USB disk mode, drag both files onto the card, and run the bootloader's update. The first start installs the rest behind DON'T POWER OFF: leave it on until it plays.
+- **With the bootloader:** unpack the zip, put the unit in the bootloader's USB disk mode, delete any older chimera `.bin` and `.bk2` files from the card, drag both new files onto it, and run the bootloader's update. The first start installs the rest behind DON'T POWER OFF: leave it on until it plays.
 - **Or with the tool:** with the unit on and connected, `python3 chimera-usb.py update chimera-@VERSION@.zip`. It checks the package, flashes, waits for the first start, and prints `OK updated` when it is done (it needs dfu-util).
 
 The [README](https://github.com/joegiralt/chimera-releases#readme) has the details and the steps to go back to the stock firmware. Never write the bootloader (anything below `0x08020000`) or the option bytes. On the card, Chimera writes only under `/CHIMERA/`; the only file it reads outside it is the `.bk2` you put there, and it never touches your stock files.
