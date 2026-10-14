@@ -101,6 +101,9 @@ pub struct Frame<'a> {
     pub orbit_focus: Option<orbit::Focus>,
     /// THEME's HINTS: gesture hints drawn (ADR 0086).
     pub hints: bool,
+    /// SYSTEM's PUSH ENCODERS: a value cell with no hint of its own hints
+    /// the pushes (ADR 0140).
+    pub push: bool,
     /// TAPE's strip: the active Part's source, and its newest note's heads.
     pub strip: &'a crate::ui::tape_strip::Overview,
     pub heads: crate::dsp::tape_engine::Heads,
@@ -634,7 +637,16 @@ impl Renderer {
             look(f, f.focus),
             f.prime_status,
         );
-        hint::focus(display, f.hint(view.hint(&f.ctx)));
+        // PUSH ENCODERS on: the pushes' hint over none or the generic
+        // LEARN (the two never fit together); a cell's own words stay.
+        let own = view.hint(&f.ctx);
+        let generic = own.is_empty() || own == view::LEARN_HINT;
+        let h = if cfg!(feature = "push-encoders") && generic && f.push && view.pushes() {
+            crate::ui::push::HINT
+        } else {
+            own
+        };
+        hint::focus(display, f.hint(h));
         if let View::Source(view::SourceState::Card { cost, free, .. }) = view {
             crate::ui::source_cell::draw_card_row(display, f.pool, cost, free, f.hints);
         }

@@ -30,6 +30,61 @@ pub const fn encoder_accel(n: u8) -> i8 {
 /// A burst ends after this long with no detent.
 pub const ENCODER_BURST_GAP_MS: u32 = 150;
 
+/// The HC165 bits a push read adds: a control board with push encoders
+/// (v1.2) chains a fourth register, the 32-bit read's top byte. A, B, C,
+/// D, E, F's switches; active low.
+pub const PUSH_BITS: [u32; NUM_ENCODERS] = [1 << 31, 1 << 30, 1 << 29, 1 << 27, 1 << 26, 1 << 28];
+
+/// Each encoder's push in a 32-bit read, pressed = true. A top byte of all
+/// zeros is a board with no fourth register (its serial input is tied
+/// low), not six pushes: none is pressed.
+pub const fn push_levels(bits: u32) -> [bool; NUM_ENCODERS] {
+    let mut out = [false; NUM_ENCODERS];
+    if bits & 0xFF00_0000 == 0 {
+        return out;
+    }
+    let mut i = 0;
+    while i < NUM_ENCODERS {
+        out[i] = bits & PUSH_BITS[i] == 0;
+        i += 1;
+    }
+    out
+}
+
+/// A switch's level, settled: it follows the raw level only once it has
+/// held `DEBOUNCE_TICKS` control ticks running.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Debounce {
+    level: bool,
+    run: u8,
+}
+
+/// 6 ms at the controls' 500 Hz.
+pub const DEBOUNCE_TICKS: u8 = 3;
+
+impl Debounce {
+    pub const fn new() -> Self {
+        Self {
+            level: false,
+            run: 0,
+        }
+    }
+
+    /// One tick's raw level in; the settled level out.
+    pub fn step(&mut self, raw: bool) -> bool {
+        if raw == self.level {
+            self.run = 0;
+        } else {
+            self.run += 1;
+            if self.run >= DEBOUNCE_TICKS {
+                self.level = raw;
+                self.run = 0;
+            }
+        }
+        self.level
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum EncoderId {
@@ -215,6 +270,12 @@ pub trait Controls {
     /// The controls' clock, in ms.
     fn now_ms(&self) -> Ms {
         Ms(0)
+    }
+
+    /// Encoder `id`'s push this frame, as a button's edges. Shells without
+    /// push encoders, or with them switched off, never press one.
+    fn push(&self, _id: EncoderId) -> Edges {
+        Edges::default()
     }
 }
 

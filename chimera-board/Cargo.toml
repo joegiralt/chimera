@@ -12,9 +12,13 @@ perf-probe = []
 bench = ["perf-probe"]
 sd-probe = []
 orbit = ["chimera-core/orbit"]
+# TAPE's bench build: it drops the card bench, for FLASH (#539).
+tape = ["chimera-core/tape"]
 # The MIDI map: CC apply, learn and the MIDI MAP page (#247). Bench
 # firmware leaves it out: FLASH (#507).
 midi-map = ["chimera-core/midi-map"]
+# SYSTEM's PUSH ENCODERS (ADR 0140): the 32-bit read.
+push-encoders = ["chimera-core/push-encoders"]
 # The master tape's bench build: it drops the card bench, for AXI (ADR 0087).
 master-tape = []
 usb-console = [

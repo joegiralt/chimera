@@ -1411,6 +1411,12 @@ impl Block for PitchParams {
         }
     }
 
+    /// PITCH under MUSICAL keeps its ladder: a rung, however fine.
+    #[cfg(feature = "push-encoders")]
+    fn ladder(&self, id: ParamId) -> bool {
+        id == Self::PITCH && self.snap == Snap::Musical
+    }
+
     fn enum_code(&self, id: ParamId) -> Option<u8> {
         match id {
             Self::STEAL => Some(self.steal.disk_code()),

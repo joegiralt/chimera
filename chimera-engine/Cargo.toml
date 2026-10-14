@@ -14,6 +14,8 @@ libm = "0.2"
 chimera-waves = { path = "../chimera-waves" }
 
 [features]
+# SYSTEM's PUSH ENCODERS' fine turn (ADR 0140): `block::nudge_fine`.
+push-encoders = []
 # The wave tables rendered into RAM at boot (`waves::render_into`), not
 # shipped in flash (ADR 0122). The firmware's; a host keeps the static.
 boot-waves = []

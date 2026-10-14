@@ -35,6 +35,7 @@ struct Fake {
     dfu_calls: usize,
     boot: Option<BootSeen>,
     sweep: Option<SweepRun>,
+    board: Option<chimera_core::board::BoardId>,
     sweep_ask: Option<SweepAsk>,
     sweeps: usize,
     usb_regs: Option<UsbRegs>,
@@ -54,6 +55,7 @@ impl Fake {
             dfu_calls: 0,
             boot: None,
             sweep: None,
+            board: None,
             sweep_ask: None,
             sweeps: 0,
             usb_regs: None,
@@ -92,6 +94,9 @@ impl Unit for Fake {
     fn sweep(&self) -> Option<SweepRun> {
         self.sweep
     }
+    fn board(&self) -> Option<chimera_core::board::BoardId> {
+        self.board
+    }
     fn request_sweep(&mut self) -> Option<SweepAsk> {
         self.sweeps += 1;
         self.sweep_ask
@@ -109,7 +114,12 @@ impl Unit for Fake {
 }
 
 fn audio() -> AudioStats {
-    AudioStats::new(SiliconRev::V, 480_000_000, ResetCause::Watchdog)
+    AudioStats::new(
+        SiliconRev::V,
+        chimera_core::board::BoardId::Lqfp176,
+        480_000_000,
+        ResetCause::Watchdog,
+    )
 }
 
 fn ask(u: &mut Fake, line: &str) -> String {
@@ -381,6 +391,26 @@ fn the_chips_status_ends_with_its_boot_line() {
              gintsts=00000004 dsts=00000005 pwr_cr3=00000006\nOK\n"
         )
     );
+}
+
+#[test]
+fn status_names_the_board_and_its_strap_after_at() {
+    use chimera_core::board::BoardId;
+    let mut u = Fake::new();
+    let mut want = String::new();
+    chimera_core::console::write_status(&u.ui, &mut want).unwrap();
+    for (b, line) in [
+        (BoardId::Lqfp176, "board lqfp176 straps=0b0001\n"),
+        (BoardId::Lqfp144, "board lqfp144 straps=0b0010\n"),
+        (BoardId::Lqfp100, "board lqfp100 straps=0b0011\n"),
+        (
+            BoardId::from_straps(0b1111),
+            "board unknown straps=0b1111\n",
+        ),
+    ] {
+        u.board = Some(b);
+        assert_eq!(ask(&mut u, "status\n"), format!("{want}{line}OK\n"));
+    }
 }
 
 #[test]

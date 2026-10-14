@@ -4,8 +4,9 @@ use core::fmt::{self, Write};
 
 use super::{
     CardAnswer, Command, Frame, MAX_LINE, NoArg, Out, PROTOCOL, Refusal, Request, Stalled,
-    write_card, write_shot, write_status, write_sweep,
+    write_board, write_card, write_shot, write_status, write_sweep,
 };
+use crate::board::BoardId;
 use crate::boot::{BootSeen, UsbRegs};
 use crate::hw::MAX_VOICES;
 use crate::perf::load::AudioStats;
@@ -65,6 +66,11 @@ pub trait Unit {
     /// The boot's card sweep, run or skipped: `status`'s `sweep` line,
     /// after `boot`. `None`: no line.
     fn sweep(&self) -> Option<SweepRun> {
+        None
+    }
+    /// The main board from its strap: `status`'s `board` line, after
+    /// `at`. `None`: no line.
+    fn board(&self) -> Option<BoardId> {
         None
     }
     /// `sweep`'s request (`ask_sweep`), reached before the answer starts;
@@ -138,6 +144,7 @@ pub fn answer(
         Err(r) => Err(Why::Refused(r)),
         Ok(Request::Help(NoArg)) => Ok(help(&mut t)),
         Ok(Request::Status(NoArg)) => Ok(write_status(unit.ui(), &mut t)
+            .and_then(|()| unit.board().map_or(Ok(()), |b| write_board(b, &mut t)))
             .and_then(|()| unit.boot().map_or(Ok(()), |b| writeln!(t, "{b}")))
             .and_then(|()| unit.sweep().map_or(Ok(()), |r| write_sweep(&r, &mut t)))
             .and_then(|()| {

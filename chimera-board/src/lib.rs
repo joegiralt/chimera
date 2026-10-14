@@ -31,6 +31,7 @@ pub mod usb;
 #[cfg(not(feature = "sd-probe"))]
 pub mod watchdog;
 
+use chimera_core::board::{BoardId, HC165_PA, HC165_PF, Port};
 #[cfg(not(feature = "sd-probe"))]
 use chimera_core::project::{LOAD_ACK_TIMEOUT_MS, LOAD_LINK};
 #[cfg(not(feature = "sd-probe"))]
@@ -57,6 +58,13 @@ fn fp_flush_to_zero(fpu: &mut cortex_m::peripheral::FPU) {
     }
 }
 
+/// The strap's pull-ups (about 40 kOhm) into the pins' few pF settle in
+/// well under a microsecond; 10 us is margin. Stock reads with none.
+const STRAP_SETTLE_US: u32 = 10;
+// `boot`'s typed pins are the ones the core's tables name.
+const _: () = assert!(HC165_PA.data == 0 && HC165_PA.load == 1 && HC165_PA.clk == 2);
+const _: () = assert!(HC165_PF.data == 2 && HC165_PF.load == 1 && HC165_PF.clk == 0);
+
 pub type Display = Stm32Display<
     spi::Spi<pac::SPI1, spi::Enabled>,
     PD8<Output<PushPull>>,
@@ -80,6 +88,7 @@ pub struct Board {
 #[cfg(not(feature = "sd-probe"))]
 struct SynthParts {
     reset_cause: ResetCause,
+    board_id: BoardId,
     led: stm32h7xx_hal::gpio::PE1<Output<PushPull>>,
     beat_led: orbit::BeatLed,
     backlight: Backlight,
@@ -126,13 +135,38 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     let gpioa = dp.GPIOA.split(ccdr.peripheral.GPIOA);
     let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);
     let gpioe = dp.GPIOE.split(ccdr.peripheral.GPIOE);
-    let gpiof = dp.GPIOF.split(ccdr.peripheral.GPIOF);
     let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
     #[cfg(feature = "midi-din")]
     let _midi_rx = gpiob.pb7.into_alternate::<7>();
-    let _hc_data = gpiof.pf2.into_floating_input();
-    let _hc_load = gpiof.pf1.into_push_pull_output();
-    let _hc_clk = gpiof.pf0.into_push_pull_output();
+    // The board's strap before its HC165 pins (ADR 0140): PD0..PD3 pulled
+    // up, left to settle, read once. They stay pulled-up inputs.
+    let straps = (
+        gpiod.pd0.into_pull_up_input(),
+        gpiod.pd1.into_pull_up_input(),
+        gpiod.pd2.into_pull_up_input(),
+        gpiod.pd3.into_pull_up_input(),
+    );
+    clocks::delay_us(clk.cpu_hz, STRAP_SETTLE_US);
+    let board_id = BoardId::from_pins([
+        straps.0.is_high(),
+        straps.1.is_high(),
+        straps.2.is_high(),
+        straps.3.is_high(),
+    ]);
+    // The pins `board_id.hc165()` names; the LQFP100 has no port F.
+    match board_id.hc165().port {
+        Port::A => {
+            let _hc_data = gpioa.pa0.into_floating_input();
+            let _hc_load = gpioa.pa1.into_push_pull_output();
+            let _hc_clk = gpioa.pa2.into_push_pull_output();
+        }
+        Port::F => {
+            let gpiof = dp.GPIOF.split(ccdr.peripheral.GPIOF);
+            let _hc_data = gpiof.pf2.into_floating_input();
+            let _hc_load = gpiof.pf1.into_push_pull_output();
+            let _hc_clk = gpiof.pf0.into_push_pull_output();
+        }
+    }
 
     // The front-panel LED between D and E: low from boot, never floating.
     // A plain GPIO; TIM3_CH4 is its pin for a later fade (#307). Without
@@ -201,6 +235,7 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
         #[cfg(not(feature = "sd-probe"))]
         synth: SynthParts {
             reset_cause,
+            board_id,
             led,
             beat_led,
             backlight,
@@ -220,6 +255,7 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
                 crs_rec: ccdr.peripheral.CRS,
                 boot: seen,
                 sweep: None,
+                board: board_id,
             },
         },
         sd: sd::SdParts {
@@ -327,6 +363,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         synth:
             SynthParts {
                 reset_cause,
+                board_id,
                 mut led,
                 beat_led,
                 mut backlight,
@@ -339,7 +376,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             },
         sd,
     } = board;
-    let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk, reset_cause);
+    let mut stats_r = probe::init(&mut cp.DCB, &mut cp.DWT, clk, reset_cause, board_id);
 
     let mut controls = Stm32Controls::new();
     let ui = shared::take_ui().expect("UI state taken once");
@@ -416,6 +453,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
 
     // Step 2.
     controls::start_systick(cp.SYST, &mut cp.SCB, clk.cpu_hz);
+    controls::wire(board_id.hc165());
     controls::enable();
 
     let (scope_w, mut scope_r) = shared::take_scope().expect("scope buffer taken once");
@@ -424,7 +462,14 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         shared::take_audio(ui.project().perf()).expect("audio buffer taken once");
     // Without MIDI DIN or `card` nothing takes a producer.
     #[cfg_attr(
-        not(any(feature = "midi-din", all(feature = "bench", feature = "usb-console"))),
+        not(any(
+            feature = "midi-din",
+            all(
+                feature = "bench",
+                feature = "usb-console",
+                not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
+            )
+        )),
         allow(unused_mut, unused_variables)
     )]
     let (mut producers, notes) = shared::NOTES.split().expect("note sources split once");
@@ -453,11 +498,12 @@ pub fn synth(board: Board, shell: Shell) -> ! {
 
     // The console's `card`: the measurement over the card, its chord on
     // the `CARD` note source. Not in ORBIT's bench builds, nor the master
-    // tape's: with it they no longer fit FLASH, or AXI's margin.
+    // tape's, nor TAPE's: with it they no longer fit FLASH, or AXI's
+    // margin (TAPE's comes back with streaming: #539).
     #[cfg(all(
         feature = "bench",
         feature = "usb-console",
-        not(any(feature = "orbit", feature = "master-tape"))
+        not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
     ))]
     let mut card_bench = card_speed::take(
         producers
@@ -495,12 +541,17 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         #[cfg(all(
             feature = "usb-console",
             feature = "bench",
-            not(any(feature = "orbit", feature = "master-tape"))
+            not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
         ))]
         let card_run: usb::CardRun = &mut |arg, s, store| Some(card_bench.answer(arg, store, s));
         #[cfg(all(
             feature = "usb-console",
-            any(not(feature = "bench"), feature = "orbit", feature = "master-tape")
+            any(
+                not(feature = "bench"),
+                feature = "orbit",
+                feature = "master-tape",
+                feature = "tape"
+            )
         ))]
         let card_run: usb::CardRun = &mut |_, _, _| None;
         #[cfg(feature = "usb-console")]
@@ -516,6 +567,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
                 usb::Restart::Sweep(_) => marker.reset(),
             }
         }
+        // SYSTEM's PUSH ENCODERS as last edited: off, the read stays 24 bits.
+        controls::set_push(ui.midi().push);
         controls.snapshot();
         // ORBIT's latest view: the pages draw it, the drift is absorbed.
         orbit.see(ui);
