@@ -763,7 +763,7 @@ fn map_round_trips() {
     let st = BuildStamp::new("0.1.0", "02e440e2", false);
     let mut lib = VecSink(Vec::new());
     write_file(&mut lib, &header(&s), &mut |w| {
-        encode_library_sound(&s, &st, w)
+        encode_library_sound(&s, &st, None, w)
     })
     .unwrap();
     let back = decode(&lib.0).unwrap();

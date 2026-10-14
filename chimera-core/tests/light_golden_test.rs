@@ -25,13 +25,13 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_personal_theme", 0x3a2a9ae7815335b2),
     // Re-recorded: FACTORY joins the title, B ◂▸ moves to hint line 1.
     // Then the formant merge: the pool meter's cost.
-    ("sound_browser", 0xf31114affd5e4164),
+    ("sound_browser", 0x0e534f5f78e5c519),
     ("toast_exfat", 0xd8ee278545272c31),
     // Re-recorded on the formant merge: the pool meter's cost.
-    ("factory_described", 0xf156c95bd722c0f3),
-    ("factory_empty", 0xe0ed61157e6d73c3),
-    ("factory_no_card", 0x44e7d55b3b0d5a3f),
-    ("factory_coming_soon", 0x6c02b7c62f5a5a32),
+    ("factory_described", 0x9b21c1fb883a64a6),
+    ("factory_empty", 0x6d3924c1bafc3003),
+    ("factory_no_card", 0x8f07edc2301da0ff),
+    ("factory_coming_soon", 0x1f4258c50d9f09ce),
 ];
 
 fn light(name: &str) -> Fb {
