@@ -1,4 +1,4 @@
-# 0137. A Sound carries a 16-entry MIDI map, learned with MIX+SEQ on the focused cell
+# 0139. A Sound carries a 16-entry MIDI map, learned with MIX+SEQ on the focused cell
 
 - **Status:** Proposed
 - **Deciders:** project owner (2026-10-13: "go with your recommendations"), firmware
