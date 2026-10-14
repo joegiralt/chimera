@@ -45,6 +45,7 @@ impl DirStore {
             Dir::Sounds => self.root.join("CHIMERA/SOUNDS"),
             Dir::Bench => self.root.join("CHIMERA/BENCH"),
             Dir::Tapes => self.root.join("CHIMERA/TAPES"),
+            Dir::System => self.root.join("CHIMERA/SYSTEM"),
         }
     }
 

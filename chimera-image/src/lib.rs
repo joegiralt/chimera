@@ -13,7 +13,7 @@ pub use header::{
     UNSEALED_HEADER, Version,
 };
 pub use install::{
-    AutoInstall, BANK2_BAD, Bank2Sector, Bank2Word, BootAction, Flash, FlashFail, InstallFail,
-    Plan, auto_install, boot_action, install, plan,
+    AutoInstall, BANK2_BAD, Bank2Sector, Bank2Word, BootAction, Flash, FlashAt, FlashFail,
+    InstallFail, Plan, auto_install, boot_action, install, plan,
 };
 pub use judge::{Bank2Memory, Door, ImageRead, ReadFail, Verdict, judge, judge_uncommitted};

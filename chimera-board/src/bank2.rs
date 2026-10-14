@@ -107,7 +107,7 @@ pub fn set_mpu(s: Mpu2) {
 
 fn bank2() -> &'static pac::flash::BANK {
     // SAFETY: FLASH's fixed register block, its bank-2 half: KEYR2, CR2,
-    // SR2 and CCR2, nothing else. Only this module touches them, from the
+    // SR2 and CCR2, nothing else. Only this module writes them, from the
     // boot or the UI loop; no interrupt touches the flash controller.
     unsafe { (*pac::FLASH::ptr()).bank2() }
 }
@@ -237,14 +237,14 @@ impl FlashBank2 {
     }
 
     /// Still as `new` left it: region 2 `Write`, the door closed. Anything
-    /// else (the caller reopened it) refuses the op as `Locked`: nothing
-    /// erases code a door may run, or stores through a region not mapped
-    /// for it.
+    /// else (the caller reopened it) refuses the op as `NotWritable`:
+    /// nothing erases code a door may run, or stores through a region not
+    /// mapped for it.
     fn writable() -> Result<(), FlashFail> {
         if mpu() == Mpu2::Write && !DOOR_CELL.is_open() {
             Ok(())
         } else {
-            Err(FlashFail::Locked)
+            Err(FlashFail::NotWritable)
         }
     }
 
@@ -261,14 +261,17 @@ impl FlashBank2 {
 }
 
 impl ImageRead for FlashBank2 {
+    /// `Err` unless still `writable`.
     fn read(&mut self, off: u32, buf: &mut [u8]) -> Result<(), ReadFail> {
+        Self::writable().map_err(|_| ReadFail)?;
         clear_flags();
         FlashRead.read(off, buf)
     }
 }
 
-// SAFETY: `read` is `FlashRead`'s, region 2 `Write`: uncached, live; SR2
-// cleared first, so its DBECCERR is this read's.
+// SAFETY: `read` is `FlashRead`'s, and only with region 2 `Write`
+// (`writable`): strongly-ordered, uncached, live; SR2 cleared first, so
+// its DBECCERR is this read's.
 unsafe impl Bank2Memory for FlashBank2 {}
 
 // SAFETY: the registers are bank 2's own (`bank2()`); an erase names a
@@ -314,17 +317,27 @@ unsafe impl Flash for FlashBank2 {
 }
 
 /// Bank 2 judged against this build's seal; on `Good`, region 2 `Open`,
-/// the door cell opened and the door checked once: `probe(1) == 43`, the
-/// table's first and last bytes. Anything less leaves region 2 `Read`
-/// (the console's `flash` still reads S0) and the cell closed.
+/// the door cell opened and the door checked once.
 #[cfg(feature = "bank2")]
 pub fn boot_judge() -> Bank2Status {
+    open_door()
+}
+
+/// Bank 2 judged against this build's seal; on `Good`, region 2 `Open`,
+/// the door cell opened and the door checked once: `probe(1) == 43`, the
+/// table's first and last bytes. Anything less leaves region 2 `Read`
+/// (the console's `flash` still reads S0) and the cell closed. The boot's
+/// and an install's one way in.
+#[cfg(feature = "bank2")]
+fn open_door() -> Bank2Status {
     use chimera_core::bank2::{DOOR_MAGIC, PROBE_ADDS, TABLE_LEN};
     use chimera_image::Door;
 
     let Some(seal) = crate::bank2_seal() else {
         return Bank2Status::Unsealed;
     };
+    DOOR_CELL.close();
+    set_mpu(Mpu2::Read);
     clear_flags();
     let door = match Door::open(&mut FlashRead, &seal) {
         Ok(d) => d,
@@ -355,4 +368,67 @@ pub fn boot_judge() -> Bank2Status {
 #[cfg(not(feature = "bank2"))]
 pub fn boot_judge() -> Bank2Status {
     Bank2Status::Unsealed
+}
+
+/// `bank2 install`, from the UI loop before its answer starts. The staged
+/// file is judged first; unless that refuses it, TAPE lets go, the door
+/// closes, region 2 goes `Write`, DON'T POWER OFF goes up and the file is
+/// written while the audio plays from bank 1. Then `open_door` judges and
+/// checks bank 2 again: open, or region 2 `Read` and the cell closed. The
+/// caller redraws the whole screen after.
+#[cfg(all(feature = "bank2", feature = "usb-console"))]
+#[inline(never)]
+pub fn run_install(
+    store: &mut impl chimera_hal::store::Store,
+    ui: &mut chimera_core::ui::UiState,
+    display: &mut impl chimera_hal::ChimeraDisplay,
+    cpu_hz: u32,
+) -> chimera_core::console::Bank2Answer {
+    use chimera_core::console::{
+        Bank2Answer, Bank2Audio, Bank2Refusal, CardImage, check_staged, installed,
+    };
+    use chimera_core::ui::{fmt::FmtBuf, installing};
+
+    let refuse = Bank2Answer::Refused;
+    let Some(seal) = crate::bank2_seal() else {
+        return refuse(Bank2Refusal::Unsealed);
+    };
+    if ui.card_pending() {
+        return refuse(Bank2Refusal::Busy);
+    }
+    let vol = match store.mount() {
+        Ok(v) => v,
+        Err(e) => return refuse(Bank2Refusal::Card(e)),
+    };
+    let mut staged = CardImage::new(store, vol);
+    let verdict = chimera_image::judge(&mut staged, &seal);
+    let open = ui.bank2().is_some_and(|b| b.is_open());
+    let h = match check_staged(open, &verdict, staged.error()) {
+        Ok(h) => h,
+        Err(a) => return a,
+    };
+    let before = audio();
+    ui.close_bank2();
+    let mut flash = FlashBank2::new(cpu_hz);
+    let mut line = FmtBuf::new();
+    let _ = write!(line, "INSTALLING {}", h.version.as_str());
+    installing::draw(display, line.as_str());
+    let mut buf = [0u8; 512];
+    let r = chimera_image::install(&mut flash, &mut staged, &seal, &mut buf);
+    let now = open_door();
+    ui.set_bank2(now);
+    let after = audio();
+    let audio = Bank2Audio {
+        overruns: [before[0], after[0]],
+        blocks: [before[1], after[1]],
+    };
+    installed(r, &now, audio)
+}
+
+/// The audio's overruns and blocks rendered.
+#[cfg(all(feature = "bank2", feature = "usb-console"))]
+fn audio() -> [u32; 2] {
+    use crate::shared::{BLOCKS, OVERRUNS};
+    use core::sync::atomic::Ordering::Relaxed;
+    [OVERRUNS.load(Relaxed), BLOCKS.load(Relaxed)]
 }

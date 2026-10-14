@@ -126,6 +126,7 @@ macro_rules! table {
             Dfu    (NoArg)   => "dfu",    "restart into the ROM loader for just flash",
             Sweep  (NoArg)   => "sweep",  "the lost-cluster sweep at the next boot: restarts into it",
             Flash  (NoArg)   => "flash",  "flash controller and bank 2, read only",
+            Bank2  (Bank2Arg) => "bank2", "bank 2: its state; bank2 install: the staged file into it",
             $($card)*
         }
     };
@@ -260,5 +261,7 @@ mod fault;
 pub use fault::*;
 mod flash;
 pub use flash::*;
+mod bank2;
+pub use bank2::*;
 mod nocard;
 pub use nocard::NoCard;

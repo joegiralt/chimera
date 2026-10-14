@@ -5,7 +5,7 @@ use core::fmt::{self, Write};
 /// Bank 1's state of the door, for the board.
 pub use chimera_engine::bank2::{DOOR_CELL, DOOR_MAGIC, PROBE_ADDS, TABLE_LEN};
 use chimera_image::Verdict;
-pub use chimera_image::Version;
+pub use chimera_image::{Seal, Version};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Bank2Status {
@@ -48,6 +48,11 @@ impl Bank2Status {
     /// `bank2 open 0.2.0 02e440e2 seal=0123456789abcdef`, `bank2 empty`, …
     pub fn line(&self, w: &mut impl Write) -> fmt::Result {
         w.write_str("bank2 ")?;
+        self.state(w)
+    }
+
+    /// The line without `bank2 `: `empty`, `stale have 0.2.0`, …
+    pub fn state(&self, w: &mut impl Write) -> fmt::Result {
         match self {
             Self::Unsealed => w.write_str("unsealed"),
             Self::Empty => w.write_str("empty"),

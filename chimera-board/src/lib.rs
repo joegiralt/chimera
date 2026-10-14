@@ -525,8 +525,14 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         let card_run: usb::CardRun = &mut |_, _, _| None;
         #[cfg(feature = "usb-console")]
         if let Some(restart) = usb.up().and_then(|u| {
-            let frame = display.frame();
-            u.service(ui, stats_r.as_mut(), bench_text, frame, card_run, store)
+            u.service(
+                ui,
+                stats_r.as_mut(),
+                bench_text,
+                &mut display,
+                card_run,
+                store,
+            )
         }) {
             // As the menu's path: a THEME change in this visit is kept.
             ui.sync_system_now(&mut sync, &mut card, store, &mut settings);
@@ -536,6 +542,11 @@ pub fn synth(board: Board, shell: Shell) -> ! {
                 usb::Restart::Sweep(_) => marker.reset(),
             }
         }
+        // `bank2 install` held the screen: everything redraws below.
+        #[cfg(feature = "usb-console")]
+        let installed = usb.up().is_some_and(|u| u.take_redraw());
+        #[cfg(not(feature = "usb-console"))]
+        let installed = false;
         controls.snapshot();
         // ORBIT's latest view: the pages draw it, the drift is absorbed.
         orbit.see(ui);
@@ -586,8 +597,9 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         last_tick = now;
         ui.step_idle(elapsed_ms, busy);
         let toast = ui.step_toast(elapsed_ms);
-        if toast == ToastStep::Ended || busy {
-            // The toast or BUSY covered rows the dirty regions don't know about.
+        if toast == ToastStep::Ended || busy || installed {
+            // The toast, BUSY or the install covered rows the dirty regions
+            // don't know about.
             ui.render_with_audio(&mut display, &perf.stats, stats.as_ref(), scope_r.read());
             ui.prime_regions(&perf.stats, stats.as_ref(), scope_r.read());
             if let ToastStep::Show(text) = toast {

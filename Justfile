@@ -3,7 +3,7 @@
 # The bench's builds, an area each (all of it no longer fits FLASH), and
 # the filter probes `tools/loop_count.py` counts. Each is built with
 # `--no-default-features` (the `bench` feature brings back all of the
-# shipping set but the console's `put`; `filter-probes`, `default`).
+# shipping set but the console's `put`; so does `filter-probes`).
 # bench-tape is out until it fits FLASH again (private issue #506).
 bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,orbit bench-orbit filter-probes"
 bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit"

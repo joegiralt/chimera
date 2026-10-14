@@ -79,6 +79,7 @@ shot    the screen in THEME's colours; shot raw: canonical
 dfu     restart into the ROM loader for just flash
 sweep   the lost-cluster sweep at the next boot: restarts into it
 flash   flash controller and bank 2, read only
+bank2   bank 2: its state; bank2 install: the staged file into it
 ls      files and sizes in PROJECTS; ls tapes, ls sounds: theirs
 put     a project, Sound or source: <path> <size> <crc32> [--over]
 rm      a library Sound's pair: /CHIMERA/SOUNDS/S#######
@@ -86,7 +87,7 @@ get     a library Sound's file, base64: /CHIMERA/SOUNDS/S#######
 OK
 ```
 
-A `bank2-spike` build lists `b2erase`, `b2prog`, `b2call` and `b2stat` after `flash`. The first line names the protocol version, `1`. A change that breaks a host parser bumps it. Rows come from the command table in table order.
+The first line names the protocol version, `1`. A change that breaks a host parser bumps it. Rows come from the command table in table order.
 
 **`status`**
 
@@ -253,7 +254,18 @@ OK
 
 The flash controller's state for bank 2 (RM0433 § 4.9, the bank-2 design's Phase 0a), each register's raw word then its fields. Read only: nothing is written, unlocked or erased, and the option bytes are untouched. `protected` lists the sectors whose WRPS bit is 0; `pcrop` and `secure` give an area's first and last byte, or `none` when START > END. `peek` is the first 32 bytes at bank 2's start, `erased` when all are 0xFF; the stock bootloader's slot at 0x08180000 is no longer read, as the MPU makes it no-access (ADR 0137). The register lines go out before the peek, and `sr*_after` shows any ECC error the peek raised. The desktop answers `ERR flash is not in this build`.
 
-**`b2erase`, `b2prog`, `b2call`, `b2stat`** (DEVELOPER, SPIKE: `bank2-spike` builds only, `just firmware-b2spike`; never shipping, orbit or bench)
+**`bank2`, `bank2 install`**
+
+```
+bank2 empty
+OK
+audio overruns 0 -> 0 blocks +412
+OK bank2 open 0.2.0 02e440e2
+```
+
+`bank2` is the `status` line for bank 2 (ADR 0137), then `OK`. `bank2 install` writes the staged `/CHIMERA/SYSTEM/BANK2.BK2` into bank 2 from the UI loop, before the answer starts, with the audio playing from bank 1 and `DON'T POWER OFF` on the screen; the screen redraws in full after it. The staged file is judged against this build's seal first: nothing is written for `ERR bank2: nothing staged`, `ERR bank2: staged: needs firmware <version>` (sealed for another build), `ERR bank2: staged: <state>` (`torn`, `corrupt`, …), `ERR bank2: <card error>`, `ERR bank2: firmware unsealed`, `ERR bank2: busy` (card work pending) or `OK already installed` (bank 2 open with that seal). Otherwise the door closes, bank 2 is written (S0 erased first, commit word last), and the door is judged and checked again: `OK bank2 open <version>`, or `ERR bank2: flash <busy|locked|not writable|errors <sr2 hex>|timeout|not erased> at <S0..S3|word hex>`, `ERR bank2: readback <state>`, `ERR bank2: staged file unreadable`, `ERR bank2: staged: <state>` or `ERR bank2: door check failed`, with bank 2 left not open. Either way the `audio` line before it gives the overrun counter before and after and the blocks rendered meanwhile. The file gets there by `put /CHIMERA/SYSTEM/BANK2.BK2 <size> <crc32>` (at most 512 KiB): the old one is deleted, the new one read back and judged; one sealed for another build stays (`OK staged: needs firmware <version>`), anything else is deleted (`ERR put: not a bank-2 image`), and an unsealed build stages nothing (`ERR put: firmware unsealed`).
+
+**`b2erase`, `b2prog`, `b2call`, `b2stat`** (RETIRED with the spike, along with `bank2-spike` and `just firmware-b2spike`; kept as the phase 0b record)
 
 ```
 b2erase sector 0 08100000..0811ffff psize 2 timeout_ms 6000

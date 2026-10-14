@@ -2067,6 +2067,10 @@ pub const OVERLAYS: &[(&str, Overlay)] = &[
     ("busy", Overlay::Busy),
     ("toast_saved", Overlay::Toast("SAVED")),
     ("toast_exfat", Overlay::Toast("CARD IS EXFAT: FORMAT FAT32")),
+    (
+        "installing",
+        Overlay::Installing("INSTALLING 0.2.0 02e440e2"),
+    ),
 ];
 
 /// The two faces of the one overlay component.
@@ -2074,6 +2078,8 @@ pub const OVERLAYS: &[(&str, Overlay)] = &[
 pub enum Overlay {
     Busy,
     Toast(&'static str),
+    /// Bank 2's install, the whole screen.
+    Installing(&'static str),
 }
 
 /// Every case name: the screens, then the overlays.
@@ -2090,6 +2096,10 @@ pub fn render_overlay(o: Overlay) -> (Fb, (u16, u16)) {
     let band = match o {
         Overlay::Busy => draw_busy(&mut fb),
         Overlay::Toast(text) => draw_toast(&mut fb, text),
+        Overlay::Installing(line) => {
+            chimera_core::ui::installing::draw(&mut fb, line);
+            (0, chimera_hal::SCREEN_HEIGHT)
+        }
     };
     (fb, band)
 }

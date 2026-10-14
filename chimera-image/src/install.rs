@@ -56,6 +56,8 @@ impl Bank2Word {
 pub enum FlashFail {
     Busy,
     Locked,
+    /// The MPU or the door not as the writer left them: nothing started.
+    NotWritable,
     /// The status register's error bits.
     Errors(u32),
     Timeout,
@@ -92,11 +94,18 @@ pub fn plan(h: &Header) -> Plan {
     }
 }
 
+/// Where a flash op failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlashAt {
+    Sector(Bank2Sector),
+    Word(Bank2Word),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InstallFail {
     /// The staged file isn't `Good` for this build; flash untouched.
     Staged(Verdict),
-    Flash(FlashFail),
+    Flash(FlashFail, FlashAt),
     /// What flash judged after writing; the commit word stays erased unless
     /// this came from the final `Door::open`.
     Readback(Verdict),
@@ -122,7 +131,9 @@ pub fn install(
     };
     let p = plan(&h);
     for &s in p.sectors {
-        flash.erase(s).map_err(InstallFail::Flash)?;
+        flash
+            .erase(s)
+            .map_err(|f| InstallFail::Flash(f, FlashAt::Sector(s)))?;
     }
     let mut done = 0u32;
     while done < h.body_len {
@@ -152,7 +163,9 @@ fn program_words(flash: &mut impl Flash, off: u32, data: &[u8]) -> Result<(), In
     for w in data.as_chunks::<32>().0 {
         if w.iter().any(|&b| b != 0xFF) {
             let at = Bank2Word::new(addr).ok_or(InstallFail::Readback(Verdict::Corrupt))?;
-            flash.program(at, w).map_err(InstallFail::Flash)?;
+            flash
+                .program(at, w)
+                .map_err(|f| InstallFail::Flash(f, FlashAt::Word(at)))?;
         }
         addr = addr.saturating_add(FLASH_WORD);
     }

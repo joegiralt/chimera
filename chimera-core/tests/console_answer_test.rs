@@ -1,8 +1,9 @@
 use chimera_core::boot::{BootAction, BootSeen, UsbRegs};
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::console::{
-    CardAnswer, CardFail, CardSpeed, Colours, Command, Console, FlashPeek, FlashRegs, Frame, NoArg,
-    Out, Request, SHOT_HEADER, Stalled, Stats, SweepAsk, Unit, answer,
+    Bank2Answer, Bank2Audio, Bank2Fail, Bank2Refusal, CardAnswer, CardFail, CardSpeed, Colours,
+    Command, Console, FlashPeek, FlashRegs, Frame, NoArg, Out, Request, SHOT_HEADER, Stalled,
+    Stats, SweepAsk, Unit, answer, check_staged, installed,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::reset::ResetCause;
@@ -40,6 +41,8 @@ struct Fake {
     usb_regs: Option<UsbRegs>,
     flash: Option<(FlashRegs, FlashPeek)>,
     forgotten: usize,
+    bank2: Option<Bank2Answer>,
+    installs: usize,
 }
 
 impl Fake {
@@ -60,6 +63,8 @@ impl Fake {
             usb_regs: None,
             flash: None,
             forgotten: 0,
+            bank2: None,
+            installs: 0,
         }
     }
 }
@@ -106,6 +111,10 @@ impl Unit for Fake {
     }
     fn flash_peek(&self) -> Option<FlashPeek> {
         self.flash.map(|f| f.1)
+    }
+    fn bank2_install(&mut self) -> Option<Bank2Answer> {
+        self.installs += 1;
+        self.bank2
     }
     type Files = chimera_core::console::NoCard;
     fn files(&mut self) -> Option<&mut Self::Files> {
@@ -159,6 +168,7 @@ fn help_is_the_specs_text() {
          dfu     restart into the ROM loader for just flash\n\
          sweep   the lost-cluster sweep at the next boot: restarts into it\n\
          flash   flash controller and bank 2, read only\n\
+         bank2   bank 2: its state; bank2 install: the staged file into it\n\
          ls      files and sizes in PROJECTS; ls tapes, ls sounds: theirs\n\
          put     a project, Sound or source: <path> <size> <crc32> [--over]\n\
          rm      a library Sound's pair: /CHIMERA/SOUNDS/S#######\n\
@@ -843,4 +853,219 @@ fn flash_registers_then_peek_then_ok() {
     assert_eq!(keys.first(), Some(&"acr"));
     assert!(keys.iter().position(|k| *k == "scar_cur2") < keys.iter().position(|k| *k == "peek"));
     assert_eq!(&keys[keys.len() - 3..], ["sr1_after", "sr2_after", "OK"]);
+}
+
+use chimera_core::bank2::{Bank2Status, Version};
+use chimera_image::{Bank2Sector, Bank2Word, FlashAt, FlashFail, Header, InstallFail, Verdict};
+
+fn v020() -> Version {
+    Version::new("0.2.0 02e440e2")
+}
+
+const AUDIO: Bank2Audio = Bank2Audio {
+    overruns: [3, 3],
+    blocks: [10, 1660],
+};
+
+#[test]
+fn bank2_is_the_boot_line_then_ok() {
+    let mut u = Fake::new();
+    assert_eq!(ask(&mut u, "bank2\n"), "ERR bank2 is not in this build\n");
+    u.ui.set_bank2(Bank2Status::Stale { have: v020() });
+    assert_eq!(
+        ask(&mut u, "bank2\n"),
+        "bank2 stale have 0.2.0 02e440e2\nOK\n"
+    );
+    assert_eq!(u.installs, 0, "bank2 alone writes nothing");
+}
+
+#[test]
+fn bank2_install_answers() {
+    let fail = |why| Bank2Answer::Failed { why, audio: AUDIO };
+    let refused = Bank2Answer::Refused;
+    let word = Bank2Word::new(0x0810_0120).unwrap();
+    let cases = [
+        (
+            Bank2Answer::Open {
+                version: v020(),
+                audio: AUDIO,
+            },
+            "audio overruns 3 -> 3 blocks +1650\nOK bank2 open 0.2.0 02e440e2\n",
+        ),
+        (Bank2Answer::Already, "OK already installed\n"),
+        (
+            refused(Bank2Refusal::Stale(Version::new("0.3.0"))),
+            "ERR bank2: staged: needs firmware 0.3.0\n",
+        ),
+        (
+            refused(Bank2Refusal::Nothing),
+            "ERR bank2: nothing staged\n",
+        ),
+        (
+            refused(Bank2Refusal::Staged(Bank2Status::Foreign)),
+            "ERR bank2: staged: foreign\n",
+        ),
+        (
+            refused(Bank2Refusal::Card(StoreError::NoCard)),
+            "ERR bank2: NO CARD\n",
+        ),
+        (
+            refused(Bank2Refusal::Unsealed),
+            "ERR bank2: firmware unsealed\n",
+        ),
+        (refused(Bank2Refusal::Busy), "ERR bank2: busy\n"),
+        (
+            fail(Bank2Fail::Flash(
+                FlashFail::Timeout,
+                FlashAt::Sector(Bank2Sector::S0),
+            )),
+            "audio overruns 3 -> 3 blocks +1650\nERR bank2: flash timeout at S0\n",
+        ),
+        (
+            fail(Bank2Fail::Flash(
+                FlashFail::Errors(1 << 17),
+                FlashAt::Word(word),
+            )),
+            "audio overruns 3 -> 3 blocks +1650\nERR bank2: flash errors 00020000 at 08100120\n",
+        ),
+        (
+            fail(Bank2Fail::Flash(
+                FlashFail::NotWritable,
+                FlashAt::Word(word),
+            )),
+            "audio overruns 3 -> 3 blocks +1650\nERR bank2: flash not writable at 08100120\n",
+        ),
+        (
+            fail(Bank2Fail::Readback(Bank2Status::Torn)),
+            "audio overruns 3 -> 3 blocks +1650\nERR bank2: readback torn\n",
+        ),
+        (
+            fail(Bank2Fail::StagedRead),
+            "audio overruns 3 -> 3 blocks +1650\nERR bank2: staged file unreadable\n",
+        ),
+        (
+            fail(Bank2Fail::Door),
+            "audio overruns 3 -> 3 blocks +1650\nERR bank2: door check failed\n",
+        ),
+    ];
+    for (a, want) in cases {
+        let mut u = Fake::new();
+        u.bank2 = Some(a);
+        assert_eq!(ask(&mut u, "bank2 install\n"), want, "{a:?}");
+        assert_eq!(u.installs, 1);
+    }
+    let mut u = Fake::new();
+    assert_eq!(
+        ask(&mut u, "bank2 install\n"),
+        "ERR bank2 is not in this build\n"
+    );
+}
+
+#[test]
+fn every_flash_failure_has_its_words() {
+    for (f, want) in [
+        (FlashFail::Busy, "busy"),
+        (FlashFail::Locked, "locked"),
+        (FlashFail::NotWritable, "not writable"),
+        (FlashFail::Errors(0x0004_0000), "errors 00040000"),
+        (FlashFail::Timeout, "timeout"),
+        (FlashFail::NotErased, "not erased"),
+    ] {
+        let mut u = Fake::new();
+        u.bank2 = Some(Bank2Answer::Failed {
+            why: Bank2Fail::Flash(f, FlashAt::Sector(Bank2Sector::S3)),
+            audio: AUDIO,
+        });
+        let a = ask(&mut u, "bank2 install\n");
+        assert!(a.ends_with(&format!("flash {want} at S3\n")), "{a}");
+    }
+}
+
+fn header() -> Header {
+    Header {
+        body_len: 4352,
+        body_crc: 0x1234_5678,
+        door_off: 0x100,
+        seal: *b"SEAL0001",
+        version: v020(),
+    }
+}
+
+/// What the staged file's verdict allows, before anything is written.
+#[test]
+fn the_staged_file_decides_first() {
+    let h = header();
+    assert_eq!(check_staged(false, &Verdict::Good(h), None), Ok(h));
+    assert_eq!(
+        check_staged(true, &Verdict::Good(h), None),
+        Err(Bank2Answer::Already)
+    );
+    let refused = |r| Err(Bank2Answer::Refused(r));
+    assert_eq!(
+        check_staged(false, &Verdict::Unreadable, Some(StoreError::NotFound)),
+        refused(Bank2Refusal::Nothing)
+    );
+    assert_eq!(
+        check_staged(true, &Verdict::Unreadable, Some(StoreError::Timeout)),
+        refused(Bank2Refusal::Card(StoreError::Timeout))
+    );
+    assert_eq!(
+        check_staged(false, &Verdict::Stale { have: v020() }, None),
+        refused(Bank2Refusal::Stale(v020()))
+    );
+    for (v, s) in [
+        (Verdict::Empty, Bank2Status::Empty),
+        (Verdict::Torn, Bank2Status::Torn),
+        (Verdict::Foreign, Bank2Status::Foreign),
+        (Verdict::Format(2), Bank2Status::Format(2)),
+        (Verdict::Corrupt, Bank2Status::Corrupt),
+        (Verdict::Unreadable, Bank2Status::Corrupt),
+    ] {
+        assert_eq!(
+            check_staged(false, &v, None),
+            refused(Bank2Refusal::Staged(s)),
+            "{v:?}"
+        );
+    }
+}
+
+/// The install's outcome and bank 2 as the door then judged it.
+#[test]
+fn the_install_and_the_door_decide_the_answer() {
+    let h = header();
+    let open = Bank2Status::Open {
+        version: v020(),
+        seal: h.seal,
+    };
+    let fail = |why| Bank2Answer::Failed { why, audio: AUDIO };
+    assert_eq!(
+        installed(Ok(h), &open, AUDIO),
+        Bank2Answer::Open {
+            version: v020(),
+            audio: AUDIO
+        }
+    );
+    assert_eq!(
+        installed(Ok(h), &Bank2Status::Corrupt, AUDIO),
+        fail(Bank2Fail::Door)
+    );
+    let at = FlashAt::Sector(Bank2Sector::S1);
+    for (r, why) in [
+        (
+            InstallFail::Flash(FlashFail::Timeout, at),
+            Bank2Fail::Flash(FlashFail::Timeout, at),
+        ),
+        (
+            InstallFail::Readback(Verdict::Torn),
+            Bank2Fail::Readback(Bank2Status::Torn),
+        ),
+        (InstallFail::Io, Bank2Fail::StagedRead),
+        (
+            InstallFail::Staged(Verdict::Corrupt),
+            Bank2Fail::Staged(Bank2Status::Corrupt),
+        ),
+    ] {
+        // Even if the door somehow judged open, a failed install says so.
+        assert_eq!(installed(Err(r), &open, AUDIO), fail(why), "{r:?}");
+    }
 }

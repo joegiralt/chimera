@@ -15,6 +15,7 @@ pub mod focus;
 pub mod glyph;
 pub mod hint;
 pub mod hold;
+pub mod installing;
 pub mod jog;
 pub mod led;
 pub mod library;
@@ -560,6 +561,10 @@ impl UiState {
     pub fn bank2(&self) -> Option<crate::bank2::Bank2Status> {
         self.bank2
     }
+
+    /// Lets go of everything that reads bank 2, before the door closes for
+    /// an install. Nothing does yet: TAPE's voices join with bank 2's TAPE.
+    pub fn close_bank2(&mut self) {}
 
     /// SETTINGS › MIDI CONFIG as last edited.
     pub fn midi(&self) -> MidiSettings {

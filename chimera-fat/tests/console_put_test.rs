@@ -321,8 +321,8 @@ fn refusals_before_ready_write_nothing() {
     ] {
         assert!(ask(&mut s, &line, b"").starts_with("ERR put: "), "{line}");
     }
-    let usage = "ERR put takes /CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A [--over] \
-                 or /CHIMERA/TAPES/<CRC>.SRC, its size and CRC-32 in hex\n";
+    let usage = "ERR put takes /CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A [--over], \
+                 /CHIMERA/TAPES/<CRC>.SRC or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 in hex\n";
     for path in [
         "/CHIMERA/PROJECTS/AVRIL14.A",
         "/CHIMERA/PROJECTS/../SYSTEM.A",
@@ -333,6 +333,8 @@ fn refusals_before_ready_write_nothing() {
         "/CHIMERA/SOUNDS//S0000001.A",
         "/CHIMERA/SYSTEM.A",
         "/CHIMERA/BENCH/CARD0.BIN",
+        "/CHIMERA/SYSTEM/BANK2.BIN",
+        "/CHIMERA/SYSTEM/BANK2.BK",
         "PROJECTS/P0000014.A",
     ] {
         assert_eq!(
@@ -376,7 +378,7 @@ fn the_open_project_is_refused() {
         resume: false,
     };
     let mut host = Host::new(&lines(&body), 0);
-    put(arg, ProjectId::new(ID), &mut s, &mut host).unwrap();
+    put(arg, ProjectId::new(ID), None, &mut s, &mut host).unwrap();
     assert_eq!(
         String::from_utf8(host.out).unwrap(),
         "ERR put: project is open\n"
@@ -1249,4 +1251,103 @@ fn get_of_a_torn_pair_says_why() {
         ask(&mut s, "get /CHIMERA/SOUNDS/S0000003\n", b""),
         "ERR get: not found\n"
     );
+}
+
+const BANK2: &str = "/CHIMERA/SYSTEM/BANK2.BK2";
+
+fn bank2_file() -> FileName {
+    FileName::new(Dir::System, b"BANK2", b"BK2").unwrap()
+}
+
+fn system<S: Store>(s: &mut S, vol: VolumeId) -> Vec<(FileName, u32)> {
+    let mut got = Vec::new();
+    match s.list(vol, Dir::System, &mut |f, n| got.push((f, n))) {
+        Ok(()) | Err(StoreError::NotFound) => got,
+        Err(e) => panic!("{e:?}"),
+    }
+}
+
+fn body(n: usize) -> Vec<u8> {
+    (0..n).map(|i| (i as u8).wrapping_mul(13) ^ 0x5A).collect()
+}
+
+#[test]
+fn a_bank2_image_is_staged_whole() {
+    let mut s = FatStore::new(fat16(16_384, 1));
+    let vol = card(&mut s);
+    let img = bank2_image(&body(4352), console::SEAL);
+    assert_eq!(img.len(), 4608);
+    assert_eq!(
+        ask(&mut s, &put_line(BANK2, &img), &lines(&img)),
+        "READY\nOK\n"
+    );
+    assert_eq!(read(&mut s, vol, bank2_file()), Some(img.clone()));
+    // Staged again, it replaces the old file.
+    let new = bank2_image(&body(8192 - 256), console::SEAL);
+    assert_eq!(
+        ask(&mut s, &put_line(BANK2, &new), &lines(&new)),
+        "READY\nOK\n"
+    );
+    assert_eq!(system(&mut s, vol), [(bank2_file(), 8192)]);
+    assert_eq!(read(&mut s, vol, bank2_file()), Some(new));
+    clean(s.device());
+}
+
+/// One for another build is kept: the boot after its firmware installs it.
+#[test]
+fn a_stale_bank2_image_is_kept_and_says_whose() {
+    let mut s = FatStore::new(fat16(16_384, 1));
+    let vol = card(&mut s);
+    let img = bank2_image(&body(4352), *b"OTHERONE");
+    assert_eq!(
+        ask(&mut s, &put_line(BANK2, &img), &lines(&img)),
+        "READY\nOK staged: needs firmware 0.2.0 02e440e2\n"
+    );
+    assert_eq!(read(&mut s, vol, bank2_file()), Some(img));
+    clean(s.device());
+}
+
+#[test]
+fn a_file_that_is_not_a_bank2_image_is_refused_and_gone() {
+    let mut s = FatStore::new(fat16(16_384, 1));
+    let vol = card(&mut s);
+    let mut torn = bank2_image(&body(4352), console::SEAL);
+    torn[300] ^= 1;
+    let mut uncommitted = bank2_image(&body(4352), console::SEAL);
+    uncommitted[0xE0] = 0xFF;
+    for bad in [vec![0u8; 1024], torn, uncommitted, vec![0xFF; 512]] {
+        assert_eq!(
+            ask(&mut s, &put_line(BANK2, &bad), &lines(&bad)),
+            "READY\nERR put: not a bank-2 image\n"
+        );
+        assert_eq!(system(&mut s, vol), []);
+    }
+    clean(s.device());
+}
+
+#[test]
+fn an_unsealed_unit_stages_nothing() {
+    let mut s = FatStore::new(fat16(16_384, 1));
+    let vol = card(&mut s);
+    let img = bank2_image(&body(4352), console::SEAL);
+    let mut unit = Fake::new(&mut s);
+    unit.seal = None;
+    let (said, _) = ask_unit(&mut unit, &put_line(BANK2, &img), &lines(&img), 0);
+    assert_eq!(said, "ERR put: firmware unsealed\n");
+    assert_eq!(system(&mut s, vol), []);
+}
+
+/// A bad transfer leaves no staged file, whatever was there.
+#[test]
+fn a_failed_bank2_transfer_leaves_nothing() {
+    let mut s = FatStore::new(fat16(16_384, 1));
+    let vol = card(&mut s);
+    let img = bank2_image(&body(4352), console::SEAL);
+    let line = format!("put {BANK2} {} {:08x}\n", img.len(), crc(&img) ^ 1);
+    assert_eq!(
+        ask(&mut s, &line, &lines(&img)),
+        "READY\nERR put: CRC mismatch\n"
+    );
+    assert_eq!(system(&mut s, vol), []);
+    clean(s.device());
 }

@@ -39,6 +39,9 @@ pub enum Dir {
     Bench,
     /// `/CHIMERA/TAPES`: TAPE's sources, write-once (ADR 0087).
     Tapes,
+    /// `/CHIMERA/SYSTEM`: bank 2's staged image (ADR 0137). The stock
+    /// bootloader reads only `.bin` files in the root.
+    System,
 }
 
 /// An 8.3 name in one of the `Dir`s: A-Z and 0-9 only, so it is valid on any

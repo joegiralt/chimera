@@ -84,6 +84,16 @@ pub trait Unit {
     fn flash_peek(&self) -> Option<super::FlashPeek> {
         None
     }
+    /// This build's bank-2 seal, which a staged file is judged against.
+    /// `None`: unsealed, or no bank 2 in this build.
+    fn bank2_seal(&self) -> Option<crate::bank2::Seal> {
+        None
+    }
+    /// `bank2 install`'s outcome, reached before the answer starts.
+    /// `None`: not in this build.
+    fn bank2_install(&mut self) -> Option<super::Bank2Answer> {
+        None
+    }
     /// Provokes the fault, once `OK` is not yet out. `None`: not in this build.
     #[cfg(feature = "fault-inject")]
     fn fault(&mut self, _: super::FaultArg) -> Option<()> {
@@ -206,6 +216,15 @@ pub fn answer(
                     .map_or(Ok(()), |p| super::write_flash_peek(&p, &mut t))
             })),
         },
+        Ok(r @ Request::Bank2(super::Bank2Arg::Status)) => match unit.ui().bank2() {
+            None => Err(Why::Absent(r.command())),
+            Some(b) => Ok(b.line(&mut t).and_then(|()| t.write_char('\n'))),
+        },
+        // Its whole answer, `OK` or `ERR` included, is the outcome's.
+        Ok(r @ Request::Bank2(super::Bank2Arg::Install)) => match unit.bank2_install() {
+            None => Err(Why::Absent(r.command())),
+            Some(a) => return super::write_bank2(&a, t.0),
+        },
         #[cfg(feature = "fault-inject")]
         Ok(r @ Request::Fault(super::FaultArg::Ndtr)) => unit
             .fault_dump()
@@ -227,10 +246,11 @@ pub fn answer(
         #[cfg(feature = "card-put")]
         Ok(r @ Request::Put(arg)) => {
             let open = unit.ui().project().meta().id();
+            let seal = unit.bank2_seal();
             match unit.files() {
                 None => Err(Why::Absent(r.command())),
                 Some(f) => {
-                    let said = super::put(arg, open, f, t.0);
+                    let said = super::put(arg, open, seal, f, t.0);
                     if matches!(arg.to, super::PutTo::Sound { .. }) {
                         unit.forget_library();
                     }

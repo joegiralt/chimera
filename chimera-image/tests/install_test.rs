@@ -397,8 +397,28 @@ fn flash_errors_never_open() {
     let mut f = SimFlash::new();
     f.dead = true;
     let r = run(&mut f, &img, &seal(SEAL_A));
-    assert_eq!(r, Err(InstallFail::Flash(FlashFail::Timeout)));
+    assert_eq!(
+        r,
+        Err(InstallFail::Flash(
+            FlashFail::Timeout,
+            FlashAt::Sector(Bank2Sector::S0)
+        ))
+    );
     assert!(Door::open(&mut f, &seal(SEAL_A)).is_err());
+}
+
+/// A failed op names its sector or word: the first body word after S0.
+#[test]
+fn a_flash_failure_says_where() {
+    let img = sealed(&dense(4096, 2), SEAL_A);
+    let mut f = SimFlash::new();
+    f.cut_after(1);
+    let r = run(&mut f, &img, &seal(SEAL_A));
+    let at = Bank2Word::new(BANK2_BASE + HEADER_LEN).unwrap();
+    assert_eq!(
+        r,
+        Err(InstallFail::Flash(FlashFail::Timeout, FlashAt::Word(at)))
+    );
 }
 
 /// After the cut, a verdict of `Good` for `seal` means exactly `img`; and,

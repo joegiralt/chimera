@@ -3,6 +3,7 @@
 // Each test binary uses its own part of this module.
 #![allow(dead_code)]
 
+use chimera_core::bank2::Seal;
 use chimera_core::console::{
     CardAnswer, Console, Frame, Out, PUT_CHUNK_BYTES, Stalled, Stats, Unit, answer,
 };
@@ -24,7 +25,12 @@ pub struct Fake<'a, S> {
     pub files: &'a mut S,
     /// `forget_library` calls: a Sound `put` or `rm` drops the page.
     pub forgotten: usize,
+    /// This build's bank-2 seal: `SEAL`, or `None` unsealed.
+    pub seal: Option<Seal>,
 }
+
+/// The fake unit's bank-2 seal.
+pub const SEAL: [u8; 8] = *b"SEAL0001";
 
 impl<'a, S> Fake<'a, S> {
     pub fn new(files: &'a mut S) -> Self {
@@ -33,6 +39,7 @@ impl<'a, S> Fake<'a, S> {
             fb: Box::new([0; FB_SIZE]),
             files,
             forgotten: 0,
+            seal: Seal::new(SEAL),
         }
     }
 }
@@ -64,6 +71,9 @@ impl<S: Files> Unit for Fake<'_, S> {
     }
     fn usb_regs(&self) -> Option<chimera_core::boot::UsbRegs> {
         None
+    }
+    fn bank2_seal(&self) -> Option<Seal> {
+        self.seal
     }
     type Files = S;
     fn files(&mut self) -> Option<&mut S> {
@@ -227,4 +237,16 @@ pub fn chunked(file: &[u8]) -> Vec<u8> {
     file.chunks(PUT_CHUNK_BYTES as usize)
         .flat_map(|c| [lines(c), format!("end {:08x}\n", crc(c)).into_bytes()].concat())
         .collect()
+}
+
+/// A committed bank-2 image of `body` sealed `seal`, version 0.2.0.
+pub fn bank2_image(body: &[u8], seal: [u8; 8]) -> Vec<u8> {
+    let h = chimera_image::Header {
+        body_len: body.len() as u32,
+        body_crc: crc(body),
+        door_off: 0x100,
+        seal,
+        version: chimera_core::bank2::Version::new("0.2.0 02e440e2"),
+    };
+    [&h.to_bytes(true)[..], body].concat()
 }

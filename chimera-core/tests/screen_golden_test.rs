@@ -314,6 +314,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),
     ("toast_exfat", 0xfc0cb3b4feb1a1b5),
+    // Bank 2's install: DON'T POWER OFF over the whole screen.
+    ("installing", 0xb2af55fe85e8e58d),
 ];
 
 #[test]

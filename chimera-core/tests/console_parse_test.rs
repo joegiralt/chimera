@@ -169,7 +169,7 @@ fn a_line_split_anywhere_parses_once() {
 fn the_table_is_the_one_list() {
     let names: Vec<_> = Command::ALL.iter().map(|c| c.name()).collect();
     let mut want = vec![
-        "help", "status", "stats", "bench", "card", "shot", "dfu", "sweep", "flash",
+        "help", "status", "stats", "bench", "card", "shot", "dfu", "sweep", "flash", "bank2",
     ];
     if cfg!(feature = "card-put") {
         want.extend(["ls", "put", "rm", "get"]);
@@ -301,6 +301,68 @@ fn put_takes_a_tapes_path() {
             "{bad}"
         );
     }
+}
+
+/// The staged bank-2 file, any case, at most bank 2's 512 KiB; no other
+/// name or extension (never a `.BIN` the bootloader would take).
+#[cfg(feature = "card-put")]
+#[test]
+fn put_takes_the_staged_bank2_file() {
+    let one = |s: &str| feed(&mut Console::new(), s.as_bytes()).remove(0);
+    let want = |size| {
+        Ok(Request::Put(PutArg {
+            to: PutTo::Bank2,
+            size,
+            crc: 0x1A2B_3C4D,
+            resume: false,
+        }))
+    };
+    assert_eq!(
+        one("put /CHIMERA/SYSTEM/BANK2.BK2 4608 1a2b3c4d\n"),
+        want(4608)
+    );
+    assert_eq!(
+        one("put /chimera/system/bank2.bk2 4608 1A2B3C4D\n"),
+        want(4608)
+    );
+    assert_eq!(
+        one("put /CHIMERA/SYSTEM/BANK2.BK2 524288 1a2b3c4d\n"),
+        want(524_288)
+    );
+    for bad in [
+        "put /CHIMERA/SYSTEM/BANK2.BIN 4608 1a2b3c4d",
+        "put /CHIMERA/BANK2.BK2 4608 1a2b3c4d",
+        "put /BANK2.BK2 4608 1a2b3c4d",
+        "put /CHIMERA/SYSTEM/BANK2.BK2 524289 1a2b3c4d",
+        "put /CHIMERA/SYSTEM/BANK3.BK2 4608 1a2b3c4d",
+        "put /CHIMERA/SYSTEM//BANK2.BK2 4608 1a2b3c4d",
+        "put /CHIMERA/SYSTEM/BANK2.BK2.BIN 4608 1a2b3c4d",
+        "put /CHIMERA/SYSTEM/BANK2.BK2 4608 1a2b3c4d --over",
+    ] {
+        assert_eq!(
+            one(&format!("{bad}\n")),
+            Err(Refusal::Arguments(Command::Put)),
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn bank2_takes_install_or_nothing() {
+    let one = |s: &str| feed(&mut Console::new(), s.as_bytes()).remove(0);
+    assert_eq!(one("bank2\n"), Ok(Request::Bank2(Bank2Arg::Status)));
+    assert_eq!(
+        one("BANK2 Install\n"),
+        Ok(Request::Bank2(Bank2Arg::Install))
+    );
+    for bad in ["bank2 erase", "bank2 install now", "bank2 status"] {
+        assert_eq!(
+            one(&format!("{bad}\n")),
+            Err(Refusal::Arguments(Command::Bank2)),
+            "{bad}"
+        );
+    }
+    assert_eq!(Command::Bank2.usage(), "install or nothing");
 }
 
 #[cfg(feature = "card-put")]

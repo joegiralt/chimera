@@ -62,6 +62,7 @@ impl ShortName {
                 Dir::Sounds => b"SOUNDS",
                 Dir::Bench => b"BENCH",
                 Dir::Tapes => b"TAPES",
+                Dir::System => b"SYSTEM",
             },
             b"",
         )
