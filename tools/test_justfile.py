@@ -72,5 +72,34 @@ class Bank2Split(unittest.TestCase):
         self.assertIn("INSERT BEFORE .text", src)
 
 
+class OneUpdate(unittest.TestCase):
+    """An update is one thing (Task 9c): a zip a variant, and every route
+    flashes and installs through `chimera-usb.py update`."""
+
+    def test_flash_goes_through_update(self):
+        body = "\n".join(recipes()["flash"])
+        self.assertIn("chimera-usb.py update target/chimera.bin target/chimera.bk2", body)
+        self.assertNotIn("dfu-util", body)
+        self.assertNotIn("chimera-usb.py bank2", body)
+
+    def test_release_ships_a_zip_a_variant(self):
+        body = "\n".join(recipes()["release"])
+        for want in (
+            'SHA256SUMS chimera-$V-orbit.zip chimera-$V.zip chimera-usb.py ',
+            "zip -qX",
+            "bank2-seal --check",
+            "check-bin-size",
+            "check-bin-paths",
+            "sha256sum -c --quiet SHA256SUMS",
+            "README.txt",
+        ):
+            self.assertIn(want, body)
+        # The zip's members, exactly.
+        self.assertIn('"README.txt SHA256SUMS $n.bin $n.bk2"', body)
+        # No .bk2 named .bin: a .bin never starts with the .bk2 magic.
+        self.assertIn("CHIMERA2", body)
+        self.assertNotIn('"$out/chimera-$V.bin"', body)
+
+
 if __name__ == "__main__":
     unittest.main()

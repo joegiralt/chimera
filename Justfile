@@ -144,12 +144,16 @@ check-bin-size bin:
 
 # Draft a release of the path-clean firmware on the PUBLIC chimera-releases
 # repo (#413): `just release 0.1.0 [--dry-run]`. Refuses a dirty tree or a
-# version already tagged or released; builds `release-bin`; names the files
-# chimera-<version>{,-orbit}.{bin,bk2} (each .bk2 sealed for its .bin); adds tools/chimera-usb.py (version-stamped,
-# leak-checked); writes SHA256SUMS and the notes from
+# version already tagged or released; builds `release-bin`; packs each
+# variant as one zip, chimera-<version>{,-orbit}.zip, holding exactly its
+# .bin, its .bk2 (sealed for that .bin), README.txt and SHA256SUMS: an
+# update is one thing (drag both onto the card in the bootloader's disk
+# mode, or `chimera-usb.py update <zip>`). Adds tools/chimera-usb.py
+# (version-stamped, leak-checked); writes SHA256SUMS and the notes from
 # docs/alpha/RELEASE-NOTES.md.tmpl; asserts the assets are exactly those
-# six and none is a private file's bytes. A draft only: the owner
-# publishes. --dry-run does everything but `gh release create`.
+# four, each zip's members exactly those four and checked as unpacked, and
+# none is a private file's bytes. A draft only: the owner publishes.
+# --dry-run does everything but `gh release create`.
 release version *flags:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -162,16 +166,33 @@ release version *flags:
     ! git rev-parse -q --verify "refs/tags/v$V" >/dev/null || { echo "v$V is already tagged" >&2; exit 1; }
     if gh release view "v$V" -R $REPO >/dev/null 2>&1; then echo "v$V is already released on $REPO" >&2; exit 1; fi
     just release-bin
-    out=target/release-assets/v$V
+    out="$PWD/target/release-assets/v$V"
     rm -rf "$out"; mkdir -p "$out"
-    cp target/release-bin/chimera.bin "$out/chimera-$V.bin"
-    cp target/release-bin/chimera-orbit.bin "$out/chimera-$V-orbit.bin"
-    cp target/release-bin/chimera.bk2 "$out/chimera-$V.bk2"
-    cp target/release-bin/chimera-orbit.bk2 "$out/chimera-$V-orbit.bk2"
-    for b in "$out"/*.bin "$out"/*.bk2; do just check-bin-paths "$b"; done
-    # Each .bk2 is sealed for the .bin beside it.
+    work=$(mktemp -d) && trap 'rm -rf "$work"' EXIT
+    # The commit's time on every member, in UTC: the zip is the same each run.
+    stamp=$(git log -1 --format=%ct)
     for v in "" -orbit; do
-        {{utils}} bank2-seal --check "$out/chimera-$V$v.bin" "$out/chimera-$V$v.bk2"
+        n=chimera-$V$v; d="$work/$n"; c="$work/check$v"
+        mkdir "$d" "$c"
+        cp target/release-bin/chimera$v.bin "$d/$n.bin"
+        cp target/release-bin/chimera$v.bk2 "$d/$n.bk2"
+        printf '%s\n' "Copy $n.bin and $n.bk2 onto the card in the bootloader's USB disk mode, then run its update once." \
+            "Or, with the unit on and connected: python3 chimera-usb.py update $n.zip" > "$d/README.txt"
+        (cd "$d" && sha256sum "$n.bin" "$n.bk2" > SHA256SUMS)
+        touch -d "@$stamp" "$d"/*
+        (cd "$d" && TZ=UTC zip -qX "$out/$n.zip" "$n.bin" "$n.bk2" README.txt SHA256SUMS)
+        # As a tester unpacks it: exactly these members, whole, one build.
+        got=$(python3 -I -c 'import sys, zipfile; print(*sorted(zipfile.ZipFile(sys.argv[1]).namelist()))' "$out/$n.zip")
+        [ "$got" = "README.txt SHA256SUMS $n.bin $n.bk2" ] || { echo "$n.zip holds $got" >&2; exit 1; }
+        python3 -I -m zipfile -e "$out/$n.zip" "$c"
+        (cd "$c" && sha256sum -c --quiet SHA256SUMS)
+        {{utils}} bank2-seal --check "$c/$n.bin" "$c/$n.bk2"
+        just check-bin-size "$c/$n.bin"
+        just check-no-gate "$c/$n.bin"
+        for f in "$c/$n.bin" "$c/$n.bk2"; do just check-bin-paths "$f"; done
+        # No .bk2 under a .bin name: only the .bk2 starts CHIMERA2.
+        if head -c 8 "$c/$n.bin" | grep -qa CHIMERA2; then echo "$n.bin is a .bk2" >&2; exit 1; fi
+        head -c 8 "$c/$n.bk2" | grep -qa CHIMERA2 || { echo "$n.bk2 is not a .bk2" >&2; exit 1; }
     done
     # The console tool, stamped with the release version.
     sed "s/^VERSION = \"dev\"/VERSION = \"$V\"/" tools/chimera-usb.py > "$out/chimera-usb.py"
@@ -181,20 +202,22 @@ release version *flags:
     if grep -n -E -e '/home/|/Users/|[A-Za-z0-9._-]+@[A-Za-z0-9-]+\.|https?://|ADR|docs/|chimera-(core|board|engine|desktop|stm32)|\.rs\b|joegiralt' -e "$(id -un)" "$out/chimera-usb.py"; then
         echo "chimera-usb.py leaks a private reference" >&2; exit 1
     fi
-    (cd "$out" && sha256sum chimera-$V.bin chimera-$V.bk2 chimera-$V-orbit.bin chimera-$V-orbit.bk2 chimera-usb.py > SHA256SUMS)
-    # Nothing private ships: exactly these assets, and none is a private
-    # file (the stock bootloader backup, the bootloader, a dev chimera.bin).
-    [ "$(ls "$out" | LC_ALL=C sort | tr '\n' ' ')" = "SHA256SUMS chimera-$V-orbit.bin chimera-$V-orbit.bk2 chimera-$V.bin chimera-$V.bk2 chimera-usb.py " ] || { echo "unexpected assets in $out" >&2; exit 1; }
-    for p in preenfm3-bootloader-backup.bin bootloader.bin chimera.bin chimera.bk2; do
+    (cd "$out" && sha256sum chimera-$V.zip chimera-$V-orbit.zip chimera-usb.py > SHA256SUMS)
+    # Nothing private ships: exactly these assets, and no asset or zip
+    # member is a private file (the stock bootloader backup, the
+    # bootloader, a dev chimera.bin or .bk2).
+    [ "$(ls "$out" | LC_ALL=C sort | tr '\n' ' ')" = "SHA256SUMS chimera-$V-orbit.zip chimera-$V.zip chimera-usb.py " ] || { echo "unexpected assets in $out" >&2; exit 1; }
+    for p in preenfm3-bootloader-backup.bin bootloader.bin chimera.bin chimera.bk2 target/chimera.bin target/chimera.bk2; do
         [ -f "$p" ] || continue
         h=$(sha256sum "$p" | cut -d' ' -f1)
-        if grep -q "$h" "$out/SHA256SUMS"; then echo "asset is $p: refusing" >&2; exit 1; fi
+        if grep -q "$h" "$out/SHA256SUMS" "$work"/chimera-*/SHA256SUMS; then echo "asset is $p: refusing" >&2; exit 1; fi
     done
     sed -e "s/@VERSION@/$V/g" -e "s/@COMMIT@/$(git rev-parse --short HEAD)/g" -e "s/@DATE@/$(date -u +%F)/g" \
         docs/alpha/RELEASE-NOTES.md.tmpl > "$out/RELEASE-NOTES.md"
     ! grep -q '@[A-Z]*@' "$out/RELEASE-NOTES.md" || { echo "unfilled template field" >&2; exit 1; }
-    assets=("$out/chimera-$V.bin" "$out/chimera-$V.bk2" "$out/chimera-$V-orbit.bin" "$out/chimera-$V-orbit.bk2" "$out/chimera-usb.py" "$out/SHA256SUMS")
-    echo "assets:"; (cd "$out" && ls -l chimera-$V.bin chimera-$V.bk2 chimera-$V-orbit.bin chimera-$V-orbit.bk2 chimera-usb.py SHA256SUMS && cat SHA256SUMS)
+    assets=("$out/chimera-$V.zip" "$out/chimera-$V-orbit.zip" "$out/chimera-usb.py" "$out/SHA256SUMS")
+    echo "assets:"; (cd "$out" && ls -l chimera-$V.zip chimera-$V-orbit.zip chimera-usb.py SHA256SUMS && cat SHA256SUMS)
+    for v in "" -orbit; do python3 -I -m zipfile -l "$out/chimera-$V$v.zip"; done
     if [ $dry = 1 ]; then
         echo "dry run: would draft v$V on $REPO with notes $out/RELEASE-NOTES.md"; exit 0
     fi
@@ -372,22 +395,19 @@ ls *args:
 sweep:
     python3 tools/chimera-usb.py sweep
 
-# Flash firmware to PreenFM3 via DFU. With the console up, `to-dfu` sends
-# `dfu` and waits for the ROM loader; without it, bridge BOOT0 and re-plug.
-# dfu-util exits 74 when `:leave` resets the unit under it; that counts only
-# if the download completed and the console comes back within 10 s.
+# Flash firmware to PreenFM3, both halves in one go, as a tester's update
+# does (`chimera-usb.py update`): the .bk2 staged on the card under the
+# running firmware (or after the flash, for one from before bank 2), the
+# .bin by DFU (`to-dfu` sends `dfu` with the console up; without it, bridge
+# BOOT0 and re-plug; dfu-util's 74 after `:leave` counts only if the
+# download completed), the first boot installing the .bk2, then `status`
+# showing it open.
 flash:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
     just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera
-    python3 tools/chimera-usb.py to-dfu
-    log=$(mktemp) && trap 'rm -f "$log"' EXIT
-    rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
-    if [ "$rc" -eq 74 ] && grep -q 'File downloaded successfully' "$log"; then
-        python3 tools/chimera-usb.py wait-console 10
-    elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
-    python3 tools/chimera-usb.py bank2 target/chimera.bk2
+    python3 tools/chimera-usb.py update target/chimera.bin target/chimera.bk2
 
 # Flash one bench area to PreenFM3 via DFU: `just flash-bench <area> [extra]`,
 # area one of algo, routing, memory, stress, orbit, tape; extra more

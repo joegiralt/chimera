@@ -4,8 +4,11 @@ Run: python3 -m unittest discover -s tools -p 'test_*.py'
 """
 
 import base64
+import contextlib
 import datetime
+import hashlib
 import importlib.util
+import io
 import os
 import pathlib
 import re
@@ -18,6 +21,7 @@ import tempfile
 import threading
 import time
 import unittest
+import zipfile
 import zlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -396,15 +400,16 @@ class Tool(unittest.TestCase):
         self.assertEqual(tool.CONSOLE_ID, (0x0483, 0x5740))
         self.assertEqual(tool.ROM_DFU_ID, (0x0483, 0xDF11))
         just = (ROOT / "Justfile").read_text()
-        for recipe in ("flash:", "flash-bench area"):
+        # `flash` goes through `update` (its DFU is the tool's).
+        for recipe in ("flash-bench area", "flash-fault:"):
             body = just.split("\n" + recipe, 1)[1].split("\n\n", 1)[0]
             self.assertLess(body.index("to-dfu"), body.index("dfu-util"), recipe)
             self.assertIn("-s 0x8020000:leave", body, recipe)
             self.assertIn("set -euo pipefail", body, recipe)
             self.assertIn('"$rc" -eq 74', body, recipe)
             self.assertIn("File downloaded successfully", body, recipe)
-        flash = just.split("\nflash:", 1)[1].split("\n\n", 1)[0]
-        self.assertIn("wait-console 10", flash)
+        fault = just.split("\nflash-fault:", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("wait-console 10", fault)
 
     def test_the_justfile_never_touches_the_option_bytes(self):
         just = (ROOT / "Justfile").read_text()
@@ -448,11 +453,12 @@ class PutUnit:
     answered `ACK <bytes so far>`, or `ERR put: chunk` at the chunk
     `bad_chunk` names; `present` answers `OK PRESENT` before any data.
     The first `busy` puts answer `ERR busy`; `answers` maps other request
-    lines to their answers."""
+    lines to their answers. `refuse_once`: only the first put is refused."""
 
-    def __init__(self, refuse=None, after=None, silent=False, listing=b"OK\n", present=False, bad_chunk=None, busy=0, answers=None):
+    def __init__(self, refuse=None, after=None, silent=False, listing=b"OK\n", present=False, bad_chunk=None, busy=0, answers=None, refuse_once=False):
         self.answers = answers or {}
         self.refuse, self.after, self.silent, self.listing = refuse, after, silent, listing
+        self.refuse_once = refuse_once
         self.busy = busy
         self.present, self.bad_chunk = present, bad_chunk
         self.requests, self.data, self.ends = [], b"", []
@@ -500,6 +506,8 @@ class PutUnit:
                         continue
                     if self.refuse:
                         conn.sendall(self.refuse)
+                        if self.refuse_once:
+                            self.refuse = None
                         continue
                     size, crc = int(words[2]), int(words[3], 16)
                     if self.present:
@@ -842,37 +850,6 @@ class Bank2(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertEqual(u.requests, [])
 
-    def test_update_flashes_then_installs(self):
-        calls = []
-        saved = tool.to_dfu, tool.flash_bin, tool.bank2_install
-        tool.flash_bin = lambda t, env, b: calls.append(("flash", b)) or 0
-        tool.bank2_install = lambda t, env, k: calls.append(("bank2", k)) or 0
-        try:
-            self.assertEqual(tool.update(None, {}, "a.bin", "a.bk2"), 0)
-            self.assertEqual(tool.update(None, {}, "a.bin", "a.bin"), 1)
-            tool.flash_bin = lambda t, env, b: 1
-            self.assertEqual(tool.update(None, {}, "b.bin", "b.bk2"), 1)
-        finally:
-            tool.to_dfu, tool.flash_bin, tool.bank2_install = saved
-        self.assertEqual(calls, [("flash", "a.bin"), ("bank2", "a.bk2")])
-
-    def test_update_refuses_a_bad_bank_1_file_before_any_dfu(self):
-        calls = []
-        saved = tool.to_dfu, tool.subprocess.run, tool.bank2_install
-        tool.to_dfu = lambda t, e: calls.append("dfu") or 0
-        tool.subprocess.run = lambda *a, **k: calls.append("run")
-        tool.bank2_install = lambda *a: calls.append("bank2") or 0
-        try:
-            bk2 = self.local("a.bk2", bytes(self.bk2))
-            magic = self.local("m.bin", b"CHIMERA2" + bytes(64))
-            big = self.local("big.bin", bytes(917_504))
-            for first in (bk2, magic, big):
-                self.assertEqual(tool.update(None, {}, first, bk2), 1, first)
-            self.assertEqual(tool.update(None, {}, bk2, self.local("fw.bin", b"fw")), 1)
-        finally:
-            tool.to_dfu, tool.subprocess.run, tool.bank2_install = saved
-        self.assertEqual(calls, [])
-
     def test_a_plain_put_of_a_stale_bk2_prints_the_line(self):
         f = self.local("old.bk2")
         with PutUnit(after=b"OK staged: needs firmware 0.3.0\n") as u:
@@ -890,12 +867,12 @@ class Bank2(unittest.TestCase):
         saved = tool.to_dfu, tool.wait_console, tool.subprocess.run
         tool.to_dfu, tool.wait_console, tool.subprocess.run = (lambda t, e: 0), (lambda e, s: 0), run
         try:
-            tool.flash_bin(None, {}, self.local("x.bin", b"fw"))
+            tool.dfu_flash(None, {}, self.local("x.bin", b"fw"), 10.0)
         finally:
             tool.to_dfu, tool.wait_console, tool.subprocess.run = saved
         self.assertEqual(seen.get("timeout"), tool.DFU_UTIL_S)
 
-    def test_update_runs_dfu_util_on_the_firmware_area(self):
+    def test_dfu_runs_dfu_util_on_the_firmware_area(self):
         argv = []
 
         def run(cmd, **kw):
@@ -906,7 +883,7 @@ class Bank2(unittest.TestCase):
         tool.to_dfu, tool.wait_console, tool.subprocess.run = (lambda t, e: 0), (lambda e, s: 0), run
         try:
             f = self.local("x.bin", b"fw")
-            self.assertEqual(tool.flash_bin(None, {}, f), 0)
+            self.assertEqual(tool.dfu_flash(None, {}, f, 10.0), 0)
         finally:
             tool.to_dfu, tool.wait_console, tool.subprocess.run = saved
         self.assertEqual(argv[0], "dfu-util")
@@ -915,6 +892,196 @@ class Bank2(unittest.TestCase):
     def test_the_public_tool_names_nothing_private(self):
         leak = re.compile(r"/home/|/Users/|https?://|ADR|docs/|chimera-(core|board|engine|desktop|stm32)|\.rs\b|joegiralt")
         self.assertIsNone(leak.search(TOOL.read_text()))
+
+
+VERSION = b"0.2.0 02e440e2"
+OLD_PUT = (
+    b"ERR put takes /CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A [--over] "
+    b"or /CHIMERA/TAPES/<CRC>.SRC, its size and CRC-32 in hex\n"
+)
+
+
+def make_pair(body=b"door" * 64, version=VERSION):
+    """A .bin and its .bk2 as `bank2-split` makes them: the .bk2's header
+    seals its body (SHA-256 prefix, CRC-32), the .bin holds the seal once."""
+    seal = hashlib.sha256(body).digest()[:8]
+    h = bytearray(256)
+    h[0:8] = b"CHIMERA2"
+    h[8:10] = (1).to_bytes(2, "little")
+    h[0x0C:0x10] = len(body).to_bytes(4, "little")
+    h[0x10:0x14] = zlib.crc32(body).to_bytes(4, "little")
+    h[0x14:0x18] = (0x100).to_bytes(4, "little")
+    h[0x18:0x20] = seal
+    h[0x20 : 0x20 + len(version)] = version
+    h[0xE0:0x100] = (0xB2C0FFEE).to_bytes(4, "little") * 8
+    return b"\x7fFW" + seal + b"rest of bank 1" * 50, bytes(h) + body, seal
+
+
+def sums(files):
+    return "".join("%s  %s\n" % (hashlib.sha256(d).hexdigest(), n) for n, d in files).encode()
+
+
+class Update(unittest.TestCase):
+    """`update <chimera-<v>.zip>`: check it all, stage the .bk2 under the
+    running firmware, flash the .bin, let the boot install, read status."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.bin, self.bk2, self.seal = make_pair()
+        self.events = []
+        self.waits = []
+        saved = tool.to_dfu, tool.subprocess.run, tool.wait_console, tool.send
+        self.addCleanup(lambda: setattr(tool, "to_dfu", saved[0]) or setattr(tool.subprocess, "run", saved[1]) or setattr(tool, "wait_console", saved[2]) or setattr(tool, "send", saved[3]))
+        send = tool.send
+
+        def record_send(conn, line):
+            self.events.append(line if isinstance(line, str) else line.decode())
+            return send(conn, line)
+
+        def run(cmd, **kw):
+            self.events.append("dfu-util")
+            return subprocess.CompletedProcess(cmd, 74, "File downloaded successfully\n", "")
+
+        def wait(env, secs):
+            self.waits.append(secs)
+            return 0
+
+        tool.send = record_send
+        tool.to_dfu = lambda t, e: self.events.append("to-dfu") or 0
+        tool.subprocess.run = run
+        tool.wait_console = wait
+
+    def package(self, members=None, name="chimera-0.2.0"):
+        if members is None:
+            files = [(name + ".bin", self.bin), (name + ".bk2", self.bk2)]
+            members = files + [("SHA256SUMS", sums(files)), ("README.txt", b"Copy both files onto the card.\n")]
+        p = pathlib.Path(self.tmp.name, name + ".zip")
+        with zipfile.ZipFile(p, "w") as z:
+            for n, d in members:
+                z.writestr(n, d)
+        return str(p)
+
+    def status(self, line):
+        return b"chimera 0.2.0\n" + line + b"\nOK\n"
+
+    def open_line(self, seal=None):
+        return b"bank2 open " + VERSION + b" seal=" + (seal or self.seal).hex().encode()
+
+    def update(self, unit, args):
+        out = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = tool.main(["update", *args], {"CHIMERA_USB": unit.target})
+        out.flush()
+        return rc, out.buffer.getvalue().decode(), err.getvalue()
+
+    def sent(self, prefix):
+        return [i for i, e in enumerate(self.events) if e.startswith(prefix)]
+
+    def test_stages_then_flashes_then_reads_status(self):
+        answers = {b"status": self.status(self.open_line())}
+        with PutUnit(answers=answers, after=b"OK staged: needs firmware 0.2.0 02e440e2\n") as u:
+            rc, out, err = self.update(u, [self.package()])
+        self.assertEqual(rc, 0, err)
+        self.assertIn("OK updated 0.2.0 02e440e2", out)
+        put, dfu, status = self.sent("put /CHIMERA/SYSTEM/BANK2.BK2 "), self.sent("dfu-util"), self.sent("status")
+        self.assertEqual((len(put), len(dfu), len(status)), (1, 1, 1), self.events)
+        self.assertLess(put[0], dfu[0])
+        self.assertLess(dfu[0], status[0])
+        self.assertEqual(u.data, self.bk2)
+        self.assertEqual(self.sent("bank2"), [], "the boot installs it, not the console")
+        self.assertGreaterEqual(max(self.waits), 60.0, "the first boot installs before the console comes up")
+
+    def test_a_plain_ok_stages_too(self):
+        with PutUnit(answers={b"status": self.status(self.open_line())}) as u:
+            rc, out, err = self.update(u, [self.package()])
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(len(self.sent("dfu-util")), 1)
+
+    def test_a_staging_failure_stops_before_any_flash(self):
+        for refusal in (b"ERR put: CARD FULL\n", b"ERR put: firmware unsealed\n", b"ERR put: not a bank-2 image\n"):
+            self.events.clear()
+            with PutUnit(refuse=refusal) as u:
+                rc, out, err = self.update(u, [self.package()])
+            self.assertEqual(rc, 1, refusal)
+            self.assertIn(refusal.strip().decode(), err)
+            self.assertEqual(self.sent("to-dfu") + self.sent("dfu-util"), [], refusal)
+
+    def test_old_firmware_flashes_first_then_puts_and_installs(self):
+        answers = {
+            b"bank2": b"bank2 empty\nOK\n",
+            b"bank2 install": b"audio overruns 0 -> 0 blocks +40\nOK bank2 open 0.2.0 02e440e2\n",
+            b"status": self.status(self.open_line()),
+        }
+        with PutUnit(answers=answers, refuse=OLD_PUT, refuse_once=True) as u:
+            rc, out, err = self.update(u, [self.package()])
+        self.assertEqual(rc, 0, err)
+        puts, dfu = self.sent("put "), self.sent("dfu-util")
+        install, status = self.sent("bank2 install"), self.sent("status")
+        self.assertEqual(len(puts), 2, self.events)
+        self.assertLess(puts[0], dfu[0])
+        self.assertLess(dfu[0], puts[1])
+        self.assertLess(puts[1], install[0])
+        self.assertLess(install[0], status[0])
+        self.assertEqual(u.data, self.bk2)
+
+    def test_old_firmware_without_source_puts_is_deferred_too(self):
+        old = b"ERR put takes /CHIMERA/PROJECTS/P#######.A or /CHIMERA/SOUNDS/S#######.A [--over], its size and CRC-32 in hex\n"
+        answers = {b"bank2": b"bank2 empty\nOK\n", b"bank2 install": b"OK bank2 open 0.2.0 02e440e2\n", b"status": self.status(self.open_line())}
+        with PutUnit(answers=answers, refuse=old, refuse_once=True) as u:
+            rc, out, err = self.update(u, [self.package()])
+        self.assertEqual(rc, 0, err)
+
+    def test_a_bad_package_touches_nothing(self):
+        files = [("chimera-0.2.0.bin", self.bin), ("chimera-0.2.0.bk2", self.bk2)]
+        readme = ("README.txt", b"x\n")
+        good_sums = ("SHA256SUMS", sums(files))
+        _, other_bk2, _ = make_pair(b"another build" * 20)
+        cases = {
+            "bad SHA256SUMS": files + [("SHA256SUMS", sums(files).replace(b"0", b"1", 1)), readme],
+            "missing .bk2": files[:1] + [("SHA256SUMS", sums(files[:1])), readme],
+            "missing SHA256SUMS": files + [readme],
+            "extra member": files + [good_sums, readme, ("chimera.bin", self.bin)],
+            "bk2 posing as bin": [("chimera-0.2.0.bin", self.bk2), files[1], ("SHA256SUMS", sums([("chimera-0.2.0.bin", self.bk2), files[1]])), readme],
+            "too big for the bootloader": [("chimera-0.2.0.bin", self.bin + bytes(917_504)), files[1], ("SHA256SUMS", sums([("chimera-0.2.0.bin", self.bin + bytes(917_504)), files[1]])), readme],
+            "pair from two builds": [files[0], ("chimera-0.2.0.bk2", other_bk2), ("SHA256SUMS", sums([files[0], ("chimera-0.2.0.bk2", other_bk2)])), readme],
+            "corrupt bk2 body": [files[0], ("chimera-0.2.0.bk2", self.bk2[:-1] + b"X"), ("SHA256SUMS", sums([files[0], ("chimera-0.2.0.bk2", self.bk2[:-1] + b"X")])), readme],
+        }
+        for what, members in cases.items():
+            self.events.clear()
+            with PutUnit() as u:
+                rc, out, err = self.update(u, [self.package(members)])
+            self.assertEqual(rc, 1, what)
+            self.assertEqual(self.events, [], what)
+            self.assertEqual(u.requests, [], what)
+            self.assertEqual(self.waits, [], what)
+        not_zip = pathlib.Path(self.tmp.name, "x.zip")
+        not_zip.write_bytes(b"PK no")
+        with PutUnit() as u:
+            rc, out, err = self.update(u, [str(not_zip)])
+        self.assertEqual((rc, u.requests), (1, []))
+
+    def test_exit_1_unless_status_is_open_with_the_package_seal(self):
+        for line in (b"bank2 stale have 0.1.0", self.open_line(bytes(8)), b"bank2 empty", b"bank2 open 0.1.0 seal=" + self.seal.hex().encode()):
+            self.events.clear()
+            with PutUnit(answers={b"status": self.status(line)}) as u:
+                rc, out, err = self.update(u, [self.package()])
+            self.assertEqual(rc, 1, line)
+            self.assertIn(line.decode(), out + err)
+            self.assertNotIn("OK updated", out)
+
+    def test_a_loose_pair_takes_the_same_path(self):
+        b = pathlib.Path(self.tmp.name, "chimera.bin")
+        k = pathlib.Path(self.tmp.name, "chimera.bk2")
+        b.write_bytes(self.bin)
+        k.write_bytes(self.bk2)
+        with PutUnit(answers={b"status": self.status(self.open_line())}) as u:
+            rc, out, err = self.update(u, [str(b), str(k)])
+        self.assertEqual(rc, 0, err)
+        self.assertLess(self.sent("put ")[0], self.sent("dfu-util")[0])
+        with PutUnit() as u:
+            rc, out, err = self.update(u, [str(k), str(b)])
+        self.assertEqual((rc, u.requests), (1, []))
 
 
 if __name__ == "__main__":

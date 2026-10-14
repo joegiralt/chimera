@@ -9,10 +9,12 @@
                                                    or a TAPE source as /CHIMERA/TAPES/<CRC>.SRC, in checked chunks
                                                    (<remote> ending in / takes the local name; /CHIMERA/SOUNDS/ takes
                                                    `ls sounds`' top user id + 1)
-    python3 chimera-usb.py bank2 <file.bk2>  install the second half of a release (its .bk2) after the .bin
+    python3 chimera-usb.py update <chimera-<v>.zip>
+                                                   update the unit to a release, in one go: the .bk2 onto
+                                                   the card, the .bin by DFU, and the first boot installs
+                                                   the .bk2 (`update <file.bin> <file.bk2>` takes the pair)
+    python3 chimera-usb.py bank2 <file.bk2>  install a .bk2 under the running firmware (developers)
     python3 chimera-usb.py bank2 erase       empty bank 2 (a `just firmware-gate` build only)
-    python3 chimera-usb.py update <file.bin> <file.bk2>
-                                                   flash the .bin by DFU, then install the .bk2
     python3 chimera-usb.py flash             the flash controller's registers and bank 2's first bytes, read only
     python3 chimera-usb.py to-dfu            the unit into ROM DFU, to flash it
     python3 chimera-usb.py wait-console [s]  wait (default 10 s) for the console on the bus
@@ -24,9 +26,12 @@ path; `put` shows its progress on stderr and never retries a failure (a source
 already on the card answers `OK PRESENT`, so a re-run is the retry). `ERR busy`
 (the unit's card work pending) is retried: 5 tries, 200 ms apart, doubling.
 Python 3 and its standard library only; Linux and macOS (no Windows).
-`bank2` exits 0 on OK (or `OK already installed`), 2 if the file belongs to
-another firmware (`staged: needs firmware <version>`: it installs at the next
-boot of that firmware), 1 on any other ERR. `update` needs dfu-util.
+`update` checks the whole package before it touches the unit, stops before
+the flash if the .bk2 can't go onto the card, and exits 0 only once
+`status` shows the package's version and seal open (`OK updated <version>`);
+it needs dfu-util. `bank2` exits 0 on OK (or `OK already installed`), 2 if
+the file belongs to another firmware (`staged: needs firmware <version>`: it
+installs at the next boot of that firmware), 1 on any other ERR.
 `--version` prints this tool's release.
 
 The port: CHIMERA_USB picks it. Unset, the first of /dev/chimera,
@@ -45,6 +50,7 @@ import datetime
 import enum
 import errno
 import glob
+import hashlib
 import os
 import pathlib
 import select
@@ -52,7 +58,9 @@ import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import time
+import zipfile
 import zlib
 from typing import NamedTuple, Union
 
@@ -71,6 +79,15 @@ BANK2_WAIT_S = 60.0  # the unit holds its UI loop for the whole write
 LATER = " (it installs at that firmware's next boot)"
 BANK2_REMOTE = "/CHIMERA/SYSTEM/BANK2.BK2"
 BANK2_SEAL = slice(0x18, 0x20)  # the .bk2 header's seal
+BK2_HEADER = 256
+BK2_MAX = 512 * 1024  # bank 2's four sectors
+UPDATE_BOOT_WAIT_S = 90.0  # the first boot installs the .bk2 behind DON'T POWER OFF, then the console comes up
+# Firmware from before bank 2 refuses the path (its `put` usage, exactly): the
+# .bk2 then goes after the flash.
+OLD_PUT_REFUSALS = (
+    b"ERR put takes /CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A [--over] or /CHIMERA/TAPES/<CRC>.SRC, its size and CRC-32 in hex",
+    b"ERR put takes /CHIMERA/PROJECTS/P#######.A or /CHIMERA/SOUNDS/S#######.A [--over], its size and CRC-32 in hex",
+)
 DFU_UTIL_S = 300  # a flash is ~30 s; this is only to not hang forever
 FW_MAX = 917_504  # the stock bootloader erases itself at this size
 FLASH_AT = "0x8020000:leave"  # the firmware area, never the bootloader
@@ -658,18 +675,90 @@ def stage_only(body: bytes) -> int:
     return 2
 
 
-def flash_bin(t: Target, env, local: str) -> int:
-    """The `.bin` into the firmware area by DFU, then the console back."""
-    if not local.lower().endswith(".bin"):
-        return fail("update takes the .bin first, then the .bk2 (not %s)" % local)
+class BadPackage(Exception):
+    """The update can't go: why, before anything touched the unit."""
+
+
+class Package(NamedTuple):
+    """A release's pair: `name`.bin for DFU and `name`.bk2 for the card."""
+
+    name: str
+    bin: bytes
+    bk2: bytes
+
+    @property
+    def version(self) -> str:
+        return self.bk2[0x20:0x40].split(b"\0", 1)[0].decode("ascii", "replace")
+
+    @property
+    def seal(self) -> str:
+        return self.bk2[BANK2_SEAL].hex()
+
+
+def check_pair(name: str, bin_data: bytes, bk2: bytes) -> Package:
+    """The .bin under the bootloader's limit and no .bk2 in disguise; the
+    .bk2 whole (length, CRC-32, its seal its body's SHA-256 prefix) and
+    sealed for this .bin (the seal in it once). Raises BadPackage."""
+    if bin_data[:8] == b"CHIMERA2":
+        raise BadPackage("%s.bin is a .bk2 under a .bin name" % name)
+    if len(bin_data) >= FW_MAX:
+        raise BadPackage("%s.bin is %d bytes: too big for the firmware area" % (name, len(bin_data)))
+    if bk2[:8] != b"CHIMERA2" or not BK2_HEADER <= len(bk2) <= BK2_MAX:
+        raise BadPackage("%s.bk2 is not a .bk2" % name)
+    body = bk2[BK2_HEADER:]
+    if int.from_bytes(bk2[0x0C:0x10], "little") != len(body) or zlib.crc32(body) != int.from_bytes(bk2[0x10:0x14], "little"):
+        raise BadPackage("%s.bk2 is damaged" % name)
+    seal = bk2[BANK2_SEAL]
+    if hashlib.sha256(body).digest()[:8] != seal:
+        raise BadPackage("%s.bk2 is damaged (its seal)" % name)
+    if bin_data.count(seal) != 1:
+        raise BadPackage("%s.bin and its .bk2 are not one build" % name)
+    return Package(name, bin_data, bk2)
+
+
+def read_package(path: str) -> Package:
+    """A release zip: exactly `<name>.bin`, `<name>.bk2`, `SHA256SUMS` over
+    the two, and `README.txt`. Raises BadPackage."""
     try:
-        head = pathlib.Path(local).read_bytes()
+        z = zipfile.ZipFile(path)
+    except (OSError, zipfile.BadZipFile) as e:
+        raise BadPackage("%s: %s" % (path, getattr(e, "strerror", None) or e))
+    with z:
+        infos = {i.filename: i for i in z.infolist()}
+        bins = [n for n in infos if n.endswith(".bin")]
+        name = bins[0][:-4] if len(bins) == 1 else ""
+        want = {name + ".bin", name + ".bk2", "SHA256SUMS", "README.txt"}
+        if not name or "/" in name or set(infos) != want:
+            raise BadPackage("%s holds %s, not one release's .bin, .bk2, SHA256SUMS and README.txt" % (path, ", ".join(sorted(infos)) or "nothing"))
+        caps = {name + ".bin": FW_MAX, name + ".bk2": BK2_MAX, "SHA256SUMS": 4096, "README.txt": 4096}
+        for n, cap in caps.items():
+            if infos[n].file_size > cap:
+                raise BadPackage("%s: %s is %d bytes, too big" % (path, n, infos[n].file_size))
+        data = {n: z.read(n) for n in want}
+    listed = {}
+    for ln in data["SHA256SUMS"].decode(errors="replace").splitlines():
+        h, _, n = ln.partition(" ")
+        listed[n.lstrip(" *")] = h.lower()
+    pair = {name + ".bin", name + ".bk2"}
+    if set(listed) != pair or any(hashlib.sha256(data[n]).hexdigest() != listed[n] for n in pair):
+        raise BadPackage("%s: SHA256SUMS does not match its files: download it again" % path)
+    return check_pair(name, data[name + ".bin"], data[name + ".bk2"])
+
+
+def read_files(bin_path: str, bk2_path: str) -> Package:
+    """A loose pair, as `just flash` builds it. Raises BadPackage."""
+    if not bin_path.lower().endswith(".bin") or not bk2_path.lower().endswith(".bk2"):
+        raise BadPackage("takes <file.bin> <file.bk2>, in that order")
+    try:
+        bin_data, bk2 = pathlib.Path(bin_path).read_bytes(), pathlib.Path(bk2_path).read_bytes()
     except OSError as e:
-        return fail("update: %s: %s" % (local, e.strerror or e))
-    if head[:8] == b"CHIMERA2":
-        return fail("update: %s is a .bk2 under a .bin name" % local)
-    if len(head) >= FW_MAX:
-        return fail("update: %s is %d bytes: too big for the firmware area" % (local, len(head)))
+        raise BadPackage("%s: %s" % (e.filename, e.strerror or e))
+    return check_pair(pathlib.Path(bin_path).name[:-4], bin_data, bk2)
+
+
+def dfu_flash(t: Target, env, local: str, wait: float) -> int:
+    """`local` into the firmware area by DFU, then the console back within
+    `wait` s."""
     rc = to_dfu(t, env)
     if rc:
         return rc
@@ -684,13 +773,73 @@ def flash_bin(t: Target, env, local: str) -> int:
     # `:leave` resets the unit under dfu-util, which then exits 74.
     if r.returncode not in (0, 74) or (r.returncode == 74 and "File downloaded successfully" not in r.stdout):
         return fail("update: dfu-util failed (%d)" % r.returncode)
-    return wait_console(env, 10.0)
+    return wait_console(env, wait)
 
 
-def update(t: Target, env, bin_path: str, bk2_path: str) -> int:
-    if not bk2_path.lower().endswith(".bk2"):
-        return fail("update takes <file.bin> <file.bk2>")
-    return flash_bin(t, env, bin_path) or bank2_install(t, env, bk2_path)
+def stage(t: Target, env, pkg: Package):
+    """The .bk2 onto the card under the running firmware: True staged,
+    False for firmware from before bank 2 (it refuses the path), else the
+    exit code."""
+    rc = wait_console(env, float(env.get("CHIMERA_DFU_WAIT", "10")))
+    if rc:
+        return rc
+    conn = open_conn(t)
+    try:
+        status, body = retry_busy(lambda: put(conn, pkg.bk2, BANK2_REMOTE, show_progress))
+    except PutRefused as e:
+        return fail("\nupdate: %s: nothing flashed" % e)
+    except NoAnswer:
+        return fail("\nupdate: no answer from %s: nothing flashed" % describe(t))
+    except Vanished:
+        return fail("\nupdate: %s went away: nothing flashed" % describe(t))
+    finally:
+        conn.close()
+    print(file=sys.stderr)
+    if status is Status.OK:
+        return True
+    if bytes(body) in OLD_PUT_REFUSALS:
+        print("this firmware can't take the .bk2 yet: it goes after the flash", file=sys.stderr)
+        return False
+    return fail("%s: nothing flashed" % body.decode(errors="replace"))
+
+
+def updated(t: Target, pkg: Package) -> int:
+    """0 once `status` shows `pkg` open, else what it shows and 1."""
+    want = "bank2 open %s seal=%s" % (pkg.version, pkg.seal)
+    conn = open_conn(t)
+    try:
+        status, body = request(conn, "status")
+    except NoAnswer:
+        return fail("update: flashed, but no status from %s" % describe(t))
+    except Vanished:
+        return fail("update: flashed, but %s went away" % describe(t))
+    finally:
+        conn.close()
+    text = body.decode(errors="replace")
+    got = next((ln for ln in text.splitlines() if ln.startswith("bank2 ")), text.strip())
+    if status is Status.OK and got == want:
+        print("OK updated %s" % pkg.version)
+        return 0
+    return fail("update: flashed, but status says %r, not %r (a staged .bk2 stays on the card for the next boot)" % (got, want))
+
+
+def update(t: Target, env, pkg: Package) -> int:
+    """One update: the .bk2 staged under the running firmware, the .bin by
+    DFU, the first boot's install waited for, then `status` checked. Older
+    firmware takes the .bk2 after the flash instead."""
+    staged = stage(t, env, pkg)
+    if staged is not True and staged is not False:
+        return staged
+    with tempfile.TemporaryDirectory() as d:
+        b, k = pathlib.Path(d, pkg.name + ".bin"), pathlib.Path(d, pkg.name + ".bk2")
+        b.write_bytes(pkg.bin)
+        k.write_bytes(pkg.bk2)
+        rc = dfu_flash(t, env, str(b), UPDATE_BOOT_WAIT_S)
+        if rc:
+            return rc
+        if not staged and bank2_install(t, env, str(k)):
+            return 1
+    return updated(t, pkg)
 
 
 def main(argv, env) -> int:
@@ -710,7 +859,16 @@ def main(argv, env) -> int:
     if argv[0] == "bank2":
         return bank2_install(t, env, argv[1]) if len(argv) == 2 else fail("bank2 takes <file.bk2>")
     if argv[0] == "update":
-        return update(t, env, argv[1], argv[2]) if len(argv) == 3 else fail("update takes <file.bin> <file.bk2>")
+        try:
+            if len(argv) == 2:
+                pkg = read_package(argv[1])
+            elif len(argv) == 3:
+                pkg = read_files(argv[1], argv[2])
+            else:
+                return fail("update takes <chimera-<version>.zip>, or <file.bin> <file.bk2>")
+        except BadPackage as e:
+            return fail("update: %s" % e)
+        return update(t, env, pkg)
     if argv[0] == "put":
         over = argv[3:] == ["--over"]
         if len(argv) != 3 and not over:
