@@ -26,7 +26,6 @@ use chimera_core::storage::{FileKind, Generation, Header, ProjectId, ValidAddr, 
 
 use super::source::{self, Source, VecSink};
 use crate::listen::lined_tables;
-use crate::privacy::PORT_IDS;
 
 /// Where the demos live, in `tools/factory-sounds/`; errors name it.
 pub const FILE: &str = "projects.toml";
@@ -329,14 +328,14 @@ pub fn check(demos: &[Demo], sounds: &[Source]) -> Result<(), String> {
     Ok(())
 }
 
-/// The public Sound `p` names. A port (a `from` line, or an id in
-/// `PORT_IDS`) is refused by name: the demos ship in the public set.
+/// The public Sound `p` names. A private port (a `from` line) is refused
+/// by name: the demos ship in the public set.
 fn sound_of<'a>(p: &DemoPart, sounds: &'a [Source]) -> Result<&'a Source, String> {
     let s = sounds
         .iter()
         .find(|s| s.name.as_str() == p.sound)
         .ok_or_else(|| at(p.line, format!("no Sound named {}", p.sound)))?;
-    if s.from.is_some() || PORT_IDS.contains(&s.id.get()) {
+    if s.from.is_some() {
         return Err(at(
             p.line,
             format!(

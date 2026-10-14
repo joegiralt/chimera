@@ -759,9 +759,9 @@ pub fn check(all: &[Source]) -> Result<(), String> {
     Ok(())
 }
 
-/// The public set's walls (ADR 0134): no Source with a `from` or `edits`
-/// line (a port's hint on the page), and no
-/// id reserved for the private ports.
+/// The public set's walls (ADR 0134, 0138): no Source with a `from` or
+/// `edits` line. The ports ship public with those as comments (ADR 0138),
+/// so their ids S9100010-25 are public ids now.
 pub fn public(all: &[Source]) -> Result<(), String> {
     for s in all {
         if let Some((line, _)) = &s.from {
@@ -774,13 +774,6 @@ pub fn public(all: &[Source]) -> Result<(), String> {
             return Err(format!(
                 "{}: edits: a port's line; the public build refuses it",
                 s.at(e.line)
-            ));
-        }
-        if PORT_IDS.contains(&s.id.get()) {
-            return Err(format!(
-                "{}: id {} is reserved for the private ports",
-                s.at(s.id_line),
-                s.id
             ));
         }
     }
