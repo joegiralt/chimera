@@ -8,6 +8,7 @@ mod imp {
     use core::ptr::{addr_of, addr_of_mut};
     use core::sync::atomic::{AtomicBool, Ordering};
 
+    use chimera_core::board::BoardId;
     use chimera_core::clock_plan::SiliconRev;
     use chimera_core::hw::BlockBudget;
     use chimera_core::perf::load::AudioStats;
@@ -19,7 +20,12 @@ mod imp {
     use crate::clocks::Clocks;
     use crate::shared;
 
-    const BLANK: AudioStats = AudioStats::new(SiliconRev::Unknown(0), 0, ResetCause::Unknown);
+    const BLANK: AudioStats = AudioStats::new(
+        SiliconRev::Unknown(0),
+        BoardId::Unknown(0),
+        0,
+        ResetCause::Unknown,
+    );
     const PAINT_MARGIN: usize = 256;
 
     static mut STATS_BUF: TripleBuffer<AudioStats> = TripleBuffer::new(BLANK, BLANK, BLANK);
@@ -80,6 +86,7 @@ mod imp {
         dwt: &mut DWT,
         clocks: Clocks,
         reset: ResetCause,
+        board: BoardId,
     ) -> Option<Reader<AudioStats>> {
         if !crate::clocks::enable_cycle_counter(dcb, dwt) || TAKEN.swap(true, Ordering::AcqRel) {
             return None;
@@ -87,7 +94,7 @@ mod imp {
         // SAFETY: the flag lets one caller past, before the audio interrupt is
         // unmasked, so nothing else touches these statics yet.
         unsafe {
-            *addr_of_mut!(STATS) = AudioStats::new(clocks.rev, clocks.cpu_hz, reset);
+            *addr_of_mut!(STATS) = AudioStats::new(clocks.rev, board, clocks.cpu_hz, reset);
             *addr_of_mut!(BUDGET) = BlockBudget::for_cpu(clocks.cpu_hz);
             let (w, r) = (&mut *addr_of_mut!(STATS_BUF)).split();
             *addr_of_mut!(WRITER) = Some(w);
@@ -157,7 +164,13 @@ mod stub {
         0
     }
 
-    pub fn init(_: &mut DCB, _: &mut DWT, _: Clocks, _: ResetCause) -> Option<Reader<AudioStats>> {
+    pub fn init(
+        _: &mut DCB,
+        _: &mut DWT,
+        _: Clocks,
+        _: ResetCause,
+        _: chimera_core::board::BoardId,
+    ) -> Option<Reader<AudioStats>> {
         None
     }
 

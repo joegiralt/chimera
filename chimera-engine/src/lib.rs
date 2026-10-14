@@ -17,6 +17,7 @@ pub use chimera_hal::{MidiChannel, MidiNote, Velocity};
 pub mod addr;
 pub mod audio_out;
 pub mod block;
+pub mod board;
 pub mod boot;
 pub mod budget;
 pub mod clock_plan;

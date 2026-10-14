@@ -920,7 +920,7 @@ pub static SYS_ABOUT: BlockDef = BlockDef {
     params: [
         ParamSlot::legacy("VERSION", &ValFmt::Int(0)),
         ParamSlot::legacy("BUILD", &ValFmt::Int(0)),
-        ParamSlot::legacy("REV", &ValFmt::Int(0)),
+        ParamSlot::legacy("CHIP", &ValFmt::Int(0)),
         ParamSlot::legacy("CLOCK", &ValFmt::Int(0)),
         ParamSlot::legacy("RESET", &ValFmt::Int(0)),
         ParamSlot::legacy("CARD", &ValFmt::Int(0)),

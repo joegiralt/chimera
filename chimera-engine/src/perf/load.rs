@@ -1,3 +1,4 @@
+use crate::board::BoardId;
 use crate::clock_plan::SiliconRev;
 use crate::hw::BlockBudget;
 use crate::note_queue::MAX_NOTE_SOURCES;
@@ -23,6 +24,8 @@ pub struct AudioStats {
     pub sources: u8,
     pub stack_used: u32,
     pub rev: SiliconRev,
+    /// The main board, from its strap (ADR 0140).
+    pub board: BoardId,
     pub cpu_hz: u32,
     /// Why the chip last reset: a watchdog reset is otherwise a silent
     /// reboot.
@@ -39,7 +42,7 @@ pub struct AudioStats {
 }
 
 impl AudioStats {
-    pub const fn new(rev: SiliconRev, cpu_hz: u32, reset: ResetCause) -> Self {
+    pub const fn new(rev: SiliconRev, board: BoardId, cpu_hz: u32, reset: ResetCause) -> Self {
         Self {
             load_avg: 0,
             load_peak: 0,
@@ -51,6 +54,7 @@ impl AudioStats {
             sources: 0,
             stack_used: 0,
             rev,
+            board,
             cpu_hz,
             reset,
             voices: 0,

@@ -2144,7 +2144,12 @@ pub const CASES: &[ScreenCase] = &[
 
 /// `AudioStats` fixture for AUDIO LOAD's and ABOUT's goldens and tests.
 pub fn audio_fixture() -> AudioStats {
-    let mut s = AudioStats::new(SiliconRev::V, 480_000_000, ResetCause::Watchdog);
+    let mut s = AudioStats::new(
+        SiliconRev::V,
+        chimera_core::board::BoardId::Lqfp176,
+        480_000_000,
+        ResetCause::Watchdog,
+    );
     s.load_avg = 23;
     s.load_peak = 41;
     s.overruns = 2;

@@ -216,7 +216,7 @@ A leaf is one page (ADR 0066): no key steps it.
 | ![](settings_audio_outputs.png) | AUDIO › OUTPUTS | Each Part's OUT: the mixer's own value |
 | ![](settings_audio_tuning.png) | AUDIO › TUNING | TUNE and SCALE |
 | ![](settings_personal_theme.png) | PERSONAL › THEME | BRIGHT, GAMMA, ACCENT (AMBER, focused), BLACK |
-| ![](settings_system_about.png) | SYSTEM › ABOUT | Version, build, chip REV, clock, reset cause, the card |
+| ![](settings_system_about.png) | SYSTEM › ABOUT | Version, build, CHIP (silicon rev and board package), clock, reset cause, the card |
 | ![](settings_system_diag_aud_load.png) | DIAG › AUD LOAD | Audio load, peak, overruns, drops, desyncs, stack |
 
 ## DEMO (SETTINGS › SYSTEM › DIAGNOSTICS › DEMO, debug builds)

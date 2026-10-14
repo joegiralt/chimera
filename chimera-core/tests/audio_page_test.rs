@@ -131,8 +131,26 @@ fn about_shows_the_firmware_chip_and_card() {
     let s = audio_fixture();
     assert_eq!(
         texts(Some(&s), Card::Absent),
-        [VERSION, BUILD, "V", "480 MHZ", "WDOG", "NO CARD"]
+        [VERSION, BUILD, "V 176", "480 MHZ", "WDOG", "NO CARD"]
     );
+    // CHIP: the rev, then the board's package from its strap; an unknown
+    // strap is wired as the 176 and says so. Every one fits its column.
+    use chimera_core::board::BoardId;
+    for (rev, board, want) in [
+        (SiliconRev::V, BoardId::Lqfp144, "V 144"),
+        (SiliconRev::Y, BoardId::Lqfp100, "Y 100"),
+        (
+            SiliconRev::Unknown(0x2001),
+            BoardId::Unknown(0b1111),
+            "? 176?",
+        ),
+    ] {
+        let mut s = audio_fixture();
+        (s.rev, s.board) = (rev, board);
+        let got = cell_texts(Some(&s), Card::Absent)[2].as_str().to_string();
+        assert_eq!(got, want);
+        assert!(text_width(&FONT_VALUE, &got, 0) <= CELL_COL_W);
+    }
     assert_eq!(texts(None, Card::Absent)[2..5], ["--", "--", "--"]);
     let vol = |label: &[u8; 11]| {
         Card::Ready(VolumeId {
