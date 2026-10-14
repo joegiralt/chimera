@@ -501,9 +501,10 @@ pub struct RegionSet {
     pub count: u8,
     /// The layout built, and whether a prompt is over it; `None` rebuilds.
     pub prev_screen: Option<(Layout, bool)>,
-    /// THEME's HINTS as the bands were last drawn: any band may draw a
-    /// hint, so a change redraws them all (`UiState::hints_moved`).
-    pub drawn_hints: Option<bool>,
+    /// THEME's HINTS and SYSTEM's PUSH ENCODERS as the bands were last
+    /// drawn: any band may draw a hint, so a change redraws them all
+    /// (`UiState::hints_moved`).
+    pub drawn_hints: Option<(bool, bool)>,
 }
 
 /// Which bands a screen has: a page's, or SETTINGS' (a list, or a leaf of

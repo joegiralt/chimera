@@ -445,6 +445,11 @@ impl View {
             .map_or(FocusGlyph::Arc, |s| s.glyph)
     }
 
+    /// A value a push can set or fine-tune (ADR 0140).
+    pub fn pushes(&self) -> bool {
+        matches!(self, View::Param { .. } | View::Route { .. })
+    }
+
     pub fn addr(&self) -> Option<ParamAddr> {
         match *self {
             View::Param { addr, .. } => Some(addr),

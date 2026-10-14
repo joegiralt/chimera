@@ -10,6 +10,9 @@ use crate::dsp::clampf;
 /// A switch's two names, as `ValFmt::Names` shows it.
 pub const OFF_ON: [&str; 2] = ["OFF", "ON"];
 
+/// Fine ticks to a step: a pushed encoder's turn (ADR 0140).
+pub const FINE_DIV: f32 = 10.0;
+
 /// Display format and shift-snap behavior of a parameter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValFmt {
@@ -425,6 +428,17 @@ impl ParamSpec {
         })
     }
 
+    /// `v` moved `delta` fine ticks, each `1 / FINE_DIV` of a step: an
+    /// encoder pushed while it turns (ADR 0140).
+    #[inline(never)]
+    pub fn nudged_fine(&self, v: f32, delta: i8) -> f32 {
+        let d = f32::from(delta) / FINE_DIV;
+        self.quantize(match self.scale {
+            Scale::Linear => v + d * self.step,
+            Scale::Octaves => v * exp2(d * self.step),
+        })
+    }
+
     /// Where shift+encoder takes `v`: the format's next snap point up
     /// (`delta > 0`) or down, as a value. Out of line: one copy, not one
     /// per block.
@@ -638,6 +652,18 @@ pub trait Block {
     fn nudge(&mut self, id: ParamId, delta: i8) {
         if let Some(s) = self.spec(id) {
             self.write(id, s.nudged(self.get(id), delta));
+        }
+    }
+
+    /// A pushed encoder's turn: a continuous param moves a tenth of its
+    /// step a tick; any other moves one plain tick, through `nudge`, so a
+    /// block's own stepping (WAVE's budget, ROTATE's wrap) still holds.
+    fn nudge_fine(&mut self, id: ParamId, delta: i8) {
+        match self.spec(id) {
+            Some(s) if s.kind == ParamKind::Continuous => {
+                self.write(id, s.nudged_fine(self.get(id), delta))
+            }
+            _ => self.nudge(id, delta.signum()),
         }
     }
 

@@ -109,6 +109,25 @@ impl PageId {
         }
     }
 
+    /// A pushed encoder's turn: the bound param fine (ADR 0140).
+    pub fn fine_encoder(&self, idx: usize, delta: i8, params: &mut impl Blocks) {
+        if let Some(a) = self.binding(idx)
+            && let Some(mut b) = params.block_mut(a.block)
+        {
+            b.nudge_fine(a.param, delta);
+        }
+    }
+
+    /// A push tap: the bound param to its default (ADR 0140).
+    pub fn default_encoder(&self, idx: usize, params: &mut impl Blocks) {
+        if let Some(a) = self.binding(idx)
+            && let Some(mut b) = params.block_mut(a.block)
+            && let Some(s) = b.spec(a.param)
+        {
+            b.set(a.param, s.default);
+        }
+    }
+
     /// Shift+encoder: snap to the coarse points of the bound param's format.
     pub fn snap_encoder(&self, idx: usize, delta: i8, params: &mut impl Blocks) {
         if let Some(a) = self.binding(idx)

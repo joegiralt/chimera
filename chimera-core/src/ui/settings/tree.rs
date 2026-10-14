@@ -4,7 +4,7 @@
 
 use super::leaves::{
     ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, LIVE_SNAP_LEAF, OUTPUTS_LEAF, OnePage, POOL_LEAF,
-    SAVER_LEAF, THEME_LEAF, TUNING_LEAF,
+    PUSH_LEAF, SAVER_LEAF, THEME_LEAF, TUNING_LEAF,
 };
 use core::num::NonZeroU16;
 
@@ -193,12 +193,13 @@ static DIAGNOSTICS: &[Row] = &[
     row("DEMO", List(&DEMO)),
 ];
 
-static SYSTEM: [Row; 6] = [
+static SYSTEM: [Row; 7] = [
     crumb("OS UPGRADE", "OS", Kind::Act(Act::EnterDfu)),
     row("STORAGE", Later(issue(267))),
     crumb("FORMAT CARD", "FORMAT", Later(issue(268))),
     crumb("USB CONFIG", "USB", Later(issue(269))),
     crumb("DIAGNOSTICS", "DIAG", List(DIAGNOSTICS)),
+    crumb("PUSH ENCODERS", "PUSH", Leaf(&PUSH_LEAF)),
     row("ABOUT", Leaf(&ABOUT_LEAF)),
 ];
 

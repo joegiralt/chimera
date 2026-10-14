@@ -143,6 +143,7 @@ fn system_is_the_spec_order() {
             "FORMAT CARD",
             "USB CONFIG",
             "DIAGNOSTICS",
+            "PUSH ENCODERS",
             "ABOUT"
         ]
     );

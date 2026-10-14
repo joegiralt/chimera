@@ -8,7 +8,8 @@
 use chimera_core::board::{Hc165Pins, Port};
 use chimera_core::clock_plan::{cycles_for_ns, systick_reload};
 use chimera_hal::{
-    ButtonId, ButtonState, Controls, Edges, EncoderId, Latch, Ms, NUM_BUTTONS, NUM_ENCODERS,
+    ButtonId, ButtonState, Controls, Debounce, Edges, EncoderId, Latch, Ms, NUM_BUTTONS,
+    NUM_ENCODERS, push_levels,
 };
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, AtomicI8, AtomicU32, AtomicUsize, Ordering};
@@ -63,19 +64,20 @@ const BTN_BITS: [u32; NUM_BUTTONS] = [
 /// N24 quadrature table — 1 count per detent click (vs N12 which gives 2)
 const QUAD: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0];
 
+/// The twelve buttons, then the six encoders' pushes.
+const NUM_SWITCHES: usize = NUM_BUTTONS + NUM_ENCODERS;
+
 // Shared ISR ↔ main state
 static READY: AtomicBool = AtomicBool::new(false);
+/// SYSTEM's PUSH ENCODERS: the read takes 32 bits, not 24.
+static PUSH: AtomicBool = AtomicBool::new(false);
 static ENC_DELTA: [AtomicI8; NUM_ENCODERS] = [const { AtomicI8::new(0) }; NUM_ENCODERS];
-/// Each button's edges since the last `snapshot`. The ISR feeds them; the
+/// Each switch's edges since the last `snapshot`. The ISR feeds them; the
 /// main loop takes them inside `interrupt::free`, so the two never overlap.
-static mut LATCHES: [Latch; NUM_BUTTONS] = [Latch::new(); NUM_BUTTONS];
+static mut LATCHES: [Latch; NUM_SWITCHES] = [Latch::new(); NUM_SWITCHES];
 static mut ENC_STATE: [u8; NUM_ENCODERS] = [0; NUM_ENCODERS];
 static mut ENC_DEBOUNCE: [u8; NUM_ENCODERS] = [0; NUM_ENCODERS];
-/// Button debounce: tracks how many consecutive ISR ticks a button has been stable.
-/// Only latches as pressed after BTN_DEBOUNCE_TICKS consecutive "pressed" reads.
-static mut BTN_DEBOUNCE: [u8; NUM_BUTTONS] = [0; NUM_BUTTONS];
-static mut BTN_STATE: [bool; NUM_BUTTONS] = [false; NUM_BUTTONS];
-const BTN_DEBOUNCE_TICKS: u8 = 3; // 6ms at 500Hz
+static mut DEBOUNCE: [Debounce; NUM_SWITCHES] = [Debounce::new(); NUM_SWITCHES];
 static ISR_TICK: AtomicU32 = AtomicU32::new(0);
 static ENC_LAST_EDGE: [AtomicU32; NUM_ENCODERS] = [const { AtomicU32::new(0) }; NUM_ENCODERS];
 
@@ -105,6 +107,11 @@ pub fn wire(pins: Hc165Pins) {
     HC_DATA.store(1 << pins.data, Ordering::Relaxed);
     HC_LOAD.store(1 << pins.load, Ordering::Relaxed);
     HC_CLK.store(1 << pins.clk, Ordering::Relaxed);
+}
+
+/// SYSTEM's PUSH ENCODERS: off, the read is the 24 bits it always was.
+pub fn set_push(on: bool) {
+    PUSH.store(on, Ordering::Relaxed);
 }
 
 /// Allow ISR to run. Call after the HC165's port is configured and `wire`d.
@@ -152,7 +159,9 @@ pub unsafe fn isr_tick() {
         HC_LOAD.load(Ordering::Relaxed),
         HC_CLK.load(Ordering::Relaxed),
     );
-    // Shift the HC165 chain in: LOAD low then high, then 24 clocks, DATA
+    let push = PUSH.load(Ordering::Relaxed);
+    let n = if push { 32 } else { 24 };
+    // Shift the HC165 chain in: LOAD low then high, then `n` clocks, DATA
     // read while CLK is low. BSRR's top half resets, its bottom half sets.
     // SAFETY: `base` is GPIOA's or GPIOF's fixed register block (`wire`
     // stores no other); IDR and BSRR are its 32-bit registers. The caller
@@ -165,7 +174,7 @@ pub unsafe fn isr_tick() {
         cortex_m::asm::delay(d);
 
         let mut b: u32 = 0;
-        for i in 0..24u32 {
+        for i in 0..n {
             core::ptr::write_volatile(bsrr, clk << 16);
             cortex_m::asm::delay(d);
             if core::ptr::read_volatile(idr) & data != 0 {
@@ -177,28 +186,25 @@ pub unsafe fn isr_tick() {
         b
     };
 
-    // Buttons: active low, debounced to stable level, edges latched.
-    // SAFETY: BTN_DEBOUNCE/BTN_STATE are only touched here, from SysTick
-    // (this fn's contract), which is not reentrant. LATCHES is shared with
+    // Buttons and pushes: active low, debounced, edges latched. Pushes
+    // off read released, so one held when they are switched off lets go.
+    let pushes = if push {
+        push_levels(bits)
+    } else {
+        [false; NUM_ENCODERS]
+    };
+    // SAFETY: DEBOUNCE is only touched here, from SysTick (this fn's
+    // contract), which is not reentrant. LATCHES is shared with
     // `snapshot`, which only touches it inside `interrupt::free`: on this
-    // single core that masks SysTick, so the ISR never runs during it, and the main loop cannot run during the ISR.
-    // Access is exclusive either way; no ordering beyond that is needed.
+    // single core that masks SysTick, so the ISR never runs during it, and
+    // the main loop cannot run during the ISR. Access is exclusive either
+    // way; no ordering beyond that is needed.
     unsafe {
         let latches = &mut *addr_of_mut!(LATCHES);
-        for (i, &mask) in BTN_BITS.iter().enumerate() {
-            let raw_pressed = bits & mask == 0;
-            if raw_pressed == BTN_STATE[i] {
-                // Same as current debounced state — reset counter
-                BTN_DEBOUNCE[i] = 0;
-            } else {
-                // Different from debounced state — count stable ticks
-                BTN_DEBOUNCE[i] += 1;
-                if BTN_DEBOUNCE[i] >= BTN_DEBOUNCE_TICKS {
-                    BTN_STATE[i] = raw_pressed;
-                    BTN_DEBOUNCE[i] = 0;
-                }
-            }
-            latches[i].level(BTN_STATE[i], now_ms);
+        let debounce = &mut *addr_of_mut!(DEBOUNCE);
+        let raw = BTN_BITS.iter().map(|&m| bits & m == 0).chain(pushes);
+        for ((raw, d), latch) in raw.zip(debounce.iter_mut()).zip(latches.iter_mut()) {
+            latch.level(d.step(raw), now_ms);
         }
     }
 
@@ -237,7 +243,8 @@ pub unsafe fn isr_tick() {
 // --- Main-thread interface ---
 
 pub struct Stm32Controls {
-    edges: [Edges; NUM_BUTTONS],
+    /// The buttons', then the pushes'.
+    edges: [Edges; NUM_SWITCHES],
     now_ms: Ms,
     enc: [i8; NUM_ENCODERS],
     burst: [u8; NUM_ENCODERS],
@@ -246,7 +253,7 @@ pub struct Stm32Controls {
 impl Stm32Controls {
     pub(crate) fn new() -> Self {
         Self {
-            edges: [Edges::default(); NUM_BUTTONS],
+            edges: [Edges::default(); NUM_SWITCHES],
             now_ms: Ms(0),
             enc: [0; NUM_ENCODERS],
             burst: [0; NUM_ENCODERS],
@@ -303,5 +310,9 @@ impl Controls for Stm32Controls {
 
     fn now_ms(&self) -> Ms {
         self.now_ms
+    }
+
+    fn push(&self, id: EncoderId) -> Edges {
+        self.edges[NUM_BUTTONS + id as usize]
     }
 }

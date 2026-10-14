@@ -75,6 +75,45 @@ fn machine_edit(a: ParamAddr, before: f32, b: &mut dyn Block) {
     }
 }
 
+/// A pushed encoder's turn on `slot` (ADR 0140): the bound param fine, or
+/// the selector a plain tick.
+pub fn fine_encoder(
+    def: &BlockDef,
+    slot: usize,
+    delta: i8,
+    params: &mut impl Blocks,
+    sel_op: &mut Op,
+) {
+    let ctx = SlotCtx::read(&*params, *sel_op);
+    if def
+        .params
+        .get(slot)
+        .is_some_and(|s| s.binding == SlotBinding::SelectOp)
+    {
+        *sel_op = sel_op.nudged(delta.signum());
+    } else if let Some(a) = slot_addr(def, slot, &ctx)
+        && let Some(mut b) = params.block_mut(a.block)
+    {
+        let before = b.get(a.param);
+        b.nudge_fine(a.param, delta);
+        machine_edit(a, before, &mut *b);
+    }
+}
+
+/// A push tap on `slot` (ADR 0140): the bound param to its default, set
+/// as shift+encoder sets a snap point. The selector has none.
+pub fn default_encoder(def: &BlockDef, slot: usize, params: &mut impl Blocks, sel_op: Op) {
+    let ctx = SlotCtx::read(&*params, sel_op);
+    if let Some(a) = slot_addr(def, slot, &ctx)
+        && let Some(mut b) = params.block_mut(a.block)
+        && let Some(s) = b.spec(a.param)
+    {
+        let before = b.get(a.param);
+        b.set(a.param, s.default);
+        machine_edit(a, before, &mut *b);
+    }
+}
+
 /// Shift+encoder on `slot`: snap the bound param (the selector does not snap).
 pub fn snap_encoder(def: &BlockDef, slot: usize, delta: i8, params: &mut impl Blocks, sel_op: Op) {
     let ctx = SlotCtx::read(&*params, sel_op);
