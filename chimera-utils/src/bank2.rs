@@ -67,7 +67,9 @@ pub fn check_pair(bin: &[u8], bk2: &[u8]) -> Result<Seal, String> {
     let seal = Seal::new(h.seal).ok_or("the .bk2 seal is a reserved value")?;
     match bin.windows(8).filter(|w| *w == h.seal).count() {
         1 => Ok(seal),
-        n => Err(format!("the .bk2's seal is in the .bin {n} times, not once")),
+        n => Err(format!(
+            "the .bk2's seal is in the .bin {n} times, not once"
+        )),
     }
 }
 
