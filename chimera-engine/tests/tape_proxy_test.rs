@@ -151,4 +151,53 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     assert!(!e2.is_active());
     assert_eq!(e2.heads(), Heads::NONE);
     assert!(TapeEngine::refuses(p.model, Some(id), &tok.begin_block()));
+
+    // Open again: the deck plays on from where the close left it.
+    DOOR_CELL.open_host();
+    assert!(e2.is_active());
+    for _ in 0..5 {
+        let v = tok.begin_block();
+        let (mut a, mut b) = ([0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE]);
+        d2.play(&mut a, &p, &v, SR);
+        e2.play(&mut b, &p, &v, SR);
+        assert_eq!(bits(&a), bits(&b));
+        assert!(a.iter().any(|&y| y != 0.0));
+    }
+
+    // A strip restored while closed: the deck's strip is dropped and the
+    // voice's seed kept, so the deck built next is a fresh one on seed 3.
+    // TAPE up, so a strip that ran on (`d4`) sounds different.
+    let worn = TapeEngineParams { tape: 0.8, ..p };
+    let s = e2.strip();
+    let ran = d2.strip();
+    DOOR_CELL.close();
+    let mut pslot3 = MaybeUninit::uninit();
+    let e3 = TapeEngine::init_in_place(&mut pslot3);
+    e3.restore(s);
+    DOOR_CELL.open_host();
+    let mut dslot3 = MaybeUninit::uninit();
+    let d3 = TapeDeck::init_in_place(&mut dslot3);
+    d3.seed(3);
+    let mut dslot4 = MaybeUninit::uninit();
+    let d4 = TapeDeck::init_in_place(&mut dslot4);
+    d4.restore(ran);
+    let v = tok.begin_block();
+    for k in [&mut *d3, &mut *d4] {
+        k.latch(id);
+        k.start(60, &worn, &v, SR);
+    }
+    e3.latch(id);
+    e3.start(60, &worn, &v, SR);
+    let mut differs = false;
+    for _ in 0..40 {
+        let v = tok.begin_block();
+        let (mut a, mut b, mut c) = ([0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE]);
+        d3.play(&mut a, &worn, &v, SR);
+        e3.play(&mut b, &worn, &v, SR);
+        d4.play(&mut c, &worn, &v, SR);
+        assert_eq!(bits(&a), bits(&b));
+        differs |= bits(&a) != bits(&c);
+    }
+    assert!(differs, "the strip's wear must be audible here");
+    DOOR_CELL.close();
 }

@@ -267,10 +267,14 @@ check:
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bank2-gate
-    # The bench, an area a build: all of it no longer fits FLASH.
-    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; done
+    # The bench, an area a build: all of it no longer fits FLASH. Each is
+    # door-checked, as bank2-split checks the builds it splits.
+    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; done
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
-    cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
+    # The bootloader links cortex-m-rt's script itself: without it lld warns
+    # and links an ELF with no vector table.
+    out=$(cargo build -p chimera-bootloader --target thumbv7em-none-eabihf 2>&1) || { echo "$out"; exit 1; }; echo "$out"; if echo "$out" | grep -q "cannot find entry symbol"; then exit 1; fi
+    rust-objdump -h target/thumbv7em-none-eabihf/debug/chimera-bootloader | grep -q '[.]vector_table' || { echo "chimera-bootloader: no .vector_table" >&2; exit 1; }
     cargo build -p chimera-theory --target thumbv7em-none-eabihf
     just clippy
     just loom
