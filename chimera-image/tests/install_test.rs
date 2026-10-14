@@ -494,6 +494,12 @@ fn boot_action_table() {
         assert!(a.may_install(), "{a:?}");
     }
     assert!(!BootAction::EraseS0NoInstall.may_install());
+    // Erased, bank 2 is never read that boot: Empty by construction.
+    assert_eq!(
+        BootAction::EraseS0ThenJudge.after_erase(),
+        Some(Verdict::Empty)
+    );
+    assert_eq!(BootAction::EraseS0NoInstall.after_erase(), None);
 }
 
 /// A fault outside the boot's own install marks bank 2 bad; one inside it

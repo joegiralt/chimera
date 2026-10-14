@@ -185,9 +185,10 @@ pub const BANK2_INSTALLING: u32 = 0xB21A_57A1;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BootAction {
     Judge,
-    /// A word faulted: erase S0 (erase clears its ECC), judge, reinstall.
+    /// A word faulted: erase S0 (erase clears its ECC); bank 2 is then
+    /// `Empty` by construction, never read; reinstall.
     EraseS0ThenJudge,
-    /// The last boot's install never ended: erase S0, judge, install
+    /// The last boot's install never ended: erase S0, read nothing, install
     /// nothing this boot, so a word that faults again costs one more reset.
     EraseS0NoInstall,
 }
@@ -196,6 +197,13 @@ impl BootAction {
     /// The staged file may be installed this boot.
     pub fn may_install(self) -> bool {
         self != BootAction::EraseS0NoInstall
+    }
+
+    /// After S0's erase succeeded: the verdict the boot's install may go
+    /// over, `Empty` without a read (a word that faults even after its
+    /// erase can't fault this boot), or `None`.
+    pub fn after_erase(self) -> Option<Verdict> {
+        self.may_install().then_some(Verdict::Empty)
     }
 }
 

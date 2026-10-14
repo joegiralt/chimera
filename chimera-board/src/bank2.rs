@@ -107,8 +107,9 @@ pub fn set_mpu(s: Mpu2) {
 
 fn bank2() -> &'static pac::flash::BANK {
     // SAFETY: FLASH's fixed register block, its bank-2 half: KEYR2, CR2,
-    // SR2 and CCR2, nothing else. Only this module writes them, from the
-    // boot or the UI loop; no interrupt touches the flash controller.
+    // SR2, CCR2 and FA2R. Only this module writes them, from the boot or
+    // the UI loop; the HardFault handler only reads SR2 and FA2R (no read
+    // side effects), and no interrupt touches the flash controller.
     unsafe { (*pac::FLASH::ptr()).bank2() }
 }
 
@@ -221,8 +222,8 @@ fn wait(start: u32, limit: u32) -> Result<(), FlashFail> {
 /// Bank 2's flash controller over S0-S3, built only by `new`: the door
 /// closed and region 2 `Write` (strongly-ordered, uncached), so its reads
 /// are live and no cache line holds bank 2 across an erase or program
-/// (`set_mpu` invalidates the whole caches out of `Open`). From the UI loop
-/// only; the audio interrupt and the tick keep running from bank 1
+/// (`set_mpu` invalidates the whole caches out of `Open`). From the boot or
+/// the UI loop only; the audio interrupt and the tick keep running from bank 1
 /// meanwhile (RM0433 read-while-write), as in the phase 0b spike. Nothing
 /// linked into bank 1 reads bank 2 with the door closed.
 pub struct FlashBank2 {
@@ -341,37 +342,46 @@ pub struct Bank2Boot {
 }
 
 /// The boot's bank-2 step, before anything reads bank 2: BKP14R's mark
-/// first (`boot_action`): a fault marked is cleared, then S0 erased (erase
-/// clears its ECC), so one fault costs one reset, never a loop. An erase
-/// that fails leaves bank 2 unread and closed this boot. Then the judge:
-/// on `Good`, region 2 `Open`, the door cell opened and the door checked.
-/// The cycle counter must already run: it bounds the erase.
+/// first (`boot_action`). A mark erases S0 (erase clears its ECC), then
+/// clears the mark, and bank 2 is `Empty` by construction: nothing of it is
+/// read that boot, so a word that faults even after its erase can't loop
+/// the boot. A failed erase keeps the mark and leaves bank 2 closed. No
+/// mark: the judge; on `Good`, region 2 `Open`, the door cell opened and
+/// the door checked; SR2's flags cleared after, so a stale DBECCERR can't
+/// make a later, unrelated bus fault reset. The cycle counter must already
+/// run: it bounds the erase.
 #[cfg(feature = "bank2")]
 pub fn boot_judge(rtc: &pac::RTC, cpu_hz: u32) -> Bank2Boot {
     use chimera_image::{BootAction, boot_action};
 
+    let closed = |status| Bank2Boot {
+        status,
+        install_over: None,
+    };
     let action = boot_action(crate::dfu::bank2_mark(rtc));
     if action != BootAction::Judge {
-        crate::dfu::set_bank2_mark(rtc, 0);
         let erased = FlashBank2::new(cpu_hz).erase(Bank2Sector::S0);
         set_mpu(Mpu2::Read);
         if let Err(f) = erased {
-            return Bank2Boot {
-                status: Bank2Status::EccEraseFailed(f),
-                install_over: None,
-            };
+            return closed(Bank2Status::EccEraseFailed(f));
         }
+        crate::dfu::set_bank2_mark(rtc, 0);
+        if crate::bank2_seal().is_none() {
+            return closed(Bank2Status::Unsealed);
+        }
+        return Bank2Boot {
+            status: Bank2Status::Empty,
+            install_over: action.after_erase(),
+        };
     }
     let Some(seal) = crate::bank2_seal() else {
-        return Bank2Boot {
-            status: Bank2Status::Unsealed,
-            install_over: None,
-        };
+        return closed(Bank2Status::Unsealed);
     };
     let (status, flash) = open_door(&seal);
+    clear_flags();
     Bank2Boot {
         status,
-        install_over: action.may_install().then_some(flash),
+        install_over: Some(flash),
     }
 }
 
@@ -388,7 +398,7 @@ pub fn boot_judge(_: &pac::RTC, _: u32) -> Bank2Boot {
 /// (a bus fault, SR2.DBECCERR, FA2R in S0-S3) marks BKP14R and resets.
 /// Anything else returns, to the handler's halt. Register reads only, no
 /// HAL object: safe in a fault handler.
-#[cfg(feature = "bank2")]
+#[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
 pub fn reset_on_ecc_fault() {
     // SAFETY: SCB_CFSR, read only; its bits are sticky until written.
     let cfsr = unsafe { (*cortex_m::peripheral::SCB::PTR).cfsr.read() };

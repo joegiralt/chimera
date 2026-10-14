@@ -60,9 +60,10 @@ pub fn set_bank2_mark(rtc: &pac::rtc::RegisterBlock, v: u32) {
 /// boot, so the handler halts instead.
 #[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
 pub fn mark_fault_and_reset() {
-    // SAFETY: the RTC's fixed register block, its backup registers only,
-    // from a fault handler: nothing runs after it. DBP and RTCAPBEN are
-    // set by `after_reset`; the read-back below says if they were not.
+    // SAFETY: the RTC's fixed register block, its backup registers only;
+    // the caller, a fault handler, halts or resets after. DBP and
+    // RTCAPBEN are set by `after_reset`; the read-back below says if they
+    // were not.
     let rtc = unsafe { &*pac::RTC::ptr() };
     let mark = chimera_image::fault_mark(bank2_mark(rtc));
     set_bank2_mark(rtc, mark);
