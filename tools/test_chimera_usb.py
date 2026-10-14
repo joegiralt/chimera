@@ -1062,13 +1062,21 @@ class Update(unittest.TestCase):
         self.assertEqual((rc, u.requests), (1, []))
 
     def test_exit_1_unless_status_is_open_with_the_package_seal(self):
-        for line in (b"bank2 stale have 0.1.0", self.open_line(bytes(8)), b"bank2 empty", b"bank2 open 0.1.0 seal=" + self.seal.hex().encode()):
+        for line in (b"bank2 stale have 0.1.0", self.open_line(bytes(8)), b"bank2 empty", b"bank2 torn"):
             self.events.clear()
             with PutUnit(answers={b"status": self.status(line)}) as u:
                 rc, out, err = self.update(u, [self.package()])
             self.assertEqual(rc, 1, line)
             self.assertIn(line.decode(), out + err)
             self.assertNotIn("OK updated", out)
+
+    def test_an_unchanged_bk2_keeps_its_older_version(self):
+        # Same seal, installed by an earlier release: nothing to install.
+        older = b"bank2 open 0.1.0 11111111 seal=" + self.seal.hex().encode()
+        with PutUnit(answers={b"status": self.status(older)}) as u:
+            rc, out, err = self.update(u, [self.package()])
+        self.assertEqual(rc, 0, err)
+        self.assertIn("OK updated", out)
 
     def test_a_loose_pair_takes_the_same_path(self):
         b = pathlib.Path(self.tmp.name, "chimera.bin")

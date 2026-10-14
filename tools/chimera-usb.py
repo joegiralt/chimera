@@ -28,7 +28,7 @@ already on the card answers `OK PRESENT`, so a re-run is the retry). `ERR busy`
 Python 3 and its standard library only; Linux and macOS (no Windows).
 `update` checks the whole package before it touches the unit, stops before
 the flash if the .bk2 can't go onto the card, and exits 0 only once
-`status` shows the package's version and seal open (`OK updated <version>`);
+`status` shows the package's seal open (`OK updated <version>`);
 it needs dfu-util. `bank2` exits 0 on OK (or `OK already installed`), 2 if
 the file belongs to another firmware (`staged: needs firmware <version>`: it
 installs at the next boot of that firmware), 1 on any other ERR.
@@ -804,7 +804,9 @@ def stage(t: Target, env, pkg: Package):
 
 
 def updated(t: Target, pkg: Package) -> int:
-    """0 once `status` shows `pkg` open, else what it shows and 1."""
+    """0 once `status` shows `pkg`'s seal open, else what it shows and 1.
+    The seal, not the version: a release whose .bk2 didn't change keeps
+    the one installed before it, and its version."""
     want = "bank2 open %s seal=%s" % (pkg.version, pkg.seal)
     conn = open_conn(t)
     try:
@@ -817,7 +819,7 @@ def updated(t: Target, pkg: Package) -> int:
         conn.close()
     text = body.decode(errors="replace")
     got = next((ln for ln in text.splitlines() if ln.startswith("bank2 ")), text.strip())
-    if status is Status.OK and got == want:
+    if status is Status.OK and got.startswith("bank2 open ") and got.endswith(" seal=" + pkg.seal):
         print("OK updated %s" % pkg.version)
         return 0
     return fail("update: flashed, but status says %r, not %r (a staged .bk2 stays on the card for the next boot)" % (got, want))
