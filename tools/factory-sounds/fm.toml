@@ -705,17 +705,19 @@ mod.NOTE = "ALGO.VOWEL +127, OP_E.LEVEL -127, OP_F.LEVEL -127, OP_C.LEVEL -127"
 OUT.LEVEL = "1"  # 127
 trim = "-5.3"
 
-# FM acid (S9100060, with va.toml's set): op 6, a sine, modulates op 1 on
-# A2, one mono voice with a short glide. The index is the squelch's first
-# half: ENV 2 snaps it down each note, an S&H LFO (8 Hz: a sixteenth at 120
-# BPM, no LFO tempo sync) steps it and velocity pushes it; the LADDER then
-# squelches the result as the other acid Sounds'. FM Parts have the filter,
-# so the cutoff envelope is the same one.
+# FM acid (S9100060, with va.toml's set): unabashed FM bass on A8, three
+# modulators into op 1 and a clean 0.50 sub (op 2) under it, one mono
+# voice with a short glide. Op 4 (1:1, FDBK 3) is the growl, op 5 (2:1) the
+# bark and op 6 (1.41, inharmonic) the metal; each decays fast, ENV 2 adds
+# a snappy index spike per note, velocity pushes all of it so accents bite,
+# and an S&H LFO (8 Hz: a sixteenth at 120 BPM, no LFO tempo sync) steps
+# the 2:1 and 1.41 indices. The LADDER is open and secondary; NOTE pulls
+# the indices down in the top octaves.
 [[sound]]
 id = "S9100060"
 name = "ACID FM"
 engine = "ALGO"
-note = "SINE FM INTO LADDER"
+note = "DEEP BARKING FM BASS"
 demo = "mono"
 plays = "bass short glide"
 home = "C2"
@@ -723,30 +725,50 @@ phrase = "acid"
 harmonic = "yes"
 PITCH.STEAL = "GLIDE"
 PITCH.GLIDE_TIME = "0.45"  # 31 ms
-ALGO.ALG_A = "A2"
-ALGO.ALG_B = "A2"
+ALGO.ALG_A = "A8"
+ALGO.ALG_B = "A8"
 OP_A.LEVEL = "99"
 OP_A.VEL = "2"
 OP_A.D1R = "4"
 OP_A.D1L = "13"
 OP_A.RR = "10"
-OP_F.LEVEL = "50"
+OP_B.CRSE = "0"  # 0.50
+OP_B.LEVEL = "75"
+OP_B.D1R = "4"
+OP_B.D1L = "13"
+OP_B.RR = "10"
+OP_C.LEVEL = "0"
+OP_D.LEVEL = "80"
+OP_D.VEL = "3"
+OP_D.FDBK = "3"
+OP_D.D1R = "18"
+OP_D.D1L = "6"
+OP_D.RR = "10"
+OP_E.CRSE = "8"  # 2.00
+OP_E.LEVEL = "66"
+OP_E.VEL = "3"
+OP_E.D1R = "20"
+OP_E.D1L = "3"
+OP_E.RR = "10"
+OP_F.CRSE = "5"  # 1.41
+OP_F.LEVEL = "52"
 OP_F.VEL = "3"
-OP_F.D1R = "16"
-OP_F.D1L = "9"
+OP_F.D1R = "22"
+OP_F.D1L = "2"
 OP_F.RR = "10"
 FILTER.KIND = "LADDER"
-FILTER.CUTOFF = "900"  # 900 Hz
-FILTER.RESO = "0.5"  # 64
+FILTER.CUTOFF = "3000"  # 3.00 kHz
+FILTER.RESO = "0.25"  # 32
 FILTER.LEVEL = "0.78"  # 99
 ENV2.ATK = "0"  # 2.0 ms
-ENV2.DEC = "0.4"  # 84 ms
+ENV2.DEC = "0.35"  # 57 ms
 ENV2.SUS = "0"  # 0%
 ENV2.LEVEL = "0.55"  # 70
-mod.ENV2 = "FILTER.CUTOFF +62, OP_F.LEVEL +40"
+mod.ENV2 = "FILTER.CUTOFF +30, OP_D.LEVEL +30, OP_E.LEVEL +35, OP_F.LEVEL +30"
 LFO1.RATE = "8"  # 51
 LFO1.SHAPE = "RANDOM"
-mod.LFO1 = "OP_F.LEVEL +14"
-mod.VEL = "ENV2.LEVEL +70, FILTER.CUTOFF +18, OP_F.LEVEL +18"
+mod.LFO1 = "OP_E.LEVEL +25, OP_F.LEVEL +30"
+mod.VEL = "ENV2.LEVEL +70, FILTER.CUTOFF +15, OP_D.LEVEL +25, OP_E.LEVEL +30, OP_F.LEVEL +25"
+mod.NOTE = "OP_D.LEVEL -40, OP_E.LEVEL -60, OP_F.LEVEL -90"
 OUT.LEVEL = "1"  # 127
 trim = "-1.4"
