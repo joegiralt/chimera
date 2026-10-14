@@ -1,7 +1,7 @@
 //! Judging bank 2 and the one door into it.
 
 use crate::crc::Crc32;
-use crate::header::{BANK2_BASE, HEADER_LEN, Header, Seal, Version};
+use crate::header::{BANK2_BASE, COMMIT, COMMIT_OFF, HEADER_LEN, Header, Seal, Version};
 
 /// A read the memory could not serve (a bus or ECC fault).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,10 +34,35 @@ pub fn judge(img: &mut impl ImageRead, want: &Seal) -> Verdict {
     if img.read(0, &mut hb).is_err() {
         return Verdict::Unreadable;
     }
-    let h = match Header::parse(&hb) {
-        Ok(h) => h,
-        Err(v) => return v,
-    };
+    match Header::parse(&hb) {
+        Ok(h) => judge_body(img, want, h),
+        Err(v) => v,
+    }
+}
+
+/// `judge` of an image whose commit word is still erased, as the writer
+/// reads it back before committing: the commit check is skipped, nothing
+/// else. A commit word not fully erased is `Torn`: it can't be programmed.
+pub fn judge_uncommitted(img: &mut impl ImageRead, want: &Seal) -> Verdict {
+    let mut hb = [0u8; 256];
+    if img.read(0, &mut hb).is_err() {
+        return Verdict::Unreadable;
+    }
+    let c = COMMIT_OFF as usize;
+    if hb[c..c + 32].iter().any(|&b| b != 0xFF) {
+        return Verdict::Torn;
+    }
+    for w in hb[c..c + 32].as_chunks_mut::<4>().0 {
+        *w = COMMIT.to_le_bytes();
+    }
+    match Header::parse(&hb) {
+        Ok(h) => judge_body(img, want, h),
+        Err(v) => v,
+    }
+}
+
+/// The seal, then the body CRC.
+fn judge_body(img: &mut impl ImageRead, want: &Seal, h: Header) -> Verdict {
     if h.seal != want.bytes() {
         return Verdict::Stale { have: h.version };
     }

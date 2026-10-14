@@ -4,10 +4,15 @@
 
 pub mod crc;
 mod header;
+mod install;
 mod judge;
 
 pub use header::{
     BANK2_BASE, BANK2_LEN, COMMIT, COMMIT_OFF, FLASH_WORD, FORMAT, HEADER_LEN, Header, MAGIC, Seal,
     UNSEALED_HEADER, Version,
 };
-pub use judge::{Bank2Memory, Door, ImageRead, ReadFail, Verdict, judge};
+pub use install::{
+    AutoInstall, BANK2_BAD, Bank2Sector, Bank2Word, BootAction, Flash, FlashFail, InstallFail,
+    Plan, auto_install, boot_action, install, plan,
+};
+pub use judge::{Bank2Memory, Door, ImageRead, ReadFail, Verdict, judge, judge_uncommitted};
