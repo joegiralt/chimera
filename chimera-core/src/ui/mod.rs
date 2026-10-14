@@ -3067,13 +3067,18 @@ impl UiState {
 
     /// `page_name` where a header is drawn: Pages, Mixer, FX and ORBIT.
     pub fn page_title(&self) -> FmtBuf {
+        self.page_header().name
+    }
+
+    /// The header the page draws: context, name and warning.
+    pub fn page_header(&self) -> components::HeaderText {
         renderer::page_header(
             self.head(),
             self.page_def(),
             &self.ctx(),
             self.project.perf().parts(),
+            self.bank2,
         )
-        .name
     }
 
     /// What one frame draws from.

@@ -231,3 +231,19 @@ fn the_rev_page_draws_needs_update_closed() {
         "TYPE's text ran into SIZE"
     );
 }
+
+/// The TYPE cell itself reads UPDATE closed.
+#[test]
+fn the_type_cell_reads_update_closed() {
+    use chimera_core::bank2::NEEDS_UPDATE_CELL;
+    let mut ui = UiState::new();
+    ui.set_bank2(Bank2Status::Empty);
+    to_fx(&mut ui, REV);
+    settle(&mut ui);
+    assert!(first_cell_reads(&render_ui(&ui), NEEDS_UPDATE_CELL));
+    let mut ui = UiState::new();
+    ui.set_bank2(open());
+    to_fx(&mut ui, REV);
+    settle(&mut ui);
+    assert!(!first_cell_reads(&render_ui(&ui), NEEDS_UPDATE_CELL));
+}

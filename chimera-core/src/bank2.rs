@@ -90,18 +90,37 @@ impl Bank2Status {
 pub const NEEDS_UPDATE: &str = "NEEDS UPDATE";
 pub const NEEDS_UPDATE_CELL: &str = "UPDATE";
 
+/// Whether bank 2's code can't play. `None` is a build without bank 2
+/// (the desktop, the bench sets), which plays it all from bank 1.
+fn closed(bank2: Option<Bank2Status>) -> bool {
+    bank2.is_some_and(|s| !s.is_open())
+}
+
 /// The text cell `addr` shows in place of its value under `bank2`: the
-/// reverb's TYPE reads `NEEDS UPDATE` while its engines can't play (ADR
-/// 0142). `None` (no bank 2 on this target, the desktop) is never closed.
+/// reverb's TYPE (ADR 0142) and TAPE's MODEL (ADR 0141) read `NEEDS
+/// UPDATE` while their code can't play.
 pub fn closed_text(
     addr: crate::addr::ParamAddr,
     bank2: Option<Bank2Status>,
 ) -> Option<&'static str> {
-    use crate::addr::BlockRef;
+    use crate::addr::{BlockRef, ParamAddr};
     use crate::dsp::reverb::ReverbParams;
-    let closed = bank2.is_some_and(|s| !s.is_open());
-    (closed && addr == crate::addr::ParamAddr::new(BlockRef::Reverb, ReverbParams::TYPE))
-        .then_some(NEEDS_UPDATE)
+    use crate::dsp::tape_engine::params::TapeEngineParams;
+    let named = [
+        ParamAddr::new(BlockRef::Reverb, ReverbParams::TYPE),
+        ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL),
+    ];
+    (closed(bank2) && named.contains(&addr)).then_some(NEEDS_UPDATE)
+}
+
+/// What the header of a Part playing `engine` warns under `bank2`: a TAPE
+/// Part is silent while TAPE can't play (ADR 0141). Beside the context and
+/// the page, the header has room for the last word only.
+pub fn closed_part(
+    engine: crate::params::EngineType,
+    bank2: Option<Bank2Status>,
+) -> Option<&'static str> {
+    (closed(bank2) && engine == crate::params::EngineType::Tape).then_some(NEEDS_UPDATE_CELL)
 }
 
 /// A flash op's failure in words: `timeout`, `errors 00040000`, …

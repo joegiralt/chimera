@@ -57,6 +57,11 @@ fn main() {
 
     let mut ui = UiState::with_arena(leaked_arena(&SOURCE_TABLE));
     ui.project_mut().set_gate_clock(gate_ms);
+    // QA of the labels a closed bank 2 shows (ADR 0141); the desktop plays
+    // everything either way. Unset, it has no bank 2, which reads as open.
+    if std::env::var("CHIMERA_BANK2").as_deref() == Ok("closed") {
+        ui.set_bank2(chimera_core::bank2::Bank2Status::Empty);
+    }
 
     // Boot: SYSTEM and the last project behind the splash, held 1 s from
     // first light as on the chip; then the splash again in the card's theme.

@@ -829,15 +829,8 @@ impl ProjectCheck {
         // A save would write fewer slots than the file holds.
         self.lossy |= self.dropped_slots > 0;
         t.orbit.loaded();
+        // A TAPE Part loads as TAPE, silent while bank 2 is closed (ADR 0141).
         for (part, read) in t.perf.parts.iter_mut().zip(self.origins) {
-            // TAPE is coming soon (ADR 0132): its Part loads as INIT VA,
-            // and a save drops the TAPE Sound.
-            if part.sound.engine() == EngineType::Tape {
-                *part.sound = Sound::init(EngineType::Va);
-                part.origin = Origin::Init(EngineType::Va);
-                self.lossy = true;
-                continue;
-            }
             let engine = part.sound.engine();
             part.origin = match read {
                 ReadOrigin::Slot(slot) => match t.pool.get(slot) {

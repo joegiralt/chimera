@@ -410,7 +410,11 @@ pub fn synth(board: Board, shell: Shell) -> ! {
 
     let mut controls = Stm32Controls::new();
     let ui = shared::take_ui().expect("UI state taken once");
-    ui.set_bank2(bank2.status);
+    // A build without bank 2 plays TAPE and the reverb from bank 1: no
+    // status, so nothing reads NEEDS UPDATE (ADR 0141).
+    if cfg!(feature = "bank2") {
+        ui.set_bank2(bank2.status);
+    }
     ui.project_mut().set_gate_clock(gate_ms);
 
     // Start-up, in order, behind the splash until PART 1 can be drawn:

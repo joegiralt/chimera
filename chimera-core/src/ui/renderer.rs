@@ -838,7 +838,7 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let h = page_header(f.head, f.def, &f.ctx, f.parts);
+        let h = page_header(f.head, f.def, &f.ctx, f.parts, f.bank2);
         components::header(
             display,
             h.context.as_str(),
@@ -894,8 +894,15 @@ pub fn page_header(
     def: &BlockDef,
     ctx: &SlotCtx,
     parts: &Parts,
+    bank2: Option<crate::bank2::Bank2Status>,
 ) -> components::HeaderText {
     let suffix = ["", " / A", " / B"][title_type(def, &ctx.envs) as usize % 3];
+    let closed = match head {
+        Head::Sound(p) | Head::Mix(p) => {
+            crate::bank2::closed_part(parts[p.index()].sound.engine(), bank2)
+        }
+        Head::Settings | Head::Ring(_) | Head::Orbit(_) => None,
+    };
     components::header_text(
         head,
         def,
@@ -903,6 +910,7 @@ pub fn page_header(
         ctx.kind,
         suffix,
         out_of(head, parts),
+        closed,
     )
 }
 

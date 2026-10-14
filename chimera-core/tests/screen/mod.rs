@@ -1560,6 +1560,11 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::press(ButtonId::Edit));
     }),
     ("tape_deck_loop", |ui| tape_deck(ui, 0)),
+    // Bank 2 closed: the header warns UPDATE, MODEL reads NEEDS UPDATE (ADR 0141).
+    ("tape_deck_needs_update", |ui| {
+        ui.set_bank2(chimera_core::bank2::Bank2Status::Empty);
+        tape_deck(ui, 0);
+    }),
     ("tape_page_loop", |ui| {
         tape_deck(ui, 0);
         feed(ui, Input::press(ButtonId::Edit));
@@ -2242,6 +2247,30 @@ pub fn render(name: &str) -> Fb {
 }
 
 /// Full render of `ui` with the goldens' audio and scope fixtures.
+/// Whether the first cell's value line lights `text`'s pixels and no
+/// others, a column wide.
+#[allow(dead_code)]
+pub fn first_cell_reads(shot: &Fb, text: &str) -> bool {
+    use chimera_core::ui::theme::{
+        BG, CELL_COL_W, CELL_LABEL_Y, CELL_VALUE_DY, FONT_VALUE, INK, MARGIN_X, SCREEN_H,
+    };
+    let mut want = Fb::new();
+    chimera_core::ui::draw::text_tracked(
+        &mut want,
+        &FONT_VALUE,
+        text,
+        MARGIN_X,
+        CELL_LABEL_Y + CELL_VALUE_DY,
+        INK,
+        0,
+    );
+    let cols = MARGIN_X..MARGIN_X + CELL_COL_W - 4;
+    let lit = |x, y| want.at(x, y) != Rgb565::BLACK;
+    (0..SCREEN_H)
+        .filter(|&y| cols.clone().any(|x| lit(x, y)))
+        .all(|y| cols.clone().all(|x| (shot.at(x, y) != BG) == lit(x, y)))
+}
+
 pub fn render_ui(ui: &UiState) -> Fb {
     let mut fb = Fb::new();
     ui.render_with_audio(

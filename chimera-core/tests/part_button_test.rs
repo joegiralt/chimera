@@ -237,6 +237,7 @@ fn header(ui: &UiState) -> (String, String, Option<&'static str>) {
         FilterKind::Svf,
         "",
         out,
+        None,
     );
     (h.context.as_str().into(), h.name.as_str().into(), h.warn)
 }
