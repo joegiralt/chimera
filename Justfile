@@ -7,7 +7,9 @@
 # bench-tape alone keeps TAPE in bank 1 and doesn't fit FLASH
 # (private issue #506); `bench-tape,bank2` plays
 # it from bank 2, so its run needs that build's .bk2 installed.
-bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,orbit bench-orbit bench-tape,bank2 filter-probes"
+# `bench-stress` plays the reverb from bank 1 and `bench-stress,bank2` the
+# same code from bank 2 (ADR 0142): Gate 3's A/B of the banks' speed.
+bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,bank2 bench-stress,orbit bench-orbit bench-tape,bank2 filter-probes"
 bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit"
 
 # Build desktop simulator
@@ -315,6 +317,8 @@ check:
     cargo test -p chimera-core -p chimera-engine --no-default-features
     cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
     cargo test -p chimera-core --features bank2-gate --test console_parse_test --test console_answer_test --test bank2_status_test
+    # TAPE's and the reverb's bank-1 sides through the host's own door.
+    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
@@ -348,7 +352,8 @@ check:
 # frames from `main` and from each interrupt entry (the audio's DMA1_STR0,
 # render_half and the FX bus under it, MIDI's USART1, SysTick, HardFault),
 # all nested at once, against the stack, each call through a pointer
-# charged the deepest address-taken function, three deep; and that the audio
+# charged the deepest address-taken function (bank 2's door table among
+# the data dumped, so a door entry is one), three deep; and that the audio
 # interrupt reaches no small-profile code (ADR 0108). Checked for the default,
 # no-default, orbit, bank2-gate, every bench set (`bench_sets`) and sd-probe feature
 # sets (sd-probe has no interrupts: frames only).
@@ -369,7 +374,7 @@ stack-check:
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
         test -r "$elf"
         dis="$("$objdump" -d --mcpu=cortex-m7 --no-show-raw-insn -C "$elf")"
-        data="$("$objdump" -s -j .rodata -j .data "$elf")"
+        data="$("$objdump" -s -j .rodata -j .data -j .bank2 "$elf")"
         if grep -E -e '^[0-9a-f]{8} <' -e 'sub(\.w)?[[:space:]]+sp, (sp, )?(#0x([2-9a-f][0-9a-f]{3}|[0-9a-f]{5,})$|r[0-9])' <<<"$dis" \
             | grep -B1 -E '^[[:space:]]' \
             | grep -v -e '^--$'; then

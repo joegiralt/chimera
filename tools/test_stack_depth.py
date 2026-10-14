@@ -138,5 +138,22 @@ class StackDepth(unittest.TestCase):
         self.assertEqual(img.funcs["f"][2], {"g"})
 
 
+    def test_a_tbb_table_is_no_pointer(self):
+        # `tbb`'s byte offsets disassemble as `.word`s: one that reads as a
+        # function's address is not a pointer to it (bench-routing, ADR 0142).
+        img = sd.parse(io.StringIO(
+            "08000000 <f>:\n"
+            " 8000000:      \ttbb\t[pc, r5]\n"
+            " 8000004: 01 01 00 08  \t.word\t0x08000101\n"
+            " 8000008:      \tmovs\tr2, #0xa\n"
+            " 800000a:      \tldr\tr1, [pc, #0x0]\n"
+            " 800000c: 01 02 00 08  \t.word\t0x08000201\n"
+            "\n08000100 <g>:\n 8000100:      \tbx\tlr\n"
+            "\n08000200 <h>:\n 8000200:      \tbx\tlr\n"
+        ))
+        self.assertNotIn(0x08000101, img.words)
+        self.assertIn(0x08000201, img.words, "a literal after the table still counts")
+
+
 if __name__ == "__main__":
     unittest.main()

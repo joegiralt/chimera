@@ -20,7 +20,8 @@ bench-routing = ["bench", "midi-din"]
 # MEMORY: sizes, a rebuild, MODAL's note-ons, the project CRC.
 bench-memory = ["bench", "midi-din"]
 # STRESS: NEW's Parts with every key down, and the runs' phases; ORBIT
-# plays in them with `orbit`.
+# plays in them with `orbit`. With `bank2` the reverb plays from bank 2
+# (ADR 0142): its A/B against this build's bank 1.
 bench-stress = ["bench", "midi-din"]
 # ORBIT: its block's cost and phases.
 bench-orbit = ["bench", "midi-din", "orbit"]

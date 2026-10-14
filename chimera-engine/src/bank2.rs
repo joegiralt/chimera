@@ -28,6 +28,9 @@ pub struct Bank2Door {
     /// TAPE's deck (`TapeEngine` is bank 1's proxy of it).
     #[cfg(feature = "bank2")]
     pub tape: crate::dsp::tape_engine::TapeDoor,
+    /// The reverb's engines (ADR 0142; `Reverb::play` is bank 1's side).
+    #[cfg(feature = "bank2")]
+    pub reverb: crate::dsp::rev::ReverbDoor,
 }
 
 #[cfg(feature = "bank2")]
@@ -43,6 +46,7 @@ static DOOR: Bank2Door = Bank2Door {
     probe,
     table: &TABLE,
     tape: crate::dsp::tape_engine::TapeDeck::DOOR,
+    reverb: crate::dsp::rev::Reverb::DOOR,
 };
 
 #[cfg(feature = "bank2")]

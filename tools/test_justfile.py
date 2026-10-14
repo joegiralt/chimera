@@ -72,6 +72,26 @@ class Bank2Split(unittest.TestCase):
         self.assertIn("INSERT BEFORE .text", src)
 
 
+class Bank2Code(unittest.TestCase):
+    """Code behind the door (ADR 0137, 0142) is checked like bank 1's."""
+
+    def test_the_stack_check_reads_the_door_table(self):
+        body = "\n".join(recipes()["stack-check"])
+        dump = [l for l in body.splitlines() if " -s " in l]
+        self.assertTrue(dump)
+        for l in dump:
+            self.assertIn("-j .bank2", l, "door targets would go uncharged")
+
+    def test_the_reverb_bench_runs_in_either_bank(self):
+        sets = re.search(r'^bench_sets := "([^"]*)"', (ROOT / "Justfile").read_text(), re.M)
+        self.assertIn("bench-stress", sets.group(1).split())
+        self.assertIn("bench-stress,bank2", sets.group(1).split())
+
+    def test_check_runs_the_proxies_with_their_door(self):
+        body = "\n".join(recipes()["check"])
+        self.assertRegex(body, r"--features bank2,test-support --test tape_proxy_test --test reverb_proxy_test")
+
+
 class OneUpdate(unittest.TestCase):
     """An update is one thing: `flash` installs through `chimera-usb.py
     update`; a release ships one firmware, the ORBIT build's .bin and its

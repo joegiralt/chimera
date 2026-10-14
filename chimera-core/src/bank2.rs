@@ -81,8 +81,27 @@ impl Bank2Status {
 
     /// What ABOUT shows: no bank jargon (owner decision 8).
     pub fn label(&self) -> &'static str {
-        if self.is_open() { "OK" } else { "NEEDS UPDATE" }
+        if self.is_open() { "OK" } else { NEEDS_UPDATE }
     }
+}
+
+/// What a cell whose code is in bank 2 reads while bank 2 isn't open: the
+/// focus band (and ABOUT) whole, the cell, a column wide, its last word.
+pub const NEEDS_UPDATE: &str = "NEEDS UPDATE";
+pub const NEEDS_UPDATE_CELL: &str = "UPDATE";
+
+/// The text cell `addr` shows in place of its value under `bank2`: the
+/// reverb's TYPE reads `NEEDS UPDATE` while its engines can't play (ADR
+/// 0142). `None` (no bank 2 on this target, the desktop) is never closed.
+pub fn closed_text(
+    addr: crate::addr::ParamAddr,
+    bank2: Option<Bank2Status>,
+) -> Option<&'static str> {
+    use crate::addr::BlockRef;
+    use crate::dsp::reverb::ReverbParams;
+    let closed = bank2.is_some_and(|s| !s.is_open());
+    (closed && addr == crate::addr::ParamAddr::new(BlockRef::Reverb, ReverbParams::TYPE))
+        .then_some(NEEDS_UPDATE)
 }
 
 /// A flash op's failure in words: `timeout`, `errors 00040000`, …

@@ -196,7 +196,7 @@ impl FxBus {
             0.0
         };
         self.reverb
-            .process(reverb, &params.reverb, mix, tempo, sample_rate, &mut wet);
+            .play(reverb, &params.reverb, mix, tempo, sample_rate, &mut wet);
         add(&mut ret.l, &wet.l);
         add(&mut ret.r, &wet.r);
     }

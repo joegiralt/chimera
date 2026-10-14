@@ -800,6 +800,14 @@ impl Renderer {
                 }
                 View::Orbit(cell) => buf = orbit::cell_text(cell, &f.orbit, f.ctx.ring),
                 View::Source(s) => s.cell(&mut buf),
+                // A column wide: NEEDS UPDATE's last word (the band reads it whole).
+                _ if v
+                    .addr()
+                    .and_then(|a| crate::bank2::closed_text(a, f.bank2))
+                    .is_some() =>
+                {
+                    let _ = core::fmt::Write::write_str(&mut buf, crate::bank2::NEEDS_UPDATE_CELL);
+                }
                 _ => buf = param_text(f, i, &v, value),
             }
             let c = components::Cell {
@@ -970,6 +978,14 @@ fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
 /// A param's text at display value `v`: a reverb panel cell's in its
 /// units (`reverb_panel::value_text`), any other by its format.
 fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
+    if let Some(t) = view
+        .addr()
+        .and_then(|a| crate::bank2::closed_text(a, f.bank2))
+    {
+        let mut buf = FmtBuf::new();
+        let _ = core::fmt::Write::write_str(&mut buf, t);
+        return buf;
+    }
     match view.addr().filter(|_| view::is_reverb_panel(f.def, i)) {
         Some(a) => {
             let mut p = f.fx.reverb;

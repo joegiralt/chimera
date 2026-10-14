@@ -171,3 +171,63 @@ fn hold_line_fits_the_screen() {
         "ERASING  PULL NOW 3"
     );
 }
+
+/// While bank 2 isn't open the reverb plays nothing (ADR 0142): its TYPE
+/// reads NEEDS UPDATE. Open, or with no bank 2 (the desktop), its TYPE.
+#[test]
+fn a_closed_bank2_labels_the_reverb_type() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::bank2::closed_text;
+    use chimera_core::dsp::reverb::ReverbParams;
+    let ty = ParamAddr::new(BlockRef::Reverb, ReverbParams::TYPE);
+    assert_eq!(
+        closed_text(ty, Some(Bank2Status::Empty)),
+        Some("NEEDS UPDATE")
+    );
+    assert_eq!(
+        closed_text(ty, Some(Bank2Status::Unsealed)),
+        Some("NEEDS UPDATE")
+    );
+    assert_eq!(closed_text(ty, Some(open())), None);
+    assert_eq!(closed_text(ty, None), None, "no bank 2 on this target");
+    let mix = ParamAddr::new(BlockRef::Reverb, ReverbParams::MIX);
+    assert_eq!(closed_text(mix, Some(Bank2Status::Empty)), None);
+}
+
+/// The focus band reads NEEDS UPDATE; the TYPE cell, a column wide,
+/// UPDATE, leaving SIZE's cell beside it alone.
+#[test]
+fn the_rev_page_draws_needs_update_closed() {
+    use chimera_core::bank2::NEEDS_UPDATE_CELL;
+    use chimera_core::ui::draw::text_width;
+    use chimera_core::ui::theme::{CELL_COL_W, CELL_LABEL_Y, CELL_ROW_H, FONT_VALUE, MARGIN_X};
+    assert!(text_width(&FONT_VALUE, NEEDS_UPDATE_CELL, 0) <= CELL_COL_W - 4);
+    let shot = |s: Option<Bank2Status>| {
+        let mut ui = UiState::new();
+        if let Some(s) = s {
+            ui.set_bank2(s);
+        }
+        to_fx(&mut ui, REV);
+        settle(&mut ui);
+        render_ui(&ui)
+    };
+    let (none, empty, ok) = (
+        shot(None),
+        shot(Some(Bank2Status::Empty)),
+        shot(Some(open())),
+    );
+    assert_eq!(none.hash(), ok.hash(), "open, REV draws as it always did");
+    assert_ne!(empty.hash(), ok.hash());
+    let size_cell = |fb: &Fb| {
+        let x0 = MARGIN_X + CELL_COL_W;
+        let y0 = CELL_LABEL_Y - 4;
+        (y0..y0 + CELL_ROW_H)
+            .flat_map(|y| (x0..x0 + CELL_COL_W).map(move |x| (x, y)))
+            .map(|(x, y)| fb.at(x, y))
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        size_cell(&empty) == size_cell(&ok),
+        "TYPE's text ran into SIZE"
+    );
+}
