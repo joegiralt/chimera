@@ -65,9 +65,11 @@ fn closing_bank_two_releases_tape_and_leaves_algo_playing() {
     // The audio runs a block each time the UI waits.
     let ok = {
         let mut ui = chimera_core::ui::UiState::new();
+        let mut blocks = 0;
         ui.close_bank2(&link, || {
             block(&mut rig, &mut src);
-            true
+            blocks += 1;
+            blocks < 16
         })
     };
     assert!(ok, "the audio reported TAPE quiet");
@@ -96,4 +98,65 @@ fn closing_bank_two_releases_tape_and_leaves_algo_playing() {
     }
     block(&mut rig, &mut src);
     assert_eq!(tape_voices(&rig), 1, "open again");
+}
+
+#[test]
+fn an_algo_note_stealing_a_fading_tape_voice_still_sounds() {
+    let mut src = OneSource::new(&held_plain(&sine(24_000, 100.0, 24_000), 24_000));
+    let mut rig = InstRig::with_budget(SampleBudget::for_cpu(u32::MAX));
+    *rig.shared.parts[0].params = init_params(EngineType::Tape);
+    rig.shared.parts[0].source = Some(src.id);
+    *rig.shared.parts[1].params = init_params(EngineType::Algo);
+    let (c0, c1) = (
+        rig.shared.parts[0].mix.channel,
+        rig.shared.parts[1].mix.channel,
+    );
+    let link = LoadLink::new();
+    let mut gate = LoadGate::new();
+    let mut block = |rig: &mut InstRig, src: &mut OneSource| {
+        let view: GateView<'_> = src.view();
+        gate.before_block(&link, &mut rig.inst, &rig.shared);
+        rig.inst.render_with(
+            &mut rig.fx,
+            &mut rig.dac,
+            &rig.shared,
+            &mut rig.scope,
+            &view,
+        );
+    };
+    let on = NoteKind::On(Velocity::DEFAULT);
+    {
+        let view = src.view();
+        for n in 40..48 {
+            let ev = NoteEvent {
+                channel: c0,
+                note: MidiNote::new(n).unwrap(),
+                kind: on,
+            };
+            rig.inst.handle_with(ev, &rig.shared, &view);
+        }
+        // Every voice is TAPE's, so this steals one: the note waits on its fade.
+        let ev = NoteEvent {
+            channel: c1,
+            note: MidiNote::new(60).unwrap(),
+            kind: on,
+        };
+        rig.inst.handle_with(ev, &rig.shared, &view);
+    }
+    let mut ui = chimera_core::ui::UiState::new();
+    let mut blocks = 0;
+    let ok = ui.close_bank2(&link, || {
+        block(&mut rig, &mut src);
+        blocks += 1;
+        blocks < 16
+    });
+    assert!(ok, "the audio reported TAPE quiet");
+    for _ in 0..4 {
+        block(&mut rig, &mut src);
+    }
+    assert!(rig.inst.part_bus(0).iter().all(|&x| x == 0.0));
+    assert!(
+        rig.inst.part_bus(1).iter().any(|x| x.abs() > 1e-4),
+        "the stolen voice's ALGO note plays"
+    );
 }

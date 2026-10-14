@@ -1142,18 +1142,39 @@ impl Instrument {
         self.shed(v);
     }
 
-    /// Whether voice `v` plays a TAPE Part's Sound.
+    /// Whether `part`'s Sound is TAPE.
+    fn part_is_tape(shared: &AudioShared, part: usize) -> bool {
+        shared.parts[part % MAX_PARTS].params.engine() == EngineType::Tape
+    }
+
+    /// Whether voice `v` still plays a TAPE Part's Sound, or is booked to
+    /// one (a TAPE note waiting on a fading voice).
     fn is_tape(&self, v: usize, shared: &AudioShared) -> bool {
-        let p = self.sounding[v] as usize % MAX_PARTS;
-        !self.alloc.slots()[v].is_free() && shared.parts[p].params.engine() == EngineType::Tape
+        let slot = self.alloc.slots()[v];
+        !slot.is_free()
+            && (Self::part_is_tape(shared, self.sounding[v] as usize)
+                || slot
+                    .part()
+                    .is_some_and(|q| Self::part_is_tape(shared, q as usize)))
     }
 
     /// CC 120 for TAPE's voices alone, on any channel: a bank-2 write is
     /// about to take TAPE's DSP away, so they fade now (not a release
     /// tail), and a key held down does not come back. The other Parts play.
+    /// A TAPE sound fading under another Part's waiting note (a steal)
+    /// only loses its DSP: the slot and the note stay, and start when it
+    /// rests.
     pub fn sound_off_tape(&mut self, shared: &AudioShared) {
         for v in 0..MAX_VOICES {
-            if self.is_tape(v, shared) {
+            if !self.is_tape(v, shared) {
+                continue;
+            }
+            let owner = self.alloc.slots()[v].part();
+            if owner.is_some_and(|q| !Self::part_is_tape(shared, q as usize))
+                && self.waiting[v].is_some()
+            {
+                let _ = self.voices[v].kill();
+            } else {
                 self.sound_off(v);
             }
         }
