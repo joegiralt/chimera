@@ -114,7 +114,7 @@ impl PageId {
         if let Some(a) = self.binding(idx)
             && let Some(mut b) = params.block_mut(a.block)
         {
-            b.nudge_fine(a.param, delta);
+            crate::block::nudge_fine(&mut *b, a.param, delta);
         }
     }
 

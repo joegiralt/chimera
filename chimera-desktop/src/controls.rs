@@ -18,11 +18,15 @@ const ENCODER_KEYS: [Key; NUM_ENCODERS] = [Key::Q, Key::W, Key::E, Key::R, Key::
 ///
 /// Encoders (keyboard approximation): Q W E R T Y turn A-F up, with Shift
 /// down. The row below is the piano's black keys (`main.rs`), so no key
-/// both plays a note and turns an encoder.
+/// both plays a note and turns an encoder. Pushes (SYSTEM's PUSH
+/// ENCODERS, ADR 0140): Ctrl + Q..Y pushes that encoder, no turn (a tap
+/// on release); Alt + Q..Y pushes and turns it, with Shift down.
 pub struct DesktopControls {
     encoder_deltas: [i8; NUM_ENCODERS],
     latches: [Latch; NUM_BUTTONS],
     edges: [Edges; NUM_BUTTONS],
+    push_latches: [Latch; NUM_ENCODERS],
+    pushes: [Edges; NUM_ENCODERS],
     now_ms: Ms,
 }
 
@@ -51,6 +55,8 @@ impl DesktopControls {
             encoder_deltas: [0; NUM_ENCODERS],
             latches: [Latch::new(); NUM_BUTTONS],
             edges: [Edges::default(); NUM_BUTTONS],
+            push_latches: [Latch::new(); NUM_ENCODERS],
+            pushes: [Edges::default(); NUM_ENCODERS],
             now_ms: Ms(0),
         }
     }
@@ -60,18 +66,21 @@ impl DesktopControls {
     pub fn update_events(&mut self, down: &[Key], now_ms: Ms) {
         self.now_ms = now_ms;
         self.encoder_deltas = [0; NUM_ENCODERS];
-        let step = if down
-            .iter()
-            .any(|k| matches!(k, Key::LeftShift | Key::RightShift))
-        {
+        let any = |keys: [Key; 2]| down.iter().any(|k| keys.contains(k));
+        let step = if any([Key::LeftShift, Key::RightShift]) {
             -1
         } else {
             1
         };
+        let ctrl = any([Key::LeftCtrl, Key::RightCtrl]);
+        let alt = any([Key::LeftAlt, Key::RightAlt]);
         for (i, key) in ENCODER_KEYS.iter().enumerate() {
-            if down.contains(key) {
+            let held = down.contains(key);
+            if held && !ctrl {
                 self.encoder_deltas[i] = step;
             }
+            self.push_latches[i].level(held && (ctrl || alt), now_ms);
+            self.pushes[i] = self.push_latches[i].take();
         }
 
         let mut level = [false; NUM_BUTTONS];
@@ -100,6 +109,10 @@ impl Controls for DesktopControls {
 
     fn now_ms(&self) -> Ms {
         self.now_ms
+    }
+
+    fn push(&self, id: EncoderId) -> Edges {
+        self.pushes[id as usize]
     }
 }
 
@@ -130,5 +143,23 @@ mod tests {
         c.update_events(&[Key::M], Ms(30));
         assert_eq!(c.button_state(ButtonId::Menu), ButtonState::Held);
         assert_eq!(c.now_ms(), Ms(30));
+    }
+
+    /// Ctrl + Q pushes A and turns nothing, a tap on release; Alt + Y
+    /// pushes F and turns it, Shift down.
+    #[test]
+    fn ctrl_pushes_and_alt_pushes_and_turns() {
+        let mut c = DesktopControls::new();
+        c.update_events(&[Key::LeftCtrl, Key::Q], Ms(10));
+        assert_eq!(c.push(EncoderId::A).pressed_at, Some(Ms(10)));
+        assert_eq!(c.encoder_delta(EncoderId::A), 0);
+        c.update_events(&[Key::LeftCtrl], Ms(30));
+        assert_eq!(c.push(EncoderId::A).released_at, Some(Ms(30)));
+        c.update_events(&[Key::LeftAlt, Key::LeftShift, Key::Y], Ms(50));
+        assert!(c.push(EncoderId::F).down);
+        assert_eq!(c.encoder_delta(EncoderId::F), -1);
+        c.update_events(&[Key::Y], Ms(70));
+        assert!(!c.push(EncoderId::F).down);
+        assert_eq!(c.encoder_delta(EncoderId::F), 1);
     }
 }

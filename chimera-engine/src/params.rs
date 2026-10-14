@@ -1412,16 +1412,8 @@ impl Block for PitchParams {
     }
 
     /// PITCH under MUSICAL keeps its ladder: a rung, however fine.
-    fn nudge_fine(&mut self, id: ParamId, delta: i8) {
-        if id == Self::PITCH && self.snap == Snap::Musical {
-            self.nudge(id, delta.signum());
-        } else if let Some(s) = self.spec(id) {
-            let v = match s.kind {
-                crate::block::ParamKind::Continuous => s.nudged_fine(self.get(id), delta),
-                _ => s.nudged(self.get(id), delta.signum()),
-            };
-            self.write(id, v);
-        }
+    fn ladder(&self, id: ParamId) -> bool {
+        id == Self::PITCH && self.snap == Snap::Musical
     }
 
     fn enum_code(&self, id: ParamId) -> Option<u8> {

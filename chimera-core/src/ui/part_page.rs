@@ -95,7 +95,7 @@ pub fn fine_encoder(
         && let Some(mut b) = params.block_mut(a.block)
     {
         let before = b.get(a.param);
-        b.nudge_fine(a.param, delta);
+        crate::block::nudge_fine(&mut *b, a.param, delta);
         machine_edit(a, before, &mut *b);
     }
 }

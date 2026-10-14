@@ -547,6 +547,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
                 usb::Restart::Sweep(_) => marker.reset(),
             }
         }
+        // SYSTEM's PUSH ENCODERS as last edited: off, the read stays 24 bits.
+        controls::set_push(ui.midi().push);
         controls.snapshot();
         // ORBIT's latest view: the pages draw it, the drift is absorbed.
         orbit.see(ui);
