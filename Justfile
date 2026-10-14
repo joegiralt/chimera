@@ -206,9 +206,9 @@ release version *flags:
             i = zipfile.ZipInfo(n, (2026, 1, 1, 0, 0, 0)); i.compress_type = zipfile.ZIP_DEFLATED; i.external_attr = 0o644 << 16
             z.writestr(i, (src / n).read_bytes())
     PY
-    if python3 -I -m zipfile -l "$out/factory-v1.zip" | grep -E 'S91000(1[0-9]|2[0-5])\.A'; then
-        echo "factory-v1.zip lists a private port id: refusing" >&2; exit 1
-    fi
+    # The 16 TX81Z-inspired ports ship public (ADR 0138): all of them, or refuse.
+    n=$(python3 -I -m zipfile -l "$out/factory-v1.zip" | grep -cE 'S91000(1[0-9]|2[0-5])\.A' || true)
+    [ "$n" = 16 ] || { echo "factory-v1.zip holds $n of the 16 ports: refusing" >&2; exit 1; }
     (cd "$out" && sha256sum chimera-$V.bin chimera-$V-orbit.bin chimera-usb.py factory-v1.zip > SHA256SUMS)
     # Nothing private ships: exactly these assets, and none is a private
     # file (the stock bootloader backup, the bootloader, a dev chimera.bin).

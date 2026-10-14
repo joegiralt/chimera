@@ -81,51 +81,39 @@ fn no_private_ports_in_index() {
     assert_eq!(scan_index(&root), Vec::<String>::new());
 }
 
+/// ADR 0138: an inspired-by port Source is public; only raw bank files
+/// are offences, staged or not.
 #[test]
-fn staged_port_source_is_caught() {
+fn staged_port_source_is_fine_but_a_staged_bank_is_caught() {
     let r = TempRepo::new("privacy-staged");
-    r.stage("x.toml", "from = \"tx81z 1a2b3c4d #7\"\n");
-    let found = scan_index(&r.0);
-    assert_eq!(found.len(), 1, "{found:?}");
-    assert!(found[0].contains("x.toml"));
-}
-
-/// The index is what a commit takes: a port staged, then cleaned in the
-/// working tree only, is still caught.
-#[test]
-fn a_port_staged_then_edited_is_caught() {
-    let r = TempRepo::new("privacy-edited");
     r.stage(
         "x.toml",
-        "id = \"S9100002\"\nfrom = \"tx81z 1a2b3c4d #7\"\n",
+        "id = \"S9100010\"\nfrom = \"tx81z 1a2b3c4d #7\"\n",
     );
-    std::fs::write(r.0.join("x.toml"), "id = \"S9100002\"\n").unwrap();
+    assert!(scan_index(&r.0).is_empty());
+    std::fs::write(r.0.join("bank.syx"), b"\xf0\xf7").unwrap();
+    git(&r.0, &["add", "bank.syx"]);
     let found = scan_index(&r.0);
     assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("bank.syx"));
 }
 
 #[test]
-fn content_match_beats_path() {
+fn content_does_not_matter_only_the_path() {
     let f: [(&str, &[u8]); 1] = [("tools/factory-sounds/fm.toml", b"from = \"tx81z ab #1\"")];
+    assert!(offences(&f).is_empty());
+    let f: [(&str, &[u8]); 1] = [("tools/factory-sounds/private/fm.toml", b"")];
     assert_eq!(offences(&f).len(), 1);
 }
 
-/// A port's id, or a single-quoted `from`, gives a port away too.
+/// A port's id and `from` line are ordinary content now.
 #[test]
-fn a_port_id_or_a_single_quoted_from_is_an_offence() {
-    for bad in [
+fn a_port_id_or_from_is_not_an_offence() {
+    for ok in [
         "id = \"S9100010\"",
         "id='S9100025'",
-        "  ID = \"S9100017\"  # a port",
         "from = 'tx81z 1a2b3c4d #7'",
-    ] {
-        assert_eq!(offences(&[("a.toml", bad.as_bytes())]).len(), 1, "{bad}");
-    }
-    for ok in [
-        "id = \"S9100009\"",
-        "id = \"S9100026\"",
-        "idle = \"S9100012\"",
-        "from = \"tx81\"",
+        "from = \"tx81z 1a2b3c4d #7\"",
     ] {
         assert!(offences(&[("a.toml", ok.as_bytes())]).is_empty(), "{ok}");
     }

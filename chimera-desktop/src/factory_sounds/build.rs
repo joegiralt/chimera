@@ -17,7 +17,7 @@ use super::source::{self, Edit, Source};
 
 /// The Sound Sources, in curated order (spec § 2: VA, FM, MODAL).
 /// `projects.toml` holds the demo projects.
-pub const SOUND_FILES: [&str; 3] = ["va.toml", "fm.toml", "modal.toml"];
+pub const SOUND_FILES: [&str; 4] = ["va.toml", "fm.toml", "modal.toml", "ports.toml"];
 
 /// One built file, as the release lists it.
 #[derive(Clone, Debug, PartialEq)]

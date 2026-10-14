@@ -369,11 +369,9 @@ fn retired_ids_refused() {
 }
 
 #[test]
-fn public_refuses_port_id() {
-    for id in ["S9100010", "S9100025"] {
-        fails(&base_with(2, &format!("id = \"{id}\"")), 2, id);
-    }
-    for id in ["S9100009", "S9100026"] {
+fn public_takes_port_ids() {
+    // The ports ship public (ADR 0138): their ids are ordinary ids now.
+    for id in ["S9100009", "S9100010", "S9100025", "S9100026"] {
         run(&base_with(2, &format!("id = \"{id}\""))).unwrap();
     }
 }
@@ -1076,6 +1074,7 @@ fn facts_use_full_words() {
         "DIRTY",
         "LP4",
         "LP2",
+        "BP2",
         "REV2",
         "EXP",
         "ENV",
@@ -2573,26 +2572,7 @@ fn demo_part_unknown_sound_fails() {
 #[test]
 fn demo_part_private_sound_fails() {
     let mut sounds = demo_sounds();
-    // A port's id (`privacy::PORT_IDS`), however it got into the list.
-    let port = run(&BASE
-        .replace("S9100002", "S9100010")
-        .replace("TEST PAD\"", "PORT ONE\""));
-    assert!(port.is_err(), "the public build refuses the port itself");
-    let port = source::parse(
-        &BASE
-            .replace("S9100002", "S9100010")
-            .replace("TEST PAD\"", "PORT ONE\""),
-        "ports.toml",
-    )
-    .unwrap();
-    sounds.extend(port);
-    demo_fails(
-        &demo_with(7, "part.2 = \"PORT ONE, POLY, CH 2\""),
-        &sounds,
-        7,
-        "private",
-    );
-    // So is any Source with a `from` line.
+    // A Source with a `from` line is a private port.
     let from = source::parse(
         &format!(
             "{}from = \"tx81z 0123abcd #1\"\n",
@@ -3069,7 +3049,7 @@ fn held_demos_are_checked_not_built_and_their_effects_pend() {
 
 /// A valid port Source; each bad test changes one line.
 const PORT: &str = r#"[[sound]]
-id = "S9100010"
+id = "S9100070"
 name = "PORT ONE"
 engine = "VA"
 note = "A PORTED PAD"
@@ -3218,10 +3198,10 @@ fn private_edits_formant_is_a_category() {
 
 #[test]
 fn private_id_must_be_in_port_range() {
-    for id in ["S9100009", "S9100026", "S9100002"] {
+    for id in ["S9100069", "S9100100", "S9100002"] {
         port_fails(&port_with(2, &format!("id = \"{id}\"")), 2, id);
     }
-    for id in ["S9100010", "S9100025"] {
+    for id in ["S9100070", "S9100099"] {
         port_run(&port_with(2, &format!("id = \"{id}\""))).unwrap();
     }
     // The public walls still stand: no `from`, no port id.
@@ -3261,7 +3241,7 @@ fn private_never_writes_public_dir() {
     let man = build::private(&public, &ports, &root, &STAMP, None).unwrap();
     assert_eq!(
         man.sounds.iter().map(|e| e.id.get()).collect::<Vec<_>>(),
-        vec![9_100_010]
+        vec![9_100_070]
     );
     assert!(man.projects.is_empty());
     assert_eq!(
@@ -3274,7 +3254,7 @@ fn private_never_writes_public_dir() {
         .iter()
         .map(|(p, _)| p.to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names, ["CHIMERA/SOUNDS/S9100010.A", "manifest.json"]);
+    assert_eq!(names, ["CHIMERA/SOUNDS/S9100070.A", "manifest.json"]);
     let mut root_entries: Vec<_> = std::fs::read_dir(&root)
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
@@ -3285,9 +3265,9 @@ fn private_never_writes_public_dir() {
     let (files, _) = build::files(&port_run(PORT).unwrap(), &STAMP).unwrap();
     assert_eq!(built[0].1, files[0].1);
     // A rebuild empties private/ first.
-    std::fs::write(root.join("private/CHIMERA/SOUNDS/S9100011.A"), "stale").unwrap();
+    std::fs::write(root.join("private/CHIMERA/SOUNDS/S9100071.A"), "stale").unwrap();
     build::private(&public, &ports, &root, &STAMP, None).unwrap();
-    assert!(!root.join("private/CHIMERA/SOUNDS/S9100011.A").exists());
+    assert!(!root.join("private/CHIMERA/SOUNDS/S9100071.A").exists());
     // A failed build leaves no old set to install.
     std::fs::write(ports.join("one.toml"), port_with(13, "# no edits")).unwrap();
     build::private(&public, &ports, &root, &STAMP, None).unwrap_err();
@@ -3362,7 +3342,7 @@ fn private_qa_stays_in_its_ledger() {
     let priv_ledger = scratch_ledger("private-qa-private");
     // A port's render left in the public ledger by an older run.
     std::fs::create_dir_all(pub_ledger.join("renders")).unwrap();
-    std::fs::write(pub_ledger.join("renders/S9100010-long.wav"), b"old").unwrap();
+    std::fs::write(pub_ledger.join("renders/S9100070-long.wav"), b"old").unwrap();
     // A port whose edits its bank refutes fails before anything renders.
     let e = run::qa(&run::Qa {
         dir: &public,
@@ -3394,7 +3374,7 @@ fn private_qa_stays_in_its_ledger() {
     for f in ["listening.html", "report.txt"] {
         let t = std::fs::read_to_string(pub_ledger.join(f)).unwrap();
         assert!(
-            !t.contains("PRIVATE") && !t.contains("PORT ONE") && !t.contains("S9100010"),
+            !t.contains("PRIVATE") && !t.contains("PORT ONE") && !t.contains("S9100070"),
             "{f}: {t}"
         );
         assert!(t.contains("TEST PAD"), "{f}: {t}");
@@ -3402,7 +3382,7 @@ fn private_qa_stays_in_its_ledger() {
     // The private ledger: the ports, under PRIVATE, and nothing public.
     let page = std::fs::read_to_string(priv_ledger.join("listening.html")).unwrap();
     let txt = std::fs::read_to_string(priv_ledger.join("report.txt")).unwrap();
-    assert!(txt.contains("S9100010 PORT ONE  PRIVATE  PASS"), "{txt}");
+    assert!(txt.contains("S9100070 PORT ONE  PRIVATE  PASS"), "{txt}");
     assert!(!txt.contains("TEST PAD") && !page.contains("TEST PAD"));
     let at = page.find("<h2>PRIVATE</h2>").expect("a PRIVATE section");
     assert!(page[at..].contains("PORT ONE"));
