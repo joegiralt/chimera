@@ -820,6 +820,19 @@ class Bank2(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn(b"ERR bank2: flash timeout at S0", r.stderr)
 
+    def test_erase_sends_it_alone(self):
+        with PutUnit(answers={b"bank2 erase": b"OK bank2 erased\n"}) as u:
+            r = run_tool(["bank2", "erase"], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, b"OK bank2 erased\n")
+        self.assertEqual(u.requests, [b"bank2 erase"])
+
+    def test_an_erase_err_exits_1(self):
+        with PutUnit(answers={b"bank2 erase": b"ERR bank2: flash timeout\n"}) as u:
+            r = run_tool(["bank2", "erase"], u.target)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(b"ERR bank2: flash timeout", r.stderr)
+
     def test_the_install_answer_waits_a_minute(self):
         self.assertEqual(tool.BANK2_WAIT_S, 60.0)
 

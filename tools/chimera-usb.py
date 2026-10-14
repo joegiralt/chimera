@@ -10,6 +10,7 @@
                                                    (<remote> ending in / takes the local name; /CHIMERA/SOUNDS/ takes
                                                    `ls sounds`' top user id + 1)
     python3 chimera-usb.py bank2 <file.bk2>  install the second half of a release (its .bk2) after the .bin
+    python3 chimera-usb.py bank2 erase       empty bank 2 (a `just firmware-gate` build only)
     python3 chimera-usb.py update <file.bin> <file.bk2>
                                                    flash the .bin by DFU, then install the .bk2
     python3 chimera-usb.py flash             the flash controller's registers and bank 2's first bytes, read only
@@ -631,6 +632,27 @@ def bank2_install(t: Target, env, local: str) -> int:
     return fail(text)
 
 
+def bank2_erase(t: Target) -> int:
+    """`bank2 erase`, a bank2-gate build's: S0 erased for the next power
+    pull. 0 on OK, else 1."""
+    conn = open_conn(t)
+    try:
+        send(conn, "bank2 erase")
+        ln, before = bank2_answer(conn)
+    except NoAnswer:
+        return fail("bank2 erase: no answer from %s" % describe(t))
+    except Vanished:
+        return fail("bank2 erase: %s went away" % describe(t))
+    finally:
+        conn.close()
+    sys.stdout.buffer.write(before)
+    text = ln.decode(errors="replace")
+    if text.startswith("OK"):
+        print(text)
+        return 0
+    return fail(text)
+
+
 def stage_only(body: bytes) -> int:
     fail(body.decode(errors="replace") + LATER)
     return 2
@@ -683,6 +705,8 @@ def main(argv, env) -> int:
         return to_dfu(t, env)
     if argv[0] == "wait-console":
         return wait_console(env, float(argv[1]) if len(argv) > 1 else 10.0)
+    if argv[0] == "bank2" and argv[1:] == ["erase"]:
+        return bank2_erase(t)
     if argv[0] == "bank2":
         return bank2_install(t, env, argv[1]) if len(argv) == 2 else fail("bank2 takes <file.bk2>")
     if argv[0] == "update":
