@@ -61,7 +61,12 @@ impl Counted {
         (c, vol)
     }
 
+    /// A root file is planted, as a host drops it: the store won't write
+    /// the root.
     fn put(&mut self, vol: VolumeId, f: FileName, bytes: &[u8]) {
+        if f.dir() == Dir::Root {
+            return self.s.plant(f, bytes);
+        }
         self.s
             .write(vol, f, &mut |w: &mut dyn ByteSink| w.put(bytes))
             .unwrap();
@@ -201,19 +206,21 @@ fn the_system_file_comes_first() {
     );
 }
 
+/// Releases dropped and never deleted pile up ahead of the newest (a host
+/// appends entries): it is still found behind 8 and more, up to the bound.
 #[test]
-fn at_most_eight_root_files_are_judged() {
-    assert_eq!(ROOT_BK2_MAX, 8);
-    for stale in [7u8, 8, 9] {
+fn the_newest_is_found_behind_many_stale_up_to_the_bound() {
+    assert_eq!(ROOT_BK2_MAX, 32);
+    for stale in [8u8, 12, 31, 32, 33] {
         let (mut s, vol) = Counted::new();
         for i in 1..=stale {
-            let stem = [b'C', b'H', b'I', b'M', b'E', b'R', b'~', b'0' + i];
-            s.put(vol, root(&stem), &image(OTHER, "old", &body(i)));
+            let stem = format!("CHIME~{i:02}");
+            s.put(vol, root(stem.as_bytes()), &image(OTHER, "old", &body(i)));
         }
-        // Lists after every CHIMER~n.
+        // Lists after every CHIME~nn.
         s.put(vol, root(b"ZZ"), &image(SEAL, "new", &body(0)));
         let got = found(&mut s, &Verdict::Empty);
-        if stale < 8 {
+        if usize::from(stale) < ROOT_BK2_MAX {
             assert_eq!(got, Some((root(b"ZZ"), "new".into())), "{stale} stale");
         } else {
             assert_eq!(got, None, "{stale} stale");
@@ -225,6 +232,17 @@ fn at_most_eight_root_files_are_judged() {
             .count();
         assert!(roots <= ROOT_BK2_MAX, "{stale} stale: {roots} judged");
     }
+}
+
+#[test]
+fn the_root_is_never_written() {
+    let (mut s, vol) = Counted::new();
+    let f = root(b"CHIMER~1");
+    assert_eq!(
+        s.write(vol, f, &mut |w: &mut dyn ByteSink| w.put(b"x")),
+        Err(StoreError::ReadOnly)
+    );
+    assert_eq!(s.delete(vol, f), Err(StoreError::ReadOnly));
 }
 
 #[test]

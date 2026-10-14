@@ -49,8 +49,9 @@ pub const STAGED: FileName = match FileName::new(Dir::System, b"BANK2", b"BK2") 
     None => panic!("an 8.3 name"),
 };
 
-/// Most root `*.BK2` files a boot judges.
-pub const ROOT_BK2_MAX: usize = 8;
+/// Most root `*.BK2` files a boot judges: one a release dropped and never
+/// deleted, past many; another build's costs one header read.
+pub const ROOT_BK2_MAX: usize = 32;
 
 /// A staged file as an image, a card read a call. A read past its end is
 /// `Err`; the card's own error is kept for `error`.

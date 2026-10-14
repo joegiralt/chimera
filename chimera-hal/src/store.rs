@@ -42,8 +42,9 @@ pub enum Dir {
     /// `/CHIMERA/SYSTEM`: bank 2's staged image (ADR 0137). The stock
     /// bootloader reads only `.bin` files in the root.
     System,
-    /// The card's root: read only, for a dropped bank-2 image (ADR 0137).
-    /// Always there; never made or removed.
+    /// The card's root: listed and read, for a dropped bank-2 image (ADR
+    /// 0137). Always there; never made or removed; `write` and `delete`
+    /// refuse it (`ReadOnly`), `seal` too (`Io`).
     Root,
 }
 

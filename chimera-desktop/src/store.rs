@@ -93,7 +93,11 @@ impl DirStore {
     }
 
     /// A read-only file on the host is sealed: `ReadOnly`.
+    /// Not sealed, and not in the root (read only: a host drops files there).
     fn writable(&self, f: FileName) -> Result<(), StoreError> {
+        if f.dir() == Dir::Root {
+            return Err(StoreError::ReadOnly);
+        }
         match fs::metadata(self.file_path(f)) {
             Ok(m) if m.permissions().readonly() => Err(StoreError::ReadOnly),
             _ => Ok(()),
