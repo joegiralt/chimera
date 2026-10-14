@@ -11,12 +11,14 @@ use crate::dsp::clampf;
 pub const OFF_ON: [&str; 2] = ["OFF", "ON"];
 
 /// Fine ticks to a step: a pushed encoder's turn (ADR 0140).
+#[cfg(feature = "push-encoders")]
 pub const FINE_DIV: f32 = 10.0;
 
 /// A pushed encoder's turn (ADR 0140): a continuous param moves a tenth
 /// of its step a tick; any other, or one on its own `ladder`, moves one
 /// plain tick through `nudge`, so a block's own stepping (WAVE's budget,
 /// ROTATE's wrap) still holds. One copy for every block, not one each.
+#[cfg(feature = "push-encoders")]
 #[inline(never)]
 pub fn nudge_fine(b: &mut dyn Block, id: ParamId, delta: i8) {
     match b.spec(id) {
@@ -440,6 +442,7 @@ impl ParamSpec {
 
     /// `v` moved `delta` fine ticks, each `1 / FINE_DIV` of a step: an
     /// encoder pushed while it turns (ADR 0140).
+    #[cfg(feature = "push-encoders")]
     #[inline]
     pub fn nudged_fine(&self, v: f32, delta: i8) -> f32 {
         self.moved(v, f32::from(delta) / FINE_DIV)
@@ -672,6 +675,7 @@ pub trait Block {
 
     /// `id` steps by its own ladder even pushed (`nudge_fine`): PITCH
     /// under MUSICAL.
+    #[cfg(feature = "push-encoders")]
     fn ladder(&self, _id: ParamId) -> bool {
         false
     }

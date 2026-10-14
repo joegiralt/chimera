@@ -665,6 +665,8 @@ pub enum NavKey {
     Bar(i8),
     /// SEQ held: into ORBIT.
     SeqHold,
+    /// SEQ pressed under MIX: MIDI learn, `UiState`'s; no place moves.
+    MixSeq,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

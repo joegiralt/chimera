@@ -4,6 +4,8 @@ pub(crate) mod job;
 pub mod leaves;
 pub mod listing;
 pub mod manage;
+#[cfg(feature = "midi-map")]
+pub mod midi_map;
 pub mod naming;
 pub mod part;
 pub mod prompt;
@@ -103,26 +105,29 @@ pub(crate) enum Ask {
     EnterDfu(Choice<DfuAnswer>),
     /// PROJECT's PURGE UNUSED SOURCES, counted as it opened.
     PurgeSources(Unused, Choice<PurgeAnswer>),
+    /// MIDI MAP's MIX+MINUS: the Part and the entry as it was when asked.
+    #[cfg(feature = "midi-map")]
+    MapDelete(midi_map::MapDelete, Choice<DeleteAnswer>),
 }
 
 /// `AskKind` and its `ALL`, from one list: no kind can miss `ALL`.
 macro_rules! ask_kinds {
-    ($($k:ident => $slug:literal,)*) => {
+    ($($(#[$m:meta])* $k:ident => $slug:literal,)*) => {
         /// Which `Ask` is open, for tests that must cover each.
         #[cfg(any(test, feature = "test-support"))]
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub enum AskKind {
-            $($k,)*
+            $($(#[$m])* $k,)*
         }
 
         #[cfg(any(test, feature = "test-support"))]
         impl AskKind {
-            pub const ALL: &[AskKind] = &[$(AskKind::$k,)*];
+            pub const ALL: &[AskKind] = &[$($(#[$m])* AskKind::$k,)*];
 
             /// `snake_case`, for file names.
             pub fn slug(self) -> &'static str {
                 match self {
-                    $(AskKind::$k => $slug,)*
+                    $($(#[$m])* AskKind::$k => $slug,)*
                 }
             }
         }
@@ -146,6 +151,8 @@ ask_kinds! {
     ReloadScene => "reload_scene",
     EnterDfu => "enter_dfu",
     PurgeSources => "purge_sources",
+    #[cfg(feature = "midi-map")]
+    MapDelete => "map_delete",
 }
 
 /// A listed project as its prompt names it.
@@ -177,6 +184,8 @@ pub(crate) enum Answered {
     ReloadScene(SceneAsk, Answer<ReloadSceneAnswer>),
     EnterDfu(Answer<DfuAnswer>),
     PurgeSources(Answer<PurgeAnswer>),
+    #[cfg(feature = "midi-map")]
+    MapDelete(midi_map::MapDelete, Answer<DeleteAnswer>),
 }
 
 /// Each named Part's `Revert`, by Part, as offered when the prompt opened:
@@ -301,6 +310,8 @@ impl Ask {
             ),
             Ask::EnterDfu(c) => panel(&EnterDfu, c, f),
             Ask::PurgeSources(unused, c) => panel(&PurgeSources { unused: *unused }, c, f),
+            #[cfg(feature = "midi-map")]
+            Ask::MapDelete(d, c) => panel(d, c, f),
         }
     }
 
@@ -323,6 +334,8 @@ impl Ask {
             Ask::ReloadScene(..) => AskKind::ReloadScene,
             Ask::EnterDfu(_) => AskKind::EnterDfu,
             Ask::PurgeSources(..) => AskKind::PurgeSources,
+            #[cfg(feature = "midi-map")]
+            Ask::MapDelete(..) => AskKind::MapDelete,
         }
     }
 
@@ -443,6 +456,11 @@ impl Ask {
             Ask::PurgeSources(unused, mut choice) => match choice.input(delta, p) {
                 Some(a) => Got(Answered::PurgeSources(a)),
                 None => Open(Ask::PurgeSources(unused, choice)),
+            },
+            #[cfg(feature = "midi-map")]
+            Ask::MapDelete(d, mut choice) => match choice.input(delta, p) {
+                Some(a) => Got(Answered::MapDelete(d, a)),
+                None => Open(Ask::MapDelete(d, choice)),
             },
         }
     }

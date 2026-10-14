@@ -44,6 +44,7 @@ fn on_flt(ct: EngineType) -> UiState {
     load_init(&mut ui, ct);
     let p = ui.params_mut();
     p.filter.cutoff = 2000.0;
+    p.lfos[0].depth = 1.0; // INIT's is the wheel, at rest
     p.algo
         .try_set_kind(
             0,
@@ -501,7 +502,7 @@ fn applies_matches_the_panel() {
 #[test]
 fn type_steps_the_built_kinds_and_never_edits_the_matrix() {
     use chimera_core::ui::view::{self, SlotCtx};
-    let s = chimera_core::preset::Sound::init(EngineType::Algo);
+    let s = chimera_core::preset::Sound::plain_init(EngineType::Algo);
     let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
     assert!(!view::is_dimmed(
         &view::view(&chimera_core::ui::block_registry::FILTER, 0, &ctx),
@@ -557,7 +558,7 @@ fn matrix_set(s: &mut Sound, src: ModSource, c: FixedCol, a: i8) {
 /// Spec § 2: one stored value, two places to edit it.
 #[test]
 fn fm3_and_qm_are_views_of_one_cell() {
-    let mut s = Sound::init(EngineType::Algo);
+    let mut s = Sound::plain_init(EngineType::Algo);
     for (slot, src, c) in [
         (JackSlot::Fm3, ModSource::Lfo1, FixedCol::Freq),
         (JackSlot::Qm, ModSource::Env3, FixedCol::Q),
@@ -625,7 +626,7 @@ fn others_unchanged(x: &Sound, y: &Sound, moved: [(ModSource, FixedCol); 2]) {
 
 #[test]
 fn repatch_moves_exactly_one_route() {
-    let mut s = Sound::init(EngineType::Algo);
+    let mut s = Sound::plain_init(EngineType::Algo);
     s.mod_state
         .set_fixed(ModSource::Lfo1.index(), FixedCol::Freq, 40);
     s.mod_state
@@ -652,7 +653,7 @@ fn repatch_moves_exactly_one_route() {
 /// Review Focus 5: no free cell, no move; the jack stays where it was.
 #[test]
 fn repatch_with_every_target_occupied_changes_nothing() {
-    let mut s = Sound::init(EngineType::Algo);
+    let mut s = Sound::plain_init(EngineType::Algo);
     for j in Jack::FM3_CHOICES {
         if let Jack::Mod(m) = j {
             s.mod_state.set_fixed(m.index(), FixedCol::Freq, 7);
@@ -829,7 +830,7 @@ fn panels_follow_the_type() {
     assert_eq!(t(FilterKind::Svf, 5), Some(T::Filter(FilterParams::LEVEL)));
     // The 2040's MODE shows LP4, dimmed.
     use chimera_core::ui::view::{self, SlotCtx};
-    let mut s = Sound::init(EngineType::Algo);
+    let mut s = Sound::plain_init(EngineType::Algo);
     s.params.filter.set_kind(FilterKind::K2040);
     let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
     let v = view::view(&FILTER_MOD, 5, &ctx);
@@ -976,7 +977,7 @@ fn a_tap_jack_off_algo_is_its_default() {
             Jack::Mod(ModSource::Vel)
         );
     }
-    let mut s = Sound::init(EngineType::Modal);
+    let mut s = Sound::plain_init(EngineType::Modal);
     assert!(s.params.filter.set_fm3_src(Jack::Tap(TapOp::Op5)));
     s.mod_state
         .set_fixed(ModSource::Lfo1.index(), FixedCol::Freq, 21);

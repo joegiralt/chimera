@@ -72,8 +72,8 @@ pub struct Frame<'a> {
     /// Every Part (Mixer overview) and the one being edited.
     pub parts: &'a Parts,
     pub active_part: PartId,
-    /// The last MIX+PLUS outcome, shown in the focus band in place of the
-    /// value readout (issue #21).
+    /// The last MIX+PLUS outcome or MIDI learn's word, shown in the focus
+    /// band in place of the value readout (issue #21).
     pub prime_status: Option<PrimeStatus>,
     /// The project's pool, for PROJECT › POOL.
     pub pool: &'a crate::project::Pool,
@@ -281,7 +281,8 @@ impl Renderer {
             _ => {}
         }
         if let Some(status) = f.prime_status {
-            components::viz_status(display, status);
+            let label = view::view(f.def, f.focus, &f.ctx).label();
+            components::viz_status(display, status, label);
         }
     }
 
@@ -636,8 +637,11 @@ impl Renderer {
             look(f, f.focus),
             f.prime_status,
         );
+        // PUSH ENCODERS on: the pushes' hint over none or the generic
+        // LEARN (the two never fit together); a cell's own words stay.
         let own = view.hint(&f.ctx);
-        let h = if own.is_empty() && f.push && view.pushes() {
+        let generic = own.is_empty() || own == view::LEARN_HINT;
+        let h = if cfg!(feature = "push-encoders") && generic && f.push && view.pushes() {
             crate::ui::push::HINT
         } else {
             own

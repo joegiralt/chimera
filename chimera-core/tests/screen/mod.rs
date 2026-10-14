@@ -211,6 +211,11 @@ impl Input {
         self.buttons.push((b, ButtonState::Held));
         self
     }
+    /// This frame with `e` turned `delta` too.
+    pub fn and_turn(mut self, e: EncoderId, delta: i8) -> Self {
+        self.encoders.push((e, delta));
+        self
+    }
     pub fn turn(e: EncoderId, delta: i8) -> Self {
         Self {
             encoders: vec![(e, delta)],
@@ -421,7 +426,7 @@ impl<'u> Rig<'u> {
         }
     }
 
-    fn work(&mut self) {
+    pub fn work(&mut self) {
         let link = &self.link;
         let cx = CardCx {
             card: &mut self.card,

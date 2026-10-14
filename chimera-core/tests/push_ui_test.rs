@@ -191,7 +191,7 @@ fn hint_ink(ui: &UiState) -> usize {
         .count()
 }
 
-/// LEVEL touched: ON, its band hints the pushes; OFF, nothing. It fits.
+/// LEVEL touched: ON, its band hints the pushes, not LEARN. It fits.
 #[test]
 fn a_value_cell_hints_the_pushes_when_on() {
     let touched = |on| {
@@ -199,8 +199,9 @@ fn a_value_cell_hints_the_pushes_when_on() {
         screen::feed(&mut ui, screen::Input::turn(EncoderId::D, 1));
         hint_ink(&ui)
     };
+    // OFF, LEVEL shows its own hint (LEARN with the MIDI map), or none.
     assert!(touched(true) > 0);
-    assert_eq!(touched(false), 0);
+    assert_ne!(touched(true), touched(false));
     assert!(hint::width(push::HINT) <= theme::CONTENT_W);
 }
 

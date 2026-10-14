@@ -57,6 +57,9 @@ pub enum Screen {
     /// `SCENE n` as the slot is saved or neutral.
     #[cfg(feature = "orbit")]
     SceneSaveTo,
+    /// The active Part's MIDI map: a row per entry.
+    #[cfg(feature = "midi-map")]
+    MidiMap,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,7 +110,7 @@ static PROJECT: [Row; 5] = [
 ];
 
 /// The active Part's list: its crumb is `PART n`.
-pub static PART: [Row; 6] = [
+pub static PART: [Row; 6 + cfg!(feature = "midi-map") as usize] = [
     row("RENAME", Kind::Act(Act::PartRename)),
     row("CLEAR", Kind::Act(Act::PartClear)),
     crumb("SAVE TO PROJ", "SAVE TO", Kind::Screen(Screen::SaveToProj)),
@@ -118,6 +121,8 @@ pub static PART: [Row; 6] = [
         "SAVE TO LIB",
         Kind::Act(Act::SaveToLibrary),
     ),
+    #[cfg(feature = "midi-map")]
+    row("MIDI MAP", Kind::Screen(Screen::MidiMap)),
 ];
 
 /// PART's SAVE TO LIBRARY row, found at compile time.
@@ -358,6 +363,8 @@ const SCREEN_PATHS: &[([u8; 4], usize)] = &[
     path_of(Screen::SaveToProj),
     #[cfg(feature = "orbit")]
     path_of(Screen::SceneSaveTo),
+    #[cfg(feature = "midi-map")]
+    path_of(Screen::MidiMap),
 ];
 
 /// Screen `s`'s path in the tree.
@@ -368,6 +375,8 @@ pub fn screen_path(s: Screen) -> &'static [u8] {
         Screen::SaveToProj => &SCREEN_PATHS[2],
         #[cfg(feature = "orbit")]
         Screen::SceneSaveTo => &SCREEN_PATHS[3],
+        #[cfg(feature = "midi-map")]
+        Screen::MidiMap => &SCREEN_PATHS[SCREEN_PATHS.len() - 1],
     };
     &path[..*depth]
 }

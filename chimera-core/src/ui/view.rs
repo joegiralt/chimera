@@ -17,6 +17,7 @@ use crate::dsp::modulator::{
 use crate::dsp::reverb::{ReverbParams, ReverbType, in_plate_zone};
 use crate::dsp::tape_engine::machine::{self, Cell};
 use crate::dsp::tape_engine::{self, TapeEngineParams as T, TapeModel, wave};
+use crate::midi_map::Mappable;
 use crate::modulation::VCA;
 use crate::name::SoundName;
 use crate::orbit::RingIdx;
@@ -460,7 +461,7 @@ impl View {
     /// The gesture hint a param's focus band shows (ADR 0086): MUTE's
     /// MIX + B*n*, which mutes any ring from anywhere in ORBIT. ORBIT's
     /// own cells give theirs through their focus. A route view's: MIX +
-    /// MINUS deletes its route.
+    /// MINUS deletes its route. A mappable param's adds MIX + SEQ's learn.
     pub fn hint(&self, ctx: &SlotCtx) -> Hint {
         if let View::Route { .. } = self {
             return crate::ui::mod_grid::DELETE;
@@ -485,10 +486,17 @@ impl View {
             Some(a) if matches!(a.block, BlockRef::OrbitRing(_)) && a.param == SceneRing::MUTE => {
                 MUTE_HINT
             }
+            Some(a) if cfg!(feature = "midi-map") && Mappable::new(a).is_some() => LEARN_HINT,
             _ => hint::NONE,
         }
     }
 }
+
+/// MIX + SEQ learns a CC on the cell (MIDI map spec § 4): every mappable
+/// cell's hint, but where the cell's own gesture leaves no room on the line.
+pub const LEARN: Gesture<'static> = Gesture("MIX + SEQ", "LEARNS A CC");
+/// Every mappable cell's hint; PUSH ENCODERS' replaces it when on.
+pub const LEARN_HINT: Hint = &[LEARN];
 
 const SYM_HINT: Hint = &[Gesture("EDIT ▾", "SYM")];
 

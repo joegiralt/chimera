@@ -110,6 +110,7 @@ impl PageId {
     }
 
     /// A pushed encoder's turn: the bound param fine (ADR 0140).
+    #[cfg(feature = "push-encoders")]
     pub fn fine_encoder(&self, idx: usize, delta: i8, params: &mut impl Blocks) {
         if let Some(a) = self.binding(idx)
             && let Some(mut b) = params.block_mut(a.block)
@@ -118,14 +119,10 @@ impl PageId {
         }
     }
 
-    /// A push tap: the bound param to its default (ADR 0140).
-    pub fn default_encoder(&self, idx: usize, params: &mut impl Blocks) {
-        if let Some(a) = self.binding(idx)
-            && let Some(mut b) = params.block_mut(a.block)
-            && let Some(s) = b.spec(a.param)
-        {
-            b.set(a.param, s.default);
-        }
+    /// No pushes in this build: never called, a plain turn.
+    #[cfg(not(feature = "push-encoders"))]
+    pub fn fine_encoder(&self, idx: usize, delta: i8, params: &mut impl Blocks) {
+        self.apply_encoder(idx, delta, params);
     }
 
     /// Shift+encoder: snap to the coarse points of the bound param's format.

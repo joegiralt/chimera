@@ -4,32 +4,34 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free", "push-encoders"]
+default = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-map", "push-encoders"]
 midi-din = ["chimera-board/midi-din"]
 perf-probe = ["chimera-board/perf-probe"]
 # The bench on the unit, one area a build: all of it no longer fits FLASH
 # beside the synth. `bench` is the shared rig, built with an area and
 # `--no-default-features`: the shipping set less the console's `put`
 # (`card-put`, ~7 KB), which no bench run needs, so ORBIT's areas fit.
-bench = ["perf-probe", "chimera-core/probe", "chimera-board/bench", "midi-din", "usb-console"]
+bench = ["perf-probe", "chimera-core/probe", "chimera-board/bench", "usb-console"]
 # ALGO's patches, the FX bus, the kernel and FORMANT's rows; its ELF is the one
 # `tools/loop_count.py` counts the kernel's loops on.
-bench-algo = ["bench", "chimera-core/span-count", "chimera-engine/demo-sounds"]
+bench-algo = ["bench", "midi-din", "chimera-core/span-count", "chimera-engine/demo-sounds"]
 # ROUTING: the matrix, filter types, taps and MODAL's rows.
-bench-routing = ["bench"]
+bench-routing = ["bench", "midi-din"]
 # MEMORY: sizes, a rebuild, MODAL's note-ons, the project CRC.
-bench-memory = ["bench"]
+bench-memory = ["bench", "midi-din"]
 # STRESS: NEW's Parts with every key down, and the runs' phases; ORBIT
 # plays in them with `orbit`.
-bench-stress = ["bench"]
+bench-stress = ["bench", "midi-din"]
 # ORBIT: its block's cost and phases.
-bench-orbit = ["bench", "orbit"]
+bench-orbit = ["bench", "midi-din", "orbit"]
 # TAPE COLD: each machine's cold-cache voice.
+# TAPE COLD never plays MIDI; FLASH (#507).
 bench-tape = ["bench", "chimera-core/tape"]
 # The filter probes, linked though nothing calls them, for
 # `tools/loop_count.py`'s static counts: the shipping build plus them,
-# `default` included, as the bench sets are built without it.
-filter-probes = ["default", "chimera-core/filter-probe"]
+# `default` less PUSH ENCODERS (FLASH; the filters' loops are the same),
+# as the bench sets are built without it.
+filter-probes = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-map", "chimera-core/filter-probe"]
 # On-unit SD bring-up: prints the card probe and halts; no audio.
 sd-probe = ["chimera-board/sd-probe"]
 # The master tape stage back on the chain, with its bench row (ADR 0055).
@@ -38,6 +40,9 @@ master-tape = ["chimera-core/master-tape", "chimera-board/master-tape"]
 push-encoders = ["chimera-board/push-encoders"]
 # ORBIT, the ring sequencer: SEQ hold opens it, the audio block runs it.
 orbit = ["chimera-core/orbit", "chimera-board/orbit"]
+# The MIDI map: CC apply, learn and the MIDI MAP page (#247). Bench
+# firmware leaves it out: FLASH (#507).
+midi-map = ["chimera-board/midi-map"]
 # The USB console (ADR 0068): CDC-ACM on the OTG FS port, polled from the UI
 # loop, its interrupt never unmasked.
 usb-console = ["chimera-board/usb-console"]

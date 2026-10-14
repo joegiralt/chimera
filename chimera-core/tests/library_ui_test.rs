@@ -507,6 +507,30 @@ fn a_midi_edit_during_the_source_read_refuses() {
     assert_eq!(r.counts(), counts, "no source, no slot");
 }
 
+/// A CC ramp on Part 1 through the source read (spec § 1): dropped while
+/// the load is pending, so the adopt's witness holds.
+#[cfg(feature = "midi-map")]
+#[test]
+fn a_cc_during_the_source_read_is_dropped() {
+    use chimera_core::midi_in::{Cc, CcEvent};
+    use chimera_hal::Ms;
+    let mut r = Rig::new();
+    tape_library(&mut r, 100.0, "TAPE");
+    let ev = CcEvent {
+        channel: r.ui.project().part(P1).mix.channel,
+        cc: Cc::new(74).unwrap(),
+        value: 0,
+    };
+    // INIT's CC 74 heard: CUTOFF ramps from the next pass.
+    r.ui.hear_ccs(core::iter::once(ev), Ms(1_000), true);
+    r.start_load();
+    r.one_pass(); // the read; the stream starts
+    assert!(r.ui.card_pending(), "still streaming");
+    r.ui.hear_ccs(core::iter::once(ev), Ms(1_010), true);
+    r.work();
+    assert!(r.toast().starts_with("LOADED TO SLOT "));
+}
+
 #[test]
 fn a_tape_load_streams_its_source_then_adopts() {
     let mut r = Rig::new();

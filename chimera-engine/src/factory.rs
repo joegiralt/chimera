@@ -125,7 +125,8 @@ mod authored {
     const SQR: OpKind = OpKind::Table(WaveId::SQR);
 
     fn named(name: &str, algo: AlgoParams) -> Sound {
-        let mut s = Sound::init(EngineType::Algo);
+        let mut s = Sound::plain_init(EngineType::Algo);
+        s.map = crate::midi_map::default_for(EngineType::Algo);
         s.name = SoundName::new(name).expect("a valid factory name");
         s.params.algo = algo;
         s

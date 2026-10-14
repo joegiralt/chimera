@@ -213,12 +213,13 @@ fn mix_released_first_still_mutes_the_menu_press() {
     );
 }
 
+/// MIX + SEQ is learn's (MIDI map spec § 4): no SEQ tap follows.
 #[test]
-fn seq_tap_is_not_muted_by_mix() {
+fn seq_tap_is_muted_by_mix() {
     let mut g = HoldGates::new();
     g.step(&stub(0, press(0), Edges::default(), press(0)));
     let p = g.step(&stub(100, held(), Edges::default(), release(100)));
-    assert_eq!(p.seq, Some(Press::Tap));
+    assert_eq!(p.seq, None);
     assert_eq!(p.menu, None);
 }
 

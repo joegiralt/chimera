@@ -32,6 +32,8 @@ pub mod import;
 pub mod in_place;
 pub mod instrument;
 pub mod meter;
+pub mod midi_in;
+pub mod midi_map;
 pub mod midi_settings;
 pub mod mod_path;
 pub mod modulation;

@@ -39,7 +39,17 @@ pub fn write_status(ui: &UiState, w: &mut impl Write) -> fmt::Result {
 /// The `board` line (ADR 0140): the board and the strap it was read
 /// from, PD0 first; an unknown strap is wired as the LQFP176.
 pub fn write_board(b: BoardId, w: &mut impl Write) -> fmt::Result {
-    writeln!(w, "board {} straps=0b{:04b}", b.word(), b.straps())
+    let s = b.straps();
+    let bit = |i: u8| if s >> i & 1 == 1 { '1' } else { '0' };
+    writeln!(
+        w,
+        "board {} straps=0b{}{}{}{}",
+        b.word(),
+        bit(3),
+        bit(2),
+        bit(1),
+        bit(0)
+    )
 }
 
 /// `Location` in ASCII, ` > ` between levels; SETTINGS' breadcrumb in full.

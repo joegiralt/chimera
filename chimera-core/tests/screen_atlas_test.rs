@@ -432,8 +432,59 @@ fn manage_command(ui: &mut UiState, row: usize, c: Command, modified: bool) {
 }
 
 /// Prompt `k`, opened by the keys that open it.
+/// SETTINGS › PART › MIDI MAP on Part 1: six entries, one dead (STRUCT
+/// is Modal's), one inverted, one narrowed; the bar on the second.
+#[cfg(feature = "midi-map")]
+fn map_page(ui: &mut UiState, fill: bool) {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::modal::ModalParams;
+    use chimera_core::midi_in::Cc;
+    use chimera_core::midi_map::{MapEntry, Mappable, MidiMap};
+    use chimera_core::params::FilterParams;
+    let at = |b, id| Mappable::new(ParamAddr::new(b, id)).unwrap();
+    let mut m = MidiMap::EMPTY;
+    let e = |cc, t, min, max| MapEntry {
+        cc: Cc::new(cc).unwrap(),
+        target: t,
+        min,
+        max,
+    };
+    if fill {
+        for x in [
+            e(74, at(BlockRef::Filter, FilterParams::CUTOFF), 0, 255),
+            e(71, at(BlockRef::Filter, FilterParams::RESONANCE), 40, 200),
+            e(16, at(BlockRef::Modal, ModalParams::STRUCTURE), 0, 255),
+            e(
+                7,
+                at(BlockRef::Part, chimera_core::part::PartParams::LEVEL),
+                0,
+                255,
+            ),
+            e(
+                10,
+                at(BlockRef::Part, chimera_core::part::PartParams::PAN),
+                255,
+                0,
+            ),
+        ] {
+            m.learn(x.cc, x.target).unwrap();
+            let n = m.len() - 1;
+            m.set(n, x);
+        }
+    }
+    ui.project_mut().edit_part(P1).sound.map = m;
+    part_row(ui, 6);
+    feed(ui, Input::press(ButtonId::Edit));
+    feed(ui, Input::press(ButtonId::Plus));
+}
+
 fn prompt(k: AskKind, ui: &mut UiState) {
     match k {
+        #[cfg(feature = "midi-map")]
+        AskKind::MapDelete => {
+            map_page(ui, true);
+            feed(ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
+        }
         AskKind::ReplacePart => {
             edit(ui, P1);
             part_row(ui, 1); // CLEAR
@@ -628,6 +679,8 @@ fn settings_shots() -> Vec<(String, Setup)> {
     for (name, go) in states {
         v.push((name.into(), Box::new(go)));
     }
+    #[cfg(feature = "midi-map")]
+    v.push(("midi_map".into(), Box::new(|ui| map_page(ui, true))));
     for &k in AskKind::ALL {
         let name = format!("settings_prompt_{}", k.slug());
         v.push((name, Box::new(move |ui| prompt(k, ui))));
@@ -640,6 +693,17 @@ fn settled(go: &dyn Fn(&mut UiState)) -> UiState {
     go(&mut ui);
     settle(&mut ui);
     ui
+}
+
+#[cfg(feature = "midi-map")]
+#[test]
+fn empty_midi_map_renders() {
+    let mut ui = UiState::new();
+    map_page(&mut ui, false);
+    settle(&mut ui);
+    let fb = render_ui(&ui);
+    assert_eq!(fb.oob, 0);
+    fb.dump("midi_map_empty");
 }
 
 #[test]

@@ -107,6 +107,11 @@ unsafe impl<T: Send> Send for Writer<T> {}
 unsafe impl<T: Send> Send for Reader<T> {}
 
 impl<T> Writer<T> {
+    /// The reader has taken the last publish: a later one is all it misses.
+    pub fn taken(&self) -> bool {
+        (self.buf.latest.load(Ordering::Acquire) ^ STORED) & FRESH == 0
+    }
+
     pub fn publish(&mut self, f: impl FnOnce(&mut T)) {
         // SAFETY: `back` is the writer's own slot (the permutation
         // invariant): no other reference to it exists while `f` runs.

@@ -156,7 +156,7 @@ fn full_registry_with_drive_and_cutoff_keeps_every_route() {
 
 #[test]
 fn fixed_columns_round_trip_through_a_save() {
-    let mut s = Sound::init(EngineType::Algo);
+    let mut s = Sound::plain_init(EngineType::Algo);
     let m = &mut s.mod_state;
     for (i, c) in FixedCol::ALL.into_iter().enumerate() {
         m.set_fixed(ModSource::Lfo2.index(), c, -(i as i8) - 3);
@@ -194,8 +194,9 @@ fn init_routes_live_in_fixed_freq() {
             0
         };
         assert_eq!(m.fixed_present(FixedCol::Vca), vca, "{e:?}");
-        assert_eq!(s.dest_registry.len(), 0);
-        assert_eq!(m.num_dests(), 0);
+        // The registry holds only the wheel's PITCH (spec § 9).
+        assert_eq!(s.dest_registry.len(), 1);
+        assert_eq!(m.num_dests(), 1);
     }
 }
 
@@ -265,7 +266,7 @@ fn vca_rule_reads_the_fixed_vca_column() {
 #[test]
 fn a_full_eight_by_twenty_matrix_round_trips() {
     use chimera_core::modulation::MAX_MOD_DESTS;
-    let mut s = Sound::init(EngineType::Algo);
+    let mut s = Sound::plain_init(EngineType::Algo);
     let regs = others(MAX_MOD_DESTS);
     assert_eq!(regs.len(), MAX_MOD_DESTS);
     for &a in &regs {
@@ -334,7 +335,7 @@ fn the_jacks_round_trip_through_a_sound_file() {
         (FilterParams::QM_IN, &Jack::QM_CHOICES[..]),
     ] {
         for (v, &j) in choices.iter().enumerate() {
-            let mut s = Sound::init(EngineType::Algo);
+            let mut s = Sound::plain_init(EngineType::Algo);
             s.params.filter.set(id, v as f32);
             let got = if id == FilterParams::FM3_IN {
                 s.params.filter.fm3_src()
@@ -357,7 +358,7 @@ fn default_jacks_survive_a_sparse_round_trip() {
     use chimera_core::factory::encode_entry;
     use chimera_core::project::EncodedSound;
     use chimera_core::taps::Jack;
-    let mut s = Sound::init(EngineType::Algo);
+    let mut s = Sound::plain_init(EngineType::Algo);
     s.mod_state
         .set_fixed(ModSource::Lfo1.index(), FixedCol::Q, 40);
     s.mod_state

@@ -84,8 +84,10 @@ as stock does, it is a setting.
   - MIX wins: MIX + turn snaps, pushed or not.
   - Nothing on empty, action, readout or card cells, dimmed cells,
     jacks, SCRUB's FINGER, or the reverb's word choices (TYPE, SYNC).
-- Hint: with PUSH ENCODERS ON, a value cell with no hint of its own
-  shows `PUSH DEFAULT  PUSH + TURN FINE` in its focus band.
+- Hint: with PUSH ENCODERS ON, a value cell with no hint of its own, or
+  only the MIDI map's generic `MIX + SEQ LEARNS A CC` (ADR 0139; the two
+  do not fit one band), shows `PUSH DEFAULT  PUSH + TURN FINE` in its
+  focus band. A cell's own words (reverb TYPE, SYM, MUTE, DELETE) stay.
 - Built behind the `push-encoders` feature (chimera-core, chimera-board,
   chimera-stm32), on in the shipping and ORBIT builds and the desktop,
   off in the bench sets, whose FLASH is full: off, there is no SYSTEM row

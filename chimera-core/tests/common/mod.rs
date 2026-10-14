@@ -157,14 +157,13 @@ impl Case {
     }
 }
 
-/// Init params per engine: the chain's `Sound::init` params.
+/// Init params per engine: the chain's `Sound::init` params, with LFO 1 at
+/// DEPTH 1 as before INIT's wheel (spec § 9), so the goldens' LFO 1 routes
+/// still swing.
 pub fn init_params(engine: EngineType) -> ParamSnapshot {
-    match engine {
-        EngineType::Algo => Sound::init(EngineType::Algo).params,
-        EngineType::Modal => Sound::init(EngineType::Modal).params,
-        EngineType::Tape => Sound::init(EngineType::Tape).params,
-        EngineType::Va => Sound::init(EngineType::Va).params,
-    }
+    let mut p = Sound::init(engine).params;
+    p.lfos[0].depth = 1.0;
+    p
 }
 
 /// Filter cutoff — the same semantic address on every chain.
@@ -391,6 +390,8 @@ pub fn expects_sound(e: EngineType) -> bool {
 pub fn tri() -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Algo);
     p.algo = AlgoParams::single(WaveId::TRI);
+    // Parts carry INIT's wheel route: LFO 1 at its rest.
+    p.lfos[0].depth = 0.0;
     p
 }
 
