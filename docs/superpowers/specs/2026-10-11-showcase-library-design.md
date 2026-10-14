@@ -252,6 +252,8 @@ Which TX81Z voice each starts from is chosen at the porting step, by the nearest
 
 **Formant placeholders, `S9100028`–`S9100030`** (VOWEL CHOIR, TALK BASS, FORMANT LEAD): retired by the owner 2026-10-13, removed from the Sources and the page. The ids are never reassigned: `source::parse` refuses them.
 
+**`S9100060`** (ACID FM): cut by the owner 2026-10-14 from the acid set; retired the same way.
+
 **MODAL, `S9100031`–`S9100034`.** Note-off never damps MODAL (it rings like Rings).
 
 | Id | Name | Model | Description | Modulation |

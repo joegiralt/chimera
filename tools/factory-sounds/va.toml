@@ -717,12 +717,12 @@ mod.LFO1 = "FILTER.CUTOFF +22"
 mod.VEL = "ENV2.LEVEL +70, FILTER.CUTOFF +12"
 trim = "-3.7"
 
-# Warm, Kobol-style acid: a saw and a quieter one an octave up (a detuned
+# Warm acid: a saw and a quieter one an octave up (a detuned
 # pair fails the aliasing gate), the 2040 in its EXP voicing just below self-oscillation; ENV 2 and a slow LFO move
 # the cutoff.
 [[sound]]
 id = "S9100056"
-name = "ACID KOBOL"
+name = "ACID WARM"
 engine = "VA"
 note = "WARM 2040 EXP, LFO + ENV"
 demo = "mono"
@@ -842,12 +842,12 @@ mod.LFO2 = "FILTER.CUTOFF +12"
 mod.VEL = "ENV2.LEVEL +70, FILTER.CUTOFF +12"
 trim = "4.4"
 
-# Aphex-style: two saws in RING a detuned fifth-ish apart, three S&H LFOs on
+# Wonky acid: two saws in RING a detuned fifth-ish apart, three S&H LFOs on
 # their own clocks (8 Hz cutoff, 4 Hz pitch by a quarter-tone, 2.67 Hz the
 # ring blend: three against four) under the wonky line.
 [[sound]]
 id = "S9100059"
-name = "ACID APHEX"
+name = "ACID WONKY"
 engine = "VA"
 note = "RING, S&H CUTOFF AND PITCH"
 demo = "mono"

@@ -362,7 +362,7 @@ fn id_outside_range() {
 
 #[test]
 fn retired_ids_refused() {
-    for id in ["S9100028", "S9100029", "S9100030"] {
+    for id in ["S9100028", "S9100029", "S9100030", "S9100060"] {
         fails(&base_with(2, &format!("id = \"{id}\"")), 2, "retired");
     }
     run(&base_with(2, "id = \"S9100031\"")).unwrap();
