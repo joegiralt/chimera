@@ -750,7 +750,7 @@ ROOM has no ALL, because 7 of the 10 beat values would clamp to its 1.5 s maximu
     - units such as `141ms`, `2.5s`, `6.6k`, `0.30Hz` and `1/8`, from the same pure mappings the DSP uses;
     - slot 3's static step is 1/128, and QUAD's panel overrides it to 1/31, so QUAD's SIZE still moves one table step per tick;
     - a synced knob steps one division per tick.
-  - **MIDI MAP** (the per-Part CC map) shows the current TYPE's panel label for a reverb slot: a CC on slot 3 reads SIZE under ROOM and LENGTH under GATE. It never shows the static spec's label. Superseded in part by ADR 0136.
+  - **MIDI MAP** (the per-Part CC map) shows the current TYPE's panel label for a reverb slot: a CC on slot 3 reads SIZE under ROOM and LENGTH under GATE. It never shows the static spec's label. Superseded in part by ADR 0137.
   - **Short forms** of ≤ 6 characters stand in when a label outruns its bar (ADR 0053's MECHANICS → MECH rule): PRE-DLY → `PRE`, DENSITY → `DENS`, DIFFUSE → `DIFF`. The focus band shows the full word.
 - **The demo page.** `DEMO_GLYPH_CUBE` stays bound to QUAD's slots.
 
@@ -1074,7 +1074,7 @@ They lock refactors, not quality (ADR 0011). Ear tuning re-records them delibera
 
 - **Panels.** Every TYPE's main and MORE labels fit their cells, short forms included. Every unit string fits, and so do folded values (`▾1/8`) and `PLATE`.
 - **Hints.** No reverb cell returns a hint (ADR 0086).
-- **MIDI MAP** shows each TYPE's panel labels. Superseded in part by ADR 0136.
+- **MIDI MAP** shows each TYPE's panel labels. Superseded in part by ADR 0137.
 - **TAIL.** `tail_shape` is pure, and changes under every knob of its TYPE. Composites draw set values only (ADR 0067's existing test, extended). The box-clear and status tests cover TAIL.
 - **Screen goldens** (`screen_golden_test`) for REV and REV › MORE under QUAD, HALL and GATE.
 
