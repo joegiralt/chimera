@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free"]
+default = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free", "push-encoders"]
 midi-din = ["chimera-board/midi-din"]
 perf-probe = ["chimera-board/perf-probe"]
 # The bench on the unit, one area a build: all of it no longer fits FLASH
@@ -34,6 +34,8 @@ filter-probes = ["default", "chimera-core/filter-probe"]
 sd-probe = ["chimera-board/sd-probe"]
 # The master tape stage back on the chain, with its bench row (ADR 0055).
 master-tape = ["chimera-core/master-tape", "chimera-board/master-tape"]
+# SYSTEM's PUSH ENCODERS (ADR 0140); the bench sets go without (FLASH).
+push-encoders = ["chimera-board/push-encoders"]
 # ORBIT, the ring sequencer: SEQ hold opens it, the audio block runs it.
 orbit = ["chimera-core/orbit", "chimera-board/orbit"]
 # The USB console (ADR 0068): CDC-ACM on the OTG FS port, polled from the UI

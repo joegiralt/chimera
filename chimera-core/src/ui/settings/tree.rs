@@ -2,9 +2,11 @@
 //! table, so a feature is built out by replacing its `Later(issue(n))`
 //! kind and navigation stays as it is.
 
+#[cfg(feature = "push-encoders")]
+use super::leaves::PUSH_LEAF;
 use super::leaves::{
     ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, LIVE_SNAP_LEAF, OUTPUTS_LEAF, OnePage, POOL_LEAF,
-    PUSH_LEAF, SAVER_LEAF, THEME_LEAF, TUNING_LEAF,
+    SAVER_LEAF, THEME_LEAF, TUNING_LEAF,
 };
 use core::num::NonZeroU16;
 
@@ -193,12 +195,13 @@ static DIAGNOSTICS: &[Row] = &[
     row("DEMO", List(&DEMO)),
 ];
 
-static SYSTEM: [Row; 7] = [
+static SYSTEM: &[Row] = &[
     crumb("OS UPGRADE", "OS", Kind::Act(Act::EnterDfu)),
     row("STORAGE", Later(issue(267))),
     crumb("FORMAT CARD", "FORMAT", Later(issue(268))),
     crumb("USB CONFIG", "USB", Later(issue(269))),
     crumb("DIAGNOSTICS", "DIAG", List(DIAGNOSTICS)),
+    #[cfg(feature = "push-encoders")]
     crumb("PUSH ENCODERS", "PUSH", Leaf(&PUSH_LEAF)),
     row("ABOUT", Leaf(&ABOUT_LEAF)),
 ];
@@ -211,7 +214,7 @@ static TOP: [Row; 8] = [
     crumb("SYSEX DUMP", "SYSEX", Later(issue(263))),
     crumb("AUDIO ROUTING", "AUDIO", List(&AUDIO)),
     crumb("PERSONALIZE", "PERSONAL", List(&PERSONALIZE)),
-    row("SYSTEM", List(&SYSTEM)),
+    row("SYSTEM", List(SYSTEM)),
 ];
 
 pub static ROOT: Row = row("SETTINGS", List(&TOP));

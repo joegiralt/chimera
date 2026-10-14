@@ -86,6 +86,10 @@ as stock does, it is a setting.
     jacks, SCRUB's FINGER, or the reverb's word choices (TYPE, SYNC).
 - Hint: with PUSH ENCODERS ON, a value cell with no hint of its own
   shows `PUSH DEFAULT  PUSH + TURN FINE` in its focus band.
+- Built behind the `push-encoders` feature (chimera-core, chimera-board,
+  chimera-stm32), on in the shipping and ORBIT builds and the desktop,
+  off in the bench sets, whose FLASH is full: off, there is no SYSTEM row
+  and the read is the 24-bit one. The strap read is in every build.
 - Desktop: Ctrl + Q..Y pushes that encoder with no turn (a tap on
   release); Alt + Q..Y pushes and turns it up, Alt + Shift down.
 

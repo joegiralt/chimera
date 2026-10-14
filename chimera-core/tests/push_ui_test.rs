@@ -3,6 +3,8 @@
 //! MIX wins over the push, cells with no value take nothing, OFF changes
 //! nothing, and a value cell's band hints the pushes.
 
+#![cfg(feature = "push-encoders")]
+
 mod common;
 mod screen;
 

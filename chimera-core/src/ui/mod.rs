@@ -2256,10 +2256,15 @@ impl UiState {
         }
     }
 
+    /// SYSTEM's PUSH ENCODERS, in a build that has them (ADR 0140).
+    fn push_on(&self) -> bool {
+        cfg!(feature = "push-encoders") && self.midi.push
+    }
+
     /// Each encoder's push this frame (ADR 0140); with PUSH ENCODERS off,
     /// none, and any push held is forgotten, not let go.
     fn step_pushes(&mut self, c: &impl Controls) -> [push::PushStep; chimera_hal::NUM_ENCODERS] {
-        if !self.midi.push {
+        if !self.push_on() {
             self.pushes = Default::default();
             return Default::default();
         }
@@ -2273,6 +2278,7 @@ impl UiState {
     /// the path MIX + turn's landmarks take. A cell with no value (empty,
     /// an action, a readout, a card row), a dimmed one, a jack, SCRUB's
     /// FINGER and the reverb's word choices take none.
+    #[cfg(feature = "push-encoders")]
     fn push_default(&mut self, def: &'static BlockDef, slot: usize) {
         let ctx = self.ctx();
         let v = view::view(def, slot, &ctx);
@@ -2477,7 +2483,7 @@ impl UiState {
                 }
                 // Pushed, a turn is fine: a tick a frame, no acceleration,
                 // and a tenth of a continuous param's step. MIX wins.
-                let fine = pushes[i].fine && !shift;
+                let fine = cfg!(feature = "push-encoders") && pushes[i].fine && !shift;
                 let delta = if fine { delta.signum() } else { delta };
                 let v = view::view(def, i, &self.ctx());
                 // An empty slot edits nothing, so it does not take the focus.
@@ -2559,6 +2565,7 @@ impl UiState {
                     (PageKey::Legacy(p), false, false) => p.apply_encoder(i, delta, params),
                 }
             }
+            #[cfg(feature = "push-encoders")]
             for (i, p) in pushes.iter().enumerate() {
                 if p.tap {
                     self.push_default(def, i);
@@ -2911,7 +2918,7 @@ impl UiState {
                 anim[i].current()
             }),
             hints: self.theme.hints,
-            push: self.midi.push,
+            push: self.push_on(),
             ctx,
             focus,
             scope,
@@ -3106,7 +3113,7 @@ impl UiState {
     ) {
         self.region_set
             .set_screen(self.layout(), self.prompt_open());
-        self.region_set.drawn_hints = Some((self.theme.hints, self.midi.push));
+        self.region_set.drawn_hints = Some((self.theme.hints, self.push_on()));
         let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
         {
             let f = self.frame(perf, audio, scope);
@@ -3124,7 +3131,7 @@ impl UiState {
     /// the bands were drawn, noted as drawn now: every band and the
     /// browser redraw, so no page keys its band on them.
     fn hints_moved(&mut self) -> bool {
-        let now = Some((self.theme.hints, self.midi.push));
+        let now = Some((self.theme.hints, self.push_on()));
         core::mem::replace(&mut self.region_set.drawn_hints, now) != now
     }
 

@@ -159,7 +159,7 @@ pub unsafe fn isr_tick() {
         HC_LOAD.load(Ordering::Relaxed),
         HC_CLK.load(Ordering::Relaxed),
     );
-    let push = PUSH.load(Ordering::Relaxed);
+    let push = cfg!(feature = "push-encoders") && PUSH.load(Ordering::Relaxed);
     let n = if push { 32 } else { 24 };
     // Shift the HC165 chain in: LOAD low then high, then `n` clocks, DATA
     // read while CLK is low. BSRR's top half resets, its bottom half sets.
