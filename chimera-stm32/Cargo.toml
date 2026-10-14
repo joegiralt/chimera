@@ -24,7 +24,9 @@ bench-memory = ["bench"]
 bench-stress = ["bench"]
 # ORBIT: its block's cost and phases.
 bench-orbit = ["bench", "orbit"]
-# TAPE COLD: each machine's cold-cache voice.
+# TAPE COLD: each machine's cold-cache voice. Alone it keeps TAPE in bank 1
+# and doesn't fit FLASH (#506): build it with `bank2`, whose .bk2 the run
+# needs installed.
 bench-tape = ["bench", "chimera-core/tape"]
 # The filter probes, linked though nothing calls them, for
 # `tools/loop_count.py`'s static counts: the shipping build plus them, less

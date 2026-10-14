@@ -4,8 +4,10 @@
 # the filter probes `tools/loop_count.py` counts. Each is built with
 # `--no-default-features` (the `bench` feature brings back all of the
 # shipping set but the console's `put`; so does `filter-probes`).
-# bench-tape is out until it fits FLASH again (private issue #506).
-bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,orbit bench-orbit filter-probes"
+# bench-tape alone keeps TAPE in bank 1 and doesn't fit FLASH
+# (private issue #506); `bench-tape,bank2` plays
+# it from bank 2, so its run needs that build's .bk2 installed.
+bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,orbit bench-orbit bench-tape,bank2 filter-probes"
 bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit"
 
 # Build desktop simulator

@@ -59,9 +59,10 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
         out_dir.join("bank2.x"),
         r#"
 /* Bank 2's image (ADR 0137): the 256-byte header, the door table after it,
-   then what the door reaches. Inserted before .text so cortex-m-rt's
-   *(.text .text.*) never takes a .bank2.* section. Without `bank2` it is
-   empty and the Justfile makes no .bk2. */
+   then what the door reaches. Inserted before .text, and read before
+   link.x so its statements match first: cortex-m-rt's *(.text .text.*)
+   never takes a section named here. Without `bank2` it is empty and the
+   Justfile makes no .bk2. */
 SECTIONS {
   .bank2 : ALIGN(32) {
     KEEP(*(.bank2.header));
@@ -69,6 +70,15 @@ SECTIONS {
     KEEP(*(.bank2.door));
     *(.bank2.text .bank2.text.*);
     *(.bank2.rodata .bank2.rodata.*);
+    /* TAPE's deck (`tape_engine::proxy`), by v0-mangled path: its own
+       modules, and every item of `TapeDeck`. `params` and `machine` stay
+       in bank 1, as do `Heads` and the cost table. */
+    *(.text.*11tape_engine5heads* .text.*11tape_engine7stretch* .text.*11tape_engine4wave* .text.*11tape_engine4read*
+      .text.*11tape_engine3age* .text.*11tape_engine6warble* .text.*11tape_engine7oneshot* .text.*11tape_engine4tron*
+      .text.*11tape_engine*8TapeDeck*);
+    *(.rodata.*11tape_engine5heads* .rodata.*11tape_engine7stretch* .rodata.*11tape_engine4wave* .rodata.*11tape_engine4read*
+      .rodata.*11tape_engine3age* .rodata.*11tape_engine6warble* .rodata.*11tape_engine7oneshot* .rodata.*11tape_engine4tron*
+      .rodata.*11tape_engine*8TapeDeck*);
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -96,10 +106,14 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
     .unwrap();
 
     println!("cargo:rustc-link-search={}", out_dir.display());
+    // bank2.x before cortex-m-rt's link.x: an input section goes to the
+    // first output statement that matches it in the order the scripts are
+    // read, INSERT or not, so after link.x its *(.text.*) would take TAPE's.
+    println!("cargo:rustc-link-arg=-Tbank2.x");
+    println!("cargo:rustc-link-arg=-Tlink.x");
     println!("cargo:rustc-link-arg=-Tram_d2.x");
     println!("cargo:rustc-link-arg=-Tdtcm.x");
     println!("cargo:rustc-link-arg=-Taxi_margin.x");
-    println!("cargo:rustc-link-arg=-Tbank2.x");
     // The relocations stay in the ELF: the door check reads them.
     println!("cargo:rustc-link-arg=--emit-relocs");
     println!("cargo:rerun-if-changed=memory.x");

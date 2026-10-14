@@ -1,5 +1,6 @@
 [target.thumbv7em-none-eabihf]
-rustflags = ["-C", "link-arg=-Tlink.x", "-C", "target-cpu=cortex-m7"]
+# link.x comes from chimera-stm32/build.rs, after bank2.x.
+rustflags = ["-C", "target-cpu=cortex-m7"]
 
 [env]
 # Test threads construct the 250 KB voice pool and FX bus by value; debug

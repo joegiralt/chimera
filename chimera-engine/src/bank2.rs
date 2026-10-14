@@ -6,7 +6,7 @@
 //! door only through the address a judged `Door` carries.
 
 use chimera_image::{BANK2_BASE, Door, HEADER_LEN};
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 pub const DOOR_MAGIC: u32 = 0xB2D0_0001;
 pub const TABLE_LEN: usize = 4096;
@@ -25,6 +25,9 @@ pub struct Bank2Door {
     pub probe: extern "Rust" fn(u32) -> u32,
     /// Byte `i` is `i as u8 ^ 0xB2`.
     pub table: &'static [u8; TABLE_LEN],
+    /// TAPE's deck (`TapeEngine` is bank 1's proxy of it).
+    #[cfg(feature = "bank2")]
+    pub tape: crate::dsp::tape_engine::TapeDoor,
 }
 
 #[cfg(feature = "bank2")]
@@ -39,6 +42,7 @@ static DOOR: Bank2Door = Bank2Door {
     magic: DOOR_MAGIC,
     probe,
     table: &TABLE,
+    tape: crate::dsp::tape_engine::TapeDeck::DOOR,
 };
 
 #[cfg(feature = "bank2")]
@@ -62,11 +66,11 @@ static TABLE: [u8; TABLE_LEN] = {
 
 /// Bank 1's state of the door: closed (0) or the open door's address.
 /// Close it before anything erases or programs bank 2.
-pub struct DoorCell(AtomicU32);
+pub struct DoorCell(AtomicUsize);
 
 impl DoorCell {
     pub const fn new() -> Self {
-        DoorCell(AtomicU32::new(0))
+        DoorCell(AtomicUsize::new(0))
     }
 
     /// Opens on a judged door at this link's `DOOR_ADDR`; a door anywhere
@@ -78,7 +82,7 @@ impl DoorCell {
     pub unsafe fn open(&self, d: &Door) -> bool {
         let ok = d.door_addr() == DOOR_ADDR;
         self.0
-            .store(if ok { DOOR_ADDR } else { 0 }, Ordering::Release);
+            .store(if ok { DOOR_ADDR as usize } else { 0 }, Ordering::Release);
         ok
     }
 
@@ -105,8 +109,16 @@ impl DoorCell {
         // `.bk2` body, so that body is in bank 2, and at `DOOR_ADDR` (its
         // `__bank2_door`, linker-asserted) is its `DOOR`: a `Bank2Door`,
         // aligned. The borrow ends with `f`, and bank 2 is written only
-        // with the cell closed, so it never outlives the image.
-        Some(f(unsafe { &*(a as usize as *const Bank2Door) }))
+        // with the cell closed, so it never outlives the image. On a host,
+        // `open_host` stores `DOOR`'s own address, a `'static`.
+        Some(f(unsafe { &*(a as *const Bank2Door) }))
+    }
+
+    /// Opens on this build's own `DOOR`, linked into the host's binary:
+    /// the host's tests of what bank 2 runs.
+    #[cfg(all(feature = "bank2", feature = "test-support"))]
+    pub fn open_host(&self) {
+        self.0.store(&raw const DOOR as usize, Ordering::Release);
     }
 }
 
