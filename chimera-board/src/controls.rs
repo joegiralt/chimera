@@ -1,23 +1,34 @@
 //! HC165 shift register control input via SysTick interrupt.
 //!
-//! PreenFM3 LQFP176: PF0=CLK, PF1=LOAD, PF2=DATA
+//! Port F on the LQFP176/144 boards, port A on the LQFP100 (ADR 0140):
+//! `wire` sets which before `enable`.
 //! Polled at 500Hz from SysTick ISR (matching PreenFM3).
 //! Quadrature decoding matches PreenFM3 Encoders.cpp exactly.
 
+use chimera_core::board::{Hc165Pins, Port};
 use chimera_core::clock_plan::{cycles_for_ns, systick_reload};
 use chimera_hal::{
-    ButtonId, ButtonState, Controls, Edges, EncoderId, Latch, Ms, NUM_BUTTONS, NUM_ENCODERS,
+    ButtonId, ButtonState, Controls, Debounce, Edges, EncoderId, Latch, Ms, NUM_BUTTONS,
+    NUM_ENCODERS, push_levels,
 };
 use core::ptr::addr_of_mut;
-use core::sync::atomic::{AtomicBool, AtomicI8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI8, AtomicU32, AtomicUsize, Ordering};
 use cortex_m::peripheral::syst::SystClkSource;
 use cortex_m::peripheral::{SCB, SYST};
 
 use crate::priority::{self, Priority};
 
-// GPIOF registers
-const GPIOF_IDR: *const u32 = 0x5802_1410 as *const u32;
-const GPIOF_BSRR: *mut u32 = 0x5802_1418 as *mut u32;
+const GPIOA_BASE: usize = 0x5802_0000;
+const GPIOF_BASE: usize = 0x5802_1400;
+const IDR: usize = 0x10;
+const BSRR: usize = 0x18;
+
+// The HC165's port and pins, as `wire` set them: written before `enable`'s
+// Release, read after the ISR's Acquire. Port F's until then.
+static HC_BASE: AtomicUsize = AtomicUsize::new(GPIOF_BASE);
+static HC_DATA: AtomicU32 = AtomicU32::new(1 << 2);
+static HC_LOAD: AtomicU32 = AtomicU32::new(1 << 1);
+static HC_CLK: AtomicU32 = AtomicU32::new(1 << 0);
 
 pub const CONTROLS_HZ: u32 = 500;
 // The HC165 was clocked with 100-cycle spins at 400 MHz: keep 250 ns at any clock.
@@ -53,19 +64,20 @@ const BTN_BITS: [u32; NUM_BUTTONS] = [
 /// N24 quadrature table — 1 count per detent click (vs N12 which gives 2)
 const QUAD: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0];
 
+/// The twelve buttons, then the six encoders' pushes.
+const NUM_SWITCHES: usize = NUM_BUTTONS + NUM_ENCODERS;
+
 // Shared ISR ↔ main state
 static READY: AtomicBool = AtomicBool::new(false);
+/// SYSTEM's PUSH ENCODERS: the read takes 32 bits, not 24.
+static PUSH: AtomicBool = AtomicBool::new(false);
 static ENC_DELTA: [AtomicI8; NUM_ENCODERS] = [const { AtomicI8::new(0) }; NUM_ENCODERS];
-/// Each button's edges since the last `snapshot`. The ISR feeds them; the
+/// Each switch's edges since the last `snapshot`. The ISR feeds them; the
 /// main loop takes them inside `interrupt::free`, so the two never overlap.
-static mut LATCHES: [Latch; NUM_BUTTONS] = [Latch::new(); NUM_BUTTONS];
+static mut LATCHES: [Latch; NUM_SWITCHES] = [Latch::new(); NUM_SWITCHES];
 static mut ENC_STATE: [u8; NUM_ENCODERS] = [0; NUM_ENCODERS];
 static mut ENC_DEBOUNCE: [u8; NUM_ENCODERS] = [0; NUM_ENCODERS];
-/// Button debounce: tracks how many consecutive ISR ticks a button has been stable.
-/// Only latches as pressed after BTN_DEBOUNCE_TICKS consecutive "pressed" reads.
-static mut BTN_DEBOUNCE: [u8; NUM_BUTTONS] = [0; NUM_BUTTONS];
-static mut BTN_STATE: [bool; NUM_BUTTONS] = [false; NUM_BUTTONS];
-const BTN_DEBOUNCE_TICKS: u8 = 3; // 6ms at 500Hz
+static mut DEBOUNCE: [Debounce; NUM_SWITCHES] = [Debounce::new(); NUM_SWITCHES];
 static ISR_TICK: AtomicU32 = AtomicU32::new(0);
 static ENC_LAST_EDGE: [AtomicU32; NUM_ENCODERS] = [const { AtomicU32::new(0) }; NUM_ENCODERS];
 
@@ -85,7 +97,24 @@ pub fn start_systick(mut syst: SYST, scb: &mut SCB, cpu_hz: u32) {
     syst.enable_counter();
 }
 
-/// Allow ISR to run. Call after GPIOF is fully configured.
+/// Points the ISR at the board's HC165 pins. Call before `enable`.
+pub fn wire(pins: Hc165Pins) {
+    let base = match pins.port {
+        Port::A => GPIOA_BASE,
+        Port::F => GPIOF_BASE,
+    };
+    HC_BASE.store(base, Ordering::Relaxed);
+    HC_DATA.store(1 << pins.data, Ordering::Relaxed);
+    HC_LOAD.store(1 << pins.load, Ordering::Relaxed);
+    HC_CLK.store(1 << pins.clk, Ordering::Relaxed);
+}
+
+/// SYSTEM's PUSH ENCODERS: off, the read is the 24 bits it always was.
+pub fn set_push(on: bool) {
+    PUSH.store(on, Ordering::Relaxed);
+}
+
+/// Allow ISR to run. Call after the HC165's port is configured and `wire`d.
 pub fn enable() {
     READY.store(true, Ordering::Release);
 }
@@ -111,8 +140,8 @@ fn tick_ms(tick: u32) -> u32 {
 ///
 /// # Safety
 /// Only from the SysTick exception, which does not re-enter: it is the one
-/// driver of PF0/PF1 and the one user of the debounce state, and `snapshot`
-/// masks it.
+/// driver of the HC165's LOAD and CLK and the one user of the debounce
+/// state, and `snapshot` masks it.
 pub unsafe fn isr_tick() {
     if !READY.load(Ordering::Acquire) {
         return;
@@ -122,53 +151,60 @@ pub unsafe fn isr_tick() {
     ));
 
     let d = HC165_DELAY.load(Ordering::Relaxed);
-    // Shift the HC165 chain in: LOAD on PF1, CLK on PF0, DATA on PF2.
-    // SAFETY: GPIOF_IDR/BSRR are PF's fixed memory-mapped registers; the
-    // caller is SysTick (this fn's contract), the only one driving PF0/PF1
-    // and reading PF2.
+    // Five loads a tick, then the same register writes as fixed pins.
+    let base = HC_BASE.load(Ordering::Relaxed);
+    let (idr, bsrr) = ((base + IDR) as *const u32, (base + BSRR) as *mut u32);
+    let (data, load, clk) = (
+        HC_DATA.load(Ordering::Relaxed),
+        HC_LOAD.load(Ordering::Relaxed),
+        HC_CLK.load(Ordering::Relaxed),
+    );
+    let push = cfg!(feature = "push-encoders") && PUSH.load(Ordering::Relaxed);
+    let n = if push { 32 } else { 24 };
+    // Shift the HC165 chain in: LOAD low then high, then `n` clocks, DATA
+    // read while CLK is low. BSRR's top half resets, its bottom half sets.
+    // SAFETY: `base` is GPIOA's or GPIOF's fixed register block (`wire`
+    // stores no other); IDR and BSRR are its 32-bit registers. The caller
+    // is SysTick (this fn's contract), the only one driving LOAD/CLK and
+    // reading DATA; BSRR writes touch only those pins.
     let bits = unsafe {
-        // Latch: LOAD low then high
-        core::ptr::write_volatile(GPIOF_BSRR, 1u32 << 17); // PF1 reset (LOAD low)
+        core::ptr::write_volatile(bsrr, load << 16);
         cortex_m::asm::delay(d);
-        core::ptr::write_volatile(GPIOF_BSRR, 1u32 << 1); // PF1 set (LOAD high)
+        core::ptr::write_volatile(bsrr, load);
         cortex_m::asm::delay(d);
 
         let mut b: u32 = 0;
-        for i in 0..24u32 {
-            core::ptr::write_volatile(GPIOF_BSRR, 1u32 << 16); // PF0 reset (CLK low)
+        for i in 0..n {
+            core::ptr::write_volatile(bsrr, clk << 16);
             cortex_m::asm::delay(d);
-            if core::ptr::read_volatile(GPIOF_IDR) & (1 << 2) != 0 {
-                // PF2 (DATA)
+            if core::ptr::read_volatile(idr) & data != 0 {
                 b |= 1 << i;
             }
-            core::ptr::write_volatile(GPIOF_BSRR, 1u32 << 0); // PF0 set (CLK high)
+            core::ptr::write_volatile(bsrr, clk);
             cortex_m::asm::delay(d);
         }
         b
     };
 
-    // Buttons: active low, debounced to stable level, edges latched.
-    // SAFETY: BTN_DEBOUNCE/BTN_STATE are only touched here, from SysTick
-    // (this fn's contract), which is not reentrant. LATCHES is shared with
+    // Buttons and pushes: active low, debounced, edges latched. Pushes
+    // off read released, so one held when they are switched off lets go.
+    let pushes = if push {
+        push_levels(bits)
+    } else {
+        [false; NUM_ENCODERS]
+    };
+    // SAFETY: DEBOUNCE is only touched here, from SysTick (this fn's
+    // contract), which is not reentrant. LATCHES is shared with
     // `snapshot`, which only touches it inside `interrupt::free`: on this
-    // single core that masks SysTick, so the ISR never runs during it, and the main loop cannot run during the ISR.
-    // Access is exclusive either way; no ordering beyond that is needed.
+    // single core that masks SysTick, so the ISR never runs during it, and
+    // the main loop cannot run during the ISR. Access is exclusive either
+    // way; no ordering beyond that is needed.
     unsafe {
         let latches = &mut *addr_of_mut!(LATCHES);
-        for (i, &mask) in BTN_BITS.iter().enumerate() {
-            let raw_pressed = bits & mask == 0;
-            if raw_pressed == BTN_STATE[i] {
-                // Same as current debounced state — reset counter
-                BTN_DEBOUNCE[i] = 0;
-            } else {
-                // Different from debounced state — count stable ticks
-                BTN_DEBOUNCE[i] += 1;
-                if BTN_DEBOUNCE[i] >= BTN_DEBOUNCE_TICKS {
-                    BTN_STATE[i] = raw_pressed;
-                    BTN_DEBOUNCE[i] = 0;
-                }
-            }
-            latches[i].level(BTN_STATE[i], now_ms);
+        let debounce = &mut *addr_of_mut!(DEBOUNCE);
+        let raw = BTN_BITS.iter().map(|&m| bits & m == 0).chain(pushes);
+        for ((raw, d), latch) in raw.zip(debounce.iter_mut()).zip(latches.iter_mut()) {
+            latch.level(d.step(raw), now_ms);
         }
     }
 
@@ -207,7 +243,8 @@ pub unsafe fn isr_tick() {
 // --- Main-thread interface ---
 
 pub struct Stm32Controls {
-    edges: [Edges; NUM_BUTTONS],
+    /// The buttons', then the pushes'.
+    edges: [Edges; NUM_SWITCHES],
     now_ms: Ms,
     enc: [i8; NUM_ENCODERS],
     burst: [u8; NUM_ENCODERS],
@@ -216,7 +253,7 @@ pub struct Stm32Controls {
 impl Stm32Controls {
     pub(crate) fn new() -> Self {
         Self {
-            edges: [Edges::default(); NUM_BUTTONS],
+            edges: [Edges::default(); NUM_SWITCHES],
             now_ms: Ms(0),
             enc: [0; NUM_ENCODERS],
             burst: [0; NUM_ENCODERS],
@@ -273,5 +310,9 @@ impl Controls for Stm32Controls {
 
     fn now_ms(&self) -> Ms {
         self.now_ms
+    }
+
+    fn push(&self, id: EncoderId) -> Edges {
+        self.edges[NUM_BUTTONS + id as usize]
     }
 }

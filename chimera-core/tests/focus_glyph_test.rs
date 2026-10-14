@@ -135,6 +135,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Theme", "INVERT", SWITCH),
     ("Theme", "SAVER", NONE),
     ("Midi", "SYNC", NONE),
+    ("Midi", "PUSH", SWITCH),
     ("OrbitChords", "KEY", NONE),
     ("OrbitChords", "SCALE", NONE),
     ("OrbitRing", "MUTE", SWITCH),

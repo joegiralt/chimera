@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-map", "bank2"]
+default = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-map", "push-encoders", "bank2"]
 midi-din = ["chimera-board/midi-din"]
 perf-probe = ["chimera-board/perf-probe"]
 # The bench on the unit, one area a build: all of it no longer fits FLASH
@@ -27,16 +27,18 @@ bench-orbit = ["bench", "midi-din", "orbit"]
 # TAPE COLD: each machine's cold-cache voice. It never plays MIDI; FLASH
 # (#507). Alone it keeps TAPE in bank 1 and doesn't fit FLASH (#506): build
 # it with `bank2`, whose .bk2 the run needs installed.
-bench-tape = ["bench", "chimera-core/tape"]
+bench-tape = ["bench", "chimera-core/tape", "chimera-board/tape"]
 # The filter probes, linked though nothing calls them, for
 # `tools/loop_count.py`'s static counts: the shipping build plus them, less
-# the console's `put` and the MIDI map as the bench's (bank 2's install
-# filled FLASH; #507).
+# the console's `put`, the MIDI map and PUSH ENCODERS as the bench's (bank
+# 2's install filled FLASH; #507; the filters' loops are the same).
 filter-probes = ["midi-din", "perf-probe", "usb-console", "sweep-free", "bank2", "chimera-core/filter-probe"]
 # On-unit SD bring-up: prints the card probe and halts; no audio.
 sd-probe = ["chimera-board/sd-probe"]
 # The master tape stage back on the chain, with its bench row (ADR 0055).
 master-tape = ["chimera-core/master-tape", "chimera-board/master-tape"]
+# SYSTEM's PUSH ENCODERS (ADR 0140); the bench sets go without (FLASH).
+push-encoders = ["chimera-board/push-encoders"]
 # ORBIT, the ring sequencer: SEQ hold opens it, the audio block runs it.
 orbit = ["chimera-core/orbit", "chimera-board/orbit"]
 # The MIDI map: CC apply, learn and the MIDI MAP page (#247). Bench

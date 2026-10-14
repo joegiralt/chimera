@@ -135,17 +135,18 @@ fn system_is_the_spec_order() {
         .iter()
         .map(|r| r.label)
         .collect();
-    assert_eq!(
-        labels,
-        [
-            "OS UPGRADE",
-            "STORAGE",
-            "FORMAT CARD",
-            "USB CONFIG",
-            "DIAGNOSTICS",
-            "ABOUT"
-        ]
-    );
+    let mut want = vec![
+        "OS UPGRADE",
+        "STORAGE",
+        "FORMAT CARD",
+        "USB CONFIG",
+        "DIAGNOSTICS",
+    ];
+    if cfg!(feature = "push-encoders") {
+        want.push("PUSH ENCODERS");
+    }
+    want.push("ABOUT");
+    assert_eq!(labels, want);
 }
 
 /// DIAGNOSTICS holds DEMO in debug builds only (`--release` checks the

@@ -60,11 +60,14 @@ pub fn apply_under(
     }
 }
 
-/// How an edit moves a param: a turn, a MIX+turn, or a mapped CC's value.
+/// How an edit moves a param: a turn, a MIX+turn, a pushed turn (ADR
+/// 0140), or a mapped CC's value (or a push tap's default).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Edit {
     Nudge(i8),
     Snap(i8),
+    #[cfg(feature = "push-encoders")]
+    Fine(i8),
     To(f32),
 }
 
@@ -84,6 +87,8 @@ pub fn edit(params: &mut impl Blocks, a: ParamAddr, how: Edit) -> bool {
         }
         Edit::Snap(d) => b.snap(a.param, d),
         Edit::Nudge(d) => b.nudge(a.param, d),
+        #[cfg(feature = "push-encoders")]
+        Edit::Fine(d) => crate::block::nudge_fine(&mut *b, a.param, d),
         Edit::To(v) => b.set(a.param, v),
     }
     machine_edit(a, before, &mut *b);

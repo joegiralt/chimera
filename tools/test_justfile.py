@@ -73,8 +73,9 @@ class Bank2Split(unittest.TestCase):
 
 
 class OneUpdate(unittest.TestCase):
-    """An update is one thing (Task 9c): a zip a variant, and every route
-    flashes and installs through `chimera-usb.py update`."""
+    """An update is one thing: `flash` installs through `chimera-usb.py
+    update`; a release ships one firmware, the ORBIT build's .bin and its
+    sealed .bk2, dropped on the card."""
 
     def test_flash_goes_through_update(self):
         body = "\n".join(recipes()["flash"])
@@ -82,25 +83,21 @@ class OneUpdate(unittest.TestCase):
         self.assertNotIn("dfu-util", body)
         self.assertNotIn("chimera-usb.py bank2", body)
 
-    def test_release_ships_a_zip_a_variant(self):
+    def test_release_ships_the_orbit_bin_and_its_bk2(self):
         body = "\n".join(recipes()["release"])
         for want in (
-            'SHA256SUMS chimera-$V-orbit.zip chimera-$V.zip chimera-usb.py ',
-            "zip -qX",
-            "bank2-seal --check",
-            "check-bin-size",
+            'SHA256SUMS chimera-$V.bin chimera-$V.bk2 factory-v1.zip ',
+            'cp target/release-bin/chimera-orbit.bin "$out/chimera-$V.bin"',
+            'cp target/release-bin/chimera-orbit.bk2 "$out/chimera-$V.bk2"',
+            'bank2-seal --check "$out/chimera-$V.bin" "$out/chimera-$V.bk2"',
             "check-bin-paths",
-            "sha256sum -c --quiet SHA256SUMS",
-            "README.txt",
-            "delete any older chimera .bin and .bk2 files",
-            'chmod 644 "$d"/*',
         ):
             self.assertIn(want, body)
-        # The zip's members, exactly.
-        self.assertIn('"README.txt SHA256SUMS $n.bin $n.bk2"', body)
         # No .bk2 named .bin: a .bin never starts with the .bk2 magic.
         self.assertIn("CHIMERA2", body)
-        self.assertNotIn('"$out/chimera-$V.bin"', body)
+        # No zips a variant, no console tool shipped.
+        self.assertNotIn("zip -qX", body)
+        self.assertNotIn('"$out/chimera-usb.py"', body)
 
 
 if __name__ == "__main__":

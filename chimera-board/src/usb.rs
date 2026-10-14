@@ -2,6 +2,7 @@
 //! polled from the UI loop. `pac::Interrupt::OTG_FS` is never unmasked, so
 //! USB can never preempt audio.
 
+use chimera_core::board::BoardId;
 use chimera_core::boot::{BootSeen, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep, wait_until};
 use chimera_core::console::{
     AnswerClock, Bank2Answer, BankRegs, CardAnswer, CardArg, Console, FlashPeek, FlashRegs, Frame,
@@ -117,6 +118,8 @@ pub struct UsbParts {
     pub boot: BootSeen,
     /// The boot's card sweep, run or skipped: `status`'s `sweep` line.
     pub sweep: Option<SweepRun>,
+    /// The board's strap: `status`'s `board` line.
+    pub board: BoardId,
 }
 
 /// `dfu` answered and its `OK` flushed: only `Usb::service` makes one, and
@@ -154,6 +157,7 @@ pub struct Usb {
     sweep: Option<SweepRun>,
     /// `bank2 install` drew over the screen: the loop redraws it whole.
     redraw: bool,
+    board: BoardId,
 }
 
 /// The port set up but not on the bus: no pull-up, so the host sees
@@ -165,6 +169,7 @@ pub struct Unconnected {
     cpu_hz: u32,
     boot: BootSeen,
     sweep: Option<SweepRun>,
+    board: BoardId,
 }
 
 /// The port's preconditions held, each checked with a bounded wait: only
@@ -238,6 +243,7 @@ pub fn init(ready: Ready, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
         crs_rec,
         boot,
         sweep,
+        board,
     } = parts;
     crs_rec.enable();
     // SAFETY: SYNCSRC is a 2-bit field and 0b11 is a defined value, USB2
@@ -276,6 +282,7 @@ pub fn init(ready: Ready, clocks: &CoreClocks, cpu_hz: u32) -> Unconnected {
         cpu_hz,
         boot,
         sweep,
+        board,
     }
 }
 
@@ -309,6 +316,7 @@ impl Unconnected {
             boot: self.boot,
             sweep: self.sweep,
             redraw: false,
+            board: self.board,
         }
     }
 }
@@ -351,6 +359,7 @@ impl Usb {
             sweep,
             #[cfg(feature = "bank2")]
             redraw,
+            board,
             ..
         } = self;
         dev.poll(&mut [&mut *serial]);
@@ -409,6 +418,7 @@ impl Usb {
                 dfu: false,
                 boot: *boot,
                 sweep: *sweep,
+                board: *board,
                 sweep_ask,
                 files: store,
                 forget: false,
@@ -463,6 +473,7 @@ struct ChipUnit<'a> {
     dfu: bool,
     boot: BootSeen,
     sweep: Option<SweepRun>,
+    board: BoardId,
     /// `sweep`'s request, before the answer.
     sweep_ask: Option<SweepAsk>,
     /// `ls` and `put`'s card: unread without `card-put`, and in bench
@@ -532,6 +543,10 @@ impl Unit for ChipUnit<'_> {
 
     fn sweep(&self) -> Option<SweepRun> {
         self.sweep
+    }
+
+    fn board(&self) -> Option<BoardId> {
+        Some(self.board)
     }
 
     fn request_sweep(&mut self) -> Option<SweepAsk> {

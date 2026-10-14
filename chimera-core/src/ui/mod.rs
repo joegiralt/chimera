@@ -32,6 +32,7 @@ pub mod page;
 pub mod part_page;
 pub mod perf;
 pub mod pool_page;
+pub mod push;
 pub mod region;
 pub mod renderer;
 pub mod reverb_panel;
@@ -312,6 +313,8 @@ pub struct UiState {
     dfu: Option<Said<RomDfu>>,
     /// SCRUB's FINGER: the active Part's reel, turned and let go.
     jog: jog::Jog,
+    /// Each encoder's push, under SYSTEM's PUSH ENCODERS (ADR 0140).
+    pushes: [push::Push; chimera_hal::NUM_ENCODERS],
     /// TAPE's strip: the source its overview is of (`None`: none held),
     /// the overview, the heads read each frame, and where from: the
     /// audio's (`instrument::HEADS`) but in tests.
@@ -412,6 +415,7 @@ crate::in_place::field_list!(UiState => UiState {
     led,
     dfu,
     jog,
+    pushes,
     strip_of,
     overview,
     heads,
@@ -479,6 +483,7 @@ impl UiState {
             addr_of_mut!((*p).renderer).write(renderer);
             addr_of_mut!((*p).matrix_state).write(MatrixState::new());
             addr_of_mut!((*p).jog).write(jog::Jog::new());
+            addr_of_mut!((*p).pushes).write([push::Push::default(); chimera_hal::NUM_ENCODERS]);
             addr_of_mut!((*p).strip_of).write(None);
             addr_of_mut!((*p).overview).write(tape_strip::Overview::EMPTY);
             addr_of_mut!((*p).heads).write(Heads::NONE);
@@ -1526,6 +1531,20 @@ impl UiState {
         def
     }
 
+    /// A pushed encoder's turn on `a` (ADR 0140): a tenth of a step, the
+    /// formant budget's refusal said as a turn's.
+    #[cfg(feature = "push-encoders")]
+    fn edit_fine(&mut self, part: PartId, a: ParamAddr, delta: i8) {
+        self.formant_full(part, a, delta, false);
+        self.edit_in(part, a, part_page::Edit::Fine(delta));
+    }
+
+    /// No pushes in this build: never called, a plain turn.
+    #[cfg(not(feature = "push-encoders"))]
+    fn edit_fine(&mut self, part: PartId, a: ParamAddr, delta: i8) {
+        self.edit_addr(part, a, delta, false);
+    }
+
     /// `part_page::edit` on Part `part`'s blocks.
     fn edit_in(&mut self, part: PartId, a: ParamAddr, how: part_page::Edit) -> bool {
         let params = &mut UiBlocks {
@@ -2416,7 +2435,59 @@ impl UiState {
         mv != 0.0
     }
 
+    /// SYSTEM's PUSH ENCODERS, in a build that has them (ADR 0140).
+    fn push_on(&self) -> bool {
+        cfg!(feature = "push-encoders") && self.midi.push
+    }
+
+    /// Each encoder's push this frame (ADR 0140); with PUSH ENCODERS off,
+    /// none, and any push held is forgotten, not let go.
+    fn step_pushes(&mut self, c: &impl Controls) -> [push::PushStep; chimera_hal::NUM_ENCODERS] {
+        if !self.push_on() {
+            self.pushes = Default::default();
+            return Default::default();
+        }
+        core::array::from_fn(|i| {
+            let e = ALL_ENCODERS[i];
+            self.pushes[i].step(c.push(e), c.encoder_delta(e) != 0)
+        })
+    }
+
+    /// A push tap on `slot` (ADR 0140): its value to the default, through
+    /// the path MIX + turn's landmarks take. A cell with no value (empty,
+    /// an action, a readout, a card row), a dimmed one, a jack, SCRUB's
+    /// FINGER and the reverb's word choices take none.
+    #[cfg(feature = "push-encoders")]
+    fn push_default(&mut self, def: &'static BlockDef, slot: usize) {
+        let ctx = self.ctx();
+        let v = view::view(def, slot, &ctx);
+        if let View::Route { route, .. } = v {
+            self.focus.touch(def.id, slot);
+            self.edit_route(route, |_| 0);
+            return;
+        }
+        let Some(a) = v.addr().or_else(|| match (v, self.page) {
+            (View::Legacy { .. }, PageKey::Legacy(p)) => p.binding(slot),
+            _ => None,
+        }) else {
+            return;
+        };
+        let at = self.active_part;
+        let whole = a.block == BlockRef::Reverb
+            && reverb_panel::whole_ticks(&self.project.perf().fx.reverb, a.param);
+        let jack = a.block == BlockRef::Filter && JackSlot::of(a.param).is_some();
+        let finger = a == SCRUB_FINGER && ctx.tape == TapeModel::Scrub;
+        if whole || jack || finger || view::is_dimmed(&v, &self.project.part(at).sound, &ctx) {
+            return;
+        }
+        self.focus.touch(def.id, slot);
+        if let Some(spec) = a.spec() {
+            self.edit_in(at, a, part_page::Edit::To(spec.default));
+        }
+    }
+
     fn input(&mut self, controls: &impl Controls) {
+        let pushes = self.step_pushes(controls);
         // Any encoder turn or button press retires the last prime-status
         // message (issue #21; no timer). The MIX+Plus branch below re-sets
         // it when this same frame is itself a prime attempt.
@@ -2602,6 +2673,10 @@ impl UiState {
                 if delta == 0 {
                     continue;
                 }
+                // Pushed, a turn is fine: a tick a frame, no acceleration,
+                // and a tenth of a continuous param's step. MIX wins.
+                let fine = cfg!(feature = "push-encoders") && pushes[i].fine && !shift;
+                let delta = if fine { delta.signum() } else { delta };
                 let v = view::view(def, i, &self.ctx());
                 // An empty slot edits nothing, so it does not take the focus.
                 if v != View::Empty {
@@ -2667,6 +2742,8 @@ impl UiState {
                     };
                     if shift {
                         p.snap_encoder(i, delta, params);
+                    } else if fine {
+                        p.fine_encoder(i, delta, params);
                     } else {
                         p.apply_encoder(i, delta, params);
                     }
@@ -2690,8 +2767,18 @@ impl UiState {
                 {
                     self.sel_op = self.sel_op.nudged(delta);
                 } else if let Some(a) = slot_addr(def, i, &ctx) {
-                    self.edit_addr(at, a, delta, shift);
+                    if fine {
+                        self.edit_fine(at, a, delta);
+                    } else {
+                        self.edit_addr(at, a, delta, shift);
+                    }
                     self.cc_hand(at, a);
+                }
+            }
+            #[cfg(feature = "push-encoders")]
+            for (i, p) in pushes.iter().enumerate() {
+                if p.tap {
+                    self.push_default(def, i);
                 }
             }
             let def = self.after_edit(at, chain, before, def);
@@ -3015,6 +3102,7 @@ impl UiState {
                 anim[i].current()
             }),
             hints: self.theme.hints,
+            push: self.push_on(),
             ctx,
             focus,
             scope,
@@ -3210,7 +3298,7 @@ impl UiState {
     ) {
         self.region_set
             .set_screen(self.layout(), self.prompt_open());
-        self.region_set.drawn_hints = Some(self.theme.hints);
+        self.region_set.drawn_hints = Some((self.theme.hints, self.push_on()));
         let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
         {
             let f = self.frame(perf, audio, scope);
@@ -3224,10 +3312,11 @@ impl UiState {
         }
     }
 
-    /// THEME's HINTS moved since the bands were drawn, noted as drawn now:
-    /// every band and the browser redraw, so no page keys its band on it.
+    /// THEME's HINTS or SYSTEM's PUSH ENCODERS (the push hint) moved since
+    /// the bands were drawn, noted as drawn now: every band and the
+    /// browser redraw, so no page keys its band on them.
     fn hints_moved(&mut self) -> bool {
-        let now = Some(self.theme.hints);
+        let now = Some((self.theme.hints, self.push_on()));
         core::mem::replace(&mut self.region_set.drawn_hints, now) != now
     }
 

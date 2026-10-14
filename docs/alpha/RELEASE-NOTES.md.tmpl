@@ -1,57 +1,70 @@
 # Chimera @VERSION@ (alpha)
 
-Alternative firmware for the PreenFM3: a multi-engine, multitimbral digital synth with chain-based navigation. Alpha software for testers: expect rough edges, and keep your stock firmware handy.
+New firmware for the PreenFM3: three sound engines, six parts, and the ORBIT sequencer. This is an early test version.
 
-Built from source commit `@COMMIT@`, @DATE@.
+## What to download
 
-## What's in
+- `chimera-@VERSION@.bin`: the firmware.
+- `chimera-@VERSION@.bk2`: the rest of the firmware. Copy it to the card root; the unit installs it on the next power-on.
+- `factory-v1.zip`: 56 sounds and 4 demo songs.
 
-- `chimera-@VERSION@.zip`: the firmware. Unpacked, it holds the two files to install, `chimera-@VERSION@.bin` and `chimera-@VERSION@.bk2`; always install them together.
-- `chimera-@redacted`: the same firmware with the ORBIT generative sequencer.
-- `chimera-usb.py`: the console tool (Python 3, nothing to install): `python3 chimera-usb.py status` prints the unit's state for a bug report; `shot` saves a screenshot; `put` sends TAPE sources and library Sounds to the card. `python3 chimera-usb.py --help` lists the rest.
-- `factory-v1.zip`: the factory sounds and four demonstration projects for the card (see below).
-- `SHA256SUMS`: check the downloads with `sha256sum -c SHA256SUMS`.
+## 1. Install the firmware
 
-## Factory sounds and demonstration projects
+Follow the short steps in the [README](https://github.com/joegiralt/chimera-releases#install).
 
-`factory-v1.zip` holds a `CHIMERA` folder (the factory sounds in `CHIMERA/SOUNDS`, the demonstration projects in `CHIMERA/PROJECTS`) and a `manifest.json` listing them. Unzip it, then install it one of two ways.
+## 2. Add the sounds
 
-**Over USB** (the unit running Chimera, connected by USB; Python 3 only). Close any open project on the unit first, or its put fails. From the unzipped folder, with `chimera-usb.py` beside it:
+1. Unzip `factory-v1.zip`.
+2. Turn the PreenFM3 off. Hold **MENU** and turn it on.
+3. Press **button 3** (SD card access). The PreenFM3 shows up on your computer like a USB stick.
+4. Copy the **CHIMERA** folder onto it. If your computer asks, choose **merge** or **replace**.
+5. Eject it on your computer. Turn the PreenFM3 off and on again.
 
-    for f in CHIMERA/SOUNDS/*.A; do python3 chimera-usb.py put "$f" "/$f" --over; done
-    for f in CHIMERA/PROJECTS/*.A; do python3 chimera-usb.py put "$f" "/$f"; done
+The demo songs replace any song saved in the first four slots.
 
-Sounds take `--over` (a re-run replaces them); projects do not take it, and each put saves a new generation of the project.
+To find the sounds: press **EDIT + B1**, then turn **knob 2** to the **FACTORY** tab.
 
-**With the stock bootloader's SD card access mode**: start the unit in the stock bootloader's card access mode, so the card shows up as a drive on your computer, and copy the `CHIMERA` folder to the root of the card. Merge it with any `CHIMERA` folder already there.
-
-**Warning:** the demonstration projects are saved as `P0000001` to `P0000009`. Copying `CHIMERA/PROJECTS` replaces any project of yours with one of those names, and older alpha firmware saved your own projects starting at `P0000001`. Back them up first.
-
-The demonstration projects, and what to try in each:
+## Demo songs
 
 @DEMOS@
 
-## Install, and roll back
+## Something wrong?
 
-Pick one file, `chimera-@VERSION@.zip` or the `-orbit` one, and update once:
+- Check the [known issues](https://github.com/joegiralt/chimera-releases/blob/main/KNOWN-ISSUES.md).
+- [Report a bug](https://github.com/joegiralt/chimera-releases/issues/new/choose).
+- To go back to the stock firmware, see the [README](https://github.com/joegiralt/chimera-releases#go-back-to-the-stock-firmware).
 
-- **With the bootloader:** unpack the zip, put the unit in the bootloader's USB disk mode, delete any older chimera `.bin` and `.bk2` files from the card, drag both new files onto it, and run the bootloader's update. The first start installs the rest behind DON'T POWER OFF: leave it on until it plays.
-- **Or with the tool:** with the unit on and connected, `python3 chimera-usb.py update chimera-@VERSION@.zip`. It checks the package, flashes, waits for the first start, and prints `OK updated` when it is done (it needs dfu-util).
+---
 
-The [README](https://github.com/joegiralt/chimera-releases#readme) has the details and the steps to go back to the stock firmware. Never write the bootloader (anything below `0x08020000`) or the option bytes. On the card, Chimera writes only under `/CHIMERA/`; the only file it reads outside it is the `.bk2` you put there, and it never touches your stock files.
+Built from `@COMMIT@` on @DATE@. Provided under the [tester licence](https://github.com/joegiralt/chimera-releases/blob/main/LICENSE.md).
 
-## Known issues
+<details>
+<summary>Third-party notices</summary>
 
-See [KNOWN-ISSUES.md](https://github.com/joegiralt/chimera-releases/blob/main/KNOWN-ISSUES.md).
+Parts of the MODAL engine and one soft-clipper come from Mutable Instruments' Rings and stmlib:
 
-## Boards
+    Copyright 2012-2015 Emilie Gillet.
 
-PCB v1 tested; v2 untested.
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
 
-## Reporting bugs
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
 
-[Open a bug report](https://github.com/joegiralt/chimera-releases/issues/new/choose). Give the firmware version (shown at boot), what you did, and what you heard or saw; a short recording or photo helps.
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
 
-## Licence
+The firmware also uses these open-source Rust crates, each under the licence shown (full texts: https://opensource.org/license/mit and https://www.apache.org/licenses/LICENSE-2.0):
 
-These binaries are provided under the [tester licence](https://github.com/joegiralt/chimera-releases/blob/main/LICENSE.md).
+@CRATES@
+
+</details>

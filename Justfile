@@ -205,16 +205,13 @@ check-bin-size bin:
 
 # Draft a release of the path-clean firmware on the PUBLIC chimera-releases
 # repo (#413): `just release 0.1.0 [--dry-run]`. Refuses a dirty tree or a
-# version already tagged or released; builds `release-bin`; packs each
-# variant as one zip, chimera-<version>{,-orbit}.zip, holding exactly its
-# .bin, its .bk2 (sealed for that .bin), README.txt and SHA256SUMS: an
-# update is one thing (drag both onto the card in the bootloader's disk
-# mode, or `chimera-usb.py update <zip>`). Adds tools/chimera-usb.py
-# (version-stamped, leak-checked); writes SHA256SUMS and the notes from
+# version already tagged or released; builds `release-bin`; names the files
+# chimera-<version>.bin (the ORBIT build, the only firmware shipped), its
+# chimera-<version>.bk2 (sealed for that .bin: dropped in the card root, the
+# next boot installs it) and factory-v1.zip; writes SHA256SUMS and the notes from
 # docs/alpha/RELEASE-NOTES.md.tmpl; asserts the assets are exactly those
-# four, each zip's members exactly those four and checked as unpacked, and
-# none is a private file's bytes. A draft only: the owner publishes.
-# --dry-run does everything but `gh release create`.
+# four and none is a private file's bytes. A draft only: the owner
+# publishes. --dry-run does everything but `gh release create`.
 release version *flags:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -229,42 +226,15 @@ release version *flags:
     just release-bin
     out="$PWD/target/release-assets/v$V"
     rm -rf "$out"; mkdir -p "$out"
-    work=$(mktemp -d) && trap 'rm -rf "$work"' EXIT
-    # The commit's time on every member, in UTC: the zip is the same each run.
-    stamp=$(git log -1 --format=%ct)
-    for v in "" -orbit; do
-        n=chimera-$V$v; d="$work/$n"; c="$work/check$v"
-        mkdir "$d" "$c"
-        cp target/release-bin/chimera$v.bin "$d/$n.bin"
-        cp target/release-bin/chimera$v.bk2 "$d/$n.bk2"
-        printf '%s\n' "Copy $n.bin and $n.bk2 onto the card in the bootloader's USB disk mode, then run its update once." \
-            "First delete any older chimera .bin and .bk2 files from the card." \
-            "Or, with the unit on and connected: python3 chimera-usb.py update $n.zip" > "$d/README.txt"
-        (cd "$d" && sha256sum "$n.bin" "$n.bk2" > SHA256SUMS)
-        chmod 644 "$d"/*
-        touch -d "@$stamp" "$d"/*
-        (cd "$d" && TZ=UTC zip -qX "$out/$n.zip" "$n.bin" "$n.bk2" README.txt SHA256SUMS)
-        # As a tester unpacks it: exactly these members, whole, one build.
-        got=$(python3 -I -c 'import sys, zipfile; print(*sorted(zipfile.ZipFile(sys.argv[1]).namelist()))' "$out/$n.zip")
-        [ "$got" = "README.txt SHA256SUMS $n.bin $n.bk2" ] || { echo "$n.zip holds $got" >&2; exit 1; }
-        python3 -I -m zipfile -e "$out/$n.zip" "$c"
-        (cd "$c" && sha256sum -c --quiet SHA256SUMS)
-        {{utils}} bank2-seal --check "$c/$n.bin" "$c/$n.bk2"
-        just check-bin-size "$c/$n.bin"
-        just check-no-gate "$c/$n.bin"
-        for f in "$c/$n.bin" "$c/$n.bk2"; do just check-bin-paths "$f"; done
-        # No .bk2 under a .bin name: only the .bk2 starts CHIMERA2.
-        if head -c 8 "$c/$n.bin" | grep -qa CHIMERA2; then echo "$n.bin is a .bk2" >&2; exit 1; fi
-        head -c 8 "$c/$n.bk2" | grep -qa CHIMERA2 || { echo "$n.bk2 is not a .bk2" >&2; exit 1; }
-    done
-    # The console tool, stamped with the release version.
-    sed "s/^VERSION = \"dev\"/VERSION = \"$V\"/" tools/chimera-usb.py > "$out/chimera-usb.py"
-    grep -q "^VERSION = \"$V\"" "$out/chimera-usb.py" || { echo "version not stamped in chimera-usb.py" >&2; exit 1; }
-    python3 -I -m py_compile "$out/chimera-usb.py"; rm -rf "$out/__pycache__"
-    # It is public: no home path, user name, e-mail, URL or repo-internal reference.
-    if grep -n -E -e '/home/|/Users/|[A-Za-z0-9._-]+@[A-Za-z0-9-]+\.|https?://|ADR|docs/|chimera-(core|board|engine|desktop|stm32)|\.rs\b|joegiralt' -e "$(id -un)" "$out/chimera-usb.py"; then
-        echo "chimera-usb.py leaks a private reference" >&2; exit 1
-    fi
+    # One firmware ships: the ORBIT build, which does everything the plain build does (owner, 2026-10-14),
+    # with its bank 2 beside it, one build: the seal must match.
+    cp target/release-bin/chimera-orbit.bin "$out/chimera-$V.bin"
+    cp target/release-bin/chimera-orbit.bk2 "$out/chimera-$V.bk2"
+    {{utils}} bank2-seal --check "$out/chimera-$V.bin" "$out/chimera-$V.bk2"
+    for b in "$out/chimera-$V.bin" "$out/chimera-$V.bk2"; do just check-bin-paths "$b"; done
+    # No .bk2 under a .bin name: only the .bk2 starts CHIMERA2.
+    if head -c 8 "$out/chimera-$V.bin" | grep -qa CHIMERA2; then echo "chimera-$V.bin is a .bk2" >&2; exit 1; fi
+    head -c 8 "$out/chimera-$V.bk2" | grep -qa CHIMERA2 || { echo "chimera-$V.bk2 is not a .bk2" >&2; exit 1; }
     # The factory set: the public build's CHIMERA/ + manifest.json, nothing
     # private (FACTORY_PUBLIC overrides the dir and skips the fresh build, --dry-run only).
     # A real release always builds fresh; the override is for --dry-run tests only.
@@ -284,30 +254,34 @@ release version *flags:
     # The 16 TX81Z-inspired ports ship public (ADR 0138): all of them, or refuse.
     n=$(python3 -I -m zipfile -l "$out/factory-v1.zip" | grep -cE 'S91000(1[0-9]|2[0-5])\.A' || true)
     [ "$n" = 16 ] || { echo "factory-v1.zip holds $n of the 16 ports: refusing" >&2; exit 1; }
-    (cd "$out" && sha256sum chimera-$V.zip chimera-$V-orbit.zip chimera-usb.py factory-v1.zip > SHA256SUMS)
-    # Nothing private ships: exactly these assets, and no asset or zip
-    # member is a private file (the stock bootloader backup, the
-    # bootloader, a dev chimera.bin or .bk2).
-    [ "$(ls "$out" | LC_ALL=C sort | tr '\n' ' ')" = "SHA256SUMS chimera-$V-orbit.zip chimera-$V.zip chimera-usb.py factory-v1.zip " ] || { echo "unexpected assets in $out" >&2; exit 1; }
+    (cd "$out" && sha256sum chimera-$V.bin chimera-$V.bk2 factory-v1.zip > SHA256SUMS)
+    # Nothing private ships: exactly these assets, and none is a private
+    # file (the stock bootloader backup, the bootloader, a dev chimera.bin or .bk2).
+    [ "$(ls "$out" | LC_ALL=C sort | tr '\n' ' ')" = "SHA256SUMS chimera-$V.bin chimera-$V.bk2 factory-v1.zip " ] || { echo "unexpected assets in $out" >&2; exit 1; }
     for p in preenfm3-bootloader-backup.bin bootloader.bin chimera.bin chimera.bk2 target/chimera.bin target/chimera.bk2; do
         [ -f "$p" ] || continue
         h=$(sha256sum "$p" | cut -d' ' -f1)
-        if grep -q "$h" "$out/SHA256SUMS" "$work"/chimera-*/SHA256SUMS; then echo "asset is $p: refusing" >&2; exit 1; fi
+        if grep -q "$h" "$out/SHA256SUMS"; then echo "asset is $p: refusing" >&2; exit 1; fi
     done
     # The demo list comes from projects.toml, so the notes never drift from the build.
     python3 -I - > "$out/demos.md" <<'PY'
     import tomllib
     for p in tomllib.load(open("tools/factory-sounds/projects.toml", "rb"))["project"]:
         if "held" not in p:
-            print("- `%s` %s: %s." % (p["id"], p["name"], p["try"].rstrip(".")))
+            print("- **%s**: %s." % (p["name"], p["try"].rstrip(".")))
     PY
+    # The crates the firmware links (both variants), from Cargo, so the notices never drift either.
+    for f in "" orbit; do cargo tree -q -p chimera-stm32 --target thumbv7em-none-eabihf -e normal --prefix none --format '{p} {l}' ${f:+--features=$f}; done \
+        | grep -v -e '^chimera' -e 'proc-macro' | sed 's/ (\*)$//' | sort -u | sed 's/^\([^ ]*\) \(v[^ ]*\) \(.*\)$/- `\1` \2: \3/' \
+        | sed 's|^\(- `u8g2-fonts` [^:]*\): *$|\1: MIT OR Apache-2.0; its fonts are U8g2'"'"'s, each under its own licence (https://github.com/olikraus/u8g2/blob/master/LICENSE)|' > "$out/crates.md"
+    ! grep -q ': *$' "$out/crates.md" || { echo "a linked crate has no licence: add it to the notes" >&2; exit 1; }
+    [ -s "$out/crates.md" ] || { echo "no crate list" >&2; exit 1; }
     sed -e "s/@VERSION@/$V/g" -e "s/@COMMIT@/$(git rev-parse --short HEAD)/g" -e "s/@DATE@/$(date -u +%F)/g" \
-        -e "/@DEMOS@/{r $out/demos.md" -e "d}" docs/alpha/RELEASE-NOTES.md.tmpl > "$out/RELEASE-NOTES.md"
-    rm "$out/demos.md"
+        -e "/@DEMOS@/{r $out/demos.md" -e "d}" -e "/@CRATES@/{r $out/crates.md" -e "d}" docs/alpha/RELEASE-NOTES.md.tmpl > "$out/RELEASE-NOTES.md"
+    rm "$out/demos.md" "$out/crates.md"
     ! grep -q '@[A-Z]*@' "$out/RELEASE-NOTES.md" || { echo "unfilled template field" >&2; exit 1; }
-    assets=("$out/chimera-$V.zip" "$out/chimera-$V-orbit.zip" "$out/chimera-usb.py" "$out/factory-v1.zip" "$out/SHA256SUMS")
-    echo "assets:"; (cd "$out" && ls -l chimera-$V.zip chimera-$V-orbit.zip chimera-usb.py factory-v1.zip SHA256SUMS && cat SHA256SUMS)
-    for v in "" -orbit; do python3 -I -m zipfile -l "$out/chimera-$V$v.zip"; done
+    assets=("$out/chimera-$V.bin" "$out/chimera-$V.bk2" "$out/factory-v1.zip" "$out/SHA256SUMS")
+    echo "assets:"; (cd "$out" && ls -l chimera-$V.bin chimera-$V.bk2 factory-v1.zip SHA256SUMS && cat SHA256SUMS)
     if [ $dry = 1 ]; then
         echo "dry run: would draft v$V on $REPO with notes $out/RELEASE-NOTES.md"; exit 0
     fi

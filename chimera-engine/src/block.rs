@@ -10,6 +10,25 @@ use crate::dsp::clampf;
 /// A switch's two names, as `ValFmt::Names` shows it.
 pub const OFF_ON: [&str; 2] = ["OFF", "ON"];
 
+/// Fine ticks to a step: a pushed encoder's turn (ADR 0140).
+#[cfg(feature = "push-encoders")]
+pub const FINE_DIV: f32 = 10.0;
+
+/// A pushed encoder's turn (ADR 0140): a continuous param moves a tenth
+/// of its step a tick; any other, or one on its own `ladder`, moves one
+/// plain tick through `nudge`, so a block's own stepping (WAVE's budget,
+/// ROTATE's wrap) still holds. One copy for every block, not one each.
+#[cfg(feature = "push-encoders")]
+#[inline(never)]
+pub fn nudge_fine(b: &mut dyn Block, id: ParamId, delta: i8) {
+    match b.spec(id) {
+        Some(s) if s.kind == ParamKind::Continuous && !b.ladder(id) => {
+            b.write(id, s.nudged_fine(b.get(id), delta))
+        }
+        _ => b.nudge(id, delta.signum()),
+    }
+}
+
 /// Display format and shift-snap behavior of a parameter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValFmt {
@@ -416,9 +435,22 @@ impl ParamSpec {
     }
 
     /// `v` moved `delta` ticks, clamped (and rounded as `quantize` does).
-    #[inline(never)]
+    #[inline]
     pub fn nudged(&self, v: f32, delta: i8) -> f32 {
-        let d = f32::from(delta);
+        self.moved(v, f32::from(delta))
+    }
+
+    /// `v` moved `delta` fine ticks, each `1 / FINE_DIV` of a step: an
+    /// encoder pushed while it turns (ADR 0140).
+    #[cfg(feature = "push-encoders")]
+    #[inline]
+    pub fn nudged_fine(&self, v: f32, delta: i8) -> f32 {
+        self.moved(v, f32::from(delta) / FINE_DIV)
+    }
+
+    /// `v` moved `d` steps: one copy for the coarse and the fine.
+    #[inline(never)]
+    fn moved(&self, v: f32, d: f32) -> f32 {
         self.quantize(match self.scale {
             Scale::Linear => v + d * self.step,
             Scale::Octaves => v * exp2(d * self.step),
@@ -639,6 +671,13 @@ pub trait Block {
         if let Some(s) = self.spec(id) {
             self.write(id, s.nudged(self.get(id), delta));
         }
+    }
+
+    /// `id` steps by its own ladder even pushed (`nudge_fine`): PITCH
+    /// under MUSICAL.
+    #[cfg(feature = "push-encoders")]
+    fn ladder(&self, _id: ParamId) -> bool {
+        false
     }
 
     /// Shift+encoder: jump to the next snap point of the spec's format.

@@ -446,6 +446,11 @@ impl View {
             .map_or(FocusGlyph::Arc, |s| s.glyph)
     }
 
+    /// A value a push can set or fine-tune (ADR 0140).
+    pub fn pushes(&self) -> bool {
+        matches!(self, View::Param { .. } | View::Route { .. })
+    }
+
     pub fn addr(&self) -> Option<ParamAddr> {
         match *self {
             View::Param { addr, .. } => Some(addr),
@@ -490,7 +495,8 @@ impl View {
 /// MIX + SEQ learns a CC on the cell (MIDI map spec § 4): every mappable
 /// cell's hint, but where the cell's own gesture leaves no room on the line.
 pub const LEARN: Gesture<'static> = Gesture("MIX + SEQ", "LEARNS A CC");
-const LEARN_HINT: Hint = &[LEARN];
+/// Every mappable cell's hint; PUSH ENCODERS' replaces it when on.
+pub const LEARN_HINT: Hint = &[LEARN];
 
 const SYM_HINT: Hint = &[Gesture("EDIT ▾", "SYM")];
 

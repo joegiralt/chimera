@@ -1,4 +1,5 @@
-//! SETTINGS › SYSTEM › ABOUT: the firmware, the chip and the card, read-only.
+//! SETTINGS › SYSTEM › ABOUT: the firmware, the chip and its board, and the
+//! card, read-only.
 
 use core::fmt::Write;
 
@@ -72,7 +73,9 @@ pub fn cell_texts(s: Option<&AudioStats>, card: Card) -> [FmtBuf; 6] {
         let _ = match (i, s) {
             (0, _) => b.write_str(VERSION),
             (1, _) => b.write_str(BUILD),
-            (2, Some(s)) => b.write_str(s.rev.label()),
+            // The chip: its silicon rev, then its package's pin count from
+            // the board's strap (ADR 0140), `?` when the strap is unknown.
+            (2, Some(s)) => write!(b, "{} {}", s.rev.label(), s.board.label()),
             (3, Some(s)) => write!(b, "{} MHZ", s.cpu_hz / 1_000_000),
             (4, Some(s)) => b.write_str(s.reset.label()),
             (5, _) => {
