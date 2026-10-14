@@ -462,7 +462,14 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         shared::take_audio(ui.project().perf()).expect("audio buffer taken once");
     // Without MIDI DIN or `card` nothing takes a producer.
     #[cfg_attr(
-        not(any(feature = "midi-din", all(feature = "bench", feature = "usb-console"))),
+        not(any(
+            feature = "midi-din",
+            all(
+                feature = "bench",
+                feature = "usb-console",
+                not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
+            )
+        )),
         allow(unused_mut, unused_variables)
     )]
     let (mut producers, notes) = shared::NOTES.split().expect("note sources split once");
@@ -491,11 +498,12 @@ pub fn synth(board: Board, shell: Shell) -> ! {
 
     // The console's `card`: the measurement over the card, its chord on
     // the `CARD` note source. Not in ORBIT's bench builds, nor the master
-    // tape's: with it they no longer fit FLASH, or AXI's margin.
+    // tape's, nor TAPE's: with it they no longer fit FLASH, or AXI's
+    // margin (TAPE's comes back with streaming: #539).
     #[cfg(all(
         feature = "bench",
         feature = "usb-console",
-        not(any(feature = "orbit", feature = "master-tape"))
+        not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
     ))]
     let mut card_bench = card_speed::take(
         producers
@@ -533,12 +541,17 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         #[cfg(all(
             feature = "usb-console",
             feature = "bench",
-            not(any(feature = "orbit", feature = "master-tape"))
+            not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
         ))]
         let card_run: usb::CardRun = &mut |arg, s, store| Some(card_bench.answer(arg, store, s));
         #[cfg(all(
             feature = "usb-console",
-            any(not(feature = "bench"), feature = "orbit", feature = "master-tape")
+            any(
+                not(feature = "bench"),
+                feature = "orbit",
+                feature = "master-tape",
+                feature = "tape"
+            )
         ))]
         let card_run: usb::CardRun = &mut |_, _, _| None;
         #[cfg(feature = "usb-console")]

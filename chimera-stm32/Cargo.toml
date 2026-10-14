@@ -26,7 +26,7 @@ bench-stress = ["bench", "midi-din"]
 bench-orbit = ["bench", "midi-din", "orbit"]
 # TAPE COLD: each machine's cold-cache voice.
 # TAPE COLD never plays MIDI; FLASH (#507).
-bench-tape = ["bench", "chimera-core/tape"]
+bench-tape = ["bench", "chimera-core/tape", "chimera-board/tape"]
 # The filter probes, linked though nothing calls them, for
 # `tools/loop_count.py`'s static counts: the shipping build plus them,
 # `default` less PUSH ENCODERS (FLASH; the filters' loops are the same),
