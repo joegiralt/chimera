@@ -634,3 +634,263 @@ LFO1.SHAPE = "SINE"
 mod.LFO1 = "PITCH.FINE +3"
 level = "by ear -16.5: set low so the pad phrase's chords with their reverb stay at or under 3 dB of limiting"
 trim = "-5.0"
+
+# The acid set (S9100054-60, with the FM one in fm.toml): the TB-303 and
+# its cousins. Every one is MONO with a short glide, so the acid phrase's
+# held notes slide; velocity is the accent (it opens the filter envelope
+# and the cutoff, as a 303's). Resonance stays moderate, never singing.
+# Chimera has no LFO tempo sync, so an S&H LFO is a FREE rate matched to the
+# phrase's 120 BPM (8 Hz is one sixteenth); on the Part's clock it keeps
+# time with the render but drifts from a different tempo.
+[[sound]]
+id = "S9100054"
+name = "ACID CLASSIC"
+engine = "VA"
+note = "LADDER SQUELCH, VEL ACCENTS"
+demo = "mono"
+plays = "bass short glide"
+home = "C2"
+phrase = "acid"
+OUT.LEVEL = "0.5"  # 64
+ENV1.ATK = "0.1"  # 4.7 ms
+ENV1.DEC = "0.5"  # 187 ms
+ENV1.SUS = "0.8"  # 80%
+ENV1.REL = "0.4"  # 84 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0.6667"  # 85
+VA.AMOUNT = "0"
+VA.SUB = "0"
+VA.STAB = "0.5"  # 64
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.45"  # 31 ms
+FILTER.KIND = "LADDER"
+FILTER.CUTOFF = "420"  # 420 Hz
+FILTER.RESO = "0.6"  # 76
+FILTER.LEVEL = "0.5"  # 64
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.42"  # 99 ms
+ENV2.SUS = "0"  # 0%
+ENV2.LEVEL = "0.55"  # 70
+mod.ENV2 = "FILTER.CUTOFF +45"
+mod.VEL = "ENV2.LEVEL +70, FILTER.CUTOFF +8"
+level = "by ear -14.0: set low so the short hit's resonance stays under 1 dB of limiting"
+trim = "1.7"
+
+# Edgy digital acid: a saw and a narrow pulse into DIRTY driven hard, an S&H
+# LFO (8 Hz: a sixteenth at 120 BPM) stepping the cutoff on every note.
+[[sound]]
+id = "S9100055"
+name = "ACID DIRTY"
+engine = "VA"
+note = "DIRTY, S&H 8 HZ: 16THS AT 120"
+demo = "mono"
+plays = "bass short glide"
+home = "C2"
+phrase = "acid"
+harmonic = "no"
+OUT.LEVEL = "0.5"  # 64
+ENV1.ATK = "0.1"  # 4.7 ms
+ENV1.DEC = "0.45"  # 126 ms
+ENV1.SUS = "0.8"  # 80%
+ENV1.REL = "0.4"  # 84 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0.6667"  # 85
+VA.WAVE2 = "1"  # 127
+VA.SHAPE2 = "0.3"  # 38
+VA.FINE2 = "5"  # +5
+VA.AMOUNT = "0.45"  # 57
+VA.STAB = "0.5"  # 64
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.45"  # 31 ms
+FILTER.KIND = "DIRTY"
+FILTER.CUTOFF = "520"  # 520 Hz
+FILTER.RESO = "0.78"  # 99
+FILTER.LEVEL = "0.8"  # 102
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.38"  # 72 ms
+ENV2.SUS = "0"  # 0%
+ENV2.LEVEL = "0.55"  # 70
+mod.ENV2 = "FILTER.CUTOFF +38"
+LFO1.RATE = "8"  # 51
+LFO1.SHAPE = "RANDOM"
+mod.LFO1 = "FILTER.CUTOFF +22"
+mod.VEL = "ENV2.LEVEL +70, FILTER.CUTOFF +12"
+trim = "-3.7"
+
+# Warm acid: a saw and a quieter one an octave up (a detuned
+# pair fails the aliasing gate), the 2040 in its EXP voicing just below self-oscillation; ENV 2 and a slow LFO move
+# the cutoff.
+[[sound]]
+id = "S9100056"
+name = "ACID WARM"
+engine = "VA"
+note = "WARM 2040 EXP, LFO + ENV"
+demo = "mono"
+plays = "bass short glide"
+home = "C2"
+phrase = "acid"
+OUT.LEVEL = "0.5"  # 64
+ENV1.ATK = "0.1"  # 4.7 ms
+ENV1.DEC = "0.5"  # 187 ms
+ENV1.SUS = "0.85"  # 85%
+ENV1.REL = "0.45"  # 126 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0.6667"  # 85
+VA.WAVE2 = "0.6667"  # 85
+VA.CRSE2 = "12"  # +12
+VA.AMOUNT = "0.3"  # 38  # +6
+VA.SUB = "0"
+VA.STAB = "0.55"  # 70
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.5"  # 45 ms
+FILTER.KIND = "2040"
+FILTER.VOICE = "EXP"
+FILTER.CUTOFF = "560"  # 560 Hz
+FILTER.RESO = "0.5"  # 64
+FILTER.LEVEL = "0.55"  # 70
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.45"  # 126 ms
+ENV2.SUS = "0"  # 0%
+ENV2.LEVEL = "0.55"  # 70
+mod.ENV2 = "FILTER.CUTOFF +42"
+LFO2.RATE = "0.35"  # 2
+LFO2.SHAPE = "TRIANGLE"
+mod.LFO2 = "FILTER.CUTOFF +8"
+mod.VEL = "ENV2.LEVEL +70, FILTER.CUTOFF +8"
+level = "by ear -13.2: set low so the short hit's resonance stays under 1 dB of limiting"
+trim = "1.2"
+
+# Rubbery acid on triangle waves, an octave tri under: they hold few
+# harmonics, so the filter's resonance does the squelch.
+[[sound]]
+id = "S9100057"
+name = "ACID TRI"
+engine = "VA"
+note = "TRIANGLES: RESO SQUELCH"
+demo = "mono"
+plays = "bass short glide"
+home = "C2"
+phrase = "acid"
+OUT.LEVEL = "0.5"  # 64
+ENV1.ATK = "0.1"  # 4.7 ms
+ENV1.DEC = "0.5"  # 187 ms
+ENV1.SUS = "0.8"  # 80%
+ENV1.REL = "0.4"  # 84 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0.3333"  # 42
+VA.WAVE2 = "0.3333"  # 42
+VA.SHAPE1 = "0.3"  # 38
+VA.CRSE2 = "12"  # +12
+VA.AMOUNT = "0.3"  # 38
+VA.SUB = "0.25"  # 32
+VA.STAB = "0.5"  # 64
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.5"  # 45 ms
+FILTER.KIND = "LADDER"
+FILTER.CUTOFF = "300"  # 300 Hz
+FILTER.RESO = "0.66"  # 84
+FILTER.LEVEL = "0.75"  # 95
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.4"  # 84 ms
+ENV2.SUS = "0"  # 0%
+ENV2.LEVEL = "0.55"  # 70
+mod.ENV2 = "FILTER.CUTOFF +52"
+mod.VEL = "ENV2.LEVEL +70, FILTER.CUTOFF +12"
+level = "by ear -13.4: set low so the short hit's resonance stays under 1 dB of limiting"
+trim = "1.2"
+
+# Each note opens from triangle toward saw and pulse with its filter; a slow
+# LFO leans the pulse width and a second drifts the cutoff under it.
+[[sound]]
+id = "S9100058"
+name = "ACID MORPH"
+engine = "VA"
+note = "ENV MORPHS TRI TO SAW"
+demo = "mono"
+plays = "bass short glide"
+home = "C2"
+phrase = "acid"
+OUT.LEVEL = "0.5"  # 64
+ENV1.ATK = "0.1"  # 4.7 ms
+ENV1.DEC = "0.5"  # 187 ms
+ENV1.SUS = "0.8"  # 80%
+ENV1.REL = "0.4"  # 84 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0.34"  # 43
+VA.WAVE2 = "0.34"  # 43
+VA.FINE2 = "7"  # +7
+VA.AMOUNT = "0.5"  # 64
+VA.SUB = "0.1"  # 13
+VA.STAB = "0.5"  # 64
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.45"  # 31 ms
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "380"  # 380 Hz
+FILTER.RESO = "0.45"  # 57
+FILTER.LEVEL = "0.55"  # 70
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.45"  # 126 ms
+ENV2.SUS = "0"  # 0%
+ENV2.LEVEL = "0.55"  # 70
+mod.ENV2 = "FILTER.CUTOFF +42, VA.WAVE1 +55, VA.WAVE2 +40"
+LFO1.RATE = "0.25"  # 2
+LFO1.SHAPE = "TRIANGLE"
+mod.LFO1 = "VA.SHAPE1 +35, VA.SHAPE2 -35"
+LFO2.RATE = "0.17"  # 1
+LFO2.SHAPE = "SINE"
+mod.LFO2 = "FILTER.CUTOFF +12"
+mod.VEL = "ENV2.LEVEL +70, FILTER.CUTOFF +12"
+trim = "4.4"
+
+# Wonky acid: two saws in RING a detuned fifth-ish apart, three S&H LFOs on
+# their own clocks (8 Hz cutoff, 4 Hz pitch by a quarter-tone, 2.67 Hz the
+# ring blend: three against four) under the wonky line.
+[[sound]]
+id = "S9100059"
+name = "ACID WONKY"
+engine = "VA"
+note = "RING, S&H CUTOFF AND PITCH"
+demo = "mono"
+plays = "bass short glide"
+home = "C2"
+phrase = "wonky"
+harmonic = "no"
+OUT.LEVEL = "1"  # 127
+ENV1.ATK = "0.1"  # 4.7 ms
+ENV1.DEC = "0.5"  # 187 ms
+ENV1.SUS = "0.9"  # 90%
+ENV1.REL = "0.4"  # 84 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.MODE = "RING"
+VA.WAVE1 = "0.4"  # 51
+VA.WAVE2 = "0.1"  # 13
+VA.CRSE2 = "12"  # +12
+VA.FINE2 = "-9"
+VA.AMOUNT = "0.45"  # 57
+VA.SUB = "0.2"  # 25
+VA.STAB = "0.4"  # 51
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.5"  # 45 ms
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "900"  # 900 Hz
+FILTER.RESO = "0.5"  # 64
+FILTER.LEVEL = "0.6"  # 76
+ENV2.TYPE = "B"
+ENV2.MODE = "ENV"
+ENV2.ENV_FORM = "AD"
+ENV2.RISE = "0"  # 2.0 ms
+ENV2.FALL = "0.5"  # 100 ms
+ENV2.LEVEL = "0.5"  # 64
+mod.ENV2 = "FILTER.CUTOFF +56"
+LFO1.RATE = "8"  # 51
+LFO1.SHAPE = "RANDOM"
+mod.LFO1 = "FILTER.CUTOFF +36"
+LFO2.RATE = "4"  # 25
+LFO2.SHAPE = "RANDOM"
+mod.LFO2 = "PITCH.FINE +28"
+LFO3.RATE = "2.667"  # 17
+LFO3.SHAPE = "RANDOM"
+mod.LFO3 = "VA.AMOUNT +20"
+mod.VEL = "ENV2.LEVEL +50"
+level = "by ear -14.0: set low so the short hit's resonance stays under 1 dB of limiting"
+trim = "-4.5"
