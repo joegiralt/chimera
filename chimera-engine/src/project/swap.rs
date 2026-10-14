@@ -3,7 +3,7 @@
 //! through the old snapshot, acks, and holds the note queues until a
 //! snapshot tagged with that epoch arrives.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::instrument::{AudioShared, Instrument};
 
@@ -21,6 +21,10 @@ pub const LOAD_ACK_TIMEOUT_MS: u32 = 10;
 pub struct LoadLink {
     epoch: AtomicU32,
     ack: AtomicU32,
+    /// A bank-2 write is on: the audio sounds TAPE's voices off.
+    tape_shut: AtomicBool,
+    /// The audio: no TAPE voice is sounding.
+    tape_quiet: AtomicBool,
 }
 
 pub static LOAD_LINK: LoadLink = LoadLink::new();
@@ -36,7 +40,26 @@ impl LoadLink {
         Self {
             epoch: AtomicU32::new(0),
             ack: AtomicU32::new(0),
+            tape_shut: AtomicBool::new(false),
+            tape_quiet: AtomicBool::new(false),
         }
+    }
+
+    /// The UI, before bank 2's door closes: TAPE's voices go off, and stay
+    /// off until `open_tape`.
+    pub fn shut_tape(&self) {
+        self.tape_quiet.store(false, Ordering::Release);
+        self.tape_shut.store(true, Ordering::Release);
+    }
+
+    /// The UI, once the write is done: TAPE may sound again.
+    pub fn open_tape(&self) {
+        self.tape_shut.store(false, Ordering::Release);
+    }
+
+    /// The UI: the audio reports no TAPE voice sounding.
+    pub fn tape_quiet(&self) -> bool {
+        self.tape_quiet.load(Ordering::Acquire)
     }
 
     /// The latest epoch: what the UI tags each snapshot with.
@@ -180,6 +203,11 @@ impl LoadGate {
         inst: &mut Instrument,
         shared: &AudioShared,
     ) -> bool {
+        if link.tape_shut.load(Ordering::Acquire) {
+            inst.sound_off_tape(shared);
+            link.tape_quiet
+                .store(!inst.tape_sounding(shared), Ordering::Release);
+        }
         let s = self.step(link.epoch(), shared.epoch, inst.quiet());
         if s.kill {
             inst.kill_all();

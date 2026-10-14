@@ -563,8 +563,18 @@ impl UiState {
     }
 
     /// Lets go of everything that reads bank 2, before the door closes for
-    /// an install. Nothing does yet: TAPE's voices join with bank 2's TAPE.
-    pub fn close_bank2(&mut self) {}
+    /// a write: TAPE's voices fade off (`sound_off_tape`, CC 120's way: its
+    /// DSP is about to go) and this waits, while `within`, for the audio to
+    /// say none sounds. The UI loop runs between blocks, so after it the
+    /// audio makes no door call. The other engines play on. Timed out, the
+    /// proxy is already silent: a few samples of fade, no fault.
+    pub fn close_bank2(&mut self, link: &LoadLink, mut within: impl FnMut() -> bool) -> bool {
+        link.shut_tape();
+        while !link.tape_quiet() && within() {
+            core::hint::spin_loop();
+        }
+        link.tape_quiet()
+    }
 
     /// SETTINGS › MIDI CONFIG as last edited.
     pub fn midi(&self) -> MidiSettings {

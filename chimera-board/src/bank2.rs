@@ -557,6 +557,22 @@ mod gate {
     }
 }
 
+/// TAPE's voices off before the door closes, waiting for the audio's say
+/// (three blocks: the kill, the fade, the report) for `TAPE_OFF_MS`. Timed
+/// out, the proxy is silent anyway.
+#[cfg(all(feature = "bank2", feature = "usb-console"))]
+fn close_tape(ui: &mut chimera_core::ui::UiState) {
+    use crate::controls;
+    const TICKS: u32 = TAPE_OFF_MS * controls::CONTROLS_HZ / 1000;
+    let t0 = controls::ticks();
+    let _ = ui.close_bank2(&chimera_core::project::LOAD_LINK, || {
+        controls::ticks().wrapping_sub(t0) < TICKS
+    });
+}
+
+#[cfg(all(feature = "bank2", feature = "usb-console"))]
+const TAPE_OFF_MS: u32 = 30;
+
 /// `bank2 erase` (`bank2-gate`), from the UI loop before its answer
 /// starts: TAPE lets go, the door closes, region 2 `Write`, S0 erased
 /// through `FlashBank2`, region 2 `Read`. Erased, bank 2 is `Empty` by
@@ -567,7 +583,7 @@ pub fn run_erase(
     ui: &mut chimera_core::ui::UiState,
     cpu_hz: u32,
 ) -> chimera_core::console::Bank2Answer {
-    ui.close_bank2();
+    close_tape(ui);
     let r = FlashBank2::new(cpu_hz).erase(Bank2Sector::S0);
     set_mpu(Mpu2::Read);
     let now = match (r, crate::bank2_seal()) {
@@ -575,6 +591,7 @@ pub fn run_erase(
         (Err(_), Some(seal)) => open_door(&seal).0,
         (Err(_), None) => Bank2Status::Unsealed,
     };
+    chimera_core::project::LOAD_LINK.open_tape();
     ui.set_bank2(now);
     chimera_core::console::Bank2Answer::Erased(r)
 }
@@ -616,8 +633,9 @@ pub fn run_install(
         Err(a) => return a,
     };
     let before = audio();
-    ui.close_bank2();
+    close_tape(ui);
     let (r, now) = write_staged(&mut staged, display, &h, &seal, cpu_hz);
+    chimera_core::project::LOAD_LINK.open_tape();
     ui.set_bank2(now);
     let after = audio();
     let audio = Bank2Audio {
