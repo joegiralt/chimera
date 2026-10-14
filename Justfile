@@ -225,9 +225,15 @@ release version *flags:
         if "held" not in p:
             print("- `%s` %s: %s." % (p["id"], p["name"], p["try"].rstrip(".")))
     PY
+    # The crates the firmware links (both variants), from Cargo, so the notices never drift either.
+    for f in "" orbit; do cargo tree -q -p chimera-stm32 --target thumbv7em-none-eabihf -e normal --prefix none --format '{p} {l}' ${f:+--features=$f}; done \
+        | grep -v -e '^chimera' -e 'proc-macro' | sed 's/ (\*)$//' | sort -u | sed 's/^\([^ ]*\) \(v[^ ]*\) \(.*\)$/- `\1` \2: \3/' \
+        | sed 's|^\(- `u8g2-fonts` [^:]*\): *$|\1: MIT OR Apache-2.0; its fonts are U8g2'"'"'s, each under its own licence (https://github.com/olikraus/u8g2/blob/master/LICENSE)|' > "$out/crates.md"
+    ! grep -q ': *$' "$out/crates.md" || { echo "a linked crate has no licence: add it to the notes" >&2; exit 1; }
+    [ -s "$out/crates.md" ] || { echo "no crate list" >&2; exit 1; }
     sed -e "s/@VERSION@/$V/g" -e "s/@COMMIT@/$(git rev-parse --short HEAD)/g" -e "s/@DATE@/$(date -u +%F)/g" \
-        -e "/@DEMOS@/{r $out/demos.md" -e "d}" docs/alpha/RELEASE-NOTES.md.tmpl > "$out/RELEASE-NOTES.md"
-    rm "$out/demos.md"
+        -e "/@DEMOS@/{r $out/demos.md" -e "d}" -e "/@CRATES@/{r $out/crates.md" -e "d}" docs/alpha/RELEASE-NOTES.md.tmpl > "$out/RELEASE-NOTES.md"
+    rm "$out/demos.md" "$out/crates.md"
     ! grep -q '@[A-Z]*@' "$out/RELEASE-NOTES.md" || { echo "unfilled template field" >&2; exit 1; }
     assets=("$out/chimera-$V.bin" "$out/chimera-$V-orbit.bin" "$out/chimera-usb.py" "$out/factory-v1.zip" "$out/SHA256SUMS")
     echo "assets:"; (cd "$out" && ls -l chimera-$V.bin chimera-$V-orbit.bin chimera-usb.py factory-v1.zip SHA256SUMS && cat SHA256SUMS)
