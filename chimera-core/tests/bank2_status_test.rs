@@ -154,3 +154,20 @@ fn installing_fits_the_screen() {
     assert!(long.starts_with("INSTALLING WW"), "{long}");
     assert_eq!(fit(""), "INSTALLING");
 }
+
+/// The gate's hold line, each phase, fits as the version line does.
+#[cfg(feature = "bank2-gate")]
+#[test]
+fn hold_line_fits_the_screen() {
+    use chimera_core::ui::{draw, installing, theme};
+    use chimera_image::Phase;
+    for p in [Phase::Erasing, Phase::Writing, Phase::Sealing] {
+        let l = installing::hold_line(p, 3);
+        let w = draw::text_width(&theme::FONT_VALUE, l.as_str(), theme::LABEL_TRACKING);
+        assert!(w <= installing::MAX_W, "{} is {w} px", l.as_str());
+    }
+    assert_eq!(
+        installing::hold_line(Phase::Erasing, 3).as_str(),
+        "ERASING  PULL NOW 3"
+    );
+}

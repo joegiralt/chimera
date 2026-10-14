@@ -2068,6 +2068,7 @@ pub const OVERLAYS: &[(&str, Overlay)] = &[
     ("toast_saved", Overlay::Toast("SAVED")),
     ("toast_exfat", Overlay::Toast("CARD IS EXFAT: FORMAT FAT32")),
     ("installing", Overlay::Installing("0.2.0 02e440e2")),
+    ("installing_writing", Overlay::Writing("0.2.0 02e440e2")),
 ];
 
 /// The two faces of the one overlay component.
@@ -2077,6 +2078,8 @@ pub enum Overlay {
     Toast(&'static str),
     /// Bank 2's install, the whole screen, with the version it installs.
     Installing(&'static str),
+    /// The same, its phase line at WRITING.
+    Writing(&'static str),
 }
 
 /// Every case name: the screens, then the overlays.
@@ -2095,6 +2098,12 @@ pub fn render_overlay(o: Overlay) -> (Fb, (u16, u16)) {
         Overlay::Toast(text) => draw_toast(&mut fb, text),
         Overlay::Installing(line) => {
             chimera_core::ui::installing::draw(&mut fb, line);
+            (0, chimera_hal::SCREEN_HEIGHT)
+        }
+        Overlay::Writing(line) => {
+            use chimera_core::ui::installing;
+            installing::draw(&mut fb, line);
+            installing::phase(&mut fb, chimera_image::Phase::Writing);
             (0, chimera_hal::SCREEN_HEIGHT)
         }
     };

@@ -502,8 +502,90 @@ fn write_staged(
     let mut flash = FlashBank2::new(cpu_hz);
     chimera_core::ui::installing::draw(display, h.version.as_str());
     let mut buf = [0u8; 512];
-    let r = chimera_image::install(&mut flash, staged, seal, &mut buf);
+    let mut shown = Shown {
+        d: display,
+        at: chimera_image::Phase::Erasing,
+        #[cfg(feature = "bank2-gate")]
+        cpu_hz,
+    };
+    let r = chimera_image::install_with(&mut flash, staged, seal, &mut buf, &mut shown);
     (r, open_door(seal).0)
+}
+
+/// The install's phase under DON'T POWER OFF; a gate build holds at each
+/// mark for a hand to pull the power.
+#[cfg(feature = "bank2")]
+struct Shown<'a, D> {
+    d: &'a mut D,
+    at: chimera_image::Phase,
+    #[cfg(feature = "bank2-gate")]
+    cpu_hz: u32,
+}
+
+#[cfg(feature = "bank2")]
+impl<D: chimera_hal::ChimeraDisplay> chimera_image::Progress for Shown<'_, D> {
+    fn phase(&mut self, p: chimera_image::Phase) {
+        self.at = p;
+        chimera_core::ui::installing::phase(self.d, p);
+    }
+
+    fn mark(&mut self, _: chimera_image::Mark) {
+        #[cfg(feature = "bank2-gate")]
+        gate::hold(self.d, self.at, self.cpu_hz);
+    }
+}
+
+/// The power-pull aid (`bank2-gate`): never in a shipping build; `just
+/// release-bin` refuses a .bin holding `BANK2_GATE` or `PULL NOW`.
+#[cfg(feature = "bank2-gate")]
+mod gate {
+    use chimera_core::ui::installing;
+    use chimera_image::Phase;
+    use chimera_image::regs::ms_cycles;
+    use cortex_m::peripheral::DWT;
+
+    /// The build's marker, which release-bin greps for.
+    #[used]
+    static BANK2_GATE: [u8; 16] = *b"BANK2-GATE-BUILD";
+
+    /// `PULL NOW 3`, `2`, `1`, a second each, then the phase again. A busy
+    /// wait on the cycle counter, interrupts on: the audio plays and the
+    /// tick runs. Without a counting DWT, no hold.
+    pub fn hold(d: &mut impl chimera_hal::ChimeraDisplay, p: Phase, cpu_hz: u32) {
+        core::hint::black_box(&BANK2_GATE);
+        if !crate::clocks::counting() {
+            return;
+        }
+        let second = ms_cycles(1000, cpu_hz);
+        for s in (1..=3).rev() {
+            installing::hold(d, p, s);
+            let t = DWT::cycle_count();
+            while DWT::cycle_count().wrapping_sub(t) < second {}
+        }
+        installing::phase(d, p);
+    }
+}
+
+/// `bank2 erase` (`bank2-gate`), from the UI loop before its answer
+/// starts: TAPE lets go, the door closes, region 2 `Write`, S0 erased
+/// through `FlashBank2`, region 2 `Read`. Erased, bank 2 is `Empty` by
+/// construction; a failed erase is judged again.
+#[cfg(all(feature = "bank2-gate", feature = "usb-console"))]
+#[inline(never)]
+pub fn run_erase(
+    ui: &mut chimera_core::ui::UiState,
+    cpu_hz: u32,
+) -> chimera_core::console::Bank2Answer {
+    ui.close_bank2();
+    let r = FlashBank2::new(cpu_hz).erase(Bank2Sector::S0);
+    set_mpu(Mpu2::Read);
+    let now = match (r, crate::bank2_seal()) {
+        (Ok(()), _) => Bank2Status::Empty,
+        (Err(_), Some(seal)) => open_door(&seal).0,
+        (Err(_), None) => Bank2Status::Unsealed,
+    };
+    ui.set_bank2(now);
+    chimera_core::console::Bank2Answer::Erased(r)
 }
 
 /// `bank2 install`, from the UI loop before its answer starts. The staged

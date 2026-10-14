@@ -52,6 +52,9 @@ clamp-probe = ["chimera-engine/clamp-probe"]
 # The console's `fault`: provokes a DMA transfer error to test the re-arm.
 # Test builds only, never shipping.
 fault-inject = []
+# Bank 2's power-pull aid: `bank2 erase` and the install's PULL NOW holds.
+# Debug builds only, never shipping (`just firmware-gate`).
+bank2-gate = []
 
 [dev-dependencies]
 # No default features: `--no-default-features` must reach the library too.

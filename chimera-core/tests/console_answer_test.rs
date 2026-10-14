@@ -961,6 +961,29 @@ fn bank2_install_answers() {
     );
 }
 
+/// `bank2 erase`: the board's outcome, no audio line.
+#[cfg(feature = "bank2-gate")]
+#[test]
+fn bank2_erase_answers() {
+    for (r, want) in [
+        (Ok(()), "OK bank2 erased\n"),
+        (Err(FlashFail::Timeout), "ERR bank2: flash timeout\n"),
+        (
+            Err(FlashFail::Errors(1 << 17)),
+            "ERR bank2: flash errors 00020000\n",
+        ),
+    ] {
+        let mut u = Fake::new();
+        u.bank2 = Some(Bank2Answer::Erased(r));
+        assert_eq!(ask(&mut u, "bank2 erase\n"), want, "{r:?}");
+    }
+    let mut u = Fake::new();
+    assert_eq!(
+        ask(&mut u, "bank2 erase\n"),
+        "ERR bank2 is not in this build\n"
+    );
+}
+
 #[test]
 fn every_flash_failure_has_its_words() {
     for (f, want) in [

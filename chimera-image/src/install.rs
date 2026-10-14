@@ -115,28 +115,75 @@ pub enum InstallFail {
     Io,
 }
 
-/// Writes `staged` into bank 2: judge it, erase S0 first, body from 0x100
-/// up, header words 0x00..0xDF, judge flash uncommitted, commit word last,
-/// then open. Stopped anywhere short of the commit, bank 2 is never `Good`
-/// for `want`: its commit word is erased or torn, or, S0's erase not begun,
-/// the old image is untouched. `done < body_len <= BANK2_LEN - HEADER_LEN`
-/// (a `Good` header) bounds the offsets.
+/// What `install_with` is doing, for the screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase {
+    Erasing,
+    Writing,
+    Sealing,
+}
+
+/// Points inside an install where a power cut leaves a known state: S0
+/// erased, half the body written, all but the commit word.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    EraseStarted,
+    HalfBody,
+    BeforeCommit,
+}
+
+/// Told between flash ops; it never touches the flash.
+pub trait Progress {
+    fn phase(&mut self, p: Phase);
+    fn mark(&mut self, m: Mark);
+}
+
+impl Progress for () {
+    fn phase(&mut self, _: Phase) {}
+    fn mark(&mut self, _: Mark) {}
+}
+
+/// `install_with` and no progress.
 pub fn install(
     flash: &mut impl Flash,
     staged: &mut impl ImageRead,
     want: &Seal,
     buf: &mut [u8; 512],
 ) -> Result<Header, InstallFail> {
+    install_with(flash, staged, want, buf, &mut ())
+}
+
+/// Writes `staged` into bank 2: judge it, erase S0 first, body from 0x100
+/// up, header words 0x00..0xDF, judge flash uncommitted, commit word last,
+/// then open. Stopped anywhere short of the commit, bank 2 is never `Good`
+/// for `want`: its commit word is erased or torn, or, S0's erase not begun,
+/// the old image is untouched. `done < body_len <= BANK2_LEN - HEADER_LEN`
+/// (a `Good` header) bounds the offsets. `progress` hears each phase
+/// before it starts, and each `Mark` once reached: after S0's erase, after
+/// the block holding the body's middle word, before the commit word.
+pub fn install_with(
+    flash: &mut impl Flash,
+    staged: &mut impl ImageRead,
+    want: &Seal,
+    buf: &mut [u8; 512],
+    progress: &mut impl Progress,
+) -> Result<Header, InstallFail> {
     let h = match judge(staged, want) {
         Verdict::Good(h) => h,
         v => return Err(InstallFail::Staged(v)),
     };
     let p = plan(&h);
+    progress.phase(Phase::Erasing);
     for &s in p.sectors {
         flash
             .erase(s)
             .map_err(|f| InstallFail::Flash(f, FlashAt::Sector(s)))?;
+        if s == Bank2Sector::S0 {
+            progress.mark(Mark::EraseStarted);
+        }
     }
+    progress.phase(Phase::Writing);
+    let half = h.body_len / 2 / FLASH_WORD * FLASH_WORD;
     let mut done = 0u32;
     while done < h.body_len {
         let n = (h.body_len - done).min(buf.len() as u32);
@@ -144,8 +191,12 @@ pub fn install(
         let block = &mut buf[..n as usize];
         staged.read(off, block).map_err(|_| InstallFail::Io)?;
         program_words(flash, off, block)?;
+        if (done..done + n).contains(&half) {
+            progress.mark(Mark::HalfBody);
+        }
         done += n;
     }
+    progress.phase(Phase::Sealing);
     let hb = h.to_bytes(false);
     program_words(flash, 0, &hb[..COMMIT_OFF as usize])?;
     match judge_uncommitted(flash, want) {
@@ -153,6 +204,7 @@ pub fn install(
         Verdict::Good(_) => return Err(InstallFail::Readback(Verdict::Corrupt)),
         v => return Err(InstallFail::Readback(v)),
     }
+    progress.mark(Mark::BeforeCommit);
     let committed = h.to_bytes(true);
     program_words(flash, COMMIT_OFF, &committed[COMMIT_OFF as usize..])?;
     Door::open(flash, want).map_err(InstallFail::Readback)?;

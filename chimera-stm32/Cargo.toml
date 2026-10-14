@@ -53,6 +53,10 @@ fault-inject = ["usb-console", "perf-probe", "midi-din", "chimera-board/fault-in
 # Bank 2's section (header and door at 0x08100000, `build.rs`) and bank 1's
 # seal of it (ADR 0137). The Justfile splits the ELF into .bin and .bk2.
 bank2 = ["chimera-engine/bank2", "chimera-board/bank2"]
+# Hardware Gate 2's power-pull aid: the install holds 3 s at each phase
+# (PULL NOW) and the console takes `bank2 erase`. `just firmware-gate` only:
+# never in a release, flash or bench build (release-bin refuses its marker).
+bank2-gate = ["bank2", "usb-console", "chimera-board/bank2-gate"]
 
 [dependencies]
 chimera-board = { path = "../chimera-board" }

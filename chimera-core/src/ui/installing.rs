@@ -3,6 +3,7 @@
 //! audio plays on.
 
 use chimera_hal::ChimeraDisplay;
+use chimera_image::Phase;
 
 use super::fmt::FmtBuf;
 use super::{draw, theme};
@@ -10,6 +11,9 @@ use super::{draw, theme};
 /// Baselines: the warning's two lines, then `line`.
 const WARN_Y: [i32; 2] = [130, 180];
 const LINE_Y: i32 = 220;
+/// The phase line's baseline, and the band it redraws.
+const PHASE_Y: i32 = 250;
+const PHASE_BAND: [u16; 2] = [236, 256];
 /// `line`'s widest, a margin each side.
 pub const MAX_W: i32 = theme::SCREEN_W - 2 * 8;
 
@@ -58,4 +62,54 @@ pub fn line(version: &str) -> FmtBuf {
         l = of(v);
     }
     l
+}
+
+/// The phase under the version line, redrawn and flushed alone.
+pub fn phase<D: ChimeraDisplay>(d: &mut D, p: Phase) {
+    show(d, phase_word(p), theme::INK);
+}
+
+/// A gate build's hold, `hold_line`'s.
+#[cfg(feature = "bank2-gate")]
+pub fn hold<D: ChimeraDisplay>(d: &mut D, p: Phase, secs: u8) {
+    show(d, hold_line(p, secs).as_str(), theme::WARN);
+}
+
+/// `ERASING  PULL NOW 3`.
+#[cfg(feature = "bank2-gate")]
+pub fn hold_line(p: Phase, secs: u8) -> FmtBuf {
+    let mut l = FmtBuf::new();
+    let _ = write!(l, "{}  PULL NOW {secs}", phase_word(p));
+    l
+}
+
+pub fn phase_word(p: Phase) -> &'static str {
+    match p {
+        Phase::Erasing => "ERASING",
+        Phase::Writing => "WRITING",
+        Phase::Sealing => "SEALING",
+    }
+}
+
+fn show<D: ChimeraDisplay>(d: &mut D, s: &str, c: embedded_graphics::pixelcolor::Rgb565) {
+    let [y0, y1] = PHASE_BAND;
+    draw::fill_rect(
+        d,
+        0,
+        y0.into(),
+        theme::SCREEN_W,
+        (y1 - y0).into(),
+        theme::BG,
+    );
+    let cx = theme::SCREEN_W / 2;
+    draw::text_center(
+        d,
+        &theme::FONT_VALUE,
+        s,
+        cx,
+        PHASE_Y,
+        c,
+        theme::LABEL_TRACKING,
+    );
+    d.flush_region(y0, y1);
 }

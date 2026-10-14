@@ -89,8 +89,8 @@ pub trait Unit {
     fn bank2_seal(&self) -> Option<crate::bank2::Seal> {
         None
     }
-    /// `bank2 install`'s outcome, reached before the answer starts.
-    /// `None`: not in this build.
+    /// `bank2 install`'s or `bank2 erase`'s outcome, reached before the
+    /// answer starts. `None`: not in this build.
     fn bank2_install(&mut self) -> Option<super::Bank2Answer> {
         None
     }
@@ -220,8 +220,9 @@ pub fn answer(
             None => Err(Why::Absent(r.command())),
             Some(b) => Ok(b.line(&mut t).and_then(|()| t.write_char('\n'))),
         },
-        // Its whole answer, `OK` or `ERR` included, is the outcome's.
-        Ok(r @ Request::Bank2(super::Bank2Arg::Install)) => match unit.bank2_install() {
+        // `install` or `erase`: its whole answer, `OK` or `ERR` included,
+        // is the outcome's.
+        Ok(r @ Request::Bank2(_)) => match unit.bank2_install() {
             None => Err(Why::Absent(r.command())),
             Some(a) => return super::write_bank2(&a, t.0),
         },

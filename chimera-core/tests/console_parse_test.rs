@@ -355,14 +355,26 @@ fn bank2_takes_install_or_nothing() {
         one("BANK2 Install\n"),
         Ok(Request::Bank2(Bank2Arg::Install))
     );
-    for bad in ["bank2 erase", "bank2 install now", "bank2 status"] {
+    for bad in ["bank2 install now", "bank2 status", "bank2 erase now"] {
         assert_eq!(
             one(&format!("{bad}\n")),
             Err(Refusal::Arguments(Command::Bank2)),
             "{bad}"
         );
     }
-    assert_eq!(Command::Bank2.usage(), "install or nothing");
+    #[cfg(not(feature = "bank2-gate"))]
+    {
+        assert_eq!(
+            one("bank2 erase\n"),
+            Err(Refusal::Arguments(Command::Bank2))
+        );
+        assert_eq!(Command::Bank2.usage(), "install or nothing");
+    }
+    #[cfg(feature = "bank2-gate")]
+    {
+        assert_eq!(one("Bank2 ERASE\n"), Ok(Request::Bank2(Bank2Arg::Erase)));
+        assert_eq!(Command::Bank2.usage(), "install, erase or nothing");
+    }
 }
 
 #[cfg(feature = "card-put")]

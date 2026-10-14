@@ -571,3 +571,124 @@ fn auto_install_table() {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Ev {
+    Op(Op),
+    Phase(Phase),
+    Mark(Mark),
+}
+
+type Log = std::rc::Rc<std::cell::RefCell<Vec<Ev>>>;
+
+/// SimFlash whose ops land in a log the progress shares.
+struct Logged {
+    f: SimFlash,
+    log: Log,
+}
+
+impl Logged {
+    fn note(&mut self) {
+        let mut log = self.log.borrow_mut();
+        log.extend(self.f.ops.drain(..).map(Ev::Op));
+    }
+}
+
+impl ImageRead for Logged {
+    fn read(&mut self, off: u32, buf: &mut [u8]) -> Result<(), ReadFail> {
+        self.f.read(off, buf)
+    }
+}
+
+// SAFETY: test stand-in, not a chip.
+unsafe impl Bank2Memory for Logged {}
+
+// SAFETY: test stand-in, not a chip.
+unsafe impl Flash for Logged {
+    fn erase(&mut self, s: Bank2Sector) -> Result<(), FlashFail> {
+        let r = self.f.erase(s);
+        self.note();
+        r
+    }
+
+    fn program(&mut self, w: Bank2Word, data: &[u8; 32]) -> Result<(), FlashFail> {
+        let r = self.f.program(w, data);
+        self.note();
+        r
+    }
+}
+
+struct Rec(Log);
+
+impl Progress for Rec {
+    fn phase(&mut self, p: Phase) {
+        self.0.borrow_mut().push(Ev::Phase(p));
+    }
+
+    fn mark(&mut self, m: Mark) {
+        self.0.borrow_mut().push(Ev::Mark(m));
+    }
+}
+
+/// Phases and marks land between the ops at fixed points: Erasing before
+/// the first erase, EraseStarted after S0's, Writing before the body,
+/// HalfBody after the 512-byte block holding the body's middle word,
+/// Sealing before the header words, BeforeCommit just before the commit.
+#[test]
+fn progress_lands_between_the_ops() {
+    let body = dense(300 * 1024, 7);
+    let img = sealed(&body, SEAL_A);
+    let log = Log::default();
+    let mut f = Logged {
+        f: SimFlash::new(),
+        log: log.clone(),
+    };
+    let mut buf = [0u8; 512];
+    let mut st = Staged::new(img.clone());
+    let r = install_with(
+        &mut f,
+        &mut st,
+        &seal(SEAL_A),
+        &mut buf,
+        &mut Rec(log.clone()),
+    );
+    assert_eq!(r, Ok(header(&img)));
+
+    use Bank2Sector::*;
+    let mut want = vec![
+        Ev::Phase(Phase::Erasing),
+        Ev::Op(Op::Erase(S0)),
+        Ev::Mark(Mark::EraseStarted),
+        Ev::Op(Op::Erase(S1)),
+        Ev::Op(Op::Erase(S2)),
+        Ev::Phase(Phase::Writing),
+    ];
+    let len = body.len() as u32;
+    let half_block_end = (len / 2 / 512 + 1) * 512;
+    for off in (0..len).step_by(32) {
+        want.push(Ev::Op(Op::Program(BANK2_BASE + HEADER_LEN + off)));
+        if off + 32 == half_block_end {
+            want.push(Ev::Mark(Mark::HalfBody));
+        }
+    }
+    want.push(Ev::Phase(Phase::Sealing));
+    want.extend((0..7).map(|i| Ev::Op(Op::Program(BANK2_BASE + 32 * i))));
+    want.push(Ev::Mark(Mark::BeforeCommit));
+    want.push(Ev::Op(Op::Program(BANK2_BASE + COMMIT_OFF)));
+    assert_eq!(*log.borrow(), want);
+}
+
+/// `install` is `install_with` and no progress: the same ops, the same
+/// bytes.
+#[test]
+fn install_is_install_with_nothing() {
+    let img = sealed(&sparse_3_sector(5), SEAL_A);
+    let mut a = SimFlash::new();
+    let mut b = SimFlash::new();
+    assert!(run(&mut a, &img, &seal(SEAL_A)).is_ok());
+    let mut st = Staged::new(img.clone());
+    let r = install_with(&mut b, &mut st, &seal(SEAL_A), &mut [0u8; 512], &mut ());
+    assert!(r.is_ok());
+    assert_eq!(a.ops, b.ops);
+    assert_eq!(a.mem, b.mem);
+}

@@ -15,14 +15,23 @@ use crate::bank2::{Bank2Status, Version};
 pub enum Bank2Arg {
     Status,
     Install,
+    /// S0 erased: bank 2 empty again, for the next power pull.
+    #[cfg(feature = "bank2-gate")]
+    Erase,
 }
 
 impl Arg for Bank2Arg {
-    const USAGE: &'static str = "install or nothing";
+    const USAGE: &'static str = if cfg!(feature = "bank2-gate") {
+        "install, erase or nothing"
+    } else {
+        "install or nothing"
+    };
     fn parse(mut words: Words<'_>) -> Option<Self> {
         let got = match words.next() {
             None => Bank2Arg::Status,
             Some(w) if w.eq_ignore_ascii_case(b"install") => Bank2Arg::Install,
+            #[cfg(feature = "bank2-gate")]
+            Some(w) if w.eq_ignore_ascii_case(b"erase") => Bank2Arg::Erase,
             Some(_) => return None,
         };
         words.next().is_none().then_some(got)
@@ -155,6 +164,9 @@ pub enum Bank2Answer {
         why: Bank2Fail,
         audio: Bank2Audio,
     },
+    /// `bank2 erase`: S0's erase.
+    #[cfg(feature = "bank2-gate")]
+    Erased(Result<(), FlashFail>),
 }
 
 /// The staged file's verdict, and the card error behind an unreadable one,
@@ -215,7 +227,8 @@ fn write_flash(f: FlashFail, at: FlashAt, t: &mut impl Write) -> fmt::Result {
 
 /// `bank2 install`'s whole answer: an `audio` line if flash was written,
 /// then `OK bank2 open <version>`, `OK already installed` or
-/// `ERR bank2: <why>`.
+/// `ERR bank2: <why>`; `bank2 erase`'s `OK bank2 erased` or
+/// `ERR bank2: flash <fail>`.
 pub fn write_bank2<O: Out>(a: &Bank2Answer, out: &mut O) -> Result<(), Stalled> {
     lines(a, &mut super::Text(out)).map_err(|fmt::Error| Stalled)
 }
@@ -253,6 +266,14 @@ fn lines(a: &Bank2Answer, t: &mut impl Write) -> fmt::Result {
                 Bank2Fail::Door => t.write_str("door check failed"),
             }
             .and_then(|()| t.write_char('\n'))
+        }
+        #[cfg(feature = "bank2-gate")]
+        Bank2Answer::Erased(Ok(())) => t.write_str("OK bank2 erased\n"),
+        #[cfg(feature = "bank2-gate")]
+        Bank2Answer::Erased(Err(f)) => {
+            t.write_str("ERR bank2: flash ")?;
+            crate::bank2::write_flash_fail(*f, t)?;
+            t.write_char('\n')
         }
     }
 }

@@ -393,6 +393,10 @@ impl Usb {
                     *redraw = true;
                     Some(crate::bank2::run_install(store, ui, display, cpu_hz))
                 }
+                #[cfg(feature = "bank2-gate")]
+                Ok(Request::Bank2(chimera_core::console::Bank2Arg::Erase)) => {
+                    Some(crate::bank2::run_erase(ui, cpu_hz))
+                }
                 _ => None,
             };
             let unit = &mut ChipUnit {

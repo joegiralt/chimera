@@ -316,6 +316,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("toast_exfat", 0xfc0cb3b4feb1a1b5),
     // Bank 2's install: DON'T POWER OFF over the whole screen.
     ("installing", 0xb2af55fe85e8e58d),
+    // Its phase line at WRITING.
+    ("installing_writing", 0x7f68e79694a6310d),
 ];
 
 #[test]

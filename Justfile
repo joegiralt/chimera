@@ -70,6 +70,14 @@ firmware-orbit:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit
     just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-orbit
 
+# Hardware Gate 2's power-pull aid (`bank2-gate`): the install holds 3 s at
+# each phase for a hand to pull the power, and the console takes `bank2
+# erase`. target/chimera-gate.bin and .bk2. Never flashed by a recipe, never
+# released: every other .bin is refused if it holds the aid.
+firmware-gate:
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features bank2-gate
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-gate
+
 utils := "cargo run -q --profile utils -p chimera-utils --"
 
 # The ELF's two banks: <out>.bin (bank 1, never .bank2) and, with bank 2's
@@ -79,6 +87,7 @@ bank2-split elf out:
     set -euo pipefail
     rust-objcopy -R .bank2 -O binary {{elf}} {{out}}.bin
     just check-bin-size {{out}}.bin
+    if [ "$(basename {{out}})" != chimera-gate ]; then just check-no-gate {{out}}.bin; fi
     rm -f {{out}}.bk2
     sections=$(rust-objdump -h {{elf}})
     syms=$(rust-nm {{elf}})
@@ -112,7 +121,16 @@ release-bin:
         cargo build --release -p chimera-stm32 --target $T $f --config "target.$T.rustflags=$flags"
         just bank2-split target/$T/release/chimera-stm32 target/release-bin/$out
         just check-bin-paths target/release-bin/$out.bin
+        just check-no-gate target/release-bin/$out.bin
     done
+
+# A .bin holding the power-pull aid (`bank2-gate`: its marker or its PULL
+# NOW) never ships.
+check-no-gate bin:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    n=$(grep -a -c -e BANK2-GATE-BUILD -e 'PULL NOW' "{{bin}}") || [ $? -eq 1 ]
+    if [ "${n:-0}" != 0 ]; then echo "{{bin}} is a bank2-gate build: never ship it" >&2; exit 1; fi
 
 # Stock bootloader SD flash erases sectors 1..size/128K+1: a .bin of 917,504 B
 # or more reaches sector 8, which wraps to sector 0 and erases the bootloader.
@@ -209,6 +227,7 @@ check:
     cargo test -p chimera-core -p chimera-engine --features master-tape
     cargo test -p chimera-core -p chimera-engine --no-default-features
     cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
+    cargo test -p chimera-core --features bank2-gate --test console_parse_test --test console_answer_test --test bank2_status_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
@@ -220,6 +239,7 @@ check:
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bank2-gate
     # The bench, an area a build: all of it no longer fits FLASH.
     for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; done
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
@@ -239,7 +259,7 @@ check:
 # all nested at once, against the stack, each call through a pointer
 # charged the deepest address-taken function, three deep; and that the audio
 # interrupt reaches no small-profile code (ADR 0108). Checked for the default,
-# no-default, orbit, every bench set (`bench_sets`) and sd-probe feature
+# no-default, orbit, bank2-gate, every bench set (`bench_sets`) and sd-probe feature
 # sets (sd-probe has no interrupts: frames only).
 # Needs the llvm-tools rustup component; a missing llvm-objdump or an
 # unreadable ELF fails the recipe instead of passing silently.
@@ -251,7 +271,7 @@ stack-check:
     nm="$bin/llvm-nm"
     test -x "$objdump" && test -x "$nm"
     elf=target/thumbv7em-none-eabihf/release/chimera-stm32
-    sets=("" "--no-default-features" "--features orbit")
+    sets=("" "--no-default-features" "--features orbit" "--features bank2-gate")
     for f in {{bench_sets}}; do sets+=("--no-default-features --features $f"); done
     sets+=("--no-default-features --features sd-probe")
     for features in "${sets[@]}"; do
@@ -301,6 +321,8 @@ clippy:
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features orbit -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features bank2-gate -- -D warnings
+    cargo clippy -p chimera-core --features bank2-gate --all-targets -- -D warnings
     for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features "$f" -- -D warnings || exit 1; done
     # Every bench area at once: too big to link, but no area's code is dead.
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}} -- -D warnings
