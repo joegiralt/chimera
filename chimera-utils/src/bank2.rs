@@ -65,6 +65,22 @@ pub fn check_pair(bin: &[u8], bk2: &[u8]) -> Result<Seal, String> {
         .ok_or("the .bk2 is shorter than its header")?;
     let h = Header::parse(hb).map_err(|v| format!("the .bk2 header judges {v:?}"))?;
     let seal = Seal::new(h.seal).ok_or("the .bk2 seal is a reserved value")?;
+    let body = &bk2[HEADER_LEN as usize..];
+    if body.len() != h.body_len as usize {
+        return Err(format!(
+            "the .bk2 body is {} B, its header says {}",
+            body.len(),
+            h.body_len
+        ));
+    }
+    let mut crc = Crc32::new();
+    crc.update(body);
+    if crc.finish() != h.body_crc {
+        return Err("the .bk2 body fails its CRC".into());
+    }
+    if Sha256::digest(body)[..8] != h.seal {
+        return Err("the .bk2 seal is not its body's SHA-256 prefix".into());
+    }
     match bin.windows(8).filter(|w| *w == h.seal).count() {
         1 => Ok(seal),
         n => Err(format!(

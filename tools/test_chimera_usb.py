@@ -739,8 +739,6 @@ class Put(unittest.TestCase):
         self.assertTrue(u.requests[1].startswith(b"put /CHIMERA/SOUNDS/S0000001.A 20 "), u.requests)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 SEAL = bytes(range(1, 9))
@@ -845,6 +843,45 @@ class Bank2(unittest.TestCase):
             tool.to_dfu, tool.flash_bin, tool.bank2_install = saved
         self.assertEqual(calls, [("flash", "a.bin"), ("bank2", "a.bk2")])
 
+    def test_update_refuses_a_bad_bank_1_file_before_any_dfu(self):
+        calls = []
+        saved = tool.to_dfu, tool.subprocess.run, tool.bank2_install
+        tool.to_dfu = lambda t, e: calls.append("dfu") or 0
+        tool.subprocess.run = lambda *a, **k: calls.append("run")
+        tool.bank2_install = lambda *a: calls.append("bank2") or 0
+        try:
+            bk2 = self.local("a.bk2", bytes(self.bk2))
+            magic = self.local("m.bin", b"CHIMERA2" + bytes(64))
+            big = self.local("big.bin", bytes(917_504))
+            for first in (bk2, magic, big):
+                self.assertEqual(tool.update(None, {}, first, bk2), 1, first)
+            self.assertEqual(tool.update(None, {}, bk2, self.local("fw.bin", b"fw")), 1)
+        finally:
+            tool.to_dfu, tool.subprocess.run, tool.bank2_install = saved
+        self.assertEqual(calls, [])
+
+    def test_a_plain_put_of_a_stale_bk2_prints_the_line(self):
+        f = self.local("old.bk2")
+        with PutUnit(after=b"OK staged: needs firmware 0.3.0\n") as u:
+            r = run_tool(["put", f, "/CHIMERA/SYSTEM/BANK2.BK2"], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(b"staged: needs firmware 0.3.0", r.stdout)
+
+    def test_dfu_util_has_a_timeout(self):
+        seen = {}
+
+        def run(cmd, **kw):
+            seen.update(kw)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        saved = tool.to_dfu, tool.wait_console, tool.subprocess.run
+        tool.to_dfu, tool.wait_console, tool.subprocess.run = (lambda t, e: 0), (lambda e, s: 0), run
+        try:
+            tool.flash_bin(None, {}, self.local("x.bin", b"fw"))
+        finally:
+            tool.to_dfu, tool.wait_console, tool.subprocess.run = saved
+        self.assertEqual(seen.get("timeout"), tool.DFU_UTIL_S)
+
     def test_update_runs_dfu_util_on_the_firmware_area(self):
         argv = []
 
@@ -865,3 +902,7 @@ class Bank2(unittest.TestCase):
     def test_the_public_tool_names_nothing_private(self):
         leak = re.compile(r"/home/|/Users/|https?://|ADR|docs/|chimera-(core|board|engine|desktop|stm32)|\.rs\b|joegiralt")
         self.assertIsNone(leak.search(TOOL.read_text()))
+
+
+if __name__ == "__main__":
+    unittest.main()

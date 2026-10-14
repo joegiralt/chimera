@@ -89,6 +89,10 @@ fn check_pair_matches_only_its_own_seal() {
     twice[200..208].copy_from_slice(&bk2[0x18..0x20]);
     assert!(bank2::check_pair(&twice, &bk2).is_err());
     assert!(bank2::check_pair(&bin, &bk2[..40]).is_err());
+    assert!(bank2::check_pair(&bin, &bk2[..bk2.len() - 32]).is_err());
+    let mut flipped = bk2.clone();
+    flipped[300] ^= 1;
+    assert!(bank2::check_pair(&bin, &flipped).is_err());
     bk2[0] = 0;
     assert!(bank2::check_pair(&bin, &bk2).is_err());
 }

@@ -70,6 +70,8 @@ BANK2_WAIT_S = 60.0  # the unit holds its UI loop for the whole write
 LATER = " (it installs at that firmware's next boot)"
 BANK2_REMOTE = "/CHIMERA/SYSTEM/BANK2.BK2"
 BANK2_SEAL = slice(0x18, 0x20)  # the .bk2 header's seal
+DFU_UTIL_S = 300  # a flash is ~30 s; this is only to not hang forever
+FW_MAX = 917_504  # the stock bootloader erases itself at this size
 FLASH_AT = "0x8020000:leave"  # the firmware area, never the bootloader
 PUT_MAX = 1 << 20  # the unit's limit
 PUT_LINE = 48  # bytes a data line carries: 64 base64 characters
@@ -402,6 +404,8 @@ def put_file(t: Target, local: str, remote: str, over=False) -> int:
     if status is Status.ERR:
         return fail(body.decode(errors="replace"))
     print("%s %d%s" % (remote, len(data), " PRESENT" if body == b"PRESENT" else ""))
+    if body.startswith(b"staged:"):
+        print(body.decode(errors="replace"))
     return 0
 
 
@@ -634,13 +638,23 @@ def stage_only(body: bytes) -> int:
 
 def flash_bin(t: Target, env, local: str) -> int:
     """The `.bin` into the firmware area by DFU, then the console back."""
-    if not pathlib.Path(local).is_file():
-        return fail("update: %s: no such file" % local)
+    if not local.lower().endswith(".bin"):
+        return fail("update takes the .bin first, then the .bk2 (not %s)" % local)
+    try:
+        head = pathlib.Path(local).read_bytes()
+    except OSError as e:
+        return fail("update: %s: %s" % (local, e.strerror or e))
+    if head[:8] == b"CHIMERA2":
+        return fail("update: %s is a .bk2 under a .bin name" % local)
+    if len(head) >= FW_MAX:
+        return fail("update: %s is %d bytes: too big for the firmware area" % (local, len(head)))
     rc = to_dfu(t, env)
     if rc:
         return rc
     try:
-        r = subprocess.run(["dfu-util", "-a0", "-d", "0483:df11", "-D", local, "-s", FLASH_AT], capture_output=True, text=True)
+        r = subprocess.run(["dfu-util", "-a0", "-d", "0483:df11", "-D", local, "-s", FLASH_AT], capture_output=True, text=True, timeout=DFU_UTIL_S)
+    except subprocess.TimeoutExpired:
+        return fail("update: dfu-util still running after %d s" % DFU_UTIL_S)
     except OSError as e:
         return fail("update: dfu-util: %s" % (e.strerror or e))
     sys.stdout.write(r.stdout)
