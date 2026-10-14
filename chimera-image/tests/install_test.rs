@@ -488,6 +488,56 @@ fn boot_action_table() {
     assert_eq!(boot_action(0), BootAction::Judge);
     assert_eq!(boot_action(0xFFFF_FFFF), BootAction::Judge);
     assert_eq!(boot_action(BANK2_BAD ^ 1), BootAction::Judge);
+    assert_eq!(boot_action(BANK2_INSTALLING), BootAction::EraseS0NoInstall);
+    assert_ne!(BANK2_BAD, BANK2_INSTALLING);
+    for a in [BootAction::Judge, BootAction::EraseS0ThenJudge] {
+        assert!(a.may_install(), "{a:?}");
+    }
+    assert!(!BootAction::EraseS0NoInstall.may_install());
+}
+
+/// A fault outside the boot's own install marks bank 2 bad; one inside it
+/// keeps the install's mark, so the next boot erases S0 and installs
+/// nothing: a cell that faults again costs one more reset, never a loop.
+#[test]
+fn a_fault_marks_by_what_ran() {
+    for before in [0, 0xFFFF_FFFF, BANK2_BAD, 0x1234_5678] {
+        assert_eq!(fault_mark(before), BANK2_BAD, "{before:08x}");
+    }
+    assert_eq!(fault_mark(BANK2_INSTALLING), BANK2_INSTALLING);
+    for before in [0, BANK2_BAD, BANK2_INSTALLING] {
+        assert_ne!(boot_action(fault_mark(before)), BootAction::Judge);
+    }
+}
+
+#[test]
+fn an_ecc_fault_is_bank2s_only_with_all_three() {
+    const DBECC: u32 = 1 << 26;
+    const SNECC: u32 = 1 << 25;
+    const PRECISERR: u32 = 1 << 9;
+    const IMPRECISERR: u32 = 1 << 10;
+    const IBUSERR: u32 = 1 << 8;
+    const MMARVALID: u32 = 1 << 7 | 1 << 1;
+    const UNDEFINSTR: u32 = 1 << 16;
+    // FA2R: the 256-bit word's index in bank 2; S0-S3 are words 0..16384.
+    let last = BANK2_LEN / FLASH_WORD - 1;
+    for cfsr in [PRECISERR, IMPRECISERR, IBUSERR, PRECISERR | 1 << 15] {
+        for far in [0, 7, last] {
+            assert!(bank2_ecc_fault(cfsr, DBECC, far), "{cfsr:x} {far}");
+            assert!(bank2_ecc_fault(cfsr, DBECC | SNECC, far));
+            assert!(!bank2_ecc_fault(cfsr, SNECC, far));
+            assert!(!bank2_ecc_fault(cfsr, 0, far));
+        }
+        // S4-S7: the bootloader's, never mapped.
+        assert!(!bank2_ecc_fault(cfsr, DBECC, last + 1));
+        assert!(!bank2_ecc_fault(cfsr, DBECC, 0x7fff));
+        // Bits above FAIL_ECC_ADDR2[14:0] are reserved.
+        assert!(bank2_ecc_fault(cfsr, DBECC, 0xffff_8000));
+    }
+    // Not a bus fault: an MPU or usage fault with a stale flag.
+    for cfsr in [0, MMARVALID, UNDEFINSTR] {
+        assert!(!bank2_ecc_fault(cfsr, DBECC, 0));
+    }
 }
 
 #[test]
@@ -509,6 +559,7 @@ fn auto_install_table() {
     for f in &all {
         let want = if *f == good { Skip } else { Install };
         assert_eq!(auto_install(f, &good), want, "{f:?}");
+        assert_eq!(wants_staged(f), want == Install, "{f:?}");
         for s in &all[..7] {
             assert_eq!(auto_install(f, s), Skip, "{f:?} {s:?}");
         }

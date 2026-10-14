@@ -4,7 +4,7 @@ use core::fmt::{self, Write};
 
 /// Bank 1's state of the door, for the board.
 pub use chimera_engine::bank2::{DOOR_CELL, DOOR_MAGIC, PROBE_ADDS, TABLE_LEN};
-use chimera_image::Verdict;
+use chimera_image::{FlashFail, Verdict};
 pub use chimera_image::{Seal, Version};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +26,9 @@ pub enum Bank2Status {
         version: Version,
         seal: [u8; 8],
     },
+    /// A double ECC error marked bank 2 bad and S0's erase failed: never
+    /// read this boot.
+    EccEraseFailed(FlashFail),
 }
 
 impl Bank2Status {
@@ -65,6 +68,10 @@ impl Bank2Status {
                 write!(w, "open {} seal=", version.as_str())?;
                 seal.iter().try_for_each(|b| write!(w, "{b:02x}"))
             }
+            Self::EccEraseFailed(f) => {
+                w.write_str("ecc erase failed ")?;
+                write_flash_fail(*f, w)
+            }
         }
     }
 
@@ -75,5 +82,18 @@ impl Bank2Status {
     /// What ABOUT shows: no bank jargon (owner decision 8).
     pub fn label(&self) -> &'static str {
         if self.is_open() { "OK" } else { "NEEDS UPDATE" }
+    }
+}
+
+/// A flash op's failure in words: `timeout`, `errors 00040000`, …
+pub fn write_flash_fail(f: FlashFail, w: &mut impl Write) -> fmt::Result {
+    match f {
+        FlashFail::Busy => w.write_str("busy"),
+        FlashFail::Locked => w.write_str("locked"),
+        FlashFail::NotWritable => w.write_str("not writable"),
+        FlashFail::Errors(e) => write!(w, "errors {e:08x}"),
+        FlashFail::Timeout => w.write_str("timeout"),
+        FlashFail::NotErased => w.write_str("not erased"),
+        FlashFail::NoClock => w.write_str("no cycle counter"),
     }
 }

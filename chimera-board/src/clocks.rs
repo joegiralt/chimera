@@ -73,7 +73,8 @@ pub fn enable_cycle_counter(dcb: &mut DCB, dwt: &mut DWT) -> bool {
     counting()
 }
 
-fn counting() -> bool {
+/// The DWT cycle counter moves.
+pub(crate) fn counting() -> bool {
     let start = DWT::cycle_count();
     cortex_m::asm::delay(1_000);
     DWT::cycle_count() != start

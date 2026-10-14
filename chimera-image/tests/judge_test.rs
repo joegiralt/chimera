@@ -169,6 +169,7 @@ fn door_opens_only_on_good() {
     assert_eq!(d.door_addr(), BANK2_BASE + 0x100);
     assert_eq!(d.version().as_str(), "0.2.0 02e440e2");
     assert_eq!(d.seal().bytes(), SEAL);
+    assert_eq!(judged(img.clone(), &s), Verdict::Good(*d.header()));
     let other = Seal::new([9; 8]).unwrap();
     assert!(matches!(
         Door::open(&mut Mem(img.clone(), false), &other),

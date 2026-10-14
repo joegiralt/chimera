@@ -41,6 +41,14 @@ fn bank2_status_lines() {
             "bank2 stale have 0.1.9 aaaaaaaa",
         ),
         (open(), "bank2 open 0.2.0 02e440e2 seal=0123456789abcdef"),
+        (
+            EccEraseFailed(chimera_image::FlashFail::Timeout),
+            "bank2 ecc erase failed timeout",
+        ),
+        (
+            EccEraseFailed(chimera_image::FlashFail::NoClock),
+            "bank2 ecc erase failed no cycle counter",
+        ),
     ];
     for (s, want) in cases {
         assert_eq!(line(&s), want);
@@ -51,7 +59,8 @@ fn bank2_status_lines() {
 fn only_open_is_ok() {
     use Bank2Status::*;
     assert_eq!(open().label(), "OK");
-    for s in [Unsealed, Empty, Torn, Foreign, Format(2), Corrupt] {
+    let erase = EccEraseFailed(chimera_image::FlashFail::Busy);
+    for s in [Unsealed, Empty, Torn, Foreign, Format(2), Corrupt, erase] {
         assert_eq!(s.label(), "NEEDS UPDATE");
     }
     let have = Version::new("0.1.9 aaaaaaaa");
@@ -126,4 +135,22 @@ fn status_has_the_bank2_line() {
     let mut w = String::new();
     chimera_core::console::write_status(&ui, &mut w).unwrap();
     assert!(w.ends_with("\nbank2 empty\n"), "{w}");
+}
+
+/// `INSTALLING <version>` inside the screen: the hash goes first, then
+/// whatever still doesn't fit.
+#[test]
+fn installing_fits_the_screen() {
+    use chimera_core::ui::{draw, installing, theme};
+    let fit = |v: &str| {
+        let l = installing::line(v);
+        let w = draw::text_width(&theme::FONT_VALUE, l.as_str(), theme::LABEL_TRACKING);
+        assert!(w <= installing::MAX_W, "{} is {w} px", l.as_str());
+        l.as_str().to_owned()
+    };
+    assert_eq!(fit("0.2.0 02e440e2"), "INSTALLING 0.2.0 02e440e2");
+    assert_eq!(fit("0.10.12 02e440e2"), "INSTALLING 0.10.12");
+    let long = fit("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW");
+    assert!(long.starts_with("INSTALLING WW"), "{long}");
+    assert_eq!(fit(""), "INSTALLING");
 }

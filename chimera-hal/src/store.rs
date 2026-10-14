@@ -61,14 +61,10 @@ pub struct FileName {
 }
 
 impl FileName {
-    /// `stem` is 1..=8 and `ext` 0..=3 bytes of A-Z 0-9.
-    pub fn new(dir: Dir, stem: &[u8], ext: &[u8]) -> Option<FileName> {
-        let ok = |b: &[u8], min: usize, max: usize| {
-            (min..=max).contains(&b.len())
-                && b.iter()
-                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-        };
-        if !ok(stem, 1, 8) || !ok(ext, 0, 3) {
+    /// `stem` is 1..=8 and `ext` 0..=3 bytes of A-Z 0-9. Const, so a fixed
+    /// name is checked at compile time.
+    pub const fn new(dir: Dir, stem: &[u8], ext: &[u8]) -> Option<FileName> {
+        if !name_ok(stem, 1, 8) || !name_ok(ext, 0, 3) {
             return None;
         }
         let mut f = FileName {
@@ -78,8 +74,8 @@ impl FileName {
             stem_len: stem.len() as u8,
             ext_len: ext.len() as u8,
         };
-        f.stem[..stem.len()].copy_from_slice(stem);
-        f.ext[..ext.len()].copy_from_slice(ext);
+        f.stem.split_at_mut(stem.len()).0.copy_from_slice(stem);
+        f.ext.split_at_mut(ext.len()).0.copy_from_slice(ext);
         Some(f)
     }
 
@@ -94,6 +90,21 @@ impl FileName {
     pub fn ext(&self) -> &[u8] {
         &self.ext[..self.ext_len as usize]
     }
+}
+
+/// `min..=max` bytes of A-Z 0-9.
+const fn name_ok(b: &[u8], min: usize, max: usize) -> bool {
+    if b.len() < min || b.len() > max {
+        return false;
+    }
+    let mut i = 0;
+    while i < b.len() {
+        if !(b[i].is_ascii_uppercase() || b[i].is_ascii_digit()) {
+            return false;
+        }
+        i += 1;
+    }
+    true
 }
 
 /// Why a store operation failed.

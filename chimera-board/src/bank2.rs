@@ -14,7 +14,7 @@ use chimera_image::regs::{
 };
 use chimera_image::{
     BANK2_BASE, BANK2_LEN, Bank2Memory, Bank2Sector, Bank2Word, Flash, FlashFail, ImageRead,
-    ReadFail,
+    ReadFail, Verdict,
 };
 use cortex_m::peripheral::DWT;
 use stm32h7xx_hal::pac;
@@ -227,13 +227,29 @@ fn wait(start: u32, limit: u32) -> Result<(), FlashFail> {
 /// linked into bank 1 reads bank 2 with the door closed.
 pub struct FlashBank2 {
     cpu_hz: u32,
+    /// The cycle counter moves: every op's timeout can expire.
+    clock: bool,
 }
 
 impl FlashBank2 {
     pub fn new(cpu_hz: u32) -> Self {
         DOOR_CELL.close();
         set_mpu(Mpu2::Write);
-        FlashBank2 { cpu_hz }
+        FlashBank2 {
+            cpu_hz,
+            clock: crate::clocks::counting(),
+        }
+    }
+
+    /// `writable`, and a moving cycle counter: without one an op stuck
+    /// busy would hang the boot, before the watchdog is armed.
+    fn ready(&self) -> Result<(), FlashFail> {
+        Self::writable()?;
+        if self.clock {
+            Ok(())
+        } else {
+            Err(FlashFail::NoClock)
+        }
     }
 
     /// Still as `new` left it: region 2 `Write`, the door closed. Anything
@@ -284,7 +300,7 @@ unsafe impl Flash for FlashBank2 {
     /// against `ERASE_TIMEOUT_MS`. No retry.
     fn erase(&mut self, s: Bank2Sector) -> Result<(), FlashFail> {
         let start = DWT::cycle_count();
-        Self::writable()?;
+        self.ready()?;
         let u = Unlocked::new()?;
         clear_flags();
         let v = erase_cr(cr(), s);
@@ -296,7 +312,7 @@ unsafe impl Flash for FlashBank2 {
     /// Refused unless erased; clear SR2, PG at ×32, the eight words, DSB,
     /// then WBNE and QW polled against `WORD_TIMEOUT_MS`.
     fn program(&mut self, w: Bank2Word, data: &[u8; 32]) -> Result<(), FlashFail> {
-        Self::writable()?;
+        self.ready()?;
         if Self::word(w) != [u32::MAX; 8] {
             return Err(FlashFail::NotErased);
         }
@@ -316,33 +332,90 @@ unsafe impl Flash for FlashBank2 {
     }
 }
 
-/// Bank 2 judged against this build's seal; on `Good`, region 2 `Open`,
-/// the door cell opened and the door checked once.
-#[cfg(feature = "bank2")]
-pub fn boot_judge() -> Bank2Status {
-    open_door()
+/// Bank 2 as the boot left it.
+pub struct Bank2Boot {
+    pub status: Bank2Status,
+    /// Flash's verdict, when the boot may install the staged file over it;
+    /// `None`: unsealed, or bank 2 marked and not to be installed this boot.
+    pub install_over: Option<Verdict>,
 }
 
-/// Bank 2 judged against this build's seal; on `Good`, region 2 `Open`,
-/// the door cell opened and the door checked once: `probe(1) == 43`, the
-/// table's first and last bytes. Anything less leaves region 2 `Read`
-/// (the console's `flash` still reads S0) and the cell closed. The boot's
-/// and an install's one way in.
+/// The boot's bank-2 step, before anything reads bank 2: BKP14R's mark
+/// first (`boot_action`): a fault marked is cleared, then S0 erased (erase
+/// clears its ECC), so one fault costs one reset, never a loop. An erase
+/// that fails leaves bank 2 unread and closed this boot. Then the judge:
+/// on `Good`, region 2 `Open`, the door cell opened and the door checked.
+/// The cycle counter must already run: it bounds the erase.
 #[cfg(feature = "bank2")]
-fn open_door() -> Bank2Status {
+pub fn boot_judge(rtc: &pac::RTC, cpu_hz: u32) -> Bank2Boot {
+    use chimera_image::{BootAction, boot_action};
+
+    let action = boot_action(crate::dfu::bank2_mark(rtc));
+    if action != BootAction::Judge {
+        crate::dfu::set_bank2_mark(rtc, 0);
+        let erased = FlashBank2::new(cpu_hz).erase(Bank2Sector::S0);
+        set_mpu(Mpu2::Read);
+        if let Err(f) = erased {
+            return Bank2Boot {
+                status: Bank2Status::EccEraseFailed(f),
+                install_over: None,
+            };
+        }
+    }
+    let Some(seal) = crate::bank2_seal() else {
+        return Bank2Boot {
+            status: Bank2Status::Unsealed,
+            install_over: None,
+        };
+    };
+    let (status, flash) = open_door(&seal);
+    Bank2Boot {
+        status,
+        install_over: action.may_install().then_some(flash),
+    }
+}
+
+/// A build without bank 2's section has no seal: it never reads bank 2.
+#[cfg(not(feature = "bank2"))]
+pub fn boot_judge(_: &pac::RTC, _: u32) -> Bank2Boot {
+    Bank2Boot {
+        status: Bank2Status::Unsealed,
+        install_over: None,
+    }
+}
+
+/// The HardFault handler's first step: a double ECC error read from S0-S3
+/// (a bus fault, SR2.DBECCERR, FA2R in S0-S3) marks BKP14R and resets.
+/// Anything else returns, to the handler's halt. Register reads only, no
+/// HAL object: safe in a fault handler.
+#[cfg(feature = "bank2")]
+pub fn reset_on_ecc_fault() {
+    // SAFETY: SCB_CFSR, read only; its bits are sticky until written.
+    let cfsr = unsafe { (*cortex_m::peripheral::SCB::PTR).cfsr.read() };
+    if chimera_image::bank2_ecc_fault(cfsr, sr(), bank2().far.read().bits()) {
+        crate::dfu::mark_fault_and_reset();
+    }
+}
+
+/// Bank 2 judged against `seal`, this build's, and flash's verdict. Region
+/// 2 `Read` and the door cell closed first, so every path but open ends
+/// there (the console's `flash` still reads S0). On `Good`: region 2
+/// `Open`, the cell opened and the door checked once: `probe(1) == 43`,
+/// the table's first and last bytes. The boot's and an install's one way
+/// in.
+#[cfg(feature = "bank2")]
+fn open_door(seal: &chimera_image::Seal) -> (Bank2Status, Verdict) {
     use chimera_core::bank2::{DOOR_MAGIC, PROBE_ADDS, TABLE_LEN};
     use chimera_image::Door;
 
-    let Some(seal) = crate::bank2_seal() else {
-        return Bank2Status::Unsealed;
-    };
     DOOR_CELL.close();
     set_mpu(Mpu2::Read);
     clear_flags();
-    let door = match Door::open(&mut FlashRead, &seal) {
+    let door = match Door::open(&mut FlashRead, seal) {
         Ok(d) => d,
-        Err(v) => return Bank2Status::from_verdict(&v),
+        Err(v) => return (Bank2Status::from_verdict(&v), v),
     };
+    let flash = Verdict::Good(*door.header());
     set_mpu(Mpu2::Open);
     // SAFETY: `door` was opened with `bank2_seal()`, this build's seal.
     let ok = unsafe { DOOR_CELL.open(&door) }
@@ -356,18 +429,71 @@ fn open_door() -> Bank2Status {
     if !ok {
         DOOR_CELL.close();
         set_mpu(Mpu2::Read);
-        return Bank2Status::Corrupt;
+        return (Bank2Status::Corrupt, flash);
     }
-    Bank2Status::Open {
+    let status = Bank2Status::Open {
         version: *door.version(),
         seal: door.seal().bytes(),
-    }
+    };
+    (status, flash)
 }
 
-/// A build without bank 2's section has no seal: it never opens it.
-#[cfg(not(feature = "bank2"))]
-pub fn boot_judge() -> Bank2Status {
-    Bank2Status::Unsealed
+/// The boot's install, once the card is mounted and before the project
+/// loads: the staged file judged against this build's seal, only if
+/// `flash` could take it (`wants_staged`), and `auto_install` decides. On
+/// `Install`: BKP14R `BANK2_INSTALLING`, DON'T POWER OFF, `install`, the
+/// door, BKP14R cleared. A fault meanwhile keeps the mark, so the next
+/// boot installs nothing. No audio yet and no watchdog (it arms in step
+/// 3): nothing to feed. A failure leaves the staged file for the next
+/// boot. `None`: nothing written; else bank 2 as the door then judged it.
+#[cfg(feature = "bank2")]
+#[inline(never)]
+pub fn boot_install(
+    store: &mut impl chimera_hal::store::Store,
+    display: &mut impl chimera_hal::ChimeraDisplay,
+    marker: &crate::dfu::Marker,
+    flash: &Verdict,
+    cpu_hz: u32,
+) -> Option<Bank2Status> {
+    use chimera_core::console::CardImage;
+    use chimera_image::{AutoInstall, BANK2_INSTALLING, auto_install, wants_staged};
+
+    let seal = crate::bank2_seal()?;
+    if !wants_staged(flash) {
+        return None;
+    }
+    let vol = store.mount().ok()?;
+    let mut staged = CardImage::new(store, vol);
+    let v = chimera_image::judge(&mut staged, &seal);
+    let (AutoInstall::Install, Verdict::Good(h)) = (auto_install(flash, &v), v) else {
+        return None;
+    };
+    marker.bank2_mark(BANK2_INSTALLING);
+    let (_, now) = write_staged(&mut staged, display, &h, &seal, cpu_hz);
+    marker.bank2_mark(0);
+    Some(now)
+}
+
+/// `h`, judged `Good` in `staged`, written into bank 2 behind DON'T POWER
+/// OFF, then the door: the install's result and bank 2 as the door then
+/// judged it. The boot's install and the console's, one copy.
+#[cfg(feature = "bank2")]
+#[inline(never)]
+fn write_staged(
+    staged: &mut impl ImageRead,
+    display: &mut impl chimera_hal::ChimeraDisplay,
+    h: &chimera_image::Header,
+    seal: &chimera_image::Seal,
+    cpu_hz: u32,
+) -> (
+    Result<chimera_image::Header, chimera_image::InstallFail>,
+    Bank2Status,
+) {
+    let mut flash = FlashBank2::new(cpu_hz);
+    chimera_core::ui::installing::draw(display, h.version.as_str());
+    let mut buf = [0u8; 512];
+    let r = chimera_image::install(&mut flash, staged, seal, &mut buf);
+    (r, open_door(seal).0)
 }
 
 /// `bank2 install`, from the UI loop before its answer starts. The staged
@@ -387,7 +513,6 @@ pub fn run_install(
     use chimera_core::console::{
         Bank2Answer, Bank2Audio, Bank2Refusal, CardImage, check_staged, installed,
     };
-    use chimera_core::ui::{fmt::FmtBuf, installing};
 
     let refuse = Bank2Answer::Refused;
     let Some(seal) = crate::bank2_seal() else {
@@ -409,13 +534,7 @@ pub fn run_install(
     };
     let before = audio();
     ui.close_bank2();
-    let mut flash = FlashBank2::new(cpu_hz);
-    let mut line = FmtBuf::new();
-    let _ = write!(line, "INSTALLING {}", h.version.as_str());
-    installing::draw(display, line.as_str());
-    let mut buf = [0u8; 512];
-    let r = chimera_image::install(&mut flash, &mut staged, &seal, &mut buf);
-    let now = open_door();
+    let (r, now) = write_staged(&mut staged, display, &h, &seal, cpu_hz);
     ui.set_bank2(now);
     let after = audio();
     let audio = Bank2Audio {

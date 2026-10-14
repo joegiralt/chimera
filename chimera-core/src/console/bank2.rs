@@ -31,9 +31,10 @@ impl Arg for Bank2Arg {
 
 /// The staged image: `/CHIMERA/SYSTEM/BANK2.BK2`. Not a `.bin`, and not in
 /// the root: the stock bootloader never takes it.
-pub fn staged_file() -> FileName {
-    FileName::new(Dir::System, b"BANK2", b"BK2").expect("an 8.3 name")
-}
+pub const STAGED: FileName = match FileName::new(Dir::System, b"BANK2", b"BK2") {
+    Some(f) => f,
+    None => panic!("an 8.3 name"),
+};
 
 /// The staged file as an image, a card read a call. A read past its end is
 /// `Err`; the card's own error is kept for `error`.
@@ -91,7 +92,7 @@ impl<S: Store + ?Sized> ImageRead for CardImage<'_, S> {
             return Ok(());
         }
         let mut fill = Fill { buf, at: 0 };
-        match self.store.read_at(self.vol, staged_file(), off, &mut fill) {
+        match self.store.read_at(self.vol, STAGED, off, &mut fill) {
             Ok(()) if fill.at == fill.buf.len() => Ok(()),
             Ok(()) => Err(ReadFail),
             Err(e) => {
@@ -181,13 +182,14 @@ pub fn installed(
     now: &Bank2Status,
     audio: Bank2Audio,
 ) -> Bank2Answer {
+    // The door judges after the install's last judge: open is open.
+    if let (Ok(_) | Err(InstallFail::Readback(_)), Bank2Status::Open { version, .. }) = (r, now) {
+        return Bank2Answer::Open {
+            version: *version,
+            audio,
+        };
+    }
     let why = match r {
-        Ok(h) if now.is_open() => {
-            return Bank2Answer::Open {
-                version: h.version,
-                audio,
-            };
-        }
         Ok(_) => Bank2Fail::Door,
         Err(InstallFail::Staged(v)) => Bank2Fail::Staged(Bank2Status::from_verdict(&v)),
         Err(InstallFail::Io) => Bank2Fail::StagedRead,
@@ -204,14 +206,7 @@ fn write_audio(a: &Bank2Audio, t: &mut impl Write) -> fmt::Result {
 }
 
 fn write_flash(f: FlashFail, at: FlashAt, t: &mut impl Write) -> fmt::Result {
-    match f {
-        FlashFail::Busy => t.write_str("busy"),
-        FlashFail::Locked => t.write_str("locked"),
-        FlashFail::NotWritable => t.write_str("not writable"),
-        FlashFail::Errors(e) => write!(t, "errors {e:08x}"),
-        FlashFail::Timeout => t.write_str("timeout"),
-        FlashFail::NotErased => t.write_str("not erased"),
-    }?;
+    crate::bank2::write_flash_fail(f, t)?;
     match at {
         FlashAt::Sector(s) => write!(t, " at S{}", s.index()),
         FlashAt::Word(w) => write!(t, " at {:08x}", w.get()),

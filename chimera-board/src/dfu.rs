@@ -36,6 +36,43 @@ const USB_STEP: usize = 6;
 const USB_REGS: usize = 7;
 /// BKP13R: `SOFT_INTENT` before a firmware reset, cleared every boot.
 const INTENT: usize = 13;
+/// BKP14R: bank 2's mark, `BANK2_BAD` or `BANK2_INSTALLING`. The HardFault
+/// handler and the boot's install write it; only the boot's bank-2 judge
+/// reads and clears it.
+#[cfg(feature = "bank2")]
+const BANK2_MARK: usize = 14;
+
+/// BKP14R as the last boot or fault left it.
+#[cfg(feature = "bank2")]
+pub fn bank2_mark(rtc: &pac::rtc::RegisterBlock) -> u32 {
+    rtc.bkpr[BANK2_MARK].read().bits()
+}
+
+#[cfg(feature = "bank2")]
+pub fn set_bank2_mark(rtc: &pac::rtc::RegisterBlock, v: u32) {
+    rtc.bkpr[BANK2_MARK].write(|w| w.bkp().bits(v));
+}
+
+/// From the HardFault handler, on a double ECC error read from S0-S3:
+/// BKP14R by `fault_mark`, the soft-reset intent, then reset; the next boot
+/// erases S0 before it reads bank 2. Raw registers only. Returns only if
+/// the mark did not land (no DBP): a reset would then fault again every
+/// boot, so the handler halts instead.
+#[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
+pub fn mark_fault_and_reset() {
+    // SAFETY: the RTC's fixed register block, its backup registers only,
+    // from a fault handler: nothing runs after it. DBP and RTCAPBEN are
+    // set by `after_reset`; the read-back below says if they were not.
+    let rtc = unsafe { &*pac::RTC::ptr() };
+    let mark = chimera_image::fault_mark(bank2_mark(rtc));
+    set_bank2_mark(rtc, mark);
+    if bank2_mark(rtc) != mark {
+        return;
+    }
+    rtc.bkpr[INTENT].write(|w| w.bkp().bits(SOFT_INTENT));
+    cortex_m::asm::dsb();
+    cortex_m::peripheral::SCB::sys_reset()
+}
 
 /// `after_reset` ran: RTCAPBEN is set, the marker is clear (or stuck, and
 /// ignored) and RCC_RSR is read and cleared. Only `after_reset` makes one,
@@ -70,6 +107,12 @@ impl Marker {
     pub fn reset(&self) -> ! {
         self.0.bkpr[INTENT].write(|w| w.bkp().bits(SOFT_INTENT));
         cortex_m::peripheral::SCB::sys_reset()
+    }
+
+    /// BKP14R: `BANK2_INSTALLING` around the boot's install, 0 after.
+    #[cfg(feature = "bank2")]
+    pub fn bank2_mark(&self, v: u32) {
+        set_bank2_mark(&self.0, v);
     }
 
     /// How far start-up got, for the next boot's `last_stage`.

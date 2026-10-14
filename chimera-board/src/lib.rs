@@ -99,8 +99,9 @@ pub struct Board {
 #[cfg(not(feature = "sd-probe"))]
 struct SynthParts {
     reset_cause: ResetCause,
-    /// Bank 2 as the boot judged it: ABOUT and `status`.
-    bank2: chimera_core::bank2::Bank2Status,
+    /// Bank 2 as the boot judged it: ABOUT and `status`, and the boot's
+    /// install.
+    bank2: bank2::Bank2Boot,
     led: stm32h7xx_hal::gpio::PE1<Output<PushPull>>,
     beat_led: orbit::BeatLed,
     backlight: Backlight,
@@ -141,9 +142,12 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     #[cfg(feature = "usb-console")]
     let ccdr = usb::route_kernel_clock(ccdr);
     cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
-    // Bank 2 judged before anything could call into it (ADR 0137).
+    // Bank 2 judged before anything could call into it (ADR 0137), a
+    // fault's mark first; the cycle counter bounds its erase.
     #[cfg(not(feature = "sd-probe"))]
-    let bank2 = bank2::boot_judge();
+    let _ = clocks::enable_cycle_counter(&mut cp.DCB, &mut cp.DWT);
+    #[cfg(not(feature = "sd-probe"))]
+    let bank2 = bank2::boot_judge(&dp.RTC, clk.cpu_hz);
     #[cfg(not(feature = "sd-probe"))]
     shared::build_waves();
 
@@ -366,7 +370,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
 
     let mut controls = Stm32Controls::new();
     let ui = shared::take_ui().expect("UI state taken once");
-    ui.set_bank2(bank2);
+    ui.set_bank2(bank2.status);
     ui.project_mut().set_gate_clock(gate_ms);
 
     // Start-up, in order, behind the splash until PART 1 can be drawn:
@@ -392,6 +396,14 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     // file that can't be read still applies the defaults silently:
     // private issue #197
     let (mut sync, mut settings, _) = SystemSync::boot(&mut card, store);
+    // A staged bank 2 this build can open, installed behind DON'T POWER
+    // OFF before the project, which may play from it.
+    #[cfg(feature = "bank2")]
+    if let Some(flash) = &bank2.install_over
+        && let Some(now) = bank2::boot_install(store, &mut display, &marker, flash, clk.cpu_hz)
+    {
+        ui.set_bank2(now);
+    }
     ui.set_theme(settings.theme);
     ui.set_midi(settings.midi);
     apply_theme(settings.theme, &mut theme, &mut backlight, &mut display);

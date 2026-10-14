@@ -970,6 +970,7 @@ fn every_flash_failure_has_its_words() {
         (FlashFail::Errors(0x0004_0000), "errors 00040000"),
         (FlashFail::Timeout, "timeout"),
         (FlashFail::NotErased, "not erased"),
+        (FlashFail::NoClock, "no cycle counter"),
     ] {
         let mut u = Fake::new();
         u.bank2 = Some(Bank2Answer::Failed {
@@ -1055,10 +1056,6 @@ fn the_install_and_the_door_decide_the_answer() {
             InstallFail::Flash(FlashFail::Timeout, at),
             Bank2Fail::Flash(FlashFail::Timeout, at),
         ),
-        (
-            InstallFail::Readback(Verdict::Torn),
-            Bank2Fail::Readback(Bank2Status::Torn),
-        ),
         (InstallFail::Io, Bank2Fail::StagedRead),
         (
             InstallFail::Staged(Verdict::Corrupt),
@@ -1068,4 +1065,18 @@ fn the_install_and_the_door_decide_the_answer() {
         // Even if the door somehow judged open, a failed install says so.
         assert_eq!(installed(Err(r), &open, AUDIO), fail(why), "{r:?}");
     }
+    // The install's last judge failed, but the door's own judge, a moment
+    // later, opened bank 2: it is open, and the answer says so.
+    let r = Err(InstallFail::Readback(Verdict::Unreadable));
+    assert_eq!(
+        installed(r, &open, AUDIO),
+        Bank2Answer::Open {
+            version: v020(),
+            audio: AUDIO
+        }
+    );
+    assert_eq!(
+        installed(r, &Bank2Status::Torn, AUDIO),
+        fail(Bank2Fail::Readback(Bank2Status::Corrupt))
+    );
 }

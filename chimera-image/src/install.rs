@@ -63,6 +63,8 @@ pub enum FlashFail {
     Timeout,
     /// A program over a word not all 0xFF.
     NotErased,
+    /// The cycle counter isn't counting: no op could be timed out.
+    NoClock,
 }
 
 /// Bank 2's flash controller.
@@ -172,21 +174,61 @@ fn program_words(flash: &mut impl Flash, off: u32, data: &[u8]) -> Result<(), In
     Ok(())
 }
 
-/// The mark bank 1 leaves in RAM before resetting on a bank-2 ECC fault.
+/// RTC_BKP14R after a double ECC error read from S0-S3: the HardFault
+/// handler's mark before it resets. The backup domain survives the reset.
 pub const BANK2_BAD: u32 = 0xB2BA_D0EC;
+/// RTC_BKP14R while the boot installs the staged file: cleared when the
+/// install ends, kept by a fault during it.
+pub const BANK2_INSTALLING: u32 = 0xB21A_57A1;
 
+/// What the boot does with bank 2 before reading it, by BKP14R.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BootAction {
-    EraseS0ThenJudge,
     Judge,
+    /// A word faulted: erase S0 (erase clears its ECC), judge, reinstall.
+    EraseS0ThenJudge,
+    /// The last boot's install never ended: erase S0, judge, install
+    /// nothing this boot, so a word that faults again costs one more reset.
+    EraseS0NoInstall,
+}
+
+impl BootAction {
+    /// The staged file may be installed this boot.
+    pub fn may_install(self) -> bool {
+        self != BootAction::EraseS0NoInstall
+    }
 }
 
 pub fn boot_action(mark: u32) -> BootAction {
-    if mark == BANK2_BAD {
-        BootAction::EraseS0ThenJudge
-    } else {
-        BootAction::Judge
+    match mark {
+        BANK2_BAD => BootAction::EraseS0ThenJudge,
+        BANK2_INSTALLING => BootAction::EraseS0NoInstall,
+        _ => BootAction::Judge,
     }
+}
+
+/// BKP14R's word after a bank-2 ECC fault, from what it held.
+pub const fn fault_mark(before: u32) -> u32 {
+    if before == BANK2_INSTALLING {
+        BANK2_INSTALLING
+    } else {
+        BANK2_BAD
+    }
+}
+
+/// SCB_CFSR's bus-fault bits: IBUSERR, PRECISERR, IMPRECISERR.
+const CFSR_BUS: u32 = 0b111 << 8;
+/// FLASH_ECC_FA2R's FAIL_ECC_ADDR2[14:0]: the faulting 256-bit word's index
+/// in bank 2 (RM0433 § FLASH_ECC_FA2R; 2^15 words span the 1 MiB bank).
+const FA_WORD: u32 = 0x7fff;
+
+/// A fault that a double ECC error in S0-S3 explains: a bus fault (CFSR),
+/// SR2.DBECCERR, and FA2R's word inside S0-S3. Anything else is not
+/// bank 2's to clear.
+pub const fn bank2_ecc_fault(cfsr: u32, sr2: u32, fa2r: u32) -> bool {
+    cfsr & CFSR_BUS != 0
+        && sr2 & crate::regs::SR_DBECCERR != 0
+        && fa2r & FA_WORD < BANK2_LEN / FLASH_WORD
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -198,9 +240,14 @@ pub enum AutoInstall {
 /// Both judged against this build's seal: install a good staged file unless
 /// flash already holds it.
 pub fn auto_install(flash: &Verdict, staged: &Verdict) -> AutoInstall {
-    match (flash, staged) {
-        (Verdict::Good(_), _) => AutoInstall::Skip,
-        (_, Verdict::Good(_)) => AutoInstall::Install,
+    match staged {
+        Verdict::Good(_) if wants_staged(flash) => AutoInstall::Install,
         _ => AutoInstall::Skip,
     }
+}
+
+/// `auto_install` could answer `Install` over `flash`: otherwise the staged
+/// file needn't be read at all.
+pub fn wants_staged(flash: &Verdict) -> bool {
+    !matches!(flash, Verdict::Good(_))
 }

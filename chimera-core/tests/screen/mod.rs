@@ -2067,10 +2067,7 @@ pub const OVERLAYS: &[(&str, Overlay)] = &[
     ("busy", Overlay::Busy),
     ("toast_saved", Overlay::Toast("SAVED")),
     ("toast_exfat", Overlay::Toast("CARD IS EXFAT: FORMAT FAT32")),
-    (
-        "installing",
-        Overlay::Installing("INSTALLING 0.2.0 02e440e2"),
-    ),
+    ("installing", Overlay::Installing("0.2.0 02e440e2")),
 ];
 
 /// The two faces of the one overlay component.
@@ -2078,7 +2075,7 @@ pub const OVERLAYS: &[(&str, Overlay)] = &[
 pub enum Overlay {
     Busy,
     Toast(&'static str),
-    /// Bank 2's install, the whole screen.
+    /// Bank 2's install, the whole screen, with the version it installs.
     Installing(&'static str),
 }
 

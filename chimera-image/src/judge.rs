@@ -101,7 +101,7 @@ pub unsafe trait Bank2Memory: ImageRead {}
 #[derive(Debug)]
 pub struct Door {
     door_addr: u32,
-    version: Version,
+    header: Header,
     seal: Seal,
 }
 
@@ -110,7 +110,7 @@ impl Door {
         match judge(m, want) {
             Verdict::Good(h) => Ok(Door {
                 door_addr: BANK2_BASE + h.door_off,
-                version: h.version,
+                header: h,
                 seal: *want,
             }),
             v => Err(v),
@@ -122,7 +122,12 @@ impl Door {
     }
 
     pub fn version(&self) -> &Version {
-        &self.version
+        &self.header.version
+    }
+
+    /// The header it was judged `Good` on.
+    pub fn header(&self) -> &Header {
+        &self.header
     }
 
     pub fn seal(&self) -> &Seal {

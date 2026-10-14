@@ -23,7 +23,7 @@ use core::fmt::{self, Write};
 use chimera_hal::Ms;
 use chimera_hal::store::{CHUNK, Dir, FileName, Files, StoreError};
 
-use super::{Arg, CardImage, Out, Stalled, Words, sound_file::exists, staged_file};
+use super::{Arg, CardImage, Out, STAGED, Stalled, Words, sound_file::exists};
 use crate::bank2::{Seal, Version};
 use crate::project::{ProjectCheck, peek_entry, project_file};
 use crate::storage::{
@@ -464,7 +464,7 @@ fn bank2_session<F: Files, P: Out>(
     port: &mut P,
     due: Due,
 ) -> Result<Done, PutFail> {
-    let file = staged_file();
+    let file = STAGED;
     for d in [Dir::Chimera, Dir::System] {
         due.arm(s, port, 0)?;
         s.make_dir(r.volume(), d)?;
