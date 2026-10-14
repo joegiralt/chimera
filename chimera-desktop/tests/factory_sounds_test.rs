@@ -231,6 +231,17 @@ fn every_committed_source_builds() {
     assert!(man.json().starts_with('{'));
 }
 
+/// MIDI map spec § 9: every built Source carries its engine's default map.
+#[test]
+fn every_factory_source_has_the_default_map() {
+    let s = build::sources(std::path::Path::new(SOURCES)).unwrap();
+    assert!(!s.is_empty());
+    for x in &s {
+        let want = chimera_core::midi_map::default_for(x.engine);
+        assert!(source::to_sound(x).unwrap().map == want, "{:?}", x.name);
+    }
+}
+
 /// Spec § 8: every committed description fits FACTORY's line as drawn.
 #[test]
 fn every_committed_description_fits_the_drawn_width() {
