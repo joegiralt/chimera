@@ -57,6 +57,30 @@ pub fn seal_images(
     Ok(seal)
 }
 
+/// The `.bk2`'s header seal, found once in the `.bin`: the two are one build.
+pub fn check_pair(bin: &[u8], bk2: &[u8]) -> Result<Seal, String> {
+    let hb: &[u8; HEADER_LEN as usize] = bk2
+        .get(..HEADER_LEN as usize)
+        .and_then(|h| h.try_into().ok())
+        .ok_or("the .bk2 is shorter than its header")?;
+    let h = Header::parse(hb).map_err(|v| format!("the .bk2 header judges {v:?}"))?;
+    let seal = Seal::new(h.seal).ok_or("the .bk2 seal is a reserved value")?;
+    match bin.windows(8).filter(|w| *w == h.seal).count() {
+        1 => Ok(seal),
+        n => Err(format!("the .bk2's seal is in the .bin {n} times, not once")),
+    }
+}
+
+/// `chimera-utils bank2-seal --check BIN BK2`.
+pub fn check_files(bin: &str, bk2: &str) -> Result<(), String> {
+    let b1 = std::fs::read(bin).map_err(|e| format!("{bin}: {e}"))?;
+    let b2 = std::fs::read(bk2).map_err(|e| format!("{bk2}: {e}"))?;
+    let seal = check_pair(&b1, &b2).map_err(|e| format!("{bin} + {bk2}: {e}"))?;
+    let hex: String = seal.bytes().iter().map(|x| format!("{x:02x}")).collect();
+    println!("{bk2}: seal {hex} is {bin}'s");
+    Ok(())
+}
+
 fn sym_addr(f: &ElfFile32<Endianness>, name: &str) -> Result<u64, String> {
     f.symbol_by_name(name)
         .map(|s| s.address())

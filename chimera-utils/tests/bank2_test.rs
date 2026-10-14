@@ -73,6 +73,26 @@ fn seal_refuses_bad_inputs() {
     assert_eq!(&bin[100..108], b"UNSEALED");
 }
 
+#[test]
+fn check_pair_matches_only_its_own_seal() {
+    let (mut bin, mut bk2) = fake();
+    bank2::seal_images(&mut bin, 100, &mut bk2, 256, "v").unwrap();
+    assert!(bank2::check_pair(&bin, &bk2).is_ok());
+    // Another build's .bk2: its seal is not in this .bin.
+    let (mut bin2, mut bk22) = fake();
+    bk22[300] ^= 1;
+    bank2::seal_images(&mut bin2, 100, &mut bk22, 256, "v").unwrap();
+    assert!(bank2::check_pair(&bin, &bk22).is_err());
+    // An unsealed .bin, a seal twice in the .bin, a short or foreign .bk2.
+    assert!(bank2::check_pair(&fake().0, &bk2).is_err());
+    let mut twice = bin.clone();
+    twice[200..208].copy_from_slice(&bk2[0x18..0x20]);
+    assert!(bank2::check_pair(&twice, &bk2).is_err());
+    assert!(bank2::check_pair(&bin, &bk2[..40]).is_err());
+    bk2[0] = 0;
+    assert!(bank2::check_pair(&bin, &bk2).is_err());
+}
+
 /// A `.text` with one ABS32 relocation to a symbol in `into`.
 fn elf_with(into: &[u8], relocs: bool) -> Vec<u8> {
     let mut o = Object::new(BinaryFormat::Elf, Architecture::Arm, Endianness::Little);

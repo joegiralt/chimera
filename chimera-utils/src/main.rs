@@ -31,6 +31,8 @@ usage: chimera-utils [flags] COMMAND …
                            (an effect also on the listening set)
   bank2-seal ELF BIN BK2 --version TEXT
                            fill the .bk2 header; patch its seal into the .bin
+  bank2-seal --check BIN BK2
+                           fail unless the .bk2's seal is the .bin's
   door-check ELF           fail on any bank-1 relocation into bank 2
   devices                  the devices and their knobs
   mv-refs [PROG …]         MidiVerb II references (default 1–49)
@@ -187,6 +189,9 @@ fn run() -> Result<bool, String> {
     };
     let ok = match cmd.as_str() {
         "ab" if rest.len() >= 2 => generic::ab(&cfg, &rest[0], &rest[1], &rest[2..]).map(|_| true),
+        "bank2-seal" if rest.len() == 3 && rest[0] == "--check" => {
+            bank2::check_files(&rest[1], &rest[2]).map(|_| true)
+        }
         "bank2-seal" if rest.len() == 3 => {
             let v = version.ok_or("bank2-seal needs --version")?;
             bank2::seal_files(&rest[0], &rest[1], &rest[2], &v).map(|_| true)

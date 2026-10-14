@@ -8,12 +8,13 @@ Built from source commit `@COMMIT@`, @DATE@.
 
 - `chimera-@VERSION@.bin`: the firmware.
 - `chimera-@redacted`: the same firmware with the ORBIT generative sequencer.
+- `chimera-@VERSION@.bk2` and `chimera-@VERSION@-orbit.bk2`: the second half of the matching `.bin`. Each `.bin` comes with the `.bk2` of the same name; use the pair, never a `.bk2` from another release. The unit shows NEEDS UPDATE on its ABOUT page until it is installed.
 - `chimera-usb.py`: the console tool (Python 3, nothing to install): `python3 chimera-usb.py status` prints the unit's state for a bug report; `shot` saves a screenshot; `put` sends TAPE sources and library Sounds to the card. `python3 chimera-usb.py --help` lists the rest.
 - `SHA256SUMS`: check the downloads with `sha256sum -c SHA256SUMS`.
 
 ## Install, and roll back
 
-Follow the [README](https://github.com/joegiralt/chimera-releases#readme): it has the DFU steps to install, and the steps to go back to the stock firmware. Flash the firmware area only (`0x08020000`); never the bootloader, never the option bytes. Chimera only reads and writes `/CHIMERA/` on the SD card and never touches your stock files.
+Follow the [README](https://github.com/joegiralt/chimera-releases#readme): it has the DFU steps to install, and the steps to go back to the stock firmware. Then, with the unit running, install the second half: `python3 chimera-usb.py bank2 chimera-@VERSION@.bk2` (or with `-orbit` for the ORBIT firmware). If it says `OK already installed`, there is nothing to do. `python3 chimera-usb.py update chimera-@VERSION@.bin chimera-@VERSION@.bk2` does both steps in one go. Flash the firmware area only (`0x08020000`); never the bootloader, never the option bytes. Chimera only reads and writes `/CHIMERA/` on the SD card and never touches your stock files.
 
 ## Known issues
 
