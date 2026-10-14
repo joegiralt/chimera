@@ -52,9 +52,6 @@ clamp-probe = ["chimera-engine/clamp-probe"]
 # The console's `fault`: provokes a DMA transfer error to test the re-arm.
 # Test builds only, never shipping.
 fault-inject = []
-# The console's bank-2 spike (`b2erase`, `b2prog`, `b2call`, `b2stat`):
-# erases and programs bank-2 sector 0. Developer builds only, never shipping.
-bank2-spike = []
 
 [dev-dependencies]
 # No default features: `--no-default-features` must reach the library too.

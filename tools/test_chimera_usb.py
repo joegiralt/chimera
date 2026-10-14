@@ -191,28 +191,6 @@ class Tool(unittest.TestCase):
     def test_help_names_flash(self):
         self.assertIn("chimera-usb.py flash ", tool.__doc__)
 
-    def test_help_marks_the_bank2_spike_developer_only(self):
-        self.assertIn("chimera-usb.py b2erase|b2prog|b2call|b2stat", tool.__doc__)
-        self.assertIn("DEVELOPER SPIKE (bank2-spike builds only)", tool.__doc__)
-
-    def test_b2erase_and_b2prog_wait_past_the_erase_timeout(self):
-        for cmd in ("b2erase", "b2prog"):
-            self.assertGreater(tool.first_wait(cmd), 6.0 + 2.0)
-        self.assertEqual(tool.first_wait("b2stat"), tool.SILENCE_S)
-
-    def test_a_b2erase_timeout_prints_sr2_then_fails(self):
-        body = b"b2erase sector 0 08100000..0811ffff psize 2 timeout_ms 6000\nsr2 00000005 bsy 1\n"
-        with FakeUnit({b"b2erase\n": body + b"ERR b2erase: timeout\n"}) as u:
-            r = run_tool(["b2erase"], u.target)
-        self.assertEqual((r.returncode, r.stdout), (1, body))
-        self.assertIn(b"ERR b2erase: timeout", r.stderr)
-
-    def test_b2call_prints_the_return_value(self):
-        body = b"b2call 08100081 f(1) = 43 want 43\n"
-        with FakeUnit({b"b2call\n": body + b"OK\n"}) as u:
-            r = run_tool(["b2call"], u.target)
-        self.assertEqual((r.returncode, r.stdout), (0, body))
-
     def test_err_goes_to_stderr_and_exits_1(self):
         with FakeUnit({b"stats\n": b"ERR stats is not in this build\n"}) as u:
             r = run_tool(["stats"], u.target)

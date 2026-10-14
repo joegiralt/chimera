@@ -171,9 +171,6 @@ fn the_table_is_the_one_list() {
     let mut want = vec![
         "help", "status", "stats", "bench", "card", "shot", "dfu", "sweep", "flash",
     ];
-    if cfg!(feature = "bank2-spike") {
-        want.extend(["b2erase", "b2prog", "b2call", "b2stat"]);
-    }
     if cfg!(feature = "card-put") {
         want.extend(["ls", "put", "rm", "get"]);
     }

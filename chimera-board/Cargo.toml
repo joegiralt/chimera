@@ -23,7 +23,6 @@ usb-console = [
 card-put = ["usb-console", "chimera-core/card-put"]
 sweep-free = []
 fault-inject = ["usb-console", "chimera-core/fault-inject"]
-bank2-spike = ["usb-console", "chimera-core/bank2-spike"]
 # Bank 1's seal of the bank-2 image it was linked with (ADR 0137).
 bank2 = []
 

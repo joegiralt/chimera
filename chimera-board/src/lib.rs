@@ -6,8 +6,6 @@
 #![no_std]
 
 pub mod bank2;
-#[cfg(feature = "bank2-spike")]
-pub mod bank2_spike;
 pub mod cache;
 #[cfg(all(feature = "bench", feature = "usb-console"))]
 pub mod card_speed;

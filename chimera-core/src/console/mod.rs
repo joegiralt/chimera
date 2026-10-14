@@ -113,8 +113,7 @@ macro_rules! commands {
 }
 
 /// The table: one row per command. `ls`, `put`, `rm` and `get` only with
-/// `card-put`; `b2erase`, `b2prog`, `b2call` and `b2stat` only with
-/// `bank2-spike`.
+/// `card-put`.
 macro_rules! table {
     ($($card:tt)*) => {
         commands! {
@@ -127,14 +126,6 @@ macro_rules! table {
             Dfu    (NoArg)   => "dfu",    "restart into the ROM loader for just flash",
             Sweep  (NoArg)   => "sweep",  "the lost-cluster sweep at the next boot: restarts into it",
             Flash  (NoArg)   => "flash",  "flash controller and bank 2, read only",
-            #[cfg(feature = "bank2-spike")]
-            B2erase (NoArg)  => "b2erase", "DEVELOPER SPIKE: erase bank-2 sector 0",
-            #[cfg(feature = "bank2-spike")]
-            B2prog (NoArg)   => "b2prog", "DEVELOPER SPIKE: program the test image into sector 0",
-            #[cfg(feature = "bank2-spike")]
-            B2call (NoArg)   => "b2call", "DEVELOPER SPIKE: call bank 2's test code if it matches",
-            #[cfg(feature = "bank2-spike")]
-            B2stat (NoArg)   => "b2stat", "DEVELOPER SPIKE: cr2, sr2 and sector 0's test words",
             $($card)*
         }
     };
@@ -269,9 +260,5 @@ mod fault;
 pub use fault::*;
 mod flash;
 pub use flash::*;
-#[cfg(feature = "bank2-spike")]
-mod bank2;
-#[cfg(feature = "bank2-spike")]
-pub use bank2::*;
 mod nocard;
 pub use nocard::NoCard;

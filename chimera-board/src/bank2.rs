@@ -1,24 +1,27 @@
-//! Bank 2 from bank 1 (ADR 0137): the MPU's view of it, its live reads and
-//! the boot's judgement. Only S0-S3 (0x08100000..0x0817FFFF) are ever
-//! mapped; MPU region 1 keeps sectors 4-7, the stock bootloader's slots,
-//! no-access for good. Phase 1 writes nothing.
+//! Bank 2 from bank 1 (ADR 0137): the MPU's view of it, its live reads,
+//! its flash controller and the boot's judgement. Only S0-S3
+//! (0x08100000..0x0817FFFF) are ever mapped, erased or programmed; MPU
+//! region 1 keeps sectors 4-7, the stock bootloader's slots, no-access for
+//! good. Only bank 2's own key, control, status and clear registers are
+//! named; their values are `chimera_image::regs`'.
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use chimera_core::bank2::Bank2Status;
-use chimera_image::{BANK2_BASE, BANK2_LEN, Bank2Memory, ImageRead, ReadFail};
+use chimera_core::bank2::{Bank2Status, DOOR_CELL};
+use chimera_image::regs::{
+    CCR_CLEAR, CR_LOCK, CR_START, ERASE_TIMEOUT_MS, KEYS, SR_DBECCERR, WORD_TIMEOUT_MS, busy,
+    erase_cr, ms_cycles, program_cr, relock_cr, settle,
+};
+use chimera_image::{
+    BANK2_BASE, BANK2_LEN, Bank2Memory, Bank2Sector, Bank2Word, Flash, FlashFail, ImageRead,
+    ReadFail,
+};
+use cortex_m::peripheral::DWT;
 use stm32h7xx_hal::pac;
 
 use crate::cache::{BANK2_OPEN_RASR, BANK2_READ_RASR, BANK2_REGION, BANK2_WRITE_RASR, RBAR_VALID};
 
 const _: () = assert!(BANK2_BASE == crate::cache::BANK2_BASE);
-
-/// FLASH_SR2.DBECCERR: a read hit a double ECC error.
-const SR_DBECCERR: u32 = 1 << 26;
-/// FLASH_CCR2's clear bits for SR2's EOP (16) and error flags (17-19,
-/// 21-26) (RM0433 FLASH_CCR).
-const CCR_CLEAR: u32 = 1 << 16 | 0b111 << 17 | 0x3f << 21;
-const _: () = assert!(CCR_CLEAR == 0x07EF_0000);
 
 /// MPU region 2's state over S0-S3; region 1 (no access) is under it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,19 +70,25 @@ pub fn mpu() -> Mpu2 {
     Mpu2::from_u8(STATE.load(Ordering::Acquire))
 }
 
-/// Region 2 to `s`. From the boot or the UI loop only. Into `Open`, the
-/// whole D-cache is cleaned and invalidated (set/way) and the whole
-/// I-cache invalidated first, so nothing older than the flash is read or
-/// run; no cache operation ever names a bank-2 address.
+/// Region 2 to `s`. From the boot or the UI loop only. `Open` is the only
+/// cacheable state: into it, the whole D-cache is cleaned and invalidated
+/// (set/way) and the whole I-cache invalidated first, so nothing older than
+/// the flash is read or run; out of it, the same once region 2 is no longer
+/// cacheable, so no line of it (a speculative fill included) outlives it
+/// into a write. No cache operation ever names a bank-2 address.
 pub fn set_mpu(s: Mpu2) {
     // SAFETY: whole-cache maintenance and the MPU's RBAR/RASR pair. Only the
     // boot and the UI loop call this, never an interrupt; after
     // `cache::init`, `Board` never uses its MPU, and its SCB only for
     // SysTick's priority and to reset, neither of which this touches.
     let mut cp = unsafe { cortex_m::Peripherals::steal() };
-    if s == Mpu2::Open {
+    let was = mpu();
+    let mut flush = || {
         cp.SCB.clean_invalidate_dcache(&mut cp.CPUID);
         cp.SCB.invalidate_icache();
+    };
+    if s == Mpu2::Open {
+        flush();
     }
     cortex_m::asm::dsb();
     // SAFETY: region 2's base is its size-aligned 0x08100000; its RASR is
@@ -91,16 +100,27 @@ pub fn set_mpu(s: Mpu2) {
     STATE.store(s as u8, Ordering::Release);
     cortex_m::asm::dsb();
     cortex_m::asm::isb();
+    if was == Mpu2::Open && s != Mpu2::Open {
+        flush();
+    }
 }
 
 fn bank2() -> &'static pac::flash::BANK {
-    // SAFETY: FLASH's fixed register block; here SR2 is read and CCR2
-    // written, bank 2's own, nothing else.
+    // SAFETY: FLASH's fixed register block, its bank-2 half: KEYR2, CR2,
+    // SR2 and CCR2, nothing else. Only this module touches them, from the
+    // boot or the UI loop; no interrupt touches the flash controller.
     unsafe { (*pac::FLASH::ptr()).bank2() }
 }
 
-/// SR2's flags cleared, so an error a read raises is this read's.
-#[cfg_attr(not(feature = "bank2"), allow(dead_code))]
+fn cr() -> u32 {
+    bank2().cr.read().bits()
+}
+
+fn sr() -> u32 {
+    bank2().sr.read().bits()
+}
+
+/// SR2's flags cleared, so an error an op raises is this op's.
 fn clear_flags() {
     // SAFETY: CCR2 only clears SR2's flags, one bit each; it starts,
     // unlocks or erases nothing.
@@ -143,13 +163,163 @@ impl ImageRead for FlashRead {
 // faults (no data returned) or sets SR2.DBECCERR, which is `Err`.
 unsafe impl Bank2Memory for FlashRead {}
 
+/// CR2 unlocked; dropping it relocks, whatever happened.
+struct Unlocked(());
+
+impl Unlocked {
+    /// Bank 2 idle, then KEYR2's key sequence if CR2 is locked.
+    fn new() -> Result<Self, FlashFail> {
+        if busy(sr()) {
+            return Err(FlashFail::Busy);
+        }
+        if cr() & CR_LOCK != 0 {
+            for key in KEYS {
+                // SAFETY: KEYR2 takes the two documented keys in order; it
+                // unlocks bank 2's CR only, never the option bytes.
+                bank2().keyr.write(|w| unsafe { w.bits(key) });
+            }
+        }
+        let u = Unlocked(());
+        if cr() & CR_LOCK != 0 {
+            return Err(FlashFail::Locked);
+        }
+        Ok(u)
+    }
+
+    /// `v` from `erase_cr` or `program_cr`, or either with START.
+    fn set_cr(&self, v: u32) {
+        // SAFETY: a CR2 word from `erase_cr` (one of S0-S3) or `program_cr`,
+        // maybe with START: neither can hold a bank erase.
+        bank2().cr.write(|w| unsafe { w.bits(v) });
+        cortex_m::asm::dsb();
+    }
+}
+
+impl Drop for Unlocked {
+    fn drop(&mut self) {
+        // SAFETY: sets LOCK, which only a new key sequence clears, and when
+        // idle clears PG, SER and START (`relock_cr`).
+        bank2()
+            .cr
+            .write(|w| unsafe { w.bits(relock_cr(cr(), sr())) });
+    }
+}
+
+/// Polls SR2 until idle, an error flag, or `limit` cycles from `start`.
+fn wait(start: u32, limit: u32) -> Result<(), FlashFail> {
+    loop {
+        let s = sr();
+        let late = DWT::cycle_count().wrapping_sub(start) > limit;
+        match settle(s, late) {
+            Some(f) => return Err(f),
+            None if !busy(s) => return Ok(()),
+            None => {}
+        }
+    }
+}
+
+/// Bank 2's flash controller over S0-S3, built only by `new`: the door
+/// closed and region 2 `Write` (strongly-ordered, uncached), so its reads
+/// are live and no cache line holds bank 2 across an erase or program
+/// (`set_mpu` invalidates the whole caches out of `Open`). From the UI loop
+/// only; the audio interrupt and the tick keep running from bank 1
+/// meanwhile (RM0433 read-while-write), as in the phase 0b spike. Nothing
+/// linked into bank 1 reads bank 2 with the door closed.
+pub struct FlashBank2 {
+    cpu_hz: u32,
+}
+
+impl FlashBank2 {
+    pub fn new(cpu_hz: u32) -> Self {
+        DOOR_CELL.close();
+        set_mpu(Mpu2::Write);
+        FlashBank2 { cpu_hz }
+    }
+
+    /// Still as `new` left it: region 2 `Write`, the door closed. Anything
+    /// else (the caller reopened it) refuses the op as `Locked`: nothing
+    /// erases code a door may run, or stores through a region not mapped
+    /// for it.
+    fn writable() -> Result<(), FlashFail> {
+        if mpu() == Mpu2::Write && !DOOR_CELL.is_open() {
+            Ok(())
+        } else {
+            Err(FlashFail::Locked)
+        }
+    }
+
+    /// The word at `w` as the flash holds it now.
+    fn word(w: Bank2Word) -> [u32; 8] {
+        let mut got = [0; 8];
+        for (a, x) in (w.get()..).step_by(4).zip(got.iter_mut()) {
+            // SAFETY: an aligned word inside S0-S3 (`Bank2Word`), region 2
+            // `Write` (`writable`); a load never programs or erases.
+            *x = unsafe { core::ptr::read_volatile(a as *const u32) };
+        }
+        got
+    }
+}
+
+impl ImageRead for FlashBank2 {
+    fn read(&mut self, off: u32, buf: &mut [u8]) -> Result<(), ReadFail> {
+        clear_flags();
+        FlashRead.read(off, buf)
+    }
+}
+
+// SAFETY: `read` is `FlashRead`'s, region 2 `Write`: uncached, live; SR2
+// cleared first, so its DBECCERR is this read's.
+unsafe impl Bank2Memory for FlashBank2 {}
+
+// SAFETY: the registers are bank 2's own (`bank2()`); an erase names a
+// `Bank2Sector` (S0-S3) through `erase_cr`, a program a `Bank2Word`
+// (S0-S3) under `program_cr`; neither can start a bank erase. Each runs
+// only with region 2 `Write` and the door closed, and returns `Ok` only
+// once SR2 shows the op done with no error flag.
+unsafe impl Flash for FlashBank2 {
+    /// Clear SR2, SER with `s`'s SNB at ×32, START, then BSY and QW polled
+    /// against `ERASE_TIMEOUT_MS`. No retry.
+    fn erase(&mut self, s: Bank2Sector) -> Result<(), FlashFail> {
+        let start = DWT::cycle_count();
+        Self::writable()?;
+        let u = Unlocked::new()?;
+        clear_flags();
+        let v = erase_cr(cr(), s);
+        u.set_cr(v);
+        u.set_cr(v | CR_START);
+        wait(start, ms_cycles(ERASE_TIMEOUT_MS, self.cpu_hz))
+    }
+
+    /// Refused unless erased; clear SR2, PG at ×32, the eight words, DSB,
+    /// then WBNE and QW polled against `WORD_TIMEOUT_MS`.
+    fn program(&mut self, w: Bank2Word, data: &[u8; 32]) -> Result<(), FlashFail> {
+        Self::writable()?;
+        if Self::word(w) != [u32::MAX; 8] {
+            return Err(FlashFail::NotErased);
+        }
+        let u = Unlocked::new()?;
+        clear_flags();
+        u.set_cr(program_cr(cr()));
+        let (words, _) = data.as_chunks::<4>();
+        for (a, &b) in (w.get()..).step_by(4).zip(words) {
+            let x = u32::from_le_bytes(b);
+            // SAFETY: an aligned word of a flash word in S0-S3
+            // (`Bank2Word`), region 2 `Write`, CR2.PG set: the store fills
+            // bank 2's write buffer, eight make one 256-bit word.
+            unsafe { core::ptr::write_volatile(a as *mut u32, x) };
+        }
+        cortex_m::asm::dsb();
+        wait(DWT::cycle_count(), ms_cycles(WORD_TIMEOUT_MS, self.cpu_hz))
+    }
+}
+
 /// Bank 2 judged against this build's seal; on `Good`, region 2 `Open`,
 /// the door cell opened and the door checked once: `probe(1) == 43`, the
 /// table's first and last bytes. Anything less leaves region 2 `Read`
 /// (the console's `flash` still reads S0) and the cell closed.
 #[cfg(feature = "bank2")]
 pub fn boot_judge() -> Bank2Status {
-    use chimera_core::bank2::{DOOR_CELL, DOOR_MAGIC, PROBE_ADDS, TABLE_LEN};
+    use chimera_core::bank2::{DOOR_MAGIC, PROBE_ADDS, TABLE_LEN};
     use chimera_image::Door;
 
     let Some(seal) = crate::bank2_seal() else {

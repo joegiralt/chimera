@@ -84,12 +84,6 @@ pub trait Unit {
     fn flash_peek(&self) -> Option<super::FlashPeek> {
         None
     }
-    /// The bank-2 spike's outcome, reached before the answer starts.
-    /// `None`: not in this build.
-    #[cfg(feature = "bank2-spike")]
-    fn bank2(&mut self) -> Option<super::B2Answer> {
-        None
-    }
     /// Provokes the fault, once `OK` is not yet out. `None`: not in this build.
     #[cfg(feature = "fault-inject")]
     fn fault(&mut self, _: super::FaultArg) -> Option<()> {
@@ -211,24 +205,6 @@ pub fn answer(
                 unit.flash_peek()
                     .map_or(Ok(()), |p| super::write_flash_peek(&p, &mut t))
             })),
-        },
-        // Its ERR is its own line, after what the spike did.
-        #[cfg(feature = "bank2-spike")]
-        Ok(
-            r @ (Request::B2erase(NoArg)
-            | Request::B2prog(NoArg)
-            | Request::B2call(NoArg)
-            | Request::B2stat(NoArg)),
-        ) => match unit.bank2() {
-            None => Err(Why::Absent(r.command())),
-            Some(a) => match super::write_b2(&a, &mut t) {
-                Ok(None) => Ok(Ok(())),
-                Ok(Some(why)) => {
-                    return writeln!(t, "ERR {}: {why}", r.command().name())
-                        .map_err(|fmt::Error| Stalled);
-                }
-                Err(e) => Ok(Err(e)),
-            },
         },
         #[cfg(feature = "fault-inject")]
         Ok(r @ Request::Fault(super::FaultArg::Ndtr)) => unit

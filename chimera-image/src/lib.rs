@@ -6,6 +6,7 @@ pub mod crc;
 mod header;
 mod install;
 mod judge;
+pub mod regs;
 
 pub use header::{
     BANK2_BASE, BANK2_LEN, COMMIT, COMMIT_OFF, FLASH_WORD, FORMAT, HEADER_LEN, Header, MAGIC, Seal,
