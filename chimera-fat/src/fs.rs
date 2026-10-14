@@ -24,6 +24,7 @@ fn path(dir: Dir) -> &'static [Dir] {
         Dir::Bench => &[Dir::Chimera, Dir::Bench],
         Dir::Tapes => &[Dir::Chimera, Dir::Tapes],
         Dir::System => &[Dir::Chimera, Dir::System],
+        Dir::Root => &[],
     }
 }
 
@@ -335,8 +336,9 @@ impl<'a, B: Blocks> Fs<'a, B> {
 
     fn drop_dir(&mut self, dir: Dir) -> Result<bool, FsError<B::Error>> {
         let parent = match path(dir) {
+            [] => return Err(FsError::NotFound),
             [.., p, _] => self.open(*p)?,
-            _ => self.table.layout().root(),
+            [_] => self.table.layout().root(),
         };
         let found = self.lookup(parent, ShortName::dir(dir))?;
         let Some((Slot::Dir(e), at)) = found.hit else {
@@ -491,6 +493,7 @@ impl<'a, B: Blocks> Fs<'a, B> {
     fn add_dir(&mut self, dir: Dir) -> Result<(), FsError<B::Error>> {
         let root = self.table.layout().root();
         let parent = match dir {
+            Dir::Root => return Ok(()),
             Dir::Chimera => root,
             Dir::Projects | Dir::Sounds | Dir::Bench | Dir::Tapes | Dir::System => {
                 self.open(Dir::Chimera)?

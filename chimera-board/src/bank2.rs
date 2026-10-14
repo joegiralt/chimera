@@ -449,13 +449,15 @@ fn open_door(seal: &chimera_image::Seal) -> (Bank2Status, Verdict) {
 }
 
 /// The boot's install, once the card is mounted and before the project
-/// loads: the staged file judged against this build's seal, only if
-/// `flash` could take it (`wants_staged`), and `auto_install` decides. On
-/// `Install`: BKP14R `BANK2_INSTALLING`, DON'T POWER OFF, `install`, the
-/// door, BKP14R cleared. A fault meanwhile keeps the mark, so the next
-/// boot installs nothing. No audio yet and no watchdog (it arms in step
-/// 3): nothing to feed. A failure leaves the staged file for the next
-/// boot. `None`: nothing written; else bank 2 as the door then judged it.
+/// loads: only if `flash` could take a staged file, `find_staged` picks one
+/// (SYSTEM's, else a `.BK2` dropped in the root) judged `Good` for this
+/// build's seal. Then BKP14R `BANK2_INSTALLING`, DON'T POWER OFF,
+/// `install`, the door, BKP14R cleared. A fault meanwhile keeps the mark,
+/// so the next boot installs nothing. No audio yet and no watchdog (it
+/// arms in step 3): nothing to feed. A failure leaves the file for the
+/// next boot; so does success (nothing renames it), and a boot with flash
+/// `Good` never reads it. `None`: nothing written; else bank 2 as the door
+/// then judged it.
 #[cfg(feature = "bank2")]
 #[inline(never)]
 pub fn boot_install(
@@ -465,20 +467,9 @@ pub fn boot_install(
     flash: &Verdict,
     cpu_hz: u32,
 ) -> Option<Bank2Status> {
-    use chimera_core::console::CardImage;
-    use chimera_image::{AutoInstall, BANK2_INSTALLING, auto_install, wants_staged};
-
     let seal = crate::bank2_seal()?;
-    if !wants_staged(flash) {
-        return None;
-    }
-    let vol = store.mount().ok()?;
-    let mut staged = CardImage::new(store, vol);
-    let v = chimera_image::judge(&mut staged, &seal);
-    let (AutoInstall::Install, Verdict::Good(h)) = (auto_install(flash, &v), v) else {
-        return None;
-    };
-    marker.bank2_mark(BANK2_INSTALLING);
+    let (mut staged, h) = chimera_core::console::find_staged(store, flash, &seal)?;
+    marker.bank2_mark(chimera_image::BANK2_INSTALLING);
     let (_, now) = write_staged(&mut staged, display, &h, &seal, cpu_hz);
     marker.bank2_mark(0);
     Some(now)

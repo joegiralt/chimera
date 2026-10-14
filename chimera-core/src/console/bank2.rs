@@ -1,12 +1,16 @@
 //! `bank2` and `bank2 install` (ADR 0137): bank 2's state, and the staged
 //! `/CHIMERA/SYSTEM/BANK2.BK2` written into it. The board runs the install
-//! before the answer starts; what it did is a `Bank2Answer`.
+//! before the answer starts; what it did is a `Bank2Answer`. The boot's
+//! own install also takes a `.BK2` dropped in the card root (`find_staged`).
 
 use core::fmt::{self, Write};
 use core::ops::ControlFlow;
 
 use chimera_hal::store::{Dir, FileName, ReadSink, Store, StoreError, VolumeId};
-use chimera_image::{FlashAt, FlashFail, Header, ImageRead, InstallFail, ReadFail, Verdict};
+use chimera_image::{
+    FlashAt, FlashFail, Header, ImageRead, InstallFail, ReadFail, Seal, Verdict, judge,
+    pick_staged, wants_staged,
+};
 
 use super::{Arg, Out, Stalled, Words};
 use crate::bank2::{Bank2Status, Version};
@@ -45,27 +49,71 @@ pub const STAGED: FileName = match FileName::new(Dir::System, b"BANK2", b"BK2") 
     None => panic!("an 8.3 name"),
 };
 
-/// The staged file as an image, a card read a call. A read past its end is
+/// Most root `*.BK2` files a boot judges.
+pub const ROOT_BK2_MAX: usize = 8;
+
+/// A staged file as an image, a card read a call. A read past its end is
 /// `Err`; the card's own error is kept for `error`.
 pub struct CardImage<'a, S: Store + ?Sized> {
     store: &'a mut S,
     vol: VolumeId,
+    file: FileName,
     error: Option<StoreError>,
 }
 
 impl<'a, S: Store + ?Sized> CardImage<'a, S> {
+    /// `STAGED`.
     pub fn new(store: &'a mut S, vol: VolumeId) -> Self {
+        Self::at(store, vol, STAGED)
+    }
+
+    pub fn at(store: &'a mut S, vol: VolumeId, file: FileName) -> Self {
         CardImage {
             store,
             vol,
+            file,
             error: None,
         }
+    }
+
+    pub fn file(&self) -> FileName {
+        self.file
     }
 
     /// The last card error a read hit.
     pub fn error(&self) -> Option<StoreError> {
         self.error
     }
+}
+
+/// The boot's staged file, unless `flash` already holds this build's
+/// (`wants_staged`: then the card isn't touched): `STAGED`, then the first
+/// `ROOT_BK2_MAX` root `*.BK2` (a dropped `chimera-<v>.bk2` has a host's
+/// short name, `CHIMER~1.BK2`), each judged against `seal`; the first
+/// `Good` (`pick_staged`) and its header. The rest are ignored, unsaid.
+pub fn find_staged<'a, S: Store + ?Sized>(
+    store: &'a mut S,
+    flash: &Verdict,
+    seal: &Seal,
+) -> Option<(CardImage<'a, S>, Header)> {
+    if !wants_staged(flash) {
+        return None;
+    }
+    let vol = store.mount().ok()?;
+    let mut names = [STAGED; 1 + ROOT_BK2_MAX];
+    let mut n = 1;
+    // An unlisted root leaves `STAGED` alone to judge.
+    let _ = store.list(vol, Dir::Root, &mut |f, _| {
+        if f.ext() == b"BK2" && n < names.len() {
+            names[n] = f;
+            n += 1;
+        }
+    });
+    let judged = names[..n]
+        .iter()
+        .map(|&f| judge(&mut CardImage::at(&mut *store, vol, f), seal));
+    let (i, h) = pick_staged(judged)?;
+    Some((CardImage::at(store, vol, names[i]), h))
 }
 
 /// Fills `buf` from the read's first byte; short is a miss.
@@ -101,7 +149,7 @@ impl<S: Store + ?Sized> ImageRead for CardImage<'_, S> {
             return Ok(());
         }
         let mut fill = Fill { buf, at: 0 };
-        match self.store.read_at(self.vol, STAGED, off, &mut fill) {
+        match self.store.read_at(self.vol, self.file, off, &mut fill) {
             Ok(()) if fill.at == fill.buf.len() => Ok(()),
             Ok(()) => Err(ReadFail),
             Err(e) => {

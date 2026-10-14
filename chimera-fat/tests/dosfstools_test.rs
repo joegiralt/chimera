@@ -207,6 +207,7 @@ fn verify(what: &str, disk: &RamDisk, model: &Model) {
                 Dir::Bench => d.change_dir("BENCH").unwrap(),
                 Dir::Tapes => d.change_dir("TAPES").unwrap(),
                 Dir::System => d.change_dir("SYSTEM").unwrap(),
+                Dir::Root => unreachable!("the model holds no root file"),
             }
             let stem = String::from_utf8_lossy(file.stem());
             let ext = String::from_utf8_lossy(file.ext());

@@ -311,3 +311,12 @@ pub fn auto_install(flash: &Verdict, staged: &Verdict) -> AutoInstall {
 pub fn wants_staged(flash: &Verdict) -> bool {
     !matches!(flash, Verdict::Good(_))
 }
+
+/// Of staged files judged in the boot's order, the first `Good`: its place
+/// and header. Lazy: nothing after it is judged.
+pub fn pick_staged(verdicts: impl IntoIterator<Item = Verdict>) -> Option<(usize, Header)> {
+    verdicts.into_iter().enumerate().find_map(|(i, v)| match v {
+        Verdict::Good(h) => Some((i, h)),
+        _ => None,
+    })
+}

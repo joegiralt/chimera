@@ -66,7 +66,7 @@ impl MemStore {
     }
 
     fn has_dir(&self, dir: Dir) -> Result<(), StoreError> {
-        if self.dirs.contains(&dir) {
+        if dir == Dir::Root || self.dirs.contains(&dir) {
             Ok(())
         } else {
             Err(StoreError::NotFound)
@@ -164,6 +164,9 @@ impl Store for MemStore {
 
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
         self.open(vol)?;
+        if dir == Dir::Root {
+            return Ok(());
+        }
         if dir != Dir::Chimera {
             self.has_dir(Dir::Chimera)?;
         }

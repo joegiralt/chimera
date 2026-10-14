@@ -10,8 +10,12 @@ mod image;
 mod probe;
 #[path = "common/tools.rs"]
 mod tools;
+#[path = "common/tree.rs"]
+mod tree;
 
-use chimera_core::console::{PUT_CHUNK_BYTES, PUT_DEADLINE_MS, PUT_MAX_BYTES, PutArg, PutTo, put};
+use chimera_core::console::{
+    PUT_CHUNK_BYTES, PUT_DEADLINE_MS, PUT_MAX_BYTES, PutArg, PutTo, find_staged, put,
+};
 use chimera_core::dsp::tape_engine::read::DESC_LEN;
 use chimera_core::factory;
 use chimera_core::name::{Name, SoundName};
@@ -1350,4 +1354,65 @@ fn a_failed_bank2_transfer_leaves_nothing() {
     );
     assert_eq!(system(&mut s, vol), []);
     clean(s.device());
+}
+
+/// `img` over a planted file's chain.
+fn fill_chain(t: &tree::Tree, chain: &[u32], img: &[u8]) {
+    let per = t.l.blocks_per_cluster();
+    let blocks = chain
+        .iter()
+        .flat_map(|&c| (0..per).map(move |i| t.l.cluster_block(c).unwrap() + i));
+    let mut d = t.disk.0.borrow_mut();
+    for (b, part) in blocks.zip(img.chunks(512)) {
+        d[(image::PART_LBA + b) as usize][..part.len()].copy_from_slice(part);
+    }
+}
+
+/// `chimera-0.2.0.bk2` dropped in the root by a host, as its short name
+/// `CHIMER~2.BK2` after a long-name run: the boot finds it, past one for
+/// another build and the `.bin` beside it.
+#[test]
+fn the_boot_finds_a_bk2_dropped_in_the_root() {
+    let disk = fat16(16_384, 1);
+    let good = bank2_image(&body(4352), console::SEAL);
+    let stale = bank2_image(&body(4352), *b"SEAL0002");
+    {
+        let mut t = tree::Tree::new(&disk);
+        let mut root = t.root();
+        for (short, long, img) in [
+            (b"CHIMER~1BK2", "chimera-0.1.0.bk2", &stale),
+            (b"CHIMER~2BK2", "chimera-0.2.0.bk2", &good),
+        ] {
+            let f = t.file(
+                &mut root,
+                *short,
+                Some(long),
+                (img.len() as u32, 0),
+                1,
+                None,
+            );
+            fill_chain(&t, &f.chain, img);
+        }
+        t.file(
+            &mut root,
+            *b"CHIMER~3BIN",
+            Some("chimera-0.2.0.bin"),
+            (900, 0),
+            2,
+            None,
+        );
+    }
+    let mut s = FatStore::new(disk);
+    let seal = chimera_image::Seal::new(console::SEAL).unwrap();
+    let (img, h) = find_staged(&mut s, &chimera_image::Verdict::Empty, &seal).expect("found");
+    assert_eq!(
+        img.file(),
+        FileName::new(Dir::Root, b"CHIMER~2", b"BK2").unwrap()
+    );
+    assert_eq!(h.version.as_str(), "0.2.0 02e440e2");
+    let vol = s.mount().unwrap();
+    let mut root = Vec::new();
+    s.list(vol, Dir::Root, &mut |f, n| root.push((f, n)))
+        .unwrap();
+    assert_eq!(root.len(), 3, "{root:?}");
 }

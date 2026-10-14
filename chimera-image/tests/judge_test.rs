@@ -208,3 +208,40 @@ fn unsealed_header_is_the_zero_header_committed() {
     img.extend_from_slice(&body(1024));
     assert_eq!(judged(img, &seal()), Verdict::Corrupt);
 }
+
+#[test]
+fn pick_staged_takes_the_first_good() {
+    let h = header_for(&body(64));
+    let stale = Verdict::Stale {
+        have: version("0.1.0"),
+    };
+    assert_eq!(pick_staged([]), None);
+    assert_eq!(pick_staged([Verdict::Empty, stale, Verdict::Corrupt]), None);
+    assert_eq!(pick_staged([Verdict::Good(h)]), Some((0, h)));
+    let mut later = h;
+    later.body_len += 32;
+    assert_eq!(
+        pick_staged([
+            stale,
+            Verdict::Foreign,
+            Verdict::Good(h),
+            Verdict::Good(later)
+        ]),
+        Some((2, h))
+    );
+}
+
+#[test]
+fn pick_staged_stops_at_the_first_good() {
+    let h = header_for(&body(64));
+    let mut judged = 0;
+    let verdicts = [
+        Verdict::Torn,
+        Verdict::Good(h),
+        Verdict::Empty,
+        Verdict::Empty,
+    ];
+    let got = pick_staged(verdicts.into_iter().inspect(|_| judged += 1));
+    assert_eq!(got, Some((1, h)));
+    assert_eq!(judged, 2, "nothing after the pick is judged");
+}

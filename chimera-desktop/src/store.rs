@@ -46,6 +46,7 @@ impl DirStore {
             Dir::Bench => self.root.join("CHIMERA/BENCH"),
             Dir::Tapes => self.root.join("CHIMERA/TAPES"),
             Dir::System => self.root.join("CHIMERA/SYSTEM"),
+            Dir::Root => self.root.clone(),
         }
     }
 
@@ -222,6 +223,9 @@ impl Store for DirStore {
 
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
         self.open(vol)?;
+        if dir == Dir::Root {
+            return Ok(());
+        }
         if dir != Dir::Chimera {
             self.has_dir(Dir::Chimera)?;
         }
