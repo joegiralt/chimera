@@ -105,6 +105,9 @@ pub struct Performance {
     pub fx: FxParams,
 }
 
+// `init_in_place` writes each field: a new one fails to build here first.
+crate::in_place::field_list!(Performance => Performance { parts, fx });
+
 impl Default for Performance {
     fn default() -> Self {
         Self::new()
@@ -125,7 +128,7 @@ impl Performance {
     pub fn init_in_place(slot: &mut core::mem::MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; each of the `MAX_PARTS` Parts
-        // and `fx` is written once, through raw pointers into the slot,
+        // and `fx` (every field, `field_list!` above) is written once, through raw pointers into the slot,
         // before `assume_init_mut`.
         unsafe {
             let parts = core::ptr::addr_of_mut!((*p).parts).cast::<Part>();

@@ -146,12 +146,12 @@ pub(crate) mod tests {
             f
         };
         let mut d = Desk::launch(root.clone());
-        // SETTINGS › PROJECT › LOAD, row 01, EDIT.
+        // SETTINGS › PROJECT › LOAD, row 10, EDIT.
         d.tap(Key::M);
         d.tap(Key::Down);
         d.tap(Key::Down);
         assert_eq!(d.ui.location(), Location::settings_at(&[0, 0], 0));
-        assert!(d.ui.load_row(0).unwrap().label.as_str().starts_with("01"));
+        assert!(d.ui.load_row(0).unwrap().label.as_str().starts_with("10"));
         d.tap(Key::Down);
         assert_eq!(d.ui.project().meta().file(), Some(a));
         while d.ui.in_settings() {
@@ -167,7 +167,7 @@ pub(crate) mod tests {
         let (q, _) = d.ui.prompt_words_for_test().expect("a prompt");
         assert_eq!(q.as_str(), "CARD CHANGED");
         d.tap(Key::Up);
-        assert_eq!(d.ui.naming().unwrap().text(), "ACID-001");
+        assert_eq!(d.ui.naming().unwrap().text(), "DRIFT-010");
         d.tap(Key::Up);
         let vol = d.store.mount().unwrap();
         assert_ne!(vol, old);
@@ -192,7 +192,7 @@ pub(crate) mod tests {
         assert_eq!(d.boot_toast.as_deref(), Some("NEW PROJECT"));
         // MENU held on NEW opens SAVE AS; SEQ (Up) takes the name.
         d.hold(Key::M);
-        assert_eq!(d.ui.naming().unwrap().text(), "ACID-001");
+        assert_eq!(d.ui.naming().unwrap().text(), "DRIFT-010");
         d.tap(Key::Up);
         assert_eq!(d.toast().as_deref(), Some("SAVED"));
         while d.ui.in_settings() {

@@ -119,15 +119,20 @@ struct Index {
     gens: [u16; MAX_SOUNDS],
 }
 
+// `init_in_place` writes each field: a new one fails to build here first.
+crate::in_place::field_list!(Pool => Pool { index, sources, clock, new_skipped, arena, scratch });
+crate::in_place::field_list!(Index => Index { slots, gens });
+
 impl Pool {
     /// Empty, every generation 0, built in place: no `Pool` passes
     /// through the stack. The arena's Sounds are dropped; its sources stay.
     pub fn init_in_place(slot: &mut MaybeUninit<Pool>, mut arena: ArenaWriter) -> &mut Pool {
         arena.sounds_clear();
         let p = slot.as_mut_ptr();
-        // SAFETY: `p` is valid and unaliased; every slot, the generations,
-        // the arena and the scratch are written once before
-        // `assume_init_mut`.
+        // SAFETY: `p` is valid and unaliased; every field (`field_list!`
+        // above names them: the index's slots and generations, the
+        // sources, the clock, the skip count, the arena and the scratch) is
+        // written once before `assume_init_mut`.
         unsafe {
             let slots = addr_of_mut!((*p).index.slots).cast::<Option<SoundEntry>>();
             for i in 0..MAX_SOUNDS {

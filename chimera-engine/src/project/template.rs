@@ -52,8 +52,9 @@ impl Project {
         TemplateCrc(project_crc(project))
     }
 
-    /// NEW on the heap, on an arena of its own, leaked (host tests).
-    #[cfg(any(test, feature = "test-support"))]
+    /// NEW on the heap, on an arena of its own, leaked (host tests and
+    /// tools).
+    #[cfg(any(test, feature = "test-support", feature = "host-project"))]
     pub fn boxed() -> (alloc::boxed::Box<Project>, TemplateCrc) {
         let mut raw = alloc::boxed::Box::<Project>::new_uninit();
         let t = Self::init_in_place(&mut raw, ArenaWriter::leaked());

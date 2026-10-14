@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-chimera-core = { path = "../chimera-core", features = ["source-writer"] }
+chimera-core = { path = "../chimera-core", features = ["source-writer", "host-project"] }
 chimera-hal = { path = "../chimera-hal" }
 minifb = "0.28"
 cpal = "0.15"
@@ -16,6 +16,7 @@ embedded-graphics-core = "0.4"
 hound = "3.5"
 rubato = { version = "5.0", default-features = false }
 rustfft = "6"
+sha2 = "0.10"
 
 [features]
 default = ["midi"]
@@ -26,3 +27,4 @@ master-tape = ["chimera-core/master-tape"]
 [dev-dependencies]
 chimera-core = { path = "../chimera-core", features = ["test-support"] }
 chimera-hal = { path = "../chimera-hal", features = ["testkit"] }
+proptest = { version = "1", default-features = false, features = ["std"] }

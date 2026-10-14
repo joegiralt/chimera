@@ -64,7 +64,7 @@ use crate::dsp::tape_engine::{Heads, TapeEngineParams, TapeModel};
 use crate::in_place::uninit_at;
 use crate::instrument::AudioShared;
 use crate::instrument::PartHeads;
-use crate::mod_path::{LABEL_LEN, RegistryError};
+use crate::mod_path::RegistryError;
 use crate::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::ProjectName;
 use crate::orbit::RingIdx;
@@ -91,7 +91,7 @@ use components::Head;
 use filter_panel::{JackSlot, RouteView};
 use fmt::FmtBuf;
 use hold::{HoldGates, Press};
-use library::Tab;
+use library::BrowserTab as Tab;
 use midi_settings::MidiSettings;
 use mod_grid::MatrixState;
 use nav::{
@@ -451,7 +451,7 @@ impl UiState {
             addr_of_mut!((*p).heads_from).write(&crate::instrument::HEADS);
             addr_of_mut!((*p).formant).write(FormantView::NONE);
             addr_of_mut!((*p).src).write(source_cell::SourceCell::NEW);
-            addr_of_mut!((*p).lib).write(library::LibState::NEW);
+            library::LibState::init_in_place(uninit_at(addr_of_mut!((*p).lib)));
             addr_of_mut!((*p).browser_dirty).write(false);
             addr_of_mut!((*p).page).write(page);
             addr_of_mut!((*p).sel_op).write(Op::A);
@@ -1124,39 +1124,6 @@ impl UiState {
     /// params are bound but not modulatable, so the registry refuses them.
     fn current_param_addr(&self) -> Option<ParamAddr> {
         slot_addr(self.page_def(), self.focused_slot(), &self.ctx()).map(prime_target)
-    }
-
-    /// 8-byte matrix column label for a primed destination: `O<n> ` + spec
-    /// label for operator params, else the address's block tag (≤ 3 chars,
-    /// `mod_grid::block_tag` — the page can be a sub-page with a different
-    /// short name, e.g. FLT › MOD for the filter's LEVEL) + the slot label.
-    fn mod_label(&self, addr: ParamAddr) -> [u8; LABEL_LEN] {
-        let def = self.page_def();
-        let op_prefix;
-        let (prefix, name): (&[u8], &str) = match addr.block {
-            BlockRef::AlgoOp(op) => {
-                op_prefix = [b'O', b'1' + op.index() as u8, b' '];
-                (&op_prefix, addr.spec().map_or("", |s| s.label))
-            }
-            BlockRef::Env(s) => {
-                op_prefix = [b'E', b'1' + s.index() as u8, b' '];
-                (&op_prefix, addr.spec().map_or("", |s| s.label))
-            }
-            _ if addr == crate::modulation::VCA => (b"OUT ".as_slice(), "VCA"),
-            _ => {
-                let short = mod_grid::block_tag(addr.block).as_bytes();
-                (
-                    &short[..short.len().min(3)],
-                    view::view(def, self.focused_slot(), &self.ctx()).label(),
-                )
-            }
-        };
-        let mut label = [0u8; LABEL_LEN];
-        label[..prefix.len()].copy_from_slice(prefix);
-        let rest = name.as_bytes();
-        let rlen = rest.len().min(LABEL_LEN - prefix.len());
-        label[prefix.len()..prefix.len() + rlen].copy_from_slice(&rest[..rlen]);
-        label
     }
 
     /// EDIT on the Sound rung: the entry under the cursor into `part`, then
@@ -2331,12 +2298,14 @@ impl UiState {
                 break;
             }
             if let (Some((p, b)), NavKey::Edit) = (self.loc.browse(), k) {
-                // MIX + EDIT saves to the source the tab shows.
+                // MIX + EDIT saves to the source the tab shows; FACTORY
+                // is read-only.
                 match (self.lib.tab, controls.edges(ButtonId::Mix).down) {
                     (Tab::Project, true) => self.save_part(p),
                     (Tab::Project, false) => self.load_sound(p, b),
                     (Tab::Library, true) => self.name_for_library(p, Some(b)),
-                    (Tab::Library, false) => self.library_edit(p, b),
+                    (Tab::Library | Tab::Factory, false) => self.library_edit(p, b),
+                    (Tab::Factory, true) => {}
                 }
                 continue;
             }
@@ -2388,11 +2357,7 @@ impl UiState {
                 return;
             }
             // B turns between the tabs.
-            let tab = match controls.encoder_delta(EncoderId::B) {
-                0 => self.lib.tab,
-                d if d > 0 => Tab::Library,
-                _ => Tab::Project,
-            };
+            let tab = self.lib.tab.turned(controls.encoder_delta(EncoderId::B));
             if tab != self.lib.tab {
                 self.browser_dirty = true;
                 self.lib.entered();
@@ -2400,7 +2365,9 @@ impl UiState {
             self.lib.tab = tab;
             let moved = match tab {
                 Tab::Project => browser::input(controls, b),
-                Tab::Library => browser::input_library(controls, b, library::rows(self.lib.page())),
+                Tab::Library | Tab::Factory => {
+                    browser::input_library(controls, b, library::rows(self.lib.page()))
+                }
             };
             if moved != b {
                 self.loc = Location::sound_at(p, moved);
@@ -2580,7 +2547,7 @@ impl UiState {
                     {
                         self.prime_status = Some(PrimeStatus::NotModulatable);
                     } else if let Some(addr) = self.current_param_addr() {
-                        let label = self.mod_label(addr);
+                        let label = mod_grid::dest_label(addr);
                         let sound = self.project.edit_part(at).sound;
                         self.prime_status = Some(if sound.dest_registry.is_primed(addr) {
                             PrimeStatus::AlreadyRouted
@@ -2789,13 +2756,13 @@ impl UiState {
                 Color = embedded_graphics::pixelcolor::Rgb565,
             >,
     {
-        let view = match self.lib.tab {
-            Tab::Project => browser::BrowserView::Project,
-            Tab::Library => browser::BrowserView::Library(&self.lib, &self.lib.this),
-        };
-        let (cursor, scroll) = match self.lib.tab {
-            Tab::Project => (b.cursor(), b.scroll()),
-            Tab::Library => (b.lib_cursor(), b.lib_scroll()),
+        let (view, cursor, scroll) = match self.lib.tab {
+            Tab::Project => (browser::BrowserView::Project, b.cursor(), b.scroll()),
+            Tab::Library | Tab::Factory => (
+                browser::BrowserView::Library(&self.lib, &self.lib.this),
+                b.lib_cursor(),
+                b.lib_scroll(),
+            ),
         };
         let (hints, refusal) = (self.theme.hints, self.refusal());
         browser::draw(d, &self.project, view, part, cursor, scroll, hints, refusal);

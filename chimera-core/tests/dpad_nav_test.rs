@@ -16,7 +16,7 @@ use chimera_core::ui::nav::{
 use chimera_core::ui::orbit::ORBIT_CHAIN;
 use chimera_core::ui::settings::{Kind, rows};
 use chimera_hal::ButtonId;
-use screen::{Input, feed};
+use screen::{Input, feed, tap};
 
 const P: [PartId; 6] = PartId::ALL;
 const FX_FIRST: usize = if MIXER_HOME > MIXER_PART {
@@ -346,21 +346,38 @@ fn mix_edit_in_the_browser_saves_the_sound() {
     );
 }
 
-/// Encoder B turns the Sound rung between PROJECT and LIBRARY; the Part
+/// Encoder B turns the Sound rung PROJECT → LIBRARY → FACTORY, clamped at
+/// each end; the tab is kept for the session (PROJECT at boot), the Part
 /// stays, and MINUS and PLUS still move between Parts.
 #[test]
-fn b_turns_the_sound_rung_between_its_tabs() {
-    use chimera_core::ui::library::Tab;
+fn b_turns_three_tabs_and_keeps_tab_for_session() {
+    use chimera_core::ui::library::BrowserTab as Tab;
     use chimera_hal::EncoderId;
     let mut ui = UiState::new();
     feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B2));
-    assert_eq!(ui.lib_tab(), Tab::Project);
+    assert_eq!(ui.lib_tab(), Tab::Project, "PROJECT at boot");
+    feed(&mut ui, Input::turn(EncoderId::B, -1));
+    assert_eq!(ui.lib_tab(), Tab::Project, "clamped");
     feed(&mut ui, Input::turn(EncoderId::B, 1));
     assert_eq!(ui.lib_tab(), Tab::Library);
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    assert_eq!(ui.lib_tab(), Tab::Factory);
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    assert_eq!(ui.lib_tab(), Tab::Factory, "clamped");
     assert_eq!(ui.location().browse().map(|b| b.0), Some(P[1]));
     feed(&mut ui, Input::press(ButtonId::Plus));
     assert_eq!(ui.location().browse().map(|b| b.0), Some(P[2]), "PLUS");
-    assert_eq!(ui.lib_tab(), Tab::Library, "the tab is kept");
+    assert_eq!(ui.lib_tab(), Tab::Factory, "the tab is kept");
+    tap(&mut ui, ButtonId::Menu);
+    assert!(ui.location().browse().is_none(), "MENU leaves");
+    while ui.in_settings() {
+        tap(&mut ui, ButtonId::Menu);
+    }
+    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+    assert!(ui.location().browse().is_some());
+    assert_eq!(ui.lib_tab(), Tab::Factory, "kept for the session");
+    feed(&mut ui, Input::turn(EncoderId::B, -1));
+    assert_eq!(ui.lib_tab(), Tab::Library);
     feed(&mut ui, Input::turn(EncoderId::B, -1));
     assert_eq!(ui.lib_tab(), Tab::Project);
 }

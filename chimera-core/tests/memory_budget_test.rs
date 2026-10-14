@@ -201,10 +201,14 @@ fn ui_state_rest_under_4k() {
     // on their own, 128 beside TAPE's, padded); 192 B the reverb's (the
     // TYPEs' knob memory, 108 B, and the cells' text keys); 3 KB the
     // library's page, 48 rows of 60 B, and a pending load (its source
-    // streams in the SOURCE cell's slot); 16 B the screensaver's (its idle
-    // timer and redraw count); 52 B the OP pages' formant view.
+    // streams in the SOURCE cell's slot); 80 B FACTORY's (showcase spec
+    // § 1, Cost): the selected row's description slot, a `FactoryId` and a
+    // `Note`, and the page's one set stamp; 16 B the screensaver's (its idle
+    // timer and redraw count); 52 B the OP pages' formant view. The focus
+    // memory's 8 B (a slot per page id, the OP pages' ids up to 105, #484)
+    // fit in what `LibId` gave back as a bare u32 instead of a tagged enum.
     assert!(
-        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072 + 16 + 52,
+        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072 + 80 + 16 + 52,
         "UiState grew to {rest} B besides its Project"
     );
 }

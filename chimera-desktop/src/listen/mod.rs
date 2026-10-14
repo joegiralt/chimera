@@ -776,10 +776,12 @@ pub fn qa_takes(x: &[f32], takes: &[usize]) -> Qa {
 impl Qa {
     /// Finite, sounding, at or under 0 dBFS, and click-free.
     pub fn passes(&self) -> bool {
-        self.non_finite == 0
-            && self.peak_dbfs > SILENT_DBFS
-            && self.peak_dbfs <= 0.0
-            && self.click_ratio <= CLICK_RATIO
+        self.sounds() && self.click_ratio <= CLICK_RATIO
+    }
+
+    /// Finite, sounding and at or under 0 dBFS: all but the click bar.
+    pub fn sounds(&self) -> bool {
+        self.non_finite == 0 && self.peak_dbfs > SILENT_DBFS && self.peak_dbfs <= 0.0
     }
 }
 
@@ -797,42 +799,75 @@ pub struct Src {
 /// A table's `key = "value"` lines, in order.
 pub type Table = Vec<(String, String)>;
 
+/// A `[[kind]]` table with the 1-based line of its header and of each entry.
+pub struct Lined {
+    pub kind: String,
+    pub line: usize,
+    pub entries: Vec<(usize, String, String)>,
+}
+
+/// `l` (trimmed) as `key = "value"` with an optional trailing `# comment`:
+/// the key, the value and the comment. A key is letters, digits, `_` and
+/// `.` (a dotted TOML key); a value holds no `"`.
+pub fn value_line(l: &str) -> Option<(&str, &str, Option<&str>)> {
+    let (k, v) = l.split_once('=')?;
+    let (v, rest) = v.trim_start().strip_prefix('"')?.split_once('"')?;
+    let rest = rest.trim();
+    let comment = match rest {
+        "" => None,
+        r => Some(r.strip_prefix('#')?),
+    };
+    let k = k.trim();
+    is_key(k).then_some((k, v, comment))
+}
+
+fn is_key(k: &str) -> bool {
+    !k.is_empty()
+        && !k.starts_with('.')
+        && !k.ends_with('.')
+        && k.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+}
+
 /// `file`'s `[[kind]]` tables of `key = "value"` lines, `#` comments and
 /// blank lines, each with its kind; anything else is an error, so a
 /// malformed file fails loudly.
 pub fn tables(toml: &str, file: &str) -> Result<Vec<(String, Table)>, String> {
-    let mut tables: Vec<(String, Table)> = Vec::new();
+    Ok(lined_tables(toml, file)?
+        .into_iter()
+        .map(|t| {
+            let e = t.entries.into_iter().map(|(_, k, v)| (k, v)).collect();
+            (t.kind, e)
+        })
+        .collect())
+}
+
+/// `tables`, with line numbers.
+pub fn lined_tables(toml: &str, file: &str) -> Result<Vec<Lined>, String> {
+    let mut tables: Vec<Lined> = Vec::new();
     for (n, line) in toml.lines().enumerate() {
         let l = line.trim();
         if l.is_empty() || l.starts_with('#') {
             continue;
         }
         let bad = || format!("{file}:{}: not key = \"value\": {l}", n + 1);
-        let key =
-            |k: &str| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
         if let Some(kind) = l.strip_prefix("[[").and_then(|l| l.strip_suffix("]]")) {
-            if !key(kind) {
+            if kind.is_empty() || !kind.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
                 return Err(bad());
             }
-            tables.push((kind.into(), Vec::new()));
+            tables.push(Lined {
+                kind: kind.into(),
+                line: n + 1,
+                entries: Vec::new(),
+            });
             continue;
         }
-        let (k, v) = l.split_once('=').ok_or_else(bad)?;
-        let v = v.trim();
-        let v = v
-            .strip_prefix('"')
-            .and_then(|v| v.strip_suffix('"'))
-            .filter(|v| !v.contains('"'))
-            .ok_or_else(bad)?;
-        let k = k.trim();
-        if !key(k) {
-            return Err(bad());
-        }
+        let (k, v, _) = value_line(l).ok_or_else(bad)?;
         tables
             .last_mut()
             .ok_or_else(bad)?
-            .1
-            .push((k.into(), v.into()));
+            .entries
+            .push((n + 1, k.into(), v.into()));
     }
     Ok(tables)
 }
@@ -943,26 +978,156 @@ pub fn page(rows: &[(TapeModel, &Src)]) -> String {
     PAGE.replace("<!--SECTIONS-->", &out)
 }
 
+/// One render on a `rows_page` row: its label, its WAV (relative to the
+/// page) and a measurement line.
+#[derive(Clone, Debug)]
+pub struct Player {
+    pub label: String,
+    pub file: String,
+    pub info: String,
+    /// The info line stands out (a measurement for the ear).
+    pub flag: bool,
+}
+
+/// A `rows_page` section, in page order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Section {
+    Sounds,
+    /// The effects demo projects (spec § 5).
+    Demos,
+    /// The private ports.
+    Private,
+}
+
+impl Section {
+    pub const ALL: [Section; 3] = [Section::Sounds, Section::Demos, Section::Private];
+
+    fn heading(self) -> &'static str {
+        match self {
+            Section::Sounds => "SOUNDS",
+            Section::Demos => "DEMO PROJECTS",
+            Section::Private => "PRIVATE",
+        }
+    }
+}
+
+/// A row of a `rows_page`: a title and its badge, text lines (flagged
+/// lines stand out), labelled facts, a player per render, and the section
+/// it goes in.
+#[derive(Clone, Debug)]
+pub struct Row {
+    pub title: String,
+    pub badge: Option<&'static str>,
+    pub lines: Vec<(String, bool)>,
+    pub facts: Vec<(&'static str, Vec<String>)>,
+    pub players: Vec<Player>,
+    pub section: Section,
+}
+
+const ROWS_PAGE: &str = include_str!("rows.html");
+
+/// A static listening page over any rows (the factory Sounds'), each
+/// render a plain `<audio>` player: the folder publishes as it is. Each
+/// section shows only when it has rows.
+pub fn rows_page(title: &str, intro: &str, rows: &[Row]) -> String {
+    let mut out = String::new();
+    for section in Section::ALL {
+        let mut it = rows.iter().filter(|r| r.section == section).peekable();
+        if it.peek().is_none() {
+            continue;
+        }
+        let class = if section == Section::Private {
+            " class=\"private\""
+        } else {
+            ""
+        };
+        let _ = writeln!(out, "<section{class}><h2>{}</h2>", section.heading());
+        for r in it {
+            let badge = r.badge.map_or(String::new(), |b| {
+                format!(
+                    " <span class=\"badge {}\">{}</span>",
+                    esc(&b.to_lowercase()),
+                    esc(b)
+                )
+            });
+            let _ = write!(
+                out,
+                "<article class=\"track\"><div class=\"meta\"><h3>{}{badge}</h3></div><div class=\"lines\">",
+                esc(&r.title)
+            );
+            for (l, flag) in &r.lines {
+                let c = if *flag { " class=\"flag\"" } else { "" };
+                let _ = write!(out, "<p{c}>{}</p>", esc(l));
+            }
+            out.push_str("</div>\n");
+            if !r.facts.is_empty() {
+                out.push_str("<dl class=\"facts\">");
+                for (label, lines) in &r.facts {
+                    let _ = write!(out, "<dt>{}</dt>", esc(label));
+                    for l in lines {
+                        let _ = write!(out, "<dd>{}</dd>", esc(l));
+                    }
+                }
+                out.push_str("</dl>\n");
+            }
+            for p in &r.players {
+                let _ = writeln!(
+                    out,
+                    "<div class=\"player\"><div class=\"label\"><b>{}</b><span{}>{}</span></div>\
+                     <audio controls preload=\"none\" src=\"{}\"></audio></div>",
+                    esc(&p.label),
+                    if p.flag { " class=\"flag\"" } else { "" },
+                    esc(&p.info),
+                    esc(&p.file)
+                );
+            }
+            out.push_str("</article>\n");
+        }
+        out.push_str("</section>\n");
+    }
+    ROWS_PAGE
+        .replace("<!--TITLE-->", &esc(title))
+        .replace("<!--INTRO-->", &esc(intro))
+        .replace("<!--SECTIONS-->", &out)
+}
+
 /// The WAVs' ends fade over 10 ms, so a player stopping there never clicks.
 const FADE: usize = 480;
 
 /// `x` as a 48 kHz, 16-bit mono WAV, its end faded over `FADE`.
 pub fn write_wav(path: &std::path::Path, x: &[f32]) -> Result<(), String> {
+    write_wav_ch(path, x, 1)
+}
+
+/// `x`, interleaved stereo, as a 48 kHz, 16-bit stereo WAV, its end faded
+/// over `FADE` frames.
+pub fn write_wav_stereo(path: &std::path::Path, x: &[f32]) -> Result<(), String> {
+    write_wav_ch(path, x, 2)
+}
+
+fn write_wav_ch(path: &std::path::Path, x: &[f32], channels: u16) -> Result<(), String> {
     let spec = hound::WavSpec {
-        channels: 1,
+        channels,
         sample_rate: SAMPLE_RATE,
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
     let err = |e: hound::Error| format!("{}: {e}", path.display());
     let mut w = hound::WavWriter::create(path, spec).map_err(err)?;
-    let n = x.len();
-    for (i, &s) in x.iter().enumerate() {
-        let fade = ((n - i) as f32 / FADE as f32).min(1.0);
-        let v = chimera_core::dsp::clampf(s * fade, -1.0, 1.0) * 32_767.0;
-        w.write_sample(v.round() as i16).map_err(err)?;
+    for v in wav_samples(x, channels) {
+        w.write_sample(v).map_err(err)?;
     }
     w.finalize().map_err(err)
+}
+
+/// `x`'s samples as `write_wav_ch` writes them: the end faded over `FADE`
+/// frames of `channels`, clamped, 16-bit.
+pub fn wav_samples(x: &[f32], channels: u16) -> impl Iterator<Item = i16> + '_ {
+    let (n, ch) = (x.len(), channels as usize);
+    x.iter().enumerate().map(move |(i, &s)| {
+        let fade = ((n - i).div_ceil(ch) as f32 / FADE as f32).min(1.0);
+        (chimera_core::dsp::clampf(s * fade, -1.0, 1.0) * 32_767.0).round() as i16
+    })
 }
 
 /// Ungated BS.1770 loudness of an interleaved stereo run at 48 kHz, as
@@ -1085,6 +1250,35 @@ mod tests {
     }
 
     #[test]
+    fn rows_page_escapes_and_parts_private() {
+        let row = |t: &str, private: bool| Row {
+            badge: None,
+            facts: Vec::new(),
+            title: t.into(),
+            lines: vec![("A & B".into(), false), ("by ear".into(), true)],
+            players: vec![Player {
+                label: "LONG".into(),
+                file: "renders/S9100002-long.wav".into(),
+                info: "-11.0 LUFS".into(),
+                flag: false,
+            }],
+            section: if private {
+                Section::Private
+            } else {
+                Section::Sounds
+            },
+        };
+        let html = rows_page("T", "I", &[row("<PAD>", false)]);
+        assert!(html.contains("&lt;PAD&gt;") && html.contains("A &amp; B"));
+        assert!(html.contains("src=\"renders/S9100002-long.wav\""));
+        assert!(html.contains("<p class=\"flag\">by ear</p>"));
+        assert!(html.contains(">SOUNDS<") && !html.contains("PRIVATE"));
+        let html = rows_page("T", "I", &[row("A", false), row("P", true)]);
+        assert!(html.contains("<section class=\"private\"><h2>PRIVATE</h2>"));
+        assert_eq!(html.matches("<audio").count(), 2);
+    }
+
+    #[test]
     fn only_http_links() {
         let mut s = src("x");
         s.url = Some("javascript:alert(1)".into());
@@ -1105,9 +1299,12 @@ mod tests {
         let c = credits(ok).unwrap();
         assert_eq!((c[0].0.as_str(), c[0].1.slug.as_str()), ("A.wav", "a"));
         assert_eq!(c[0].1.title, "T");
+        // A trailing comment is read past (`factory-sounds fmt` writes them).
+        let commented = credits("[[source]]\nfile = \"A.wav\"  # x\n").unwrap();
+        assert_eq!(commented[0].0, "A.wav");
         for bad in [
             "[[source]]\nfile = A.wav\n",
-            "[[source]]\nfile = \"A.wav\" # x\n",
+            "[[source]]\nfile = \"A.wav\" x\n",
             "file = \"A.wav\"\n",
             "[[source]]\nfile = \"A.wav\"\n[sources]\n",
             "[[source]]\ntitle = \"T\"\n",

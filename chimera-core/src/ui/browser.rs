@@ -22,7 +22,7 @@ use crate::ui::components;
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::hint::{self, Gesture};
-use crate::ui::library::{LibRow, LibState, Tab, row as lib_row_at, rows as lib_rows};
+use crate::ui::library::{BrowserTab, LibRow, LibState, row as lib_row_at, rows as lib_rows};
 use crate::ui::meter::{self, MeterView};
 use crate::ui::settings::part::Offer;
 use crate::ui::settings::prompt::POOL_FULL;
@@ -224,6 +224,12 @@ pub fn save_words(cost: Option<Cost>) -> FmtBuf {
 pub const EMPTY_LIBRARY: &str = "NO SOUNDS YET";
 pub const NEWER: &str = "‹ NEWER";
 pub const OLDER: &str = "OLDER ›";
+/// FACTORY's (showcase spec § 2).
+pub const EMPTY_FACTORY: &str = "NO FACTORY SOUNDS";
+pub const PREVIOUS: &str = "‹ PREVIOUS";
+pub const NEXT: &str = "NEXT ›";
+/// EDIT's words on a row of an engine coming soon.
+pub const SOON_LOAD: Gesture<'static> = Gesture("EDIT", SOON_TAG);
 pub const SAVE_TO_LIBRARY: Gesture<'static> = Gesture("MIX + EDIT", "SAVES TO LIBRARY");
 /// Line 3, the selected row's stamp: information, drawn with HINTS off.
 pub const STAMP_Y: i32 = CLEAR_Y;
@@ -242,6 +248,29 @@ pub fn load_words(cost: Option<Cost>) -> FmtBuf {
     let _ = match cost {
         Some(c) => write!(f, "LOADS · +{}", c.kib_label().as_str()),
         None => f.write_str("WON'T FIT"),
+    };
+    f
+}
+
+/// FACTORY's line 2, the description's room: it draws clipped to this.
+pub const NOTE_W: i32 = theme::CONTENT_W;
+
+/// A description's width as FACTORY draws it; the factory-sounds tool
+/// refuses one past `NOTE_W`.
+pub fn note_width(n: &str) -> i32 {
+    draw::text_width(&theme::FONT_LABEL, n, theme::LABEL_TRACKING)
+}
+
+/// FACTORY's line 3, the page's set stamp: `FACTORY · 0.1.0 1A2B3C4D`.
+pub fn factory_words(stamp: Option<BuildStamp>) -> FmtBuf {
+    let mut f = FmtBuf::new();
+    let _ = match stamp {
+        Some(s) => {
+            let mut b = FmtBuf::new();
+            let _ = write!(b, "{s}");
+            write!(f, "FACTORY · {}", components::upper(b.as_str()).as_str())
+        }
+        None => f.write_str("FACTORY · NO STAMP"),
     };
     f
 }
@@ -320,36 +349,42 @@ pub fn row_y(i: usize) -> i32 {
     LIST_TOP + i as i32 * ROW_H
 }
 
-/// What the browser lists: PROJECT's pool slots, or LIBRARY's page with
-/// this build's stamp.
+/// What the browser lists: PROJECT's pool slots, or LIBRARY's or
+/// FACTORY's page (the state's tab) with this build's stamp.
 #[derive(Clone, Copy)]
 pub enum BrowserView<'a> {
     Project,
     Library(&'a LibState, &'a BuildStamp),
 }
 
-/// The title row: `PROJECT  LIBRARY  B ◂▸`, the current tab in `INK`, then
-/// `· P1` right-aligned (ADR 0086's marks).
-fn title<D>(d: &mut D, tab: Tab, part: PartId)
+/// The space between the title's tabs, and before `· P1`.
+pub const TITLE_GAP: i32 = 8;
+/// B's mark: right on hint line 1, as the title's three tabs in full and
+/// it run past `CONTENT_W` (showcase spec § 2).
+pub const TURN: &str = "B ◂▸";
+
+/// Where the title's last tab ends: every tab in full.
+pub fn title_tabs_end() -> i32 {
+    let tabs: i32 = BrowserTab::ALL
+        .iter()
+        .map(|t| draw::text_width(&theme::FONT_LABEL_BOLD, t.label(), theme::LABEL_TRACKING))
+        .sum();
+    theme::MARGIN_X + tabs + TITLE_GAP * (BrowserTab::ALL.len() as i32 - 1)
+}
+
+/// The title row: `PROJECT  LIBRARY  FACTORY`, the current tab in `INK`,
+/// then `· P1` right-aligned (ADR 0086's marks).
+fn title<D>(d: &mut D, tab: BrowserTab, part: PartId)
 where
     D: DrawTarget<Color = Rgb565>,
 {
     let y = theme::HEADER_BASELINE;
     let mut x = theme::MARGIN_X;
-    for (t, label) in [(Tab::Project, "PROJECT"), (Tab::Library, "LIBRARY")] {
+    for t in BrowserTab::ALL {
         let ink = if t == tab { theme::INK } else { theme::FAINT };
         let font = &theme::FONT_LABEL_BOLD;
-        x += draw::text_tracked(d, font, label, x, y, ink, theme::LABEL_TRACKING) + 10;
+        x += draw::text_tracked(d, font, t.label(), x, y, ink, theme::LABEL_TRACKING) + TITLE_GAP;
     }
-    draw::text_tracked(
-        d,
-        &theme::FONT_LABEL,
-        "B ◂▸",
-        x,
-        y,
-        theme::MID,
-        theme::LABEL_TRACKING,
-    );
     let mut p = FmtBuf::new();
     let _ = write!(p, "· P{}", part.index() + 1);
     draw::text_right(
@@ -434,13 +469,18 @@ pub fn draw<D>(
 {
     match view {
         BrowserView::Project => {
-            title(d, Tab::Project, part);
+            title(d, BrowserTab::Project, part);
             project_body(d, project, part, cursor, scroll, hints, refusal);
         }
         BrowserView::Library(lib, this) => {
-            title(d, Tab::Library, part);
+            title(d, lib.tab(), part);
             library_body(d, project.pool(), lib, this, cursor, scroll, hints, refusal);
         }
+    }
+    // B's turn between the tabs: a hint, right on line 1.
+    if hints && refusal.is_none() {
+        let (font, t) = (&theme::FONT_LABEL, theme::LABEL_TRACKING);
+        draw::text_right(d, font, TURN, theme::VIZ_RIGHT, HINT_Y, theme::MID, t);
     }
 }
 
@@ -534,22 +574,28 @@ fn library_body<D>(
     }
     scroll_bar(d, scroll, total);
 
+    let factory = lib.tab() == BrowserTab::Factory;
     let on = match lib_row_at(page, cursor) {
         LibRow::Sound(e) => Some(e),
         _ => None,
     };
+    let soon = on.and_then(|e| lib.soon(e));
     // A listing that failed partway: its words under the rows it left.
     if let (Some(err), Some(p)) = (lib.err(), page)
         && !p.entries().is_empty()
     {
-        let msg = clip(&theme::FONT_LABEL, err.message(), ORPHAN_W);
+        let msg = clip(&theme::FONT_LABEL, err.message(), ORPHAN_W, 0);
         let (x, y, c) = (theme::MARGIN_X, INFO_Y, theme::WARN);
         draw::text_tracked(d, &theme::FONT_LABEL, msg, x, y, c, theme::LABEL_TRACKING);
     }
-    let fit = on.filter(|e| e.err.is_none()).map(|e| fitting(pool, e));
+    let loadable = on.filter(|e| e.err.is_none() && soon.is_none());
+    let fit = loadable.map(|e| fitting(pool, e));
     if let Some(r) = refusal {
         refusal_lines(d, r);
     } else if hints {
+        if soon.is_some() {
+            hint::draw(d, &[SOON_LOAD], theme::MARGIN_X, HINT_Y);
+        }
         if let Some(fit) = fit {
             let words = load_words(fit);
             let does = if fit.is_some() {
@@ -560,10 +606,31 @@ fn library_body<D>(
             let load = Gesture(LOAD.0, words.as_str());
             hint::gesture(d, &load, theme::MARGIN_X, HINT_Y, does);
         }
-        hint::draw(d, &[SAVE_TO_LIBRARY], theme::MARGIN_X, SAVE_Y);
+        // FACTORY is read-only: nothing saves, so line 2 is free.
+        if !factory {
+            hint::draw(d, &[SAVE_TO_LIBRARY], theme::MARGIN_X, SAVE_Y);
+        }
+    }
+    // The description is information: with HINTS off too.
+    if let Some(n) = on
+        .and_then(|e| lib.note_of(e))
+        .filter(|_| factory && refusal.is_none())
+    {
+        // `clip` measures as `note_width` does.
+        let shown = clip(
+            &theme::FONT_LABEL,
+            n.as_str(),
+            NOTE_W,
+            theme::LABEL_TRACKING,
+        );
+        let (x, y, c) = (theme::MARGIN_X, SAVE_Y, theme::INK);
+        draw::text_tracked(d, &theme::FONT_LABEL, shown, x, y, c, theme::LABEL_TRACKING);
     }
     if let Some(e) = on {
-        let words = stamp_words(e.stamp, this);
+        let words = match page.filter(|_| factory) {
+            Some(p) => factory_words(p.set_stamp),
+            None => stamp_words(e.stamp(), this),
+        };
         let (x, y, c) = (theme::MARGIN_X, STAMP_Y, theme::MID);
         draw::text_tracked(
             d,
@@ -575,7 +642,7 @@ fn library_body<D>(
             theme::LABEL_TRACKING,
         );
     }
-    let preview = on.filter(|e| e.err.is_none()).map(|e| entry_cost(e.len));
+    let preview = loadable.map(|e| entry_cost(e.len));
     meter_line(d, pool, preview);
 }
 
@@ -597,24 +664,34 @@ where
         let font = &theme::FONT_VALUE;
         draw::text_tracked(d, font, s, LIB_NAME_X, y, color, 0);
     };
+    let factory = lib.tab() == BrowserTab::Factory;
+    let (prev, next, empty) = if factory {
+        (PREVIOUS, NEXT, EMPTY_FACTORY)
+    } else {
+        (NEWER, OLDER, EMPTY_LIBRARY)
+    };
     let e = match row {
-        LibRow::Newer => return value(d, NEWER, dim),
-        LibRow::Older => return value(d, OLDER, dim),
+        LibRow::Prev => return value(d, prev, dim),
+        LibRow::Next => return value(d, next, dim),
         LibRow::Empty => {
-            let msg = lib.err().map_or(EMPTY_LIBRARY, |n| n.message());
+            let msg = lib.err().map_or(empty, |n| n.message());
             return value(d, msg, dim);
         }
         LibRow::Sound(e) => e,
     };
-    // Greyed: the name dimmed, the `FileError` in place of cost and tag.
-    let ink = match (selected, e.err) {
+    // Greyed: the name dimmed, the `FileError` (or COMING SOON) in place
+    // of cost and tag.
+    let greyed = e
+        .err
+        .map(|err| err.message())
+        .or(lib.soon(e).map(|_| SOON_TAG));
+    let ink = match (selected, greyed) {
         (true, _) => theme::BG,
         (false, Some(_)) => theme::MID,
         (false, None) => theme::INK,
     };
-    let right = match e.err {
-        Some(err) => {
-            let m = err.message();
+    let right = match greyed {
+        Some(m) => {
             draw::text_right(d, &theme::FONT_LABEL, m, TAG_RIGHT, y, dim, 0);
             draw::text_width(&theme::FONT_LABEL, m, 0)
         }
@@ -635,6 +712,7 @@ where
                 &theme::FONT_VALUE,
                 components::upper(n.as_str()).as_str(),
                 room,
+                0,
             ),
             ink,
         ),
@@ -663,10 +741,10 @@ where
     );
 }
 
-/// The longest start of `s` that fits `w` px in `font`.
-fn clip<'s>(font: &FontRenderer, s: &'s str, w: i32) -> &'s str {
+/// The longest start of `s` that fits `w` px in `font` at `tracking`.
+fn clip<'s>(font: &FontRenderer, s: &'s str, w: i32, tracking: i32) -> &'s str {
     let mut end = s.len();
-    while end > 0 && draw::text_width(font, &s[..end], 0) > w {
+    while end > 0 && draw::text_width(font, &s[..end], tracking) > w {
         end -= 1;
         while !s.is_char_boundary(end) {
             end -= 1;
@@ -752,7 +830,7 @@ where
             (None, None) => TAG_RIGHT - TAG_ROOM,
         } - NAME_GAP
             - NAME_X;
-        let shown = clip(&theme::FONT_VALUE, name.as_str(), room);
+        let shown = clip(&theme::FONT_VALUE, name.as_str(), room, 0);
         draw::text(d, &theme::FONT_VALUE, shown, NAME_X, y, color);
     }
     if let Some(c) = cost {

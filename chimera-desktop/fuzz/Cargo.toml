@@ -10,10 +10,18 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 chimera-desktop = { path = "..", default-features = false }
+chimera-core = { path = "../../chimera-core" }
 
 [[bin]]
 name = "read_wav"
 path = "fuzz_targets/read_wav.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_tx"
+path = "fuzz_targets/parse_tx.rs"
 test = false
 doc = false
 bench = false

@@ -160,8 +160,8 @@ impl ArenaWriter {
         }
     }
 
-    /// An arena of its own on the heap, leaked (host tests).
-    #[cfg(any(test, feature = "test-support"))]
+    /// An arena of its own on the heap, leaked (host tests and tools).
+    #[cfg(any(test, feature = "test-support", feature = "host-project"))]
     pub fn leaked() -> ArenaWriter {
         ArenaWriter::new(
             alloc::boxed::Box::leak(alloc::vec![0; ARENA_BYTES].into_boxed_slice()),

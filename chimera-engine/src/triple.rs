@@ -22,6 +22,9 @@ pub struct TripleBuffer<T> {
     latest: AtomicU8,
 }
 
+// `init_slots_in_place` writes each field: a new one fails to build here.
+crate::in_place::field_list!(TripleBuffer<u8> => TripleBuffer { slots, latest });
+
 impl<T> TripleBuffer<T> {
     pub const fn new(first: T, second: T, third: T) -> Self {
         Self {
@@ -56,7 +59,8 @@ impl<T> TripleBuffer<T> {
         // SAFETY: `p` comes from a live `&mut MaybeUninit<Self>`, so it is
         // valid, aligned and unaliased. `UnsafeCell<T>` is `repr(transparent)`
         // over `T`, so each slot is a `T`; the caller's `init` initialises
-        // each of the three, and `latest` is written once, before
+        // each of the three, and `latest` (the last field, `field_list!`
+        // above) is written once, before
         // `assume_init_mut`.
         unsafe {
             let slots = addr_of_mut!((*p).slots).cast::<T>();

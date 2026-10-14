@@ -46,6 +46,8 @@ usage: chimera-utils [flags] COMMAND …
   model-taps hall FITS [dens=…] [taps=FILE]
                            search HALL's tap fractions, the fits' knobs held
   model-fit VARIANT PROG … fit a `models` sketch (BURST v2) to programs
+  stim DIR                 the listening set as WAVs into DIR:
+                           snare bass stab sine_short sine_long texture hats
 flags:
   --jobs N        worker threads (default 8)
   --out DIR       outputs (env MV_OUT, default target/mv)
@@ -220,6 +222,12 @@ fn run() -> Result<bool, String> {
                     .collect::<Result<_, _>>()?
             };
             mv::start(&cfg, &types)
+        }
+        "stim" if rest.len() == 1 => {
+            stim::write_listening(std::path::Path::new(&rest[0])).map(|ps| {
+                ps.iter().for_each(|p| println!("{}", p.display()));
+                true
+            })
         }
         "mv-ab" => mv::ab(&cfg, ty(0)?).map(|_| true),
         "mv-structure" => mv::structure(&cfg, &nums(rest)?).map(|_| true),

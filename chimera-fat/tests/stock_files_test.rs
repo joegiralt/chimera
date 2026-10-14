@@ -30,7 +30,7 @@ use chimera_core::name::Name;
 use chimera_core::part::PartParams;
 use chimera_core::project::test_support::save_at;
 use chimera_core::project::{
-    Confirmed, LibPage, LibraryPart, PageAt, PartId, Project, ReplaceGuard, list_library,
+    Confirmed, LibPage, LibraryPart, PageAt, PartId, Project, ReplaceGuard, Shelf, list_library,
     read_library_sound, save_library_sound,
 };
 use chimera_core::storage::{
@@ -303,7 +303,7 @@ fn sound_file() -> Vec<u8> {
     };
     let mut out = Bytes(Vec::new());
     write_file(&mut out, &h, &mut |w| {
-        encode_library_sound(&sound(3), &STAMP, w)
+        encode_library_sound(&sound(3), &STAMP, None, w)
     })
     .unwrap();
     out.0
@@ -320,19 +320,19 @@ fn list_and_read(s: &Slot, adopt: bool) {
     let mut st = probed(s);
     let mut card = Card::new();
     let mut newest = Box::new(LibPage::EMPTY);
-    list_library(&mut card, &mut st, PageAt::Newest, &mut newest)
+    list_library(&mut card, &mut st, Shelf::User, PageAt::First, &mut newest)
         .out
         .unwrap();
     let rows: Vec<_> = newest.entries().iter().flatten().collect();
     assert_eq!(rows.len(), 48, "a full first page");
-    assert!(newest.older, "an older page");
+    assert!(newest.next, "an older page");
     let mut older = Box::new(LibPage::EMPTY);
-    let below = PageAt::Below(rows[47].id);
-    list_library(&mut card, &mut st, below, &mut older)
+    let below = PageAt::After(rows[47].id);
+    list_library(&mut card, &mut st, Shelf::User, below, &mut older)
         .out
         .unwrap();
     assert!(older.entries().iter().flatten().count() >= 2, "page 2");
-    assert!(older.newer, "a newer page");
+    assert!(older.prev, "a newer page");
     for page in [&newest, &older] {
         let e = page.entries().iter().flatten().next().unwrap();
         let file = page.file(e).unwrap();

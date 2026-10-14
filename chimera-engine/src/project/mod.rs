@@ -27,7 +27,8 @@ pub(crate) use ids::bounded_index;
 pub use ids::{PartId, PartSet, SlotId};
 pub use library::{
     AdoptError, Adopted, LibEntry, LibFile, LibNote, LibPage, LibRead, LibSeen, LibraryPart,
-    PageAt, SourceNeed, Staged, list_library, read_library_sound, save_library_sound,
+    PageAt, Shelf, SourceNeed, Staged, list_library, peek_note, read_library_sound,
+    save_library_sound,
 };
 pub use marks::{
     ActionRefused, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, StatusCache,
@@ -39,6 +40,7 @@ pub use pool::{EncodedSound, Pool, PoolFull};
 pub use sources::{
     Absence, Purged, SOURCE_HEAD, SourceEntry, SourceId, SourceRef, Unused, Users, source_users,
 };
+pub use store::PROJECT_DEMO_TOP;
 #[cfg(feature = "card-put")]
 pub use store::peek_entry;
 pub use store::still_over;

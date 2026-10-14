@@ -10,11 +10,14 @@ use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::test_support::FullOnWrite;
-use chimera_core::project::{LibNote, LibPage, PageAt, list_library, save_library_sound};
+use chimera_core::project::{
+    LibNote, LibPage, PROJECT_DEMO_TOP, PageAt, Shelf, list_library, list_projects, new_project_id,
+    peek_note, save_library_sound,
+};
 use chimera_core::storage::{
     BuildStamp, Card, FileError, FileKind, Generation, Header, ID_WINDOW, LIB_PEEK, LibId, NextId,
-    SoundDecoder, encode_library_sound, encode_sound, lib_id, library_file, load_ab, next_user_id,
-    peek_library, write_file,
+    Note, SoundDecoder, UserId, encode_library_sound, encode_sound, lib_id, library_file, load_ab,
+    next_user_id, peek_library, write_file,
 };
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
@@ -93,7 +96,9 @@ fn first(st: &mut MemStore, name: &str, n: usize) -> Vec<u8> {
 }
 
 fn save_named<S: Store>(st: &mut S, s: &Sound, name: &str) -> Result<LibId, LibNote> {
-    save_library_sound(&mut Card::new(), st, s, SoundName::new(name).unwrap(), &ST).out
+    save_library_sound(&mut Card::new(), st, s, SoundName::new(name).unwrap(), &ST)
+        .out
+        .map(LibId::from)
 }
 
 fn save<S: Store>(st: &mut S) -> Result<LibId, LibNote> {
@@ -129,7 +134,7 @@ fn file_of(
 }
 
 fn stamped_named(s: &Sound, name: &str) -> Vec<u8> {
-    file_of(s, name, &mut |w| encode_library_sound(s, &ST, w))
+    file_of(s, name, &mut |w| encode_library_sound(s, &ST, None, w))
 }
 
 fn unstamped(s: &Sound) -> Vec<u8> {
@@ -187,7 +192,7 @@ fn next_user_id_scans_windows_and_runs_out() {
     t[1] = 0b1111_1011;
     assert_eq!(
         next_user_id(LibId::USER_MAX, 1, &t),
-        NextId::Id(LibId::new(11).unwrap())
+        NextId::Id(UserId::new(11).unwrap())
     );
     assert_eq!(
         next_user_id(LibId::USER_MAX, LibId::USER_MAX - 7, &full),
@@ -287,6 +292,23 @@ fn peek_reads_the_stamp_of_a_grown_build() {
     }
 }
 
+/// A later build's longer `Build` moves the `Note`: the peek finds it at
+/// `Build`'s declared length, not at this build's.
+#[test]
+fn peek_reads_the_note_after_a_grown_build() {
+    use chimera_core::storage::RecordTag;
+    let note = Note::new("AFTER A LONGER BUILD").unwrap();
+    let base = file_of(&Sound::init(EngineType::Algo), "GROWN", &mut |w| {
+        w.put(RecordTag::Engine, &[0])?;
+        let mut build = ST.to_bytes().to_vec();
+        build.resize(build.len() + 6, 0);
+        w.put(RecordTag::Build, &build)?;
+        w.put(RecordTag::Note, note.as_str().as_bytes())
+    });
+    let p = peek_library(&base[..base.len().min(LIB_PEEK)], base.len() as u32).unwrap();
+    assert_eq!((p.stamp, p.note), (Some(ST), Some(note)));
+}
+
 #[test]
 fn peek_never_panics_on_cut_input() {
     let f = stamped_named(&factory_sound(0).unwrap(), "BASS-1");
@@ -365,13 +387,15 @@ fn chimera_only() -> MemStore {
 
 fn list<S: Store>(st: &mut S, at: PageAt) -> Box<LibPage> {
     let mut p = Box::new(LibPage::EMPTY);
-    list_library(&mut Card::new(), st, at, &mut p).out.unwrap();
+    list_library(&mut Card::new(), st, Shelf::User, at, &mut p)
+        .out
+        .unwrap();
     p
 }
 
 fn list_err<S: Store>(st: &mut S) -> LibNote {
     let mut p = Box::new(LibPage::EMPTY);
-    list_library(&mut Card::new(), st, PageAt::Newest, &mut p)
+    list_library(&mut Card::new(), st, Shelf::User, PageAt::First, &mut p)
         .out
         .unwrap_err()
 }
@@ -462,21 +486,21 @@ impl Store for Counting {
 #[test]
 fn a_hundred_sounds_page_48_48_4_newest_first() {
     let mut st = card_with_sounds(1..=100);
-    let p1 = list(&mut st, PageAt::Newest);
+    let p1 = list(&mut st, PageAt::First);
     assert_eq!(
-        (ids(&p1)[..3].to_vec(), ids(&p1).len(), p1.newer, p1.older),
+        (ids(&p1)[..3].to_vec(), ids(&p1).len(), p1.prev, p1.next),
         (vec![100, 99, 98], 48, false, true)
     );
-    let p2 = list(&mut st, PageAt::Below(LibId::new(53).unwrap()));
+    let p2 = list(&mut st, PageAt::After(LibId::new(53).unwrap()));
     assert_eq!(
-        (ids(&p2)[0], ids(&p2).len(), p2.newer, p2.older),
+        (ids(&p2)[0], ids(&p2).len(), p2.prev, p2.next),
         (52, 48, true, true)
     );
-    let p3 = list(&mut st, PageAt::Below(LibId::new(5).unwrap()));
-    assert_eq!((ids(&p3), p3.older), (vec![4, 3, 2, 1], false));
-    let up = list(&mut st, PageAt::Above(LibId::new(52).unwrap()));
-    assert_eq!((ids(&up)[47], ids(&up)[0], up.older), (53, 100, true));
-    assert!(!up.newer);
+    let p3 = list(&mut st, PageAt::After(LibId::new(5).unwrap()));
+    assert_eq!((ids(&p3), p3.next), (vec![4, 3, 2, 1], false));
+    let up = list(&mut st, PageAt::Before(LibId::new(52).unwrap()));
+    assert_eq!((ids(&up)[47], ids(&up)[0], up.next), (53, 100, true));
+    assert!(!up.prev);
     assert_eq!(up.position(LibId::new(100).unwrap()), Some(0));
 }
 
@@ -487,7 +511,7 @@ fn factory_and_foreign_names_are_never_listed_or_opened() {
         put(&mut st, n, &[0; 40]);
     }
     let mut st = Counting::new(st);
-    let p = list(&mut st, PageAt::Newest);
+    let p = list(&mut st, PageAt::First);
     assert_eq!(ids(&p), vec![1]);
     assert_eq!(st.reads(), vec!["S0000001.A"]);
 }
@@ -495,7 +519,7 @@ fn factory_and_foreign_names_are_never_listed_or_opened() {
 #[test]
 fn only_seen_sides_are_read() {
     let mut st = Counting::new(card_with_sounds(1..=10));
-    list(&mut st, PageAt::Newest);
+    list(&mut st, PageAt::First);
     assert_eq!(st.reads().len(), 10);
     assert!(st.reads().iter().all(|n| n.ends_with(".A")));
 }
@@ -505,7 +529,7 @@ fn bad_sides_list_with_their_errors() {
     let mut st = card_with_sounds(1..=2);
     truncate(&mut st, "S0000001.A", 0);
     set_version(&mut st, "S0000002.A", 2);
-    let p = list(&mut st, PageAt::Newest);
+    let p = list(&mut st, PageAt::First);
     assert_eq!(entry(&p, 1).err, Some(FileError::Truncated));
     assert_eq!(entry(&p, 1).seen.name, None);
     assert_eq!(entry(&p, 2).err, Some(FileError::NeedsNewerFirmware));
@@ -513,7 +537,7 @@ fn bad_sides_list_with_their_errors() {
 
 #[test]
 fn no_sounds_dir_is_an_empty_page() {
-    assert!(ids(&list(&mut chimera_only(), PageAt::Newest)).is_empty());
+    assert!(ids(&list(&mut chimera_only(), PageAt::First)).is_empty());
 }
 
 #[test]
@@ -530,9 +554,166 @@ fn an_unknown_engine_lists_greyed_with_its_name_and_stamp() {
         b[32] = 0x7F;
         b
     });
-    let p = list(&mut st, PageAt::Newest);
+    let p = list(&mut st, PageAt::First);
     let e = entry(&p, 1);
     assert_eq!(e.err, Some(FileError::NeedsNewerFirmware));
     assert_eq!(e.seen.name.unwrap().as_str(), "BASS-1");
-    assert_eq!((e.engine, e.stamp), (None, Some(ST)));
+    assert_eq!((e.engine, e.stamp()), (None, Some(ST)));
+}
+
+/// A project pair stub: the allocators read names only.
+fn project_stub(st: &mut MemStore, n: u32) {
+    let v = st.mount().unwrap();
+    let _ = st.make_dir(v, Dir::Chimera);
+    let _ = st.make_dir(v, Dir::Projects);
+    let name = format!("P{n:07}");
+    let f = FileName::new(Dir::Projects, name.as_bytes(), b"A").unwrap();
+    st.write(v, f, &mut |s: &mut dyn ByteSink| s.put(b"x"))
+        .unwrap();
+}
+
+/// What both allocation sites hand a new project, given the ids on the card.
+fn next_project(present: &[u32]) -> (u32, u32) {
+    let mut st = MemStore::new(1);
+    for &n in present {
+        project_stub(&mut st, n);
+    }
+    let by_new = new_project_id(&mut Card::new(), &mut st).out.unwrap();
+    let by_list = list_projects(&mut Card::new(), &mut st, &mut |_| {})
+        .fresh
+        .unwrap();
+    (by_new.file().id().get(), by_list.file().id().get())
+}
+
+#[test]
+fn save_on_empty_card_writes_p0000010() {
+    assert_eq!(PROJECT_DEMO_TOP, 9);
+    assert_eq!(next_project(&[]), (10, 10));
+}
+
+#[test]
+fn save_with_p0000003_present_writes_p0000010() {
+    assert_eq!(next_project(&[3]), (10, 10));
+}
+
+#[test]
+fn save_with_p0000012_present_writes_p0000013() {
+    assert_eq!(next_project(&[12]), (13, 13));
+}
+
+#[test]
+fn lib_id_parse_splits_user_from_factory() {
+    use chimera_core::storage::LibKind;
+    assert!(matches!(
+        LibId::parse("S0000012").map(LibId::kind),
+        Some(LibKind::User(_))
+    ));
+    assert!(matches!(
+        LibId::parse("S9100001").map(LibId::kind),
+        Some(LibKind::Factory(_))
+    ));
+    for bad in [
+        "S9000000",
+        "S0000000",
+        "P0000012",
+        "S000012",
+        "S00000123",
+        "s0000012",
+        "S000001x",
+    ] {
+        assert_eq!(LibId::parse(bad), None, "{bad}");
+    }
+    assert_eq!(UserId::new(9_000_001), None);
+    assert!(chimera_core::storage::FactoryId::new(8_999_999).is_none());
+    let f = chimera_core::storage::FactoryId::new(9_100_001).unwrap();
+    assert_eq!(f.to_string(), "S9100001");
+}
+
+/// Review Focus 3: a factory Sound loaded then saved is a user file, no Note.
+#[test]
+fn factory_load_then_save_is_user_without_note() {
+    let mut st = MemStore::new(1);
+    let v = st.mount().unwrap();
+    st.make_dir(v, Dir::Chimera).unwrap();
+    st.make_dir(v, Dir::Sounds).unwrap();
+    let mut snd = factory_sound(0).unwrap();
+    snd.name = SoundName::new("SHOWCASE").unwrap();
+    let note = Note::new("A DESCRIBED SOUND").unwrap();
+    let bytes = file_of(&snd, "SHOWCASE", &mut |w| {
+        encode_library_sound(&snd, &ST, Some(&note), w)
+    });
+    let fid = LibId::parse("S9100001").unwrap();
+    assert!(fid.is_factory());
+    let name = FileName::new(Dir::Sounds, &fid.stem(), b"A").unwrap();
+    st.write(v, name, &mut |s: &mut dyn ByteSink| s.put(&bytes))
+        .unwrap();
+    let len = len_of(&mut st, "S9100001.A");
+    let p = peek_library(&first(&mut st, "S9100001.A", LIB_PEEK), len).unwrap();
+    assert_eq!(p.note, Some(note), "the factory file carries its Note");
+
+    let loaded = load_sound(&mut st, fid);
+    let id = save_library_sound(&mut Card::new(), &mut st, &loaded, loaded.name, &ST)
+        .out
+        .unwrap();
+    assert_eq!(id.get(), 1);
+    assert!(!LibId::from(id).is_factory());
+    let n = format!("S{:07}.A", id.get());
+    let len = len_of(&mut st, &n);
+    let p = peek_library(&first(&mut st, &n, LIB_PEEK), len).unwrap();
+    assert_eq!(p.note, None);
+}
+
+/// A factory row keeps neither its stamp nor its description: the page
+/// keeps one set stamp, its first described row's, and `peek_note` reads
+/// one row's description on its own. A user row keeps its stamp.
+#[test]
+fn factory_rows_keep_the_page_one_set_stamp_and_peek_one_note() {
+    let mut st = MemStore::new(1);
+    let v = st.mount().unwrap();
+    st.make_dir(v, Dir::Chimera).unwrap();
+    st.make_dir(v, Dir::Sounds).unwrap();
+    let snd = factory_sound(0).unwrap();
+    let other = BuildStamp::new("0.0.9", "aaaaaaaa", false);
+    let note = Note::new("A DESCRIBED SOUND").unwrap();
+    for (id, stamp, note) in [
+        ("S9000001", other, None),
+        ("S9100001", ST, Some(&note)),
+        ("S0000001", ST, None),
+    ] {
+        let bytes = file_of(&snd, "SOUND", &mut |w| {
+            encode_library_sound(&snd, &stamp, note, w)
+        });
+        let name = FileName::new(Dir::Sounds, id.as_bytes(), b"A").unwrap();
+        st.write(v, name, &mut |s: &mut dyn ByteSink| s.put(&bytes))
+            .unwrap();
+    }
+    let mut p = Box::new(LibPage::EMPTY);
+    list_library(
+        &mut Card::new(),
+        &mut st,
+        Shelf::Factory,
+        PageAt::First,
+        &mut p,
+    )
+    .out
+    .unwrap();
+    let rows: Vec<_> = p.entries().iter().flatten().map(|e| e.stamp()).collect();
+    assert_eq!(rows, vec![None, None]);
+    let peek = |st: &mut MemStore, i: usize| {
+        let e = p.entries()[i].unwrap();
+        peek_note(&mut Card::new(), st, p.file(&e).unwrap()).out
+    };
+    assert_eq!(peek(&mut st, 0), Ok(None), "the stray file has none");
+    assert_eq!(peek(&mut st, 1), Ok(Some(note)));
+    // A file gone since the listing is refused, as a load is.
+    let gone = FileName::new(Dir::Sounds, b"S9100001", b"A").unwrap();
+    st.delete(v, gone).unwrap();
+    assert_eq!(peek(&mut st, 1), Err(LibNote::Gone));
+    assert_eq!(
+        p.set_stamp,
+        Some(ST),
+        "the described row's, not the stray file's"
+    );
+    let user = list(&mut st, PageAt::First);
+    assert_eq!(entry(&user, 1).stamp(), Some(ST));
 }

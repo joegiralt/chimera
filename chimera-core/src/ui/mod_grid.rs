@@ -605,6 +605,30 @@ impl MatrixState {
     }
 }
 
+/// A registry column's stored 8-byte label: `O5 LEVEL`, `E2 DEC`, else
+/// the block's tag (3 letters at most), a space and the param's label,
+/// cut at 8 (`ALG MORP`). One spelling for the unit's priming and the
+/// host's factory Sources; the grid draws its column from the address.
+pub fn dest_label(a: ParamAddr) -> [u8; LABEL_LEN] {
+    let tag = block_tag(a.block).as_bytes();
+    let (prefix, n): ([u8; 4], usize) = match a.block {
+        BlockRef::AlgoOp(op) => ([b'O', b'1' + op.index() as u8, b' ', 0], 3),
+        BlockRef::Env(e) => ([b'E', b'1' + e.index() as u8, b' ', 0], 3),
+        _ => {
+            let n = tag.len().min(3);
+            let mut p = [b' '; 4];
+            p[..n].copy_from_slice(&tag[..n]);
+            (p, n + 1)
+        }
+    };
+    let name = a.spec().map_or("", |s| s.label).as_bytes();
+    let mut label = [0u8; LABEL_LEN];
+    for (o, &c) in label.iter_mut().zip(prefix[..n].iter().chain(name)) {
+        *o = c;
+    }
+    label
+}
+
 /// Short tag for the block a destination lives in (column header, top line).
 pub fn block_tag(b: BlockRef) -> &'static str {
     match b {

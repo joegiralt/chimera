@@ -1,0 +1,636 @@
+# The VA showcase Sounds (spec § 7): `[[sound]]` Sources, S9100001 up, built
+# by `just factory-sounds` (ADR 0134). Keys are the frozen idents of
+# chimera-core/tests/fixtures/disk_codes_v1.txt: id, name, engine, note,
+# demo, plays, home, BLOCK.PARAM, mod.<SOURCE>, trim; status =
+# "placeholder" reserves an id and name; approved = "round <n> <CRC>"
+# binds the owner's round to what was heard (source::approval_crc: the
+# sound_crc plus demo, home, plays, phrase); level = "by ear
+# <LUFS>: <why>" pins a level outside -11 +- 2. Never a `from` line:
+# ports are private.
+
+[[sound]]
+id = "S9100001"
+name = "TAPE DRIFT"
+engine = "VA"
+note = "DRIFT AND SLOW LFO WARP SAWS"
+demo = "poly"
+plays = "long texture stab"
+home = "C3"
+phrase = "pad"
+approved = "round 2 85C2EBFC"
+OUT.LEVEL = "0.25"  # 32
+ENV1.ATK = "0.6"  # 331 ms
+ENV1.SUS = "0.85"  # 85%
+ENV1.REL = "0.75"  # 1.4 s
+OUT.SEND1 = "0.4"  # 51
+mod.ENV1 = "OUT.VCA +127"
+VA.STAB = "0.6"  # 76
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1800"  # 1.80 kHz
+LFO1.RATE = "0.15"  # 1
+LFO2.RATE = "0.3"  # 2
+mod.LFO1 = "VA.FINE2 +10, PITCH.FINE +4"
+mod.LFO2 = "FILTER.CUTOFF +30"
+LFO3.RATE = "0.2"  # 1
+mod.LFO3 = "VA.SHAPE1 +30, VA.SHAPE2 -30"
+mod.VEL = "VA.WAVE2 +20"
+level = "by ear -15.9: set low so a 4-note chord stays at or under 3 dB of limiting"
+trim = "-4.0"
+
+[[sound]]
+id = "S9100002"
+name = "FADED HYMN"
+engine = "VA"
+note = "ENV 2 SWEEPS WAVE SINE TO SAW"
+demo = "poly"
+plays = "long stab"
+home = "C3"
+phrase = "pad"
+approved = "round 2 0BFA155C"
+OUT.LEVEL = "0.25"  # 32
+ENV1.ATK = "0.65"  # 507 ms
+ENV1.SUS = "1"  # 100%
+ENV1.REL = "0.8"  # 2.0 s
+OUT.SEND3 = "0.12"  # 15
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0"
+VA.WAVE2 = "0"
+VA.STAB = "0.5"  # 64
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "2400"  # 2.40 kHz
+ENV2.SPEED = "SLOW"
+ENV2.ATK = "0.55"  # 1.2 s
+ENV2.SUS = "1"  # 100%
+LFO3.SHAPE = "SINE"
+LFO3.RATE = "2.5"  # 16
+mod.ENV2 = "VA.WAVE1 +85, VA.WAVE2 +85"
+mod.LFO3 = "VA.SHAPE1 +20"
+LFO1.RATE = "0.17"  # 1
+LFO1.SHAPE = "TRIANGLE"
+mod.LFO1 = "FILTER.CUTOFF +35, VA.SHAPE2 +30"
+level = "by ear -15.9: set low so a 4-note chord stays at or under 3 dB of limiting"
+trim = "-4.9"
+
+[[sound]]
+id = "S9100003"
+name = "NEON BRASS"
+engine = "VA"
+note = "SOFT FOR PAD, HARD FOR BRASS"
+demo = "poly"
+plays = "long texture"
+home = "C3"
+phrase = "lead"
+approved = "round 2 59D8D383"
+OUT.LEVEL = "0.25"  # 32
+ENV1.ATK = "0.4"  # 60 ms
+ENV1.SUS = "1"  # 100%
+ENV1.REL = "0.5"  # 187 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.STAB = "0.7"  # 89
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "700"  # 700 Hz
+ENV2.ATK = "0.25"  # 17 ms
+ENV2.DEC = "0.5"  # 187 ms
+ENV2.SUS = "0.4"  # 40%
+ENV3.SPEED = "SLOW"
+LFO1.RATE = "5"  # 32
+mod.VEL = "FILTER.CUTOFF +60"
+mod.ENV2 = "FILTER.CUTOFF +50"
+mod.LFO1 = "VA.FINE2 +8"
+mod.ENV3 = "PITCH.FINE +5, VA.SHAPE1 +25"
+mod.LFO2 = "VA.WAVE2 +20"
+LFO2.RATE = "0.4"  # 2
+trim = "-1.9"
+
+[[sound]]
+id = "S9100004"
+name = "GROWL BASS"
+engine = "VA"
+note = "MONO PART: LFO GROWLS SAWS"
+demo = "mono"
+plays = "bass texture"
+home = "C2"
+phrase = "bass"
+approved = "round 2 54B24B90"
+OUT.LEVEL = "0.5"  # 64
+ENV1.ATK = "0.1"  # 4.7 ms
+ENV1.SUS = "1"  # 100%
+ENV1.REL = "0.4"  # 84 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.FINE2 = "3"  # +3
+FILTER.KIND = "LADDER"
+FILTER.CUTOFF = "3000"  # 3.00 kHz
+FILTER.RESO = "0.3"  # 38
+LFO1.RATE = "3"  # 19
+LFO1.SYNC = "RETRIG"
+LFO2.RATE = "0.5"  # 3
+ENV2.DEC = "0.45"  # 126 ms
+ENV2.SUS = "0.3"  # 30%
+mod.LFO1 = "VA.SHAPE1 +60, VA.SHAPE2 +60"
+mod.LFO2 = "FILTER.CUTOFF +20"
+mod.ENV2 = "FILTER.CUTOFF +40, VA.AMOUNT +30"
+mod.VEL = "FOLDER.FOLD +20"
+trim = "0.5"
+
+[[sound]]
+id = "S9100005"
+name = "FOLD BASS"
+engine = "VA"
+note = "MONO PART: VELOCITY FOLDS"
+demo = "mono"
+plays = "bass texture short"
+home = "C2"
+phrase = "bass"
+approved = "round 2 4FB80E7B"
+OUT.LEVEL = "0.25"  # 32
+ENV1.ATK = "0.15"  # 7.2 ms
+ENV1.DEC = "0.45"  # 126 ms
+ENV1.SUS = "0.7"  # 70%
+ENV1.REL = "0.3"  # 38 ms
+VA.MODE = "BITS"
+VA.AMOUNT = "0.4"  # 51
+VA.SUB = "0.2"  # 25
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1200"  # 1.20 kHz
+LFO1.RATE = "0.5"  # 3
+ENV2.DEC = "0.4"  # 84 ms
+ENV2.SUS = "0"  # 0%
+mod.ENV1 = "OUT.VCA +127, FILTER.CUTOFF +40"
+mod.ENV2 = "VA.AMOUNT +50, FILTER.CUTOFF +30"
+mod.LFO1 = "VA.WAVE1 +25"
+mod.VEL = "FOLDER.FOLD +60, VA.WAVE2 +25"
+trim = "1.7"
+
+[[sound]]
+id = "S9100006"
+name = "GLIDE BASS"
+engine = "VA"
+note = "MONO PART: GLIDE, SUB BENEATH"
+demo = "mono"
+plays = "bass glide"
+home = "C2"
+phrase = "bass"
+approved = "round 2 E3097BD5"
+OUT.LEVEL = "0.25"  # 32
+ENV1.ATK = "0.1"  # 4.7 ms
+ENV1.DEC = "0.42"  # 99 ms
+ENV1.SUS = "0.7"  # 70%
+ENV1.REL = "0.3"  # 38 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.SUB = "0.2"  # 25
+VA.STAB = "0.2"  # 25
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.5765"  # 80 ms
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1000"  # 1.00 kHz
+ENV2.DEC = "0.38"  # 72 ms
+ENV2.SUS = "0"  # 0%
+LFO1.RATE = "2"  # 13
+mod.ENV2 = "FILTER.CUTOFF +40"
+trim = "3.9"
+mod.LFO1 = "VA.WAVE1 +25"
+
+[[sound]]
+id = "S9100007"
+name = "FIFTH SLIDE"
+engine = "VA"
+note = "MONO PART: GLIDING FIFTH"
+demo = "mono"
+plays = "bass glide"
+home = "C2"
+phrase = "bass"
+approved = "round 2 CC726406"
+OUT.LEVEL = "0.25"  # 32
+ENV1.ATK = "0.12"  # 5.6 ms
+ENV1.SUS = "1"  # 100%
+ENV1.REL = "0.45"  # 126 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.CRSE2 = "7"  # +7
+VA.AMOUNT = "0.5"  # 64
+VA.SUB = "0.3"  # 38
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.63"  # 120 ms
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1800"  # 1.80 kHz
+LFO1.RATE = "0.3"  # 2
+LFO2.RATE = "0.4"  # 2
+mod.LFO1 = "VA.AMOUNT +50"
+mod.LFO2 = "FILTER.CUTOFF +30"
+trim = "-0.5"
+
+[[sound]]
+id = "S9100008"
+name = "SYNC SCREAM"
+engine = "VA"
+note = "ENV 2 SWEEPS OSC 2 IN SYNC"
+demo = "poly"
+plays = "short long texture"
+home = "C3"
+phrase = "lead"
+approved = "round 2 A7B442E7"
+OUT.LEVEL = "0.25"  # 32
+ENV1.ATK = "0.15"  # 7.2 ms
+ENV1.DEC = "0.5"  # 187 ms
+ENV1.SUS = "0.85"  # 85%
+ENV1.REL = "0.45"  # 126 ms
+VA.MODE = "SYNC"
+VA.CRSE2 = "7"  # +7
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1400"  # 1.40 kHz
+ENV2.ATK = "0.5"  # 141 ms
+ENV2.DEC = "0.55"  # 279 ms
+ENV2.SUS = "0.4"  # 40%
+ENV2.LEVEL = "0.3"  # 38
+LFO1.RATE = "5.5"  # 35
+LFO2.RATE = "0.3"  # 2
+mod.ENV1 = "OUT.VCA +127, FILTER.CUTOFF +30"
+mod.ENV2 = "VA.CRSE2 +20, FILTER.CUTOFF +30"
+mod.LFO1 = "PITCH.FINE +5"
+mod.LFO2 = "VA.CRSE2 +6"
+mod.VEL = "ENV2.LEVEL +90"
+trim = "0.5"
+
+[[sound]]
+id = "S9100009"
+name = "RING LEAD"
+engine = "VA"
+note = "RING MODE: VELOCITY ADDS BELL"
+demo = "poly"
+plays = "long texture"
+home = "C4"
+phrase = "lead"
+approved = "round 2 D7921DAF"
+OUT.LEVEL = "0.25"  # 32
+ENV1.ATK = "0.25"  # 17 ms
+ENV1.SUS = "0.8"  # 80%
+ENV1.REL = "0.4"  # 84 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.MODE = "RING"
+VA.WAVE1 = "0.4"  # 51
+VA.WAVE2 = "0.1"  # 13
+VA.CRSE2 = "12"  # +12
+VA.AMOUNT = "0.35"  # 44
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1800"  # 1.80 kHz
+LFO1.RATE = "5"  # 32
+LFO2.RATE = "0.35"  # 2
+ENV2.ATK = "0.4"  # 60 ms
+ENV2.DEC = "0.5"  # 187 ms
+ENV2.SUS = "0.5"  # 50%
+mod.VEL = "VA.AMOUNT +25, FILTER.CUTOFF +15"
+mod.LFO1 = "PITCH.FINE +5"
+mod.LFO2 = "VA.WAVE1 +25, VA.SHAPE2 +30"
+mod.ENV2 = "FILTER.CUTOFF +35"
+trim = "2.6"
+[[sound]]
+id = "S9100035"
+name = "SOFT FLUTE"
+engine = "VA"
+note = "SOFT SQUARE FLUTE WITH BREATH"
+demo = "poly"
+plays = "long texture"
+home = "C4"
+phrase = "lead"
+approved = "round 2 82552FB7"
+OUT.LEVEL = "0.25"  # 32
+ENV1.ATK = "0.3"  # 26 ms
+ENV1.SUS = "0.9"  # 90%
+ENV1.REL = "0.5"  # 187 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0.95"  # 121
+VA.WAVE2 = "0"
+VA.CRSE2 = "12"  # +12
+VA.AMOUNT = "0.3"  # 38
+VA.STAB = "0.8"  # 102
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1500"  # 1.50 kHz
+ENV2.ATK = "0.3"  # 26 ms
+ENV2.DEC = "0.5"  # 187 ms
+ENV2.SUS = "0.3"  # 30%
+LFO1.RATE = "5.5"  # 35
+LFO2.RATE = "0.4"  # 2
+mod.ENV2 = "FILTER.CUTOFF +40, VA.AMOUNT +30"
+mod.LFO1 = "PITCH.FINE +4"
+mod.LFO2 = "VA.SHAPE1 +35, VA.WAVE1 -10"
+mod.VEL = "FILTER.CUTOFF +40, VA.AMOUNT +30"
+trim = "0.9"
+
+[[sound]]
+id = "S9100036"
+name = "SUPER SAWS"
+engine = "VA"
+note = "DETUNED SAWS, WIDE CHORUS"
+demo = "poly"
+plays = "long texture"
+home = "C3"
+phrase = "lead"
+approved = "round 2 45DDBDA8"
+OUT.LEVEL = "0.25"  # 32
+OUT.SEND1 = "0.4"  # 51
+ENV1.ATK = "0.12"  # 5.6 ms
+ENV1.SUS = "0.9"  # 90%
+ENV1.REL = "0.4"  # 84 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.FINE2 = "3"  # +3
+VA.CRSE2 = "12"  # +12
+VA.SUB = "0.35"  # 44
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "3500"  # 3.50 kHz
+ENV2.ATK = "0.2"  # 11 ms
+ENV2.DEC = "0.55"  # 279 ms
+ENV2.SUS = "0.5"  # 50%
+LFO1.RATE = "0.9"  # 6
+LFO2.RATE = "5"  # 32
+mod.ENV2 = "FILTER.CUTOFF +45"
+mod.LFO1 = "VA.SHAPE1 +35, VA.WAVE2 +20"
+mod.LFO2 = "PITCH.FINE +3"
+mod.VEL = "FILTER.CUTOFF +35, VA.SUB +30"
+trim = "-0.9"
+
+[[sound]]
+id = "S9100037"
+name = "SOLO PORTA"
+engine = "VA"
+note = "MONO PART: PORTAMENTO SOLO"
+demo = "mono"
+plays = "long texture"
+home = "C3"
+phrase = "lead"
+approved = "round 2 2F7B9549"
+OUT.LEVEL = "0.25"  # 32
+OUT.SEND2 = "0.3"  # 38
+ENV1.ATK = "0.15"  # 7.2 ms
+ENV1.SUS = "1"  # 100%
+ENV1.REL = "0.45"  # 126 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0.55"  # 70
+VA.WAVE2 = "0.7"  # 89
+VA.FINE2 = "2"  # +2
+VA.SUB = "0.15"  # 19
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.7"  # 205 ms
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1300"  # 1.30 kHz
+FILTER.RESO = "0.1"  # 13
+ENV2.ATK = "0.25"  # 17 ms
+ENV2.DEC = "0.5"  # 187 ms
+ENV2.SUS = "0.4"  # 40%
+LFO1.RATE = "5.5"  # 35
+LFO2.RATE = "0.25"  # 2
+mod.ENV2 = "FILTER.CUTOFF +50, VA.SHAPE2 +30"
+mod.LFO1 = "PITCH.FINE +5"
+mod.LFO2 = "VA.WAVE1 +25, VA.SHAPE1 +25"
+mod.VEL = "FILTER.CUTOFF +30"
+trim = "2.0"
+
+# Late-90s IDM set (with fm.toml and modal.toml): bit-crushed XOR grit.
+# Two squares an octave apart, XORed (MIX of the same reads 6-8 dB less
+# above 4-8 kHz), under a slow FREE triangle that sweeps the cutoff from
+# about 230 Hz to fully open and back every 4 s, coherent across voices.
+# harmonic "no": XOR is bitwise, alias-exempt by design (ADR 0118).
+[[sound]]
+id = "S9100040"
+name = "XOR GRIT"
+engine = "VA"
+note = "SLOW SWEEP OPENS ON XOR GRIT"
+demo = "poly"
+plays = "long texture"
+home = "C3"
+phrase = "lead"
+harmonic = "no"
+approved = "round 5 5781C8B2"
+OUT.LEVEL = "1"  # 127
+ENV1.ATK = "0.12"  # 5.6 ms
+ENV1.DEC = "0.5"  # 187 ms
+ENV1.SUS = "0.7"  # 70%
+ENV1.REL = "0.45"  # 126 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.MODE = "XOR"
+VA.AMOUNT = "0.5"  # 64
+VA.CRSE2 = "12"  # +12
+VA.WAVE1 = "1"  # 127
+VA.WAVE2 = "1"  # 127
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "2000"  # 2.00 kHz
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.38"  # 72 ms
+ENV2.SUS = "0"  # 0%
+mod.ENV2 = "VA.AMOUNT +30, PITCH.FINE +25"
+LFO1.RATE = "6.5"  # 41
+LFO1.SHAPE = "TRIANGLE"
+mod.LFO1 = "VA.AMOUNT +15"
+LFO2.RATE = "0.25"  # 2
+LFO2.SHAPE = "TRIANGLE"
+mod.LFO2 = "FILTER.CUTOFF +40, VA.SHAPE1 +40"
+mod.VEL = "VA.AMOUNT +20, FILTER.CUTOFF +20"
+trim = "-1.6"
+
+# Ring-mod blips: two sines a tritone apart (inharmonic); ENV 2 zaps the
+# partner's pitch. Saws clicked 17x. POLY: on a MONO Part with glide the
+# sines clicked 4.7-6.0x (glide) and 4.2-5.1x (texture).
+
+[[sound]]
+id = "S9100041"
+name = "RING BLIPS"
+engine = "VA"
+note = "TRITONE RING-MOD ZAPS"
+demo = "poly"
+plays = "short long texture"
+home = "C3"
+phrase = "wonky"
+approved = "round 3 A9D33766"
+harmonic = "no"
+OUT.LEVEL = "0.25"  # 32
+ENV1.ATK = "0.15"  # 7.2 ms
+ENV1.DEC = "0.45"  # 126 ms
+ENV1.SUS = "0.55"  # 55%
+ENV1.REL = "0.3"  # 38 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.MODE = "RING"
+VA.WAVE1 = "0"
+VA.WAVE2 = "0"
+VA.CRSE2 = "6"  # +6
+VA.AMOUNT = "0.5"  # 64
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "2500"  # 2.50 kHz
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.36"  # 61 ms
+ENV2.SUS = "0"  # 0%
+mod.ENV2 = "VA.FINE2 +60, PITCH.FINE +20, FILTER.CUTOFF +40"
+LFO1.RATE = "7"  # 44
+LFO1.SYNC = "RETRIG"
+LFO1.SHAPE = "SINE"
+mod.LFO1 = "VA.AMOUNT +25"
+LFO2.RATE = "0.3"  # 2
+mod.LFO2 = "VA.FINE2 +30"
+mod.VEL = "VA.AMOUNT +20, FILTER.CUTOFF +25"
+level = "by ear -16.7: set low so v127 texture blips stay under 1 dB of limiting"
+trim = "1.0"
+
+
+# Prophet-5-style set: two detuned oscillators into the 2040 four-pole
+# low-pass and its envelope, a little STABILITY drift, and poly-mod-like
+# motion (an envelope into osc 1's pitch or osc 2's wave). Brass: saw over
+# a detuned pulse (a P5 has no sub), the filter swelling over ~400 ms to a
+# moderate sustain, while a fast ENV 3 (sustain 0) bends osc 1 about 30
+# cents sharp at each attack and back: the P5's poly-mod brass blip.
+[[sound]]
+id = "S9100044"
+name = "WARM BRASS"
+engine = "VA"
+note = "ENV 3 BLIPS OSC 1 AS IT SWELLS"
+demo = "poly"
+plays = "long stab"
+home = "C3"
+phrase = "pad"
+approved = "round 3 93954547"
+OUT.LEVEL = "0.25"  # 32
+OUT.SEND3 = "0.1"  # 13
+ENV1.ATK = "0.5"  # 141 ms
+ENV1.SUS = "0.9"  # 90%
+ENV1.REL = "0.6"  # 415 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE2 = "0.95"  # 121
+VA.FINE2 = "7"  # +7
+VA.STAB = "0.5"  # 64
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "650"  # 650 Hz
+FILTER.RESO = "0.2"  # 25
+ENV2.ATK = "0.62"  # 393 ms
+ENV2.DEC = "0.6"  # 415 ms
+ENV2.SUS = "0.4"  # 40%
+ENV2.REL = "0.6"  # 415 ms
+mod.ENV2 = "FILTER.CUTOFF +38"
+ENV3.ATK = "0"
+ENV3.DEC = "0.45"  # 57
+ENV3.SUS = "0"
+mod.ENV3 = "VA.FINE1 +38"
+LFO1.RATE = "0.3"  # 2
+LFO1.SHAPE = "TRIANGLE"
+mod.LFO1 = "VA.SHAPE2 +20"
+mod.VEL = "FILTER.CUTOFF +25"
+level = "by ear -16.2: set low so a 4-note chord with its reverb stays at or under 3 dB of limiting"
+trim = "0.4"
+
+# Prophet-5 poly-mod keys: ENV 2 plucks the filter and bends osc 2's wave
+# (the filter envelope into oscillator B), a slow LFO widens the pulse.
+[[sound]]
+id = "S9100045"
+name = "PULSE KEYS"
+engine = "VA"
+note = "ENV 2 PLUCKS PULSE AND FILTER"
+demo = "poly"
+plays = "long texture"
+home = "C3"
+phrase = "arp"
+approved = "round 3 C968E177"
+OUT.LEVEL = "0.5"  # 64
+OUT.SEND2 = "0.2"  # 25
+ENV1.ATK = "0.1"  # 4.7 ms
+ENV1.DEC = "0.55"  # 279 ms
+ENV1.SUS = "0.7"  # 70%
+ENV1.REL = "0.5"  # 187 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0.9"  # 114
+VA.FINE2 = "3"  # +3
+VA.STAB = "0.7"  # 89
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1200"  # 1.20 kHz
+FILTER.RESO = "0.15"  # 19
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.5"  # 187 ms
+ENV2.SUS = "0.1"  # 10%
+mod.ENV2 = "FILTER.CUTOFF +28, VA.WAVE2 +20"
+LFO1.RATE = "0.2"  # 1
+LFO1.SHAPE = "TRIANGLE"
+mod.LFO1 = "VA.SHAPE1 +35"
+LFO2.RATE = "0.11"  # 1
+mod.LFO2 = "VA.FINE2 +8"
+mod.VEL = "FILTER.CUTOFF +12, VA.WAVE1 -15"
+trim = "-0.3"
+
+# The slow swell, in the manner of Radiohead's "Everything In Its Right
+# Place" (style only; the sweep phrase is original): Prophet-5-style keys
+# whose 2040 a SLOW ENV 2 swells open over 3.6 s and closed over 3.3 s on
+# each held chord. Every voice of a chord starts the envelope together, so
+# it swells as played (a FREE LFO's phase is per voice: it smears). The
+# envelope is continuous and the 2040 ramps its cutoff per sample: never
+# zippered.
+[[sound]]
+id = "S9100046"
+name = "SLOW TIDE"
+engine = "VA"
+note = "ENV 2 SWELLS EACH CHORD OPEN"
+demo = "poly"
+plays = "long stab"
+home = "C3"
+phrase = "sweep"
+approved = "round 3 C942C5D0"
+OUT.LEVEL = "0.25"  # 32
+OUT.SEND3 = "0.12"  # 15
+ENV1.ATK = "0.3"  # 26 ms
+ENV1.SUS = "0.9"  # 90%
+ENV1.REL = "0.65"  # 617 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE2 = "0.85"  # 108
+VA.FINE2 = "5"  # +5
+VA.STAB = "0.55"  # 70
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "600"  # 600 Hz
+FILTER.RESO = "0.25"  # 32
+ENV2.SPEED = "SLOW"
+ENV2.ATK = "0.68"  # 3.6 s
+ENV2.DEC = "0.62"  # 3.3 s
+ENV2.SUS = "0"  # 0%
+ENV2.REL = "0.5"  # 1.3 s
+mod.ENV2 = "FILTER.CUTOFF +32"
+LFO1.RATE = "0.3"  # 2
+mod.LFO1 = "VA.FINE2 +6"
+LFO2.RATE = "0.13"  # 1
+mod.LFO2 = "VA.SHAPE2 +30"
+LFO3.RATE = "0.08"  # 0
+LFO3.SHAPE = "TRIANGLE"
+mod.LFO3 = "VA.WAVE1 +15"
+mod.VEL = "FILTER.CUTOFF +20, VA.WAVE2 -15"
+level = "by ear -20.1: the 1 s level render hears the swell still closed; set low so the open 5-note sweep chord with its reverb stays at or under 3 dB of limiting"
+trim = "-1.2"
+
+# Two sines a few cents apart (a slow beat), crushed by BITS: ENV 2 starts
+# each note at AMOUNT near full crush (16·8^-x bits) and relaxes it to
+# clean over about a second. Filter fully open. harmonic "no": BITS is
+# quantising, alias-exempt by design (ADR 0118).
+[[sound]]
+id = "S9100053"
+name = "BIT BLOOM"
+engine = "VA"
+note = "CRUSHED SINES MELT TO CLEAN"
+demo = "poly"
+plays = "long stab"
+home = "C3"
+phrase = "pad"
+harmonic = "no"
+approved = "round 5 9D25EE4F"
+OUT.LEVEL = "0.25"  # 32
+OUT.SEND3 = "0.15"  # 19
+ENV1.ATK = "0.15"  # 7.2 ms
+ENV1.DEC = "0.6"  # 415 ms
+ENV1.SUS = "0.8"  # 80%
+ENV1.REL = "0.7"  # 919 ms
+mod.ENV1 = "OUT.VCA +127"
+VA.WAVE1 = "0"
+VA.WAVE2 = "0"
+VA.FINE2 = "3"  # +3
+VA.MODE = "BITS"
+VA.AMOUNT = "0"
+FILTER.CUTOFF = "20000"  # 20.0 kHz
+ENV2.SPEED = "SLOW"
+ENV2.ATK = "0"  # 9.3 ms
+ENV2.DEC = "0.5"  # 1.3 s
+ENV2.SUS = "0"  # 0%
+mod.ENV2 = "VA.AMOUNT +127"
+mod.VEL = "VA.AMOUNT +15"
+LFO1.RATE = "0.15"  # 1
+LFO1.SHAPE = "SINE"
+mod.LFO1 = "PITCH.FINE +3"
+level = "by ear -16.5: set low so the pad phrase's chords with their reverb stay at or under 3 dB of limiting"
+trim = "-5.0"

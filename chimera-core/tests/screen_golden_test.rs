@@ -213,22 +213,32 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the pool meter, row costs, the hints' bytes (sound-pool
     // plan Task 6); and its refusal. Then the merge with filter-types: a
     // Sound is smaller (fixed columns, no registry entry).
-    ("sound_browser", 0x3ab3496b59af0787),
+    // Then, with the library_* screens: FACTORY joins the title and B ◂▸
+    // moves to hint line 1 (showcase Task 4).
+    ("sound_browser", 0xf7e66011d5bc81cf),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
     // Then pool_full: 2352 → 2544 (the formant fields).
-    ("sound_browser_pool_full", 0x941800e328b33329),
+    ("sound_browser_pool_full", 0x50cd17a996f2bcd1),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
-    ("library_empty", 0x8f0947e1ab171164),
-    ("library_no_card", 0xc5bd9084be465729),
-    ("library_sounds", 0xe5a531230a0d7740),
-    ("library_this_build", 0x7fa3fe94036cbf5f),
-    ("library_cut_short", 0x477c57047c48ef00),
-    ("library_older", 0xb33719429542a20e),
-    ("library_newer", 0x9e00520c336cc869),
-    ("library_wont_fit", 0x9e2e27d171cad731),
-    ("library_pool_full", 0xd9fefa03d3ad18ac),
+    // Merged: FACTORY in the title (showcase) beside the formant cost.
+    ("library_empty", 0xd8911862d45ce624),
+    ("library_no_card", 0x218eef0844392199),
+    ("library_sounds", 0xdc882e59a6e21180),
+    ("library_this_build", 0xa62ccc16346d2ee7),
+    ("library_cut_short", 0xea7a836399cd9490),
+    ("library_older", 0x5fb33a7812bd7e76),
+    ("library_newer", 0xd2b82a42a181f799),
+    ("library_wont_fit", 0x7f169bc1cf90d811),
+    ("library_pool_full", 0x5952ab4362815584),
     ("library_naming", 0xab3925136bf27a0f),
+    // The FACTORY tab: a row's description on line 2, the set's build on
+    // line 3; empty, no card, and a stray TAPE file greyed COMING SOON.
+    // Re-recorded on the merge: the pool meter at the formant cost.
+    ("factory_described", 0x7d264187d1992630),
+    ("factory_empty", 0xf843b91189d17dd6),
+    ("factory_no_card", 0xd1d5f8fc5b4c10ab),
+    ("factory_coming_soon", 0xf147edaf8d91db32),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     // Re-recorded: INVERT in cell F (ADR 0126).
     ("settings_personal_theme", 0x69eb789acb0d98db),
@@ -248,7 +258,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_orbit_save_to", 0xa4d2405ea9f09bf6),
     ("settings_load", 0x34b0bd576d341497),
     ("settings_prompt_load", 0xc47d45b862dea1e3),
-    ("settings_naming", 0x3ad617885a99ddf2),
+    ("settings_naming", 0xc4298c7a6a0c5b5a),
     // Every ORBIT page again for Task 16: the map gains SCN.
     // ORBIT's RHYTHM, CHRD and CUSTOM (plan Task 9); Task 10's header,
     // `SCENE n`, and the beat dot on the playing ones.

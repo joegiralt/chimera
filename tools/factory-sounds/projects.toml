@@ -1,0 +1,54 @@
+# The effects demo projects, P0000001-P0000009 (spec § 5), built by
+# `just factory-sounds` into CHIMERA/PROJECTS/P000000n.A on NEW's template:
+#
+#   [[project]]
+#   id = "P0000001"
+#   name = "REVERB ROOMS"
+#   try = "Turn TYPE through QUAD, ROOM and HALL"   # the release notes' line
+#   fx.REVERB.TYPE = "ROOM"                         # FX by frozen idents
+#   hear.REVERB.TYPE = "QUAD, HALL"                 # a QA setting per value
+#   part.1 = "NYLON, POLY, CH 1"                    # a public Sound by name
+#
+# Each Part carries its Sound's own sends (ADR 0123). `qa` plays every
+# setting, and every reverb TYPE, CHORUS mode and the delay must be heard
+# across the demos.
+# `held = "<reason>"` keeps a demo checked but unbuilt and unrendered;
+# what only held demos play is reported pending.
+
+[[project]]
+id = "P0000001"
+name = "REVERB ROOMS"
+try = "Turn TYPE through QUAD, ROOM and HALL"
+fx.REVERB.TYPE = "ROOM"
+hear.REVERB.TYPE = "QUAD, HALL"
+part.1 = "LAST LIGHT, POLY, CH 1"
+part.2 = "SITAR DRONE, POLY, CH 2"
+
+[[project]]
+id = "P0000002"
+name = "REVERB BLOOM"
+try = "Hold slow chords, then turn TYPE from BLOOM to REVERSE"
+fx.REVERB.TYPE = "BLOOM"
+fx.REVERB.TIME = "0.75"
+hear.REVERB.TYPE = "REVERSE"
+part.1 = "FADED HYMN, POLY, CH 1"
+part.2 = "SLOW TIDE, POLY, CH 2"
+
+[[project]]
+id = "P0000003"
+name = "REVERB GATE"
+try = "Play short, sharp notes: the gate cuts every tail, the echoes too"
+fx.REVERB.TYPE = "GATE"
+fx.DELAY.REV = "0.5"
+part.1 = "WARM BRASS, POLY, CH 1"
+part.2 = "SOLO PORTA, MONO, CH 2"
+
+[[project]]
+id = "P0000004"
+name = "CHORUS DELAY"
+try = "Turn CHORUS through I, II and I+II"
+fx.CHORUS.MODE = "JUNO_BOTH"
+fx.CHORUS.MIX = "0.75"
+hear.CHORUS.MODE = "JUNO_I, JUNO_II"
+part.1 = "TAPE DRIFT, POLY, CH 1"
+part.2 = "SOLO PORTA, MONO, CH 2"
