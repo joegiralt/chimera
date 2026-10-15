@@ -65,7 +65,7 @@ MODEL's screen order and disk codes. Codes are frozen once written; the ones mar
 The chain stays `SRC · DECK · <machine> · DRV · FLT · AMP · MOD`, opening on DECK (ADR 0093, 0120). Each machine labels the shared params its own way and dims what it ignores, from the one table (`tape_engine::machine::MACHINES`). Six cells a page at most.
 
 **SRC (every machine):** SOURCE, START, END, VOL, PREP, –.
-- PREP shows the prep's name and type (`AMEN 64 · KIT`), or `RAW`. Turning it steps through the `.PRP`s made from this source. **MIX + EDIT on SOURCE or PREP opens PREP** on the sample, with the hint `MIX + EDIT · PREP THIS SAMPLE` (ADR 0086).
+- PREP shows the prep's name and type (`AMEN 16 · KIT`), or `RAW`. Turning it steps through the `.PRP`s made from this source. **MIX + EDIT on SOURCE or PREP opens PREP** on the sample, with the hint `MIX + EDIT · PREP THIS SAMPLE` (ADR 0086).
 - When streamed, SOURCE's focus band reads `STREAMED · 41 KB/S · 7 KB HEADS`.
 
 **DECK (home):** MODEL, then two machine-labelled cells (POSITION and MOTION, or dimmed), TAPE, AGE, –.
@@ -189,7 +189,7 @@ A record holds at most 640 B (ADR 0102), so KIT's slices take two `PrepSlices` r
 
   Tag codes are the next free ones when slices 3–5 build them (0x001F upward on main today), checked against open branches as TAPE's were.
 - **Sealed and write-once, named by content.** The name is a CRC over `PrepHead`'s ref and type and the type's records. The name and `PrepView` are labels, outside it, as a source's root and name are. It is written by `write_source`'s rules: write, read back, verify, seal (ADR 0087, 0106). A sealed file that fails reads as missing and is never rewritten.
-- **Editing a prep makes a new file.** MAKE writes the new `.PRP`, seals it, then deletes the one it replaces (if the user chose REPLACE, not SAVE AS). A cut between the two leaves both: harmless, and SAMPLES lists both.
+- **Editing a prep makes a new file.** MAKE writes the new `.PRP`, seals it, then deletes the one it replaces (if the user chose SAVE, not NEW). A cut between the two leaves both: harmless, and SAMPLES lists both.
 - **Several preps per source** are allowed: a KIT and a REEL of the same break. SAMPLES finds a source's preps by the ref in each head.
 - **The Sound copies the prep in** when SOURCE or PREP picks it: the same records, inside the Sound (Sound records may hold them; a `SourceRef` names the source). The audio never reads a `.PRP`. A project keeps working with the `.PRP` deleted.
 - **Clean-up (#398)** gains one rule: a `.PRP` whose source is gone is an orphan, and is deleted. A `.PRP` is otherwise a library item; the user deletes it in SAMPLES.
@@ -224,6 +224,8 @@ PREP never changes a Sound by itself. It writes a `.PRP` (and maybe a `.SRC`). B
 
 ### 4.2 Its own language
 
+Pixel mockups of every screen, in the unit's fonts and colours: (private notes). PREP's look is approved (owner, 2026-10-15).
+
 SETTINGS is lists, a breadcrumb and a footer. Part pages are the focus band, the arc and six cells under a chain map. PREP is a **workbench**: one big waveform with numbered marks, a leader strip of its chain, a readout line, six compact dials, and a **tool bar that labels B1–B6**. No other mode labels those buttons, so you always know you are in PREP.
 
 | Element | Size (240 × 320 portrait) | Look |
@@ -235,7 +237,7 @@ SETTINGS is lists, a breadcrumb and a footer. Part pages are the focus band, the
 | Ruler | 176–187 | Time at the window's ends and the cursor, in seconds to 3 places |
 | Readout | 188–215 | What the focused dial does, large: `SLICE 07 / 24 · 1.214 S`. It is also where MIX hints show (ADR 0086). |
 | Dials | 216–287 | Six cells, two rows of three, label and value only (no arcs), eased as every value (ADR 0143) |
-| Tool bar | 288–319 | Six boxes in the order of B1–B6, each a page tool's name |
+| Tool bar | 288–319 | Six boxes in the order of B1–B6, each a page tool's name: 34 px of text, so one short word (FLIP, LOUD, ERASE, NEW, SAVE; owner, 2026-10-15) or two lines (TO / START) |
 
 Marks are amber (`WARN`) only in PREP. The Part pages never draw `WARN` but for warnings, so the colour also says where you are.
 
@@ -279,11 +281,11 @@ Each mockup is the 240 × 320 screen, one character about 6 px.
  ┌GAIN───┐┌FADE IN┐┌FADE OU┐
  │+0.0 DB││  0 MS ││ 20 MS │
  └───────┘└───────┘└───────┘
- [▶ PLAY][TO S  ][TO E  ][REVERS][NORMAL][ SNAP ]
+ [▶ PLAY][TO S  ][TO E  ][ FLIP ][ LOUD ][ SNAP ]
 ```
 
 - Dials: START, END (snapping to zero crossings when SNAP is on), ZOOM, GAIN, FADE IN, FADE OUT.
-- Tools: B1 PLAY, B2 jump the view TO START, B3 TO END, B4 REVERSE (toggles a render mark), B5 NORMALISE (a render mark), B6 SNAP on/off.
+- Tools: B1 PLAY, B2 jump the view TO START, B3 TO END, B4 FLIP (reverse, a render mark), B5 LOUD (normalise, a render mark), B6 SNAP on/off.
 - GAIN, fades, REVERSE and NORMALISE are marks until MAKE, and are heard in audition (the audition applies them on the fly). MAKE renders them.
 
 **CUT** (KIT and REEL: where the marks go). Sub-pages GRID, TRANSIENT, HAND (EDIT / SEQ).
@@ -305,11 +307,11 @@ Each mockup is the 240 × 320 screen, one character about 6 px.
  ┌THRESH─┐┌MIN GAP┐┌COUNT──┐
  │ -24 DB││ 40 MS ││  16   │
  └───────┘└───────┘└───────┘
- [▶ PLAY][ ADD  ][DELETE][◂ PREV][NEXT ▸][ SNAP ]
+ [▶ PLAY][ ADD  ][ERASE ][◂ PREV][NEXT ▸][ SNAP ]
 ```
 
-- GRID: COUNT (2–64 equal). TRANSIENT: THRESH and MIN GAP (an envelope follower over one read of the file). HAND: ADD a mark at the audition head, DELETE, PREV, NEXT, POS moves the focused mark (snapping to a zero crossing).
-- MIX + B3 clears every mark (`MIX + DELETE · CLEAR ALL MARKS`).
+- GRID: COUNT (2–64 equal). TRANSIENT: THRESH and MIN GAP (an envelope follower over one read of the file). HAND: ADD a mark at the audition head, ERASE, PREV, NEXT, POS moves the focused mark (snapping to a zero crossing).
+- MIX + B3 clears every mark (`MIX + ERASE · CLEAR ALL MARKS`).
 - Up to 64 marks for KIT and 32 for REEL. The 65th ADD says `64 SLICES · KIT IS FULL`.
 
 **LOOP** (RAW)
@@ -361,7 +363,7 @@ KIT: a keyboard of 64 keys from BASE, one slice a key, drawn as the slice's poli
  ┌REPEATS┐┌SPEED──┐┌CHANCE─┐
  │  ×2   ││ 0.50× ││  50 % │
  └───────┘└───────┘└───────┘
- [▶ PLAY][ ADD  ][DELETE][◂ PROG][PROG ▸][ END  ]
+ [▶ PLAY][ ADD  ][ERASE ][◂ PROG][PROG ▸][ END  ]
 ```
 
 - B6 cycles the program's end: LOOP, STOP, NEXT.
@@ -373,15 +375,15 @@ KIT: a keyboard of 64 keys from BASE, one slice a key, drawn as the slice's poli
 ┌PREP┐ AMEN BREAK           ( KIT ) 
  TRIM · CUT · LOOP · MAP · REEL · [MAKE]
    TYPE      KIT
-   NAME      AMEN 64
+   NAME      AMEN CHOP
    MARKS     16 SLICES · 1 GROUP
    AUDIO     NO CHANGE  (.PRP ONLY, 1 KB)
-   REPLACES  AMEN 16  (SAVE AS KEEPS IT)
+   REPLACES  AMEN 16  (NEW KEEPS IT)
  MIX + PLUS · SAVE
  ┌TYPE───┐┌NAME───┐┌       ┐
  │  KIT  ││ EDIT ▸││       │
  └───────┘└───────┘└───────┘
- [▶ PLAY][SAVE AS][REPLACE][      ][      ][      ]
+ [▶ PLAY][ NEW  ][ SAVE ][      ][      ][      ]
 ```
 
 - With audio marks, AUDIO reads `RENDER · NEW .SRC · 288 KB · ~1 S` and the save renders first, behind a progress bar, then writes the `.PRP`.
