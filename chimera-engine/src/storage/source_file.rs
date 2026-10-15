@@ -7,6 +7,7 @@
 //! streams, `source_target` and `verify_and_seal` around the write.
 
 use chimera_hal::store::{Dir, FileName, Store, StoreError};
+use chimera_hal::units::Bytes;
 
 use super::SourceRef;
 use crate::dsp::tape_engine::read::{
@@ -272,6 +273,16 @@ impl SourceLayout {
     fn crc_prefix(&self) -> Crc32 {
         crc_prefix(self.head.shape, self.head.count, self.zones())
     }
+}
+
+/// The first `SourceData` record's offset in the file: after the header,
+/// the head record and a zoned source's `SourceZones` record.
+pub fn data_offset(l: &SourceLayout) -> Bytes {
+    let zones = match l.zones().len() {
+        0 => 0,
+        n => RECORD_HEAD_LEN + ZONE_LEN * n,
+    };
+    Bytes::new((HEADER_LEN + RECORD_HEAD_LEN + SOURCE_HEAD_LEN + zones) as u32)
 }
 
 fn crc_prefix(shape: Shape, count: u8, zones: &[Zone]) -> Crc32 {
