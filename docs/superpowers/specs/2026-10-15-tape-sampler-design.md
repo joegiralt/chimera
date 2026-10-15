@@ -245,7 +245,7 @@ Marks are amber (`WARN`) only in PREP. The Part pages never draw `WARN` but for 
 
 | Control | In PREP |
 |---|---|
-| MINUS / PLUS | Along the chain (D-pad rule, ADR 0081), skipping pages the prep type doesn't use (the leader still shows them `FAINT`). **CUT is never skipped** (§ 4.4). In FOCUS they do nothing: FOCUS stays on its mark, and its MARK # dial walks the marks |
+| MINUS / PLUS | Along the chain (D-pad rule, ADR 0081), skipping pages the prep type doesn't use (the leader still shows them `FAINT`). **CUT is never skipped** (§ 4.4). In FOCUS they step to the previous / next mark (the D-pad's "along" inside FOCUS; the MARK # dial does the same by turning) |
 | **EDIT** | **Down into FOCUS** on the page's focused mark (§ 4.4): TRIM's last-touched START or END, LOOP's start or end, CUT's focused slice mark. Nothing on MAP, REEL or MAKE, which have no marks to place |
 | **SEQ** | Up out of FOCUS, back to the page. Nothing on the pages themselves |
 | Encoders 1–6 | The six dials |
@@ -321,7 +321,7 @@ One sub-view serves every mark: START, END, LOOP's start and end, and each slice
 **LOOP** (RAW; mockups P3, P4)
 
 - Dials: START (the loop start; `LOOP START` doesn't fit a dial), LENGTH (its mark is the loop end), XFADE, ZOOM, **BEATS** (OFF, 1–32), **TEMPO** (40–240 BPM, default the project's tempo). START and LENGTH move one pixel a detent, with directional SNAP. BEATS sets LENGTH to that many beats at TEMPO (`4 BEATS AT 90 BPM` / `LENGTH 2.667 S`); turning LENGTH, FIND or END/HERE sets BEATS back to OFF.
-- Tools: B1 FIND, B2 SNAP, B3 `START/HERE`, B4 `END/HERE`, B6 PLAY (loops). B5 is free.
+- Tools: B1 FIND, B3 `START/HERE`, B4 `END/HERE`, B5 SNAP (B5 on every page that has it), B6 PLAY (loops). B2 is free.
 - FIND nudges the loop end to the best match near the marks: autocorrelation over at most 4,096 frames around them, a few ms (`FIND · …` / `MOVED THE END +1.2 MS`).
 - The readout hints `EDIT ▾ FOCUS ON THE SEAM`.
 - These become the Sound's POSITION, SIZE and XFADE when the prep is picked.
