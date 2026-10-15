@@ -24,7 +24,7 @@ The one firmware a release ships is the ORBIT build (`chimera-<version>.bin`). I
 - Bank 1 of the ORBIT build: 914,744 → 841,248 B (76,256 B free); default build 894,060 → 820,740 B. The `.bk2` body grows from 47,520 to 121,152 B.
 - While bank 2 isn't open (empty, stale, torn, a dev build with no seal) the reverb is silent and its TYPE says so; a Sound or project with reverb loads and plays dry and with chorus and delay.
 - Reverb now runs from bank 2 every audio block. Same flash, same wait states and an MPU region cached as bank 1's, so parity is expected but unmeasured: Gate 3 runs `bench-stress` against `bench-stress,bank2` and compares the REV rows and BUS.
-- Every bank-2 function bakes bank-1 addresses, and the reverb calls into bank 1 often (`TailGate`, the half-bands, `pow2`): almost any firmware change changes the seal. The update package therefore always carries the `.bk2` beside the `.bin` (ADR 0137's one-action update); "a firmware change that leaves bank 2's bytes alone keeps its seal" is now rare.
+- Every bank-2 function bakes bank-1 addresses, and the reverb calls into bank 1 often (`TailGate`, the half-bands, `pow2`): almost any firmware change changes the seal. Each release therefore ships the `.bk2` beside the `.bin`, to be copied to the card root (ADR 0137's one-action update); "a firmware change that leaves bank 2's bytes alone keeps its seal" is now rare.
 
 ## Sources
 - (private notes) (candidate B), `docs/superpowers/plans/2026-10-13-bank2.md`; ADR 0137; issue #460.

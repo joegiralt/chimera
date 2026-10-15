@@ -9,10 +9,10 @@
                                                    or a TAPE source as /CHIMERA/TAPES/<CRC>.SRC, in checked chunks
                                                    (<remote> ending in / takes the local name; /CHIMERA/SOUNDS/ takes
                                                    `ls sounds`' top user id + 1)
-    python3 chimera-usb.py update <chimera-<v>.zip>
-                                                   update the unit to a release, in one go: the .bk2 onto
-                                                   the card, the .bin by DFU, and the first boot installs
-                                                   the .bk2 (`update <file.bin> <file.bk2>` takes the pair)
+    python3 chimera-usb.py update <file.bin> <file.bk2>
+                                                   flash a build's pair in one go (developers, `just flash`): the
+                                                   .bk2 onto the card, the .bin by DFU, and the first boot
+                                                   installs the .bk2
     python3 chimera-usb.py bank2 <file.bk2>  install a .bk2 under the running firmware (developers)
     python3 chimera-usb.py bank2 erase       empty bank 2 (a `just firmware-gate` build only)
     python3 chimera-usb.py flash             the flash controller's registers and bank 2's first bytes, read only
@@ -26,9 +26,9 @@ path; `put` shows its progress on stderr and never retries a failure (a source
 already on the card answers `OK PRESENT`, so a re-run is the retry). `ERR busy`
 (the unit's card work pending) is retried: 5 tries, 200 ms apart, doubling.
 Python 3 and its standard library only; Linux and macOS (no Windows).
-`update` checks the whole package before it touches the unit, stops before
+`update` checks the whole pair before it touches the unit, stops before
 the flash if the .bk2 can't go onto the card, and exits 0 only once
-`status` shows the package's seal open (`OK updated <version>`);
+`status` shows the pair's seal open (`OK updated <version>`);
 it needs dfu-util. `bank2` exits 0 on OK (or `OK already installed`), 2 if
 the file belongs to another firmware (`staged: needs firmware <version>`: it
 installs at the next boot of that firmware), 1 on any other ERR.
@@ -60,7 +60,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import zipfile
 import zlib
 from typing import NamedTuple, Union
 
@@ -716,38 +715,6 @@ def check_pair(name: str, bin_data: bytes, bk2: bytes) -> Package:
     return Package(name, bin_data, bk2)
 
 
-def read_package(path: str) -> Package:
-    """A release zip: exactly `<name>.bin`, `<name>.bk2`, `SHA256SUMS` over
-    the two, and `README.txt`. Raises BadPackage."""
-    try:
-        z = zipfile.ZipFile(path)
-    except (OSError, zipfile.BadZipFile) as e:
-        raise BadPackage("%s: %s" % (path, getattr(e, "strerror", None) or e))
-    with z:
-        infos = {i.filename: i for i in z.infolist()}
-        bins = [n for n in infos if n.endswith(".bin")]
-        name = bins[0][:-4] if len(bins) == 1 else ""
-        want = {name + ".bin", name + ".bk2", "SHA256SUMS", "README.txt"}
-        if not name or "/" in name or set(infos) != want:
-            raise BadPackage("%s holds %s, not one release's .bin, .bk2, SHA256SUMS and README.txt" % (path, ", ".join(sorted(infos)) or "nothing"))
-        caps = {name + ".bin": FW_MAX, name + ".bk2": BK2_MAX, "SHA256SUMS": 4096, "README.txt": 4096}
-        for n, cap in caps.items():
-            if infos[n].file_size > cap:
-                raise BadPackage("%s: %s is %d bytes, too big" % (path, n, infos[n].file_size))
-        try:
-            data = {n: z.read(n) for n in want}
-        except (OSError, zipfile.BadZipFile, zlib.error) as e:
-            raise BadPackage("%s: %s" % (path, getattr(e, "strerror", None) or e))
-    listed = {}
-    for ln in data["SHA256SUMS"].decode(errors="replace").splitlines():
-        h, _, n = ln.partition(" ")
-        listed[n.lstrip(" *")] = h.lower()
-    pair = {name + ".bin", name + ".bk2"}
-    if set(listed) != pair or any(hashlib.sha256(data[n]).hexdigest() != listed[n] for n in pair):
-        raise BadPackage("%s: SHA256SUMS does not match its files: download it again" % path)
-    return check_pair(name, data[name + ".bin"], data[name + ".bk2"])
-
-
 def read_files(bin_path: str, bk2_path: str) -> Package:
     """A loose pair, as `just flash` builds it. Raises BadPackage."""
     if not bin_path.lower().endswith(".bin") or not bk2_path.lower().endswith(".bk2"):
@@ -870,12 +837,9 @@ def main(argv, env) -> int:
         return bank2_install(t, env, argv[1]) if len(argv) == 2 else fail("bank2 takes <file.bk2>")
     if argv[0] == "update":
         try:
-            if len(argv) == 2:
-                pkg = read_package(argv[1])
-            elif len(argv) == 3:
-                pkg = read_files(argv[1], argv[2])
-            else:
-                return fail("update takes <chimera-<version>.zip>, or <file.bin> <file.bk2>")
+            if len(argv) != 3:
+                return fail("update takes <file.bin> <file.bk2>")
+            pkg = read_files(argv[1], argv[2])
         except BadPackage as e:
             return fail("update: %s" % e)
         return update(t, env, pkg)

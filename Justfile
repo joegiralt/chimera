@@ -468,8 +468,8 @@ ls *args:
 sweep:
     python3 tools/chimera-usb.py sweep
 
-# Flash firmware to PreenFM3, both halves in one go, as a tester's update
-# does (`chimera-usb.py update`): the .bk2 staged on the card under the
+# Flash firmware to PreenFM3, both halves in one go (`chimera-usb.py update
+# <bin> <bk2>`; a tester copies the .bk2 to the card root instead): the .bk2 staged on the card under the
 # running firmware (or after the flash, for one from before bank 2), the
 # .bin by DFU (`to-dfu` sends `dfu` with the console up; without it, bridge
 # BOOT0 and re-plug; dfu-util's 74 after `:leave` counts only if the

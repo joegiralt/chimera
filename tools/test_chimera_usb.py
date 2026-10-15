@@ -21,7 +21,6 @@ import tempfile
 import threading
 import time
 import unittest
-import zipfile
 import zlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -917,13 +916,9 @@ def make_pair(body=b"door" * 64, version=VERSION):
     return b"\x7fFW" + seal + b"rest of bank 1" * 50, bytes(h) + body, seal
 
 
-def sums(files):
-    return "".join("%s  %s\n" % (hashlib.sha256(d).hexdigest(), n) for n, d in files).encode()
-
-
 class Update(unittest.TestCase):
-    """`update <chimera-<v>.zip>`: check it all, stage the .bk2 under the
-    running firmware, flash the .bin, let the boot install, read status."""
+    """`update <file.bin> <file.bk2>`: check the pair, stage the .bk2 under
+    the running firmware, flash the .bin, let the boot install, read status."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -952,15 +947,11 @@ class Update(unittest.TestCase):
         tool.subprocess.run = run
         tool.wait_console = wait
 
-    def package(self, members=None, name="chimera-0.2.0"):
-        if members is None:
-            files = [(name + ".bin", self.bin), (name + ".bk2", self.bk2)]
-            members = files + [("SHA256SUMS", sums(files)), ("README.txt", b"Copy both files onto the card.\n")]
-        p = pathlib.Path(self.tmp.name, name + ".zip")
-        with zipfile.ZipFile(p, "w") as z:
-            for n, d in members:
-                z.writestr(n, d)
-        return str(p)
+    def package(self, bin_data=None, bk2=None, name="chimera-0.2.0"):
+        b, k = pathlib.Path(self.tmp.name, name + ".bin"), pathlib.Path(self.tmp.name, name + ".bk2")
+        b.write_bytes(self.bin if bin_data is None else bin_data)
+        k.write_bytes(self.bk2 if bk2 is None else bk2)
+        return [str(b), str(k)]
 
     def status(self, line, build=VERSION):
         return b"firmware 0.2.0 release\nbuild " + build + b"\nprotocol 1\n" + line + b"\nOK\n"
@@ -981,7 +972,7 @@ class Update(unittest.TestCase):
     def test_stages_then_flashes_then_reads_status(self):
         answers = {b"status": self.status(self.open_line())}
         with PutUnit(answers=answers, after=b"OK staged: needs firmware 0.2.0 02e440e2\n") as u:
-            rc, out, err = self.update(u, [self.package()])
+            rc, out, err = self.update(u, self.package())
         self.assertEqual(rc, 0, err)
         self.assertIn("OK updated 0.2.0 02e440e2", out)
         put, dfu, status = self.sent("put /CHIMERA/SYSTEM/BANK2.BK2 "), self.sent("dfu-util"), self.sent("status")
@@ -994,7 +985,7 @@ class Update(unittest.TestCase):
 
     def test_a_plain_ok_stages_too(self):
         with PutUnit(answers={b"status": self.status(self.open_line())}) as u:
-            rc, out, err = self.update(u, [self.package()])
+            rc, out, err = self.update(u, self.package())
         self.assertEqual(rc, 0, err)
         self.assertEqual(len(self.sent("dfu-util")), 1)
 
@@ -1002,7 +993,7 @@ class Update(unittest.TestCase):
         for refusal in (b"ERR put: CARD FULL\n", b"ERR put: firmware unsealed\n", b"ERR put: not a bank-2 image\n"):
             self.events.clear()
             with PutUnit(refuse=refusal) as u:
-                rc, out, err = self.update(u, [self.package()])
+                rc, out, err = self.update(u, self.package())
             self.assertEqual(rc, 1, refusal)
             self.assertIn(refusal.strip().decode(), err)
             self.assertEqual(self.sent("to-dfu") + self.sent("dfu-util"), [], refusal)
@@ -1014,7 +1005,7 @@ class Update(unittest.TestCase):
             b"status": self.status(self.open_line()),
         }
         with PutUnit(answers=answers, refuse=OLD_PUT, refuse_once=True) as u:
-            rc, out, err = self.update(u, [self.package()])
+            rc, out, err = self.update(u, self.package())
         self.assertEqual(rc, 0, err)
         puts, dfu = self.sent("put "), self.sent("dfu-util")
         install, status = self.sent("bank2 install"), self.sent("status")
@@ -1029,43 +1020,35 @@ class Update(unittest.TestCase):
         old = b"ERR put takes /CHIMERA/PROJECTS/P#######.A or /CHIMERA/SOUNDS/S#######.A [--over], its size and CRC-32 in hex\n"
         answers = {b"bank2": b"bank2 empty\nOK\n", b"bank2 install": b"OK bank2 open 0.2.0 02e440e2\n", b"status": self.status(self.open_line())}
         with PutUnit(answers=answers, refuse=old, refuse_once=True) as u:
-            rc, out, err = self.update(u, [self.package()])
+            rc, out, err = self.update(u, self.package())
         self.assertEqual(rc, 0, err)
 
-    def test_a_bad_package_touches_nothing(self):
-        files = [("chimera-0.2.0.bin", self.bin), ("chimera-0.2.0.bk2", self.bk2)]
-        readme = ("README.txt", b"x\n")
-        good_sums = ("SHA256SUMS", sums(files))
+    def test_a_bad_pair_touches_nothing(self):
         _, other_bk2, _ = make_pair(b"another build" * 20)
         cases = {
-            "bad SHA256SUMS": files + [("SHA256SUMS", sums(files).replace(b"0", b"1", 1)), readme],
-            "missing .bk2": files[:1] + [("SHA256SUMS", sums(files[:1])), readme],
-            "missing SHA256SUMS": files + [readme],
-            "extra member": files + [good_sums, readme, ("chimera.bin", self.bin)],
-            "bk2 posing as bin": [("chimera-0.2.0.bin", self.bk2), files[1], ("SHA256SUMS", sums([("chimera-0.2.0.bin", self.bk2), files[1]])), readme],
-            "too big for the bootloader": [("chimera-0.2.0.bin", self.bin + bytes(917_504)), files[1], ("SHA256SUMS", sums([("chimera-0.2.0.bin", self.bin + bytes(917_504)), files[1]])), readme],
-            "pair from two builds": [files[0], ("chimera-0.2.0.bk2", other_bk2), ("SHA256SUMS", sums([files[0], ("chimera-0.2.0.bk2", other_bk2)])), readme],
-            "corrupt bk2 body": [files[0], ("chimera-0.2.0.bk2", self.bk2[:-1] + b"X"), ("SHA256SUMS", sums([files[0], ("chimera-0.2.0.bk2", self.bk2[:-1] + b"X")])), readme],
+            "bk2 posing as bin": (self.bk2, None),
+            "too big for the bootloader": (self.bin + bytes(917_504), None),
+            "pair from two builds": (None, other_bk2),
+            "corrupt bk2 body": (None, self.bk2[:-1] + b"X"),
+            "not a bk2": (None, b"PK no"),
         }
-        for what, members in cases.items():
+        for what, (bin_data, bk2) in cases.items():
             self.events.clear()
             with PutUnit() as u:
-                rc, out, err = self.update(u, [self.package(members)])
+                rc, out, err = self.update(u, self.package(bin_data, bk2))
             self.assertEqual(rc, 1, what)
             self.assertEqual(self.events, [], what)
             self.assertEqual(u.requests, [], what)
             self.assertEqual(self.waits, [], what)
-        not_zip = pathlib.Path(self.tmp.name, "x.zip")
-        not_zip.write_bytes(b"PK no")
         with PutUnit() as u:
-            rc, out, err = self.update(u, [str(not_zip)])
+            rc, out, err = self.update(u, self.package()[:1])
         self.assertEqual((rc, u.requests), (1, []))
 
     def test_exit_1_unless_status_is_open_with_the_package_seal(self):
         for line in (b"bank2 stale have 0.1.0", self.open_line(bytes(8)), b"bank2 empty", b"bank2 torn"):
             self.events.clear()
             with PutUnit(answers={b"status": self.status(line)}) as u:
-                rc, out, err = self.update(u, [self.package()])
+                rc, out, err = self.update(u, self.package())
             self.assertEqual(rc, 1, line)
             self.assertIn(line.decode(), out + err)
             self.assertNotIn("OK updated", out)
@@ -1074,43 +1057,25 @@ class Update(unittest.TestCase):
         # Same seal, installed by an earlier release: nothing to install.
         older = b"bank2 open 0.1.0 11111111 seal=" + self.seal.hex().encode()
         with PutUnit(answers={b"status": self.status(older)}) as u:
-            rc, out, err = self.update(u, [self.package()])
+            rc, out, err = self.update(u, self.package())
         self.assertEqual(rc, 0, err)
         self.assertIn("OK updated", out)
 
     def test_exit_1_unless_the_new_firmware_runs(self):
         for build in (b"0.1.0 11111111", b"", b"0.2.0"):
             with PutUnit(answers={b"status": self.status(self.open_line(), build)}) as u:
-                rc, out, err = self.update(u, [self.package()])
+                rc, out, err = self.update(u, self.package())
             self.assertEqual(rc, 1, build)
             self.assertIn("isn't the one running", err)
         # A dirty build's `+` is the same build.
         with PutUnit(answers={b"status": self.status(self.open_line(), VERSION + b"+")}) as u:
-            rc, out, err = self.update(u, [self.package()])
+            rc, out, err = self.update(u, self.package())
         self.assertEqual(rc, 0, err)
 
-    def test_a_damaged_member_is_a_bad_package(self):
-        p = pathlib.Path(self.package())
-        data = bytearray(p.read_bytes())
-        at = data.index(self.bk2[300:340])
-        data[at : at + 40] = bytes(40)
-        p.write_bytes(bytes(data))
+    def test_the_pair_in_the_wrong_order_is_refused(self):
+        b, k = self.package()
         with PutUnit() as u:
-            rc, out, err = self.update(u, [str(p)])
-        self.assertEqual((rc, u.requests, self.events), (1, [], []))
-        self.assertIn("update:", err)
-
-    def test_a_loose_pair_takes_the_same_path(self):
-        b = pathlib.Path(self.tmp.name, "chimera.bin")
-        k = pathlib.Path(self.tmp.name, "chimera.bk2")
-        b.write_bytes(self.bin)
-        k.write_bytes(self.bk2)
-        with PutUnit(answers={b"status": self.status(self.open_line())}) as u:
-            rc, out, err = self.update(u, [str(b), str(k)])
-        self.assertEqual(rc, 0, err)
-        self.assertLess(self.sent("put ")[0], self.sent("dfu-util")[0])
-        with PutUnit() as u:
-            rc, out, err = self.update(u, [str(k), str(b)])
+            rc, out, err = self.update(u, [k, b])
         self.assertEqual((rc, u.requests), (1, []))
 
 
