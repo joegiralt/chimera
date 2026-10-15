@@ -2,7 +2,7 @@
 
 ## What this project is
 
-Chimera is a custom Rust firmware for the PreenFM3 hardware (STM32H750). It replaces the stock FM synthesizer with a multi-engine, multitimbral digital synth with chain-based LSDJ-style navigation.
+Chimera is a custom Rust firmware for the PreenFM3 hardware (STM32H753). It replaces the stock FM synthesizer with a multi-engine, multitimbral digital synth with chain-based LSDJ-style navigation.
 
 Full design spec: `docs/chimera-synth-design.md`
 
@@ -30,7 +30,7 @@ chimera-desktop/  — simulator (minifb window, cpal audio)
 
 ## Hardware
 
-- STM32H750 @ 480 MHz, 128KB flash, firmware at 0x08020000
+- STM32H753 @ 480 MHz, 2 MB flash in two 1 MB banks; firmware at 0x08020000 (bank 1, 917,504 B); bank 2 per #460
 - ILI9341 240x320 TFT via SPI1
 - 3x CS4344 DAC via SAI (48 kHz, 32-bit)
 - HC165 shift registers for encoders/buttons (3 GPIO pins: DATA, LOAD, CLK)

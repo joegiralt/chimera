@@ -1560,6 +1560,11 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::press(ButtonId::Edit));
     }),
     ("tape_deck_loop", |ui| tape_deck(ui, 0)),
+    // Bank 2 closed: the header warns UPDATE, MODEL reads NEEDS UPDATE (ADR 0141).
+    ("tape_deck_needs_update", |ui| {
+        ui.set_bank2(chimera_core::bank2::Bank2Status::Empty);
+        tape_deck(ui, 0);
+    }),
     ("tape_page_loop", |ui| {
         tape_deck(ui, 0);
         feed(ui, Input::press(ButtonId::Edit));
@@ -2186,6 +2191,8 @@ pub const OVERLAYS: &[(&str, Overlay)] = &[
     ("busy", Overlay::Busy),
     ("toast_saved", Overlay::Toast("SAVED")),
     ("toast_exfat", Overlay::Toast("CARD IS EXFAT: FORMAT FAT32")),
+    ("installing", Overlay::Installing("0.2.0 02e440e2")),
+    ("installing_writing", Overlay::Writing("0.2.0 02e440e2")),
 ];
 
 /// The two faces of the one overlay component.
@@ -2193,6 +2200,10 @@ pub const OVERLAYS: &[(&str, Overlay)] = &[
 pub enum Overlay {
     Busy,
     Toast(&'static str),
+    /// Bank 2's install, the whole screen, with the version it installs.
+    Installing(&'static str),
+    /// The same, its phase line at WRITING.
+    Writing(&'static str),
 }
 
 /// Every case name: the screens, then the overlays.
@@ -2209,6 +2220,16 @@ pub fn render_overlay(o: Overlay) -> (Fb, (u16, u16)) {
     let band = match o {
         Overlay::Busy => draw_busy(&mut fb),
         Overlay::Toast(text) => draw_toast(&mut fb, text),
+        Overlay::Installing(line) => {
+            chimera_core::ui::installing::draw(&mut fb, line);
+            (0, chimera_hal::SCREEN_HEIGHT)
+        }
+        Overlay::Writing(line) => {
+            use chimera_core::ui::installing;
+            installing::draw(&mut fb, line);
+            installing::phase(&mut fb, chimera_image::Phase::Writing);
+            (0, chimera_hal::SCREEN_HEIGHT)
+        }
     };
     (fb, band)
 }
@@ -2226,6 +2247,30 @@ pub fn render(name: &str) -> Fb {
 }
 
 /// Full render of `ui` with the goldens' audio and scope fixtures.
+/// Whether the first cell's value line lights `text`'s pixels and no
+/// others, a column wide.
+#[allow(dead_code)]
+pub fn first_cell_reads(shot: &Fb, text: &str) -> bool {
+    use chimera_core::ui::theme::{
+        BG, CELL_COL_W, CELL_LABEL_Y, CELL_VALUE_DY, FONT_VALUE, INK, MARGIN_X, SCREEN_H,
+    };
+    let mut want = Fb::new();
+    chimera_core::ui::draw::text_tracked(
+        &mut want,
+        &FONT_VALUE,
+        text,
+        MARGIN_X,
+        CELL_LABEL_Y + CELL_VALUE_DY,
+        INK,
+        0,
+    );
+    let cols = MARGIN_X..MARGIN_X + CELL_COL_W - 4;
+    let lit = |x, y| want.at(x, y) != Rgb565::BLACK;
+    (0..SCREEN_H)
+        .filter(|&y| cols.clone().any(|x| lit(x, y)))
+        .all(|y| cols.clone().all(|x| (shot.at(x, y) != BG) == lit(x, y)))
+}
+
 pub fn render_ui(ui: &UiState) -> Fb {
     let mut fb = Fb::new();
     ui.render_with_audio(

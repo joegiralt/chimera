@@ -566,14 +566,14 @@ impl<D: Medium> Store for FatStore<D> {
         file: FileName,
         body: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
     ) -> Result<u32, StoreError> {
-        if file == mark::name() {
+        if file == mark::name() || file.dir() == Dir::Root {
             return Err(StoreError::ReadOnly);
         }
         self.change(vol, |fs| fs.write(file, body))
     }
 
     fn delete(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
-        if file == mark::name() {
+        if file == mark::name() || file.dir() == Dir::Root {
             return Err(StoreError::ReadOnly);
         }
         self.change(vol, |fs| fs.delete(file))

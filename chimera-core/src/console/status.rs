@@ -1,4 +1,4 @@
-//! `status`: firmware, project, Part and where the UI is.
+//! `status`: firmware, project, Part, where the UI is and bank 2.
 
 use core::fmt::{self, Write};
 
@@ -33,7 +33,14 @@ pub fn write_status(ui: &UiState, w: &mut impl Write) -> fmt::Result {
     writeln!(w, "part {}", ui.active_part.index() + 1)?;
     w.write_str("at ")?;
     write_at(ui, w)?;
-    w.write_char('\n')
+    w.write_char('\n')?;
+    match ui.bank2() {
+        Some(b) => {
+            b.line(w)?;
+            w.write_char('\n')
+        }
+        None => Ok(()),
+    }
 }
 
 /// The `board` line (ADR 0140): the board and the strap it was read

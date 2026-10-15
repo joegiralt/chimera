@@ -6,6 +6,7 @@ use core::fmt::Write;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
+use crate::bank2::Bank2Status;
 use crate::perf::load::AudioStats;
 use crate::storage::{BuildStamp, Card};
 use crate::ui::audio_page::NONE;
@@ -44,6 +45,7 @@ pub fn write_build_rev(w: &mut impl Write) -> core::fmt::Result {
 const NAME_Y: i32 = 110;
 const LINE_Y: i32 = 136;
 const REV_Y: i32 = 156;
+const BANK2_Y: i32 = 176;
 /// Clearance kept from the next cell's text.
 const GAP: i32 = 4;
 
@@ -106,35 +108,45 @@ where
     }
 }
 
-/// The name, and the firmware it runs.
-pub fn draw_viz<D>(d: &mut D)
+/// Under the name: the firmware, its rev, and bank 2's label (none where
+/// there is no bank 2).
+pub fn viz_lines(bank2: Option<&Bank2Status>) -> [FmtBuf; 3] {
+    let mut l = [FmtBuf::new(), FmtBuf::new(), FmtBuf::new()];
+    let _ = write!(l[0], "FIRMWARE {VERSION}  {BUILD}");
+    let _ = write_build_rev(&mut l[1]);
+    if let Some(b) = bank2 {
+        let _ = l[2].write_str(b.label());
+    }
+    l
+}
+
+/// The name, the firmware it runs, and whether bank 2 needs an update.
+pub fn draw_viz<D>(d: &mut D, bank2: Option<&Bank2Status>)
 where
     D: DrawTarget<Color = Rgb565>,
 {
     let cx = theme::SCREEN_W / 2;
     draw::text_center(d, &theme::FONT_FOCUS, "CHIMERA", cx, NAME_Y, theme::INK, 0);
-    let mut line = FmtBuf::new();
-    let _ = write!(line, "FIRMWARE {VERSION}  {BUILD}");
-    draw::text_center(
-        d,
-        &theme::FONT_LABEL,
-        line.as_str(),
-        cx,
-        LINE_Y,
-        theme::MID,
-        theme::LABEL_TRACKING,
-    );
-    let mut rev = FmtBuf::new();
-    let _ = write_build_rev(&mut rev);
-    draw::text_center(
-        d,
-        &theme::FONT_LABEL,
-        rev.as_str(),
-        cx,
-        REV_Y,
-        theme::MID,
-        theme::LABEL_TRACKING,
-    );
+    let lines = viz_lines(bank2);
+    // NEEDS UPDATE in INK, to be seen; OK as quiet as the rest.
+    let ink = bank2.map_or(theme::MID, |b| {
+        if b.is_open() { theme::MID } else { theme::INK }
+    });
+    for (line, (y, c)) in
+        lines
+            .iter()
+            .zip([(LINE_Y, theme::MID), (REV_Y, theme::MID), (BANK2_Y, ink)])
+    {
+        draw::text_center(
+            d,
+            &theme::FONT_LABEL,
+            line.as_str(),
+            cx,
+            y,
+            c,
+            theme::LABEL_TRACKING,
+        );
+    }
 }
 
 /// What the cells show, for dirty tracking.

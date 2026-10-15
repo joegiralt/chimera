@@ -3,9 +3,14 @@
 # The bench's builds, an area each (all of it no longer fits FLASH), and
 # the filter probes `tools/loop_count.py` counts. Each is built with
 # `--no-default-features` (the `bench` feature brings back all of the
-# shipping set but the console's `put`; `filter-probes`, `default`).
-bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,orbit bench-orbit bench-tape filter-probes"
-bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit,bench-tape"
+# shipping set but the console's `put`; so does `filter-probes`).
+# bench-tape alone keeps TAPE in bank 1 and doesn't fit FLASH
+# (private issue #506); `bench-tape,bank2` plays
+# it from bank 2, so its run needs that build's .bk2 installed.
+# `bench-stress` plays the reverb from bank 1 and `bench-stress,bank2` the
+# same code from bank 2 (ADR 0142): Gate 3's A/B of the banks' speed.
+bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,bank2 bench-stress,orbit bench-orbit bench-tape,bank2 filter-probes"
+bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit"
 
 # Build desktop simulator
 desktop:
@@ -118,20 +123,55 @@ put-factory-sounds dir="target/factory-sounds/public" *flags:
     for f in "${sounds[@]}"; do $USB put "$f" /CHIMERA/SOUNDS/"$(basename "$f")" --over; done
     for f in "${projects[@]}"; do $USB put "$f" /CHIMERA/PROJECTS/"$(basename "$f")"; done
 
-# Build STM32 firmware (release)
+# Build STM32 firmware (release): target/chimera.bin and .bk2
 firmware:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera
 
-# Build STM32 firmware with ORBIT (release)
+# Build STM32 firmware with ORBIT (release): target/chimera-orbit.bin and .bk2
 firmware-orbit:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-orbit
+
+# Hardware Gate 2's power-pull aid (`bank2-gate`): the install holds 3 s at
+# each phase for a hand to pull the power, and the console takes `bank2
+# erase`. target/chimera-gate.bin and .bk2. Never flashed by a recipe, never
+# released: every other .bin is refused if it holds the aid.
+firmware-gate:
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features bank2-gate
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-gate
+
+utils := "cargo run -q --profile utils -p chimera-utils --"
+
+# The ELF's two banks: <out>.bin (bank 1, never .bank2) and, with bank 2's
+# section, <out>.bk2. A build without `bank2` has an empty .bank2: no .bk2.
+bank2-split elf out:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rust-objcopy -R .bank2 -O binary {{elf}} {{out}}.bin
+    just check-bin-size {{out}}.bin
+    if [ "$(basename {{out}})" != chimera-gate ]; then just check-no-gate {{out}}.bin; fi
+    rm -f {{out}}.bk2
+    sections=$(rust-objdump -h {{elf}})
+    syms=$(rust-nm {{elf}})
+    if awk '$2 == ".bank2" && $3 != "00000000" { f = 1 } END { exit !f }' <<< "$sections"; then
+        pkg=$(cargo pkgid -p chimera-stm32)
+        hash=$(git rev-parse --short=8 HEAD)
+        ver="${pkg##*[#@]} $hash"
+        rust-objcopy -j .bank2 -O binary {{elf}} {{out}}.bk2
+        {{utils}} door-check {{elf}}
+        {{utils}} bank2-seal {{elf}} {{out}}.bin {{out}}.bk2 --version "$ver"
+        just check-bin-paths {{out}}.bk2
+    elif grep -qw BANK2_SEAL <<< "$syms"; then
+        echo "bank 1 expects a bank 2 but the ELF has none" >&2; exit 1
+    fi
 
 # Release binaries: the shipping firmware and its ORBIT variant with every build
 # path remapped (#413), so no home directory, user name or registry path
 # survives in the .bin. `--config` arrays append to .cargo/config.toml's
 # target rustflags (RUSTFLAGS would replace them).
 # Panic locations keep their relative in-crate paths (removing them needs
-# nightly's -Zlocation-detail). Output: target/release-bin/chimera{,-orbit}.bin
+# nightly's -Zlocation-detail). Output: target/release-bin/chimera{,-orbit}.{bin,bk2}
 release-bin:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -142,10 +182,18 @@ release-bin:
     for v in "" orbit; do
         if [ -n "$v" ]; then f="--features $v"; out=chimera-orbit; else f=""; out=chimera; fi
         cargo build --release -p chimera-stm32 --target $T $f --config "target.$T.rustflags=$flags"
-        rust-objcopy -O binary target/$T/release/chimera-stm32 target/release-bin/$out.bin
+        just bank2-split target/$T/release/chimera-stm32 target/release-bin/$out
         just check-bin-paths target/release-bin/$out.bin
-        just check-bin-size target/release-bin/$out.bin
+        just check-no-gate target/release-bin/$out.bin
     done
+
+# A .bin holding the power-pull aid (`bank2-gate`: its marker or its PULL
+# NOW) never ships.
+check-no-gate bin:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    n=$(grep -a -c -e BANK2-GATE-BUILD -e 'PULL NOW' "{{bin}}") || [ $? -eq 1 ]
+    if [ "${n:-0}" != 0 ]; then echo "{{bin}} is a bank2-gate build: never ship it" >&2; exit 1; fi
 
 # Stock bootloader SD flash erases sectors 1..size/128K+1: a .bin of 917,504 B
 # or more reaches sector 8, which wraps to sector 0 and erases the bootloader.
@@ -160,10 +208,11 @@ check-bin-size bin:
 # Draft a release of the path-clean firmware on the PUBLIC chimera-releases
 # repo (#413): `just release 0.1.0 [--dry-run]`. Refuses a dirty tree or a
 # version already tagged or released; builds `release-bin`; names the files
-# chimera-<version>.bin (the ORBIT build, the only firmware shipped) and
-# factory-v1.zip; writes SHA256SUMS and the notes from
+# chimera-<version>.bin (the ORBIT build, the only firmware shipped), its
+# chimera-<version>.bk2 (sealed for that .bin: dropped in the card root, the
+# next boot installs it) and factory-v1.zip; writes SHA256SUMS and the notes from
 # docs/alpha/RELEASE-NOTES.md.tmpl; asserts the assets are exactly those
-# three and none is a private file's bytes. A draft only: the owner
+# four and none is a private file's bytes. A draft only: the owner
 # publishes. --dry-run does everything but `gh release create`.
 release version *flags:
     #!/usr/bin/env bash
@@ -177,11 +226,17 @@ release version *flags:
     ! git rev-parse -q --verify "refs/tags/v$V" >/dev/null || { echo "v$V is already tagged" >&2; exit 1; }
     if gh release view "v$V" -R $REPO >/dev/null 2>&1; then echo "v$V is already released on $REPO" >&2; exit 1; fi
     just release-bin
-    out=target/release-assets/v$V
+    out="$PWD/target/release-assets/v$V"
     rm -rf "$out"; mkdir -p "$out"
-    # One firmware ships: the ORBIT build, which does everything the plain build does (owner, 2026-10-14).
+    # One firmware ships: the ORBIT build, which does everything the plain build does (owner, 2026-10-14),
+    # with its bank 2 beside it, one build: the seal must match.
     cp target/release-bin/chimera-orbit.bin "$out/chimera-$V.bin"
-    for b in "$out"/*.bin; do just check-bin-paths "$b"; done
+    cp target/release-bin/chimera-orbit.bk2 "$out/chimera-$V.bk2"
+    {{utils}} bank2-seal --check "$out/chimera-$V.bin" "$out/chimera-$V.bk2"
+    for b in "$out/chimera-$V.bin" "$out/chimera-$V.bk2"; do just check-bin-paths "$b"; done
+    # No .bk2 under a .bin name: only the .bk2 starts CHIMERA2.
+    if head -c 8 "$out/chimera-$V.bin" | grep -qa CHIMERA2; then echo "chimera-$V.bin is a .bk2" >&2; exit 1; fi
+    head -c 8 "$out/chimera-$V.bk2" | grep -qa CHIMERA2 || { echo "chimera-$V.bk2 is not a .bk2" >&2; exit 1; }
     # The factory set: the public build's CHIMERA/ + manifest.json, nothing
     # private (FACTORY_PUBLIC overrides the dir and skips the fresh build, --dry-run only).
     # A real release always builds fresh; the override is for --dry-run tests only.
@@ -201,11 +256,11 @@ release version *flags:
     # The 16 TX81Z-inspired ports ship public (ADR 0138): all of them, or refuse.
     n=$(python3 -I -m zipfile -l "$out/factory-v1.zip" | grep -cE 'S91000(1[0-9]|2[0-5])\.A' || true)
     [ "$n" = 16 ] || { echo "factory-v1.zip holds $n of the 16 ports: refusing" >&2; exit 1; }
-    (cd "$out" && sha256sum chimera-$V.bin factory-v1.zip > SHA256SUMS)
+    (cd "$out" && sha256sum chimera-$V.bin chimera-$V.bk2 factory-v1.zip > SHA256SUMS)
     # Nothing private ships: exactly these assets, and none is a private
-    # file (the stock bootloader backup, the bootloader, a dev chimera.bin).
-    [ "$(ls "$out" | LC_ALL=C sort | tr '\n' ' ')" = "SHA256SUMS chimera-$V.bin factory-v1.zip " ] || { echo "unexpected assets in $out" >&2; exit 1; }
-    for p in preenfm3-bootloader-backup.bin bootloader.bin chimera.bin; do
+    # file (the stock bootloader backup, the bootloader, a dev chimera.bin or .bk2).
+    [ "$(ls "$out" | LC_ALL=C sort | tr '\n' ' ')" = "SHA256SUMS chimera-$V.bin chimera-$V.bk2 factory-v1.zip " ] || { echo "unexpected assets in $out" >&2; exit 1; }
+    for p in preenfm3-bootloader-backup.bin bootloader.bin chimera.bin chimera.bk2 target/chimera.bin target/chimera.bk2; do
         [ -f "$p" ] || continue
         h=$(sha256sum "$p" | cut -d' ' -f1)
         if grep -q "$h" "$out/SHA256SUMS"; then echo "asset is $p: refusing" >&2; exit 1; fi
@@ -227,8 +282,8 @@ release version *flags:
         -e "/@DEMOS@/{r $out/demos.md" -e "d}" -e "/@CRATES@/{r $out/crates.md" -e "d}" docs/alpha/RELEASE-NOTES.md.tmpl > "$out/RELEASE-NOTES.md"
     rm "$out/demos.md" "$out/crates.md"
     ! grep -q '@[A-Z]*@' "$out/RELEASE-NOTES.md" || { echo "unfilled template field" >&2; exit 1; }
-    assets=("$out/chimera-$V.bin" "$out/factory-v1.zip" "$out/SHA256SUMS")
-    echo "assets:"; (cd "$out" && ls -l chimera-$V.bin factory-v1.zip SHA256SUMS && cat SHA256SUMS)
+    assets=("$out/chimera-$V.bin" "$out/chimera-$V.bk2" "$out/factory-v1.zip" "$out/SHA256SUMS")
+    echo "assets:"; (cd "$out" && ls -l chimera-$V.bin chimera-$V.bk2 factory-v1.zip SHA256SUMS && cat SHA256SUMS)
     if [ $dry = 1 ]; then
         echo "dry run: would draft v$V on $REPO with notes $out/RELEASE-NOTES.md"; exit 0
     fi
@@ -257,10 +312,13 @@ build:
 # system-wide. The host tool's tests run first, against a fake unit.
 check:
     python3 -m unittest discover -s tools -p 'test_*.py'
-    cargo test -p chimera-core -p chimera-engine -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit
     cargo test -p chimera-core -p chimera-engine --features master-tape
     cargo test -p chimera-core -p chimera-engine --no-default-features
     cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
+    cargo test -p chimera-core --features bank2-gate --test console_parse_test --test console_answer_test --test bank2_status_test --test bank2_close_test
+    # TAPE's and the reverb's bank-1 sides through the host's own door.
+    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
@@ -272,10 +330,15 @@ check:
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
-    # The bench, an area a build: all of it no longer fits FLASH.
-    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; done
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bank2-gate
+    # The bench, an area a build: all of it no longer fits FLASH. Each is
+    # door-checked, as bank2-split checks the builds it splits.
+    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; done
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
-    cargo build -p chimera-bootloader --target thumbv7em-none-eabihf
+    # The bootloader links cortex-m-rt's script itself: without it lld warns
+    # and links an ELF with no vector table.
+    out=$(cargo build -p chimera-bootloader --target thumbv7em-none-eabihf 2>&1) || { echo "$out"; exit 1; }; echo "$out"; if echo "$out" | grep -q "cannot find entry symbol"; then exit 1; fi
+    rust-objdump -h target/thumbv7em-none-eabihf/debug/chimera-bootloader | grep -q '[.]vector_table' || { echo "chimera-bootloader: no .vector_table" >&2; exit 1; }
     cargo build -p chimera-theory --target thumbv7em-none-eabihf
     just clippy
     just loom
@@ -289,9 +352,10 @@ check:
 # frames from `main` and from each interrupt entry (the audio's DMA1_STR0,
 # render_half and the FX bus under it, MIDI's USART1, SysTick, HardFault),
 # all nested at once, against the stack, each call through a pointer
-# charged the deepest address-taken function, three deep; and that the audio
+# charged the deepest address-taken function (bank 2's door table among
+# the data dumped, so a door entry is one), three deep; and that the audio
 # interrupt reaches no small-profile code (ADR 0108). Checked for the default,
-# no-default, orbit, every bench set (`bench_sets`) and sd-probe feature
+# no-default, orbit, bank2-gate, every bench set (`bench_sets`) and sd-probe feature
 # sets (sd-probe has no interrupts: frames only).
 # Needs the llvm-tools rustup component; a missing llvm-objdump or an
 # unreadable ELF fails the recipe instead of passing silently.
@@ -303,14 +367,14 @@ stack-check:
     nm="$bin/llvm-nm"
     test -x "$objdump" && test -x "$nm"
     elf=target/thumbv7em-none-eabihf/release/chimera-stm32
-    sets=("" "--no-default-features" "--features orbit")
+    sets=("" "--no-default-features" "--features orbit" "--features bank2-gate")
     for f in {{bench_sets}}; do sets+=("--no-default-features --features $f"); done
     sets+=("--no-default-features --features sd-probe")
     for features in "${sets[@]}"; do
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
         test -r "$elf"
         dis="$("$objdump" -d --mcpu=cortex-m7 --no-show-raw-insn -C "$elf")"
-        data="$("$objdump" -s -j .rodata -j .data "$elf")"
+        data="$("$objdump" -s -j .rodata -j .data -j .bank2 "$elf")"
         if grep -E -e '^[0-9a-f]{8} <' -e 'sub(\.w)?[[:space:]]+sp, (sp, )?(#0x([2-9a-f][0-9a-f]{3}|[0-9a-f]{5,})$|r[0-9])' <<<"$dis" \
             | grep -B1 -E '^[[:space:]]' \
             | grep -v -e '^--$'; then
@@ -332,7 +396,7 @@ loom:
 
 # Run tests
 test:
-    cargo test -p chimera-core -p chimera-engine -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit
+    cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit
     cargo test -p chimera-desktop --lib --tests
     just test-fat-tools
 
@@ -346,13 +410,15 @@ test-fat-tools:
 
 # Clippy on every target and feature set `check` builds, test targets included
 clippy:
-    cargo clippy -p chimera-core -p chimera-engine -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit --all-targets -- -D warnings
+    cargo clippy -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --features master-tape --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features orbit -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features bank2-gate -- -D warnings
+    cargo clippy -p chimera-core --features bank2-gate --all-targets -- -D warnings
     for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features "$f" -- -D warnings || exit 1; done
     # Every bench area at once: too big to link, but no area's code is dead.
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}} -- -D warnings
@@ -402,26 +468,29 @@ ls *args:
 sweep:
     python3 tools/chimera-usb.py sweep
 
-# Flash firmware to PreenFM3 via DFU. With the console up, `to-dfu` sends
-# `dfu` and waits for the ROM loader; without it, bridge BOOT0 and re-plug.
-# dfu-util exits 74 when `:leave` resets the unit under it; that counts only
-# if the download completed and the console comes back within 10 s.
+# Flash firmware to PreenFM3, both halves in one go (`chimera-usb.py update
+# <bin> <bk2>`; a tester copies the .bk2 to the card root instead): the .bk2 staged on the card under the
+# running firmware (or after the flash, for one from before bank 2), the
+# .bin by DFU (`to-dfu` sends `dfu` with the console up; without it, bridge
+# BOOT0 and re-plug; dfu-util's 74 after `:leave` counts only if the
+# download completed), the first boot installing the .bk2, then `status`
+# showing it open.
 flash:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
-    rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera.bin
-    python3 tools/chimera-usb.py to-dfu
-    log=$(mktemp) && trap 'rm -f "$log"' EXIT
-    rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
-    if [ "$rc" -eq 74 ] && grep -q 'File downloaded successfully' "$log"; then
-        python3 tools/chimera-usb.py wait-console 10
-    elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera
+    python3 tools/chimera-usb.py update target/chimera.bin target/chimera.bk2
 
 # Flash one bench area to PreenFM3 via DFU: `just flash-bench <area> [extra]`,
 # area one of algo, routing, memory, stress, orbit, tape; extra more
 # features (`just flash-bench stress orbit`: STRESS plays ORBIT;
-# `just flash-bench algo master-tape`: the REEL row). All of the bench no
+# `just flash-bench algo master-tape`: the REEL row). TAPE only links with
+# bank 2 (`just flash-bench tape bank2`, #506). A `bank2` bench's .bk2 is
+# split, not installed: under a console build first, `python3
+# tools/chimera-usb.py bank2 target/chimera-bench.bk2` stages it (exit 2,
+# needs firmware) and the bench's first boot installs it; without that, its
+# reverb and TAPE are silent. All of the bench no
 # longer fits FLASH at once; a bench build has no console `put` (re-flash
 # the shipping build to move files). The bench holds its screens for minutes
 # before the UI loop (and so the console) starts, so a 74 after a
@@ -432,7 +501,8 @@ flash-bench area extra="":
     features="bench-{{area}}"
     if [ -n "{{extra}}" ]; then features="$features,{{extra}}"; fi
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features "$features"
-    rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench.bin
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench
+    case ",$features," in *,bank2,*) echo "bank 2 not installed by this: stage target/chimera-bench.bk2 first (chimera-usb.py bank2, under a console build)";; esac
     python3 tools/chimera-usb.py to-dfu
     log=$(mktemp) && trap 'rm -f "$log"' EXIT
     rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-bench.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
@@ -446,7 +516,7 @@ flash-fault:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features fault-inject
-    rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-fault.bin
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-fault
     python3 tools/chimera-usb.py to-dfu
     log=$(mktemp) && trap 'rm -f "$log"' EXIT
     rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-fault.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
@@ -475,7 +545,7 @@ backup-bootloader:
 # Flash the SD bring-up probe (--no-default-features --features sd-probe) to PreenFM3 via DFU
 flash-sd-probe:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe
-    rust-objcopy -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe.bin
+    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 
 # Coverage-guided fuzz of the Sound and project decoders, the library peek, seeded with the
@@ -498,7 +568,6 @@ fuzz:
 # the host, built in the `utils` profile. Paths from the environment
 # (chimera-utils/README.md); outputs in target/mv. Flags such as --jobs N go
 # after the arguments.
-utils := "cargo run -q --profile utils -p chimera-utils --"
 
 # REF (a program on the contract, or midiverb) vs a Chimera DEVICE
 ab ref device *knobs:

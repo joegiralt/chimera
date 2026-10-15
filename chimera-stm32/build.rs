@@ -55,6 +55,56 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     )
     .unwrap();
 
+    // The reverb's engines (ADR 0142): `Reverb::process`, the door's entry,
+    // its TYPEs' modules and `run_loop`'s monomorphs, code and rodata (their
+    // switch tables follow their names). Only with `bank2`: without it
+    // `Reverb::play` calls `process` in bank 1, where the bench's A/B
+    // (`bench-stress` against `bench-stress,bank2`) keeps it.
+    let reverb = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
+        "    *(.text.*6Reverb7process* .text.*3rev4ramp .text.*3rev4room* .text.*3rev5bloom* .text.*3rev5burst*
+      .text.*3rev11loop_engine* .text.*3rev8run_loop*);
+    *(.rodata.*6Reverb7process* .rodata.*3rev4ramp .rodata.*3rev4room* .rodata.*3rev5bloom* .rodata.*3rev5burst*
+      .rodata.*3rev11loop_engine* .rodata.*3rev8run_loop*);
+"
+    } else {
+        ""
+    };
+    fs::write(
+        out_dir.join("bank2.x"),
+        r#"
+/* Bank 2's image (ADR 0137): the 256-byte header, the door table after it,
+   then what the door reaches. Inserted before .text, and read before
+   link.x so its statements match first: cortex-m-rt's *(.text .text.*)
+   never takes a section named here. Without `bank2` it is empty and the
+   Justfile makes no .bk2. */
+SECTIONS {
+  .bank2 : ALIGN(32) {
+    KEEP(*(.bank2.header));
+    . = ALIGN(32); __bank2_door = .;
+    KEEP(*(.bank2.door));
+    *(.bank2.text .bank2.text.*);
+    *(.bank2.rodata .bank2.rodata.*);
+    /* TAPE's deck (`tape_engine::proxy`), by v0-mangled path: its own
+       modules, and every item of `TapeDeck`. `params` and `machine` stay
+       in bank 1, as do `Heads` and the cost table. */
+    *(.text.*11tape_engine5heads* .text.*11tape_engine7stretch* .text.*11tape_engine4wave* .text.*11tape_engine4read*
+      .text.*11tape_engine3age* .text.*11tape_engine6warble* .text.*11tape_engine7oneshot* .text.*11tape_engine4tron*
+      .text.*11tape_engine*8TapeDeck*);
+    *(.rodata.*11tape_engine5heads* .rodata.*11tape_engine7stretch* .rodata.*11tape_engine4wave* .rodata.*11tape_engine4read*
+      .rodata.*11tape_engine3age* .rodata.*11tape_engine6warble* .rodata.*11tape_engine7oneshot* .rodata.*11tape_engine4tron*
+      .rodata.*11tape_engine*8TapeDeck*);
+    /* REVERB */
+    . = ALIGN(32); __bank2_end = .;
+  } > BANK2
+} INSERT BEFORE .text;
+ASSERT(ADDR(.bank2) == 0x08100000, "bank 2 starts at 0x08100000");
+ASSERT(__bank2_end <= 0x08180000, "bank 2 stays clear of bootloader 1.09's slots at 0x08180000");
+ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door follows the 256-byte header");
+"#
+        .replace("    /* REVERB */\n", reverb),
+    )
+    .unwrap();
+
     // The AXI margin: what the UI's stack-free state and the card may still
     // grow into. Shipping keeps 32 KiB; a bench build carries the probe's
     // extra state and keeps 8 KiB (ADR 0087).
@@ -72,9 +122,16 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     .unwrap();
 
     println!("cargo:rustc-link-search={}", out_dir.display());
+    // bank2.x before cortex-m-rt's link.x: an input section goes to the
+    // first output statement that matches it in the order the scripts are
+    // read, INSERT or not, so after link.x its *(.text.*) would take TAPE's.
+    println!("cargo:rustc-link-arg=-Tbank2.x");
+    println!("cargo:rustc-link-arg=-Tlink.x");
     println!("cargo:rustc-link-arg=-Tram_d2.x");
     println!("cargo:rustc-link-arg=-Tdtcm.x");
     println!("cargo:rustc-link-arg=-Taxi_margin.x");
+    // The relocations stay in the ELF: the door check reads them.
+    println!("cargo:rustc-link-arg=--emit-relocs");
     println!("cargo:rerun-if-changed=memory.x");
     println!("cargo:rerun-if-changed=build.rs");
 }

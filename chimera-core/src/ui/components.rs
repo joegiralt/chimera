@@ -66,7 +66,8 @@ pub struct HeaderText {
 /// TAPE's model page after its machine (STRETCH); FLT › MOD on DIRTY or
 /// LADDER, which speak CLEAN's cells, names its type (`kind`).
 /// `OUT P2`/`OUT P3` warns on a Part's pages when `out` isn't P1 (ADR
-/// 0057). A name too long for the line falls back to the page's short one.
+/// 0057); `closed` (bank 2's `UPDATE`, ADR 0141) before it. A name too long
+/// for the line falls back to the page's short one.
 pub fn header_text(
     head: Head,
     def: &BlockDef,
@@ -74,6 +75,7 @@ pub fn header_text(
     kind: FilterKind,
     suffix: &str,
     out: DacPair,
+    closed: Option<&'static str>,
 ) -> HeaderText {
     let models = models.into();
     let mut context = FmtBuf::new();
@@ -85,7 +87,9 @@ pub fn header_text(
         Head::Orbit(n) => write!(context, "SCENE {}", n.get() + 1),
     };
     let warn = match (head, out) {
-        (Head::Settings | Head::Ring(_) | Head::Orbit(_), _) | (_, DacPair::P1) => None,
+        (Head::Settings | Head::Ring(_) | Head::Orbit(_), _) => None,
+        _ if closed.is_some() => closed,
+        (_, DacPair::P1) => None,
         (_, DacPair::P2) => Some("OUT P2"),
         (_, DacPair::P3) => Some("OUT P3"),
     };

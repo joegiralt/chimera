@@ -8,7 +8,10 @@ publish = false
 [dependencies]
 chimera-core = { path = "../chimera-core" }
 chimera-hal = { path = "../chimera-hal" }
+chimera-image = { path = "../chimera-image" }
 hound = "3.5"
+object = { version = "0.36", default-features = false, features = ["read", "write", "std", "elf"] }
 rayon = "1.11"
 rustfft = "6.4"
 serde_json = "1.0"
+sha2 = "0.10"

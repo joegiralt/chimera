@@ -30,11 +30,16 @@ usb-console = [
 card-put = ["usb-console", "chimera-core/card-put"]
 sweep-free = []
 fault-inject = ["usb-console", "chimera-core/fault-inject"]
+# Bank 1's seal of the bank-2 image it was linked with (ADR 0137).
+bank2 = []
+# Bank 2's power-pull aid: `bank2 erase`, PULL NOW holds. Never shipping.
+bank2-gate = ["bank2", "usb-console", "chimera-core/bank2-gate"]
 
 [dependencies]
 chimera-core = { path = "../chimera-core", default-features = false, features = ["stamp", "boot-waves"] }
 chimera-hal = { path = "../chimera-hal" }
 chimera-fat = { path = "../chimera-fat" }
+chimera-image = { path = "../chimera-image" }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 # As `chimera-stm32`'s: the rev V register definitions.
 stm32h7xx-hal = { version = "0.16", features = ["stm32h750v", "rt"] }

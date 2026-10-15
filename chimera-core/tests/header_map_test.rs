@@ -2,6 +2,7 @@
 
 mod screen;
 
+use chimera_core::bank2::NEEDS_UPDATE_CELL;
 use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::part::DacPair::{self, P1};
@@ -72,6 +73,7 @@ fn texts(at: At) -> (String, String) {
         FilterKind::Svf,
         "",
         P1,
+        None,
     );
     (h.context.as_str().to_string(), h.name.as_str().to_string())
 }
@@ -149,7 +151,7 @@ fn header_shows_audio_load_in_warning_colours() {
 fn every_header_fits() {
     use chimera_core::dsp::modal::{EXCITER_NAMES, ResonatorMode as M};
     use chimera_core::params::EngineType;
-    use chimera_core::ui::block_registry::MODAL_EXC;
+    use chimera_core::ui::block_registry::{MODAL_EXC, TAPE_MODEL};
     use chimera_core::ui::nav::chain_def_for;
     let models = [M::String, M::Modal, M::Bowed, M::Sympathetic];
     let p6 = PartId::ALL[5];
@@ -159,6 +161,8 @@ fn every_header_fits() {
     let places = [
         At::new(Head::Sound(p6), chain_def_for(EngineType::Algo)),
         At::new(Head::Sound(p6), chain_def_for(EngineType::Modal)),
+        At::new(Head::Sound(p6), chain_def_for(EngineType::Tape)),
+        At::new(Head::Sound(p6), chain_def_for(EngineType::Va)),
         At::mix(5),
         At::new(Head::Orbit(scene), &chimera_core::ui::orbit::ORBIT_CHAIN),
     ];
@@ -174,15 +178,20 @@ fn every_header_fits() {
                 } else {
                     &[""]
                 };
-                for (model, suffix, out) in models.iter().flat_map(|&m| {
-                    suffixes.iter().copied().flat_map(move |s| {
-                        [DacPair::P1, DacPair::P2, DacPair::P3].map(|o| (m, s, o))
+                for ((model, suffix, out), closed) in models
+                    .iter()
+                    .flat_map(|&m| {
+                        suffixes.iter().copied().flat_map(move |s| {
+                            [DacPair::P1, DacPair::P2, DacPair::P3].map(|o| (m, s, o))
+                        })
                     })
-                }) {
-                    let h = header_text(at.head, def, model, FilterKind::Svf, suffix, out);
+                    .flat_map(|x| [None, Some(NEEDS_UPDATE_CELL)].map(|c| (x, c)))
+                {
+                    let h = header_text(at.head, def, model, FilterKind::Svf, suffix, out, closed);
                     let what = format!("{} / {}{:?}", h.context.as_str(), h.name.as_str(), h.warn);
                     assert!(header_fits(&h), "{what}");
-                    if h.warn.is_none() {
+                    // TAPE's model page is named after its machine (tape_pages_test).
+                    if h.warn.is_none() && def.id != TAPE_MODEL.id {
                         let full = if def.id == MODAL_EXC.id {
                             EXCITER_NAMES[model as usize].len()
                         } else {
@@ -207,6 +216,7 @@ fn the_out_warning_keeps_short_names_whole() {
         FilterKind::Svf,
         "",
         DacPair::P3,
+        None,
     );
     assert_eq!((h.name.as_str(), h.warn), ("SENDS", Some("OUT P3")));
     let alg = At::sound(1);
@@ -217,6 +227,7 @@ fn the_out_warning_keeps_short_names_whole() {
         FilterKind::Svf,
         "",
         DacPair::P2,
+        None,
     );
     assert_eq!((h.name.as_str(), h.warn), ("ALG", Some("OUT P2")));
 }
@@ -473,6 +484,7 @@ fn the_exciter_page_is_named_after_the_exciter() {
             FilterKind::Svf,
             "",
             P1,
+            None,
         );
         assert_eq!(h.name.as_str(), EXCITER_NAMES[m as usize], "{m:?}");
         assert_eq!(dungeon_map::page_label(&MODAL_EXC, m), "EXC");
@@ -495,6 +507,7 @@ fn dirty_filter_mod_names_dirty() {
             k,
             "",
             P1,
+            None,
         );
         String::from(h.name.as_str())
     };

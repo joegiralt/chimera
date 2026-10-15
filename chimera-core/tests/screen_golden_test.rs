@@ -292,6 +292,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_deck_oneshot", 0xcee951d363a9b989),
     ("tape_page_oneshot", 0xdaa2dad45cc62c6a),
     ("tape_deck_loop", 0x4d56090584f310d4),
+    // New: bank 2 closed (ADR 0141).
+    ("tape_deck_needs_update", 0xbfc70954a2cccdd9),
     ("tape_page_loop", 0x933afc3a391854d0),
     ("tape_deck_tron", 0xa947b940b896b56d),
     ("tape_page_tron", 0xb3d7bdd0216e81dc),
@@ -324,6 +326,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),
     ("toast_exfat", 0xfc0cb3b4feb1a1b5),
+    // Bank 2's install: DON'T POWER OFF over the whole screen.
+    ("installing", 0xb2af55fe85e8e58d),
+    // Its phase line at WRITING.
+    ("installing_writing", 0x7f68e79694a6310d),
 ];
 
 #[test]

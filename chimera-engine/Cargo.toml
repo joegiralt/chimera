@@ -9,6 +9,7 @@ edition.workspace = true
 # console, built for size.
 [dependencies]
 chimera-hal = { path = "../chimera-hal" }
+chimera-image = { path = "../chimera-image" }
 chimera-theory = { path = "../chimera-theory" }
 libm = "0.2"
 chimera-waves = { path = "../chimera-waves" }
@@ -19,6 +20,14 @@ push-encoders = []
 # The wave tables rendered into RAM at boot (`waves::render_into`), not
 # shipped in flash (ADR 0122). The firmware's; a host keeps the static.
 boot-waves = []
+# Bank 2's header placeholder and door table, in `.bank2` (ADR 0137): the
+# link that ships the `.bk2` (and the proxies' host tests). TAPE's deck and
+# the reverb's engines are linked there, bank 1 keeping their proxies
+# (`tape_engine::proxy`, `Reverb::play`; ADR 0142).
+bank2 = ["tape"]
+# `bank2 erase`'s live close (`LoadLink::shut_tape`, `sound_off_tape`): only
+# a gate build writes bank 2 under an open door (`just firmware-gate`).
+bank2-gate = []
 # The console's `ls` and `put` (ADR 0092): project files onto the card.
 card-put = []
 # The TAPE engine's DSP (ADR 0132): off in the shipping firmware, where no

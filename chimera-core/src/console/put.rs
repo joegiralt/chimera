@@ -12,13 +12,19 @@
 //! With `source-writer`, `put` also takes a TAPE source (ADR 0106): in
 //! 256 KiB chunks, each checked and under its own deadline, written once,
 //! read back and sealed. A file already sealed answers `OK PRESENT`.
+//!
+//! Bank 2's image goes to `/CHIMERA/SYSTEM/BANK2.BK2`, the old one deleted
+//! first, then read back and judged against this build's seal (ADR 0137):
+//! one sealed for another build stays (`OK staged: needs firmware <v>`),
+//! anything else is deleted.
 
 use core::fmt::{self, Write};
 
 use chimera_hal::Ms;
 use chimera_hal::store::{CHUNK, Dir, FileName, Files, StoreError};
 
-use super::{Arg, Out, Stalled, Words, sound_file::exists};
+use super::{Arg, CardImage, Out, STAGED, Stalled, Words, sound_file::exists};
+use crate::bank2::{Seal, Version};
 use crate::project::{ProjectCheck, peek_entry, project_file};
 use crate::storage::{
     AbFile, Card, CardFault, Check, Crc32, Event, FileError, Framer, Generation, HEADER_LEN,
@@ -65,6 +71,7 @@ const PROJECTS: &[u8] = b"/CHIMERA/PROJECTS/";
 pub(super) const SOUNDS: &[u8] = b"/CHIMERA/SOUNDS/";
 #[cfg(feature = "source-writer")]
 const TAPES: &[u8] = b"/CHIMERA/TAPES/";
+const BANK2: &[u8] = b"/CHIMERA/SYSTEM/BANK2.BK2";
 #[cfg(feature = "source-writer")]
 const _: () = assert!(PUT_CHUNK_BYTES.is_multiple_of(CHUNK as u32));
 // The sweep's cap counts on it (ADR 0094).
@@ -138,9 +145,14 @@ pub enum PutTo {
     /// A TAPE source, by its stem: written once and sealed.
     #[cfg(feature = "source-writer")]
     Source(u32),
+    /// Bank 2's image, staged for `bank2 install` and the boot.
+    Bank2,
 }
 
 fn put_to(p: &[u8]) -> Option<PutTo> {
+    if p.eq_ignore_ascii_case(BANK2) {
+        return Some(PutTo::Bank2);
+    }
     let to = project(p)
         .map(PutTo::Project)
         .or_else(|| sound(p).map(|id| PutTo::Sound { id, over: false }));
@@ -161,14 +173,18 @@ pub struct PutArg {
 
 impl Arg for PutArg {
     #[cfg(not(feature = "source-writer"))]
-    const USAGE: &'static str = "/CHIMERA/PROJECTS/P#######.A or /CHIMERA/SOUNDS/S#######.A \
-        [--over], its size and CRC-32 in hex";
+    const USAGE: &'static str = "/CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A \
+        [--over] or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 in hex";
     #[cfg(feature = "source-writer")]
     const USAGE: &'static str = "/CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A \
-        [--over] or /CHIMERA/TAPES/<CRC>.SRC, its size and CRC-32 in hex";
+        [--over], /CHIMERA/TAPES/<CRC>.SRC or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 \
+        in hex";
     fn parse(mut words: Words<'_>) -> Option<Self> {
         let mut to = put_to(words.next()?)?;
         let size = number(words.next()?, 10, 10)?;
+        if to == PutTo::Bank2 && size > chimera_image::BANK2_LEN {
+            return None;
+        }
         let crc = number(words.next()?, 16, 8)?;
         let resume = match (words.next(), &mut to) {
             (None, _) => false,
@@ -240,6 +256,10 @@ pub enum PutFail {
     /// The source's own check, at the bytes that show it.
     #[cfg(feature = "source-writer")]
     Source(PutRefusal),
+    /// No seal in this build to judge a bank-2 image against.
+    Unsealed,
+    /// The staged file, read back, is neither good nor stale: deleted.
+    NotBank2,
 }
 
 impl PutFail {
@@ -263,6 +283,8 @@ impl PutFail {
             PutFail::Chunk => "chunk",
             #[cfg(feature = "source-writer")]
             PutFail::Source(r) => r.message(),
+            PutFail::Unsealed => "firmware unsealed",
+            PutFail::NotBank2 => "not a bank-2 image",
         }
     }
 }
@@ -323,22 +345,26 @@ enum Done {
     /// The source was on the card, sealed and whole: no data taken.
     #[cfg(feature = "source-writer")]
     Present,
+    /// A bank-2 image sealed for another build: kept for its firmware.
+    Stale(Version),
 }
 
 /// `put`'s whole answer: `READY` once its directory is made, then `OK`, or
 /// `ERR put: <why>` with the pair loading as before; for a source already
 /// on the card, `OK PRESENT` in place of `READY`.
-/// `open`: the project the UI holds, which `put` never writes under it.
+/// `open`: the project the UI holds, which `put` never writes under it;
+/// `seal`: this build's, which a bank-2 image is judged against.
 /// Out of line, like `save`: 460 B smaller under fat LTO, measured.
 #[inline(never)]
 pub fn put<F: Files, P: Out>(
     arg: PutArg,
     open: Option<ProjectId>,
+    seal: Option<Seal>,
     files: &mut F,
     port: &mut P,
 ) -> Result<(), Stalled> {
     let due = Due(port.now());
-    let r = transfer(arg, open, files, port, due);
+    let r = transfer(arg, open, seal, files, port, due);
     files.cap(None);
     port.fresh();
     let mut t = super::Text(port);
@@ -346,6 +372,7 @@ pub fn put<F: Files, P: Out>(
         Ok(Done::Saved) => t.write_str("OK\n"),
         #[cfg(feature = "source-writer")]
         Ok(Done::Present) => t.write_str("OK PRESENT\n"),
+        Ok(Done::Stale(v)) => writeln!(t, "OK staged: needs firmware {}", v.as_str()),
         Err(e) => writeln!(t, "ERR put: {}", e.message()),
     }
     .map_err(|fmt::Error| Stalled)
@@ -354,6 +381,7 @@ pub fn put<F: Files, P: Out>(
 fn transfer<F: Files, P: Out>(
     arg: PutArg,
     open: Option<ProjectId>,
+    seal: Option<Seal>,
     files: &mut F,
     port: &mut P,
     due: Due,
@@ -413,7 +441,72 @@ fn transfer<F: Files, P: Out>(
                 })
                 .and_then(|o| o.result)
         }
+        PutTo::Bank2 => {
+            let seal = seal.ok_or(PutFail::Unsealed)?;
+            due.arm(files, port, 0)?;
+            Card::new()
+                .run(files, |s, r| bank2_session(s, r, &seal, arg, port, due))
+                .and_then(|o| o.result)
+        }
     }
+}
+
+/// Bank 2's image on the mounted card: `SYSTEM`, the old file deleted,
+/// `READY`, the data written as it comes, then read back and judged. Any
+/// failure past `READY` leaves no file and drains the host before the
+/// `ERR`.
+#[inline(never)]
+fn bank2_session<F: Files, P: Out>(
+    s: &mut F,
+    r: &Ready,
+    seal: &Seal,
+    arg: PutArg,
+    port: &mut P,
+    due: Due,
+) -> Result<Done, PutFail> {
+    let file = STAGED;
+    for d in [Dir::Chimera, Dir::System] {
+        due.arm(s, port, 0)?;
+        s.make_dir(r.volume(), d)?;
+    }
+    due.arm(s, port, 0)?;
+    match s.delete(r.volume(), file) {
+        Ok(()) | Err(StoreError::NotFound) => {}
+        Err(e) => return Err(e.into()),
+    }
+    port.fresh();
+    port.put(READY.as_bytes())
+        .map_err(|Stalled| PutFail::Stalled)?;
+    let mut src = Incoming::new(arg, port, due);
+    let mut why = None;
+    let wrote = src.due.arm(s, src.port, VERIFY_MS).and_then(|()| {
+        s.write(r.volume(), file, &mut |sink| {
+            copy_body(&mut src, &mut |_| Ok(()), &mut |b| sink.put(b)).map_err(|e| match e {
+                PutFail::Store(e) => e,
+                e => {
+                    why = Some(e);
+                    StoreError::Io
+                }
+            })
+        })
+        .map_err(|e| why.unwrap_or(PutFail::Store(e)))
+    });
+    let port = src.port;
+    // The read back: a deadline of its own, as a source's.
+    let done = wrote.and_then(|_| {
+        Due(port.now()).arm(s, port, 0)?;
+        match chimera_image::judge(&mut CardImage::new(s, r.volume()), seal) {
+            chimera_image::Verdict::Good(_) => Ok(Done::Saved),
+            chimera_image::Verdict::Stale { have } => Ok(Done::Stale(have)),
+            _ => Err(PutFail::NotBank2),
+        }
+    });
+    if done.is_err() {
+        s.cap(Some(VERIFY_MS));
+        let _ = s.delete(r.volume(), file);
+        drain(port);
+    }
+    done
 }
 
 /// After a failure past `READY`: the rest of the host's data read and
@@ -485,7 +578,8 @@ fn source_session<F: Files, P: Out>(
     ));
     let mut why = None;
     let wrote = s.write(r.volume(), file, &mut |sink| {
-        source_body(&mut src, &mut check, &mut |b| sink.put(b)).map_err(|e| match e {
+        let check = &mut |b: &[u8]| check.feed(b).map_err(PutFail::Source);
+        copy_body(&mut src, check, &mut |b| sink.put(b)).map_err(|e| match e {
             PutFail::Store(e) => e,
             e => {
                 why = Some(e);
@@ -511,14 +605,13 @@ fn source_session<F: Files, P: Out>(
     Ok(Done::Saved)
 }
 
-/// A source's bytes, as they come, through `check` and then to `put` a
-/// block at a time. The last block, the file's trailer in it, goes only
-/// once every chunk, the host's CRC and the check passed: a put that
-/// fails leaves a file no read takes, even before it is deleted.
-#[cfg(feature = "source-writer")]
-fn source_body<P: Out>(
+/// The bytes, as they come, through `check` and then to `put` a block at
+/// a time. The last block, a source's trailer in it, goes only once every
+/// chunk, the host's CRC and the check passed: a put that fails leaves a
+/// file no read takes, even before it is deleted.
+fn copy_body<P: Out>(
     src: &mut Incoming<'_, P>,
-    check: &mut SourceCheck,
+    check: &mut dyn FnMut(&[u8]) -> Result<(), PutFail>,
     put: &mut dyn FnMut(&[u8]) -> Result<(), StoreError>,
 ) -> Result<(), PutFail> {
     let mut block = [0u8; CHUNK];
@@ -528,7 +621,7 @@ fn source_body<P: Out>(
             block[fill] = src.next()?;
             fill += 1;
         }
-        check.feed(&block[..fill]).map_err(PutFail::Source)?;
+        check(&block[..fill])?;
         if src.got == src.size {
             if src.all.finish() != src.crc {
                 return Err(PutFail::BadCrc);

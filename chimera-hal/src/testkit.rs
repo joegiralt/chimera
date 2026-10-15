@@ -38,6 +38,11 @@ impl MemStore {
         *self = MemStore::new(serial);
     }
 
+    /// `bytes` as `file`, past `write`: as a host drops a file in the root.
+    pub fn plant(&mut self, file: FileName, bytes: &[u8]) {
+        self.files.insert(file, bytes.to_vec());
+    }
+
     pub fn eject(&mut self) {
         self.present = false;
     }
@@ -58,7 +63,7 @@ impl MemStore {
     }
 
     fn writable(&self, file: FileName) -> Result<(), StoreError> {
-        if self.sealed.contains(&file) {
+        if file.dir() == Dir::Root || self.sealed.contains(&file) {
             Err(StoreError::ReadOnly)
         } else {
             Ok(())
@@ -66,7 +71,7 @@ impl MemStore {
     }
 
     fn has_dir(&self, dir: Dir) -> Result<(), StoreError> {
-        if self.dirs.contains(&dir) {
+        if dir == Dir::Root || self.dirs.contains(&dir) {
             Ok(())
         } else {
             Err(StoreError::NotFound)
@@ -164,6 +169,9 @@ impl Store for MemStore {
 
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
         self.open(vol)?;
+        if dir == Dir::Root {
+            return Ok(());
+        }
         if dir != Dir::Chimera {
             self.has_dir(Dir::Chimera)?;
         }
@@ -295,6 +303,20 @@ pub fn store_suite<S: Store>(
     assert_eq!(s.make_dir(vol, Dir::Projects), Err(StoreError::NotFound));
     after_op(&s);
     s.make_dir(vol, Dir::Chimera).unwrap();
+    after_op(&s);
+
+    // The root is listed and read, never written: a host drops files there.
+    let dropped = FileName::new(Dir::Root, b"CHIMER~1", b"BK2").unwrap();
+    assert_eq!(s.make_dir(vol, Dir::Root), Ok(()));
+    after_op(&s);
+    assert!(listing(&mut s, vol, Dir::Root).is_ok());
+    after_op(&s);
+    let r = s.write(vol, dropped, &mut |w| w.put(b"x"));
+    assert_eq!(r, Err(StoreError::ReadOnly));
+    after_op(&s);
+    assert_eq!(s.delete(vol, dropped), Err(StoreError::ReadOnly));
+    after_op(&s);
+    assert_eq!(s.seal(vol, dropped), Err(StoreError::Io));
     after_op(&s);
     s.make_dir(vol, Dir::Projects).unwrap();
     after_op(&s);

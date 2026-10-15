@@ -68,37 +68,39 @@ impl Arg for Colours {
 
 /// One entry per command: the variant, its argument type, its name and its help line.
 macro_rules! commands {
-    ($($v:ident ($arg:ty) => $name:literal, $about:literal),+ $(,)?) => {
+    ($($(#[$m:meta])* $v:ident ($arg:ty) => $name:literal, $about:literal),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub enum Command { $($v),+ }
+        pub enum Command { $($(#[$m])* $v),+ }
 
         impl Command {
-            pub const ALL: [Command; [$(Command::$v),+].len()] = [$(Command::$v),+];
+            pub const ALL: [Command; [$($(#[$m])* Command::$v),+].len()] =
+                [$($(#[$m])* Command::$v),+];
 
             pub const fn name(self) -> &'static str {
-                match self { $(Command::$v => $name),+ }
+                match self { $($(#[$m])* Command::$v => $name),+ }
             }
 
             pub const fn about(self) -> &'static str {
-                match self { $(Command::$v => $about),+ }
+                match self { $($(#[$m])* Command::$v => $about),+ }
             }
 
             pub const fn usage(self) -> &'static str {
-                match self { $(Command::$v => <$arg as Arg>::USAGE),+ }
+                match self { $($(#[$m])* Command::$v => <$arg as Arg>::USAGE),+ }
             }
         }
 
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub enum Request { $($v($arg)),+ }
+        pub enum Request { $($(#[$m])* $v($arg)),+ }
 
         impl Request {
             pub const fn command(self) -> Command {
-                match self { $(Request::$v(_) => Command::$v),+ }
+                match self { $($(#[$m])* Request::$v(_) => Command::$v),+ }
             }
         }
 
         fn parse(word: &[u8], rest: Words<'_>) -> Result<Request, Refusal> {
             $(
+                $(#[$m])*
                 if word.eq_ignore_ascii_case($name.as_bytes()) {
                     return <$arg as Arg>::parse(rest)
                         .map(Request::$v)
@@ -123,6 +125,8 @@ macro_rules! table {
             Shot   (Colours) => "shot",   "the screen in THEME's colours; shot raw: canonical",
             Dfu    (NoArg)   => "dfu",    "restart into the ROM loader for just flash",
             Sweep  (NoArg)   => "sweep",  "the lost-cluster sweep at the next boot: restarts into it",
+            Flash  (NoArg)   => "flash",  "flash controller and bank 2, read only",
+            Bank2  (Bank2Arg) => "bank2", "bank 2: its state; bank2 install: the staged file into it",
             $($card)*
         }
     };
@@ -255,5 +259,9 @@ pub use sound_file::*;
 mod fault;
 #[cfg(feature = "fault-inject")]
 pub use fault::*;
+mod flash;
+pub use flash::*;
+mod bank2;
+pub use bank2::*;
 mod nocard;
 pub use nocard::NoCard;

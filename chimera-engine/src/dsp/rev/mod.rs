@@ -537,8 +537,34 @@ impl Reverb {
         }
     }
 
+    /// The block as the FX bus plays it: `process`, which with `bank2`
+    /// is bank 2's, through the door (ADR 0142). Closed, `out` is silent
+    /// and the reverb's state waits as it was.
+    pub fn play(
+        &mut self,
+        send: &[f32; BLOCK_SIZE],
+        p: &ReverbParams,
+        mix: f32,
+        tempo: Tempo,
+        sample_rate: u32,
+        out: &mut Stereo,
+    ) {
+        #[cfg(feature = "bank2")]
+        if crate::bank2::DOOR_CELL
+            .with(|d| (d.reverb.process)(self, send, p, mix, tempo, sample_rate, out))
+            .is_none()
+        {
+            *out = Stereo::SILENT;
+        }
+        #[cfg(not(feature = "bank2"))]
+        self.process(send, p, mix, tempo, sample_rate, out);
+    }
+
     /// Wet only: the engine's return × `mix`, into `out`. A synced time
-    /// follows `tempo`; QUAD runs free of it.
+    /// follows `tempo`; QUAD runs free of it. With `bank2` it is linked
+    /// into bank 2 with the TYPEs' engines (`bank2.x`), and bank 1 calls
+    /// it only through the door (`play`).
+    #[inline(never)]
     pub fn process(
         &mut self,
         send: &[f32; BLOCK_SIZE],
@@ -714,6 +740,20 @@ impl Reverb {
             ramp(out, r.0, step_of(r, BLOCK_SIZE));
         }
     }
+}
+
+/// The reverb's entry in the door's table (ADR 0142).
+#[cfg(feature = "bank2")]
+#[repr(C)]
+pub struct ReverbDoor {
+    pub process: fn(&mut Reverb, &[f32; BLOCK_SIZE], &ReverbParams, f32, Tempo, u32, &mut Stereo),
+}
+
+#[cfg(feature = "bank2")]
+impl Reverb {
+    pub const DOOR: ReverbDoor = ReverbDoor {
+        process: Self::process,
+    };
 }
 
 /// HALL's block: its two smeared allpasses' offsets at D =

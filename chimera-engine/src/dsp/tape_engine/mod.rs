@@ -21,12 +21,14 @@
 //! Manual p. 32, TIMESTRETCH) splices two grains at a time pointer
 //! (`stretch`).
 //!
-//! The engine itself is the `tape` feature's (ADR 0132): the shipping
-//! build has no TAPE Part to play, so it links `off`'s silent stand-in.
-//! The params, sources and UI helpers stay either way.
+//! The engine itself is the `tape` feature's (ADR 0132): a build without
+//! it links `off`'s silent stand-in. With `bank2` (the firmware's) the
+//! engine, `TapeDeck`, is linked into bank 2 and bank 1 plays it through
+//! `proxy` (ADR 0137). The params, sources and UI helpers stay either way.
 #![cfg_attr(not(feature = "tape"), allow(dead_code, unused_imports))]
 
 pub mod age;
+mod desc;
 pub mod heads;
 pub mod machine;
 pub mod oneshot;
@@ -41,6 +43,13 @@ pub mod wave;
 mod off;
 #[cfg(not(feature = "tape"))]
 pub use off::TapeEngine;
+#[cfg(feature = "bank2")]
+mod proxy;
+#[cfg(feature = "bank2")]
+pub use proxy::{TapeDoor, TapeEngine};
+/// Without `bank2`, the deck itself (with it, `proxy`'s, ADR 0137).
+#[cfg(all(feature = "tape", not(feature = "bank2")))]
+pub type TapeEngine = TapeDeck;
 
 use core::mem::MaybeUninit;
 
@@ -145,6 +154,20 @@ const MACRO_SETTLE: f32 = 1e-3;
 /// constants (`Age` takes 48 kHz too).
 const BLOCK_RATE: f32 = (SAMPLE_RATE as usize / BLOCK_SIZE) as f32;
 
+/// Each model's measured worst, either way round (spec § 5): bank 1's
+/// table, which the proxy reads without the door.
+pub const fn model_cost(m: TapeModel) -> Cost {
+    match m {
+        TapeModel::Loop => COST_LOOP,
+        TapeModel::Oneshot => COST_ONESHOT,
+        TapeModel::Tron => COST_TRON,
+        TapeModel::PingPong => COST_PING,
+        TapeModel::Scrub => COST_SCRUB,
+        TapeModel::Transwave => COST_WAVE,
+        TapeModel::Stretch => COST_STRETCH,
+    }
+}
+
 /// TAPE runs, and is billed, whenever it can be heard: stored above 0, or
 /// routed (AGE's rule, `age::age_runs`). Stored at 0 and unrouted, the
 /// transport is bypassed.
@@ -185,16 +208,20 @@ fn hold(out: &mut [f32], held: f32, g: f32, dg: f32) {
     }
 }
 
-/// A note's first `NOTE_ON_RAMP` samples ramp from `last` by a smoothstep,
-/// so a START inside a waveform never steps and the ramp has no corner
-/// where it lands: a fast attack is near full scale there (a linear ramp
-/// bent TX BASS 7× its own, #385). Once a note, out of line.
-#[cold]
-#[inline(never)]
-fn note_on_ramp(out: &mut [f32; BLOCK_SIZE], last: f32) {
-    for (i, y) in out[..NOTE_ON_RAMP as usize].iter_mut().enumerate() {
-        let x = i as f32 / NOTE_ON_RAMP as f32;
-        *y = last + (*y - last) * (x * x * (3.0 - 2.0 * x));
+#[cfg(feature = "tape")]
+impl TapeDeck {
+    /// A note's first `NOTE_ON_RAMP` samples ramp from `last` by a
+    /// smoothstep, so a START inside a waveform never steps and the ramp has
+    /// no corner where it lands: a fast attack is near full scale there (a
+    /// linear ramp bent TX BASS 7× its own, #385). Once a note, out of line;
+    /// `TapeDeck`'s, so bank 2's.
+    #[cold]
+    #[inline(never)]
+    fn note_on_ramp(out: &mut [f32; BLOCK_SIZE], last: f32) {
+        for (i, y) in out[..NOTE_ON_RAMP as usize].iter_mut().enumerate() {
+            let x = i as f32 / NOTE_ON_RAMP as f32;
+            *y = last + (*y - last) * (x * x * (3.0 - 2.0 * x));
+        }
     }
 }
 
@@ -325,7 +352,7 @@ struct Next {
 /// run on from note to note (spec § 2 TAPE), so its wow's phase
 /// random-walks apart from the other voices'.
 #[derive(Clone, Copy)]
-pub(crate) struct Strip {
+pub struct Strip {
     wow: Transport,
     rng: u32,
     age: Age,
@@ -334,7 +361,7 @@ pub(crate) struct Strip {
 
 #[cfg(feature = "tape")]
 #[derive(Clone, Copy)]
-pub struct TapeEngine {
+pub struct TapeDeck {
     /// The source a note plays, latched at note-on (ADR 0087): never
     /// re-resolved, its row read each block.
     src: Option<SourceId>,
@@ -464,9 +491,9 @@ pub struct TapeEngine {
 }
 
 #[cfg(feature = "tape")]
-impl TapeEngine {
-    fn idle() -> TapeEngine {
-        TapeEngine {
+impl TapeDeck {
+    fn idle() -> TapeDeck {
+        TapeDeck {
             src: None,
             gated: false,
             model: TapeModel::Loop,
@@ -563,7 +590,7 @@ impl TapeEngine {
     }
 
     /// The strip a rebuilt slot keeps (`restore`).
-    pub(crate) fn strip(&self) -> Strip {
+    pub fn strip(&self) -> Strip {
         Strip {
             wow: self.wow,
             rng: self.rng,
@@ -573,7 +600,7 @@ impl TapeEngine {
     }
 
     /// A fresh engine on the voice's own strip of tape, as it last ran.
-    pub(crate) fn restore(&mut self, s: Strip) {
+    pub fn restore(&mut self, s: Strip) {
         (self.wow, self.rng, self.age, self.warble) = (s.wow, s.rng, s.age, s.warble);
         // `trigger`'s hold does this too, before any note plays; a rebuilt
         // slot never carries the last note's wear on its own.
@@ -674,15 +701,7 @@ impl TapeEngine {
 
     /// Each model's measured worst, either way round (spec § 5).
     pub const fn model_cost(m: TapeModel) -> Cost {
-        match m {
-            TapeModel::Loop => COST_LOOP,
-            TapeModel::Oneshot => COST_ONESHOT,
-            TapeModel::Tron => COST_TRON,
-            TapeModel::PingPong => COST_PING,
-            TapeModel::Scrub => COST_SCRUB,
-            TapeModel::Transwave => COST_WAVE,
-            TapeModel::Stretch => COST_STRETCH,
-        }
+        model_cost(m)
     }
 
     /// What the sounding note costs: its note-on's model.
@@ -1173,7 +1192,7 @@ impl TapeEngine {
         }
 
         if core::mem::take(&mut self.ramp) {
-            note_on_ramp(out, self.last);
+            Self::note_on_ramp(out, self.last);
         }
         self.age.process(out, self.mac.age);
         self.last = out[BLOCK_SIZE - 1];

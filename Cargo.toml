@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "chimera-core",
     "chimera-engine",
+    "chimera-image",
     "chimera-hal",
     "chimera-stm32",
     "chimera-board",
@@ -17,6 +18,7 @@ exclude = ["chimera-core/fuzz", "chimera-desktop/fuzz"]
 default-members = [
     "chimera-core",
     "chimera-engine",
+    "chimera-image",
     "chimera-hal",
     "chimera-desktop",
     "chimera-waves",

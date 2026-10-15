@@ -5,6 +5,7 @@
 // formatting); this tool never ships.
 #![allow(clippy::disallowed_methods)]
 
+mod bank2;
 mod devices;
 mod generic;
 mod grain;
@@ -28,6 +29,11 @@ const USAGE: &str = "\
 usage: chimera-utils [flags] COMMAND …
   ab REF DEVICE [k=v …]    REF vs a Chimera DEVICE: null, response, THD, centroid; A/B WAVs
                            (an effect also on the listening set)
+  bank2-seal ELF BIN BK2 --version TEXT
+                           fill the .bk2 header; patch its seal into the .bin
+  bank2-seal --check BIN BK2
+                           fail unless the .bk2's seal is the .bin's
+  door-check ELF           fail on any bank-1 relocation into bank 2
   devices                  the devices and their knobs
   mv-refs [PROG …]         MidiVerb II references (default 1–49)
   mv-fit TYPE PROG …       fit TYPE's knobs to programs
@@ -129,6 +135,7 @@ fn run() -> Result<bool, String> {
             None => Ok(None),
         }
     };
+    let version = flag("--version")?;
     let jobs: usize =
         flag("--jobs")?.map_or(Ok(8), |v| v.parse().map_err(|_| "--jobs: not a number"))?;
     let path = |v: Option<String>, env: &str| v.map(PathBuf::from).or_else(|| env_path(env));
@@ -184,6 +191,14 @@ fn run() -> Result<bool, String> {
     };
     let ok = match cmd.as_str() {
         "ab" if rest.len() >= 2 => generic::ab(&cfg, &rest[0], &rest[1], &rest[2..]).map(|_| true),
+        "bank2-seal" if rest.len() == 3 && rest[0] == "--check" => {
+            bank2::check_files(&rest[1], &rest[2]).map(|_| true)
+        }
+        "bank2-seal" if rest.len() == 3 => {
+            let v = version.ok_or("bank2-seal needs --version")?;
+            bank2::seal_files(&rest[0], &rest[1], &rest[2], &v).map(|_| true)
+        }
+        "door-check" if rest.len() == 1 => bank2::door_check(&rest[0]),
         "devices" => {
             for (name, d) in devices::Device::all() {
                 let ks: Vec<String> = d

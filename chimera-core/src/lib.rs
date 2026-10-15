@@ -17,5 +17,6 @@ pub use chimera_engine::{
     tracked, triple, voice_alloc,
 };
 
+pub mod bank2;
 pub mod console;
 pub mod ui;

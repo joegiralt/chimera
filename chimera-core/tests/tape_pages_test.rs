@@ -188,6 +188,7 @@ fn model_names_fit_the_cell() {
             chimera_core::dsp::filter::FilterKind::Svf,
             "",
             chimera_core::part::DacPair::P1,
+            None,
         );
         assert_eq!(h.name.as_str(), want);
     }

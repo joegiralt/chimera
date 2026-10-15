@@ -82,6 +82,24 @@ pub trait Unit {
     /// The OTG and PWR registers now: `status`'s `usb_regs` line, last
     /// before `OK`. `None`: no line.
     fn usb_regs(&self) -> Option<UsbRegs>;
+    /// The flash controller's registers. `None`: not in this build.
+    fn flash_regs(&self) -> Option<super::FlashRegs> {
+        None
+    }
+    /// `PEEK_AT`'s words, read after `flash_regs`' lines are out.
+    fn flash_peek(&self) -> Option<super::FlashPeek> {
+        None
+    }
+    /// This build's bank-2 seal, which a staged file is judged against.
+    /// `None`: unsealed, or no bank 2 in this build.
+    fn bank2_seal(&self) -> Option<crate::bank2::Seal> {
+        None
+    }
+    /// `bank2 install`'s or `bank2 erase`'s outcome, reached before the
+    /// answer starts. `None`: not in this build.
+    fn bank2_install(&mut self) -> Option<super::Bank2Answer> {
+        None
+    }
     /// Provokes the fault, once `OK` is not yet out. `None`: not in this build.
     #[cfg(feature = "fault-inject")]
     fn fault(&mut self, _: super::FaultArg) -> Option<()> {
@@ -196,6 +214,25 @@ pub fn answer(
                 return writeln!(t, "ERR sweep: {why}").map_err(|fmt::Error| Stalled);
             }
         },
+        // The registers go out before the peek: a read of bank 2 that
+        // faults still leaves them on the host.
+        Ok(r @ Request::Flash(NoArg)) => match unit.flash_regs() {
+            None => Err(Why::Absent(r.command())),
+            Some(regs) => Ok(super::write_flash_regs(&regs, &mut t).and_then(|()| {
+                unit.flash_peek()
+                    .map_or(Ok(()), |p| super::write_flash_peek(&p, &mut t))
+            })),
+        },
+        Ok(r @ Request::Bank2(super::Bank2Arg::Status)) => match unit.ui().bank2() {
+            None => Err(Why::Absent(r.command())),
+            Some(b) => Ok(b.line(&mut t).and_then(|()| t.write_char('\n'))),
+        },
+        // `install` or `erase`: its whole answer, `OK` or `ERR` included,
+        // is the outcome's.
+        Ok(r @ Request::Bank2(_)) => match unit.bank2_install() {
+            None => Err(Why::Absent(r.command())),
+            Some(a) => return super::write_bank2(&a, t.0),
+        },
         #[cfg(feature = "fault-inject")]
         Ok(r @ Request::Fault(super::FaultArg::Ndtr)) => unit
             .fault_dump()
@@ -217,10 +254,11 @@ pub fn answer(
         #[cfg(feature = "card-put")]
         Ok(r @ Request::Put(arg)) => {
             let open = unit.ui().project().meta().id();
+            let seal = unit.bank2_seal();
             match unit.files() {
                 None => Err(Why::Absent(r.command())),
                 Some(f) => {
-                    let said = super::put(arg, open, f, t.0);
+                    let said = super::put(arg, open, seal, f, t.0);
                     if matches!(arg.to, super::PutTo::Sound { .. }) {
                         unit.forget_library();
                     }

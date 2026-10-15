@@ -136,7 +136,7 @@ fn ask(s: &mut Mem, line: &str, data: &[u8], per_byte_us: u64) -> (String, usize
     for &b in line.as_bytes() {
         if let Some(r) = c.push(b) {
             match r {
-                Ok(Request::Put(arg)) => put(arg, None, s, &mut host).unwrap(),
+                Ok(Request::Put(arg)) => put(arg, None, None, s, &mut host).unwrap(),
                 other => panic!("{other:?}"),
             }
         }

@@ -5,6 +5,7 @@
 //! there.
 #![no_std]
 
+pub mod bank2;
 pub mod cache;
 #[cfg(all(feature = "bench", feature = "usb-console"))]
 pub mod card_speed;
@@ -41,6 +42,24 @@ use display::Stm32Display;
 use stm32h7xx_hal::gpio::{Output, PD8, PD9, PD10, PushPull, Speed};
 use stm32h7xx_hal::rcc::CoreClocks;
 use stm32h7xx_hal::{pac, prelude::*, spi};
+
+/// The seal of the bank-2 image this build was linked with: the seal tool
+/// writes it into the `.bin` after the link. A build never sealed keeps
+/// `UNSEALED` and never opens bank 2.
+#[cfg(feature = "bank2")]
+#[unsafe(no_mangle)]
+#[used]
+static BANK2_SEAL: [u8; 8] = *b"UNSEALED";
+
+/// `BANK2_SEAL` as flash holds it, `None` unsealed.
+#[cfg(feature = "bank2")]
+pub fn bank2_seal() -> Option<chimera_image::Seal> {
+    // SAFETY: a static's address, aligned and live. Volatile because the
+    // seal tool patches the bytes after the link: the compiler must not fold
+    // the placeholder into the code.
+    let b = unsafe { core::ptr::read_volatile(&raw const BANK2_SEAL) };
+    chimera_image::Seal::new(b)
+}
 
 /// Flush-to-zero and default NaN, in this context (FPSCR) and in every
 /// exception's (FPDSCR, which the audio ISR starts from; it resets to
@@ -88,6 +107,9 @@ pub struct Board {
 #[cfg(not(feature = "sd-probe"))]
 struct SynthParts {
     reset_cause: ResetCause,
+    /// Bank 2 as the boot judged it: ABOUT and `status`, and the boot's
+    /// install.
+    bank2: bank2::Bank2Boot,
     board_id: BoardId,
     led: stm32h7xx_hal::gpio::PE1<Output<PushPull>>,
     beat_led: orbit::BeatLed,
@@ -129,6 +151,12 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     #[cfg(feature = "usb-console")]
     let ccdr = usb::route_kernel_clock(ccdr);
     cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
+    // Bank 2 judged before anything could call into it (ADR 0137), a
+    // fault's mark first; the cycle counter bounds its erase.
+    #[cfg(not(feature = "sd-probe"))]
+    let _ = clocks::enable_cycle_counter(&mut cp.DCB, &mut cp.DWT);
+    #[cfg(not(feature = "sd-probe"))]
+    let bank2 = bank2::boot_judge(&dp.RTC, clk.cpu_hz);
     #[cfg(not(feature = "sd-probe"))]
     shared::build_waves();
 
@@ -235,6 +263,7 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
         #[cfg(not(feature = "sd-probe"))]
         synth: SynthParts {
             reset_cause,
+            bank2,
             board_id,
             led,
             beat_led,
@@ -363,6 +392,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         synth:
             SynthParts {
                 reset_cause,
+                bank2,
                 board_id,
                 mut led,
                 beat_led,
@@ -380,6 +410,11 @@ pub fn synth(board: Board, shell: Shell) -> ! {
 
     let mut controls = Stm32Controls::new();
     let ui = shared::take_ui().expect("UI state taken once");
+    // A build without bank 2 plays TAPE and the reverb from bank 1: no
+    // status, so nothing reads NEEDS UPDATE (ADR 0141).
+    if cfg!(feature = "bank2") {
+        ui.set_bank2(bank2.status);
+    }
     ui.project_mut().set_gate_clock(gate_ms);
 
     // Start-up, in order, behind the splash until PART 1 can be drawn:
@@ -405,6 +440,14 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     // file that can't be read still applies the defaults silently:
     // private issue #197
     let (mut sync, mut settings, _) = SystemSync::boot(&mut card, store);
+    // A staged bank 2 this build can open, installed behind DON'T POWER
+    // OFF before the project, which may play from it.
+    #[cfg(feature = "bank2")]
+    if let Some(flash) = &bank2.install_over
+        && let Some(now) = bank2::boot_install(store, &mut display, &marker, flash, clk.cpu_hz)
+    {
+        ui.set_bank2(now);
+    }
     ui.set_theme(settings.theme);
     ui.set_midi(settings.midi);
     apply_theme(settings.theme, &mut theme, &mut backlight, &mut display);
@@ -556,8 +599,14 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         let card_run: usb::CardRun = &mut |_, _, _| None;
         #[cfg(feature = "usb-console")]
         if let Some(restart) = usb.up().and_then(|u| {
-            let frame = display.frame();
-            u.service(ui, stats_r.as_mut(), bench_text, frame, card_run, store)
+            u.service(
+                ui,
+                stats_r.as_mut(),
+                bench_text,
+                &mut display,
+                card_run,
+                store,
+            )
         }) {
             // As the menu's path: a THEME change in this visit is kept.
             ui.sync_system_now(&mut sync, &mut card, store, &mut settings);
@@ -567,6 +616,11 @@ pub fn synth(board: Board, shell: Shell) -> ! {
                 usb::Restart::Sweep(_) => marker.reset(),
             }
         }
+        // `bank2 install` held the screen: everything redraws below.
+        #[cfg(feature = "usb-console")]
+        let installed = usb.up().is_some_and(|u| u.take_redraw());
+        #[cfg(not(feature = "usb-console"))]
+        let installed = false;
         // SYSTEM's PUSH ENCODERS as last edited: off, the read stays 24 bits.
         controls::set_push(ui.midi().push);
         controls.snapshot();
@@ -623,8 +677,9 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         last_tick = now;
         ui.step_idle(elapsed_ms, busy);
         let toast = ui.step_toast(elapsed_ms);
-        if toast == ToastStep::Ended || busy {
-            // The toast or BUSY covered rows the dirty regions don't know about.
+        if toast == ToastStep::Ended || busy || installed {
+            // The toast, BUSY or the install covered rows the dirty regions
+            // don't know about.
             ui.render_with_audio(&mut display, &perf.stats, stats.as_ref(), scope_r.read());
             ui.prime_regions(&perf.stats, stats.as_ref(), scope_r.read());
             if let ToastStep::Show(text) = toast {

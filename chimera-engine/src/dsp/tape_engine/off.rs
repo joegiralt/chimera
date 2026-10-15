@@ -1,7 +1,7 @@
 //! TAPE without the `tape` feature (ADR 0132): a silent engine with the
-//! real one's surface. No Part plays TAPE in a shipping build (a project's
-//! TAPE Part loads as INIT VA), so this only keeps `EngineSlot` whole: a
-//! note on it is refused, never allocated, and plays nothing.
+//! real one's surface, for the bench builds without bank 2. A project's
+//! TAPE Part loads as TAPE (ADR 0141) and plays nothing here: a note on it
+//! is refused, never allocated.
 
 use core::mem::MaybeUninit;
 

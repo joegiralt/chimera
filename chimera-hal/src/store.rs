@@ -39,10 +39,18 @@ pub enum Dir {
     Bench,
     /// `/CHIMERA/TAPES`: TAPE's sources, write-once (ADR 0087).
     Tapes,
+    /// `/CHIMERA/SYSTEM`: bank 2's staged image (ADR 0137). The stock
+    /// bootloader reads only `.bin` files in the root.
+    System,
+    /// The card's root: listed and read, for a dropped bank-2 image (ADR
+    /// 0137). Always there; never made or removed; `write` and `delete`
+    /// refuse it (`ReadOnly`), `seal` too (`Io`).
+    Root,
 }
 
 /// An 8.3 name in one of the `Dir`s: A-Z and 0-9 only, so it is valid on any
-/// FAT without long-name entries.
+/// FAT without long-name entries. A root stem may also hold `~`: the short
+/// name a host gives a long one (`CHIMER~1.BK2`).
 ///
 /// ```compile_fail,E0451
 /// use chimera_hal::store::{Dir, FileName};
@@ -58,14 +66,11 @@ pub struct FileName {
 }
 
 impl FileName {
-    /// `stem` is 1..=8 and `ext` 0..=3 bytes of A-Z 0-9.
-    pub fn new(dir: Dir, stem: &[u8], ext: &[u8]) -> Option<FileName> {
-        let ok = |b: &[u8], min: usize, max: usize| {
-            (min..=max).contains(&b.len())
-                && b.iter()
-                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-        };
-        if !ok(stem, 1, 8) || !ok(ext, 0, 3) {
+    /// `stem` is 1..=8 and `ext` 0..=3 bytes of A-Z 0-9. Const, so a fixed
+    /// name is checked at compile time.
+    pub const fn new(dir: Dir, stem: &[u8], ext: &[u8]) -> Option<FileName> {
+        let tilde = matches!(dir, Dir::Root);
+        if !name_ok(stem, 1, 8, tilde) || !name_ok(ext, 0, 3, false) {
             return None;
         }
         let mut f = FileName {
@@ -75,8 +80,8 @@ impl FileName {
             stem_len: stem.len() as u8,
             ext_len: ext.len() as u8,
         };
-        f.stem[..stem.len()].copy_from_slice(stem);
-        f.ext[..ext.len()].copy_from_slice(ext);
+        f.stem.split_at_mut(stem.len()).0.copy_from_slice(stem);
+        f.ext.split_at_mut(ext.len()).0.copy_from_slice(ext);
         Some(f)
     }
 
@@ -91,6 +96,21 @@ impl FileName {
     pub fn ext(&self) -> &[u8] {
         &self.ext[..self.ext_len as usize]
     }
+}
+
+/// `min..=max` bytes of A-Z 0-9, and `~` if `tilde`.
+const fn name_ok(b: &[u8], min: usize, max: usize, tilde: bool) -> bool {
+    if b.len() < min || b.len() > max {
+        return false;
+    }
+    let mut i = 0;
+    while i < b.len() {
+        if !(b[i].is_ascii_uppercase() || b[i].is_ascii_digit() || (tilde && b[i] == b'~')) {
+            return false;
+        }
+        i += 1;
+    }
+    true
 }
 
 /// Why a store operation failed.

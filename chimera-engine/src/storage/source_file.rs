@@ -14,8 +14,8 @@ use crate::dsp::tape_engine::read::{
 };
 use crate::name::SoundName;
 
+use super::Crc32;
 use super::card::Ready;
-use super::crc::Crc32;
 use super::file::{LoadError, Scan, scan};
 use super::frame::{Event, FileError, FileKind, Framer, HEADER_LEN, RECORD_HEAD_LEN, TRAILER_LEN};
 use super::record::{ReadTag, RecordBuf, RecordTag};

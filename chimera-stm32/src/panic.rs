@@ -11,8 +11,13 @@ fn panic(_info: &PanicInfo) -> ! {
     silence_and_halt()
 }
 
+/// A double ECC error read from bank 2 resets, marked, and the next boot
+/// erases S0 (ADR 0137); any other fault halts. BusFault is never enabled
+/// (SHCSR), so a flash read's bus error escalates here.
 #[exception]
 unsafe fn HardFault(_frame: &ExceptionFrame) -> ! {
+    #[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
+    chimera_board::bank2::reset_on_ecc_fault();
     silence_and_halt()
 }
 

@@ -3,7 +3,6 @@
 mod block_codec;
 mod card;
 mod codes;
-mod crc;
 mod file;
 mod frame;
 mod library;
@@ -18,12 +17,12 @@ pub mod twelve;
 pub(crate) use block_codec::ENTRY_LEN;
 pub use block_codec::{decode_block, encode_block};
 pub use card::{Card, CardError, CardEvent, CardFault, Outcome, Ready, after_error, after_mount};
+pub use chimera_image::crc::Crc32;
 pub use codes::{
     DiskAddr, DiskValue, FILTER_DRIVE, MIGRATIONS, Migration, READDRESS, RETIRED, RETIRED_BLOCKS,
     RETIRED_CODES, RETIRED_SOURCES, Retired, TRANSLATIONS, Translation, ValidAddr, read_value,
     readdress,
 };
-pub use crc::Crc32;
 pub use file::{
     AbFile, Check, Decode, DecodeInPlace, InPlaceError, LoadError, Pick, SaveError, SideState,
     check_file, check_frame, delete_ab, delete_order, load_ab, load_ab_in_place, load_file, pick,

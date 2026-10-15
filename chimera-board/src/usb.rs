@@ -5,8 +5,8 @@
 use chimera_core::board::BoardId;
 use chimera_core::boot::{BootSeen, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep, wait_until};
 use chimera_core::console::{
-    AnswerClock, CardAnswer, CardArg, Console, Frame, LoopTimer, Out, Request, Served, Stalled,
-    Stats, SweepAsk, Unit, answer, serial_hex,
+    AnswerClock, Bank2Answer, BankRegs, CardAnswer, CardArg, Console, FlashPeek, FlashRegs, Frame,
+    LoopTimer, Out, PEEK_AT, Request, Served, Stalled, Stats, SweepAsk, Unit, answer, serial_hex,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::triple::Reader;
@@ -155,6 +155,8 @@ pub struct Usb {
     cycles_per_us: u32,
     boot: BootSeen,
     sweep: Option<SweepRun>,
+    /// `bank2 install` drew over the screen: the loop redraws it whole.
+    redraw: bool,
     board: BoardId,
 }
 
@@ -313,6 +315,7 @@ impl Unconnected {
             cycles_per_us: (self.cpu_hz / 1_000_000).max(1),
             boot: self.boot,
             sweep: self.sweep,
+            redraw: false,
             board: self.board,
         }
     }
@@ -325,9 +328,11 @@ impl Usb {
     /// answers at most one request: `Some` for a `dfu` the host was told
     /// `OK` to. A `card` runs `card` first, so its seconds come before the
     /// answer's clock starts; so does `sweep`'s request, whose `OK` is
-    /// a restart into the sweep. `ls`, `put`, `rm` and `get` work on
-    /// `store`; a Sound `put` or `rm` drops the library's page after its
-    /// answer. Out of line: inlined, its buffers took `synth`'s frame past
+    /// a restart into the sweep; so does `bank2 install`, its seconds of
+    /// writing behind its own screen (`take_redraw`). `ls`, `put`, `rm` and
+    /// `get` work on `store`; a Sound `put` or `rm` drops the library's
+    /// page after its answer. `shot` reads `display` as the last flush
+    /// left it. Out of line: inlined, its buffers took `synth`'s frame past
     /// the 8 KB check.
     #[inline(never)]
     pub fn service(
@@ -335,7 +340,7 @@ impl Usb {
         ui: &mut UiState,
         mut stats: Option<&mut Reader<AudioStats>>,
         bench: Option<&str>,
-        frame: Frame<'_>,
+        display: &mut crate::Display,
         card: CardRun<'_>,
         store: &mut SdStore,
     ) -> Option<Restart> {
@@ -343,6 +348,8 @@ impl Usb {
         let us = now.wrapping_sub(self.top) / self.cycles_per_us;
         self.top = now;
         self.timer.lap(us, self.last);
+        #[cfg(feature = "bank2")]
+        let cpu_hz = self.cycles_per_us * 1_000_000;
         let Usb {
             dev,
             serial,
@@ -350,6 +357,8 @@ impl Usb {
             timer,
             boot,
             sweep,
+            #[cfg(feature = "bank2")]
+            redraw,
             board,
             ..
         } = self;
@@ -385,13 +394,27 @@ impl Usb {
                 )),
                 _ => None,
             };
+            // Bank 2's write, seconds at most, before the answer's clock
+            // starts; the screen it drew is redrawn whole after.
+            let bank2 = match req {
+                #[cfg(feature = "bank2")]
+                Ok(Request::Bank2(chimera_core::console::Bank2Arg::Install)) => {
+                    *redraw = true;
+                    Some(crate::bank2::run_install(store, ui, display, cpu_hz))
+                }
+                #[cfg(feature = "bank2-gate")]
+                Ok(Request::Bank2(chimera_core::console::Bank2Arg::Erase)) => {
+                    Some(crate::bank2::run_erase(ui, cpu_hz))
+                }
+                _ => None,
+            };
             let unit = &mut ChipUnit {
                 ui: &*ui,
                 stats,
                 card,
                 timer,
                 bench,
-                frame,
+                frame: display.frame(),
                 dfu: false,
                 boot: *boot,
                 sweep: *sweep,
@@ -399,6 +422,7 @@ impl Usb {
                 sweep_ask,
                 files: store,
                 forget: false,
+                bank2,
             };
             let out = &mut UsbOut {
                 dev,
@@ -430,6 +454,11 @@ impl Usb {
         }
         None
     }
+
+    /// `bank2 install` drew over the screen since the last call.
+    pub fn take_redraw(&mut self) -> bool {
+        core::mem::take(&mut self.redraw)
+    }
 }
 
 /// What the console reads, borrowed for one answer.
@@ -457,6 +486,8 @@ struct ChipUnit<'a> {
     /// A Sound `put` or `rm` reached the card: the library's page goes
     /// once the answer is out.
     forget: bool,
+    /// `bank2 install`'s outcome, before the answer.
+    bank2: Option<Bank2Answer>,
 }
 
 impl Unit for ChipUnit<'_> {
@@ -526,8 +557,26 @@ impl Unit for ChipUnit<'_> {
         Some(regs())
     }
 
+    fn flash_regs(&self) -> Option<FlashRegs> {
+        Some(flash_regs())
+    }
+
+    /// `None` while region 2 is `Closed`: the load would fault.
+    fn flash_peek(&self) -> Option<FlashPeek> {
+        crate::bank2::mpu().readable().then(flash_peek)
+    }
+
     fn forget_library(&mut self) {
         self.forget = true;
+    }
+
+    #[cfg(feature = "bank2")]
+    fn bank2_seal(&self) -> Option<chimera_core::bank2::Seal> {
+        crate::bank2_seal()
+    }
+
+    fn bank2_install(&mut self) -> Option<Bank2Answer> {
+        self.bank2
     }
 
     #[cfg(all(feature = "card-put", not(feature = "bench")))]
@@ -644,6 +693,45 @@ pub fn regs() -> UsbRegs {
         gintsts: g.gintsts.read().bits(),
         dsts: d.dsts.read().bits(),
         pwr_cr3: pwr.cr3.read().bits(),
+    }
+}
+
+/// The flash controller's registers, read only: nothing here writes,
+/// unlocks or touches the option bytes.
+fn flash_regs() -> FlashRegs {
+    // SAFETY: plain reads of FLASH's fixed registers; none has a read side
+    // effect (the SR flags clear only through CCR writes).
+    let f = unsafe { &*pac::FLASH::ptr() };
+    let bank = |b: &pac::flash::BANK| BankRegs {
+        cr: b.cr.read().bits(),
+        sr: b.sr.read().bits(),
+        prar_cur: b.prar_cur.read().bits(),
+        scar_cur: b.scar_cur.read().bits(),
+        wpsn_cur: b.wpsn_curr.read().bits(),
+    };
+    FlashRegs {
+        acr: f.acr.read().bits(),
+        optcr: f.optcr().read().bits(),
+        optsr_cur: f.optsr_cur().read().bits(),
+        boot_cur: f.boot_curr().read().bits(),
+        banks: [bank(f.bank1()), bank(f.bank2())],
+    }
+}
+
+/// `PEEK_AT`'s first 32 bytes, then SR1 and SR2: an ECC error the reads
+/// raised shows there.
+fn flash_peek() -> FlashPeek {
+    let mut words = [0u32; 8];
+    for (k, w) in (0u32..).zip(words.iter_mut()) {
+        // SAFETY: an aligned word of bank-2 sector 0, which MPU region 2
+        // maps readable (the caller checked `bank2::mpu()`); a load never
+        // programs or erases it.
+        *w = unsafe { core::ptr::read_volatile((PEEK_AT + 4 * k) as *const u32) };
+    }
+    let r = flash_regs();
+    FlashPeek {
+        words,
+        sr_after: r.banks.map(|b| b.sr),
     }
 }
 

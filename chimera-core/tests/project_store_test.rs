@@ -647,11 +647,10 @@ fn saved_toast_skips_stale_parts() {
     );
 }
 
-/// A project saved with TAPE Parts (before TAPE was coming soon) loads
-/// without a panic: each TAPE Part as a clean INIT VA, the rest as saved,
-/// and the pool keeps its TAPE Sound for TAPE's return (ADR 0132).
+/// A project saved with TAPE Parts loads them as TAPE, clean, from INIT
+/// and from their slot, the rest as saved (ADR 0141).
 #[test]
-fn an_old_tape_project_loads_its_tape_parts_as_init_va() {
+fn a_tape_project_loads_its_tape_parts_as_tape() {
     use chimera_core::preset::Sound;
     use chimera_core::project::Origin;
     let mut s = MemStore::new(1);
@@ -680,10 +679,17 @@ fn an_old_tape_project_loads_its_tape_parts_as_init_va() {
     assert!(out.swap.is_some(), "{:?}", out.note);
     for part in [PartId::ALL[0], PartId::ALL[1]] {
         let x = q.part(part);
-        assert!(x.sound.bits_eq(&Sound::init(EngineType::Va)), "{part:?}");
-        assert_eq!(x.origin(), Origin::Init(EngineType::Va), "{part:?}");
+        assert!(x.sound.bits_eq(&Sound::init(EngineType::Tape)), "{part:?}");
         assert_eq!(part_status(x, q.pool()), PartStatus::Clean, "{part:?}");
     }
+    assert_eq!(
+        q.part(PartId::ALL[0]).origin(),
+        Origin::Init(EngineType::Tape)
+    );
+    assert!(matches!(
+        q.part(PartId::ALL[1]).origin(),
+        Origin::Slot { slot: s, .. } if s == slot
+    ));
     assert!(
         q.part(PartId::ALL[2]).sound.bits_eq(&kept),
         "the rest as saved"

@@ -62,6 +62,9 @@ impl ShortName {
                 Dir::Sounds => b"SOUNDS",
                 Dir::Bench => b"BENCH",
                 Dir::Tapes => b"TAPES",
+                Dir::System => b"SYSTEM",
+                // Never looked up: `add_dir` and `drop_dir` stop first.
+                Dir::Root => b"",
             },
             b"",
         )
@@ -122,8 +125,9 @@ pub fn parse(raw: &[u8; ENTRY], kind: FsKind) -> Slot {
     let mut name = [0; NAME_LEN];
     name.copy_from_slice(&raw[..NAME_LEN]);
     let name = ShortName(name);
-    // The directory is irrelevant: only whether the name is valid.
-    if name.to_file(Dir::Chimera).is_none() {
+    // Valid anywhere: the root takes the most (`~`); `list` checks again
+    // for its own directory.
+    if name.to_file(Dir::Root).is_none() {
         return Slot::Other;
     }
     let hi = match kind {

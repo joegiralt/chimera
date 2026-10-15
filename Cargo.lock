@@ -231,6 +231,7 @@ dependencies = [
  "chimera-core",
  "chimera-fat",
  "chimera-hal",
+ "chimera-image",
  "cortex-m",
  "embedded-graphics",
  "embedded-graphics-core",
@@ -258,6 +259,7 @@ dependencies = [
  "chimera-core",
  "chimera-engine",
  "chimera-hal",
+ "chimera-image",
  "chimera-theory",
  "embedded-graphics",
  "embedded-graphics-core",
@@ -290,6 +292,7 @@ version = "0.1.0"
 dependencies = [
  "chimera-engine",
  "chimera-hal",
+ "chimera-image",
  "chimera-theory",
  "chimera-waves",
  "libm",
@@ -303,6 +306,7 @@ version = "0.1.0"
 dependencies = [
  "chimera-core",
  "chimera-hal",
+ "chimera-image",
  "embedded-hal 1.0.0",
  "embedded-sdmmc",
 ]
@@ -313,6 +317,10 @@ version = "0.1.0"
 dependencies = [
  "embedded-graphics-core",
 ]
+
+[[package]]
+name = "chimera-image"
+version = "0.1.0"
 
 [[package]]
 name = "chimera-stm32"
@@ -340,10 +348,13 @@ version = "0.1.0"
 dependencies = [
  "chimera-core",
  "chimera-hal",
+ "chimera-image",
  "hound",
+ "object",
  "rayon",
  "rustfft",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -505,6 +516,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "crc32fast"
+version = "1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
+dependencies = [
+ "cfg-if",
 ]
 
 [[package]]
@@ -1360,6 +1380,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "object"
+version = "0.36.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62948e14d923ea95ea2c7c86c71013138b66525b86bdc08d2dcc262bdb497b87"
+dependencies = [
+ "crc32fast",
+ "hashbrown 0.15.5",
+ "indexmap",
+ "memchr",
 ]
 
 [[package]]

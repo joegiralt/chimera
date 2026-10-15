@@ -16,6 +16,7 @@ pub mod focus;
 pub mod glyph;
 pub mod hint;
 pub mod hold;
+pub mod installing;
 pub mod jog;
 pub mod learn;
 pub mod led;
@@ -301,6 +302,9 @@ pub struct UiState {
     job: Option<Job>,
     /// The card as `sync_system` last saw it, for ABOUT.
     card: Card,
+    /// Bank 2 as the boot judged it; `None` where there is none (the
+    /// desktop).
+    bank2: Option<crate::bank2::Bank2Status>,
     /// ORBIT's transport and the runner's last view.
     orbit: orbit::OrbitUi,
     /// The front-panel LED: ORBIT's beat.
@@ -406,6 +410,7 @@ crate::in_place::field_list!(UiState => UiState {
     listing,
     job,
     card,
+    bank2,
     orbit,
     led,
     dfu,
@@ -506,6 +511,7 @@ impl UiState {
             addr_of_mut!((*p).listing).write(Listing::new());
             addr_of_mut!((*p).job).write(None);
             addr_of_mut!((*p).card).write(Card::new());
+            addr_of_mut!((*p).bank2).write(None);
             addr_of_mut!((*p).clip).write([ClipHold::default(); crate::hw::MAX_PARTS]);
             addr_of_mut!((*p).orbit).write(orbit::OrbitUi::new());
             addr_of_mut!((*p).led).write(led::Led::OFF);
@@ -580,6 +586,34 @@ impl UiState {
     /// The theme SYSTEM held, set at boot before the first frame.
     pub fn set_theme(&mut self, t: ThemeSettings) {
         self.theme = t;
+    }
+
+    /// Bank 2 as the boot judged it (ADR 0137), set before the first
+    /// frame; a later change redraws in full.
+    pub fn set_bank2(&mut self, s: crate::bank2::Bank2Status) {
+        self.bank2 = Some(s);
+    }
+
+    pub fn bank2(&self) -> Option<crate::bank2::Bank2Status> {
+        self.bank2
+    }
+
+    /// Lets go of everything that reads bank 2, before the door closes for
+    /// a write: TAPE's voices fade off (`sound_off_tape`, CC 120's way: its
+    /// DSP is about to go) and this waits, while `within`, for the audio to
+    /// say none sounds. The UI never runs inside the audio interrupt, and
+    /// the closed door cell stops every later door call; this only makes
+    /// the cut a clean fade. The other engines play on. Timed out, the
+    /// proxy is already silent: a few samples of fade, no fault. Only a
+    /// gate build's `bank2 erase` closes a live door: an install writes
+    /// only while it is closed.
+    #[cfg(feature = "bank2-gate")]
+    pub fn close_bank2(&mut self, link: &LoadLink, mut within: impl FnMut() -> bool) -> bool {
+        link.shut_tape();
+        while !link.tape_quiet() && within() {
+            core::hint::spin_loop();
+        }
+        link.tape_quiet()
     }
 
     /// SETTINGS › MIDI CONFIG as last edited.
@@ -3036,13 +3070,18 @@ impl UiState {
 
     /// `page_name` where a header is drawn: Pages, Mixer, FX and ORBIT.
     pub fn page_title(&self) -> FmtBuf {
+        self.page_header().name
+    }
+
+    /// The header the page draws: context, name and warning.
+    pub fn page_header(&self) -> components::HeaderText {
         renderer::page_header(
             self.head(),
             self.page_def(),
             &self.ctx(),
             self.project.perf().parts(),
+            self.bank2,
         )
-        .name
     }
 
     /// What one frame draws from.
@@ -3083,6 +3122,7 @@ impl UiState {
             pool: self.project.pool(),
             audio,
             card: self.card,
+            bank2: self.bank2,
             master_gr_db: crate::meter::MASTER_GR.read(),
             clip: self.clip[self.active_part.index()].fill(),
             rev_clock: crate::meter::rev_clock(),

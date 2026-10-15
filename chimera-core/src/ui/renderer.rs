@@ -81,6 +81,8 @@ pub struct Frame<'a> {
     pub audio: Option<&'a AudioStats>,
     /// The card as last seen, for ABOUT.
     pub card: crate::storage::Card,
+    /// Bank 2 as the boot judged it, for ABOUT.
+    pub bank2: Option<crate::bank2::Bank2Status>,
     /// The master compressor's gain reduction, dB (MST's GR meter).
     pub master_gr_db: f32,
     /// The active Part's LEVEL LED fill (`ClipHold`); 0 is dark.
@@ -266,7 +268,7 @@ impl Renderer {
                 let ratio = RATIOS[((a(1) * 7.0 + 0.5) as usize).min(RATIOS.len() - 1)];
                 viz::compressor(display, -40.0 + 40.0 * a(0), ratio, f.master_gr_db);
             }
-            VizType::About => crate::ui::about_page::draw_viz(display),
+            VizType::About => crate::ui::about_page::draw_viz(display, f.bank2.as_ref()),
             VizType::Orbit => orbit::orb(display, &f.orbit, f.ctx.ring),
             VizType::OrbitCircle => orbit::circle(display, &f.orbit, self.orbit_cursor.current()),
             VizType::EnvSpeed => {
@@ -520,11 +522,12 @@ impl Renderer {
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
             PageLayout::BigViz => {
-                // The GR meter redraws every 0.25 dB.
+                // The GR meter redraws every 0.25 dB; ABOUT on bank 2's word.
                 let gr = match f.def.viz {
                     VizType::CompressorCurve => {
                         (clampf(f.master_gr_db, 0.0, viz::GR_RANGE_DB) * 4.0) as u32
                     }
+                    VizType::About => f.bank2.map_or(0, |b| 1 + b.is_open() as u32),
                     _ => 0,
                 };
                 (
@@ -797,6 +800,14 @@ impl Renderer {
                 }
                 View::Orbit(cell) => buf = orbit::cell_text(cell, &f.orbit, f.ctx.ring),
                 View::Source(s) => s.cell(&mut buf),
+                // A column wide: NEEDS UPDATE's last word (the band reads it whole).
+                _ if v
+                    .addr()
+                    .and_then(|a| crate::bank2::closed_text(a, f.bank2))
+                    .is_some() =>
+                {
+                    let _ = core::fmt::Write::write_str(&mut buf, crate::bank2::NEEDS_UPDATE_CELL);
+                }
                 _ => buf = param_text(f, i, &v, value),
             }
             let c = components::Cell {
@@ -827,7 +838,7 @@ impl Renderer {
     where
         D: DrawTarget<Color = Rgb565>,
     {
-        let h = page_header(f.head, f.def, &f.ctx, f.parts);
+        let h = page_header(f.head, f.def, &f.ctx, f.parts, f.bank2);
         components::header(
             display,
             h.context.as_str(),
@@ -883,8 +894,15 @@ pub fn page_header(
     def: &BlockDef,
     ctx: &SlotCtx,
     parts: &Parts,
+    bank2: Option<crate::bank2::Bank2Status>,
 ) -> components::HeaderText {
     let suffix = ["", " / A", " / B"][title_type(def, &ctx.envs) as usize % 3];
+    let closed = match head {
+        Head::Sound(p) | Head::Mix(p) => {
+            crate::bank2::closed_part(parts[p.index()].sound.engine(), bank2)
+        }
+        Head::Settings | Head::Ring(_) | Head::Orbit(_) => None,
+    };
     components::header_text(
         head,
         def,
@@ -892,6 +910,7 @@ pub fn page_header(
         ctx.kind,
         suffix,
         out_of(head, parts),
+        closed,
     )
 }
 
@@ -967,6 +986,14 @@ fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
 /// A param's text at display value `v`: a reverb panel cell's in its
 /// units (`reverb_panel::value_text`), any other by its format.
 fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
+    if let Some(t) = view
+        .addr()
+        .and_then(|a| crate::bank2::closed_text(a, f.bank2))
+    {
+        let mut buf = FmtBuf::new();
+        let _ = core::fmt::Write::write_str(&mut buf, t);
+        return buf;
+    }
     match view.addr().filter(|_| view::is_reverb_panel(f.def, i)) {
         Some(a) => {
             let mut p = f.fx.reverb;

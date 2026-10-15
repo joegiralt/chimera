@@ -45,6 +45,8 @@ impl DirStore {
             Dir::Sounds => self.root.join("CHIMERA/SOUNDS"),
             Dir::Bench => self.root.join("CHIMERA/BENCH"),
             Dir::Tapes => self.root.join("CHIMERA/TAPES"),
+            Dir::System => self.root.join("CHIMERA/SYSTEM"),
+            Dir::Root => self.root.clone(),
         }
     }
 
@@ -91,7 +93,11 @@ impl DirStore {
     }
 
     /// A read-only file on the host is sealed: `ReadOnly`.
+    /// Not sealed, and not in the root (read only: a host drops files there).
     fn writable(&self, f: FileName) -> Result<(), StoreError> {
+        if f.dir() == Dir::Root {
+            return Err(StoreError::ReadOnly);
+        }
         match fs::metadata(self.file_path(f)) {
             Ok(m) if m.permissions().readonly() => Err(StoreError::ReadOnly),
             _ => Ok(()),
@@ -221,6 +227,9 @@ impl Store for DirStore {
 
     fn make_dir(&mut self, vol: VolumeId, dir: Dir) -> Result<(), StoreError> {
         self.open(vol)?;
+        if dir == Dir::Root {
+            return Ok(());
+        }
         if dir != Dir::Chimera {
             self.has_dir(Dir::Chimera)?;
         }

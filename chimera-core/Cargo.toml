@@ -6,6 +6,8 @@ edition.workspace = true
 [dependencies]
 chimera-engine = { path = "../chimera-engine" }
 chimera-hal = { path = "../chimera-hal" }
+# Bank 2's verdict, for `status` and ABOUT (ADR 0137).
+chimera-image = { path = "../chimera-image" }
 chimera-theory = { path = "../chimera-theory" }
 libm = "0.2"
 embedded-graphics = "0.8"
@@ -58,6 +60,9 @@ clamp-probe = ["chimera-engine/clamp-probe"]
 # The console's `fault`: provokes a DMA transfer error to test the re-arm.
 # Test builds only, never shipping.
 fault-inject = []
+# Bank 2's power-pull aid: `bank2 erase` and the install's PULL NOW holds.
+# Debug builds only, never shipping (`just firmware-gate`).
+bank2-gate = ["chimera-engine/bank2-gate"]
 
 [dev-dependencies]
 # No default features: `--no-default-features` must reach the library too.

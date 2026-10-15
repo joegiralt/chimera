@@ -1126,15 +1126,67 @@ impl Instrument {
                 crate::played::clear_channel(ch.get());
                 for v in 0..MAX_VOICES {
                     if !self.alloc.slots()[v].is_free() && self.note_channel[v] == ch {
-                        self.held_keys[v] = NoteSet::EMPTY;
-                        self.sustained[v] = false;
-                        self.resnap_to[v] = None;
-                        self.alloc.kill(v);
-                        self.shed(v);
+                        self.sound_off(v);
                     }
                 }
             }
         }
+    }
+
+    /// Voice `v` fades out now, whatever holds it (CC 120's).
+    fn sound_off(&mut self, v: usize) {
+        self.held_keys[v] = NoteSet::EMPTY;
+        self.sustained[v] = false;
+        self.resnap_to[v] = None;
+        self.alloc.kill(v);
+        self.shed(v);
+    }
+
+    /// Whether `part`'s Sound is TAPE.
+    #[cfg(feature = "bank2-gate")]
+    fn part_is_tape(shared: &AudioShared, part: usize) -> bool {
+        shared.parts[part % MAX_PARTS].params.engine() == EngineType::Tape
+    }
+
+    /// Whether voice `v` still plays a TAPE Part's Sound, or is booked to
+    /// one (a TAPE note waiting on a fading voice).
+    #[cfg(feature = "bank2-gate")]
+    fn is_tape(&self, v: usize, shared: &AudioShared) -> bool {
+        let slot = self.alloc.slots()[v];
+        !slot.is_free()
+            && (Self::part_is_tape(shared, self.sounding[v] as usize)
+                || slot
+                    .part()
+                    .is_some_and(|q| Self::part_is_tape(shared, q as usize)))
+    }
+
+    /// CC 120 for TAPE's voices alone, on any channel: a bank-2 write is
+    /// about to take TAPE's DSP away, so they fade now (not a release
+    /// tail), and a key held down does not come back. The other Parts play.
+    /// A TAPE sound fading under another Part's waiting note (a steal)
+    /// only loses its DSP: the slot and the note stay, and start when it
+    /// rests. Only a gate build's `bank2 erase` writes under an open door.
+    #[cfg(feature = "bank2-gate")]
+    pub fn sound_off_tape(&mut self, shared: &AudioShared) {
+        for v in 0..MAX_VOICES {
+            if !self.is_tape(v, shared) {
+                continue;
+            }
+            let owner = self.alloc.slots()[v].part();
+            if owner.is_some_and(|q| !Self::part_is_tape(shared, q as usize))
+                && self.waiting[v].is_some()
+            {
+                let _ = self.voices[v].kill();
+            } else {
+                self.sound_off(v);
+            }
+        }
+    }
+
+    /// A TAPE voice still sounds, fading too.
+    #[cfg(feature = "bank2-gate")]
+    pub fn tape_sounding(&self, shared: &AudioShared) -> bool {
+        (0..MAX_VOICES).any(|v| self.is_tape(v, shared))
     }
 
     /// Each Part's wheel reach in semitones, glided as a knob: a Part with

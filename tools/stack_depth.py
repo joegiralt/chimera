@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Worst-case stack depth from a firmware disassembly (ADR 0025).
 
-    { llvm-objdump -d --mcpu=cortex-m7 -C <elf>; llvm-objdump -s -j .rodata -j .data <elf>; } \
+    { llvm-objdump -d --mcpu=cortex-m7 -C <elf>; llvm-objdump -s -j .rodata -j .data -j .bank2 <elf>; } \
         | python3 tools/stack_depth.py <stack bytes>
 
 Each function's frame is every `push`/`vpush` and `sub sp, #imm` in it (an
@@ -10,8 +10,9 @@ deepest direct call (`bl`); a tail call (`b`/`b.w` to another function's
 start) runs after the frame is popped, so it counts alone. A call back into
 the chain (recursion) counts 0 and is named. Indirect calls (`blx rN`) are
 each charged the deepest function whose address the image holds (in
-`.word` literals, `movw`/`movt` pairs, or the data sections' words when the
-`-s` dump follows the disassembly): any pointer's target is one of them.
+`.word` literals but a `tbb`/`tbh`'s table, `movw`/`movt` pairs, or the data sections' words when the
+`-s` dump follows the disassembly; `.bank2` holds the door's table, ADR
+0137): any pointer's target is one of them.
 Pointer calls are assumed to nest at most `POINTER_NEST` deep, and a
 recursive direct call to run once (the sorts' and `core::str`'s).
 
@@ -85,7 +86,7 @@ class Image:
 def parse(lines) -> Image:
     """`llvm-objdump -d` output, optionally followed by `-s` of the data
     sections: their words are where function pointers live."""
-    img, cur, data, lo = Image(), None, False, {}
+    img, cur, data, lo, table = Image(), None, False, {}, False
     for line in lines:
         line = line.rstrip("\n")
         if line.startswith("Contents of section"):
@@ -103,15 +104,22 @@ def parse(lines) -> Image:
             cur = h.group(2)
             img.funcs[cur] = [0, set(), set(), False]
             img.starts[cur] = int(h.group(1), 16)
-            lo = {}
+            lo, table = {}, False
             continue
         i = INSN.match(line)
         if not i or cur is None:
             continue
         op, args = i.group(1), i.group(2)
         f = img.funcs[cur]
+        # A `tbb`/`tbh` table's offsets, up to the next instruction, are
+        # data the disassembler shows as `.word`s: never a pointer.
+        if op in ("tbb", "tbh"):
+            table = True
+        elif not op.startswith("."):
+            table = False
         if op == ".word":
-            img.words.add(int(args.split()[0], 0))
+            if not table:
+                img.words.add(int(args.split()[0], 0))
         elif op in ("push", "push.w"):
             f[0] += 4 * regs(args)
         elif op == "vpush":

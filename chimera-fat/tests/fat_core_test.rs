@@ -381,12 +381,16 @@ fn entry_codec_round_trips() {
         ("deleted", raw(b"\xE5ONG1   CHP", 0x20), Slot::Free),
         ("end", raw(&[0; 11], 0), Slot::End),
         ("lowercase", raw(b"song1   chp", 0x20), Slot::Other),
-        ("tilde", raw(b"SONG~1  CHP", 0x20), Slot::Other),
         ("inner space", raw(b"SO NG   CHP", 0x20), Slot::Other),
         ("0x05 lead byte", raw(b"\x05ONG1   CHP", 0x20), Slot::Other),
     ] {
         assert_eq!(parse(&r, FsKind::Fat32), slot, "{what}");
     }
+    // A host's short name: an entry, which only the root lists.
+    assert!(matches!(
+        parse(&raw(b"SONG~1  CHP", 0x20), FsKind::Fat32),
+        Slot::File(_)
+    ));
 }
 
 #[test]

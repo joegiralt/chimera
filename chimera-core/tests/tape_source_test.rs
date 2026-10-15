@@ -474,7 +474,7 @@ fn zone_tune_clamps_to_the_sets_zones() {
 
 /// `p` saved as P0000001 on `s`, then loaded into a fresh project.
 /// TAPE `s` across a round trip: it rides in a pool slot and comes back to
-/// Part 1 from there, as a project's TAPE Part loads as INIT VA (ADR 0132).
+/// Part 1 from there.
 fn tape_round_trip(
     st: &mut MemStore,
     p: &mut Project,

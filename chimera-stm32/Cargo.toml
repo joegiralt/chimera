@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-map", "push-encoders"]
+default = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-map", "push-encoders", "bank2"]
 midi-din = ["chimera-board/midi-din"]
 perf-probe = ["chimera-board/perf-probe"]
 # The bench on the unit, one area a build: all of it no longer fits FLASH
@@ -20,18 +20,20 @@ bench-routing = ["bench", "midi-din"]
 # MEMORY: sizes, a rebuild, MODAL's note-ons, the project CRC.
 bench-memory = ["bench", "midi-din"]
 # STRESS: NEW's Parts with every key down, and the runs' phases; ORBIT
-# plays in them with `orbit`.
+# plays in them with `orbit`. With `bank2` the reverb plays from bank 2
+# (ADR 0142): its A/B against this build's bank 1.
 bench-stress = ["bench", "midi-din"]
 # ORBIT: its block's cost and phases.
 bench-orbit = ["bench", "midi-din", "orbit"]
-# TAPE COLD: each machine's cold-cache voice.
-# TAPE COLD never plays MIDI; FLASH (#507).
+# TAPE COLD: each machine's cold-cache voice. It never plays MIDI; FLASH
+# (#507). Alone it keeps TAPE in bank 1 and doesn't fit FLASH (#506): build
+# it with `bank2`, whose .bk2 the run needs installed.
 bench-tape = ["bench", "chimera-core/tape", "chimera-board/tape"]
 # The filter probes, linked though nothing calls them, for
-# `tools/loop_count.py`'s static counts: the shipping build plus them,
-# `default` less PUSH ENCODERS (FLASH; the filters' loops are the same),
-# as the bench sets are built without it.
-filter-probes = ["midi-din", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-map", "chimera-core/filter-probe"]
+# `tools/loop_count.py`'s static counts: the shipping build plus them, less
+# the console's `put`, the MIDI map and PUSH ENCODERS as the bench's (bank
+# 2's install filled FLASH; #507; the filters' loops are the same).
+filter-probes = ["midi-din", "perf-probe", "usb-console", "sweep-free", "bank2", "chimera-core/filter-probe"]
 # On-unit SD bring-up: prints the card probe and halts; no audio.
 sd-probe = ["chimera-board/sd-probe"]
 # The master tape stage back on the chain, with its bench row (ADR 0055).
@@ -57,6 +59,13 @@ sweep-free = ["chimera-board/sweep-free"]
 # The console's `fault dma <1|2>`: provokes a transfer error on a trailing
 # DMA stream, to test its re-arm on the unit (#25). Never in a shipping build.
 fault-inject = ["usb-console", "perf-probe", "midi-din", "chimera-board/fault-inject", "chimera-core/fault-inject"]
+# Bank 2's section (header and door at 0x08100000, `build.rs`) and bank 1's
+# seal of it (ADR 0137). The Justfile splits the ELF into .bin and .bk2.
+bank2 = ["chimera-engine/bank2", "chimera-board/bank2"]
+# Hardware Gate 2's power-pull aid: the install holds 3 s at each phase
+# (PULL NOW) and the console takes `bank2 erase`. `just firmware-gate` only:
+# never in a release, flash or bench build (release-bin refuses its marker).
+bank2-gate = ["bank2", "usb-console", "chimera-board/bank2-gate"]
 
 [dependencies]
 chimera-board = { path = "../chimera-board" }

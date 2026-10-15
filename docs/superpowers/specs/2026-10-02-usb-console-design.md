@@ -78,6 +78,8 @@ card    SD speed and streams, a chord playing; clean (bench builds)
 shot    the screen in THEME's colours; shot raw: canonical
 dfu     restart into the ROM loader for just flash
 sweep   the lost-cluster sweep at the next boot: restarts into it
+flash   flash controller and bank 2, read only
+bank2   bank 2: its state; bank2 install: the staged file into it
 ls      files and sizes in PROJECTS; ls tapes, ls sounds: theirs
 put     a project, Sound or source: <path> <size> <crc32> [--over]
 rm      a library Sound's pair: /CHIMERA/SOUNDS/S#######
@@ -96,6 +98,7 @@ project LATE SET
 state MODIFIED
 part 3
 at SETTINGS > SYSTEM > DIAG > AUD LOAD
+bank2 empty
 OK
 ```
 
@@ -103,7 +106,8 @@ OK
 - `project` is the project's name, as the footer draws it.
 - `state` is one of `NEW`, `SAVED` or `MODIFIED`, the footer's words for `ProjectStatus::Pristine`, `Saved` and `Modified`. It comes from `UiState::project_status()`, which may hash the project once (about 1.7 ms on the chip, the B1 row). That is acceptable once per request.
 - `part` is the active Part, 1 to 6.
-- On the chip only, three more lines after `at`: `boot marker=<hex> readback=<hex> action=Synth rsr=<hex> dbp=<0|1> boots=<n> from=<menu|console|none> jump_rsr=<hex> last_stage=<stage> last_usb=<state> last_usb_step=<step>(try <n>)`, then `last_usb_regs <regs>` and `usb_regs <regs>`, where `<regs>` is `gotgctl=<hex> gccfg=<hex> dctl=<hex> gintsts=<hex> dsts=<hex> pwr_cr3=<hex>`. The `boot` line is what the top of `main` saw (`boot::BootSeen`). `marker` and `readback` are RTC_BKP0R before and after the clear, `rsr` is RCC_RSR before RMVF, `dbp` is PWR_CR1.DBP on entry, `boots` counts in BKP1R (it carries on through a power-off only if VBAT kept the backup domain), `from` is BKP2R, written by `dfu::enter`, `jump_rsr` is BKP3R, RCC_RSR at the last jump to the ROM, and `last_stage` is BKP4R on entry, the `boot::BootStage` the boot before this one reached (`entry`, `card`, `audio`, `armed`, `running`, or `none`), and `last_usb` is BKP5R, how that boot's USB step ended and on which try: `on(try <n>)`, `off(<hsi48|usb33|ahbidl|csrst>, try <n>)`, or `none`; `last_usb_step` is BKP6R, the latest bring-up step it recorded and on which try: `preflight`, `init`, `connect`, `up`, then the host's `sof`, `addressed`, `configured` or `suspended` (a later step overwrites an earlier one, so `suspended` replaces `configured`). `last_usb_regs` is BKP7R..12R, that boot's last snapshot of those registers (taken every 500 ms; each synth boot clears BKP5R..12R first, so a boot that never reached USB reads zeros), and `usb_regs` is the same registers now. A boot that jumps to the ROM loader leaves the record untouched, so a cold boot's record is read through OS UPGRADE, a flash and `:leave`. § Bring-up has the USB sequence. Known limitation: from a cold power-on CSRST never clears, so the console is off until one pass through the ROM loader (OS UPGRADE, then `dfu-util … :leave`), after which it stays up until power-off (private issue #331, `docs/recovery.md`).
+- `bank2` is bank 2 as the boot judged it (ADR 0137), on the chip only: `bank2 open <version> seal=<16 hex>`, `bank2 stale have <version>`, `bank2 ecc erase failed <why>` (a double ECC error marked bank 2 bad, and the boot's erase of S0 failed: bank 2 not read this boot), or `bank2 empty|torn|foreign|corrupt|format <n>|unsealed`. ABOUT shows `OK` for `open`, else `NEEDS UPDATE`.
+- On the chip only, three more lines after `bank2`: `boot marker=<hex> readback=<hex> action=Synth rsr=<hex> dbp=<0|1> boots=<n> from=<menu|console|none> jump_rsr=<hex> last_stage=<stage> last_usb=<state> last_usb_step=<step>(try <n>)`, then `last_usb_regs <regs>` and `usb_regs <regs>`, where `<regs>` is `gotgctl=<hex> gccfg=<hex> dctl=<hex> gintsts=<hex> dsts=<hex> pwr_cr3=<hex>`. The `boot` line is what the top of `main` saw (`boot::BootSeen`). `marker` and `readback` are RTC_BKP0R before and after the clear, `rsr` is RCC_RSR before RMVF, `dbp` is PWR_CR1.DBP on entry, `boots` counts in BKP1R (it carries on through a power-off only if VBAT kept the backup domain), `from` is BKP2R, written by `dfu::enter`, `jump_rsr` is BKP3R, RCC_RSR at the last jump to the ROM, and `last_stage` is BKP4R on entry, the `boot::BootStage` the boot before this one reached (`entry`, `card`, `audio`, `armed`, `running`, or `none`), and `last_usb` is BKP5R, how that boot's USB step ended and on which try: `on(try <n>)`, `off(<hsi48|usb33|ahbidl|csrst>, try <n>)`, or `none`; `last_usb_step` is BKP6R, the latest bring-up step it recorded and on which try: `preflight`, `init`, `connect`, `up`, then the host's `sof`, `addressed`, `configured` or `suspended` (a later step overwrites an earlier one, so `suspended` replaces `configured`). `last_usb_regs` is BKP7R..12R, that boot's last snapshot of those registers (taken every 500 ms; each synth boot clears BKP5R..12R first, so a boot that never reached USB reads zeros), and `usb_regs` is the same registers now. A boot that jumps to the ROM loader leaves the record untouched, so a cold boot's record is read through OS UPGRADE, a flash and `:leave`. § Bring-up has the USB sequence. Known limitation: from a cold power-on CSRST never clears, so the console is off until one pass through the ROM loader (OS UPGRADE, then `dfu-util … :leave`), after which it stays up until power-off (private issue #331, `docs/recovery.md`).
 - `at` is `Location` in ASCII, with ` > ` between levels:
 
   | `Loc` | `at` |
@@ -229,6 +233,59 @@ Refusals, with nothing written:
 - `ERR sweep: the card has no /CHIMERA, nothing to sweep`.
 - `ERR sweep: <card error>`.
 - `ERR sweep is not in this build` on the desktop.
+
+**`flash`**
+
+```
+acr 00000037 latency 7 wrhighfreq 3
+optcr 00000001 optlock 1 optstart 0 mer 0 swap_bank 0
+optsr_cur 1bc6aaf0 rdp 0 swap_bank 0 iwdg sw bor off nrst_stop 1 nrst_stby 1 fz_iwdg_stop 0 fz_iwdg_sdby 1 st_ram 0 security 0 io_hslv 0 optchangeerr 0 opt_busy 0
+boot_cur 1ff00800 add0 08000000 add1 1ff00000
+cr1 00000031 lock 1 pg 0 ser 0 ber 0 psize 3 fw 0 start 0 snb 0
+sr1 00000000 bsy 0 wbne 0 qw 0 crc_busy 0 eop 0 crcend 0 errors -
+wpsn_cur1r 000000ff protected -
+prar_cur1 000000ff pcrop none dme 0
+scar_cur1 000000ff secure none dme 0
+cr2 …, sr2 …, wpsn_cur2r …, prar_cur2 …, scar_cur2 … as bank 1's
+peek 08100000 ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff erased
+sr1_after … sr2_after …, as sr1
+OK
+```
+
+The flash controller's state for bank 2 (RM0433 § 4.9, the bank-2 design's Phase 0a), each register's raw word then its fields. Read only: nothing is written, unlocked or erased, and the option bytes are untouched. `protected` lists the sectors whose WRPS bit is 0; `pcrop` and `secure` give an area's first and last byte, or `none` when START > END. `peek` is the first 32 bytes at bank 2's start, `erased` when all are 0xFF; the stock bootloader's slot at 0x08180000 is no longer read, as the MPU makes it no-access (ADR 0137). The register lines go out before the peek, and `sr*_after` shows any ECC error the peek raised. The desktop answers `ERR flash is not in this build`.
+
+**`bank2`, `bank2 install`**
+
+```
+bank2 empty
+OK
+audio overruns 0 -> 0 blocks +412
+OK bank2 open 0.2.0 02e440e2
+```
+
+`bank2` is the `status` line for bank 2 (ADR 0137), then `OK`. `bank2 install` writes the staged `/CHIMERA/SYSTEM/BANK2.BK2` into bank 2 from the UI loop, before the answer starts, with the audio playing from bank 1 and `DON'T POWER OFF` on the screen; the screen redraws in full after it. The staged file is judged against this build's seal first: nothing is written for `ERR bank2: nothing staged`, `ERR bank2: staged: needs firmware <version>` (sealed for another build), `ERR bank2: staged: <state>` (`torn`, `corrupt`, …), `ERR bank2: <card error>`, `ERR bank2: firmware unsealed`, `ERR bank2: busy` (card work pending) or `OK already installed` (bank 2 open with that seal). Otherwise the door closes, bank 2 is written (S0 erased first, commit word last), and the door is judged and checked again: `OK bank2 open <version>`, or `ERR bank2: flash <busy|locked|not writable|errors <sr2 hex>|timeout|not erased|no cycle counter> at <S0..S3|word hex>`, `ERR bank2: readback <state>`, `ERR bank2: staged file unreadable`, `ERR bank2: staged: <state>` or `ERR bank2: door check failed`, with bank 2 left not open. Either way the `audio` line before it gives the overrun counter before and after and the blocks rendered meanwhile. The file gets there by `put /CHIMERA/SYSTEM/BANK2.BK2 <size> <crc32>` (at most 512 KiB): the old one is deleted, the new one read back and judged; one sealed for another build stays (`OK staged: needs firmware <version>`), anything else is deleted (`ERR put: not a bank-2 image`), and an unsealed build stages nothing (`ERR put: firmware unsealed`).
+
+**`b2erase`, `b2prog`, `b2call`, `b2stat`** (RETIRED with the spike, along with `bank2-spike` and `just firmware-b2spike`; kept as the phase 0b record)
+
+```
+b2erase sector 0 08100000..0811ffff psize 2 timeout_ms 6000
+elapsed_ms 1100 cycles 528000000
+cr2 00000021 lock 1 pg 0 ser 0 ber 0 psize 2 fw 0 start 0 snb 0
+sr2 00010000 bsy 0 wbne 0 qw 0 crc_busy 0 eop 1 crcend 0 errors -
+audio overruns 3 -> 3 (+0) blocks +1650
+OK
+b2prog words 5 08100000..0810009f code at 08100080 psize 2 word_timeout_ms 5
+elapsed_ms 0 cycles 48000
+cr2 …, sr2 …, as b2erase's
+readback matches
+audio overruns 3 -> 3 (+0) blocks +0
+OK
+b2call 08100081 f(1) = 43 want 43
+OK
+b2stat: cr2 …, sr2 …, then one `peek <addr> <8 words>` per image word, then `readback erased|matches|differs …`
+```
+
+The bank-2 design's Phase 0b spike: Chimera erases and programs bank-2 sector 0 (0x08100000–0x0811FFFF) itself and runs code from it. The address type (`Bank2Sector0Addr`) can't name anything outside that sector; the shell writes FLASH_KEYR2, CR2 and CCR2 only, never the option bytes or bank 1's registers. `b2erase` sets SER, SNB 0 and PSIZE ×32, then polls BSY and QW for at most 6 s; `b2prog` refuses unless the image's words read erased, then programs five 256-bit words (a pattern, then `adds r0, r0, #42; bx lr`), each waited for (WBNE, QW) for at most 5 ms, and reads them back through an invalidated D-cache. `b2call` calls the code (Thumb bit set) only if its word reads back exactly, after an I-cache invalidate. CR2 is relocked after every erase or program, and the `cr2` line is read after the relock. Both run before the answer starts, from the UI loop, while the audio plays from bank 1; `audio` is the overrun counter and the audio blocks rendered, before and after. A failure prints what it has, then `ERR <cmd>: timeout`, `flash error`, `flash busy, nothing started`, `cr2 still locked after the keys`, `sector 0 not erased, b2erase first`, `readback differs from the image`, `the code's word differs, not called` or `wrong return value`; nothing retries. The run sheet: (private notes) (main checkout).
 
 **`fault dma <1|2>`** (builds with `fault-inject` only; never shipping, orbit or bench)
 
