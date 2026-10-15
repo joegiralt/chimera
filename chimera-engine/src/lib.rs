@@ -53,6 +53,7 @@ pub mod reset;
 pub mod scope;
 pub mod source_table;
 pub mod storage;
+pub mod stream;
 pub mod sym_alloc;
 pub mod taps;
 pub mod theme_settings;

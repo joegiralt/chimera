@@ -5,6 +5,7 @@ use embedded_graphics_core::pixelcolor::Rgb565;
 
 pub mod midi;
 pub mod store;
+pub mod units;
 #[cfg(feature = "testkit")]
 pub mod testkit;
 
@@ -191,6 +192,11 @@ impl Ms {
     /// Ms elapsed since `earlier`, across a wrap.
     pub fn since(self, earlier: Ms) -> u32 {
         self.0.wrapping_sub(earlier.0)
+    }
+
+    /// `since`, as a duration.
+    pub fn elapsed_since(self, earlier: Ms) -> units::Millis {
+        units::Millis::new(self.since(earlier))
     }
 }
 

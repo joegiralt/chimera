@@ -1,0 +1,180 @@
+//! Card, time and rate units. Each is its own type, so a block number is
+//! never a byte count and a duration is never an instant; a conversion is
+//! one of these methods, never an `as` across units.
+
+use core::num::NonZeroU8;
+use core::ops::Add;
+
+const BLOCK_BYTES: u32 = 512;
+
+fn sat(v: u64) -> u32 {
+    u32::try_from(v).unwrap_or(u32::MAX)
+}
+
+/// A 512 B device block number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Lba(u32);
+
+impl Lba {
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    pub fn offset(self, blocks: u32) -> Option<Lba> {
+        self.0.checked_add(blocks).map(Lba)
+    }
+}
+
+/// A block index within one file, never a device block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileBlock(u32);
+
+impl FileBlock {
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// A run of at least one block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockCount(u32);
+
+impl BlockCount {
+    pub const fn new(n: u32) -> Option<Self> {
+        if n == 0 { None } else { Some(Self(n)) }
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    pub const fn bytes(self) -> Bytes {
+        Bytes(self.0.saturating_mul(BLOCK_BYTES))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Bytes(u32);
+
+impl Bytes {
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    /// The block this offset falls in, and its offset there.
+    pub const fn split_block(self) -> (FileBlock, Bytes) {
+        (FileBlock(self.0 / BLOCK_BYTES), Bytes(self.0 % BLOCK_BYTES))
+    }
+
+    /// The rate that moves these bytes in `t`; 0 µs counts as 1.
+    pub fn per(self, t: Micros) -> BytesPerSec {
+        BytesPerSec(sat(u64::from(self.0) * 1_000_000 / u64::from(t.0.max(1))))
+    }
+}
+
+impl Add for Bytes {
+    type Output = Bytes;
+
+    fn add(self, o: Bytes) -> Bytes {
+        Bytes(self.0 + o.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Millis(u32);
+
+impl Millis {
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Micros(u32);
+
+impl Micros {
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BytesPerSec(u32);
+
+impl BytesPerSec {
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    /// An SPI clock moves one byte per 8 clocks.
+    pub const fn spi(hz: u32) -> Self {
+        Self(hz / 8)
+    }
+
+    /// What this rate moves in `t`, saturating.
+    pub fn bytes_in(self, t: Millis) -> Bytes {
+        Bytes(sat(u64::from(self.0) * u64::from(t.0) / 1_000))
+    }
+}
+
+/// A count of live streams, 1 to 8.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StreamCount(NonZeroU8);
+
+impl StreamCount {
+    pub const MAX: StreamCount = StreamCount(NonZeroU8::new(8).unwrap());
+
+    pub const fn new(n: u8) -> Option<Self> {
+        match NonZeroU8::new(n) {
+            Some(nz) if n <= Self::MAX.get() => Some(Self(nz)),
+            _ => None,
+        }
+    }
+
+    pub const fn get(self) -> u8 {
+        self.0.get()
+    }
+
+    /// One atomic byte: 0 is none.
+    pub const fn to_bits(c: Option<StreamCount>) -> u8 {
+        match c {
+            Some(c) => c.get(),
+            None => 0,
+        }
+    }
+
+    pub const fn from_bits(b: u8) -> Option<StreamCount> {
+        Self::new(b)
+    }
+}
+
+/// The UI waits for the bus, or does not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiWait {
+    Idle,
+    Waiting,
+}
