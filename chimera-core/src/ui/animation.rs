@@ -168,3 +168,19 @@ impl Pacer {
         Some(UiTick(()))
     }
 }
+
+/// A param cell's ease a frame: the gap the knobs' glide closes in one,
+/// 1 − e^(−FRAME_MS / τ), so the cell moves as the sound does.
+pub const KNOB_SPEED: f32 = 0.81;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block::GlideMs;
+
+    #[test]
+    fn knob_speed_is_the_glide_a_frame() {
+        let k = 1.0 - libm::expf(-(FRAME_MS as f32) / f32::from(GlideMs::KNOB.ms()));
+        assert!((KNOB_SPEED - k).abs() < 0.01, "{k}");
+    }
+}

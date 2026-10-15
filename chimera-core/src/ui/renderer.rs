@@ -16,7 +16,7 @@ use crate::part::DacPair;
 use crate::perf::load::AudioStats;
 use crate::project::PartId;
 use crate::ui::PrimeStatus;
-use crate::ui::animation::AnimatedValue;
+use crate::ui::animation::{AnimatedValue, KNOB_SPEED};
 use crate::ui::audio_page;
 use crate::ui::block_def::{BlockDef, ChainDef2, FxFlow, SlotBinding, VizType, slot_addr};
 use crate::ui::components::{self, Head};
@@ -153,8 +153,8 @@ impl Default for Renderer {
 impl Renderer {
     pub fn new() -> Self {
         Self {
-            anim: [AnimatedValue::new(0.5); 6],
-            set: [AnimatedValue::new(0.5); 6],
+            anim: [AnimatedValue::new(0.5).with_speed(KNOB_SPEED); 6],
+            set: [AnimatedValue::new(0.5).with_speed(KNOB_SPEED); 6],
             branch_scroll: AnimatedValue::new(0.0).with_speed(0.25),
             orbit_cursor: AnimatedValue::new(0.0),
         }
