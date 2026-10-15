@@ -237,7 +237,7 @@ SETTINGS is lists, a breadcrumb and a footer. Part pages are the focus band, the
 | Ruler | 176–187 | Time at the window's ends and the cursor, in seconds to 3 places |
 | Readout | 188–215 | What the focused dial does, large: `SLICE 07 / 24 · 1.214 S`. It is also where MIX hints show (ADR 0086). |
 | Dials | 216–287 | Six cells, two rows of three, label and value only (no arcs), eased as every value (ADR 0143) |
-| Tool bar | 288–319 | Six boxes in the order of B1–B6, each a page tool's name: 34 px of text, so one short word (FLIP, LOUD, ERASE, NEW, SAVE; owner, 2026-10-15) or two lines (TO / START) |
+| Tool bar | 288–319 | Six boxes in the order of B1–B6. **B6 is a filled button: green `PLAY` while stopped, red `STOP` while auditioning** (new theme colours `PLAY` and `STOP`, transport only). B1–B5 are outlined, each a page tool's name: 34 px of text, so one short word (FLIP, LOUD, ERASE, NEW, SAVE; owner, 2026-10-15) or two lines (TO / START) |
 
 Marks are amber (`WARN`) only in PREP. The Part pages never draw `WARN` but for warnings, so the colour also says where you are.
 
@@ -245,11 +245,11 @@ Marks are amber (`WARN`) only in PREP. The Part pages never draw `WARN` but for 
 
 | Control | In PREP |
 |---|---|
-| MINUS / PLUS | Along the chain (D-pad rule) |
-| EDIT / SEQ | Down into a page's sub-page and back up (CUT › GRID / TRANSIENT / HAND); SEQ at the top does nothing |
+| MINUS / PLUS | Along the chain (D-pad rule), **skipping pages the prep type doesn't use** (the leader still shows them `FAINT`) |
+| EDIT / SEQ | Nothing in PREP: no page has sub-pages |
 | Encoders 1–6 | The six dials |
-| B1 | Audition the selection: play, stop |
-| B2–B6 | The page's tools, labelled in the tool bar |
+| B1–B5 | The page's tools, labelled in the tool bar |
+| **B6** | **Audition PLAY / STOP** (B6 is PLAY/STOP everywhere, ADR 0044). In PREP it auditions only: ORBIT's transport is untouched, and a playing ORBIT plays on |
 | A played key (MIDI or the Part's keys) | Auditions the prep as mapped: on KIT that key's slice; on ZONES that zone; on REEL that key-reachable splice |
 | MIX + a button | Big or destructive actions, each with its readout hint |
 | MIX + PLUS | MAKE · SAVE (any page) |
@@ -281,14 +281,14 @@ Each mockup is the 240 × 320 screen, one character about 6 px.
  ┌GAIN───┐┌FADE IN┐┌FADE OU┐
  │+0.0 DB││  0 MS ││ 20 MS │
  └───────┘└───────┘└───────┘
- [▶ PLAY][TO S  ][TO E  ][ FLIP ][ LOUD ][ SNAP ]
+ [TO S  ][TO E  ][ FLIP ][ LOUD ][ SNAP ][▶ PLAY]
 ```
 
 - Dials: START, END (snapping to zero crossings when SNAP is on), ZOOM, GAIN, FADE IN, FADE OUT.
-- Tools: B1 PLAY, B2 jump the view TO START, B3 TO END, B4 FLIP (reverse, a render mark), B5 LOUD (normalise, a render mark), B6 SNAP on/off.
-- GAIN, fades, REVERSE and NORMALISE are marks until MAKE, and are heard in audition (the audition applies them on the fly). MAKE renders them.
+- Tools: B1 jumps the view TO START, B2 TO END, B3 FLIP (reverses the **whole sample**; its readout says `FLIP · WHOLE SAMPLE`), B4 LOUD (normalise), B5 SNAP on/off, B6 PLAY.
+- GAIN, fades, FLIP and LOUD are **render marks**: heard in audition (applied on the fly), rendered into a new `.SRC` only by MAKE. While any is set, the header shows a `RENDER` badge, their tool boxes and dials carry a render dot, and the readout says `RENDERS ON SAVE`, so audio changes never look like plain marks.
 
-**CUT** (KIT and REEL: where the marks go). Sub-pages GRID, TRANSIENT, HAND (EDIT / SEQ).
+**CUT** (KIT and REEL: where the marks go). **METHOD is a dial**, not a sub-page: GRID · TRANSIENT · HAND. The dials are METHOD, SLICE, POS, ZOOM, then the method's own: GRID → COUNT; TRANSIENT → THRESH, MIN GAP; HAND → none (dimmed). The ASCII below predates this; the pixel mockups are current.
 
 ```
 ┌PREP┐ AMEN BREAK           ( KIT ) 
@@ -307,17 +307,17 @@ Each mockup is the 240 × 320 screen, one character about 6 px.
  ┌THRESH─┐┌MIN GAP┐┌COUNT──┐
  │ -24 DB││ 40 MS ││  16   │
  └───────┘└───────┘└───────┘
- [▶ PLAY][ ADD  ][ERASE ][◂ PREV][NEXT ▸][ SNAP ]
+ [ ADD  ][ERASE ][◂ PREV][NEXT ▸][ SNAP ][▶ PLAY]
 ```
 
 - GRID: COUNT (2–64 equal). TRANSIENT: THRESH and MIN GAP (an envelope follower over one read of the file). HAND: ADD a mark at the audition head, ERASE, PREV, NEXT, POS moves the focused mark (snapping to a zero crossing).
-- MIX + B3 clears every mark (`MIX + ERASE · CLEAR ALL MARKS`).
+- MIX + B2 clears every mark (`MIX + ERASE · CLEAR ALL MARKS`).
 - Up to 64 marks for KIT and 32 for REEL. The 65th ADD says `64 SLICES · KIT IS FULL`.
 
 **LOOP** (RAW)
 
-- Dials: LOOP START, LENGTH, XFADE, ZOOM. Tools: B1 PLAY (loops), B2 FIND, B5 SNAP.
-- FIND (B2) nudges the loop end to the best match near the marks: autocorrelation over at most 4,096 frames around them, a few ms.
+- Dials: LOOP START, LENGTH, XFADE, ZOOM. Tools: B1 FIND, B5 SNAP, B6 PLAY (loops).
+- FIND (B1) nudges the loop end to the best match near the marks: autocorrelation over at most 4,096 frames around them, a few ms.
 - These become the Sound's POSITION, SIZE and XFADE when the prep is picked.
 
 **MAP** (KIT and ZONES)
@@ -339,11 +339,12 @@ KIT: a keyboard of 64 keys from BASE, one slice a key, drawn as the slice's poli
  ┌LEVEL──┐┌TUNE───┐┌BASE───┐
  │+0.0 DB││  +0   ││  C1   │
  └───────┘└───────┘└───────┘
- [▶ PLAY][ REV  ][ COPY ][PASTE ][◂ KEY ][ KEY ▸]
+ [ FLIP ][ COPY ][PASTE ][◂ KEY ][ KEY ▸][▶ PLAY]
 ```
 
-- MIX + B2 resets every key to the default (black CUT in group 1, white STACK).
-- ZONES: zone count, each zone's low and high key and root; AUTO (B2) spreads them two an octave.
+- B1 FLIP reverses **this slice** (readout `FLIP · THIS SLICE`); it is a mark, not a render.
+- MIX + B2 (COPY) resets every key to the default (black CUT in group 1, white STACK).
+- ZONES: zone count, each zone's low and high key and root; AUTO (B1) spreads them two an octave.
 
 **REEL** (REEL): splices come from CUT. This page edits programs.
 
@@ -363,10 +364,10 @@ KIT: a keyboard of 64 keys from BASE, one slice a key, drawn as the slice's poli
  ┌REPEATS┐┌SPEED──┐┌CHANCE─┐
  │  ×2   ││ 0.50× ││  50 % │
  └───────┘└───────┘└───────┘
- [▶ PLAY][ ADD  ][ERASE ][◂ PROG][PROG ▸][ END  ]
+ [ ADD  ][ERASE ][◂ PROG][PROG ▸][ END  ][▶ PLAY]
 ```
 
-- B6 cycles the program's end: LOOP, STOP, NEXT.
+- B5 cycles the program's end: LOOP, STOP, NEXT.
 - The splice strip at the top lights the step playing during audition.
 
 **MAKE**
@@ -383,7 +384,7 @@ KIT: a keyboard of 64 keys from BASE, one slice a key, drawn as the slice's poli
  ┌TYPE───┐┌NAME───┐┌       ┐
  │  KIT  ││ EDIT ▸││       │
  └───────┘└───────┘└───────┘
- [▶ PLAY][ NEW  ][ SAVE ][      ][      ][      ]
+ [ NEW  ][ SAVE ][      ][      ][      ][▶ PLAY]
 ```
 
 - With audio marks, AUDIO reads `RENDER · NEW .SRC · 288 KB · ~1 S` and the save renders first, behind a progress bar, then writes the `.PRP`.
