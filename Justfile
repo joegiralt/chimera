@@ -316,7 +316,7 @@ check:
     cargo test -p chimera-core -p chimera-engine --features master-tape
     cargo test -p chimera-core -p chimera-engine --no-default-features
     cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
-    cargo test -p chimera-core --features bank2-gate --test console_parse_test --test console_answer_test --test bank2_status_test
+    cargo test -p chimera-core --features bank2-gate --test console_parse_test --test console_answer_test --test bank2_status_test --test bank2_close_test
     # TAPE's and the reverb's bank-1 sides through the host's own door.
     cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test
     just test-fat-tools
@@ -485,7 +485,12 @@ flash:
 # Flash one bench area to PreenFM3 via DFU: `just flash-bench <area> [extra]`,
 # area one of algo, routing, memory, stress, orbit, tape; extra more
 # features (`just flash-bench stress orbit`: STRESS plays ORBIT;
-# `just flash-bench algo master-tape`: the REEL row). All of the bench no
+# `just flash-bench algo master-tape`: the REEL row). TAPE only links with
+# bank 2 (`just flash-bench tape bank2`, #506). A `bank2` bench's .bk2 is
+# split, not installed: under a console build first, `python3
+# tools/chimera-usb.py bank2 target/chimera-bench.bk2` stages it (exit 2,
+# needs firmware) and the bench's first boot installs it; without that, its
+# reverb and TAPE are silent. All of the bench no
 # longer fits FLASH at once; a bench build has no console `put` (re-flash
 # the shipping build to move files). The bench holds its screens for minutes
 # before the UI loop (and so the console) starts, so a 74 after a
@@ -497,6 +502,7 @@ flash-bench area extra="":
     if [ -n "{{extra}}" ]; then features="$features,{{extra}}"; fi
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features "$features"
     just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench
+    case ",$features," in *,bank2,*) echo "bank 2 not installed by this: stage target/chimera-bench.bk2 first (chimera-usb.py bank2, under a console build)";; esac
     python3 tools/chimera-usb.py to-dfu
     log=$(mktemp) && trap 'rm -f "$log"' EXIT
     rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-bench.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?

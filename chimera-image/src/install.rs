@@ -82,7 +82,6 @@ pub unsafe trait Flash: Bank2Memory {
 pub struct Plan {
     /// S0 first: erasing it removes the commit word before anything else.
     pub sectors: &'static [Bank2Sector],
-    pub body_words: u32,
 }
 
 /// The sectors the image spans, S0 up to the last; a body past the bank is
@@ -92,7 +91,6 @@ pub fn plan(h: &Header) -> Plan {
     let last = (HEADER_LEN + body - 1) / SECTOR_LEN;
     Plan {
         sectors: SECTORS.get(..=last as usize).unwrap_or(&SECTORS),
-        body_words: body / FLASH_WORD,
     }
 }
 

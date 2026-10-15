@@ -3,7 +3,9 @@
 //! through the old snapshot, acks, and holds the note queues until a
 //! snapshot tagged with that epoch arrives.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+#[cfg(feature = "bank2-gate")]
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::instrument::{AudioShared, Instrument};
 
@@ -22,8 +24,10 @@ pub struct LoadLink {
     epoch: AtomicU32,
     ack: AtomicU32,
     /// A bank-2 write is on: the audio sounds TAPE's voices off.
+    #[cfg(feature = "bank2-gate")]
     tape_shut: AtomicBool,
     /// The audio: no TAPE voice is sounding.
+    #[cfg(feature = "bank2-gate")]
     tape_quiet: AtomicBool,
 }
 
@@ -40,24 +44,29 @@ impl LoadLink {
         Self {
             epoch: AtomicU32::new(0),
             ack: AtomicU32::new(0),
+            #[cfg(feature = "bank2-gate")]
             tape_shut: AtomicBool::new(false),
+            #[cfg(feature = "bank2-gate")]
             tape_quiet: AtomicBool::new(false),
         }
     }
 
     /// The UI, before bank 2's door closes: TAPE's voices go off, and stay
     /// off until `open_tape`.
+    #[cfg(feature = "bank2-gate")]
     pub fn shut_tape(&self) {
         self.tape_quiet.store(false, Ordering::Release);
         self.tape_shut.store(true, Ordering::Release);
     }
 
     /// The UI, once the write is done: TAPE may sound again.
+    #[cfg(feature = "bank2-gate")]
     pub fn open_tape(&self) {
         self.tape_shut.store(false, Ordering::Release);
     }
 
     /// The UI: the audio reports no TAPE voice sounding.
+    #[cfg(feature = "bank2-gate")]
     pub fn tape_quiet(&self) -> bool {
         self.tape_quiet.load(Ordering::Acquire)
     }
@@ -203,6 +212,7 @@ impl LoadGate {
         inst: &mut Instrument,
         shared: &AudioShared,
     ) -> bool {
+        #[cfg(feature = "bank2-gate")]
         if link.tape_shut.load(Ordering::Acquire) {
             inst.sound_off_tape(shared);
             link.tape_quiet

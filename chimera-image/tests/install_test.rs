@@ -256,7 +256,6 @@ fn plan_spans_s0_first() {
     assert_eq!(plan(&h(128 * 1024 - 224)).sectors, &[S0, S1]);
     assert_eq!(plan(&h(200 * 1024)).sectors, &[S0, S1]);
     assert_eq!(plan(&h(512 * 1024 - 256)).sectors, &[S0, S1, S2, S3]);
-    assert_eq!(plan(&h(200 * 1024)).body_words, 200 * 1024 / 32);
     // A header never parsed can't reach S4.
     assert_eq!(plan(&h(u32::MAX)).sectors, &[S0, S1, S2, S3]);
 }

@@ -1,4 +1,6 @@
 //! A bank-2 write releases TAPE's voices first; the other engines play on.
+//! Only a gate build's `bank2 erase` closes a live door.
+#![cfg(feature = "bank2-gate")]
 
 mod common;
 use common::tape::{OneSource, held_plain, sine};

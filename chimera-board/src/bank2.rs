@@ -500,7 +500,11 @@ fn write_staged(
         cpu_hz,
     };
     let r = chimera_image::install_with(&mut flash, staged, seal, &mut buf, &mut shown);
-    (r, open_door(seal).0)
+    let now = open_door(seal).0;
+    // As the boot's judge: no stale DBECCERR left to read a later bus fault
+    // as bank 2's.
+    clear_flags();
+    (r, now)
 }
 
 /// The install's phase under DON'T POWER OFF; a gate build holds at each
@@ -559,8 +563,8 @@ mod gate {
 
 /// TAPE's voices off before the door closes, waiting for the audio's say
 /// (three blocks: the kill, the fade, the report) for `TAPE_OFF_MS`. Timed
-/// out, the proxy is silent anyway.
-#[cfg(all(feature = "bank2", feature = "usb-console"))]
+/// out, the proxy is silent anyway. Only `bank2 erase` closes a live door.
+#[cfg(all(feature = "bank2-gate", feature = "usb-console"))]
 fn close_tape(ui: &mut chimera_core::ui::UiState) {
     use crate::controls;
     const TICKS: u32 = TAPE_OFF_MS * controls::CONTROLS_HZ / 1000;
@@ -570,7 +574,7 @@ fn close_tape(ui: &mut chimera_core::ui::UiState) {
     });
 }
 
-#[cfg(all(feature = "bank2", feature = "usb-console"))]
+#[cfg(all(feature = "bank2-gate", feature = "usb-console"))]
 const TAPE_OFF_MS: u32 = 30;
 
 /// `bank2 erase` (`bank2-gate`), from the UI loop before its answer
@@ -597,8 +601,9 @@ pub fn run_erase(
 }
 
 /// `bank2 install`, from the UI loop before its answer starts. The staged
-/// file is judged first; unless that refuses it, TAPE lets go, the door
-/// closes, region 2 goes `Write`, DON'T POWER OFF goes up and the file is
+/// file is judged first; unless that refuses it (an open bank 2 always
+/// refuses: the door is closed here, TAPE silent), region 2 goes `Write`,
+/// DON'T POWER OFF goes up and the file is
 /// written while the audio plays from bank 1. Then `open_door` judges and
 /// checks bank 2 again: open, or region 2 `Read` and the cell closed. The
 /// caller redraws the whole screen after.
@@ -633,9 +638,10 @@ pub fn run_install(
         Err(a) => return a,
     };
     let before = audio();
-    close_tape(ui);
+    // `check_staged` refuses a write while open (`Good` there is this seal,
+    // so `Already`): TAPE has nothing sounding to let go.
+    debug_assert!(!DOOR_CELL.is_open());
     let (r, now) = write_staged(&mut staged, display, &h, &seal, cpu_hz);
-    chimera_core::project::LOAD_LINK.open_tape();
     ui.set_bank2(now);
     let after = audio();
     let audio = Bank2Audio {

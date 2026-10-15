@@ -25,6 +25,9 @@ boot-waves = []
 # the reverb's engines are linked there, bank 1 keeping their proxies
 # (`tape_engine::proxy`, `Reverb::play`; ADR 0142).
 bank2 = ["tape"]
+# `bank2 erase`'s live close (`LoadLink::shut_tape`, `sound_off_tape`): only
+# a gate build writes bank 2 under an open door (`just firmware-gate`).
+bank2-gate = []
 # The console's `ls` and `put` (ADR 0092): project files onto the card.
 card-put = []
 # The TAPE engine's DSP (ADR 0132): off in the shipping firmware, where no

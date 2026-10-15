@@ -604,7 +604,10 @@ impl UiState {
     /// say none sounds. The UI never runs inside the audio interrupt, and
     /// the closed door cell stops every later door call; this only makes
     /// the cut a clean fade. The other engines play on. Timed out, the
-    /// proxy is already silent: a few samples of fade, no fault.
+    /// proxy is already silent: a few samples of fade, no fault. Only a
+    /// gate build's `bank2 erase` closes a live door: an install writes
+    /// only while it is closed.
+    #[cfg(feature = "bank2-gate")]
     pub fn close_bank2(&mut self, link: &LoadLink, mut within: impl FnMut() -> bool) -> bool {
         link.shut_tape();
         while !link.tape_quiet() && within() {
