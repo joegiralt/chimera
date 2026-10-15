@@ -316,6 +316,7 @@ name = "chimera-hal"
 version = "0.1.0"
 dependencies = [
  "embedded-graphics-core",
+ "loom",
 ]
 
 [[package]]

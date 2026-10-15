@@ -3,6 +3,7 @@
 use embedded_graphics_core::draw_target::DrawTarget;
 use embedded_graphics_core::pixelcolor::Rgb565;
 
+pub mod card_bus;
 pub mod midi;
 pub mod store;
 #[cfg(feature = "testkit")]
