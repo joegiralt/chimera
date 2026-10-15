@@ -572,8 +572,8 @@ Slices 0–7 are the release (release-needs-features).
 ## 10. Open questions for the owner
 
 1. ~~The master tape stage reads REEL on screen.~~ Settled: the stage becomes `MTAPE` (matrix `MTP`).
-2. Over the stream budget, a new note steals the oldest streamed voice. Is that right, or should it be refused?
-3. Decision 8 is applied to every card write while streams play (project save from SETTINGS, library save, `put`, CLEAN UP), not only a render and a MENU-hold save. Agreed?
+2. ~~Over the stream budget.~~ Settled: a new note steals the oldest streamed voice.
+3. ~~Fade on every write.~~ Settled: every card write while streams play fades them (save, library save, `put`, CLEAN UP, renders).
 4. TRON's keep: MOTOR (cheap, recommended) or REWIND (each replay is a cold start, up to ~60 ms late)?
 5. RESAMPLE renders one note of a Part's Sound. Do you also want a held chord, or an ORBIT phrase, in this release?
 
