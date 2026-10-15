@@ -28,6 +28,7 @@ pub use file::{
     check_file, check_frame, delete_ab, delete_order, load_ab, load_ab_in_place, load_file, pick,
     save_ab, save_target, write_target,
 };
+pub(crate) use frame::RECORD_HEAD_LEN;
 pub use frame::{
     Event, FORMAT_VERSION, FileError, FileKind, Framer, Generation, HEADER_LEN, Header, MAGIC,
     ProjectFile, ProjectId, Side, TRAILER_LEN, peek_header,

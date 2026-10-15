@@ -8,11 +8,11 @@ use chimera_hal::store::{Extents, FileRuns, Transfers};
 use chimera_hal::units::{BlockCount, Bytes, FileBlock};
 
 use super::units::{Frames, Packing};
-use crate::storage::{SOURCE_DATA_MAX, SourceLayout, data_offset};
+use crate::storage::{RECORD_HEAD_LEN, RecordTag, SOURCE_DATA_MAX, SourceLayout, data_offset};
 
 /// A `SourceData` record: tag `u16`, length `u16`, then the samples.
-const RECORD_HEAD: usize = 4;
-const TAG: u16 = 0x0018;
+const RECORD_HEAD: usize = RECORD_HEAD_LEN;
+const TAG: u16 = RecordTag::SourceData.code();
 
 /// Records in a chunk: the one constant the rest derive from.
 pub const CHUNK_RECORDS: u32 = 8;
@@ -94,7 +94,10 @@ impl StreamFile {
             data_len: Bytes::new(data_len),
             frames: Frames::new(l.head().sref.frames),
         };
+        let covered = runs.len.get().div_ceil(512);
+        let on_card = covered == 0 || runs.ext.locate(FileBlock::new(covered - 1)).is_some();
         (end <= runs.len.get()
+            && on_card
             && data_len > 0
             && ChunkIdx::new(data_len.div_ceil(CHUNK_BYTES.get()) - 1).is_some())
         .then_some(sf)
@@ -114,17 +117,21 @@ impl StreamFile {
         (f < self.frames).then(|| ChunkIdx(f.get() / CHUNK_FRAMES.get()))
     }
 
-    pub fn chunk_frames(&self, c: ChunkIdx) -> Range<Frames> {
-        let start = c.0 * CHUNK_FRAMES.get();
-        Frames::new(start)
-            ..Frames::new(
-                start
-                    .saturating_add(CHUNK_FRAMES.get())
-                    .min(self.frames.get()),
-            )
+    /// `None` past `last_chunk`.
+    pub fn chunk_frames(&self, c: ChunkIdx) -> Option<Range<Frames>> {
+        (c <= self.last_chunk()).then(|| {
+            // At most `last_chunk` x 2,688 frames: inside the file's.
+            let start = c.0 * CHUNK_FRAMES.get();
+            Frames::new(start)..Frames::new((start + CHUNK_FRAMES.get()).min(self.frames.get()))
+        })
     }
 
-    pub fn chunk_blocks(&self, c: ChunkIdx) -> ChunkBlocks {
+    /// `None` past `last_chunk`.
+    pub fn chunk_blocks(&self, c: ChunkIdx) -> Option<ChunkBlocks> {
+        if c > self.last_chunk() {
+            return None;
+        }
+        // Inside the file, whose bytes fit `u32` (`from_layout`).
         let first_p = c.0 * CHUNK_BYTES.get();
         let last_p = (first_p + CHUNK_BYTES.get()).min(self.data_len.get()) - 1;
         let at = |p: u32| {
@@ -135,11 +142,8 @@ impl StreamFile {
         let end = at(last_p) + last_p % SOURCE_DATA_MAX as u32;
         let (first, skip) = Bytes::new(start).split_block();
         let (last, _) = Bytes::new(end).split_block();
-        ChunkBlocks {
-            first,
-            count: BlockCount::new(last.get() - first.get() + 1).unwrap_or(BlockCount::ONE),
-            skip,
-        }
+        let count = BlockCount::new(last.get() - first.get() + 1)?;
+        Some(ChunkBlocks { first, count, skip })
     }
 
     /// Device reads for `b`: a chunk across a run's edge is two.
@@ -162,10 +166,11 @@ pub enum Deframe {
 /// Copies the samples of the records at `raw[skip..]` into `out`, until
 /// it is full; the bytes written.
 pub fn deframe(raw: &[u8], skip: Bytes, out: &mut [u8]) -> Result<Bytes, Deframe> {
-    let mut at = skip.get() as usize;
+    let mut at = usize::try_from(skip.get()).map_err(|_| Deframe::Short)?;
     let mut done = 0;
     while done < out.len() {
-        let head = raw.get(at..at + RECORD_HEAD).ok_or(Deframe::Short)?;
+        let body_at = at.checked_add(RECORD_HEAD).ok_or(Deframe::Short)?;
+        let head = raw.get(at..body_at).ok_or(Deframe::Short)?;
         if u16::from_le_bytes([head[0], head[1]]) != TAG {
             return Err(Deframe::Tag);
         }
@@ -173,12 +178,11 @@ pub fn deframe(raw: &[u8], skip: Bytes, out: &mut [u8]) -> Result<Bytes, Deframe
         if n == 0 || n > SOURCE_DATA_MAX || n > out.len() - done {
             return Err(Deframe::Length);
         }
-        let body = raw
-            .get(at + RECORD_HEAD..at + RECORD_HEAD + n)
-            .ok_or(Deframe::Short)?;
-        out[done..done + n].copy_from_slice(body);
+        let end = body_at.checked_add(n).ok_or(Deframe::Short)?;
+        out[done..done + n].copy_from_slice(raw.get(body_at..end).ok_or(Deframe::Short)?);
         done += n;
-        at += RECORD_HEAD + n;
+        at = end;
     }
-    Ok(Bytes::new(done as u32))
+    // `out` is a chunk: far under 4 GiB.
+    Ok(Bytes::new(u32::try_from(done).unwrap_or(u32::MAX)))
 }

@@ -135,7 +135,7 @@ fn on_device(file: &[u8], cuts: &[u32]) -> (FileRuns, Vec<u8>) {
 }
 
 fn raw_of(sf: &StreamFile, c: ChunkIdx, dev: &[u8]) -> (Vec<u8>, Bytes) {
-    let b = sf.chunk_blocks(c);
+    let b = sf.chunk_blocks(c).unwrap();
     let mut raw = Vec::new();
     for (lba, n) in sf.reads(&b) {
         let at = lba.get() as usize * 512;
@@ -238,7 +238,7 @@ fn last_chunk_is_short() {
     let sf = StreamFile::from_layout(&l, runs).unwrap();
     let last = sf.last_chunk();
     assert_eq!(last.get(), 2);
-    let r = sf.chunk_frames(last);
+    let r = sf.chunk_frames(last).unwrap();
     assert_eq!(r.start, Frames::new(CHUNK_FRAMES.get() * 2));
     assert_eq!(r.end, Frames::new(f));
     assert_eq!(sf.chunk_of(Frames::new(f - 1)), Some(last));
@@ -260,4 +260,33 @@ fn chunk_constants_derive_from_the_record_count() {
     assert_eq!(FRAMED_CHUNK_BYTES, Bytes::new(4_064));
     assert_eq!(RAW_CHUNK_BLOCKS, 9);
     assert_eq!(RAW_CHUNK_BYTES, 4_608);
+}
+
+#[test]
+fn a_chunk_past_the_end_is_none() {
+    let (l, _, data) = layout(1, CHUNK_FRAMES.get() * 2 + 10, 0);
+    let file = written(&l, None, &data);
+    let (runs, _) = on_device(&file, &[]);
+    let sf = StreamFile::from_layout(&l, runs).unwrap();
+    for n in [sf.last_chunk().get() + 1, 0xFF_FFFF] {
+        let c = ChunkIdx::new(n).unwrap();
+        assert_eq!(sf.chunk_blocks(c), None);
+        assert_eq!(sf.chunk_frames(c), None);
+    }
+}
+
+#[test]
+fn runs_short_of_the_file_are_refused() {
+    let (l, _, data) = layout(1, 5_000, 0);
+    let file = written(&l, None, &data);
+    let (runs, _) = on_device(&file, &[]);
+    assert!(StreamFile::from_layout(&l, runs).is_some());
+    let blocks = file.len().div_ceil(512) as u32;
+    let mut r = Runs::new();
+    r.push(Lba::new(0), BlockCount::new(blocks - 1).unwrap());
+    let short = FileRuns {
+        ext: r.finish().unwrap(),
+        len: runs.len,
+    };
+    assert!(StreamFile::from_layout(&l, short).is_none());
 }
