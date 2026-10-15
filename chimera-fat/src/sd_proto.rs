@@ -112,6 +112,10 @@ pub enum Scan {
 }
 
 /// Waits for a block's data token over idle 0xFF bytes.
+fn bytes(n: usize) -> Bytes {
+    Bytes::new(u32::try_from(n).unwrap_or(u32::MAX))
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct TokenScan {
     waited: Bytes,
@@ -136,8 +140,10 @@ impl TokenScan {
     }
 
     fn wait(&mut self, n: usize) {
-        let n = Bytes::new(u32::try_from(n).unwrap_or(u32::MAX));
-        self.waited = self.waited.checked_add(n).unwrap_or(Bytes::new(u32::MAX));
+        self.waited = self
+            .waited
+            .checked_add(bytes(n))
+            .unwrap_or(Bytes::new(u32::MAX));
     }
 
     /// True once the scan has clocked `TOKEN_TIMEOUT_MS` of bytes.
@@ -160,7 +166,7 @@ pub enum ProtoError {
     R1(u8),
 }
 
-/// A read command's R1 must be all clear.
+/// After init, a read command's R1 must be all clear: the idle bit too.
 pub const fn check_r1(r1: u8) -> Result<(), ProtoError> {
     if r1 == 0 {
         Ok(())
@@ -181,103 +187,106 @@ pub fn stop_response(bytes: &[u8; STOP_BYTES]) -> Result<(), ProtoError> {
     }
 }
 
-/// What the shell does next in a multi-block read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Step {
-    /// Clock `SCAN_BYTES` and hand them to `scanned`.
-    Scan,
-    /// `have` bytes of block `block` are in place; land `want` after them.
-    Rest {
-        block: u32,
-        have: Bytes,
-        want: Bytes,
-    },
+/// Where a CMD18 read is: each state has the one call that moves it on,
+/// and an `Err` ends the walk. Plain data, so the card IRQ can keep it.
+#[derive(Clone, Copy, Debug)]
+pub enum Walk {
+    /// Clock `SCAN_BYTES` and hand them to `Scanning::scanned`.
+    Scan(Scanning),
+    /// Land `Resting::want` bytes after the `have` in place.
+    Rest(Resting),
     Stop,
+}
+
+impl Walk {
+    /// A read of `count` blocks, at its first scan.
+    pub const fn new(count: BlockCount) -> Walk {
+        Walk::Scan(Scanning {
+            block: 0,
+            count,
+            scan: TokenScan::new(),
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Scanning {
+    block: u32,
+    count: BlockCount,
+    scan: TokenScan,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Scanned {
-    Waiting,
-    /// The token is found: `tail` of the burst is block bytes.
+pub enum ScanOutcome<S, R> {
+    Waiting(S),
+    /// The token is found: `tail` of the burst is the block's first bytes.
     Token {
         tail: Range<usize>,
+        rest: R,
     },
 }
 
-#[derive(Clone, Copy, Debug)]
-enum State {
-    Scan(TokenScan),
-    Rest { have: usize },
-    Stop,
+impl Scanning {
+    pub fn scanned(
+        mut self,
+        burst: &[u8; SCAN_BYTES],
+    ) -> Result<ScanOutcome<Scanning, Resting>, ProtoError> {
+        match self.scan.feed(burst) {
+            Scan::Waiting => Ok(ScanOutcome::Waiting(self)),
+            Scan::Error(b) => Err(ProtoError::ErrorToken(b)),
+            Scan::Token { at } => Ok(ScanOutcome::Token {
+                tail: at + 1..SCAN_BYTES,
+                rest: Resting {
+                    block: self.block,
+                    count: self.count,
+                    have: SCAN_BYTES - at - 1,
+                },
+            }),
+        }
+    }
+
+    pub fn timed_out(&self, clock: BytesPerSec) -> bool {
+        self.scan.timed_out(clock)
+    }
 }
 
-/// A CMD18 read of `count` blocks, as a walk of scans and block landings.
-#[derive(Clone, Copy, Debug)]
-pub struct MultiRead {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Resting {
     block: u32,
     count: BlockCount,
-    state: State,
+    have: usize,
 }
 
-impl MultiRead {
-    pub const fn new(count: BlockCount) -> Self {
-        Self {
-            block: 0,
-            count,
-            state: State::Scan(TokenScan::new()),
-        }
+impl Resting {
+    pub fn block(&self) -> u32 {
+        self.block
     }
 
-    pub fn step(&self) -> Step {
-        match self.state {
-            State::Scan(_) => Step::Scan,
-            State::Rest { have } => Step::Rest {
-                block: self.block,
-                have: Bytes::new(have as u32),
-                want: Bytes::new((BLOCK_WITH_CRC - have) as u32),
-            },
-            State::Stop => Step::Stop,
-        }
+    /// Block bytes already in place.
+    pub fn have(&self) -> Bytes {
+        bytes(self.have)
     }
 
-    /// A scan burst. Out of `Scan` it is ignored.
-    pub fn scanned(&mut self, burst: &[u8; SCAN_BYTES]) -> Result<Scanned, ProtoError> {
-        let State::Scan(scan) = &mut self.state else {
-            return Ok(Scanned::Waiting);
-        };
-        match scan.feed(burst) {
-            Scan::Waiting => Ok(Scanned::Waiting),
-            Scan::Error(b) => Err(ProtoError::ErrorToken(b)),
-            Scan::Token { at } => {
-                self.state = State::Rest {
-                    have: SCAN_BYTES - at - 1,
-                };
-                Ok(Scanned::Token {
-                    tail: at + 1..SCAN_BYTES,
-                })
-            }
-        }
+    /// What the shell's DMA lands straight after them.
+    pub fn want(&self) -> Bytes {
+        bytes(BLOCK_WITH_CRC - self.have)
     }
 
-    /// A whole block and its CRC16 are in place. Out of `Rest` it is ignored.
-    pub fn landed(&mut self, block: &[u8; BLOCK_WITH_CRC]) -> Result<(), ProtoError> {
-        if !matches!(self.state, State::Rest { .. }) {
-            return Ok(());
-        }
+    /// The whole block and its CRC16 are in place.
+    pub fn landed(self, block: &[u8; BLOCK_WITH_CRC]) -> Result<Walk, ProtoError> {
         let (data, crc) = block.split_at(BLOCK_BYTES);
         if crc16(data) != u16::from_be_bytes([crc[0], crc[1]]) {
             return Err(ProtoError::Crc);
         }
-        self.block += 1;
-        self.state = if self.block < self.count.get() {
-            State::Scan(TokenScan::new())
+        let block = self.block + 1;
+        Ok(if block < self.count.get() {
+            Walk::Scan(Scanning {
+                block,
+                count: self.count,
+                scan: TokenScan::new(),
+            })
         } else {
-            State::Stop
-        };
-        Ok(())
-    }
-
-    pub fn timed_out(&self, clock: BytesPerSec) -> bool {
-        matches!(self.state, State::Scan(s) if s.timed_out(clock))
+            Walk::Stop
+        })
     }
 }

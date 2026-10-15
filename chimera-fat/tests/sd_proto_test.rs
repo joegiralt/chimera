@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use chimera_fat::sd_addr::CmdArg;
 use chimera_fat::sd_proto::*;
 use chimera_hal::units::{BlockCount, Bytes, BytesPerSec};
@@ -72,44 +70,42 @@ fn block(n: u8) -> [u8; BLOCK_WITH_CRC] {
     b
 }
 
-/// Plays the shell: feeds scans with the token at `pos` (after `empty` blank
-/// scans), copies the tail, lands the rest.
+/// Plays the shell on one block: scans with the token at `pos` (after
+/// `empty` blank scans), copies the tail, lands the rest.
 fn play(
-    m: &mut MultiRead,
+    walk: Walk,
     blk: &[u8; BLOCK_WITH_CRC],
     pos: usize,
     empty: usize,
-) -> Result<[u8; BLOCK_WITH_CRC], ProtoError> {
-    assert_eq!(m.step(), Step::Scan);
+) -> Result<([u8; BLOCK_WITH_CRC], Walk), ProtoError> {
+    let Walk::Scan(mut sc) = walk else {
+        panic!("not scanning")
+    };
     for _ in 0..empty {
-        assert_eq!(m.scanned(&[0xFF; SCAN_BYTES])?, Scanned::Waiting);
+        sc = match sc.scanned(&[0xFF; SCAN_BYTES])? {
+            ScanOutcome::Waiting(s) => s,
+            ScanOutcome::Token { .. } => panic!("early token"),
+        };
     }
     let mut burst = [0xFF; SCAN_BYTES];
     burst[pos] = DATA_TOKEN;
     let n = SCAN_BYTES - pos - 1;
     burst[pos + 1..].copy_from_slice(&blk[..n]);
-    let tail: Range<usize> = match m.scanned(&burst)? {
-        Scanned::Token { tail } => tail,
-        Scanned::Waiting => panic!("token missed"),
+    let ScanOutcome::Token { tail, rest } = sc.scanned(&burst)? else {
+        panic!("token missed")
     };
     assert_eq!(tail, pos + 1..SCAN_BYTES);
+    assert_eq!(rest.have(), Bytes::new(n as u32));
+    assert_eq!(rest.want(), Bytes::new((BLOCK_WITH_CRC - n) as u32));
     let mut out = [0u8; BLOCK_WITH_CRC];
     out[..tail.len()].copy_from_slice(&burst[tail]);
-    match m.step() {
-        Step::Rest { have, want, .. } => {
-            assert_eq!(have, Bytes::new(n as u32));
-            assert_eq!(want, Bytes::new((BLOCK_WITH_CRC - n) as u32));
-            out[n..].copy_from_slice(&blk[n..]);
-        }
-        s => panic!("{s:?}"),
-    }
-    m.landed(&out)?;
-    Ok(out)
+    out[n..].copy_from_slice(&blk[n..]);
+    Ok((out, rest.landed(&out)?))
 }
 
 #[test]
 fn multiread_walks_nine_blocks_with_tokens_anywhere() {
-    let mut m = MultiRead::new(BlockCount::new(9).unwrap());
+    let mut w = Walk::new(BlockCount::new(9).unwrap());
     let plan = [
         (0, 0),
         (1, 0),
@@ -123,41 +119,72 @@ fn multiread_walks_nine_blocks_with_tokens_anywhere() {
     ];
     for (i, (pos, empty)) in plan.into_iter().enumerate() {
         let b = block(i as u8);
-        assert_eq!(play(&mut m, &b, pos, empty).unwrap(), b);
+        let (out, next) = play(w, &b, pos, empty).unwrap();
+        assert_eq!(out, b);
+        w = next;
     }
-    assert_eq!(m.step(), Step::Stop);
+    assert!(matches!(w, Walk::Stop));
 }
 
 #[test]
-fn multiread_flags_bad_crc() {
-    let mut m = MultiRead::new(BlockCount::new(2).unwrap());
+fn the_block_index_advances_per_landing() {
+    let mut w = Walk::new(BlockCount::new(3).unwrap());
+    for i in 0..3 {
+        let Walk::Scan(sc) = w else {
+            panic!("stopped early")
+        };
+        let mut burst = [0xFF; SCAN_BYTES];
+        burst[0] = DATA_TOKEN;
+        let ScanOutcome::Token { rest, .. } = sc.scanned(&burst).unwrap() else {
+            panic!()
+        };
+        assert_eq!(rest.block(), i);
+        w = rest.landed(&block(0)).unwrap();
+    }
+    assert!(matches!(w, Walk::Stop));
+}
+
+#[test]
+fn multiread_flags_bad_crc_and_the_walk_ends() {
+    let w = Walk::new(BlockCount::new(2).unwrap());
     let mut b = block(1);
     b[100] ^= 1;
-    // play() lands the corrupted block as given
-    assert_eq!(play(&mut m, &b, 0, 0).unwrap_err(), ProtoError::Crc);
+    assert_eq!(play(w, &b, 0, 0).unwrap_err(), ProtoError::Crc);
 }
 
 #[test]
-fn multiread_reports_an_error_token() {
-    let mut m = MultiRead::new(BlockCount::new(9).unwrap());
+fn multiread_reports_an_error_token_and_the_walk_ends() {
+    let mut w = Walk::new(BlockCount::new(9).unwrap());
     for i in 0..2 {
-        play(&mut m, &block(i), 3, 0).unwrap();
+        w = play(w, &block(i), 3, 0).unwrap().1;
     }
+    let Walk::Scan(sc) = w else { panic!() };
     let mut burst = [0xFF; SCAN_BYTES];
     burst[10] = 0x02;
-    assert_eq!(m.scanned(&burst), Err(ProtoError::ErrorToken(0x02)));
+    assert_eq!(
+        sc.scanned(&burst).unwrap_err(),
+        ProtoError::ErrorToken(0x02)
+    );
 }
 
 #[test]
 fn multiread_times_out_waiting_for_a_token() {
-    let mut m = MultiRead::new(BlockCount::new(1).unwrap());
+    let Walk::Scan(mut sc) = Walk::new(BlockCount::new(1).unwrap()) else {
+        panic!()
+    };
     let clock = BytesPerSec::spi(25_000_000);
     for _ in 0..(312_500 / SCAN_BYTES) {
-        assert!(!m.timed_out(clock));
-        m.scanned(&[0xFF; SCAN_BYTES]).unwrap();
+        assert!(!sc.timed_out(clock));
+        sc = match sc.scanned(&[0xFF; SCAN_BYTES]).unwrap() {
+            ScanOutcome::Waiting(s) => s,
+            _ => panic!(),
+        };
     }
-    m.scanned(&[0xFF; SCAN_BYTES]).unwrap();
-    assert!(m.timed_out(clock));
+    sc = match sc.scanned(&[0xFF; SCAN_BYTES]).unwrap() {
+        ScanOutcome::Waiting(s) => s,
+        _ => panic!(),
+    };
+    assert!(sc.timed_out(clock));
 }
 
 #[test]
@@ -185,4 +212,5 @@ fn stop_response_skips_junk_before_r1() {
 fn r1_with_any_error_bit_is_refused() {
     assert_eq!(check_r1(0x00), Ok(()));
     assert_eq!(check_r1(0x04), Err(ProtoError::R1(0x04)));
+    assert_eq!(check_r1(0x01), Err(ProtoError::R1(0x01)));
 }
