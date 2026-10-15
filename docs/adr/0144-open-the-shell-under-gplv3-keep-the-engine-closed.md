@@ -70,6 +70,15 @@ contributions they don't own.
    - add a trademark notice so a fork can't ship as Chimera.
 6. **An IP lawyer reviews** the exception's wording and the trademark before
    anything opens.
+7. **The open source goes out as a new public repo, starting from one fresh
+   commit** of the shell and the stub engine.
+   - None of the private repo's history is published: not the engine's code
+     or how it was built, and not the old commit messages and trailers.
+   - The private repo keeps its full history, unrewritten, as the record of
+     who wrote what and when. That record backs the owner's right to reuse the
+     engine in closed products.
+   - From then on, shell work happens in the public repo, or is exported to
+     it; the engine stays in the private one.
 
 ## Alternatives considered
 - **MPL-2.0 for the shell.**
@@ -98,6 +107,13 @@ contributions they don't own.
   - The strongest protection.
   - Kept for alpha (point 1), but it costs testers and outside fixes, and
     the shell isn't the moat.
+- **Make the private repo public, after rewriting its history** (e.g. with
+  `git filter-repo`).
+  - Rejected: it would publish the engine's history unless every engine file
+    were cut out too. It breaks every commit hash and PR link. It weakens the
+    authorship record. And it doesn't erase anything: the repo was public from
+    April until 2026-10-08 and was cloned then, and GitHub keeps PRs' original
+    commits.
 
 ## Consequences
 - **The commercial asset stays closed.** The engine never leaves the owner's
