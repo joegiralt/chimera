@@ -5,7 +5,10 @@ use embedded_sdmmc::embedded_sdmmc_types::sdcard::CardType;
 #[test]
 fn cmd18_arg_addresses_by_card_type() {
     let lba = Lba::new(1_000);
-    assert_eq!(AddrMode::of(CardType::SdhcSdxc).arg(lba).unwrap().get(), 1_000);
+    assert_eq!(
+        AddrMode::of(CardType::SdhcSdxc).arg(lba).unwrap().get(),
+        1_000
+    );
     assert_eq!(AddrMode::of(CardType::SD2).arg(lba).unwrap().get(), 512_000);
     assert_eq!(AddrMode::of(CardType::SD1).arg(lba).unwrap().get(), 512_000);
 }

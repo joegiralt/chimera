@@ -10,7 +10,10 @@ fn lba_offset_refuses_overflow() {
 #[test]
 fn bytes_split_at_block_edges() {
     for (b, blk, off) in [(0, 0, 0), (511, 0, 511), (512, 1, 0), (513, 1, 1)] {
-        assert_eq!(Bytes::new(b).split_block(), (FileBlock::new(blk), Bytes::new(off)));
+        assert_eq!(
+            Bytes::new(b).split_block(),
+            (FileBlock::new(blk), Bytes::new(off))
+        );
     }
 }
 
@@ -23,8 +26,14 @@ fn token_window_in_bytes() {
 
 #[test]
 fn throughput_from_bytes_and_time() {
-    assert_eq!(Bytes::new(4_608).per(Micros::new(1_000)), BytesPerSec::new(4_608_000));
-    assert_eq!(Bytes::new(5).per(Micros::new(0)), Bytes::new(5).per(Micros::new(1)));
+    assert_eq!(
+        Bytes::new(4_608).per(Micros::new(1_000)),
+        BytesPerSec::new(4_608_000)
+    );
+    assert_eq!(
+        Bytes::new(5).per(Micros::new(0)),
+        Bytes::new(5).per(Micros::new(1))
+    );
     assert_eq!(Bytes::new(u32::MAX).per(Micros::new(1)).get(), u32::MAX);
 }
 
@@ -45,6 +54,9 @@ fn stream_count_is_one_to_eight() {
 
 #[test]
 fn bytes_add_refuses_overflow() {
-    assert_eq!(Bytes::new(1).checked_add(Bytes::new(2)), Some(Bytes::new(3)));
+    assert_eq!(
+        Bytes::new(1).checked_add(Bytes::new(2)),
+        Some(Bytes::new(3))
+    );
     assert_eq!(Bytes::new(u32::MAX).checked_add(Bytes::new(1)), None);
 }

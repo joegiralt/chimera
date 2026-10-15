@@ -47,7 +47,11 @@ impl VoiceIdx {
     };
 
     pub const fn new(i: usize) -> Option<Self> {
-        if i < MAX_VOICES { Some(Self(i as u8)) } else { None }
+        if i < MAX_VOICES {
+            Some(Self(i as u8))
+        } else {
+            None
+        }
     }
 
     pub fn index(self) -> usize {

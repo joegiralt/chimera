@@ -88,7 +88,11 @@ pub struct SourceRate(u16);
 
 impl SourceRate {
     pub const fn new(hz: u16) -> Option<Self> {
-        if hz >= 4_000 && hz <= 48_000 { Some(Self(hz)) } else { None }
+        if hz >= 4_000 && hz <= 48_000 {
+            Some(Self(hz))
+        } else {
+            None
+        }
     }
 
     pub const fn get(self) -> u16 {
@@ -104,7 +108,11 @@ impl Ratio {
     pub const ONE: Ratio = Ratio(1_000);
 
     pub const fn from_milli(m: u32) -> Option<Self> {
-        if m >= 1 && m <= 32_000 { Some(Self(m)) } else { None }
+        if m >= 1 && m <= 32_000 {
+            Some(Self(m))
+        } else {
+            None
+        }
     }
 
     /// Source frames one audio block consumes, times 1000; never 0.

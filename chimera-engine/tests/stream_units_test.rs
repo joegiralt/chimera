@@ -61,6 +61,9 @@ fn voice_idx_below_max_voices() {
 
 #[test]
 fn frames_add_refuses_overflow() {
-    assert_eq!(Frames::new(1).checked_add(Frames::new(2)), Some(Frames::new(3)));
+    assert_eq!(
+        Frames::new(1).checked_add(Frames::new(2)),
+        Some(Frames::new(3))
+    );
     assert_eq!(Frames::new(u32::MAX).checked_add(Frames::new(1)), None);
 }

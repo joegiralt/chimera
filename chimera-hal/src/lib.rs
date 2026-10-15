@@ -5,9 +5,9 @@ use embedded_graphics_core::pixelcolor::Rgb565;
 
 pub mod midi;
 pub mod store;
-pub mod units;
 #[cfg(feature = "testkit")]
 pub mod testkit;
+pub mod units;
 
 pub const BLOCK_SIZE: usize = 64;
 pub const SCREEN_WIDTH: u16 = 240;
