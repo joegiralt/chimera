@@ -127,6 +127,8 @@ macro_rules! table {
             Sweep  (NoArg)   => "sweep",  "the lost-cluster sweep at the next boot: restarts into it",
             Flash  (NoArg)   => "flash",  "flash controller and bank 2, read only",
             Bank2  (Bank2Arg) => "bank2", "bank 2: its state; bank2 install: the staged file into it",
+            Key    (KeyArg)  => "key",    "B1-B6 MENU MINUS PLUS MIX EDIT SEQ PUSH1-6, A+B [hold_ms]",
+            Turn   (TurnArg) => "turn",   "<encoder 1-6> <delta -64..64>: detents at a hand's pace",
             $($card)*
         }
     };
@@ -263,5 +265,7 @@ mod flash;
 pub use flash::*;
 mod bank2;
 pub use bank2::*;
+mod hands;
+pub use hands::*;
 mod nocard;
 pub use nocard::NoCard;

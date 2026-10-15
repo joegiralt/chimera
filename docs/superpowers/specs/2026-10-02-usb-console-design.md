@@ -80,6 +80,8 @@ dfu     restart into the ROM loader for just flash
 sweep   the lost-cluster sweep at the next boot: restarts into it
 flash   flash controller and bank 2, read only
 bank2   bank 2: its state; bank2 install: the staged file into it
+key     B1-B6 MENU MINUS PLUS MIX EDIT SEQ PUSH1-6, A+B [hold_ms]
+turn    <encoder 1-6> <delta -64..64>: detents at a hand's pace
 ls      files and sizes in PROJECTS; ls tapes, ls sounds: theirs
 put     a project, Sound or source: <path> <size> <crc32> [--over]
 rm      a library Sound's pair: /CHIMERA/SOUNDS/S#######
@@ -264,6 +266,10 @@ OK bank2 open 0.2.0 02e440e2
 ```
 
 `bank2` is the `status` line for bank 2 (ADR 0137), then `OK`. `bank2 install` writes the staged `/CHIMERA/SYSTEM/BANK2.BK2` into bank 2 from the UI loop, before the answer starts, with the audio playing from bank 1 and `DON'T POWER OFF` on the screen; the screen redraws in full after it. The staged file is judged against this build's seal first: nothing is written for `ERR bank2: nothing staged`, `ERR bank2: staged: needs firmware <version>` (sealed for another build), `ERR bank2: staged: <state>` (`torn`, `corrupt`, …), `ERR bank2: <card error>`, `ERR bank2: firmware unsealed`, `ERR bank2: busy` (card work pending) or `OK already installed` (bank 2 open with that seal). Otherwise the door closes, bank 2 is written (S0 erased first, commit word last), and the door is judged and checked again: `OK bank2 open <version>`, or `ERR bank2: flash <busy|locked|not writable|errors <sr2 hex>|timeout|not erased|no cycle counter> at <S0..S3|word hex>`, `ERR bank2: readback <state>`, `ERR bank2: staged file unreadable`, `ERR bank2: staged: <state>` or `ERR bank2: door check failed`, with bank 2 left not open. Either way the `audio` line before it gives the overrun counter before and after and the blocks rendered meanwhile. The file gets there by `put /CHIMERA/SYSTEM/BANK2.BK2 <size> <crc32>` (at most 512 KiB): the old one is deleted, the new one read back and judged; one sealed for another build stays (`OK staged: needs firmware <version>`), anything else is deleted (`ERR put: not a bank-2 image`), and an unsealed build stages nothing (`ERR put: firmware unsealed`).
+
+**`key <name>[+<name>] [hold_ms]`, `turn <encoder 1-6> <delta>`**
+
+The console's hands, for QA without the owner's: `OK` once the gesture is queued (8 wait at most, else `ERR busy`, which the host tool retries). Names, any case: `B1`..`B6`, `MENU`, `MINUS`, `PLUS`, `MIX`, `EDIT`, `SEQ`, and `PUSH1`..`PUSH6` (the encoders' pushes, `push-encoders` builds, read only with SYSTEM's PUSH ENCODERS on, as the scan reads them). A hold of 0 or none is a 60 ms tap; at most 10000. `key MIX+SEQ` holds MIX, presses SEQ 60 ms later, releases it, then MIX 60 ms after. `turn` gives one detent each 25 ms, so the encoder's acceleration builds as under a brisk hand; 160 ms of rest after it start the next turn's burst afresh. The shell ORs the held switches into the HC165 read before the debounce and adds the detents where the quadrature decode does (`chimera_core::console::Hands`), so the UI sees what a hand makes. `shot` after the gesture's time to see the result.
 
 **`b2erase`, `b2prog`, `b2call`, `b2stat`** (RETIRED with the spike, along with `bank2-spike` and `just firmware-b2spike`; kept as the phase 0b record)
 

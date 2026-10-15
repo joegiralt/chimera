@@ -6,7 +6,8 @@ use chimera_core::board::BoardId;
 use chimera_core::boot::{BootSeen, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep, wait_until};
 use chimera_core::console::{
     AnswerClock, Bank2Answer, BankRegs, CardAnswer, CardArg, Console, FlashPeek, FlashRegs, Frame,
-    LoopTimer, Out, PEEK_AT, Request, Served, Stalled, Stats, SweepAsk, Unit, answer, serial_hex,
+    Hand, Hands, LoopTimer, Out, PEEK_AT, Request, Served, Stalled, Stats, SweepAsk, Unit, answer,
+    serial_hex,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::triple::Reader;
@@ -158,6 +159,8 @@ pub struct Usb {
     /// `bank2 install` drew over the screen: the loop redraws it whole.
     redraw: bool,
     board: BoardId,
+    /// `key` and `turn`'s gestures, played into the controls each lap.
+    hands: Hands,
 }
 
 /// The port set up but not on the bus: no pull-up, so the host sees
@@ -317,6 +320,7 @@ impl Unconnected {
             sweep: self.sweep,
             redraw: false,
             board: self.board,
+            hands: Hands::new(),
         }
     }
 }
@@ -360,6 +364,7 @@ impl Usb {
             #[cfg(feature = "bank2")]
             redraw,
             board,
+            hands,
             ..
         } = self;
         dev.poll(&mut [&mut *serial]);
@@ -423,6 +428,7 @@ impl Usb {
                 files: store,
                 forget: false,
                 bank2,
+                hands,
             };
             let out = &mut UsbOut {
                 dev,
@@ -453,6 +459,11 @@ impl Usb {
             return Some(restart);
         }
         None
+    }
+
+    /// The console's hand at `now`: what `key` and `turn` hold and turn.
+    pub fn hand(&mut self, now: Ms) -> Hand {
+        self.hands.step(now)
     }
 
     /// `bank2 install` drew over the screen since the last call.
@@ -488,6 +499,7 @@ struct ChipUnit<'a> {
     forget: bool,
     /// `bank2 install`'s outcome, before the answer.
     bank2: Option<Bank2Answer>,
+    hands: &'a mut Hands,
 }
 
 impl Unit for ChipUnit<'_> {
@@ -568,6 +580,10 @@ impl Unit for ChipUnit<'_> {
 
     fn forget_library(&mut self) {
         self.forget = true;
+    }
+
+    fn hands(&mut self) -> Option<&mut Hands> {
+        Some(&mut *self.hands)
     }
 
     #[cfg(feature = "bank2")]

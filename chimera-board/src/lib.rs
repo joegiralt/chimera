@@ -623,6 +623,12 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         let installed = false;
         // SYSTEM's PUSH ENCODERS as last edited: off, the read stays 24 bits.
         controls::set_push(ui.midi().push);
+        // The console's `key` and `turn`, at the scan's level.
+        #[cfg(feature = "usb-console")]
+        controls::hand(
+            &usb.up()
+                .map_or_else(Default::default, |u| u.hand(controls::now_ms())),
+        );
         controls.snapshot();
         // ORBIT's latest view: the pages draw it, the drift is absorbed.
         orbit.see(ui);

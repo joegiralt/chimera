@@ -7,6 +7,7 @@
 
 use chimera_core::board::{Hc165Pins, Port};
 use chimera_core::clock_plan::{cycles_for_ns, systick_reload};
+use chimera_core::console::Hand;
 use chimera_hal::{
     ButtonId, ButtonState, Controls, Debounce, Edges, EncoderId, Latch, Ms, NUM_BUTTONS,
     NUM_ENCODERS, push_levels,
@@ -80,6 +81,9 @@ static mut ENC_DEBOUNCE: [u8; NUM_ENCODERS] = [0; NUM_ENCODERS];
 static mut DEBOUNCE: [Debounce; NUM_SWITCHES] = [Debounce::new(); NUM_SWITCHES];
 static ISR_TICK: AtomicU32 = AtomicU32::new(0);
 static ENC_LAST_EDGE: [AtomicU32; NUM_ENCODERS] = [const { AtomicU32::new(0) }; NUM_ENCODERS];
+/// The console's hand: switches it holds, one bit each in `LATCHES`'
+/// order, read as pressed before the debounce.
+static HAND: AtomicU32 = AtomicU32::new(0);
 
 /// Arms SysTick at `CONTROLS_HZ`, its priority set first so the first tick
 /// cannot run at the reset priority (0, the audio level).
@@ -193,6 +197,8 @@ pub unsafe fn isr_tick() {
     } else {
         [false; NUM_ENCODERS]
     };
+    let hand = HAND.load(Ordering::Relaxed);
+    let by_hand = |i: usize| hand & (1 << i) != 0;
     // SAFETY: DEBOUNCE is only touched here, from SysTick (this fn's
     // contract), which is not reentrant. LATCHES is shared with
     // `snapshot`, which only touches it inside `interrupt::free`: on this
@@ -203,8 +209,14 @@ pub unsafe fn isr_tick() {
         let latches = &mut *addr_of_mut!(LATCHES);
         let debounce = &mut *addr_of_mut!(DEBOUNCE);
         let raw = BTN_BITS.iter().map(|&m| bits & m == 0).chain(pushes);
-        for ((raw, d), latch) in raw.zip(debounce.iter_mut()).zip(latches.iter_mut()) {
-            latch.level(d.step(raw), now_ms);
+        // A push the scan does not read, the hand cannot press either.
+        let live = (0..NUM_SWITCHES).map(|i| i < NUM_BUTTONS || push);
+        for (i, ((raw, live), (d, latch))) in raw
+            .zip(live)
+            .zip(debounce.iter_mut().zip(latches.iter_mut()))
+            .enumerate()
+        {
+            latch.level(d.step(raw || (live && by_hand(i))), now_ms);
         }
     }
 
@@ -241,6 +253,19 @@ pub unsafe fn isr_tick() {
 }
 
 // --- Main-thread interface ---
+
+/// The console's hand for this lap: its switches into the next scans, its
+/// detents where the quadrature decode puts a hand's. Before `snapshot`.
+pub fn hand(h: &Hand) {
+    HAND.store(h.down, Ordering::Relaxed);
+    let now = ISR_TICK.load(Ordering::Relaxed);
+    for ((&d, delta), edge) in h.detents.iter().zip(&ENC_DELTA).zip(&ENC_LAST_EDGE) {
+        if d != 0 {
+            delta.fetch_add(d, Ordering::Relaxed);
+            edge.store(now, Ordering::Relaxed);
+        }
+    }
+}
 
 pub struct Stm32Controls {
     /// The buttons', then the pushes'.
