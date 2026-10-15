@@ -17,10 +17,11 @@ use chimera_core::dsp::algo::plan::OPS;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::knobs::{KNOBS, Knob, KnobPublisher, MOVES, coeff};
 use chimera_core::dsp::modal::ModalParams;
+use chimera_core::dsp::va::VaParams;
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::midi_in::{CC_RING_LEN, Cc, CcEvent, CcRing};
-use chimera_core::midi_map::Mappable;
+use chimera_core::midi_map::{MapEntry, Mappable};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams};
 use chimera_core::preset::Sound;
@@ -31,7 +32,8 @@ use chimera_core::project::{
 use chimera_core::scope::ScopeWriter;
 use chimera_core::storage::{Card, SystemSync};
 use chimera_core::ui::UiState;
-use chimera_core::ui::block_registry::{ALGO_OP_PAGES, FILTER};
+use chimera_core::ui::animation::{FRAME_MS, UiTick};
+use chimera_core::ui::block_registry::{ALGO_OP_PAGES, FILTER, VA_HOME};
 use chimera_core::ui::busy::ToastStep;
 use chimera_core::ui::nav::PartChain;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
@@ -45,6 +47,8 @@ const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF)
 const TYPE: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::KIND);
 const WAVE_A: ParamAddr = ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::WAVE);
 const RESO: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE);
+const WAVE1: ParamAddr = ParamAddr::new(BlockRef::Va, VaParams::WAVE1);
+const VA_MODE: ParamAddr = ParamAddr::new(BlockRef::Va, VaParams::MODE);
 const STRUCTURE: ParamAddr = ParamAddr::new(BlockRef::Modal, ModalParams::STRUCTURE);
 
 /// A UI pass: 4 ms, three 1.33 ms audio blocks.
@@ -234,6 +238,50 @@ fn cc_moves_cutoff() {
     let p = b.ui.project();
     assert_ne!(p.part(P1).sound.stamp(), stamp, "the Sound was written");
     assert_eq!(part_status(p.part(P1), p.pool()), PartStatus::Edited);
+}
+
+/// Hand-speed sweeps to each end of a learned range, then rest: the
+/// stored value lands on the spec's own min and max, not a hair short,
+/// for a continuous target and a stepped one, full and inverted.
+#[test]
+fn swept_ends_reach_min_and_max() {
+    for a in [WAVE1, VA_MODE] {
+        for invert in [false, true] {
+            let mut b = Bench::new(Sound::plain_init(EngineType::Va));
+            b.map(P1, 20, a);
+            if invert {
+                let s = b.ui.project_mut().edit_part(P1).sound;
+                let e = s.map.entries()[0];
+                s.map.set(
+                    0,
+                    MapEntry {
+                        min: 255,
+                        max: 0,
+                        ..e
+                    },
+                );
+            }
+            let (lo, hi) = if invert {
+                (spec(a).max, spec(a).min)
+            } else {
+                (spec(a).min, spec(a).max)
+            };
+            for _ in 0..2 {
+                for v in (0..=100u8).rev() {
+                    b.pass(&[(20, v)]);
+                    b.passes(2);
+                }
+                b.passes(125);
+                assert_eq!(b.stored(P1, a), lo, "{a:?} CC 0, inverted {invert}");
+                for v in 27..=127u8 {
+                    b.pass(&[(20, v)]);
+                    b.passes(2);
+                }
+                b.passes(125);
+                assert_eq!(b.stored(P1, a), hi, "{a:?} CC 127, inverted {invert}");
+            }
+        }
+    }
 }
 
 /// 8 continuous knobs Part 1's engine reads, the filter's aside (the
@@ -906,4 +954,76 @@ fn learned_cells_ramp() {
     b.pass(&[(41, 0)]);
     b.passes(20);
     ramps_up(&mut b, 41, level);
+}
+
+/// One UI frame each `FRAME_MS` of 4 ms passes, VA's home showing WAVE1
+/// at slot 0; WAVE1's played place and its cell's, after each frame.
+fn frames(b: &mut Bench, n: u32, mut each: impl FnMut(u32, f32, f32)) {
+    for f in 1..=n {
+        b.passes((FRAME_MS / PASS_MS) as usize);
+        b.ui.update(UiTick::for_test());
+        each(
+            f * FRAME_MS,
+            b.played(WAVE1),
+            b.ui.renderer.anim[0].current(),
+        );
+    }
+}
+
+/// VA, WAVE1 on CC 20 at 0, a note sounding, its cell shown and settled.
+fn wave1_at_rest() -> Bench {
+    let mut b = Bench::new(Sound::plain_init(EngineType::Va));
+    b.map(P1, 20, WAVE1);
+    b.pass(&[(20, 0)]);
+    b.note();
+    assert_eq!(b.ui.page_def().id, VA_HOME.id);
+    frames(&mut b, 40, |_, _, _| {});
+    assert_eq!(b.ui.renderer.anim[0].current(), 0.0);
+    b
+}
+
+/// The cell's number: the place at the 127 steps a CC has.
+fn shown(place: f32) -> u8 {
+    (place * 127.0).round() as u8
+}
+
+/// A single CC after silence (spec § 5): the sound crosses in the 15 ms
+/// floor plus the 30 ms knob glide, and the cell shows it as quickly,
+/// lerped, never a snap: on the unit it crawled for a second.
+#[test]
+fn a_cc_jump_shows_as_fast_as_it_sounds() {
+    let mut b = wave1_at_rest();
+    b.pass(&[(20, 127)]);
+    // Played: a 15 ms ramp, then the one-pole's τ.
+    b.passes(((15 + 30) / PASS_MS) as usize);
+    assert!(b.played(WAVE1) > 0.6, "{} at 45 ms", b.played(WAVE1));
+    let mut first = None;
+    frames(&mut b, 6, |ms, played, cell| {
+        first.get_or_insert(cell);
+        if ms >= 200 {
+            assert_eq!(shown(played), 127, "played at {ms} ms");
+            assert_eq!(shown(cell), 127, "shown {cell} at {ms} ms");
+        }
+    });
+    assert!(first.unwrap() < 1.0, "the cell lerps, never snaps");
+}
+
+/// A sweep to each end at 5 ms a step: the cell shows the end within
+/// 200 ms of the last CC, as the sound has it.
+#[test]
+fn a_swept_end_shows_promptly() {
+    let mut b = wave1_at_rest();
+    for (from, to) in [(0u8, 127u8), (127, 0)] {
+        let up = to > from;
+        for k in 0..=127u8 {
+            let v = if up { k } else { 127 - k };
+            b.pass_with(vec![b.ev(P1, 20, v)], None, 5, 4);
+            if k % 10 == 0 {
+                b.ui.update(UiTick::for_test());
+            }
+        }
+        frames(&mut b, 4, |_, _, _| {});
+        assert_eq!(shown(b.played(WAVE1)), to, "played");
+        assert_eq!(shown(b.ui.renderer.anim[0].current()), to, "shown");
+    }
 }
