@@ -2,8 +2,8 @@ use chimera_core::boot::{BootAction, BootSeen, UsbRegs};
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::console::{
     Bank2Answer, Bank2Audio, Bank2Fail, Bank2Refusal, CardAnswer, CardFail, CardSpeed, Colours,
-    Command, Console, FlashPeek, FlashRegs, Frame, NoArg, Out, Request, SHOT_HEADER, Stalled,
-    Stats, SweepAsk, Unit, answer, check_staged, installed,
+    Command, Console, FlashPeek, FlashRegs, Frame, Hands, NoArg, Out, QUEUE, Request, SHOT_HEADER,
+    Stalled, Stats, SweepAsk, Unit, answer, check_staged, installed,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::reset::ResetCause;
@@ -44,6 +44,7 @@ struct Fake {
     forgotten: usize,
     bank2: Option<Bank2Answer>,
     installs: usize,
+    hands: Option<Hands>,
 }
 
 impl Fake {
@@ -67,6 +68,7 @@ impl Fake {
             forgotten: 0,
             bank2: None,
             installs: 0,
+            hands: None,
         }
     }
 }
@@ -116,6 +118,9 @@ impl Unit for Fake {
     }
     fn flash_peek(&self) -> Option<FlashPeek> {
         self.flash.map(|f| f.1)
+    }
+    fn hands(&mut self) -> Option<&mut Hands> {
+        self.hands.as_mut()
     }
     fn bank2_install(&mut self) -> Option<Bank2Answer> {
         self.installs += 1;
@@ -179,6 +184,8 @@ fn help_is_the_specs_text() {
          sweep   the lost-cluster sweep at the next boot: restarts into it\n\
          flash   flash controller and bank 2, read only\n\
          bank2   bank 2: its state; bank2 install: the staged file into it\n\
+         key     B1-B6 MENU MINUS PLUS MIX EDIT SEQ PUSH1-6, A+B [hold_ms]\n\
+         turn    <encoder 1-6> <delta -64..64>: detents at a hand's pace\n\
          ls      files and sizes in PROJECTS; ls tapes, ls sounds: theirs\n\
          put     a project, Sound or source: <path> <size> <crc32> [--over]\n\
          rm      a library Sound's pair: /CHIMERA/SOUNDS/S#######\n\
@@ -1132,4 +1139,98 @@ fn the_install_and_the_door_decide_the_answer() {
         installed(r, &Bank2Status::Torn, AUDIO),
         fail(Bank2Fail::Readback(Bank2Status::Corrupt))
     );
+}
+
+#[test]
+fn key_and_turn_queue_then_ok() {
+    let mut u = Fake::new();
+    assert_eq!(ask(&mut u, "key MENU\n"), "ERR key is not in this build\n");
+    assert_eq!(ask(&mut u, "turn 1 3\n"), "ERR turn is not in this build\n");
+    u.hands = Some(Hands::new());
+    assert_eq!(ask(&mut u, "key MIX+SEQ\n"), "OK\n");
+    assert_eq!(ask(&mut u, "turn 6 -64\n"), "OK\n");
+    for _ in 2..QUEUE {
+        assert_eq!(ask(&mut u, "key b1 500\n"), "OK\n");
+    }
+    assert_eq!(ask(&mut u, "key b1\n"), "ERR busy\n");
+    assert!(
+        ask(&mut u, "key FOO\n").starts_with("ERR key takes <name>[+<name>] [hold_ms]: B1-B6 ")
+    );
+    assert_eq!(
+        ask(&mut u, "turn 7 1\n"),
+        "ERR turn takes <encoder 1-6> <delta -64..64, not 0>\n"
+    );
+}
+
+mod hands {
+    use chimera_core::console::{Gesture, Hand, Hands, KeyArg, Switch, TurnArg};
+    use chimera_hal::{ButtonId, EncoderId, Ms};
+
+    fn key(with: Option<ButtonId>, tap: ButtonId, hold_ms: u16) -> Gesture {
+        Gesture::Key(KeyArg {
+            with: with.map(Switch::Button),
+            tap: Switch::Button(tap),
+            hold_ms,
+        })
+    }
+
+    fn held(h: Hand) -> Vec<ButtonId> {
+        chimera_hal::ALL_BUTTONS
+            .into_iter()
+            .filter(|&b| h.holds(Switch::Button(b)))
+            .collect()
+    }
+
+    #[test]
+    fn a_tap_is_down_60_ms_then_up_60() {
+        let mut h = Hands::new();
+        h.queue(key(None, ButtonId::Menu, 0)).unwrap();
+        assert_eq!(held(h.step(Ms(1000))), [ButtonId::Menu]);
+        assert_eq!(held(h.step(Ms(1059))), [ButtonId::Menu]);
+        assert_eq!(held(h.step(Ms(1060))), []);
+        assert!(!h.idle());
+        assert_eq!(h.step(Ms(1120)), Hand::default());
+        assert!(h.idle());
+    }
+
+    #[test]
+    fn a_combo_holds_the_first_around_the_second() {
+        let mut h = Hands::new();
+        h.queue(key(Some(ButtonId::Mix), ButtonId::Seq, 100))
+            .unwrap();
+        h.queue(key(None, ButtonId::B2, 0)).unwrap();
+        use ButtonId::*;
+        assert_eq!(held(h.step(Ms(0))), [Mix]);
+        assert_eq!(held(h.step(Ms(60))), [Mix, Seq]);
+        assert_eq!(held(h.step(Ms(159))), [Mix, Seq]);
+        assert_eq!(held(h.step(Ms(160))), [Mix]);
+        assert_eq!(held(h.step(Ms(220))), []);
+        // The gap ends at 280: the next gesture starts on that lap.
+        assert_eq!(held(h.step(Ms(279))), []);
+        assert_eq!(held(h.step(Ms(280))), [B2]);
+    }
+
+    #[test]
+    fn a_turn_spreads_its_detents_and_catches_up_after_a_stall() {
+        let mut h = Hands::new();
+        let turn = |delta| {
+            Gesture::Turn(TurnArg {
+                enc: EncoderId::C,
+                delta,
+            })
+        };
+        h.queue(turn(-3)).unwrap();
+        h.queue(turn(5)).unwrap();
+        let c = |h: Hand| h.detents[EncoderId::C as usize];
+        assert_eq!(h.step(Ms(0)).detents, [0, 0, -1, 0, 0, 0]);
+        assert_eq!(c(h.step(Ms(10))), 0);
+        assert_eq!(c(h.step(Ms(25))), -1);
+        assert_eq!(c(h.step(Ms(90))), -1);
+        assert_eq!(c(h.step(Ms(200))), 0);
+        // 50 + 160: the next turn's first detent.
+        assert_eq!(c(h.step(Ms(210))), 1);
+        assert_eq!(c(h.step(Ms(400))), 4);
+        assert_eq!(c(h.step(Ms(1000))), 0);
+        assert!(h.idle());
+    }
 }

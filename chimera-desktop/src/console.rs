@@ -4,7 +4,7 @@
 #[cfg(test)]
 use chimera_core::console::SHOT_HEADER;
 use chimera_core::console::{
-    AnswerClock, CardAnswer, Console, Frame, Out, Served, Stalled, Stats, Unit, answer,
+    AnswerClock, CardAnswer, Console, Frame, Hands, Out, Served, Stalled, Stats, Unit, answer,
 };
 use chimera_core::ui::UiState;
 use chimera_hal::Ms;
@@ -93,6 +93,8 @@ impl SocketConsole {
 pub struct DeskUnit<'a> {
     pub ui: &'a UiState,
     pub frame: Frame<'a>,
+    /// `key` and `turn`'s queue. `None`: they answer not in this build.
+    pub hands: Option<&'a mut Hands>,
 }
 
 impl Unit for DeskUnit<'_> {
@@ -119,6 +121,9 @@ impl Unit for DeskUnit<'_> {
     }
     fn usb_regs(&self) -> Option<chimera_core::boot::UsbRegs> {
         None
+    }
+    fn hands(&mut self) -> Option<&mut Hands> {
+        self.hands.as_deref_mut()
     }
     type Files = chimera_core::console::NoCard;
     fn files(&mut self) -> Option<&mut Self::Files> {
@@ -256,6 +261,7 @@ mod tests {
         let mut c = client(&con);
         c.write_all(request).unwrap();
         let unit = &mut DeskUnit {
+            hands: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -282,6 +288,7 @@ mod tests {
         let mut c = client(&con);
         c.write_all(b"status\n").unwrap();
         let unit = &mut DeskUnit {
+            hands: None,
             ui: &desk.ui,
             frame: Frame {
                 fb: &fb,
@@ -312,6 +319,7 @@ mod tests {
         let mut c = client(&con);
         c.write_all(b"stats\nbench\n").unwrap();
         let mut unit = DeskUnit {
+            hands: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -334,6 +342,7 @@ mod tests {
         let mut c = client(&con);
         c.write_all(b"dfu\n").unwrap();
         let mut unit = DeskUnit {
+            hands: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -354,6 +363,7 @@ mod tests {
         let mut c = client(&con);
         c.write_all(b"help\nstatus\n").unwrap();
         let mut unit = DeskUnit {
+            hands: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -379,6 +389,7 @@ mod tests {
         let mut new = client(&con);
         new.write_all(b"help\n").unwrap();
         let unit = &mut DeskUnit {
+            hands: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -397,6 +408,7 @@ mod tests {
         let mut con = SocketConsole::bind("127.0.0.1:0").unwrap();
         let mut c = client(&con);
         let mut unit = DeskUnit {
+            hands: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -434,6 +446,7 @@ mod tests {
         let mut con = SocketConsole::bind("127.0.0.1:0").unwrap();
         drop(client(&con));
         let mut unit = DeskUnit {
+            hands: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -455,6 +468,7 @@ mod tests {
         c.write_all(&[b'a'; 8 * READ_BUDGET]).unwrap();
         std::thread::sleep(Duration::from_millis(50));
         let unit = &mut DeskUnit {
+            hands: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -472,6 +486,7 @@ mod tests {
         let mut con = SocketConsole::bind("127.0.0.1:0").unwrap();
         let mut old = client(&con);
         let mut unit = DeskUnit {
+            hands: None,
             ui: &ui,
             frame: Frame {
                 fb: &fb,
@@ -486,5 +501,87 @@ mod tests {
         assert!(serve_until_answered(&mut con, &mut unit));
         let text = read_until_terminal(&mut new);
         assert!(text.starts_with("chimera console 1\n"), "{text}");
+    }
+
+    /// The keyboard keys that press and turn what `h` does this frame.
+    fn keys_for(h: &chimera_core::console::Hand) -> Vec<minifb::Key> {
+        use minifb::Key::*;
+        let mut keys: Vec<_> = [
+            Key1, Key2, Key3, Key4, Key5, Key6, M, Left, Right, Space, Up, Down,
+        ]
+        .into_iter()
+        .filter(|&k| {
+            crate::controls::button_for(k)
+                .is_some_and(|b| h.holds(chimera_core::console::Switch::Button(b)))
+        })
+        .collect();
+        for (&d, &k) in h.detents.iter().zip(&crate::controls::ENCODER_KEYS) {
+            match d {
+                0 => {}
+                1 => keys.push(k),
+                -1 => keys.extend([LeftShift, k]),
+                _ => panic!("one detent a frame at the sim's 33 ms: {d}"),
+            }
+        }
+        keys
+    }
+
+    /// `key` and `turn` through the socket move the UI frame by frame as the
+    /// same presses and turns on the keyboard do.
+    #[test]
+    fn key_and_turn_reach_the_ui_as_the_keyboard_does() {
+        use crate::qa::Desk;
+        let mut by_console = Desk::launch(crate::qa::tests::unique_root());
+        let mut by_keys = Desk::launch(crate::qa::tests::unique_root());
+        let start = by_console.ui.location();
+        let fb: Box<[u16; FB_SIZE]> = vec![0u16; FB_SIZE].try_into().unwrap();
+        let mut con = SocketConsole::bind("127.0.0.1:0").unwrap();
+        let mut c = client(&con);
+        let status = |d: &Desk| {
+            let mut s = String::new();
+            chimera_core::console::write_status(&d.ui, &mut s).unwrap();
+            s
+        };
+        let mut moved = false;
+        for line in [
+            "key MENU",
+            "key PLUS",
+            "key EDIT",
+            "turn 3 2",
+            "turn 3 -1",
+            "key SEQ",
+            "key MENU",
+            "key MIX+B2 200",
+            "turn 1 -3",
+            "key MIX",
+            "key B1 900",
+        ] {
+            c.write_all(format!("{line}\n").as_bytes()).unwrap();
+            let unit = &mut DeskUnit {
+                ui: &by_console.ui,
+                frame: Frame {
+                    fb: &fb,
+                    palette: Palette::IDENTITY,
+                },
+                hands: Some(&mut by_console.hands),
+            };
+            assert!(serve_until_answered(&mut con, unit));
+            assert_eq!(read_line(&mut c), "OK\n", "{line}");
+            for frame in 0.. {
+                let hand = by_console.frame(&[]);
+                by_keys.frame(&keys_for(&hand));
+                assert_eq!(
+                    by_console.ui.location(),
+                    by_keys.ui.location(),
+                    "{line} {frame}"
+                );
+                assert_eq!(status(&by_console), status(&by_keys), "{line} {frame}");
+                moved |= by_console.ui.location() != start;
+                if by_console.hands.idle() {
+                    break;
+                }
+            }
+        }
+        assert!(moved, "the gestures went somewhere");
     }
 }

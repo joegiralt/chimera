@@ -170,6 +170,7 @@ fn the_table_is_the_one_list() {
     let names: Vec<_> = Command::ALL.iter().map(|c| c.name()).collect();
     let mut want = vec![
         "help", "status", "stats", "bench", "card", "shot", "dfu", "sweep", "flash", "bank2",
+        "key", "turn",
     ];
     if cfg!(feature = "card-put") {
         want.extend(["ls", "put", "rm", "get"]);
@@ -471,4 +472,73 @@ fn without_card_put_ls_and_put_are_unknown() {
     let got = feed(&mut Console::new(), b"put x 1 0\nls\n");
     assert!(matches!(got[0], Err(Refusal::Unknown(_))));
     assert!(matches!(got[1], Err(Refusal::Unknown(_))));
+}
+
+fn one(s: &str) -> Result<Request, Refusal> {
+    feed(&mut Console::new(), s.as_bytes()).remove(0)
+}
+
+fn key(with: Option<Switch>, tap: Switch, hold_ms: u16) -> Result<Request, Refusal> {
+    Ok(Request::Key(KeyArg { with, tap, hold_ms }))
+}
+
+#[test]
+fn key_takes_a_name_a_combo_and_a_hold() {
+    use chimera_hal::ButtonId::*;
+    let b = Switch::Button;
+    assert_eq!(one("key MENU\n"), key(None, b(Menu), 0));
+    assert_eq!(one("key menu 0\n"), key(None, b(Menu), 0));
+    assert_eq!(one("KEY b6 250\n"), key(None, b(B6), 250));
+    assert_eq!(one("key MIX+SEQ\n"), key(Some(b(Mix)), b(Seq), 0));
+    assert_eq!(one("key mix+b3 800\n"), key(Some(b(Mix)), b(B3), 800));
+    assert_eq!(one("key minus\n"), key(None, b(Minus), 0));
+    assert_eq!(one("key PLUS 10000\n"), key(None, b(Plus), 10_000));
+    assert_eq!(one("key EDIT\n"), key(None, b(Edit), 0));
+    #[cfg(feature = "push-encoders")]
+    assert_eq!(
+        one("key MIX+push4\n"),
+        key(Some(b(Mix)), Switch::Push(chimera_hal::EncoderId::D), 0)
+    );
+    for bad in [
+        "key\n",
+        "key FOO\n",
+        "key B0\n",
+        "key B7\n",
+        "key PUSH7\n",
+        "key MIX+\n",
+        "key +SEQ\n",
+        "key MIX+MIX\n",
+        "key MIX+SEQ+B1\n",
+        "key MENU -1\n",
+        "key MENU 10001\n",
+        "key MENU 1x\n",
+        "key MENU 5 5\n",
+    ] {
+        assert_eq!(one(bad), Err(Refusal::Arguments(Command::Key)), "{bad}");
+    }
+}
+
+#[test]
+fn turn_takes_an_encoder_and_a_delta() {
+    use chimera_hal::EncoderId::*;
+    let t = |enc, delta| Ok(Request::Turn(TurnArg { enc, delta }));
+    assert_eq!(one("turn 1 1\n"), t(A, 1));
+    assert_eq!(one("TURN 6 -64\n"), t(F, -64));
+    assert_eq!(one("turn 3 +64\n"), t(C, 64));
+    for bad in [
+        "turn\n",
+        "turn 1\n",
+        "turn 0 1\n",
+        "turn 7 1\n",
+        "turn 12 1\n",
+        "turn A 1\n",
+        "turn 1 0\n",
+        "turn 1 65\n",
+        "turn 1 -65\n",
+        "turn 1 200\n",
+        "turn 1 x\n",
+        "turn 1 2 3\n",
+    ] {
+        assert_eq!(one(bad), Err(Refusal::Arguments(Command::Turn)), "{bad}");
+    }
 }

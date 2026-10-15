@@ -100,6 +100,11 @@ pub trait Unit {
     fn bank2_install(&mut self) -> Option<super::Bank2Answer> {
         None
     }
+    /// The console's hands, which `key` and `turn` queue on. `None`: not
+    /// in this build.
+    fn hands(&mut self) -> Option<&mut super::Hands> {
+        None
+    }
     /// Provokes the fault, once `OK` is not yet out. `None`: not in this build.
     #[cfg(feature = "fault-inject")]
     fn fault(&mut self, _: super::FaultArg) -> Option<()> {
@@ -123,8 +128,8 @@ pub trait Unit {
 enum Why {
     Refused(Refusal),
     Absent(Command),
-    /// Card work is pending in the UI: a card verb waits for it.
-    #[cfg(feature = "card-put")]
+    /// Card work is pending in the UI, which a card verb waits for, or
+    /// the hands' queue is full.
     Busy,
 }
 
@@ -135,7 +140,6 @@ impl fmt::Display for Why {
             Why::Refused(Refusal::Arguments(c)) => write!(f, "{} takes {}", c.name(), c.usage()),
             Why::Refused(Refusal::TooLong) => write!(f, "line too long, {MAX_LINE} max"),
             Why::Absent(c) => write!(f, "{} is not in this build", c.name()),
-            #[cfg(feature = "card-put")]
             Why::Busy => f.write_str("busy"),
         }
     }
@@ -233,6 +237,8 @@ pub fn answer(
             None => Err(Why::Absent(r.command())),
             Some(a) => return super::write_bank2(&a, t.0),
         },
+        Ok(r @ Request::Key(k)) => queue(unit, r, super::Gesture::Key(k)),
+        Ok(r @ Request::Turn(tn)) => queue(unit, r, super::Gesture::Turn(tn)),
         #[cfg(feature = "fault-inject")]
         Ok(r @ Request::Fault(super::FaultArg::Ndtr)) => unit
             .fault_dump()
@@ -286,6 +292,14 @@ pub fn answer(
         Err(why) => writeln!(t, "ERR {why}"),
     }
     .map_err(|fmt::Error| Stalled)
+}
+
+/// `key` or `turn`: `OK` once queued.
+fn queue(unit: &mut impl Unit, r: Request, g: super::Gesture) -> Result<fmt::Result, Why> {
+    match unit.hands() {
+        None => Err(Why::Absent(r.command())),
+        Some(h) => h.queue(g).map(Ok).map_err(|super::Busy| Why::Busy),
+    }
 }
 
 fn help(t: &mut impl Write) -> fmt::Result {

@@ -1,10 +1,12 @@
+use chimera_core::console::Hand;
 use chimera_hal::{
     ButtonId, ButtonState, Controls, Edges, EncoderId, Latch, Ms, NUM_BUTTONS, NUM_ENCODERS,
 };
 use minifb::Key;
 
 /// Encoder A-F's keys, in `EncoderId` order.
-const ENCODER_KEYS: [Key; NUM_ENCODERS] = [Key::Q, Key::W, Key::E, Key::R, Key::T, Key::Y];
+pub(crate) const ENCODER_KEYS: [Key; NUM_ENCODERS] =
+    [Key::Q, Key::W, Key::E, Key::R, Key::T, Key::Y];
 
 /// Maps keyboard to PreenFM3 controls.
 ///
@@ -31,7 +33,7 @@ pub struct DesktopControls {
 }
 
 /// The button a key stands for.
-fn button_for(key: Key) -> Option<ButtonId> {
+pub(crate) fn button_for(key: Key) -> Option<ButtonId> {
     Some(match key {
         Key::Key1 => ButtonId::B1,
         Key::Key2 => ButtonId::B2,
@@ -63,7 +65,14 @@ impl DesktopControls {
 
     /// Call once per frame with the keys down now. A tap that starts and
     /// ends between two frames is not seen.
+    #[cfg(test)]
     pub fn update_events(&mut self, down: &[Key], now_ms: Ms) {
+        self.update_events_with(down, &Hand::default(), now_ms);
+    }
+
+    /// `update_events`, the console's hand (`key`, `turn`) pressing and
+    /// turning with the keyboard.
+    pub fn update_events_with(&mut self, down: &[Key], hand: &Hand, now_ms: Ms) {
         self.now_ms = now_ms;
         self.encoder_deltas = [0; NUM_ENCODERS];
         let any = |keys: [Key; 2]| down.iter().any(|k| keys.contains(k));
@@ -79,11 +88,13 @@ impl DesktopControls {
             if held && !ctrl {
                 self.encoder_deltas[i] = step;
             }
-            self.push_latches[i].level(held && (ctrl || alt), now_ms);
+            self.encoder_deltas[i] = self.encoder_deltas[i].saturating_add(hand.detents[i]);
+            let by_hand = hand.down & (1 << (NUM_BUTTONS + i)) != 0;
+            self.push_latches[i].level(held && (ctrl || alt) || by_hand, now_ms);
             self.pushes[i] = self.push_latches[i].take();
         }
 
-        let mut level = [false; NUM_BUTTONS];
+        let mut level: [bool; NUM_BUTTONS] = core::array::from_fn(|i| hand.down & (1 << i) != 0);
         for b in down.iter().copied().filter_map(button_for) {
             level[b as usize] = true;
         }

@@ -16,6 +16,12 @@
     python3 chimera-usb.py bank2 <file.bk2>  install a .bk2 under the running firmware (developers)
     python3 chimera-usb.py bank2 erase       empty bank 2 (a `just firmware-gate` build only)
     python3 chimera-usb.py flash             the flash controller's registers and bank 2's first bytes, read only
+    python3 chimera-usb.py key <name>[+<name>] [hold_ms]
+                                                   press a button as a hand would (a tap without hold_ms):
+                                                   B1-B6 MENU MINUS PLUS MIX EDIT SEQ PUSH1-6; key MIX+SEQ
+                                                   holds MIX while it taps SEQ. OK once queued (8 at most)
+    python3 chimera-usb.py turn <encoder 1-6> <delta -64..64>
+                                                   detents every 25 ms, so acceleration builds as by hand
     python3 chimera-usb.py to-dfu            the unit into ROM DFU, to flash it
     python3 chimera-usb.py wait-console [s]  wait (default 10 s) for the console on the bus
 

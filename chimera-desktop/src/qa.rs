@@ -3,6 +3,7 @@
 //! `DirStore`, with no window. Desktop QA for what the window would show.
 
 use crate::controls::DesktopControls;
+use chimera_core::console::{Hand, Hands};
 use chimera_core::project::LoadLink;
 use chimera_core::storage::{Card, SystemSettings, SystemSync};
 use chimera_core::ui::UiState;
@@ -27,6 +28,8 @@ pub struct Desk {
     settings: SystemSettings,
     link: LoadLink,
     now: u32,
+    /// The console's `key` and `turn`, pressing with the keys.
+    pub hands: Hands,
     /// The toast `boot` left, read before the first frame.
     pub boot_toast: Option<String>,
 }
@@ -51,14 +54,17 @@ impl Desk {
             settings,
             link: LoadLink::new(),
             now: 0,
+            hands: Hands::new(),
             boot_toast,
         }
     }
 
-    /// One frame with `keys` down.
-    pub fn frame(&mut self, keys: &[Key]) {
+    /// One frame with `keys` down, and the console's hand; it returns the
+    /// hand.
+    pub fn frame(&mut self, keys: &[Key]) -> Hand {
         self.now += FRAME_MS;
-        self.controls.update_events(keys, Ms(self.now));
+        let hand = self.hands.step(Ms(self.now));
+        self.controls.update_events_with(keys, &hand, Ms(self.now));
         self.ui.handle_input(&self.controls);
         let link = &self.link;
         let cx = CardCx {
@@ -77,6 +83,7 @@ impl Desk {
             &mut self.settings,
         );
         self.ui.update(UiTick::for_test());
+        hand
     }
 
     pub fn tap(&mut self, k: Key) {

@@ -90,6 +90,7 @@ fn main() {
     let mut toast_at = Instant::now();
 
     let mut console = console::bind_or_off(console::ADDR);
+    let mut hands = chimera_core::console::Hands::new();
 
     while display.is_open() {
         // Before the frame's input and draw: the snapshot point the chip uses.
@@ -97,6 +98,7 @@ fn main() {
             c.service(&mut DeskUnit {
                 ui: &ui,
                 frame: display.frame(),
+                hands: Some(&mut hands),
             })
         });
         let now = Instant::now();
@@ -104,7 +106,8 @@ fn main() {
         frame_start = now;
 
         let keys = display.get_keys();
-        controls.update_events(&keys, Ms(first_light.elapsed().as_millis() as u32));
+        let at = Ms(first_light.elapsed().as_millis() as u32);
+        controls.update_events_with(&keys, &hands.step(at), at);
 
         // Octave shift: [ and ]
         if keys.contains(&minifb::Key::LeftBracket) {
