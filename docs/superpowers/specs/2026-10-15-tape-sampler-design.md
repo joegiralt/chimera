@@ -288,7 +288,7 @@ Each mockup is the 240 × 320 screen, one character about 6 px.
 - Tools: B1 jumps the view TO START, B2 TO END, B3 FLIP (reverses the **whole sample**; its readout says `FLIP · WHOLE SAMPLE`), B4 LOUD (normalise), B5 SNAP on/off, B6 PLAY.
 - GAIN, fades, FLIP and LOUD are **render marks**: heard in audition (applied on the fly), rendered into a new `.SRC` only by MAKE. While any is set, the header shows a `RENDER` badge, their tool boxes and dials carry a render dot, and the readout says `RENDERS ON SAVE`, so audio changes never look like plain marks.
 
-**CUT** (KIT and REEL: where the marks go). **METHOD is a dial**, not a sub-page: GRID · TRANSIENT · HAND. The dials are METHOD, SLICE, POS, ZOOM, then the method's own: GRID → COUNT; TRANSIENT → THRESH, MIN GAP; HAND → none (dimmed). The ASCII below predates this; the pixel mockups are current.
+**CUT** (KIT and REEL: where the marks go). **METHOD is a dial**, not a sub-page: GRID · TRANSIENT · HAND. The dials are METHOD, SLICE, ZOOM, then the method's own: GRID → COUNT; TRANSIENT → COUNT, MIN GAP, THRESH; HAND → POS (moving a mark is a hand edit, so POS lives in HAND). The ASCII below predates this; the pixel mockups are current.
 
 ```
 ┌PREP┐ AMEN BREAK           ( KIT ) 
@@ -310,7 +310,11 @@ Each mockup is the 240 × 320 screen, one character about 6 px.
  [ ADD  ][ERASE ][◂ PREV][NEXT ▸][ SNAP ][▶ PLAY]
 ```
 
-- GRID: COUNT (2–64 equal). TRANSIENT: THRESH and MIN GAP (an envelope follower over one read of the file). HAND: ADD a mark at the audition head, ERASE, PREV, NEXT, POS moves the focused mark (snapping to a zero crossing).
+- GRID: COUNT (2–64 equal slices of the trimmed window).
+- TRANSIENT is **count-first** (owner, 2026-10-15; the MPC's chop): COUNT (1–64) keeps the COUNT strongest onsets, at least MIN GAP apart. One read of the file runs an envelope follower and keeps every onset with its strength (≤ 512, ~2 KB in PREP's scratch); turning COUNT or MIN GAP re-picks from that list instantly, with no new read. THRESH (a floor in dB, default off) is the fine dial: onsets under it are never picked, so COUNT can come up short and the readout says so (`12 OF 16 · RAISE THRESH`).
+- **Marks redraw live** as the dials turn; the readout shows the method and the result (`TRANSIENT · 16 SLICES`).
+- **Hand edits are protected.** Turning METHOD to HAND keeps the current marks for editing. Turning it back to GRID or TRANSIENT after any hand edit asks `REPLACE HAND EDITS? YES / NO` first; NO leaves METHOD on HAND.
+- HAND: ADD a mark at the audition head, ERASE, PREV, NEXT, POS moves the focused mark (snapping to a zero crossing when SNAP is on).
 - MIX + B2 clears every mark (`MIX + ERASE · CLEAR ALL MARKS`).
 - Up to 64 marks for KIT and 32 for REEL. The 65th ADD says `64 SLICES · KIT IS FULL`.
 
