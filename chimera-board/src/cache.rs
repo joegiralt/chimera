@@ -1,11 +1,12 @@
+use chimera_core::console::Sram4;
 use cortex_m::peripheral::{CPUID, MPU, SCB};
 use stm32h7xx_hal::pac;
 
 const DMA_REGION_BASE: u32 = 0x3000_0000;
 pub(crate) const RBAR_VALID: u32 = 1 << 4;
-// XN | AP = full access | TEX 001, C 0, B 0 (Normal, non-cacheable) | S 0 | SIZE 11 (4 KB) | ENABLE
-const DMA_REGION_RASR: u32 = (1 << 28) | (0b011 << 24) | (0b001 << 19) | (11 << 1) | 1;
-const _: () = assert!(DMA_REGION_RASR == 0x1308_0017);
+// XN | AP = full access | TEX 001, C 0, B 0 (Normal, non-cacheable) | S 0 | SIZE 13 (16 KB) | ENABLE
+const DMA_REGION_RASR: u32 = (1 << 28) | (0b011 << 24) | (0b001 << 19) | (13 << 1) | 1;
+const _: () = assert!(DMA_REGION_RASR == 0x1308_001B);
 // ENABLE | PRIVDEFENA: the default memory map everywhere else.
 const MPU_CTRL: u32 = 0b101;
 
@@ -41,6 +42,31 @@ pub(crate) const BANK2_OPEN_RASR: u32 = AP_RO | NORMAL_WT | SIZE_512K | ENABLE;
 const _: () = assert!(BANK2_OPEN_RASR == 0x0602_0025);
 pub(crate) const BANK2_REGION: u32 = 2;
 
+/// One word per `words`: write a pattern, push it out to the RAM and read it
+/// back past the cache, then zero it. A memory check of SRAM4 (D3, always
+/// clocked), not of any layout.
+///
+/// # Safety
+/// Each pointer is a valid, aligned, unshared word of memory nothing else
+/// uses yet, in different cache lines (a line is 32 B).
+pub unsafe fn sram4_self_test(scb: &mut SCB, words: &[*mut u32]) -> Sram4 {
+    const PATTERN: u32 = 0xA5A5_5A5A;
+    let mut ok = true;
+    for &w in words {
+        // SAFETY: `w` is valid and exclusively ours (the contract above); the
+        // by-address clean+invalidate covers just its own line, so nothing
+        // else loses data.
+        unsafe {
+            w.write_volatile(PATTERN);
+            scb.clean_invalidate_dcache_by_address(w as usize, 4);
+            ok &= w.read_volatile() == PATTERN;
+            w.write_volatile(0);
+            scb.clean_invalidate_dcache_by_address(w as usize, 4);
+        }
+    }
+    if ok { Sram4::Ok } else { Sram4::Failed }
+}
+
 pub fn enable_d2_sram() {
     // SAFETY: read-modify-write of RCC_AHB2ENR's SRAM1/2/3EN before anything
     // touches D2 (ADR 0014); single-threaded, before the HAL owns RCC.
@@ -61,7 +87,7 @@ pub fn init(mpu: &mut MPU, scb: &mut SCB, cpuid: &mut CPUID) {
     cortex_m::asm::dmb();
     // SAFETY: the MPU is reprogrammed with both caches still off and no DMA
     // running; regions 3-15 are disabled in case a bootloader left any,
-    // region 0 covers exactly the linker-asserted 4 KB DMA block, and
+    // region 0 covers exactly the linker-asserted 16 KB DMA block, and
     // regions 1 and 2 bank 2, where nothing bank 1 links lives (memory.x
     // ends FLASH at 0x08100000), so no code or data in use loses access.
     unsafe {

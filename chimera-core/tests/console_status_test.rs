@@ -1,6 +1,6 @@
 mod screen;
 
-use chimera_core::console::{state_word, write_status};
+use chimera_core::console::{SRAM4, Sram4, state_word, write_status};
 use chimera_core::part::DacPair;
 use chimera_core::project::{PartId, ProjectStatus};
 use chimera_core::ui::UiState;
@@ -28,6 +28,16 @@ fn at(ui: &UiState) -> String {
 }
 
 #[test]
+fn status_reports_sram4() {
+    let ui = Box::new(UiState::new());
+    assert_eq!(line(&status(&ui), "sram4"), "untested");
+    SRAM4.store(Sram4::Ok);
+    assert_eq!(line(&status(&ui), "sram4"), "ok");
+    SRAM4.store(Sram4::Failed);
+    assert_eq!(line(&status(&ui), "sram4"), "FAIL");
+}
+
+#[test]
 fn status_has_its_lines_in_order() {
     let ui = Box::new(UiState::new());
     let s = status(&ui);
@@ -35,7 +45,7 @@ fn status_has_its_lines_in_order() {
     assert_eq!(
         keys,
         [
-            "firmware", "build", "protocol", "project", "state", "part", "at"
+            "firmware", "build", "protocol", "project", "state", "part", "at", "sram4"
         ]
     );
     assert_eq!(

@@ -151,6 +151,11 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     #[cfg(feature = "usb-console")]
     let ccdr = usb::route_kernel_clock(ccdr);
     cache::init(&mut cp.MPU, &mut cp.SCB, &mut cp.CPUID);
+    // SAFETY: once, before audio and the rings' owner exist, so the eight
+    // words (8 KiB apart, so in different lines) are nothing else's yet.
+    #[cfg(not(feature = "sd-probe"))]
+    chimera_core::console::SRAM4
+        .store(unsafe { cache::sram4_self_test(&mut cp.SCB, &shared::sram4_words()) });
     // Bank 2 judged before anything could call into it (ADR 0137), a
     // fault's mark first; the cycle counter bounds its erase.
     #[cfg(not(feature = "sd-probe"))]

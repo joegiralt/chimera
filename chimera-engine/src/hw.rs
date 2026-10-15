@@ -57,9 +57,12 @@ pub const AXI_SRAM: usize = 512 * 1024; // D1: framebuffer, UI, Performance, FX 
 pub const D2_SRAM: usize = 288 * 1024; // SRAM1+2+3 at 0x3000_0000: voices, DMA buffers
 pub const DTCM: usize = 128 * 1024; // tables, audio stack
 
-/// D2 kept free for the audio DMA rings (3 SAI × 2 halves × 64 frames × 2 ch
-/// × 4 B = 3 KB, `chimera-stm32/src/audio/dma.rs`) and MIDI buffers.
-pub const D2_DMA_RESERVE: usize = 8 * 1024;
+/// D2 kept free, as one non-cacheable MPU region (16 KB), for the audio DMA
+/// rings (3 SAI × 2 halves × 64 frames × 2 ch × 4 B = 3 KB,
+/// `chimera-stm32/src/audio/dma.rs`), MIDI buffers and the card's staging.
+pub const D2_DMA_RESERVE: usize = 16 * 1024;
+/// D3 SRAM4 at 0x3800_0000: the stream rings.
+pub const SRAM4: usize = 64 * 1024;
 /// The UI's knob publisher, kept in D2 beside the voices on the board, not
 /// in AXI, which the bench builds hold within 8 KiB of full (ADR 0115).
 pub const D2_KNOBS: usize = core::mem::size_of::<crate::dsp::knobs::KnobPublisher>();

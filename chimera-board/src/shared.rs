@@ -7,7 +7,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use chimera_core::dsp::algo::engine::{FormantView, FormantViews};
 use chimera_core::dsp::algo::waves::{self, Waves};
 use chimera_core::dsp::knobs::KnobPublisher;
-use chimera_core::hw::MAX_PARTS;
+use chimera_core::hw::{self, MAX_PARTS};
 use chimera_core::instrument::AudioShared;
 #[cfg(feature = "midi-din")]
 use chimera_core::midi_in::CcRing;
@@ -35,6 +35,18 @@ pub fn take_scope() -> Option<(Writer<ScopeFrame>, Reader<ScopeFrame>)> {
     Some(unsafe { &mut *addr_of_mut!(SCOPE) }.split())
 }
 
+// D3 SRAM4 (sram4.x): the stream rings, typed where they are built. NOLOAD,
+// so nothing reads it before `cache::sram4_self_test`.
+#[unsafe(link_section = ".sram4")]
+static mut RINGS: MaybeUninit<[u8; hw::SRAM4]> = MaybeUninit::uninit();
+
+/// One word every 8 KiB of SRAM4, for its self-test.
+pub fn sram4_words() -> [*mut u32; 8] {
+    let base = addr_of_mut!(RINGS).cast::<u8>();
+    // SAFETY: each offset is inside `RINGS` (8 * 8 KiB = SRAM4).
+    core::array::from_fn(|i| unsafe { base.add(i * 8 * 1024) }.cast::<u32>())
+}
+
 // The wave tables' zero-wait working copy, at the top of DTCM (dtcm.x).
 #[unsafe(link_section = ".dtcm_waves")]
 static mut WAVES_DTCM: MaybeUninit<Waves> = MaybeUninit::uninit();
@@ -53,7 +65,7 @@ pub fn build_waves() {
 // `UiState` is ~27 KB: it lives in D2, not in `main`'s frame on the
 // ~63.75 KB DTCM stack (ADR 0025), nor in AXI, which the MIDI map's 96 B a
 // Sound filled to the margin (ADR 0087, 0139). NOLOAD: built in place by
-// `take_ui`. D2 is cacheable apart from the 4 KB DMA window (`cache.rs`).
+// `take_ui`. D2 is cacheable apart from the 16 KB DMA window (`cache.rs`).
 #[unsafe(link_section = ".ram_d2")]
 static mut UI: MaybeUninit<UiState> = MaybeUninit::uninit();
 static UI_TAKEN: AtomicBool = AtomicBool::new(false);

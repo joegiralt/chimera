@@ -7,6 +7,8 @@ MEMORY
     RAM  (rwx) : ORIGIN = 0x24000000, LENGTH = 512K
     /* D2 SRAM1 (128K) + SRAM2 (128K) + SRAM3 (32K), contiguous (RM0433 §2.3) */
     RAM_D2 (rwx) : ORIGIN = 0x30000000, LENGTH = 288K
+    /* D3 SRAM4 (64K), no clock enable needed (RM0433 §2.3) */
+    RAM_D3 (rwx) : ORIGIN = 0x38000000, LENGTH = 64K
     DTCM (rwx) : ORIGIN = 0x20000000, LENGTH = 128K
 }
 
