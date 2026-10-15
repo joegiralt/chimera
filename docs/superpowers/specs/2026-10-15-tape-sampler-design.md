@@ -575,6 +575,6 @@ Slices 0–7 are the release (release-needs-features).
 2. ~~Over the stream budget.~~ Settled: a new note steals the oldest streamed voice.
 3. ~~Fade on every write.~~ Settled: every card write while streams play fades them (save, library save, `put`, CLEAN UP, renders).
 4. TRON's keep: MOTOR (cheap, recommended) or REWIND (each replay is a cold start, up to ~60 ms late)?
-5. RESAMPLE renders one note of a Part's Sound. Do you also want a held chord, or an ORBIT phrase, in this release?
+5. ~~RESAMPLE's scope.~~ Settled: one note in this release; chords later (private issue #555).
 
 Settled here by precedent or the code, not asked: the `.PRP` is content-named and write-once (§ 3.2); KIT has 4 choke groups; REEL's CHANCE is rolled a step early; streams are 12-bit mono only; streaming is forward-only until REEL.
