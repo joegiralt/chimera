@@ -1,4 +1,4 @@
-# 0144. Ship binary-only through alpha; open the shell under MPL-2.0 and keep the engine closed
+# 0144. Ship binary-only through alpha; at beta open the shell under GPLv3 with a linking exception and keep the engine closed
 
 - **Status:** Proposed
 - **Deciders:** owner
@@ -29,7 +29,7 @@ contributions they don't own.
 ## Decision
 1. **Alpha stays binary-only** under the current tester licence. No source is
    published.
-2. **When source opens, it opens split** along the existing crate line:
+2. **At beta, source opens, split** along the existing crate line:
    - **Closed, all rights reserved:**
      - `chimera-engine`: the DSP, voices, FX and their tables.
      - ORBIT's runner and generators, wherever they live when the split is
@@ -37,7 +37,7 @@ contributions they don't own.
      - The factory Sounds.
 
      Shipped only inside release binaries.
-   - **Open, MPL-2.0:** the shell.
+   - **Open, GPLv3 with a linking exception:** the shell.
      - The UI: `chimera-core` minus anything moved to the closed side.
      - Hardware: `chimera-hal`, `chimera-stm32`, `chimera-board`,
        `chimera-bootloader`.
@@ -46,22 +46,40 @@ contributions they don't own.
    - **A stub engine:** a small open engine with the same interface as
      `chimera-engine` (a plain oscillator, a filter, an envelope), so a public
      checkout builds and plays without the closed crate.
-3. **MPL-2.0, not GPL, for the shell.**
-   - MPL's copyleft is per file. Changes to open files must be shared, but the
-     open files may be combined with the closed engine in one binary.
-   - GPL would need a written linking exception for the same result.
-4. **Contributions to the shell need a contributor licence agreement** that
-   grants the owner the right to relicense, so open-side code can still move
-   into products. The engine takes no outside contributions.
+3. **GPLv3 for the shell, with an additional permission under section 7**:
+
+   > As an additional permission under GNU GPL version 3 section 7, you may
+   > combine this program with the Chimera DSP engine, under its own licence,
+   > and convey the result.
+
+   - Forks of the shell must stay GPLv3: stricter than MPL, which fits the aim.
+   - The exception lets every release binary include the closed engine,
+     whoever contributed to the shell. Without it, the first merged outside
+     contribution would make shipping it beside the closed engine a breach
+     of that contributor's GPL.
+   - Forks can't ship the engine: they don't have it. They get the stub.
+4. **No contributor licence agreement.** The exception covers the firmware,
+   and the owner doesn't plan to reuse the shell in products. Open-side code
+   the owner later wants in a product must be the owner's alone. The engine
+   takes no outside contributions, so the owner may always reuse it anywhere,
+   including closed plugins.
 5. **The name and logo are protected separately** from the code. Before the
    first public source release:
    - check whether "Chimera" can be registered as a trademark for synth
      firmware and software;
    - add a trademark notice so a fork can't ship as Chimera.
-6. **An IP lawyer reviews** the MPL boundary, the CLA and the trademark before
+6. **An IP lawyer reviews** the exception's wording and the trademark before
    anything opens.
 
 ## Alternatives considered
+- **MPL-2.0 for the shell.**
+  - Its per-file copyleft allows combining with the closed engine without an
+    exception.
+  - Rejected: forks could keep their own new files closed. GPLv3 with the
+    exception is stricter on forks and still allows the closed engine.
+- **GPLv3 for the shell, plus a CLA instead of the exception.**
+  - Works too, but every contributor has to sign, and the owner has no plans
+    to relicense the shell.
 - **GPLv3 on everything, plus a CLA.**
   - The owner could still sell the code closed, under a second licence.
   - But the engines and their tuning become public. A GPL fork could ship the
@@ -83,8 +101,7 @@ contributions they don't own.
 
 ## Consequences
 - **The commercial asset stays closed.** The engine never leaves the owner's
-  hands, so plugins and other hardware need no second licence and no CLA for
-  it.
+  hands, so plugins and other hardware need no second licence for it.
 - **The split must stay clean.** No engine code in open files, a stable
   engine interface, and a stub engine that keeps building. Code that crosses
   the line, such as ORBIT pieces in `chimera-core`, has to move before the
@@ -103,7 +120,8 @@ contributions they don't own.
 ## Sources
 - `chimera-releases/LICENSE.md`: the tester licence.
 - Elektronauts PreenFM3 thread, post 192 (2026-10-15).
-- MPL-2.0: https://www.mozilla.org/en-US/MPL/2.0/ and its FAQ on larger works.
-- GPLv3: https://www.gnu.org/licenses/gpl-3.0.html
+- GPLv3, section 7 (additional permissions): https://www.gnu.org/licenses/gpl-3.0.html
+- GPL FAQ on linking exceptions: https://www.gnu.org/licenses/gpl-faq.html#GPLIncompatibleLibs
+- MPL-2.0: https://www.mozilla.org/en-US/MPL/2.0/
 - PolyForm Noncommercial: https://polyformproject.org/licenses/noncommercial/1.0.0/
 - Business Source License: https://mariadb.com/bsl11/
