@@ -49,7 +49,7 @@ B5 confirms writes stall reads (expected: yes, so § 8's quiet stays). B7 measur
 |---|---|---|
 | SRAM4 joins the map | `chimera-stm32/memory.x`, `chimera-stm32/build.rs` | `RAM_D3 (rwx) : ORIGIN = 0x38000000, LENGTH = 64K` in `memory.x`; the `.sram4 (NOLOAD)` output section in a script `build.rs` writes (as it writes `ram_d2.x`), with an assert that it fits `RAM_D3` |
 | Rings in SRAM4 | `chimera-engine/src/stream/ring.rs` | `#[link_section = ".sram4"] static RINGS: Rings` (8 × 8,128 B = 65,024 B), asserted ≤ 64 KiB. CPU access only: the card IRQ copies in, the audio reads. Cacheable (the default map). |
-| The DMA region grows to 16 KiB | `chimera-board/src/cache.rs`, `chimera-stm32/build.rs` (`ram_d2.x`), `chimera-engine/src/hw.rs` | The `.ram_d2_dma` output section (input `.ram_d2.dma`, where `audio/dma.rs`' `RINGS` already lands) at `ORIGIN(RAM_D2)` grows from 4,096 to 16,384 B, `ALIGN(16384)`, holding the SAI rings (3 KB, as now) and the card staging (2 × 4,608 B). Its two asserts in `build.rs` change with it. MPU region 0's SIZE goes from 11 (4 KB) to 13 (16 KB); `DMA_REGION_RASR` and its assert change (`0x1308_0017` → `0x1308_001B`). `D2_DMA_RESERVE` 8 → 16 KiB. Nothing else may land in `.ram_d2.dma`. |
+| The DMA region grows to 16 KiB | `chimera-board/src/cache.rs`, `chimera-stm32/build.rs` (`ram_d2.x`), `chimera-engine/src/hw.rs` | The `.ram_d2_dma` output section (input `.ram_d2.dma`, where `audio/dma.rs`' `RINGS` already lands) at `ORIGIN(RAM_D2)` grows from 4,096 to 16,384 B, `ALIGN(16384)`, holding the SAI rings (3 KB, as now) and the card staging: one buffer of a 128 B token-scan area plus 9 blocks and a trailing CRC (4,738 B). The IRQ de-frames before it starts the next transfer, so a second buffer has no use. Its two asserts in `build.rs` change with it. MPU region 0's SIZE goes from 11 (4 KB) to 13 (16 KB); `DMA_REGION_RASR` and its assert change (`0x1308_0017` → `0x1308_001B`). `D2_DMA_RESERVE` 8 → 16 KiB. Nothing else may land in `.ram_d2.dma`. |
 | SRAM4's clock | `chimera-board/src/cache.rs` (`enable_d2_sram`'s neighbour) | None needed: RCC_AHB4ENR has no SRAM4 enable on this part (only AHB4LPENR's `SRAM4LPEN`, for sleep; checked against the `stm32h7` PAC). A boot self-test writes and reads one word of each ring and reports `sram4 ok` in `status`. |
 | Stream registry | `chimera-engine/src/stream/registry.rs` | A D2 static, ~2.2 KB: 8 rows, each a streamed source's `SourceId`, `Extents` and framing (§ 5) |
 
@@ -68,26 +68,36 @@ pub const CMD12: u8 = 12;  // STOP_TRANSMISSION
 pub const CMD17: u8 = 17;  // READ_SINGLE_BLOCK
 pub const CMD18: u8 = 18;  // READ_MULTIPLE_BLOCK
 pub const DATA_TOKEN: u8 = 0xFE;
+pub const BLOCK_WITH_CRC: usize = 514;
+/// A token-scan burst. Under one block and its CRC, so the bytes after a
+/// token are always the head of one block: one range.
+pub const SCAN_BYTES: usize = 128;
 
 /// A command frame with its CRC7 (CRC is on: `AcquireOpts::use_crc`).
-pub fn command(index: u8, arg: u32) -> [u8; 6];
+/// The argument comes only from `AddrMode::arg` (byte or block addressing).
+pub fn command(index: CmdIndex, arg: CmdArg) -> [u8; 6];
 pub fn crc7(bytes: &[u8]) -> u8;
 pub fn crc16(bytes: &[u8]) -> u16;           // CCITT, the data blocks'
 
 /// Scans clocked-in bytes for the data token, across DMA bursts.
-pub struct TokenScan { waited: u32 }
+pub struct TokenScan { waited: Bytes }
 pub enum Scan { Waiting, Token { at: usize }, Error(u8) }  // 0b000x_xxxx error token
-impl TokenScan { pub fn feed(&mut self, bytes: &[u8]) -> Scan; }
 
 /// One multi-block read's progress: which block, how much of it, its CRC.
-pub struct MultiRead { blocks: u16, done: u16, have: u16 }
-pub enum Step { Token, Data { want: usize }, Crc, Stop }
+pub struct MultiRead { /* blocks, done, scan */ }
+pub enum Step { Scan, Rest { block: u32, have: Bytes, want: Bytes }, Stop }
+pub enum Scanned { Waiting, Token { tail: Range<usize> } }
 impl MultiRead {
-    pub fn new(blocks: u16) -> Self;
+    pub fn new(blocks: BlockCount) -> Self;
     pub fn step(&self) -> Step;
-    pub fn took(&mut self, n: usize);
-    pub fn check(&mut self, block: &[u8; 512], crc: [u8; 2]) -> Result<(), ProtoError>;
+    /// A scan burst: the token's tail is the block's first bytes.
+    pub fn scanned(&mut self, burst: &[u8; SCAN_BYTES]) -> Result<Scanned, ProtoError>;
+    /// The block and its CRC, contiguous: the CRC16 check.
+    pub fn landed(&mut self, block: &[u8; BLOCK_WITH_CRC]) -> Result<(), ProtoError>;
 }
+/// CMD12's answer: skip the stuff byte, then R1 is the first byte with
+/// bit 7 clear within NCR (a data byte still clocking out is not R1).
+pub fn stop_response(bytes: &[u8; 9]) -> Result<(), ProtoError>;
 pub enum ProtoError { Crc, ErrorToken(u8), Timeout, R1(u8) }
 ```
 
@@ -96,39 +106,58 @@ pub enum ProtoError { Crc, ErrorToken(u8), Timeout, R1(u8) }
 - **DMA2 stream 0** = SPI2 RX, **DMA2 stream 1** = SPI2 TX, through DMAMUX1 channels 8 and 9 (`ccr[8]`, `ccr[9]`: DMA2's streams follow DMA1's 0–7). The request ids are 39 (`Spi2RxDma`) and 40 (`Spi2TxDma`), as the `stm32h7` PAC's `DMAREQ_ID_A` has them. DMA1 streams 0–2 on channels 0–2 stay the audio's (`chimera-stm32/src/audio/dma.rs`); nothing uses DMA2 today.
 - **TX sends 0xFF** from one constant byte, memory increment off. RX writes the staging buffer.
 - **The transfer, as a state machine** run in `DMA2_STR0` (RX complete; also pended in software to wake it):
-  1. **Command** (polled, about 3 µs): CS low, `command(CMD18, lba)`, read R1 within NCR.
-  2. **Token:** DMA 1 KB bursts of 0xFF (about 330 µs each at 25 MHz); `TokenScan` each one. A token mid-burst carries its data's first bytes; `MultiRead` accounts them.
-  3. **Data:** DMA the rest of the block and its 2 CRC bytes; `check`. Then the next block's Token.
-  4. **Stop:** `CMD12` (polled), then DMA bursts until MISO reads 0xFF (not busy). CS high.
-  5. **Done:** copy the samples into the ring slot (§ 5.3), mark it Ready, pick the next (§ 6).
-- The SPI peripheral stays configured as `SdSpi` leaves it (8-bit, mode 3, 25 MHz). `CFG1`'s `RXDMAEN`/`TXDMAEN` and `CR2`'s `TSIZE` are writable only with `SPE` clear, so for a burst the shell clears `SPE`, sets them (RX's DMA enable before the streams start, TX's after, per RM0433's SPI DMA sequence), sets `SPE` and `CSTART`, and after `EOT` clears them, restoring `TSIZE` 0 with `SPE` set as the HAL's `Spi` leaves it, so the polled path finds the peripheral as it left it.
-  - `// SAFETY:` the bus word (§ 4.3) is `Stream` for the whole transfer, so no other code touches SPI2's registers or CS. The UI path takes the word before any register access.
-- **IRQ cost:** a 5 ms token wait is about 15 bursts at about 1 µs of work each; the copy of 4,032 B from non-cacheable D2 is about 10 µs; CRC16 in software over 4,608 B is about 100 µs (table-driven, measured by B2). At 72 chunks a second that is under 1 % of the CPU, all of it under the UI, none under audio.
+  1. **Command** (polled, about 3 µs): CS low, `command(CMD18, AddrMode::arg(lba))`, read R1 within NCR.
+  2. **Token:** DMA `SCAN_BYTES` bursts of 0xFF into a small scan area (about 41 µs each at 25 MHz); `MultiRead::scanned` each one. On a token, its tail (the block's first bytes) is copied to the block's place in the staging.
+  3. **Rest:** DMA the rest of the block and its 2 CRC bytes straight after the tail, so the blocks lie contiguous for `deframe` with no memmove (a block's CRC lands where the next block starts, and is checked by `landed` before that block's tail overwrites it). Then the next block's Token.
+  4. **Stop:** `CMD12` (polled), `stop_response` (the stuff byte skipped, R1 within NCR), then polled bytes until MISO reads 0xFF (not busy), bounded by `TOKEN_TIMEOUT_MS`. CS high, one 0xFF. A stop error after CRC-good blocks keeps the data and is counted (`stop_errors`); the next CMD18's R1 says whether the card is well.
+  5. **Done:** de-frame the samples into the ring slot (§ 5.3), mark it Ready, pick the next (§ 6).
+- **One state machine, owned by the IRQ.** Bench reads from the UI thread only post a request and poll for its answer; the thread never runs a transfer or takes the bus, so nothing waits on its own interrupt. Entries are gated on the DMA flags (TC, TE) and the IRQ's own in-flight state, so a software pend mid-transfer is ignored.
+- **Abort and watchdog.** TEIE is on; a TE, an OVR or MODF, or any bound passed (every poll is bounded by the cycle counter) runs the abort: both DMA streams EN = 0 and wait for it; CSUSP, wait SUSP, SPE = 0; clear LIFCR and the SPI's IFCR flags; CMD12, `stop_response`, busy (bounded); CS high and 8 clocks; the bus given back. A transfer whose TC never comes (a TE that cleared EN, a MODF) is caught by the watchdog: a bus held as `Stream` for over `WATCHDOG_MS` (200 ms) makes the UI loop, or `SharedCard`'s wait, ask the IRQ to abort. If CMD12's busy never ends, `fault = Read` and nothing starts until a UI mount clears it.
+- The SPI peripheral is found as `SdSpi`'s HAL `Spi` leaves it: 8-bit, mode 3, SSM = 1 and SSI = 1, an endless transaction running (TSIZE 0, CSTART set by `send`), CFG2 written whole (so AFCNTR = 0 after every `rebuild`). The register sequences are data (`chimera-fat::h7_spi`), host-tested for order, and the shell runs them one access at a time:
+  - **Take:** CSUSP and wait SUSP (only if CSTART), clear the flags, SPE = 0, save CFG1, write MBR for the fast clock itself (the UI may have left 400 kHz), AFCNTR = 1 (SCK stays driven while SPE = 0, mid-CMD18 with CS low).
+  - **Burst:** suspend, SPE = 0, AFCNTR = 1, TSIZE = n, RXDMAEN, the streams (flags cleared first), TXDMAEN, SPE, CSTART (RM0433's SPI DMA order).
+  - **Burst end:** wait EOT, check OVR and MODF (a protocol error), clear EOT, TXTF and the rest through IFCR, SPE = 0, the DMA enables off.
+  - **Give:** suspend, SPE = 0, the DMA enables off, CFG1 restored, TSIZE 0, SPE = 1, so the HAL finds the peripheral as it left it.
+  - Every CR1 write carries SSI (a write that drops it is MODF, which clears SPE and master mode); the type allows no other.
+  - `// SAFETY:` the bus word (§ 4.3) is `Stream` for the whole transfer, taken by this handler, so no other code touches SPI2's registers or CS. The UI path takes the word before any register access, its re-init and mount included.
+- **Memory:** the staging is a `static mut MaybeUninit` in `.ram_d2.dma`, reached by raw pointer while a stream may run and read as a slice only after TC, a DMB and an acquire fence. The IRQ's state lives in one cell only its handler opens. The IRQ never holds `SdStore`: it needs only SPI2, CS and `CARD_ADDR`.
+- **IRQ cost:** a 5 ms token wait is about 120 scan bursts at about 1 µs of work each. Non-cacheable D2 byte loads cost about 10–20 cycles each from the M7, so de-framing 4,032 B and the CRC16 over 4,608 B come to about 250–350 µs a chunk (word loads bring it down; B2 measures CRC16, and slice 0's report carries `card_irq_us_max`). At about 86 chunks a second that is under 3 % of the CPU, all of it under the UI, none under audio.
 - B2 also reports CRC16's time. If it passes 200 µs a chunk, the H7's CRC unit takes it (a later change, not this slice).
 
 ### 4.3 The bus word and `SharedCard`
 
 ```rust
-// chimera-hal/src/card_bus.rs: pure atomics, host- and loom-tested;
-// chimera-fat, chimera-engine and chimera-board all see it.
+// chimera-hal/src/card_bus.rs: pure atomics, host- and loom-tested
+// (`chimera-core/tests/loom_card_bus.rs`); chimera-fat, chimera-engine and
+// chimera-board all see it.
 #[repr(u8)] pub enum Owner { Free = 0, Ui = 1, Stream = 2 }
+pub enum Took { Taken, Wanted }
+pub enum Wake { Pend, Quiet }
 pub struct CardBus {
-    owner: AtomicU8, ui_waiting: AtomicBool, wanted: AtomicBool,
+    owner: AtomicU8, since: AtomicU32 /* a Stream take's Ms */, ui_waiting: AtomicBool,
+    wanted: AtomicBool, abort: AtomicBool,
     quiet: AtomicU8, fault: AtomicU8, streams_active: AtomicU8,
 }
 
 // chimera-fat/src/shared_card.rs: generic, host-tested over a fake `Medium`.
-/// The UI's card, for `FatStore`: each `BlockDevice` call takes the bus.
-pub struct SharedCard<D: Medium> { dev: D, bus: &'static CardBus, pend: fn() }
-impl<D: Medium> BlockDevice for SharedCard<D> { /* take(Ui) → dev.read/write → give() → pend() if wanted */ }
-impl<D: Medium> Medium for SharedCard<D> { /* forwards to D's */ }
+/// The UI's card, for `FatStore`: every touch of the device takes the bus.
+pub struct SharedCard<D: Medium> { dev: D, bus: &'static CardBus, addr: &'static CardAddr, hooks: Hooks, .. }
+pub enum SharedError<E> { Busy, Dev(E) }
+impl<D: Medium> BlockDevice for SharedCard<D> { /* take(Ui) → dev → give() → pend() on Wake::Pend */ }
+impl<D: Medium> Medium for SharedCard<D> { /* start_op, reinit, mounted under the bus; classify(Busy) = StoreError::Busy */ }
 ```
 
-- `chimera-board/src/sd.rs`: `pub type SdStore = FatStore<SharedCard<SdDevice>>`, `pend` pending `DMA2_STR0`. `STORE_RESERVE` still holds (the wrapper adds a pointer).
-- **The UI takes the bus** by setting `ui_waiting`, then spinning on `Free → Ui` under the operation's deadline (`SD_IDLE_MS`). The card IRQ, after each transfer, gives the bus up when `ui_waiting` is set and no stream is urgent (`URGENT_MS`). The UI waits at most one transfer (about 7 ms).
-- **The IRQ finds the bus taken** (`Ui`): it sets `wanted` and returns. `SharedCard::give` pends the IRQ if `wanted` is set.
+- `chimera-board/src/sd.rs`: `pub type SdStore = FatStore<SharedCard<SdDevice>>`, `pend` pending `DMA2_STR0`. `STORE_RESERVE` still holds (the wrapper adds a few pointers).
+- **Every SPI2 touch takes the bus.** Not only `read`, `write` and `num_blocks`, but `Medium::start_op` (an acquire's CMD0), `reinit` (it rebuilds SPI2 at 400 kHz, sends wake clocks and marks the card uninit) and `mounted` (it rebuilds SPI2 at the fast clock). `reinit` clears `CARD_ADDR` and `mounted` sets it (and clears `fault`), both while holding the bus. The bench's and the probe's raw device calls go through `with_device`, which takes it too.
+- **A bus wait that times out is `Busy`, never a card error.** `SharedCard`'s own error, `Busy`, classifies as `StoreError::Busy`, which `FatStore` never re-inits on and the UI treats as a retry, not a fault. Otherwise a UI wait timing out behind a long stream transfer would re-init SPI2 under an in-flight CMD18.
+- **The UI takes the bus** by setting `ui_waiting`, then spinning on `Free → Ui` under the operation's deadline (`SD_IDLE_MS`). The card IRQ, after each transfer, gives the bus up when `ui_waiting` is set and no stream is urgent (`URGENT_MS`). The UI waits at most one transfer (about 7 ms). While it spins, a bus held as `Stream` past `WATCHDOG_MS` asks the IRQ to abort (§ 4.2).
+- **Wakeups, with none lost:**
+  1. The audio pends `DMA2_STR0` on every new want, whoever owns the bus (one NVIC write; the handler ignores a spurious entry).
+  2. The IRQ takes only through `take_or_want`: a failed CAS sets `wanted`, then retries the CAS once.
+  3. `give` stores `Free` first, then swaps `wanted` out; `Pend` if it was set, and the giver pends. A `want` the swap misses landed after `Free`, so the retry in 2 takes the bus.
+  4. The IRQ, after giving, re-scans the wants and pends if any is left.
 - **Writes quiet the streams** (§ 8) inside `SharedCard::write`, so every writer is covered without touching its call site.
-- The bench's `card_speed.rs` drops its own read path and calls the driver. `Extents` moves from `chimera-core/src/console/card.rs` to `chimera-hal/src/store.rs`, unchanged, so the bench, the registry and the IRQ share it (chimera-engine can't see `chimera-fat`).
+- The bench's `card_speed.rs` drops its own read path and posts its reads to the IRQ. `Extents` moves from `chimera-core/src/console/card.rs` to `chimera-hal/src/store.rs`, unchanged, so the bench, the registry and the IRQ share it (chimera-engine can't see `chimera-fat`).
 
 ### 4.4 The benches
 
@@ -138,10 +167,13 @@ The console's `card` gains verbs (`chimera-core/src/console/card.rs`), each prin
 |---|---|---|---|
 | `card dma chunk` | B2: DMA CMD18 random reads of 1, 2, 4, 8, 16 KB; fit `t = L + n/BW`; CRC16's time | L p99 ≤ 5 ms | L p99 > 8 ms |
 | `card dma burst` | B3: 8 reads queued at once, 1,000 bursts; the 8th's time | p99.9 ≤ 60 ms | > 90 ms |
-| `card dma sustain N` | B4: N rings at 41 KB/s × 1.2 through the real slot protocol and EDF, 10 min | N ≥ 10 with zero empties | N < 6 |
+| `card dma sustain N` | B4: N rings at 41 KB/s × 1.2 through the real slot protocol and EDF, 10 min, each stream its own bed | N = 8 (the rings' cap) with zero empties | N < 6 |
 | `card dma stall` | B5: one 4 KB write a second to a pre-allocated 4 MiB file while B4 runs at N/2, 30 min | write-busy p99.9 ≤ 100 ms, max ≤ 250 ms | max > 250 ms |
 | `card dma ui` | B6: B4 at N with full-screen redraws and a project save | UI ≥ 15 fps, the save completes, no overrun | UI frozen > 200 ms, or an overrun |
 | `card dma back` | B7: a backward 4 KB walk | ≤ 1.3 × forward random | > 2 × |
+| `card dma listen N` | B8: B4 at N, stream 0 played aloud and recorded. Each stream reads its own aperiodic bed (a chirp: no period divides a chunk, so a repeated, skipped or misplaced chunk shows), and the firmware checks every chunk it consumes, on every stream, against a host-computed table on the card (`BEDS.CHK`) | zero discontinuities in the recording; zero order and check errors on every stream | any |
+| `card dma inject <abort\|te\|modf>` | B9: 100 injected faults mid-transfer under B4 at N = 2, each followed by a UI card read | every UI read succeeds; no fault; streams resume | any |
+| `card dma wake N` | B10: B4 at N = 1 and 2 with a UI card read every 50 ms, 10 min | zero empties | any (a lost wakeup) |
 
 Each result goes into (private notes) as raw text, and `card clean` follows. A fail on B2–B4 stops slice 1 and goes back to the owner with the numbers.
 
@@ -310,9 +342,12 @@ RAM voices and every other engine play on throughout. `stats` reports `card_quie
 | Event | Card layer | Audio | UI |
 |---|---|---|---|
 | CRC16 mismatch or error token | One retry of that transfer | — | — |
-| A second failure, a token timeout (`TOKEN_TIMEOUT_MS`) or a bad R1 | `fault = Read`; Filling slots go back to Wanted; nothing more starts | Every streamed voice starves (§ 7.3); new streamed notes are refused (`Admit::Refuse`) | TAPE pages' focus band reads `CARD READ FAILED`. Next pass: `Medium::reinit` through `SharedCard`. Success clears `fault`; the IRQ resumes. |
+| A second failure, a token timeout (`TOKEN_TIMEOUT_MS`), a bad CMD18 R1, or an abort whose CMD12 never leaves busy | `fault = Read`; Filling slots go back to Wanted; nothing more starts | Every streamed voice starves (§ 7.3); new streamed notes are refused (`Admit::Refuse`) | TAPE pages' focus band reads `CARD READ FAILED`. Next pass: `Medium::reinit` through `SharedCard`. Success clears `fault`; the IRQ resumes. |
 | The volume changed after a re-init (`StoreError::VolumeChanged`) | Registry cleared | Streamed sources' notes refused | Streamed sources read `SOURCE MISSING` until the project resolves them again |
 | A record tag or length mismatch in `deframe` | As a read error, without the retry | as above | as above, plus `stats` `stream_frame_errors` |
+| A bad CMD12 R1 after CRC-good blocks | The chunk is kept; `stop_errors` counts it; the next CMD18's R1 decides | — | — |
+| A DMA TE, an SPI OVR or MODF, a bound passed, or a lost TC (the watchdog) | The abort (§ 4.2): the bus is always given back; the transfer counts as a failure of that transfer | as for a read error | — |
+| A UI bus wait that times out | `Busy`: no re-init, no fault | — | the operation retries on a later pass |
 
 No path panics, blocks the audio or allocates. The audio's only failure mode is silence that fades.
 
@@ -322,7 +357,10 @@ All host-side first (`just test`). The unit is the last gate.
 
 ### 10.1 Pure
 
-- **`chimera-fat/tests/sd_proto_test.rs`:** `command` matches the SD spec's CMD0, CMD17 and CMD18 frames and CRC7s; `crc16` matches the SD Physical Layer spec's example (512 × 0xFF → 0x7FA1; check it against the spec when writing the test); `TokenScan` finds a token at every offset of a burst and across burst edges, reports error tokens, and times out; `MultiRead` walks 9 blocks fed in odd-sized pieces.
+- **`chimera-fat/tests/sd_proto_test.rs`:** `command` matches the SD spec's CMD0, CMD17 and CMD18 frames and CRC7s; `crc16` matches the SD Physical Layer spec's example (512 × 0xFF → 0x7FA1; check it against the spec when writing the test); `TokenScan` finds a token at every offset of a burst and across burst edges, reports error tokens, and times out; `MultiRead` walks 9 blocks with tokens anywhere in a scan burst; `stop_response` skips junk before R1.
+- **`chimera-fat/tests/h7_spi_test.rs`:** the register sequences' order (suspend before SPE = 0, RM0433's DMA order, the abort's DMA-first stop, the HAL's state restored on give).
+- **`chimera-fat/tests/shared_card_test.rs`:** a `FatStore` over a held bus answers `Busy` and never re-inits; every `Medium` call that does I/O takes the bus.
+- **`card_bus_test.rs`** and **`loom_card_bus.rs`:** no want is left stranded with the bus Free and no pend outstanding.
 - **`chimera-engine/tests/stream_layout_test.rs`:** proptest over sources of 64 frames to 4 MiB, `Plain` and `ZoneSet`, and random run splits up to 32: for every chunk, `chunk_blocks` and `deframe` give exactly the bytes a whole-file de-frame gives. A corrupted record tag is a `Deframe` error.
 - **`stream_edf_test.rs`:** EDF order; ties; the UI yields unless urgent; a starvation bound (the UI waits at most one transfer when nothing is urgent).
 - **`stream_slot_test.rs`** (and a loom model): every interleaving of want, claim, fill, cancel and re-want leaves the audio reading only bytes of its own generation; a cancelled fill is dropped.
