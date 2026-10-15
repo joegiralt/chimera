@@ -550,7 +550,7 @@ Bank 1 is nearly full; bank 2 holds TAPE's DSP and the reverb behind the door (A
 - **"No destructive editing on the device"** (feature table): still true. Renders write new files; nothing is overwritten.
 - **The descriptor's rule** "`head_frames` only on a `ZoneSet`": a streamed `Plain` carries heads too (slice 1). The descriptor is RAM only, so no file changes.
 
-**A name collision to settle:** the master tape stage reads **REEL** on screen today (ADR 0093: page short `REEL`, matrix `REL`). The REEL machine needs that word. One must change (open question 1).
+**The master tape stage is renamed MTAPE** (owner, 2026-10-15). It reads **REEL** on screen today (ADR 0093: page short `REEL`, matrix `REL`); it becomes page short `MTAPE`, matrix `MTP`, so the REEL machine keeps its word. Labels only: no param ids or disk codes change. Done by slice 5 at the latest.
 
 ## 9. Slices
 
@@ -571,7 +571,7 @@ Slices 0–7 are the release (release-needs-features).
 
 ## 10. Open questions for the owner
 
-1. The master tape stage reads REEL on screen. Rename it (suggestion: `MTAPE`, matrix `MTP`), or call the machine something else?
+1. ~~The master tape stage reads REEL on screen.~~ Settled: the stage becomes `MTAPE` (matrix `MTP`).
 2. Over the stream budget, a new note steals the oldest streamed voice. Is that right, or should it be refused?
 3. Decision 8 is applied to every card write while streams play (project save from SETTINGS, library save, `put`, CLEAN UP), not only a render and a MENU-hold save. Agreed?
 4. TRON's keep: MOTOR (cheap, recommended) or REWIND (each replay is a cold start, up to ~60 ms late)?

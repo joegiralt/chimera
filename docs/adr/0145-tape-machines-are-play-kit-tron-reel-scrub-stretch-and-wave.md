@@ -31,7 +31,7 @@
 - Old Sounds load safely as PLAY; their sound may differ (ONESHOT's SLICE is gone).
 - The allocator gains a policy check at note-on: a no-op for every Part but a KIT's.
 - KIT and REEL publish their tables as prep rows in the pool (ADR 0146), sharing `MAX_SOURCES`.
-- REEL's name collides with the master tape stage's on-screen word (ADR 0093). One must change before slice 5 (spec open question 1).
+- The master tape stage's on-screen word REEL (ADR 0093) becomes `MTAPE` (matrix `MTP`) so the REEL machine keeps its name; labels only, by slice 5.
 - TRON's verdict is a release gate.
 
 ## Sources
