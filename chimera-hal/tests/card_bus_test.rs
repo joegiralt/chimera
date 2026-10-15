@@ -65,7 +65,7 @@ fn abort_asked_is_taken_once() {
 fn settle_waits_quiet_hold() {
     let b = CardBus::new();
     b.ask_quiet();
-    b.answer_quiet();
+    b.answer_quiet(Ms(0));
     b.note_write(Ms(100));
     assert!(!b.settle(Ms(119)));
     assert_eq!(b.quiet(), Quiet::Held);
@@ -77,7 +77,7 @@ fn settle_waits_quiet_hold() {
 fn settle_across_the_ms_wrap() {
     let b = CardBus::new();
     b.ask_quiet();
-    b.answer_quiet();
+    b.answer_quiet(Ms(0));
     b.note_write(Ms(u32::MAX - 5));
     assert!(b.settle(Ms(14)));
 }
@@ -88,7 +88,7 @@ fn quiet_walks_off_asked_held() {
     assert_eq!(b.quiet(), Quiet::Off);
     b.ask_quiet();
     assert_eq!(b.quiet(), Quiet::Asked);
-    b.answer_quiet();
+    b.answer_quiet(Ms(0));
     assert_eq!(b.quiet(), Quiet::Held);
     b.note_write(Ms(0));
     assert!(b.settle(Ms(20)));
@@ -98,7 +98,7 @@ fn quiet_walks_off_asked_held() {
 #[test]
 fn answer_without_ask_stays_off() {
     let b = CardBus::new();
-    b.answer_quiet();
+    b.answer_quiet(Ms(0));
     assert_eq!(b.quiet(), Quiet::Off);
     assert!(!b.settle(Ms(1_000)));
 }
@@ -133,4 +133,33 @@ fn ui_wait_round_trips() {
     assert_eq!(b.ui_wait(), UiWait::Waiting);
     b.set_ui_wait(UiWait::Idle);
     assert_eq!(b.ui_wait(), UiWait::Idle);
+}
+
+#[test]
+fn a_hold_counts_from_its_answer_not_an_old_write() {
+    let b = CardBus::new();
+    b.note_write(Ms(0));
+    b.ask_quiet();
+    b.answer_quiet(Ms(5000));
+    assert!(!b.settle(Ms(5001)));
+    assert!(b.settle(Ms(5020)));
+}
+
+#[test]
+fn answering_a_held_quiet_again_keeps_its_stamp() {
+    let b = CardBus::new();
+    b.ask_quiet();
+    b.answer_quiet(Ms(100));
+    b.answer_quiet(Ms(115));
+    assert!(b.settle(Ms(120)));
+}
+
+#[test]
+fn a_stream_take_drops_a_stale_abort() {
+    let b = CardBus::new();
+    b.ask_abort();
+    assert_eq!(b.take_or_want(Ms(0)), Took::Taken);
+    assert!(!b.take_abort());
+    b.ask_abort();
+    assert!(b.take_abort());
 }

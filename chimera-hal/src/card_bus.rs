@@ -146,7 +146,7 @@ impl CardBus {
 
     /// Free → `t`. A `Stream` take stamps `now` first, published by the
     /// CAS's release: only the IRQ takes `Stream`, so a failed take
-    /// overwrites no live stamp.
+    /// overwrites no live stamp. It also drops a stale abort.
     pub fn try_take(&self, t: Taker, now: Ms) -> bool {
         self.take(t, now, Ordering::AcqRel, Ordering::Relaxed)
     }
@@ -155,14 +155,22 @@ impl CardBus {
         if t == Taker::Stream {
             self.since.store(now.0, Ordering::Relaxed);
         }
-        self.owner
+        let took = self
+            .owner
             .compare_exchange(Owner::Free as u8, Owner::from(t) as u8, ok, fail)
-            .is_ok()
+            .is_ok();
+        if took && t == Taker::Stream {
+            // An abort asked as the last transfer ended is not this one's.
+            self.abort.store(false, Ordering::Release);
+        }
+        took
     }
 
     /// The card IRQ's only take. A failed CAS stores `wanted`, then
     /// retries once; the store and the retry are `SeqCst`, against
-    /// `give`'s two, so neither side's read can pass its own write.
+    /// `give`'s two, so neither side's read can pass its own write. A
+    /// retry that takes leaves `wanted` set, so the IRQ's next give may
+    /// answer a spurious `Pend`: rule 1 allows it.
     pub fn take_or_want(&self, now: Ms) -> Took {
         if self.try_take(Taker::Stream, now) {
             return Took::Taken;
@@ -226,9 +234,15 @@ impl CardBus {
         self.quiet_step(Quiet::Off, Quiet::Asked);
     }
 
-    /// Asked → Held; otherwise nothing.
-    pub fn answer_quiet(&self) {
-        self.quiet_step(Quiet::Asked, Quiet::Held);
+    /// Asked → Held, the hold counted from `now`; otherwise nothing, so
+    /// the audio may answer every block without moving a hold's stamp.
+    /// Only the audio moves Asked → Held, so the check and the CAS don't
+    /// race; the stamp lands first and the CAS's release publishes it.
+    pub fn answer_quiet(&self, now: Ms) {
+        if self.quiet() == Quiet::Asked {
+            self.wrote.store(now.0, Ordering::Relaxed);
+            self.quiet_step(Quiet::Asked, Quiet::Held);
+        }
     }
 
     pub fn quiet(&self) -> Quiet {
