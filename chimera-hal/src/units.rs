@@ -47,6 +47,8 @@ impl FileBlock {
 pub struct BlockCount(u32);
 
 impl BlockCount {
+    pub const ONE: BlockCount = BlockCount(1);
+
     pub const fn new(n: u32) -> Option<Self> {
         if n == 0 { None } else { Some(Self(n)) }
     }

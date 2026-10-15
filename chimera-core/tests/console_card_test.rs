@@ -1,8 +1,10 @@
 use chimera_core::console::{
-    CYCLE_SPAN_MS, CardArg, CardKind, CardSpeed, Console, Extents, FILE_BLOCKS, FILES, Latency,
-    MAX_RUNS, MIN_APART_PER_MILLE, RANDOM_READS, READ_BLOCKS, Refusal, Request, STREAM_BYTES_PER_S,
+    CYCLE_SPAN_MS, CardArg, CardKind, CardSpeed, Console, FILE_BLOCKS, FILES, Latency,
+    MIN_APART_PER_MILLE, RANDOM_READS, READ_BLOCKS, Refusal, Request, STREAM_BYTES_PER_S,
     STREAM_ROUNDS, STREAMS, Throughput, apart_per_mille, interleaved, random_reads, span_us,
 };
+use chimera_hal::store::{MAX_RUNS, Runs};
+use chimera_hal::units::{BlockCount, FileBlock, Lba};
 
 #[test]
 fn a_stream_is_24_khz_of_12_bits() {
@@ -111,26 +113,31 @@ fn a_span_past_the_wrap_is_refused() {
 
 #[test]
 fn transfers_never_cross_a_run() {
-    let mut e = Extents::new();
-    e.push(1_000, 10);
-    e.push(5_000, 6);
-    let t: Vec<_> = e.transfers(4, 12, 4).collect();
+    let mut r = Runs::new();
+    r.push(Lba::new(1_000), BlockCount::new(10).unwrap());
+    r.push(Lba::new(5_000), BlockCount::new(6).unwrap());
+    let e = r.finish().unwrap();
+    let max = |n| BlockCount::new(n).unwrap();
+    let t: Vec<_> = e
+        .transfers(FileBlock::new(4), 12, max(4))
+        .map(|(a, n)| (a.get(), n.get()))
+        .collect();
     assert_eq!(t, [(1_004, 4), (1_008, 2), (5_000, 4), (5_004, 2)]);
-    assert_eq!(e.locate(15), Some((5_005, 1)));
-    assert_eq!(e.locate(16), None);
-    assert_eq!(e.first(), Some(1_000));
-    assert_eq!(e.transfers(14, 10, 32).map(|(_, n)| n).sum::<u32>(), 2);
+    let at = e.locate(FileBlock::new(15)).unwrap();
+    assert_eq!((at.0.get(), at.1.get()), (5_005, 1));
+    assert_eq!(e.locate(FileBlock::new(16)), None);
+    assert_eq!(e.first(), Lba::new(1_000));
+    let past = e.transfers(FileBlock::new(14), 10, max(32));
+    assert_eq!(past.map(|(_, n)| n.get()).sum::<u32>(), 2);
 }
 
 #[test]
-fn extents_count_runs_they_cannot_keep() {
-    let mut e = Extents::new();
+fn extents_refuse_runs_they_cannot_keep() {
+    let mut r = Runs::new();
     for i in 0..MAX_RUNS as u32 + 3 {
-        e.push(i * 10, 1);
+        r.push(Lba::new(i * 10), BlockCount::ONE);
     }
-    assert_eq!(e.seen(), MAX_RUNS as u32 + 3);
-    assert!(!e.whole());
-    assert_eq!(e.locate(MAX_RUNS as u32), None);
+    assert_eq!(r.finish().err().map(|f| f.runs), Some(MAX_RUNS as u32 + 3));
 }
 
 #[test]

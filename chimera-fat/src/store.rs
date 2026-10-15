@@ -9,9 +9,10 @@ use crate::mark::{self, CLEAN, DIRTY};
 use crate::sweep::{self, Fail};
 use crate::volume::{Layout, first_partition, layout};
 use chimera_hal::store::{
-    ByteSink, Dir, Doubt, FileName, Files, Mark, ReadSink, Store, StoreError, Sweep, SweepSeen,
-    SweepStats, Swept, VolumeId,
+    ByteSink, Dir, Doubt, FileName, FileRuns, Files, Mark, ReadSink, Runs, RunsError, Store,
+    StoreError, Sweep, SweepSeen, SweepStats, Swept, VolumeId,
 };
+use chimera_hal::units::{BlockCount, Bytes, Lba};
 use embedded_hal::delay::DelayNs;
 use embedded_hal::spi::SpiDevice;
 use embedded_sdmmc::{Block, BlockDevice, BlockIdx, SdCard, SdCardError};
@@ -539,6 +540,20 @@ impl<D: Medium> Store for FatStore<D> {
         f: &mut dyn FnMut(FileName, u32),
     ) -> Result<(), StoreError> {
         self.run(vol, |fs, _| fs.list(dir, f))
+    }
+
+    fn runs(&mut self, vol: VolumeId, file: FileName) -> Result<FileRuns, RunsError> {
+        let mut runs = Runs::new();
+        let len = FatStore::runs(self, vol, file, &mut |at, n| {
+            if let Some(n) = BlockCount::new(n) {
+                runs.push(Lba::new(at), n);
+            }
+        })?;
+        let ext = runs.finish().map_err(RunsError::Fragmented)?;
+        Ok(FileRuns {
+            ext,
+            len: Bytes::new(len),
+        })
     }
 
     fn read(

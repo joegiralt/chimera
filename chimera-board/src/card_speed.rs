@@ -20,7 +20,8 @@ use chimera_core::triple::Reader;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_fat::Medium;
 use chimera_hal::Ms;
-use chimera_hal::store::{ByteSink, CHUNK, Dir, FileName, Store, StoreError, VolumeId};
+use chimera_hal::store::{ByteSink, CHUNK, Dir, FileName, RunsError, Store, StoreError, VolumeId};
+use chimera_hal::units::{BlockCount, FileBlock, Lba};
 use cortex_m::peripheral::DWT;
 use embedded_sdmmc::embedded_sdmmc_types::sdcard::CardType;
 use embedded_sdmmc::{Block, BlockDevice, BlockIdx};
@@ -32,6 +33,10 @@ use crate::shared::{BLOCKS, OVERRUNS};
 /// The largest transfer, 16 KB.
 const BUF_BLOCKS: usize = 32;
 const _: () = assert!(READ_BLOCKS as usize <= BUF_BLOCKS);
+const READ_RUN: BlockCount = match BlockCount::new(READ_BLOCKS) {
+    Some(n) => n,
+    None => panic!("READ_BLOCKS is 0"),
+};
 /// Audio counts as running if it renders a block within this.
 const LIVE_MS: u32 = 10;
 /// Kept back from a test file's write for deleting it if it fails.
@@ -189,7 +194,7 @@ impl CardBench {
             bytes,
             free_bytes: free,
         });
-        let [a, b] = ext.map(|e| e.first().unwrap_or(0));
+        let [a, b] = ext.map(|e| e.first().get());
         let files = Files {
             apart_mib: a.abs_diff(b) / 2_048,
             apart_per_mille: apart_per_mille(a, b, bytes),
@@ -237,7 +242,8 @@ impl CardBench {
         due: &Deadline,
     ) -> Result<Throughput, CardFail> {
         let mut us = 0u64;
-        for (lba, n) in ext.transfers(from, SPAN_BLOCKS, max) {
+        let max = BlockCount::new(max).ok_or(StoreError::Io)?;
+        for (lba, n) in ext.transfers(FileBlock::new(from), SPAN_BLOCKS, max) {
             us += u64::from(self.timed_read(store, lba, n, due)?);
         }
         Ok(throughput(SPAN_BLOCKS, us))
@@ -299,7 +305,7 @@ impl CardBench {
         due: &Deadline,
     ) -> Result<u32, CardFail> {
         let mut us = 0u32;
-        for (lba, n) in ext.transfers(at, READ_BLOCKS, READ_BLOCKS) {
+        for (lba, n) in ext.transfers(FileBlock::new(at), READ_BLOCKS, READ_RUN) {
             us = us.saturating_add(self.timed_read(store, lba, n, due)?);
         }
         Ok(us)
@@ -311,8 +317,8 @@ impl CardBench {
     fn timed_read(
         &mut self,
         store: &SdStore,
-        lba: u32,
-        n: u32,
+        lba: Lba,
+        n: BlockCount,
         due: &Deadline,
     ) -> Result<u32, CardFail> {
         due.arm(store, 0)?;
@@ -320,11 +326,11 @@ impl CardBench {
         let blocks = self
             .bufs
             .blocks
-            .get_mut(..n as usize)
+            .get_mut(..n.get() as usize)
             .ok_or(StoreError::Io)?;
         let (t, ms) = (DWT::cycle_count(), now_ms());
         dev.start_op();
-        dev.read(blocks, BlockIdx(lba)).map_err(|e| {
+        dev.read(blocks, BlockIdx(lba.get())).map_err(|e| {
             let why = dev.classify(&e);
             dev.reinit();
             CardFail::Store(why)
@@ -365,26 +371,22 @@ fn test_files(
         // The whole FAT read: a few s on a 32 GB card.
         free = Some(due.op(store, |s| s.free_bytes(vol))?);
     }
-    let mut ext = [Extents::new(); FILES];
     let mut files = Files::default();
-    for (i, (e, f)) in ext.iter_mut().zip(found).enumerate() {
+    for (i, f) in found.iter_mut().enumerate() {
         let name = test_file(i);
-        *e = match f {
-            Some(e) => e,
-            None => {
-                let room = free.unwrap_or(0);
-                write_test_file(store, vol, name, FILE_AIMS[i], room, due)?;
-                free = Some(room.saturating_sub(u64::from(FILE_BYTES)));
-                files.created += 1;
-                whole_file(store, vol, name, due)?.ok_or(StoreError::Corrupt)?
-            }
-        };
-        if !e.whole() {
-            return Err(CardFail::Fragmented);
+        if f.is_none() {
+            let room = free.unwrap_or(0);
+            write_test_file(store, vol, name, FILE_AIMS[i], room, due)?;
+            free = Some(room.saturating_sub(u64::from(FILE_BYTES)));
+            files.created += 1;
+            *f = Some(whole_file(store, vol, name, due)?.ok_or(StoreError::Corrupt)?);
         }
-        files.runs += e.seen();
+        files.runs += f.map_or(0, |e| e.runs());
     }
-    Ok((ext, files, free))
+    let [Some(a), Some(b)] = found else {
+        return Err(StoreError::Corrupt.into());
+    };
+    Ok(([a, b], files, free))
 }
 
 /// `name`'s runs if it holds a whole test file; `None` if it is missing
@@ -395,14 +397,17 @@ fn whole_file(
     name: FileName,
     due: &Deadline,
 ) -> Result<Option<Extents>, CardFail> {
-    let mut ext = Extents::new();
-    let len = due.op(store, |s| {
-        match s.runs(vol, name, &mut |at, n| ext.push(at, n)) {
-            Err(StoreError::NotFound) => Ok(0),
-            r => r,
-        }
+    let found = due.op(store, |s| match Store::runs(s, vol, name) {
+        Ok(r) => Ok(Some(Ok(r))),
+        Err(RunsError::Store(StoreError::NotFound)) => Ok(None),
+        Err(RunsError::Store(e)) => Err(e),
+        Err(RunsError::Fragmented(_)) => Ok(Some(Err(CardFail::Fragmented))),
     })?;
-    Ok((len >= FILE_BYTES).then_some(ext))
+    match found {
+        None => Ok(None),
+        Some(Err(f)) => Err(f),
+        Some(Ok(r)) => Ok((r.len.get() >= FILE_BYTES).then_some(r.ext)),
+    }
 }
 
 /// A test file, aimed `aim` per mille into the card: only with `free`

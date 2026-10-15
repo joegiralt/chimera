@@ -6,6 +6,7 @@
 use core::fmt::{self, Write};
 
 use chimera_hal::store::StoreError;
+pub use chimera_hal::store::{Extents, MAX_RUNS, Runs};
 
 use super::{Arg, Words};
 
@@ -37,8 +38,6 @@ pub const STREAM_ROUNDS: u32 = 100;
 /// The test files must start at least this far apart (per mille of the
 /// card), or `card` fails with `TooClose`; it doesn't retry placement.
 pub const MIN_APART_PER_MILLE: u64 = 250;
-/// Runs `Extents` keeps per file; a file in more is `CardFail::Fragmented`.
-pub const MAX_RUNS: usize = 32;
 /// The whole `card`, files written included: well inside the host's 60 s.
 pub const DEADLINE_MS: u32 = 45_000;
 /// A span timed by the cycle counter must end before it wraps (8.9 s at
@@ -351,98 +350,6 @@ impl fmt::Display for Size {
             b if b >= 1_024 && b.is_multiple_of(1_024) => write!(f, "{}k", b / 1_024),
             b => write!(f, "{b}"),
         }
-    }
-}
-
-/// A file's runs on the device, as `FatStore::runs` gives them.
-#[derive(Clone, Copy, Debug)]
-pub struct Extents {
-    runs: [(u32, u32); MAX_RUNS],
-    kept: usize,
-    seen: u32,
-}
-
-impl Default for Extents {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Extents {
-    pub const fn new() -> Self {
-        Extents {
-            runs: [(0, 0); MAX_RUNS],
-            kept: 0,
-            seen: 0,
-        }
-    }
-
-    /// The next run: its first device block and its length in blocks.
-    pub fn push(&mut self, first: u32, blocks: u32) {
-        if let Some(slot) = self.runs.get_mut(self.kept) {
-            *slot = (first, blocks);
-            self.kept += 1;
-        }
-        self.seen = self.seen.saturating_add(1);
-    }
-
-    /// Every run pushed, kept or not.
-    pub fn seen(&self) -> u32 {
-        self.seen
-    }
-
-    /// Whether every run pushed was kept.
-    pub fn whole(&self) -> bool {
-        self.seen as usize == self.kept
-    }
-
-    /// The first run's first device block.
-    pub fn first(&self) -> Option<u32> {
-        self.runs.get(..self.kept)?.first().map(|r| r.0)
-    }
-
-    /// File block `at` on the device, and the blocks left in its run.
-    pub fn locate(&self, mut at: u32) -> Option<(u32, u32)> {
-        for &(first, n) in self.runs.get(..self.kept)? {
-            if at < n {
-                return Some((first + at, n - at));
-            }
-            at -= n;
-        }
-        None
-    }
-
-    /// The reads of file blocks `from..from + len`, each at most `max`
-    /// blocks and none across a run's end: (device block, blocks). Stops
-    /// short past the kept runs.
-    pub fn transfers(&self, from: u32, len: u32, max: u32) -> Transfers<'_> {
-        Transfers {
-            ext: self,
-            at: from,
-            end: from.saturating_add(len),
-            max: max.max(1),
-        }
-    }
-}
-
-pub struct Transfers<'a> {
-    ext: &'a Extents,
-    at: u32,
-    end: u32,
-    max: u32,
-}
-
-impl Iterator for Transfers<'_> {
-    type Item = (u32, u32);
-
-    fn next(&mut self) -> Option<(u32, u32)> {
-        if self.at >= self.end {
-            return None;
-        }
-        let (lba, left) = self.ext.locate(self.at)?;
-        let n = left.min(self.max).min(self.end - self.at);
-        self.at += n;
-        Some((lba, n))
     }
 }
 

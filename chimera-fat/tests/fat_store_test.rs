@@ -7,6 +7,7 @@ use chimera_fat::FatStore;
 use chimera_fat::dir::{ShortName, Slot, lfn_checksum, parse};
 use chimera_fat::volume::{FsKind, Layout, Link, Root, first_partition, layout};
 use chimera_hal::store::{Dir, FileName, Store, StoreError, Unsupported, VolumeId};
+use chimera_hal::units::{BlockCount, FileBlock};
 use core::cell::RefCell;
 use embedded_sdmmc::BlockDevice;
 use image::{
@@ -1133,6 +1134,33 @@ fn runs_split_where_the_chain_jumps() {
     assert_eq!(runs.len(), 2);
     assert_eq!((runs[0].1, runs[1].1), (per, 2 * per));
     assert_eq!(raw_runs(&disk, &runs, len), body);
+}
+
+#[test]
+fn runs_follow_a_fragmented_chain() {
+    let (disk, vol) = card();
+    let mut s = probed(&disk);
+    let cluster = layout_of(&disk).cluster_bytes() as usize;
+    let a = pattern(1, 2 * cluster);
+    let b = pattern(2, cluster);
+    let c = pattern(3, 5 * cluster + 77);
+    s.write(vol, name(b"A"), &mut |w| w.put(&a)).unwrap();
+    s.write(vol, name(b"B"), &mut |w| w.put(&b)).unwrap();
+    s.delete(vol, name(b"A")).unwrap();
+    // A fresh store searches from cluster 2: it fills A's hole, then jumps B.
+    let mut s = probed(&disk);
+    s.write(vol, name(b"C"), &mut |w| w.put(&c)).unwrap();
+    let r = Store::runs(&mut s, vol, name(b"C")).unwrap();
+    assert_eq!(r.len.get() as usize, c.len());
+    assert!(r.ext.runs() > 1, "C jumps over B");
+    let max = BlockCount::new(u32::MAX).unwrap();
+    let raw: Vec<u8> = r
+        .ext
+        .transfers(FileBlock::new(0), u32::MAX, max)
+        .flat_map(|(at, n)| (at.get()..at.get() + n.get()).flat_map(|b| disk.block(b)))
+        .take(c.len())
+        .collect();
+    assert_eq!(raw, c);
 }
 
 #[test]

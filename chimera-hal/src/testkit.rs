@@ -1,7 +1,11 @@
 //! `MemStore` and the conformance suite every `Store` must pass.
 extern crate std;
 
-use crate::store::{ByteSink, CHUNK, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
+use crate::store::{
+    ByteSink, CHUNK, Dir, FileName, FileRuns, ReadSink, RunsError, Store, StoreError, VolumeId,
+    synthetic_runs,
+};
+use crate::units::{BlockCount, Bytes, FileBlock};
 use core::ops::ControlFlow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::vec::Vec;
@@ -118,6 +122,12 @@ impl Store for MemStore {
         sink: &mut dyn ReadSink,
     ) -> Result<(), StoreError> {
         self.read_at(vol, file, 0, sink)
+    }
+
+    fn runs(&mut self, vol: VolumeId, file: FileName) -> Result<FileRuns, RunsError> {
+        self.open(vol)?;
+        let data = self.files.get(&file).ok_or(StoreError::NotFound)?;
+        synthetic_runs(file, Bytes::new(data.len() as u32))
     }
 
     fn read_at(
@@ -352,6 +362,23 @@ pub fn store_suite<S: Store>(
         assert_eq!(c.data, data, "round trip of {n} bytes");
         written.push((f, n));
     }
+
+    // runs_cover_the_file: a written file's runs span its length.
+    let (f, n) = written[5];
+    let r = s.runs(vol, f).unwrap();
+    assert_eq!(r.len.get() as usize, n);
+    let max = BlockCount::new(u32::MAX).unwrap();
+    let blocks: u32 = r
+        .ext
+        .transfers(FileBlock::new(0), u32::MAX, max)
+        .map(|(_, b)| b.get())
+        .sum();
+    assert!(blocks as usize * CHUNK >= n);
+    assert!(matches!(
+        s.runs(vol, name(b"NORUNS")),
+        Err(RunsError::Store(StoreError::NotFound))
+    ));
+    after_op(&s);
 
     // Overwriting with less truncates.
     let f = written[5].0;

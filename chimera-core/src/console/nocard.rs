@@ -1,6 +1,8 @@
 //! `NoCard`: the card type of a unit whose console has none.
 
-use chimera_hal::store::{ByteSink, Dir, FileName, Files, ReadSink, Store, StoreError, VolumeId};
+use chimera_hal::store::{
+    ByteSink, Dir, FileName, FileRuns, Files, ReadSink, RunsError, Store, StoreError, VolumeId,
+};
 
 /// A unit with no card behind the console: `ls` and `put` are not in its
 /// build.
@@ -20,6 +22,9 @@ impl Store for NoCard {
         match *self {}
     }
     fn read(&mut self, _: VolumeId, _: FileName, _: &mut dyn ReadSink) -> Result<(), StoreError> {
+        match *self {}
+    }
+    fn runs(&mut self, _: VolumeId, _: FileName) -> Result<FileRuns, RunsError> {
         match *self {}
     }
     fn write(

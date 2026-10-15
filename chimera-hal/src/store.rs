@@ -2,6 +2,8 @@
 
 use core::ops::ControlFlow;
 
+use crate::units::{BlockCount, Bytes, FileBlock, Lba};
+
 /// A mounted volume's identity: a swap changes one or both.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VolumeId {
@@ -198,6 +200,12 @@ pub trait Store {
     ) -> Result<(), StoreError> {
         Err(StoreError::Io)
     }
+    /// `file`'s length and where its blocks lie on the device, for raw
+    /// reads that bypass the store. A store with no device blocks says
+    /// `Io`; a file in more than `MAX_RUNS` runs is `Fragmented`.
+    fn runs(&mut self, _vol: VolumeId, _file: FileName) -> Result<FileRuns, RunsError> {
+        Err(RunsError::Store(StoreError::Io))
+    }
     /// Replaces the file; returns the bytes written. What `body` put before an
     /// `Err` stays: not atomic, so callers needing atomicity write the side
     /// nobody reads. A `file.dir()` that was never made is `NotFound`.
@@ -257,6 +265,178 @@ pub trait Store {
     ) -> Result<Swept, (Doubt, SweepStats)> {
         Ok(Swept::default())
     }
+}
+
+/// Runs `Extents` keeps per file.
+pub const MAX_RUNS: usize = 32;
+
+/// A file in more than `MAX_RUNS` runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fragmented {
+    pub runs: u32,
+}
+
+/// Collects a file's runs, in order; `finish` is the only way to an
+/// `Extents`.
+pub struct Runs {
+    runs: [(Lba, BlockCount); MAX_RUNS],
+    kept: usize,
+    seen: u32,
+}
+
+impl Default for Runs {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Runs {
+    pub const fn new() -> Self {
+        Runs {
+            runs: [(Lba::new(0), BlockCount::ONE); MAX_RUNS],
+            kept: 0,
+            seen: 0,
+        }
+    }
+
+    /// The next run: its first device block and its length. Past
+    /// `MAX_RUNS` it is counted and not kept.
+    pub fn push(&mut self, first: Lba, blocks: BlockCount) {
+        if let Some(slot) = self.runs.get_mut(self.kept) {
+            *slot = (first, blocks);
+            self.kept += 1;
+        }
+        self.seen = self.seen.saturating_add(1);
+    }
+
+    pub fn finish(self) -> Result<Extents, Fragmented> {
+        if self.seen as usize > MAX_RUNS {
+            return Err(Fragmented { runs: self.seen });
+        }
+        Ok(Extents {
+            runs: self.runs,
+            kept: self.kept,
+        })
+    }
+}
+
+/// A file's runs on the device: at most `MAX_RUNS`, whole.
+#[derive(Clone, Copy, Debug)]
+pub struct Extents {
+    runs: [(Lba, BlockCount); MAX_RUNS],
+    kept: usize,
+}
+
+impl Extents {
+    pub fn runs(&self) -> u32 {
+        self.kept as u32
+    }
+
+    /// The first run's first device block; block 0 for an empty file,
+    /// which has no run.
+    pub fn first(&self) -> Lba {
+        self.runs[0].0
+    }
+
+    fn kept(&self) -> &[(Lba, BlockCount)] {
+        self.runs.get(..self.kept).unwrap_or_default()
+    }
+
+    /// File block `at` on the device, and the blocks left in its run.
+    pub fn locate(&self, at: FileBlock) -> Option<(Lba, BlockCount)> {
+        let mut at = at.get();
+        for &(first, n) in self.kept() {
+            if at < n.get() {
+                return Some((first.offset(at)?, BlockCount::new(n.get() - at)?));
+            }
+            at -= n.get();
+        }
+        None
+    }
+
+    /// The reads of file blocks `from..from + len`, each at most `max`
+    /// blocks and none across a run's end: (device block, blocks). Stops
+    /// short past the last run.
+    pub fn transfers(&self, from: FileBlock, len: u32, max: BlockCount) -> Transfers<'_> {
+        Transfers {
+            ext: self,
+            at: from.get(),
+            end: from.get().saturating_add(len),
+            max,
+        }
+    }
+}
+
+pub struct Transfers<'a> {
+    ext: &'a Extents,
+    at: u32,
+    end: u32,
+    max: BlockCount,
+}
+
+impl Iterator for Transfers<'_> {
+    type Item = (Lba, BlockCount);
+
+    fn next(&mut self) -> Option<(Lba, BlockCount)> {
+        if self.at >= self.end {
+            return None;
+        }
+        let (lba, left) = self.ext.locate(FileBlock::new(self.at))?;
+        let n = left.get().min(self.max.get()).min(self.end - self.at);
+        self.at += n;
+        Some((lba, BlockCount::new(n)?))
+    }
+}
+
+/// A file's length and where it lies on the device.
+#[derive(Clone, Copy, Debug)]
+pub struct FileRuns {
+    pub ext: Extents,
+    pub len: Bytes,
+}
+
+/// Why `Store::runs` gave none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunsError {
+    Store(StoreError),
+    Fragmented(Fragmented),
+}
+
+impl From<StoreError> for RunsError {
+    fn from(e: StoreError) -> Self {
+        RunsError::Store(e)
+    }
+}
+
+/// Blocks between synthetic files' first blocks: 32 MiB.
+pub const SYNTHETIC_STRIDE: u32 = 1 << 16;
+// The 16-bit fold times the stride fits a block number.
+const _: () = assert!((u16::MAX as u64 + 1) * SYNTHETIC_STRIDE as u64 <= 1 << 32);
+
+/// Where a store with no device puts `file`: its stem's 16-bit fold times
+/// `SYNTHETIC_STRIDE`, so a file under 32 MiB overlaps no other's runs
+/// (two stems may fold alike).
+pub fn synthetic_lba(file: FileName) -> Lba {
+    let fold = file
+        .stem()
+        .iter()
+        .fold(0u16, |h, &b| h.wrapping_mul(31).wrapping_add(u16::from(b)));
+    Lba::new(u32::from(fold) * SYNTHETIC_STRIDE)
+}
+
+/// `Store::runs` for a store with no device: one run at `synthetic_lba`.
+/// A file over the stride is `Io`.
+pub fn synthetic_runs(file: FileName, len: Bytes) -> Result<FileRuns, RunsError> {
+    let blocks = len.get().div_ceil(CHUNK as u32);
+    let mut r = Runs::new();
+    if let Some(n) = BlockCount::new(blocks) {
+        if blocks > SYNTHETIC_STRIDE {
+            return Err(StoreError::Io.into());
+        }
+        r.push(synthetic_lba(file), n);
+    }
+    let ext = r.finish().map_err(RunsError::Fragmented)?;
+    Ok(FileRuns { ext, len })
 }
 
 /// The longest file any Chimera write makes: the bench's 4 MiB card test
@@ -464,4 +644,61 @@ pub trait Files: Store {
     /// Each operation armed from now on ends after `ms` in all; `None`: the
     /// medium's own cap.
     fn cap(&mut self, ms: Option<u32>);
+}
+
+#[cfg(test)]
+mod runs_tests {
+    use super::*;
+
+    fn bc(n: u32) -> BlockCount {
+        BlockCount::new(n).unwrap()
+    }
+
+    #[test]
+    fn thirty_three_runs_are_fragmented() {
+        let mut r = Runs::new();
+        for i in 0..MAX_RUNS as u32 + 1 {
+            r.push(Lba::new(i * 10), bc(1));
+        }
+        assert_eq!(r.finish().err(), Some(Fragmented { runs: 33 }));
+
+        let mut r = Runs::new();
+        for i in 0..MAX_RUNS as u32 {
+            r.push(Lba::new(i * 10), bc(2));
+        }
+        let e = r.finish().unwrap();
+        assert_eq!(e.runs(), 32);
+        // Block 3 is the second block of run 1; block 63 the last of run 31.
+        assert_eq!(e.locate(FileBlock::new(3)), Some((Lba::new(11), bc(1))));
+        assert_eq!(e.locate(FileBlock::new(63)), Some((Lba::new(311), bc(1))));
+        assert_eq!(e.locate(FileBlock::new(64)), None);
+    }
+
+    #[test]
+    fn transfers_never_cross_a_run() {
+        let mut r = Runs::new();
+        r.push(Lba::new(1_000), bc(10));
+        r.push(Lba::new(5_000), bc(6));
+        let e = r.finish().unwrap();
+        let mut t = e.transfers(FileBlock::new(4), 12, bc(4));
+        for want in [(1_004, 4), (1_008, 2), (5_000, 4), (5_004, 2)] {
+            let (a, n) = t.next().unwrap();
+            assert_eq!((a.get(), n.get()), want);
+        }
+        assert!(t.next().is_none());
+        assert_eq!(e.first(), Lba::new(1_000));
+        let n: u32 = e
+            .transfers(FileBlock::new(14), 10, bc(32))
+            .map(|(_, n)| n.get())
+            .sum();
+        assert_eq!(n, 2, "stops short past the last run");
+    }
+
+    #[test]
+    fn synthetic_files_do_not_overlap_under_the_stride() {
+        let a = FileName::new(Dir::Tapes, b"A", b"").unwrap();
+        let b = FileName::new(Dir::Tapes, b"B", b"").unwrap();
+        let (la, lb) = (synthetic_lba(a).get(), synthetic_lba(b).get());
+        assert!(la.abs_diff(lb) >= SYNTHETIC_STRIDE);
+    }
 }

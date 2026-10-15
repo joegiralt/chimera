@@ -1,6 +1,10 @@
 //! The desktop simulator's card: a host directory behind `Store`.
 
-use chimera_hal::store::{ByteSink, CHUNK, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
+use chimera_hal::store::{
+    ByteSink, CHUNK, Dir, FileName, FileRuns, ReadSink, RunsError, Store, StoreError, VolumeId,
+    synthetic_runs,
+};
+use chimera_hal::units::Bytes;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -166,6 +170,13 @@ impl Store for DirStore {
         sink: &mut dyn ReadSink,
     ) -> Result<(), StoreError> {
         self.read_at(vol, file, 0, sink)
+    }
+
+    fn runs(&mut self, vol: VolumeId, file: FileName) -> Result<FileRuns, RunsError> {
+        self.open(vol)?;
+        let len = fs::metadata(self.file_path(file)).map_err(io_err)?.len();
+        let len = u32::try_from(len).map_err(|_| StoreError::Io)?;
+        synthetic_runs(file, Bytes::new(len))
     }
 
     fn read_at(
