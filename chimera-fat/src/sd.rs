@@ -2,8 +2,11 @@
 //! a few CMD0s, not the acquire deadline (#186). Pure: the shell sends
 //! `CMD0` with CS low and hands over the `NCR_BYTES` it clocks back.
 
+use crate::sd_addr::CmdArg;
+use crate::sd_proto;
+
 /// GO_IDLE_STATE with its CRC, which the card checks before SPI mode.
-pub const CMD0: [u8; 6] = [0x40, 0x00, 0x00, 0x00, 0x00, 0x95];
+pub const CMD0: [u8; 6] = sd_proto::command(sd_proto::CMD0, CmdArg::ZERO);
 
 /// NCR: a card answers within 8 bytes of a command.
 pub const NCR_BYTES: usize = 8;

@@ -12,6 +12,7 @@ pub mod fsinfo;
 pub mod mark;
 pub mod sd;
 pub mod sd_addr;
+pub mod sd_proto;
 mod store;
 pub mod sweep;
 pub mod volume;
