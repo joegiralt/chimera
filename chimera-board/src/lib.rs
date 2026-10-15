@@ -156,6 +156,8 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     #[cfg(not(feature = "sd-probe"))]
     chimera_core::console::SRAM4
         .store(unsafe { cache::sram4_self_test(&mut cp.SCB, &shared::sram4_words()) });
+    #[cfg(not(feature = "sd-probe"))]
+    shared::zero_rings();
     // Bank 2 judged before anything could call into it (ADR 0137), a
     // fault's mark first; the cycle counter bounds its erase.
     #[cfg(not(feature = "sd-probe"))]

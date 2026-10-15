@@ -1,5 +1,5 @@
 use core::mem::MaybeUninit;
-use core::ptr::addr_of_mut;
+use core::ptr::{addr_of, addr_of_mut};
 #[cfg(feature = "perf-probe")]
 use core::sync::atomic::AtomicU8;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -20,6 +20,7 @@ use chimera_core::preset::Performance;
 use chimera_core::project::arena::{ARENA_BYTES, ArenaWriter};
 use chimera_core::scope::{ScopeFrame, scope_buffer};
 use chimera_core::source_table::SOURCE_TABLE;
+use chimera_core::stream::ring::Rings;
 use chimera_core::triple::{Reader, TripleBuffer, Writer};
 use chimera_core::ui::UiState;
 
@@ -35,16 +36,45 @@ pub fn take_scope() -> Option<(Writer<ScopeFrame>, Reader<ScopeFrame>)> {
     Some(unsafe { &mut *addr_of_mut!(SCOPE) }.split())
 }
 
-// D3 SRAM4 (sram4.x): the stream rings, typed where they are built. NOLOAD,
-// so nothing reads it before `cache::sram4_self_test`.
+// D3 SRAM4 (sram4.x): the stream rings. NOLOAD, so nothing reads it
+// before `cache::sram4_self_test`, then `zero_rings` builds them in place.
 #[unsafe(link_section = ".sram4")]
-static mut RINGS: MaybeUninit<[u8; hw::SRAM4]> = MaybeUninit::uninit();
+static mut RINGS: MaybeUninit<Rings> = MaybeUninit::uninit();
+static RINGS_TAKEN: AtomicBool = AtomicBool::new(false);
+static RINGS_ZEROED: AtomicBool = AtomicBool::new(false);
+
+const SRAM4_WORDS: usize = 8;
+const SRAM4_STRIDE: usize = hw::SRAM4 / SRAM4_WORDS;
+// The self-test's last word lies inside the rings.
+const _: () = assert!((SRAM4_WORDS - 1) * SRAM4_STRIDE + 4 <= size_of::<Rings>());
 
 /// One word every 8 KiB of SRAM4, for its self-test.
-pub fn sram4_words() -> [*mut u32; 8] {
+pub fn sram4_words() -> [*mut u32; SRAM4_WORDS] {
     let base = addr_of_mut!(RINGS).cast::<u8>();
-    // SAFETY: each offset is inside `RINGS` (8 * 8 KiB = SRAM4).
-    core::array::from_fn(|i| unsafe { base.add(i * 8 * 1024) }.cast::<u32>())
+    // SAFETY: each offset is inside `RINGS` (asserted above), 4-aligned as
+    // `Rings` is.
+    core::array::from_fn(|i| unsafe { base.add(i * SRAM4_STRIDE) }.cast::<u32>())
+}
+
+/// Every slot Empty: after `cache::sram4_self_test`, once.
+pub fn zero_rings() {
+    if RINGS_TAKEN.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    // SAFETY: the flag lets one caller past, before `rings` hands out any
+    // reference (it waits for `RINGS_ZEROED`); all-zero bytes are a valid
+    // `Rings` (ring.rs).
+    unsafe { addr_of_mut!(RINGS).write_bytes(0, 1) };
+    RINGS_ZEROED.store(true, Ordering::Release);
+}
+
+/// The rings, once `zero_rings` has built them.
+pub fn rings() -> Option<&'static Rings> {
+    // SAFETY: zeroed (a valid `Rings`) before the flag's `Release`, and only
+    // ever touched again through `Rings`' own atomics and sides.
+    RINGS_ZEROED
+        .load(Ordering::Acquire)
+        .then(|| unsafe { (*addr_of!(RINGS)).assume_init_ref() })
 }
 
 // The wave tables' zero-wait working copy, at the top of DTCM (dtcm.x).

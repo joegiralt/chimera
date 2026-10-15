@@ -67,6 +67,10 @@ impl AudioBlocks {
         Self(n)
     }
 
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
     pub const fn after(self, blocks: u32) -> Self {
         Self(self.0.wrapping_add(blocks))
     }

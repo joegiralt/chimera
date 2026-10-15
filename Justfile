@@ -389,10 +389,11 @@ stack-check:
     done
 
 # The source table's gate under loom (ADR 0087): every interleaving of
-# one audio block loop and one UI close, wait, move and open. Its own
+# one audio block loop and one UI close, wait, move and open; and a stream
+# slot's want, cancel and fill against the card's claim. Its own
 # target dir: `--cfg loom` would rebuild everything else.
 loom:
-    RUSTFLAGS="--cfg loom" CARGO_TARGET_DIR=target/loom cargo test -p chimera-core --features test-support --test loom_source_table --release
+    RUSTFLAGS="--cfg loom" CARGO_TARGET_DIR=target/loom cargo test -p chimera-core --features test-support --test loom_source_table --test loom_stream_slot --release
 
 # Run tests
 test:
