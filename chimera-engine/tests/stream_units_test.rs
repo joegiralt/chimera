@@ -1,4 +1,5 @@
 use chimera_engine::stream::units::*;
+use chimera_engine::voice_alloc::VoiceIdx;
 use chimera_hal::units::{Bytes, Millis};
 
 #[test]
@@ -55,5 +56,11 @@ fn source_rate_in_format_range() {
 #[test]
 fn voice_idx_below_max_voices() {
     assert!(VoiceIdx::new(7).is_some() && VoiceIdx::new(8).is_none());
-    assert_eq!(VoiceIdx::all().count(), 8);
+    assert_eq!(VoiceIdx::ALL.len(), 8);
+}
+
+#[test]
+fn frames_add_refuses_overflow() {
+    assert_eq!(Frames::new(1).checked_add(Frames::new(2)), Some(Frames::new(3)));
+    assert_eq!(Frames::new(u32::MAX).checked_add(Frames::new(1)), None);
 }

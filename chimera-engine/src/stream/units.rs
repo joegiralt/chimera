@@ -2,7 +2,6 @@
 //! speed, and the small indices a stream's slots and rings use.
 
 use core::num::NonZeroU32;
-use core::ops::Add;
 
 use chimera_hal::units::{Bytes, Millis, StreamCount};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
@@ -40,6 +39,13 @@ impl Frames {
         self.0
     }
 
+    pub const fn checked_add(self, o: Frames) -> Option<Frames> {
+        match self.0.checked_add(o.0) {
+            Some(n) => Some(Frames(n)),
+            None => None,
+        }
+    }
+
     pub fn checked_sub(self, o: Frames) -> Option<Frames> {
         self.0.checked_sub(o.0).map(Frames)
     }
@@ -49,14 +55,6 @@ impl Frames {
         match p {
             Packing::Twelve => Bytes::new(self.0.div_ceil(2).saturating_mul(3)),
         }
-    }
-}
-
-impl Add for Frames {
-    type Output = Frames;
-
-    fn add(self, o: Frames) -> Frames {
-        Frames(self.0 + o.0)
     }
 }
 
@@ -161,23 +159,5 @@ impl SlotIdx {
 
     pub const fn index(self) -> usize {
         self as usize
-    }
-}
-
-/// A voice's index, below `MAX_VOICES`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct VoiceIdx(usize);
-
-impl VoiceIdx {
-    pub const fn new(i: usize) -> Option<Self> {
-        if i < MAX_VOICES { Some(Self(i)) } else { None }
-    }
-
-    pub const fn get(self) -> usize {
-        self.0
-    }
-
-    pub fn all() -> impl Iterator<Item = VoiceIdx> {
-        (0..MAX_VOICES).map(VoiceIdx)
     }
 }

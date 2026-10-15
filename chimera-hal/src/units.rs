@@ -3,7 +3,6 @@
 //! one of these methods, never an `as` across units.
 
 use core::num::NonZeroU8;
-use core::ops::Add;
 
 const BLOCK_BYTES: u32 = 512;
 
@@ -73,6 +72,13 @@ impl Bytes {
         self.0
     }
 
+    pub const fn checked_add(self, o: Bytes) -> Option<Bytes> {
+        match self.0.checked_add(o.0) {
+            Some(n) => Some(Bytes(n)),
+            None => None,
+        }
+    }
+
     /// The block this offset falls in, and its offset there.
     pub const fn split_block(self) -> (FileBlock, Bytes) {
         (FileBlock(self.0 / BLOCK_BYTES), Bytes(self.0 % BLOCK_BYTES))
@@ -81,14 +87,6 @@ impl Bytes {
     /// The rate that moves these bytes in `t`; 0 µs counts as 1.
     pub fn per(self, t: Micros) -> BytesPerSec {
         BytesPerSec(sat(u64::from(self.0) * 1_000_000 / u64::from(t.0.max(1))))
-    }
-}
-
-impl Add for Bytes {
-    type Output = Bytes;
-
-    fn add(self, o: Bytes) -> Bytes {
-        Bytes(self.0 + o.0)
     }
 }
 

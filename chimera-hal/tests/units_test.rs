@@ -42,3 +42,9 @@ fn stream_count_is_one_to_eight() {
         assert_eq!(StreamCount::from_bits(StreamCount::to_bits(x)), x);
     }
 }
+
+#[test]
+fn bytes_add_refuses_overflow() {
+    assert_eq!(Bytes::new(1).checked_add(Bytes::new(2)), Some(Bytes::new(3)));
+    assert_eq!(Bytes::new(u32::MAX).checked_add(Bytes::new(1)), None);
+}
