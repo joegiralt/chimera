@@ -35,7 +35,7 @@
 | `STREAM_BUDGET_BPS` | 466,000 (60 % of M1's 778 KB/s) | `stream::admit` | B4: the largest N with zero empty rings for 10 min at 75 % load, × 0.8 |
 | `URGENT_MS` | 15 | `stream::edf` | B6: the UI stays ≥ 15 fps under N streams |
 | `TOKEN_TIMEOUT_MS` | 100 | `chimera-fat::sd_proto` | B2's max × 10 |
-| `QUIET_HOLD_MS` | 20 | `card_dma` | — (a write burst's gaps) |
+| `QUIET_HOLD_MS` | 20 | `chimera-hal::card_bus` | — (a write burst's gaps) |
 | `DROP_FADE` | 144 samples (3 ms) | `stream::cursor` | click test (§ 10) |
 | `QUIET_FADE` | 480 samples (10 ms) | `stream::cursor` | click test |
 | `GUARD_FRAMES` | 4 (2 packed pairs, 6 B) | `stream::ring` | Hermite's 4 taps |
@@ -47,11 +47,11 @@ B5 confirms writes stall reads (expected: yes, so § 8's quiet stays). B7 measur
 
 | Change | File | Detail |
 |---|---|---|
-| SRAM4 joins the map | `chimera-stm32/memory.x` | `RAM_D3 (rwx) : ORIGIN = 0x38000000, LENGTH = 64K`; a `.sram4 (NOLOAD)` section |
+| SRAM4 joins the map | `chimera-stm32/memory.x`, `chimera-stm32/build.rs` | `RAM_D3 (rwx) : ORIGIN = 0x38000000, LENGTH = 64K` in `memory.x`; the `.sram4 (NOLOAD)` output section in a script `build.rs` writes (as it writes `ram_d2.x`), with an assert that it fits `RAM_D3` |
 | Rings in SRAM4 | `chimera-engine/src/stream/ring.rs` | `#[link_section = ".sram4"] static RINGS: Rings` (8 × 8,128 B = 65,024 B), asserted ≤ 64 KiB. CPU access only: the card IRQ copies in, the audio reads. Cacheable (the default map). |
-| The DMA region grows to 16 KiB | `chimera-board/src/cache.rs`, `chimera-stm32/memory.x`, `chimera-engine/src/hw.rs` | A `.dma` section at `ORIGIN(RAM_D2)`, 16 KiB, aligned, holding the SAI rings (3 KB, as now) and the card staging (2 × 4,608 B). MPU region 0's SIZE goes from 11 (4 KB) to 13 (16 KB); `DMA_REGION_RASR` and its assert change. `D2_DMA_RESERVE` 8 → 16 KiB. Nothing else may land in `.dma`: a linker assert. |
-| SRAM4's clock | `chimera-board/src/cache.rs` (`enable_d2_sram`'s neighbour) | Verify in RM0433 § 8 whether SRAM4 needs an enable bit on this part. A boot self-test writes and reads one word of each ring and reports `sram4 ok` in `status`. |
-| Stream registry | `chimera-engine/src/stream/registry.rs` | A D2 static, ~2 KB: per streamed source, its `Extents` and framing (§ 5) |
+| The DMA region grows to 16 KiB | `chimera-board/src/cache.rs`, `chimera-stm32/build.rs` (`ram_d2.x`), `chimera-engine/src/hw.rs` | The `.ram_d2_dma` output section (input `.ram_d2.dma`, where `audio/dma.rs`' `RINGS` already lands) at `ORIGIN(RAM_D2)` grows from 4,096 to 16,384 B, `ALIGN(16384)`, holding the SAI rings (3 KB, as now) and the card staging (2 × 4,608 B). Its two asserts in `build.rs` change with it. MPU region 0's SIZE goes from 11 (4 KB) to 13 (16 KB); `DMA_REGION_RASR` and its assert change (`0x1308_0017` → `0x1308_001B`). `D2_DMA_RESERVE` 8 → 16 KiB. Nothing else may land in `.ram_d2.dma`. |
+| SRAM4's clock | `chimera-board/src/cache.rs` (`enable_d2_sram`'s neighbour) | None needed: RCC_AHB4ENR has no SRAM4 enable on this part (only AHB4LPENR's `SRAM4LPEN`, for sleep; checked against the `stm32h7` PAC). A boot self-test writes and reads one word of each ring and reports `sram4 ok` in `status`. |
+| Stream registry | `chimera-engine/src/stream/registry.rs` | A D2 static, ~2.2 KB: 8 rows, each a streamed source's `SourceId`, `Extents` and framing (§ 5) |
 
 D2 free goes 86,240 → about 76,000 B. AXI grows by under 1 KB (per-voice cursor state lives in `TapeDeck`, already sized by MODAL's slot).
 
@@ -93,7 +93,7 @@ pub enum ProtoError { Crc, ErrorToken(u8), Timeout, R1(u8) }
 
 ### 4.2 The DMA shell: `chimera-board/src/card_dma.rs`
 
-- **DMA2 stream 0** = SPI2 RX, **DMA2 stream 1** = SPI2 TX, through DMAMUX1. The request ids are `spi2_rx_dma` and `spi2_tx_dma`; verify them in RM0433's DMAMUX1 table (39 and 40 expected). DMA1 streams 0–2 stay the audio's.
+- **DMA2 stream 0** = SPI2 RX, **DMA2 stream 1** = SPI2 TX, through DMAMUX1 channels 8 and 9 (`ccr[8]`, `ccr[9]`: DMA2's streams follow DMA1's 0–7). The request ids are 39 (`Spi2RxDma`) and 40 (`Spi2TxDma`), as the `stm32h7` PAC's `DMAREQ_ID_A` has them. DMA1 streams 0–2 on channels 0–2 stay the audio's (`chimera-stm32/src/audio/dma.rs`); nothing uses DMA2 today.
 - **TX sends 0xFF** from one constant byte, memory increment off. RX writes the staging buffer.
 - **The transfer, as a state machine** run in `DMA2_STR0` (RX complete; also pended in software to wake it):
   1. **Command** (polled, about 3 µs): CS low, `command(CMD18, lba)`, read R1 within NCR.
@@ -101,7 +101,7 @@ pub enum ProtoError { Crc, ErrorToken(u8), Timeout, R1(u8) }
   3. **Data:** DMA the rest of the block and its 2 CRC bytes; `check`. Then the next block's Token.
   4. **Stop:** `CMD12` (polled), then DMA bursts until MISO reads 0xFF (not busy). CS high.
   5. **Done:** copy the samples into the ring slot (§ 5.3), mark it Ready, pick the next (§ 6).
-- The SPI peripheral stays configured as `SdSpi` leaves it (8-bit, mode 3, 25 MHz). The shell sets `RXDMAEN`, `TXDMAEN` and `TSIZE` for a burst and clears them after, so the polled path finds the peripheral as it left it.
+- The SPI peripheral stays configured as `SdSpi` leaves it (8-bit, mode 3, 25 MHz). `CFG1`'s `RXDMAEN`/`TXDMAEN` and `CR2`'s `TSIZE` are writable only with `SPE` clear, so for a burst the shell clears `SPE`, sets them (RX's DMA enable before the streams start, TX's after, per RM0433's SPI DMA sequence), sets `SPE` and `CSTART`, and after `EOT` clears them, restoring `TSIZE` 0 with `SPE` set as the HAL's `Spi` leaves it, so the polled path finds the peripheral as it left it.
   - `// SAFETY:` the bus word (§ 4.3) is `Stream` for the whole transfer, so no other code touches SPI2's registers or CS. The UI path takes the word before any register access.
 - **IRQ cost:** a 5 ms token wait is about 15 bursts at about 1 µs of work each; the copy of 4,032 B from non-cacheable D2 is about 10 µs; CRC16 in software over 4,608 B is about 100 µs (table-driven, measured by B2). At 72 chunks a second that is under 1 % of the CPU, all of it under the UI, none under audio.
 - B2 also reports CRC16's time. If it passes 200 µs a chunk, the H7's CRC unit takes it (a later change, not this slice).
@@ -109,17 +109,22 @@ pub enum ProtoError { Crc, ErrorToken(u8), Timeout, R1(u8) }
 ### 4.3 The bus word and `SharedCard`
 
 ```rust
-// chimera-board/src/card_dma.rs
+// chimera-hal/src/card_bus.rs: pure atomics, host- and loom-tested;
+// chimera-fat, chimera-engine and chimera-board all see it.
 #[repr(u8)] pub enum Owner { Free = 0, Ui = 1, Stream = 2 }
-pub struct CardBus { owner: AtomicU8, ui_waiting: AtomicBool, quiet: AtomicU8, fault: AtomicU8 }
+pub struct CardBus {
+    owner: AtomicU8, ui_waiting: AtomicBool, wanted: AtomicBool,
+    quiet: AtomicU8, fault: AtomicU8, streams_active: AtomicU8,
+}
 
+// chimera-fat/src/shared_card.rs: generic, host-tested over a fake `Medium`.
 /// The UI's card, for `FatStore`: each `BlockDevice` call takes the bus.
-pub struct SharedCard { dev: SdDevice, bus: &'static CardBus }
-impl BlockDevice for SharedCard { /* take(Ui) → dev.read/write → give() → pend if wanted */ }
-impl Medium for SharedCard { /* forwards to SdDevice's */ }
+pub struct SharedCard<D: Medium> { dev: D, bus: &'static CardBus, pend: fn() }
+impl<D: Medium> BlockDevice for SharedCard<D> { /* take(Ui) → dev.read/write → give() → pend() if wanted */ }
+impl<D: Medium> Medium for SharedCard<D> { /* forwards to D's */ }
 ```
 
-- `chimera-board/src/sd.rs`: `pub type SdStore = FatStore<SharedCard>`. `STORE_RESERVE` still holds (the wrapper adds a pointer).
+- `chimera-board/src/sd.rs`: `pub type SdStore = FatStore<SharedCard<SdDevice>>`, `pend` pending `DMA2_STR0`. `STORE_RESERVE` still holds (the wrapper adds a pointer).
 - **The UI takes the bus** by setting `ui_waiting`, then spinning on `Free → Ui` under the operation's deadline (`SD_IDLE_MS`). The card IRQ, after each transfer, gives the bus up when `ui_waiting` is set and no stream is urgent (`URGENT_MS`). The UI waits at most one transfer (about 7 ms).
 - **The IRQ finds the bus taken** (`Ui`): it sets `wanted` and returns. `SharedCard::give` pends the IRQ if `wanted` is set.
 - **Writes quiet the streams** (§ 8) inside `SharedCard::write`, so every writer is covered without touching its call site.
@@ -190,11 +195,11 @@ One `AtomicU32` a slot: state (2 bits: Empty, Wanted, Filling, Ready), generatio
 | Audio | Ready → Empty when the head leaves; Wanted or Filling → Empty with gen+1 to cancel | `Release` |
 | Card IRQ | a fill whose CAS to Ready fails (the generation moved) is dropped | — |
 
-The audio reads a slot's bytes only after an `Acquire` load shows Ready under its own generation. Loom covers it, as `source_table.rs`' gate is covered.
+The audio reads a slot's bytes only after an `Acquire` load shows Ready under its own generation. Loom covers it, as `source_table.rs`' gate is covered: `chimera-core/tests/loom_stream_slot.rs`, added to `just loom` (which runs only `loom_source_table` today).
 
 ### 5.5 The registry: `chimera-engine/src/stream/registry.rs`
 
-- `StreamRegistry`, a D2 static: one `StreamFile` a `SourceId` (32 rows; about 2 KB with 32-run `Extents` for up to 8 streamed sources, the rest empty).
+- `StreamRegistry`, a D2 static: 8 rows, each a `SourceId` and its `StreamFile` (a 32-run `Extents` is 268 B, so 32 rows, one a `MAX_SOURCES`, would be about 9 KB). A ninth streamed source refuses to load (`STREAMS FULL`, provisional copy).
 - The UI writes a row before it publishes the source's pool row (`Release` on the pool row orders it). It clears it only after the source is retired and its `sounding` bit is clear (ADR 0087's retire).
 - The card IRQ reads rows only for ids a Wanted slot names.
 
@@ -203,7 +208,7 @@ The audio reads a slot's bytes only after an `Acquire` load shows Ready under it
 `chimera-core/src/ui/source_cell.rs` (`SourceLoad`) and project-load pass 2:
 
 - **Whole** if `held_len(whole)` fits the arena's free space, as now.
-- **Streamed** otherwise, if MODEL is PLAY in MODE ONE or a forward LOOP. Its `held` is the descriptor, the head table and the heads: START's head, and LOOP's loop-start head when MODE is LOOP. A head is `HEAD_MS` long, or to END if that is shorter. The loop-start head begins XFADE (at most 100 ms) before the loop's start, so the wrap's crossfade, which reads the material before the loop, reads RAM. The UI resolves `runs` (more than 32 refuses: `FRAGMENTED · COPY IT AGAIN`), writes the registry row, reads the heads with `read_heads_into` (beside `read_source_into`, the same 4 KB a UI pass), and publishes.
+- **Streamed** otherwise, if MODEL is PLAY in MODE ONE or a forward LOOP. Its `held` is the descriptor, the head table and the heads: START's head, and LOOP's loop-start head when MODE is LOOP. A head is `HEAD_MS` long, or to END if that is shorter. The loop-start head begins XFADE (at most 100 ms) before the loop's start, so the wrap's crossfade, which reads the material before the loop, reads RAM. The UI resolves `runs` through `Store::runs`, new in `chimera-hal` beside `read_at` (`SourceLoad` is generic over `Store`; `FatStore` forwards its own `runs`; `DirStore` and `MemStore` give one synthetic run per file that the desktop's card model maps back; the default is `Io`) (more than 32 refuses: `FRAGMENTED · COPY IT AGAIN`), writes the registry row, reads the heads with `read_heads_into` (beside `read_source_into`, the same 4 KB a UI pass), and publishes.
 - **Refused** otherwise: `PING NEEDS RAM`, `REVERSE NEEDS RAM`, or the machine's own reason (SCRUB, STRETCH and WAVE are RAM only). The meter's preview shows the heads' cost.
 - A streamed source whose MODEL or MODE later changes to one that needs RAM refuses its note-ons with the same reasons (`TapeDeck::refuses`), before allocation.
 - **Re-heading.** START and the loop's start aren't modulatable (note-on, ADR 0093), but they can be turned. 200 ms after the last turn, the UI re-stages the heads: a new row under the gate, as a compaction moves bytes. Notes started before that read a stale head: their START has none, so they start cold (§ 7.3).
@@ -230,7 +235,7 @@ The deadline the audio writes is `now + frames_ahead / (inc_max · 64)` blocks. 
 
 `EngineCtx` (`chimera-engine/src/dsp/engines.rs`) gains `streams: &'a StreamPort<'a>`: this voice's ring and slot words, the registry's frame counts, the block counter and the quiet flag. ALGO, MODAL and VA ignore it, as they ignore `src`. `TapeDoor`'s `start` and `play` take `&StreamPort<'_>` (bank 2's seal changes, as for any release).
 
-### 7.2 Spans: `chimera-engine/src/dsp/tape_engine/span.rs` (bank 2)
+### 7.2 Spans: `chimera-engine/src/dsp/tape_engine/span.rs` (bank 2: `build.rs`' `bank2.x` gains a `11tape_engine4span` glob; it links bank 2 by module path, so a new module not named there lands in bank 1)
 
 ```rust
 /// A run of contiguous source frames the voice can read: a head in the
@@ -244,7 +249,7 @@ impl Span<'_> {
 
 `SourceView` gains `SourceView::span(bytes, desc)` for a slice that isn't a whole row; its clamping and SAFETY argument are unchanged, now relative to the span.
 
-### 7.3 The cursor: `chimera-engine/src/stream/cursor.rs` (pure; linked into bank 2 with `TapeDeck`)
+### 7.3 The cursor: `chimera-engine/src/stream/cursor.rs` (pure; linked into bank 2 with `TapeDeck` by a `6stream6cursor` glob added to `bank2.x`)
 
 Per streamed voice, about 48 B inside `TapeDeck`:
 
@@ -282,12 +287,12 @@ pub fn admit(new: Bill, playing: impl Iterator<Item = (usize, Bill, Age)>, budge
 
 `chimera-engine/src/dsp/tape_engine/params.rs`, `machine.rs`:
 
-- `TapeModel::Play = 0` replaces `Loop`. `Oneshot` (7) and `PingPong` (2) stay as load codes only: `from_code(7)` gives PLAY with MODE ONE and FADE HOLD; `from_code(2)` gives PLAY with MODE PING. Their SLICE values load and are ignored.
+- `TapeModel::Play = 0` replaces `Loop`. `Oneshot` (7) and `PingPong` (2) stay as load codes only: MODEL's code sets one param, so the load's translation (beside `translate_v1`, which already turns REVERSE's code 1 into LOOP) turns code 7 into PLAY with MODE ONE and FADE HOLD, and code 2 into PLAY with MODE PING; `TapeModel::from_disk_code` no longer yields them. Their SLICE values load and are ignored.
 - **MODE** (id 15: ONE, LOOP, PING; note-on). The engine's dispatch on `model` becomes a dispatch on MODE inside PLAY; the three paths are the existing ones.
 - **FADE** is DRAG (id 9) on PLAY's page, with a last step **HOLD** (note-off ignored) in MODE ONE only, dimmed in LOOP and PING. ONE's default is HOLD; LOOP and PING's is 32 ms (the existing TRON release's law, `tron::release_k`).
 - MODEL's order in this slice: PLAY, TRON, SCRUB, STRETCH, WAVE. KIT and REEL take their places in slices 4 and 5.
 - **Machine page PLAY:** MODE, LENGTH, XFADE, FADE, WOW. DECK: MODEL, POSITION, WALK, TAPE, AGE.
-- `MACHINE_NAMES`, `MODEL_NAMES` and the factory TAPE Sounds' text sources (`tools/factory-sounds`) follow.
+- `MACHINE_NAMES`, `MODEL_NAMES` and the factory TAPE Sounds' text sources (`tools/factory-tapes/recipes.toml`, built by `chimera-desktop/src/factory_tapes.rs`) follow.
 
 ## 8. Quiet for writes
 
@@ -306,7 +311,7 @@ RAM voices and every other engine play on throughout. `stats` reports `card_quie
 |---|---|---|---|
 | CRC16 mismatch or error token | One retry of that transfer | — | — |
 | A second failure, a token timeout (`TOKEN_TIMEOUT_MS`) or a bad R1 | `fault = Read`; Filling slots go back to Wanted; nothing more starts | Every streamed voice starves (§ 7.3); new streamed notes are refused (`Admit::Refuse`) | TAPE pages' focus band reads `CARD READ FAILED`. Next pass: `Medium::reinit` through `SharedCard`. Success clears `fault`; the IRQ resumes. |
-| The volume changed after a re-init (`CardChanged`) | Registry cleared | Streamed sources' notes refused | Streamed sources read `SOURCE MISSING` until the project resolves them again |
+| The volume changed after a re-init (`StoreError::VolumeChanged`) | Registry cleared | Streamed sources' notes refused | Streamed sources read `SOURCE MISSING` until the project resolves them again |
 | A record tag or length mismatch in `deframe` | As a read error, without the retry | as above | as above, plus `stats` `stream_frame_errors` |
 
 No path panics, blocks the audio or allocates. The audio's only failure mode is silence that fades.
@@ -361,12 +366,12 @@ A `TestCard` in `chimera-engine/src/stream/test_card.rs` (feature `test-support`
 
 Claude flashes and reads the unit over the console (hardware-checks-only-at-ship); the owner only for a power pull.
 
-1. `just flash` the ORBIT build and its `.bk2`. `status` shows `bank2 open` and `sram4 ok`.
+1. `just firmware-orbit`, then `python3 tools/chimera-usb.py update target/chimera-orbit.bin target/chimera-orbit.bk2` (`just flash` builds the default set, not ORBIT). `status` shows bank 2 open and `sram4 ok`.
 2. Put four 24 kHz beds of 25–28 s (each under `put`'s 1 MiB; host-built from CC0 rain, crackle, room tone and tape hiss) with `just put-tape`.
 3. A project: Parts 1–4 PLAY LOOP on the beds (streamed: each is bigger than the arena's free space); Part 5 a 4-voice chord on a heavy Sound held through the console keys at ≥ 70 % load.
 4. Ten minutes. `stats`: `stream_underruns 0`, `overruns 0`, `stream_faults 0`, the UI's `loop_peak_us` and frame rate recorded.
 5. A MENU-hold save mid-run: the beds fade out and back (`card_quiet_ms_max` recorded), the save completes, Part 5 never drops.
-6. `card fault` (a bench verb that fails the next transfer twice): the beds drop out, the TAPE pages read `CARD READ FAILED`, and within a second they recover.
+6. `fault card` (fails the next transfer twice): the beds drop out, the TAPE pages read `CARD READ FAILED`, and within a second they recover. `card` is bench-only (`chimera-board/bench`), so this verb joins the `fault` command of `fault-inject` builds, and this step runs on an ORBIT build with `fault-inject` (`--features orbit,fault-inject`); if that does not fit FLASH, the controller rules.
 7. Raw console text in the ledger. Then the owner's UAT by ear: the beds loop for minutes with no clicks, and a save sounds like a tape lifted and dropped.
 
 ## 13. What the bench may change
