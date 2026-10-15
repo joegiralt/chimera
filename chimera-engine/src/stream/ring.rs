@@ -278,7 +278,10 @@ impl Ready<'_> {
     }
 }
 
-/// A slot the card took to fill. Not `Clone`: one fill a claim.
+/// A slot the card took to fill. Not `Clone`: one fill a claim. The card
+/// holds at most one `Claim` per slot at a time: finish, requeue or drop it
+/// before claiming that slot again. The 6-bit generation wraps after 64
+/// cancels, so two live claims on one slot could pass a stale check.
 pub struct Claim {
     voice: VoiceIdx,
     slot: SlotIdx,

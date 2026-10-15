@@ -15,8 +15,8 @@
 //!   happened before the `want` it claims, so the card's writes come after.
 //! - **fill_done:** CAS `Release`; `seen` loads `Acquire`, so a Ready
 //!   seen is a Ready whose bytes are written.
-//! - **release / cancel:** `Release`, so the audio's reads come before the
-//!   card's next claim of the slot.
+//! - **release:** `Release`, so the audio's reads come before the card's
+//!   next claim of the slot. **cancel** is `AcqRel` for the same reason.
 
 #[cfg(not(loom))]
 use core::sync::atomic::{AtomicU32, Ordering};
