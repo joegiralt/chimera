@@ -197,6 +197,14 @@ impl CardBus {
         }
     }
 
+    /// The card IRQ's yield to a waiting UI: a want without a take, so the
+    /// UI's give answers `Pend` and the IRQ looks again. Sound only from
+    /// the IRQ, which runs whole between two UI steps: the UI, seen
+    /// waiting, has not yet given.
+    pub fn want(&self) {
+        self.wanted.store(true, Ordering::SeqCst);
+    }
+
     pub fn owner(&self) -> Owner {
         Owner::from_bits(self.owner.load(Ordering::Acquire))
     }

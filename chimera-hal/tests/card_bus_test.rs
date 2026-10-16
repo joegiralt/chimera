@@ -163,3 +163,12 @@ fn a_stream_take_drops_a_stale_abort() {
     b.ask_abort();
     assert!(b.take_abort());
 }
+
+#[test]
+fn a_yield_to_a_waiting_ui_is_answered_by_its_give() {
+    let b = CardBus::new();
+    b.want();
+    assert!(b.try_take(Taker::Ui, Ms(0)));
+    assert_eq!(b.give(), Wake::Pend);
+    assert_eq!(b.give(), Wake::Quiet);
+}
