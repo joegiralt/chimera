@@ -47,7 +47,8 @@ use crate::shared::{AUDIO_CYCLES, BLOCKS, rings};
 
 /// The bound on any register poll.
 pub const REG_WAIT_US: Micros = Micros::new(50);
-/// The polled wait for a card not busy before CMD18: about 20 µs at SCK.
+/// The polled wait for a card not busy, before CMD18 and after CMD12:
+/// about 20 µs at SCK.
 const READY_BYTES: u32 = 64;
 
 const _: () = assert!(WATCHDOG_MS.get() >= 2 * TOKEN_TIMEOUT_MS.get());
@@ -1023,9 +1024,9 @@ impl IrqState {
         let upto = kind.landing(end) + dest.n.get();
         #[cfg(feature = "bench")]
         let (dest, fault) = bench::aim(dest);
-        self.bursts += 1;
         match h.fly(dest, &self.line) {
             Ok(bus) => {
+                self.bursts += 1;
                 #[cfg(feature = "bench")]
                 bench::strike(fault, &bus.0);
                 self.job = Job::Read(Transfer {
@@ -1151,15 +1152,18 @@ impl IrqState {
     /// The busy, polled for `READY_BYTES` (after a read it is mostly gone
     /// by then), else one 0xFF burst into `scan`, `left` bytes of drain
     /// still allowed.
+    /// The bus is polled (`stop` and `drained` leave it so); the poll's
+    /// bytes count against `left`.
     fn drain(&mut self, mut h: Held, left: u32, then: Then) {
-        match h.polled(&self.line).and_then(|()| h.ready(&self.line)) {
+        match h.ready(&self.line) {
             Ok(()) => return self.stopped(h, then),
-            Err(Why::Busy) if left > 0 => {}
+            Err(Why::Busy) if left > READY_BYTES => {}
             Err(_) => return self.fault(h, then),
         }
-        self.bursts += 1;
+        let left = left - READY_BYTES;
         match h.fly(Dest::scan(), &self.line) {
             Ok(bus) => {
+                self.bursts += 1;
                 self.job = Job::Read(Transfer {
                     bus,
                     phase: Phase::Drain { left, then },
@@ -1174,15 +1178,18 @@ impl IrqState {
 
     /// A drain burst landed: the busy polled again.
     fn drained(&mut self, bus: Flying, left: u32, then: Then) {
-        let h = match bus.land(&self.line) {
+        let mut h = match bus.land(&self.line) {
             Ok(h) => h,
             Err((f, _)) => {
                 let h = f.ground(&self.line);
                 return self.fault(h, then);
             }
         };
+        if h.polled(&self.line).is_err() {
+            return self.fault(h, then);
+        }
         let burst = u32::try_from(SCAN_BYTES).unwrap_or(u32::MAX);
-        self.drain(h, left.saturating_sub(burst + READY_BYTES), then);
+        self.drain(h, left.saturating_sub(burst), then);
     }
 
     /// The card out of busy: CS high, then the read's end.

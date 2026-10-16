@@ -526,14 +526,7 @@ impl Unit for ChipUnit<'_> {
     /// `None` outright in the builds without the card bench (`lib.rs`), so
     /// their answer links none of `card`'s text.
     fn card(&mut self) -> Option<CardAnswer> {
-        if !cfg!(all(
-            feature = "bench",
-            not(any(
-                feature = "orbit",
-                feature = "master-tape",
-                feature = "tape"
-            ))
-        )) {
+        if !crate::CARD_BENCH {
             return None;
         }
         self.card

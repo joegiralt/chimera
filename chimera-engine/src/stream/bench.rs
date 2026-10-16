@@ -635,15 +635,17 @@ impl BenchStreams {
         };
         let end = file.chunk_frames(here).map_or(0, |r| r.end.get() * 1_000);
         let ahead = end.saturating_sub(at) / fpb;
-        // The chunk after next is due a whole chunk later.
-        let chunk = CHUNK_FRAMES.get() * 1_000 / fpb;
         let mut asked = want(turn, v, head, cur, here, now);
         let Some(next) = after(here) else {
             return asked;
         };
         asked |= want(turn, v, head, cur.next(), next, now.after(ahead));
         if let Some(then) = after(next) {
-            let due = now.after(ahead.saturating_add(chunk));
+            // Due once `next` has played: a short last chunk is due sooner.
+            let len = file
+                .chunk_frames(next)
+                .map_or(0, |r| (r.end.get() - r.start.get()) * 1_000);
+            let due = now.after(ahead.saturating_add(len / fpb));
             asked |= want(turn, v, head, cur.next().next(), then, due);
         }
         asked

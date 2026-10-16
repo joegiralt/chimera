@@ -174,10 +174,13 @@ impl Rings {
     }
 
     /// The audio's side and the card's, once, over these rings and
-    /// `third`; `None` if either was taken (a refusal may still take the
-    /// other).
+    /// `third`; `None` if either was taken, the other then left as it was.
     pub fn sides<'r>(&'r self, third: &'r ThirdSlots) -> Option<(AudioSide<'r>, CardSide<'r>)> {
-        if third.taken.swap(true, Ordering::AcqRel) || self.taken.swap(true, Ordering::AcqRel) {
+        if self.taken.swap(true, Ordering::AcqRel) {
+            return None;
+        }
+        if third.taken.swap(true, Ordering::AcqRel) {
+            self.taken.store(false, Ordering::Release);
             return None;
         }
         let at = Store { rings: self, third };
@@ -457,8 +460,11 @@ impl CardSide<'_> {
             return;
         };
         // SAFETY: `c`'s slot is Filling under its claim, so only this
-        // `&mut self` touches it; `before` is Ready, where nothing writes
-        // (`Ring`'s `Sync`). Two slots, two cells: the borrows don't overlap.
+        // `&mut self` touches it. The audio may release or cancel `before`
+        // meanwhile, but slot bytes are written only by the one `CardSide`,
+        // which is inside this call: `before`'s bytes can't change under
+        // the copy (`Ring`'s `Sync`). Two slots, two cells: the borrows
+        // don't overlap.
         let (to, from) = unsafe {
             (
                 &mut *at.cell(c.voice, c.slot).get(),

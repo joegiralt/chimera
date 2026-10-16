@@ -328,6 +328,24 @@ fn wants_carry_deadlines_in_blocks() {
 }
 
 #[test]
+fn the_chunk_after_a_short_last_chunk_is_due_sooner() {
+    // A chunk and a half: chunk 1 is half a chunk, so the loop's chunk 0
+    // after it is due half a chunk after chunk 1's deadline.
+    let s: Vec<i16> = (0..CF + CF / 2).map(|i| (i % 4096) as i16 - 2048).collect();
+    let mut r = Rig::new(beds1(&s));
+    r.arm(24_000, 1_200, 1, Listen::Off);
+    let now = r.now;
+    r.bench.block(&mut r.audio.turn(), r.beds, now);
+    let turn = r.audio.turn();
+    let half = (CF / 2) * 1_000 / 38_400;
+    assert!(matches!(
+        turn.seen(VoiceIdx::ALL[0], SlotIdx::C),
+        SlotState::Wanted { chunk, deadline, .. }
+            if chunk.get() == 0 && deadline == now.after(70 + half)
+    ));
+}
+
+#[test]
 fn a_waiting_ui_never_holds_back_the_spare_slot() {
     // Owner: streams always beat the UI. A UI on the bus the whole run
     // still leaves every want served, so the stall is covered.
