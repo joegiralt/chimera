@@ -7,6 +7,8 @@
 
 pub mod bank2;
 pub mod cache;
+#[cfg(not(feature = "sd-probe"))]
+pub mod card_dma;
 #[cfg(all(feature = "bench", feature = "usb-console"))]
 pub mod card_speed;
 pub mod clocks;
@@ -334,6 +336,8 @@ pub struct AudioStart<'a> {
     pub formant: chimera_core::triple::Writer<chimera_core::dsp::algo::engine::FormantViews>,
     pub orbit: orbit::Runner,
     pub sources: chimera_core::source_table::AudioToken,
+    /// The stream rings' audio side.
+    pub streams: chimera_core::stream::ring::AudioSide<'static>,
     #[cfg(feature = "midi-din")]
     pub din: chimera_core::note_queue::NoteProducer<'static>,
     /// MIDI DIN's CCs: the ISR pushes, the UI drains (MIDI map spec § 1).
@@ -442,6 +446,15 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     display.flush();
     let sd = sd::init(sd, &mut cp.DCB, &mut cp.DWT, &clocks, clk.cpu_hz);
     let store = sd::take_store(sd).expect("store taken once");
+    // The rings' card side to the card IRQ, its audio side to the audio.
+    let (streams, card_side) = shared::rings()
+        .and_then(chimera_core::stream::ring::Rings::sides)
+        .expect("ring sides taken once");
+    {
+        use stm32h7xx_hal::spi::{Enabled, Spi};
+        let ker = Spi::<pac::SPI2, Enabled>::kernel_clk_unwrap(&clocks).raw();
+        card_dma::init(&mut cp.NVIC, card_side, ker, clk.cpu_hz);
+    }
     let mut card = Card::new();
     // No card or a card fault shows at the project's boot; a SYSTEM
     // file that can't be read still applies the defaults silently:
@@ -536,6 +549,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         formant: formant_w,
         orbit: orbit_runner,
         sources,
+        streams,
         #[cfg(feature = "midi-din")]
         din: producers
             .take(shared::DIN)
@@ -585,6 +599,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
 
     let mut last_tick = controls::ticks();
     loop {
+        // A stuck card transfer aborted, a stranded want woken.
+        card_dma::watch(controls::now_ms());
         // The snapshot point: every path through the last iteration flushed.
         #[cfg(feature = "usb-console")]
         tend_usb(&mut usb, ui, &marker, &clocks, clk.cpu_hz, &mut usb_snap);

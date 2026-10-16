@@ -20,6 +20,11 @@ const REQUEST_ID: [u8; DAC_PAIRS] = [87, 88, 89];
 #[repr(C, align(32))]
 struct Rings([[[DacSample; BLOCK_SIZE * 2]; 2]; DAC_PAIRS]);
 const _: () = assert!(core::mem::size_of::<Rings>() == DAC_PAIRS * RING_WORDS * 4);
+// The card's staging shares the non-cacheable DMA region (ram_d2.x).
+const _: () = assert!(
+    core::mem::size_of::<Rings>() + chimera_board::card_dma::STAGING_BYTES
+        <= chimera_engine::hw::D2_DMA_RESERVE
+);
 
 // SAFETY: ".ram_d2.dma" is real RAM_D2 SRAM (linker-defined) and NOLOAD, so
 // this static holds garbage at boot; sound because the type is `MaybeUninit`

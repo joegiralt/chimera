@@ -47,6 +47,9 @@ DIS = """
 08000700 <HardFault>:
  8000700:      \tpush\t{r7, lr}
 
+08000780 <DMA2_STR0>:
+ 8000780:      \tpush\t{r7, lr}
+
 08000800 <<chimera_core::dsp::voice::Voice>::render>:
  8000800:      \tpush\t{r4, lr}
  8000802:      \tsub\tsp, #0x40
@@ -110,9 +113,20 @@ class StackDepth(unittest.TestCase):
     def test_the_roots_sum_with_exception_frames(self):
         out = io.StringIO()
         self.assertTrue(sd.check(self.img, 64 * 1024, out))
-        want = 20 + 0x100 + 0x2000 + 4 * (8 + sd.EXC_FRAME)
+        want = 20 + 0x100 + 0x2000 + 5 * (8 + sd.EXC_FRAME)
         self.assertIn("nested     %6d B" % want, out.getvalue())
         self.assertFalse(sd.check(self.img, want + sd.MARGIN - 1, io.StringIO()))
+
+    def test_dma2_str0_counts(self):
+        # The card interrupt nests like the others: its frame and its
+        # exception frame are in the sum, and a build without it fails.
+        out = io.StringIO()
+        self.assertTrue(sd.check(self.img, 64 * 1024, out))
+        self.assertIn("DMA2_STR0  %6d B" % (8 + sd.EXC_FRAME), out.getvalue())
+        del self.img.funcs["DMA2_STR0"]
+        out = io.StringIO()
+        self.assertFalse(sd.check(self.img, 1 << 20, out))
+        self.assertIn("no DMA2_STR0", out.getvalue())
 
     def test_a_missing_root_fails_but_midi_may_be_absent(self):
         del self.img.funcs["USART1"]

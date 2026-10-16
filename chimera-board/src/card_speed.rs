@@ -1,8 +1,8 @@
-//! The console's `card` on the unit (bench builds): the SD driver's own
-//! multi-block reads over two test files' runs, each read timed by the
-//! cycle counter, from the UI loop while audio runs. Every read keeps
-//! `SD_IDLE_MS` and the whole run `DEADLINE_MS`; audio, MIDI and the
-//! watchdog's kicks run above it in interrupts throughout.
+//! The console's `card` on the unit (bench builds): multi-block reads over
+//! two test files' runs, each posted to the card IRQ (`BenchPort`) and
+//! timed there by the cycle counter, from the UI loop while audio runs.
+//! Every read keeps `SD_IDLE_MS` and the whole run `DEADLINE_MS`; audio,
+//! MIDI and the watchdog's kicks run above it in interrupts throughout.
 
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -12,7 +12,7 @@ use chimera_core::console::{
     CardAnswer, CardArg, CardFail, CardInfo, CardKind, CardSpeed, DEADLINE_MS, Extents, FILE_AIMS,
     FILE_BYTES, FILES, Files, Latency, Load, MIN_APART_PER_MILLE, RANDOM_READS, READ_BLOCKS,
     ROOM_MARGIN_BYTES, SEQ_BLOCKS, SPAN_BLOCKS, STREAM_ROUNDS, STREAMS, Throughput,
-    apart_per_mille, interleaved, random_reads, span_start, span_us,
+    apart_per_mille, interleaved, random_reads, span_start,
 };
 use chimera_core::note_queue::{NoteEvent, NoteKind, NoteProducer};
 use chimera_core::perf::load::AudioStats;
@@ -24,15 +24,13 @@ use chimera_hal::Ms;
 use chimera_hal::store::{ByteSink, CHUNK, Dir, FileName, RunsError, Store, StoreError, VolumeId};
 use chimera_hal::units::{BlockCount, FileBlock, Lba};
 use cortex_m::peripheral::DWT;
-use embedded_sdmmc::{Block, BlockDevice, BlockIdx};
+use embedded_sdmmc::Block;
 
+use crate::card_dma::{BenchPort, bench_port};
 use crate::controls::now_ms;
 use crate::sd::SdStore;
 use crate::shared::{BLOCKS, OVERRUNS};
 
-/// The largest transfer, 16 KB.
-const BUF_BLOCKS: usize = 32;
-const _: () = assert!(READ_BLOCKS as usize <= BUF_BLOCKS);
 const READ_RUN: BlockCount = match BlockCount::new(READ_BLOCKS) {
     Some(n) => n,
     None => panic!("READ_BLOCKS is 0"),
@@ -50,38 +48,36 @@ const CHORD: [u8; 8] = [48, 52, 55, 59, 60, 64, 67, 71];
 /// Names `card clean` deletes per listing.
 const CLEAN_BATCH: usize = 8;
 
-/// The transfer buffer and the latency samples: statics, not the stack.
+/// The latency samples: a static, not the stack.
 struct Bufs {
-    blocks: [Block; BUF_BLOCKS],
     lat: [u32; RANDOM_READS],
 }
 
 static mut BUFS: Bufs = Bufs {
-    blocks: [const {
-        Block {
-            contents: [0; Block::LEN],
-        }
-    }; BUF_BLOCKS],
     lat: [0; RANDOM_READS],
 };
 static BUFS_TAKEN: AtomicBool = AtomicBool::new(false);
 
 pub struct CardBench {
     bufs: &'static mut Bufs,
+    port: BenchPort,
     notes: NoteProducer<'static>,
     cpu_hz: u32,
 }
 
-/// The one `CardBench`, over the `CARD` note source.
+/// The one `CardBench`, over the `CARD` note source and the card IRQ's
+/// bench port.
 pub fn take(notes: NoteProducer<'static>, cpu_hz: u32) -> Option<CardBench> {
     if BUFS_TAKEN.swap(true, Ordering::AcqRel) {
         return None;
     }
+    let port = bench_port()?;
     // SAFETY: the flag lets exactly one caller past, so this is the only
     // reference to `BUFS` ever made.
     let bufs = unsafe { &mut *addr_of_mut!(BUFS) };
     Some(CardBench {
         bufs,
+        port,
         notes,
         cpu_hz,
     })
@@ -206,14 +202,14 @@ impl CardBench {
             return Err(CardFail::TooClose);
         }
         for ((i, &n), out) in (0..).zip(&SEQ_BLOCKS).zip(&mut s.seq) {
-            *out = Some(self.sequential(store, &ext[0], span_start(i), n, due)?);
+            *out = Some(self.sequential(&ext[0], span_start(i), n, due)?);
         }
         self.chord(NoteKind::On(Velocity::DEFAULT));
         crate::clocks::delay_us(self.cpu_hz, SETTLE_US);
         let mut loaded = || -> Result<(), CardFail> {
-            s.random = Some(self.random(store, &ext, s.seed, due)?);
+            s.random = Some(self.random(&ext, s.seed, due)?);
             s.load = load(stats.as_deref_mut());
-            let (mean, rounds) = self.interleaved(store, &ext, due)?;
+            let (mean, rounds) = self.interleaved(&ext, due)?;
             (s.interleaved, s.rounds) = (Some(mean), Some(rounds));
             s.load = load(stats.as_deref_mut()).or(s.load);
             Ok(())
@@ -236,7 +232,6 @@ impl CardBench {
     /// `SPAN_BLOCKS` from file block `from`, `max` blocks a transfer.
     fn sequential(
         &mut self,
-        store: &SdStore,
         ext: &Extents,
         from: u32,
         max: u32,
@@ -245,7 +240,7 @@ impl CardBench {
         let mut us = 0u64;
         let max = BlockCount::new(max).ok_or(StoreError::Io)?;
         for (lba, n) in ext.transfers(FileBlock::new(from), SPAN_BLOCKS, max) {
-            us += u64::from(self.timed_read(store, lba, n, due)?);
+            us += u64::from(self.read(lba, n, due)?);
         }
         Ok(throughput(SPAN_BLOCKS, us))
     }
@@ -253,13 +248,12 @@ impl CardBench {
     /// `RANDOM_READS` timed reads of 4 KB across both files.
     fn random(
         &mut self,
-        store: &SdStore,
         ext: &[Extents; FILES],
         seed: u32,
         due: &Deadline,
     ) -> Result<Latency, CardFail> {
         for (i, (file, at)) in random_reads(seed).enumerate() {
-            let us = self.read_4k(store, &ext[file], at, due)?;
+            let us = self.read_4k(&ext[file], at, due)?;
             if let Some(slot) = self.bufs.lat.get_mut(i) {
                 *slot = us;
             }
@@ -271,13 +265,12 @@ impl CardBench {
     /// time (every stream refilled once).
     fn interleaved(
         &mut self,
-        store: &SdStore,
         ext: &[Extents; FILES],
         due: &Deadline,
     ) -> Result<(Throughput, Latency), CardFail> {
         let (mut us, mut blocks, mut round) = (0u64, 0u32, 0u32);
         for (i, (file, at)) in (1..).zip(interleaved()) {
-            let t = self.read_4k(store, &ext[file], at, due)?;
+            let t = self.read_4k(&ext[file], at, due)?;
             (us, blocks, round) = (us + u64::from(t), blocks + READ_BLOCKS, round + t);
             if i % STREAMS == 0 {
                 if let Some(slot) = self.bufs.lat.get_mut((i / STREAMS - 1) as usize) {
@@ -298,50 +291,23 @@ impl CardBench {
     }
 
     /// One 4 KB read from file block `at`, split where a run ends.
-    fn read_4k(
-        &mut self,
-        store: &SdStore,
-        ext: &Extents,
-        at: u32,
-        due: &Deadline,
-    ) -> Result<u32, CardFail> {
+    fn read_4k(&mut self, ext: &Extents, at: u32, due: &Deadline) -> Result<u32, CardFail> {
         let mut us = 0u32;
         for (lba, n) in ext.transfers(FileBlock::new(at), READ_BLOCKS, READ_RUN) {
-            us = us.saturating_add(self.timed_read(store, lba, n, due)?);
+            us = us.saturating_add(self.read(lba, n, due)?);
         }
         Ok(us)
     }
 
-    /// One multi-block read under its own `SD_IDLE_MS`, in µs. A failure
-    /// re-inits the card, as `FatStore` does; a read past the cycle
-    /// counter's wrap is `ClockWrap`.
-    fn timed_read(
-        &mut self,
-        store: &SdStore,
-        lba: Lba,
-        n: BlockCount,
-        due: &Deadline,
-    ) -> Result<u32, CardFail> {
-        due.arm(store, 0)?;
-        let cpu_hz = self.cpu_hz;
-        let blocks = self
-            .bufs
-            .blocks
-            .get_mut(..n.get() as usize)
-            .ok_or(StoreError::Io)?;
-        // Timed from the bus taken: the wait for it is not the card's.
-        let timed = store.device().with_device(|dev| {
-            let (t, ms) = (DWT::cycle_count(), now_ms());
-            dev.start_op();
-            dev.read(blocks, BlockIdx(lba.get()))
-                .map_err(|e| dev.classify(&e))?;
-            Ok((DWT::cycle_count().wrapping_sub(t), now_ms().since(ms)))
-        });
-        // The store's re-init, once the hold is given: it clears CARD_ADDR.
-        let (cycles, ms) = timed
-            .map_err(StoreError::from)?
-            .map_err(|why| CardFail::Store(store.device().reinit().err().unwrap_or(why)))?;
-        span_us(cycles, cpu_hz, ms).ok_or(CardFail::ClockWrap)
+    /// One multi-block read by the card IRQ, under its own `SD_IDLE_MS`,
+    /// in µs from CMD18 to the stop. The IRQ checks every block's CRC and
+    /// keeps none; a failure leaves the card as the IRQ's abort left it.
+    fn read(&mut self, lba: Lba, n: BlockCount, due: &Deadline) -> Result<u32, CardFail> {
+        if due.left_ms() == 0 {
+            return Err(CardFail::Timeout);
+        }
+        let us = self.port.read(lba, n).map_err(StoreError::from)?;
+        Ok(us.get())
     }
 }
 

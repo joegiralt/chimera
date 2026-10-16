@@ -28,8 +28,9 @@ Standard library only.
 import re
 import sys
 
-ISRS = ("DMA1_STR0", "USART1", "SysTick", "HardFault")
-# A build without MIDI DIN has no USART1; the rest are always there.
+ISRS = ("DMA1_STR0", "USART1", "DMA2_STR0", "SysTick", "HardFault")
+# A build without MIDI DIN has no USART1; the rest are always there (the
+# card's DMA2_STR0 in every build but the SD probe, which has no check).
 OPTIONAL = ("USART1",)
 THREAD = "main"  # what `Reset` calls; its own frame is a few words
 # An exception's stacked frame with the FPU's lazy state: 26 words, aligned.
