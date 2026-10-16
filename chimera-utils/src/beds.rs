@@ -194,14 +194,15 @@ mod tests {
             let chunks: Vec<&[i16]> = bed.chunks_exact(cf).collect();
             for (i, a) in chunks.iter().enumerate() {
                 for (j, b) in chunks.iter().enumerate().skip(i + 1) {
+                    // Early out: windows that differ do so within a few ms.
                     let worst = a
                         .iter()
                         .zip(*b)
                         .map(|(&x, &y)| (i32::from(x) - i32::from(y)).abs())
-                        .max();
+                        .find(|&d| d > 3_277);
                     assert!(
-                        worst.unwrap() > 3_277,
-                        "bed {k}: chunks {i} and {j} differ by at most {worst:?} of 32768"
+                        worst.is_some(),
+                        "bed {k}: chunks {i} and {j} differ by at most 0.1"
                     );
                 }
             }

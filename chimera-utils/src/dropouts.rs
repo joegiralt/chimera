@@ -25,9 +25,14 @@ const JUMP: f64 = 2.0;
 const QUIET: f64 = 0.003_162_277_7;
 /// Chunks a lag may jump either way and still be found.
 const MAX_CHUNKS: i64 = 2;
+/// What is compared: the band under this. The reference's linear upsample
+/// bakes an image of the bed at (24 kHz - f) that a converter's filter
+/// changes, -38 dB re a 2.5 kHz tone: over the threshold, and no drop-out.
+const BAND_HZ: f64 = 8_000.0;
+/// This many flagged windows in a row (100 ms) and the lag is lost: lock again.
+const LOST: usize = 5;
 /// The lock at the start: the first 1 s of sound, after a margin.
 const LOCK: usize = OUT_RATE as usize;
-const LOCK_MARGIN: usize = 4_800;
 
 /// The bed at 48 kHz, looped.
 pub struct Reference {
@@ -100,11 +105,15 @@ fn fit(x: &[f64], r: &[f64]) -> (f64, f64) {
     if rr == 0.0 {
         return (f64::INFINITY, 0.0);
     }
+    // A gain under zero is a half period away, not a fit.
+    if xr <= 0.0 {
+        return (xx / rr, 0.0);
+    }
     (((xx - xr * xr / rr) / rr).max(0.0), xr / rr)
 }
 
-/// The sample offset into `r` where `rec[from..from + LOCK]` lies: the
-/// peak of their circular cross-correlation.
+/// The sample offset into `r` where `rec[from..]` (up to 1 s, at least
+/// 0.25 s) lies: the peak of their circular cross-correlation.
 fn lock(rec: &[f64], from: usize, r: &Reference) -> usize {
     let n = r.r.len();
     let mut seg: Vec<Complex<f64>> = rec[from..from + LOCK.min(rec.len() - from)]
@@ -125,50 +134,113 @@ fn lock(rec: &[f64], from: usize, r: &Reference) -> usize {
         .map_or(0, |(i, _)| i)
 }
 
+/// `x` through a linear-phase low-pass at `BAND_HZ` (63 taps, Hann), the
+/// ends wrapped when `looped`, else zeros. Both sides get the same, so
+/// their delay cancels.
+fn lowpass(x: &[f64], looped: bool) -> Vec<f64> {
+    use std::f64::consts::PI;
+    const HALF: i64 = 31;
+    let fc = BAND_HZ / f64::from(OUT_RATE);
+    let taps: Vec<f64> = (-HALF..=HALF)
+        .map(|k| {
+            let k = k as f64;
+            let sinc = if k == 0.0 {
+                2.0 * fc
+            } else {
+                (2.0 * PI * fc * k).sin() / (PI * k)
+            };
+            sinc * (0.5 + 0.5 * (PI * k / (HALF as f64 + 1.0)).cos())
+        })
+        .collect();
+    let gain: f64 = taps.iter().sum();
+    let n = x.len() as i64;
+    let at = |i: i64| match (looped, i) {
+        (true, _) => x[i.rem_euclid(n) as usize],
+        (false, 0..) if i < n => x[i as usize],
+        _ => 0.0,
+    };
+    (0..n)
+        .map(|i| {
+            taps.iter()
+                .zip(-HALF..)
+                .map(|(h, k)| h * at(i + k))
+                .sum::<f64>()
+                / gain
+        })
+        .collect()
+}
+
 /// Every window of `rec` (48 kHz) that is not the reference: its residual
 /// over −40 dB, or its lag jumping over 2 samples. `chunk` is the stream's
 /// chunk in samples.
 pub fn analyse(rec: &[f64], r: &Reference, chunk: usize) -> Result<Vec<Hit>, String> {
+    let (rec, r) = (
+        &lowpass(rec, false)[..],
+        &Reference {
+            r: lowpass(&r.r, true),
+        },
+    );
     let loud = |w: &[f64]| (w.iter().map(|x| x * x).sum::<f64>() / w.len() as f64).sqrt() > QUIET;
     let first = rec
         .as_chunks::<WINDOW>()
         .0
         .iter()
         .position(|w| loud(w))
-        .map(|w| w * WINDOW + LOCK_MARGIN)
+        // Past the onset, which the filter smears into the window before.
+        .map(|w| (w + 2) * WINDOW)
         .filter(|&s| s + LOCK / 4 <= rec.len())
         .ok_or("the recording has no 0.25 s of sound to lock on")?;
     let n = r.r.len() as f64;
     let mut lag = (lock(rec, first, r) as f64 - first as f64).rem_euclid(n);
     let (mut hits, mut want) = (Vec::new(), vec![0.0; WINDOW]);
-    for at in (first - LOCK_MARGIN..=rec.len() - WINDOW).step_by(WINDOW) {
+    // The flagged windows in a row, held until a clean one or a re-lock.
+    let mut run: Vec<Hit> = Vec::new();
+    // Not the last 31 samples either: the filter's zeros.
+    for at in (first..=rec.len().saturating_sub(WINDOW + 32)).step_by(WINDOW) {
         let x = &rec[at..at + WINDOW];
         let try_lag = |center: f64| {
-            // The best whole lag near `center`, then halved steps either side.
-            let mut w = vec![0.0; WINDOW];
-            let resid = |l: f64, w: &mut [f64]| {
-                r.window(at as f64 + l, w);
-                fit(x, w).0
+            let w = std::cell::RefCell::new(vec![0.0; WINDOW]);
+            let resid = |l: f64| {
+                let mut w = w.borrow_mut();
+                r.window(at as f64 + l, &mut w);
+                fit(x, &w).0
             };
-            let (mut best, mut at_best) = (f64::INFINITY, center);
-            for d in -SEARCH..=SEARCH {
-                let l = center.round() + d as f64;
-                let e = resid(l, &mut w);
-                if e < best {
-                    (best, at_best) = (e, l);
-                }
-            }
-            let mut step = 0.5;
-            while step > 0.01 {
-                for l in [at_best - step, at_best + step] {
-                    let e = resid(l, &mut w);
-                    if e < best {
-                        (best, at_best) = (e, l);
+            // Halved steps either side of `from`.
+            let refine = |from: f64, mut step: f64| {
+                let (mut best, mut at_best) = (resid(from), from);
+                while step > 0.01 {
+                    for l in [at_best - step, at_best + step] {
+                        let e = resid(l);
+                        if e < best {
+                            (best, at_best) = (e, l);
+                        }
                     }
+                    step /= 2.0;
                 }
-                step /= 2.0;
+                (best, at_best)
+            };
+            // The clocks drift slowly: a few samples either side first.
+            let near = (-12..=12)
+                .map(|d| refine(center + f64::from(d) * 0.25, 0.125))
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .unwrap_or((f64::INFINITY, center));
+            if 10.0 * near.0.log10() <= RESIDUAL_DB {
+                return near;
             }
-            (best, at_best)
+            // Else the ms either side: the few best whole lags (a tone fits a
+            // period away nearly as well), each refined.
+            let mut whole: Vec<(f64, f64)> = (-SEARCH..=SEARCH)
+                .map(|d| {
+                    let l = center.round() + d as f64;
+                    (resid(l), l)
+                })
+                .collect();
+            whole.sort_by(|a, b| a.0.total_cmp(&b.0));
+            whole
+                .iter()
+                .take(4)
+                .map(|&(_, l)| refine(l, 0.5))
+                .fold(near, |a, b| if b.0 < a.0 { b } else { a })
         };
         r.window(at as f64 + lag, &mut want);
         if want.iter().map(|x| x * x).sum::<f64>() / (WINDOW as f64) < QUIET * QUIET {
@@ -185,7 +257,33 @@ pub fn analyse(rec: &[f64], r: &Reference, chunk: usize) -> Result<Vec<Hit>, Str
             }
         }
         let (db, jump) = (10.0 * e.log10(), l - lag);
-        if db > RESIDUAL_DB || jump.abs() > JUMP {
+        if db > RESIDUAL_DB {
+            // A window that fits nothing (a gap, a seam) moves nothing.
+            run.push(Hit {
+                at,
+                resid_db: db,
+                lag: l,
+                jump,
+            });
+            if run.len() == LOST && at + LOCK / 4 <= rec.len() {
+                // Lost: the lag changed by something else than chunks.
+                let found = (lock(rec, at, r) as f64 - at as f64).rem_euclid(n);
+                let slip = (found - lag + n / 2.0).rem_euclid(n) - n / 2.0;
+                if slip.abs() > JUMP {
+                    let first = run[0];
+                    hits.push(Hit {
+                        jump: slip,
+                        lag: found,
+                        ..first
+                    });
+                    run.clear();
+                    lag = found;
+                }
+            }
+            continue;
+        }
+        hits.append(&mut run);
+        if jump.abs() > JUMP {
             hits.push(Hit {
                 at,
                 resid_db: db,
@@ -193,11 +291,9 @@ pub fn analyse(rec: &[f64], r: &Reference, chunk: usize) -> Result<Vec<Hit>, Str
                 jump,
             });
         }
-        // A window that fits nothing (a gap, a seam) moves nothing.
-        if db <= RESIDUAL_DB {
-            lag = l;
-        }
+        lag = l;
     }
+    hits.append(&mut run);
     Ok(hits)
 }
 
@@ -373,5 +469,62 @@ mod tests {
             hits.iter().any(|h| (h.jump - C as f64).abs() < 3.0),
             "{hits:?}"
         );
+    }
+
+    #[test]
+    fn a_slip_that_is_no_chunk_is_one_event_then_clean() {
+        let r = reference();
+        let ev = 100_000;
+        let rec = record(
+            &r,
+            70_000.0,
+            3.0,
+            40.0,
+            |i| if i >= ev { 1_000.0 } else { 0.0 },
+        );
+        let hits = analyse(&rec, &r, C).unwrap();
+        let t = (4_800 + ev) as f64 / f64::from(OUT_RATE);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert!(
+            secs(&hits[0]) > t - 0.02 && secs(&hits[0]) < t + 0.06,
+            "{hits:?} at {t}"
+        );
+        assert!((hits[0].jump - 1_000.0).abs() < 3.0, "{hits:?}");
+    }
+
+    /// Bed 7 (to 2.5 kHz) as a converter gives it: the reference's samples
+    /// low-passed at 21 kHz and delayed 0.37 sample (windowed sinc), not
+    /// the reference's own interpolation.
+    #[test]
+    fn a_filtered_delayed_high_bed_is_clean() {
+        let bed: Vec<f64> = chirp(7, 6.0, 24_000)
+            .iter()
+            .map(|&s| f64::from(s) / 32768.0)
+            .collect();
+        let r = Reference::new(&bed, 24_000);
+        let (fc, delay, half) = (21.0 / 48.0, 0.37, 32i64);
+        let pi = std::f64::consts::PI;
+        let h = |k: i64| {
+            let x = k as f64 - delay;
+            let sinc = if x == 0.0 {
+                2.0 * fc
+            } else {
+                (2.0 * pi * fc * x).sin() / (pi * x)
+            };
+            sinc * (0.5 + 0.5 * (pi * x / (half as f64 + 1.0)).cos())
+        };
+        let n = r.r.len() as i64;
+        let mut seed = 99u32;
+        let mut rec = vec![0.0; 4_800];
+        rec.extend((70_000..70_000 + 3 * 48_000).map(|m: i64| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let noise = (f64::from(seed >> 8) / f64::from(1u32 << 24) - 0.5) * 1e-4 * 3.464;
+            (-half..=half + 1)
+                .map(|k| h(k) * r.r[(m - k).rem_euclid(n) as usize])
+                .sum::<f64>()
+                + noise
+        }));
+        let hits = analyse(&rec, &r, C).unwrap();
+        assert!(hits.is_empty(), "{hits:?}");
     }
 }

@@ -4,6 +4,7 @@
 
 use chimera_core::console::{Console, Out, Request, Stalled, put};
 use chimera_core::storage::Crc32;
+use chimera_core::stream::bench::{BedCheck, BedChecks};
 use chimera_hal::Ms;
 use chimera_hal::store::{ByteSink, Dir, FileName, Files, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
@@ -156,15 +157,25 @@ fn on_card(s: &mut Mem) -> Option<Vec<u8>> {
     s.read(vol, beds(), &mut k).ok().map(|()| k.0)
 }
 
+/// A `BEDS.CHK` of one bed of `chunks` chunks.
+fn table(stem: u32, chunks: u32) -> Vec<u8> {
+    let crcs: Vec<u32> = (0..chunks).map(|c| c * 31 + stem).collect();
+    let all = BedChecks::new(&[BedCheck::new(stem, &crcs).unwrap()]).unwrap();
+    let mut out = vec![0; 9 * 1024];
+    let n = all.encode(&mut out);
+    out.truncate(n);
+    out
+}
+
 #[test]
 fn put_takes_the_bed_checks() {
     let mut s = Mem(MemStore::new(7));
-    let first: Vec<u8> = (0..5_000u32).map(|i| (i * 7) as u8).collect();
+    let first = table(1, 9);
     let said = ask(&mut s, "/CHIMERA/BENCH/BEDS.CHK", &first);
     assert_eq!(said, "READY\nOK\n");
     assert_eq!(on_card(&mut s).as_deref(), Some(&first[..]));
     // A second put replaces it.
-    let second = vec![0x5A; 9 * 1024];
+    let second = table(2, 200);
     let said = ask(&mut s, "/chimera/bench/beds.chk", &second);
     assert_eq!(said, "READY\nOK\n");
     assert_eq!(on_card(&mut s).as_deref(), Some(&second[..]));
