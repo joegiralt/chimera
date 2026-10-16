@@ -21,9 +21,9 @@ use chimera_core::boot::wait_until;
 use chimera_core::console::{
     CardAnswer, CardArg, CardFail, CardInfo, CardKind, CardSpeed, DEADLINE_MS, DmaAnswer, DmaOwn,
     DmaRefusal, DmaReport, DmaVerb, Extents, FILE_AIMS, FILE_BLOCKS, FILE_BYTES, FILES, Files,
-    Histogram, Inject, Latency, Load, MIN_APART_PER_MILLE, Percentile, RANDOM_READS, READ_BLOCKS,
-    ROOM_MARGIN_BYTES, SEQ_BLOCKS, SPAN_BLOCKS, STREAM_ROUNDS, STREAMS, StreamLines, Throughput,
-    apart_per_mille, fit_line, interleaved, random_reads, span_start,
+    Histogram, Inject, IrqCounts, Latency, Load, MIN_APART_PER_MILLE, Percentile, RANDOM_READS,
+    READ_BLOCKS, ROOM_MARGIN_BYTES, SEQ_BLOCKS, SPAN_BLOCKS, STREAM_ROUNDS, STREAMS, StreamLines,
+    Throughput, apart_per_mille, fit_line, interleaved, random_reads, span_start,
 };
 use chimera_core::dsp::tape_engine::read::Shape;
 use chimera_core::hw::MAX_VOICES;
@@ -585,6 +585,9 @@ struct Counts {
     aborts: u32,
     stop_errors: u32,
     faults: u32,
+    entries: u32,
+    reads: u32,
+    bursts: u32,
 }
 
 impl Counts {
@@ -595,7 +598,16 @@ impl Counts {
             aborts: get(&STATS.aborts),
             stop_errors: get(&STATS.stop_errors),
             faults: get(&STATS.faults),
+            entries: get(&STATS.entries),
+            reads: get(&STATS.reads),
+            bursts: get(&STATS.bursts),
         }
+    }
+
+    /// A run's start: the counts, the bursts' max restarted.
+    fn start() -> Counts {
+        STATS.bursts_max.store(0, Ordering::Relaxed);
+        Counts::now()
     }
 
     fn since(self, then: Counts) -> Counts {
@@ -604,6 +616,9 @@ impl Counts {
             aborts: self.aborts.wrapping_sub(then.aborts),
             stop_errors: self.stop_errors.wrapping_sub(then.stop_errors),
             faults: self.faults.wrapping_sub(then.faults),
+            entries: self.entries.wrapping_sub(then.entries),
+            reads: self.reads.wrapping_sub(then.reads),
+            bursts: self.bursts.wrapping_sub(then.bursts),
         }
     }
 }
@@ -871,7 +886,7 @@ impl CardBench {
                 CardKind::of(block_addressed, bytes),
                 u32::try_from(bytes / 1_000_000).unwrap_or(u32::MAX),
             ),
-            counts: Counts::now(),
+            counts: Counts::start(),
             work,
         });
         Ok(())
@@ -1233,6 +1248,12 @@ impl CardBench {
             aborts: c.aborts,
             stop_errors: c.stop_errors,
             card_irq_us_max: Micros::new(STATS.irq_us_max.load(Ordering::Relaxed)),
+            irq: IrqCounts {
+                entries: c.entries,
+                reads: c.reads,
+                bursts: c.bursts,
+                bursts_max: STATS.bursts_max.load(Ordering::Relaxed),
+            },
             own,
         });
     }

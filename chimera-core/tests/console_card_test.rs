@@ -208,8 +208,8 @@ fn the_card_kind_follows_addressing_and_size() {
 
 mod dma {
     use chimera_core::console::{
-        CardKind, DmaOwn, DmaReport, Histogram, LinkFit, Percentile, Spread, StreamLines, fit_line,
-        write_dma,
+        CardKind, DmaOwn, DmaReport, Histogram, IrqCounts, LinkFit, Percentile, Spread,
+        StreamLines, fit_line, write_dma,
     };
     use chimera_core::stream::bench::BenchReport;
     use chimera_core::ui::about_page::THIS;
@@ -282,6 +282,12 @@ mod dma {
             aborts: 1,
             stop_errors: 0,
             card_irq_us_max: Micros::new(312),
+            irq: IrqCounts {
+                entries: 900,
+                reads: 40,
+                bursts: 760,
+                bursts_max: 31,
+            },
             own,
         }
     }
@@ -297,7 +303,8 @@ mod dma {
         format!(
             "n 20000\nmedian_us 2100\np95_us 2400\np99_us 3000\np999_us 9000\nmax_us over\n\
              overruns 0\nloaded_load_pct 72\ncard SDHC\ncard_mb 31914\ngit {}{plus}\n\
-             aborts 1\nstop_errors 0\ncard_irq_us_max 312\n",
+             aborts 1\nstop_errors 0\ncard_irq_us_max 312\n\
+             card_irqs 900\ncard_reads 40\ncard_read_bursts 760\ncard_read_bursts_max 31\n",
             THIS.hash()
         )
     }

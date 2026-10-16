@@ -701,7 +701,18 @@ pub struct DmaReport {
     pub stop_errors: u32,
     /// Since boot (M2).
     pub card_irq_us_max: Micros,
+    pub irq: IrqCounts,
     pub own: DmaOwn,
+}
+
+/// The card IRQ's work during a run: its entries, and the bursts (a
+/// `DMA2_STR0` entry each) its reads took, from CMD18 to the drain's end.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IrqCounts {
+    pub entries: u32,
+    pub reads: u32,
+    pub bursts: u32,
+    pub bursts_max: u32,
 }
 
 /// A report's lines.
@@ -726,6 +737,10 @@ pub fn write_dma(r: &DmaReport, t: &mut impl Write) -> fmt::Result {
     writeln!(t, "aborts {}", r.aborts)?;
     writeln!(t, "stop_errors {}", r.stop_errors)?;
     writeln!(t, "card_irq_us_max {}", r.card_irq_us_max.get())?;
+    writeln!(t, "card_irqs {}", r.irq.entries)?;
+    writeln!(t, "card_reads {}", r.irq.reads)?;
+    writeln!(t, "card_read_bursts {}", r.irq.bursts)?;
+    writeln!(t, "card_read_bursts_max {}", r.irq.bursts_max)?;
     match &r.own {
         DmaOwn::Chunk { idle, fit, crc16 } => {
             write_fit(t, "idle_fit", idle)?;

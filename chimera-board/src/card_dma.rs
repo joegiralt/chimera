@@ -108,6 +108,13 @@ pub struct CardStats {
     pub irq_us_max: AtomicU32,
     /// Card faults set: a busy that never drained, a stop never sent.
     pub faults: AtomicU32,
+    /// Entries of `DMA2_STR0`, pends too.
+    pub entries: AtomicU32,
+    /// Reads that ended well, and their bursts: a TC entry each.
+    pub reads: AtomicU32,
+    pub bursts: AtomicU32,
+    /// The most bursts one read took.
+    pub bursts_max: AtomicU32,
 }
 
 pub static STATS: CardStats = CardStats {
@@ -115,6 +122,10 @@ pub static STATS: CardStats = CardStats {
     stop_errors: AtomicU32::new(0),
     irq_us_max: AtomicU32::new(0),
     faults: AtomicU32::new(0),
+    entries: AtomicU32::new(0),
+    reads: AtomicU32::new(0),
+    bursts: AtomicU32::new(0),
+    bursts_max: AtomicU32::new(0),
 };
 
 /// Wakes the card IRQ.
@@ -732,6 +743,8 @@ struct IrqState {
     side: CardSide<'static>,
     job: Job,
     line: Line,
+    /// Bursts of the read under way.
+    bursts: u32,
 }
 
 /// A cell only `DMA2_STR0` opens.
@@ -830,6 +843,7 @@ pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker_hz: u32, cpu_hz: u
         side,
         job: Job::Idle,
         line,
+        bursts: 0,
     };
     // SAFETY: once (`side` exists once: `Rings::sides`), before the unmask.
     unsafe { IRQ.set(st) };
@@ -844,6 +858,7 @@ pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker_hz: u32, cpu_hz: u
 #[interrupt]
 fn DMA2_STR0() {
     let t = DWT::cycle_count();
+    STATS.entries.fetch_add(1, Ordering::Relaxed);
     // SAFETY: `IRQ`'s one `get`: `init` set it before unmasking this
     // handler, which doesn't nest with itself.
     let st = unsafe { IRQ.get() };
@@ -966,6 +981,7 @@ impl IrqState {
             },
             Work::Yield | Work::Nothing => return self.release(h),
         };
+        self.bursts = 0;
         self.begin(h, kind, lba, blocks);
     }
 
@@ -999,6 +1015,7 @@ impl IrqState {
         };
         #[cfg(feature = "bench")]
         let (dest, fault) = bench::aim(dest);
+        self.bursts += 1;
         match h.fly(dest, &self.line) {
             Ok(bus) => {
                 #[cfg(feature = "bench")]
@@ -1124,6 +1141,7 @@ impl IrqState {
 
     /// One 0xFF burst into `scan`, `left` bytes of drain still allowed.
     fn drain(&mut self, h: Held, left: u32, then: Then) {
+        self.bursts += 1;
         match h.fly(Dest::scan(), &self.line) {
             Ok(bus) => {
                 self.job = Job::Read(Transfer {
@@ -1159,6 +1177,9 @@ impl IrqState {
         h.end(&self.line);
         match then {
             Then::Next { done, t0 } => {
+                STATS.reads.fetch_add(1, Ordering::Relaxed);
+                STATS.bursts.fetch_add(self.bursts, Ordering::Relaxed);
+                STATS.bursts_max.fetch_max(self.bursts, Ordering::Relaxed);
                 let took = self.line.us(DWT::cycle_count().wrapping_sub(t0));
                 match done {
                     Done::Filled => {}
