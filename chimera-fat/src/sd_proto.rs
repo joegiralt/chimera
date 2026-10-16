@@ -91,9 +91,12 @@ pub fn crc16(data: &[u8]) -> u16 {
 }
 
 pub fn crc16_update(crc: u16, data: &[u8]) -> u16 {
-    data.iter().fold(crc, |c, &b| {
-        c << 8 ^ CRC16_TABLE[usize::from((c >> 8) as u8 ^ b)]
-    })
+    data.iter().fold(crc, |c, &b| crc16_byte(c, b))
+}
+
+#[inline(always)]
+fn crc16_byte(c: u16, b: u8) -> u16 {
+    c << 8 ^ CRC16_TABLE[usize::from((c >> 8) as u8 ^ b)]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -268,8 +271,17 @@ impl Reading {
                 },
                 At::Data { have, crc } => {
                     let n = usize::from(BLOCK - have).min(buf.len() - r);
-                    let crc = crc16_update(crc, &buf[r..r + n]);
-                    buf.copy_within(r..r + n, w);
+                    // One pass over the staging (non-cacheable): each byte
+                    // read once, into the CRC and down onto the data. A
+                    // forward copy with `w <= r` reads each byte before
+                    // anything lands on it.
+                    let (gap, span) = (r - w, &mut buf[w..r + n]);
+                    let mut crc = crc;
+                    for i in 0..n {
+                        let b = span[i + gap];
+                        crc = crc16_byte(crc, b);
+                        span[i] = b;
+                    }
                     (r, w) = (r + n, w + n);
                     // `n` is at most `BLOCK - have`.
                     let have = have + n as u16;

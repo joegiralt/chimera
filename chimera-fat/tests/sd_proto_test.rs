@@ -91,11 +91,26 @@ fn count(n: usize) -> BlockCount {
 /// staging's bound.
 fn play(card: &[u8], n: usize, cap: usize) -> Result<(Vec<u8>, usize), ProtoError> {
     let mut buf = vec![0xEE; n * STREAM_BLOCK];
-    let (mut walk, mut end, mut clocked, mut bursts) = (Walk::new(count(n)), 0, 0, 0);
+    let (end, bursts) = play_at(&mut buf, 0, card, n, cap)?;
+    assert_eq!(end, n * BLOCK_BYTES);
+    buf.truncate(end);
+    Ok((buf, bursts))
+}
+
+/// One read of `n` blocks, its data packed on from `start`: where its data
+/// ends, and its bursts.
+fn play_at(
+    buf: &mut [u8],
+    start: usize,
+    card: &[u8],
+    n: usize,
+    cap: usize,
+) -> Result<(usize, usize), ProtoError> {
+    let (mut walk, mut end, mut clocked, mut bursts) = (Walk::new(count(n)), start, 0, 0);
     while let Walk::Read(r) = walk {
         let need = usize::try_from(r.need().get()).unwrap();
         assert!(need > 0);
-        assert!(end + need <= n * STREAM_BLOCK, "a burst past the staging");
+        assert!(end + need <= buf.len(), "a burst past the staging");
         let k = need.min(cap);
         assert!(clocked + k <= card.len(), "clocked past the last CRC");
         buf[end..end + k].copy_from_slice(&card[clocked..clocked + k]);
@@ -104,9 +119,7 @@ fn play(card: &[u8], n: usize, cap: usize) -> Result<(Vec<u8>, usize), ProtoErro
         (walk, end) = r.landed(&mut buf[..end + k], end)?;
     }
     assert_eq!(clocked, card.len(), "the walk stops at the last CRC");
-    assert_eq!(end, n * BLOCK_BYTES);
-    buf.truncate(end);
-    Ok((buf, bursts))
+    Ok((end, bursts))
 }
 
 fn data(n: usize) -> Vec<u8> {
@@ -126,6 +139,28 @@ fn a_multiread_packs_nine_blocks_whatever_their_gaps() {
     for gaps in plans {
         let (got, _) = play(&stream(&gaps), 9, usize::MAX).unwrap();
         assert_eq!(got, data(9), "{gaps:?}");
+    }
+}
+
+#[test]
+fn a_second_piece_packs_on_after_the_first() {
+    // A chunk across a run's edge: 5 blocks, then 4 from another CMD18,
+    // landing after the first piece's data, within the staging's bound.
+    let data9 = data(9);
+    for cap in [usize::MAX, 7, 515] {
+        let mut buf = vec![0xEE; 9 * STREAM_BLOCK];
+        let first = stream(&[40, 3, 0, 9, 1]);
+        let (end, _) = play_at(&mut buf, 0, &first, 5, cap).unwrap();
+        assert_eq!(end, 5 * BLOCK_BYTES);
+        let mut second = Vec::new();
+        for (i, g) in [700, 2, 2, 0].into_iter().enumerate() {
+            second.extend(std::iter::repeat_n(0xFF, g));
+            second.push(DATA_TOKEN);
+            second.extend_from_slice(&block(5 + i as u8));
+        }
+        let (end, _) = play_at(&mut buf, end, &second, 4, cap).unwrap();
+        assert_eq!(end, 9 * BLOCK_BYTES);
+        assert_eq!(buf[..end], data9[..], "cap {cap}");
     }
 }
 
@@ -206,6 +241,24 @@ fn a_bench_read_lands_every_burst_at_the_start() {
         walk = r.landed(&mut buf[..k], 0).unwrap().0;
     }
     assert_eq!(at, card.len());
+    // A bad block long after the staging wrapped is still caught.
+    let mut bad = card.clone();
+    bad[17 * (9 + STREAM_BLOCK) + 9 + 1 + 300] ^= 4;
+    let mut walk = Walk::new(count(20));
+    let mut at = 0;
+    let err = loop {
+        let Walk::Read(r) = walk else {
+            panic!("the bad block passed")
+        };
+        let k = usize::try_from(r.need().get()).unwrap().min(buf.len());
+        buf[..k].copy_from_slice(&bad[at..at + k]);
+        at += k;
+        match r.landed(&mut buf[..k], 0) {
+            Ok((w, _)) => walk = w,
+            Err(e) => break e,
+        }
+    };
+    assert_eq!(err, ProtoError::Crc);
 }
 
 #[test]
