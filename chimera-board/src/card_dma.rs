@@ -1154,7 +1154,7 @@ impl IrqState {
     /// still allowed.
     /// The bus is polled (`stop` and `drained` leave it so); the poll's
     /// bytes count against `left`.
-    fn drain(&mut self, mut h: Held, left: u32, then: Then) {
+    fn drain(&mut self, h: Held, left: u32, then: Then) {
         match h.ready(&self.line) {
             Ok(()) => return self.stopped(h, then),
             Err(Why::Busy) if left > READY_BYTES => {}
