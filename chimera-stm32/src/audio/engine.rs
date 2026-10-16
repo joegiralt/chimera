@@ -128,7 +128,9 @@ pub fn render_half(half: Half) {
     // this is the only live reference to `ENGINE`.
     let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
     #[cfg(feature = "bench")]
-    bench_block(&mut e.streams);
+    if chimera_board::CARD_BENCH {
+        bench_block(&mut e.streams);
+    }
     let shared = e.shared.read();
     // TAPE's voices read the pool through the block's view.
     let (gate, notes, orbit) = (&mut e.gate, &mut e.notes, &mut e.orbit);
@@ -166,7 +168,7 @@ pub fn render_half(half: Half) {
         let out = unsafe { dma::half_mut(pair, half) };
         interleave(e.dac.out(), pair, out);
         #[cfg(feature = "bench")]
-        if pair == DacPair::P1 && BENCH.listening() {
+        if chimera_board::CARD_BENCH && pair == DacPair::P1 && BENCH.listening() {
             bench_listen(&mut e.streams, out);
         }
     }

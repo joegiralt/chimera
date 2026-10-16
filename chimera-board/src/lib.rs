@@ -11,6 +11,19 @@ pub mod cache;
 pub mod card_dma;
 #[cfg(all(feature = "bench", feature = "usb-console"))]
 pub mod card_speed;
+
+/// The console's `card` bench is in this build: not in ORBIT's bench
+/// builds, the master tape's nor TAPE's (FLASH, AXI's margin). Without it
+/// nothing sets the stream bench's beds, so its heads never run.
+pub const CARD_BENCH: bool = cfg!(all(
+    feature = "bench",
+    feature = "usb-console",
+    not(any(
+        feature = "orbit",
+        feature = "master-tape",
+        feature = "tape"
+    ))
+));
 pub mod clocks;
 #[cfg(not(feature = "sd-probe"))]
 pub mod controls;
