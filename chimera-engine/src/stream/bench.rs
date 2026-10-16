@@ -110,7 +110,8 @@ pub enum BedError {
 }
 
 /// `BEDS.CHK`: `b"BEDS"`, a count, then per bed its stem (`u32` LE), its
-/// chunk count (`u16` LE) and a `Crc32` (LE) a chunk.
+/// chunk count (`u16` LE) and a `Crc32` (LE) a chunk. The tool's, which
+/// `encode`s it; the unit reads it through `BedTable`.
 #[derive(Clone, Copy, Debug)]
 pub struct BedChecks {
     checks: [BedCheck; MAX_BEDS],
@@ -138,34 +139,6 @@ impl BedChecks {
         &self.checks[..self.count]
     }
 
-    pub fn decode(b: &[u8]) -> Result<BedChecks, BedError> {
-        let mut r = Reader(b);
-        if r.take(4)? != MAGIC {
-            return Err(BedError::Magic);
-        }
-        let count = usize::from(r.take(1)?[0]);
-        if count > MAX_BEDS {
-            return Err(BedError::Count);
-        }
-        let mut out = BedChecks {
-            checks: [NO_CHECK; MAX_BEDS],
-            count,
-        };
-        for check in &mut out.checks[..count] {
-            let stem = r.u32()?;
-            let n = usize::from(u16::from_le_bytes([r.take(1)?[0], r.take(1)?[0]]));
-            if n == 0 || n > MAX_BED_CHUNKS {
-                return Err(BedError::Chunks);
-            }
-            let mut crc = [0; MAX_BED_CHUNKS];
-            for c in &mut crc[..n] {
-                *c = r.u32()?;
-            }
-            *check = BedCheck::new(stem, &crc[..n]).ok_or(BedError::Chunks)?;
-        }
-        Ok(out)
-    }
-
     /// The bytes written; 0, and nothing, if `out` is short.
     pub fn encode(&self, out: &mut [u8]) -> usize {
         let len = 5 + self
@@ -179,7 +152,7 @@ impl BedChecks {
         let mut w = out.iter_mut();
         let mut put = |b: &[u8]| b.iter().zip(&mut w).for_each(|(&b, o)| *o = b);
         put(&MAGIC);
-        // At most 8 (`new`, `decode`).
+        // At most 8 (`new`).
         put(&[self.count as u8]);
         for c in self.checks() {
             put(&c.stem.to_le_bytes());
@@ -190,6 +163,89 @@ impl BedChecks {
             }
         }
         len
+    }
+}
+
+/// A `BEDS.CHK` in place, checked once by `parse`: each bed's table is
+/// copied straight into its `BedCheck`, so no table of all eight (8.5 KiB)
+/// is ever built.
+#[derive(Clone, Copy, Debug)]
+pub struct BedTable<'a> {
+    beds: &'a [u8],
+    count: usize,
+}
+
+impl<'a> BedTable<'a> {
+    /// The magic, the count, each bed's chunks and the length checked.
+    pub fn parse(b: &'a [u8]) -> Result<BedTable<'a>, BedError> {
+        let mut r = Reader(b);
+        if r.take(4)? != MAGIC {
+            return Err(BedError::Magic);
+        }
+        let count = usize::from(r.take(1)?[0]);
+        if count > MAX_BEDS {
+            return Err(BedError::Count);
+        }
+        let beds = r.0;
+        for _ in 0..count {
+            r.entry()?;
+        }
+        Ok(BedTable { beds, count })
+    }
+
+    /// Beds in the table.
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
+    /// Bed `k`'s stem and CRC bytes; `None` past `count`.
+    fn entry(&self, k: usize) -> Option<(u32, &'a [u8])> {
+        if k >= self.count {
+            return None;
+        }
+        let mut r = Reader(self.beds);
+        for _ in 0..k {
+            r.entry().ok()?;
+        }
+        r.entry().ok()
+    }
+
+    pub fn stem(&self, k: usize) -> Option<u32> {
+        self.entry(k).map(|(stem, _)| stem)
+    }
+
+    /// Bed `k`'s table into `out`; false past `count`.
+    pub fn check_into(&self, k: usize, out: &mut BedCheck) -> bool {
+        let Some((stem, crcs)) = self.entry(k) else {
+            return false;
+        };
+        let n = crcs.len() / 4;
+        // `parse`: 1..=MAX_BED_CHUNKS.
+        let Some(last) = u32::try_from(n - 1).ok().and_then(ChunkIdx::new) else {
+            return false;
+        };
+        out.stem = stem;
+        out.chunks = last;
+        for (c, b) in out.crc.iter_mut().zip(crcs.as_chunks::<4>().0) {
+            *c = u32::from_le_bytes(*b);
+        }
+        true
+    }
+
+    /// Bed `k` with `file`, built in `slot`; false (`slot` left as it was)
+    /// past `count`, or if the table doesn't cover the file's chunks.
+    pub fn place(&self, k: usize, file: StreamFile, slot: &mut Option<Bed>) -> bool {
+        let fits = self
+            .entry(k)
+            .is_some_and(|(_, crcs)| crcs.len() / 4 == file.last_chunk().get() as usize + 1);
+        if !fits || file.frames().get() == 0 {
+            return false;
+        }
+        let bed = slot.insert(Bed {
+            file,
+            check: NO_CHECK,
+        });
+        self.check_into(k, &mut bed.check)
     }
 }
 
@@ -205,6 +261,17 @@ impl<'a> Reader<'a> {
     fn u32(&mut self) -> Result<u32, BedError> {
         let b = self.take(4)?;
         Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+
+    /// One bed: its stem and its CRCs' bytes.
+    fn entry(&mut self) -> Result<(u32, &'a [u8]), BedError> {
+        let stem = self.u32()?;
+        let n = self.take(2)?;
+        let n = usize::from(u16::from_le_bytes([n[0], n[1]]));
+        if n == 0 || n > MAX_BED_CHUNKS {
+            return Err(BedError::Chunks);
+        }
+        Ok((stem, self.take(4 * n)?))
     }
 }
 

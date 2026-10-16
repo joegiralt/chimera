@@ -1276,8 +1276,9 @@ mod bench {
     const WRITING: u8 = 1;
     const READY: u8 = 2;
     static BEDS_STATE: AtomicU8 = AtomicU8::new(EMPTY);
-    // 10 KiB, NOLOAD in D2 beside the UI: read only once Ready, after
-    // `fill_beds` built it in place.
+    // SAFETY: 10 KiB, NOLOAD in D2 beside the UI: garbage at boot, which
+    // is sound as it is `MaybeUninit`, reached only by address, and read
+    // only once Ready, after `fill_beds` built it in place.
     #[unsafe(link_section = ".ram_d2")]
     static mut BEDS: MaybeUninit<BenchBeds> = MaybeUninit::uninit();
 

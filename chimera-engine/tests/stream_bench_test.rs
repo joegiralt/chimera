@@ -9,7 +9,7 @@ use chimera_engine::storage::{
     write_source,
 };
 use chimera_engine::stream::bench::{
-    ArmError, Asked, Bed, BedCheck, BedChecks, BedError, BenchBeds, BenchStreams, Listen,
+    ArmError, Asked, Bed, BedCheck, BedChecks, BedError, BedTable, BenchBeds, BenchStreams, Listen,
     MAX_BED_CHUNKS,
 };
 use chimera_engine::stream::edf::wants;
@@ -365,16 +365,14 @@ fn misordered(k: usize) -> (u32, Vec<i32>) {
     let v = VoiceIdx::ALL[k];
     let four = ChunkIdx::new(4).unwrap();
     // The want of chunk 4 goes out as the head enters chunk 3.
-    let slot = loop {
+    let slot = (0..10 * blocks_per_chunk(32_000)).find_map(|_| {
         r.block();
         let turn = r.audio.turn();
-        let s = SlotIdx::ALL
+        SlotIdx::ALL
             .into_iter()
-            .find(|&s| matches!(turn.seen(v, s), SlotState::Ready { chunk, .. } if chunk == four));
-        if let Some(s) = s {
-            break s;
-        }
-    };
+            .find(|&s| matches!(turn.seen(v, s), SlotState::Ready { chunk, .. } if chunk == four))
+    });
+    let slot = slot.expect("chunk 4 Ready within 10 chunks");
     let mut turn = r.audio.turn();
     turn.cancel(v, slot);
     turn.want(v, slot, ChunkIdx::new(9).unwrap(), r.now)
@@ -435,9 +433,12 @@ fn bed_checks_round_trip() {
     let n = checks.encode(&mut out);
     assert_eq!(n, 5 + 3 * 6 + (1 + 9 + 264) * 4);
     assert_eq!(&out[..4], b"BEDS");
-    let back = BedChecks::decode(&out[..n]).unwrap();
-    assert_eq!(back.checks().len(), 3);
-    for (a, b) in back.checks().iter().zip(&all) {
+    let back = BedTable::parse(&out[..n]).unwrap();
+    assert_eq!(back.count(), 3);
+    let mut a = BedCheck::new(0, &[0]).unwrap();
+    for (k, b) in all.iter().enumerate() {
+        assert!(back.check_into(k, &mut a));
+        assert_eq!(back.stem(k), Some(b.stem()));
         assert_eq!(a.stem(), b.stem());
         assert_eq!(a.chunks(), b.chunks());
         let mut c = ChunkIdx::new(0).unwrap();
@@ -450,6 +451,8 @@ fn bed_checks_round_trip() {
         }
     }
     assert_eq!(all[1].chunks().get(), 8);
+    assert!(!back.check_into(3, &mut a));
+    assert_eq!(back.stem(3), None);
 }
 
 #[test]
@@ -459,18 +462,15 @@ fn bed_checks_refuse_a_bad_table() {
     let good = out[..n].to_vec();
     let mut bad = good.clone();
     bad[0] = b'X';
-    assert_eq!(BedChecks::decode(&bad).err(), Some(BedError::Magic));
+    assert_eq!(BedTable::parse(&bad).err(), Some(BedError::Magic));
     let mut bad = good.clone();
     bad[4] = 9;
-    assert_eq!(BedChecks::decode(&bad).err(), Some(BedError::Count));
+    assert_eq!(BedTable::parse(&bad).err(), Some(BedError::Count));
     let mut bad = good.clone();
     bad[9..11].copy_from_slice(&(MAX_BED_CHUNKS as u16 + 1).to_le_bytes());
-    assert_eq!(BedChecks::decode(&bad).err(), Some(BedError::Chunks));
-    assert_eq!(
-        BedChecks::decode(&good[..n - 1]).err(),
-        Some(BedError::Short)
-    );
-    assert_eq!(BedChecks::decode(b"BED").err(), Some(BedError::Short));
+    assert_eq!(BedTable::parse(&bad).err(), Some(BedError::Chunks));
+    assert_eq!(BedTable::parse(&good[..n - 1]).err(), Some(BedError::Short));
+    assert_eq!(BedTable::parse(b"BED").err(), Some(BedError::Short));
 }
 
 #[test]
@@ -480,6 +480,19 @@ fn a_bed_needs_its_table_to_match_its_chunks() {
     let sf = StreamFile::from_layout(&l, on_device(&file).0).unwrap();
     assert!(Bed::new(sf, check(1, 2)).is_none());
     assert!(Bed::new(sf, BedCheck::of_packed(1, &data).unwrap()).is_some());
+    // From the table, in place.
+    let all = [check(1, 2), BedCheck::of_packed(9, &data).unwrap()];
+    let mut out = vec![0; 1_024];
+    let n = BedChecks::new(&all).unwrap().encode(&mut out);
+    let table = BedTable::parse(&out[..n]).unwrap();
+    let mut slot = None;
+    assert!(!table.place(0, sf, &mut slot) && slot.is_none());
+    assert!(!table.place(2, sf, &mut slot) && slot.is_none());
+    assert!(table.place(1, sf, &mut slot));
+    let bed = slot.unwrap();
+    assert_eq!(bed.check().stem(), 9);
+    let c = ChunkIdx::new(2).unwrap();
+    assert_eq!(bed.check().crc(c), all[1].crc(c));
 }
 
 #[test]
