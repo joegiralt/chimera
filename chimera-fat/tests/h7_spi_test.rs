@@ -1,5 +1,4 @@
 use chimera_fat::h7_spi::*;
-use chimera_hal::units::{BlockCount, Bytes};
 
 fn bl(n: usize) -> BurstLen {
     BurstLen::new(n).unwrap()
@@ -101,14 +100,6 @@ fn mbr_picks_fastest_at_or_below() {
     let k = 120_000_000;
     assert_eq!(Mbr::fastest(k, 25_000_000).unwrap().sck_hz(k), 15_000_000);
     assert_eq!(Mbr::fastest(256 * 10_000_000 + 256, 10_000_000), None);
-}
-
-#[test]
-fn placement_rings_long_reads() {
-    assert_eq!(Placement::Chunk.offset(8), Bytes::new(4096));
-    let r = Placement::Ring(BlockCount::new(9).unwrap());
-    assert_eq!(r.offset(9), Bytes::new(0));
-    assert_eq!(r.offset(31), Bytes::new(2048));
 }
 
 #[test]

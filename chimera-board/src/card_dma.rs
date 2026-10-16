@@ -13,7 +13,6 @@
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::{MaybeUninit, offset_of, replace};
-use core::ops::Range;
 use core::ptr::{self, addr_of, addr_of_mut};
 use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 
@@ -25,18 +24,18 @@ use chimera_core::stream::ring::{CardSide, Claim};
 use chimera_core::stream::units::AudioBlocks;
 use chimera_core::voice_alloc::VoiceIdx;
 use chimera_fat::h7_spi::{
-    ABORT, BURST_END, BurstLen, Cr1, DmaEvent, GIVE, Gate, Mbr, Op, POLLED, Placement, RegFault,
-    TAKE, burst, gate,
+    ABORT, BURST_END, BurstLen, Cr1, DmaEvent, GIVE, Gate, Mbr, Op, POLLED, RegFault, TAKE, burst,
+    gate,
 };
 use chimera_fat::sd::NCR_BYTES;
 use chimera_fat::sd_addr::CmdArg;
 use chimera_fat::sd_proto::{
-    BLOCK_BYTES, BLOCK_WITH_CRC, CMD12, CMD18, CRC_BYTES, CmdIndex, ProtoError, SCAN_BYTES,
-    STOP_BYTES, ScanOutcome, TOKEN_TIMEOUT_MS, Walk, check_r1, command, stop_response,
+    BLOCK_BYTES, CMD12, CMD18, CmdIndex, ProtoError, Reading, SCAN_BYTES, STOP_BYTES, STREAM_BLOCK,
+    TOKEN_TIMEOUT_MS, Walk, check_r1, command, stop_response,
 };
 use chimera_hal::Ms;
 use chimera_hal::card_bus::{CardFault, Owner, Took, WATCHDOG_MS, Wake};
-use chimera_hal::units::{BlockCount, Bytes, BytesPerSec, Lba, Micros};
+use chimera_hal::units::{BlockCount, BytesPerSec, Lba, Micros};
 use cortex_m::asm::dmb;
 use cortex_m::peripheral::{DWT, NVIC};
 use stm32h7xx_hal::pac::{self, interrupt};
@@ -62,17 +61,13 @@ const SPI2_TX_DMA: u8 = 40;
 const RX: usize = 0;
 const TX: usize = 1;
 
-/// A raw chunk's blocks with the last one's CRC.
-const BLOCKS_LEN: usize = RAW_CHUNK_BYTES + CRC_BYTES;
-/// A bench read cycles through the staging a raw chunk at a time.
-#[cfg(feature = "bench")]
-const RAW_MAX: BlockCount = match BlockCount::new(RAW_CHUNK_BLOCKS) {
-    Some(n) => n,
-    None => panic!(),
-};
+/// A raw chunk's blocks as the card clocks them, tokens and CRCs too: the
+/// most a fill's bursts land past its start (`Reading::need`, I4).
+const BLOCKS_LEN: usize = RAW_CHUNK_BLOCKS as usize * STREAM_BLOCK;
 
-/// The token-scan area, then the blocks in place: the IRQ de-frames before
-/// it starts the next transfer, so one buffer is enough.
+/// The busy drain's area, then the blocks, packed in place as they land:
+/// the IRQ de-frames before it starts the next transfer, so one buffer is
+/// enough.
 #[repr(C, align(32))]
 struct DmaBuf {
     scan: [u8; SCAN_BYTES],
@@ -83,9 +78,9 @@ pub const STAGING_BYTES: usize = size_of::<DmaBuf>();
 const SCAN_AT: usize = offset_of!(DmaBuf, scan);
 const BLOCKS_AT: usize = offset_of!(DmaBuf, blocks);
 const _: () = assert!(SCAN_AT == 0 && BLOCKS_AT == SCAN_BYTES);
-// The last block's CRC ends the buffer: no burst passes its end (I4).
-const _: () = assert!(BLOCKS_LEN == RAW_CHUNK_BLOCKS as usize * BLOCK_BYTES + CRC_BYTES);
-const _: () = assert!((RAW_CHUNK_BLOCKS as usize - 1) * BLOCK_BYTES + BLOCK_WITH_CRC == BLOCKS_LEN);
+// A raw chunk's packed data fits; no burst passes the end (I4).
+const _: () = assert!(RAW_CHUNK_BYTES == RAW_CHUNK_BLOCKS as usize * BLOCK_BYTES);
+const _: () = assert!(BLOCKS_LEN <= u16::MAX as usize);
 
 // NOLOAD in the non-cacheable DMA region: nothing in it is read before the
 // DMA or the CPU writes it. Reached only by address (`staged`) while a
@@ -576,44 +571,24 @@ fn give(mut h: Held, line: &Line) {
 struct Staging<'h>(PhantomData<&'h mut Held>);
 
 impl Staging<'_> {
-    /// The scan burst just landed: all of `scan`.
-    fn scan(&self) -> &[u8; SCAN_BYTES] {
-        // SAFETY: the streams are off while this borrows its `Held`, so
-        // nothing writes the buffer; the scan burst wrote every byte of
-        // `scan` before its TC (`advance`'s one use).
-        unsafe { &*staged(SCAN_AT).cast::<[u8; SCAN_BYTES]>() }
-    }
-
-    /// A block and its CRC at `off`: its tail copy and its rest burst wrote
-    /// them (`advance`'s one use).
-    fn block(&self, off: Bytes) -> Option<&[u8; BLOCK_WITH_CRC]> {
-        let off = usize::try_from(off.get()).ok()?;
-        (off + BLOCK_WITH_CRC <= BLOCKS_LEN).then(|| {
-            // SAFETY: inside `blocks` (checked above), streams off, every
-            // byte written by this block's tail and rest.
-            unsafe { &*staged(BLOCKS_AT + off).cast::<[u8; BLOCK_WITH_CRC]>() }
+    /// The read's bytes up to `upto`, a burst just landed at their end:
+    /// the data its bursts packed before it, then the burst.
+    fn landed(&mut self, upto: usize) -> Option<&mut [u8]> {
+        (upto <= BLOCKS_LEN).then(|| {
+            // SAFETY: inside `blocks` (checked above); the streams are off
+            // and this borrows the `Held` mutably, so nothing else touches
+            // the buffer; this job's bursts (a fill's earlier pieces too)
+            // wrote every byte up to `upto` (`advance`'s one use).
+            unsafe { core::slice::from_raw_parts_mut(staged(BLOCKS_AT), upto) }
         })
     }
 
-    /// A token's tail, the block's first bytes, to its place.
-    fn copy_tail(&mut self, tail: Range<usize>, off: Bytes) -> Option<()> {
-        let off = usize::try_from(off.get()).ok()?;
-        let n = tail.len();
-        (tail.end <= SCAN_BYTES && off + n <= BLOCKS_LEN).then(|| {
-            // SAFETY: both ranges inside their fields (checked above), which
-            // don't overlap; streams off, so only this CPU touches them.
-            unsafe {
-                ptr::copy_nonoverlapping(staged(SCAN_AT + tail.start), staged(BLOCKS_AT + off), n)
-            }
-        })
-    }
-
-    /// The first `blocks` of a read placed whole (`Placement::Chunk`).
+    /// The data of a fill's `blocks`, packed whole by its landings.
     fn chunk(&self, blocks: BlockCount) -> Option<&[u8]> {
         let n = usize::try_from(blocks.bytes().get()).ok()?;
         (n <= BLOCKS_LEN).then(|| {
-            // SAFETY: inside `blocks`; every block of the read wrote its
-            // 512 B and its CRC, so all `n` bytes are written; streams off.
+            // SAFETY: inside `blocks`; every block of the read landed its
+            // 512 B there, so all `n` bytes are written; streams off.
             unsafe { core::slice::from_raw_parts(staged(BLOCKS_AT), n) }
         })
     }
@@ -631,7 +606,7 @@ struct Dest {
 }
 
 impl Dest {
-    /// A token scan's, or a busy drain's.
+    /// A busy drain's.
     fn scan() -> Dest {
         Dest {
             at: staged(SCAN_AT) as u32,
@@ -639,22 +614,22 @@ impl Dest {
         }
     }
 
-    /// Where `walk`'s next burst lands; `None` at its stop.
-    fn of(walk: &Walk, kind: &Kind) -> Option<Dest> {
-        let (at, n) = match walk {
-            Walk::Scan(_) => return Some(Dest::scan()),
-            Walk::Rest(r) => {
-                let off = usize::try_from(kind.offset(r.block()).get()).ok()?;
-                let have = usize::try_from(r.have().get()).ok()?;
-                let n = usize::try_from(r.want().get()).ok()?;
-                // Never past `blocks`' end (I4); `ChunkRead`'s pieces and the
-                // ring's modulus keep every block inside, this keeps the DMA so.
-                (off + have + n <= BLOCKS_LEN).then_some((BLOCKS_AT + off + have, n))?
-            }
-            Walk::Stop => return None,
+    /// The next burst of a read whose data ends at `end`: what it still
+    /// needs, landed after the data; `None` past the staging (I4).
+    fn of(r: &Reading, kind: &Kind, end: usize) -> Option<Dest> {
+        let from = kind.landing(end);
+        let need = usize::try_from(r.need().get()).ok()?;
+        let n = match kind {
+            Kind::Fill(_) => need,
+            // A bench read longer than the staging lands it over and over.
+            #[cfg(feature = "bench")]
+            Kind::Bench => need.min(BLOCKS_LEN),
         };
+        // `Reading::need` and `ChunkRead`'s pieces keep a fill inside; this
+        // keeps the DMA so.
+        (from + n <= BLOCKS_LEN).then_some(())?;
         Some(Dest {
-            at: staged(at) as u32,
+            at: staged(BLOCKS_AT + from) as u32,
             n: BurstLen::new(n)?,
         })
     }
@@ -677,13 +652,23 @@ enum Kind {
 }
 
 impl Kind {
-    /// Where the read's `block` lands: a piece after the pieces before it
-    /// (`Placement::Chunk`), so a chunk's blocks lie whole for `deframe`.
-    fn offset(&self, block: u32) -> Bytes {
+    /// Where a burst lands, the data so far ending at `end`: a fill's after
+    /// it, so a chunk's blocks lie whole for `deframe`; a bench read's,
+    /// only CRC-checked, at the start each time.
+    fn landing(&self, end: usize) -> usize {
         match self {
-            Kind::Fill(f) => Placement::Chunk.offset(f.piece.at.saturating_add(block)),
+            Kind::Fill(_) => end,
             #[cfg(feature = "bench")]
-            Kind::Bench => Placement::Ring(RAW_MAX).offset(block),
+            Kind::Bench => 0,
+        }
+    }
+
+    /// Where a read's data starts: a piece's after the pieces before it.
+    fn start(&self) -> usize {
+        match self {
+            Kind::Fill(f) => f.piece.at as usize * BLOCK_BYTES,
+            #[cfg(feature = "bench")]
+            Kind::Bench => 0,
         }
     }
 }
@@ -718,13 +703,16 @@ enum Done {
 enum Phase {
     /// A CMD18's bursts.
     Read {
-        walk: Walk,
+        walk: Reading,
         /// Cycles at CMD18.
         t0: u32,
         kind: Kind,
+        /// Where the read's packed data ends, and where the burst's bytes.
+        end: usize,
+        upto: usize,
     },
-    /// After CMD12: 0xFF bursts into `scan` until one ends in 0xFF, at most
-    /// `left` bytes more.
+    /// After CMD12: a 0xFF burst into `scan` while the card is busy, at
+    /// most `left` bytes more.
     Drain { left: u32, then: Then },
 }
 
@@ -905,7 +893,16 @@ impl IrqState {
                 let h = bus.ground(&self.line);
                 self.fault(h, then);
             }
-            (Phase::Read { walk, t0, kind }, None) => self.advance(bus, walk, t0, kind),
+            (
+                Phase::Read {
+                    walk,
+                    t0,
+                    kind,
+                    end,
+                    upto,
+                },
+                None,
+            ) => self.advance(bus, walk, t0, kind, end, upto),
             (Phase::Drain { left, then }, None) => self.drained(bus, left, then),
         }
     }
@@ -1003,16 +1000,24 @@ impl IrqState {
         }
         let t0 = DWT::cycle_count();
         match h.command(CMD18, arg, &self.line) {
-            Ok(()) => self.fly(h, Walk::new(blocks), t0, kind),
+            Ok(()) => {
+                let end = kind.start();
+                self.fly(h, Walk::new(blocks), t0, kind, end)
+            }
             Err(why) => self.abort(h, kind, why),
         }
     }
 
     /// The next burst of `walk`, or its stop.
-    fn fly(&mut self, h: Held, walk: Walk, t0: u32, kind: Kind) {
-        let Some(dest) = Dest::of(&walk, &kind) else {
-            return self.finish(h, t0, kind);
+    fn fly(&mut self, h: Held, walk: Walk, t0: u32, kind: Kind, end: usize) {
+        let walk = match walk {
+            Walk::Read(r) => r,
+            Walk::Stop => return self.finish(h, t0, kind),
         };
+        let Some(dest) = Dest::of(&walk, &kind, end) else {
+            return self.abort(h, kind, Why::Bound);
+        };
+        let upto = kind.landing(end) + dest.n.get();
         #[cfg(feature = "bench")]
         let (dest, fault) = bench::aim(dest);
         self.bursts += 1;
@@ -1022,7 +1027,13 @@ impl IrqState {
                 bench::strike(fault, &bus.0);
                 self.job = Job::Read(Transfer {
                     bus,
-                    phase: Phase::Read { walk, t0, kind },
+                    phase: Phase::Read {
+                        walk,
+                        t0,
+                        kind,
+                        end,
+                        upto,
+                    },
                 })
             }
             Err((f, why)) => {
@@ -1032,8 +1043,16 @@ impl IrqState {
         }
     }
 
-    /// A burst landed: scan it for the token, or check the block it ended.
-    fn advance(&mut self, bus: Flying, walk: Walk, t0: u32, kind: Kind) {
+    /// A burst landed: its blocks' data packed and CRC-checked.
+    fn advance(
+        &mut self,
+        bus: Flying,
+        walk: Reading,
+        t0: u32,
+        kind: Kind,
+        end: usize,
+        upto: usize,
+    ) {
         let mut h = match bus.land(&self.line) {
             Ok(h) => h,
             Err((f, why)) => {
@@ -1041,29 +1060,16 @@ impl IrqState {
                 return self.abort(h, kind, why);
             }
         };
-        let next = match walk {
-            Walk::Scan(s) => match s.scanned(h.staging().scan()) {
-                Err(e) => Err(Why::Proto(e)),
-                Ok(ScanOutcome::Waiting(s)) if s.timed_out(self.line.clock) => {
-                    Err(Why::Proto(ProtoError::Timeout))
-                }
-                Ok(ScanOutcome::Waiting(s)) => Ok(Walk::Scan(s)),
-                Ok(ScanOutcome::Token { tail, rest }) => {
-                    let off = kind.offset(rest.block());
-                    match h.staging().copy_tail(tail, off) {
-                        Some(()) => Ok(Walk::Rest(rest)),
-                        None => Err(Why::Bound),
-                    }
-                }
-            },
-            Walk::Rest(r) => match h.staging().block(kind.offset(r.block())) {
-                Some(b) => r.landed(b).map_err(Why::Proto),
-                None => Err(Why::Bound),
-            },
-            Walk::Stop => Ok(Walk::Stop),
+        let from = kind.landing(end);
+        let next = match h.staging().landed(upto) {
+            Some(buf) => walk.landed(buf, from).map_err(Why::Proto),
+            None => Err(Why::Bound),
         };
         match next {
-            Ok(walk) => self.fly(h, walk, t0, kind),
+            Ok((Walk::Read(r), _)) if r.timed_out(self.line.clock) => {
+                self.abort(h, kind, Why::Proto(ProtoError::Timeout))
+            }
+            Ok((walk, end)) => self.fly(h, walk, t0, kind, end),
             Err(why) => self.abort(h, kind, why),
         }
     }
@@ -1125,8 +1131,8 @@ impl IrqState {
         }
     }
 
-    /// CMD12 and its answer, then the busy drained by DMA. A stop that
-    /// can't be sent faults the card: no second CMD12.
+    /// CMD12 and its answer, then the busy drained. A stop that can't be
+    /// sent faults the card: no second CMD12.
     fn stop(&mut self, mut h: Held, then: Then) {
         match h.stop(&self.line) {
             Ok(answer) => {
@@ -1139,8 +1145,15 @@ impl IrqState {
         }
     }
 
-    /// One 0xFF burst into `scan`, `left` bytes of drain still allowed.
-    fn drain(&mut self, h: Held, left: u32, then: Then) {
+    /// The busy, polled for `READY_BYTES` (after a read it is mostly gone
+    /// by then), else one 0xFF burst into `scan`, `left` bytes of drain
+    /// still allowed.
+    fn drain(&mut self, mut h: Held, left: u32, then: Then) {
+        match h.polled(&self.line).and_then(|()| h.ready(&self.line)) {
+            Ok(()) => return self.stopped(h, then),
+            Err(Why::Busy) if left > 0 => {}
+            Err(_) => return self.fault(h, then),
+        }
         self.bursts += 1;
         match h.fly(Dest::scan(), &self.line) {
             Ok(bus) => {
@@ -1156,24 +1169,21 @@ impl IrqState {
         }
     }
 
-    /// A drain burst landed: the card is out of busy if it ended in 0xFF.
+    /// A drain burst landed: the busy polled again.
     fn drained(&mut self, bus: Flying, left: u32, then: Then) {
-        let mut h = match bus.land(&self.line) {
+        let h = match bus.land(&self.line) {
             Ok(h) => h,
             Err((f, _)) => {
                 let h = f.ground(&self.line);
                 return self.fault(h, then);
             }
         };
-        let idle = h.staging().scan()[SCAN_BYTES - 1] == 0xFF;
-        let left = left.saturating_sub(u32::try_from(SCAN_BYTES).unwrap_or(u32::MAX));
-        if !idle {
-            return if left == 0 {
-                self.fault(h, then)
-            } else {
-                self.drain(h, left, then)
-            };
-        }
+        let burst = u32::try_from(SCAN_BYTES).unwrap_or(u32::MAX);
+        self.drain(h, left.saturating_sub(burst + READY_BYTES), then);
+    }
+
+    /// The card out of busy: CS high, then the read's end.
+    fn stopped(&mut self, mut h: Held, then: Then) {
         h.end(&self.line);
         match then {
             Then::Next { done, t0 } => {

@@ -1,8 +1,6 @@
 //! SPI-mode SD protocol, pure: command frames, CRC7/CRC16, the data-token
 //! scan and the CMD18 multi-block walk. The shell only moves bytes: it
-//! clocks what `step` asks for and hands them back.
-
-use core::ops::Range;
+//! clocks what the walk asks for and hands them back.
 
 use chimera_hal::units::{BlockCount, Bytes, BytesPerSec, Millis};
 
@@ -27,10 +25,8 @@ pub const TOKEN_TIMEOUT_MS: Millis = Millis::new(100);
 pub const BLOCK_BYTES: usize = 512;
 pub const CRC_BYTES: usize = 2;
 pub const BLOCK_WITH_CRC: usize = BLOCK_BYTES + CRC_BYTES;
-/// A token scan burst: shorter than a block, so what follows the token is
-/// always one range of one block.
+/// A busy drain's burst, after CMD12.
 pub const SCAN_BYTES: usize = 128;
-const _: () = assert!(SCAN_BYTES < BLOCK_WITH_CRC);
 
 /// Command, argument (big-endian), CRC7 with the end bit.
 pub const fn command(idx: CmdIndex, arg: CmdArg) -> [u8; 6] {
@@ -187,106 +183,127 @@ pub fn stop_response(bytes: &[u8; STOP_BYTES]) -> Result<(), ProtoError> {
     }
 }
 
-/// Where a CMD18 read is: each state has the one call that moves it on,
-/// and an `Err` ends the walk. Plain data, so the card IRQ can keep it.
+/// A block as the card clocks it in a read: its token, data and CRC16.
+pub const STREAM_BLOCK: usize = 1 + BLOCK_WITH_CRC;
+
+/// Where a CMD18 read is, or its stop. Plain data, so the card IRQ can
+/// keep it.
 #[derive(Clone, Copy, Debug)]
 pub enum Walk {
-    /// Clock `SCAN_BYTES` and hand them to `Scanning::scanned`.
-    Scan(Scanning),
-    /// Land `Resting::want` bytes after the `have` in place.
-    Rest(Resting),
+    /// Clock `Reading::need` bytes (or fewer), then `Reading::landed`.
+    Read(Reading),
     Stop,
 }
 
 impl Walk {
-    /// A read of `count` blocks, at its first scan.
+    /// A read of `count` blocks, at its first token.
     pub const fn new(count: BlockCount) -> Walk {
-        Walk::Scan(Scanning {
+        Walk::Read(Reading {
             block: 0,
             count,
-            scan: TokenScan::new(),
+            at: At::Gap(TokenScan::new()),
         })
     }
+}
+
+/// A read of `count` blocks, at `block`. The shell lands whatever the card
+/// clocks, idle bytes, tokens and CRCs too, right after the data so far;
+/// `landed` packs each block's data down onto it, so a chunk's blocks lie
+/// whole however many bursts and gaps they came in.
+#[derive(Clone, Copy, Debug)]
+pub struct Reading {
+    block: u32,
+    count: BlockCount,
+    at: At,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Scanning {
-    block: u32,
-    count: BlockCount,
-    scan: TokenScan,
+enum At {
+    /// Idle bytes before the block's token.
+    Gap(TokenScan),
+    /// `have` bytes of data in, their CRC16 so far.
+    Data { have: u16, crc: u16 },
+    /// The data in, the CRC16's first byte if clocked.
+    Crc { crc: u16, hi: Option<u8> },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ScanOutcome<S, R> {
-    Waiting(S),
-    /// The token is found: `tail` of the burst is the block's first bytes.
-    Token {
-        tail: Range<usize>,
-        rest: R,
-    },
-}
+const BLOCK: u16 = BLOCK_BYTES as u16;
+const _: () = assert!(BLOCK_BYTES <= u16::MAX as usize);
 
-impl Scanning {
-    pub fn scanned(
-        mut self,
-        burst: &[u8; SCAN_BYTES],
-    ) -> Result<ScanOutcome<Scanning, Resting>, ProtoError> {
-        match self.scan.feed(burst) {
-            Scan::Waiting => Ok(ScanOutcome::Waiting(self)),
-            Scan::Error(b) => Err(ProtoError::ErrorToken(b)),
-            Scan::Token { at } => Ok(ScanOutcome::Token {
-                tail: at + 1..SCAN_BYTES,
-                rest: Resting {
-                    block: self.block,
-                    count: self.count,
-                    have: SCAN_BYTES - at - 1,
+impl Reading {
+    /// The fewest bytes the read still clocks: as if no idle byte came
+    /// before any token, so a burst of it never runs past the last CRC.
+    /// Landed at the data's end, it ends within `count × STREAM_BLOCK` of
+    /// the read's start (the staging's bound, I4).
+    pub fn need(&self) -> Bytes {
+        const STREAM: u32 = STREAM_BLOCK as u32;
+        const CRC: u32 = CRC_BYTES as u32;
+        let after = self.count.get() - self.block - 1;
+        let here = match self.at {
+            At::Gap(_) => STREAM,
+            At::Data { have, .. } => u32::from(BLOCK - have) + CRC,
+            At::Crc { hi: None, .. } => CRC,
+            At::Crc { hi: Some(_), .. } => 1,
+        };
+        Bytes::new(after.saturating_mul(STREAM).saturating_add(here))
+    }
+
+    /// The burst at `buf[from..]` just landed after the data at
+    /// `buf[..from]`: its blocks' data packed onto it, each block's CRC16
+    /// checked. The walk on, and where the data now ends.
+    pub fn landed(mut self, buf: &mut [u8], from: usize) -> Result<(Walk, usize), ProtoError> {
+        let (mut r, mut w) = (from, from);
+        while r < buf.len() {
+            self.at = match self.at {
+                At::Gap(mut scan) => match scan.feed(&buf[r..]) {
+                    Scan::Waiting => {
+                        r = buf.len();
+                        At::Gap(scan)
+                    }
+                    Scan::Token { at } => {
+                        r += at + 1;
+                        At::Data { have: 0, crc: 0 }
+                    }
+                    Scan::Error(b) => return Err(ProtoError::ErrorToken(b)),
                 },
-            }),
+                At::Data { have, crc } => {
+                    let n = usize::from(BLOCK - have).min(buf.len() - r);
+                    let crc = crc16_update(crc, &buf[r..r + n]);
+                    buf.copy_within(r..r + n, w);
+                    (r, w) = (r + n, w + n);
+                    // `n` is at most `BLOCK - have`.
+                    let have = have + n as u16;
+                    if have == BLOCK {
+                        At::Crc { crc, hi: None }
+                    } else {
+                        At::Data { have, crc }
+                    }
+                }
+                At::Crc { crc, hi: None } => {
+                    r += 1;
+                    At::Crc {
+                        crc,
+                        hi: Some(buf[r - 1]),
+                    }
+                }
+                At::Crc { crc, hi: Some(hi) } => {
+                    if u16::from_be_bytes([hi, buf[r]]) != crc {
+                        return Err(ProtoError::Crc);
+                    }
+                    r += 1;
+                    self.block += 1;
+                    if self.block == self.count.get() {
+                        return Ok((Walk::Stop, w));
+                    }
+                    At::Gap(TokenScan::new())
+                }
+            };
         }
+        Ok((Walk::Read(self), w))
     }
 
+    /// Waiting on a token for `TOKEN_TIMEOUT_MS` of bytes.
     pub fn timed_out(&self, clock: BytesPerSec) -> bool {
-        self.scan.timed_out(clock)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Resting {
-    block: u32,
-    count: BlockCount,
-    have: usize,
-}
-
-impl Resting {
-    pub fn block(&self) -> u32 {
-        self.block
-    }
-
-    /// Block bytes already in place.
-    pub fn have(&self) -> Bytes {
-        bytes(self.have)
-    }
-
-    /// What the shell's DMA lands straight after them.
-    pub fn want(&self) -> Bytes {
-        bytes(BLOCK_WITH_CRC - self.have)
-    }
-
-    /// The whole block and its CRC16 are in place.
-    pub fn landed(self, block: &[u8; BLOCK_WITH_CRC]) -> Result<Walk, ProtoError> {
-        let (data, crc) = block.split_at(BLOCK_BYTES);
-        if crc16(data) != u16::from_be_bytes([crc[0], crc[1]]) {
-            return Err(ProtoError::Crc);
-        }
-        let block = self.block + 1;
-        Ok(if block < self.count.get() {
-            Walk::Scan(Scanning {
-                block,
-                count: self.count,
-                scan: TokenScan::new(),
-            })
-        } else {
-            Walk::Stop
-        })
+        matches!(self.at, At::Gap(s) if s.timed_out(clock))
     }
 }

@@ -1,6 +1,6 @@
 use chimera_fat::sd_addr::CmdArg;
 use chimera_fat::sd_proto::*;
-use chimera_hal::units::{BlockCount, Bytes, BytesPerSec};
+use chimera_hal::units::{BlockCount, BytesPerSec};
 
 #[test]
 fn command_frames_match_the_sd_spec() {
@@ -70,121 +70,142 @@ fn block(n: u8) -> [u8; BLOCK_WITH_CRC] {
     b
 }
 
-/// Plays the shell on one block: scans with the token at `pos` (after
-/// `empty` blank scans), copies the tail, lands the rest.
-fn play(
-    walk: Walk,
-    blk: &[u8; BLOCK_WITH_CRC],
-    pos: usize,
-    empty: usize,
-) -> Result<([u8; BLOCK_WITH_CRC], Walk), ProtoError> {
-    let Walk::Scan(mut sc) = walk else {
-        panic!("not scanning")
-    };
-    for _ in 0..empty {
-        sc = match sc.scanned(&[0xFF; SCAN_BYTES])? {
-            ScanOutcome::Waiting(s) => s,
-            ScanOutcome::Token { .. } => panic!("early token"),
-        };
+/// What the card clocks out for a CMD18 of `gaps.len()` blocks: each
+/// block's idle gap, its token, its data and CRC16.
+fn stream(gaps: &[usize]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for (i, &g) in gaps.iter().enumerate() {
+        out.extend(std::iter::repeat_n(0xFF, g));
+        out.push(DATA_TOKEN);
+        out.extend_from_slice(&block(i as u8));
     }
-    let mut burst = [0xFF; SCAN_BYTES];
-    burst[pos] = DATA_TOKEN;
-    let n = SCAN_BYTES - pos - 1;
-    burst[pos + 1..].copy_from_slice(&blk[..n]);
-    let ScanOutcome::Token { tail, rest } = sc.scanned(&burst)? else {
-        panic!("token missed")
-    };
-    assert_eq!(tail, pos + 1..SCAN_BYTES);
-    assert_eq!(rest.have(), Bytes::new(n as u32));
-    assert_eq!(rest.want(), Bytes::new((BLOCK_WITH_CRC - n) as u32));
-    let mut out = [0u8; BLOCK_WITH_CRC];
-    out[..tail.len()].copy_from_slice(&burst[tail]);
-    out[n..].copy_from_slice(&blk[n..]);
-    Ok((out, rest.landed(&out)?))
+    out
+}
+
+fn count(n: usize) -> BlockCount {
+    BlockCount::new(n as u32).unwrap()
+}
+
+/// The shell, played: each burst `need` bytes (at most `cap`), landed at
+/// the data's end. The data, the bursts, and whether every burst fit the
+/// staging's bound.
+fn play(card: &[u8], n: usize, cap: usize) -> Result<(Vec<u8>, usize), ProtoError> {
+    let mut buf = vec![0xEE; n * STREAM_BLOCK];
+    let (mut walk, mut end, mut clocked, mut bursts) = (Walk::new(count(n)), 0, 0, 0);
+    while let Walk::Read(r) = walk {
+        let need = usize::try_from(r.need().get()).unwrap();
+        assert!(need > 0);
+        assert!(end + need <= n * STREAM_BLOCK, "a burst past the staging");
+        let k = need.min(cap);
+        assert!(clocked + k <= card.len(), "clocked past the last CRC");
+        buf[end..end + k].copy_from_slice(&card[clocked..clocked + k]);
+        clocked += k;
+        bursts += 1;
+        (walk, end) = r.landed(&mut buf[..end + k], end)?;
+    }
+    assert_eq!(clocked, card.len(), "the walk stops at the last CRC");
+    assert_eq!(end, n * BLOCK_BYTES);
+    buf.truncate(end);
+    Ok((buf, bursts))
+}
+
+fn data(n: usize) -> Vec<u8> {
+    (0..n)
+        .flat_map(|i| block(i as u8)[..512].to_vec())
+        .collect()
 }
 
 #[test]
-fn multiread_walks_nine_blocks_with_tokens_anywhere() {
-    let mut w = Walk::new(BlockCount::new(9).unwrap());
-    let plan = [
-        (0, 0),
-        (1, 0),
-        (64, 0),
-        (127, 0),
-        (5, 3),
-        (0, 1),
-        (127, 3),
-        (30, 2),
-        (99, 0),
+fn a_multiread_packs_nine_blocks_whatever_their_gaps() {
+    let plans: [[usize; 9]; 4] = [
+        [0; 9],
+        [3_000, 20, 20, 20, 20, 20, 20, 20, 20],
+        [1, 127, 128, 129, 513, 514, 515, 0, 1_031],
+        [600, 0, 3, 0, 7, 0, 0, 2, 64],
     ];
-    for (i, (pos, empty)) in plan.into_iter().enumerate() {
-        let b = block(i as u8);
-        let (out, next) = play(w, &b, pos, empty).unwrap();
-        assert_eq!(out, b);
-        w = next;
+    for gaps in plans {
+        let (got, _) = play(&stream(&gaps), 9, usize::MAX).unwrap();
+        assert_eq!(got, data(9), "{gaps:?}");
     }
-    assert!(matches!(w, Walk::Stop));
 }
 
 #[test]
-fn the_block_index_advances_per_landing() {
-    let mut w = Walk::new(BlockCount::new(3).unwrap());
-    for i in 0..3 {
-        let Walk::Scan(sc) = w else {
-            panic!("stopped early")
-        };
-        let mut burst = [0xFF; SCAN_BYTES];
-        burst[0] = DATA_TOKEN;
-        let ScanOutcome::Token { rest, .. } = sc.scanned(&burst).unwrap() else {
-            panic!()
-        };
-        assert_eq!(rest.block(), i);
-        w = rest.landed(&block(0)).unwrap();
+fn bursts_may_end_anywhere_in_a_block() {
+    let card = stream(&[5, 0, 130]);
+    for cap in [
+        1, 2, 3, 5, 6, 7, 127, 128, 511, 512, 513, 514, 515, 516, 1_029,
+    ] {
+        let (got, _) = play(&card, 3, cap).unwrap();
+        assert_eq!(got, data(3), "cap {cap}");
     }
-    assert!(matches!(w, Walk::Stop));
+}
+
+#[test]
+fn a_chunk_takes_a_few_bursts_not_one_a_token_and_a_block() {
+    // About 1 ms to the first token at 25 MHz, then short gaps: the old
+    // walk took a 128 B scan a burst to the first token (24), then a scan
+    // and a rest a block (17 more).
+    let gaps = [3_000, 20, 20, 20, 20, 20, 20, 20, 20];
+    let (_, bursts) = play(&stream(&gaps), 9, usize::MAX).unwrap();
+    assert!(bursts <= 3, "{bursts}");
+    let (_, bursts) = play(&stream(&[0; 9]), 9, usize::MAX).unwrap();
+    assert_eq!(bursts, 1);
 }
 
 #[test]
 fn multiread_flags_bad_crc_and_the_walk_ends() {
-    let w = Walk::new(BlockCount::new(2).unwrap());
-    let mut b = block(1);
-    b[100] ^= 1;
-    assert_eq!(play(w, &b, 0, 0).unwrap_err(), ProtoError::Crc);
+    let mut card = stream(&[4, 4]);
+    card[4 + 1 + 515 + 4 + 1 + 100] ^= 1;
+    assert_eq!(play(&card, 2, usize::MAX).unwrap_err(), ProtoError::Crc);
+    let mut card = stream(&[4, 4]);
+    card[4 + 1 + 513] ^= 1;
+    assert_eq!(play(&card, 2, 7).unwrap_err(), ProtoError::Crc);
 }
 
 #[test]
 fn multiread_reports_an_error_token_and_the_walk_ends() {
-    let mut w = Walk::new(BlockCount::new(9).unwrap());
-    for i in 0..2 {
-        w = play(w, &block(i), 3, 0).unwrap().1;
-    }
-    let Walk::Scan(sc) = w else { panic!() };
-    let mut burst = [0xFF; SCAN_BYTES];
-    burst[10] = 0x02;
+    let mut card = stream(&[3, 3, 30]);
+    card[2 * 518 + 10] = 0x02;
     assert_eq!(
-        sc.scanned(&burst).unwrap_err(),
+        play(&card, 3, usize::MAX).unwrap_err(),
         ProtoError::ErrorToken(0x02)
     );
 }
 
 #[test]
 fn multiread_times_out_waiting_for_a_token() {
-    let Walk::Scan(mut sc) = Walk::new(BlockCount::new(1).unwrap()) else {
+    let Walk::Read(mut r) = Walk::new(count(1)) else {
         panic!()
     };
     let clock = BytesPerSec::spi(25_000_000);
-    for _ in 0..(312_500 / SCAN_BYTES) {
-        assert!(!sc.timed_out(clock));
-        sc = match sc.scanned(&[0xFF; SCAN_BYTES]).unwrap() {
-            ScanOutcome::Waiting(s) => s,
-            _ => panic!(),
+    let mut buf = vec![0xFF; STREAM_BLOCK];
+    let mut idle = 0;
+    while idle < 312_500 {
+        assert!(!r.timed_out(clock));
+        let n = usize::try_from(r.need().get()).unwrap();
+        let Walk::Read(next) = r.landed(&mut buf[..n], 0).unwrap().0 else {
+            panic!()
         };
+        (r, idle) = (next, idle + n);
     }
-    sc = match sc.scanned(&[0xFF; SCAN_BYTES]).unwrap() {
-        ScanOutcome::Waiting(s) => s,
-        _ => panic!(),
-    };
-    assert!(sc.timed_out(clock));
+    assert!(r.timed_out(clock));
+}
+
+#[test]
+fn a_bench_read_lands_every_burst_at_the_start() {
+    // A read longer than the staging: every burst lands at 0, its blocks
+    // still checked.
+    let gaps = [9; 20];
+    let card = stream(&gaps);
+    let mut buf = vec![0; 4 * STREAM_BLOCK];
+    let (mut walk, mut at) = (Walk::new(count(20)), 0);
+    while let Walk::Read(r) = walk {
+        let k = usize::try_from(r.need().get()).unwrap().min(buf.len());
+        buf[..k].copy_from_slice(&card[at..at + k]);
+        at += k;
+        walk = r.landed(&mut buf[..k], 0).unwrap().0;
+    }
+    assert_eq!(at, card.len());
 }
 
 #[test]

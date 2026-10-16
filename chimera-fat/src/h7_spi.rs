@@ -2,8 +2,6 @@
 //! each `Op` as one register access (or one bounded wait); host tests
 //! check the order.
 
-use chimera_hal::units::{BlockCount, Bytes};
-
 const SSI: u32 = 1 << 12;
 const SPE: u32 = 1;
 
@@ -172,27 +170,6 @@ pub const ABORT: [Op; 8] = [
     Op::RxDma(false),
     Op::TxDma(false),
 ];
-
-/// Where block k of a read lands in the buffer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Placement {
-    Chunk,
-    Ring(BlockCount),
-}
-
-impl Placement {
-    pub const fn offset(self, block: u32) -> Bytes {
-        let k = match self {
-            Placement::Chunk => block,
-            Placement::Ring(n) => block % n.get(),
-        };
-        // 0 is not a BlockCount; k x 512 saturates in BlockCount::bytes.
-        match BlockCount::new(k) {
-            Some(b) => b.bytes(),
-            None => Bytes::new(0),
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DmaEvent {
