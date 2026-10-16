@@ -601,6 +601,28 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     loop {
         // A stuck card transfer aborted, a stranded want woken.
         card_dma::watch(controls::now_ms());
+        // A `card dma` run moved on: B6 redraws every row, and saves the
+        // project once a minute.
+        #[cfg(all(
+            feature = "usb-console",
+            feature = "bench",
+            feature = "bank2",
+            not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
+        ))]
+        let bench_redraw = {
+            let ask = card_bench.tick(controls::now_ms(), store, stats_r.as_mut());
+            if ask.save {
+                card_bench.saved(bench_save(&mut card, store, ui));
+            }
+            ask.redraw
+        };
+        #[cfg(not(all(
+            feature = "usb-console",
+            feature = "bench",
+            feature = "bank2",
+            not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
+        )))]
+        let bench_redraw = false;
         // The snapshot point: every path through the last iteration flushed.
         #[cfg(feature = "usb-console")]
         tend_usb(&mut usb, ui, &marker, &clocks, clk.cpu_hz, &mut usb_snap);
@@ -706,9 +728,9 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         last_tick = now;
         ui.step_idle(elapsed_ms, busy);
         let toast = ui.step_toast(elapsed_ms);
-        if toast == ToastStep::Ended || busy || installed {
+        if toast == ToastStep::Ended || busy || installed || bench_redraw {
             // The toast, BUSY or the install covered rows the dirty regions
-            // don't know about.
+            // don't know about; B6 redraws them all regardless.
             ui.render_with_audio(&mut display, &perf.stats, stats.as_ref(), scope_r.read());
             ui.prime_regions(&perf.stats, stats.as_ref(), scope_r.read());
             if let ToastStep::Show(text) = toast {
@@ -735,6 +757,25 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             }
         }
     }
+}
+
+/// B6's save of the open project over its own file: true if it landed.
+#[cfg(all(
+    feature = "usb-console",
+    feature = "bench",
+    feature = "bank2",
+    not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
+))]
+#[inline(never)]
+fn bench_save(
+    card: &mut chimera_core::storage::Card,
+    store: &mut sd::SdStore,
+    ui: &mut chimera_core::ui::UiState,
+) -> bool {
+    use chimera_core::project::{ProjectNote, SaveTo, save_project_as};
+    let name = ui.project().meta().name();
+    let saved = save_project_as(card, store, ui.project_mut(), SaveTo::Own, name);
+    matches!(saved.out, ProjectNote::Saved(_))
 }
 
 /// A USB try if one is due, and the host's progress: each step, the try's

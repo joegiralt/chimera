@@ -236,6 +236,36 @@ class Tool(unittest.TestCase):
             r = run_tool(["card"], u.target)
         self.assertEqual((r.returncode, r.stdout), (0, b"streams 12\n"))
 
+    def test_card_wait_polls_until_result(self):
+        replies = {
+            b"card dma sustain 8\n": [b"OK started sustain 8\n"],
+            b"card dma report\n": [b"running 10\nOK\n", b"running 90\nOK\n", b"n 3\nempties 0\nOK\n"],
+        }
+
+        asked = []
+
+        class Script:
+            def __contains__(self, line):
+                return bool(replies.get(line))
+
+            def __getitem__(self, line):
+                asked.append(line)
+                return replies[line][0]
+
+        with FakeUnit(Script(), on_answer=lambda: replies[asked[-1]].pop(0)) as u:
+            r = run_tool(["card-wait", "sustain", "8"], u.target, env={"CHIMERA_POLL_S": "0"})
+        self.assertEqual((r.returncode, r.stdout), (0, b"n 3\nempties 0\n"), r.stderr)
+        self.assertEqual(u.requests, [b"card dma sustain 8\n"] + [b"card dma report\n"] * 3)
+        self.assertIn(b"running 90", r.stderr)
+        self.assertEqual(tool.CARD_POLL_S, 10.0)
+
+    def test_card_wait_stops_at_a_refused_start(self):
+        with FakeUnit({b"card dma burst\n": b"ERR beds\n"}) as u:
+            r = run_tool(["card-wait", "burst"], u.target, env={"CHIMERA_POLL_S": "0"})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(b"ERR beds", r.stderr)
+        self.assertEqual(u.requests, [b"card dma burst\n"])
+
     def test_shot_writes_a_png_of_the_pixels(self):
         px = bytes(range(256)) * 600  # 153 600 bytes
         with FakeUnit({b"shot\n": b"SHOT 240 320 rgb565be 153600\n" + px + b"OK\n"}) as u, tempfile.TemporaryDirectory() as d:

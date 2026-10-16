@@ -23,6 +23,9 @@
                                                    holds MIX while it taps SEQ. OK once queued (8 at most)
     python3 chimera-usb.py turn <encoder 1-6> <delta -64..64>
                                                    detents every 25 ms, so acceleration builds as by hand
+    python3 chimera-usb.py card-wait <bench> [N|kind]
+                                                   a bench build's `card dma <bench>`, then `card dma report`
+                                                   every 10 s until its result, which it prints
     python3 chimera-usb.py to-dfu            the unit into ROM DFU, to flash it
     python3 chimera-usb.py wait-console [s]  wait (default 10 s) for the console on the bus
 
@@ -47,7 +50,8 @@ device path, or `tcp:HOST:PORT`. On Linux, if it says "no access", either
 add yourself to the dialout group (then log out and in again), or run the
 `sudo tee` line it prints once. Shots are saved in the current directory;
 CHIMERA_SHOTS picks another. CHIMERA_SYSFS and CHIMERA_DFU_WAIT (s,
-default 10) are for to-dfu and wait-console.
+default 10) are for to-dfu and wait-console; CHIMERA_POLL_S (s, default
+10) is card-wait's.
 """
 
 VERSION = "dev"  # `just release` stamps the release version here
@@ -77,6 +81,7 @@ except ImportError:  # Windows
 
 SIM = ("127.0.0.1", 7341)  # the desktop simulator (developers)
 SILENCE_S = 2.0
+CARD_POLL_S = 10.0  # card-wait's `card dma report`, a bench's minutes apart enough
 CARD_WAIT_S = 60.0  # `card` measures before it answers: ~5 s, ~15 s writing its test file
 LS_WAIT_S = 15.0  # a cold card acquire, then one listing under the card's 10 s cap
 SWEEP_WAIT_S = 15.0  # a cold acquire, then the mark's one write; the unit restarts after OK
@@ -829,6 +834,35 @@ def update(t: Target, env, pkg: Package) -> int:
     return updated(t, pkg)
 
 
+def card_wait(t: Target, env, verbs) -> int:
+    """`card dma <verbs>`, then its report every `CARD_POLL_S` until the
+    result: printed, exit 0. Progress goes to stderr; any ERR exits 1."""
+    poll = float(env.get("CHIMERA_POLL_S", CARD_POLL_S))
+    conn = open_conn(t)
+    try:
+        send(conn, "card dma " + " ".join(verbs))
+        first = Reader(conn, CARD_WAIT_S).line()
+        if not first.startswith(b"OK started"):
+            return fail(first.decode(errors="replace"))
+        print(first.decode(errors="replace"), file=sys.stderr)
+        while True:
+            time.sleep(poll)
+            send(conn, "card dma report")
+            status, body = answer(conn)
+            if status is Status.ERR:
+                return fail(body.decode(errors="replace"))
+            if not body.startswith(b"running "):
+                sys.stdout.buffer.write(body)
+                return 0
+            print(body.decode(errors="replace").strip(), file=sys.stderr)
+    except NoAnswer:
+        return fail("no answer from %s" % describe(t))
+    except Vanished:
+        return fail("%s went away" % describe(t))
+    finally:
+        conn.close()
+
+
 def main(argv, env) -> int:
     if argv[:1] == ["--version"]:
         print(VERSION)
@@ -853,6 +887,8 @@ def main(argv, env) -> int:
         except BadPackage as e:
             return fail("update: %s" % e)
         return update(t, env, pkg)
+    if argv[0] == "card-wait":
+        return card_wait(t, env, argv[1:]) if len(argv) > 1 else fail("card-wait takes <bench> [N|kind]")
     if argv[0] == "put":
         over = argv[3:] == ["--over"]
         if len(argv) != 3 and not over:

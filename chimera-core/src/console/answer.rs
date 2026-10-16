@@ -185,6 +185,9 @@ pub fn answer(
         // measures links none of it. A stop keeps what came before.
         Ok(r @ Request::Card(_)) => match unit.card() {
             None => Err(Why::Absent(r.command())),
+            Some(CardAnswer::Dma(a)) => {
+                return super::write_dma_answer(&a, &mut t).map_err(|fmt::Error| Stalled);
+            }
             Some(CardAnswer::Cleaned(Ok(()))) => Ok(Ok(())),
             Some(CardAnswer::Cleaned(Err(e))) => {
                 return writeln!(t, "ERR card: {}", e.message()).map_err(|fmt::Error| Stalled);

@@ -7,6 +7,10 @@ use core::fmt::{self, Write};
 
 use chimera_hal::store::StoreError;
 pub use chimera_hal::store::{Extents, MAX_RUNS, Runs};
+use chimera_hal::units::{Bytes, BytesPerSec, Micros, Millis, StreamCount};
+
+use crate::stream::bench::BenchReport;
+use crate::ui::about_page::THIS;
 
 use super::{Arg, Words};
 
@@ -53,20 +57,22 @@ pub const fn span_start(i: u32) -> u32 {
     i * SPAN_BLOCKS
 }
 
-/// `card`'s argument: measure (with a seed for the random reads), or
-/// remove `/CHIMERA/BENCH`.
+/// `card`'s argument: measure (with a seed for the random reads), remove
+/// `/CHIMERA/BENCH`, or a bench on the DMA driver.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CardArg {
     Run(Option<u32>),
     Clean,
+    Dma(DmaVerb),
 }
 
 impl Arg for CardArg {
-    const USAGE: &'static str = "clean, seed=N or nothing";
+    const USAGE: &'static str = "clean, seed=N, dma <chunk|burst|sustain N|stall N|ui N|back|listen N|wake N|inject abort|te|modf|report|stop> or nothing";
     fn parse(mut words: Words<'_>) -> Option<Self> {
         let got = match words.next() {
             None => CardArg::Run(None),
             Some(w) if w.eq_ignore_ascii_case(b"clean") => CardArg::Clean,
+            Some(w) if w.eq_ignore_ascii_case(b"dma") => CardArg::Dma(DmaVerb::parse(&mut words)?),
             Some(w) => {
                 let n = w.strip_prefix(b"seed=")?;
                 let n = core::str::from_utf8(n).ok()?.parse().ok()?;
@@ -291,6 +297,7 @@ pub enum CardAnswer {
     /// What was measured, and why it stopped short if it did.
     Measured(CardSpeed, Option<CardFail>),
     Cleaned(Result<(), CardFail>),
+    Dma(DmaAnswer),
 }
 
 /// `card`'s body: `key value` lines, for the phases that completed.
@@ -381,4 +388,451 @@ pub fn interleaved() -> impl Iterator<Item = (usize, u32)> {
             (file, (i / FILES as u32) * stride + round * READ_BLOCKS)
         })
     })
+}
+
+/// A bench on the DMA driver (slice 0's B2–B10). Stream k reads bed k,
+/// the beds `/CHIMERA/BENCH/BEDS.CHK` lists: no verb names one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DmaVerb {
+    /// B2: random reads of 1 to 16 KB, idle and loaded; the line fit.
+    Chunk,
+    /// B3: eight reads queued at once, the 8th's time.
+    Burst,
+    /// B4: N streams for 10 min.
+    Sustain(StreamCount),
+    /// B5: B4 with a 4 KB write a second.
+    Stall(StreamCount),
+    /// B6: B4 with the UI redrawn whole every pass and a save a minute.
+    Ui(StreamCount),
+    /// B7: a backward 4 KB walk, against forward random.
+    Back,
+    /// B8: B4 with stream 0 played aloud.
+    Listen(StreamCount),
+    /// B10: B4 with a UI read every 50 ms.
+    Wake(StreamCount),
+    /// B9: B4 at 2 with a fault a second.
+    Inject(Inject),
+    Report,
+    Stop,
+}
+
+/// B9's fault, armed for one transfer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Inject {
+    /// An abort asked mid-CMD18.
+    Abort,
+    /// One RX burst aimed at DTCM, which DMA2 can't reach.
+    Te,
+    /// CR1 written once without SSI.
+    Modf,
+}
+
+impl Inject {
+    pub fn name(self) -> &'static str {
+        match self {
+            Inject::Abort => "abort",
+            Inject::Te => "te",
+            Inject::Modf => "modf",
+        }
+    }
+}
+
+impl DmaVerb {
+    /// The words after `dma`, all of them.
+    fn parse(words: &mut Words<'_>) -> Option<DmaVerb> {
+        let w = words.next()?;
+        let is = |name: &str| w.eq_ignore_ascii_case(name.as_bytes());
+        let mut count = || {
+            let n = core::str::from_utf8(words.next()?).ok()?.parse().ok()?;
+            StreamCount::new(n)
+        };
+        let verb = if is("chunk") {
+            DmaVerb::Chunk
+        } else if is("burst") {
+            DmaVerb::Burst
+        } else if is("sustain") {
+            DmaVerb::Sustain(count()?)
+        } else if is("stall") {
+            DmaVerb::Stall(count()?)
+        } else if is("ui") {
+            DmaVerb::Ui(count()?)
+        } else if is("back") {
+            DmaVerb::Back
+        } else if is("listen") {
+            DmaVerb::Listen(count()?)
+        } else if is("wake") {
+            DmaVerb::Wake(count()?)
+        } else if is("inject") {
+            let k = words.next()?;
+            let kind = [Inject::Abort, Inject::Te, Inject::Modf]
+                .into_iter()
+                .find(|i| k.eq_ignore_ascii_case(i.name().as_bytes()))?;
+            DmaVerb::Inject(kind)
+        } else if is("report") {
+            DmaVerb::Report
+        } else if is("stop") {
+            DmaVerb::Stop
+        } else {
+            return None;
+        };
+        Some(verb)
+    }
+}
+
+impl fmt::Display for DmaVerb {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DmaVerb::Chunk => f.write_str("chunk"),
+            DmaVerb::Burst => f.write_str("burst"),
+            DmaVerb::Sustain(n) => write!(f, "sustain {}", n.get()),
+            DmaVerb::Stall(n) => write!(f, "stall {}", n.get()),
+            DmaVerb::Ui(n) => write!(f, "ui {}", n.get()),
+            DmaVerb::Back => f.write_str("back"),
+            DmaVerb::Listen(n) => write!(f, "listen {}", n.get()),
+            DmaVerb::Wake(n) => write!(f, "wake {}", n.get()),
+            DmaVerb::Inject(i) => write!(f, "inject {}", i.name()),
+            DmaVerb::Report => f.write_str("report"),
+            DmaVerb::Stop => f.write_str("stop"),
+        }
+    }
+}
+
+/// A histogram's bucket, in µs.
+pub const BUCKET_US: u32 = 100;
+
+/// Times in `BUCKET_US` buckets, then a count of those past the last.
+#[derive(Clone, Debug)]
+pub struct Histogram<const BUCKETS: usize> {
+    buckets: [u32; BUCKETS],
+    over: u32,
+}
+
+impl<const BUCKETS: usize> Default for Histogram<BUCKETS> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A percentile: within a bucket's upper edge, or past the last bucket.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Percentile {
+    Within(Micros),
+    Over,
+}
+
+impl fmt::Display for Percentile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Percentile::Within(us) => write!(f, "{}", us.get()),
+            Percentile::Over => f.write_str("over"),
+        }
+    }
+}
+
+/// A run's spread, from its histogram.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Spread {
+    pub n: u32,
+    pub median: Percentile,
+    pub p95: Percentile,
+    pub p99: Percentile,
+    pub p999: Percentile,
+    pub max: Percentile,
+}
+
+impl<const BUCKETS: usize> Histogram<BUCKETS> {
+    pub const fn new() -> Self {
+        Histogram {
+            buckets: [0; BUCKETS],
+            over: 0,
+        }
+    }
+
+    /// An empty one, built where it stays (10 KB at 2,500 buckets: never
+    /// by value on the firmware's stack).
+    pub fn init_in_place(slot: &mut core::mem::MaybeUninit<Self>) -> &mut Self {
+        // SAFETY: the slot's pointer is valid for one `Self`; every field
+        // is a `u32`, for which all-zero bytes are a value: an empty
+        // histogram.
+        unsafe {
+            slot.as_mut_ptr().write_bytes(0, 1);
+            slot.assume_init_mut()
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.buckets.fill(0);
+        self.over = 0;
+    }
+
+    pub fn record(&mut self, t: Micros) {
+        let i = usize::try_from(t.get() / BUCKET_US).unwrap_or(usize::MAX);
+        let n = self.buckets.get_mut(i).unwrap_or(&mut self.over);
+        *n = n.saturating_add(1);
+    }
+
+    pub fn count(&self) -> u32 {
+        self.buckets
+            .iter()
+            .fold(self.over, |n, &b| n.saturating_add(b))
+    }
+
+    /// Nearest rank: the upper edge of the bucket holding it. Empty: 0.
+    pub fn percentile(&self, per_mille: u16) -> Percentile {
+        let n = u64::from(self.count());
+        if n == 0 {
+            return Percentile::Within(Micros::new(0));
+        }
+        let rank = (n * u64::from(per_mille.min(1_000))).div_ceil(1_000).max(1);
+        let mut seen = 0u64;
+        for (edge, &b) in (1u32..).zip(&self.buckets) {
+            seen += u64::from(b);
+            if seen >= rank {
+                return Percentile::Within(Micros::new(edge * BUCKET_US));
+            }
+        }
+        Percentile::Over
+    }
+
+    pub fn spread(&self) -> Spread {
+        Spread {
+            n: self.count(),
+            median: self.percentile(500),
+            p95: self.percentile(950),
+            p99: self.percentile(990),
+            p999: self.percentile(999),
+            max: self.percentile(1_000),
+        }
+    }
+}
+
+/// `t = latency + n / bandwidth`, fitted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LinkFit {
+    pub latency: Micros,
+    pub bandwidth: BytesPerSec,
+}
+
+/// Least squares of `t = L + n/BW` over `points`; `None` under two sizes
+/// or for a slope at or under 0. A latency under 0 is 0.
+pub fn fit_line(points: &[(Bytes, Micros)]) -> Option<LinkFit> {
+    let k = i128::try_from(points.len()).ok()?;
+    let (mut sx, mut sy, mut sxx, mut sxy) = (0i128, 0i128, 0i128, 0i128);
+    for (b, t) in points {
+        let (x, y) = (i128::from(b.get()), i128::from(t.get()));
+        (sx, sy, sxx, sxy) = (sx + x, sy + y, sxx + x * x, sxy + x * y);
+    }
+    // k² times the variance and the covariance.
+    let var = k * sxx - sx * sx;
+    let cov = k * sxy - sx * sy;
+    if var <= 0 || cov <= 0 {
+        return None;
+    }
+    // µs a byte is cov / var; the mean's line through it.
+    let latency = (sy * var - cov * sx) / (k * var);
+    let bandwidth = var * 1_000_000 / cov;
+    Some(LinkFit {
+        latency: Micros::new(u32::try_from(latency.max(0)).unwrap_or(u32::MAX)),
+        bandwidth: BytesPerSec::new(u32::try_from(bandwidth).unwrap_or(u32::MAX)),
+    })
+}
+
+/// A streaming bench's streams, as `BENCH` counted them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StreamLines {
+    pub n_streams: StreamCount,
+    pub report: BenchReport,
+}
+
+/// Each verb's own lines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DmaOwn {
+    /// B2: fits over each size's p99, idle and loaded; CRC16 of a block.
+    Chunk {
+        idle: Option<LinkFit>,
+        fit: Option<LinkFit>,
+        crc16: Micros,
+    },
+    /// B3: the spread is the 8th read's.
+    Burst,
+    /// B4, B8: the spread is the fills'.
+    Streams(StreamLines),
+    /// B5: the spread is the writes' busy.
+    Stall {
+        streams: StreamLines,
+        write_busy_errors: u32,
+    },
+    /// B6.
+    Ui {
+        streams: StreamLines,
+        ui_fps_min: u32,
+        ui_frozen_max: Millis,
+        save_ok: bool,
+    },
+    /// B7: the spread is the backward walk's.
+    Back {
+        back_mean: Micros,
+        forward_mean: Micros,
+    },
+    /// B9, B10.
+    Reads {
+        streams: StreamLines,
+        ui_reads: u32,
+        ui_reads_ok: u32,
+        faults: u32,
+    },
+}
+
+/// A bench's result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DmaReport {
+    pub spread: Spread,
+    /// Audio blocks missed during the run.
+    pub overruns: u32,
+    pub loaded_load_pct: u16,
+    pub card: CardKind,
+    pub card_mb: u32,
+    /// The card IRQ's, during the run.
+    pub aborts: u32,
+    pub stop_errors: u32,
+    /// Since boot (M2).
+    pub card_irq_us_max: Micros,
+    pub own: DmaOwn,
+}
+
+/// A report's lines.
+pub fn write_dma(r: &DmaReport, t: &mut impl Write) -> fmt::Result {
+    let s = &r.spread;
+    writeln!(t, "n {}", s.n)?;
+    writeln!(t, "median_us {}", s.median)?;
+    writeln!(t, "p95_us {}", s.p95)?;
+    writeln!(t, "p99_us {}", s.p99)?;
+    writeln!(t, "p999_us {}", s.p999)?;
+    writeln!(t, "max_us {}", s.max)?;
+    writeln!(t, "overruns {}", r.overruns)?;
+    writeln!(t, "loaded_load_pct {}", r.loaded_load_pct)?;
+    writeln!(t, "card {}", r.card.name())?;
+    writeln!(t, "card_mb {}", r.card_mb)?;
+    writeln!(
+        t,
+        "git {}{}",
+        THIS.hash(),
+        if THIS.dirty() { "+" } else { "" }
+    )?;
+    writeln!(t, "aborts {}", r.aborts)?;
+    writeln!(t, "stop_errors {}", r.stop_errors)?;
+    writeln!(t, "card_irq_us_max {}", r.card_irq_us_max.get())?;
+    match &r.own {
+        DmaOwn::Chunk { idle, fit, crc16 } => {
+            write_fit(t, "idle_fit", idle)?;
+            write_fit(t, "fit", fit)?;
+            writeln!(t, "crc16_us {}", crc16.get())
+        }
+        DmaOwn::Burst => Ok(()),
+        DmaOwn::Streams(s) => write_streams(t, s),
+        DmaOwn::Stall {
+            streams,
+            write_busy_errors,
+        } => {
+            write_streams(t, streams)?;
+            writeln!(t, "write_busy_errors {write_busy_errors}")
+        }
+        DmaOwn::Ui {
+            streams,
+            ui_fps_min,
+            ui_frozen_max,
+            save_ok,
+        } => {
+            write_streams(t, streams)?;
+            writeln!(t, "ui_fps_min {ui_fps_min}")?;
+            writeln!(t, "ui_frozen_max_ms {}", ui_frozen_max.get())?;
+            writeln!(t, "save_ok {}", u8::from(*save_ok))
+        }
+        DmaOwn::Back {
+            back_mean,
+            forward_mean,
+        } => {
+            writeln!(t, "back_mean_us {}", back_mean.get())?;
+            writeln!(t, "forward_mean_us {}", forward_mean.get())
+        }
+        DmaOwn::Reads {
+            streams,
+            ui_reads,
+            ui_reads_ok,
+            faults,
+        } => {
+            write_streams(t, streams)?;
+            writeln!(t, "ui_reads {ui_reads}")?;
+            writeln!(t, "ui_reads_ok {ui_reads_ok}")?;
+            writeln!(t, "faults {faults}")
+        }
+    }
+}
+
+fn write_fit(t: &mut impl Write, name: &str, fit: &Option<LinkFit>) -> fmt::Result {
+    match fit {
+        None => writeln!(t, "{name} none"),
+        Some(f) => {
+            writeln!(t, "{name}_latency_us {}", f.latency.get())?;
+            writeln!(t, "{name}_bandwidth_kbs {}", f.bandwidth.get() / 1_000)
+        }
+    }
+}
+
+fn write_streams(t: &mut impl Write, s: &StreamLines) -> fmt::Result {
+    let r = &s.report;
+    writeln!(t, "n_streams {}", s.n_streams.get())?;
+    writeln!(t, "empties {}", r.empties)?;
+    writeln!(t, "late_max_blocks {}", r.late_max_blocks)?;
+    writeln!(t, "blocks {}", r.blocks)?;
+    writeln!(t, "order_errors {}", r.order_errors)?;
+    let streams = &r.check_errors[..usize::from(s.n_streams.get())];
+    writeln!(t, "check_errors {}", streams.iter().sum::<u32>())?;
+    for (k, n) in streams.iter().enumerate() {
+        writeln!(t, "check_errors_{k} {n}")?;
+    }
+    Ok(())
+}
+
+/// Why a `card dma` verb didn't start or report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DmaRefusal {
+    /// A run is going.
+    Busy,
+    /// No `BEDS.CHK`, a bed that isn't a `Plain` source, or fewer beds
+    /// than streams.
+    Beds,
+    /// `report` with nothing run this boot.
+    NoRun,
+    /// A bench build without bank 2: no FLASH for the benches.
+    Absent,
+    Card(CardFail),
+}
+
+/// What a `card dma` answers, at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DmaAnswer {
+    Started(DmaVerb),
+    Stopped,
+    /// Per cent done.
+    Running(u8),
+    Report(DmaReport),
+    Refused(DmaRefusal),
+}
+
+/// The whole answer, its `OK` or `ERR` line included.
+pub fn write_dma_answer(a: &DmaAnswer, t: &mut impl Write) -> fmt::Result {
+    match a {
+        DmaAnswer::Started(v) => writeln!(t, "OK started {v}"),
+        DmaAnswer::Stopped => t.write_str("OK stopped\n"),
+        DmaAnswer::Running(pct) => writeln!(t, "running {pct}\nOK"),
+        DmaAnswer::Report(r) => write_dma(r, t).and_then(|()| t.write_str("OK\n")),
+        DmaAnswer::Refused(DmaRefusal::Busy) => t.write_str("ERR busy\n"),
+        DmaAnswer::Refused(DmaRefusal::Beds) => t.write_str("ERR beds\n"),
+        DmaAnswer::Refused(DmaRefusal::NoRun) => t.write_str("ERR card: no dma run\n"),
+        DmaAnswer::Refused(DmaRefusal::Absent) => {
+            t.write_str("ERR card dma is not in this build\n")
+        }
+        DmaAnswer::Refused(DmaRefusal::Card(e)) => writeln!(t, "ERR card: {}", e.message()),
+    }
 }

@@ -106,12 +106,15 @@ pub struct CardStats {
     pub stop_errors: AtomicU32,
     /// The longest entry of `DMA2_STR0`, in µs.
     pub irq_us_max: AtomicU32,
+    /// Card faults set: a busy that never drained, a stop never sent.
+    pub faults: AtomicU32,
 }
 
 pub static STATS: CardStats = CardStats {
     aborts: AtomicU32::new(0),
     stop_errors: AtomicU32::new(0),
     irq_us_max: AtomicU32::new(0),
+    faults: AtomicU32::new(0),
 };
 
 /// Wakes the card IRQ.
@@ -405,7 +408,9 @@ impl Held {
                 let (rx, tx) = (&d.st[RX], &d.st[TX]);
                 rx.ndtr.write(|w| w.ndt().bits(n));
                 // SAFETY: `dest` is inside `DMA_BUF` with `n` bytes after it
-                // (`Dest::of`), in D2 SRAM, which DMA2 reaches.
+                // (`Dest::of`), in D2 SRAM, which DMA2 reaches; or, armed by
+                // a bench's `inject te` alone, DTCM, which it can't: a
+                // transfer error that writes nothing (`bench::aim`).
                 rx.m0ar.write(|w| unsafe { w.m0a().bits(dest) });
                 rx.cr.modify(|_, w| w.en().enabled());
                 tx.ndtr.write(|w| w.ndt().bits(n));
@@ -991,8 +996,12 @@ impl IrqState {
         let Some(dest) = Dest::of(&walk, &kind) else {
             return self.finish(h, t0, kind);
         };
+        #[cfg(feature = "bench")]
+        let (dest, fault) = bench::aim(dest);
         match h.fly(dest, &self.line) {
             Ok(bus) => {
+                #[cfg(feature = "bench")]
+                bench::strike(fault, &bus.0);
                 self.job = Job::Read(Transfer {
                     bus,
                     phase: Phase::Read { walk, t0, kind },
@@ -1050,7 +1059,13 @@ impl IrqState {
             Kind::Fill(f) => match f.at.after(&f.piece) {
                 Some(piece) => return self.stop(h, Then::More(Fill { piece, ..f })),
                 None => {
-                    self.deliver(&mut h, f.claim, &f.at);
+                    let filled = self.deliver(&mut h, f.claim, &f.at);
+                    #[cfg(feature = "bench")]
+                    if filled {
+                        bench::filled(self.line.us(DWT::cycle_count().wrapping_sub(t0)));
+                    }
+                    #[cfg(not(feature = "bench"))]
+                    let _ = filled;
                     Done::Filled
                 }
             },
@@ -1061,12 +1076,13 @@ impl IrqState {
     }
 
     /// The chunk de-framed into its slot (bench builds check it against
-    /// its bed's table, and publish it either way), the guard, then Ready.
-    fn deliver(&mut self, h: &mut Held, claim: Claim, at: &ChunkRead<'_>) {
+    /// its bed's table, and publish it either way), the guard, then Ready:
+    /// true if it went Ready.
+    fn deliver(&mut self, h: &mut Held, claim: Claim, at: &ChunkRead<'_>) -> bool {
         let Some(out) = self.side.fill_buf(&claim) else {
             // Stale: the audio cancelled it, and the fill lands nowhere.
             let _ = self.side.fill_done(claim);
-            return;
+            return false;
         };
         let len = usize::try_from(at.packed().get()).unwrap_or(usize::MAX);
         let framed = h
@@ -1083,10 +1099,11 @@ impl IrqState {
             });
         if let Some(Ok(_)) = framed {
             self.side.write_guard(&claim);
-            let _ = self.side.fill_done(claim);
+            self.side.fill_done(claim)
         } else {
             // A record's tag or length is wrong: a read error.
             self.side.requeue(claim);
+            false
         }
     }
 
@@ -1167,6 +1184,7 @@ impl IrqState {
     fn fault(&mut self, mut h: Held, then: Then) {
         h.end(&self.line);
         BUS.set_fault(CardFault::Read);
+        STATS.faults.fetch_add(1, Ordering::Relaxed);
         give(h, &self.line);
         match then {
             Then::Next { done, .. } => match done {
@@ -1246,7 +1264,9 @@ fn settle(owed: Owed) {
 #[cfg(feature = "bench")]
 use bench::MAIL;
 #[cfg(feature = "bench")]
-pub use bench::{BenchPort, ReadFail, beds, bench_port, fill_beds};
+pub use bench::{
+    BenchPort, FILL_RING, ReadFail, beds, bench_port, fill_beds, fill_time, fills, inject,
+};
 
 /// The console's timed reads (I6): the thread posts one and polls for its
 /// answer; the IRQ runs it as a job of its own. The thread never takes the
@@ -1255,7 +1275,7 @@ pub use bench::{BenchPort, ReadFail, beds, bench_port, fill_beds};
 mod bench {
     use core::mem::MaybeUninit;
     use core::ptr::{addr_of, addr_of_mut};
-    use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering, fence};
 
     use chimera_core::stream::bench::{BENCH, Bed, BenchBeds};
     use chimera_core::stream::layout::ChunkIdx;
@@ -1265,9 +1285,84 @@ mod bench {
     use chimera_hal::store::StoreError;
     use chimera_hal::units::{BlockCount, Lba, Micros, Millis};
 
-    use super::{BUS, CARD_ADDR, pend, unstick};
+    use chimera_core::console::Inject;
+
+    use super::{BUS, CARD_ADDR, Dest, Held, pend, unstick};
     use crate::controls::now_ms;
     use crate::sd::SD_IDLE_MS;
+
+    /// Fills that went Ready since boot: also the next index into `FILL_US`.
+    static FILLS: AtomicU32 = AtomicU32::new(0);
+    /// The fill ring's length: the UI drains it every pass, far more often.
+    pub const FILL_RING: u32 = 64;
+    /// Each fill's µs, from its last piece's CMD18 to its Ready.
+    static FILL_US: [AtomicU32; FILL_RING as usize] =
+        [const { AtomicU32::new(0) }; FILL_RING as usize];
+
+    /// The IRQ's, the one writer: a fill went Ready in `us`.
+    pub(super) fn filled(us: Micros) {
+        let i = FILLS.load(Ordering::Relaxed);
+        FILL_US[(i % FILL_RING) as usize].store(us.get(), Ordering::Relaxed);
+        FILLS.store(i.wrapping_add(1), Ordering::Release);
+    }
+
+    /// Fills since boot.
+    pub fn fills() -> u32 {
+        FILLS.load(Ordering::Acquire)
+    }
+
+    /// Fill `i`'s time; `None` before it lands, or once the IRQ may be
+    /// writing its slot again (checked after the read).
+    pub fn fill_time(i: u32) -> Option<Micros> {
+        let us = FILL_US[(i % FILL_RING) as usize].load(Ordering::Relaxed);
+        // As a seqlock's reader: the slot is read before the count is.
+        fence(Ordering::Acquire);
+        (1..FILL_RING)
+            .contains(&FILLS.load(Ordering::Relaxed).wrapping_sub(i))
+            .then_some(Micros::new(us))
+    }
+
+    /// The fault armed for the next read burst: 0 none, else `Inject`'s.
+    static ARMED: AtomicU8 = AtomicU8::new(0);
+    const KINDS: [Inject; 3] = [Inject::Abort, Inject::Te, Inject::Modf];
+    /// DTCM's base: DMA2 has no path to it, so a burst aimed there is a
+    /// transfer error that writes nothing (RM0433 § 2.1).
+    const DTCM: u32 = 0x2000_0000;
+    /// CR1 with SPE and without SSI: MODF, as SSM = 1 (I3's bench breach).
+    const SPE_ONLY: u32 = 1;
+
+    /// B9's: the next read burst gets `i`.
+    pub fn inject(i: Inject) {
+        let code = KINDS
+            .iter()
+            .position(|&k| k == i)
+            .map_or(0, |p| p as u8 + 1);
+        ARMED.store(code, Ordering::Release);
+    }
+
+    /// The armed fault, taken by this burst; a TE's burst aims at DTCM.
+    pub(super) fn aim(dest: Dest) -> (Dest, Option<Inject>) {
+        let fault = match ARMED.swap(0, Ordering::AcqRel) {
+            0 => None,
+            c => KINDS.get(usize::from(c) - 1).copied(),
+        };
+        match fault {
+            Some(Inject::Te) => (Dest { at: DTCM, ..dest }, fault),
+            _ => (dest, fault),
+        }
+    }
+
+    /// The burst just started: an abort asked, or CR1 without SSI.
+    pub(super) fn strike(fault: Option<Inject>, h: &Held) {
+        match fault {
+            Some(Inject::Abort) => BUS.ask_abort(),
+            // SAFETY: CR1's bits as RM0433 lays them; the one write that
+            // drops SSI, made only here, armed only by `card dma inject
+            // modf`. The bus is this handler's (`Held`).
+            Some(Inject::Modf) => h.spi().cr1.write(|w| unsafe { w.bits(SPE_ONLY) }),
+            Some(Inject::Te) | None => {}
+        }
+    }
 
     /// The beds' cell, written once a boot: Empty → Writing (the UI, by
     /// CAS) → Ready, after which nothing writes it, so the IRQ and the
