@@ -53,6 +53,21 @@ fn stream_stuck_after_watchdog() {
 }
 
 #[test]
+fn a_take_stamped_after_the_clock_read_is_not_stuck() {
+    let b = CardBus::new();
+    assert!(b.try_take(Taker::Stream, Ms(1_002)));
+    assert!(!b.stuck(Ms(1_000)));
+    b.give();
+    assert!(b.try_take(Taker::Stream, Ms(1)));
+    assert!(!b.stuck(Ms(u32::MAX - 1)));
+    b.give();
+    assert!(b.try_take(Taker::Stream, Ms(u32::MAX - 1)));
+    assert!(!b.stuck(Ms(u32::MAX - 3)));
+    assert!(b.stuck(Ms(200)));
+    assert!(!b.stuck(Ms(198)));
+}
+
+#[test]
 fn abort_asked_is_taken_once() {
     let b = CardBus::new();
     assert!(!b.take_abort());

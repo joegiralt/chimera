@@ -209,10 +209,12 @@ impl CardBus {
         Owner::from_bits(self.owner.load(Ordering::Acquire))
     }
 
-    /// The bus is `Stream`'s and has been for over `WATCHDOG_MS`.
+    /// The bus is `Stream`'s and has been for over `WATCHDOG_MS`. A take
+    /// stamped after `now` was read (the IRQ preempted the caller) is not.
     pub fn stuck(&self, now: Ms) -> bool {
         self.owner() == Owner::Stream
-            && now.elapsed_since(Ms(self.since.load(Ordering::Relaxed))) > WATCHDOG_MS
+            && now.signed_since(Ms(self.since.load(Ordering::Relaxed)))
+                > WATCHDOG_MS.get().cast_signed()
     }
 
     pub fn ask_abort(&self) {

@@ -195,6 +195,12 @@ impl Ms {
         self.0.wrapping_sub(earlier.0)
     }
 
+    /// `since`, signed: negative when `earlier` is later (a stamp taken
+    /// after this clock read).
+    pub fn signed_since(self, earlier: Ms) -> i32 {
+        i32::from_ne_bytes(self.since(earlier).to_ne_bytes())
+    }
+
     /// `since`, as a duration.
     pub fn elapsed_since(self, earlier: Ms) -> units::Millis {
         units::Millis::new(self.since(earlier))
