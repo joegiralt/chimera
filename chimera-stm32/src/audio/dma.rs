@@ -7,11 +7,13 @@ use chimera_engine::audio_out::{
 };
 use chimera_engine::hw::{BLOCK_SIZE, DAC_PAIRS};
 use chimera_engine::part::DacPair;
-use cortex_m::peripheral::NVIC;
+use cortex_m::peripheral::{DWT, NVIC};
 use stm32h7xx_hal::pac::{self, interrupt};
 
 use chimera_board::priority::{self, Priority};
-use chimera_board::shared::{BLOCKS, DESYNCS, DMA_ERRORS, FIFO_ERRORS, OVERRUNS, bump};
+use chimera_board::shared::{
+    AUDIO_CYCLES, BLOCKS, DESYNCS, DMA_ERRORS, FIFO_ERRORS, OVERRUNS, bump,
+};
 
 pub const RING_WORDS: usize = 2 * BLOCK_SIZE * 2;
 // DMAMUX1 requests for SAI1_A, SAI1_B, SAI2_A (RM0433; stock PreenFM3 uses the same).
@@ -191,6 +193,7 @@ fn rearm(dma1: &pac::dma1::RegisterBlock, pair: DacPair) {
 
 #[interrupt]
 fn DMA1_STR0() {
+    let t0 = DWT::cycle_count();
     // SAFETY: once `init` has run, this handler is the only user of DMA1's
     // LISR and LIFCR (it clears stream 0's HT/TC and streams 1–2's error flags), reads
     // their NDTR and re-arms a halted stream 1 or 2.
@@ -256,4 +259,5 @@ fn DMA1_STR0() {
     if overruns > 0 {
         bump(&OVERRUNS, overruns);
     }
+    AUDIO_CYCLES.fetch_add(DWT::cycle_count().wrapping_sub(t0), Ordering::Relaxed);
 }

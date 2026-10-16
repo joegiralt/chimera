@@ -281,6 +281,9 @@ pub static DMA_ERRORS: AtomicU32 = AtomicU32::new(0);
 pub static FIFO_ERRORS: AtomicU32 = AtomicU32::new(0);
 /// Halves rendered, wrapping: the watchdog's audio heartbeat.
 pub static BLOCKS: AtomicU32 = AtomicU32::new(0);
+/// Cycles spent in the audio interrupt, wrapping: what the card IRQ takes
+/// off its own entries' time.
+pub static AUDIO_CYCLES: AtomicU32 = AtomicU32::new(0);
 /// MIDI DIN's line errors: overrun, framing, noise.
 pub static MIDI_ERRORS: AtomicU32 = AtomicU32::new(0);
 

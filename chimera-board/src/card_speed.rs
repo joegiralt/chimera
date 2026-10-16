@@ -1248,6 +1248,7 @@ impl CardBench {
             aborts: c.aborts,
             stop_errors: c.stop_errors,
             card_irq_us_max: Micros::new(STATS.irq_us_max.load(Ordering::Relaxed)),
+            card_irq_own_us_max: Micros::new(STATS.irq_own_us_max.load(Ordering::Relaxed)),
             irq: IrqCounts {
                 entries: c.entries,
                 reads: c.reads,

@@ -43,7 +43,7 @@ use stm32h7xx_hal::pac::{self, interrupt};
 use crate::controls::now_ms;
 use crate::priority::{self, Priority};
 use crate::sd::{BUS, CARD_ADDR, SD_FAST_HZ};
-use crate::shared::{BLOCKS, rings};
+use crate::shared::{AUDIO_CYCLES, BLOCKS, rings};
 
 /// The bound on any register poll.
 pub const REG_WAIT_US: Micros = Micros::new(50);
@@ -99,8 +99,10 @@ fn staged(at: usize) -> *mut u8 {
 pub struct CardStats {
     pub aborts: AtomicU32,
     pub stop_errors: AtomicU32,
-    /// The longest entry of `DMA2_STR0`, in µs.
+    /// The longest entry of `DMA2_STR0`, in µs, audio preemption and all.
     pub irq_us_max: AtomicU32,
+    /// The longest entry less the audio interrupt's cycles inside it.
+    pub irq_own_us_max: AtomicU32,
     /// Card faults set: a busy that never drained, a stop never sent.
     pub faults: AtomicU32,
     /// Entries of `DMA2_STR0`, pends too.
@@ -116,6 +118,7 @@ pub static STATS: CardStats = CardStats {
     aborts: AtomicU32::new(0),
     stop_errors: AtomicU32::new(0),
     irq_us_max: AtomicU32::new(0),
+    irq_own_us_max: AtomicU32::new(0),
     faults: AtomicU32::new(0),
     entries: AtomicU32::new(0),
     reads: AtomicU32::new(0),
@@ -845,14 +848,20 @@ pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker_hz: u32, cpu_hz: u
 /// one step of the job. A pend mid-transfer is ignored (I6).
 #[interrupt]
 fn DMA2_STR0() {
-    let t = DWT::cycle_count();
+    let (t, audio) = (DWT::cycle_count(), AUDIO_CYCLES.load(Ordering::Relaxed));
     STATS.entries.fetch_add(1, Ordering::Relaxed);
     // SAFETY: `IRQ`'s one `get`: `init` set it before unmasking this
     // handler, which doesn't nest with itself.
     let st = unsafe { IRQ.get() };
     st.step(events(), BUS.take_abort());
-    let us = st.line.us(DWT::cycle_count().wrapping_sub(t));
-    STATS.irq_us_max.fetch_max(us.get(), Ordering::Relaxed);
+    let wall = DWT::cycle_count().wrapping_sub(t);
+    let own = wall.saturating_sub(AUDIO_CYCLES.load(Ordering::Relaxed).wrapping_sub(audio));
+    STATS
+        .irq_us_max
+        .fetch_max(st.line.us(wall).get(), Ordering::Relaxed);
+    STATS
+        .irq_own_us_max
+        .fetch_max(st.line.us(own).get(), Ordering::Relaxed);
 }
 
 /// The work `pick` chose.
