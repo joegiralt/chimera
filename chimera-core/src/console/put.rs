@@ -13,6 +13,9 @@
 //! 256 KiB chunks, each checked and under its own deadline, written once,
 //! read back and sealed. A file already sealed answers `OK PRESENT`.
 //!
+//! The bench's check table goes to `/CHIMERA/BENCH/BEDS.CHK`, a whole file
+//! of at most 9 KiB, the old one replaced.
+//!
 //! Bank 2's image goes to `/CHIMERA/SYSTEM/BANK2.BK2`, the old one deleted
 //! first, then read back and judged against this build's seal (ADR 0137):
 //! one sealed for another build stays (`OK staged: needs firmware <v>`),
@@ -33,6 +36,8 @@ use crate::storage::{
 };
 #[cfg(feature = "source-writer")]
 use crate::storage::{PutRefusal, SourceCheck, Wrote, source_name, source_target, verify_and_seal};
+use crate::stream::bench::MAX_BED_CHUNKS;
+use crate::stream::layout::FRAMED_CHUNK_BYTES;
 
 /// The largest file `put` takes: a project is about 130 KB.
 pub const PUT_MAX_BYTES: u32 = 1 << 20;
@@ -72,6 +77,16 @@ pub(super) const SOUNDS: &[u8] = b"/CHIMERA/SOUNDS/";
 #[cfg(feature = "source-writer")]
 const TAPES: &[u8] = b"/CHIMERA/TAPES/";
 const BANK2: &[u8] = b"/CHIMERA/SYSTEM/BANK2.BK2";
+const BEDS: &[u8] = b"/CHIMERA/BENCH/BEDS.CHK";
+/// The bench's check table: 8 beds of `MAX_BED_CHUNKS` CRCs fit.
+pub const BEDS_MAX_BYTES: u32 = 9 * 1024;
+const BEDS_FILE: FileName = match FileName::new(Dir::Bench, b"BEDS", b"CHK") {
+    Some(f) => f,
+    None => panic!("an 8.3 name"),
+};
+// A bed `put` takes is a source under `PUT_MAX_BYTES`: its table has room.
+const _: () = assert!(PUT_MAX_BYTES / FRAMED_CHUNK_BYTES.get() < MAX_BED_CHUNKS as u32);
+const _: () = assert!(5 + 8 * (6 + 4 * MAX_BED_CHUNKS) <= BEDS_MAX_BYTES as usize);
 #[cfg(feature = "source-writer")]
 const _: () = assert!(PUT_CHUNK_BYTES.is_multiple_of(CHUNK as u32));
 // The sweep's cap counts on it (ADR 0094).
@@ -147,11 +162,16 @@ pub enum PutTo {
     Source(u32),
     /// Bank 2's image, staged for `bank2 install` and the boot.
     Bank2,
+    /// The bench's check table, replaced whole.
+    Beds,
 }
 
 fn put_to(p: &[u8]) -> Option<PutTo> {
     if p.eq_ignore_ascii_case(BANK2) {
         return Some(PutTo::Bank2);
+    }
+    if p.eq_ignore_ascii_case(BEDS) {
+        return Some(PutTo::Beds);
     }
     let to = project(p)
         .map(PutTo::Project)
@@ -174,15 +194,18 @@ pub struct PutArg {
 impl Arg for PutArg {
     #[cfg(not(feature = "source-writer"))]
     const USAGE: &'static str = "/CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A \
-        [--over] or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 in hex";
+        [--over], /CHIMERA/BENCH/BEDS.CHK or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 \
+        in hex";
     #[cfg(feature = "source-writer")]
     const USAGE: &'static str = "/CHIMERA/PROJECTS/P#######.A, /CHIMERA/SOUNDS/S#######.A \
-        [--over], /CHIMERA/TAPES/<CRC>.SRC or /CHIMERA/SYSTEM/BANK2.BK2, its size and CRC-32 \
-        in hex";
+        [--over], /CHIMERA/TAPES/<CRC>.SRC, /CHIMERA/BENCH/BEDS.CHK or /CHIMERA/SYSTEM/BANK2.BK2, \
+        its size and CRC-32 in hex";
     fn parse(mut words: Words<'_>) -> Option<Self> {
         let mut to = put_to(words.next()?)?;
         let size = number(words.next()?, 10, 10)?;
-        if to == PutTo::Bank2 && size > chimera_image::BANK2_LEN {
+        if (to == PutTo::Bank2 && size > chimera_image::BANK2_LEN)
+            || (to == PutTo::Beds && size > BEDS_MAX_BYTES)
+        {
             return None;
         }
         let crc = number(words.next()?, 16, 8)?;
@@ -445,27 +468,49 @@ fn transfer<F: Files, P: Out>(
             let seal = seal.ok_or(PutFail::Unsealed)?;
             due.arm(files, port, 0)?;
             Card::new()
-                .run(files, |s, r| bank2_session(s, r, &seal, arg, port, due))
+                .run(files, |s, r| {
+                    whole_session(s, r, Dir::System, STAGED, arg, port, due, |s, r, port| {
+                        // The read back: a deadline of its own, as a source's.
+                        Due(port.now()).arm(s, port, 0)?;
+                        match chimera_image::judge(&mut CardImage::new(s, r.volume()), &seal) {
+                            chimera_image::Verdict::Good(_) => Ok(Done::Saved),
+                            chimera_image::Verdict::Stale { have } => Ok(Done::Stale(have)),
+                            _ => Err(PutFail::NotBank2),
+                        }
+                    })
+                })
+                .and_then(|o| o.result)
+        }
+        PutTo::Beds => {
+            due.arm(files, port, 0)?;
+            Card::new()
+                .run(files, |s, r| {
+                    whole_session(s, r, Dir::Bench, BEDS_FILE, arg, port, due, |_, _, _| {
+                        Ok(Done::Saved)
+                    })
+                })
                 .and_then(|o| o.result)
         }
     }
 }
 
-/// Bank 2's image on the mounted card: `SYSTEM`, the old file deleted,
-/// `READY`, the data written as it comes, then read back and judged. Any
-/// failure past `READY` leaves no file and drains the host before the
-/// `ERR`.
+/// A whole file on the mounted card (bank 2's image, the bench's table):
+/// `dir`, the old file deleted, `READY`, the data written as it comes, then
+/// `judge`d. Any failure past `READY` leaves no file and drains the host
+/// before the `ERR`.
+#[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn bank2_session<F: Files, P: Out>(
+fn whole_session<F: Files, P: Out>(
     s: &mut F,
     r: &Ready,
-    seal: &Seal,
+    dir: Dir,
+    file: FileName,
     arg: PutArg,
     port: &mut P,
     due: Due,
+    judge: impl FnOnce(&mut F, &Ready, &mut P) -> Result<Done, PutFail>,
 ) -> Result<Done, PutFail> {
-    let file = STAGED;
-    for d in [Dir::Chimera, Dir::System] {
+    for d in [Dir::Chimera, dir] {
         due.arm(s, port, 0)?;
         s.make_dir(r.volume(), d)?;
     }
@@ -492,15 +537,7 @@ fn bank2_session<F: Files, P: Out>(
         .map_err(|e| why.unwrap_or(PutFail::Store(e)))
     });
     let port = src.port;
-    // The read back: a deadline of its own, as a source's.
-    let done = wrote.and_then(|_| {
-        Due(port.now()).arm(s, port, 0)?;
-        match chimera_image::judge(&mut CardImage::new(s, r.volume()), seal) {
-            chimera_image::Verdict::Good(_) => Ok(Done::Saved),
-            chimera_image::Verdict::Stale { have } => Ok(Done::Stale(have)),
-            _ => Err(PutFail::NotBank2),
-        }
-    });
+    let done = wrote.and_then(|_| judge(s, r, port));
     if done.is_err() {
         s.cap(Some(VERIFY_MS));
         let _ = s.delete(r.volume(), file);

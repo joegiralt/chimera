@@ -6,7 +6,9 @@
 #![allow(clippy::disallowed_methods)]
 
 mod bank2;
+mod beds;
 mod devices;
+mod dropouts;
 mod generic;
 mod grain;
 mod metrics;
@@ -52,6 +54,12 @@ usage: chimera-utils [flags] COMMAND …
   model-taps hall FITS [dens=…] [taps=FILE]
                            search HALL's tap fractions, the fits' knobs held
   model-fit VARIANT PROG … fit a `models` sketch (BURST v2) to programs
+  beds write DIR [--n 8] [--secs 25] [--rate 24000]
+                           bed<k>.wav: a linear chirp from 100 x 1.3^k Hz to 4x that
+  beds check OUT.CHK BED.SRC …
+                           the per-chunk CRCs of sealed sources, for `just put-beds`
+  dropouts find REC.WAV --ref BED.WAV [--channel N]
+                           gaps, repeats and skips in a recording of stream 0
   stim DIR                 the listening set as WAVs into DIR:
                            snare bass stab sine_short sine_long texture hats
 flags:
@@ -238,6 +246,13 @@ fn run() -> Result<bool, String> {
             };
             mv::start(&cfg, &types)
         }
+        "beds" if rest.first().is_some_and(|c| c == "write") => {
+            beds::write(&rest[1..]).map(|_| true)
+        }
+        "beds" if rest.first().is_some_and(|c| c == "check") => {
+            beds::check(&rest[1..]).map(|_| true)
+        }
+        "dropouts" if rest.first().is_some_and(|c| c == "find") => dropouts::find(&rest[1..]),
         "stim" if rest.len() == 1 => {
             stim::write_listening(std::path::Path::new(&rest[0])).map(|ps| {
                 ps.iter().for_each(|p| println!("{}", p.display()));

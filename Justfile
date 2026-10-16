@@ -452,6 +452,12 @@ status:
 # About 10 s, up to 45 the first time while it writes two 4 MiB files in
 # /CHIMERA/BENCH; it plays a chord on channel 1. `just card seed=N` repeats
 # a run's random reads; `just card clean` removes /CHIMERA/BENCH.
+# Bench beds: `beds write DIR` (chirp WAVs), `beds check OUT.CHK bed0.SRC …` (the CRC table `put-beds` sends)
+beds *args:
+    {{utils}} beds {{args}}
+# Drop-outs in a MOTU recording of stream 0: `just dropouts find rec.wav --ref bed0.wav [--channel N]`
+dropouts *args:
+    {{utils}} dropouts {{args}}
 # The card's read speed beside audio and the streams it holds (any `just flash-bench <area>` without ORBIT or master-tape first)
 card *args:
     python3 tools/chimera-usb.py card {{args}}
@@ -463,6 +469,9 @@ put local remote:
 # `just put-tape chimera-card/CHIMERA/TAPES/0BADF00D.SRC`. A re-run answers OK PRESENT.
 put-tape file:
     python3 tools/chimera-usb.py put "{{ if file =~ '^/' { file } else { invocation_directory() / file } }}" /CHIMERA/TAPES/
+# The bench's check table onto the card (the product build runs; 9 KiB at most): `just put-beds BEDS.CHK`
+put-beds file:
+    python3 tools/chimera-usb.py put "{{ if file =~ '^/' { file } else { invocation_directory() / file } }}" /CHIMERA/BENCH/BEDS.CHK
 # The project files on the card and their sizes; `just ls tapes`: the sources
 ls *args:
     python3 tools/chimera-usb.py ls {{args}}

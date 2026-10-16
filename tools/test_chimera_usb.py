@@ -644,6 +644,25 @@ class Put(unittest.TestCase):
         self.assertEqual(r.stdout, b"/CHIMERA/TAPES/0BADF00D.SRC 600000\n")
         self.assertIn(b"100% 600000 of 600000 bytes", r.stderr)
 
+    def test_put_beds_path(self):
+        data = bytes((i * 11) % 251 for i in range(5_000))
+        f = self.local("BEDS.CHK", data)
+        with PutUnit() as u:
+            r = run_tool(["put", f, "/CHIMERA/BENCH/"], u.target)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(u.data, data)
+        self.assertEqual(u.requests[0], b"put /CHIMERA/BENCH/BEDS.CHK 5000 %08x" % zlib.crc32(data))
+        self.assertEqual(u.ends, [], "a whole file, not chunks")
+        self.assertEqual(r.stdout, b"/CHIMERA/BENCH/BEDS.CHK 5000\n")
+
+    def test_a_beds_table_over_9_kib_is_refused_before_sending(self):
+        f = self.local("BEDS.CHK", bytes(9 * 1024 + 1))
+        with PutUnit() as u:
+            r = run_tool(["put", f, "/CHIMERA/BENCH/BEDS.CHK"], u.target)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(b"put takes at most 9216", r.stderr)
+        self.assertEqual(u.requests, [])
+
     def test_a_project_never_takes_the_source_protocol(self):
         data = bytes(300_000)
         f = self.local("P.A", data)

@@ -6,7 +6,8 @@
     python3 chimera-usb.py put <local> <remote> [--over]
                                                    a project file onto the card as /CHIMERA/PROJECTS/P#######.A,
                                                    a library Sound as /CHIMERA/SOUNDS/S#######.A (--over replaces one there),
-                                                   or a TAPE source as /CHIMERA/TAPES/<CRC>.SRC, in checked chunks
+                                                   or a TAPE source as /CHIMERA/TAPES/<CRC>.SRC, in checked chunks,
+                                                   or the bench's check table as /CHIMERA/BENCH/BEDS.CHK (9 KiB at most)
                                                    (<remote> ending in / takes the local name; /CHIMERA/SOUNDS/ takes
                                                    `ls sounds`' top user id + 1)
     python3 chimera-usb.py update <file.bin> <file.bk2>
@@ -99,7 +100,9 @@ FLASH_AT = "0x8020000:leave"  # the firmware area, never the bootloader
 PUT_MAX = 1 << 20  # the unit's limit
 PUT_LINE = 48  # bytes a data line carries: 64 base64 characters
 PUT_CHUNK = 256 * 1024  # a TAPE source goes in chunks this big
+PUT_BEDS_MAX = 9 * 1024  # the bench's check table
 TAPES = "/CHIMERA/TAPES/"
+BEDS = "/CHIMERA/BENCH/BEDS.CHK"
 SOUNDS = "/CHIMERA/SOUNDS/"
 USER_MAX = 8_999_999  # highest user Sound id
 BUSY_TRIES = 5
@@ -365,8 +368,9 @@ def put(conn: Conn, data: bytes, remote: str, progress=lambda sent, total: None,
     `end <crc32>` and waited on for its `ACK <bytes so far>`.
     `progress(sent, total)` after each batch of lines. Raises NoAnswer,
     Vanished or PutRefused."""
-    if len(data) > PUT_MAX:
-        raise PutRefused("%d bytes: put takes at most %d" % (len(data), PUT_MAX))
+    cap = PUT_BEDS_MAX if remote.upper() == BEDS else PUT_MAX
+    if len(data) > cap:
+        raise PutRefused("%d bytes: put takes at most %d" % (len(data), cap))
     send(conn, "put %s %d %08x%s" % (remote, len(data), zlib.crc32(data), " --over" if over else ""))
     rd = Reader(conn, PUT_WAIT_S)
     first = rd.line()
