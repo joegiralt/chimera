@@ -28,7 +28,10 @@ fn earliest_deadline_wins() {
 #[test]
 fn ties_go_to_lower_voice() {
     let (lo, hi) = (want(2, NOW.after(9)), want(5, NOW.after(9)));
-    assert_eq!(pick([hi, lo].into_iter(), NOW, UiWait::Idle), Pick::Fill(lo));
+    assert_eq!(
+        pick([hi, lo].into_iter(), NOW, UiWait::Idle),
+        Pick::Fill(lo)
+    );
 }
 
 #[test]
@@ -36,10 +39,19 @@ fn ui_waiting_yields_unless_urgent() {
     let far = want(0, NOW.after(URGENT_BLOCKS + 1));
     let near = want(0, NOW.after(URGENT_BLOCKS));
     assert_eq!(URGENT_BLOCKS, 11);
-    assert_eq!(pick([far].into_iter(), NOW, UiWait::Waiting), Pick::YieldToUi);
-    assert_eq!(pick([near].into_iter(), NOW, UiWait::Waiting), Pick::Fill(near));
+    assert_eq!(
+        pick([far].into_iter(), NOW, UiWait::Waiting),
+        Pick::YieldToUi
+    );
+    assert_eq!(
+        pick([near].into_iter(), NOW, UiWait::Waiting),
+        Pick::Fill(near)
+    );
     assert_eq!(pick([far].into_iter(), NOW, UiWait::Idle), Pick::Fill(far));
-    assert_eq!(pick([near].into_iter(), NOW, UiWait::Idle), Pick::Fill(near));
+    assert_eq!(
+        pick([near].into_iter(), NOW, UiWait::Idle),
+        Pick::Fill(near)
+    );
 }
 
 #[test]
@@ -60,8 +72,14 @@ fn overdue_is_most_urgent() {
     let now = AudioBlocks::new(100);
     let late = want(4, AudioBlocks::new(95));
     let soon = want(0, now.after(3));
-    assert_eq!(pick([soon, late].into_iter(), now, UiWait::Idle), Pick::Fill(late));
-    assert_eq!(pick([soon, late].into_iter(), now, UiWait::Waiting), Pick::Fill(late));
+    assert_eq!(
+        pick([soon, late].into_iter(), now, UiWait::Idle),
+        Pick::Fill(late)
+    );
+    assert_eq!(
+        pick([soon, late].into_iter(), now, UiWait::Waiting),
+        Pick::Fill(late)
+    );
 }
 
 #[test]
