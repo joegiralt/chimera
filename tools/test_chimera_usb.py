@@ -259,6 +259,24 @@ class Tool(unittest.TestCase):
         self.assertIn(b"running 90", r.stderr)
         self.assertEqual(tool.CARD_POLL_S, 10.0)
 
+    def test_card_wait_gives_a_slow_report_the_card_wait(self):
+        replies = {b"card dma ui 8\n": [b"OK started ui 8\n"], b"card dma report\n": [b"n 1\nOK\n"]}
+        asked = []
+
+        class Slow:
+            def __contains__(self, line):
+                return bool(replies.get(line))
+
+            def __getitem__(self, line):
+                if line == b"card dma report\n" and line not in asked:
+                    time.sleep(tool.SILENCE_S + 0.5)  # a B6 save mid-pass
+                asked.append(line)
+                return replies[line][0]
+
+        with FakeUnit(Slow(), on_answer=lambda: replies[asked[-1]].pop(0)) as u:
+            r = run_tool(["card-wait", "ui", "8"], u.target, env={"CHIMERA_POLL_S": "0"})
+        self.assertEqual((r.returncode, r.stdout), (0, b"n 1\n"), r.stderr)
+
     def test_card_wait_stops_at_a_refused_start(self):
         with FakeUnit({b"card dma burst\n": b"ERR beds\n"}) as u:
             r = run_tool(["card-wait", "burst"], u.target, env={"CHIMERA_POLL_S": "0"})

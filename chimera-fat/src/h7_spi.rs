@@ -81,6 +81,9 @@ pub enum Op {
     Start,
     /// CFG2.AFCNTR modify.
     AfcntrOn,
+    /// CFG2.MASTER modify, with SPE off and MODF cleared: a MODF clears it
+    /// with SPE, and a slave never clocks.
+    MasterOn,
     /// CFG1, saved at take and put back at give.
     SaveCfg1,
     SetMbr,
@@ -103,13 +106,14 @@ pub enum RegFault {
     Modf,
 }
 
-pub const TAKE: [Op; 6] = [
+pub const TAKE: [Op; 7] = [
     Op::Suspend,
     Op::ClearFlags,
     Op::Cr1(Cr1::OFF),
     Op::SaveCfg1,
     Op::SetMbr,
     Op::AfcntrOn,
+    Op::MasterOn,
 ];
 
 /// Polled bytes follow (CMD18, CMD12, R1, busy), each bounded.
@@ -144,10 +148,11 @@ pub const BURST_END: [Op; 6] = [
 
 /// Leaves the peripheral as the HAL left it; AFCNTR stays on (harmless to
 /// the HAL, and SCK stays driven).
-pub const GIVE: [Op; 8] = [
+pub const GIVE: [Op; 9] = [
     Op::Suspend,
     Op::ClearFlags,
     Op::Cr1(Cr1::OFF),
+    Op::MasterOn,
     Op::RxDma(false),
     Op::TxDma(false),
     Op::RestoreCfg1,
@@ -157,12 +162,13 @@ pub const GIVE: [Op; 8] = [
 
 /// The shell then runs `POLLED`, CMD12, `stop_response`, the busy wait, CS
 /// high, one 0xFF, then `GIVE`.
-pub const ABORT: [Op; 7] = [
+pub const ABORT: [Op; 8] = [
     Op::StreamsOff,
     Op::Suspend,
     Op::Cr1(Cr1::OFF),
     Op::ClearStreams,
     Op::ClearFlags,
+    Op::MasterOn,
     Op::RxDma(false),
     Op::TxDma(false),
 ];

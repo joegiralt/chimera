@@ -388,6 +388,7 @@ impl Held {
             Op::Cr1(c) => spi.cr1.write(|w| unsafe { w.bits(c.bits()) }),
             Op::Start => spi.cr1.modify(|_, w| w.cstart().started()),
             Op::AfcntrOn => spi.cfg2.modify(|_, w| w.afcntr().controlled()),
+            Op::MasterOn => spi.cfg2.modify(|_, w| w.master().master()),
             Op::SaveCfg1 => self.cfg1 = spi.cfg1.read().bits(),
             Op::SetMbr => spi.cfg1.modify(|_, w| w.mbr().bits(line.mbr.bits())),
             // SAFETY: the value `SaveCfg1` read from this register.
@@ -1265,7 +1266,8 @@ fn settle(owed: Owed) {
 use bench::MAIL;
 #[cfg(feature = "bench")]
 pub use bench::{
-    BenchPort, FILL_RING, ReadFail, beds, bench_port, fill_beds, fill_time, fills, inject,
+    BenchPort, FILL_RING, ReadFail, beds, bench_port, clear_fault, fill_beds, fill_time, fills,
+    inject,
 };
 
 /// The console's timed reads (I6): the thread posts one and polls for its
@@ -1338,6 +1340,11 @@ mod bench {
             .position(|&k| k == i)
             .map_or(0, |p| p as u8 + 1);
         ARMED.store(code, Ordering::Release);
+    }
+
+    /// Any fault still armed, dropped.
+    pub fn clear_fault() {
+        ARMED.store(0, Ordering::Release);
     }
 
     /// The armed fault, taken by this burst; a TE's burst aims at DTCM.

@@ -848,7 +848,8 @@ def card_wait(t: Target, env, verbs) -> int:
         while True:
             time.sleep(poll)
             send(conn, "card dma report")
-            status, body = answer(conn)
+            # A pass may hold the console a while (a B6 save, a B5 write).
+            status, body = answer(conn, CARD_WAIT_S)
             if status is Status.ERR:
                 return fail(body.decode(errors="replace"))
             if not body.startswith(b"running "):

@@ -312,6 +312,8 @@ mod dma {
                 order_errors: 0,
                 check_errors: [0, 2, 0, 0, 0, 0, 0, 9],
             },
+            fills_lost: 4,
+            runs: [1, 3, 1, 1, 1, 1, 1, 1],
         }
     }
 
@@ -319,7 +321,7 @@ mod dma {
     fn dma_report_text() {
         let want = common()
             + "n_streams 2\nempties 0\nlate_max_blocks 3\nblocks 450000\norder_errors 0\n\
-               check_errors 2\ncheck_errors_0 0\ncheck_errors_1 2\n";
+               check_errors 2\ncheck_errors_0 0\ncheck_errors_1 2\nfills_lost 4\nruns_0 1\nruns_1 3\n";
         assert_eq!(text(&report(DmaOwn::Streams(streams()))), want);
 
         let chunk = DmaOwn::Chunk {
@@ -352,7 +354,7 @@ mod dma {
             streams: streams(),
             write_busy_errors: 0,
         };
-        assert!(text(&report(stall)).ends_with("check_errors_1 2\nwrite_busy_errors 0\n"));
+        assert!(text(&report(stall)).ends_with("runs_1 3\nwrite_busy_errors 0\n"));
         let back = DmaOwn::Back {
             back_mean: Micros::new(2_600),
             forward_mean: Micros::new(2_500),

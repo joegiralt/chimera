@@ -26,6 +26,7 @@ use chimera_core::console::{
     apart_per_mille, fit_line, interleaved, random_reads, span_start,
 };
 use chimera_core::dsp::tape_engine::read::Shape;
+use chimera_core::hw::MAX_VOICES;
 use chimera_core::note_queue::{NoteEvent, NoteKind, NoteProducer};
 use chimera_core::perf::load::AudioStats;
 use chimera_core::storage::{
@@ -651,11 +652,13 @@ enum Work {
         sums: [u64; 2],
         rng: u64,
     },
-    /// `seen`: the fills drained into the histogram.
+    /// `seen`: the fills drained into the histogram; `lost`: those the
+    /// ring had moved past.
     Streams {
         n: StreamCount,
         ms: u32,
         seen: u32,
+        lost: u32,
         side: Side,
     },
 }
@@ -677,6 +680,8 @@ struct Dma {
     rate: Option<SourceRate>,
     /// B5's test file's runs.
     stall: Option<Extents>,
+    /// Each bed's runs on the card.
+    runs: [u32; MAX_VOICES],
 }
 
 impl Dma {
@@ -688,6 +693,7 @@ impl Dma {
             bed0: None,
             rate: None,
             stall: None,
+            runs: [0; MAX_VOICES],
         }
     }
 }
@@ -774,6 +780,7 @@ impl CardBench {
             n,
             ms,
             seen: card_dma::fills(),
+            lost: 0,
             side,
         };
         let now = now_ms();
@@ -889,6 +896,7 @@ impl CardBench {
         }
         let table = BedTable::parse(&self.bufs.table[..n]).map_err(|_| DmaRefusal::Beds)?;
         let mut first = None;
+        let mut runs = [0; MAX_VOICES];
         let ok = card_dma::fill_beds(|beds| {
             table.count() > 0
                 && beds
@@ -896,12 +904,16 @@ impl CardBench {
                     .iter_mut()
                     .enumerate()
                     .take(table.count())
-                    .all(|(k, slot)| {
-                        let placed = place(store, vol, &table, k, slot);
+                    .zip(&mut runs)
+                    .all(|((k, slot), runs)| {
+                        let Some((name, rate, n)) = place(store, vol, &table, k, slot) else {
+                            return false;
+                        };
+                        *runs = n;
                         if k == 0 {
-                            first = placed;
+                            first = Some((name, rate));
                         }
-                        placed.is_some()
+                        true
                     })
         });
         if !ok {
@@ -909,6 +921,7 @@ impl CardBench {
         }
         let (bed0, rate) = first.ok_or(DmaRefusal::Beds)?;
         (self.dma.vol, self.dma.bed0, self.dma.rate) = (Some(vol), Some(bed0), Some(rate));
+        self.dma.runs = runs;
         Ok(())
     }
 
@@ -1035,16 +1048,25 @@ impl CardBench {
                 }
                 *done >= 2 * BACK_READS
             }
-            Work::Streams { ms, seen, side, .. } => {
+            Work::Streams {
+                ms,
+                seen,
+                lost,
+                side,
+                ..
+            } => {
                 let head = card_dma::fills();
                 let from = head.saturating_sub(FILL_RING - 1).max(*seen);
                 // B5's histogram is its writes'.
                 let writing = matches!(side, Side::Stall { .. });
+                let mut timed = 0;
                 for us in (from..head).filter_map(card_dma::fill_time) {
+                    timed += 1;
                     if !writing {
                         self.hist.record(us);
                     }
                 }
+                *lost += head.wrapping_sub(*seen) - timed;
                 *seen = head;
                 let due = |done: u32, every: u32| since >= (done + 1).saturating_mul(every);
                 match side {
@@ -1136,11 +1158,16 @@ impl CardBench {
             return;
         };
         BENCH.disarm();
+        // An injection no burst took would hit the next run's first.
+        card_dma::clear_fault();
         self.chord(NoteKind::Off);
         let c = Counts::now().since(run.counts);
-        let lines = |n| StreamLines {
+        let runs = self.dma.runs;
+        let lines = |n, fills_lost| StreamLines {
             n_streams: n,
             report: BENCH.report(),
+            fills_lost,
+            runs,
         };
         let own = match run.work {
             Work::Chunk { points, .. } => {
@@ -1171,10 +1198,10 @@ impl CardBench {
                     forward_mean: mean(sums[1], done.saturating_sub(BACK_READS)),
                 }
             }
-            Work::Streams { n, side, .. } => match side {
-                Side::Plain => DmaOwn::Streams(lines(n)),
+            Work::Streams { n, lost, side, .. } => match side {
+                Side::Plain => DmaOwn::Streams(lines(n, lost)),
                 Side::Stall { errors, .. } => DmaOwn::Stall {
-                    streams: lines(n),
+                    streams: lines(n, lost),
                     write_busy_errors: errors,
                 },
                 Side::Ui {
@@ -1183,13 +1210,14 @@ impl CardBench {
                     save_ok,
                     ..
                 } => DmaOwn::Ui {
-                    streams: lines(n),
-                    ui_fps_min: fps_min,
+                    streams: lines(n, lost),
+                    // No window closed: a run stopped inside its first second.
+                    ui_fps_min: if fps_min == u32::MAX { 0 } else { fps_min },
                     ui_frozen_max: Millis::new(frozen_ms),
                     save_ok,
                 },
                 Side::Reads { reads, ok, .. } => DmaOwn::Reads {
-                    streams: lines(n),
+                    streams: lines(n, lost),
                     ui_reads: reads,
                     ui_reads_ok: ok,
                     faults: c.faults,
@@ -1234,15 +1262,16 @@ fn reads(fault: Option<Inject>) -> Side {
     }
 }
 
-/// Bed `k` of `table`, from its source's runs and head: its name and
-/// rate, or `None` if it is missing, fragmented or not a `Plain` source.
+/// Bed `k` of `table`, from its source's runs and head: its name, rate
+/// and run count, or `None` if it is missing, fragmented or not a `Plain`
+/// source.
 fn place(
     store: &mut SdStore,
     vol: VolumeId,
     table: &BedTable<'_>,
     k: usize,
     slot: &mut Option<Bed>,
-) -> Option<(FileName, SourceRate)> {
+) -> Option<(FileName, SourceRate, u32)> {
     let name = source_name(table.stem(k)?);
     let runs = Store::runs(store, vol, name).ok()?;
     let mut head = Head {
@@ -1262,7 +1291,8 @@ fn place(
     }
     let rate = SourceRate::new(sh.sref.rate)?;
     let file = StreamFile::from_layout(&SourceLayout::whole(sh)?, runs)?;
-    table.place(k, file, slot).then_some((name, rate))
+    let n = runs.ext.runs();
+    table.place(k, file, slot).then_some((name, rate, n))
 }
 
 /// A whole small file into `buf`; `over` if it doesn't fit.

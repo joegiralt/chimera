@@ -642,6 +642,10 @@ pub fn fit_line(points: &[(Bytes, Micros)]) -> Option<LinkFit> {
 pub struct StreamLines {
     pub n_streams: StreamCount,
     pub report: BenchReport,
+    /// Fills the UI saw too late to time: the ring had moved past them.
+    pub fills_lost: u32,
+    /// Each bed's runs on the card: over 1, its chunks can straddle one.
+    pub runs: [u32; crate::hw::MAX_VOICES],
 }
 
 /// Each verb's own lines.
@@ -790,6 +794,10 @@ fn write_streams(t: &mut impl Write, s: &StreamLines) -> fmt::Result {
     writeln!(t, "check_errors {}", streams.iter().sum::<u32>())?;
     for (k, n) in streams.iter().enumerate() {
         writeln!(t, "check_errors_{k} {n}")?;
+    }
+    writeln!(t, "fills_lost {}", s.fills_lost)?;
+    for (k, n) in s.runs.iter().take(streams.len()).enumerate() {
+        writeln!(t, "runs_{k} {n}")?;
     }
     Ok(())
 }

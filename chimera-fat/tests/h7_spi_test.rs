@@ -60,8 +60,30 @@ fn burst_end_checks_errors_and_clears_eot() {
 #[test]
 fn abort_stops_dma_before_spi() {
     assert_eq!(ABORT[0], Op::StreamsOff);
-    assert_eq!(ABORT[5], Op::RxDma(false));
-    assert_eq!(ABORT[6], Op::TxDma(false));
+    assert_eq!(
+        ABORT[ABORT.len() - 2..],
+        [Op::RxDma(false), Op::TxDma(false)]
+    );
+}
+
+/// A MODF clears CFG2.MASTER with SPE: every enable that can follow one
+/// (the take's polled bytes, the abort's CMD12, the HAL's after a give)
+/// comes after `MasterOn`, which comes with SPE off and MODF cleared.
+#[test]
+fn master_mode_comes_back_before_every_enable() {
+    let with_polled = |seq: &[Op]| [seq, &POLLED[..]].concat();
+    for seq in [with_polled(&TAKE), with_polled(&ABORT), GIVE.to_vec()] {
+        let master = seq.iter().position(|&o| o == Op::MasterOn);
+        let master = master.unwrap_or_else(|| panic!("no MasterOn: {seq:?}"));
+        let first_on = seq.iter().position(|&o| o == Op::Cr1(Cr1::ON)).unwrap();
+        assert!(master < first_on, "{seq:?}");
+        let before = &seq[..master];
+        let off = before.iter().rposition(|&o| o == Op::Cr1(Cr1::OFF));
+        let cleared = before.iter().rposition(|&o| o == Op::ClearFlags);
+        assert!(off.is_some() && cleared.is_some(), "{seq:?}");
+    }
+    assert_eq!(&ABORT[4..6], &[Op::ClearFlags, Op::MasterOn]);
+    assert_eq!(TAKE[TAKE.len() - 1], Op::MasterOn);
 }
 
 #[test]
