@@ -61,7 +61,7 @@ pub const DTCM: usize = 128 * 1024; // tables, audio stack
 /// rings (3 SAI × 2 halves × 64 frames × 2 ch × 4 B = 3 KB,
 /// `chimera-stm32/src/audio/dma.rs`), MIDI buffers and the card's staging.
 pub const D2_DMA_RESERVE: usize = 16 * 1024;
-/// D3 SRAM4 at 0x3800_0000: the stream rings.
+/// D3 SRAM4 at 0x3800_0000: the stream rings, but for their third slots.
 pub const SRAM4: usize = 64 * 1024;
 /// The UI's knob publisher, kept in D2 beside the voices on the board, not
 /// in AXI, which the bench builds hold within 8 KiB of full (ADR 0115).
@@ -70,9 +70,12 @@ pub const D2_KNOBS: usize = core::mem::size_of::<crate::dsp::knobs::KnobPublishe
 /// the knobs, for the same reason.
 pub const D2_FORMANT: usize =
     core::mem::size_of::<crate::triple::TripleBuffer<crate::dsp::algo::engine::FormantViews>>();
+/// The stream rings' third slots, which SRAM4 has no room for: in D2.
+pub const D2_THIRD_SLOTS: usize = core::mem::size_of::<crate::stream::ring::ThirdSlots>();
 /// `[Voice; MAX_VOICES]` lives in D2 beside the DMA buffers, the knob
-/// publisher and the formant views.
-pub const VOICE_RAM_BUDGET: usize = D2_SRAM - D2_DMA_RESERVE - D2_KNOBS - D2_FORMANT;
+/// publisher, the formant views and the third slots.
+pub const VOICE_RAM_BUDGET: usize =
+    D2_SRAM - D2_DMA_RESERVE - D2_KNOBS - D2_FORMANT - D2_THIRD_SLOTS;
 /// A `Voice` less its `EngineSlot`: the chain, modulators and bookkeeping
 /// (ADR 0051, 2,048 B; ADR 0101 raises it to 2,112 for the 2040's state;
 /// 2,176 for the formant operators' 13 glided settings in `AlgoLive`, which

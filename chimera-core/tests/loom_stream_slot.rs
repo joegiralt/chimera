@@ -14,16 +14,15 @@ use loom::sync::Arc;
 use loom::thread;
 
 use chimera_engine::stream::layout::ChunkIdx;
-use chimera_engine::stream::ring::{AudioTurn, Rings};
+use chimera_engine::stream::ring::{AudioTurn, Rings, ThirdSlots};
 use chimera_engine::stream::units::{AudioBlocks, Generation, SlotIdx};
 use chimera_engine::voice_alloc::VoiceIdx;
 
 const V: VoiceIdx = VoiceIdx::ALL[0];
-const S: SlotIdx = SlotIdx::A;
 
-/// If the slot is Ready under `g`, its bytes must be `chunk`'s.
-fn read(turn: &AudioTurn, g: Generation, chunk: u32, shadow: &UnsafeCell<u32>) {
-    if let Some(r) = turn.ready(V, S, g) {
+/// If slot `s` is Ready under `g`, its bytes must be `chunk`'s.
+fn read(turn: &AudioTurn, s: SlotIdx, g: Generation, chunk: u32, shadow: &UnsafeCell<u32>) {
+    if let Some(r) = turn.ready(V, s, g) {
         assert_eq!(r.chunk().get(), chunk, "Ready under another chunk");
         // SAFETY: loom's cell, read through its checker.
         let filled = shadow.with(|p| unsafe { *p });
@@ -31,18 +30,33 @@ fn read(turn: &AudioTurn, g: Generation, chunk: u32, shadow: &UnsafeCell<u32>) {
     }
 }
 
+/// Slot A's bytes lie in `Rings`, slot C's in `ThirdSlots`.
 #[test]
 fn a_cancelled_fill_never_reads_as_the_new_one() {
-    loom::model(|| {
+    model(SlotIdx::A);
+}
+
+#[test]
+fn a_cancelled_third_slot_fill_never_reads_as_the_new_one() {
+    model(SlotIdx::C);
+}
+
+fn model(s: SlotIdx) {
+    loom::model(move || {
         // `Rings::new` builds its 64 KB on the stack: more than a loom
         // thread's default.
-        let r: &'static Rings = thread::Builder::new()
+        let (r, third): (&'static Rings, &'static ThirdSlots) = thread::Builder::new()
             .stack_size(1 << 20)
-            .spawn(|| &*Box::leak(Box::new(Rings::new())))
+            .spawn(|| {
+                (
+                    &*Box::leak(Box::new(Rings::new())),
+                    &*Box::leak(Box::new(ThirdSlots::new())),
+                )
+            })
             .unwrap()
             .join()
             .unwrap();
-        let (mut audio, mut card) = r.sides().unwrap();
+        let (mut audio, mut card) = r.sides(third).unwrap();
         let shadow = Arc::new(UnsafeCell::new(0u32));
         let at = AudioBlocks::new(0);
 
@@ -50,7 +64,7 @@ fn a_cancelled_fill_never_reads_as_the_new_one() {
             let shadow = shadow.clone();
             thread::spawn(move || {
                 for _ in 0..2 {
-                    let Some(c) = card.claim(V, S) else {
+                    let Some(c) = card.claim(V, s) else {
                         thread::yield_now();
                         continue;
                     };
@@ -65,15 +79,15 @@ fn a_cancelled_fill_never_reads_as_the_new_one() {
         };
 
         let mut turn = audio.turn();
-        let g1 = turn.want(V, S, ChunkIdx::new(1).unwrap(), at).unwrap();
-        read(&turn, g1, 1, &shadow);
-        turn.cancel(V, S);
-        let g2 = turn.want(V, S, ChunkIdx::new(2).unwrap(), at).unwrap();
+        let g1 = turn.want(V, s, ChunkIdx::new(1).unwrap(), at).unwrap();
+        read(&turn, s, g1, 1, &shadow);
+        turn.cancel(V, s);
+        let g2 = turn.want(V, s, ChunkIdx::new(2).unwrap(), at).unwrap();
         assert_ne!(g1, g2);
         thread::yield_now();
-        read(&turn, g2, 2, &shadow);
+        read(&turn, s, g2, 2, &shadow);
         assert!(
-            turn.ready(V, S, g1).is_none(),
+            turn.ready(V, s, g1).is_none(),
             "a cancelled generation never reads"
         );
         drop(turn);

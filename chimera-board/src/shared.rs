@@ -20,7 +20,7 @@ use chimera_core::preset::Performance;
 use chimera_core::project::arena::{ARENA_BYTES, ArenaWriter};
 use chimera_core::scope::{ScopeFrame, scope_buffer};
 use chimera_core::source_table::SOURCE_TABLE;
-use chimera_core::stream::ring::Rings;
+use chimera_core::stream::ring::{AudioSide, CardSide, Rings, ThirdSlots};
 use chimera_core::triple::{Reader, TripleBuffer, Writer};
 use chimera_core::ui::UiState;
 
@@ -40,6 +40,11 @@ pub fn take_scope() -> Option<(Writer<ScopeFrame>, Reader<ScopeFrame>)> {
 // before `cache::sram4_self_test`, then `zero_rings` builds them in place.
 #[unsafe(link_section = ".sram4")]
 static mut RINGS: MaybeUninit<Rings> = MaybeUninit::uninit();
+// Their third slots, which SRAM4 can't hold: 32 KB of D2 beside the UI,
+// NOLOAD, built in place by `zero_rings` too. Cacheable, as the rings:
+// only the CPU touches either.
+#[unsafe(link_section = ".ram_d2")]
+static mut THIRD: MaybeUninit<ThirdSlots> = MaybeUninit::uninit();
 static RINGS_TAKEN: AtomicBool = AtomicBool::new(false);
 static RINGS_ZEROED: AtomicBool = AtomicBool::new(false);
 
@@ -61,10 +66,13 @@ pub fn zero_rings() {
     if RINGS_TAKEN.swap(true, Ordering::AcqRel) {
         return;
     }
-    // SAFETY: the flag lets one caller past, before `rings` hands out any
-    // reference (it waits for `RINGS_ZEROED`); all-zero bytes are a valid
-    // `Rings` (ring.rs).
-    unsafe { addr_of_mut!(RINGS).write_bytes(0, 1) };
+    // SAFETY: the flag lets one caller past, before `rings` or `sides`
+    // hands out any reference (they wait for `RINGS_ZEROED`); all-zero
+    // bytes are a valid `Rings` and `ThirdSlots` (ring.rs).
+    unsafe {
+        addr_of_mut!(RINGS).write_bytes(0, 1);
+        addr_of_mut!(THIRD).write_bytes(0, 1);
+    }
     RINGS_ZEROED.store(true, Ordering::Release);
 }
 
@@ -75,6 +83,16 @@ pub fn rings() -> Option<&'static Rings> {
     RINGS_ZEROED
         .load(Ordering::Acquire)
         .then(|| unsafe { (*addr_of!(RINGS)).assume_init_ref() })
+}
+
+/// The rings' audio and card sides, once.
+pub fn ring_sides() -> Option<(AudioSide<'static>, CardSide<'static>)> {
+    // SAFETY: as `rings`: zeroed before the flag's `Release`, then touched
+    // only through `ThirdSlots`' own flag and the sides.
+    let third = RINGS_ZEROED
+        .load(Ordering::Acquire)
+        .then(|| unsafe { (*addr_of!(THIRD)).assume_init_ref() })?;
+    rings()?.sides(third)
 }
 
 // The wave tables' zero-wait working copy, at the top of DTCM (dtcm.x).

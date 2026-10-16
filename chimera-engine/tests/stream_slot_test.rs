@@ -1,6 +1,6 @@
 use chimera_engine::storage::twelve::pack12;
 use chimera_engine::stream::layout::{CHUNK_BYTES, CHUNK_FRAMES, ChunkIdx};
-use chimera_engine::stream::ring::{AudioTurn, CardSide, Guard, Rings};
+use chimera_engine::stream::ring::{AudioTurn, CardSide, Guard, Rings, ThirdSlots};
 use chimera_engine::stream::slot::SlotState;
 use chimera_engine::stream::units::{AudioBlocks, Generation, SlotIdx};
 use chimera_engine::voice_alloc::VoiceIdx;
@@ -8,14 +8,34 @@ use chimera_engine::voice_alloc::VoiceIdx;
 const V: VoiceIdx = VoiceIdx::ALL[3];
 const A: SlotIdx = SlotIdx::A;
 const B: SlotIdx = SlotIdx::B;
+const C: SlotIdx = SlotIdx::C;
 const D: AudioBlocks = AudioBlocks::new(40);
 
 fn ix(n: u32) -> ChunkIdx {
     ChunkIdx::new(n).unwrap()
 }
 
-fn rings() -> Box<Rings> {
-    Box::new(Rings::new())
+/// The rings and the third slots the board keeps apart from them.
+struct Store {
+    r: Box<Rings>,
+    third: Box<ThirdSlots>,
+}
+
+impl Store {
+    fn sides(&self) -> Option<(chimera_engine::stream::ring::AudioSide<'_>, CardSide<'_>)> {
+        self.r.sides(&self.third)
+    }
+
+    fn wants(&self) -> impl Iterator<Item = (VoiceIdx, SlotIdx, AudioBlocks)> + '_ {
+        self.r.wants()
+    }
+}
+
+fn rings() -> Store {
+    Store {
+        r: Box::new(Rings::new()),
+        third: Box::new(ThirdSlots::new()),
+    }
 }
 
 /// A chunk's frames, `base` up, wrapped into 12 bits.
@@ -25,7 +45,8 @@ fn ramp(base: i32) -> Vec<i16> {
         .collect()
 }
 
-/// Wants, claims and fills `s` with `frames`, guarding it from its other slot.
+/// Wants, claims and fills `s` with `frames`, guarding it from the slot
+/// before.
 fn fill(turn: &AudioTurn, card: &mut CardSide, s: SlotIdx, c: u32, frames: &[i16]) -> Generation {
     let g = turn.want(V, s, ix(c), D).unwrap();
     let claim = card.claim(V, s).unwrap();
@@ -225,6 +246,42 @@ fn sides_are_taken_once() {
     let r = rings();
     assert!(r.sides().is_some());
     assert!(r.sides().is_none());
+    let other = Rings::new();
+    assert!(
+        other.sides(&r.third).is_none(),
+        "third slots taken by one rings serve no other"
+    );
+}
+
+#[test]
+fn three_slots_cycle_with_the_guard_across_the_wrap() {
+    let r = rings();
+    let (mut audio, mut card) = r.sides().unwrap();
+    let mut turn = audio.turn();
+    let gs = [(A, 4, 100), (B, 5, 900), (C, 6, 1_700)]
+        .map(|(s, c, base)| fill(&turn, &mut card, s, c, &ramp(base)));
+    for (s, g, c) in [(A, gs[0], 4), (B, gs[1], 5), (C, gs[2], 6)] {
+        assert_eq!(turn.ready(V, s, g).unwrap().chunk(), ix(c));
+    }
+    {
+        let c = turn.ready(V, C, gs[2]).unwrap();
+        assert_eq!(c.guard(), Guard::Guarded, "C guarded from B");
+        let n = ramp(900).len();
+        let guard: Vec<_> = (-4..0).map(|i| c.sample(i).unwrap()).collect();
+        assert_eq!(guard, ramp(900)[n - 4..]);
+        assert_eq!(c.sample(0), Some(ramp(1_700)[0]));
+    }
+    turn.release(V, A);
+    let ga = fill(&turn, &mut card, A, 7, &ramp(2_500));
+    let a = turn.ready(V, A, ga).unwrap();
+    assert_eq!(
+        a.guard(),
+        Guard::Guarded,
+        "A guarded from C across the wrap"
+    );
+    let guard: Vec<_> = (-4..0).map(|i| a.sample(i).unwrap()).collect();
+    let n = ramp(1_700).len();
+    assert_eq!(guard, ramp(1_700)[n - 4..]);
 }
 
 #[test]
@@ -249,8 +306,10 @@ fn zeroed_rings_are_empty() {
     // SAFETY: all-zero bytes are a valid `Rings` (every slot Empty at
     // generation 0), as the board relies on.
     let r: Box<Rings> = unsafe { Box::<Rings>::new_zeroed().assume_init() };
-    let (mut audio, _card) = r.sides().unwrap();
-    assert!(r.sides().is_none());
+    // SAFETY: as above: all-zero bytes are valid `ThirdSlots`.
+    let third: Box<ThirdSlots> = unsafe { Box::<ThirdSlots>::new_zeroed().assume_init() };
+    let (mut audio, _card) = r.sides(&third).unwrap();
+    assert!(r.sides(&third).is_none());
     let turn = audio.turn();
     for v in VoiceIdx::ALL {
         for s in SlotIdx::ALL {

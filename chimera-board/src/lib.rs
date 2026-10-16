@@ -447,9 +447,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let sd = sd::init(sd, &mut cp.DCB, &mut cp.DWT, &clocks, clk.cpu_hz);
     let store = sd::take_store(sd).expect("store taken once");
     // The rings' card side to the card IRQ, its audio side to the audio.
-    let (streams, card_side) = shared::rings()
-        .and_then(chimera_core::stream::ring::Rings::sides)
-        .expect("ring sides taken once");
+    let (streams, card_side) = shared::ring_sides().expect("ring sides taken once");
     {
         use stm32h7xx_hal::spi::{Enabled, Spi};
         let ker = Spi::<pac::SPI2, Enabled>::kernel_clk_unwrap(&clocks).raw();

@@ -1,6 +1,6 @@
 use chimera_engine::stream::edf::{Pick, URGENT_BLOCKS, Want, pick, wants};
 use chimera_engine::stream::layout::ChunkIdx;
-use chimera_engine::stream::ring::Rings;
+use chimera_engine::stream::ring::{Rings, ThirdSlots};
 use chimera_engine::stream::units::{AudioBlocks, SlotIdx};
 use chimera_engine::voice_alloc::VoiceIdx;
 use chimera_hal::units::UiWait;
@@ -85,25 +85,34 @@ fn overdue_is_most_urgent() {
 #[test]
 fn wants_lists_only_wanted_slots() {
     let rings = Box::new(Rings::new());
-    let (mut audio, mut card) = rings.sides().unwrap();
+    let third = Box::new(ThirdSlots::new());
+    let (mut audio, mut card) = rings.sides(&third).unwrap();
     let turn = audio.turn();
     let (v, a, b, c) = (VoiceIdx::ALL[2], SlotIdx::A, SlotIdx::B, VoiceIdx::ALL[6]);
     let d = AudioBlocks::new(77);
     turn.want(v, a, ix(0), d).unwrap();
     turn.want(v, b, ix(1), d).unwrap();
     turn.want(c, a, ix(2), d).unwrap();
+    turn.want(c, SlotIdx::C, ix(3), d.after(5)).unwrap();
     let filling = card.claim(v, a).unwrap();
     let done = card.claim(v, b).unwrap();
     assert!(card.fill_done(done));
     let got: Vec<_> = wants(&rings).collect();
     assert_eq!(
         got,
-        [Want {
-            voice: c,
-            slot: a,
-            deadline: d
-        }]
+        [
+            Want {
+                voice: c,
+                slot: a,
+                deadline: d
+            },
+            Want {
+                voice: c,
+                slot: SlotIdx::C,
+                deadline: d.after(5)
+            }
+        ]
     );
     card.requeue(filling);
-    assert_eq!(wants(&rings).count(), 2);
+    assert_eq!(wants(&rings).count(), 3);
 }

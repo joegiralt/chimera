@@ -1,6 +1,12 @@
-//! The stream rings in SRAM4: two slots a voice, each a chunk of packed
-//! samples behind a few guard frames copied from the chunk before, so a
-//! cursor's interpolation reads across the seam from one slot.
+//! The stream rings: three slots a voice, each a chunk of packed samples
+//! behind a few guard frames copied from the chunk before, so a cursor's
+//! interpolation reads across the seam from one slot. Three slots, so a
+//! read late by up to a chunk lands while the head still plays the one
+//! before.
+//!
+//! `Rings` (SRAM4) holds every slot's word and guard flag and slots A and
+//! B's bytes; slot C's bytes are `ThirdSlots`, which SRAM4 has no room
+//! for (the board keeps them in D2).
 //!
 //! Two sides, each handed out once (`Rings::sides`): the audio's, which
 //! wants, cancels and reads, and the card's, the one writer of slot bytes.
@@ -56,32 +62,71 @@ impl Guard {
     }
 }
 
+type SlotCell = UnsafeCell<[u8; SLOT_BYTES]>;
+
 pub struct Ring {
-    slots: [Slot; 2],
-    bytes: [UnsafeCell<[u8; SLOT_BYTES]>; 2],
-    guard: [AtomicU8; 2],
+    slots: [Slot; SlotIdx::ALL.len()],
+    /// Slots A and B's; C's are in `ThirdSlots`.
+    bytes: [SlotCell; 2],
+    guard: [AtomicU8; SlotIdx::ALL.len()],
 }
 
-// SAFETY: `bytes` are written only through the one `CardSide` (`sides`
-// hands it out once), under a `Claim` whose slot is still Filling under
-// its generation (`fill_buf`, `write_guard` check it); a slot leaves
-// Filling only by the card's own `&mut self` calls or the audio's cancel,
-// and nothing reads a Filling or Empty slot. They are read only through a
-// `Ready`, which exists only while its slot is Ready under its own
-// generation, and borrows the block's `AudioTurn`: the card never moves a
-// Ready slot, and the audio's `release` and `cancel` need `&mut AudioTurn`.
-// The `Release` publish and `Acquire` load of the slot word order the
-// bytes (slot.rs). `write_guard` reads the other slot while it is Ready,
-// where only reads happen.
+/// Each voice's slot C bytes. All-zero bytes are valid, not yet taken.
+pub struct ThirdSlots {
+    bytes: [SlotCell; MAX_VOICES],
+    taken: AtomicBool,
+}
+
+// SAFETY: as `Ring`'s: the cells are reached only through the one pair of
+// sides `Rings::sides` hands out with them (`taken` lets one pair).
+unsafe impl Sync for ThirdSlots {}
+
+#[cfg(not(loom))]
+impl Default for ThirdSlots {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ThirdSlots {
+    #[cfg(not(loom))]
+    pub const fn new() -> ThirdSlots {
+        ThirdSlots {
+            bytes: [const { UnsafeCell::new([0; SLOT_BYTES]) }; MAX_VOICES],
+            taken: AtomicBool::new(false),
+        }
+    }
+
+    #[cfg(loom)]
+    pub fn new() -> ThirdSlots {
+        ThirdSlots {
+            bytes: core::array::from_fn(|_| UnsafeCell::new([0; SLOT_BYTES])),
+            taken: AtomicBool::new(false),
+        }
+    }
+}
+
+// SAFETY: `bytes` (and `ThirdSlots`') are written only through the one
+// `CardSide` (`sides` hands it out once, with both flags), under a `Claim`
+// whose slot is still Filling under its generation (`fill_buf`,
+// `write_guard` check it); a slot leaves Filling only by the card's own
+// `&mut self` calls or the audio's cancel, and nothing reads a Filling or
+// Empty slot. They are read only through a `Ready`, which exists only
+// while its slot is Ready under its own generation, and borrows the
+// block's `AudioTurn`: the card never moves a Ready slot, and the audio's
+// `release` and `cancel` need `&mut AudioTurn`. The `Release` publish and
+// `Acquire` load of the slot word order the bytes (slot.rs).
+// `write_guard` reads another slot while it is Ready, where only reads
+// happen.
 unsafe impl Sync for Ring {}
 
 impl Ring {
     #[cfg(not(loom))]
     const fn new() -> Ring {
         Ring {
-            slots: [const { Slot::new() }; 2],
+            slots: [const { Slot::new() }; SlotIdx::ALL.len()],
             bytes: [const { UnsafeCell::new([0; SLOT_BYTES]) }; 2],
-            guard: [const { AtomicU8::new(0) }; 2],
+            guard: [const { AtomicU8::new(0) }; SlotIdx::ALL.len()],
         }
     }
 
@@ -97,7 +142,7 @@ impl Ring {
 
 /// A ring a voice. All-zero bytes are a valid `Rings`: every slot Empty
 /// at generation 0, Unguarded, its sides not yet taken. The board builds
-/// it so, in place in SRAM4.
+/// it so, in place in SRAM4, and its `ThirdSlots` in D2.
 pub struct Rings {
     rings: [Ring; MAX_VOICES],
     taken: AtomicBool,
@@ -128,10 +173,15 @@ impl Rings {
         }
     }
 
-    /// The audio's side and the card's, once.
-    pub fn sides(&self) -> Option<(AudioSide<'_>, CardSide<'_>)> {
-        (!self.taken.swap(true, Ordering::AcqRel))
-            .then_some((AudioSide { rings: self }, CardSide { rings: self }))
+    /// The audio's side and the card's, once, over these rings and
+    /// `third`; `None` if either was taken (a refusal may still take the
+    /// other).
+    pub fn sides<'r>(&'r self, third: &'r ThirdSlots) -> Option<(AudioSide<'r>, CardSide<'r>)> {
+        if third.taken.swap(true, Ordering::AcqRel) || self.taken.swap(true, Ordering::AcqRel) {
+            return None;
+        }
+        let at = Store { rings: self, third };
+        Some((AudioSide { at }, CardSide { at }))
     }
 
     /// Every Wanted slot and its deadline, for EDF.
@@ -149,27 +199,57 @@ impl Rings {
     fn slot(&self, v: VoiceIdx, s: SlotIdx) -> &Slot {
         &self.rings[v.index()].slots[s.index()]
     }
+
+    fn guard(&self, v: VoiceIdx, s: SlotIdx) -> &AtomicU8 {
+        &self.rings[v.index()].guard[s.index()]
+    }
+}
+
+/// The rings and their third slots, as both sides reach them.
+#[derive(Clone, Copy)]
+struct Store<'r> {
+    rings: &'r Rings,
+    third: &'r ThirdSlots,
+}
+
+impl<'r> Store<'r> {
+    fn slot(self, v: VoiceIdx, s: SlotIdx) -> &'r Slot {
+        self.rings.slot(v, s)
+    }
+
+    fn guard(self, v: VoiceIdx, s: SlotIdx) -> &'r AtomicU8 {
+        self.rings.guard(v, s)
+    }
+
+    fn cell(self, v: VoiceIdx, s: SlotIdx) -> &'r SlotCell {
+        let near = &self.rings.rings[v.index()].bytes;
+        match s {
+            SlotIdx::A => &near[0],
+            SlotIdx::B => &near[1],
+            SlotIdx::C => &self.third.bytes[v.index()],
+        }
+    }
 }
 
 /// The audio's side: one `AudioTurn` a block.
 pub struct AudioSide<'r> {
-    rings: &'r Rings,
+    at: Store<'r>,
 }
 
 impl AudioSide<'_> {
     pub fn turn(&mut self) -> AudioTurn<'_> {
-        AudioTurn { rings: self.rings }
+        AudioTurn { at: self.at }
     }
 }
 
 /// One audio block's access to the rings.
 pub struct AudioTurn<'s> {
-    rings: &'s Rings,
+    at: Store<'s>,
 }
 
 impl<'s> AudioTurn<'s> {
     pub fn seen(&self, v: VoiceIdx, s: SlotIdx) -> SlotState {
-        self.rings.slot(v, s).seen()
+        self.at.slot(v, s).seen()
     }
 
     /// Empty → Wanted: the generation its fill will carry.
@@ -180,7 +260,7 @@ impl<'s> AudioTurn<'s> {
         c: ChunkIdx,
         by: AudioBlocks,
     ) -> Option<Generation> {
-        self.rings.slot(v, s).want(c, by)
+        self.at.slot(v, s).want(c, by)
     }
 
     /// Ready → Empty. Not while a `Ready` lives:
@@ -190,9 +270,11 @@ impl<'s> AudioTurn<'s> {
     /// use chimera_engine::stream::ring::Rings;
     /// use chimera_engine::stream::units::{AudioBlocks, SlotIdx};
     /// use chimera_engine::voice_alloc::VoiceIdx;
+    /// use chimera_engine::stream::ring::ThirdSlots;
     /// static RINGS: Rings = Rings::new();
+    /// static THIRD: ThirdSlots = ThirdSlots::new();
     /// let (v, s) = (VoiceIdx::ALL[0], SlotIdx::A);
-    /// let (mut audio, mut card) = RINGS.sides().unwrap();
+    /// let (mut audio, mut card) = RINGS.sides(&THIRD).unwrap();
     /// let mut turn = audio.turn();
     /// let g = turn.want(v, s, ChunkIdx::new(0).unwrap(), AudioBlocks::new(9)).unwrap();
     /// let claim = card.claim(v, s).unwrap();
@@ -208,9 +290,11 @@ impl<'s> AudioTurn<'s> {
     /// use chimera_engine::stream::ring::Rings;
     /// use chimera_engine::stream::units::{AudioBlocks, SlotIdx};
     /// use chimera_engine::voice_alloc::VoiceIdx;
+    /// use chimera_engine::stream::ring::ThirdSlots;
     /// static RINGS: Rings = Rings::new();
+    /// static THIRD: ThirdSlots = ThirdSlots::new();
     /// let (v, s) = (VoiceIdx::ALL[0], SlotIdx::A);
-    /// let (mut audio, _card) = RINGS.sides().unwrap();
+    /// let (mut audio, _card) = RINGS.sides(&THIRD).unwrap();
     /// let mut turn = audio.turn();
     /// let g = turn.want(v, s, ChunkIdx::new(0).unwrap(), AudioBlocks::new(9)).unwrap();
     /// let ready = turn.ready(v, s, g);
@@ -218,25 +302,24 @@ impl<'s> AudioTurn<'s> {
     /// drop(ready);
     /// ```
     pub fn release(&mut self, v: VoiceIdx, s: SlotIdx) {
-        self.rings.slot(v, s).release();
+        self.at.slot(v, s).release();
     }
 
     /// Whatever the slot holds → Empty, under a new generation: a fill in
     /// flight is dropped.
     pub fn cancel(&mut self, v: VoiceIdx, s: SlotIdx) {
-        self.rings.slot(v, s).cancel();
+        self.at.slot(v, s).cancel();
     }
 
     /// The slot's samples, if it is Ready under `g`.
     pub fn ready<'t>(&'t self, v: VoiceIdx, s: SlotIdx, g: Generation) -> Option<Ready<'t>> {
-        let ring = &self.rings.rings[v.index()];
-        let chunk = ring.slots[s.index()].ready(g)?;
-        let guard = Guard::from_bits(ring.guard[s.index()].load(Ordering::Relaxed));
+        let chunk = self.at.slot(v, s).ready(g)?;
+        let guard = Guard::from_bits(self.at.guard(v, s).load(Ordering::Relaxed));
         // SAFETY: the slot is Ready under `g` (loaded `Acquire` above), so
         // the card wrote these bytes before its `Release` and won't again
         // until this turn's `release` or `cancel`, which the borrow of
         // `self` keeps out while the `Ready` lives (`Ring`'s `Sync`).
-        let bytes = unsafe { &*ring.bytes[s.index()].get() };
+        let bytes = unsafe { &*self.at.cell(v, s).get() };
         Some(Ready {
             chunk,
             guard,
@@ -305,15 +388,15 @@ impl Claim {
 
 /// The card's side: the one writer of slot bytes.
 pub struct CardSide<'r> {
-    rings: &'r Rings,
+    at: Store<'r>,
 }
 
 impl CardSide<'_> {
     /// Wanted → Filling.
     pub fn claim(&mut self, v: VoiceIdx, s: SlotIdx) -> Option<Claim> {
-        let (chunk, generation) = self.rings.slot(v, s).claim()?;
+        let (chunk, generation) = self.at.slot(v, s).claim()?;
         // Before `fill_done`'s `Release`; a write_guard may set it.
-        self.rings.rings[v.index()].guard[s.index()].store(0, Ordering::Relaxed);
+        self.at.guard(v, s).store(0, Ordering::Relaxed);
         Some(Claim {
             voice: v,
             slot: s,
@@ -323,9 +406,7 @@ impl CardSide<'_> {
     }
 
     fn filling(&self, c: &Claim) -> bool {
-        self.rings
-            .slot(c.voice, c.slot)
-            .filling(c.chunk, c.generation)
+        self.at.slot(c.voice, c.slot).filling(c.chunk, c.generation)
     }
 
     /// The chunk area after the guard; `None` for a stale claim. One at a
@@ -336,9 +417,11 @@ impl CardSide<'_> {
     /// use chimera_engine::stream::ring::Rings;
     /// use chimera_engine::stream::units::{AudioBlocks, SlotIdx};
     /// use chimera_engine::voice_alloc::VoiceIdx;
+    /// use chimera_engine::stream::ring::ThirdSlots;
     /// static RINGS: Rings = Rings::new();
+    /// static THIRD: ThirdSlots = ThirdSlots::new();
     /// let v = VoiceIdx::ALL[0];
-    /// let (mut audio, mut card) = RINGS.sides().unwrap();
+    /// let (mut audio, mut card) = RINGS.sides(&THIRD).unwrap();
     /// let turn = audio.turn();
     /// let at = AudioBlocks::new(9);
     /// turn.want(v, SlotIdx::A, ChunkIdx::new(0).unwrap(), at).unwrap();
@@ -352,7 +435,7 @@ impl CardSide<'_> {
         if !self.filling(c) {
             return None;
         }
-        let cell = &self.rings.rings[c.voice.index()].bytes[c.slot.index()];
+        let cell = self.at.cell(c.voice, c.slot);
         // SAFETY: the slot is Filling under `c`'s generation, so no `Ready`
         // reads it, and this is the one `CardSide`, whose `&mut self` this
         // slice borrows: no other slice of any slot lives (`Ring`'s `Sync`).
@@ -360,43 +443,42 @@ impl CardSide<'_> {
         Some(&mut bytes[GUARD..])
     }
 
-    /// The other slot's last frames ahead of this chunk, when it is Ready
-    /// with the chunk before; else Unguarded.
+    /// The last frames of another slot Ready with the chunk before, ahead
+    /// of this chunk; else Unguarded.
     pub fn write_guard(&mut self, c: &Claim) {
         if !self.filling(c) {
             return;
         }
-        let ring = &self.rings.rings[c.voice.index()];
-        let other = c.slot.other();
-        let before = ring.slots[other.index()]
-            .ready_chunk()
-            .and_then(ChunkIdx::next);
-        if before != Some(c.chunk) {
+        let at = self.at;
+        let Some(before) = SlotIdx::ALL.into_iter().find(|&s| {
+            s != c.slot
+                && at.slot(c.voice, s).ready_chunk().and_then(ChunkIdx::next) == Some(c.chunk)
+        }) else {
             return;
-        }
+        };
         // SAFETY: `c`'s slot is Filling under its claim, so only this
-        // `&mut self` touches it; the other slot is Ready, where nothing
-        // writes (`Ring`'s `Sync`). Two cells: the borrows don't overlap.
+        // `&mut self` touches it; `before` is Ready, where nothing writes
+        // (`Ring`'s `Sync`). Two slots, two cells: the borrows don't overlap.
         let (to, from) = unsafe {
             (
-                &mut *ring.bytes[c.slot.index()].get(),
-                &*ring.bytes[other.index()].get(),
+                &mut *at.cell(c.voice, c.slot).get(),
+                &*at.cell(c.voice, before).get(),
             )
         };
         to[..GUARD].copy_from_slice(&from[SLOT_BYTES - GUARD..]);
-        ring.guard[c.slot.index()].store(1, Ordering::Relaxed);
+        at.guard(c.voice, c.slot).store(1, Ordering::Relaxed);
     }
 
     /// Filling → Ready; false if the fill was dropped (cancelled).
     pub fn fill_done(&mut self, c: Claim) -> bool {
-        self.rings
+        self.at
             .slot(c.voice, c.slot)
             .finish(c.chunk, c.generation, Finish::Ready)
     }
 
     /// Filling → Wanted, same generation: a fault, to try again.
     pub fn requeue(&mut self, c: Claim) {
-        self.rings
+        self.at
             .slot(c.voice, c.slot)
             .finish(c.chunk, c.generation, Finish::Requeue);
     }

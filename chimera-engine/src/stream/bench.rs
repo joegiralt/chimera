@@ -374,7 +374,7 @@ struct Head {
     /// The head entered a chunk that wasn't Ready yet.
     waiting: AtomicBool,
     /// Each slot's deadline, as wanted.
-    due: [AtomicU32; 2],
+    due: [AtomicU32; SlotIdx::ALL.len()],
 }
 
 impl Head {
@@ -385,15 +385,15 @@ impl Head {
             cur: AtomicU8::new(0),
             primed: AtomicBool::new(false),
             waiting: AtomicBool::new(false),
-            due: [const { AtomicU32::new(0) }; 2],
+            due: [const { AtomicU32::new(0) }; SlotIdx::ALL.len()],
         }
     }
 
     fn cur(&self) -> SlotIdx {
-        if self.cur.load(Ordering::Relaxed) == 1 {
-            SlotIdx::B
-        } else {
-            SlotIdx::A
+        match self.cur.load(Ordering::Relaxed) {
+            1 => SlotIdx::B,
+            2 => SlotIdx::C,
+            _ => SlotIdx::A,
         }
     }
 
@@ -467,7 +467,7 @@ impl BenchStreams {
     }
 
     /// The UI's: `n` heads from frame 0, the counts zeroed. The first
-    /// block of each primes it (its slots cancelled, chunks 0 and 1 wanted).
+    /// block of each primes it (its slots cancelled, chunks 0 to 2 wanted).
     pub fn arm(
         &self,
         beds: &BenchBeds,
@@ -594,8 +594,8 @@ impl BenchStreams {
             if new != old {
                 let passed = head.cur();
                 free(turn, v, passed);
-                head.set_cur(passed.other());
-                let waiting = match turn.seen(v, passed.other()) {
+                head.set_cur(passed.next());
+                let waiting = match turn.seen(v, passed.next()) {
                     SlotState::Ready { chunk, .. } if Some(chunk) == new => false,
                     SlotState::Ready { .. } => {
                         self.order_errors.fetch_add(1, Ordering::Relaxed);
@@ -611,7 +611,7 @@ impl BenchStreams {
         }
         let cur = head.cur();
         if burst {
-            free(turn, v, cur.other());
+            free(turn, v, cur.next());
         }
         if head.waiting.load(Ordering::Relaxed) {
             let due = AudioBlocks::new(head.due[cur.index()].load(Ordering::Relaxed));
@@ -626,16 +626,25 @@ impl BenchStreams {
         let Some(here) = file.chunk_of(Frames::new(at / 1_000)) else {
             return false;
         };
-        let next = if here == file.last_chunk() {
-            ChunkIdx::new(0)
-        } else {
-            here.next()
+        let after = |c: ChunkIdx| {
+            if c == file.last_chunk() {
+                ChunkIdx::new(0)
+            } else {
+                c.next()
+            }
         };
         let end = file.chunk_frames(here).map_or(0, |r| r.end.get() * 1_000);
         let ahead = end.saturating_sub(at) / fpb;
+        // The chunk after next is due a whole chunk later.
+        let chunk = CHUNK_FRAMES.get() * 1_000 / fpb;
         let mut asked = want(turn, v, head, cur, here, now);
-        if let Some(next) = next {
-            asked |= want(turn, v, head, cur.other(), next, now.after(ahead));
+        let Some(next) = after(here) else {
+            return asked;
+        };
+        asked |= want(turn, v, head, cur.next(), next, now.after(ahead));
+        if let Some(then) = after(next) {
+            let due = now.after(ahead.saturating_add(chunk));
+            asked |= want(turn, v, head, cur.next().next(), then, due);
         }
         asked
     }

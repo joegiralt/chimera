@@ -36,6 +36,10 @@ pub fn wants(rings: &Rings) -> impl Iterator<Item = Want> + '_ {
 /// The least `now.until(deadline)` wins (overdue is negative, so most
 /// urgent), ties to the lower voice. A waiting UI gets the bus unless that
 /// is within `URGENT_BLOCKS`.
+///
+/// Owner rule: streams always beat the UI; a slower UI while playing is
+/// acceptable. A want within `URGENT_BLOCKS` is never held for a waiting
+/// UI, and the UI only ever gets the bus between transfers.
 pub fn pick(wants: impl Iterator<Item = Want>, now: AudioBlocks, ui: UiWait) -> Pick {
     let Some(w) = wants.min_by_key(|w| (now.until(w.deadline), w.voice.index())) else {
         return Pick::Idle;

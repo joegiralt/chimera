@@ -14,7 +14,7 @@ use chimera_engine::stream::bench::{
 };
 use chimera_engine::stream::edf::wants;
 use chimera_engine::stream::layout::{CHUNK_BYTES, CHUNK_FRAMES, ChunkIdx, StreamFile, deframe};
-use chimera_engine::stream::ring::{AudioSide, CardSide, Rings};
+use chimera_engine::stream::ring::{AudioSide, CardSide, Rings, ThirdSlots};
 use chimera_engine::stream::slot::SlotState;
 use chimera_engine::stream::units::{AudioBlocks, Ratio, SlotIdx, SourceRate};
 use chimera_engine::voice_alloc::VoiceIdx;
@@ -132,11 +132,16 @@ struct FakeCard {
     wrong: Option<(usize, u32)>,
     /// Leave (stream, chunk) unfilled.
     skip: Option<(usize, u32)>,
+    /// Serve nothing while `now` is in it: a card the audio holds off.
+    stall: core::ops::Range<u32>,
     claimed: Vec<(usize, u32)>,
 }
 
 impl FakeCard {
     fn serve(&mut self, beds: &BenchBeds, bench: &BenchStreams, now: AudioBlocks) {
+        if self.stall.contains(&now.get()) {
+            return;
+        }
         let ws: Vec<_> = wants(self.rings).collect();
         for w in ws {
             if self.late > 0 && now.until(w.deadline) > -self.late {
@@ -188,7 +193,8 @@ struct Rig {
 impl Rig {
     fn new((beds, devs): (&'static BenchBeds, Vec<Vec<u8>>)) -> Rig {
         let rings: &'static Rings = Box::leak(Box::new(Rings::new()));
-        let (audio, side) = rings.sides().unwrap();
+        let third: &'static ThirdSlots = Box::leak(Box::new(ThirdSlots::new()));
+        let (audio, side) = rings.sides(third).unwrap();
         Rig {
             bench: Box::leak(Box::new(BenchStreams::new())),
             beds,
@@ -200,6 +206,7 @@ impl Rig {
                 late: 0,
                 wrong: None,
                 skip: None,
+                stall: 0..0,
                 claimed: Vec::new(),
             },
             now: AudioBlocks::new(1_000),
@@ -296,7 +303,29 @@ fn wants_carry_deadlines_in_blocks() {
         SlotState::Wanted { chunk, deadline, .. }
             if chunk.get() == 1 && deadline == now.after(2_688 * 1_000 / 38_400)
     ));
+    assert!(matches!(
+        turn.seen(v, SlotIdx::C),
+        SlotState::Wanted { chunk, deadline, .. }
+            if chunk.get() == 2 && deadline == now.after(2 * (2_688 * 1_000 / 38_400))
+    ));
     assert_eq!(2_688 * 1_000 / 38_400, 70);
+}
+
+#[test]
+fn the_spare_slot_covers_a_card_stalled_a_chunk_and_a_half() {
+    let per = blocks_per_chunk(38_400);
+    // From every point of a chunk: two slots run dry from its start.
+    for from in (0..per).step_by(5) {
+        let mut r = Rig::new(beds8());
+        r.arm(24_000, 1_200, 8, Listen::Off);
+        r.run(3 * per);
+        let at = r.now.get() + from;
+        r.card.stall = at..at + per * 3 / 2;
+        r.run(4 * per);
+        let rep = r.bench.report();
+        assert_eq!((rep.empties, rep.order_errors), (0, 0), "stall from {from}");
+        assert_eq!(rep.check_errors, [0; 8]);
+    }
 }
 
 #[test]

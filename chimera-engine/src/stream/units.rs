@@ -152,20 +152,24 @@ impl Generation {
     }
 }
 
-/// One of a stream's two slots.
+/// One of a stream's three slots: the chunk playing, the next, and a
+/// spare that covers a late read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SlotIdx {
     A,
     B,
+    C,
 }
 
 impl SlotIdx {
-    pub const ALL: [SlotIdx; 2] = [SlotIdx::A, SlotIdx::B];
+    pub const ALL: [SlotIdx; 3] = [SlotIdx::A, SlotIdx::B, SlotIdx::C];
 
-    pub const fn other(self) -> Self {
+    /// The slot after, round the ring.
+    pub const fn next(self) -> Self {
         match self {
             Self::A => Self::B,
-            Self::B => Self::A,
+            Self::B => Self::C,
+            Self::C => Self::A,
         }
     }
 

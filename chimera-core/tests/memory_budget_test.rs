@@ -310,8 +310,8 @@ fn arena_needs_the_delay() {
 }
 
 /// D2 holds the voices' Instrument, the DMA rings' reserve, the UI's knob
-/// publisher (ADR 0115) and the formant views, and keeps room: the figure
-/// ADR 0115 records.
+/// publisher (ADR 0115), the formant views and the stream rings' third
+/// slots, and keeps room: the figure ADR 0115 records.
 #[test]
 fn d2_holds_the_knob_publisher() {
     use chimera_core::dsp::knobs::KnobPublisher;
@@ -320,12 +320,15 @@ fn d2_holds_the_knob_publisher() {
         size_of::<KnobPublisher>(),
     );
     assert_eq!(knobs, hw::D2_KNOBS);
-    let used = inst + hw::D2_DMA_RESERVE + knobs + hw::D2_FORMANT;
+    let used = inst + hw::D2_DMA_RESERVE + knobs + hw::D2_FORMANT + hw::D2_THIRD_SLOTS;
     eprintln!(
-        "D2: Instrument {inst} + DMA reserve {} + knobs {knobs} + formant views {} = {used} B, {} B free",
+        "D2: Instrument {inst} + DMA reserve {} + knobs {knobs} + formant views {} + third slots {} = {used} B, {} B free",
         hw::D2_DMA_RESERVE,
         hw::D2_FORMANT,
+        hw::D2_THIRD_SLOTS,
         hw::D2_SRAM - used
     );
+    // A slot a voice: 8 x 4,038 B, and the taken flag.
+    assert_eq!(hw::D2_THIRD_SLOTS, 32_305);
     assert!(used <= hw::D2_SRAM);
 }
