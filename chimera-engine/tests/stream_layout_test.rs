@@ -290,3 +290,69 @@ fn runs_short_of_the_file_are_refused() {
     };
     assert!(StreamFile::from_layout(&l, short).is_none());
 }
+
+/// Chunk 1's blocks split at `cuts` (file blocks inside it): its pieces,
+/// read off the device in order, de-frame to its samples.
+fn split_chunk(cuts_in_chunk: &[u32]) -> usize {
+    let (l, _, data) = layout(3, CHUNK_FRAMES.get() * 3, 0);
+    let file = written(&l, None, &data);
+    let probe = StreamFile::from_layout(&l, on_device(&file, &[]).0).unwrap();
+    let c = ChunkIdx::new(1).unwrap();
+    let b = probe.chunk_blocks(c).unwrap();
+    // `on_device` cuts before block `1 + k`.
+    let cuts: Vec<u32> = cuts_in_chunk
+        .iter()
+        .map(|k| b.first.get() + k - 1)
+        .collect();
+    let (runs, dev) = on_device(&file, &cuts);
+    let sf = StreamFile::from_layout(&l, runs).unwrap();
+    let r = sf.chunk_read(c).unwrap();
+    assert_eq!(r.blocks(), b.count);
+    assert_eq!(r.skip(), b.skip);
+    assert_eq!(r.packed(), CHUNK_BYTES);
+    let mut raw = Vec::new();
+    let mut piece = r.first();
+    let mut pieces = 0;
+    while let Some(p) = piece {
+        assert_eq!(p.at as usize, raw.len() / 512, "pieces land contiguously");
+        assert!(p.blocks.get() <= RAW_CHUNK_BLOCKS);
+        let at = p.lba.get() as usize * 512;
+        raw.extend_from_slice(&dev[at..at + p.blocks.get() as usize * 512]);
+        pieces += 1;
+        piece = r.after(&p);
+    }
+    assert_eq!(raw.len(), b.count.get() as usize * 512);
+    let mut out = vec![0; CHUNK_BYTES.get() as usize];
+    deframe(&raw, r.skip(), &mut out).unwrap();
+    let at = CHUNK_BYTES.get() as usize;
+    assert_eq!(&out[..], &data[at..2 * at]);
+    pieces
+}
+
+#[test]
+fn a_chunk_on_one_run_is_one_piece() {
+    assert_eq!(split_chunk(&[]), 1);
+}
+
+#[test]
+fn a_chunk_across_a_run_edge_is_two_pieces() {
+    assert_eq!(split_chunk(&[4]), 2);
+}
+
+#[test]
+fn a_chunk_across_two_run_edges_is_three_pieces() {
+    assert_eq!(split_chunk(&[2, 6]), 3);
+}
+
+#[test]
+fn a_chunk_read_past_the_end_is_none() {
+    let (l, _, data) = layout(1, CHUNK_FRAMES.get() + 10, 0);
+    let file = written(&l, None, &data);
+    let sf = StreamFile::from_layout(&l, on_device(&file, &[]).0).unwrap();
+    let last = sf.chunk_read(sf.last_chunk()).unwrap();
+    assert_eq!(
+        last.packed(),
+        Bytes::new(data.len() as u32 - CHUNK_BYTES.get())
+    );
+    assert!(sf.chunk_read(sf.last_chunk().next().unwrap()).is_none());
+}

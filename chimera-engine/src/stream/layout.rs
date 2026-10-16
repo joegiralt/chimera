@@ -5,7 +5,7 @@
 use core::ops::Range;
 
 use chimera_hal::store::{Extents, FileRuns, Transfers};
-use chimera_hal::units::{BlockCount, Bytes, FileBlock};
+use chimera_hal::units::{BlockCount, Bytes, FileBlock, Lba};
 
 use super::units::{Frames, Packing};
 use crate::storage::{RECORD_HEAD_LEN, RecordTag, SOURCE_DATA_MAX, SourceLayout, data_offset};
@@ -150,6 +150,81 @@ impl StreamFile {
     pub fn reads(&self, b: &ChunkBlocks) -> Transfers<'_> {
         self.ext.transfers(b.first, b.count.get(), RAW_MAX)
     }
+
+    /// Chunk `c`'s reads, a CMD18 a piece; `None` past `last_chunk`, or
+    /// where its pieces don't cover its blocks.
+    pub fn chunk_read(&self, c: ChunkIdx) -> Option<ChunkRead<'_>> {
+        let blocks = self.chunk_blocks(c)?;
+        let covered: u32 = self.reads(&blocks).map(|(_, n)| n.get()).sum();
+        let len =
+            Bytes::new((self.data_len.get() - c.0 * CHUNK_BYTES.get()).min(CHUNK_BYTES.get()));
+        piece(&self.ext, &blocks, 0)?;
+        (covered == blocks.count.get() && blocks.count.get() <= RAW_CHUNK_BLOCKS).then_some(
+            ChunkRead {
+                file: self,
+                blocks,
+                len,
+            },
+        )
+    }
+}
+
+/// One CMD18 of a chunk: its device blocks, landing `at` blocks into the
+/// staging, after the pieces before it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Piece {
+    pub lba: Lba,
+    pub blocks: BlockCount,
+    pub at: u32,
+}
+
+/// A chunk's reads: pieces that cover its blocks in order, at most a raw
+/// chunk's in all, so they land contiguously in one staging.
+#[derive(Clone, Copy, Debug)]
+pub struct ChunkRead<'f> {
+    file: &'f StreamFile,
+    blocks: ChunkBlocks,
+    len: Bytes,
+}
+
+impl ChunkRead<'_> {
+    /// Every piece's blocks.
+    pub fn blocks(&self) -> BlockCount {
+        self.blocks.count
+    }
+
+    /// Where the first record starts in the first block.
+    pub fn skip(&self) -> Bytes {
+        self.blocks.skip
+    }
+
+    /// The chunk's packed bytes.
+    pub fn packed(&self) -> Bytes {
+        self.len
+    }
+
+    /// Always `Some` (`chunk_read` found it); an `Option` so the read
+    /// holds no copy of it.
+    pub fn first(&self) -> Option<Piece> {
+        piece(&self.file.ext, &self.blocks, 0)
+    }
+
+    /// The piece after `p`; `None` after the last.
+    pub fn after(&self, p: &Piece) -> Option<Piece> {
+        piece(
+            &self.file.ext,
+            &self.blocks,
+            p.at.checked_add(p.blocks.get())?,
+        )
+    }
+}
+
+/// The piece of `b` that starts `at` blocks in.
+fn piece(ext: &Extents, b: &ChunkBlocks, at: u32) -> Option<Piece> {
+    let from = FileBlock::new(b.first.get().checked_add(at)?);
+    let left = b.count.get().checked_sub(at)?;
+    let (lba, blocks) = ext.transfers(from, left, RAW_MAX).next()?;
+    Some(Piece { lba, blocks, at })
 }
 
 /// Why a chunk's bytes are not samples.

@@ -5,6 +5,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use chimera_board::shared::NOTE_SOURCES;
 #[cfg(feature = "perf-probe")]
 use chimera_board::shared::{COST_PCT, VOICES};
+#[cfg(feature = "bench")]
+use chimera_engine::audio_out::DacSample;
 use chimera_engine::audio_out::{Half, interleave};
 use chimera_engine::dsp::algo::engine::FormantViews;
 use chimera_engine::dsp::fx_bus::FxBus;
@@ -16,6 +18,13 @@ use chimera_engine::project::{LOAD_LINK, LoadGate};
 use chimera_engine::scope::{ScopeFrame, ScopeWriter};
 use chimera_engine::source_table::AudioToken;
 use chimera_engine::triple::{Reader, Writer};
+
+#[cfg(feature = "bench")]
+use chimera_engine::stream::{
+    bench::{Asked, BENCH},
+    ring::AudioSide,
+    units::AudioBlocks,
+};
 
 use super::dma;
 
@@ -41,6 +50,9 @@ struct Engine {
     orbit: chimera_board::orbit::Runner,
     /// The source table's one reader (ADR 0087).
     sources: AudioToken,
+    /// The stream rings' audio side: the bench's heads (Task 11).
+    #[cfg(feature = "bench")]
+    streams: AudioSide<'static>,
 }
 
 static mut ENGINE: MaybeUninit<Engine> = MaybeUninit::uninit();
@@ -57,6 +69,8 @@ pub unsafe fn slots() -> (
     unsafe { (&mut *addr_of_mut!(INSTRUMENT), &mut *addr_of_mut!(FX)) }
 }
 
+// The bench's rings side is the eighth.
+#[cfg_attr(feature = "bench", allow(clippy::too_many_arguments))]
 pub fn init(
     budget: SampleBudget,
     shared: Reader<AudioShared>,
@@ -65,6 +79,7 @@ pub fn init(
     formant: Writer<FormantViews>,
     orbit: chimera_board::orbit::Runner,
     mut sources: AudioToken,
+    #[cfg(feature = "bench")] streams: AudioSide<'static>,
 ) {
     if ENGINE_TAKEN.swap(true, Ordering::AcqRel) {
         return;
@@ -92,6 +107,8 @@ pub fn init(
                 sources.set_period_us(BLOCK_SIZE as u32 * 1_000_000 / SAMPLE_RATE);
                 sources
             },
+            #[cfg(feature = "bench")]
+            streams,
         });
     }
     ENGINE_READY.store(true, Ordering::Release);
@@ -110,6 +127,8 @@ pub fn render_half(half: Half) {
     // is unmasked) call this, never concurrently and never re-entrantly, so
     // this is the only live reference to `ENGINE`.
     let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
+    #[cfg(feature = "bench")]
+    bench_block(&mut e.streams);
     let shared = e.shared.read();
     // TAPE's voices read the pool through the block's view.
     let (gate, notes, orbit) = (&mut e.gate, &mut e.notes, &mut e.orbit);
@@ -143,7 +162,38 @@ pub fn render_half(half: Half) {
     for pair in DacPair::ALL {
         // SAFETY: `main` runs `dma::clear` before `prefill`; the caller is
         // this half's only writer while the DMA reads the other half, and the
-        // reference ends with this `interleave` call.
-        interleave(e.dac.out(), pair, unsafe { dma::half_mut(pair, half) });
+        // reference ends with this pair's turn of the loop.
+        let out = unsafe { dma::half_mut(pair, half) };
+        interleave(e.dac.out(), pair, out);
+        #[cfg(feature = "bench")]
+        if pair == DacPair::P1 && BENCH.listening() {
+            bench_listen(&mut e.streams, out);
+        }
+    }
+}
+
+/// The bench's heads, once the beds are set (disarmed till then): a new
+/// want wakes the card IRQ (I1's rule 1). Out of line, as `bench_listen`,
+/// so its frame isn't on the stack under the render.
+#[cfg(feature = "bench")]
+#[inline(never)]
+fn bench_block(streams: &mut AudioSide<'static>) {
+    let now = AudioBlocks::new(chimera_board::shared::BLOCKS.load(Ordering::Relaxed));
+    if let Some(beds) = chimera_board::card_dma::beds()
+        && BENCH.block(&mut streams.turn(), beds, now) == Asked::New
+    {
+        chimera_board::card_dma::pend();
+    }
+}
+
+/// Bench stream 0 in place of the synth on the master.
+#[cfg(feature = "bench")]
+#[inline(never)]
+fn bench_listen(streams: &mut AudioSide<'static>, out: &mut [DacSample; BLOCK_SIZE * 2]) {
+    let mut words = [0; BLOCK_SIZE * 2];
+    BENCH.fill_listen(&streams.turn(), &mut words);
+    for (o, w) in out.iter_mut().zip(words) {
+        // A full-scale word is 2^31: the DAC's own −1..1.
+        *o = chimera_engine::audio_out::to_dac(w as f32 / 2_147_483_648.0);
     }
 }

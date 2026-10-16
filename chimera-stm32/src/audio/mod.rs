@@ -28,6 +28,8 @@ pub fn start(a: AudioStart<'_>) {
         a.formant,
         a.orbit,
         a.sources,
+        #[cfg(feature = "bench")]
+        a.streams,
     );
     let pll3 = pll3_for(clocks::HSE_HZ, chimera_hal::SAMPLE_RATE, a.clk.rev);
     clocks::init_pll3(&pll3);

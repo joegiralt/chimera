@@ -18,9 +18,12 @@ use core::ptr::{self, addr_of, addr_of_mut};
 use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 
 use chimera_core::stream::edf::{Pick, Want, pick, wants};
-use chimera_core::stream::layout::{CHUNK_BYTES, RAW_CHUNK_BLOCKS, RAW_CHUNK_BYTES, deframe};
+use chimera_core::stream::layout::{
+    ChunkIdx, ChunkRead, Piece, RAW_CHUNK_BLOCKS, RAW_CHUNK_BYTES, deframe,
+};
 use chimera_core::stream::ring::{CardSide, Claim};
 use chimera_core::stream::units::AudioBlocks;
+use chimera_core::voice_alloc::VoiceIdx;
 use chimera_fat::h7_spi::{
     ABORT, BURST_END, BurstLen, Cr1, DmaEvent, GIVE, Gate, Mbr, Op, POLLED, Placement, RegFault,
     TAKE, burst, gate,
@@ -116,39 +119,29 @@ pub fn pend() {
     NVIC::pend(pac::Interrupt::DMA2_STR0);
 }
 
-/// One CMD18 of a chunk: its first device block, at most a raw chunk's
-/// blocks (so no burst passes the staging's end, I4), where its first
-/// record starts and its packed bytes (at most a slot's).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ChunkRead {
-    lba: Lba,
-    blocks: BlockCount,
-    skip: Bytes,
-    len: Bytes,
+/// Where voice `v`'s chunk `c` lies on the card: a CMD18 a piece, at most
+/// a raw chunk's blocks in all (`StreamFile::chunk_read`), so no burst
+/// passes the staging's end (I4). Bench builds read stream k's bed; the
+/// stream registry (Task 22) answers the rest.
+#[cfg(feature = "bench")]
+fn locate(v: VoiceIdx, c: ChunkIdx) -> Option<ChunkRead<'static>> {
+    bench::bed(v)?.file().chunk_read(c)
 }
 
-impl ChunkRead {
-    pub const fn new(lba: Lba, blocks: BlockCount, skip: Bytes, len: Bytes) -> Option<Self> {
-        if blocks.get() <= RAW_CHUNK_BLOCKS
-            && skip.get() < BLOCK_BYTES as u32
-            && len.get() <= CHUNK_BYTES.get()
-        {
-            Some(Self {
-                lba,
-                blocks,
-                skip,
-                len,
-            })
-        } else {
-            None
-        }
-    }
-}
-
-/// Where a want's chunk lies on the card. Nothing yet: the bench's beds
-/// (Task 11) and the stream registry (Task 22) answer it.
-fn locate(_: &Want) -> Option<ChunkRead> {
+#[cfg(not(feature = "bench"))]
+fn locate(_: VoiceIdx, _: ChunkIdx) -> Option<ChunkRead<'static>> {
     None
+}
+
+/// Voice `v` streams from a file this IRQ knows.
+fn serves(v: VoiceIdx) -> bool {
+    #[cfg(feature = "bench")]
+    return bench::bed(v).is_some();
+    #[cfg(not(feature = "bench"))]
+    {
+        let _ = v;
+        false
+    }
 }
 
 /// The Wanted slots this IRQ can serve.
@@ -156,7 +149,7 @@ fn servable() -> impl Iterator<Item = Want> {
     rings()
         .into_iter()
         .flat_map(wants)
-        .filter(|w| locate(w).is_some())
+        .filter(|w| serves(w.voice))
 }
 
 /// The UI loop's, each pass. A transfer stuck past `WATCHDOG_MS` (a TE,
@@ -630,15 +623,15 @@ impl Dest {
     }
 
     /// Where `walk`'s next burst lands; `None` at its stop.
-    fn of(walk: &Walk, place: Placement) -> Option<Dest> {
+    fn of(walk: &Walk, kind: &Kind) -> Option<Dest> {
         let (at, n) = match walk {
             Walk::Scan(_) => return Some(Dest::scan()),
             Walk::Rest(r) => {
-                let off = usize::try_from(place.offset(r.block()).get()).ok()?;
+                let off = usize::try_from(kind.offset(r.block()).get()).ok()?;
                 let have = usize::try_from(r.have().get()).ok()?;
                 let n = usize::try_from(r.want().get()).ok()?;
-                // Never past `blocks`' end (I4); `ChunkRead` and the ring's
-                // modulus keep every block inside, this keeps the DMA so.
+                // Never past `blocks`' end (I4); `ChunkRead`'s pieces and the
+                // ring's modulus keep every block inside, this keeps the DMA so.
                 (off + have + n <= BLOCKS_LEN).then_some((BLOCKS_AT + off + have, n))?
             }
             Walk::Stop => return None,
@@ -650,20 +643,30 @@ impl Dest {
     }
 }
 
+/// A slot's fill: one job, however many CMD18s its chunk takes.
+struct Fill {
+    /// The one `Claim` (Task 5) of the slot.
+    claim: Claim,
+    at: ChunkRead<'static>,
+    /// The piece under way.
+    piece: Piece,
+}
+
 /// What a transfer is for.
 enum Kind {
-    /// The one `Claim` (Task 5) of the slot this fills.
-    Fill { claim: Claim, at: ChunkRead },
+    Fill(Fill),
     #[cfg(feature = "bench")]
     Bench,
 }
 
 impl Kind {
-    fn placement(&self) -> Placement {
+    /// Where the read's `block` lands: a piece after the pieces before it
+    /// (`Placement::Chunk`), so a chunk's blocks lie whole for `deframe`.
+    fn offset(&self, block: u32) -> Bytes {
         match self {
-            Kind::Fill { .. } => Placement::Chunk,
+            Kind::Fill(f) => Placement::Chunk.offset(f.piece.at.saturating_add(block)),
             #[cfg(feature = "bench")]
-            Kind::Bench => Placement::Ring(RAW_MAX),
+            Kind::Bench => Placement::Ring(RAW_MAX).offset(block),
         }
     }
 }
@@ -683,6 +686,8 @@ enum Then {
     },
     /// An abort: the bus goes back, then the answer.
     Give(Owed),
+    /// A fill's piece read: the next piece's CMD18, on the bus held.
+    More(Fill),
 }
 
 /// What a good read leaves to answer.
@@ -843,7 +848,7 @@ fn DMA2_STR0() {
 
 /// The work `pick` chose.
 enum Work {
-    Fill(Want, ChunkRead),
+    Fill(Want),
     /// A read in the bench's mailbox, claimed once the bus is held.
     #[cfg(feature = "bench")]
     Bench,
@@ -913,10 +918,7 @@ impl IrqState {
         }
         let now = AudioBlocks::new(BLOCKS.load(Ordering::Relaxed));
         match pick(servable(), now, BUS.ui_wait()) {
-            Pick::Fill(w) => match locate(&w) {
-                Some(at) => Work::Fill(w, at),
-                None => Work::Nothing,
-            },
+            Pick::Fill(w) => Work::Fill(w),
             Pick::YieldToUi => Work::Yield,
             Pick::Idle => {
                 #[cfg(feature = "bench")]
@@ -931,8 +933,22 @@ impl IrqState {
     /// The bus held: the chosen work's CMD18.
     fn start(&mut self, h: Held, work: Work) {
         let (kind, lba, blocks) = match work {
-            Work::Fill(w, at) => match self.side.claim(w.voice, w.slot) {
-                Some(claim) => (Kind::Fill { claim, at }, at.lba, at.blocks),
+            Work::Fill(w) => match self.side.claim(w.voice, w.slot) {
+                Some(claim) => match locate(claim.voice(), claim.chunk())
+                    .and_then(|at| Some((at, at.first()?)))
+                {
+                    Some((at, piece)) => (
+                        Kind::Fill(Fill { claim, at, piece }),
+                        piece.lba,
+                        piece.blocks,
+                    ),
+                    // A chunk off the file: left Wanted, no pend, so it
+                    // can't loop this handler (`watch` wakes it).
+                    None => {
+                        self.side.requeue(claim);
+                        return give(h, &self.line);
+                    }
+                },
                 // The audio cancelled it since the pick.
                 None => return self.release(h),
             },
@@ -972,7 +988,7 @@ impl IrqState {
 
     /// The next burst of `walk`, or its stop.
     fn fly(&mut self, h: Held, walk: Walk, t0: u32, kind: Kind) {
-        let Some(dest) = Dest::of(&walk, kind.placement()) else {
+        let Some(dest) = Dest::of(&walk, &kind) else {
             return self.finish(h, t0, kind);
         };
         match h.fly(dest, &self.line) {
@@ -998,7 +1014,6 @@ impl IrqState {
                 return self.abort(h, kind, why);
             }
         };
-        let place = kind.placement();
         let next = match walk {
             Walk::Scan(s) => match s.scanned(h.staging().scan()) {
                 Err(e) => Err(Why::Proto(e)),
@@ -1007,14 +1022,14 @@ impl IrqState {
                 }
                 Ok(ScanOutcome::Waiting(s)) => Ok(Walk::Scan(s)),
                 Ok(ScanOutcome::Token { tail, rest }) => {
-                    let off = place.offset(rest.block());
+                    let off = kind.offset(rest.block());
                     match h.staging().copy_tail(tail, off) {
                         Some(()) => Ok(Walk::Rest(rest)),
                         None => Err(Why::Bound),
                     }
                 }
             },
-            Walk::Rest(r) => match h.staging().block(place.offset(r.block())) {
+            Walk::Rest(r) => match h.staging().block(kind.offset(r.block())) {
                 Some(b) => r.landed(b).map_err(Why::Proto),
                 None => Err(Why::Bound),
             },
@@ -1026,33 +1041,46 @@ impl IrqState {
         }
     }
 
-    /// Every block landed and CRC-good: the chunk goes to its slot (a stop
-    /// error after keeps it, I8), then CMD12 and the drain.
+    /// Every block of the read landed and CRC-good. A piece with more
+    /// after it: CMD12, the drain, then the next piece. The last: the
+    /// chunk goes to its slot (a stop error after keeps it, I8), then
+    /// CMD12 and the drain.
     fn finish(&mut self, mut h: Held, t0: u32, kind: Kind) {
         let done = match kind {
-            Kind::Fill { claim, at } => {
-                self.deliver(&mut h, claim, at);
-                Done::Filled
-            }
+            Kind::Fill(f) => match f.at.after(&f.piece) {
+                Some(piece) => return self.stop(h, Then::More(Fill { piece, ..f })),
+                None => {
+                    self.deliver(&mut h, f.claim, &f.at);
+                    Done::Filled
+                }
+            },
             #[cfg(feature = "bench")]
             Kind::Bench => Done::Bench,
         };
         self.stop(h, Then::Next { done, t0 });
     }
 
-    /// The chunk de-framed into its slot, the guard, then Ready.
-    fn deliver(&mut self, h: &mut Held, claim: Claim, at: ChunkRead) {
+    /// The chunk de-framed into its slot (bench builds check it against
+    /// its bed's table, and publish it either way), the guard, then Ready.
+    fn deliver(&mut self, h: &mut Held, claim: Claim, at: &ChunkRead<'_>) {
         let Some(out) = self.side.fill_buf(&claim) else {
             // Stale: the audio cancelled it, and the fill lands nowhere.
             let _ = self.side.fill_done(claim);
             return;
         };
-        let len = usize::try_from(at.len.get()).unwrap_or(usize::MAX);
+        let len = usize::try_from(at.packed().get()).unwrap_or(usize::MAX);
         let framed = h
             .staging()
-            .chunk(at.blocks)
+            .chunk(at.blocks())
             .zip(out.get_mut(..len))
-            .map(|(raw, out)| deframe(raw, at.skip, out));
+            .map(|(raw, out)| {
+                let n = deframe(raw, at.skip(), out);
+                #[cfg(feature = "bench")]
+                if n.is_ok() {
+                    bench::check(claim.voice(), claim.chunk(), out);
+                }
+                n
+            });
         if let Some(Ok(_)) = framed {
             self.side.write_guard(&claim);
             let _ = self.side.fill_done(claim);
@@ -1067,7 +1095,7 @@ impl IrqState {
     fn stop(&mut self, mut h: Held, then: Then) {
         match h.stop(&self.line) {
             Ok(answer) => {
-                if answer.is_err() && matches!(then, Then::Next { .. }) {
+                if answer.is_err() && !matches!(then, Then::Give(_)) {
                     STATS.stop_errors.fetch_add(1, Ordering::Relaxed);
                 }
                 self.drain(h, self.line.drain_bytes, then);
@@ -1127,6 +1155,10 @@ impl IrqState {
                 give(h, &self.line);
                 settle(owed);
             }
+            Then::More(f) => {
+                let (lba, blocks) = (f.piece.lba, f.piece.blocks);
+                self.begin(h, Kind::Fill(f), lba, blocks);
+            }
         }
     }
 
@@ -1143,6 +1175,8 @@ impl IrqState {
                 Done::Bench => MAIL.answer(Err(ReadFail::Fault)),
             },
             Then::Give(owed) => settle(owed),
+            // The whole chunk requeued, once: its one claim moves here.
+            Then::More(f) => self.side.requeue(f.claim),
         }
     }
 
@@ -1184,8 +1218,8 @@ impl IrqState {
         #[cfg(not(feature = "bench"))]
         let _ = why;
         match kind {
-            Kind::Fill { claim, .. } => {
-                self.side.requeue(claim);
+            Kind::Fill(f) => {
+                self.side.requeue(f.claim);
                 Owed::default()
             }
             #[cfg(feature = "bench")]
@@ -1212,15 +1246,20 @@ fn settle(owed: Owed) {
 #[cfg(feature = "bench")]
 use bench::MAIL;
 #[cfg(feature = "bench")]
-pub use bench::{BenchPort, ReadFail, bench_port};
+pub use bench::{BenchPort, ReadFail, beds, bench_port, fill_beds};
 
 /// The console's timed reads (I6): the thread posts one and polls for its
 /// answer; the IRQ runs it as a job of its own. The thread never takes the
 /// bus, so nothing waits on its own interrupt.
 #[cfg(feature = "bench")]
 mod bench {
+    use core::mem::MaybeUninit;
+    use core::ptr::{addr_of, addr_of_mut};
     use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
+    use chimera_core::stream::bench::{BENCH, Bed, BenchBeds};
+    use chimera_core::stream::layout::ChunkIdx;
+    use chimera_core::voice_alloc::VoiceIdx;
     use chimera_fat::sd_proto::ProtoError;
     use chimera_hal::card_bus::CardFault;
     use chimera_hal::store::StoreError;
@@ -1229,6 +1268,58 @@ mod bench {
     use super::{BUS, CARD_ADDR, pend, unstick};
     use crate::controls::now_ms;
     use crate::sd::SD_IDLE_MS;
+
+    /// The beds' cell, written once a boot: Empty → Writing (the UI, by
+    /// CAS) → Ready, after which nothing writes it, so the IRQ and the
+    /// audio read it freely. A new `BEDS.CHK` needs a reboot.
+    const EMPTY: u8 = 0;
+    const WRITING: u8 = 1;
+    const READY: u8 = 2;
+    static BEDS_STATE: AtomicU8 = AtomicU8::new(EMPTY);
+    // 10 KiB, NOLOAD in D2 beside the UI: read only once Ready, after
+    // `fill_beds` built it in place.
+    #[unsafe(link_section = ".ram_d2")]
+    static mut BEDS: MaybeUninit<BenchBeds> = MaybeUninit::uninit();
+
+    /// The beds, once `fill_beds` has set them.
+    pub fn beds() -> Option<&'static BenchBeds> {
+        // SAFETY: Ready only after `fill_beds` wrote the whole value (its
+        // `Release`, this `Acquire`), and nothing writes it again.
+        (BEDS_STATE.load(Ordering::Acquire) == READY)
+            .then(|| unsafe { (*addr_of!(BEDS)).assume_init_ref() })
+    }
+
+    /// The UI's, once a boot: the beds built in place, then `fill` sets
+    /// them. False if they're set already, or `fill` refuses (the cell
+    /// is left Empty for another try).
+    pub fn fill_beds(fill: impl FnOnce(&mut BenchBeds) -> bool) -> bool {
+        if BEDS_STATE
+            .compare_exchange(EMPTY, WRITING, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return false;
+        }
+        // SAFETY: the CAS lets one caller into Writing, and no reader
+        // forms a reference before Ready, so this is the only one.
+        let beds = BenchBeds::init_in_place(unsafe { &mut *addr_of_mut!(BEDS) });
+        let ok = fill(beds);
+        BEDS_STATE.store(if ok { READY } else { EMPTY }, Ordering::Release);
+        ok
+    }
+
+    /// Stream `v`'s bed.
+    pub(super) fn bed(v: VoiceIdx) -> Option<&'static Bed> {
+        beds()?.beds[v.index()].as_ref()
+    }
+
+    /// A fill's de-framed chunk against its bed's table (I7).
+    pub(super) fn check(v: VoiceIdx, c: ChunkIdx, bytes: &[u8]) {
+        if let Some(b) = bed(v)
+            && !b.check().verify(c, bytes)
+        {
+            BENCH.check_failed(v);
+        }
+    }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum ReadFail {
