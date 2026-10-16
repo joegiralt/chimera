@@ -861,7 +861,6 @@ enum Work {
     /// A read in the bench's mailbox, claimed once the bus is held.
     #[cfg(feature = "bench")]
     Bench,
-    Yield,
     Nothing,
 }
 
@@ -910,10 +909,6 @@ impl IrqState {
     /// Nothing in flight: start the earliest want, else the bench's read.
     fn look(&mut self) {
         let work = self.work();
-        if let Work::Yield = work {
-            // The waiting UI's give pends this handler again.
-            return BUS.want();
-        }
         if let Work::Nothing = work {
             return;
         }
@@ -935,9 +930,8 @@ impl IrqState {
             return Work::Nothing;
         }
         let now = AudioBlocks::new(BLOCKS.load(Ordering::Relaxed));
-        match pick(servable(), now, BUS.ui_wait()) {
+        match pick(servable(), now) {
             Pick::Fill(w) => Work::Fill(w),
-            Pick::YieldToUi => Work::Yield,
             Pick::Idle => {
                 #[cfg(feature = "bench")]
                 if MAIL.queued() {
@@ -976,7 +970,7 @@ impl IrqState {
                 // The thread withdrew it since the pick.
                 None => return self.release(h),
             },
-            Work::Yield | Work::Nothing => return self.release(h),
+            Work::Nothing => return self.release(h),
         };
         self.bursts = 0;
         self.begin(h, kind, lba, blocks);
@@ -1230,10 +1224,11 @@ impl IrqState {
         }
     }
 
-    /// The bus kept for the next pick, unless a waiting UI isn't to wait.
+    /// The bus kept for the next pick while any stream wants a fill (a
+    /// waiting UI gets it only then: `edf::pick`).
     fn next(&mut self, h: Held) {
         match self.work() {
-            Work::Yield | Work::Nothing => self.release(h),
+            Work::Nothing => self.release(h),
             work => self.start(h.keep(), work),
         }
     }

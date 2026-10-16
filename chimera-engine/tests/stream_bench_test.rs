@@ -12,7 +12,7 @@ use chimera_engine::stream::bench::{
     ArmError, Asked, Bed, BedCheck, BedChecks, BedError, BedTable, BenchBeds, BenchStreams, Listen,
     MAX_BED_CHUNKS,
 };
-use chimera_engine::stream::edf::wants;
+use chimera_engine::stream::edf::{Pick, Want, pick, wants};
 use chimera_engine::stream::layout::{CHUNK_BYTES, CHUNK_FRAMES, ChunkIdx, StreamFile, deframe};
 use chimera_engine::stream::ring::{AudioSide, CardSide, Rings, ThirdSlots};
 use chimera_engine::stream::slot::SlotState;
@@ -134,6 +134,9 @@ struct FakeCard {
     skip: Option<(usize, u32)>,
     /// Serve nothing while `now` is in it: a card the audio holds off.
     stall: core::ops::Range<u32>,
+    /// A UI waits on the bus all the while: wants are served as `pick`
+    /// hands them out, and the UI has the bus whenever it doesn't.
+    ui_waiting: bool,
     claimed: Vec<(usize, u32)>,
 }
 
@@ -142,18 +145,30 @@ impl FakeCard {
         if self.stall.contains(&now.get()) {
             return;
         }
+        if self.ui_waiting {
+            while let Pick::Fill(w) = pick(wants(self.rings), now) {
+                self.fill(w, beds, bench, now);
+            }
+            return;
+        }
         let ws: Vec<_> = wants(self.rings).collect();
         for w in ws {
+            self.fill(w, beds, bench, now);
+        }
+    }
+
+    fn fill(&mut self, w: Want, beds: &BenchBeds, bench: &BenchStreams, now: AudioBlocks) {
+        {
             if self.late > 0 && now.until(w.deadline) > -self.late {
-                continue;
+                return;
             }
             let Some(claim) = self.side.claim(w.voice, w.slot) else {
-                continue;
+                return;
             };
             let (v, c) = (w.voice.index(), claim.chunk());
             if self.skip == Some((v, c.get())) {
                 self.side.requeue(claim);
-                continue;
+                return;
             }
             self.claimed.push((v, c.get()));
             let bed = beds.beds[v].as_ref().unwrap();
@@ -207,6 +222,7 @@ impl Rig {
                 wrong: None,
                 skip: None,
                 stall: 0..0,
+                ui_waiting: false,
                 claimed: Vec::new(),
             },
             now: AudioBlocks::new(1_000),
@@ -309,6 +325,24 @@ fn wants_carry_deadlines_in_blocks() {
             if chunk.get() == 2 && deadline == now.after(2 * (2_688 * 1_000 / 38_400))
     ));
     assert_eq!(2_688 * 1_000 / 38_400, 70);
+}
+
+#[test]
+fn a_waiting_ui_never_holds_back_the_spare_slot() {
+    // Owner: streams always beat the UI. A UI on the bus the whole run
+    // still leaves every want served, so the stall is covered.
+    let per = blocks_per_chunk(38_400);
+    for from in (0..per).step_by(5) {
+        let mut r = Rig::new(beds8());
+        r.card.ui_waiting = true;
+        r.arm(24_000, 1_200, 8, Listen::Off);
+        r.run(3 * per);
+        let at = r.now.get() + from;
+        r.card.stall = at..at + per * 3 / 2;
+        r.run(4 * per);
+        let rep = r.bench.report();
+        assert_eq!((rep.empties, rep.order_errors), (0, 0), "stall from {from}");
+    }
 }
 
 #[test]
