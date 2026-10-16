@@ -9,6 +9,7 @@ pub mod dir;
 pub mod fat;
 pub mod fs;
 pub mod fsinfo;
+pub mod h7_spi;
 pub mod mark;
 pub mod sd;
 pub mod sd_addr;
