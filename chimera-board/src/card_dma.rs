@@ -45,6 +45,8 @@ use crate::shared::{BLOCKS, rings};
 
 /// The bound on any register poll.
 pub const REG_WAIT_US: Micros = Micros::new(50);
+/// The polled wait for a card not busy before CMD18: about 20 µs at SCK.
+const READY_BYTES: u32 = 64;
 
 const _: () = assert!(WATCHDOG_MS.get() >= 2 * TOKEN_TIMEOUT_MS.get());
 
@@ -188,7 +190,7 @@ enum Why {
     Reg(RegFault),
     /// A poll passed its bound.
     Bound,
-    /// CMD12's busy never ended.
+    /// The card still busy before CMD18 (`READY_BYTES`).
     Busy,
     /// The watchdog asked.
     Asked,
@@ -206,8 +208,8 @@ struct Line {
     clock: BytesPerSec,
     /// `REG_WAIT_US` in cycles.
     reg_wait: u32,
-    /// `TOKEN_TIMEOUT_MS` in cycles.
-    token_wait: u32,
+    /// `TOKEN_TIMEOUT_MS` of bytes at SCK: the busy drain's bound.
+    drain_bytes: u32,
     cycles_per_us: u32,
 }
 
@@ -316,7 +318,8 @@ impl Held {
     /// mode, the audio never takes and this handler doesn't nest.
     fn keep(self) -> Held {
         let _ = BUS.give();
-        let _ = BUS.take_or_want(now_ms());
+        let took = BUS.take_or_want(now_ms());
+        debug_assert_eq!(took, Took::Taken);
         self
     }
 
@@ -472,22 +475,18 @@ impl Held {
         Err(Why::Proto(ProtoError::Timeout))
     }
 
-    /// Until the card leaves busy (DO reads 0xFF): `TOKEN_TIMEOUT_MS` on
-    /// the cycle counter, and that many bytes at SCK at most.
+    /// DO reads 0xFF within `READY_BYTES`: a card still busy is left to
+    /// a later pick, never waited out here.
     fn ready(&self, line: &Line) -> Result<(), Why> {
-        let t0 = DWT::cycle_count();
-        for _ in 0..line.clock.bytes_in(TOKEN_TIMEOUT_MS).get() {
+        for _ in 0..READY_BYTES {
             if self.xfer(0xFF, line)? == 0xFF {
                 return Ok(());
-            }
-            if DWT::cycle_count().wrapping_sub(t0) > line.token_wait {
-                break;
             }
         }
         Err(Why::Busy)
     }
 
-    /// CMD12, its answer, the busy wait, CS high and one 0xFF. The inner
+    /// CMD12 and its answer; the busy after it drains by DMA. The inner
     /// `Err` is a stop error: the blocks before it stand (I8).
     fn stop(&mut self, line: &Line) -> Result<Result<(), ProtoError>, Why> {
         self.polled(line)?;
@@ -498,11 +497,15 @@ impl Held {
         for b in &mut r {
             *b = self.xfer(0xFF, line)?;
         }
-        let answer = stop_response(&r);
-        let busy = self.ready(line);
+        Ok(stop_response(&r))
+    }
+
+    /// CS high, then one 0xFF so the card lets DO go.
+    fn end(&mut self, line: &Line) {
         self.deselect();
-        self.xfer(0xFF, line)?;
-        busy.map(|()| answer)
+        if self.polled(line).is_ok() {
+            let _ = self.xfer(0xFF, line);
+        }
     }
 
     /// The staging, read while both streams are off.
@@ -545,11 +548,13 @@ impl Flying {
     }
 }
 
-/// GIVE, then the bus; a give that finds it wanted pends.
+/// GIVE, then the bus; a give that finds it wanted pends. Every op runs
+/// past a failed suspend, so CFG1 (MBR, the DMA enables) is always the
+/// HAL's again.
 fn give(mut h: Held, line: &Line) {
-    // A suspend that times out leaves the HAL a peripheral its next call
-    // fails on, and the UI re-inits it: nothing more to do here.
-    let _ = h.run(&GIVE, line, 0);
+    for &o in &GIVE {
+        let _ = h.op(o, line, 0);
+    }
     if BUS.give() == Wake::Pend {
         pend();
     }
@@ -604,6 +609,11 @@ impl Staging<'_> {
     }
 }
 
+const SCAN_LEN: BurstLen = match BurstLen::new(SCAN_BYTES) {
+    Some(n) => n,
+    None => panic!(),
+};
+
 /// A burst's target in the staging.
 struct Dest {
     at: u32,
@@ -611,10 +621,18 @@ struct Dest {
 }
 
 impl Dest {
+    /// A token scan's, or a busy drain's.
+    fn scan() -> Dest {
+        Dest {
+            at: staged(SCAN_AT) as u32,
+            n: SCAN_LEN,
+        }
+    }
+
     /// Where `walk`'s next burst lands; `None` at its stop.
     fn of(walk: &Walk, place: Placement) -> Option<Dest> {
         let (at, n) = match walk {
-            Walk::Scan(_) => (SCAN_AT, SCAN_BYTES),
+            Walk::Scan(_) => return Some(Dest::scan()),
             Walk::Rest(r) => {
                 let off = usize::try_from(place.offset(r.block()).get()).ok()?;
                 let have = usize::try_from(r.have().get()).ok()?;
@@ -650,13 +668,48 @@ impl Kind {
     }
 }
 
-/// A CMD18 under way.
+/// The bench's answer still owed when the bus is given; nothing outside
+/// bench builds.
+#[derive(Default)]
+struct Owed(#[cfg(feature = "bench")] Option<ReadFail>);
+
+/// A read's end, after its busy drained.
+enum Then {
+    /// It ended well: the next pick.
+    Next {
+        done: Done,
+        /// Cycles at CMD18.
+        t0: u32,
+    },
+    /// An abort: the bus goes back, then the answer.
+    Give(Owed),
+}
+
+/// What a good read leaves to answer.
+enum Done {
+    /// The chunk is already in its slot.
+    Filled,
+    #[cfg(feature = "bench")]
+    Bench,
+}
+
+enum Phase {
+    /// A CMD18's bursts.
+    Read {
+        walk: Walk,
+        /// Cycles at CMD18.
+        t0: u32,
+        kind: Kind,
+    },
+    /// After CMD12: 0xFF bursts into `scan` until one ends in 0xFF, at most
+    /// `left` bytes more.
+    Drain { left: u32, then: Then },
+}
+
+/// A burst under way.
 struct Transfer {
     bus: Flying,
-    walk: Walk,
-    /// Cycles at CMD18.
-    t0: u32,
-    kind: Kind,
+    phase: Phase,
 }
 
 enum Job {
@@ -716,7 +769,8 @@ pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker_hz: u32, cpu_hz: u
     let (rcc, mux) = unsafe { (&*pac::RCC::ptr(), &*pac::DMAMUX1::ptr()) };
     rcc.ahb1enr.modify(|_, w| w.dma2en().set_bit());
     let _ = rcc.ahb1enr.read();
-    // SAFETY: SPI2's RX and TX requests.
+    // SAFETY: 39 and 40 are SPI2's RX and TX requests in RM0433's DMAMUX1
+    // table; channels 8 and 9 are DMA2's streams 0 and 1, this file's alone.
     unsafe {
         mux.ccr[RX_MUX].modify(|_, w| w.dmareq_id().bits(SPI2_RX_DMA));
         mux.ccr[TX_MUX].modify(|_, w| w.dmareq_id().bits(SPI2_TX_DMA));
@@ -756,7 +810,9 @@ pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker_hz: u32, cpu_hz: u
         mbr,
         clock: BytesPerSec::spi(mbr.sck_hz(spi_ker_hz)),
         reg_wait: REG_WAIT_US.get() * cycles_per_us,
-        token_wait: TOKEN_TIMEOUT_MS.get().saturating_mul(cycles_per_us * 1_000),
+        drain_bytes: BytesPerSec::spi(mbr.sck_hz(spi_ker_hz))
+            .bytes_in(TOKEN_TIMEOUT_MS)
+            .get(),
         cycles_per_us,
     };
     let st = IrqState {
@@ -803,19 +859,28 @@ impl IrqState {
             return;
         }
         // Not in flight, a TE or an ask has nothing to stop: look instead.
-        let Job::Read(t) = replace(&mut self.job, Job::Idle) else {
+        let Job::Read(Transfer { bus, phase }) = replace(&mut self.job, Job::Idle) else {
             return self.look();
         };
-        if asked {
-            let h = t.bus.ground(&self.line);
-            return self.abort(h, t.kind, Why::Asked);
-        }
-        match g {
-            Gate::Advance => self.advance(t),
-            _ => {
-                let h = t.bus.ground(&self.line);
-                self.abort(h, t.kind, Why::Dma);
+        let fail = if asked {
+            Some(Why::Asked)
+        } else if g == Gate::Advance {
+            None
+        } else {
+            Some(Why::Dma)
+        };
+        match (phase, fail) {
+            (Phase::Read { kind, .. }, Some(why)) => {
+                let h = bus.ground(&self.line);
+                self.abort(h, kind, why);
             }
+            // The card was already being stopped: no second CMD12.
+            (Phase::Drain { then, .. }, Some(_)) => {
+                let h = bus.ground(&self.line);
+                self.fault(h, then);
+            }
+            (Phase::Read { walk, t0, kind }, None) => self.advance(bus, walk, t0, kind),
+            (Phase::Drain { left, then }, None) => self.drained(bus, left, then),
         }
     }
 
@@ -882,7 +947,8 @@ impl IrqState {
         self.begin(h, kind, lba, blocks);
     }
 
-    /// CS low, CMD18 and its R1, then the first token scan.
+    /// CS low, CMD18 and its R1, then the first token scan. A card still
+    /// busy is left for a later pick.
     fn begin(&mut self, mut h: Held, kind: Kind, lba: Lba, blocks: BlockCount) {
         let Some(mode) = CARD_ADDR.get() else {
             return self.drop_job(h, kind, Why::Unmounted);
@@ -894,11 +960,11 @@ impl IrqState {
             return self.drop_job(h, kind, why);
         }
         h.select();
+        if let Err(why) = h.ready(&self.line) {
+            return self.drop_job(h, kind, why);
+        }
         let t0 = DWT::cycle_count();
-        let sent = h
-            .ready(&self.line)
-            .and_then(|()| h.command(CMD18, arg, &self.line));
-        match sent {
+        match h.command(CMD18, arg, &self.line) {
             Ok(()) => self.fly(h, Walk::new(blocks), t0, kind),
             Err(why) => self.abort(h, kind, why),
         }
@@ -913,9 +979,7 @@ impl IrqState {
             Ok(bus) => {
                 self.job = Job::Read(Transfer {
                     bus,
-                    walk,
-                    t0,
-                    kind,
+                    phase: Phase::Read { walk, t0, kind },
                 })
             }
             Err((f, why)) => {
@@ -926,13 +990,7 @@ impl IrqState {
     }
 
     /// A burst landed: scan it for the token, or check the block it ended.
-    fn advance(&mut self, t: Transfer) {
-        let Transfer {
-            bus,
-            walk,
-            t0,
-            kind,
-        } = t;
+    fn advance(&mut self, bus: Flying, walk: Walk, t0: u32, kind: Kind) {
         let mut h = match bus.land(&self.line) {
             Ok(h) => h,
             Err((f, why)) => {
@@ -968,24 +1026,18 @@ impl IrqState {
         }
     }
 
-    /// Every block landed: the stop, then the job's end, then the next.
+    /// Every block landed and CRC-good: the chunk goes to its slot (a stop
+    /// error after keeps it, I8), then CMD12 and the drain.
     fn finish(&mut self, mut h: Held, t0: u32, kind: Kind) {
-        let answer = match h.stop(&self.line) {
-            Ok(a) => a,
-            Err(why) => return self.abort(h, kind, why),
-        };
-        let took = self.line.us(DWT::cycle_count().wrapping_sub(t0));
-        if answer.is_err() {
-            STATS.stop_errors.fetch_add(1, Ordering::Relaxed);
-        }
-        match kind {
-            Kind::Fill { claim, at } => self.deliver(&mut h, claim, at),
+        let done = match kind {
+            Kind::Fill { claim, at } => {
+                self.deliver(&mut h, claim, at);
+                Done::Filled
+            }
             #[cfg(feature = "bench")]
-            Kind::Bench => MAIL.answer(Ok(took)),
-        }
-        #[cfg(not(feature = "bench"))]
-        let _ = took;
-        self.next(h);
+            Kind::Bench => Done::Bench,
+        };
+        self.stop(h, Then::Next { done, t0 });
     }
 
     /// The chunk de-framed into its slot, the guard, then Ready.
@@ -1010,6 +1062,90 @@ impl IrqState {
         }
     }
 
+    /// CMD12 and its answer, then the busy drained by DMA. A stop that
+    /// can't be sent faults the card: no second CMD12.
+    fn stop(&mut self, mut h: Held, then: Then) {
+        match h.stop(&self.line) {
+            Ok(answer) => {
+                if answer.is_err() && matches!(then, Then::Next { .. }) {
+                    STATS.stop_errors.fetch_add(1, Ordering::Relaxed);
+                }
+                self.drain(h, self.line.drain_bytes, then);
+            }
+            Err(_) => self.fault(h, then),
+        }
+    }
+
+    /// One 0xFF burst into `scan`, `left` bytes of drain still allowed.
+    fn drain(&mut self, h: Held, left: u32, then: Then) {
+        match h.fly(Dest::scan(), &self.line) {
+            Ok(bus) => {
+                self.job = Job::Read(Transfer {
+                    bus,
+                    phase: Phase::Drain { left, then },
+                })
+            }
+            Err((f, _)) => {
+                let h = f.ground(&self.line);
+                self.fault(h, then);
+            }
+        }
+    }
+
+    /// A drain burst landed: the card is out of busy if it ended in 0xFF.
+    fn drained(&mut self, bus: Flying, left: u32, then: Then) {
+        let mut h = match bus.land(&self.line) {
+            Ok(h) => h,
+            Err((f, _)) => {
+                let h = f.ground(&self.line);
+                return self.fault(h, then);
+            }
+        };
+        let idle = h.staging().scan()[SCAN_BYTES - 1] == 0xFF;
+        let left = left.saturating_sub(u32::try_from(SCAN_BYTES).unwrap_or(u32::MAX));
+        if !idle {
+            return if left == 0 {
+                self.fault(h, then)
+            } else {
+                self.drain(h, left, then)
+            };
+        }
+        h.end(&self.line);
+        match then {
+            Then::Next { done, t0 } => {
+                let took = self.line.us(DWT::cycle_count().wrapping_sub(t0));
+                match done {
+                    Done::Filled => {}
+                    #[cfg(feature = "bench")]
+                    Done::Bench => MAIL.answer(Ok(took)),
+                }
+                #[cfg(not(feature = "bench"))]
+                let _ = took;
+                self.next(h);
+            }
+            Then::Give(owed) => {
+                give(h, &self.line);
+                settle(owed);
+            }
+        }
+    }
+
+    /// The card never left busy, or couldn't be stopped: CS high, the
+    /// fault set, the bus given. Nothing starts until a mount clears it.
+    fn fault(&mut self, mut h: Held, then: Then) {
+        h.end(&self.line);
+        BUS.set_fault(CardFault::Read);
+        give(h, &self.line);
+        match then {
+            Then::Next { done, .. } => match done {
+                Done::Filled => {}
+                #[cfg(feature = "bench")]
+                Done::Bench => MAIL.answer(Err(ReadFail::Fault)),
+            },
+            Then::Give(owed) => settle(owed),
+        }
+    }
+
     /// The bus kept for the next pick, unless a waiting UI isn't to wait.
     fn next(&mut self, h: Held) {
         match self.work() {
@@ -1026,41 +1162,51 @@ impl IrqState {
         }
     }
 
-    /// No command sent: the job goes back, the bus too.
+    /// No command sent: CS high, the bus back, then the job.
     fn drop_job(&mut self, h: Held, kind: Kind, why: Why) {
+        h.deselect();
         give(h, &self.line);
-        self.answer_failed(kind, why);
+        settle(self.fail_job(kind, why));
     }
 
-    /// The abort (I2): the card stopped (CMD12, its answer, busy, CS high,
-    /// one 0xFF), the bus given back, the job's claim requeued. A busy that
-    /// never ends faults the card: nothing starts until a mount clears it.
-    /// A requeued want waits for the next wake (a new want, or `watch`),
-    /// so a card that keeps failing can't hold this handler in a loop.
-    fn abort(&mut self, mut h: Held, kind: Kind, why: Why) {
+    /// The abort (I2): the job's claim requeued, then the card stopped
+    /// (CMD12, its answer, the busy drained) and the bus given back. A
+    /// requeued want waits for the next wake (a new want, or `watch`), so
+    /// a card that keeps failing can't hold this handler in a loop.
+    fn abort(&mut self, h: Held, kind: Kind, why: Why) {
         STATS.aborts.fetch_add(1, Ordering::Relaxed);
-        if h.stop(&self.line).is_err() {
-            h.deselect();
-            BUS.set_fault(CardFault::Read);
-        }
-        give(h, &self.line);
-        self.answer_failed(kind, why);
+        let then = Then::Give(self.fail_job(kind, why));
+        self.stop(h, then);
     }
 
-    fn answer_failed(&mut self, kind: Kind, why: Why) {
+    /// A fill's claim requeued; a bench read's answer, owed.
+    fn fail_job(&mut self, kind: Kind, why: Why) -> Owed {
+        #[cfg(not(feature = "bench"))]
+        let _ = why;
         match kind {
-            Kind::Fill { claim, .. } => self.side.requeue(claim),
+            Kind::Fill { claim, .. } => {
+                self.side.requeue(claim);
+                Owed::default()
+            }
             #[cfg(feature = "bench")]
-            Kind::Bench => MAIL.answer(Err(match why {
+            Kind::Bench => Owed(Some(match why {
                 Why::Proto(e) => ReadFail::Proto(e),
                 Why::Unmounted => ReadFail::Unmounted,
                 Why::Range => ReadFail::Range,
                 _ => ReadFail::Aborted,
             })),
         }
-        #[cfg(not(feature = "bench"))]
-        let _ = why;
     }
+}
+
+/// A bench answer owed, given once the bus is.
+fn settle(owed: Owed) {
+    #[cfg(feature = "bench")]
+    if let Owed(Some(f)) = owed {
+        MAIL.answer(Err(f));
+    }
+    #[cfg(not(feature = "bench"))]
+    let Owed() = owed;
 }
 
 #[cfg(feature = "bench")]
