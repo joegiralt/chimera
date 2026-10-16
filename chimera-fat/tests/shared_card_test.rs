@@ -100,12 +100,14 @@ impl Medium for Fake {
         note("start_op", self.bus);
     }
 
-    fn reinit(&self) {
+    fn reinit(&self) -> Result<(), StoreError> {
         note("reinit", self.bus);
+        Ok(())
     }
 
-    fn mounted(&self) {
+    fn mounted(&self) -> Result<(), StoreError> {
         note("mounted", self.bus);
+        Ok(())
     }
 
     fn addr_mode(&self) -> Option<AddrMode> {
@@ -210,18 +212,35 @@ fn a_mount_the_stream_interrupts_is_busy_not_reinit() {
 }
 
 #[test]
+fn a_stream_between_identify_and_mounted_makes_the_mount_busy() {
+    let (c, bus, addr) = card(false);
+    let mut store = FatStore::new(c);
+    // start_op, the MBR's read and the boot sector's read take two ms
+    // each: the stream takes the bus as `mounted` asks for it.
+    TAKE_AT.set(Some((6, bus)));
+    assert_eq!(store.mount(), Err(StoreError::Busy));
+    assert_eq!(addr.get(), None);
+    let calls: Vec<_> = log().into_iter().map(|(name, _)| name).collect();
+    assert_eq!(calls, ["start_op", "read", "read"]);
+    bus.give();
+    assert!(store.mount().is_ok());
+    assert_eq!(addr.get(), Some(AddrMode::Block));
+}
+
+#[test]
 fn every_medium_io_call_takes_the_bus() {
     let (c, bus, _) = card(false);
     assert!(bus.try_take(Taker::Stream, Ms(0)));
+    // Before `start_op`: each waits out the bus itself.
+    assert_eq!(c.reinit(), Err(StoreError::Busy));
+    assert_eq!(c.mounted(), Err(StoreError::Busy));
     c.start_op();
-    c.reinit();
-    c.mounted();
     assert!(c.with_device(|_| ()).is_err());
     assert_eq!(log(), []);
     bus.give();
     c.start_op();
-    c.reinit();
-    c.mounted();
+    assert_eq!(c.reinit(), Ok(()));
+    assert_eq!(c.mounted(), Ok(()));
     assert_eq!(c.with_device(|_| bus.owner()).ok(), Some(Owner::Ui));
     assert_eq!(
         log(),
@@ -238,10 +257,10 @@ fn every_medium_io_call_takes_the_bus() {
 fn mounted_publishes_the_card_addr_and_reinit_clears_it() {
     let (c, bus, addr) = card(false);
     bus.set_fault(CardFault::Read);
-    c.mounted();
+    assert_eq!(c.mounted(), Ok(()));
     assert_eq!(addr.get(), Some(AddrMode::Block));
     assert_eq!(bus.fault(), CardFault::Clear);
-    c.reinit();
+    assert_eq!(c.reinit(), Ok(()));
     assert_eq!(addr.get(), None);
 }
 

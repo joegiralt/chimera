@@ -24,9 +24,14 @@ pub trait Medium: BlockDevice {
     /// Arm the medium's deadline for one `Store` operation.
     fn start_op(&self) {}
     /// After an error: wake, slow clock, re-acquire on the next access.
-    fn reinit(&self) {}
-    /// The volume opened: fast clock.
-    fn mounted(&self) {}
+    /// `Busy`: the bus was the streams', the card untouched.
+    fn reinit(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
+    /// The volume opened: fast clock. `Busy` as `reinit`.
+    fn mounted(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
     /// Each operation armed from now on ends after `ms` in all; `None`:
     /// the medium's own cap.
     fn cap(&self, _ms: Option<u32>) {}
@@ -84,16 +89,18 @@ impl<S: SpiDevice<u8> + SdBus, D: DelayNs> Medium for SdCard<S, D> {
         self.spi(|s| s.start_op());
     }
 
-    fn reinit(&self) {
+    fn reinit(&self) -> Result<(), StoreError> {
         self.spi(|s| {
             s.set_phase(BusPhase::Acquire);
             s.wake();
         });
         self.mark_card_uninit();
+        Ok(())
     }
 
-    fn mounted(&self) {
+    fn mounted(&self) -> Result<(), StoreError> {
         self.spi(|s| s.set_phase(BusPhase::Data));
+        Ok(())
     }
 
     fn cap(&self, ms: Option<u32>) {
@@ -376,13 +383,13 @@ impl<D: Medium> FatStore<D> {
     }
 
     /// A device error: classified by the medium, which re-inits unless
-    /// the bus was busy and the card was never asked.
+    /// the bus was busy and the card was never asked. A re-init the bus
+    /// was too busy for is `Busy`: the card is as it was.
     fn fault(&self, e: &D::Error) -> StoreError {
-        let err = self.dev.classify(e);
-        if err != StoreError::Busy {
-            self.dev.reinit();
+        match self.dev.classify(e) {
+            StoreError::Busy => StoreError::Busy,
+            err => self.dev.reinit().err().unwrap_or(err),
         }
-        err
     }
 
     /// Reads absolute block `lba` into `buf`.
@@ -537,18 +544,21 @@ impl<D: Medium> Store for FatStore<D> {
                 return Err(StoreError::Busy);
             }
             // A card swapped while idle is still in SD mode: re-init, retry once.
-            self.dev.reinit();
+            self.dev.reinit()?;
             self.dev.start_op();
             self.read(0).map_err(|e| self.fault(&e))?;
         }
         // No volume to use (unsupported, exFAT): back to acquiring, so the
         // medium's phase and the driver agree the card needs re-init.
-        let (_, _, id) = self.identify().inspect_err(|&e| {
-            if e != StoreError::Busy {
-                self.dev.reinit();
+        let (_, _, id) = match self.identify() {
+            Ok(v) => v,
+            Err(StoreError::Busy) => return Err(StoreError::Busy),
+            Err(e) => {
+                self.dev.reinit()?;
+                return Err(e);
             }
-        })?;
-        self.dev.mounted();
+        };
+        self.dev.mounted()?;
         Ok(id)
     }
 

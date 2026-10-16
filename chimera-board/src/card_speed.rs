@@ -333,15 +333,15 @@ impl CardBench {
         let timed = store.device().with_device(|dev| {
             let (t, ms) = (DWT::cycle_count(), now_ms());
             dev.start_op();
-            dev.read(blocks, BlockIdx(lba.get())).map_err(|e| {
-                let why = dev.classify(&e);
-                dev.reinit();
-                CardFail::Store(why)
-            })?;
-            let cycles = DWT::cycle_count().wrapping_sub(t);
-            span_us(cycles, cpu_hz, now_ms().since(ms)).ok_or(CardFail::ClockWrap)
+            dev.read(blocks, BlockIdx(lba.get()))
+                .map_err(|e| dev.classify(&e))?;
+            Ok((DWT::cycle_count().wrapping_sub(t), now_ms().since(ms)))
         });
-        timed.map_err(StoreError::from)?
+        // The store's re-init, once the hold is given: it clears CARD_ADDR.
+        let (cycles, ms) = timed
+            .map_err(StoreError::from)?
+            .map_err(|why| CardFail::Store(store.device().reinit().err().unwrap_or(why)))?;
+        span_us(cycles, cpu_hz, ms).ok_or(CardFail::ClockWrap)
     }
 }
 

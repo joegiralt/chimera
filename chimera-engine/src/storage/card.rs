@@ -193,9 +193,10 @@ fn mounted(card: Card, vol: VolumeId) -> (Card, CardEvent) {
     (Card::Ready(vol), event)
 }
 
-/// A failed mount fails closed: anything but NO CARD or BUSY is a card fault, and
-/// one that names no card fault (a file error from `mount`) is `Io`. The
-/// type-driven fix is a `MountError`: private issue #196
+/// A failed mount fails closed: anything but NO CARD or BUSY is a card
+/// fault, and one that names no card fault (a file error from `mount`) is
+/// `Io`. The type-driven fix is a `MountError`:
+/// private issue #196
 fn mount_failed(card: Card, e: StoreError) -> Card {
     match e {
         StoreError::NoCard => return Card::Absent,

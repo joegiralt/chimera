@@ -201,13 +201,13 @@ fn classify_table() {
 fn reinit_wakes_at_init_clock() {
     let log = Rc::new(Log::default());
     let sd = card(&log, u32::MAX);
-    sd.reinit();
+    assert_eq!(sd.reinit(), Ok(()));
     assert_eq!(
         *log.calls.borrow(),
         [Call::SetPhase(BusPhase::Acquire), Call::Wake]
     );
     log.calls.borrow_mut().clear();
-    sd.mounted();
+    assert_eq!(sd.mounted(), Ok(()));
     assert_eq!(*log.calls.borrow(), [Call::SetPhase(BusPhase::Data)]);
 }
 

@@ -100,7 +100,9 @@ impl<D: Medium> SharedCard<D> {
         }
     }
 
-    /// `f` on the device, the bus held.
+    /// `f` on the device, the bus held. Not re-entrant: a `SharedCard`
+    /// call inside `f` waits out `take` for the bus `f` holds, then
+    /// answers `Busy`.
     pub fn with_device<R>(&self, f: impl FnOnce(&D) -> R) -> Result<R, Busy> {
         let h = self.hold()?;
         Ok(f(h.dev))
@@ -172,23 +174,20 @@ impl<D: Medium> Medium for SharedCard<D> {
         }
     }
 
-    /// The address mode goes with the card. A busy bus skips the re-init:
-    /// the next operation's error asks it again.
-    fn reinit(&self) {
+    /// The address mode goes with the card, busy or not.
+    fn reinit(&self) -> Result<(), StoreError> {
         self.addr.clear();
-        if let Ok(h) = self.op_hold() {
-            h.dev.reinit();
-        }
+        self.op_hold()?.dev.reinit()
     }
 
-    fn mounted(&self) {
-        if let Ok(h) = self.op_hold() {
-            h.dev.mounted();
-            if let Some(m) = h.dev.addr_mode() {
-                self.addr.set(m);
-            }
-            self.bus.set_fault(CardFault::Clear);
+    fn mounted(&self) -> Result<(), StoreError> {
+        let h = self.op_hold()?;
+        h.dev.mounted()?;
+        if let Some(m) = h.dev.addr_mode() {
+            self.addr.set(m);
         }
+        self.bus.set_fault(CardFault::Clear);
+        Ok(())
     }
 
     fn cap(&self, ms: Option<u32>) {
@@ -206,7 +205,8 @@ impl<D: Medium> Medium for SharedCard<D> {
         self.dev.elapsed_ms()
     }
 
+    /// The one `mounted` published: asking the driver may re-acquire, I/O.
     fn addr_mode(&self) -> Option<AddrMode> {
-        self.dev.addr_mode()
+        self.addr.get()
     }
 }
