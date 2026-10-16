@@ -13,6 +13,7 @@ pub mod mark;
 pub mod sd;
 pub mod sd_addr;
 pub mod sd_proto;
+pub mod shared_card;
 mod store;
 pub mod sweep;
 pub mod volume;

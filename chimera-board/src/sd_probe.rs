@@ -119,22 +119,25 @@ pub fn run(display: &mut impl ChimeraDisplay, clk: Clocks, store: &mut SdStore) 
     };
     c.clear();
 
-    let sd = store.device();
-    let (ker, sck, counts) = sd.spi(|s| {
-        let (ker, sck) = s.sck_hz();
-        (ker, sck, s.counts_cycles())
+    let raw = store.device().with_device(|sd| {
+        let (ker, sck, counts) = sd.spi(|s| {
+            let (ker, sck) = s.sck_hz();
+            (ker, sck, s.counts_cycles())
+        });
+        let ok = if sck <= SD_INIT_HZ { "OK" } else { "HIGH" };
+        c.line(format_args!("KER {}K SCK {sck} {ok}", ker / 1_000));
+        let dwt = if counts { "RUNS" } else { "STOPPED" };
+        c.line(format_args!(
+            "DWT {dwt} REV {} {} MHZ",
+            clk.rev.label(),
+            cpu_hz / 1_000_000
+        ));
+        acquire(&mut c, sd) && volume(&mut c, sd)
     });
-    let ok = if sck <= SD_INIT_HZ { "OK" } else { "HIGH" };
-    c.line(format_args!("KER {}K SCK {sck} {ok}", ker / 1_000));
-    let dwt = if counts { "RUNS" } else { "STOPPED" };
-    c.line(format_args!(
-        "DWT {dwt} REV {} {} MHZ",
-        clk.rev.label(),
-        cpu_hz / 1_000_000
-    ));
-
-    if acquire(&mut c, sd) && volume(&mut c, sd) {
-        files(&mut c, store);
+    match raw {
+        Ok(true) => files(&mut c, store),
+        Ok(false) => {}
+        Err(_) => c.line(format_args!("CARD BUSY")),
     }
     sizes(&mut c);
     c.line(format_args!("DONE"));
@@ -275,10 +278,17 @@ fn files<D: ChimeraDisplay>(c: &mut Console<D>, store: &mut SdStore) {
     };
 
     for hz in TEST_HZ {
-        store.device().spi(|s| s.set_hz(Hertz::from_raw(hz)));
+        let hz_set = store
+            .device()
+            .with_device(|d| d.spi(|s| s.set_hz(Hertz::from_raw(hz))));
+        if hz_set.is_err() {
+            c.line(format_args!("{hz} CARD BUSY"));
+            continue;
+        }
         let mut gap = 0;
         let mut gap_since = |store: &SdStore| {
-            gap = gap.max(store.device().spi(|s| s.max_gap_us()));
+            let g = store.device().with_device(|d| d.spi(|s| s.max_gap_us()));
+            gap = gap.max(g.unwrap_or(0));
         };
         let t = DWT::cycle_count();
         let wrote = store.write(vol, file, &mut |sink: &mut dyn ByteSink| {

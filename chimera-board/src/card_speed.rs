@@ -19,15 +19,15 @@ use chimera_core::perf::load::AudioStats;
 use chimera_core::triple::Reader;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_fat::Medium;
+use chimera_fat::sd_addr::AddrMode;
 use chimera_hal::Ms;
 use chimera_hal::store::{ByteSink, CHUNK, Dir, FileName, RunsError, Store, StoreError, VolumeId};
 use chimera_hal::units::{BlockCount, FileBlock, Lba};
 use cortex_m::peripheral::DWT;
-use embedded_sdmmc::embedded_sdmmc_types::sdcard::CardType;
 use embedded_sdmmc::{Block, BlockDevice, BlockIdx};
 
 use crate::controls::now_ms;
-use crate::sd::{SD_OP_CAP_MS, SdStore};
+use crate::sd::SdStore;
 use crate::shared::{BLOCKS, OVERRUNS};
 
 /// The largest transfer, 16 KB.
@@ -107,7 +107,7 @@ impl Deadline {
         if left == 0 {
             return Err(CardFail::Timeout);
         }
-        store.device().spi(|s| s.set_cap_ms(left));
+        store.device().cap(Some(left));
         Ok(())
     }
 
@@ -147,7 +147,7 @@ impl CardBench {
             }
         };
         // Every operation since ran under the deadline's cap.
-        store.device().spi(|s| s.set_cap_ms(SD_OP_CAP_MS));
+        store.device().cap(None);
         answer
     }
 
@@ -183,11 +183,12 @@ impl CardBench {
         due.op(store, |s| s.make_dir(vol, Dir::Chimera))?;
         due.op(store, |s| s.make_dir(vol, Dir::Bench))?;
         let bytes = due.op(store, |s| {
-            let dev = s.device();
-            dev.start_op();
-            dev.num_bytes().map_err(|e| dev.classify(&e))
+            s.device().with_device(|dev| {
+                dev.start_op();
+                dev.num_bytes().map_err(|e| dev.classify(&e))
+            })?
         })?;
-        let block_addressed = store.device().get_card_type() == Some(CardType::SdhcSdxc);
+        let block_addressed = store.device().addr_mode() == Some(AddrMode::Block);
         let (ext, files, free) = test_files(store, vol, due)?;
         s.card = Some(CardInfo {
             kind: CardKind::of(block_addressed, bytes),
@@ -322,21 +323,25 @@ impl CardBench {
         due: &Deadline,
     ) -> Result<u32, CardFail> {
         due.arm(store, 0)?;
-        let dev = store.device();
+        let cpu_hz = self.cpu_hz;
         let blocks = self
             .bufs
             .blocks
             .get_mut(..n.get() as usize)
             .ok_or(StoreError::Io)?;
-        let (t, ms) = (DWT::cycle_count(), now_ms());
-        dev.start_op();
-        dev.read(blocks, BlockIdx(lba.get())).map_err(|e| {
-            let why = dev.classify(&e);
-            dev.reinit();
-            CardFail::Store(why)
-        })?;
-        let cycles = DWT::cycle_count().wrapping_sub(t);
-        span_us(cycles, self.cpu_hz, now_ms().since(ms)).ok_or(CardFail::ClockWrap)
+        // Timed from the bus taken: the wait for it is not the card's.
+        let timed = store.device().with_device(|dev| {
+            let (t, ms) = (DWT::cycle_count(), now_ms());
+            dev.start_op();
+            dev.read(blocks, BlockIdx(lba.get())).map_err(|e| {
+                let why = dev.classify(&e);
+                dev.reinit();
+                CardFail::Store(why)
+            })?;
+            let cycles = DWT::cycle_count().wrapping_sub(t);
+            span_us(cycles, cpu_hz, now_ms().since(ms)).ok_or(CardFail::ClockWrap)
+        });
+        timed.map_err(StoreError::from)?
     }
 }
 

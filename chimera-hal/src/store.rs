@@ -134,6 +134,9 @@ pub enum StoreError {
     /// deletes it. A file error, not a card fault.
     ReadOnly,
     Io,
+    /// The streams held the card bus past the UI's wait: nothing was sent,
+    /// and the card is as it was. Not a card fault; nothing re-inits.
+    Busy,
 }
 
 impl StoreError {
@@ -155,6 +158,7 @@ impl StoreError {
             StoreError::Corrupt => "FILE IS DAMAGED",
             StoreError::ReadOnly => "FILE IS READ-ONLY",
             StoreError::Io => "CARD ERROR",
+            StoreError::Busy => "CARD BUSY",
         }
     }
 }
@@ -578,6 +582,7 @@ impl Doubt {
             Doubt::Card(StoreError::Unsupported(_)) => "unsupported",
             // The sweep's read-only phases asked to write: a bug.
             Doubt::Card(StoreError::ReadOnly) => "write-refused",
+            Doubt::Card(StoreError::Busy) => "busy",
             Doubt::Card(_) => "card-error",
         }
     }

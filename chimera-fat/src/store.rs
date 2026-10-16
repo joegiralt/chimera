@@ -6,6 +6,7 @@ use crate::blocks::{BLOCK, Blocks, FsError};
 use crate::fat::{FatCache, Orphan, Stale, Table};
 use crate::fs::Fs;
 use crate::mark::{self, CLEAN, DIRTY};
+use crate::sd_addr::AddrMode;
 use crate::sweep::{self, Fail};
 use crate::volume::{Layout, first_partition, layout};
 use chimera_hal::store::{
@@ -36,6 +37,10 @@ pub trait Medium: BlockDevice {
     /// the sweep's phase times. 0 where nothing counts.
     fn elapsed_ms(&self) -> u32 {
         0
+    }
+    /// How the card addresses a block, once acquired.
+    fn addr_mode(&self) -> Option<AddrMode> {
+        None
     }
 }
 
@@ -97,6 +102,10 @@ impl<S: SpiDevice<u8> + SdBus, D: DelayNs> Medium for SdCard<S, D> {
 
     fn elapsed_ms(&self) -> u32 {
         self.spi(|s| s.elapsed_ms())
+    }
+
+    fn addr_mode(&self) -> Option<AddrMode> {
+        self.get_card_type().map(AddrMode::of)
     }
 
     fn classify(&self, e: &SdCardError) -> StoreError {
@@ -366,10 +375,13 @@ impl<D: Medium> FatStore<D> {
         }
     }
 
-    /// A device error: classified by the medium, which re-inits.
+    /// A device error: classified by the medium, which re-inits unless
+    /// the bus was busy and the card was never asked.
     fn fault(&self, e: &D::Error) -> StoreError {
         let err = self.dev.classify(e);
-        self.dev.reinit();
+        if err != StoreError::Busy {
+            self.dev.reinit();
+        }
         err
     }
 
@@ -520,7 +532,10 @@ impl<D: Medium> FatStore<D> {
 impl<D: Medium> Store for FatStore<D> {
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.dev.start_op();
-        if self.read(0).is_err() {
+        if let Err(e) = self.read(0) {
+            if self.dev.classify(&e) == StoreError::Busy {
+                return Err(StoreError::Busy);
+            }
             // A card swapped while idle is still in SD mode: re-init, retry once.
             self.dev.reinit();
             self.dev.start_op();
@@ -528,7 +543,11 @@ impl<D: Medium> Store for FatStore<D> {
         }
         // No volume to use (unsupported, exFAT): back to acquiring, so the
         // medium's phase and the driver agree the card needs re-init.
-        let (_, _, id) = self.identify().inspect_err(|_| self.dev.reinit())?;
+        let (_, _, id) = self.identify().inspect_err(|&e| {
+            if e != StoreError::Busy {
+                self.dev.reinit();
+            }
+        })?;
         self.dev.mounted();
         Ok(id)
     }

@@ -10,7 +10,11 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use chimera_core::hw::STORE_RESERVE;
 use chimera_fat::deadline::{Deadline, Over};
 use chimera_fat::sd::{CMD0, NCR_BYTES, PRESENCE_TRIES, r1_within_ncr};
+use chimera_fat::sd_addr::CardAddr;
+use chimera_fat::shared_card::{Hooks, SharedCard};
 use chimera_fat::{BusPhase, FatStore, SdBus};
+use chimera_hal::card_bus::CardBus;
+use chimera_hal::units::Millis;
 use cortex_m::peripheral::{DCB, DWT};
 use embedded_hal::delay::DelayNs;
 use embedded_hal::spi::{self as ehspi, ErrorKind, ErrorType, Operation, SpiDevice};
@@ -18,13 +22,15 @@ use embedded_sdmmc::SdCard;
 use embedded_sdmmc::sdcard::spi::AcquireOpts;
 use stm32h7xx_hal::gpio::{Output, PA9, PB14, PB15, PE12, PushPull, Speed};
 use stm32h7xx_hal::hal::blocking::spi::{Transfer, Write};
-use stm32h7xx_hal::pac::SPI2;
+use stm32h7xx_hal::pac::{self, SPI2};
 use stm32h7xx_hal::prelude::*;
 use stm32h7xx_hal::rcc::{CoreClocks, rec};
 use stm32h7xx_hal::spi::{self, Enabled, Spi};
 use stm32h7xx_hal::time::Hertz;
 
 use crate::clocks;
+#[cfg(not(feature = "sd-probe"))]
+use crate::controls::now_ms;
 
 pub const SD_INIT_HZ: u32 = 400_000;
 pub const SD_FAST_HZ: u32 = 25_000_000;
@@ -155,14 +161,6 @@ impl SdSpi {
 
     pub fn timed_out(&self) -> bool {
         self.deadline.is_over()
-    }
-
-    /// The cap of the operations armed from now on. Only the bench's test
-    /// file write raises it, and puts `SD_OP_CAP_MS` back; the idle limit
-    /// still ends a stalled card.
-    #[cfg(feature = "bench")]
-    pub fn set_cap_ms(&mut self, ms: u32) {
-        self.cap_ms = ms;
     }
 
     /// #186: CMD0 with CS low, `PRESENCE_TRIES` times at most; an R1 within
@@ -334,8 +332,14 @@ impl DelayNs for CycleDelay {
 
 pub type SdDevice = SdCard<SdSpi, CycleDelay>;
 
-/// The card behind `Store`: our FAT layer over the SD driver (ADR 0048).
-pub type SdStore = FatStore<SdDevice>;
+/// Who owns SPI2 and the card: the UI or the streaming IRQ.
+pub static BUS: CardBus = CardBus::new();
+/// The mounted card's address mode, for the streaming IRQ.
+pub static CARD_ADDR: CardAddr = CardAddr::new();
+
+/// The card behind `Store`: our FAT layer over the SD driver (ADR 0048),
+/// every touch through the bus.
+pub type SdStore = FatStore<SharedCard<SdDevice>>;
 
 const _: () = assert!(size_of::<SdStore>() <= STORE_RESERVE);
 
@@ -347,9 +351,26 @@ pub fn take_store(dev: SdDevice) -> Option<&'static mut SdStore> {
     if STORE_TAKEN.swap(true, Ordering::AcqRel) {
         return None;
     }
+    let hooks = Hooks { pend, now: now_ms };
+    let dev = SharedCard::new(dev, &BUS, &CARD_ADDR, hooks, Millis::new(SD_IDLE_MS));
     // SAFETY: the flag lets exactly one caller past, so this is the only
     // reference to `STORE` ever made.
     Some(unsafe { &mut *addr_of_mut!(STORE) }.write(FatStore::new(dev)))
+}
+
+/// The probe runs no SysTick and no streams: each call counts a ms, so a
+/// wait for the bus still ends.
+#[cfg(feature = "sd-probe")]
+fn now_ms() -> chimera_hal::Ms {
+    use core::sync::atomic::AtomicU32;
+    static CALLS: AtomicU32 = AtomicU32::new(0);
+    chimera_hal::Ms(CALLS.fetch_add(1, Ordering::Relaxed))
+}
+
+/// Wakes the card IRQ. It stays masked until the streaming DMA's init, so
+/// a pend before that only waits.
+fn pend() {
+    cortex_m::peripheral::NVIC::pend(pac::Interrupt::DMA2_STR0);
 }
 
 /// What the card needs from `boot`.
