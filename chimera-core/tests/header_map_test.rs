@@ -421,6 +421,43 @@ fn the_algo_map_has_no_overlapping_nodes() {
     }
 }
 
+/// ROW's node line: the pill (at least 34, its bold label + 10) and the
+/// tracked labels beside it never touch, on any chain, whichever is current.
+#[test]
+fn the_row_nodes_never_overlap() {
+    let t = theme::LABEL_TRACKING;
+    for chain in chimera_core::ui::block_registry::ALL_CHAINS.iter() {
+        let n = chain.blocks.len();
+        let label = |i: usize| chain.blocks[i].map.unwrap_or(chain.blocks[i].def.short);
+        for cur in 0..n {
+            let ext: Vec<(i32, i32)> = (0..n)
+                .map(|i| {
+                    let x = node_x(i, n);
+                    let w = if i == cur {
+                        theme::PILL_W.max(
+                            chimera_core::ui::draw::text_width(
+                                &theme::FONT_LABEL_BOLD,
+                                label(i),
+                                t,
+                            ) + theme::ROW_PILL_PAD,
+                        )
+                    } else {
+                        chimera_core::ui::draw::text_width(&theme::FONT_LABEL, label(i), t)
+                    };
+                    (x - w / 2, x - w / 2 + w)
+                })
+                .collect();
+            for w in ext.windows(2) {
+                assert!(
+                    w[0].1 < w[1].0,
+                    "{} node {cur} current: {ext:?}",
+                    chain.name
+                );
+            }
+        }
+    }
+}
+
 /// Spec § UI: EDIT reaches every OSC sub-page, and the map scrolls so the
 /// current one is always drawn lit (STACK; ROW underlines it).
 #[test]

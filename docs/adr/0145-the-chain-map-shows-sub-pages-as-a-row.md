@@ -20,7 +20,7 @@ for it to be built and made switchable in THEME.
   the rest. A SYSTEM from before PAGES reads ROW. ROW is the default.
 - THEME's page has no free cell (BRIGHT, GAMMA, ACCENT, BLACK, HINTS,
   INVERT), so PAGES has its own leaf, SETTINGS › PERSONALIZE › CHAIN MAP,
-  held in the THEME block as SCREENSAVER's SAVER is.
+  held in the THEME block as SCREENSAVER's SAVER is (ADR 0127).
 - **ROW** (`dungeon_map::draw_row`): the nodes on a line at y 279, the
   current one an accent pill at least 34 px wide (its bold label plus 10),
   18 high; the others a 3 px ring with the label below at 296. Under a
@@ -51,7 +51,7 @@ for it to be built and made switchable in THEME.
   page, and the current page sits near the middle.
 
 ## Consequences
-The map's band now shows up to about a dozen pages at once and where the
+The map's band now shows six or seven pages at once and where the
 rest lie. The region key carries PAGES, and ROW keys no scroll, so the
 STACK list's easing doesn't redraw the row. The node line sits 7 px higher
 in ROW than in STACK. Any later map change has two drawings to keep.
@@ -60,4 +60,5 @@ in ROW than in STACK. Any later map change has two drawings to keep.
 - `chainRow()` in (private notes);
   rendered page "Sub-page row (#579)", an unpublished page
 - ADR 0016 (visual direction), ADR 0081 (one D-pad), ADR 0126 (THEME's
-  INVERT, which took the cell SCREENSAVER left for its own leaf)
+  INVERT, which took the sixth cell), ADR 0127 (SCREENSAVER's own leaf,
+  the precedent for CHAIN MAP's)

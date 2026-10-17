@@ -7,10 +7,10 @@ mod screen;
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::ui::block_def::ChainDef2;
 use chimera_core::ui::block_registry::{
-    ALGO_CHAIN, MIXER_CHANNEL_CHAIN, MODAL_PLUCK_CHAIN, TAPE_CHAIN, VA_CHAIN,
+    ALGO_CHAIN, ALL_CHAINS, MIXER_CHANNEL_CHAIN, MODAL_PLUCK_CHAIN, TAPE_CHAIN, VA_CHAIN,
 };
 use chimera_core::ui::draw::text_width;
-use chimera_core::ui::dungeon_map::{self, page_label, page_window};
+use chimera_core::ui::dungeon_map::{self, ROW_MAX, page_label, page_window};
 use chimera_core::ui::theme::{self, ROW_GAP};
 use chimera_core::ui::theme_settings::Pages;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
@@ -141,4 +141,19 @@ fn the_arrows_show_exactly_where_the_row_is_cut() {
         }
     }
     assert!(cut_both, "some page is cut both ways");
+}
+
+/// The row measures `ROW_MAX` pages: no node on any chain has more.
+#[test]
+fn every_node_fits_the_row() {
+    for chain in ALL_CHAINS.iter() {
+        for b in chain.blocks {
+            assert!(
+                b.sub_page_count() <= ROW_MAX,
+                "{} {}",
+                chain.name,
+                b.def.short
+            );
+        }
+    }
 }

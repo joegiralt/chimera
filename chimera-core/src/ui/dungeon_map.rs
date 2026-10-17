@@ -243,8 +243,9 @@ pub fn page_window(widths: &[i32], cur: usize, room: i32) -> Range<usize> {
     }
 }
 
-/// The most sub-pages the row measures; past it the rest go unseen.
-const ROW_MAX: usize = 32;
+/// The most sub-pages the row measures; every chain keeps within it
+/// (`page_row_test`).
+pub const ROW_MAX: usize = 32;
 
 /// ROW: the nodes on one line, the current node's sub-pages along the
 /// bottom, windowed round the current one, `<` and `>` where it's cut.
