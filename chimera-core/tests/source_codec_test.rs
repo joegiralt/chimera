@@ -53,6 +53,7 @@ fn held(head: &SourceHead, data: &[u8]) -> Vec<u8> {
         count: head.count,
         rate: head.sref.rate,
         head_frames: 0,
+        heads: 0,
     };
     let mut v = d.to_bytes().to_vec();
     v.extend_from_slice(data);

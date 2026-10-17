@@ -174,15 +174,15 @@ pub fn render_half(half: Half) {
     }
 }
 
-/// The bench's heads, once the beds are set (disarmed till then): a new
-/// want wakes the card IRQ (I1's rule 1). Out of line, as `bench_listen`,
-/// so its frame isn't on the stack under the render.
+/// The bench's heads over the registry's bed rows (disarmed till the beds
+/// are set): a new want wakes the card IRQ (I1's rule 1). Out of line, as
+/// `bench_listen`, so its frame isn't on the stack under the render.
 #[cfg(feature = "bench")]
 #[inline(never)]
 fn bench_block(streams: &mut AudioSide<'static>) {
     let now = AudioBlocks::new(chimera_board::shared::BLOCKS.load(Ordering::Relaxed));
-    if let Some(beds) = chimera_board::card_dma::beds()
-        && BENCH.block(&mut streams.turn(), beds, now) == Asked::New
+    if let Some(reg) = chimera_board::shared::registry()
+        && BENCH.block(&mut streams.turn(), reg, now) == Asked::New
     {
         chimera_board::card_dma::pend();
     }

@@ -10,7 +10,9 @@
 
 use core::ops::{Add, Sub};
 
-pub use super::desc::{DESC_LEN, Descriptor, MAX_ZONES, MIN_SOURCE_FRAMES, Shape, ZONE_LAYOUT_LEN};
+pub use super::desc::{
+    DESC_LEN, Descriptor, MAX_ZONES, MIN_SOURCE_FRAMES, Shape, ZONE_LAYOUT_LEN, head_table,
+};
 
 /// A head's position: 32.32 fixed-point frames, exact over any source the
 /// arena holds. Adds and subtracts wrap.
@@ -77,7 +79,10 @@ pub struct SourceView<'a> {
 impl<'a> SourceView<'a> {
     /// `None` if the descriptor is bad, or `held` holds fewer than
     /// `MIN_SOURCE_FRAMES` after it. The samples are `2 · (data_len / 3)`
-    /// frames: an odd source reads one silent frame at its end.
+    /// frames: an odd source reads one silent frame at its end. Always
+    /// inlined: bank 1's `Pool::source_view` (the UI's) calls it, and
+    /// `read` is bank 2's (door-check).
+    #[inline(always)]
     pub fn new(held: &'a [u8]) -> Option<SourceView<'a>> {
         let desc = Descriptor::from_bytes(held)?;
         let data = held.get(desc.data_start()..)?;

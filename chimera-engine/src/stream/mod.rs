@@ -3,6 +3,7 @@
 pub mod bench;
 pub mod edf;
 pub mod layout;
+pub mod registry;
 pub mod ring;
 pub mod slot;
 pub mod units;

@@ -4,6 +4,8 @@
 //!
 //! The audio runs `block` and `fill_listen`, the card IRQ `check_failed`,
 //! the UI `arm` and `report`: atomics only, so one static serves them all.
+//! Bed k's file is the stream registry's row `bed_id(k)`; its table is
+//! `BenchBeds`'.
 
 use core::mem::MaybeUninit;
 use core::num::NonZeroU32;
@@ -13,10 +15,12 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use chimera_hal::units::StreamCount;
 
 use super::layout::{CHUNK_BYTES, CHUNK_FRAMES, ChunkIdx, StreamFile};
+use super::registry::StreamRegistry;
 use super::ring::{AudioTurn, Ready};
 use super::slot::SlotState;
 use super::units::{AudioBlocks, Frames, Ratio, SlotIdx, SourceRate};
 use crate::hw::{BLOCK_SIZE, MAX_VOICES};
+use crate::project::SourceId;
 use crate::storage::Crc32;
 use crate::voice_alloc::VoiceIdx;
 
@@ -33,6 +37,21 @@ const _: () = assert!(
 const _: () = assert!(BLOCK_SIZE as u32 * 32 < CHUNK_FRAMES.get());
 
 const MAGIC: [u8; 4] = *b"BEDS";
+
+const _: () = assert!(MAX_BEDS <= SourceId::ALL.len());
+
+/// Stream `v`'s row in the stream registry.
+pub fn bed_id(v: VoiceIdx) -> SourceId {
+    SourceId::ALL[v.index()]
+}
+
+/// `file` registered as stream `v`'s bed, if a table of `chunks` covers
+/// exactly its chunks.
+fn admit(reg: &StreamRegistry, v: VoiceIdx, file: StreamFile, chunks: usize) -> bool {
+    chunks == file.last_chunk().get() as usize + 1
+        && file.frames().get() > 0
+        && reg.insert(bed_id(v), file).is_ok()
+}
 
 /// A bed's table: the `Crc32` of each de-framed chunk.
 #[derive(Clone, Copy, Debug)]
@@ -232,20 +251,20 @@ impl<'a> BedTable<'a> {
         true
     }
 
-    /// Bed `k` with `file`, built in `slot`; false (`slot` left as it was)
-    /// past `count`, or if the table doesn't cover the file's chunks.
-    pub fn place(&self, k: usize, file: StreamFile, slot: &mut Option<Bed>) -> bool {
-        let fits = self
-            .entry(k)
-            .is_some_and(|(_, crcs)| crcs.len() / 4 == file.last_chunk().get() as usize + 1);
-        if !fits || file.frames().get() == 0 {
+    /// Bed `k`: `file` registered (`admit`), its table built in `slot`;
+    /// false (`slot` left as it was) past `count`, if the table doesn't
+    /// cover the file's chunks, or the registry is full.
+    pub fn place(
+        &self,
+        k: usize,
+        file: StreamFile,
+        reg: &StreamRegistry,
+        slot: &mut Option<BedCheck>,
+    ) -> bool {
+        let (Some(&v), Some((_, crcs))) = (VoiceIdx::ALL.get(k), self.entry(k)) else {
             return false;
-        }
-        let bed = slot.insert(Bed {
-            file,
-            check: NO_CHECK,
-        });
-        self.check_into(k, &mut bed.check)
+        };
+        admit(reg, v, file, crcs.len() / 4) && self.check_into(k, slot.insert(NO_CHECK))
     }
 }
 
@@ -275,31 +294,10 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// A bed on the card and its table, which covers exactly its chunks.
-#[derive(Clone, Copy, Debug)]
-pub struct Bed {
-    file: StreamFile,
-    check: BedCheck,
-}
-
-impl Bed {
-    pub fn new(file: StreamFile, check: BedCheck) -> Option<Bed> {
-        (check.chunks == file.last_chunk() && file.frames().get() > 0)
-            .then_some(Bed { file, check })
-    }
-
-    pub fn file(&self) -> &StreamFile {
-        &self.file
-    }
-
-    pub fn check(&self) -> &BedCheck {
-        &self.check
-    }
-}
-
-/// Bed k is stream k's.
+/// Bed k's table, stream k's: it covers exactly the chunks of the file in
+/// row `bed_id(k)`.
 pub struct BenchBeds {
-    pub beds: [Option<Bed>; MAX_BEDS],
+    checks: [Option<BedCheck>; MAX_BEDS],
 }
 
 impl Default for BenchBeds {
@@ -311,21 +309,47 @@ impl Default for BenchBeds {
 impl BenchBeds {
     pub const fn new() -> BenchBeds {
         BenchBeds {
-            beds: [None; MAX_BEDS],
+            checks: [None; MAX_BEDS],
         }
     }
 
-    /// No beds, built where it stays (10 KiB: never by value on the
+    /// No beds, built where it stays (8.5 KiB: never by value on the
     /// firmware's stack).
     pub fn init_in_place(slot: &mut MaybeUninit<BenchBeds>) -> &mut BenchBeds {
         let p = slot.as_mut_ptr();
         for i in 0..MAX_BEDS {
-            // SAFETY: `p` is the slot's, valid for writes; `beds` is the one
-            // field, so once each bed is written the value is whole.
-            unsafe { addr_of_mut!((*p).beds[i]).write(None) };
+            // SAFETY: `p` is the slot's, valid for writes; `checks` is the
+            // one field, so once each is written the value is whole.
+            unsafe { addr_of_mut!((*p).checks[i]).write(None) };
         }
         // SAFETY: every field written above.
         unsafe { slot.assume_init_mut() }
+    }
+
+    /// Bed `v`: `file` registered (`admit`), `check` its table; false if
+    /// it doesn't cover the file's chunks or the registry is full.
+    pub fn set(
+        &mut self,
+        reg: &StreamRegistry,
+        v: VoiceIdx,
+        file: StreamFile,
+        check: BedCheck,
+    ) -> bool {
+        let ok = admit(reg, v, file, check.count());
+        if ok {
+            self.checks[v.index()] = Some(check);
+        }
+        ok
+    }
+
+    /// Stream `v`'s table.
+    pub fn check(&self, v: VoiceIdx) -> Option<&BedCheck> {
+        self.checks[v.index()].as_ref()
+    }
+
+    /// Slots for `BedTable::place`, bed k's at k.
+    pub fn slots(&mut self) -> &mut [Option<BedCheck>; MAX_BEDS] {
+        &mut self.checks
     }
 }
 
@@ -337,7 +361,7 @@ pub enum Listen {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArmError {
-    /// Fewer beds than streams.
+    /// Fewer beds registered than streams.
     Beds,
 }
 
@@ -470,21 +494,24 @@ impl BenchStreams {
     /// block of each primes it (its slots cancelled, chunks 0 to 2 wanted).
     pub fn arm(
         &self,
-        beds: &BenchBeds,
+        reg: &StreamRegistry,
         rate: SourceRate,
         n: StreamCount,
         speed: Ratio,
         listen: Listen,
     ) -> Result<(), ArmError> {
         let k = usize::from(n.get());
-        if beds.beds[..k].iter().any(Option::is_none) {
+        if VoiceIdx::ALL[..k]
+            .iter()
+            .any(|&v| reg.get(bed_id(v)).is_none())
+        {
             return Err(ArmError::Beds);
         }
         // Off while the rest is written: a block that preempts does nothing.
         self.n.store(0, Ordering::Release);
-        for (h, b) in self.heads.iter().zip(&beds.beds) {
+        for (h, v) in self.heads.iter().zip(VoiceIdx::ALL) {
             h.primed.store(false, Ordering::Relaxed);
-            let frames = b.as_ref().map_or(1, |b| b.file.frames().get());
+            let frames = reg.get(bed_id(v)).map_or(1, |f| f.frames().get());
             h.frames.store(frames, Ordering::Relaxed);
         }
         for c in [
@@ -540,7 +567,7 @@ impl BenchStreams {
     }
 
     /// The audio's, once a block: every armed head over its bed.
-    pub fn block(&self, turn: &mut AudioTurn<'_>, beds: &BenchBeds, now: AudioBlocks) -> Asked {
+    pub fn block(&self, turn: &mut AudioTurn<'_>, reg: &StreamRegistry, now: AudioBlocks) -> Asked {
         let Some(n) = StreamCount::from_bits(self.n.load(Ordering::Acquire)) else {
             return Asked::Nothing;
         };
@@ -554,10 +581,10 @@ impl BenchStreams {
         };
         self.blocks.fetch_add(1, Ordering::Relaxed);
         let mut asked = Asked::Nothing;
-        let streams = VoiceIdx::ALL.into_iter().zip(&self.heads).zip(&beds.beds);
-        for ((v, head), bed) in streams.take(usize::from(n.get())) {
-            if let Some(bed) = bed
-                && self.step(turn, v, head, &bed.file, &tick)
+        let streams = VoiceIdx::ALL.into_iter().zip(&self.heads);
+        for (v, head) in streams.take(usize::from(n.get())) {
+            if let Some(file) = reg.get(bed_id(v))
+                && self.step(turn, v, head, file, &tick)
             {
                 asked = Asked::New;
             }
@@ -576,7 +603,7 @@ impl BenchStreams {
         tick: &Tick,
     ) -> bool {
         let Tick { fpb, now, burst } = *tick;
-        // `Bed::new` and the const asserts above: none of this overflows.
+        // `admit` and the const asserts above: none of this overflows.
         let total = file.frames().get() * 1_000;
         if !head.primed.swap(true, Ordering::Relaxed) {
             for s in SlotIdx::ALL {

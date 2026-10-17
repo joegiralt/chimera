@@ -45,6 +45,7 @@ fn reads_stay_in_row() {
             count: 1,
             rate,
             head_frames: 0,
+            heads: 0,
         };
         let mut held = d.to_bytes().to_vec();
         held.extend_from_slice(&packed[..3 * frames.div_ceil(2)]);
@@ -111,6 +112,7 @@ fn transwave_reads_stay_in_row() {
             count,
             rate: 48_000,
             head_frames: 0,
+            heads: 0,
         };
         let mut held = d.to_bytes().to_vec();
         held.resize(DESC_LEN + 3 * n / 2, 0);

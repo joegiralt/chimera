@@ -156,6 +156,7 @@ pub fn held_from(m: &Mono, rate: u32) -> Result<(Vec<u8>, Pitch), String> {
         count: 1,
         rate: u16::try_from(rate).expect("a rate under 65 536"),
         head_frames: 0,
+        heads: 0,
     };
     let mut held = desc.to_bytes().to_vec();
     held.resize(DESC_LEN + 3 * q.len() / 2, 0);
@@ -195,6 +196,7 @@ pub fn held_transwave(m: &Mono, frames: usize) -> Result<(Vec<u8>, f32), String>
         count: n as u8,
         rate: 48_000,
         head_frames: 0,
+        heads: 0,
     };
     let mut held = desc.to_bytes().to_vec();
     held.resize(DESC_LEN + 3 * q.len() / 2, 0);

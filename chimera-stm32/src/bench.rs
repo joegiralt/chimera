@@ -1234,6 +1234,7 @@ fn tape_sources(project: &mut Project, t: Tapes) -> Option<[SourceId; MAX_VOICES
         count,
         rate,
         head_frames: 0,
+        heads: 0,
     };
     let mut ids = [None; MAX_VOICES];
     for (i, id) in ids.iter_mut().enumerate() {

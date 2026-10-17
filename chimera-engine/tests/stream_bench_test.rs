@@ -9,11 +9,12 @@ use chimera_engine::storage::{
     write_source,
 };
 use chimera_engine::stream::bench::{
-    ArmError, Asked, Bed, BedCheck, BedChecks, BedError, BedTable, BenchBeds, BenchStreams, Listen,
-    MAX_BED_CHUNKS,
+    ArmError, Asked, BedCheck, BedChecks, BedError, BedTable, BenchBeds, BenchStreams, Listen,
+    MAX_BED_CHUNKS, bed_id,
 };
 use chimera_engine::stream::edf::{Pick, Want, pick, wants};
 use chimera_engine::stream::layout::{CHUNK_BYTES, CHUNK_FRAMES, ChunkIdx, StreamFile, deframe};
+use chimera_engine::stream::registry::StreamRegistry;
 use chimera_engine::stream::ring::{AudioSide, CardSide, Rings, ThirdSlots};
 use chimera_engine::stream::slot::SlotState;
 use chimera_engine::stream::units::{AudioBlocks, Ratio, SlotIdx, SourceRate};
@@ -86,38 +87,59 @@ fn on_device(file: &[u8]) -> (FileRuns, Vec<u8>) {
     (FileRuns { ext, len }, dev)
 }
 
-/// A bed and its device image.
-fn bed(samples: &[i16], stem: u32) -> (Bed, Vec<u8>) {
+/// The beds' tables and the registry their files are rows of.
+#[derive(Clone, Copy)]
+struct Beds {
+    checks: &'static BenchBeds,
+    reg: &'static StreamRegistry,
+}
+
+/// Stream `v`'s bed, its file and its table.
+fn bed_of(beds: Beds, v: VoiceIdx) -> (&'static StreamFile, &'static BedCheck) {
+    let file = beds.reg.get(bed_id(v)).unwrap();
+    (file, beds.checks.check(v).unwrap())
+}
+
+/// A bed's file, its table and its device image.
+fn bed(samples: &[i16], stem: u32) -> (StreamFile, BedCheck, Vec<u8>) {
     let (l, data, file) = source(samples);
     let (runs, dev) = on_device(&file);
     let sf = StreamFile::from_layout(&l, runs).unwrap();
-    let check = BedCheck::of_packed(stem, &data).unwrap();
-    (Bed::new(sf, check).unwrap(), dev)
+    (sf, BedCheck::of_packed(stem, &data).unwrap(), dev)
+}
+
+/// Beds of each `samples`, stream k's the k-th.
+fn beds_of(all: &[(Vec<i16>, u32)]) -> (Beds, Vec<Vec<u8>>) {
+    let reg: &'static StreamRegistry = Box::leak(Box::new(StreamRegistry::new()));
+    let mut checks = Box::new(BenchBeds::new());
+    let mut devs = Vec::new();
+    for ((s, stem), v) in all.iter().zip(VoiceIdx::ALL) {
+        let (sf, check, dev) = bed(s, *stem);
+        assert!(checks.set(reg, v, sf, check));
+        devs.push(dev);
+    }
+    let checks = Box::leak(checks);
+    (Beds { checks, reg }, devs)
 }
 
 /// 8 beds, each its own content and length: bed k is 10 + k chunks, the
 /// last short but for bed 0.
-fn beds8() -> (&'static BenchBeds, Vec<Vec<u8>>) {
-    let mut beds = Box::new(BenchBeds::new());
-    let mut devs = Vec::new();
-    for k in 0..8u32 {
-        let frames = (10 + k) * CF - 100 * k;
-        let s: Vec<i16> = (0..frames)
-            .map(|i| ((i.wrapping_mul(2_654_435_761) ^ (k << 9)) % 4096) as i16 - 2048)
-            .collect();
-        let (b, dev) = bed(&s, 0xBED0 + k);
-        beds.beds[k as usize] = Some(b);
-        devs.push(dev);
-    }
-    (Box::leak(beds), devs)
+fn beds8() -> (Beds, Vec<Vec<u8>>) {
+    let all: Vec<_> = (0..8u32)
+        .map(|k| {
+            let frames = (10 + k) * CF - 100 * k;
+            let s: Vec<i16> = (0..frames)
+                .map(|i| ((i.wrapping_mul(2_654_435_761) ^ (k << 9)) % 4096) as i16 - 2048)
+                .collect();
+            (s, 0xBED0 + k)
+        })
+        .collect();
+    beds_of(&all)
 }
 
 /// One bed of `samples` on stream 0.
-fn beds1(samples: &[i16]) -> (&'static BenchBeds, Vec<Vec<u8>>) {
-    let mut beds = Box::new(BenchBeds::new());
-    let (b, dev) = bed(samples, 7);
-    beds.beds[0] = Some(b);
-    (Box::leak(beds), vec![dev])
+fn beds1(samples: &[i16]) -> (Beds, Vec<Vec<u8>>) {
+    beds_of(&[(samples.to_vec(), 7)])
 }
 
 /// Serves Wanted slots as the card IRQ does: claim, the chunk's pieces off
@@ -141,7 +163,7 @@ struct FakeCard {
 }
 
 impl FakeCard {
-    fn serve(&mut self, beds: &BenchBeds, bench: &BenchStreams, now: AudioBlocks) {
+    fn serve(&mut self, beds: Beds, bench: &BenchStreams, now: AudioBlocks) {
         if self.stall.contains(&now.get()) {
             return;
         }
@@ -157,7 +179,7 @@ impl FakeCard {
         }
     }
 
-    fn fill(&mut self, w: Want, beds: &BenchBeds, bench: &BenchStreams, now: AudioBlocks) {
+    fn fill(&mut self, w: Want, beds: Beds, bench: &BenchStreams, now: AudioBlocks) {
         {
             if self.late > 0 && now.until(w.deadline) > -self.late {
                 return;
@@ -171,13 +193,13 @@ impl FakeCard {
                 return;
             }
             self.claimed.push((v, c.get()));
-            let bed = beds.beds[v].as_ref().unwrap();
+            let (file, check) = bed_of(beds, w.voice);
             let mut from = c;
             if self.wrong == Some((v, c.get())) {
                 self.wrong = None;
                 from = c.next().unwrap();
             }
-            let r = bed.file().chunk_read(from).unwrap();
+            let r = file.chunk_read(from).unwrap();
             let mut raw = Vec::new();
             let mut p = r.first();
             while let Some(pc) = p {
@@ -185,10 +207,10 @@ impl FakeCard {
                 raw.extend_from_slice(&self.devs[v][at..][..pc.blocks.get() as usize * 512]);
                 p = r.after(&pc);
             }
-            let len = bed.file().chunk_read(c).unwrap().packed().get() as usize;
+            let len = file.chunk_read(c).unwrap().packed().get() as usize;
             let out = &mut self.side.fill_buf(&claim).unwrap()[..len];
             deframe(&raw, r.skip(), out).unwrap();
-            if !bed.check().verify(c, out) {
+            if !check.verify(c, out) {
                 bench.check_failed(w.voice);
             }
             self.side.write_guard(&claim);
@@ -199,14 +221,14 @@ impl FakeCard {
 
 struct Rig {
     bench: &'static BenchStreams,
-    beds: &'static BenchBeds,
+    beds: Beds,
     audio: AudioSide<'static>,
     card: FakeCard,
     now: AudioBlocks,
 }
 
 impl Rig {
-    fn new((beds, devs): (&'static BenchBeds, Vec<Vec<u8>>)) -> Rig {
+    fn new((beds, devs): (Beds, Vec<Vec<u8>>)) -> Rig {
         let rings: &'static Rings = Box::leak(Box::new(Rings::new()));
         let third: &'static ThirdSlots = Box::leak(Box::new(ThirdSlots::new()));
         let (audio, side) = rings.sides(third).unwrap();
@@ -233,14 +255,16 @@ impl Rig {
         let rate = SourceRate::new(hz).unwrap();
         let speed = Ratio::from_milli(milli).unwrap();
         let n = StreamCount::new(n).unwrap();
-        self.bench.arm(self.beds, rate, n, speed, listen).unwrap();
+        self.bench
+            .arm(self.beds.reg, rate, n, speed, listen)
+            .unwrap();
     }
 
     /// One audio block, then the card's turn; the block's answer.
     fn block(&mut self) -> Asked {
         let asked = self
             .bench
-            .block(&mut self.audio.turn(), self.beds, self.now);
+            .block(&mut self.audio.turn(), self.beds.reg, self.now);
         self.card.serve(self.beds, self.bench, self.now);
         self.now = self.now.after(1);
         asked
@@ -250,7 +274,7 @@ impl Rig {
     fn listen(&mut self) -> [i32; 128] {
         let mut out = [7; 128];
         let mut turn = self.audio.turn();
-        self.bench.block(&mut turn, self.beds, self.now);
+        self.bench.block(&mut turn, self.beds.reg, self.now);
         self.bench.fill_listen(&turn, &mut out);
         self.card.serve(self.beds, self.bench, self.now);
         self.now = self.now.after(1);
@@ -307,7 +331,7 @@ fn wants_carry_deadlines_in_blocks() {
     let mut r = Rig::new(beds8());
     r.arm(24_000, 1_200, 1, Listen::Off);
     let now = r.now;
-    r.bench.block(&mut r.audio.turn(), r.beds, now);
+    r.bench.block(&mut r.audio.turn(), r.beds.reg, now);
     let turn = r.audio.turn();
     let v = VoiceIdx::ALL[0];
     assert!(matches!(
@@ -335,7 +359,7 @@ fn the_chunk_after_a_short_last_chunk_is_due_sooner() {
     let mut r = Rig::new(beds1(&s));
     r.arm(24_000, 1_200, 1, Listen::Off);
     let now = r.now;
-    r.bench.block(&mut r.audio.turn(), r.beds, now);
+    r.bench.block(&mut r.audio.turn(), r.beds.reg, now);
     let turn = r.audio.turn();
     let half = (CF / 2) * 1_000 / 38_400;
     assert!(matches!(
@@ -388,7 +412,10 @@ fn burst_queues_every_stream_in_one_block() {
     assert_eq!(r.wanted(), 0);
     r.bench.queue_burst();
     let now = r.now;
-    assert_eq!(r.bench.block(&mut r.audio.turn(), r.beds, now), Asked::New);
+    assert_eq!(
+        r.bench.block(&mut r.audio.turn(), r.beds.reg, now),
+        Asked::New
+    );
     assert_eq!(r.wanted(), 8);
 }
 
@@ -559,21 +586,35 @@ fn a_bed_needs_its_table_to_match_its_chunks() {
     let s: Vec<i16> = vec![0; 3 * CF as usize];
     let (l, data, file) = source(&s);
     let sf = StreamFile::from_layout(&l, on_device(&file).0).unwrap();
-    assert!(Bed::new(sf, check(1, 2)).is_none());
-    assert!(Bed::new(sf, BedCheck::of_packed(1, &data).unwrap()).is_some());
-    // From the table, in place.
+    let [v0, v1, ..] = VoiceIdx::ALL;
+    let reg = StreamRegistry::new();
+    let mut beds = BenchBeds::new();
+    assert!(!beds.set(&reg, v0, sf, check(1, 2)));
+    assert!(reg.get(bed_id(v0)).is_none() && beds.check(v0).is_none());
+    assert!(beds.set(&reg, v0, sf, BedCheck::of_packed(1, &data).unwrap()));
+    assert_eq!(
+        reg.get(bed_id(v0)).map(StreamFile::last_chunk),
+        Some(sf.last_chunk())
+    );
+    // From the table, in place: the file its row.
     let all = [check(1, 2), BedCheck::of_packed(9, &data).unwrap()];
     let mut out = vec![0; 1_024];
     let n = BedChecks::new(&all).unwrap().encode(&mut out);
     let table = BedTable::parse(&out[..n]).unwrap();
+    let reg = StreamRegistry::new();
     let mut slot = None;
-    assert!(!table.place(0, sf, &mut slot) && slot.is_none());
-    assert!(!table.place(2, sf, &mut slot) && slot.is_none());
-    assert!(table.place(1, sf, &mut slot));
-    let bed = slot.unwrap();
-    assert_eq!(bed.check().stem(), 9);
+    assert!(!table.place(0, sf, &reg, &mut slot) && slot.is_none());
+    assert!(!table.place(2, sf, &reg, &mut slot) && slot.is_none());
+    assert!(reg.get(bed_id(v0)).is_none());
+    assert!(table.place(1, sf, &reg, &mut slot));
+    let got = slot.unwrap();
+    assert_eq!(got.stem(), 9);
     let c = ChunkIdx::new(2).unwrap();
-    assert_eq!(bed.check().crc(c), all[1].crc(c));
+    assert_eq!(got.crc(c), all[1].crc(c));
+    assert_eq!(
+        reg.get(bed_id(v1)).map(StreamFile::last_chunk),
+        Some(sf.last_chunk())
+    );
 }
 
 #[test]
@@ -583,7 +624,7 @@ fn arming_needs_a_bed_a_stream() {
     let rate = SourceRate::new(24_000).unwrap();
     let two = StreamCount::new(2).unwrap();
     assert_eq!(
-        r.bench.arm(r.beds, rate, two, Ratio::ONE, Listen::Off),
+        r.bench.arm(r.beds.reg, rate, two, Ratio::ONE, Listen::Off),
         Err(ArmError::Beds)
     );
 }

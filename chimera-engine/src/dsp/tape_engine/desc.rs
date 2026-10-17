@@ -44,13 +44,16 @@ pub const ZONE_LAYOUT_LEN: usize = 9;
 pub const MAX_ZONES: u8 = 24;
 
 /// `held`'s first 16 B: `shape`, `count`, `rate` (LE), `head_frames` (LE,
-/// 0 when held whole), then 8 reserved zero bytes.
+/// 0 when held whole), `heads`, then 7 reserved zero bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Descriptor {
     pub shape: Shape,
     pub count: u8,
     pub rate: u16,
     pub head_frames: u32,
+    /// A streamed `Plain`'s heads (slice 1 § 5.1); 0 when held whole, and
+    /// on a `ZoneSet`, whose heads are its zones'.
+    pub heads: u8,
 }
 
 impl Descriptor {
@@ -59,13 +62,15 @@ impl Descriptor {
         (b[0], b[1]) = (self.shape as u8, self.count);
         b[2..4].copy_from_slice(&self.rate.to_le_bytes());
         b[4..8].copy_from_slice(&self.head_frames.to_le_bytes());
+        b[8] = self.heads;
         b
     }
 
     /// `None` for a short slice, an unknown shape, a count outside its
     /// shape's `1..=max` (a `Plain` holds exactly 1), a rate outside
-    /// 4 000..=48 000 (the pool spec's range), `head_frames` set on anything but a `ZoneSet`, or a set
-    /// reserved byte.
+    /// 4 000..=48 000 (the pool spec's range), `head_frames` on a
+    /// `Transwave`, a `Plain`'s `heads` and `head_frames` not set together,
+    /// `heads` on a `ZoneSet`, or a set reserved byte.
     pub fn from_bytes(b: &[u8]) -> Option<Descriptor> {
         let b: &[u8; DESC_LEN] = b.get(..DESC_LEN)?.try_into().ok()?;
         let shape = Shape::from_code(b[0])?;
@@ -74,11 +79,17 @@ impl Descriptor {
             count: b[1],
             rate: u16::from_le_bytes([b[2], b[3]]),
             head_frames: u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
+            heads: b[8],
+        };
+        let heads_ok = match shape {
+            Shape::Plain => (d.heads == 0) == (d.head_frames == 0),
+            Shape::Transwave => d.heads == 0 && d.head_frames == 0,
+            Shape::ZoneSet => d.heads == 0,
         };
         let ok = (1..=shape.max_count()).contains(&d.count)
             && (4_000..=48_000).contains(&d.rate)
-            && (d.head_frames == 0 || shape == Shape::ZoneSet)
-            && b[8..].iter().all(|&x| x == 0);
+            && heads_ok
+            && b[9..].iter().all(|&x| x == 0);
         ok.then_some(d)
     }
 
@@ -89,4 +100,26 @@ impl Descriptor {
             _ => DESC_LEN,
         }
     }
+}
+
+/// A streamed `Plain`'s head table, after the descriptor: each head's first
+/// frame (`u32` LE). `None` for no descriptor, an odd first frame, or a
+/// `held` too short for the table and its heads' samples; empty when held
+/// whole.
+pub fn head_table(held: &[u8]) -> Option<&[[u8; 4]]> {
+    let d = Descriptor::from_bytes(held)?;
+    let table = held
+        .get(DESC_LEN..)?
+        .as_chunks()
+        .0
+        .get(..usize::from(d.heads))?;
+    // 12-bit pairs, 3 B each; in `u64`, past any `head_frames`.
+    let heads = u64::from(d.heads);
+    let need = (DESC_LEN as u64) + 4 * heads + u64::from(d.head_frames.div_ceil(2)) * 3 * heads;
+    let fits = held.len() as u64 >= need;
+    (fits
+        && table
+            .iter()
+            .all(|at| u32::from_le_bytes(*at).is_multiple_of(2)))
+    .then_some(table)
 }

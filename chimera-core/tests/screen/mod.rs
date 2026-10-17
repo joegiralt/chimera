@@ -799,6 +799,7 @@ fn held(shape: Shape, count: u8, rate: u16, x: &[f32]) -> Vec<u8> {
         count,
         rate,
         head_frames: 0,
+        heads: 0,
     };
     let s: Vec<i16> = x
         .iter()

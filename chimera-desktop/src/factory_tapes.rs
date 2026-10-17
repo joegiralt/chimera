@@ -489,6 +489,7 @@ pub fn held(b: &Built) -> Vec<u8> {
         count: b.head.count,
         rate: b.head.sref.rate,
         head_frames: 0,
+        heads: 0,
     };
     let mut h = d.to_bytes().to_vec();
     h.resize(DESC_LEN, 0);

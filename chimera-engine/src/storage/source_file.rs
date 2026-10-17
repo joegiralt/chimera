@@ -238,6 +238,7 @@ impl SourceLayout {
             count: self.head.count,
             rate: self.head.sref.rate,
             head_frames: 0,
+            heads: 0,
         }
     }
 

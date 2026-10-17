@@ -825,6 +825,7 @@ mod tests {
             count: 1,
             rate: 48_000,
             head_frames: 0,
+            heads: 0,
         };
         let mut x = [0i16; 224];
         for (i, y) in x.iter_mut().enumerate() {

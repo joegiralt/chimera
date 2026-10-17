@@ -20,6 +20,7 @@ use chimera_core::preset::Performance;
 use chimera_core::project::arena::{ARENA_BYTES, ArenaWriter};
 use chimera_core::scope::{ScopeFrame, scope_buffer};
 use chimera_core::source_table::SOURCE_TABLE;
+use chimera_core::stream::registry::StreamRegistry;
 use chimera_core::stream::ring::{AudioSide, CardSide, Rings, ThirdSlots};
 use chimera_core::triple::{Reader, TripleBuffer, Writer};
 use chimera_core::ui::UiState;
@@ -45,6 +46,10 @@ static mut RINGS: MaybeUninit<Rings> = MaybeUninit::uninit();
 // only the CPU touches either.
 #[unsafe(link_section = ".ram_d2")]
 static mut THIRD: MaybeUninit<ThirdSlots> = MaybeUninit::uninit();
+// The stream registry (slice 1 § 5.5): NOLOAD in D2, zeroed by
+// `zero_rings` too.
+#[unsafe(link_section = ".ram_d2")]
+static mut REGISTRY: MaybeUninit<StreamRegistry> = MaybeUninit::uninit();
 static RINGS_TAKEN: AtomicBool = AtomicBool::new(false);
 static RINGS_ZEROED: AtomicBool = AtomicBool::new(false);
 
@@ -61,17 +66,20 @@ pub fn sram4_words() -> [*mut u32; SRAM4_WORDS] {
     core::array::from_fn(|i| unsafe { base.add(i * SRAM4_STRIDE) }.cast::<u32>())
 }
 
-/// Every slot Empty: after `cache::sram4_self_test`, once.
+/// Every slot Empty and every registry row free: after
+/// `cache::sram4_self_test`, once.
 pub fn zero_rings() {
     if RINGS_TAKEN.swap(true, Ordering::AcqRel) {
         return;
     }
-    // SAFETY: the flag lets one caller past, before `rings` or `sides`
-    // hands out any reference (they wait for `RINGS_ZEROED`); all-zero
-    // bytes are a valid `Rings` and `ThirdSlots` (ring.rs).
+    // SAFETY: the flag lets one caller past, before `rings`, `sides` or
+    // `registry` hands out any reference (they wait for `RINGS_ZEROED`);
+    // all-zero bytes are a valid `Rings`, `ThirdSlots` (ring.rs) and
+    // `StreamRegistry` (registry.rs).
     unsafe {
         addr_of_mut!(RINGS).write_bytes(0, 1);
         addr_of_mut!(THIRD).write_bytes(0, 1);
+        addr_of_mut!(REGISTRY).write_bytes(0, 1);
     }
     RINGS_ZEROED.store(true, Ordering::Release);
 }
@@ -83,6 +91,15 @@ pub fn rings() -> Option<&'static Rings> {
     RINGS_ZEROED
         .load(Ordering::Acquire)
         .then(|| unsafe { (*addr_of!(RINGS)).assume_init_ref() })
+}
+
+/// The stream registry, once `zero_rings` has emptied it.
+pub fn registry() -> Option<&'static StreamRegistry> {
+    // SAFETY: zeroed (empty) before the flag's `Release`, then touched only
+    // through `StreamRegistry`'s own tags.
+    RINGS_ZEROED
+        .load(Ordering::Acquire)
+        .then(|| unsafe { (*addr_of!(REGISTRY)).assume_init_ref() })
 }
 
 /// The rings' audio and card sides, once.

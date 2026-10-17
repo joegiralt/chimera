@@ -90,6 +90,7 @@ pub fn held_plain(samples: &[f32], rate: u16) -> Vec<u8> {
         count: 1,
         rate,
         head_frames: 0,
+        heads: 0,
     };
     let s: Vec<i16> = samples.iter().map(|&x| to12(x)).collect();
     let mut held = d.to_bytes().to_vec();
@@ -136,6 +137,7 @@ pub fn held_transwave(top: u32, count: u8, amp: impl Fn(usize, u32) -> f32) -> V
         count,
         rate: 48_000,
         head_frames: 0,
+        heads: 0,
     };
     let mut s: Vec<i16> = Vec::new();
     for f in 0..count as usize {

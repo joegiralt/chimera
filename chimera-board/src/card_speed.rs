@@ -32,10 +32,14 @@ use chimera_core::perf::load::AudioStats;
 use chimera_core::storage::{
     HEADER_LEN, RecordTag, SOURCE_HEAD_LEN, SourceHead, SourceLayout, source_name,
 };
-use chimera_core::stream::bench::{ArmError, BENCH, Bed, BedTable, Listen, MAX_BED_CHUNKS};
+use chimera_core::stream::bench::{
+    ArmError, BENCH, BedCheck, BedTable, Listen, MAX_BED_CHUNKS, bed_id,
+};
 use chimera_core::stream::layout::{ChunkIdx, StreamFile};
+use chimera_core::stream::registry::StreamRegistry;
 use chimera_core::stream::units::{Ratio, SourceRate};
 use chimera_core::triple::Reader;
+use chimera_core::voice_alloc::VoiceIdx;
 use chimera_core::{MidiChannel, MidiNote, Velocity};
 use chimera_fat::Medium;
 use chimera_fat::sd_addr::AddrMode;
@@ -51,7 +55,7 @@ use embedded_sdmmc::{Block, BlockDevice, BlockIdx};
 use crate::card_dma::{self, BenchPort, FILL_RING, STATS, bench_port};
 use crate::controls::now_ms;
 use crate::sd::SdStore;
-use crate::shared::{BLOCKS, OVERRUNS};
+use crate::shared::{BLOCKS, OVERRUNS, registry};
 
 const READ_RUN: BlockCount = match BlockCount::new(READ_BLOCKS) {
     Some(n) => n,
@@ -725,22 +729,24 @@ fn xorshift(state: &mut u64) -> u32 {
     (*state >> 32) as u32
 }
 
-fn loaded_beds() -> impl Iterator<Item = &'static Bed> {
-    card_dma::beds()
+/// The beds' files, once set: the registry's bed rows.
+fn loaded_beds() -> impl Iterator<Item = &'static StreamFile> {
+    let reg = card_dma::beds().and(registry());
+    VoiceIdx::ALL
         .into_iter()
-        .flat_map(|b| b.beds.iter().flatten())
+        .filter_map(move |v| reg?.get(bed_id(v)))
 }
 
 /// Chunk `c`'s first device block in loaded bed `k`.
 fn chunk_lba(k: usize, c: u32) -> Option<Lba> {
     let bed = loaded_beds().nth(k)?;
-    Some(bed.file().chunk_read(ChunkIdx::new(c)?)?.first()?.lba)
+    Some(bed.chunk_read(ChunkIdx::new(c)?)?.first()?.lba)
 }
 
 /// A random chunk's first block, of a random bed.
 fn somewhere(rng: &mut u64) -> Option<Lba> {
     let k = xorshift(rng) as usize % loaded_beds().count().max(1);
-    let last = loaded_beds().nth(k)?.file().last_chunk().get();
+    let last = loaded_beds().nth(k)?.last_chunk().get();
     chunk_lba(k, xorshift(rng) % (last + 1))
 }
 
@@ -783,12 +789,12 @@ impl CardBench {
             .map_err(card)?;
         let block_addressed = store.device().addr_mode() == Some(AddrMode::Block);
         self.load_beds(store, vol)?;
-        let (Some(beds), Some(rate)) = (card_dma::beds(), self.dma.rate) else {
+        let (Some(reg), Some(rate)) = (card_dma::beds().and(registry()), self.dma.rate) else {
             return Err(DmaRefusal::Beds);
         };
         let arm = |n, speed, listen| {
             BENCH
-                .arm(beds, rate, n, speed, listen)
+                .arm(reg, rate, n, speed, listen)
                 .map_err(|ArmError::Beds| DmaRefusal::Beds)
         };
         let streams = |n, ms, side| Work::Streams {
@@ -817,14 +823,7 @@ impl CardBench {
                 BENCH.disarm();
                 Work::Back {
                     done: 0,
-                    at: (
-                        0,
-                        beds.beds
-                            .iter()
-                            .flatten()
-                            .next()
-                            .map_or(0, |b| b.file().last_chunk().get()),
-                    ),
+                    at: (0, loaded_beds().next().map_or(0, |b| b.last_chunk().get())),
                     sums: [0; 2],
                     rng: 1 << 32 | u64::from(DWT::cycle_count()),
                 }
@@ -910,18 +909,19 @@ impl CardBench {
             return Err(DmaRefusal::Beds);
         }
         let table = BedTable::parse(&self.bufs.table[..n]).map_err(|_| DmaRefusal::Beds)?;
+        let reg = registry().ok_or(DmaRefusal::Beds)?;
         let mut first = None;
         let mut runs = [0; MAX_VOICES];
         let ok = card_dma::fill_beds(|beds| {
             table.count() > 0
                 && beds
-                    .beds
+                    .slots()
                     .iter_mut()
                     .enumerate()
                     .take(table.count())
                     .zip(&mut runs)
                     .all(|((k, slot), runs)| {
-                        let Some((name, rate, n)) = place(store, vol, &table, k, slot) else {
+                        let Some((name, rate, n)) = place(store, vol, &table, k, reg, slot) else {
                             return false;
                         };
                         *runs = n;
@@ -932,6 +932,12 @@ impl CardBench {
                     })
         });
         if !ok {
+            for v in VoiceIdx::ALL {
+                // SAFETY: the beds were never Ready, so the bench was never
+                // armed: no want names a bed, and neither the audio nor the
+                // IRQ (`card_dma::bed`) has read a bed's row.
+                unsafe { reg.clear(bed_id(v)) };
+            }
             return Err(DmaRefusal::Beds);
         }
         let (bed0, rate) = first.ok_or(DmaRefusal::Beds)?;
@@ -1043,9 +1049,7 @@ impl CardBench {
                             Some(c) => (at.0, c),
                             None => {
                                 let k = (at.0 + 1) % loaded_beds().count().max(1);
-                                let last = loaded_beds()
-                                    .nth(k)
-                                    .map_or(0, |b| b.file().last_chunk().get());
+                                let last = loaded_beds().nth(k).map_or(0, |b| b.last_chunk().get());
                                 (k, last)
                             }
                         };
@@ -1292,7 +1296,8 @@ fn place(
     vol: VolumeId,
     table: &BedTable<'_>,
     k: usize,
-    slot: &mut Option<Bed>,
+    reg: &StreamRegistry,
+    slot: &mut Option<BedCheck>,
 ) -> Option<(FileName, SourceRate, u32)> {
     let name = source_name(table.stem(k)?);
     let runs = Store::runs(store, vol, name).ok()?;
@@ -1314,7 +1319,7 @@ fn place(
     let rate = SourceRate::new(sh.sref.rate)?;
     let file = StreamFile::from_layout(&SourceLayout::whole(sh)?, runs)?;
     let n = runs.ext.runs();
-    table.place(k, file, slot).then_some((name, rate, n))
+    table.place(k, file, reg, slot).then_some((name, rate, n))
 }
 
 /// A whole small file into `buf`; `over` if it doesn't fit.

@@ -992,6 +992,7 @@ fn tron_refuses_a_zone_set() {
         count: 3,
         rate: 32_000,
         head_frames: 0,
+        heads: 0,
     };
     let mut zs = d.to_bytes().to_vec();
     zs.resize(DESC_LEN + 27 + 3 * 33, 0);

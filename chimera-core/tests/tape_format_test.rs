@@ -6,7 +6,7 @@
 mod common;
 
 use chimera_core::dsp::tape_engine::read::{
-    DESC_LEN, Descriptor, Shape, SourceView, ZONE_LAYOUT_LEN,
+    DESC_LEN, Descriptor, Shape, SourceView, ZONE_LAYOUT_LEN, head_table,
 };
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
@@ -615,4 +615,97 @@ fn listed_zones_reads_the_size() {
     let size = size_of(&mut s, p.sref);
     assert_eq!(listed_zones(p.sref, size), Some(0), "whole");
     assert_eq!(listed_zones(p.sref, size - 1), None, "torn");
+}
+
+/// A streamed `Plain` (slice 1 § 5.1): byte 8 counts its heads, each
+/// `head_frames` long, and the head table after the descriptor holds each
+/// head's first frame.
+#[test]
+fn streamed_plain_descriptor_round_trips() {
+    let d = Descriptor {
+        shape: Shape::Plain,
+        count: 1,
+        rate: 24_000,
+        head_frames: 2_400,
+        heads: 2,
+    };
+    let b = d.to_bytes();
+    assert_eq!(b[8], 2);
+    assert_eq!(Descriptor::from_bytes(&b), Some(d));
+    let at = [0u32.to_le_bytes(), 48_000u32.to_le_bytes()];
+    let mut held = b.to_vec();
+    held.extend(at.iter().flatten());
+    held.resize(held.len() + 2 * 3_600, 0);
+    assert_eq!(head_table(&held), Some(&at[..]));
+    assert_eq!(
+        head_table(&held[..held.len() - 1]),
+        None,
+        "a head cut short"
+    );
+    let mut odd = held.clone();
+    odd[DESC_LEN + 4] = 1;
+    assert_eq!(head_table(&odd), None, "a head starting on an odd frame");
+    let whole = Descriptor {
+        head_frames: 0,
+        heads: 0,
+        ..d
+    };
+    assert_eq!(head_table(&whole.to_bytes()), Some(&[][..]), "held whole");
+}
+
+/// Heads and `head_frames` come together on a `Plain`: neither alone. A
+/// `ZoneSet`'s heads are its zones', so it counts none; a `Transwave`
+/// streams none.
+#[test]
+fn heads_on_a_whole_plain_refused() {
+    let plain = Descriptor {
+        shape: Shape::Plain,
+        count: 1,
+        rate: 24_000,
+        head_frames: 2_400,
+        heads: 0,
+    };
+    let bad = [
+        plain,
+        Descriptor {
+            head_frames: 0,
+            heads: 1,
+            ..plain
+        },
+        Descriptor {
+            shape: Shape::Transwave,
+            heads: 1,
+            ..plain
+        },
+        Descriptor {
+            shape: Shape::ZoneSet,
+            heads: 1,
+            ..plain
+        },
+    ];
+    for d in bad {
+        assert_eq!(Descriptor::from_bytes(&d.to_bytes()), None, "{d:?}");
+    }
+    let zones = Descriptor {
+        shape: Shape::ZoneSet,
+        ..plain
+    };
+    assert_eq!(Descriptor::from_bytes(&zones.to_bytes()), Some(zones));
+}
+
+#[test]
+fn reserved_bytes_still_zero() {
+    let good = Descriptor {
+        shape: Shape::Plain,
+        count: 1,
+        rate: 24_000,
+        head_frames: 2_400,
+        heads: 2,
+    }
+    .to_bytes();
+    for at in 9..DESC_LEN {
+        let mut b = good;
+        b[at] = 1;
+        assert_eq!(Descriptor::from_bytes(&b), None, "reserved byte {at}");
+    }
 }

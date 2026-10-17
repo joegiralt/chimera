@@ -16,6 +16,7 @@ fn desc(shape: Shape, count: u8, rate: u16) -> Descriptor {
         count,
         rate,
         head_frames: 0,
+        heads: 0,
     }
 }
 
@@ -69,6 +70,7 @@ fn descriptor_round_trips() {
                 count,
                 rate,
                 head_frames,
+                heads: 0,
             };
             let b = d.to_bytes();
             assert_eq!(b[0], shape as u8);
@@ -80,7 +82,7 @@ fn descriptor_round_trips() {
     }
     let good = desc(Shape::Plain, 1, 48_000).to_bytes();
     assert_eq!(Descriptor::from_bytes(&good[..15]), None, "short");
-    for at in 8..16 {
+    for at in 9..16 {
         let mut b = good;
         b[at] = 1;
         assert_eq!(Descriptor::from_bytes(&b), None, "reserved byte {at}");

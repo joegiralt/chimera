@@ -27,6 +27,7 @@ fn source() -> (AudioToken, SourceId) {
         count: 1,
         rate: RATE,
         head_frames: 0,
+        heads: 0,
     };
     let s: Vec<i16> = (0..FRAMES)
         .map(|i| (libm::sinf(core::f32::consts::TAU * i as f32 / 100.0) * 2047.0) as i16)

@@ -134,11 +134,12 @@ pub fn pend() {
 
 /// Where voice `v`'s chunk `c` lies on the card: a CMD18 a piece, at most
 /// a raw chunk's blocks in all (`StreamFile::chunk_read`), so no burst
-/// passes the staging's end (I4). Bench builds read stream k's bed; the
-/// stream registry (Task 22) answers the rest.
+/// passes the staging's end (I4). Bench builds read stream k's bed, the
+/// registry's row `bed_id(k)`; a voice's own source (Task 22) answers the
+/// rest.
 #[cfg(feature = "bench")]
 fn locate(v: VoiceIdx, c: ChunkIdx) -> Option<ChunkRead<'static>> {
-    bench::bed(v)?.file().chunk_read(c)
+    bench::bed(v)?.chunk_read(c)
 }
 
 #[cfg(not(feature = "bench"))]
@@ -1321,8 +1322,8 @@ mod bench {
     use core::ptr::{addr_of, addr_of_mut};
     use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering, fence};
 
-    use chimera_core::stream::bench::{BENCH, Bed, BenchBeds};
-    use chimera_core::stream::layout::ChunkIdx;
+    use chimera_core::stream::bench::{BENCH, BenchBeds, bed_id};
+    use chimera_core::stream::layout::{ChunkIdx, StreamFile};
     use chimera_core::voice_alloc::VoiceIdx;
     use chimera_fat::sd_proto::ProtoError;
     use chimera_hal::card_bus::CardFault;
@@ -1334,6 +1335,7 @@ mod bench {
     use super::{BUS, CARD_ADDR, Dest, Held, pend, unstick};
     use crate::controls::now_ms;
     use crate::sd::SD_IDLE_MS;
+    use crate::shared::registry;
 
     /// Fills that went Ready since boot: also the next index into `FILL_US`.
     static FILLS: AtomicU32 = AtomicU32::new(0);
@@ -1420,7 +1422,7 @@ mod bench {
     const WRITING: u8 = 1;
     const READY: u8 = 2;
     static BEDS_STATE: AtomicU8 = AtomicU8::new(EMPTY);
-    // SAFETY: 10 KiB, NOLOAD in D2 beside the UI: garbage at boot, which
+    // SAFETY: 8.5 KiB, NOLOAD in D2 beside the UI: garbage at boot, which
     // is sound as it is `MaybeUninit`, reached only by address, and read
     // only once Ready, after `fill_beds` built it in place.
     #[unsafe(link_section = ".ram_d2")]
@@ -1452,15 +1454,16 @@ mod bench {
         ok
     }
 
-    /// Stream `v`'s bed.
-    pub(super) fn bed(v: VoiceIdx) -> Option<&'static Bed> {
-        beds()?.beds[v.index()].as_ref()
+    /// Stream `v`'s bed, once the beds are set.
+    pub(super) fn bed(v: VoiceIdx) -> Option<&'static StreamFile> {
+        beds()?;
+        registry()?.get(bed_id(v))
     }
 
     /// A fill's de-framed chunk against its bed's table (I7).
     pub(super) fn check(v: VoiceIdx, c: ChunkIdx, bytes: &[u8]) {
-        if let Some(b) = bed(v)
-            && !b.check().verify(c, bytes)
+        if let Some(b) = beds().and_then(|b| b.check(v))
+            && !b.verify(c, bytes)
         {
             BENCH.check_failed(v);
         }
