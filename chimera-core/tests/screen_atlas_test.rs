@@ -166,7 +166,7 @@ impl Ctx {
     }
 
     fn start(self) -> UiState {
-        let mut ui = UiState::new();
+        let mut ui = crate::screen::stack_ui();
         if let Ctx::Part(engine) = self {
             load_init(&mut ui, engine);
         }
@@ -689,7 +689,7 @@ fn settings_shots() -> Vec<(String, Setup)> {
 }
 
 fn settled(go: &dyn Fn(&mut UiState)) -> UiState {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     go(&mut ui);
     settle(&mut ui);
     ui
@@ -698,7 +698,7 @@ fn settled(go: &dyn Fn(&mut UiState)) -> UiState {
 #[cfg(feature = "midi-map")]
 #[test]
 fn empty_midi_map_renders() {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     map_page(&mut ui, false);
     settle(&mut ui);
     let fb = render_ui(&ui);
@@ -741,7 +741,7 @@ fn every_screen_renders() {
     fb.dump("boot_splash");
 
     for (name, note) in notes() {
-        let mut ui = UiState::new();
+        let mut ui = crate::screen::stack_ui();
         ui.show_note(note);
         let ToastStep::Show(line) = ui.step_toast(0) else {
             panic!("{name}: no toast");

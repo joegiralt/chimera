@@ -32,6 +32,8 @@ fn cx(engine: EngineType) -> NavCtx {
         orbit: OrbitCx::NONE,
         // HALL: every FX sub-page shows, REV › MORE 2 (DENSITY) too.
         rev: chimera_core::dsp::reverb::ReverbType::Hall,
+        // ADR 0081's keys; ROW's are `row_*` below.
+        pages: chimera_core::ui::theme_settings::Pages::Stack,
     }
 }
 
@@ -440,4 +442,129 @@ fn edit_on_amp_goes_to_sym_and_wraps() {
         l.step(NavKey::Edit, &cx, &mut r),
         Step::Go(Location::pages(P[0], amp))
     );
+}
+
+/// THEME's PAGES ROW (ADR 0145): the panel has EDIT left of SEQ, so EDIT
+/// is the previous sub-page, none before the first, and SEQ the next,
+/// wrapping from the last; MINUS and PLUS as under STACK.
+#[test]
+fn row_edit_steps_left_and_seq_right_wrapping() {
+    use chimera_core::ui::theme_settings::Pages;
+    for engine in [EngineType::Algo, EngineType::Modal, EngineType::Va] {
+        let cx = NavCtx {
+            pages: Pages::Row,
+            ..cx(engine)
+        };
+        let c = chain_def_for(engine);
+        for at in pages(c) {
+            let l = Location::pages(P[2], at);
+            for k in DPAD {
+                let stack_key = match k {
+                    NavKey::Edit => NavKey::SeqTap,
+                    NavKey::SeqTap => NavKey::Edit,
+                    k => k,
+                };
+                let want = expect(c, at, stack_key)
+                    .map_or(Step::Stay, |a| Step::Go(Location::pages(P[2], a)));
+                assert_eq!(
+                    l.step(k, &cx, &mut Recall::new()),
+                    want,
+                    "{engine:?} {at:?} {k:?}"
+                );
+            }
+        }
+    }
+}
+
+/// `sub_move` is the one map from PAGES and a key to a step: STACK keeps
+/// ADR 0081's, ROW swaps EDIT and SEQ, and nothing else moves a page.
+#[test]
+fn sub_move_maps_pages_and_keys() {
+    use chimera_core::ui::nav::sub_move;
+    use chimera_core::ui::theme_settings::Pages::{Row, Stack};
+    let cases = [
+        (Stack, NavKey::Edit, Some(Move::Down)),
+        (Stack, NavKey::SeqTap, Some(Move::Up)),
+        (Row, NavKey::Edit, Some(Move::Up)),
+        (Row, NavKey::SeqTap, Some(Move::Down)),
+        (Row, NavKey::Plus, Some(Move::Next)),
+        (Stack, NavKey::Minus, Some(Move::Prev)),
+        (Row, NavKey::MenuTap, None),
+    ];
+    for (p, k, want) in cases {
+        assert_eq!(sub_move(p, k), want, "{p:?} {k:?}");
+    }
+}
+
+/// ORBIT under ROW: SEQ cycles RING's sub-pages and opens CUSTOM, EDIT
+/// goes back; EDIT on SCN still saves.
+#[test]
+fn row_flips_orbit_sub_pages_but_scn_still_saves() {
+    use chimera_core::ui::orbit::{ORB_NODE, RING_NODE, SCN_NODE};
+    use chimera_core::ui::theme_settings::Pages;
+    let cx = NavCtx {
+        pages: Pages::Row,
+        ..cx(EngineType::Algo)
+    };
+    let mut r = Recall::new();
+    let go = |l: Location, k, r: &mut Recall| match l.step_orbit(k, &cx, r) {
+        Step::Go(to) => Some(to),
+        _ => None,
+    };
+    let at = |l: Location| l.page(&cx).unwrap().1;
+    let home = Location::from(OrbitAt::HOME);
+    assert_eq!(at(home).node() as usize, ORB_NODE);
+    assert_eq!(
+        go(home, OrbitKey::Edit, &mut r),
+        None,
+        "none before the first"
+    );
+    let custom = go(home, OrbitKey::SeqTap, &mut r).unwrap();
+    assert_eq!(at(custom).sub(), 1, "SEQ opens CUSTOM");
+    assert_eq!(go(custom, OrbitKey::Edit, &mut r), Some(home));
+    assert_eq!(go(custom, OrbitKey::SeqTap, &mut r), Some(home), "wraps");
+    let walk = |node: usize, r: &mut Recall| {
+        let mut l = home;
+        while at(l).node() as usize != node {
+            let k = if (at(l).node() as usize) < node {
+                OrbitKey::Plus
+            } else {
+                OrbitKey::Minus
+            };
+            l = go(l, k, r).unwrap();
+        }
+        l
+    };
+    let ring = walk(RING_NODE, &mut r);
+    let next = go(ring, OrbitKey::SeqTap, &mut r).unwrap();
+    assert_eq!(at(next).sub(), at(ring).sub() + 1);
+    assert_eq!(go(next, OrbitKey::Edit, &mut r), Some(ring));
+    let scn = walk(SCN_NODE, &mut r);
+    assert!(matches!(
+        scn.step_orbit(OrbitKey::Edit, &cx, &mut r),
+        Step::Orbit(_)
+    ));
+}
+
+/// On the unit, ROW (the default): from OSC's first page EDIT does
+/// nothing, SEQ steps right, EDIT back left, and SEQ from the last page
+/// wraps to the first.
+#[test]
+fn row_buttons_on_the_panel() {
+    let mut ui = UiState::new();
+    screen::to_osc(&mut ui);
+    let sub = |ui: &UiState| ui.location().page(&cx(EngineType::Algo)).unwrap().1.sub();
+    tap(&mut ui, ButtonId::Edit);
+    assert_eq!(sub(&ui), 0, "EDIT at the first does nothing");
+    tap(&mut ui, ButtonId::Seq);
+    assert_eq!(sub(&ui), 1, "SEQ right");
+    tap(&mut ui, ButtonId::Edit);
+    assert_eq!(sub(&ui), 0, "EDIT left");
+    let n = chain_def_for(EngineType::Algo).blocks[screen::osc_node()].sub_page_count();
+    for _ in 0..n - 1 {
+        tap(&mut ui, ButtonId::Seq);
+    }
+    assert_eq!(sub(&ui) as usize, n - 1);
+    tap(&mut ui, ButtonId::Seq);
+    assert_eq!(sub(&ui), 0, "SEQ wraps from the last");
 }

@@ -42,7 +42,7 @@ fn pitch_fine_steal_time_and_snap_on_a_to_e_and_f_free() {
 fn snap_musical_steps_pitch_on_every_engine() {
     use chimera_core::params::Snap;
     for engine in EngineType::ALL {
-        let mut ui = chimera_core::ui::UiState::new();
+        let mut ui = crate::screen::stack_ui();
         load_init(&mut ui, engine);
         to_pitch(&mut ui, engine);
         assert_eq!(ui.params().pitch.snap, Snap::Chromatic);
@@ -62,7 +62,7 @@ fn snap_musical_steps_pitch_on_every_engine() {
 fn steal_and_glide_time_turn() {
     use chimera_core::params::Steal;
     for engine in EngineType::ALL {
-        let mut ui = chimera_core::ui::UiState::new();
+        let mut ui = crate::screen::stack_ui();
         load_init(&mut ui, engine);
         to_pitch(&mut ui, engine);
         assert_eq!(ui.params().pitch.steal, Steal::Cut);
@@ -80,7 +80,7 @@ fn steal_and_glide_time_turn() {
 #[test]
 fn both_engines_reach_the_pitch_page_and_turn_it() {
     for engine in EngineType::ALL {
-        let mut ui = chimera_core::ui::UiState::new();
+        let mut ui = crate::screen::stack_ui();
         load_init(&mut ui, engine);
         to_pitch(&mut ui, engine);
         feed(&mut ui, Input::turn(EncoderId::A, 12));
@@ -92,7 +92,7 @@ fn both_engines_reach_the_pitch_page_and_turn_it() {
 
 #[test]
 fn mix_plus_primes_pitch_for_the_matrix() {
-    let mut ui = chimera_core::ui::UiState::new();
+    let mut ui = crate::screen::stack_ui();
     load_init(&mut ui, EngineType::Modal);
     to_pitch(&mut ui, EngineType::Modal);
     feed(&mut ui, Input::turn(EncoderId::A, 1));

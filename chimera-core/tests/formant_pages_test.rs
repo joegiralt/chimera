@@ -22,7 +22,7 @@ use screen::*;
 const P0: PartId = PartId::ALL[0];
 
 fn on_op1() -> Box<UiState> {
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     init_part(&mut ui, P0);
     to_osc(&mut ui);
     to_osc_sub(&mut ui, &ALGO_OP_PAGES[0]);
@@ -115,7 +115,7 @@ fn a_project_load_rechains_by_id() {
     let formant = put_with(&mut store, "FORMANT", |p| {
         **p.edit_part(P0).sound = demo_sound(Demo::Breath);
     });
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     let mut rig = Rig::new(&mut ui, store);
     rig.load(plain);
     to_osc(rig.ui);

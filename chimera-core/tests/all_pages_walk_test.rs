@@ -117,7 +117,7 @@ impl Context {
     }
 
     fn start(self) -> UiState {
-        let mut ui = UiState::new();
+        let mut ui = crate::screen::stack_ui();
         match self {
             Context::Part(engine) => load_init(&mut ui, engine),
             Context::Formant => {
@@ -321,7 +321,7 @@ fn representative_pages_walk() {
 #[test]
 fn settings_leaves_redraw_on_arrival() {
     let (perf, scope, audio) = (PerfStats::zero(), scope_fixture(), audio_fixture());
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     let mut fb = Fb::new();
     for leaf in leaves() {
         to_leaf(&mut ui, &leaf.labels);

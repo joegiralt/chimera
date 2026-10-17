@@ -253,7 +253,7 @@ fn the_notches_draw_where_they_cut() {
 
 /// Width of the lit segment on the plot: HOLD focused lights H.
 fn lit_h_width(hold: i8) -> i32 {
-    let mut ui = chimera_core::ui::UiState::new();
+    let mut ui = crate::screen::stack_ui();
     to_mod_sub(&mut ui, 1, &chimera_core::ui::block_registry::ENVELOPE);
     feed(&mut ui, Input::turn(EncoderId::E, hold + 1));
     feed(&mut ui, Input::turn(EncoderId::E, -1)); // HOLD focused, at `hold`
@@ -271,7 +271,7 @@ fn lit_h_width(hold: i8) -> i32 {
 /// The stage labels under E1's plot, DECAY focused, as glyph runs
 /// (columns with ink, split by blank ones).
 fn stage_labels_at_hold_0(hold_pos: chimera_core::dsp::modulator::HoldPos) -> usize {
-    let mut ui = chimera_core::ui::UiState::new();
+    let mut ui = crate::screen::stack_ui();
     ui.params_mut().envelopes[0].hold_pos = hold_pos;
     to_mod_sub(&mut ui, 1, &chimera_core::ui::block_registry::ENVELOPE);
     feed(&mut ui, Input::turn(EncoderId::B, 1));

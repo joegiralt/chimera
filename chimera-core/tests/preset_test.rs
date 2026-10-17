@@ -116,13 +116,14 @@ fn node(ui: &UiState) -> usize {
         dyn_rows: 0,
         orbit: OrbitCx::NONE,
         rev: chimera_core::dsp::reverb::ReverbType::Quad,
+        pages: chimera_core::ui::theme_settings::Pages::Stack,
     };
     ui.location().page(&cx).unwrap().1.node() as usize
 }
 
 #[test]
 fn plus_moves_one_block_per_press() {
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
     let start_node = node(&ui);
 
     // Single Pressed event → one step
@@ -144,7 +145,7 @@ fn plus_moves_one_block_per_press() {
 
 #[test]
 fn minus_moves_one_block_per_press() {
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
 
     // Move forward first so we have room to go back
     ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
@@ -162,7 +163,7 @@ fn minus_moves_one_block_per_press() {
 
 #[test]
 fn edit_held_with_b_press_does_not_navigate() {
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
     let start_node = node(&ui);
 
     // Edit+B1 should open browser, NOT navigate
@@ -191,7 +192,7 @@ fn open_browser(ui: &mut UiState, btn: ButtonId) {
 
 #[test]
 fn edit_b1_opens_patch_browser() {
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
     assert!(ui.location().browse().is_none());
 
     open_browser(&mut ui, ButtonId::B1);
@@ -204,7 +205,7 @@ fn edit_b1_opens_patch_browser() {
 
 #[test]
 fn edit_b3_opens_browser_for_track_2() {
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
 
     open_browser(&mut ui, ButtonId::B3);
     assert!(
@@ -216,7 +217,7 @@ fn edit_b3_opens_browser_for_track_2() {
 
 #[test]
 fn b1_without_edit_does_not_open_browser() {
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
 
     ui.handle_input(&MockControls::new().button(ButtonId::B1, ButtonState::Pressed));
     assert!(ui.location().browse().is_none());
@@ -224,7 +225,7 @@ fn b1_without_edit_does_not_open_browser() {
 
 #[test]
 fn browser_load_copies_patch_to_part() {
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
 
     // Store a named sound in pool slot 2
     let mut sound = Sound::init(EngineType::Algo);
@@ -258,7 +259,7 @@ fn browser_load_copies_patch_to_part() {
 
 #[test]
 fn browser_cancel_does_not_load() {
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
     let original_name = ui.project().part(PartId::ALL[0]).sound.name;
 
     // Store sound and open browser
@@ -277,7 +278,7 @@ fn browser_cancel_does_not_load() {
 
 #[test]
 fn browser_init_entries_set_the_engine() {
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
 
     // Open browser, scroll to "INIT Modal" (entry 1)
     open_browser(&mut ui, ButtonId::B1);
@@ -307,7 +308,7 @@ fn browser_init_entries_set_the_engine() {
 /// channel and mix (Review Focus: a load must not re-route MIDI).
 #[test]
 fn browser_load_keeps_part_mix() {
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
     ui.project_mut().edit_part(PartId::ALL[2]).mix.channel =
         chimera_core::MidiChannel::new(9).unwrap();
     ui.project_mut().edit_part(PartId::ALL[2]).mix.level = 0.3;
@@ -346,7 +347,7 @@ fn primed(ui: &UiState) -> Vec<chimera_core::addr::ParamAddr> {
 /// cutoff is the permanent FREQ column: priming it registers nothing.
 #[test]
 fn priming_on_main_page_registers_focused_param() {
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
     press(&mut ui, ButtonId::Plus);
     press(&mut ui, ButtonId::Plus);
     press(&mut ui, ButtonId::Plus); // node 3: Filter
@@ -373,7 +374,7 @@ fn priming_on_main_page_registers_focused_param() {
 /// modulatable, so the registry refuses it.
 #[test]
 fn priming_on_the_lfo_sub_page_registers_nothing() {
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
     for _ in 0..5 {
         press(&mut ui, ButtonId::Plus);
     }
@@ -395,7 +396,7 @@ fn priming_on_the_lfo_sub_page_registers_nothing() {
 /// refuses them and nothing is registered.
 #[test]
 fn priming_a_wave_registers_nothing() {
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
     press(&mut ui, ButtonId::Plus); // WAVE
     assert_eq!(
         ui.page(),
@@ -423,4 +424,16 @@ fn performance_default_is_new() {
 fn to_entry(ui: &mut UiState, entry: usize) {
     let d = entry as i8 - HEAD as i8;
     ui.handle_input(&MockControls::new().encoder(EncoderId::A, d));
+}
+
+/// A fresh UI under STACK: ADR 0081's keys (ROW flips them, ADR 0145).
+fn stack_ui() -> UiState {
+    use chimera_core::ui::theme_settings::{Pages, ThemeSettings};
+    let mut ui = UiState::new();
+    let t = ui.theme();
+    ui.set_theme(ThemeSettings {
+        pages: Pages::Stack,
+        ..t
+    });
+    ui
 }

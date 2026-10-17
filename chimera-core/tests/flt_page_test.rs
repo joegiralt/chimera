@@ -40,7 +40,7 @@ fn flt_node(ct: EngineType) -> usize {
 
 /// Part 1 on `ct`'s init Sound with a held saw worth filtering, on FLT.
 fn on_flt(ct: EngineType) -> UiState {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     load_init(&mut ui, ct);
     let p = ui.params_mut();
     p.filter.cutoff = 2000.0;
@@ -176,7 +176,7 @@ fn deleting_a_route_at_zero_redraws_the_grid() {
     use chimera_core::ui::page::PageLayout;
     use chimera_core::ui::perf::PerfStats;
     use chimera_core::ui::region::{RegionKind, layout_regions};
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     to_matrix(&mut ui); // E1 → CUTOFF, present at 0
     let (mut fb, perf, scope) = (Fb::new(), PerfStats::zero(), scope_fixture());
     ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);

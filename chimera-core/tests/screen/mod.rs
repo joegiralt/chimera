@@ -1446,36 +1446,37 @@ pub const CASES: &[ScreenCase] = &[
     }),
     // THEME's PAGES ROW (ADR 0145): FLT's two pages, no arrows; RES's
     // three; MOD at ENV2, cut on the right; OSC at D1R, cut both ways, and
-    // at OP6, cut on the left; DRV, no pages, no row.
+    // at OP6, cut on the left; DRV, no pages, no row. Walked with
+    // STACK's keys, then drawn under ROW.
     ("row_flt", |ui| {
-        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
         on_flt(ui, FilterKind::Svf, false);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
     }),
     ("row_res", |ui| {
-        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
         load_init(ui, EngineType::Modal);
         plus(ui, 1);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
     }),
     ("row_mod", |ui| {
-        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
         to_mod_sub(ui, 2, &reg::ENV_2);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
     }),
     ("row_osc_mid", |ui| {
-        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
         init_part(ui, PartId::ALL[0]);
         to_osc(ui);
         to_osc_sub(ui, &chimera_core::ui::block_registry::ALGO_D1R);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
     }),
     ("row_osc_last", |ui| {
-        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
         init_part(ui, PartId::ALL[0]);
         to_osc(ui);
         to_osc_sub(ui, &chimera_core::ui::block_registry::ALGO_OP_PAGES[5]);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
     }),
     ("row_drv", |ui| {
-        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
         init_part(ui, PartId::ALL[0]);
         plus(ui, 2);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
     }),
     ("env_a", |ui| {
         to_mod_sub(ui, 1, &reg::ENVELOPE);
@@ -2212,6 +2213,14 @@ pub fn audio_fixture() -> AudioStats {
 pub fn set_pages(ui: &mut UiState, pages: chimera_core::ui::theme_settings::Pages) {
     let t = ui.theme();
     ui.set_theme(chimera_core::ui::theme_settings::ThemeSettings { pages, ..t });
+}
+
+/// A fresh UI under STACK: ADR 0081's keys, EDIT down and SEQ up, which
+/// the suites walk pages with (ROW flips them, ADR 0145).
+pub fn stack_ui() -> UiState {
+    let mut ui = UiState::new();
+    stack_map(&mut ui);
+    ui
 }
 
 /// The map as the goldens before ROW drew it.

@@ -922,6 +922,7 @@ impl UiState {
     fn cx(&self) -> NavCtx {
         let mut cx = nav_cx(&self.project);
         cx.dyn_rows = self.screen().map_or(0, |s| self.screen_rows(s)) as u8;
+        cx.pages = self.theme.pages;
         cx
     }
 
@@ -1104,7 +1105,8 @@ impl UiState {
         let ctx = SlotCtx::read(&sound.params, self.sel_op)
             .on_clock(self.orbit.status.source)
             .on_rev(&self.project.perf().fx.reverb)
-            .on_chorus(&self.project.perf().fx.chorus);
+            .on_chorus(&self.project.perf().fx.chorus)
+            .on_pages(self.theme.pages);
         let base = view::SourceState::of(ctx.tape, sound.source_ref(), self.project.pool());
         let ctx = ctx.on_source(self.src.state(self.active_part, base, &self.project));
         match self.loc.orbit() {
@@ -3598,6 +3600,7 @@ fn nav_cx(project: &Project) -> NavCtx {
         orbit: OrbitCx {
             targets: live.rings.map(|r| r.target.part()),
         },
+        pages: ThemeSettings::DEFAULT.pages,
     }
 }
 

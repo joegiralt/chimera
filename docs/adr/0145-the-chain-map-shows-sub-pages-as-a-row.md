@@ -34,13 +34,27 @@ for it to be built and made switchable in THEME.
 - **STACK** is the list as it was, bit for bit; every screen golden from
   before this ADR is recorded under STACK and unchanged, and new `row_`
   goldens lock ROW.
-- **Navigation is unchanged** (ADR 0081): SEQ is the previous sub-page and
-  does nothing on the first; EDIT is the next and wraps from the last;
-  MINUS and PLUS move along the nodes. Only the drawing changes, so SEQ and
-  EDIT now read as left and right through pages you can see.
+- **ROW flips SEQ and EDIT to match the panel** (amends ADR 0081 under
+  ROW only). On the unit EDIT sits left of SEQ, and ROW reads left to
+  right, first page leftmost; with ADR 0081's keys the left button moved
+  the underline right, which the owner found backwards on the unit
+  (2026-10-17). Under ROW, EDIT is the previous sub-page and does nothing
+  on the first; SEQ is the next and wraps from the last to the first.
+  Under STACK the keys are ADR 0081's: EDIT down with the wrap, SEQ up.
+  MINUS and PLUS move along the nodes under both. One function,
+  `nav::sub_move(pages, key)`, maps PAGES and the key to the step; Part
+  pages, the FX pages and ORBIT's RING and ORB sub-pages all go through
+  it. EDIT on SCN still saves, and EDIT's other jobs (a SETTINGS row, the
+  Sound rung, the browser's load) are not sub-page steps and don't
+  change. The hint that names the next page follows: AMP's SYM reads
+  `EDIT ▾ SYM` under STACK and `SEQ ▸ SYM` under ROW.
 
 ## Alternatives considered
 - **ROW only:** the owner asked for the drawing to be switchable.
+- **ADR 0081's keys under ROW too:** built first; on the unit the left
+  button stepped right.
+- **Mirroring the row** (first page rightmost) to keep the keys: pages
+  would read right to left.
 - **A seventh cell on THEME:** the page has six; moving one off would
   change a page the owner just signed off.
 - **The mock's widths for every page in the label font:** the current page
@@ -51,7 +65,9 @@ for it to be built and made switchable in THEME.
   page, and the current page sits near the middle.
 
 ## Consequences
-The map's band now shows six or seven pages at once and where the
+Under ROW the D-pad differs from ADR 0081 on sub-pages; the suites that
+walk pages with ADR 0081's keys run under STACK (`screen::stack_ui`), and
+ROW's keys have their own tests. The map's band now shows six or seven pages at once and where the
 rest lie. The region key carries PAGES, and ROW keys no scroll, so the
 STACK list's easing doesn't redraw the row. The node line sits 7 px higher
 in ROW than in STACK. Any later map change has two drawings to keep.
