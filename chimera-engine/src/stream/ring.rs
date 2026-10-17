@@ -341,7 +341,17 @@ pub struct Ready<'a> {
     bytes: &'a [u8; SLOT_BYTES],
 }
 
-impl Ready<'_> {
+impl<'a> Ready<'a> {
+    /// The frames `sample` reads, packed, and the first's index in the
+    /// chunk: from −4 when Guarded, 0 when not. A pair each 3 B, so a
+    /// reader decodes them as a row's samples.
+    pub fn packed(&self) -> (i32, &'a [u8]) {
+        match self.guard {
+            Guard::Guarded => (-(GUARD_FRAMES.get() as i32), &self.bytes[..]),
+            Guard::Unguarded => (0, &self.bytes[GUARD..]),
+        }
+    }
+
     pub fn chunk(&self) -> ChunkIdx {
         self.chunk
     }

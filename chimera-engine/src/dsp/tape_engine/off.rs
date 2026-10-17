@@ -11,6 +11,7 @@ use crate::hw::Cost;
 use crate::modulation::ModState;
 use crate::project::SourceId;
 use crate::source_table::GateView;
+use crate::stream::port::StreamPort;
 
 use super::{Heads, PlayMode, TapeEngineParams, TapeModel};
 
@@ -42,7 +43,15 @@ impl TapeEngine {
         None
     }
 
-    pub fn start(&mut self, _: u8, _: &TapeEngineParams, _: &GateView<'_>, _: u32) {}
+    pub fn start(
+        &mut self,
+        _: u8,
+        _: &TapeEngineParams,
+        _: &GateView<'_>,
+        _: u32,
+        _: Option<&mut StreamPort<'_, '_>>,
+    ) {
+    }
 
     /// Every note: nothing here plays.
     pub fn refuses(_: TapeModel, _: Option<SourceId>, _: &GateView<'_>) -> bool {
@@ -55,6 +64,7 @@ impl TapeEngine {
         _: &TapeEngineParams,
         _: &GateView<'_>,
         _: u32,
+        _: Option<&mut StreamPort<'_, '_>>,
     ) {
         out.fill(0.0);
     }

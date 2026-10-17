@@ -332,3 +332,10 @@ fn d2_holds_the_knob_publisher() {
     assert_eq!(hw::D2_THIRD_SLOTS, 32_305);
     assert!(used <= hw::D2_SRAM);
 }
+
+/// Slice 1 § 10.3: every voice's ring fits SRAM4's 64 KiB.
+#[test]
+fn rings_fit_sram4() {
+    use chimera_core::stream::ring::Rings;
+    assert!(size_of::<Rings>() <= 64 * 1024, "{} B", size_of::<Rings>());
+}

@@ -256,6 +256,7 @@ fn with_view(v: &mut Rig, f: impl FnOnce(&mut Voice, &mut EngineCtx<'_>)) {
         voice,
         &mut EngineCtx {
             sym: pool,
+            streams: None,
             src: &view,
             part: chimera_core::project::PartId::ALL[0],
             tune: 0.0,
@@ -314,6 +315,7 @@ fn no_source_unlatches_the_last() {
         let view = src.view();
         let ctx = &mut EngineCtx {
             sym: &mut sym,
+            streams: None,
             src: &view,
             part: chimera_core::project::PartId::ALL[0],
             tune: 0.0,
@@ -343,6 +345,7 @@ fn a_sounding_note_bills_its_latched_model() {
     let mut sym = SymPool::boxed();
     let ctx = &mut EngineCtx {
         sym: &mut sym,
+        streams: None,
         src: &view,
         part: chimera_core::project::PartId::ALL[0],
         tune: 0.0,
@@ -422,6 +425,7 @@ fn a_note_waiting_a_fade_plays_its_source() {
         let view = src.view();
         let ctx = &mut EngineCtx {
             sym: &mut sym,
+            streams: None,
             src: &view,
             part: chimera_core::project::PartId::ALL[0],
             tune: 0.0,
@@ -445,5 +449,17 @@ fn a_note_waiting_a_fade_plays_its_source() {
     assert!(
         then < 1e-3,
         "on its own source, not the last note's: {then}"
+    );
+}
+
+/// Slice 1 § 10.3: the deck holds its stream's cursor and still fits
+/// inside MODAL's slot, so `EngineSlot` (and a voice) doesn't grow.
+#[test]
+fn tape_with_its_cursor_stays_under_modal() {
+    assert!(
+        size_of::<TapeEngine>() < size_of::<ModalEngine>(),
+        "TAPE {} B, MODAL {} B",
+        size_of::<TapeEngine>(),
+        size_of::<ModalEngine>()
     );
 }

@@ -70,6 +70,7 @@ macro_rules! with_ctx {
         let mut run = |$id: Option<chimera_core::project::SourceId>, view: &GateView<'_>| {
             let $ctx = &mut EngineCtx {
                 sym: &mut **pool,
+                streams: None,
                 src: view,
                 part,
                 tune,

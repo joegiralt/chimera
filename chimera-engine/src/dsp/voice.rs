@@ -1336,6 +1336,7 @@ mod tests {
         let none = crate::source_table::GateView::empty();
         let ctx = &mut EngineCtx {
             sym: &mut pool,
+            streams: None,
             src: &none,
             part: crate::project::PartId::ALL[0],
             tune: 0.0,

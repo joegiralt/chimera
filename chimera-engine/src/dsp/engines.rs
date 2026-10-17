@@ -21,6 +21,7 @@ use crate::modulation::{ModState, amount_scale};
 use crate::params::{EngineType, ParamSnapshot, PitchParams, Steal};
 use crate::project::{PartId, SourceId};
 use crate::source_table::GateView;
+use crate::stream::port::StreamPort;
 use crate::sym_alloc::{Lease, SymAlloc};
 use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
@@ -36,11 +37,15 @@ pub enum SlotKind {
 }
 
 /// What an engine reads beside its params: the sympathetic pool (MODAL's
-/// SYMP), this block's view of the pool's sources (TAPE) and the Part the
-/// voice plays (VA's seed). Each engine ignores what it doesn't read.
+/// SYMP), this block's view of the pool's sources and the voice's ring
+/// (TAPE) and the Part the voice plays (VA's seed). Each engine ignores
+/// what it doesn't read.
 pub struct EngineCtx<'a> {
     pub sym: &'a mut SymPool,
     pub src: &'a GateView<'a>,
+    /// The voice's stream (slice 1 § 7.1): `None` with no rings, where a
+    /// streamed source plays nothing.
+    pub streams: Option<&'a mut StreamPort<'a, 'a>>,
     pub part: PartId,
     /// SETTINGS > TUNING in semitones, eased (`Instrument`): added to the
     /// pitch offset of every engine.
@@ -332,7 +337,13 @@ impl EngineSlot {
                     Some(id) => t.latch(id),
                     None => t.unlatch(),
                 }
-                t.start(note.get(), &p.tape, ctx.src, sample_rate);
+                t.start(
+                    note.get(),
+                    &p.tape,
+                    ctx.src,
+                    sample_rate,
+                    ctx.streams.as_deref_mut(),
+                );
             }
             (Self::Va(v), None) => v.note_on(note.get(), &p.va, ctx.part, sample_rate),
             (Self::Va(v), Some(tau)) => v.glide_on(note.get(), &p.va, ctx.part, (sample_rate, tau)),
@@ -452,7 +463,13 @@ impl EngineSlot {
         match self {
             Self::Algo(a) => a.render(out, &p.algo, live, sample_rate, taps),
             Self::Modal(m) => m.render(out, &p.modal, sample_rate, ctx.sym),
-            Self::Tape(t) => t.play(out, &p.tape, ctx.src, sample_rate),
+            Self::Tape(t) => t.play(
+                out,
+                &p.tape,
+                ctx.src,
+                sample_rate,
+                ctx.streams.as_deref_mut(),
+            ),
             Self::Va(v) => v.render(out, &p.va, sample_rate),
         }
     }

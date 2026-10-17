@@ -66,9 +66,9 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     e.seed(3);
     e.latch(id);
     assert!(TapeEngine::refuses(p.model, Some(id), &tok.begin_block()));
-    e.start(60, &p, &tok.begin_block(), SR);
+    e.start(60, &p, &tok.begin_block(), SR, None);
     let mut out = [1.0; BLOCK_SIZE];
-    e.play(&mut out, &p, &tok.begin_block(), SR);
+    e.play(&mut out, &p, &tok.begin_block(), SR, None);
     assert_eq!(out, [0.0; BLOCK_SIZE]);
     assert!(!e.is_active() && !e.sustains());
     assert_eq!(e.source(), None);
@@ -102,14 +102,14 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
             e.hold();
             d.set_pitch(7.0);
             e.set_pitch(7.0);
-            d.start(note, &p, &v, SR);
-            e.start(note, &p, &v, SR);
+            d.start(note, &p, &v, SR, None);
+            e.start(note, &p, &v, SR, None);
         }
         for _ in 0..40 {
             let v = tok.begin_block();
             let (mut a, mut b) = ([0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE]);
-            d.play(&mut a, &p, &v, SR);
-            e.play(&mut b, &p, &v, SR);
+            d.play(&mut a, &p, &v, SR, None);
+            e.play(&mut b, &p, &v, SR, None);
             assert_eq!(bits(&a), bits(&b));
             assert_eq!(d.heads(), e.heads());
             assert_eq!(d.playing_cost(), e.playing_cost());
@@ -134,15 +134,15 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     d2.latch(id);
     e2.latch(id);
     let v = tok.begin_block();
-    d2.start(64, &p, &v, SR);
-    e2.start(64, &p, &v, SR);
+    d2.start(64, &p, &v, SR, None);
+    e2.start(64, &p, &v, SR, None);
     d.note_off();
     e.note_off();
     for _ in 0..20 {
         let v = tok.begin_block();
         let (mut a, mut b) = ([0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE]);
-        d2.play(&mut a, &p, &v, SR);
-        e2.play(&mut b, &p, &v, SR);
+        d2.play(&mut a, &p, &v, SR, None);
+        e2.play(&mut b, &p, &v, SR, None);
         assert_eq!(bits(&a), bits(&b));
         assert!(a.iter().any(|&y| y != 0.0));
     }
@@ -150,7 +150,7 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     // Closed again mid-note: silent, and nothing reads the deck.
     DOOR_CELL.close();
     let mut out = [1.0; BLOCK_SIZE];
-    e2.play(&mut out, &p, &tok.begin_block(), SR);
+    e2.play(&mut out, &p, &tok.begin_block(), SR, None);
     assert_eq!(out, [0.0; BLOCK_SIZE]);
     assert!(!e2.is_active());
     assert_eq!(e2.heads(), Heads::NONE);
@@ -162,8 +162,8 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     for _ in 0..5 {
         let v = tok.begin_block();
         let (mut a, mut b) = ([0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE]);
-        d2.play(&mut a, &p, &v, SR);
-        e2.play(&mut b, &p, &v, SR);
+        d2.play(&mut a, &p, &v, SR, None);
+        e2.play(&mut b, &p, &v, SR, None);
         assert_eq!(bits(&a), bits(&b));
         assert!(a.iter().any(|&y| y != 0.0));
     }
@@ -188,17 +188,17 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     let v = tok.begin_block();
     for k in [&mut *d3, &mut *d4] {
         k.latch(id);
-        k.start(60, &worn, &v, SR);
+        k.start(60, &worn, &v, SR, None);
     }
     e3.latch(id);
-    e3.start(60, &worn, &v, SR);
+    e3.start(60, &worn, &v, SR, None);
     let mut differs = false;
     for _ in 0..40 {
         let v = tok.begin_block();
         let (mut a, mut b, mut c) = ([0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE], [0.0; BLOCK_SIZE]);
-        d3.play(&mut a, &worn, &v, SR);
-        e3.play(&mut b, &worn, &v, SR);
-        d4.play(&mut c, &worn, &v, SR);
+        d3.play(&mut a, &worn, &v, SR, None);
+        e3.play(&mut b, &worn, &v, SR, None);
+        d4.play(&mut c, &worn, &v, SR, None);
         assert_eq!(bits(&a), bits(&b));
         differs |= bits(&a) != bits(&c);
     }

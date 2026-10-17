@@ -303,6 +303,7 @@ fn clamp_inc(inc_max: f32) -> f32 {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Cursor {
     /// Each slot's want: a Ready slot is read only under it.
     wants: [Generation; SLOTS],
@@ -333,6 +334,19 @@ impl Cursor {
 
     pub fn flow(&self) -> Flow {
         self.state
+    }
+
+    /// The head it plays or has yet to pass; `None` once passed.
+    pub fn head(&self) -> Option<RamHead> {
+        self.head
+    }
+
+    /// The note is over: every slot dropped, silent until the next start.
+    pub fn stop(&mut self, port: &mut StreamPort<'_, '_>) {
+        for s in SlotIdx::ALL {
+            port.turn.cancel(port.voice, s);
+        }
+        (self.head, self.state, self.gain) = (None, Flow::Cold, Fade::SILENT);
     }
 
     /// Note-on (or any jump) at source frame `pos`, reading at most

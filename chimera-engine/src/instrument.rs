@@ -977,6 +977,7 @@ impl Instrument {
                         self.sounding[v] = q;
                         let ctx = &mut EngineCtx {
                             sym: &mut self.sym,
+                            streams: None,
                             src,
                             part: part_id(q),
                             tune: self.tune,
@@ -1060,6 +1061,7 @@ impl Instrument {
         self.resnap_to[v] = None;
         self.voices[v].note_off(&mut EngineCtx {
             sym: &mut self.sym,
+            streams: None,
             src: &NO_SOURCES,
             part: part_id(self.sounding[v]),
             tune: self.tune,
@@ -1283,6 +1285,7 @@ impl Instrument {
                 glide,
                 &mut EngineCtx {
                     sym: &mut self.sym,
+                    streams: None,
                     src: &NO_SOURCES,
                     part: part_id(self.sounding[v]),
                     tune: self.tune,
@@ -1338,6 +1341,7 @@ impl Instrument {
         let voice = &mut self.voices[v];
         let ctx = &mut EngineCtx {
             sym: &mut self.sym,
+            streams: None,
             src,
             part: part_id(q),
             tune: self.tune,
@@ -1622,6 +1626,7 @@ impl Instrument {
             let part = &shared.parts[p];
             let ctx = &mut EngineCtx {
                 sym: &mut self.sym,
+                streams: None,
                 src,
                 part: PartId::ALL[p],
                 tune: self.tune,

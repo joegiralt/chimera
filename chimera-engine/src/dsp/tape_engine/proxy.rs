@@ -14,6 +14,7 @@ use crate::hw::Cost;
 use crate::modulation::ModState;
 use crate::project::SourceId;
 use crate::source_table::GateView;
+use crate::stream::port::StreamPort;
 
 use super::{Heads, PlayMode, TapeDeck, TapeEngineParams, TapeModel, model_cost};
 
@@ -27,9 +28,23 @@ pub struct TapeDoor {
     pub restore: fn(&mut TapeDeck, super::Strip),
     pub latch: fn(&mut TapeDeck, SourceId),
     pub unlatch: fn(&mut TapeDeck),
-    pub start: fn(&mut TapeDeck, u8, &TapeEngineParams, &GateView<'_>, u32),
+    pub start: fn(
+        &mut TapeDeck,
+        u8,
+        &TapeEngineParams,
+        &GateView<'_>,
+        u32,
+        Option<&mut StreamPort<'_, '_>>,
+    ),
     pub refuses: fn(TapeModel, Option<SourceId>, &GateView<'_>) -> bool,
-    pub play: fn(&mut TapeDeck, &mut [f32; BLOCK_SIZE], &TapeEngineParams, &GateView<'_>, u32),
+    pub play: fn(
+        &mut TapeDeck,
+        &mut [f32; BLOCK_SIZE],
+        &TapeEngineParams,
+        &GateView<'_>,
+        u32,
+        Option<&mut StreamPort<'_, '_>>,
+    ),
     pub cost: fn(&TapeEngineParams, &ModState) -> Cost,
     pub playing_cost: fn(&TapeDeck) -> Option<Cost>,
     pub set_pitch: fn(&mut TapeDeck, f32),
@@ -149,8 +164,15 @@ impl TapeEngine {
         self.read(|_, k| k.src).flatten()
     }
 
-    pub fn start(&mut self, note: u8, p: &TapeEngineParams, src: &GateView<'_>, sample_rate: u32) {
-        self.run(|t, k| (t.start)(k, note, p, src, sample_rate));
+    pub fn start(
+        &mut self,
+        note: u8,
+        p: &TapeEngineParams,
+        src: &GateView<'_>,
+        sample_rate: u32,
+        streams: Option<&mut StreamPort<'_, '_>>,
+    ) {
+        self.run(|t, k| (t.start)(k, note, p, src, sample_rate, streams));
     }
 
     /// Closed, every note.
@@ -166,9 +188,10 @@ impl TapeEngine {
         p: &TapeEngineParams,
         src: &GateView<'_>,
         sample_rate: u32,
+        streams: Option<&mut StreamPort<'_, '_>>,
     ) {
         if self
-            .run(|t, k| (t.play)(k, out, p, src, sample_rate))
+            .run(|t, k| (t.play)(k, out, p, src, sample_rate, streams))
             .is_none()
         {
             out.fill(0.0);

@@ -568,17 +568,17 @@ fn a_glide_on_a_gated_note_moves_its_start() {
     let mut e = fresh();
     e.latch(src.id);
     src.close();
-    e.start(60, &p, &src.view(), SR);
+    e.start(60, &p, &src.view(), SR, None);
     assert!(e.is_active());
     e.glide_to(64, (SR, 0.01));
     src.open();
     let mut late = [0.0; BLOCK_SIZE];
-    e.play(&mut late, &p, &src.view(), SR);
+    e.play(&mut late, &p, &src.view(), SR, None);
     let mut f = fresh();
     f.latch(src.id);
     let mut now = [0.0; BLOCK_SIZE];
-    f.start(64, &p, &src.view(), SR);
-    f.play(&mut now, &p, &src.view(), SR);
+    f.start(64, &p, &src.view(), SR, None);
+    f.play(&mut now, &p, &src.view(), SR, None);
     assert!(loud(&now));
     assert_eq!(late, now);
 
@@ -590,10 +590,10 @@ fn a_glide_on_a_gated_note_moves_its_start() {
     let mut g = fresh();
     g.latch(src.id);
     src.close();
-    g.start(60, &wave, &src.view(), SR);
+    g.start(60, &wave, &src.view(), SR, None);
     src.open();
     let mut out = [1.0; BLOCK_SIZE];
-    g.play(&mut out, &wave, &src.view(), SR);
+    g.play(&mut out, &wave, &src.view(), SR, None);
     assert!(!g.is_active() && !loud(&out));
 }
 
@@ -615,7 +615,7 @@ fn a_gated_hold_note_sustains() {
     let e = TapeEngine::init_in_place(&mut slot);
     e.latch(src.id);
     src.close();
-    e.start(60, &p, &src.view(), SR);
+    e.start(60, &p, &src.view(), SR, None);
     assert!(e.is_active() && e.sustains());
 }
 
@@ -669,6 +669,7 @@ fn a_dropped_queued_note_frees_its_source() {
         let view = src.view();
         let ctx = &mut EngineCtx {
             sym: &mut sym,
+            streams: None,
             src: &view,
             part: chimera_core::project::PartId::ALL[0],
             tune: 0.0,
@@ -687,6 +688,7 @@ fn a_dropped_queued_note_frees_its_source() {
     let view = src.view();
     let ctx = &mut EngineCtx {
         sym: &mut sym,
+        streams: None,
         src: &view,
         part: chimera_core::project::PartId::ALL[0],
         tune: 0.0,

@@ -34,6 +34,8 @@ pub mod machine;
 pub mod oneshot;
 pub mod params;
 pub mod read;
+#[cfg(feature = "tape")]
+pub mod span;
 pub mod stretch;
 pub mod tron;
 pub mod warble;
@@ -52,6 +54,7 @@ pub use proxy::{TapeDoor, TapeEngine};
 pub type TapeEngine = TapeDeck;
 
 use core::mem::MaybeUninit;
+use core::ops::Range;
 
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 
@@ -65,13 +68,20 @@ use crate::hw::Cost;
 use crate::modulation::ModState;
 use crate::project::SourceId;
 use crate::source_table::GateView;
+#[cfg(feature = "tape")]
+use crate::stream::admit::{HEAD_MS, WOW_CENTS};
+#[cfg(feature = "tape")]
+use crate::stream::cursor::{Cursor, HeadIdx};
+use crate::stream::port::StreamPort;
 use age::Age;
 use heads::{
     Bounds, Dir, Fade, Ghost, Head, Plan, Turn, Window, at, min_frames, plan, shortest,
     window_end_min, window_start,
 };
 use oneshot::slice_bounds;
-use read::{Pos, SourceView};
+use read::{Descriptor, Pos, SourceView};
+#[cfg(feature = "tape")]
+use span::{Reads, StreamRow};
 use stretch::Stretch;
 use warble::Warble;
 use wave::Wave;
@@ -493,6 +503,18 @@ pub struct TapeDeck {
     /// The transport is skipped: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     no_transport: bool,
+    /// A streamed note's cursor (slice 1 § 7.3), and whether the note
+    /// streams: its row holds heads, and the ring the rest.
+    cursor: Cursor,
+    streamed: bool,
+    /// A LOOP wrap moved the head this block: the cursor starts there.
+    jumped: bool,
+    /// The fastest step a sample: `INC_MAX`, or a streamed note's
+    /// `inc_max`, which its cursor plans for.
+    inc_cap: f32,
+    /// Streamed views check every tap: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    strict: bool,
 }
 
 #[cfg(feature = "tape")]
@@ -580,6 +602,12 @@ impl TapeDeck {
             warble: Warble::new(),
             #[cfg(any(test, feature = "test-support"))]
             no_transport: false,
+            cursor: Cursor::new(),
+            streamed: false,
+            jumped: false,
+            inc_cap: INC_MAX,
+            #[cfg(any(test, feature = "test-support"))]
+            strict: false,
         }
     }
 
@@ -635,19 +663,110 @@ impl TapeDeck {
         SourceView::new(src.bytes(self.src?)?)
     }
 
+    /// The latched source's row this block, if streamed (slice 1 § 5.1).
+    fn streamed_row<'v>(&self, src: &'v GateView<'_>) -> Option<&'v [u8]> {
+        src.bytes(self.src?)
+            .filter(|h| Descriptor::from_bytes(h).is_some_and(|d| d.heads > 0))
+    }
+
     /// `note_on` on the latched source through the block's view. With no
     /// source to read, or one `p`'s model can't play (`wave::playable`), the
     /// engine stays idle. One a closed gate moves waits, active and silent,
-    /// and starts on the first block after the gate opens (`play`).
-    pub fn start(&mut self, note: u8, p: &TapeEngineParams, src: &GateView<'_>, sample_rate: u32) {
+    /// and starts on the first block after the gate opens (`play`). A
+    /// streamed source plays through `streams` (`start_streamed`).
+    pub fn start(
+        &mut self,
+        note: u8,
+        p: &TapeEngineParams,
+        src: &GateView<'_>,
+        sample_rate: u32,
+        mut streams: Option<&mut StreamPort<'_, '_>>,
+    ) {
+        if self.streamed
+            && let Some(port) = streams.as_deref_mut()
+        {
+            self.cursor.stop(port);
+        }
+        if let Some(held) = self.streamed_row(src) {
+            self.start_streamed(note, p, held, sample_rate, streams);
+            return;
+        }
         match self.view(src) {
             Some(v) if wave::playable(p.model, &v) => self.note_on(note, p, &v, sample_rate),
             None if self.src.is_some_and(|id| src.moving(id)) => {
                 (self.note, self.model, self.mode) = (note, p.model, p.mode);
                 self.hold = params::hold(p);
-                (self.gated, self.active) = (true, true);
+                (self.gated, self.active, self.streamed) = (true, true, false);
             }
-            _ => (self.gated, self.active) = (false, false),
+            _ => (self.gated, self.active, self.streamed) = (false, false, false),
+        }
+    }
+
+    /// A note on a streamed row (slice 1 § 7): PLAY ONE or a forward LOOP
+    /// only, through the voice's rings. Its window is worked out over the
+    /// file's frames; the cursor starts on START's head, cold if that
+    /// doesn't hold where the head starts.
+    #[inline(never)]
+    fn start_streamed(
+        &mut self,
+        note: u8,
+        p: &TapeEngineParams,
+        held: &[u8],
+        sample_rate: u32,
+        streams: Option<&mut StreamPort<'_, '_>>,
+    ) {
+        (self.gated, self.active, self.streamed) = (false, false, false);
+        let forward = p.model == TapeModel::Play && p.mode != PlayMode::Ping && p.end >= p.start;
+        let (Some(port), true) = (streams, forward) else {
+            return;
+        };
+        let Some(row) = self.row(held, port) else {
+            return;
+        };
+        let Some(head) = row.head_span(HeadIdx::START) else {
+            return;
+        };
+        // Reads nothing: the window from the file's frames and the rate.
+        self.note_on(note, p, &head.view, sample_rate);
+        self.streamed = true;
+        let tune = self.tune();
+        self.inc_cap = clampf(
+            inc(
+                row.desc().rate,
+                note,
+                self.pitch + tune + WOW_CENTS,
+                self.root,
+                sample_rate,
+            ),
+            f32::EPSILON,
+            INC_MAX,
+        );
+        let at = self.heads[0].pos.whole();
+        self.cursor
+            .start(at, self.inc_cap, row.head(HeadIdx::START), port);
+    }
+
+    fn row<'v>(&self, held: &'v [u8], port: &StreamPort<'_, '_>) -> Option<StreamRow<'v>> {
+        let row = StreamRow::new(held, port.file_frames)?;
+        #[cfg(any(test, feature = "test-support"))]
+        if self.strict {
+            return Some(row.strict());
+        }
+        Some(row)
+    }
+
+    /// Streamed notes read strict views, every tap checked: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn strict_spans(&mut self) {
+        self.strict = true;
+    }
+
+    /// SLICE NOTE plays at ROOT: the cents that take the note there.
+    fn tune(&self) -> f32 {
+        if self.at_root {
+            self.root - f32::from(self.note) * 100.0
+        } else {
+            0.0
         }
     }
 
@@ -676,19 +795,106 @@ impl TapeDeck {
         p: &TapeEngineParams,
         src: &GateView<'_>,
         sample_rate: u32,
+        mut streams: Option<&mut StreamPort<'_, '_>>,
     ) {
+        if let Some(held) = self.streamed_row(src) {
+            self.play_streamed(out, p, (held, src), sample_rate, streams);
+            return;
+        }
         if let Some(v) = self.view(src) {
             if core::mem::take(&mut self.gated) {
-                self.start(self.note, p, src, sample_rate);
-            } else if v.frames() < self.n {
+                self.start(self.note, p, src, sample_rate, streams.as_deref_mut());
+            } else if v.frames() < self.n || self.streamed {
                 self.active = false;
             }
             self.render(out, p, &v, sample_rate);
-            return;
+        } else {
+            out.fill(0.0);
+            if !self.src.is_some_and(|id| src.moving(id)) {
+                (self.gated, self.active) = (false, false);
+            }
         }
-        out.fill(0.0);
-        if !self.src.is_some_and(|id| src.moving(id)) {
+        self.end_stream(streams);
+    }
+
+    /// A streamed note that ended drops its slots.
+    fn end_stream(&mut self, streams: Option<&mut StreamPort<'_, '_>>) {
+        if !self.active
+            && self.streamed
+            && let Some(port) = streams
+        {
+            self.cursor.stop(port);
+            self.streamed = false;
+        }
+    }
+
+    /// `play` on a streamed row: with no rings to read through, nothing
+    /// plays.
+    #[inline(never)]
+    fn play_streamed(
+        &mut self,
+        out: &mut [f32; BLOCK_SIZE],
+        p: &TapeEngineParams,
+        (held, src): (&[u8], &GateView<'_>),
+        sample_rate: u32,
+        streams: Option<&mut StreamPort<'_, '_>>,
+    ) {
+        let Some(port) = streams else {
+            out.fill(0.0);
             (self.gated, self.active) = (false, false);
+            return;
+        };
+        if core::mem::take(&mut self.gated) {
+            self.start(self.note, p, src, sample_rate, Some(&mut *port));
+        }
+        match self.row(held, port) {
+            Some(row) if self.active && self.streamed && row.frames() >= self.n => {
+                self.stream_block(out, p, row, sample_rate, port);
+            }
+            _ => {
+                (self.active, self.last) = (false, 0.0);
+                out.fill(0.0);
+            }
+        }
+        self.end_stream(Some(port));
+    }
+
+    /// A streamed note's block (slice 1 § 7.3): heads re-staged under the
+    /// cursor start it again there; the cursor plans the block's spans, the
+    /// model reads them, its output takes the cursor's gain; a LOOP wrap
+    /// the cursor's head doesn't hold starts it on the loop-start head.
+    fn stream_block(
+        &mut self,
+        out: &mut [f32; BLOCK_SIZE],
+        p: &TapeEngineParams,
+        row: StreamRow<'_>,
+        sample_rate: u32,
+        port: &mut StreamPort<'_, '_>,
+    ) {
+        if let Some(h) = self.cursor.head()
+            && row.head(h.idx) != Some(h)
+        {
+            let at = self.heads[0].pos.whole();
+            self.cursor.start(at, self.inc_cap, row.head(h.idx), port);
+        }
+        let h = self.heads[0].pos;
+        let plan = self
+            .cursor
+            .plan(f64::from(h.whole()) + f64::from(h.frac()), port);
+        self.inc_cap = plan.inc_max.max(f32::EPSILON);
+        let reads = Reads::streamed(&plan, &row, &self.cursor, &*port.turn, port.voice);
+        self.render_reads(out, p, &reads, sample_rate);
+        if core::mem::take(&mut self.jumped) {
+            let at = self.heads[0].pos.whole();
+            let held = self
+                .cursor
+                .head()
+                .and_then(|h| row.head_span(h.idx))
+                .is_some_and(|s| s.holds(at));
+            if !held {
+                self.cursor
+                    .start(at, self.inc_cap, row.head(HeadIdx::LOOP), port);
+            }
         }
     }
 
@@ -745,6 +951,7 @@ impl TapeDeck {
         sample_rate: u32,
     ) {
         let (frames, rate) = (v.frames(), v.desc().rate);
+        (self.streamed, self.inc_cap) = (false, INC_MAX);
         self.model = p.model;
         self.mode = p.mode;
         self.hold = params::hold(p);
@@ -874,7 +1081,9 @@ impl TapeDeck {
     /// LOOP plays its next pass reversed: END before the START latched at
     /// note-on (#369).
     fn reversed(&self, end: f32) -> bool {
-        self.lp() && Dir::of(self.start, end) == Dir::Rev
+        // Streamed, forward only (slice 1 § 2.3): END turned before START
+        // mid-note never flips it.
+        self.lp() && !self.streamed && Dir::of(self.start, end) == Dir::Rev
     }
 
     /// START and END as the model plays them. Reversed (`rev`), LOOP's
@@ -1156,6 +1365,20 @@ impl TapeDeck {
         v: &SourceView<'_>,
         sample_rate: u32,
     ) {
+        self.render_reads(out, p, &Reads::whole(*v), sample_rate);
+    }
+
+    /// `render` through a block's reads: a row's, or a streamed note's
+    /// spans (`span::Reads`), whose output takes the cursor's gain.
+    fn render_reads(
+        &mut self,
+        out: &mut [f32; BLOCK_SIZE],
+        p: &TapeEngineParams,
+        reads: &Reads<'_>,
+        sample_rate: u32,
+    ) {
+        let (v, _) = reads.run(0);
+        let v = &v;
         if !self.active {
             out.fill(0.0);
             self.last = 0.0;
@@ -1201,7 +1424,7 @@ impl TapeDeck {
                 (first, sample_rate),
             );
         } else if self.one_head() {
-            self.render_once(out, v, sample_rate);
+            self.render_once(out, reads, sample_rate);
         } else if self.model == TapeModel::Stretch {
             let target = self.target_inc(v.desc().rate, 0.0, sample_rate);
             let m = self.mac;
@@ -1214,7 +1437,7 @@ impl TapeDeck {
                 sample_rate,
             );
         } else {
-            self.render_heads(out, v, (p, first), sample_rate);
+            self.render_heads(out, reads, (p, first), sample_rate);
             if self.rel_k != 1.0 {
                 // PLAY's FADE after note-off: TRON's one-pole release.
                 let (mut g, k) = (self.rel, self.rel_k);
@@ -1229,6 +1452,11 @@ impl TapeDeck {
             }
         }
 
+        if self.streamed {
+            for y in out.iter_mut() {
+                *y *= self.cursor.gain();
+            }
+        }
         if core::mem::take(&mut self.ramp) {
             Self::note_on_ramp(out, self.last);
         }
@@ -1250,7 +1478,7 @@ impl TapeDeck {
                 sample_rate,
             ) * self.slide.value(),
             f32::EPSILON,
-            INC_MAX,
+            self.inc_cap,
         )
     }
 
@@ -1278,14 +1506,10 @@ impl TapeDeck {
     /// tape's run-out, each sample ramps to 0 over `END_RAMP` and the note
     /// ends there; a span shorter than a block's travel ends inside it.
     #[inline(never)]
-    fn render_once(&mut self, out: &mut [f32; BLOCK_SIZE], v: &SourceView<'_>, sample_rate: u32) {
+    fn render_once(&mut self, out: &mut [f32; BLOCK_SIZE], reads: &Reads<'_>, sample_rate: u32) {
         // SLICE NOTE: the note picks the slice and plays at ROOT.
-        let tune = if self.at_root {
-            self.root - f32::from(self.note) * 100.0
-        } else {
-            0.0
-        };
-        let target = self.target_inc(v.desc().rate, tune, sample_rate);
+        let tune = self.tune();
+        let target = self.target_inc(reads.run(0).0.desc().rate, tune, sample_rate);
         let (from, to) = self.inc.step(target);
         let fast = from.max(to);
         let rem = Pos(at(self.once_end).0.saturating_sub(self.heads[0].pos.0));
@@ -1307,11 +1531,18 @@ impl TapeDeck {
         };
         let (from, to) = (Pos::from_f32(from).0, Pos::from_f32(to).0);
         let step = (to.wrapping_sub(from) as i64 / BLOCK_SIZE as i64) as u64;
-        let c = (from, step, gain);
-        match (self.mirror(), near) {
-            (_, false) => self.once(out, v, c),
-            (false, true) => self.once_near::<false>(out, v, c),
-            (true, true) => self.once_near::<true>(out, v, c),
+        let mut c = (from, step, gain);
+        // Run by run: each to the sample whose read leaves it.
+        let (mut i, mut k) = (0, 0);
+        while i < BLOCK_SIZE && self.active {
+            let (v, stop) = reads.run(k);
+            let j = self.reach(i, (c.0, step), stop);
+            c = match (self.mirror(), near) {
+                (_, false) => self.once(out, &v, c, i..j),
+                (false, true) => self.once_near::<false>(out, &v, c, i..j),
+                (true, true) => self.once_near::<true>(out, &v, c, i..j),
+            };
+            (i, k) = (j, k + 1);
         }
         if self.rel < tron::TRON_FLOOR {
             self.active = false;
@@ -1326,8 +1557,9 @@ impl TapeDeck {
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
         v: &SourceView<'_>,
-        (mut cur, step, _): (u64, u64, (f32, f32)),
-    ) {
+        (mut cur, step, gain): (u64, u64, (f32, f32)),
+        run: Range<usize>,
+    ) -> (u64, u64, (f32, f32)) {
         let (m, a) = if self.mirror() {
             (u64::MAX, self.off.0.wrapping_add(1))
         } else {
@@ -1335,7 +1567,8 @@ impl TapeDeck {
         };
         let mut h = self.heads[0].pos;
         let (mut g, k) = (self.rel, self.rel_k);
-        for y in out.iter_mut() {
+        let n = run.len() as u32;
+        for y in out[run].iter_mut() {
             // Reversed at `lo` 0, the head's last fraction reads just
             // under frame 0: the position wraps, and `SourceView::read`
             // takes its whole part as `i32` −1, clamped to frame 0.
@@ -1344,9 +1577,25 @@ impl TapeDeck {
             cur = cur.wrapping_add(step);
             h = h + Pos(cur);
         }
-        self.left = self.left.saturating_sub(BLOCK_SIZE as u32);
+        self.left = self.left.saturating_sub(n);
         self.heads[0].pos = h;
         self.rel = g;
+        (cur, step, gain)
+    }
+
+    /// The sample from `i` whose read reaches `stop`: the head stepped as
+    /// `once` steps it, nothing read. A row's run never stops.
+    fn reach(&self, mut i: usize, (mut cur, step): (u64, u64), stop: u32) -> usize {
+        if stop == u32::MAX {
+            return BLOCK_SIZE;
+        }
+        let mut h = self.heads[0].pos;
+        while i < BLOCK_SIZE && h.whole() < stop {
+            cur = cur.wrapping_add(step);
+            h = h + Pos(cur);
+            i += 1;
+        }
+        i
     }
 
     /// `render_once`'s samples near the end or the run-out, read forward or
@@ -1360,13 +1609,14 @@ impl TapeDeck {
         out: &mut [f32; BLOCK_SIZE],
         v: &SourceView<'_>,
         (mut cur, step, (mut r, dr)): (u64, u64, (f32, f32)),
-    ) {
+        run: Range<usize>,
+    ) -> (u64, u64, (f32, f32)) {
         let off = self.off;
         let mut h = self.heads[0].pos;
         let (mut g, k) = (self.rel, self.rel_k);
         let end = at(self.once_end);
-        let mut i = 0;
-        while i < BLOCK_SIZE && h < end && self.left > 0 {
+        let mut i = run.start;
+        while i < run.end && h < end && self.left > 0 {
             r -= dr;
             let x = clampf(r, 0.0, 1.0);
             // `off − h` under frame 0 at `lo` 0: `read`'s clamp, as in `once`.
@@ -1385,6 +1635,7 @@ impl TapeDeck {
         }
         self.heads[0].pos = h;
         self.rel = g;
+        (cur, step, (r, dr))
     }
 
     /// The block of a model that plays heads through a window: all but
@@ -1392,10 +1643,12 @@ impl TapeDeck {
     fn render_heads(
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
-        v: &SourceView<'_>,
+        reads: &Reads<'_>,
         (p, first): (&TapeEngineParams, bool),
         sample_rate: u32,
     ) {
+        let (v, _) = reads.run(0);
+        let v = &v;
         let w = self.walk + self.mac.motion * BLOCK_SIZE as f32 / sample_rate as f32;
         self.walk = w - libm::floorf(w);
 
@@ -1468,23 +1721,36 @@ impl TapeDeck {
         let (from, to) = (Pos::from_f32(from).0, Pos::from_f32(to).0);
         let step = (to.wrapping_sub(from) as i64 / BLOCK_SIZE as i64) as u64;
 
-        let (mut i, mut cur) = (0, from);
+        // Run by run: the first head reads each to its stop, and after a
+        // wrap the loop-start head, which the second always reads.
+        let (mut i, mut cur, mut run) = (0, from, 0);
+        let second = &reads.second;
+        self.jumped = false;
         while i < BLOCK_SIZE {
-            let c = (i, cur, step);
+            let (r, stop) = if self.jumped {
+                (*second, u32::MAX)
+            } else {
+                reads.run(run)
+            };
+            let (r, c) = (&r, (i, cur, step));
+            let rs = (r, second, stop);
             (i, cur) = match (self.ghost.is_some(), self.turning.is_some()) {
-                (true, _) => self.run_slow::<true>(out, v, c, &k),
-                (false, true) => self.run_slow::<false>(out, v, c, &k),
+                (true, _) => self.run_slow::<true>(out, r, c, &k),
+                (false, true) => self.run_slow::<false>(out, r, c, &k),
                 (false, false) if self.flipping() => match self.mirror() {
-                    false => self.run_flip::<false>(out, v, c, &k),
-                    true => self.run_flip::<true>(out, v, c, &k),
+                    false => self.run_flip::<false>(out, r, c, &k),
+                    true => self.run_flip::<true>(out, r, c, &k),
                 },
                 (false, false) => match (self.mirror(), scrub) {
-                    (false, false) => self.run::<false, false>(out, v, c, &k),
-                    (true, false) => self.run::<true, false>(out, v, c, &k),
-                    (false, true) => self.run::<false, true>(out, v, c, &k),
-                    (true, true) => self.run::<true, true>(out, v, c, &k),
+                    (false, false) => self.run::<false, false>(out, rs, c, &k),
+                    (true, false) => self.run::<true, false>(out, rs, c, &k),
+                    (false, true) => self.run::<false, true>(out, rs, c, &k),
+                    (true, true) => self.run::<true, true>(out, rs, c, &k),
                 },
             };
+            if !self.jumped && self.heads[0].pos.whole() >= stop {
+                run += 1;
+            }
         }
         if scrub {
             self.hush_block(out, first);
@@ -1672,12 +1938,13 @@ impl TapeDeck {
     fn run<const MIRROR: bool, const MOVING: bool>(
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
-        v: &SourceView<'_>,
+        (v, v1, stop): (&SourceView<'_>, &SourceView<'_>, u32),
         (mut i, mut cur, step): (usize, u64, u64),
         k: &AtWrap<'_>,
     ) -> (usize, u64) {
         let [mut h0, mut h1] = self.heads.map(|h| h.pos);
-        let (mut ev, mut g, mut off, mut df) = (self.event, self.gain, self.off, self.df);
+        // A run's stop is one more event: it hands the head to the next.
+        let (mut ev, mut g, mut off, mut df) = (self.event.min(stop), self.gain, self.off, self.df);
         let ddf = self.ddf;
         while i < BLOCK_SIZE {
             let mut hit = false;
@@ -1794,7 +2061,7 @@ impl TapeDeck {
                             g = f.gain(h0);
                             // A smoothstep, as SCRUB's: a tiny loop's linear
                             // fade bent in one sample at its ends (#385).
-                            out[i] = a + g * g * (3.0 - 2.0 * g) * (v.read(h1) - a);
+                            out[i] = a + g * g * (3.0 - 2.0 * g) * (v1.read(h1) - a);
                             cur = cur.wrapping_add(step);
                             h0 = h0 + Pos(cur);
                             h1 = h1 + Pos(cur);
@@ -1813,12 +2080,16 @@ impl TapeDeck {
                 if MOVING {
                     self.df = df;
                 }
+                if self.heads[0].pos.whole() < self.event {
+                    // The run's stop, not an event.
+                    return (i, cur);
+                }
                 self.on_event(k);
-                if self.leaves(MIRROR) {
+                if self.leaves(MIRROR) || self.jumped {
                     return (i, cur);
                 }
                 [h0, h1] = self.heads.map(|h| h.pos);
-                (ev, g, off) = (self.event, self.gain, self.off);
+                (ev, g, off) = (self.event.min(stop), self.gain, self.off);
             }
         }
         (self.heads[0].pos, self.heads[1].pos) = (h0, h1);
@@ -2029,7 +2300,14 @@ impl TapeDeck {
                     place -= 1.0;
                 }
                 let xfade = if self.ping() { 0.0 } else { k.xfade };
-                Bounds::of_min(ws, we, (self.mac.size, place, xfade), k.rate, self.min_len)
+                let mut b =
+                    Bounds::of_min(ws, we, (self.mac.size, place, xfade), k.rate, self.min_len);
+                if self.streamed {
+                    // The loop-start head begins XFADE early: at most
+                    // `HEAD_MS` of source (slice 1 § 7.3 step 6).
+                    b.lx = b.lx.min(u32::from(k.rate) * HEAD_MS / 1_000);
+                }
+                b
             }
         }
     }
@@ -2060,6 +2338,7 @@ impl TapeDeck {
                 // own frame if it was a flip's.
                 let flip = self.heads[1].mirror != self.mirror();
                 self.heads[0] = self.heads[1];
+                self.jumped = true;
                 if flip {
                     self.off = if self.mirror() {
                         at(self.n - 1)
@@ -2085,6 +2364,7 @@ impl TapeDeck {
                     continue;
                 }
                 self.heads[0].pos = pos;
+                self.jumped = true;
                 self.bounds = next;
                 self.event = next.fade_at();
             } else {

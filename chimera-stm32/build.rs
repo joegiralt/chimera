@@ -101,14 +101,15 @@ SECTIONS {
     *(.bank2.text .bank2.text.*);
     *(.bank2.rodata .bank2.rodata.*);
     /* TAPE's deck (`tape_engine::proxy`), by v0-mangled path: its own
-       modules, and every item of `TapeDeck`. `params` and `machine` stay
-       in bank 1, as do `Heads` and the cost table. */
+       modules, and every item of `TapeDeck`; its spans and the stream's
+       cursor, which only the deck calls. `params` and `machine` stay in
+       bank 1, as do `Heads` and the cost table. */
     *(.text.*11tape_engine5heads* .text.*11tape_engine7stretch* .text.*11tape_engine4wave* .text.*11tape_engine4read*
       .text.*11tape_engine3age* .text.*11tape_engine6warble* .text.*11tape_engine7oneshot* .text.*11tape_engine4tron*
-      .text.*11tape_engine*8TapeDeck*);
+      .text.*11tape_engine4span* .text.*6stream6cursor* .text.*11tape_engine*8TapeDeck*);
     *(.rodata.*11tape_engine5heads* .rodata.*11tape_engine7stretch* .rodata.*11tape_engine4wave* .rodata.*11tape_engine4read*
       .rodata.*11tape_engine3age* .rodata.*11tape_engine6warble* .rodata.*11tape_engine7oneshot* .rodata.*11tape_engine4tron*
-      .rodata.*11tape_engine*8TapeDeck*);
+      .rodata.*11tape_engine4span* .rodata.*6stream6cursor* .rodata.*11tape_engine*8TapeDeck*);
     /* REVERB */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2

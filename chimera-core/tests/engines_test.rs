@@ -27,6 +27,7 @@ fn params(kind: EngineType) -> ParamSnapshot {
 fn ctx<'a>(sym: &'a mut SymPool, src: &'a GateView<'a>) -> EngineCtx<'a> {
     EngineCtx {
         sym,
+        streams: None,
         src,
         part: chimera_core::project::PartId::ALL[0],
         tune: 0.0,

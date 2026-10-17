@@ -1692,6 +1692,7 @@ fn tape_params_sweep() {
                                 let view = src.view();
                                 let mut ctx = EngineCtx {
                                     sym: &mut sym,
+                                    streams: None,
                                     src: &view,
                                     part: chimera_core::project::PartId::ALL[0],
                                     tune: 0.0,
