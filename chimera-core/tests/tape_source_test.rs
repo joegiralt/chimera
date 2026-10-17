@@ -597,6 +597,28 @@ fn a_glide_on_a_gated_note_moves_its_start() {
     assert!(!g.is_active() && !loud(&out));
 }
 
+/// A HOLD note waiting at the gate already holds: a note-off before the
+/// gate opens leaves it playing to END.
+#[test]
+fn a_gated_hold_note_sustains() {
+    use chimera_core::dsp::tape_engine::{FADE_HOLD, PlayMode, TapeEngine, TapeEngineParams};
+    use common::tape::OneSource;
+    let (_, held) = plain(1, 100.0);
+    let p = TapeEngineParams {
+        model: TapeModel::Play,
+        mode: PlayMode::One,
+        drag: FADE_HOLD,
+        ..TapeEngineParams::default()
+    };
+    let mut src = OneSource::new(&held);
+    let mut slot = core::mem::MaybeUninit::uninit();
+    let e = TapeEngine::init_in_place(&mut slot);
+    e.latch(src.id);
+    src.close();
+    e.start(60, &p, &src.view(), SR);
+    assert!(e.is_active() && e.sustains());
+}
+
 /// The shells' block (`Instrument::run_block`): note-ons and the render
 /// read through the block's view, and the mask after it is the voices'.
 #[test]

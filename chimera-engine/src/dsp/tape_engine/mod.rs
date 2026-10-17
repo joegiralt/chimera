@@ -644,6 +644,7 @@ impl TapeDeck {
             Some(v) if wave::playable(p.model, &v) => self.note_on(note, p, &v, sample_rate),
             None if self.src.is_some_and(|id| src.moving(id)) => {
                 (self.note, self.model, self.mode) = (note, p.model, p.mode);
+                self.hold = params::hold(p);
                 (self.gated, self.active) = (true, true);
             }
             _ => (self.gated, self.active) = (false, false),
