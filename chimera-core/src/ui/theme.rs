@@ -179,6 +179,22 @@ pub const NODE_LABEL_Y: i32 = 306;
 /// Sub-page branch rows under the pill.
 pub const BRANCH_START_Y: i32 = 300;
 pub const BRANCH_LINE_HEIGHT: i32 = 10;
+/// THEME's PAGES ROW (ADR 0145): the nodes on a line at 279, the pill at
+/// least `PILL_W` wide; the sub-pages on a row under a rule at 302,
+/// between `ROW_L` and `ROW_R`, the arrows outside them.
+pub const ROW_LINE_Y: i32 = 279;
+pub const ROW_PILL_H: i32 = 18;
+pub const ROW_PILL_PAD: i32 = 10;
+pub const ROW_PILL_LABEL_Y: i32 = 283;
+pub const ROW_NODE_R: i32 = 3;
+pub const ROW_NODE_LABEL_Y: i32 = 296;
+pub const ROW_RULE_Y: i32 = 302;
+pub const ROW_Y: i32 = 314;
+pub const ROW_L: i32 = 22;
+pub const ROW_R: i32 = 218;
+pub const ROW_GAP: i32 = 10;
+pub const ROW_ARROW_L: i32 = 10;
+pub const ROW_ARROW_R: i32 = 230;
 
 /// SETTINGS (spec § Screens): breadcrumb, list and footer, in its own look.
 /// The breadcrumb's width before it drops leading parts: it clears the

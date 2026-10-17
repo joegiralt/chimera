@@ -8,8 +8,8 @@ use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::SYS_THEME;
 use chimera_core::ui::theme;
 use chimera_core::ui::theme_settings::{
-    Accent, Black, Bright, Gamma, Palette, Saver, ThemeSettings, accent_color, accent_soft, duty,
-    ground, midpoint, palette, tables,
+    Accent, Black, Bright, Gamma, Pages, Palette, Saver, ThemeSettings, accent_color, accent_soft,
+    duty, ground, midpoint, palette, tables,
 };
 use chimera_hal::{ButtonId, EncoderId};
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
@@ -299,6 +299,7 @@ fn in_settings_and_set_theme() {
         hints: false,
         invert: false,
         saver: Saver::from_index(5),
+        pages: Pages::Stack,
     };
     ui.set_theme(t);
     assert_eq!(ui.theme(), t);
@@ -492,4 +493,21 @@ fn the_screensaver_page_edits_its_idle_time() {
     assert_eq!(ui.theme().saver, Saver::from_index(3));
     feed(&mut ui, Input::turn(EncoderId::A, -9));
     assert_eq!(ui.theme().saver, Saver::OFF);
+}
+
+/// SETTINGS › PERSONALIZE › CHAIN MAP: its one cell is PAGES, ROW by
+/// default, STACK one step up and held there (ADR 0145).
+#[test]
+fn the_chain_map_page_toggles_pages() {
+    use chimera_core::ui::block_registry::SYS_MAP;
+    let mut ui = chimera_core::ui::UiState::new();
+    to_leaf(&mut ui, &["PERSONALIZE", "CHAIN MAP"]);
+    assert_eq!(ui.page_def().id, SYS_MAP.id);
+    assert_eq!(ui.theme().pages, Pages::Row);
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    assert_eq!(ui.theme().pages, Pages::Stack);
+    feed(&mut ui, Input::turn(EncoderId::A, 3));
+    assert_eq!(ui.theme().pages, Pages::Stack);
+    feed(&mut ui, Input::turn(EncoderId::A, -1));
+    assert_eq!(ui.theme(), ThemeSettings::DEFAULT);
 }

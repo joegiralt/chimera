@@ -118,7 +118,7 @@ use settings::view::PartBand;
 use settings::{
     Act, Answered, Ask, Done, Modal, ModalStep, NamingFor, PART_ROW, SaveAs, Screen, screen_path,
 };
-use theme_settings::ThemeSettings;
+use theme_settings::{Pages, ThemeSettings};
 use view::{SlotCtx, View};
 
 /// A replace aimed at one Part: SAVE PART FIRST saves that Part.
@@ -3110,6 +3110,7 @@ impl UiState {
                 anim[i].current()
             }),
             hints: self.theme.hints,
+            pages: self.theme.pages,
             push: self.push_on(),
             ctx,
             focus,
@@ -3267,12 +3268,17 @@ impl UiState {
                 .keyed(self.matrix_state.rev, looks | renderer::led_key(f) << 12)
                 .with_text_key(rev_text_key(f))
             }
+            // ROW draws no scroll: the list's easing redraws nothing.
             RegionKind::Nav => RegionData::nav(
                 chain,
                 node,
                 sub,
-                region::quantize(self.renderer.branch_scroll.current()),
+                match f.pages {
+                    Pages::Row => 0,
+                    Pages::Stack => region::quantize(self.renderer.branch_scroll.current()),
+                },
                 f.ctx.model as u8 | f.ctx.tape.index() << 4 | self.formant_key() << 7,
+                f.pages as u8,
             ),
             RegionKind::Grid => RegionData::grid_with_value(
                 self.matrix_state.sel_row as u8,

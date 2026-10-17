@@ -16,6 +16,7 @@ use chimera_core::ui::dungeon_map::{self, node_x};
 use chimera_core::ui::nav::{Location, PageAt};
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::theme;
+use chimera_core::ui::theme_settings::Pages;
 use chimera_hal::ButtonId;
 use screen::{Fb, Input, feed, osc_node, scope_fixture, settle, to_osc};
 
@@ -284,7 +285,14 @@ fn nodes_spread_over_the_line_and_a_single_node_is_centred() {
 fn current_block_is_an_accent_pill_others_are_rings() {
     let flt = At::sound(0).at(3, 0); // FLT of OSC ALG DRV FLT FLD MOD
     let mut fb = Fb::new();
-    dungeon_map::draw(&mut fb, flt.chain, flt.page(), ResonatorMode::String, 0);
+    dungeon_map::draw(
+        &mut fb,
+        flt.chain,
+        flt.page(),
+        ResonatorMode::String,
+        Pages::Stack,
+        0,
+    );
     let (pill, other) = (node_x(3, 6), node_x(0, 6));
     assert_eq!(
         fb.at(pill - 14, theme::MAP_LINE_Y),
@@ -306,7 +314,14 @@ fn current_block_is_an_accent_pill_others_are_rings() {
 fn sub_pages_hang_under_the_pill_with_the_current_one_lit() {
     let env = At::sound(0).at(5, 1); // MOD: MOD, ENV, LFO
     let mut fb = Fb::new();
-    dungeon_map::draw(&mut fb, env.chain, env.page(), ResonatorMode::String, 0);
+    dungeon_map::draw(
+        &mut fb,
+        env.chain,
+        env.page(),
+        ResonatorMode::String,
+        Pages::Stack,
+        0,
+    );
     let x = node_x(5, 6) - 8;
     let lit_row = theme::BRANCH_START_Y + theme::BRANCH_LINE_HEIGHT + theme::BRANCH_LINE_HEIGHT / 2;
     assert_eq!(fb.at(x, lit_row), theme::ACCENT, "ENV lit");
@@ -320,17 +335,24 @@ fn the_map_draws_only_in_its_band_on_every_chain() {
         let chain_id = place.chain.name;
         for node in 0..place.chain.len() {
             let subs = place.at(node, 0).subs();
-            for sub in 0..subs.max(1) {
+            for (sub, pages) in (0..subs.max(1)).flat_map(|s| Pages::ALL.map(|p| (s, p))) {
                 let at = place.at(node, sub);
                 let mut fb = Fb::new();
-                dungeon_map::draw(&mut fb, at.chain, at.page(), ResonatorMode::String, 0);
+                dungeon_map::draw(
+                    &mut fb,
+                    at.chain,
+                    at.page(),
+                    ResonatorMode::String,
+                    pages,
+                    0,
+                );
                 assert!(
                     fb.px[..theme::MAP_TOP as usize * 240]
                         .iter()
                         .all(|&p| p == 0),
-                    "{chain_id:?} {node} {sub}"
+                    "{chain_id:?} {node} {sub} {pages:?}"
                 );
-                assert_eq!(fb.oob, 0, "{chain_id:?} {node} {sub}");
+                assert_eq!(fb.oob, 0, "{chain_id:?} {node} {sub} {pages:?}");
             }
         }
     }
@@ -400,10 +422,11 @@ fn the_algo_map_has_no_overlapping_nodes() {
 }
 
 /// Spec § UI: EDIT reaches every OSC sub-page, and the map scrolls so the
-/// current one is always drawn lit.
+/// current one is always drawn lit (STACK; ROW underlines it).
 #[test]
 fn every_osc_sub_page_is_reachable_and_lit_on_the_map() {
     let mut ui = UiState::new();
+    screen::stack_map(&mut ui);
     to_osc(&mut ui);
     let block = &ALGO_CHAIN.blocks[osc_node()];
     // The dot's centre column; its fill draws over the trunk beneath it.
@@ -428,6 +451,12 @@ fn every_osc_sub_page_is_reachable_and_lit_on_the_map() {
             block.active_def(sub).short
         );
         assert_eq!(fb.oob, 0);
+        screen::set_pages(&mut ui, Pages::Row);
+        let mut fb = Fb::new();
+        ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+        let lit = (theme::ROW_L..theme::ROW_R).any(|x| fb.at(x, theme::ROW_Y + 3) == theme::ACCENT);
+        assert!(lit, "ROW underlines sub-page {sub}");
+        screen::stack_map(&mut ui);
     }
     feed(&mut ui, Input::press(ButtonId::Edit));
     assert_eq!(

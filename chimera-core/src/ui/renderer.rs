@@ -103,6 +103,8 @@ pub struct Frame<'a> {
     pub orbit_focus: Option<orbit::Focus>,
     /// THEME's HINTS: gesture hints drawn (ADR 0086).
     pub hints: bool,
+    /// THEME's PAGES: how the map shows sub-pages (ADR 0145).
+    pub pages: crate::ui::theme_settings::Pages,
     /// SYSTEM's PUSH ENCODERS: a value cell with no hint of its own hints
     /// the pushes (ADR 0140).
     pub push: bool,
@@ -567,6 +569,7 @@ impl Renderer {
                         chain,
                         at,
                         f.ctx.models(),
+                        f.pages,
                         (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32,
                     );
                 }

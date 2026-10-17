@@ -78,6 +78,15 @@ const GOLDENS: &[(&str, u64)] = &[
     ("flt_led_full", 0x458fb02687f0911b),
     // FM3 IN on LFO 2, QM IN on OP 6 (Task 17).
     ("flt_mod_repatched", 0xd0193d60eed2fa02),
+    // THEME's PAGES ROW (ADR 0145): every other screen is recorded under
+    // STACK (`screen::ui_for`). FLT's two pages, RES's three, MOD at E2
+    // with `>`, OSC at D1R with both arrows and at OP6 with `<`, DRV bare.
+    ("row_flt", 0xd45e1bc46b792f3b),
+    ("row_res", 0xef3b823ba798fd6a),
+    ("row_mod", 0xcad01b7187c3f651),
+    ("row_osc_mid", 0xe3667da91b8bbcf5),
+    ("row_osc_last", 0xecd6f67045037214),
+    ("row_drv", 0xa319372fd505ebc9),
     ("env_a", 0x6f15c442d71edf83),
     ("env_b_env_ad", 0x849b12e99ea94bfd),
     ("env_b_env_ahr", 0x25bd96be29456024),
@@ -242,6 +251,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: a fresh project's footer drops NEW (#286).
     // Re-recorded: INVERT in cell F (ADR 0126).
     ("settings_personal_theme", 0x69eb789acb0d98db),
+    // PERSONALIZE › CHAIN MAP: PAGES, ROW (ADR 0145).
+    ("settings_personal_chain_map", 0x7aa40f30346b46bd),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
     ("settings_system_diag_aud_load", 0x0063331a51f3da0e),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
