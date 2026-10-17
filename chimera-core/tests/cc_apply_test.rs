@@ -84,7 +84,7 @@ impl Bench {
     /// Part 1 on `s`, sustained.
     fn new(mut s: Sound) -> Self {
         s.params.envelopes[0].sustain = 1.0;
-        let mut ui = Box::new(UiState::new());
+        let mut ui = Box::new(crate::screen::stack_ui());
         screen::init_part(&mut ui, P1);
         let was = PartChain::of(&ui.project().part(P1).sound);
         **ui.project_mut().edit_part(P1).sound = s;
@@ -793,7 +793,7 @@ fn two_passes_in_one_block_never_overflow() {
 fn a_cc_beside_a_queued_load_is_dropped() {
     let mut s = MemStore::new(1);
     let f = screen::put(&mut s, "NEXT");
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     let ch = ui.project().part(P1).mix.channel;
     let ev = |v| CcEvent {
         channel: ch,

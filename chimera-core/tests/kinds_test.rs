@@ -250,7 +250,7 @@ fn fits_all(p: &AlgoParams) -> bool {
 struct TestUi(Box<UiState>);
 
 fn test_ui_with(s: &Sound) -> TestUi {
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     screen::init_part(&mut ui, PartId::ALL[0]);
     screen::to_osc(&mut ui);
     let mut t = TestUi(ui);

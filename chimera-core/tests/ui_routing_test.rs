@@ -122,7 +122,7 @@ fn primed(ui: &UiState) -> Vec<ParamAddr> {
 
 #[test]
 fn priming_on_a_part_page_registers_its_address() {
-    let mut ui = UiState::new(); // Part 1, Drive page
+    let mut ui = stack_ui(); // Part 1, Drive page
     to_drive(&mut ui);
     prime_slot_0(&mut ui);
     assert_eq!(
@@ -141,7 +141,7 @@ fn priming_on_a_part_page_registers_its_address() {
 /// priming it from the sub-page still tags it "FLT".
 #[test]
 fn priming_the_filter_level_from_flt_mode_tags_it_flt() {
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
     to_filter_mode(&mut ui);
     prime_slot(&mut ui, EncoderId::A); // LEVEL (slot 0: LEVEL, FM3, FM3 IN, QM, QM IN, --)
     assert_eq!(
@@ -157,7 +157,7 @@ fn priming_the_filter_level_from_flt_mode_tags_it_flt() {
 /// `Block{node,i}`, which the voice read as an engine/Drive/Filter/Folder param).
 #[test]
 fn priming_on_legacy_page_registers_nothing() {
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
     ui.handle_input(
         &MockControls::new()
             .button(ButtonId::Mix, ButtonState::Held)
@@ -175,7 +175,7 @@ fn priming_on_legacy_page_registers_nothing() {
 /// Spec §4: the registry refuses non-modulatable params (LFO RATE).
 #[test]
 fn priming_a_non_modulatable_param_is_refused() {
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
     for _ in 0..5 {
         press(&mut ui, ButtonId::Plus); // → MOD node
     }
@@ -200,7 +200,7 @@ fn priming_a_non_modulatable_param_is_refused() {
 fn algo_matrix_rows_are_the_eight_sources() {
     use chimera_core::preset::MAX_SOUNDS;
 
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
     ui.handle_input(
         &MockControls::new()
             .button(ButtonId::Edit, ButtonState::Held)
@@ -246,7 +246,7 @@ fn routes(ui: &UiState, part: usize) -> Vec<(ParamAddr, i8)> {
 #[test]
 fn switching_part_rebuilds_the_matrix_for_that_part() {
     let drive = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
     to_drive(&mut ui);
     prime_slot_0(&mut ui); // Part 1: DRIVE
     press(&mut ui, ButtonId::B2);
@@ -323,7 +323,7 @@ fn switching_part_rebuilds_the_matrix_for_that_part() {
 fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
     let drive = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
     let mix = ParamAddr::new(BlockRef::Drive, DriveParams::MIX);
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
 
     // Prime 3 destinations on Part 1 (DRIVE, TONE, MIX; columns 4, 5, 6
     // after the fixed four) and move the cursor to column 6.
@@ -388,7 +388,7 @@ fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
 fn un_priming_keeps_the_other_routes_own_amounts() {
     let drive = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
     let mix = ParamAddr::new(BlockRef::Drive, DriveParams::MIX);
-    let mut ui = UiState::new();
+    let mut ui = stack_ui();
 
     // Prime DRIVE (A), TONE (B), MIX (C) -- columns 4, 5, 6 after the
     // fixed four.
@@ -418,4 +418,16 @@ fn un_priming_keeps_the_other_routes_own_amounts() {
         [(CUTOFF, 0), (drive, 10), (mix, 30)],
         "A and C keep their own amounts, keyed by destination, not by column"
     );
+}
+
+/// A fresh UI under STACK: ADR 0081's keys (ROW flips them, ADR 0145).
+fn stack_ui() -> UiState {
+    use chimera_core::ui::theme_settings::{Pages, ThemeSettings};
+    let mut ui = UiState::new();
+    let t = ui.theme();
+    ui.set_theme(ThemeSettings {
+        pages: Pages::Stack,
+        ..t
+    });
+    ui
 }

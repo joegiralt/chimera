@@ -9,7 +9,7 @@ use chimera_core::storage::{
     SystemCheck, SystemSettings, SystemSync, encode_system, exit_plan, save_ab,
 };
 use chimera_core::ui::midi_settings::MidiSettings;
-use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, Saver, ThemeSettings};
+use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, Pages, Saver, ThemeSettings};
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
 use common::codec_util::{
@@ -35,6 +35,7 @@ fn settings() -> SystemSettings {
             hints: false,
             invert: true,
             saver: Saver::from_index(3),
+            pages: Pages::Stack,
         },
         last_project: ProjectId::new(7),
     }
@@ -799,4 +800,30 @@ fn an_old_system_file_gets_the_default_screensaver() {
     }
     let (got, _) = boot_bytes(include_bytes!("fixtures/v1/system.sys"));
     assert_eq!(got.theme.accent, Accent::Rose, "the rest as written");
+}
+
+/// PAGES STACK round-trips, and alone is a change to write; a SYSTEM from
+/// before PAGES, either v1 fixture, draws the ROW (ADR 0145).
+#[test]
+fn pages_round_trips_and_an_old_system_is_row() {
+    let mut s = MemStore::new(1);
+    let stack = SystemSettings {
+        theme: ThemeSettings {
+            pages: Pages::Stack,
+            ..ThemeSettings::DEFAULT
+        },
+        ..SystemSettings::DEFAULT
+    };
+    save(&mut s, &stack);
+    assert_eq!(boot(&mut s).0, stack);
+    assert_ne!(
+        chimera_core::storage::body_crc(&stack),
+        chimera_core::storage::body_crc(&SystemSettings::DEFAULT)
+    );
+    for f in [
+        include_bytes!("fixtures/v1/system.sys").as_slice(),
+        include_bytes!("fixtures/v1/system_midi.sys").as_slice(),
+    ] {
+        assert_eq!(boot_bytes(f).0.theme.pages, Pages::Row);
+    }
 }

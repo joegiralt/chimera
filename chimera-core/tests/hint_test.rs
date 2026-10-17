@@ -455,7 +455,7 @@ fn every_pool_hint_fits() {
 /// on Part 6 is 1, not past it.
 #[test]
 fn ring_value_stays_within_one() {
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     let mut seen = Vec::new();
     for p in PartId::ALL {
         ui.project_mut()
@@ -476,7 +476,7 @@ fn ring_value_stays_within_one() {
 #[test]
 fn hints_off_shows_no_hint() {
     use chimera_core::ui::theme_settings::ThemeSettings;
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     assert!(ui.theme().hints, "ON by default");
     screen::to_leaf(&mut ui, &["PERSONALIZE", "THEME"]);
     feed(&mut ui, Input::turn(E, -1));
@@ -647,16 +647,22 @@ fn chorus_hint_names_the_mode() {
     );
 }
 
+/// SYM is AMP's next page: EDIT ▾ under STACK, SEQ ▸ under ROW (ADR 0145).
 #[test]
 fn fold_vel_mix_hint_sym() {
-    let want: Hint = &[Gesture("EDIT ▾", "SYM")];
-    let c = ctx0();
-    for (b, p) in [
-        (BlockRef::Folder, FolderParams::FOLD),
-        (BlockRef::Out, OutParams::VCA_VEL),
-        (BlockRef::Folder, FolderParams::MIX),
+    use chimera_core::ui::theme_settings::Pages;
+    for (pages, want) in [
+        (Pages::Stack, &[Gesture("EDIT ▾", "SYM")]),
+        (Pages::Row, &[Gesture("SEQ ▸", "SYM")]),
     ] {
-        assert_eq!(out_hint(b, p, &c), want);
+        let c = ctx0().on_pages(pages);
+        for (b, p) in [
+            (BlockRef::Folder, FolderParams::FOLD),
+            (BlockRef::Out, OutParams::VCA_VEL),
+            (BlockRef::Folder, FolderParams::MIX),
+        ] {
+            assert_eq!(out_hint(b, p, &c), &want[..], "{pages:?}");
+        }
     }
 }
 
@@ -714,7 +720,7 @@ fn chorus_send_hint_follows_the_project_chorus() {
         feed(ui, Input::turn(A, 1));
     };
     for go in [amp, sends] {
-        let mut ui = Box::new(UiState::new());
+        let mut ui = Box::new(crate::screen::stack_ui());
         go(&mut ui);
         screen::settle(&mut ui);
         assert!(

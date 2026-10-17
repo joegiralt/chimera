@@ -1444,6 +1444,40 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::D, 40)); // QM on ENV 3
         feed(ui, Input::turn(EncoderId::E, 20)); // QM IN = OP 6, the list's end
     }),
+    // THEME's PAGES ROW (ADR 0145): FLT's two pages, no arrows; RES's
+    // three; MOD at ENV2, cut on the right; OSC at D1R, cut both ways, and
+    // at OP6, cut on the left; DRV, no pages, no row. Walked with
+    // STACK's keys, then drawn under ROW.
+    ("row_flt", |ui| {
+        on_flt(ui, FilterKind::Svf, false);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
+    ("row_res", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 1);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
+    ("row_mod", |ui| {
+        to_mod_sub(ui, 2, &reg::ENV_2);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
+    ("row_osc_mid", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        to_osc(ui);
+        to_osc_sub(ui, &chimera_core::ui::block_registry::ALGO_D1R);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
+    ("row_osc_last", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        to_osc(ui);
+        to_osc_sub(ui, &chimera_core::ui::block_registry::ALGO_OP_PAGES[5]);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
+    ("row_drv", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        plus(ui, 2);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
     ("env_a", |ui| {
         to_mod_sub(ui, 1, &reg::ENVELOPE);
         feed(ui, Input::turn(EncoderId::B, 6));
@@ -1991,6 +2025,11 @@ pub const CASES: &[ScreenCase] = &[
         to_leaf(ui, &["PERSONALIZE", "THEME"]);
         feed(ui, Input::turn(EncoderId::C, 1)); // ACCENT AMBER, focused
     }),
+    // PERSONALIZE › CHAIN MAP (ADR 0145): PAGES turned to ROW, focused.
+    ("settings_personal_chain_map", |ui| {
+        to_leaf(ui, &["PERSONALIZE", "CHAIN MAP"]);
+        feed(ui, Input::turn(EncoderId::A, -1));
+    }),
     // MIDI CONFIG › SYNC (ADR 0080): EXT, the default, focused.
     ("settings_midi_sync", |ui| {
         to_leaf(ui, &["MIDI CONFIG", "SYNC"]);
@@ -2170,6 +2209,25 @@ pub fn audio_fixture() -> AudioStats {
     s
 }
 
+/// THEME's PAGES at `pages`.
+pub fn set_pages(ui: &mut UiState, pages: chimera_core::ui::theme_settings::Pages) {
+    let t = ui.theme();
+    ui.set_theme(chimera_core::ui::theme_settings::ThemeSettings { pages, ..t });
+}
+
+/// A fresh UI under STACK: ADR 0081's keys, EDIT down and SEQ up, which
+/// the suites walk pages with (ROW flips them, ADR 0145).
+pub fn stack_ui() -> UiState {
+    let mut ui = UiState::new();
+    stack_map(&mut ui);
+    ui
+}
+
+/// The map as the goldens before ROW drew it.
+pub fn stack_map(ui: &mut UiState) {
+    set_pages(ui, chimera_core::ui::theme_settings::Pages::Stack);
+}
+
 /// Build case `name`'s screen: a fresh UiState, the case's input, settled lerps.
 pub fn ui_for(name: &str) -> UiState {
     let (_, setup) = CASES
@@ -2177,6 +2235,8 @@ pub fn ui_for(name: &str) -> UiState {
         .find(|c| c.0 == name)
         .unwrap_or_else(|| panic!("no case {name}"));
     let mut ui = UiState::new();
+    // Recorded under STACK (ADR 0145); a `row_` case sets ROW itself.
+    stack_map(&mut ui);
     setup(&mut ui);
     settle(&mut ui);
     if let Some(&(_, clip)) = LEDS.iter().find(|l| l.0 == name) {

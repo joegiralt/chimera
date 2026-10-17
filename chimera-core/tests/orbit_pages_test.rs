@@ -60,7 +60,7 @@ fn ring_rhythm_golden() {
 /// it whichever cell was turned last (named: ADR 0084).
 #[test]
 fn orb_custom_circle() {
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     let chords = |ui: &UiState| ui.project().orbit().live().chords;
     let page = |ui: &UiState| ui.page_def().id;
     hold(&mut ui, Seq);
@@ -154,7 +154,7 @@ fn chrd_is_the_progression_only() {
     use chimera_core::orbit::runner::Capture;
     use chimera_core::ui::block_def::SlotBinding;
     use chimera_hal::EncoderId::F;
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     hold(&mut ui, Seq);
     feed(&mut ui, Input::press(Plus));
     feed(&mut ui, Input::press(Plus));
@@ -327,7 +327,7 @@ fn the_dirty_path_follows_orbit() {
 fn degree_turns_from_the_sets_last() {
     use chimera_core::orbit::chords::ScaleKind;
     use chimera_theory::Degree;
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     hold(&mut ui, Seq);
     feed(&mut ui, Input::press(Plus));
     feed(&mut ui, Input::press(Plus));
@@ -347,7 +347,7 @@ fn degree_turns_from_the_sets_last() {
 /// load or a scene switch changed it), so the page is never a dead end.
 #[test]
 fn custom_edit_returns_with_scale_named() {
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     hold(&mut ui, Seq);
     feed(&mut ui, Input::turn(C, 9));
     assert_eq!(ui.page_def().id, ORBIT_CUSTOM.id);
@@ -581,7 +581,7 @@ fn header_dot_pulses() {
 #[test]
 fn orb_encoders() {
     use chimera_hal::EncoderId::F;
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     hold(&mut ui, Seq);
     assert_eq!(ui.page_def().id, ORBIT_ORB.id);
     let ring = |ui: &UiState| ui.location().orbit().unwrap().ring().get();
@@ -607,7 +607,7 @@ fn orb_encoders() {
 fn orb_bpm_is_inert_under_midi() {
     use chimera_core::orbit::runner::OrbitView;
     use chimera_hal::EncoderId::F;
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     hold(&mut ui, Seq);
     let bpm = |ui: &UiState| ui.project().orbit().bpm.get();
     ui.set_orbit_view(&screen::midi_view(0.0));
@@ -712,7 +712,7 @@ fn voice_and_notes_pages() {
     assert_eq!(OrbitCell::Note.fmt(), ValFmt::Int(127));
 
     // The cells' text on ring 2's NOTES: its pool [69, 72, 76].
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     to_notes(&mut ui, 2);
     let text = |ui: &UiState, c: OrbitCell| {
         let f = OrbitFrame::new(ui.project().orbit(), ui.orbit());
@@ -871,7 +871,7 @@ fn step_ring_plays_its_steps() {
     use chimera_core::orbit::ring::NoteMode;
     use chimera_hal::ButtonId::Mix;
     use chimera_hal::EncoderId::{D, F};
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     // Ring 2: E(3,8), hits on steps 0, 3 and 6.
     to_notes(&mut ui, 2);
     feed(&mut ui, Input::turn(A, -1));
@@ -927,7 +927,7 @@ fn clear_down_randomises_in_key() {
     use chimera_core::orbit::ring::Range;
     use chimera_hal::ButtonId::Mix;
     use chimera_hal::EncoderId::E;
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     to_notes(&mut ui, 2);
     let key = ui.project().orbit().live().chords.key();
     let in_register = |ui: &UiState, n: u8| {
@@ -983,7 +983,7 @@ fn clear_needs_mix() {
     use chimera_core::ui::orbit::{ORBIT_NOTES, OrbitCell};
     use chimera_hal::ButtonId::Mix;
     use chimera_hal::EncoderId::E;
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     to_notes(&mut ui, 2);
     for mode in [0, -1] {
         feed(&mut ui, Input::turn(A, mode));
@@ -1014,7 +1014,7 @@ fn clear_needs_mix() {
 #[test]
 fn orb_owns_the_songs_frame() {
     let fresh = || {
-        let mut ui = Box::new(UiState::new());
+        let mut ui = Box::new(crate::screen::stack_ui());
         hold(&mut ui, Seq);
         ui
     };
@@ -1057,7 +1057,7 @@ fn orb_owns_the_songs_frame() {
 #[test]
 fn clear_down_rolls_new_dice_through_the_runner() {
     use chimera_hal::ButtonId::Mix;
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     to_notes(&mut ui, 2);
     let mut rig = screen::ShellRig::new(ui);
     rig.b6();
@@ -1082,7 +1082,7 @@ fn clear_down_rolls_new_dice_through_the_runner() {
 /// the first toggle makes it CUSTOM from those notes, the toggle applied.
 #[test]
 fn edit_opens_custom_on_a_named_scale() {
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     let chords = |ui: &UiState| ui.project().orbit().live().chords;
     let page = |ui: &UiState| ui.page_def().id;
     hold(&mut ui, Seq);
@@ -1134,7 +1134,7 @@ fn ring_cell_names_its_part() {
     use chimera_core::orbit::RingIdx;
     use chimera_core::ui::orbit::OrbitCell;
     use chimera_core::ui::orbit::draw::{OrbitFrame, cell_text};
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     hold(&mut ui, Seq);
     let f = OrbitFrame::new(ui.project().orbit(), ui.orbit());
     let text = |r: usize| {

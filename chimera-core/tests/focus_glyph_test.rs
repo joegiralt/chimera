@@ -134,6 +134,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Theme", "HINTS", SWITCH),
     ("Theme", "INVERT", SWITCH),
     ("Theme", "SAVER", NONE),
+    ("Theme", "PAGES", NONE),
     ("Midi", "SYNC", NONE),
     ("Midi", "PUSH", SWITCH),
     ("OrbitChords", "KEY", NONE),
@@ -169,6 +170,8 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("Lfo", "TYPE"),
     // MONO and POLY: neither is off.
     ("Part", "MODE"),
+    // ROW and STACK: two drawings of the map.
+    ("Theme", "PAGES"),
     // CUT and GLIDE: two ways to steal; GLIDE could read as "glide on".
     ("Pitch", "STEAL"),
     // CHROMA and MUSICAL: two ladders for PITCH's steps.

@@ -122,7 +122,7 @@ fn part_page_binds_channel_mode_output_level_pan() {
 /// MIX + B2 selects Part 2 and its encoders edit Part 2's mix settings.
 #[test]
 fn mix_b2_edits_part_2() {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     open_mixer_part(&mut ui, ButtonId::B2);
     assert_eq!(ui.active_part, PartId::ALL[1]);
     assert!(matches!(ui.page(), PageKey::Part { def: 27, .. }));
@@ -145,7 +145,7 @@ fn mix_b2_edits_part_2() {
 
 #[test]
 fn sends_page_edits_the_part_sends() {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     open_mixer(&mut ui, ButtonId::B3); // SENDS
     turn(&mut ui, EncoderId::C, 64); // reverb send
     assert_eq!(
@@ -208,7 +208,7 @@ fn fx_are_shared_across_parts() {
 /// ADR 0010: mix settings are not modulatable, so MIX + Plus primes nothing.
 #[test]
 fn priming_a_part_param_is_refused() {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     open_mixer_part(&mut ui, ButtonId::B1);
     turn(&mut ui, EncoderId::D, 1); // focus LEVEL
     ui.handle_input(
@@ -228,7 +228,7 @@ fn priming_a_part_param_is_refused() {
 mod screen;
 
 fn overview(setup: impl FnOnce(&mut UiState), part_button: ButtonId) -> screen::Fb {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     setup(&mut ui);
     open_mixer_part(&mut ui, part_button);
     screen::settle(&mut ui);
@@ -300,7 +300,7 @@ fn part_overview_shows_every_part_with_the_edited_one_lit() {
 
 #[test]
 fn part_overview_redraws_as_the_level_lerps() {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     open_mixer_part(&mut ui, ButtonId::B1);
     screen::settle(&mut ui);
     let mut fb = screen::Fb::new();
@@ -449,7 +449,7 @@ fn the_reverb_page_is_type_size_time_damp_smear_mix() {
 /// turns RATE.
 #[test]
 fn the_reverb_pages_turn_by_the_panel() {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     open_mixer(&mut ui, ButtonId::B1);
     for _ in 0..3 {
         ui.handle_input(&MockControls::new().button(ButtonId::Plus, ButtonState::Pressed));
@@ -694,7 +694,7 @@ fn the_master_page_meters_gain_reduction() {
 fn rev_more_redraws_the_plate_zones_predelay() {
     use chimera_core::dsp::reverb::ReverbType;
     use chimera_core::ui::perf::PerfStats;
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     screen::to_fx(&mut ui, screen::REV);
     {
         let r = &mut ui.project_mut().edit_fx().reverb;

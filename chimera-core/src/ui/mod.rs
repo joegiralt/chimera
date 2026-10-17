@@ -118,7 +118,7 @@ use settings::view::PartBand;
 use settings::{
     Act, Answered, Ask, Done, Modal, ModalStep, NamingFor, PART_ROW, SaveAs, Screen, screen_path,
 };
-use theme_settings::ThemeSettings;
+use theme_settings::{Pages, ThemeSettings};
 use view::{SlotCtx, View};
 
 /// A replace aimed at one Part: SAVE PART FIRST saves that Part.
@@ -922,6 +922,7 @@ impl UiState {
     fn cx(&self) -> NavCtx {
         let mut cx = nav_cx(&self.project);
         cx.dyn_rows = self.screen().map_or(0, |s| self.screen_rows(s)) as u8;
+        cx.pages = self.theme.pages;
         cx
     }
 
@@ -1104,7 +1105,8 @@ impl UiState {
         let ctx = SlotCtx::read(&sound.params, self.sel_op)
             .on_clock(self.orbit.status.source)
             .on_rev(&self.project.perf().fx.reverb)
-            .on_chorus(&self.project.perf().fx.chorus);
+            .on_chorus(&self.project.perf().fx.chorus)
+            .on_pages(self.theme.pages);
         let base = view::SourceState::of(ctx.tape, sound.source_ref(), self.project.pool());
         let ctx = ctx.on_source(self.src.state(self.active_part, base, &self.project));
         match self.loc.orbit() {
@@ -3110,6 +3112,7 @@ impl UiState {
                 anim[i].current()
             }),
             hints: self.theme.hints,
+            pages: self.theme.pages,
             push: self.push_on(),
             ctx,
             focus,
@@ -3267,12 +3270,17 @@ impl UiState {
                 .keyed(self.matrix_state.rev, looks | renderer::led_key(f) << 12)
                 .with_text_key(rev_text_key(f))
             }
+            // ROW draws no scroll: the list's easing redraws nothing.
             RegionKind::Nav => RegionData::nav(
                 chain,
                 node,
                 sub,
-                region::quantize(self.renderer.branch_scroll.current()),
+                match f.pages {
+                    Pages::Row => 0,
+                    Pages::Stack => region::quantize(self.renderer.branch_scroll.current()),
+                },
                 f.ctx.model as u8 | f.ctx.tape.index() << 4 | self.formant_key() << 7,
+                f.pages as u8,
             ),
             RegionKind::Grid => RegionData::grid_with_value(
                 self.matrix_state.sel_row as u8,
@@ -3592,6 +3600,7 @@ fn nav_cx(project: &Project) -> NavCtx {
         orbit: OrbitCx {
             targets: live.rings.map(|r| r.target.part()),
         },
+        pages: ThemeSettings::DEFAULT.pages,
     }
 }
 

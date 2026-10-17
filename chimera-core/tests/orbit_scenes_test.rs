@@ -33,7 +33,7 @@ const S: [SceneIdx; 8] = SceneIdx::ALL;
 
 /// A fresh UI, inside ORBIT on ORB.
 fn in_orbit() -> Box<UiState> {
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     hold(&mut ui, Seq);
     assert!(ui.location().orbit().is_some());
     ui
@@ -852,7 +852,7 @@ fn new_plays_v4_as_scene_1() {
     assert_eq!(*song.live(), Scene::init());
     assert!(S[1..].iter().all(|&n| *song.scene(n) == Scene::neutral()));
     assert_eq!((song.current(), song.queued()), (S[0], None));
-    let ui = UiState::new();
+    let ui = crate::screen::stack_ui();
     assert_eq!(*ui.project().orbit(), song);
 }
 
@@ -1256,7 +1256,7 @@ fn loads_void_everything_before() {
         });
     };
     for seed in 1..=4u32 {
-        let mut ui = Box::new(UiState::new());
+        let mut ui = Box::new(crate::screen::stack_ui());
         screen::to_ring(&mut ui, 2);
         tap(&mut ui, Edit);
         tap(&mut ui, Edit);
