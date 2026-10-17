@@ -1,5 +1,6 @@
 //! Streaming a sample from the card.
 
+pub mod admit;
 pub mod bench;
 pub mod edf;
 pub mod layout;
