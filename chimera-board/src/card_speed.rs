@@ -6,10 +6,8 @@
 //!
 //! `card dma` (B2–B10) runs on the streaming driver itself: each verb
 //! starts a run that `CardBench::tick` moves on from every UI pass, timing
-//! and moving bytes only; the console's `card` math holds the rest. Only
-//! with bank 2: the other bench sets have no FLASH for it, and leave it
-//! unlinked.
-#![cfg_attr(not(feature = "bank2"), allow(dead_code))]
+//! and moving bytes only; the console's `card` math holds the rest. All
+//! of it only with bank 2: the other bench sets have no FLASH for it.
 
 use core::hint::black_box;
 use core::mem::MaybeUninit;
@@ -187,10 +185,7 @@ impl CardBench {
     ) -> CardAnswer {
         let due = Deadline(now_ms());
         let answer = match arg {
-            #[cfg(feature = "bank2")]
             CardArg::Dma(verb) => CardAnswer::Dma(self.dma(verb, store, stats)),
-            #[cfg(not(feature = "bank2"))]
-            CardArg::Dma(_) => CardAnswer::Dma(DmaAnswer::Refused(DmaRefusal::Absent)),
             CardArg::Clean => CardAnswer::Cleaned(clean(store, &due)),
             CardArg::Run(seed) => {
                 let mut s = CardSpeed {

@@ -69,7 +69,7 @@ use chimera_engine::scope::{ScopeFrame, ScopeWriter, scope_buffer};
 use chimera_engine::source_table::{AudioToken, GateView};
 use chimera_engine::sym_alloc::SymAlloc;
 use chimera_engine::taps::TapOp;
-use chimera_engine::triple::TripleBuffer;
+use chimera_engine::triple::{TripleBuffer, Writer};
 use chimera_engine::voice_alloc::VoiceIdx;
 use chimera_engine::{MidiChannel, MidiNote, Velocity};
 use chimera_engine::{
@@ -792,8 +792,24 @@ struct Rig<'p> {
     fx_slot: &'static mut MaybeUninit<FxBus>,
     shared_slot: &'static mut MaybeUninit<AudioShared>,
     perf: &'p Performance,
-    scope: ScopeWriter,
-    dac: DacBlocks,
+    scope: &'static mut ScopeWriter,
+    dac: &'static mut DacBlocks,
+}
+
+// The rig's scope writer and DAC blocks: in AXI, as the engine keeps its
+// own, not 3.5 KB on the bench's frames under `main`. Zeroed `.bss`;
+// `rig_io` builds them before any read.
+static mut RIG_IO: MaybeUninit<(ScopeWriter, DacBlocks)> = MaybeUninit::uninit();
+
+/// `RIG_IO` built in place: out of line, so no temporary of it is ever on
+/// the deep path's frames.
+#[inline(never)]
+fn rig_io(w: Writer<ScopeFrame>) -> (&'static mut ScopeWriter, &'static mut DacBlocks) {
+    // SAFETY: the bench is the only user of `RIG_IO` (see `run`), which
+    // calls this once, and `write` builds it whole before any read.
+    let io = unsafe { &mut *addr_of_mut!(RIG_IO) };
+    let (scope, dac) = io.write((ScopeWriter::new(w), DacBlocks::new()));
+    (scope, dac)
 }
 
 // Not inlined, so its frame never adds to `main`'s.
@@ -819,13 +835,12 @@ pub fn run(
         let (w, _unread) = (&mut *addr_of_mut!(SCOPE)).write(scope_buffer()).split();
         (i, f, chimera_board::shared::bench_audio(), w)
     };
-    #[cfg_attr(not(feature = "bench-tape"), allow(unused_mut))]
-    let mut scope = ScopeWriter::new(scope_w);
+    let (scope, dac) = rig_io(scope_w);
     #[cfg(feature = "bench-tape")]
     {
         tape_page(
             (&mut *inst_slot, &mut *fx_slot, &mut *shared_slot),
-            (&mut scope, sources),
+            (&mut *scope, sources),
             project,
             rec,
         );
@@ -835,7 +850,7 @@ pub fn run(
     let _ = sources;
     algo_pages(
         clocks,
-        (inst_slot, fx_slot, shared_slot, scope),
+        (inst_slot, fx_slot, shared_slot, scope, dac),
         project,
         rec,
         proj_crc,
@@ -876,11 +891,12 @@ fn title(rec: &mut Recorder<'_>, clocks: Clocks) {
 #[inline(never)]
 fn algo_pages(
     clocks: Clocks,
-    (inst_slot, fx_slot, shared_slot, scope): (
+    (inst_slot, fx_slot, shared_slot, scope, dac): (
         &'static mut MaybeUninit<Instrument>,
         &'static mut MaybeUninit<FxBus>,
         &'static mut MaybeUninit<AudioShared>,
-        ScopeWriter,
+        &'static mut ScopeWriter,
+        &'static mut DacBlocks,
     ),
     project: &Project,
     rec: &mut Recorder<'_>,
@@ -893,7 +909,7 @@ fn algo_pages(
         shared_slot,
         perf: project.perf(),
         scope,
-        dac: DacBlocks::new(),
+        dac,
     };
     #[cfg(feature = "bench-algo")]
     {
@@ -1555,12 +1571,12 @@ impl Rig<'_> {
         }
         for b in 0..WARM_BLOCKS {
             each(shared, b);
-            inst.render_with(fx, &mut self.dac, shared, &mut self.scope, &NO_POOL);
+            inst.render_with(fx, self.dac, shared, self.scope, &NO_POOL);
         }
         let start = DWT::cycle_count();
         for b in 0..TIMED_BLOCKS {
             each(shared, WARM_BLOCKS + b);
-            inst.render_with(fx, &mut self.dac, shared, &mut self.scope, &NO_POOL);
+            inst.render_with(fx, self.dac, shared, self.scope, &NO_POOL);
         }
         let cycles = DWT::cycle_count().wrapping_sub(start);
         let spans = match inst.ringing() {
@@ -1601,14 +1617,14 @@ impl Rig<'_> {
                 &NO_POOL,
             );
             if first_block {
-                inst.render_with(fx, &mut self.dac, shared, &mut self.scope, &NO_POOL);
+                inst.render_with(fx, self.dac, shared, self.scope, &NO_POOL);
             }
             if round > 0 {
                 cycles = cycles.wrapping_add(DWT::cycle_count().wrapping_sub(start));
             }
             inst.handle_with(ev(NoteKind::Off), shared, &NO_POOL);
             for _ in 0..IDLE_BLOCKS {
-                inst.render_with(fx, &mut self.dac, shared, &mut self.scope, &NO_POOL);
+                inst.render_with(fx, self.dac, shared, self.scope, &NO_POOL);
                 if idle(inst) {
                     break;
                 }
@@ -1714,7 +1730,7 @@ impl Rig<'_> {
         let written = [true; MAX_PARTS];
         let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
         let mut pans = MixState::default();
-        let scope = &mut self.scope;
+        let scope = &mut *self.scope;
         // Its cycles: the voices' render before it is not counted.
         let mut block = |shared: &mut AudioShared, fx: &mut FxBus, dac: &mut DacBlocks, b: u32| {
             if let Some(inst) = inst.as_deref_mut() {
@@ -1736,12 +1752,12 @@ impl Rig<'_> {
             DWT::cycle_count().wrapping_sub(start)
         };
         for b in 0..WARM_BLOCKS + SWITCH_WARM {
-            block(shared, fx, &mut self.dac, b);
+            block(shared, fx, self.dac, b);
         }
         let mut cycles = 0u32;
         for b in 0..TIMED_BLOCKS {
             let b = WARM_BLOCKS + SWITCH_WARM + b;
-            cycles = cycles.wrapping_add(block(shared, fx, &mut self.dac, b));
+            cycles = cycles.wrapping_add(block(shared, fx, self.dac, b));
         }
         cycles / (TIMED_BLOCKS * BLOCK_SIZE as u32)
     }
@@ -1839,7 +1855,7 @@ impl Rig<'_> {
                 ph = Phases::read(b, ran, boundary);
             }
             let k0 = knob_cycles();
-            inst.render_with(fx, &mut self.dac, shared, &mut self.scope, &NO_POOL);
+            inst.render_with(fx, self.dac, shared, self.scope, &NO_POOL);
             let k = knob_cycles().wrapping_sub(k0);
             for (pair, o) in DacPair::ALL.into_iter().zip(out.iter_mut()) {
                 interleave(self.dac.out(), pair, o);
@@ -1918,13 +1934,7 @@ impl Rig<'_> {
                 ReverbType::Bloom,
             ][(b / SWITCH_EVERY) as usize % 5];
             let start = DWT::cycle_count();
-            inst.render_with(
-                fx,
-                &mut self.dac,
-                shared,
-                &mut self.scope,
-                &GateView::empty(),
-            );
+            inst.render_with(fx, self.dac, shared, self.scope, &GateView::empty());
             for (pair, o) in DacPair::ALL.into_iter().zip(out.iter_mut()) {
                 interleave(self.dac.out(), pair, o);
             }

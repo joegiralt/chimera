@@ -9,15 +9,17 @@ pub mod bank2;
 pub mod cache;
 #[cfg(not(feature = "sd-probe"))]
 pub mod card_dma;
-#[cfg(all(feature = "bench", feature = "usb-console"))]
+#[cfg(all(feature = "bench", feature = "usb-console", feature = "bank2"))]
 pub mod card_speed;
 
-/// The console's `card` bench is in this build: not in ORBIT's bench
-/// builds, the master tape's nor TAPE's (FLASH, AXI's margin). Without it
-/// nothing sets the stream bench's beds, so its heads never run.
+/// The console's `card` bench is in this build: bank 2's bench builds
+/// only, where `card dma` runs, and not ORBIT's, the master tape's nor
+/// TAPE's (FLASH, AXI's margin). Without it nothing sets the stream
+/// bench's beds, so its heads never run.
 pub const CARD_BENCH: bool = cfg!(all(
     feature = "bench",
     feature = "usb-console",
+    feature = "bank2",
     not(any(
         feature = "orbit",
         feature = "master-tape",
@@ -578,12 +580,14 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     marker.stage(BootStage::Audio);
 
     // The console's `card`: the measurement over the card, its chord on
-    // the `CARD` note source. Not in ORBIT's bench builds, nor the master
-    // tape's, nor TAPE's: with it they no longer fit FLASH, or AXI's
-    // margin (TAPE's comes back with streaming: #539).
+    // the `CARD` note source. Only in bank 2's bench builds, where `card
+    // dma` runs (#568); not ORBIT's, the master tape's nor TAPE's: with it
+    // they no longer fit FLASH, or AXI's margin (TAPE's comes back with
+    // streaming: #539).
     #[cfg(all(
         feature = "bench",
         feature = "usb-console",
+        feature = "bank2",
         not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
     ))]
     let mut card_bench = card_speed::take(
@@ -646,17 +650,17 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         #[cfg(all(
             feature = "usb-console",
             feature = "bench",
+            feature = "bank2",
             not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
         ))]
         let card_run: usb::CardRun = &mut |arg, s, store| Some(card_bench.answer(arg, store, s));
         #[cfg(all(
             feature = "usb-console",
-            any(
-                not(feature = "bench"),
-                feature = "orbit",
-                feature = "master-tape",
-                feature = "tape"
-            )
+            not(all(
+                feature = "bench",
+                feature = "bank2",
+                not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
+            ))
         ))]
         let card_run: usb::CardRun = &mut |_, _, _| None;
         #[cfg(feature = "usb-console")]
