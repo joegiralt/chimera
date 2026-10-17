@@ -12,7 +12,7 @@ use crate::modulation::ModState;
 use crate::project::SourceId;
 use crate::source_table::GateView;
 
-use super::{Heads, TapeEngineParams, TapeModel};
+use super::{Heads, PlayMode, TapeEngineParams, TapeModel};
 
 #[derive(Clone, Copy)]
 pub struct TapeEngine;
@@ -63,7 +63,7 @@ impl TapeEngine {
         Cost(0)
     }
 
-    pub const fn model_cost(_: TapeModel) -> Cost {
+    pub const fn model_cost(_: TapeModel, _: PlayMode) -> Cost {
         Cost(0)
     }
 

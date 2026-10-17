@@ -8,13 +8,13 @@ use std::mem::MaybeUninit;
 
 use crate::import::tape::convert::{Mono, Pitch, clean, quantise_tpdf, resample, yin};
 use crate::import::tape::transwave::{DEFAULT_TOP, MAX_FRAMES, cut_cycles, round12, transwave};
-use chimera_core::block::{Block, DiskCode, ParamId};
+use chimera_core::block::{Block, ParamId};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape, SourceView,
 };
 use chimera_core::dsp::tape_engine::{
-    StretchType, TapeEngine, TapeEngineParams as P, TapeModel, Wow,
+    FADE_HOLD, MACHINE_NAMES, PlayMode, StretchType, TapeEngine, TapeEngineParams as P, TapeModel, Wow,
 };
 use chimera_core::dsp::va::VaMode;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
@@ -409,9 +409,8 @@ pub fn script(model: TapeModel) -> Script {
         TapeModel::Scrub => Script(&SCRUB_SWEEP, &[], &[]),
         TapeModel::Transwave => Script(&WAVE_SWEEP, &[], &[]),
         TapeModel::Stretch => Script(&STRETCH_KEYS, &STRETCH_TAKES, &[]),
-        TapeModel::Oneshot => Script(&ONESHOT_KEYS, &ONESHOT_TAKES, &[]),
         TapeModel::Tron => Script(&TRON_KEYS, &[10.0], &[0, 12]),
-        TapeModel::Loop | TapeModel::PingPong => Script(&SWEEP, &[], &[]),
+        TapeModel::Play => Script(&SWEEP, &[], &[]),
     }
 }
 
@@ -420,9 +419,8 @@ pub fn legend(model: TapeModel) -> &'static str {
         TapeModel::Scrub => SCRUB_LEGEND,
         TapeModel::Transwave => WAVE_LEGEND,
         TapeModel::Stretch => STRETCH_LEGEND,
-        TapeModel::Oneshot => ONESHOT_LEGEND,
         TapeModel::Tron => TRON_LEGEND,
-        TapeModel::Loop | TapeModel::PingPong => SWEEP_LEGEND,
+        TapeModel::Play => SWEEP_LEGEND,
     }
 }
 
@@ -472,12 +470,15 @@ pub const TRON_LEGEND: &str = "0–10 s held at ROOT · 10–20 s held an octave
     its own 8 s of tape (END may come first)";
 
 /// How a machine is heard besides its plain script (spec § 2 Machines):
-/// END before START, WOW WARBLE, SLICE NOTE.
+/// END before START, WOW WARBLE, PLAY's other MODEs (LOOP is Plain),
+/// SLICE NOTE.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Way {
     Plain,
     Reversed,
     Warble,
+    One,
+    Ping,
     SliceNote,
 }
 
@@ -485,9 +486,15 @@ impl Way {
     /// The ways `m` is rendered.
     pub fn of(m: TapeModel) -> &'static [Way] {
         match m {
-            TapeModel::Loop => &[Way::Plain, Way::Reversed, Way::Warble],
+            TapeModel::Play => &[
+                Way::Plain,
+                Way::Reversed,
+                Way::Warble,
+                Way::One,
+                Way::SliceNote,
+                Way::Ping,
+            ],
             TapeModel::Stretch => &[Way::Plain, Way::Reversed],
-            TapeModel::Oneshot => &[Way::Plain, Way::SliceNote],
             _ => &[Way::Plain],
         }
     }
@@ -498,6 +505,8 @@ impl Way {
             Way::Plain => "",
             Way::Reversed => "-rev",
             Way::Warble => "-warble",
+            Way::One => "-one",
+            Way::Ping => "-ping",
             Way::SliceNote => "-note",
         }
     }
@@ -507,7 +516,9 @@ impl Way {
             Way::Plain => "",
             Way::Reversed => " · END before START",
             Way::Warble => " · WOW WARBLE, TAPE 0.5 from 11.5 s",
-            Way::SliceNote => " · SLICE NOTE, 16 notes from C4",
+            Way::One => " · MODE ONE, FADE HOLD",
+            Way::Ping => " · MODE PING",
+            Way::SliceNote => " · MODE ONE, SLICE NOTE, 16 notes from C4",
         }
     }
 
@@ -531,7 +542,18 @@ impl Way {
                 wow: Wow::Warble,
                 ..p
             },
+            Way::One => P {
+                mode: PlayMode::One,
+                drag: FADE_HOLD,
+                ..p
+            },
+            Way::Ping => P {
+                mode: PlayMode::Ping,
+                ..p
+            },
             Way::SliceNote => P {
+                mode: PlayMode::One,
+                drag: FADE_HOLD,
                 slice: chimera_core::dsp::tape_engine::SliceCode::NOTE,
                 ..p
             },
@@ -540,6 +562,7 @@ impl Way {
 
     pub fn script(self, model: TapeModel) -> Script {
         match self {
+            Way::One => Script(&ONESHOT_KEYS, &ONESHOT_TAKES, &[]),
             Way::SliceNote => Script(&ONESHOT_NOTE_KEYS, &ONESHOT_NOTE_TAKES, &ONESHOT_NOTE_NOTES),
             _ => script(model),
         }
@@ -897,10 +920,10 @@ pub fn credits(toml: &str) -> Result<Vec<(String, Src)>, String> {
         .collect()
 }
 
-/// `model`'s name in file names and on the command line: `loop`,
-/// `pingpong`, `transwave`….
+/// `model`'s name in file names and on the command line: `play`,
+/// `transwave`….
 pub fn model_slug(model: TapeModel) -> String {
-    model.disk_ident().to_lowercase().replace('_', "")
+    MACHINE_NAMES[usize::from(model.index())].to_lowercase()
 }
 
 pub fn file_name(model: TapeModel, src: &Src, kind: &str) -> String {
@@ -943,7 +966,7 @@ pub fn page(rows: &[(TapeModel, &Src)]) -> String {
         if it.peek().is_none() {
             continue;
         }
-        let name = m.disk_ident().replace('_', "-");
+        let name = MACHINE_NAMES[usize::from(m.index())];
         let _ = write!(
             out,
             "<section><h2>{name}</h2><p class=\"legend\">{}</p>",
@@ -1227,11 +1250,11 @@ mod tests {
     #[test]
     fn page_lists_every_track() {
         let (a, b) = (src("tx-bass"), src("choir"));
-        let rows = [(TapeModel::Loop, &a), (TapeModel::Loop, &b)];
+        let rows = [(TapeModel::Play, &a), (TapeModel::Play, &b)];
         let html = page(&rows);
         for s in ["tx-bass", "choir"] {
             for kind in ["dry", "wet"] {
-                let f = format!("loop-{s}-{kind}.wav");
+                let f = format!("play-{s}-{kind}.wav");
                 assert!(html.contains(&f), "{f} missing");
             }
         }
@@ -1282,11 +1305,11 @@ mod tests {
     fn only_http_links() {
         let mut s = src("x");
         s.url = Some("javascript:alert(1)".into());
-        let html = page(&[(TapeModel::Loop, &s)]);
+        let html = page(&[(TapeModel::Play, &s)]);
         assert!(!html.contains("href=\"javascript"), "plain text");
         s.url = Some("https://example.org/f".into());
         s.author.clear();
-        let html = page(&[(TapeModel::Loop, &s)]);
+        let html = page(&[(TapeModel::Play, &s)]);
         assert!(
             html.contains(">https://example.org/f</a>"),
             "the URL stands in"

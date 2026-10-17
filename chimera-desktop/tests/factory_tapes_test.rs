@@ -3,7 +3,7 @@
 //! TAPE Sound at the factory median (ADR 0063).
 
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::dsp::tape_engine::TapeModel;
+use chimera_core::dsp::tape_engine::{PlayMode, TapeModel};
 use chimera_core::dsp::tape_engine::read::Shape;
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
@@ -201,9 +201,9 @@ fn factory_sounds_sit_at_the_median() {
             ((b.head.root + 50) / 100) as u8
         };
         let secs = b.head.sref.frames as f32 / f32::from(b.head.sref.rate);
-        let blocks = match (s.model, t.slice.code()) {
-            (TapeModel::Oneshot, 1) => (secs / 16.0 * BPS as f32) as usize,
-            (TapeModel::Oneshot, _) => ((secs * BPS as f32) as usize).min(BPS),
+        let blocks = match (s.model, s.mode, t.slice.code()) {
+            (TapeModel::Play, PlayMode::One, 1) => (secs / 16.0 * BPS as f32) as usize,
+            (TapeModel::Play, PlayMode::One, _) => ((secs * BPS as f32) as usize).min(BPS),
             _ => BPS,
         };
         let d = rig.lufs(note, blocks.max(1)) - median;
@@ -272,7 +272,7 @@ fn scrub_take_that_turns_is_click_free() {
     use chimera_core::dsp::tape_engine::machine::defaults;
     use chimera_core::dsp::tape_engine::{StretchType, TapeEngineParams as P};
     use chimera_desktop::factory_tapes::pitch;
-    use chimera_desktop::listen::{CLICK_RATIO, Script, Way, qa, render, root_note, script};
+    use chimera_desktop::listen::{CLICK_RATIO, Script, Way, qa, render, root_note};
     static RAMP: [(f32, chimera_core::block::ParamId, f32); 2] =
         [(0.0, P::MOTION, 0.6), (3.0, P::MOTION, -0.6)];
     let (r, built) = set();
@@ -286,11 +286,11 @@ fn scrub_take_that_turns_is_click_free() {
             .unwrap();
         let (h, p) = (held(b), pitch(&b.head));
         let straight = render(
-            Way::Plain.base(TapeModel::Oneshot, StretchType::Mono),
+            Way::One.base(TapeModel::Play, StretchType::Mono),
             &h,
             p,
             root_note(p),
-            &script(TapeModel::Oneshot),
+            &Way::One.script(TapeModel::Play),
         );
         let own = qa(&straight[..straight.len().min(48_000 * 5 / 2)]).click_ratio;
         let mut base = Way::Plain.base(TapeModel::Scrub, StretchType::Mono);

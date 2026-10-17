@@ -44,7 +44,7 @@ use chimera_engine::dsp::rev::extra_cost;
 use chimera_engine::dsp::rev::sync::Tempo;
 use chimera_engine::dsp::reverb::ReverbType;
 use chimera_engine::dsp::tape_engine::read::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape};
-use chimera_engine::dsp::tape_engine::{StretchType, TapeModel, wave};
+use chimera_engine::dsp::tape_engine::{PlayMode, StretchType, TapeModel, wave};
 use chimera_engine::dsp::voice::Voice;
 #[cfg(feature = "bench-algo")]
 use chimera_engine::factory::{Demo, demo_sound};
@@ -1033,12 +1033,12 @@ const TAPE_ROWS: [TapeRow; 13] = [
             Hit::Hold
         },
     ),
-    ("LOOP 64", Tapes::Least, |p| tiny(p, TapeModel::Loop), HOLD),
+    ("LOOP 64", Tapes::Least, |p| tiny(p, TapeModel::Play, PlayMode::Loop), HOLD),
     (
         "REV 64",
         Tapes::Least,
         |p| {
-            tiny(p, TapeModel::Loop);
+            tiny(p, TapeModel::Play, PlayMode::Loop);
             (p.tape.start, p.tape.end) = (1.0, 0.0);
         },
         HOLD,
@@ -1046,21 +1046,21 @@ const TAPE_ROWS: [TapeRow; 13] = [
     (
         "PING 64",
         Tapes::Least,
-        |p| tiny(p, TapeModel::PingPong),
+        |p| tiny(p, TapeModel::Play, PlayMode::Ping),
         HOLD,
     ),
     (
         "SCRUB 64",
         Tapes::Least,
-        |p| tiny(p, TapeModel::Scrub),
+        |p| tiny(p, TapeModel::Scrub, PlayMode::Loop),
         HOLD,
     ),
-    ("LOOP 256", Tapes::Short, |p| tiny(p, TapeModel::Loop), HOLD),
+    ("LOOP 256", Tapes::Short, |p| tiny(p, TapeModel::Play, PlayMode::Loop), HOLD),
     (
         "REV 256",
         Tapes::Short,
         |p| {
-            tiny(p, TapeModel::Loop);
+            tiny(p, TapeModel::Play, PlayMode::Loop);
             (p.tape.start, p.tape.end) = (1.0, 0.0);
         },
         HOLD,
@@ -1068,20 +1068,20 @@ const TAPE_ROWS: [TapeRow; 13] = [
     (
         "PING 256",
         Tapes::Short,
-        |p| tiny(p, TapeModel::PingPong),
+        |p| tiny(p, TapeModel::Play, PlayMode::Ping),
         square,
     ),
     (
         "SCRUB 256",
         Tapes::Short,
-        |p| tiny(p, TapeModel::Scrub),
+        |p| tiny(p, TapeModel::Scrub, PlayMode::Loop),
         square,
     ),
     (
         "1SHOT",
         Tapes::Least,
         |p| {
-            tiny(p, TapeModel::Oneshot);
+            tiny(p, TapeModel::Play, PlayMode::One);
             p.tape.slice = chimera_engine::dsp::tape_engine::SliceCode::new(17);
         },
         |_, _| Hit::Again,
@@ -1089,14 +1089,15 @@ const TAPE_ROWS: [TapeRow; 13] = [
     (
         "TRON",
         Tapes::Least,
-        |p| tiny(p, TapeModel::Tron),
+        |p| tiny(p, TapeModel::Tron, PlayMode::Loop),
         |_, _| Hit::AgainOff,
     ),
 ];
 
 /// SIZE 0, XFADE ½, ROOT 0: `inc` clamped on any source.
-fn tiny(p: &mut ParamSnapshot, model: TapeModel) {
-    (p.tape.model, p.tape.size, p.tape.xfade, p.tape.root) = (model, 0.0, 0.5, 0.0);
+fn tiny(p: &mut ParamSnapshot, model: TapeModel, mode: PlayMode) {
+    (p.tape.model, p.tape.mode) = (model, mode);
+    (p.tape.size, p.tape.xfade, p.tape.root) = (0.0, 0.5, 0.0);
 }
 
 /// POSITION a square wave, flipping every block: the bounds jump, and

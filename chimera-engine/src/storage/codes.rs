@@ -167,8 +167,9 @@ pub const RETIRED_BLOCKS: &[u8] = &[];
 
 /// `(block code, param id, value code)`: one enum value that is gone for good.
 /// TAPE's MODEL REVERSE (#369): LOOP with END before START plays it, so a
-/// file's code 1 goes to `Retired` and `tape_engine::translate_v1`.
-pub const RETIRED_CODES: &[(u8, u8, u8)] = &[(34, 0, 1)];
+/// file's code 1 goes to `Retired` and `tape_engine::translate_v1`. So do
+/// PING-PONG (2) and ONESHOT (7), which PLAY folds (ADR 0145).
+pub const RETIRED_CODES: &[(u8, u8, u8)] = &[(34, 0, 1), (34, 0, 2), (34, 0, 7)];
 
 /// `ModSource` codes that are gone for good.
 pub const RETIRED_SOURCES: &[u8] = &[];

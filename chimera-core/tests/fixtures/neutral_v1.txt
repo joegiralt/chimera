@@ -299,7 +299,8 @@ Sound {
             speed: 0.5,
         },
         tape: TapeEngineParams {
-            model: Loop,
+            model: Play,
+            mode: Loop,
             start: 0.0,
             end: 1.0,
             position: 0.0,

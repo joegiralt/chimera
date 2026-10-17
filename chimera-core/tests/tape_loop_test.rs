@@ -11,7 +11,7 @@ use core::mem::MaybeUninit;
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::wave;
 use chimera_core::dsp::tape_engine::{
-    INC_MAX, NOTE_ON_RAMP, TapeEngine, TapeEngineParams, TapeModel, inc, loop_len,
+    INC_MAX, NOTE_ON_RAMP, PlayMode, TapeEngine, TapeEngineParams, TapeModel, inc, loop_len,
 };
 use chimera_hal::BLOCK_SIZE;
 use common::tape::{Mach, held_plain, held_transwave, sine};
@@ -21,9 +21,9 @@ const SR: u32 = 48_000;
 /// The models that play heads through a window (TRANSWAVE has its own).
 /// LOOP either way (END before START plays reversed), and the rest.
 const MODELS: [Mach; 5] = [
-    Mach::fwd(TapeModel::Loop),
-    Mach::rev(TapeModel::Loop),
-    Mach::fwd(TapeModel::PingPong),
+    Mach::fwd(TapeModel::Play),
+    Mach::rev(TapeModel::Play),
+    Mach::ping(),
     Mach::fwd(TapeModel::Scrub),
     Mach::fwd(TapeModel::Stretch),
 ];
@@ -147,8 +147,8 @@ fn loops_are_click_free() {
     let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     for m in [
-        Mach::fwd(TapeModel::Loop),
-        Mach::rev(TapeModel::Loop),
+        Mach::fwd(TapeModel::Play),
+        Mach::rev(TapeModel::Play),
         Mach::fwd(TapeModel::Scrub),
     ] {
         for xfade in [0.1, 0.5] {
@@ -202,7 +202,7 @@ fn tiny_loop_fades_have_no_corner() {
     let held = held_plain(&sine(48_000, 183.4, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let own = (TAU / 183.4).powi(2);
-    for m in [Mach::fwd(TapeModel::Loop), Mach::rev(TapeModel::Loop)] {
+    for m in [Mach::fwd(TapeModel::Play), Mach::rev(TapeModel::Play)] {
         let mut p = as_model(
             m,
             TapeEngineParams {
@@ -316,9 +316,14 @@ fn note_on_ramp_has_no_corner() {
     let held = held_plain(&sine(48_000, 4_000.0, 8_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let n = NOTE_ON_RAMP as f32;
-    for model in [TapeModel::Loop, TapeModel::PingPong, TapeModel::Stretch] {
+    for (model, mode) in [
+        (TapeModel::Play, PlayMode::Loop),
+        (TapeModel::Play, PlayMode::Ping),
+        (TapeModel::Stretch, PlayMode::Loop),
+    ] {
         let p = TapeEngineParams {
             model,
+            mode,
             start: 0.125,
             motion: if model == TapeModel::Stretch {
                 0.5
@@ -452,15 +457,16 @@ fn tiny_sources_play_finite() {
             // ONESHOT (SLICE OFF, NOTE, 16) and TRON, every window either
             // way, at the clamp: they end, finite.
             for (model, slice) in [
-                (TapeModel::Oneshot, 0u8),
-                (TapeModel::Oneshot, 1),
-                (TapeModel::Oneshot, 17),
+                (TapeModel::Play, 0u8),
+                (TapeModel::Play, 1),
+                (TapeModel::Play, 17),
                 (TapeModel::Tron, 0),
             ] {
                 for (start, end) in [(0.0, 0.0), (0.5, 0.5), (1.0, 1.0), (0.0, 1.0), (1.0, 0.0)] {
                     for size in [0.0, 1.0] {
                         let p = TapeEngineParams {
                             model,
+                            mode: PlayMode::One,
                             slice: chimera_core::dsp::tape_engine::SliceCode::new(slice),
                             start,
                             end,
@@ -536,12 +542,17 @@ fn midi_extremes_stay_finite() {
     let (out, _) = play(&mut e, &p, &v, SR as usize / BLOCK_SIZE);
     assert!(out.iter().all(|y| y.is_finite()));
     // The machines, at both ends of MIDI, either way round.
-    for model in [TapeModel::Oneshot, TapeModel::Tron, TapeModel::Loop] {
+    for (model, mode) in [
+        (TapeModel::Play, PlayMode::One),
+        (TapeModel::Tron, PlayMode::Loop),
+        (TapeModel::Play, PlayMode::Loop),
+    ] {
         for slice in [0u8, 1, 17] {
             for (note, pitch) in [(0u8, -2_400.0f32), (127, 2_400.0)] {
                 for (start, end) in [(0.2, 0.8), (0.8, 0.2)] {
                     let p = TapeEngineParams {
                         model,
+                        mode,
                         slice: chimera_core::dsp::tape_engine::SliceCode::new(slice),
                         start,
                         end,
@@ -554,7 +565,7 @@ fn midi_extremes_stay_finite() {
                     let (out, _) = play(&mut e, &p, &v, SR as usize / BLOCK_SIZE);
                     assert!(
                         out.iter().all(|y| y.is_finite()),
-                        "{model:?} {slice} note {note} {start}..{end}"
+                        "{model:?} {mode:?} {slice} note {note} {start}..{end}"
                     );
                 }
             }

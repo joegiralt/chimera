@@ -56,12 +56,21 @@ fn sound(a: ParamAddr) -> (Sound, Option<Vec<u8>>) {
             // PERIOD is STRETCH MONO's lock, DRAG TRON's release (FADE); the
             // rest, the first machine that reads it. A quarter-second
             // source: LOOP wraps within a note.
-            let m = [Oneshot, Loop, PingPong, Stretch, Transwave, Tron, Scrub];
+            let m = [Play, Stretch, Transwave, Tron, Scrub];
             s.params.tape.model = match a.param {
                 TapeEngineParams::PERIOD => Stretch,
                 TapeEngineParams::DRAG => Tron,
+                // SLICE is retired: no machine has a cell for it.
+                TapeEngineParams::SLICE => Play,
                 id => *m.iter().find(|&&m| tape::reads(m, id)).unwrap(),
             };
+            // START, END and SLICE latch at note-on in ONE; LOOP reads END live.
+            if matches!(
+                a.param,
+                TapeEngineParams::START | TapeEngineParams::END | TapeEngineParams::SLICE
+            ) {
+                s.params.tape.mode = chimera_core::dsp::tape_engine::PlayMode::One;
+            }
             src = Some(held_plain(&saw_with_burst(48_000, 0.25), 48_000));
             // TRON's fade heard past ENV 1's release on the VCA.
             s.params.envelopes[0].release = 1.0;

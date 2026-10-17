@@ -10,7 +10,7 @@ use chimera_core::clock_plan::SiliconRev;
 use chimera_core::dsp::filter::{FilterKind, FilterMode};
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
 use chimera_core::dsp::tape_engine::wave::frame_len;
-use chimera_core::dsp::tape_engine::{Heads, SliceCode};
+use chimera_core::dsp::tape_engine::{Heads, PlayMode, SliceCode, fade_default};
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, Instrument, PartHeads};
 use chimera_core::name::ProjectName;
@@ -783,7 +783,7 @@ pub fn load_init(ui: &mut UiState, engine: EngineType) {
     }
 }
 
-/// TAPE's init on Part 1, at DECK, MODEL turned `by` from LOOP.
+/// TAPE's init on Part 1, at DECK, MODEL turned `by` from PLAY.
 pub fn tape_deck(ui: &mut UiState, by: i8) {
     load_init(ui, EngineType::Tape);
     plus(ui, 1); // SRC · DECK
@@ -927,11 +927,18 @@ pub fn src_card(ui: &mut UiState, then: CardRow) {
     }
 }
 
+/// Part 1's PLAY in `mode`, its FADE the MODE edit's default.
+pub fn play_mode(ui: &mut UiState, mode: PlayMode) {
+    let p = chimera_core::project::PartId::ALL[0];
+    let t = &mut ui.project_mut().edit_part(p).sound.params.tape;
+    (t.mode, t.drag) = (mode, fade_default(mode));
+}
+
 /// TAPE's init on Part 1 with the strip's source, at DECK, MODEL turned
-/// `by` from LOOP, the audio's heads `heads`.
+/// `by` from PLAY, the audio's heads `heads`.
 pub fn tape_strip(ui: &mut UiState, by: i8, heads: Heads) {
     load_init(ui, EngineType::Tape);
-    strip_source(ui, by == 3);
+    strip_source(ui, by == 4);
     plus(ui, 1); // SRC · DECK
     if by != 0 {
         feed(ui, Input::turn(EncoderId::A, by));
@@ -1538,7 +1545,7 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 3)); // PITCH +19, focused
     }),
     // TAPE's pages (TAPE Task 15): SRC, then DECK and the model page per
-    // machine, MODEL turned from LOOP (index 1).
+    // machine, MODEL turned from PLAY (index 0, MODE LOOP).
     ("tape_src", |ui| load_init(ui, EngineType::Tape)),
     // A source the pool doesn't hold: SOURCE MISSING, focused.
     ("tape_src_missing", |ui| {
@@ -1554,9 +1561,13 @@ pub const CASES: &[ScreenCase] = &[
             .source = Some(chimera_core::storage::TapeSource { r, tune: None });
         feed(ui, Input::turn(EncoderId::A, 1));
     }),
-    ("tape_deck_oneshot", |ui| tape_deck(ui, -1)),
+    ("tape_deck_oneshot", |ui| {
+        tape_deck(ui, 0);
+        play_mode(ui, PlayMode::One);
+    }),
     ("tape_page_oneshot", |ui| {
-        tape_deck(ui, -1);
+        tape_deck(ui, 0);
+        play_mode(ui, PlayMode::One);
         feed(ui, Input::press(ButtonId::Edit));
     }),
     ("tape_deck_loop", |ui| tape_deck(ui, 0)),
@@ -1574,36 +1585,41 @@ pub const CASES: &[ScreenCase] = &[
         tape_deck(ui, 1);
         feed(ui, Input::press(ButtonId::Edit));
     }),
-    ("tape_deck_stretch", |ui| tape_deck(ui, 2)),
+    ("tape_deck_stretch", |ui| tape_deck(ui, 3)),
     ("tape_page_stretch", |ui| {
-        tape_deck(ui, 2);
+        tape_deck(ui, 3);
         feed(ui, Input::press(ButtonId::Edit));
     }),
     // An unpitched source's TYPE in focus: too wide for the numerals.
     ("tape_page_stretch_type", |ui| {
-        tape_deck(ui, 2);
+        tape_deck(ui, 3);
         feed(ui, Input::press(ButtonId::Edit));
         feed(ui, Input::turn(EncoderId::B, 1));
     }),
-    ("tape_deck_transwave", |ui| tape_deck(ui, 3)),
+    ("tape_deck_transwave", |ui| tape_deck(ui, 4)),
     ("tape_page_transwave", |ui| {
-        tape_deck(ui, 3);
-        feed(ui, Input::press(ButtonId::Edit));
-    }),
-    ("tape_deck_scrub", |ui| tape_deck(ui, 4)),
-    ("tape_page_scrub", |ui| {
         tape_deck(ui, 4);
         feed(ui, Input::press(ButtonId::Edit));
     }),
-    ("tape_deck_pingpong", |ui| tape_deck(ui, 5)),
+    ("tape_deck_scrub", |ui| tape_deck(ui, 2)),
+    ("tape_page_scrub", |ui| {
+        tape_deck(ui, 2);
+        feed(ui, Input::press(ButtonId::Edit));
+    }),
+    ("tape_deck_pingpong", |ui| {
+        tape_deck(ui, 0);
+        play_mode(ui, PlayMode::Ping);
+    }),
     ("tape_page_pingpong", |ui| {
-        tape_deck(ui, 5);
+        tape_deck(ui, 0);
+        play_mode(ui, PlayMode::Ping);
         feed(ui, Input::press(ButtonId::Edit));
     }),
     // The strip (TAPE Task 16): each machine over the plucks (a transwave
     // for TRANSWAVE), with the heads the audio would store.
     ("tape_strip_oneshot", |ui| {
-        tape_strip(ui, -1, Heads::new(9_000, None))
+        tape_strip(ui, 0, Heads::new(9_000, None));
+        play_mode(ui, PlayMode::One);
     }),
     // A loop's fade: the second head plays on.
     ("tape_strip_loop", |ui| {
@@ -1613,18 +1629,19 @@ pub const CASES: &[ScreenCase] = &[
         tape_strip(ui, 1, Heads::new(6_000, Some(30_000)))
     }),
     ("tape_strip_stretch", |ui| {
-        tape_strip(ui, 2, Heads::new(12_000, Some(13_200)))
+        tape_strip(ui, 3, Heads::new(12_000, Some(13_200)))
     }),
     ("tape_strip_transwave", |ui| {
-        tape_strip(ui, 3, Heads::new(2, Some(3)))
+        tape_strip(ui, 4, Heads::new(2, Some(3)))
     }),
     ("tape_strip_scrub", |ui| {
-        tape_strip(ui, 4, Heads::new(16_000, None));
+        tape_strip(ui, 2, Heads::new(16_000, None));
         let p = chimera_core::project::PartId::ALL[0];
         ui.project_mut().edit_part(p).sound.params.tape.position = 0.4; // FINGER
     }),
     ("tape_strip_pingpong", |ui| {
-        tape_strip(ui, 5, Heads::new(25_000, None))
+        tape_strip(ui, 0, Heads::new(25_000, None));
+        play_mode(ui, PlayMode::Ping);
     }),
     // END before START on SRC: LOOP plays reversed.
     ("tape_strip_loop_reversed", |ui| {
@@ -1633,17 +1650,18 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::B, 100)); // START
         feed(ui, Input::turn(EncoderId::C, -80)); // END
     }),
-    // SLICE 5 on the model page, back on DECK.
+    // SLICE 5 (a loaded Sound's: no cell sets it now).
     ("tape_strip_oneshot_slice", |ui| {
-        tape_strip(ui, -1, Heads::new(10_000, None)); // in slice 5
-        feed(ui, Input::press(ButtonId::Edit));
-        feed(ui, Input::turn(EncoderId::A, 6));
-        tap(ui, ButtonId::Seq);
+        tape_strip(ui, 0, Heads::new(10_000, None)); // in slice 5
+        play_mode(ui, PlayMode::One);
+        let p = chimera_core::project::PartId::ALL[0];
+        ui.project_mut().edit_part(p).sound.params.tape.slice = SliceCode::new(6);
     }),
     // END before START: ONESHOT's slice 5 counts from START, PING-PONG
     // plays its sorted window.
     ("tape_strip_oneshot_slice_reversed", |ui| {
-        tape_strip(ui, -1, Heads::NONE);
+        tape_strip(ui, 0, Heads::NONE);
+        play_mode(ui, PlayMode::One);
         let p = &mut ui
             .project_mut()
             .edit_part(chimera_core::project::PartId::ALL[0])
@@ -1653,7 +1671,8 @@ pub const CASES: &[ScreenCase] = &[
         (p.start, p.end, p.slice) = (0.9, 0.1, SliceCode::new(6));
     }),
     ("tape_strip_pingpong_reversed", |ui| {
-        tape_strip(ui, 5, Heads::new(20_000, None));
+        tape_strip(ui, 0, Heads::new(20_000, None));
+        play_mode(ui, PlayMode::Ping);
         let p = &mut ui
             .project_mut()
             .edit_part(chimera_core::project::PartId::ALL[0])

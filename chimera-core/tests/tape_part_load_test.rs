@@ -114,5 +114,5 @@ fn deck_reads_needs_update_closed() {
     );
     assert_eq!(empty.1, Some(NEEDS_UPDATE_CELL));
     assert!(first_cell_reads(&empty.0, NEEDS_UPDATE_CELL));
-    assert!(first_cell_reads(&ok.0, "LOOP"));
+    assert!(first_cell_reads(&ok.0, "PLAY"));
 }

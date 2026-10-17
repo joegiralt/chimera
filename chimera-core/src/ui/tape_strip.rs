@@ -11,7 +11,7 @@ use crate::dsp::clampf;
 use crate::dsp::tape_engine::Heads;
 use crate::dsp::tape_engine::heads::{Bounds, Dir, Window, min_frames};
 use crate::dsp::tape_engine::oneshot::Slice;
-use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
+use crate::dsp::tape_engine::params::{PlayMode, TapeEngineParams, TapeModel};
 use crate::dsp::tape_engine::read::{Shape, SourceView};
 use crate::dsp::tape_engine::tron::tron_len_s;
 use crate::ui::{draw, theme};
@@ -114,6 +114,7 @@ pub fn key(o: &Overview, model: TapeModel, p: &TapeEngineParams, heads: Heads) -
         o.frames,
         u32::from(o.rate),
         model as u32,
+        p.mode as u32,
         u32::from(p.slice.code()),
         p.size.to_bits(),
         p.xfade.to_bits(),
@@ -175,7 +176,7 @@ pub fn draw_strip<D>(
     }
     let col = |f: u32| x + o.column(f);
     let mut w = Window::of(p.start, p.end, n, min_frames(o.rate));
-    if !model.ordered() {
+    if !model.ordered(p.mode) {
         w.dir = Dir::Fwd;
     }
     let len = w.frames();
@@ -190,8 +191,8 @@ pub fn draw_strip<D>(
     };
     let slice = |k: u64| w.lo + (k * u64::from(len) / 16) as u32;
     let (mut ramp, mut edges, mut ticks) = (None, None, 0u32);
-    let lit = match model {
-        TapeModel::Oneshot => {
+    let lit = match (model, p.mode) {
+        (TapeModel::Play, PlayMode::One) => {
             let s = p.slice.slice();
             ticks = if s == Slice::Off { 0 } else { 16 };
             // Slice k from START (`slice_bounds`), or under NOTE the one
@@ -208,7 +209,7 @@ pub fn draw_strip<D>(
         }
         // The tape SIZE gives at the newest note's pitch (the audio's), or
         // at ROOT's with none: from START to where it runs out, or END.
-        TapeModel::Tron => match heads.second() {
+        (TapeModel::Tron, _) => match heads.second() {
             Some(out) if fwd => (w.lo, out.max(w.lo)),
             Some(out) => (out.min(w.hi), w.hi),
             None => {
@@ -216,9 +217,9 @@ pub fn draw_strip<D>(
                 place(0, run.min(len))
             }
         },
-        TapeModel::Loop | TapeModel::PingPong => {
+        (TapeModel::Play, _) => {
             let b = Bounds::of(0, len, (p.size, p.position, p.xfade), o.rate);
-            if model == TapeModel::PingPong {
+            if p.mode == PlayMode::Ping {
                 edges = Some(place(b.ls, b.le));
             } else if b.lx > 0 {
                 // The fade's incoming head: before the loop, or inside it
@@ -231,7 +232,7 @@ pub fn draw_strip<D>(
             }
             place(b.ls, b.le)
         }
-        TapeModel::Transwave => {
+        (TapeModel::Transwave, _) => {
             // The table's frames: the two read lit, else POSITION's.
             let c = u32::from(o.count.max(1));
             ticks = c;
@@ -240,7 +241,7 @@ pub fn draw_strip<D>(
             let h = heads.head().unwrap_or(at);
             (f(h), f(heads.second().unwrap_or(h).max(h) + 1))
         }
-        TapeModel::Scrub | TapeModel::Stretch => (w.lo, w.hi),
+        (TapeModel::Scrub | TapeModel::Stretch, _) => (w.lo, w.hi),
     };
     let (l, r) = (col(lit.0), col(lit.1.max(lit.0 + 1) - 1));
     rect(d, l, y, r - l + 1, H, theme::ACCENT_DIM);
@@ -297,7 +298,7 @@ pub fn draw_strip<D>(
     }
     if let Some(h) = heads.head() {
         rect(d, col(h), y, 1, H, theme::ACCENT);
-        if model.ordered() {
+        if model.ordered(p.mode) {
             tri(d, col(h) + dir, y + 3, (dir, 0), theme::ACCENT);
         }
     }

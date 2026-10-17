@@ -677,11 +677,17 @@ fn the_model_bills_every_bench_row_high() {
     }
     // The TAPE rows (spec § 5), TAPE and AGE at 0.5 on each, as the bench
     // plays them; read cold on the unit. 0 until the owner's session.
-    use chimera_core::dsp::tape_engine::TapeModel::{
-        Loop, Oneshot, PingPong, Scrub, Stretch, Transwave, Tron,
-    };
-    let tape = |model, (start, end): (f32, f32), steal_glide: bool| {
+    use chimera_core::dsp::tape_engine::PlayMode;
+    use chimera_core::dsp::tape_engine::TapeModel::{Play, Scrub, Stretch, Transwave, Tron};
+    // PLAY's three MODEs are the old LOOP, PING-PONG and ONESHOT.
+    let (lp, ping, one) = (
+        (Play, PlayMode::Loop),
+        (Play, PlayMode::Ping),
+        (Play, PlayMode::One),
+    );
+    let tape = |(model, mode), (start, end): (f32, f32), steal_glide: bool| {
         let mut p = tape_sound(model);
+        p.tape.mode = mode;
         (p.tape.tape, p.tape.age, p.tape.start, p.tape.end) = (0.5, 0.5, start, end);
         if steal_glide {
             p.pitch.steal = chimera_core::params::Steal::Glide;
@@ -690,27 +696,27 @@ fn the_model_bills_every_bench_row_high() {
     };
     let (fwd, rev) = ((0.0, 1.0), (1.0, 0.0));
     for (name, billed, measured) in [
-        ("TAPE LOOP", tape(Loop, fwd, false), 0),
-        ("TAPE STRETCH", tape(Stretch, fwd, false), 0),
+        ("TAPE LOOP", tape(lp, fwd, false), 0),
+        ("TAPE STRETCH", tape((Stretch, PlayMode::Loop), fwd, false), 0),
         // ±12 st every block: billed as a glide or a deep route is.
-        ("TAPE WAVE C7", tape(Transwave, fwd, true), 0),
-        ("TINY LOOP 8", tape(Loop, fwd, false), 0),
-        ("TINY REV 8", tape(Loop, rev, false), 0),
-        ("TINY PING 8", tape(PingPong, fwd, false), 0),
-        ("TINY SCRUB 8", tape(Scrub, fwd, false), 0),
-        ("TINY LOOP", tape(Loop, fwd, false), 0),
-        ("TINY REV", tape(Loop, rev, false), 0),
-        ("TINY PING", tape(PingPong, fwd, false), 0),
-        ("TINY SCRUB", tape(Scrub, fwd, false), 0),
-        ("TINY 1SHOT", tape(Oneshot, fwd, false), 0),
-        ("TINY TRON", tape(Tron, fwd, false), 0),
+        ("TAPE WAVE C7", tape((Transwave, PlayMode::Loop), fwd, true), 0),
+        ("TINY LOOP 8", tape(lp, fwd, false), 0),
+        ("TINY REV 8", tape(lp, rev, false), 0),
+        ("TINY PING 8", tape(ping, fwd, false), 0),
+        ("TINY SCRUB 8", tape((Scrub, PlayMode::Loop), fwd, false), 0),
+        ("TINY LOOP", tape(lp, fwd, false), 0),
+        ("TINY REV", tape(lp, rev, false), 0),
+        ("TINY PING", tape(ping, fwd, false), 0),
+        ("TINY SCRUB", tape((Scrub, PlayMode::Loop), fwd, false), 0),
+        ("TINY 1SHOT", tape(one, fwd, false), 0),
+        ("TINY TRON", tape((Tron, PlayMode::Loop), fwd, false), 0),
     ] {
         assert!(billed >= measured, "{name}: {billed} < {measured}");
     }
-    assert_eq!(tape(Loop, fwd, false), 36 + 450 + 40);
-    assert_eq!(tape(Stretch, fwd, false), 36 + 450 + 40);
-    assert_eq!(tape(Transwave, fwd, true), 36 + 770 + 40);
-    assert_eq!(tape(Oneshot, fwd, false), 36 + 230 + 40);
+    assert_eq!(tape(lp, fwd, false), 36 + 450 + 40);
+    assert_eq!(tape((Stretch, PlayMode::Loop), fwd, false), 36 + 450 + 40);
+    assert_eq!(tape((Transwave, PlayMode::Loop), fwd, true), 36 + 770 + 40);
+    assert_eq!(tape(one, fwd, false), 36 + 230 + 40);
 }
 
 /// The Task 13 bench (rev V, 480 MHz, 2026-09-28, the bench-t13c run):
@@ -1531,9 +1537,15 @@ fn tape_sound(model: chimera_core::dsp::tape_engine::TapeModel) -> ParamSnapshot
 /// and both at 0.5.
 #[test]
 fn tape_bills_each_model() {
-    use TapeModel::{Loop, Oneshot, PingPong, Scrub, Stretch, Transwave, Tron};
+    use TapeModel::{Play, Scrub, Stretch, Transwave, Tron};
     use chimera_core::addr::{BlockRef, ParamAddr};
-    use chimera_core::dsp::tape_engine::{TapeEngineParams, TapeModel};
+    use chimera_core::dsp::tape_engine::{PlayMode, TapeEngineParams, TapeModel};
+    // PLAY's three MODEs bill what LOOP, PING-PONG and ONESHOT billed.
+    let (lp, ping, one) = (
+        (Play, PlayMode::Loop),
+        (Play, PlayMode::Ping),
+        (Play, PlayMode::One),
+    );
     let rooms = {
         let v = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
         let y = SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0;
@@ -1548,17 +1560,18 @@ fn tape_bills_each_model() {
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     let on = |q| ParamAddr::new(BlockRef::TapeEngine, q);
     // Model, bill, voices with TAPE and AGE off, with both.
-    for (model, bill, off, both) in [
-        (Loop, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
-        (PingPong, 490, [8, 7, 8, 8], [8, 6, 8, 8]),
-        (Scrub, 480, [8, 7, 8, 8], [8, 6, 8, 8]),
-        (Transwave, 400, [8, 8, 8, 8], [8, 8, 8, 8]),
-        (Stretch, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
-        (Oneshot, 230, [8, 8, 8, 8], [8, 8, 8, 8]),
-        (Tron, 230, [8, 8, 8, 8], [8, 8, 8, 8]),
+    for ((model, mode), bill, off, both) in [
+        (lp, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
+        (ping, 490, [8, 7, 8, 8], [8, 6, 8, 8]),
+        ((Scrub, PlayMode::Loop), 480, [8, 7, 8, 8], [8, 6, 8, 8]),
+        ((Transwave, PlayMode::Loop), 400, [8, 8, 8, 8], [8, 8, 8, 8]),
+        ((Stretch, PlayMode::Loop), 450, [8, 7, 8, 8], [8, 7, 8, 8]),
+        (one, 230, [8, 8, 8, 8], [8, 8, 8, 8]),
+        ((Tron, PlayMode::Loop), 230, [8, 8, 8, 8], [8, 8, 8, 8]),
     ] {
         for reversed in [false, true] {
             let mut p = tape_sound(model);
+            p.tape.mode = mode;
             if reversed {
                 (p.tape.start, p.tape.end) = (1.0, 0.0);
             }
@@ -1580,7 +1593,7 @@ fn tape_bills_each_model() {
                         continue;
                     };
                     let why = format!(
-                        "{model:?} rev {reversed} TAPE {tape}/{tape_routed} AGE {age}/{age_routed}"
+                        "{model:?} {mode:?} rev {reversed} TAPE {tape}/{tape_routed} AGE {age}/{age_routed}"
                     );
                     assert_eq!(EngineSlot::cost(&p, &mods), Cost(bill + t + a), "{why}");
                 }

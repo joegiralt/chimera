@@ -15,7 +15,8 @@
 # (`six_parts_fit`): every Plain source but TRON and the kit is at most
 # 18 KB (0.75 s at 16k, 0.375 s at 32k, 1 s at 12k).
 #
-# [[sound]]: name; source; model (its machine's defaults); then TAPE params
+# [[sound]]: name; source; model (its machine's defaults), PLAY with its mode
+# (ONE, LOOP or PING; ONE holds); then TAPE params
 # by label (START, END, POSITION, MOTION, TAPE, AGE, SIZE, XFADE, DRAG,
 # TYPE, SLICE, WOW) as stored values; trim in dB on OUT LEVEL, so each sits
 # at the factory median (`factory_sounds_sit_at_the_median`).
@@ -302,19 +303,22 @@ transwave = "436.36"
 [[sound]]
 name = "SINE LOOP"
 source = "SINE C4"
-model = "LOOP"
+model = "PLAY"
+mode = "LOOP"
 trim = "-6.5"
 
 [[sound]]
 name = "EPIANO HIT"
 source = "EPIANO C4"
-model = "ONESHOT"
+model = "PLAY"
+mode = "ONE"
 trim = "-2.5"
 
 [[sound]]
 name = "EPIANO STAB"
 source = "EPIANO STAB"
-model = "ONESHOT"
+model = "PLAY"
+mode = "ONE"
 trim = "+2.0"
 
 [[sound]]
@@ -326,32 +330,37 @@ trim = "+2.0"
 [[sound]]
 name = "TX BASS HIT"
 source = "TX BASS C2"
-model = "ONESHOT"
+model = "PLAY"
+mode = "ONE"
 trim = "+6.5"
 
 [[sound]]
 name = "SQR BASS HIT"
 source = "SQR BASS C2"
-model = "ONESHOT"
+model = "PLAY"
+mode = "ONE"
 trim = "+3.5"
 
 [[sound]]
 name = "BRASS LOOP"
 source = "BRASS C4"
-model = "LOOP"
+model = "PLAY"
+mode = "LOOP"
 start = "0.2"
 trim = "+1.5"
 
 [[sound]]
 name = "BELL HIT"
 source = "BELL C5"
-model = "ONESHOT"
+model = "PLAY"
+mode = "ONE"
 trim = "-4.5"
 
 [[sound]]
 name = "BELL BACKWARDS"
 source = "BELL C5"
-model = "ONESHOT"
+model = "PLAY"
+mode = "ONE"
 start = "1"
 end = "0"
 trim = "-4.0"
@@ -365,14 +374,16 @@ trim = "-1.0"
 [[sound]]
 name = "PAD LOOP"
 source = "PAD CHORD"
-model = "LOOP"
+model = "PLAY"
+mode = "LOOP"
 start = "0.15"
 trim = "+2.0"
 
 [[sound]]
 name = "PAD PINGPONG"
 source = "PAD CHORD"
-model = "PING_PONG"
+model = "PLAY"
+mode = "PING"
 # Past the pad's attack.
 position = "0.5"
 trim = "+3.5"
@@ -380,32 +391,37 @@ trim = "+3.5"
 [[sound]]
 name = "KEYS LOOP"
 source = "KEYS C4"
-model = "LOOP"
+model = "PLAY"
+mode = "LOOP"
 start = "0.1"
 trim = "+1.5"
 
 [[sound]]
 name = "PLUCK HIT"
 source = "PLUCK C3"
-model = "ONESHOT"
+model = "PLAY"
+mode = "ONE"
 trim = "+2.0"
 
 [[sound]]
 name = "PLUCK LOW"
 source = "PLUCK E2"
-model = "ONESHOT"
+model = "PLAY"
+mode = "ONE"
 trim = "+2.0"
 
 [[sound]]
 name = "HARP HIT"
 source = "HARP C5"
-model = "ONESHOT"
+model = "PLAY"
+mode = "ONE"
 trim = "+0.5"
 
 [[sound]]
 name = "BOWED LOOP"
 source = "BOWED C3"
-model = "LOOP"
+model = "PLAY"
+mode = "LOOP"
 start = "0.2"
 trim = "-6.0"
 
@@ -418,19 +434,22 @@ trim = "-1.0"
 [[sound]]
 name = "METAL HIT"
 source = "METAL C4"
-model = "ONESHOT"
+model = "PLAY"
+mode = "ONE"
 trim = "+4.0"
 
 [[sound]]
 name = "GLASS HIT"
 source = "GLASS C6"
-model = "ONESHOT"
+model = "PLAY"
+mode = "ONE"
 trim = "+4.0"
 
 [[sound]]
 name = "SYMP LOOP"
 source = "SYMP C3"
-model = "LOOP"
+model = "PLAY"
+mode = "LOOP"
 trim = "-0.5"
 
 [[sound]]
@@ -442,13 +461,15 @@ trim = "-7.5"
 [[sound]]
 name = "NOISE LOOP"
 source = "NOISE"
-model = "LOOP"
+model = "PLAY"
+mode = "LOOP"
 trim = "+7.0"
 
 [[sound]]
 name = "WIND LOOP"
 source = "WIND"
-model = "LOOP"
+model = "PLAY"
+mode = "LOOP"
 tape = "0.3"
 trim = "+5.0"
 
@@ -461,14 +482,16 @@ trim = "+7.0"
 [[sound]]
 name = "KIT"
 source = "KIT 16"
-model = "ONESHOT"
+model = "PLAY"
+mode = "ONE"
 slice = "1"
 trim = "-3.0"
 
 [[sound]]
 name = "VOICE LOOP"
 source = "VOICE AH"
-model = "LOOP"
+model = "PLAY"
+mode = "LOOP"
 trim = "+1.0"
 
 [[sound]]

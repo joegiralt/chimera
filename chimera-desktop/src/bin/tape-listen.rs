@@ -11,7 +11,7 @@
 //! name is looked for in `$CHIMERA_TAPES_SRC` (`~/chimera-tapes-src`).
 
 use chimera_core::block::DiskCode;
-use chimera_core::dsp::tape_engine::{StretchType, TapeModel};
+use chimera_core::dsp::tape_engine::{MACHINE_NAMES, StretchType, TapeModel};
 use chimera_core::factory::FACTORY_LEN;
 use chimera_desktop::import::tape::convert::{Channel, Mono, Pitch, read_wav};
 use chimera_desktop::listen::{
@@ -51,7 +51,7 @@ fn run() -> Result<bool, String> {
             srcs.push(args.next().ok_or("--src needs chimera or a WAV")?);
         } else if a.eq_ignore_ascii_case("reverse") {
             // REVERSE is LOOP with END before START (#369): its renders.
-            models.push(TapeModel::Loop);
+            models.push(TapeModel::Play);
         } else {
             let m = TapeModel::ALL
                 .into_iter()
@@ -176,7 +176,7 @@ fn run() -> Result<bool, String> {
                     let _ = writeln!(
                         report,
                         "{:<9} {:<17} {kind}  peak {:6.2} dBFS  click {:5.2}x at {:6.3} s  non-finite {}  {}",
-                        m.disk_ident(),
+                        MACHINE_NAMES[usize::from(m.index())],
                         row.slug,
                         q.peak_dbfs,
                         q.click_ratio,

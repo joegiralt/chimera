@@ -518,8 +518,9 @@ fn retired_never_live() {
             (25, 7)
         ]
     );
-    // TAPE's MODEL REVERSE (#369): LOOP with END before START.
-    assert_eq!(RETIRED_CODES, &[(34, 0, 1)]);
+    // TAPE's MODEL REVERSE (#369): LOOP with END before START; PING-PONG
+    // and ONESHOT, folded into PLAY (ADR 0145).
+    assert_eq!(RETIRED_CODES, &[(34, 0, 1), (34, 0, 2), (34, 0, 7)]);
     assert!(RETIRED_SOURCES.is_empty() && RETIRED_BLOCKS.is_empty());
     for &(block, id) in RETIRED {
         for b in BlockRef::ALL

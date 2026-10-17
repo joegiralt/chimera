@@ -79,8 +79,8 @@ use wave::Wave;
 pub use heads::loop_len;
 pub use oneshot::SliceCode;
 pub use params::{
-    MACHINE_NAMES, MODEL_NAMES, StretchType, TAPE_ENGINE_SPECS, TapeEngineParams, TapeModel, Wow,
-    drag_s, jogs, reads,
+    FADE_HOLD, MACHINE_NAMES, MODEL_NAMES, PlayMode, StretchType, TAPE_ENGINE_SPECS,
+    TapeEngineParams, TapeModel, Wow, drag_s, fade_default, jogs, reads,
 };
 
 // Each model's bill: its measured worst a sample, the M7's static count
@@ -156,12 +156,14 @@ const BLOCK_RATE: f32 = (SAMPLE_RATE as usize / BLOCK_SIZE) as f32;
 
 /// Each model's measured worst, either way round (spec § 5): bank 1's
 /// table, which the proxy reads without the door.
-pub const fn model_cost(m: TapeModel) -> Cost {
+pub const fn model_cost(m: TapeModel, mode: PlayMode) -> Cost {
     match m {
-        TapeModel::Loop => COST_LOOP,
-        TapeModel::Oneshot => COST_ONESHOT,
+        TapeModel::Play => match mode {
+            PlayMode::One => COST_ONESHOT,
+            PlayMode::Loop => COST_LOOP,
+            PlayMode::Ping => COST_PING,
+        },
         TapeModel::Tron => COST_TRON,
-        TapeModel::PingPong => COST_PING,
         TapeModel::Scrub => COST_SCRUB,
         TapeModel::Transwave => COST_WAVE,
         TapeModel::Stretch => COST_STRETCH,
@@ -369,6 +371,9 @@ pub struct TapeDeck {
     /// starts (`note_on`) on the first block its row reads (spec § 4).
     gated: bool,
     model: TapeModel,
+    /// PLAY's MODE and whether FADE holds, latched at note-on.
+    mode: PlayMode,
+    hold: bool,
     /// The head, and the head a fade reads into, each in its frame `u`:
     /// mirrored, the source is read at `off − u`, else at `u` (`off + u`
     /// in SCRUB). They differ only while a flip fades (LOOP's END moved
@@ -496,7 +501,9 @@ impl TapeDeck {
         TapeDeck {
             src: None,
             gated: false,
-            model: TapeModel::Loop,
+            model: TapeModel::Play,
+            mode: PlayMode::Loop,
+            hold: false,
             heads: [Head::default(); 2],
             off: Pos(0),
             df: 0,
@@ -636,7 +643,7 @@ impl TapeDeck {
         match self.view(src) {
             Some(v) if wave::playable(p.model, &v) => self.note_on(note, p, &v, sample_rate),
             None if self.src.is_some_and(|id| src.moving(id)) => {
-                (self.note, self.model) = (note, p.model);
+                (self.note, self.model, self.mode) = (note, p.model, p.mode);
                 (self.gated, self.active) = (true, true);
             }
             _ => (self.gated, self.active) = (false, false),
@@ -689,7 +696,7 @@ impl TapeDeck {
     /// change is `EngineSlot`'s, which sees the pitch.
     pub fn cost(p: &TapeEngineParams, mods: &ModState) -> Cost {
         let routed = |q| mods.moves_addr(ParamAddr::new(BlockRef::TapeEngine, q));
-        let mut c = Self::model_cost(p.model);
+        let mut c = Self::model_cost(p.model, p.mode);
         if tape_runs(p.tape, routed(TapeEngineParams::TAPE)) {
             c = c + COST_TAPE_RUNS;
         }
@@ -700,13 +707,13 @@ impl TapeDeck {
     }
 
     /// Each model's measured worst, either way round (spec § 5).
-    pub const fn model_cost(m: TapeModel) -> Cost {
-        model_cost(m)
+    pub const fn model_cost(m: TapeModel, mode: PlayMode) -> Cost {
+        model_cost(m, mode)
     }
 
     /// What the sounding note costs: its note-on's model.
     pub fn playing_cost(&self) -> Option<Cost> {
-        self.active.then(|| Self::model_cost(self.model))
+        self.active.then(|| Self::model_cost(self.model, self.mode))
     }
 
     /// A glide steal's ratio now, 1 at rest: for the tests.
@@ -738,6 +745,8 @@ impl TapeDeck {
     ) {
         let (frames, rate) = (v.frames(), v.desc().rate);
         self.model = p.model;
+        self.mode = p.mode;
+        self.hold = params::hold(p);
         self.gated = false;
         self.note = note;
         self.root = p.root;
@@ -766,7 +775,7 @@ impl TapeDeck {
         self.active = true;
         self.wow_kind = p.wow;
         self.start = p.start;
-        if matches!(self.model, TapeModel::Oneshot | TapeModel::Tron) {
+        if self.one_head() {
             self.once_on(note, p, v, sample_rate);
             return;
         }
@@ -791,7 +800,7 @@ impl TapeDeck {
         self.min_len = shortest(rate, fast);
         let we = window_end_min(self.ws, end, frames, self.min_len);
         self.we = we;
-        let xfade = if self.model == TapeModel::PingPong {
+        let xfade = if self.ping() {
             0.0
         } else {
             p.xfade
@@ -817,7 +826,7 @@ impl TapeDeck {
                     start_at = self.bounds.ls;
                 }
             }
-            model => {
+            _ => {
                 self.bounds = Bounds::of_min(
                     self.ws,
                     we,
@@ -825,7 +834,7 @@ impl TapeDeck {
                     rate,
                     self.min_len,
                 );
-                if model == TapeModel::Loop && rev {
+                if self.lp() && rev {
                     self.set_mirror(true);
                     self.off = at(frames - 1);
                 }
@@ -845,10 +854,28 @@ impl TapeDeck {
         self.runup = true;
     }
 
+    /// PLAY in MODE ONE, LOOP or PING: the paths the old machines took.
+    fn one(&self) -> bool {
+        self.model == TapeModel::Play && self.mode == PlayMode::One
+    }
+
+    fn lp(&self) -> bool {
+        self.model == TapeModel::Play && self.mode == PlayMode::Loop
+    }
+
+    fn ping(&self) -> bool {
+        self.model == TapeModel::Play && self.mode == PlayMode::Ping
+    }
+
+    /// ONE and TRON play one head toward the window's end.
+    fn one_head(&self) -> bool {
+        self.one() || self.model == TapeModel::Tron
+    }
+
     /// LOOP plays its next pass reversed: END before the START latched at
     /// note-on (#369).
     fn reversed(&self, end: f32) -> bool {
-        self.model == TapeModel::Loop && Dir::of(self.start, end) == Dir::Rev
+        self.lp() && Dir::of(self.start, end) == Dir::Rev
     }
 
     /// START and END as the model plays them. Reversed (`rev`), LOOP's
@@ -856,7 +883,7 @@ impl TapeDeck {
     /// (`1 − START`), as REVERSE's was. PING-PONG and SCRUB take the sorted
     /// window.
     fn window(&self, p: &TapeEngineParams, rev: bool) -> (f32, f32) {
-        if !self.model.ordered() {
+        if !self.model.ordered(self.mode) {
             (p.start.min(p.end), p.start.max(p.end))
         } else if rev {
             (1.0 - p.start, 1.0 - p.end)
@@ -890,7 +917,7 @@ impl TapeDeck {
         let (frames, rate) = (v.frames(), v.desc().rate);
         let mut w = Window::of(p.start, p.end, frames, min_frames(rate));
         self.at_root = false;
-        if self.model == TapeModel::Oneshot {
+        if self.one() {
             let s = p.slice.slice();
             self.at_root = s.by_note();
             w = slice_bounds(w, s, note);
@@ -949,19 +976,20 @@ impl TapeDeck {
         self.note = note;
     }
 
-    /// TRON's tape fades through FADE's one-pole, the pressure pad lifting.
-    /// Every other machine: nothing (a loop has no end, so the note ends
-    /// when its VCA lets go; ONESHOT ignores it, `sustains`).
+    /// TRON's tape, and PLAY ONE's short of HOLD, fade through FADE's
+    /// one-pole, the pressure pad lifting. Every other machine: nothing (a
+    /// loop has no end, so the note ends when its VCA lets go; ONE at HOLD
+    /// ignores it, `sustains`).
     pub fn note_off(&mut self) {
-        if self.model == TapeModel::Tron {
+        if self.model == TapeModel::Tron || self.one() {
             self.rel_k = self.fade_k;
         }
     }
 
-    /// An ONESHOT head plays: the voice keeps its gate, so note-off
+    /// A HOLD head plays (PLAY ONE): the voice keeps its gate, so note-off
     /// changes nothing and the note ends at END.
     pub fn sustains(&self) -> bool {
-        self.active && self.model == TapeModel::Oneshot
+        self.active && self.hold
     }
 
     /// A fresh note is to come on an idle voice: its ramp starts from 0, not
@@ -1174,7 +1202,7 @@ impl TapeDeck {
                 (m.position, m.motion, m.size),
                 (first, sample_rate),
             );
-        } else if matches!(self.model, TapeModel::Oneshot | TapeModel::Tron) {
+        } else if self.one_head() {
             self.render_once(out, v, sample_rate);
         } else if self.model == TapeModel::Stretch {
             let target = self.target_inc(v.desc().rate, 0.0, sample_rate);
@@ -1366,7 +1394,7 @@ impl TapeDeck {
         let (mut from, mut to) = self.inc.step(target);
         // The next pass's frame: LOOP's END moved across START flips it,
         // at the next wrap. Its window's start is that frame's.
-        let rev = if self.model == TapeModel::Loop {
+        let rev = if self.lp() {
             self.reversed(p.end)
         } else {
             self.mirror()
@@ -1378,7 +1406,7 @@ impl TapeDeck {
             let start = if rev { 1.0 - self.start } else { self.start };
             window_start(start, v.frames())
         };
-        if self.model == TapeModel::PingPong {
+        if self.ping() {
             self.v = to;
             self.inv_v = 1.0 / to;
             self.reach = to * self.clamp_len as f32 + 1.0;
@@ -1516,7 +1544,7 @@ impl TapeDeck {
     fn follow_next(&mut self) {
         let (b, ev) = (self.bounds, self.event);
         self.bounds = self.next;
-        self.event = if self.model == TapeModel::PingPong {
+        self.event = if self.ping() {
             self.pp_event()
         } else {
             self.next.fade_at()
@@ -1985,12 +2013,12 @@ impl TapeDeck {
                 );
                 if self.mirror() { b.mirror(self.n) } else { b }
             }
-            model => {
+            _ => {
                 let mut place = self.mac.position + self.walk;
                 if place > 1.0 {
                     place -= 1.0;
                 }
-                let xfade = if model == TapeModel::PingPong {
+                let xfade = if self.ping() {
                     0.0
                 } else {
                     k.xfade
@@ -2016,7 +2044,7 @@ impl TapeDeck {
                 self.events += 1;
             }
             self.runup = false;
-            if self.model == TapeModel::PingPong {
+            if self.ping() {
                 self.turn(k);
                 continue;
             }

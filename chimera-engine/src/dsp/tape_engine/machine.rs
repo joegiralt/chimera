@@ -4,9 +4,9 @@
 //! Digitakt II, as the owner cites it; Octatrack manual OS 1.25,
 //! § Machines). START, END, TAPE and AGE read the same everywhere.
 //! The UI writes a machine's defaults when MODEL changes (Task 15), never
-//! on load; the neutral stays LOOP's.
+//! on load; the neutral stays PLAY in LOOP.
 
-use super::params::{StretchType, TapeEngineParams as P, TapeModel, Wow};
+use super::params::{PlayMode, StretchType, TapeEngineParams as P, TapeModel, Wow};
 use crate::block::ParamId;
 
 /// One labelled control on a machine.
@@ -47,19 +47,19 @@ const LENGTH: Cell = cell(P::SIZE, "LENGTH", "LEN", 1.0);
 const XFADE: Cell = cell(P::XFADE, "XFADE", "XFD", 0.1);
 
 /// By `TapeModel::index`.
-pub static MACHINES: [Machine; 7] = [
+pub static MACHINES: [Machine; 5] = [
     Machine {
-        model: TapeModel::Oneshot,
-        page: "ONE",
-        deck: [None, None],
-        // SLICE's value 0: OFF.
-        cells: &[cell(P::SLICE, "SLICE", "SLC", 0.0), WOW],
-    },
-    Machine {
-        model: TapeModel::Loop,
-        page: "LOOP",
+        model: TapeModel::Play,
+        page: "PLAY",
         deck: [POS, WALK],
-        cells: &[LENGTH, XFADE, WOW],
+        // MODE LOOP; FADE 0.3: 32 ms (ONE's HOLD is `fade_default`'s).
+        cells: &[
+            cell(P::MODE, "MODE", "MOD", PlayMode::Loop as u8 as f32),
+            LENGTH,
+            XFADE,
+            cell(P::DRAG, "FADE", "FDE", 0.3),
+            WOW,
+        ],
     },
     Machine {
         model: TapeModel::Tron,
@@ -67,6 +67,12 @@ pub static MACHINES: [Machine; 7] = [
         deck: [None, None],
         // LENGTH 1: 8 s. FADE 0.3: 32 ms.
         cells: &[LENGTH, cell(P::DRAG, "FADE", "FDE", 0.3), WOW],
+    },
+    Machine {
+        model: TapeModel::Scrub,
+        page: "SCRUB",
+        deck: [Some(cell(P::POSITION, "FINGER", "FNG", 0.0)), SPEED],
+        cells: &[LENGTH, XFADE, cell(P::DRAG, "DRAG", "DRG", 0.3), WOW],
     },
     Machine {
         model: TapeModel::Stretch,
@@ -87,18 +93,6 @@ pub static MACHINES: [Machine; 7] = [
             Some(cell(P::MOTION, "SCAN", "SCN", 0.0)),
         ],
         cells: &[cell(P::SIZE, "RANGE", "RNG", 1.0), WOW],
-    },
-    Machine {
-        model: TapeModel::Scrub,
-        page: "SCRUB",
-        deck: [Some(cell(P::POSITION, "FINGER", "FNG", 0.0)), SPEED],
-        cells: &[LENGTH, XFADE, cell(P::DRAG, "DRAG", "DRG", 0.3), WOW],
-    },
-    Machine {
-        model: TapeModel::PingPong,
-        page: "PING",
-        deck: [POS, WALK],
-        cells: &[LENGTH, WOW],
     },
 ];
 

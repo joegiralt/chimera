@@ -3,7 +3,7 @@
 //! Sound, so pages, vizzes and encoders all read by address.
 
 use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
-use crate::block::ValFmt;
+use crate::block::{DiskCode, ValFmt};
 use crate::dsp::algo::kinds::{self, OpKind};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
@@ -16,7 +16,7 @@ use crate::dsp::modulator::{
 };
 use crate::dsp::reverb::{ReverbParams, ReverbType, in_plate_zone};
 use crate::dsp::tape_engine::machine::{self, Cell};
-use crate::dsp::tape_engine::{self, TapeEngineParams as T, TapeModel, wave};
+use crate::dsp::tape_engine::{self, PlayMode, TapeEngineParams as T, TapeModel, wave};
 use crate::midi_map::Mappable;
 use crate::modulation::VCA;
 use crate::name::SoundName;
@@ -74,6 +74,8 @@ pub struct SlotCtx {
     pub model: ResonatorMode,
     /// TAPE's machine: its labels and its model page's cells.
     pub tape: TapeModel,
+    /// PLAY's MODE: ONE's FADE ends in HOLD.
+    pub mode: PlayMode,
     /// TAPE's PERIOD is 0: an unpitched source plays MONO as POLY.
     pub unpitched: bool,
     /// TAPE's SOURCE as SRC reads it.
@@ -121,6 +123,8 @@ impl SlotCtx {
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
             tape: TapeModel::from_index(get(BlockRef::TapeEngine, T::MODEL) as u8),
+            mode: PlayMode::from_disk_code(get(BlockRef::TapeEngine, T::MODE) as u8)
+                .unwrap_or(PlayMode::Loop),
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
             src: SourceState::None,
             rev: reverb_panel::shown(rev.kind),
@@ -193,7 +197,7 @@ impl From<ResonatorMode> for Models {
     fn from(modal: ResonatorMode) -> Self {
         Models {
             modal,
-            tape: TapeModel::Loop,
+            tape: TapeModel::Play,
         }
     }
 }
@@ -531,10 +535,15 @@ fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
     }
 }
 
-/// `addr`'s format under `ctx`: MODE names its kind's own modes.
+/// `addr`'s format under `ctx`: MODE names its kind's own modes, PLAY's
+/// FADE reads HOLD.
 fn fmt_of(addr: ParamAddr, fmt: ValFmt, ctx: &SlotCtx) -> ValFmt {
     match (addr.block, addr.param) {
         (BlockRef::Filter, FilterParams::MODE) => ValFmt::Names(ctx.kind.mode_labels()),
+        // PLAY's FADE: in MODE ONE its last step is HOLD.
+        (BlockRef::TapeEngine, T::DRAG) if ctx.tape == TapeModel::Play && ctx.mode == PlayMode::One => {
+            ValFmt::Hold
+        }
         _ => fmt,
     }
 }
@@ -670,7 +679,7 @@ fn machine_view(at: MachineSlot, ctx: &SlotCtx) -> View {
             text: "POLY (UNPITCHED)",
         };
     }
-    param(addr, label, spec.fmt)
+    param(addr, label, fmt_of(addr, spec.fmt, ctx))
 }
 
 /// Whether slot `i` of `def` is a reverb panel cell: its text and step

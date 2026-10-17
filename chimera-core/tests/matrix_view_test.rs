@@ -115,7 +115,7 @@ fn the_readout_names_the_voice_pitch() {
         label: [0; 8],
     };
     let mut buf = FmtBuf::new();
-    fmt_readout_dest(&mut buf, "LFO 1", &dest, TapeModel::Loop);
+    fmt_readout_dest(&mut buf, "LFO 1", &dest, TapeModel::Play);
     assert_eq!(buf.as_str(), "VOICE PITCH");
     assert_eq!(block_tag(BlockRef::Pitch), "PIT");
 }
@@ -721,7 +721,7 @@ fn every_route_readout_fits_its_line() {
         addr: ParamAddr::new(BlockRef::Filter, chimera_core::params::FilterParams::CUTOFF),
         label: [0; 8],
     };
-    fmt_readout_dest(&mut full, "ENV 3", &cutoff, TapeModel::Loop);
+    fmt_readout_dest(&mut full, "ENV 3", &cutoff, TapeModel::Play);
     assert_eq!(full.as_str(), "FILTER CUTOFF");
     let mut widest = 0;
     for b in BlockRef::ALL {
@@ -729,7 +729,7 @@ fn every_route_readout_fits_its_line() {
         let tapes: &[TapeModel] = if b == BlockRef::TapeEngine {
             &TapeModel::ALL
         } else {
-            &[TapeModel::Loop]
+            &[TapeModel::Play]
         };
         for (spec, &t) in b
             .specs()

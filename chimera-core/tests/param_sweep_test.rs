@@ -1716,10 +1716,10 @@ fn tape_params_sweep() {
                             runs += 1;
                             heard += usize::from(peak > 0.05);
                             // The voice: ENV 1 lets go, and within 1 s it is silent.
-                            // ONESHOT ignores note-off: it ends at its END, the
+                            // ONE at HOLD ignores note-off: it ends at its END, the
                             // second of saw at this note's speed (ROOT's, and
                             // TAPE's wow slowing it by 2 %) at most, then the 1 s.
-                            let most = if p.tape.model == TapeModel::Oneshot {
+                            let most = if chimera_core::dsp::tape_engine::params::hold(&p.tape) {
                                 let st = (p.tape.root - f32::from(n) * 100.0) / 1_200.0;
                                 let secs = 1.02 * 2f32.powf(st);
                                 ((secs + 1.0) * BPS as f32) as usize

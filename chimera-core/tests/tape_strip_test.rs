@@ -162,7 +162,7 @@ fn heads_published_once_a_block() {
         scope_writer(),
     );
     let mut shared = Box::<AudioShared>::default();
-    for (p, model) in [(0, TapeModel::Loop), (1, TapeModel::Tron)] {
+    for (p, model) in [(0, TapeModel::Play), (1, TapeModel::Tron)] {
         let a = &mut shared.parts[p];
         *a.params = Sound::init(EngineType::Tape).params;
         a.params.tape.model = model;
@@ -239,7 +239,7 @@ fn strip_key_moves_with_the_heads() {
     let held = noise(21_600); // 100 frames a column
     let o = Overview::of(&SourceView::new(&held).unwrap(), 0.0, 1.0);
     let p = TapeEngineParams::default();
-    let key = |o: &Overview, h: Heads| tape_strip::key(o, TapeModel::Loop, &p, h);
+    let key = |o: &Overview, h: Heads| tape_strip::key(o, TapeModel::Play, &p, h);
     let at = |h, s| key(&o, Heads::new(h, s));
     assert_eq!(at(1_000, None), at(1_099, None), "one column");
     assert_ne!(at(1_000, None), at(1_100, None), "the next");
@@ -257,7 +257,7 @@ fn strip_key_moves_with_the_heads() {
     let size = TapeEngineParams { size: 0.5, ..p };
     assert_ne!(
         key(&o, Heads::NONE),
-        tape_strip::key(&o, TapeModel::Loop, &size, Heads::NONE),
+        tape_strip::key(&o, TapeModel::Play, &size, Heads::NONE),
         "LENGTH, off this page"
     );
 }

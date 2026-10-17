@@ -654,9 +654,20 @@ fn golden_check_catches_every_disagreement() {
 /// then the machines (TAPE Task 12b). `tape_reverse` is Task 12's REVERSE,
 /// now LOOP with END before START: its row is unchanged.
 fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
-    use chimera_core::dsp::tape_engine::TapeModel as M;
+    use chimera_core::dsp::tape_engine::{FADE_HOLD, PlayMode, TapeModel as M};
     let p = TapeEngineParams::default();
     let model = |model| TapeEngineParams { model, ..p };
+    // The old machines, played as PLAY in each MODE (ADR 0145): ONE at
+    // HOLD is ONESHOT.
+    let ping = TapeEngineParams {
+        mode: PlayMode::Ping,
+        ..p
+    };
+    let one = TapeEngineParams {
+        mode: PlayMode::One,
+        drag: FADE_HOLD,
+        ..p
+    };
     let rev = |model| TapeEngineParams {
         model,
         start: 1.0,
@@ -664,9 +675,9 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
         ..p
     };
     vec![
-        ("tape_loop", model(M::Loop)),
-        ("tape_reverse", rev(M::Loop)),
-        ("tape_pingpong", model(M::PingPong)),
+        ("tape_loop", model(M::Play)),
+        ("tape_reverse", rev(M::Play)),
+        ("tape_pingpong", ping),
         ("tape_transwave", model(M::Transwave)),
         // A moving tape: the neutral's MOTION 0 is a stopped, silent one.
         (
@@ -679,13 +690,13 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
         ("tape_stretch", model(M::Stretch)),
         ("tape_loop_age", TapeEngineParams { age: 0.5, ..p }),
         ("tape_loop_tape", TapeEngineParams { tape: 0.5, ..p }),
-        ("tape_oneshot", model(M::Oneshot)),
+        ("tape_oneshot", one),
         // SLICE 7: its value 8.
         (
             "tape_oneshot_slice7",
             TapeEngineParams {
                 slice: chimera_core::dsp::tape_engine::SliceCode::new(8),
-                ..model(M::Oneshot)
+                ..one
             },
         ),
         // Held: a 1.4 s tape runs out before the key up; released: an 8 s
@@ -759,7 +770,7 @@ fn reverse_golden_replays_bit_identically() {
     payload.extend_from_slice(&1u32.to_le_bytes());
     decode_block(&payload, MIGRATIONS, TRANSLATIONS, Some(&mut s.params)).unwrap();
     let t = s.params.tape;
-    assert_eq!((t.model, t.start, t.end), (TapeModel::Loop, 1.0, 0.0));
+    assert_eq!((t.model, t.start, t.end), (TapeModel::Play, 1.0, 0.0));
     let out = tape_render(&t);
     let want = TAPE_GOLDENS
         .iter()

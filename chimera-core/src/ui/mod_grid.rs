@@ -190,7 +190,7 @@ impl MatrixState {
             num_dests: 0,
             sources: [None; MAX_SOURCES],
             num_sources: 0,
-            tape: TapeModel::Loop,
+            tape: TapeModel::Play,
         };
         // Matrix starts empty — no destinations enabled, no amounts set.
         // Users enable params with MIX+Plus on block pages, set amounts in grid.

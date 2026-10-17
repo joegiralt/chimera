@@ -6,7 +6,10 @@ use crate::ui::page::ValFmt;
 pub fn fmt_val(buf: &mut FmtBuf, val: f32, fmt: ValFmt) {
     use core::fmt::Write;
     match fmt {
-        ValFmt::Uni => {
+        ValFmt::Hold if val >= 0.999 => {
+            let _ = buf.write_str("HOLD");
+        }
+        ValFmt::Uni | ValFmt::Hold => {
             let midi = (val * 127.0 + 0.5) as i32;
             let _ = write!(buf, "{}", midi);
         }

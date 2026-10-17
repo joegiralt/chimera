@@ -50,6 +50,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("TapeEngine", "TYPE", NONE),
     ("TapeEngine", "SLICE", NONE),
     ("TapeEngine", "WOW", NONE),
+    ("TapeEngine", "MODE", NONE),
     ("Algo", "ALG_A", NONE),
     ("Algo", "ALG_B", NONE),
     ("Filter", "KIND", NONE),

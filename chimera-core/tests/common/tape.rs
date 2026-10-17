@@ -228,20 +228,38 @@ pub fn power_bh(x: &[f32]) -> Vec<f64> {
 }
 
 /// A machine as a test plays it: its model, and END before START or not.
-/// The old REVERSE is `Mach::rev(TapeModel::Loop)` (#369).
+/// The old REVERSE is `Mach::rev(TapeModel::Play)` (#369).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Mach {
     pub model: chimera_core::dsp::tape_engine::TapeModel,
+    pub mode: chimera_core::dsp::tape_engine::PlayMode,
     pub rev: bool,
 }
 
 impl Mach {
     pub const fn fwd(model: chimera_core::dsp::tape_engine::TapeModel) -> Mach {
-        Mach { model, rev: false }
+        Mach {
+            model,
+            mode: chimera_core::dsp::tape_engine::PlayMode::Loop,
+            rev: false,
+        }
     }
 
     pub const fn rev(model: chimera_core::dsp::tape_engine::TapeModel) -> Mach {
-        Mach { model, rev: true }
+        Mach {
+            model,
+            mode: chimera_core::dsp::tape_engine::PlayMode::Loop,
+            rev: true,
+        }
+    }
+
+    /// PLAY in MODE PING.
+    pub const fn ping() -> Mach {
+        Mach {
+            model: chimera_core::dsp::tape_engine::TapeModel::Play,
+            mode: chimera_core::dsp::tape_engine::PlayMode::Ping,
+            rev: false,
+        }
     }
 
     /// `p` on this machine: its START and END swapped when reversed.
@@ -251,6 +269,7 @@ impl Mach {
     ) -> chimera_core::dsp::tape_engine::TapeEngineParams {
         let p = chimera_core::dsp::tape_engine::TapeEngineParams {
             model: self.model,
+            mode: self.mode,
             ..p
         };
         if self.rev {

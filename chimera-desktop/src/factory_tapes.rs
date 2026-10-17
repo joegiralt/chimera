@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use chimera_core::block::{Block, DiskCode, ParamId};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
-use chimera_core::dsp::tape_engine::{TapeEngineParams as P, TapeModel, machine};
+use chimera_core::dsp::tape_engine::{
+    MACHINE_NAMES, PlayMode, TapeEngineParams as P, TapeModel, fade_default, machine,
+};
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
@@ -91,6 +93,8 @@ pub struct SoundRecipe {
     pub name: SoundName,
     pub source: SoundName,
     pub model: TapeModel,
+    /// PLAY's MODE: ONE, LOOP or PING.
+    pub mode: PlayMode,
     pub set: Vec<(ParamId, f32)>,
     pub trim_db: f32,
 }
@@ -227,12 +231,20 @@ fn sound_recipe(name: SoundName, t: &Table) -> Result<SoundRecipe, String> {
     let m = need(t, "model")?;
     let model = TapeModel::ALL
         .into_iter()
-        .find(|x| x.disk_ident() == m)
+        .find(|x| MACHINE_NAMES[usize::from(x.index())] == m)
         .ok_or(format!("model {m}"))?;
+    let mode = match get(t, "mode") {
+        None => PlayMode::Loop,
+        Some(k) if model == TapeModel::Play => [PlayMode::One, PlayMode::Loop, PlayMode::Ping]
+            .into_iter()
+            .find(|x| x.disk_ident() == k)
+            .ok_or(format!("mode {k}"))?,
+        Some(k) => return Err(format!("mode {k}: PLAY only")),
+    };
     let specs = P::default();
     let mut set = Vec::new();
     for (k, v) in t {
-        if ["name", "source", "model", "trim"].contains(&k.as_str()) {
+        if ["name", "source", "model", "mode", "trim"].contains(&k.as_str()) {
             continue;
         }
         let spec = specs
@@ -246,6 +258,7 @@ fn sound_recipe(name: SoundName, t: &Table) -> Result<SoundRecipe, String> {
         name,
         source: SoundName::new(need(t, "source")?).map_err(|e| format!("source: {e:?}"))?,
         model,
+        mode,
         set,
         trim_db: num(t, "trim")?.unwrap_or(0.0),
     })
@@ -500,8 +513,11 @@ pub fn tape_sound(s: &SoundRecipe, head: &SourceHead) -> Sound {
     snd.name = s.name;
     snd.pick_source(head, None);
     let t = &mut snd.params.tape;
-    t.model = s.model;
-    for (id, v) in machine::defaults(s.model).chain(s.set.iter().copied()) {
+    (t.model, t.mode) = (s.model, s.mode);
+    // PLAY's FADE is its MODE's (ONE holds).
+    let fade = (s.model == TapeModel::Play).then_some((P::DRAG, fade_default(s.mode)));
+    let defaults = machine::defaults(s.model).chain(fade);
+    for (id, v) in defaults.chain(s.set.iter().copied()) {
         t.set(id, v);
     }
     // On the knob's grid, as INIT's 45/128 is.
@@ -574,12 +590,13 @@ pub fn manifest(r: &Recipes, built: &[Option<Built>]) -> String {
         };
         let _ = write!(
             j,
-            "{}{{\"name\": \"{}\", \"file\": \"{}.A\", \"source\": \"{:08X}\", \"model\": \"{}\"}}",
+            "{}{{\"name\": \"{}\", \"file\": \"{}.A\", \"source\": \"{:08X}\", \"model\": \"{}\", \"mode\": \"{}\"}}",
             if first { "" } else { ",\n" },
             s.name.as_str(),
             sound_stem(i),
             b.head.sref.crc,
-            s.model.disk_ident()
+            MACHINE_NAMES[usize::from(s.model.index())],
+            s.mode.disk_ident()
         );
         first = false;
     }
