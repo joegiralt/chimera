@@ -641,7 +641,12 @@ fn streamed_plain_descriptor_round_trips() {
     assert_eq!(HeadSpec::new(0, 11), None, "odd end");
     assert_eq!(HeadSpec::new(10, 10), None, "empty");
     let mut held = vec![0; streamed_held_len(&heads)];
-    let at = write_head_table(d, &heads, &mut held);
+    let at = write_head_table(d, &heads, &mut held).unwrap();
+    assert_eq!(
+        write_head_table(d, &heads, &mut [0; DESC_LEN]),
+        None,
+        "too short"
+    );
     assert_eq!(at, DESC_LEN + 2 * HEAD_ENTRY);
     assert_eq!(held.len(), at + 3 * 2_692 / 2 + 3 * 5_764 / 2);
     let t = head_table(&held).expect("a table");

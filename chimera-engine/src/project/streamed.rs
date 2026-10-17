@@ -3,7 +3,7 @@
 //! its runs in the stream registry for the card interrupt. The SOURCE
 //! cell's load and a project load's pass 2 both take this path.
 
-use chimera_hal::store::{RunsError, Store, StoreError};
+use chimera_hal::store::{FileRuns, RunsError, Store, StoreError};
 
 use super::arena::Cost;
 use super::pool::StreamRefused;
@@ -108,6 +108,23 @@ impl StreamLoad {
         })
     }
 
+    /// `start`, its file's runs found and its head read already (a
+    /// project load's pass 2): no first pass. `None` as `start`, or when
+    /// the runs don't hold its samples.
+    pub fn found(
+        p: &mut Project,
+        head: SourceHead,
+        heads: Heads,
+        runs: FileRuns,
+    ) -> Option<StreamLoad> {
+        let file = StreamFile::from_layout(&SourceLayout::whole(head)?, runs)?;
+        let l = Self::start(p, head, heads)?;
+        Some(StreamLoad {
+            file: Some(file),
+            ..l
+        })
+    }
+
     /// Streamed pool source `id`'s heads re-staged as `heads` (spec § 5.6:
     /// START or the loop turned); `None` when it isn't streamed, or they
     /// don't fit the gap beside its old ones.
@@ -192,7 +209,7 @@ impl StreamLoad {
             head_frames: head_frames(self.sref.rate),
             heads: 0,
         };
-        let table = write_head_table(d, self.heads.as_slice(), held);
+        let table = write_head_table(d, self.heads.as_slice(), held).ok_or(gone)?;
         // The head the next bytes are in, and how far into it.
         let mut before = 0;
         for h in self.heads.as_slice() {

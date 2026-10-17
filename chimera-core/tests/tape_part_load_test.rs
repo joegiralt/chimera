@@ -283,4 +283,87 @@ mod streamed {
             })
         );
     }
+
+    /// The file `write_source` made for `src` on `s`, byte for byte.
+    fn file_bytes(s: &mut MemStore, src: &(SourceHead, Vec<u8>)) -> Vec<u8> {
+        use core::ops::ControlFlow;
+        struct Sink<'a>(&'a mut Vec<u8>);
+        impl chimera_hal::store::ReadSink for Sink<'_> {
+            fn begin(&mut self, _: u32) -> ControlFlow<()> {
+                ControlFlow::Continue(())
+            }
+            fn chunk(&mut self, b: &[u8]) -> ControlFlow<()> {
+                self.0.extend_from_slice(b);
+                ControlFlow::Continue(())
+            }
+        }
+        let mut out = Vec::new();
+        let f = source_file(src.0.sref);
+        Card::new()
+            .run(s, |s, r| s.read(r.volume(), f, &mut Sink(&mut out)))
+            .unwrap()
+            .result
+            .unwrap();
+        out
+    }
+
+    /// A record's tag broken inside the head pass 2 streams: nothing is
+    /// published, and the cell reads CARD READ FAILED, not SOURCE MISSING.
+    #[test]
+    fn a_broken_head_in_pass_two_reads_failed() {
+        use chimera_core::ui::source_cell::READ_FAILED;
+        use chimera_core::ui::view::SourceState;
+        let mut s = MemStore::new(1);
+        let bed = source(4, 150_000);
+        put(&mut s, &bed);
+        let mut file = file_bytes(&mut s, &bed);
+        file[28 + 4 + 34 + 508] ^= 0xFF;
+        s.plant(source_file(bed.0.sref), &file);
+        let (mut p, t) = Project::boxed();
+        tape_part(&mut p, t, 0, bed.0.sref);
+        p.source_absent(bed.0.sref).unwrap();
+        let (q, _) = round_trip(&mut s, &mut p, false);
+        let r = bed.0.sref;
+        assert_eq!(q.pool().held(r), None, "nothing published");
+        let id = q.pool().find_source(r).unwrap();
+        assert_eq!(q.pool().absence(id), Some(Absence::ReadFailed));
+        assert!(
+            q.pool().streams().unwrap().get(id).is_none(),
+            "no stream row"
+        );
+        let st = SourceState::of(&q.part(PartId::ALL[0]).sound.params.tape, Some(r), q.pool());
+        let mut b = chimera_core::ui::fmt::FmtBuf::new();
+        st.text(&mut b);
+        assert_eq!(b.as_str(), READ_FAILED);
+    }
+
+    /// A Part that plays its too-big source a way that needs it whole:
+    /// pass 2 keeps it absent and the cell says why.
+    #[test]
+    fn pass_two_says_what_the_part_needs_whole() {
+        use chimera_core::dsp::tape_engine::NeedsRam;
+        use chimera_core::ui::source_cell::PING_NEEDS_RAM;
+        use chimera_core::ui::view::SourceState;
+        let mut s = MemStore::new(1);
+        let bed = source(5, 150_000);
+        put(&mut s, &bed);
+        let (mut p, t) = Project::boxed();
+        tape_part(&mut p, t, 0, bed.0.sref);
+        p.edit_part(PartId::ALL[0]).sound.params.tape.mode = PlayMode::Ping;
+        p.source_absent(bed.0.sref).unwrap();
+        let (q, _) = round_trip(&mut s, &mut p, false);
+        let id = q.pool().find_source(bed.0.sref).unwrap();
+        assert_eq!(
+            q.pool().absence(id),
+            Some(Absence::NeedsRam(NeedsRam::Ping))
+        );
+        let st = SourceState::of(
+            &q.part(PartId::ALL[0]).sound.params.tape,
+            Some(bed.0.sref),
+            q.pool(),
+        );
+        let mut b = chimera_core::ui::fmt::FmtBuf::new();
+        st.text(&mut b);
+        assert_eq!(b.as_str(), PING_NEEDS_RAM);
+    }
 }

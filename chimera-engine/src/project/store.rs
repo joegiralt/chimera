@@ -446,9 +446,14 @@ fn stream_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> 
     use super::streamed::{LoadKind, StreamFail, StreamLoad, StreamStep, load_kind};
     use crate::storage::read_source_head;
     use chimera_hal::store::RunsError;
-    let mut n = 0u8;
+    let (mut n, mut fault) = (0u8, false);
     for id in SourceId::ALL.into_iter().filter(|i| ids & i.bit() != 0) {
         let Some(e) = p.pool.source(id) else { continue };
+        // A card fault ends the reads: the rest read as failed.
+        if fault {
+            p.pool.mark_absent(id, Absence::ReadFailed);
+            continue;
+        }
         let tape = PartId::ALL
             .into_iter()
             .map(|q| &p.part(q).sound)
@@ -464,18 +469,30 @@ fn stream_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> 
             Err(RunsError::Store(err)) => {
                 if CardFault::store_error(&SourceReadError::from(err)).is_some() {
                     p.pool.mark_absent(id, Absence::ReadFailed);
-                    break;
+                    fault = true;
                 }
                 continue;
             }
         };
-        let Ok(head) = read_source_head(s, r, e.r.crc, runs.len.get()) else {
-            continue;
+        let head = match read_source_head(s, r, e.r.crc, runs.len.get()) {
+            Ok(head) => head,
+            Err(err) => {
+                p.pool.mark_absent(id, Absence::ReadFailed);
+                if err.store_error().is_some() {
+                    fault = true;
+                }
+                continue;
+            }
         };
-        let LoadKind::Streamed(heads) = load_kind(&head, p.pool.free(), &tape) else {
-            continue;
+        let heads = match load_kind(&head, p.pool.free(), &tape) {
+            LoadKind::Streamed(heads) => heads,
+            LoadKind::Refused(why) => {
+                p.pool.mark_absent(id, Absence::NeedsRam(why));
+                continue;
+            }
+            LoadKind::Whole => continue,
         };
-        let Some(mut l) = StreamLoad::start(p, head, heads) else {
+        let Some(mut l) = StreamLoad::found(p, head, heads, runs) else {
             continue;
         };
         let why = loop {
@@ -487,6 +504,10 @@ fn stream_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> 
                 }
                 StreamStep::Failed(StreamFail::Full) => break Some(Absence::StreamsFull),
                 StreamStep::Failed(StreamFail::Fragmented) => break Some(Absence::Fragmented),
+                StreamStep::Failed(StreamFail::Read(err)) => {
+                    fault = err.store_error().is_some();
+                    break Some(Absence::ReadFailed);
+                }
                 StreamStep::Failed(_) => break None,
             }
         };

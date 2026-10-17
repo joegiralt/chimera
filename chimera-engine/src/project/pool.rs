@@ -61,6 +61,12 @@ pub enum StreamRefused {
     Taken,
 }
 
+impl From<PoolFull> for StreamRefused {
+    fn from(e: PoolFull) -> Self {
+        StreamRefused::Pool(e)
+    }
+}
+
 /// Where a slot's bytes sit in the arena.
 #[derive(Clone, Copy, Debug)]
 struct SoundEntry {
@@ -313,29 +319,17 @@ impl Pool {
         len: usize,
         file: StreamFile,
     ) -> Result<SourceId, StreamRefused> {
-        let found = self.find_source(r);
-        if let Some(s) = found.filter(|&s| self.source(s).is_some_and(|e| !e.absent())) {
-            return Ok(s);
-        }
-        let (needs, free) = (source_cost(len), self.arena.gap());
-        let s = found
-            .or_else(|| self.free_source())
-            .filter(|_| needs <= free)
-            .ok_or(StreamRefused::Pool(PoolFull { needs, free }))?;
         let reg = self.arena.streams().ok_or(StreamRefused::Full)?;
-        reg.insert(s, file).map_err(|e| match e {
-            RowRefused::Full => StreamRefused::Full,
-            RowRefused::Taken => StreamRefused::Taken,
-        })?;
-        match self.source_put(s, r, len, |_| Some(len)) {
-            Ok(_) => Ok(s),
-            Err(e) => {
-                // SAFETY: `s`'s pool row was never published, so no voice
-                // and no card read has its stream row.
-                unsafe { reg.clear(s) };
-                Err(StreamRefused::Pool(e))
-            }
-        }
+        let first = |s| {
+            reg.insert(s, file).map_err(|e| match e {
+                RowRefused::Full => StreamRefused::Full,
+                RowRefused::Taken => StreamRefused::Taken,
+            })
+        };
+        // SAFETY: `s`'s pool row was never published, so no voice and no
+        // card read has its stream row.
+        let undo = |s| unsafe { reg.clear(s) };
+        self.commit_with(r, len, first, undo)
     }
 
     /// Source `s`'s heads re-staged (slice 1 § 5.6): the `len` bytes
@@ -523,6 +517,19 @@ impl Pool {
         r: SourceRef,
         len: usize,
     ) -> Result<SourceId, PoolFull> {
+        self.commit_with(r, len, |_| Ok(()), |_| {})
+    }
+
+    /// `source_commit`, with `first` run on the slot before its row is
+    /// published: its refusal publishes nothing, and `undo` takes it back
+    /// if the publish then fails.
+    fn commit_with<E: From<PoolFull>>(
+        &mut self,
+        r: SourceRef,
+        len: usize,
+        first: impl FnOnce(SourceId) -> Result<(), E>,
+        undo: impl FnOnce(SourceId),
+    ) -> Result<SourceId, E> {
         let found = self.find_source(r);
         if let Some(s) = found.filter(|&s| self.source(s).is_some_and(|e| !e.absent())) {
             return Ok(s);
@@ -531,7 +538,11 @@ impl Pool {
             needs: source_cost(len),
             free: Cost::default(),
         })?;
-        self.source_put(s, r, len, |_| Some(len))?;
+        first(s)?;
+        if let Err(e) = self.source_put(s, r, len, |_| Some(len)) {
+            undo(s);
+            return Err(e.into());
+        }
         Ok(s)
     }
 

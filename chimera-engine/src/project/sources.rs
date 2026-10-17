@@ -44,6 +44,9 @@ pub enum Absence {
     StreamsFull,
     /// Too big for the arena, and in more runs than a stream row keeps.
     Fragmented,
+    /// Too big for the arena, and its Part plays it a way that needs it
+    /// whole.
+    NeedsRam(crate::dsp::tape_engine::params::NeedsRam),
 }
 
 /// A pool source: its ref and how many of its bytes the arena holds. An

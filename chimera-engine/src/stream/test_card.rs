@@ -97,7 +97,7 @@ impl<'r> TestCard<'r> {
             ..self.desc
         };
         let mut held = alloc::vec![0; streamed_held_len(heads)];
-        let mut at = write_head_table(d, heads, &mut held);
+        let mut at = write_head_table(d, heads, &mut held).expect("its length");
         for h in heads {
             let o = 3 * (h.first() / 2) as usize;
             let src = self.samples.get(o..).unwrap_or(&[]);

@@ -442,10 +442,14 @@ pub struct SourceCell {
     at: Option<(PartId, u32, u32)>,
     job: Option<SourceJob>,
     note: Option<&'static str>,
-    /// A streamed source whose heads its Part moved off: since how many
-    /// frames, and whether re-staging them failed.
+    /// A streamed source whose heads its Part moved off, and since how
+    /// many frames.
     #[cfg(feature = "tape")]
     wait: Option<Wait>,
+    /// Each source's heads whose re-stage failed for a reason that stays
+    /// (`heads_key`; 0 none): not tried again until it wants others.
+    #[cfg(feature = "tape")]
+    stuck: [u32; MAX_SOURCES],
 }
 
 /// Heads wanted for a streamed source, unchanged for `frames` frames.
@@ -455,17 +459,23 @@ struct Wait {
     id: SourceId,
     heads: Heads,
     frames: u16,
-    failed: bool,
 }
 
 /// How long the heads wait after the last turn (spec § 5.6).
-pub const REHEAD_MS: u32 = 200;
+pub const REHEAD: chimera_hal::units::Millis = chimera_hal::units::Millis::new(200);
+
+/// `heads`, folded to a word that is never 0 (FNV-1a).
+#[cfg(feature = "tape")]
+fn heads_key(heads: &Heads) -> u32 {
+    let words = heads.as_slice().iter().flat_map(|h| [h.first(), h.end()]);
+    words.fold(0x811C_9DC5, |k, w| (k ^ w).wrapping_mul(0x0100_0193)) | 1
+}
 
 /// The first streamed source a Part's START, loop or XFADE moved off its
-/// heads, and the heads it wants. A source two Parts play takes its first
-/// Part's heads (#599).
+/// heads that `ready` lets re-stage, and the heads it wants. A source two
+/// Parts play takes its first Part's heads (#599).
 #[cfg(feature = "tape")]
-fn moved_heads(p: &Project) -> Option<(SourceId, Heads)> {
+fn moved_heads(p: &Project, ready: impl Fn(SourceId, &Heads) -> bool) -> Option<(SourceId, Heads)> {
     let pool = p.pool();
     let mut seen = 0u32;
     PartId::ALL.into_iter().find_map(|part| {
@@ -480,7 +490,7 @@ fn moved_heads(p: &Project) -> Option<(SourceId, Heads)> {
         let want = heads_for(r, &sound.params.tape)?;
         let moved =
             first && !staged.is_empty() && !staged.iter().eq(want.as_slice().iter().copied());
-        moved.then_some((id, want))
+        (moved && ready(id, &want)).then_some((id, want))
     })
 }
 
@@ -494,6 +504,8 @@ impl SourceCell {
         note: None,
         #[cfg(feature = "tape")]
         wait: None,
+        #[cfg(feature = "tape")]
+        stuck: [0; MAX_SOURCES],
     };
 
     /// Card work is queued: BUSY shows. A re-head runs unseen.
@@ -515,7 +527,7 @@ impl SourceCell {
     }
 
     /// Once a frame: a streamed source whose Part moved START, the loop or
-    /// XFADE off its heads re-stages them `REHEAD_MS` after the last turn,
+    /// XFADE off its heads re-stages them `REHEAD` after the last turn,
     /// once no note holds it (spec § 5.6, #588). Beside no other card work.
     #[cfg_attr(not(feature = "tape"), allow(unused_variables))]
     pub fn tick(&mut self, p: &mut Project) {
@@ -528,7 +540,13 @@ impl SourceCell {
         if self.job.is_some() {
             return;
         }
-        let Some((id, heads)) = moved_heads(p) else {
+        // Neither a source a note holds (#588) nor one stuck on these
+        // heads keeps the others waiting.
+        let sounding = p.pool().table().sounding();
+        let ready = |id: SourceId, h: &Heads| {
+            sounding & id.bit() == 0 && self.stuck[id.index()] != heads_key(h)
+        };
+        let Some((id, heads)) = moved_heads(p, ready) else {
             self.wait = None;
             return;
         };
@@ -538,13 +556,11 @@ impl SourceCell {
                 id,
                 heads,
                 frames: 0,
-                failed: false,
             },
         };
         let frames = w.frames.saturating_add(1);
         self.wait = Some(Wait { frames, ..w });
-        let quiet = p.pool().table().sounding() & id.bit() == 0;
-        if u32::from(frames) * crate::ui::animation::FRAME_MS >= REHEAD_MS && quiet && !w.failed {
+        if u32::from(frames) * crate::ui::animation::FRAME_MS >= REHEAD.get() {
             self.job = StreamLoad::rehead(p, id, heads).map(SourceJob::Rehead);
         }
     }
@@ -754,6 +770,11 @@ impl SourceCell {
             // No card, or it won't mount: the job's own failure.
             self.note = Some(READ_FAILED);
         }
+        // A re-head that found no card: tried again after another `REHEAD`.
+        #[cfg(feature = "tape")]
+        if ran.is_err() && !seen {
+            self.wait = None;
+        }
     }
 
     fn run<S: Store>(&mut self, job: SourceJob, s: &mut S, r: &Ready, p: &mut Project) {
@@ -801,10 +822,16 @@ impl SourceCell {
             SourceJob::Rehead(mut l) => match l.step(s, r, p, STEP_BYTES as usize) {
                 StreamStep::More => self.job = Some(SourceJob::Rehead(l)),
                 StreamStep::Done(_) | StreamStep::Failed(StreamFail::Sounding) => {}
+                // A card fault: tried again after another `REHEAD`.
+                StreamStep::Failed(StreamFail::Read(e))
+                    if crate::storage::CardFault::store_error(&e).is_some() =>
+                {
+                    self.wait = None
+                }
                 // Not again until the heads it wants change.
                 StreamStep::Failed(_) => {
-                    if let Some(w) = &mut self.wait {
-                        w.failed = true;
+                    if let Some(w) = self.wait {
+                        self.stuck[w.id.index()] = heads_key(&w.heads);
                     }
                 }
             },

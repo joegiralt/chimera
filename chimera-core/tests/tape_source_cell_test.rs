@@ -882,8 +882,10 @@ fn fragmented_refused() {
     rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
     rig.turn(1);
     rig.s.fragmented = true;
+    let free = rig.ui.project().pool().free();
     rig.load();
     assert_eq!(rig.band(), FRAGMENTED);
+    assert_eq!(rig.ui.project().pool().free(), free, "the gap as it was");
     assert_eq!(rig.ui.project().pool().find_source(b.0.sref), None);
     assert!(
         SourceId::ALL
@@ -1102,4 +1104,67 @@ fn reheading_waits_for_the_notes_on_it() {
     stop.store(true, Ordering::Relaxed);
     audio.join().unwrap();
     assert_heads(&rig, &b, after.as_slice());
+}
+
+/// One source a note holds doesn't stop another's heads moving: the
+/// re-head takes the first source it can.
+#[test]
+fn a_held_source_doesnt_stop_anothers_reheading() {
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::{Arc, OnceLock};
+    use std::time::{Duration, Instant};
+    fn now_ms() -> u32 {
+        static T0: OnceLock<Instant> = OnceLock::new();
+        T0.get_or_init(Instant::now).elapsed().as_millis() as u32
+    }
+    let (a, b) = (bed(20), bed(21));
+    let mut rig = Rig::new(&[a.clone(), b.clone()]);
+    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    for _ in 0..2 {
+        rig.turn(100);
+        rig.load();
+    }
+    let pool = rig.ui.project().pool();
+    assert!(pool.streamed(a.0.sref) && pool.streamed(b.0.sref));
+    let ia = pool.find_source(a.0.sref).unwrap();
+    // Part 1 plays A, Part 2 B.
+    let p2 = PartId::ALL[1];
+    let mut snd = rig.sound().clone();
+    snd.source = Some(TapeSource::from(b.0.sref));
+    **rig.ui.project_mut().edit_part(p2).sound = snd;
+    rig.ui.project_mut().edit_part(P1).sound.source = Some(TapeSource::from(a.0.sref));
+    let before = heads_for(a.0.sref, &rig.params()).unwrap();
+    assert_heads(&rig, &a, before.as_slice());
+    rig.ui.project_mut().set_gate_clock(now_ms);
+    let mut tok = rig.ui.project().pool().table().reader().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let held = Arc::new(AtomicU32::new(ia.bit()));
+    let audio = std::thread::spawn({
+        let (held, stop) = (held.clone(), stop.clone());
+        move || {
+            while !stop.load(Ordering::Relaxed) {
+                let _ = tok.begin_block();
+                tok.store_sounding(held.load(Ordering::Relaxed));
+                std::thread::sleep(Duration::from_micros(500));
+            }
+        }
+    });
+    let table = rig.ui.project().pool().table();
+    while table.sounding() != ia.bit() {
+        std::thread::yield_now();
+    }
+    rig.tape(|t| t.start = 0.5);
+    rig.ui.project_mut().edit_part(p2).sound.params.tape.start = 0.5;
+    let after = heads_for(b.0.sref, &rig.ui.project().part(p2).sound.params.tape).unwrap();
+    for _ in 0..200 {
+        let t = head_table(rig.ui.project().pool().held(b.0.sref).unwrap()).unwrap();
+        if t.iter().eq(after.as_slice().iter().copied()) {
+            break;
+        }
+        rig.frame();
+    }
+    stop.store(true, Ordering::Relaxed);
+    audio.join().unwrap();
+    assert_heads(&rig, &b, after.as_slice());
+    assert_heads(&rig, &a, before.as_slice());
 }

@@ -13,7 +13,7 @@ use chimera_hal::units::Bytes;
 
 use super::SourceRef;
 use crate::dsp::tape_engine::read::{
-    DESC_LEN, Descriptor, HeadSpec, MAX_ZONES, MIN_SOURCE_FRAMES, Shape, ZONE_LAYOUT_LEN,
+    DESC_LEN, Descriptor, MAX_ZONES, MIN_SOURCE_FRAMES, Shape, ZONE_LAYOUT_LEN,
 };
 use crate::name::SoundName;
 
@@ -823,26 +823,6 @@ pub fn read_packed_into<S: Store>(
         (false, false) => Err(bad(FileError::Truncated)),
         (false, true) => Ok(()),
     }
-}
-
-/// Every head of whole `Plain` source `r`, in turn, into `out` as a
-/// streamed `held` keeps them after its table; the bytes written.
-pub fn read_heads_into<S: Store>(
-    s: &mut S,
-    r: &Ready,
-    sref: SourceRef,
-    heads: &[HeadSpec],
-    out: &mut [u8],
-) -> Result<usize, SourceReadError> {
-    let mut at = 0;
-    for h in heads {
-        let to = out
-            .get_mut(at..at + h.bytes())
-            .ok_or(SourceReadError::NoRoom)?;
-        read_packed_into(s, r, sref, 3 * (h.first() / 2), to)?;
-        at += h.bytes();
-    }
-    Ok(at)
 }
 
 /// Feeds a `SourceCheck` until its head came, or `left` bytes went.

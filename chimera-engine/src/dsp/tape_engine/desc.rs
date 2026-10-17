@@ -158,18 +158,21 @@ pub fn streamed_held_len(heads: &[HeadSpec]) -> usize {
 }
 
 /// Writes `d` (`heads` set to their count) and the table into `out`;
-/// where the first head's samples go. Panics if `out` is shorter.
-pub fn write_head_table(d: Descriptor, heads: &[HeadSpec], out: &mut [u8]) -> usize {
+/// where the first head's samples go. `None` if `out` is shorter, or past
+/// 255 heads.
+pub fn write_head_table(d: Descriptor, heads: &[HeadSpec], out: &mut [u8]) -> Option<usize> {
     let d = Descriptor {
-        heads: heads.len() as u8,
+        heads: u8::try_from(heads.len()).ok()?,
         ..d
     };
+    let end = DESC_LEN + HEAD_ENTRY * heads.len();
+    let out = out.get_mut(..end)?;
     out[..DESC_LEN].copy_from_slice(&d.to_bytes());
     let (table, _) = out[DESC_LEN..].as_chunks_mut::<HEAD_ENTRY>();
     for (h, o) in heads.iter().zip(table) {
         *o = h.to_bytes();
     }
-    DESC_LEN + HEAD_ENTRY * heads.len()
+    Some(end)
 }
 
 /// A streamed `Plain`'s head table, after the descriptor, every entry a

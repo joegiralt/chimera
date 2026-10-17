@@ -209,12 +209,27 @@ fn ui_state_rest_under_4k() {
     // for each entry's waiting bin, the hand's marks and each Part's room a
     // pass; 48 B bank 2's status (its version and seal, ADR 0137). 12 B the
     // six encoders' pushes (ADR 0140). 32 B the SOURCE cell's re-head
-    // wait: the heads a streamed source wants, and since when (slice 1
+    // wait: the heads a streamed source wants, and since when; 128 B its
+    // latch of each source's heads that can't be re-staged (slice 1
     // § 5.6). The focus
     // memory's 8 B (a slot per page id, the OP pages' ids up to 105, #484)
     // fit in what `LibId` gave back as a bare u32 instead of a tagged enum.
     assert!(
-        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072 + 80 + 16 + 52 + 1648 + 120 + 48 + 12 + 32,
+        rest <= 4096
+            + 512
+            + 2816
+            + 128
+            + 192
+            + 3072
+            + 80
+            + 16
+            + 52
+            + 1648
+            + 120
+            + 48
+            + 12
+            + 32
+            + 128,
         "UiState grew to {rest} B besides its Project"
     );
 }

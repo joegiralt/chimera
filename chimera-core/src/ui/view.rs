@@ -329,6 +329,7 @@ impl SourceState {
             SourceState::Absent(Absence::ReadFailed) => READ_FAILED,
             SourceState::Absent(Absence::StreamsFull) => crate::ui::source_cell::STREAMS_FULL,
             SourceState::Absent(Absence::Fragmented) => crate::ui::source_cell::FRAGMENTED,
+            SourceState::Absent(Absence::NeedsRam(n)) => crate::ui::source_cell::needs_ram_words(n),
             SourceState::NotTranswave => "NOT A TRANSWAVE",
             SourceState::ZonesOnTron => "ZONES: NOT TRON",
             SourceState::NeedsRam(n) => crate::ui::source_cell::needs_ram_words(n),
@@ -350,6 +351,7 @@ impl SourceState {
             }
             SourceState::Absent(Absence::StreamsFull) => buf.write_str("FULL"),
             SourceState::Absent(Absence::Fragmented) => buf.write_str("COPY"),
+            SourceState::Absent(Absence::NeedsRam(_)) => buf.write_str("RAM"),
             SourceState::NotTranswave => buf.write_str("NO WAVE"),
             SourceState::ZonesOnTron => buf.write_str("ZONES"),
             SourceState::NeedsRam(_) => buf.write_str("RAM"),
