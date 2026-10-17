@@ -18,11 +18,15 @@ pub struct Bill(pub u32);
 /// frames, 4608 framed bytes per 4032 of data, scaled by `ratio_max`.
 pub fn bill(rate: u16, ratio_max: f32) -> Bill {
     let bps = rate as f32 * 1.5 * 4608.0 / 4032.0 * ratio_max;
+    if !bps.is_finite() {
+        return Bill(u32::MAX);
+    }
     Bill((bps + 0.5) as u32)
 }
 
 /// The fastest read ratio a note can reach: its distance from the root,
-/// plus the pitch route's reach, the bend range and wow.
+/// plus the pitch route's reach, the bend range and wow. Not clamped below
+/// 1 on purpose: notes below the root read slower.
 pub fn ratio_max(note: u8, root_cents: f32, pitch_reach_cents: f32, bend_cents: f32) -> f32 {
     let cents = note as f32 * 100.0 - root_cents + pitch_reach_cents + bend_cents + WOW_CENTS;
     exp2(cents / 1200.0)

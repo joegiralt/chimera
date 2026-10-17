@@ -80,3 +80,37 @@ fn head_is_100_ms_rounded_up_to_even() {
     assert_eq!(head_frames(24_000), 2_400);
     assert_eq!(head_frames(11_025), 1_104);
 }
+
+#[test]
+fn a_nan_ratio_bills_the_maximum_and_is_refused() {
+    let b = bill(24_000, f32::NAN);
+    assert_eq!(b, Bill(u32::MAX));
+    assert_eq!(
+        admit(b, std::iter::empty(), STREAM_BUDGET_BPS),
+        Admit::Refuse
+    );
+}
+
+#[test]
+fn the_callers_re_ask_loop_steals_two_oldest_released_first() {
+    let b = Bill(100_000);
+    let mut playing = vec![
+        (0, b, age(false, 900)),
+        (1, b, age(true, 10)),
+        (2, b, age(true, 50)),
+        (3, b, age(false, 100)),
+    ];
+    let new = Bill(250_000);
+    let mut stolen = Vec::new();
+    loop {
+        match admit(new, playing.iter().copied(), STREAM_BUDGET_BPS) {
+            Admit::Ok => break,
+            Admit::Steal(i) => {
+                stolen.push(i);
+                playing.retain(|v| v.0 != i);
+            }
+            Admit::Refuse => panic!("refused"),
+        }
+    }
+    assert_eq!(stolen, [2, 1]);
+}
