@@ -4,7 +4,7 @@ use chimera_hal::card_bus::CardBus;
 
 use super::ring::{AudioSide, AudioTurn};
 use super::stats::StreamStats;
-use super::units::{AudioBlocks, Frames};
+use super::units::{AudioBlocks, Frames, SlotIdx};
 use crate::dsp::engines::EngineCtx;
 use crate::dsp::modal::SymPool;
 use crate::project::{PartId, SourceId};
@@ -16,8 +16,9 @@ use crate::voice_alloc::VoiceIdx;
 pub struct StreamPort<'a, 's> {
     pub turn: &'a mut AudioTurn<'s>,
     pub voice: VoiceIdx,
-    /// The streamed file's frames.
-    pub file_frames: Frames,
+    /// A streamed source's frames, `None` for one that isn't: the deck
+    /// asks for the source it latched (#594).
+    pub frames: &'a dyn Fn(SourceId) -> Option<Frames>,
     pub now: AudioBlocks,
     pub bus: &'a CardBus,
     pub stats: &'a StreamStats,
@@ -54,18 +55,29 @@ pub struct CtxBase<'a> {
     pub tune: f32,
 }
 
+/// Whether a voice gets a port this call: only while admission bills it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Port {
+    Off,
+    /// `StreamPort::ratio_max`.
+    On(Option<f32>),
+}
+
 /// Each voice's port, a call at a time: `NoPorts` where no rings are
 /// wired, `Streams` where they are.
 pub trait VoicePorts {
-    /// `f` on `base` with voice `v`'s port for `port`'s source, if it
-    /// streams, capped at `port`'s ratio.
+    /// `f` on `base` with voice `v`'s port, if `port` gives one.
     fn ctx<R>(
         &mut self,
         base: CtxBase<'_>,
         v: VoiceIdx,
-        port: (Option<SourceId>, Option<f32>),
+        port: Port,
         f: impl FnOnce(&mut EngineCtx<'_>) -> R,
     ) -> R;
+
+    /// Voice `v`'s ring emptied: it plays no stream (killed, its engine
+    /// changed, its deck rebuilt: #586).
+    fn drop_ring(&mut self, v: VoiceIdx);
 
     /// The streams' counters; `None` with no rings.
     fn stats(&self) -> Option<&StreamStats>;
@@ -80,7 +92,7 @@ impl VoicePorts for NoPorts {
         &mut self,
         base: CtxBase<'_>,
         _: VoiceIdx,
-        _: (Option<SourceId>, Option<f32>),
+        _: Port,
         f: impl FnOnce(&mut EngineCtx<'_>) -> R,
     ) -> R {
         f(&mut EngineCtx {
@@ -92,6 +104,9 @@ impl VoicePorts for NoPorts {
         })
     }
 
+    #[inline(always)]
+    fn drop_ring(&mut self, _: VoiceIdx) {}
+
     fn stats(&self) -> Option<&StreamStats> {
         None
     }
@@ -102,18 +117,18 @@ impl VoicePorts for Streams<'_, '_> {
         &mut self,
         base: CtxBase<'_>,
         v: VoiceIdx,
-        (source, ratio_max): (Option<SourceId>, Option<f32>),
+        port: Port,
         f: impl FnOnce(&mut EngineCtx<'_>) -> R,
     ) -> R {
-        let c = &self.card;
-        let Some(file_frames) = source.and_then(|id| (c.frames)(id)) else {
-            return NoPorts.ctx(base, v, (None, None), f);
+        let Port::On(ratio_max) = port else {
+            return NoPorts.ctx(base, v, port, f);
         };
+        let c = &self.card;
         let mut turn = self.audio.turn();
         let mut port = StreamPort {
             turn: &mut turn,
             voice: v,
-            file_frames,
+            frames: c.frames,
             now: c.now,
             bus: c.bus,
             stats: c.stats,
@@ -127,6 +142,13 @@ impl VoicePorts for Streams<'_, '_> {
             part: base.part,
             tune: base.tune,
         })
+    }
+
+    fn drop_ring(&mut self, v: VoiceIdx) {
+        let mut turn = self.audio.turn();
+        for s in SlotIdx::ALL {
+            turn.cancel(v, s);
+        }
     }
 
     fn stats(&self) -> Option<&StreamStats> {

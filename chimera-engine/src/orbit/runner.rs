@@ -19,6 +19,7 @@ use crate::hw::{BLOCK_SIZE, Cost, MAX_PARTS};
 use crate::instrument::{AudioShared, Instrument, NoteOrigin, NoteSet};
 use crate::note_queue::{NoteEvent, NoteKind, RealTime};
 use crate::source_table::GateView;
+use crate::stream::port::{NoPorts, VoicePorts};
 use crate::triple::TripleBuffer;
 use chimera_theory::{Chord, Note};
 use core::mem::size_of;
@@ -432,11 +433,12 @@ impl OrbitRunner {
         }
     }
 
-    fn send(
+    fn send<P: VoicePorts>(
         inst: &mut Instrument,
         (shared, src): (&AudioShared, &GateView<'_>),
         ev: &Events,
         fired: &mut [u8; RINGS],
+        ports: &mut P,
     ) {
         for e in ev.iter() {
             let Some(note) = MidiNote::new(e.note.get()) else {
@@ -457,7 +459,7 @@ impl OrbitRunner {
             };
             #[cfg(feature = "probe")]
             let t0 = crate::probe::now();
-            inst.handle_from_with(ev, shared, NoteOrigin::Orbit(e.ring), src);
+            inst.handle_streamed(ev, shared, NoteOrigin::Orbit(e.ring), src, ports);
             #[cfg(feature = "probe")]
             crate::probe::max(6, crate::probe::now().wrapping_sub(t0));
         }
@@ -564,13 +566,24 @@ impl OrbitRunner {
         self.block_with(inst, shared, &GateView::empty())
     }
 
-    /// `block`, TAPE's note-ons reading through the block's `src`: what
-    /// the shells run.
+    /// `block`, TAPE's note-ons reading through the block's `src`.
     pub fn block_with(
         &mut self,
         inst: &mut Instrument,
         shared: &AudioShared,
         src: &GateView<'_>,
+    ) -> Events {
+        self.block_ported(inst, shared, src, &mut NoPorts)
+    }
+
+    /// `block_with`, a streamed note starting through its voice's port
+    /// from `ports`: what the firmware runs.
+    pub fn block_ported<P: VoicePorts>(
+        &mut self,
+        inst: &mut Instrument,
+        shared: &AudioShared,
+        src: &GateView<'_>,
+        ports: &mut P,
     ) -> Events {
         #[cfg(feature = "probe")]
         crate::probe::begin();
@@ -581,7 +594,7 @@ impl OrbitRunner {
         inst.set_harmony(h);
         #[cfg(feature = "probe")]
         crate::probe::stamp(7);
-        Self::send(inst, (shared, src), &sent, &mut self.fired);
+        Self::send(inst, (shared, src), &sent, &mut self.fired, ports);
         #[cfg(feature = "probe")]
         crate::probe::stamp(8);
         if h.is_some() && h != self.harmony {

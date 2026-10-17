@@ -43,6 +43,10 @@ impl TapeEngine {
         None
     }
 
+    pub fn streams(&self) -> bool {
+        false
+    }
+
     pub fn start(
         &mut self,
         _: u8,

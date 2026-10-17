@@ -417,6 +417,14 @@ impl EngineSlot {
         }
     }
 
+    /// A streamed TAPE note plays: it owns its voice's ring.
+    pub fn streams(&self) -> bool {
+        match self {
+            Self::Tape(t) => t.streams(),
+            Self::Algo(_) | Self::Modal(_) | Self::Va(_) => false,
+        }
+    }
+
     /// The source TAPE latched at its last note-on; none on the others.
     pub fn source(&self) -> Option<SourceId> {
         match self {

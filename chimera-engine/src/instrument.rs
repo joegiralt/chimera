@@ -10,6 +10,7 @@ use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
 use chimera_hal::BLOCK_SIZE;
+use chimera_hal::units::StreamCount;
 
 use crate::dsp::Stereo;
 use crate::dsp::ease::{Ease, ease_coeff, step_of};
@@ -38,7 +39,7 @@ use crate::project::{Loads, PartId, Project, SourceId};
 use crate::scope::ScopeWriter;
 use crate::source_table::{AudioToken, GateView};
 use crate::stream::admit::{Admit, Age, Bill, STREAM_BUDGET_BPS, admit};
-use crate::stream::port::{CtxBase, NoPorts, VoicePorts};
+use crate::stream::port::{CtxBase, NoPorts, Port, VoicePorts};
 use crate::stream::stats::StreamStats;
 use crate::tracked::Tracked;
 use crate::voice_alloc::{Allocator, VoiceIdx};
@@ -1157,23 +1158,30 @@ impl Instrument {
         v.map(|v| (v, None))
     }
 
-    /// Voice `v`'s port this call: `source`'s, capped at what it is paid,
-    /// only while admission bills the voice; a note never admitted reads
-    /// nothing.
+    /// Voice `v`'s port this call, capped at what it is paid, only while
+    /// admission bills the voice; a note never admitted reads nothing. Its
+    /// deck finds its own source's file (#594).
     #[cfg(feature = "tape")]
-    fn port_of(&self, v: usize, source: Option<SourceId>) -> (Option<SourceId>, Option<f32>) {
+    fn port_of(&self, v: usize) -> Port {
         let st = &self.streaming[v];
         match st.billed() {
-            Some(_) => (source, st.paid.map(|p| p.ratio)),
-            None => (None, None),
+            Some(_) => Port::On(st.paid.map(|p| p.ratio)),
+            None => Port::Off,
         }
     }
 
     /// Without TAPE nothing streams: no port.
     #[cfg(not(feature = "tape"))]
     #[inline(always)]
-    fn port_of(&self, _: usize, _: Option<SourceId>) -> (Option<SourceId>, Option<f32>) {
-        (None, None)
+    fn port_of(&self, _: usize) -> Port {
+        Port::Off
+    }
+
+    /// Voices playing a streamed note now: the card's load.
+    pub fn streaming(&self) -> Option<StreamCount> {
+        let n = self.voices.iter().filter(|v| v.streams()).count();
+        // At most `MAX_VOICES`, which `StreamCount::MAX` is.
+        StreamCount::new(n as u8)
     }
 
     /// A block on voice `v`'s stream: its age (from its release, or its
@@ -1353,7 +1361,10 @@ impl Instrument {
                             tune: self.tune,
                         };
                         // Unbilled, no port (`port_of`).
-                        let port = (stream.and(part.source), stream.map(|p| p.ratio));
+                        let port = match stream {
+                            Some(p) => Port::On(Some(p.ratio)),
+                            None => Port::Off,
+                        };
                         ports.ctx(base, VoiceIdx::ALL[v], port, |ctx| {
                             voice.note_on(note, vel, &part.params, part.source, ctx)
                         })
@@ -1737,7 +1748,7 @@ impl Instrument {
         {
             self.streaming[v].fading = None;
         }
-        let port = self.port_of(v, w.source);
+        let port = self.port_of(v);
         let voice = &mut self.voices[v];
         let base = CtxBase {
             sym: &mut self.sym,
@@ -1958,14 +1969,29 @@ impl Instrument {
     pub fn run_block(
         &mut self,
         sources: &mut AudioToken,
-        (fx, dac, scope): (&mut FxBus, &mut DacBlocks, &mut ScopeWriter),
+        out: (&mut FxBus, &mut DacBlocks, &mut ScopeWriter),
         shared: &AudioShared,
         notes: impl FnOnce(&mut Self, &GateView<'_>),
     ) {
+        self.run_block_ported(sources, out, shared, &mut NoPorts, |inst, reads, _| {
+            notes(inst, reads)
+        });
+    }
+
+    /// `run_block`, the notes and the render reaching each streamed
+    /// voice's port through `ports` (slice 1 § 7.1).
+    pub fn run_block_ported<P: VoicePorts>(
+        &mut self,
+        sources: &mut AudioToken,
+        (fx, dac, scope): (&mut FxBus, &mut DacBlocks, &mut ScopeWriter),
+        shared: &AudioShared,
+        ports: &mut P,
+        notes: impl FnOnce(&mut Self, &GateView<'_>, &mut P),
+    ) {
         {
             let reads = sources.begin_block();
-            notes(self, &reads);
-            self.render_with(fx, dac, shared, scope, &reads);
+            notes(self, &reads, ports);
+            self.render_streamed(fx, dac, shared, scope, &reads, ports);
         }
         sources.store_sounding(self.source_mask());
     }
@@ -2036,13 +2062,12 @@ impl Instrument {
         crate::probe::acc(9, crate::probe::now().wrapping_sub(t0));
         for v in 0..MAX_VOICES {
             if self.alloc.slots()[v].is_free() {
+                ports.drop_ring(VoiceIdx::ALL[v]);
                 continue;
             }
             let p = self.sounding[v] as usize % MAX_PARTS;
             let part = &shared.parts[p];
-            // A note queued behind the fade starts in it, on its source.
-            let [latched, queued] = self.voices[v].reads();
-            let port = self.port_of(v, queued.or(latched));
+            let port = self.port_of(v);
             let base = CtxBase {
                 sym: &mut self.sym,
                 src,
@@ -2062,6 +2087,10 @@ impl Instrument {
                 );
             });
             self.age_stream(v);
+            // Killed, rebuilt or ended: its deck no longer tends the ring.
+            if !self.voices[v].streams() {
+                ports.drop_ring(VoiceIdx::ALL[v]);
+            }
             clip[p] = clip[p].max(self.voices[v].filter_clip());
             if written[p] {
                 for (b, &s) in self.buses[p].iter_mut().zip(&block) {

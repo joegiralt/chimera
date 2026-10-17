@@ -70,10 +70,12 @@ use crate::modulation::ModState;
 use crate::project::SourceId;
 use crate::source_table::GateView;
 #[cfg(feature = "tape")]
-use crate::stream::cursor::{Cursor, DROP_FADE, HeadIdx};
+use crate::stream::cursor::{Cursor, DROP_FADE, HeadIdx, Streamed};
 use crate::stream::port::StreamPort;
 #[cfg(feature = "tape")]
 use crate::stream::stage::xfade_max;
+#[cfg(feature = "tape")]
+use crate::stream::units::Frames;
 use age::Age;
 use heads::{
     Bounds, Dir, Fade, Ghost, Head, Plan, Turn, Window, at, min_frames, plan, shortest,
@@ -700,6 +702,11 @@ impl TapeDeck {
         self.src
     }
 
+    /// A streamed note owns its voice's ring, from its start to its end.
+    pub fn streams(&self) -> bool {
+        self.streamed
+    }
+
     /// The latched source's row this block, its descriptor read once:
     /// `None` with none latched, its row empty or moving, or a descriptor
     /// that doesn't read.
@@ -781,7 +788,10 @@ impl TapeDeck {
         let (Some(port), None) = (streams, params::needs_ram(p)) else {
             return;
         };
-        let Some(row) = self.row(held, port) else {
+        let Some(stream) = self.stream_of(port) else {
+            return;
+        };
+        let Some(row) = self.row(held, stream.frames) else {
             return;
         };
         let Some(head) = row.head_span(HeadIdx::START) else {
@@ -801,7 +811,7 @@ impl TapeDeck {
         }
         let at = self.heads[0].pos.whole();
         self.cursor
-            .start(at, self.inc_cap, row.head(HeadIdx::START), port);
+            .start(at, self.inc_cap, row.head(HeadIdx::START), stream, port);
     }
 
     /// A streamed note's cap at read ratio `r`, frames a sample.
@@ -870,12 +880,18 @@ impl TapeDeck {
             || holds(self.cursor.head().and_then(|h| row.head_span(h.idx)))
     }
 
-    fn row<'v>(
-        &self,
-        (held, d): (&'v [u8], Descriptor),
-        port: &StreamPort<'_, '_>,
-    ) -> Option<StreamRow<'v>> {
-        let row = StreamRow::new(held, d, port.file_frames)?;
+    /// The latched source's stream: its file's frames from the card's
+    /// lookup by its own id, never the Part's (#594).
+    fn stream_of(&self, port: &StreamPort<'_, '_>) -> Option<Streamed> {
+        let id = self.src?;
+        Some(Streamed {
+            id,
+            frames: (port.frames)(id)?,
+        })
+    }
+
+    fn row<'v>(&self, (held, d): (&'v [u8], Descriptor), frames: Frames) -> Option<StreamRow<'v>> {
+        let row = StreamRow::new(held, d, frames)?;
         #[cfg(any(test, feature = "test-support"))]
         if self.strict {
             return Some(row.strict());
@@ -997,7 +1013,10 @@ impl TapeDeck {
             let waited = core::mem::take(&mut self.waited);
             self.start_from(self.note, p, src, sample_rate, Some(&mut *port), waited);
         }
-        match self.row((held, d), port) {
+        let row = self
+            .stream_of(port)
+            .and_then(|st| self.row((held, d), st.frames));
+        match row {
             Some(row) if self.active && self.streamed && row.frames() >= self.n => {
                 self.stream_block(out, p, row, sample_rate, port);
             }

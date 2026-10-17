@@ -609,6 +609,7 @@ impl BenchStreams {
             for s in SlotIdx::ALL {
                 turn.cancel(v, s);
             }
+            turn.stream(v, bed_id(v));
             head.at.store(0, Ordering::Relaxed);
             head.set_cur(SlotIdx::A);
             head.waiting.store(false, Ordering::Relaxed);

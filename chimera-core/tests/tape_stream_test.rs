@@ -809,6 +809,8 @@ struct Played<'r> {
     rig: InstRig,
     st: Stream<'r>,
     src: OneSource,
+    /// A source the card's lookup gives 100 frames.
+    short: Option<SourceId>,
 }
 
 impl<'r> Played<'r> {
@@ -823,7 +825,12 @@ impl<'r> Played<'r> {
             *rig.shared.parts[q].mod_state = ModState::from_registry(&ModDestRegistry::new(), 8);
             rig.shared.parts[q].source = Some(src.id);
         }
-        Played { rig, st, src }
+        Played {
+            rig,
+            st,
+            src,
+            short: None,
+        }
     }
 
     /// `f` with this block's view and the voices' ports.
@@ -831,8 +838,14 @@ impl<'r> Played<'r> {
         &mut self,
         f: impl FnOnce(&mut InstRig, &GateView<'_>, &mut Streams<'_, '_>) -> R,
     ) -> R {
-        let frames = self.st.card.frames();
-        let lookup = move |_: SourceId| Some(frames);
+        let (frames, short) = (self.st.card.frames(), self.short);
+        let lookup = move |id: SourceId| {
+            Some(if Some(id) == short {
+                chimera_core::stream::units::Frames::new(100)
+            } else {
+                frames
+            })
+        };
         let view = self.src.view();
         let mut s = Streams {
             audio: &mut self.st.audio,
@@ -1497,4 +1510,159 @@ fn a_slice_note_glide_holds_pitch() {
             assert_eq!(t.slide(), 1.0, "streamed {streamed} block {k}");
         }
     }
+}
+
+/// #594: admission sheds a released voice for a note on its own Part,
+/// whose SOURCE changed since; the note queues behind the shed's fade. The
+/// fade reads its own file's length, so it fades rather than stops.
+#[test]
+fn a_fading_note_reads_its_own_source_length() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let p = one_hold();
+    let held = st.card.held(&[0], HF);
+    let (src, other) = OneSource::with(&held, &held);
+    let mut pl = Played::new(st, src, &[(0, p), (1, p)]);
+    pl.short = Some(other);
+    let bend = pl.rig.shared.parts[0].mix.bend;
+    let eight: u32 = (58..66).map(|n| bill_of(&p, n, bend)).sum();
+    assert!(eight <= STREAM_BUDGET_BPS && eight + bill_of(&p, 64, bend) > STREAM_BUDGET_BPS);
+    pl.on(0, 65);
+    for n in 58..65 {
+        pl.on(1, n);
+    }
+    let victim = pl.voice_of(0, 65).unwrap();
+    let mut bus = Vec::new();
+    for k in 0..64 {
+        match k {
+            5 => pl.off(0, 65),
+            60 => {
+                pl.rig.shared.parts[0].source = Some(other);
+                pl.on(0, 64);
+                assert_eq!(pl.voice_of(0, 64), Some(victim), "the shed takes it");
+            }
+            _ => {}
+        }
+        pl.block();
+        bus.extend_from_slice(pl.rig.inst.part_bus(0));
+    }
+    let step = |x: &[f32]| {
+        x.windows(2)
+            .map(|d| (d[1] - d[0]).abs())
+            .fold(0.0, f32::max)
+    };
+    let steady = step(&bus[10 * BLOCK_SIZE..60 * BLOCK_SIZE]);
+    assert!(steady > 1e-3, "the victim sounds");
+    let worst = step(&bus[59 * BLOCK_SIZE..]);
+    assert!(worst <= 4.0 * steady, "step {worst} over 4 x {steady}");
+}
+
+/// The voice's ring slots once it plays no stream.
+fn ring_empty(pl: &mut Played<'_>, v: usize) -> bool {
+    use chimera_core::stream::slot::SlotState;
+    use chimera_core::stream::units::SlotIdx;
+    let turn = pl.st.audio.turn();
+    SlotIdx::ALL
+        .iter()
+        .all(|&s| turn.seen(VoiceIdx::ALL[v], s) == SlotState::Empty)
+}
+
+/// #586: a killed voice (a project load's fade) drops its ring's slots
+/// once its fade ends.
+#[test]
+fn a_killed_voice_drops_its_slots() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, one_hold())]);
+    pl.on(0, 60);
+    let v = pl.voice_of(0, 60).unwrap();
+    for _ in 0..20 {
+        pl.block();
+    }
+    assert!(!ring_empty(&mut pl, v), "it streams");
+    pl.rig.inst.kill_all();
+    for _ in 0..6 {
+        pl.block();
+    }
+    assert!(!pl.rig.inst.active()[v]);
+    assert!(ring_empty(&mut pl, v), "every slot dropped");
+}
+
+/// #586: a voice whose next note plays another engine drops its slots
+/// once the old note's fade ends.
+#[test]
+fn an_engine_change_drops_the_slots() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, one_hold())]);
+    pl.on(0, 60);
+    let v = pl.voice_of(0, 60).unwrap();
+    for _ in 0..20 {
+        pl.block();
+    }
+    assert!(!ring_empty(&mut pl, v), "it streams");
+    *pl.rig.shared.parts[0].params = init_params(EngineType::Algo);
+    pl.on(0, 60);
+    assert_eq!(pl.voice_of(0, 60), Some(v), "the re-strike takes it");
+    for _ in 0..6 {
+        pl.block();
+    }
+    assert!(pl.rig.inst.active()[v], "ALGO plays on it");
+    assert!(ring_empty(&mut pl, v), "every slot dropped");
+}
+
+/// A shell's whole block through the voices' ports (`run_block_ported`):
+/// a note the drain hands it starts streamed on its port, and the render
+/// reads on through it.
+#[test]
+fn a_ported_block_starts_and_plays_a_streamed_note() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, one_hold())]);
+    let mut heard = 0.0f32;
+    for k in 0..20 {
+        pl.st.serve();
+        let frames = pl.st.card.frames();
+        let lookup = move |_: SourceId| Some(frames);
+        let mut s = Streams {
+            audio: &mut pl.st.audio,
+            card: StreamCard {
+                frames: &lookup,
+                now: AudioBlocks::new(pl.st.now),
+                bus: &pl.st.card.bus,
+                stats: &pl.st.card.stats,
+                pend: || {},
+            },
+        };
+        let rig = &mut pl.rig;
+        let channel = rig.shared.parts[0].mix.channel;
+        rig.inst.run_block_ported(
+            pl.src.token(),
+            (&mut rig.fx, &mut rig.dac, &mut rig.scope),
+            &rig.shared,
+            &mut s,
+            |inst, reads, ports| {
+                if k == 0 {
+                    let ev = NoteEvent {
+                        channel,
+                        note: MidiNote::new(60).unwrap(),
+                        kind: NoteKind::On(Velocity::DEFAULT),
+                    };
+                    inst.handle_streamed(ev, &rig.shared, NoteOrigin::Live, reads, ports);
+                }
+            },
+        );
+        pl.st.now += 1;
+        heard = heard.max(rig.inst.part_bus(0).iter().fold(0.0, |m, y| m.max(y.abs())));
+    }
+    assert_eq!(pl.rig.inst.streaming().map(|c| c.get()), Some(1));
+    assert!(heard > 0.1, "it plays: {heard}");
+    assert!(pl.st.card.claims() > 0, "read through its ring");
 }

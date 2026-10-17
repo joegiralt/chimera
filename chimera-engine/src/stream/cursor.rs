@@ -24,6 +24,7 @@ use super::port::StreamPort;
 use super::ring::{AudioTurn, GUARD_FRAMES, Guard, Ready, SLOTS};
 use super::slot::SlotState;
 use super::units::{AudioBlocks, Frames, Generation, SlotIdx};
+use crate::project::SourceId;
 use crate::voice_alloc::VoiceIdx;
 
 /// A drop-out's fade, out and back in, in output samples.
@@ -303,10 +304,20 @@ fn clamp_inc(inc_max: f32) -> f32 {
     }
 }
 
+/// What a note streams: its source, whose registry row the card reads,
+/// and its file's frames, both latched at its start (#594).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Streamed {
+    pub id: SourceId,
+    pub frames: Frames,
+}
+
 #[derive(Clone, Copy)]
 pub struct Cursor {
     /// Each slot's want: a Ready slot is read only under it.
     wants: [Generation; SLOTS],
+    /// The note's stream; `None` before the first start.
+    src: Option<Streamed>,
     head: Option<RamHead>,
     gain: Fade,
     state: Flow,
@@ -325,6 +336,7 @@ impl Cursor {
     pub const fn new() -> Cursor {
         Cursor {
             wants: [Generation::ZERO; SLOTS],
+            src: None,
             head: None,
             gain: Fade::SILENT,
             state: Flow::Cold,
@@ -358,21 +370,24 @@ impl Cursor {
         (self.head, self.state, self.gain) = (None, Flow::Cold, Fade::SILENT);
     }
 
-    /// Note-on (or any jump) at source frame `pos`, reading at most
-    /// `inc_max` source frames a sample until the next start: drops the
-    /// last note's slots, plays from `head` if it holds `pos` (else starts
-    /// cold), and asks every slot.
+    /// Note-on at source frame `pos` of `src`, reading at most `inc_max`
+    /// source frames a sample until the next start: drops the last note's
+    /// slots, names `src` on the ring, plays from `head` if it holds `pos`
+    /// (else starts cold), and asks every slot.
     pub fn start(
         &mut self,
         pos: u32,
         inc_max: f32,
         head: Option<RamHead>,
+        src: Streamed,
         port: &mut StreamPort<'_, '_>,
     ) {
         for s in SlotIdx::ALL {
             port.turn.cancel(port.voice, s);
         }
-        match head.filter(|&h| head_span(h, port.file_frames).holds(pos)) {
+        port.turn.stream(port.voice, src.id);
+        self.src = Some(src);
+        match head.filter(|&h| head_span(h, src.frames).holds(pos)) {
             Some(h) => {
                 self.head = Some(h);
                 self.state = Flow::Head(h.idx);
@@ -387,9 +402,10 @@ impl Cursor {
         self.tend(pos, true, port);
     }
 
-    /// A jump mid-note (a wrap, heads re-staged) to `pos`: `start`, but a
-    /// warm landing keeps the gain where it was and rises over
-    /// `DROP_FADE`, so a voice that ducked before it never steps.
+    /// A jump mid-note (a wrap, heads re-staged) to `pos`: `start` on the
+    /// note's stream, but a warm landing keeps the gain where it was and
+    /// rises over `DROP_FADE`, so a voice that ducked before it never
+    /// steps. Nothing before a start.
     pub fn jump(
         &mut self,
         pos: u32,
@@ -397,8 +413,11 @@ impl Cursor {
         head: Option<RamHead>,
         port: &mut StreamPort<'_, '_>,
     ) {
+        let Some(src) = self.src else {
+            return;
+        };
         let level = self.gain.level;
-        self.start(pos, inc_max, head, port);
+        self.start(pos, inc_max, head, src, port);
         if matches!(self.state, Flow::Head(_)) && level < FULL {
             self.gain = Fade {
                 level,
@@ -429,7 +448,7 @@ impl Cursor {
             (false, true) => self.cold(port),
             _ => {}
         }
-        let file = port.file_frames;
+        let file = self.file();
         if self.head.is_some_and(|h| head_span(h, file).last < i0) {
             self.head = None;
         }
@@ -501,6 +520,11 @@ impl Cursor {
         f32::from(f.level) / f32::from(FULL)
     }
 
+    /// The note's file's frames; none before a start.
+    fn file(&self) -> Frames {
+        self.src.map_or(Frames::new(0), |s| s.frames)
+    }
+
     fn cold(&mut self, port: &StreamPort<'_, '_>) {
         self.head = None;
         self.state = Flow::Cold;
@@ -524,10 +548,11 @@ impl Cursor {
     /// cancelled, so a late fill lands nowhere) and, `asking`, wants the
     /// missing ones into the free slots. Not `asking`, every want goes.
     fn tend(&mut self, i0: u32, asking: bool, port: &mut StreamPort<'_, '_>) {
-        let Some(last) = last_chunk(port.file_frames) else {
+        let file = self.file();
+        let Some(last) = last_chunk(file) else {
             return;
         };
-        let base = self.base(i0, port.file_frames, last);
+        let base = self.base(i0, file, last);
         let top = base.saturating_add(SLOTS as u32 - 1).min(last);
         let v = port.voice;
         let mut have = [false; SLOTS];
@@ -586,7 +611,7 @@ impl Cursor {
     fn deadline(&self, c: u32, i0: u32, port: &StreamPort<'_, '_>) -> AudioBlocks {
         let mut need = c.saturating_mul(CF);
         if let Some(h) = self.head {
-            need = need.max(head_span(h, port.file_frames).last.saturating_add(1));
+            need = need.max(head_span(h, self.file()).last.saturating_add(1));
         }
         let ahead = need.saturating_sub(i0) as f32;
         let blocks = (ahead / (self.inc * BLOCK as f32).max(1.0)) as u32;
@@ -596,14 +621,14 @@ impl Cursor {
     /// The head, and every slot Ready under this cursor's want.
     fn spans(&self, port: &StreamPort<'_, '_>) -> [Option<Span>; SPANS] {
         let mut out = [None; SPANS];
-        let last = last_chunk(port.file_frames).unwrap_or(0);
+        let last = last_chunk(self.file()).unwrap_or(0);
         for (o, s) in out.iter_mut().zip(SlotIdx::ALL) {
             *o = port
                 .turn
                 .ready(port.voice, s, self.wants[s.index()])
                 .map(|r| slot_span(s, r.chunk(), r.guard(), last));
         }
-        out[SLOTS] = self.head.map(|h| head_span(h, port.file_frames));
+        out[SLOTS] = self.head.map(|h| head_span(h, self.file()));
         out
     }
 }

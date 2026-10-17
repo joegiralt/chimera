@@ -4,6 +4,7 @@
 //! does (`claim`, `fill_buf`, `write_guard`, `fill_done`). So the tests run
 //! the real slot protocol, cursor and models.
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use chimera_hal::card_bus::CardBus;
@@ -16,6 +17,7 @@ use super::units::{AudioBlocks, Frames};
 use crate::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, HeadSpec, Shape, streamed_held_len, write_head_table,
 };
+use crate::project::SourceId;
 use crate::voice_alloc::VoiceIdx;
 
 pub struct TestCard<'r> {
@@ -29,6 +31,8 @@ pub struct TestCard<'r> {
     /// The read in flight, and the block it lands.
     flight: Option<(Claim, AudioBlocks)>,
     claims: u32,
+    /// Its lookup: every source is this one.
+    lookup: Box<dyn Fn(SourceId) -> Option<Frames>>,
     pub bus: CardBus,
     pub stats: StreamStats,
 }
@@ -51,6 +55,7 @@ impl<'r> TestCard<'r> {
             fail: 0,
             flight: None,
             claims: 0,
+            lookup: Box::new(move |_| Some(frames)),
             bus: CardBus::new(),
             stats: StreamStats::new(),
         }
@@ -118,7 +123,7 @@ impl<'r> TestCard<'r> {
         StreamPort {
             turn,
             voice,
-            file_frames: self.frames,
+            frames: &*self.lookup,
             now,
             bus: &self.bus,
             stats: &self.stats,

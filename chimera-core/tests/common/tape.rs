@@ -61,6 +61,12 @@ impl OneSource {
         self.tok.begin_block()
     }
 
+    /// The audio's token, for a shell's whole block (`run_block_ported`).
+    #[allow(dead_code)]
+    pub fn token(&mut self) -> &mut AudioToken {
+        &mut self.tok
+    }
+
     /// The row gone: retired and compacted, as the pool leaves it.
     pub fn clear(&self) {
         self.table.clear_for_test(self.id);

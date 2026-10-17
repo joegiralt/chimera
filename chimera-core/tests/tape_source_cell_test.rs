@@ -991,7 +991,7 @@ fn registry_row_before_pool_row() {
     assert_eq!(pool.find_source(b.0.sref), None);
     assert_eq!(pool.source_count(), 0, "no pool row");
     // SAFETY: no voice or card read has these test rows.
-    unsafe { reg.clear(SourceId::new(31).unwrap()) };
+    assert!(unsafe { reg.clear(SourceId::new(31).unwrap()) });
     rig.turn(1);
     rig.load();
     let pool = rig.ui.project().pool();

@@ -842,6 +842,12 @@ impl Voice {
         self.slot.heads()
     }
 
+    /// A streamed note sounds: its deck owns the voice's ring. Otherwise
+    /// the ring holds nothing of this voice's (#586).
+    pub fn streams(&self) -> bool {
+        self.active && self.slot.streams()
+    }
+
     /// The sources this voice reads or will, for the audio's `sounding`
     /// mask (spec § 4): only while active (an idle engine keeps its last
     /// source latched, and must not hold its row), the latched one, fading

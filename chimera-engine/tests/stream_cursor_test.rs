@@ -1,7 +1,8 @@
 use std::cell::Cell;
 
+use chimera_engine::project::SourceId;
 use chimera_engine::stream::cursor::{
-    Cursor, DROP_FADE, FadeCmd, Flow, HeadIdx, Plan, QUIET_FADE, RamHead, SpanSrc,
+    Cursor, DROP_FADE, FadeCmd, Flow, HeadIdx, Plan, QUIET_FADE, RamHead, SpanSrc, Streamed,
 };
 use chimera_engine::stream::layout::CHUNK_FRAMES;
 use chimera_engine::stream::port::StreamPort;
@@ -17,6 +18,10 @@ use std::sync::atomic::Ordering;
 const V: VoiceIdx = VoiceIdx::ALL[2];
 const CF: u32 = CHUNK_FRAMES.get();
 const FILE: Frames = Frames::new(40 * CF);
+const SRC: Streamed = Streamed {
+    id: SourceId::ALL[7],
+    frames: FILE,
+};
 const HEAD: RamHead = RamHead {
     idx: HeadIdx::START,
     start: 0,
@@ -84,7 +89,7 @@ impl Play<'_> {
         let mut port = StreamPort {
             turn: &mut turn,
             voice: V,
-            file_frames: FILE,
+            frames: &|_| Some(FILE),
             now: AudioBlocks::new(self.now),
             bus: &self.rig.bus,
             stats: &self.rig.stats,
@@ -100,7 +105,7 @@ impl Play<'_> {
 
     fn start_at(&mut self, pos: u32, inc_max: f32, head: Option<RamHead>) {
         self.pos = f64::from(pos);
-        self.with(|c, p| c.start(pos, inc_max, head, p));
+        self.with(|c, p| c.start(pos, inc_max, head, SRC, p));
     }
 
     /// Plans a block, then runs its samples at `inc`: each one's position
@@ -571,4 +576,18 @@ fn gain_never_steps() {
     assert!(underruns(&rig) > 0 && colds(&rig) > 0);
     assert!(worst <= 1.0 / DROP as f32 + 1e-6, "{worst}");
     assert_eq!(outside, 0, "heard outside the runs");
+}
+
+/// A start names its note's source on the ring, before its wants, so the
+/// card reads them from that file; a jump keeps it.
+#[test]
+fn a_start_names_its_source_on_the_ring() {
+    let rig = Rig::new();
+    let mut p = rig.play();
+    assert_eq!(rig.rings.source(V), None);
+    p.start(0, None);
+    assert_eq!(rig.rings.source(V), Some(SRC.id));
+    assert!(!p.wanted().is_empty());
+    p.with(|c, port| c.jump(CF, 1.0, None, port));
+    assert_eq!(rig.rings.source(V), Some(SRC.id));
 }

@@ -164,6 +164,10 @@ impl TapeEngine {
         self.read(|_, k| k.src).flatten()
     }
 
+    pub fn streams(&self) -> bool {
+        self.read(|_, k| k.streamed).unwrap_or(false)
+    }
+
     pub fn start(
         &mut self,
         note: u8,
