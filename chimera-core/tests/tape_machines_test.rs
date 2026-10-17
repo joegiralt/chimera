@@ -168,6 +168,35 @@ fn play_loads_old_codes() {
     assert_eq!((t.mode, t.drag), (PlayMode::One, 0.6));
 }
 
+#[test]
+fn fade_releases_loop_and_ping() {
+    let held = sine_src(48_000);
+    let v = SourceView::strict(&held).unwrap();
+    for mode in [PlayMode::Loop, PlayMode::Ping] {
+        let run = |drag: f32| {
+            let p = P {
+                mode,
+                drag,
+                size: 0.5,
+                ..P::default()
+            };
+            let mut e = fresh();
+            e.note_on(60, &p, &v, SR);
+            let mut out = play(&mut e, &p, &v, 100).0;
+            e.note_off();
+            out.extend(play(&mut e, &p, &v, 400).0);
+            (out, e.is_active())
+        };
+        let (short, on) = run(0.0);
+        let (long, _) = run(0.8);
+        assert!(!on, "{mode:?}: the 10 ms fade ends the note");
+        let at = 100 * B;
+        assert_eq!(short[..at], long[..at], "{mode:?}: before note-off");
+        let tail = |x: &[f32]| x[at + 40 * B..at + 44 * B].iter().map(|y| y.abs()).sum::<f32>();
+        assert!(tail(&short) < 0.05 * tail(&long), "{mode:?}: FADE sets the tail");
+    }
+}
+
 /// HOLD is FADE's last step in MODE ONE only: in LOOP and PING no DRAG
 /// gives it, and DRAG's top renders its 500 ms.
 #[test]
@@ -1127,7 +1156,7 @@ fn machine_table_is_pinned() {
 /// A machine's cell moved from its default (`busy` keeps every path in
 /// play: TAPE on, so WOW is heard; a moving POSITION, so DRAG is): the
 /// render changes. PLAY runs in each MODE, minus the cells that MODE's path
-/// ignores (ONE plays one head to END; FADE is its release).
+/// ignores (`reads_in`: ONE plays one head to END).
 #[test]
 fn every_cell_reads_in_the_audio() {
     let held = held_plain(&saw_with_burst(48_000, 1.0), 48_000);
@@ -1145,8 +1174,7 @@ fn every_cell_reads_in_the_audio() {
     for (m, mode) in cases {
         let ignored: &[ParamId] = match (m.model, mode) {
             (TapeModel::Play, PlayMode::One) => &[P::POSITION, P::MOTION, P::SIZE, P::XFADE],
-            (TapeModel::Play, PlayMode::Loop) => &[P::DRAG],
-            (TapeModel::Play, PlayMode::Ping) => &[P::XFADE, P::DRAG],
+            (TapeModel::Play, PlayMode::Ping) => &[P::XFADE],
             _ => &[],
         };
         let src = if m.model == TapeModel::Transwave {

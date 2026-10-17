@@ -755,7 +755,7 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
         // What MODEL ignores (spec § 1 Dimming).
         (BlockRef::Modal, id) => !modal::reads(sound.params.modal.mode, id),
         // What the machine ignores (spec § 3).
-        (BlockRef::TapeEngine, id) => !tape_engine::reads(sound.params.tape.model, id),
+        (BlockRef::TapeEngine, id) => !tape_engine::reads_in(sound.params.tape.model, sound.params.tape.mode, id),
         _ => false,
     }
 }

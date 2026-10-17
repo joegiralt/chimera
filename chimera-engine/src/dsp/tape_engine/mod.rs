@@ -80,7 +80,7 @@ pub use heads::loop_len;
 pub use oneshot::SliceCode;
 pub use params::{
     FADE_HOLD, MACHINE_NAMES, MODEL_NAMES, PlayMode, StretchType, TAPE_ENGINE_SPECS,
-    TapeEngineParams, TapeModel, Wow, drag_s, fade_default, jogs, reads,
+    TapeEngineParams, TapeModel, Wow, drag_s, fade_default, jogs, reads, reads_in,
 };
 
 // Each model's bill: its measured worst a sample, the M7's static count
@@ -775,6 +775,8 @@ impl TapeDeck {
         self.active = true;
         self.wow_kind = p.wow;
         self.start = p.start;
+        (self.rel, self.rel_k) = (1.0, 1.0);
+        self.fade_k = tron::release_k(p.drag, sample_rate);
         if self.one_head() {
             self.once_on(note, p, v, sample_rate);
             return;
@@ -976,12 +978,11 @@ impl TapeDeck {
         self.note = note;
     }
 
-    /// TRON's tape, and PLAY ONE's short of HOLD, fade through FADE's
-    /// one-pole, the pressure pad lifting. Every other machine: nothing (a
-    /// loop has no end, so the note ends when its VCA lets go; ONE at HOLD
-    /// ignores it, `sustains`).
+    /// TRON's tape and PLAY (short of HOLD in ONE) fade through FADE's
+    /// one-pole, the pressure pad lifting. ONE at HOLD ignores it
+    /// (`sustains`); the other machines do nothing, their VCA lets go.
     pub fn note_off(&mut self) {
-        if self.model == TapeModel::Tron || self.one() {
+        if self.model == TapeModel::Tron || (self.model == TapeModel::Play && !self.hold) {
             self.rel_k = self.fade_k;
         }
     }
@@ -1217,6 +1218,18 @@ impl TapeDeck {
             );
         } else {
             self.render_heads(out, v, (p, first), sample_rate);
+            if self.rel_k != 1.0 {
+                // PLAY's FADE after note-off: TRON's one-pole release.
+                let (mut g, k) = (self.rel, self.rel_k);
+                for y in out.iter_mut() {
+                    *y *= g;
+                    g *= k;
+                }
+                self.rel = g;
+                if g < tron::TRON_FLOOR {
+                    self.active = false;
+                }
+            }
         }
 
         if core::mem::take(&mut self.ramp) {

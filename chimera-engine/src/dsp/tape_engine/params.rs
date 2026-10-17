@@ -298,6 +298,22 @@ pub fn reads(model: TapeModel, id: ParamId) -> bool {
     }
 }
 
+/// `reads` under PLAY's `mode`: ONE plays one head to END, so POSITION,
+/// WALK, LENGTH and XFADE do nothing there; PING has no crossfade.
+pub fn reads_in(model: TapeModel, mode: PlayMode, id: ParamId) -> bool {
+    type P = TapeEngineParams;
+    if model == TapeModel::Play {
+        match mode {
+            PlayMode::One if matches!(id, P::POSITION | P::MOTION | P::SIZE | P::XFADE) => {
+                return false;
+            }
+            PlayMode::Ping if id == P::XFADE => return false,
+            _ => {}
+        }
+    }
+    reads(model, id)
+}
+
 /// Whether `model` moves `id` by a motion of its own the knobs would only
 /// blur: SCRUB's POSITION is its jog, which the UI steps with DRAG's
 /// momentum (ADR 0112). The Part's knobs hand it on at once.

@@ -558,6 +558,29 @@ fn matrix_columns_read_the_machine() {
     assert_eq!(grid(&m), walk);
 }
 
+/// What the MODE ignores shows dimmed, as HOLD's cell does elsewhere: ONE
+/// plays one head to END, PING has no crossfade.
+#[test]
+fn cells_a_mode_ignores_are_dimmed() {
+    use chimera_core::dsp::tape_engine::PlayMode;
+    let dim = |mode, id| {
+        let mut s = sound_on(TapeModel::Play);
+        s.params.tape.mode = mode;
+        view::dimmed(tape(id), &s)
+    };
+    for id in [P::POSITION, P::MOTION, P::SIZE, P::XFADE] {
+        assert!(dim(PlayMode::One, id), "ONE {id:?}");
+    }
+    for id in [P::MODE, P::DRAG, P::WOW, P::TAPE] {
+        assert!(!dim(PlayMode::One, id), "ONE {id:?}");
+    }
+    for id in [P::POSITION, P::MOTION, P::SIZE, P::DRAG] {
+        assert!(!dim(PlayMode::Loop, id) && !dim(PlayMode::Ping, id), "{id:?}");
+    }
+    assert!(!dim(PlayMode::Loop, P::XFADE));
+    assert!(dim(PlayMode::Ping, P::XFADE));
+}
+
 /// PLAY's FADE ends in HOLD in MODE ONE only: elsewhere the top step is a
 /// number, as TRON's and SCRUB's are.
 #[test]
