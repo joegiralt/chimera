@@ -8,27 +8,44 @@ mod screen;
 
 use core::ops::ControlFlow;
 
+use chimera_core::dsp::tape_engine::heads::{Bounds, window_end, window_start};
+use chimera_core::dsp::tape_engine::params::TapeEngineParams;
 use chimera_core::dsp::tape_engine::read::Shape;
+use chimera_core::dsp::tape_engine::read::{HeadSpec, head_table};
+use chimera_core::dsp::tape_engine::{PlayMode, TapeModel};
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
+use chimera_core::project::SourceId;
 use chimera_core::project::arena::Cost;
 use chimera_core::project::{
     LoadLink, PartId, ProjectSource, ReplaceGuard, SourceRef, project_crc,
 };
+use chimera_core::storage::source_file;
 use chimera_core::storage::{
     Card, SourceHead, SourceLayout, SystemSettings, SystemSync, TapeSource, WholeShape,
     held_for_file_len, source_crc, source_file_min_len, write_descriptor, write_source,
 };
+use chimera_core::stream::layout::StreamFile;
+use chimera_core::stream::registry::StreamRegistry;
+use chimera_core::stream::stage::heads_for;
 use chimera_core::ui::UiState;
+use chimera_core::ui::animation::{FRAME_MS, UiTick};
 use chimera_core::ui::meter::MeterView;
 use chimera_core::ui::settings::CardCx;
 use chimera_core::ui::source_cell::{
-    Memo, READ_FAILED, SourceMemo, SourceRow, card_cost, rows, wont_fit_words,
+    FRAGMENTED, LoadKind, Memo, PING_NEEDS_RAM, READ_FAILED, STREAMS_FULL, SourceMemo, SourceRow,
+    card_cost, load_kind, rows, wont_fit_words,
 };
 use chimera_core::ui::view::SourceState;
-use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
+use chimera_hal::store::synthetic_runs;
+use chimera_hal::store::{
+    ByteSink, Dir, FileName, FileRuns, MAX_RUNS, ReadSink, Runs, RunsError, Store, StoreError,
+    VolumeId,
+};
 use chimera_hal::testkit::MemStore;
+use chimera_hal::units::Bytes;
+use chimera_hal::units::{BlockCount, Lba};
 use chimera_hal::{ButtonId, EncoderId};
 use screen::{Input, feed, load_init, tap};
 
@@ -76,6 +93,8 @@ struct Log {
     fail_reads: bool,
     /// Source reads from here on give no bytes: a file shorter than listed.
     ends_at: u32,
+    /// `runs` finds every file in 33 runs.
+    fragmented: bool,
 }
 
 struct Counted<'a>(&'a mut dyn ReadSink, u32);
@@ -144,6 +163,16 @@ impl Store for Log {
     fn seal(&mut self, v: VolumeId, f: FileName) -> Result<(), StoreError> {
         self.inner.seal(v, f)
     }
+    fn runs(&mut self, v: VolumeId, f: FileName) -> Result<FileRuns, RunsError> {
+        if !self.fragmented {
+            return self.inner.runs(v, f);
+        }
+        let mut r = Runs::new();
+        for i in 0..MAX_RUNS as u32 + 1 {
+            r.push(Lba::new(10 * i), BlockCount::ONE);
+        }
+        Err(RunsError::Fragmented(r.finish().unwrap_err()))
+    }
 }
 
 struct Rig {
@@ -163,6 +192,7 @@ impl Rig {
             reads: Vec::new(),
             fail_reads: false,
             ends_at: u32::MAX,
+            fragmented: false,
         };
         let mut card = Card::new();
         for (h, d) in on_card {
@@ -384,9 +414,12 @@ fn loaded_row_moves_above_divider() {
     assert!(pool.source_view(h.sref).is_some());
 }
 
+/// A card row that won't fit whole, on a Part that needs it whole (PING:
+/// slice 1 § 5.6), alerts; MIX + PLUS loads nothing and says why.
 #[test]
 fn wont_fit_alerts() {
     let mut rig = Rig::new(&[choir()]);
+    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::Ping));
     // Fill the pool until the CHOIR won't fit.
     let mut seed = 20;
     while rig.ui.project().pool().free() >= card_cost(file_len(&choir().0)).unwrap() {
@@ -405,15 +438,16 @@ fn wont_fit_alerts() {
         "{}",
         words.as_str()
     );
-    let before = MeterView::of(rig.ui.project().pool(), None);
-    rig.mix_plus();
-    assert!(!rig.ui.card_pending(), "loads nothing");
-    assert_eq!(MeterView::of(rig.ui.project().pool(), None), before);
     // The band draws it in ALERT.
     let fb = screen::render_ui(&rig.ui);
     let alert = chimera_core::ui::theme::ALERT;
     let y = chimera_core::ui::hint::FOCUS_Y;
     assert!((y - 8..=y).any(|y| (12..200).any(|x| fb.at(x, y) == alert)));
+    let before = MeterView::of(rig.ui.project().pool(), None);
+    rig.mix_plus();
+    assert!(!rig.ui.card_pending(), "loads nothing");
+    assert_eq!(MeterView::of(rig.ui.project().pool(), None), before);
+    assert_eq!(rig.band(), PING_NEEDS_RAM);
 }
 
 /// Review Focus 1: a load that doesn't finish (MENU at each pass; the card
@@ -651,4 +685,421 @@ fn the_last_chunk_does_not_publish_before_adopt() {
     let pool = rig.ui.project().pool();
     assert_eq!(pool.source_count(), srcs);
     assert_eq!(pool.find_source(h.sref), None);
+}
+
+// Streamed loads (slice 1 § 5.6): a source too big for the arena loads as
+// its descriptor, head table and heads; the rest stays on the card.
+
+/// 6.25 s at 24 kHz: 225 KB whole, more than the arena.
+fn bed(seed: u8) -> (SourceHead, Vec<u8>) {
+    source(seed, 150_000, "BED")
+}
+
+impl Rig {
+    fn tape(&mut self, f: impl FnOnce(&mut TapeEngineParams)) {
+        f(&mut self.ui.project_mut().edit_part(P1).sound.params.tape);
+    }
+
+    fn params(&self) -> TapeEngineParams {
+        self.sound().params.tape
+    }
+
+    fn registry(&self) -> &'static StreamRegistry {
+        self.ui.project().pool().streams().expect("a registry")
+    }
+
+    /// One UI frame: its tick, then its card work.
+    fn frame(&mut self) {
+        self.ui.update(UiTick::for_test());
+        self.work();
+    }
+}
+
+/// The file `write_source` makes for `src`, byte for byte.
+fn file_bytes(src: &(SourceHead, Vec<u8>)) -> Vec<u8> {
+    let mut s = MemStore::new(9);
+    let mut card = Card::new();
+    let w = card
+        .run(&mut s, |s, r| write_source(s, r, &src.0, &src.1))
+        .unwrap();
+    w.result.unwrap();
+    let mut out = Vec::new();
+    card.run(&mut s, |s, r| {
+        struct Sink<'a>(&'a mut Vec<u8>);
+        impl ReadSink for Sink<'_> {
+            fn begin(&mut self, _: u32) -> ControlFlow<()> {
+                ControlFlow::Continue(())
+            }
+            fn chunk(&mut self, b: &[u8]) -> ControlFlow<()> {
+                self.0.extend_from_slice(b);
+                ControlFlow::Continue(())
+            }
+        }
+        s.read(r.volume(), source_file(src.0.sref), &mut Sink(&mut out))
+    })
+    .unwrap()
+    .result
+    .unwrap();
+    out
+}
+
+/// The streamed source's row: its head table's heads, each holding the
+/// file's samples at its frames.
+fn assert_heads(rig: &Rig, src: &(SourceHead, Vec<u8>), want: &[HeadSpec]) {
+    let pool = rig.ui.project().pool();
+    assert!(pool.streamed(src.0.sref), "streamed");
+    let held = pool.held(src.0.sref).expect("held");
+    let t = head_table(held).expect("a head table");
+    assert_eq!(t.iter().collect::<Vec<_>>(), want);
+    for i in 0..t.len() {
+        let (h, at) = t.get(i).unwrap();
+        let o = 3 * (h.first() / 2) as usize;
+        assert_eq!(
+            &held[at..at + h.bytes()],
+            &src.1[o..o + h.bytes()],
+            "head {i}"
+        );
+    }
+}
+
+#[test]
+fn fits_loads_whole() {
+    let (h, _) = choir();
+    let mut rig = Rig::new(&[choir()]);
+    let free = rig.ui.project().pool().free();
+    assert_eq!(load_kind(&h, free, &rig.params()), LoadKind::Whole);
+    rig.turn(1);
+    rig.load();
+    let pool = rig.ui.project().pool();
+    assert!(pool.source_view(h.sref).is_some(), "held whole");
+    assert!(!pool.streamed(h.sref));
+    let id = pool.find_source(h.sref).unwrap();
+    assert!(rig.registry().get(id).is_none(), "no stream row");
+}
+
+#[test]
+fn too_big_play_one_streams_with_start_head() {
+    let b = bed(1);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    let heads = heads_for(b.0.sref, &rig.params()).unwrap();
+    assert_eq!(heads.as_slice().len(), 1);
+    let free = rig.ui.project().pool().free();
+    assert_eq!(
+        load_kind(&b.0, free, &rig.params()),
+        LoadKind::Streamed(heads)
+    );
+    rig.turn(1);
+    // The meter previews the heads' cost, and MIX + PLUS loads.
+    let SourceState::Card { cost, free, .. } = rig.ui.source_state() else {
+        panic!("{:?}", rig.ui.source_state());
+    };
+    assert_eq!(cost, Cost::of(16 + heads.held_len()));
+    assert!(cost <= free);
+    rig.load();
+    assert_heads(&rig, &b, heads.as_slice());
+    let pool = rig.ui.project().pool();
+    let id = pool.find_source(b.0.sref).unwrap();
+    let f = rig.registry().get(id).expect("its stream row");
+    assert_eq!(f.file(), source_file(b.0.sref));
+    assert_eq!(f.frames().get(), b.0.sref.frames);
+    assert_eq!(
+        rig.sound().source_ref(),
+        Some(b.0.sref),
+        "the Part plays it"
+    );
+    assert_eq!(
+        rig.band(),
+        "BED · 24K · 6.3 S · ".to_string() + Cost::of(16 + heads.held_len()).kib_label().as_str()
+    );
+}
+
+#[test]
+fn too_big_loop_streams_with_two_heads() {
+    let b = bed(2);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.tape(|t| {
+        (t.model, t.mode) = (TapeModel::Play, PlayMode::Loop);
+        (t.size, t.position, t.xfade) = (0.7, 0.6, 0.1);
+    });
+    let heads = heads_for(b.0.sref, &rig.params()).unwrap();
+    rig.turn(1);
+    rig.load();
+    assert_heads(&rig, &b, heads.as_slice());
+    let p = rig.params();
+    let frames = b.0.sref.frames;
+    let ws = window_start(p.start, frames);
+    let lp = Bounds::of(
+        ws,
+        window_end(ws, p.end, frames, 24_000),
+        (p.size, p.position, p.xfade),
+        24_000,
+    );
+    let lh = heads.as_slice()[1];
+    assert!(
+        lp.lx > 0 && lh.first() < lp.ls - lp.lx,
+        "the loop head begins XFADE early"
+    );
+}
+
+/// A source too big for the arena that the Part plays in a way that needs
+/// it whole: refused with the Part's reason, nothing published.
+fn refused(f: impl FnOnce(&mut TapeEngineParams), words: &str) {
+    let b = bed(3);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.tape(f);
+    rig.turn(1);
+    let pool = rig.ui.project().pool();
+    let (free, count) = (pool.free(), pool.source_count());
+    rig.load();
+    assert_eq!(rig.band(), words);
+    let pool = rig.ui.project().pool();
+    assert_eq!((pool.free(), pool.source_count()), (free, count), "{words}");
+    assert_eq!(
+        pool.find_source(b.0.sref),
+        None,
+        "{words}: nothing published"
+    );
+}
+
+#[test]
+fn too_big_ping_refused() {
+    refused(
+        |t| (t.model, t.mode) = (TapeModel::Play, PlayMode::Ping),
+        PING_NEEDS_RAM,
+    );
+}
+
+#[test]
+fn too_big_scrub_refused() {
+    refused(|t| t.model = TapeModel::Scrub, "SCRUB NEEDS RAM");
+}
+
+#[test]
+fn fragmented_refused() {
+    let b = bed(4);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.turn(1);
+    rig.s.fragmented = true;
+    rig.load();
+    assert_eq!(rig.band(), FRAGMENTED);
+    assert_eq!(rig.ui.project().pool().find_source(b.0.sref), None);
+    assert!(
+        SourceId::ALL
+            .iter()
+            .all(|&s| rig.registry().get(s).is_none())
+    );
+}
+
+/// Review Focus 3: eight streams fill the registry; the ninth refuses
+/// with STREAMS FULL and publishes nothing, and the eight play on.
+#[test]
+fn ninth_streamed_source_refuses() {
+    let beds: Vec<_> = (10..19).map(bed).collect();
+    let mut rig = Rig::new(&beds);
+    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    let mut streamed = Vec::new();
+    for _ in 0..9 {
+        rig.turn(100);
+        let SourceState::Card { stem, .. } = rig.ui.source_state() else {
+            panic!("{:?}", rig.ui.source_state());
+        };
+        rig.load();
+        streamed.push(stem);
+    }
+    let pool = rig.ui.project().pool();
+    let held: Vec<_> = beds.iter().filter(|b| pool.streamed(b.0.sref)).collect();
+    assert_eq!(held.len(), 8);
+    let ninth = beds.iter().find(|b| b.0.sref.crc == streamed[8]).unwrap();
+    assert_eq!(pool.find_source(ninth.0.sref), None, "the ninth: nothing");
+    assert_eq!(rig.band(), STREAMS_FULL);
+}
+
+/// Review Focus 2, ruled: a streamed load reads the file's head and its
+/// heads, never the rest, and checks only their framing. Framing broken in
+/// a head fails it, publishing nothing; a sample out of the heads it never
+/// reads.
+#[test]
+fn streamed_load_trusts_the_seal() {
+    let b = bed(5);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    let heads = heads_for(b.0.sref, &rig.params()).unwrap();
+    let size = file_len(&b.0);
+    rig.turn(1);
+    rig.s.reads.clear();
+    rig.load();
+    assert_heads(&rig, &b, heads.as_slice());
+    let read: u32 = rig.s.reads.iter().map(|r| r.1).sum();
+    let want = heads.as_slice()[0].bytes() as u32;
+    assert!(read <= 4_096 + want + 2 * 508, "read {read} of {size}");
+    // A sample past the heads, damaged: never read, so it loads.
+    let mut file = file_bytes(&b);
+    let n = file.len();
+    file[n - 100] ^= 0xFF;
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.s.inner.plant(source_file(b.0.sref), &file);
+    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.turn(1);
+    rig.load();
+    assert!(
+        rig.ui.project().pool().streamed(b.0.sref),
+        "the seal is trusted"
+    );
+    // A record's tag inside the head: framing, so the load fails.
+    let mut file = file_bytes(&b);
+    let first = 28 + 4 + 34;
+    file[first + 508] ^= 0xFF;
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.s.inner.plant(source_file(b.0.sref), &file);
+    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.turn(1);
+    rig.load();
+    assert_eq!(rig.band(), READ_FAILED);
+    assert_eq!(rig.ui.project().pool().find_source(b.0.sref), None);
+    assert!(
+        SourceId::ALL
+            .iter()
+            .all(|&s| rig.registry().get(s).is_none())
+    );
+}
+
+/// The registry row goes in before the pool row is published: a full
+/// registry refuses the load with nothing published; a row free, the load
+/// publishes with its row there.
+#[test]
+fn registry_row_before_pool_row() {
+    let b = bed(6);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    let reg = rig.registry();
+    let other = bed(7).0;
+    let l = SourceLayout::whole(other).unwrap();
+    let len = source_file_min_len(other.sref).unwrap();
+    let runs = synthetic_runs(source_file(other.sref), Bytes::new(len)).unwrap();
+    let f = StreamFile::from_layout(&l, runs).unwrap();
+    for n in 24..32 {
+        reg.insert(SourceId::new(n).unwrap(), f).unwrap();
+    }
+    rig.turn(1);
+    rig.load();
+    assert_eq!(rig.band(), STREAMS_FULL);
+    let pool = rig.ui.project().pool();
+    assert_eq!(pool.find_source(b.0.sref), None);
+    assert_eq!(pool.source_count(), 0, "no pool row");
+    // SAFETY: no voice or card read has these test rows.
+    unsafe { reg.clear(SourceId::new(31).unwrap()) };
+    rig.turn(1);
+    rig.load();
+    let pool = rig.ui.project().pool();
+    let id = pool.find_source(b.0.sref).expect("published");
+    assert_eq!(
+        reg.get(id).map(StreamFile::file),
+        Some(source_file(b.0.sref))
+    );
+}
+
+/// START turned on a streamed source: its heads move 200 ms after the
+/// last turn, while no note holds it; a turn before then waits again.
+#[test]
+fn reheading_after_start_turn() {
+    let b = bed(8);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.turn(1);
+    rig.load();
+    let before = heads_for(b.0.sref, &rig.params()).unwrap();
+    assert_heads(&rig, &b, before.as_slice());
+    let frames_200ms = (200 / FRAME_MS) as usize;
+    rig.tape(|t| t.start = 0.3);
+    for _ in 0..frames_200ms - 1 {
+        rig.frame();
+    }
+    // A turn before the 200 ms: the wait starts again.
+    rig.tape(|t| t.start = 0.5);
+    for _ in 0..frames_200ms - 1 {
+        rig.frame();
+    }
+    assert_heads(&rig, &b, before.as_slice());
+    let after = heads_for(b.0.sref, &rig.params()).unwrap();
+    assert_ne!(after, before);
+    for _ in 0..20 {
+        rig.frame();
+    }
+    assert_heads(&rig, &b, after.as_slice());
+    let id = rig.ui.project().pool().find_source(b.0.sref).unwrap();
+    assert!(rig.registry().get(id).is_some(), "its stream row stays");
+    // The old heads are a pending hole, closed by the next pass.
+    for _ in 0..4 {
+        rig.frame();
+    }
+    let (_, _, pending) = rig.ui.project().pool().split();
+    assert_eq!(pending, Cost::default(), "the old heads' hole closed");
+}
+
+/// #588: while a note holds a streamed source its heads stay put, however
+/// long after the turn; once it lets go, they move. The audio runs on its
+/// own thread, answering the gate as the chip's does.
+#[test]
+fn reheading_waits_for_the_notes_on_it() {
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::{Arc, OnceLock};
+    use std::time::{Duration, Instant};
+    fn now_ms() -> u32 {
+        static T0: OnceLock<Instant> = OnceLock::new();
+        T0.get_or_init(Instant::now).elapsed().as_millis() as u32
+    }
+    let b = bed(9);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.turn(1);
+    rig.load();
+    let before = heads_for(b.0.sref, &rig.params()).unwrap();
+    let id = rig.ui.project().pool().find_source(b.0.sref).unwrap();
+    rig.ui.project_mut().set_gate_clock(now_ms);
+    let mut tok = rig.ui.project().pool().table().reader().unwrap();
+    let (held, stop) = (
+        Arc::new(AtomicU32::new(id.bit())),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let audio = std::thread::spawn({
+        let (held, stop) = (held.clone(), stop.clone());
+        move || {
+            while !stop.load(Ordering::Relaxed) {
+                let _ = tok.begin_block();
+                tok.store_sounding(held.load(Ordering::Relaxed));
+                std::thread::sleep(Duration::from_micros(500));
+            }
+        }
+    });
+    let table = rig.ui.project().pool().table();
+    while table.sounding() != id.bit() {
+        std::thread::yield_now();
+    }
+    rig.tape(|t| t.start = 0.5);
+    for _ in 0..40 {
+        rig.frame();
+    }
+    assert_heads(&rig, &b, before.as_slice());
+    held.store(0, Ordering::Relaxed);
+    while table.sounding() != 0 {
+        std::thread::yield_now();
+    }
+    let after = heads_for(b.0.sref, &rig.params()).unwrap();
+    let pool = |rig: &Rig| {
+        head_table(rig.ui.project().pool().held(b.0.sref).unwrap())
+            .unwrap()
+            .iter()
+            .collect::<Vec<_>>()
+    };
+    for _ in 0..200 {
+        if pool(&rig) == after.as_slice() {
+            break;
+        }
+        rig.frame();
+    }
+    stop.store(true, Ordering::Relaxed);
+    audio.join().unwrap();
+    assert_heads(&rig, &b, after.as_slice());
 }

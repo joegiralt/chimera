@@ -165,11 +165,9 @@ pub fn write_head_table(d: Descriptor, heads: &[HeadSpec], out: &mut [u8]) -> us
         ..d
     };
     out[..DESC_LEN].copy_from_slice(&d.to_bytes());
-    for (h, o) in heads
-        .iter()
-        .zip(out[DESC_LEN..].chunks_exact_mut(HEAD_ENTRY))
-    {
-        o.copy_from_slice(&h.to_bytes());
+    let (table, _) = out[DESC_LEN..].as_chunks_mut::<HEAD_ENTRY>();
+    for (h, o) in heads.iter().zip(table) {
+        *o = h.to_bytes();
     }
     DESC_LEN + HEAD_ENTRY * heads.len()
 }

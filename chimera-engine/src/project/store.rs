@@ -424,16 +424,83 @@ fn load_into<S: Store>(
     let read = load_ab_in_place(s, r, project_file(id), &mut d);
     *swap = d.take_swap();
     let (lossy, to_read, (sounds, sources)) = (d.lossy(), d.to_read(), d.dropped());
-    let (unlisted, over) = (d.missing(), d.over_budget());
+    let (unlisted, over, to_stream) = (d.missing(), d.over_budget(), d.to_stream());
     read?;
     let (missed, unread) = read_sources(s, r, p, to_read);
+    let streamed = stream_sources(s, r, p, to_stream);
     Ok(Loaded {
         lossy,
         sounds,
-        sources: sources.saturating_add(missed),
+        sources: sources.saturating_add(missed).saturating_sub(streamed),
         missing: unlisted.saturating_add(unread),
         over,
     })
+}
+
+/// The sources `ids`, too big for the arena, that a TAPE Part plays
+/// forward load as their heads (slice 1 § 5.6), as the SOURCE cell's load
+/// does; one every stream row refuses, or in too many runs, stays absent
+/// and says why. How many streamed. A card fault ends them.
+#[cfg(feature = "tape")]
+fn stream_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> u8 {
+    use super::streamed::{LoadKind, StreamFail, StreamLoad, StreamStep, load_kind};
+    use crate::storage::read_source_head;
+    use chimera_hal::store::RunsError;
+    let mut n = 0u8;
+    for id in SourceId::ALL.into_iter().filter(|i| ids & i.bit() != 0) {
+        let Some(e) = p.pool.source(id) else { continue };
+        let tape = PartId::ALL
+            .into_iter()
+            .map(|q| &p.part(q).sound)
+            .find(|x| x.engine() == crate::params::EngineType::Tape && x.source_ref() == Some(e.r))
+            .map(|x| x.params.tape);
+        let Some(tape) = tape else { continue };
+        let runs = match s.runs(r.volume(), crate::storage::source_file(e.r)) {
+            Ok(runs) => runs,
+            Err(RunsError::Fragmented(_)) => {
+                p.pool.mark_absent(id, Absence::Fragmented);
+                continue;
+            }
+            Err(RunsError::Store(err)) => {
+                if CardFault::store_error(&SourceReadError::from(err)).is_some() {
+                    p.pool.mark_absent(id, Absence::ReadFailed);
+                    break;
+                }
+                continue;
+            }
+        };
+        let Ok(head) = read_source_head(s, r, e.r.crc, runs.len.get()) else {
+            continue;
+        };
+        let LoadKind::Streamed(heads) = load_kind(&head, p.pool.free(), &tape) else {
+            continue;
+        };
+        let Some(mut l) = StreamLoad::start(p, head, heads) else {
+            continue;
+        };
+        let why = loop {
+            match l.step(s, r, p, usize::MAX) {
+                StreamStep::More => {}
+                StreamStep::Done(_) => {
+                    n = n.saturating_add(1);
+                    break None;
+                }
+                StreamStep::Failed(StreamFail::Full) => break Some(Absence::StreamsFull),
+                StreamStep::Failed(StreamFail::Fragmented) => break Some(Absence::Fragmented),
+                StreamStep::Failed(_) => break None,
+            }
+        };
+        if let Some(w) = why {
+            p.pool.mark_absent(id, w);
+        }
+    }
+    n
+}
+
+/// No TAPE: nothing streams.
+#[cfg(not(feature = "tape"))]
+fn stream_sources<S: Store>(_: &mut S, _: &Ready, _: &mut Project, _: u32) -> u8 {
+    0
 }
 
 /// Reads sources `ids` into their absent entries, inside the load's epoch

@@ -6,12 +6,14 @@
 //! one only through `put` (ADR 0106): `SourceCheck` judges it as it
 //! streams, `source_target` and `verify_and_seal` around the write.
 
-use chimera_hal::store::{Dir, FileName, Store, StoreError};
+use core::ops::ControlFlow;
+
+use chimera_hal::store::{Dir, FileName, ReadSink, Store, StoreError};
 use chimera_hal::units::Bytes;
 
 use super::SourceRef;
 use crate::dsp::tape_engine::read::{
-    DESC_LEN, Descriptor, MAX_ZONES, MIN_SOURCE_FRAMES, Shape, ZONE_LAYOUT_LEN,
+    DESC_LEN, Descriptor, HeadSpec, MAX_ZONES, MIN_SOURCE_FRAMES, Shape, ZONE_LAYOUT_LEN,
 };
 use crate::name::SoundName;
 
@@ -715,6 +717,179 @@ pub fn read_source_into<S: Store>(
     out: &mut [u8],
 ) -> Result<usize, SourceReadError> {
     read_source(s, r, Expect::Ref(sref), Some(out)).map(|l| l.held_len())
+}
+
+/// A whole `Plain` file of `r`'s packed bytes: where its first
+/// `SourceData` record starts, and how many sample bytes there are.
+fn plain_data(r: SourceRef) -> Option<(u32, u32)> {
+    let off = HEADER_LEN + RECORD_HEAD_LEN + SOURCE_HEAD_LEN;
+    let len = u32::try_from(held_len(r)? - DESC_LEN).ok()?;
+    Some((off as u32, len))
+}
+
+/// Takes the samples of `SourceData` records from a record's start, the
+/// first `skip` bytes of the first one dropped, into `out`: each record's
+/// tag and length checked (a full record but the last), never its
+/// samples. A streamed load trusts the seal (Review Focus 2).
+struct HeadSink<'a> {
+    out: &'a mut [u8],
+    got: usize,
+    skip: usize,
+    /// Sample bytes left in the file from the record being read.
+    left: u32,
+    head: [u8; RECORD_HEAD_LEN],
+    /// Head bytes seen of the record being read, then its samples left.
+    at_head: usize,
+    body: usize,
+    bad: bool,
+}
+
+impl ReadSink for HeadSink<'_> {
+    fn begin(&mut self, _len: u32) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+
+    fn chunk(&mut self, mut bytes: &[u8]) -> ControlFlow<()> {
+        while !bytes.is_empty() && self.got < self.out.len() {
+            if self.body == 0 {
+                let n = (RECORD_HEAD_LEN - self.at_head).min(bytes.len());
+                self.head[self.at_head..][..n].copy_from_slice(&bytes[..n]);
+                (self.at_head, bytes) = (self.at_head + n, &bytes[n..]);
+                if self.at_head < RECORD_HEAD_LEN {
+                    break;
+                }
+                let tag = u16::from_le_bytes([self.head[0], self.head[1]]);
+                let len = u16::from_le_bytes([self.head[2], self.head[3]]) as usize;
+                let want = (self.left as usize).min(SOURCE_DATA_MAX);
+                if tag != RecordTag::SourceData.code() || len != want || len == 0 {
+                    self.bad = true;
+                    return ControlFlow::Break(());
+                }
+                (self.at_head, self.body) = (0, len);
+                self.left -= len as u32;
+                continue;
+            }
+            let n = self.body.min(bytes.len());
+            let drop = self.skip.min(n);
+            let take = (n - drop).min(self.out.len() - self.got);
+            self.out[self.got..][..take].copy_from_slice(&bytes[drop..drop + take]);
+            self.got += take;
+            (self.skip, self.body, bytes) = (self.skip - drop, self.body - n, &bytes[n..]);
+        }
+        if self.got == self.out.len() {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    }
+}
+
+/// `out.len()` packed bytes of whole `Plain` source `r` from packed byte
+/// `from`, read from the `SourceData` record holding it: a head, or a
+/// UI pass's share of one. Framing a record's tag and length don't match
+/// fails it (`Corrupt`), as does a file that ends first (`Truncated`).
+pub fn read_packed_into<S: Store>(
+    s: &mut S,
+    r: &Ready,
+    sref: SourceRef,
+    from: u32,
+    out: &mut [u8],
+) -> Result<(), SourceReadError> {
+    let bad = |e| SourceReadError::Load(LoadError::File(e));
+    let (off, len) = plain_data(sref).ok_or(bad(FileError::Bounds))?;
+    let end = (from as u64) + out.len() as u64;
+    if end > u64::from(len) {
+        return Err(bad(FileError::Bounds));
+    }
+    let k = from / SOURCE_DATA_MAX as u32;
+    let mut sink = HeadSink {
+        out,
+        got: 0,
+        skip: (from % SOURCE_DATA_MAX as u32) as usize,
+        left: len - k * SOURCE_DATA_MAX as u32,
+        head: [0; RECORD_HEAD_LEN],
+        at_head: 0,
+        body: 0,
+        bad: false,
+    };
+    let at = off + k * (RECORD_HEAD_LEN + SOURCE_DATA_MAX) as u32;
+    s.read_at(r.volume(), source_file(sref), at, &mut sink)
+        .map_err(|e| match e {
+            StoreError::NotFound => SourceReadError::Load(LoadError::Missing),
+            e => e.into(),
+        })?;
+    match (sink.bad, sink.got == sink.out.len()) {
+        (true, _) => Err(bad(FileError::Corrupt)),
+        (false, false) => Err(bad(FileError::Truncated)),
+        (false, true) => Ok(()),
+    }
+}
+
+/// Every head of whole `Plain` source `r`, in turn, into `out` as a
+/// streamed `held` keeps them after its table; the bytes written.
+pub fn read_heads_into<S: Store>(
+    s: &mut S,
+    r: &Ready,
+    sref: SourceRef,
+    heads: &[HeadSpec],
+    out: &mut [u8],
+) -> Result<usize, SourceReadError> {
+    let mut at = 0;
+    for h in heads {
+        let to = out
+            .get_mut(at..at + h.bytes())
+            .ok_or(SourceReadError::NoRoom)?;
+        read_packed_into(s, r, sref, 3 * (h.first() / 2), to)?;
+        at += h.bytes();
+    }
+    Ok(at)
+}
+
+/// Feeds a `SourceCheck` until its head came, or `left` bytes went.
+struct HeadOnly<'a> {
+    check: &'a mut SourceCheck,
+    left: u32,
+    refused: bool,
+}
+
+impl ReadSink for HeadOnly<'_> {
+    fn begin(&mut self, _len: u32) -> ControlFlow<()> {
+        ControlFlow::Continue(())
+    }
+
+    fn chunk(&mut self, bytes: &[u8]) -> ControlFlow<()> {
+        let n = bytes.len().min(self.left as usize);
+        self.refused = self.check.feed(&bytes[..n]).is_err();
+        self.left -= n as u32;
+        if self.refused || self.left == 0 || self.check.head().is_some() {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    }
+}
+
+/// The head of card file `stem`, `len` bytes long, from its first records:
+/// a streamed load's descriptor, read without the samples.
+pub fn read_source_head<S: Store>(
+    s: &mut S,
+    r: &Ready,
+    stem: u32,
+    len: u32,
+) -> Result<SourceHead, SourceReadError> {
+    let bad = SourceReadError::Load(LoadError::File(FileError::Corrupt));
+    let mut check = SourceCheck::new(stem, len).map_err(|_| bad)?;
+    let mut sink = HeadOnly {
+        check: &mut check,
+        left: 4_096,
+        refused: false,
+    };
+    s.read_at(r.volume(), source_name(stem), 0, &mut sink)
+        .map_err(|e| match e {
+            StoreError::NotFound => SourceReadError::Load(LoadError::Missing),
+            e => e.into(),
+        })?;
+    check.head().ok_or(bad)
 }
 
 /// Why `put` refuses a source file (TAPE Task 18), at the record that

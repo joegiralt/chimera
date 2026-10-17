@@ -116,3 +116,171 @@ fn deck_reads_needs_update_closed() {
     assert!(first_cell_reads(&empty.0, NEEDS_UPDATE_CELL));
     assert!(first_cell_reads(&ok.0, "PLAY"));
 }
+
+// Streamed sources through pass 2 (slice 1 § 5.6).
+
+mod streamed {
+    use super::*;
+    use chimera_core::dsp::tape_engine::params::TapeEngineParams;
+    use chimera_core::dsp::tape_engine::read::Shape;
+    use chimera_core::dsp::tape_engine::{PlayMode, TapeModel};
+    use chimera_core::name::SoundName;
+    use chimera_core::project::test_support::save_at;
+    use chimera_core::project::{
+        Absence, LoadLink, ProjectNote, ProjectSource, ReplaceGuard, SourceId, SourceRef,
+        StreamLoad, StreamStep, load_project,
+    };
+    use chimera_core::storage::{
+        Card, ProjectId, SourceHead, SourceLayout, WholeShape, source_crc, source_file,
+        source_file_min_len, write_source,
+    };
+    use chimera_core::stream::layout::StreamFile;
+    use chimera_core::stream::stage::heads_for;
+    use chimera_hal::store::{Store, synthetic_runs};
+    use chimera_hal::testkit::MemStore;
+    use chimera_hal::units::Bytes;
+
+    fn source(seed: u8, frames: u32) -> (SourceHead, Vec<u8>) {
+        let data: Vec<u8> = (0..3 * frames.div_ceil(2) as usize)
+            .map(|i| (i as u32).wrapping_mul(37).wrapping_add(seed as u32) as u8)
+            .collect();
+        let head = SourceHead {
+            sref: SourceRef {
+                crc: source_crc(WholeShape::Plain, 1, &data),
+                frames,
+                rate: 24_000,
+            },
+            shape: Shape::Plain,
+            count: 1,
+            root: 6_000,
+            period_q16: 0,
+            name: SoundName::new("BED").unwrap(),
+        };
+        (head, data)
+    }
+
+    fn put(s: &mut MemStore, src: &(SourceHead, Vec<u8>)) {
+        let w = Card::new()
+            .run(s, |s, r| write_source(s, r, &src.0, &src.1))
+            .unwrap();
+        w.result.unwrap();
+    }
+
+    fn one(t: &mut TapeEngineParams) {
+        (t.model, t.mode) = (TapeModel::Play, PlayMode::One);
+    }
+
+    /// Part `n` on TAPE, PLAY ONE, playing `r`.
+    fn tape_part(p: &mut Project, t: chimera_core::project::TemplateCrc, n: usize, r: SourceRef) {
+        let part = PartId::ALL[n];
+        let src = PartSource {
+            part,
+            from: PartFrom::Init(EngineType::Tape),
+        };
+        load(p, t, src).unwrap();
+        let e = p.edit_part(part);
+        one(&mut e.sound.params.tape);
+        e.sound.source = Some(r.into());
+    }
+
+    /// `p` saved on `s`, loaded into a fresh project, its registry's rows
+    /// 24..32 taken first when `full`.
+    fn round_trip(
+        s: &mut MemStore,
+        p: &mut Project,
+        full: bool,
+    ) -> (Box<Project>, Option<ProjectNote>) {
+        let mut card = Card::new();
+        assert!(matches!(save_at(&mut card, s, p, 1), ProjectNote::Saved(_)));
+        let (mut q, t) = Project::boxed();
+        if full {
+            let other = source(99, 150_000).0;
+            let l = SourceLayout::whole(other).unwrap();
+            let len = source_file_min_len(other.sref).unwrap();
+            let runs = synthetic_runs(source_file(other.sref), Bytes::new(len)).unwrap();
+            let f = StreamFile::from_layout(&l, runs).unwrap();
+            for n in 24..32 {
+                q.pool()
+                    .streams()
+                    .unwrap()
+                    .insert(SourceId::new(n).unwrap(), f)
+                    .unwrap();
+            }
+        }
+        let vol = s.mount().unwrap();
+        let id = ProjectId::new(1).unwrap();
+        let go = ReplaceGuard::check(&q, t, ProjectSource::File { id, vol }).expect("no prompt");
+        let out = load_project(&mut card, s, &mut q, go, &LoadLink::new());
+        assert!(out.swap.is_some(), "{:?}", out.note);
+        (q, out.note)
+    }
+
+    /// A Part streams a source too big for the arena; the project saved
+    /// and loaded, pass 2 streams it the same: its heads, its stream row,
+    /// the Part on it, nothing left out.
+    #[test]
+    fn a_streamed_part_loads_through_pass_two() {
+        let mut s = MemStore::new(1);
+        let bed = source(1, 150_000);
+        put(&mut s, &bed);
+        let r = bed.0.sref;
+        let (mut p, t) = Project::boxed();
+        tape_part(&mut p, t, 0, r);
+        let heads = heads_for(r, &p.part(PartId::ALL[0]).sound.params.tape).unwrap();
+        let mut card = Card::new();
+        let got = card
+            .run(&mut s, |s, rd| {
+                let mut l = StreamLoad::start(&mut p, bed.0, heads).unwrap();
+                loop {
+                    match l.step(s, rd, &mut p, 4_096) {
+                        StreamStep::More => {}
+                        StreamStep::Done(id) => break Ok::<_, chimera_hal::store::StoreError>(id),
+                        StreamStep::Failed(f) => panic!("{f:?}"),
+                    }
+                }
+            })
+            .unwrap()
+            .result
+            .unwrap();
+        let held = p.pool().held(r).unwrap().to_vec();
+        let file = *p.pool().streams().unwrap().get(got).unwrap();
+        let (q, note) = round_trip(&mut s, &mut p, false);
+        assert_eq!(note, None, "nothing left out");
+        assert_eq!(q.pool().held(r), Some(&held[..]), "the same heads");
+        assert!(q.pool().streamed(r));
+        let id = q.pool().find_source(r).unwrap();
+        let f = q.pool().streams().unwrap().get(id).expect("its stream row");
+        assert_eq!((f.file(), f.frames()), (file.file(), file.frames()));
+        assert_eq!(q.part(PartId::ALL[0]).sound.source_ref(), Some(r));
+    }
+
+    /// Review Focus 3: a project load that finds every stream row taken
+    /// keeps the streamed source's ref, absent and saying why, and the
+    /// project's other Parts load.
+    #[test]
+    fn a_ninth_stream_in_a_project_stays_absent() {
+        let mut s = MemStore::new(1);
+        let (bed, small) = (source(2, 150_000), source(3, 6_000));
+        put(&mut s, &bed);
+        put(&mut s, &small);
+        let (mut p, t) = Project::boxed();
+        tape_part(&mut p, t, 0, bed.0.sref);
+        tape_part(&mut p, t, 1, small.0.sref);
+        p.source_absent(bed.0.sref).unwrap();
+        p.source_absent(small.0.sref).unwrap();
+        let (q, note) = round_trip(&mut s, &mut p, true);
+        let id = q.pool().find_source(bed.0.sref).expect("the ref kept");
+        assert_eq!(q.pool().absence(id), Some(Absence::StreamsFull));
+        assert!(
+            q.pool().source_view(small.0.sref).is_some(),
+            "Part 2's loads"
+        );
+        assert_eq!(
+            note,
+            Some(ProjectNote::DidntFit {
+                sounds: 0,
+                sources: 1
+            })
+        );
+    }
+}

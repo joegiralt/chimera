@@ -389,6 +389,9 @@ pub struct ProjectCheck {
     dropped_sources: u8,
     /// Pass 2's absent entries the plan takes: the loader reads them.
     to_read: u32,
+    /// Pass 2's absent entries the plan left out for room: the loader
+    /// streams those a TAPE Part plays (slice 1 § 5.6).
+    to_stream: u32,
     context: Context,
     parts: PartSet,
     fx: bool,
@@ -426,6 +429,7 @@ impl ProjectCheck {
             dropped_slots: 0,
             dropped_sources: 0,
             to_read: 0,
+            to_stream: 0,
             context: Context::None,
             parts: PartSet::EMPTY,
             fx: false,
@@ -563,6 +567,7 @@ impl ProjectCheck {
         (c.slots, c.n_refs, c.part_used) = (0, 0, 0);
         c.slot_costs.fill(0);
         (self.dropped_slots, self.dropped_sources, self.to_read) = (0, 0, 0);
+        self.to_stream = 0;
         (self.context, self.parts) = (Context::None, PartSet::EMPTY);
         (self.fx, self.fx_blocks, self.mix, self.origin) = (false, 0, false, false);
         self.origins = [ReadOrigin::Missing; MAX_PARTS];
@@ -599,6 +604,8 @@ impl ProjectCheck {
             Some(id) if self.plan.missing & bit != 0 => {
                 t.pool.mark_absent(id, super::Absence::NotOnCard)
             }
+            // Too big for the room: streamed if a TAPE Part plays it.
+            Some(id) if cfg!(feature = "tape") => self.to_stream |= id.bit(),
             Some(_) => {}
             // No slot free: the ref is lost, and a save would drop it. A
             // ref the plan left out for room is counted already.
@@ -917,6 +924,12 @@ impl<'a> ProjectDecoder<'a> {
     /// absent entry until it does.
     pub(crate) fn to_read(&self) -> u32 {
         self.check.to_read
+    }
+
+    /// After pass 2: the sources too big for the arena's room, each an
+    /// absent entry: the loader streams those a TAPE Part plays.
+    pub(crate) fn to_stream(&self) -> u32 {
+        self.check.to_stream
     }
 
     /// After `begin`: the refs `/CHIMERA/TAPES` doesn't list.

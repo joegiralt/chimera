@@ -892,6 +892,11 @@ pub fn src_card(ui: &mut UiState, then: CardRow) {
     let w = Card::new().run(&mut s, |s, r| write_source(s, r, &head, data));
     w.unwrap().result.unwrap();
     if then == CardRow::Full {
+        // PING takes its source whole: a row too big won't stream instead
+        // (slice 1 § 5.6).
+        let p1 = chimera_core::project::PartId::ALL[0];
+        let t = &mut ui.project_mut().edit_part(p1).sound.params.tape;
+        t.mode = chimera_core::dsp::tape_engine::PlayMode::Ping;
         strip_source(ui, false);
         strip_source(ui, true);
         let mut crc = 0x0F11_0000;

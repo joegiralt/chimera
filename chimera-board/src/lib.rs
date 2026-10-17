@@ -440,6 +440,12 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         ui.set_bank2(bank2.status);
     }
     ui.project_mut().set_gate_clock(gate_ms);
+    // Streamed sources' files go in the registry for the card (slice 1
+    // § 5.5); a bench build's beds keep its rows to themselves.
+    #[cfg(not(feature = "bench"))]
+    if let Some(r) = shared::registry() {
+        ui.project_mut().set_streams(r);
+    }
 
     // Start-up, in order, behind the splash until PART 1 can be drawn:
     // 1. SYSTEM and the last project from the card, however slow;

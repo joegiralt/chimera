@@ -57,6 +57,9 @@ fn main() {
 
     let mut ui = UiState::with_arena(leaked_arena(&SOURCE_TABLE));
     ui.project_mut().set_gate_clock(gate_ms);
+    // Streamed sources' files, registered as on the chip (slice 1 § 5.5).
+    let streams = chimera_core::stream::registry::StreamRegistry::new();
+    ui.project_mut().set_streams(Box::leak(Box::new(streams)));
     // QA of the labels a closed bank 2 shows (ADR 0141); the desktop plays
     // everything either way. Unset, it has no bank 2, which reads as open.
     if std::env::var("CHIMERA_BANK2").as_deref() == Ok("closed") {

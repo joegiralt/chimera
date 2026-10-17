@@ -2860,10 +2860,14 @@ impl UiState {
     pub fn update(&mut self, _: animation::UiTick) {
         self.saver_frames = self.saver_frames.saturating_add(1);
         self.saver_drawn |= self.idle.asleep();
+        // A streamed source's heads follow its Part's turns (spec § 5.6).
+        if !self.lib.busy() {
+            self.src.tick(&mut self.project);
+        }
         // A pending source hole closes when nothing above it sounds; never
         // under a load staging in the gap.
         // Nor under a library load's staging or scratch.
-        if !self.src.loading() && !self.lib.busy() {
+        if !self.src.holds_gap() && !self.lib.busy() {
             self.project.sources_pass();
         }
         self.refresh_status();

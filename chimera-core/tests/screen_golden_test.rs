@@ -320,7 +320,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_strip_tron_idle", 0x2e9a7c033cdd056d),
     ("tape_src_pool", 0x5cc2849e855b0b0e),
     ("tape_src_card", 0x2851ad3cea608bdf),
-    ("tape_src_wont_fit", 0x7a0855b2f56038bd),
+    ("tape_src_wont_fit", 0x5e45d3f281d9f413),
     ("tape_src_loaded", 0x6e6533e2a42a05d2),
     ("tape_src_read_failed", 0x60b02af140ccd019),
     ("busy", 0x198544cd36863145),

@@ -40,6 +40,10 @@ pub enum Absence {
     NotOnCard,
     /// The card faulted reading it, or before its turn came.
     ReadFailed,
+    /// Too big for the arena, and every stream row taken (slice 1 § 5.5).
+    StreamsFull,
+    /// Too big for the arena, and in more runs than a stream row keeps.
+    Fragmented,
 }
 
 /// A pool source: its ref and how many of its bytes the arena holds. An
@@ -258,6 +262,12 @@ impl Project {
             self.bump();
         }
         moved
+    }
+
+    /// The registry streamed sources' files go in: the shell's, lent once
+    /// (a bench build's beds keep theirs).
+    pub fn set_streams(&mut self, r: &'static crate::stream::registry::StreamRegistry) {
+        self.pool.set_streams(r);
     }
 
     /// The UI loop's clock in ms, which a gate waits by

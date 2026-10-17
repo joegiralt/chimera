@@ -536,60 +536,94 @@ fn span_reads_stay_in_bounds() {
     }
 }
 
-/// START turned while the note still plays its head: the heads re-staged
-/// for the new START move under it, so the cursor starts again where the
-/// note is, cold (no head holds it there), and never reads the moved
-/// head's bytes as its own (strict views). It comes back as the whole
-/// render, tape time having run on.
+/// START turned while a note plays (#588): the heads stay until no note
+/// holds the source (`Pool::source_rehead`), so the note plays on as held
+/// whole, never cut. A note at the new START before the re-stage starts
+/// cold, reading nothing stale (strict views), and fades in to the whole
+/// render; once re-staged, a note there starts warm.
 #[test]
-fn reheading_under_the_head_starts_cold() {
+fn a_start_turn_never_cuts_a_note() {
     let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
     let p = TapeEngineParams {
         tape: 0.0,
         age: 0.0,
         ..params(PlayMode::One, 0.3, 1.0)
     };
-    let s = Script {
+    let moved = TapeEngineParams { start: 0.2, ..p };
+    let script = |p, turned| Script {
         p,
-        turned: None,
-        turn: 0,
+        turned,
+        turn: 10,
         again: usize::MAX,
         blocks: 400,
     };
-    let w = render_whole(&s, 60, &whole);
+    let wa = render_whole(&script(p, Some(moved.start)), 60, &whole);
+    let wb = render_whole(&script(moved, None), 60, &whole);
+    let r = SourceRef {
+        crc: 0,
+        frames: FRAMES,
+        rate: RATE,
+    };
     let (rings, third) = rings();
     let mut st = Stream::new(&rings, &third, &whole, 0);
-    let moved = TapeEngineParams { start: 0.2, ..p };
-    let mut srcs = [
-        OneSource::new(&st.card.held(&heads_at(&p, FRAMES, 60), HF)),
-        OneSource::new(&st.card.held(&heads_at(&moved, FRAMES, 60), HF)),
-    ];
-    let mut slot = MaybeUninit::uninit();
-    let e = deck(&mut slot);
-    e.strict_spans();
-    let mut out = Vec::new();
+    let row =
+        |c: &TestCard<'_>, q: &TapeEngineParams| c.held_heads(heads_for(r, q).unwrap().as_slice());
+    let mut stale = OneSource::new(&row(&st.card, &p));
+    let mut slots: Vec<MaybeUninit<TapeEngine>> = (0..3).map(|_| MaybeUninit::uninit()).collect();
+    let mut decks: Vec<&mut TapeEngine> = slots.iter_mut().map(deck).collect();
+    decks.iter_mut().for_each(|e| e.strict_spans());
+    let (mut oa, mut ob) = (Vec::new(), Vec::new());
     let mut b = [0.0; BLOCK_SIZE];
-    for k in 0..s.blocks {
+    for k in 0..420 {
         st.serve();
-        let src = &mut srcs[usize::from(k >= 10)];
-        st.with(V, |port| {
+        let q = if k < 10 { p } else { moved };
+        let (va, vb) = (VoiceIdx::ALL[0], VoiceIdx::ALL[1]);
+        st.with(va, |port| {
             if k == 0 {
-                e.start(60, &p, &src.view(), SR, Some(port));
+                decks[0].start(60, &q, &stale.view(), SR, Some(port));
             }
-            e.play(&mut b, &p, &src.view(), SR, Some(port));
+            decks[0].play(&mut b, &q, &stale.view(), SR, Some(port));
+        });
+        oa.extend_from_slice(&b);
+        if k >= 20 {
+            st.with(vb, |port| {
+                if k == 20 {
+                    decks[1].start(60, &moved, &stale.view(), SR, Some(port));
+                }
+                decks[1].play(&mut b, &moved, &stale.view(), SR, Some(port));
+            });
+            ob.extend_from_slice(&b);
+        }
+        st.now += 1;
+    }
+    assert_eq!(&oa[..400 * BLOCK_SIZE], &wa[..], "never cut");
+    assert_eq!(
+        st.card.stats.cold.load(Ordering::Relaxed),
+        1,
+        "the new START, cold"
+    );
+    assert!(
+        ob[..BLOCK_SIZE].iter().all(|&y| y == 0.0),
+        "silent until it lands"
+    );
+    let tail = 100 * BLOCK_SIZE;
+    assert_eq!(&ob[tail..380 * BLOCK_SIZE], &wb[tail..380 * BLOCK_SIZE]);
+    // Re-staged once no note holds it: a note at the new START, warm.
+    let mut fresh = OneSource::new(&row(&st.card, &moved));
+    let mut out = Vec::new();
+    for k in 0..100 {
+        st.serve();
+        st.with(VoiceIdx::ALL[2], |port| {
+            if k == 0 {
+                decks[2].start(60, &moved, &fresh.view(), SR, Some(port));
+            }
+            decks[2].play(&mut b, &moved, &fresh.view(), SR, Some(port));
         });
         out.extend_from_slice(&b);
         st.now += 1;
     }
-    assert_eq!(st.card.stats.cold.load(Ordering::Relaxed), 1);
-    assert_eq!(&out[..10 * BLOCK_SIZE], &w[..10 * BLOCK_SIZE]);
-    assert!(
-        out[10 * BLOCK_SIZE..11 * BLOCK_SIZE]
-            .iter()
-            .all(|&y| y == 0.0)
-    );
-    let tail = 300 * BLOCK_SIZE;
-    assert_eq!(&out[tail..], &w[tail..]);
+    assert_eq!(st.card.stats.cold.load(Ordering::Relaxed), 1, "warm");
+    assert_eq!(&out[..], &wb[..100 * BLOCK_SIZE]);
 }
 
 /// POSITION moves the loop off its staged head mid-note: each wrap lands

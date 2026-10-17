@@ -13,14 +13,22 @@ use core::num::NonZeroU32;
 
 use chimera_hal::store::{ReadSink, Store, StoreError};
 
+use crate::dsp::tape_engine::params::TapeEngineParams;
+#[cfg(feature = "tape")]
+use crate::dsp::tape_engine::read::head_table;
 use crate::dsp::tape_engine::{NeedsRam, TapeModel};
 use crate::preset::Sound;
 use crate::project::arena::{Cost, MAX_SOURCES};
-use crate::project::{PartId, Pool, Project, SOURCE_HEAD, SourceId, SourceNeed};
+pub use crate::project::{LoadKind, load_kind};
+use crate::project::{PartId, Pool, Project, SOURCE_HEAD, SourceId, SourceNeed, StreamFail};
+#[cfg(feature = "tape")]
+use crate::project::{StreamLoad, StreamStep};
 use crate::storage::{
     MAX_TAPES, Ready, SourceCheck, SourceHead, SourceRef, TapeList, TapeSource, held_for_file_len,
     source_file,
 };
+#[cfg(feature = "tape")]
+use crate::stream::stage::{Heads, heads_for};
 use crate::ui::view::SourceState;
 
 /// What one UI pass reads of a card-row load, and of a head.
@@ -31,6 +39,10 @@ pub const HEAD_CACHE: usize = 16;
 pub const SOURCE_MISSING: &str = "SOURCE MISSING";
 pub const NOT_ON_CARD: &str = "SOURCE NOT ON CARD";
 pub const READ_FAILED: &str = "CARD READ FAILED";
+/// A source in more runs than the stream registry keeps (slice 1 § 5.3).
+pub const FRAGMENTED: &str = "FRAGMENTED · COPY IT AGAIN";
+/// A ninth streamed source: the registry's eight rows taken.
+pub const STREAMS_FULL: &str = "STREAMS FULL";
 /// A streamed source reads forward only until slice 5 (slice 1 § 2.3).
 pub const PING_NEEDS_RAM: &str = "PING NEEDS RAM";
 pub const REVERSE_NEEDS_RAM: &str = "REVERSE NEEDS RAM";
@@ -46,6 +58,19 @@ pub fn needs_ram_words(n: NeedsRam) -> &'static str {
         NeedsRam::Machine(TapeModel::Transwave) => "WAVE NEEDS RAM",
         NeedsRam::Machine(TapeModel::Tron) => "TRON NEEDS RAM",
         NeedsRam::Machine(TapeModel::Play) => "NEEDS RAM",
+    }
+}
+
+/// Why a streamed load published nothing: the focus band's words.
+pub fn stream_fail_words(f: StreamFail) -> &'static str {
+    match f {
+        StreamFail::Fragmented => FRAGMENTED,
+        StreamFail::Full => STREAMS_FULL,
+        StreamFail::Pool(_) => crate::ui::settings::prompt::POOL_FULL,
+        StreamFail::Read(crate::storage::SourceReadError::Load(
+            crate::storage::LoadError::Missing,
+        )) => NOT_ON_CARD,
+        StreamFail::Read(_) | StreamFail::Sounding => READ_FAILED,
     }
 }
 
@@ -394,6 +419,12 @@ enum SourceJob {
         pick: bool,
     },
     Load(PartId, SourceLoad),
+    /// A card row too big for the arena, loading as its heads.
+    #[cfg(feature = "tape")]
+    Stream(PartId, StreamLoad),
+    /// A streamed source's heads re-staging: no BUSY, no words.
+    #[cfg(feature = "tape")]
+    Rehead(StreamLoad),
     /// A library load's source, held for `UiState` to step: never run
     /// here. It shares this slot, as the two never stream at once.
     Stage(SourceLoad),
@@ -411,6 +442,46 @@ pub struct SourceCell {
     at: Option<(PartId, u32, u32)>,
     job: Option<SourceJob>,
     note: Option<&'static str>,
+    /// A streamed source whose heads its Part moved off: since how many
+    /// frames, and whether re-staging them failed.
+    #[cfg(feature = "tape")]
+    wait: Option<Wait>,
+}
+
+/// Heads wanted for a streamed source, unchanged for `frames` frames.
+#[cfg(feature = "tape")]
+#[derive(Clone, Copy)]
+struct Wait {
+    id: SourceId,
+    heads: Heads,
+    frames: u16,
+    failed: bool,
+}
+
+/// How long the heads wait after the last turn (spec § 5.6).
+pub const REHEAD_MS: u32 = 200;
+
+/// The first streamed source a Part's START, loop or XFADE moved off its
+/// heads, and the heads it wants. A source two Parts play takes its first
+/// Part's heads (#599).
+#[cfg(feature = "tape")]
+fn moved_heads(p: &Project) -> Option<(SourceId, Heads)> {
+    let pool = p.pool();
+    let mut seen = 0u32;
+    PartId::ALL.into_iter().find_map(|part| {
+        let sound = &p.part(part).sound;
+        let r = sound
+            .source_ref()
+            .filter(|_| sound.engine() == crate::params::EngineType::Tape)?;
+        let id = pool.find_source(r)?;
+        let first = seen & id.bit() == 0;
+        seen |= id.bit();
+        let staged = head_table(pool.held(r)?)?;
+        let want = heads_for(r, &sound.params.tape)?;
+        let moved =
+            first && !staged.is_empty() && !staged.iter().eq(want.as_slice().iter().copied());
+        moved.then_some((id, want))
+    })
 }
 
 impl SourceCell {
@@ -421,14 +492,68 @@ impl SourceCell {
         at: None,
         job: None,
         note: None,
+        #[cfg(feature = "tape")]
+        wait: None,
     };
 
-    /// Card work is queued: BUSY shows.
+    /// Card work is queued: BUSY shows. A re-head runs unseen.
     pub fn busy(&self) -> bool {
+        #[cfg(feature = "tape")]
+        if matches!(self.job, Some(SourceJob::Rehead(_))) {
+            return false;
+        }
         self.job.is_some()
     }
 
+    /// Staging in the gap: the pool's holes wait (`UiState::update`).
+    pub fn holds_gap(&self) -> bool {
+        #[cfg(feature = "tape")]
+        if matches!(self.job, Some(SourceJob::Rehead(_))) {
+            return true;
+        }
+        self.loading()
+    }
+
+    /// Once a frame: a streamed source whose Part moved START, the loop or
+    /// XFADE off its heads re-stages them `REHEAD_MS` after the last turn,
+    /// once no note holds it (spec § 5.6, #588). Beside no other card work.
+    #[cfg_attr(not(feature = "tape"), allow(unused_variables))]
+    pub fn tick(&mut self, p: &mut Project) {
+        #[cfg(feature = "tape")]
+        self.rehead_tick(p);
+    }
+
+    #[cfg(feature = "tape")]
+    fn rehead_tick(&mut self, p: &mut Project) {
+        if self.job.is_some() {
+            return;
+        }
+        let Some((id, heads)) = moved_heads(p) else {
+            self.wait = None;
+            return;
+        };
+        let w = match self.wait {
+            Some(w) if w.id == id && w.heads == heads => w,
+            _ => Wait {
+                id,
+                heads,
+                frames: 0,
+                failed: false,
+            },
+        };
+        let frames = w.frames.saturating_add(1);
+        self.wait = Some(Wait { frames, ..w });
+        let quiet = p.pool().table().sounding() & id.bit() == 0;
+        if u32::from(frames) * crate::ui::animation::FRAME_MS >= REHEAD_MS && quiet && !w.failed {
+            self.job = StreamLoad::rehead(p, id, heads).map(SourceJob::Rehead);
+        }
+    }
+
     pub fn loading(&self) -> bool {
+        #[cfg(feature = "tape")]
+        if matches!(self.job, Some(SourceJob::Stream(..))) {
+            return true;
+        }
         matches!(self.job, Some(SourceJob::Load(..)))
     }
 
@@ -483,13 +608,16 @@ impl SourceCell {
             return SourceState::Failed(w);
         }
         if let Some((_, stem, size)) = self.at.filter(|a| a.0 == part) {
+            let whole = card_cost(size).unwrap_or_default();
             return SourceState::Card {
                 stem,
                 head: self
                     .heads
                     .get(stem)
                     .map(|h| (h.name, h.sref.rate, h.sref.frames)),
-                cost: card_cost(size).unwrap_or_default(),
+                cost: self
+                    .kind(p, part, stem)
+                    .map_or(whole, |(_, k)| k.cost(whole)),
                 free: p.pool().free(),
             };
         }
@@ -569,13 +697,43 @@ impl SourceCell {
         }
     }
 
-    /// MIX + PLUS on SOURCE: loads the card row it's on, if it fits.
+    /// MIX + PLUS on SOURCE: loads the card row it's on, if it fits:
+    /// whole, or too big for the arena as its heads (spec § 5.6), or says
+    /// why the Part needs it whole.
     pub fn load(&mut self, p: &mut Project, part: PartId) {
-        if let Some((_, stem, size)) = self.at.filter(|a| a.0 == part)
-            && let Some(l) = SourceLoad::start(p, stem, size)
-        {
-            self.job = Some(SourceJob::Load(part, l));
+        let Some((_, stem, size)) = self.at.filter(|a| a.0 == part) else {
+            return;
+        };
+        match self.kind(p, part, stem) {
+            #[cfg(feature = "tape")]
+            Some((head, LoadKind::Streamed(heads))) => {
+                if let Some(l) = StreamLoad::start(p, head, heads) {
+                    self.job = Some(SourceJob::Stream(part, l));
+                }
+            }
+            Some((_, LoadKind::Refused(n))) => self.note = Some(needs_ram_words(n)),
+            _ => {
+                if let Some(l) = SourceLoad::start(p, stem, size) {
+                    self.job = Some(SourceJob::Load(part, l));
+                }
+            }
         }
+    }
+
+    /// How card row `stem` loads for `part`, its head once read, with the
+    /// START and END the pick will give it (`SourceMemo::turn`). Whole
+    /// only without TAPE.
+    fn kind(&self, p: &Project, part: PartId, stem: u32) -> Option<(SourceHead, LoadKind)> {
+        if !cfg!(feature = "tape") {
+            return None;
+        }
+        let head = self.heads.get(stem)?;
+        let sound = &p.part(part).sound;
+        let mut t: TapeEngineParams = sound.params.tape;
+        if sound.source_ref() != Some(head.sref) {
+            (t.start, t.end) = self.memo.get(stem).map_or((0.0, 1.0), |m| (m.start, m.end));
+        }
+        Some((head, load_kind(&head, p.pool().free(), &t)))
     }
 
     /// One pass of the queued card work. Out of line: its rows and the
@@ -583,11 +741,16 @@ impl SourceCell {
     #[inline(never)]
     pub fn work<S: Store>(&mut self, card: &mut crate::storage::Card, s: &mut S, p: &mut Project) {
         let Some(job) = self.job.take() else { return };
+        // A re-head runs unseen: its failures say nothing.
+        #[cfg(feature = "tape")]
+        let seen = !matches!(job, SourceJob::Rehead(_));
+        #[cfg(not(feature = "tape"))]
+        let seen = true;
         let ran = card.run(s, |s, r| {
             self.run(job, s, r, p);
             Ok::<_, StoreError>(())
         });
-        if ran.is_err() {
+        if ran.is_err() && seen {
             // No card, or it won't mount: the job's own failure.
             self.note = Some(READ_FAILED);
         }
@@ -624,6 +787,26 @@ impl SourceCell {
                     self.pick(p, part, h.sref);
                 }
                 LoadStep::Failed(w) => self.note = Some(w),
+            },
+            #[cfg(feature = "tape")]
+            SourceJob::Stream(part, mut l) => match l.step(s, r, p, STEP_BYTES as usize) {
+                StreamStep::More => self.job = Some(SourceJob::Stream(part, l)),
+                StreamStep::Done(_) => {
+                    self.at = None;
+                    self.pick(p, part, l.sref());
+                }
+                StreamStep::Failed(f) => self.note = Some(stream_fail_words(f)),
+            },
+            #[cfg(feature = "tape")]
+            SourceJob::Rehead(mut l) => match l.step(s, r, p, STEP_BYTES as usize) {
+                StreamStep::More => self.job = Some(SourceJob::Rehead(l)),
+                StreamStep::Done(_) | StreamStep::Failed(StreamFail::Sounding) => {}
+                // Not again until the heads it wants change.
+                StreamStep::Failed(_) => {
+                    if let Some(w) = &mut self.wait {
+                        w.failed = true;
+                    }
+                }
             },
             // `UiState::lib_step`'s, not this.
             SourceJob::Stage(l) => self.job = Some(SourceJob::Stage(l)),
