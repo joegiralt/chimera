@@ -89,7 +89,7 @@ impl Play<'_> {
             bus: &self.rig.bus,
             stats: &self.rig.stats,
             pend,
-            reach_cents: 0.0,
+            ratio_max: None,
         };
         f(&mut self.cur, &mut port)
     }

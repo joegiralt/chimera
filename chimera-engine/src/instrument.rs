@@ -39,6 +39,7 @@ use crate::scope::ScopeWriter;
 use crate::source_table::{AudioToken, GateView};
 use crate::stream::admit::{Admit, Age, Bill, STREAM_BUDGET_BPS, admit};
 use crate::stream::port::{CtxBase, NoPorts, VoicePorts};
+use crate::stream::stats::StreamStats;
 use crate::tracked::Tracked;
 use crate::voice_alloc::{Allocator, VoiceIdx};
 use crate::{MidiChannel, MidiNote, Velocity};
@@ -298,33 +299,44 @@ struct Waiting {
     source: Option<SourceId>,
 }
 
-/// A voice's card stream, as admission sees it (slice 1 § 5.5).
+/// What admission paid for a streamed note (slice 1 § 5.5): its bill,
+/// and the read ratio that covers, its cap (`StreamPort::ratio_max`).
+#[derive(Clone, Copy, Debug)]
+struct Paid {
+    bill: Bill,
+    ratio: f32,
+}
+
+/// A voice's card stream, as admission sees it.
 #[derive(Clone, Copy, Debug)]
 struct Streaming {
-    /// Its note's bill; `None` off the card.
-    bill: Option<Bill>,
+    /// Its note's; `None` off the card, or not admitted yet (its source
+    /// moving at note-on).
+    paid: Option<Paid>,
     /// The note it took fades out first on the same ring: billed until
     /// the fade ends.
     fading: Option<Bill>,
     age: Age,
-    /// Its note's reach past PITCH and TUNING (`StreamPort::reach_cents`).
-    reach: f32,
+    /// Its reach rose past what the card admits: it holds at its cap,
+    /// counted once (`StreamStats::held_at_cap`).
+    #[cfg_attr(not(feature = "tape"), allow(dead_code))]
+    capped: bool,
 }
 
 impl Streaming {
     const IDLE: Streaming = Streaming {
-        bill: None,
+        paid: None,
         fading: None,
         age: Age {
             released: false,
             since: 0,
         },
-        reach: 0.0,
+        capped: false,
     };
 
     /// The ring serves one stream at a time: counted once, fading or not.
     fn billed(&self) -> Option<Bill> {
-        self.bill.max(self.fading)
+        self.paid.map(|p| p.bill).max(self.fading)
     }
 }
 
@@ -893,19 +905,20 @@ impl Instrument {
         a.params.engine() == EngineType::Tape && TapeEngine::refuses(&a.params.tape, a.source, src)
     }
 
-    /// What key `key`'s note-on, `note` on Part `p`, asks of the card
-    /// (slice 1 § 5.5): its bill at the fastest it reads, and its reach
-    /// past PITCH and TUNING (`StreamPort::reach_cents`); `None` off the
-    /// card. A glide steal can start from the Part's highest sounding note;
-    /// a HELD RE-SNAP key can glide up to `snap_reach_up` over itself.
+    /// What key `key`'s note `note` on Part `p`, reading `source`, asks of
+    /// the card (slice 1 § 5.5): its bill at the fastest it can read, from
+    /// PITCH, TUNING, every PITCH and FINE route at full swing, the bend's
+    /// range and wow; `None` off the card, or while `source` moves. A glide
+    /// steal can start from the Part's highest sounding note; a snapping
+    /// Part's key can re-snap up to `snap_reach_up` over itself.
     #[cfg(feature = "tape")]
     fn stream_bill(
         &self,
         p: usize,
         shared: &AudioShared,
         src: &GateView<'_>,
-        (key, note): (MidiNote, MidiNote),
-    ) -> Option<(Bill, f32)> {
+        (key, note, source): (MidiNote, MidiNote, Option<SourceId>),
+    ) -> Option<Paid> {
         use crate::dsp::engines::pitch_reach;
         use crate::dsp::tape_engine::ratio_max;
         use crate::dsp::tape_engine::read::Descriptor;
@@ -915,7 +928,7 @@ impl Instrument {
         if part.params.engine() != EngineType::Tape {
             return None;
         }
-        let d = Descriptor::from_bytes(src.bytes(part.source?)?).filter(|d| d.heads > 0)?;
+        let d = Descriptor::from_bytes(src.bytes(source?)?).filter(|d| d.heads > 0)?;
         let mut top = note.get();
         if part.params.pitch.steal_glide().is_some() {
             for s in self
@@ -927,7 +940,8 @@ impl Instrument {
                 top = top.max(s.note().map_or(0, MidiNote::get));
             }
         }
-        if part.mix.held == Held::Resnap && part.mix.snap.target().is_some() {
+        // HELD may turn to RE-SNAP mid-note: any snapping Part's key may.
+        if part.mix.snap.target().is_some() {
             let k = key.get();
             let up = Note::new(k).map_or(11, snap_reach_up);
             top = top.max(k.saturating_add(up).min(127));
@@ -935,8 +949,11 @@ impl Instrument {
         let routes = pitch_reach(&part.mod_state);
         let bend = f32::from(part.mix.bend) * 100.0;
         let cents = (part.params.pitch.semitones() + self.tune) * 100.0 + routes;
-        let b = bill(d.rate, ratio_max(&part.params.tape, top, cents, bend));
-        Some((b, routes + bend))
+        let ratio = ratio_max(&part.params.tape, top, cents, bend);
+        Some(Paid {
+            bill: bill(d.rate, ratio),
+            ratio,
+        })
     }
 
     /// Without TAPE every TAPE note is refused (`off`): nothing streams.
@@ -946,8 +963,8 @@ impl Instrument {
         _: usize,
         _: &AudioShared,
         _: &GateView<'_>,
-        _: (MidiNote, MidiNote),
-    ) -> Option<(Bill, f32)> {
+        _: (MidiNote, MidiNote, Option<SourceId>),
+    ) -> Option<Paid> {
         None
     }
 
@@ -964,19 +981,122 @@ impl Instrument {
         admit(new, playing, STREAM_BUDGET_BPS)
     }
 
+    /// Admits voice `v`'s bill `new` mid-note (#595): only released voices
+    /// go, each fading out as a shed one does; a held note is never cut.
+    /// False: it doesn't fit, nothing stolen.
+    #[cfg(feature = "tape")]
+    fn admit_mid(&mut self, v: usize, new: Bill) -> bool {
+        let mut gone = [false; MAX_VOICES];
+        gone[v] = true;
+        // Each steal adds a voice to `gone`: at most one a voice.
+        for _ in 0..=MAX_VOICES {
+            let st = &self.streaming;
+            let others = || {
+                st.iter()
+                    .enumerate()
+                    .filter(|&(w, _)| !gone[w])
+                    .filter_map(|(w, s)| Some((w, s.billed()?, s.age)))
+            };
+            let held = others()
+                .filter(|o| !o.2.released)
+                .fold(0u32, |a, o| a.saturating_add(o.1.0));
+            let released = others().filter(|o| o.2.released);
+            match admit(new, released, STREAM_BUDGET_BPS.saturating_sub(held)) {
+                Admit::Ok => return true,
+                Admit::Steal(w) if w < MAX_VOICES => {
+                    gone[w] = true;
+                    self.alloc.kill(w);
+                    self.shed(w);
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// Voice `v`'s note, paid for, now reaches `new` (#595): re-admitted
+    /// (`admit_mid`), its cap following; or it holds at its cap, counted
+    /// once a rise.
+    #[cfg(feature = "tape")]
+    fn raise(&mut self, v: usize, new: Paid, stats: Option<&StreamStats>) {
+        let st = self.streaming[v];
+        let Some(old) = st.paid.filter(|old| new.ratio > old.ratio) else {
+            return;
+        };
+        let up = Paid {
+            bill: new.bill.max(old.bill),
+            ratio: new.ratio,
+        };
+        if self.admit_mid(v, up.bill) {
+            (self.streaming[v].paid, self.streaming[v].capped) = (Some(up), false);
+        } else if !st.capped {
+            self.streaming[v].capped = true;
+            if let Some(s) = stats {
+                s.held_at_cap.fetch_add(1, Relaxed);
+            }
+        }
+    }
+
+    /// Once a block, before the voices render (#595): each sounding streamed
+    /// note's bill, as its Part's PITCH, TUNING, bend range, routes and SNAP
+    /// now reach, re-admitted when it rose (`raise`). A note whose source
+    /// moved at note-on is admitted once it reads, released voices going,
+    /// or refused, counted, and freed. Eight voices' bills at most.
+    #[cfg(feature = "tape")]
+    #[inline(never)]
+    fn refresh_bills(
+        &mut self,
+        shared: &AudioShared,
+        src: &GateView<'_>,
+        stats: Option<&StreamStats>,
+    ) {
+        for v in 0..MAX_VOICES {
+            let s = self.alloc.slots()[v];
+            let (Some(q), Some(note)) = (s.part(), s.note()) else {
+                continue;
+            };
+            let voice = &self.voices[v];
+            if s.dying() || !voice.is_active() || voice.fading() || self.waiting[v].is_some() {
+                continue;
+            }
+            let at = (self.keys[v], note, voice.reads()[0]);
+            let Some(new) = self.stream_bill(q as usize, shared, src, at) else {
+                continue;
+            };
+            if self.streaming[v].paid.is_some() {
+                self.raise(v, new, stats);
+            } else if self.admit_mid(v, new.bill) {
+                self.streaming[v].paid = Some(new);
+            } else {
+                if let Some(s) = stats {
+                    s.late_refused.fetch_add(1, Relaxed);
+                }
+                self.alloc.kill(v);
+                self.shed(v);
+            }
+        }
+    }
+
+    #[cfg(not(feature = "tape"))]
+    #[inline(always)]
+    fn refresh_bills(&mut self, _: &AudioShared, _: &GateView<'_>, _: Option<&StreamStats>) {}
+
     /// The voice a note-on books (`Allocator::pick_where`), once a streamed
     /// note's admission has freed what the card needs: each voice it steals
     /// fades out through the allocator, as a shed one does, and the pick
     /// is asked again, so the note takes a stolen voice when it needs one.
-    /// A Mono retrigger or a re-strike replaces its voice's stream. `None`:
-    /// refused, and counted.
+    /// A Mono retrigger or a re-strike replaces its voice's stream; a STEAL
+    /// GLIDE one carries on the held note, so it is admitted mid-note
+    /// (`raise`). Returns what the note is paid; `None`: refused, counted.
+    #[cfg(feature = "tape")]
     #[inline(never)]
     fn pick_admitted(
         &mut self,
         (q, mode, note, from): (u8, PartMode, MidiNote, NoteOrigin),
-        cost: Cost,
-        stream: Option<Bill>,
-    ) -> Option<usize> {
+        (cost, glides): (Cost, bool),
+        stream: Option<Paid>,
+        stats: Option<&StreamStats>,
+    ) -> Option<(usize, Option<Paid>)> {
         let mut gone = [false; MAX_VOICES];
         // Each steal adds a voice to `gone`: at most one a voice.
         for _ in 0..=MAX_VOICES {
@@ -989,15 +1109,21 @@ impl Instrument {
                 break;
             };
             let Some(new) = stream else {
-                return Some(v);
+                return Some((v, None));
             };
             let s = self.alloc.slots()[v];
-            let mut ask = gone;
-            ask[v] |= !s.dying()
+            let replaces = !s.dying()
                 && s.part() == Some(q)
                 && (mode == PartMode::Mono || s.note() == Some(note));
-            match self.admit_stream(new, &ask) {
-                Admit::Ok => return Some(v),
+            if replaces && glides && self.voices[v].is_active() && self.streaming[v].paid.is_some()
+            {
+                self.raise(v, new, stats);
+                return Some((v, self.streaming[v].paid));
+            }
+            let mut ask = gone;
+            ask[v] |= replaces;
+            match self.admit_stream(new.bill, &ask) {
+                Admit::Ok => return Some((v, Some(new))),
                 Admit::Steal(w) if w < MAX_VOICES => {
                     gone[w] = true;
                     self.alloc.kill(w);
@@ -1010,9 +1136,50 @@ impl Instrument {
         None
     }
 
+    /// Without TAPE nothing streams: the pick alone.
+    #[cfg(not(feature = "tape"))]
+    #[inline(always)]
+    fn pick_admitted(
+        &mut self,
+        (q, mode, note, from): (u8, PartMode, MidiNote, NoteOrigin),
+        (cost, _): (Cost, bool),
+        _: Option<Paid>,
+        _: Option<&StreamStats>,
+    ) -> Option<(usize, Option<Paid>)> {
+        let reserved = self.reserved();
+        let origins = &self.note_origin;
+        let v = self
+            .alloc
+            .pick_where(q, mode, note, cost, reserved, &|v| origins[v] == from);
+        if v.is_none() {
+            self.alloc.refuse();
+        }
+        v.map(|v| (v, None))
+    }
+
+    /// Voice `v`'s port this call: `source`'s, capped at what it is paid,
+    /// only while admission bills the voice; a note never admitted reads
+    /// nothing.
+    #[cfg(feature = "tape")]
+    fn port_of(&self, v: usize, source: Option<SourceId>) -> (Option<SourceId>, Option<f32>) {
+        let st = &self.streaming[v];
+        match st.billed() {
+            Some(_) => (source, st.paid.map(|p| p.ratio)),
+            None => (None, None),
+        }
+    }
+
+    /// Without TAPE nothing streams: no port.
+    #[cfg(not(feature = "tape"))]
+    #[inline(always)]
+    fn port_of(&self, _: usize, _: Option<SourceId>) -> (Option<SourceId>, Option<f32>) {
+        (None, None)
+    }
+
     /// A block on voice `v`'s stream: its age (from its release, or its
     /// start while held; a shed voice the oldest of all), and the end of a
     /// fade it was billed for.
+    #[cfg(feature = "tape")]
     fn age_stream(&mut self, v: usize) {
         let s = self.alloc.slots()[v];
         let st = &mut self.streaming[v];
@@ -1034,6 +1201,10 @@ impl Instrument {
             st.fading = None;
         }
     }
+
+    #[cfg(not(feature = "tape"))]
+    #[inline(always)]
+    fn age_stream(&mut self, _: usize) {}
 
     /// The voices' bills as admission counts them: for the tests.
     #[cfg(any(test, feature = "test-support"))]
@@ -1107,13 +1278,17 @@ impl Instrument {
                     let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
                     let knobs = if first { Knobs::COST } else { Cost::ZERO };
                     let mut cost = self.costs[p] + knobs + self.high_note(p, shared, note, first);
-                    let stream = self.stream_bill(p, shared, src, (ev.note, note));
+                    let stream = self.stream_bill(p, shared, src, (ev.note, note, part.source));
                     if stream.is_some() {
                         cost = cost + COST_STREAM;
                     }
-                    let Some(v) =
-                        self.pick_admitted((q, mode, note, from), cost, stream.map(|(b, _)| b))
-                    else {
+                    let glides = part.params.pitch.steal_glide().is_some();
+                    let Some((v, stream)) = self.pick_admitted(
+                        (q, mode, note, from),
+                        (cost, glides),
+                        stream,
+                        ports.stats(),
+                    ) else {
                         continue;
                     };
                     // Sympathetic: a free slot is promised to it, else it
@@ -1160,7 +1335,6 @@ impl Instrument {
                     crate::probe::acc(1, t2.wrapping_sub(t1));
                     let voice = &mut self.voices[v];
                     let waited = self.waiting[v].take().is_some();
-                    let reach = stream.map_or(0.0, |(_, r)| r);
                     let queued = if waits || deferred {
                         // Another Part's sound fades out on its own bus and
                         // settings first; a Sympathetic note past the clear
@@ -1178,22 +1352,27 @@ impl Instrument {
                             part: part_id(q),
                             tune: self.tune,
                         };
-                        ports.ctx(base, VoiceIdx::ALL[v], (part.source, reach), |ctx| {
+                        // Unbilled, no port (`port_of`).
+                        let port = (stream.and(part.source), stream.map(|p| p.ratio));
+                        ports.ctx(base, VoiceIdx::ALL[v], port, |ctx| {
                             voice.note_on(note, vel, &part.params, part.source, ctx)
                         })
                     };
                     // The voice's old stream, if it fades out first on the
                     // same ring, counts until the fade ends.
-                    let old = self.streaming[v].billed();
-                    self.streaming[v] = Streaming {
-                        bill: stream.map(|(b, _)| b),
-                        fading: old.filter(|_| self.voices[v].fading()),
-                        age: Age {
-                            released: false,
-                            since: 0,
-                        },
-                        reach,
-                    };
+                    #[cfg(feature = "tape")]
+                    {
+                        let old = self.streaming[v].billed();
+                        self.streaming[v] = Streaming {
+                            paid: stream,
+                            fading: old.filter(|_| self.voices[v].fading()),
+                            age: Age {
+                                released: false,
+                                since: 0,
+                            },
+                            capped: false,
+                        };
+                    }
                     #[cfg(feature = "probe")]
                     crate::probe::acc(2, crate::probe::now().wrapping_sub(t2));
                     // A note replaced before it sounded (ADR 0027).
@@ -1554,7 +1733,11 @@ impl Instrument {
             return false;
         }
         self.alloc.fade_from(v, Cost::ZERO);
-        self.streaming[v].fading = None;
+        #[cfg(feature = "tape")]
+        {
+            self.streaming[v].fading = None;
+        }
+        let port = self.port_of(v, w.source);
         let voice = &mut self.voices[v];
         let base = CtxBase {
             sym: &mut self.sym,
@@ -1562,8 +1745,7 @@ impl Instrument {
             part: part_id(q),
             tune: self.tune,
         };
-        let reach = self.streaming[v].reach;
-        ports.ctx(base, VoiceIdx::ALL[v], (w.source, reach), |ctx| {
+        ports.ctx(base, VoiceIdx::ALL[v], port, |ctx| {
             let _ = voice.note_on(note, w.vel, params, w.source, ctx);
             if !held {
                 voice.note_off(ctx);
@@ -1843,6 +2025,7 @@ impl Instrument {
         // 0. Notes that waited on the clear budget, their voices idle, start
         //    before the voices render: let in this block, one sounds in it.
         self.clear_backlog = false;
+        self.refresh_bills(shared, src, ports.stats());
         self.start_waiting(shared, src, ports);
         self.serve_resnaps();
         #[cfg(feature = "probe")]
@@ -1857,6 +2040,9 @@ impl Instrument {
             }
             let p = self.sounding[v] as usize % MAX_PARTS;
             let part = &shared.parts[p];
+            // A note queued behind the fade starts in it, on its source.
+            let [latched, queued] = self.voices[v].reads();
+            let port = self.port_of(v, queued.or(latched));
             let base = CtxBase {
                 sym: &mut self.sym,
                 src,
@@ -1864,9 +2050,6 @@ impl Instrument {
                 tune: self.tune,
             };
             let voice = &mut self.voices[v];
-            // A note queued behind the fade starts in it, on its source.
-            let [latched, queued] = voice.reads();
-            let port = (queued.or(latched), self.streaming[v].reach);
             let (knobs, clock) = (&self.knobs[p].0, &self.lfo_clocks[p]);
             ports.ctx(base, VoiceIdx::ALL[v], port, |ctx| {
                 voice.render_knobs(
@@ -1899,6 +2082,7 @@ impl Instrument {
             {
                 self.waiting[v] = None;
                 self.alloc.release_finished(v);
+                #[cfg(feature = "tape")]
                 if self.alloc.slots()[v].is_free() {
                     self.streaming[v] = Streaming::IDLE;
                 }

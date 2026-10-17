@@ -9,6 +9,11 @@ pub struct StreamStats {
     /// Cold starts: a note-on without a head, or a return from quiet.
     pub cold: AtomicU32,
     pub faults: AtomicU32,
+    /// A held note's reach rose mid-note past what the card could admit:
+    /// it plays on at its cap (#595).
+    pub held_at_cap: AtomicU32,
+    /// A note whose source was moving at note-on, refused once it read.
+    pub late_refused: AtomicU32,
     pub frame_errors: AtomicU32,
     pub quiet_ms_max: AtomicU32,
     pub irq_us_max: AtomicU32,
@@ -21,6 +26,8 @@ impl StreamStats {
             underruns: AtomicU32::new(0),
             cold: AtomicU32::new(0),
             faults: AtomicU32::new(0),
+            held_at_cap: AtomicU32::new(0),
+            late_refused: AtomicU32::new(0),
             frame_errors: AtomicU32::new(0),
             quiet_ms_max: AtomicU32::new(0),
             irq_us_max: AtomicU32::new(0),

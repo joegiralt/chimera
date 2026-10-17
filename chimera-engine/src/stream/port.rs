@@ -24,10 +24,10 @@ pub struct StreamPort<'a, 's> {
     /// Pends the card IRQ (`DMA2_STR0`), after every new want, whoever
     /// owns the bus.
     pub pend: fn(),
-    /// Cents a note started through this port can move past its PITCH and
-    /// TUNING: its routes at full swing and the bend's range (#585). Its
-    /// cursor plans for them.
-    pub reach_cents: f32,
+    /// The read ratio admission pays for this voice (slice 1 § 5.5, #585):
+    /// its cap. `None`: unbilled (the bench's and the deck tests' ports),
+    /// the note's own speed and wow.
+    pub ratio_max: Option<f32>,
 }
 
 /// The card's side of every port this block.
@@ -58,14 +58,17 @@ pub struct CtxBase<'a> {
 /// wired, `Streams` where they are.
 pub trait VoicePorts {
     /// `f` on `base` with voice `v`'s port for `port`'s source, if it
-    /// streams; a note it starts reaches `port`'s cents.
+    /// streams, capped at `port`'s ratio.
     fn ctx<R>(
         &mut self,
         base: CtxBase<'_>,
         v: VoiceIdx,
-        port: (Option<SourceId>, f32),
+        port: (Option<SourceId>, Option<f32>),
         f: impl FnOnce(&mut EngineCtx<'_>) -> R,
     ) -> R;
+
+    /// The streams' counters; `None` with no rings.
+    fn stats(&self) -> Option<&StreamStats>;
 }
 
 /// No rings: a streamed source plays nothing.
@@ -77,7 +80,7 @@ impl VoicePorts for NoPorts {
         &mut self,
         base: CtxBase<'_>,
         _: VoiceIdx,
-        _: (Option<SourceId>, f32),
+        _: (Option<SourceId>, Option<f32>),
         f: impl FnOnce(&mut EngineCtx<'_>) -> R,
     ) -> R {
         f(&mut EngineCtx {
@@ -88,6 +91,10 @@ impl VoicePorts for NoPorts {
             tune: base.tune,
         })
     }
+
+    fn stats(&self) -> Option<&StreamStats> {
+        None
+    }
 }
 
 impl VoicePorts for Streams<'_, '_> {
@@ -95,12 +102,12 @@ impl VoicePorts for Streams<'_, '_> {
         &mut self,
         base: CtxBase<'_>,
         v: VoiceIdx,
-        (source, reach_cents): (Option<SourceId>, f32),
+        (source, ratio_max): (Option<SourceId>, Option<f32>),
         f: impl FnOnce(&mut EngineCtx<'_>) -> R,
     ) -> R {
         let c = &self.card;
         let Some(file_frames) = source.and_then(|id| (c.frames)(id)) else {
-            return NoPorts.ctx(base, v, (None, 0.0), f);
+            return NoPorts.ctx(base, v, (None, None), f);
         };
         let mut turn = self.audio.turn();
         let mut port = StreamPort {
@@ -111,7 +118,7 @@ impl VoicePorts for Streams<'_, '_> {
             bus: c.bus,
             stats: c.stats,
             pend: c.pend,
-            reach_cents,
+            ratio_max,
         };
         f(&mut EngineCtx {
             sym: base.sym,
@@ -120,5 +127,9 @@ impl VoicePorts for Streams<'_, '_> {
             part: base.part,
             tune: base.tune,
         })
+    }
+
+    fn stats(&self) -> Option<&StreamStats> {
+        Some(self.card.stats)
     }
 }

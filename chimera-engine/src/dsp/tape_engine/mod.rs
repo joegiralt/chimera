@@ -498,7 +498,8 @@ pub struct TapeDeck {
     rel: f32,
     rel_k: f32,
     fade_k: f32,
-    /// ONESHOT under SLICE NOTE: the note picks the slice and plays at ROOT.
+    /// `params::at_root` at note-on: ONE under SLICE NOTE, the note picks
+    /// the slice and plays at ROOT. The deck's one SLICE NOTE test.
     at_root: bool,
     fade: Option<Fade>,
     /// The first head's frame at which the next fade, wrap or turn is
@@ -545,10 +546,11 @@ pub struct TapeDeck {
     /// The fastest step a sample: `INC_MAX`, or a streamed note's
     /// `inc_max`, which its cursor plans for.
     inc_cap: f32,
-    /// A streamed note's rate, and the cents its speed reaches over its key
-    /// (PITCH, TUNING, its routes and bend): `stream_cap`'s.
+    /// A streamed note's rate.
     stream_rate: u16,
-    stream_cents: f32,
+    /// Blocks a gated note has waited on its moving source: tape time it
+    /// catches up on when it starts (#595).
+    waited: u32,
     /// Streamed views check every tap: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     strict: bool,
@@ -645,7 +647,7 @@ impl TapeDeck {
             ducked: false,
             inc_cap: INC_MAX,
             stream_rate: 0,
-            stream_cents: 0.0,
+            waited: 0,
             #[cfg(any(test, feature = "test-support"))]
             strict: false,
         }
@@ -721,7 +723,20 @@ impl TapeDeck {
         p: &TapeEngineParams,
         src: &GateView<'_>,
         sample_rate: u32,
+        streams: Option<&mut StreamPort<'_, '_>>,
+    ) {
+        self.start_from(note, p, src, sample_rate, streams, 0);
+    }
+
+    /// `start`, a gated note `waited` blocks after its note-on.
+    fn start_from(
+        &mut self,
+        note: u8,
+        p: &TapeEngineParams,
+        src: &GateView<'_>,
+        sample_rate: u32,
         mut streams: Option<&mut StreamPort<'_, '_>>,
+        waited: u32,
     ) {
         if self.streamed
             && let Some(port) = streams.as_deref_mut()
@@ -730,7 +745,7 @@ impl TapeDeck {
         }
         let v = match self.row_of(src) {
             Some(Row::Streamed(held, d)) => {
-                self.start_streamed(note, p, (held, d), sample_rate, streams);
+                self.start_streamed(note, p, (held, d), (sample_rate, waited), streams);
                 return;
             }
             Some(Row::Whole(v)) => Some(v),
@@ -742,6 +757,7 @@ impl TapeDeck {
                 (self.note, self.model, self.mode) = (note, p.model, p.mode);
                 self.hold = params::hold(p);
                 (self.gated, self.active, self.streamed) = (true, true, false);
+                self.waited = 0;
             }
             _ => (self.gated, self.active, self.streamed) = (false, false, false),
         }
@@ -757,7 +773,7 @@ impl TapeDeck {
         note: u8,
         p: &TapeEngineParams,
         held: (&[u8], Descriptor),
-        sample_rate: u32,
+        (sample_rate, waited): (u32, u32),
         streams: Option<&mut StreamPort<'_, '_>>,
     ) {
         (self.gated, self.active, self.streamed) = (false, false, false);
@@ -773,28 +789,68 @@ impl TapeDeck {
         // Reads nothing: the window from the file's frames and the rate.
         self.note_on(note, p, &head.view, sample_rate);
         self.streamed = true;
-        (self.stream_rate, self.stream_cents) = (row.desc().rate, self.pitch + port.reach_cents);
-        self.inc_cap = self.stream_cap(note, sample_rate);
+        self.stream_rate = row.desc().rate;
+        let r = port.ratio_max.unwrap_or_else(|| self.own_ratio(note));
+        self.inc_cap = self.cap_at(r, sample_rate);
+        if waited > 0 {
+            self.catch_up(waited, sample_rate);
+            if !self.active {
+                return;
+            }
+        }
         let at = self.heads[0].pos.whole();
         self.cursor
             .start(at, self.inc_cap, row.head(HeadIdx::START), port);
     }
 
-    /// The fastest a streamed note on `note` reads, frames a sample (#585):
-    /// `stream_cents` over its key, and wow (`admit::ratio_max`). SLICE NOTE
-    /// plays at ROOT. MOTION walks the loop, never its speed.
-    fn stream_cap(&self, note: u8, sample_rate: u32) -> f32 {
-        let root = if self.one() && self.at_root {
-            f32::from(note) * 100.0
-        } else {
-            self.root
-        };
-        let r = crate::stream::admit::ratio_max(note, root, self.stream_cents, 0.0);
+    /// A streamed note's cap at read ratio `r`, frames a sample.
+    fn cap_at(&self, r: f32, sample_rate: u32) -> f32 {
         clampf(
             f32::from(self.stream_rate) / sample_rate as f32 * r,
             f32::EPSILON,
             INC_MAX,
         )
+    }
+
+    /// An unbilled port's ratio (the bench's, the deck tests'): `note` at
+    /// its pitch, and wow. SLICE NOTE plays at ROOT.
+    fn own_ratio(&self, note: u8) -> f32 {
+        let root = if self.at_root {
+            f32::from(note) * 100.0
+        } else {
+            self.root
+        };
+        crate::stream::admit::ratio_max(note, root, self.pitch, 0.0)
+    }
+
+    /// A note that waited `blocks` on a moving source plays from where
+    /// tape time has reached (#595), its cursor starting there, cold if no
+    /// head holds it: ONE to its end, LOOP up to its first event (a gate
+    /// moves for a few blocks).
+    fn catch_up(&mut self, blocks: u32, sample_rate: u32) {
+        let i = inc(
+            self.stream_rate,
+            self.note,
+            self.pitch + self.tune(),
+            self.root,
+            sample_rate,
+        );
+        // `as` saturates: never past `u32`.
+        let frames = (blocks as f32 * BLOCK_SIZE as f32 * i) as u32;
+        let to = self.heads[0].pos.whole().saturating_add(frames);
+        let to = if self.one() {
+            if to >= self.once_end {
+                self.active = false;
+                return;
+            }
+            to
+        } else {
+            to.min(self.event.saturating_sub(1))
+                .max(self.heads[0].pos.whole())
+        };
+        for h in &mut self.heads {
+            h.pos = at(to);
+        }
     }
 
     /// The next wrap lands on a head: the fade's second head reads it from
@@ -885,7 +941,15 @@ impl TapeDeck {
         };
         if let Some(v) = v {
             if core::mem::take(&mut self.gated) {
-                self.start(self.note, p, src, sample_rate, streams.as_deref_mut());
+                let waited = core::mem::take(&mut self.waited);
+                self.start_from(
+                    self.note,
+                    p,
+                    src,
+                    sample_rate,
+                    streams.as_deref_mut(),
+                    waited,
+                );
             } else if v.frames() < self.n || self.streamed {
                 self.active = false;
             }
@@ -894,6 +958,8 @@ impl TapeDeck {
             out.fill(0.0);
             if !self.src.is_some_and(|id| src.moving(id)) {
                 (self.gated, self.active) = (false, false);
+            } else if self.gated {
+                self.waited = self.waited.saturating_add(1);
             }
         }
         self.end_stream(streams);
@@ -927,7 +993,8 @@ impl TapeDeck {
             return;
         };
         if core::mem::take(&mut self.gated) {
-            self.start(self.note, p, src, sample_rate, Some(&mut *port));
+            let waited = core::mem::take(&mut self.waited);
+            self.start_from(self.note, p, src, sample_rate, Some(&mut *port), waited);
         }
         match self.row((held, d), port) {
             Some(row) if self.active && self.streamed && row.frames() >= self.n => {
@@ -953,6 +1020,14 @@ impl TapeDeck {
         sample_rate: u32,
         port: &mut StreamPort<'_, '_>,
     ) {
+        // Admission paid for faster (a knob, a glide, a re-snap: #595):
+        // the cursor plans for it from here.
+        if let Some(r) = port.ratio_max
+            && self.cap_at(r, sample_rate) > self.inc_cap
+        {
+            self.inc_cap = self.cap_at(r, sample_rate);
+            self.cursor.raise(self.inc_cap);
+        }
         if let Some(h) = self.cursor.head()
             && row.head(h.idx) != Some(h)
         {
@@ -1030,8 +1105,8 @@ impl TapeDeck {
     /// no cap, and its cap: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn speed(&self) -> Option<(f32, f32)> {
-        let tune = if self.one_head() { self.tune() } else { 0.0 };
-        let cents = f32::from(self.note) * 100.0 + self.pitch + self.cents + tune - self.root;
+        let cents =
+            f32::from(self.note) * 100.0 + self.pitch + self.cents + self.tune() - self.root;
         let wants = f32::from(self.stream_rate) / SAMPLE_RATE as f32
             * exp2(cents / 1_200.0)
             * self.slide.value();
@@ -1069,6 +1144,7 @@ impl TapeDeck {
         (self.streamed, self.inc_cap) = (false, INC_MAX);
         self.model = p.model;
         self.mode = p.mode;
+        self.at_root = params::at_root(p);
         self.hold = params::hold(p);
         self.gated = false;
         self.note = note;
@@ -1239,11 +1315,8 @@ impl TapeDeck {
     fn once_on(&mut self, note: u8, p: &TapeEngineParams, v: &SourceView<'_>, sample_rate: u32) {
         let (frames, rate) = (v.frames(), v.desc().rate);
         let mut w = Window::of(p.start, p.end, frames, min_frames(rate));
-        self.at_root = false;
         if self.one() {
-            let s = p.slice.slice();
-            self.at_root = s.by_note();
-            w = slice_bounds(w, s, note);
+            w = slice_bounds(w, p.slice.slice(), note);
             self.left = u32::MAX;
         } else {
             self.left = tron::tron_run_samples(tron::tron_len_s(p.size), sample_rate);
@@ -1289,22 +1362,16 @@ impl TapeDeck {
     /// `inc` glides to `note`'s from the pitch it sounds, a one-pole of
     /// `tau` seconds in log pitch. Idle, or on `note`, nothing moves.
     /// Gated, the note it starts on moves (its `note_on` drops the glide).
-    pub fn glide_to(&mut self, note: u8, (sample_rate, tau): (u32, f32)) {
+    pub fn glide_to(&mut self, note: u8, (_sample_rate, tau): (u32, f32)) {
         if !self.active || note == self.note {
             return;
         }
         // SLICE NOTE plays every key at ROOT: no pitch to travel.
-        let from = if self.one() && self.at_root {
+        let from = if self.at_root {
             self.slide.value()
         } else {
             exp2((self.note as f32 - note as f32) / 12.0) * self.slide.value()
         };
-        if self.streamed {
-            // From where it sounds, at most its cap, to `note`'s speed: its
-            // cursor plans for the faster (#585).
-            self.inc_cap = self.inc_cap.max(self.stream_cap(note, sample_rate));
-            self.cursor.raise(self.inc_cap);
-        }
         self.slide = Glide::new(from, tau);
         self.slide.toward(1.0);
         self.note = note;
