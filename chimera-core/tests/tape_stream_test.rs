@@ -26,9 +26,12 @@ use chimera_core::params::{EngineType, PitchParams, Steal};
 use chimera_core::part::{Held, LiveSnap, PartMode};
 use chimera_core::project::SourceId;
 use chimera_core::source_table::GateView;
+use chimera_core::storage::SourceRef;
 use chimera_core::stream::admit::{STREAM_BUDGET_BPS, bill, head_frames};
+use chimera_core::stream::layout::CHUNK_FRAMES;
 use chimera_core::stream::port::{StreamCard, StreamPort, Streams};
 use chimera_core::stream::ring::{AudioSide, Rings, ThirdSlots};
+use chimera_core::stream::stage::heads_for;
 use chimera_core::stream::test_card::TestCard;
 use chimera_core::stream::units::AudioBlocks;
 use chimera_core::voice_alloc::VoiceIdx;
@@ -382,23 +385,22 @@ fn underrun_drops_out_cleanly() {
 
 /// Eight notes in one block at TRON's speed (×1.214: +3 st and 33 cents of
 /// wow), the card at M1's worst (6.66 ms a read, 5 blocks) behind one read
-/// in flight: 100 ms heads hold, 60 ms heads starve. The heads end just
-/// past a chunk's start, as the burst's sums assume (spec § 5.4: the second
-/// chunks due 92 ms after the head).
+/// in flight: 100 ms heads hold, 60 ms heads starve. Placed as a load
+/// places them (`stage::heads_for`: just past a chunk's start, #583), they
+/// hold at every START, the worst included: there a 100 ms head cut at its
+/// length ends 2 frames short of a chunk, and starves.
 #[test]
 fn chord_burst_holds() {
     let whole = held_plain(&noise(FRAMES), RATE);
-    let underruns = |head: u32| {
+    let underruns = |at: u32, held: &dyn Fn(&TestCard<'_>, &TapeEngineParams) -> Vec<u8>| {
         let (rings, third) = rings();
         let mut st = Stream::new(&rings, &third, &whole, 5);
-        let at = 2_690 - head + 4;
         let p = TapeEngineParams {
             tape: 0.0,
             age: 0.0,
             ..params(PlayMode::One, at as f32 / FRAMES as f32, 1.0)
         };
-        let start = window_start(p.start, FRAMES);
-        let mut src = OneSource::new(&st.card.held(&[start], head));
+        let mut src = OneSource::new(&held(&st.card, &p));
         let mut slots: Vec<MaybeUninit<TapeEngine>> =
             (0..8).map(|_| MaybeUninit::uninit()).collect();
         let mut decks: Vec<&mut TapeEngine> = slots.iter_mut().map(deck).collect();
@@ -422,8 +424,29 @@ fn chord_burst_holds() {
         }
         st.card.stats.underruns.load(Ordering::Relaxed)
     };
-    assert_eq!(underruns(head_frames(RATE)), 0);
-    assert!(underruns(head_frames(RATE) * 6 / 10) > 0);
+    let cut = |head: u32| {
+        move |c: &TestCard<'_>, p: &TapeEngineParams| c.held(&[window_start(p.start, FRAMES)], head)
+    };
+    let loaded = |c: &TestCard<'_>, p: &TapeEngineParams| {
+        let r = SourceRef {
+            crc: 0,
+            frames: FRAMES,
+            rate: RATE,
+        };
+        c.held_heads(heads_for(r, p).unwrap().as_slice())
+    };
+    let hf = head_frames(RATE);
+    // Cut at its length, a head ending just past a chunk's start holds.
+    let kind = 2_690 - hf + 4;
+    assert_eq!(underruns(kind, &cut(hf)), 0);
+    assert!(underruns(kind, &cut(hf * 6 / 10)) > 0);
+    // The worst: cut at its length, it ends 2 frames short of chunk 2.
+    let cf = CHUNK_FRAMES.get();
+    let worst = 2 * cf - 2 - hf + 1;
+    assert!(underruns(worst, &cut(hf)) > 0, "a cut head starves there");
+    for at in [worst, worst + 2, kind, 3 * cf + 1_000, 1] {
+        assert_eq!(underruns(at, &loaded), 0, "START at {at}");
+    }
 }
 
 /// Review Focus 5: a loop of about 1,000 frames inside the loop-start head
@@ -625,6 +648,124 @@ fn moved_loop_fades_at_the_wrap() {
         let tail = &out[1_000 * BLOCK_SIZE..];
         assert!(tail.iter().any(|&y| y.abs() > 0.5), "xfade {xfade}: silent");
     }
+}
+
+/// A streamed LOOP's XFADE stops at 100 ms of source from its first pass
+/// (§ 7.3 step 6), which the loop head a load places holds (#584): every
+/// wrap lands warm on it, none cold, nothing starves, every read in its
+/// span.
+#[test]
+fn streamed_xfade_stops_at_what_the_loop_head_holds() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let p = TapeEngineParams {
+        size: 0.75,
+        position: 0.5,
+        xfade: 0.5,
+        tape: 0.0,
+        age: 0.0,
+        ..params(PlayMode::Loop, 0.30, 0.34)
+    };
+    let r = SourceRef {
+        crc: 0,
+        frames: FRAMES,
+        rate: RATE,
+    };
+    let (rings, third) = rings();
+    let mut st = Stream::new(&rings, &third, &whole, 0);
+    let mut src = OneSource::new(&st.card.held_heads(heads_for(r, &p).unwrap().as_slice()));
+    let mut slot = MaybeUninit::uninit();
+    let e = deck(&mut slot);
+    e.strict_spans();
+    let (mut b, mut out) = ([0.0; BLOCK_SIZE], Vec::new());
+    for k in 0..2_000 {
+        st.serve();
+        st.with(V, |port| {
+            if k == 0 {
+                e.start(60, &p, &src.view(), SR, Some(port));
+            }
+            e.play(&mut b, &p, &src.view(), SR, Some(port));
+        });
+        out.extend_from_slice(&b);
+        st.now += 1;
+    }
+    assert!(e.events() >= 4, "{} events: it wrapped", e.events());
+    let step = |x: &[f32]| {
+        x.windows(2)
+            .map(|d| (d[1] - d[0]).abs())
+            .fold(0.0, f32::max)
+    };
+    let steady = step(&out[60 * BLOCK_SIZE..400 * BLOCK_SIZE]);
+    let worst = step(&out[400 * BLOCK_SIZE..]);
+    assert!(worst <= 4.0 * steady, "step {worst} over 4 x {steady}");
+    // The fade reads RAM: the voice never ducks (a 300 Hz sine is never
+    // near 0 for a drop fade's 144 samples).
+    let quiet = out[60 * BLOCK_SIZE..]
+        .split(|y| y.abs() > 0.05)
+        .map(<[f32]>::len)
+        .max();
+    assert!(
+        quiet < Some(100),
+        "a run of {quiet:?} quiet samples: it ducked"
+    );
+    let stats = &st.card.stats;
+    assert_eq!(stats.cold.load(Ordering::Relaxed), 0, "every wrap warm");
+    assert_eq!(stats.underruns.load(Ordering::Relaxed), 0);
+    assert_eq!(stats.faults.load(Ordering::Relaxed), 0);
+}
+
+/// A loop moved a little earlier, its landing still in the loop head but
+/// its fade's start not: the voice ducks before the wrap and lands warm,
+/// rising from where the duck left it, never stepping to full.
+#[test]
+fn a_warm_landing_after_a_duck_rises() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let p = TapeEngineParams {
+        size: 0.75,
+        position: 0.5,
+        xfade: 0.3,
+        tape: 0.0,
+        age: 0.0,
+        ..params(PlayMode::Loop, 0.30, 0.34)
+    };
+    let r = SourceRef {
+        crc: 0,
+        frames: FRAMES,
+        rate: RATE,
+    };
+    let (rings, third) = rings();
+    let mut st = Stream::new(&rings, &third, &whole, 0);
+    let mut src = OneSource::new(&st.card.held_heads(heads_for(r, &p).unwrap().as_slice()));
+    let mut slot = MaybeUninit::uninit();
+    let e = deck(&mut slot);
+    e.strict_spans();
+    // About 1,000 frames earlier: lands in the head, the fade's start not.
+    let moved = TapeEngineParams {
+        position: 0.5 - 1_000.0 / 23_000.0,
+        ..p
+    };
+    let (mut b, mut out) = ([0.0; BLOCK_SIZE], Vec::new());
+    for k in 0..2_000 {
+        let q = if k < 50 { &p } else { &moved };
+        st.serve();
+        st.with(V, |port| {
+            if k == 0 {
+                e.start(60, q, &src.view(), SR, Some(port));
+            }
+            e.play(&mut b, q, &src.view(), SR, Some(port));
+        });
+        out.extend_from_slice(&b);
+        st.now += 1;
+    }
+    let step = |x: &[f32]| {
+        x.windows(2)
+            .map(|d| (d[1] - d[0]).abs())
+            .fold(0.0, f32::max)
+    };
+    let steady = step(&out[60 * BLOCK_SIZE..400 * BLOCK_SIZE]);
+    let worst = step(&out[400 * BLOCK_SIZE..]);
+    assert!(worst <= 4.0 * steady, "step {worst} over 4 x {steady}");
+    assert_eq!(st.card.stats.cold.load(Ordering::Relaxed), 0, "warm");
+    assert!(e.events() >= 4, "{} events", e.events());
 }
 
 // Admission and refusals at note-on (slice 1 § 5.5, § 2.3).

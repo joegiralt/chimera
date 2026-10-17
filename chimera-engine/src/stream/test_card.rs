@@ -13,7 +13,9 @@ use super::port::StreamPort;
 use super::ring::{AudioTurn, CardSide, Claim, Rings};
 use super::stats::StreamStats;
 use super::units::{AudioBlocks, Frames};
-use crate::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
+use crate::dsp::tape_engine::read::{
+    DESC_LEN, Descriptor, HeadSpec, Shape, streamed_held_len, write_head_table,
+};
 use crate::voice_alloc::VoiceIdx;
 
 pub struct TestCard<'r> {
@@ -78,22 +80,30 @@ impl<'r> TestCard<'r> {
     /// and a read at `S` takes the frame before (`stream::cursor`), so each
     /// head is staged from `S − 1`, down to its pair.
     pub fn held(&self, at: &[u32], head_frames: u32) -> Vec<u8> {
+        let heads: Vec<HeadSpec> = at
+            .iter()
+            .filter_map(|&s| {
+                let f = s.saturating_sub(1) & !1;
+                HeadSpec::new(f, f + head_frames.next_multiple_of(2))
+            })
+            .collect();
+        self.held_heads(&heads)
+    }
+
+    /// The streamed row holding `heads`, past the source's end as silence.
+    pub fn held_heads(&self, heads: &[HeadSpec]) -> Vec<u8> {
         let d = Descriptor {
-            heads: at.len() as u8,
-            head_frames,
+            head_frames: crate::stream::admit::head_frames(self.desc.rate),
             ..self.desc
         };
-        let mut held = d.to_bytes().to_vec();
-        let from: Vec<u32> = at.iter().map(|&s| s.saturating_sub(1) & !1).collect();
-        for f in &from {
-            held.extend_from_slice(&f.to_le_bytes());
-        }
-        let len = 3 * head_frames.div_ceil(2) as usize;
-        for &f in &from {
-            let o = 3 * (f / 2) as usize;
-            let mut head = self.samples.get(o..).unwrap_or(&[]).to_vec();
-            head.resize(len, 0);
-            held.extend_from_slice(&head[..len]);
+        let mut held = alloc::vec![0; streamed_held_len(heads)];
+        let mut at = write_head_table(d, heads, &mut held);
+        for h in heads {
+            let o = 3 * (h.first() / 2) as usize;
+            let src = self.samples.get(o..).unwrap_or(&[]);
+            let n = src.len().min(h.bytes());
+            held[at..at + n].copy_from_slice(&src[..n]);
+            at += h.bytes();
         }
         held
     }

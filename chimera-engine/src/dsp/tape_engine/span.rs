@@ -4,7 +4,7 @@
 //! those frames: ONE's and LOOP's loops read it as they read a row.
 //! Bank 2's, with `TapeDeck` (`build.rs`' `11tape_engine4span` glob).
 
-use super::desc::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape, head_table_of};
+use super::desc::{Descriptor, HeadTable, MIN_SOURCE_FRAMES, Shape, head_table_of};
 use super::read::SourceView;
 use crate::stream::cursor::{Cursor, HeadIdx, Plan, RamHead, SpanSrc};
 use crate::stream::layout::CHUNK_FRAMES;
@@ -35,11 +35,11 @@ impl Span<'_> {
 }
 
 /// A streamed `Plain`'s row (slice 1 § 5.1): the descriptor, each head's
-/// first frame, then the heads' samples, over a file of `frames`.
+/// frames, then the heads' samples, over a file of `frames`.
 #[derive(Clone, Copy)]
 pub struct StreamRow<'a> {
     held: &'a [u8],
-    table: &'a [[u8; 4]],
+    table: HeadTable<'a>,
     desc: Descriptor,
     frames: u32,
     /// Strict views, for the tests: every tap checked against its span.
@@ -84,18 +84,16 @@ impl<'a> StreamRow<'a> {
 
     /// Head `idx` as the cursor plays it: its frames, cut at the file's end.
     pub fn head(&self, idx: HeadIdx) -> Option<RamHead> {
-        let start = u32::from_le_bytes(*self.table.get(idx.index())?);
-        let end = start.saturating_add(self.desc.head_frames).min(self.frames);
+        let (h, _) = self.table.get(idx.index())?;
+        let (start, end) = (h.first(), h.end().min(self.frames));
         (start < end).then_some(RamHead { idx, start, end })
     }
 
-    /// Head `idx`'s span.
+    /// Head `idx`'s span: its first frame is even (`HeadSpec`).
     pub fn head_span(&self, idx: HeadIdx) -> Option<Span<'a>> {
-        let h = self.head(idx)?;
+        let (h, at) = self.table.get(idx.index())?;
         // `head_table` checked `held` holds every head's samples.
-        let len = 3 * self.desc.head_frames.div_ceil(2) as usize;
-        let at = DESC_LEN + 4 * self.table.len() + idx.index() * len;
-        self.span(self.held.get(at..at + len)?, h.start)
+        self.span(self.held.get(at..at + h.bytes())?, h.first())
     }
 
     /// A Ready slot's span: its chunk, and its guard's frames before it.

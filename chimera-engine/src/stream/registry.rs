@@ -26,9 +26,14 @@ const WRITING: u8 = u8::MAX;
 // Every id + 1 is a tag: neither `FREE` nor `WRITING`.
 const _: () = assert!(SourceId::ALL.len() < WRITING as usize);
 
-/// Every row taken: a ninth streamed source refuses to load.
+/// Why `insert` took no row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Full;
+pub enum RowRefused {
+    /// Every row taken: a ninth streamed source refuses to load.
+    Full,
+    /// A row holds the id already: one row an id.
+    Taken,
+}
 
 struct Row {
     tag: AtomicU8,
@@ -67,9 +72,13 @@ impl StreamRegistry {
         }
     }
 
-    /// `f` under `id`, in a free row. The UI's, before it publishes the
-    /// source's pool row.
-    pub fn insert(&self, id: SourceId, f: StreamFile) -> Result<(), Full> {
+    /// `f` under `id`, in a free row, if no row holds `id`. The UI's,
+    /// before it publishes the source's pool row: rows are inserted from
+    /// the UI's thread alone, so the look for `id` holds until the claim.
+    pub fn insert(&self, id: SourceId, f: StreamFile) -> Result<(), RowRefused> {
+        if self.get(id).is_some() {
+            return Err(RowRefused::Taken);
+        }
         let row = self
             .rows
             .iter()
@@ -78,7 +87,7 @@ impl StreamRegistry {
                     .compare_exchange(FREE, WRITING, Ordering::Acquire, Ordering::Relaxed)
                     .is_ok()
             })
-            .ok_or(Full)?;
+            .ok_or(RowRefused::Full)?;
         // SAFETY: the CAS made this row ours alone: no reader forms a
         // reference while its tag isn't an id's, and no one held it once
         // freed (`clear`).

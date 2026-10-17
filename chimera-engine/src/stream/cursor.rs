@@ -387,6 +387,26 @@ impl Cursor {
         self.tend(pos, true, port);
     }
 
+    /// A jump mid-note (a wrap, heads re-staged) to `pos`: `start`, but a
+    /// warm landing keeps the gain where it was and rises over
+    /// `DROP_FADE`, so a voice that ducked before it never steps.
+    pub fn jump(
+        &mut self,
+        pos: u32,
+        inc_max: f32,
+        head: Option<RamHead>,
+        port: &mut StreamPort<'_, '_>,
+    ) {
+        let level = self.gain.level;
+        self.start(pos, inc_max, head, port);
+        if matches!(self.state, Flow::Head(_)) && level < FULL {
+            self.gain = Fade {
+                level,
+                step: DROP_STEP,
+            };
+        }
+    }
+
     /// The note may read faster from here (a glide, #585): never slower.
     pub fn raise(&mut self, inc_max: f32) {
         self.inc = self.inc.max(clamp_inc(inc_max));

@@ -6,7 +6,7 @@ use chimera_engine::name::SoundName;
 use chimera_engine::project::SourceId;
 use chimera_engine::storage::{SourceHead, SourceLayout, SourceRef, data_offset};
 use chimera_engine::stream::layout::StreamFile;
-use chimera_engine::stream::registry::{Full, STREAM_ROWS, StreamRegistry};
+use chimera_engine::stream::registry::{RowRefused, STREAM_ROWS, StreamRegistry};
 use chimera_engine::stream::units::Frames;
 use chimera_hal::store::{FileRuns, Runs};
 use chimera_hal::units::{BlockCount, Bytes, Lba};
@@ -68,7 +68,7 @@ fn ninth_insert_is_full() {
     for n in 0..STREAM_ROWS as u8 {
         r.insert(id(n), file(1_000 + u32::from(n))).unwrap();
     }
-    assert_eq!(r.insert(id(20), file(9_000)), Err(Full));
+    assert_eq!(r.insert(id(20), file(9_000)), Err(RowRefused::Full));
     assert_eq!(frames(&r, 20), None);
     // SAFETY: as above.
     unsafe { r.clear(id(5)) };
@@ -121,4 +121,19 @@ fn a_row_streams_its_file() {
     // SAFETY: nothing reads `r` but this test.
     unsafe { r.clear(id(2)) };
     assert!(!r.streams(f.file()));
+}
+
+/// One row an id (ruling 6): a second insert under it is refused, and the
+/// first row is untouched.
+#[test]
+fn a_taken_id_is_refused() {
+    let r = StreamRegistry::new();
+    r.insert(id(4), file(5_000)).unwrap();
+    assert_eq!(r.insert(id(4), file(6_000)), Err(RowRefused::Taken));
+    assert_eq!(frames(&r, 4), Some(5_000));
+    r.insert(id(5), file(6_000)).unwrap();
+    // SAFETY: nothing reads `r` but this test.
+    unsafe { r.clear(id(4)) };
+    r.insert(id(4), file(7_000)).unwrap();
+    assert_eq!(frames(&r, 4), Some(7_000));
 }

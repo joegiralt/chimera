@@ -40,6 +40,7 @@ pub mod stretch;
 pub mod tron;
 pub mod warble;
 pub mod wave;
+pub mod window;
 
 #[cfg(not(feature = "tape"))]
 mod off;
@@ -69,10 +70,10 @@ use crate::modulation::ModState;
 use crate::project::SourceId;
 use crate::source_table::GateView;
 #[cfg(feature = "tape")]
-use crate::stream::admit::head_frames;
-#[cfg(feature = "tape")]
 use crate::stream::cursor::{Cursor, DROP_FADE, HeadIdx};
 use crate::stream::port::StreamPort;
+#[cfg(feature = "tape")]
+use crate::stream::stage::xfade_max;
 use age::Age;
 use heads::{
     Bounds, Dir, Fade, Ghost, Head, Plan, Turn, Window, at, min_frames, plan, shortest,
@@ -1032,7 +1033,7 @@ impl TapeDeck {
             && row.head(h.idx) != Some(h)
         {
             let at = self.heads[0].pos.whole();
-            self.cursor.start(at, self.inc_cap, row.head(h.idx), port);
+            self.cursor.jump(at, self.inc_cap, row.head(h.idx), port);
         }
         let h = self.heads[0].pos;
         let plan = self
@@ -1064,7 +1065,7 @@ impl TapeDeck {
                 .is_some_and(|s| s.holds(at));
             if !held {
                 self.cursor
-                    .start(at, self.inc_cap, row.head(HeadIdx::LOOP), port);
+                    .jump(at, self.inc_cap, row.head(HeadIdx::LOOP), port);
             }
         }
     }
@@ -2503,9 +2504,9 @@ impl TapeDeck {
                 let mut b =
                     Bounds::of_min(ws, we, (self.mac.size, place, xfade), k.rate, self.min_len);
                 if self.streamed {
-                    // The loop-start head begins XFADE early: at most a
-                    // head of source (slice 1 § 7.3 step 6).
-                    b.lx = b.lx.min(head_frames(k.rate));
+                    // The loop head holds XFADE before the loop, at most
+                    // `XFADE_MAX_MS` of source (§ 7.3 step 6, #584).
+                    b.lx = b.lx.min(xfade_max(k.rate));
                 }
                 b
             }

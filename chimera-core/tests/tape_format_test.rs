@@ -6,7 +6,8 @@
 mod common;
 
 use chimera_core::dsp::tape_engine::read::{
-    DESC_LEN, Descriptor, Shape, SourceView, ZONE_LAYOUT_LEN, head_table,
+    DESC_LEN, Descriptor, HEAD_ENTRY, HeadSpec, Shape, SourceView, ZONE_LAYOUT_LEN, head_table,
+    streamed_held_len, write_head_table,
 };
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
@@ -617,9 +618,9 @@ fn listed_zones_reads_the_size() {
     assert_eq!(listed_zones(p.sref, size - 1), None, "torn");
 }
 
-/// A streamed `Plain` (slice 1 § 5.1): byte 8 counts its heads, each
-/// `head_frames` long, and the head table after the descriptor holds each
-/// head's first frame.
+/// A streamed `Plain` (slice 1 § 5.1): byte 8 counts its heads, and the
+/// head table after the descriptor holds each head's frames, `first` and
+/// `end`, both even (`HeadSpec`), each head as long as its own.
 #[test]
 fn streamed_plain_descriptor_round_trips() {
     let d = Descriptor {
@@ -632,25 +633,45 @@ fn streamed_plain_descriptor_round_trips() {
     let b = d.to_bytes();
     assert_eq!(b[8], 2);
     assert_eq!(Descriptor::from_bytes(&b), Some(d));
-    let at = [0u32.to_le_bytes(), 48_000u32.to_le_bytes()];
-    let mut held = b.to_vec();
-    held.extend(at.iter().flatten());
-    held.resize(held.len() + 2 * 3_600, 0);
-    assert_eq!(head_table(&held), Some(&at[..]));
-    assert_eq!(
-        head_table(&held[..held.len() - 1]),
-        None,
+    let heads = [
+        HeadSpec::new(0, 2_692).unwrap(),
+        HeadSpec::new(48_000, 53_764).unwrap(),
+    ];
+    assert_eq!(HeadSpec::new(1, 10), None, "odd first");
+    assert_eq!(HeadSpec::new(0, 11), None, "odd end");
+    assert_eq!(HeadSpec::new(10, 10), None, "empty");
+    let mut held = vec![0; streamed_held_len(&heads)];
+    let at = write_head_table(d, &heads, &mut held);
+    assert_eq!(at, DESC_LEN + 2 * HEAD_ENTRY);
+    assert_eq!(held.len(), at + 3 * 2_692 / 2 + 3 * 5_764 / 2);
+    let t = head_table(&held).expect("a table");
+    assert_eq!(t.iter().collect::<Vec<_>>(), heads);
+    assert_eq!(t.get(1), Some((heads[1], at + heads[0].bytes())));
+    assert!(
+        head_table(&held[..held.len() - 1]).is_none(),
         "a head cut short"
     );
     let mut odd = held.clone();
-    odd[DESC_LEN + 4] = 1;
-    assert_eq!(head_table(&odd), None, "a head starting on an odd frame");
+    odd[DESC_LEN + HEAD_ENTRY] = 1;
+    assert!(
+        head_table(&odd).is_none(),
+        "a head starting on an odd frame"
+    );
+    let mut empty = held.clone();
+    empty[DESC_LEN + 4..DESC_LEN + 8].copy_from_slice(&0u32.to_le_bytes());
+    assert!(
+        head_table(&empty).is_none(),
+        "a head ending where it starts"
+    );
     let whole = Descriptor {
         head_frames: 0,
         heads: 0,
         ..d
     };
-    assert_eq!(head_table(&whole.to_bytes()), Some(&[][..]), "held whole");
+    assert!(
+        head_table(&whole.to_bytes()).unwrap().is_empty(),
+        "held whole"
+    );
 }
 
 /// Heads and `head_frames` come together on a `Plain`: neither alone. A

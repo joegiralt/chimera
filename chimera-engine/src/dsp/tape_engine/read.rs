@@ -11,7 +11,8 @@
 use core::ops::{Add, Sub};
 
 pub use super::desc::{
-    DESC_LEN, Descriptor, MAX_ZONES, MIN_SOURCE_FRAMES, Shape, ZONE_LAYOUT_LEN, head_table,
+    DESC_LEN, Descriptor, HEAD_ENTRY, HeadSpec, HeadTable, MAX_ZONES, MIN_SOURCE_FRAMES, Shape,
+    ZONE_LAYOUT_LEN, head_table, streamed_held_len, write_head_table,
 };
 
 /// A head's position: 32.32 fixed-point frames, exact over any source the

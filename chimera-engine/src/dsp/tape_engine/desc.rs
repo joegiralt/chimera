@@ -50,6 +50,8 @@ pub struct Descriptor {
     pub shape: Shape,
     pub count: u8,
     pub rate: u16,
+    /// A streamed `Plain`'s reach past each note (`HEAD_MS` at its rate);
+    /// each head's own frames are its table entry's.
     pub head_frames: u32,
     /// A streamed `Plain`'s heads (slice 1 § 5.1); 0 when held whole, and
     /// on a `ZoneSet`, whose heads are its zones'.
@@ -102,28 +104,126 @@ impl Descriptor {
     }
 }
 
-/// A streamed `Plain`'s head table, after the descriptor: each head's first
-/// frame (`u32` LE). `None` for no descriptor, an odd first frame, or a
-/// `held` too short for the table and its heads' samples; empty when held
-/// whole.
-pub fn head_table(held: &[u8]) -> Option<&[[u8; 4]]> {
+/// A head's frames `first..end`: both even, `first < end`. The only way
+/// a head table is written, so a head's span always starts on a 12-bit
+/// pair (`SourceView::span`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HeadSpec {
+    first: u32,
+    end: u32,
+}
+
+impl HeadSpec {
+    pub const fn new(first: u32, end: u32) -> Option<HeadSpec> {
+        if first.is_multiple_of(2) && end.is_multiple_of(2) && first < end {
+            Some(HeadSpec { first, end })
+        } else {
+            None
+        }
+    }
+
+    pub const fn first(&self) -> u32 {
+        self.first
+    }
+
+    pub const fn end(&self) -> u32 {
+        self.end
+    }
+
+    /// Its packed samples: two frames in three bytes.
+    pub const fn bytes(&self) -> usize {
+        3 * ((self.end - self.first) / 2) as usize
+    }
+
+    fn to_bytes(self) -> [u8; HEAD_ENTRY] {
+        let mut b = [0; HEAD_ENTRY];
+        b[..4].copy_from_slice(&self.first.to_le_bytes());
+        b[4..].copy_from_slice(&self.end.to_le_bytes());
+        b
+    }
+
+    fn from_bytes(b: &[u8; HEAD_ENTRY]) -> Option<HeadSpec> {
+        let w = |i: usize| u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+        HeadSpec::new(w(0), w(4))
+    }
+}
+
+/// A head table's entry: `first`, then `end` (LE).
+pub const HEAD_ENTRY: usize = 8;
+
+/// A streamed `Plain`'s `held`: the descriptor, a `HEAD_ENTRY` a head,
+/// then each head's samples in turn.
+pub fn streamed_held_len(heads: &[HeadSpec]) -> usize {
+    DESC_LEN + HEAD_ENTRY * heads.len() + heads.iter().map(HeadSpec::bytes).sum::<usize>()
+}
+
+/// Writes `d` (`heads` set to their count) and the table into `out`;
+/// where the first head's samples go. Panics if `out` is shorter.
+pub fn write_head_table(d: Descriptor, heads: &[HeadSpec], out: &mut [u8]) -> usize {
+    let d = Descriptor {
+        heads: heads.len() as u8,
+        ..d
+    };
+    out[..DESC_LEN].copy_from_slice(&d.to_bytes());
+    for (h, o) in heads
+        .iter()
+        .zip(out[DESC_LEN..].chunks_exact_mut(HEAD_ENTRY))
+    {
+        o.copy_from_slice(&h.to_bytes());
+    }
+    DESC_LEN + HEAD_ENTRY * heads.len()
+}
+
+/// A streamed `Plain`'s head table, after the descriptor, every entry a
+/// `HeadSpec` and every head's samples in `held`: checked once, here.
+#[derive(Clone, Copy, Debug)]
+pub struct HeadTable<'a> {
+    entries: &'a [[u8; HEAD_ENTRY]],
+}
+
+impl HeadTable<'_> {
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Head `i`, and where its samples start in `held`.
+    pub fn get(&self, i: usize) -> Option<(HeadSpec, usize)> {
+        let h = HeadSpec::from_bytes(self.entries.get(i)?)?;
+        let before: usize = self.entries[..i]
+            .iter()
+            .filter_map(HeadSpec::from_bytes)
+            .map(|h| h.bytes())
+            .sum();
+        Some((h, DESC_LEN + HEAD_ENTRY * self.len() + before))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = HeadSpec> + '_ {
+        self.entries.iter().filter_map(HeadSpec::from_bytes)
+    }
+}
+
+/// `held`'s head table. `None` for no descriptor, an entry that isn't a
+/// `HeadSpec` (an odd frame, an empty head), or a `held` too short for the
+/// table and its heads' samples; empty when held whole.
+pub fn head_table(held: &[u8]) -> Option<HeadTable<'_>> {
     head_table_of(held, Descriptor::from_bytes(held)?)
 }
 
 /// `head_table` under `d`, `held`'s descriptor already read.
-pub fn head_table_of(held: &[u8], d: Descriptor) -> Option<&[[u8; 4]]> {
-    let table = held
+pub fn head_table_of(held: &[u8], d: Descriptor) -> Option<HeadTable<'_>> {
+    let entries = held
         .get(DESC_LEN..)?
         .as_chunks()
         .0
         .get(..usize::from(d.heads))?;
-    // 12-bit pairs, 3 B each; in `u64`, past any `head_frames`.
-    let heads = u64::from(d.heads);
-    let need = (DESC_LEN as u64) + 4 * heads + u64::from(d.head_frames.div_ceil(2)) * 3 * heads;
-    let fits = held.len() as u64 >= need;
-    (fits
-        && table
-            .iter()
-            .all(|at| u32::from_le_bytes(*at).is_multiple_of(2)))
-    .then_some(table)
+    // In `u64`: past any frames a table can name.
+    let mut need = (DESC_LEN + HEAD_ENTRY * entries.len()) as u64;
+    for e in entries {
+        need += HeadSpec::from_bytes(e)?.bytes() as u64;
+    }
+    (held.len() as u64 >= need).then_some(HeadTable { entries })
 }

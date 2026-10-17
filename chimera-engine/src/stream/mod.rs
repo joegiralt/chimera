@@ -9,6 +9,7 @@ pub mod port;
 pub mod registry;
 pub mod ring;
 pub mod slot;
+pub mod stage;
 pub mod stats;
 #[cfg(feature = "test-support")]
 pub mod test_card;
