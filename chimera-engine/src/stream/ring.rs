@@ -64,11 +64,14 @@ impl Guard {
 
 type SlotCell = UnsafeCell<[u8; SLOT_BYTES]>;
 
+/// Slots a ring.
+pub const SLOTS: usize = SlotIdx::ALL.len();
+
 pub struct Ring {
-    slots: [Slot; SlotIdx::ALL.len()],
+    slots: [Slot; SLOTS],
     /// Slots A and B's; C's are in `ThirdSlots`.
     bytes: [SlotCell; 2],
-    guard: [AtomicU8; SlotIdx::ALL.len()],
+    guard: [AtomicU8; SLOTS],
 }
 
 /// Each voice's slot C bytes. All-zero bytes are valid, not yet taken.
@@ -124,9 +127,9 @@ impl Ring {
     #[cfg(not(loom))]
     const fn new() -> Ring {
         Ring {
-            slots: [const { Slot::new() }; SlotIdx::ALL.len()],
+            slots: [const { Slot::new() }; SLOTS],
             bytes: [const { UnsafeCell::new([0; SLOT_BYTES]) }; 2],
-            guard: [const { AtomicU8::new(0) }; SlotIdx::ALL.len()],
+            guard: [const { AtomicU8::new(0) }; SLOTS],
         }
     }
 

@@ -2,9 +2,12 @@
 
 pub mod admit;
 pub mod bench;
+pub mod cursor;
 pub mod edf;
 pub mod layout;
+pub mod port;
 pub mod registry;
 pub mod ring;
 pub mod slot;
+pub mod stats;
 pub mod units;
