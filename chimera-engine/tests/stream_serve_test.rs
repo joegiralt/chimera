@@ -11,6 +11,7 @@ use chimera_engine::stream::registry::StreamRegistry;
 use chimera_engine::stream::ring::{AudioSide, CardSide, Rings, ThirdSlots};
 use chimera_engine::stream::serve::{ServeStep, serve_step};
 use chimera_engine::stream::slot::SlotState;
+use chimera_engine::stream::stats::StreamStats;
 use chimera_engine::stream::units::{AudioBlocks, Frames, SlotIdx};
 use chimera_engine::voice_alloc::VoiceIdx;
 use chimera_hal::store::{FileRuns, Runs};
@@ -79,7 +80,7 @@ impl Rig {
 }
 
 fn step<'r>(card: &mut CardSide<'_>, reg: &'r StreamRegistry, ui: UiWait) -> ServeStep<'r> {
-    serve_step(card, reg, NOW, ui)
+    serve_step(card, reg, NOW, ui, &StreamStats::new())
 }
 
 /// Runs a `Read` as the interrupt does: its chunk's bytes into the slot,
@@ -193,12 +194,19 @@ fn a_want_the_card_cannot_read_is_passed_over() {
     turn.want(V2, SlotIdx::A, past, NOW).unwrap();
     turn.want(V2, SlotIdx::B, ix(0), NOW.after(50)).unwrap();
 
-    let s = step(&mut card, &rig.reg, UiWait::Idle);
+    let stats = StreamStats::new();
+    let s = serve_step(&mut card, &rig.reg, NOW, UiWait::Idle, &stats);
     assert_eq!(land(&mut card, s).1, SlotIdx::B);
     assert!(matches!(
-        step(&mut card, &rig.reg, UiWait::Idle),
+        serve_step(&mut card, &rig.reg, NOW, UiWait::Idle, &stats),
         ServeStep::Idle
     ));
+    // The chunk off its file, passed over each look; a ring with no row
+    // isn't a read at all.
+    assert_eq!(
+        stats.unreadable.load(std::sync::atomic::Ordering::Relaxed),
+        2
+    );
     for (v, s) in [(v0, SlotIdx::A), (V1, SlotIdx::A), (V2, SlotIdx::A)] {
         assert!(
             matches!(turn.seen(v, s), SlotState::Wanted { .. }),

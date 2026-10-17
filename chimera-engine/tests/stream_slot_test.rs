@@ -386,3 +386,22 @@ fn a_ring_names_the_source_it_reads() {
     turn.stream(V, last);
     assert_eq!(r.r.source(V), Some(last));
 }
+
+/// The last chunk index has no chunk after it: its fill patches no other
+/// slot (a Filling one would land Guarded with this chunk's bytes).
+#[test]
+fn the_last_chunk_guards_nothing_after_it() {
+    let r = rings();
+    let (mut audio, mut card) = r.sides().unwrap();
+    let turn = audio.turn();
+    let gb = turn.want(V, B, ix(3), D).unwrap();
+    let b = card.claim(V, B).unwrap();
+    turn.want(V, A, ChunkIdx::MAX, D).unwrap();
+    let a = card.claim(V, A).unwrap();
+    pack12(&ramp(100), card.fill_buf(&a).unwrap());
+    assert!(card.fill_done(a));
+    pack12(&ramp(900), card.fill_buf(&b).unwrap());
+    card.write_guard(&b);
+    assert!(card.fill_done(b));
+    assert_eq!(turn.ready(V, B, gb).unwrap().guard(), Guard::Unguarded);
+}

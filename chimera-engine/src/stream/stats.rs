@@ -15,9 +15,13 @@ pub struct StreamStats {
     /// A note whose source was moving at note-on, refused once it read.
     pub late_refused: AtomicU32,
     pub frame_errors: AtomicU32,
+    /// Reads passed over: a want's chunk its file can't read, left
+    /// Wanted (`serve_step`).
+    pub unreadable: AtomicU32,
     pub quiet_ms_max: AtomicU32,
     pub irq_us_max: AtomicU32,
-    pub irq_us_sum: AtomicU32,
+    /// The card IRQ's own cycles, wrapping: a reader takes deltas.
+    pub irq_cycles: AtomicU32,
 }
 
 impl StreamStats {
@@ -29,9 +33,10 @@ impl StreamStats {
             held_at_cap: AtomicU32::new(0),
             late_refused: AtomicU32::new(0),
             frame_errors: AtomicU32::new(0),
+            unreadable: AtomicU32::new(0),
             quiet_ms_max: AtomicU32::new(0),
             irq_us_max: AtomicU32::new(0),
-            irq_us_sum: AtomicU32::new(0),
+            irq_cycles: AtomicU32::new(0),
         }
     }
 }

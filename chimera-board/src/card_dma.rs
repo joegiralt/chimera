@@ -844,7 +844,7 @@ fn DMA2_STR0() {
     STATS.irq_own_us_max.fetch_max(own_us, Ordering::Relaxed);
     // CARD IRQ: the streams' own share of the CPU.
     STREAM_STATS.irq_us_max.fetch_max(own_us, Ordering::Relaxed);
-    STREAM_STATS.irq_us_sum.fetch_add(own_us, Ordering::Relaxed);
+    STREAM_STATS.irq_cycles.fetch_add(own, Ordering::Relaxed);
 }
 
 /// The work chosen, claimed with the bus held.
@@ -936,7 +936,7 @@ impl IrqState {
         if let Some(reg) = registry() {
             let now = AudioBlocks::new(BLOCKS.load(Ordering::Relaxed));
             if let ServeStep::Read { claimed, row } =
-                serve_step(&mut self.side, reg, now, BUS.ui_wait())
+                serve_step(&mut self.side, reg, now, BUS.ui_wait(), &STREAM_STATS)
             {
                 match row
                     .file()

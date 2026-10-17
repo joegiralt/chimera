@@ -553,7 +553,9 @@ impl<'r> CardSide<'r> {
         let at = self.at;
         let Some(next) = SlotIdx::ALL.into_iter().find(|&s| {
             s != c.slot
-                && at.slot(c.voice, s).ready_chunk() == c.chunk.next()
+                && c.chunk
+                    .next()
+                    .is_some_and(|n| at.slot(c.voice, s).ready_chunk() == Some(n))
                 && at.guard(c.voice, s).load(Ordering::Relaxed) == 0
         }) else {
             return;
