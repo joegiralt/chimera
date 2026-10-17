@@ -150,33 +150,81 @@ def parse(lines) -> Image:
     return img
 
 
-def depth(funcs, root, charge=0):
+def components(funcs):
+    """Each function's strongly connected component (Tarjan, iterative) as a
+    frozenset: the functions it can recurse through, itself alone if none."""
+    index, low, stack, on, comp = {}, {}, [], set(), {}
+    edges = {f: sorted(set(v[1]) | set(v[2])) for f, v in funcs.items()}
+    for root in sorted(funcs):
+        if root in index:
+            continue
+        work = [(root, 0)]
+        while work:
+            f, i = work.pop()
+            if i == 0:
+                index[f] = low[f] = len(index)
+                stack.append(f)
+                on.add(f)
+            out = edges.get(f, ())
+            if i < len(out):
+                work.append((f, i + 1))
+                c = out[i]
+                if c not in index:
+                    work.append((c, 0))
+                elif c in on:
+                    low[f] = min(low[f], index[c])
+                continue
+            if work:
+                parent = work[-1][0]
+                low[parent] = min(low[parent], low[f])
+            if low[f] == index[f]:
+                members = []
+                while True:
+                    m = stack.pop()
+                    on.discard(m)
+                    members.append(m)
+                    if m == f:
+                        break
+                for m in members:
+                    comp[m] = frozenset(members)
+    return comp
+
+
+def depth(funcs, root, charge=0, comp=None):
     """(bytes, deepest chain, recursive calls cut, functions with pointer
-    calls). A pointer call costs `charge`."""
+    calls). A pointer call costs `charge`. A call back into the chain costs
+    0, so a recursion's worst case is its longest simple path, every
+    function in it live once. That depends on which of the cycle's
+    functions are already on the chain, so a result is kept per function
+    and those (the rest of the chain can't be reached again); calls go in
+    name order and only a deeper one replaces the best: one answer, one
+    chain, whatever the hash seed."""
+    comp = components(funcs) if comp is None else comp
     memo, cut, indirect = {}, set(), set()
 
     def go(f, on):
-        if f in memo:
-            return memo[f]
         if f in on:
             cut.add(f)
             return 0, [f + " (recursion)"]
+        key = (f, on & comp.get(f, frozenset()))
+        if key in memo:
+            return memo[key]
         frame, calls, tails, ind = funcs.get(f, (0, (), (), False))
         best = (0, [])
         if ind:
             indirect.add(f)
             best = (charge, ["(a pointer call, %d B)" % charge])
         on = on | {f}
-        for c in calls:
+        for c in sorted(calls):
             d = go(c, on)
             if d[0] > best[0]:
                 best = d
         own = (frame + best[0], [f] + best[1])
-        for t in tails:
+        for t in sorted(tails):
             d = go(t, on)
             if d[0] > own[0]:
                 own = d
-        memo[f] = own
+        memo[key] = own
         return own
 
     total, chain = go(root, frozenset())
@@ -190,10 +238,11 @@ def pointer_charge(img, out):
     A fixed point doesn't exist: address-taken functions make pointer
     calls themselves (a `Store` body calling a sink), so the nesting is the
     stated assumption."""
-    taken = [f for f, a in img.starts.items() if (a | 1) in img.words and f not in ROOTS]
+    taken = sorted(f for f, a in img.starts.items() if (a | 1) in img.words and f not in ROOTS)
+    comp = components(img.funcs)
     charge, deepest = 0, "-"
     for _ in range(POINTER_NEST):
-        charge, deepest = max(((depth(img.funcs, f, charge)[0], f) for f in taken), default=(0, "-"))
+        charge, deepest = max(((depth(img.funcs, f, charge, comp)[0], f) for f in taken), default=(0, "-"))
     print(
         "pointers   %6d B  each, %d deep, over %d address-taken functions; deepest %s"
         % (charge, POINTER_NEST, len(taken), short(deepest)),
@@ -222,6 +271,7 @@ def short(name, n=90):
 def check(img, stack_bytes, out):
     """True if every root is found and the nested sum fits."""
     charge = pointer_charge(img, out)
+    comp = components(img.funcs)
     ok, total = True, 0
     for i, root in enumerate((THREAD,) + ISRS):
         if root not in img.funcs:
@@ -229,7 +279,7 @@ def check(img, stack_bytes, out):
                 print("stack-depth: no %s in the disassembly" % root, file=out)
                 ok = False
             continue
-        d, chain, cut, ind = depth(img.funcs, root, charge)
+        d, chain, cut, ind = depth(img.funcs, root, charge, comp)
         d += EXC_FRAME if i else 0
         total += d
         print("%-10s %6d B  %s" % (root, d, " > ".join(short(c, 60) for c in chain[:6]) + (" > …" if len(chain) > 6 else "")), file=out)

@@ -356,7 +356,8 @@ check:
 # all nested at once, against the stack, each call through a pointer
 # charged the deepest address-taken function (bank 2's door table among
 # the data dumped, so a door entry is one), three deep; and that the audio
-# interrupt reaches no small-profile code (ADR 0108). Checked for the default,
+# interrupt reaches no small-profile code (ADR 0108); each run three times
+# under different hash seeds, all alike. Checked for the default,
 # no-default, orbit, bank2-gate, every bench set (`bench_sets`) and sd-probe feature
 # sets (sd-probe has no interrupts: frames only).
 # Needs the llvm-tools rustup component; a missing llvm-objdump or an
@@ -386,7 +387,18 @@ stack-check:
         if [[ "$features" != *sd-probe* ]]; then
             addr() { "$nm" "$elf" | awk -v s="$1" '$3 == s { print strtonum("0x" $1) }'; }
             echo "stack-depth (features: ${features:-default})"
-            python3 tools/stack_depth.py "$(( $(addr _stack_start) - $(addr _stack_end) ))" <<<"$dis"$'\n'"$data"
+            # Three hash seeds, one answer (#582): the walk's order never moves it.
+            stack=$(( $(addr _stack_start) - $(addr _stack_end) ))
+            runs=()
+            for seed in 0 1 2; do
+                runs+=("$(PYTHONHASHSEED=$seed python3 tools/stack_depth.py "$stack" <<<"$dis"$'\n'"$data"; echo "exit $?")")
+            done
+            echo "${runs[0]%exit *}"
+            if [[ "${runs[0]}" != "${runs[1]}" || "${runs[0]}" != "${runs[2]}" ]]; then
+                echo "stack-depth: the answer changes with PYTHONHASHSEED" >&2
+                exit 1
+            fi
+            [[ "${runs[0]}" == *"exit 0" ]]
         fi
     done
 

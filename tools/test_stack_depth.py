@@ -2,12 +2,14 @@
 
 import importlib.util
 import io
+import os
 import pathlib
+import subprocess
+import sys
 import unittest
 
-_spec = importlib.util.spec_from_file_location(
-    "stack_depth", pathlib.Path(__file__).resolve().parent / "stack_depth.py"
-)
+TOOL = pathlib.Path(__file__).resolve().parent / "stack_depth.py"
+_spec = importlib.util.spec_from_file_location("stack_depth", TOOL)
 sd = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sd)
 
@@ -167,6 +169,43 @@ class StackDepth(unittest.TestCase):
         ))
         self.assertNotIn(0x08000101, img.words)
         self.assertIn(0x08000201, img.words, "a literal after the table still counts")
+
+    def cycle(self, light, heavy):
+        """main calls both of a cycle: `light` (16 B) and `heavy` (256 B),
+        heavy also a 4 KB leaf. Whichever main enters first, the worst
+        is light > heavy > leaf (#582)."""
+        f = lambda frame, *calls: (frame, frozenset(calls), frozenset(), False)
+        return {
+            "main": f(8, light, heavy),
+            light: f(16, heavy),
+            heavy: f(256, light, "leaf"),
+            "leaf": f(0x1000),
+        }
+
+    def test_a_cycle_costs_its_longest_simple_path_in_any_order(self):
+        want = 8 + 16 + 256 + 0x1000
+        for light, heavy in (("a", "b"), ("b", "a")):
+            total, chain, cut, _ = sd.depth(self.cycle(light, heavy), "main")
+            self.assertEqual(total, want, "light %s" % light)
+            self.assertEqual(chain, ["main", light, heavy, "leaf"])
+            self.assertEqual(cut, {"a", "b"}, "both entries' back edges")
+
+    def test_every_hash_seed_gives_one_answer(self):
+        # The cycles below and DIS's: a set's order changes with the seed.
+        cycle = (
+            "08000180 <ping>:\n 8000180:      \tsub\tsp, #0x10\n 8000182:      \tbl\t0x80001c0 <pong>\n\n"
+            "080001c0 <pong>:\n 80001c0:      \tsub\tsp, #0x200\n 80001c2:      \tbl\t0x8000180 <ping>\n"
+            " 80001c4:      \tbl\t0x8000300 <tail>\n\n"
+        )
+        calls = " 8000100:      \tbl\t0x8000180 <ping>\n 8000100:      \tbl\t0x80001c0 <pong>\n"
+        dis = DIS.replace("08000100 <leaf>:\n", "08000100 <leaf>:\n" + calls).replace("Contents of", cycle + "Contents of")
+        outs = set()
+        for seed in range(6):
+            env = dict(os.environ, PYTHONHASHSEED=str(seed))
+            run = subprocess.run([sys.executable, str(TOOL), "65536"], input=dis, env=env, capture_output=True, text=True)
+            outs.add((run.returncode, run.stdout))
+        self.assertEqual(len(outs), 1, "\n----\n".join(o for _, o in outs))
+        self.assertIn("%-10s %6d B  main > leaf > ping > pong > tail" % ("main", 20 + 0x100 + 8 + 0x10 + 0x200 + 0x2000), outs.pop()[1])
 
 
 if __name__ == "__main__":
