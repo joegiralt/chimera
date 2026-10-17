@@ -8,6 +8,7 @@ pub mod layout;
 pub mod port;
 pub mod registry;
 pub mod ring;
+pub mod serve;
 pub mod slot;
 pub mod stage;
 pub mod stats;

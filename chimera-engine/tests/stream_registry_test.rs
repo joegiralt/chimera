@@ -55,7 +55,7 @@ fn registry_insert_get_clear() {
     assert_eq!(frames(&r, 31), Some(7_000));
     assert_eq!(frames(&r, 0), None);
     // SAFETY: nothing reads `r` but this test, between calls.
-    unsafe { r.clear(id(3)) };
+    assert!(unsafe { r.clear(id(3)) });
     assert_eq!(frames(&r, 3), None);
     assert_eq!(frames(&r, 31), Some(7_000), "another row stays");
     r.insert(id(3), file(6_000)).unwrap();
@@ -71,7 +71,7 @@ fn ninth_insert_is_full() {
     assert_eq!(r.insert(id(20), file(9_000)), Err(RowRefused::Full));
     assert_eq!(frames(&r, 20), None);
     // SAFETY: as above.
-    unsafe { r.clear(id(5)) };
+    assert!(unsafe { r.clear(id(5)) });
     r.insert(id(20), file(9_000)).unwrap();
     assert_eq!(frames(&r, 20), Some(9_000));
     assert_eq!(frames(&r, 7), Some(1_007));
@@ -84,7 +84,7 @@ fn clear_all_empties() {
         r.insert(id(n), file(2_000)).unwrap();
     }
     // SAFETY: as above.
-    unsafe { r.clear_all() };
+    assert!(unsafe { r.clear_all() });
     assert!((0..STREAM_ROWS as u8).all(|n| frames(&r, n).is_none()));
     for n in 0..STREAM_ROWS as u8 {
         r.insert(id(n + 8), file(3_000)).unwrap();
@@ -119,7 +119,7 @@ fn a_row_streams_its_file() {
     assert!(r.streams(source_name(5_000)));
     assert!(!r.streams(source_name(5_001)));
     // SAFETY: nothing reads `r` but this test.
-    unsafe { r.clear(id(2)) };
+    assert!(unsafe { r.clear(id(2)) });
     assert!(!r.streams(f.file()));
 }
 
@@ -133,7 +133,59 @@ fn a_taken_id_is_refused() {
     assert_eq!(frames(&r, 4), Some(5_000));
     r.insert(id(5), file(6_000)).unwrap();
     // SAFETY: nothing reads `r` but this test.
-    unsafe { r.clear(id(4)) };
+    assert!(unsafe { r.clear(id(4)) });
     r.insert(id(4), file(7_000)).unwrap();
     assert_eq!(frames(&r, 4), Some(7_000));
+}
+
+/// #597: the card IRQ's hold keeps a row from being freed under its read.
+/// `clear` leaves it (the pool's drain waits a pass), and frees it once
+/// the hold drops; the row's file stays guarded meanwhile.
+#[test]
+fn a_held_row_is_not_freed() {
+    let r = StreamRegistry::new();
+    let f = file(5_000);
+    r.insert(id(3), f).unwrap();
+    r.insert(id(4), file(6_000)).unwrap();
+    let held = r.hold(id(3)).unwrap();
+    assert_eq!(held.file().frames(), Frames::new(5_000));
+    // SAFETY: nothing reads `r` but this test and its hold.
+    assert!(!unsafe { r.clear(id(3)) }, "held: left");
+    assert_eq!(frames(&r, 3), Some(5_000));
+    assert!(r.streams(f.file()));
+    assert!(unsafe { r.clear(id(4)) }, "another row frees");
+    assert_eq!(r.insert(id(3), file(7_000)), Err(RowRefused::Taken));
+    drop(held);
+    assert!(unsafe { r.clear(id(3)) });
+    assert_eq!(frames(&r, 3), None);
+}
+
+/// One hold at a time, and none on a row that isn't there.
+#[test]
+fn one_hold_at_a_time() {
+    let r = StreamRegistry::new();
+    r.insert(id(1), file(1_000)).unwrap();
+    r.insert(id(2), file(2_000)).unwrap();
+    assert!(r.hold(id(9)).is_none());
+    let a = r.hold(id(1)).unwrap();
+    assert!(r.hold(id(2)).is_none(), "the card holds one row");
+    drop(a);
+    let b = r.hold(id(2)).unwrap();
+    assert_eq!(b.file().frames(), Frames::new(2_000));
+}
+
+/// `clear_all` leaves a held row too.
+#[test]
+fn clear_all_leaves_a_held_row() {
+    let r = StreamRegistry::new();
+    for n in 0..3 {
+        r.insert(id(n), file(2_000 + u32::from(n))).unwrap();
+    }
+    let held = r.hold(id(1)).unwrap();
+    // SAFETY: nothing reads `r` but this test and its hold.
+    assert!(!unsafe { r.clear_all() });
+    assert_eq!(frames(&r, 0), None);
+    assert_eq!(frames(&r, 1), Some(2_001));
+    drop(held);
+    assert!(unsafe { r.clear_all() });
 }

@@ -328,7 +328,10 @@ impl Pool {
         };
         // SAFETY: `s`'s pool row was never published, so no voice and no
         // card read has its stream row.
-        let undo = |s| unsafe { reg.clear(s) };
+        let undo = |s| {
+            // Never held: no want names `s` yet.
+            let _ = unsafe { reg.clear(s) };
+        };
         self.commit_with(r, len, first, undo)
     }
 
@@ -715,15 +718,17 @@ impl Pool {
             if let SrcSlot::Draining { since } = *slot
                 && (!reader || blocks.wrapping_sub(since) >= 2 && sounding & s.bit() == 0)
             {
-                *slot = SrcSlot::Empty;
-                if let Some(reg) = streams.filter(|_| cfg!(feature = "tape")) {
-                    // SAFETY (ADR 0087's retire): the source was retired,
-                    // its hole closed under an acked gate that moved it, its
-                    // table row emptied two blocks ago and no voice held it
-                    // since, so the audio holds nothing of its row. No card
-                    // read serves a pool row before the card interrupt does
-                    // (#597 owes its in-flight half).
-                    unsafe { reg.clear(s) };
+                // SAFETY (ADR 0087's retire): the source was retired, its
+                // hole closed under an acked gate that moved it, its table
+                // row emptied two blocks ago and no voice held it since, so
+                // the audio holds nothing of its row. A card read in flight
+                // holds it (#597): left, and drained on a later pass.
+                let freed = match streams.filter(|_| cfg!(feature = "tape")) {
+                    Some(reg) => unsafe { reg.clear(s) },
+                    None => true,
+                };
+                if freed {
+                    *slot = SrcSlot::Empty;
                 }
             }
         }

@@ -318,3 +318,71 @@ fn zeroed_rings_are_empty() {
     }
     assert_eq!(turn.want(V, A, ix(0), D), Some(Generation::ZERO.next()));
 }
+
+/// #581: chunk k's fill, requeued, lands after k+1's: k+1 is guarded from
+/// it then, and a view taken before keeps what it saw.
+#[test]
+fn a_late_fill_guards_the_chunk_after_it() {
+    let r = rings();
+    let (mut audio, mut card) = r.sides().unwrap();
+    let turn = audio.turn();
+    let (k, after) = (ramp(100), ramp(900));
+    turn.want(V, A, ix(4), D).unwrap();
+    let first = card.claim(V, A).unwrap();
+    card.requeue(first);
+    let gb = fill(&turn, &mut card, B, 5, &after);
+    let before = turn.ready(V, B, gb).unwrap();
+    assert_eq!(before.guard(), Guard::Unguarded);
+
+    let retry = card.claim(V, A).unwrap();
+    pack12(&k, card.fill_buf(&retry).unwrap());
+    card.write_guard(&retry);
+    assert!(card.fill_done(retry));
+
+    assert_eq!(before.sample(-1), None, "the block's view holds");
+    let b = turn.ready(V, B, gb).unwrap();
+    assert_eq!(b.guard(), Guard::Guarded);
+    let n = k.len();
+    let guard: Vec<_> = (-4..0).map(|i| b.sample(i).unwrap()).collect();
+    assert_eq!(guard, k[n - 4..]);
+    assert_eq!(b.sample(0), Some(after[0]));
+    let (from, bytes) = b.packed();
+    assert_eq!((from, bytes.len()), (-4, CHUNK_BYTES.get() as usize + 6));
+}
+
+/// A fill finds the chunk after it Ready and already guarded, or another
+/// chunk: neither is touched.
+#[test]
+fn a_fill_leaves_other_chunks_guards_alone() {
+    let r = rings();
+    let (mut audio, mut card) = r.sides().unwrap();
+    let mut turn = audio.turn();
+    let ga = fill(&turn, &mut card, A, 4, &ramp(100));
+    let gb = fill(&turn, &mut card, B, 5, &ramp(900));
+    let gc = fill(&turn, &mut card, C, 8, &ramp(300));
+    turn.release(V, A);
+    let ga2 = fill(&turn, &mut card, A, 4, &ramp(2000));
+    let _ = ga;
+    let b = turn.ready(V, B, gb).unwrap();
+    let guard: Vec<_> = (-4..0).map(|i| b.sample(i).unwrap()).collect();
+    let n = ramp(100).len();
+    assert_eq!(guard, ramp(100)[n - 4..], "a Guarded chunk keeps its guard");
+    assert_eq!(turn.ready(V, C, gc).unwrap().guard(), Guard::Unguarded);
+    assert!(turn.ready(V, A, ga2).is_some());
+}
+
+/// The card reads a voice's chunks from the source its ring names.
+#[test]
+fn a_ring_names_the_source_it_reads() {
+    use chimera_engine::project::SourceId;
+    let r = rings();
+    let (mut audio, _card) = r.sides().unwrap();
+    assert_eq!(r.r.source(V), None, "a zeroed ring reads nothing");
+    let turn = audio.turn();
+    turn.stream(V, SourceId::ALL[5]);
+    assert_eq!(r.r.source(V), Some(SourceId::ALL[5]));
+    assert_eq!(r.r.source(VoiceIdx::ALL[0]), None);
+    let last = *SourceId::ALL.last().unwrap();
+    turn.stream(V, last);
+    assert_eq!(r.r.source(V), Some(last));
+}

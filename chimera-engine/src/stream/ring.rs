@@ -14,6 +14,7 @@
 //! slot word's generation, so neither side touches bytes the other owns.
 
 use core::cell::UnsafeCell;
+use core::ptr;
 #[cfg(not(loom))]
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -21,10 +22,11 @@ use chimera_hal::units::Bytes;
 #[cfg(loom)]
 use loom::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-use super::layout::{CHUNK_BYTES, CHUNK_FRAMES, ChunkIdx};
+use super::layout::{CHUNK_BYTES, ChunkIdx};
 use super::slot::{Finish, Slot, SlotState};
 use super::units::{AudioBlocks, Frames, Generation, Packing, SlotIdx};
 use crate::hw::MAX_VOICES;
+use crate::project::SourceId;
 use crate::storage::twelve::unpack12;
 use crate::voice_alloc::VoiceIdx;
 
@@ -72,7 +74,12 @@ pub struct Ring {
     /// Slots A and B's; C's are in `ThirdSlots`.
     bytes: [SlotCell; 2],
     guard: [AtomicU8; SLOTS],
+    /// The source its wants read, id + 1; 0 none.
+    source: AtomicU8,
 }
+
+// Every id + 1 fits the byte, 0 left for none.
+const _: () = assert!(SourceId::ALL.len() < u8::MAX as usize);
 
 /// Each voice's slot C bytes. All-zero bytes are valid, not yet taken.
 pub struct ThirdSlots {
@@ -130,6 +137,7 @@ impl Ring {
             slots: [const { Slot::new() }; SLOTS],
             bytes: [const { UnsafeCell::new([0; SLOT_BYTES]) }; 2],
             guard: [const { AtomicU8::new(0) }; SLOTS],
+            source: AtomicU8::new(0),
         }
     }
 
@@ -139,6 +147,7 @@ impl Ring {
             slots: core::array::from_fn(|_| Slot::new()),
             bytes: core::array::from_fn(|_| UnsafeCell::new([0; SLOT_BYTES])),
             guard: core::array::from_fn(|_| AtomicU8::new(0)),
+            source: AtomicU8::new(0),
         }
     }
 }
@@ -202,6 +211,14 @@ impl Rings {
         })
     }
 
+    /// The source voice `v`'s wants read (`AudioTurn::stream`). Read
+    /// after a claim, whose `Acquire` saw the want's `Release`: the
+    /// source its note set before it.
+    pub fn source(&self, v: VoiceIdx) -> Option<SourceId> {
+        let id = self.rings[v.index()].source.load(Ordering::Relaxed);
+        SourceId::new(id.checked_sub(1)?)
+    }
+
     fn slot(&self, v: VoiceIdx, s: SlotIdx) -> &Slot {
         &self.rings[v.index()].slots[s.index()]
     }
@@ -254,6 +271,17 @@ pub struct AudioTurn<'s> {
 }
 
 impl<'s> AudioTurn<'s> {
+    /// Voice `v`'s wants read `id` from here on: set at a note's start,
+    /// its last note's slots cancelled, before its wants (whose `Release`
+    /// publishes it).
+    pub fn stream(&self, v: VoiceIdx, id: SourceId) {
+        // Under `SourceId::ALL.len()` (asserted above).
+        let tag = id.index() as u8 + 1;
+        self.at.rings.rings[v.index()]
+            .source
+            .store(tag, Ordering::Relaxed);
+    }
+
     pub fn seen(&self, v: VoiceIdx, s: SlotIdx) -> SlotState {
         self.at.slot(v, s).seen()
     }
@@ -320,12 +348,25 @@ impl<'s> AudioTurn<'s> {
     /// The slot's samples, if it is Ready under `g`.
     pub fn ready<'t>(&'t self, v: VoiceIdx, s: SlotIdx, g: Generation) -> Option<Ready<'t>> {
         let chunk = self.at.slot(v, s).ready(g)?;
-        let guard = Guard::from_bits(self.at.guard(v, s).load(Ordering::Relaxed));
+        // `Acquire`: a guard the card patched in later (`fill_done`) is
+        // written whole when seen.
+        let guard = Guard::from_bits(self.at.guard(v, s).load(Ordering::Acquire));
+        let from = match guard {
+            Guard::Guarded => 0,
+            Guard::Unguarded => GUARD,
+        };
         // SAFETY: the slot is Ready under `g` (loaded `Acquire` above), so
         // the card wrote these bytes before its `Release` and won't again
         // until this turn's `release` or `cancel`, which the borrow of
-        // `self` keeps out while the `Ready` lives (`Ring`'s `Sync`).
-        let bytes = unsafe { &*self.at.cell(v, s).get() };
+        // `self` keeps out while the `Ready` lives (`Ring`'s `Sync`). An
+        // Unguarded view leaves the guard out: the one place the card may
+        // still write a Ready slot (`fill_done`'s patch).
+        let bytes = unsafe {
+            &*ptr::slice_from_raw_parts(
+                self.at.cell(v, s).get().cast::<u8>().add(from),
+                SLOT_BYTES - from,
+            )
+        };
         Some(Ready {
             chunk,
             guard,
@@ -338,7 +379,8 @@ impl<'s> AudioTurn<'s> {
 pub struct Ready<'a> {
     chunk: ChunkIdx,
     guard: Guard,
-    bytes: &'a [u8; SLOT_BYTES],
+    /// From the guard when Guarded, else from the chunk.
+    bytes: &'a [u8],
 }
 
 impl<'a> Ready<'a> {
@@ -348,8 +390,8 @@ impl<'a> Ready<'a> {
     /// a slot, and like `sample` only under a want's generation (`ready`).
     pub fn packed(&self) -> (i32, &'a [u8]) {
         match self.guard {
-            Guard::Guarded => (-(GUARD_FRAMES.get() as i32), &self.bytes[..]),
-            Guard::Unguarded => (0, &self.bytes[GUARD..]),
+            Guard::Guarded => (-(GUARD_FRAMES.get() as i32), self.bytes),
+            Guard::Unguarded => (0, self.bytes),
         }
     }
 
@@ -364,15 +406,12 @@ impl<'a> Ready<'a> {
     /// Frame `i` of the chunk: from -4 when Guarded (0 when not) to the
     /// chunk's last frame; `None` outside.
     pub fn sample(&self, i: i32) -> Option<i16> {
-        let first = match self.guard {
-            Guard::Guarded => 0,
-            Guard::Unguarded => GUARD_FRAMES.get(),
-        };
-        let at = u32::try_from(i.checked_add_unsigned(GUARD_FRAMES.get())?).ok()?;
-        if at < first || at >= GUARD_FRAMES.get() + CHUNK_FRAMES.get() {
+        let (first, _) = self.packed();
+        let at = u32::try_from(i.checked_sub(first)?).ok()?;
+        if at as usize >= self.bytes.len() / 3 * 2 {
             return None;
         }
-        // Under `GUARD_FRAMES + CHUNK_FRAMES`: a pair in `bytes`.
+        // The first frame starts a pair (`GUARD_FRAMES` is even).
         let (even, odd) = unpack12(self.bytes, at as usize / 2);
         Some(if at.is_multiple_of(2) { even } else { odd })
     }
@@ -408,7 +447,12 @@ pub struct CardSide<'r> {
     at: Store<'r>,
 }
 
-impl CardSide<'_> {
+impl<'r> CardSide<'r> {
+    /// The rings it fills, for their wants and sources.
+    pub fn rings(&self) -> &'r Rings {
+        self.at.rings
+    }
+
     /// Wanted → Filling.
     pub fn claim(&mut self, v: VoiceIdx, s: SlotIdx) -> Option<Claim> {
         let (chunk, generation) = self.at.slot(v, s).claim()?;
@@ -489,11 +533,48 @@ impl CardSide<'_> {
         at.guard(c.voice, c.slot).store(1, Ordering::Relaxed);
     }
 
-    /// Filling → Ready; false if the fill was dropped (cancelled).
+    /// Filling → Ready; false if the fill was dropped (cancelled). The
+    /// chunk after it, Ready already and Unguarded (it landed first: a
+    /// requeue), takes its guard from it (#581).
     pub fn fill_done(&mut self, c: Claim) -> bool {
-        self.at
+        let done = self
+            .at
             .slot(c.voice, c.slot)
-            .finish(c.chunk, c.generation, Finish::Ready)
+            .finish(c.chunk, c.generation, Finish::Ready);
+        if done {
+            self.guard_next(&c);
+        }
+        done
+    }
+
+    /// `c`'s last frames ahead of the chunk after it, where that is Ready
+    /// and Unguarded.
+    fn guard_next(&mut self, c: &Claim) {
+        let at = self.at;
+        let Some(next) = SlotIdx::ALL.into_iter().find(|&s| {
+            s != c.slot
+                && at.slot(c.voice, s).ready_chunk() == c.chunk.next()
+                && at.guard(c.voice, s).load(Ordering::Relaxed) == 0
+        }) else {
+            return;
+        };
+        // SAFETY: slot bytes are written only by the one `CardSide`,
+        // inside this call. `next` is Ready and Unguarded, so every `Ready`
+        // of it leaves its guard out (`AudioTurn::ready`): the write to
+        // those bytes overlaps no view. `c`'s slot is only read. Two
+        // slots, two cells.
+        let (to, from) = unsafe {
+            (
+                &mut *ptr::slice_from_raw_parts_mut(
+                    at.cell(c.voice, next).get().cast::<u8>(),
+                    GUARD,
+                ),
+                &*at.cell(c.voice, c.slot).get(),
+            )
+        };
+        to.copy_from_slice(&from[SLOT_BYTES - GUARD..]);
+        // The bytes before the flag: `ready` loads it `Acquire`.
+        at.guard(c.voice, next).store(1, Ordering::Release);
     }
 
     /// Filling → Wanted, same generation: a fault, to try again.

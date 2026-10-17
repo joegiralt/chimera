@@ -931,7 +931,7 @@ impl CardBench {
                 // SAFETY: the beds were never Ready, so the bench was never
                 // armed: no want names a bed, and neither the audio nor the
                 // IRQ (`card_dma::bed`) has read a bed's row.
-                unsafe { reg.clear(bed_id(v)) };
+                let _ = unsafe { reg.clear(bed_id(v)) };
             }
             return Err(DmaRefusal::Beds);
         }
