@@ -4,11 +4,13 @@
 
 use core::ops::Range;
 
-use chimera_hal::store::{Extents, FileRuns, Transfers};
+use chimera_hal::store::{Extents, FileName, FileRuns, Transfers};
 use chimera_hal::units::{BlockCount, Bytes, FileBlock, Lba};
 
 use super::units::{Frames, Packing};
-use crate::storage::{RECORD_HEAD_LEN, RecordTag, SOURCE_DATA_MAX, SourceLayout, data_offset};
+use crate::storage::{
+    RECORD_HEAD_LEN, RecordTag, SOURCE_DATA_MAX, SourceLayout, data_offset, source_name,
+};
 
 /// A `SourceData` record: tag `u16`, length `u16`, then the samples.
 const RECORD_HEAD: usize = RECORD_HEAD_LEN;
@@ -73,6 +75,8 @@ pub struct ChunkBlocks {
 #[derive(Clone, Copy, Debug)]
 pub struct StreamFile {
     ext: Extents,
+    /// Its `.SRC`'s stem: the file a delete must not free under a stream.
+    stem: u32,
     data_off: Bytes,
     data_len: Bytes,
     frames: Frames,
@@ -90,6 +94,7 @@ impl StreamFile {
             .checked_add(data_offset(l).get())?;
         let sf = StreamFile {
             ext: runs.ext,
+            stem: l.head().sref.crc,
             data_off: data_offset(l),
             data_len: Bytes::new(data_len),
             frames: Frames::new(l.head().sref.frames),
@@ -101,6 +106,11 @@ impl StreamFile {
             && data_len > 0
             && ChunkIdx::new(data_len.div_ceil(CHUNK_BYTES.get()) - 1).is_some())
         .then_some(sf)
+    }
+
+    /// The `.SRC` it streams from (`source_name`).
+    pub fn file(&self) -> FileName {
+        source_name(self.stem)
     }
 
     pub fn frames(&self) -> Frames {

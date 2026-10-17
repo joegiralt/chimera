@@ -236,6 +236,8 @@ pub struct FatStore<D: Medium> {
     hint: Keyed<u32>,
     stale: Keyed<Stale>,
     orphan: Keyed<Orphan>,
+    /// Files the streams read: `write` and `delete` refuse them.
+    streamed: fn(FileName) -> bool,
 }
 
 type FsResult<T, D> = Result<T, FsError<PartError<<D as BlockDevice>::Error>>>;
@@ -249,7 +251,14 @@ impl<D: Medium> FatStore<D> {
             hint: Keyed::new(),
             stale: Keyed::new(),
             orphan: Keyed::new(),
+            streamed: |_| false,
         }
+    }
+
+    /// `streamed(file)` true: `write` and `delete` refuse `file` with
+    /// `Streaming`, touching nothing (the stream registry's rows).
+    pub fn guard_streamed(&mut self, streamed: fn(FileName) -> bool) {
+        self.streamed = streamed;
     }
 
     pub fn device(&self) -> &D {
@@ -613,12 +622,18 @@ impl<D: Medium> Store for FatStore<D> {
         if file == mark::name() || file.dir() == Dir::Root {
             return Err(StoreError::ReadOnly);
         }
+        if (self.streamed)(file) {
+            return Err(StoreError::Streaming);
+        }
         self.change(vol, |fs| fs.write(file, body))
     }
 
     fn delete(&mut self, vol: VolumeId, file: FileName) -> Result<(), StoreError> {
         if file == mark::name() || file.dir() == Dir::Root {
             return Err(StoreError::ReadOnly);
+        }
+        if (self.streamed)(file) {
+            return Err(StoreError::Streaming);
         }
         self.change(vol, |fs| fs.delete(file))
     }

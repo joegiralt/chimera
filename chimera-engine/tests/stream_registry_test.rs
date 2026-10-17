@@ -107,3 +107,18 @@ fn zeroed_registry_is_empty() {
         Some(Frames::new(4_000))
     );
 }
+
+/// What the store's guard asks: a live row's `.SRC`, and no other.
+#[test]
+fn a_row_streams_its_file() {
+    use chimera_engine::storage::source_name;
+    let r = StreamRegistry::new();
+    let f = file(5_000);
+    assert!(!r.streams(f.file()));
+    r.insert(id(2), f).unwrap();
+    assert!(r.streams(source_name(5_000)));
+    assert!(!r.streams(source_name(5_001)));
+    // SAFETY: nothing reads `r` but this test.
+    unsafe { r.clear(id(2)) };
+    assert!(!r.streams(f.file()));
+}

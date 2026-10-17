@@ -355,7 +355,12 @@ pub fn take_store(dev: SdDevice) -> Option<&'static mut SdStore> {
     let dev = SharedCard::new(dev, &BUS, &CARD_ADDR, hooks, Millis::new(SD_IDLE_MS));
     // SAFETY: the flag lets exactly one caller past, so this is the only
     // reference to `STORE` ever made.
-    Some(unsafe { &mut *addr_of_mut!(STORE) }.write(FatStore::new(dev)))
+    let store = unsafe { &mut *addr_of_mut!(STORE) }.write(FatStore::new(dev));
+    // A stem the streams read is never deleted or replaced under them,
+    // `card clean` included. The probe has no streams.
+    #[cfg(not(feature = "sd-probe"))]
+    store.guard_streamed(|f| crate::shared::registry().is_some_and(|r| r.streams(f)));
+    Some(store)
 }
 
 /// The probe runs no SysTick and no streams: each call counts a ms, so a

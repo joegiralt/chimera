@@ -428,3 +428,50 @@ fn same_audio_new_root_is_present() {
     s.list(vol, Dir::Tapes, &mut |f, _| files.push(f)).unwrap();
     assert_eq!(files, vec![source_file(h.sref)]);
 }
+
+/// A stem with a stream registry row is neither deleted nor replaced: the
+/// store refuses with `Streaming` and writes nothing, until the row clears.
+#[test]
+fn a_streamed_stem_is_not_deleted() {
+    use chimera_core::project::SourceId;
+    use chimera_core::storage::{SourceLayout, data_offset, source_name};
+    use chimera_core::stream::layout::StreamFile;
+    use chimera_core::stream::registry::StreamRegistry;
+    use chimera_hal::store::{FileRuns, Runs};
+    use chimera_hal::units::{BlockCount, Bytes, Lba};
+    static REG: StreamRegistry = StreamRegistry::new();
+
+    let (h, _) = source(9, FRAMES);
+    let l = SourceLayout::whole(h).unwrap();
+    let data = l.data_len() as u32;
+    let len = data_offset(&l).get() + data + 4 * data.div_ceil(504);
+    let mut runs = Runs::new();
+    runs.push(Lba::new(1_000), BlockCount::new(len.div_ceil(512)).unwrap());
+    let runs = FileRuns {
+        ext: runs.finish().unwrap(),
+        len: Bytes::new(len),
+    };
+    let file = source_name(h.sref.crc);
+    let other = source_name(h.sref.crc ^ 1);
+    let disk = Rc::new(with_clusters(CLUSTERS, 0x57E));
+    let mut s = probed(&disk);
+    s.guard_streamed(|f| REG.streams(f));
+    let vol = s.mount().unwrap();
+    s.make_dir(vol, Dir::Chimera).unwrap();
+    s.make_dir(vol, Dir::Tapes).unwrap();
+    for f in [file, other] {
+        s.write(vol, f, &mut |w| w.put(b"unsealed")).unwrap();
+    }
+    let id = SourceId::new(4).unwrap();
+    REG.insert(id, StreamFile::from_layout(&l, runs).unwrap())
+        .unwrap();
+    let wrote = log(&s).writes.borrow().len();
+    assert_eq!(s.delete(vol, file), Err(StoreError::Streaming));
+    let raw = s.write(vol, file, &mut |w| w.put(b"over"));
+    assert_eq!(raw, Err(StoreError::Streaming));
+    assert_eq!(log(&s).writes.borrow().len(), wrote, "nothing written");
+    assert_eq!(s.delete(vol, other), Ok(()), "another stem deletes");
+    // SAFETY: nothing reads `REG` but this test.
+    unsafe { REG.clear(id) };
+    assert_eq!(s.delete(vol, file), Ok(()));
+}

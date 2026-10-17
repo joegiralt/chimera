@@ -22,7 +22,8 @@ impl CardError {
             | StoreError::Corrupt
             | StoreError::Full
             | StoreError::ReadOnly
-            | StoreError::Busy => None,
+            | StoreError::Busy
+            | StoreError::Streaming => None,
             StoreError::Unsupported(u) => Some(CardError::Unsupported(u)),
             StoreError::Timeout => Some(CardError::Timeout),
             StoreError::VolumeChanged(v) => Some(CardError::VolumeChanged(v)),

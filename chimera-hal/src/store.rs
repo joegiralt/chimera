@@ -137,6 +137,9 @@ pub enum StoreError {
     /// The streams held the card bus past the UI's wait: nothing was sent,
     /// and the card is as it was. Not a card fault; nothing re-inits.
     Busy,
+    /// A delete or replace of a source the streams read (a registry row):
+    /// refused, nothing written. A file error, not a card fault.
+    Streaming,
 }
 
 impl StoreError {
@@ -159,6 +162,7 @@ impl StoreError {
             StoreError::ReadOnly => "FILE IS READ-ONLY",
             StoreError::Io => "CARD ERROR",
             StoreError::Busy => "CARD BUSY",
+            StoreError::Streaming => "SOURCE IS STREAMING",
         }
     }
 }

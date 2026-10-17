@@ -11,6 +11,8 @@ use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU8, Ordering};
 
+use chimera_hal::store::FileName;
+
 use super::layout::StreamFile;
 use crate::project::SourceId;
 
@@ -96,6 +98,16 @@ impl StreamRegistry {
         // SAFETY: the tag's `Acquire` saw `insert`'s `Release`, after the
         // file was written whole; it stays put while held (`clear`).
         Some(unsafe { (*row.file.get()).assume_init_ref() })
+    }
+
+    /// A row streams `file`: the store refuses to delete or replace it
+    /// (`FatStore::guard_streamed`).
+    pub fn streams(&self, file: FileName) -> bool {
+        self.rows.iter().any(|r| {
+            let t = r.tag.load(Ordering::Acquire);
+            // SAFETY: as `get`: an id's tag, its file written whole.
+            t != FREE && t != WRITING && unsafe { (*r.file.get()).assume_init_ref() }.file() == file
+        })
     }
 
     /// `id`'s row freed.
