@@ -1,7 +1,7 @@
 use std::cell::Cell;
 
 use chimera_engine::stream::cursor::{
-    Cursor, DROP_FADE, FadeCmd, Flow, Head, Plan, QUIET_FADE, SpanSrc,
+    Cursor, DROP_FADE, FadeCmd, Flow, HeadIdx, Plan, QUIET_FADE, RamHead, SpanSrc,
 };
 use chimera_engine::stream::layout::CHUNK_FRAMES;
 use chimera_engine::stream::port::StreamPort;
@@ -17,7 +17,12 @@ use std::sync::atomic::Ordering;
 const V: VoiceIdx = VoiceIdx::ALL[2];
 const CF: u32 = CHUNK_FRAMES.get();
 const FILE: Frames = Frames::new(40 * CF);
-const HEAD: Head = Head { idx: 0, end: 4_800 };
+const HEAD: RamHead = RamHead {
+    idx: HeadIdx::START,
+    start: 0,
+    end: 4_800,
+};
+const H0: HeadIdx = HeadIdx::START;
 const DROP: u32 = DROP_FADE.get();
 const QUIET: u32 = QUIET_FADE.get();
 
@@ -88,16 +93,20 @@ impl Play<'_> {
         f(&mut self.cur, &mut port)
     }
 
-    fn start(&mut self, pos: u32, head: Option<Head>) {
-        self.pos = f64::from(pos);
-        self.with(|c, p| c.start(pos, 1.0, head, p));
+    fn start(&mut self, pos: u32, head: Option<RamHead>) {
+        self.start_at(pos, 1.0, head);
     }
 
-    /// Plans a block at `inc`, then runs its samples: each one's position
+    fn start_at(&mut self, pos: u32, inc_max: f32, head: Option<RamHead>) {
+        self.pos = f64::from(pos);
+        self.with(|c, p| c.start(pos, inc_max, head, p));
+    }
+
+    /// Plans a block, then runs its samples at `inc`: each one's position
     /// and gain.
     fn block(&mut self, inc: f64) -> (Plan, Vec<(f64, f32)>) {
         let pos = self.pos;
-        let plan = self.with(|c, p| c.plan(pos, inc as f32, p));
+        let plan = self.with(|c, p| c.plan(pos, p));
         let mut out = Vec::with_capacity(BLOCK_SIZE);
         for _ in 0..BLOCK_SIZE {
             out.push((self.pos, self.cur.gain()));
@@ -153,6 +162,14 @@ impl Play<'_> {
     }
 }
 
+/// Samples heard at a read no run of the plan takes.
+fn audible_outside(plan: &Plan, samples: &[(f64, f32)]) -> usize {
+    samples
+        .iter()
+        .filter(|&&(pos, g)| g > 0.0 && !plan.runs().iter().any(|r| r.1.contains(&(pos as u32))))
+        .count()
+}
+
 fn underruns(r: &Rig) -> u32 {
     r.stats.underruns.load(Ordering::Relaxed)
 }
@@ -176,7 +193,7 @@ fn asks_every_slot_at_note_on() {
     let mut p = rig.play();
     let before = pends();
     p.start(0, Some(HEAD));
-    assert_eq!(p.cur.flow(), Flow::Head(0));
+    assert_eq!(p.cur.flow(), Flow::Head(H0));
     // The chunk the head hands over to (it holds the head's last read,
     // 4,797), then the two after it, each a slot.
     let mut deadlines = vec![];
@@ -263,17 +280,22 @@ fn block_split_at_span_end() {
     // The head until chunk 1's slot (unguarded: the head was before it)
     // holds a read, from CF + 1.
     let (plan, _) = p.block(1.0);
-    assert_eq!(plan.runs(), [(SpanSrc::Head(0), 0..65)]);
+    assert_eq!(plan.runs(), [(SpanSrc::Head(H0), 0..65)]);
     p.pos = f64::from(CF) - 38.0;
     let (plan, _) = p.block(1.0);
     assert_eq!(
         plan.runs(),
         [
-            (SpanSrc::Head(0), CF - 38..CF + 1),
+            (SpanSrc::Head(H0), CF - 38..CF + 1),
             (SpanSrc::Slot(a), CF + 1..CF + 27)
         ]
     );
     assert_eq!(p.cur.flow(), Flow::Ring(a));
+    {
+        let turn = p.audio.turn();
+        let ready = p.cur.ready(&turn, V, a).unwrap();
+        assert_eq!(ready.chunk().get(), 1);
+    }
 
     // Chunk 2's slot, guarded from chunk 1's, takes over at its first
     // read whose taps it holds: 2 x CF - 3.
@@ -293,7 +315,7 @@ fn block_split_at_span_end() {
 fn runs_cover_every_block_at_speed() {
     let rig = Rig::new();
     let mut p = rig.play();
-    p.start(0, Some(HEAD));
+    p.start_at(0, 16.0, Some(HEAD));
     // On past END too: the last chunk holds every read after it.
     for _ in 0..200 {
         p.serve();
@@ -313,15 +335,18 @@ fn runs_cover_every_block_at_speed() {
 
 /// Plays until a block plans a fade out: that block and the rest of the
 /// samples to silence.
-fn starve(p: &mut Play) -> (u32, Vec<(f64, f32)>) {
-    for _ in 0..200 {
-        let (plan, mut gains) = p.block(1.0);
+fn starve(p: &mut Play, inc: f64) -> (u32, Vec<(f64, f32)>) {
+    for _ in 0..2_000 {
+        let (plan, mut gains) = p.block(inc);
+        assert_eq!(audible_outside(&plan, &gains), 0);
         if let FadeCmd::Out { end_frame } = plan.fade {
             for r in plan.runs() {
                 assert!(r.1.end <= end_frame + 1, "reads past the held frames");
             }
             for _ in 0..3 {
-                gains.extend(p.block(1.0).1);
+                let (plan, more) = p.block(inc);
+                assert_eq!(audible_outside(&plan, &more), 0);
+                gains.extend(more);
             }
             return (end_frame, gains);
         }
@@ -331,18 +356,62 @@ fn starve(p: &mut Play) -> (u32, Vec<(f64, f32)>) {
 
 #[test]
 fn underrun_fades_out_ending_at_last_held_frame() {
+    for inc in [0.25, 1.0, 3.84, 16.0] {
+        let rig = Rig::new();
+        let mut p = rig.play();
+        p.start_at(0, inc as f32, Some(HEAD));
+        let (end_frame, gains) = starve(&mut p, inc);
+        // The head's last read whose taps it holds.
+        assert_eq!(end_frame, HEAD.end - 3);
+        let zero = gains.iter().position(|&(_, g)| g == 0.0).unwrap();
+        assert!(
+            zero < DROP as usize,
+            "{inc}: silent within DROP_FADE: {zero}"
+        );
+        assert!(gains[zero].0 <= f64::from(end_frame), "{inc}");
+        assert!(gains[zero..].iter().all(|&(_, g)| g == 0.0));
+        assert!(matches!(p.cur.flow(), Flow::Starved { .. }));
+        assert_eq!(underruns(&rig), 1);
+    }
+}
+
+#[test]
+fn head_holds_from_the_frame_after_its_start() {
+    let start = 3 * CF + 100;
+    let head = RamHead {
+        idx: HeadIdx::LOOP,
+        start,
+        end: start + 4_800,
+    };
+    // The read at START takes the frame before it, which the head lacks.
+    let rig = Rig::new();
+    let mut p = rig.play();
+    p.start(start, Some(head));
+    assert_eq!(p.cur.flow(), Flow::Cold);
+
+    let rig = Rig::new();
+    let mut p = rig.play();
+    p.start(start + 1, Some(head));
+    assert_eq!(p.cur.flow(), Flow::Head(HeadIdx::LOOP));
+    let (plan, _) = p.block(1.0);
+    assert_eq!(
+        plan.runs(),
+        [(SpanSrc::Head(HeadIdx::LOOP), start + 1..start + 66)]
+    );
+    // The handoff chunk holds the head's last read.
+    assert_eq!(p.wanted().first().map(|w| w.0), Some((start + 4_797) / CF));
+}
+
+#[test]
+fn jump_without_start_counts_a_fault() {
     let rig = Rig::new();
     let mut p = rig.play();
     p.start(0, Some(HEAD));
-    let (end_frame, gains) = starve(&mut p);
-    // The head's last read whose taps it holds.
-    assert_eq!(end_frame, HEAD.end - 3);
-    let zero = gains.iter().position(|&(_, g)| g == 0.0).unwrap();
-    assert!(zero < DROP as usize, "silent within DROP_FADE: {zero}");
-    assert!(gains[zero].0 <= f64::from(end_frame));
-    assert!(gains[zero..].iter().all(|&(_, g)| g == 0.0));
-    assert!(matches!(p.cur.flow(), Flow::Starved { .. }));
-    assert_eq!(underruns(&rig), 1);
+    p.block(1.0);
+    p.pos = f64::from(20 * CF);
+    let (plan, _) = p.block(1.0);
+    assert!(plan.runs().is_empty());
+    assert_eq!(rig.stats.faults.load(Ordering::Relaxed), 1);
 }
 
 #[test]
@@ -350,7 +419,7 @@ fn starved_reasks_under_head_and_cancels_stale() {
     let rig = Rig::new();
     let mut p = rig.play();
     p.start(0, Some(HEAD));
-    starve(&mut p);
+    starve(&mut p, 1.0);
     let one = p.slot_of(1).unwrap();
     let g1 = gen_of(p.seen(one)).unwrap();
     // Tape time runs on: once the head is in chunk 3, chunks 1 and 2 are
@@ -383,7 +452,7 @@ fn fades_in_over_drop_fade_when_ready() {
     let rig = Rig::new();
     let mut p = rig.play();
     p.start(0, Some(HEAD));
-    starve(&mut p);
+    starve(&mut p, 1.0);
     for _ in 0..20 {
         p.block(1.0);
     }
@@ -468,8 +537,9 @@ fn quiet_fades_over_quiet_fade_and_cancels_wants() {
 fn gain_never_steps() {
     let rig = Rig::new();
     let mut p = rig.play();
-    p.start(0, Some(HEAD));
+    p.start_at(0, 2.0, Some(HEAD));
     let mut last = p.cur.gain();
+    let mut outside = 0;
     let mut worst = 0f32;
     let mut levels = (false, false);
     for b in 0..1_500u32 {
@@ -485,8 +555,11 @@ fn gain_never_steps() {
         if b == 800 {
             p.quiet_off();
         }
+        // Under the note's inc_max, varying block to block.
         let inc = 0.5 + f64::from(b % 7) * 0.25;
-        for (_, g) in p.block(inc).1 {
+        let (plan, samples) = p.block(inc);
+        outside += audible_outside(&plan, &samples);
+        for (_, g) in samples {
             worst = worst.max((g - last).abs());
             levels.0 |= g == 0.0;
             levels.1 |= g == 1.0;
@@ -496,4 +569,5 @@ fn gain_never_steps() {
     assert!(levels.0 && levels.1);
     assert!(underruns(&rig) > 0 && colds(&rig) > 0);
     assert!(worst <= 1.0 / DROP as f32 + 1e-6, "{worst}");
+    assert_eq!(outside, 0, "heard outside the runs");
 }

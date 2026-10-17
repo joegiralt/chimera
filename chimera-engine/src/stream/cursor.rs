@@ -6,27 +6,38 @@
 //!
 //! Positions are read positions: a Hermite read at `i` takes the taps
 //! `i - 1..=i + 2`, and a span holds `i` only with all four.
+//!
+//! The read moves forward, at most `Plan::inc_max` a sample, from the
+//! `pos` each block's plan was given. Every other move of the read goes
+//! through `start`: a jump is a new start, cold, or on a head when one
+//! holds the target.
 
 use core::ops::Range;
 use core::sync::atomic::Ordering;
 
-use chimera_hal::BLOCK_SIZE;
 use chimera_hal::card_bus::Quiet;
+use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 
-use super::layout::{CHUNK_FRAMES, ChunkIdx};
+use super::admit::STREAM_BUDGET_BPS;
+use super::layout::{CHUNK_BYTES, CHUNK_FRAMES, ChunkIdx, RAW_CHUNK_BYTES};
 use super::port::StreamPort;
-use super::ring::{GUARD_FRAMES, Guard, SLOTS};
+use super::ring::{AudioTurn, GUARD_FRAMES, Guard, Ready, SLOTS};
 use super::slot::SlotState;
 use super::units::{AudioBlocks, Frames, Generation, SlotIdx};
+use crate::voice_alloc::VoiceIdx;
 
 /// A drop-out's fade, out and back in, in output samples.
 pub const DROP_FADE: Frames = Frames::new(144);
 /// Quiet's fade out, in output samples.
 pub const QUIET_FADE: Frames = Frames::new(480);
 /// The fastest read planned for, source frames an output sample.
-/// Admission keeps a streamed voice under 4: at 3.84 one bills the whole
-/// budget.
 pub const MAX_INC: f32 = 16.0;
+/// Admission's bill (`admit::bill`) for a read at 1 frame a sample: 1.5 B
+/// a frame, 9 raw blocks a chunk.
+const BILL_AT_ONE: u64 =
+    SAMPLE_RATE as u64 * 3 * RAW_CHUNK_BYTES as u64 / (2 * CHUNK_BYTES.get() as u64);
+// No admitted voice reads faster than the cursor plans for.
+const _: () = assert!((STREAM_BUDGET_BPS as u64).div_ceil(BILL_AT_ONE) < MAX_INC as u64);
 
 const CF: u32 = CHUNK_FRAMES.get();
 const BLOCK: u32 = BLOCK_SIZE as u32;
@@ -49,17 +60,30 @@ const _: () = assert!(TRAVEL_MAX < CF - 3);
 // the one under the read and the two after, `2 x CF - 3` past it.
 const _: () = assert!(TRAVEL_MAX + MAX_INC as u32 * DROP_FADE.get() < 2 * CF - 3);
 
-/// A head in RAM the note starts on, in the deck's numbering.
+/// Which of a source's heads: START's, or the loop's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Head {
-    pub idx: u8,
-    /// The source frame after its last.
+pub struct HeadIdx(u8);
+
+impl HeadIdx {
+    pub const START: HeadIdx = HeadIdx(0);
+    pub const LOOP: HeadIdx = HeadIdx(1);
+
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// A head in RAM: source frames `start..end`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RamHead {
+    pub idx: HeadIdx,
+    pub start: u32,
     pub end: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Flow {
-    Head(u8),
+    Head(HeadIdx),
     Ring(SlotIdx),
     /// Out of held frames: silent, tape time running on.
     Starved {
@@ -88,7 +112,7 @@ impl Fade {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpanSrc {
-    Head(u8),
+    Head(HeadIdx),
     Slot(SlotIdx),
 }
 
@@ -102,22 +126,26 @@ pub enum FadeCmd {
     In,
 }
 
-/// A block's reads and its fade.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A block's reads and its fade. It holds no bytes: the deck reads a
+/// slot's through `Cursor::ready`, under the block's turn.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Plan {
     runs: [(SpanSrc, Range<u32>); 2],
     n: u8,
     pub fade: FadeCmd,
+    /// The note's fastest read: the deck caps each sample's step at it.
+    pub inc_max: f32,
 }
 
 impl Plan {
-    const NONE: (SpanSrc, Range<u32>) = (SpanSrc::Head(0), 0..0);
+    const NONE: (SpanSrc, Range<u32>) = (SpanSrc::Head(HeadIdx::START), 0..0);
 
-    fn silent(fade: FadeCmd) -> Plan {
+    fn silent(fade: FadeCmd, inc_max: f32) -> Plan {
         Plan {
             runs: [Self::NONE; 2],
             n: 0,
             fade,
+            inc_max,
         }
     }
 
@@ -212,17 +240,23 @@ fn last_chunk(file: Frames) -> Option<u32> {
     file.get().checked_sub(1).map(chunk_of)
 }
 
-/// A head reaching the file's end holds every read after it (the view
-/// clamps at END).
-fn head_span(h: Head, file: Frames) -> Span {
+/// A head holds from its second frame (a read takes the frame before),
+/// or from 0 at the file's start; one reaching the file's end holds every
+/// read after it (the view clamps at both ends).
+fn head_span(h: RamHead, file: Frames) -> Span {
     let last = if h.end >= file.get() {
         u32::MAX
     } else {
         h.end.saturating_sub(AFTER + 1)
     };
+    let first = if h.start == 0 {
+        0
+    } else {
+        h.start.saturating_add(1)
+    };
     Span {
         src: SpanSrc::Head(h.idx),
-        first: 0,
+        first,
         last,
     }
 }
@@ -272,9 +306,12 @@ fn clamp_inc(inc_max: f32) -> f32 {
 pub struct Cursor {
     /// Each slot's want: a Ready slot is read only under it.
     wants: [Generation; SLOTS],
-    head: Option<Head>,
+    head: Option<RamHead>,
     gain: Fade,
     state: Flow,
+    /// The note's fastest read, clamped: every plan and deadline uses it,
+    /// so a fade planned in one block holds through the next.
+    inc: f32,
 }
 
 impl Default for Cursor {
@@ -290,6 +327,7 @@ impl Cursor {
             head: None,
             gain: Fade::SILENT,
             state: Flow::Cold,
+            inc: 0.0,
         }
     }
 
@@ -297,14 +335,15 @@ impl Cursor {
         self.state
     }
 
-    /// Note-on at source frame `pos`: drops the last note's slots, plays
-    /// from `head` if it holds `pos` (else starts cold), and asks every
-    /// slot.
+    /// Note-on (or any jump) at source frame `pos`, reading at most
+    /// `inc_max` source frames a sample until the next start: drops the
+    /// last note's slots, plays from `head` if it holds `pos` (else starts
+    /// cold), and asks every slot.
     pub fn start(
         &mut self,
         pos: u32,
         inc_max: f32,
-        head: Option<Head>,
+        head: Option<RamHead>,
         port: &mut StreamPort<'_, '_>,
     ) {
         for s in SlotIdx::ALL {
@@ -321,13 +360,13 @@ impl Cursor {
                 self.gain = Fade::SILENT;
             }
         }
-        self.tend(pos, clamp_inc(inc_max), true, port);
+        self.inc = clamp_inc(inc_max);
+        self.tend(pos, true, port);
     }
 
-    /// Once a block, before the model renders from `pos` at up to
-    /// `inc_max` source frames a sample.
-    pub fn plan(&mut self, pos: f64, inc_max: f32, port: &mut StreamPort<'_, '_>) -> Plan {
-        let inc = clamp_inc(inc_max);
+    /// Once a block, before the model renders from `pos`.
+    pub fn plan(&mut self, pos: f64, port: &mut StreamPort<'_, '_>) -> Plan {
+        let inc = self.inc;
         // `as` saturates (NaN to 0): no read past `u32`.
         let i0 = pos as u32;
         let i_last = (pos + f64::from(inc * BLOCK as f32)) as u32;
@@ -350,16 +389,20 @@ impl Cursor {
             for s in SlotIdx::ALL {
                 port.turn.cancel(port.voice, s);
             }
-            return Plan::silent(FadeCmd::Hold);
+            return Plan::silent(FadeCmd::Hold, inc);
         }
-        self.tend(i0, inc, self.state != Flow::Quiet, port);
+        self.tend(i0, self.state != Flow::Quiet, port);
 
         let spans = self.spans(port);
         let walk = walk(&spans, i0);
         let held = walk.as_ref().map(|w| w.held);
         let ok = held.is_some_and(|h| h >= look);
         let end_frame = held.unwrap_or(i0);
-        let mut plan = Plan::silent(FadeCmd::Hold);
+        if walk.is_none() && self.gain.level > 0 {
+            // Audible with nothing to read: a jump that skipped `start`.
+            port.stats.faults.fetch_add(1, Ordering::Relaxed);
+        }
+        let mut plan = Plan::silent(FadeCmd::Hold, inc);
         if let Some(w) = &walk {
             plan.read(w, i_last);
         }
@@ -397,6 +440,12 @@ impl Cursor {
         plan
     }
 
+    /// Slot `s`'s bytes, if Ready under this cursor's want: what a
+    /// `SpanSrc::Slot` run reads, for the block `turn` is.
+    pub fn ready<'t>(&self, turn: &'t AudioTurn<'_>, v: VoiceIdx, s: SlotIdx) -> Option<Ready<'t>> {
+        turn.ready(v, s, self.wants[s.index()])
+    }
+
     /// The gain for the next sample.
     pub fn gain(&mut self) -> f32 {
         let f = &mut self.gain;
@@ -426,7 +475,7 @@ impl Cursor {
     /// Drops every slot outside the chunks wanted (released if Ready, else
     /// cancelled, so a late fill lands nowhere) and, `asking`, wants the
     /// missing ones into the free slots. Not `asking`, every want goes.
-    fn tend(&mut self, i0: u32, inc: f32, asking: bool, port: &mut StreamPort<'_, '_>) {
+    fn tend(&mut self, i0: u32, asking: bool, port: &mut StreamPort<'_, '_>) {
         let Some(last) = last_chunk(port.file_frames) else {
             return;
         };
@@ -476,7 +525,7 @@ impl Cursor {
             let Some(chunk) = ChunkIdx::new(c) else {
                 return;
             };
-            let by = self.deadline(c, i0, inc, port);
+            let by = self.deadline(c, i0, port);
             if let Some(g) = port.turn.want(v, s, chunk, by) {
                 self.wants[s.index()] = g;
                 (port.pend)();
@@ -486,13 +535,13 @@ impl Cursor {
 
     /// `now` plus the blocks until the read needs chunk `c`: at its start,
     /// or once the head runs out.
-    fn deadline(&self, c: u32, i0: u32, inc: f32, port: &StreamPort<'_, '_>) -> AudioBlocks {
+    fn deadline(&self, c: u32, i0: u32, port: &StreamPort<'_, '_>) -> AudioBlocks {
         let mut need = c.saturating_mul(CF);
         if let Some(h) = self.head {
             need = need.max(head_span(h, port.file_frames).last.saturating_add(1));
         }
         let ahead = need.saturating_sub(i0) as f32;
-        let blocks = (ahead / (inc * BLOCK as f32).max(1.0)) as u32;
+        let blocks = (ahead / (self.inc * BLOCK as f32).max(1.0)) as u32;
         port.now.after(blocks.min(MAX_AHEAD))
     }
 
