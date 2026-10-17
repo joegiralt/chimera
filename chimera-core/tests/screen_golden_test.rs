@@ -81,11 +81,12 @@ const GOLDENS: &[(&str, u64)] = &[
     // THEME's PAGES ROW (ADR 0145): every other screen is recorded under
     // STACK (`screen::ui_for`). FLT's two pages, RES's three, MOD at E2
     // with `>`, OSC at D1R with both arrows and at OP6 with `<`, DRV bare.
-    ("row_flt", 0xd45e1bc46b792f3b),
-    ("row_res", 0xef3b823ba798fd6a),
-    ("row_mod", 0xcad01b7187c3f651),
-    ("row_osc_mid", 0xe3667da91b8bbcf5),
-    ("row_osc_last", 0xecd6f67045037214),
+    // Re-recorded: the row's pages in full words (`ROW_WORDS`).
+    ("row_flt", 0xafb54bf210453ad0),
+    ("row_res", 0x92503689734f4ddc),
+    ("row_mod", 0x1db005ea4ea974e2),
+    ("row_osc_mid", 0x9b2c7a9fd24e3120),
+    ("row_osc_last", 0x1b1f078c8285ea81),
     ("row_drv", 0xa319372fd505ebc9),
     ("env_a", 0x6f15c442d71edf83),
     ("env_b_env_ad", 0x849b12e99ea94bfd),

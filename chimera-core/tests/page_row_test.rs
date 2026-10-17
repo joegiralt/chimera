@@ -10,7 +10,7 @@ use chimera_core::ui::block_registry::{
     ALGO_CHAIN, ALL_CHAINS, MIXER_CHANNEL_CHAIN, MODAL_PLUCK_CHAIN, TAPE_CHAIN, VA_CHAIN,
 };
 use chimera_core::ui::draw::text_width;
-use chimera_core::ui::dungeon_map::{self, ROW_MAX, page_label, page_window};
+use chimera_core::ui::dungeon_map::{self, ROW_MAX, ROW_WORDS, page_window, row_label};
 use chimera_core::ui::theme::{self, ROW_GAP};
 use chimera_core::ui::theme_settings::Pages;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
@@ -126,7 +126,7 @@ fn the_arrows_show_exactly_where_the_row_is_cut() {
                         } else {
                             &theme::FONT_LABEL
                         };
-                        text_width(font, page_label(def, ResonatorMode::String), t)
+                        text_width(font, row_label(def, ResonatorMode::String), t)
                     })
                     .collect();
                 let r = page_window(&w, sub, theme::ROW_R - theme::ROW_L);
@@ -154,6 +154,44 @@ fn every_node_fits_the_row() {
                 chain.name,
                 b.def.short
             );
+        }
+    }
+}
+
+/// Every page on a node with sub-pages has a row word, picked once
+/// (MDL2 and TAPE's model page are named by their model); and every word,
+/// bold under any model, fits the row alone.
+#[test]
+fn every_row_page_has_a_word_that_fits() {
+    use chimera_core::dsp::tape_engine::TapeModel;
+    use chimera_core::ui::block_registry::{MODAL_2, TAPE_MODEL};
+    use chimera_core::ui::view::Models;
+    for (i, a) in ROW_WORDS.iter().enumerate() {
+        assert!(
+            ROW_WORDS[..i].iter().all(|b| b.0.id != a.0.id),
+            "{} twice",
+            a.1
+        );
+    }
+    let room = theme::ROW_R - theme::ROW_L;
+    for chain in ALL_CHAINS.iter() {
+        for b in chain.blocks.iter().filter(|b| b.sub_page_count() > 0) {
+            for def in core::iter::once(b.def).chain(b.sub_pages.iter().copied()) {
+                let named = def.id == MODAL_2.id || def.id == TAPE_MODEL.id;
+                assert!(
+                    named || ROW_WORDS.iter().any(|w| w.0.id == def.id),
+                    "{} {}: no row word",
+                    chain.name,
+                    def.short
+                );
+                for modal in (0..4).map(ResonatorMode::from_u8) {
+                    for tape in TapeModel::ALL {
+                        let w = row_label(def, Models { modal, tape });
+                        let px = text_width(&theme::FONT_LABEL_BOLD, w, theme::LABEL_TRACKING);
+                        assert!(px <= room, "{w}: {px} px");
+                    }
+                }
+            }
         }
     }
 }

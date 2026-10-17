@@ -12,6 +12,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use crate::dsp::modal::MODEL_NAMES;
 use crate::dsp::tape_engine::machine::machine;
 use crate::ui::block_def::{BlockDef, ChainDef2};
+use crate::ui::block_registry as reg;
 use crate::ui::block_registry::{MODAL_2, TAPE_MODEL};
 use crate::ui::draw;
 use crate::ui::nav::PageAt;
@@ -36,6 +37,79 @@ pub fn page_label(def: &BlockDef, models: impl Into<Models>) -> &'static str {
         id if id == MODAL_2.id => MODEL_NAMES[m.modal as usize],
         id if id == TAPE_MODEL.id => machine(m.tape).page,
         _ => def.short,
+    }
+}
+
+/// The row's word for each page on a node with sub-pages: the word a
+/// musician reads, in full where it fits (ADR 0145). STACK and the crumbs
+/// keep `short`. MDL2 and TAPE's model page are named at draw time.
+pub static ROW_WORDS: [(&BlockDef, &str); 51] = [
+    (&reg::ALGO_ALG, "ALGORITHM"),
+    (&reg::PITCH, "PITCH"),
+    (&reg::ALGO_WAVE, "WAVE"),
+    (&reg::ALGO_COARSE, "COARSE"),
+    (&reg::ALGO_FINE, "FINE"),
+    (&reg::ALGO_DETUNE, "DETUNE"),
+    (&reg::ALGO_LEVEL, "LEVEL"),
+    (&reg::ALGO_VELOCITY, "VELOCITY"),
+    (&reg::ALGO_AR, "ATTACK"),
+    (&reg::ALGO_D1R, "DECAY 1"),
+    (&reg::ALGO_D1L, "SUSTAIN"),
+    (&reg::ALGO_D2R, "DECAY 2"),
+    (&reg::ALGO_RR, "RELEASE"),
+    (&reg::ALGO_RATE_SCALE, "RATE SCALE"),
+    (&reg::ALGO_FEEDBACK, "FEEDBACK"),
+    (&reg::ALGO_FORMANT, "FORMANT"),
+    (&reg::ALGO_OP_PAGES[0], "OPERATOR 1"),
+    (&reg::ALGO_OP_PAGES[1], "OPERATOR 2"),
+    (&reg::ALGO_OP_PAGES[2], "OPERATOR 3"),
+    (&reg::ALGO_OP_PAGES[3], "OPERATOR 4"),
+    (&reg::ALGO_OP_PAGES[4], "OPERATOR 5"),
+    (&reg::ALGO_OP_PAGES[5], "OPERATOR 6"),
+    (&reg::FILTER, "FILTER"),
+    (&reg::FILTER_MOD, "MODULATION"),
+    (&reg::FOLDER, "AMP"),
+    (&reg::FOLDER_SYM, "SYMMETRY"),
+    (&reg::MOD_MATRIX, "MATRIX"),
+    (&reg::ENVELOPE, "ENV1"),
+    (&reg::ENV_2, "ENV2"),
+    (&reg::ENV_3, "ENV3"),
+    (&reg::ENV_SPEED, "SPEED"),
+    (&reg::LFO, "LFO1"),
+    (&reg::LFO_2, "LFO2"),
+    (&reg::LFO_3, "LFO3"),
+    (&reg::MODAL_1, "RESONATOR"),
+    (&reg::TAPE_DECK, "DECK"),
+    (&reg::VA_HOME, "VA"),
+    (&reg::VA_OSC1, "OSCILLATOR 1"),
+    (&reg::VA_OSC2, "OSCILLATOR 2"),
+    (&reg::DELAY, "DELAY"),
+    (&reg::DELAY_CHAR, "CHARACTER"),
+    (&reg::EFX, "REVERB"),
+    (&reg::EFX_MORE, "MORE"),
+    (&reg::EFX_MORE2, "MORE 2"),
+    (&reg::MASTER, "MASTER"),
+    (&reg::MASTER_LEVEL, "LEVEL"),
+    (&crate::ui::orbit::ORBIT_ORB, "ORB"),
+    (&crate::ui::orbit::ORBIT_CUSTOM, "CUSTOM"),
+    (&crate::ui::orbit::ORBIT_RHYTHM, "RHYTHM"),
+    (&crate::ui::orbit::ORBIT_VOICE, "VOICE"),
+    (&crate::ui::orbit::ORBIT_NOTES, "NOTES"),
+];
+
+/// A page's word on the row: `ROW_WORDS`, MDL2 by its model, TAPE's model
+/// page by its machine in full (`STRETCH`), else `page_label`.
+pub fn row_label(def: &BlockDef, models: impl Into<Models>) -> &'static str {
+    let m = models.into();
+    match def.id {
+        id if id == MODAL_2.id => MODEL_NAMES[m.modal as usize],
+        id if id == TAPE_MODEL.id => {
+            crate::dsp::tape_engine::MACHINE_NAMES[m.tape.index() as usize]
+        }
+        id => ROW_WORDS
+            .iter()
+            .find(|w| w.0.id == id)
+            .map_or_else(|| page_label(def, m), |w| w.1),
     }
 }
 
@@ -318,7 +392,7 @@ where
         } else {
             block.sub_pages[i - 1]
         };
-        page_label(def, models)
+        row_label(def, models)
     };
     let font = |i: usize| {
         if i == cur {

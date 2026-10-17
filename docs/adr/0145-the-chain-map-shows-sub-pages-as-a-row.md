@@ -31,6 +31,12 @@ for it to be built and made switchable in THEME.
   right, then a page left, until neither fits); `<` at x 10 shows when
   pages are cut on the left, `>` right-aligned at 230 when cut on the
   right. A node with no sub-pages draws no rule and no row.
+- ROW names each page in a full word (`dungeon_map::ROW_WORDS`, by
+  page: MATRIX, ENV1, SPEED, COARSE, VELOCITY, DECAY 1, OPERATOR 1...;
+  MDL2 by its model, TAPE's model page by its machine in full), since the
+  row scrolls and has the room; fewer pages fit at once and the arrows
+  say there are more. Every word fits the row alone. STACK and the crumbs
+  keep the short codes.
 - **STACK** is the list as it was, bit for bit; every screen golden from
   before this ADR is recorded under STACK and unchanged, and new `row_`
   goldens lock ROW.
@@ -67,7 +73,7 @@ for it to be built and made switchable in THEME.
 ## Consequences
 Under ROW the D-pad differs from ADR 0081 on sub-pages; the suites that
 walk pages with ADR 0081's keys run under STACK (`screen::stack_ui`), and
-ROW's keys have their own tests. The map's band now shows six or seven pages at once and where the
+ROW's keys have their own tests. The map's band now shows three to six pages at once, in full words, and where the
 rest lie. The region key carries PAGES, and ROW keys no scroll, so the
 STACK list's easing doesn't redraw the row. The node line sits 7 px higher
 in ROW than in STACK. Any later map change has two drawings to keep.
