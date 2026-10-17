@@ -214,6 +214,8 @@ pub enum SourceState {
     NotTranswave,
     /// TRON on a zone set (the streamed TRON's).
     ZonesOnTron,
+    /// A streamed source the note would need in RAM (slice 1 § 2.3).
+    NeedsRam(tape_engine::NeedsRam),
     Held {
         rate: u16,
         frames: u32,
@@ -233,8 +235,9 @@ pub enum SourceState {
 }
 
 impl SourceState {
-    /// What a note-on on `model` finds for `r` in `pool`.
-    pub fn of(model: TapeModel, r: Option<SourceRef>, pool: &Pool) -> Self {
+    /// What a note-on on `p` finds for `r` in `pool`.
+    pub fn of(p: &T, r: Option<SourceRef>, pool: &Pool) -> Self {
+        let model = p.model;
         let Some(r) = r else {
             return SourceState::None;
         };
@@ -244,14 +247,18 @@ impl SourceState {
         if let Some(why) = pool.absence(id) {
             return SourceState::Absent(why);
         }
+        let held = SourceState::Held {
+            rate: r.rate,
+            frames: r.frames,
+            cost: pool.source(id).map_or(Cost::default(), |e| e.cost()),
+            name: None,
+        };
         match pool.source_view(r) {
-            Some(v) if wave::playable(model, &v) => SourceState::Held {
-                rate: r.rate,
-                frames: r.frames,
-                cost: pool.source(id).map_or(Cost::default(), |e| e.cost()),
-                name: None,
-            },
+            Some(v) if wave::playable(model, &v) => held,
             Some(_) if model == TapeModel::Transwave => SourceState::NotTranswave,
+            None if pool.streamed(r) => {
+                tape_engine::needs_ram(p).map_or(held, SourceState::NeedsRam)
+            }
             _ => SourceState::ZonesOnTron,
         }
     }
@@ -322,6 +329,7 @@ impl SourceState {
             SourceState::Absent(Absence::ReadFailed) => READ_FAILED,
             SourceState::NotTranswave => "NOT A TRANSWAVE",
             SourceState::ZonesOnTron => "ZONES: NOT TRON",
+            SourceState::NeedsRam(n) => crate::ui::source_cell::needs_ram_words(n),
             SourceState::Failed(w) => w,
             _ => "NONE",
         }
@@ -340,6 +348,7 @@ impl SourceState {
             }
             SourceState::NotTranswave => buf.write_str("NO WAVE"),
             SourceState::ZonesOnTron => buf.write_str("ZONES"),
+            SourceState::NeedsRam(_) => buf.write_str("RAM"),
             SourceState::Held { rate, frames, .. } => {
                 seconds(buf, rate, frames);
                 Ok(())

@@ -1105,7 +1105,8 @@ impl UiState {
             .on_clock(self.orbit.status.source)
             .on_rev(&self.project.perf().fx.reverb)
             .on_chorus(&self.project.perf().fx.chorus);
-        let base = view::SourceState::of(ctx.tape, sound.source_ref(), self.project.pool());
+        let base =
+            view::SourceState::of(&sound.params.tape, sound.source_ref(), self.project.pool());
         let ctx = ctx.on_source(self.src.state(self.active_part, base, &self.project));
         match self.loc.orbit() {
             Some(o) => ctx.on_ring(o.ring()),

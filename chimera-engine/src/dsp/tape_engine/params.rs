@@ -135,6 +135,32 @@ pub fn hold(p: &TapeEngineParams) -> bool {
     p.model == TapeModel::Play && p.mode == PlayMode::One && p.drag >= FADE_HOLD
 }
 
+/// SLICE NOTE: a ONE note plays at ROOT, whatever its key.
+pub fn at_root(p: &TapeEngineParams) -> bool {
+    p.model == TapeModel::Play && p.mode == PlayMode::One && p.slice.slice().by_note()
+}
+
+/// Why a streamed source can't play `p` (slice 1 § 2.3): streams read
+/// forward only until slice 5, and the other machines seek.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NeedsRam {
+    Ping,
+    /// END before START.
+    Reverse,
+    /// SCRUB, STRETCH and WAVE; TRON until slice 2.
+    Machine(TapeModel),
+}
+
+/// `None`: PLAY in MODE ONE or LOOP, END at or after START.
+pub fn needs_ram(p: &TapeEngineParams) -> Option<NeedsRam> {
+    match (p.model, p.mode) {
+        (TapeModel::Play, PlayMode::Ping) => Some(NeedsRam::Ping),
+        (TapeModel::Play, _) if p.end < p.start => Some(NeedsRam::Reverse),
+        (TapeModel::Play, _) => None,
+        (m, _) => Some(NeedsRam::Machine(m)),
+    }
+}
+
 /// The speed's deviation under TAPE: the capstan's transport (ADR 0053),
 /// or CHOMPI's Warble (`warble`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

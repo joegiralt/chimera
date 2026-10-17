@@ -262,6 +262,18 @@ impl Pool {
         crate::dsp::tape_engine::read::SourceView::new(held)
     }
 
+    /// Source `r` is held as heads, the rest streamed (slice 1 § 5.3).
+    pub fn streamed(&self, r: SourceRef) -> bool {
+        self.find_source(r)
+            .and_then(|s| self.source(s))
+            .map(|e| {
+                self.arena
+                    .bytes(e.offset + SOURCE_HEAD as u32, e.held as usize)
+            })
+            .and_then(crate::dsp::tape_engine::read::Descriptor::from_bytes)
+            .is_some_and(|d| d.heads > 0)
+    }
+
     /// Source `r` with its `held` bytes; an identical source already held
     /// is shared, and an absent one takes the bytes in its own slot.
     /// Refused, with nothing moved, when the gap can't take it, or when

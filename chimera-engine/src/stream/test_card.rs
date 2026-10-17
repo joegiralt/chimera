@@ -113,6 +113,7 @@ impl<'r> TestCard<'r> {
             bus: &self.bus,
             stats: &self.stats,
             pend: || {},
+            reach_cents: 0.0,
         }
     }
 

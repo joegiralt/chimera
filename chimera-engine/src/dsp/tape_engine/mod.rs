@@ -69,7 +69,7 @@ use crate::modulation::ModState;
 use crate::project::SourceId;
 use crate::source_table::GateView;
 #[cfg(feature = "tape")]
-use crate::stream::admit::{WOW_CENTS, head_frames};
+use crate::stream::admit::head_frames;
 #[cfg(feature = "tape")]
 use crate::stream::cursor::{Cursor, DROP_FADE, HeadIdx};
 use crate::stream::port::StreamPort;
@@ -89,8 +89,9 @@ use wave::Wave;
 pub use heads::loop_len;
 pub use oneshot::SliceCode;
 pub use params::{
-    FADE_HOLD, MACHINE_NAMES, MODEL_NAMES, PlayMode, StretchType, TAPE_ENGINE_SPECS,
-    TapeEngineParams, TapeModel, Wow, drag_s, fade_default, jogs, reads, reads_in,
+    FADE_HOLD, MACHINE_NAMES, MODEL_NAMES, NeedsRam, PlayMode, StretchType, TAPE_ENGINE_SPECS,
+    TapeEngineParams, TapeModel, Wow, at_root, drag_s, fade_default, jogs, needs_ram, reads,
+    reads_in,
 };
 
 // Each model's bill: its measured worst a sample, the M7's static count
@@ -118,6 +119,9 @@ pub const COST_TAPE_RUNS: Cost = Cost(10);
 /// AGE when it runs (`age::age_runs`): the wear's loop and block, 15.9 →
 /// 25.5.
 pub const COST_AGE: Cost = Cost(30);
+/// A streamed source on PLAY's bill: span switching and slot checks
+/// (slice 1 § 5.5), an estimate the bench rows re-measure.
+pub const COST_STREAM: Cost = Cost(20);
 /// TRANSWAVE's pitch can cross a level (`COST_WAVE_LEVEL`) in a note past
 /// this many cents: the hysteresis' 0.35 to 0.715 step, ±6.2 st.
 pub const LEVEL_CENTS: f32 = 620.0;
@@ -178,6 +182,25 @@ pub const fn model_cost(m: TapeModel, mode: PlayMode) -> Cost {
         TapeModel::Transwave => COST_WAVE,
         TapeModel::Stretch => COST_STRETCH,
     }
+}
+
+/// `model_cost` on a streamed source: only PLAY streams.
+pub const fn streamed_cost(m: TapeModel, mode: PlayMode) -> Cost {
+    Cost(model_cost(m, mode).0 + COST_STREAM.0)
+}
+
+/// The fastest read ratio a streamed note on `p` reaches (slice 1 § 5.5,
+/// #585): `cents` over its key (PITCH, TUNING, every route at full swing),
+/// the bend's range and wow; SLICE NOTE plays at ROOT. MOTION and WALK move
+/// PLAY's loop, never its speed, so they add nothing. A glide's reach is
+/// the caller's: it passes the note the glide can start from.
+pub fn ratio_max(p: &TapeEngineParams, note: u8, cents: f32, bend_cents: f32) -> f32 {
+    let root = if params::at_root(p) {
+        f32::from(note) * 100.0
+    } else {
+        p.root
+    };
+    crate::stream::admit::ratio_max(note, root, cents, bend_cents)
 }
 
 /// TAPE runs, and is billed, whenever it can be heard: stored above 0, or
@@ -522,6 +545,10 @@ pub struct TapeDeck {
     /// The fastest step a sample: `INC_MAX`, or a streamed note's
     /// `inc_max`, which its cursor plans for.
     inc_cap: f32,
+    /// A streamed note's rate, and the cents its speed reaches over its key
+    /// (PITCH, TUNING, its routes and bend): `stream_cap`'s.
+    stream_rate: u16,
+    stream_cents: f32,
     /// Streamed views check every tap: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     strict: bool,
@@ -617,6 +644,8 @@ impl TapeDeck {
             jumped: false,
             ducked: false,
             inc_cap: INC_MAX,
+            stream_rate: 0,
+            stream_cents: 0.0,
             #[cfg(any(test, feature = "test-support"))]
             strict: false,
         }
@@ -732,8 +761,7 @@ impl TapeDeck {
         streams: Option<&mut StreamPort<'_, '_>>,
     ) {
         (self.gated, self.active, self.streamed) = (false, false, false);
-        let forward = p.model == TapeModel::Play && p.mode != PlayMode::Ping && p.end >= p.start;
-        let (Some(port), true) = (streams, forward) else {
+        let (Some(port), None) = (streams, params::needs_ram(p)) else {
             return;
         };
         let Some(row) = self.row(held, port) else {
@@ -745,21 +773,28 @@ impl TapeDeck {
         // Reads nothing: the window from the file's frames and the rate.
         self.note_on(note, p, &head.view, sample_rate);
         self.streamed = true;
-        let tune = self.tune();
-        self.inc_cap = clampf(
-            inc(
-                row.desc().rate,
-                note,
-                self.pitch + tune + WOW_CENTS,
-                self.root,
-                sample_rate,
-            ),
-            f32::EPSILON,
-            INC_MAX,
-        );
+        (self.stream_rate, self.stream_cents) = (row.desc().rate, self.pitch + port.reach_cents);
+        self.inc_cap = self.stream_cap(note, sample_rate);
         let at = self.heads[0].pos.whole();
         self.cursor
             .start(at, self.inc_cap, row.head(HeadIdx::START), port);
+    }
+
+    /// The fastest a streamed note on `note` reads, frames a sample (#585):
+    /// `stream_cents` over its key, and wow (`admit::ratio_max`). SLICE NOTE
+    /// plays at ROOT. MOTION walks the loop, never its speed.
+    fn stream_cap(&self, note: u8, sample_rate: u32) -> f32 {
+        let root = if self.one() && self.at_root {
+            f32::from(note) * 100.0
+        } else {
+            self.root
+        };
+        let r = crate::stream::admit::ratio_max(note, root, self.stream_cents, 0.0);
+        clampf(
+            f32::from(self.stream_rate) / sample_rate as f32 * r,
+            f32::EPSILON,
+            INC_MAX,
+        )
     }
 
     /// The next wrap lands on a head: the fade's second head reads it from
@@ -806,19 +841,26 @@ impl TapeDeck {
         }
     }
 
-    /// A note-on on `model` and `id` (a Part's) plays nothing: no source,
-    /// an absent one (its row empty, the gate open), or one `model` can't
-    /// play. One a closed gate moves isn't refused: it waits (`start`).
-    /// Refused, it is never allocated (spec § 2).
-    pub fn refuses(model: TapeModel, id: Option<SourceId>, src: &GateView<'_>) -> bool {
+    /// A note-on on `p` and `id` (a Part's) plays nothing: no source, an
+    /// absent one (its row empty, the gate open), one `p`'s model can't
+    /// play, or a streamed one `p` needs in RAM (`needs_ram`). One a closed
+    /// gate moves isn't refused: it waits (`start`). Refused, it is never
+    /// allocated (spec § 2).
+    pub fn refuses(p: &TapeEngineParams, id: Option<SourceId>, src: &GateView<'_>) -> bool {
         let Some(id) = id else {
             return true;
         };
-        !src.moving(id)
-            && !src
-                .bytes(id)
-                .and_then(SourceView::new)
-                .is_some_and(|v| wave::playable(model, &v))
+        if src.moving(id) {
+            return false;
+        }
+        let Some(held) = src.bytes(id) else {
+            return true;
+        };
+        match Descriptor::from_bytes(held) {
+            Some(d) if d.heads > 0 => params::needs_ram(p).is_some(),
+            Some(d) => !SourceView::of(held, d).is_some_and(|v| wave::playable(p.model, &v)),
+            None => true,
+        }
     }
 
     /// `render` from the latched source's row this block. While a closed
@@ -972,9 +1014,28 @@ impl TapeDeck {
         model_cost(m, mode)
     }
 
-    /// What the sounding note costs: its note-on's model.
+    /// What the sounding note costs: its note-on's model, and the
+    /// stream's term on a streamed source.
     pub fn playing_cost(&self) -> Option<Cost> {
-        self.active.then(|| Self::model_cost(self.model, self.mode))
+        self.active.then(|| {
+            if self.streamed {
+                streamed_cost(self.model, self.mode)
+            } else {
+                Self::model_cost(self.model, self.mode)
+            }
+        })
+    }
+
+    /// A streamed note's speed now, frames a sample, as it would be with
+    /// no cap, and its cap: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn speed(&self) -> Option<(f32, f32)> {
+        let tune = if self.one_head() { self.tune() } else { 0.0 };
+        let cents = f32::from(self.note) * 100.0 + self.pitch + self.cents + tune - self.root;
+        let wants = f32::from(self.stream_rate) / SAMPLE_RATE as f32
+            * exp2(cents / 1_200.0)
+            * self.slide.value();
+        (self.active && self.streamed).then_some((wants, self.inc_cap))
     }
 
     /// A glide steal's ratio now, 1 at rest: for the tests.
@@ -1228,11 +1289,22 @@ impl TapeDeck {
     /// `inc` glides to `note`'s from the pitch it sounds, a one-pole of
     /// `tau` seconds in log pitch. Idle, or on `note`, nothing moves.
     /// Gated, the note it starts on moves (its `note_on` drops the glide).
-    pub fn glide_to(&mut self, note: u8, (_sample_rate, tau): (u32, f32)) {
+    pub fn glide_to(&mut self, note: u8, (sample_rate, tau): (u32, f32)) {
         if !self.active || note == self.note {
             return;
         }
-        let from = exp2((self.note as f32 - note as f32) / 12.0) * self.slide.value();
+        // SLICE NOTE plays every key at ROOT: no pitch to travel.
+        let from = if self.one() && self.at_root {
+            self.slide.value()
+        } else {
+            exp2((self.note as f32 - note as f32) / 12.0) * self.slide.value()
+        };
+        if self.streamed {
+            // From where it sounds, at most its cap, to `note`'s speed: its
+            // cursor plans for the faster (#585).
+            self.inc_cap = self.inc_cap.max(self.stream_cap(note, sample_rate));
+            self.cursor.raise(self.inc_cap);
+        }
         self.slide = Glide::new(from, tau);
         self.slide.toward(1.0);
         self.note = note;

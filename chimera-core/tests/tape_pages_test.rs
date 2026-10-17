@@ -14,7 +14,7 @@ use chimera_core::block::{Block, ParamId, ParamKind};
 use chimera_core::dsp::tape_engine::machine::{MACHINES, machine};
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
-    MODEL_NAMES, TAPE_ENGINE_SPECS, TapeEngine, TapeEngineParams, TapeModel, reads,
+    MODEL_NAMES, PlayMode, TAPE_ENGINE_SPECS, TapeEngine, TapeEngineParams, TapeModel, reads,
 };
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
@@ -438,7 +438,13 @@ fn src_reads_states() {
     };
     ui.project_mut().source_store(r, &held).unwrap();
     let pool = ui.project().pool();
-    let state = |m, r| SourceState::of(m, r, pool);
+    let state = |model, r| {
+        let p = TapeEngineParams {
+            model,
+            ..TapeEngineParams::default()
+        };
+        SourceState::of(&p, r, pool)
+    };
     assert_eq!(text(state(TapeModel::Play, None)), "NONE / NONE");
     assert_eq!(
         text(state(TapeModel::Play, Some(r))),
@@ -624,4 +630,62 @@ fn mode_edit_writes_its_fade() {
         (s.params.tape.mode, s.params.tape.drag),
         (PlayMode::Ping, 0.3)
     );
+}
+
+/// A streamed source says why a note on it won't play (slice 1 § 2.3), in
+/// the focus band as every other refusal does: streams read forward only,
+/// and the machines that seek need RAM.
+#[test]
+fn streamed_refusals_reach_the_band() {
+    use chimera_core::stream::ring::{Rings, ThirdSlots};
+    use chimera_core::stream::test_card::TestCard;
+    use chimera_core::ui::source_cell::{PING_NEEDS_RAM, REVERSE_NEEDS_RAM};
+    let text = |s: SourceState| {
+        let (mut b, mut c) = (FmtBuf::new(), FmtBuf::new());
+        s.text(&mut b);
+        s.cell(&mut c);
+        assert!(draw::text_width(&theme::FONT_VALUE, c.as_str(), 0) <= theme::CELL_COL_W - 4);
+        format!("{} / {}", b.as_str(), c.as_str())
+    };
+    let whole = held_plain(&sine(24_000, 100.7, 720_000), 24_000);
+    let rings: &'static Rings = Box::leak(Box::new(Rings::new()));
+    let third: &'static ThirdSlots = Box::leak(Box::new(ThirdSlots::new()));
+    let (_, card) = rings.sides(third).unwrap();
+    let held = TestCard::new(card, &whole, 0).held(&[0, 0], 4_800);
+    let r = SourceRef {
+        crc: 0x5EED,
+        frames: 720_000,
+        rate: 24_000,
+    };
+    let mut ui = chimera_core::ui::UiState::new();
+    ui.project_mut().source_store(r, &held).unwrap();
+    let pool = ui.project().pool();
+    let state = |model, mode, start, end| {
+        let p = TapeEngineParams {
+            model,
+            mode,
+            start,
+            end,
+            ..TapeEngineParams::default()
+        };
+        text(SourceState::of(&p, Some(r), pool))
+    };
+    use PlayMode::{Loop, One, Ping};
+    assert!(state(TapeModel::Play, Loop, 0.0, 1.0).starts_with("24K · 30.0 S"));
+    assert!(state(TapeModel::Play, One, 0.0, 1.0).starts_with("24K · 30.0 S"));
+    let ping = state(TapeModel::Play, Ping, 0.0, 1.0);
+    assert!(ping.starts_with(&format!("{PING_NEEDS_RAM} / ")), "{ping}");
+    for mode in [One, Loop] {
+        let rev = state(TapeModel::Play, mode, 0.9, 0.1);
+        assert!(rev.starts_with(&format!("{REVERSE_NEEDS_RAM} / ")), "{rev}");
+    }
+    for (m, why) in [
+        (TapeModel::Scrub, "SCRUB NEEDS RAM"),
+        (TapeModel::Stretch, "STRETCH NEEDS RAM"),
+        (TapeModel::Transwave, "WAVE NEEDS RAM"),
+        (TapeModel::Tron, "TRON NEEDS RAM"),
+    ] {
+        let s = state(m, Loop, 0.0, 1.0);
+        assert!(s.starts_with(&format!("{why} / ")), "{s}");
+    }
 }

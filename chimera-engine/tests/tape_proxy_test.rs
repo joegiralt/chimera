@@ -65,7 +65,7 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     let e = TapeEngine::init_in_place(&mut slot);
     e.seed(3);
     e.latch(id);
-    assert!(TapeEngine::refuses(p.model, Some(id), &tok.begin_block()));
+    assert!(TapeEngine::refuses(&p, Some(id), &tok.begin_block()));
     e.start(60, &p, &tok.begin_block(), SR, None);
     let mut out = [1.0; BLOCK_SIZE];
     e.play(&mut out, &p, &tok.begin_block(), SR, None);
@@ -87,10 +87,10 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     e.seed(3);
     for (k, note) in [(0, 60u8), (40, 67)] {
         let v = tok.begin_block();
-        assert!(!TapeEngine::refuses(p.model, Some(id), &v));
+        assert!(!TapeEngine::refuses(&p, Some(id), &v));
         assert_eq!(
-            TapeEngine::refuses(p.model, Some(id), &v),
-            TapeDeck::refuses(p.model, Some(id), &v)
+            TapeEngine::refuses(&p, Some(id), &v),
+            TapeDeck::refuses(&p, Some(id), &v)
         );
         d.latch(id);
         e.latch(id);
@@ -154,7 +154,7 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     assert_eq!(out, [0.0; BLOCK_SIZE]);
     assert!(!e2.is_active());
     assert_eq!(e2.heads(), Heads::NONE);
-    assert!(TapeEngine::refuses(p.model, Some(id), &tok.begin_block()));
+    assert!(TapeEngine::refuses(&p, Some(id), &tok.begin_block()));
 
     // Open again: the deck plays on from where the close left it.
     DOOR_CELL.open_host();

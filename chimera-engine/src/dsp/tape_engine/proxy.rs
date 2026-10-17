@@ -36,7 +36,7 @@ pub struct TapeDoor {
         u32,
         Option<&mut StreamPort<'_, '_>>,
     ),
-    pub refuses: fn(TapeModel, Option<SourceId>, &GateView<'_>) -> bool,
+    pub refuses: fn(&TapeEngineParams, Option<SourceId>, &GateView<'_>) -> bool,
     pub play: fn(
         &mut TapeDeck,
         &mut [f32; BLOCK_SIZE],
@@ -176,9 +176,9 @@ impl TapeEngine {
     }
 
     /// Closed, every note.
-    pub fn refuses(model: TapeModel, id: Option<SourceId>, src: &GateView<'_>) -> bool {
+    pub fn refuses(p: &TapeEngineParams, id: Option<SourceId>, src: &GateView<'_>) -> bool {
         DOOR_CELL
-            .with(|d| (d.tape.refuses)(model, id, src))
+            .with(|d| (d.tape.refuses)(p, id, src))
             .unwrap_or(true)
     }
 
@@ -219,6 +219,11 @@ impl TapeEngine {
     #[cfg(any(test, feature = "test-support"))]
     pub fn slide(&self) -> f32 {
         self.read(|_, k| k.slide()).unwrap_or(1.0)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn speed(&self) -> Option<(f32, f32)> {
+        self.read(|_, k| k.speed()).flatten()
     }
 
     pub fn set_pitch(&mut self, cents: f32) {

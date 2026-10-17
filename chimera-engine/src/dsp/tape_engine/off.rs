@@ -54,7 +54,7 @@ impl TapeEngine {
     }
 
     /// Every note: nothing here plays.
-    pub fn refuses(_: TapeModel, _: Option<SourceId>, _: &GateView<'_>) -> bool {
+    pub fn refuses(_: &TapeEngineParams, _: Option<SourceId>, _: &GateView<'_>) -> bool {
         true
     }
 

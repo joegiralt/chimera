@@ -13,6 +13,7 @@ use core::num::NonZeroU32;
 
 use chimera_hal::store::{ReadSink, Store, StoreError};
 
+use crate::dsp::tape_engine::{NeedsRam, TapeModel};
 use crate::preset::Sound;
 use crate::project::arena::{Cost, MAX_SOURCES};
 use crate::project::{PartId, Pool, Project, SOURCE_HEAD, SourceId, SourceNeed};
@@ -30,6 +31,23 @@ pub const HEAD_CACHE: usize = 16;
 pub const SOURCE_MISSING: &str = "SOURCE MISSING";
 pub const NOT_ON_CARD: &str = "SOURCE NOT ON CARD";
 pub const READ_FAILED: &str = "CARD READ FAILED";
+/// A streamed source reads forward only until slice 5 (slice 1 § 2.3).
+pub const PING_NEEDS_RAM: &str = "PING NEEDS RAM";
+pub const REVERSE_NEEDS_RAM: &str = "REVERSE NEEDS RAM";
+
+/// Why a streamed source won't play: the focus band's words.
+pub fn needs_ram_words(n: NeedsRam) -> &'static str {
+    match n {
+        NeedsRam::Ping => PING_NEEDS_RAM,
+        NeedsRam::Reverse => REVERSE_NEEDS_RAM,
+        // The machines that seek (slice 1 § 2.7): provisional copy.
+        NeedsRam::Machine(TapeModel::Scrub) => "SCRUB NEEDS RAM",
+        NeedsRam::Machine(TapeModel::Stretch) => "STRETCH NEEDS RAM",
+        NeedsRam::Machine(TapeModel::Transwave) => "WAVE NEEDS RAM",
+        NeedsRam::Machine(TapeModel::Tron) => "TRON NEEDS RAM",
+        NeedsRam::Machine(TapeModel::Play) => "NEEDS RAM",
+    }
+}
 
 /// A step of SOURCE's turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

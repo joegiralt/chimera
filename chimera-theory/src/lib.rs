@@ -942,7 +942,18 @@ impl SnapTo {
 /// The nearest note in `to`, staying inside 0..=127; a tie goes down.
 /// A chord snaps to exactly its tones.
 pub const fn snap(note: Note, to: SnapTo) -> Note {
-    let set = to.mask();
+    snap_in(note, to.mask())
+}
+
+/// The most semitones `snap` moves `note` up, to any set: it looks down
+/// first, so the nearest class above is at most 5 away, unless the one
+/// below would fall under note 0.
+pub const fn snap_reach_up(note: Note) -> u8 {
+    if note.0 < 6 { 11 } else { 5 }
+}
+
+/// `snap` to the pitch classes in `set` (non-empty).
+const fn snap_in(note: Note, set: u16) -> Note {
     let n = note.0 as i16;
     let mut d = 0;
     // Every set holds a pitch class, so one side hits within 11.
@@ -1002,3 +1013,24 @@ const _: () = {
     }
     assert!(TABLE_BYTES <= 512);
 };
+
+#[cfg(test)]
+mod snap_tests {
+    use super::*;
+
+    /// Every non-empty set, every note: `snap` moves up at most
+    /// `snap_reach_up`.
+    #[test]
+    fn snap_moves_up_at_most_its_reach() {
+        for set in 1..1u16 << 12 {
+            for n in 0..=127u8 {
+                let to = snap_in(Note(n), set).0;
+                let up = to.saturating_sub(n);
+                assert!(up <= snap_reach_up(Note(n)), "{n} to {to} in {set:#05x}");
+            }
+        }
+        // Both bounds are reached.
+        assert_eq!(snap_in(Note(60), 1 << 5).0, 65);
+        assert_eq!(snap_in(Note(0), 1 << 11).0, 11);
+    }
+}

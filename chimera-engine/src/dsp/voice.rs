@@ -774,6 +774,11 @@ impl Voice {
         self.slot.note_off(ctx);
     }
 
+    /// Fading out: a steal's, a shed's, or ahead of a queued note.
+    pub fn fading(&self) -> bool {
+        self.fade > 0
+    }
+
     /// Fade to silence over `FADE` samples, then go idle as a fresh voice.
     /// A second call mid-fade does not restart it. Returns whether a note
     /// that came mid-fade was dropped unheard.

@@ -1547,7 +1547,9 @@ fn tape_sound(model: chimera_core::dsp::tape_engine::TapeModel) -> ParamSnapshot
 fn tape_bills_each_model() {
     use TapeModel::{Play, Scrub, Stretch, Transwave, Tron};
     use chimera_core::addr::{BlockRef, ParamAddr};
-    use chimera_core::dsp::tape_engine::{PlayMode, TapeEngineParams, TapeModel};
+    use chimera_core::dsp::tape_engine::{
+        COST_STREAM, PlayMode, TapeEngineParams, TapeModel, streamed_cost,
+    };
     // PLAY's three MODEs bill what LOOP, PING-PONG and ONESHOT billed.
     let (lp, ping, one) = (
         (Play, PlayMode::Loop),
@@ -1605,6 +1607,14 @@ fn tape_bills_each_model() {
                     );
                     assert_eq!(EngineSlot::cost(&p, &mods), Cost(bill + t + a), "{why}");
                 }
+            }
+            // A streamed source (slice 1 § 5.5): only PLAY streams.
+            if model == Play && mode != PlayMode::Ping {
+                assert_eq!(
+                    streamed_cost(model, mode),
+                    Cost(bill + COST_STREAM.0),
+                    "{model:?} {mode:?} streamed"
+                );
             }
             for (stored, want, extra) in [(0.0, off, 0), (0.5, both, 40)] {
                 (p.tape.tape, p.tape.age) = (stored, stored);

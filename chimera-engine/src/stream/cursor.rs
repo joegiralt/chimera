@@ -387,6 +387,11 @@ impl Cursor {
         self.tend(pos, true, port);
     }
 
+    /// The note may read faster from here (a glide, #585): never slower.
+    pub fn raise(&mut self, inc_max: f32) {
+        self.inc = self.inc.max(clamp_inc(inc_max));
+    }
+
     /// Once a block, before the model renders from `pos`.
     pub fn plan(&mut self, pos: f64, port: &mut StreamPort<'_, '_>) -> Plan {
         let inc = self.inc;

@@ -4,7 +4,7 @@
 
 mod common;
 
-use chimera_core::dsp::tape_engine::TapeModel;
+use chimera_core::dsp::tape_engine::TapeEngineParams;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
 use chimera_core::name::SoundName;
 use chimera_core::project::Absence;
@@ -679,7 +679,7 @@ fn a_card_fault_ends_the_source_reads() {
     for r in refs {
         let id = q.pool().find_source(r).unwrap();
         assert_eq!(q.pool().absence(id), Some(Absence::ReadFailed));
-        let state = SourceState::of(TapeModel::Play, Some(r), q.pool());
+        let state = SourceState::of(&TapeEngineParams::default(), Some(r), q.pool());
         assert_eq!(state, SourceState::Absent(Absence::ReadFailed));
     }
 }
@@ -715,7 +715,7 @@ fn absent_sources_say_why() {
     assert_eq!(why(bad.sref), Some(Absence::Missing));
     let text = |r| {
         let mut b = chimera_core::ui::fmt::FmtBuf::new();
-        SourceState::of(TapeModel::Play, Some(r), q.pool()).text(&mut b);
+        SourceState::of(&TapeEngineParams::default(), Some(r), q.pool()).text(&mut b);
         b.as_str().to_string()
     };
     assert_eq!(text(off.sref), "SOURCE NOT ON CARD");
