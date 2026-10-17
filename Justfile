@@ -473,7 +473,7 @@ beds *args:
 # Drop-outs in a MOTU recording of stream 0: `just dropouts find rec.wav --ref bed0.wav [--channel N]`
 dropouts *args:
     {{utils}} dropouts {{args}}
-# The card's read speed beside audio and the streams it holds (any `just flash-bench <area>` without ORBIT or master-tape first)
+# The card's read speed beside audio and the streams it holds (a bank 2 bench build first: `bench-stress,bank2` or `bench-tape,bank2`)
 card *args:
     python3 tools/chimera-usb.py card {{args}}
 # A project file onto the card over USB (ADR 0092), saved as the unit saves:
