@@ -92,7 +92,15 @@ impl<'a> SourceView<'a> {
     /// (door-check).
     #[inline(always)]
     pub fn new(held: &'a [u8]) -> Option<SourceView<'a>> {
-        let desc = Descriptor::from_bytes(held).filter(|d| d.heads == 0)?;
+        Self::of(held, Descriptor::from_bytes(held)?)
+    }
+
+    /// `new` under `desc`, `held`'s descriptor already read.
+    #[inline(always)]
+    pub fn of(held: &'a [u8], desc: Descriptor) -> Option<SourceView<'a>> {
+        if desc.heads != 0 {
+            return None;
+        }
         let data = held.get(desc.data_start()..)?;
         let pairs = data.len() / 3;
         let frames = u32::try_from(2 * pairs)

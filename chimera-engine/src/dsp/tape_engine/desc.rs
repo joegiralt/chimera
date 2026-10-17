@@ -107,7 +107,11 @@ impl Descriptor {
 /// `held` too short for the table and its heads' samples; empty when held
 /// whole.
 pub fn head_table(held: &[u8]) -> Option<&[[u8; 4]]> {
-    let d = Descriptor::from_bytes(held)?;
+    head_table_of(held, Descriptor::from_bytes(held)?)
+}
+
+/// `head_table` under `d`, `held`'s descriptor already read.
+pub fn head_table_of(held: &[u8], d: Descriptor) -> Option<&[[u8; 4]]> {
     let table = held
         .get(DESC_LEN..)?
         .as_chunks()

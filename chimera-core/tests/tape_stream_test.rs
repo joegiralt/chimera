@@ -31,6 +31,8 @@ const FRAMES: u32 = 720_000;
 /// `HEAD_MS`, and room for XFADE's 100 ms before the loop.
 const HF: u32 = 4_800;
 const V: VoiceIdx = VoiceIdx::ALL[0];
+/// A script's START turn under the note's head (`streamed_equals_whole`).
+const WARM: usize = usize::MAX;
 
 fn noise(frames: u32) -> Vec<f32> {
     let mut rng = XorShift(0x5EED_0019);
@@ -115,6 +117,7 @@ fn params(mode: PlayMode, start: f32, end: f32) -> TapeEngineParams {
 
 /// A run's script: note-on at block 0, START turned at `turn` (the heads
 /// re-staged for it), the note struck again at `again`.
+#[derive(Clone, Copy)]
 struct Script {
     p: TapeEngineParams,
     turned: Option<f32>,
@@ -148,7 +151,9 @@ fn render_whole(s: &Script, note: u8, whole: &[u8]) -> Vec<f32> {
     out
 }
 
-fn render_streamed(s: &Script, note: u8, whole: &[u8]) -> (Vec<f32>, [u32; 3]) {
+/// The streamed render, its underruns, cold starts and faults, and the
+/// reads the card took the block after the START turn.
+fn render_streamed(s: &Script, note: u8, whole: &[u8]) -> (Vec<f32>, [u32; 4]) {
     let (rings, third) = rings();
     let mut st = Stream::new(&rings, &third, whole, 0);
     let row = |p: &TapeEngineParams| st.card.held(&heads_at(p, FRAMES, note), HF);
@@ -162,6 +167,7 @@ fn render_streamed(s: &Script, note: u8, whole: &[u8]) -> (Vec<f32>, [u32; 3]) {
     let mut out = Vec::new();
     let mut b = [0.0; BLOCK_SIZE];
     let mut row = 0;
+    let mut turned = [0; 2];
     for k in 0..s.blocks {
         if k == s.turn
             && let Some(t) = s.turned
@@ -170,6 +176,9 @@ fn render_streamed(s: &Script, note: u8, whole: &[u8]) -> (Vec<f32>, [u32; 3]) {
             row = 1;
         }
         st.serve();
+        if k == s.turn || k == s.turn + 1 {
+            turned[k - s.turn] = st.card.claims();
+        }
         let src = &mut srcs[row];
         st.with(V, |port| {
             if k == 0 || k == s.again {
@@ -183,7 +192,15 @@ fn render_streamed(s: &Script, note: u8, whole: &[u8]) -> (Vec<f32>, [u32; 3]) {
     let n = |f: fn(&chimera_core::stream::stats::StreamStats) -> &core::sync::atomic::AtomicU32| {
         st.stat(|s| f(s).load(Ordering::Relaxed))
     };
-    (out, [n(|s| &s.underruns), n(|s| &s.cold), n(|s| &s.faults)])
+    (
+        out,
+        [
+            n(|s| &s.underruns),
+            n(|s| &s.cold),
+            n(|s| &s.faults),
+            turned[1] - turned[0],
+        ],
+    )
 }
 
 /// The slice's key test: streamed with an on-time card, PLAY ONE and LOOP
@@ -191,7 +208,9 @@ fn render_streamed(s: &Script, note: u8, whole: &[u8]) -> (Vec<f32>, [u32; 3]) {
 /// START turn that re-stages the heads mid-note and a note struck after
 /// it. LOOP's short loop sits past the ring at the window's end (its start
 /// doesn't move with START); the long loop's passes read the ring and wrap
-/// onto the loop-start head.
+/// onto the loop-start head. Warm: START nudged while the note still plays
+/// its START head, whose re-staged copy still holds it, so the cursor starts
+/// again on it (the card reads the ring anew) with no cold start.
 #[test]
 fn streamed_equals_whole() {
     let whole = held_plain(&noise(FRAMES), RATE);
@@ -227,11 +246,40 @@ fn streamed_equals_whole() {
             again: 2_400,
             blocks: 3_200,
         },
+        Script {
+            p: params(PlayMode::One, 0.30, 1.0),
+            turned: Some(0.3001),
+            turn: WARM,
+            again: 1_200,
+            blocks: 1_600,
+        },
+        Script {
+            p: TapeEngineParams {
+                size: 0.0,
+                position: 1.0,
+                xfade: 0.5,
+                ..params(PlayMode::Loop, 0.30, 0.31)
+            },
+            turned: Some(0.3001),
+            turn: WARM,
+            again: 1_200,
+            blocks: 1_600,
+        },
     ];
     for (n, s) in scripts.iter().enumerate() {
         for note in [36, 48, 60, 72, 84, 96] {
+            // A warm turn comes 200 frames into the note, under its head.
+            let inc = 0.5 * 2f32.powf((f32::from(note) - 60.0) / 12.0);
+            let warm = (200.0 / (64.0 * inc)).ceil() as usize + 1;
+            let s = &Script {
+                turn: if s.turn == WARM { warm } else { s.turn },
+                ..*s
+            };
             let w = render_whole(s, note, &whole);
-            let (st, [under, cold, faults]) = render_streamed(s, note, &whole);
+            let (st, [under, cold, faults, reread]) = render_streamed(s, note, &whole);
+            if s.turn == warm {
+                assert!(reread >= 3, "script {n} note {note}: no re-head ({reread})");
+            }
             assert!(
                 w.iter().any(|&y| y != 0.0),
                 "script {n} note {note}: silent"
@@ -505,4 +553,62 @@ fn reheading_under_the_head_starts_cold() {
     );
     let tail = 300 * BLOCK_SIZE;
     assert_eq!(&out[tail..], &w[tail..]);
+}
+
+/// POSITION moves the loop off its staged head mid-note: each wrap lands
+/// where no head holds, so the voice fades out over `DROP_FADE` before it,
+/// the fade's second head reads silence, and the wrap starts cold and fades
+/// back in. No step passes 4× the steady state's largest
+/// (`click_free_test`'s rule), at XFADE 0 (a hard splice) or not.
+#[test]
+fn moved_loop_fades_at_the_wrap() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    for xfade in [0.0, 0.25] {
+        let p = TapeEngineParams {
+            size: 0.8,
+            position: 1.0,
+            xfade,
+            tape: 0.0,
+            age: 0.0,
+            ..params(PlayMode::Loop, 0.30, 0.32)
+        };
+        let (rings, third) = rings();
+        let mut st = Stream::new(&rings, &third, &whole, 0);
+        let mut src = OneSource::new(&st.card.held(&heads_at(&p, FRAMES, 60), HF));
+        let mut slot = MaybeUninit::uninit();
+        let e = deck(&mut slot);
+        // No read, the fade's second head's either, leaves its span.
+        e.strict_spans();
+        let moved = TapeEngineParams { position: 0.5, ..p };
+        let mut out = Vec::new();
+        let mut b = [0.0; BLOCK_SIZE];
+        for k in 0..1_500 {
+            let q = if k < 50 { &p } else { &moved };
+            st.serve();
+            st.with(V, |port| {
+                if k == 0 {
+                    e.start(60, q, &src.view(), SR, Some(port));
+                }
+                e.play(&mut b, q, &src.view(), SR, Some(port));
+            });
+            out.extend_from_slice(&b);
+            st.now += 1;
+        }
+        let step = |x: &[f32]| {
+            x.windows(2)
+                .map(|d| (d[1] - d[0]).abs())
+                .fold(0.0, f32::max)
+        };
+        // The first wrap comes near block 296.
+        let steady = step(&out[60 * BLOCK_SIZE..250 * BLOCK_SIZE]);
+        let worst = step(&out[250 * BLOCK_SIZE..]);
+        assert!(
+            worst <= 4.0 * steady,
+            "xfade {xfade}: step {worst} over 4 x {steady}"
+        );
+        let cold = st.card.stats.cold.load(Ordering::Relaxed);
+        assert!(cold >= 3, "xfade {xfade}: {cold} cold wraps");
+        let tail = &out[1_000 * BLOCK_SIZE..];
+        assert!(tail.iter().any(|&y| y.abs() > 0.5), "xfade {xfade}: silent");
+    }
 }

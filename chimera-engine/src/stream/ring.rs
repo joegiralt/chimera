@@ -344,7 +344,8 @@ pub struct Ready<'a> {
 impl<'a> Ready<'a> {
     /// The frames `sample` reads, packed, and the first's index in the
     /// chunk: from −4 when Guarded, 0 when not. A pair each 3 B, so a
-    /// reader decodes them as a row's samples.
+    /// reader decodes them as a row's samples. The one raw-byte path out of
+    /// a slot, and like `sample` only under a want's generation (`ready`).
     pub fn packed(&self) -> (i32, &'a [u8]) {
         match self.guard {
             Guard::Guarded => (-(GUARD_FRAMES.get() as i32), &self.bytes[..]),

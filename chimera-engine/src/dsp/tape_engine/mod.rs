@@ -69,9 +69,9 @@ use crate::modulation::ModState;
 use crate::project::SourceId;
 use crate::source_table::GateView;
 #[cfg(feature = "tape")]
-use crate::stream::admit::{HEAD_MS, WOW_CENTS};
+use crate::stream::admit::{WOW_CENTS, head_frames};
 #[cfg(feature = "tape")]
-use crate::stream::cursor::{Cursor, HeadIdx};
+use crate::stream::cursor::{Cursor, DROP_FADE, HeadIdx};
 use crate::stream::port::StreamPort;
 use age::Age;
 use heads::{
@@ -81,7 +81,7 @@ use heads::{
 use oneshot::slice_bounds;
 use read::{Descriptor, Pos, SourceView};
 #[cfg(feature = "tape")]
-use span::{Reads, StreamRow};
+use span::{Reads, Stop, StreamRow};
 use stretch::Stretch;
 use warble::Warble;
 use wave::Wave;
@@ -371,6 +371,14 @@ pub struct Strip {
     warble: Warble,
 }
 
+/// A source's row as a block reads it: held whole, or streamed (its
+/// descriptor, read once).
+#[cfg(feature = "tape")]
+enum Row<'v> {
+    Whole(SourceView<'v>),
+    Streamed(&'v [u8], Descriptor),
+}
+
 #[cfg(feature = "tape")]
 #[derive(Clone, Copy)]
 pub struct TapeDeck {
@@ -509,6 +517,8 @@ pub struct TapeDeck {
     streamed: bool,
     /// A LOOP wrap moved the head this block: the cursor starts there.
     jumped: bool,
+    /// The voice fades out before a wrap no head holds.
+    ducked: bool,
     /// The fastest step a sample: `INC_MAX`, or a streamed note's
     /// `inc_max`, which its cursor plans for.
     inc_cap: f32,
@@ -605,6 +615,7 @@ impl TapeDeck {
             cursor: Cursor::new(),
             streamed: false,
             jumped: false,
+            ducked: false,
             inc_cap: INC_MAX,
             #[cfg(any(test, feature = "test-support"))]
             strict: false,
@@ -657,16 +668,17 @@ impl TapeDeck {
         self.src
     }
 
-    /// The latched source's view this block: `None` with none latched, its
-    /// row empty or moving, or a descriptor that doesn't read.
-    fn view<'v>(&self, src: &'v GateView<'_>) -> Option<SourceView<'v>> {
-        SourceView::new(src.bytes(self.src?)?)
-    }
-
-    /// The latched source's row this block, if streamed (slice 1 § 5.1).
-    fn streamed_row<'v>(&self, src: &'v GateView<'_>) -> Option<&'v [u8]> {
-        src.bytes(self.src?)
-            .filter(|h| Descriptor::from_bytes(h).is_some_and(|d| d.heads > 0))
+    /// The latched source's row this block, its descriptor read once:
+    /// `None` with none latched, its row empty or moving, or a descriptor
+    /// that doesn't read.
+    fn row_of<'v>(&self, src: &'v GateView<'_>) -> Option<Row<'v>> {
+        let held = src.bytes(self.src?)?;
+        let d = Descriptor::from_bytes(held)?;
+        if d.heads > 0 {
+            Some(Row::Streamed(held, d))
+        } else {
+            SourceView::of(held, d).map(Row::Whole)
+        }
     }
 
     /// `note_on` on the latched source through the block's view. With no
@@ -687,11 +699,15 @@ impl TapeDeck {
         {
             self.cursor.stop(port);
         }
-        if let Some(held) = self.streamed_row(src) {
-            self.start_streamed(note, p, held, sample_rate, streams);
-            return;
-        }
-        match self.view(src) {
+        let v = match self.row_of(src) {
+            Some(Row::Streamed(held, d)) => {
+                self.start_streamed(note, p, (held, d), sample_rate, streams);
+                return;
+            }
+            Some(Row::Whole(v)) => Some(v),
+            None => None,
+        };
+        match v {
             Some(v) if wave::playable(p.model, &v) => self.note_on(note, p, &v, sample_rate),
             None if self.src.is_some_and(|id| src.moving(id)) => {
                 (self.note, self.model, self.mode) = (note, p.model, p.mode);
@@ -711,7 +727,7 @@ impl TapeDeck {
         &mut self,
         note: u8,
         p: &TapeEngineParams,
-        held: &[u8],
+        held: (&[u8], Descriptor),
         sample_rate: u32,
         streams: Option<&mut StreamPort<'_, '_>>,
     ) {
@@ -746,8 +762,28 @@ impl TapeDeck {
             .start(at, self.inc_cap, row.head(HeadIdx::START), port);
     }
 
-    fn row<'v>(&self, held: &'v [u8], port: &StreamPort<'_, '_>) -> Option<StreamRow<'v>> {
-        let row = StreamRow::new(held, port.file_frames)?;
+    /// The next wrap lands on a head: the fade's second head reads it from
+    /// `XFADE` before the loop, and the head after the wrap from there on.
+    fn lands(&self, row: &StreamRow<'_>) -> bool {
+        let b = self.fade.map_or(self.next, |f| f.next);
+        // With no room before the loop the fade folds inside it (`heads`).
+        let early = if b.ls - b.ls.min(self.ws) >= b.lx {
+            b.lx
+        } else {
+            0
+        };
+        let (from, to) = (b.ls - early, b.ls.saturating_add(b.lx));
+        let holds = |s: Option<span::Span<'_>>| s.is_some_and(|s| s.holds(from) && s.holds(to));
+        holds(row.head_span(HeadIdx::LOOP))
+            || holds(self.cursor.head().and_then(|h| row.head_span(h.idx)))
+    }
+
+    fn row<'v>(
+        &self,
+        (held, d): (&'v [u8], Descriptor),
+        port: &StreamPort<'_, '_>,
+    ) -> Option<StreamRow<'v>> {
+        let row = StreamRow::new(held, d, port.file_frames)?;
         #[cfg(any(test, feature = "test-support"))]
         if self.strict {
             return Some(row.strict());
@@ -797,11 +833,15 @@ impl TapeDeck {
         sample_rate: u32,
         mut streams: Option<&mut StreamPort<'_, '_>>,
     ) {
-        if let Some(held) = self.streamed_row(src) {
-            self.play_streamed(out, p, (held, src), sample_rate, streams);
-            return;
-        }
-        if let Some(v) = self.view(src) {
+        let v = match self.row_of(src) {
+            Some(Row::Streamed(held, d)) => {
+                self.play_streamed(out, p, (held, d, src), sample_rate, streams);
+                return;
+            }
+            Some(Row::Whole(v)) => Some(v),
+            None => None,
+        };
+        if let Some(v) = v {
             if core::mem::take(&mut self.gated) {
                 self.start(self.note, p, src, sample_rate, streams.as_deref_mut());
             } else if v.frames() < self.n || self.streamed {
@@ -835,7 +875,7 @@ impl TapeDeck {
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
         p: &TapeEngineParams,
-        (held, src): (&[u8], &GateView<'_>),
+        (held, d, src): (&[u8], Descriptor, &GateView<'_>),
         sample_rate: u32,
         streams: Option<&mut StreamPort<'_, '_>>,
     ) {
@@ -847,7 +887,7 @@ impl TapeDeck {
         if core::mem::take(&mut self.gated) {
             self.start(self.note, p, src, sample_rate, Some(&mut *port));
         }
-        match self.row(held, port) {
+        match self.row((held, d), port) {
             Some(row) if self.active && self.streamed && row.frames() >= self.n => {
                 self.stream_block(out, p, row, sample_rate, port);
             }
@@ -882,9 +922,23 @@ impl TapeDeck {
             .cursor
             .plan(f64::from(h.whole()) + f64::from(h.frac()), port);
         self.inc_cap = plan.inc_max.max(f32::EPSILON);
-        let reads = Reads::streamed(&plan, &row, &self.cursor, &*port.turn, port.voice);
+        let mut reads = Reads::streamed(&plan, &row, &self.cursor, &*port.turn, port.voice);
+        if self.lp() && !self.lands(&row) {
+            // The loop moved off its head (POSITION, SIZE, WALK): the fade's
+            // second head reads silence, and the voice fades out before the
+            // wrap, which starts cold (spec § 5.7: drop-outs fade).
+            reads.second = row.silent();
+            let left = self.bounds.le.saturating_sub(h.whole()) as f32;
+            if left <= self.inc_cap * (BLOCK_SIZE + DROP_FADE.get() as usize) as f32 {
+                self.cursor.duck(true);
+                self.ducked = true;
+            }
+        } else if core::mem::take(&mut self.ducked) {
+            self.cursor.duck(false);
+        }
         self.render_reads(out, p, &reads, sample_rate);
         if core::mem::take(&mut self.jumped) {
+            self.ducked = false;
             let at = self.heads[0].pos.whole();
             let held = self
                 .cursor
@@ -1585,10 +1639,10 @@ impl TapeDeck {
 
     /// The sample from `i` whose read reaches `stop`: the head stepped as
     /// `once` steps it, nothing read. A row's run never stops.
-    fn reach(&self, mut i: usize, (mut cur, step): (u64, u64), stop: u32) -> usize {
-        if stop == u32::MAX {
+    fn reach(&self, mut i: usize, (mut cur, step): (u64, u64), stop: Stop) -> usize {
+        let Stop::At(stop) = stop else {
             return BLOCK_SIZE;
-        }
+        };
         let mut h = self.heads[0].pos;
         while i < BLOCK_SIZE && h.whole() < stop {
             cur = cur.wrapping_add(step);
@@ -1615,8 +1669,8 @@ impl TapeDeck {
         let mut h = self.heads[0].pos;
         let (mut g, k) = (self.rel, self.rel_k);
         let end = at(self.once_end);
-        let mut i = run.start;
-        while i < run.end && h < end && self.left > 0 {
+        let (mut i, stop) = (run.start, run.end.min(BLOCK_SIZE));
+        while i < stop && h < end && self.left > 0 {
             r -= dr;
             let x = clampf(r, 0.0, 1.0);
             // `off − h` under frame 0 at `lo` 0: `read`'s clamp, as in `once`.
@@ -1728,7 +1782,7 @@ impl TapeDeck {
         self.jumped = false;
         while i < BLOCK_SIZE {
             let (r, stop) = if self.jumped {
-                (*second, u32::MAX)
+                (*second, Stop::Never)
             } else {
                 reads.run(run)
             };
@@ -1748,7 +1802,10 @@ impl TapeDeck {
                     (true, true) => self.run::<true, true>(out, rs, c, &k),
                 },
             };
-            if !self.jumped && self.heads[0].pos.whole() >= stop {
+            if !self.jumped
+                && let Stop::At(s) = stop
+                && self.heads[0].pos.whole() >= s
+            {
                 run += 1;
             }
         }
@@ -1938,13 +1995,17 @@ impl TapeDeck {
     fn run<const MIRROR: bool, const MOVING: bool>(
         &mut self,
         out: &mut [f32; BLOCK_SIZE],
-        (v, v1, stop): (&SourceView<'_>, &SourceView<'_>, u32),
+        (v, v1, stop): (&SourceView<'_>, &SourceView<'_>, Stop),
         (mut i, mut cur, step): (usize, u64, u64),
         k: &AtWrap<'_>,
     ) -> (usize, u64) {
         let [mut h0, mut h1] = self.heads.map(|h| h.pos);
         // A run's stop is one more event: it hands the head to the next.
-        let (mut ev, mut g, mut off, mut df) = (self.event.min(stop), self.gain, self.off, self.df);
+        let at = |ev: u32| match stop {
+            Stop::At(s) => ev.min(s),
+            Stop::Never => ev,
+        };
+        let (mut ev, mut g, mut off, mut df) = (at(self.event), self.gain, self.off, self.df);
         let ddf = self.ddf;
         while i < BLOCK_SIZE {
             let mut hit = false;
@@ -2089,7 +2150,7 @@ impl TapeDeck {
                     return (i, cur);
                 }
                 [h0, h1] = self.heads.map(|h| h.pos);
-                (ev, g, off) = (self.event.min(stop), self.gain, self.off);
+                (ev, g, off) = (at(self.event), self.gain, self.off);
             }
         }
         (self.heads[0].pos, self.heads[1].pos) = (h0, h1);
@@ -2303,9 +2364,9 @@ impl TapeDeck {
                 let mut b =
                     Bounds::of_min(ws, we, (self.mac.size, place, xfade), k.rate, self.min_len);
                 if self.streamed {
-                    // The loop-start head begins XFADE early: at most
-                    // `HEAD_MS` of source (slice 1 § 7.3 step 6).
-                    b.lx = b.lx.min(u32::from(k.rate) * HEAD_MS / 1_000);
+                    // The loop-start head begins XFADE early: at most a
+                    // head of source (slice 1 § 7.3 step 6).
+                    b.lx = b.lx.min(head_frames(k.rate));
                 }
                 b
             }

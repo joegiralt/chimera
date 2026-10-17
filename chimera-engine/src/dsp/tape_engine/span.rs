@@ -4,13 +4,18 @@
 //! those frames: ONE's and LOOP's loops read it as they read a row.
 //! Bank 2's, with `TapeDeck` (`build.rs`' `11tape_engine4span` glob).
 
-use super::desc::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape, head_table};
+use super::desc::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape, head_table_of};
 use super::read::SourceView;
 use crate::stream::cursor::{Cursor, HeadIdx, Plan, RamHead, SpanSrc};
 use crate::stream::layout::CHUNK_FRAMES;
-use crate::stream::ring::{AudioTurn, Ready};
+use crate::stream::ring::{AudioTurn, GUARD_FRAMES, Ready};
 use crate::stream::units::Frames;
 use crate::voice_alloc::VoiceIdx;
+
+// A slot's span starts on a 12-bit pair: `SourceView::span` takes an even
+// first frame only.
+const _: () = assert!(CHUNK_FRAMES.get().is_multiple_of(2));
+const _: () = assert!(GUARD_FRAMES.get().is_multiple_of(2));
 
 /// Source frames a span holds, read as a row.
 #[derive(Clone, Copy, Debug)]
@@ -45,11 +50,10 @@ pub struct StreamRow<'a> {
 impl<'a> StreamRow<'a> {
     /// `held` as a streamed row of a file of `file` frames (even, as a
     /// whole row reads an odd one); `None` if it isn't one.
-    pub fn new(held: &'a [u8], file: Frames) -> Option<StreamRow<'a>> {
-        let desc = Descriptor::from_bytes(held)?;
+    pub fn new(held: &'a [u8], desc: Descriptor, file: Frames) -> Option<StreamRow<'a>> {
         let frames = file.get().checked_add(1)? & !1;
         let ok = desc.shape == Shape::Plain && desc.heads > 0 && frames >= MIN_SOURCE_FRAMES;
-        let table = head_table(held).filter(|_| ok)?;
+        let table = head_table_of(held, desc).filter(|_| ok)?;
         Some(StreamRow {
             held,
             table,
@@ -119,12 +123,19 @@ impl<'a> StreamRow<'a> {
     }
 }
 
-/// A block's reads: each run's view and the read it stops before, then
-/// LOOP's loop-start head, which a fade's second head and a wrap read. A
-/// row held whole is one run that never stops.
+/// Where a run hands the head to the next: before a read, or never.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stop {
+    At(u32),
+    Never,
+}
+
+/// A block's reads: each run's view and where it stops (past the runs,
+/// silence: the gain is 0 there), then LOOP's loop-start head, which a
+/// fade's second head and a wrap read. A row held whole is one run that
+/// never stops.
 pub struct Reads<'a> {
-    runs: [(SourceView<'a>, u32); 3],
-    n: usize,
+    runs: [(SourceView<'a>, Stop); 2],
     /// The loop-start head (a whole row: the row).
     pub second: SourceView<'a>,
 }
@@ -132,14 +143,12 @@ pub struct Reads<'a> {
 impl<'a> Reads<'a> {
     pub fn whole(v: SourceView<'a>) -> Reads<'a> {
         Reads {
-            runs: [(v, u32::MAX); 3],
-            n: 1,
+            runs: [(v, Stop::Never); 2],
             second: v,
         }
     }
 
-    /// The cursor's `plan` over `row`: its runs, then silence to the block's
-    /// end (the gain is 0 past them).
+    /// The cursor's `plan` over `row`: its runs, then silence.
     pub fn streamed(
         plan: &Plan,
         row: &StreamRow<'a>,
@@ -148,25 +157,25 @@ impl<'a> Reads<'a> {
         v: VoiceIdx,
     ) -> Reads<'a> {
         let silent = row.silent();
-        let mut runs = [(silent, u32::MAX); 3];
-        let mut n = 0;
+        let mut runs = [(silent, Stop::Never); 2];
         for ((src, r), run) in plan.runs().iter().zip(runs.iter_mut()) {
             let span = match *src {
                 SpanSrc::Head(h) => row.head_span(h),
                 SpanSrc::Slot(s) => cursor.ready(turn, v, s).and_then(|r| row.slot_span(&r)),
             };
-            *run = (span.map_or(silent, |s| s.view), r.end);
-            n += 1;
+            *run = (span.map_or(silent, |s| s.view), Stop::At(r.end));
         }
         Reads {
             runs,
-            n: n + 1,
             second: row.head_span(HeadIdx::LOOP).map_or(silent, |s| s.view),
         }
     }
 
-    /// Run `k`'s view and stop; past the last, the last.
-    pub fn run(&self, k: usize) -> (SourceView<'a>, u32) {
-        self.runs[k.min(self.n - 1)]
+    /// Run `k`'s view and stop; past the runs, silence.
+    pub fn run(&self, k: usize) -> (SourceView<'a>, Stop) {
+        self.runs.get(k).copied().unwrap_or_else(|| {
+            let v = &self.runs[0].0;
+            (SourceView::silent(v.desc(), v.frames()), Stop::Never)
+        })
     }
 }

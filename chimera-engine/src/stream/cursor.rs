@@ -341,6 +341,15 @@ impl Cursor {
         self.head
     }
 
+    /// The deck's own fade, out (`true`) before a jump no span holds, or
+    /// back in: over `DROP_FADE`, while it plays a span (a drop-out, a cold
+    /// start or quiet runs its own).
+    pub fn duck(&mut self, out: bool) {
+        if matches!(self.state, Flow::Head(_) | Flow::Ring(_)) {
+            self.gain.step = if out { -DROP_STEP } else { DROP_STEP };
+        }
+    }
+
     /// The note is over: every slot dropped, silent until the next start.
     pub fn stop(&mut self, port: &mut StreamPort<'_, '_>) {
         for s in SlotIdx::ALL {
