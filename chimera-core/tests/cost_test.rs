@@ -697,9 +697,17 @@ fn the_model_bills_every_bench_row_high() {
     let (fwd, rev) = ((0.0, 1.0), (1.0, 0.0));
     for (name, billed, measured) in [
         ("TAPE LOOP", tape(lp, fwd, false), 0),
-        ("TAPE STRETCH", tape((Stretch, PlayMode::Loop), fwd, false), 0),
+        (
+            "TAPE STRETCH",
+            tape((Stretch, PlayMode::Loop), fwd, false),
+            0,
+        ),
         // ±12 st every block: billed as a glide or a deep route is.
-        ("TAPE WAVE C7", tape((Transwave, PlayMode::Loop), fwd, true), 0),
+        (
+            "TAPE WAVE C7",
+            tape((Transwave, PlayMode::Loop), fwd, true),
+            0,
+        ),
         ("TINY LOOP 8", tape(lp, fwd, false), 0),
         ("TINY REV 8", tape(lp, rev, false), 0),
         ("TINY PING 8", tape(ping, fwd, false), 0),

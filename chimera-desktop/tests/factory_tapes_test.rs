@@ -3,8 +3,8 @@
 //! TAPE Sound at the factory median (ADR 0063).
 
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::dsp::tape_engine::{PlayMode, TapeModel};
 use chimera_core::dsp::tape_engine::read::Shape;
+use chimera_core::dsp::tape_engine::{PlayMode, TapeModel};
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};

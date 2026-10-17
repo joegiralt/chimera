@@ -14,7 +14,8 @@ use chimera_core::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape, SourceView,
 };
 use chimera_core::dsp::tape_engine::{
-    FADE_HOLD, MACHINE_NAMES, PlayMode, StretchType, TapeEngine, TapeEngineParams as P, TapeModel, Wow,
+    FADE_HOLD, MACHINE_NAMES, PlayMode, StretchType, TapeEngine, TapeEngineParams as P, TapeModel,
+    Wow,
 };
 use chimera_core::dsp::va::VaMode;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};

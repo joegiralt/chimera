@@ -803,11 +803,7 @@ impl TapeDeck {
         self.min_len = shortest(rate, fast);
         let we = window_end_min(self.ws, end, frames, self.min_len);
         self.we = we;
-        let xfade = if self.ping() {
-            0.0
-        } else {
-            p.xfade
-        };
+        let xfade = if self.ping() { 0.0 } else { p.xfade };
         self.set_mirror(false);
         self.off = Pos(0);
         let mut start_at = self.ws;
@@ -2032,11 +2028,7 @@ impl TapeDeck {
                 if place > 1.0 {
                     place -= 1.0;
                 }
-                let xfade = if self.ping() {
-                    0.0
-                } else {
-                    k.xfade
-                };
+                let xfade = if self.ping() { 0.0 } else { k.xfade };
                 Bounds::of_min(ws, we, (self.mac.size, place, xfade), k.rate, self.min_len)
             }
         }

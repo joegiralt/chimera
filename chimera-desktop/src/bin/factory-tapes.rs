@@ -194,7 +194,12 @@ const DEMOS: [Demo; 14] = [
     ("SINE LOOP", None, &[0, 12], None),
     ("PAD LOOP", None, &[0, 5], None),
     ("TRON BOWED", None, &[0, 12], None),
-    ("BOWED LOOP", Some((TapeModel::Tron, PlayMode::Loop)), &[0, 7], None),
+    (
+        "BOWED LOOP",
+        Some((TapeModel::Tron, PlayMode::Loop)),
+        &[0, 7],
+        None,
+    ),
     ("STAB STRETCH", None, &[0, 0], Some((P::MOTION, 0.25, 1.0))),
     ("VOICE STRETCH", None, &[0, 0], Some((P::MOTION, 0.25, 1.0))),
     ("WAVE MORPH", None, &[0, 7], Some((P::POSITION, 0.0, 1.0))),

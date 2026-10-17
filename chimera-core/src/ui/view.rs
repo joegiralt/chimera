@@ -541,7 +541,9 @@ fn fmt_of(addr: ParamAddr, fmt: ValFmt, ctx: &SlotCtx) -> ValFmt {
     match (addr.block, addr.param) {
         (BlockRef::Filter, FilterParams::MODE) => ValFmt::Names(ctx.kind.mode_labels()),
         // PLAY's FADE: in MODE ONE its last step is HOLD.
-        (BlockRef::TapeEngine, T::DRAG) if ctx.tape == TapeModel::Play && ctx.mode == PlayMode::One => {
+        (BlockRef::TapeEngine, T::DRAG)
+            if ctx.tape == TapeModel::Play && ctx.mode == PlayMode::One =>
+        {
             ValFmt::Hold
         }
         _ => fmt,
@@ -755,7 +757,9 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
         // What MODEL ignores (spec § 1 Dimming).
         (BlockRef::Modal, id) => !modal::reads(sound.params.modal.mode, id),
         // What the machine ignores (spec § 3).
-        (BlockRef::TapeEngine, id) => !tape_engine::reads_in(sound.params.tape.model, sound.params.tape.mode, id),
+        (BlockRef::TapeEngine, id) => {
+            !tape_engine::reads_in(sound.params.tape.model, sound.params.tape.mode, id)
+        }
         _ => false,
     }
 }

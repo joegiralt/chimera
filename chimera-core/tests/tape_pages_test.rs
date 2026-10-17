@@ -575,7 +575,10 @@ fn cells_a_mode_ignores_are_dimmed() {
         assert!(!dim(PlayMode::One, id), "ONE {id:?}");
     }
     for id in [P::POSITION, P::MOTION, P::SIZE, P::DRAG] {
-        assert!(!dim(PlayMode::Loop, id) && !dim(PlayMode::Ping, id), "{id:?}");
+        assert!(
+            !dim(PlayMode::Loop, id) && !dim(PlayMode::Ping, id),
+            "{id:?}"
+        );
     }
     assert!(!dim(PlayMode::Loop, P::XFADE));
     assert!(dim(PlayMode::Ping, P::XFADE));
@@ -612,7 +615,13 @@ fn mode_edit_writes_its_fade() {
     s.params.tape.drag = 0.7;
     let mode = tape(P::MODE);
     assert!(edit(&mut s.params, mode, Edit::To(0.0)));
-    assert_eq!((s.params.tape.mode, s.params.tape.drag), (PlayMode::One, FADE_HOLD));
+    assert_eq!(
+        (s.params.tape.mode, s.params.tape.drag),
+        (PlayMode::One, FADE_HOLD)
+    );
     assert!(edit(&mut s.params, mode, Edit::To(2.0)));
-    assert_eq!((s.params.tape.mode, s.params.tape.drag), (PlayMode::Ping, 0.3));
+    assert_eq!(
+        (s.params.tape.mode, s.params.tape.drag),
+        (PlayMode::Ping, 0.3)
+    );
 }

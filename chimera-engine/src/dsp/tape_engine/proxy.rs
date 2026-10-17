@@ -211,8 +211,7 @@ impl TapeEngine {
     }
 
     pub fn sustains(&self) -> bool {
-        self.read(|_, k| k.active && k.hold)
-            .unwrap_or(false)
+        self.read(|_, k| k.active && k.hold).unwrap_or(false)
     }
 
     pub fn hold(&mut self) {

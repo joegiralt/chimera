@@ -11,8 +11,8 @@ use core::mem::MaybeUninit;
 use chimera_core::block::{Block, DiskCode, ParamId};
 use chimera_core::dsp::tape_engine::heads::{Dir, Window};
 use chimera_core::dsp::tape_engine::machine::{MACHINES, defaults, machine};
-use chimera_core::dsp::tape_engine::params::hold;
 use chimera_core::dsp::tape_engine::oneshot::{SLICE_NOTE_BASE, Slice, slice_bounds};
+use chimera_core::dsp::tape_engine::params::hold;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape, SourceView};
 use chimera_core::dsp::tape_engine::tron::{TRON_LEN_MAX_S, tron_len_s, tron_run_samples};
 use chimera_core::dsp::tape_engine::warble::Warble;
@@ -157,11 +157,20 @@ fn play_loads_old_codes() {
     assert!(hold(&t));
     assert_eq!(t.slice.code(), 0, "SLICE loads and is ignored");
     let t = load(&block(&[code(0), drag]));
-    assert_eq!((t.model, t.mode, t.drag), (TapeModel::Play, PlayMode::Loop, 0.6));
+    assert_eq!(
+        (t.model, t.mode, t.drag),
+        (TapeModel::Play, PlayMode::Loop, 0.6)
+    );
     let t = load(&block(&[code(2), drag]));
-    assert_eq!((t.model, t.mode, t.drag), (TapeModel::Play, PlayMode::Ping, 0.6));
+    assert_eq!(
+        (t.model, t.mode, t.drag),
+        (TapeModel::Play, PlayMode::Ping, 0.6)
+    );
     let t = load(&block(&[code(1), drag]));
-    assert_eq!((t.model, t.mode, t.drag), (TapeModel::Play, PlayMode::Loop, 0.6));
+    assert_eq!(
+        (t.model, t.mode, t.drag),
+        (TapeModel::Play, PlayMode::Loop, 0.6)
+    );
     assert!(t.end < t.start);
     // A file of today names MODE itself: ONE keeps its own DRAG.
     let t = load(&block(&[code(0), (15, 0u32.to_le_bytes()), drag]));
@@ -192,8 +201,16 @@ fn fade_releases_loop_and_ping() {
         assert!(!on, "{mode:?}: the 10 ms fade ends the note");
         let at = 100 * B;
         assert_eq!(short[..at], long[..at], "{mode:?}: before note-off");
-        let tail = |x: &[f32]| x[at + 40 * B..at + 44 * B].iter().map(|y| y.abs()).sum::<f32>();
-        assert!(tail(&short) < 0.05 * tail(&long), "{mode:?}: FADE sets the tail");
+        let tail = |x: &[f32]| {
+            x[at + 40 * B..at + 44 * B]
+                .iter()
+                .map(|y| y.abs())
+                .sum::<f32>()
+        };
+        assert!(
+            tail(&short) < 0.05 * tail(&long),
+            "{mode:?}: FADE sets the tail"
+        );
     }
 }
 

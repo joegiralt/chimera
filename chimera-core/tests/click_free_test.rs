@@ -201,7 +201,9 @@ fn test_no_clicks_tape() {
 fn test_no_clicks_tape_machines() {
     use chimera_core::block::Block;
     use chimera_core::dsp::tape_engine::machine::defaults;
-    use chimera_core::dsp::tape_engine::{FADE_HOLD, PlayMode, TapeEngineParams as P, TapeModel, Wow};
+    use chimera_core::dsp::tape_engine::{
+        FADE_HOLD, PlayMode, TapeEngineParams as P, TapeModel, Wow,
+    };
     use common::tape::{held_plain, held_transwave, sine};
     let plain = held_plain(&sine(48_000, 100.7, 4 * 24_000), 48_000);
     let wave = held_transwave(512, 4, |f, h| if h <= 1 + f as u32 { 0.4 } else { 0.0 });

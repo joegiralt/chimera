@@ -1033,7 +1033,12 @@ const TAPE_ROWS: [TapeRow; 13] = [
             Hit::Hold
         },
     ),
-    ("LOOP 64", Tapes::Least, |p| tiny(p, TapeModel::Play, PlayMode::Loop), HOLD),
+    (
+        "LOOP 64",
+        Tapes::Least,
+        |p| tiny(p, TapeModel::Play, PlayMode::Loop),
+        HOLD,
+    ),
     (
         "REV 64",
         Tapes::Least,
@@ -1055,7 +1060,12 @@ const TAPE_ROWS: [TapeRow; 13] = [
         |p| tiny(p, TapeModel::Scrub, PlayMode::Loop),
         HOLD,
     ),
-    ("LOOP 256", Tapes::Short, |p| tiny(p, TapeModel::Play, PlayMode::Loop), HOLD),
+    (
+        "LOOP 256",
+        Tapes::Short,
+        |p| tiny(p, TapeModel::Play, PlayMode::Loop),
+        HOLD,
+    ),
     (
         "REV 256",
         Tapes::Short,
