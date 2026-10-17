@@ -2,7 +2,8 @@ use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use chimera_board::shared::NOTE_SOURCES;
+use chimera_board::sd::BUS;
+use chimera_board::shared::{BLOCKS, NOTE_SOURCES, STREAM_STATS, registry};
 #[cfg(feature = "perf-probe")]
 use chimera_board::shared::{COST_PCT, VOICES};
 #[cfg(feature = "bench")]
@@ -11,20 +12,21 @@ use chimera_engine::audio_out::{Half, interleave};
 use chimera_engine::dsp::algo::engine::FormantViews;
 use chimera_engine::dsp::fx_bus::FxBus;
 use chimera_engine::hw::{BLOCK_SIZE, SAMPLE_RATE, SampleBudget};
-use chimera_engine::instrument::{AudioShared, DacBlocks, Instrument};
+use chimera_engine::instrument::{AudioShared, DacBlocks, Instrument, NoteOrigin};
 use chimera_engine::note_queue::{InEvent, NoteDrain};
 use chimera_engine::part::DacPair;
+use chimera_engine::project::SourceId;
 use chimera_engine::project::{LOAD_LINK, LoadGate};
 use chimera_engine::scope::{ScopeFrame, ScopeWriter};
 use chimera_engine::source_table::AudioToken;
+use chimera_engine::stream::layout::StreamFile;
+use chimera_engine::stream::port::{NoPorts, StreamCard, Streams, VoicePorts};
+use chimera_engine::stream::ring::AudioSide;
+use chimera_engine::stream::units::AudioBlocks;
 use chimera_engine::triple::{Reader, Writer};
 
 #[cfg(feature = "bench")]
-use chimera_engine::stream::{
-    bench::{Asked, BENCH},
-    ring::AudioSide,
-    units::AudioBlocks,
-};
+use chimera_engine::stream::bench::{Asked, BENCH};
 
 use super::dma;
 
@@ -50,8 +52,8 @@ struct Engine {
     orbit: chimera_board::orbit::Runner,
     /// The source table's one reader (ADR 0087).
     sources: AudioToken,
-    /// The stream rings' audio side: the bench's heads (Task 11).
-    #[cfg(feature = "bench")]
+    /// The stream rings' audio side: the voices' ports, or the card
+    /// bench's heads where it runs.
     streams: AudioSide<'static>,
 }
 
@@ -69,8 +71,7 @@ pub unsafe fn slots() -> (
     unsafe { (&mut *addr_of_mut!(INSTRUMENT), &mut *addr_of_mut!(FX)) }
 }
 
-// The bench's rings side is the eighth.
-#[cfg_attr(feature = "bench", allow(clippy::too_many_arguments))]
+#[allow(clippy::too_many_arguments)]
 pub fn init(
     budget: SampleBudget,
     shared: Reader<AudioShared>,
@@ -79,7 +80,7 @@ pub fn init(
     formant: Writer<FormantViews>,
     orbit: chimera_board::orbit::Runner,
     mut sources: AudioToken,
-    #[cfg(feature = "bench")] streams: AudioSide<'static>,
+    streams: AudioSide<'static>,
 ) {
     if ENGINE_TAKEN.swap(true, Ordering::AcqRel) {
         return;
@@ -107,7 +108,6 @@ pub fn init(
                 sources.set_period_us(BLOCK_SIZE as u32 * 1_000_000 / SAMPLE_RATE);
                 sources
             },
-            #[cfg(feature = "bench")]
             streams,
         });
     }
@@ -127,32 +127,39 @@ pub fn render_half(half: Half) {
     // is unmasked) call this, never concurrently and never re-entrantly, so
     // this is the only live reference to `ENGINE`.
     let e = unsafe { (*addr_of_mut!(ENGINE)).assume_init_mut() };
+    let shared = e.shared.read();
+    let run = Run {
+        inst: &mut *e.inst,
+        sources: &mut e.sources,
+        out: (&mut *e.fx, &mut e.dac, &mut e.scope),
+        gate: &mut e.gate,
+        notes: &mut e.notes,
+        orbit: &mut e.orbit,
+    };
     #[cfg(feature = "bench")]
     if chimera_board::CARD_BENCH {
         bench_block(&mut e.streams);
     }
-    let shared = e.shared.read();
-    // TAPE's voices read the pool through the block's view.
-    let (gate, notes, orbit) = (&mut e.gate, &mut e.notes, &mut e.orbit);
-    let out = (&mut *e.fx, &mut e.dac, &mut e.scope);
-    e.inst
-        .run_block(&mut e.sources, out, shared, |inst, reads| {
-            if gate.before_block(&LOAD_LINK, inst, shared) {
-                let now = orbit.now();
-                notes.drain(|src, ev| match ev {
-                    // Capture sees the raw key, before any snap.
-                    InEvent::Note(n) => {
-                        orbit.live(n);
-                        inst.handle_with(n, shared, reads);
-                    }
-                    InEvent::Bend(b) => inst.bend(b),
-                    InEvent::Sustain(p) => inst.sustain(p),
-                    InEvent::Mode(m) => inst.channel_mode(m),
-                    InEvent::Rt(rt) => orbit.realtime(src.index(), rt, now),
-                });
-                orbit.block(inst, shared, reads);
-            }
-        });
+    if chimera_board::CARD_BENCH || !chimera_engine::stream::STREAMS {
+        // No TAPE, or the rings are the card bench's: no voice streams.
+        block(run, shared, &mut NoPorts);
+    } else {
+        let reg = registry();
+        let frames = |id: SourceId| reg?.get(id).map(StreamFile::frames);
+        let mut ports = Streams {
+            audio: &mut e.streams,
+            card: StreamCard {
+                frames: &frames,
+                now: AudioBlocks::new(BLOCKS.load(Ordering::Relaxed)),
+                bus: &BUS,
+                stats: &STREAM_STATS,
+                // Every new want wakes the card IRQ, whoever has the bus (I1).
+                pend: chimera_board::card_dma::pend,
+            },
+        };
+        block(run, shared, &mut ports);
+    }
+    BUS.set_streams_active(e.inst.streaming());
     e.orbit.publish();
     let inst = &*e.inst;
     e.formant.publish(|v| inst.formant_views_into(v));
@@ -174,14 +181,57 @@ pub fn render_half(half: Half) {
     }
 }
 
+/// What a block runs on: the engine's parts but the rings and the shared
+/// snapshot.
+struct Run<'a> {
+    inst: &'a mut Instrument,
+    sources: &'a mut AudioToken,
+    out: (&'a mut FxBus, &'a mut DacBlocks, &'a mut ScopeWriter),
+    gate: &'a mut LoadGate,
+    notes: &'a mut NoteDrain<'static, NOTE_SOURCES>,
+    orbit: &'a mut chimera_board::orbit::Runner,
+}
+
+/// One block's notes and render, every voice's stream through `ports`:
+/// the gate, then only when it opens the drain (live notes to ORBIT's
+/// capture and then the Parts, real-time to ORBIT's clock) and ORBIT.
+#[inline(never)]
+fn block<P: VoicePorts>(r: Run<'_>, shared: &AudioShared, ports: &mut P) {
+    let Run {
+        inst,
+        sources,
+        out,
+        gate,
+        notes,
+        orbit,
+    } = r;
+    inst.run_block_ported(sources, out, shared, ports, |inst, reads, ports| {
+        if gate.before_block(&LOAD_LINK, inst, shared) {
+            let now = orbit.now();
+            notes.drain(|src, ev| match ev {
+                // Capture sees the raw key, before any snap.
+                InEvent::Note(n) => {
+                    orbit.live(n);
+                    inst.handle_streamed(n, shared, NoteOrigin::Live, reads, ports);
+                }
+                InEvent::Bend(b) => inst.bend(b),
+                InEvent::Sustain(p) => inst.sustain(p),
+                InEvent::Mode(m) => inst.channel_mode(m),
+                InEvent::Rt(rt) => orbit.realtime(src.index(), rt, now),
+            });
+            orbit.block(inst, shared, reads, ports);
+        }
+    });
+}
+
 /// The bench's heads over the registry's bed rows (disarmed till the beds
 /// are set): a new want wakes the card IRQ (I1's rule 1). Out of line, as
 /// `bench_listen`, so its frame isn't on the stack under the render.
 #[cfg(feature = "bench")]
 #[inline(never)]
 fn bench_block(streams: &mut AudioSide<'static>) {
-    let now = AudioBlocks::new(chimera_board::shared::BLOCKS.load(Ordering::Relaxed));
-    if let Some(reg) = chimera_board::shared::registry()
+    let now = AudioBlocks::new(BLOCKS.load(Ordering::Relaxed));
+    if let Some(reg) = registry()
         && BENCH.block(&mut streams.turn(), reg, now) == Asked::New
     {
         chimera_board::card_dma::pend();

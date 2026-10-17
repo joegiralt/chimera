@@ -472,6 +472,6 @@ fn a_streamed_stem_is_not_deleted() {
     assert_eq!(log(&s).writes.borrow().len(), wrote, "nothing written");
     assert_eq!(s.delete(vol, other), Ok(()), "another stem deletes");
     // SAFETY: nothing reads `REG` but this test.
-    unsafe { REG.clear(id) };
+    assert!(unsafe { REG.clear(id) });
     assert_eq!(s.delete(vol, file), Ok(()));
 }

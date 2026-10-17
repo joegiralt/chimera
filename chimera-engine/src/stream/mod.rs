@@ -1,5 +1,9 @@
 //! Streaming a sample from the card.
 
+/// TAPE is in the build: a voice may stream. Without it the shells run
+/// their blocks with no ports.
+pub const STREAMS: bool = cfg!(feature = "tape");
+
 pub mod admit;
 pub mod bench;
 pub mod cursor;

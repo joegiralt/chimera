@@ -22,6 +22,7 @@ use chimera_core::scope::{ScopeFrame, scope_buffer};
 use chimera_core::source_table::SOURCE_TABLE;
 use chimera_core::stream::registry::StreamRegistry;
 use chimera_core::stream::ring::{AudioSide, CardSide, Rings, ThirdSlots};
+use chimera_core::stream::stats::StreamStats;
 use chimera_core::triple::{Reader, TripleBuffer, Writer};
 use chimera_core::ui::UiState;
 
@@ -94,6 +95,7 @@ pub fn rings() -> Option<&'static Rings> {
 }
 
 /// The stream registry, once `zero_rings` has emptied it.
+#[inline]
 pub fn registry() -> Option<&'static StreamRegistry> {
     // SAFETY: zeroed (empty) before the flag's `Release`, then touched only
     // through `StreamRegistry`'s own tags.
@@ -301,6 +303,8 @@ pub static BLOCKS: AtomicU32 = AtomicU32::new(0);
 /// Cycles spent in the audio interrupt, wrapping: what the card IRQ takes
 /// off its own entries' time.
 pub static AUDIO_CYCLES: AtomicU32 = AtomicU32::new(0);
+/// The streams' counters: the voices', and the card IRQ's time.
+pub static STREAM_STATS: StreamStats = StreamStats::new();
 /// MIDI DIN's line errors: overrun, framing, noise.
 pub static MIDI_ERRORS: AtomicU32 = AtomicU32::new(0);
 

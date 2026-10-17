@@ -2,8 +2,8 @@
 //! DMA2 stream 0 receiving and stream 1 sending 0xFF, run by one state
 //! machine in `DMA2_STR0`. It fills the voices' stream rings and, in bench
 //! builds, the console's timed reads. Every decision is host-tested
-//! (`sd_proto`, `h7_spi`, `edf`, `ring`, `card_bus`); this shell runs them
-//! on the registers.
+//! (`sd_proto`, `h7_spi`, `serve`, `ring`, `card_bus`); this shell runs
+//! them on the registers.
 //!
 //! A transfer holds the bus as `Stream` from its take to its give. Only a
 //! `Held`, made by `Held::take` and spent by `give`, reaches SPI2 and CS,
@@ -16,13 +16,11 @@ use core::mem::{MaybeUninit, offset_of, replace};
 use core::ptr::{self, addr_of, addr_of_mut};
 use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 
-use chimera_core::stream::edf::{Pick, Want, pick, wants};
-use chimera_core::stream::layout::{
-    ChunkIdx, ChunkRead, Piece, RAW_CHUNK_BLOCKS, RAW_CHUNK_BYTES, deframe,
-};
+use chimera_core::stream::layout::{ChunkRead, Piece, RAW_CHUNK_BLOCKS, RAW_CHUNK_BYTES, deframe};
+use chimera_core::stream::registry::RowHold;
 use chimera_core::stream::ring::{CardSide, Claim};
+use chimera_core::stream::serve::{ServeStep, servable, serve_step};
 use chimera_core::stream::units::AudioBlocks;
-use chimera_core::voice_alloc::VoiceIdx;
 use chimera_fat::h7_spi::{
     ABORT, BURST_END, BurstLen, Cr1, DmaEvent, GIVE, Gate, Mbr, Op, POLLED, RegFault, TAKE, burst,
     gate,
@@ -43,7 +41,7 @@ use stm32h7xx_hal::pac::{self, interrupt};
 use crate::controls::now_ms;
 use crate::priority::{self, Priority};
 use crate::sd::{BUS, CARD_ADDR, SD_FAST_HZ};
-use crate::shared::{AUDIO_CYCLES, BLOCKS, rings};
+use crate::shared::{AUDIO_CYCLES, BLOCKS, STREAM_STATS, registry, rings};
 
 /// The bound on any register poll.
 pub const REG_WAIT_US: Micros = Micros::new(50);
@@ -132,45 +130,18 @@ pub fn pend() {
     NVIC::pend(pac::Interrupt::DMA2_STR0);
 }
 
-/// Where voice `v`'s chunk `c` lies on the card: a CMD18 a piece, at most
-/// a raw chunk's blocks in all (`StreamFile::chunk_read`), so no burst
-/// passes the staging's end (I4). Bench builds read stream k's bed, the
-/// registry's row `bed_id(k)`; a voice's own source (Task 22) answers the
-/// rest.
-#[cfg(feature = "bench")]
-fn locate(v: VoiceIdx, c: ChunkIdx) -> Option<ChunkRead<'static>> {
-    bench::bed(v)?.chunk_read(c)
-}
-
-#[cfg(not(feature = "bench"))]
-fn locate(_: VoiceIdx, _: ChunkIdx) -> Option<ChunkRead<'static>> {
-    None
-}
-
-/// Voice `v` streams from a file this IRQ knows.
-fn serves(v: VoiceIdx) -> bool {
-    #[cfg(feature = "bench")]
-    return bench::bed(v).is_some();
-    #[cfg(not(feature = "bench"))]
-    {
-        let _ = v;
-        false
-    }
-}
-
-/// The Wanted slots this IRQ can serve.
-fn servable() -> impl Iterator<Item = Want> {
+/// A Wanted slot this IRQ can read: its ring names a registry row.
+fn wanted() -> bool {
     rings()
-        .into_iter()
-        .flat_map(wants)
-        .filter(|w| serves(w.voice))
+        .zip(registry())
+        .is_some_and(|(r, reg)| servable(r, reg).next().is_some())
 }
 
 /// The UI loop's, each pass. A transfer stuck past `WATCHDOG_MS` (a TE,
 /// a MODF, a lost TC) is asked to abort. A want left with the bus free (a
 /// failed fill requeued, or a yield whose UI gave up) is woken here.
 pub fn watch(now: Ms) {
-    if !unstick(now) && BUS.owner() == Owner::Free && serving() && servable().next().is_some() {
+    if !unstick(now) && BUS.owner() == Owner::Free && serving() && wanted() {
         pend();
     }
 }
@@ -644,9 +615,17 @@ impl Dest {
 struct Fill {
     /// The one `Claim` (Task 5) of the slot.
     claim: Claim,
-    at: ChunkRead<'static>,
+    /// Its file's registry row, held until the fill drops (#597).
+    row: RowHold<'static>,
     /// The piece under way.
     piece: Piece,
+}
+
+impl Fill {
+    /// The chunk's reads, from the held row (`serve_step` found them).
+    fn read(&self) -> Option<ChunkRead<'_>> {
+        self.row.file().chunk_read(self.claim.chunk())
+    }
 }
 
 /// What a transfer is for.
@@ -858,20 +837,22 @@ fn DMA2_STR0() {
     st.step(events(), BUS.take_abort());
     let wall = DWT::cycle_count().wrapping_sub(t);
     let own = wall.saturating_sub(AUDIO_CYCLES.load(Ordering::Relaxed).wrapping_sub(audio));
+    let own_us = st.line.us(own).get();
     STATS
         .irq_us_max
         .fetch_max(st.line.us(wall).get(), Ordering::Relaxed);
-    STATS
-        .irq_own_us_max
-        .fetch_max(st.line.us(own).get(), Ordering::Relaxed);
+    STATS.irq_own_us_max.fetch_max(own_us, Ordering::Relaxed);
+    // CARD IRQ: the streams' own share of the CPU.
+    STREAM_STATS.irq_us_max.fetch_max(own_us, Ordering::Relaxed);
+    STREAM_STATS.irq_us_sum.fetch_add(own_us, Ordering::Relaxed);
 }
 
-/// The work `pick` chose.
+/// The work chosen, claimed with the bus held.
 enum Work {
-    Fill(Want),
-    /// A read in the bench's mailbox, claimed once the bus is held.
+    Fill(Fill),
+    /// The bench's mailbox read.
     #[cfg(feature = "bench")]
-    Bench,
+    Bench(Lba, BlockCount),
     Nothing,
 }
 
@@ -917,18 +898,9 @@ impl IrqState {
         }
     }
 
-    /// Nothing in flight: start the earliest want, else the bench's read.
+    /// Nothing in flight (I6): with a want or the bench's read waiting,
+    /// the bus taken and the work chosen under it.
     fn look(&mut self) {
-        let work = self.work();
-        if let Work::Nothing = work {
-            return;
-        }
-        if let Some(h) = Held::take(&self.line) {
-            self.start(h, work);
-        }
-    }
-
-    fn work(&mut self) -> Work {
         if !serving() {
             #[cfg(feature = "bench")]
             if MAIL.claim().is_some() {
@@ -938,50 +910,68 @@ impl IrqState {
                     ReadFail::Fault
                 }));
             }
-            return Work::Nothing;
+            return;
         }
-        let now = AudioBlocks::new(BLOCKS.load(Ordering::Relaxed));
-        match pick(servable(), now) {
-            Pick::Fill(w) => Work::Fill(w),
-            Pick::Idle => {
-                #[cfg(feature = "bench")]
-                if MAIL.queued() {
-                    return Work::Bench;
-                }
-                Work::Nothing
+        #[cfg(feature = "bench")]
+        let waits = wanted() || MAIL.queued();
+        #[cfg(not(feature = "bench"))]
+        let waits = wanted();
+        if !waits {
+            return;
+        }
+        if let Some(h) = Held::take(&self.line) {
+            match self.work() {
+                Work::Nothing => give(h, &self.line),
+                work => self.start(h, work),
             }
         }
+    }
+
+    /// With the bus held: the earliest want it can read (`serve_step`),
+    /// claimed; else the bench's read.
+    fn work(&mut self) -> Work {
+        if !serving() {
+            return Work::Nothing;
+        }
+        if let Some(reg) = registry() {
+            let now = AudioBlocks::new(BLOCKS.load(Ordering::Relaxed));
+            if let ServeStep::Read { claimed, row } =
+                serve_step(&mut self.side, reg, now, BUS.ui_wait())
+            {
+                match row
+                    .file()
+                    .chunk_read(claimed.chunk())
+                    .and_then(|r| r.first())
+                {
+                    Some(piece) => {
+                        return Work::Fill(Fill {
+                            claim: claimed,
+                            row,
+                            piece,
+                        });
+                    }
+                    // `serve_step` read it: never.
+                    None => self.side.requeue(claimed),
+                }
+            }
+        }
+        #[cfg(feature = "bench")]
+        if let Some((lba, n)) = MAIL.claim() {
+            return Work::Bench(lba, n);
+        }
+        Work::Nothing
     }
 
     /// The bus held: the chosen work's CMD18.
     fn start(&mut self, h: Held, work: Work) {
         let (kind, lba, blocks) = match work {
-            Work::Fill(w) => match self.side.claim(w.voice, w.slot) {
-                Some(claim) => match locate(claim.voice(), claim.chunk())
-                    .and_then(|at| Some((at, at.first()?)))
-                {
-                    Some((at, piece)) => (
-                        Kind::Fill(Fill { claim, at, piece }),
-                        piece.lba,
-                        piece.blocks,
-                    ),
-                    // A chunk off the file: left Wanted, no pend, so it
-                    // can't loop this handler (`watch` wakes it).
-                    None => {
-                        self.side.requeue(claim);
-                        return give(h, &self.line);
-                    }
-                },
-                // The audio cancelled it since the pick.
-                None => return self.release(h),
-            },
+            Work::Fill(f) => {
+                let (lba, blocks) = (f.piece.lba, f.piece.blocks);
+                (Kind::Fill(f), lba, blocks)
+            }
             #[cfg(feature = "bench")]
-            Work::Bench => match MAIL.claim() {
-                Some((lba, n)) => (Kind::Bench, lba, n),
-                // The thread withdrew it since the pick.
-                None => return self.release(h),
-            },
-            Work::Nothing => return self.release(h),
+            Work::Bench(lba, n) => (Kind::Bench, lba, n),
+            Work::Nothing => return give(h, &self.line),
         };
         self.bursts = 0;
         self.begin(h, kind, lba, blocks);
@@ -1085,10 +1075,11 @@ impl IrqState {
     /// CMD12 and the drain.
     fn finish(&mut self, mut h: Held, t0: u32, kind: Kind) {
         let done = match kind {
-            Kind::Fill(f) => match f.at.after(&f.piece) {
+            Kind::Fill(f) => match f.read().and_then(|r| r.after(&f.piece)) {
                 Some(piece) => return self.stop(h, Then::More(Fill { piece, ..f })),
                 None => {
-                    let filled = self.deliver(&mut h, f.claim, &f.at);
+                    // The row's hold drops after the chunk is in its slot.
+                    let filled = self.deliver(&mut h, f);
                     #[cfg(feature = "bench")]
                     if filled {
                         bench::filled(self.line.us(DWT::cycle_count().wrapping_sub(t0)));
@@ -1107,7 +1098,12 @@ impl IrqState {
     /// The chunk de-framed into its slot (bench builds check it against
     /// its bed's table, and publish it either way), the guard, then Ready:
     /// true if it went Ready.
-    fn deliver(&mut self, h: &mut Held, claim: Claim, at: &ChunkRead<'_>) -> bool {
+    fn deliver(&mut self, h: &mut Held, f: Fill) -> bool {
+        let Fill { claim, row, .. } = f;
+        let Some(at) = row.file().chunk_read(claim.chunk()) else {
+            self.side.requeue(claim);
+            return false;
+        };
         let Some(out) = self.side.fill_buf(&claim) else {
             // Stale: the audio cancelled it, and the fill lands nowhere.
             let _ = self.side.fill_done(claim);
@@ -1241,20 +1237,12 @@ impl IrqState {
         }
     }
 
-    /// The bus kept for the next pick while any stream wants a fill (a
-    /// waiting UI gets it only then: `edf::pick`).
+    /// The bus kept for the next read while any stream wants a fill it
+    /// can read (a waiting UI gets it only then: `serve_step`).
     fn next(&mut self, h: Held) {
         match self.work() {
-            Work::Nothing => self.release(h),
+            Work::Nothing => give(h, &self.line),
             work => self.start(h.keep(), work),
-        }
-    }
-
-    /// The bus given; a want still left pends a look.
-    fn release(&mut self, h: Held) {
-        give(h, &self.line);
-        if serving() && servable().next().is_some() {
-            pend();
         }
     }
 
@@ -1322,8 +1310,8 @@ mod bench {
     use core::ptr::{addr_of, addr_of_mut};
     use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering, fence};
 
-    use chimera_core::stream::bench::{BENCH, BenchBeds, bed_id};
-    use chimera_core::stream::layout::{ChunkIdx, StreamFile};
+    use chimera_core::stream::bench::{BENCH, BenchBeds};
+    use chimera_core::stream::layout::ChunkIdx;
     use chimera_core::voice_alloc::VoiceIdx;
     use chimera_fat::sd_proto::ProtoError;
     use chimera_hal::card_bus::CardFault;
@@ -1335,7 +1323,6 @@ mod bench {
     use super::{BUS, CARD_ADDR, Dest, Held, pend, unstick};
     use crate::controls::now_ms;
     use crate::sd::SD_IDLE_MS;
-    use crate::shared::registry;
 
     /// Fills that went Ready since boot: also the next index into `FILL_US`.
     static FILLS: AtomicU32 = AtomicU32::new(0);
@@ -1452,12 +1439,6 @@ mod bench {
         let ok = fill(beds);
         BEDS_STATE.store(if ok { READY } else { EMPTY }, Ordering::Release);
         ok
-    }
-
-    /// Stream `v`'s bed, once the beds are set.
-    pub(super) fn bed(v: VoiceIdx) -> Option<&'static StreamFile> {
-        beds()?;
-        registry()?.get(bed_id(v))
     }
 
     /// A fill's de-framed chunk against its bed's table (I7).
