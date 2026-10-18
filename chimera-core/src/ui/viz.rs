@@ -358,6 +358,9 @@ impl ModMark {
 
     /// A fingerprint: equal while the mark draws the same pixels.
     pub fn key(&self) -> u32 {
+        // Columns span the 216 px plot (x 12..=228) and rows 40..=72: each
+        // fits a byte.
+        const _: () = assert!(theme::VIZ_RIGHT < 256 && FILTER_PASS_Y < 256);
         let p =
             |s: Option<(i32, i32)>| s.map_or(0, |(a, b)| (a as u32 & 0xff) << 8 | b as u32 & 0xff);
         p(self.cutoff) | p(self.res) << 16

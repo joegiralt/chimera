@@ -328,6 +328,11 @@ fn a_cell_page_redraws_on_the_printed_number_only() {
         [],
         "below the display resolution"
     );
+    // Modulation moves the animator alone: the printed number is the set one.
+    let m = ui.renderer.anim[2].target();
+    ui.renderer.anim[2].set_target(m + 0.1);
+    assert_eq!(flushed(&mut ui, &mut fb), [], "modulation moves no number");
+    ui.renderer.anim[2].set_target(m);
     aim(&mut ui, if v > 0.5 { v - 0.1 } else { v + 0.1 });
     assert_eq!(flushed(&mut ui, &mut fb), [(28, 118), (186, 266)]);
 }
