@@ -19,9 +19,9 @@ use chimera_core::boot::wait_until;
 use chimera_core::console::{
     CardAnswer, CardArg, CardFail, CardInfo, CardKind, CardSpeed, DEADLINE_MS, DmaAnswer, DmaOwn,
     DmaRefusal, DmaReport, DmaVerb, Extents, FILE_AIMS, FILE_BLOCKS, FILE_BYTES, FILES, Files,
-    Histogram, Inject, IrqCounts, Latency, Load, MIN_APART_PER_MILLE, Percentile, RANDOM_READS,
-    READ_BLOCKS, ROOM_MARGIN_BYTES, SEQ_BLOCKS, SPAN_BLOCKS, STREAM_ROUNDS, STREAMS, StreamLines,
-    Throughput, apart_per_mille, fit_line, interleaved, random_reads, span_start,
+    Histogram, Inject, IrqCounts, Latency, Load, MIN_APART_PER_MILLE, PerMille, Percentile,
+    RANDOM_READS, READ_BLOCKS, ROOM_MARGIN_BYTES, SEQ_BLOCKS, SPAN_BLOCKS, STREAM_ROUNDS, STREAMS,
+    StreamLines, Throughput, apart_per_mille, fit_line, interleaved, random_reads, span_start,
 };
 use chimera_core::dsp::tape_engine::read::Shape;
 use chimera_core::hw::MAX_VOICES;
@@ -53,7 +53,7 @@ use embedded_sdmmc::{Block, BlockDevice, BlockIdx};
 use crate::card_dma::{self, BenchPort, FILL_RING, STATS, bench_port};
 use crate::controls::now_ms;
 use crate::sd::SdStore;
-use crate::shared::{BLOCKS, OVERRUNS, registry};
+use crate::shared::{BLOCKS, OVERRUNS, STREAM_STATS, registry};
 
 const READ_RUN: BlockCount = match BlockCount::new(READ_BLOCKS) {
     Some(n) => n,
@@ -587,6 +587,8 @@ struct Counts {
     entries: u32,
     reads: u32,
     bursts: u32,
+    /// The card IRQ's own cycles (CARD IRQ's share).
+    irq_cycles: u32,
 }
 
 impl Counts {
@@ -600,6 +602,7 @@ impl Counts {
             entries: get(&STATS.entries),
             reads: get(&STATS.reads),
             bursts: get(&STATS.bursts),
+            irq_cycles: get(&STREAM_STATS.irq_cycles),
         }
     }
 
@@ -618,6 +621,7 @@ impl Counts {
             entries: self.entries.wrapping_sub(then.entries),
             reads: self.reads.wrapping_sub(then.reads),
             bursts: self.bursts.wrapping_sub(then.bursts),
+            irq_cycles: self.irq_cycles.wrapping_sub(then.irq_cycles),
         }
     }
 }
@@ -1248,6 +1252,10 @@ impl CardBench {
             stop_errors: c.stop_errors,
             card_irq_us_max: Micros::new(STATS.irq_us_max.load(Ordering::Relaxed)),
             card_irq_own_us_max: Micros::new(STATS.irq_own_us_max.load(Ordering::Relaxed)),
+            card_irq_share: PerMille::of(
+                c.irq_cycles.into(),
+                u64::from(now_ms().since(run.began)) * u64::from(self.cpu_hz / 1_000),
+            ),
             irq: IrqCounts {
                 entries: c.entries,
                 reads: c.reads,

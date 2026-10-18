@@ -208,7 +208,7 @@ fn the_card_kind_follows_addressing_and_size() {
 
 mod dma {
     use chimera_core::console::{
-        CardKind, DmaOwn, DmaReport, Histogram, IrqCounts, LinkFit, Percentile, Spread,
+        CardKind, DmaOwn, DmaReport, Histogram, IrqCounts, LinkFit, PerMille, Percentile, Spread,
         StreamLines, fit_line, write_dma,
     };
     use chimera_core::stream::bench::BenchReport;
@@ -283,6 +283,7 @@ mod dma {
             stop_errors: 0,
             card_irq_us_max: Micros::new(312),
             card_irq_own_us_max: Micros::new(140),
+            card_irq_share: PerMille::of(3, 1_000),
             irq: IrqCounts {
                 entries: 900,
                 reads: 40,
@@ -304,7 +305,7 @@ mod dma {
         format!(
             "n 20000\nmedian_us 2100\np95_us 2400\np99_us 3000\np999_us 9000\nmax_us over\n\
              overruns 0\nloaded_load_pct 72\ncard SDHC\ncard_mb 31914\ngit {}{plus}\n\
-             aborts 1\nstop_errors 0\ncard_irq_us_max 312\ncard_irq_own_us_max 140\n\
+             aborts 1\nstop_errors 0\ncard_irq_us_max 312\ncard_irq_own_us_max 140\ncard_irq_pct 0.3\n\
              card_irqs 900\ncard_reads 40\ncard_read_bursts 760\ncard_read_bursts_max 31\n",
             THIS.hash()
         )

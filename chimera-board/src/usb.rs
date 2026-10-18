@@ -150,6 +150,8 @@ pub struct Usb {
     serial: Port,
     line: Console,
     timer: LoopTimer,
+    /// Where `stats` last read the card IRQ's cycles.
+    irq: crate::card_dma::IrqMark,
     /// DWT at the last loop top, and whether that iteration answered.
     top: u32,
     last: Served,
@@ -313,6 +315,7 @@ impl Unconnected {
             serial: self.serial,
             line: Console::new(),
             timer: LoopTimer::new(),
+            irq: crate::card_dma::IrqMark::new(crate::controls::now_ms()),
             top: DWT::cycle_count(),
             last: Served::Idle,
             cycles_per_us: (self.cpu_hz / 1_000_000).max(1),
@@ -359,6 +362,8 @@ impl Usb {
             serial,
             line,
             timer,
+            irq,
+            cycles_per_us,
             boot,
             sweep,
             #[cfg(feature = "bank2")]
@@ -418,6 +423,8 @@ impl Usb {
                 stats,
                 card,
                 timer,
+                irq,
+                cycles_per_us: *cycles_per_us,
                 bench,
                 frame: display.frame(),
                 dfu: false,
@@ -478,6 +485,8 @@ struct ChipUnit<'a> {
     stats: Option<&'a mut Reader<AudioStats>>,
     card: Option<CardAnswer>,
     timer: &'a mut LoopTimer,
+    irq: &'a mut crate::card_dma::IrqMark,
+    cycles_per_us: u32,
     bench: Option<&'a str>,
     frame: Frame<'a>,
     /// `dfu` asked: the restart waits for the `OK` to be out.
@@ -512,10 +521,14 @@ impl Unit for ChipUnit<'_> {
         let audio = crate::audio_stats(self.stats.as_deref_mut())?;
         crate::probe::restart_voice_peak();
         let (loop_avg_us, loop_peak_us) = self.timer.take();
+        let streams = chimera_core::stream::STREAMS.then(|| {
+            crate::card_dma::tally(self.irq, crate::controls::now_ms(), self.cycles_per_us)
+        });
         Some(Stats {
             audio,
             loop_avg_us,
             loop_peak_us,
+            streams,
         })
     }
 

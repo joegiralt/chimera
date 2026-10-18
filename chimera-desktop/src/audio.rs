@@ -8,7 +8,7 @@ use chimera_core::dsp::algo::engine::FormantViews;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::hw::{BLOCK_SIZE, CPU_HZ_REV_V, DAC_PAIRS, SAMPLE_RATE, SampleBudget};
-use chimera_core::instrument::{AudioShared, DacBlocks, DacOut, Instrument};
+use chimera_core::instrument::{AudioShared, DacBlocks, DacOut, Instrument, NoteOrigin};
 use chimera_core::note_queue::{
     InEvent, NoteDrain, NoteEvent, NoteKind, NoteProducer, NoteSources, SourceId,
 };
@@ -16,8 +16,16 @@ use chimera_core::orbit::runner::{OrbitRunner, OrbitView};
 use chimera_core::project::{LOAD_LINK, LoadGate, LoadLink, Project};
 use chimera_core::scope::{ScopeFrame, ScopeWriter};
 use chimera_core::source_table::{AudioToken, SOURCE_TABLE};
+use chimera_core::stream::layout::StreamFile;
+use chimera_core::stream::port::{NoPorts, StreamCard, Streams, VoicePorts};
+use chimera_core::stream::registry::StreamRegistry;
+use chimera_core::stream::ring::AudioSide;
+use chimera_core::stream::stats::StreamStats;
+use chimera_core::stream::units::AudioBlocks;
 use chimera_core::triple::{TripleBuffer, Writer};
 use chimera_core::{MidiChannel, MidiNote, Velocity};
+use chimera_hal::Ms;
+use chimera_hal::card_bus::CardBus;
 use cpal::Stream;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::Arc;
@@ -62,6 +70,7 @@ impl DesktopAudio {
         scope: Writer<ScopeFrame>,
         orbit: Writer<OrbitView>,
         formant: Writer<FormantViews>,
+        streams: Option<DeskStreams>,
     ) -> Self {
         let host = cpal::default_host();
         let device = host.default_output_device().expect("no output device");
@@ -92,6 +101,7 @@ impl DesktopAudio {
 
         let sources = SOURCE_TABLE.reader().expect("the source reader, once");
         let mut engine = Engine::new(sample_rate, orbit, sources);
+        engine.streams = streams;
         let mut formant = formant;
         let mut block_pos = BLOCK_SIZE;
         let mut scope = ScopeWriter::new(scope);
@@ -208,6 +218,8 @@ struct Engine {
     view: Writer<OrbitView>,
     /// The source table's one reader (ADR 0087).
     sources: AudioToken,
+    /// The card model, when on.
+    streams: Option<DeskStreams>,
 }
 
 impl Engine {
@@ -226,13 +238,15 @@ impl Engine {
             )),
             view,
             sources,
+            streams: None,
         }
     }
 
     /// One block, as the firmware renders each half: the gate, then only
     /// when it opens the drain (live notes to any capture and then the
     /// Parts, real-time to ORBIT's clock) and ORBIT, then the render and
-    /// ORBIT's report.
+    /// ORBIT's report. With the card model on, each streamed voice reads
+    /// its ring (`card_stream`), as `engine::render_half` does on the chip.
     fn block<const N: usize>(
         &mut self,
         link: &LoadLink,
@@ -240,35 +254,95 @@ impl Engine {
         shared: &AudioShared,
         scope: &mut ScopeWriter,
     ) {
-        let Self {
-            inst,
-            fx,
-            dac,
-            gate,
-            runner,
-            view,
-            sources,
-        } = self;
-        // TAPE's voices read the pool through the block's view.
-        inst.run_block(sources, (fx, dac, scope), shared, |inst, reads| {
-            if gate.before_block(link, inst, shared) {
-                let now = runner.now();
-                drain.drain(|src, ev| match ev {
-                    // Capture sees the raw key, before any snap.
-                    InEvent::Note(n) => {
-                        runner.live(n);
-                        inst.handle_with(n, shared, reads);
-                    }
-                    InEvent::Bend(b) => inst.bend(b),
-                    InEvent::Sustain(p) => inst.sustain(p),
-                    InEvent::Mode(m) => inst.channel_mode(m),
-                    InEvent::Rt(rt) => runner.realtime(src.index(), rt, now),
-                });
-                runner.block_with(inst, shared, reads);
+        match self.streams.as_mut() {
+            Some(st) => {
+                let reg = st.reg;
+                let frames = |id| reg.get(id).map(StreamFile::frames);
+                let now = AudioBlocks::new(st.blocks.load(Ordering::Relaxed));
+                let mut ports = Streams {
+                    audio: &mut st.audio,
+                    card: StreamCard {
+                        frames: &frames,
+                        now,
+                        bus: st.bus,
+                        stats: st.stats,
+                        // The card thread polls.
+                        pend: || {},
+                        loud: core::cell::Cell::new(false),
+                    },
+                };
+                Self::run(
+                    (&mut self.inst, &mut self.fx, &mut self.dac, &mut self.gate),
+                    (&mut self.runner, &mut self.sources),
+                    (link, drain, shared, scope),
+                    &mut ports,
+                );
+                ports.answer_quiet(Ms(st.t0.elapsed().as_millis() as u32));
+                st.bus.set_streams_active(self.inst.streaming());
+                st.blocks.fetch_add(1, Ordering::Relaxed);
             }
-        });
-        view.publish(|v| runner.fill_view(v));
+            None => Self::run(
+                (&mut self.inst, &mut self.fx, &mut self.dac, &mut self.gate),
+                (&mut self.runner, &mut self.sources),
+                (link, drain, shared, scope),
+                &mut NoPorts,
+            ),
+        }
+        let runner = &self.runner;
+        self.view.publish(|v| runner.fill_view(v));
     }
+
+    /// `block`'s notes and render, every voice's stream through `ports`.
+    #[allow(clippy::type_complexity)]
+    fn run<const N: usize, P: VoicePorts>(
+        (inst, fx, dac, gate): (&mut Instrument, &mut FxBus, &mut DacBlocks, &mut LoadGate),
+        (runner, sources): (&mut OrbitRunner, &mut AudioToken),
+        (link, drain, shared, scope): (
+            &LoadLink,
+            &mut NoteDrain<'_, N>,
+            &AudioShared,
+            &mut ScopeWriter,
+        ),
+        ports: &mut P,
+    ) {
+        // TAPE's voices read the pool through the block's view.
+        inst.run_block_ported(
+            sources,
+            (fx, dac, scope),
+            shared,
+            ports,
+            |inst, reads, ports| {
+                if gate.before_block(link, inst, shared) {
+                    let now = runner.now();
+                    drain.drain(|src, ev| match ev {
+                        // Capture sees the raw key, before any snap.
+                        InEvent::Note(n) => {
+                            runner.live(n);
+                            inst.handle_streamed(n, shared, NoteOrigin::Live, reads, ports);
+                        }
+                        InEvent::Bend(b) => inst.bend(b),
+                        InEvent::Sustain(p) => inst.sustain(p),
+                        InEvent::Mode(m) => inst.channel_mode(m),
+                        InEvent::Rt(rt) => runner.realtime(src.index(), rt, now),
+                    });
+                    runner.block_ported(inst, shared, reads, ports);
+                }
+            },
+        );
+    }
+}
+
+/// The card model's side of the audio (`card_stream`): the rings' audio
+/// side, the registry the UI fills, the bus and counters both share.
+pub struct DeskStreams {
+    pub audio: AudioSide<'static>,
+    pub reg: &'static StreamRegistry,
+    pub bus: &'static CardBus,
+    pub stats: &'static StreamStats,
+    /// Blocks rendered: the card's deadlines' clock.
+    pub blocks: &'static AtomicU32,
+    /// The quiet's clock.
+    pub t0: Instant,
 }
 
 /// The mixdown's clamped frames, reported at most once per `EVERY`.

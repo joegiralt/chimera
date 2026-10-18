@@ -22,11 +22,13 @@ use chimera_core::ui::busy::{ToastStep, draw_busy, draw_toast};
 use chimera_core::ui::perf::PerfTracker;
 use chimera_core::ui::settings::CardCx;
 use chimera_desktop::store::{DirStore, sim_card};
+use chimera_hal::card_bus::CardBus;
 use chimera_hal::store::Store;
 use chimera_hal::{ChimeraDisplay, MidiChannel, MidiNote, Ms, Velocity};
 use console::DeskUnit;
 use controls::DesktopControls;
 use display::DesktopDisplay;
+use std::sync::atomic::AtomicU32;
 use std::time::{Duration, Instant};
 
 /// SYSTEM and its theme, then step 2: the last project, or NEW and why.
@@ -45,6 +47,46 @@ fn boot<S: Store>(
     (sync, settings)
 }
 
+/// The card model (slice 1 § 10.5): the rings, the registry, the bus and
+/// counters, and the card thread serving the rings from the sim's card at
+/// `CHIMERA_CARD_LATENCY` (`m1`, `slow`, `zero`), faulting at
+/// `CHIMERA_CARD_FAULT=after:N`. Leaked: one a process.
+fn card_model() -> (audio::DeskStreams, &'static CardBus) {
+    use chimera_core::stream::registry::StreamRegistry;
+    use chimera_core::stream::ring::{Rings, ThirdSlots};
+    use chimera_core::stream::stats::StreamStats;
+    use chimera_desktop::card_stream::{CardStream, FaultAfter, Latency, spawn};
+    let latency = Latency::from_env().unwrap_or_else(|| {
+        eprintln!("CHIMERA_CARD_LATENCY: m1, slow or zero; m1");
+        Latency::M1
+    });
+    let fault = FaultAfter::from_env().unwrap_or_else(|| {
+        eprintln!("CHIMERA_CARD_FAULT: after:N; none");
+        FaultAfter::NEVER
+    });
+    let reg: &'static StreamRegistry = Box::leak(Box::new(StreamRegistry::new()));
+    let bus: &'static CardBus = Box::leak(Box::new(CardBus::new()));
+    let stats: &'static StreamStats = Box::leak(Box::new(StreamStats::new()));
+    let blocks: &'static AtomicU32 = Box::leak(Box::new(AtomicU32::new(0)));
+    let rings: &'static Rings = Box::leak(Box::new(Rings::new()));
+    let third: &'static ThirdSlots = Box::leak(Box::new(ThirdSlots::new()));
+    let (audio, card) = rings.sides(third).expect("fresh rings");
+    let store = DirStore::new(sim_card());
+    spawn(
+        CardStream::new(card, reg, store, (bus, stats), (latency, fault)),
+        blocks,
+    );
+    let st = audio::DeskStreams {
+        audio,
+        reg,
+        bus,
+        stats,
+        blocks,
+        t0: Instant::now(),
+    };
+    (st, bus)
+}
+
 fn main() {
     let mut display = DesktopDisplay::new();
     let mut controls = DesktopControls::new();
@@ -53,13 +95,14 @@ fn main() {
     let no_views = [FormantView::NONE; chimera_core::hw::MAX_PARTS];
     let (formant_w, mut formant_r) =
         Box::leak(Box::new(TripleBuffer::new(no_views, no_views, no_views))).split();
-    let mut audio = audio::DesktopAudio::new(scope_w, orbit_w, formant_w);
+    let (desk_streams, bus) = card_model();
+    let streams = desk_streams.reg;
+    let mut audio = audio::DesktopAudio::new(scope_w, orbit_w, formant_w, Some(desk_streams));
 
     let mut ui = UiState::with_arena(leaked_arena(&SOURCE_TABLE));
     ui.project_mut().set_gate_clock(gate_ms);
     // Streamed sources' files, registered as on the chip (slice 1 § 5.5).
-    let streams = chimera_core::stream::registry::StreamRegistry::new();
-    ui.project_mut().set_streams(Box::leak(Box::new(streams)));
+    ui.project_mut().set_streams(streams);
     // QA of the labels a closed bank 2 shows (ADR 0141); the desktop plays
     // everything either way. Unset, it has no bank 2, which reads as open.
     if std::env::var("CHIMERA_BANK2").as_deref() == Ok("closed") {
@@ -72,7 +115,7 @@ fn main() {
     display.set_theme(&ui.theme());
     let _ = chimera_core::ui::splash::draw(&mut display);
     display.flush();
-    let mut store = DirStore::new(sim_card());
+    let mut store = DirStore::new(sim_card()).with_bus(bus);
     let mut card = Card::new();
     let (mut sync, mut settings) = boot(&mut ui, &mut card, &mut store);
     // The Yellow Sign ignores INVERT (`splash_palette`).

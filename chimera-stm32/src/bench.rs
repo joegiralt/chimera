@@ -53,7 +53,7 @@ use chimera_engine::hw::{
     BLOCK_SIZE, BlockBudget, MAX_PARTS, MAX_VOICES, SAMPLE_RATE, SampleBudget, VOICE_RAM_BUDGET,
 };
 use chimera_engine::instrument::{
-    AudioShared, DacBlocks, Instrument, MixState, PartAudio, mix_parts,
+    AudioShared, DacBlocks, Instrument, MixState, NoteOrigin, PartAudio, mix_parts,
 };
 use chimera_engine::modulation::{CUTOFF, FixedCol, MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_engine::note_queue::{NoteEvent, NoteKind};
@@ -67,6 +67,10 @@ use chimera_engine::preset::{Performance, Sound};
 use chimera_engine::project::{NEW_PARTS, Project, SlotId, SourceId, SourceRef, project_crc};
 use chimera_engine::scope::{ScopeFrame, ScopeWriter, scope_buffer};
 use chimera_engine::source_table::{AudioToken, GateView};
+use chimera_engine::stream::port::{StreamCard, Streams};
+use chimera_engine::stream::ring::{AudioSide, CardSide};
+use chimera_engine::stream::stats::StreamStats;
+use chimera_engine::stream::units::{AudioBlocks, SlotIdx};
 use chimera_engine::sym_alloc::SymAlloc;
 use chimera_engine::taps::TapOp;
 use chimera_engine::triple::{TripleBuffer, Writer};
@@ -78,6 +82,7 @@ use chimera_engine::{
     project::Loads,
     tracked::Tracked,
 };
+use chimera_hal::card_bus::CardBus;
 use cortex_m::peripheral::DWT;
 use embedded_graphics_core::pixelcolor::Rgb565;
 
@@ -818,6 +823,7 @@ pub fn run(
     display: &mut Display,
     clocks: Clocks,
     (project, sources): (&mut Project, &mut AudioToken),
+    rings: chimera_board::BenchRings<'_>,
     report: &mut Text,
 ) {
     #[cfg(feature = "bench-memory")]
@@ -845,9 +851,17 @@ pub fn run(
             rec,
         );
         hold(clocks);
+        stream_page(
+            (&mut *inst_slot, &mut *fx_slot, &mut *shared_slot),
+            (&mut *scope, sources),
+            project,
+            rings,
+            rec,
+        );
+        hold(clocks);
     }
     #[cfg(not(feature = "bench-tape"))]
-    let _ = sources;
+    let _ = (sources, rings);
     algo_pages(
         clocks,
         (inst_slot, fx_slot, shared_slot, scope, dac),
@@ -1335,6 +1349,297 @@ fn tape_page(
             }
         }
         free_sources(project, rig.sources);
+        rec.line(Face::Value, line.as_str(), (4, 46 + i as i32 * 18));
+    }
+    rec.flush();
+}
+
+/// TAPE STREAM's file: `Tapes::Long`'s frames and rate, so its RAM twin is
+/// the LOOP row's sources.
+const STREAM_FRAMES: u32 = 12_000;
+const STREAM_RATE: u16 = 24_000;
+/// ROOT C4; the eight notes C4 − 4 to + 3 st, `inc` 0.40 to 0.59: with the
+/// bend's 2 st and wow, 369 KB/s billed, the most eight distinct notes
+/// admit under `STREAM_BUDGET_BPS` (466 KB/s) a semitone higher being 391
+/// KB/s at 0.63. A held streamed voice that fast spans a chunk edge every
+/// 70 blocks, never every block: HIT strikes every block instead, each a
+/// new start on its head and its ring asked again.
+const STREAM_LOW: u8 = 56;
+
+/// A TAPE STREAM row: its label, the Sound over PLAY with TAPE and AGE at
+/// 0.5, and what changes before each block.
+type StreamRow = (
+    &'static str,
+    fn(&mut ParamSnapshot),
+    fn(&mut ParamSnapshot, u32) -> Hit,
+);
+
+const STREAM_ROWS: [StreamRow; 2] = [
+    // The whole file looped, XFADE ½: the ring read through, each pass
+    // onto the loop head.
+    (
+        "LOOP",
+        |p| (p.tape.mode, p.tape.size, p.tape.xfade) = (PlayMode::Loop, 1.0, 0.5),
+        HOLD,
+    ),
+    ("HIT", |p| p.tape.mode = PlayMode::One, |_, _| Hit::Again),
+];
+
+/// The Sound a row sets: PLAY at ROOT C4, TAPE and AGE at 0.5.
+fn stream_sound(row: &StreamRow) -> ParamSnapshot {
+    let mut p = snapshot(EngineType::Tape);
+    (p.tape.tape, p.tape.age) = (0.5, 0.5);
+    (p.tape.model, p.tape.root) = (TapeModel::Play, 6_000.0);
+    (row.1)(&mut p);
+    p
+}
+
+/// Eight streamed rows of a `STREAM_FRAMES` file for `p`: each its heads
+/// (`heads_for`, as a load stages them) of seeded noise; `None` if the
+/// arena can't take them.
+fn stream_sources(project: &mut Project, p: &ParamSnapshot) -> Option<[SourceId; MAX_VOICES]> {
+    use chimera_engine::dsp::tape_engine::read::{streamed_held_len, write_head_table};
+    let mut ids = [None; MAX_VOICES];
+    for (i, id) in ids.iter_mut().enumerate() {
+        let crc = 0x57E4_0000 | i as u32;
+        let r = SourceRef {
+            crc,
+            frames: STREAM_FRAMES,
+            rate: STREAM_RATE,
+        };
+        let heads = chimera_engine::stream::stage::heads_for(r, &p.tape)?;
+        let d = Descriptor {
+            shape: Shape::Plain,
+            count: 1,
+            rate: STREAM_RATE,
+            head_frames: chimera_engine::stream::admit::head_frames(STREAM_RATE),
+            heads: 0,
+        };
+        *id = project.source_write(r, heads.held_len(), |b| {
+            let at = write_head_table(d, heads.as_slice(), b).unwrap_or(b.len());
+            debug_assert_eq!(b.len(), streamed_held_len(heads.as_slice()));
+            noise(crc, &mut b[at..]);
+        });
+    }
+    ids.iter()
+        .all(Option::is_some)
+        .then(|| ids.map(|id| id.unwrap_or(SourceId::ALL[0])))
+}
+
+/// `b` filled with xorshift noise from `seed`.
+fn noise(seed: u32, b: &mut [u8]) {
+    let mut x = seed | 1;
+    for y in b {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        *y = x as u8;
+    }
+}
+
+/// Every Wanted slot read at once, as an on-time card: noise in, the
+/// guard, Ready. Outside the timing.
+fn serve_all(card: &mut CardSide<'_>) {
+    for v in VoiceIdx::ALL {
+        for s in SlotIdx::ALL {
+            let Some(c) = card.claim(v, s) else {
+                continue;
+            };
+            if let Some(b) = card.fill_buf(&c) {
+                noise(0xC4D0 ^ c.chunk().get(), b);
+            }
+            card.write_guard(&c);
+            card.fill_done(c);
+        }
+    }
+}
+
+/// The rings and the card's side of the voices' ports, a row's.
+struct StreamRig<'s, 'r> {
+    audio: &'s mut AudioSide<'r>,
+    card: &'s mut CardSide<'r>,
+    bus: CardBus,
+    stats: StreamStats,
+}
+
+impl StreamRig<'_, '_> {
+    /// `f` with the block's ports at block `b`: a streamed source is one
+    /// of `streamed`.
+    fn ports<R>(
+        &mut self,
+        streamed: &[SourceId],
+        b: u32,
+        f: impl FnOnce(&mut Streams<'_, '_>) -> R,
+    ) -> R {
+        let frames = |id: SourceId| {
+            streamed
+                .contains(&id)
+                .then_some(chimera_engine::stream::units::Frames::new(STREAM_FRAMES))
+        };
+        let mut ports = Streams {
+            audio: self.audio,
+            card: StreamCard {
+                frames: &frames,
+                now: AudioBlocks::new(b),
+                bus: &self.bus,
+                stats: &self.stats,
+                pend: || {},
+                loud: core::cell::Cell::new(false),
+            },
+        };
+        f(&mut ports)
+    }
+}
+
+impl TapeRig<'_> {
+    /// `time_cold`'s worst block, its voices through the rings' ports: the
+    /// eight notes of `row` on `ids`, every Wanted slot served between
+    /// blocks, the D-cache cleaned and invalidated before each timed one.
+    /// Streamed when `streamed`, else `ids` are RAM sources. Ends with every
+    /// ring emptied (`drop_ring`). With the voices streaming at the end.
+    #[inline(never)]
+    fn time_streamed(
+        &mut self,
+        perf: &Performance,
+        row: &StreamRow,
+        ids: &[SourceId; MAX_VOICES],
+        (st, streamed): (&mut StreamRig<'_, '_>, bool),
+    ) -> (u32, u8) {
+        // SAFETY: as `time_cold`'s: the bench runs alone, before interrupts.
+        let mut cp = unsafe { cortex_m::Peripherals::steal() };
+        let on: &[SourceId] = if streamed { ids } else { &[] };
+        let (mut worst, mut streaming) = (0u32, 0);
+        for _ in 0..COLD_RUNS {
+            let budget = SampleBudget::for_cpu(u32::MAX);
+            let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
+            let fx = FxBus::init_in_place(self.fx_slot);
+            let shared = AudioShared::init_in_place(self.shared_slot, perf);
+            let p = &mut shared.parts[0];
+            (*p.params, *p.mod_state) = (stream_sound(row), ModState::new());
+            let mut b = 0;
+            strike(self.sources, inst, shared, (st, on, b), ids);
+            for k in 0..WARM_BLOCKS + TIMED_BLOCKS {
+                if (row.2)(&mut shared.parts[0].params, k) == Hit::Again {
+                    strike(self.sources, inst, shared, (st, on, b), ids);
+                }
+                serve_all(st.card);
+                cp.SCB.clean_invalidate_dcache(&mut cp.CPUID);
+                let out = (&mut *fx, &mut self.dac, &mut *self.scope);
+                let c = st.ports(on, b, |ports| {
+                    let start = DWT::cycle_count();
+                    inst.run_block_ported(self.sources, out, shared, ports, |_, _, _| {});
+                    DWT::cycle_count().wrapping_sub(start)
+                });
+                if k >= WARM_BLOCKS {
+                    worst = worst.max(c);
+                }
+                b += 1;
+            }
+            streaming = inst.streaming().map_or(0, |n| n.get());
+            // Every voice let go and freed: each ring dropped as it frees.
+            let inst = Instrument::init_in_place(self.inst_slot, SAMPLE_RATE, budget);
+            let out = (&mut *fx, &mut self.dac, &mut *self.scope);
+            st.ports(on, b, |ports| {
+                inst.run_block_ported(self.sources, out, shared, ports, |_, _, _| {})
+            });
+        }
+        self.sources.store_sounding(0);
+        (worst / BLOCK_SIZE as u32, streaming)
+    }
+}
+
+/// Voice `v` struck at `STREAM_LOW + v` on `ids[v]`, through the ports:
+/// admitted and started as a live note is.
+fn strike(
+    sources: &mut AudioToken,
+    inst: &mut Instrument,
+    shared: &mut AudioShared,
+    (st, on, b): (&mut StreamRig<'_, '_>, &[SourceId], u32),
+    ids: &[SourceId; MAX_VOICES],
+) {
+    st.ports(on, b, |ports| {
+        let view = sources.begin_block();
+        for (v, &id) in ids.iter().enumerate() {
+            shared.parts[0].source = Some(id);
+            let ev = NoteEvent {
+                channel: MidiChannel::clamped(0),
+                note: MidiNote::new(STREAM_LOW + v as u8).unwrap_or(MidiNote::A4),
+                kind: NoteKind::On(Velocity::DEFAULT),
+            };
+            inst.handle_streamed(ev, shared, NoteOrigin::Live, &view, ports);
+        }
+    });
+}
+
+/// TAPE STREAM (slice 1 § 10.4, #596): each row's eight voices streamed
+/// less the same eight on RAM sources (the LOOP row's), cold, over 8:
+/// what streaming adds a voice, `refresh_bills` and the ports in, against
+/// `COST_STREAM`. `None` rings: not lent, nothing timed.
+#[inline(never)]
+fn stream_page(
+    (inst_slot, fx_slot, shared_slot): Slots<'_>,
+    (scope, sources): (&mut ScopeWriter, &mut AudioToken),
+    project: &mut Project,
+    rings: chimera_board::BenchRings<'_>,
+    rec: &mut Recorder<'_>,
+) {
+    use chimera_engine::dsp::tape_engine::COST_STREAM;
+    let rig = &mut TapeRig {
+        inst_slot,
+        fx_slot,
+        shared_slot,
+        scope,
+        dac: DacBlocks::new(),
+        sources,
+    };
+    rec.clear();
+    rec.heading("TAPE STREAM /VOICE");
+    let Some((audio, card)) = rings else {
+        rec.line(Face::Value, "NO RINGS", (4, 46));
+        rec.flush();
+        return;
+    };
+    let st = &mut StreamRig {
+        audio,
+        card,
+        bus: CardBus::new(),
+        stats: StreamStats::new(),
+    };
+    let mut line = FmtBuf::new();
+    for (i, row) in STREAM_ROWS.iter().enumerate() {
+        line.clear();
+        let p = stream_sound(row);
+        let ram = match tape_sources(project, Tapes::Long) {
+            Some(ids) => {
+                let (c, _) = rig.time_streamed(project.perf(), row, &ids, (st, false));
+                free_sources(project, rig.sources);
+                Some(c)
+            }
+            None => None,
+        };
+        let streamed = match stream_sources(project, &p) {
+            Some(ids) => {
+                let c = rig.time_streamed(project.perf(), row, &ids, (st, true));
+                free_sources(project, rig.sources);
+                Some(c)
+            }
+            None => None,
+        };
+        match (streamed, ram) {
+            (Some((s, n)), Some(r)) => {
+                let per = s.saturating_sub(r) / MAX_VOICES as u32;
+                let _ = write!(
+                    line,
+                    "{} +{per}/{} 8V {s} RAM {r} S {n} U {}",
+                    row.0,
+                    COST_STREAM.0,
+                    st.stats.underruns.load(Ordering::Relaxed)
+                );
+            }
+            _ => {
+                let _ = write!(line, "{} FULL", row.0);
+            }
+        }
         rec.line(Face::Value, line.as_str(), (4, 46 + i as i32 * 18));
     }
     rec.flush();

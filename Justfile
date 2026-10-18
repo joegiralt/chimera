@@ -26,6 +26,14 @@ desktop:
 tape-listen *args:
     cargo run -q -p chimera-desktop --bin tape-listen -- {{args}}
 
+# Streamed PLAY's desktop QA (slice 1 § 10.5): every factory bed in
+# target/tapes-v1/ (`just factory-tapes` first), ONE and LOOP, read through
+# the card model at m1, slow and m1 with a fault, judged by the click rule.
+# `just stream-qa <dir>` also writes RAIN, TRON BOWED and PAD CHORD's LOOPs
+# there as WAVs.
+stream-qa dir="":
+    STREAM_QA_WAVS="{{dir}}" cargo test -q -p chimera-desktop --test stream_qa -- --ignored --nocapture
+
 # A WAV to a TAPE source (spec § 6), sealed in the desktop sim's card
 # (CHIMERA_CARD, else chimera-card/), never the unit's:
 # `just tape take.wav [--rate 24k] [--root C3] [--transwave <cycle> [--top 1024] [--frames 32]]

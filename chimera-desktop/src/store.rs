@@ -1,5 +1,6 @@
 //! The desktop simulator's card: a host directory behind `Store`.
 
+use chimera_hal::card_bus::{CardBus, CardFault};
 use chimera_hal::store::{
     ByteSink, CHUNK, Dir, FileName, FileRuns, ReadSink, RunsError, Store, StoreError, VolumeId,
     synthetic_runs,
@@ -13,6 +14,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// `root` is the card; `root/VOLUME` holds its id as `serial label`.
 pub struct DirStore {
     root: PathBuf,
+    /// The card model's bus (`card_stream`): its read fault, cleared by
+    /// `recover`.
+    bus: Option<&'static CardBus>,
 }
 
 fn io_err(e: io::Error) -> StoreError {
@@ -39,7 +43,31 @@ pub fn sim_card() -> PathBuf {
 
 impl DirStore {
     pub fn new(root: PathBuf) -> Self {
-        DirStore { root }
+        DirStore { root, bus: None }
+    }
+
+    /// The store the card model's streams fault through.
+    pub fn with_bus(self, bus: &'static CardBus) -> Self {
+        DirStore {
+            bus: Some(bus),
+            ..self
+        }
+    }
+
+    /// `out.len()` bytes of `f` from `offset`, zeros past its end: the
+    /// card model's block reads.
+    pub fn read_bytes(&self, f: FileName, offset: u64, out: &mut [u8]) -> io::Result<()> {
+        let mut fh = File::open(self.file_path(f))?;
+        fh.seek(SeekFrom::Start(offset))?;
+        let mut at = 0;
+        while at < out.len() {
+            match fh.read(&mut out[at..])? {
+                0 => break,
+                n => at += n,
+            }
+        }
+        out[at..].fill(0);
+        Ok(())
     }
 
     fn dir_path(&self, dir: Dir) -> PathBuf {
@@ -126,6 +154,19 @@ impl ByteSink for FileSink<'_> {
 }
 
 impl Store for DirStore {
+    fn read_fault(&self) -> CardFault {
+        self.bus.map_or(CardFault::Clear, CardBus::fault)
+    }
+
+    /// A host directory has nothing to re-init: the mount clears it.
+    fn recover(&mut self) -> Result<VolumeId, StoreError> {
+        let vol = self.mount()?;
+        if let Some(b) = self.bus {
+            b.set_fault(CardFault::Clear);
+        }
+        Ok(vol)
+    }
+
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         if !self.root.is_dir() {
             return Err(StoreError::NoCard);

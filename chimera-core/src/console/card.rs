@@ -703,6 +703,8 @@ pub struct DmaReport {
     pub card_irq_us_max: Micros,
     /// Since boot: its longest entry less the audio that preempted it.
     pub card_irq_own_us_max: Micros,
+    /// Its own time's share of the run (CARD IRQ, slice 1 § 10.4).
+    pub card_irq_share: super::PerMille,
     pub irq: IrqCounts,
     pub own: DmaOwn,
 }
@@ -740,6 +742,7 @@ pub fn write_dma(r: &DmaReport, t: &mut impl Write) -> fmt::Result {
     writeln!(t, "stop_errors {}", r.stop_errors)?;
     writeln!(t, "card_irq_us_max {}", r.card_irq_us_max.get())?;
     writeln!(t, "card_irq_own_us_max {}", r.card_irq_own_us_max.get())?;
+    writeln!(t, "card_irq_pct {}", r.card_irq_share)?;
     writeln!(t, "card_irqs {}", r.irq.entries)?;
     writeln!(t, "card_reads {}", r.irq.reads)?;
     writeln!(t, "card_read_bursts {}", r.irq.bursts)?;

@@ -74,9 +74,10 @@ fn bench(
     clk: chimera_board::clocks::Clocks,
     project: &mut chimera_engine::project::Project,
     sources: &mut chimera_engine::source_table::AudioToken,
+    rings: chimera_board::BenchRings<'_>,
 ) -> &'static str {
     let report = bench::take_report().expect("bench report taken once");
-    bench::run(display, clk, (project, sources), report);
+    bench::run(display, clk, (project, sources), rings, report);
     let report: &'static chimera_core::console::Report<{ bench::BENCH_TEXT_LEN }> = report;
     report.as_str()
 }

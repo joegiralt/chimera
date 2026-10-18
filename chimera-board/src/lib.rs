@@ -374,7 +374,29 @@ pub struct Shell {
         clocks::Clocks,
         &mut chimera_core::project::Project,
         &mut chimera_core::source_table::AudioToken,
+        BenchRings<'_>,
     ) -> &'static str,
+}
+
+/// The stream rings' sides, lent to TAPE's bench before the card IRQ takes
+/// its own (`TAPE STREAM`); `None` in the other areas, where it has.
+#[cfg(feature = "bench")]
+pub type BenchRings<'a> = Option<(
+    &'a mut chimera_core::stream::ring::AudioSide<'static>,
+    &'a mut chimera_core::stream::ring::CardSide<'static>,
+)>;
+
+/// The card IRQ's start, with the rings' card side.
+#[cfg(not(feature = "sd-probe"))]
+fn start_card(
+    nvic: &mut cortex_m::peripheral::NVIC,
+    clocks: &CoreClocks,
+    cpu_hz: u32,
+    side: chimera_core::stream::ring::CardSide<'static>,
+) {
+    use stm32h7xx_hal::spi::{Enabled, Spi};
+    let ker = Spi::<pac::SPI2, Enabled>::kernel_clk_unwrap(clocks).raw();
+    card_dma::init(nvic, side, ker, cpu_hz);
 }
 
 /// The bench's text and flush, built here with the UI's (ADR 0108):
@@ -468,12 +490,11 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let sd = sd::init(sd, &mut cp.DCB, &mut cp.DWT, &clocks, clk.cpu_hz);
     let store = sd::take_store(sd).expect("store taken once");
     // The rings' card side to the card IRQ, its audio side to the audio.
-    let (streams, card_side) = shared::ring_sides().expect("ring sides taken once");
-    {
-        use stm32h7xx_hal::spi::{Enabled, Spi};
-        let ker = Spi::<pac::SPI2, Enabled>::kernel_clk_unwrap(&clocks).raw();
-        card_dma::init(&mut cp.NVIC, card_side, ker, clk.cpu_hz);
-    }
+    // TAPE's bench lends both sides to its STREAM rows first.
+    #[cfg_attr(not(all(feature = "bench", feature = "tape")), allow(unused_mut))]
+    let (mut streams, mut card_side) = shared::ring_sides().expect("ring sides taken once");
+    #[cfg(not(all(feature = "bench", feature = "tape")))]
+    start_card(&mut cp.NVIC, &clocks, clk.cpu_hz, card_side);
     let mut card = Card::new();
     // No card or a card fault shows at the project's boot; a SYSTEM
     // file that can't be read still applies the defaults silently:
@@ -529,7 +550,13 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         clk,
         ui.project_mut(),
         &mut sources,
+        #[cfg(feature = "tape")]
+        Some((&mut streams, &mut card_side)),
+        #[cfg(not(feature = "tape"))]
+        None,
     ));
+    #[cfg(all(feature = "bench", feature = "tape"))]
+    start_card(&mut cp.NVIC, &clocks, clk.cpu_hz, card_side);
     #[cfg(all(feature = "usb-console", not(feature = "bench")))]
     let bench_text: Option<&str> = None;
 

@@ -128,6 +128,56 @@ pub static STATS: CardStats = CardStats {
     bursts_max: AtomicU32::new(0),
 };
 
+/// The card IRQ's own cycles and the time when `stats` last read them.
+#[cfg(feature = "usb-console")]
+#[derive(Clone, Copy)]
+pub struct IrqMark {
+    cycles: u32,
+    at: Ms,
+}
+
+#[cfg(feature = "usb-console")]
+impl IrqMark {
+    pub fn new(now: Ms) -> IrqMark {
+        IrqMark {
+            cycles: STREAM_STATS.irq_cycles.load(Ordering::Relaxed),
+            at: now,
+        }
+    }
+}
+
+/// `stats`' stream lines at `now`: the IRQ's share since `mark`, which
+/// moves to now. Its cycles wrap after 8.9 s of IRQ time: more than 1.5 %
+/// of 10 min between reads.
+#[cfg(feature = "usb-console")]
+pub fn tally(
+    mark: &mut IrqMark,
+    now: Ms,
+    cycles_per_us: u32,
+) -> chimera_core::console::StreamTally {
+    use chimera_core::console::{PerMille, StreamTally};
+    use chimera_hal::units::Millis;
+    let ld = |a: &AtomicU32| a.load(Ordering::Relaxed);
+    let s = &STREAM_STATS;
+    let then = replace(mark, IrqMark::new(now));
+    let own = mark.cycles.wrapping_sub(then.cycles);
+    let wall = u64::from(now.since(then.at)) * 1_000 * u64::from(cycles_per_us);
+    StreamTally {
+        underruns: ld(&s.underruns),
+        cold: ld(&s.cold),
+        faults: ld(&s.faults),
+        frame_errors: ld(&s.frame_errors),
+        unreadable: ld(&s.unreadable),
+        held_at_cap: ld(&s.held_at_cap),
+        late_refused: ld(&s.late_refused),
+        quiet_ms_max: Millis::new(ld(&s.quiet_ms_max)),
+        quiets: ld(&s.quiets),
+        irq_us_max: Micros::new(ld(&STATS.irq_us_max)),
+        irq_own_us_max: Micros::new(ld(&STATS.irq_own_us_max)),
+        irq_share: PerMille::of(own.into(), wall),
+    }
+}
+
 /// Wakes the card IRQ.
 pub fn pend() {
     NVIC::pend(pac::Interrupt::DMA2_STR0);
