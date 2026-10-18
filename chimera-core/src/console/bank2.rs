@@ -89,8 +89,8 @@ impl<'a, S: Store + ?Sized> CardImage<'a, S> {
 
 /// The boot's staged file, unless `flash` already holds this build's
 /// (`wants_staged`: then the card isn't touched): `STAGED`, then the first
-/// `ROOT_BK2_MAX` root `*.BK2` (a dropped `chimera-<v>.bk2` has a host's
-/// short name, `CHIMER~1.BK2`), each judged against `seal`; the first
+/// `ROOT_BK2_MAX` root `*.BK2` (a dropped `CHIMERA.BK2`, or a long name a host
+/// shortens, `CHIMER~1.BK2`), each judged against `seal`; the first
 /// `Good` (`pick_staged`) and its header. The rest are ignored, unsaid.
 pub fn find_staged<'a, S: Store + ?Sized>(
     store: &'a mut S,
