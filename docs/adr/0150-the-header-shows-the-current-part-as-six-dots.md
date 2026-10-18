@@ -1,4 +1,4 @@
-# 0147. The header shows the current Part as six dots (extends 0126)
+# 0150. The header shows the current Part as six dots (extends 0126)
 
 - **Status:** Proposed
 - **Deciders:** project owner
