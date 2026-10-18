@@ -24,7 +24,9 @@ choosing B has to morph over to see what each algorithm is (#565, #338).
 
 ## Consequences
 Picking either previews it live; the focus moving off them returns the blend.
-`alg_pick_test` locks it.
+The band's dirty key folds in the picked cell and the held code, so the
+device redraws on a focus change or a held step too. `alg_pick_test` locks
+both the full and the dirty render.
 
 ## Sources
 private issue #565, ADR 0151.
