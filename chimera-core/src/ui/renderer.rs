@@ -190,7 +190,7 @@ impl Renderer {
                 use crate::params::FilterParams;
                 let flt = &f.parts[f.active_part.index()].sound.params.filter;
                 let v = view::view(f.def, f.focus, &f.ctx);
-                let buf = value_text(f, f.focus, a(f.focus));
+                let buf = value_text(f, f.focus, self.anim[f.focus].target());
                 let readout = (v != View::Empty).then(|| (v.label(), buf.as_str()));
                 viz::filter(
                     display,
@@ -633,8 +633,7 @@ impl Renderer {
             );
             return hint::focus(display, f.hint(o.hint));
         }
-        let v = self.anim[f.focus].current();
-        let buf = value_text(f, f.focus, v);
+        let buf = value_text(f, f.focus, self.anim[f.focus].target());
         components::focus_band(
             display,
             view.label(),
@@ -678,7 +677,7 @@ impl Renderer {
             _ => self.anim[f.focus].current(),
         };
         let frame = f.clock.frame();
-        let text = value_text(f, f.focus, self.anim[f.focus].current());
+        let text = value_text(f, f.focus, self.anim[f.focus].target());
         let g = super::glyph::gauge(glyph, value, fmt, |reads| match reads {
             Reads::Composite(id) => {
                 // Which of the composite's params has focus.
@@ -813,7 +812,7 @@ impl Renderer {
                 {
                     let _ = core::fmt::Write::write_str(&mut buf, crate::bank2::NEEDS_UPDATE_CELL);
                 }
-                _ => buf = param_text(f, i, &v, value),
+                _ => buf = param_text(f, i, &v, anim.target()),
             }
             let c = components::Cell {
                 label: cell_label(&v),

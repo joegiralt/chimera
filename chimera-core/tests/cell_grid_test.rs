@@ -230,3 +230,41 @@ fn part_switch_redraws_mod_bars_that_differ() {
     ui.render_with_scope(&mut full, &perf, &scope);
     assert!(fb.px == full.px);
 }
+
+/// Issue #559: after a turn the readout is the set value at once; only the
+/// gauges and bars ease.
+#[test]
+fn the_readout_shows_the_target_the_frame_after_a_turn() {
+    let turned = |settled: bool| {
+        let mut ui = ui_for("algo_level");
+        feed(&mut ui, Input::turn(EncoderId::C, 40));
+        if settled {
+            settle(&mut ui);
+        } else {
+            ui.update(UiTick::for_test());
+        }
+        render_ui(&ui)
+    };
+    let (mid, rest) = (turned(false), turned(true));
+    let rows = |fb: &Fb, y0: i32, y1: i32, x0: i32, x1: i32| {
+        (y0..y1)
+            .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+            .map(|(x, y)| fb.at(x, y))
+            .collect::<Vec<_>>()
+    };
+    let focus = |fb: &Fb| rows(fb, theme::FOCUS_LABEL_Y + 6, theme::FOCUS_BOTTOM, 0, 90);
+    let cell = |fb: &Fb| {
+        let x = theme::MARGIN_X + 2 * theme::CELL_COL_W;
+        let y = theme::CELL_LABEL_Y + theme::CELL_VALUE_DY - 6;
+        rows(
+            fb,
+            y,
+            theme::CELL_LABEL_Y + theme::CELL_BAR_DY - 1,
+            x,
+            x + 50,
+        )
+    };
+    assert!(mid.px != rest.px, "the gauges are still easing");
+    assert!(focus(&mid) == focus(&rest), "focus readout lags");
+    assert!(cell(&mid) == cell(&rest), "cell readout lags");
+}
