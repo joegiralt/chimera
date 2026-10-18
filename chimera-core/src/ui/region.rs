@@ -331,6 +331,7 @@ impl RegionData {
             title_type: u8::MAX,
             out: u8::MAX,
             status: HeaderStatus {
+                parts: None,
                 sounding: false,
                 load_pct: u8::MAX,
                 orbit_dot: None,

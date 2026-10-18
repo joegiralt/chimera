@@ -31,6 +31,8 @@ pub const PILL_EDGE: Rgb565 = Rgb565::new(7, 14, 6);
 /// Audio load above 60 % / 80 %.
 pub const WARN: Rgb565 = Rgb565::new(31, 32, 0);
 pub const ALERT: Rgb565 = Rgb565::new(31, 0, 0);
+/// The current Part's dot: bright green whatever the accent (`#29ff29`).
+pub const PART_LIVE: Rgb565 = Rgb565::new(5, 63, 5);
 
 // --- Fonts (u8g2; only these are linked) ---
 
@@ -68,6 +70,14 @@ pub const HEADER_BASELINE: i32 = 20;
 pub const HEADER_DOT_X: i32 = 225;
 pub const HEADER_DOT_Y: i32 = 16;
 pub const HEADER_DOT_R: i32 = 3;
+/// The Part dots: a row above the header text, one a Part, from the left
+/// margin.
+pub const PART_DOT_Y: i32 = 5;
+pub const PART_DOT_X: i32 = MARGIN_X + PART_DOT_R;
+pub const PART_DOT_PITCH: i32 = 10;
+/// A sounding Part's ring; the current Part's dot is one larger, the
+/// rest one smaller.
+pub const PART_DOT_R: i32 = 3;
 /// ORBIT's beat dot, one dot left of the sounding dot.
 pub const ORBIT_DOT_X: i32 = HEADER_DOT_X - 10;
 

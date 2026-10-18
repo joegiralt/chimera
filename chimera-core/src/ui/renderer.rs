@@ -70,6 +70,8 @@ pub struct Frame<'a> {
     pub sounding: bool,
     /// ORBIT's beat dot: its fill while ORBIT runs (`OrbitAnim::dot`).
     pub orbit_dot: Option<u8>,
+    /// The Parts with a voice sounding (the header's Part dots).
+    pub live: crate::project::PartSet,
     /// Every Part (Mixer overview) and the one being edited.
     pub parts: &'a Parts,
     pub active_part: PartId,
@@ -127,6 +129,12 @@ impl Frame<'_> {
     /// What the header shows beside its words: the load and the dots.
     pub fn header_status(&self) -> components::HeaderStatus {
         components::HeaderStatus {
+            parts: matches!(self.head, Head::Sound(_) | Head::Mix(_)).then_some(
+                components::PartDots {
+                    current: self.active_part,
+                    live: self.live,
+                },
+            ),
             sounding: self.sounding,
             load_pct: self.perf.audio_load_pct,
             orbit_dot: self.orbit_dot,
