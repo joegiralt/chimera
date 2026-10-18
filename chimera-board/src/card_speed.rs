@@ -546,6 +546,12 @@ const STILL: Ratio = match Ratio::from_milli(1) {
     Some(r) => r,
     None => panic!(),
 };
+/// B4 reads each stream at 1.2×, the spec's worst read rate (§ 2), so the
+/// budget's 0.8 is taken off a rate actually run.
+const SUSTAIN_SPEED: Ratio = match Ratio::from_milli(1_200) {
+    Some(r) => r,
+    None => panic!(),
+};
 /// B3's burst: a read for every stream.
 const BURST_READS: u32 = StreamCount::MAX.get() as u32;
 const B9_STREAMS: StreamCount = match StreamCount::new(2) {
@@ -828,7 +834,7 @@ impl CardBench {
                 }
             }
             DmaVerb::Sustain(n) => {
-                arm(n, Ratio::ONE, Listen::Off)?;
+                arm(n, SUSTAIN_SPEED, Listen::Off)?;
                 streams(n, SUSTAIN_MS, Side::Plain)
             }
             DmaVerb::Listen(n) => {

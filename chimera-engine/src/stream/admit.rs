@@ -8,9 +8,10 @@ use crate::voice_alloc::VoiceIdx;
 /// Head of a source kept in RAM, in milliseconds.
 pub const HEAD_MS: u32 = 100;
 /// What admission lets streams ask of the card, bytes a second: bench B4's
-/// formula, N × 41,143 × 1.2 × 0.8 at N = 8. B4 ran eight 24 kHz streams
-/// at `Ratio::ONE` (329 KB/s) with 0 empty rings, so this sits under what
-/// the card was shown to hold. Raising it needs B4 re-run at the new rate.
+/// formula, N × 41,143 × 1.2 × 0.8 at N = 8: 0.8 of what B4 held. B4 ran
+/// eight 24 kHz streams at 1.2× (395 KB/s) for 10 min with 0 empty rings
+/// and 0 late blocks (ledger tape-plan/m2/b4-1p2.txt). Raising it needs B4
+/// re-run at the new rate.
 pub const STREAM_BUDGET_BPS: u32 = 315_978;
 /// Worst-case tape wow, in cents.
 pub const WOW_CENTS: f32 = 33.0;
