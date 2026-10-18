@@ -667,7 +667,7 @@ impl Renderer {
     /// the slot itself.
     pub fn gauge(&self, f: &Frame) -> Gauge {
         if let Some(o) = &f.orbit_focus {
-            return o.gauge;
+            return components::fit_gauge(o.text.as_str(), o.gauge);
         }
         let view = view::view(f.def, f.focus, &f.ctx);
         let (fmt, glyph, focused) = (view.fmt(), view.glyph(), view.addr());
@@ -678,7 +678,8 @@ impl Renderer {
             _ => self.anim[f.focus].current(),
         };
         let frame = f.clock.frame();
-        super::glyph::gauge(glyph, value, fmt, |reads| match reads {
+        let text = value_text(f, f.focus, self.anim[f.focus].current());
+        let g = super::glyph::gauge(glyph, value, fmt, |reads| match reads {
             Reads::Composite(id) => {
                 // Which of the composite's params has focus.
                 let focus = id.params().iter().position(|&a| Some(a) == focused);
@@ -726,7 +727,8 @@ impl Renderer {
                     mode: va_mode(mode),
                 }
             }
-        })
+        });
+        components::fit_gauge(text.as_str(), g)
     }
 
     /// A composite's inputs, `addrs`' set values normalized: eased (`set`)

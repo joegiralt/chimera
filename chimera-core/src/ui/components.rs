@@ -295,6 +295,7 @@ pub fn focus_band<D>(
     D: DrawTarget<Color = Rgb565>,
 {
     focus_label(d, label, theme::MARGIN_X);
+    let gauge = fit_gauge(value_text, gauge);
     // A value too wide for the large numerals (`NOT A TRANSWAVE`) reads at
     // the status size, the whole row its own.
     let wide = draw::text_width(&theme::FONT_FOCUS, value_text, 0) > theme::CONTENT_W;
@@ -430,6 +431,43 @@ where
         theme::INK,
     );
     draw_gauge(d, gauge);
+}
+
+/// Clear air between the large value and its gauge.
+pub const GAUGE_GAP: i32 = 4;
+
+/// The leftmost column `gauge` draws in; `None` for no gauge.
+pub fn gauge_left(gauge: &Gauge) -> Option<i32> {
+    let end = theme::SCREEN_W - theme::MARGIN_X;
+    match gauge {
+        Gauge::None => None,
+        Gauge::Arc { .. } => Some(theme::ARC_CX - theme::ARC_R - theme::ARC_WIDTH as i32),
+        Gauge::Switch { .. } => Some(theme::SWITCH_CX - theme::SWITCH_W / 2),
+        Gauge::LevelBar { .. } => Some(theme::LEVEL_TICK_X - 1),
+        Gauge::Crossfader { .. } => Some(end - theme::XF_W - theme::XF_CAP_W / 2),
+        Gauge::Blend { .. } => Some(end - theme::BLEND_W - theme::XF_CAP_W / 2),
+        Gauge::Staff { .. } => Some(theme::STAFF_X),
+        Gauge::Wave(_) | Gauge::VaWave(_) => Some(theme::WAVE_X),
+        Gauge::VaMix(_) => Some(end - theme::VA_MIX_W),
+        Gauge::Braid(_) => Some(theme::BRAID_X),
+        Gauge::Rings(_) => Some(theme::RINGS_X),
+        Gauge::Cube(_) | Gauge::Tail(_) => Some(theme::CUBE_X),
+    }
+}
+
+/// `gauge`, or none where `value_text` at the focus size would run into
+/// it. The gauge goes, not the numerals: the value is what the eye reads,
+/// and it keeps its size until it passes the whole row (`focus_band`).
+pub fn fit_gauge(value_text: &str, gauge: Gauge) -> Gauge {
+    let Some(left) = gauge_left(&gauge) else {
+        return gauge;
+    };
+    let w = draw::text_width(&theme::FONT_FOCUS, value_text, 0);
+    if theme::FOCUS_VALUE_X + w + GAUGE_GAP <= left {
+        gauge
+    } else {
+        Gauge::None
+    }
 }
 
 /// The box an animated gauge redraws alone each frame; `None` for the

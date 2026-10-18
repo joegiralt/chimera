@@ -15,7 +15,8 @@ use screen::*;
 
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0x14f8295d1f5838e9),
-    ("algo_formant_page", 0x5de8238f2dbf43c3),
+    // Re-recorded: 4.53 kHz drops the arc it ran under (#590).
+    ("algo_formant_page", 0xfd46647ec0f1e7d2),
     ("algo_op_page_3", 0xb6ac3cd0c290d672),
     ("algo_op_page_3_turned", 0x3469930dff1a6231),
     ("algo_op_page_frmt", 0x64614c2f6af9fc1c),

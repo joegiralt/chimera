@@ -28,7 +28,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_alg", 0xc43f8fe941a69fd6),
     ("algo_alg_morph_dimmed", 0x37c1f515da8aa9cc),
     // VOWEL takes ALGO's sixth cell, dimmed with no formant; FRM page.
-    ("algo_formant_page", 0xd7abbf43c79496b6),
+    // Re-recorded: 4.53 kHz drops the arc it ran under (#590).
+    ("algo_formant_page", 0x99f3105b5be5b7f4),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
     ("mod_matrix_morph_inert", 0x27f70ba2fbed39e1),
