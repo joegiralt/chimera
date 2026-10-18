@@ -4,7 +4,7 @@
 - **Deciders:** owner (one shipped firmware, the ORBIT build; bank 1 room), firmware
 
 ## Context
-The one firmware a release ships is the ORBIT build (`chimera-<version>.bin`). Its bank 1 had 2,760 B of the 917,504 B left at `cc2397e8`: no room for the next feature or fix. ADR 0137's door already plays TAPE's DSP from bank 2. Of what could follow it (private notes), the reverb's TYPE engines are the largest seam with one entry: `Reverb::process`, called once a block from `FxBus::process`, reaching the ROOM, HALL, BLOOM, GATE and REVERSE engines, which nothing else in bank 1 calls. No vtables, no shared statics. Moving the whole FX send bus would free more but silence chorus and delay too; the VA or ALGO DSP would silence INIT.
+The one firmware a release ships is the ORBIT build (`CHIMERA.BIN`). Its bank 1 had 2,760 B of the 917,504 B left at `cc2397e8`: no room for the next feature or fix. ADR 0137's door already plays TAPE's DSP from bank 2. Of what could follow it (private notes), the reverb's TYPE engines are the largest seam with one entry: `Reverb::process`, called once a block from `FxBus::process`, reaching the ROOM, HALL, BLOOM, GATE and REVERSE engines, which nothing else in bank 1 calls. No vtables, no shared statics. Moving the whole FX send bus would free more but silence chorus and delay too; the VA or ALGO DSP would silence INIT.
 
 ## Decision
 - **`Reverb::process` is the door's reverb entry** (`Bank2Door::reverb`, a `ReverbDoor { process }`), `#[inline(never)]`. With `bank2`, `bank2.x` links it into `.bank2` with `rev::{room, bloom, burst, loop_engine}`, `run_loop`'s monomorphs and `rev::ramp`, text and rodata (their switch tables follow their names). Without `bank2` the globs are left out and it stays in bank 1.

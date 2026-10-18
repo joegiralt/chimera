@@ -208,12 +208,12 @@ check-bin-size bin:
 # Draft a release of the path-clean firmware on the PUBLIC chimera-releases
 # repo (#413): `just release 0.1.0 [--dry-run]`. Refuses a dirty tree or a
 # version already tagged or released; builds `release-bin`; names the files
-# CHIMERA.BIN (8.3: the stock bootloader lists short names, #558; the ORBIT build, the only firmware shipped), its
-# CHIMERA.BK2 (sealed for that .bin: dropped in the card root, the
-# next boot installs it) and factory-v1.zip; writes SHA256SUMS and the notes from
-# docs/alpha/RELEASE-NOTES.md.tmpl; asserts the assets are exactly those
-# four and none is a private file's bytes. A draft only: the owner
-# publishes. --dry-run does everything but `gh release create`.
+# CHIMERA.BIN (8.3, so the stock bootloader lists it, #558; the ORBIT build,
+# the only firmware shipped), CHIMERA.BK2 (sealed for that .bin: dropped in
+# the card root, the next boot installs it) and factory-v1.zip; writes
+# SHA256SUMS and the notes from docs/alpha/RELEASE-NOTES.md.tmpl; asserts
+# the assets are exactly those four and none is a private file's bytes. A
+# draft only: the owner publishes. --dry-run does everything but `gh release create`.
 release version *flags:
     #!/usr/bin/env bash
     set -euo pipefail

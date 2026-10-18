@@ -115,6 +115,7 @@ class OneUpdate(unittest.TestCase):
             self.assertIn(want, body)
         # No .bk2 named .bin: a .bin never starts with the .bk2 magic.
         self.assertIn("CHIMERA2", body)
+        self.assertIn("`CHIMERA.BIN`", open("docs/alpha/RELEASE-NOTES.md.tmpl").read())
         # No zips a variant, no console tool shipped.
         self.assertNotIn("zip -qX", body)
         self.assertNotIn('"$out/chimera-usb.py"', body)
