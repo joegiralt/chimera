@@ -575,11 +575,11 @@ fn stats_line_renders_at_max_counts_without_overflow() {
     assert_eq!(fb.oob, 0);
 }
 
-/// The selected cell's amount counts up with the lerp, frame by frame —
-/// never a jump to the new value — and a dirty render matches a full
-/// render on every frame of the way.
+/// The selected cell's amount prints the target from the first frame
+/// (#559) while its fill eases, and a dirty render matches a full render on
+/// every frame of the way.
 #[test]
-fn the_selected_amount_lerps() {
+fn the_selected_amount_prints_its_target() {
     let mut ui = ui_for("mod_matrix");
     let mut dirty = Fb::new();
     ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope_fixture());
@@ -592,7 +592,6 @@ fn the_selected_amount_lerps() {
         |fb: &Fb, t: &str| same_cell(fb, &cell_as(fb.px[0], 0, 3, theme::ACCENT, Some(t)), 0, 3);
     assert!(shows(&full(&ui), "+42"));
     feed(&mut ui, Input::turn(EncoderId::E, 85)); // +42 → +127
-    let mut shown = vec![];
     for frame in 0..60 {
         ui.update(UiTick::for_test());
         ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope_fixture());
@@ -601,22 +600,8 @@ fn the_selected_amount_lerps() {
             dirty.px == fb.px,
             "frame {frame}: dirty render == full render"
         );
-        let a = amount_of(ui.renderer.anim[MATRIX_AMOUNT_SLOT].current());
-        assert!(
-            shows(&fb, &format!("{a:+}")),
-            "frame {frame}: cell prints {a:+}"
-        );
-        shown.push(a);
+        assert!(shows(&fb, "+127"), "frame {frame}: cell prints the target");
     }
-    assert!(
-        shown.windows(2).all(|w| w[0] <= w[1]),
-        "monotonic: {shown:?}"
-    );
-    assert!(shown[0] < 127 && shown.contains(&127), "{shown:?}");
-    assert!(
-        shown.iter().any(|&a| 42 < a && a < 127),
-        "intermediate: {shown:?}"
-    );
 }
 
 /// Grid and readout keys (`MatrixState.rev`, cursor, scroll): every matrix

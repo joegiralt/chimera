@@ -190,7 +190,7 @@ impl Renderer {
                 use crate::params::FilterParams;
                 let flt = &f.parts[f.active_part.index()].sound.params.filter;
                 let v = view::view(f.def, f.focus, &f.ctx);
-                let buf = value_text(f, f.focus, a(f.focus));
+                let buf = value_text(f, f.focus, self.anim[f.focus].target());
                 let readout = (v != View::Empty).then(|| (v.label(), buf.as_str()));
                 viz::filter(
                     display,
@@ -532,9 +532,11 @@ impl Renderer {
                     VizType::About => f.bank2.map_or(0, |b| 1 + b.is_open() as u32),
                     _ => 0,
                 };
+                let live = f.focus as u32 | gr << 8 | led_key(f) << 16;
+                // The readout's text follows the target, not the eased value.
                 (
                     region::quantize_values(&self.anim),
-                    f.focus as u32 | gr << 8 | led_key(f) << 16,
+                    region::fold_keys(live.into(), &[self.text_key(f, f.focus)]),
                 )
             }
             PageLayout::Matrix => ([0; 6], 0),
@@ -559,7 +561,7 @@ impl Renderer {
             RegionKind::Grid => crate::ui::mod_grid::draw_grid(
                 display,
                 matrix_state,
-                amount_of(self.anim[MATRIX_AMOUNT_SLOT].current()),
+                amount_of(self.anim[MATRIX_AMOUNT_SLOT].target()),
                 inert(f),
             ),
             RegionKind::Nav => {
@@ -606,7 +608,7 @@ impl Renderer {
             return crate::ui::mod_grid::draw_readout(
                 display,
                 f.matrix,
-                amount_of(self.anim[MATRIX_AMOUNT_SLOT].current()),
+                amount_of(self.anim[MATRIX_AMOUNT_SLOT].target()),
                 inert(f),
                 f.hint(f.matrix.hint()),
             );
@@ -633,8 +635,7 @@ impl Renderer {
             );
             return hint::focus(display, f.hint(o.hint));
         }
-        let v = self.anim[f.focus].current();
-        let buf = value_text(f, f.focus, v);
+        let buf = value_text(f, f.focus, self.anim[f.focus].target());
         components::focus_band(
             display,
             view.label(),
@@ -663,6 +664,21 @@ impl Renderer {
         orbit::viz_key(f.def, &f.orbit, f.ctx.ring, self.orbit_cursor.current())
     }
 
+    /// A hash of slot `i`'s printed text at its target: a move below the
+    /// display resolution leaves it, a change in the number changes it.
+    pub fn text_key(&self, f: &Frame, i: usize) -> u32 {
+        if view::view(f.def, i, &f.ctx) == View::Empty {
+            return 0;
+        }
+        let text = value_text(f, i, self.anim[i].target());
+        region::settings_key(&[text.as_str().as_bytes()])
+    }
+
+    /// The matrix amount as printed (the target's `amount_of`).
+    pub fn amount_key(&self) -> u32 {
+        amount_of(self.anim[MATRIX_AMOUNT_SLOT].target()) as u8 as u32
+    }
+
     /// The focused slot's gauge, by its glyph; ORBIT's own where it reads
     /// the slot itself.
     pub fn gauge(&self, f: &Frame) -> Gauge {
@@ -678,7 +694,7 @@ impl Renderer {
             _ => self.anim[f.focus].current(),
         };
         let frame = f.clock.frame();
-        let text = value_text(f, f.focus, self.anim[f.focus].current());
+        let text = value_text(f, f.focus, self.anim[f.focus].target());
         let g = super::glyph::gauge(glyph, value, fmt, |reads| match reads {
             Reads::Composite(id) => {
                 // Which of the composite's params has focus.
@@ -813,7 +829,7 @@ impl Renderer {
                 {
                     let _ = core::fmt::Write::write_str(&mut buf, crate::bank2::NEEDS_UPDATE_CELL);
                 }
-                _ => buf = param_text(f, i, &v, value),
+                _ => buf = param_text(f, i, &v, anim.target()),
             }
             let c = components::Cell {
                 label: cell_label(&v),

@@ -27,6 +27,16 @@ pub fn quantize_values(anim: &[AnimatedValue; 6]) -> [u16; 6] {
     ]
 }
 
+/// `key` and `keys` (printed-text hashes) folded to one word: equal only
+/// when both are.
+pub fn fold_keys(key: u64, keys: &[u32]) -> u32 {
+    use core::hash::Hasher;
+    let mut h = Fnv::new();
+    h.write(&key.to_le_bytes());
+    keys.iter().for_each(|k| h.write(&k.to_le_bytes()));
+    h.get()
+}
+
 /// Sentinel value that never matches real data — forces initial redraw.
 const SENTINEL: u16 = u16::MAX;
 /// Page used in sentinel snapshots (the SENTINEL values make them unequal).
