@@ -8,11 +8,12 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::cell::Cell;
 
-use chimera_hal::card_bus::CardBus;
+use chimera_hal::card_bus::{CardBus, CardFault, ProtoError};
 
 use super::layout::{CHUNK_BYTES, ChunkIdx};
 use super::port::StreamPort;
 use super::ring::{AudioTurn, CardSide, Claim, Rings};
+use super::serve::{ErrorStep, ReadError, read_failed};
 use super::stats::StreamStats;
 use super::units::{AudioBlocks, Frames};
 use crate::dsp::tape_engine::read::{
@@ -29,8 +30,9 @@ pub struct TestCard<'r> {
     frames: Frames,
     latency: u32,
     fail: u32,
-    /// The read in flight, and the block it lands.
-    flight: Option<(Claim, AudioBlocks)>,
+    garble: bool,
+    /// The read in flight, the block it lands, and whether it is a retry.
+    flight: Option<(Claim, AudioBlocks, bool)>,
     claims: u32,
     /// Its lookup: every source is this one.
     lookup: Box<dyn Fn(SourceId) -> Option<Frames>>,
@@ -56,6 +58,7 @@ impl<'r> TestCard<'r> {
             frames,
             latency: latency_blocks,
             fail: 0,
+            garble: false,
             flight: None,
             claims: 0,
             lookup: Box::new(move |_| Some(frames)),
@@ -74,9 +77,15 @@ impl<'r> TestCard<'r> {
         self.latency = blocks;
     }
 
-    /// The next `n` reads fail: requeued, as a read error's retry.
+    /// The next `n` reads fail a CRC, as the card IRQ takes it
+    /// (`serve::read_failed`): read again once, then the fault.
     pub fn fail_next(&mut self, n: u32) {
         self.fail = n;
+    }
+
+    /// The next read lands bytes that won't de-frame.
+    pub fn garble_next(&mut self) {
+        self.garble = true;
     }
 
     /// Reads claimed so far.
@@ -139,16 +148,20 @@ impl<'r> TestCard<'r> {
 
     /// Between blocks, at `now`: lands the read in flight if it is due,
     /// then starts the earliest-deadline Wanted slot's, one at a time; at
-    /// latency 0 every Wanted slot lands at once.
+    /// latency 0 every Wanted slot lands at once. Faulted, nothing starts.
     pub fn serve(&mut self, rings: &Rings, now: AudioBlocks) {
         loop {
-            if let Some((_, due)) = &self.flight {
+            if let Some((_, due, _)) = &self.flight {
                 if now.until(*due) > 0 {
                     return;
                 }
-                if let Some((c, _)) = self.flight.take() {
-                    self.land(c);
+                if let Some((c, _, retried)) = self.flight.take() {
+                    self.land(c, retried, now);
+                    continue;
                 }
+            }
+            if self.bus.fault() == CardFault::Read {
+                return;
             }
             let Some((v, s, _)) = rings.wants().min_by_key(|&(_, _, d)| now.until(d)) else {
                 return;
@@ -157,16 +170,27 @@ impl<'r> TestCard<'r> {
                 return;
             };
             self.claims += 1;
-            self.flight = Some((c, now.after(self.latency)));
+            self.flight = Some((c, now.after(self.latency), false));
         }
     }
 
     /// The claimed chunk's samples into its slot, its guard ahead, Ready;
-    /// a failing read requeues it.
-    fn land(&mut self, c: Claim) {
-        if self.fail > 0 {
+    /// a failing read is read again once, else requeued, the card faulted.
+    fn land(&mut self, c: Claim, retried: bool, now: AudioBlocks) {
+        let err = if self.fail > 0 {
             self.fail -= 1;
-            self.card.requeue(c);
+            Some(ReadError::Proto(ProtoError::Crc))
+        } else {
+            core::mem::take(&mut self.garble).then_some(ReadError::Frame)
+        };
+        if let Some(err) = err {
+            match read_failed(err, retried, &self.bus, &self.stats) {
+                ErrorStep::Retry => {
+                    self.claims += 1;
+                    self.flight = Some((c, now.after(self.latency), true));
+                }
+                ErrorStep::Fault | ErrorStep::FrameError => self.card.requeue(c),
+            }
             return;
         }
         let chunk = |c: ChunkIdx| {

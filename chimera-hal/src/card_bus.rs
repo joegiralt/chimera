@@ -92,6 +92,16 @@ impl Quiet {
     }
 }
 
+/// A read's protocol failure (`chimera_fat::sd_proto`): the streams'
+/// fault decision is the engine's (`stream::serve::on_error`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProtoError {
+    Crc,
+    ErrorToken(u8),
+    Timeout,
+    R1(u8),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CardFault {

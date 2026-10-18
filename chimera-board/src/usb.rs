@@ -551,6 +551,10 @@ impl Unit for ChipUnit<'_> {
         match arg {
             chimera_core::console::FaultArg::Dma(n) => crate::fault::dma_transfer_error(n),
             chimera_core::console::FaultArg::Ndtr => None,
+            chimera_core::console::FaultArg::Card => {
+                crate::card_dma::fail_next(2);
+                Some(())
+            }
         }
     }
 

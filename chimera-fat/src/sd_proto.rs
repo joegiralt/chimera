@@ -2,6 +2,7 @@
 //! scan and the CMD18 multi-block walk. The shell only moves bytes: it
 //! clocks what the walk asks for and hands them back.
 
+pub use chimera_hal::card_bus::ProtoError;
 use chimera_hal::units::{BlockCount, Bytes, BytesPerSec, Millis};
 
 use crate::sd_addr::CmdArg;
@@ -155,14 +156,6 @@ impl Default for TokenScan {
     fn default() -> Self {
         Self::new()
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProtoError {
-    Crc,
-    ErrorToken(u8),
-    Timeout,
-    R1(u8),
 }
 
 /// After init, a read command's R1 must be all clear: the idle bit too.

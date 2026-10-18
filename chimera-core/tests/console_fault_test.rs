@@ -40,3 +40,23 @@ fn fault_takes_dma_1_or_2_only() {
         );
     }
 }
+
+/// `fault card`: the card's next transfer fails twice (a retry, then the
+/// read fault); it takes no argument.
+#[test]
+fn fault_card_parses_alone() {
+    assert_eq!(
+        parse("fault card"),
+        Some(Ok(Request::Fault(FaultArg::Card)))
+    );
+    assert_eq!(
+        parse("fault CARD"),
+        Some(Ok(Request::Fault(FaultArg::Card)))
+    );
+    for bad in ["fault card x", "fault card 2"] {
+        assert!(
+            matches!(parse(bad), Some(Err(Refusal::Arguments(_)))),
+            "{bad}"
+        );
+    }
+}

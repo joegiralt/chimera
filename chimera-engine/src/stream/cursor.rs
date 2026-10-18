@@ -15,7 +15,7 @@
 use core::ops::Range;
 use core::sync::atomic::Ordering;
 
-use chimera_hal::card_bus::Quiet;
+use chimera_hal::card_bus::{CardBus, CardFault, Quiet};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 
 use super::admit::STREAM_BUDGET_BPS;
@@ -90,6 +90,8 @@ pub enum Flow {
     Starved {
         since: AudioBlocks,
     },
+    /// A write's quiet or a card fault: fading to silence, no wants, tape
+    /// time running on; cold once it ends.
     Quiet,
     /// Silent until the chunk under the read lands.
     Cold,
@@ -304,6 +306,16 @@ fn clamp_inc(inc_max: f32) -> f32 {
     }
 }
 
+/// A write's quiet or a card fault: the fade's step down (a fault's over
+/// `DROP_FADE`, the quiet's over `QUIET_FADE`); `None` reading freely.
+fn hush(bus: &CardBus) -> Option<i16> {
+    match (bus.fault(), bus.quiet()) {
+        (CardFault::Read, _) => Some(DROP_STEP),
+        (CardFault::Clear, Quiet::Asked | Quiet::Held) => Some(QUIET_STEP),
+        (CardFault::Clear, Quiet::Off) => None,
+    }
+}
+
 /// What a note streams: its source, whose registry row the card reads,
 /// and its file's frames, both latched at its start (#594).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -391,10 +403,10 @@ impl Cursor {
             Some(h) => {
                 self.head = Some(h);
                 self.state = Flow::Head(h.idx);
-                // Under a write's quiet, silent until it ends.
-                self.gain = match port.bus.quiet() {
-                    Quiet::Off => Fade::OPEN,
-                    Quiet::Asked | Quiet::Held => Fade::SILENT,
+                // Under a write's quiet or a fault, silent until it ends.
+                self.gain = match hush(port.bus) {
+                    None => Fade::OPEN,
+                    Some(_) => Fade::SILENT,
                 };
             }
             None => {
@@ -442,15 +454,17 @@ impl Cursor {
         let i_last = (pos + f64::from(inc * BLOCK as f32)) as u32;
         let look = i_last.saturating_add((inc * DROP_FADE.get() as f32) as u32 + 1);
 
-        let quiet = port.bus.quiet() != Quiet::Off;
-        match (quiet, self.state == Flow::Quiet) {
-            (true, false) => {
+        let hushed = hush(port.bus);
+        match (hushed, self.state == Flow::Quiet) {
+            // A fault under a quiet hurries it to `DROP_FADE`.
+            (Some(step), _) => {
                 self.state = Flow::Quiet;
-                self.gain.step = self.gain.step.min(-QUIET_STEP);
+                self.gain.step = self.gain.step.min(-step);
             }
-            (false, true) => self.cold(port),
+            (None, true) => self.cold(port),
             _ => {}
         }
+        let quiet = hushed.is_some();
         if quiet && self.gain.level > 0 {
             port.loud.set(true);
         }

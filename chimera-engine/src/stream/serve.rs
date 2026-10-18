@@ -1,9 +1,11 @@
-//! The card interrupt's decision (slice 1 § 7.2), pure so the board only
-//! runs it: the earliest Wanted slot it can read, claimed, with its file's
-//! registry row held for the read (#597); else the bus goes back.
+//! The card interrupt's decisions (slice 1 § 7.2), pure so the board only
+//! runs them: the earliest Wanted slot it can read, claimed, with its
+//! file's registry row held for the read (#597), else the bus goes back;
+//! and what a failed read does next.
 
 use core::sync::atomic::Ordering;
 
+use chimera_hal::card_bus::{CardBus, CardFault, ProtoError};
 use chimera_hal::units::UiWait;
 
 use super::edf::{Pick, Want, pick, wants};
@@ -35,7 +37,9 @@ pub fn servable<'a>(rings: &'a Rings, reg: &'a StreamRegistry) -> impl Iterator<
 /// The next read: EDF over the servable wants (owner rule: any want
 /// before a waiting UI, `edf::pick`). A want cancelled since the pick, or
 /// whose chunk its file can't read, is passed over, the latter left
-/// Wanted (requeued) for a later wake and counted (`unreadable`).
+/// Wanted (requeued) for a later wake and counted (`unreadable`). Never a
+/// fault (`on_error`): the file's, not the card's, so a re-init can't mend
+/// it, and its voice alone starves, fading out.
 pub fn serve_step<'r>(
     card: &mut CardSide<'_>,
     reg: &'r StreamRegistry,
@@ -68,4 +72,50 @@ pub fn serve_step<'r>(
             }
         }
     }
+}
+
+/// Why a fill failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadError {
+    /// The card's: CMD18's R1, a data token or CRC16, a timeout.
+    Proto(ProtoError),
+    /// CRC-good blocks whose records don't de-frame (`layout::deframe`).
+    Frame,
+}
+
+/// A failed fill's next step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ErrorStep {
+    /// The transfer once more, its claim kept.
+    Retry,
+    /// `CardFault::Read`: the claim requeued, nothing more starts until
+    /// the UI's re-init and mount clear it.
+    Fault,
+    /// The fault, with no retry: the same bytes would come back. Counted
+    /// in `frame_errors`.
+    FrameError,
+}
+
+/// A CRC16 mismatch or an error token is read again, once; a second
+/// failure, a token timeout or a bad R1 faults (C1).
+pub fn on_error(err: ReadError, retried: bool) -> ErrorStep {
+    match err {
+        ReadError::Proto(ProtoError::Crc | ProtoError::ErrorToken(_)) if !retried => {
+            ErrorStep::Retry
+        }
+        ReadError::Proto(_) => ErrorStep::Fault,
+        ReadError::Frame => ErrorStep::FrameError,
+    }
+}
+
+/// `on_error`'s step, taken: a fault set on `bus`, a frame error counted.
+pub fn read_failed(err: ReadError, retried: bool, bus: &CardBus, stats: &StreamStats) -> ErrorStep {
+    let step = on_error(err, retried);
+    if step == ErrorStep::FrameError {
+        stats.frame_errors.fetch_add(1, Ordering::Relaxed);
+    }
+    if step != ErrorStep::Retry {
+        bus.set_fault(CardFault::Read);
+    }
+    step
 }

@@ -1069,6 +1069,16 @@ fn mount_retries_once_after_reinit() {
     assert_eq!(log(&s).reads.get(), 2, "no third read");
 }
 
+/// After a stream read fault the card is re-inited before the mount,
+/// even though its first read would have answered.
+#[test]
+fn recover_reinits_then_mounts() {
+    let (disk, vol) = card();
+    let mut s = probed(&disk);
+    assert_eq!(s.recover(), Ok(vol));
+    assert_eq!(log(&s).reinits.get(), 1);
+}
+
 /// Review Focus 2's torn truncate: an old length over a short chain.
 #[test]
 fn chain_errors_read_as_corrupt() {

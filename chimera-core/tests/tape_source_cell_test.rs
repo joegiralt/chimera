@@ -34,10 +34,11 @@ use chimera_core::ui::animation::{FRAME_MS, UiTick};
 use chimera_core::ui::meter::MeterView;
 use chimera_core::ui::settings::CardCx;
 use chimera_core::ui::source_cell::{
-    FRAGMENTED, LoadKind, Memo, PING_NEEDS_RAM, READ_FAILED, STREAMS_FULL, SourceMemo, SourceRow,
-    card_cost, load_kind, rows, wont_fit_words,
+    FRAGMENTED, LoadKind, Memo, PING_NEEDS_RAM, READ_FAILED, SOURCE_MISSING, STREAMS_FULL,
+    SourceMemo, SourceRow, card_cost, load_kind, rows, wont_fit_words,
 };
 use chimera_core::ui::view::SourceState;
+use chimera_hal::card_bus::CardFault;
 use chimera_hal::store::synthetic_runs;
 use chimera_hal::store::{
     ByteSink, Dir, FileName, FileRuns, MAX_RUNS, ReadSink, Runs, RunsError, Store, StoreError,
@@ -95,6 +96,11 @@ struct Log {
     ends_at: u32,
     /// `runs` finds every file in 33 runs.
     fragmented: bool,
+    /// The card IRQ's read fault, as `read_fault` reports it.
+    fault: CardFault,
+    /// What a `recover` gives: `Ok` mounts, clearing the fault.
+    recovery: Result<(), StoreError>,
+    recovers: u32,
 }
 
 struct Counted<'a>(&'a mut dyn ReadSink, u32);
@@ -111,6 +117,15 @@ impl ReadSink for Counted<'_> {
 
 impl Store for Log {
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
+        self.inner.mount()
+    }
+    fn read_fault(&self) -> CardFault {
+        self.fault
+    }
+    fn recover(&mut self) -> Result<VolumeId, StoreError> {
+        self.recovers += 1;
+        self.recovery?;
+        self.fault = CardFault::Clear;
         self.inner.mount()
     }
     fn list(
@@ -193,6 +208,9 @@ impl Rig {
             fail_reads: false,
             ends_at: u32::MAX,
             fragmented: false,
+            fault: CardFault::Clear,
+            recovery: Ok(()),
+            recovers: 0,
         };
         let mut card = Card::new();
         for (h, d) in on_card {
@@ -1167,4 +1185,89 @@ fn a_held_source_doesnt_stop_anothers_reheading() {
     audio.join().unwrap();
     assert_heads(&rig, &b, after.as_slice());
     assert_heads(&rig, &a, before.as_slice());
+}
+
+// Card read faults: the UI pass re-inits and mounts.
+
+/// `b` loaded streamed on Part 1 at PLAY ONE.
+fn streamed_rig(b: &(SourceHead, Vec<u8>)) -> Rig {
+    let mut rig = Rig::new(std::slice::from_ref(b));
+    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.turn(1);
+    rig.load();
+    assert!(rig.ui.project().pool().streamed(b.0.sref));
+    rig
+}
+
+/// While the card is faulted, a streamed source's band reads CARD READ
+/// FAILED: a re-init that fails leaves it so, tried once; one the bus was
+/// too busy for is tried again; one that mounts clears it.
+#[test]
+fn focus_band_reads_card_read_failed() {
+    let b = bed(3);
+    let mut rig = streamed_rig(&b);
+    let fine = rig.band();
+    assert_ne!(fine, READ_FAILED);
+
+    (rig.s.fault, rig.s.recovery) = (CardFault::Read, Err(StoreError::Io));
+    rig.work();
+    assert_eq!(rig.band(), READ_FAILED);
+    rig.work();
+    assert_eq!(rig.s.recovers, 1, "a failed re-init isn't retried");
+    assert_eq!(rig.band(), READ_FAILED);
+
+    // A mount by any card op clears the fault, and the band.
+    rig.s.fault = CardFault::Clear;
+    rig.work();
+    assert_eq!(rig.band(), fine);
+
+    (rig.s.fault, rig.s.recovery) = (CardFault::Read, Err(StoreError::Busy));
+    rig.work();
+    assert_eq!(rig.band(), READ_FAILED);
+    rig.s.recovery = Ok(());
+    rig.work();
+    assert_eq!(rig.s.recovers, 3, "busy: tried again");
+    assert_eq!(rig.s.fault, CardFault::Clear);
+    assert_eq!(rig.band(), fine);
+}
+
+/// A RAM source plays through a fault: its band is its own.
+#[test]
+fn a_held_source_reads_through_a_fault() {
+    let mut rig = Rig::new(&[choir()]);
+    rig.turn(1);
+    rig.load();
+    let fine = rig.band();
+    (rig.s.fault, rig.s.recovery) = (CardFault::Read, Err(StoreError::Io));
+    rig.work();
+    assert_eq!(rig.band(), fine);
+}
+
+/// The re-init mounts another card: the stream registry empties and the
+/// streamed source reads SOURCE MISSING.
+#[test]
+fn volume_change_clears_registry() {
+    let b = bed(4);
+    let mut rig = streamed_rig(&b);
+    let id = rig.ui.project().pool().find_source(b.0.sref).unwrap();
+    assert!(rig.registry().get(id).is_some());
+    rig.s.fault = CardFault::Read;
+    rig.s.inner.swap(2);
+    rig.work();
+    assert_eq!(rig.s.fault, CardFault::Clear, "mounted");
+    assert!(rig.registry().get(id).is_none(), "its row gone");
+    assert_eq!(rig.band(), SOURCE_MISSING);
+}
+
+/// The same card mounts again: its rows stay.
+#[test]
+fn same_card_keeps_its_rows() {
+    let b = bed(5);
+    let mut rig = streamed_rig(&b);
+    let id = rig.ui.project().pool().find_source(b.0.sref).unwrap();
+    let fine = rig.band();
+    rig.s.fault = CardFault::Read;
+    rig.work();
+    assert!(rig.registry().get(id).is_some());
+    assert_eq!(rig.band(), fine);
 }

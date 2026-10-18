@@ -10,6 +10,7 @@ use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
 use chimera_hal::BLOCK_SIZE;
+use chimera_hal::card_bus::CardFault;
 use chimera_hal::units::StreamCount;
 
 use crate::dsp::Stereo;
@@ -973,8 +974,12 @@ impl Instrument {
     /// now, but those `gone` (stolen already, or replaced by the note):
     /// `Steal(v)` frees one more, released first, the oldest (umbrella open
     /// question 2). A voice still fading counts until it is freed; a shed
-    /// one goes first.
-    pub fn admit_stream(&self, new: Bill, gone: &[bool; MAX_VOICES]) -> Admit {
+    /// one goes first. Under a card fault nothing streams: refused, no
+    /// voice stolen.
+    pub fn admit_stream(&self, new: Bill, gone: &[bool; MAX_VOICES], fault: CardFault) -> Admit {
+        if fault == CardFault::Read {
+            return Admit::Refuse;
+        }
         let playing = self.streaming.iter().enumerate().filter_map(|(v, s)| {
             let b = s.billed().filter(|_| !gone[v])?;
             Some((v, b, s.age))
@@ -1096,7 +1101,7 @@ impl Instrument {
         (q, mode, note, from): (u8, PartMode, MidiNote, NoteOrigin),
         (cost, glides): (Cost, bool),
         stream: Option<Paid>,
-        stats: Option<&StreamStats>,
+        (stats, fault): (Option<&StreamStats>, CardFault),
     ) -> Option<(usize, Option<Paid>)> {
         let mut gone = [false; MAX_VOICES];
         // Each steal adds a voice to `gone`: at most one a voice.
@@ -1123,7 +1128,7 @@ impl Instrument {
             }
             let mut ask = gone;
             ask[v] |= replaces;
-            match self.admit_stream(new.bill, &ask) {
+            match self.admit_stream(new.bill, &ask, fault) {
                 Admit::Ok => return Some((v, Some(new))),
                 Admit::Steal(w) if w < MAX_VOICES => {
                     gone[w] = true;
@@ -1145,7 +1150,7 @@ impl Instrument {
         (q, mode, note, from): (u8, PartMode, MidiNote, NoteOrigin),
         (cost, _): (Cost, bool),
         _: Option<Paid>,
-        _: Option<&StreamStats>,
+        _: (Option<&StreamStats>, CardFault),
     ) -> Option<(usize, Option<Paid>)> {
         let reserved = self.reserved();
         let origins = &self.note_origin;
@@ -1295,7 +1300,7 @@ impl Instrument {
                         (q, mode, note, from),
                         (cost, glides),
                         stream,
-                        ports.stats(),
+                        (ports.stats(), ports.fault()),
                     ) else {
                         continue;
                     };

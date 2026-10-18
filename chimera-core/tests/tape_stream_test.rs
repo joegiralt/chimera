@@ -28,7 +28,7 @@ use chimera_core::project::SourceId;
 use chimera_core::source_table::GateView;
 use chimera_core::storage::SourceRef;
 use chimera_core::stream::admit::{STREAM_BUDGET_BPS, bill, head_frames};
-use chimera_core::stream::cursor::QUIET_FADE;
+use chimera_core::stream::cursor::{DROP_FADE, QUIET_FADE};
 use chimera_core::stream::layout::CHUNK_FRAMES;
 use chimera_core::stream::port::{StreamCard, StreamPort, Streams};
 use chimera_core::stream::ring::{AudioSide, Rings, ThirdSlots};
@@ -37,7 +37,7 @@ use chimera_core::stream::test_card::TestCard;
 use chimera_core::stream::units::AudioBlocks;
 use chimera_core::voice_alloc::VoiceIdx;
 use chimera_core::{MidiNote, Velocity};
-use chimera_hal::card_bus::Quiet;
+use chimera_hal::card_bus::{CardFault, Quiet};
 use chimera_hal::{BLOCK_SIZE, Ms};
 use chimera_theory::{Chord, Key, PitchClass, Quality, Scale};
 use common::tape::{OneSource, held_plain, sine};
@@ -1755,4 +1755,154 @@ fn quiet_fades_and_returns() {
         .zip(&tape0[300 * b..])
         .fold(0.0f32, |m, (y, y0)| m.max((y - y0).abs()));
     assert!(off < 1e-2, "off the unquieted run by {off}");
+}
+
+/// One run of `fault_starves_and_recovers`: a streamed note on Part 0 and
+/// ALGO on Part 1; the card's next `fails` reads fail from block 100. Once
+/// the card faults, a streamed note-on on Part 2, then the fault cleared
+/// (the UI's re-init and mount) `CLEAR` blocks later and the note again.
+struct FaultRun {
+    tape: Vec<f32>,
+    ram: Vec<f32>,
+    fault_at: Option<usize>,
+    /// Voices booked before and after the note-on under the fault.
+    booked: (usize, usize),
+    refused: u32,
+    /// Part 2's note after the clear plays.
+    again: bool,
+    claims: u32,
+    underruns: u32,
+}
+
+const CLEAR: usize = 100;
+
+fn fault_run(fails: u32) -> FaultRun {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, one_hold()), (2, one_hold())]);
+    *pl.rig.shared.parts[1].params = init_params(EngineType::Algo);
+    pl.on(0, 60);
+    pl.on(1, 64);
+    let mut run = FaultRun {
+        tape: Vec::new(),
+        ram: Vec::new(),
+        fault_at: None,
+        booked: (0, 0),
+        refused: 0,
+        again: false,
+        claims: 0,
+        underruns: 0,
+    };
+    for k in 0..600 {
+        if k == 100 {
+            pl.st.card.fail_next(fails);
+        }
+        match run.fault_at.map(|f| k - f) {
+            Some(20) => {
+                run.booked.0 = pl.booked();
+                pl.on(2, 67);
+                run.booked.1 = pl.booked();
+                run.refused = pl.rig.inst.allocator().refused();
+            }
+            Some(CLEAR) => pl.st.card.bus.set_fault(CardFault::Clear),
+            Some(d) if d == CLEAR + 20 => pl.on(2, 67),
+            Some(d) if d == CLEAR + 60 => {
+                run.again = pl.rig.inst.streaming().map(|c| c.get()) == Some(2)
+            }
+            _ => {}
+        }
+        pl.block();
+        if run.fault_at.is_none() && pl.st.card.bus.fault() == CardFault::Read {
+            run.fault_at = Some(k);
+        }
+        run.tape.extend_from_slice(pl.rig.inst.part_bus(0));
+        run.ram.extend_from_slice(pl.rig.inst.part_bus(1));
+    }
+    run.claims = pl.st.card.claims();
+    run.underruns = pl.st.card.stats.underruns.load(Ordering::Relaxed);
+    run
+}
+
+fn worst_step(x: &[f32]) -> f32 {
+    x.windows(2)
+        .map(|d| (d[1] - d[0]).abs())
+        .fold(0.0, f32::max)
+}
+
+/// C1, I2: a read that fails twice (a retry, then the fault) drops every
+/// stream out over `DROP_FADE`; a streamed note-on under the fault is
+/// refused before a voice is booked; the RAM voice plays on untouched;
+/// the fault cleared, the stream fades back in where tape time reached,
+/// and new streamed notes play. Nothing steps more than 4× steady state.
+#[test]
+fn fault_starves_and_recovers() {
+    let r = fault_run(2);
+    let ok = fault_run(0);
+    assert_eq!(ok.fault_at, None);
+    let at = r.fault_at.expect("the card faulted");
+    assert!(at > 100, "only after the reads failed");
+    assert_eq!(r.ram, ok.ram, "the RAM voice untouched");
+
+    let b = BLOCK_SIZE;
+    let peak = |x: &[f32]| x.iter().fold(0.0f32, |m, y| m.max(y.abs()));
+    let playing = peak(&r.tape[(at - 1) * b..at * b]);
+    assert!(playing > 0.1, "it played");
+    // The deck's gain is 0 within `DROP_FADE` and a block: what's left is
+    // the voice chain's own tail, only falling.
+    let by = at + 1 + DROP_FADE.get() as usize / b + 1;
+    let tail: Vec<f32> = (by..at + CLEAR)
+        .map(|k| peak(&r.tape[k * b..(k + 1) * b]))
+        .collect();
+    assert!(tail[0] < playing / 10.0, "{} at block {by}", tail[0]);
+    assert!(tail.windows(2).all(|t| t[1] <= t[0]), "only falling");
+
+    assert_eq!(r.booked.1, r.booked.0, "refused before allocation");
+    assert!(r.refused > 0, "counted");
+    assert!(r.again, "a streamed note plays once cleared");
+
+    let steady = worst_step(&ok.tape[50 * b..100 * b]);
+    let worst = worst_step(&r.tape[60 * b..]);
+    assert!(worst <= 4.0 * steady, "step {worst} over 4 x {steady}");
+    // Back where tape time reached: the run without a fault, once the
+    // chain settles (`quiet_fades_and_returns`'s bound).
+    let back = (at + CLEAR + 100) * b;
+    let off = r.tape[back..(at + CLEAR + 150) * b]
+        .iter()
+        .zip(&ok.tape[back..])
+        .fold(0.0f32, |m, (y, y0)| m.max((y - y0).abs()));
+    assert!(off < 1e-2, "off the run without a fault by {off}");
+}
+
+/// One CRC error is read again at once: no fault, no drop-out, the same
+/// output bit for bit, one claim more.
+#[test]
+fn one_crc_error_retries_silently() {
+    let r = fault_run(1);
+    let ok = fault_run(0);
+    assert_eq!(r.fault_at, None, "no fault");
+    assert_eq!(r.underruns, 0);
+    assert_eq!(r.claims, ok.claims + 1, "read again");
+    assert_eq!(r.tape, ok.tape);
+}
+
+/// A chunk that won't de-frame is counted and faults the card, unretried.
+#[test]
+fn frame_error_counts() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, one_hold())]);
+    pl.on(0, 60);
+    for k in 0..300 {
+        if k == 100 {
+            pl.st.card.garble_next();
+        }
+        pl.block();
+    }
+    let s = &pl.st.card.stats;
+    assert_eq!(s.frame_errors.load(Ordering::Relaxed), 1);
+    assert_eq!(pl.st.card.bus.fault(), CardFault::Read);
 }

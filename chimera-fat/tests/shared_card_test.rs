@@ -319,6 +319,27 @@ fn a_stream_between_identify_and_mounted_makes_the_mount_busy() {
     assert_eq!(addr.get(), Some(AddrMode::Block));
 }
 
+/// The card IRQ's read fault reaches the store; its recovery re-inits
+/// under the bus, then mounts, which clears it.
+#[test]
+fn recover_reinits_under_the_bus_and_clears_the_fault() {
+    let (c, bus, _) = card(false);
+    let mut store = FatStore::new(c);
+    bus.set_fault(CardFault::Read);
+    assert_eq!(store.read_fault(), CardFault::Read);
+    assert!(store.recover().is_ok());
+    assert_eq!(store.read_fault(), CardFault::Clear);
+    let calls: Vec<_> = log().into_iter().take(3).collect();
+    assert_eq!(
+        calls,
+        [
+            ("start_op", Owner::Ui),
+            ("reinit", Owner::Ui),
+            ("start_op", Owner::Ui)
+        ]
+    );
+}
+
 #[test]
 fn every_medium_io_call_takes_the_bus() {
     let (c, bus, _) = card(false);

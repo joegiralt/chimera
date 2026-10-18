@@ -3,7 +3,7 @@
 use core::cell::Cell;
 
 use chimera_hal::Ms;
-use chimera_hal::card_bus::CardBus;
+use chimera_hal::card_bus::{CardBus, CardFault};
 
 use super::ring::{AudioSide, AudioTurn};
 use super::stats::StreamStats;
@@ -97,6 +97,9 @@ pub trait VoicePorts {
 
     /// The streams' counters; `None` with no rings.
     fn stats(&self) -> Option<&StreamStats>;
+
+    /// The card's read fault: a streamed note-on is refused under one.
+    fn fault(&self) -> CardFault;
 }
 
 /// No rings: a streamed source plays nothing.
@@ -125,6 +128,10 @@ impl VoicePorts for NoPorts {
 
     fn stats(&self) -> Option<&StreamStats> {
         None
+    }
+
+    fn fault(&self) -> CardFault {
+        CardFault::Clear
     }
 }
 
@@ -170,5 +177,9 @@ impl VoicePorts for Streams<'_, '_> {
 
     fn stats(&self) -> Option<&StreamStats> {
         Some(self.card.stats)
+    }
+
+    fn fault(&self) -> CardFault {
+        self.card.bus.fault()
     }
 }

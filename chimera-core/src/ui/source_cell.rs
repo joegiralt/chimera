@@ -11,6 +11,7 @@ use core::ops::ControlFlow;
 
 use core::num::NonZeroU32;
 
+use chimera_hal::card_bus::CardFault;
 use chimera_hal::store::{ReadSink, Store, StoreError};
 
 use crate::dsp::tape_engine::params::TapeEngineParams;
@@ -19,13 +20,15 @@ use crate::dsp::tape_engine::read::head_table;
 use crate::dsp::tape_engine::{NeedsRam, TapeModel};
 use crate::preset::Sound;
 use crate::project::arena::{Cost, MAX_SOURCES};
+use crate::project::{
+    Absence, PartId, Pool, Project, SOURCE_HEAD, SourceId, SourceNeed, StreamFail,
+};
 pub use crate::project::{LoadKind, load_kind};
-use crate::project::{PartId, Pool, Project, SOURCE_HEAD, SourceId, SourceNeed, StreamFail};
 #[cfg(feature = "tape")]
 use crate::project::{StreamLoad, StreamStep};
 use crate::storage::{
-    MAX_TAPES, Ready, SourceCheck, SourceHead, SourceRef, TapeList, TapeSource, held_for_file_len,
-    source_file,
+    Card, CardEvent, MAX_TAPES, Ready, SourceCheck, SourceHead, SourceRef, TapeList, TapeSource,
+    after_mount, held_for_file_len, source_file,
 };
 #[cfg(feature = "tape")]
 use crate::stream::stage::{Heads, heads_for};
@@ -450,6 +453,21 @@ pub struct SourceCell {
     /// (`heads_key`; 0 none): not tried again until it wants others.
     #[cfg(feature = "tape")]
     stuck: [u32; MAX_SOURCES],
+    /// The card IRQ's read fault, as the last UI pass met it.
+    read: Recovery,
+}
+
+/// A stream read fault, from the UI's side: the card IRQ sets it, a mount
+/// clears it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Recovery {
+    Clear,
+    /// A re-init and mount owed: this pass, and the next while the bus is
+    /// busy (the card untouched, C1).
+    Owed,
+    /// The re-init failed: left until a card op's mount clears it, so the
+    /// UI never stalls on a card that won't come back.
+    Stuck,
 }
 
 /// Heads wanted for a streamed source, unchanged for `frames` frames.
@@ -506,7 +524,33 @@ impl SourceCell {
         wait: None,
         #[cfg(feature = "tape")]
         stuck: [0; MAX_SOURCES],
+        read: Recovery::Clear,
     };
+
+    /// Once a pass, before any card work: under a stream read fault the
+    /// card re-inited and mounted (`Store::recover`). Another card's volume
+    /// takes the streamed sources with it (`Project::lose_streams`).
+    pub fn recover<S: Store>(&mut self, card: &mut Card, s: &mut S, p: &mut Project) {
+        self.read = match (s.read_fault(), self.read) {
+            (CardFault::Clear, _) => Recovery::Clear,
+            (CardFault::Read, Recovery::Stuck) => Recovery::Stuck,
+            (CardFault::Read, _) => match s.recover() {
+                Err(StoreError::Busy) => Recovery::Owed,
+                r => {
+                    let (c, event) = after_mount(*card, r);
+                    *card = c;
+                    if event.is_some_and(|e| e != CardEvent::Same) {
+                        p.lose_streams();
+                    }
+                    if r.is_ok() {
+                        Recovery::Clear
+                    } else {
+                        Recovery::Stuck
+                    }
+                }
+            },
+        };
+    }
 
     /// Card work is queued: BUSY shows. A re-head runs unseen.
     pub fn busy(&self) -> bool {
@@ -638,6 +682,9 @@ impl SourceCell {
             };
         }
         let r = p.part(part).sound.source_ref();
+        if self.read != Recovery::Clear && r.is_some_and(|r| p.pool().streamed(r)) {
+            return SourceState::Absent(Absence::ReadFailed);
+        }
         base.named(r.and_then(|r| self.heads.get(r.crc)).map(|h| h.name))
     }
 

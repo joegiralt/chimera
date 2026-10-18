@@ -19,7 +19,9 @@ use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 use chimera_core::stream::layout::{ChunkRead, Piece, RAW_CHUNK_BLOCKS, RAW_CHUNK_BYTES, deframe};
 use chimera_core::stream::registry::RowHold;
 use chimera_core::stream::ring::{CardSide, Claim};
-use chimera_core::stream::serve::{ServeStep, servable, serve_step};
+use chimera_core::stream::serve::{
+    ErrorStep, ReadError, ServeStep, read_failed, servable, serve_step,
+};
 use chimera_core::stream::units::AudioBlocks;
 use chimera_fat::h7_spi::{
     ABORT, BURST_END, BurstLen, Cr1, DmaEvent, GIVE, Gate, Mbr, Op, POLLED, RegFault, TAKE, burst,
@@ -102,7 +104,8 @@ pub struct CardStats {
     pub irq_us_max: AtomicU32,
     /// The longest entry less the audio interrupt's cycles inside it.
     pub irq_own_us_max: AtomicU32,
-    /// Card faults set: a busy that never drained, a stop never sent.
+    /// Card faults set: a read failed past its retry (`serve::on_error`),
+    /// a busy that never drained, a stop never sent.
     pub faults: AtomicU32,
     /// Entries of `DMA2_STR0`, pends too.
     pub entries: AtomicU32,
@@ -128,6 +131,17 @@ pub static STATS: CardStats = CardStats {
 /// Wakes the card IRQ.
 pub fn pend() {
     NVIC::pend(pac::Interrupt::DMA2_STR0);
+}
+
+/// `fault card`'s fills still to fail a CRC.
+#[cfg(feature = "fault-inject")]
+static FAIL: AtomicU32 = AtomicU32::new(0);
+
+/// `fault card`: the next `n` fills' transfers fail a CRC at their first
+/// burst; two are the retry, then the read fault.
+#[cfg(feature = "fault-inject")]
+pub fn fail_next(n: u32) {
+    FAIL.store(n, Ordering::Release);
 }
 
 /// A Wanted slot this IRQ can read: its ring names a registry row.
@@ -626,6 +640,8 @@ struct Fill {
     row: RowHold<'static>,
     /// The piece under way.
     piece: Piece,
+    /// Its transfer failed once already (`serve::on_error`).
+    retried: bool,
 }
 
 impl Fill {
@@ -681,6 +697,9 @@ enum Then {
     Give(Owed),
     /// A fill's piece read: the next piece's CMD18, on the bus held.
     More(Fill),
+    /// A piece's transfer failed once: the bus back, then the piece again
+    /// on the next entry.
+    Retry(Fill),
 }
 
 /// What a good read leaves to answer.
@@ -724,6 +743,8 @@ struct IrqState {
     line: Line,
     /// Bursts of the read under way.
     bursts: u32,
+    /// A fill to read again (`Then::Retry`): first at the next look.
+    retry: Option<Fill>,
 }
 
 /// A cell only `DMA2_STR0` opens.
@@ -823,6 +844,7 @@ pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker_hz: u32, cpu_hz: u
         job: Job::Idle,
         line,
         bursts: 0,
+        retry: None,
     };
     // SAFETY: once (`side` exists once: `Rings::sides`), before the unmask.
     unsafe { IRQ.set(st) };
@@ -909,6 +931,10 @@ impl IrqState {
     /// the bus taken and the work chosen under it.
     fn look(&mut self) {
         if !serving() {
+            // A retry the fault or the unmount overtook: its claim back.
+            if let Some(f) = self.retry.take() {
+                self.side.requeue(f.claim);
+            }
             #[cfg(feature = "bench")]
             if MAIL.claim().is_some() {
                 MAIL.answer(Err(if CARD_ADDR.get().is_none() {
@@ -920,9 +946,9 @@ impl IrqState {
             return;
         }
         #[cfg(feature = "bench")]
-        let waits = wanted() || MAIL.queued();
+        let waits = self.retry.is_some() || wanted() || MAIL.queued();
         #[cfg(not(feature = "bench"))]
-        let waits = wanted();
+        let waits = self.retry.is_some() || wanted();
         if !waits {
             return;
         }
@@ -931,12 +957,21 @@ impl IrqState {
                 Work::Nothing => give(h, &self.line),
                 work => self.start(h, work),
             }
+        } else if let Some(f) = self.retry.take() {
+            // Requeued, `watch` wakes it; held, its row would stay held.
+            self.side.requeue(f.claim);
         }
     }
 
-    /// With the bus held: the earliest want it can read (`serve_step`),
-    /// claimed; else the bench's read.
+    /// With the bus held: a retry first, then the earliest want it can
+    /// read (`serve_step`), claimed; else the bench's read.
     fn work(&mut self) -> Work {
+        match self.retry.take() {
+            Some(f) if serving() && filling() => return Work::Fill(f),
+            // A fault since, or a write's quiet: its claim back.
+            Some(f) => self.side.requeue(f.claim),
+            None => {}
+        }
         if !serving() {
             return Work::Nothing;
         }
@@ -955,6 +990,7 @@ impl IrqState {
                             claim: claimed,
                             row,
                             piece,
+                            retried: false,
                         });
                     }
                     // `serve_step` read it: never.
@@ -1067,6 +1103,18 @@ impl IrqState {
             Some(buf) => walk.landed(buf, from).map_err(Why::Proto),
             None => Err(Why::Bound),
         };
+        #[cfg(feature = "fault-inject")]
+        let next = match next {
+            Ok(_)
+                if matches!(kind, Kind::Fill(_))
+                    && FAIL
+                        .try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1))
+                        .is_ok() =>
+            {
+                Err(Why::Proto(ProtoError::Crc))
+            }
+            n => n,
+        };
         match next {
             Ok((Walk::Read(r), _)) if r.timed_out(self.line.clock) => {
                 self.abort(h, kind, Why::Proto(ProtoError::Timeout))
@@ -1083,7 +1131,14 @@ impl IrqState {
     fn finish(&mut self, mut h: Held, t0: u32, kind: Kind) {
         let done = match kind {
             Kind::Fill(f) => match f.read().and_then(|r| r.after(&f.piece)) {
-                Some(piece) => return self.stop(h, Then::More(Fill { piece, ..f })),
+                Some(piece) => {
+                    let f = Fill {
+                        piece,
+                        retried: false,
+                        ..f
+                    };
+                    return self.stop(h, Then::More(f));
+                }
                 None => {
                     // The row's hold drops after the chunk is in its slot.
                     let filled = self.deliver(&mut h, f);
@@ -1133,7 +1188,9 @@ impl IrqState {
             self.side.write_guard(&claim);
             self.side.fill_done(claim)
         } else {
-            // A record's tag or length is wrong: a read error.
+            // A record's tag or length is wrong: the same bytes would come
+            // back, so the fault, unretried.
+            failed(ReadError::Frame, false);
             self.side.requeue(claim);
             false
         }
@@ -1144,7 +1201,8 @@ impl IrqState {
     fn stop(&mut self, mut h: Held, then: Then) {
         match h.stop(&self.line) {
             Ok(answer) => {
-                if answer.is_err() && !matches!(then, Then::Give(_)) {
+                // After CRC-good data: the blocks stand (I8).
+                if answer.is_err() && matches!(then, Then::Next { .. } | Then::More(_)) {
                     STATS.stop_errors.fetch_add(1, Ordering::Relaxed);
                 }
                 self.drain(h, self.line.drain_bytes, then);
@@ -1222,6 +1280,13 @@ impl IrqState {
                 let (lba, blocks) = (f.piece.lba, f.piece.blocks);
                 self.begin(h, Kind::Fill(f), lba, blocks);
             }
+            // Never `begin` from here: the retry's CMD18 runs on a fresh
+            // entry, so no entry laps the cycle twice (the stack's bound).
+            Then::Retry(f) => {
+                self.retry = Some(f);
+                give(h, &self.line);
+                pend();
+            }
         }
     }
 
@@ -1229,8 +1294,7 @@ impl IrqState {
     /// fault set, the bus given. Nothing starts until a mount clears it.
     fn fault(&mut self, mut h: Held, then: Then) {
         h.end(&self.line);
-        BUS.set_fault(CardFault::Read);
-        STATS.faults.fetch_add(1, Ordering::Relaxed);
+        set_fault();
         give(h, &self.line);
         match then {
             Then::Next { done, .. } => match done {
@@ -1240,7 +1304,7 @@ impl IrqState {
             },
             Then::Give(owed) => settle(owed),
             // The whole chunk requeued, once: its one claim moves here.
-            Then::More(f) => self.side.requeue(f.claim),
+            Then::More(f) | Then::Retry(f) => self.side.requeue(f.claim),
         }
     }
 
@@ -1263,10 +1327,20 @@ impl IrqState {
     /// The abort (I2): the job's claim requeued, then the card stopped
     /// (CMD12, its answer, the busy drained) and the bus given back. A
     /// requeued want waits for the next wake (a new want, or `watch`), so
-    /// a card that keeps failing can't hold this handler in a loop.
+    /// a card that keeps failing can't hold this handler in a loop. A
+    /// fill's protocol error (C1: CMD18's R1, a token, a CRC16, a token
+    /// timeout) is read again once, or faults the card (`on_error`).
     fn abort(&mut self, h: Held, kind: Kind, why: Why) {
         STATS.aborts.fetch_add(1, Ordering::Relaxed);
-        let then = Then::Give(self.fail_job(kind, why));
+        let then = match (kind, why) {
+            (Kind::Fill(f), Why::Proto(e)) => match failed(ReadError::Proto(e), f.retried) {
+                ErrorStep::Retry => Then::Retry(Fill { retried: true, ..f }),
+                ErrorStep::Fault | ErrorStep::FrameError => {
+                    Then::Give(self.fail_job(Kind::Fill(f), why))
+                }
+            },
+            (kind, why) => Then::Give(self.fail_job(kind, why)),
+        };
         self.stop(h, then);
     }
 
@@ -1288,6 +1362,23 @@ impl IrqState {
             })),
         }
     }
+}
+
+/// The read fault: nothing starts until the UI's re-init and mount clear
+/// it.
+fn set_fault() {
+    BUS.set_fault(CardFault::Read);
+    STATS.faults.fetch_add(1, Ordering::Relaxed);
+}
+
+/// A fill's read error, decided (`serve::read_failed`, which sets the
+/// fault and counts a frame error), its fault counted.
+fn failed(err: ReadError, retried: bool) -> ErrorStep {
+    let step = read_failed(err, retried, &BUS, &STREAM_STATS);
+    if step != ErrorStep::Retry {
+        STATS.faults.fetch_add(1, Ordering::Relaxed);
+    }
+    step
 }
 
 /// A bench answer owed, given once the bus is.

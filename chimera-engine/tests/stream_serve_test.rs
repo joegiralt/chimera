@@ -230,3 +230,55 @@ fn a_read_holds_its_row() {
     land(&mut card, s);
     assert!(unsafe { rig.reg.clear(id(3)) }, "free once it ends");
 }
+
+/// C1, I2: a CRC or an error token is read again once; a second failure,
+/// a token timeout or CMD18's bad R1 faults the card; a chunk that won't
+/// de-frame faults it with no retry, counted apart.
+#[test]
+fn read_errors_retry_once_then_fault() {
+    use chimera_engine::stream::serve::{ErrorStep, ReadError, on_error};
+    use chimera_hal::card_bus::ProtoError;
+    let p = ReadError::Proto;
+    for (err, first, again) in [
+        (p(ProtoError::Crc), ErrorStep::Retry, ErrorStep::Fault),
+        (
+            p(ProtoError::ErrorToken(0x08)),
+            ErrorStep::Retry,
+            ErrorStep::Fault,
+        ),
+        (p(ProtoError::Timeout), ErrorStep::Fault, ErrorStep::Fault),
+        (p(ProtoError::R1(0x04)), ErrorStep::Fault, ErrorStep::Fault),
+        (
+            ReadError::Frame,
+            ErrorStep::FrameError,
+            ErrorStep::FrameError,
+        ),
+    ] {
+        assert_eq!(on_error(err, false), first, "{err:?}");
+        assert_eq!(on_error(err, true), again, "{err:?} retried");
+    }
+}
+
+/// The step taken: a retry touches nothing; a fault sets the bus's; a
+/// frame error counts, then faults.
+#[test]
+fn a_failed_read_faults_the_bus_and_counts() {
+    use chimera_engine::stream::serve::{ErrorStep, ReadError, read_failed};
+    use chimera_hal::card_bus::{CardBus, CardFault, ProtoError};
+    use std::sync::atomic::Ordering::Relaxed;
+    let (bus, stats) = (CardBus::new(), StreamStats::new());
+    let crc = ReadError::Proto(ProtoError::Crc);
+    assert_eq!(read_failed(crc, false, &bus, &stats), ErrorStep::Retry);
+    assert_eq!(bus.fault(), CardFault::Clear);
+    assert_eq!(read_failed(crc, true, &bus, &stats), ErrorStep::Fault);
+    assert_eq!(bus.fault(), CardFault::Read);
+    assert_eq!(stats.frame_errors.load(Relaxed), 0);
+
+    let bus = CardBus::new();
+    assert_eq!(
+        read_failed(ReadError::Frame, false, &bus, &stats),
+        ErrorStep::FrameError
+    );
+    assert_eq!(bus.fault(), CardFault::Read);
+    assert_eq!(stats.frame_errors.load(Relaxed), 1);
+}

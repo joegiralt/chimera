@@ -9,6 +9,7 @@ use crate::mark::{self, CLEAN, DIRTY};
 use crate::sd_addr::AddrMode;
 use crate::sweep::{self, Fail};
 use crate::volume::{Layout, first_partition, layout};
+use chimera_hal::card_bus::CardFault;
 use chimera_hal::store::{
     ByteSink, Dir, Doubt, FileName, FileRuns, Files, Mark, ReadSink, Runs, RunsError, Store,
     StoreError, Sweep, SweepSeen, SweepStats, Swept, VolumeId,
@@ -46,6 +47,10 @@ pub trait Medium: BlockDevice {
     /// How the card addresses a block, once acquired.
     fn addr_mode(&self) -> Option<AddrMode> {
         None
+    }
+    /// The streams' reads faulted (`Store::read_fault`).
+    fn read_fault(&self) -> CardFault {
+        CardFault::Clear
     }
 }
 
@@ -546,6 +551,17 @@ impl<D: Medium> FatStore<D> {
 }
 
 impl<D: Medium> Store for FatStore<D> {
+    fn read_fault(&self) -> CardFault {
+        self.dev.read_fault()
+    }
+
+    /// The card left mid-read: re-inited first, so the mount acquires it.
+    fn recover(&mut self) -> Result<VolumeId, StoreError> {
+        self.dev.start_op();
+        self.dev.reinit()?;
+        self.mount()
+    }
+
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.dev.start_op();
         if let Err(e) = self.read(0) {

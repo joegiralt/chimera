@@ -111,6 +111,7 @@ impl UiState {
         link: &LoadLink,
         publish: impl FnOnce(Swap, &UiState) -> R,
     ) -> Option<R> {
+        self.src.recover(cx.card, cx.store, &mut self.project);
         // At most one of the two streams: each refuses to start beside the other.
         if self.lib.busy() {
             self.lib_step(cx.card, cx.store);

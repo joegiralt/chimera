@@ -232,4 +232,8 @@ impl<D: Medium> Medium for SharedCard<D> {
     fn addr_mode(&self) -> Option<AddrMode> {
         self.addr.get()
     }
+
+    fn read_fault(&self) -> CardFault {
+        self.bus.fault()
+    }
 }

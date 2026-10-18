@@ -2,6 +2,7 @@
 
 use core::ops::ControlFlow;
 
+use crate::card_bus::CardFault;
 use crate::units::{BlockCount, Bytes, FileBlock, Lba};
 
 /// A mounted volume's identity: a swap changes one or both.
@@ -182,6 +183,16 @@ pub trait ReadSink {
 pub trait Store {
     /// (Re)init the medium if needed, open the volume, read its id, close it.
     fn mount(&mut self) -> Result<VolumeId, StoreError>;
+    /// The streams' card reads faulted: `recover` is owed. A store no
+    /// stream reads never faults.
+    fn read_fault(&self) -> CardFault {
+        CardFault::Clear
+    }
+    /// After a read fault: the medium re-inited, then `mount`, whose
+    /// success clears the fault. `Busy`: the card untouched.
+    fn recover(&mut self) -> Result<VolumeId, StoreError> {
+        self.mount()
+    }
     /// Each op below: open volume, check id == vol (else `VolumeChanged`,
     /// nothing touched), act, close every handle.
     fn list(

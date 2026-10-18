@@ -267,6 +267,29 @@ impl Project {
         moved
     }
 
+    /// The card under the streamed sources changed (a re-init after a read
+    /// fault mounted another volume): each streamed source out of the
+    /// index, so its Parts read SOURCE MISSING, and every stream row
+    /// freed, so no read lands another card's blocks. A voice holding a
+    /// retired source is never cut (ADR 0087); its wants go unserved.
+    pub fn lose_streams(&mut self) {
+        let Some(reg) = self.pool.streams() else {
+            return;
+        };
+        self.bump();
+        for s in SourceId::ALL {
+            if self.pool.source(s).is_some_and(|e| self.pool.streamed(e.r)) {
+                self.pool.source_free(s);
+            }
+        }
+        // SAFETY: every `get` reference is formed and dropped inside one
+        // entry of the audio or card interrupt, both above this thread,
+        // so none is live here; `clear` leaves the card's held row; and
+        // the pool reuses no freed id before its drain (ADR 0087), so no
+        // row is rewritten under a voice that latched it.
+        let _ = unsafe { reg.clear_all() };
+    }
+
     /// The registry streamed sources' files go in: the shell's, lent once
     /// (a bench build's beds keep theirs).
     pub fn set_streams(&mut self, r: &'static crate::stream::registry::StreamRegistry) {
