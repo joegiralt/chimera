@@ -19,6 +19,8 @@ const PX_PER_DB: f32 = 98.0 / 48.0;
 const COLS: usize = 217;
 /// Prototype against engine, px: 1 px is 0.5 dB.
 const TOL_PX: f32 = 1.0;
+/// DIRTY's output gain (0.5 x 0.5 x 2 sub-steps, LEVEL), measured: px.
+const DIRTY_LEVEL_PX: f32 = -13.4;
 /// A whole curve against the engine, px (about 1.5 dB).
 const SHAPE_TOL_PX: f32 = 3.0;
 /// At 8 kHz FREQ, below FREQ only: the warp's share, px (about 3 dB).
@@ -192,6 +194,18 @@ fn the_drawn_curve_is_the_engines_across_the_plot() {
                 let med = diffs[diffs.len() / 2];
                 let worst = diffs.iter().map(|d| (d - med).abs()).fold(0.0, f32::max);
                 println!("{name} {fc} Hz RES {res}: level {med:.1} px, worst {worst:.1} px");
+                // The level: CLEAN and LADDER sit on the drawn line (CLEAN's trim is 1
+                // for k >= 0.5, RES <= 0.5); DIRTY's output gain is 13.4 px under it.
+                let want_level = if kind == K::Dirty {
+                    DIRTY_LEVEL_PX
+                } else {
+                    0.0
+                };
+                let level_tol = if fc > 4000.0 { 8.0 } else { 1.0 };
+                assert!(
+                    (med - want_level).abs() <= level_tol,
+                    "{name} {fc} Hz RES {res}: level {med} px, want {want_level}"
+                );
                 let tol = if fc > 4000.0 {
                     WARP_TOL_PX
                 } else {
