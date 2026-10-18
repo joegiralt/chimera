@@ -287,7 +287,10 @@ impl Project {
         // so none is live here; `clear` leaves the card's held row; and
         // the pool reuses no freed id before its drain (ADR 0087), so no
         // row is rewritten under a voice that latched it.
-        let _ = unsafe { reg.clear_all() };
+        let all = unsafe { reg.clear_all() };
+        // Under a fault the card IRQ holds no row: a retry's hold is
+        // dropped at its next look (`card_dma`).
+        debug_assert!(all, "a stream row held under a fault");
     }
 
     /// The registry streamed sources' files go in: the shell's, lent once

@@ -1365,19 +1365,27 @@ impl IrqState {
 }
 
 /// The read fault: nothing starts until the UI's re-init and mount clear
-/// it.
+/// it. Counted once (`counted`).
 fn set_fault() {
+    let was = BUS.fault();
     BUS.set_fault(CardFault::Read);
-    STATS.faults.fetch_add(1, Ordering::Relaxed);
+    counted(was);
+}
+
+/// A fault just set from `was`: counted if it is a new one, so a decided
+/// fault whose CMD12 then fails (`abort` → `stop` → `fault`) counts once.
+fn counted(was: CardFault) {
+    if was == CardFault::Clear && BUS.fault() == CardFault::Read {
+        STATS.faults.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 /// A fill's read error, decided (`serve::read_failed`, which sets the
 /// fault and counts a frame error), its fault counted.
 fn failed(err: ReadError, retried: bool) -> ErrorStep {
+    let was = BUS.fault();
     let step = read_failed(err, retried, &BUS, &STREAM_STATS);
-    if step != ErrorStep::Retry {
-        STATS.faults.fetch_add(1, Ordering::Relaxed);
-    }
+    counted(was);
     step
 }
 
