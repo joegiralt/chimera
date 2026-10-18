@@ -786,7 +786,7 @@ fn system_midi_fixture_round_trips() {
 }
 
 /// SYSTEM files written before SAVER have no such record: they load with
-/// the screensaver at its default, 7 s, the rest as written.
+/// the screensaver at its default, 5 min, the rest as written.
 #[test]
 fn an_old_system_file_gets_the_default_screensaver() {
     for f in [
@@ -796,7 +796,7 @@ fn an_old_system_file_gets_the_default_screensaver() {
         let (got, note) = boot_bytes(f);
         assert_eq!(note, None);
         assert_eq!(got.theme.saver, Saver::DEFAULT);
-        assert_eq!(got.theme.saver.ms(), Some(7_000));
+        assert_eq!(got.theme.saver.ms(), Some(300_000));
     }
     let (got, _) = boot_bytes(include_bytes!("fixtures/v1/system.sys"));
     assert_eq!(got.theme.accent, Accent::Rose, "the rest as written");
@@ -826,4 +826,23 @@ fn pages_round_trips_and_an_old_system_is_row() {
     ] {
         assert_eq!(boot_bytes(f).0.theme.pages, Pages::Row);
     }
+}
+
+/// Every SAVER step, OFF and the new minutes included, round-trips; an
+/// old file's 60 s (index 5) still reads 60 s.
+#[test]
+fn every_saver_step_round_trips() {
+    for i in 0..9 {
+        let mut s = MemStore::new(1);
+        let want = SystemSettings {
+            theme: ThemeSettings {
+                saver: Saver::from_index(i),
+                ..ThemeSettings::DEFAULT
+            },
+            ..SystemSettings::DEFAULT
+        };
+        save(&mut s, &want);
+        assert_eq!(boot(&mut s).0.theme.saver, Saver::from_index(i), "{i}");
+    }
+    assert_eq!(Saver::from_index(5).ms(), Some(60_000));
 }

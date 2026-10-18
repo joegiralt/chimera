@@ -490,9 +490,67 @@ fn the_screensaver_page_edits_its_idle_time() {
     assert_eq!(ui.page_def().id, SYS_SAVER.id);
     assert_eq!(ui.theme().saver, Saver::DEFAULT);
     feed(&mut ui, Input::turn(EncoderId::A, 1));
-    assert_eq!(ui.theme().saver, Saver::from_index(3));
-    feed(&mut ui, Input::turn(EncoderId::A, -9));
+    assert_eq!(ui.theme().saver, Saver::from_index(8));
+    feed(&mut ui, Input::turn(EncoderId::A, 9));
+    assert_eq!(ui.theme().saver.ms(), Some(600_000), "held at 10 MIN");
+    feed(&mut ui, Input::turn(EncoderId::A, -99));
     assert_eq!(ui.theme().saver, Saver::OFF);
+}
+
+/// The steps: 5 MIN by default, then the old ones keep their indices.
+#[test]
+fn the_saver_steps_keep_their_old_indices() {
+    let ms: Vec<_> = (0..9).map(|i| Saver::from_index(i).ms()).collect();
+    let s = |s: u32| Some(s * 1000);
+    assert_eq!(
+        ms,
+        [
+            None,
+            s(5),
+            s(7),
+            s(10),
+            s(30),
+            s(60),
+            s(120),
+            s(300),
+            s(600)
+        ]
+    );
+    assert_eq!(Saver::DEFAULT.ms(), Some(300_000));
+    assert_eq!(Saver::from_index(200), Saver::from_index(8));
+}
+
+/// OFF never starts the saver, however long the idle.
+#[test]
+fn saver_off_never_sleeps() {
+    let mut ui = chimera_core::ui::UiState::new();
+    to_leaf(&mut ui, &["PERSONALIZE", "SCREENSAVER"]);
+    feed(&mut ui, Input::turn(EncoderId::A, -99));
+    for _ in 0..1000 {
+        ui.step_idle(60_000, false);
+    }
+    assert!(!ui.asleep());
+}
+
+/// A control used while the saver is up wakes the screen and acts (ADR 0147).
+#[test]
+fn a_control_wakes_the_screen_and_acts() {
+    use chimera_core::ui::block_registry::SYS_SAVER;
+    let mut ui = chimera_core::ui::UiState::new();
+    to_leaf(&mut ui, &["PERSONALIZE", "SCREENSAVER"]);
+    feed(&mut ui, Input::turn(EncoderId::A, -99));
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    assert_eq!(ui.theme().saver, Saver::from_index(1));
+    ui.step_idle(5_000, false);
+    assert!(ui.asleep());
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    assert!(!ui.asleep());
+    assert_eq!(ui.theme().saver, Saver::from_index(2), "the turn acted");
+    ui.step_idle(7_000, false);
+    assert!(ui.asleep());
+    tap(&mut ui, ButtonId::Menu);
+    assert!(!ui.asleep());
+    assert_ne!(ui.page_def().id, SYS_SAVER.id, "the button acted");
 }
 
 /// SETTINGS › PERSONALIZE › CHAIN MAP: its one cell is PAGES, ROW by

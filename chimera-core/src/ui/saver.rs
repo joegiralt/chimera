@@ -1,8 +1,8 @@
 //! The oscilloscope screensaver: after SCREENSAVER's idle time the screen
 //! shows the master scope large, with the last note in, the pitch it
 //! sounds at, the pitch measured off the scope, and the keys held with
-//! their chord. Any button or encoder wakes it and that touch is
-//! swallowed. MIDI does not wake it.
+//! their chord. Any button or encoder wakes it and acts too. MIDI does
+//! not wake it.
 //!
 //! `Idle` is the pure timer; naming and measuring are pure functions;
 //! `draw` takes a `Readout`, so goldens need no audio.
@@ -21,21 +21,11 @@ use crate::ui::{draw, theme};
 /// The screensaver redraws every this many UI frames (20 Hz): ~7 Hz.
 pub const REDRAW_FRAMES: u8 = 3;
 
-/// What a touch did.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Touch {
-    Pass,
-    /// The touch woke the screen or continues the waking press: not for
-    /// the UI.
-    Swallow,
-}
-
-/// Idle time, asleep or not, and the wake press still down.
+/// Idle time, and whether the screen is asleep.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Idle {
     idle_ms: u32,
     asleep: bool,
-    swallowing: bool,
 }
 
 impl Idle {
@@ -43,7 +33,6 @@ impl Idle {
         Self {
             idle_ms: 0,
             asleep: false,
-            swallowing: false,
         }
     }
 
@@ -68,24 +57,13 @@ impl Idle {
     }
 
     /// One frame of input: `turned` an encoder moved, `down` a button is
-    /// down. The touch that wakes the screen is swallowed, and a waking
-    /// button's press, hold and release with it.
-    pub fn touch(&mut self, turned: bool, down: bool) -> Touch {
-        let active = turned || down;
-        if active {
+    /// down. Either wakes the screen and restarts the clock; the touch
+    /// is also the UI's (ADR 0147).
+    pub fn touch(&mut self, turned: bool, down: bool) {
+        if turned || down {
             self.idle_ms = 0;
-        }
-        if self.asleep && active {
             self.asleep = false;
-            self.swallowing = down;
-            return Touch::Swallow;
         }
-        if self.swallowing {
-            self.swallowing = down;
-            // The release frame is still the wake press's.
-            return Touch::Swallow;
-        }
-        Touch::Pass
     }
 }
 

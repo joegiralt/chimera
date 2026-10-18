@@ -5,7 +5,7 @@ mod screen;
 
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::fmt::FmtBuf;
-use chimera_core::ui::saver::{self, Idle, Readout, Touch};
+use chimera_core::ui::saver::{self, Idle, Readout};
 use screen::Fb;
 
 fn s(f: impl FnOnce(&mut FmtBuf)) -> String {
@@ -32,39 +32,29 @@ fn sleeps_after_the_timeout_and_off_never_does() {
 fn input_resets_the_clock() {
     let mut i = Idle::new();
     i.tick(6_000, Some(7_000));
-    assert_eq!(i.touch(true, false), Touch::Pass);
+    i.touch(true, false);
     i.tick(6_000, Some(7_000));
     assert!(!i.asleep());
-    assert_eq!(i.touch(false, false), Touch::Pass);
 }
 
 #[test]
-fn a_waking_button_is_swallowed_through_its_release() {
-    let mut i = Idle::new();
-    i.tick(7_000, Some(7_000));
-    assert!(i.asleep());
-    assert_eq!(i.touch(false, true), Touch::Swallow);
-    assert!(!i.asleep());
-    // Still down: swallowed. The release frame is too; then the UI's.
-    assert_eq!(i.touch(false, true), Touch::Swallow);
-    assert_eq!(i.touch(false, false), Touch::Swallow);
-    assert_eq!(i.touch(false, false), Touch::Pass);
-    assert_eq!(i.touch(false, true), Touch::Pass);
-}
-
-#[test]
-fn a_waking_turn_is_swallowed_once() {
-    let mut i = Idle::new();
-    i.tick(7_000, Some(7_000));
-    assert_eq!(i.touch(true, false), Touch::Swallow);
-    assert_eq!(i.touch(true, false), Touch::Pass);
+fn any_touch_wakes_and_restarts_the_clock() {
+    for (turned, down) in [(true, false), (false, true)] {
+        let mut i = Idle::new();
+        i.tick(7_000, Some(7_000));
+        assert!(i.asleep());
+        i.touch(turned, down);
+        assert!(!i.asleep());
+        i.tick(6_999, Some(7_000));
+        assert!(!i.asleep());
+    }
 }
 
 #[test]
 fn a_quiet_frame_asleep_stays_asleep() {
     let mut i = Idle::new();
     i.tick(9_000, Some(7_000));
-    assert_eq!(i.touch(false, false), Touch::Pass);
+    i.touch(false, false);
     assert!(i.asleep());
 }
 
@@ -370,13 +360,13 @@ fn idle(ui: &mut UiState, ms: u32) {
     ui.step_idle(ms, false);
 }
 
-/// Asleep at 7 s, not at 6.999. The
-/// waking press changes nothing; the next one does.
+/// Asleep at the default 5 min, not a ms before. The waking press wakes
+/// the screen and acts (ADR 0147).
 #[test]
-fn the_ui_sleeps_wakes_and_swallows_the_first_touch() {
+fn the_ui_sleeps_and_the_waking_touch_acts() {
     let mut ui = UiState::new();
     assert_eq!(ui.theme().saver, Saver::DEFAULT);
-    idle(&mut ui, 6_999);
+    idle(&mut ui, DEFAULT_MS - 1);
     let mut fb = Fb::new();
     let scope = [0.0; SCOPE_LEN];
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope);
@@ -386,14 +376,13 @@ fn the_ui_sleeps_wakes_and_swallows_the_first_touch() {
     assert_ne!(fb.hash(), awake, "asleep");
     let loc = ui.location();
     screen::feed(&mut ui, Input::press(ButtonId::B2).at(0));
-    assert_eq!(ui.location(), loc, "swallowed");
     screen::feed(&mut ui, Input::release(ButtonId::B2).at(50));
+    assert_ne!(ui.location(), loc, "the waking press navigated");
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope);
-    assert_eq!(fb.hash(), awake, "awake again, same page");
-    screen::feed(&mut ui, Input::press(ButtonId::B2).at(2000));
-    screen::feed(&mut ui, Input::release(ButtonId::B2).at(2100));
-    assert_ne!(ui.location(), loc, "the next touch navigates");
+    assert_ne!(fb.hash(), awake, "awake, on the new page");
 }
+
+const DEFAULT_MS: u32 = 300_000;
 
 #[test]
 fn off_never_sleeps() {
@@ -413,7 +402,7 @@ fn off_never_sleeps() {
 #[test]
 fn card_work_is_not_idle_time() {
     let mut ui = UiState::new();
-    ui.step_idle(6_000, false);
+    ui.step_idle(DEFAULT_MS - 1_000, false);
     // A blocking save or load: its time doesn't count, and the clock restarts.
     ui.step_idle(5_000, true);
     ui.step_idle(1_000, false);
@@ -422,9 +411,9 @@ fn card_work_is_not_idle_time() {
     saver::draw(&mut saver_fb, &[0.0; SCOPE_LEN], &Readout::NONE);
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &[0.0; SCOPE_LEN]);
     assert_ne!(fb.hash(), saver_fb.hash(), "awake");
-    ui.step_idle(6_000, false);
+    ui.step_idle(DEFAULT_MS, false);
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &[0.0; SCOPE_LEN]);
-    assert_eq!(fb.hash(), saver_fb.hash(), "asleep after 7 s of nothing");
+    assert_eq!(fb.hash(), saver_fb.hash(), "asleep after 5 min of nothing");
     // Busy asleep stays asleep (no wake without a touch).
     ui.step_idle(100, true);
     ui.render_with_scope(&mut fb, &PerfStats::zero(), &[0.0; SCOPE_LEN]);

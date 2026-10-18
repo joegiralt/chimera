@@ -253,13 +253,14 @@ impl DiskCode for Black {
 }
 
 /// Idle time before the screensaver, by step index (OFF, then seconds).
+/// Disk codes are the indices: frozen, new steps append (ADR 0147).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Saver(u8);
 
 impl Saver {
-    const SECS: [u8; 6] = [0, 5, 7, 10, 30, 60];
+    const SECS: [u16; 9] = [0, 5, 7, 10, 30, 60, 120, 300, 600];
     pub const OFF: Saver = Saver(0);
-    pub const DEFAULT: Saver = Saver(2);
+    pub const DEFAULT: Saver = Saver(7);
 
     /// Step `i`, held to the last.
     pub const fn from_index(i: u8) -> Saver {
@@ -338,7 +339,10 @@ impl ThemeSettings {
 
 const GAMMA_NAMES: [&str; 3] = ["PANEL", "SOFT", "PUNCH"];
 const ACCENT_NAMES: [&str; 5] = ["TEAL", "AMBER", "ROSE", "LIME", "ICE"];
-const SAVER_NAMES: [&str; 6] = ["OFF", "5 S", "7 S", "10 S", "30 S", "60 S"];
+const SAVER_NAMES: [&str; 9] = [
+    "OFF", "5 S", "7 S", "10 S", "30 S", "60 S", "2 MIN", "5 MIN", "10 MIN",
+];
+const _: () = assert!(SAVER_NAMES.len() == Saver::SECS.len());
 const PAGES_NAMES: [&str; 2] = ["ROW", "STACK"];
 
 const _: () = assert!(BRIGHT_IDENTS.len() == THEME_SPECS[0].max as usize + 1);
@@ -411,14 +415,14 @@ pub static THEME_SPECS: [ParamSpec; 8] = [
     )
     .ident("INVERT")
     .glyph(crate::glyph::FocusGlyph::Switch),
-    // A SYSTEM from before SAVER has none: 7 S.
+    // A SYSTEM from before SAVER has none: 5 MIN.
     ParamSpec::stepped(
         6,
         "SAVER",
         ValFmt::Names(&SAVER_NAMES),
         0.0,
-        5.0,
-        2.0,
+        8.0,
+        7.0,
         false,
         Motion::Stepped(Change::Snap),
     )

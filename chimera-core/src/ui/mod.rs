@@ -895,6 +895,11 @@ impl UiState {
         self.midi = s.midi;
     }
 
+    /// The screensaver is up.
+    pub fn asleep(&self) -> bool {
+        self.idle.asleep()
+    }
+
     /// `elapsed_ms` of wall time since the last call, for the screensaver:
     /// the shells' loops call it beside `step_toast`. `busy`: card work ran
     /// this frame, so `elapsed_ms` is its blocking time. A prompt, card work
@@ -2360,14 +2365,7 @@ impl UiState {
     /// Process one frame of input: navigation + encoder deltas, then
     /// ORBIT's commands flushed for the frame's publish.
     pub fn handle_input(&mut self, controls: &impl Controls) {
-        if self.idle.touch(any_turn(controls), any_down(controls)) == saver::Touch::Swallow {
-            // A held key still ages.
-            let jog = self.jog_pass(controls.now_ms().0);
-            if cfg!(feature = "midi-map") {
-                self.cc.hand(u8::from(jog));
-            }
-            return;
-        }
+        self.idle.touch(any_turn(controls), any_down(controls));
         let rev = self.project.rev();
         let model = |ui: &Self| ui.project.part(ui.active_part).sound.params.tape.model;
         let was = model(self);
