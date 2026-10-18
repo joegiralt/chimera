@@ -1613,7 +1613,12 @@ impl UiState {
         if pressed(ButtonId::Edit) && !edit_part {
             push(NavKey::Edit);
         }
-        let a = c.encoder_delta(EncoderId::A);
+        #[cfg(feature = "midi-map")]
+        let mapping = self.screen() == Some(Screen::MidiMap);
+        #[cfg(not(feature = "midi-map"))]
+        let mapping = false;
+        // MIDI MAP's B, C and D edit the row under the bar.
+        let a = list_turn(c, if mapping { &MAP_EDITS } else { &[] });
         let on_list = self.loc.settings().is_some_and(|s| s.at_leaf().is_none());
         if on_list && a != 0 {
             push(NavKey::Bar(a));
@@ -3504,6 +3509,21 @@ fn part_key(c: &impl Controls) -> bool {
         && PART_BUTTONS
             .iter()
             .any(|&b| c.button_state(b) == ButtonState::Pressed)
+}
+
+/// MIDI MAP's value encoders: CC, MIN, MAX.
+#[cfg(feature = "midi-map")]
+const MAP_EDITS: [EncoderId; 3] = [EncoderId::B, EncoderId::C, EncoderId::D];
+#[cfg(not(feature = "midi-map"))]
+const MAP_EDITS: [EncoderId; 0] = [];
+
+/// A list's bar move this frame: every encoder not in `taken` moves it,
+/// their turns summed.
+pub(crate) fn list_turn(c: &impl Controls, taken: &[EncoderId]) -> i8 {
+    ALL_ENCODERS
+        .iter()
+        .filter(|e| !taken.contains(e))
+        .fold(0i8, |n, &e| n.saturating_add(c.encoder_delta(e)))
 }
 
 /// An encoder moved this frame.

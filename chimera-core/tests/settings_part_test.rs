@@ -662,3 +662,40 @@ mod midi_map {
         assert_eq!(ui.project().part(P[0]).sound.params.filter.cutoff, was);
     }
 }
+
+/// MIDI MAP's rows follow A, E and F; B, C and D edit the row (#561).
+#[cfg(feature = "midi-map")]
+mod midi_map_bar {
+    use super::*;
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::midi_in::Cc;
+    use chimera_core::midi_map::{Mappable, MidiMap};
+    use chimera_core::params::FilterParams;
+
+    #[test]
+    fn a_e_and_f_move_the_bar_b_c_d_edit() {
+        let mut ui = UiState::new();
+        let (cc, target) = (
+            Cc::new(74).unwrap(),
+            Mappable::new(ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF)).unwrap(),
+        );
+        let mut m = MidiMap::EMPTY;
+        m.learn(cc, target).unwrap();
+        ui.project_mut().edit_part(P[0]).sound.map = m;
+        part_row(&mut ui, P[0], 6);
+        feed(&mut ui, Input::press(ButtonId::Edit));
+        let row = |ui: &UiState| ui.location().settings().unwrap().row();
+        let rev = ui.project().rev();
+        for id in [EncoderId::A, EncoderId::E, EncoderId::F] {
+            feed(&mut ui, Input::turn(id, 1));
+            assert_eq!(row(&ui), 0, "one row: it wraps, {id:?}");
+        }
+        assert_eq!(ui.project().rev(), rev, "the bar edits nothing");
+        // MIN sits at 0 and MAX at 255: C turns up, D down.
+        for (id, d) in [(EncoderId::B, 1), (EncoderId::C, 1), (EncoderId::D, -1)] {
+            let before = ui.project().rev();
+            feed(&mut ui, Input::turn(id, d));
+            assert_ne!(ui.project().rev(), before, "{id:?} edits");
+        }
+    }
+}
