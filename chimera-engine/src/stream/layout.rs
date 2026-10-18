@@ -169,14 +169,26 @@ impl StreamFile {
         let len =
             Bytes::new((self.data_len.get() - c.0 * CHUNK_BYTES.get()).min(CHUNK_BYTES.get()));
         piece(&self.ext, &blocks, 0)?;
-        (covered == blocks.count.get() && blocks.count.get() <= RAW_CHUNK_BLOCKS).then_some(
-            ChunkRead {
-                file: self,
-                blocks,
-                len,
-            },
-        )
+        (covered == blocks.count.get() && blocks.count.get() <= RAW_CHUNK_BLOCKS)
+            .then_some(self.read_of(ChunkPlan { blocks, len }))
     }
+
+    /// The read `chunk_read` found, from its plan: no second look.
+    pub(crate) fn read_of(&self, p: ChunkPlan) -> ChunkRead<'_> {
+        ChunkRead {
+            file: self,
+            blocks: p.blocks,
+            len: p.len,
+        }
+    }
+}
+
+/// A `ChunkRead` less its file, kept beside the held row
+/// (`serve::HeldRead`) so a fill works its read out once.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ChunkPlan {
+    blocks: ChunkBlocks,
+    len: Bytes,
 }
 
 /// One CMD18 of a chunk: its device blocks, landing `at` blocks into the
@@ -198,6 +210,13 @@ pub struct ChunkRead<'f> {
 }
 
 impl ChunkRead<'_> {
+    pub(crate) fn plan(&self) -> ChunkPlan {
+        ChunkPlan {
+            blocks: self.blocks,
+            len: self.len,
+        }
+    }
+
     /// Every piece's blocks.
     pub fn blocks(&self) -> BlockCount {
         self.blocks.count

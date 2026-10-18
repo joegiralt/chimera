@@ -14,9 +14,11 @@ use std::time::{Duration, Instant};
 
 use chimera_core::storage::{Card, SourceLayout, SourceRef, read_source_head, source_file};
 use chimera_core::stream::layout::{RAW_CHUNK_BYTES, StreamFile, deframe};
-use chimera_core::stream::registry::{RowHold, StreamRegistry};
+use chimera_core::stream::registry::StreamRegistry;
 use chimera_core::stream::ring::{CardSide, Claim};
-use chimera_core::stream::serve::{ErrorStep, ReadError, ServeStep, read_failed, serve_step};
+use chimera_core::stream::serve::{
+    ErrorStep, HeldRead, ReadError, ServeStep, read_failed, serve_step,
+};
 use chimera_core::stream::stats::StreamStats;
 use chimera_core::stream::units::AudioBlocks;
 use chimera_hal::card_bus::{CardBus, CardFault, ProtoError, Quiet};
@@ -133,7 +135,7 @@ pub fn stream_file(store: &mut DirStore, sref: SourceRef) -> Option<StreamFile> 
 /// when it lands.
 struct Flight<'r> {
     claim: Claim,
-    row: RowHold<'r>,
+    row: HeldRead<'r>,
     raw: Vec<u8>,
     due: ClockUs,
     retried: bool,
@@ -215,7 +217,7 @@ impl<'r> CardStream<'r> {
                 return;
             };
             let fails = self.fault.0 == Some(self.reads);
-            match self.read(&row, &claimed) {
+            match self.read(&row) {
                 Some(raw) => {
                     self.flight = Some(Flight {
                         claim: claimed,
@@ -253,9 +255,9 @@ impl<'r> CardStream<'r> {
 
     /// The claimed chunk's raw blocks: each piece's from its file, at its
     /// block less the file's `synthetic_lba`.
-    fn read(&self, row: &RowHold<'_>, c: &Claim) -> Option<Vec<u8>> {
+    fn read(&self, row: &HeldRead<'_>) -> Option<Vec<u8>> {
         let file = row.file();
-        let r = file.chunk_read(c.chunk())?;
+        let r = row.read();
         let base = synthetic_lba(file.file()).get();
         let mut raw = vec![0; RAW_CHUNK_BYTES];
         let mut piece = r.first();
@@ -304,10 +306,7 @@ impl<'r> CardStream<'r> {
             }
             return;
         }
-        let Some(r) = row.file().chunk_read(claim.chunk()) else {
-            self.side.requeue(claim);
-            return;
-        };
+        let r = row.read();
         let Some(out) = self.side.fill_buf(&claim) else {
             // Stale: the audio cancelled it.
             let _ = self.side.fill_done(claim);

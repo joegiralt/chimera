@@ -16,11 +16,10 @@ use core::mem::{MaybeUninit, offset_of, replace};
 use core::ptr::{self, addr_of, addr_of_mut};
 use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 
-use chimera_core::stream::layout::{ChunkRead, Piece, RAW_CHUNK_BLOCKS, RAW_CHUNK_BYTES, deframe};
-use chimera_core::stream::registry::RowHold;
+use chimera_core::stream::layout::{Piece, RAW_CHUNK_BLOCKS, RAW_CHUNK_BYTES, deframe};
 use chimera_core::stream::ring::{CardSide, Claim};
 use chimera_core::stream::serve::{
-    ErrorStep, ReadError, ServeStep, read_failed, servable, serve_step,
+    ErrorStep, HeldRead, ReadError, ServeStep, read_failed, servable, serve_step,
 };
 use chimera_core::stream::units::AudioBlocks;
 use chimera_fat::h7_spi::{
@@ -706,19 +705,13 @@ impl Dest {
 struct Fill {
     /// The one `Claim` (Task 5) of the slot.
     claim: Claim,
-    /// Its file's registry row, held until the fill drops (#597).
-    row: RowHold<'static>,
+    /// Its file's registry row, held until the fill drops (#597), and
+    /// the chunk's read on it.
+    row: HeldRead<'static>,
     /// The piece under way.
     piece: Piece,
     /// Its transfer failed once already (`serve::on_error`).
     retried: bool,
-}
-
-impl Fill {
-    /// The chunk's reads, from the held row (`serve_step` found them).
-    fn read(&self) -> Option<ChunkRead<'_>> {
-        self.row.file().chunk_read(self.claim.chunk())
-    }
 }
 
 /// What a transfer is for.
@@ -928,14 +921,18 @@ pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker_hz: u32, cpu_hz: u
 /// one step of the job. A pend mid-transfer is ignored (I6).
 #[interrupt]
 fn DMA2_STR0() {
-    let (t, audio) = (DWT::cycle_count(), AUDIO_CYCLES.load(Ordering::Relaxed));
+    let (t, audio) = clocks();
     STATS.entries.fetch_add(1, Ordering::Relaxed);
     // SAFETY: `IRQ`'s one `get`: `init` set it before unmasking this
     // handler, which doesn't nest with itself.
     let st = unsafe { IRQ.get() };
     st.step(events(), BUS.take_abort());
-    let wall = DWT::cycle_count().wrapping_sub(t);
-    let own = wall.saturating_sub(AUDIO_CYCLES.load(Ordering::Relaxed).wrapping_sub(audio));
+    let (t1, audio1) = clocks();
+    let wall = t1.wrapping_sub(t);
+    let own = wall.saturating_sub(audio1.wrapping_sub(audio));
+    // The bench's check is no streaming cost.
+    #[cfg(feature = "bench")]
+    let own = own.saturating_sub(bench::CHECK_CYCLES.swap(0, Ordering::Relaxed));
     let own_us = st.line.us(own).get();
     STATS
         .irq_us_max
@@ -943,6 +940,19 @@ fn DMA2_STR0() {
     STATS.irq_own_us_max.fetch_max(own_us, Ordering::Relaxed);
     // CARD IRQ: the streams' own share of the CPU.
     STREAM_STATS.irq_cycles.fetch_add(own, Ordering::Relaxed);
+}
+
+/// The cycle counter and the audio's cycles as one pair: an audio entry
+/// between the two reads is caught and the pair read again (N1).
+#[inline(always)]
+fn clocks() -> (u32, u32) {
+    loop {
+        let audio = AUDIO_CYCLES.load(Ordering::Relaxed);
+        let t = DWT::cycle_count();
+        if AUDIO_CYCLES.load(Ordering::Relaxed) == audio {
+            return (t, audio);
+        }
+    }
 }
 
 /// The work chosen, claimed with the bus held.
@@ -1049,11 +1059,7 @@ impl IrqState {
             if let ServeStep::Read { claimed, row } =
                 serve_step(&mut self.side, reg, now, BUS.ui_wait(), &STREAM_STATS)
             {
-                match row
-                    .file()
-                    .chunk_read(claimed.chunk())
-                    .and_then(|r| r.first())
-                {
+                match row.read().first() {
                     Some(piece) => {
                         return Work::Fill(Fill {
                             claim: claimed,
@@ -1199,7 +1205,7 @@ impl IrqState {
     /// CMD12 and the drain.
     fn finish(&mut self, mut h: Held, t0: u32, kind: Kind) {
         let done = match kind {
-            Kind::Fill(f) => match f.read().and_then(|r| r.after(&f.piece)) {
+            Kind::Fill(f) => match f.row.read().after(&f.piece) {
                 Some(piece) => {
                     let f = Fill {
                         piece,
@@ -1231,10 +1237,7 @@ impl IrqState {
     /// true if it went Ready.
     fn deliver(&mut self, h: &mut Held, f: Fill) -> bool {
         let Fill { claim, row, .. } = f;
-        let Some(at) = row.file().chunk_read(claim.chunk()) else {
-            self.side.requeue(claim);
-            return false;
-        };
+        let at = row.read();
         let Some(out) = self.side.fill_buf(&claim) else {
             // Stale: the audio cancelled it, and the fill lands nowhere.
             let _ = self.side.fill_done(claim);
@@ -1492,6 +1495,7 @@ mod bench {
     use chimera_hal::card_bus::CardFault;
     use chimera_hal::store::StoreError;
     use chimera_hal::units::{BlockCount, Lba, Micros, Millis};
+    use cortex_m::peripheral::DWT;
 
     use chimera_core::console::Inject;
 
@@ -1617,12 +1621,17 @@ mod bench {
     }
 
     /// A fill's de-framed chunk against its bed's table (I7).
+    /// `check`'s cycles, which `DMA2_STR0` takes out of its own.
+    pub(super) static CHECK_CYCLES: AtomicU32 = AtomicU32::new(0);
+
     pub(super) fn check(v: VoiceIdx, c: ChunkIdx, bytes: &[u8]) {
+        let t0 = DWT::cycle_count();
         if let Some(b) = beds().and_then(|b| b.check(v))
             && !b.verify(c, bytes)
         {
             BENCH.check_failed(v);
         }
+        CHECK_CYCLES.fetch_add(DWT::cycle_count().wrapping_sub(t0), Ordering::Relaxed);
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]

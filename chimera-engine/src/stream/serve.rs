@@ -9,6 +9,7 @@ use chimera_hal::card_bus::{CardBus, CardFault, ProtoError};
 use chimera_hal::units::UiWait;
 
 use super::edf::{Pick, Want, pick, wants};
+use super::layout::{ChunkPlan, ChunkRead, StreamFile};
 use super::registry::{RowHold, StreamRegistry};
 use super::ring::{CardSide, Claim, Rings, SLOTS};
 use super::stats::StreamStats;
@@ -16,13 +17,30 @@ use super::units::AudioBlocks;
 use crate::hw::MAX_VOICES;
 
 pub enum ServeStep<'r> {
-    /// Read `claimed`'s chunk from `row`'s file (`StreamFile::chunk_read`
-    /// holds for it); the row stays held until `row` drops.
-    Read { claimed: Claim, row: RowHold<'r> },
+    /// Read `claimed`'s chunk (`row.read()`); the row stays held until
+    /// `row` drops.
+    Read { claimed: Claim, row: HeldRead<'r> },
     /// Every ring full and the UI waits: the bus goes to it.
     Yield,
     /// Nothing to read.
     Idle,
+}
+
+/// A held row and the claimed chunk's read on it, worked out once.
+pub struct HeldRead<'r> {
+    row: RowHold<'r>,
+    plan: ChunkPlan,
+}
+
+impl HeldRead<'_> {
+    pub fn file(&self) -> &StreamFile {
+        self.row.file()
+    }
+
+    /// The claimed chunk's read, as `serve_step` found it.
+    pub fn read(&self) -> ChunkRead<'_> {
+        self.row.file().read_of(self.plan)
+    }
 }
 
 /// The Wanted slots whose rings name a registry row.
@@ -62,11 +80,15 @@ pub fn serve_step<'r>(
             continue;
         };
         // After the claim: the source the want's note set (`Rings::source`).
-        match rings.source(w.voice).and_then(|id| reg.hold(id)) {
-            Some(row) if row.file().chunk_read(claimed.chunk()).is_some() => {
-                return ServeStep::Read { claimed, row };
+        let held = rings.source(w.voice).and_then(|id| reg.hold(id));
+        match held.and_then(|row| Some((row.file().chunk_read(claimed.chunk())?.plan(), row))) {
+            Some((plan, row)) => {
+                return ServeStep::Read {
+                    claimed,
+                    row: HeldRead { row, plan },
+                };
             }
-            _ => {
+            None => {
                 card.requeue(claimed);
                 stats.unreadable.fetch_add(1, Ordering::Relaxed);
             }

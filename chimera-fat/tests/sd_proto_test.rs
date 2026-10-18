@@ -175,6 +175,28 @@ fn bursts_may_end_anywhere_in_a_block() {
     }
 }
 
+/// The word-wide pack and CRC at every word alignment of the gap and of
+/// the burst's end, and a flipped byte caught at each.
+#[test]
+fn packs_and_checks_at_every_word_alignment() {
+    for g in 0..8 {
+        let card = stream(&[g, g + 1, 3 * g]);
+        for cap in (1..=9).chain([513, 514, 515, 516, usize::MAX]) {
+            let (got, _) = play(&card, 3, cap).unwrap();
+            assert_eq!(got, data(3), "gap {g} cap {cap}");
+            for at in [0, 1, 2, 3, 255, 508, 509, 510, 511] {
+                let mut bad = card.clone();
+                bad[g + STREAM_BLOCK + g + 1 + 1 + at] ^= 0x10;
+                assert_eq!(
+                    play(&bad, 3, cap).unwrap_err(),
+                    ProtoError::Crc,
+                    "{g} {cap} {at}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn a_chunk_takes_a_few_bursts_not_one_a_token_and_a_block() {
     // About 1 ms to the first token at 25 MHz, then short gaps: the old

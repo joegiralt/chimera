@@ -86,6 +86,19 @@ const fn crc16_table() -> [u16; 256] {
 }
 static CRC16_TABLE: [u16; 256] = crc16_table();
 
+/// A byte's CRC16 followed by a zero byte's: two bytes, two independent
+/// lookups (`crc16_pair`).
+const fn crc16_table1(t: &[u16; 256]) -> [u16; 256] {
+    let mut t1 = [0u16; 256];
+    let mut i = 0;
+    while i < 256 {
+        t1[i] = t[i] << 8 ^ t[(t[i] >> 8) as usize];
+        i += 1;
+    }
+    t1
+}
+static CRC16_TABLE1: [u16; 256] = crc16_table1(&crc16_table());
+
 /// CRC16-CCITT (poly 0x1021, init 0).
 pub fn crc16(data: &[u8]) -> u16 {
     crc16_update(0, data)
@@ -98,6 +111,25 @@ pub fn crc16_update(crc: u16, data: &[u8]) -> u16 {
 #[inline(always)]
 fn crc16_byte(c: u16, b: u8) -> u16 {
     c << 8 ^ CRC16_TABLE[usize::from((c >> 8) as u8 ^ b)]
+}
+
+/// `crc16_byte` of `b0` then `b1`, the two lookups independent.
+#[inline(always)]
+fn crc16_pair(c: u16, b0: u8, b1: u8) -> u16 {
+    CRC16_TABLE1[usize::from((c >> 8) as u8 ^ b0)] ^ CRC16_TABLE[usize::from(c as u8 ^ b1)]
+}
+
+/// The first byte that isn't idle 0xFF. The staging is non-cacheable, so
+/// two words go at a time first: their loads in flight together, not a
+/// load a byte.
+fn not_idle(bytes: &[u8]) -> Option<usize> {
+    let (pairs, _) = bytes.as_chunks::<8>();
+    let skip = 8 * pairs
+        .iter()
+        .position(|w| u64::from_ne_bytes(*w) != u64::MAX)
+        .unwrap_or(pairs.len());
+    let at = bytes.get(skip..)?.iter().position(|&b| b != 0xFF)?;
+    Some(skip + at)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,7 +161,7 @@ impl TokenScan {
     }
 
     pub fn feed(&mut self, bytes: &[u8]) -> Scan {
-        match bytes.iter().position(|&b| b != 0xFF) {
+        match not_idle(bytes) {
             None => {
                 self.wait(bytes.len());
                 Scan::Waiting
@@ -265,12 +297,31 @@ impl Reading {
                 At::Data { have, crc } => {
                     let n = usize::from(BLOCK - have).min(buf.len() - r);
                     // One pass over the staging (non-cacheable): each byte
-                    // read once, into the CRC and down onto the data. A
-                    // forward copy with `w <= r` reads each byte before
-                    // anything lands on it.
+                    // read once, into the CRC and down onto the data, a
+                    // word at a time, then the tail. A forward copy with
+                    // `w <= r` reads each word whole before anything lands
+                    // on it.
                     let (gap, span) = (r - w, &mut buf[w..r + n]);
                     let mut crc = crc;
-                    for i in 0..n {
+                    let mut i = 0;
+                    while i + 4 <= n {
+                        let Some(&q) = span.get(i + gap..).and_then(<[u8]>::first_chunk::<4>)
+                        else {
+                            break;
+                        };
+                        let Some(d) = span.get_mut(i..).and_then(<[u8]>::first_chunk_mut::<4>)
+                        else {
+                            break;
+                        };
+                        // One load and one store: the word whole, its bytes
+                        // by shifts.
+                        let q = u32::from_le_bytes(q);
+                        *d = q.to_le_bytes();
+                        let [b0, b1, b2, b3] = [q, q >> 8, q >> 16, q >> 24].map(|b| b as u8);
+                        crc = crc16_pair(crc16_pair(crc, b0, b1), b2, b3);
+                        i += 4;
+                    }
+                    for i in i..n {
                         let b = span[i + gap];
                         crc = crc16_byte(crc, b);
                         span[i] = b;
