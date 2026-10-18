@@ -14,6 +14,7 @@ pub mod filter_panel;
 pub mod fmt;
 pub mod focus;
 pub mod glyph;
+pub mod held;
 pub mod hint;
 pub mod hold;
 pub mod installing;
@@ -58,9 +59,10 @@ use chimera_hal::{
 use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks, Op, ParamAddr};
 use crate::block::Block;
 use crate::boot::RomDfu;
+use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::engine::{FormantView, FormantViews};
-use crate::dsp::algo::kinds::step_kind;
-use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, step_alg};
+use crate::dsp::algo::kinds::{OpKind, step_kind};
+use crate::dsp::algo::params::step_alg;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::dsp::reverb::KnobMemory;
@@ -275,6 +277,8 @@ pub struct UiState {
     display_lfos: [Lfo; 3],
     /// The last MIX+PLUS outcome; `None` once retired (issue #21).
     prime_status: Option<PrimeStatus>,
+    /// A WAVE or ALG choice the budget refused, shown dimmed (ADR 0151).
+    held: Option<(PartId, held::Held)>,
     /// A save the pool had no room for, in the browser's band until the
     /// next input (ADR 0017's convention).
     refusal: Option<Line>,
@@ -397,6 +401,7 @@ crate::in_place::field_list!(UiState => UiState {
     focus,
     display_lfos,
     prime_status,
+    held,
     refusal,
     theme,
     midi,
@@ -498,6 +503,7 @@ impl UiState {
             addr_of_mut!((*p).focus).write(focus::FocusMemory::new());
             addr_of_mut!((*p).display_lfos).write([Lfo::new(); 3]);
             addr_of_mut!((*p).prime_status).write(None);
+            addr_of_mut!((*p).held).write(None);
             addr_of_mut!((*p).refusal).write(None);
             addr_of_mut!((*p).theme).write(theme);
             addr_of_mut!((*p).midi).write(midi);
@@ -707,6 +713,7 @@ impl UiState {
     /// else keep the page by id.
     fn project_replaced(&mut self, was: PartChain) {
         self.src.forget();
+        self.held = None;
         let part = self.active_part;
         let cx = self.cx();
         if let (Some(_), Some(p)) = (self.loc.page(&cx), self.loc.part())
@@ -1459,30 +1466,76 @@ impl UiState {
         });
     }
 
-    /// A WAVE or ALG turn steps over a kind or an algorithm the formant
-    /// budget refuses: say so.
+    /// A CC or pushed turn lands on a kind or an algorithm the formant
+    /// budget refuses: say so (an encoder turn shows it dimmed instead).
     #[inline(never)]
     fn formant_full(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) {
+        if !held::applies(a, shift) {
+            return;
+        }
         let p = &self.project.part(at).sound.params.algo;
-        let skipped = match a.block {
-            BlockRef::AlgoOp(op) if a.param == AlgoOpParams::WAVE => {
+        let refused = match a.block {
+            BlockRef::AlgoOp(op) => {
                 let d = if shift {
                     delta.signum() * i8::MAX
                 } else {
                     delta
                 };
-                step_kind(p.kinds(), p.linked(), op.index(), d).skipped
+                let from = p.kinds().get(op.index());
+                step_kind(p.kinds(), p.linked(), op.index(), from, d).refused
             }
-            BlockRef::Algo
-                if !shift && matches!(a.param, AlgoParams::ALG_A | AlgoParams::ALG_B) =>
-            {
-                step_alg(p, a.param, delta).skipped
-            }
-            _ => false,
+            _ => step_alg(p, a.param, p.side(a.param), delta).refused,
         };
-        if skipped {
+        if refused {
             self.error(Line::new(prompt::FORMANT_FULL));
         }
+    }
+
+    /// An encoder turn on WAVE or ALG A/B (ADR 0151): onto a kind or an
+    /// algorithm the budget refuses it lands dimmed with its reason, and
+    /// nothing is written; onto one it allows, it is written. `false` for
+    /// any other cell.
+    fn turn_choice(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) -> bool {
+        if !held::applies(a, shift) {
+            return false;
+        }
+        let p = &self.project.part(at).sound.params.algo;
+        let held = self.held.filter(|&(h, c)| h == at && c.addr == a);
+        let (code, refused) = match a.block {
+            BlockRef::AlgoOp(op) => {
+                let d = if shift {
+                    delta.signum() * i8::MAX
+                } else {
+                    delta
+                };
+                let from = held.map_or(p.kinds().get(op.index()), |(_, c)| OpKind::clamped(c.code));
+                let s = step_kind(p.kinds(), p.linked(), op.index(), from, d);
+                (s.to.code(), s.refused)
+            }
+            _ => {
+                let from = held.map_or(p.side(a.param), |(_, c)| AlgoId::clamped(c.code));
+                let s = step_alg(p, a.param, from, delta);
+                (s.to.get(), s.refused)
+            }
+        };
+        if refused {
+            self.held = Some((at, held::Held { addr: a, code }));
+        } else {
+            self.held = None;
+            self.edit_in(at, a, part_page::Edit::To(f32::from(code)));
+        }
+        true
+    }
+
+    /// The choice the focused cell shows dimmed and why, if any.
+    pub fn held_choice(&self) -> Option<held::Shown> {
+        let (at, h) = self.held?;
+        let def = self.page_def();
+        let on = slot_addr(def, self.focused_slot(), &self.ctx());
+        (at == self.active_part && on == Some(h.addr))
+            .then(|| h.why(&self.project.part(at).sound))
+            .flatten()
+            .map(|why| held::Shown { held: h, why })
     }
 
     /// The encoder's edit path (spec § 6): `a` on Part `part` turned
@@ -2514,6 +2567,12 @@ impl UiState {
         // it when this same frame is itself a prime attempt.
         if any_input(controls) {
             self.prime_status = None;
+            if ALL_BUTTONS
+                .iter()
+                .any(|&b| controls.button_state(b) == ButtonState::Pressed)
+            {
+                self.held = None;
+            }
             self.toast.dismiss();
             self.browser_dirty |= self.refusal.take().is_some();
             self.src.input();
@@ -2703,6 +2762,10 @@ impl UiState {
                 if v != View::Empty {
                     self.focus.touch(def.id, i);
                 }
+                // A turn elsewhere ends the held choice.
+                if self.held.is_some_and(|(_, h)| v.addr() != Some(h.addr)) {
+                    self.held = None;
+                }
                 if let View::Route { route, .. } = v {
                     self.edit_route(route, |a| match route {
                         // A detent a step: OFF, HALF, FULL.
@@ -2790,7 +2853,7 @@ impl UiState {
                 } else if let Some(a) = slot_addr(def, i, &ctx) {
                     if fine {
                         self.edit_fine(at, a, delta);
-                    } else {
+                    } else if !self.turn_choice(at, a, delta, shift) {
                         self.edit_addr(at, a, delta, shift);
                     }
                     self.cc_hand(at, a);
@@ -3151,6 +3214,7 @@ impl UiState {
             strip: &self.overview,
             heads: self.heads,
             formant: &self.formant,
+            held: self.held_choice(),
         }
     }
 

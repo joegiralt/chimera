@@ -106,15 +106,16 @@ class OneUpdate(unittest.TestCase):
     def test_release_ships_the_orbit_bin_and_its_bk2(self):
         body = "\n".join(recipes()["release"])
         for want in (
-            'SHA256SUMS chimera-$V.bin chimera-$V.bk2 factory-v1.zip ',
-            'cp target/release-bin/chimera-orbit.bin "$out/chimera-$V.bin"',
-            'cp target/release-bin/chimera-orbit.bk2 "$out/chimera-$V.bk2"',
-            'bank2-seal --check "$out/chimera-$V.bin" "$out/chimera-$V.bk2"',
+            'CHIMERA.BIN CHIMERA.BK2 SHA256SUMS factory-v1.zip ',
+            'cp target/release-bin/chimera-orbit.bin "$out/CHIMERA.BIN"',
+            'cp target/release-bin/chimera-orbit.bk2 "$out/CHIMERA.BK2"',
+            'bank2-seal --check "$out/CHIMERA.BIN" "$out/CHIMERA.BK2"',
             "check-bin-paths",
         ):
             self.assertIn(want, body)
         # No .bk2 named .bin: a .bin never starts with the .bk2 magic.
         self.assertIn("CHIMERA2", body)
+        self.assertIn("`CHIMERA.BIN`", open("docs/alpha/RELEASE-NOTES.md.tmpl").read())
         # No zips a variant, no console tool shipped.
         self.assertNotIn("zip -qX", body)
         self.assertNotIn('"$out/chimera-usb.py"', body)

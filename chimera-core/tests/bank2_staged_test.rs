@@ -1,6 +1,6 @@
 //! The boot's staged file (ADR 0137, Task 9c): `/CHIMERA/SYSTEM/BANK2.BK2`
 //! first, then up to eight `*.BK2` in the card root, a dropped
-//! `chimera-<v>.bk2` by its short name; the first judged `Good` for this
+//! `CHIMERA.BK2` (or a host-shortened long name); the first judged `Good` for this
 //! build's seal. Nothing is read when flash already holds it.
 
 use chimera_core::console::{ROOT_BK2_MAX, STAGED, find_staged};
