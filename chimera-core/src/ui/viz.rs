@@ -89,13 +89,15 @@ pub enum Response {
     High,
     /// CLEAN HP4.
     High24,
-    /// The low-pass and high-pass meeting at FREQ.
+    /// CLEAN BP2: `2s/(s² + ks + 1)`, BP4 the cascade.
     Band,
     Band24,
-    /// A notch at FREQ.
+    /// DIRTY BP2: `s/(s² + qs + 1)`, no boost.
+    DirtyBand,
+    /// DIRTY's NOTCH1: `(1 + s²)/(s² + qs + 1)`, a zero at FREQ.
     Notch,
-    /// CLEAN's NOTCH1: a dip at FREQ that Q turns into a peak, a notch at
-    /// 2 × FREQ and the treble 12 dB down.
+    /// CLEAN's NOTCH1: `(1 + s²/4)/(s² + ks + 1)`, a zero at 2 × FREQ and
+    /// the treble 12 dB down.
     Notch2x,
     /// NOTCH2: notches at 0.414 × and 2.414 × FREQ, Q raising the peak
     /// between them.
@@ -126,7 +128,7 @@ impl Response {
             (K::K2040, _) => Response::K2040,
             // DIRTY's NOTCH1 notches at FREQ (spec § 5).
             (K::Dirty, M::Notch) => Response::Notch,
-            (K::Dirty, M::Bp12 | M::Bp24) => Response::Band,
+            (K::Dirty, M::Bp12 | M::Bp24) => Response::DirtyBand,
             (K::Dirty, M::Hp12 | M::Hp24) => Response::High,
             (K::Dirty, _) => Response::Low,
             // LADDER keeps the loop's bass loss and its mode gains (ADR 0104).
@@ -171,7 +173,7 @@ fn den4(w: f32, k: f32) -> f32 {
 /// The response's gain in dB at `w` × FREQ, from the filter's own transfer
 /// function (the analog prototype of the coefficients in `dsp::filter`; the
 /// TPT and Chamberlin forms follow it to a fraction of a dB below a few kHz).
-/// The notches are drawn by `response_y`'s schematic instead.
+/// NOTCH2 is drawn by `response_y`'s schematic instead.
 fn mag_db(r: Response, w: f32, reso: f32) -> f32 {
     use crate::dsp::filter::{FilterMode as M, clean, ladder};
     let k = clean::clean_k(reso);
@@ -184,11 +186,13 @@ fn mag_db(r: Response, w: f32, reso: f32) -> f32 {
         Response::Lp1 => (1.0 + w2, den2(w, k)),
         Response::High => (w2 * w2, den2(w, k)),
         Response::High24 => (w2 * w2 * w2 * w2, den2(w, k) * den2(w, k2)),
-        Response::Band => {
-            return mag_db(Response::Low, w, reso).min(mag_db(Response::High, w, reso));
-        }
-        Response::Band24 => {
-            return mag_db(Response::Low24, w, reso).min(mag_db(Response::High24, w, reso));
+        Response::Band => (4.0 * w2, den2(w, k)),
+        Response::Band24 => (4.0 * w2 * w2, den2(w, k) * den2(w, k2)),
+        Response::DirtyBand => (w2, den2(w, k)),
+        Response::Notch => ((1.0 - w2) * (1.0 - w2), den2(w, k)),
+        Response::Notch2x => {
+            let z = 1.0 - 0.25 * w2;
+            (z * z, den2(w, k))
         }
         Response::K2040 => (1.0, den4(w, k4)),
         Response::LadderLp2 | Response::LadderBp2 | Response::LadderBp4 | Response::LadderHp4 => {
@@ -201,7 +205,7 @@ fn mag_db(r: Response, w: f32, reso: f32) -> f32 {
             let g = ladder::mode_gain(m, k4);
             (g * g * n, den4(w, k4))
         }
-        Response::Notch | Response::Notch2x | Response::DoubleNotch => return 0.0,
+        Response::DoubleNotch => return 0.0,
     };
     // A ring at the onset is off the plot, not infinite.
     10.0 * libm::log10f(num.max(1e-12) / den.max(1e-6))
@@ -210,22 +214,15 @@ fn mag_db(r: Response, w: f32, reso: f32) -> f32 {
 /// The curve's y at column `t` (0..1 across the plot) for `cutoff` and
 /// `reso`. The plot is linear in Hz, so k × FREQ sits at k × `cutoff`; the
 /// transfer-function responses are drawn at their real gain, 2.04 px a dB
-/// below the pass line, and clamp at the plot's edges. The notches stay
-/// schematic: they dip where they cut.
+/// below the pass line, and clamp at the plot's edges. Only NOTCH2's pair of
+/// notches is schematic. CLEAN's output trim (its RES 1 level) is not drawn:
+/// the pass band stays on the 0 dB line.
 pub fn response_y(t: f32, cutoff: f32, reso: f32, r: Response) -> i32 {
     let span = (PLOT_BASE - FILTER_PASS_Y) as f32;
     let peak_h = (FILTER_PASS_Y - PLOT_TOP) as f32;
     // `h` px down at FREQ (up if negative), in a notch's shape.
     let bump = |h: f32| h * dip(t, cutoff);
     let y = match r {
-        Response::Notch => FILTER_PASS_Y as f32 + span * dip(t, cutoff),
-        Response::Notch2x => {
-            // Q 0 dips 8.6 dB at FREQ; the treble is drawn a quarter down.
-            let treble = if t > 2.0 * cutoff { 0.25 * span } else { 0.0 };
-            let at_freq = 0.2 * span * (1.0 - reso) - peak_h * reso;
-            let notch = dip(t, 2.0 * cutoff);
-            FILTER_PASS_Y as f32 + treble + bump(at_freq) + (span - treble) * notch
-        }
         Response::DoubleNotch => {
             let n = dip(t, 0.414 * cutoff).max(dip(t, 2.414 * cutoff));
             FILTER_PASS_Y as f32 - bump(peak_h * reso) * (1.0 - n) + span * n

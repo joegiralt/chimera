@@ -1425,6 +1425,12 @@ pub const CASES: &[ScreenCase] = &[
         ui.params_mut().filter.resonance = 0.3;
         feed(ui, Input::turn(EncoderId::B, -70)); // CUTOFF
     }),
+    ("flt_clean_bp2", |ui| {
+        on_flt(ui, FilterKind::Svf, false);
+        ui.params_mut().filter.set_mode(FilterMode::Bp12);
+        ui.params_mut().filter.resonance = 0.3;
+        feed(ui, Input::turn(EncoderId::B, -70)); // FREQ
+    }),
     ("flt_ladder_res_0", |ui| {
         on_flt(ui, FilterKind::Ladder, false);
         feed(ui, Input::turn(EncoderId::B, -70)); // FREQ

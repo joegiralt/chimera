@@ -19,12 +19,16 @@ const PX_PER_DB: f32 = 98.0 / 48.0;
 const COLS: usize = 217;
 /// Prototype against engine, px: 1 px is 0.5 dB.
 const TOL_PX: f32 = 1.0;
+/// A whole curve against the engine, px (about 1.5 dB).
+const SHAPE_TOL_PX: f32 = 3.0;
+/// At 8 kHz FREQ, below FREQ only: the warp's share, px (about 3 dB).
+const WARP_TOL_PX: f32 = 6.0;
 
-fn engine(kind: FilterKind, mode: FilterMode, res: f32) -> Vec<f64> {
+fn spectrum(kind: FilterKind, mode: FilterMode, fc: f32, res: f32) -> Vec<f64> {
     let mut p = FilterParams::default();
     p.set_kind(kind);
     assert!(p.set_mode(mode));
-    (p.cutoff, p.resonance) = (FC, res);
+    (p.cutoff, p.resonance) = (fc, res);
     let mut f = Filter::new();
     let mut re = Vec::with_capacity(N);
     for b in 0..N / BLOCK_SIZE {
@@ -37,11 +41,18 @@ fn engine(kind: FilterKind, mode: FilterMode, res: f32) -> Vec<f64> {
     }
     let mut im = vec![0.0; N];
     fft(&mut re, &mut im);
-    // Gain in dB for the bins 1 Hz to 6 kHz (the plot's range at FREQ 1 kHz).
+    (0..N / 2)
+        .map(|i| 20.0 * (re[i].hypot(im[i]) / 0.01).log10())
+        .collect()
+}
+
+/// Gain in dB over the bins 1 Hz to 6 kHz (the plot's range at FREQ 1 kHz).
+fn engine(kind: FilterKind, mode: FilterMode, res: f32) -> Vec<f64> {
     let hz = |i: usize| i as f64 * f64::from(SR) / N as f64;
+    let g = spectrum(kind, mode, FC, res);
     (1..N / 2)
         .filter(|&i| hz(i) <= 6.0 * f64::from(FC))
-        .map(|i| 20.0 * (re[i].hypot(im[i]) / 0.01).log10())
+        .map(|i| g[i])
         .collect()
 }
 
@@ -121,5 +132,73 @@ fn dirty_and_clean_share_their_q_law() {
         let d = chimera_core::dsp::filter::dirty::dirty_q(r);
         let c = chimera_core::dsp::filter::clean::clean_k(r);
         assert!((d - c).abs() < 1e-6);
+    }
+}
+
+/// Drawn px against the engine's dB (2.04 px a dB) across the plot, for the
+/// shapes with no pass band to measure from (the band-passes, the notches,
+/// HP, LP1): the columns at 0.3 to 2.5 x FREQ at 1 kHz, the curve's shape
+/// after the output level (DIRTY's gain, not drawn) is taken off as the
+/// median difference. At 8 kHz the TPT's bilinear warp bends the skirt
+/// above FREQ, which the prototype does not draw (the viz has no Hz), so
+/// that case reads 0.3 to 1 x FREQ only. Columns near the plot's floor (a
+/// notch's zero) are left out.
+#[test]
+fn the_drawn_curve_is_the_engines_across_the_plot() {
+    use FilterKind as K;
+    use FilterMode as M;
+    let cases = [
+        (K::Svf, M::Bp12, "CLEAN BP2"),
+        (K::Svf, M::Bp24, "CLEAN BP4"),
+        (K::Svf, M::Hp24, "CLEAN HP4"),
+        (K::Svf, M::Lp6, "CLEAN LP1"),
+        (K::Svf, M::Notch, "CLEAN NOTCH1"),
+        (K::Dirty, M::Bp12, "DIRTY BP2"),
+        (K::Dirty, M::Hp12, "DIRTY HP2"),
+        (K::Dirty, M::Notch, "DIRTY NOTCH1"),
+        (K::Ladder, M::Bp12, "LADDER BP2"),
+        (K::Ladder, M::Bp24, "LADDER BP4"),
+        (K::Ladder, M::Hp24, "LADDER HP4"),
+        (K::Ladder, M::Lp12, "LADDER LP2"),
+    ];
+    let c = 1.0 / 3.0;
+    for (fc, hi) in [(1000.0f32, 2.5), (8000.0, 1.0)] {
+        for (kind, mode, name) in cases {
+            // DIRTY's Chamberlin zero shifts with the warp: its notch steepens it
+            // to 11 dB at 8 kHz, which the viz does not draw.
+            if fc > 4000.0 && name == "DIRTY NOTCH1" {
+                continue;
+            }
+            for res in [0.0, 0.3, 0.5] {
+                let g = spectrum(kind, mode, fc, res);
+                let r = Response::of(kind, mode);
+                let mut diffs = Vec::new();
+                for col in 0..COLS {
+                    let t = col as f32 / (COLS - 1) as f32;
+                    let hz = t / c * fc;
+                    if !(0.3..=hi).contains(&(t / c)) {
+                        continue;
+                    }
+                    let y = viz::response_y(t, c, res, r);
+                    let want = viz::FILTER_PASS_Y as f32
+                        - g[(f64::from(hz) * N as f64 / f64::from(SR)).round() as usize] as f32
+                            * PX_PER_DB;
+                    let edge = (PLOT_TOP + 4) as f32..(viz::PLOT_BASE - 40) as f32;
+                    if edge.contains(&want) && edge.contains(&(y as f32)) {
+                        diffs.push(y as f32 - want);
+                    }
+                }
+                diffs.sort_by(|a, b| a.total_cmp(b));
+                let med = diffs[diffs.len() / 2];
+                let worst = diffs.iter().map(|d| (d - med).abs()).fold(0.0, f32::max);
+                println!("{name} {fc} Hz RES {res}: level {med:.1} px, worst {worst:.1} px");
+                let tol = if fc > 4000.0 {
+                    WARP_TOL_PX
+                } else {
+                    SHAPE_TOL_PX
+                };
+                assert!(worst <= tol, "{name} {fc} Hz RES {res}: {worst} px");
+            }
+        }
     }
 }

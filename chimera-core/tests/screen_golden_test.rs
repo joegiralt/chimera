@@ -64,16 +64,17 @@ const GOLDENS: &[(&str, u64)] = &[
     // Each type's FLT and FLT › MOD (filter-types § 5, Task 17): CLEAN's
     // NOTCH1, the 2040's lowered pass band and KEYBD HALF, its fixed MODE
     // dimmed and VOICE EXP, DIRTY's NOTCH1 at FREQ (its own MODE names).
-    ("flt_clean", 0x48ad43f82d53c3b8),
+    ("flt_clean", 0xee8a0becf9cf1157),
     ("flt_mod_clean", 0xa8e1c2139dc9d441),
     ("flt_2040", 0xc6be3829db70f923),
     ("flt_mod_2040", 0x739059e65565d859),
     ("flt_mod_2040_exp", 0xa75e45413d0f33fe),
-    ("flt_dirty", 0x2fd9a7df881017c9),
+    ("flt_dirty", 0x6ab4e5d0d8d1bbee),
     ("flt_mod_dirty", 0x52a872af1ad9e63a),
     ("flt_ladder", 0x2b883c72e0e90927),
     // New (#574): the peak at its real height, 2040 RES 0.3 and LADDER RES 0.
     ("flt_2040_res_30", 0xee19390b6bfaf97f),
+    ("flt_clean_bp2", 0x6bc4d2cbf8228dd7),
     ("flt_ladder_res_0", 0xff9f8d6fb429142b),
     ("flt_mod_ladder", 0x804291fcb121eca2),
     // The LEVEL LED at 0 (dark), ½ and 1: beside LEVEL, beside the 2040's
