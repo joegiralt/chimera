@@ -76,32 +76,22 @@ const PX_PER_DB: f32 = (PLOT_BASE - FILTER_PASS_Y) as f32 / 48.0;
 pub const LED_X: i32 = theme::VIZ_RIGHT - 4;
 pub const LED_Y: i32 = PLOT_TOP + 4;
 
-/// Filter response y at column `t` (0..1 across the plot): flat pass band,
-/// a resonance bump at `cutoff`, then roll-off to the base (the pre-refresh
-/// curve's shape).
-pub fn filter_y(t: f32, cutoff: f32, reso: f32) -> i32 {
-    let dist = (t - cutoff) * 6.0;
-    let peak_h = (FILTER_PASS_Y - PLOT_TOP) as f32 * reso;
-    let y = if dist < -0.5 {
-        FILTER_PASS_Y as f32
-    } else if dist < 0.5 {
-        let peak = libm::cosf(dist * core::f32::consts::PI) * 0.5 + 0.5;
-        FILTER_PASS_Y as f32 - peak_h * peak
-    } else {
-        let rolloff = (dist - 0.5).min(4.0) / 4.0;
-        FILTER_PASS_Y as f32 + (PLOT_BASE - FILTER_PASS_Y) as f32 * rolloff
-    };
-    (y as i32).clamp(PLOT_TOP, PLOT_BASE)
-}
-
 /// The shape the viz draws for a kind's mode (spec § 5).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Response {
+    /// CLEAN LP2 and DIRTY LP2: `1/(s² + ks + 1)`.
     Low,
-    /// LP1: half the low-pass's roll-off, the same resonant peak.
+    /// CLEAN LP4: two such stages, the second at `clean_k2`.
+    Low24,
+    /// LP1: `(1 + s)/(s² + ks + 1)`, half the low-pass's roll-off.
     Lp1,
+    /// HP2 (DIRTY): `s²/(s² + ks + 1)`.
     High,
+    /// CLEAN HP4.
+    High24,
+    /// The low-pass and high-pass meeting at FREQ.
     Band,
+    Band24,
     /// A notch at FREQ.
     Notch,
     /// CLEAN's NOTCH1: a dip at FREQ that Q turns into a peak, a notch at
@@ -110,14 +100,15 @@ pub enum Response {
     /// NOTCH2: notches at 0.414 × and 2.414 × FREQ, Q raising the peak
     /// between them.
     DoubleNotch,
-    /// The 2040's LP4 and LADDER's LP4: the pass band lowered by
-    /// `1/(1 + k)` as RES rises.
+    /// The 2040's LP4 and LADDER's LP4: `1/((1 + s)⁴ + k)`, the pass band
+    /// lowered by `1/(1 + k)` as RES rises.
     K2040,
-    /// LADDER's LP2: LP4's bass loss and its mode gain, ½ at the onset.
+    /// LADDER's LP2, BP2, BP4 and HP4: LP4's denominator, each mode's
+    /// numerator and gain (ADR 0104).
     LadderLp2,
-    /// LADDER's BP2 and BP4: 0 dB peaks at RES 0, eased down to LP4's ring
-    /// as their mode gains are (ADR 0104).
-    LadderBand,
+    LadderBp2,
+    LadderBp4,
+    LadderHp4,
 }
 
 impl Response {
@@ -125,11 +116,13 @@ impl Response {
         use crate::dsp::filter::{FilterKind as K, FilterMode as M};
         match (kind, m) {
             (K::Svf, M::Lp6) => Response::Lp1,
-            (K::Svf, M::Hp24 | M::Hp12) => Response::High,
-            (K::Svf, M::Bp12 | M::Bp24) => Response::Band,
+            (K::Svf, M::Hp24 | M::Hp12) => Response::High24,
+            (K::Svf, M::Bp12) => Response::Band,
+            (K::Svf, M::Bp24) => Response::Band24,
             (K::Svf, M::Notch) => Response::Notch2x,
             (K::Svf, M::Phaser) => Response::DoubleNotch,
-            (K::Svf, M::Lp12 | M::Lp24) => Response::Low,
+            (K::Svf, M::Lp12) => Response::Low,
+            (K::Svf, M::Lp24) => Response::Low24,
             (K::K2040, _) => Response::K2040,
             // DIRTY's NOTCH1 notches at FREQ (spec § 5).
             (K::Dirty, M::Notch) => Response::Notch,
@@ -137,8 +130,9 @@ impl Response {
             (K::Dirty, M::Hp12 | M::Hp24) => Response::High,
             (K::Dirty, _) => Response::Low,
             // LADDER keeps the loop's bass loss and its mode gains (ADR 0104).
-            (K::Ladder, M::Bp12 | M::Bp24) => Response::LadderBand,
-            (K::Ladder, M::Hp24 | M::Hp12) => Response::High,
+            (K::Ladder, M::Bp12) => Response::LadderBp2,
+            (K::Ladder, M::Bp24) => Response::LadderBp4,
+            (K::Ladder, M::Hp24 | M::Hp12) => Response::LadderHp4,
             (K::Ladder, M::Lp12) => Response::LadderLp2,
             (K::Ladder, _) => Response::K2040,
         }
@@ -156,25 +150,74 @@ fn dip(t: f32, at: f32) -> f32 {
     }
 }
 
-/// `filter_y` for each response: high-pass mirrors it about the cutoff,
-/// band-pass takes both skirts, the notches dip where they cut. The plot
-/// is linear in Hz, so k × FREQ sits at k × `cutoff`.
+/// The lowest FREQ column the curve is drawn for (a FREQ of 0 would put
+/// every column at infinity).
+const MIN_CUTOFF: f32 = 0.01;
+
+/// A 2-pole denominator's `|s² + ks + 1|²` at `s = jw`.
+fn den2(w: f32, k: f32) -> f32 {
+    let a = 1.0 - w * w;
+    a * a + k * k * w * w
+}
+
+/// The 4-pole's `|(1 + s)⁴ + k|²` at `s = jw`.
+fn den4(w: f32, k: f32) -> f32 {
+    let w2 = w * w;
+    let re = 1.0 - 6.0 * w2 + w2 * w2 + k;
+    let im = 4.0 * w * (1.0 - w2);
+    re * re + im * im
+}
+
+/// The response's gain in dB at `w` × FREQ, from the filter's own transfer
+/// function (the analog prototype of the coefficients in `dsp::filter`; the
+/// TPT and Chamberlin forms follow it to a fraction of a dB below a few kHz).
+/// The notches are drawn by `response_y`'s schematic instead.
+fn mag_db(r: Response, w: f32, reso: f32) -> f32 {
+    use crate::dsp::filter::{FilterMode as M, clean, ladder};
+    let k = clean::clean_k(reso);
+    let k2 = clean::clean_k2(k);
+    let (w2, k4) = (w * w, crate::dsp::filter::k2040::k2040_k(reso));
+    // |H|² as numerator over denominator.
+    let (num, den) = match r {
+        Response::Low => (1.0, den2(w, k)),
+        Response::Low24 => (1.0, den2(w, k) * den2(w, k2)),
+        Response::Lp1 => (1.0 + w2, den2(w, k)),
+        Response::High => (w2 * w2, den2(w, k)),
+        Response::High24 => (w2 * w2 * w2 * w2, den2(w, k) * den2(w, k2)),
+        Response::Band => {
+            return mag_db(Response::Low, w, reso).min(mag_db(Response::High, w, reso));
+        }
+        Response::Band24 => {
+            return mag_db(Response::Low24, w, reso).min(mag_db(Response::High24, w, reso));
+        }
+        Response::K2040 => (1.0, den4(w, k4)),
+        Response::LadderLp2 | Response::LadderBp2 | Response::LadderBp4 | Response::LadderHp4 => {
+            let (m, n) = match r {
+                Response::LadderLp2 => (M::Lp12, (1.0 + w2) * (1.0 + w2)),
+                Response::LadderBp2 => (M::Bp12, w2 * (1.0 + w2) * (1.0 + w2)),
+                Response::LadderBp4 => (M::Bp24, w2 * w2),
+                _ => (M::Hp24, w2 * w2 * w2 * w2),
+            };
+            let g = ladder::mode_gain(m, k4);
+            (g * g * n, den4(w, k4))
+        }
+        Response::Notch | Response::Notch2x | Response::DoubleNotch => return 0.0,
+    };
+    // A ring at the onset is off the plot, not infinite.
+    10.0 * libm::log10f(num.max(1e-12) / den.max(1e-6))
+}
+
+/// The curve's y at column `t` (0..1 across the plot) for `cutoff` and
+/// `reso`. The plot is linear in Hz, so k × FREQ sits at k × `cutoff`; the
+/// transfer-function responses are drawn at their real gain, 2.04 px a dB
+/// below the pass line, and clamp at the plot's edges. The notches stay
+/// schematic: they dip where they cut.
 pub fn response_y(t: f32, cutoff: f32, reso: f32, r: Response) -> i32 {
-    let low = filter_y(t, cutoff, reso);
-    let high = filter_y(2.0 * cutoff - t, cutoff, reso);
     let span = (PLOT_BASE - FILTER_PASS_Y) as f32;
     let peak_h = (FILTER_PASS_Y - PLOT_TOP) as f32;
     // `h` px down at FREQ (up if negative), in a notch's shape.
     let bump = |h: f32| h * dip(t, cutoff);
     let y = match r {
-        Response::Low => return low,
-        Response::High => return high,
-        Response::Band => return low.max(high),
-        // The roll-off below the pass line halved: 6 dB, not 12.
-        Response::Lp1 => {
-            let d = low - FILTER_PASS_Y;
-            return FILTER_PASS_Y + if d > 0 { d / 2 } else { d };
-        }
         Response::Notch => FILTER_PASS_Y as f32 + span * dip(t, cutoff),
         Response::Notch2x => {
             // Q 0 dips 8.6 dB at FREQ; the treble is drawn a quarter down.
@@ -183,32 +226,11 @@ pub fn response_y(t: f32, cutoff: f32, reso: f32, r: Response) -> i32 {
             let notch = dip(t, 2.0 * cutoff);
             FILTER_PASS_Y as f32 + treble + bump(at_freq) + (span - treble) * notch
         }
-        // The bass loss in dB, on the low-pass's shape; the peak still rises.
-        // LADDER's LP2 also loses its mode gain; its band-passes ease from
-        // 0 dB at RES 0 to LP4's loss at the onset. One `log10f`.
-        Response::K2040 | Response::LadderLp2 | Response::LadderBand => {
-            let k = crate::dsp::filter::k2040::k2040_k(reso);
-            let (base, loss, ease) = match r {
-                Response::LadderLp2 => {
-                    let g = crate::dsp::filter::ladder::mode_gain(
-                        crate::dsp::filter::FilterMode::Lp12,
-                        k,
-                    );
-                    (low, (1.0 + k) / g, 1.0)
-                }
-                Response::LadderBand => (
-                    low.max(high),
-                    1.0 + k,
-                    crate::dsp::clampf(k * 0.25, 0.0, 1.0),
-                ),
-                _ => (low, 1.0 + k, 1.0),
-            };
-            base as f32 + ease * 20.0 * libm::log10f(loss) * PX_PER_DB
-        }
         Response::DoubleNotch => {
             let n = dip(t, 0.414 * cutoff).max(dip(t, 2.414 * cutoff));
             FILTER_PASS_Y as f32 - bump(peak_h * reso) * (1.0 - n) + span * n
         }
+        _ => FILTER_PASS_Y as f32 - mag_db(r, t / cutoff.max(MIN_CUTOFF), reso) * PX_PER_DB,
     };
     (y as i32).clamp(PLOT_TOP, PLOT_BASE)
 }

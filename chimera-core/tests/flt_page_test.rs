@@ -296,7 +296,7 @@ fn an_absent_route_knob_shows_a_dash() {
         &mut want,
         a(1),
         a(2),
-        viz::Response::Low,
+        viz::Response::Low24,
         Some((label, "--")),
     );
     assert!(

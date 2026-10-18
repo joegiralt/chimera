@@ -55,7 +55,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: MODE reads LP4, CLEAN's label for LP24 (ADR 0096); then
     // TYPE live with two kinds (Task 8); then CLEAN's Cascadia words FREQ,
     // Q, FM1, FM2 (Task 12): was 0x032b329ca06df69b.
-    ("bigviz_filter", 0x5a832bd651e51efe),
+    // Re-recorded (#574): the filter curve is the real response.
+    ("bigviz_filter", 0x06e0d835d9feaeca),
     // Re-recorded: MODE reads HP4, CLEAN's label for HP24 (ADR 0096); then
     // LEVEL 64 in DRIVE's cell (Task 6); then FLT › MOD's six cells, FM3
     // turned, its delete hint showing (Task 12): was 0xf6e7d94448ca7888.
@@ -65,25 +66,28 @@ const GOLDENS: &[(&str, u64)] = &[
     // dimmed and VOICE EXP, DIRTY's NOTCH1 at FREQ (its own MODE names).
     ("flt_clean", 0x48ad43f82d53c3b8),
     ("flt_mod_clean", 0xa8e1c2139dc9d441),
-    ("flt_2040", 0x45bf4079e38e3316),
+    ("flt_2040", 0xc6be3829db70f923),
     ("flt_mod_2040", 0x739059e65565d859),
     ("flt_mod_2040_exp", 0xa75e45413d0f33fe),
     ("flt_dirty", 0x2fd9a7df881017c9),
     ("flt_mod_dirty", 0x52a872af1ad9e63a),
-    ("flt_ladder", 0x533bf12f36283be5),
+    ("flt_ladder", 0x2b883c72e0e90927),
+    // New (#574): the peak at its real height, 2040 RES 0.3 and LADDER RES 0.
+    ("flt_2040_res_30", 0xee19390b6bfaf97f),
+    ("flt_ladder_res_0", 0xff9f8d6fb429142b),
     ("flt_mod_ladder", 0x804291fcb121eca2),
     // The LEVEL LED at 0 (dark), ½ and 1: beside LEVEL, beside the 2040's
     // DRIVE and in FLT's viz corner (Task 17).
     ("flt_led_0", 0x5e725d1446b222da),
     ("flt_led_half", 0xdb0b393eaefa9987),
-    ("flt_led_full", 0x458fb02687f0911b),
+    ("flt_led_full", 0x10ee9c3bc9ddd9be),
     // FM3 IN on LFO 2, QM IN on OP 6 (Task 17).
     ("flt_mod_repatched", 0xd0193d60eed2fa02),
     // THEME's PAGES ROW (ADR 0145): every other screen is recorded under
     // STACK (`screen::ui_for`). FLT's two pages, RES's three, MOD at E2
     // with `>`, OSC at D1R with both arrows and at OP6 with `<`, DRV bare.
     // Re-recorded: the row's pages in full words (`ROW_WORDS`).
-    ("row_flt", 0xafb54bf210453ad0),
+    ("row_flt", 0xd062924852dbabb5),
     ("row_res", 0x92503689734f4ddc),
     ("row_mod", 0x1db005ea4ea974e2),
     ("row_osc_mid", 0x9b2c7a9fd24e3120),
