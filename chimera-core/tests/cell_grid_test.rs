@@ -298,3 +298,90 @@ fn readouts_show_the_target_through_full_and_dirty_renders() {
         assert!(!exact || full.px == want.px, "{case}: readout lags");
     }
 }
+
+/// The bands a dirty render flushes now, on a persistent `fb`.
+fn flushed(ui: &mut UiState, fb: &mut Fb) -> Vec<(u16, u16)> {
+    let out = ui.render_dirty_with_scope(fb, &PerfStats::zero(), &scope_fixture());
+    out.into_iter().filter(|&(a, b)| a != b).collect()
+}
+
+/// The text keys follow what is printed (#559): a target move below the
+/// display resolution dirties nothing, a change in the number dirties the
+/// focus band and the cells.
+#[test]
+fn a_cell_page_redraws_on_the_printed_number_only() {
+    let mut ui = ui_for("algo_level");
+    feed(&mut ui, Input::turn(EncoderId::C, 1));
+    settle(&mut ui);
+    let mut fb = Fb::new();
+    flushed(&mut ui, &mut fb);
+    assert!(flushed(&mut ui, &mut fb).is_empty());
+    let v = ui.renderer.anim[2].target();
+    ui.renderer.anim[2].set_target(v + 0.0002);
+    assert_eq!(
+        flushed(&mut ui, &mut fb),
+        [],
+        "below the display resolution"
+    );
+    ui.renderer.anim[2].set_target(if v > 0.5 { v - 0.1 } else { v + 0.1 });
+    assert_eq!(flushed(&mut ui, &mut fb), [(28, 118), (186, 266)]);
+}
+
+/// The same on the matrix: its grid and route readout key on the amount as
+/// printed, and the readout's words follow the target at once.
+#[test]
+fn the_matrix_redraws_on_the_printed_amount_only() {
+    use chimera_core::ui::renderer::{MATRIX_AMOUNT_SLOT as SLOT, amount_of, amount_value};
+    let mut ui = ui_for("mod_matrix");
+    let mut fb = Fb::new();
+    flushed(&mut ui, &mut fb);
+    assert!(flushed(&mut ui, &mut fb).is_empty());
+    let now = amount_of(ui.renderer.anim[SLOT].target());
+    let v = amount_value(now);
+    assert_eq!(amount_of(v + 0.0005), now);
+    ui.renderer.anim[SLOT].set_target(v + 0.0005);
+    assert_eq!(
+        flushed(&mut ui, &mut fb),
+        [],
+        "below the display resolution"
+    );
+    let rest = {
+        let mut r = ui_for("mod_matrix");
+        feed(&mut r, Input::turn(EncoderId::E, 1));
+        settle(&mut r);
+        r
+    };
+    ui.renderer.anim[SLOT].set_target(amount_value(now + 1));
+    let bands = flushed(&mut ui, &mut fb);
+    assert!(bands.len() >= 2, "readout and grid redraw: {bands:?}");
+    // The readout is the settled one's, with the amount still easing.
+    let (mut want, y) = (Fb::new(), bands[0]);
+    rest.render_with_scope(&mut want, &PerfStats::zero(), &scope_fixture());
+    let rows = |f: &Fb| f.px[y.0 as usize * W..y.1 as usize * W].to_vec();
+    assert!(rows(&fb) == rows(&want), "route readout lags");
+}
+
+/// A slow LFO on a page: the viz band redraws only on frames where what it
+/// shows moved, never each frame by the bits of a target.
+#[test]
+fn a_slow_lfo_redraws_only_when_the_display_moves() {
+    let mut ui = ui_for("mod_matrix");
+    feed(&mut ui, Input::press(ButtonId::Minus));
+    feed(&mut ui, Input::press(ButtonId::Minus));
+    let (mut fb, mut redraws, mut moved) = (Fb::new(), 0, 0);
+    flushed(&mut ui, &mut fb);
+    let shown = |ui: &UiState| {
+        let a = &ui.renderer.anim;
+        (0..6)
+            .map(|i| chimera_core::ui::region::quantize(a[i].current()))
+            .collect::<Vec<_>>()
+    };
+    for _ in 0..40 {
+        let before = shown(&ui);
+        ui.update(UiTick::for_test());
+        moved += (shown(&ui) != before) as u32;
+        redraws += !flushed(&mut ui, &mut fb).is_empty() as u32;
+    }
+    assert!(moved > 0, "the LFO moves the page");
+    assert!(redraws <= moved, "{redraws} redraws for {moved} moves");
+}

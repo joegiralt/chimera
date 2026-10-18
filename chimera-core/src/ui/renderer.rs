@@ -534,10 +534,9 @@ impl Renderer {
                 };
                 let live = f.focus as u32 | gr << 8 | led_key(f) << 16;
                 // The readout's text follows the target, not the eased value.
-                let target = self.anim[f.focus].target().to_bits();
                 (
                     region::quantize_values(&self.anim),
-                    region::fold_targets(live.into(), &[target]),
+                    region::fold_keys(live.into(), &[self.text_key(f, f.focus)]),
                 )
             }
             PageLayout::Matrix => ([0; 6], 0),
@@ -663,6 +662,21 @@ impl Renderer {
     /// What an ORBIT viz draws, for its region's key; 0 on any other.
     pub fn orbit_viz_key(&self, f: &Frame) -> u32 {
         orbit::viz_key(f.def, &f.orbit, f.ctx.ring, self.orbit_cursor.current())
+    }
+
+    /// A hash of slot `i`'s printed text at its target: a move below the
+    /// display resolution leaves it, a change in the number changes it.
+    pub fn text_key(&self, f: &Frame, i: usize) -> u32 {
+        if view::view(f.def, i, &f.ctx) == View::Empty {
+            return 0;
+        }
+        let text = value_text(f, i, self.anim[i].target());
+        region::settings_key(&[text.as_str().as_bytes()])
+    }
+
+    /// The matrix amount as printed (the target's `amount_of`).
+    pub fn amount_key(&self) -> u32 {
+        amount_of(self.anim[MATRIX_AMOUNT_SLOT].target()) as u8 as u32
     }
 
     /// The focused slot's gauge, by its glyph; ORBIT's own where it reads
