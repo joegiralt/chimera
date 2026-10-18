@@ -320,8 +320,8 @@ pub fn orphan_words(name: SoundName, cost: Cost) -> Line {
     }
 }
 
-/// Encoder A moves the cursor, clamped to the list; the scroll follows it
-/// on screen. EDIT's load, MIX+EDIT's save, MIX+MINUS's clear and every
+/// Any encoder but B (the tabs') moves the cursor, clamped to the list; the
+/// scroll follows it on screen. EDIT's load, MIX+EDIT's save, MIX+MINUS's clear and every
 /// key's way out are `UiState`'s.
 pub fn input(controls: &impl Controls, b: Browse) -> Browse {
     let cursor = moved(controls, b.cursor());
@@ -338,9 +338,9 @@ pub fn input_library(controls: &impl Controls, b: Browse, rows: usize) -> Browse
     b.lib_at(moved(controls, b.lib_cursor()), rows)
 }
 
-/// `cursor` moved by encoder A, not below 0.
+/// `cursor` moved by any encoder but B, not below 0.
 fn moved(controls: &impl Controls, cursor: usize) -> usize {
-    let delta = i32::from(controls.encoder_delta(EncoderId::A));
+    let delta = i32::from(super::list_turn(controls, &[EncoderId::B]));
     (cursor as i32 + delta).max(0) as usize
 }
 

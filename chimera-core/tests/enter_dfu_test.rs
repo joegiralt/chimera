@@ -84,7 +84,9 @@ fn enter_dfu_gives_one_yes() {
     let mut ui = Box::new(UiState::new());
     let mut sys = Sys::new();
     ask(&mut ui);
-    tap(&mut ui, ButtonId::Seq); // the first pill: ENTER DFU
+    assert_eq!(ui.prompt_pick(), Some(1), "opens on CANCEL");
+    feed(&mut ui, Input::turn(EncoderId::A, -1)); // ENTER DFU
+    tap(&mut ui, ButtonId::Edit);
     assert!(sys.take(&mut ui).is_some());
     assert!(sys.take(&mut ui).is_none(), "taken once");
     assert_eq!(ui.prompt_kind_for_test(), None);
@@ -95,11 +97,13 @@ fn cancel_and_menu_give_none() {
     let mut ui = Box::new(UiState::new());
     let mut sys = Sys::new();
     ask(&mut ui);
-    feed(&mut ui, Input::turn(EncoderId::A, 1)); // CANCEL
-    tap(&mut ui, ButtonId::Seq);
+    tap(&mut ui, ButtonId::Edit); // opens on CANCEL
     assert!(sys.take(&mut ui).is_none());
     ask(&mut ui);
     tap(&mut ui, ButtonId::Menu);
+    assert!(sys.take(&mut ui).is_none());
+    ask(&mut ui);
+    tap(&mut ui, ButtonId::Seq);
     assert!(sys.take(&mut ui).is_none());
     assert_eq!(ui.prompt_kind_for_test(), None);
 }
@@ -124,7 +128,8 @@ fn the_theme_is_saved_before_the_restart() {
     sys.frame(&mut ui);
     ui.set_theme(t);
     sys.frame(&mut ui);
-    tap(&mut ui, ButtonId::Seq);
+    feed(&mut ui, Input::turn(EncoderId::A, -1)); // ENTER DFU
+    tap(&mut ui, ButtonId::Edit);
     assert!(ui.in_settings(), "still in SETTINGS: no exit sync ran");
     assert!(sys.take(&mut ui).is_some());
     let (_, after, _) = SystemSync::boot(&mut Card::new(), &mut sys.s);

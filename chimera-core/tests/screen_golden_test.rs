@@ -139,44 +139,44 @@ const GOLDENS: &[(&str, u64)] = &[
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it, the screens are as before.
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_part", 0xedd206cd4bd4a59c),
+    ("mixer_part", 0x44c46534e226f795),
     // mixer_sends, mixer_out_p2 re-recorded: the sends are the Sound's OUT block (ADR 0123).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_sends", 0xe04acfd7821d85d9),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay", 0xc697f9d549cfb496),
+    ("mixer_fx_delay", 0x06d33e7115588a5f),
     // TYPE first, the panel's units, and REV › MORE (reverb TYPEs T6);
     // the REV pages re-recorded for RATE's default and law (ADR 0121).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb", 0x3ec808729de360b0),
+    ("mixer_fx_reverb", 0xd7557d426c214e95),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_more", 0x145a2cb62391d1b0),
+    ("mixer_fx_reverb_more", 0xa08f460297c7feb5),
     // HALL (its SIZE cell PLATE at SIZE 0) and GATE, each page (T10);
     // MORE re-recorded: the SYNC cell, and GATE's synced LENGTH (T12).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_hall", 0x058c5f6f699d239a),
+    ("mixer_fx_reverb_hall", 0x78d84195c05b8343),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_hall_more", 0xec4efaf3961939cf),
+    ("mixer_fx_reverb_hall_more", 0xface8515437b5d36),
     // HALL re-recorded as fitted (T10b): its knobs, SPREAD, MORE 2's DENSITY.
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_hall_more2", 0x17b7da341482dcdf),
+    ("mixer_fx_reverb_hall_more2", 0x4ef7260ee50491b6),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate", 0x457bdc4f45472ddd),
+    ("mixer_fx_reverb_gate", 0xe8f501ae0b0c4710),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate_more", 0xbf0d24cd9f9f9355),
+    ("mixer_fx_reverb_gate_more", 0x52bb45fe10882418),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate_sync", 0x7cbc1d7b8d07ecac),
+    ("mixer_fx_reverb_gate_sync", 0x38fedd73166e5621),
     // BLOOM, each page (T11).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_bloom", 0x672dfcd796a47f59),
+    ("mixer_fx_reverb_bloom", 0x7a431159e411a474),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_bloom_more", 0x16d5f020644e7a07),
+    ("mixer_fx_reverb_bloom_more", 0x95e21ecdcac11a0e),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_char", 0x7479f1fb3a9df4bc),
+    ("mixer_fx_delay_char", 0xd85a5c6e74ff99b1),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master", 0x56a92de14c3c7d2f),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master_level", 0xe699d6651832774d),
+    ("mixer_master_level", 0x6fc81b19f9527540),
     #[cfg(feature = "master-tape")]
     ("mixer_part", 0x6c62b07122b423b6),
     #[cfg(feature = "master-tape")]
@@ -246,7 +246,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("library_newer", 0x54415a7d9a958936),
     ("library_wont_fit", 0x24494e0f831f3bab),
     ("library_pool_full", 0x950a8303f1cef0f3),
-    ("library_naming", 0xab3925136bf27a0f),
+    ("library_naming", 0xa234ea336d54efbf),
     // The FACTORY tab: a row's description on line 2, the set's build on
     // line 3; empty, no card, and a stray TAPE file greyed COMING SOON.
     // Re-recorded on the merge: the pool meter at the formant cost.
@@ -274,8 +274,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // Slot 3 written: MODIFIED, as ORBIT is in the project's CRC (Task 18).
     ("settings_orbit_save_to", 0xa4d2405ea9f09bf6),
     ("settings_load", 0x34b0bd576d341497),
-    ("settings_prompt_load", 0xc47d45b862dea1e3),
-    ("settings_naming", 0xc4298c7a6a0c5b5a),
+    ("settings_prompt_load", 0xfb661eb8bbfd7b2b),
+    ("settings_naming", 0x39679c2d5eca087a),
     // Every ORBIT page again for Task 16: the map gains SCN.
     // ORBIT's RHYTHM, CHRD and CUSTOM (plan Task 9); Task 10's header,
     // `SCENE n`, and the beat dot on the playing ones.

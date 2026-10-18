@@ -1613,7 +1613,12 @@ impl UiState {
         if pressed(ButtonId::Edit) && !edit_part {
             push(NavKey::Edit);
         }
-        let a = c.encoder_delta(EncoderId::A);
+        #[cfg(feature = "midi-map")]
+        let mapping = self.screen() == Some(Screen::MidiMap);
+        #[cfg(not(feature = "midi-map"))]
+        let mapping = false;
+        // MIDI MAP's B, C and D edit the row under the bar.
+        let a = list_turn(c, if mapping { &MAP_EDITS } else { &[] });
         let on_list = self.loc.settings().is_some_and(|s| s.at_leaf().is_none());
         if on_list && a != 0 {
             push(NavKey::Bar(a));
@@ -1682,6 +1687,13 @@ impl UiState {
     /// Whether a prompt is open.
     pub fn prompt_open(&self) -> bool {
         self.prompt().is_some()
+    }
+
+    /// The highlighted pill of an open prompt.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn prompt_pick(&self) -> Option<usize> {
+        self.prompt().map(|a| a.with_view(|v| v.picked()))
     }
 
     fn prompt(&self) -> Option<&Ask> {
@@ -3246,6 +3258,7 @@ impl UiState {
                     &[self.renderer.text_key(f, f.focus)],
                 ),
                 f.hints,
+                matches!(f.head, Head::Mix(_)),
             )
             .animated(glyph::anim_key(
                 shown.is_some_and(|g| g.animates()),
@@ -3442,8 +3455,12 @@ impl UiState {
                     && data[i] != r.prev_data
                     && data[i].without_anim() == r.prev_data.without_anim()
                     && let Some(gauge) = shown
-                    && let Some(rows) =
-                        renderer::Renderer::redraw_gauge(display, |d| d.pixel_buffer(), gauge)
+                    && let Some(rows) = renderer::Renderer::redraw_gauge(
+                        display,
+                        |d| d.pixel_buffer(),
+                        gauge,
+                        renderer::Renderer::focus_hint(&f),
+                    )
                 {
                     flush_list[flush_count] = rows;
                     flush_count += 1;
@@ -3497,6 +3514,28 @@ fn part_key(c: &impl Controls) -> bool {
         && PART_BUTTONS
             .iter()
             .any(|&b| c.button_state(b) == ButtonState::Pressed)
+}
+
+/// MIDI MAP's value encoders: CC, MIN, MAX.
+#[cfg(feature = "midi-map")]
+const MAP_EDITS: [EncoderId; 3] = [EncoderId::B, EncoderId::C, EncoderId::D];
+#[cfg(not(feature = "midi-map"))]
+const MAP_EDITS: [EncoderId; 0] = [];
+
+/// A list's bar move this frame: the biggest turn among the encoders not
+/// in `taken` (the first on a tie), so two brushed together move it once.
+pub(crate) fn list_turn(c: &impl Controls, taken: &[EncoderId]) -> i8 {
+    ALL_ENCODERS
+        .iter()
+        .filter(|e| !taken.contains(e))
+        .map(|&e| c.encoder_delta(e))
+        .fold(0i8, |m, d| {
+            if d.unsigned_abs() > m.unsigned_abs() {
+                d
+            } else {
+                m
+            }
+        })
 }
 
 /// An encoder moved this frame.
