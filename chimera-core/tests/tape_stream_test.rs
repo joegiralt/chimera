@@ -534,7 +534,16 @@ fn span_reads_stay_in_bounds() {
             assert!(b.iter().all(|y| y.is_finite()), "run {run}: {p:?}");
             st.now += 1;
         }
-        assert_eq!(st.card.stats.unplanned.load(Ordering::Relaxed), 0, "run {run}");
+        assert_eq!(
+            st.card.stats.unplanned.load(Ordering::Relaxed),
+            0,
+            "run {run}"
+        );
+        assert_eq!(
+            st.card.stats.cold_loud.load(Ordering::Relaxed),
+            0,
+            "run {run}"
+        );
     }
 }
 
@@ -747,6 +756,7 @@ fn streamed_xfade_stops_at_what_the_loop_head_holds() {
     assert_eq!(stats.cold.load(Ordering::Relaxed), 0, "every wrap warm");
     assert_eq!(stats.underruns.load(Ordering::Relaxed), 0);
     assert_eq!(stats.unplanned.load(Ordering::Relaxed), 0);
+    assert_eq!(stats.cold_loud.load(Ordering::Relaxed), 0);
 }
 
 /// A loop moved a little earlier, its landing still in the loop head but

@@ -129,6 +129,30 @@ impl Ratio {
     }
 }
 
+/// A read's step: source frames an output sample, in `MIN..=MAX`, so a
+/// head never stands still and no read outruns what its cursor plans for.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct Inc(f32);
+
+impl Inc {
+    /// Four octaves over a 48 kHz source's own speed.
+    pub const MAX: Inc = Inc(16.0);
+    pub const MIN: Inc = Inc(f32::EPSILON);
+
+    /// Clamped into range; NaN is `MIN`.
+    pub fn new(x: f32) -> Inc {
+        if x > Self::MIN.0 {
+            Inc(x.min(Self::MAX.0))
+        } else {
+            Self::MIN
+        }
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+}
+
 /// A slot's fill generation, mod 64.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Generation(u8);

@@ -23,7 +23,7 @@ use super::layout::{CHUNK_BYTES, CHUNK_FRAMES, ChunkIdx, RAW_CHUNK_BYTES};
 use super::port::StreamPort;
 use super::ring::{AudioTurn, GUARD_FRAMES, Guard, Ready, SLOTS};
 use super::slot::SlotState;
-use super::units::{AudioBlocks, Frames, Generation, SlotIdx};
+use super::units::{AudioBlocks, Frames, Generation, Inc, SlotIdx};
 use crate::project::SourceId;
 use crate::voice_alloc::VoiceIdx;
 
@@ -32,7 +32,7 @@ pub const DROP_FADE: Frames = Frames::new(144);
 /// Quiet's fade out, in output samples.
 pub const QUIET_FADE: Frames = Frames::new(480);
 /// The fastest read planned for, source frames an output sample.
-pub const MAX_INC: f32 = 16.0;
+const MAX_INC: f32 = Inc::MAX.get();
 /// Admission's bill (`admit::bill`) for a read at 1 frame a sample: 1.5 B
 /// a frame, 9 raw blocks a chunk.
 const BILL_AT_ONE: u64 =
@@ -87,9 +87,7 @@ pub enum Flow {
     Head(HeadIdx),
     Ring(SlotIdx),
     /// Out of held frames: silent, tape time running on.
-    Starved {
-        since: AudioBlocks,
-    },
+    Starved,
     /// A write's quiet or a card fault: fading to silence, no wants, tape
     /// time running on; cold once it ends.
     Quiet,
@@ -137,13 +135,13 @@ pub struct Plan {
     n: u8,
     pub fade: FadeCmd,
     /// The note's fastest read: the deck caps each sample's step at it.
-    pub inc_max: f32,
+    pub inc_max: Inc,
 }
 
 impl Plan {
     const NONE: (SpanSrc, Range<u32>) = (SpanSrc::Head(HeadIdx::START), 0..0);
 
-    fn silent(fade: FadeCmd, inc_max: f32) -> Plan {
+    fn silent(fade: FadeCmd, inc_max: Inc) -> Plan {
         Plan {
             runs: [Self::NONE; 2],
             n: 0,
@@ -297,15 +295,6 @@ fn flow_of(src: SpanSrc) -> Flow {
     }
 }
 
-/// `inc_max`, finite and inside `0..=MAX_INC`.
-fn clamp_inc(inc_max: f32) -> f32 {
-    if inc_max > 0.0 {
-        inc_max.min(MAX_INC)
-    } else {
-        0.0
-    }
-}
-
 /// A write's quiet or a card fault: the fade's step down (a fault's over
 /// `DROP_FADE`, the quiet's over `QUIET_FADE`); `None` reading freely.
 fn hush(bus: &CardBus) -> Option<i16> {
@@ -333,9 +322,9 @@ pub struct Cursor {
     head: Option<RamHead>,
     gain: Fade,
     state: Flow,
-    /// The note's fastest read, clamped: every plan and deadline uses it,
-    /// so a fade planned in one block holds through the next.
-    inc: f32,
+    /// The note's fastest read: every plan and deadline uses it, so a
+    /// fade planned in one block holds through the next.
+    inc: Inc,
 }
 
 impl Default for Cursor {
@@ -352,7 +341,7 @@ impl Cursor {
             head: None,
             gain: Fade::SILENT,
             state: Flow::Cold,
-            inc: 0.0,
+            inc: Inc::MIN,
         }
     }
 
@@ -389,7 +378,7 @@ impl Cursor {
     pub fn start(
         &mut self,
         pos: u32,
-        inc_max: f32,
+        inc_max: Inc,
         head: Option<RamHead>,
         src: Streamed,
         port: &mut StreamPort<'_, '_>,
@@ -414,7 +403,7 @@ impl Cursor {
                 self.gain = Fade::SILENT;
             }
         }
-        self.inc = clamp_inc(inc_max);
+        self.inc = inc_max;
         self.tend(pos, true, port);
     }
 
@@ -425,7 +414,7 @@ impl Cursor {
     pub fn jump(
         &mut self,
         pos: u32,
-        inc_max: f32,
+        inc_max: Inc,
         head: Option<RamHead>,
         port: &mut StreamPort<'_, '_>,
     ) {
@@ -438,17 +427,21 @@ impl Cursor {
         if matches!(self.state, Flow::Head(_)) {
             let step = if level < FULL { DROP_STEP } else { 0 };
             self.gain = Fade { level, step };
+        } else if level > 0 {
+            port.stats.cold_loud.fetch_add(1, Ordering::Relaxed);
         }
     }
 
     /// The note may read faster from here (a glide, #585): never slower.
-    pub fn raise(&mut self, inc_max: f32) {
-        self.inc = self.inc.max(clamp_inc(inc_max));
+    pub fn raise(&mut self, inc_max: Inc) {
+        if inc_max > self.inc {
+            self.inc = inc_max;
+        }
     }
 
     /// Once a block, before the model renders from `pos`.
     pub fn plan(&mut self, pos: f64, port: &mut StreamPort<'_, '_>) -> Plan {
-        let inc = self.inc;
+        let inc = self.inc.get();
         // `as` saturates (NaN to 0): no read past `u32`.
         let i0 = pos as u32;
         let i_last = (pos + f64::from(inc * BLOCK as f32)) as u32;
@@ -476,7 +469,7 @@ impl Cursor {
             for s in SlotIdx::ALL {
                 port.turn.cancel(port.voice, s);
             }
-            return Plan::silent(FadeCmd::Hold, inc);
+            return Plan::silent(FadeCmd::Hold, self.inc);
         }
         self.tend(i0, self.state != Flow::Quiet, port);
 
@@ -489,7 +482,7 @@ impl Cursor {
             // Audible with nothing to read: a jump that skipped `start`.
             port.stats.unplanned.fetch_add(1, Ordering::Relaxed);
         }
-        let mut plan = Plan::silent(FadeCmd::Hold, inc);
+        let mut plan = Plan::silent(FadeCmd::Hold, self.inc);
         if let Some(w) = &walk {
             plan.read(w, i_last);
         }
@@ -497,15 +490,15 @@ impl Cursor {
             (Flow::Head(_) | Flow::Ring(_) | Flow::Quiet, true) => FadeCmd::Hold,
             (Flow::Head(_) | Flow::Ring(_), false) => {
                 port.stats.underruns.fetch_add(1, Ordering::Relaxed);
-                self.state = Flow::Starved { since: port.now };
+                self.state = Flow::Starved;
                 self.gain.step = -DROP_STEP;
                 FadeCmd::Out { end_frame }
             }
-            (Flow::Starved { .. } | Flow::Cold, true) => {
+            (Flow::Starved | Flow::Cold, true) => {
                 self.gain.step = DROP_STEP;
                 FadeCmd::In
             }
-            (Flow::Starved { .. } | Flow::Cold | Flow::Quiet, false) => {
+            (Flow::Starved | Flow::Cold | Flow::Quiet, false) => {
                 self.gain.step = self.gain.step.min(-DROP_STEP);
                 if self.gain.level > 0 {
                     FadeCmd::Out { end_frame }
@@ -634,7 +627,7 @@ impl Cursor {
             need = need.max(head_span(h, self.file()).last.saturating_add(1));
         }
         let ahead = need.saturating_sub(i0) as f32;
-        let blocks = (ahead / (self.inc * BLOCK as f32).max(1.0)) as u32;
+        let blocks = (ahead / (self.inc.get() * BLOCK as f32).max(1.0)) as u32;
         port.now.after(blocks.min(MAX_AHEAD))
     }
 

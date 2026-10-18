@@ -69,6 +69,7 @@ use crate::hw::Cost;
 use crate::modulation::ModState;
 use crate::project::SourceId;
 use crate::source_table::GateView;
+use crate::stream::admit::ReadRatio;
 #[cfg(feature = "tape")]
 use crate::stream::cursor::{Cursor, DROP_FADE, HeadIdx, Streamed};
 use crate::stream::port::StreamPort;
@@ -76,6 +77,7 @@ use crate::stream::port::StreamPort;
 use crate::stream::stage::xfade_max;
 #[cfg(feature = "tape")]
 use crate::stream::units::Frames;
+use crate::stream::units::Inc;
 use age::Age;
 use heads::{
     Bounds, Dir, Fade, Ghost, Head, Plan, Turn, Window, at, min_frames, plan, shortest,
@@ -131,8 +133,9 @@ pub const COST_STREAM: Cost = Cost(100);
 /// this many cents: the hysteresis' 0.35 to 0.715 step, ±6.2 st.
 pub const LEVEL_CENTS: f32 = 620.0;
 
-/// `inc`'s clamp: four octaves over a 48 kHz source's own speed.
-pub const INC_MAX: f32 = 16.0;
+/// `inc`'s clamp: four octaves over a 48 kHz source's own speed, the
+/// cursor's bound too.
+pub const INC_MAX: f32 = Inc::MAX.get();
 /// A note's first samples ramp from 0 (1 ms), so a START inside a waveform
 /// never steps.
 pub const NOTE_ON_RAMP: u32 = 48;
@@ -199,7 +202,7 @@ pub const fn streamed_cost(m: TapeModel, mode: PlayMode) -> Cost {
 /// the bend's range and wow; SLICE NOTE plays at ROOT. MOTION and WALK move
 /// PLAY's loop, never its speed, so they add nothing. A glide's reach is
 /// the caller's: it passes the note the glide can start from.
-pub fn ratio_max(p: &TapeEngineParams, note: u8, cents: f32, bend_cents: f32) -> f32 {
+pub fn ratio_max(p: &TapeEngineParams, note: u8, cents: f32, bend_cents: f32) -> ReadRatio {
     let root = if params::at_root(p) {
         f32::from(note) * 100.0
     } else {
@@ -548,9 +551,9 @@ pub struct TapeDeck {
     jumped: bool,
     /// The voice fades out before a wrap no head holds.
     ducked: bool,
-    /// The fastest step a sample: `INC_MAX`, or a streamed note's
+    /// The fastest step a sample: `Inc::MAX`, or a streamed note's
     /// `inc_max`, which its cursor plans for.
-    inc_cap: f32,
+    inc_cap: Inc,
     /// A streamed note's rate.
     stream_rate: u16,
     /// Blocks a gated note has waited on its moving source: tape time it
@@ -650,7 +653,7 @@ impl TapeDeck {
             streamed: false,
             jumped: false,
             ducked: false,
-            inc_cap: INC_MAX,
+            inc_cap: Inc::MAX,
             stream_rate: 0,
             waited: 0,
             #[cfg(any(test, feature = "test-support"))]
@@ -817,17 +820,13 @@ impl TapeDeck {
     }
 
     /// A streamed note's cap at read ratio `r`, frames a sample.
-    fn cap_at(&self, r: f32, sample_rate: u32) -> f32 {
-        clampf(
-            f32::from(self.stream_rate) / sample_rate as f32 * r,
-            f32::EPSILON,
-            INC_MAX,
-        )
+    fn cap_at(&self, r: ReadRatio, sample_rate: u32) -> Inc {
+        Inc::new(f32::from(self.stream_rate) / sample_rate as f32 * r.get())
     }
 
     /// An unbilled port's ratio (the bench's, the deck tests'): `note` at
     /// its pitch, and wow. SLICE NOTE plays at ROOT.
-    fn own_ratio(&self, note: u8) -> f32 {
+    fn own_ratio(&self, note: u8) -> ReadRatio {
         let root = if self.at_root {
             f32::from(note) * 100.0
         } else {
@@ -1060,7 +1059,7 @@ impl TapeDeck {
         let plan = self
             .cursor
             .plan(f64::from(h.whole()) + f64::from(h.frac()), port);
-        self.inc_cap = plan.inc_max.max(f32::EPSILON);
+        self.inc_cap = plan.inc_max;
         let mut reads = Reads::streamed(&plan, &row, &self.cursor, &*port.turn, port.voice);
         if self.lp() && !self.lands(&row) {
             // The loop moved off its head (POSITION, SIZE, WALK): the fade's
@@ -1068,7 +1067,7 @@ impl TapeDeck {
             // wrap, which starts cold (spec § 5.7: drop-outs fade).
             reads.second = row.silent();
             let left = self.bounds.le.saturating_sub(h.whole()) as f32;
-            if left <= self.inc_cap * (BLOCK_SIZE + DROP_FADE.get() as usize) as f32 {
+            if left <= self.inc_cap.get() * (BLOCK_SIZE + DROP_FADE.get() as usize) as f32 {
                 self.cursor.duck(true);
                 self.ducked = true;
             }
@@ -1132,7 +1131,7 @@ impl TapeDeck {
         let wants = f32::from(self.stream_rate) / SAMPLE_RATE as f32
             * exp2(cents / 1_200.0)
             * self.slide.value();
-        (self.active && self.streamed).then_some((wants, self.inc_cap))
+        (self.active && self.streamed).then_some((wants, self.inc_cap.get()))
     }
 
     /// A glide steal's ratio now, 1 at rest: for the tests.
@@ -1163,7 +1162,7 @@ impl TapeDeck {
         sample_rate: u32,
     ) {
         let (frames, rate) = (v.frames(), v.desc().rate);
-        (self.streamed, self.inc_cap) = (false, INC_MAX);
+        (self.streamed, self.inc_cap) = (false, Inc::MAX);
         self.model = p.model;
         self.mode = p.mode;
         self.at_root = params::at_root(p);
@@ -1693,7 +1692,7 @@ impl TapeDeck {
                 sample_rate,
             ) * self.slide.value(),
             f32::EPSILON,
-            self.inc_cap,
+            self.inc_cap.get(),
         )
     }
 

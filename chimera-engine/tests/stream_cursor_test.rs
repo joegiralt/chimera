@@ -9,7 +9,7 @@ use chimera_engine::stream::port::StreamPort;
 use chimera_engine::stream::ring::{AudioSide, CardSide, Rings, ThirdSlots};
 use chimera_engine::stream::slot::SlotState;
 use chimera_engine::stream::stats::StreamStats;
-use chimera_engine::stream::units::{AudioBlocks, Frames, SlotIdx};
+use chimera_engine::stream::units::{AudioBlocks, Frames, Inc, SlotIdx};
 use chimera_engine::voice_alloc::VoiceIdx;
 use chimera_hal::card_bus::CardBus;
 use chimera_hal::{BLOCK_SIZE, Ms};
@@ -108,7 +108,7 @@ impl Play<'_> {
 
     fn start_at(&mut self, pos: u32, inc_max: f32, head: Option<RamHead>) {
         self.pos = f64::from(pos);
-        self.with(|c, p| c.start(pos, inc_max, head, SRC, p));
+        self.with(|c, p| c.start(pos, Inc::new(inc_max), head, SRC, p));
     }
 
     /// Plans a block, then runs its samples at `inc`: each one's position
@@ -379,7 +379,7 @@ fn underrun_fades_out_ending_at_last_held_frame() {
         );
         assert!(gains[zero].0 <= f64::from(end_frame), "{inc}");
         assert!(gains[zero..].iter().all(|&(_, g)| g == 0.0));
-        assert!(matches!(p.cur.flow(), Flow::Starved { .. }));
+        assert!(matches!(p.cur.flow(), Flow::Starved));
         assert_eq!(underruns(&rig), 1);
     }
 }
@@ -452,7 +452,7 @@ fn starved_reasks_under_head_and_cancels_stale() {
         }
         other => panic!("{other:?}"),
     }
-    assert!(matches!(p.cur.flow(), Flow::Starved { .. }));
+    assert!(matches!(p.cur.flow(), Flow::Starved));
     assert_eq!(underruns(&rig), 1, "one drop-out, one count");
 }
 
@@ -576,7 +576,7 @@ fn a_jump_under_quiet_keeps_its_level() {
     }
     rig.bus.ask_quiet(Ms(0));
     let at = p.pos as u32;
-    p.with(|c, port| c.jump(at, 1.0, Some(HEAD), port));
+    p.with(|c, port| c.jump(at, Inc::new(1.0), Some(HEAD), port));
     let (_, gains) = p.block(1.0);
     let step = 1.0 / QUIET as f32;
     assert!((gains[0].1 - (1.0 - step)).abs() < 1e-4, "{}", gains[0].1);
@@ -636,6 +636,6 @@ fn a_start_names_its_source_on_the_ring() {
     p.start(0, None);
     assert_eq!(rig.rings.source(V), Some(SRC.id));
     assert!(!p.wanted().is_empty());
-    p.with(|c, port| c.jump(CF, 1.0, None, port));
+    p.with(|c, port| c.jump(CF, Inc::new(1.0), None, port));
     assert_eq!(rig.rings.source(V), Some(SRC.id));
 }

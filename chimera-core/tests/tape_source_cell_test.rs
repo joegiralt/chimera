@@ -773,8 +773,8 @@ fn assert_heads(rig: &Rig, src: &(SourceHead, Vec<u8>), want: &[HeadSpec]) {
         let (h, at) = t.get(i).unwrap();
         let o = 3 * (h.first() / 2) as usize;
         assert_eq!(
-            &held[at..at + h.bytes()],
-            &src.1[o..o + h.bytes()],
+            &held[at..at + h.byte_len()],
+            &src.1[o..o + h.byte_len()],
             "head {i}"
         );
     }
@@ -952,7 +952,7 @@ fn streamed_load_trusts_the_seal() {
     rig.load();
     assert_heads(&rig, &b, heads.as_slice());
     let read: u32 = rig.s.reads.iter().map(|r| r.1).sum();
-    let want = heads.as_slice()[0].bytes() as u32;
+    let want = heads.as_slice()[0].bytes().get();
     assert!(read <= 4_096 + want + 2 * 508, "read {read} of {size}");
     // A sample past the heads, damaged: never read, so it loads.
     let mut file = file_bytes(&b);

@@ -4,6 +4,7 @@
 //! cell's load and a project load's pass 2 both take this path.
 
 use chimera_hal::store::{FileRuns, RunsError, Store, StoreError};
+use chimera_hal::units::Bytes;
 
 use super::arena::Cost;
 use super::pool::StreamRefused;
@@ -17,6 +18,7 @@ use crate::storage::{
 };
 use crate::stream::admit::head_frames;
 use crate::stream::layout::StreamFile;
+use crate::stream::units::{Frames, Packing};
 use crate::stream::stage::{Heads, heads_for};
 
 /// How a card file loads for a Part (spec § 5.6).
@@ -213,16 +215,19 @@ impl StreamLoad {
         // The head the next bytes are in, and how far into it.
         let mut before = 0;
         for h in self.heads.as_slice() {
-            if self.at < before + h.bytes() {
+            if self.at < before + h.byte_len() {
                 let into = self.at - before;
-                let n = (h.bytes() - into).min(budget.max(3) / 3 * 3);
+                let n = (h.byte_len() - into).min(budget.max(3) / 3 * 3);
                 let out = &mut held[table + self.at..][..n];
-                let from = 3 * (h.first() / 2) + into as u32;
+                let from = Frames::new(h.first())
+                    .to_bytes(Packing::Twelve)
+                    .checked_add(Bytes::new(into as u32))
+                    .ok_or(gone)?;
                 read_packed_into(s, r, self.sref, from, out).map_err(StreamFail::Read)?;
                 self.at += n;
                 return Ok(None);
             }
-            before += h.bytes();
+            before += h.byte_len();
         }
         if let Some(id) = self.rehead {
             p.bump();

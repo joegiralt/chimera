@@ -651,7 +651,7 @@ fn streamed_plain_descriptor_round_trips() {
     assert_eq!(held.len(), at + 3 * 2_692 / 2 + 3 * 5_764 / 2);
     let t = head_table(&held).expect("a table");
     assert_eq!(t.iter().collect::<Vec<_>>(), heads);
-    assert_eq!(t.get(1), Some((heads[1], at + heads[0].bytes())));
+    assert_eq!(t.get(1), Some((heads[1], at + heads[0].byte_len())));
     assert!(
         head_table(&held[..held.len() - 1]).is_none(),
         "a head cut short"

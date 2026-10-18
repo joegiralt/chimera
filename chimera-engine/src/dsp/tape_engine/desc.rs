@@ -2,6 +2,10 @@
 //! start of `held`. Bank 1's with `bank2` (storage and the pool read it),
 //! as `read` re-exports it; `read`'s decode is bank 2's.
 
+use chimera_hal::units::Bytes;
+
+use crate::stream::units::{Frames, Packing};
+
 /// What a source holds: one sample, a transwave's frames, or TRON's zones.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -130,9 +134,14 @@ impl HeadSpec {
         self.end
     }
 
-    /// Its packed samples: two frames in three bytes.
-    pub const fn bytes(&self) -> usize {
-        3 * ((self.end - self.first) / 2) as usize
+    /// Its packed samples.
+    pub const fn bytes(&self) -> Bytes {
+        Frames::new(self.end - self.first).to_bytes(Packing::Twelve)
+    }
+
+    /// `bytes`, as an index into `held`.
+    pub const fn byte_len(&self) -> usize {
+        self.bytes().get() as usize
     }
 
     fn to_bytes(self) -> [u8; HEAD_ENTRY] {
@@ -154,7 +163,7 @@ pub const HEAD_ENTRY: usize = 8;
 /// A streamed `Plain`'s `held`: the descriptor, a `HEAD_ENTRY` a head,
 /// then each head's samples in turn.
 pub fn streamed_held_len(heads: &[HeadSpec]) -> usize {
-    DESC_LEN + HEAD_ENTRY * heads.len() + heads.iter().map(HeadSpec::bytes).sum::<usize>()
+    DESC_LEN + HEAD_ENTRY * heads.len() + heads.iter().map(HeadSpec::byte_len).sum::<usize>()
 }
 
 /// Writes `d` (`heads` set to their count) and the table into `out`;
@@ -197,7 +206,7 @@ impl HeadTable<'_> {
         let before: usize = self.entries[..i]
             .iter()
             .filter_map(HeadSpec::from_bytes)
-            .map(|h| h.bytes())
+            .map(|h| h.byte_len())
             .sum();
         Some((h, DESC_LEN + HEAD_ENTRY * self.len() + before))
     }
@@ -224,7 +233,7 @@ pub fn head_table_of(held: &[u8], d: Descriptor) -> Option<HeadTable<'_>> {
     // In `u64`: past any frames a table can name.
     let mut need = (DESC_LEN + HEAD_ENTRY * entries.len()) as u64;
     for e in entries {
-        need += HeadSpec::from_bytes(e)?.bytes() as u64;
+        need += u64::from(HeadSpec::from_bytes(e)?.bytes().get());
     }
     (held.len() as u64 >= need).then_some(HeadTable { entries })
 }

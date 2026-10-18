@@ -39,7 +39,7 @@ use crate::preset::{Part, Performance, Sound};
 use crate::project::{Loads, PartId, Project, SourceId};
 use crate::scope::ScopeWriter;
 use crate::source_table::{AudioToken, GateView};
-use crate::stream::admit::{Admit, Age, Bill, STREAM_BUDGET_BPS, admit};
+use crate::stream::admit::{Admit, Age, Bill, ReadRatio, STREAM_BUDGET_BPS, admit};
 use crate::stream::port::{CtxBase, NoPorts, Port, VoicePorts};
 use crate::stream::stats::StreamStats;
 use crate::tracked::Tracked;
@@ -306,7 +306,7 @@ struct Waiting {
 #[derive(Clone, Copy, Debug)]
 struct Paid {
     bill: Bill,
-    ratio: f32,
+    ratio: ReadRatio,
 }
 
 /// A voice's card stream, as admission sees it.
@@ -980,8 +980,8 @@ impl Instrument {
         if fault == CardFault::Read {
             return Admit::Refuse;
         }
-        let playing = self.streaming.iter().enumerate().filter_map(|(v, s)| {
-            let b = s.billed().filter(|_| !gone[v])?;
+        let playing = VoiceIdx::ALL.iter().zip(&self.streaming).filter_map(|(&v, s)| {
+            let b = s.billed().filter(|_| !gone[v.index()])?;
             Some((v, b, s.age))
         });
         admit(new, playing, STREAM_BUDGET_BPS)
@@ -998,10 +998,11 @@ impl Instrument {
         for _ in 0..=MAX_VOICES {
             let st = &self.streaming;
             let others = || {
-                st.iter()
-                    .enumerate()
-                    .filter(|&(w, _)| !gone[w])
-                    .filter_map(|(w, s)| Some((w, s.billed()?, s.age)))
+                VoiceIdx::ALL
+                    .iter()
+                    .zip(st)
+                    .filter(|&(w, _)| !gone[w.index()])
+                    .filter_map(|(&w, s)| Some((w, s.billed()?, s.age)))
             };
             let held = others()
                 .filter(|o| !o.2.released)
@@ -1009,12 +1010,12 @@ impl Instrument {
             let released = others().filter(|o| o.2.released);
             match admit(new, released, STREAM_BUDGET_BPS.saturating_sub(held)) {
                 Admit::Ok => return true,
-                Admit::Steal(w) if w < MAX_VOICES => {
-                    gone[w] = true;
-                    self.alloc.kill(w);
-                    self.shed(w);
+                Admit::Steal(w) => {
+                    gone[w.index()] = true;
+                    self.alloc.kill(w.index());
+                    self.shed(w.index());
                 }
-                _ => return false,
+                Admit::Refuse => return false,
             }
         }
         false
@@ -1130,12 +1131,12 @@ impl Instrument {
             ask[v] |= replaces;
             match self.admit_stream(new.bill, &ask, fault) {
                 Admit::Ok => return Some((v, Some(new))),
-                Admit::Steal(w) if w < MAX_VOICES => {
-                    gone[w] = true;
-                    self.alloc.kill(w);
-                    self.shed(w);
+                Admit::Steal(w) => {
+                    gone[w.index()] = true;
+                    self.alloc.kill(w.index());
+                    self.shed(w.index());
                 }
-                _ => break,
+                Admit::Refuse => break,
             }
         }
         self.alloc.refuse();

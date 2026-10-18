@@ -5,6 +5,7 @@ use core::cell::Cell;
 use chimera_hal::Ms;
 use chimera_hal::card_bus::{CardBus, CardFault};
 
+use super::admit::ReadRatio;
 use super::ring::{AudioSide, AudioTurn};
 use super::stats::StreamStats;
 use super::units::{AudioBlocks, Frames, SlotIdx};
@@ -31,7 +32,7 @@ pub struct StreamPort<'a, 's> {
     /// The read ratio admission pays for this voice (slice 1 § 5.5, #585):
     /// its cap. `None`: unbilled (the bench's and the deck tests' ports),
     /// the note's own speed and wow.
-    pub ratio_max: Option<f32>,
+    pub ratio_max: Option<ReadRatio>,
     /// Set by a cursor still audible under a quiet.
     pub loud: &'a Cell<bool>,
 }
@@ -76,7 +77,7 @@ pub struct CtxBase<'a> {
 pub enum Port {
     Off,
     /// `StreamPort::ratio_max`.
-    On(Option<f32>),
+    On(Option<ReadRatio>),
 }
 
 /// Each voice's port, a call at a time: `NoPorts` where no rings are

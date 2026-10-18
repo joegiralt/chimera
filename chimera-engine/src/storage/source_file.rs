@@ -788,13 +788,14 @@ impl ReadSink for HeadSink<'_> {
 /// `from`, read from the `SourceData` record holding it: a head, or a
 /// UI pass's share of one. Framing a record's tag and length don't match
 /// fails it (`Corrupt`), as does a file that ends first (`Truncated`).
-pub fn read_packed_into<S: Store>(
+pub fn read_packed_into<S: Store + ?Sized>(
     s: &mut S,
     r: &Ready,
     sref: SourceRef,
-    from: u32,
+    from: Bytes,
     out: &mut [u8],
 ) -> Result<(), SourceReadError> {
+    let from = from.get();
     let bad = |e| SourceReadError::Load(LoadError::File(e));
     let (off, len) = plain_data(sref).ok_or(bad(FileError::Bounds))?;
     let end = (from as u64) + out.len() as u64;
@@ -851,7 +852,7 @@ impl ReadSink for HeadOnly<'_> {
 
 /// The head of card file `stem`, `len` bytes long, from its first records:
 /// a streamed load's descriptor, read without the samples.
-pub fn read_source_head<S: Store>(
+pub fn read_source_head<S: Store + ?Sized>(
     s: &mut S,
     r: &Ready,
     stem: u32,

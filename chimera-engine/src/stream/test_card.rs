@@ -15,7 +15,7 @@ use super::port::StreamPort;
 use super::ring::{AudioTurn, CardSide, Claim, Rings};
 use super::serve::{ErrorStep, ReadError, read_failed};
 use super::stats::StreamStats;
-use super::units::{AudioBlocks, Frames};
+use super::units::{AudioBlocks, Frames, Packing};
 use crate::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, HeadSpec, Shape, streamed_held_len, write_head_table,
 };
@@ -117,11 +117,11 @@ impl<'r> TestCard<'r> {
         let mut held = alloc::vec![0; streamed_held_len(heads)];
         let mut at = write_head_table(d, heads, &mut held).expect("its length");
         for h in heads {
-            let o = 3 * (h.first() / 2) as usize;
+            let o = Frames::new(h.first()).to_bytes(Packing::Twelve).get() as usize;
             let src = self.samples.get(o..).unwrap_or(&[]);
-            let n = src.len().min(h.bytes());
+            let n = src.len().min(h.byte_len());
             held[at..at + n].copy_from_slice(&src[..n]);
-            at += h.bytes();
+            at += h.byte_len();
         }
         held
     }

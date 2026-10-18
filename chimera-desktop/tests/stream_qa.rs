@@ -31,6 +31,7 @@ use chimera_desktop::listen::write_wav;
 use chimera_desktop::store::DirStore;
 use chimera_hal::card_bus::{CardBus, CardFault};
 use chimera_hal::store::{Dir, FileName, Store, StoreError};
+use chimera_hal::units::Bytes;
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
@@ -76,9 +77,9 @@ fn streamed_row(head: &SourceHead, packed: &[u8], p: &TapeEngineParams) -> Optio
     for h in heads.as_slice() {
         let o = 3 * (h.first() / 2) as usize;
         let src = packed.get(o..).unwrap_or(&[]);
-        let n = src.len().min(h.bytes());
+        let n = src.len().min(h.byte_len());
         held[at..at + n].copy_from_slice(&src[..n]);
-        at += h.bytes();
+        at += h.byte_len();
     }
     Some(held)
 }
@@ -262,7 +263,8 @@ fn beds(card: &Path) -> Vec<(SourceHead, Vec<u8>, String)> {
             .run(&mut store, |s, r| {
                 let head = read_source_head(s, r, stem, len).map_err(|_| StoreError::Io)?;
                 let mut packed = vec![0; 3 * head.sref.frames.div_ceil(2) as usize];
-                read_packed_into(s, r, head.sref, 0, &mut packed).map_err(|_| StoreError::Io)?;
+                read_packed_into(s, r, head.sref, Bytes::new(0), &mut packed)
+                    .map_err(|_| StoreError::Io)?;
                 Ok::<_, StoreError>((head, packed))
             })
             .unwrap()

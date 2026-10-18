@@ -93,7 +93,7 @@ impl<'a> StreamRow<'a> {
     pub fn head_span(&self, idx: HeadIdx) -> Option<Span<'a>> {
         let (h, at) = self.table.get(idx.index())?;
         // `head_table` checked `held` holds every head's samples.
-        self.span(self.held.get(at..at + h.bytes())?, h.first())
+        self.span(self.held.get(at..at + h.byte_len())?, h.first())
     }
 
     /// A Ready slot's span: its chunk, and its guard's frames before it.

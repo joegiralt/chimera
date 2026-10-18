@@ -13,6 +13,10 @@ pub struct StreamStats {
     /// A tripwire, not the card: a cursor audible with nothing to read, a
     /// jump that skipped `start`. Card read faults are `card_faults`.
     pub unplanned: AtomicU32,
+    /// A tripwire for desktop QA: a jump that landed cold while the voice
+    /// was still audible. The deck's duck should have faded it first, so
+    /// each one may be a step.
+    pub cold_loud: AtomicU32,
     /// A held note's reach rose mid-note past what the card could admit:
     /// it plays on at its cap (#595).
     pub held_at_cap: AtomicU32,
@@ -37,6 +41,7 @@ impl StreamStats {
             underruns: AtomicU32::new(0),
             cold: AtomicU32::new(0),
             unplanned: AtomicU32::new(0),
+            cold_loud: AtomicU32::new(0),
             held_at_cap: AtomicU32::new(0),
             late_refused: AtomicU32::new(0),
             frame_errors: AtomicU32::new(0),
