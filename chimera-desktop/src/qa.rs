@@ -173,9 +173,9 @@ pub(crate) mod tests {
         d.hold(Key::M);
         let (q, _) = d.ui.prompt_words_for_test().expect("a prompt");
         assert_eq!(q.as_str(), "CARD CHANGED");
-        d.tap(Key::Up);
+        d.tap(Key::Down);
         assert_eq!(d.ui.naming().unwrap().text(), "DRIFT-010");
-        d.tap(Key::Up);
+        d.tap(Key::Down);
         let vol = d.store.mount().unwrap();
         assert_ne!(vol, old);
         assert_eq!(d.ui.project().meta().file().unwrap().vol(), vol);
@@ -197,10 +197,10 @@ pub(crate) mod tests {
         let (a, b) = (unique_root(), unique_root());
         let mut d = Desk::launch(a.clone());
         assert_eq!(d.boot_toast.as_deref(), Some("NEW PROJECT"));
-        // MENU held on NEW opens SAVE AS; SEQ (Up) takes the name.
+        // MENU held on NEW opens SAVE AS; EDIT (Down) takes the name.
         d.hold(Key::M);
         assert_eq!(d.ui.naming().unwrap().text(), "DRIFT-010");
-        d.tap(Key::Up);
+        d.tap(Key::Down);
         assert_eq!(d.toast().as_deref(), Some("SAVED"));
         while d.ui.in_settings() {
             d.tap(Key::M);

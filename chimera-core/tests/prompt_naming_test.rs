@@ -1,5 +1,5 @@
-//! The prompt panel and NAMING (settings spec § Screens): A picks, SEQ
-//! confirms and MENU cancels, both on release; B*n* drops either and acts.
+//! The prompt panel and NAMING (settings spec § Screens): A picks, EDIT
+//! confirms and MENU and SEQ cancel; B*n* drops either and acts.
 
 mod screen;
 
@@ -9,7 +9,7 @@ use chimera_core::params::EngineType;
 use chimera_core::project::{Line, PartFrom, PartId, PartSet, PartSource, SlotId, Subject};
 use chimera_core::storage::ProjectId;
 use chimera_core::ui::busy::ToastStep;
-use chimera_core::ui::hold::{HoldGates, Press, Presses};
+use chimera_core::ui::hold::{HoldGates, Presses};
 use chimera_core::ui::nav::{ListAt, Location};
 use chimera_core::ui::page::PageLayout;
 use chimera_core::ui::perf::PerfStats;
@@ -28,6 +28,7 @@ use screen::*;
 const NO_PRESS: Presses = Presses {
     menu: None,
     seq: None,
+    edit: false,
     ring: [None; chimera_core::orbit::RINGS],
 };
 
@@ -49,7 +50,7 @@ fn prompt_picks_with_a_and_clamps() {
 }
 
 #[test]
-fn seq_confirms_and_menu_cancels_on_release() {
+fn edit_confirms_and_menu_and_seq_cancel_on_release() {
     let mut gates = HoldGates::new();
     let mut c = Choice::<R>::new();
     c.input(1, &NO_PRESS);
@@ -57,29 +58,62 @@ fn seq_confirms_and_menu_cancels_on_release() {
         let p = gates.step(&i);
         c.input(i.encoder_delta(EncoderId::A) as i32, &p)
     };
-    assert_eq!(frame(&mut c, Input::press(ButtonId::Seq).at(0)), None);
     assert_eq!(
-        frame(&mut c, Input::release(ButtonId::Seq).at(100)).map(Answer::picked),
+        frame(&mut c, Input::press(ButtonId::Edit).at(0)).map(Answer::picked),
         Some(Some(R::Replace))
     );
-    assert_eq!(frame(&mut c, Input::press(ButtonId::Menu).at(200)), None);
-    assert_eq!(
-        frame(&mut c, Input::release(ButtonId::Menu).at(300)).map(Answer::picked),
-        Some(None)
-    );
+    for (b, t) in [(ButtonId::Menu, 200), (ButtonId::Seq, 400)] {
+        assert_eq!(frame(&mut c, Input::press(b).at(t)), None);
+        assert_eq!(
+            frame(&mut c, Input::release(b).at(t + 100)).map(Answer::picked),
+            Some(None)
+        );
+    }
 }
 
 #[test]
-fn seq_with_a_turn_confirms_the_pick_shown() {
+fn edit_with_a_turn_confirms_the_pick_shown() {
     let mut c = Choice::<R>::new();
-    let seq = Presses {
-        menu: None,
-        seq: Some(Press::Tap),
+    let edit = Presses {
+        edit: true,
         ..NO_PRESS
     };
     assert_eq!(
-        c.input(1, &seq).map(Answer::picked),
+        c.input(1, &edit).map(Answer::picked),
         Some(Some(R::SavePartFirst))
+    );
+}
+
+/// A destructive pill is never the one a prompt opens on.
+#[test]
+fn prompts_open_on_the_safe_pill() {
+    use chimera_core::ui::settings::prompt::{
+        ClearAnswer, ClearSceneAnswer, DeleteAnswer, DfuAnswer, PurgeAnswer, ReloadSceneAnswer,
+        SaveOverAnswer, SaveSceneOverAnswer,
+    };
+    macro_rules! safe {
+        ($($a:ident),+) => {$(
+            assert_eq!(Choice::<$a>::new().picked(), $a::Cancel, stringify!($a));
+        )+};
+    }
+    safe!(
+        DeleteAnswer,
+        ClearAnswer,
+        SaveOverAnswer,
+        SaveSceneOverAnswer,
+        ClearSceneAnswer,
+        ReloadSceneAnswer,
+        DfuAnswer,
+        PurgeAnswer
+    );
+    assert_eq!(Choice::<R>::new().picked(), R::SavePartFirst);
+    assert_eq!(
+        Choice::<chimera_core::ui::settings::prompt::LoadAnswer>::new().picked(),
+        chimera_core::ui::settings::prompt::LoadAnswer::SaveThenLoad
+    );
+    assert_eq!(
+        Choice::<chimera_core::ui::settings::prompt::NameExistsAnswer>::new().picked(),
+        chimera_core::ui::settings::prompt::NameExistsAnswer::KeepBoth
     );
 }
 
@@ -117,8 +151,8 @@ fn bn_drops_an_open_prompt() {
     );
     assert!(!ui.prompt_open());
     assert!(kept(&ui, &before));
-    // Nothing is left for a later SEQ to confirm.
-    tap(&mut ui, ButtonId::Seq);
+    // Nothing is left for a later EDIT to confirm.
+    tap(&mut ui, ButtonId::Edit);
     assert!(kept(&ui, &before));
 }
 
@@ -136,7 +170,7 @@ fn mix_bn_drops_it_too_and_edit_bn_does_not() {
 fn a_prompt_takes_every_other_key() {
     let (mut ui, before) = asking();
     let at = ui.location();
-    for b in [ButtonId::Plus, ButtonId::Minus, ButtonId::Edit] {
+    for b in [ButtonId::Plus, ButtonId::Minus] {
         tap(&mut ui, b);
     }
     hold(&mut ui, ButtonId::Menu);
@@ -146,10 +180,11 @@ fn a_prompt_takes_every_other_key() {
     assert!(kept(&ui, &before));
 }
 
-/// A to `steps` down the pills, then SEQ.
+/// A to `steps` down the pills, then EDIT.
 fn answer(ui: &mut UiState, steps: i8) {
+    feed(ui, turn(EncoderId::A, -9));
     feed(ui, turn(EncoderId::A, steps));
-    tap(ui, ButtonId::Seq);
+    tap(ui, ButtonId::Edit);
     assert!(!ui.prompt_open());
 }
 
@@ -159,6 +194,13 @@ fn each_answer_does_what_it_says() {
     tap(&mut ui, ButtonId::Menu);
     assert!(!ui.prompt_open());
     assert!(kept(&ui, &before), "MENU keeps the Part");
+
+    let (mut ui, before) = asking();
+    feed(&mut ui, turn(EncoderId::A, 1));
+    assert_eq!(ui.prompt_pick(), Some(1), "A moves the highlight");
+    tap(&mut ui, ButtonId::Seq);
+    assert!(!ui.prompt_open());
+    assert!(kept(&ui, &before), "SEQ keeps the Part");
 
     let (mut ui, before) = asking();
     answer(&mut ui, 2);
@@ -269,8 +311,7 @@ fn edit(n: &mut Naming, i: Input) -> Option<NamingOut> {
 
 fn save(n: &mut Naming) -> Option<NamingOut> {
     let p = Presses {
-        menu: None,
-        seq: Some(chimera_core::ui::hold::Press::Tap),
+        edit: true,
         ..NO_PRESS
     };
     n.input(&Input::default(), &p)
@@ -460,14 +501,14 @@ fn naming_saves_into_what_it_renames() {
     ui.rename_for_test(project_list(), None, "  ");
     let at = ui.location();
     assert_eq!(at, project_list().location(), "NAMING opens on its list");
-    tap(&mut ui, ButtonId::Seq);
+    tap(&mut ui, ButtonId::Edit);
     assert!(ui.naming().is_some(), "an empty name is refused");
     assert_eq!(
         ui.step_toast(0),
         ToastStep::Show(Line::new("NAME IS EMPTY"))
     );
     feed(&mut ui, turn(EncoderId::B, 2));
-    tap(&mut ui, ButtonId::Seq);
+    tap(&mut ui, ButtonId::Edit);
     assert!(ui.naming().is_none());
     assert_eq!(ui.project().meta().name().as_str(), "B");
     assert_eq!(ui.location(), at);
@@ -475,13 +516,17 @@ fn naming_saves_into_what_it_renames() {
     let p2 = PartId::ALL[1];
     ui.rename_for_test(project_list(), Some(p2), "PAD");
     feed(&mut ui, turn(EncoderId::C, 1));
-    tap(&mut ui, ButtonId::Seq);
+    tap(&mut ui, ButtonId::Edit);
     assert_eq!(ui.project().part(p2).sound.name.as_str(), "PAD0");
     ui.rename_for_test(project_list(), Some(p2), "GONE");
     tap(&mut ui, ButtonId::Menu);
     assert!(ui.naming().is_none());
     assert_eq!(ui.project().part(p2).sound.name.as_str(), "PAD0");
     assert_eq!(ui.location(), at, "MENU cancels NAMING, not SETTINGS");
+    ui.rename_for_test(project_list(), Some(p2), "GONE");
+    tap(&mut ui, ButtonId::Seq);
+    assert!(ui.naming().is_none(), "SEQ cancels it too");
+    assert_eq!(ui.project().part(p2).sound.name.as_str(), "PAD0");
 }
 
 #[test]

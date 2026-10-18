@@ -101,8 +101,9 @@ fn question(ui: &UiState) -> String {
 
 /// Option `i` of the open prompt.
 fn answer(ui: &mut UiState, i: i8) {
+    feed(ui, Input::turn(EncoderId::A, -9));
     feed(ui, Input::turn(EncoderId::A, i));
-    tap(ui, ButtonId::Seq);
+    tap(ui, ButtonId::Edit);
     assert!(!ui.prompt_open());
 }
 
@@ -352,7 +353,7 @@ fn rename_marks_the_part_edited() {
     tap(&mut ui, ButtonId::Edit);
     assert_eq!(ui.naming().expect("NAMING").text(), name.as_str());
     feed(&mut ui, Input::turn(EncoderId::B, 1));
-    tap(&mut ui, ButtonId::Seq);
+    tap(&mut ui, ButtonId::Edit);
     assert!(ui.naming().is_none());
     assert_ne!(ui.project().part(P[0]).sound.name, name);
     assert_eq!(status(&ui, P[0]), PartStatus::Edited);

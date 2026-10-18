@@ -536,7 +536,7 @@ fn prompt(k: AskKind, ui: &mut UiState) {
             r.to(&["PROJECT"]);
             r.bar_to(1);
             r.tap(ButtonId::Edit);
-            r.tap(ButtonId::Seq);
+            r.tap(ButtonId::Edit);
         }
         AskKind::CardChanged => {
             let mut s = MemStore::new(1);
@@ -661,7 +661,7 @@ fn settings_shots() -> Vec<(String, Setup)> {
             modify(r.ui);
             r.to(&["PROJECT", "LOAD PROJECT"]);
             r.tap(ButtonId::Edit);
-            r.tap(ButtonId::Seq);
+            r.tap(ButtonId::Edit);
             assert!(r.ui.naming().is_some());
         }),
         ("settings_prompt_clear_loaded", |ui| {

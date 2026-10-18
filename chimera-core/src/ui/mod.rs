@@ -1684,6 +1684,13 @@ impl UiState {
         self.prompt().is_some()
     }
 
+    /// The highlighted pill of an open prompt.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn prompt_pick(&self) -> Option<usize> {
+        self.prompt().map(|a| a.with_view(|v| v.picked()))
+    }
+
     fn prompt(&self) -> Option<&Ask> {
         match &self.modal {
             Some(Modal::Prompt(a)) => Some(a),

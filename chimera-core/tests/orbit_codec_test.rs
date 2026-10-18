@@ -741,8 +741,9 @@ mod unit {
         rig.bar_to(i);
         rig.tap(chimera_hal::ButtonId::Edit);
         if rig.ui.prompt_open() {
+            rig.feed(Input::turn(A, -9));
             rig.feed(Input::turn(A, 1));
-            rig.tap(Seq);
+            rig.tap(chimera_hal::ButtonId::Edit);
         }
         assert_eq!(rig.ui.project().meta().file(), Some(f));
         while rig.ui.in_settings() {

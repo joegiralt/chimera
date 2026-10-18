@@ -242,7 +242,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("library_newer", 0x54415a7d9a958936),
     ("library_wont_fit", 0x24494e0f831f3bab),
     ("library_pool_full", 0x950a8303f1cef0f3),
-    ("library_naming", 0xab3925136bf27a0f),
+    ("library_naming", 0xa234ea336d54efbf),
     // The FACTORY tab: a row's description on line 2, the set's build on
     // line 3; empty, no card, and a stray TAPE file greyed COMING SOON.
     // Re-recorded on the merge: the pool meter at the formant cost.
@@ -270,8 +270,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // Slot 3 written: MODIFIED, as ORBIT is in the project's CRC (Task 18).
     ("settings_orbit_save_to", 0xa4d2405ea9f09bf6),
     ("settings_load", 0x34b0bd576d341497),
-    ("settings_prompt_load", 0xc47d45b862dea1e3),
-    ("settings_naming", 0xc4298c7a6a0c5b5a),
+    ("settings_prompt_load", 0xa55f49be917f847b),
+    ("settings_naming", 0x39679c2d5eca087a),
     // Every ORBIT page again for Task 16: the map gains SCN.
     // ORBIT's RHYTHM, CHRD and CUSTOM (plan Task 9); Task 10's header,
     // `SCENE n`, and the beat dot on the playing ones.
