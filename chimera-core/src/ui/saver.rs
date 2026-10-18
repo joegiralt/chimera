@@ -1,7 +1,8 @@
 //! The oscilloscope screensaver: after SCREENSAVER's idle time the screen
 //! shows the master scope large, with the last note in, the pitch it
 //! sounds at, the pitch measured off the scope, and the keys held with
-//! their chord. Any button or encoder wakes it and acts too. MIDI does
+//! their chord. Any button or encoder wakes it; a button also acts, a turn
+//! loses its first detent. MIDI does
 //! not wake it.
 //!
 //! `Idle` is the pure timer; naming and measuring are pure functions;
@@ -57,14 +58,25 @@ impl Idle {
     }
 
     /// One frame of input: `turned` an encoder moved, `down` a button is
-    /// down. Either wakes the screen and restarts the clock; the touch
-    /// is also the UI's (ADR 0147).
-    pub fn touch(&mut self, turned: bool, down: bool) {
+    /// down. Either wakes the screen and restarts the clock. A button is
+    /// also the UI's; a turn that woke it loses its first detent (ADR 0147).
+    pub fn touch(&mut self, turned: bool, down: bool) -> Wake {
+        let woke = self.asleep && turned && !down;
         if turned || down {
             self.idle_ms = 0;
             self.asleep = false;
         }
+        if woke { Wake::FirstDetent } else { Wake::Pass }
     }
+}
+
+/// What a touch owes the UI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wake {
+    Pass,
+    /// Drop one detent of the first encoder that moved: a turn you
+    /// couldn't see never changes the sound.
+    FirstDetent,
 }
 
 impl Default for Idle {

@@ -52,7 +52,7 @@ use core::ptr::addr_of_mut;
 use crate::storage::{Card, CardEvent, Exit, SystemSettings, SystemSync};
 use chimera_hal::store::Store;
 use chimera_hal::{
-    ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, EncoderId, PART_BUTTONS,
+    ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, Edges, EncoderId, Ms, PART_BUTTONS,
 };
 
 use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks, Op, ParamAddr};
@@ -2365,7 +2365,13 @@ impl UiState {
     /// Process one frame of input: navigation + encoder deltas, then
     /// ORBIT's commands flushed for the frame's publish.
     pub fn handle_input(&mut self, controls: &impl Controls) {
-        self.idle.touch(any_turn(controls), any_down(controls));
+        let drop =
+            self.idle.touch(any_turn(controls), any_down(controls)) == saver::Wake::FirstDetent;
+        // One wrapper always, so the input path is compiled once.
+        self.handle_frame(&Frame(controls, drop));
+    }
+
+    fn handle_frame(&mut self, controls: &impl Controls) {
         let rev = self.project.rev();
         let model = |ui: &Self| ui.project.part(ui.active_part).sound.params.tape.model;
         let was = model(self);
@@ -3486,6 +3492,37 @@ fn part_key(c: &impl Controls) -> bool {
 /// An encoder moved this frame.
 fn any_turn(controls: &impl Controls) -> bool {
     ALL_ENCODERS.iter().any(|&e| controls.encoder_delta(e) != 0)
+}
+
+/// `Controls`, with one detent taken off the first encoder that moved
+/// when `.1`.
+struct Frame<'a, C>(&'a C, bool);
+
+impl<C: Controls> Controls for Frame<'_, C> {
+    fn encoder_delta(&self, id: EncoderId) -> i8 {
+        if !self.1 {
+            return self.0.encoder_delta(id);
+        }
+        let first = ALL_ENCODERS.iter().find(|&&e| self.0.encoder_delta(e) != 0);
+        let d = self.0.encoder_delta(id);
+        if first == Some(&id) {
+            d - d.signum()
+        } else {
+            d
+        }
+    }
+    fn button_state(&self, id: ButtonId) -> ButtonState {
+        self.0.button_state(id)
+    }
+    fn edges(&self, id: ButtonId) -> Edges {
+        self.0.edges(id)
+    }
+    fn now_ms(&self) -> Ms {
+        self.0.now_ms()
+    }
+    fn push(&self, id: EncoderId) -> Edges {
+        self.0.push(id)
+    }
 }
 
 /// A button went down or is held down.

@@ -5,7 +5,7 @@ mod screen;
 
 use chimera_core::scope::SCOPE_LEN;
 use chimera_core::ui::fmt::FmtBuf;
-use chimera_core::ui::saver::{self, Idle, Readout};
+use chimera_core::ui::saver::{self, Idle, Readout, Wake};
 use screen::Fb;
 
 fn s(f: impl FnOnce(&mut FmtBuf)) -> String {
@@ -43,8 +43,10 @@ fn any_touch_wakes_and_restarts_the_clock() {
         let mut i = Idle::new();
         i.tick(7_000, Some(7_000));
         assert!(i.asleep());
-        i.touch(turned, down);
+        let w = i.touch(turned, down);
+        assert_eq!(w == Wake::FirstDetent, turned, "a turn loses a detent");
         assert!(!i.asleep());
+        assert_eq!(i.touch(turned, down), Wake::Pass, "awake: it all acts");
         i.tick(6_999, Some(7_000));
         assert!(!i.asleep());
     }

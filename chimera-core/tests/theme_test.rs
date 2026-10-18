@@ -532,9 +532,10 @@ fn saver_off_never_sleeps() {
     assert!(!ui.asleep());
 }
 
-/// A control used while the saver is up wakes the screen and acts (ADR 0147).
+/// Asleep, a button wakes and acts; a turn wakes and loses its first
+/// detent: a turn you couldn't see never changes the sound (ADR 0147).
 #[test]
-fn a_control_wakes_the_screen_and_acts() {
+fn a_button_wakes_and_acts_and_a_turn_loses_one_detent() {
     use chimera_core::ui::block_registry::SYS_SAVER;
     let mut ui = chimera_core::ui::UiState::new();
     to_leaf(&mut ui, &["PERSONALIZE", "SCREENSAVER"]);
@@ -545,8 +546,21 @@ fn a_control_wakes_the_screen_and_acts() {
     assert!(ui.asleep());
     feed(&mut ui, Input::turn(EncoderId::A, 1));
     assert!(!ui.asleep());
-    assert_eq!(ui.theme().saver, Saver::from_index(2), "the turn acted");
-    ui.step_idle(7_000, false);
+    assert_eq!(
+        ui.theme().saver,
+        Saver::from_index(1),
+        "one detent: only wakes"
+    );
+    ui.step_idle(5_000, false);
+    assert!(ui.asleep());
+    feed(&mut ui, Input::turn(EncoderId::A, 3));
+    assert!(!ui.asleep());
+    assert_eq!(ui.theme().saver, Saver::from_index(3), "3 detents: 2 act");
+    ui.step_idle(10_000, false);
+    assert!(ui.asleep());
+    feed(&mut ui, Input::turn(EncoderId::A, -1));
+    assert_eq!(ui.theme().saver, Saver::from_index(3), "backwards too");
+    ui.step_idle(10_000, false);
     assert!(ui.asleep());
     tap(&mut ui, ButtonId::Menu);
     assert!(!ui.asleep());
