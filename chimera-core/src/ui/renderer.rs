@@ -646,22 +646,33 @@ impl Renderer {
             look(f, f.focus),
             f.prime_status,
         );
-        // PUSH ENCODERS on: the pushes' hint over none or the generic
-        // LEARN (the two never fit together); a cell's own words stay.
-        let own = view.hint(&f.ctx);
-        let generic = own.is_empty() || own == view::LEARN_HINT;
-        let h = if cfg!(feature = "push-encoders") && generic && f.push && view.pushes() {
-            crate::ui::push::HINT
-        } else {
-            own
-        };
         match f.held.filter(|s| held_on(f, &view) == Some(s.held)) {
             Some(s) => Self::draw_reason(display, s.why),
-            None => hint::focus(display, f.hint(h)),
+            None => hint::focus(display, Self::focus_hint(f)),
         }
         if let View::Source(view::SourceState::Card { cost, free, .. }) = view {
             crate::ui::source_cell::draw_card_row(display, f.pool, cost, free, f.hints);
         }
+    }
+
+    /// The hint the focus band draws now (none with HINTS off). PUSH
+    /// ENCODERS on: the pushes' hint over none or the generic LEARN (the
+    /// two never fit together); a cell's own words stay.
+    pub fn focus_hint(f: &Frame) -> hint::Hint {
+        if let Some(o) = &f.orbit_focus {
+            return f.hint(o.hint);
+        }
+        let view = view::view(f.def, f.focus, &f.ctx);
+        let own = view.hint(&f.ctx);
+        let generic = own.is_empty() || own == view::LEARN_HINT;
+        let h = if cfg!(feature = "push-encoders") && generic && f.push && view.pushes() {
+            crate::ui::push::HINT
+        } else if matches!(f.head, Head::Mix(_)) {
+            view::mixer_hint(own)
+        } else {
+            own
+        };
+        f.hint(h)
     }
 
     /// Why the cell's choice is dimmed, in the hint's place.
@@ -801,6 +812,7 @@ impl Renderer {
         display: &mut D,
         fb: impl FnOnce(&mut D) -> &mut [u16],
         gauge: Gauge,
+        hint: hint::Hint,
     ) -> Option<(u16, u16)>
     where
         D: DrawTarget<Color = Rgb565>,
@@ -808,6 +820,8 @@ impl Renderer {
         let (x, y, w, h) = components::gauge_rect(&gauge)?;
         Self::clear_rect_fb(fb(display), x, y, w, h);
         components::draw_gauge(display, gauge);
+        // The box clears the hint's top row where the two meet.
+        hint::focus(display, hint);
         Some((y as u16, (y + h) as u16))
     }
 
