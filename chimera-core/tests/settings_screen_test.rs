@@ -296,3 +296,11 @@ fn every_breadcrumb_clears_the_dots() {
         }
     }
 }
+
+#[cfg(feature = "midi-map")]
+#[test]
+fn the_map_legend_fits() {
+    let s = legend(LegendFor::Map, false);
+    let w = draw::text_width(&theme::FONT_LABEL, s, 0);
+    assert!(w <= 216, "{s} is {w} px");
+}

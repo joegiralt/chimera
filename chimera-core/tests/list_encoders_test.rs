@@ -7,6 +7,7 @@ mod screen;
 use chimera_core::ui::UiState;
 use chimera_core::ui::browser;
 use chimera_core::ui::nav::Browse;
+use chimera_core::ui::settings::{Kind, rows};
 use chimera_hal::{ALL_ENCODERS, ButtonId, EncoderId};
 use screen::{Input, Rig, feed, three};
 
@@ -51,6 +52,78 @@ fn every_encoder_moves_the_project_lists() {
     }
 }
 
+/// Every SETTINGS list with three rows or more, as label paths.
+fn lists(path: &mut Vec<u8>, labels: &mut Vec<&'static str>, out: &mut Vec<Vec<&'static str>>) {
+    let rs = rows(path);
+    if rs.len() >= 3 {
+        out.push(labels.clone());
+    }
+    for (i, r) in rs.iter().enumerate() {
+        if let Kind::List(_) = r.kind {
+            path.push(i as u8);
+            labels.push(r.label);
+            lists(path, labels, out);
+            labels.pop();
+            path.pop();
+        }
+    }
+}
+
+#[test]
+fn every_encoder_moves_every_settings_sub_list() {
+    let mut all = Vec::new();
+    lists(&mut Vec::new(), &mut Vec::new(), &mut all);
+    assert!(all.len() > 3);
+    for labels in all.iter().filter(|l| !l.is_empty()) {
+        let mut ui = UiState::new();
+        let mut r = Rig::new(&mut ui, three().0);
+        r.to(labels);
+        bar_follows(r.ui, &ALL_ENCODERS);
+    }
+}
+
+#[cfg(feature = "orbit")]
+#[test]
+fn every_encoder_moves_scene_save_to() {
+    let mut ui = UiState::new();
+    let mut r = Rig::new(&mut ui, three().0);
+    r.to(&["ORBIT", "SAVE TO PROJ"]);
+    bar_follows(r.ui, &ALL_ENCODERS);
+}
+
+/// The bar moves by the biggest turn of the frame: brushed encoders move
+/// it once, and opposite nudges do not cancel.
+#[test]
+fn the_biggest_turn_wins() {
+    let mut ui = UiState::new();
+    screen::tap(&mut ui, ButtonId::Menu);
+    let go = |ui: &mut UiState, i: Input, by: i32| {
+        let at = row(ui) as i32;
+        feed(ui, i);
+        assert_eq!(row(ui) as i32 - at, by);
+    };
+    go(
+        &mut ui,
+        Input::turn(EncoderId::A, 1).and_turn(EncoderId::C, 1),
+        1,
+    );
+    go(
+        &mut ui,
+        Input::turn(EncoderId::B, 1).and_turn(EncoderId::F, 3),
+        3,
+    );
+    go(
+        &mut ui,
+        Input::turn(EncoderId::A, -1).and_turn(EncoderId::E, 1),
+        -1,
+    );
+    go(
+        &mut ui,
+        Input::turn(EncoderId::D, 1).and_turn(EncoderId::E, -2),
+        -2,
+    );
+}
+
 #[test]
 fn the_browser_moves_on_every_encoder_but_b() {
     let at = Browse::of(4, 0);
@@ -69,25 +142,5 @@ fn the_browser_moves_on_every_encoder_but_b() {
             assert_eq!(up, Browse::of(3, 0), "{e:?}");
             assert_eq!(lib.lib_cursor(), 1, "{e:?}");
         }
-    }
-}
-
-#[test]
-fn every_encoder_picks_the_prompt_pill() {
-    let pick = |e: Option<EncoderId>| {
-        let mut ui = UiState::new();
-        screen::prompt_load(&mut ui);
-        if let Some(e) = e {
-            feed(&mut ui, Input::turn(e, 2));
-        }
-        feed(&mut ui, Input::press(ButtonId::Seq));
-        feed(&mut ui, Input::release(ButtonId::Seq).at(100));
-        (ui.prompt_open(), ui.card_pending(), ui.naming().is_some())
-    };
-    let none = pick(None);
-    let a = pick(Some(EncoderId::A));
-    assert_ne!(a, none, "two detents reach CANCEL");
-    for e in ALL_ENCODERS {
-        assert_eq!(pick(Some(e)), a, "{e:?}");
     }
 }

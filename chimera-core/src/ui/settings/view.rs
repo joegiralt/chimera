@@ -771,7 +771,7 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
         (L::ManageLater, _) => "LATER · MENU LIST",
         (L::Load, _) => "EDIT LOAD · MENU BACK",
         #[cfg(feature = "midi-map")]
-        (L::Map, _) => "B CC · C-D RANGE · MIX+MINUS DELETE",
+        (L::Map, _) => "AEF MOVE · BCD EDIT · MIX+MINUS DEL",
     }
 }
 

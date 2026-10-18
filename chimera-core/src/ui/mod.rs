@@ -3517,13 +3517,20 @@ const MAP_EDITS: [EncoderId; 3] = [EncoderId::B, EncoderId::C, EncoderId::D];
 #[cfg(not(feature = "midi-map"))]
 const MAP_EDITS: [EncoderId; 0] = [];
 
-/// A list's bar move this frame: every encoder not in `taken` moves it,
-/// their turns summed.
+/// A list's bar move this frame: the biggest turn among the encoders not
+/// in `taken` (the first on a tie), so two brushed together move it once.
 pub(crate) fn list_turn(c: &impl Controls, taken: &[EncoderId]) -> i8 {
     ALL_ENCODERS
         .iter()
         .filter(|e| !taken.contains(e))
-        .fold(0i8, |n, &e| n.saturating_add(c.encoder_delta(e)))
+        .map(|&e| c.encoder_delta(e))
+        .fold(0i8, |m, d| {
+            if d.unsigned_abs() > m.unsigned_abs() {
+                d
+            } else {
+                m
+            }
+        })
 }
 
 /// An encoder moved this frame.

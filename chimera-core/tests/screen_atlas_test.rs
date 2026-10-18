@@ -838,3 +838,67 @@ fn atlas_settings_never_shows_the_map() {
     }
     assert!(seen > 30, "{seen}");
 }
+
+/// Any encoder picks the next pill of every prompt kind, as A does; two
+/// together pick by the bigger turn, once.
+#[test]
+fn every_encoder_picks_every_prompt_pill() {
+    let shown = |k: AskKind, i: Option<Input>| {
+        let mut ui = crate::screen::stack_ui();
+        prompt(k, &mut ui);
+        assert!(ui.prompt_open(), "{k:?}");
+        if let Some(i) = i {
+            feed(&mut ui, i);
+        }
+        settle(&mut ui);
+        render_ui(&ui).hash()
+    };
+    for &k in AskKind::ALL {
+        let none = shown(k, None);
+        let a = shown(k, Some(Input::turn(EncoderId::A, 1)));
+        assert_ne!(a, none, "{k:?}: a detent moves the pill");
+        for e in ENCODERS {
+            assert_eq!(shown(k, Some(Input::turn(e, 1))), a, "{k:?} {e:?}");
+        }
+        let both = Input::turn(EncoderId::B, 1).and_turn(EncoderId::E, 1);
+        assert_eq!(shown(k, Some(both)), a, "{k:?}: brushed once");
+        let nudge = Input::turn(EncoderId::C, 1).and_turn(EncoderId::F, -1);
+        assert_eq!(shown(k, Some(nudge)), a, "{k:?}: no cancelling");
+    }
+}
+
+/// MIDI MAP: A, E and F move the bar; B, C and D edit the row and leave it.
+#[cfg(feature = "midi-map")]
+#[test]
+fn midi_map_splits_the_encoders() {
+    let row = |ui: &UiState| ui.location().settings().unwrap().row();
+    let mut ui = crate::screen::stack_ui();
+    map_page(&mut ui, true);
+    let n = ui.map_band().map.len();
+    assert!(n >= 2);
+    let rev = ui.project().rev();
+    for e in [EncoderId::A, EncoderId::E, EncoderId::F] {
+        let at = row(&ui);
+        feed(&mut ui, Input::turn(e, 1));
+        assert_eq!(row(&ui) as usize, (at as usize + 1) % n, "{e:?}");
+        feed(&mut ui, Input::turn(e, -1));
+        assert_eq!(row(&ui), at, "{e:?} back");
+    }
+    assert_eq!(ui.project().rev(), rev, "moving edits nothing");
+    let at = row(&ui);
+    for (e, d) in [(EncoderId::B, 1), (EncoderId::C, 1), (EncoderId::D, -1)] {
+        let before = ui.project().rev();
+        feed(&mut ui, Input::turn(e, d));
+        assert_eq!(row(&ui), at, "{e:?} keeps the bar");
+        assert_ne!(ui.project().rev(), before, "{e:?} edits");
+    }
+}
+
+#[cfg(feature = "midi-map")]
+#[test]
+fn midi_map_hints_the_split() {
+    let mut ui = crate::screen::stack_ui();
+    map_page(&mut ui, true);
+    let l = ui.legend_for_test().unwrap();
+    assert!(l.contains("AEF MOVE") && l.contains("BCD EDIT"), "{l}");
+}
