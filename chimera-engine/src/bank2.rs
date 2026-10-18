@@ -31,6 +31,13 @@ pub struct Bank2Door {
     /// The reverb's engines (ADR 0142; `Reverb::play` is bank 1's side).
     #[cfg(feature = "bank2")]
     pub reverb: crate::dsp::rev::ReverbDoor,
+    /// Streamed admission (`Instrument`'s wrappers are bank 1's side).
+    #[cfg(feature = "bank2")]
+    pub admit: crate::instrument::AdmitDoor,
+    /// Streamed loads: head placement and the load's passes
+    /// (`StreamLoad::step`, `stage::heads_for` are bank 1's side).
+    #[cfg(feature = "bank2")]
+    pub load: crate::project::LoadDoor,
 }
 
 #[cfg(feature = "bank2")]
@@ -47,6 +54,8 @@ static DOOR: Bank2Door = Bank2Door {
     table: &TABLE,
     tape: crate::dsp::tape_engine::TapeDeck::DOOR,
     reverb: crate::dsp::rev::Reverb::DOOR,
+    admit: crate::instrument::Instrument::ADMIT,
+    load: crate::project::LoadDoor::DOOR,
 };
 
 #[cfg(feature = "bank2")]
@@ -123,6 +132,15 @@ impl DoorCell {
     #[cfg(all(feature = "bank2", feature = "test-support"))]
     pub fn open_host(&self) {
         self.0.store(&raw const DOOR as usize, Ordering::Release);
+    }
+
+    /// `open_host` where this build links bank 2, nothing where it plays
+    /// TAPE from bank 1: a host test run under the firmware's features
+    /// (`just test-firmware-features`) loads as the unit does, door open.
+    #[cfg(feature = "test-support")]
+    pub fn open_host_if_linked(&self) {
+        #[cfg(feature = "bank2")]
+        self.open_host();
     }
 }
 

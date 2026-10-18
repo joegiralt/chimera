@@ -44,7 +44,7 @@ Writes stall every read for up to 250 ms (the SD spec allows it).
 
 ## Consequences
 - SRAM4 (64 KB) is spent on rings. D2 gives 8 KB more to the DMA region and about 2 KB to the stream registry.
-- About 8 KB of bank-1 flash; the streamed read path is bank 2's (TapeDeck).
+- About 8 KB of bank-1 flash; the streamed read path is bank 2's (TapeDeck). Streamed admission (the bill, the stealing pick, the block's re-bill) and streamed loads (head placement, a load's passes, a project load's streamed sources) are bank 2's too, behind the door's `AdmitDoor` and `LoadDoor` (ADR 0137); bank 1 keeps their wrappers, the plain pick for notes that don't stream, `load_kind`'s whole check, the card interrupt, `CardBus` and the quiet, the audio's port glue and fault recovery. With bank 2 shut no note streams and no streamed load runs, as TAPE is silent then (ADR 0141).
 - `stats` gains `stream_underruns`, `stream_cold`, `stream_unplanned` (the cursor's tripwire: a jump that skipped `start`), `stream_frame_errors`, `card_faults` (card reads failed past their retry) and `card_quiet_ms_max`.
 - A streamed note costs a bill in bytes as well as cycles; slow cards get fewer streams.
 - Long files need slice 2's resumable `put` (`put`'s limit is 1 MiB, ADR 0106).

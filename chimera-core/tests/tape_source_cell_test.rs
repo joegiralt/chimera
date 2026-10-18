@@ -54,6 +54,8 @@ const P1: PartId = PartId::ALL[0];
 
 /// A plain source of `frames` at 24 kHz.
 fn source(seed: u8, frames: u32, name: &str) -> (SourceHead, Vec<u8>) {
+    // Under the firmware's features streamed loads go through bank 2's door.
+    chimera_core::bank2::DOOR_CELL.open_host_if_linked();
     let data: Vec<u8> = (0..3 * frames.div_ceil(2) as usize)
         .map(|i| (i as u32).wrapping_mul(37).wrapping_add(seed as u32) as u8)
         .collect();

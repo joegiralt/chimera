@@ -110,6 +110,14 @@ SECTIONS {
     *(.rodata.*11tape_engine5heads* .rodata.*11tape_engine7stretch* .rodata.*11tape_engine4wave* .rodata.*11tape_engine4read*
       .rodata.*11tape_engine3age* .rodata.*11tape_engine6warble* .rodata.*11tape_engine7oneshot* .rodata.*11tape_engine4tron*
       .rodata.*11tape_engine4span* .rodata.*6stream6cursor* .rodata.*11tape_engine*8TapeDeck*);
+    /* Streamed admission and loads (`AdmitDoor`, `LoadDoor`): the bill,
+       the stealing pick and the block's re-bill; the heads' placement, a
+       load's passes and their head reads. Bank 1 keeps the wrappers, the
+       plain pick and `load_kind`'s whole check. */
+    *(.text.*10instrument9admission* .text.*7project8streamed4load* .text.*6stream5stage5place*
+      .text.*11source_file16read_source_head* .text.*11source_file16read_packed_into*);
+    *(.rodata.*10instrument9admission* .rodata.*7project8streamed4load* .rodata.*6stream5stage5place*
+      .rodata.*11source_file16read_source_head* .rodata.*11source_file16read_packed_into*);
     /* REVERB */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2

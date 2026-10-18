@@ -34,17 +34,20 @@ use crate::orbit::RingIdx;
 use crate::orbit::ring::Harmony;
 use crate::orbit::runner::{OrbitRunner, OrbitShared};
 use crate::params::{EngineType, ParamSnapshot};
-use crate::part::{Held, LiveSnap, PartMode, PartParams};
+use crate::part::{Held, LiveSnap, PartParams};
 use crate::preset::{Part, Performance, Sound};
 use crate::project::{Loads, PartId, Project, SourceId};
 use crate::scope::ScopeWriter;
 use crate::source_table::{AudioToken, GateView};
-use crate::stream::admit::{Admit, Age, Bill, ReadRatio, STREAM_BUDGET_BPS, admit};
+use crate::stream::admit::{Age, Bill, ReadRatio};
 use crate::stream::port::{CtxBase, NoPorts, Port, VoicePorts};
 use crate::stream::stats::StreamStats;
 use crate::tracked::Tracked;
 use crate::voice_alloc::{Allocator, VoiceIdx};
 use crate::{MidiChannel, MidiNote, Velocity};
+
+mod admission;
+pub use admission::AdmitDoor;
 use chimera_theory::{Note, snap};
 
 /// Each Part's newest TAPE note's heads, for the strip (spec § 3): stored
@@ -304,7 +307,7 @@ struct Waiting {
 /// What admission paid for a streamed note (slice 1 § 5.5): its bill,
 /// and the read ratio that covers, its cap (`StreamPort::ratio_max`).
 #[derive(Clone, Copy, Debug)]
-struct Paid {
+pub(crate) struct Paid {
     bill: Bill,
     ratio: ReadRatio,
 }
@@ -321,7 +324,6 @@ struct Streaming {
     age: Age,
     /// Its reach rose past what the card admits: it holds at its cap,
     /// counted once (`StreamStats::held_at_cap`).
-    #[cfg_attr(not(feature = "tape"), allow(dead_code))]
     capped: bool,
 }
 
@@ -907,280 +909,89 @@ impl Instrument {
         a.params.engine() == EngineType::Tape && TapeEngine::refuses(&a.params.tape, a.source, src)
     }
 
-    /// What key `key`'s note `note` on Part `p`, reading `source`, asks of
-    /// the card (slice 1 § 5.5): its bill at the fastest it can read, from
-    /// PITCH, TUNING, every PITCH and FINE route at full swing, the bend's
-    /// range and wow; `None` off the card, or while `source` moves. A glide
-    /// steal can start from the Part's highest sounding note; a snapping
-    /// Part's key can re-snap up to `snap_reach_up` over itself.
-    #[cfg(feature = "tape")]
+    /// `f` on admission's door (`AdmitDoor`): bank 2's through the door
+    /// with `bank2`, `None` closed; this build's own without; never
+    /// without TAPE, where nothing streams.
+    #[inline(always)]
+    fn admission<R>(f: impl FnOnce(&AdmitDoor) -> R) -> Option<R> {
+        #[cfg(feature = "bank2")]
+        return crate::bank2::DOOR_CELL.with(|d| f(&d.admit));
+        #[cfg(all(feature = "tape", not(feature = "bank2")))]
+        return Some(f(&Self::ADMIT));
+        #[cfg(not(feature = "tape"))]
+        {
+            let _ = f;
+            None
+        }
+    }
+
+    /// What a note on Part `p` asks of the card (`AdmitDoor::bill`); a
+    /// Part that doesn't play TAPE asks nothing.
     fn stream_bill(
         &self,
         p: usize,
         shared: &AudioShared,
         src: &GateView<'_>,
-        (key, note, source): (MidiNote, MidiNote, Option<SourceId>),
+        at: admission::BillAt,
     ) -> Option<Paid> {
-        use crate::dsp::engines::pitch_reach;
-        use crate::dsp::tape_engine::ratio_max;
-        use crate::dsp::tape_engine::read::Descriptor;
-        use crate::stream::admit::bill;
-        use chimera_theory::snap_reach_up;
-        let part = &shared.parts[p % MAX_PARTS];
-        if part.params.engine() != EngineType::Tape {
+        if shared.parts[p % MAX_PARTS].params.engine() != EngineType::Tape {
             return None;
         }
-        let d = Descriptor::from_bytes(src.bytes(source?)?).filter(|d| d.heads > 0)?;
-        let mut top = note.get();
-        if part.params.pitch.steal_glide().is_some() {
-            for s in self
-                .alloc
-                .slots()
-                .iter()
-                .filter(|s| s.part() == Some(p as u8))
-            {
-                top = top.max(s.note().map_or(0, MidiNote::get));
-            }
-        }
-        // HELD may turn to RE-SNAP mid-note: any snapping Part's key may.
-        if part.mix.snap.target().is_some() {
-            let k = key.get();
-            let up = Note::new(k).map_or(11, snap_reach_up);
-            top = top.max(k.saturating_add(up).min(127));
-        }
-        let routes = pitch_reach(&part.mod_state);
-        let bend = f32::from(part.mix.bend) * 100.0;
-        let cents = (part.params.pitch.semitones() + self.tune) * 100.0 + routes;
-        let ratio = ratio_max(&part.params.tape, top, cents, bend);
-        Some(Paid {
-            bill: bill(d.rate, ratio),
-            ratio,
-        })
+        Self::admission(|d| (d.bill)(self, p, shared, src, at)).flatten()
     }
 
-    /// Without TAPE every TAPE note is refused (`off`): nothing streams.
-    #[cfg(not(feature = "tape"))]
-    fn stream_bill(
-        &self,
-        _: usize,
-        _: &AudioShared,
-        _: &GateView<'_>,
-        _: (MidiNote, MidiNote, Option<SourceId>),
-    ) -> Option<Paid> {
-        None
-    }
-
-    /// Admits a streamed note billed `new` against the voices streaming
-    /// now, but those `gone` (stolen already, or replaced by the note):
-    /// `Steal(v)` frees one more, released first, the oldest (umbrella open
-    /// question 2). A voice still fading counts until it is freed; a shed
-    /// one goes first. Under a card fault nothing streams: refused, no
-    /// voice stolen.
-    pub fn admit_stream(&self, new: Bill, gone: &[bool; MAX_VOICES], fault: CardFault) -> Admit {
-        if fault == CardFault::Read {
-            return Admit::Refuse;
-        }
-        let playing = VoiceIdx::ALL.iter().zip(&self.streaming).filter_map(|(&v, s)| {
-            let b = s.billed().filter(|_| !gone[v.index()])?;
-            Some((v, b, s.age))
-        });
-        admit(new, playing, STREAM_BUDGET_BPS)
-    }
-
-    /// Admits voice `v`'s bill `new` mid-note (#595): only released voices
-    /// go, each fading out as a shed one does; a held note is never cut.
-    /// False: it doesn't fit, nothing stolen.
-    #[cfg(feature = "tape")]
-    fn admit_mid(&mut self, v: usize, new: Bill) -> bool {
-        let mut gone = [false; MAX_VOICES];
-        gone[v] = true;
-        // Each steal adds a voice to `gone`: at most one a voice.
-        for _ in 0..=MAX_VOICES {
-            let st = &self.streaming;
-            let others = || {
-                VoiceIdx::ALL
-                    .iter()
-                    .zip(st)
-                    .filter(|&(w, _)| !gone[w.index()])
-                    .filter_map(|(&w, s)| Some((w, s.billed()?, s.age)))
-            };
-            let held = others()
-                .filter(|o| !o.2.released)
-                .fold(0u32, |a, o| a.saturating_add(o.1.0));
-            let released = others().filter(|o| o.2.released);
-            match admit(new, released, STREAM_BUDGET_BPS.saturating_sub(held)) {
-                Admit::Ok => return true,
-                Admit::Steal(w) => {
-                    gone[w.index()] = true;
-                    self.alloc.kill(w.index());
-                    self.shed(w.index());
-                }
-                Admit::Refuse => return false,
-            }
-        }
-        false
-    }
-
-    /// Voice `v`'s note, paid for, now reaches `new` (#595): re-admitted
-    /// (`admit_mid`), its cap following; or it holds at its cap, counted
-    /// once a rise.
-    #[cfg(feature = "tape")]
-    fn raise(&mut self, v: usize, new: Paid, stats: Option<&StreamStats>) {
-        let st = self.streaming[v];
-        let Some(old) = st.paid.filter(|old| new.ratio > old.ratio) else {
-            return;
-        };
-        let up = Paid {
-            bill: new.bill.max(old.bill),
-            ratio: new.ratio,
-        };
-        if self.admit_mid(v, up.bill) {
-            (self.streaming[v].paid, self.streaming[v].capped) = (Some(up), false);
-        } else if !st.capped {
-            self.streaming[v].capped = true;
-            if let Some(s) = stats {
-                s.held_at_cap.fetch_add(1, Relaxed);
-            }
-        }
-    }
-
-    /// Once a block, before the voices render (#595): each sounding streamed
-    /// note's bill, as its Part's PITCH, TUNING, bend range, routes and SNAP
-    /// now reach, re-admitted when it rose (`raise`). A note whose source
-    /// moved at note-on is admitted once it reads, released voices going,
-    /// or refused, counted, and freed. Eight voices' bills at most.
-    #[cfg(feature = "tape")]
-    #[inline(never)]
+    /// Once a block, before the voices render: the streamed notes'
+    /// re-bill (`AdmitDoor::refresh`).
     fn refresh_bills(
         &mut self,
         shared: &AudioShared,
         src: &GateView<'_>,
         stats: Option<&StreamStats>,
     ) {
-        for v in 0..MAX_VOICES {
-            let s = self.alloc.slots()[v];
-            let (Some(q), Some(note)) = (s.part(), s.note()) else {
-                continue;
-            };
-            let voice = &self.voices[v];
-            if s.dying() || !voice.is_active() || voice.fading() || self.waiting[v].is_some() {
-                continue;
-            }
-            let at = (self.keys[v], note, voice.reads()[0]);
-            let Some(new) = self.stream_bill(q as usize, shared, src, at) else {
-                continue;
-            };
-            if self.streaming[v].paid.is_some() {
-                self.raise(v, new, stats);
-            } else if self.admit_mid(v, new.bill) {
-                self.streaming[v].paid = Some(new);
-            } else {
-                if let Some(s) = stats {
-                    s.late_refused.fetch_add(1, Relaxed);
-                }
-                self.alloc.kill(v);
-                self.shed(v);
-            }
-        }
+        Self::admission(|d| (d.refresh)(self, shared, src, stats));
     }
 
-    #[cfg(not(feature = "tape"))]
-    #[inline(always)]
-    fn refresh_bills(&mut self, _: &AudioShared, _: &GateView<'_>, _: Option<&StreamStats>) {}
-
-    /// The voice a note-on books (`Allocator::pick_where`), once a streamed
-    /// note's admission has freed what the card needs: each voice it steals
-    /// fades out through the allocator, as a shed one does, and the pick
-    /// is asked again, so the note takes a stolen voice when it needs one.
-    /// A Mono retrigger or a re-strike replaces its voice's stream; a STEAL
-    /// GLIDE one carries on the held note, so it is admitted mid-note
-    /// (`raise`). Returns what the note is paid; `None`: refused, counted.
-    #[cfg(feature = "tape")]
-    #[inline(never)]
+    /// The voice a note-on books: a streamed note through admission
+    /// (`AdmitDoor::pick`), any other the plain pick. Returns what the
+    /// note is paid; `None`: refused, counted.
     fn pick_admitted(
         &mut self,
-        (q, mode, note, from): (u8, PartMode, MidiNote, NoteOrigin),
-        (cost, glides): (Cost, bool),
+        at: admission::PickAt,
+        costs: (Cost, bool),
         stream: Option<Paid>,
-        (stats, fault): (Option<&StreamStats>, CardFault),
+        ctx: (Option<&StreamStats>, CardFault),
     ) -> Option<(usize, Option<Paid>)> {
-        let mut gone = [false; MAX_VOICES];
-        // Each steal adds a voice to `gone`: at most one a voice.
-        for _ in 0..=MAX_VOICES {
-            let reserved = self.reserved();
-            let origins = &self.note_origin;
-            let Some(v) = self
-                .alloc
-                .pick_where(q, mode, note, cost, reserved, &|v| origins[v] == from)
-            else {
-                break;
-            };
-            let Some(new) = stream else {
-                return Some((v, None));
-            };
-            let s = self.alloc.slots()[v];
-            let replaces = !s.dying()
-                && s.part() == Some(q)
-                && (mode == PartMode::Mono || s.note() == Some(note));
-            if replaces && glides && self.voices[v].is_active() && self.streaming[v].paid.is_some()
-            {
-                self.raise(v, new, stats);
-                return Some((v, self.streaming[v].paid));
-            }
-            let mut ask = gone;
-            ask[v] |= replaces;
-            match self.admit_stream(new.bill, &ask, fault) {
-                Admit::Ok => return Some((v, Some(new))),
-                Admit::Steal(w) => {
-                    gone[w.index()] = true;
-                    self.alloc.kill(w.index());
-                    self.shed(w.index());
-                }
-                Admit::Refuse => break,
-            }
+        if let Some(new) = stream
+            && let Some(r) = Self::admission(|d| (d.pick)(self, at, costs, new, ctx))
+        {
+            return r;
         }
-        self.alloc.refuse();
-        None
-    }
-
-    /// Without TAPE nothing streams: the pick alone.
-    #[cfg(not(feature = "tape"))]
-    #[inline(always)]
-    fn pick_admitted(
-        &mut self,
-        (q, mode, note, from): (u8, PartMode, MidiNote, NoteOrigin),
-        (cost, _): (Cost, bool),
-        _: Option<Paid>,
-        _: (Option<&StreamStats>, CardFault),
-    ) -> Option<(usize, Option<Paid>)> {
-        let reserved = self.reserved();
-        let origins = &self.note_origin;
-        let v = self
-            .alloc
-            .pick_where(q, mode, note, cost, reserved, &|v| origins[v] == from);
+        let v = self.pick_one(at, costs.0);
         if v.is_none() {
             self.alloc.refuse();
         }
         v.map(|v| (v, None))
     }
 
+    /// The allocator's pick for a note-on (`Allocator::pick_where`), among
+    /// voices of its origin. Bank 1's: its filter is a `dyn Fn`, whose
+    /// table bank 1 holds.
+    fn pick_one(&mut self, (q, mode, note, from): admission::PickAt, cost: Cost) -> Option<usize> {
+        let reserved = self.reserved();
+        let origins = &self.note_origin;
+        self.alloc
+            .pick_where(q, mode, note, cost, reserved, &|v| origins[v] == from)
+    }
+
     /// Voice `v`'s port this call, capped at what it is paid, only while
     /// admission bills the voice; a note never admitted reads nothing. Its
     /// deck finds its own source's file (#594).
-    #[cfg(feature = "tape")]
     fn port_of(&self, v: usize) -> Port {
         let st = &self.streaming[v];
         match st.billed() {
             Some(_) => Port::On(st.paid.map(|p| p.ratio)),
             None => Port::Off,
         }
-    }
-
-    /// Without TAPE nothing streams: no port.
-    #[cfg(not(feature = "tape"))]
-    #[inline(always)]
-    fn port_of(&self, _: usize) -> Port {
-        Port::Off
     }
 
     /// Voices playing a streamed note now: the card's load.
