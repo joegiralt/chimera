@@ -12,7 +12,7 @@ use u8g2_fonts::FontRenderer;
 use crate::dsp::filter::FilterKind;
 use crate::dsp::modal::{EXCITER_NAMES, ModalPage};
 use crate::part::DacPair;
-use crate::project::PartId;
+use crate::project::{PartId, PartSet};
 use crate::ui::PrimeStatus;
 use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::block_registry::FILTER_MOD;
@@ -152,9 +152,18 @@ pub fn header_fits(h: &HeaderText) -> bool {
     header_end(h.context.as_str(), h.name.as_str()) + RIGHT_GAP <= right
 }
 
+/// The Part dots: which Part the page is on, and which have voices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PartDots {
+    pub current: PartId,
+    pub live: PartSet,
+}
+
 /// What a header shows of the instrument beside its words.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HeaderStatus {
+    /// A Part's page: its dots.
+    pub parts: Option<PartDots>,
     /// The live output is above silence: the sounding dot.
     pub sounding: bool,
     /// Audio load (0 = not measured).
@@ -231,6 +240,9 @@ pub fn header_dots<D>(d: &mut D, s: HeaderStatus)
 where
     D: DrawTarget<Color = Rgb565>,
 {
+    if let Some(p) = s.parts {
+        part_dots(d, p);
+    }
     let (y, r) = (theme::HEADER_DOT_Y, theme::HEADER_DOT_R);
     if s.sounding {
         draw::dot(d, theme::HEADER_DOT_X, y, r, theme::ACCENT);
@@ -241,6 +253,23 @@ where
         let filled = (r * fill as i32 + 127) / 255;
         if filled > 0 {
             draw::dot(d, x, y, filled, theme::ACCENT);
+        }
+    }
+}
+
+/// Six dots, one a Part: the current one filled bright green, larger, a sounding
+/// one a ring, the rest small and faint.
+fn part_dots<D>(d: &mut D, p: PartDots)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let (y, r) = (theme::PART_DOT_Y, theme::PART_DOT_R);
+    for id in PartId::ALL {
+        let x = theme::PART_DOT_X + id.index() as i32 * theme::PART_DOT_PITCH;
+        match (id == p.current, p.live.contains(id)) {
+            (true, _) => draw::dot(d, x, y, r + 1, theme::PART_LIVE),
+            (false, true) => draw::ring(d, x, y, r, theme::ACCENT, 1),
+            (false, false) => draw::dot(d, x, y, r - 1, theme::FAINT),
         }
     }
 }

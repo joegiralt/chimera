@@ -690,6 +690,15 @@ impl Instrument {
         self.voices.iter().filter(|v| v.is_active()).count()
     }
 
+    /// The Parts with a voice sounding (a released one counts until it
+    /// ends).
+    pub fn sounding_set(&self) -> crate::project::PartSet {
+        (0..MAX_VOICES)
+            .filter(|&v| self.voices[v].is_active())
+            .filter_map(|v| crate::project::PartId::new(self.sounding[v]))
+            .fold(crate::project::PartSet::EMPTY, |s, p| s.with(p))
+    }
+
     /// The voice budget booked, FX bus and ORBIT included, in percent: for
     /// `stats`.
     pub fn cost_pct(&self) -> u8 {
@@ -1664,6 +1673,7 @@ impl Instrument {
         self.step_lfo_clocks(shared);
 
         self.publish_heads();
+        crate::meter::publish_sounding_parts(self.sounding_set());
         self.clear_left = SYM_CLEAR_BUDGET;
 
         // 2-4.

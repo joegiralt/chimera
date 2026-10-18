@@ -71,6 +71,16 @@ impl PartSet {
         PartSet(self.0 | 1 << p.0)
     }
 
+    /// The bits, for an atomic word.
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
+    /// `bits` back, the bits past the Parts dropped.
+    pub const fn from_bits(b: u8) -> PartSet {
+        PartSet(b & ((1u16 << MAX_PARTS) - 1) as u8)
+    }
+
     pub fn contains(self, p: PartId) -> bool {
         self.0 & 1 << p.0 != 0
     }
