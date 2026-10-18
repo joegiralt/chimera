@@ -10,13 +10,13 @@ Short names are the chain map's node labels; the sub-page row spells pages in fu
 
 | Key | Does |
 |---|---|
-| B1-B6 | Part *n*'s pages. The same key again: its mixer, and back |
+| B1-B6 | Part *n*'s pages. The same key again: its mixer; from that Part's mixer it returns to your page. From anywhere else it lands on the engine's home page |
 | MIX + B*n* | Part *n*'s mixer (inside the mixer: keeps the page) |
 | EDIT + B*n* | The Sound browser for Part *n* |
 | MINUS / PLUS | Previous / next node along the chain |
 | EDIT / SEQ | Under ROW (the default): previous / next sub-page, SEQ wrapping from the last. Under STACK: EDIT down (wrapping), SEQ up |
 | hold SEQ | ORBIT |
-| MENU | SETTINGS; inside, back a level. Hold: quick-save |
+| MENU | SETTINGS; inside, back a level (SEQ goes back a level too). Hold: quick-save |
 | Dialogs | EDIT confirms; MENU or SEQ cancels; any encoder moves the highlight |
 
 SETTINGS › PERSONALIZE › CHAIN MAP › PAGES picks ROW or STACK.
@@ -45,11 +45,9 @@ shared  FLT └ FMD (FILTER MOD)
 
 TAPE has a chain in the code (SRC, DECK with its model page and PIT, DRV, FLT, AMP, MOD). In 0.1.0 and until it ships, TAPE rows in the Sound browser read COMING SOON and don't load.
 
-<!-- 0.2.0 final pass: when TAPE (#476) is merged, drop the "until it ships" sentence and list TAPE as a live engine. Also add: FX in the filter (#614), the new VA modes (#601-605, #613), the STABILITY glyph (#593) and the chain-map engine track (#592). -->
-
 ### Pages that draw the whole band
 
-FLT (the filter's response curve, with CUTOFF and RES), MST, the MOD matrix and ORBIT's ORB have a picture in place of a focus band.
+FLT (the filter's response curve, with CUTOFF and RES), MST, E1-E3, SPD, ORBIT's ORB and CUSTOM, and SETTINGS' ABOUT have a picture in place of a focus band. The MOD matrix keeps its focus band.
 
 ---
 
@@ -57,7 +55,9 @@ FLT (the filter's response curve, with CUTOFF and RES), MST, the MOD matrix and 
 
 ```
 PRT ── SND ── CHR ── DLY ── REV ── MST
-                      └ CHAR  └ MORE, MORE 2  └ LVL
+                      │      │      │
+                      CHAR   MORE,  LVL
+                             MORE 2
 ```
 
 Opens on SND, or on the effect page last left. PRT: CH, MODE, OUT, LEVEL, PAN, BEND. SND: the three send levels. EDIT from PRT or SND goes down to the Sound browser.
@@ -96,7 +96,7 @@ SYSTEM        OS UPGRADE, STORAGE (later), FORMAT CARD (later), USB CONFIG (late
               DIAGNOSTICS, PUSH ENCODERS, ABOUT
 ```
 
-THEME holds BRIGHT, GAMMA, ACCENT, BLACK, HINTS and INVERT. SCREENSAVER: OFF, 5, 7, 10, 30, 60 s, 2, 5, 10 min (default 5 min). DIAGNOSTICS: AUDIO LOAD, TEST TONE (later), INPUT TEST (later). Rows marked later are shown dimmed and skipped.
+THEME holds BRIGHT, GAMMA, ACCENT, BLACK, HINTS and INVERT. SCREENSAVER: OFF, 5, 7, 10, 30, 60 s, 2, 5, 10 min (default 5 min). DIAGNOSTICS: AUDIO LOAD, TEST TONE (later), INPUT TEST (later). Rows marked later are dimmed and labelled LATER; the bar lands on them, but EDIT does nothing.
 
 ---
 
