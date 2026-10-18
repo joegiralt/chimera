@@ -25,7 +25,7 @@ use chimera_core::modulation::ModRouting;
 use chimera_core::params::EngineType;
 use chimera_core::part::PartParams;
 use chimera_core::preset::Sound;
-use chimera_core::project::{Line, PartId};
+use chimera_core::project::PartId;
 use chimera_core::storage::{
     Decode, FileError, Framer, MIGRATIONS, RecordTag, SoundDecoder, TRANSLATIONS, decode_block,
 };
