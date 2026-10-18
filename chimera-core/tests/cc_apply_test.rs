@@ -448,7 +448,7 @@ fn stepped_cc_hysteresis() {
 }
 
 /// Operator A at FRMT and every other at NOISE: the budget is full, so
-/// A's WAVE up from FRMT is refused, and stays.
+/// A's WAVE up from FRMT is refused, and stays (a turn shows it dimmed).
 fn budget_full() -> Sound {
     let mut s = Sound::plain_init(EngineType::Algo);
     s.params.algo.try_set_kind(0, OpKind::Formant).unwrap();
@@ -473,7 +473,13 @@ fn stepped_cc_past_the_formant_budget_is_refused_as_a_turn() {
     screen::to_osc_sub(&mut b.ui, &ALGO_OP_PAGES[0]);
     b.ui.step_toast(60_000);
     feed(&mut b.ui, Input::turn(EncoderId::A, 1));
-    assert_eq!(b.ui.step_toast(0), full, "the turn toasts");
+    assert_eq!(
+        b.ui.step_toast(0),
+        ToastStep::Idle,
+        "the turn doesn't toast"
+    );
+    let shown = b.ui.held_choice().expect("NOIS is shown dimmed");
+    assert_eq!(shown.held.code, 17);
     assert_eq!(kind(&b), OpKind::Formant);
 }
 

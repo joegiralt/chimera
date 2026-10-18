@@ -1076,6 +1076,17 @@ fn prime(ui: &mut UiState) {
 }
 
 /// Part 1 on INIT Algo as filter `kind`, on FLT (or FLT › MOD with `sub`).
+/// LFO 1 at 3 Hz, full depth, into FREQ at +64.
+pub fn lfo_on_freq(ui: &mut UiState) {
+    let l = &mut ui.params_mut().lfos[0];
+    (l.depth, l.rate) = (1.0, 3.0);
+    ui.mod_state_mut().set_fixed(
+        chimera_core::modulation::ModSource::Lfo1.index(),
+        chimera_core::modulation::FixedCol::Freq,
+        64,
+    );
+}
+
 fn on_flt(ui: &mut UiState, kind: chimera_core::dsp::filter::FilterKind, sub: bool) {
     init_part(ui, PartId::ALL[0]);
     ui.params_mut().filter.set_kind(kind);
@@ -1391,6 +1402,19 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::B, -70)); // CUTOFF
         feed(ui, Input::turn(EncoderId::C, 90)); // RES: the pass band falls
         feed(ui, Input::turn(EncoderId::E, 1)); // KEYBD, stepped
+    }),
+    // Modulation draws a ghost beside the set curve (#575): ENV AMT +40 on
+    // the 2040, an LFO on CLEAN's FREQ.
+    ("flt_2040_env_amt", |ui| {
+        on_flt(ui, FilterKind::K2040, false);
+        ui.params_mut().envelopes[0].sustain = 0.7; // held mid-note
+        feed(ui, Input::turn(EncoderId::B, -80)); // CUTOFF
+        feed(ui, Input::turn(EncoderId::D, 40)); // ENV AMT
+    }),
+    ("flt_clean_lfo", |ui| {
+        on_flt(ui, FilterKind::Svf, false);
+        feed(ui, Input::turn(EncoderId::B, -80)); // FREQ
+        lfo_on_freq(ui);
     }),
     ("flt_mod_2040", |ui| {
         on_flt(ui, FilterKind::K2040, true);

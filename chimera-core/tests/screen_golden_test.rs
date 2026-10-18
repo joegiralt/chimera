@@ -67,6 +67,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("flt_clean", 0xee8a0becf9cf1157),
     ("flt_mod_clean", 0xa8e1c2139dc9d441),
     ("flt_2040", 0xc6be3829db70f923),
+    // Modulation draws a ghost beside the set curve (#575).
+    ("flt_2040_env_amt", 0xd382d7c84e2701f6),
+    ("flt_clean_lfo", 0xbba1813aa3d1d2c1),
     ("flt_mod_2040", 0x739059e65565d859),
     ("flt_mod_2040_exp", 0xa75e45413d0f33fe),
     ("flt_dirty", 0x6ab4e5d0d8d1bbee),

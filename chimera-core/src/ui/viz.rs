@@ -341,6 +341,85 @@ pub fn filter<D>(
     }
 }
 
+/// Where modulation moves the filter from its set value, in pixels: the
+/// ghost the FLT viz draws beside the solid curve. Each `Some` holds
+/// (set, moved) and is `None` while the two share a pixel, so a still
+/// modulation redraws nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ModMark {
+    /// Columns of the cutoff corner.
+    pub cutoff: Option<(i32, i32)>,
+    /// Rows of the resonance peak's top.
+    pub res: Option<(i32, i32)>,
+}
+
+/// Gap below the plot's base to the cutoff band, and the band's height.
+const MARK_DY: i32 = 4;
+const MARK_H: i32 = 3;
+/// The resonance band's column, right of the plot.
+const MARK_RES_X: i32 = theme::VIZ_RIGHT + 5;
+
+impl ModMark {
+    /// The mark for the set `cutoff`/`reso` and where modulation puts them
+    /// (all 0..1).
+    pub fn of(cutoff: f32, moved_cutoff: f32, reso: f32, moved_reso: f32) -> Self {
+        let w = (theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32;
+        let x = |c: f32| theme::VIZ_LEFT + (w * clampf(c, 0.0, 1.0)) as i32;
+        let y = |r: f32| {
+            FILTER_PASS_Y - ((FILTER_PASS_Y - PLOT_TOP) as f32 * clampf(r, 0.0, 1.0)) as i32
+        };
+        let apart = |a: i32, b: i32| (a != b).then_some((a, b));
+        Self {
+            cutoff: apart(x(cutoff), x(moved_cutoff)),
+            res: apart(y(reso), y(moved_reso)),
+        }
+    }
+
+    /// A fingerprint: equal while the mark draws the same pixels.
+    pub fn key(&self) -> u32 {
+        // Columns span the 216 px plot (x 12..=228) and rows 40..=72: each
+        // fits a byte.
+        const _: () = assert!(theme::VIZ_RIGHT < 256 && FILTER_PASS_Y < 256);
+        let p =
+            |s: Option<(i32, i32)>| s.map_or(0, |(a, b)| (a as u32 & 0xff) << 8 | b as u32 & 0xff);
+        p(self.cutoff) | p(self.res) << 16
+    }
+
+    /// The boxes the mark can occupy (x, y, w, h): the cutoff band under
+    /// the plot, the resonance band right of it. Neither touches the curve.
+    pub const BOXES: [(i32, i32, i32, i32); 2] = [
+        (
+            theme::VIZ_LEFT - 2,
+            PLOT_BASE + MARK_DY - 1,
+            theme::VIZ_RIGHT - theme::VIZ_LEFT + 5,
+            MARK_H + 2,
+        ),
+        (
+            MARK_RES_X - 3,
+            PLOT_TOP - 1,
+            7,
+            FILTER_PASS_Y - PLOT_TOP + 3,
+        ),
+    ];
+
+    /// Faint band from the set value to the moved one, and a ghost tick
+    /// where modulation has it now. Secondary: grey, never the accent.
+    pub fn draw<D>(&self, d: &mut D)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let y0 = PLOT_BASE + MARK_DY;
+        if let Some((a, b)) = self.cutoff {
+            draw::fill_rect(d, a.min(b), y0, (a - b).abs() + 1, MARK_H, theme::FAINT);
+            draw::fill_rect(d, b, y0 - 1, 1, MARK_H + 2, theme::MID);
+        }
+        if let Some((a, b)) = self.res {
+            draw::fill_rect(d, MARK_RES_X, a.min(b), 3, (a - b).abs() + 1, theme::FAINT);
+            draw::fill_rect(d, MARK_RES_X - 2, b, 7, 1, theme::MID);
+        }
+    }
+}
+
 /// Most stages `envelope` draws: A · H · D · S · R.
 pub const MAX_STAGES: usize = 5;
 
