@@ -564,6 +564,29 @@ fn a_start_under_quiet_stays_silent() {
     assert_eq!(p.block(1.0).0.fade, FadeCmd::In);
 }
 
+/// A warm jump at full gain just as a quiet is asked keeps its level: the
+/// quiet's fade takes it down from there, never a snap to 0.
+#[test]
+fn a_jump_under_quiet_keeps_its_level() {
+    let rig = Rig::new();
+    let mut p = rig.play();
+    p.start(0, Some(HEAD));
+    for _ in 0..4 {
+        p.block(1.0);
+    }
+    rig.bus.ask_quiet(Ms(0));
+    let at = p.pos as u32;
+    p.with(|c, port| c.jump(at, 1.0, Some(HEAD), port));
+    let (_, gains) = p.block(1.0);
+    let step = 1.0 / QUIET as f32;
+    assert!((gains[0].1 - (1.0 - step)).abs() < 1e-4, "{}", gains[0].1);
+    assert!(
+        (gains[1].1 - (1.0 - 2.0 * step)).abs() < 1e-4,
+        "{}",
+        gains[1].1
+    );
+}
+
 #[test]
 fn gain_never_steps() {
     let rig = Rig::new();

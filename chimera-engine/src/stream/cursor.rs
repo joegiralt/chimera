@@ -409,7 +409,7 @@ impl Cursor {
     /// A jump mid-note (a wrap, heads re-staged) to `pos`: `start` on the
     /// note's stream, but a warm landing keeps the gain where it was and
     /// rises over `DROP_FADE`, so a voice that ducked before it never
-    /// steps. Nothing before a start.
+    /// steps, nor one under a quiet snaps to 0. Nothing before a start.
     pub fn jump(
         &mut self,
         pos: u32,
@@ -422,11 +422,10 @@ impl Cursor {
         };
         let level = self.gain.level;
         self.start(pos, inc_max, head, src, port);
-        if matches!(self.state, Flow::Head(_)) && level < FULL {
-            self.gain = Fade {
-                level,
-                step: DROP_STEP,
-            };
+        // Its level kept, under a quiet too (`plan` fades it from there).
+        if matches!(self.state, Flow::Head(_)) {
+            let step = if level < FULL { DROP_STEP } else { 0 };
+            self.gain = Fade { level, step };
         }
     }
 

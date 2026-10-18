@@ -148,7 +148,9 @@ impl<D: Medium> SharedCard<D> {
         self.bus.ask_quiet(start);
         while self.bus.quiet() != Quiet::Held
             && (self.hooks.now)().elapsed_since(start) < QUIET_SPIN_MS
-        {}
+        {
+            core::hint::spin_loop();
+        }
     }
 
     /// `hold`, unless this operation already found the bus busy.
