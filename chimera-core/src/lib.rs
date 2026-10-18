@@ -17,6 +17,13 @@ pub use chimera_engine::{
     taps, tracked, triple, voice_alloc,
 };
 
+// The engine's TAPE (`bank2` brings it) with the UI that loads its sources,
+// or neither: the engine alone plays nothing but SOURCE MISSING.
+const _: () = assert!(
+    cfg!(feature = "tape") == chimera_engine::stream::STREAMS,
+    "chimera-engine/tape needs chimera-core/tape"
+);
+
 pub mod bank2;
 pub mod console;
 pub mod ui;

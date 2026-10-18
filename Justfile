@@ -426,6 +426,20 @@ test:
     cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit
     cargo test -p chimera-desktop --lib --tests
     just test-fat-tools
+    just test-firmware-features
+
+# TAPE's load tests under the shipping firmware's own core and engine
+# features, read from Cargo's resolve of `--features orbit`: a gate the
+# host's defaults hide but the firmware lacks fails here.
+test-firmware-features:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    resolved() { cargo tree -q -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit -e features -i "$1" --prefix none --format '{p} [{f}]' | sed -n "s/^$1 v.*\[\(.*\)\]$/\1/p" | head -1; }
+    core=$(resolved chimera-core); engine=$(resolved chimera-engine)
+    [[ ",$core," == *,tape,* ]] || { echo "the firmware's chimera-core has no tape: [$core]" >&2; exit 1; }
+    f="$core,$(sed 's|\([^,]*\)|chimera-engine/\1|g' <<<"$engine")"
+    echo "firmware features: $f"
+    cargo test -p chimera-core --no-default-features --features "$f" --test tape_part_load_test --test tape_source_cell_test
 
 # The FAT layer checked by dosfstools (ADR 0048): mkfs.fat images must read
 # back and fsck.fat -n must pass, after the suite and after console puts
