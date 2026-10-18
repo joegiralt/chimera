@@ -263,7 +263,7 @@ impl Rig {
         .position(|&x| x == a)
         .unwrap();
         self.turn(EncoderId::A, i as i8);
-        tap(&mut self.ui, ButtonId::Seq);
+        tap(&mut self.ui, ButtonId::Edit);
         assert!(!self.ui.prompt_open());
     }
 
@@ -380,7 +380,7 @@ fn mix_edit_in_library_names_then_saves() {
     assert_eq!(r.ui.naming_title_for_test(), Some("SOUND NAME"));
     let status = r.ui.project_status();
     let part = r.ui.project().part(P1).sound.name;
-    tap(&mut r.ui, ButtonId::Seq);
+    tap(&mut r.ui, ButtonId::Edit);
     r.work();
     assert_eq!(r.toast(), "SAVED TO LIBRARY");
     assert_eq!(r.sounds(), vec![1]);
@@ -675,7 +675,7 @@ fn a_lowest_free_save_lands_on_its_page() {
     r.open_library();
     r.work();
     r.feed(Input::chord(ButtonId::Mix, ButtonId::Edit));
-    tap(&mut r.ui, ButtonId::Seq);
+    tap(&mut r.ui, ButtonId::Edit);
     r.work();
     assert_eq!(r.toast(), "SAVED TO LIBRARY");
     assert_eq!(r.cursor_id(), Some(2));
@@ -773,7 +773,7 @@ fn a_save_from_settings_drops_the_page_and_lists_on_entry() {
         r.press(ButtonId::Plus);
     }
     r.press(ButtonId::Edit);
-    tap(&mut r.ui, ButtonId::Seq);
+    tap(&mut r.ui, ButtonId::Edit);
     r.one_pass();
     assert_eq!(r.toast(), "SAVED TO LIBRARY");
     assert!(!r.ui.card_pending(), "no page listed off the browser");

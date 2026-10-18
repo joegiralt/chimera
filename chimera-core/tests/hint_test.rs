@@ -780,3 +780,35 @@ fn mappable_cells_hint_learn() {
     }
     assert!(seen > 0);
 }
+
+/// In the mixer MIX + B*n* keeps the page and opens Part *n*'s (ADR 0044):
+/// the focus band says so, within the screen, and the header and strip
+/// name the Part it lands on.
+#[test]
+fn mix_plus_a_part_button_in_the_mixer_is_hinted() {
+    use chimera_core::ui::view::mixer_hint;
+    use chimera_hal::ButtonId::{B3, Mix};
+    let mut ui = Box::new(ui_for("mixer_part"));
+    assert!(hint_ink(&ui) > 0, "PART's touched cell: a hint");
+    let page = screen::page_def_id(&ui);
+    let from = ui.active_part;
+    feed(&mut ui, Input::chord(Mix, B3));
+    assert!(ui.location().on_mixer(), "still the mixer");
+    assert_eq!(screen::page_def_id(&ui), page, "the same page");
+    assert_ne!(ui.active_part, from);
+    assert_eq!(ui.location().part(), Some(ui.active_part));
+    assert_eq!(ui.active_part.index(), 2, "Part 3");
+    assert!(hint_ink(&ui) > 0, "the hint stays on the new Part");
+    let jump = Gesture("MIX + B1-6", "PART");
+    assert_eq!(mixer_hint(hint::NONE), &[jump][..]);
+    let with_learn = mixer_hint(chimera_core::ui::view::LEARN_HINT);
+    assert_eq!(
+        with_learn,
+        &[jump, Gesture("MIX + SEQ", "LEARN")][..],
+        "both gestures stay hinted"
+    );
+    assert_eq!(mixer_hint(&[Gesture("REVERB ▸", "HALL")]).len(), 1);
+    for h in [mixer_hint(hint::NONE), with_learn] {
+        assert!(hint::width(h) <= theme::CONTENT_W, "{}", hint::width(h));
+    }
+}

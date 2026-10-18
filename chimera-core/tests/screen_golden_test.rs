@@ -136,79 +136,79 @@ const GOLDENS: &[(&str, u64)] = &[
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it, the screens are as before.
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_part", 0x8ff9af8c692c0faa),
+    ("mixer_part", 0xfd1a118204f19d77),
     // mixer_sends, mixer_out_p2 re-recorded: the sends are the Sound's OUT block (ADR 0123).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_sends", 0x35e09ae3385236bb),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay", 0xe4fcca706139c7bb),
+    ("mixer_fx_delay", 0xfbe0808a050ed002),
     // TYPE first, the panel's units, and REV › MORE (reverb TYPEs T6);
     // the REV pages re-recorded for RATE's default and law (ADR 0121).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb", 0x23570ab7def0ec21),
+    ("mixer_fx_reverb", 0x9d9d0b61c361768c),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_more", 0xcea8331d9db316e9),
+    ("mixer_fx_reverb_more", 0x7b25fe8ae4125c8c),
     // HALL (its SIZE cell PLATE at SIZE 0) and GATE, each page (T10);
     // MORE re-recorded: the SYNC cell, and GATE's synced LENGTH (T12).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_hall", 0x7bf5cbf34842c847),
+    ("mixer_fx_reverb_hall", 0x110a3c12bb55b53e),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_hall_more", 0x4c8a83f2df898b32),
+    ("mixer_fx_reverb_hall_more", 0x733a41e95f057403),
     // HALL re-recorded as fitted (T10b): its knobs, SPREAD, MORE 2's DENSITY.
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_hall_more2", 0x275b70b3b49d0002),
+    ("mixer_fx_reverb_hall_more2", 0x8bfbd6ba87c2ac03),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate", 0xe0ca23331152493c),
+    ("mixer_fx_reverb_gate", 0x6da0632fff3b4421),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate_more", 0x0821e6bbf4d6c1a4),
+    ("mixer_fx_reverb_gate_more", 0x9c5959ebe27922a1),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate_sync", 0x600df788af1e38ad),
+    ("mixer_fx_reverb_gate_sync", 0x382b5c06de0836b8),
     // BLOOM, each page (T11).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_bloom", 0xfc9d436127625de8),
+    ("mixer_fx_reverb_bloom", 0x8bb0cf42db45e7a5),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_bloom_more", 0x84e0e4272af19222),
+    ("mixer_fx_reverb_bloom_more", 0x1cadf3eefa17fedb),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_char", 0xfad0c5092f85d3a5),
+    ("mixer_fx_delay_char", 0xb3e9570b26525f00),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master", 0xaa7cc5f71d43600a),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master_level", 0xeaf848ed262e3df4),
+    ("mixer_master_level", 0x33a39d11187d9bb1),
     #[cfg(feature = "master-tape")]
-    ("mixer_part", 0x8ff9af8c692c0faa),
+    ("mixer_part", 0xfd1a118204f19d77),
     #[cfg(feature = "master-tape")]
     ("mixer_sends", 0x35e09ae3385236bb),
     // DLY's branch hides REV's label it ran into (TAPE Task 15).
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay", 0xe4fcca706139c7bb),
+    ("mixer_fx_delay", 0xfbe0808a050ed002),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb", 0x23570ab7def0ec21),
+    ("mixer_fx_reverb", 0x9d9d0b61c361768c),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_more", 0xcea8331d9db316e9),
+    ("mixer_fx_reverb_more", 0x7b25fe8ae4125c8c),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall", 0x7bf5cbf34842c847),
+    ("mixer_fx_reverb_hall", 0x110a3c12bb55b53e),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall_more", 0x4c8a83f2df898b32),
+    ("mixer_fx_reverb_hall_more", 0x733a41e95f057403),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall_more2", 0x275b70b3b49d0002),
+    ("mixer_fx_reverb_hall_more2", 0x8bfbd6ba87c2ac03),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate", 0xe0ca23331152493c),
+    ("mixer_fx_reverb_gate", 0x6da0632fff3b4421),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate_more", 0x0821e6bbf4d6c1a4),
+    ("mixer_fx_reverb_gate_more", 0x9c5959ebe27922a1),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate_sync", 0x600df788af1e38ad),
+    ("mixer_fx_reverb_gate_sync", 0x382b5c06de0836b8),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_bloom", 0xfc9d436127625de8),
+    ("mixer_fx_reverb_bloom", 0x8bb0cf42db45e7a5),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_bloom_more", 0x84e0e4272af19222),
+    ("mixer_fx_reverb_bloom_more", 0x1cadf3eefa17fedb),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_char", 0xfad0c5092f85d3a5),
+    ("mixer_fx_delay_char", 0xb3e9570b26525f00),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", 0xe4642868fa275a5c),
     #[cfg(feature = "master-tape")]
     ("mixer_master", 0xaa7cc5f71d43600a),
     #[cfg(feature = "master-tape")]
-    ("mixer_master_level", 0xeaf848ed262e3df4),
+    ("mixer_master_level", 0x33a39d11187d9bb1),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_out_p2", 0xbbf4869671d1e56d),
     #[cfg(feature = "master-tape")]
@@ -243,7 +243,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("library_newer", 0x54415a7d9a958936),
     ("library_wont_fit", 0x24494e0f831f3bab),
     ("library_pool_full", 0x950a8303f1cef0f3),
-    ("library_naming", 0xab3925136bf27a0f),
+    ("library_naming", 0xa234ea336d54efbf),
     // The FACTORY tab: a row's description on line 2, the set's build on
     // line 3; empty, no card, and a stray TAPE file greyed COMING SOON.
     // Re-recorded on the merge: the pool meter at the formant cost.
@@ -271,8 +271,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // Slot 3 written: MODIFIED, as ORBIT is in the project's CRC (Task 18).
     ("settings_orbit_save_to", 0xa4d2405ea9f09bf6),
     ("settings_load", 0x34b0bd576d341497),
-    ("settings_prompt_load", 0xc47d45b862dea1e3),
-    ("settings_naming", 0xc4298c7a6a0c5b5a),
+    ("settings_prompt_load", 0xfb661eb8bbfd7b2b),
+    ("settings_naming", 0x39679c2d5eca087a),
     // Every ORBIT page again for Task 16: the map gains SCN.
     // ORBIT's RHYTHM, CHRD and CUSTOM (plan Task 9); Task 10's header,
     // `SCENE n`, and the beat dot on the playing ones.

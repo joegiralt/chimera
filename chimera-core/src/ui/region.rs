@@ -78,6 +78,8 @@ pub enum RegionData {
         text: u32,
         /// HINTS on: the band draws its hint.
         hints: bool,
+        /// The mixer's jump hint shows on a bare cell (`view::mixer_hint`).
+        mixer: bool,
     },
     /// The mod matrix readout: the selected route, its animated amount and
     /// the route count.
@@ -192,6 +194,7 @@ impl RegionData {
             gauge: 0,
             text: 0,
             hints: false,
+            mixer: false,
         }
     }
 
@@ -219,10 +222,14 @@ impl RegionData {
 
     /// A focus band keyed on the text it shows from outside its slot,
     /// and on HINTS, too.
-    pub fn with_text(mut self, key: u32, hints_on: bool) -> Self {
-        if let Self::Focus { text, hints, .. } = &mut self {
+    pub fn with_text(mut self, key: u32, hints_on: bool, in_mixer: bool) -> Self {
+        if let Self::Focus {
+            text, hints, mixer, ..
+        } = &mut self
+        {
             *text = key;
             *hints = hints_on;
+            *mixer = in_mixer;
         }
         self
     }
@@ -329,6 +336,7 @@ impl RegionData {
             gauge: u32::MAX,
             text: u32::MAX,
             hints: false,
+            mixer: false,
         }
     }
 

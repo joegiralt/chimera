@@ -52,7 +52,7 @@ use core::ptr::addr_of_mut;
 use crate::storage::{Card, CardEvent, Exit, SystemSettings, SystemSync};
 use chimera_hal::store::Store;
 use chimera_hal::{
-    ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, EncoderId, PART_BUTTONS,
+    ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, Edges, EncoderId, Ms, PART_BUTTONS,
 };
 
 use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks, Op, ParamAddr};
@@ -899,6 +899,11 @@ impl UiState {
         self.midi = s.midi;
     }
 
+    /// The screensaver is up.
+    pub fn asleep(&self) -> bool {
+        self.idle.asleep()
+    }
+
     /// `elapsed_ms` of wall time since the last call, for the screensaver:
     /// the shells' loops call it beside `step_toast`. `busy`: card work ran
     /// this frame, so `elapsed_ms` is its blocking time. A prompt, card work
@@ -1612,7 +1617,12 @@ impl UiState {
         if pressed(ButtonId::Edit) && !edit_part {
             push(NavKey::Edit);
         }
-        let a = c.encoder_delta(EncoderId::A);
+        #[cfg(feature = "midi-map")]
+        let mapping = self.screen() == Some(Screen::MidiMap);
+        #[cfg(not(feature = "midi-map"))]
+        let mapping = false;
+        // MIDI MAP's B, C and D edit the row under the bar.
+        let a = list_turn(c, if mapping { &MAP_EDITS } else { &[] });
         let on_list = self.loc.settings().is_some_and(|s| s.at_leaf().is_none());
         if on_list && a != 0 {
             push(NavKey::Bar(a));
@@ -1681,6 +1691,13 @@ impl UiState {
     /// Whether a prompt is open.
     pub fn prompt_open(&self) -> bool {
         self.prompt().is_some()
+    }
+
+    /// The highlighted pill of an open prompt.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn prompt_pick(&self) -> Option<usize> {
+        self.prompt().map(|a| a.with_view(|v| v.picked()))
     }
 
     fn prompt(&self) -> Option<&Ask> {
@@ -2364,14 +2381,13 @@ impl UiState {
     /// Process one frame of input: navigation + encoder deltas, then
     /// ORBIT's commands flushed for the frame's publish.
     pub fn handle_input(&mut self, controls: &impl Controls) {
-        if self.idle.touch(any_turn(controls), any_down(controls)) == saver::Touch::Swallow {
-            // A held key still ages.
-            let jog = self.jog_pass(controls.now_ms().0);
-            if cfg!(feature = "midi-map") {
-                self.cc.hand(u8::from(jog));
-            }
-            return;
-        }
+        let drop =
+            self.idle.touch(any_turn(controls), any_down(controls)) == saver::Wake::FirstDetent;
+        // One wrapper always, so the input path is compiled once.
+        self.handle_frame(&Frame(controls, drop));
+    }
+
+    fn handle_frame(&mut self, controls: &impl Controls) {
         let rev = self.project.rev();
         let model = |ui: &Self| ui.project.part(ui.active_part).sound.params.tape.model;
         let was = model(self);
@@ -3254,6 +3270,7 @@ impl UiState {
                     &[self.renderer.text_key(f, f.focus)],
                 ),
                 f.hints,
+                matches!(f.head, Head::Mix(_)),
             )
             .animated(glyph::anim_key(
                 shown.is_some_and(|g| g.animates()),
@@ -3450,8 +3467,12 @@ impl UiState {
                     && data[i] != r.prev_data
                     && data[i].without_anim() == r.prev_data.without_anim()
                     && let Some(gauge) = shown
-                    && let Some(rows) =
-                        renderer::Renderer::redraw_gauge(display, |d| d.pixel_buffer(), gauge)
+                    && let Some(rows) = renderer::Renderer::redraw_gauge(
+                        display,
+                        |d| d.pixel_buffer(),
+                        gauge,
+                        renderer::Renderer::focus_hint(&f),
+                    )
                 {
                     flush_list[flush_count] = rows;
                     flush_count += 1;
@@ -3507,9 +3528,62 @@ fn part_key(c: &impl Controls) -> bool {
             .any(|&b| c.button_state(b) == ButtonState::Pressed)
 }
 
+/// MIDI MAP's value encoders: CC, MIN, MAX.
+#[cfg(feature = "midi-map")]
+const MAP_EDITS: [EncoderId; 3] = [EncoderId::B, EncoderId::C, EncoderId::D];
+#[cfg(not(feature = "midi-map"))]
+const MAP_EDITS: [EncoderId; 0] = [];
+
+/// A list's bar move this frame: the biggest turn among the encoders not
+/// in `taken` (the first on a tie), so two brushed together move it once.
+pub(crate) fn list_turn(c: &impl Controls, taken: &[EncoderId]) -> i8 {
+    ALL_ENCODERS
+        .iter()
+        .filter(|e| !taken.contains(e))
+        .map(|&e| c.encoder_delta(e))
+        .fold(0i8, |m, d| {
+            if d.unsigned_abs() > m.unsigned_abs() {
+                d
+            } else {
+                m
+            }
+        })
+}
+
 /// An encoder moved this frame.
 fn any_turn(controls: &impl Controls) -> bool {
     ALL_ENCODERS.iter().any(|&e| controls.encoder_delta(e) != 0)
+}
+
+/// `Controls`, with one detent taken off the first encoder that moved
+/// when `.1`.
+struct Frame<'a, C>(&'a C, bool);
+
+impl<C: Controls> Controls for Frame<'_, C> {
+    fn encoder_delta(&self, id: EncoderId) -> i8 {
+        if !self.1 {
+            return self.0.encoder_delta(id);
+        }
+        let first = ALL_ENCODERS.iter().find(|&&e| self.0.encoder_delta(e) != 0);
+        let d = self.0.encoder_delta(id);
+        if first == Some(&id) {
+            d - d.signum()
+        } else {
+            d
+        }
+    }
+    fn button_state(&self, id: ButtonId) -> ButtonState {
+        self.0.button_state(id)
+    }
+    fn edges(&self, id: ButtonId) -> Edges {
+        self.0.edges(id)
+    }
+    fn now_ms(&self) -> Ms {
+        self.0.now_ms()
+    }
+    fn push(&self, id: EncoderId) -> Edges {
+        self.0.push(id)
+    }
 }
 
 /// A button went down or is held down.
