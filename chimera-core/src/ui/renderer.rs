@@ -7,8 +7,9 @@ use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
 use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use crate::block::find_spec;
+use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::env::EnvRates;
-use crate::dsp::algo::params::AlgoOpParams;
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::modulator::{EnvType, HoldPos};
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
 use crate::dsp::va::osc::{Morph, Unit};
@@ -328,12 +329,16 @@ impl Renderer {
                 let slot = (0..f.def.params.len())
                     .find(|&i| slot_addr(f.def, i, &f.ctx) == Some(morph))
                     .expect("ALG page binds MORPH");
-                viz::algo_diagram(
-                    display,
-                    algo.algs().0.algorithm(),
-                    algo.algs().1.algorithm(),
-                    self.anim[slot].current(),
-                );
+                let (a, b) = (algo.algs().0.algorithm(), algo.algs().1.algorithm());
+                // Picking ALG A or B shows that algorithm itself (ADR 0153),
+                // even a refused, held one; else A moving to B with MORPH.
+                if let Some((is_b, held)) = alg_pick(f) {
+                    let own = if is_b { b } else { a };
+                    let shown = held.map_or(own, |c| AlgoId::clamped(c).algorithm());
+                    viz::algo_diagram(display, shown, shown, 0.0);
+                } else {
+                    viz::algo_diagram(display, a, b, self.anim[slot].current());
+                }
             }
             VizType::Strip => {
                 let (model, p) = self.strip_params(f);
@@ -491,9 +496,14 @@ impl Renderer {
                 VizType::AlgoDiagram => {
                     let algo = &f.parts[f.active_part.index()].sound.params.algo;
                     let q = region::quantize_values(&self.anim);
+                    // The picked cell and its held code move the band too.
+                    let pick = alg_pick(f).map_or(0, |(is_b, held)| {
+                        let side = u32::from(is_b) + 1;
+                        side | u32::from(held.map_or(0, |c| c + 1)) << 2
+                    });
                     (
                         [0, 0, q[2], 0, 0, 0],
-                        (algo.algs().0.get() as u32) << 8 | algo.algs().1.get() as u32,
+                        pick << 16 | (algo.algs().0.get() as u32) << 8 | algo.algs().1.get() as u32,
                     )
                 }
                 // ORBIT's own key: `orbit_viz_key`.
@@ -1040,6 +1050,19 @@ fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
         view => buf = param_text(f, i, &view, v),
     }
     buf
+}
+
+/// The ALGO page's picked cell (ALG A or B is the focus) and the refused
+/// code held on it, if any.
+fn alg_pick(f: &Frame) -> Option<(bool, Option<u8>)> {
+    let at = slot_addr(f.def, f.focus, &f.ctx)?;
+    [AlgoParams::ALG_A, AlgoParams::ALG_B]
+        .into_iter()
+        .find(|&id| at == ParamAddr::new(BlockRef::Algo, id))
+        .map(|id| {
+            let held = f.held.filter(|s| s.held.addr.param == id);
+            (id == AlgoParams::ALG_B, held.map(|s| s.held.code))
+        })
 }
 
 /// The refused choice `view` shows in place of its value, if it is the cell.
