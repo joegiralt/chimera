@@ -55,7 +55,7 @@ fn legends_read_as_the_spec_says() {
     assert_eq!(copy(LegendFor::Later), back_close("LATER"));
     for (l, s) in [
         (LegendFor::Leaf, "A-F EDIT · MENU BACK"),
-        (LegendFor::Prompt, "A PICK · EDIT OK · MENU BACK"),
+        (LegendFor::Prompt, "EDIT OK · MENU BACK"),
         (LegendFor::Naming, "EDIT SAVE · MENU BACK"),
         (LegendFor::ManageList, "EDIT COMMANDS · MENU BACK"),
         (LegendFor::ManageCommands, "EDIT RUN · MENU LIST"),

@@ -855,14 +855,20 @@ fn every_encoder_picks_every_prompt_pill() {
     };
     for &k in AskKind::ALL {
         let none = shown(k, None);
-        let a = shown(k, Some(Input::turn(EncoderId::A, 1)));
+        // A prompt opens on its safe pill: one way moves it, the other clamps.
+        let d = if shown(k, Some(Input::turn(EncoderId::A, 1))) != none {
+            1
+        } else {
+            -1
+        };
+        let a = shown(k, Some(Input::turn(EncoderId::A, d)));
         assert_ne!(a, none, "{k:?}: a detent moves the pill");
         for e in ENCODERS {
-            assert_eq!(shown(k, Some(Input::turn(e, 1))), a, "{k:?} {e:?}");
+            assert_eq!(shown(k, Some(Input::turn(e, d))), a, "{k:?} {e:?}");
         }
-        let both = Input::turn(EncoderId::B, 1).and_turn(EncoderId::E, 1);
+        let both = Input::turn(EncoderId::B, d).and_turn(EncoderId::E, d);
         assert_eq!(shown(k, Some(both)), a, "{k:?}: brushed once");
-        let nudge = Input::turn(EncoderId::C, 1).and_turn(EncoderId::F, -1);
+        let nudge = Input::turn(EncoderId::C, d).and_turn(EncoderId::F, -d);
         assert_eq!(shown(k, Some(nudge)), a, "{k:?}: no cancelling");
     }
 }

@@ -270,7 +270,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Slot 3 written: MODIFIED, as ORBIT is in the project's CRC (Task 18).
     ("settings_orbit_save_to", 0xa4d2405ea9f09bf6),
     ("settings_load", 0x34b0bd576d341497),
-    ("settings_prompt_load", 0xa55f49be917f847b),
+    ("settings_prompt_load", 0xfb661eb8bbfd7b2b),
     ("settings_naming", 0x39679c2d5eca087a),
     // Every ORBIT page again for Task 16: the map gains SCN.
     // ORBIT's RHYTHM, CHRD and CUSTOM (plan Task 9); Task 10's header,

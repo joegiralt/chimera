@@ -1,4 +1,4 @@
-//! The prompt panel and NAMING (settings spec § Screens): A picks, EDIT
+//! The prompt panel and NAMING (settings spec § Screens): any encoder picks, EDIT
 //! confirms and MENU and SEQ cancel; B*n* drops either and acts.
 
 mod screen;
@@ -197,7 +197,7 @@ fn each_answer_does_what_it_says() {
 
     let (mut ui, before) = asking();
     feed(&mut ui, turn(EncoderId::A, 1));
-    assert_eq!(ui.prompt_pick(), Some(1), "A moves the highlight");
+    assert_eq!(ui.prompt_pick(), Some(1), "any encoder moves the highlight");
     tap(&mut ui, ButtonId::Seq);
     assert!(!ui.prompt_open());
     assert!(kept(&ui, &before), "SEQ keeps the Part");
