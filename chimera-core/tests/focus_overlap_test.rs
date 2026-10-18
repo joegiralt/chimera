@@ -15,7 +15,7 @@ use chimera_core::dsp::va::VaMode;
 use chimera_core::dsp::va::osc::{Morph, Unit};
 use chimera_core::ui::block_def::BlockDef;
 use chimera_core::ui::block_registry::ALL_CHAINS;
-use chimera_core::ui::components::{self, Look};
+use chimera_core::ui::components::{self, Layout, Look};
 use chimera_core::ui::fmt::{FmtBuf, fmt_val};
 use chimera_core::ui::glyph::{
     Accidental, Braid, CompositeId, FocusGlyph, Gauge, Reads, Rings, Tail, VaGlyph, VaMix,
@@ -89,7 +89,7 @@ fn widest(fmt: ValFmt, spec: Option<&ParamSpec>) -> String {
         };
         let mut buf = FmtBuf::new();
         fmt_val(&mut buf, v, fmt);
-        let w = chimera_core::ui::draw::text_width(&theme::FONT_FOCUS, buf.as_str(), 0);
+        let w = components::big_width(buf.as_str());
         if w > best.0 {
             best = (w, buf.as_str().to_string());
         }
@@ -252,4 +252,110 @@ fn gauges_stay_right_of_gauge_left() {
             );
         }
     }
+}
+
+/// Every format's text at each swept step, in order of the value.
+fn texts(fmt: ValFmt, spec: &ParamSpec) -> Vec<String> {
+    (0..=STEPS)
+        .map(|k| {
+            let v = k as f32 / STEPS as f32;
+            let v = match fmt {
+                ValFmt::LogHz { .. } | ValFmt::Vowel => spec.denormalize(v),
+                _ => v,
+            };
+            let mut buf = FmtBuf::new();
+            fmt_val(&mut buf, v, fmt);
+            buf.as_str().to_string()
+        })
+        .collect()
+}
+
+const ARC: Gauge = Gauge::Arc {
+    value: 0.5,
+    bipolar: false,
+};
+
+/// A value in Hz, kHz, ms or s keeps its arc at every step.
+#[test]
+fn timed_and_pitched_values_keep_their_arc() {
+    let mut n = 0;
+    for b in BlockRef::ALL {
+        for s in b.specs().iter().filter(|s| s.glyph == FocusGlyph::Arc) {
+            for t in texts(s.fmt, s) {
+                if matches!(components::split_unit(&t).1, "Hz" | "kHz" | "ms" | "s") {
+                    n += 1;
+                    assert_eq!(
+                        components::layout(&t, &ARC),
+                        Layout::WithGauge,
+                        "{b:?}.{}: {t:?} loses its arc",
+                        s.ident
+                    );
+                }
+            }
+        }
+    }
+    assert!(n > 1000, "{n} unit values");
+}
+
+/// While a value turns the band changes layout at most down its fallback
+/// once (large and gauge, large alone, small), never back and forth.
+#[test]
+fn the_layout_never_flickers_as_a_value_turns() {
+    for b in BlockRef::ALL {
+        for s in b.specs().iter().filter(|s| s.glyph == FocusGlyph::Arc) {
+            let seq: Vec<Layout> = texts(s.fmt, s)
+                .iter()
+                .map(|t| components::layout(t, &ARC))
+                .collect();
+            let changes = seq.windows(2).filter(|w| w[0] != w[1]).count();
+            assert!(changes <= 2, "{b:?}.{}: {changes} layout changes", s.ident);
+        }
+    }
+}
+
+/// Through `Renderer::gauge` and the real band: turn each encoder of a
+/// formant's page detent by detent; the arc stays, and nothing but the
+/// gauge's own colours stands right of `gauge_left` beside the value.
+#[test]
+fn the_rendered_page_keeps_its_arc_clear_of_the_value() {
+    use chimera_core::dsp::algo::kinds::OpKind;
+    use chimera_core::project::PartId;
+    use chimera_core::ui::animation::UiTick;
+    use chimera_core::ui::block_registry::ALGO_FORMANT;
+    use chimera_hal::{ALL_ENCODERS, EncoderId};
+    let mut ui = stack_ui();
+    load_init(&mut ui, chimera_core::params::EngineType::Algo);
+    let sound = &mut ui.project_mut().edit_part(PartId::ALL[0]).sound;
+    sound.params.algo.try_set_kind(0, OpKind::Formant).unwrap();
+    to_osc(&mut ui);
+    to_osc_sub(&mut ui, &ALGO_FORMANT);
+    let left = components::gauge_left(&ARC).unwrap() - components::GAUGE_GAP;
+    let mut arcs = 0;
+    for e in ALL_ENCODERS {
+        let e: EncoderId = e;
+        for step in 0..140 {
+            feed(&mut ui, Input::turn(e, if step < 70 { 1 } else { -1 }));
+            for _ in 0..6 {
+                ui.update(UiTick::for_test());
+            }
+            let fb = render_ui(&ui);
+            let arc = |x, y| matches!(fb.at(x, y), c if c == theme::ACCENT || c == theme::FAINT);
+            let rows = theme::ARC_CY - theme::ARC_R..theme::ARC_CY + theme::ARC_R;
+            let drawn = rows
+                .clone()
+                .any(|y| (left..theme::SCREEN_W).any(|x| arc(x, y)));
+            arcs += usize::from(drawn);
+            // Rows the value spans, clear of the label above and the hint below.
+            for y in 62..theme::FOCUS_VALUE_Y {
+                for x in left..theme::SCREEN_W {
+                    let c = fb.at(x, y);
+                    assert!(
+                        c == theme::BG || arc(x, y),
+                        "{e:?} step {step}: value ink at ({x}, {y}) right of the gauge's edge"
+                    );
+                }
+            }
+        }
+    }
+    assert!(arcs > 0, "no arc was ever drawn");
 }

@@ -295,10 +295,10 @@ pub fn focus_band<D>(
     D: DrawTarget<Color = Rgb565>,
 {
     focus_label(d, label, theme::MARGIN_X);
-    let gauge = fit_gauge(value_text, gauge);
+    let layout = layout(value_text, &gauge);
     // A value too wide for the large numerals (`NOT A TRANSWAVE`) reads at
     // the status size, the whole row its own.
-    let wide = draw::text_width(&theme::FONT_FOCUS, value_text, 0) > theme::CONTENT_W;
+    let wide = layout == Layout::Small;
     match status {
         None if wide => {
             draw::text_tracked(
@@ -338,16 +338,9 @@ pub fn focus_band<D>(
                 Look::Absent => theme::INK2,
                 _ => theme::MID,
             };
-            draw::text(
-                d,
-                &theme::FONT_FOCUS,
-                value_text,
-                theme::FOCUS_VALUE_X,
-                theme::FOCUS_VALUE_Y,
-                color,
-            );
+            big_value(d, value_text, color, color);
         }
-        None => focus_value(d, value_text, gauge),
+        None => focus_value(d, value_text, gauge, layout),
     }
 }
 
@@ -418,19 +411,97 @@ where
 }
 
 /// The value large and its gauge; with none, the text has the band.
-fn focus_value<D>(d: &mut D, value_text: &str, gauge: Gauge)
+fn focus_value<D>(d: &mut D, value_text: &str, gauge: Gauge, layout: Layout)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    draw::text(
-        d,
-        &theme::FONT_FOCUS,
-        value_text,
-        theme::FOCUS_VALUE_X,
-        theme::FOCUS_VALUE_Y,
-        theme::INK,
-    );
-    draw_gauge(d, gauge);
+    big_value(d, value_text, theme::INK, theme::MID);
+    if layout == Layout::WithGauge {
+        draw_gauge(d, gauge);
+    }
+}
+
+/// `value_text` as a large number with its unit small beside it, on the
+/// number's baseline; a word is all large.
+fn big_value<D>(d: &mut D, value_text: &str, color: Rgb565, unit_color: Rgb565)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let (number, unit) = split_unit(value_text);
+    let x = theme::FOCUS_VALUE_X
+        + draw::text(
+            d,
+            &theme::FONT_FOCUS,
+            number,
+            theme::FOCUS_VALUE_X,
+            theme::FOCUS_VALUE_Y,
+            color,
+        );
+    if !unit.is_empty() {
+        draw::text(
+            d,
+            &theme::FONT_VALUE,
+            unit,
+            x + UNIT_GAP,
+            theme::FOCUS_VALUE_Y,
+            unit_color,
+        );
+    }
+}
+
+/// Clear air between a large number and its small unit.
+pub const UNIT_GAP: i32 = 4;
+
+/// `2.14 kHz` as `("2.14", "kHz")`: a number and its trailing unit (`ms`,
+/// `%`, `BT`); a word, or a number with none, is `(text, "")`.
+pub fn split_unit(text: &str) -> (&str, &str) {
+    let cut = text
+        .trim_end_matches(|c: char| c.is_ascii_alphabetic() || c == '%')
+        .len();
+    let number = text[..cut].trim_end();
+    if cut == text.len() || !number.ends_with(|c: char| c.is_ascii_digit()) {
+        return (text, "");
+    }
+    // A number holds no letters: `A5 dB` is a word.
+    if number.chars().any(|c| c.is_ascii_alphabetic()) {
+        return (text, "");
+    }
+    (number, &text[cut..])
+}
+
+/// How the band sets a value against its gauge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    /// The large value, its gauge beside it.
+    WithGauge,
+    /// The large value alone: it clears the row but not the gauge.
+    NoGauge,
+    /// The value font, the whole row: past the large value's reach.
+    Small,
+}
+
+/// The advance of the large value as `big_value` sets it.
+pub fn big_width(value_text: &str) -> i32 {
+    let (number, unit) = split_unit(value_text);
+    let n = draw::text_width(&theme::FONT_FOCUS, number, 0);
+    if unit.is_empty() {
+        n
+    } else {
+        n + UNIT_GAP + draw::text_width(&theme::FONT_VALUE, unit, 0)
+    }
+}
+
+/// The layout of `value_text` beside `gauge`, in order of fallback: both
+/// large, the value alone, the value font. Never overlapping.
+pub fn layout(value_text: &str, gauge: &Gauge) -> Layout {
+    let w = big_width(value_text);
+    if w > theme::CONTENT_W {
+        return Layout::Small;
+    }
+    match gauge_left(gauge) {
+        Some(left) if theme::FOCUS_VALUE_X + w + GAUGE_GAP > left => Layout::NoGauge,
+        _ => Layout::WithGauge,
+    }
 }
 
 /// Clear air between the large value and its gauge.
@@ -455,18 +526,11 @@ pub fn gauge_left(gauge: &Gauge) -> Option<i32> {
     }
 }
 
-/// `gauge`, or none where `value_text` at the focus size would run into
-/// it. The gauge goes, not the numerals: the value is what the eye reads,
-/// and it keeps its size until it passes the whole row (`focus_band`).
+/// `gauge`, or none where `layout` leaves it out.
 pub fn fit_gauge(value_text: &str, gauge: Gauge) -> Gauge {
-    let Some(left) = gauge_left(&gauge) else {
-        return gauge;
-    };
-    let w = draw::text_width(&theme::FONT_FOCUS, value_text, 0);
-    if theme::FOCUS_VALUE_X + w + GAUGE_GAP <= left {
-        gauge
-    } else {
-        Gauge::None
+    match layout(value_text, &gauge) {
+        Layout::WithGauge => gauge,
+        _ => Gauge::None,
     }
 }
 

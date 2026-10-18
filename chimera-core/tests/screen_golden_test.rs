@@ -28,8 +28,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_alg", 0xc43f8fe941a69fd6),
     ("algo_alg_morph_dimmed", 0x37c1f515da8aa9cc),
     // VOWEL takes ALGO's sixth cell, dimmed with no formant; FRM page.
-    // Re-recorded: 4.53 kHz drops the arc it ran under (#590).
-    ("algo_formant_page", 0x99f3105b5be5b7f4),
+    // Re-recorded: a value's unit sits small beside its number (ADR 0146).
+    ("algo_formant_page", 0x5d207f32f5389b52),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
     ("mod_matrix_morph_inert", 0x27f70ba2fbed39e1),
@@ -59,12 +59,12 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: MODE reads HP4, CLEAN's label for HP24 (ADR 0096); then
     // LEVEL 64 in DRIVE's cell (Task 6); then FLT › MOD's six cells, FM3
     // turned, its delete hint showing (Task 12): was 0xf6e7d94448ca7888.
-    ("flt_mode", 0xc9a4e03001119a94),
+    ("flt_mode", 0xbc50e415f6274421),
     // Each type's FLT and FLT › MOD (filter-types § 5, Task 17): CLEAN's
     // NOTCH1, the 2040's lowered pass band and KEYBD HALF, its fixed MODE
     // dimmed and VOICE EXP, DIRTY's NOTCH1 at FREQ (its own MODE names).
     ("flt_clean", 0x48ad43f82d53c3b8),
-    ("flt_mod_clean", 0xe4409e57eb8c885c),
+    ("flt_mod_clean", 0xa8e1c2139dc9d441),
     ("flt_2040", 0x45bf4079e38e3316),
     ("flt_mod_2040", 0x739059e65565d859),
     ("flt_mod_2040_exp", 0xa75e45413d0f33fe),
@@ -144,29 +144,29 @@ const GOLDENS: &[(&str, u64)] = &[
     // TYPE first, the panel's units, and REV › MORE (reverb TYPEs T6);
     // the REV pages re-recorded for RATE's default and law (ADR 0121).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb", 0xd63df29d1fff7b34),
+    ("mixer_fx_reverb", 0x3ec808729de360b0),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_more", 0x9e7e4d1cddac9c0c),
+    ("mixer_fx_reverb_more", 0x145a2cb62391d1b0),
     // HALL (its SIZE cell PLATE at SIZE 0) and GATE, each page (T10);
     // MORE re-recorded: the SYNC cell, and GATE's synced LENGTH (T12).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_hall", 0xee42abcf28055f52),
+    ("mixer_fx_reverb_hall", 0x058c5f6f699d239a),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_hall_more", 0x294f0d43d2e8e2bf),
+    ("mixer_fx_reverb_hall_more", 0xec4efaf3961939cf),
     // HALL re-recorded as fitted (T10b): its knobs, SPREAD, MORE 2's DENSITY.
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_hall_more2", 0x17b7da341482dcdf),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate", 0x1959301cfa1bfc54),
+    ("mixer_fx_reverb_gate", 0x457bdc4f45472ddd),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate_more", 0x286d4c6b82bbf6ed),
+    ("mixer_fx_reverb_gate_more", 0xbf0d24cd9f9f9355),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_gate_sync", 0x7cbc1d7b8d07ecac),
     // BLOOM, each page (T11).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_bloom", 0x89b262d8d8284309),
+    ("mixer_fx_reverb_bloom", 0x672dfcd796a47f59),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_bloom_more", 0xb8c9a258c854705b),
+    ("mixer_fx_reverb_bloom_more", 0x16d5f020644e7a07),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay_char", 0x7479f1fb3a9df4bc),
     #[cfg(not(feature = "master-tape"))]
@@ -256,10 +256,10 @@ const GOLDENS: &[(&str, u64)] = &[
     // PERSONALIZE › CHAIN MAP: PAGES, ROW (ADR 0145).
     ("settings_personal_chain_map", 0x7aa40f30346b46bd),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
-    ("settings_system_diag_aud_load", 0x0063331a51f3da0e),
+    ("settings_system_diag_aud_load", 0x18fe4d081416e4cb),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.
-    ("settings_project_pool", 0x0c71ec47cf18008d),
+    ("settings_project_pool", 0x6ceb6837fe4ebecc),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).
