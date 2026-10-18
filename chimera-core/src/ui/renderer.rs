@@ -7,8 +7,9 @@ use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
 use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use crate::block::find_spec;
+use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::env::EnvRates;
-use crate::dsp::algo::params::AlgoOpParams;
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::modulator::{EnvType, HoldPos};
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
 use crate::dsp::va::osc::{Morph, Unit};
@@ -115,6 +116,8 @@ pub struct Frame<'a> {
     pub heads: crate::dsp::tape_engine::Heads,
     /// The edited Part's newest voice's formant view (OP pages).
     pub formant: &'a crate::dsp::algo::engine::FormantView,
+    /// The focused cell's refused choice, shown dimmed (ADR 0151).
+    pub held: Option<crate::ui::held::Shown>,
 }
 
 impl Frame<'_> {
@@ -180,6 +183,51 @@ impl Renderer {
         }
     }
 
+    /// FLT's CUTOFF and RES slots, by address (spec § UI "Vizzes read by
+    /// address").
+    fn filter_slots(&self, f: &Frame) -> (Option<usize>, Option<usize>) {
+        use crate::addr::{BlockRef, ParamAddr};
+        use crate::params::FilterParams;
+        let slot = |id| {
+            let addr = ParamAddr::new(BlockRef::Filter, id);
+            (0..f.def.params.len()).find(|&i| slot_addr(f.def, i, &f.ctx) == Some(addr))
+        };
+        (slot(FilterParams::CUTOFF), slot(FilterParams::RESONANCE))
+    }
+
+    /// Where modulation has CUTOFF and RES now, against their set values:
+    /// the set eased, plus the modulation's own offset (the animators'
+    /// targets differ by it alone), so a knob turn alone leaves no mark.
+    pub fn filter_mark(&self, f: &Frame) -> viz::ModMark {
+        let (c, r) = self.filter_slots(f);
+        let moved = |s: Option<usize>| {
+            s.map_or((0.0, 0.0), |s| {
+                let set = self.set[s].current();
+                (set, set + self.anim[s].target() - self.set[s].target())
+            })
+        };
+        let ((c, mc), (r, mr)) = (moved(c), moved(r));
+        viz::ModMark::of(c, mc, r, mr)
+    }
+
+    /// The values a page's bars and viz draw: the set ones on FLT, whose
+    /// modulation is `filter_mark`'s; the modulated ones elsewhere.
+    pub fn eased(&self, viz: VizType) -> &[AnimatedValue; 6] {
+        if viz == VizType::FilterResponse {
+            &self.set
+        } else {
+            &self.anim
+        }
+    }
+
+    /// The FLT viz's mark key; 0 on any other page.
+    pub fn mark_key(&self, f: &Frame) -> u32 {
+        match (f.def.layout, f.def.viz) {
+            (PageLayout::BigViz, VizType::FilterResponse) => self.filter_mark(f).key(),
+            _ => 0,
+        }
+    }
+
     /// BigViz: the page's visualization with the touched value riding on it.
     fn draw_big_viz<D>(&self, display: &mut D, f: &Frame)
     where
@@ -188,25 +236,21 @@ impl Renderer {
         let a = |i: usize| self.anim[i].current();
         match f.def.viz {
             VizType::FilterResponse => {
-                // By address, not slot (spec § UI "Vizzes read by address").
-                let at = |id| {
-                    let addr = crate::addr::ParamAddr::new(crate::addr::BlockRef::Filter, id);
-                    (0..f.def.params.len())
-                        .find(|&i| slot_addr(f.def, i, &f.ctx) == Some(addr))
-                        .map_or(0.0, a)
-                };
-                use crate::params::FilterParams;
+                let (c, r) = self.filter_slots(f);
                 let flt = &f.parts[f.active_part.index()].sound.params.filter;
                 let v = view::view(f.def, f.focus, &f.ctx);
-                let buf = value_text(f, f.focus, self.anim[f.focus].target());
+                let buf = value_text(f, f.focus, self.set[f.focus].target());
                 let readout = (v != View::Empty).then(|| (v.label(), buf.as_str()));
+                // The solid curve is the set value; modulation is the mark.
+                let at = |s: Option<usize>| s.map_or(0.0, |s| self.set[s].current());
                 viz::filter(
                     display,
-                    at(FilterParams::CUTOFF),
-                    at(FilterParams::RESONANCE),
+                    at(c),
+                    at(r),
                     viz::Response::of(flt.kind(), flt.mode()),
                     readout,
                 );
+                self.filter_mark(f).draw(display);
                 if f.clip > 0.0 {
                     draw::clip_led(display, viz::LED_X, viz::LED_Y, f.clip);
                 }
@@ -334,12 +378,16 @@ impl Renderer {
                 let slot = (0..f.def.params.len())
                     .find(|&i| slot_addr(f.def, i, &f.ctx) == Some(morph))
                     .expect("ALG page binds MORPH");
-                viz::algo_diagram(
-                    display,
-                    algo.algs().0.algorithm(),
-                    algo.algs().1.algorithm(),
-                    self.anim[slot].current(),
-                );
+                let (a, b) = (algo.algs().0.algorithm(), algo.algs().1.algorithm());
+                // Picking ALG A or B shows that algorithm itself (ADR 0153),
+                // even a refused, held one; else A moving to B with MORPH.
+                if let Some((is_b, held)) = alg_pick(f) {
+                    let own = if is_b { b } else { a };
+                    let shown = held.map_or(own, |c| AlgoId::clamped(c).algorithm());
+                    viz::algo_diagram(display, shown, shown, 0.0);
+                } else {
+                    viz::algo_diagram(display, a, b, self.anim[slot].current());
+                }
             }
             VizType::Strip => {
                 let (model, p) = self.strip_params(f);
@@ -497,9 +545,14 @@ impl Renderer {
                 VizType::AlgoDiagram => {
                     let algo = &f.parts[f.active_part.index()].sound.params.algo;
                     let q = region::quantize_values(&self.anim);
+                    // The picked cell and its held code move the band too.
+                    let pick = alg_pick(f).map_or(0, |(is_b, held)| {
+                        let side = u32::from(is_b) + 1;
+                        side | u32::from(held.map_or(0, |c| c + 1)) << 2
+                    });
                     (
                         [0, 0, q[2], 0, 0, 0],
-                        (algo.algs().0.get() as u32) << 8 | algo.algs().1.get() as u32,
+                        pick << 16 | (algo.algs().0.get() as u32) << 8 | algo.algs().1.get() as u32,
                     )
                 }
                 // ORBIT's own key: `orbit_viz_key`.
@@ -542,8 +595,9 @@ impl Renderer {
                 };
                 let live = f.focus as u32 | gr << 8 | led_key(f) << 16;
                 // The readout's text follows the target, not the eased value.
+                // FLT's curve is the set value: its modulation is `filter_mark`.
                 (
-                    region::quantize_values(&self.anim),
+                    region::quantize_values(self.eased(f.def.viz)),
                     region::fold_keys(live.into(), &[self.text_key(f, f.focus)]),
                 )
             }
@@ -643,7 +697,7 @@ impl Renderer {
             );
             return hint::focus(display, f.hint(o.hint));
         }
-        let buf = value_text(f, f.focus, self.anim[f.focus].target());
+        let buf = value_text(f, f.focus, self.set[f.focus].target());
         components::focus_band(
             display,
             view.label(),
@@ -652,7 +706,10 @@ impl Renderer {
             look(f, f.focus),
             f.prime_status,
         );
-        hint::focus(display, Self::focus_hint(f));
+        match f.held.filter(|s| held_on(f, &view) == Some(s.held)) {
+            Some(s) => Self::draw_reason(display, s.why),
+            None => hint::focus(display, Self::focus_hint(f)),
+        }
         if let View::Source(view::SourceState::Card { cost, free, .. }) = view {
             crate::ui::source_cell::draw_card_row(display, f.pool, cost, free, f.hints);
         }
@@ -678,6 +735,24 @@ impl Renderer {
         f.hint(h)
     }
 
+    /// Why the cell's choice is dimmed, in the hint's place.
+    fn draw_reason<D>(display: &mut D, why: crate::dsp::algo::kinds::Why)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let text = crate::ui::held::reason(why);
+        let t = crate::ui::source_cell::tracking(text.as_str());
+        crate::ui::draw::text_tracked(
+            display,
+            &theme::FONT_LABEL,
+            text.as_str(),
+            theme::MARGIN_X,
+            hint::FOCUS_Y,
+            theme::ALERT,
+            t,
+        );
+    }
+
     /// What an ORBIT viz draws, for its region's key; 0 on any other.
     pub fn orbit_viz_key(&self, f: &Frame) -> u32 {
         orbit::viz_key(f.def, &f.orbit, f.ctx.ring, self.orbit_cursor.current())
@@ -689,7 +764,7 @@ impl Renderer {
         if view::view(f.def, i, &f.ctx) == View::Empty {
             return 0;
         }
-        let text = value_text(f, i, self.anim[i].target());
+        let text = value_text(f, i, self.set[i].target());
         region::settings_key(&[text.as_str().as_bytes()])
     }
 
@@ -713,7 +788,7 @@ impl Renderer {
             _ => self.anim[f.focus].current(),
         };
         let frame = f.clock.frame();
-        let text = value_text(f, f.focus, self.anim[f.focus].target());
+        let text = value_text(f, f.focus, self.set[f.focus].target());
         let g = super::glyph::gauge(glyph, value, fmt, |reads| match reads {
             Reads::Composite(id) => {
                 // Which of the composite's params has focus.
@@ -825,13 +900,13 @@ impl Renderer {
             }
             _ => {}
         }
-        for (i, anim) in self.anim.iter().enumerate() {
+        for i in 0..self.anim.len() {
             let v = view::view(f.def, i, &f.ctx);
             if v == View::Empty {
                 components::cell(display, i, top, None);
                 continue;
             }
-            let value = anim.current();
+            let value = self.anim[i].current();
             let mut buf = FmtBuf::new();
             match v {
                 // The cell keeps a readout's first words: `POLY`, not
@@ -851,7 +926,7 @@ impl Renderer {
                 {
                     let _ = core::fmt::Write::write_str(&mut buf, crate::bank2::NEEDS_UPDATE_CELL);
                 }
-                _ => buf = param_text(f, i, &v, anim.target()),
+                _ => buf = param_text(f, i, &v, self.set[i].target()),
             }
             let c = components::Cell {
                 label: cell_label(&v),
@@ -994,6 +1069,7 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
             }
         }
         View::Source(view::SourceState::Card { .. }) => components::Look::Dimmed,
+        v if held_on(f, &v).is_some() => components::Look::Dimmed,
         v if view::is_dimmed(&v, sound, &f.ctx) => components::Look::Dimmed,
         _ => components::Look::Live,
     }
@@ -1026,9 +1102,39 @@ fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
     buf
 }
 
+/// The ALGO page's picked cell (ALG A or B is the focus) and the refused
+/// code held on it, if any.
+fn alg_pick(f: &Frame) -> Option<(bool, Option<u8>)> {
+    let at = slot_addr(f.def, f.focus, &f.ctx)?;
+    [AlgoParams::ALG_A, AlgoParams::ALG_B]
+        .into_iter()
+        .find(|&id| at == ParamAddr::new(BlockRef::Algo, id))
+        .map(|id| {
+            let held = f.held.filter(|s| s.held.addr.param == id);
+            (id == AlgoParams::ALG_B, held.map(|s| s.held.code))
+        })
+}
+
+/// The refused choice `view` shows in place of its value, if it is the cell.
+fn held_on(f: &Frame, view: &View) -> Option<crate::ui::held::Held> {
+    f.held
+        .map(|s| s.held)
+        .filter(|h| view.addr() == Some(h.addr))
+}
+
 /// A param's text at display value `v`: a reverb panel cell's in its
 /// units (`reverb_panel::value_text`), any other by its format.
 fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
+    if let Some(h) = held_on(f, view) {
+        let mut buf = FmtBuf::new();
+        let fmt = view.fmt();
+        fmt::fmt_val(
+            &mut buf,
+            f32::from(h.code) / f32::from(fmt.max_int().max(1)),
+            fmt,
+        );
+        return buf;
+    }
     if let Some(t) = view
         .addr()
         .and_then(|a| crate::bank2::closed_text(a, f.bank2))
