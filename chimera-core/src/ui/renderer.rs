@@ -113,6 +113,8 @@ pub struct Frame<'a> {
     pub heads: crate::dsp::tape_engine::Heads,
     /// The edited Part's newest voice's formant view (OP pages).
     pub formant: &'a crate::dsp::algo::engine::FormantView,
+    /// The focused cell's refused choice, shown dimmed (ADR 0151).
+    pub held: Option<crate::ui::held::Shown>,
 }
 
 impl Frame<'_> {
@@ -644,7 +646,10 @@ impl Renderer {
             look(f, f.focus),
             f.prime_status,
         );
-        hint::focus(display, Self::focus_hint(f));
+        match f.held.filter(|s| held_on(f, &view) == Some(s.held)) {
+            Some(s) => Self::draw_reason(display, s.why),
+            None => hint::focus(display, Self::focus_hint(f)),
+        }
         if let View::Source(view::SourceState::Card { cost, free, .. }) = view {
             crate::ui::source_cell::draw_card_row(display, f.pool, cost, free, f.hints);
         }
@@ -668,6 +673,24 @@ impl Renderer {
             own
         };
         f.hint(h)
+    }
+
+    /// Why the cell's choice is dimmed, in the hint's place.
+    fn draw_reason<D>(display: &mut D, why: crate::dsp::algo::kinds::Why)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let text = crate::ui::held::reason(why);
+        let t = crate::ui::source_cell::tracking(text.as_str());
+        crate::ui::draw::text_tracked(
+            display,
+            &theme::FONT_LABEL,
+            text.as_str(),
+            theme::MARGIN_X,
+            hint::FOCUS_Y,
+            theme::ALERT,
+            t,
+        );
     }
 
     /// What an ORBIT viz draws, for its region's key; 0 on any other.
@@ -986,6 +1009,7 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
             }
         }
         View::Source(view::SourceState::Card { .. }) => components::Look::Dimmed,
+        v if held_on(f, &v).is_some() => components::Look::Dimmed,
         v if view::is_dimmed(&v, sound, &f.ctx) => components::Look::Dimmed,
         _ => components::Look::Live,
     }
@@ -1018,9 +1042,26 @@ fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
     buf
 }
 
+/// The refused choice `view` shows in place of its value, if it is the cell.
+fn held_on(f: &Frame, view: &View) -> Option<crate::ui::held::Held> {
+    f.held
+        .map(|s| s.held)
+        .filter(|h| view.addr() == Some(h.addr))
+}
+
 /// A param's text at display value `v`: a reverb panel cell's in its
 /// units (`reverb_panel::value_text`), any other by its format.
 fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
+    if let Some(h) = held_on(f, view) {
+        let mut buf = FmtBuf::new();
+        let fmt = view.fmt();
+        fmt::fmt_val(
+            &mut buf,
+            f32::from(h.code) / f32::from(fmt.max_int().max(1)),
+            fmt,
+        );
+        return buf;
+    }
     if let Some(t) = view
         .addr()
         .and_then(|a| crate::bank2::closed_text(a, f.bank2))

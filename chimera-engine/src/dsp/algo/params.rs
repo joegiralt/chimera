@@ -523,10 +523,11 @@ impl Block for OpViewMut<'_> {
         }
     }
 
-    /// WAVE steps over the kinds the budget refuses (`step_kind`).
+    /// WAVE lands on the kind `delta` on; the budget refuses it (`step_kind`).
     fn nudge(&mut self, id: ParamId, delta: i8) {
         if id == AlgoOpParams::WAVE {
-            let to = step_kind(self.p.kinds, self.p.linked(), self.op, delta).to;
+            let from = self.p.kinds.get(self.op);
+            let to = step_kind(self.p.kinds, self.p.linked(), self.op, from, delta).to;
             let _ = self.p.try_set_kind(self.op, to);
         } else if let Some(s) = self.spec(id) {
             self.write(id, s.nudged(self.get(id), delta));
@@ -666,6 +667,12 @@ impl AlgoParams {
         }
     }
 
+    /// ALG A's or B's (`id`) algorithm.
+    pub fn side(&self, id: ParamId) -> AlgoId {
+        let (a, b) = self.algs();
+        if id == Self::ALG_A { a } else { b }
+    }
+
     pub fn op(&self, op: Op) -> OpView<'_> {
         OpView {
             p: self,
@@ -800,10 +807,11 @@ impl Block for AlgoParams {
             && self.set_side(id, code).is_ok()
     }
 
-    /// ALG A and B step over the algorithms the budget refuses (`step_alg`).
+    /// ALG A and B land on the algorithm `delta` on; the budget refuses it
+    /// (`step_alg`).
     fn nudge(&mut self, id: ParamId, delta: i8) {
         if matches!(id, Self::ALG_A | Self::ALG_B) {
-            let to = step_alg(self, id, delta).to;
+            let to = step_alg(self, id, self.side(id), delta).to;
             let _ = self.set_side(id, to.get());
         } else if let Some(s) = self.spec(id) {
             self.write(id, s.nudged(self.get(id), delta));
@@ -815,34 +823,23 @@ impl Block for AlgoParams {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AlgStep {
     pub to: AlgoId,
-    /// A refused algorithm was met on the way: the cell toasts.
-    pub skipped: bool,
+    /// `to` would overspend the budget: shown dimmed, never written.
+    pub refused: bool,
 }
 
-/// `|delta|` algorithms on from ALG A's or B's (`id`) that the budget
-/// allows with `p`'s kinds, in `delta`'s direction, stopping at the ends.
-pub fn step_alg(p: &AlgoParams, id: ParamId, delta: i8) -> AlgStep {
+/// The algorithm `delta` on from `from` for ALG A or B (`id`), clamped to
+/// the list, whether `p`'s kinds allow it or not.
+pub fn step_alg(p: &AlgoParams, id: ParamId, from: AlgoId, delta: i8) -> AlgStep {
     let (a, b) = p.algs();
-    let mut s = AlgStep {
-        to: if id == AlgoParams::ALG_A { a } else { b },
-        skipped: false,
+    let code = (i16::from(from.get()) + i16::from(delta)).clamp(0, ALGO_COUNT as i16 - 1);
+    let to = AlgoId::clamped(code as u8);
+    let l = if id == AlgoParams::ALG_A {
+        Linked::of(to, b)
+    } else {
+        Linked::of(a, to)
     };
-    let (mut code, mut left) = (i16::from(s.to.get()), delta.unsigned_abs());
-    while left > 0 {
-        code += i16::from(delta.signum());
-        let Some(next) = u8::try_from(code).ok().and_then(AlgoId::from_index) else {
-            break;
-        };
-        let l = if id == AlgoParams::ALG_A {
-            Linked::of(next, b)
-        } else {
-            Linked::of(a, next)
-        };
-        if p.kinds.fit(l) {
-            (s.to, left) = (next, left - 1);
-        } else {
-            s.skipped = true;
-        }
+    AlgStep {
+        to,
+        refused: !p.kinds.fit(l),
     }
-    s
 }
