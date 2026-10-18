@@ -328,12 +328,21 @@ impl Renderer {
                 let slot = (0..f.def.params.len())
                     .find(|&i| slot_addr(f.def, i, &f.ctx) == Some(morph))
                     .expect("ALG page binds MORPH");
-                viz::algo_diagram(
-                    display,
-                    algo.algs().0.algorithm(),
-                    algo.algs().1.algorithm(),
-                    self.anim[slot].current(),
+                let (a, b) = (algo.algs().0.algorithm(), algo.algs().1.algorithm());
+                let alg_b = crate::addr::ParamAddr::new(
+                    crate::addr::BlockRef::Algo,
+                    crate::dsp::algo::params::AlgoParams::ALG_B,
                 );
+                // Picking ALG B shows B itself (ADR 0153), even a refused,
+                // held one; else A moving to B with MORPH.
+                if slot_addr(f.def, f.focus, &f.ctx) == Some(alg_b) {
+                    let shown = f.held.filter(|s| s.held.addr == alg_b).map_or(b, |s| {
+                        crate::dsp::algo::algorithms::AlgoId::clamped(s.held.code).algorithm()
+                    });
+                    viz::algo_diagram(display, shown, shown, 0.0);
+                } else {
+                    viz::algo_diagram(display, a, b, self.anim[slot].current());
+                }
             }
             VizType::Strip => {
                 let (model, p) = self.strip_params(f);
