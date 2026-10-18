@@ -8,7 +8,7 @@ use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use crate::block::find_spec;
 use crate::dsp::algo::env::EnvRates;
-use crate::dsp::algo::params::AlgoOpParams;
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::modulator::{EnvType, HoldPos};
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
 use crate::dsp::va::osc::{Morph, Unit};
@@ -329,14 +329,14 @@ impl Renderer {
                     .find(|&i| slot_addr(f.def, i, &f.ctx) == Some(morph))
                     .expect("ALG page binds MORPH");
                 let (a, b) = (algo.algs().0.algorithm(), algo.algs().1.algorithm());
-                let alg_b = crate::addr::ParamAddr::new(
-                    crate::addr::BlockRef::Algo,
-                    crate::dsp::algo::params::AlgoParams::ALG_B,
-                );
-                // Picking ALG B shows B itself (ADR 0153), even a refused,
-                // held one; else A moving to B with MORPH.
-                if slot_addr(f.def, f.focus, &f.ctx) == Some(alg_b) {
-                    let shown = f.held.filter(|s| s.held.addr == alg_b).map_or(b, |s| {
+                let focus = slot_addr(f.def, f.focus, &f.ctx);
+                // Picking ALG A or B shows that algorithm itself (ADR 0153),
+                // even a refused, held one; else A moving to B with MORPH.
+                let pick = [(AlgoParams::ALG_A, a), (AlgoParams::ALG_B, b)]
+                    .into_iter()
+                    .find(|&(id, _)| focus == Some(ParamAddr::new(BlockRef::Algo, id)));
+                if let Some((id, own)) = pick {
+                    let shown = f.held.filter(|s| s.held.addr.param == id).map_or(own, |s| {
                         crate::dsp::algo::algorithms::AlgoId::clamped(s.held.code).algorithm()
                     });
                     viz::algo_diagram(display, shown, shown, 0.0);

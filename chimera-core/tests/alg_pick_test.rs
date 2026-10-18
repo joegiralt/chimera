@@ -35,3 +35,26 @@ fn the_diagram_follows_the_alg_b_cell() {
     assert!(band(&picked) == band(&algo_page(16, 16)));
     assert_ne!(band(&picked), band(&algo_page(0, 1)));
 }
+
+/// ALG B = A1 + `b` first, then ALG A = A1 + `a` (focus on ALG A), MORPH `m`.
+fn pick_a(a: i8, b: i8, m: i8) -> Fb {
+    let mut ui = stack_ui();
+    init_part(&mut ui, PartId::ALL[0]);
+    feed(&mut ui, Input::turn(EncoderId::B, b));
+    if m != 0 {
+        feed(&mut ui, Input::turn(EncoderId::C, m));
+    }
+    feed(&mut ui, Input::turn(EncoderId::A, a));
+    settle(&mut ui);
+    render_ui(&ui)
+}
+
+#[test]
+fn the_diagram_follows_the_alg_a_cell_at_any_morph() {
+    for m in [0, 100] {
+        let picked = pick_a(16, 1, m);
+        // A17 shows whatever ALG B and MORPH hold.
+        assert!(band(&picked) == band(&pick_a(16, 16, m)), "morph {m}");
+        assert!(band(&picked) != band(&pick_a(2, 1, m)), "morph {m}");
+    }
+}
