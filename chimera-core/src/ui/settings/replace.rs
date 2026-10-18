@@ -22,13 +22,14 @@ pub mod said {
     pub use chimera_engine::confirm::Said;
 }
 
-use chimera_hal::{Controls, EncoderId};
+use chimera_hal::Controls;
 
 use crate::project::{
     Confirmed, LibraryPart, NeedsConfirm, PartSource, Pending, Project, ProjectSource, Target,
     TemplateCrc,
 };
 use crate::ui::hold::Presses;
+use crate::ui::list_turn;
 
 use super::prompt::{Choice, LibraryAnswer, LoadAnswer, ReloadAnswer, ReplaceAnswer};
 
@@ -83,7 +84,7 @@ impl<R: Target, A: Guarded<Confirms = R>> Asked<R, A> {
         p: &Presses,
         project: &Project,
     ) -> Result<Reply<R, A>, Self> {
-        let Some(a) = self.choice.input(c.encoder_delta(EncoderId::A) as i32, p) else {
+        let Some(a) = self.choice.input(i32::from(list_turn(c, &[])), p) else {
             return Err(self);
         };
         if let Some(yes) = said(a) {

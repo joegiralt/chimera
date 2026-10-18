@@ -22,7 +22,7 @@ pub use tree::{
     path_of, row_at, rows, screen_path,
 };
 
-use chimera_hal::{Controls, EncoderId};
+use chimera_hal::Controls;
 
 use crate::name::{Name, ProjectName};
 use crate::project::{
@@ -31,6 +31,7 @@ use crate::project::{
 };
 use crate::ui::browser::Browse;
 use crate::ui::hold::Presses;
+use crate::ui::list_turn;
 use crate::ui::region::settings_key;
 use job::{Then, ThenClear};
 use listing::Chosen;
@@ -360,8 +361,8 @@ impl Ask {
 
     fn input(self, c: &impl Controls, p: &Presses, project: &Project) -> AskStep {
         use AskStep::{Answered as Got, Open};
-        // A picks.
-        let delta = c.encoder_delta(EncoderId::A) as i32;
+        // Any encoder picks.
+        let delta = i32::from(list_turn(c, &[]));
         match self {
             Ask::ReplacePart(ask, to) => match ask.input(c, p, project) {
                 Ok(r) => Got(Answered::ReplacePart(r, to)),
