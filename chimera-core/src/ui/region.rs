@@ -102,6 +102,8 @@ pub enum RegionData {
         /// What an ORBIT viz draws of the scene and the runner
         /// (`orbit::draw::viz_key`).
         orbit: u32,
+        /// `viz::ModMark::key`: a moved ghost redraws its boxes alone.
+        mark: u32,
     },
     Cells {
         page: PageKey,
@@ -252,7 +254,21 @@ impl RegionData {
             live,
             status,
             orbit: 0,
+            mark: 0,
         }
+    }
+
+    /// This key with no mark share: equal when only the mark moved.
+    pub fn without_mark(self) -> Self {
+        self.with_mark(0)
+    }
+
+    /// A viz keyed on its modulation mark too.
+    pub fn with_mark(mut self, key: u32) -> Self {
+        if let Self::Viz { mark, .. } = &mut self {
+            *mark = key;
+        }
+        self
     }
 
     /// A viz keyed on what it draws of ORBIT too.
@@ -338,6 +354,7 @@ impl RegionData {
             live: u32::MAX,
             status: None,
             orbit: u32::MAX,
+            mark: u32::MAX,
         }
     }
 

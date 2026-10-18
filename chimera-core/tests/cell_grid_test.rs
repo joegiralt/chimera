@@ -316,14 +316,19 @@ fn a_cell_page_redraws_on_the_printed_number_only() {
     let mut fb = Fb::new();
     flushed(&mut ui, &mut fb);
     assert!(flushed(&mut ui, &mut fb).is_empty());
-    let v = ui.renderer.anim[2].target();
-    ui.renderer.anim[2].set_target(v + 0.0002);
+    // The number reads the set value (#575); the animator follows it.
+    let v = ui.renderer.set[2].target();
+    let aim = |ui: &mut UiState, t: f32| {
+        ui.renderer.set[2].set_target(t);
+        ui.renderer.anim[2].set_target(t);
+    };
+    aim(&mut ui, v + 0.0002);
     assert_eq!(
         flushed(&mut ui, &mut fb),
         [],
         "below the display resolution"
     );
-    ui.renderer.anim[2].set_target(if v > 0.5 { v - 0.1 } else { v + 0.1 });
+    aim(&mut ui, if v > 0.5 { v - 0.1 } else { v + 0.1 });
     assert_eq!(flushed(&mut ui, &mut fb), [(28, 118), (186, 266)]);
 }
 
