@@ -151,6 +151,7 @@ pub struct CardStream<'r> {
     rng: u32,
     reads: u32,
     flight: Option<Flight<'r>>,
+    ceiling: bool,
 }
 
 impl<'r> CardStream<'r> {
@@ -172,6 +173,15 @@ impl<'r> CardStream<'r> {
             rng: 0x5EED_0C4D,
             reads: 0,
             flight: None,
+            ceiling: false,
+        }
+    }
+
+    /// Every read at the model's ceiling (quantile 1): its worst card.
+    pub fn at_ceiling(self) -> CardStream<'r> {
+        CardStream {
+            ceiling: true,
+            ..self
         }
     }
 
@@ -233,7 +243,12 @@ impl<'r> CardStream<'r> {
         *x ^= *x << 13;
         *x ^= *x >> 17;
         *x ^= *x << 5;
-        self.latency.at(*x as f32 / u32::MAX as f32)
+        let q = if self.ceiling {
+            1.0
+        } else {
+            *x as f32 / u32::MAX as f32
+        };
+        self.latency.at(q)
     }
 
     /// The claimed chunk's raw blocks: each piece's from its file, at its

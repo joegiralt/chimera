@@ -355,6 +355,8 @@ impl Usb {
         let us = now.wrapping_sub(self.top) / self.cycles_per_us;
         self.top = now;
         self.timer.lap(us, self.last);
+        // Every pass, inside the IRQ counter's wrap.
+        crate::card_dma::irq_cycles();
         #[cfg(feature = "bank2")]
         let cpu_hz = self.cycles_per_us * 1_000_000;
         let Usb {

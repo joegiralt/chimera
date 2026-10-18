@@ -23,8 +23,9 @@ pub struct StreamStats {
     /// Writes' quiets, ask to release: the longest, and how many.
     pub quiet_ms_max: AtomicU32,
     pub quiets: AtomicU32,
-    pub irq_us_max: AtomicU32,
-    /// The card IRQ's own cycles, wrapping: a reader takes deltas.
+    /// The card IRQ's own cycles, wrapping every 8.9 s of its time: a
+    /// reader folds them (`IrqCycles`). Its longest entry is
+    /// `CardStats::irq_own_us_max`.
     pub irq_cycles: AtomicU32,
 }
 
@@ -40,7 +41,6 @@ impl StreamStats {
             unreadable: AtomicU32::new(0),
             quiet_ms_max: AtomicU32::new(0),
             quiets: AtomicU32::new(0),
-            irq_us_max: AtomicU32::new(0),
             irq_cycles: AtomicU32::new(0),
         }
     }
@@ -49,5 +49,33 @@ impl StreamStats {
     pub fn note_quiet(&self, len: Millis) {
         self.quiet_ms_max.fetch_max(len.get(), Ordering::Relaxed);
         self.quiets.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// The card IRQ's wrapping cycles folded into 64 bits: folded more often
+/// than they wrap (every UI pass), no gap between two reads loses one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrqCycles {
+    raw: u32,
+    total: u64,
+}
+
+impl IrqCycles {
+    /// From the counter's value `raw` now.
+    pub const fn new(raw: u32) -> IrqCycles {
+        IrqCycles { raw, total: 0 }
+    }
+
+    /// The counter now `raw`: the cycles since, added. The total.
+    pub fn fold(&mut self, raw: u32) -> u64 {
+        self.total = self
+            .total
+            .wrapping_add(u64::from(raw.wrapping_sub(self.raw)));
+        self.raw = raw;
+        self.total
+    }
+
+    pub fn total(&self) -> u64 {
+        self.total
     }
 }

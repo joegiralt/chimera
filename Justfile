@@ -28,7 +28,9 @@ tape-listen *args:
 
 # Streamed PLAY's desktop QA (slice 1 § 10.5): every factory bed in
 # target/tapes-v1/ (`just factory-tapes` first), ONE and LOOP, read through
-# the card model at m1, slow and m1 with a fault, judged by the click rule.
+# the card model at m1, slow and m1 with a fault, judged by the click rule;
+# then six voices admission takes, one at inc 2, on a 28 s bed with every
+# read at slow's 19.6 ms ceiling: drop-outs that must all be fades.
 # `just stream-qa <dir>` also writes RAIN, TRON BOWED and PAD CHORD's LOOPs
 # there as WAVs.
 stream-qa dir="":

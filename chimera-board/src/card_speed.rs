@@ -53,7 +53,7 @@ use embedded_sdmmc::{Block, BlockDevice, BlockIdx};
 use crate::card_dma::{self, BenchPort, FILL_RING, STATS, bench_port};
 use crate::controls::now_ms;
 use crate::sd::SdStore;
-use crate::shared::{BLOCKS, OVERRUNS, STREAM_STATS, registry};
+use crate::shared::{BLOCKS, OVERRUNS, registry};
 
 const READ_RUN: BlockCount = match BlockCount::new(READ_BLOCKS) {
     Some(n) => n,
@@ -587,8 +587,8 @@ struct Counts {
     entries: u32,
     reads: u32,
     bursts: u32,
-    /// The card IRQ's own cycles (CARD IRQ's share).
-    irq_cycles: u32,
+    /// The card IRQ's own cycles (CARD IRQ's share), folded.
+    irq_cycles: u64,
 }
 
 impl Counts {
@@ -602,7 +602,7 @@ impl Counts {
             entries: get(&STATS.entries),
             reads: get(&STATS.reads),
             bursts: get(&STATS.bursts),
-            irq_cycles: get(&STREAM_STATS.irq_cycles),
+            irq_cycles: card_dma::irq_cycles(),
         }
     }
 
@@ -621,7 +621,7 @@ impl Counts {
             entries: self.entries.wrapping_sub(then.entries),
             reads: self.reads.wrapping_sub(then.reads),
             bursts: self.bursts.wrapping_sub(then.bursts),
-            irq_cycles: self.irq_cycles.wrapping_sub(then.irq_cycles),
+            irq_cycles: self.irq_cycles.saturating_sub(then.irq_cycles),
         }
     }
 }
@@ -1253,7 +1253,7 @@ impl CardBench {
             card_irq_us_max: Micros::new(STATS.irq_us_max.load(Ordering::Relaxed)),
             card_irq_own_us_max: Micros::new(STATS.irq_own_us_max.load(Ordering::Relaxed)),
             card_irq_share: PerMille::of(
-                c.irq_cycles.into(),
+                c.irq_cycles,
                 u64::from(now_ms().since(run.began)) * u64::from(self.cpu_hz / 1_000),
             ),
             irq: IrqCounts {

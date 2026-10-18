@@ -106,9 +106,11 @@ fn step(x: &[f32]) -> f32 {
         .fold(0.0, f32::max)
 }
 
-/// `blocks` of `p` on note `note`, whole: the reference.
-fn whole(held: &[u8], rate: u16, p: &TapeEngineParams, note: u8, blocks: usize) -> Vec<f32> {
-    let mut t = Table::new(held, rate);
+/// `blocks` of `p` on note `note`, whole: the reference, read straight
+/// from the row as `listen::render` reads it (a bed over the arena's
+/// 160 KB too).
+fn whole(held: &[u8], _rate: u16, p: &TapeEngineParams, note: u8, blocks: usize) -> Vec<f32> {
+    let v = chimera_core::dsp::tape_engine::read::SourceView::new(held).expect("a row");
     let mut slot = MaybeUninit::uninit();
     let e = TapeEngine::init_in_place(&mut slot);
     e.seed(3);
@@ -116,14 +118,12 @@ fn whole(held: &[u8], rate: u16, p: &TapeEngineParams, note: u8, blocks: usize) 
     let mut out = Vec::with_capacity(blocks * BLOCK_SIZE);
     let mut b = [0.0; BLOCK_SIZE];
     for k in 0..blocks {
-        let view = t.tok.begin_block();
         if k == 0 {
-            e.start(note, p, &view, SAMPLE_RATE, None);
+            e.note_on(note, p, &v, SAMPLE_RATE);
         }
-        e.play(&mut b, p, &view, SAMPLE_RATE, None);
+        e.render(&mut b, p, &v, SAMPLE_RATE);
         out.extend_from_slice(&b);
     }
-    let _ = t.table;
     out
 }
 
@@ -366,4 +366,158 @@ fn stream_qa() {
         }
     }
     assert_eq!(fails, 0, "{fails} renders over the click rule");
+}
+
+/// The stressed bed: 28 s of a 220 Hz sine at 24 kHz, as the unit proof's
+/// beds' length; a sine, so a step in a drop-out shows.
+fn sine_bed(card: &Path) -> (SourceHead, Vec<u8>) {
+    use chimera_core::name::SoundName;
+    use chimera_core::storage::twelve::pack12;
+    use chimera_core::storage::{SourceRef, WholeShape, source_crc, write_source};
+    let frames = 28 * 24_000u32;
+    let s: Vec<i16> = (0..frames)
+        .map(|i| (1_000.0 * (core::f32::consts::TAU * 220.0 * i as f32 / 24_000.0).sin()) as i16)
+        .collect();
+    let mut packed = vec![0; 3 * s.len().div_ceil(2)];
+    pack12(&s, &mut packed);
+    let head = SourceHead {
+        sref: SourceRef {
+            crc: source_crc(WholeShape::Plain, 1, &packed),
+            frames,
+            rate: 24_000,
+        },
+        shape: Shape::Plain,
+        count: 1,
+        root: 6_000,
+        period_q16: 0,
+        name: SoundName::new("SINE BED").unwrap(),
+    };
+    let mut store = DirStore::new(card.to_path_buf());
+    let _ = Card::new()
+        .run(&mut store, |st, rd| write_source(st, rd, &head, &packed))
+        .unwrap();
+    (head, packed)
+}
+
+/// Slice 1's margin under the worst card: voices up to what admission
+/// takes, one at a high `inc`, `slow` at its ceiling (every read 19.6 ms):
+/// the card falls behind, the voices drop out, and every drop-out is a
+/// fade by the click rule, each voice against its own whole render.
+#[test]
+#[ignore = "QA: `just stream-qa`"]
+fn stream_qa_stressed() {
+    use chimera_core::stream::admit::{STREAM_BUDGET_BPS, bill, ratio_max};
+    let out = PathBuf::from(format!("{ROOT}/target/stream-qa"));
+    let card = out.join("stressed");
+    let _ = std::fs::remove_dir_all(&card);
+    std::fs::create_dir_all(&card).unwrap();
+    let (head, packed) = sine_bed(&card);
+    // Two octaves up (`inc` 2.0), five a minor third up (0.59 each).
+    let notes = [84u8, 63, 63, 63, 63, 63];
+    let billed: u32 = notes
+        .iter()
+        .map(|&n| bill(24_000, ratio_max(n, 6_000.0, 0.0, 0.0)).0)
+        .sum();
+    assert!(billed <= STREAM_BUDGET_BPS, "admission takes {billed}");
+    let p = TapeEngineParams {
+        model: TapeModel::Play,
+        mode: PlayMode::Loop,
+        root: 6_000.0,
+        ..TapeEngineParams::default()
+    };
+    let row = streamed_row(&head, &packed, &p).expect("streams");
+    let mut held = Descriptor {
+        shape: Shape::Plain,
+        count: 1,
+        rate: 24_000,
+        head_frames: 0,
+        heads: 0,
+    }
+    .to_bytes()
+    .to_vec();
+    held.extend_from_slice(&packed);
+    let blocks = 5 * SAMPLE_RATE as usize / BLOCK_SIZE;
+
+    let mut t = Table::new(&row, 24_000);
+    let reg = Box::new(StreamRegistry::new());
+    let file = stream_file(&mut DirStore::new(card.clone()), head.sref).expect("its row");
+    reg.insert(SourceId::ALL[0], file).expect("a free row");
+    let (rings, third) = (Box::new(Rings::new()), Box::new(ThirdSlots::new()));
+    let (mut audio, side) = rings.sides(&third).expect("fresh rings");
+    let (bus, stats) = (CardBus::new(), StreamStats::new());
+    let mut cs = CardStream::new(
+        side,
+        &reg,
+        DirStore::new(card.clone()),
+        (&bus, &stats),
+        (Latency::Slow, FaultAfter::NEVER),
+    )
+    .at_ceiling();
+    let mut slots: Vec<MaybeUninit<TapeEngine>> =
+        notes.iter().map(|_| MaybeUninit::uninit()).collect();
+    let decks: Vec<&mut TapeEngine> = slots
+        .iter_mut()
+        .map(|s| {
+            let e = TapeEngine::init_in_place(s);
+            e.seed(3);
+            e.latch(SourceId::ALL[0]);
+            e
+        })
+        .collect();
+    let frames = |id| {
+        reg.get(id)
+            .map(chimera_core::stream::layout::StreamFile::frames)
+    };
+    let loud = core::cell::Cell::new(false);
+    let mut outs = vec![Vec::with_capacity(blocks * BLOCK_SIZE); notes.len()];
+    let mut b = [0.0; BLOCK_SIZE];
+    let mut decks = decks;
+    for k in 0..blocks {
+        let now = AudioBlocks::new(k as u32);
+        cs.serve(ClockUs(k as u64 * BLOCK_US_X3 / 3), now);
+        let view = t.tok.begin_block();
+        for (v, e) in decks.iter_mut().enumerate() {
+            let mut turn = audio.turn();
+            let mut port = StreamPort {
+                turn: &mut turn,
+                voice: VoiceIdx::ALL[v],
+                frames: &frames,
+                now,
+                bus: &bus,
+                stats: &stats,
+                pend: || {},
+                ratio_max: None,
+                loud: &loud,
+            };
+            if k == 0 {
+                e.start(notes[v], &p, &view, SAMPLE_RATE, Some(&mut port));
+            }
+            e.play(&mut b, &p, &view, SAMPLE_RATE, Some(&mut port));
+            outs[v].extend_from_slice(&b);
+        }
+    }
+    let _ = t.table;
+    let underruns = stats.underruns.load(Ordering::Relaxed);
+    println!(
+        "stressed: {} voices billed {billed} B/s, slow at 19.6 ms, {} reads, {underruns} drop-outs",
+        notes.len(),
+        cs.reads()
+    );
+    println!("voice | note | worst/steady | fade worst/steady | verdict");
+    let mut fails = 0;
+    for (v, s) in outs.iter().enumerate() {
+        let w = whole(&held, 24_000, &p, notes[v], blocks);
+        let verdict = judge(&w, s, &stats);
+        let pass = verdict.passes();
+        fails += usize::from(!pass);
+        println!(
+            "{v} | {} | {:.2} | {:.2} | {}",
+            notes[v],
+            verdict.worst / verdict.steady,
+            verdict.fade_worst / verdict.steady,
+            if pass { "pass" } else { "FAIL" }
+        );
+    }
+    assert!(underruns > 0, "the card kept up: no margin shown");
+    assert_eq!(fails, 0, "a drop-out over the click rule");
 }

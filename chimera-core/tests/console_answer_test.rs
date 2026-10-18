@@ -1291,3 +1291,25 @@ mod hands {
         assert!(h.idle());
     }
 }
+
+/// The card IRQ's u32 cycles wrap every 8.9 s of its time at 480 MHz:
+/// folded every UI pass into 64 bits, a 10-minute gap at 2 % reads 2 %
+/// (#596 review), not the wrapped remainder.
+#[test]
+fn irq_cycles_fold_past_the_wrap() {
+    use chimera_core::stream::stats::IrqCycles;
+    let (hz, pass_ms, share) = (480_000_000u64, 33u64, 0.02);
+    let per_pass = (hz as f64 * share * pass_ms as f64 / 1e3) as u64;
+    let passes = 10 * 60 * 1_000 / pass_ms;
+    let (mut raw, mut f) = (0u32, IrqCycles::new(0));
+    let start = f.fold(raw);
+    for _ in 0..passes {
+        raw = raw.wrapping_add(per_pass as u32);
+        f.fold(raw);
+    }
+    let own = f.total() - start;
+    assert_eq!(own, per_pass * passes);
+    assert!(own > u64::from(u32::MAX), "the raw counter wrapped");
+    let wall = passes * pass_ms * hz / 1_000;
+    assert_eq!(PerMille::of(own, wall).to_string(), "2.0");
+}

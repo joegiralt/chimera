@@ -128,11 +128,32 @@ pub static STATS: CardStats = CardStats {
     bursts_max: AtomicU32::new(0),
 };
 
+/// The card IRQ's cycles folded into 64 bits: the UI loop's alone.
+#[cfg(feature = "usb-console")]
+static IRQ_TOTAL: cortex_m::interrupt::Mutex<
+    core::cell::Cell<chimera_core::stream::stats::IrqCycles>,
+> = cortex_m::interrupt::Mutex::new(core::cell::Cell::new(
+    chimera_core::stream::stats::IrqCycles::new(0),
+));
+
+/// The card IRQ's own cycles since boot, its u32 folded in: called every
+/// UI pass (`Usb::service`), far inside its 8.9 s wrap.
+#[cfg(feature = "usb-console")]
+pub fn irq_cycles() -> u64 {
+    cortex_m::interrupt::free(|cs| {
+        let c = IRQ_TOTAL.borrow(cs);
+        let mut f = c.get();
+        let t = f.fold(STREAM_STATS.irq_cycles.load(Ordering::Relaxed));
+        c.set(f);
+        t
+    })
+}
+
 /// The card IRQ's own cycles and the time when `stats` last read them.
 #[cfg(feature = "usb-console")]
 #[derive(Clone, Copy)]
 pub struct IrqMark {
-    cycles: u32,
+    cycles: u64,
     at: Ms,
 }
 
@@ -140,15 +161,14 @@ pub struct IrqMark {
 impl IrqMark {
     pub fn new(now: Ms) -> IrqMark {
         IrqMark {
-            cycles: STREAM_STATS.irq_cycles.load(Ordering::Relaxed),
+            cycles: irq_cycles(),
             at: now,
         }
     }
 }
 
 /// `stats`' stream lines at `now`: the IRQ's share since `mark`, which
-/// moves to now. Its cycles wrap after 8.9 s of IRQ time: more than 1.5 %
-/// of 10 min between reads.
+/// moves to now.
 #[cfg(feature = "usb-console")]
 pub fn tally(
     mark: &mut IrqMark,
@@ -160,7 +180,7 @@ pub fn tally(
     let ld = |a: &AtomicU32| a.load(Ordering::Relaxed);
     let s = &STREAM_STATS;
     let then = replace(mark, IrqMark::new(now));
-    let own = mark.cycles.wrapping_sub(then.cycles);
+    let own = mark.cycles.saturating_sub(then.cycles);
     let wall = u64::from(now.since(then.at)) * 1_000 * u64::from(cycles_per_us);
     StreamTally {
         underruns: ld(&s.underruns),
@@ -174,7 +194,7 @@ pub fn tally(
         quiets: ld(&s.quiets),
         irq_us_max: Micros::new(ld(&STATS.irq_us_max)),
         irq_own_us_max: Micros::new(ld(&STATS.irq_own_us_max)),
-        irq_share: PerMille::of(own.into(), wall),
+        irq_share: PerMille::of(own, wall),
     }
 }
 
@@ -922,7 +942,6 @@ fn DMA2_STR0() {
         .fetch_max(st.line.us(wall).get(), Ordering::Relaxed);
     STATS.irq_own_us_max.fetch_max(own_us, Ordering::Relaxed);
     // CARD IRQ: the streams' own share of the CPU.
-    STREAM_STATS.irq_us_max.fetch_max(own_us, Ordering::Relaxed);
     STREAM_STATS.irq_cycles.fetch_add(own, Ordering::Relaxed);
 }
 
