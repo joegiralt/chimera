@@ -79,9 +79,9 @@ use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
 use crate::project::arena::ArenaWriter;
 use crate::project::{
-    self, CardOut, Confirmed, DeleteTarget, Line, LoadLink, PartEdit, PartFrom, PartId, PartSource,
-    Project, ProjectFile, ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, SaveTo,
-    SceneAsk, SceneSlot, StatusCache, Swap, TemplateCrc, part_block_mut,
+    self, CardOut, Confirmed, DeleteTarget, Line, LoadLink, PartEdit, PartFrom, PartId, PartSet,
+    PartSource, Project, ProjectFile, ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard,
+    SaveTo, SceneAsk, SceneSlot, StatusCache, Swap, TemplateCrc, part_block_mut,
 };
 use crate::scope::SCOPE_LEN;
 use crate::storage::{ProjectId, SourceRef};
@@ -332,6 +332,8 @@ pub struct UiState {
     lib: library::LibState,
     /// Each Part's filter LEVEL LED: its meter, held and falling.
     clip: [ClipHold; crate::hw::MAX_PARTS],
+    /// The Parts with a voice sounding, as the audio last published.
+    live: PartSet,
     /// Each reverb TYPE's knobs as last left: a TYPE nudge away and back
     /// loses nothing. RAM only; a project load clears it.
     rev_knobs: KnobMemory,
@@ -424,6 +426,7 @@ crate::in_place::field_list!(UiState => UiState {
     src,
     lib,
     clip,
+    live,
     rev_knobs,
     cc,
     learn,
@@ -512,6 +515,7 @@ impl UiState {
             addr_of_mut!((*p).job).write(None);
             addr_of_mut!((*p).card).write(Card::new());
             addr_of_mut!((*p).bank2).write(None);
+            addr_of_mut!((*p).live).write(PartSet::EMPTY);
             addr_of_mut!((*p).clip).write([ClipHold::default(); crate::hw::MAX_PARTS]);
             addr_of_mut!((*p).orbit).write(orbit::OrbitUi::new());
             addr_of_mut!((*p).led).write(led::Led::OFF);
@@ -2424,6 +2428,12 @@ impl UiState {
         self.heads_from = from;
     }
 
+    /// The header's dots read `live` as the sounding Parts until the next
+    /// `update`: for the goldens and tests.
+    pub fn show_sounding(&mut self, live: PartSet) {
+        self.live = live;
+    }
+
     /// SCRUB's reel this pass: POSITION moves at the jog's speed, gliding
     /// to a stop through DRAG once the FINGER is let go.
     fn jog_pass(&mut self, now_ms: u32) -> bool {
@@ -2873,6 +2883,7 @@ impl UiState {
         for (h, m) in self.clip.iter_mut().zip(&crate::meter::FILTER_CLIP) {
             h.step(m.take().get(), animation::FRAME_MS as u16);
         }
+        self.live = crate::meter::sounding_parts();
         let at = self.active_part;
         self.strip_pass();
         self.heads = self.heads_from.read(at.index());
@@ -3119,6 +3130,7 @@ impl UiState {
             scope,
             sounding: crate::scope::peak(scope) > crate::scope::SOUNDING_PEAK,
             orbit_dot: self.orbit.anim.dot(),
+            live: self.live,
             parts: self.project.perf().parts(),
             active_part: self.active_part,
             prime_status: self.band_status(),

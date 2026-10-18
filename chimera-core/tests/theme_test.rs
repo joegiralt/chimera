@@ -159,6 +159,7 @@ fn accents_are_distinct_from_each_other_and_the_greys() {
         theme::FAINT,
         theme::WARN,
         theme::ALERT,
+        theme::PART_LIVE,
     ];
     for (i, a) in Accent::ALL.iter().enumerate() {
         for b in &Accent::ALL[..i] {
@@ -328,7 +329,7 @@ fn input_dismisses_the_toast() {
 // --- INVERT (ADR 0126) ---
 
 use chimera_core::ui::theme_settings::{
-    ALERT_LIGHT, WARN_LIGHT, accent_light, ground_light, splash_palette,
+    ALERT_LIGHT, LIVE_LIGHT, WARN_LIGHT, accent_light, ground_light, splash_palette,
 };
 
 fn light(black: i8, accent: Accent) -> ThemeSettings {
@@ -378,6 +379,7 @@ fn light_mode_flips_every_other_colour_and_twice_is_the_identity() {
         theme::ACCENT_SOFT,
         theme::WARN,
         theme::ALERT,
+        theme::PART_LIVE,
     ]
     .map(raw);
     for px in 0..=u16::MAX {
@@ -443,6 +445,7 @@ fn every_accent_holds_3_to_1_in_both_modes() {
                 if invert {
                     assert!(contrast(WARN_LIGHT, p.bg) >= 3.0, "WARN {k}");
                     assert!(contrast(ALERT_LIGHT, p.bg) >= 3.0, "ALERT {k}");
+                    assert!(contrast(LIVE_LIGHT, p.bg) >= 3.0, "LIVE {k}");
                 }
             }
         }

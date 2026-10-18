@@ -1649,3 +1649,26 @@ fn a_sound_load_eases_its_sends() {
         .unwrap();
     assert!(last >= 0.99, "reached within 100 ms: {last}");
 }
+
+/// The header's Part dots: a Part is in the sounding set from its note-on
+/// until its voice ends after the note-off, and only its own.
+#[test]
+fn the_sounding_set_follows_note_on_and_off() {
+    use chimera_core::project::{PartId, PartSet};
+    let mut rig = Rig::new();
+    let shared = AudioShared::default();
+    assert_eq!(rig.inst.sounding_set(), PartSet::EMPTY);
+    rig.inst.handle(on(0, 60), &shared);
+    rig.block(&shared);
+    let live = rig.inst.sounding_set();
+    assert_eq!(live.len(), 1);
+    assert_eq!(live.iter().next(), Some(PartId::ALL[0]));
+    rig.inst.handle(off(0, 60), &shared);
+    for _ in 0..40_000 {
+        rig.block(&shared);
+        if rig.inst.sounding_set().is_empty() {
+            return;
+        }
+    }
+    panic!("the Part still sounds long after its note-off");
+}
