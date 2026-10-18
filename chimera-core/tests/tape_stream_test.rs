@@ -944,7 +944,7 @@ fn bill_of(p: &TapeEngineParams, note: u8, bend: u8) -> u32 {
 
 /// Eight notes that fit the card's budget; a ninth that doesn't, unless a
 /// voice goes. The oldest released goes (umbrella open question 2), not
-/// the allocator's oldest note-on: 58 started first and let go last.
+/// the allocator's oldest note-on: 50 started first and let go last.
 #[test]
 fn ninth_stream_steals_oldest_released() {
     let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
@@ -954,11 +954,11 @@ fn ninth_stream_steals_oldest_released() {
     let src = OneSource::new(&st.card.held(&[0], HF));
     let mut pl = Played::new(st, src, &[(0, p)]);
     let bend = pl.rig.shared.parts[0].mix.bend;
-    let notes = 58..66u8;
+    let notes = 50..58u8;
     let eight: u32 = notes.clone().map(|n| bill_of(&p, n, bend)).sum();
-    let ninth = bill_of(&p, 66, bend);
+    let ninth = bill_of(&p, 63, bend);
     assert!(eight <= STREAM_BUDGET_BPS && eight + ninth > STREAM_BUDGET_BPS);
-    assert!(eight - bill_of(&p, 59, bend) + ninth <= STREAM_BUDGET_BPS);
+    assert!(eight - bill_of(&p, 51, bend) + ninth <= STREAM_BUDGET_BPS);
 
     for n in notes.clone() {
         pl.on(0, n);
@@ -967,17 +967,17 @@ fn ninth_stream_steals_oldest_released() {
     assert_eq!(pl.billed(), eight);
     for k in 0..60 {
         match k {
-            10 => pl.off(0, 59),
-            40 => pl.off(0, 58),
+            10 => pl.off(0, 51),
+            40 => pl.off(0, 50),
             _ => {}
         }
         pl.block();
     }
-    let (first, early) = (pl.voice_of(0, 58).unwrap(), pl.voice_of(0, 59).unwrap());
-    pl.on(0, 66);
+    let (first, early) = (pl.voice_of(0, 50).unwrap(), pl.voice_of(0, 51).unwrap());
+    pl.on(0, 63);
     let slots = pl.rig.inst.allocator().slots();
-    assert_eq!(pl.voice_of(0, 66), Some(early), "59, let go first, goes");
-    assert_eq!(slots[first].note().map(MidiNote::get), Some(58));
+    assert_eq!(pl.voice_of(0, 63), Some(early), "51, let go first, goes");
+    assert_eq!(slots[first].note().map(MidiNote::get), Some(50));
     assert!(!slots[first].dying());
     for _ in 0..10 {
         pl.block();
@@ -1000,19 +1000,19 @@ fn steal_fades_through_allocator() {
     let p = one_hold();
     let src = OneSource::new(&st.card.held(&[0], HF));
     let mut pl = Played::new(st, src, &[(0, p), (1, p)]);
-    pl.on(1, 58);
-    for n in 59..66 {
+    pl.on(1, 50);
+    for n in 51..58 {
         pl.on(0, n);
     }
-    let victim = pl.voice_of(1, 58).unwrap();
+    let victim = pl.voice_of(1, 50).unwrap();
     let mut bus = Vec::new();
     for k in 0..100 {
         if k == 5 {
-            pl.off(1, 58);
+            pl.off(1, 50);
         }
         if k == 60 {
-            pl.on(0, 66);
-            assert_eq!(pl.voice_of(0, 66), Some(victim), "the steal takes it");
+            pl.on(0, 63);
+            assert_eq!(pl.voice_of(0, 63), Some(victim), "the steal takes it");
         }
         pl.block();
         bus.extend_from_slice(pl.rig.inst.part_bus(1));
@@ -1028,7 +1028,7 @@ fn steal_fades_through_allocator() {
     assert!(worst <= 4.0 * steady, "step {worst} over 4 x {steady}");
     // Gone within the voice's fade and a block, and silent after.
     assert!(bus[64 * BLOCK_SIZE..].iter().all(|&y| y == 0.0));
-    assert!(pl.rig.inst.active()[victim], "66 plays on it");
+    assert!(pl.rig.inst.active()[victim], "63 plays on it");
 }
 
 /// The machines that seek, and PING, refuse a streamed source before the
@@ -1336,7 +1336,7 @@ fn eight_held(released: &[u8]) -> (Played<'static>, u32) {
     };
     let src = OneSource::new(&st.card.held(&[0], HF));
     let mut pl = Played::new(st, src, &[(0, p)]);
-    for n in 58..66 {
+    for n in 50..58 {
         pl.on(0, n);
     }
     for _ in 0..10 {
@@ -1378,9 +1378,9 @@ fn a_knob_turn_never_steals_a_held_voice() {
 /// oldest first.
 #[test]
 fn a_knob_turn_steals_released_voices_only() {
-    let (mut pl, _) = eight_held(&[58, 59]);
-    let gone = [pl.voice_of(0, 58).unwrap(), pl.voice_of(0, 59).unwrap()];
-    pl.rig.shared.parts[0].params.pitch.pitch = 3.0;
+    let (mut pl, _) = eight_held(&[50, 51]);
+    let gone = [pl.voice_of(0, 50).unwrap(), pl.voice_of(0, 51).unwrap()];
+    pl.rig.shared.parts[0].params.pitch.pitch = 6.0;
     for k in 0..20 {
         pl.block();
         // A stolen voice's bill counts until its fade ends.
@@ -1396,7 +1396,7 @@ fn a_knob_turn_steals_released_voices_only() {
     }
     assert!(
         slots[gone[0]].is_free() || slots[gone[0]].dying(),
-        "58 went first"
+        "50 went first"
     );
 }
 
@@ -1454,9 +1454,9 @@ fn a_late_note_that_doesnt_fit_is_refused() {
     let src = OneSource::new(&st.card.held(&[0], HF));
     let mut pl = Played::new(st, src, &[(0, p)]);
     let bend = pl.rig.shared.parts[0].mix.bend;
-    let held: u32 = (59..66).map(|n| bill_of(&p, n, bend)).sum();
+    let held: u32 = (51..58).map(|n| bill_of(&p, n, bend)).sum();
     assert!(held + bill_of(&p, 72, bend) > STREAM_BUDGET_BPS);
-    for n in 59..66 {
+    for n in 51..58 {
         pl.on(0, n);
     }
     pl.src.close();
@@ -1472,7 +1472,7 @@ fn a_late_note_that_doesnt_fit_is_refused() {
     assert_eq!(pl.st.card.stats.late_refused.load(Ordering::Relaxed), 1);
     assert!(pl.rig.inst.allocator().slots()[late].is_free(), "freed");
     assert_eq!(pl.billed(), held);
-    for n in 59..66 {
+    for n in 51..58 {
         assert!(
             pl.rig.inst.active()[pl.voice_of(0, n).unwrap()],
             "{n} plays on"
@@ -1531,21 +1531,21 @@ fn a_fading_note_reads_its_own_source_length() {
     let mut pl = Played::new(st, src, &[(0, p), (1, p)]);
     pl.short = Some(other);
     let bend = pl.rig.shared.parts[0].mix.bend;
-    let eight: u32 = (58..66).map(|n| bill_of(&p, n, bend)).sum();
-    assert!(eight <= STREAM_BUDGET_BPS && eight + bill_of(&p, 64, bend) > STREAM_BUDGET_BPS);
-    pl.on(0, 65);
-    for n in 58..65 {
+    let eight: u32 = (50..58).map(|n| bill_of(&p, n, bend)).sum();
+    assert!(eight <= STREAM_BUDGET_BPS && eight + bill_of(&p, 63, bend) > STREAM_BUDGET_BPS);
+    pl.on(0, 57);
+    for n in 50..57 {
         pl.on(1, n);
     }
-    let victim = pl.voice_of(0, 65).unwrap();
+    let victim = pl.voice_of(0, 57).unwrap();
     let mut bus = Vec::new();
     for k in 0..64 {
         match k {
-            5 => pl.off(0, 65),
+            5 => pl.off(0, 57),
             60 => {
                 pl.rig.shared.parts[0].source = Some(other);
-                pl.on(0, 64);
-                assert_eq!(pl.voice_of(0, 64), Some(victim), "the shed takes it");
+                pl.on(0, 63);
+                assert_eq!(pl.voice_of(0, 63), Some(victim), "the shed takes it");
             }
             _ => {}
         }

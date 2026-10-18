@@ -122,12 +122,11 @@ pub const COST_TAPE_RUNS: Cost = Cost(10);
 /// AGE when it runs (`age::age_runs`): the wear's loop and block, 15.9 →
 /// 25.5.
 pub const COST_AGE: Cost = Cost(30);
-/// A streamed source on PLAY's bill: span switching and slot checks
-/// (slice 1 § 5.5), 20, and the block's re-bill (`refresh_bills`, #596):
-/// `pitch_reach`, `ratio_max` and the bill, about 550 instructions a voice
-/// a block, × 1.46 × 1.1 over 64 samples, 14. A host estimate till TAPE
-/// STREAM's bench rows measure it.
-pub const COST_STREAM: Cost = Cost(40);
+/// A streamed source on PLAY's bill: span switching, slot checks, the
+/// ports and the block's re-bill (`refresh_bills`, #596). Measured on the
+/// unit (TAPE STREAM bench, 2026-10-18, ADR 0013): LOOP and HIT both +100
+/// a voice over the same eight on RAM sources.
+pub const COST_STREAM: Cost = Cost(100);
 /// TRANSWAVE's pitch can cross a level (`COST_WAVE_LEVEL`) in a note past
 /// this many cents: the hysteresis' 0.35 to 0.715 step, ±6.2 st.
 pub const LEVEL_CENTS: f32 = 620.0;

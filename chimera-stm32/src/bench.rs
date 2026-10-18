@@ -1358,13 +1358,14 @@ fn tape_page(
 /// the LOOP row's sources.
 const STREAM_FRAMES: u32 = 12_000;
 const STREAM_RATE: u16 = 24_000;
-/// ROOT C4; the eight notes C4 − 4 to + 3 st, `inc` 0.40 to 0.59: with the
-/// bend's 2 st and wow, 369 KB/s billed, the most eight distinct notes
-/// admit under `STREAM_BUDGET_BPS` (466 KB/s) a semitone higher being 391
-/// KB/s at 0.63. A held streamed voice that fast spans a chunk edge every
-/// 70 blocks, never every block: HIT strikes every block instead, each a
-/// new start on its head and its ring asked again.
-const STREAM_LOW: u8 = 56;
+/// ROOT C4; the eight notes C4 − 7 to 0 st, `inc` 0.33 to 0.50: with the
+/// bend's 2 st and wow, 310 KB/s billed, the most eight distinct notes
+/// admit under `STREAM_BUDGET_BPS` (316 KB/s), a semitone higher being 329
+/// KB/s. A held streamed voice that fast spans a chunk edge every 80
+/// blocks or so, never every block: HIT strikes every block instead, each
+/// a new start on its head and its ring asked again. (COST_STREAM's +100
+/// was measured at C4 − 4 to + 3, under the old 466 KB/s placeholder.)
+const STREAM_LOW: u8 = 53;
 
 /// A TAPE STREAM row: its label, the Sound over PLAY with TAPE and AGE at
 /// 0.5, and what changes before each block.

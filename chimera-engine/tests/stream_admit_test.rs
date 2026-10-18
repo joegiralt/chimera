@@ -20,25 +20,30 @@ fn plus_12_route_doubles_the_bill() {
     assert_eq!(bill(24_000, 2.0), Bill(82_286));
 }
 
+/// B4's budget sits under eight beds at 1x (329,144): seven fit, the
+/// eighth steals.
 #[test]
-fn eight_beds_fit_the_default() {
+fn seven_beds_fit_the_budget_an_eighth_steals() {
     let b = bill(24_000, 1.0);
-    let p = (0..8).map(|i| (i, b, age(false, 0)));
-    assert_eq!(admit(b, p.take(7), STREAM_BUDGET_BPS), Admit::Ok);
+    let p = (0..7).map(|i| (i, b, age(false, i as u32)));
+    assert_eq!(admit(b, p.clone().take(6), STREAM_BUDGET_BPS), Admit::Ok);
+    assert_eq!(admit(b, p, STREAM_BUDGET_BPS), Admit::Steal(6));
 }
 
+/// A TRON chord at +3 st: six fit, a seventh steals.
 #[test]
-fn eight_tron_notes_fit() {
+fn six_tron_notes_fit() {
     let b = bill(24_000, ratio_max(60, 6000.0, 300.0, 0.0));
     let total = 8 * b.0;
     assert!((395_000..=403_000).contains(&total), "{total}");
-    let p = (0..7).map(|i| (i, b, age(false, 0)));
-    assert_eq!(admit(b, p, STREAM_BUDGET_BPS), Admit::Ok);
+    let p = (0..6).map(|i| (i, b, age(false, 0)));
+    assert_eq!(admit(b, p.clone().take(5), STREAM_BUDGET_BPS), Admit::Ok);
+    assert!(matches!(admit(b, p, STREAM_BUDGET_BPS), Admit::Steal(_)));
 }
 
 #[test]
 fn ninth_steals_oldest_released_then_oldest_held() {
-    let b = Bill(58_000);
+    let b = Bill(38_000);
     let mut p = [
         (0, b, age(false, 900)),
         (1, b, age(true, 10)),
@@ -72,7 +77,7 @@ fn refuse_when_nothing_can_be_stolen() {
 #[test]
 fn admit_refuses_a_note_over_the_whole_budget() {
     let p = (0..3).map(|i| (i, Bill(100_000), age(true, 5)));
-    assert_eq!(admit(Bill(658_000), p, STREAM_BUDGET_BPS), Admit::Refuse);
+    assert_eq!(admit(Bill(STREAM_BUDGET_BPS + 1), p, STREAM_BUDGET_BPS), Admit::Refuse);
 }
 
 #[test]
@@ -93,14 +98,14 @@ fn a_nan_ratio_bills_the_maximum_and_is_refused() {
 
 #[test]
 fn the_callers_re_ask_loop_steals_two_oldest_released_first() {
-    let b = Bill(100_000);
+    let b = Bill(60_000);
     let mut playing = vec![
         (0, b, age(false, 900)),
         (1, b, age(true, 10)),
         (2, b, age(true, 50)),
         (3, b, age(false, 100)),
     ];
-    let new = Bill(250_000);
+    let new = Bill(150_000);
     let mut stolen = Vec::new();
     loop {
         match admit(new, playing.iter().copied(), STREAM_BUDGET_BPS) {

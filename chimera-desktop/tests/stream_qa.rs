@@ -412,8 +412,9 @@ fn stream_qa_stressed() {
     let _ = std::fs::remove_dir_all(&card);
     std::fs::create_dir_all(&card).unwrap();
     let (head, packed) = sine_bed(&card);
-    // Two octaves up (`inc` 2.0), five a minor third up (0.59 each).
-    let notes = [84u8, 63, 63, 63, 63, 63];
+    // Two octaves up (`inc` 2.0), three a tone up (0.56 each): B4's
+    // budget takes four such voices, not six.
+    let notes = [84u8, 62, 62, 62];
     let billed: u32 = notes
         .iter()
         .map(|&n| bill(24_000, ratio_max(n, 6_000.0, 0.0, 0.0)).0)

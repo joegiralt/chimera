@@ -5,8 +5,11 @@ use crate::dsp::algo::math::exp2;
 
 /// Head of a source kept in RAM, in milliseconds.
 pub const HEAD_MS: u32 = 100;
-/// What the card sustains for streams, bytes a second.
-pub const STREAM_BUDGET_BPS: u32 = 466_000;
+/// What admission lets streams ask of the card, bytes a second: bench B4's
+/// formula, N × 41,143 × 1.2 × 0.8 at N = 8. B4 ran eight 24 kHz streams
+/// at `Ratio::ONE` (329 KB/s) with 0 empty rings, so this sits under what
+/// the card was shown to hold. Raising it needs B4 re-run at the new rate.
+pub const STREAM_BUDGET_BPS: u32 = 315_978;
 /// Worst-case tape wow, in cents.
 pub const WOW_CENTS: f32 = 33.0;
 
