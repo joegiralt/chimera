@@ -3337,6 +3337,7 @@ impl UiState {
                     .filter(|_| f.def.layout == PageLayout::BigViz);
                 RegionData::viz_with_status(self.page, values, live, status)
                     .with_orbit(self.renderer.orbit_viz_key(f))
+                    .with_mark(self.renderer.mark_key(f))
             }
             RegionKind::Cells => {
                 let looks = (0..6).fold(0u32, |k, i| k | (renderer::look(f, i) as u32) << (2 * i));
@@ -3528,6 +3529,18 @@ impl UiState {
                 {
                     flush_list[flush_count] = rows;
                     flush_count += 1;
+                } else if r.kind == region::RegionKind::Viz
+                    && data[i] != r.prev_data
+                    && data[i].without_mark() == r.prev_data.without_mark()
+                    && flush_count + viz::ModMark::BOXES.len() <= region::MAX_REGIONS
+                {
+                    // Only the modulation mark moved: its boxes alone.
+                    for (x, y, w, h) in viz::ModMark::BOXES {
+                        renderer::Renderer::clear_rect_fb(display.pixel_buffer(), x, y, w, h);
+                        flush_list[flush_count] = (y as u16, (y + h) as u16);
+                        flush_count += 1;
+                    }
+                    self.renderer.filter_mark(&f).draw(display);
                 } else if data[i] != r.prev_data {
                     // The panel is opaque over its own last frame; what it
                     // lands on blanks once, as it opens.

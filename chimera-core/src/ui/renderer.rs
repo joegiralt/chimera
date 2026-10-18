@@ -175,6 +175,51 @@ impl Renderer {
         }
     }
 
+    /// FLT's CUTOFF and RES slots, by address (spec § UI "Vizzes read by
+    /// address").
+    fn filter_slots(&self, f: &Frame) -> (Option<usize>, Option<usize>) {
+        use crate::addr::{BlockRef, ParamAddr};
+        use crate::params::FilterParams;
+        let slot = |id| {
+            let addr = ParamAddr::new(BlockRef::Filter, id);
+            (0..f.def.params.len()).find(|&i| slot_addr(f.def, i, &f.ctx) == Some(addr))
+        };
+        (slot(FilterParams::CUTOFF), slot(FilterParams::RESONANCE))
+    }
+
+    /// Where modulation has CUTOFF and RES now, against their set values:
+    /// the set eased, plus the modulation's own offset (the animators'
+    /// targets differ by it alone), so a knob turn alone leaves no mark.
+    pub fn filter_mark(&self, f: &Frame) -> viz::ModMark {
+        let (c, r) = self.filter_slots(f);
+        let moved = |s: Option<usize>| {
+            s.map_or((0.0, 0.0), |s| {
+                let set = self.set[s].current();
+                (set, set + self.anim[s].target() - self.set[s].target())
+            })
+        };
+        let ((c, mc), (r, mr)) = (moved(c), moved(r));
+        viz::ModMark::of(c, mc, r, mr)
+    }
+
+    /// The values a page's bars and viz draw: the set ones on FLT, whose
+    /// modulation is `filter_mark`'s; the modulated ones elsewhere.
+    pub fn eased(&self, viz: VizType) -> &[AnimatedValue; 6] {
+        if viz == VizType::FilterResponse {
+            &self.set
+        } else {
+            &self.anim
+        }
+    }
+
+    /// The FLT viz's mark key; 0 on any other page.
+    pub fn mark_key(&self, f: &Frame) -> u32 {
+        match (f.def.layout, f.def.viz) {
+            (PageLayout::BigViz, VizType::FilterResponse) => self.filter_mark(f).key(),
+            _ => 0,
+        }
+    }
+
     /// BigViz: the page's visualization with the touched value riding on it.
     fn draw_big_viz<D>(&self, display: &mut D, f: &Frame)
     where
@@ -183,25 +228,21 @@ impl Renderer {
         let a = |i: usize| self.anim[i].current();
         match f.def.viz {
             VizType::FilterResponse => {
-                // By address, not slot (spec § UI "Vizzes read by address").
-                let at = |id| {
-                    let addr = crate::addr::ParamAddr::new(crate::addr::BlockRef::Filter, id);
-                    (0..f.def.params.len())
-                        .find(|&i| slot_addr(f.def, i, &f.ctx) == Some(addr))
-                        .map_or(0.0, a)
-                };
-                use crate::params::FilterParams;
+                let (c, r) = self.filter_slots(f);
                 let flt = &f.parts[f.active_part.index()].sound.params.filter;
                 let v = view::view(f.def, f.focus, &f.ctx);
-                let buf = value_text(f, f.focus, self.anim[f.focus].target());
+                let buf = value_text(f, f.focus, self.set[f.focus].target());
                 let readout = (v != View::Empty).then(|| (v.label(), buf.as_str()));
+                // The solid curve is the set value; modulation is the mark.
+                let at = |s: Option<usize>| s.map_or(0.0, |s| self.set[s].current());
                 viz::filter(
                     display,
-                    at(FilterParams::CUTOFF),
-                    at(FilterParams::RESONANCE),
+                    at(c),
+                    at(r),
                     viz::Response::of(flt.kind(), flt.mode()),
                     readout,
                 );
+                self.filter_mark(f).draw(display);
                 if f.clip > 0.0 {
                     draw::clip_led(display, viz::LED_X, viz::LED_Y, f.clip);
                 }
@@ -546,8 +587,9 @@ impl Renderer {
                 };
                 let live = f.focus as u32 | gr << 8 | led_key(f) << 16;
                 // The readout's text follows the target, not the eased value.
+                // FLT's curve is the set value: its modulation is `filter_mark`.
                 (
-                    region::quantize_values(&self.anim),
+                    region::quantize_values(self.eased(f.def.viz)),
                     region::fold_keys(live.into(), &[self.text_key(f, f.focus)]),
                 )
             }
@@ -647,7 +689,7 @@ impl Renderer {
             );
             return hint::focus(display, f.hint(o.hint));
         }
-        let buf = value_text(f, f.focus, self.anim[f.focus].target());
+        let buf = value_text(f, f.focus, self.set[f.focus].target());
         components::focus_band(
             display,
             view.label(),
@@ -714,7 +756,7 @@ impl Renderer {
         if view::view(f.def, i, &f.ctx) == View::Empty {
             return 0;
         }
-        let text = value_text(f, i, self.anim[i].target());
+        let text = value_text(f, i, self.set[i].target());
         region::settings_key(&[text.as_str().as_bytes()])
     }
 
@@ -738,7 +780,7 @@ impl Renderer {
             _ => self.anim[f.focus].current(),
         };
         let frame = f.clock.frame();
-        let text = value_text(f, f.focus, self.anim[f.focus].target());
+        let text = value_text(f, f.focus, self.set[f.focus].target());
         let g = super::glyph::gauge(glyph, value, fmt, |reads| match reads {
             Reads::Composite(id) => {
                 // Which of the composite's params has focus.
@@ -850,13 +892,13 @@ impl Renderer {
             }
             _ => {}
         }
-        for (i, anim) in self.anim.iter().enumerate() {
+        for i in 0..self.anim.len() {
             let v = view::view(f.def, i, &f.ctx);
             if v == View::Empty {
                 components::cell(display, i, top, None);
                 continue;
             }
-            let value = anim.current();
+            let value = self.anim[i].current();
             let mut buf = FmtBuf::new();
             match v {
                 // The cell keeps a readout's first words: `POLY`, not
@@ -876,7 +918,7 @@ impl Renderer {
                 {
                     let _ = core::fmt::Write::write_str(&mut buf, crate::bank2::NEEDS_UPDATE_CELL);
                 }
-                _ => buf = param_text(f, i, &v, anim.target()),
+                _ => buf = param_text(f, i, &v, self.set[i].target()),
             }
             let c = components::Cell {
                 label: cell_label(&v),
