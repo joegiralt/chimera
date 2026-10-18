@@ -620,7 +620,11 @@ pub fn synth(board: Board, shell: Shell) -> ! {
 
     let mut last_tick = controls::ticks();
     loop {
-        // A stuck card transfer aborted, a stranded want woken.
+        // A write's quiet released 20 ms after its last write; then a
+        // stuck card transfer aborted, a stranded want woken.
+        if let Some(q) = sd::BUS.settle(controls::now_ms()) {
+            shared::STREAM_STATS.note_quiet(q);
+        }
         card_dma::watch(controls::now_ms());
         // A `card dma` run moved on: B6 redraws every row, and saves the
         // project once a minute.

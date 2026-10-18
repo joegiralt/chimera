@@ -1,6 +1,6 @@
 use chimera_hal::Ms;
 use chimera_hal::card_bus::{CardBus, CardFault, Owner, Quiet, Taker, Took, Wake};
-use chimera_hal::units::{StreamCount, UiWait};
+use chimera_hal::units::{Millis, StreamCount, UiWait};
 
 #[test]
 fn take_and_give() {
@@ -79,35 +79,48 @@ fn abort_asked_is_taken_once() {
 #[test]
 fn settle_waits_quiet_hold() {
     let b = CardBus::new();
-    b.ask_quiet();
+    b.ask_quiet(Ms(0));
     b.answer_quiet(Ms(0));
     b.note_write(Ms(100));
-    assert!(!b.settle(Ms(119)));
+    assert_eq!(None, b.settle(Ms(119)));
     assert_eq!(b.quiet(), Quiet::Held);
-    assert!(b.settle(Ms(120)));
+    assert_eq!(b.settle(Ms(120)), Some(Millis::new(120)));
     assert_eq!(b.quiet(), Quiet::Off);
 }
 
 #[test]
 fn settle_across_the_ms_wrap() {
     let b = CardBus::new();
-    b.ask_quiet();
+    b.ask_quiet(Ms(0));
     b.answer_quiet(Ms(0));
     b.note_write(Ms(u32::MAX - 5));
-    assert!(b.settle(Ms(14)));
+    assert_eq!(b.settle(Ms(14)), Some(Millis::new(14)));
 }
 
 #[test]
 fn quiet_walks_off_asked_held() {
     let b = CardBus::new();
     assert_eq!(b.quiet(), Quiet::Off);
-    b.ask_quiet();
+    b.ask_quiet(Ms(0));
     assert_eq!(b.quiet(), Quiet::Asked);
     b.answer_quiet(Ms(0));
     assert_eq!(b.quiet(), Quiet::Held);
     b.note_write(Ms(0));
-    assert!(b.settle(Ms(20)));
+    assert_eq!(b.settle(Ms(20)), Some(Millis::new(20)));
     assert_eq!(b.quiet(), Quiet::Off);
+}
+
+/// A quiet's length runs from its ask; a second ask while one runs moves
+/// nothing.
+#[test]
+fn settle_answers_the_quiet_length_from_its_ask() {
+    let b = CardBus::new();
+    b.ask_quiet(Ms(10));
+    b.ask_quiet(Ms(30));
+    b.answer_quiet(Ms(40));
+    b.note_write(Ms(50));
+    assert_eq!(b.settle(Ms(70)), Some(Millis::new(60)));
+    assert_eq!(b.settle(Ms(200)), None, "once");
 }
 
 #[test]
@@ -115,7 +128,7 @@ fn answer_without_ask_stays_off() {
     let b = CardBus::new();
     b.answer_quiet(Ms(0));
     assert_eq!(b.quiet(), Quiet::Off);
-    assert!(!b.settle(Ms(1_000)));
+    assert_eq!(None, b.settle(Ms(1_000)));
 }
 
 #[test]
@@ -154,19 +167,19 @@ fn ui_wait_round_trips() {
 fn a_hold_counts_from_its_answer_not_an_old_write() {
     let b = CardBus::new();
     b.note_write(Ms(0));
-    b.ask_quiet();
+    b.ask_quiet(Ms(0));
     b.answer_quiet(Ms(5000));
-    assert!(!b.settle(Ms(5001)));
-    assert!(b.settle(Ms(5020)));
+    assert_eq!(None, b.settle(Ms(5001)));
+    assert_eq!(b.settle(Ms(5020)), Some(Millis::new(5020)));
 }
 
 #[test]
 fn answering_a_held_quiet_again_keeps_its_stamp() {
     let b = CardBus::new();
-    b.ask_quiet();
+    b.ask_quiet(Ms(0));
     b.answer_quiet(Ms(100));
     b.answer_quiet(Ms(115));
-    assert!(b.settle(Ms(120)));
+    assert_eq!(b.settle(Ms(120)), Some(Millis::new(120)));
 }
 
 #[test]

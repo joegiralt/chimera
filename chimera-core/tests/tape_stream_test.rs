@@ -28,6 +28,7 @@ use chimera_core::project::SourceId;
 use chimera_core::source_table::GateView;
 use chimera_core::storage::SourceRef;
 use chimera_core::stream::admit::{STREAM_BUDGET_BPS, bill, head_frames};
+use chimera_core::stream::cursor::QUIET_FADE;
 use chimera_core::stream::layout::CHUNK_FRAMES;
 use chimera_core::stream::port::{StreamCard, StreamPort, Streams};
 use chimera_core::stream::ring::{AudioSide, Rings, ThirdSlots};
@@ -36,7 +37,8 @@ use chimera_core::stream::test_card::TestCard;
 use chimera_core::stream::units::AudioBlocks;
 use chimera_core::voice_alloc::VoiceIdx;
 use chimera_core::{MidiNote, Velocity};
-use chimera_hal::BLOCK_SIZE;
+use chimera_hal::card_bus::Quiet;
+use chimera_hal::{BLOCK_SIZE, Ms};
 use chimera_theory::{Chord, Key, PitchClass, Quality, Scale};
 use common::tape::{OneSource, held_plain, sine};
 use common::{InstRig, XorShift, init_params};
@@ -855,6 +857,7 @@ impl<'r> Played<'r> {
                 bus: &self.st.card.bus,
                 stats: &self.st.card.stats,
                 pend: || {},
+                loud: Default::default(),
             },
         };
         f(&mut self.rig, &view, &mut s)
@@ -882,6 +885,7 @@ impl<'r> Played<'r> {
 
     fn block(&mut self) {
         self.st.serve();
+        let now = Ms(self.st.now);
         self.ported(|rig, view, s| {
             rig.inst.render_streamed(
                 &mut rig.fx,
@@ -891,6 +895,7 @@ impl<'r> Played<'r> {
                 view,
                 s,
             );
+            s.answer_quiet(now);
         });
         self.st.now += 1;
     }
@@ -1639,6 +1644,7 @@ fn a_ported_block_starts_and_plays_a_streamed_note() {
                 bus: &pl.st.card.bus,
                 stats: &pl.st.card.stats,
                 pend: || {},
+                loud: Default::default(),
             },
         };
         let rig = &mut pl.rig;
@@ -1665,4 +1671,88 @@ fn a_ported_block_starts_and_plays_a_streamed_note() {
     assert_eq!(pl.rig.inst.streaming().map(|c| c.get()), Some(1));
     assert!(heard > 0.1, "it plays: {heard}");
     assert!(pl.st.card.claims() > 0, "read through its ring");
+}
+
+/// One run of `quiet_fades_and_returns`: a streamed note on Part 0, ALGO
+/// on Part 1; with `quiet`, a write's quiet asked at block `ASK` and
+/// settled at `OFF`. Each block's Part 0 and Part 1 buses, and the block
+/// the quiet was held.
+fn quiet_run(quiet: bool) -> (Vec<f32>, Vec<f32>, Option<u32>) {
+    const ASK: u32 = 100;
+    const OFF: u32 = 200;
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, one_hold())]);
+    *pl.rig.shared.parts[1].params = init_params(EngineType::Algo);
+    pl.on(0, 60);
+    pl.on(1, 64);
+    let (mut tape, mut ram, mut held) = (Vec::new(), Vec::new(), None);
+    for k in 0..400 {
+        let bus = &pl.st.card.bus;
+        if quiet && k == ASK {
+            bus.ask_quiet(Ms(k));
+        }
+        if quiet && k == OFF {
+            assert!(bus.settle(Ms(k)).is_some(), "settles");
+        }
+        pl.block();
+        if held.is_none() && pl.st.card.bus.quiet() == Quiet::Held {
+            held = Some(k);
+        }
+        tape.extend_from_slice(pl.rig.inst.part_bus(0));
+        ram.extend_from_slice(pl.rig.inst.part_bus(1));
+    }
+    (tape, ram, held)
+}
+
+/// Decision 8: a write's quiet fades the streamed voice to 0 within
+/// `QUIET_FADE` and two blocks, and the audio holds it; the RAM voice is
+/// bit-identical to a run without quiet; on release the stream re-asks
+/// from where tape time reached and fades back in, click-free, onto the
+/// run without quiet.
+#[test]
+fn quiet_fades_and_returns() {
+    let (tape, ram, held) = quiet_run(true);
+    let (tape0, ram0, _) = quiet_run(false);
+    assert!(ram0.iter().any(|&y| y != 0.0), "ALGO plays");
+    assert_eq!(ram, ram0, "the RAM voice untouched");
+
+    let b = BLOCK_SIZE;
+    let by = 100 + QUIET_FADE.get() as usize / b + 2;
+    let held = held.expect("held") as usize;
+    let faded = 100 + QUIET_FADE.get() as usize / b;
+    assert!(
+        (faded..by).contains(&held),
+        "held at block {held}, not once faded"
+    );
+    let peak = |x: &[f32]| x.iter().fold(0.0f32, |m, y| m.max(y.abs()));
+    // The deck's gain is 0 by `by`: what's left is the voice chain's own
+    // tail, 40 dB down and only falling.
+    let playing = peak(&tape[99 * b..100 * b]);
+    assert!(playing > 0.1, "it played");
+    let tail: Vec<f32> = (by..200).map(|k| peak(&tape[k * b..(k + 1) * b])).collect();
+    assert!(tail[0] < playing / 100.0, "{} at block {by}", tail[0]);
+    assert!(
+        tail.windows(2).all(|t| t[1] <= t[0]),
+        "only falling: {tail:?}"
+    );
+
+    let step = |x: &[f32]| {
+        x.windows(2)
+            .map(|d| (d[1] - d[0]).abs())
+            .fold(0.0, f32::max)
+    };
+    let steady = step(&tape0[50 * b..100 * b]);
+    let worst = step(&tape[60 * b..]);
+    assert!(worst <= 4.0 * steady, "step {worst} over 4 x {steady}");
+    // Back where tape time reached: the run without quiet, once faded in.
+    // A frame off would differ by ~0.1 (300 Hz at 24 kHz); the chain's
+    // settling leaves ~1e-3.
+    let off = tape[300 * b..]
+        .iter()
+        .zip(&tape0[300 * b..])
+        .fold(0.0f32, |m, (y, y0)| m.max((y - y0).abs()));
+    assert!(off < 1e-2, "off the unquieted run by {off}");
 }

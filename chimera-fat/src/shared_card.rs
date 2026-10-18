@@ -1,12 +1,13 @@
 //! The UI's card behind the card bus (spec § 4.3): every touch of SPI2
 //! holds the bus as `Ui`. A wait for it that runs past `take` is `Busy`:
-//! the device untouched, never a card fault, never a re-init (C1).
+//! the device untouched, never a card fault, never a re-init (C1). A
+//! write while streams play quiets them first (decision 8).
 
 use core::cell::Cell;
 use core::fmt;
 
 use chimera_hal::Ms;
-use chimera_hal::card_bus::{CardBus, CardFault, Taker, Wake};
+use chimera_hal::card_bus::{CardBus, CardFault, QUIET_SPIN_MS, Quiet, Taker, Wake};
 use chimera_hal::store::StoreError;
 use chimera_hal::units::{Millis, UiWait};
 use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx};
@@ -136,6 +137,20 @@ impl<D: Medium> SharedCard<D> {
         held
     }
 
+    /// Streams playing and no quiet yet: asks one and spins until the
+    /// audio holds it, `QUIET_SPIN_MS` at most. Before the hold (C1): a
+    /// spin that runs out writes anyway, never `Busy`.
+    fn quiet(&self) {
+        if self.bus.streams_active().is_none() || self.bus.quiet() != Quiet::Off {
+            return;
+        }
+        let start = (self.hooks.now)();
+        self.bus.ask_quiet(start);
+        while self.bus.quiet() != Quiet::Held
+            && (self.hooks.now)().elapsed_since(start) < QUIET_SPIN_MS
+        {}
+    }
+
     /// `hold`, unless this operation already found the bus busy.
     fn op_hold(&self) -> Result<UiHold<'_, D>, Busy> {
         if self.op_busy.get() {
@@ -153,9 +168,15 @@ impl<D: Medium> BlockDevice for SharedCard<D> {
         h.dev.read(blocks, start).map_err(SharedError::Dev)
     }
 
+    /// Quiet first; each write keeps the quiet held (`note_write`).
     fn write(&self, blocks: &[Block], start: BlockIdx) -> Result<(), Self::Error> {
+        if !self.op_busy.get() {
+            self.quiet();
+        }
         let h = self.op_hold()?;
-        h.dev.write(blocks, start).map_err(SharedError::Dev)
+        let r = h.dev.write(blocks, start).map_err(SharedError::Dev);
+        self.bus.note_write((self.hooks.now)());
+        r
     }
 
     fn num_blocks(&self) -> Result<BlockCount, Self::Error> {

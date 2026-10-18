@@ -1,7 +1,9 @@
+use core::cell::Cell;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use chimera_board::controls::now_ms;
 use chimera_board::sd::BUS;
 use chimera_board::shared::{BLOCKS, NOTE_SOURCES, STREAM_STATS, registry};
 #[cfg(feature = "perf-probe")]
@@ -143,6 +145,8 @@ pub fn render_half(half: Half) {
     if chimera_board::CARD_BENCH || !chimera_engine::stream::STREAMS {
         // No TAPE, or the rings are the card bench's: no voice streams.
         block(run, shared, &mut NoPorts);
+        // Nothing streams: a write's quiet holds at once.
+        BUS.answer_quiet(now_ms());
     } else {
         let reg = registry();
         let frames = |id: SourceId| reg?.get(id).map(StreamFile::frames);
@@ -155,9 +159,11 @@ pub fn render_half(half: Half) {
                 stats: &STREAM_STATS,
                 // Every new want wakes the card IRQ, whoever has the bus (I1).
                 pend: chimera_board::card_dma::pend,
+                loud: Cell::new(false),
             },
         };
         block(run, shared, &mut ports);
+        ports.answer_quiet(now_ms());
     }
     BUS.set_streams_active(e.inst.streaming());
     e.orbit.publish();

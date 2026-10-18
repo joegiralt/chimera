@@ -1,6 +1,8 @@
 //! The streams' counters, for `stats`: atomics any context bumps.
 
-use core::sync::atomic::AtomicU32;
+use core::sync::atomic::{AtomicU32, Ordering};
+
+use chimera_hal::units::Millis;
 
 #[derive(Default)]
 pub struct StreamStats {
@@ -18,7 +20,9 @@ pub struct StreamStats {
     /// Reads passed over: a want's chunk its file can't read, left
     /// Wanted (`serve_step`).
     pub unreadable: AtomicU32,
+    /// Writes' quiets, ask to release: the longest, and how many.
     pub quiet_ms_max: AtomicU32,
+    pub quiets: AtomicU32,
     pub irq_us_max: AtomicU32,
     /// The card IRQ's own cycles, wrapping: a reader takes deltas.
     pub irq_cycles: AtomicU32,
@@ -35,8 +39,15 @@ impl StreamStats {
             frame_errors: AtomicU32::new(0),
             unreadable: AtomicU32::new(0),
             quiet_ms_max: AtomicU32::new(0),
+            quiets: AtomicU32::new(0),
             irq_us_max: AtomicU32::new(0),
             irq_cycles: AtomicU32::new(0),
         }
+    }
+
+    /// A quiet settled after `len`.
+    pub fn note_quiet(&self, len: Millis) {
+        self.quiet_ms_max.fetch_max(len.get(), Ordering::Relaxed);
+        self.quiets.fetch_add(1, Ordering::Relaxed);
     }
 }

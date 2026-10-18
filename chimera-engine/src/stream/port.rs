@@ -1,5 +1,8 @@
 //! What a streamed voice's cursor reaches in one block.
 
+use core::cell::Cell;
+
+use chimera_hal::Ms;
 use chimera_hal::card_bus::CardBus;
 
 use super::ring::{AudioSide, AudioTurn};
@@ -29,6 +32,8 @@ pub struct StreamPort<'a, 's> {
     /// its cap. `None`: unbilled (the bench's and the deck tests' ports),
     /// the note's own speed and wow.
     pub ratio_max: Option<f32>,
+    /// Set by a cursor still audible under a quiet.
+    pub loud: &'a Cell<bool>,
 }
 
 /// The card's side of every port this block.
@@ -39,12 +44,23 @@ pub struct StreamCard<'a> {
     pub bus: &'a CardBus,
     pub stats: &'a StreamStats,
     pub pend: fn(),
+    /// A port's cursor still audible under a quiet, this block.
+    pub loud: Cell<bool>,
 }
 
 /// The rings and the card, for the voices' ports (slice 1 § 7.1).
 pub struct Streams<'a, 'r> {
     pub audio: &'a mut AudioSide<'r>,
     pub card: StreamCard<'a>,
+}
+
+impl Streams<'_, '_> {
+    /// After the block's voices: the quiet held once no cursor is loud.
+    pub fn answer_quiet(&self, now: Ms) {
+        if !self.card.loud.get() {
+            self.card.bus.answer_quiet(now);
+        }
+    }
 }
 
 /// What an engine call shares across voices: `EngineCtx` but the port.
@@ -134,6 +150,7 @@ impl VoicePorts for Streams<'_, '_> {
             stats: c.stats,
             pend: c.pend,
             ratio_max,
+            loud: &c.loud,
         };
         f(&mut EngineCtx {
             sym: base.sym,

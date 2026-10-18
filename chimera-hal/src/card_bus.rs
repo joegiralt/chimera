@@ -18,6 +18,9 @@ use crate::units::{Millis, StreamCount, UiWait};
 
 /// A write holds the streams quiet until this long passes without one.
 pub const QUIET_HOLD_MS: Millis = Millis::new(20);
+/// A write waits this long for the audio to hold its quiet, then writes
+/// anyway (C1).
+pub const QUIET_SPIN_MS: Millis = Millis::new(50);
 /// A `Stream` hold longer than this is stuck: the UI asks an abort.
 pub const WATCHDOG_MS: Millis = Millis::new(200);
 
@@ -104,6 +107,8 @@ pub struct CardBus {
     wanted: AtomicBool,
     abort: AtomicBool,
     quiet: AtomicU8,
+    /// The quiet's ask, for its length.
+    asked: AtomicU32,
     /// The last write's `Ms`, for `settle`.
     wrote: AtomicU32,
     fault: AtomicU8,
@@ -119,6 +124,7 @@ macro_rules! fresh {
             wanted: AtomicBool::new(false),
             abort: AtomicBool::new(false),
             quiet: AtomicU8::new(Quiet::Off as u8),
+            asked: AtomicU32::new(0),
             wrote: AtomicU32::new(0),
             fault: AtomicU8::new(CardFault::Clear as u8),
             streams_active: AtomicU8::new(0),
@@ -239,9 +245,13 @@ impl CardBus {
         }
     }
 
-    /// Off → Asked; otherwise nothing.
-    pub fn ask_quiet(&self) {
-        self.quiet_step(Quiet::Off, Quiet::Asked);
+    /// Off → Asked, stamped `now`; otherwise nothing. Only the UI asks,
+    /// so the check and the CAS don't race.
+    pub fn ask_quiet(&self, now: Ms) {
+        if self.quiet() == Quiet::Off {
+            self.asked.store(now.0, Ordering::Relaxed);
+            self.quiet_step(Quiet::Off, Quiet::Asked);
+        }
     }
 
     /// Asked → Held, the hold counted from `now`; otherwise nothing, so
@@ -263,12 +273,13 @@ impl CardBus {
         self.wrote.store(now.0, Ordering::Release);
     }
 
-    /// Held → Off once `QUIET_HOLD_MS` passes without a write; true if it
-    /// did.
-    pub fn settle(&self, now: Ms) -> bool {
-        self.quiet() == Quiet::Held
+    /// Held → Off once `QUIET_HOLD_MS` passes without a write: the
+    /// quiet's length from its ask, if it did.
+    pub fn settle(&self, now: Ms) -> Option<Millis> {
+        let off = self.quiet() == Quiet::Held
             && now.elapsed_since(Ms(self.wrote.load(Ordering::Acquire))) >= QUIET_HOLD_MS
-            && self.quiet_step(Quiet::Held, Quiet::Off)
+            && self.quiet_step(Quiet::Held, Quiet::Off);
+        off.then(|| now.elapsed_since(Ms(self.asked.load(Ordering::Relaxed))))
     }
 
     fn quiet_step(&self, from: Quiet, to: Quiet) -> bool {

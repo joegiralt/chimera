@@ -6,6 +6,7 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::cell::Cell;
 
 use chimera_hal::card_bus::CardBus;
 
@@ -35,6 +36,8 @@ pub struct TestCard<'r> {
     lookup: Box<dyn Fn(SourceId) -> Option<Frames>>,
     pub bus: CardBus,
     pub stats: StreamStats,
+    /// A cursor still audible under a quiet, set through its ports.
+    pub loud: Cell<bool>,
 }
 
 impl<'r> TestCard<'r> {
@@ -58,6 +61,7 @@ impl<'r> TestCard<'r> {
             lookup: Box::new(move |_| Some(frames)),
             bus: CardBus::new(),
             stats: StreamStats::new(),
+            loud: Cell::new(false),
         }
     }
 
@@ -129,6 +133,7 @@ impl<'r> TestCard<'r> {
             stats: &self.stats,
             pend: || {},
             ratio_max: None,
+            loud: &self.loud,
         }
     }
 

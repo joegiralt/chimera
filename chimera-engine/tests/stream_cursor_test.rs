@@ -48,6 +48,7 @@ struct Rig {
     third: Box<ThirdSlots>,
     bus: CardBus,
     stats: StreamStats,
+    loud: Cell<bool>,
 }
 
 impl Rig {
@@ -57,6 +58,7 @@ impl Rig {
             third: Box::new(ThirdSlots::new()),
             bus: CardBus::new(),
             stats: StreamStats::new(),
+            loud: Cell::new(false),
         }
     }
 
@@ -95,6 +97,7 @@ impl Play<'_> {
             stats: &self.rig.stats,
             pend,
             ratio_max: None,
+            loud: &self.rig.loud,
         };
         f(&mut self.cur, &mut port)
     }
@@ -164,7 +167,7 @@ impl Play<'_> {
 
     fn quiet_off(&self) {
         self.rig.bus.answer_quiet(Ms(0));
-        assert!(self.rig.bus.settle(Ms(1_000)));
+        assert!(self.rig.bus.settle(Ms(1_000)).is_some());
     }
 }
 
@@ -506,7 +509,7 @@ fn quiet_fades_over_quiet_fade_and_cancels_wants() {
         p.block(1.0);
     }
     let three = p.slot_of(3).unwrap();
-    rig.bus.ask_quiet();
+    rig.bus.ask_quiet(Ms(0));
     let (_, mut gains) = p.block(1.0);
     assert_eq!(p.cur.flow(), Flow::Quiet);
     assert_eq!(p.seen(three), SlotState::Empty, "wants are cancelled");
@@ -539,6 +542,28 @@ fn quiet_fades_over_quiet_fade_and_cancels_wants() {
     assert_eq!(underruns(&rig), 0);
 }
 
+/// A note-on under a write's quiet, on a head, starts silent: it never
+/// sounds mid-save, nor keeps the quiet waiting (`loud`); released, it
+/// fades in from where its tape reached.
+#[test]
+fn a_start_under_quiet_stays_silent() {
+    let rig = Rig::new();
+    let mut p = rig.play();
+    rig.bus.ask_quiet(Ms(0));
+    p.start(0, Some(HEAD));
+    for _ in 0..10 {
+        let (plan, gains) = p.block(1.0);
+        assert!(plan.runs().is_empty());
+        assert!(gains.iter().all(|&(_, g)| g == 0.0));
+        assert!(!rig.loud.get(), "never loud");
+    }
+    p.quiet_off();
+    p.block(1.0);
+    assert_eq!(p.cur.flow(), Flow::Cold);
+    p.serve();
+    assert_eq!(p.block(1.0).0.fade, FadeCmd::In);
+}
+
 #[test]
 fn gain_never_steps() {
     let rig = Rig::new();
@@ -556,7 +581,7 @@ fn gain_never_steps() {
             _ => {}
         }
         if b == 700 {
-            rig.bus.ask_quiet();
+            rig.bus.ask_quiet(Ms(0));
         }
         if b == 800 {
             p.quiet_off();

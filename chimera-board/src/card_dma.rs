@@ -32,7 +32,7 @@ use chimera_fat::sd_proto::{
     TOKEN_TIMEOUT_MS, Walk, check_r1, command, stop_response,
 };
 use chimera_hal::Ms;
-use chimera_hal::card_bus::{CardFault, Owner, Took, WATCHDOG_MS, Wake};
+use chimera_hal::card_bus::{CardFault, Owner, Quiet, Took, WATCHDOG_MS, Wake};
 use chimera_hal::units::{BlockCount, BytesPerSec, Lba, Micros};
 use cortex_m::asm::dmb;
 use cortex_m::peripheral::{DWT, NVIC};
@@ -132,9 +132,16 @@ pub fn pend() {
 
 /// A Wanted slot this IRQ can read: its ring names a registry row.
 fn wanted() -> bool {
-    rings()
-        .zip(registry())
-        .is_some_and(|(r, reg)| servable(r, reg).next().is_some())
+    filling()
+        && rings()
+            .zip(registry())
+            .is_some_and(|(r, reg)| servable(r, reg).next().is_some())
+}
+
+/// No write's quiet: under one, the fill in flight finishes and no new one
+/// starts (decision 8).
+fn filling() -> bool {
+    BUS.quiet() == Quiet::Off
 }
 
 /// The UI loop's, each pass. A transfer stuck past `WATCHDOG_MS` (a TE,
@@ -933,7 +940,7 @@ impl IrqState {
         if !serving() {
             return Work::Nothing;
         }
-        if let Some(reg) = registry() {
+        if let Some(reg) = registry().filter(|_| filling()) {
             let now = AudioBlocks::new(BLOCKS.load(Ordering::Relaxed));
             if let ServeStep::Read { claimed, row } =
                 serve_step(&mut self.side, reg, now, BUS.ui_wait(), &STREAM_STATS)

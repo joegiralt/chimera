@@ -373,7 +373,7 @@ impl Cursor {
     /// Note-on at source frame `pos` of `src`, reading at most `inc_max`
     /// source frames a sample until the next start: drops the last note's
     /// slots, names `src` on the ring, plays from `head` if it holds `pos`
-    /// (else starts cold), and asks every slot.
+    /// (else starts cold; silent under a quiet), and asks every slot.
     pub fn start(
         &mut self,
         pos: u32,
@@ -391,7 +391,11 @@ impl Cursor {
             Some(h) => {
                 self.head = Some(h);
                 self.state = Flow::Head(h.idx);
-                self.gain = Fade::OPEN;
+                // Under a write's quiet, silent until it ends.
+                self.gain = match port.bus.quiet() {
+                    Quiet::Off => Fade::OPEN,
+                    Quiet::Asked | Quiet::Held => Fade::SILENT,
+                };
             }
             None => {
                 self.cold(port);
@@ -447,6 +451,9 @@ impl Cursor {
             }
             (false, true) => self.cold(port),
             _ => {}
+        }
+        if quiet && self.gain.level > 0 {
+            port.loud.set(true);
         }
         let file = self.file();
         if self.head.is_some_and(|h| head_span(h, file).last < i0) {
