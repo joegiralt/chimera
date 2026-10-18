@@ -1,5 +1,5 @@
-//! The prompt's answers and the yes they carry (ADR 0066): a SEQ tap on a
-//! prompt's confirming pill is the only `Said`, the guard's witness
+//! The prompt's answers and the yes they carry (ADR 0066, 0149): an EDIT
+//! press on a prompt's confirming pill is the only `Said`, the guard's witness
 //! (`project::guard`). The UI draws the prompts
 //! (`chimera_core::ui::settings::prompt`) and keeps the presses
 //! (`chimera_core::ui::hold`).
@@ -25,6 +25,8 @@ pub enum Press {
 pub struct Presses {
     pub menu: Option<Press>,
     pub seq: Option<Press>,
+    /// EDIT's press edge, alone: not in a chord with MIX or a B key.
+    pub edit: bool,
     /// B1–B5, indexed by `RingIdx`: ORBIT's ring keys. B6 never holds.
     pub ring: [Option<Press>; RINGS],
 }
@@ -57,10 +59,12 @@ impl<T: Copy> Opts<T> {
 pub trait Answers: Copy + Eq + Debug + 'static {
     /// In the pills' order.
     const ALL: Opts<Self>;
+    /// The pill a prompt opens on: the safe one, so a reflex EDIT loses nothing.
+    const START: u8 = 0;
 }
 
 macro_rules! answers {
-    ($(#[$m:meta])* $name:ident { $($v:ident),+ $(,)? } $opts:ident) => {
+    ($(#[$m:meta])* $name:ident { $($v:ident),+ $(,)? } $opts:ident $(, start $start:literal)?) => {
         $(#[$m])*
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub enum $name {
@@ -69,6 +73,7 @@ macro_rules! answers {
 
         impl Answers for $name {
             const ALL: Opts<Self> = Opts::$opts([$($name::$v),+]);
+            $(const START: u8 = $start;)?
         }
     };
 }
@@ -82,17 +87,17 @@ answers!(
     AlsoUsesAnswer { Update, Leave } Two
 );
 answers!(NameExistsAnswer { KeepBoth, Overwrite } Two);
-answers!(DeleteAnswer { Delete, Cancel } Two);
-answers!(ClearAnswer { Clear, Cancel } Two);
-answers!(SaveOverAnswer { SaveOver, Cancel } Two);
-answers!(SaveSceneOverAnswer { SaveOver, Cancel } Two);
-answers!(ClearSceneAnswer { Clear, Cancel } Two);
-answers!(ReloadSceneAnswer { Reload, Cancel } Two);
+answers!(DeleteAnswer { Delete, Cancel } Two, start 1);
+answers!(ClearAnswer { Clear, Cancel } Two, start 1);
+answers!(SaveOverAnswer { SaveOver, Cancel } Two, start 1);
+answers!(SaveSceneOverAnswer { SaveOver, Cancel } Two, start 1);
+answers!(ClearSceneAnswer { Clear, Cancel } Two, start 1);
+answers!(ReloadSceneAnswer { Reload, Cancel } Two, start 1);
 answers!(CardChangedAnswer { SaveAs, Cancel } Two);
-answers!(DfuAnswer { EnterDfu, Cancel } Two);
-answers!(PurgeAnswer { Purge, Cancel } Two);
+answers!(DfuAnswer { EnterDfu, Cancel } Two, start 1);
+answers!(PurgeAnswer { Purge, Cancel } Two, start 1);
 
-/// A pick, or MENU (`None`). Only `Choice::input` makes one, so an answer
+/// A pick, or MENU or SEQ (`None`). Only `Choice::input` makes one, so an answer
 /// is always a key's:
 ///
 /// ```compile_fail,E0423
@@ -103,7 +108,7 @@ answers!(PurgeAnswer { Purge, Cancel } Two);
 pub struct Answer<A>(Option<A>);
 
 impl<A: Copy> Answer<A> {
-    /// The option SEQ confirmed; `None` for MENU.
+    /// The option EDIT confirmed; `None` for MENU or SEQ.
     pub fn picked(self) -> Option<A> {
         self.0
     }
@@ -123,10 +128,10 @@ impl<A: Answers> Default for Choice<A> {
 }
 
 impl<A: Answers> Choice<A> {
-    /// On the first option.
+    /// On the safe option, `A::START`.
     pub fn new() -> Self {
         Choice {
-            at: 0,
+            at: A::START,
             _a: PhantomData,
         }
     }
@@ -140,13 +145,13 @@ impl<A: Answers> Choice<A> {
         self.at
     }
 
-    /// MENU cancels; SEQ answers with the option shown before this frame's
-    /// turn; `delta` (the picking encoder's turn) moves, clamped.
+    /// MENU and SEQ cancel; EDIT answers with the option shown before this
+    /// frame's turn; `delta` (the picking encoder's turn) moves, clamped.
     pub fn input(&mut self, delta: i32, p: &Presses) -> Option<Answer<A>> {
-        if p.menu == Some(Press::Tap) {
+        if p.menu == Some(Press::Tap) || p.seq == Some(Press::Tap) {
             return Some(Answer(None));
         }
-        if p.seq == Some(Press::Tap) {
+        if p.edit {
             return Some(Answer(Some(self.picked())));
         }
         let last = A::ALL.as_slice().len() as i32 - 1;
@@ -207,12 +212,12 @@ impl Guarded for LoadAnswer {
     const SAVE_FIRST: Self = LoadAnswer::SaveThenLoad;
 }
 
-/// The yes in `a`, if SEQ took the confirming pill.
+/// The yes in `a`, if EDIT took the confirming pill.
 pub fn said<A: Commits>(a: Answer<A>) -> Option<Said<A::Confirms>> {
     (a.picked() == Some(A::CONFIRM)).then(Said::new)
 }
 
-/// A SEQ tap on a prompt's confirming pill, for a `T` target only.
+/// An EDIT press on a prompt's confirming pill, for a `T` target only.
 pub struct Said<T>(PhantomData<T>);
 
 impl<T> Said<T> {

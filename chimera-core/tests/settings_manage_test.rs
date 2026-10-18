@@ -217,7 +217,7 @@ fn delete_another_after_confirm() {
     assert_eq!(r.question(), "DELETE BETA?");
     // CANCEL keeps it.
     r.feed(Input::turn(EncoderId::A, 1));
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert!(!r.ui.prompt_open());
     assert_eq!(r.files(), [a, b]);
     // MENU cancels too.
@@ -227,7 +227,8 @@ fn delete_another_after_confirm() {
     assert_eq!(r.files(), [a, b]);
 
     r.tap(ButtonId::Edit);
-    r.tap(ButtonId::Seq);
+    r.feed(Input::turn(EncoderId::A, -9));
+    r.tap(ButtonId::Edit);
     assert_eq!(r.files(), [a]);
     assert_eq!(r.ui.listing().len(), 1);
     // Its commands went with it: the bar is back on the list.
@@ -256,7 +257,8 @@ fn delete_the_project_system_names_clears_last_project() {
     r.open_manage();
     r.command(a, Command::Delete);
     r.tap(ButtonId::Edit);
-    r.tap(ButtonId::Seq);
+    r.feed(Input::turn(EncoderId::A, -9));
+    r.tap(ButtonId::Edit);
     assert_eq!(r.files(), [b]);
     assert_eq!(r.set.last_project, None);
 }
@@ -275,7 +277,8 @@ fn save_to_overwrites_after_confirm() {
     assert_eq!(listed(&mut r.s)[1].name, Some(name("BETA")));
 
     r.tap(ButtonId::Edit);
-    r.tap(ButtonId::Seq);
+    r.feed(Input::turn(EncoderId::A, -9));
+    r.tap(ButtonId::Edit);
     assert_eq!(project_crc(&read_back(&mut r.s, b)), crc);
     assert_eq!(listed(&mut r.s)[1].name, Some(name("GAMMA")));
     assert_eq!(r.ui.project().meta().file(), Some(b));
@@ -295,7 +298,8 @@ fn clear_other_and_clear_own() {
     r.command(b, Command::Clear);
     r.tap(ButtonId::Edit);
     assert_eq!(r.question(), "CLEAR BETA?");
-    r.tap(ButtonId::Seq);
+    r.feed(Input::turn(EncoderId::A, -9));
+    r.tap(ButtonId::Edit);
     assert_eq!(listed(&mut r.s)[1].name, Some(name("NEW PROJECT")));
     assert_eq!(project_crc(&read_back(&mut r.s, b)), fresh);
     assert_eq!(r.ui.project().meta().name(), name("ALPHA"));
@@ -307,10 +311,11 @@ fn clear_other_and_clear_own() {
     r.command(a, Command::Clear);
     r.tap(ButtonId::Edit);
     assert_eq!(r.question(), "CLEAR ALPHA?");
-    r.tap(ButtonId::Seq);
+    r.feed(Input::turn(EncoderId::A, -9));
+    r.tap(ButtonId::Edit);
     assert_eq!(r.question(), "START A NEW PROJECT?");
     r.feed(Input::turn(EncoderId::A, 1));
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert!(!r.ui.prompt_open());
     r.ui.update(UiTick::for_test());
     assert_eq!(project_crc(r.ui.project()), fresh);
@@ -331,7 +336,7 @@ fn rename_loaded_marks_modified() {
     r.tap(ButtonId::Edit);
     assert_eq!(r.ui.naming().unwrap().text(), "ALPHA");
     r.feed(Input::turn(EncoderId::E, -1));
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert!(r.ui.naming().is_none());
     assert_eq!(r.ui.project().meta().name(), name("ALPH"));
     r.ui.update(UiTick::for_test());
@@ -403,7 +408,8 @@ fn clear_own_when_saved() {
     r.command(a, Command::Clear);
     r.tap(ButtonId::Edit);
     assert_eq!(r.question(), "CLEAR ALPHA?");
-    r.tap(ButtonId::Seq);
+    r.feed(Input::turn(EncoderId::A, -9));
+    r.tap(ButtonId::Edit);
     // Saved: no load prompt.
     assert!(!r.ui.prompt_open());
     assert_eq!(project_crc(&read_back(&mut r.s, a)), fresh);
@@ -421,8 +427,9 @@ fn clear_own_on_a_swapped_card_leaves_ram() {
     r.command(a, Command::Clear);
     r.tap(ButtonId::Edit);
     assert_eq!(r.question(), "CLEAR ALPHA?");
+    r.feed(Input::turn(EncoderId::A, -9));
     r.s.swap(2);
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(project_crc(r.ui.project()), kept);
     assert!(!r.ui.prompt_open());
     let toast = match r.ui.step_toast(0) {
@@ -450,12 +457,13 @@ fn clear_own_save_then_load_keeps_the_edits_elsewhere() {
     r.tap(ButtonId::Menu);
     r.command(a, Command::Clear);
     r.tap(ButtonId::Edit);
-    r.tap(ButtonId::Seq);
+    r.feed(Input::turn(EncoderId::A, -9));
+    r.tap(ButtonId::Edit);
     assert_eq!(r.question(), "START A NEW PROJECT?");
     // SAVE THEN LOAD: SAVE AS, never over the file being cleared.
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert_eq!(r.ui.naming().unwrap().text(), "DRIFT-010");
-    r.tap(ButtonId::Seq);
+    r.tap(ButtonId::Edit);
     assert!(r.ui.naming().is_none() && !r.ui.prompt_open());
 
     let all = listed(&mut r.s);
@@ -481,7 +489,8 @@ fn manage_never_sits_empty() {
     r.open_manage();
     r.command(a, Command::Delete);
     r.tap(ButtonId::Edit);
-    r.tap(ButtonId::Seq);
+    r.feed(Input::turn(EncoderId::A, -9));
+    r.tap(ButtonId::Edit);
     assert!(r.files().is_empty());
     let m = screen_path(Screen::ManageProjects);
     assert_eq!(

@@ -1,6 +1,6 @@
 //! NAMING (storage spec § Naming and tags): A moves the cursor, B cycles
 //! A–Z, C cycles 0–9, space and `-`, D toggles case, E deletes. F's tags
-//! come with plan 3. SEQ saves, MENU cancels.
+//! come with plan 3. EDIT saves, MENU and SEQ cancel.
 
 use chimera_hal::{Controls, EncoderId};
 use embedded_graphics::draw_target::DrawTarget;
@@ -32,7 +32,7 @@ pub struct Naming {
 pub enum NamingOut {
     Save(Name<NAME_MAX>),
     Cancel,
-    /// SEQ on a name of spaces: refused, NAMING stays.
+    /// EDIT on a name of spaces: refused, NAMING stays.
     Empty,
 }
 
@@ -103,10 +103,10 @@ impl Naming {
     }
 
     pub fn input(&mut self, c: &impl Controls, p: &Presses) -> Option<NamingOut> {
-        if p.menu == Some(Press::Tap) {
+        if p.menu == Some(Press::Tap) || p.seq == Some(Press::Tap) {
             return Some(NamingOut::Cancel);
         }
-        if p.seq == Some(Press::Tap) {
+        if p.edit {
             return Some(match Name::new(self.text().trim_matches(' ')) {
                 Ok(n) => NamingOut::Save(n),
                 Err(_) => NamingOut::Empty,
