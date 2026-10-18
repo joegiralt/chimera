@@ -12,8 +12,9 @@ perf-probe = []
 bench = ["perf-probe"]
 sd-probe = []
 orbit = ["chimera-core/orbit"]
-# TAPE's bench build: it drops the card bench, for FLASH (#539).
-tape = ["chimera-core/tape"]
+# TAPE's bench build: it drops the card bench, for FLASH (#539). Not TAPE
+# itself, which `chimera-stm32`'s `bank2` brings.
+bench-tape = ["chimera-core/tape"]
 # The MIDI map: CC apply, learn and the MIDI MAP page (#247). Bench
 # firmware leaves it out: FLASH (#507).
 midi-map = ["chimera-core/midi-map"]

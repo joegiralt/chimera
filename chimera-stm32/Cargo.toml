@@ -28,7 +28,7 @@ bench-orbit = ["bench", "midi-din", "orbit"]
 # TAPE COLD: each machine's cold-cache voice. It never plays MIDI; FLASH
 # (#507). Alone it keeps TAPE in bank 1 and doesn't fit FLASH (#506): build
 # it with `bank2`, whose .bk2 the run needs installed.
-bench-tape = ["bench", "chimera-core/tape", "chimera-board/tape"]
+bench-tape = ["bench", "chimera-core/tape", "chimera-board/bench-tape"]
 # The filter probes, linked though nothing calls them, for
 # `tools/loop_count.py`'s static counts: the shipping build plus them, less
 # the console's `put`, the MIDI map and PUSH ENCODERS as the bench's (bank
@@ -62,8 +62,8 @@ fault-inject = ["usb-console", "perf-probe", "midi-din", "chimera-board/fault-in
 # Bank 2's section (header and door at 0x08100000, `build.rs`) and bank 1's
 # seal of it (ADR 0137). The Justfile splits the ELF into .bin and .bk2.
 # TAPE plays from bank 2, so the UI that loads its sources comes with it
-# (chimera-core asserts the pair). Not `chimera-board/tape`: that is TAPE's
-# bench, which drops the card bench.
+# (chimera-core asserts the pair). Not `chimera-board/bench-tape`: that is
+# TAPE's bench, which drops the card bench.
 bank2 = ["chimera-engine/bank2", "chimera-board/bank2", "chimera-core/tape"]
 # Hardware Gate 2's power-pull aid: the install holds 3 s at each phase
 # (PULL NOW) and the console takes `bank2 erase`. `just firmware-gate` only:

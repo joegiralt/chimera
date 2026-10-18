@@ -447,8 +447,8 @@ class Tool(unittest.TestCase):
         self.assertEqual(tool.CONSOLE_ID, (0x0483, 0x5740))
         self.assertEqual(tool.ROM_DFU_ID, (0x0483, 0xDF11))
         just = (ROOT / "Justfile").read_text()
-        # `flash` goes through `update` (its DFU is the tool's).
-        for recipe in ("flash-bench area", "flash-fault:"):
+        # `flash` and `flash-fault` go through `update` (its DFU is the tool's).
+        for recipe in ("flash-bench area",):
             body = just.split("\n" + recipe, 1)[1].split("\n\n", 1)[0]
             self.assertLess(body.index("to-dfu"), body.index("dfu-util"), recipe)
             self.assertIn("-s 0x8020000:leave", body, recipe)
@@ -456,13 +456,13 @@ class Tool(unittest.TestCase):
             self.assertIn('"$rc" -eq 74', body, recipe)
             self.assertIn("File downloaded successfully", body, recipe)
         fault = just.split("\nflash-fault:", 1)[1].split("\n\n", 1)[0]
-        self.assertIn("wait-console 10", fault)
+        self.assertIn("chimera-usb.py update target/chimera-fault.bin target/chimera-fault.bk2", fault)
 
     def test_the_justfile_never_touches_the_option_bytes(self):
         just = (ROOT / "Justfile").read_text()
         self.assertEqual(re.findall(r"-a\s*1\b|--alt[ =]1\b", just), [])
         alts = re.findall(r"^\s+(?:rc=0 && )?dfu-util (\S+)", just, re.M)
-        self.assertGreaterEqual(len(alts), 4)
+        self.assertGreaterEqual(len(alts), 3)
         self.assertEqual(set(alts), {"-a0"})
 
     def test_backup_bootloader_refuses_to_overwrite(self):

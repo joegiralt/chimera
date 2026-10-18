@@ -1574,8 +1574,8 @@ fn strike(
 
 /// TAPE STREAM (slice 1 § 10.4, #596): each row's eight voices streamed
 /// less the same eight on RAM sources (the LOOP row's), cold, over 8:
-/// what streaming adds a voice, `refresh_bills` and the ports in, against
-/// `COST_STREAM`. `None` rings: not lent, nothing timed.
+/// what streaming adds a voice, `refresh_bills` and the ports in:
+/// `COST_STREAM`'s measure. `None` rings: not lent, nothing timed.
 #[inline(never)]
 fn stream_page(
     (inst_slot, fx_slot, shared_slot): Slots<'_>,
@@ -1584,7 +1584,6 @@ fn stream_page(
     rings: chimera_board::BenchRings<'_>,
     rec: &mut Recorder<'_>,
 ) {
-    use chimera_engine::dsp::tape_engine::COST_STREAM;
     let rig = &mut TapeRig {
         inst_slot,
         fx_slot,
@@ -1629,11 +1628,12 @@ fn stream_page(
         match (streamed, ram) {
             (Some((s, n)), Some(r)) => {
                 let per = s.saturating_sub(r) / MAX_VOICES as u32;
+                // Within `FmtBuf`'s 32: +PER over the 8 voices' STREAMED/RAM
+                // cycles, S streams, U underruns.
                 let _ = write!(
                     line,
-                    "{} +{per}/{} 8V {s} RAM {r} S {n} U {}",
+                    "{} +{per} {s}/{r} S{n} U{}",
                     row.0,
-                    COST_STREAM.0,
                     st.stats.underruns.load(Ordering::Relaxed)
                 );
             }

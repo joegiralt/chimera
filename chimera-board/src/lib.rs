@@ -9,7 +9,13 @@ pub mod bank2;
 pub mod cache;
 #[cfg(not(feature = "sd-probe"))]
 pub mod card_dma;
-#[cfg(all(feature = "bench", feature = "usb-console", feature = "bank2"))]
+// Only where `CARD_BENCH` is true: nothing else reaches it.
+#[cfg(all(
+    feature = "bench",
+    feature = "usb-console",
+    feature = "bank2",
+    not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
+))]
 pub mod card_speed;
 
 /// The console's `card` bench is in this build: bank 2's bench builds
@@ -23,7 +29,7 @@ pub const CARD_BENCH: bool = cfg!(all(
     not(any(
         feature = "orbit",
         feature = "master-tape",
-        feature = "tape"
+        feature = "bench-tape"
     ))
 ));
 pub mod clocks;
@@ -491,9 +497,9 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let store = sd::take_store(sd).expect("store taken once");
     // The rings' card side to the card IRQ, its audio side to the audio.
     // TAPE's bench lends both sides to its STREAM rows first.
-    #[cfg_attr(not(all(feature = "bench", feature = "tape")), allow(unused_mut))]
+    #[cfg_attr(not(all(feature = "bench", feature = "bench-tape")), allow(unused_mut))]
     let (mut streams, mut card_side) = shared::ring_sides().expect("ring sides taken once");
-    #[cfg(not(all(feature = "bench", feature = "tape")))]
+    #[cfg(not(all(feature = "bench", feature = "bench-tape")))]
     start_card(&mut cp.NVIC, &clocks, clk.cpu_hz, card_side);
     let mut card = Card::new();
     // No card or a card fault shows at the project's boot; a SYSTEM
@@ -550,12 +556,12 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         clk,
         ui.project_mut(),
         &mut sources,
-        #[cfg(feature = "tape")]
+        #[cfg(feature = "bench-tape")]
         Some((&mut streams, &mut card_side)),
-        #[cfg(not(feature = "tape"))]
+        #[cfg(not(feature = "bench-tape"))]
         None,
     ));
-    #[cfg(all(feature = "bench", feature = "tape"))]
+    #[cfg(all(feature = "bench", feature = "bench-tape"))]
     start_card(&mut cp.NVIC, &clocks, clk.cpu_hz, card_side);
     #[cfg(all(feature = "usb-console", not(feature = "bench")))]
     let bench_text: Option<&str> = None;
@@ -576,7 +582,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             all(
                 feature = "bench",
                 feature = "usb-console",
-                not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
+                not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
             )
         )),
         allow(unused_mut, unused_variables)
@@ -615,7 +621,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         feature = "bench",
         feature = "usb-console",
         feature = "bank2",
-        not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
+        not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
     ))]
     let mut card_bench = card_speed::take(
         producers
@@ -659,7 +665,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             feature = "usb-console",
             feature = "bench",
             feature = "bank2",
-            not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
+            not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
         ))]
         let bench_redraw = {
             let ask = card_bench.tick(controls::now_ms(), store, stats_r.as_mut());
@@ -672,7 +678,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             feature = "usb-console",
             feature = "bench",
             feature = "bank2",
-            not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
+            not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
         )))]
         let bench_redraw = false;
         // The snapshot point: every path through the last iteration flushed.
@@ -682,7 +688,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             feature = "usb-console",
             feature = "bench",
             feature = "bank2",
-            not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
+            not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
         ))]
         let card_run: usb::CardRun = &mut |arg, s, store| Some(card_bench.answer(arg, store, s));
         #[cfg(all(
@@ -690,7 +696,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
             not(all(
                 feature = "bench",
                 feature = "bank2",
-                not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
+                not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
             ))
         ))]
         let card_run: usb::CardRun = &mut |_, _, _| None;
@@ -816,7 +822,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     feature = "usb-console",
     feature = "bench",
     feature = "bank2",
-    not(any(feature = "orbit", feature = "master-tape", feature = "tape"))
+    not(any(feature = "orbit", feature = "master-tape", feature = "bench-tape"))
 ))]
 #[inline(never)]
 fn bench_save(

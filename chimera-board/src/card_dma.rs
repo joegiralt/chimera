@@ -944,12 +944,15 @@ fn DMA2_STR0() {
 }
 
 /// The cycle counter and the audio's cycles as one pair: an audio entry
-/// between the two reads is caught and the pair read again (N1).
+/// between the two reads is caught and the pair read again (N1). The
+/// fences keep the counter's read between the two loads.
 #[inline(always)]
 fn clocks() -> (u32, u32) {
     loop {
         let audio = AUDIO_CYCLES.load(Ordering::Relaxed);
+        compiler_fence(Ordering::SeqCst);
         let t = DWT::cycle_count();
+        compiler_fence(Ordering::SeqCst);
         if AUDIO_CYCLES.load(Ordering::Relaxed) == audio {
             return (t, audio);
         }

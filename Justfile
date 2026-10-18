@@ -560,19 +560,16 @@ flash-bench area extra="":
         echo "bench running ~4 min; console appears after"
     elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
 
-# Flash the fault-injection build (console `fault dma <1|2>`, for #25) via
-# DFU: the shipping set plus `fault-inject`, less `put`. A test build only.
+# Flash the fault-injection build (console `fault dma <1|2>`, for #25;
+# `fault card`) with its bank 2, both halves as `flash` does: `fault-inject`
+# and `bank2`, less `put`, so TAPE streams and `fault card` has reads to
+# fail. A test build only.
 flash-fault:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features fault-inject
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features fault-inject,bank2
     just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-fault
-    python3 tools/chimera-usb.py to-dfu
-    log=$(mktemp) && trap 'rm -f "$log"' EXIT
-    rc=0 && dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-fault.bin -s 0x8020000:leave 2>&1 | tee "$log" || rc=$?
-    if [ "$rc" -eq 74 ] && grep -q 'File downloaded successfully' "$log"; then
-        python3 tools/chimera-usb.py wait-console 10
-    elif [ "$rc" -ne 0 ]; then exit "$rc"; fi
+    python3 tools/chimera-usb.py update target/chimera-fault.bin target/chimera-fault.bk2
 
 # Copy the stock bootloader (0x08000000, 128 KB) to ~/chimera-backups with a
 # .sha256, never over an existing file. Upload only: it never writes the

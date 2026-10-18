@@ -30,8 +30,9 @@ bank2 = ["tape"]
 bank2-gate = []
 # The console's `ls` and `put` (ADR 0092): project files onto the card.
 card-put = []
-# The TAPE engine's DSP (ADR 0132): off in the shipping firmware, where no
-# Part plays TAPE until its rework (#476); on for the desktop and tests.
+# The TAPE engine's DSP and streaming: on for the desktop and tests, and in
+# every shipping build through `bank2`, which plays it from bank 2. The UI
+# keeps TAPE locked (COMING SOON, ADR 0132) until its rework (#476).
 tape = []
 # The master tape stage on DAC pair 1 (ADR 0055: off the chain by default;
 # its parameters and disk codes stay either way).
