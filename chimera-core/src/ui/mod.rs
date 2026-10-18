@@ -3443,8 +3443,12 @@ impl UiState {
                     && data[i] != r.prev_data
                     && data[i].without_anim() == r.prev_data.without_anim()
                     && let Some(gauge) = shown
-                    && let Some(rows) =
-                        renderer::Renderer::redraw_gauge(display, |d| d.pixel_buffer(), gauge)
+                    && let Some(rows) = renderer::Renderer::redraw_gauge(
+                        display,
+                        |d| d.pixel_buffer(),
+                        gauge,
+                        renderer::Renderer::focus_hint(&f),
+                    )
                 {
                     flush_list[flush_count] = rows;
                     flush_count += 1;

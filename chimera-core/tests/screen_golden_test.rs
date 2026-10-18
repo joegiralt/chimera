@@ -135,7 +135,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it, the screens are as before.
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_part", 0x0e2f62f7ab016a89),
+    ("mixer_part", 0x44c46534e226f795),
     // mixer_sends, mixer_out_p2 re-recorded: the sends are the Sound's OUT block (ADR 0123).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_sends", 0xe04acfd7821d85d9),

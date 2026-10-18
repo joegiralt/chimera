@@ -804,8 +804,8 @@ fn mix_plus_a_part_button_in_the_mixer_is_hinted() {
     let with_learn = mixer_hint(chimera_core::ui::view::LEARN_HINT);
     assert_eq!(
         with_learn,
-        &[jump][..],
-        "it takes the generic learn's place"
+        &[jump, Gesture("MIX + SEQ", "LEARN")][..],
+        "both gestures stay hinted"
     );
     assert_eq!(mixer_hint(&[Gesture("REVERB ▸", "HALL")]).len(), 1);
     for h in [mixer_hint(hint::NONE), with_learn] {
