@@ -32,6 +32,7 @@ use chimera_core::storage::{
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry::ALGO_OP_PAGES;
 use chimera_core::ui::busy::ToastStep;
+use chimera_core::ui::held;
 use chimera_core::ui::nav::PartChain;
 use chimera_hal::EncoderId;
 
@@ -294,6 +295,11 @@ impl TestUi {
         self.0.step_toast(0)
     }
 
+    /// Encoder A turned on the page it is on.
+    fn again(&mut self, delta: i8) {
+        screen::feed(&mut self.0, screen::Input::turn(EncoderId::A, delta));
+    }
+
     /// `turn_wave` with MIX held: the snap path.
     fn snap_wave(&mut self, op: Op, delta: i8) -> ToastStep {
         screen::to_osc_sub(&mut self.0, &ALGO_OP_PAGES[op.index()]);
@@ -307,6 +313,13 @@ impl TestUi {
 
     fn sound(&self) -> &Sound {
         &self.0.project().part(PartId::ALL[0]).sound
+    }
+
+    /// The focused cell's refused choice and its reason, as the band shows
+    /// them.
+    fn refusal(&self) -> Option<(u8, String)> {
+        let s = self.0.held_choice()?;
+        Some((s.held.code, held::reason(s.why).as_str().to_string()))
     }
 }
 
@@ -413,8 +426,8 @@ fn every_write_path_checks_the_budget() {
             3 => decode_one(&mut s.params, op, code),
             4 => {
                 ui.load(&s);
-                let t = ui.turn_wave(op, if rng & 1 == 0 { 2 } else { -1 });
-                toasts += usize::from(t == ToastStep::Show(Line::new("FORMANT BUDGET FULL")));
+                ui.turn_wave(op, if rng & 1 == 0 { 2 } else { -1 });
+                toasts += usize::from(ui.refusal().is_some());
                 s = ui.sound().clone();
             }
             _ => sweep_set(&mut bench, &mut s, op, code),
@@ -434,13 +447,13 @@ fn every_write_path_checks_the_budget() {
         "every path writes: {changed:?}"
     );
     assert!(full > 100, "the budget was reached: {full}");
-    assert!(toasts > 0, "the WAVE cell toasts a refused kind");
+    assert!(toasts > 0, "the WAVE cell shows a refused kind dimmed");
 }
 
-/// Shift+turn on WAVE runs to the last kind the budget allows and toasts
-/// the ones it stepped over, as a turn does; it never overspends.
+/// Shift+turn on WAVE runs to the list's ends; an end the budget refuses
+/// is shown dimmed, not written.
 #[test]
-fn shift_turn_on_wave_steps_over_refused_kinds_and_toasts() {
+fn shift_turn_on_wave_runs_to_the_ends() {
     let mut s = Sound::init(EngineType::Algo);
     let n = FORMANT_N as usize;
     for i in 0..n {
@@ -448,12 +461,9 @@ fn shift_turn_on_wave_steps_over_refused_kinds_and_toasts() {
     }
     let mut ui = test_ui_with(&s);
     let op = Op::ALL[n];
-    let t = ui.snap_wave(op, 1);
-    assert_eq!(t, ToastStep::Show(Line::new("FORMANT BUDGET FULL")));
-    let to = ui.sound().params.algo.kinds().get(n);
-    assert_ne!(to, OpKind::Formant, "FRMT refused");
+    ui.snap_wave(op, 1);
+    assert_eq!(ui.sound().params.algo.kinds().get(n), OpKind::Noise);
     assert!(fits_all(&ui.sound().params.algo));
-    // Down from there: to the first table, over whatever is refused.
     ui.snap_wave(op, -1);
     assert_eq!(
         ui.sound().params.algo.kinds().get(n),
@@ -461,8 +471,10 @@ fn shift_turn_on_wave_steps_over_refused_kinds_and_toasts() {
     );
 }
 
+/// Turning WAVE onto a kind the budget refuses shows it dimmed with its
+/// reason and writes nothing; the next turn goes on from it.
 #[test]
-fn the_wave_encoder_steps_over_refused_kinds() {
+fn the_wave_encoder_lands_on_refused_kinds_dimmed() {
     let mut p = AlgoParams::default();
     for i in 0..FORMANT_N as usize {
         p.try_set_kind(i, OpKind::Formant).unwrap();
@@ -471,18 +483,125 @@ fn the_wave_encoder_steps_over_refused_kinds() {
     p.try_set_kind(n, OpKind::Table(WaveId::SSAW)).unwrap();
     let l = p.linked();
     assert!(l.has(n), "INIT links into operator {}", n + 1);
-    let s = step_kind(p.kinds(), l, n, 1);
-    assert_eq!(s.to, OpKind::Noise);
-    assert!(s.skipped);
-    p.try_set_kind(n, OpKind::Noise).unwrap();
-    let s = step_kind(p.kinds(), l, n, -1);
-    assert_eq!(s.to, OpKind::Table(WaveId::SSAW));
-    assert!(s.skipped);
-    let s = step_kind(p.kinds(), l, n, -2);
-    assert_eq!(s.to, OpKind::Table(WaveId::RSQR));
-    // The list's ends are no refusal.
-    let s = step_kind(p.kinds(), l, n, 1);
-    assert_eq!((s.to, s.skipped), (OpKind::Noise, false));
+    // SSAW (15) +1 is FRMT: refused, and +2 NOIS fits.
+    let s = step_kind(p.kinds(), l, n, OpKind::Table(WaveId::SSAW), 1);
+    assert_eq!((s.to, s.refused), (OpKind::Formant, true));
+    let s = step_kind(p.kinds(), l, n, OpKind::Formant, 1);
+    assert_eq!((s.to, s.refused), (OpKind::Noise, false));
+    // The list's ends clamp.
+    let s = step_kind(p.kinds(), l, n, OpKind::Noise, 1);
+    assert_eq!((s.to, s.refused), (OpKind::Noise, false));
+    let s = step_kind(p.kinds(), l, n, OpKind::Noise, -127);
+    assert_eq!(s.to, OpKind::Table(WaveId::W1));
+}
+
+#[test]
+fn a_modulated_operator_shows_frmt_dimmed_with_the_reason() {
+    let mut s = Sound::init(EngineType::Algo);
+    let n = FORMANT_N as usize;
+    for i in 0..n {
+        s.params.algo.try_set_kind(i, OpKind::Formant).unwrap();
+    }
+    // Op n+1 is modulated (INIT links into it); FRMT is two steps from W1
+    // only by the list, so land on it from NOIS' neighbour, SSAW.
+    s.params
+        .algo
+        .try_set_kind(n, OpKind::Table(WaveId::SSAW))
+        .unwrap();
+    let mut ui = test_ui_with(&s);
+    let op = Op::ALL[n];
+    ui.turn_wave(op, 1);
+    let (code, why) = ui.refusal().expect("FRMT is shown dimmed");
+    assert_eq!(code, 16);
+    assert_eq!(why, format!("OP {} MODULATED · OVER BUDGET", n + 1));
+    assert_eq!(
+        ui.sound().params.algo.kinds().get(n),
+        OpKind::Table(WaveId::SSAW),
+        "the kind doesn't change"
+    );
+    // The next turn goes on from the dimmed kind: NOIS fits and lands.
+    ui.again(1);
+    assert_eq!(ui.refusal(), None);
+    assert_eq!(ui.sound().params.algo.kinds().get(n), OpKind::Noise);
+}
+
+#[test]
+fn an_unmodulated_operator_takes_frmt_normally() {
+    let mut s = Sound::init(EngineType::Algo);
+    s.params
+        .algo
+        .try_set_kind(5, OpKind::Table(WaveId::SSAW))
+        .unwrap();
+    let l = s.params.algo.linked();
+    assert!(!l.has(5), "INIT leaves operator 6 unmodulated");
+    let mut ui = test_ui_with(&s);
+    ui.turn_wave(Op::ALL[5], 1);
+    assert_eq!(ui.refusal(), None);
+    assert_eq!(ui.sound().params.algo.kinds().get(5), OpKind::Formant);
+}
+
+#[test]
+fn a_full_budget_says_so() {
+    let mut s = Sound::init(EngineType::Algo);
+    s.params.algo.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
+    for i in 0..FORMANT_N_UNLINKED as usize {
+        s.params.algo.try_set_kind(i, OpKind::Formant).unwrap();
+    }
+    let n = FORMANT_N_UNLINKED as usize;
+    s.params
+        .algo
+        .try_set_kind(n, OpKind::Table(WaveId::SSAW))
+        .unwrap();
+    let mut ui = test_ui_with(&s);
+    ui.turn_wave(Op::ALL[n], 1);
+    let (code, why) = ui.refusal().expect("FRMT is refused");
+    assert_eq!(code, 16);
+    assert_eq!(why, "BUDGET FULL · OTHER FORMANTS");
+}
+
+/// The reason is drawn in ALERT on the hint line, and only while held.
+#[test]
+fn the_band_draws_the_reason_while_the_kind_is_held() {
+    use chimera_core::ui::{hint, theme};
+    let mut s = Sound::init(EngineType::Algo);
+    let n = FORMANT_N as usize;
+    for i in 0..n {
+        s.params.algo.try_set_kind(i, OpKind::Formant).unwrap();
+    }
+    s.params
+        .algo
+        .try_set_kind(n, OpKind::Table(WaveId::SSAW))
+        .unwrap();
+    let mut ui = test_ui_with(&s);
+    let alert_on_line = |ui: &mut TestUi| {
+        screen::settle(&mut ui.0);
+        let mut fb = screen::Fb::new();
+        ui.0.render_with_scope(
+            &mut fb,
+            &chimera_core::ui::perf::PerfStats::zero(),
+            &screen::scope_fixture(),
+        );
+        (hint::FOCUS_Y - 9..=hint::FOCUS_Y)
+            .flat_map(|y| (0..screen::W as i32).map(move |x| (x, y)))
+            .filter(|&(x, y)| fb.at(x, y) == theme::ALERT)
+            .count()
+    };
+    assert_eq!(alert_on_line(&mut ui), 0);
+    ui.turn_wave(Op::ALL[n], 1);
+    assert!(alert_on_line(&mut ui) > 50, "the reason is drawn");
+    ui.again(1);
+    assert_eq!(alert_on_line(&mut ui), 0, "NOIS lands and the line clears");
+}
+
+#[test]
+fn the_reasons_fit_the_band() {
+    use chimera_core::dsp::algo::kinds::Why;
+    use chimera_core::ui::{draw, theme};
+    for w in [Why::Modulated(5), Why::Full, Why::Links] {
+        let t = held::reason(w);
+        let px = draw::text_width(&theme::FONT_LABEL, t.as_str(), theme::LABEL_TRACKING);
+        assert!(px <= theme::CONTENT_W, "{t:?} is {px} px");
+    }
 }
 
 /// What a load keeps of `want` on `l`: each operator in order, refused
@@ -609,18 +728,20 @@ fn the_alg_encoder_steps_over_refused_algorithms() {
     // Past A1 every algorithm links into one of operators 1–3; T8, just
     // before it, links only 6 → 5.
     for side in [AlgoParams::ALG_A, AlgoParams::ALG_B] {
-        let s = step_alg(&p, side, 1);
-        assert_eq!((s.to, s.skipped), (AlgoId::A1, true));
-        let s = step_alg(&p, side, -1);
-        assert_eq!((s.to, s.skipped), (AlgoId::T8, false));
-        let s = step_alg(&p, side, -2);
-        assert_eq!((s.to, s.skipped), (AlgoId::T8, true));
+        let from = p.side(side);
+        let s = step_alg(&p, side, from, 1);
+        assert_eq!((s.to, s.refused), (AlgoId::A2, true));
+        let s = step_alg(&p, side, from, -1);
+        assert_eq!((s.to, s.refused), (AlgoId::T8, false));
     }
     // With one FRMT on operator 6 (never linked), every algorithm fits.
     let mut q = AlgoParams::default();
     q.try_set_kind(5, OpKind::Formant).unwrap();
-    let s = step_alg(&q, AlgoParams::ALG_A, 3);
-    assert_eq!((s.to.get(), s.skipped), (3, false));
+    let s = step_alg(&q, AlgoParams::ALG_A, q.side(AlgoParams::ALG_A), 3);
+    assert_eq!(
+        (s.to.get(), s.refused),
+        (q.side(AlgoParams::ALG_A).get() + 3, false)
+    );
     // Operator 1 FRMT and operator 4 FRMT: T1 (1 linked, 4 not) fits; T3
     // (4 → 1, 3 → 2 → 1) links into 1 only: fits; A8 links 4, 5, 6 → 1:
     // fits. A11 links into 1 and 4: refused.
@@ -634,7 +755,10 @@ fn the_alg_encoder_steps_over_refused_algorithms() {
     let mut b = r;
     use chimera_core::block::Block;
     b.nudge(AlgoParams::ALG_A, 1);
-    assert_eq!(b.algs().0, step_alg(&r, AlgoParams::ALG_A, 1).to);
+    assert_eq!(
+        b.algs().0,
+        step_alg(&r, AlgoParams::ALG_A, r.side(AlgoParams::ALG_A), 1).to
+    );
     assert!(fits_all(&b));
     assert_eq!(at.0, AlgoId::T1);
 }
@@ -650,8 +774,10 @@ fn an_alg_edit_adding_a_link_to_a_full_patch_is_refused() {
     }
     let mut ui = test_ui_with(&s);
     for side in 0..2 {
-        let t = ui.turn_alg(side, 1);
-        assert_eq!(t, ToastStep::Show(Line::new("FORMANT BUDGET FULL")));
+        ui.turn_alg(side, 1);
+        let (code, why) = ui.refusal().expect("A2 is shown dimmed");
+        assert_eq!(code, AlgoId::A2.get());
+        assert_eq!(why, "LINKS A FORMANT · OVER BUDGET");
         assert_eq!(ui.sound().params.algo.algs(), (AlgoId::A1, AlgoId::A1));
         assert_eq!(ui.sound().params.algo.kinds(), s.params.algo.kinds());
     }
@@ -660,8 +786,8 @@ fn an_alg_edit_adding_a_link_to_a_full_patch_is_refused() {
     s2.params.algo.try_set_algs(AlgoId::A1, AlgoId::A1).unwrap();
     s2.params.algo.try_set_kind(5, OpKind::Formant).unwrap();
     ui.load(&s2);
-    let t = ui.turn_alg(0, 1);
-    assert_ne!(t, ToastStep::Show(Line::new("FORMANT BUDGET FULL")));
+    ui.turn_alg(0, 1);
+    assert_eq!(ui.refusal(), None);
     assert_eq!(ui.sound().params.algo.algs().0, AlgoId::A2);
 }
 
@@ -723,11 +849,11 @@ fn every_alg_write_path_checks_the_budget() {
             }
             4 => {
                 ui.load(&s);
-                let t = ui.turn_alg(
+                ui.turn_alg(
                     usize::from(side == AlgoParams::ALG_B),
                     if rng & 1 == 0 { 2 } else { -1 },
                 );
-                toasts += usize::from(t == ToastStep::Show(Line::new("FORMANT BUDGET FULL")));
+                toasts += usize::from(ui.refusal().is_some());
                 s = ui.sound().clone();
             }
             _ => {
@@ -748,7 +874,7 @@ fn every_alg_write_path_checks_the_budget() {
         "every path writes: {changed:?}"
     );
     assert!(refused > 100, "the budget refused: {refused}");
-    assert!(toasts > 0, "the ALG cells toast a refused algorithm");
+    assert!(toasts > 0, "the ALG cells show a refused algorithm dimmed");
 }
 
 #[test]
@@ -802,14 +928,14 @@ fn a_frmt_steps_to_every_kind_the_whole_patch_fits() {
         assert_eq!(k.with(op, to, l).is_ok(), fits(&whole, l), "{to:?}");
     }
     // NOIS on 1–5 alone is over the four-voice floor: op 6 stays FRMT.
-    let st = step_kind(k, l, op, -1);
-    assert_eq!((st.to, st.skipped), (OpKind::Formant, true));
+    let st = step_kind(k, l, op, k.get(op), -1);
+    assert_eq!((st.to, st.refused), (OpKind::Table(WaveId::SSAW), true));
     // With NOIS on 1–4, every kind fits whole and every step lands.
     let mut q = *p;
     q.try_set_kind(4, OpKind::Table(WaveId::W1)).unwrap();
     for d in -16..=1i8 {
-        let st = step_kind(q.kinds(), l, op, d);
+        let st = step_kind(q.kinds(), l, op, q.kinds().get(op), d);
         assert_eq!(st.to.code() as i16, 16 + i16::from(d), "{d}");
-        assert!(!st.skipped);
+        assert!(!st.refused);
     }
 }
