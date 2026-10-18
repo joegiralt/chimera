@@ -506,7 +506,7 @@ pub(crate) enum Modal {
 
 pub(crate) enum ModalStep {
     Open(Modal),
-    /// SEQ on an empty name: refused, NAMING stays.
+    /// EDIT on an empty name: refused, NAMING stays.
     Refused(NamingFor, Naming),
     Done(Done),
 }

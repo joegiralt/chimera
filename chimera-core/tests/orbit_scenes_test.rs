@@ -703,9 +703,6 @@ fn save_over_another_scene_asks() {
     for cancel in [Menu, Seq] {
         save_to(&mut ui, 5);
         assert_eq!(question(&ui), "SAVE OVER SCENE 5?");
-        if cancel == Seq {
-            feed(&mut ui, Input::turn(A, 1)); // CANCEL
-        }
         tap(&mut ui, cancel);
         assert!(!ui.prompt_open());
         assert_eq!(slot(&ui, 4), five, "{cancel:?} leaves it");
@@ -720,7 +717,8 @@ fn save_over_another_scene_asks() {
     to_scn(&mut ui);
 
     save_to(&mut ui, 5);
-    tap(&mut ui, Seq); // SAVE OVER
+    feed(&mut ui, Input::turn(A, -9));
+    tap(&mut ui, Edit); // SAVE OVER
     assert!(!ui.prompt_open());
     assert_eq!(slot(&ui, 4), *ui.project().orbit().live());
     assert_eq!(slot(&ui, 4).chords.tonic, PitchClass::F);
@@ -758,7 +756,8 @@ fn a_changed_slot_refuses_the_prompt() {
         .expect("nothing queued");
     let meanwhile = slot(&ui, 4);
     edit_live(&mut ui, PitchClass::B);
-    tap(&mut ui, Seq); // SAVE OVER
+    feed(&mut ui, Input::turn(A, -9));
+    tap(&mut ui, Edit); // SAVE OVER
     assert!(!ui.prompt_open());
     assert_eq!(slot(&ui, 4), meanwhile, "refused");
     assert_eq!(toast(&mut ui), "SCENE CHANGED");
@@ -914,7 +913,8 @@ fn settings_scene_act(rig: &mut ShellRig, row: usize) {
     screen::plus(&mut rig.ui, row);
     rig.tap(Edit);
     if rig.ui.prompt_open() {
-        rig.tap(Seq);
+        rig.frame(Input::turn(A, -9), 1);
+        rig.tap(Edit);
     }
     let _ = rig.ui.step_toast(0);
     while rig.ui.in_settings() {

@@ -109,7 +109,9 @@ impl HoldGates {
         for ((g, out), &b) in self.rings.iter_mut().zip(&mut ring).zip(&PART_BUTTONS) {
             *out = g.step(c.edges(b), now, mix || edit);
         }
+        let chord = mix || PART_BUTTONS.iter().any(|&b| c.edges(b).down);
         Presses {
+            edit: c.edges(ButtonId::Edit).pressed_at.is_some() && !chord,
             menu: self.menu.step(c.edges(ButtonId::Menu), now, mix),
             seq: self.seq.step(c.edges(ButtonId::Seq), now, mix),
             ring,

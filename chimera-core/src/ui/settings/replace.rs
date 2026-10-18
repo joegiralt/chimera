@@ -1,5 +1,5 @@
 //! A replace waiting on its prompt (#258): the prompt's `Pending` and its
-//! `Choice` together, so only a SEQ tap on the confirming pill makes the
+//! `Choice` together, so only an EDIT press on the confirming pill makes the
 //! `Confirmed`. DELETE, CLEAR, SAVE OVER, OVERWRITE THAT ONE and ENTER DFU
 //! confirm through `said` the same way. Nothing else holds a `Said`:
 //!

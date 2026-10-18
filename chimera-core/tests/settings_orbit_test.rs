@@ -140,9 +140,6 @@ fn clear_asks_and_clears() {
     for cancel in [Menu, Seq] {
         rig.tap(Edit);
         assert_eq!(question(&rig.ui), "CLEAR SCENE 1?");
-        if cancel == Seq {
-            rig.frame(Input::turn(A, 1), 1); // CANCEL
-        }
         rig.tap(cancel);
         assert!(!rig.ui.prompt_open());
         assert!(rig.ui.in_settings(), "{cancel:?} closes the prompt only");
@@ -151,7 +148,8 @@ fn clear_asks_and_clears() {
     }
     let live = *rig.ui.project().orbit().live();
     rig.tap(Edit);
-    rig.tap(Seq); // CLEAR
+    rig.frame(Input::turn(A, -9), 1);
+    rig.tap(Edit); // CLEAR
     assert!(!rig.ui.prompt_open());
     let song = rig.ui.project().orbit();
     assert_eq!(slot(&rig.ui, 0), Scene::neutral());
@@ -264,7 +262,8 @@ fn reload_drops_the_drift() {
     assert_eq!(look(&rig.ui, RELOAD), RowLook::Normal);
     rig.tap(Edit);
     assert_eq!(question(&rig.ui), "RELOAD SCENE 1?");
-    rig.tap(Seq); // RELOAD
+    rig.frame(Input::turn(A, -9), 1);
+    rig.tap(Edit); // RELOAD
     assert!(!rig.ui.prompt_open());
     assert_eq!(rig.ui.project().orbit().queued(), Some(S[0]));
 
@@ -331,8 +330,9 @@ fn scene_prompts_answer_by_meaning() {
 
     // The pill reached by its answer's place in `ALL`.
     let pick = |ui: &mut UiState, at: usize| {
+        feed(ui, Input::turn(A, -9));
         feed(ui, Input::turn(A, at as i8));
-        tap(ui, Seq);
+        tap(ui, Edit);
         assert!(!ui.prompt_open());
     };
     let place = |a: ClearSceneAnswer| {
@@ -403,7 +403,8 @@ fn a_landing_takes_no_knobs_the_ui_has_not_landed() {
     let mut rig = playing();
     orbit_row(&mut rig.ui, CLEAR);
     rig.tap(Edit);
-    rig.tap(Seq); // CLEAR
+    rig.frame(Input::turn(A, -9), 1);
+    rig.tap(Edit); // CLEAR
     assert_eq!(rig.ui.project().orbit().queued(), Some(S[0]));
     let loops = rig.view().loops;
     rig.until(|v| v.loops == loops && v.cue.is_some());
@@ -476,7 +477,8 @@ fn reload_keeps_the_edits_and_drops_the_drift() {
     orbit_row(&mut rig.ui, RELOAD);
     rig.tap(Edit);
     assert_eq!(question(&rig.ui), "RELOAD SCENE 1?");
-    rig.tap(Seq); // RELOAD
+    rig.frame(Input::turn(A, -9), 1);
+    rig.tap(Edit); // RELOAD
     past_the_loop(&mut rig);
     let song = rig.ui.project().orbit();
     assert_eq!(song.queued(), None);
@@ -516,7 +518,8 @@ fn a_capture_under_a_scene_prompt_refuses_it() {
         ui.set_orbit_view(&v);
         let taken = slot(&ui, 0);
         assert_eq!(taken.rings[1].ring.pool.notes(), &notes[..3]);
-        tap(&mut ui, Seq); // YES
+        feed(&mut ui, Input::turn(A, -9));
+        tap(&mut ui, Edit); // YES
         assert!(!ui.prompt_open());
         assert_eq!(toast(&mut ui), "SCENE CHANGED", "row {row}");
         assert_eq!(slot(&ui, 0), taken, "row {row}: the capture stands");
