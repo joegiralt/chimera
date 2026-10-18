@@ -27,6 +27,21 @@ pub fn quantize_values(anim: &[AnimatedValue; 6]) -> [u16; 6] {
     ]
 }
 
+/// The targets' exact bits: the text's share of a key. The eased `current`,
+/// quantized, misses a target that moves less than one bucket.
+pub fn target_bits(anim: &[AnimatedValue; 6]) -> [u32; 6] {
+    core::array::from_fn(|i| anim[i].target().to_bits())
+}
+
+/// `key` and `targets` folded to one word: equal only when both are.
+pub fn fold_targets(key: u64, targets: &[u32]) -> u32 {
+    use core::hash::Hasher;
+    let mut h = Fnv::new();
+    h.write(&key.to_le_bytes());
+    targets.iter().for_each(|t| h.write(&t.to_le_bytes()));
+    h.get()
+}
+
 /// Sentinel value that never matches real data — forces initial redraw.
 const SENTINEL: u16 = u16::MAX;
 /// Page used in sentinel snapshots (the SENTINEL values make them unequal).
@@ -750,5 +765,23 @@ fn sentinel(kind: RegionKind) -> RegionData {
         K::Grid => RegionData::sentinel_grid(),
         K::Crumbs | K::List | K::Footer => RegionData::Settings { key: u32::MAX },
         K::Prompt => RegionData::Overlay { key: u32::MAX },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A target that moves less than one `quantize` bucket still changes the
+    /// text key (#559).
+    #[test]
+    fn a_sub_bucket_target_change_changes_the_key() {
+        let at = |t: f32| {
+            let mut a = [AnimatedValue::new(0.5); 6];
+            a[0].set_target(t);
+            fold_targets(0, &target_bits(&a)[..1])
+        };
+        assert_eq!(quantize(0.5000), quantize(0.5004));
+        assert_ne!(at(0.5000), at(0.5004));
     }
 }

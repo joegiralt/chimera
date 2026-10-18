@@ -268,3 +268,33 @@ fn the_readout_shows_the_target_the_frame_after_a_turn() {
     assert!(focus(&mid) == focus(&rest), "focus readout lags");
     assert!(cell(&mid) == cell(&rest), "cell readout lags");
 }
+
+/// Issue #559 through the viz readout and the matrix amount, full and dirty:
+/// one tick after a turn, a filter slot that does not move the curve
+/// draws the settled screen, pixel for pixel.
+#[test]
+fn readouts_show_the_target_through_full_and_dirty_renders() {
+    // The matrix fill eases by design: only its keys are checked here.
+    for (case, enc, by, exact) in [
+        ("bigviz_filter", EncoderId::D, 40, true),
+        ("mod_matrix", EncoderId::E, 40, false),
+    ] {
+        let scope = scope_fixture();
+        let mut rest = ui_for(case);
+        feed(&mut rest, Input::turn(enc, by));
+        settle(&mut rest);
+        let mut want = Fb::new();
+        rest.render_with_scope(&mut want, &PerfStats::zero(), &scope);
+
+        let mut ui = ui_for(case);
+        let mut dirty = Fb::new();
+        ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope);
+        feed(&mut ui, Input::turn(enc, by));
+        ui.update(UiTick::for_test());
+        ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope);
+        let mut full = Fb::new();
+        ui.render_with_scope(&mut full, &PerfStats::zero(), &scope);
+        assert!(dirty.px == full.px, "{case}: dirty == full");
+        assert!(!exact || full.px == want.px, "{case}: readout lags");
+    }
+}

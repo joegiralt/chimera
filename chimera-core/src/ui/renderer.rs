@@ -532,9 +532,12 @@ impl Renderer {
                     VizType::About => f.bank2.map_or(0, |b| 1 + b.is_open() as u32),
                     _ => 0,
                 };
+                let live = f.focus as u32 | gr << 8 | led_key(f) << 16;
+                // The readout's text follows the target, not the eased value.
+                let target = self.anim[f.focus].target().to_bits();
                 (
                     region::quantize_values(&self.anim),
-                    f.focus as u32 | gr << 8 | led_key(f) << 16,
+                    region::fold_targets(live.into(), &[target]),
                 )
             }
             PageLayout::Matrix => ([0; 6], 0),
@@ -559,7 +562,7 @@ impl Renderer {
             RegionKind::Grid => crate::ui::mod_grid::draw_grid(
                 display,
                 matrix_state,
-                amount_of(self.anim[MATRIX_AMOUNT_SLOT].current()),
+                amount_of(self.anim[MATRIX_AMOUNT_SLOT].target()),
                 inert(f),
             ),
             RegionKind::Nav => {
@@ -606,7 +609,7 @@ impl Renderer {
             return crate::ui::mod_grid::draw_readout(
                 display,
                 f.matrix,
-                amount_of(self.anim[MATRIX_AMOUNT_SLOT].current()),
+                amount_of(self.anim[MATRIX_AMOUNT_SLOT].target()),
                 inert(f),
                 f.hint(f.matrix.hint()),
             );

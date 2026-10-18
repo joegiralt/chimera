@@ -3190,6 +3190,7 @@ impl UiState {
     ) -> region::RegionData {
         use region::{RegionData, RegionKind};
         let mut qvalues = region::quantize_values(&self.renderer.anim);
+        let targets = region::target_bits(&self.renderer.anim);
         // SOURCE's text isn't an animated value: its cell and band key on it.
         for (i, q) in qvalues.iter_mut().enumerate() {
             if let View::Source(s) = view::view(f.def, i, &f.ctx) {
@@ -3217,7 +3218,7 @@ impl UiState {
                 self.matrix_state.num_cols() as u8,
                 qvalues[renderer::MATRIX_AMOUNT_SLOT],
             )
-            .keyed(self.matrix_state.rev, renderer::inert(f)),
+            .keyed(self.matrix_state.rev, matrix_inert(f, targets)),
             RegionKind::Focus => RegionData::focus(
                 self.page,
                 f.focus as u8,
@@ -3234,9 +3235,13 @@ impl UiState {
             .with_set(region::quantize(self.renderer.set[f.focus].current()))
             .with_gauge(shown.map_or(0, |g| g.outside_key()))
             .with_text(
-                f.orbit_focus
-                    .as_ref()
-                    .map_or_else(|| rev_clock_key(f), |o| o.key()),
+                region::fold_targets(
+                    f.orbit_focus
+                        .as_ref()
+                        .map_or_else(|| rev_clock_key(f), |o| o.key())
+                        .into(),
+                    &targets[f.focus..=f.focus],
+                ),
                 f.hints,
             )
             .animated(glyph::anim_key(
@@ -3268,7 +3273,7 @@ impl UiState {
                     core::array::from_fn(|i| renderer::mod_info(f, i).map(f32::to_bits)),
                 )
                 .keyed(self.matrix_state.rev, looks | renderer::led_key(f) << 12)
-                .with_text_key(rev_text_key(f))
+                .with_text_key(region::fold_targets(rev_text_key(f), &targets).into())
             }
             // ROW draws no scroll: the list's easing redraws nothing.
             RegionKind::Nav => RegionData::nav(
@@ -3288,7 +3293,7 @@ impl UiState {
                 self.matrix_state.scroll_x as u8,
                 qvalues[renderer::MATRIX_AMOUNT_SLOT],
             )
-            .keyed(self.matrix_state.rev, renderer::inert(f)),
+            .keyed(self.matrix_state.rev, matrix_inert(f, targets)),
             RegionKind::Crumbs | RegionKind::List | RegionKind::Footer => {
                 let key = f.settings.map_or(0, |b| match kind {
                     RegionKind::Crumbs => b.crumbs_key(f.header_status()),
@@ -3616,6 +3621,14 @@ fn page_def(at: Location, cx: &NavCtx) -> &'static BlockDef {
 /// SIZE CC moves while REV › MORE shows only PRE-DLY's stored knob; and
 /// the clock a synced cell's note reads. 0 on any other page. Bits 0–15
 /// PRE-DLY, 16 the plate, 17–40 the clock (`rev_clock_key`).
+/// The matrix's inert columns and the amount's target, as one key.
+fn matrix_inert(f: &renderer::Frame, targets: [u32; 6]) -> u32 {
+    region::fold_targets(
+        renderer::inert(f).into(),
+        &targets[renderer::MATRIX_AMOUNT_SLOT..=renderer::MATRIX_AMOUNT_SLOT],
+    )
+}
+
 fn rev_text_key(f: &renderer::Frame) -> u64 {
     if !is_rev_page(f) {
         return 0;
