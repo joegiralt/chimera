@@ -420,7 +420,7 @@ fn jump_without_start_counts_a_fault() {
     p.pos = f64::from(20 * CF);
     let (plan, _) = p.block(1.0);
     assert!(plan.runs().is_empty());
-    assert_eq!(rig.stats.faults.load(Ordering::Relaxed), 1);
+    assert_eq!(rig.stats.unplanned.load(Ordering::Relaxed), 1);
 }
 
 #[test]

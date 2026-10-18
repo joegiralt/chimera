@@ -10,7 +10,9 @@ pub struct StreamStats {
     pub underruns: AtomicU32,
     /// Cold starts: a note-on without a head, or a return from quiet.
     pub cold: AtomicU32,
-    pub faults: AtomicU32,
+    /// A tripwire, not the card: a cursor audible with nothing to read, a
+    /// jump that skipped `start`. Card read faults are `card_faults`.
+    pub unplanned: AtomicU32,
     /// A held note's reach rose mid-note past what the card could admit:
     /// it plays on at its cap (#595).
     pub held_at_cap: AtomicU32,
@@ -34,7 +36,7 @@ impl StreamStats {
         StreamStats {
             underruns: AtomicU32::new(0),
             cold: AtomicU32::new(0),
-            faults: AtomicU32::new(0),
+            unplanned: AtomicU32::new(0),
             held_at_cap: AtomicU32::new(0),
             late_refused: AtomicU32::new(0),
             frame_errors: AtomicU32::new(0),

@@ -29,7 +29,10 @@ pub struct Stats {
 pub struct StreamTally {
     pub underruns: u32,
     pub cold: u32,
-    pub faults: u32,
+    /// The cursor's tripwire (`StreamStats::unplanned`).
+    pub unplanned: u32,
+    /// Card read faults past their retry (`CardStats::faults`).
+    pub card_faults: u32,
     pub frame_errors: u32,
     pub unreadable: u32,
     pub held_at_cap: u32,
@@ -384,11 +387,12 @@ fn stats(s: &Stats, t: &mut impl Write) -> fmt::Result {
 fn streams(n: &StreamTally, t: &mut impl Write) -> fmt::Result {
     writeln!(t, "stream_underruns {}", n.underruns)?;
     writeln!(t, "stream_cold {}", n.cold)?;
-    writeln!(t, "stream_faults {}", n.faults)?;
+    writeln!(t, "stream_unplanned {}", n.unplanned)?;
     writeln!(t, "stream_frame_errors {}", n.frame_errors)?;
     writeln!(t, "stream_unreadable {}", n.unreadable)?;
     writeln!(t, "stream_held_at_cap {}", n.held_at_cap)?;
     writeln!(t, "stream_late_refused {}", n.late_refused)?;
+    writeln!(t, "card_faults {}", n.card_faults)?;
     writeln!(t, "card_quiet_ms_max {}", n.quiet_ms_max.get())?;
     writeln!(t, "card_quiets {}", n.quiets)?;
     writeln!(t, "card_irq_us_max {}", n.irq_us_max.get())?;

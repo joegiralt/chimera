@@ -184,7 +184,8 @@ pub fn tally(
     StreamTally {
         underruns: ld(&s.underruns),
         cold: ld(&s.cold),
-        faults: ld(&s.faults),
+        unplanned: ld(&s.unplanned),
+        card_faults: ld(&STATS.faults),
         frame_errors: ld(&s.frame_errors),
         unreadable: ld(&s.unreadable),
         held_at_cap: ld(&s.held_at_cap),

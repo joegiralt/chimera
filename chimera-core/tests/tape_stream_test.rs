@@ -216,7 +216,7 @@ fn render_streamed(s: &Script, note: u8, whole: &[u8]) -> (Vec<f32>, [u32; 4]) {
         [
             n(|s| &s.underruns),
             n(|s| &s.cold),
-            n(|s| &s.faults),
+            n(|s| &s.unplanned),
             turned[1] - turned[0],
         ],
     )
@@ -534,7 +534,7 @@ fn span_reads_stay_in_bounds() {
             assert!(b.iter().all(|y| y.is_finite()), "run {run}: {p:?}");
             st.now += 1;
         }
-        assert_eq!(st.card.stats.faults.load(Ordering::Relaxed), 0, "run {run}");
+        assert_eq!(st.card.stats.unplanned.load(Ordering::Relaxed), 0, "run {run}");
     }
 }
 
@@ -746,7 +746,7 @@ fn streamed_xfade_stops_at_what_the_loop_head_holds() {
     let stats = &st.card.stats;
     assert_eq!(stats.cold.load(Ordering::Relaxed), 0, "every wrap warm");
     assert_eq!(stats.underruns.load(Ordering::Relaxed), 0);
-    assert_eq!(stats.faults.load(Ordering::Relaxed), 0);
+    assert_eq!(stats.unplanned.load(Ordering::Relaxed), 0);
 }
 
 /// A loop moved a little earlier, its landing still in the loop head but

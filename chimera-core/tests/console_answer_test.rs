@@ -357,7 +357,8 @@ fn stats_prints_the_streams_lines() {
         streams: Some(StreamTally {
             underruns: 3,
             cold: 17,
-            faults: 1,
+            unplanned: 1,
+            card_faults: 7,
             frame_errors: 0,
             unreadable: 2,
             held_at_cap: 4,
@@ -373,9 +374,9 @@ fn stats_prints_the_streams_lines() {
     assert!(
         got.ends_with(
             "loop_avg_us 1\nloop_peak_us 2\n\
-             stream_underruns 3\nstream_cold 17\nstream_faults 1\nstream_frame_errors 0\n\
+             stream_underruns 3\nstream_cold 17\nstream_unplanned 1\nstream_frame_errors 0\n\
              stream_unreadable 2\nstream_held_at_cap 4\nstream_late_refused 5\n\
-             card_quiet_ms_max 38\ncard_quiets 6\n\
+             card_faults 7\ncard_quiet_ms_max 38\ncard_quiets 6\n\
              card_irq_us_max 312\ncard_irq_own_us_max 140\ncard_irq_pct 0.4\nOK\n"
         ),
         "{got}"

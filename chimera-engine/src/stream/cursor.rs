@@ -487,7 +487,7 @@ impl Cursor {
         let end_frame = held.unwrap_or(i0);
         if walk.is_none() && self.gain.level > 0 {
             // Audible with nothing to read: a jump that skipped `start`.
-            port.stats.faults.fetch_add(1, Ordering::Relaxed);
+            port.stats.unplanned.fetch_add(1, Ordering::Relaxed);
         }
         let mut plan = Plan::silent(FadeCmd::Hold, inc);
         if let Some(w) = &walk {
