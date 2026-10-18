@@ -11,7 +11,8 @@ use chimera_core::dsp::rev::sync::{FoldState, Tempo};
 use chimera_core::dsp::reverb::{RevSync, ReverbType};
 use chimera_core::meter::publish_rev_clock;
 use chimera_core::ui::perf::PerfStats;
-use chimera_core::ui::{UiState, draw, theme};
+use chimera_core::ui::view;
+use chimera_core::ui::{UiState, draw, hint, theme};
 use chimera_hal::EncoderId;
 use embedded_graphics::prelude::*;
 
@@ -65,6 +66,14 @@ fn a_synced_cell_redraws_when_the_clock_moves() {
     for y in y0..y1 {
         for x in x0..x1 {
             Pixel(Point::new(x, y), theme::BG).draw(&mut want).unwrap();
+        }
+    }
+    // The mixer's jump hint runs along the band's foot; it is not the value.
+    let jump = theme::MARGIN_X + hint::width(view::mixer_hint(hint::NONE));
+    for y in hint::FOCUS_Y - 8..theme::FOCUS_BOTTOM {
+        for x in theme::MARGIN_X..jump {
+            Pixel(Point::new(x, y), theme::BG).draw(&mut want).unwrap();
+            Pixel(Point::new(x, y), theme::BG).draw(&mut fb).unwrap();
         }
     }
     draw::text(

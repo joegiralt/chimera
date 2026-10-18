@@ -3246,6 +3246,7 @@ impl UiState {
                     &[self.renderer.text_key(f, f.focus)],
                 ),
                 f.hints,
+                matches!(f.head, Head::Mix(_)),
             )
             .animated(glyph::anim_key(
                 shown.is_some_and(|g| g.animates()),

@@ -650,6 +650,8 @@ impl Renderer {
         let generic = own.is_empty() || own == view::LEARN_HINT;
         let h = if cfg!(feature = "push-encoders") && generic && f.push && view.pushes() {
             crate::ui::push::HINT
+        } else if matches!(f.head, Head::Mix(_)) {
+            view::mixer_hint(own)
         } else {
             own
         };
