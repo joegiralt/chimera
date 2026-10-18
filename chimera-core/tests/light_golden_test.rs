@@ -15,7 +15,8 @@ use screen::*;
 
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0x14f8295d1f5838e9),
-    ("algo_formant_page", 0x5de8238f2dbf43c3),
+    // Re-recorded: a value's unit sits small beside its number (ADR 0146).
+    ("algo_formant_page", 0xc0a0b584b139dba7),
     ("algo_op_page_3", 0xb6ac3cd0c290d672),
     ("algo_op_page_3_turned", 0x3469930dff1a6231),
     ("algo_op_page_frmt", 0x64614c2f6af9fc1c),
