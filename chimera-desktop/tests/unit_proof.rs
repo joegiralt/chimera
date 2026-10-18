@@ -203,8 +203,13 @@ fn heads() -> Vec<(SourceHead, u64)> {
     all
 }
 
-/// `snd` into a pool slot and onto `part`, as a library load does.
+/// `snd` into a pool slot and onto `part`, as a library load does: its
+/// source's ref in the pool too, absent, so the save writes its
+/// `PoolSource` and the load streams it.
 fn place(p: &mut Project, t: chimera_core::project::TemplateCrc, part: PartId, snd: &Sound) {
+    if let Some(r) = snd.source_ref() {
+        p.source_absent(r).expect("a source row");
+    }
     let slot = match p.needs_for(snd, None) {
         Ok(Some(s)) => s,
         Ok(None) => {
@@ -305,6 +310,38 @@ fn project() {
         cap * 100 / cycles
     );
     let out = dir().join(format!("{PROJECT}.A"));
-    std::fs::write(&out, file_bytes(&p).expect("encoded")).expect("written");
+    let file = file_bytes(&p).expect("encoded");
+    std::fs::write(&out, &file).expect("written");
     println!("{}", out.display());
+    loads_streamed(&file, &heads);
+}
+
+/// The project file loaded beside the beds as the unit loads it (both
+/// passes): Parts 1-4 each stream their bed, nothing left out.
+fn loads_streamed(file: &[u8], heads: &[(SourceHead, u64)]) {
+    use chimera_core::project::{LoadLink, ProjectSource, load_project};
+    use chimera_core::storage::{Card, ProjectId};
+    use chimera_desktop::store::DirStore;
+    use chimera_hal::store::Store;
+    let card = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("unit-proof-card");
+    let (tapes, projects) = (card.join("CHIMERA/TAPES"), card.join("CHIMERA/PROJECTS"));
+    for d in [&tapes, &projects] {
+        std::fs::create_dir_all(d).expect("card dir");
+    }
+    for (h, _) in heads {
+        let name = format!("{:08X}.SRC", h.sref.crc);
+        std::fs::copy(dir().join("CHIMERA/TAPES").join(&name), tapes.join(&name)).expect("src");
+    }
+    std::fs::write(projects.join(format!("{PROJECT}.A")), file).expect("project");
+    let mut s = DirStore::new(card);
+    let id = ProjectId::new(77).expect("an id");
+    let (mut q, t) = Project::boxed();
+    let vol = s.mount().expect("mounted");
+    let go = ReplaceGuard::check(&q, t, ProjectSource::File { id, vol }).expect("no prompt");
+    let out = load_project(&mut Card::new(), &mut s, &mut q, go, &LoadLink::new());
+    assert_eq!(out.note, None, "nothing left out");
+    for (part, (h, _)) in PartId::ALL.iter().zip(heads) {
+        assert_eq!(q.part(*part).sound.source_ref(), Some(h.sref));
+        assert!(q.pool().streamed(h.sref), "{} streams", h.name.as_str());
+    }
 }

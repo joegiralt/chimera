@@ -254,6 +254,35 @@ mod streamed {
         assert_eq!(q.part(PartId::ALL[0]).sound.source_ref(), Some(r));
     }
 
+    /// The unit proof's shape: four Parts on four beds the arena can't
+    /// hold, each ref in the pool as a library load puts it, so the save
+    /// writes its `PoolSource`. Both passes stream all four; none reads
+    /// SOURCE MISSING. `just test` runs it under the firmware's features.
+    #[test]
+    fn four_streamed_parts_load_through_pass_two() {
+        use chimera_core::ui::view::SourceState;
+        let mut s = MemStore::new(1);
+        let (mut p, t) = Project::boxed();
+        let beds: Vec<_> = (0..4).map(|k| source(10 + k, 150_000)).collect();
+        for (k, bed) in beds.iter().enumerate() {
+            put(&mut s, bed);
+            tape_part(&mut p, t, k, bed.0.sref);
+            p.source_absent(bed.0.sref).unwrap();
+        }
+        let (q, note) = round_trip(&mut s, &mut p, false);
+        assert_eq!(note, None, "nothing left out");
+        for (k, bed) in beds.iter().enumerate() {
+            let r = bed.0.sref;
+            assert!(q.pool().streamed(r), "Part {} streams", k + 1);
+            let st = SourceState::of(&q.part(PartId::ALL[k]).sound.params.tape, Some(r), q.pool());
+            assert!(
+                matches!(st, SourceState::Held { .. }),
+                "Part {}: {st:?}",
+                k + 1
+            );
+        }
+    }
+
     /// Review Focus 3: a project load that finds every stream row taken
     /// keeps the streamed source's ref, absent and saying why, and the
     /// project's other Parts load.
