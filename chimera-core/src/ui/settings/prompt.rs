@@ -1,5 +1,5 @@
 //! The prompt (spec § Screens): a teal-outlined panel with the question,
-//! the reason in the route colour, and two or three pills. A picks, EDIT
+//! the reason in the route colour, and two or three pills. any encoder picks, EDIT
 //! confirms, MENU and SEQ cancel. Each prompt answers in its own enum,
 //! whose `ALL` is the pills' order: a pill's place never decides its meaning.
 

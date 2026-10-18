@@ -762,7 +762,7 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
         (L::Later, true) => "LATER · MENU CLOSE",
         (L::Leaf, _) => "A-F EDIT · MENU BACK",
         (L::ReadOnly, _) => "MENU BACK",
-        (L::Prompt, _) => "A PICK · EDIT OK · MENU BACK",
+        (L::Prompt, _) => "EDIT OK · MENU BACK",
         (L::Naming, _) => "EDIT SAVE · MENU BACK",
         (L::ManageList, _) => "EDIT COMMANDS · MENU BACK",
         (L::ManageCommands, _) => "EDIT RUN · MENU LIST",
@@ -771,7 +771,7 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
         (L::ManageLater, _) => "LATER · MENU LIST",
         (L::Load, _) => "EDIT LOAD · MENU BACK",
         #[cfg(feature = "midi-map")]
-        (L::Map, _) => "B CC · C-D RANGE · MIX+MINUS DELETE",
+        (L::Map, _) => "AEF MOVE · BCD EDIT · MIX+MINUS DEL",
     }
 }
 

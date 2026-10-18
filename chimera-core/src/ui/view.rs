@@ -507,6 +507,23 @@ pub const LEARN: Gesture<'static> = Gesture("MIX + SEQ", "LEARNS A CC");
 /// Every mappable cell's hint; PUSH ENCODERS' replaces it when on.
 pub const LEARN_HINT: Hint = &[LEARN];
 
+/// MIX + B*n* in the mixer keeps the page and opens Part *n*'s (ADR 0044).
+const PART_JUMP: Gesture<'static> = Gesture("MIX + B1-6", "PART");
+const PART_JUMP_HINT: Hint = &[PART_JUMP];
+const PART_JUMP_LEARN: Hint = &[PART_JUMP, Gesture("MIX + SEQ", "LEARN")];
+
+/// A mixer cell's hint: `own` where it has words of its own, else the Part
+/// jump, with learn's short form after it where `own` was the generic learn.
+pub fn mixer_hint(own: Hint) -> Hint {
+    if own == LEARN_HINT {
+        PART_JUMP_LEARN
+    } else if own.is_empty() {
+        PART_JUMP_HINT
+    } else {
+        own
+    }
+}
+
 /// SYM is AMP's next sub-page: EDIT down under STACK, SEQ right under
 /// ROW (`nav::sub_move`).
 fn sym_hint(pages: Pages) -> Hint {

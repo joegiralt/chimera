@@ -17,8 +17,8 @@ This supersedes the last paragraph of 0081 and the "SEQ confirms" lines of
   press, alone: EDIT in a chord with MIX or a B key confirms nothing
   (`Presses::edit`).
 - **MENU and SEQ cancel** (MENU is leave, SEQ is back), on release.
-- **A moves the highlight**, clamped. No button keeps a dialog-only meaning.
-- **Legends:** prompts read `A PICK · EDIT OK · MENU BACK`, NAMING
+- **Any encoder moves the highlight**, clamped. No button keeps a dialog-only meaning.
+- **Legends:** prompts read `EDIT OK · MENU BACK`, NAMING
   `EDIT SAVE · MENU BACK`. None says SEQ.
 - **A prompt opens on its safe pill** (`Answers::START`). The destructive
   ones (DELETE, CLEAR, SAVE OVER, CLEAR and RELOAD SCENE, ENTER DFU, PURGE,
