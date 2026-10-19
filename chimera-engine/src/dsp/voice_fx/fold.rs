@@ -111,10 +111,8 @@ fn fold_wave(x: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     extern crate std;
-    use super::super::rig::{Rig, sine};
+    use super::super::rig::{FNV0, Rig, fnv, sine};
     use super::*;
-    use crate::dsp::wavefolder::Wavefolder;
-    use crate::params::FolderParams;
 
     fn bits(b: &[f32]) -> std::vec::Vec<u32> {
         b.iter().map(|x| x.to_bits()).collect()
@@ -124,6 +122,11 @@ mod tests {
         [sine(0, 1.0, 300.0), sine(0, 1.0, 70.0)]
     }
 
+    /// Today's fold on these cases, FNV-1a over every block, recorded
+    /// against `Wavefolder` bit for bit before wavefolder.rs went (#614).
+    const FOLD_STEADY: u64 = 0x11ca_90b6_439a_274f;
+    const FOLD_MOVING: u64 = 0x1acf_60a0_c095_fc50;
+
     #[test]
     fn fold_at_level_half_is_todays_folder_bit_for_bit() {
         let rows = lane_rows();
@@ -132,52 +135,38 @@ mod tests {
             from: [0.1, 0.0],
             to: [0.3, 0.0],
         };
+        let mut h = FNV0;
         for tapped in [false, true] {
             for fold in [0.01, 0.5, 1.0] {
                 for sym in [0.0, 0.5, 1.0] {
                     for mix in [0.3, 1.0] {
-                        let (mut old, mut rig) = (Wavefolder::new(), Rig::default());
-                        let p = FolderParams {
-                            fold,
-                            symmetry: sym,
-                            mix,
-                        };
+                        let mut rig = Rig::default();
                         for b in 0..40 {
-                            let mut a = sine(b, 0.7, 110.0);
-                            let mut n = a;
+                            let mut n = sine(b, 0.7, 110.0);
                             let l = tapped.then_some(&lane);
-                            old.process(&mut a, &p, true, l);
                             run(&mut n, &rig.ends([fold, sym, 0.5], mix, true), false, l);
-                            assert_eq!(
-                                bits(&a),
-                                bits(&n),
-                                "F{fold} S{sym} M{mix} tap {tapped} block {b}"
-                            );
+                            h = fnv(h, &n);
                         }
                     }
                 }
             }
         }
+        assert_eq!(h, FOLD_STEADY);
     }
 
     #[test]
     fn fold_moving_blocks_match_with_and_without_glide() {
+        let mut h = FNV0;
         for glide in [false, true] {
-            let (mut old, mut rig) = (Wavefolder::new(), Rig::default());
+            let mut rig = Rig::default();
             for b in 0..6 {
                 let fold = if b < 2 { 0.2 } else { 0.8 };
-                let p = FolderParams {
-                    fold,
-                    symmetry: 0.3,
-                    mix: 0.7,
-                };
-                let mut a = sine(b, 0.7, 110.0);
-                let mut n = a;
-                old.process_glide(&mut a, &p, true, None, || glide);
+                let mut n = sine(b, 0.7, 110.0);
                 run(&mut n, &rig.ends([fold, 0.3, 0.5], 0.7, true), glide, None);
-                assert_eq!(bits(&a), bits(&n), "glide {glide} block {b}");
+                h = fnv(h, &n);
             }
         }
+        assert_eq!(h, FOLD_MOVING);
     }
 
     #[test]

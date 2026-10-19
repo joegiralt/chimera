@@ -216,11 +216,10 @@ impl BlockRef {
             | BlockRef::Folder
             | BlockRef::Out
             | BlockRef::Pitch
-            | BlockRef::Env(_) => true,
-            // Not yet: the voice plays TAPE from build step 3, and runs the
-            // FX slot once it is wired (#614).
-            BlockRef::TapeEngine
             | BlockRef::VoiceFx
+            | BlockRef::Env(_) => true,
+            // Not yet: the voice plays TAPE from build step 3.
+            BlockRef::TapeEngine
             | BlockRef::Lfo(_)
             | BlockRef::Chorus
             | BlockRef::Delay

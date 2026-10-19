@@ -3,6 +3,7 @@
 
 use crate::block::{Block, Change, DiskCode, ParamId, ParamSpec, Smoothing, ValFmt, apply_code};
 use crate::glyph::FocusGlyph;
+use crate::hw::Cost;
 
 /// What the slot runs. Codes are forever: 2 is FUZZ's and 4 DELAY's, neither
 /// built yet.
@@ -37,6 +38,54 @@ impl FxType {
 
     fn index(self) -> usize {
         Self::LIST.iter().position(|&t| t == self).unwrap_or(0)
+    }
+
+    /// Whether the slot runs: once P1 is 0.001 or more, or `moved` (a route
+    /// on P1, or FOLD's tap) may raise it. OFF never. The bill and the gate
+    /// read the same answer (`Voice::fx_runs`).
+    pub fn runs(self, p1: f32, moved: bool) -> bool {
+        self != FxType::Off && (p1 >= 0.001 || moved)
+    }
+
+    /// The type running steady.
+    /// - SOFT, today's DRV: the unit reads 58 (2026-10-19, rev V, ROUTING
+    ///   bench, run 2, `/VOICE` slope); the host-era bench said 57 (#642).
+    /// - FOLD: the bench's FOLD row less 1 OP (measured 2026-09-28, rev V
+    ///   at 480 MHz), 43, and the offset of silence's fold (ADR 0060), 1
+    ///   instruction a sample, 1.6 by ADR 0056's host method. LEVEL's
+    ///   multiply adds about 1: re-measured on the unit in Task 13.
+    pub const fn cost(self) -> Cost {
+        match self {
+            FxType::Off => Cost::ZERO,
+            FxType::Soft => Cost(58),
+            FxType::Fold => Cost(45),
+        }
+    }
+
+    /// A route on P1–P3 or MIX, or FOLD's tap: the type ramps every block.
+    /// - SOFT: 36 instructions a sample against the steady 22; the unit
+    ///   reads 26 (84 − 58; 2026-10-19, rev V, ROUTING bench, run 2,
+    ///   `/VOICE` slope), the host count 23 (#642).
+    /// - FOLD: recounted on the bench ELF at 1879169d (2026-10-07): the
+    ///   moving loop 45 instructions a sample (silence's fold per sample,
+    ///   ADR 0060) + 3.48 of block, 80, against the steady 24 + 3.48, 45.
+    ///
+    /// Unrouted, only the UI moves them: brief, in the headroom (ADR 0061).
+    pub const fn ramp_cost(self) -> Cost {
+        match self {
+            FxType::Off => Cost::ZERO,
+            FxType::Soft => Cost(26),
+            FxType::Fold => Cost(35),
+        }
+    }
+
+    /// A knob glide's blocks: four steady loops' prologues, a few
+    /// instructions each, no divide: under 1 a sample, billed 1 (ADR 0117).
+    pub const fn glide_cost(self) -> Cost {
+        match self {
+            FxType::Off => Cost::ZERO,
+            FxType::Soft | FxType::Fold => Cost(1),
+        }
     }
 }
 
@@ -183,7 +232,9 @@ pub static VOICE_FX_SPECS: [ParamSpec; 6] = [
         true,
         Smoothing::STAGE,
     )
-    .ident("P1"),
+    .ident("P1")
+    // AMOUNT is wider than a matrix header.
+    .short("AMT"),
     ParamSpec::continuous(
         3,
         "SHAPE",
@@ -195,7 +246,8 @@ pub static VOICE_FX_SPECS: [ParamSpec; 6] = [
         true,
         Smoothing::STAGE,
     )
-    .ident("P2"),
+    .ident("P2")
+    .short("SHAP"),
     ParamSpec::continuous(
         4,
         "LEVEL",

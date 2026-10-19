@@ -155,7 +155,9 @@ impl VoiceFx {
     /// `y = x − Σ w·(x·scale − kernel(x·scale)) / scale`; one side alone at
     /// full weight and scale 1 is the kernel's output. A kernel at MIX 0
     /// returns `x·scale` exactly, so its change is ±0, the sum (from +0)
-    /// +0 and `y` is `x` bit for bit, −0 too. `lane` reaches only FOLD.
+    /// +0 and `y` is `x` bit for bit, up to the sign of zero (the lone fast
+    /// path returns the kernel's, and FOLD's is +0 for −0). `lane` reaches
+    /// only FOLD.
     pub fn apply(
         &mut self,
         b: &FxBlock,
@@ -217,6 +219,19 @@ pub(crate) mod rig {
             }
         }
     }
+
+    /// FNV-1a 64 over `b`'s sample bits, from `h`: the old stages' outputs,
+    /// recorded before they were deleted, are kept as these.
+    pub fn fnv(mut h: u64, b: &[f32]) -> u64 {
+        for x in b {
+            for byte in x.to_bits().to_le_bytes() {
+                h = (h ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        h
+    }
+
+    pub const FNV0: u64 = 0xcbf2_9ce4_8422_2325;
 
     pub fn sine(b: usize, amp: f32, hz: f32) -> [f32; BLOCK_SIZE] {
         core::array::from_fn(|i| {

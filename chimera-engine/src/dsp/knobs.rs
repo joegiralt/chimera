@@ -582,8 +582,7 @@ const BEND_LAND: f32 = 1e-4;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Gliding {
     pub filter: bool,
-    pub fold: bool,
-    pub drive: bool,
+    pub fx: bool,
 }
 
 /// A Part's knobs on their way to the stored values, as its voices play
@@ -707,8 +706,7 @@ impl Knobs {
             let (b, p) = (KNOBS[i].addr.block, KNOBS[i].addr.param);
             g.filter |= b == BlockRef::Filter
                 && (p == FilterParams::CUTOFF || p == FilterParams::RESONANCE);
-            g.fold |= b == BlockRef::Folder;
-            g.drive |= b == BlockRef::Drive;
+            g.fx |= b == BlockRef::VoiceFx;
         }
         g
     }

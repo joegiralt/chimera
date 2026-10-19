@@ -70,52 +70,49 @@ pub fn run(buf: &mut [f32; BLOCK_SIZE], e: &Ends, glide: bool) {
 #[cfg(test)]
 mod tests {
     extern crate std;
-    use super::super::rig::{Rig, sine};
+    use super::super::rig::{FNV0, Rig, fnv, sine};
     use super::*;
-    use crate::dsp::drive::Drive;
-    use crate::params::DriveParams;
 
     fn bits(b: &[f32]) -> std::vec::Vec<u32> {
         b.iter().map(|x| x.to_bits()).collect()
     }
 
+    /// Today's DRV on these cases, FNV-1a over every block, recorded
+    /// against `Drive` bit for bit before drive.rs went (#614).
+    const DRV_STEADY: u64 = 0xeaaf_d861_f95a_8657;
+    const DRV_MOVING: u64 = 0x4764_583d_3241_498e;
+
     #[test]
     fn soft_at_level_half_is_todays_drive_bit_for_bit() {
+        let mut h = FNV0;
         for drive in [0.01, 0.5, 1.0] {
             for tone in [0.0, 0.5, 1.0] {
                 for mix in [0.3, 1.0] {
-                    let (mut old, mut rig) = (Drive::new(), Rig::default());
-                    let p = DriveParams { drive, tone, mix };
+                    let mut rig = Rig::default();
                     for b in 0..40 {
-                        let mut a = sine(b, 0.7, 110.0);
-                        let mut n = a;
-                        old.process(&mut a, &p, true);
+                        let mut n = sine(b, 0.7, 110.0);
                         run(&mut n, &rig.ends([drive, tone, 0.5], mix, true), false);
-                        assert_eq!(bits(&a), bits(&n), "D{drive} T{tone} M{mix} block {b}");
+                        h = fnv(h, &n);
                     }
                 }
             }
         }
+        assert_eq!(h, DRV_STEADY);
     }
 
     #[test]
     fn soft_moving_blocks_match_with_and_without_glide() {
+        let mut h = FNV0;
         for glide in [false, true] {
-            let (mut old, mut rig) = (Drive::new(), Rig::default());
+            let mut rig = Rig::default();
             for b in 0..6 {
                 let drive = if b < 2 { 0.2 } else { 0.8 };
-                let p = DriveParams {
-                    drive,
-                    tone: 0.3,
-                    mix: 0.7,
-                };
-                let mut a = sine(b, 0.7, 110.0);
-                let mut n = a;
-                old.process_glide(&mut a, &p, true, || glide);
+                let mut n = sine(b, 0.7, 110.0);
                 run(&mut n, &rig.ends([drive, 0.3, 0.5], 0.7, true), glide);
-                assert_eq!(bits(&a), bits(&n), "glide {glide} block {b}");
+                h = fnv(h, &n);
             }
         }
+        assert_eq!(h, DRV_MOVING);
     }
 
     #[test]
