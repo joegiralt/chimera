@@ -31,6 +31,10 @@ pub struct Bank2Door {
     /// The reverb's engines (ADR 0142; `Reverb::play` is bank 1's side).
     #[cfg(feature = "bank2")]
     pub reverb: crate::dsp::rev::ReverbDoor,
+    /// The VA's `MOD` oscillators (ADR 0163; `VaEngine::render_fm` is
+    /// bank 1's side).
+    #[cfg(feature = "bank2")]
+    pub va: crate::dsp::va::osc::door::VaDoor,
 }
 
 #[cfg(feature = "bank2")]
@@ -47,6 +51,7 @@ static DOOR: Bank2Door = Bank2Door {
     table: &TABLE,
     tape: crate::dsp::tape_engine::TapeDeck::DOOR,
     reverb: crate::dsp::rev::Reverb::DOOR,
+    va: crate::dsp::va::osc::door::DOOR,
 };
 
 #[cfg(feature = "bank2")]

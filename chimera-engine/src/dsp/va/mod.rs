@@ -60,6 +60,12 @@ impl VaMode {
         VaMode::Max,
         VaMode::Phase,
     ];
+
+    /// Whether this MODE's oscillators are `osc::door`'s, which with
+    /// `bank2` play only while bank 2 is open (ADR 0163).
+    pub const fn in_bank2(self) -> bool {
+        matches!(self, VaMode::Fm | VaMode::Phase)
+    }
 }
 
 /// MODE's names, in `VaMode`'s order (display only; PHASE is "PHAS", the
@@ -348,10 +354,16 @@ pub fn phase_depth(blend: f32) -> f32 {
     0.5 * blend
 }
 
+/// `jitter_draw`'s scale of a raw word at depth `d` (the door's entries
+/// draw with it, ADR 0163).
+fn jitter_depth(d: f32) -> f32 {
+    JITTER_CENTS * d * CENT * (1.0 / 2_147_483_648.0)
+}
+
 /// STABILITY's jitter draw at depth `d`: `1 + jd·word`, one closure type
 /// for every MODE, so the renders share the oscillators' instances (flash).
 fn jitter_draw(stab: &mut Stability, d: f32) -> impl FnMut() -> f32 + '_ {
-    let jd = JITTER_CENTS * d * CENT * (1.0 / 2_147_483_648.0);
+    let jd = jitter_depth(d);
     move || 1.0 + jd * stab.jitter_word() as f32
 }
 
@@ -939,13 +951,13 @@ impl VaEngine {
             marks: mk,
             ..
         } = self;
-        let mut draw = jitter_draw(stab, l.d);
+        let jd = jitter_depth(l.d);
         o2.render::<BLOCK_SIZE, false, false, false, false>(
             b,
             mk,
             &l.osc[1],
             &mut jit[1],
-            &mut draw,
+            &mut jitter_draw(stab, l.d),
             &ZEROS,
             (0.0, 0.0),
         );
@@ -955,16 +967,21 @@ impl VaEngine {
             x += dx;
             *v *= x;
         }
-        o1.render::<BLOCK_SIZE, true, false, true, true>(
-            out,
-            mk,
-            &l.osc[0],
-            &mut jit[0],
-            &mut draw,
-            b,
-            (1.0, 0.0),
-        );
-        drop(draw);
+        // OSC 1's MOD render is bank 2's with `bank2` (ADR 0163). Closed,
+        // the voice is silent and OSC 1 waits as it was.
+        let mut osc1 = |f: osc::door::ModRender| {
+            f(o1, out, mk, &l.osc[0], &mut jit[0], stab, jd, b, (1.0, 0.0))
+        };
+        #[cfg(feature = "bank2")]
+        if crate::bank2::DOOR_CELL
+            .with(|d| osc1(d.va.osc1_mod))
+            .is_none()
+        {
+            out.fill(0.0);
+            return;
+        }
+        #[cfg(not(feature = "bank2"))]
+        osc1(osc::door::osc1_mod);
         #[cfg(any(test, feature = "test-support"))]
         {
             self.backwards = self.osc2.iter().any(|&v| v < -1.0);
@@ -989,13 +1006,13 @@ impl VaEngine {
             pm_prev,
             ..
         } = self;
-        let mut draw = jitter_draw(stab, l.d);
+        let jd = jitter_depth(l.d);
         o2.render::<BLOCK_SIZE, false, false, false, false>(
             b,
             mk,
             &l.osc[1],
             &mut jit[1],
-            &mut draw,
+            &mut jitter_draw(stab, l.d),
             &ZEROS,
             (0.0, 0.0),
         );
@@ -1012,16 +1029,21 @@ impl VaEngine {
             prev = off;
         }
         *pm_prev = prev;
-        o1.render::<BLOCK_SIZE, true, false, true, true>(
-            out,
-            mk,
-            &l.osc[0],
-            &mut jit[0],
-            &mut draw,
-            b,
-            (0.0, 1.0),
-        );
-        drop(draw);
+        // OSC 1's MOD render is bank 2's with `bank2` (ADR 0163). Closed,
+        // the voice is silent and OSC 1 waits as it was.
+        let mut osc1 = |f: osc::door::ModRender| {
+            f(o1, out, mk, &l.osc[0], &mut jit[0], stab, jd, b, (0.0, 1.0))
+        };
+        #[cfg(feature = "bank2")]
+        if crate::bank2::DOOR_CELL
+            .with(|d| osc1(d.va.osc1_mod))
+            .is_none()
+        {
+            out.fill(0.0);
+            return;
+        }
+        #[cfg(not(feature = "bank2"))]
+        osc1(osc::door::osc1_mod);
         match gain {
             Some(g) => self.operator::<true>(out, l, VaMode::Phase, g),
             None => self.operator::<false>(out, l, VaMode::Phase, &DUCK_UP[1]),
