@@ -61,6 +61,8 @@ pub enum BlockRef {
     Drive,
     Filter,
     Folder,
+    /// The voice's FX slot (`VoiceFxParams`, ADR 0155).
+    VoiceFx,
     /// ENV slot `n`: `envelopes[n]`.
     Env(crate::dsp::modulator::EnvSlot),
     /// LFO slot `n`: `lfos[n]`.
@@ -98,7 +100,7 @@ pub enum BlockRef {
 }
 
 impl BlockRef {
-    pub const ALL: [BlockRef; 35] = [
+    pub const ALL: [BlockRef; 36] = [
         BlockRef::Modal,
         BlockRef::Algo,
         BlockRef::AlgoOp(Op::A),
@@ -134,6 +136,7 @@ impl BlockRef {
         BlockRef::Midi,
         BlockRef::TapeEngine,
         BlockRef::Va,
+        BlockRef::VoiceFx,
     ];
 
     /// The block type's spec table (static; no instance needed).
@@ -147,6 +150,7 @@ impl BlockRef {
             BlockRef::Drive => &crate::params::DRIVE_SPECS,
             BlockRef::Filter => &crate::params::FILTER_SPECS,
             BlockRef::Folder => &crate::params::FOLDER_SPECS,
+            BlockRef::VoiceFx => &crate::dsp::voice_fx::params::VOICE_FX_SPECS,
             BlockRef::Env(_) => &crate::params::ENV_SPECS,
             BlockRef::Lfo(_) => &crate::dsp::lfo::LFO_SPECS,
             BlockRef::Out => &crate::params::OUT_SPECS,
@@ -177,6 +181,7 @@ impl BlockRef {
             | BlockRef::Drive
             | BlockRef::Filter
             | BlockRef::Folder
+            | BlockRef::VoiceFx
             | BlockRef::Env(_)
             | BlockRef::Lfo(_)
             | BlockRef::Out
@@ -211,6 +216,7 @@ impl BlockRef {
             | BlockRef::Folder
             | BlockRef::Out
             | BlockRef::Pitch
+            | BlockRef::VoiceFx
             | BlockRef::Env(_) => true,
             // Not yet: the voice plays TAPE from build step 3.
             BlockRef::TapeEngine

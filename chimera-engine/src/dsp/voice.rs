@@ -4,13 +4,12 @@ use core::ptr::addr_of_mut;
 use chimera_hal::BLOCK_SIZE;
 
 use crate::addr::{BlockRef, Blocks, ParamAddr};
-use crate::block::{ParamId, apply_offset};
+use crate::block::apply_offset;
 use crate::dsp::algo::engine::{AlgoEngine, AlgoLive, SpanReach};
 use crate::dsp::algo::kinds::OpKind;
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::dc_blocker::DcBlocker;
-use crate::dsp::drive::Drive;
 use crate::dsp::ease::{Ramp, at, step_of};
 use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
@@ -22,19 +21,19 @@ use crate::dsp::knobs::Knobs;
 use crate::dsp::lfo::{Lfo, LfoClock};
 use crate::dsp::modal::{ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
-use crate::dsp::wavefolder::Wavefolder;
+use crate::dsp::voice_fx::VoiceFx;
+use crate::dsp::voice_fx::params::{FxType, Place, VoiceFxParams};
 use crate::hw::{Cost, MAX_VOICES, VOICE_CHAIN_BYTES, VOICE_RAM_BUDGET};
 use crate::in_place::{by_value, uninit_at};
 use crate::meter::Clip;
 use crate::modulation::{
     FixedCol, MAX_MOD_SOURCES, ModRouting, ModSource, ModState, amount_scale, note_source,
 };
-use crate::params::{
-    DriveParams, EngineType, EnvParams, FilterParams, FolderParams, ParamSnapshot, Steal,
-};
+use crate::params::{EngineType, EnvParams, FilterParams, ParamSnapshot, Steal};
 use crate::project::SourceId;
 use crate::taps::{
-    TAP_CAPTURE_COST, TAP_FOLD_COST, TAP_SHAPE_COST, TAP_VCA_COST, TapLane, TapRows, tap_vca,
+    TAP_CAPTURE_COST, TAP_FOLD_COST, TAP_SHAPE_COST, TAP_VCA_COST, TapLane, TapOp, TapRoutes,
+    TapRows, tap_vca,
 };
 use crate::voice_alloc::VoiceIdx;
 use crate::{MidiNote, Velocity};
@@ -56,7 +55,7 @@ pub const DC_HZ: f32 = 5.0;
 const END_STEP: f32 = 1.0e-4;
 
 /// Complete voice signal chain:
-/// [Engine] → [Drive] → [Filter] → [Wavefolder] → [tap-VCA] → [DC blocker] → [VCA]
+/// [Engine] → [FX PRE] → [Filter] → [FX POST] → [tap-VCA] → [DC blocker] → [VCA]
 /// Modulators: three envelopes, three LFOs
 pub struct Voice {
     /// The engine it plays, and so the engine it last played.
@@ -66,12 +65,12 @@ pub struct Voice {
     sample_rate: u32,
     /// Slot rebuilds since `init_in_place`, wrapping: `reset` keeps it.
     rebuilds: u16,
-    drive: Drive,
+    /// The FX slot, PRE or POST the filter (ADR 0155).
+    fx: VoiceFx,
     filter: Filter,
     /// The last block's LEVEL clip, for the LED: 0 while the clipper is
     /// off or the voice idle.
     filter_clip: Clip,
-    folder: Wavefolder,
     /// The amp gate after the filter (ADR 0110).
     gate: AmpGate,
     /// DC from the stages before it (ADR 0060).
@@ -197,40 +196,13 @@ impl Voice {
     /// A `kill` ramps to silence over this many samples (ADR 0027).
     pub const FADE: u16 = 2 * BLOCK_SIZE as u16;
 
-    /// The wavefolder, which runs once FOLD is 0.001 or more: the bench's
-    /// FOLD row less 1 OP (measured 2026-09-28, rev V at 480 MHz), 43, and
-    /// the offset of silence's fold (ADR 0060), 1 instruction a sample, 1.6
-    /// by ADR 0056's host method.
-    pub const FOLD_COST: Cost = Cost(45);
-    /// FOLD, SYM or MIX routed, or a FOLD tap: the fold ramps every block.
-    /// Recounted on the bench ELF at 1879169d (2026-10-07): the moving loop
-    /// 45 instructions a sample (silence's fold per sample, ADR 0060) +
-    /// 3.48 of block, 80, against the steady 24 + 3.48, 45: 35 (was 29,
-    /// from 42 against 24).
-    pub const FOLD_RAMP_COST: Cost = Cost(35);
-    /// The drive stage, which runs once DRIVE is 0.001 or more. Measured:
-    /// bench-t13d's DRIVE LO row (541) less that run's 1 OP (488) = 53;
-    /// bench-t13c's DRIVE row (540) less that run's 1 OP (483) = 57.
-    /// Billed as the larger: 57.
-    pub const DRIVE_COST: Cost = Cost(57);
-    /// DRIVE, TONE or MIX routed: the drive ramps every block, 36
-    /// instructions a sample against the steady 22; 14 × 1.46 × 1.1 = 22.5.
-    /// Unrouted, only the UI moves them: brief, in the headroom (ADR 0061).
-    pub const DRIVE_RAMP_COST: Cost = Cost(23);
-
-    /// A knob glide's fold and drive blocks: four steady loops' prologues,
-    /// a few instructions each, no divide: under 1 a sample, billed 1
-    /// (ADR 0117).
-    pub const FOLD_GLIDE_COST: Cost = Cost(1);
-    pub const DRIVE_GLIDE_COST: Cost = Cost(1);
-
     /// Cycles/sample of a voice playing `p` under `mods`.
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         EngineSlot::cost(p, mods)
             + Self::CHAIN_COST
             + Self::filter_cost(p, mods)
             + ModRouting::cost(p, mods)
-            + Self::stage_cost(p, mods)
+            + Self::fx_cost(p, mods)
             + Self::tap_cost(p)
     }
 
@@ -253,7 +225,7 @@ impl Voice {
     }
 
     /// What a Part's gliding knobs add to a voice playing `p` (ADR 0117): a
-    /// glide steps the filter, fold and drive coefficients a few times a
+    /// glide steps the filter's and the FX slot's coefficients a few times a
     /// block, each step on the steady loop, over the steady bill. Nothing
     /// for a path a route or tap already bills moving. Admission counts it;
     /// shedding doesn't.
@@ -267,27 +239,10 @@ impl Voice {
             || taps(FixedCol::Q)
             || mods.fixed_moves(FixedCol::Freq)
             || mods.fixed_moves(FixedCol::Q);
-        let (fold, drive) = Self::stage_runs(p, mods);
-        let routed = |block, ps: [ParamId; 3]| {
-            ps.iter()
-                .any(|&q| mods.moves_addr(ParamAddr::new(block, q)))
-        };
-        let fold_ramps = routed(
-            BlockRef::Folder,
-            [
-                FolderParams::FOLD,
-                FolderParams::SYMMETRY,
-                FolderParams::MIX,
-            ],
-        ) || taps(FixedCol::Fold);
-        let drive_ramps = routed(
-            BlockRef::Drive,
-            [DriveParams::DRIVE, DriveParams::TONE, DriveParams::MIX],
-        );
         let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
+        let fx = g.fx && Self::fx_runs(p, mods) && !Self::fx_ramps(p, mods);
         when(g.filter && !filter_moves, p.filter.kind().glide_cost())
-            + when(g.fold && fold && !fold_ramps, Self::FOLD_GLIDE_COST)
-            + when(g.drive && drive && !drive_ramps, Self::DRIVE_GLIDE_COST)
+            + when(fx, p.fx.ty().glide_cost())
     }
 
     /// LEVEL's gate can open: stored over ½, or routed.
@@ -296,7 +251,7 @@ impl Voice {
             || mods.moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL))
     }
 
-    /// The taps the filter and folder don't bill (on ALGO only): the
+    /// The taps the filter and the FX slot don't bill (on ALGO only): the
     /// tap-VCA once, and each wanted op's capture.
     fn tap_cost(p: &ParamSnapshot) -> Cost {
         if p.engine() != EngineType::Algo {
@@ -307,7 +262,7 @@ impl Voice {
         } else {
             Cost::ZERO
         };
-        p.taps
+        Self::live_taps(p)
             .wanted()
             .into_iter()
             .filter(|&w| w)
@@ -386,53 +341,55 @@ impl Voice {
         })
     }
 
-    /// Whether the folder and the drive stage run: once the stored amount
-    /// is 0.001 or more, or a route or (on ALGO) a tap of nonzero amount
-    /// may raise it. The bill and each stage's gate read the same answer.
-    pub fn stage_runs(p: &ParamSnapshot, mods: &ModState) -> (bool, bool) {
-        let routed = |block, param| mods.moves_addr(ParamAddr::new(block, param));
-        let tapped = p.engine() == EngineType::Algo && p.taps.moving(FixedCol::Fold);
-        (
-            p.folder.fold >= 0.001 || routed(BlockRef::Folder, FolderParams::FOLD) || tapped,
-            p.drive.drive >= 0.001 || routed(BlockRef::Drive, DriveParams::DRIVE),
-        )
+    /// The taps the voice plays: an FX tap acts only on FOLD; under any
+    /// other type it is dimmed, unplayed and unbilled.
+    fn live_taps(p: &ParamSnapshot) -> TapRoutes {
+        let mut t = p.taps;
+        if p.fx.ty() != FxType::Fold {
+            for op in TapOp::ALL {
+                t.clear(op, FixedCol::Fx);
+            }
+        }
+        t
     }
 
-    /// The folder and the drive stage as they run, each with its ramp while
-    /// a route moves one of its settings.
-    fn stage_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
-        let (fold, drive) = Self::stage_runs(p, mods);
-        let routed = |block, params: [ParamId; 3]| {
-            params
-                .iter()
-                .any(|&param| mods.moves_addr(ParamAddr::new(block, param)))
-        };
-        let tapped = p.engine() == EngineType::Algo && p.taps.moving(FixedCol::Fold);
-        let mut c = Cost::ZERO;
-        if fold {
-            c = c + Self::FOLD_COST;
-            let fp = [
-                FolderParams::FOLD,
-                FolderParams::SYMMETRY,
-                FolderParams::MIX,
-            ];
-            if routed(BlockRef::Folder, fp) || tapped {
-                c = c + Self::FOLD_RAMP_COST;
-            }
-            if tapped {
-                c = c + TAP_FOLD_COST;
-            }
+    /// FOLD's tap moves P1 (on ALGO only).
+    fn fx_tapped(p: &ParamSnapshot) -> bool {
+        p.engine() == EngineType::Algo && p.fx.ty() == FxType::Fold && p.taps.moving(FixedCol::Fx)
+    }
+
+    /// Whether the FX slot runs: its type's `runs`, `moved` by a route of
+    /// nonzero amount on P1 or FOLD's tap. The bill and the slot's gate
+    /// read the same answer.
+    pub fn fx_runs(p: &ParamSnapshot, mods: &ModState) -> bool {
+        let moved = mods.fixed_moves(FixedCol::Fx) || Self::fx_tapped(p);
+        p.fx.ty().runs(p.fx.pots[0], moved)
+    }
+
+    /// A route moves one of the slot's P1–P3 or MIX at audio rate.
+    fn fx_routed(mods: &ModState) -> bool {
+        use VoiceFxParams as X;
+        [X::P1, X::P2, X::P3, X::MIX]
+            .iter()
+            .any(|&q| mods.moves_addr(ParamAddr::new(BlockRef::VoiceFx, q)))
+    }
+
+    /// The slot ramps every block: a route on its pots or MIX, or FOLD's tap.
+    fn fx_ramps(p: &ParamSnapshot, mods: &ModState) -> bool {
+        Self::fx_routed(mods) || Self::fx_tapped(p)
+    }
+
+    /// The FX slot as it runs: its type's cost, its ramp while it ramps,
+    /// and FOLD's tapped loop.
+    fn fx_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
+        if !Self::fx_runs(p, mods) {
+            return Cost::ZERO;
         }
-        if drive {
-            c = c + Self::DRIVE_COST;
-            if routed(
-                BlockRef::Drive,
-                [DriveParams::DRIVE, DriveParams::TONE, DriveParams::MIX],
-            ) {
-                c = c + Self::DRIVE_RAMP_COST;
-            }
-        }
-        c
+        let t = p.fx.ty();
+        let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
+        t.cost()
+            + when(Self::fx_ramps(p, mods), t.ramp_cost())
+            + when(Self::fx_tapped(p), TAP_FOLD_COST)
     }
 
     /// The sample rate is stored once (spec §3), not passed per call. A
@@ -479,10 +436,9 @@ impl Voice {
         unsafe {
             let played = ParamSnapshot::default();
             write_chain!(p, {
-                drive: Drive::new(),
+                fx: VoiceFx::new(),
                 filter: Filter::new(),
                 filter_clip: Clip::ZERO,
-                folder: Wavefolder::new(),
                 gate: AmpGate::OPEN,
                 dc: DcBlocker::new(DC_HZ, (*p).sample_rate),
                 volume: Ramp::default(),
@@ -682,8 +638,7 @@ impl Voice {
             // A fresh note: no ramp from the last note's settings, and no
             // ring left in the filter.
             self.filter.reset();
-            self.drive.hold();
-            self.folder.hold();
+            self.fx.hold();
             self.dc.reset();
             self.gate = AmpGate::OPEN;
             self.volume.hold();
@@ -910,9 +865,13 @@ impl Voice {
             return;
         }
 
-        // The stages run, and fade their gates, as the allocator bills them:
-        // by the stored settings.
-        let (fold_on, drive_on) = Self::stage_runs(
+        // The FX slot runs, and fades its gate, as the allocator bills it: by
+        // the stored settings. OFF runs nothing, so a switch to or from OFF
+        // closes or opens the gate as the TYPE fade moves the side: the wet
+        // share goes as t², both 20 ms, continuous at both ends. Kept so:
+        // OFF's voice pays nothing once the fade ends, and no gate is left
+        // open on a type that isn't there.
+        let fx_on = Self::fx_runs(
             if self.fade == 0 { params } else { &self.played },
             mod_state,
         );
@@ -997,8 +956,8 @@ impl Voice {
             live.routed = mod_state.algo_levels_routed();
             live.morph_routed =
                 mod_state.moves_addr(ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH));
-            // The fixed FREQ, Q and FOLD columns; VCA's is per sample, above.
-            for c in [FixedCol::Freq, FixedCol::Q, FixedCol::Fold] {
+            // The fixed FREQ, Q and FX columns; VCA's is per sample, above.
+            for c in [FixedCol::Freq, FixedCol::Q, FixedCol::Fx] {
                 let off = knobs.fixed_sum(mod_state, c, &mod_values);
                 let a = c.addr();
                 if off != 0.0
@@ -1039,7 +998,7 @@ impl Voice {
         // The taps (spec § 6), live on ALGO only: each amount ramps from the
         // last block's, and the engine captures the ops some ramp reads.
         let (from, to) = if m.engine() == EngineType::Algo {
-            let to = m.taps.amounts();
+            let to = Self::live_taps(m).amounts();
             (core::mem::replace(&mut self.tap_amt, to), to)
         } else {
             self.tap_amt = [[0; 4]; 2];
@@ -1069,33 +1028,14 @@ impl Voice {
             })
         };
 
-        // A stage glides when no route moves its settings at audio rate:
-        // then only a knob does, in steps (ADR 0117). Asked only of a
-        // moving stage: the scans cost a steady block nothing.
-        let routed = |block, ps: [ParamId; 3]| {
-            ps.iter()
-                .any(|&q| mod_state.moves_addr(ParamAddr::new(block, q)))
-        };
-        let drive_glide = || {
-            !routed(
-                BlockRef::Drive,
-                [DriveParams::DRIVE, DriveParams::TONE, DriveParams::MIX],
-            )
-        };
-        let fold_glide = || {
-            !routed(
-                BlockRef::Folder,
-                [
-                    FolderParams::FOLD,
-                    FolderParams::SYMMETRY,
-                    FolderParams::MIX,
-                ],
-            )
-        };
-
-        // 2. Drive, gated as it's billed.
-        self.drive
-            .process_glide(output, &m.drive, drive_on, drive_glide);
+        // 2. The FX slot before the filter, at the engine's reference. It
+        // glides when no route moves its settings at audio rate: then only
+        // a knob does, in steps (ADR 0117). Off, the kernels never read it
+        // (the closing gate takes the per-sample path), so it isn't asked.
+        let fx = self.fx.step(&m.fx, fx_on);
+        let scale = m.engine().fx_scale();
+        let glide = !(fx_on && Self::fx_routed(mod_state));
+        self.fx.apply(&fx, Place::Pre, output, scale, glide, None);
 
         // 3. Filter
         let mods = FilterMods {
@@ -1109,14 +1049,12 @@ impl Voice {
         };
         self.filter_clip = self.filter.process(output, &m.filter, sample_rate, &mods);
 
-        // 4. Wavefolder
-        self.folder.process_glide(
-            output,
-            &m.folder,
-            fold_on,
-            lane(FixedCol::Fold).as_ref(),
-            fold_glide,
-        );
+        // 4. The FX slot after it. FOLD's tap is live only under FOLD
+        // (`live_taps`): leaving FOLD, its amount ramps out over the fade's
+        // first block, as any tap amount moves.
+        let tap = lane(FixedCol::Fx);
+        self.fx
+            .apply(&fx, Place::Post, output, scale, glide, tap.as_ref());
 
         // 5. The tap-VCA, AM to ring, before the blocker: a tap correlated
         // with the signal leaves a DC, which the blocker takes.
@@ -1124,8 +1062,8 @@ impl Voice {
             tap_vca(output, &l);
         }
 
-        // 6. DC from the engine, the drive, the filter, the fold and the
-        // tap-VCA: none reaches the VCA (ADR 0060).
+        // 6. DC from the engine, the FX slot, the filter and the tap-VCA:
+        // none reaches the VCA (ADR 0060).
         self.dc.run(output);
 
         if gated {

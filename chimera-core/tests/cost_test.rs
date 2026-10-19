@@ -15,6 +15,7 @@ use chimera_core::dsp::filter::ladder::{LADDER_COST, LADDER_MOVE_COST};
 use chimera_core::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::voice::Voice;
+use chimera_core::dsp::voice_fx::params::{FxType, VoiceFxParams};
 use chimera_core::hw::{
     CPU_HZ_REV_V, CPU_HZ_REV_Y, Cost, FLOOR_VOICES, FLOOR_VOICES_FORMANT, MAX_VOICES, SampleBudget,
 };
@@ -74,10 +75,23 @@ fn voice_costs_are_the_billed_literals() {
 /// The SVF at LP24, the default: the engine terms already carry it.
 const LP24: Cost = FilterKind::Svf.cost(K2040Voice::Rev2);
 
-/// Every built (TYPE, MODE, VOICE) bills `max(0, cycles − OLD_LP24)`, as
-/// counted on the bench ELF (plan § Measured, Task 15): CLEAN 35–80 and
-/// DIRTY 70 sit under LP24's 95; the 2040 REV2 110, EXP 135; LADDER 210
-/// (ADR 0104), billed its costliest mode.
+/// The 2040, LADDER, SOFT and tapped FOLD bill what the unit reads.
+#[test]
+fn the_2040_and_ladder_bill_the_unit() {
+    // Unit bench 2026-10-19, rev V, ROUTING, `/VOICE` slope (#642).
+    assert_eq!(FilterKind::K2040.cost(K2040Voice::Exp), Cost(136));
+    assert_eq!(FilterKind::K2040.cost(K2040Voice::Rev2), Cost(78));
+    assert_eq!(FilterKind::Ladder.cost(K2040Voice::Exp), Cost(176));
+    assert_eq!(LADDER_COST, Cost(176));
+    assert_eq!(FxType::Soft.cost(), Cost(58));
+    assert_eq!(FxType::Soft.ramp_cost(), Cost(26));
+    assert_eq!(chimera_core::taps::TAP_FOLD_COST, Cost(51));
+}
+
+/// Every built (TYPE, MODE, VOICE) bills `max(0, cycles − OLD_LP24)`:
+/// CLEAN 35–80 and DIRTY 70 sit under LP24's 95 (host counts, plan §
+/// Measured, Task 15); the 2040 REV2 78, EXP 136 and LADDER 176 as the
+/// unit reads them (#642, ADR 0104), billed its costliest mode.
 #[test]
 fn filter_bills_each_type_and_mode() {
     use FilterKind as K;
@@ -87,8 +101,8 @@ fn filter_bills_each_type_and_mode() {
             for v in K2040Voice::ALL {
                 let want = match (k, v) {
                     (K::Svf | K::Dirty, _) => 0,
-                    (K::K2040, K2040Voice::Rev2) => 15,
-                    (K::K2040, K2040Voice::Exp) => 40,
+                    (K::K2040, K2040Voice::Rev2) => 78,
+                    (K::K2040, K2040Voice::Exp) => 136,
                     (K::Ladder, _) => LADDER_COST.0,
                 };
                 assert_eq!(k.cost(v), Cost(want), "{k:?} {m:?} {v:?}");
@@ -183,8 +197,8 @@ fn the_moving_path_bills_once() {
 #[test]
 fn taps_bill_each_destination() {
     use chimera_core::taps::{TAP_CAPTURE_COST, TAP_FOLD_COST, TAP_VCA_COST};
-    assert!(TAP_VCA_COST >= Cost(30) && TAP_FOLD_COST >= Cost(125 - 80));
-    assert!(TAP_CAPTURE_COST >= Cost(15) && Voice::FOLD_RAMP_COST >= Cost(80 - 45));
+    assert!(TAP_VCA_COST >= Cost(30) && TAP_FOLD_COST >= Cost(51));
+    assert!(TAP_CAPTURE_COST >= Cost(15) && FxType::Fold.ramp_cost() >= Cost(80 - 45));
     let none = ModState::new();
     let base = ParamSnapshot::for_engine(EngineType::Algo);
     let bare = Voice::cost(&base, &none);
@@ -195,7 +209,8 @@ fn taps_bill_each_destination() {
     );
     let with = |taps: &[(TapOp, FixedCol, i8)], fold: f32| {
         let mut p = base.clone();
-        p.folder.fold = fold;
+        p.fx.set_type(FxType::Fold);
+        p.fx.pots[0] = fold;
         for &(op, c, a) in taps {
             p.taps.set(op, c, a);
         }
@@ -215,20 +230,20 @@ fn taps_bill_each_destination() {
     );
     let zero = with(&[(op5, FixedCol::Vca, 0)], 0.0);
     assert_eq!(Voice::cost(&zero, &none), bare, "a 0 tap bills nothing");
-    let fold = with(&[(op6, FixedCol::Fold, 64)], 0.0);
+    let fold = with(&[(op6, FixedCol::Fx, 64)], 0.0);
     assert_eq!(
         Voice::cost(&fold, &none),
-        bare + Voice::FOLD_COST + Voice::FOLD_RAMP_COST + TAP_FOLD_COST + TAP_CAPTURE_COST
+        bare + FxType::Fold.cost() + FxType::Fold.ramp_cost() + TAP_FOLD_COST + TAP_CAPTURE_COST
     );
     let stored = with(&[], 0.5);
-    let fold = with(&[(op6, FixedCol::Fold, 64)], 0.5);
+    let fold = with(&[(op6, FixedCol::Fx, 64)], 0.5);
     assert_eq!(
         Voice::cost(&fold, &none),
-        Voice::cost(&stored, &none) + Voice::FOLD_RAMP_COST + TAP_FOLD_COST + TAP_CAPTURE_COST
+        Voice::cost(&stored, &none) + FxType::Fold.ramp_cost() + TAP_FOLD_COST + TAP_CAPTURE_COST
     );
-    // A FOLD route already ramps the folder: the tap adds its loop only.
+    // An FX route already ramps the fold: the tap adds its loop only.
     let mut ms = ModState::with_sources(8);
-    ms.set_fixed(ModSource::Lfo1.index(), FixedCol::Fold, 20);
+    ms.set_fixed(ModSource::Lfo1.index(), FixedCol::Fx, 20);
     assert_eq!(
         Voice::cost(&fold, &ms),
         Voice::cost(&stored, &ms) + TAP_FOLD_COST + TAP_CAPTURE_COST
@@ -237,7 +252,7 @@ fn taps_bill_each_destination() {
     let all = with(
         &[
             (op5, FixedCol::Vca, 64),
-            (op6, FixedCol::Fold, 64),
+            (op6, FixedCol::Fx, 64),
             (op5, FixedCol::Freq, 64),
             (op6, FixedCol::Q, 64),
         ],
@@ -327,12 +342,12 @@ fn a_running_clipper_bills_until_it_stops() {
 }
 
 /// The 2040 bills by its VOICE alone (spec § Cost), as measured over
-/// `OLD_LP24` (95): REV2 110 cycles, EXP 135; CLEAN ignores VOICE.
+/// `OLD_LP24` (95): REV2 78 cycles, EXP 136 (the unit's, #642); CLEAN ignores VOICE.
 #[test]
 fn the_2040_bills_its_voice() {
     let mut f = chimera_core::params::FilterParams::default();
     f.set_kind(FilterKind::K2040);
-    for (v, want) in [(K2040Voice::Rev2, 15), (K2040Voice::Exp, 40)] {
+    for (v, want) in [(K2040Voice::Rev2, 78), (K2040Voice::Exp, 136)] {
         f.voice = v;
         assert_eq!(f.filter_cost(), Cost(want), "{v:?}");
     }
@@ -342,9 +357,9 @@ fn the_2040_bills_its_voice() {
     p.filter.voice = K2040Voice::Exp;
     assert_eq!(Voice::cost(&p, &mods), clean, "VOICE is inert on CLEAN");
     p.filter.set_kind(FilterKind::K2040);
-    assert_eq!(Voice::cost(&p, &mods).0, clean.0 + 40);
+    assert_eq!(Voice::cost(&p, &mods).0, clean.0 + 136);
     p.filter.voice = K2040Voice::Rev2;
-    assert_eq!(Voice::cost(&p, &mods).0, clean.0 + 15);
+    assert_eq!(Voice::cost(&p, &mods).0, clean.0 + 78);
 }
 
 /// DIRTY bills 0 over `OLD_LP24` in every mode, VOICE inert (spec § Cost:
@@ -437,9 +452,9 @@ fn mod_routing_bills_each_routed_destination() {
     use ModRouting as M;
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::modulator::EnvSlot;
-    use chimera_core::params::{EnvParams, FolderParams};
+    use chimera_core::params::EnvParams;
     let p = ParamSnapshot::for_engine(EngineType::Algo);
-    let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
+    let fold = FixedCol::Fx.addr();
     let level = |s| ParamAddr::new(BlockRef::Env(s), EnvParams::LEVEL);
     let mut ms = chimera_core::preset::Sound::plain_init(EngineType::Algo).mod_state;
     ms.set_route_addr(ModSource::Lfo3.index(), fold, 0);
@@ -486,56 +501,68 @@ fn mod_routing_bills_each_func_lfo() {
     assert_eq!(M::cost(&p, &none), M::BASE + M::FUNC + M::FUNC);
 }
 
-/// The folder and the drive stage bill once their stored amount runs them
-/// (0.001 or more, as `process` tests it) or a route of nonzero amount may.
+/// The slot bills its type once P1 runs it (0.001 or more, as `runs`
+/// tests it) or a route of nonzero amount on P1 may; a route on any pot or
+/// MIX adds the type's ramp. OFF bills nothing, whatever its pots.
 #[test]
-fn voice_bills_fold_and_drive_when_they_can_run() {
+fn voice_bills_the_fx_type_when_it_can_run() {
     use chimera_core::addr::{BlockRef, ParamAddr};
-    use chimera_core::params::{DriveParams, FolderParams};
     let base = ParamSnapshot::for_engine(EngineType::Algo);
     let none = ModState::new();
     let bare = Voice::cost(&base, &none);
-    let mut p = base.clone();
-    p.folder.fold = 0.000_9;
-    p.drive.drive = 0.000_9;
-    assert_eq!(Voice::cost(&p, &none), bare, "below the threshold");
-    p.folder.fold = 0.001;
-    assert_eq!(Voice::cost(&p, &none), bare + Voice::FOLD_COST);
-    p.drive.drive = 1.0;
-    assert_eq!(
-        Voice::cost(&p, &none),
-        bare + Voice::FOLD_COST + Voice::DRIVE_COST
-    );
-    // Stored at 0, a route: 0 bills nothing, anything else both stages
-    // and their ramps.
-    let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
-    let drive = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
+    let mut off = base.clone();
+    off.fx.pots[0] = 1.0;
+    assert_eq!(Voice::cost(&off, &none), bare, "OFF");
+    let mut soft = base.clone();
+    soft.fx.set_type(FxType::Soft);
+    soft.fx.pots[0] = 0.000_9;
+    assert_eq!(Voice::cost(&soft, &none), bare, "below the threshold");
+    soft.fx.pots[0] = 0.001;
+    assert_eq!(Voice::cost(&soft, &none), bare + FxType::Soft.cost());
+    let mut fold = soft.clone();
+    fold.fx.set_type(FxType::Fold);
+    assert_eq!(Voice::cost(&fold, &none), bare + FxType::Fold.cost());
+    // Stored at 0, a route on P1: 0 bills nothing, anything else the type
+    // and its ramp.
+    let p1 = ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P1);
+    let mut at0 = fold.clone();
+    at0.fx.pots[0] = 0.0;
     let empty = chimera_core::mod_path::ModDestRegistry::new();
     let mut ms = ModState::from_registry(&empty, 8);
-    ms.set_route_addr(ModSource::Vel.index(), fold, 0);
-    ms.set_route_addr(ModSource::Vel.index(), drive, 0);
-    assert_eq!(Voice::cost(&base, &ms), bare);
-    ms.set_route_addr(ModSource::Vel.index(), fold, -1);
-    ms.set_route_addr(ModSource::Vel.index(), drive, 1);
-    let routes = ModRouting::DEST_FIRST + ModRouting::DEST;
-    let ramps = Voice::FOLD_RAMP_COST + Voice::DRIVE_RAMP_COST;
+    ms.set_route_addr(ModSource::Vel.index(), p1, 0);
+    assert_eq!(Voice::cost(&at0, &ms), bare);
+    ms.set_route_addr(ModSource::Vel.index(), p1, -1);
     assert_eq!(
-        Voice::cost(&base, &ms),
-        bare + Voice::FOLD_COST + Voice::DRIVE_COST + ramps + routes
+        Voice::cost(&at0, &ms),
+        bare + FxType::Fold.cost() + FxType::Fold.ramp_cost() + ModRouting::DEST_FIRST
     );
-    // A route on TONE alone ramps a drive its stored DRIVE runs (I1).
+    // A route on P2 alone ramps a type its stored P1 runs (I1).
     let mut ms = ModState::from_registry(&empty, 8);
     let t = ms
-        .push(ParamAddr::new(BlockRef::Drive, DriveParams::TONE))
+        .push(ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P2))
         .unwrap();
     ms.set_route(ModSource::Vel.index(), t, 1);
-    let mut on = base.clone();
-    on.drive.drive = 0.3;
+    soft.fx.pots[0] = 0.3;
     assert_eq!(
-        Voice::cost(&on, &ms),
-        bare + Voice::DRIVE_COST + Voice::DRIVE_RAMP_COST + ModRouting::DEST_FIRST
+        Voice::cost(&soft, &ms),
+        bare + FxType::Soft.cost() + FxType::Soft.ramp_cost() + ModRouting::DEST_FIRST
     );
     assert_eq!(Voice::cost(&base, &ms), bare + ModRouting::DEST_FIRST);
+}
+
+/// An FX tap acts only under FOLD: under SOFT or OFF it bills nothing, not
+/// even its op's capture.
+#[test]
+fn fx_taps_are_inert_off_fold() {
+    let none = ModState::new();
+    for ty in [FxType::Off, FxType::Soft] {
+        let mut p = ParamSnapshot::for_engine(EngineType::Algo);
+        p.fx.set_type(ty);
+        p.fx.pots[0] = 0.5;
+        let plain = Voice::cost(&p, &none);
+        p.taps.set(TapOp::Op6, FixedCol::Fx, 64);
+        assert_eq!(Voice::cost(&p, &none), plain, "{ty:?}");
+    }
 }
 
 /// BURST mode adds `BURST` on top of `ENV_B`; B in ENV or LFO
@@ -774,7 +801,9 @@ fn the_model_bills_every_routing_row_high() {
         ms
     };
     let (mut fold, mut drive) = (one(), one());
-    (fold.folder.fold, drive.drive.drive) = (1.0, 1.0);
+    fold.fx.set_type(FxType::Fold);
+    drive.fx.set_type(FxType::Soft);
+    (fold.fx.pots[0], drive.fx.pots[0]) = (1.0, 1.0);
     let (d1, fl) = (dest(LfoType::Classic), dest(LfoType::Func));
     let mut svf = one();
     svf.filter.set_mode(FilterMode::Phaser);
@@ -806,7 +835,7 @@ fn the_model_bills_every_routing_row_high() {
         ("A SLIDE", one(), slide(), 568),
         ("B SLIDE", env_b(Func::Env(EnvForm::Ad)), slide(), 616),
         ("FOLD", fold, ModState::new(), 526),
-        ("DRIVE", drive, ModState::new(), 540),
+        ("SOFT", drive, ModState::new(), 540),
         ("1 DEST", d1.0, d1.1, 486),
         ("FUNC LFO", fl.0, fl.1, 491),
         ("A LEVEL", one(), a_level, 548),
@@ -818,11 +847,11 @@ fn the_model_bills_every_routing_row_high() {
 
 /// The MODS row (spec § Tests "Bench"), measured 668: 1 OP; ENV 2 type B,
 /// ENV AD, SHAPE 0.8 → VCA; every source routed at 64; all three LFOs
-/// FUNC; FOLD stored at 1, so the folder runs.
+/// FUNC; FOLD stored at 1, so the fold runs.
 fn mods_row() -> (ParamSnapshot, ModState) {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::modulator::{EnvForm, EnvType, Func, LfoType};
-    use chimera_core::params::{FilterParams, FolderParams, OutParams};
+    use chimera_core::params::{FilterParams, OutParams};
     let mut p = ParamSnapshot::for_engine(EngineType::Algo);
     for (i, op) in p.algo.ops.iter_mut().enumerate() {
         op.level = if i == 0 { 99 } else { 0 };
@@ -830,7 +859,8 @@ fn mods_row() -> (ParamSnapshot, ModState) {
     let e2 = &mut p.envelopes[1];
     (e2.env_type, e2.func.shape) = (EnvType::B, 0.8);
     e2.func.set_func(Func::Env(EnvForm::Ad));
-    p.folder.fold = 1.0;
+    p.fx.set_type(FxType::Fold);
+    p.fx.pots[0] = 1.0;
     for l in p.lfos.iter_mut() {
         l.lfo_type = LfoType::Func;
     }
@@ -851,7 +881,7 @@ fn mods_row() -> (ParamSnapshot, ModState) {
         ),
         (
             ModSource::Lfo3,
-            ParamAddr::new(BlockRef::Folder, FolderParams::FOLD),
+            ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P1),
         ),
         (
             ModSource::Vel,
@@ -886,8 +916,8 @@ fn the_model_bills_the_mods_row_high() {
             + M::DEST_FIRST
             + Cost(5 * M::DEST.0)
             + func
-            + Voice::FOLD_COST
-            + Voice::FOLD_RAMP_COST
+            + FxType::Fold.cost()
+            + FxType::Fold.ramp_cost()
             + LP24
             // CUTOFF and RES routed: the moving path, once; LEVEL routed.
             + chimera_core::dsp::filter::CLEAN_MOVE_COST
@@ -974,17 +1004,19 @@ fn the_costliest_patch_gets_six_voices_on_rev_v() {
     let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
     let playing = FxBus::COST.0 + Instrument::BURST.0 + OrbitRunner::COST.0;
     assert_eq!((budget - playing) / 915, 5);
-    // With the folder on, unrouted (45, ADR 0060): 960, six on rev V and
-    // five on rev Y (six and four with the tape); the drive stage too
-    // (1,017): six on rev V, four on rev Y (five and four with the tape).
-    // No factory Sound does either with this shape.
+    // With FOLD in the slot, unrouted (45, ADR 0060): 960, six on rev V
+    // and five on rev Y (six and four with the tape); with SOFT, the
+    // dearer (973), the same. No factory Sound does either with this shape.
     let fits = |hz, voice: u32| (SampleBudget::for_cpu(hz).as_cost().0 - FxBus::COST.0) / voice;
-    let fold = plain + Voice::FOLD_COST.0;
     let want = if TAPE { (6, 4) } else { (6, 5) };
-    assert_eq!((fits(CPU_HZ_REV_V, fold), fits(CPU_HZ_REV_Y, fold)), want);
-    let both = fold + Voice::DRIVE_COST.0;
-    let want = if TAPE { (5, 4) } else { (6, 4) };
-    assert_eq!((fits(CPU_HZ_REV_V, both), fits(CPU_HZ_REV_Y, both)), want);
+    for ty in [FxType::Fold, FxType::Soft] {
+        let v = plain + ty.cost().0;
+        assert_eq!(
+            (fits(CPU_HZ_REV_V, v), fits(CPU_HZ_REV_Y, v)),
+            want,
+            "{ty:?}"
+        );
+    }
 }
 
 /// CHOIR, TALK BASS, BREATH and VOX (factory 8–11) with their routes,
@@ -1626,14 +1658,14 @@ fn va_bills_each_mode() {
     assert_eq!(rooms, [5_436, 4_186, 5_265, 5_146]);
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     for (mode, bill, voices) in [
-        (Mix, 530, [8, 6, 8, 8]),
-        (Sync, 540, [8, 6, 8, 8]),
-        (Ring, 530, [8, 6, 8, 8]),
-        (Xor, 550, [8, 6, 8, 7]),
-        (Bits, 530, [8, 6, 8, 8]),
-        (Fm, 590, [7, 6, 7, 7]),
-        (Am, 540, [8, 6, 8, 8]),
-        (Max, 580, [8, 6, 7, 7]),
+        (Mix, 530, [7, 6, 7, 7]),
+        (Sync, 540, [7, 5, 7, 7]),
+        (Ring, 530, [7, 6, 7, 7]),
+        (Xor, 550, [7, 5, 7, 7]),
+        (Bits, 530, [7, 6, 7, 7]),
+        (Fm, 590, [7, 5, 7, 6]),
+        (Am, 540, [7, 5, 7, 7]),
+        (Max, 580, [7, 5, 7, 7]),
     ] {
         let p = va_sound(mode);
         assert_eq!(
@@ -1642,7 +1674,7 @@ fn va_bills_each_mode() {
             "{mode:?}"
         );
         let voice = Voice::cost(&p, &ModState::new()).0;
-        assert_eq!(voice, bill + 83 + 15, "{mode:?}");
+        assert_eq!(voice, bill + 83 + 78, "{mode:?}");
         assert_eq!(at(voice), voices, "{mode:?}");
     }
 }
