@@ -15,7 +15,10 @@ fn glyph_inputs_and_paint_open_and_closed() {
 
     DOOR_CELL.close();
     assert_eq!(TapeGauge::from_set(set, false), TapeGauge::still(Kind::One));
-    assert!(!chimera_engine::tape_glyph::paint(&draw::inputs(set, false), &mut out));
+    assert!(!chimera_engine::tape_glyph::paint(
+        &draw::inputs(set, false),
+        &mut out
+    ));
 
     DOOR_CELL.open_host();
     let live = TapeGauge::from_set(set, false);

@@ -36,7 +36,7 @@ pub(crate) struct BoardDoor {
 
 /// `BoardDoor::magic`.
 #[cfg(feature = "bank2")]
-const BOARD_MAGIC: u32 = 0xB2B0_0001;
+const BOARD_MAGIC: u32 = u32::from_le_bytes(*b"B2BD");
 
 #[cfg(feature = "bank2")]
 #[unsafe(link_section = ".bank2.door.board")]

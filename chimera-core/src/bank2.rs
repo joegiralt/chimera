@@ -154,6 +154,10 @@ pub struct UiDoor {
     pub(crate) source_run: fn(&mut SourceCell, SourceJob, &mut dyn Store, &Ready, &mut Project),
 }
 
+/// A card row's head and how it loads (`SourceCell::kind`).
+#[cfg_attr(not(feature = "tape"), allow(dead_code))]
+type HeadKind = (SourceHead, LoadKind);
+
 /// `UiDoor::magic`.
 const UI_MAGIC: u32 = 0xB2C0_0001;
 
@@ -180,7 +184,8 @@ impl UiDoor {
 static UI_DOOR: UiDoor = UiDoor::OWN;
 
 /// `f` on the UI's table: bank 2's through the door on the unit with
-/// `bank2`, `None` closed; this build's own elsewhere.
+/// `bank2`, `None` closed; this build's own elsewhere; `None` without
+/// `tape`.
 #[inline(always)]
 pub fn ui_door<R>(f: impl FnOnce(&UiDoor) -> R) -> Option<R> {
     #[cfg(all(feature = "bank2", target_os = "none"))]
@@ -189,8 +194,22 @@ pub fn ui_door<R>(f: impl FnOnce(&UiDoor) -> R) -> Option<R> {
         // `UI_DOOR_ADDR` (its assert).
         unsafe { DOOR_CELL.with_at(UI_DOOR_ADDR, f) }
     }
-    #[cfg(not(all(feature = "bank2", target_os = "none")))]
-    Some(f(&UiDoor::OWN))
+    #[cfg(all(feature = "tape", not(all(feature = "bank2", target_os = "none"))))]
+    {
+        Some(f(&UiDoor::OWN))
+    }
+    // Without TAPE's DSP (the bench) TAPE's UI is as closed, and links out.
+    #[cfg(not(feature = "tape"))]
+    {
+        let _ = f;
+        None
+    }
+}
+
+/// TAPE's UI can't run: bank 2 closed. A build without `tape` plays TAPE
+/// silent and unlabelled (ADR 0141), so never there.
+pub fn ui_closed() -> bool {
+    cfg!(feature = "tape") && ui_door(|_| ()).is_none()
 }
 
 /// The UI's table answers (the boot's door check).

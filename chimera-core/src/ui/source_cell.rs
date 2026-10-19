@@ -605,7 +605,7 @@ impl SourceCell {
     /// it's on, or `base` named from the head cache.
     pub fn state(&self, part: PartId, base: SourceState, p: &Project) -> SourceState {
         // Closed, the cell can't turn or load: it says so (ADR 0175).
-        if crate::bank2::ui_door(|_| ()).is_none() {
+        if crate::bank2::ui_closed() {
             return SourceState::Failed(crate::bank2::NEEDS_UPDATE);
         }
         if let Some(w) = self.note {

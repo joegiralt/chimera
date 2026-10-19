@@ -49,6 +49,10 @@ ROOTS = ("Reset", "__stext", "main", "DefaultHandler", "DefaultHandler_") + ISRS
 # calling a dyn sink calling `core::fmt`'s writer. An assumption, not a
 # proof: the firmware formats only flat values, and no dyn call recurses.
 POINTER_NEST = 3
+# A root whose one pointer call is a door entry (ADR 0175) whose target is
+# known: charged that target's depth, not every address-taken function's.
+# The card interrupt's shim calls `IrqState::step` through the board's slot.
+DOOR_CALLS = {"DMA2_STR0": ("<chimera_board::card_dma::IrqState>::step",)}
 
 HEADER = re.compile(r"^([0-9a-f]{8}) <(.+)>:$")
 # The mnemonic follows the address (and raw bytes, if shown) after a tab.
@@ -190,7 +194,7 @@ def components(funcs):
     return comp
 
 
-def depth(funcs, root, charge=0, comp=None):
+def depth(funcs, root, charge=0, comp=None, doors=None):
     """(bytes, deepest chain, recursive calls cut, functions with pointer
     calls). A pointer call costs `charge`. A call back into the chain costs
     0, so a recursion's worst case is its longest simple path, every
@@ -198,7 +202,9 @@ def depth(funcs, root, charge=0, comp=None):
     functions are already on the chain, so a result is kept per function
     and those (the rest of the chain can't be reached again); calls go in
     name order and only a deeper one replaces the best: one answer, one
-    chain, whatever the hash seed."""
+    chain, whatever the hash seed. A function in `doors` charges its
+    pointer call its named targets' depth instead, where they are found."""
+    doors = doors or {}
     comp = components(funcs) if comp is None else comp
     memo, cut, indirect = {}, set(), set()
 
@@ -211,10 +217,15 @@ def depth(funcs, root, charge=0, comp=None):
             return memo[key]
         frame, calls, tails, ind = funcs.get(f, (0, (), (), False))
         best = (0, [])
-        if ind:
+        known = [t for t in doors.get(f, ()) if t in funcs]
+        if ind and not known:
             indirect.add(f)
             best = (charge, ["(a pointer call, %d B)" % charge])
         on = on | {f}
+        for t in sorted(known if ind else ()):
+            d = go(t, on)
+            if d[0] > best[0]:
+                best = (d[0], ["(the door's) " + d[1][0]] + d[1][1:])
         for c in sorted(calls):
             d = go(c, on)
             if d[0] > best[0]:
@@ -279,7 +290,7 @@ def check(img, stack_bytes, out):
                 print("stack-depth: no %s in the disassembly" % root, file=out)
                 ok = False
             continue
-        d, chain, cut, ind = depth(img.funcs, root, charge, comp)
+        d, chain, cut, ind = depth(img.funcs, root, charge, comp, DOOR_CALLS)
         d += EXC_FRAME if i else 0
         total += d
         print("%-10s %6d B  %s" % (root, d, " > ".join(short(c, 60) for c in chain[:6]) + (" > …" if len(chain) > 6 else "")), file=out)
