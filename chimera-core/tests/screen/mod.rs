@@ -1442,6 +1442,23 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::B, -70)); // FREQ
         feed(ui, Input::turn(EncoderId::C, 90)); // Q: the pass band falls
     }),
+    // #574: the resonance peak at its real height, a 2040 at RES 0.3 and a
+    // LADDER at RES 0 (no peak).
+    ("flt_2040_res_30", |ui| {
+        on_flt(ui, FilterKind::K2040, false);
+        ui.params_mut().filter.resonance = 0.3;
+        feed(ui, Input::turn(EncoderId::B, -70)); // CUTOFF
+    }),
+    ("flt_clean_bp2", |ui| {
+        on_flt(ui, FilterKind::Svf, false);
+        ui.params_mut().filter.set_mode(FilterMode::Bp12);
+        ui.params_mut().filter.resonance = 0.3;
+        feed(ui, Input::turn(EncoderId::B, -70)); // FREQ
+    }),
+    ("flt_ladder_res_0", |ui| {
+        on_flt(ui, FilterKind::Ladder, false);
+        feed(ui, Input::turn(EncoderId::B, -70)); // FREQ
+    }),
     ("flt_mod_ladder", |ui| {
         on_flt(ui, FilterKind::Ladder, true);
         feed(ui, Input::turn(EncoderId::A, 20)); // LEVEL
