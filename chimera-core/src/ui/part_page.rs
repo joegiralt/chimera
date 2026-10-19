@@ -79,7 +79,7 @@ pub fn edit(params: &mut impl Blocks, a: ParamAddr, how: Edit) -> bool {
     };
     let before = b.get(a.param);
     match how {
-        // The last kind the budget allows, as a turn steps to it.
+        // The list's end, as a turn steps to it (the budget may refuse it).
         Edit::Snap(d)
             if matches!(a.block, BlockRef::AlgoOp(_)) && a.param == AlgoOpParams::WAVE =>
         {

@@ -24,14 +24,15 @@ fn dirty_render_from_scratch_equals_full_render() {
 
 #[test]
 fn filter_curve_keeps_its_shape() {
-    assert_eq!(viz::filter_y(0.0, 0.5, 0.0), FILTER_PASS_Y, "pass band");
+    let y = |t, c, r| viz::response_y(t, c, r, viz::Response::Low);
+    assert_eq!(y(0.0, 0.5, 0.0), FILTER_PASS_Y, "pass band");
     assert_eq!(
-        viz::filter_y(0.5, 0.5, 1.0),
+        y(0.5, 0.5, 1.0),
         PLOT_TOP,
         "full resonance peaks at the top"
     );
-    assert_eq!(viz::filter_y(1.0, 0.2, 0.5), PLOT_BASE, "rolled off");
-    assert!(viz::filter_y(0.5, 0.5, 0.5) < FILTER_PASS_Y);
+    assert!(y(1.0, 0.2, 0.5) > FILTER_PASS_Y + 50, "rolled off");
+    assert!(y(0.5, 0.5, 0.5) > FILTER_PASS_Y - 4, "RES 0.5 is no bump");
 }
 
 /// The readout on the filter is the focused slot, not always CUTOFF.
@@ -51,7 +52,7 @@ fn filter_readout_rides_the_focused_value() {
         &mut want,
         cutoff,
         reso,
-        viz::Response::Low,
+        viz::Response::Low24,
         Some(("Q", text.as_str())),
     );
     assert!(band(&fb, 28, 186) == band(&want, 28, 186));
@@ -253,7 +254,7 @@ fn the_notches_draw_where_they_cut() {
 
 /// Width of the lit segment on the plot: HOLD focused lights H.
 fn lit_h_width(hold: i8) -> i32 {
-    let mut ui = chimera_core::ui::UiState::new();
+    let mut ui = crate::screen::stack_ui();
     to_mod_sub(&mut ui, 1, &chimera_core::ui::block_registry::ENVELOPE);
     feed(&mut ui, Input::turn(EncoderId::E, hold + 1));
     feed(&mut ui, Input::turn(EncoderId::E, -1)); // HOLD focused, at `hold`
@@ -271,7 +272,7 @@ fn lit_h_width(hold: i8) -> i32 {
 /// The stage labels under E1's plot, DECAY focused, as glyph runs
 /// (columns with ink, split by blank ones).
 fn stage_labels_at_hold_0(hold_pos: chimera_core::dsp::modulator::HoldPos) -> usize {
-    let mut ui = chimera_core::ui::UiState::new();
+    let mut ui = crate::screen::stack_ui();
     ui.params_mut().envelopes[0].hold_pos = hold_pos;
     to_mod_sub(&mut ui, 1, &chimera_core::ui::block_registry::ENVELOPE);
     feed(&mut ui, Input::turn(EncoderId::B, 1));
@@ -302,17 +303,14 @@ fn hold_is_a_segment_of_env_a() {
 }
 
 /// The 2040's pass band falls by `1/(1 + k)` as RES rises: at RES 0 it is
-/// the low-pass, at RES 1 about 14 dB down (spec § 5).
+/// 0 dB, at RES 1 about 14 dB down (spec § 5).
 #[test]
 fn the_2040_pass_band_falls_with_res() {
     use chimera_core::dsp::filter::{FilterKind, FilterMode};
     let r = viz::Response::of(FilterKind::K2040, FilterMode::Lp24);
     assert_eq!(r, viz::Response::K2040);
-    let (t, c) = (0.1, 0.5);
-    assert_eq!(
-        viz::response_y(t, c, 0.0, r),
-        viz::response_y(t, c, 0.0, viz::Response::Low)
-    );
+    let (t, c) = (0.0, 0.5);
+    assert_eq!(viz::response_y(t, c, 0.0, r), FILTER_PASS_Y);
     let drop = viz::response_y(t, c, 1.0, r) - FILTER_PASS_Y;
     assert!((25..=31).contains(&drop), "{drop} px");
 }

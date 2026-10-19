@@ -354,7 +354,7 @@ fn capture_survives_the_triple_buffer() {
         chimera_hal::SAMPLE_RATE,
         SampleBudget::for_cpu(CPU_HZ_REV_V),
     ));
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     screen::to_ring(&mut ui, 1);
     screen::plus(&mut ui, 1);
     let mut frame = |ui: &mut UiState, input: Input, keys: &[(u8, bool)]| {
@@ -487,7 +487,7 @@ fn capture_survives_the_triple_buffer() {
 #[test]
 fn segs_shrinking_disarms_a_segment() {
     use chimera_hal::EncoderId::B;
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     screen::to_ring(&mut ui, 1);
     screen::plus(&mut ui, 1);
     feed(&mut ui, Input::turn(B, 3).and_held(ButtonId::Mix));
@@ -511,7 +511,7 @@ fn segs_shrinking_disarms_a_segment() {
 /// others; turned down it disarms. Arming one target drops the other.
 #[test]
 fn learn_arms_the_selected_ring() {
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     screen::to_ring(&mut ui, 2);
     screen::tap(&mut ui, ButtonId::Edit);
     screen::tap(&mut ui, ButtonId::Edit);
@@ -782,7 +782,7 @@ fn captures_taken_once_after_any_interleaving() {
     };
     let mut checked = 0;
     for seed in 1..=4u32 {
-        let mut ui = Box::new(UiState::new());
+        let mut ui = Box::new(crate::screen::stack_ui());
         screen::to_ring(&mut ui, 2);
         screen::tap(&mut ui, ButtonId::Edit);
         screen::tap(&mut ui, ButtonId::Edit);

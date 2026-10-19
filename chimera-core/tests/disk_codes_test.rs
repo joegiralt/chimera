@@ -519,7 +519,7 @@ fn retired_never_live() {
         ]
     );
     // TAPE's MODEL REVERSE (#369): LOOP with END before START; PING-PONG
-    // and ONESHOT, folded into PLAY (ADR 0145).
+    // and ONESHOT, folded into PLAY (ADR 0170).
     assert_eq!(RETIRED_CODES, &[(34, 0, 1), (34, 0, 2), (34, 0, 7)]);
     assert!(RETIRED_SOURCES.is_empty() && RETIRED_BLOCKS.is_empty());
     for &(block, id) in RETIRED {

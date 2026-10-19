@@ -1,4 +1,4 @@
-# 0148. Draw each TAPE machine as a knob-driven glyph, still and live
+# 0173. Draw each TAPE machine as a knob-driven glyph, still and live
 
 - **Status:** Proposed
 - **Deciders:** owner (the picks, 2026-10-19), firmware
@@ -15,7 +15,7 @@ The focus band redraws a region when its key changes. The animated composites (t
 - **TAPE and AGE wear every glyph.** TAPE bends each row by a fixed sine of the row, up to 1.6 px at 100 %: a function of the value, not of time. AGE adds hashed grain on the ground, and above 50 % dims up to three fixed row bands as dropouts. Both are a `DrawTarget` wrapper over the box, so no 6 KB buffer.
 - **Functional core.** `chimera_engine::tape_glyph::draw::render` is a pure function of a `TapeGauge` (a `Machine` enum with one typed input struct a machine, plus `Wear`) into a 64 × 48 `Canvas` of `Ink`s (the theme's tokens by name). The UI paints the canvas in its `Palette` (`chimera_core::ui::tape_glyph`), every pixel of the box.
 - **The raster is bank 2's.** With `bank2` the `draw` module is linked into bank 2 (`bank2.x`) and bank 1 reaches it only through the door (`Bank2Door::glyph`, `tape_glyph::paint`), as the reverb's engines do (0142). Bank 1 keeps the inputs, the key and the paint. With bank 2 closed no glyph is drawn; TAPE is silent and labelled then anyway (0141). A build without TAPE's DSP (`tape` off: the bench builds) links no raster and draws no glyph.
-- **ONE's match shows the play run.** The flame sits at START, the stick before it is charred, and the run to END is lit under it; END before START burns from the far end. The 16 notches are decoration only. SLICE is retired and slicing is KIT's (0145), so the glyph doesn't revive it. POSITION and LENGTH don't drive it, because ONE ignores them (`reads_in`).
+- **ONE's match shows the play run.** The flame sits at START, the stick before it is charred, and the run to END is lit under it; END before START burns from the far end. The 16 notches are decoration only. SLICE is retired and slicing is KIT's (0170), so the glyph doesn't revive it. POSITION and LENGTH don't drive it, because ONE ignores them (`reads_in`).
 - **SIZE is drawn linear in the knob**, though the real length is exponential, so it reads at 64 px. The value and the strip show the truth.
 - **A cell the machine ignores keeps the glyph** (owner UAT, #645). Every machine reads only what it plays (`reads_in`), so an ignored param (TRON's POSITION and MOTION, ONE's POSITION, WALK, LENGTH and XFADE, PING's XFADE) moves neither the key nor a pixel. Its cell reads dimmed, and the focus band shows its dimmed value beside the machine's glyph, unchanged. Every other dimmed cell still shows no gauge.
 - **LOOP's wheel rolls by POSITION along the whole window** (#645). Its radius is 10 to 15 px (LENGTH), so it never fills the box, and POSITION places it from end to end with its spokes turning as it goes. It rolls even at LENGTH 1, where the loop is the whole window and POSITION moves no sound: the fully lit strip shows that, as WALK's hamster runs whatever LENGTH is. The line under the wheel is the window strip with the loop lit, as designed.
@@ -39,5 +39,5 @@ The focus band redraws a region when its key changes. The animated composites (t
 ## Sources
 - #641 (the picks), #615 (TAPE).
 - The mockup: (private notes) and `notes.md`, the owner's ledger, outside the repo.
-- ADR 0093 (the machine tables), 0112 (SCRUB's jog), 0145 (the lineup: PLAY's MODE, SLICE retired to KIT).
+- ADR 0093 (the machine tables), 0112 (SCRUB's jog), 0170 (the lineup: PLAY's MODE, SLICE retired to KIT).
 - `chimera-core/src/ui/tape_glyph.rs`, `chimera-core/tests/tape_glyph_test.rs`.

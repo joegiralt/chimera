@@ -1,4 +1,4 @@
-//! TAPE's machine glyphs (#641, ADR 0148): one 64 × 48 picture a machine,
+//! TAPE's machine glyphs (#641, ADR 0173): one 64 × 48 picture a machine,
 //! still on MODEL and MODE (its identity), live on every other machine
 //! cell (drawn from the Part's set values).
 //!
@@ -443,7 +443,7 @@ pub fn paint(g: &TapeGauge, out: &mut Canvas) -> bool {
     }
 }
 
-/// The glyph's entry in the door's table (ADR 0148).
+/// The glyph's entry in the door's table (ADR 0173).
 #[cfg(feature = "bank2")]
 #[repr(C)]
 pub struct GlyphDoor {

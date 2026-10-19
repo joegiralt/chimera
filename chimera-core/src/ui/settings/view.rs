@@ -26,6 +26,7 @@ use crate::ui::fmt::FmtBuf;
 use crate::ui::nav::{Column, SettingsAt};
 use crate::ui::region::settings_key;
 use crate::ui::theme;
+use crate::ui::theme::{Face, TextSize};
 
 pub const LIST_TOP: i32 = 34;
 pub const ROW_H: i32 = 28;
@@ -74,6 +75,8 @@ struct Col {
     max_glyph: i32,
     /// A note goes beneath the label, not beside it.
     note_below: bool,
+    /// TEXT SIZE: LARGE scales a whole-width row where it fits (ADR 0154).
+    size: TextSize,
 }
 
 /// A whole-width list.
@@ -86,6 +89,7 @@ const FULL: Col = Col {
     font: &theme::FONT_VALUE,
     max_glyph: 15,
     note_below: false,
+    size: TextSize::Normal,
 };
 /// MANAGE's projects, x 0–140.
 const MANAGE_LIST: Col = Col {
@@ -327,8 +331,9 @@ pub fn draw_list<D: DrawTarget<Color = Rgb565>>(
     rows: &[ListRow<'_>],
     bar: usize,
     first: usize,
+    size: TextSize,
 ) {
-    draw_rows(d, rows.len(), bar, first, |i, f| f(rows[i]));
+    draw_rows(d, rows.len(), bar, first, size, |i, f| f(rows[i]));
 }
 
 /// `draw_list` under the PART strip.
@@ -336,9 +341,11 @@ fn draw_part_list<D: DrawTarget<Color = Rgb565>>(
     d: &mut D,
     len: usize,
     bar: usize,
+    size: TextSize,
     row: impl FnMut(usize, &mut dyn FnMut(ListRow<'_>)),
 ) {
-    draw_col(d, &FULL, PART_LIST_TOP, len, bar, 0, Bar::Keyed, row);
+    let c = Col { size, ..FULL };
+    draw_col(d, &c, PART_LIST_TOP, len, bar, 0, Bar::Keyed, row);
 }
 
 /// MANAGE PROJECTS: `rows` on the left from `first`, the bar on `bar`;
@@ -387,9 +394,11 @@ pub fn draw_rows<D: DrawTarget<Color = Rgb565>>(
     len: usize,
     bar: usize,
     first: usize,
+    size: TextSize,
     row: impl FnMut(usize, &mut dyn FnMut(ListRow<'_>)),
 ) {
-    draw_col(d, &FULL, LIST_TOP, len, bar, first, Bar::Keyed, row);
+    let c = Col { size, ..FULL };
+    draw_col(d, &c, LIST_TOP, len, bar, first, Bar::Keyed, row);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -439,28 +448,45 @@ fn draw_row<D: DrawTarget<Color = Rgb565>>(d: &mut D, c: &Col, r: &ListRow<'_>, 
         _ => r.note,
     };
     let below = c.note_below && note.is_some();
-    let base = y + if below { UPPER_BASELINE } else { ROW_BASELINE };
+    // LARGE (ADR 0154): the whole column in the large faces, a pixel lower;
+    // a label too long is cut with an ellipsis, never set smaller.
+    let size = if below { TextSize::Normal } else { c.size };
+    let large = size == TextSize::Large;
+    let base = y + if below { UPPER_BASELINE } else { ROW_BASELINE } + i32::from(large);
+    let t = theme::LABEL_TRACKING;
+    let note_font = theme::font(Face::Label, size);
     let beside = match note {
-        Some(n) if !below => draw::text_width(&theme::FONT_LABEL, n, theme::LABEL_TRACKING) + 4,
+        Some(n) if !below => draw::text_width(note_font, n, t) + 4,
         _ => 0,
     };
-    let shown = fit(c, r.label, c.right - c.text - beside);
-    draw::text_tracked(d, c.font, shown, c.text, base, label, theme::LABEL_TRACKING);
-    let small = |d: &mut D, s: &str, x, y, color| {
-        draw::text_right(d, &theme::FONT_LABEL, s, x, y, color, theme::LABEL_TRACKING);
+    if large {
+        let slot = draw::Slot {
+            left: c.text,
+            top: y,
+            right: c.right - beside,
+            bottom: y + BAR_H,
+        };
+        let font = theme::font(Face::Value, size);
+        draw::text_cut(d, font, r.label, c.text, base, label, t, slot);
+    } else {
+        let shown = fit(c, r.label, c.right - c.text - beside);
+        draw::text_tracked(d, c.font, shown, c.text, base, label, t);
+    }
+    let small = |d: &mut D, font, s: &str, x, y, color| {
+        draw::text_right(d, font, s, x, y, color, t);
     };
     match note {
         Some(n) if below => {
             draw::text(d, &theme::FONT_LABEL, n, c.text, y + NOTE_BASELINE, side);
         }
-        Some(n) => small(d, n, c.right, base - 1, side),
+        Some(n) => small(d, note_font, n, c.right, base - 1, side),
         None if r.opens => {
             let color = if on && live {
                 theme::ACCENT
             } else {
                 theme::BAR_REST
             };
-            small(d, "›", c.right, base - 1, color)
+            small(d, &theme::FONT_LABEL, "›", c.right, base - 1, color)
         }
         None => {}
     }
@@ -762,8 +788,8 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
         (L::Later, true) => "LATER · MENU CLOSE",
         (L::Leaf, _) => "A-F EDIT · MENU BACK",
         (L::ReadOnly, _) => "MENU BACK",
-        (L::Prompt, _) => "A PICK · SEQ OK · MENU CANCEL",
-        (L::Naming, _) => "SEQ SAVE · MENU CANCEL",
+        (L::Prompt, _) => "EDIT OK · MENU BACK",
+        (L::Naming, _) => "EDIT SAVE · MENU BACK",
         (L::ManageList, _) => "EDIT COMMANDS · MENU BACK",
         (L::ManageCommands, _) => "EDIT RUN · MENU LIST",
         (L::ManageDimmed(None), _) => "MENU LIST",
@@ -771,7 +797,7 @@ pub fn legend(on: LegendFor, at_top: bool) -> &'static str {
         (L::ManageLater, _) => "LATER · MENU LIST",
         (L::Load, _) => "EDIT LOAD · MENU BACK",
         #[cfg(feature = "midi-map")]
-        (L::Map, _) => "B CC · C-D RANGE · MIX+MINUS DELETE",
+        (L::Map, _) => "AEF MOVE · BCD EDIT · MIX+MINUS DEL",
     }
 }
 
@@ -801,6 +827,8 @@ pub struct Bands<'a> {
     /// The playing scene, for ORBIT's crumb; its band in the ORBIT branch.
     pub scene: SceneIdx,
     pub orbit: Option<OrbitBand>,
+    /// TEXT SIZE, for the whole-width lists (ADR 0154).
+    pub text: TextSize,
 }
 
 /// What is over SETTINGS' bands.
@@ -986,6 +1014,7 @@ impl Bands<'_> {
                 l.load_rows(),
                 self.at.row() as usize,
                 self.first,
+                self.text,
                 |i, f| {
                     if let Some(r) = l.load_row(i, loaded) {
                         f(ListRow {
@@ -1018,7 +1047,13 @@ impl Bands<'_> {
         for (s, r) in shown.iter_mut().zip(rows) {
             *s = ListRow::of(r);
         }
-        draw_list(d, &shown[..n], self.at.row() as usize, self.first);
+        draw_list(
+            d,
+            &shown[..n],
+            self.at.row() as usize,
+            self.first,
+            self.text,
+        );
     }
 
     /// MIDI MAP's rows, or the empty page's one.
@@ -1026,7 +1061,7 @@ impl Bands<'_> {
     fn draw_map<D: DrawTarget<Color = Rgb565>>(&self, d: &mut D, m: &super::midi_map::MapBand) {
         if m.map.is_empty() {
             // Two rows: the one line outruns the list's width.
-            return draw_rows(d, 2, usize::MAX, 0, |i, f| {
+            return draw_rows(d, 2, usize::MAX, 0, self.text, |i, f| {
                 f(ListRow {
                     label: ["NO CCS", "MIX+SEQ ON A CELL"][i],
                     opens: false,
@@ -1040,6 +1075,7 @@ impl Bands<'_> {
             m.map.len(),
             self.at.row() as usize,
             self.first,
+            self.text,
             |i, f| {
                 let r = m.row(i);
                 f(ListRow {
@@ -1068,7 +1104,7 @@ impl Bands<'_> {
         draw_part_strip(d, self.active, b.name.as_str(), b.mark);
         let bar = self.at.row() as usize;
         if self.at.screen() == Some(Screen::SaveToProj) {
-            return draw_part_list(d, SAVE_ROWS.len(), bar, |i, f| {
+            return draw_part_list(d, SAVE_ROWS.len(), bar, self.text, |i, f| {
                 let c = SAVE_ROWS[i];
                 f(ListRow {
                     label: b.offer.label(c).as_str(),
@@ -1080,7 +1116,7 @@ impl Bands<'_> {
         }
         let rows = self.rows();
         // RELOAD's slot is in the strip: beside the label, it would cut it.
-        draw_part_list(d, rows.len(), bar, |i, f| {
+        draw_part_list(d, rows.len(), bar, self.text, |i, f| {
             let r = &rows[i];
             f(ListRow {
                 look: b.look(r.kind),
@@ -1094,17 +1130,24 @@ impl Bands<'_> {
         let bar = self.at.row() as usize;
         #[cfg(feature = "orbit")]
         if self.at.screen() == Some(Screen::SceneSaveTo) {
-            return draw_rows(d, SceneIdx::ALL.len(), bar, self.first, |i, f| {
-                f(ListRow {
-                    label: b.save_label(SceneIdx::ALL[i]).as_str(),
-                    opens: false,
-                    note: None,
-                    look: RowLook::Normal,
-                })
-            });
+            return draw_rows(
+                d,
+                SceneIdx::ALL.len(),
+                bar,
+                self.first,
+                self.text,
+                |i, f| {
+                    f(ListRow {
+                        label: b.save_label(SceneIdx::ALL[i]).as_str(),
+                        opens: false,
+                        note: None,
+                        look: RowLook::Normal,
+                    })
+                },
+            );
         }
         let rows = self.rows();
-        draw_rows(d, rows.len(), bar, self.first, |i, f| {
+        draw_rows(d, rows.len(), bar, self.first, self.text, |i, f| {
             let r = &rows[i];
             f(ListRow {
                 look: b.look(r.kind),

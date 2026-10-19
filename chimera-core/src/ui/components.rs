@@ -12,7 +12,7 @@ use u8g2_fonts::FontRenderer;
 use crate::dsp::filter::FilterKind;
 use crate::dsp::modal::{EXCITER_NAMES, ModalPage};
 use crate::part::DacPair;
-use crate::project::PartId;
+use crate::project::{PartId, PartSet};
 use crate::ui::PrimeStatus;
 use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::block_registry::FILTER_MOD;
@@ -153,9 +153,18 @@ pub fn header_fits(h: &HeaderText) -> bool {
     header_end(h.context.as_str(), h.name.as_str()) + RIGHT_GAP <= right
 }
 
+/// The Part dots: which Part the page is on, and which have voices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PartDots {
+    pub current: PartId,
+    pub live: PartSet,
+}
+
 /// What a header shows of the instrument beside its words.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HeaderStatus {
+    /// A Part's page: its dots.
+    pub parts: Option<PartDots>,
     /// The live output is above silence: the sounding dot.
     pub sounding: bool,
     /// Audio load (0 = not measured).
@@ -232,6 +241,9 @@ pub fn header_dots<D>(d: &mut D, s: HeaderStatus)
 where
     D: DrawTarget<Color = Rgb565>,
 {
+    if let Some(p) = s.parts {
+        part_dots(d, p);
+    }
     let (y, r) = (theme::HEADER_DOT_Y, theme::HEADER_DOT_R);
     if s.sounding {
         draw::dot(d, theme::HEADER_DOT_X, y, r, theme::ACCENT);
@@ -242,6 +254,23 @@ where
         let filled = (r * fill as i32 + 127) / 255;
         if filled > 0 {
             draw::dot(d, x, y, filled, theme::ACCENT);
+        }
+    }
+}
+
+/// Six dots, one a Part: the current one filled bright green, larger, a sounding
+/// one a ring, the rest small and faint.
+fn part_dots<D>(d: &mut D, p: PartDots)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let (y, r) = (theme::PART_DOT_Y, theme::PART_DOT_R);
+    for id in PartId::ALL {
+        let x = theme::PART_DOT_X + id.index() as i32 * theme::PART_DOT_PITCH;
+        match (id == p.current, p.live.contains(id)) {
+            (true, _) => draw::dot(d, x, y, r + 1, theme::PART_LIVE),
+            (false, true) => draw::ring(d, x, y, r, theme::ACCENT, 1),
+            (false, false) => draw::dot(d, x, y, r - 1, theme::FAINT),
         }
     }
 }
@@ -280,13 +309,15 @@ where
 /// its `gauge`. A dimmed or absent slot reads as its cell does, with no
 /// gauge: a dimmed value in MID, an absent route's dash in INK2. A TAPE
 /// cell its machine ignores keeps the machine's glyph beside its dimmed
-/// value (ADR 0148).
+/// value (ADR 0173).
 ///
 /// While a MIX+PLUS `status` is pending (issue #21) the value readout — the
 /// large numerals and the arc gauge — is replaced by the status word(s) at
 /// the mid-size value font, so the longest message (`NOT MODULATABLE`)
 /// still fits the full row width; the label above is unchanged, so the
 /// message still reads against the parameter it was tried on.
+///
+/// The label takes `size`'s face where it fits left of the gauge (ADR 0154).
 pub fn focus_band<D>(
     d: &mut D,
     label: &str,
@@ -294,13 +325,15 @@ pub fn focus_band<D>(
     gauge: Gauge,
     look: Look,
     status: Option<PrimeStatus>,
+    size: theme::TextSize,
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
-    focus_label(d, label, theme::MARGIN_X);
+    focus_label(d, label, &gauge, size);
+    let layout = layout(value_text, &gauge);
     // A value too wide for the large numerals (`NOT A TRANSWAVE`) reads at
     // the status size, the whole row its own.
-    let wide = draw::text_width(&theme::FONT_FOCUS, value_text, 0) > theme::CONTENT_W;
+    let wide = layout == Layout::Small;
     match status {
         None if wide => {
             draw::text_tracked(
@@ -337,23 +370,16 @@ pub fn focus_band<D>(
         }
         // A TAPE cell its machine ignores: dimmed, its glyph as it was.
         None if look == Look::Dimmed && matches!(gauge, Gauge::Tape(_)) => {
-            focus_value(d, value_text, gauge, theme::MID)
+            focus_value(d, value_text, gauge, layout, theme::MID)
         }
         None if look != Look::Live => {
             let color = match look {
                 Look::Absent => theme::INK2,
                 _ => theme::MID,
             };
-            draw::text(
-                d,
-                &theme::FONT_FOCUS,
-                value_text,
-                theme::FOCUS_VALUE_X,
-                theme::FOCUS_VALUE_Y,
-                color,
-            );
+            big_value(d, value_text, color, color);
         }
-        None => focus_value(d, value_text, gauge, theme::INK),
+        None => focus_value(d, value_text, gauge, layout, theme::INK),
     }
 }
 
@@ -407,47 +433,189 @@ pub fn status_font(s: &str) -> &'static FontRenderer {
     }
 }
 
-/// Focus label at `x`; returns where it ends.
-fn focus_label<D>(d: &mut D, label: &str, x: i32) -> i32
+/// Focus label at the margin, at `size` where it fits left of `gauge`.
+fn focus_label<D>(d: &mut D, label: &str, gauge: &Gauge, size: theme::TextSize)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    x + draw::text_tracked(
+    draw::text_fit(
         d,
-        &theme::FONT_VALUE,
+        theme::Face::Value,
+        size,
         label,
-        x,
+        theme::MARGIN_X,
         theme::FOCUS_LABEL_Y,
         theme::MID,
         theme::LABEL_TRACKING,
-    )
+        focus_label_slot(gauge),
+    );
+}
+
+/// The focus label's slot: the band's top to clear of the large value,
+/// the margin to the gauge (less `GAUGE_GAP`) or the far margin.
+pub fn focus_label_slot(gauge: &Gauge) -> draw::Slot {
+    let far = theme::SCREEN_W - theme::MARGIN_X;
+    draw::Slot {
+        left: theme::MARGIN_X,
+        top: theme::HEADER_BOTTOM,
+        right: gauge_left(gauge).map_or(far, |l| l - GAUGE_GAP),
+        bottom: theme::FOCUS_LABEL_Y + 4,
+    }
 }
 
 /// The least gap between the value and a TAPE glyph, px.
 pub const TAPE_GAP: i32 = 8;
 
 /// The value large and its gauge; with none, the text has the band.
-fn focus_value<D>(d: &mut D, value_text: &str, gauge: Gauge, ink: Rgb565)
+fn focus_value<D>(d: &mut D, value_text: &str, gauge: Gauge, layout: Layout, ink: Rgb565)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    // Beside a TAPE glyph a long word (CAPSTAN) drops to the readout size.
-    let room = theme::WAVE_X - theme::FOCUS_VALUE_X - TAPE_GAP;
-    let wide = draw::text_width(&theme::FONT_FOCUS, value_text, 0) > room;
-    let font = if matches!(gauge, Gauge::Tape(_)) && wide {
-        &theme::FONT_READOUT
+    if let Gauge::Tape(_) = gauge {
+        // Beside a TAPE glyph a long word (CAPSTAN) drops to the readout size.
+        if layout == Layout::NoGauge {
+            draw::text(
+                d,
+                &theme::FONT_READOUT,
+                value_text,
+                theme::FOCUS_VALUE_X,
+                theme::FOCUS_VALUE_Y,
+                ink,
+            );
+        } else {
+            big_value(d, value_text, ink, theme::MID);
+        }
+        draw_gauge(d, gauge);
+        return;
+    }
+    big_value(d, value_text, ink, theme::MID);
+    if layout == Layout::WithGauge {
+        draw_gauge(d, gauge);
+    }
+}
+
+/// `value_text` as a large number with its unit small beside it, on the
+/// number's baseline; a word is all large.
+fn big_value<D>(d: &mut D, value_text: &str, color: Rgb565, unit_color: Rgb565)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let (number, unit) = split_unit(value_text);
+    let x = theme::FOCUS_VALUE_X
+        + draw::text(
+            d,
+            &theme::FONT_FOCUS,
+            number,
+            theme::FOCUS_VALUE_X,
+            theme::FOCUS_VALUE_Y,
+            color,
+        );
+    if !unit.is_empty() {
+        draw::text(
+            d,
+            &theme::FONT_VALUE,
+            unit,
+            x + UNIT_GAP,
+            theme::FOCUS_VALUE_Y,
+            unit_color,
+        );
+    }
+}
+
+/// Clear air between a large number and its small unit.
+pub const UNIT_GAP: i32 = 4;
+
+/// `2.14 kHz` as `("2.14", "kHz")`: a number and its trailing unit (`ms`,
+/// `%`, `BT`); a word, or a number with none, is `(text, "")`.
+pub fn split_unit(text: &str) -> (&str, &str) {
+    let cut = text
+        .trim_end_matches(|c: char| c.is_ascii_alphabetic() || c == '%')
+        .len();
+    let number = text[..cut].trim_end();
+    if cut == text.len() || !number.ends_with(|c: char| c.is_ascii_digit()) {
+        return (text, "");
+    }
+    // A number holds no letters: `A5 dB` is a word.
+    if number.chars().any(|c| c.is_ascii_alphabetic()) {
+        return (text, "");
+    }
+    (number, &text[cut..])
+}
+
+/// How the band sets a value against its gauge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    /// The large value, its gauge beside it.
+    WithGauge,
+    /// The large value alone: it clears the row but not the gauge.
+    NoGauge,
+    /// The value font, the whole row: past the large value's reach.
+    Small,
+}
+
+/// The advance of the large value as `big_value` sets it.
+pub fn big_width(value_text: &str) -> i32 {
+    let (number, unit) = split_unit(value_text);
+    let n = draw::text_width(&theme::FONT_FOCUS, number, 0);
+    if unit.is_empty() {
+        n
     } else {
-        &theme::FONT_FOCUS
-    };
-    draw::text(
-        d,
-        font,
-        value_text,
-        theme::FOCUS_VALUE_X,
-        theme::FOCUS_VALUE_Y,
-        ink,
-    );
-    draw_gauge(d, gauge);
+        n + UNIT_GAP + draw::text_width(&theme::FONT_VALUE, unit, 0)
+    }
+}
+
+/// The layout of `value_text` beside `gauge`, in order of fallback: both
+/// large, the value alone, the value font. Never overlapping.
+pub fn layout(value_text: &str, gauge: &Gauge) -> Layout {
+    let w = big_width(value_text);
+    if w > theme::CONTENT_W {
+        return Layout::Small;
+    }
+    match gauge_left(gauge) {
+        Some(left) if theme::FOCUS_VALUE_X + w + gap(gauge) > left => Layout::NoGauge,
+        _ => Layout::WithGauge,
+    }
+}
+
+/// Clear air between the large value and its gauge.
+pub const GAUGE_GAP: i32 = 4;
+
+/// The clear air `gauge` keeps from the large value.
+fn gap(gauge: &Gauge) -> i32 {
+    match gauge {
+        Gauge::Tape(_) => TAPE_GAP,
+        _ => GAUGE_GAP,
+    }
+}
+
+/// The leftmost column `gauge` draws in; `None` for no gauge.
+pub fn gauge_left(gauge: &Gauge) -> Option<i32> {
+    let end = theme::SCREEN_W - theme::MARGIN_X;
+    match gauge {
+        Gauge::None => None,
+        Gauge::Arc { .. } => Some(theme::ARC_CX - theme::ARC_R - theme::ARC_WIDTH as i32),
+        Gauge::Switch { .. } => Some(theme::SWITCH_CX - theme::SWITCH_W / 2),
+        Gauge::LevelBar { .. } => Some(theme::LEVEL_TICK_X - 1),
+        Gauge::Crossfader { .. } => Some(end - theme::XF_W - theme::XF_CAP_W / 2),
+        Gauge::Blend { .. } => Some(end - theme::BLEND_W - theme::XF_CAP_W / 2),
+        Gauge::Staff { .. } => Some(theme::STAFF_X),
+        Gauge::Wave(_) | Gauge::VaWave(_) => Some(theme::WAVE_X),
+        Gauge::VaMix(_) => Some(end - theme::VA_MIX_W),
+        Gauge::Braid(_) => Some(theme::BRAID_X),
+        Gauge::Rings(_) => Some(theme::RINGS_X),
+        Gauge::Cube(_) | Gauge::Tail(_) => Some(theme::CUBE_X),
+        Gauge::Tape(_) => Some(theme::WAVE_X),
+    }
+}
+
+/// `gauge`, or none where `layout` leaves it out.
+pub fn fit_gauge(value_text: &str, gauge: Gauge) -> Gauge {
+    match layout(value_text, &gauge) {
+        Layout::WithGauge => gauge,
+        // A TAPE glyph stays: its long word drops to the readout size.
+        Layout::NoGauge if matches!(gauge, Gauge::Tape(_)) => gauge,
+        _ => Gauge::None,
+    }
 }
 
 /// The box an animated gauge redraws alone each frame; `None` for the
@@ -1133,9 +1301,10 @@ pub struct Cell<'a> {
     pub motion: Option<Motion>,
 }
 
-/// Draw cell `i` (knob order a–f, 3×2) with its label baseline `top + row·36`.
-/// `None` is an empty slot: a dim dash.
-pub fn cell<D>(d: &mut D, i: usize, top: i32, cell: Option<&Cell>)
+/// Draw cell `i` (knob order a–f, 3×2) with its label baseline `top + row·36`,
+/// its lines and faces at `size` (ADR 0154). `None` is an empty slot: a dim
+/// dash. Returns the value's advance (0 with none).
+pub fn cell<D>(d: &mut D, i: usize, top: i32, cell: Option<&Cell>, size: theme::TextSize) -> i32
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -1143,42 +1312,37 @@ where
     let y = top + (i / 3) as i32 * theme::CELL_ROW_H;
     let Some(c) = cell else {
         draw::fill_rect(d, x, y - 3, 8, 1, theme::FAINT);
-        return;
+        return 0;
     };
+    let lines = theme::cell_lines(size);
+    let (label_slot, value_slot) = cell_slots(x, y, lines);
     let dim = c.look == Look::Dimmed;
     let label_color = if c.active && !dim {
         theme::ACCENT
     } else {
         theme::MID
     };
-    draw::text_tracked(
+    draw::text_fit(
         d,
-        &theme::FONT_LABEL,
+        theme::Face::Label,
+        size,
         c.label,
         x,
-        y,
+        y + lines.label,
         label_color,
         theme::LABEL_TRACKING,
+        label_slot,
     );
     if c.look == Look::Absent {
-        draw::fill_rect(d, x, y + theme::CELL_VALUE_DY - 5, 12, 2, theme::INK2);
-        return;
+        draw::fill_rect(d, x, y + lines.value - 5, 12, 2, theme::INK2);
+        return 0;
     }
     let value_color = match (dim, c.active) {
         (true, _) => theme::MID,
         (false, true) => theme::INK,
         (false, false) => theme::INK2,
     };
-    // Tracked by 0: the same glyphs, and the marks (RING's "3 › P3").
-    draw::text_tracked(
-        d,
-        &theme::FONT_VALUE,
-        c.text,
-        x,
-        y + theme::CELL_VALUE_DY,
-        value_color,
-        0,
-    );
+    let advance = cell_value(d, c.text, x, y + lines.value, value_color, value_slot, size);
     let bar = c.motion.map_or(!c.fmt.is_discrete(), |m| m.is_continuous());
     if bar && !dim {
         let fill = if c.active {
@@ -1189,7 +1353,7 @@ where
         draw::bar(
             d,
             x,
-            y + theme::CELL_BAR_DY,
+            y + lines.bar,
             theme::CELL_BAR_W,
             theme::CELL_BAR_H,
             c.value,
@@ -1206,14 +1370,75 @@ where
         } else {
             (mid + len, mid)
         };
-        draw::fill_rect(d, mid, y + theme::CELL_MOD_DY - 1, 1, 3, theme::MID);
-        draw::fill_rect(
-            d,
-            x0,
-            y + theme::CELL_MOD_DY,
-            (x1 - x0).max(1),
-            1,
-            theme::INK2,
-        );
+        draw::fill_rect(d, mid, y + lines.modl - 1, 1, 3, theme::MID);
+        draw::fill_rect(d, x0, y + lines.modl, (x1 - x0).max(1), 1, theme::INK2);
     }
+    advance
+}
+
+/// A cell's value from `x` on baseline `y`. LARGE: whole in the large
+/// face where it fits; else its number large and its unit in NORMAL's
+/// value face beside it, as the focus value sets them (`3.54` large,
+/// `kHz` small); else whole in NORMAL's (ADR 0154). Returns the advance.
+fn cell_value<D>(
+    d: &mut D,
+    text: &str,
+    x: i32,
+    y: i32,
+    color: Rgb565,
+    slot: draw::Slot,
+    size: theme::TextSize,
+) -> i32
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    use theme::{Face, TextSize};
+    let room = slot.right - x;
+    let whole = theme::fit(size, room, |z| {
+        draw::text_width(theme::font(Face::Value, z), text, 0)
+    });
+    let (number, unit) = split_unit(text);
+    let unit_w = draw::text_width(&theme::FONT_VALUE, unit, 0) + UNIT_GAP;
+    let split = whole == TextSize::Normal
+        && !unit.is_empty()
+        && theme::fit(size, room - unit_w, |z| {
+            draw::text_width(theme::font(Face::Value, z), number, 0)
+        }) == TextSize::Large;
+    if !split {
+        // Tracked by 0: the same glyphs, and the marks (RING's "3 › P3").
+        return draw::text_fit(d, Face::Value, whole, text, x, y, color, 0, slot);
+    }
+    let head = draw::text_fit(
+        d,
+        Face::Value,
+        TextSize::Large,
+        number,
+        x,
+        y,
+        color,
+        0,
+        slot,
+    );
+    head + UNIT_GAP + draw::text(d, &theme::FONT_VALUE, unit, x + head + UNIT_GAP, y, color)
+}
+
+/// A cell's label and value slots, the cell at `x` with its row's label
+/// baseline at `y`: a column less a 4 px gutter wide; the label from the
+/// row's top to its baseline, the value from there to the bar.
+pub fn cell_slots(x: i32, y: i32, lines: theme::CellLines) -> (draw::Slot, draw::Slot) {
+    let right = x + theme::CELL_COL_W - 4;
+    let split = y + lines.label + 1;
+    let label = draw::Slot {
+        left: x,
+        top: y - (theme::CELL_LABEL_Y - theme::VIZ_BAND_BOTTOM),
+        right,
+        bottom: split,
+    };
+    let value = draw::Slot {
+        left: x,
+        top: split,
+        right,
+        bottom: y + lines.bar,
+    };
+    (label, value)
 }

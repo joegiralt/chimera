@@ -71,7 +71,7 @@ fn op_page_cells_edit_their_operator() {
 
 #[test]
 fn edit_and_seq_walk_into_and_out_of_the_op_pages() {
-    let mut ui = chimera_core::ui::UiState::new();
+    let mut ui = crate::screen::stack_ui();
     init_part(&mut ui, PartId::ALL[0]);
     to_osc(&mut ui);
     let osc = page_def_id(&ui);
@@ -149,7 +149,7 @@ fn a_kind_change_on_an_op_page_keeps_it() {
     let modal = put_with(&mut store, "MODAL", |p| {
         **p.edit_part(P0).sound = Sound::init(EngineType::Modal);
     });
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     let mut rig = Rig::new(&mut ui, store);
     rig.load(plain);
     on_page(&mut rig, &ALGO_OP_PAGES[1]);
@@ -210,7 +210,7 @@ impl Live {
         let mut bench = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::default());
         bench.edit_sound(|b| *b = s);
         Live {
-            ui: Box::new(UiState::new()),
+            ui: Box::new(crate::screen::stack_ui()),
             bench,
             held: None,
         }

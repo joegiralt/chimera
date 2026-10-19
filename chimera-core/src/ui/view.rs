@@ -37,6 +37,7 @@ use crate::ui::mod_panel::{self, PanelSlot};
 use crate::ui::op_page;
 use crate::ui::orbit::OrbitCell;
 use crate::ui::reverb_panel;
+use crate::ui::theme_settings::Pages;
 
 /// What an ENV slot's page resolves against: type A's panel follows its
 /// SPEED, type B's its MODE and that MODE's FORM.
@@ -92,6 +93,8 @@ pub struct SlotCtx {
     pub clock: ClockSource,
     /// Each operator's kind: which cells its OP page shows.
     pub op_kinds: [OpKind; OPS],
+    /// THEME's PAGES: which key a hint names for the next sub-page.
+    pub pages: Pages,
 }
 
 impl SlotCtx {
@@ -133,7 +136,13 @@ impl SlotCtx {
             clock: ClockSource::Internal,
             op_kinds: Op::ALL
                 .map(|op| OpKind::clamped(get(BlockRef::AlgoOp(op), AlgoOpParams::WAVE) as u8)),
+            pages: crate::ui::theme_settings::ThemeSettings::DEFAULT.pages,
         }
+    }
+
+    /// This context under THEME's PAGES.
+    pub fn on_pages(self, pages: Pages) -> Self {
+        Self { pages, ..self }
     }
 
     /// This context with SOURCE read as `src`.
@@ -506,11 +515,11 @@ impl View {
             Some(ParamAddr {
                 block: BlockRef::Folder,
                 param,
-            }) if param == FolderParams::FOLD || param == FolderParams::MIX => SYM_HINT,
+            }) if param == FolderParams::FOLD || param == FolderParams::MIX => sym_hint(ctx.pages),
             Some(ParamAddr {
                 block: BlockRef::Out,
                 param,
-            }) if param == OutParams::VCA_VEL => SYM_HINT,
+            }) if param == OutParams::VCA_VEL => sym_hint(ctx.pages),
             Some(a) if matches!(a.block, BlockRef::OrbitRing(_)) && a.param == SceneRing::MUTE => {
                 MUTE_HINT
             }
@@ -526,7 +535,31 @@ pub const LEARN: Gesture<'static> = Gesture("MIX + SEQ", "LEARNS A CC");
 /// Every mappable cell's hint; PUSH ENCODERS' replaces it when on.
 pub const LEARN_HINT: Hint = &[LEARN];
 
-const SYM_HINT: Hint = &[Gesture("EDIT ▾", "SYM")];
+/// MIX + B*n* in the mixer keeps the page and opens Part *n*'s (ADR 0044).
+const PART_JUMP: Gesture<'static> = Gesture("MIX + B1-6", "PART");
+const PART_JUMP_HINT: Hint = &[PART_JUMP];
+const PART_JUMP_LEARN: Hint = &[PART_JUMP, Gesture("MIX + SEQ", "LEARN")];
+
+/// A mixer cell's hint: `own` where it has words of its own, else the Part
+/// jump, with learn's short form after it where `own` was the generic learn.
+pub fn mixer_hint(own: Hint) -> Hint {
+    if own == LEARN_HINT {
+        PART_JUMP_LEARN
+    } else if own.is_empty() {
+        PART_JUMP_HINT
+    } else {
+        own
+    }
+}
+
+/// SYM is AMP's next sub-page: EDIT down under STACK, SEQ right under
+/// ROW (`nav::sub_move`).
+fn sym_hint(pages: Pages) -> Hint {
+    match pages {
+        Pages::Stack => &[Gesture("EDIT ▾", "SYM")],
+        Pages::Row => &[Gesture("SEQ ▸", "SYM")],
+    }
+}
 
 const REV_HINTS: [Hint; 6] = [
     &[Gesture("REVERB ▸", ReverbType::NAMES[0])],

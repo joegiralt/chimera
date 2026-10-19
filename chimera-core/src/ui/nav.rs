@@ -13,6 +13,7 @@ use crate::ui::block_registry::{
 use crate::ui::orbit::{ORB_NODE, ORBIT_CHAIN, RING_NODE, SCN_NODE};
 use crate::ui::settings::leaves::OnePage;
 use crate::ui::settings::{Act, Kind, MANAGE_COMMANDS, Row, Screen, row_at};
+use crate::ui::theme_settings::Pages;
 
 pub use crate::ui::block_def::PageAt;
 pub use crate::ui::browser::Browse;
@@ -365,22 +366,33 @@ impl OrbitAt {
             }
             OrbitKey::Mute(ring) => Step::Orbit(OrbitAct::Mute(ring)),
             OrbitKey::PlayStop => Step::Orbit(OrbitAct::PlayStop),
-            // Up a sub-page, never a save (ADR 0081).
-            OrbitKey::SeqTap => page(ORBIT_CHAIN.step(self.page, Move::Up)),
             OrbitKey::Plus => page(ORBIT_CHAIN.step(self.page, Move::Next)),
             OrbitKey::Minus => page(ORBIT_CHAIN.step(self.page, Move::Prev)),
-            OrbitKey::Edit if self.on(RING_NODE) => {
-                let n = ORBIT_CHAIN.blocks[RING_NODE].sub_page_count().max(1);
-                page(ORBIT_CHAIN.page(RING_NODE, (sub + 1) % n))
-            }
-            // EDIT is down (#316): ORB's one sub-page, CUSTOM, always
-            // opens, a named scale shown by its notes (ADR 0084); from it
-            // EDIT wraps back to ORB.
-            OrbitKey::Edit if self.on(ORB_NODE) && sub == 1 => page(ORBIT_CHAIN.page(ORB_NODE, 0)),
-            OrbitKey::Edit if self.on(ORB_NODE) => page(Some(CUSTOM_PAGE)),
-            // SCN's commit: SAVE → n.
+            // SCN's commit: SAVE → n, EDIT under either PAGES.
             OrbitKey::Edit if self.on(SCN_NODE) => Step::Orbit(OrbitAct::SaveTo),
-            OrbitKey::Edit => Step::Stay,
+            OrbitKey::Edit | OrbitKey::SeqTap => {
+                let k = if k == OrbitKey::Edit {
+                    NavKey::Edit
+                } else {
+                    NavKey::SeqTap
+                };
+                match sub_move(cx.pages, k) {
+                    // Up a sub-page, never a save (ADR 0081).
+                    Some(Move::Up) => page(ORBIT_CHAIN.step(self.page, Move::Up)),
+                    Some(Move::Down) if self.on(RING_NODE) => {
+                        let n = ORBIT_CHAIN.blocks[RING_NODE].sub_page_count().max(1);
+                        page(ORBIT_CHAIN.page(RING_NODE, (sub + 1) % n))
+                    }
+                    // Down (#316): ORB's one sub-page, CUSTOM, always
+                    // opens, a named scale shown by its notes (ADR 0084);
+                    // from it, down wraps back to ORB.
+                    Some(Move::Down) if self.on(ORB_NODE) && sub == 1 => {
+                        page(ORBIT_CHAIN.page(ORB_NODE, 0))
+                    }
+                    Some(Move::Down) if self.on(ORB_NODE) => page(Some(CUSTOM_PAGE)),
+                    _ => Step::Stay,
+                }
+            }
             OrbitKey::MenuTap => Step::Go(r.resolve(r.orbit_from, cx)),
         }
     }
@@ -594,6 +606,8 @@ pub struct NavCtx {
     /// A Screen's row count.
     pub dyn_rows: u8,
     pub orbit: OrbitCx,
+    /// THEME's PAGES: which way SEQ and EDIT step a sub-page (`sub_move`).
+    pub pages: Pages,
 }
 
 impl NavCtx {
@@ -829,9 +843,8 @@ impl Location {
             },
             (_, NavKey::MenuTap) => Step::Go(Location::settings_at(&[], 0)),
             (Settings(s), k) => s.step(k, cx),
-            (Pages(p, at), k) => {
-                page_step(cx.chain(p).def(), at, k).map_or(Step::Stay, |at| go(Pages(p, at)))
-            }
+            (Pages(p, at), k) => page_step(cx.chain(p).def(), at, k, cx.pages)
+                .map_or(Step::Stay, |at| go(Pages(p, at))),
             (Part(p, m), NavKey::Plus) => go(mix_walk(p, m, 1)),
             (Part(p, m), NavKey::Minus) => go(mix_walk(p, m, -1)),
             (Part(p, _), NavKey::Edit) => go(Sound(p, Browse::default())),
@@ -839,8 +852,8 @@ impl Location {
             (Part(..), NavKey::SeqTap) => Step::Stay,
             (Sound(p, _), NavKey::SeqTap) => go(r.mix_entry(p)),
             (Fx(p, at), NavKey::Minus) if at.node() == FX_FIRST => go(Part(p, MixPage::Sends)),
-            (Fx(p, at), k) => page_step(&MIXER_CHANNEL_CHAIN, at, k)
-                .map(|to| skip_empty_rev(at, to, k, cx.rev))
+            (Fx(p, at), k) => page_step(&MIXER_CHANNEL_CHAIN, at, k, cx.pages)
+                .map(|to| skip_empty_rev(at, to, sub_move(cx.pages, k), cx.rev))
                 .map_or(Step::Stay, |at| go(Fx(p, at))),
             (Sound(p, b), NavKey::Plus) => go(Sound(wrap(p, 1), b)),
             (Sound(p, b), NavKey::Minus) => go(Sound(wrap(p, -1), b)),
@@ -930,35 +943,44 @@ pub(crate) fn step_clamped(at: usize, delta: i32, len: usize) -> usize {
     (at as i32 + delta).clamp(0, len as i32 - 1) as usize
 }
 
-/// PLUS and MINUS step the node, clamped; EDIT is sub-page down, from the
-/// last back to the first; SEQ up, none above the first (ADR 0081).
-fn page_step(c: &ChainDef2, at: PageAt, k: NavKey) -> Option<PageAt> {
-    let m = match k {
-        NavKey::Plus => Move::Next,
-        NavKey::Minus => Move::Prev,
-        NavKey::Edit => Move::Down,
-        NavKey::SeqTap => Move::Up,
-        _ => return None,
-    };
+/// What a key does on a chain's pages. PLUS and MINUS step the node.
+/// Under STACK, EDIT is the next sub-page (down) and SEQ the previous (up)
+/// (ADR 0081); ROW draws the pages left to right and the panel has EDIT
+/// left of SEQ, so there EDIT is the previous and SEQ the next (ADR 0145).
+/// The next wraps from the last to the first; the previous stops at the
+/// first.
+pub fn sub_move(pages: Pages, k: NavKey) -> Option<Move> {
+    match (pages, k) {
+        (_, NavKey::Plus) => Some(Move::Next),
+        (_, NavKey::Minus) => Some(Move::Prev),
+        (Pages::Stack, NavKey::Edit) | (Pages::Row, NavKey::SeqTap) => Some(Move::Down),
+        (Pages::Stack, NavKey::SeqTap) | (Pages::Row, NavKey::Edit) => Some(Move::Up),
+        _ => None,
+    }
+}
+
+/// `k`'s step on `c` (`sub_move`), clamped along, wrapping down.
+fn page_step(c: &ChainDef2, at: PageAt, k: NavKey, pages: Pages) -> Option<PageAt> {
+    let m = sub_move(pages, k)?;
     match c.step(at, m) {
         None if m == Move::Down => c.page(at.node() as usize, 0),
         to => to,
     }
 }
 
-/// EDIT onto REV › MORE 2 under a TYPE with no cells there goes on round
-/// to REV; SEQ never reaches it (it is the last).
+/// Down onto REV › MORE 2 under a TYPE with no cells there goes on round
+/// to REV; up never reaches it (it is the last).
 fn skip_empty_rev(
     from: PageAt,
     to: PageAt,
-    k: NavKey,
+    m: Option<Move>,
     rev: crate::dsp::reverb::ReverbType,
 ) -> PageAt {
     use crate::ui::reverb_panel::{RevPage, shows};
     let more2 = MIXER_CHANNEL_CHAIN
         .def_at(to)
         .is_some_and(|d| d.id == block_registry::EFX_MORE2.id);
-    if more2 && k == NavKey::Edit && !shows(rev, RevPage::More2) {
+    if more2 && m == Some(Move::Down) && !shows(rev, RevPage::More2) {
         MIXER_CHANNEL_CHAIN
             .page(from.node() as usize, 0)
             .unwrap_or(to)

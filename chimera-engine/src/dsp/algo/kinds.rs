@@ -102,6 +102,11 @@ impl Linked {
         Linked(m)
     }
 
+    /// `self` with `op` taken to have no modulator.
+    pub const fn without(self, op: usize) -> Linked {
+        Linked(self.0 & !(1 << op))
+    }
+
     pub const fn has(self, op: usize) -> bool {
         self.0 & (1 << op) != 0
     }
@@ -221,32 +226,41 @@ pub const fn reads(kind: OpKind, id: ParamId) -> bool {
     )
 }
 
-/// Where an encoder turn of WAVE lands.
+/// Where an encoder turn of WAVE lands: the kind `delta` codes on from
+/// `from`, clamped to the list, whether the budget allows it or not.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KindStep {
     pub to: OpKind,
-    /// A refused kind was met on the way: the cell toasts.
-    pub skipped: bool,
+    /// `to` would overspend the budget: shown dimmed, never written.
+    pub refused: bool,
 }
 
-/// `|delta|` allowed kinds on from operator `op`'s under `l`, in `delta`'s
-/// direction, stopping at codes 0 and 17.
-pub fn step_kind(k: Kinds, l: Linked, op: usize, delta: i8) -> KindStep {
-    let mut s = KindStep {
-        to: k.get(op),
-        skipped: false,
-    };
-    let (mut code, mut left) = (i16::from(s.to.code()), delta.unsigned_abs());
-    while left > 0 {
-        code += i16::from(delta.signum());
-        let Some(next) = u8::try_from(code).ok().and_then(OpKind::from_code) else {
-            break;
-        };
-        if k.with(op, next, l).is_ok() {
-            (s.to, left) = (next, left - 1);
-        } else {
-            s.skipped = true;
-        }
+pub fn step_kind(k: Kinds, l: Linked, op: usize, from: OpKind, delta: i8) -> KindStep {
+    let code = (i16::from(from.code()) + i16::from(delta)).clamp(0, OP_KIND_COUNT as i16 - 1);
+    let to = OpKind::clamped(code as u8);
+    KindStep {
+        to,
+        refused: k.with(op, to, l).is_err(),
     }
-    s
+}
+
+/// Why a kind or an algorithm is refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Why {
+    /// Operator `n` (0-based) has a modulator: unlinked it would fit.
+    Modulated(usize),
+    /// The other formants have used the budget.
+    Full,
+    /// The algorithm links into a formant the budget can't carry.
+    Links,
+}
+
+/// Why `k` can't take `to` on `op` under `l`, or `None` where it can.
+pub fn why_kind(k: Kinds, l: Linked, op: usize, to: OpKind) -> Option<Why> {
+    k.with(op, to, l).err()?;
+    Some(if l.has(op) && k.with(op, to, l.without(op)).is_ok() {
+        Why::Modulated(op)
+    } else {
+        Why::Full
+    })
 }

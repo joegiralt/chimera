@@ -197,6 +197,8 @@ static SOFTS_LIGHT: [Rgb565; 5] = [
 /// WARN (`#f88000`) and ALERT (`#f80000`) in light mode, by the same rule.
 pub const WARN_LIGHT: Rgb565 = rgb565(darken(0xf88000));
 pub const ALERT_LIGHT: Rgb565 = rgb565(darken(0xf80000));
+/// PART_LIVE (`#29ff29`) in light mode.
+pub const LIVE_LIGHT: Rgb565 = rgb565(darken(0x29ff29));
 
 /// INVERT's ground: the dark ground at the same BLACK, bit-flipped. BLACK
 /// −2 is white; each step takes a little more off it.
@@ -273,7 +275,7 @@ impl Palette {
         }
     }
 
-    /// Light mode's `map_raw`: every colour but the swapped five is flipped.
+    /// Light mode's `map_raw`: every colour but the swapped six is flipped.
     #[inline]
     fn light_raw(&self, px: u16) -> u16 {
         if px == raw(theme::BG) {
@@ -286,6 +288,8 @@ impl Palette {
             raw(WARN_LIGHT)
         } else if px == raw(theme::ALERT) {
             raw(ALERT_LIGHT)
+        } else if px == raw(theme::PART_LIVE) {
+            raw(LIVE_LIGHT)
         } else {
             !px
         }
@@ -303,7 +307,7 @@ fn from_raw(px: u16) -> Rgb565 {
 }
 
 /// The colours the display shows for ACCENT, ACCENT_SOFT and BG (and, in
-/// light mode, WARN and ALERT). The soft accent rides the ground: in dark
+/// light mode, WARN, ALERT and PART_LIVE). The soft accent rides the ground: in dark
 /// mode it moves with BLACK by the ground's own step.
 #[inline(never)]
 pub fn palette(t: &ThemeSettings) -> Palette {

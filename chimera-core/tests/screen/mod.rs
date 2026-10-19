@@ -1089,6 +1089,17 @@ fn prime(ui: &mut UiState) {
 }
 
 /// Part 1 on INIT Algo as filter `kind`, on FLT (or FLT › MOD with `sub`).
+/// LFO 1 at 3 Hz, full depth, into FREQ at +64.
+pub fn lfo_on_freq(ui: &mut UiState) {
+    let l = &mut ui.params_mut().lfos[0];
+    (l.depth, l.rate) = (1.0, 3.0);
+    ui.mod_state_mut().set_fixed(
+        chimera_core::modulation::ModSource::Lfo1.index(),
+        chimera_core::modulation::FixedCol::Freq,
+        64,
+    );
+}
+
 fn on_flt(ui: &mut UiState, kind: chimera_core::dsp::filter::FilterKind, sub: bool) {
     init_part(ui, PartId::ALL[0]);
     ui.params_mut().filter.set_kind(kind);
@@ -1405,6 +1416,19 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::C, 90)); // RES: the pass band falls
         feed(ui, Input::turn(EncoderId::E, 1)); // KEYBD, stepped
     }),
+    // Modulation draws a ghost beside the set curve (#575): ENV AMT +40 on
+    // the 2040, an LFO on CLEAN's FREQ.
+    ("flt_2040_env_amt", |ui| {
+        on_flt(ui, FilterKind::K2040, false);
+        ui.params_mut().envelopes[0].sustain = 0.7; // held mid-note
+        feed(ui, Input::turn(EncoderId::B, -80)); // CUTOFF
+        feed(ui, Input::turn(EncoderId::D, 40)); // ENV AMT
+    }),
+    ("flt_clean_lfo", |ui| {
+        on_flt(ui, FilterKind::Svf, false);
+        feed(ui, Input::turn(EncoderId::B, -80)); // FREQ
+        lfo_on_freq(ui);
+    }),
     ("flt_mod_2040", |ui| {
         on_flt(ui, FilterKind::K2040, true);
         feed(ui, Input::turn(EncoderId::F, 1)); // MODE: fixed, dimmed
@@ -1431,6 +1455,23 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::B, -70)); // FREQ
         feed(ui, Input::turn(EncoderId::C, 90)); // Q: the pass band falls
     }),
+    // #574: the resonance peak at its real height, a 2040 at RES 0.3 and a
+    // LADDER at RES 0 (no peak).
+    ("flt_2040_res_30", |ui| {
+        on_flt(ui, FilterKind::K2040, false);
+        ui.params_mut().filter.resonance = 0.3;
+        feed(ui, Input::turn(EncoderId::B, -70)); // CUTOFF
+    }),
+    ("flt_clean_bp2", |ui| {
+        on_flt(ui, FilterKind::Svf, false);
+        ui.params_mut().filter.set_mode(FilterMode::Bp12);
+        ui.params_mut().filter.resonance = 0.3;
+        feed(ui, Input::turn(EncoderId::B, -70)); // FREQ
+    }),
+    ("flt_ladder_res_0", |ui| {
+        on_flt(ui, FilterKind::Ladder, false);
+        feed(ui, Input::turn(EncoderId::B, -70)); // FREQ
+    }),
     ("flt_mod_ladder", |ui| {
         on_flt(ui, FilterKind::Ladder, true);
         feed(ui, Input::turn(EncoderId::A, 20)); // LEVEL
@@ -1456,6 +1497,40 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::C, 1)); // FM3 IN = LFO 2
         feed(ui, Input::turn(EncoderId::D, 40)); // QM on ENV 3
         feed(ui, Input::turn(EncoderId::E, 20)); // QM IN = OP 6, the list's end
+    }),
+    // THEME's PAGES ROW (ADR 0145): FLT's two pages, no arrows; RES's
+    // three; MOD at ENV2, cut on the right; OSC at D1R, cut both ways, and
+    // at OP6, cut on the left; DRV, no pages, no row. Walked with
+    // STACK's keys, then drawn under ROW.
+    ("row_flt", |ui| {
+        on_flt(ui, FilterKind::Svf, false);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
+    ("row_res", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 1);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
+    ("row_mod", |ui| {
+        to_mod_sub(ui, 2, &reg::ENV_2);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
+    ("row_osc_mid", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        to_osc(ui);
+        to_osc_sub(ui, &chimera_core::ui::block_registry::ALGO_D1R);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
+    ("row_osc_last", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        to_osc(ui);
+        to_osc_sub(ui, &chimera_core::ui::block_registry::ALGO_OP_PAGES[5]);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
+    ("row_drv", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        plus(ui, 2);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
     }),
     ("env_a", |ui| {
         to_mod_sub(ui, 1, &reg::ENVELOPE);
@@ -2016,6 +2091,17 @@ pub const CASES: &[ScreenCase] = &[
         to_leaf(ui, &["PERSONALIZE", "THEME"]);
         feed(ui, Input::turn(EncoderId::C, 1)); // ACCENT AMBER, focused
     }),
+    // PERSONALIZE › CHAIN MAP (ADR 0145): PAGES turned to ROW, focused.
+    ("settings_personal_chain_map", |ui| {
+        to_leaf(ui, &["PERSONALIZE", "CHAIN MAP"]);
+        feed(ui, Input::turn(EncoderId::A, -1));
+    }),
+    // Long user names (ADR 0154's NORMAL pair for the LARGE case).
+    ("sound_browser_long", long_names),
+    // PERSONALIZE › TEXT SIZE (ADR 0154): SIZE at NORMAL, the default.
+    ("settings_personal_text_size", |ui| {
+        to_leaf(ui, &["PERSONALIZE", "TEXT SIZE"]);
+    }),
     // MIDI CONFIG › SYNC (ADR 0080): EXT, the default, focused.
     ("settings_midi_sync", |ui| {
         to_leaf(ui, &["MIDI CONFIG", "SYNC"]);
@@ -2175,6 +2261,75 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::E, -1).and_held(ButtonId::Mix));
         feed(ui, Input::turn(EncoderId::F, 40).and_held(ButtonId::Mix));
     }),
+    // TEXT SIZE LARGE (ADR 0154): each its NORMAL case's screen, the
+    // cells, the focus label, the hint and the lists a size up where each
+    // fits.
+    ("large_engine_algo", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        feed(ui, Input::turn(EncoderId::A, 2));
+        large(ui);
+    }),
+    ("large_algo_level", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        to_level_page(ui);
+        feed(ui, Input::turn(EncoderId::B, 60));
+        large(ui);
+    }),
+    ("large_bigviz_filter", |ui| {
+        plus(ui, 3);
+        feed(ui, Input::turn(EncoderId::C, 80));
+        feed(ui, Input::turn(EncoderId::B, -60));
+        large(ui);
+    }),
+    ("large_modal_amp", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 3);
+        large(ui);
+    }),
+    ("large_va_drive", |ui| {
+        load_init(ui, EngineType::Va);
+        plus(ui, 1);
+        large(ui);
+    }),
+    ("large_mixer_sends", |ui| {
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        feed(ui, Input::turn(EncoderId::C, 40));
+        large(ui);
+    }),
+    ("large_settings_top", |ui| {
+        tap(ui, ButtonId::Menu);
+        large(ui);
+    }),
+    ("large_settings_personal", |ui| {
+        to_leaf(ui, &["PERSONALIZE"]);
+        large(ui);
+    }),
+    ("large_sound_browser", |ui| {
+        let mut s = Sound::init(EngineType::Algo);
+        s.name = chimera_core::name::Name::new("WARM BASS").unwrap();
+        ui.project_mut().pool_store(SlotId::ALL[0], &s).unwrap();
+        let mut s = Sound::init(EngineType::Modal);
+        s.name = chimera_core::name::Name::new("GLASS PLUCK").unwrap();
+        ui.project_mut().pool_store(SlotId::ALL[1], &s).unwrap();
+        feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+        feed(ui, Input::turn(EncoderId::A, 1));
+        large(ui);
+    }),
+    // Long user names: the selected one takes its row whole at LARGE,
+    // the other is cut with an ellipsis, one face down the column.
+    ("large_sound_browser_long", |ui| {
+        long_names(ui);
+        large(ui);
+    }),
+    ("large_library_sounds", |ui| {
+        library_tab(ui, lib_card(), |_| {});
+        large(ui);
+    }),
+    // The leaf itself, SIZE turned from NORMAL to LARGE.
+    ("large_settings_text_size", |ui| {
+        to_leaf(ui, &["PERSONALIZE", "TEXT SIZE"]);
+        feed(ui, Input::turn(EncoderId::A, 1));
+    }),
 ];
 
 /// `AudioStats` fixture for AUDIO LOAD's and ABOUT's goldens and tests.
@@ -2195,6 +2350,51 @@ pub fn audio_fixture() -> AudioStats {
     s
 }
 
+/// THEME's PAGES at `pages`.
+pub fn set_pages(ui: &mut UiState, pages: chimera_core::ui::theme_settings::Pages) {
+    let t = ui.theme();
+    ui.set_theme(chimera_core::ui::theme_settings::ThemeSettings { pages, ..t });
+}
+
+/// Two long user names in the pool, the browser open on the first.
+fn long_names(ui: &mut UiState) {
+    for (slot, name, engine) in [
+        (0, "CATHEDRAL ORGANS", EngineType::Algo),
+        (1, "SUBMERGED STRING", EngineType::Modal),
+    ] {
+        let mut s = Sound::init(engine);
+        s.name = chimera_core::name::Name::new(name).unwrap();
+        ui.project_mut().pool_store(SlotId::ALL[slot], &s).unwrap();
+    }
+    feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+    feed(ui, Input::turn(EncoderId::A, 0));
+}
+
+/// TEXT SIZE LARGE, set after a case's keys: each large case is its
+/// NORMAL golden's screen, a size up.
+fn large(ui: &mut UiState) {
+    set_text(ui, chimera_core::ui::theme::TextSize::Large);
+}
+
+/// TEXT SIZE at `text` (ADR 0154).
+pub fn set_text(ui: &mut UiState, text: chimera_core::ui::theme::TextSize) {
+    let t = ui.theme();
+    ui.set_theme(chimera_core::ui::theme_settings::ThemeSettings { text, ..t });
+}
+
+/// A fresh UI under STACK: ADR 0081's keys, EDIT down and SEQ up, which
+/// the suites walk pages with (ROW flips them, ADR 0145).
+pub fn stack_ui() -> UiState {
+    let mut ui = UiState::new();
+    stack_map(&mut ui);
+    ui
+}
+
+/// The map as the goldens before ROW drew it.
+pub fn stack_map(ui: &mut UiState) {
+    set_pages(ui, chimera_core::ui::theme_settings::Pages::Stack);
+}
+
 /// Build case `name`'s screen: a fresh UiState, the case's input, settled lerps.
 pub fn ui_for(name: &str) -> UiState {
     let (_, setup) = CASES
@@ -2202,6 +2402,8 @@ pub fn ui_for(name: &str) -> UiState {
         .find(|c| c.0 == name)
         .unwrap_or_else(|| panic!("no case {name}"));
     let mut ui = UiState::new();
+    // Recorded under STACK (ADR 0145); a `row_` case sets ROW itself.
+    stack_map(&mut ui);
     setup(&mut ui);
     settle(&mut ui);
     if let Some(&(_, clip)) = LEDS.iter().find(|l| l.0 == name) {

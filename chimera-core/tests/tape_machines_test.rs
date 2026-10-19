@@ -139,7 +139,7 @@ fn reverse_code_loads_as_loop_swapped() {
 }
 
 /// ONESHOT (7), LOOP (0), PING-PONG (2) and REVERSE (1) load as PLAY
-/// (ADR 0145): ONE with FADE HOLD, LOOP and PING keeping their DRAG, and
+/// (ADR 0170): ONE with FADE HOLD, LOOP and PING keeping their DRAG, and
 /// LOOP with END before START.
 #[test]
 fn play_loads_old_codes() {

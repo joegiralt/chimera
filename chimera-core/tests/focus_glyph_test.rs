@@ -47,7 +47,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Va", "MODE", FocusGlyph::Va(VaGlyph::Mode)),
     ("Va", "WAVE1", FocusGlyph::Va(VaGlyph::Wave(VaOsc::One))),
     ("Va", "WAVE2", FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two))),
-    // TAPE's machine cells: the machine's glyph (ADR 0148).
+    // TAPE's machine cells: the machine's glyph (ADR 0173).
     ("TapeEngine", "MODEL", TAPE),
     ("TapeEngine", "TYPE", TAPE),
     ("TapeEngine", "SLICE", NONE),
@@ -144,6 +144,8 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Theme", "HINTS", SWITCH),
     ("Theme", "INVERT", SWITCH),
     ("Theme", "SAVER", NONE),
+    ("Theme", "PAGES", NONE),
+    ("Theme", "TEXT", NONE),
     ("Midi", "SYNC", NONE),
     ("Midi", "PUSH", SWITCH),
     ("OrbitChords", "KEY", NONE),
@@ -179,6 +181,10 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("Lfo", "TYPE"),
     // MONO and POLY: neither is off.
     ("Part", "MODE"),
+    // ROW and STACK: two drawings of the map.
+    ("Theme", "PAGES"),
+    // NORMAL and LARGE: two sizes, neither off.
+    ("Theme", "TEXT"),
     // CUT and GLIDE: two ways to steal; GLIDE could read as "glide on".
     ("Pitch", "STEAL"),
     // CHROMA and MUSICAL: two ladders for PITCH's steps.
@@ -267,7 +273,7 @@ fn every_two_state_choice_is_decided() {
                 "{b:?}.{}: SWITCH or TWO_PEERS, once",
                 s.ident
             );
-            // TAPE's two-word cells show the machine (ADR 0148).
+            // TAPE's two-word cells show the machine (ADR 0173).
             if peers {
                 assert!(
                     matches!(s.glyph, FocusGlyph::None | FocusGlyph::Tape),

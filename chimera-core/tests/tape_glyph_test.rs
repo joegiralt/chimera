@@ -1,4 +1,4 @@
-//! TAPE's machine glyphs (#641, ADR 0148): each machine's still and live
+//! TAPE's machine glyphs (#641, ADR 0173): each machine's still and live
 //! pictures locked by golden, the focus band's glyph keyed only on its
 //! quantised steps (a dirty redraw is a full one while a knob turns, and
 //! nothing redraws at idle).
@@ -727,7 +727,8 @@ fn dimmed_cells_keep_the_glyph() {
     for (by, mode, page, slot, id) in cells {
         let model = TapeModel::ALL[by as usize];
         assert!(!reads_in(model, mode, id), "{model:?} {mode:?} {id:?}");
-        let mut ui = chimera_core::ui::UiState::new();
+        // Under STACK, EDIT goes down to the model page (ADR 0145).
+        let mut ui = stack_ui();
         tape_deck(&mut ui, by);
         play_mode(&mut ui, mode);
         // DECK's TAPE cell: a live glyph.

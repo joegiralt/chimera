@@ -1,4 +1,4 @@
-# 0147. Stream long TAPE sources from the card by DMA, behind heads held in RAM
+# 0172. Stream long TAPE sources from the card by DMA, behind heads held in RAM
 
 - **Status:** Proposed
 - **Deciders:** owner (streaming is in; decisions 1, 5 and 8, 2026-10-15), firmware

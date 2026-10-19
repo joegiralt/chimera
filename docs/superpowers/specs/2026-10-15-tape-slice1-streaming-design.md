@@ -2,7 +2,7 @@
 
 - **Status:** Draft for owner review (2026-10-15)
 - **Umbrella:** `2026-10-15-tape-sampler-design.md` (§ 5 streaming, § 9 slices 0–1)
-- **ADRs:** 0147 (streaming by DMA behind heads), 0145 (PLAY folds ONESHOT, LOOP and PING-PONG)
+- **ADRs:** 0172 (streaming by DMA behind heads), 0170 (PLAY folds ONESHOT, LOOP and PING-PONG)
 - **Issue:** private issue #476
 - **Rules:** no_std; no heap, blocking or panic in audio; every `unsafe` with `// SAFETY:`; params never snap; host first, the unit last.
 
@@ -243,7 +243,7 @@ The audio reads a slot's bytes only after an `Acquire` load shows Ready under it
 - **Streamed** otherwise, if MODEL is PLAY in MODE ONE or a forward LOOP. Its `held` is the descriptor, the head table and the heads: START's head, and LOOP's loop-start head when MODE is LOOP. A head is `HEAD_MS` long, or to END if that is shorter. The loop-start head begins XFADE (at most 100 ms) before the loop's start, so the wrap's crossfade, which reads the material before the loop, reads RAM. The UI resolves `runs` through `Store::runs`, new in `chimera-hal` beside `read_at` (`SourceLoad` is generic over `Store`; `FatStore` forwards its own `runs`; `DirStore` and `MemStore` give one synthetic run per file that the desktop's card model maps back; the default is `Io`) (more than 32 refuses: `FRAGMENTED · COPY IT AGAIN`), writes the registry row, reads the heads with `read_heads_into` (beside `read_source_into`, the same 4 KB a UI pass), and publishes.
 - **Refused** otherwise: `PING NEEDS RAM`, `REVERSE NEEDS RAM`, or the machine's own reason (SCRUB, STRETCH and WAVE are RAM only). The meter's preview shows the heads' cost.
 - A streamed source whose MODEL or MODE later changes to one that needs RAM refuses its note-ons with the same reasons (`TapeDeck::refuses`), before allocation.
-- **Re-heading.** START and the loop's start aren't modulatable (note-on, ADR 0093), but they can be turned. 200 ms after the last turn, the UI re-stages the heads: a new row under the gate, as a compaction moves bytes, or, while a note holds the source, beside it under a free id on the same file, the old id retiring as its notes end (#598, ADR 0147). Notes started before that read a stale head: their START has none, so they start cold (§ 7.3).
+- **Re-heading.** START and the loop's start aren't modulatable (note-on, ADR 0093), but they can be turned. 200 ms after the last turn, the UI re-stages the heads: a new row under the gate, as a compaction moves bytes, or, while a note holds the source, beside it under a free id on the same file, the old id retiring as its notes end (#598, ADR 0172). Notes started before that read a stale head: their START has none, so they start cold (§ 7.3).
 
 ## 6. Scheduling: `chimera-engine/src/stream/edf.rs`
 
