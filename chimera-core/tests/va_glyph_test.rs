@@ -162,6 +162,8 @@ const MODE_GOLDENS: &[(&str, u64)] = &[
     ("bits_100", 0xc67fbc52da2a4a08),
     ("fm_050", 0x53047951d090ece0),
     ("fm_100", 0x8f8eca18b59af852),
+    ("am_050", 0x2a982566b01fa105),
+    ("am_100", 0xc963df042a8e7b3d),
     ("max_050", 0x1831da0c4eb7b178),
     ("max_100", 0x884d5c6f119105ce),
 ];
@@ -188,6 +190,14 @@ fn mode_scopes_match_their_goldens() {
 fn fm_scope_reads_osc_1_through_osc_2() {
     assert_eq!(mix(VaMode::Fm, 0.0), mix(VaMode::Mix, 0.0));
     assert_ne!(mix(VaMode::Fm, 1.0), mix(VaMode::Mix, 0.0));
+}
+
+/// AM's scope is OSC 1 scaled by OSC 2 unipolarly: at BLEND 0 it is MIX's
+/// OSC 1 alone; at BLEND 1 it differs from it.
+#[test]
+fn am_scope_scales_osc_1_by_osc_2() {
+    assert_eq!(mix(VaMode::Am, 0.0), mix(VaMode::Mix, 0.0));
+    assert_ne!(mix(VaMode::Am, 1.0), mix(VaMode::Mix, 0.0));
 }
 
 /// MAX's scope is the plain mix at BLEND 0 and rides above it at BLEND 1
@@ -231,6 +241,7 @@ fn blend_ends_name_what_amount_does() {
     assert_eq!(blend_ends(VaMode::Xor), ["MIX", "XOR"]);
     assert_eq!(blend_ends(VaMode::Bits), ["CLEAN", "CRUSH"]);
     assert_eq!(blend_ends(VaMode::Fm), ["CLEAN", "DEEP"]);
+    assert_eq!(blend_ends(VaMode::Am), ["CLEAN", "AM"]);
 }
 
 fn label_w(s: &str) -> i32 {
