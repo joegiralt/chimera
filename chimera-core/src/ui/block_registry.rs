@@ -23,7 +23,7 @@ use crate::ui::page::{PageLayout, ValFmt};
 use crate::ui::reverb_panel::RevPage;
 use crate::ui::settings::leaves::{
     ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, DEMO_LEAVES, LIVE_SNAP_LEAF, MAP_LEAF,
-    OUTPUTS_LEAF, POOL_LEAF, PUSH_LEAF, SAVER_LEAF, SYNC_LEAF, THEME_LEAF, TUNING_LEAF,
+    OUTPUTS_LEAF, POOL_LEAF, PUSH_LEAF, SAVER_LEAF, SYNC_LEAF, TEXT_LEAF, THEME_LEAF, TUNING_LEAF,
 };
 use crate::ui::theme_settings::ThemeSettings;
 
@@ -910,6 +910,24 @@ pub static SYS_MAP: BlockDef = BlockDef {
     ],
 };
 
+/// SETTINGS › PERSONALIZE › TEXT SIZE: SIZE, how large the reading text
+/// draws (ADR 0154). Held in the THEME block, stored in SYSTEM with it.
+pub static SYS_TEXT: BlockDef = BlockDef {
+    id: 109,
+    name: "Text Size",
+    short: "TXT",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Theme, ThemeSettings::TEXT),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
 /// SYSTEM › PUSH ENCODERS: the control board's encoders push (ADR 0140).
 pub static SYS_PUSH: BlockDef = BlockDef {
     id: 107,
@@ -1275,7 +1293,7 @@ pub static DEMO_BLOCKS: [ChainBlock; 15] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 19] = [
+const FIXED: [&ChainDef2; 20] = [
     &ALGO_CHAIN,
     &ALGO_FORMANT_CHAIN,
     &MODAL_PLUCK_CHAIN,
@@ -1289,6 +1307,7 @@ const FIXED: [&ChainDef2; 19] = [
     THEME_LEAF.chain(),
     SAVER_LEAF.chain(),
     MAP_LEAF.chain(),
+    TEXT_LEAF.chain(),
     PUSH_LEAF.chain(),
     ABOUT_LEAF.chain(),
     AUDIO_LOAD_LEAF.chain(),

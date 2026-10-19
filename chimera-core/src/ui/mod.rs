@@ -1795,6 +1795,7 @@ impl UiState {
             map: (at.screen() == Some(Screen::MidiMap)).then(|| self.map_band()),
             scene: self.project.orbit().current(),
             orbit: self.orbit_band(at),
+            text: self.theme.text,
         }
     }
 
@@ -3121,8 +3122,18 @@ impl UiState {
                 b.lib_scroll(),
             ),
         };
-        let (hints, refusal) = (self.theme.hints, self.refusal());
-        browser::draw(d, &self.project, view, part, cursor, scroll, hints, refusal);
+        let (hints, refusal, text) = (self.theme.hints, self.refusal(), self.theme.text);
+        browser::draw(
+            d,
+            &self.project,
+            view,
+            part,
+            cursor,
+            scroll,
+            hints,
+            refusal,
+            text,
+        );
     }
 
     /// The open prompt's panel, if any, over the Sound rung.
@@ -3203,6 +3214,7 @@ impl UiState {
             }),
             hints: self.theme.hints,
             pages: self.theme.pages,
+            text: self.theme.text,
             push: self.push_on(),
             ctx,
             focus,
@@ -3418,7 +3430,7 @@ impl UiState {
     ) {
         self.region_set
             .set_screen(self.layout(), self.prompt_open());
-        self.region_set.drawn_hints = Some((self.theme.hints, self.push_on()));
+        self.region_set.drawn_hints = Some((self.theme.hints, self.push_on(), self.theme.text));
         let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
         {
             let f = self.frame(perf, audio, scope);
@@ -3432,11 +3444,11 @@ impl UiState {
         }
     }
 
-    /// THEME's HINTS or SYSTEM's PUSH ENCODERS (the push hint) moved since
-    /// the bands were drawn, noted as drawn now: every band and the
-    /// browser redraw, so no page keys its band on them.
+    /// THEME's HINTS, SYSTEM's PUSH ENCODERS (the push hint) or TEXT SIZE
+    /// moved since the bands were drawn, noted as drawn now: every band and
+    /// the browser redraw, so no page keys its band on them.
     fn hints_moved(&mut self) -> bool {
-        let now = Some((self.theme.hints, self.push_on()));
+        let now = Some((self.theme.hints, self.push_on(), self.theme.text));
         core::mem::replace(&mut self.region_set.drawn_hints, now) != now
     }
 
@@ -3537,6 +3549,7 @@ impl UiState {
                         |d| d.pixel_buffer(),
                         gauge,
                         renderer::Renderer::focus_hint(&f),
+                        f.text,
                     )
                 {
                     flush_list[flush_count] = rows;

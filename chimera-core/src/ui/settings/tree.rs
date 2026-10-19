@@ -6,7 +6,7 @@
 use super::leaves::PUSH_LEAF;
 use super::leaves::{
     ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, LIVE_SNAP_LEAF, MAP_LEAF, OUTPUTS_LEAF, OnePage,
-    POOL_LEAF, SAVER_LEAF, THEME_LEAF, TUNING_LEAF,
+    POOL_LEAF, SAVER_LEAF, TEXT_LEAF, THEME_LEAF, TUNING_LEAF,
 };
 use core::num::NonZeroU16;
 
@@ -174,10 +174,11 @@ static AUDIO: [Row; 3] = [
     row("TUNING", Leaf(&TUNING_LEAF)),
 ];
 
-static PERSONALIZE: [Row; 3] = [
+static PERSONALIZE: [Row; 4] = [
     row("THEME", Leaf(&THEME_LEAF)),
     crumb("SCREENSAVER", "SAVER", Leaf(&SAVER_LEAF)),
     crumb("CHAIN MAP", "MAP", Leaf(&MAP_LEAF)),
+    crumb("TEXT SIZE", "TEXT", Leaf(&TEXT_LEAF)),
 ];
 
 /// A row per DEMO page, by its short name.

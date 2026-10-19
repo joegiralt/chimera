@@ -313,6 +313,8 @@ where
 /// the mid-size value font, so the longest message (`NOT MODULATABLE`)
 /// still fits the full row width; the label above is unchanged, so the
 /// message still reads against the parameter it was tried on.
+///
+/// The label takes `size`'s face where it fits left of the gauge (ADR 0154).
 pub fn focus_band<D>(
     d: &mut D,
     label: &str,
@@ -320,10 +322,11 @@ pub fn focus_band<D>(
     gauge: Gauge,
     look: Look,
     status: Option<PrimeStatus>,
+    size: theme::TextSize,
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
-    focus_label(d, label, theme::MARGIN_X);
+    focus_label(d, label, &gauge, size);
     let layout = layout(value_text, &gauge);
     // A value too wide for the large numerals (`NOT A TRANSWAVE`) reads at
     // the status size, the whole row its own.
@@ -423,20 +426,34 @@ pub fn status_font(s: &str) -> &'static FontRenderer {
     }
 }
 
-/// Focus label at `x`; returns where it ends.
-fn focus_label<D>(d: &mut D, label: &str, x: i32) -> i32
+/// Focus label at the margin, at `size` where it fits left of `gauge`.
+fn focus_label<D>(d: &mut D, label: &str, gauge: &Gauge, size: theme::TextSize)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    x + draw::text_tracked(
+    draw::text_fit(
         d,
-        &theme::FONT_VALUE,
+        theme::Face::Value,
+        size,
         label,
-        x,
+        theme::MARGIN_X,
         theme::FOCUS_LABEL_Y,
         theme::MID,
         theme::LABEL_TRACKING,
-    )
+        focus_label_slot(gauge),
+    );
+}
+
+/// The focus label's slot: the band's top to clear of the large value,
+/// the margin to the gauge (less `GAUGE_GAP`) or the far margin.
+pub fn focus_label_slot(gauge: &Gauge) -> draw::Slot {
+    let far = theme::SCREEN_W - theme::MARGIN_X;
+    draw::Slot {
+        left: theme::MARGIN_X,
+        top: theme::HEADER_BOTTOM,
+        right: gauge_left(gauge).map_or(far, |l| l - GAUGE_GAP),
+        bottom: theme::FOCUS_LABEL_Y + 4,
+    }
 }
 
 /// The value large and its gauge; with none, the text has the band.
@@ -1244,9 +1261,10 @@ pub struct Cell<'a> {
     pub motion: Option<Motion>,
 }
 
-/// Draw cell `i` (knob order a–f, 3×2) with its label baseline `top + row·36`.
-/// `None` is an empty slot: a dim dash.
-pub fn cell<D>(d: &mut D, i: usize, top: i32, cell: Option<&Cell>)
+/// Draw cell `i` (knob order a–f, 3×2) with its label baseline `top + row·36`,
+/// its lines and faces at `size` (ADR 0154). `None` is an empty slot: a dim
+/// dash. Returns the value's advance (0 with none).
+pub fn cell<D>(d: &mut D, i: usize, top: i32, cell: Option<&Cell>, size: theme::TextSize) -> i32
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -1254,42 +1272,37 @@ where
     let y = top + (i / 3) as i32 * theme::CELL_ROW_H;
     let Some(c) = cell else {
         draw::fill_rect(d, x, y - 3, 8, 1, theme::FAINT);
-        return;
+        return 0;
     };
+    let lines = theme::cell_lines(size);
+    let (label_slot, value_slot) = cell_slots(x, y, lines);
     let dim = c.look == Look::Dimmed;
     let label_color = if c.active && !dim {
         theme::ACCENT
     } else {
         theme::MID
     };
-    draw::text_tracked(
+    draw::text_fit(
         d,
-        &theme::FONT_LABEL,
+        theme::Face::Label,
+        size,
         c.label,
         x,
-        y,
+        y + lines.label,
         label_color,
         theme::LABEL_TRACKING,
+        label_slot,
     );
     if c.look == Look::Absent {
-        draw::fill_rect(d, x, y + theme::CELL_VALUE_DY - 5, 12, 2, theme::INK2);
-        return;
+        draw::fill_rect(d, x, y + lines.value - 5, 12, 2, theme::INK2);
+        return 0;
     }
     let value_color = match (dim, c.active) {
         (true, _) => theme::MID,
         (false, true) => theme::INK,
         (false, false) => theme::INK2,
     };
-    // Tracked by 0: the same glyphs, and the marks (RING's "3 › P3").
-    draw::text_tracked(
-        d,
-        &theme::FONT_VALUE,
-        c.text,
-        x,
-        y + theme::CELL_VALUE_DY,
-        value_color,
-        0,
-    );
+    let advance = cell_value(d, c.text, x, y + lines.value, value_color, value_slot, size);
     let bar = c.motion.map_or(!c.fmt.is_discrete(), |m| m.is_continuous());
     if bar && !dim {
         let fill = if c.active {
@@ -1300,7 +1313,7 @@ where
         draw::bar(
             d,
             x,
-            y + theme::CELL_BAR_DY,
+            y + lines.bar,
             theme::CELL_BAR_W,
             theme::CELL_BAR_H,
             c.value,
@@ -1317,14 +1330,75 @@ where
         } else {
             (mid + len, mid)
         };
-        draw::fill_rect(d, mid, y + theme::CELL_MOD_DY - 1, 1, 3, theme::MID);
-        draw::fill_rect(
-            d,
-            x0,
-            y + theme::CELL_MOD_DY,
-            (x1 - x0).max(1),
-            1,
-            theme::INK2,
-        );
+        draw::fill_rect(d, mid, y + lines.modl - 1, 1, 3, theme::MID);
+        draw::fill_rect(d, x0, y + lines.modl, (x1 - x0).max(1), 1, theme::INK2);
     }
+    advance
+}
+
+/// A cell's value from `x` on baseline `y`. LARGE: whole in the large
+/// face where it fits; else its number large and its unit in NORMAL's
+/// value face beside it, as the focus value sets them (`3.54` large,
+/// `kHz` small); else whole in NORMAL's (ADR 0154). Returns the advance.
+fn cell_value<D>(
+    d: &mut D,
+    text: &str,
+    x: i32,
+    y: i32,
+    color: Rgb565,
+    slot: draw::Slot,
+    size: theme::TextSize,
+) -> i32
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    use theme::{Face, TextSize};
+    let room = slot.right - x;
+    let whole = theme::fit(size, room, |z| {
+        draw::text_width(theme::font(Face::Value, z), text, 0)
+    });
+    let (number, unit) = split_unit(text);
+    let unit_w = draw::text_width(&theme::FONT_VALUE, unit, 0) + UNIT_GAP;
+    let split = whole == TextSize::Normal
+        && !unit.is_empty()
+        && theme::fit(size, room - unit_w, |z| {
+            draw::text_width(theme::font(Face::Value, z), number, 0)
+        }) == TextSize::Large;
+    if !split {
+        // Tracked by 0: the same glyphs, and the marks (RING's "3 › P3").
+        return draw::text_fit(d, Face::Value, whole, text, x, y, color, 0, slot);
+    }
+    let head = draw::text_fit(
+        d,
+        Face::Value,
+        TextSize::Large,
+        number,
+        x,
+        y,
+        color,
+        0,
+        slot,
+    );
+    head + UNIT_GAP + draw::text(d, &theme::FONT_VALUE, unit, x + head + UNIT_GAP, y, color)
+}
+
+/// A cell's label and value slots, the cell at `x` with its row's label
+/// baseline at `y`: a column less a 4 px gutter wide; the label from the
+/// row's top to its baseline, the value from there to the bar.
+pub fn cell_slots(x: i32, y: i32, lines: theme::CellLines) -> (draw::Slot, draw::Slot) {
+    let right = x + theme::CELL_COL_W - 4;
+    let split = y + lines.label + 1;
+    let label = draw::Slot {
+        left: x,
+        top: y - (theme::CELL_LABEL_Y - theme::VIZ_BAND_BOTTOM),
+        right,
+        bottom: split,
+    };
+    let value = draw::Slot {
+        left: x,
+        top: split,
+        right,
+        bottom: y + lines.bar,
+    };
+    (label, value)
 }

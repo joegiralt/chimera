@@ -108,6 +108,8 @@ pub struct Frame<'a> {
     pub hints: bool,
     /// THEME's PAGES: how the map shows sub-pages (ADR 0145).
     pub pages: crate::ui::theme_settings::Pages,
+    /// TEXT SIZE: the reading text's faces (ADR 0154).
+    pub text: theme::TextSize,
     /// SYSTEM's PUSH ENCODERS: a value cell with no hint of its own hints
     /// the pushes (ADR 0140).
     pub push: bool,
@@ -676,10 +678,10 @@ impl Renderer {
             );
         }
         if f.def.viz == VizType::AudioStats {
-            return audio_page::draw_focus(display, f.def, f.audio);
+            return audio_page::draw_focus(display, f.def, f.audio, f.text);
         }
         if f.def.viz == VizType::Pool {
-            return crate::ui::pool_page::draw_focus(display, f.pool);
+            return crate::ui::pool_page::draw_focus(display, f.pool, f.text);
         }
         let view = view::view(f.def, f.focus, &f.ctx);
         if view == View::Empty {
@@ -694,21 +696,25 @@ impl Renderer {
                 o.gauge,
                 look(f, f.focus),
                 f.prime_status,
+                f.text,
             );
-            return hint::focus(display, f.hint(o.hint));
+            let right = hint_right(&o.gauge);
+            return hint::focus(display, f.hint(o.hint), f.text, right);
         }
         let buf = value_text(f, f.focus, self.set[f.focus].target());
+        let gauge = self.gauge(f);
         components::focus_band(
             display,
             view.label(),
             buf.as_str(),
-            self.gauge(f),
+            gauge,
             look(f, f.focus),
             f.prime_status,
+            f.text,
         );
         match f.held.filter(|s| held_on(f, &view) == Some(s.held)) {
             Some(s) => Self::draw_reason(display, s.why),
-            None => hint::focus(display, Self::focus_hint(f)),
+            None => hint::focus(display, Self::focus_hint(f), f.text, hint_right(&gauge)),
         }
         if let View::Source(view::SourceState::Card { cost, free, .. }) = view {
             crate::ui::source_cell::draw_card_row(display, f.pool, cost, free, f.hints);
@@ -873,6 +879,7 @@ impl Renderer {
         fb: impl FnOnce(&mut D) -> &mut [u16],
         gauge: Gauge,
         hint: hint::Hint,
+        text: theme::TextSize,
     ) -> Option<(u16, u16)>
     where
         D: DrawTarget<Color = Rgb565>,
@@ -881,7 +888,7 @@ impl Renderer {
         Self::clear_rect_fb(fb(display), x, y, w, h);
         components::draw_gauge(display, gauge);
         // The box clears the hint's top row where the two meet.
-        hint::focus(display, hint);
+        hint::focus(display, hint, text, hint_right(&gauge));
         Some((y as u16, (y + h) as u16))
     }
 
@@ -891,19 +898,23 @@ impl Renderer {
         D: DrawTarget<Color = Rgb565>,
     {
         match f.def.viz {
-            VizType::AudioStats => return audio_page::draw_cells(display, f.def, f.audio, top),
+            VizType::AudioStats => {
+                return audio_page::draw_cells(display, f.def, f.audio, top, f.text);
+            }
             VizType::Pool => {
-                return crate::ui::pool_page::draw_cells(display, f.def, f.pool, top);
+                return crate::ui::pool_page::draw_cells(display, f.def, f.pool, top, f.text);
             }
             VizType::About => {
-                return crate::ui::about_page::draw_cells(display, f.def, f.audio, f.card, top);
+                return crate::ui::about_page::draw_cells(
+                    display, f.def, f.audio, f.card, top, f.text,
+                );
             }
             _ => {}
         }
         for i in 0..self.anim.len() {
             let v = view::view(f.def, i, &f.ctx);
             if v == View::Empty {
-                components::cell(display, i, top, None);
+                components::cell(display, i, top, None, f.text);
                 continue;
             }
             let value = self.anim[i].current();
@@ -938,13 +949,13 @@ impl Renderer {
                 look: look(f, i),
                 motion: v.addr().and_then(|a| a.spec()).map(|s| s.motion()),
             };
-            components::cell(display, i, top, Some(&c));
+            let w = components::cell(display, i, top, Some(&c), f.text);
             if f.clip > 0.0 && v.addr() == Some(LEVEL) {
-                let w = draw::text_width(&theme::FONT_VALUE, buf.as_str(), 0);
                 draw::clip_led(
                     display,
                     theme::MARGIN_X + (i % 3) as i32 * theme::CELL_COL_W + w + LED_DX,
-                    top + (i / 3) as i32 * theme::CELL_ROW_H + theme::CELL_VALUE_DY - LED_RISE,
+                    top + (i / 3) as i32 * theme::CELL_ROW_H + theme::cell_lines(f.text).value
+                        - LED_RISE,
                     f.clip,
                 );
             }
@@ -987,6 +998,12 @@ impl Renderer {
         let end = y_end as usize * theme::SCREEN_W as usize;
         fb[start..end].fill(bg);
     }
+}
+
+/// Where a LARGE focus hint must end: clear of `gauge`, which its taller
+/// line would reach (ADR 0154).
+fn hint_right(gauge: &Gauge) -> i32 {
+    components::focus_label_slot(gauge).right
 }
 
 /// `addrs`' stored values, normalized: `eased_set`'s fallback for a param
