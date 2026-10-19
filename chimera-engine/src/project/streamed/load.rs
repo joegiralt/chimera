@@ -100,10 +100,11 @@ impl StreamLoad {
         }
         if let Some(id) = self.rehead {
             p.bump();
-            return match p.pool.source_rehead_timed(id, len) {
-                true => Ok(Some(id)),
-                false => Err(StreamFail::Sounding),
-            };
+            return p
+                .pool
+                .source_rehead_timed(id, len)
+                .map(Some)
+                .ok_or(StreamFail::Sounding);
         }
         p.bump();
         p.pool

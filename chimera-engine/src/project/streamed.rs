@@ -92,7 +92,8 @@ pub enum StreamFail {
     Pool(PoolFull),
     /// Missing, damaged framing, or a card fault.
     Read(SourceReadError),
-    /// A re-head's source sounds: it waits for its notes (#588).
+    /// A re-head's source sounds and its heads couldn't go in beside it
+    /// (nothing free, or the pool refused): it waits (#588, #598).
     Sounding,
 }
 

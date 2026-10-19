@@ -10,7 +10,9 @@ use core::sync::atomic::Ordering;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::engines::EngineSlot;
-use chimera_core::dsp::tape_engine::heads::{Bounds, shortest, window_end_min, window_start};
+use chimera_core::dsp::tape_engine::heads::{
+    Bounds, shortest, window_end, window_end_min, window_start,
+};
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
     COST_STREAM, FADE_HOLD, INC_MAX, PlayMode, SliceCode, TapeEngine, TapeEngineParams, TapeModel,
@@ -1915,4 +1917,140 @@ fn frame_error_counts() {
     let s = &pl.st.card.stats;
     assert_eq!(s.frame_errors.load(Ordering::Relaxed), 1);
     assert_eq!(pl.st.card.bus.fault(), CardFault::Read);
+}
+
+/// #609 (I1): a LOOP bed over a cluster of 9 rotted chunks, for several
+/// laps. The card is blamed for the first two failures (each a fault and a
+/// re-init); their second failures condemn the file, and from then on no
+/// lap faults or reads a bad chunk again: the voice drops out over them
+/// and comes back each lap.
+#[test]
+fn a_rotted_cluster_in_a_loop_faults_twice_then_never() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let p = TapeEngineParams {
+        size: 1.0,
+        position: 0.0,
+        xfade: 0.0,
+        drag: FADE_HOLD,
+        tape: 0.0,
+        age: 0.0,
+        ..params(PlayMode::Loop, 0.0, 0.05)
+    };
+    let ws = window_start(p.start, FRAMES);
+    let we = window_end(ws, p.end, FRAMES, RATE);
+    let b = Bounds::of(ws, we, (p.size, p.position, p.xfade), RATE);
+    let lap = (b.frames() / 32) as usize;
+    let (rings, third) = rings();
+    let mut st = Stream::new(&rings, &third, &whole, 0);
+    st.card.rot_chunks(2..11);
+    let src = OneSource::new(&st.card.held(&heads_at(&p, FRAMES, 60), HF));
+    let mut pl = Played::new(st, src, &[(0, p)]);
+    pl.on(0, 60);
+    let mut faults = Vec::new();
+    let mut cleared_at = None;
+    let mut level = Vec::new();
+    for k in 0..5 * lap {
+        let was = pl.st.card.bus.fault();
+        pl.block();
+        if was == CardFault::Clear && pl.st.card.bus.fault() == CardFault::Read {
+            faults.push(k);
+            cleared_at = Some(k + 10);
+        }
+        // The UI's re-init and mount, a few blocks on.
+        if cleared_at == Some(k) {
+            pl.st.card.bus.set_fault(CardFault::Clear);
+        }
+        let x = pl.rig.inst.part_bus(0);
+        level.push(x.iter().fold(0.0f32, |m, y| m.max(y.abs())));
+    }
+    let stats = &pl.st.card.stats;
+    eprintln!(
+        "DBG lap {lap} faults {faults:?} fe {} un {}",
+        stats.frame_errors.load(Ordering::Relaxed),
+        stats.unreadable.load(Ordering::Relaxed)
+    );
+    assert_eq!(
+        faults.len(),
+        2,
+        "two suspects, then the verdict: {faults:?}"
+    );
+    assert!(faults[1] < lap, "both in the first lap");
+    assert_eq!(
+        stats.frame_errors.load(Ordering::Relaxed),
+        4,
+        "each read twice"
+    );
+    assert_eq!(pl.st.card.bus.fault(), CardFault::Clear);
+    // Every later lap still plays (its good chunks and heads) and drops out.
+    for l in 2..5 {
+        let w = &level[l * lap..(l + 1) * lap];
+        assert!(w.iter().any(|&x| x > 0.1), "lap {l} plays");
+        assert!(w.iter().any(|&x| x < 0.05), "lap {l} drops out");
+    }
+}
+
+/// #609: a rotted record faults the card the first time it fails to
+/// de-frame (the card may have sent the wrong blocks); once the re-init
+/// clears that, the same chunk failing again is the file's: no second
+/// fault, counted, passed over. Only the voice reading it drops out over
+/// the bad chunk and comes back past it; another stream plays on.
+#[test]
+fn a_rotted_chunk_drops_out_its_voice_not_the_card() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let mut st = Stream::new(&rings, &third, &whole, 0);
+    st.card.rot_chunks(4..5);
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let far = TapeEngineParams {
+        start: 0.5,
+        ..one_hold()
+    };
+    let mut pl = Played::new(st, src, &[(0, one_hold()), (2, far)]);
+    pl.on(0, 60);
+    pl.on(2, 60);
+    let (mut faults, mut fault_at, mut cleared) = (0, None, None);
+    let peak = |x: &[f32]| x.iter().fold(0.0f32, |m, y| m.max(y.abs()));
+    let (mut near, mut far_out) = (Vec::new(), Vec::new());
+    for k in 0..900 {
+        let was = pl.st.card.bus.fault();
+        pl.block();
+        if was == CardFault::Clear && pl.st.card.bus.fault() == CardFault::Read {
+            faults += 1;
+            fault_at.get_or_insert(k);
+        }
+        // The UI's re-init and mount, a few blocks on.
+        if fault_at.is_some_and(|f| k == f + 10) {
+            pl.st.card.bus.set_fault(CardFault::Clear);
+            cleared = Some(k);
+        }
+        near.push(peak(pl.rig.inst.part_bus(0)));
+        far_out.push(peak(pl.rig.inst.part_bus(2)));
+    }
+    let stats = &pl.st.card.stats;
+    assert_eq!(faults, 1, "the card faults once, for the first failure");
+    assert_eq!(stats.frame_errors.load(Ordering::Relaxed), 2);
+    assert!(stats.unreadable.load(Ordering::Relaxed) > 0, "passed over");
+    assert_eq!(pl.st.card.bus.fault(), CardFault::Clear);
+    // After the clear both play; then the near voice drops out over the
+    // rotted chunk (to the voice chain's falling tail) while the far one
+    // plays on, and the near one returns.
+    let back = cleared.unwrap() + 30;
+    let gap: Vec<usize> = (back..near.len()).filter(|&k| near[k] < 0.05).collect();
+    assert!(
+        gap.len() > 50,
+        "dropped out over the chunk: {} blocks",
+        gap.len()
+    );
+    let (&g0, &g1) = (gap.first().expect("a drop-out"), gap.last().unwrap());
+    assert!(near[back] > 0.1, "playing again after the clear");
+    // A few blocks of fade in, then playing to the end.
+    assert!(
+        near[g1 + 5..].iter().all(|&p| p > 0.1),
+        "back past the chunk"
+    );
+    assert!(g1 + 5 < near.len() - 50, "back well before the end");
+    assert!(
+        far_out[g0..=g1].iter().all(|&p| p > 0.1),
+        "the other stream plays through"
+    );
 }
