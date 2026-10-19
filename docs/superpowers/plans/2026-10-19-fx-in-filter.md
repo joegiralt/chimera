@@ -22,13 +22,17 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-17-fx-in-filter-design.md` (copied onto this branch). Issue #614 (covers #573). Owner decisions: (private notes). Spike code, read-only reference: branch `drive-spike`, `chimera-desktop/src/bin/drive-spike.rs`.
 
+**Owner rulings (2026-10-19):**
+- **FUZZ's kernel lives in bank 2** behind the door (Task 12). With bank 2 closed, FUZZ passes dry and its TYPE reads NEEDS UPDATE.
+- **The fixed matrix column FOLD becomes FX** (`FixedCol::Fx`) and moves the current type's first pot (P1). The OP 5/6 taps on it act only while TYPE is FOLD; on other types they are dimmed and not billed.
+- **PLACE takes the type's default only when TYPE leaves OFF.** Picking another type later keeps the PLACE you set.
+- **With TYPE OFF, FLT › FX shows dashes for the pots** (`View::Empty`), and MIX reads dimmed.
+
 **Decided here (the spec leaves these to the builder):**
 - **OFF is a TYPE value** (code 0), first in the list.
 - **The type switch crossfade is 20 ms** (`FX_FADE = 960` samples, the stage gate's). Old and new run together, and the crossfade blocks are not billed, as with the filter's fade.
-- **PLACE takes the type's default only when TYPE leaves OFF.** Picking another type later keeps the PLACE you set (owner question 3).
 - **LPG is not selectable** until DRUM. Its KIND code 7 and ident `LPG` are reserved in a comment and a test. Nothing loads as it.
 - **The engine reference is `EngineType::fx_scale`:** the signal is multiplied by it into the slot and divided by it out of the slot. A stage at MIX 0 is therefore the dry signal.
-- **The fixed matrix column FOLD becomes FX** (`FixedCol::Fx`), pointing at P1. The OP 5/6 taps on it act only while TYPE is FOLD; on SOFT and FUZZ they are inert, dimmed and not billed (owner question 2).
 - **The ADRs:**
   - 0155: the FX slot and layout A.
   - 0156: FUZZ's model and provenance.
