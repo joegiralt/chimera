@@ -11,7 +11,7 @@ use crate::dsp::rev::sync::{FoldState, Tempo};
 use crate::dsp::reverb::{EngineKnobs, RevSync, ReverbParams, ReverbType, knobs};
 use crate::dsp::va::combine::{Crusher, Peaks, combine, ring_gain};
 use crate::dsp::va::osc::{MIN_INC, Morph, Unit, peak_bound, wave_at};
-use crate::dsp::va::{VaMode, fm_index};
+use crate::dsp::va::{VaMode, fm_index, phase_depth};
 
 pub use chimera_engine::glyph::{
     BRAID_PARAMS, CUBE_PARAMS, CompositeId, FocusGlyph, REVERB_PARAMS, RINGS_PARAMS, VA_MIX_PARAMS,
@@ -252,7 +252,8 @@ pub fn va_mode(v: f32) -> VaMode {
 /// engine's own peak bounds, RING gain and crusher. FM reads OSC 1 at a
 /// phase integrated across the points, its rate `1 + I·b/pk.b` (`I`
 /// `fm_index` uncapped), so the scope shows the read speeding up, slowing
-/// and running backwards. Scaled so its peak is `half` px (a near-silent
+/// and running backwards. PHASE reads OSC 1 at `p1 + phase_depth·b/pk.b`,
+/// the wave bent where OSC 2 is high. Scaled so its peak is `half` px (a near-silent
 /// output no louder than a tenth of the inputs' peak), up positive.
 pub fn va_mix_trace<const N: usize>(v: &VaMix, half: i32) -> [i32; N] {
     let [m1, m2] = v.osc;
@@ -266,6 +267,7 @@ pub fn va_mix_trace<const N: usize>(v: &VaMix, half: i32) -> [i32; N] {
     let frac = |x: f32| x - libm::floorf(x);
     let last = (N - 1).max(1) as f32;
     let (dt, index) = (VA_MIX_PERIODS / last, fm_index(v.amount, 0.0));
+    let depth = phase_depth(v.amount);
     let mut read = 0.0;
     let ys = core::array::from_fn(|i| {
         let t = VA_MIX_PERIODS * i as f32 / last;
@@ -281,6 +283,9 @@ pub fn va_mix_trace<const N: usize>(v: &VaMix, half: i32) -> [i32; N] {
             read += dt * (1.0 + index * b / pk.b);
             return a;
         }
+        if v.mode == VaMode::Phase {
+            return wave_at(frac(p1 + depth * b / pk.b), m1, MIN_INC).0;
+        }
         let a = wave_at(p1, m1, MIN_INC).0;
         combine(v.mode, a, b, v.amount, k, pk, &crush)
     });
@@ -290,7 +295,8 @@ pub fn va_mix_trace<const N: usize>(v: &VaMix, half: i32) -> [i32; N] {
 /// The words at BLEND's ends under `mode`: what AMOUNT 0 and 1 give.
 /// MIX and SYNC fade OSC 1 to OSC 2; RING and XOR the plain mix to the
 /// operator; BITS crushes the mix from 16 bits to 2; FM runs OSC 1 from
-/// plain (CLEAN) to its full index (DEEP).
+/// plain (CLEAN) to its full index (DEEP); PHASE from OSC 1 plain to the
+/// CZ's full warp.
 pub const fn blend_ends(mode: VaMode) -> [&'static str; 2] {
     match mode {
         VaMode::Mix | VaMode::Sync => ["1", "2"],

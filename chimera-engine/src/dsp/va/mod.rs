@@ -56,8 +56,9 @@ impl VaMode {
     ];
 }
 
-/// MODE's names, in `VaMode`'s order (display only).
-pub const MODE_NAMES: [&str; 7] = ["MIX", "SYNC", "RING", "XOR", "BITS", "FM", "PHASE"];
+/// MODE's names, in `VaMode`'s order (display only; PHASE is "PHAS", the
+/// full word is 17 px too wide beside the scope).
+pub const MODE_NAMES: [&str; 7] = ["MIX", "SYNC", "RING", "XOR", "BITS", "FM", "PHAS"];
 
 impl DiskCode for VaMode {
     fn disk_code(self) -> u8 {
@@ -314,14 +315,23 @@ pub const COST_BITS: Cost = Cost(530);
 /// crossed either way at the 0.45 cap, a divide a crossing) + 134.4 + 29.4
 /// + 74.2 (5.1 of it the modulator's scaling) + 29.9 + 95.
 pub const COST_FM: Cost = Cost(590);
-// provisional: Task 6 counts it
-pub const COST_PHASE: Cost = Cost(590);
+/// PHASE: 209.3 (SINE/TRI, OSC 1's MOD instance as FM's: the read's rate
+/// is the offset's difference, `k = (0, 1)`) + 134.4 + 26.5 + 2.9 + 76.4
+/// (6.3 of it the offset loop) + 30.0 + 95.
+pub const COST_PHASE: Cost = Cost(580);
 
 /// PHASE's peak depth at BLEND `blend`, in cycles: `blend/2`. BLEND ½ is
 /// the CZ's full warp (PD is PM at index 2π(½ − d), Lazzarini et al.,
 /// DAFx-09).
 pub fn phase_depth(blend: f32) -> f32 {
     0.5 * blend
+}
+
+/// STABILITY's jitter draw at depth `d`: `1 + jd·word`, one closure type
+/// for every MODE, so the renders share the oscillators' instances (flash).
+fn jitter_draw(stab: &mut Stability, d: f32) -> impl FnMut() -> f32 + '_ {
+    let jd = JITTER_CENTS * d * CENT * (1.0 / 2_147_483_648.0);
+    move || 1.0 + jd * stab.jitter_word() as f32
 }
 
 /// FM's index at BLEND `blend`, `5·blend²`, capped so OSC 1's fastest read
@@ -877,8 +887,7 @@ impl VaEngine {
             marks: mk,
             ..
         } = self;
-        let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
-        let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+        let mut draw = jitter_draw(stab, l.d);
         o2.render::<BLOCK_SIZE, false, false, false, false>(
             b,
             mk,
@@ -903,6 +912,7 @@ impl VaEngine {
             b,
             (1.0, 0.0),
         );
+        drop(draw);
         #[cfg(any(test, feature = "test-support"))]
         {
             self.backwards = self.osc2.iter().any(|&v| v < -1.0);
@@ -927,8 +937,7 @@ impl VaEngine {
             pm_prev,
             ..
         } = self;
-        let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
-        let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+        let mut draw = jitter_draw(stab, l.d);
         o2.render::<BLOCK_SIZE, false, false, false, false>(
             b,
             mk,
@@ -960,6 +969,7 @@ impl VaEngine {
             b,
             (0.0, 1.0),
         );
+        drop(draw);
         match gain {
             Some(g) => self.operator::<true>(out, l, VaMode::Phase, g),
             None => self.operator::<false>(out, l, VaMode::Phase, &DUCK_UP[1]),
@@ -983,8 +993,7 @@ impl VaEngine {
         } = self;
         // a wrap's factor, `1 + jitter(d)·CENT`, from the raw draw: exactly
         // 1 at d = 0 (STAB 1)
-        let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
-        let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+        let mut draw = jitter_draw(stab, l.d);
         // these MODEs read no modulated phase (FM does, `render_fm`)
         let (z, nk) = (&ZEROS, (0.0, 0.0));
         // OSC 1 marks its sub flips and its wraps, one instance for every
@@ -1020,6 +1029,7 @@ impl VaEngine {
                 nk,
             );
         }
+        drop(draw);
         // a loop of its own while the duck runs (the count bills it)
         match gain {
             Some(g) => self.operator::<true>(out, l, mode, g),

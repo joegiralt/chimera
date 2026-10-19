@@ -480,7 +480,10 @@ fn phase_alias_gate() {
         }
     }
     println!("worst where Carson fits {:.1} dB at {}", worst.0, worst.1);
-    println!("least correction elsewhere {:.1} dB at {}", least.0, least.1);
+    println!(
+        "least correction elsewhere {:.1} dB at {}",
+        least.0, least.1
+    );
     assert!(fails.is_empty(), "{fails:#?}");
 }
 
