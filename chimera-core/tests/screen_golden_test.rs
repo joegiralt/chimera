@@ -313,7 +313,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // TEXT SIZE LARGE (ADR 0154): each its NORMAL case's screen a size up.
     ("large_engine_algo", 0xe91f2bcb6eb8bf3b),
     ("large_algo_level", 0xf225b94d99567b7c),
-    ("large_bigviz_filter", 0xbc513237f6c402d9),
+    ("large_bigviz_filter", 0xedcdc32ed45e9a09),
     ("large_modal_amp", 0xbfc8b95f0eb078b8),
     ("large_va_drive", 0x01744038da287ded),
     // The Mix chain's map has a TAPE node with `master-tape` (ADR 0055).
