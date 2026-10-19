@@ -304,8 +304,10 @@ pub const COST_RING: Cost = Cost(530);
 pub const COST_XOR: Cost = Cost(550);
 /// BITS: 158.2 + 134.4 + 42.6 + 68.8 + 29.9 + 95.
 pub const COST_BITS: Cost = Cost(530);
-// provisional: Task 4 counts it
-pub const COST_FM: Cost = Cost(530);
+/// FM: 222.8 (SINE/TRI, OSC 1's MOD instance: its edges follow the read,
+/// crossed either way at the 0.45 cap, a divide a crossing) + 134.4 + 29.4
+/// + 74.2 (5.1 of it the modulator's scaling) + 29.9 + 95.
+pub const COST_FM: Cost = Cost(590);
 
 /// FM's index at BLEND `blend`, `5·blend²`, capped so OSC 1's fastest read
 /// `inc·(1 + I)` stays under `MAX_INC` (0.45 cycles a sample); `inc = 0`

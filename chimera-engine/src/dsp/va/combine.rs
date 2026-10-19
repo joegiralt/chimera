@@ -13,6 +13,11 @@ pub const PROVENANCE: &[Provenance] = &[
     Provenance::Textbook {
         cite: "Kleimola, \"Audio Synthesis by Bitwise Logical Modulation\", DAFx-08, 2008 (XOR)",
     },
+    Provenance::Textbook {
+        cite: "Chowning, \"The Synthesis of Complex Audio Spectra by Means of Frequency \
+               Modulation\", JAES 21(7), 1973 (FM; FM's through-zero linear read rate is \
+               from first principles, the Intellijel DPO an instrument reference only)",
+    },
     Provenance::Original {
         author: "AI-assisted, owner-directed and reviewed",
     },

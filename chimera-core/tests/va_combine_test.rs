@@ -425,6 +425,9 @@ fn xor_provenance_is_declared() {
     assert!(combine::PROVENANCE.iter().any(
         |p| matches!(p, Provenance::Textbook { cite } if cite.contains("Kleimola") && cite.contains("DAFx-08"))
     ));
+    assert!(combine::PROVENANCE.iter().any(
+        |p| matches!(p, Provenance::Textbook { cite } if cite.contains("Chowning") && cite.contains("1973"))
+    ));
     assert!(
         combine::PATENT
             .iter()
