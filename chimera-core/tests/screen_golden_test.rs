@@ -32,8 +32,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: a value's unit sits small beside its number (ADR 0146).
     ("algo_formant_page", 0xc2798d511cef5b20),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
-    // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
-    ("mod_matrix_morph_inert", 0x53b9daa3425f3673),
+    // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17);
+    // then FOLD's column named FX (#614).
+    ("mod_matrix_morph_inert", 0x7be44a5dd2dffa93),
     // Re-recorded: WAVE shows its scope (#310).
     ("algo_wave", 0xe96d1f664d72dff8),
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
@@ -223,13 +224,14 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_out_p2", 0x60429572e55d3aaf),
     ("algo_out_p3", 0x6a41c9fba77fd7fc),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
-    // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
-    ("mod_matrix", 0x1489a48bb5bcc212),
-    ("mod_matrix_wide", 0x5e46b81eebf7bc96),
+    // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17);
+    // then FOLD's column named FX (#614), here and in the next three.
+    ("mod_matrix", 0xef455a07fb204322),
+    ("mod_matrix_wide", 0xcb96b37ccdad88fe),
     // OP5 → FREQ, the cursor on OP5's X cell and its hint; MODAL's eight
     // rows of 17 (Task 17).
-    ("mod_matrix_algo_taps", 0xddd15a302b53a08e),
-    ("mod_matrix_modal", 0x827f3e3f62e4bfac),
+    ("mod_matrix_algo_taps", 0xe159632a9ac1f92e),
+    ("mod_matrix_modal", 0xea127c9de06a34ec),
     // Re-recorded: the pool meter, row costs, the hints' bytes (sound-pool
     // plan Task 6); and its refusal. Then the merge with filter-types: a
     // Sound is smaller (fixed columns, no registry entry).
