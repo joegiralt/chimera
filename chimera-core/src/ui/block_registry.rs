@@ -14,7 +14,7 @@ use crate::dsp::tape_engine::TapeEngineParams;
 use crate::dsp::va::VaParams;
 use crate::dsp::voice_fx::params::VoiceFxParams;
 use crate::modulation::{MAX_MOD_SOURCES, ModSource};
-use crate::params::{DriveParams, EnvParams, FilterParams, OutParams, PitchParams};
+use crate::params::{EnvParams, FilterParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{
     BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, MachineSlot, ParamSlot, VizType,
@@ -1148,8 +1148,8 @@ pub static DEMO_GLYPH_LEVEL: BlockDef = BlockDef {
     ],
 };
 
-/// GLYPH: CROSSFADER. a: ALG A to ALG B (MORPH); b: dry to wet (DRV's
-/// MIX). The cap follows the set value, never modulation.
+/// GLYPH: CROSSFADER. a: ALG A to ALG B (MORPH); b: dry to wet (the FX
+/// slot's MIX). The cap follows the set value, never modulation.
 pub static DEMO_GLYPH_XF: BlockDef = BlockDef {
     id: 74,
     name: "Glyph: Crossfader",
@@ -1158,7 +1158,7 @@ pub static DEMO_GLYPH_XF: BlockDef = BlockDef {
     viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Algo, AlgoParams::MORPH),
-        ParamSlot::param(BlockRef::Drive, DriveParams::MIX),
+        ParamSlot::param(BlockRef::VoiceFx, VoiceFxParams::MIX),
         EMPTY,
         EMPTY,
         EMPTY,

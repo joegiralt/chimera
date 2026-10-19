@@ -149,13 +149,7 @@ fn amp_has_no_fold() {
     assert_eq!(AMP.id, 9);
     for s in AMP.params {
         if let SlotBinding::Param(a) = s.binding {
-            assert!(
-                !matches!(
-                    a.block,
-                    BlockRef::VoiceFx | BlockRef::Folder | BlockRef::Drive
-                ),
-                "{a:?}"
-            );
+            assert!(a.block != BlockRef::VoiceFx, "{a:?}");
         }
     }
 }

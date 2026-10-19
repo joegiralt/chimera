@@ -3,9 +3,10 @@ use chimera_core::block::ParamId;
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::modal::ModalParams;
 use chimera_core::dsp::modulator::EnvSlot;
+use chimera_core::dsp::voice_fx::params::VoiceFxParams;
 use chimera_core::mod_path::{ModDestRegistry, RegistryError};
 use chimera_core::modulation::FixedCol;
-use chimera_core::params::{DriveParams, EnvParams};
+use chimera_core::params::EnvParams;
 
 fn op_level(op: Op) -> ParamAddr {
     ParamAddr::new(BlockRef::AlgoOp(op), AlgoOpParams::LEVEL)
@@ -21,7 +22,7 @@ fn registry_starts_empty() {
 #[test]
 fn registry_add_and_find() {
     let mut reg = ModDestRegistry::new();
-    let addr = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
+    let addr = ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P2);
     assert_eq!(reg.add(addr, *b"DrvDrv\0\0"), Ok(()));
     assert_eq!(reg.len(), 1);
     assert!(reg.is_primed(addr));
@@ -107,8 +108,10 @@ fn registry_accepts_exactly_the_modulatable_addresses() {
             accepted += addr.modulatable() as usize;
         }
     }
+    // (DRV's and the folder's moved into the FX slot, whose P1 is the fixed
+    // FX column's.)
     // + ENV n LEVEL, TIME, RISE, FALL, SHAPE; VCA; PITCH, FINE; Modal's macros;
     // VA's eleven; each operator's FRMT and BW, and VOWEL; the FX slot's
     // pots and MIX
-    assert_eq!(accepted, 17 + 3 * 5 + 1 + 2 + 4 + 11 + 2 * 6 + 1 + 4);
+    assert_eq!(accepted, 11 + 3 * 5 + 1 + 2 + 4 + 11 + 2 * 6 + 1 + 4);
 }

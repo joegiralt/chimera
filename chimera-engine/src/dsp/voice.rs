@@ -1034,8 +1034,11 @@ impl Voice {
         // (the closing gate takes the per-sample path), so it isn't asked.
         let fx = self.fx.step(&m.fx, fx_on);
         let scale = m.engine().fx_scale();
+        // FOLD's tap reaches it at either hook, wherever PLACE puts the fold.
+        let tap = lane(FixedCol::Fx);
         let glide = !(fx_on && Self::fx_routed(mod_state));
-        self.fx.apply(&fx, Place::Pre, output, scale, glide, None);
+        self.fx
+            .apply(&fx, Place::Pre, output, scale, glide, tap.as_ref());
 
         // 3. Filter
         let mods = FilterMods {
@@ -1052,7 +1055,6 @@ impl Voice {
         // 4. The FX slot after it. FOLD's tap is live only under FOLD
         // (`live_taps`): leaving FOLD, its amount ramps out over the fade's
         // first block, as any tap amount moves.
-        let tap = lane(FixedCol::Fx);
         self.fx
             .apply(&fx, Place::Post, output, scale, glide, tap.as_ref());
 

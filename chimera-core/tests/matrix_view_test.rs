@@ -68,7 +68,8 @@ fn the_readout_names_the_selected_route() {
 #[test]
 fn the_readout_states_the_effect_in_the_destinations_units() {
     use chimera_core::addr::{BlockRef, ParamAddr};
-    use chimera_core::params::{FilterParams, FolderParams, OutParams};
+    use chimera_core::dsp::voice_fx::params::VoiceFxParams;
+    use chimera_core::params::{FilterParams, OutParams};
     use chimera_core::ui::fmt::FmtBuf;
     use chimera_core::ui::mod_grid::fmt_route_effect;
     let effect = |b, id, a| {
@@ -83,10 +84,10 @@ fn the_readout_states_the_effect_in_the_destinations_units() {
     assert_eq!(effect(BlockRef::Out, OutParams::VCA, 64), "+64 = +50%");
     assert_eq!(effect(BlockRef::Out, OutParams::VCA, 127), "+127 = +100%");
     assert_eq!(
-        effect(BlockRef::Folder, FolderParams::FOLD, -30),
+        effect(BlockRef::VoiceFx, VoiceFxParams::P1, -30),
         "-30 = -24%"
     );
-    assert_eq!(effect(BlockRef::Folder, FolderParams::FOLD, 0), "0 = 0%");
+    assert_eq!(effect(BlockRef::VoiceFx, VoiceFxParams::P1, 0), "0 = 0%");
     use chimera_core::params::PitchParams;
     let pitch = PitchParams::PITCH;
     assert_eq!(effect(BlockRef::Pitch, pitch, 32), "+32 = +6.0 st");

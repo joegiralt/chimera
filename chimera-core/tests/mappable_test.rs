@@ -8,10 +8,11 @@ use chimera_core::dsp::lfo::LfoParams;
 use chimera_core::dsp::modal::ModalParams;
 use chimera_core::dsp::modulator::LfoSlot;
 use chimera_core::dsp::va::VaParams;
+use chimera_core::dsp::voice_fx::params::VoiceFxParams;
 use chimera_core::midi_in::Cc;
 use chimera_core::midi_map::{MAP_LEN, MapEntry, MapFull, Mappable, MidiMap};
 use chimera_core::orbit::RingIdx;
-use chimera_core::params::{DriveParams, FilterParams, FolderParams, OutParams};
+use chimera_core::params::{FilterParams, OutParams};
 use chimera_core::part::PartParams;
 use chimera_core::project::PartId;
 
@@ -67,8 +68,8 @@ fn mappable_whitelist() {
         (lfo1, LfoParams::DEPTH),
         (BlockRef::Algo, AlgoParams::MORPH),
         (BlockRef::Algo, AlgoParams::VOWEL),
-        (BlockRef::Drive, DriveParams::DRIVE),
-        (BlockRef::Folder, FolderParams::FOLD),
+        (BlockRef::VoiceFx, VoiceFxParams::P1),
+        (BlockRef::VoiceFx, VoiceFxParams::P2),
         (BlockRef::Modal, ModalParams::STRUCTURE),
         (BlockRef::Modal, ModalParams::BRIGHT),
         (BlockRef::Modal, ModalParams::DAMP),

@@ -116,6 +116,9 @@ OUT.LEVEL = "0.5"  # 64
 ENV1.ATK = "0.1"  # 4.7 ms
 ENV1.SUS = "1"  # 100%
 ENV1.REL = "0.4"  # 84 ms
+VOICEFX.TYPE = "FOLD"
+VOICEFX.PLACE = "POST"
+VOICEFX.MIX = "0.5"  # 0
 mod.ENV1 = "OUT.VCA +127"
 VA.FINE2 = "3"  # +3
 FILTER.KIND = "LADDER"
@@ -129,7 +132,7 @@ ENV2.SUS = "0.3"  # 30%
 mod.LFO1 = "VA.SHAPE1 +60, VA.SHAPE2 +60"
 mod.LFO2 = "FILTER.CUTOFF +20"
 mod.ENV2 = "FILTER.CUTOFF +40, VA.AMOUNT +30"
-mod.VEL = "FOLDER.FOLD +20"
+mod.VEL = "VOICEFX.P1 +20"
 trim = "0.5"
 
 [[sound]]
@@ -155,10 +158,13 @@ FILTER.CUTOFF = "1200"  # 1.20 kHz
 LFO1.RATE = "0.5"  # 3
 ENV2.DEC = "0.4"  # 84 ms
 ENV2.SUS = "0"  # 0%
+VOICEFX.TYPE = "FOLD"
+VOICEFX.PLACE = "POST"
+VOICEFX.MIX = "0.5"  # 0
 mod.ENV1 = "OUT.VCA +127, FILTER.CUTOFF +40"
 mod.ENV2 = "VA.AMOUNT +50, FILTER.CUTOFF +30"
 mod.LFO1 = "VA.WAVE1 +25"
-mod.VEL = "FOLDER.FOLD +60, VA.WAVE2 +25"
+mod.VEL = "VOICEFX.P1 +60, VA.WAVE2 +25"
 trim = "1.7"
 
 [[sound]]
