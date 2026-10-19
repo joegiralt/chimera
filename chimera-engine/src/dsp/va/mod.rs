@@ -22,8 +22,8 @@ use crate::glyph::{FocusGlyph, VaGlyph, VaOsc};
 use crate::hw::Cost;
 use crate::project::PartId;
 use crate::voice_alloc::VoiceIdx;
-use combine::{Crusher, Operator, Peaks, ring_gain};
-use osc::{NO_WRAP, R, Ramps, Sub, SubEdge, VarOsc, wave_reach};
+use combine::{Crusher, MaxKink, Operator, Peaks, am_gain, ring_gain};
+use osc::{MAX_INC, NO_WRAP, R, Ramps, Sub, SubEdge, VarOsc, ZEROS, wave_reach};
 use stability::{JITTER_CENTS, Seed, Stability, depth};
 #[cfg(any(test, feature = "test-support"))]
 use {osc::Correction, stability::Character};
@@ -38,20 +38,29 @@ pub enum VaMode {
     Ring = 2,
     Xor = 3,
     Bits = 4,
+    /// OSC 2 frequency-modulates OSC 1 linearly, through zero (#601).
+    Fm = 5,
+    /// OSC 2 scales OSC 1, never through zero (#603).
+    Am = 6,
+    /// The larger of the two oscillators, its kinks rounded (#605).
+    Max = 7,
 }
 
 impl VaMode {
-    pub const ALL: [VaMode; 5] = [
+    pub const ALL: [VaMode; 8] = [
         VaMode::Mix,
         VaMode::Sync,
         VaMode::Ring,
         VaMode::Xor,
         VaMode::Bits,
+        VaMode::Fm,
+        VaMode::Am,
+        VaMode::Max,
     ];
 }
 
 /// MODE's names, in `VaMode`'s order (display only).
-pub const MODE_NAMES: [&str; 5] = ["MIX", "SYNC", "RING", "XOR", "BITS"];
+pub const MODE_NAMES: [&str; 8] = ["MIX", "SYNC", "RING", "XOR", "BITS", "FM", "AM", "MAX"];
 
 impl DiskCode for VaMode {
     fn disk_code(self) -> u8 {
@@ -61,6 +70,9 @@ impl DiskCode for VaMode {
             VaMode::Ring => 2,
             VaMode::Xor => 3,
             VaMode::Bits => 4,
+            VaMode::Fm => 5,
+            VaMode::Am => 6,
+            VaMode::Max => 7,
         }
     }
 
@@ -71,6 +83,9 @@ impl DiskCode for VaMode {
             VaMode::Ring => "RING",
             VaMode::Xor => "XOR",
             VaMode::Bits => "BITS",
+            VaMode::Fm => "FM",
+            VaMode::Am => "AM",
+            VaMode::Max => "MAX",
         }
     }
 
@@ -81,6 +96,9 @@ impl DiskCode for VaMode {
             2 => Some(VaMode::Ring),
             3 => Some(VaMode::Xor),
             4 => Some(VaMode::Bits),
+            5 => Some(VaMode::Fm),
+            6 => Some(VaMode::Am),
+            7 => Some(VaMode::Max),
             _ => None,
         }
     }
@@ -189,7 +207,7 @@ pub static VA_SPECS: [ParamSpec; 12] = [
         2,
         "MODE",
         ValFmt::Names(&MODE_NAMES),
-        4.0,
+        7.0,
         0.0,
         Change::Crossfade,
     )
@@ -287,17 +305,40 @@ pub const VA_OUT_GAIN: f32 = 3.631;
 /// ceiling, 7/48 a sample. Each line: OSC 1 (TRI/SAW) + OSC 2 + operator
 /// and sub + block + crossings + 95 (2026-10-13, ADR 0118 point 13).
 ///
-/// MIX: 158.2 + 134.4 (TRI/SAW) + 36.2 + 68.0 + 29.9 + 95.
+/// MIX: 158.2 + 134.4 (TRI/SAW) + 36.2 + 68.4 + 29.9 + 95.
 pub const COST_MIX: Cost = Cost(530);
 /// SYNC: 121.7 (master at 7 kHz) + 183.7 (SINE/TRI slave: a reset's 197.5
-/// × 7/48) + 36.2 + 71.5 + 31.0 + 95.
+/// × 7/48) + 36.2 + 71.8 + 31.1 + 95.
 pub const COST_SYNC: Cost = Cost(540);
-/// RING: 158.2 + 134.4 + 42.6 + 68.7 + 29.9 + 95.
+/// RING: 158.2 + 134.4 + 42.6 + 69.1 + 29.9 + 95.
 pub const COST_RING: Cost = Cost(530);
-/// XOR: 158.2 + 134.4 + 53.9 + 69.9 + 29.9 + 95.
+/// XOR: 158.2 + 134.4 + 53.9 + 70.2 + 29.9 + 95.
 pub const COST_XOR: Cost = Cost(550);
-/// BITS: 158.2 + 134.4 + 42.6 + 68.8 + 29.9 + 95.
+/// BITS: 158.2 + 134.4 + 42.6 + 69.2 + 29.9 + 95.
 pub const COST_BITS: Cost = Cost(530);
+/// FM: 222.8 (SINE/TRI, OSC 1's MOD instance: its edges follow the read,
+/// crossed either way at the 0.45 cap, a divide a crossing) + 134.4 + 29.4
+/// + 74.2 (5.1 of it the modulator's scaling) + 29.9 + 95.
+pub const COST_FM: Cost = Cost(590);
+/// AM: 158.2 + 134.4 + 41.0 + 3.3 (the sub) + 71.1 + 29.9 + 95.
+pub const COST_AM: Cost = Cost(540);
+/// MAX: 158.2 + 134.4 + 50.6 (the operator's loop, with the step test) +
+/// 3.3 + 37.7 (a kink a sample at the worst: one sign change, its divide and
+/// the BLAMP) + 71.7 + 29.9 + 95, 581.3 against MIX's 522.2 in the same
+/// count (the merged tree's block work reads 34 higher for every MODE).
+pub const COST_MAX: Cost = Cost(590);
+
+/// FM's index at BLEND `blend`, `5·blend²`, capped so OSC 1's fastest read
+/// `inc·(1 + I)` stays under `MAX_INC` (0.45 cycles a sample); `inc = 0`
+/// is uncapped (the glyph).
+pub fn fm_index(blend: f32, inc: f32) -> f32 {
+    (5.0 * blend * blend).min(fm_cap(inc))
+}
+
+/// The index cap at `inc`, `max(0, MAX_INC/inc − 1)`.
+fn fm_cap(inc: f32) -> f32 {
+    (MAX_INC / inc - 1.0).max(0.0)
+}
 
 /// SYNC's master pitch ceiling, A8 − 10 cents (owner, 2026-10-11; ADR 0118
 /// point 12): it bounds the slave's resets at 7 kHz.
@@ -451,6 +492,12 @@ pub struct VaEngine {
     amount: Ramp,
     sub_level: Ramp,
     ring_k: Ramp,
+    /// FM's index (`fm_index`).
+    fm: Ramp,
+    /// AM's level make-up (`am_gain`).
+    am_n: Ramp,
+    /// MAX's corrector.
+    max: MaxKink,
     note: u8,
     pitch: f32,
     slide: Glide,
@@ -463,6 +510,8 @@ pub struct VaEngine {
     duck: Duck,
     #[cfg(any(test, feature = "test-support"))]
     last_k: [f32; 2],
+    #[cfg(any(test, feature = "test-support"))]
+    backwards: bool,
 }
 
 #[cfg(not(any(test, feature = "test-support")))]
@@ -484,6 +533,9 @@ impl VaEngine {
             amount: Ramp::default(),
             sub_level: Ramp::default(),
             ring_k: Ramp::default(),
+            fm: Ramp::default(),
+            am_n: Ramp::default(),
+            max: MaxKink::NEW,
             note: 60,
             pitch: 0.0,
             slide: Glide::new(1.0, 1.0),
@@ -495,6 +547,8 @@ impl VaEngine {
             duck: Duck::Steady,
             #[cfg(any(test, feature = "test-support"))]
             last_k: [0.0; 2],
+            #[cfg(any(test, feature = "test-support"))]
+            backwards: false,
         }
     }
 
@@ -556,6 +610,8 @@ impl VaEngine {
                 self.sub.reset();
                 self.jit = [1.0; 2];
             }
+            // the corrector's memory goes with the voice, at any STABILITY
+            self.max.reset();
             (self.playing, self.duck) = (p.mode, Duck::Steady);
         }
         if self.seeded != Some(part) {
@@ -612,6 +668,8 @@ impl VaEngine {
         self.amount.hold();
         self.sub_level.hold();
         self.ring_k.hold();
+        self.fm.hold();
+        self.am_n.hold();
         for o in &mut self.osc {
             o.hold();
         }
@@ -634,6 +692,9 @@ impl VaEngine {
             VaMode::Ring => COST_RING,
             VaMode::Xor => COST_XOR,
             VaMode::Bits => COST_BITS,
+            VaMode::Fm => COST_FM,
+            VaMode::Am => COST_AM,
+            VaMode::Max => COST_MAX,
         }
     }
 
@@ -730,6 +791,11 @@ impl VaEngine {
         });
         let k = self.ring_k.step(ring_gain(l.pk));
         l.k = (k.0, step_of(k, BLOCK_SIZE));
+        // AM's make-up rides in the same lane, ramped per block
+        if self.playing == VaMode::Am {
+            let n = self.am_n.step(am_gain(unit(p.amount), l.pk));
+            l.k = (n.0, step_of(n, BLOCK_SIZE));
+        }
         #[cfg(any(test, feature = "test-support"))]
         {
             self.last_k = [k.0, k.1];
@@ -754,12 +820,31 @@ impl VaEngine {
                 self.crusher.set(unit(p.amount));
                 self.render_bits(out, &l, gain)
             }
+            VaMode::Am => self.render_am(out, &l, gain),
+            VaMode::Max => self.render_max(out, &l, gain),
+            VaMode::Fm => {
+                // capped at the block's faster end; a pitch jump past the
+                // last block's cap lands on it
+                let (i0, di) = l.osc[0].inc;
+                let inc = i0.max(i0 + di * BLOCK_SIZE as f32);
+                let (from, to) = self.fm.step(fm_index(unit(p.amount), inc));
+                self.render_fm(out, &l, gain, (from.min(fm_cap(inc)), to))
+            }
         }
         self.duck = match duck {
             Duck::Steady => Duck::Steady,
             Duck::Down(0) => Duck::Down(1),
             Duck::Down(_) => {
                 self.playing = p.mode;
+                // MAX starts from nothing under the duck
+                self.max.reset();
+                // FM's index starts on its value
+                self.fm.hold();
+                self.am_n.hold();
+                // a MOD MODE's read phase becomes the clock (ADR 0158)
+                for o in &mut self.osc {
+                    o.settle();
+                }
                 Duck::Up(0)
             }
             Duck::Up(0) => Duck::Up(1),
@@ -778,6 +863,11 @@ impl VaEngine {
     }
 
     #[inline(never)]
+    fn render_am(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
+        self.run(out, l, VaMode::Am, gain);
+    }
+
+    #[inline(never)]
     fn render_ring(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
         self.run(out, l, VaMode::Ring, gain);
     }
@@ -790,6 +880,60 @@ impl VaEngine {
     #[inline(never)]
     fn render_bits(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
         self.run(out, l, VaMode::Bits, gain);
+    }
+
+    #[inline(never)]
+    fn render_max(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
+        self.run(out, l, VaMode::Max, gain);
+    }
+
+    /// FM (#601): OSC 2 plain, at unit peak times the index `ix` (from,
+    /// to), drives OSC 1's read rate `inc·(1 + I·b)` through zero; the
+    /// operator plays OSC 1 alone, with the sub and the chain gain.
+    #[inline(never)]
+    fn render_fm(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain, ix: (f32, f32)) {
+        let Self {
+            osc: [o1, o2],
+            stab,
+            jit,
+            osc2: b,
+            marks: mk,
+            ..
+        } = self;
+        let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
+        let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+        o2.render::<BLOCK_SIZE, false, false, false, false>(
+            b,
+            mk,
+            &l.osc[1],
+            &mut jit[1],
+            &mut draw,
+            &ZEROS,
+            (0.0, 0.0),
+        );
+        let s = 1.0 / l.pk.b;
+        let (mut x, dx) = (ix.0 * s, step_of(ix, BLOCK_SIZE) * s);
+        for v in b.iter_mut() {
+            x += dx;
+            *v *= x;
+        }
+        o1.render::<BLOCK_SIZE, true, false, true, true>(
+            out,
+            mk,
+            &l.osc[0],
+            &mut jit[0],
+            &mut draw,
+            b,
+            (1.0, 0.0),
+        );
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.backwards = self.osc2.iter().any(|&v| v < -1.0);
+        }
+        match gain {
+            Some(g) => self.operator::<true>(out, l, VaMode::Fm, g),
+            None => self.operator::<false>(out, l, VaMode::Fm, &DUCK_UP[1]),
+        }
     }
 
     /// One block in `mode`, a constant in each caller, so each mode's loop
@@ -811,14 +955,40 @@ impl VaEngine {
         // 1 at d = 0 (STAB 1)
         let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
         let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+        // these MODEs read no modulated phase (FM does, `render_fm`)
+        let (z, nk) = (&ZEROS, (0.0, 0.0));
         // OSC 1 marks its sub flips and its wraps, one instance for every
         // MODE (flash): only SYNC's slave reads the wraps, resetting at
         // them (ADR 0118 point 13)
-        o1.render::<BLOCK_SIZE, true, false, true>(out, mk, &l.osc[0], &mut jit[0], &mut draw);
+        o1.render::<BLOCK_SIZE, true, false, true, false>(
+            out,
+            mk,
+            &l.osc[0],
+            &mut jit[0],
+            &mut draw,
+            z,
+            nk,
+        );
         if mode == VaMode::Sync {
-            o2.render::<BLOCK_SIZE, false, true, false>(b, mk, &l.osc[1], &mut jit[1], &mut draw);
+            o2.render::<BLOCK_SIZE, false, true, false, false>(
+                b,
+                mk,
+                &l.osc[1],
+                &mut jit[1],
+                &mut draw,
+                z,
+                nk,
+            );
         } else {
-            o2.render::<BLOCK_SIZE, false, false, false>(b, mk, &l.osc[1], &mut jit[1], &mut draw);
+            o2.render::<BLOCK_SIZE, false, false, false, false>(
+                b,
+                mk,
+                &l.osc[1],
+                &mut jit[1],
+                &mut draw,
+                z,
+                nk,
+            );
         }
         // a loop of its own while the duck runs (the count bills it)
         match gain {
@@ -839,6 +1009,7 @@ impl VaEngine {
     ) {
         let Self {
             sub,
+            max,
             crusher,
             osc2: b,
             marks: mk,
@@ -854,6 +1025,7 @@ impl VaEngine {
         let (mut n, mut dn, ddn) = (down * l.norm.0, down * l.norm.1, down * l.norm.2);
         // SUB's level, a sample's step at a time
         let (mut s, mut sl) = (*sub, s0);
+        let mut kink = *max;
         // one sample (a macro: a closure here is left out of line)
         macro_rules! one {
             ($i:expr) => {{
@@ -861,7 +1033,12 @@ impl VaEngine {
                 x += dx;
                 k += dk;
                 sl += ds;
-                let c = op.at(out[i], b[i], x, k);
+                // MAX plays one sample late, the sub on the clock
+                let c = if mode == VaMode::Max {
+                    kink.step(out[i], b[i], x)
+                } else {
+                    op.at(out[i], b[i], x, k)
+                };
                 let sv = s.step(mk[i][1]);
                 let y = (c + sl * sv) * n;
                 out[i] = if DUCKED { y * g[i] } else { y };
@@ -878,6 +1055,7 @@ impl VaEngine {
             one!(i + 3);
         }
         *sub = s;
+        *max = kink;
     }
 
     /// A glide steal's ratio now, 1 at rest.
@@ -886,9 +1064,16 @@ impl VaEngine {
         self.slide.value()
     }
 
-    /// Both oscillators uncorrected: the alias gate's baseline.
+    /// MAX's kink corrector off, the oscillators corrected.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn kink_uncorrected(&mut self) {
+        self.max.off = true;
+    }
+
+    /// Both oscillators uncorrected (and MAX's kinks): the alias gate's baseline.
     #[cfg(any(test, feature = "test-support"))]
     pub fn uncorrected(&mut self) {
+        self.max.off = true;
         self.osc = self.osc.map(|o| o.with_correction(Correction::Off));
     }
 
@@ -914,6 +1099,21 @@ impl VaEngine {
     #[cfg(any(test, feature = "test-support"))]
     pub fn runs(&self) -> [u8; 2] {
         [self.osc[0].runs(), self.osc[1].runs()]
+    }
+
+    /// Whether OSC 1's read ran backwards in the last FM block (its rate
+    /// `inc·(1 + I·b)` went negative).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn read_ran_backwards(&self) -> bool {
+        self.backwards
+    }
+
+    /// Both clocks jumped to `p`, as a carry restores them.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_osc_phase(&mut self, p: [f32; 2]) {
+        for (o, p) in self.osc.iter_mut().zip(p) {
+            o.set_phase(p);
+        }
     }
 
     /// The last block's RING gain ramp, from and to.

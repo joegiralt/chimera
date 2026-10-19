@@ -285,7 +285,13 @@ fn an_absent_route_knob_shows_a_dash() {
         look: Look::Absent,
         motion: None,
     };
-    components::cell(&mut want, 0, theme::CELL_LABEL_Y, Some(&c));
+    components::cell(
+        &mut want,
+        0,
+        theme::CELL_LABEL_Y,
+        Some(&c),
+        chimera_core::ui::theme::TextSize::Normal,
+    );
     assert!(
         same_rect(
             &fb,
@@ -330,8 +336,14 @@ fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
         },
         components::Look::Absent,
         None,
+        chimera_core::ui::theme::TextSize::Normal,
     );
-    chimera_core::ui::hint::focus(&mut want, chimera_core::ui::mod_grid::DELETE);
+    chimera_core::ui::hint::focus(
+        &mut want,
+        chimera_core::ui::mod_grid::DELETE,
+        chimera_core::ui::theme::TextSize::Normal,
+        228,
+    );
     assert!(same_rect(
         &fb,
         &want,

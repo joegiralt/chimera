@@ -86,7 +86,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: MODE reads LP4, CLEAN's label for LP24 (ADR 0096); then
     // TYPE live with two kinds (Task 8); then CLEAN's Cascadia words FREQ,
     // Q, FM1, FM2 (Task 12): was 0x032b329ca06df69b.
-    ("bigviz_filter", 0xf3769cc4b6bf5934),
+    ("bigviz_filter", 0x6cd2e6ff4a1be264),
     // Re-recorded: MODE reads HP4, CLEAN's label for HP24 (ADR 0096); then
     // LEVEL 64 in DRIVE's cell (Task 6); then FLT › MOD's six cells, FM3
     // turned, its delete hint showing (Task 12): was 0xf6e7d94448ca7888.
@@ -96,26 +96,35 @@ const GOLDENS: &[(&str, u64)] = &[
     // dimmed and VOICE EXP, DIRTY's NOTCH1 at FREQ (its own MODE names).
     // Layout A (#614): VOICE EXP on FLT (flt_2040_exp, was
     // flt_mod_2040_exp), KEYBD HALF on FLT › MOD, no MODE cell.
-    ("flt_clean", 0x6ea7919e354a6286),
+    ("flt_clean", 0x9ec7bcd7852b7629),
     ("flt_mod_clean", 0x4f4aabd71e6452c5),
-    ("flt_2040", 0xc65c03aa6a57a0d5),
+    ("flt_2040", 0x9193c6a0a99f32e7),
     // KIND focused on the 2040: its readout names 4-POLE LP (#614).
-    ("flt_2040_kind", 0x4b99e79e4a4ee8a7),
+    ("flt_2040_kind", 0xc3f8a275fee54593),
     // Modulation draws a ghost beside the set curve (#575).
-    ("flt_2040_env_amt", 0x2a6bf1783639dd77),
-    ("flt_clean_lfo", 0x9b67a79a9a3888dc),
+    ("flt_2040_env_amt", 0x699b08d8431f7498),
+    ("flt_clean_lfo", 0x7d1dcbb838bbe51f),
     ("flt_mod_2040", 0xbbaec5d6b217ecf4),
-    ("flt_2040_exp", 0x49cd3034158d00fa),
-    ("flt_dirty", 0x91ac562362ab8eb7),
+    ("flt_2040_exp", 0xf46d292e79bd92fa),
+    ("flt_dirty", 0x2cc8b44775c00e5c),
     ("flt_mod_dirty", 0x44d6578ab02c579a),
-    ("flt_ladder", 0xbb7d920ebe9f7f5b),
+    ("flt_ladder", 0xfdaa11559ebee7fd),
     ("flt_mod_ladder", 0x79aecd65ca83688e),
+    // New (#574): the peak at its real height, 2040 RES 0.3, CLEAN BP2 and
+    // LADDER RES 0.
+    // Re-recorded on the merge of main (#614): the filter picture and the
+    // #574 rows in layout A (also flt_clean, flt_2040, flt_dirty, flt_ladder,
+    // flt_2040_kind, flt_2040_exp, flt_led_full, flt_front_fx, row_flt,
+    // bigviz_filter above).
+    ("flt_2040_res_30", 0x4b44fbe438e8e240),
+    ("flt_clean_bp2", 0x923fe7dc9ab17fa4),
+    ("flt_ladder_res_0", 0x2cd85724671cdd7b),
     // The LEVEL LED at 0 (dark), ½ and 1: beside LEVEL, beside the 2040's
     // DRIVE and in FLT's viz corner (Task 17); then beside FLT › FX's INPUT
     // (#614).
     ("flt_led_0", 0xcbd43b8fec65b3c2),
     ("flt_led_half", 0x37ecbd3d3822696b),
-    ("flt_led_full", 0xe29caebb66e99ff1),
+    ("flt_led_full", 0xefaae4942eb1f370),
     // FM3 IN on LFO 2, QM IN on OP 6 (Task 17).
     ("flt_mod_repatched", 0x0bb67ffa22a7ec36),
     // FLT › FX (#614): OFF's dashes, SOFT's and FOLD's pots; FX and PLACE
@@ -123,12 +132,12 @@ const GOLDENS: &[(&str, u64)] = &[
     ("flt_fx_off", 0x26d2a70b0b9483c3),
     ("flt_fx_soft", 0x1bb51b8c56dc0ff9),
     ("flt_fx_fold", 0xfc790f5157ba593c),
-    ("flt_front_fx", 0x373df7e958074998),
+    ("flt_front_fx", 0xbf5bbe39581abaff),
     // THEME's PAGES ROW (ADR 0145): every other screen is recorded under
     // STACK (`screen::ui_for`). FLT's three pages, RES's three, MOD at E2
     // with `>`, OSC at D1R with both arrows and at OP6 with `<`, AMP bare.
     // Re-recorded: the row's pages in full words (`ROW_WORDS`).
-    ("row_flt", 0xf4340244015d6e86),
+    ("row_flt", 0xa0836b245e40209b),
     ("row_res", 0x52e7d782b213fed2),
     ("row_mod", 0x61ae81a248025efe),
     ("row_osc_mid", 0x10a75dc9cea244b8),
@@ -275,7 +284,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("sound_browser", 0xe6ebc09a421a5c11),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
     // Then pool_full: 2352 → 2544 (the formant fields).
-    ("sound_browser_pool_full", 0x4327d7766a8f1115),
+    ("sound_browser_pool_full", 0x81ce95e09e0bd574),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.
@@ -301,6 +310,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_personal_theme", 0x69eb789acb0d98db),
     // PERSONALIZE › CHAIN MAP: PAGES, ROW (ADR 0145).
     ("settings_personal_chain_map", 0x7aa40f30346b46bd),
+    // Long user names, LARGE's pair (ADR 0154).
+    ("sound_browser_long", 0x9f219d2caa40b9bd),
+    // PERSONALIZE › TEXT SIZE at NORMAL (ADR 0154).
+    ("settings_personal_text_size", 0x771bfc59119e85d2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
     ("settings_system_diag_aud_load", 0x18fe4d081416e4cb),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
@@ -343,6 +356,26 @@ const GOLDENS: &[(&str, u64)] = &[
     ("orbit_notes_step", 0xc1c3dab7eeb50a2f),
     // 32 steps, step 32 picked: the row scrolled to its last eight.
     ("orbit_notes_step32", 0x211fc000f7a5be91),
+    // TEXT SIZE LARGE (ADR 0154): each its NORMAL case's screen a size up.
+    // Re-recorded on the merge of main (#614): LARGE text (ADR 0154) over the
+    // chain map without DRV, and FLT layout A: large_engine_algo,
+    // large_algo_level, large_bigviz_filter, large_modal_amp, large_va_drive.
+    ("large_engine_algo", 0x05c1170e863ceb31),
+    ("large_algo_level", 0x6781c7502e39f90e),
+    ("large_bigviz_filter", 0xcabe5de5ca85d1d7),
+    ("large_modal_amp", 0x0a265b6a0a9884ed),
+    ("large_va_drive", 0xba4281d0b2c6fd24),
+    // The Mix chain's map has a TAPE node with `master-tape` (ADR 0055).
+    #[cfg(not(feature = "master-tape"))]
+    ("large_mixer_sends", 0x3ea6919e3a4e3772),
+    #[cfg(feature = "master-tape")]
+    ("large_mixer_sends", 0x66e4fced766b46b8),
+    ("large_settings_top", 0x9d2976351278b0df),
+    ("large_settings_personal", 0x35b1c3eb794412f7),
+    ("large_sound_browser", 0x018933e3d8721858),
+    ("large_sound_browser_long", 0xa914e71773ba2c56),
+    ("large_library_sounds", 0xc680b63718145a73),
+    ("large_settings_text_size", 0xe57ffb4a4502d385),
     // SCN: a saved slot, SAVE's, a queued one filling (plan Task 16).
     ("orbit_scn", 0x7c2558bf895b7432),
     // TAPE's pages (TAPE Task 15): SRC, and DECK and the model page per machine.

@@ -45,6 +45,7 @@ use chimera_engine::dsp::rev::sync::Tempo;
 use chimera_engine::dsp::reverb::ReverbType;
 use chimera_engine::dsp::tape_engine::read::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape};
 use chimera_engine::dsp::tape_engine::{StretchType, TapeModel, wave};
+use chimera_engine::dsp::va::VaMode;
 use chimera_engine::dsp::voice::Voice;
 use chimera_engine::dsp::voice_fx::params::FxType;
 #[cfg(feature = "bench-algo")]
@@ -163,6 +164,34 @@ const PATCHES: [Row; ROWS] = [
     // LADDER − 1 OP: LADDER's steady bill over CLEAN LP4 (ADR 0104).
     ("LADDER", ladder_op, 36, 12),
 ];
+
+/// The VA screen's rows, a row a MODE: each at BLEND 1 (the operator all in),
+/// SYNC's slave a fifth up, FM's modulator at unison. A new MODE appends its
+/// row.
+const VA_ROWS: usize = 8;
+const VA: [Row; VA_ROWS] = [
+    ("MIX", || va(VaMode::Mix), 36, 12),
+    ("SYNC", || va(VaMode::Sync), 36, 12),
+    ("RING", || va(VaMode::Ring), 36, 12),
+    ("XOR", || va(VaMode::Xor), 36, 12),
+    ("BITS", || va(VaMode::Bits), 36, 12),
+    ("FM", || va(VaMode::Fm), 36, 12),
+    ("AM", || va(VaMode::Am), 36, 12),
+    ("MAX", || va(VaMode::Max), 36, 12),
+];
+
+#[inline(never)]
+fn va(mode: VaMode) -> ParamSnapshot {
+    let mut p = snapshot(EngineType::Va);
+    p.va.mode = mode;
+    p.va.amount = 1.0;
+    match mode {
+        VaMode::Sync => p.va.coarse[1] = 7,
+        VaMode::Fm => p.va.coarse[1] = 0,
+        _ => {}
+    }
+    p
+}
 
 /// 1 OP through LADDER LP4.
 fn ladder_op() -> ParamSnapshot {
@@ -977,6 +1006,21 @@ fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     let mut formant = [Counts::default(); FORMANT_ROWS];
     time_rows(rig, &FORMANT, &mut formant, (36, 10));
     show_rows(rec, "FORMANT", &FORMANT, &formant);
+    hold(clocks);
+    let mut va = [Counts::default(); VA_ROWS];
+    for (row, &(_, patch, low, step)) in va.iter_mut().zip(&VA) {
+        for n in 1..=MAX_VOICES {
+            let setup = |s: &mut AudioShared| *s.parts[0].params = black_box(patch());
+            row.add(n, rig.time(&setup, &|_, _| {}, n, low, step));
+        }
+    }
+    rec.clear();
+    let mut line = FmtBuf::new();
+    rec.heading("VA");
+    for (i, (&(label, ..), c)) in VA.iter().zip(&va).enumerate() {
+        voice_row(rec, &mut line, 46 + i as i32 * ROW_H, label, c);
+    }
+    rec.flush();
 }
 
 /// Each of `rows` at 1..8 voices, notes `low` up by `step`.

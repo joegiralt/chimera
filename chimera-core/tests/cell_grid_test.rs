@@ -108,10 +108,16 @@ fn focus_band_shows_the_last_touched_slot() {
         },
         components::Look::Live,
         None,
+        chimera_core::ui::theme::TextSize::Normal,
     );
     // MORPH maps: its hint offers MIX + SEQ's learn.
     if cfg!(feature = "midi-map") {
-        chimera_core::ui::hint::focus(&mut want, &[chimera_core::ui::view::LEARN]);
+        chimera_core::ui::hint::focus(
+            &mut want,
+            &[chimera_core::ui::view::LEARN],
+            chimera_core::ui::theme::TextSize::Normal,
+            228,
+        );
     }
     assert!(
         band(&fb, 28, 118) == band(&want, 28, 118),
@@ -147,7 +153,13 @@ fn only_the_focused_cell_label_uses_the_accent() {
 #[test]
 fn empty_slots_are_a_dim_dash_and_choices_have_no_bar() {
     let mut fb = Fb::new();
-    components::cell(&mut fb, 0, 200, None);
+    components::cell(
+        &mut fb,
+        0,
+        200,
+        None,
+        chimera_core::ui::theme::TextSize::Normal,
+    );
     assert_eq!(fb.at(theme::MARGIN_X + 3, 197), theme::FAINT);
     let c = Cell {
         label: "MODE",
@@ -160,7 +172,13 @@ fn empty_slots_are_a_dim_dash_and_choices_have_no_bar() {
         motion: None,
     };
     let mut fb = Fb::new();
-    components::cell(&mut fb, 1, 200, Some(&c));
+    components::cell(
+        &mut fb,
+        1,
+        200,
+        Some(&c),
+        chimera_core::ui::theme::TextSize::Normal,
+    );
     let bar_y = 200 + theme::CELL_BAR_DY;
     let x = theme::MARGIN_X + theme::CELL_COL_W;
     assert!(

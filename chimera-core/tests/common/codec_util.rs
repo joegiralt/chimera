@@ -176,6 +176,7 @@ pub fn system_fixture_settings() -> SystemSettings {
             invert: false,
             saver: Saver::DEFAULT,
             pages: Pages::Row,
+            text: chimera_core::ui::theme::TextSize::Normal,
         },
         last_project: ProjectId::new(1_234_567),
     }
@@ -205,6 +206,7 @@ pub fn system_midi_fixture_settings() -> SystemSettings {
             invert: false,
             saver: Saver::DEFAULT,
             pages: Pages::Row,
+            text: chimera_core::ui::theme::TextSize::Normal,
         },
         last_project: ProjectId::new(89),
     }

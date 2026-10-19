@@ -309,6 +309,7 @@ fn the_browser_offers_clear_on_a_filled_slot() {
             0,
             true,
             None,
+            chimera_core::ui::theme::TextSize::Normal,
         );
         (0..120)
             .flat_map(|x| (browser::CLEAR_Y - 7..=browser::CLEAR_Y).map(move |y| (x, y)))
@@ -506,6 +507,7 @@ fn hints_off_shows_no_hint() {
         0,
         true,
         None,
+        chimera_core::ui::theme::TextSize::Normal,
     );
     browser::draw(
         &mut b,
@@ -516,6 +518,7 @@ fn hints_off_shows_no_hint() {
         0,
         false,
         None,
+        chimera_core::ui::theme::TextSize::Normal,
     );
     assert_ne!(a.hash(), b.hash(), "the browser's go too");
 }

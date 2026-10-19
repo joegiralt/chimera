@@ -88,8 +88,14 @@ pub fn cell_texts(s: Option<&AudioStats>, card: Card) -> [FmtBuf; 6] {
     })
 }
 
-pub fn draw_cells<D>(d: &mut D, def: &BlockDef, s: Option<&AudioStats>, card: Card, top: i32)
-where
+pub fn draw_cells<D>(
+    d: &mut D,
+    def: &BlockDef,
+    s: Option<&AudioStats>,
+    card: Card,
+    top: i32,
+    size: theme::TextSize,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
     for (i, text) in cell_texts(s, card).iter().enumerate() {
@@ -104,7 +110,7 @@ where
             look: components::Look::Live,
             motion: None,
         };
-        components::cell(d, i, top, Some(&cell));
+        components::cell(d, i, top, Some(&cell), size);
     }
 }
 
