@@ -373,7 +373,7 @@ const fn unit(
     )
 }
 
-/// Every machine cell shows the machine's glyph (ADR 0148).
+/// Every machine cell shows the machine's glyph (ADR 0173).
 const TAPE: crate::glyph::FocusGlyph = crate::glyph::FocusGlyph::Tape;
 
 /// The five macros are modulatable (read every block, eased); the rest is
@@ -610,7 +610,7 @@ const SLICE_IDENTS: [&str; 18] = [
 ];
 
 /// A file from before PLAY: MODEL's retired codes load as PLAY (#369, ADR
-/// 0145). REVERSE (1) is LOOP with START and END swapped, which plays it bit
+/// 0170). REVERSE (1) is LOOP with START and END swapped, which plays it bit
 /// for bit; ONESHOT (7) is MODE ONE with FADE at HOLD and no SLICE; PING-PONG
 /// (2) is MODE PING. Run after the file's writes, so a sparse Sound's base
 /// START 0, END 1 becomes START 1, END 0.

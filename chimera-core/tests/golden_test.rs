@@ -657,7 +657,7 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
     use chimera_core::dsp::tape_engine::{FADE_HOLD, PlayMode, TapeModel as M};
     let p = TapeEngineParams::default();
     let model = |model| TapeEngineParams { model, ..p };
-    // The old machines, played as PLAY in each MODE (ADR 0145): ONE at
+    // The old machines, played as PLAY in each MODE (ADR 0170): ONE at
     // HOLD is ONESHOT.
     let ping = TapeEngineParams {
         mode: PlayMode::Ping,

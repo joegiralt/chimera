@@ -1,4 +1,4 @@
-# 0145. TAPE's machines are PLAY, KIT, TRON (on probation), REEL, SCRUB, STRETCH and WAVE
+# 0170. TAPE's machines are PLAY, KIT, TRON (on probation), REEL, SCRUB, STRETCH and WAVE
 
 - **Status:** Proposed
 - **Deciders:** owner (answers to `prep-and-play.md` § 3, 2026-10-15), firmware
@@ -10,8 +10,8 @@
 ## Decision
 - **MODEL, in screen order:** PLAY, KIT, TRON, REEL, SCRUB, STRETCH, WAVE. GRAIN is later (code 10 reserved).
 - **Codes:** PLAY 0 (LOOP's), TRON 6, SCRUB 4, STRETCH 5, WAVE 3; KIT 8 and REEL 9 are new. ONESHOT (7) loads as PLAY with MODE ONE and FADE HOLD; PING-PONG (2) as PLAY with MODE PING. ONESHOT's SLICE loads and is ignored (no-legacy-compat).
-- **Each machine takes prep types** (ADR 0146) and refuses others before allocation, with a reason: PLAY RAW or ZONES; KIT KIT; TRON ZONES or RAW; REEL REEL; SCRUB, STRETCH and WAVE RAW.
-- **PLAY:** MODE (ONE, LOOP, PING) over the existing paths; a release FADE (DRAG relabelled), whose last step HOLD exists only in MODE ONE; streams automatically when the source doesn't fit the arena (ADR 0147).
+- **Each machine takes prep types** (ADR 0171) and refuses others before allocation, with a reason: PLAY RAW or ZONES; KIT KIT; TRON ZONES or RAW; REEL REEL; SCRUB, STRETCH and WAVE RAW.
+- **PLAY:** MODE (ONE, LOOP, PING) over the existing paths; a release FADE (DRAG relabelled), whose last step HOLD exists only in MODE ONE; streams automatically when the source doesn't fit the arena (ADR 0172).
 - **KIT:** up to 64 slices on keys from BASE (C1, 36); per slice CUT or STACK, a choke group (0 none, 1–4), LEVEL, TUNE, REV; by default black keys CUT in group 1 and white keys STACK. Whole source in RAM.
 - **Cut and choke are one module both KITs use** (`chimera-engine/src/choke.rs`: `Rehit`, `ChokeGroup`, `KeyPolicy`, `victims`), run by the allocator at note-on and cutting through its existing fade. TAPE's KIT and #215's KIT Part each keep their own policy table. Splitting them later is a copy of that one file.
 - **TRON is on probation:** PLAY's voice and streaming with its own page (RUN, FADE, WOW) and defaults (RUN 8 s, FADE 32 ms, WARBLE). By the release it must offer something PLAY can't, MOTOR (one tape motor a Part) or a spring REWIND being the candidates. If it doesn't, it folds into PLAY: factory TRON Sounds become PLAY Sounds and code 6 loads as PLAY with the same settings. Zones now (two an octave); per-key tapes later.
@@ -30,7 +30,7 @@
 ## Consequences
 - Old Sounds load safely as PLAY; their sound may differ (ONESHOT's SLICE is gone).
 - The allocator gains a policy check at note-on: a no-op for every Part but a KIT's.
-- KIT and REEL publish their tables as prep rows in the pool (ADR 0146), sharing `MAX_SOURCES`.
+- KIT and REEL publish their tables as prep rows in the pool (ADR 0171), sharing `MAX_SOURCES`.
 - The master tape stage's on-screen word REEL (ADR 0093) becomes `MTAPE` (matrix `MTP`) so the REEL machine keeps its name; labels only, by slice 5.
 - TRON's verdict is a release gate.
 

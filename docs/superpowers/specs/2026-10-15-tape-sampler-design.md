@@ -4,7 +4,7 @@
 - **Issue:** private issue #476 (the TAPE release headline); #215 (KIT Part, choke groups); #398 (clean-up)
 - **Builds on:** the TAPE core (`2026-10-04-tape-core-design.md`, ADR 0093), the pool (ADR 0087), `put` for sources (ADR 0106), bank 2 (ADR 0137, 0141, 0142), the card format (ADR 0045, 0048, 0102)
 - **Research:** (private notes) (the plan; its § 4 holds the owner's answers), `feature-table.md` (streaming feasibility, the M1 card run), `tape-rework/adversarial-review-streaming.md` (the bench plan B1–B10)
-- **ADRs:** 0145 (the machine lineup), 0146 (PREP and the `.PRP`), 0147 (streaming by DMA behind heads). All Proposed.
+- **ADRs:** 0170 (the machine lineup), 0171 (PREP and the `.PRP`), 0172 (streaming by DMA behind heads). All Proposed.
 - **First slice in detail:** `2026-10-15-tape-slice1-streaming-design.md`
 
 This is the umbrella. It fixes what every slice shares: the machines, the prep types and their file, PREP's screens, the streaming architecture, budgets, and the slice list. Each slice gets its own plan; slice 1 also gets its own spec.
@@ -194,7 +194,7 @@ A record holds at most 640 B (ADR 0102), so KIT's slices take two `PrepSlices` r
 - **The Sound copies the prep in** when SOURCE or PREP picks it: the same records, inside the Sound (Sound records may hold them; a `SourceRef` names the source). The audio never reads a `.PRP`. A project keeps working with the `.PRP` deleted.
 - **Clean-up (#398)** gains one rule: a `.PRP` whose source is gone is an orphan, and is deleted. A `.PRP` is otherwise a library item; the user deletes it in SAMPLES.
 
-**Why content-named, not named after its source:** a source may have several preps, and a file named after its source would have to be rewritten in place. That needs an A/B pair (ADR 0045) on a card the owner power-pulls. Write-once files need no A/B, reuse the sealing code `put` already has, and match the `.SRC` beside them (ADR 0146).
+**Why content-named, not named after its source:** a source may have several preps, and a file named after its source would have to be rewritten in place. That needs an A/B pair (ADR 0045) on a card the owner power-pulls. Write-once files need no A/B, reuse the sealing code `put` already has, and match the `.SRC` beside them (ADR 0171).
 
 ### 3.3 What the audio reads
 
@@ -448,7 +448,7 @@ The library, in SETTINGS' own language: breadcrumb, list rows, footer (ADR 0066)
 
 ## 5. Streaming
 
-The full design of slice 1 is in its own spec. Here is what every slice builds on. ADR 0147 records it.
+The full design of slice 1 is in its own spec. Here is what every slice builds on. ADR 0172 records it.
 
 ### 5.1 Why and how much
 
@@ -550,9 +550,9 @@ Bank 1 is nearly full; bank 2 holds TAPE's DSP and the reverb behind the door (A
 **Stays (2026-10-04 core spec, ADR 0093):** the `.SRC` format, `SourceHead`, the CRC rule, 12-bit packing, the Hermite read and its 0.35 × rate cut-off, folding on pitch-up; the pool and the gate; ROOT and PERIOD copied into the Sound; `ZoneSet`, `SourceZones`, `ZoneTune`; SCRUB, STRETCH, TRANSWAVE as built; TAPE and AGE; WOW; END before START; the billing method and the bench rows; the host importer; `put` (ADR 0106); the factory set's rules; the names (`TapeEngine`, DECK, the chain).
 
 **Superseded:**
-- **The machine lineup** (ADR 0093 § Machines): ONESHOT, LOOP and PING-PONG fold into PLAY; KIT and REEL are new; ONESHOT's SLICE goes to KIT. (ADR 0145)
-- **TRON plays `Plain` sources held whole** (core § 2 Machines): TRON now streams zone sets; RAM TRON stays possible where the source fits. (ADR 0145, 0147)
-- **"Refill stays in the UI loop; rings in D2; 35 ms heads"** (core § 8): the DMA layer, rings in SRAM4, 100 ms heads by default. (ADR 0147)
+- **The machine lineup** (ADR 0093 § Machines): ONESHOT, LOOP and PING-PONG fold into PLAY; KIT and REEL are new; ONESHOT's SLICE goes to KIT. (ADR 0170)
+- **TRON plays `Plain` sources held whole** (core § 2 Machines): TRON now streams zone sets; RAM TRON stays possible where the source fits. (ADR 0170, 0172)
+- **"Refill stays in the UI loop; rings in D2; 35 ms heads"** (core § 8): the DMA layer, rings in SRAM4, 100 ms heads by default. (ADR 0172)
 - **"Dither is host code"** (core § 6): on-device renders dither too. WAV decode and sample-rate conversion stay on the host.
 - **"No destructive editing on the device"** (feature table): still true. Renders write new files; nothing is overwritten.
 - **The descriptor's rule** "`head_frames` only on a `ZoneSet`": a streamed `Plain` carries heads too (slice 1). The descriptor is RAM only, so no file changes.

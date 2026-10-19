@@ -33,7 +33,7 @@ pub enum FocusGlyph {
     Composite(CompositeId),
     /// VA's own gauges, drawn from the VA block's set values (ADR 0129).
     Va(VaGlyph),
-    /// TAPE's machine glyph (ADR 0148): every machine cell's, drawn from
+    /// TAPE's machine glyph (ADR 0173): every machine cell's, drawn from
     /// `TAPE_GLYPH_PARAMS`' set values; still on MODEL and MODE.
     Tape,
 }

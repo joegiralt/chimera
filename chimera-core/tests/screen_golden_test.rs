@@ -287,7 +287,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // SCN: a saved slot, SAVE's, a queued one filling (plan Task 16).
     ("orbit_scn", 0x7c2558bf895b7432),
     // TAPE's pages (TAPE Task 15): SRC, and DECK and the model page per machine.
-    // Re-recorded: every machine cell shows its machine's glyph (ADR 0148).
+    // Re-recorded: every machine cell shows its machine's glyph (ADR 0173).
     ("tape_src", 0xd81e5d7ee47a12b9),
     ("tape_src_missing", 0xe32642060f0d88ed),
     ("tape_deck_oneshot", 0x06355419d99f8d0a),

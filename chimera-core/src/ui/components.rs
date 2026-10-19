@@ -280,7 +280,7 @@ where
 /// its `gauge`. A dimmed or absent slot reads as its cell does, with no
 /// gauge: a dimmed value in MID, an absent route's dash in INK2. A TAPE
 /// cell its machine ignores keeps the machine's glyph beside its dimmed
-/// value (ADR 0148).
+/// value (ADR 0173).
 ///
 /// While a MIX+PLUS `status` is pending (issue #21) the value readout — the
 /// large numerals and the arc gauge — is replaced by the status word(s) at

@@ -755,7 +755,7 @@ impl Renderer {
     /// The gauge the focus band shows now: none while a prime status holds
     /// the band, or for an absent or empty slot, or a dimmed one but for
     /// TAPE's machine glyph, which a cell its machine ignores leaves as it
-    /// was (ADR 0148).
+    /// was (ADR 0173).
     pub fn shown_gauge(&self, f: &Frame) -> Option<Gauge> {
         let plain = f.def.layout != PageLayout::Matrix
             && !matches!(f.def.viz, VizType::AudioStats | VizType::Pool);

@@ -47,7 +47,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Va", "MODE", FocusGlyph::Va(VaGlyph::Mode)),
     ("Va", "WAVE1", FocusGlyph::Va(VaGlyph::Wave(VaOsc::One))),
     ("Va", "WAVE2", FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two))),
-    // TAPE's machine cells: the machine's glyph (ADR 0148).
+    // TAPE's machine cells: the machine's glyph (ADR 0173).
     ("TapeEngine", "MODEL", TAPE),
     ("TapeEngine", "TYPE", TAPE),
     ("TapeEngine", "SLICE", NONE),
@@ -267,7 +267,7 @@ fn every_two_state_choice_is_decided() {
                 "{b:?}.{}: SWITCH or TWO_PEERS, once",
                 s.ident
             );
-            // TAPE's two-word cells show the machine (ADR 0148).
+            // TAPE's two-word cells show the machine (ADR 0173).
             if peers {
                 assert!(
                     matches!(s.glyph, FocusGlyph::None | FocusGlyph::Tape),

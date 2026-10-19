@@ -76,7 +76,7 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     // switch tables follow their names). Only with `bank2`: without it
     // `Reverb::play` calls `process` in bank 1, where the bench's A/B
     // (`bench-stress` against `bench-stress,bank2`) keeps it. TAPE's
-    // machine glyphs' raster too (ADR 0148: `tape_glyph::draw`, the door's
+    // machine glyphs' raster too (ADR 0173: `tape_glyph::draw`, the door's
     // `render`), which `paint` calls in bank 1 without it.
     let reverb = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
         "    *(.text.*6Reverb7process* .text.*3rev4ramp .text.*3rev4room* .text.*3rev5bloom* .text.*3rev5burst*

@@ -1,4 +1,4 @@
-//! TAPE's machine glyphs (#641, ADR 0148): each machine's still and live
+//! TAPE's machine glyphs (#641, ADR 0173): each machine's still and live
 //! pictures locked by golden, the focus band's glyph keyed only on its
 //! quantised steps (a dirty redraw is a full one while a knob turns, and
 //! nothing redraws at idle).
