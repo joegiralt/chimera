@@ -9,7 +9,7 @@ A voice can run two shaping stages today: DRV before the filter and the AMP page
 
 ## Decision
 
-- **One slot replaces two stages.** DRV leaves the chain (VA · FLT · AMP · MOD, ALGO · ALG · OSC · FLT · AMP · MOD, TAPE · SRC · DECK · FLT · AMP · MOD) and FOLD, FOLD MIX and SYM leave AMP. Every filter kind (CLEAN, DIRTY, LADDER, 2040) carries the slot.
+- **One slot replaces two stages.** DRV leaves the chain (VA · FLT · AMP · MOD, ALGO · ALG · OSC · FLT · AMP · MOD, TAPE · SRC · DECK · FLT · AMP · MOD) and FOLD, FOLD MIX and SYM leave AMP. Every filter kind (CLEAN, DIRTY, LADDER, 2040, and LPG when it is built) carries the slot.
 - **The stored block is VOICEFX** (`BlockRef::VoiceFx`, code 36, `VoiceFxParams`): TYPE 0, PLACE 1, P1 2, P2 3, P3 4, MIX 5. P1–P3 and MIX are `Smoothing::STAGE` (20 ms, they glide, ADR 0112/0117); TYPE and PLACE are `Change::Crossfade`.
 - **TYPE** (`FxType`) is OFF 0, SOFT 1, FUZZ 2, FOLD 3, in that order on the knob; 4 is held for DELAY. OFF is a TYPE value, first in the list. The pots are cell positions, reinterpreted per type as filter KIND does:
 
@@ -48,7 +48,7 @@ A voice can run two shaping stages today: DRV before the filter and the AMP page
 ## Consequences
 
 - One block, six params, and one more stored code; DRIVE and FOLDER retire.
-- `ParamSnapshot` grows 20 B (`VoiceFxParams`), and `Voice` holds its played copy, so a `Voice` less its slot is 2,184 B: **`VOICE_CHAIN_BYTES` 2,176 → 2,240**, the next 64 (ADR 0051/0101/0131's rule). Retiring DRV and the fold's state and params frees more than that.
+- `ParamSnapshot` grows 20 B (`VoiceFxParams`), and `Voice` holds its played copy, so a `Voice` less its slot is 2,184 B: **`VOICE_CHAIN_BYTES` 2,176 → 2,240**, the next 64 (ADR 0051/0101/0131's rule). Retiring DRV and the fold's state and params is expected to free more than that; to be measured in Tasks 6 and 10.
 - A FUZZ Part gets fewer voices only near the CPU limit, through the admission bill.
 - DELAY can come later as a TYPE in the same slot, with code 4; its cost is memory (a buffer a voice).
 

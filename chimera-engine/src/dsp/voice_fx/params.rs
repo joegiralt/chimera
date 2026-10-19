@@ -127,10 +127,10 @@ impl VoiceFxParams {
         self.ty
     }
 
-    /// A TYPE turn: leaving OFF takes the type's place; any later pick keeps
+    /// A TYPE turn: leaving OFF for a type takes its place; any later pick keeps
     /// yours. A load sets both as stored (`set_enum_code`).
     pub fn set_type(&mut self, t: FxType) {
-        if self.ty == FxType::Off {
+        if self.ty == FxType::Off && t != FxType::Off {
             self.place = t.default_place();
         }
         self.ty = t;

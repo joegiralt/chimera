@@ -30,6 +30,11 @@ fn picking_a_type_from_off_takes_its_place_later_ones_keep_yours() {
     p.place = Place::Pre;
     p.set_type(FxType::Soft);
     assert_eq!(p.place, Place::Pre);
+    // OFF onto OFF is no departure: PLACE stays as set.
+    p.set_type(FxType::Off);
+    p.place = Place::Post;
+    p.set_type(FxType::Off);
+    assert_eq!(p.place, Place::Post);
 }
 
 #[test]
