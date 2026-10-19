@@ -1,4 +1,4 @@
-//! The six operators and the sub's mix (spec § Combine). Each sees its
+//! The seven operators and the sub's mix (spec § Combine). Each sees its
 //! inputs within their block peak bounds and stays within 0.9; XOR and
 //! BITS alias by nature and are exempt from the alias gate.
 
@@ -196,7 +196,7 @@ impl Operator {
             VaMode::Xor => sum + (xor16_scaled(a, b, self.kx, self.p2) - sum) * x,
             VaMode::Bits => self.q * self.crush.process_scaled(sum, self.liq),
             // OSC 2 is in OSC 1's phase already
-            VaMode::Fm => a,
+            VaMode::Fm | VaMode::Phase => a,
         }
     }
 }
@@ -217,7 +217,7 @@ pub fn combine(mode: VaMode, a: f32, b: f32, x: f32, k: f32, pk: Peaks, crush: &
             let q = 0.5 * (pk.a + pk.b);
             q * crush.process(half / q)
         }
-        VaMode::Fm => a,
+        VaMode::Fm | VaMode::Phase => a,
     }
 }
 

@@ -5,10 +5,10 @@ mod common;
 
 use core::mem::MaybeUninit;
 
-use chimera_core::dsp::va::{VA_CHAIN_GAIN, VaEngine, VaMode, VaParams, fm_index};
+use chimera_core::dsp::va::{VA_CHAIN_GAIN, VaEngine, VaMode, VaParams, fm_index, phase_depth};
 use chimera_core::project::PartId;
 use chimera_hal::BLOCK_SIZE;
-use common::spectrum::{alias_db_lattice, peak_hz};
+use common::spectrum::{alias_db_lattice, fundamental, peak_hz};
 
 const SR: u32 = 48_000;
 const B: usize = BLOCK_SIZE;
@@ -342,5 +342,225 @@ fn leaving_fm_settles() {
             100.0 * d / lim
         );
         assert!(d <= lim, "{m0:?} → {m1:?}: {d} > {lim}");
+    }
+}
+
+// ---- PHASE (#602) ----
+
+fn phase(amount: f32) -> VaParams {
+    VaParams {
+        mode: VaMode::Phase,
+        amount,
+        ..sine()
+    }
+}
+
+/// A phase offset repeats with the cycle, so the pitch is OSC 1's at any
+/// BLEND and any ratio.
+#[test]
+fn phase_keeps_pitch() {
+    let f0 = hz_of(A4);
+    for crse in [0i8, 7] {
+        for blend in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let base = VaParams {
+                coarse: [0, crse],
+                ..phase(blend)
+            };
+            let y = held(A4, base, PITCH_BLOCKS + 200);
+            let f = peak_hz(&y, SR as f32, f0);
+            let cents = 1200.0 * (f / f64::from(f0)).log2();
+            println!("PHASE CRSE2 {crse} BLEND {blend}: {f:.3} Hz ({cents:+.3} cents)");
+            assert!(cents.abs() <= 1.0, "CRSE2 {crse} BLEND {blend}: {cents}");
+        }
+    }
+}
+
+/// Total energy of the 2nd–8th harmonics of `f0`, Hann-windowed.
+fn upper_energy(y: &[f32], f0: f32) -> f64 {
+    let n = y.len();
+    let w: Vec<f32> = y
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| v * (0.5 - 0.5 * (core::f32::consts::TAU * i as f32 / n as f32).cos()))
+        .collect();
+    (2..=8)
+        .map(|k| {
+            let (re, im) = fundamental(&w, SR as f32, f0 * k as f32);
+            f64::from(re).powi(2) + f64::from(im).powi(2)
+        })
+        .sum()
+}
+
+/// A sine warped by a triangle OSC 2 (SHAPE 1, the CZ's skewed triangle),
+/// locked 1:1: the upper harmonics grow with BLEND, the filter sweep a CZ
+/// makes with its DCW.
+#[test]
+fn phase_warps_like_cz() {
+    let f0 = hz_of(A4);
+    let mut last = -1.0;
+    for i in 0..=5 {
+        let blend = 0.1 * i as f32;
+        let base = VaParams {
+            wave: [0.0, 1.0 / 3.0],
+            shape: [0.0, 1.0],
+            ..phase(blend)
+        };
+        let y = held(A4, base, 600);
+        let e = upper_energy(&y[y.len() - 8192..], f0);
+        println!("PHASE BLEND {blend:.1}: harmonics 2-8 energy {e:.3e}");
+        assert!(e > last, "BLEND {blend}: {e} <= {last}");
+        last = e;
+    }
+}
+
+/// The alias gate on the lattice of both pitches, corrected and not. A
+/// sine modulator under a sine carrier is bandlimited by Carson's rule at
+/// index `2π·depth`: its gate is −45 dB where that fits under Nyquist;
+/// elsewhere (saw or pulse carrier) the correction must win 10 dB. A saw
+/// modulator is printed, not gated: its step moves the phase by up to a
+/// cycle in a sample, which nothing corrects (the carrier's own edges only
+/// follow the read's rate), and the uncorrected step is often exact.
+#[test]
+fn phase_alias_gate() {
+    let mut worst = (f64::MIN, String::new());
+    let mut least = (f64::MAX, String::new());
+    let mut fails = Vec::new();
+    println!("note crse wave1 wave2 blend: on / off dB (carson Hz)");
+    for note in [C5, C6] {
+        for crse in [0i8, 12, 7] {
+            let (fine, ratio) = match crse {
+                7 => (1.955, 1.5),
+                c => (0.0, 2f32.powf(f32::from(c) / 12.0)),
+            };
+            for w1 in ANCHORS {
+                for w2 in [0.0, SAW] {
+                    for blend in [0.25, 0.5, 1.0] {
+                        let base = VaParams {
+                            wave: [w1, w2],
+                            coarse: [0, crse],
+                            fine: [0.0, fine],
+                            ..phase(blend)
+                        };
+                        let fc = hz_of(note);
+                        let fm_ = fc * ratio;
+                        let i = core::f32::consts::TAU * phase_depth(blend);
+                        let carson = (i + 1.0) * fm_ + fc;
+                        let gate = |prep: fn(&mut VaEngine)| {
+                            let y = take_with(prep, note, base, GATE_BLOCKS, |_, _| {});
+                            alias_db_lattice(&y, SR as f32, fc, fm_)
+                        };
+                        let on = gate(|_| {});
+                        let off = gate(VaEngine::uncorrected);
+                        let fits = carson < 24_000.0 && w1 < SAW && w2 == 0.0;
+                        let at = format!("{note} {crse:+} {w1:.3} {w2:.3} {blend}");
+                        let tag = if fits { "" } else { " exception" };
+                        println!("{at}: {on:.1} / {off:.1} ({carson:.0}){tag}");
+                        if w2 == SAW {
+                            // a saw's step is a step in the phase: printed
+                            continue;
+                        }
+                        if fits {
+                            if on > -45.0 {
+                                fails.push(format!("{at}: {on:.1} dB > -45"));
+                            }
+                            if on > worst.0 {
+                                worst = (on, at);
+                            }
+                        } else {
+                            if on > off - 10.0 {
+                                fails.push(format!("{at}: {on:.1} vs off {off:.1}"));
+                            }
+                            if off - on < least.0 {
+                                least = (off - on, at);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    println!("worst where Carson fits {:.1} dB at {}", worst.0, worst.1);
+    println!("least correction elsewhere {:.1} dB at {}", least.0, least.1);
+    assert!(fails.is_empty(), "{fails:#?}");
+}
+
+/// PHASE moves OSC 1's phase, not its level: at INIT's tuning and a fifth
+/// apart every BLEND sounds as loud as OSC 1 alone, within 1.5 dB.
+#[test]
+fn phase_level_matches_mix() {
+    let blocks = 2 * SR as usize / B;
+    for (coarse, fine) in [(0i8, 6.0), (7, 0.0)] {
+        let saws = VaParams {
+            wave: [SAW; 2],
+            coarse: [0, coarse],
+            fine: [0.0, fine],
+            ..sine()
+        };
+        let mix = rms(&held(
+            C4,
+            VaParams {
+                mode: VaMode::Mix,
+                amount: 0.0,
+                ..saws
+            },
+            blocks,
+        ));
+        for blend in [0.0, 0.5, 1.0] {
+            let y = held(
+                C4,
+                VaParams {
+                    mode: VaMode::Phase,
+                    amount: blend,
+                    ..saws
+                },
+                blocks,
+            );
+            let db = 20.0 * (rms(&y) / mix).log10();
+            println!("CRSE2 {coarse} FINE2 {fine} BLEND {blend}: {db:+.2} dB");
+            assert!(
+                db.abs() <= 1.5,
+                "CRSE2 {coarse} FINE2 {fine} BLEND {blend}: {db}"
+            );
+        }
+    }
+}
+
+/// PHASE in and out of the duck never clicks, the sub on or off.
+#[test]
+fn phase_changes_never_click() {
+    let base = VaParams {
+        wave: [SAW, 0.3],
+        shape: [0.3, 0.0],
+        fine: [0.0, 6.0],
+        coarse: [0, 7],
+        amount: 0.8,
+        ..sine()
+    };
+    for sub in [0.0, 0.5] {
+        for (m0, m1) in [
+            (VaMode::Mix, VaMode::Phase),
+            (VaMode::Phase, VaMode::Mix),
+            (VaMode::Phase, VaMode::Fm),
+            (VaMode::Fm, VaMode::Phase),
+        ] {
+            let base = VaParams { sub, ..base };
+            let y = take_with(
+                |_| {},
+                A4,
+                base,
+                2 * AT,
+                |b, p| p.mode = if b < AT { m0 } else { m1 },
+            );
+            let held: Vec<_> = [m0, m1]
+                .iter()
+                .map(|&m| held(A4, VaParams { mode: m, ..base }, 2 * AT))
+                .collect();
+            let (d, lim) = click(&y, &held);
+            println!(
+                "SUB {sub} {m0:?} -> {m1:?}: d2 {d:.3e} / limit {lim:.3e} ({:.0}%)",
+                100.0 * d / lim
+            );
+            assert!(d <= lim, "{m0:?} -> {m1:?}: {d} > {lim}");
+        }
     }
 }

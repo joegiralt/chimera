@@ -40,21 +40,24 @@ pub enum VaMode {
     Bits = 4,
     /// OSC 2 frequency-modulates OSC 1 linearly, through zero (#601).
     Fm = 5,
+    /// OSC 2 phase-modulates OSC 1, a CZ-like phase distortion (#602).
+    Phase = 6,
 }
 
 impl VaMode {
-    pub const ALL: [VaMode; 6] = [
+    pub const ALL: [VaMode; 7] = [
         VaMode::Mix,
         VaMode::Sync,
         VaMode::Ring,
         VaMode::Xor,
         VaMode::Bits,
         VaMode::Fm,
+        VaMode::Phase,
     ];
 }
 
 /// MODE's names, in `VaMode`'s order (display only).
-pub const MODE_NAMES: [&str; 6] = ["MIX", "SYNC", "RING", "XOR", "BITS", "FM"];
+pub const MODE_NAMES: [&str; 7] = ["MIX", "SYNC", "RING", "XOR", "BITS", "FM", "PHASE"];
 
 impl DiskCode for VaMode {
     fn disk_code(self) -> u8 {
@@ -65,6 +68,7 @@ impl DiskCode for VaMode {
             VaMode::Xor => 3,
             VaMode::Bits => 4,
             VaMode::Fm => 5,
+            VaMode::Phase => 6,
         }
     }
 
@@ -76,6 +80,7 @@ impl DiskCode for VaMode {
             VaMode::Xor => "XOR",
             VaMode::Bits => "BITS",
             VaMode::Fm => "FM",
+            VaMode::Phase => "PHASE",
         }
     }
 
@@ -87,6 +92,7 @@ impl DiskCode for VaMode {
             3 => Some(VaMode::Xor),
             4 => Some(VaMode::Bits),
             5 => Some(VaMode::Fm),
+            6 => Some(VaMode::Phase),
             _ => None,
         }
     }
@@ -195,7 +201,7 @@ pub static VA_SPECS: [ParamSpec; 12] = [
         2,
         "MODE",
         ValFmt::Names(&MODE_NAMES),
-        5.0,
+        6.0,
         0.0,
         Change::Crossfade,
     )
@@ -308,6 +314,15 @@ pub const COST_BITS: Cost = Cost(530);
 /// crossed either way at the 0.45 cap, a divide a crossing) + 134.4 + 29.4
 /// + 74.2 (5.1 of it the modulator's scaling) + 29.9 + 95.
 pub const COST_FM: Cost = Cost(590);
+// provisional: Task 6 counts it
+pub const COST_PHASE: Cost = Cost(590);
+
+/// PHASE's peak depth at BLEND `blend`, in cycles: `blend/2`. BLEND ½ is
+/// the CZ's full warp (PD is PM at index 2π(½ − d), Lazzarini et al.,
+/// DAFx-09).
+pub fn phase_depth(blend: f32) -> f32 {
+    0.5 * blend
+}
 
 /// FM's index at BLEND `blend`, `5·blend²`, capped so OSC 1's fastest read
 /// `inc·(1 + I)` stays under `MAX_INC` (0.45 cycles a sample); `inc = 0`
@@ -473,8 +488,10 @@ pub struct VaEngine {
     amount: Ramp,
     sub_level: Ramp,
     ring_k: Ramp,
-    /// FM's index (`fm_index`).
+    /// FM's index (`fm_index`), PHASE's depth (`phase_depth`): one plays.
     fm: Ramp,
+    /// PHASE's offset (cycles) at the last sample, `D·b/pk`; NaN: none yet.
+    pm_prev: f32,
     note: u8,
     pitch: f32,
     slide: Glide,
@@ -511,6 +528,7 @@ impl VaEngine {
             sub_level: Ramp::default(),
             ring_k: Ramp::default(),
             fm: Ramp::default(),
+            pm_prev: 0.0,
             note: 60,
             pitch: 0.0,
             slide: Glide::new(1.0, 1.0),
@@ -586,6 +604,7 @@ impl VaEngine {
                 self.jit = [1.0; 2];
             }
             (self.playing, self.duck) = (p.mode, Duck::Steady);
+            self.pm_prev = 0.0;
         }
         if self.seeded != Some(part) {
             self.stab
@@ -665,6 +684,7 @@ impl VaEngine {
             VaMode::Xor => COST_XOR,
             VaMode::Bits => COST_BITS,
             VaMode::Fm => COST_FM,
+            VaMode::Phase => COST_PHASE,
         }
     }
 
@@ -793,14 +813,21 @@ impl VaEngine {
                 let (from, to) = self.fm.step(fm_index(unit(p.amount), inc));
                 self.render_fm(out, &l, gain, (from.min(fm_cap(inc)), to))
             }
+            VaMode::Phase => {
+                let d = self.fm.step(phase_depth(unit(p.amount)));
+                self.render_phase(out, &l, gain, d)
+            }
         }
         self.duck = match duck {
             Duck::Steady => Duck::Steady,
             Duck::Down(0) => Duck::Down(1),
             Duck::Down(_) => {
                 self.playing = p.mode;
-                // FM's index starts on its value
+                // FM's index and PHASE's depth start on their value; PHASE's
+                // offset starts at the first sample's (the read is the clock
+                // after `settle`, and an offset's jump would click)
                 self.fm.hold();
+                self.pm_prev = f32::NAN;
                 // a MOD MODE's read phase becomes the clock (ADR 0158)
                 for o in &mut self.osc {
                     o.settle();
@@ -883,6 +910,59 @@ impl VaEngine {
         match gain {
             Some(g) => self.operator::<true>(out, l, VaMode::Fm, g),
             None => self.operator::<false>(out, l, VaMode::Fm, &DUCK_UP[1]),
+        }
+    }
+
+    /// PHASE (#602): OSC 2 plain, at unit peak times the depth `dp` (from,
+    /// to) cycles, offsets OSC 1's read phase; the read's rate is the
+    /// offset's difference (`k = (0, 1)`). The operator plays OSC 1 alone.
+    #[inline(never)]
+    fn render_phase(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain, dp: (f32, f32)) {
+        let Self {
+            osc: [o1, o2],
+            stab,
+            jit,
+            osc2: b,
+            marks: mk,
+            pm_prev,
+            ..
+        } = self;
+        let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
+        let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+        o2.render::<BLOCK_SIZE, false, false, false, false>(
+            b,
+            mk,
+            &l.osc[1],
+            &mut jit[1],
+            &mut draw,
+            &ZEROS,
+            (0.0, 0.0),
+        );
+        let s = 1.0 / l.pk.b;
+        let (mut x, dx) = (dp.0 * s, step_of(dp, BLOCK_SIZE) * s);
+        let mut prev = *pm_prev;
+        if prev.is_nan() {
+            prev = (dp.0 * s + dx) * b[0];
+        }
+        for v in b.iter_mut() {
+            x += dx;
+            let off = x * *v;
+            *v = off - prev;
+            prev = off;
+        }
+        *pm_prev = prev;
+        o1.render::<BLOCK_SIZE, true, false, true, true>(
+            out,
+            mk,
+            &l.osc[0],
+            &mut jit[0],
+            &mut draw,
+            b,
+            (0.0, 1.0),
+        );
+        match gain {
+            Some(g) => self.operator::<true>(out, l, VaMode::Phase, g),
+            None => self.operator::<false>(out, l, VaMode::Phase, &DUCK_UP[1]),
         }
     }
 

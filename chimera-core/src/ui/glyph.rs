@@ -298,6 +298,7 @@ pub const fn blend_ends(mode: VaMode) -> [&'static str; 2] {
         VaMode::Xor => ["MIX", "XOR"],
         VaMode::Bits => ["CLEAN", "CRUSH"],
         VaMode::Fm => ["CLEAN", "DEEP"],
+        VaMode::Phase => ["CLEAN", "WARP"],
     }
 }
 
