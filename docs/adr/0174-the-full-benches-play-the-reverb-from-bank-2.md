@@ -1,6 +1,6 @@
 # 0174. Build the ALGO, STRESS and ORBIT benches with bank 2
 
-- **Status:** Proposed
+- **Status:** Proposed (supersedes in part 0142: its bank-1 vs bank-2 reverb A/B bench)
 - **Deciders:** firmware (#654), owner to rule on the next bank-1 move
 
 ## Context
