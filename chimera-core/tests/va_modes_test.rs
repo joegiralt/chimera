@@ -438,10 +438,11 @@ fn band_db(y: &[f32], lo: f64) -> f64 {
 }
 
 /// A turn is a corner, a reset a step: a sine or triangle slave in SYNC
-/// carries 18–28 dB more above 8 kHz, gated at 6. Printed, not gated: a
-/// saw (its own edges are steps either way: within 2 dB), and CRSE2 +7,
-/// where OSC 2 is half a cycle on at each wrap, so a sine's or triangle's
-/// reset from there is the same corner as a turn (within 0.1 dB).
+/// carries 18–28 dB more above 8 kHz, gated at 6. Held only to never
+/// 3 dB brighter than SYNC: a saw (its own edges are steps either way:
+/// within 2 dB), and CRSE2 +7, where OSC 2 is half a cycle on at each
+/// wrap, so a sine's or triangle's reset from there is the same corner as
+/// a turn (within 0.1 dB).
 #[test]
 fn soft_sync_is_softer_than_sync() {
     for (w2, crse) in [SAW, 1.0 / 3.0, 0.0]
@@ -469,12 +470,11 @@ fn soft_sync_is_softer_than_sync() {
             "WAVE2 {w2:.3} CRSE2 {crse}: above 8 kHz SOFT SYNC {soft_:.1} dB, SYNC {hard:.1} dB ({:+.1})",
             soft_ - hard
         );
-        if w2 < SAW && crse != 7 {
-            assert!(
-                soft_ <= hard - 6.0,
-                "WAVE2 {w2} CRSE2 {crse}: {soft_} vs {hard}"
-            );
-        }
+        let room = if w2 < SAW && crse != 7 { -6.0 } else { 3.0 };
+        assert!(
+            soft_ <= hard + room,
+            "WAVE2 {w2} CRSE2 {crse}: {soft_} vs {hard}"
+        );
     }
 }
 
@@ -549,8 +549,8 @@ fn soft_sync_level_matches_mix() {
 }
 
 /// Entering SOFT SYNC the read starts forward (`settle` at the swap):
-/// after an odd number of turns, out to MIX and back in, it plays as a
-/// fresh engine started at those phases does.
+/// left while OSC 2 reads backward (an odd number of turns), out to MIX
+/// and back in, it plays as a fresh engine started at those phases does.
 #[test]
 fn entering_soft_sync_starts_forward() {
     let base = VaParams {
@@ -559,15 +559,23 @@ fn entering_soft_sync_starts_forward() {
         ..soft(0.8)
     };
     let tail = 10;
+    // SOFT SYNC for `k` blocks, then MIX through the duck's swap
+    let leave = |e: &mut VaEngine, p: &mut VaParams, k: usize| {
+        e.hold();
+        e.note_on(A4, p, PartId::new(0).unwrap(), SR);
+        run(e, p, k, |_, _| {});
+        p.mode = VaMode::Mix;
+        run(e, p, 4, |_, _| {});
+        assert_eq!(e.mode(), VaMode::Mix);
+        e.dirs_at_swap()[1]
+    };
+    // a turn every 109 samples at A4: some start leaves it backward
+    let k = (1..20)
+        .find(|&k| with_engine(|e| leave(e, &mut { base }, k)) < 0.0)
+        .expect("OSC 2 left backward");
     let (back, settled) = with_engine(|e| {
         let mut p = base;
-        e.hold();
-        e.note_on(A4, &p, PartId::new(0).unwrap(), SR);
-        // 26.7 ms a block of 64 at A4: a few turns, an odd count somewhere
-        run(e, &mut p, 3, |_, _| {});
-        p.mode = VaMode::Mix;
-        run(e, &mut p, 4, |_, _| {});
-        assert_eq!(e.mode(), VaMode::Mix);
+        assert_eq!(leave(e, &mut p, k), -1.0);
         p.mode = VaMode::SoftSync;
         run(e, &mut p, 2, |_, _| {});
         assert_eq!(e.mode(), VaMode::SoftSync);

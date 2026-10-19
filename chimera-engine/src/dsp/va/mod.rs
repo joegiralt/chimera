@@ -499,6 +499,8 @@ pub struct VaEngine {
     last_k: [f32; 2],
     #[cfg(any(test, feature = "test-support"))]
     backwards: bool,
+    #[cfg(any(test, feature = "test-support"))]
+    swap_dirs: [f32; 2],
 }
 
 #[cfg(not(any(test, feature = "test-support")))]
@@ -534,6 +536,8 @@ impl VaEngine {
             last_k: [0.0; 2],
             #[cfg(any(test, feature = "test-support"))]
             backwards: false,
+            #[cfg(any(test, feature = "test-support"))]
+            swap_dirs: [1.0; 2],
         }
     }
 
@@ -815,6 +819,10 @@ impl VaEngine {
                 self.playing = p.mode;
                 // FM's index starts on its value
                 self.fm.hold();
+                #[cfg(any(test, feature = "test-support"))]
+                {
+                    self.swap_dirs = self.osc.each_ref().map(|o| o.read_dir());
+                }
                 // a MOD MODE's read phase becomes the clock (ADR 0158)
                 for o in &mut self.osc {
                     o.settle();
@@ -928,8 +936,8 @@ impl VaEngine {
         // reverses unmodulated (FM's is `render_fm`)
         let (z, nk) = (&ZEROS, (0.0, 0.0));
         // OSC 1 marks its sub flips and its wraps, one instance for every
-        // MODE (flash): only SYNC's slave reads the wraps, resetting at
-        // them (ADR 0118 point 13)
+        // MODE (flash): only SYNC's and SOFT SYNC's OSC 2 read the wraps,
+        // resetting (ADR 0118 point 13) or turning (ADR 0161) at them
         o1.render::<BLOCK_SIZE, true, false, true, false>(
             out,
             mk,
@@ -1072,6 +1080,12 @@ impl VaEngine {
     #[cfg(any(test, feature = "test-support"))]
     pub fn read_ran_backwards(&self) -> bool {
         self.backwards
+    }
+
+    /// Both reads' directions at the last MODE swap, before `settle`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn dirs_at_swap(&self) -> [f32; 2] {
+        self.swap_dirs
     }
 
     /// Both clocks jumped to `p`, as a carry restores them.

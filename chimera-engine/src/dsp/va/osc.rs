@@ -1010,6 +1010,12 @@ impl VarOsc {
         self.read
     }
 
+    /// The read's direction, ±1.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn read_dir(&self) -> f32 {
+        self.dir
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn with_correction(mut self, c: Correction) -> Self {
         self.correction = c;
