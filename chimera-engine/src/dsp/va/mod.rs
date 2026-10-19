@@ -299,16 +299,16 @@ pub const VA_OUT_GAIN: f32 = 3.631;
 /// ceiling, 7/48 a sample. Each line: OSC 1 (TRI/SAW) + OSC 2 + operator
 /// and sub + block + crossings + 95 (2026-10-13, ADR 0118 point 13).
 ///
-/// MIX: 158.2 + 134.4 (TRI/SAW) + 36.2 + 68.0 + 29.9 + 95.
+/// MIX: 158.2 + 134.4 (TRI/SAW) + 36.2 + 68.4 + 29.9 + 95.
 pub const COST_MIX: Cost = Cost(530);
 /// SYNC: 121.7 (master at 7 kHz) + 183.7 (SINE/TRI slave: a reset's 197.5
-/// × 7/48) + 36.2 + 71.5 + 31.0 + 95.
+/// × 7/48) + 36.2 + 71.8 + 31.1 + 95.
 pub const COST_SYNC: Cost = Cost(540);
-/// RING: 158.2 + 134.4 + 42.6 + 68.7 + 29.9 + 95.
+/// RING: 158.2 + 134.4 + 42.6 + 69.1 + 29.9 + 95.
 pub const COST_RING: Cost = Cost(530);
-/// XOR: 158.2 + 134.4 + 53.9 + 69.9 + 29.9 + 95.
+/// XOR: 158.2 + 134.4 + 53.9 + 70.2 + 29.9 + 95.
 pub const COST_XOR: Cost = Cost(550);
-/// BITS: 158.2 + 134.4 + 42.6 + 68.8 + 29.9 + 95.
+/// BITS: 158.2 + 134.4 + 42.6 + 69.2 + 29.9 + 95.
 pub const COST_BITS: Cost = Cost(530);
 /// FM: 222.8 (SINE/TRI, OSC 1's MOD instance: its edges follow the read,
 /// crossed either way at the 0.45 cap, a divide a crossing) + 134.4 + 29.4

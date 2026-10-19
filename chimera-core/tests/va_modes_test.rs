@@ -156,11 +156,11 @@ fn fm_goes_through_zero() {
 /// Carson's bandwidth `(I + 1)·f_m + f_c` fits under Nyquist the gate is
 /// −45 dB; elsewhere the correction must win 10 dB. A saw or pulse
 /// carrier's harmonics reach Nyquist at any index, so its band never fits
-/// (measured: −23 to −48 dB at BLEND 1, ADR 0159). Most of that is the
-/// 2-point kernel at up to 6× the note's read rate (BLEND 1, `I` = 5); the
-/// rate's corners alone stay at about −58 dB or under (a sine carrier
-/// under a saw modulator), and a saw modulator adds about 10 dB more
-/// (private issue #650). CRSE 7 plays the just
+/// (measured: −23 to −48 dB at BLEND 1, ADR 0159). Most of that is, by
+/// estimate, the 2-point kernel at up to 6× the note's read rate (BLEND 1,
+/// `I` = 5); the rate's corners alone stay at about −58 dB or under (a sine
+/// carrier under a saw modulator), and a saw modulator adds 1.5 to 19.1 dB
+/// more at BLEND 1 (private issue #650). CRSE 7 plays the just
 /// fifth (FINE2 +1.955 cents, 3:2): the equal-tempered fifth's lattice,
 /// cut at `|i|, |j| ≤ ⌈24 kHz / f⌉ + 1`, leaves a high harmonic's in-band
 /// sidebands unmasked (the same patch reads −31 dB there, −59 dB at 3:2).
