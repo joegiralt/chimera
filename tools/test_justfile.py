@@ -92,7 +92,11 @@ class Bank2Code(unittest.TestCase):
 
     def test_check_runs_the_proxies_with_their_door(self):
         body = "\n".join(recipes()["check"])
-        self.assertRegex(body, r"--features bank2,test-support --test tape_proxy_test --test reverb_proxy_test")
+        self.assertRegex(body, r"--features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test")
+
+    def test_split_checks_the_va_door_is_in_bank_2(self):
+        body = "\n".join(recipes()["bank2-split"])
+        self.assertIn("just check-door-placed {{elf}}", body)
 
 
 class OneUpdate(unittest.TestCase):

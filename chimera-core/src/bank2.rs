@@ -109,15 +109,17 @@ pub fn closed_text(
     use crate::block::DiskCode;
     use crate::dsp::reverb::ReverbParams;
     use crate::dsp::tape_engine::params::TapeEngineParams;
-    use crate::dsp::va::{MODE_NAMES, VaMode, VaParams};
+    use crate::dsp::va::{VaMode, VaParams};
     let named = [
         ParamAddr::new(BlockRef::Reverb, ReverbParams::TYPE),
         ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL),
     ];
     let va_mode = || {
         addr == ParamAddr::new(BlockRef::Va, VaParams::MODE)
-            && VaMode::from_disk_code(crate::ui::fmt::discrete(v, MODE_NAMES.len() as u8 - 1))
-                .is_some_and(VaMode::in_bank2)
+            && addr.spec().is_some_and(|s| {
+                VaMode::from_disk_code(crate::ui::fmt::discrete(v, s.fmt.max_int()))
+                    .is_some_and(VaMode::in_bank2)
+            })
     };
     (closed(bank2) && (named.contains(&addr) || va_mode())).then_some(NEEDS_UPDATE)
 }

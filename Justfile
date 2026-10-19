@@ -166,6 +166,7 @@ bank2-split elf out:
         ver="${pkg##*[#@]} $hash"
         rust-objcopy -j .bank2 -O binary {{elf}} {{out}}.bk2
         {{utils}} door-check {{elf}}
+        just check-door-placed {{elf}}
         {{utils}} bank2-seal {{elf}} {{out}}.bin {{out}}.bk2 --version "$ver"
         just check-bin-paths {{out}}.bk2
     elif grep -qw BANK2_SEAL <<< "$syms"; then
@@ -195,6 +196,13 @@ release-bin:
 
 # A .bin holding the power-pull aid (`bank2-gate`: its marker or its PULL
 # NOW) never ships.
+# VA's MOD path (ADR 0163) is all bank 2's on a bank-2 build: a `bank2.x`
+# glob that misses a new door entry or run leaves it silently in bank 1.
+check-door-placed elf:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rust-nm -C {{elf}} | awk '/ [tT] .*va::osc::door::/ { n++; a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08180000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print "va::osc::door: nothing linked" > "/dev/stderr"; exit bad || !n }'
+
 check-no-gate bin:
     #!/usr/bin/env bash
     set -euo pipefail

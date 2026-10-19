@@ -301,4 +301,11 @@ fn the_va_page_draws_update_at_fm_closed() {
     );
     assert_eq!(va_home(5, Some(open())).hash(), va_home(5, None).hash());
     assert_ne!(va_home(5, empty).hash(), va_home(5, None).hash());
+    use chimera_core::bank2::{NEEDS_UPDATE, NEEDS_UPDATE_CELL};
+    let closed = va_home(5, empty);
+    assert!(cell_reads(&closed, 2, NEEDS_UPDATE_CELL), "MODE's cell");
+    assert!(band_reads(&closed, NEEDS_UPDATE), "the focus band");
+    let fm = va_home(5, Some(open()));
+    assert!(cell_reads(&fm, 2, "FM"));
+    assert!(!band_reads(&fm, NEEDS_UPDATE));
 }

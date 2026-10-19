@@ -923,8 +923,8 @@ impl VaEngine {
             x += dx;
             *v *= x;
         }
-        // OSC 1's MOD render is bank 2's with `bank2` (ADR 0163): closed,
-        // the voice is silent and OSC 1 waits as it was
+        // OSC 1's MOD render is bank 2's with `bank2` (ADR 0163). Closed,
+        // the voice is silent and OSC 1 waits as it was.
         let mut osc1 = |f: osc::door::ModRender| {
             f(o1, out, mk, &l.osc[0], &mut jit[0], stab, jd, b, (1.0, 0.0))
         };

@@ -23,6 +23,8 @@ VA MODE FM (ADR 0159) added OSC 1's `MOD` render, `VarOsc::render::<64, true, fa
 ## Consequences
 - Bank 1 of the ORBIT build: 865,780 → 858,748 B (51,724 → 58,756 B free, +7,032 B). The `.bk2` body grows from 121,152 to 128,192 B.
 - While bank 2 isn't open, FM (and PHASE, SOFT SYNC as they join) is silent and its MODE says so; a Sound in FM loads and is silent; the other MODEs play.
+- The stack: `osc1_mod` inlines `render_in`, so its frame is render's and the entry's together. The deepest set, `bench-stress,bank2`, reaches 62,536 B nested of the 63,232 B limit (margin already taken off): 696 B left. The next entries (SOFT SYNC, LOOPFM) are checked against that; a deeper one goes back to `render_in` out of line.
+- `just check-door-placed` (run by `bank2-split`) fails a bank-2 build that leaves any `va::osc::door` symbol in bank 1: a glob that misses a new entry.
 - FM's OSC 1 runs from bank 2 every block a voice plays FM; parity with bank 1 is expected (ADR 0142's Gate 3), unmeasured.
 - The `MOD` runs' symbols move to `va::osc::door::run::<...>` and the entry `door::osc1_mod`: the bill count (`bills2.py`'s `mod_master` role, ADR 0159 point 8) reads them there.
 - The bench sets without `bank2` (`bench-stress,orbit`) keep FM in bank 1 and gain nothing.
