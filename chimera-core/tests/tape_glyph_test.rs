@@ -772,3 +772,67 @@ fn stretch_chevrons_count_the_speed_not_the_knob() {
     assert_eq!(chevrons(-1.0), chevrons(0.48));
     assert_eq!(chevrons(1.0), 2 * chevrons(0.48));
 }
+
+#[test]
+fn mode_turned_on_the_page_dims_and_frees_the_loop_cells() {
+    // `dimmed_cells_keep_the_glyph` sets MODE behind the UI; here MODE is
+    // turned on the PLAY page, LOOP → ONE → LOOP, as on the unit (owner
+    // UAT on 581cbcfe). In ONE, POSITION, WALK, LENGTH and XFADE ignore
+    // their knobs and the match holds; back in LOOP they move again. A
+    // dirty frame always equals a full one.
+    use chimera_core::project::PartId;
+    use chimera_hal::ButtonId;
+    let perf = PerfStats::zero();
+    let tape = |ui: &chimera_core::ui::UiState| {
+        let t = &ui.project().part(PartId::ALL[0]).sound.params.tape;
+        (t.mode, [t.position, t.motion, t.size, t.xfade])
+    };
+    let mut fb = Fb::new();
+    let mut shot = |ui: &mut chimera_core::ui::UiState| {
+        for _ in 0..120 {
+            ui.update(UiTick::for_test());
+            ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
+        }
+        let mut full = Fb::new();
+        ui.render_with_scope(&mut full, &perf, &scope_fixture());
+        assert!(fb.px == full.px, "a dirty frame is a full one");
+        (theme::WAVE_Y..theme::WAVE_Y + H)
+            .flat_map(|y| (theme::WAVE_X..theme::WAVE_X + W).map(move |x| (x, y)))
+            .map(|(x, y)| full.at(x, y))
+            .collect::<Vec<_>>()
+    };
+    let mut ui = chimera_core::ui::UiState::new();
+    tape_deck(&mut ui, 0);
+    shot(&mut ui);
+    // DECK → PLAY; MODE LOOP → ONE.
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    feed(&mut ui, Input::turn(EncoderId::A, -1));
+    assert_eq!(tape(&ui).0, PlayMode::One);
+    feed(&mut ui, Input::turn(EncoderId::E, 1));
+    feed(&mut ui, Input::turn(EncoderId::E, -1));
+    let one = shot(&mut ui);
+    let held = tape(&ui);
+    for enc in [EncoderId::B, EncoderId::C] {
+        feed(&mut ui, Input::turn(enc, -20));
+        assert_eq!(shot(&mut ui), one, "PLAY {enc:?} in ONE");
+    }
+    // PLAY → PITCH → DECK.
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    for enc in [EncoderId::B, EncoderId::C] {
+        feed(&mut ui, Input::turn(enc, 20));
+        assert_eq!(shot(&mut ui), one, "DECK {enc:?} in ONE");
+    }
+    assert_eq!(tape(&ui), held, "ONE's ignored cells kept their values");
+    // Back to PLAY, MODE ONE → LOOP: POSITION moves the wheel.
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    assert_eq!(tape(&ui).0, PlayMode::Loop);
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    let before = shot(&mut ui);
+    feed(&mut ui, Input::turn(EncoderId::B, 20));
+    assert_ne!(shot(&mut ui), before, "POSITION rolls the wheel in LOOP");
+    assert!(tape(&ui).1[0] > held.1[0]);
+}
