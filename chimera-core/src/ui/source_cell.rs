@@ -571,8 +571,9 @@ impl SourceCell {
     }
 
     /// Once a frame: a streamed source whose Part moved START, the loop or
-    /// XFADE off its heads re-stages them `REHEAD` after the last turn,
-    /// once no note holds it (spec § 5.6, #588). Beside no other card work.
+    /// XFADE off its heads re-stages them `REHEAD` after the last turn;
+    /// a note holding it keeps the old ones (spec § 5.6, #588, #598).
+    /// Beside no other card work.
     #[cfg_attr(not(feature = "tape"), allow(unused_variables))]
     pub fn tick(&mut self, p: &mut Project) {
         #[cfg(feature = "tape")]
@@ -584,12 +585,12 @@ impl SourceCell {
         if self.job.is_some() {
             return;
         }
-        // Neither a source a note holds (#588) nor one stuck on these
-        // heads keeps the others waiting.
-        let sounding = p.pool().table().sounding();
-        let ready = |id: SourceId, h: &Heads| {
-            sounding & id.bit() == 0 && self.stuck[id.index()] != heads_key(h)
-        };
+        // Neither a source that can't re-stage yet (a note holds it, and
+        // nothing is free beside it: #598) nor one stuck on these heads
+        // keeps the others waiting.
+        let pool = p.pool();
+        let ready =
+            |id: SourceId, h: &Heads| pool.can_rehead(id) && self.stuck[id.index()] != heads_key(h);
         let Some((id, heads)) = moved_heads(p, ready) else {
             self.wait = None;
             return;

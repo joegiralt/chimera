@@ -1060,13 +1060,16 @@ fn reheading_after_start_turn() {
     assert_eq!(pending, Cost::default(), "the old heads' hole closed");
 }
 
-/// #588: while a note holds a streamed source its heads stay put, however
-/// long after the turn; once it lets go, they move. The audio runs on its
-/// own thread, answering the gate as the chip's does.
+/// #598: a note holding a streamed source reads its old heads every block,
+/// never cut, while the turn's new heads go in beside them under a free
+/// id on the same stream file, so a note struck now finds them at once
+/// rather than waiting for the held note to end. Once it lets go, the old
+/// heads drain: their pool slot, stream row and hole all freed. The audio
+/// runs on its own thread, answering the gate as the chip's does.
 #[test]
-fn reheading_waits_for_the_notes_on_it() {
+fn reheading_goes_beside_a_held_note() {
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-    use std::sync::{Arc, OnceLock};
+    use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
     fn now_ms() -> u32 {
         static T0: OnceLock<Instant> = OnceLock::new();
@@ -1085,12 +1088,22 @@ fn reheading_waits_for_the_notes_on_it() {
         Arc::new(AtomicU32::new(id.bit())),
         Arc::new(AtomicBool::new(false)),
     );
+    // The head table the held note reads, each block it holds `id`.
+    let reads = Arc::new(Mutex::new(Vec::<Vec<HeadSpec>>::new()));
     let audio = std::thread::spawn({
-        let (held, stop) = (held.clone(), stop.clone());
+        let (held, stop, reads) = (held.clone(), stop.clone(), reads.clone());
         move || {
             while !stop.load(Ordering::Relaxed) {
-                let _ = tok.begin_block();
-                tok.store_sounding(held.load(Ordering::Relaxed));
+                let h = held.load(Ordering::Relaxed);
+                {
+                    let v = tok.begin_block();
+                    if h != 0 {
+                        let t = v.bytes(id).and_then(head_table);
+                        let t = t.map(|t| t.iter().collect()).unwrap_or_default();
+                        reads.lock().unwrap().push(t);
+                    }
+                }
+                tok.store_sounding(h);
                 std::thread::sleep(Duration::from_micros(500));
             }
         }
@@ -1100,34 +1113,64 @@ fn reheading_waits_for_the_notes_on_it() {
         std::thread::yield_now();
     }
     rig.tape(|t| t.start = 0.5);
-    for _ in 0..40 {
-        rig.frame();
-    }
-    assert_heads(&rig, &b, before.as_slice());
-    held.store(0, Ordering::Relaxed);
-    while table.sounding() != 0 {
-        std::thread::yield_now();
-    }
     let after = heads_for(b.0.sref, &rig.params()).unwrap();
-    let pool = |rig: &Rig| {
+    let staged = |rig: &Rig| {
         head_table(rig.ui.project().pool().held(b.0.sref).unwrap())
             .unwrap()
             .iter()
             .collect::<Vec<_>>()
     };
     for _ in 0..200 {
-        if pool(&rig) == after.as_slice() {
+        if staged(&rig) == after.as_slice() {
             break;
         }
         rig.frame();
     }
+    assert_heads(&rig, &b, after.as_slice());
+    let pool = rig.ui.project().pool();
+    let new = pool.find_source(b.0.sref).unwrap();
+    assert_ne!(new, id, "beside it, under a free id");
+    assert_eq!(pool.source(id), None, "the old id retired");
+    let reg = rig.registry();
+    assert_eq!(
+        reg.get(new).map(StreamFile::file),
+        Some(source_file(b.0.sref))
+    );
+    assert!(reg.get(id).is_some(), "the held note's stream row stays");
+    // Held on a while: still the old heads, and their row stays.
+    while reads.lock().unwrap().len() < 100 {
+        rig.frame();
+        std::thread::sleep(Duration::from_micros(200));
+    }
+    assert!(reg.get(id).is_some());
+    held.store(0, Ordering::Relaxed);
+    while table.sounding() != 0 {
+        std::thread::yield_now();
+    }
+    for _ in 0..200 {
+        if reg.get(id).is_none() && rig.ui.project().pool().split().2 == Cost::default() {
+            break;
+        }
+        rig.frame();
+        // The drain waits two audio blocks with the id let go.
+        std::thread::sleep(Duration::from_micros(500));
+    }
     stop.store(true, Ordering::Relaxed);
     audio.join().unwrap();
+    let reads = reads.lock().unwrap();
+    assert!(reads.len() >= 100, "{} blocks held", reads.len());
+    assert!(
+        reads.iter().all(|t| t.as_slice() == before.as_slice()),
+        "the held note read its old heads every block"
+    );
+    assert!(reg.get(id).is_none(), "the old stream row freed");
+    let (_, _, pending) = rig.ui.project().pool().split();
+    assert_eq!(pending, Cost::default(), "the old heads' hole closed");
     assert_heads(&rig, &b, after.as_slice());
 }
 
-/// One source a note holds doesn't stop another's heads moving: the
-/// re-head takes the first source it can.
+/// One source a note holds doesn't stop another's heads moving: both
+/// re-stage, the held one beside its note (#598).
 #[test]
 fn a_held_source_doesnt_stop_anothers_reheading() {
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -1176,9 +1219,13 @@ fn a_held_source_doesnt_stop_anothers_reheading() {
     rig.tape(|t| t.start = 0.5);
     rig.ui.project_mut().edit_part(p2).sound.params.tape.start = 0.5;
     let after = heads_for(b.0.sref, &rig.ui.project().part(p2).sound.params.tape).unwrap();
+    let after_a = heads_for(a.0.sref, &rig.params()).unwrap();
+    let moved = |rig: &Rig, src: &(SourceHead, Vec<u8>), want: &[HeadSpec]| {
+        let t = head_table(rig.ui.project().pool().held(src.0.sref).unwrap()).unwrap();
+        t.iter().eq(want.iter().copied())
+    };
     for _ in 0..200 {
-        let t = head_table(rig.ui.project().pool().held(b.0.sref).unwrap()).unwrap();
-        if t.iter().eq(after.as_slice().iter().copied()) {
+        if moved(&rig, &b, after.as_slice()) && moved(&rig, &a, after_a.as_slice()) {
             break;
         }
         rig.frame();
@@ -1186,7 +1233,10 @@ fn a_held_source_doesnt_stop_anothers_reheading() {
     stop.store(true, Ordering::Relaxed);
     audio.join().unwrap();
     assert_heads(&rig, &b, after.as_slice());
-    assert_heads(&rig, &a, before.as_slice());
+    // A's held note keeps its old heads; A's new ones went in beside (#598).
+    assert_ne!(after_a, before);
+    assert_heads(&rig, &a, after_a.as_slice());
+    assert!(rig.registry().get(ia).is_some(), "A's held row stays");
 }
 
 // Card read faults: the UI pass re-inits and mounts.

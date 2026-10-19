@@ -106,6 +106,13 @@ impl StreamRegistry {
         Ok(())
     }
 
+    /// A row is free: an `insert` of a new id would take it.
+    pub fn has_room(&self) -> bool {
+        self.rows
+            .iter()
+            .any(|r| r.tag.load(Ordering::Acquire) == FREE)
+    }
+
     /// `id`'s file, if a row holds it.
     pub fn get(&self, id: SourceId) -> Option<&StreamFile> {
         let tag = id.index() as u8 + 1;
