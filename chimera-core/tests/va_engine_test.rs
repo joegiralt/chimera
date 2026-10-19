@@ -1036,9 +1036,10 @@ fn out_of_range_values_clamp() {
 
 #[test]
 fn mode_scrolled_every_block_settles() {
-    // SOFT SYNC beside SYNC: last in the list, its settled phases put
-    // SYNC's first reset late on the duck's way up after AM, a click
-    // (private issue #677)
+    // SOFT SYNC beside SYNC: in some orders SYNC's first reset after a
+    // swap lands late on the duck's way up and clicks, SYNC's own, with
+    // any MODE before it (private issue #677,
+    // #670)
     const SCROLL: [VaMode; 7] = [
         VaMode::Mix,
         VaMode::Sync,
