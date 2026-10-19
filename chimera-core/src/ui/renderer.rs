@@ -753,15 +753,21 @@ impl Renderer {
     }
 
     /// The gauge the focus band shows now: none while a prime status holds
-    /// the band, or for a dimmed, absent or empty slot.
+    /// the band, or for an absent or empty slot, or a dimmed one but for
+    /// TAPE's machine glyph, which a cell its machine ignores leaves as it
+    /// was (ADR 0148).
     pub fn shown_gauge(&self, f: &Frame) -> Option<Gauge> {
         let plain = f.def.layout != PageLayout::Matrix
             && !matches!(f.def.viz, VizType::AudioStats | VizType::Pool);
-        (plain
-            && f.prime_status.is_none()
-            && view::view(f.def, f.focus, &f.ctx) != View::Empty
-            && look(f, f.focus) == components::Look::Live)
-            .then(|| self.gauge(f))
+        if !plain || f.prime_status.is_some() || view::view(f.def, f.focus, &f.ctx) == View::Empty {
+            return None;
+        }
+        let g = self.gauge(f);
+        match look(f, f.focus) {
+            components::Look::Live => Some(g),
+            components::Look::Dimmed if matches!(g, Gauge::Tape(_)) => Some(g),
+            _ => None,
+        }
     }
 
     /// Redraw only `gauge` (the shown one) in its box, if it has one; the

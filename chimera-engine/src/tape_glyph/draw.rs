@@ -223,11 +223,26 @@ fn loop_span(pos: f32, size: f32) -> (f32, f32) {
     (lo, lo + l)
 }
 
-/// The window along the floor at `y`, the loop `lo..hi` lit.
+/// XFADE's share of a loop `len` px long, px: up to half of it.
+fn fade_px(len: i32, xfade: f32) -> i32 {
+    r(len as f32 * 0.5 * xfade)
+}
+
+/// Every other column of `x0..x1` back to `ink`: XFADE's dashed end, the
+/// last column kept.
+fn dash(p: &mut Pix, x0: i32, x1: i32, y: i32, h: i32, ink: Ink) {
+    for x in (x0..x1 - 1).rev().step_by(2) {
+        p.rect(x, y, 1, h, ink);
+    }
+}
+
+/// The window along the floor at `y`, the loop `lo..hi` lit, its last
+/// `fade` px (XFADE) dashed.
 #[inline(never)]
-fn window_strip(p: &mut Pix, lo: i32, hi: i32, y: i32) {
+fn window_strip(p: &mut Pix, lo: i32, hi: i32, y: i32, fade: i32) {
     p.rect(2, y, 60, 2, FAINT);
     p.rect(lo, y, (hi - lo).max(2), 2, ACC);
+    dash(p, hi - fade, hi, y, 2, FAINT);
     p.rect(lo, y - 2, 1, 4, ACC);
     p.rect((lo + 1).max(hi - 1), y - 2, 1, 4, ACC);
 }
@@ -271,17 +286,23 @@ fn one(p: &mut Pix, run: Run) {
     p.oval(s, y - 4, 1, 2, INK);
 }
 
-/// LOOP: a hamster wheel on the lit loop. LENGTH sizes the wheel,
-/// POSITION rolls it along the window, WALK turns the hamster to the
-/// drift and adds speed lines; at 0 it sits.
+/// LOOP: a hamster wheel on the lit loop. LENGTH sizes the wheel (10 to
+/// 15 px, so it has room to roll), POSITION rolls it along the window,
+/// its spokes turning as it goes, even where LENGTH leaves the loop no
+/// room (the strip shows that); XFADE dashes the loop's end; WALK turns
+/// the hamster to the drift and adds speed lines; at 0 it sits.
 #[inline(never)]
 fn wheel(p: &mut Pix, l: Loop) {
     let (size, m) = (l.length.unit(), l.walk.bi());
     let (lo, hi) = loop_span(l.position.unit(), size);
-    window_strip(p, r(lo), r(hi), 45);
-    let rad = r(10.0 + 9.0 * size);
-    let cx = r((lo + hi) / 2.0).clamp(rad + 1, 62 - rad);
+    let (lo, hi) = (r(lo), r(hi));
+    window_strip(p, lo, hi, 45, fade_px(hi - lo, l.xfade.unit()));
+    let rad = r(10.0 + 5.0 * size);
+    let (left, right) = (rad + 1, 62 - rad);
+    let cx = left + r(l.position.unit() * (right - left) as f32);
     let cy = 41 - rad;
+    // Rolled: a turn of the spokes for every px along.
+    let spin = 0.2 + cx as f32 / rad as f32;
     let leg = rad as f32 * 0.6;
     p.line(cx, cy, r(cx as f32 - leg), 42, FAINT);
     p.line(cx, cy, r(cx as f32 + leg), 42, FAINT);
@@ -291,7 +312,7 @@ fn wheel(p: &mut Pix, l: Loop) {
     }
     let out = (rad - 3) as f32;
     for i in 0..8 {
-        let a = 0.2 + i as f32 * FRAC_PI_4;
+        let a = spin + i as f32 * FRAC_PI_4;
         let (co, si) = (cos(a), fast_sin(a));
         p.line(
             cx + r(3.0 * co),
@@ -541,10 +562,11 @@ fn film(p: &mut Pix, f: Film) {
     }
 }
 
-/// SCRUB's bubbles round the sponge: (dx, dy, radius), foamed in order.
+/// SCRUB's bubbles round the sponge: (dx, dy, radius), foamed in order,
+/// clear of SPEED's arrow (dx −4..4, dy −6..−2).
 const BUBBLES: [(i8, i8, i8); 10] = [
     (-9, -4, 1),
-    (7, -6, 2),
+    (9, -6, 2),
     (-2, -11, 2),
     (12, -14, 1),
     (-12, -15, 3),
@@ -569,42 +591,49 @@ const PORES: [(i8, i8); 9] = [
 ];
 
 /// SCRUB: a sponge on the tape. FINGER moves it (DRAG is the jog's own
-/// lag, in the value itself), LENGTH is the loop lit under it, DRAG
-/// leaves a wet trail behind the way it plays, and bubbles foam with
-/// |SPEED|: at a standstill there are none, and the tape is silent.
+/// lag, in the value itself), LENGTH is the loop outlined under it (its
+/// tape hollow, so it reads beside the sponge's own accent), XFADE dashes
+/// its end, DRAG leaves a wet trail behind the way it plays, and bubbles
+/// foam with |SPEED|: at a standstill there are none, and the tape is
+/// silent. SPEED's arrow sits over the sponge, drawn last, so nothing
+/// hides it.
 #[inline(never)]
 fn sponge(p: &mut Pix, s: Sponge) {
     let m = s.speed.bi();
     let sx = r(14.0 + s.finger.unit() * 36.0);
     let lw = r(lvis(s.length.unit()) * 30.0).max(3);
+    let (end, fade) = (sx + lw, fade_px(lw, s.xfade.unit()));
     let trail = r(s.drag.unit() * 14.0);
     let ahead = m >= 0.0;
-    for x in 1..63 {
+    let amp = |x: i32| {
         let xf = x as f32;
-        let a = 1 + r(3.0 * libm::fabsf(fast_sin(xf * 0.71) * fast_sin(xf * 0.23 + 1.0)));
-        let lit = x >= sx && x < sx + lw;
+        1 + r(3.0 * libm::fabsf(fast_sin(xf * 0.71) * fast_sin(xf * 0.23 + 1.0)))
+    };
+    for x in 1..63 {
+        let a = amp(x);
         let wet = if ahead {
             x < sx - 10 && x >= sx - 10 - trail
         } else {
             x > sx + 10 && x <= sx + 10 + trail
         };
-        let ink = match (lit, wet) {
-            (true, _) => ACC,
-            (false, true) => FAINT,
-            _ => MID,
-        };
-        p.rect(x, 42 - a, 1, 2 * a + 1, ink);
+        if (sx..end).contains(&x) {
+            // The run's outline: its ends whole, each edge down to its
+            // lower neighbour's so the line joins, the inside open.
+            if x == sx || x == end - 1 {
+                p.rect(x, 42 - a, 1, 2 * a + 1, ACC);
+            } else {
+                let b = amp(x - 1).min(amp(x + 1)).min(a);
+                p.rect(x, 42 - a, 1, a - b + 1, ACC);
+                p.rect(x, 42 + b, 1, a - b + 1, ACC);
+            }
+        } else {
+            p.rect(x, 42 - a, 1, 2 * a + 1, if wet { FAINT } else { MID });
+        }
         if wet && x % 2 == 1 {
             p.px(x, 47, MID);
         }
     }
-    if libm::fabsf(m) > 0.04 {
-        if ahead {
-            p.arrow((sx + lw + 1).min(61), 34, 1, ACC);
-        } else {
-            p.arrow((sx - 2).max(2), 34, -1, ACC);
-        }
-    }
+    dash(p, end - fade, end, 38, 9, BG);
     let (l, t) = (sx - 11, 21);
     p.rect(l + 1, t, 21, 14, BG);
     p.frame(l, t, 23, 14, INK2);
@@ -620,5 +649,12 @@ fn sponge(p: &mut Pix, s: Sponge) {
         if rad > 1 {
             p.px(x - 1, y - 1, INK);
         }
+    }
+    // SPEED's way: a 9 px arrow centred over the sponge, clear of the
+    // bubbles (none sits in its rows) and drawn over them anyway.
+    if libm::fabsf(m) > 0.04 {
+        let (d, y) = (if ahead { 1 } else { -1 }, t - 4);
+        p.rect(if ahead { sx - 4 } else { sx - 1 }, y, 6, 1, ACC);
+        p.arrow(sx + 2 * d, y, d, ACC);
     }
 }

@@ -9,8 +9,8 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::Rectangle;
 
 pub use chimera_engine::tape_glyph::{
-    Bellows, Blind, Canvas, Film, H, Ink, Kind, Loop, Machine, Q, Q5, Q6, Run, Sponge, TapeGauge,
-    W, Wear,
+    Bellows, Blind, Canvas, Film, H, Ink, Kind, Loop, Machine, Q, Q3, Q4, Q5, Q6, Run, Sponge,
+    TapeGauge, W, Wear,
 };
 
 const _: () = assert!(W == theme::WAVE_W && H == theme::WAVE_H);
