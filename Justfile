@@ -317,8 +317,8 @@ check:
     cargo test -p chimera-core -p chimera-engine --no-default-features
     cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
     cargo test -p chimera-core --features bank2-gate --test console_parse_test --test console_answer_test --test bank2_status_test --test bank2_close_test
-    # TAPE's and the reverb's bank-1 sides through the host's own door.
-    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test
+    # TAPE's, the reverb's and VA FM's bank-1 sides through the host's own door.
+    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
