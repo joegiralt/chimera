@@ -202,10 +202,10 @@ fn matrix_dests_are_semantic() {
     assert_eq!(matrix.mod_info_for(op_c), Some(0.0));
     assert_eq!(matrix.mod_info_for(sym), Some(0.0));
     // A fixed column counts as primed once it has a route.
-    let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
+    let fold = FixedCol::Fx.addr();
     assert_eq!(matrix.mod_info_for(fold), None);
     matrix.num_sources = 1;
-    matrix.set(0, FixedCol::Fold.index(), 127);
+    matrix.set(0, FixedCol::Fx.index(), 127);
     assert_eq!(matrix.mod_info_for(fold), Some(1.0));
     assert_eq!(
         matrix.mod_info_for(ParamAddr::new(BlockRef::AlgoOp(Op::D), AlgoOpParams::LEVEL)),

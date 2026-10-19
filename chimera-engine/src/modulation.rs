@@ -31,11 +31,12 @@ pub enum FixedCol {
     Freq = 0,
     Q = 1,
     Vca = 2,
-    Fold = 3,
+    /// The FX slot's first pot, whatever its type (ADR 0155).
+    Fx = 3,
 }
 
 impl FixedCol {
-    pub const ALL: [FixedCol; 4] = [FixedCol::Freq, FixedCol::Q, FixedCol::Vca, FixedCol::Fold];
+    pub const ALL: [FixedCol; 4] = [FixedCol::Freq, FixedCol::Q, FixedCol::Vca, FixedCol::Fx];
 
     /// The param the column routes into.
     pub const fn addr(self) -> ParamAddr {
@@ -43,7 +44,10 @@ impl FixedCol {
             FixedCol::Freq => CUTOFF,
             FixedCol::Q => ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE),
             FixedCol::Vca => VCA,
-            FixedCol::Fold => ParamAddr::new(BlockRef::Folder, crate::params::FolderParams::FOLD),
+            FixedCol::Fx => ParamAddr::new(
+                BlockRef::VoiceFx,
+                crate::dsp::voice_fx::params::VoiceFxParams::P1,
+            ),
         }
     }
 
@@ -58,7 +62,7 @@ impl FixedCol {
             FixedCol::Freq => "FREQ",
             FixedCol::Q => "Q",
             FixedCol::Vca => "VCA",
-            FixedCol::Fold => "FOLD",
+            FixedCol::Fx => "FX",
         }
     }
 
@@ -591,7 +595,7 @@ impl ModRouting {
     /// slots' own count too: their sums run every block; SLIDE and LEVEL
     /// bill what they add.
     fn dest_cost(mods: &ModState) -> Cost {
-        let fixed = [FixedCol::Freq, FixedCol::Q, FixedCol::Fold]
+        let fixed = [FixedCol::Freq, FixedCol::Q, FixedCol::Fx]
             .into_iter()
             .filter(|&c| mods.fixed_moves(c))
             .count();

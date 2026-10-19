@@ -22,7 +22,7 @@ use crate::glyph::{FocusGlyph, VaGlyph, VaOsc};
 use crate::hw::Cost;
 use crate::project::PartId;
 use crate::voice_alloc::VoiceIdx;
-use combine::{Crusher, Operator, Peaks, ring_gain};
+use combine::{Crusher, Operator, Peaks, am_gain, ring_gain};
 use osc::{MAX_INC, NO_WRAP, R, Ramps, Sub, SubEdge, VarOsc, ZEROS, wave_reach};
 use stability::{JITTER_CENTS, Seed, Stability, depth};
 #[cfg(any(test, feature = "test-support"))]
@@ -40,16 +40,19 @@ pub enum VaMode {
     Bits = 4,
     /// OSC 2 frequency-modulates OSC 1 linearly, through zero (#601).
     Fm = 5,
+    /// OSC 2 scales OSC 1, never through zero (#603).
+    Am = 6,
 }
 
 impl VaMode {
-    pub const ALL: [VaMode; 6] = [
+    pub const ALL: [VaMode; 7] = [
         VaMode::Mix,
         VaMode::Sync,
         VaMode::Ring,
         VaMode::Xor,
         VaMode::Bits,
         VaMode::Fm,
+        VaMode::Am,
     ];
 
     /// Whether this MODE's oscillators are `osc::door`'s, which with
@@ -60,7 +63,7 @@ impl VaMode {
 }
 
 /// MODE's names, in `VaMode`'s order (display only).
-pub const MODE_NAMES: [&str; 6] = ["MIX", "SYNC", "RING", "XOR", "BITS", "FM"];
+pub const MODE_NAMES: [&str; 7] = ["MIX", "SYNC", "RING", "XOR", "BITS", "FM", "AM"];
 
 impl DiskCode for VaMode {
     fn disk_code(self) -> u8 {
@@ -71,6 +74,7 @@ impl DiskCode for VaMode {
             VaMode::Xor => 3,
             VaMode::Bits => 4,
             VaMode::Fm => 5,
+            VaMode::Am => 6,
         }
     }
 
@@ -82,6 +86,7 @@ impl DiskCode for VaMode {
             VaMode::Xor => "XOR",
             VaMode::Bits => "BITS",
             VaMode::Fm => "FM",
+            VaMode::Am => "AM",
         }
     }
 
@@ -93,6 +98,7 @@ impl DiskCode for VaMode {
             3 => Some(VaMode::Xor),
             4 => Some(VaMode::Bits),
             5 => Some(VaMode::Fm),
+            6 => Some(VaMode::Am),
             _ => None,
         }
     }
@@ -201,7 +207,7 @@ pub static VA_SPECS: [ParamSpec; 12] = [
         2,
         "MODE",
         ValFmt::Names(&MODE_NAMES),
-        5.0,
+        6.0,
         0.0,
         Change::Crossfade,
     )
@@ -299,21 +305,23 @@ pub const VA_OUT_GAIN: f32 = 3.631;
 /// ceiling, 7/48 a sample. Each line: OSC 1 (TRI/SAW) + OSC 2 + operator
 /// and sub + block + crossings + 95 (2026-10-13, ADR 0118 point 13).
 ///
-/// MIX: 158.2 + 134.4 (TRI/SAW) + 36.2 + 68.0 + 29.9 + 95.
+/// MIX: 158.2 + 134.4 (TRI/SAW) + 36.2 + 68.4 + 29.9 + 95.
 pub const COST_MIX: Cost = Cost(530);
 /// SYNC: 121.7 (master at 7 kHz) + 183.7 (SINE/TRI slave: a reset's 197.5
-/// × 7/48) + 36.2 + 71.5 + 31.0 + 95.
+/// × 7/48) + 36.2 + 71.8 + 31.1 + 95.
 pub const COST_SYNC: Cost = Cost(540);
-/// RING: 158.2 + 134.4 + 42.6 + 68.7 + 29.9 + 95.
+/// RING: 158.2 + 134.4 + 42.6 + 69.1 + 29.9 + 95.
 pub const COST_RING: Cost = Cost(530);
-/// XOR: 158.2 + 134.4 + 53.9 + 69.9 + 29.9 + 95.
+/// XOR: 158.2 + 134.4 + 53.9 + 70.2 + 29.9 + 95.
 pub const COST_XOR: Cost = Cost(550);
-/// BITS: 158.2 + 134.4 + 42.6 + 68.8 + 29.9 + 95.
+/// BITS: 158.2 + 134.4 + 42.6 + 69.2 + 29.9 + 95.
 pub const COST_BITS: Cost = Cost(530);
 /// FM: 222.8 (SINE/TRI, OSC 1's MOD instance: its edges follow the read,
 /// crossed either way at the 0.45 cap, a divide a crossing) + 134.4 + 29.4
 /// + 74.2 (5.1 of it the modulator's scaling) + 29.9 + 95.
 pub const COST_FM: Cost = Cost(590);
+/// AM: 158.2 + 134.4 + 41.0 + 3.3 (the sub) + 71.1 + 29.9 + 95.
+pub const COST_AM: Cost = Cost(540);
 
 /// FM's index at BLEND `blend`, `5·blend²`, capped so OSC 1's fastest read
 /// `inc·(1 + I)` stays under `MAX_INC` (0.45 cycles a sample); `inc = 0`
@@ -481,6 +489,8 @@ pub struct VaEngine {
     ring_k: Ramp,
     /// FM's index (`fm_index`).
     fm: Ramp,
+    /// AM's level make-up (`am_gain`).
+    am_n: Ramp,
     note: u8,
     pitch: f32,
     slide: Glide,
@@ -517,6 +527,7 @@ impl VaEngine {
             sub_level: Ramp::default(),
             ring_k: Ramp::default(),
             fm: Ramp::default(),
+            am_n: Ramp::default(),
             note: 60,
             pitch: 0.0,
             slide: Glide::new(1.0, 1.0),
@@ -648,6 +659,7 @@ impl VaEngine {
         self.sub_level.hold();
         self.ring_k.hold();
         self.fm.hold();
+        self.am_n.hold();
         for o in &mut self.osc {
             o.hold();
         }
@@ -671,6 +683,7 @@ impl VaEngine {
             VaMode::Xor => COST_XOR,
             VaMode::Bits => COST_BITS,
             VaMode::Fm => COST_FM,
+            VaMode::Am => COST_AM,
         }
     }
 
@@ -767,6 +780,11 @@ impl VaEngine {
         });
         let k = self.ring_k.step(ring_gain(l.pk));
         l.k = (k.0, step_of(k, BLOCK_SIZE));
+        // AM's make-up rides in the same lane, ramped per block
+        if self.playing == VaMode::Am {
+            let n = self.am_n.step(am_gain(unit(p.amount), l.pk));
+            l.k = (n.0, step_of(n, BLOCK_SIZE));
+        }
         #[cfg(any(test, feature = "test-support"))]
         {
             self.last_k = [k.0, k.1];
@@ -791,6 +809,7 @@ impl VaEngine {
                 self.crusher.set(unit(p.amount));
                 self.render_bits(out, &l, gain)
             }
+            VaMode::Am => self.render_am(out, &l, gain),
             VaMode::Fm => {
                 // capped at the block's faster end; a pitch jump past the
                 // last block's cap lands on it
@@ -807,6 +826,7 @@ impl VaEngine {
                 self.playing = p.mode;
                 // FM's index starts on its value
                 self.fm.hold();
+                self.am_n.hold();
                 // a MOD MODE's read phase becomes the clock (ADR 0158)
                 for o in &mut self.osc {
                     o.settle();
@@ -826,6 +846,11 @@ impl VaEngine {
     #[inline(never)]
     fn render_sync(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
         self.run(out, l, VaMode::Sync, gain);
+    }
+
+    #[inline(never)]
+    fn render_am(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
+        self.run(out, l, VaMode::Am, gain);
     }
 
     #[inline(never)]

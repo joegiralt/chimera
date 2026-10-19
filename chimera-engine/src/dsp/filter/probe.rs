@@ -10,10 +10,9 @@ use core::hint::black_box;
 use super::clean::clean_k;
 use super::k2040::VoiceSpec;
 use super::{Clean, Dirty, FilterMods, K2040, Ladder, TapShape, tap_g_range};
-use crate::dsp::wavefolder::Wavefolder;
+use crate::dsp::voice_fx::{Ends, fold};
 use crate::hw::{BLOCK_SIZE, SAMPLE_RATE};
 use crate::params::FilterParams;
-use crate::params::FolderParams;
 use crate::taps::TapLane;
 
 /// CLEAN in mode `M` (a `FilterMode` discriminant), `process`'s prelude
@@ -117,12 +116,12 @@ pub fn tap_vca_probe(buf: &mut [f32; BLOCK_SIZE]) {
     }
 }
 
-/// The folder's tapped loop.
+/// FOLD's tapped loop.
 #[inline(never)]
-pub fn fold_tap_probe(w: &mut Wavefolder, buf: &mut [f32; BLOCK_SIZE], p: &FolderParams) {
+pub fn fold_tap_probe(buf: &mut [f32; BLOCK_SIZE], e: &Ends) {
     let rows = black_box([*buf; 2]);
     let l = lanes(&rows).freq;
-    w.process(buf, p, true, l.as_ref());
+    fold::run(buf, e, false, l.as_ref());
 }
 
 /// CLEAN's glide loop (`Clean::stepped`) in mode `M`: `STEPS` sub-blocks.

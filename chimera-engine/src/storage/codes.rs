@@ -54,6 +54,7 @@ impl BlockRef {
             // namespace.
             BlockRef::TapeEngine => 34,
             BlockRef::Va => 35,
+            BlockRef::VoiceFx => 36,
             BlockRef::PartMix(_) | BlockRef::Tempo => return None,
         })
     }
@@ -95,6 +96,7 @@ impl BlockRef {
             BlockRef::Midi => "MIDI",
             BlockRef::TapeEngine => "TAPE_ENG",
             BlockRef::Va => "VA",
+            BlockRef::VoiceFx => "VOICEFX",
             BlockRef::PartMix(_) | BlockRef::Tempo => return None,
         })
     }

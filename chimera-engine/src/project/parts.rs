@@ -252,6 +252,7 @@ pub fn part_block<'a>(
         | BlockRef::Drive
         | BlockRef::Filter
         | BlockRef::Folder
+        | BlockRef::VoiceFx
         | BlockRef::Env(_)
         | BlockRef::Lfo(_)
         | BlockRef::Out
@@ -288,6 +289,7 @@ pub fn part_block_mut<'a>(
         | BlockRef::Drive
         | BlockRef::Filter
         | BlockRef::Folder
+        | BlockRef::VoiceFx
         | BlockRef::Env(_)
         | BlockRef::Lfo(_)
         | BlockRef::Out
