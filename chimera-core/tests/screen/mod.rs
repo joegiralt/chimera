@@ -2453,20 +2453,45 @@ pub fn render(name: &str) -> Fb {
 /// others, a column wide.
 #[allow(dead_code)]
 pub fn first_cell_reads(shot: &Fb, text: &str) -> bool {
-    use chimera_core::ui::theme::{
-        BG, CELL_COL_W, CELL_LABEL_Y, CELL_VALUE_DY, FONT_VALUE, INK, MARGIN_X, SCREEN_H,
-    };
-    let mut want = Fb::new();
-    chimera_core::ui::draw::text_tracked(
-        &mut want,
-        &FONT_VALUE,
+    cell_reads(shot, 0, text)
+}
+
+/// Whether cell `col` of the top row reads `text` exactly, in its value's
+/// place.
+pub fn cell_reads(shot: &Fb, col: i32, text: &str) -> bool {
+    use chimera_core::ui::theme::{CELL_COL_W, CELL_LABEL_Y, CELL_VALUE_DY, MARGIN_X};
+    let x = MARGIN_X + col * CELL_COL_W;
+    reads_at(
+        shot,
+        text,
+        x,
+        CELL_LABEL_Y + CELL_VALUE_DY,
+        CELL_COL_W - 4,
+        0,
+    )
+}
+
+/// Whether the focus band's value reads `text` at the status size (a
+/// value too wide for the numerals: `NEEDS UPDATE`).
+pub fn band_reads(shot: &Fb, text: &str) -> bool {
+    use chimera_core::ui::theme::{FOCUS_VALUE_Y, LABEL_TRACKING, MARGIN_X, SCREEN_W};
+    reads_at(
+        shot,
         text,
         MARGIN_X,
-        CELL_LABEL_Y + CELL_VALUE_DY,
-        INK,
-        0,
-    );
-    let cols = MARGIN_X..MARGIN_X + CELL_COL_W - 4;
+        FOCUS_VALUE_Y,
+        SCREEN_W - 2 * MARGIN_X,
+        LABEL_TRACKING,
+    )
+}
+
+/// `text` in the value font at `(x, y)`: every row it lights, across
+/// `x..x + w`, lit in `shot` exactly where it is.
+fn reads_at(shot: &Fb, text: &str, x: i32, y: i32, w: i32, tracking: i32) -> bool {
+    use chimera_core::ui::theme::{BG, FONT_VALUE, INK, SCREEN_H};
+    let mut want = Fb::new();
+    chimera_core::ui::draw::text_tracked(&mut want, &FONT_VALUE, text, x, y, INK, tracking);
+    let cols = x..x + w;
     let lit = |x, y| want.at(x, y) != Rgb565::BLACK;
     (0..SCREEN_H)
         .filter(|&y| cols.clone().any(|x| lit(x, y)))

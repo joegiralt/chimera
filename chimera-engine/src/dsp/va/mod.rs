@@ -57,6 +57,12 @@ impl VaMode {
         VaMode::Am,
         VaMode::Max,
     ];
+
+    /// Whether this MODE's oscillators are `osc::door`'s, which with
+    /// `bank2` play only while bank 2 is open (ADR 0163).
+    pub const fn in_bank2(self) -> bool {
+        matches!(self, VaMode::Fm)
+    }
 }
 
 /// MODE's names, in `VaMode`'s order (display only).
@@ -917,15 +923,21 @@ impl VaEngine {
             x += dx;
             *v *= x;
         }
-        o1.render::<BLOCK_SIZE, true, false, true, true>(
-            out,
-            mk,
-            &l.osc[0],
-            &mut jit[0],
-            &mut draw,
-            b,
-            (1.0, 0.0),
-        );
+        // OSC 1's MOD render is bank 2's with `bank2` (ADR 0163). Closed,
+        // the voice is silent and OSC 1 waits as it was.
+        let mut osc1 = |f: osc::door::ModRender| {
+            f(o1, out, mk, &l.osc[0], &mut jit[0], stab, jd, b, (1.0, 0.0))
+        };
+        #[cfg(feature = "bank2")]
+        if crate::bank2::DOOR_CELL
+            .with(|d| osc1(d.va.osc1_mod))
+            .is_none()
+        {
+            out.fill(0.0);
+            return;
+        }
+        #[cfg(not(feature = "bank2"))]
+        osc1(osc::door::osc1_mod);
         #[cfg(any(test, feature = "test-support"))]
         {
             self.backwards = self.osc2.iter().any(|&v| v < -1.0);

@@ -69,6 +69,14 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     } else {
         ""
     };
+    // The VA's MOD oscillators (ADR 0163): `va::osc::door`, every MOD
+    // render's entry and its runs' instances. Only with `bank2`.
+    let va = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
+        "    *(.text.*3osc4door* .rodata.*3osc4door*);
+"
+    } else {
+        ""
+    };
     fs::write(
         out_dir.join("bank2.x"),
         r#"
@@ -94,6 +102,7 @@ SECTIONS {
       .rodata.*11tape_engine3age* .rodata.*11tape_engine6warble* .rodata.*11tape_engine7oneshot* .rodata.*11tape_engine4tron*
       .rodata.*11tape_engine*8TapeDeck*);
     /* REVERB */
+    /* VA */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -101,7 +110,8 @@ ASSERT(ADDR(.bank2) == 0x08100000, "bank 2 starts at 0x08100000");
 ASSERT(__bank2_end <= 0x08180000, "bank 2 stays clear of bootloader 1.09's slots at 0x08180000");
 ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door follows the 256-byte header");
 "#
-        .replace("    /* REVERB */\n", reverb),
+        .replace("    /* REVERB */\n", reverb)
+        .replace("    /* VA */\n", va),
     )
     .unwrap();
 
