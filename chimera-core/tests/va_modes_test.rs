@@ -930,14 +930,15 @@ fn phase_warps_like_cz() {
 /// sine modulator under a sine carrier is bandlimited by Carson's rule at
 /// index `2π·depth`: its gate is −45 dB where that fits under Nyquist;
 /// elsewhere (saw or pulse carrier) the correction must win 10 dB. A saw
-/// modulator is printed, not gated: its step moves the phase by up to a
-/// cycle in a sample, which nothing corrects (the carrier's own edges only
-/// follow the read's rate), and the uncorrected step is often exact.
+/// or pulse modulator's step is a jump of the read, one step of the output
+/// (ADR 0160): −45 dB everywhere. A triangle modulator: −45 dB, or the
+/// correction wins 10 dB.
 #[test]
 fn phase_alias_gate() {
     let mut worst = (f64::MIN, String::new());
     let mut least = (f64::MAX, String::new());
-    let mut fails = Vec::new();
+    let mut stepped = (f64::MIN, String::new());
+    let (mut fails, mut held_out) = (Vec::new(), Vec::new());
     println!("note crse wave1 wave2 blend: on / off dB (carson Hz)");
     for note in [C5, C6] {
         for crse in [0i8, 12, 7] {
@@ -946,7 +947,7 @@ fn phase_alias_gate() {
                 c => (0.0, 2f32.powf(f32::from(c) / 12.0)),
             };
             for w1 in ANCHORS {
-                for w2 in [0.0, SAW] {
+                for w2 in ANCHORS {
                     for blend in [0.25, 0.5, 1.0] {
                         let base = VaParams {
                             wave: [w1, w2],
@@ -968,8 +969,14 @@ fn phase_alias_gate() {
                         let at = format!("{note} {crse:+} {w1:.3} {w2:.3} {blend}");
                         let tag = if fits { "" } else { " exception" };
                         println!("{at}: {on:.1} / {off:.1} ({carson:.0}){tag}");
-                        if w2 == SAW {
-                            // a saw's step is a step in the phase: printed
+                        if w2 > 0.0 {
+                            let won = w2 < SAW && on <= off - 10.0;
+                            if on > -45.0 && !won {
+                                held_out.push(format!("{at}: {on:.1} vs off {off:.1}"));
+                            }
+                            if w2 >= SAW && on > stepped.0 {
+                                stepped = (on, at);
+                            }
                             continue;
                         }
                         if fits {
@@ -997,7 +1004,13 @@ fn phase_alias_gate() {
         "least correction elsewhere {:.1} dB at {}",
         least.0, least.1
     );
+    println!(
+        "worst under a saw or pulse modulator {:.1} dB at {}",
+        stepped.0, stepped.1
+    );
+    println!("past the modulator's gate: {held_out:#?}");
     assert!(fails.is_empty(), "{fails:#?}");
+    assert!(held_out.is_empty(), "{held_out:#?}");
 }
 
 /// PHASE moves OSC 1's phase, not its level: at INIT's tuning and a fifth
