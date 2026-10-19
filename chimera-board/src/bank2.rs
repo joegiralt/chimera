@@ -23,6 +23,40 @@ use crate::cache::{BANK2_OPEN_RASR, BANK2_READ_RASR, BANK2_REGION, BANK2_WRITE_R
 
 const _: () = assert!(BANK2_BASE == crate::cache::BANK2_BASE);
 
+/// The board's table in bank 2 (ADR 0175), at `BOARD_DOOR_ADDR`, after the
+/// engine's door: what the board's bank 1 calls of its own code there.
+#[cfg(feature = "bank2")]
+#[repr(C)]
+pub(crate) struct BoardDoor {
+    magic: u32,
+    /// The card interrupt's streaming work.
+    #[cfg(not(feature = "sd-probe"))]
+    pub(crate) card: crate::card_dma::CardDoor,
+}
+
+/// `BoardDoor::magic`.
+#[cfg(feature = "bank2")]
+const BOARD_MAGIC: u32 = u32::from_le_bytes(*b"B2BD");
+
+#[cfg(feature = "bank2")]
+#[unsafe(link_section = ".bank2.door.board")]
+#[used]
+static BOARD_DOOR: BoardDoor = BoardDoor {
+    magic: BOARD_MAGIC,
+    #[cfg(not(feature = "sd-probe"))]
+    card: crate::card_dma::CardDoor::DOOR,
+};
+
+/// `f` on the board's table, `None` closed (see `DoorCell::with`).
+#[cfg(feature = "bank2")]
+#[inline(always)]
+pub(crate) fn board_door<R>(f: impl FnOnce(&BoardDoor) -> R) -> Option<R> {
+    use chimera_core::bank2::BOARD_DOOR_ADDR;
+    // SAFETY: `bank2.x` links `BOARD_DOOR`, a `BoardDoor`, at its slot,
+    // `BOARD_DOOR_ADDR` (its assert).
+    unsafe { DOOR_CELL.with_at(BOARD_DOOR_ADDR, f) }
+}
+
 /// MPU region 2's state over S0-S3; region 1 (no access) is under it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -435,7 +469,9 @@ fn open_door(seal: &chimera_image::Seal) -> (Bank2Status, Verdict) {
                 && (d.probe)(1) == 1 + PROBE_ADDS
                 && d.table[0] == 0xB2
                 && d.table[last] == last as u8 ^ 0xB2
-        }) == Some(true);
+        }) == Some(true)
+        && board_door(|b| b.magic == BOARD_MAGIC) == Some(true)
+        && chimera_core::bank2::ui_door_ok();
     if !ok {
         DOOR_CELL.close();
         set_mpu(Mpu2::Read);
@@ -569,9 +605,14 @@ fn close_tape(ui: &mut chimera_core::ui::UiState) {
     use crate::controls;
     const TICKS: u32 = TAPE_OFF_MS * controls::CONTROLS_HZ / 1000;
     let t0 = controls::ticks();
-    let _ = ui.close_bank2(&chimera_core::project::LOAD_LINK, || {
-        controls::ticks().wrapping_sub(t0) < TICKS
-    });
+    let within = || controls::ticks().wrapping_sub(t0) < TICKS;
+    let _ = ui.close_bank2(&chimera_core::project::LOAD_LINK, within);
+    // No stream wants a fill now: the burst in flight lands and the card
+    // interrupt gives the bus back before its work (bank 2's) goes.
+    #[cfg(not(feature = "sd-probe"))]
+    while crate::sd::BUS.owner() == chimera_hal::card_bus::Owner::Stream && within() {
+        core::hint::spin_loop();
+    }
 }
 
 #[cfg(all(feature = "bank2-gate", feature = "usb-console"))]

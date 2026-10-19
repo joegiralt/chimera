@@ -2476,7 +2476,9 @@ impl UiState {
         let held = r.filter(|_| v.is_some());
         // Keyed on the ref: a source file is write-once and sealed, and its
         // ref's CRC is over its bytes, so other bytes are another ref.
-        if held != self.strip_of {
+        // Worked out only with the UI's table open (ADR 0175), so a bank 2
+        // installed later fills it.
+        if held != self.strip_of && crate::bank2::ui_door(|_| ()).is_some() {
             self.strip_of = held;
             self.overview = v.map_or(tape_strip::Overview::EMPTY, |v| {
                 tape_strip::Overview::of(&v, 0.0, 1.0)

@@ -6,7 +6,10 @@
 //! (`.superpowers/ledgers/tape-glyphs/`): rows, Bresenham lines, discs of
 //! `r² + r`, then the wear passes.
 
-use super::{Bellows, Blind, Canvas, Film, H, Ink, Loop, Machine, Run, Sponge, TapeGauge, W};
+use super::{
+    Bellows, Blind, Canvas, Film, H, Ink, Kind, Loop, Machine, PlayMode, Q, Q3, Q4, Q5, Q6, Run,
+    Sponge, TapeGauge, TapeModel, W, Wear,
+};
 use crate::dsp::algo::math::clampf;
 use crate::dsp::fast_sin;
 use core::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
@@ -18,6 +21,86 @@ const MID: Ink = Ink::Mid;
 const FAINT: Ink = Ink::Faint;
 const ACC: Ink = Ink::Accent;
 const SOFT: Ink = Ink::Soft;
+
+/// From `TAPE_GLYPH_PARAMS`' set values, normalized: MODEL, MODE,
+/// START, END, POSITION, MOTION, SIZE, DRAG, TAPE, AGE, XFADE. `still`
+/// for MODEL's and MODE's cells, which show the machine, not its
+/// knobs. A machine reads only what it plays (`reads_in`), so a cell it
+/// ignores leaves the glyph as it was.
+pub fn inputs(set: [f32; 11], still: bool) -> TapeGauge {
+    let [
+        model,
+        mode,
+        start,
+        end,
+        pos,
+        motion,
+        size,
+        drag,
+        tape,
+        age,
+        xfade,
+    ] = set;
+    let pick = |v: f32, n: u8| libm::roundf(clampf(v, 0.0, 1.0) * n as f32) as u8;
+    let model = TapeModel::from_index(pick(model, TapeModel::ALL.len() as u8 - 1));
+    let mode = match pick(mode, 2) {
+        0 => PlayMode::One,
+        1 => PlayMode::Loop,
+        _ => PlayMode::Ping,
+    };
+    let kind = Kind::of(model, mode);
+    if still {
+        return TapeGauge::still(kind);
+    }
+    let (q6, q5) = (Q6::of, Q5::of);
+    let machine = match kind {
+        Kind::One => Machine::One(Run {
+            start: q6(start),
+            end: q6(end),
+        }),
+        Kind::Loop | Kind::Ping => {
+            let l = Loop {
+                position: q6(pos),
+                length: q6(size),
+                walk: q6(motion),
+                // PING has no crossfade.
+                xfade: Q3::of(if kind == Kind::Loop { xfade } else { 0.0 }),
+            };
+            if kind == Kind::Loop {
+                Machine::Loop(l)
+            } else {
+                Machine::Ping(l)
+            }
+        }
+        Kind::Tron => Machine::Tron(Blind {
+            length: q6(size),
+            fade: q5(drag),
+        }),
+        Kind::Stretch => Machine::Stretch(Bellows {
+            speed: q6(motion),
+            d_time: q5(size),
+        }),
+        Kind::Wave => Machine::Wave(Film {
+            frame: q6(pos),
+            range: q6(size),
+            scan: q5(motion),
+        }),
+        Kind::Scrub => Machine::Scrub(Sponge {
+            finger: q6(pos),
+            speed: Q4::of(motion),
+            length: q5(size),
+            drag: Q4::of(drag),
+            xfade: Q3::of(xfade),
+        }),
+    };
+    TapeGauge {
+        machine,
+        wear: Wear {
+            tape: Q::of(tape),
+            age: Q::of(age),
+        },
+    }
+}
 
 /// `g` into `out`, from the ground up: the machine, then TAPE's bend,
 /// AGE's grain on the ground and its dropouts.

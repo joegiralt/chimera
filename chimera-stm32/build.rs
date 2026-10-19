@@ -85,9 +85,55 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
       .rodata.*3rev11loop_engine* .rodata.*3rev8run_loop*);
     *(.text.*14chimera_engine10tape_glyph4draw*);
     *(.rodata.*14chimera_engine10tape_glyph4draw*);
+    /* The card interrupt's streaming work (ADR 0175, `card_dma::CardDoor`):
+       `IrqState`'s steps, the reads' bursts, the stops and the drains, the
+       serve's pick. Bank 1 keeps the handler's shim, `closed` and what it
+       needs (`Held::op`/`run`, `Flying::ground`, `give`,
+       `CardSide::requeue`), and `fill_done`, which the bench's TAPE rig
+       calls too. */
+    *(.text.*13chimera_board8card_dma*8IrqState* .text.*13chimera_board8card_dma*4Held3end*
+      .text.*13chimera_board8card_dma*4Held3fly* .text.*13chimera_board8card_dma*4Held4xfer*
+      .text.*13chimera_board8card_dma*4Held5ready* .text.*13chimera_board8card_dma*4Held6polled*
+      .text.*13chimera_board8card_dma*4Held4stop* .text.*13chimera_board8card_dma*4Held7command*
+      .text.*13chimera_board8card_dma*6Flying4land* .text.*13chimera_board8card_dma6failed*
+      .text.*13chimera_board8card_dma6wanted* .text.*13chimera_board8card_dma7serving*
+      .text.*13chimera_board8card_dma8watch_in* .text.*6stream5serve*
+      .text.*5Rings5wants* .text.*6stream3edf*);
+    *(.rodata.*13chimera_board8card_dma*8IrqState* .rodata.*6stream5serve*);
+    /* TAPE's UI (ADR 0175, `chimera_core::bank2::UiDoor`): the strip's
+       raster and the SOURCE cell's card work and turns. Bank 1 keeps the
+       overview's cache, the cell's state and the wrappers.
+       Whole functions only, not their closures: the machine outliner
+       shares their small calls with bank 1's code. */
+    *(.text.*12chimera_core2ui10tape_strip6raster8strip_in .text.*12chimera_core2ui10tape_strip6raster3tri
+      .text.*12chimera_core2ui10tape_strip6raster6key_in .text.*12chimera_core2ui10tape_strip6raster*8Overview5of_in
+      .text.*12chimera_core2ui11source_cell4card5stops .text.*12chimera_core2ui11source_cell4card9heads_key
+      .text.*12chimera_core2ui11source_cell4card11moved_heads* .text.*12chimera_core2ui11source_cell4card*10SourceCell4size
+      .text.*12chimera_core2ui11source_cell4card*10SourceCell7turn_in .text.*12chimera_core2ui11source_cell4card*10SourceCell4pick
+      .text.*12chimera_core2ui11source_cell4card*10SourceCell7load_in .text.*12chimera_core2ui11source_cell4card*10SourceCell7kind_in
+      .text.*12chimera_core2ui11source_cell4card*10SourceCell9rehead_in .text.*12chimera_core2ui11source_cell4card*10SourceCell6run_in
+      .text.*7project8streamed*10StreamLoad5start .text.*7project8streamed*10StreamLoad5found
+      .text.*7project8streamed*10StreamLoad6rehead .text.*7project8streamed9load_kind);
+    *(.rodata.*12chimera_core2ui10tape_strip6raster* .rodata.*12chimera_core2ui11source_cell4card*);
 "
     } else {
         ""
+    };
+    // The crates the engine can't name keep their own tables, each at a
+    // fixed slot after the door (`chimera_engine::bank2`'s `*_DOOR_ADDR`):
+    // the board's (the card interrupt), then the UI's.
+    let (slots, asserts) = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
+        (
+            "    . = __bank2_door + 0x100; __bank2_board_door = .;
+    KEEP(*(.bank2.door.board));
+    . = __bank2_door + 0x180; __bank2_ui_door = .;
+    KEEP(*(.bank2.door.ui));
+",
+            "ASSERT(__bank2_board_door == 0x08100200, \"the board's table at its slot\");
+ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
+        )
+    } else {
+        ("", "")
     };
     fs::write(
         out_dir.join("bank2.x"),
@@ -102,6 +148,7 @@ SECTIONS {
     KEEP(*(.bank2.header));
     . = ALIGN(32); __bank2_door = .;
     KEEP(*(.bank2.door));
+    /* SLOTS */
     *(.bank2.text .bank2.text.*);
     *(.bank2.rodata .bank2.rodata.*);
     /* TAPE's deck (`tape_engine::proxy`), by v0-mangled path: its own
@@ -116,8 +163,9 @@ SECTIONS {
       .rodata.*11tape_engine4span* .rodata.*6stream6cursor* .rodata.*11tape_engine*8TapeDeck*);
     /* Streamed admission and loads (`AdmitDoor`, `LoadDoor`): the bill,
        the stealing pick and the block's re-bill; the heads' placement, a
-       load's passes and their head reads. Bank 1 keeps the wrappers, the
-       plain pick and `load_kind`'s whole check. */
+       load's passes and their head reads. Bank 1 keeps the wrappers and
+       the plain pick; a load's start and `load_kind` follow the UI's table
+       (ADR 0175, below). */
     *(.text.*10instrument9admission* .text.*7project8streamed4load* .text.*6stream5stage5place*
       .text.*11source_file16read_source_head* .text.*11source_file16read_packed_into*);
     *(.rodata.*10instrument9admission* .rodata.*7project8streamed4load* .rodata.*6stream5stage5place*
@@ -129,8 +177,11 @@ SECTIONS {
 ASSERT(ADDR(.bank2) == 0x08100000, "bank 2 starts at 0x08100000");
 ASSERT(__bank2_end <= 0x08180000, "bank 2 stays clear of bootloader 1.09's slots at 0x08180000");
 ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door follows the 256-byte header");
+/* ASSERTS */
 "#
-        .replace("    /* REVERB */\n", reverb),
+        .replace("    /* REVERB */\n", reverb)
+        .replace("    /* SLOTS */\n", slots)
+        .replace("/* ASSERTS */", asserts),
     )
     .unwrap();
 

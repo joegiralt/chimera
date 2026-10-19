@@ -15,6 +15,13 @@ pub const PROBE_ADDS: u32 = 42;
 /// Where the link puts the door: right after the header (`bank2.x` asserts
 /// `__bank2_door` is this).
 pub const DOOR_ADDR: u32 = BANK2_BASE + HEADER_LEN;
+/// The board's table (`chimera_board::bank2::BoardDoor`): the card
+/// interrupt's streaming work. A crate the engine can't name keeps its own
+/// table at its own fixed slot after the door (`bank2.x` asserts each),
+/// reached through `DoorCell::with_at`.
+pub const BOARD_DOOR_ADDR: u32 = DOOR_ADDR + 0x100;
+/// The UI's table (`chimera_core::bank2::UiDoor`): TAPE's cells and strip.
+pub const UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x180;
 
 /// The door table: what bank 1 may call or read in bank 2. Reached only
 /// inside `DoorCell::with`: never copy `probe` or `table` out of it, they
@@ -130,6 +137,25 @@ impl DoorCell {
         // with the cell closed, so it never outlives the image. On a host,
         // `open_host` stores `DOOR`'s own address, a `'static`.
         Some(f(unsafe { &*(a as *const Bank2Door) }))
+    }
+
+    /// `f` on the table of type `T` that this link put at `at`, one of
+    /// the fixed slots after the door (`BOARD_DOOR_ADDR`, `UI_DOOR_ADDR`);
+    /// `None` closed, and on a host (`open_host`'s door is a plain static,
+    /// with no slots after it), where those crates call their own code.
+    ///
+    /// # Safety
+    /// `bank2.x` links a `T` at `at` in this build (its slot's assert).
+    pub unsafe fn with_at<T, R>(&self, at: u32, f: impl FnOnce(&T) -> R) -> Option<R> {
+        let a = self.0.load(Ordering::Acquire);
+        if a != DOOR_ADDR as usize {
+            return None;
+        }
+        // SAFETY: the cell holds `DOOR_ADDR` only from `open` on a door
+        // judged `Good` for this build's seal (see `with`): this link's
+        // body is in bank 2, so at `at` is its `T`, as the caller vouches,
+        // and it lives as long as the image does, past `f`.
+        Some(f(unsafe { &*(at as *const T) }))
     }
 
     /// Opens on this build's own `DOOR`, linked into the host's binary:
