@@ -8,8 +8,8 @@ use chimera_core::project::PartId;
 use chimera_core::ui::block_registry::SYS_THEME;
 use chimera_core::ui::theme;
 use chimera_core::ui::theme_settings::{
-    Accent, Black, Bright, Gamma, Palette, Saver, ThemeSettings, accent_color, accent_soft, duty,
-    ground, midpoint, palette, tables,
+    Accent, Black, Bright, Gamma, Pages, Palette, Saver, ThemeSettings, accent_color, accent_soft,
+    duty, ground, midpoint, palette, tables,
 };
 use chimera_hal::{ButtonId, EncoderId};
 use embedded_graphics::pixelcolor::raw::{RawData, RawU16};
@@ -159,6 +159,7 @@ fn accents_are_distinct_from_each_other_and_the_greys() {
         theme::FAINT,
         theme::WARN,
         theme::ALERT,
+        theme::PART_LIVE,
     ];
     for (i, a) in Accent::ALL.iter().enumerate() {
         for b in &Accent::ALL[..i] {
@@ -299,6 +300,8 @@ fn in_settings_and_set_theme() {
         hints: false,
         invert: false,
         saver: Saver::from_index(5),
+        pages: Pages::Stack,
+        text: chimera_core::ui::theme::TextSize::Large,
     };
     ui.set_theme(t);
     assert_eq!(ui.theme(), t);
@@ -327,7 +330,7 @@ fn input_dismisses_the_toast() {
 // --- INVERT (ADR 0126) ---
 
 use chimera_core::ui::theme_settings::{
-    ALERT_LIGHT, WARN_LIGHT, accent_light, ground_light, splash_palette,
+    ALERT_LIGHT, LIVE_LIGHT, WARN_LIGHT, accent_light, ground_light, splash_palette,
 };
 
 fn light(black: i8, accent: Accent) -> ThemeSettings {
@@ -377,6 +380,7 @@ fn light_mode_flips_every_other_colour_and_twice_is_the_identity() {
         theme::ACCENT_SOFT,
         theme::WARN,
         theme::ALERT,
+        theme::PART_LIVE,
     ]
     .map(raw);
     for px in 0..=u16::MAX {
@@ -442,6 +446,7 @@ fn every_accent_holds_3_to_1_in_both_modes() {
                 if invert {
                     assert!(contrast(WARN_LIGHT, p.bg) >= 3.0, "WARN {k}");
                     assert!(contrast(ALERT_LIGHT, p.bg) >= 3.0, "ALERT {k}");
+                    assert!(contrast(LIVE_LIGHT, p.bg) >= 3.0, "LIVE {k}");
                 }
             }
         }
@@ -489,7 +494,96 @@ fn the_screensaver_page_edits_its_idle_time() {
     assert_eq!(ui.page_def().id, SYS_SAVER.id);
     assert_eq!(ui.theme().saver, Saver::DEFAULT);
     feed(&mut ui, Input::turn(EncoderId::A, 1));
-    assert_eq!(ui.theme().saver, Saver::from_index(3));
-    feed(&mut ui, Input::turn(EncoderId::A, -9));
+    assert_eq!(ui.theme().saver, Saver::from_index(8));
+    feed(&mut ui, Input::turn(EncoderId::A, 9));
+    assert_eq!(ui.theme().saver.ms(), Some(600_000), "held at 10 MIN");
+    feed(&mut ui, Input::turn(EncoderId::A, -99));
     assert_eq!(ui.theme().saver, Saver::OFF);
+}
+
+/// The steps: 5 MIN by default, then the old ones keep their indices.
+#[test]
+fn the_saver_steps_keep_their_old_indices() {
+    let ms: Vec<_> = (0..9).map(|i| Saver::from_index(i).ms()).collect();
+    let s = |s: u32| Some(s * 1000);
+    assert_eq!(
+        ms,
+        [
+            None,
+            s(5),
+            s(7),
+            s(10),
+            s(30),
+            s(60),
+            s(120),
+            s(300),
+            s(600)
+        ]
+    );
+    assert_eq!(Saver::DEFAULT.ms(), Some(300_000));
+    assert_eq!(Saver::from_index(200), Saver::from_index(8));
+}
+
+/// OFF never starts the saver, however long the idle.
+#[test]
+fn saver_off_never_sleeps() {
+    let mut ui = chimera_core::ui::UiState::new();
+    to_leaf(&mut ui, &["PERSONALIZE", "SCREENSAVER"]);
+    feed(&mut ui, Input::turn(EncoderId::A, -99));
+    for _ in 0..1000 {
+        ui.step_idle(60_000, false);
+    }
+    assert!(!ui.asleep());
+}
+
+/// Asleep, a button wakes and acts; a turn wakes and loses its first
+/// detent: a turn you couldn't see never changes the sound (ADR 0147).
+#[test]
+fn a_button_wakes_and_acts_and_a_turn_loses_one_detent() {
+    use chimera_core::ui::block_registry::SYS_SAVER;
+    let mut ui = chimera_core::ui::UiState::new();
+    to_leaf(&mut ui, &["PERSONALIZE", "SCREENSAVER"]);
+    feed(&mut ui, Input::turn(EncoderId::A, -99));
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    assert_eq!(ui.theme().saver, Saver::from_index(1));
+    ui.step_idle(5_000, false);
+    assert!(ui.asleep());
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    assert!(!ui.asleep());
+    assert_eq!(
+        ui.theme().saver,
+        Saver::from_index(1),
+        "one detent: only wakes"
+    );
+    ui.step_idle(5_000, false);
+    assert!(ui.asleep());
+    feed(&mut ui, Input::turn(EncoderId::A, 3));
+    assert!(!ui.asleep());
+    assert_eq!(ui.theme().saver, Saver::from_index(3), "3 detents: 2 act");
+    ui.step_idle(10_000, false);
+    assert!(ui.asleep());
+    feed(&mut ui, Input::turn(EncoderId::A, -1));
+    assert_eq!(ui.theme().saver, Saver::from_index(3), "backwards too");
+    ui.step_idle(10_000, false);
+    assert!(ui.asleep());
+    tap(&mut ui, ButtonId::Menu);
+    assert!(!ui.asleep());
+    assert_ne!(ui.page_def().id, SYS_SAVER.id, "the button acted");
+}
+
+/// SETTINGS › PERSONALIZE › CHAIN MAP: its one cell is PAGES, ROW by
+/// default, STACK one step up and held there (ADR 0145).
+#[test]
+fn the_chain_map_page_toggles_pages() {
+    use chimera_core::ui::block_registry::SYS_MAP;
+    let mut ui = chimera_core::ui::UiState::new();
+    to_leaf(&mut ui, &["PERSONALIZE", "CHAIN MAP"]);
+    assert_eq!(ui.page_def().id, SYS_MAP.id);
+    assert_eq!(ui.theme().pages, Pages::Row);
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    assert_eq!(ui.theme().pages, Pages::Stack);
+    feed(&mut ui, Input::turn(EncoderId::A, 3));
+    assert_eq!(ui.theme().pages, Pages::Stack);
+    feed(&mut ui, Input::turn(EncoderId::A, -1));
+    assert_eq!(ui.theme(), ThemeSettings::DEFAULT);
 }

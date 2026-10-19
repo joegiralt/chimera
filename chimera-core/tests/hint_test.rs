@@ -309,6 +309,7 @@ fn the_browser_offers_clear_on_a_filled_slot() {
             0,
             true,
             None,
+            chimera_core::ui::theme::TextSize::Normal,
         );
         (0..120)
             .flat_map(|x| (browser::CLEAR_Y - 7..=browser::CLEAR_Y).map(move |y| (x, y)))
@@ -455,7 +456,7 @@ fn every_pool_hint_fits() {
 /// on Part 6 is 1, not past it.
 #[test]
 fn ring_value_stays_within_one() {
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     let mut seen = Vec::new();
     for p in PartId::ALL {
         ui.project_mut()
@@ -476,7 +477,7 @@ fn ring_value_stays_within_one() {
 #[test]
 fn hints_off_shows_no_hint() {
     use chimera_core::ui::theme_settings::ThemeSettings;
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     assert!(ui.theme().hints, "ON by default");
     screen::to_leaf(&mut ui, &["PERSONALIZE", "THEME"]);
     feed(&mut ui, Input::turn(E, -1));
@@ -506,6 +507,7 @@ fn hints_off_shows_no_hint() {
         0,
         true,
         None,
+        chimera_core::ui::theme::TextSize::Normal,
     );
     browser::draw(
         &mut b,
@@ -516,6 +518,7 @@ fn hints_off_shows_no_hint() {
         0,
         false,
         None,
+        chimera_core::ui::theme::TextSize::Normal,
     );
     assert_ne!(a.hash(), b.hash(), "the browser's go too");
 }
@@ -647,16 +650,22 @@ fn chorus_hint_names_the_mode() {
     );
 }
 
+/// SYM is AMP's next page: EDIT ▾ under STACK, SEQ ▸ under ROW (ADR 0145).
 #[test]
 fn fold_vel_mix_hint_sym() {
-    let want: Hint = &[Gesture("EDIT ▾", "SYM")];
-    let c = ctx0();
-    for (b, p) in [
-        (BlockRef::Folder, FolderParams::FOLD),
-        (BlockRef::Out, OutParams::VCA_VEL),
-        (BlockRef::Folder, FolderParams::MIX),
+    use chimera_core::ui::theme_settings::Pages;
+    for (pages, want) in [
+        (Pages::Stack, &[Gesture("EDIT ▾", "SYM")]),
+        (Pages::Row, &[Gesture("SEQ ▸", "SYM")]),
     ] {
-        assert_eq!(out_hint(b, p, &c), want);
+        let c = ctx0().on_pages(pages);
+        for (b, p) in [
+            (BlockRef::Folder, FolderParams::FOLD),
+            (BlockRef::Out, OutParams::VCA_VEL),
+            (BlockRef::Folder, FolderParams::MIX),
+        ] {
+            assert_eq!(out_hint(b, p, &c), &want[..], "{pages:?}");
+        }
     }
 }
 
@@ -714,7 +723,7 @@ fn chorus_send_hint_follows_the_project_chorus() {
         feed(ui, Input::turn(A, 1));
     };
     for go in [amp, sends] {
-        let mut ui = Box::new(UiState::new());
+        let mut ui = Box::new(crate::screen::stack_ui());
         go(&mut ui);
         screen::settle(&mut ui);
         assert!(
@@ -773,4 +782,36 @@ fn mappable_cells_hint_learn() {
         }
     }
     assert!(seen > 0);
+}
+
+/// In the mixer MIX + B*n* keeps the page and opens Part *n*'s (ADR 0044):
+/// the focus band says so, within the screen, and the header and strip
+/// name the Part it lands on.
+#[test]
+fn mix_plus_a_part_button_in_the_mixer_is_hinted() {
+    use chimera_core::ui::view::mixer_hint;
+    use chimera_hal::ButtonId::{B3, Mix};
+    let mut ui = Box::new(ui_for("mixer_part"));
+    assert!(hint_ink(&ui) > 0, "PART's touched cell: a hint");
+    let page = screen::page_def_id(&ui);
+    let from = ui.active_part;
+    feed(&mut ui, Input::chord(Mix, B3));
+    assert!(ui.location().on_mixer(), "still the mixer");
+    assert_eq!(screen::page_def_id(&ui), page, "the same page");
+    assert_ne!(ui.active_part, from);
+    assert_eq!(ui.location().part(), Some(ui.active_part));
+    assert_eq!(ui.active_part.index(), 2, "Part 3");
+    assert!(hint_ink(&ui) > 0, "the hint stays on the new Part");
+    let jump = Gesture("MIX + B1-6", "PART");
+    assert_eq!(mixer_hint(hint::NONE), &[jump][..]);
+    let with_learn = mixer_hint(chimera_core::ui::view::LEARN_HINT);
+    assert_eq!(
+        with_learn,
+        &[jump, Gesture("MIX + SEQ", "LEARN")][..],
+        "both gestures stay hinted"
+    );
+    assert_eq!(mixer_hint(&[Gesture("REVERB ▸", "HALL")]).len(), 1);
+    for h in [mixer_hint(hint::NONE), with_learn] {
+        assert!(hint::width(h) <= theme::CONTENT_W, "{}", hint::width(h));
+    }
 }

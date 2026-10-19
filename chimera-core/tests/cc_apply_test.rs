@@ -84,7 +84,7 @@ impl Bench {
     /// Part 1 on `s`, sustained.
     fn new(mut s: Sound) -> Self {
         s.params.envelopes[0].sustain = 1.0;
-        let mut ui = Box::new(UiState::new());
+        let mut ui = Box::new(crate::screen::stack_ui());
         screen::init_part(&mut ui, P1);
         let was = PartChain::of(&ui.project().part(P1).sound);
         **ui.project_mut().edit_part(P1).sound = s;
@@ -448,7 +448,7 @@ fn stepped_cc_hysteresis() {
 }
 
 /// Operator A at FRMT and every other at NOISE: the budget is full, so
-/// A's WAVE up from FRMT is refused, and stays.
+/// A's WAVE up from FRMT is refused, and stays (a turn shows it dimmed).
 fn budget_full() -> Sound {
     let mut s = Sound::plain_init(EngineType::Algo);
     s.params.algo.try_set_kind(0, OpKind::Formant).unwrap();
@@ -473,7 +473,13 @@ fn stepped_cc_past_the_formant_budget_is_refused_as_a_turn() {
     screen::to_osc_sub(&mut b.ui, &ALGO_OP_PAGES[0]);
     b.ui.step_toast(60_000);
     feed(&mut b.ui, Input::turn(EncoderId::A, 1));
-    assert_eq!(b.ui.step_toast(0), full, "the turn toasts");
+    assert_eq!(
+        b.ui.step_toast(0),
+        ToastStep::Idle,
+        "the turn doesn't toast"
+    );
+    let shown = b.ui.held_choice().expect("NOIS is shown dimmed");
+    assert_eq!(shown.held.code, 17);
     assert_eq!(kind(&b), OpKind::Formant);
 }
 
@@ -793,7 +799,7 @@ fn two_passes_in_one_block_never_overflow() {
 fn a_cc_beside_a_queued_load_is_dropped() {
     let mut s = MemStore::new(1);
     let f = screen::put(&mut s, "NEXT");
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     let ch = ui.project().part(P1).mix.channel;
     let ev = |v| CcEvent {
         channel: ch,

@@ -727,7 +727,8 @@ fn dimmed_cells_keep_the_glyph() {
     for (by, mode, page, slot, id) in cells {
         let model = TapeModel::ALL[by as usize];
         assert!(!reads_in(model, mode, id), "{model:?} {mode:?} {id:?}");
-        let mut ui = chimera_core::ui::UiState::new();
+        // Under STACK, EDIT goes down to the model page (ADR 0145).
+        let mut ui = stack_ui();
         tape_deck(&mut ui, by);
         play_mode(&mut ui, mode);
         // DECK's TAPE cell: a live glyph.

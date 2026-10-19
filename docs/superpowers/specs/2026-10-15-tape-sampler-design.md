@@ -224,20 +224,20 @@ PREP never changes a Sound by itself. It writes a `.PRP` (and maybe a `.SRC`). B
 
 ### 4.2 Its own language
 
-Pixel mockups of every screen, in the unit's fonts and colours: (private notes). PREP's look is approved (owner, 2026-10-15).
+Pixel mockups of every screen, in the unit's fonts and colours: (private notes). PREP's look is approved (owner, 2026-10-15), and so is its **precision design**: the mockups' "Proposed: precision" screens (P1–P8) and the walkthrough's Proposed mode (`walkthrough.html#pro`), whose state machine is the reference for the behaviour in §§ 4.3–4.4 (owner, 2026-10-15, from the adversarial UX review (private notes)). Where the earlier screens and the Proposed ones differ, the Proposed ones win.
 
 SETTINGS is lists, a breadcrumb and a footer. Part pages are the focus band, the arc and six cells under a chain map. PREP is a **workbench**: one big waveform with numbered marks, a leader strip of its chain, a readout line, six compact dials, and a **tool bar that labels B1–B6**. No other mode labels those buttons, so you always know you are in PREP.
 
 | Element | Size (240 × 320 portrait) | Look |
 |---|---|---|
 | Header | 0–23 | A filled `PREP` tag in `ACCENT`, the source's name, the prep type at the right in a pill |
-| Leader | 24–39 | `TRIM · CUT · LOOP · MAP · REEL · MAKE`, the current page in a box, the rest `MID`; pages that don't apply to the type are `FAINT` |
-| Overview | 40–55 | The whole file, min/max in `FAINT`, the zoom window bracketed in `INK2` |
-| Waveform | 56–175 | 216 × 120, min/max a column in `MID`, the selection shaded `ACCENT_SOFT`, marks as `WARN` lines with numbered flags along the top, the audition head in `INK` |
-| Ruler | 176–187 | Time at the window's ends and the cursor, in seconds to 3 places |
-| Readout | 188–215 | What the focused dial does, large: `SLICE 07 / 24 · 1.214 S`. It is also where MIX hints show (ADR 0086). |
-| Dials | 216–287 | Six cells, two rows of three, label and value only (no arcs), eased as every value (ADR 0143) |
-| Tool bar | 288–319 | Six boxes in the order of B1–B6. **B6 is a filled button: green `PLAY` while stopped, red `STOP` while auditioning** (new theme colours `PLAY` and `STOP`, transport only). B1–B5 are outlined, each a page tool's name: 34 px of text, so one short word (FLIP, LOUD, ERASE, NEW, SAVE; owner, 2026-10-15) or two lines (TO / START) |
+| Leader | 24–39 | `TRIM · CUT · LOOP · MAP · REEL · MAKE`, the current page in a box, the rest `MID`; pages that don't apply to the type are `FAINT`. In FOCUS it becomes the band `TRIM ▾ FOCUS · END` (§ 4.4) |
+| Overview | 40–55 | The whole file, min/max in `FAINT`, the view's window bracketed in `INK2` |
+| Waveform | 56–175 | 216 × 120, min/max a column in `MID`, the selection shaded `ACCENT_SOFT`, marks as `WARN` lines with numbered flags along the top, the **head** in `INK` (§ 4.3) |
+| Ruler | 176–187 | The window's start and end times at the sides, and in the middle what a pixel is worth: `1 PX = 33 MS` … `1 PX = 1 SMP` |
+| Readout | 188–215 | A big line, what the last control did: `SLICE 07 · 0:00.872`. Positions read in seconds to 3 places, then to the sample once a pixel is under 1 ms: `0:06.020 + 17 SMP`. A small line under it carries the result (`TRANSIENT · 16 SLICES`) or a MIX hint (ADR 0086) |
+| Dials | 216–287 | Six cells, two rows of three, label and value only (no arcs), eased as every value (ADR 0143). A position dial shows what fits at the zoom: `6.020 S`, then `6.0204 S` once a pixel is under 1 ms |
+| Tool bar | 288–319 | Six boxes in the order of B1–B6. **B6 is a filled button: green `PLAY` while stopped, red `STOP` while auditioning** (new theme colours `PLAY` and `STOP`, transport only). B1–B5 are outlined, each a page tool's name: 34 px of text, so one short word (ADD, ERASE, FLIP, LOUD, SNAP, FIND, FROM, UP TO, ◂ZERO; owner, 2026-10-15) or two short lines (START / HERE, MOVE / HERE, PLAY / ALL) |
 
 Marks are amber (`WARN`) only in PREP. The Part pages never draw `WARN` but for warnings, so the colour also says where you are.
 
@@ -245,83 +245,85 @@ Marks are amber (`WARN`) only in PREP. The Part pages never draw `WARN` but for 
 
 | Control | In PREP |
 |---|---|
-| MINUS / PLUS | Along the chain (D-pad rule), **skipping pages the prep type doesn't use** (the leader still shows them `FAINT`) |
-| EDIT / SEQ | Nothing in PREP: no page has sub-pages |
+| MINUS / PLUS | Along the chain (D-pad rule, ADR 0081), skipping pages the prep type doesn't use (the leader still shows them `FAINT`). **CUT is never skipped** (§ 4.4). In FOCUS they step to the previous / next mark (the D-pad's "along" inside FOCUS; the MARK # dial does the same by turning) |
+| **EDIT** | **Down into FOCUS** on the page's focused mark (§ 4.4): TRIM's last-touched START or END, LOOP's start or end, CUT's focused slice mark. Nothing on MAP, REEL or MAKE, which have no marks to place |
+| **SEQ** | Up out of FOCUS, back to the page. Nothing on the pages themselves |
 | Encoders 1–6 | The six dials |
 | B1–B5 | The page's tools, labelled in the tool bar |
 | **B6** | **Audition PLAY / STOP** (B6 is PLAY/STOP everywhere, ADR 0044). In PREP it auditions only: ORBIT's transport is untouched, and a playing ORBIT plays on |
-| A played key (MIDI or the Part's keys) | Auditions the prep as mapped: on KIT that key's slice; on ZONES that zone; on REEL that key-reachable splice |
-| MIX + a button | Big or destructive actions, each with its readout hint |
-| MIX + PLUS | MAKE · SAVE (any page) |
-| MENU | Leave. Unsaved marks ask `KEEP EDITING / DISCARD` |
+| A played key (MIDI or the Part's keys) | Auditions the prep as mapped (on KIT that key's slice; on ZONES that zone; on REEL that key-reachable splice) **and selects it**: on CUT the key's slice becomes SLICE and the view goes to its mark; on MAP it becomes KEY |
+| **MIX + ZOOM** | Scrolls the view; no mark moves (below) |
+| **MIX + SEQ** | **Undo** (below). On Part pages MIX + SEQ is MIDI learn; PREP has no learn, so the gesture is free here (owner, 2026-10-15) |
+| **MIX + EDIT** | **Redo.** MIX + EDIT is PREP's door on a Part's SRC page (§ 4.1); inside PREP it has no other meaning |
+| MIX + a tool | Big actions, each with its hint when the tool is touched: MIX + ERASE clears every mark (CUT), MIX + COPY resets every key (MAP). Both are undoable |
+| MIX + PLUS | MAKE · SAVE (any page, FOCUS too) |
+| MENU | Closes FOCUS if it is open; otherwise leaves. Unsaved marks ask `LEAVE PREP? KEEP EDITING / DISCARD`, with the small line `MIX + SEQ CAN STILL UNDO` while there is history |
+
+**No PREP control needs a pushed encoder.** Push encoders are optional hardware (ADR 0140, OFF by default) and the owner's unit has none. Fine moves have their own dial (FOCUS's FINE) and their own zoom. On a board with pushes, push + turn on a mark dial may become a shortcut for FINE; it is never the only way.
 
 **Audition** plays through a neutral TAPE Sound of the right machine on the Part PREP came from (from SAMPLES, the last focused Part). The Part's own Sound is untouched. Audition streams if the source is big, like any note.
 
+**The view.** One rule on every page with a waveform (TRIM, CUT, LOOP; mockup P1):
+
+- **It centres on the last-touched mark**: START or END on TRIM; LOOP's start, or its end for LENGTH and BEATS; CUT's focused mark (a slice's start) for SLICE, POS, ADD, ERASE, MOVE/HERE and a played key. ZOOM zooms around it, and the overview's bracket moves with it. Switching pages keeps the rule, so nothing is ever edited off screen.
+- **One detent of a mark dial moves the mark one pixel** of the current view, at every zoom; acceleration (1, 2, 4, 5, 10 a click in a burst) multiplies it. Zooming in *is* fine control, and the step always matches what you see.
+- **ZOOM** steps by doublings, from the whole file in 216 px down to **1 sample a pixel** (15 doublings for a 2-minute file at 48 kHz), and **eases** between levels in log space, never jumping (ADR 0143). Its value and the ruler read what a pixel is worth.
+- **MIX + ZOOM scrolls** 24 px a detent: the readout says `SCROLL · 0:40.000` / `NO MARK MOVED`, and the head parks at the view's centre. Whenever ZOOM is touched the readout hints `MIX + ZOOM · SCROLL`. Touching a mark takes the view back to it.
+- While audition plays, the view follows the head whenever it leaves the window.
+
+**The head.** An `INK` line that persists. It parks where audition stopped and where a scroll leaves the view; touching START puts it on START, and touching END puts it a second before END, so B6 right after an END turn plays the tail. On TRIM, **B6 plays from the head** to END (from START when the head is outside the window). The **HERE tools** act at the live head while audition plays, else at the parked one: TRIM's START/HERE and END/HERE, LOOP's START/HERE and END/HERE, CUT's ADD and MOVE/HERE. Tap them while B6 or PLAY/ALL plays to place marks by ear, then refine by eye.
+
+**SNAP** (a tool on TRIM, CUT and LOOP; one setting for the session) is **directional**: a turn of START, END, POS, LOOP's START or LENGTH moves the mark its pixel, then on to the **next zero crossing in the direction of the turn**, searching up to 4,800 frames. The search starts past where the detent put the mark, so every detent moves on and a snapped mark can never be trapped on one crossing (the nearest-crossing rule the first walkthrough had did trap it whenever a detent was shorter than half the gap between crossings). With no crossing in reach the mark moves unsnapped. The HERE tools and FOCUS's MARK and FINE never snap; in FOCUS, ◂ZERO and ZERO▸ do it on demand. So a mark that needs to sit between crossings is reached by zooming in (one pixel is then a few samples) or by FOCUS's FINE.
+
+**Undo** (mockup P7):
+
+- **What it keeps:** snapshots of the prep being edited: the trim and the render marks (GAIN, fades, FLIP, LOUD), CUT's marks, method and settings, the loop, the key map, the zones, the programs and the type. Not the view, the zoom, the head or FOCUS's own HEIGHT, AROUND and MARK #.
+- **A step** is each tool press (ADD, ERASE, CLEAR ALL, MOVE/HERE, a HERE tool, FIND, PASTE, FLIP, LOUD, AUTO, KIT or REEL on CUT) and each *run* of turns on one dial; a run ends when another control is touched or after 1 s idle, so a long sweep undoes as one step. **8 levels**; a ninth drops the oldest. A new edit clears redo.
+- **Gestures:** MIX + SEQ undoes, MIX + EDIT redoes. After every undoable edit the readout's small line shows `MIX + SEQ · UNDO` (and `EDIT ▾ FOCUS` where a mark moved) for that touch (ADR 0086). An undo says what it undid, `UNDO · ERASE`, and offers `MIX + EDIT · REDO`; at either end the readout says `NOTHING TO UNDO` / `NOTHING TO REDO`.
+- **It replaces prompts.** The `REPLACE HAND EDITS?` prompt is gone: METHOD changes freely and MIX + SEQ brings hand edits back. MIX + ERASE (clear all) and MIX + COPY (reset all keys) need no prompt either.
+- **The history is the session's.** MAKE (SAVE or NEW) and MENU › DISCARD end it.
+- **Renders aren't undone, and needn't be.** Render marks are marks until MAKE, so undo takes them back like any other. The render itself runs at MAKE, which ends the history; it writes a new `.SRC` and never overwrites (§ 3.4), so the old source is still on the card to pick again (NEW keeps the old `.PRP` too). Getting rid of an unwanted render means deleting its new file: DELETE in SAMPLES (MIX + MINUS), or CLEAN UP once nothing uses it.
+- **Memory:** the editing state holds every type's tables, so a snapshot is at most about 1.4 KB (KIT's 64 slices 770 B, REEL 466 B, ZONES 97 B, RAW 22 B, CUT's settings and the render marks). Eight levels are a fixed ring of about 11 KB, a static in AXI: no heap, nothing in the audio's path. If slice 3 measures AXI tighter than § 7.1 says, the ring drops to 4 levels (about 6 KB).
+
 ### 4.4 The pages
 
-Each mockup is the 240 × 320 screen, one character about 6 px.
+The pixel mockups are the reference for every page. The ASCII sketches below (MAP, REEL, MAKE) are still accurate; TRIM's and CUT's were dropped when the precision design changed them (mockups P1, P5, P6, P8).
 
-**TRIM** (RAW and every type: the window the prep keeps)
+**FOCUS** (EDIT on any mark of TRIM, CUT or LOOP; mockups P2, P4)
 
-```
-┌PREP┐ RAIN ROOF            ( RAW ) 
- [TRIM] · CUT · LOOP · MAP · REEL · MAKE
- ▕▁▂▃▅▆▅▃▂▁▂▃[▅▆▇▆▅▃]▂▁▂▃▅▃▂▁▁▂▃▅▆▅▃▂▕
-┌──────────────────────────────────────┐
-│ S                                  E │
-│ ▏  ▂▃▅▆▇▆▅▃▂ ▂▃▅▇█▇▅▃▂ ▂▃▅▆▅▃▂  ▂▃ ▏ │
-│ ▏ ▅██████████████████████████████▅▏ │
-│ ▏  ▂▃▅▆▇▆▅▃▂ ▂▃▅▇█▇▅▃▂ ▂▃▅▆▅▃▂  ▂▃ ▏ │
-└──────────────────────────────────────┘
- 0:00.412          ▲ 0:06.020    1:54.900
- START  0:00.412 · ZERO CROSS
- ┌START──┐┌END────┐┌ZOOM───┐
- │0.412 S││114.9 S││  ×4   │
- └───────┘└───────┘└───────┘
- ┌GAIN───┐┌FADE IN┐┌FADE OU┐
- │+0.0 DB││  0 MS ││ 20 MS │
- └───────┘└───────┘└───────┘
- [TO S  ][TO E  ][ FLIP ][ LOUD ][ SNAP ][▶ PLAY]
-```
+One sub-view serves every mark: START, END, LOOP's start and end, and each slice mark.
 
-- Dials: START, END (snapping to zero crossings when SNAP is on), ZOOM, GAIN, FADE IN, FADE OUT.
-- Tools: B1 jumps the view TO START, B2 TO END, B3 FLIP (reverses the **whole sample**; its readout says `FLIP · WHOLE SAMPLE`), B4 LOUD (normalise), B5 SNAP on/off, B6 PLAY.
+- **The mark is a fixed amber centre line** and the audio moves under it. At 2 samples a pixel or closer the wave is drawn as a line, not min/max columns. The ruler reads ± the half-window and what a pixel is worth.
+- **Dials:** MARK (one pixel a detent), **FINE** (one sample a detent; the value is the frame number), ZOOM (opens at 4 samples a pixel, eases, down to 1), **HEIGHT** (y-zoom ×1–×16, for tails, fade ends and quiet crossings), MARK # (which mark, wrapping), **AROUND** (50 ms–2 s, default 500 ms: how much the audition tools play).
+- **Tools:** B1 `◂ZERO` and B2 `ZERO▸` jump the mark to the previous or next zero crossing (the readout says where and by how much: `ZERO · 0:06.020 + 17 SMP` / `-12 SMP`), so they follow the direction you press and can't stick. B3 `FROM` plays AROUND from the mark; B4 `UP TO` plays AROUND up to it (checking an end by ear). B5 `LOOP` repeats the AROUND window centred on the mark until pressed again, a tick to nudge against. B6 plays that window once.
+- **On LOOP's end, FOCUS shows the seam**: the 108 px before the loop end on the left, the 108 px from the loop start on the right, shaded, so the join is the centre line (flag `SEAM`, labels END and START). On LOOP the audition tools play across the seam (`THE SEAM · 500 MS EACH SIDE`; B5 `LOOPING THE SEAM`), and FINE moves the end while you watch the two sides meet.
+- Moving a mark in FOCUS is an edit like any other: undoable, and on CUT it makes METHOD HAND. The readout hints `SEQ ▴ BACK` and `MIX + SEQ · UNDO`. SEQ returns to the page, with the view on the mark.
+
+**TRIM** (RAW and every type: the window the prep keeps; mockup P1)
+
+- Dials: START, END (one pixel a detent, directional SNAP), ZOOM, GAIN, FADE IN, FADE OUT.
+- Tools: B1 `START/HERE`, B2 `END/HERE` (they replace TO START and TO END: the view follows the mark now), B3 FLIP (reverses the **whole sample**; readout `FLIP · WHOLE SAMPLE` / `MARKS FOLLOW THE AUDIO · RENDERS`), B4 LOUD (normalise; `LOUD · PEAK TO -0.5 DB`), B5 SNAP (`SNAP · NEXT ZERO CROSSING` / `IN THE WAY YOU TURN`), B6 PLAY from the head to END.
 - GAIN, fades, FLIP and LOUD are **render marks**: heard in audition (applied on the fly), rendered into a new `.SRC` only by MAKE. While any is set, the header shows a `RENDER` badge, their tool boxes and dials carry a render dot, and the readout says `RENDERS ON SAVE`, so audio changes never look like plain marks.
 
-**CUT** (KIT and REEL: where the marks go). **METHOD is a dial**, not a sub-page: GRID · TRANSIENT · HAND. The dials are METHOD, SLICE, ZOOM, then the method's own: GRID → COUNT; TRANSIENT → COUNT, MIN GAP, THRESH; HAND → POS (moving a mark is a hand edit, so POS lives in HAND). The ASCII below predates this; the pixel mockups are current.
+**CUT** (KIT and REEL: where the marks go; mockups P5, P6, P8)
 
-```
-┌PREP┐ AMEN BREAK           ( KIT ) 
- TRIM · [CUT] · LOOP · MAP · REEL · MAKE
- ▕▃▆▃▂▆▃▂▅▃▂▆▃▂▅▃▂▆▃▂▅▃▂▆▃▂▅▃▂▆▃▂▅▃▂▕
-┌1───2────3───4────5───6────7───8────┐
-│▏   ▏    ▏   ▏    ▏   ▏    ▏   ▏    │
-│█▅▃▂█▅▃▂▁█▅▃▂█▅▃▂▁█▅▃▂█▅▃▂▁█▅▃▂█▅▃▂ │
-│▏   ▏    ▏   ▏    ▏   ▏    ▏   ▏    │
-└────────────────────────────────────┘
- 0:00.000     ▲ 0:00.402       0:01.851
- TRANSIENT · 16 SLICES · MIN GAP 40 MS
- ┌SLICE──┐┌POS────┐┌ZOOM───┐
- │ 3 / 16││0.402 S││  ×1   │
- └───────┘└───────┘└───────┘
- ┌THRESH─┐┌MIN GAP┐┌COUNT──┐
- │ -24 DB││ 40 MS ││  16   │
- └───────┘└───────┘└───────┘
- [ ADD  ][ERASE ][◂ PREV][NEXT ▸][ SNAP ][▶ PLAY]
-```
-
-- GRID: COUNT (2–64 equal slices of the trimmed window).
-- TRANSIENT is **count-first** (owner, 2026-10-15; the MPC's chop): COUNT (1–64) keeps the COUNT strongest onsets, at least MIN GAP apart. One read of the file runs an envelope follower and keeps every onset with its strength (≤ 512, ~2 KB in PREP's scratch); turning COUNT or MIN GAP re-picks from that list instantly, with no new read. THRESH (a floor in dB, default off) is the fine dial: onsets under it are never picked, so COUNT can come up short and the readout says so (`12 OF 16 · RAISE THRESH`).
-- **Marks redraw live** as the dials turn; the readout shows the method and the result (`TRANSIENT · 16 SLICES`).
-- **Hand edits are protected.** Turning METHOD to HAND keeps the current marks for editing. Turning it back to GRID or TRANSIENT after any hand edit asks `REPLACE HAND EDITS? YES / NO` first; NO leaves METHOD on HAND.
-- HAND: ADD a mark at the audition head, ERASE, PREV, NEXT, POS moves the focused mark (snapping to a zero crossing when SNAP is on).
-- MIX + B2 clears every mark (`MIX + ERASE · CLEAR ALL MARKS`).
+- **Never skipped, and where the type is chosen.** On a RAW or ZONES prep, PLUS lands on CUT, which asks `KIT OR REEL?` over the waveform (readout `CUT · KIT OR REEL?` / `B1 KIT · B2 REEL · PLUS PASSES BY`), with every dial but ZOOM dimmed. B1 `KIT` or B2 `REEL` sets the type here (`CUT FOR A KIT` / `UP TO 64 SLICES FROM C1`; `CUT FOR A REEL` / `UP TO 32 SPLICES`), an undoable step. PLUS passes by to LOOP for a loop or a one-shot. MAKE's TYPE shows the choice and can still change it. (CUT comes with slice 4; in slice 3 PLUS goes from TRIM to LOOP.)
+- **METHOD is a dial**, not a sub-page: GRID · TRANSIENT · HAND. The dials are METHOD, SLICE, ZOOM, then the method's own:
+  - **GRID → BEATS** (1–32), **TEMPO** (AUTO or 40–240 BPM), **DIV** (1/4, 1/8, 1/16): BEATS × DIV slices. At TEMPO AUTO the beats fill the trim window and the readout gives the tempo that results (`GRID · 16 SLICES · 129.7 BPM`); at a set TEMPO each slice is a beat ÷ DIV from START, and the grid stops at END. It stops at the type's ceiling (64 or 32) too. A plain count of equal slices is BEATS at 1/4 on AUTO.
+  - **TRANSIENT → COUNT, MIN GAP, THRESH**, count-first (owner, 2026-10-15; the MPC's chop): COUNT (1–64) keeps the COUNT strongest onsets, at least MIN GAP apart. One read of the file runs an envelope follower and keeps every onset with its strength (≤ 512, ~2 KB in PREP's scratch); turning COUNT or MIN GAP re-picks from that list instantly, with no new read. THRESH (a floor in dB, default off) is the fine dial: onsets under it are never picked, so COUNT can come up short and the readout says so (`12 OF 16 · RAISE THRESH`).
+  - **HAND → POS** (the focused mark, one pixel a detent, directional SNAP); MIN GAP and THRESH dim.
+- **Marks redraw live** as the dials turn; the readout shows the method and the result. Where flags are closer than a number needs, they become unnumbered stubs; the focused one keeps its number.
+- Tools: B1 `ADD` (a mark at the head: `ADDED AT THE HEAD · 0:00.872`, or `A MARK IS ALREADY HERE` within 2 ms), B2 `ERASE` (the focused mark; slice 1's start stays: `SLICE 1 STARTS THE SAMPLE`), B3 `MOVE/HERE` (the focused mark to the head), B4 `PLAY/ALL` (plays the trim window from the head, which runs and parks where you stop; tap ADD on each hit: `PLAYING ALL · TAP B1 ADD`), B5 SNAP, B6 the focused slice. PREV and NEXT are gone: SLICE does that, and so does a played key.
+- **Hand edits:** POS, ADD, ERASE, MOVE/HERE or a move in FOCUS turn METHOD to HAND, keeping the marks. Turning METHOD back to GRID or TRANSIENT re-cuts at once, with no prompt: MIX + SEQ brings the hand edits back.
+- MIX + ERASE clears every mark (hint `MIX + ERASE · CLEAR ALL MARKS` when ERASE is touched; then `MIX + SEQ · UNDO`).
 - Up to 64 marks for KIT and 32 for REEL. The 65th ADD says `64 SLICES · KIT IS FULL`.
 
-**LOOP** (RAW)
+**LOOP** (RAW; mockups P3, P4)
 
-- Dials: LOOP START, LENGTH, XFADE, ZOOM. Tools: B1 FIND, B5 SNAP, B6 PLAY (loops).
-- FIND (B1) nudges the loop end to the best match near the marks: autocorrelation over at most 4,096 frames around them, a few ms.
+- Dials: START (the loop start; `LOOP START` doesn't fit a dial), LENGTH (its mark is the loop end), XFADE, ZOOM, **BEATS** (OFF, 1–32), **TEMPO** (40–240 BPM, default the project's tempo). START and LENGTH move one pixel a detent, with directional SNAP. BEATS sets LENGTH to that many beats at TEMPO (`4 BEATS AT 90 BPM` / `LENGTH 2.667 S`); turning LENGTH, FIND or END/HERE sets BEATS back to OFF.
+- Tools: B1 FIND, B3 `START/HERE`, B4 `END/HERE`, B5 SNAP (B5 on every page that has it), B6 PLAY (loops). B2 is free.
+- FIND nudges the loop end to the best match near the marks: autocorrelation over at most 4,096 frames around them, a few ms (`FIND · …` / `MOVED THE END +1.2 MS`).
+- The readout hints `EDIT ▾ FOCUS ON THE SEAM`.
 - These become the Sound's POSITION, SIZE and XFADE when the prep is picked.
 
 **MAP** (KIT and ZONES)
@@ -346,8 +348,9 @@ KIT: a keyboard of 64 keys from BASE, one slice a key, drawn as the slice's poli
  [ FLIP ][ COPY ][PASTE ][◂ KEY ][ KEY ▸][▶ PLAY]
 ```
 
+- Playing a key moves KEY there, so the KEY dial is a fallback.
 - B1 FLIP reverses **this slice** (readout `FLIP · THIS SLICE`); it is a mark, not a render.
-- MIX + B2 (COPY) resets every key to the default (black CUT in group 1, white STACK).
+- MIX + B2 (COPY) resets every key to the default (black CUT in group 1, white STACK). Touching COPY hints `MIX + COPY · RESET ALL KEYS`; the reset is undoable.
 - ZONES: zone count, each zone's low and high key and root; AUTO (B1) spreads them two an octave.
 
 **REEL** (REEL): splices come from CUT. This page edits programs.
@@ -393,12 +396,16 @@ KIT: a keyboard of 64 keys from BASE, one slice a key, drawn as the slice's poli
 
 - With audio marks, AUDIO reads `RENDER · NEW .SRC · 288 KB · ~1 S` and the save renders first, behind a progress bar, then writes the `.PRP`.
 - NAME opens the house NAMING screen (`settings::naming`).
+- TYPE shows the type CUT chose (§ 4.4) and can still change it; a change is an undo step.
+- SAVE and NEW end the undo history (§ 4.3).
 
 ### 4.5 What runs on the unit and what on the host
 
 | Tool | Where | Cost on the unit |
 |---|---|---|
 | Overview (min/max a column) | Unit | One read of the file: 4 MB in 2–3 s, once, then kept in `PrepView` |
+| The waveform zoomed past the overview, and FOCUS | Unit | Only the window is read, as a UI read under § 5.4's rules: a few KB at FOCUS's zoom, about 0.5 s for a 20 s window. Until it lands the view draws the overview stretched; the window's 216 columns (432 B) are cached. Slice 3 measures it. |
+| Zero-crossing search (SNAP, ◂ZERO, ZERO▸) | Unit | ≤ 4,800 frames from the window or one chunk read |
 | Trim, gain, fades, reverse, normalise, crush | Unit, a render | Two passes (CRC, then write). A write runs at 363 KB/s: 288 KB in ~0.8 s; a 4 MB reel ~12 s. 16 KB of scratch. |
 | Grid, transient and hand slicing; splices; programs; key and zone maps | Unit | Marks only. Transient detection is one read and an envelope follower. |
 | Loop FIND | Unit | ≤ 4,096-frame autocorrelation: a few ms |
@@ -410,7 +417,7 @@ KIT: a keyboard of 64 keys from BASE, one slice a key, drawn as the slice's poli
 
 Every unit tool runs in the UI loop in chunks behind `ui::busy` with a progress bar; audio never waits (ADR 0087's rule). MENU cancels a render, deleting its unsealed file.
 
-**PREP's RAM:** 16 KB of chunk scratch, a static in D2; the overview (432 B) and the marks being edited (≤ 1 KB) in AXI. **Card writes in PREP** fade streams on other Parts (decision 8, § 5.7).
+**PREP's RAM:** 16 KB of chunk scratch, a static in D2; in AXI the overview and the window's columns (432 B each), the prep being edited (≤ 1.4 KB) and the undo ring (8 × ≤ 1.4 KB, about 11 KB; § 4.3), about 13 KB in all. **Card writes in PREP** fade streams on other Parts (decision 8, § 5.7).
 
 ### 4.6 SETTINGS › SAMPLES
 
@@ -527,7 +534,7 @@ Chimera feeds itself (decision 7): render a Part's Sound offline to a new `.SRC`
 |---|---|---|---|
 | SRAM4 (64 KiB, D3) | 65,536 (unused, not in `memory.x`) | 65,024: 8 rings | Slice 1 adds the region. CPU-only access, so DMA reach doesn't matter. |
 | D2 SRAM1–3 | 86,240 | +8,192 for the larger DMA region (staging 9,216 inside it); ~2 KB stream registry; 16 KB PREP scratch; ~20–25 KB RESAMPLE voice (measured in slice 6) | ~35 KB left at the end |
-| AXI | ~27 KB spendable | ~1 KB: per-voice stream state, counters, PREP's overview and marks | The linker's 32 KiB margin stays |
+| AXI | ~27 KB spendable | ~14 KB: per-voice stream state and counters (~1 KB); PREP's overview, window columns and marks (~2 KB); PREP's undo ring (~11 KB, 4 levels if tight) | The linker's 32 KiB margin stays |
 | Arena (153,600 B for sources) | per project | Heads, a streamed source at 24 kHz: PLAY ONE 3.6–7.6 KB (START's head, `HEAD_MS` to just past the next chunk boundary); PLAY LOOP 7.2–18.8 KB (that, and the loop's: XFADE ≤ 100 ms before the loop plus `HEAD_MS`, to the boundary, 3.6–11.2 KB); a TRON set 43 KB (12 heads) and a REEL up to 58 KB (16), each of their heads up to a chunk (4 KB) more to its boundary; KIT and REEL prep rows ≤ 1 KB each | On the meter. Heads end past a chunk boundary so a chord's second chunks aren't due behind its first (#583); the loop's holds XFADE and `HEAD_MS` (#584) |
 | DTCM, ITCM | — | nothing | |
 
@@ -568,8 +575,8 @@ Each slice is its own plan. Each ends on the unit (hardware-checks-only-at-ship:
 | 0 | **Bench** | The real DMA read path and protocol (slice 1's driver, not a throwaway), driven by the console's `card` in `bench-stress,bank2`: B2 (access time vs chunk), B3 (8-read burst), B4 (sustained EDF streams, 10 min), B5 (write stall), B6 (UI under streams), B7 (reverse) | Raw console text for every bench is in the ledger. It fixes CHUNK_RECORDS, HEAD_MS and the stream budget, or shows a number in § 5 is wrong. |
 | 1 | **Streaming core + PLAY** | The card layer in product code; `SharedCard`; SRAM4 rings; the slot protocol; EDF; admission; drop-outs; quiet for writes; fault handling; PLAY (the fold, MODE, FADE) streaming forward ONE and LOOP | 4 Parts each loop a 25–28 s bed (under `put`'s 1 MiB; longer files wait for slice 2) while Part 5 holds a 4-voice chord at ≥ 70 % load for 10 min: `stream_underruns` 0, `overruns` 0. A MENU-hold save in the middle fades the beds out and back. An injected read fault drops out, reads `CARD READ FAILED`, and recovers. |
 | 2 | **TRON on zones** | PLAY takes ZONES; TRON's page and RUN; resumable `put` (its ADR, as ADR 0093 requires) or disk-mode copy for files over 1 MiB; host zone-set builder; 2–4 CC0 factory TRON sets; MOTOR and REWIND prototypes | 8-note chords of 8 s TRON notes over every zone, 10 min, 0 underruns; owner A/B of MOTOR and REWIND |
-| 3 | **PREP + SAMPLES** | PREP mode (TRIM, LOOP, MAKE), its bank-2 door and ADR, the `.PRP` (RAW), renders, SETTINGS › SAMPLES, the catalog, CARD TEST, CLEAN UP (#398) | Trim and loop a 2-minute bed on the unit, MAKE a `.PRP` and a rendered `.SRC`, pick both on a Part, power-pull during a render and boot clean |
-| 4 | **CUT + MAP + KIT** | CUT (grid, transient, hand), MAP (KIT and ZONES), the KIT machine, prep rows, `choke.rs` | A 64-slice break plays from C1–D#6 with black keys choking each other and white keys stacking, retriggered by ORBIT at 16ths for 10 min |
+| 3 | **PREP + SAMPLES** | PREP mode (TRIM, LOOP, MAKE), its view rule, head and HERE tools, FOCUS (seam included), undo, LOOP's BEATS, its bank-2 door and ADR, the `.PRP` (RAW), renders, SETTINGS › SAMPLES, the catalog, CARD TEST, CLEAN UP (#398) | Trim a 2-minute bed to the sample (FOCUS, FINE) and loop it in BEATS on the unit, undo and redo across 8 steps, MAKE a `.PRP` and a rendered `.SRC`, pick both on a Part, power-pull during a render and boot clean |
+| 4 | **CUT + MAP + KIT** | CUT (its KIT or REEL choice; grid in BEATS, transient, hand; ADD, MOVE/HERE, PLAY/ALL; keys select), MAP (KIT and ZONES), the KIT machine, prep rows, `choke.rs` | A 64-slice break plays from C1–D#6 with black keys choking each other and white keys stacking, retriggered by ORBIT at 16ths for 10 min |
 | 5 | **REEL** | Splices, programs with CHANCE, PREP's REEL page, backward and ping-pong streaming (PLAY's PING and reverse too) | The owner's `A → ×3 · A ← ×3 · LOOP` on a streamed 2-minute reel on 4 Parts, 0 underruns; a 50 % step skips about half the time |
 | 6 | **RESAMPLE** | The scratch voice, decimation, dither, the two-pass write, opening PREP | Resample ALGO, VA and MODAL Sounds to 24 kHz takes that null against a desktop render of the same Sound (bit-exact before dither, same seed) |
 | 7 | **Release gate** | TRON's verdict (MOTOR or fold), factory KITs and REELs, desktop QA of every machine, fixes #381, #423, #524 | Owner UAT; every bench row under its bill; the release notes |
@@ -583,5 +590,7 @@ Slices 0–7 are the release (release-needs-features).
 3. ~~Fade on every write.~~ Settled: every card write while streams play fades them (save, library save, `put`, CLEAN UP, renders).
 4. TRON's keep: MOTOR (cheap, recommended) or REWIND (each replay is a cold start, up to ~60 ms late)?
 5. ~~RESAMPLE's scope.~~ Settled: one note in this release; chords later (private issue #555).
+
+Settled by the owner with the precision design (2026-10-15): PREP's view rule, FOCUS, the head and HERE tools, 8-level undo on MIX + SEQ / MIX + EDIT (MIX + SEQ stays MIDI learn on Part pages), CUT never skipped and choosing the type, positions to the sample, BEATS at a TEMPO (§§ 4.2–4.4).
 
 Settled here by precedent or the code, not asked: the `.PRP` is content-named and write-once (§ 3.2); KIT has 4 choke groups; REEL's CHANCE is rolled a step early; streams are 12-bit mono only; streaming is forward-only until REEL.

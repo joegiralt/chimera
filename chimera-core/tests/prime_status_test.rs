@@ -21,7 +21,7 @@ fn prime(ui: &mut UiState, enc: EncoderId) {
 
 #[test]
 fn mix_plus_on_a_fresh_modulatable_param_reports_added() {
-    let mut ui = UiState::new(); // Part 1, LEVEL page: slot A is operator 1's LEVEL
+    let mut ui = crate::screen::stack_ui(); // Part 1, LEVEL page: slot A is operator 1's LEVEL
     to_level_page(&mut ui);
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
@@ -29,7 +29,7 @@ fn mix_plus_on_a_fresh_modulatable_param_reports_added() {
 
 #[test]
 fn mix_plus_on_an_already_routed_param_reports_already_routed() {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     to_level_page(&mut ui);
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
@@ -44,7 +44,7 @@ fn mix_plus_on_an_already_routed_param_reports_already_routed() {
 /// the reported status.
 #[test]
 fn mix_plus_on_a_non_modulatable_param_reports_not_modulatable() {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     for _ in 0..5 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // -> MOD node
     }
@@ -76,7 +76,7 @@ fn registry_full_maps_to_the_full_status() {
 
 #[test]
 fn an_encoder_turn_clears_the_status() {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     to_level_page(&mut ui);
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
@@ -87,7 +87,7 @@ fn an_encoder_turn_clears_the_status() {
 
 #[test]
 fn a_page_change_clears_the_status() {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     to_level_page(&mut ui);
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
@@ -98,7 +98,7 @@ fn a_page_change_clears_the_status() {
 
 #[test]
 fn un_priming_also_clears_the_status() {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     to_level_page(&mut ui);
     prime(&mut ui, EncoderId::A);
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));
@@ -132,7 +132,7 @@ fn matrix_hint_fits_its_row() {
 /// has to feed.
 #[test]
 fn dirty_render_with_a_status_message_equals_full_render() {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     to_level_page(&mut ui);
     feed(&mut ui, Input::turn(EncoderId::A, 1)); // focus LEVEL, no prime yet
     settle(&mut ui);
@@ -181,7 +181,7 @@ fn diff_rows(a: &Fb, b: &Fb, top: i32, bottom: i32) -> usize {
 
 /// OSC → ALG → DRV → FLT, CUTOFF focused.
 fn filter_page() -> UiState {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::Plus));
@@ -192,7 +192,7 @@ fn filter_page() -> UiState {
 
 /// E1 (BigViz), slot C focused.
 fn envelope_page() -> UiState {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     to_mod_sub(&mut ui, 1, &chimera_core::ui::block_registry::ENVELOPE);
     feed(&mut ui, Input::turn(EncoderId::C, 1));
     settle(&mut ui);
@@ -272,7 +272,7 @@ fn bigviz_status_appears_and_clears_through_the_dirty_regions() {
 /// input redraws the focus band — dirty == full, and the value is back.
 #[test]
 fn focus_band_status_clearing_redraws_through_the_dirty_regions() {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     to_level_page(&mut ui);
     feed(&mut ui, Input::turn(EncoderId::A, 1));
     settle(&mut ui);
@@ -330,7 +330,7 @@ fn prime_every_slot(ui: &mut UiState, slots: &[EncoderId], out: &mut Vec<PrimeSt
 fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     use chimera_core::modulation::MAX_MOD_DESTS;
     use chimera_core::ui::block_registry::{ENV_2, ENV_3, ENVELOPE};
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     let mut seen = Vec::new();
 
     prime_every_slot(&mut ui, &ALL_SLOTS[2..5], &mut seen); // ALGO: MORPH, TRNSP (refused), VOL
@@ -381,7 +381,7 @@ fn stage_cells_prime_time_and_sustain_primes_level() {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::dsp::modulator::EnvSlot;
     use chimera_core::params::EnvParams;
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     to_mod_sub(&mut ui, 1, &chimera_core::ui::block_registry::ENVELOPE);
     prime(&mut ui, EncoderId::A); // ATTACK
     assert_eq!(ui.prime_status(), Some(PrimeStatus::Added));

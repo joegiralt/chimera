@@ -2,7 +2,9 @@
 //! per meter, written once per block (it never blocks), read whenever the
 //! UI draws. Each meter has its own type, so a dB never lands in a clip's.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+
+use crate::project::PartSet;
 
 use crate::dsp::rev::sync::{FoldState, Tempo};
 
@@ -90,6 +92,18 @@ pub static MASTER_GR: DbMeter = DbMeter::new();
 /// the UI last took it (`Voice::filter_clip`). Global, as `MASTER_GR`.
 pub static FILTER_CLIP: [ClipMeter; crate::hw::MAX_PARTS] =
     [const { ClipMeter::new() }; crate::hw::MAX_PARTS];
+
+/// The Parts with a voice sounding, as the last block left them: the
+/// header's dots. Global, as `MASTER_GR`.
+static SOUNDING_PARTS: AtomicU8 = AtomicU8::new(0);
+
+pub fn publish_sounding_parts(s: PartSet) {
+    SOUNDING_PARTS.store(s.bits(), Ordering::Relaxed);
+}
+
+pub fn sounding_parts() -> PartSet {
+    PartSet::from_bits(SOUNDING_PARTS.load(Ordering::Relaxed))
+}
 
 /// The tempo the reverb follows and its synced time's fold, in one word:
 /// tempo × 4 (its 0.25 BPM grid) in the low 16 bits, the fold above. What

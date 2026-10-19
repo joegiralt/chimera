@@ -186,6 +186,7 @@ fn stub(now: u32, mix: Edges, menu: Edges, seq: Edges) -> Stub {
 const NONE: Presses = Presses {
     menu: None,
     seq: None,
+    edit: false,
     ring: [None; RINGS],
 };
 

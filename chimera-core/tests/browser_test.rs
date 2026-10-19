@@ -46,6 +46,7 @@ fn drawn(p: &Project, cursor: usize, scroll: usize) -> Fb {
         scroll,
         true,
         None,
+        chimera_core::ui::theme::TextSize::Normal,
     );
     assert_eq!(fb.oob, 0);
     fb

@@ -55,8 +55,8 @@ fn legends_read_as_the_spec_says() {
     assert_eq!(copy(LegendFor::Later), back_close("LATER"));
     for (l, s) in [
         (LegendFor::Leaf, "A-F EDIT · MENU BACK"),
-        (LegendFor::Prompt, "A PICK · SEQ OK · MENU CANCEL"),
-        (LegendFor::Naming, "SEQ SAVE · MENU CANCEL"),
+        (LegendFor::Prompt, "EDIT OK · MENU BACK"),
+        (LegendFor::Naming, "EDIT SAVE · MENU BACK"),
         (LegendFor::ManageList, "EDIT COMMANDS · MENU BACK"),
         (LegendFor::ManageCommands, "EDIT RUN · MENU LIST"),
         (LegendFor::ManageDimmed(None), "MENU LIST"),
@@ -295,4 +295,12 @@ fn every_breadcrumb_clears_the_dots() {
             );
         }
     }
+}
+
+#[cfg(feature = "midi-map")]
+#[test]
+fn the_map_legend_fits() {
+    let s = legend(LegendFor::Map, false);
+    let w = draw::text_width(&theme::FONT_LABEL, s, 0);
+    assert!(w <= 216, "{s} is {w} px");
 }

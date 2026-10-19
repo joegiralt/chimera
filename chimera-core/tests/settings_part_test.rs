@@ -101,8 +101,9 @@ fn question(ui: &UiState) -> String {
 
 /// Option `i` of the open prompt.
 fn answer(ui: &mut UiState, i: i8) {
+    feed(ui, Input::turn(EncoderId::A, -9));
     feed(ui, Input::turn(EncoderId::A, i));
-    tap(ui, ButtonId::Seq);
+    tap(ui, ButtonId::Edit);
     assert!(!ui.prompt_open());
 }
 
@@ -352,7 +353,7 @@ fn rename_marks_the_part_edited() {
     tap(&mut ui, ButtonId::Edit);
     assert_eq!(ui.naming().expect("NAMING").text(), name.as_str());
     feed(&mut ui, Input::turn(EncoderId::B, 1));
-    tap(&mut ui, ButtonId::Seq);
+    tap(&mut ui, ButtonId::Edit);
     assert!(ui.naming().is_none());
     assert_ne!(ui.project().part(P[0]).sound.name, name);
     assert_eq!(status(&ui, P[0]), PartStatus::Edited);
@@ -659,5 +660,42 @@ mod midi_map {
         let was = ui.project().part(P[0]).sound.params.filter.cutoff;
         ui.hear_ccs(core::iter::empty(), Ms(300), true);
         assert_eq!(ui.project().part(P[0]).sound.params.filter.cutoff, was);
+    }
+}
+
+/// MIDI MAP's rows follow A, E and F; B, C and D edit the row (#561).
+#[cfg(feature = "midi-map")]
+mod midi_map_bar {
+    use super::*;
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::midi_in::Cc;
+    use chimera_core::midi_map::{Mappable, MidiMap};
+    use chimera_core::params::FilterParams;
+
+    #[test]
+    fn a_e_and_f_move_the_bar_b_c_d_edit() {
+        let mut ui = UiState::new();
+        let (cc, target) = (
+            Cc::new(74).unwrap(),
+            Mappable::new(ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF)).unwrap(),
+        );
+        let mut m = MidiMap::EMPTY;
+        m.learn(cc, target).unwrap();
+        ui.project_mut().edit_part(P[0]).sound.map = m;
+        part_row(&mut ui, P[0], 6);
+        feed(&mut ui, Input::press(ButtonId::Edit));
+        let row = |ui: &UiState| ui.location().settings().unwrap().row();
+        let rev = ui.project().rev();
+        for id in [EncoderId::A, EncoderId::E, EncoderId::F] {
+            feed(&mut ui, Input::turn(id, 1));
+            assert_eq!(row(&ui), 0, "one row: it wraps, {id:?}");
+        }
+        assert_eq!(ui.project().rev(), rev, "the bar edits nothing");
+        // MIN sits at 0 and MAX at 255: C turns up, D down.
+        for (id, d) in [(EncoderId::B, 1), (EncoderId::C, 1), (EncoderId::D, -1)] {
+            let before = ui.project().rev();
+            feed(&mut ui, Input::turn(id, d));
+            assert_ne!(ui.project().rev(), before, "{id:?} edits");
+        }
     }
 }

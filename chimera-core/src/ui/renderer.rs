@@ -7,8 +7,9 @@ use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, StyledDrawable};
 
 use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
 use crate::block::find_spec;
+use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::env::EnvRates;
-use crate::dsp::algo::params::AlgoOpParams;
+use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::modulator::{EnvType, HoldPos};
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
 use crate::dsp::va::osc::{Morph, Unit};
@@ -71,6 +72,8 @@ pub struct Frame<'a> {
     pub sounding: bool,
     /// ORBIT's beat dot: its fill while ORBIT runs (`OrbitAnim::dot`).
     pub orbit_dot: Option<u8>,
+    /// The Parts with a voice sounding (the header's Part dots).
+    pub live: crate::project::PartSet,
     /// Every Part (Mixer overview) and the one being edited.
     pub parts: &'a Parts,
     pub active_part: PartId,
@@ -105,6 +108,10 @@ pub struct Frame<'a> {
     pub orbit_focus: Option<orbit::Focus>,
     /// THEME's HINTS: gesture hints drawn (ADR 0086).
     pub hints: bool,
+    /// THEME's PAGES: how the map shows sub-pages (ADR 0145).
+    pub pages: crate::ui::theme_settings::Pages,
+    /// TEXT SIZE: the reading text's faces (ADR 0154).
+    pub text: theme::TextSize,
     /// SYSTEM's PUSH ENCODERS: a value cell with no hint of its own hints
     /// the pushes (ADR 0140).
     pub push: bool,
@@ -113,6 +120,8 @@ pub struct Frame<'a> {
     pub heads: crate::dsp::tape_engine::Heads,
     /// The edited Part's newest voice's formant view (OP pages).
     pub formant: &'a crate::dsp::algo::engine::FormantView,
+    /// The focused cell's refused choice, shown dimmed (ADR 0151).
+    pub held: Option<crate::ui::held::Shown>,
 }
 
 impl Frame<'_> {
@@ -124,6 +133,12 @@ impl Frame<'_> {
     /// What the header shows beside its words: the load and the dots.
     pub fn header_status(&self) -> components::HeaderStatus {
         components::HeaderStatus {
+            parts: matches!(self.head, Head::Sound(_) | Head::Mix(_)).then_some(
+                components::PartDots {
+                    current: self.active_part,
+                    live: self.live,
+                },
+            ),
             sounding: self.sounding,
             load_pct: self.perf.audio_load_pct,
             orbit_dot: self.orbit_dot,
@@ -172,6 +187,51 @@ impl Renderer {
         }
     }
 
+    /// FLT's CUTOFF and RES slots, by address (spec § UI "Vizzes read by
+    /// address").
+    fn filter_slots(&self, f: &Frame) -> (Option<usize>, Option<usize>) {
+        use crate::addr::{BlockRef, ParamAddr};
+        use crate::params::FilterParams;
+        let slot = |id| {
+            let addr = ParamAddr::new(BlockRef::Filter, id);
+            (0..f.def.params.len()).find(|&i| slot_addr(f.def, i, &f.ctx) == Some(addr))
+        };
+        (slot(FilterParams::CUTOFF), slot(FilterParams::RESONANCE))
+    }
+
+    /// Where modulation has CUTOFF and RES now, against their set values:
+    /// the set eased, plus the modulation's own offset (the animators'
+    /// targets differ by it alone), so a knob turn alone leaves no mark.
+    pub fn filter_mark(&self, f: &Frame) -> viz::ModMark {
+        let (c, r) = self.filter_slots(f);
+        let moved = |s: Option<usize>| {
+            s.map_or((0.0, 0.0), |s| {
+                let set = self.set[s].current();
+                (set, set + self.anim[s].target() - self.set[s].target())
+            })
+        };
+        let ((c, mc), (r, mr)) = (moved(c), moved(r));
+        viz::ModMark::of(c, mc, r, mr)
+    }
+
+    /// The values a page's bars and viz draw: the set ones on FLT, whose
+    /// modulation is `filter_mark`'s; the modulated ones elsewhere.
+    pub fn eased(&self, viz: VizType) -> &[AnimatedValue; 6] {
+        if viz == VizType::FilterResponse {
+            &self.set
+        } else {
+            &self.anim
+        }
+    }
+
+    /// The FLT viz's mark key; 0 on any other page.
+    pub fn mark_key(&self, f: &Frame) -> u32 {
+        match (f.def.layout, f.def.viz) {
+            (PageLayout::BigViz, VizType::FilterResponse) => self.filter_mark(f).key(),
+            _ => 0,
+        }
+    }
+
     /// BigViz: the page's visualization with the touched value riding on it.
     fn draw_big_viz<D>(&self, display: &mut D, f: &Frame)
     where
@@ -180,25 +240,21 @@ impl Renderer {
         let a = |i: usize| self.anim[i].current();
         match f.def.viz {
             VizType::FilterResponse => {
-                // By address, not slot (spec § UI "Vizzes read by address").
-                let at = |id| {
-                    let addr = crate::addr::ParamAddr::new(crate::addr::BlockRef::Filter, id);
-                    (0..f.def.params.len())
-                        .find(|&i| slot_addr(f.def, i, &f.ctx) == Some(addr))
-                        .map_or(0.0, a)
-                };
-                use crate::params::FilterParams;
+                let (c, r) = self.filter_slots(f);
                 let flt = &f.parts[f.active_part.index()].sound.params.filter;
                 let v = view::view(f.def, f.focus, &f.ctx);
-                let buf = value_text(f, f.focus, a(f.focus));
+                let buf = value_text(f, f.focus, self.set[f.focus].target());
                 let readout = (v != View::Empty).then(|| (v.label(), buf.as_str()));
+                // The solid curve is the set value; modulation is the mark.
+                let at = |s: Option<usize>| s.map_or(0.0, |s| self.set[s].current());
                 viz::filter(
                     display,
-                    at(FilterParams::CUTOFF),
-                    at(FilterParams::RESONANCE),
+                    at(c),
+                    at(r),
                     viz::Response::of(flt.kind(), flt.mode()),
                     readout,
                 );
+                self.filter_mark(f).draw(display);
                 if f.clip > 0.0 {
                     draw::clip_led(display, viz::LED_X, viz::LED_Y, f.clip);
                 }
@@ -326,12 +382,16 @@ impl Renderer {
                 let slot = (0..f.def.params.len())
                     .find(|&i| slot_addr(f.def, i, &f.ctx) == Some(morph))
                     .expect("ALG page binds MORPH");
-                viz::algo_diagram(
-                    display,
-                    algo.algs().0.algorithm(),
-                    algo.algs().1.algorithm(),
-                    self.anim[slot].current(),
-                );
+                let (a, b) = (algo.algs().0.algorithm(), algo.algs().1.algorithm());
+                // Picking ALG A or B shows that algorithm itself (ADR 0153),
+                // even a refused, held one; else A moving to B with MORPH.
+                if let Some((is_b, held)) = alg_pick(f) {
+                    let own = if is_b { b } else { a };
+                    let shown = held.map_or(own, |c| AlgoId::clamped(c).algorithm());
+                    viz::algo_diagram(display, shown, shown, 0.0);
+                } else {
+                    viz::algo_diagram(display, a, b, self.anim[slot].current());
+                }
             }
             VizType::Strip => {
                 let (model, p) = self.strip_params(f);
@@ -489,9 +549,14 @@ impl Renderer {
                 VizType::AlgoDiagram => {
                     let algo = &f.parts[f.active_part.index()].sound.params.algo;
                     let q = region::quantize_values(&self.anim);
+                    // The picked cell and its held code move the band too.
+                    let pick = alg_pick(f).map_or(0, |(is_b, held)| {
+                        let side = u32::from(is_b) + 1;
+                        side | u32::from(held.map_or(0, |c| c + 1)) << 2
+                    });
                     (
                         [0, 0, q[2], 0, 0, 0],
-                        (algo.algs().0.get() as u32) << 8 | algo.algs().1.get() as u32,
+                        pick << 16 | (algo.algs().0.get() as u32) << 8 | algo.algs().1.get() as u32,
                     )
                 }
                 // ORBIT's own key: `orbit_viz_key`.
@@ -532,9 +597,12 @@ impl Renderer {
                     VizType::About => f.bank2.map_or(0, |b| 1 + b.is_open() as u32),
                     _ => 0,
                 };
+                let live = f.focus as u32 | gr << 8 | led_key(f) << 16;
+                // The readout's text follows the target, not the eased value.
+                // FLT's curve is the set value: its modulation is `filter_mark`.
                 (
-                    region::quantize_values(&self.anim),
-                    f.focus as u32 | gr << 8 | led_key(f) << 16,
+                    region::quantize_values(self.eased(f.def.viz)),
+                    region::fold_keys(live.into(), &[self.text_key(f, f.focus)]),
                 )
             }
             PageLayout::Matrix => ([0; 6], 0),
@@ -559,7 +627,7 @@ impl Renderer {
             RegionKind::Grid => crate::ui::mod_grid::draw_grid(
                 display,
                 matrix_state,
-                amount_of(self.anim[MATRIX_AMOUNT_SLOT].current()),
+                amount_of(self.anim[MATRIX_AMOUNT_SLOT].target()),
                 inert(f),
             ),
             RegionKind::Nav => {
@@ -569,6 +637,7 @@ impl Renderer {
                         chain,
                         at,
                         f.ctx.models(),
+                        f.pages,
                         (self.branch_scroll.current() * theme::BRANCH_LINE_HEIGHT as f32) as i32,
                     );
                 }
@@ -605,16 +674,16 @@ impl Renderer {
             return crate::ui::mod_grid::draw_readout(
                 display,
                 f.matrix,
-                amount_of(self.anim[MATRIX_AMOUNT_SLOT].current()),
+                amount_of(self.anim[MATRIX_AMOUNT_SLOT].target()),
                 inert(f),
                 f.hint(f.matrix.hint()),
             );
         }
         if f.def.viz == VizType::AudioStats {
-            return audio_page::draw_focus(display, f.def, f.audio);
+            return audio_page::draw_focus(display, f.def, f.audio, f.text);
         }
         if f.def.viz == VizType::Pool {
-            return crate::ui::pool_page::draw_focus(display, f.pool);
+            return crate::ui::pool_page::draw_focus(display, f.pool, f.text);
         }
         let view = view::view(f.def, f.focus, &f.ctx);
         if view == View::Empty {
@@ -629,32 +698,67 @@ impl Renderer {
                 o.gauge,
                 look(f, f.focus),
                 f.prime_status,
+                f.text,
             );
-            return hint::focus(display, f.hint(o.hint));
+            let right = hint_right(&o.gauge);
+            return hint::focus(display, f.hint(o.hint), f.text, right);
         }
-        let v = self.anim[f.focus].current();
-        let buf = value_text(f, f.focus, v);
+        let buf = value_text(f, f.focus, self.set[f.focus].target());
+        let gauge = self.gauge(f);
         components::focus_band(
             display,
             view.label(),
             buf.as_str(),
-            self.gauge(f),
+            gauge,
             look(f, f.focus),
             f.prime_status,
+            f.text,
         );
-        // PUSH ENCODERS on: the pushes' hint over none or the generic
-        // LEARN (the two never fit together); a cell's own words stay.
+        match f.held.filter(|s| held_on(f, &view) == Some(s.held)) {
+            Some(s) => Self::draw_reason(display, s.why),
+            None => hint::focus(display, Self::focus_hint(f), f.text, hint_right(&gauge)),
+        }
+        if let View::Source(view::SourceState::Card { cost, free, .. }) = view {
+            crate::ui::source_cell::draw_card_row(display, f.pool, cost, free, f.hints);
+        }
+    }
+
+    /// The hint the focus band draws now (none with HINTS off). PUSH
+    /// ENCODERS on: the pushes' hint over none or the generic LEARN (the
+    /// two never fit together); a cell's own words stay.
+    pub fn focus_hint(f: &Frame) -> hint::Hint {
+        if let Some(o) = &f.orbit_focus {
+            return f.hint(o.hint);
+        }
+        let view = view::view(f.def, f.focus, &f.ctx);
         let own = view.hint(&f.ctx);
         let generic = own.is_empty() || own == view::LEARN_HINT;
         let h = if cfg!(feature = "push-encoders") && generic && f.push && view.pushes() {
             crate::ui::push::HINT
+        } else if matches!(f.head, Head::Mix(_)) {
+            view::mixer_hint(own)
         } else {
             own
         };
-        hint::focus(display, f.hint(h));
-        if let View::Source(view::SourceState::Card { cost, free, .. }) = view {
-            crate::ui::source_cell::draw_card_row(display, f.pool, cost, free, f.hints);
-        }
+        f.hint(h)
+    }
+
+    /// Why the cell's choice is dimmed, in the hint's place.
+    fn draw_reason<D>(display: &mut D, why: crate::dsp::algo::kinds::Why)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let text = crate::ui::held::reason(why);
+        let t = crate::ui::source_cell::tracking(text.as_str());
+        crate::ui::draw::text_tracked(
+            display,
+            &theme::FONT_LABEL,
+            text.as_str(),
+            theme::MARGIN_X,
+            hint::FOCUS_Y,
+            theme::ALERT,
+            t,
+        );
     }
 
     /// What an ORBIT viz draws, for its region's key; 0 on any other.
@@ -662,11 +766,26 @@ impl Renderer {
         orbit::viz_key(f.def, &f.orbit, f.ctx.ring, self.orbit_cursor.current())
     }
 
+    /// A hash of slot `i`'s printed text at its target: a move below the
+    /// display resolution leaves it, a change in the number changes it.
+    pub fn text_key(&self, f: &Frame, i: usize) -> u32 {
+        if view::view(f.def, i, &f.ctx) == View::Empty {
+            return 0;
+        }
+        let text = value_text(f, i, self.set[i].target());
+        region::settings_key(&[text.as_str().as_bytes()])
+    }
+
+    /// The matrix amount as printed (the target's `amount_of`).
+    pub fn amount_key(&self) -> u32 {
+        amount_of(self.anim[MATRIX_AMOUNT_SLOT].target()) as u8 as u32
+    }
+
     /// The focused slot's gauge, by its glyph; ORBIT's own where it reads
     /// the slot itself.
     pub fn gauge(&self, f: &Frame) -> Gauge {
         if let Some(o) = &f.orbit_focus {
-            return o.gauge;
+            return components::fit_gauge(o.text.as_str(), o.gauge);
         }
         let view = view::view(f.def, f.focus, &f.ctx);
         let (fmt, glyph, focused) = (view.fmt(), view.glyph(), view.addr());
@@ -677,7 +796,8 @@ impl Renderer {
             _ => self.anim[f.focus].current(),
         };
         let frame = f.clock.frame();
-        super::glyph::gauge(glyph, value, fmt, |reads| match reads {
+        let text = value_text(f, f.focus, self.set[f.focus].target());
+        let g = super::glyph::gauge(glyph, value, fmt, |reads| match reads {
             Reads::Composite(id) => {
                 // Which of the composite's params has focus.
                 let focus = id.params().iter().position(|&a| Some(a) == focused);
@@ -736,7 +856,8 @@ impl Renderer {
                     mode: va_mode(mode),
                 }
             }
-        })
+        });
+        components::fit_gauge(text.as_str(), g)
     }
 
     /// A composite's inputs, `addrs`' set values normalized: eased (`set`)
@@ -776,6 +897,8 @@ impl Renderer {
         display: &mut D,
         fb: impl FnOnce(&mut D) -> &mut [u16],
         gauge: Gauge,
+        hint: hint::Hint,
+        text: theme::TextSize,
     ) -> Option<(u16, u16)>
     where
         D: DrawTarget<Color = Rgb565>,
@@ -783,6 +906,8 @@ impl Renderer {
         let (x, y, w, h) = components::gauge_rect(&gauge)?;
         Self::clear_rect_fb(fb(display), x, y, w, h);
         components::draw_gauge(display, gauge);
+        // The box clears the hint's top row where the two meet.
+        hint::focus(display, hint, text, hint_right(&gauge));
         Some((y as u16, (y + h) as u16))
     }
 
@@ -792,22 +917,26 @@ impl Renderer {
         D: DrawTarget<Color = Rgb565>,
     {
         match f.def.viz {
-            VizType::AudioStats => return audio_page::draw_cells(display, f.def, f.audio, top),
+            VizType::AudioStats => {
+                return audio_page::draw_cells(display, f.def, f.audio, top, f.text);
+            }
             VizType::Pool => {
-                return crate::ui::pool_page::draw_cells(display, f.def, f.pool, top);
+                return crate::ui::pool_page::draw_cells(display, f.def, f.pool, top, f.text);
             }
             VizType::About => {
-                return crate::ui::about_page::draw_cells(display, f.def, f.audio, f.card, top);
+                return crate::ui::about_page::draw_cells(
+                    display, f.def, f.audio, f.card, top, f.text,
+                );
             }
             _ => {}
         }
-        for (i, anim) in self.anim.iter().enumerate() {
+        for i in 0..self.anim.len() {
             let v = view::view(f.def, i, &f.ctx);
             if v == View::Empty {
-                components::cell(display, i, top, None);
+                components::cell(display, i, top, None, f.text);
                 continue;
             }
-            let value = anim.current();
+            let value = self.anim[i].current();
             let mut buf = FmtBuf::new();
             match v {
                 // The cell keeps a readout's first words: `POLY`, not
@@ -827,7 +956,7 @@ impl Renderer {
                 {
                     let _ = core::fmt::Write::write_str(&mut buf, crate::bank2::NEEDS_UPDATE_CELL);
                 }
-                _ => buf = param_text(f, i, &v, value),
+                _ => buf = param_text(f, i, &v, self.set[i].target()),
             }
             let c = components::Cell {
                 label: cell_label(&v),
@@ -839,13 +968,13 @@ impl Renderer {
                 look: look(f, i),
                 motion: v.addr().and_then(|a| a.spec()).map(|s| s.motion()),
             };
-            components::cell(display, i, top, Some(&c));
+            let w = components::cell(display, i, top, Some(&c), f.text);
             if f.clip > 0.0 && v.addr() == Some(LEVEL) {
-                let w = draw::text_width(&theme::FONT_VALUE, buf.as_str(), 0);
                 draw::clip_led(
                     display,
                     theme::MARGIN_X + (i % 3) as i32 * theme::CELL_COL_W + w + LED_DX,
-                    top + (i / 3) as i32 * theme::CELL_ROW_H + theme::CELL_VALUE_DY - LED_RISE,
+                    top + (i / 3) as i32 * theme::CELL_ROW_H + theme::cell_lines(f.text).value
+                        - LED_RISE,
                     f.clip,
                 );
             }
@@ -888,6 +1017,12 @@ impl Renderer {
         let end = y_end as usize * theme::SCREEN_W as usize;
         fb[start..end].fill(bg);
     }
+}
+
+/// Where a LARGE focus hint must end: clear of `gauge`, which its taller
+/// line would reach (ADR 0154).
+fn hint_right(gauge: &Gauge) -> i32 {
+    components::focus_label_slot(gauge).right
 }
 
 /// `addrs`' stored values, normalized: `eased_set`'s fallback for a param
@@ -970,6 +1105,7 @@ pub fn look(f: &Frame, i: usize) -> components::Look {
             }
         }
         View::Source(view::SourceState::Card { .. }) => components::Look::Dimmed,
+        v if held_on(f, &v).is_some() => components::Look::Dimmed,
         v if view::is_dimmed(&v, sound, &f.ctx) => components::Look::Dimmed,
         _ => components::Look::Live,
     }
@@ -1002,9 +1138,39 @@ fn value_text(f: &Frame, i: usize, v: f32) -> FmtBuf {
     buf
 }
 
+/// The ALGO page's picked cell (ALG A or B is the focus) and the refused
+/// code held on it, if any.
+fn alg_pick(f: &Frame) -> Option<(bool, Option<u8>)> {
+    let at = slot_addr(f.def, f.focus, &f.ctx)?;
+    [AlgoParams::ALG_A, AlgoParams::ALG_B]
+        .into_iter()
+        .find(|&id| at == ParamAddr::new(BlockRef::Algo, id))
+        .map(|id| {
+            let held = f.held.filter(|s| s.held.addr.param == id);
+            (id == AlgoParams::ALG_B, held.map(|s| s.held.code))
+        })
+}
+
+/// The refused choice `view` shows in place of its value, if it is the cell.
+fn held_on(f: &Frame, view: &View) -> Option<crate::ui::held::Held> {
+    f.held
+        .map(|s| s.held)
+        .filter(|h| view.addr() == Some(h.addr))
+}
+
 /// A param's text at display value `v`: a reverb panel cell's in its
 /// units (`reverb_panel::value_text`), any other by its format.
 fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
+    if let Some(h) = held_on(f, view) {
+        let mut buf = FmtBuf::new();
+        let fmt = view.fmt();
+        fmt::fmt_val(
+            &mut buf,
+            f32::from(h.code) / f32::from(fmt.max_int().max(1)),
+            fmt,
+        );
+        return buf;
+    }
     if let Some(t) = view
         .addr()
         .and_then(|a| crate::bank2::closed_text(a, f.bank2))

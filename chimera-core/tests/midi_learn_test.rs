@@ -31,7 +31,7 @@ const RESO: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE
 /// Part 1 on INIT Algo with the 2040 (its FREQ reads CUTOFF), on FLT,
 /// CUTOFF focused.
 fn on_cutoff() -> Box<UiState> {
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     let was = PartChain::of(&ui.project().part(P1).sound);
     screen::init_part(&mut ui, P1);
     let sound = ui.project_mut().edit_part(P1).sound;
