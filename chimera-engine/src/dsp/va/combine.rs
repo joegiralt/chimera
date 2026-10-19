@@ -151,7 +151,7 @@ pub fn ring_gain(pk: Peaks) -> f32 {
     (1.0 / R).min(0.9 / (pk.a * pk.b))
 }
 
-/// BLEND 85 of 127: AM's knee (ADR 0175). Below it BLEND runs the whole
+/// BLEND 85 of 127: AM's knee (ADR 0176). Below it BLEND runs the whole
 /// unipolar AM, above it on into ring.
 pub const AM_KNEE: f32 = 85.0 / 127.0;
 

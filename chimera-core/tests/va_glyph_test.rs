@@ -126,7 +126,7 @@ fn the_mode_glyph_differs_per_mode() {
         let traces: Vec<_> = VaMode::ALL.iter().map(|&m| mix(m, amount)).collect();
         for i in 0..traces.len() {
             for j in i + 1..traces.len() {
-                // AM's top is RING's product (ADR 0175)
+                // AM's top is RING's product (ADR 0176)
                 let same = [VaMode::ALL[i], VaMode::ALL[j]] == [VaMode::Ring, VaMode::Am];
                 if same && amount == 1.0 {
                     assert_eq!(traces[i], traces[j], "AM at 1 is RING");

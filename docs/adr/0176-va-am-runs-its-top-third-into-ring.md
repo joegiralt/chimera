@@ -1,4 +1,4 @@
-# 0175. Run VA MODE AM's top third into ring
+# 0176. Run VA MODE AM's top third into ring
 
 - **Status:** Proposed
 - **Deciders:** owner (UAT 2026-10-19 and the A/B pick, issue #675), firmware

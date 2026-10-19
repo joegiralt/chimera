@@ -41,7 +41,7 @@ pub enum VaMode {
     /// OSC 2 frequency-modulates OSC 1 linearly, through zero (#601).
     Fm = 5,
     /// OSC 2 scales OSC 1, unipolar to BLEND 85, then on into ring at 127
-    /// (#603, #675, ADR 0175).
+    /// (#603, #675, ADR 0176).
     Am = 6,
     /// The larger of the two oscillators, its kinks rounded (#605).
     Max = 7,
@@ -328,7 +328,7 @@ pub const COST_BITS: Cost = Cost(530);
 /// + 74.2 (5.1 of it the modulator's scaling) + 29.9 + 95.
 pub const COST_FM: Cost = Cost(590);
 /// AM: 158.2 + 134.4 + 41.0 + 3.3 (the sub) + 71.1 + 29.9 + 95, + 0.7 for
-/// `am_reach` at the BLEND ramp's two ends a block (ADR 0175: `render` 54
+/// `am_reach` at the BLEND ramp's two ends a block (ADR 0176: `render` 54
 /// instructions longer, about half on AM's path; its loops unchanged): 533.6.
 pub const COST_AM: Cost = Cost(540);
 /// MAX: 158.2 + 134.4 + 50.6 (the operator's loop, with the step test) +

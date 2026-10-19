@@ -494,7 +494,7 @@ fn am_level_matches_mix() {
 /// C5 over the lattice. Up to the knee, wherever MIX at the same BLEND
 /// passes −45 dB, AM does (the product of two band-limited waves adds lines
 /// at |f1 ± f2|). Past it AM runs into RING's product and is held to RING's
-/// own figure at BLEND 1, `max(−45, RING + 0.5)` (ADR 0175: the product's
+/// own figure at BLEND 1, `max(−45, RING + 0.5)` (ADR 0176: the product's
 /// slope kinks, #660).
 #[test]
 fn am_alias_gate() {
@@ -690,7 +690,7 @@ fn am_top_is_ring() {
 
 /// Unison's ring term carries DC (constant at FINE2 0, FINE2's beat at +6).
 /// AM at BLEND 1 carries no more than RING at BLEND 1, and through the
-/// voice's DC blocker (ADR 0060) it is under −55 dB re the RMS (ADR 0175;
+/// voice's DC blocker (ADR 0060) it is under −55 dB re the RMS (ADR 0176;
 /// the half-second window's own leakage reads about −59).
 #[test]
 fn am_ring_dc_is_rings() {
