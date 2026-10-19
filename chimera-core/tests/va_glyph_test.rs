@@ -12,7 +12,7 @@ use chimera_core::dsp::va::osc::{Morph, Unit, wave_at};
 use chimera_core::dsp::va::{MODE_NAMES, VA_SPECS, VaMode, VaParams};
 use chimera_core::params::EngineType;
 use chimera_core::ui::UiState;
-use chimera_core::ui::components::{SCOPE_HALF, SCOPE_N, VA_MIX_N};
+use chimera_core::ui::components::{self, Layout, SCOPE_HALF, SCOPE_N, VA_MIX_N};
 use chimera_core::ui::glyph::{
     FocusGlyph, Gauge, VA_MIX_PARAMS, VaGlyph, VaMix, VaOsc, blend_ends, va_mix_trace,
     va_wave_trace,
@@ -162,6 +162,8 @@ const MODE_GOLDENS: &[(&str, u64)] = &[
     ("bits_100", 0xc67fbc52da2a4a08),
     ("fm_050", 0x53047951d090ece0),
     ("fm_100", 0x8f8eca18b59af852),
+    ("loopfm_050", 0x4f47d06c91ee116e),
+    ("loopfm_100", 0x78b9dbcc4401c215),
 ];
 
 #[test]
@@ -186,6 +188,14 @@ fn mode_scopes_match_their_goldens() {
 fn fm_scope_reads_osc_1_through_osc_2() {
     assert_eq!(mix(VaMode::Fm, 0.0), mix(VaMode::Mix, 0.0));
     assert_ne!(mix(VaMode::Fm, 1.0), mix(VaMode::Mix, 0.0));
+}
+
+/// LOOPFM's scope draws both oscillators as loopback FM: BLEND moves it
+/// (mix and loop together), and it is not MIX's.
+#[test]
+fn loopfm_scope_loops_with_blend() {
+    assert_ne!(mix(VaMode::LoopFm, 0.0), mix(VaMode::LoopFm, 1.0));
+    assert_ne!(mix(VaMode::LoopFm, 0.5), mix(VaMode::Mix, 0.5));
 }
 
 /// SYNC restarts OSC 2 on OSC 1's wrap: OSC 1's second period starts as
@@ -220,6 +230,7 @@ fn blend_ends_name_what_amount_does() {
     assert_eq!(blend_ends(VaMode::Xor), ["MIX", "XOR"]);
     assert_eq!(blend_ends(VaMode::Bits), ["CLEAN", "CRUSH"]);
     assert_eq!(blend_ends(VaMode::Fm), ["CLEAN", "DEEP"]);
+    assert_eq!(blend_ends(VaMode::LoopFm), ["1", "LOOP"]);
 }
 
 fn label_w(s: &str) -> i32 {
@@ -240,6 +251,37 @@ fn the_new_words_fit() {
     }
 }
 
+/// A MODE name too wide for the large numerals beside the scope reads in
+/// the value font, and its ink stays clear of the scope's box.
+#[test]
+fn a_long_mode_name_reads_small_beside_the_scope() {
+    let gauge = Gauge::VaMix(VaMix::from_set([0.0; 6]));
+    assert_eq!(components::layout("LOOPFM", &gauge), Layout::SmallBeside);
+    assert_eq!(components::layout("MIX", &gauge), Layout::WithGauge);
+    let (mut text, mut both) = (Fb::new(), Fb::new());
+    let call = |fb: &mut screen::Fb, g| {
+        components::focus_band(
+            fb,
+            "MODE",
+            "LOOPFM",
+            g,
+            chimera_core::ui::components::Look::Live,
+            None,
+            theme::TextSize::Normal,
+        )
+    };
+    call(&mut text, Gauge::None);
+    call(&mut both, components::fit_gauge("LOOPFM", gauge));
+    let left = theme::SCREEN_W - theme::MARGIN_X - theme::VA_MIX_W;
+    // the band's value row, left of the scope: the same pixels both ways
+    // once the large numerals are not drawn: here, the scope drew
+    let drew = (theme::WAVE_Y..theme::FOCUS_BOTTOM).any(|y| {
+        (left..left + theme::VA_MIX_W)
+            .any(|x| both.px[y as usize * W + x as usize] != text.px[y as usize * W + x as usize])
+    });
+    assert!(drew, "the scope is kept");
+}
+
 /// Every value the VA glyphs' params show ends before their gauge.
 #[test]
 fn values_stay_clear_of_the_glyphs() {
@@ -247,7 +289,9 @@ fn values_stay_clear_of_the_glyphs() {
     let right = |w: &str| theme::FOCUS_VALUE_X + draw::text_width(&theme::FONT_FOCUS, w, 0);
     let edge = theme::SCREEN_W - theme::MARGIN_X;
     for name in MODE_NAMES {
-        assert!(right(name) + GAP <= edge - theme::VA_MIX_W, "{name}");
+        // large beside the scope, or the value font beside it: never over it
+        let gauge = Gauge::VaMix(VaMix::from_set([0.0; 6]));
+        assert_ne!(components::layout(name, &gauge), Layout::NoGauge, "{name}");
     }
     for v in 0..=127 {
         let v = v.to_string();
