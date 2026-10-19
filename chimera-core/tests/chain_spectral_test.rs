@@ -1,13 +1,12 @@
 mod common;
-use chimera_core::dsp::drive::Drive;
 use chimera_core::dsp::filter::{Clean, FilterMode, FilterMods};
-use chimera_core::dsp::wavefolder::Wavefolder;
+use chimera_core::dsp::voice_fx::params::FxType;
 use chimera_core::modulation::ModState;
-use chimera_core::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
+use chimera_core::params::{FilterParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::Rig;
-use common::{SR, goertzel, tri};
+use common::{SR, fx_run, goertzel, tri};
 
 /// Generate a sine wave buffer.
 fn sine_buf(freq: f32, len: usize) -> Vec<f32> {
@@ -32,12 +31,7 @@ fn test_drive_adds_harmonics() {
     let mut clean = sine_buf(freq, 4096);
     let clean_harmonics = harmonic_energy(&clean, freq);
 
-    let params = DriveParams {
-        drive: 0.8,
-        mix: 1.0,
-        ..Default::default()
-    };
-    Drive::new().process(&mut clean, &params, params.drive >= 0.001);
+    fx_run(FxType::Soft, [0.8, 0.5, 0.5], 1.0, &mut clean);
     let driven_harmonics = harmonic_energy(&clean, freq);
 
     assert!(
@@ -54,8 +48,7 @@ fn test_drive_at_zero_preserves_spectrum() {
 
     let original = sine_buf(freq, 4096);
     let mut processed = original.clone();
-    let params = DriveParams::default(); // drive=0
-    Drive::new().process(&mut processed, &params, params.drive >= 0.001);
+    fx_run(FxType::Soft, [0.0, 0.5, 0.5], 1.0, &mut processed);
 
     let orig_h = harmonic_energy(&original, freq);
     let proc_h = harmonic_energy(&processed, freq);
@@ -74,12 +67,7 @@ fn test_drive_more_drive_more_harmonics() {
 
     let measure = |amount: f32| -> f32 {
         let mut buf = sine_buf(freq, 4096);
-        let params = DriveParams {
-            drive: amount,
-            mix: 1.0,
-            ..Default::default()
-        };
-        Drive::new().process(&mut buf, &params, params.drive >= 0.001);
+        fx_run(FxType::Soft, [amount, 0.5, 0.5], 1.0, &mut buf);
         harmonic_energy(&buf, freq)
     };
 
@@ -107,12 +95,7 @@ fn test_drive_tone_changes_spectrum() {
 
     let measure = |tone: f32| -> f32 {
         let mut buf = sine_buf(freq, 4096);
-        let params = DriveParams {
-            drive: 0.6,
-            tone,
-            mix: 1.0,
-        };
-        Drive::new().process(&mut buf, &params, params.drive >= 0.001);
+        fx_run(FxType::Soft, [0.6, tone, 0.5], 1.0, &mut buf);
         harmonic_energy(&buf, freq)
     };
 
@@ -336,12 +319,7 @@ fn test_folder_adds_harmonics() {
     let clean_h = harmonic_energy(&clean, freq);
 
     let mut folded = sine_buf(freq, 4096);
-    let params = FolderParams {
-        fold: 0.7,
-        mix: 1.0,
-        ..Default::default()
-    };
-    Wavefolder::new().process(&mut folded, &params, params.fold >= 0.001, None);
+    fx_run(FxType::Fold, [0.7, 0.5, 0.5], 1.0, &mut folded);
     let folded_h = harmonic_energy(&folded, freq);
 
     assert!(
@@ -358,12 +336,7 @@ fn test_folder_more_fold_more_harmonics() {
 
     let measure = |amount: f32| -> f32 {
         let mut buf = sine_buf(freq, 4096);
-        let params = FolderParams {
-            fold: amount,
-            mix: 1.0,
-            ..Default::default()
-        };
-        Wavefolder::new().process(&mut buf, &params, params.fold >= 0.001, None);
+        fx_run(FxType::Fold, [amount, 0.5, 0.5], 1.0, &mut buf);
         harmonic_energy(&buf, freq)
     };
 
@@ -426,8 +399,8 @@ fn test_voice_drive_adds_grit() {
     let measure = |drive_amount: f32| -> f32 {
         let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
         let mut params = ParamSnapshot::default();
-        params.drive.drive = drive_amount;
-        params.drive.mix = 1.0;
+        params.fx.set_type(FxType::Soft);
+        params.fx.pots[0] = drive_amount;
 
         voice.note_on(
             MidiNote::new(60).unwrap(),

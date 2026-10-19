@@ -100,6 +100,7 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
     use crate::dsp::modal::ModalParams;
     use crate::dsp::tape_engine::TapeEngineParams as T;
     use crate::dsp::va::VaParams as V;
+    use crate::dsp::voice_fx::params::VoiceFxParams as X;
     use crate::params::{
         DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams,
     };
@@ -183,6 +184,20 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
                 panic!("a FOLD knob without a field")
             };
             (offset_of!(P, folder) + f, Kind::F32)
+        }
+        BlockRef::VoiceFx => {
+            let f = if id == X::P1.0 {
+                offset_of!(X, pots)
+            } else if id == X::P2.0 {
+                offset_of!(X, pots) + size_of::<f32>()
+            } else if id == X::P3.0 {
+                offset_of!(X, pots) + 2 * size_of::<f32>()
+            } else if id == X::MIX.0 {
+                offset_of!(X, mix)
+            } else {
+                panic!("an FX knob without a field")
+            };
+            (offset_of!(P, fx) + f, Kind::F32)
         }
         BlockRef::Env(s) => {
             let f = if id == EnvParams::SUSTAIN.0 {
@@ -567,8 +582,7 @@ const BEND_LAND: f32 = 1e-4;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Gliding {
     pub filter: bool,
-    pub fold: bool,
-    pub drive: bool,
+    pub fx: bool,
 }
 
 /// A Part's knobs on their way to the stored values, as its voices play
@@ -692,8 +706,7 @@ impl Knobs {
             let (b, p) = (KNOBS[i].addr.block, KNOBS[i].addr.param);
             g.filter |= b == BlockRef::Filter
                 && (p == FilterParams::CUTOFF || p == FilterParams::RESONANCE);
-            g.fold |= b == BlockRef::Folder;
-            g.drive |= b == BlockRef::Drive;
+            g.fx |= b == BlockRef::VoiceFx;
         }
         g
     }

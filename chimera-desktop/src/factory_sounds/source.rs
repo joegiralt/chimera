@@ -634,6 +634,7 @@ fn other_engine(a: ParamAddr, engine: EngineType) -> Result<(), String> {
         BlockRef::Drive
         | BlockRef::Filter
         | BlockRef::Folder
+        | BlockRef::VoiceFx
         | BlockRef::Env(_)
         | BlockRef::Lfo(_)
         | BlockRef::Out
