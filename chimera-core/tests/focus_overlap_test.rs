@@ -66,8 +66,28 @@ fn ink(fb: &Fb, i: usize) -> bool {
 /// The value alone, and with `g`: the pixels `g` landed on, and if the
 /// band drew it at all.
 fn overlap(label: &str, text: &str, g: Gauge) -> (bool, Vec<(usize, usize)>) {
-    let value = render(|d| components::focus_band(d, label, text, Gauge::None, Look::Live, None));
-    let both = render(|d| components::focus_band(d, label, text, g, Look::Live, None));
+    let value = render(|d| {
+        components::focus_band(
+            d,
+            label,
+            text,
+            Gauge::None,
+            Look::Live,
+            None,
+            chimera_core::ui::theme::TextSize::Normal,
+        )
+    });
+    let both = render(|d| {
+        components::focus_band(
+            d,
+            label,
+            text,
+            g,
+            Look::Live,
+            None,
+            chimera_core::ui::theme::TextSize::Normal,
+        )
+    });
     let shown = value.px != both.px;
     let alone = render(|d| components::draw_gauge(d, g));
     let hits = (0..W * H)

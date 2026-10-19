@@ -77,8 +77,13 @@ pub fn cell_texts(s: Option<&AudioStats>) -> [FmtBuf; 6] {
     })
 }
 
-pub fn draw_cells<D>(d: &mut D, def: &BlockDef, s: Option<&AudioStats>, top: i32)
-where
+pub fn draw_cells<D>(
+    d: &mut D,
+    def: &BlockDef,
+    s: Option<&AudioStats>,
+    top: i32,
+    size: theme::TextSize,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
     for (i, text) in cell_texts(s).iter().enumerate() {
@@ -93,11 +98,11 @@ where
             look: components::Look::Live,
             motion: None,
         };
-        components::cell(d, i, top, Some(&cell));
+        components::cell(d, i, top, Some(&cell), size);
     }
 }
 
-pub fn draw_focus<D>(d: &mut D, def: &BlockDef, s: Option<&AudioStats>)
+pub fn draw_focus<D>(d: &mut D, def: &BlockDef, s: Option<&AudioStats>, size: theme::TextSize)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -113,6 +118,7 @@ where
         },
         components::Look::Live,
         None,
+        size,
     );
 }
 

@@ -19,7 +19,7 @@ Short names are the chain map's node labels; the sub-page row spells pages in fu
 | MENU | SETTINGS; inside, back a level (SEQ goes back a level too). Hold: quick-save |
 | Dialogs | EDIT confirms; MENU or SEQ cancels; any encoder moves the highlight |
 
-SETTINGS › PERSONALIZE › CHAIN MAP › PAGES picks ROW or STACK.
+SETTINGS › PERSONALIZE › CHAIN MAP › PAGES picks ROW or STACK; TEXT SIZE › SIZE picks NORMAL or LARGE.
 
 ---
 
@@ -91,7 +91,7 @@ ORBIT         RENAME (later), CLEAR, SAVE TO PROJ, RELOAD FROM PROJ
 MIDI CONFIG   SYNC, PORT CONFIG (later), CHANNELS
 SYSEX DUMP    later
 AUDIO ROUTING OUTPUTS, SENDS (later), TUNING
-PERSONALIZE   THEME, SCREENSAVER, CHAIN MAP
+PERSONALIZE   THEME, SCREENSAVER, CHAIN MAP, TEXT SIZE
 SYSTEM        OS UPGRADE, STORAGE (later), FORMAT CARD (later), USB CONFIG (later),
               DIAGNOSTICS, PUSH ENCODERS, ABOUT
 ```

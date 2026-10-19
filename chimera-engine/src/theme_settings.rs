@@ -1,6 +1,7 @@
 //! SETTINGS › PERSONALIZE › THEME: backlight, panel gamma, accent and
 //! ground (ADR 0033), light mode (ADR 0126), whether focus bands show gesture hints (ADR
-//! 0086), and how the chain map draws sub-pages (ADR 0145).
+//! 0086), how the chain map draws sub-pages (ADR 0145), and the text size
+//! (ADR 0154).
 //!
 //! The values, their disk codes and the THEME block; what they look like
 //! (colours, PWM duty, the panel's gamma tables) is the UI's
@@ -207,6 +208,34 @@ impl Pages {
     pub const ALL: [Pages; 2] = [Pages::Row, Pages::Stack];
 }
 
+/// How large the reading text draws (ADR 0154).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextSize {
+    /// The faces the screens were drawn in.
+    Normal,
+    /// The cells, the focus label, the hint and the lists a size up,
+    /// where each fits.
+    Large,
+}
+
+impl DiskCode for TextSize {
+    fn disk_code(self) -> u8 {
+        self as u8
+    }
+
+    fn disk_ident(self) -> &'static str {
+        TEXT_NAMES[self as usize]
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        TextSize::ALL.get(c as usize).copied()
+    }
+}
+
+impl TextSize {
+    pub const ALL: [TextSize; 2] = [TextSize::Normal, TextSize::Large];
+}
+
 /// Ground lift in RGB565 levels, −2..=4: green (6-bit) moves one level per
 /// step, red and blue follow at half that, so the ground stays neutral and
 /// every step differs (−2 is pure black; +4 is `#181818`, still well below
@@ -300,6 +329,8 @@ pub struct ThemeSettings {
     pub saver: Saver,
     /// The chain map's sub-pages: a row or a stack.
     pub pages: Pages,
+    /// The reading text's size.
+    pub text: TextSize,
 }
 
 impl Default for ThemeSettings {
@@ -319,6 +350,7 @@ impl ThemeSettings {
         invert: false,
         saver: Saver::DEFAULT,
         pages: Pages::Row,
+        text: TextSize::Normal,
     };
 
     /// TEAL at ground 0: the palette the renderer draws, unchanged.
@@ -335,6 +367,7 @@ impl ThemeSettings {
     pub const INVERT: ParamId = ParamId(5);
     pub const SAVER: ParamId = ParamId(6);
     pub const PAGES: ParamId = ParamId(7);
+    pub const TEXT: ParamId = ParamId(8);
 }
 
 const GAMMA_NAMES: [&str; 3] = ["PANEL", "SOFT", "PUNCH"];
@@ -344,13 +377,14 @@ const SAVER_NAMES: [&str; 9] = [
 ];
 const _: () = assert!(SAVER_NAMES.len() == Saver::SECS.len());
 const PAGES_NAMES: [&str; 2] = ["ROW", "STACK"];
+const TEXT_NAMES: [&str; 2] = ["NORMAL", "LARGE"];
 
 const _: () = assert!(BRIGHT_IDENTS.len() == THEME_SPECS[0].max as usize + 1);
 const _: () = assert!(BLACK_IDENTS.len() == THEME_SPECS[3].max as usize + 1);
 
 /// Choices by index: BRIGHT 0..=18 (10..100 %), BLACK 0..=6 (−2..+4). The
 /// defaults are the owner's pick: 70, PUNCH, TEAL, −2.
-pub static THEME_SPECS: [ParamSpec; 8] = [
+pub static THEME_SPECS: [ParamSpec; 9] = [
     ParamSpec::choice(
         0,
         "BRIGHT",
@@ -439,6 +473,17 @@ pub static THEME_SPECS: [ParamSpec; 8] = [
     )
     .ident("PAGES")
     .glyph(crate::glyph::FocusGlyph::None),
+    // A SYSTEM from before TEXT has none: NORMAL.
+    ParamSpec::choice(
+        8,
+        "SIZE",
+        ValFmt::Names(&TEXT_NAMES),
+        1.0,
+        0.0,
+        Change::Snap,
+    )
+    .ident("TEXT")
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 impl Block for ThemeSettings {
@@ -457,6 +502,7 @@ impl Block for ThemeSettings {
             Self::INVERT => f32::from(self.invert),
             Self::SAVER => self.saver.index() as f32,
             Self::PAGES => self.pages as u8 as f32,
+            Self::TEXT => self.text as u8 as f32,
             _ => 0.0,
         }
     }
@@ -473,6 +519,7 @@ impl Block for ThemeSettings {
             Self::INVERT => self.invert = i != 0,
             Self::SAVER => self.saver = Saver::from_index(i),
             Self::PAGES => self.pages = Pages::ALL[(i as usize).min(Pages::ALL.len() - 1)],
+            Self::TEXT => self.text = TextSize::ALL[(i as usize).min(TextSize::ALL.len() - 1)],
             _ => {}
         }
     }
@@ -484,6 +531,7 @@ impl Block for ThemeSettings {
             Self::ACCENT => Some(self.accent.disk_code()),
             Self::BLACK => Some(self.black.disk_code()),
             Self::PAGES => Some(self.pages.disk_code()),
+            Self::TEXT => Some(self.text.disk_code()),
             _ => None,
         }
     }
@@ -495,6 +543,7 @@ impl Block for ThemeSettings {
             Self::ACCENT => Some(self.accent.disk_ident()),
             Self::BLACK => Some(self.black.disk_ident()),
             Self::PAGES => Some(self.pages.disk_ident()),
+            Self::TEXT => Some(self.text.disk_ident()),
             _ => None,
         }
     }
@@ -506,6 +555,7 @@ impl Block for ThemeSettings {
             Self::ACCENT => apply_code(Accent::from_disk_code(code), |a| self.accent = a),
             Self::BLACK => apply_code(Black::from_disk_code(code), |b| self.black = b),
             Self::PAGES => apply_code(Pages::from_disk_code(code), |p| self.pages = p),
+            Self::TEXT => apply_code(TextSize::from_disk_code(code), |t| self.text = t),
             _ => false,
         }
     }
