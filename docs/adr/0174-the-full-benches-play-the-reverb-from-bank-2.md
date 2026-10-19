@@ -14,7 +14,7 @@ The plan for #654 was to move TAPE's remaining bank-1 code behind the door. Meas
 
 ## Decision
 - **`bench-algo`, `bench-algo,master-tape`, `bench-stress` and `bench-orbit` build with `bank2`** in `bench_sets` (`bench-algo,bank2`, `bench-algo,master-tape,bank2`, `bench-stress,bank2`, `bench-orbit,bank2`), as `bench-stress,orbit,bank2` already does. Their reverb rows time bank 2's code, which is what ships, and each run needs its build's `.bk2` installed (`flash-bench` says so).
-- **The bank-1 reverb A/B is retired.** Gate 3 (2026-10-15) measured the REV rows from bank 1 against bank 2 (QUAD 77→54, GATE 160→148, RVRS 171→151, ROOM 250→243, HALL 261→256, BLOOM 274→273): bank 2 is never slower. `tools/test_justfile.py` now checks that every ALGO, STRESS and ORBIT set carries `bank2`. A build without `bank2` still plays the reverb from bank 1 (the desktop, the host tests, bench-routing and bench-memory).
+- **The bank-1 reverb A/B is retired.** Gate 3 (2026-10-15) measured the REV rows from bank 1 against bank 2 (QUAD 77→54, GATE 160→148, RVRS 171→151, ROOM 250→243, HALL 261→256, BLOOM 274→273): bank 2 is never slower. `tools/test_justfile.py` now checks that every ALGO, ROUTING, MEMORY, STRESS and ORBIT set carries `bank2`. A build without `bank2` still plays the reverb from bank 1 (the desktop, the host tests). bench-routing and bench-memory play from bank 2 too: neither fits FLASH without it (ROUTING by 3,264 B; MEMORY by 5,064 B once SOFT SYNC's reversing OSC 2, ADR 0161, sits in its bank 1).
 - **No TAPE code moves in this change.** TAPE's bank-1 share is the glue above. Bank 1's room comes back through the non-TAPE seams instead.
 
 ## Alternatives considered

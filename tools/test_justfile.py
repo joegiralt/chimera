@@ -84,7 +84,7 @@ class Bank2Code(unittest.TestCase):
 
     def test_the_full_benches_play_the_reverb_from_bank_2(self):
         sets = re.search(r'^bench_sets := "([^"]*)"', (ROOT / "Justfile").read_text(), re.M).group(1).split()
-        for area in ("bench-algo", "bench-stress", "bench-orbit"):
+        for area in ("bench-algo", "bench-routing", "bench-memory", "bench-stress", "bench-orbit"):
             mine = [s for s in sets if area in s.split(",")]
             self.assertTrue(mine, area)
             for s in mine:
@@ -92,7 +92,11 @@ class Bank2Code(unittest.TestCase):
 
     def test_check_runs_the_proxies_with_their_door(self):
         body = "\n".join(recipes()["check"])
-        self.assertRegex(body, r"--features bank2,test-support --test tape_proxy_test --test reverb_proxy_test")
+        self.assertRegex(body, r"--features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test")
+
+    def test_split_checks_the_va_door_is_in_bank_2(self):
+        body = "\n".join(recipes()["bank2-split"])
+        self.assertIn("just check-door-placed {{elf}}", body)
 
 
 class OneUpdate(unittest.TestCase):
