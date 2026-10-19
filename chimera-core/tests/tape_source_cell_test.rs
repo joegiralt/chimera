@@ -1323,3 +1323,90 @@ fn same_card_keeps_its_rows() {
     assert!(rig.registry().get(id).is_some());
     assert_eq!(rig.band(), fine);
 }
+
+/// #609: a file the card condemned whole reads `BAD FILE · COPY AGAIN` on
+/// the focus band and `BAD FILE` in its cell, each inside its width.
+#[test]
+fn a_condemned_file_says_so() {
+    use chimera_core::ui::draw::text_width;
+    use chimera_core::ui::source_cell::FILE_DAMAGED;
+    use chimera_core::ui::theme::{CELL_COL_W, CONTENT_W, FONT_VALUE, LABEL_TRACKING};
+    let b = bed(30);
+    let rig = streamed_rig(&b);
+    let id = rig.ui.project().pool().find_source(b.0.sref).unwrap();
+    assert_ne!(rig.band(), FILE_DAMAGED);
+    rig.registry().hold(id).unwrap().mark_damaged();
+    assert_eq!(rig.band(), FILE_DAMAGED);
+    let mut cell = chimera_core::ui::fmt::FmtBuf::new();
+    rig.ui.source_state().cell(&mut cell);
+    assert_eq!(cell.as_str(), "BAD FILE");
+    let band = text_width(&FONT_VALUE, FILE_DAMAGED, LABEL_TRACKING);
+    assert!(band <= CONTENT_W, "band {band}px over {CONTENT_W}");
+    let w = text_width(&FONT_VALUE, cell.as_str(), 0);
+    assert!(w <= CELL_COL_W, "cell {w}px over {CELL_COL_W}");
+}
+
+/// #598: with every stream row taken, a held source's heads can't go in
+/// beside it, so the re-stage waits (no card reads meanwhile); a row
+/// freed, they go in beside it.
+#[test]
+fn reheading_waits_when_nothing_is_free_beside() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, OnceLock};
+    use std::time::{Duration, Instant};
+    fn now_ms() -> u32 {
+        static T0: OnceLock<Instant> = OnceLock::new();
+        T0.get_or_init(Instant::now).elapsed().as_millis() as u32
+    }
+    let b = bed(31);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.turn(1);
+    rig.load();
+    let before = heads_for(b.0.sref, &rig.params()).unwrap();
+    let id = rig.ui.project().pool().find_source(b.0.sref).unwrap();
+    // The other seven rows taken.
+    let reg = rig.registry();
+    let f = *reg.get(id).unwrap();
+    for n in 24..31 {
+        reg.insert(SourceId::new(n).unwrap(), f).unwrap();
+    }
+    rig.ui.project_mut().set_gate_clock(now_ms);
+    let mut tok = rig.ui.project().pool().table().reader().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let audio = std::thread::spawn({
+        let stop = stop.clone();
+        move || {
+            while !stop.load(Ordering::Relaxed) {
+                let _ = tok.begin_block();
+                tok.store_sounding(id.bit());
+                std::thread::sleep(Duration::from_micros(500));
+            }
+        }
+    });
+    let table = rig.ui.project().pool().table();
+    while table.sounding() != id.bit() {
+        std::thread::yield_now();
+    }
+    rig.tape(|t| t.start = 0.5);
+    let reads = rig.s.reads.len();
+    for _ in 0..40 {
+        rig.frame();
+    }
+    assert_heads(&rig, &b, before.as_slice());
+    assert_eq!(rig.s.reads.len(), reads, "no card reads while it waits");
+    // SAFETY: no voice or card read has these test rows.
+    assert!(unsafe { reg.clear(SourceId::new(30).unwrap()) });
+    let after = heads_for(b.0.sref, &rig.params()).unwrap();
+    for _ in 0..200 {
+        let t = head_table(rig.ui.project().pool().held(b.0.sref).unwrap()).unwrap();
+        if t.iter().eq(after.as_slice().iter().copied()) {
+            break;
+        }
+        rig.frame();
+    }
+    stop.store(true, Ordering::Relaxed);
+    audio.join().unwrap();
+    assert_heads(&rig, &b, after.as_slice());
+    assert_ne!(rig.ui.project().pool().find_source(b.0.sref), Some(id));
+}

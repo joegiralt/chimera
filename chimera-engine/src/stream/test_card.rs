@@ -11,7 +11,7 @@ use core::sync::atomic::Ordering;
 
 use chimera_hal::card_bus::{CardBus, CardFault, ProtoError};
 
-use super::layout::{CHUNK_BYTES, ChunkIdx, FileChunk};
+use super::layout::{CHUNK_BYTES, ChunkIdx, FileChunk, FileKey};
 use super::port::StreamPort;
 use super::ring::{AudioTurn, CardSide, Claim, Rings};
 use super::serve::{ErrorStep, ReadError, Rot, read_failed};
@@ -23,8 +23,14 @@ use crate::dsp::tape_engine::read::{
 use crate::project::SourceId;
 use crate::voice_alloc::VoiceIdx;
 
-/// Its one file's stem, as a frame error names its chunks.
-const STEM: u32 = 0;
+/// Its one file, as a frame error names it: stem 0 at block 0.
+const FILE: FileKey = FileKey::new(0, chimera_hal::units::Lba::new(0));
+
+/// Chunk `c` where it lies: a raw chunk's blocks each.
+fn key(c: ChunkIdx) -> FileChunk {
+    let blocks = super::layout::RAW_CHUNK_BLOCKS;
+    FileChunk::new(FILE, chimera_hal::units::Lba::new(c.get() * blocks))
+}
 
 pub struct TestCard<'r> {
     card: CardSide<'r>,
@@ -35,8 +41,8 @@ pub struct TestCard<'r> {
     latency: u32,
     fail: u32,
     garble: bool,
-    /// A chunk whose record is rotted: it never de-frames.
-    rotten: Option<ChunkIdx>,
+    /// The chunks whose records are rotted: they never de-frame.
+    rotten: core::ops::Range<u32>,
     rot: Rot,
     /// The read in flight, the block it lands, and whether it is a retry.
     flight: Option<(Claim, AudioBlocks, bool)>,
@@ -66,7 +72,7 @@ impl<'r> TestCard<'r> {
             latency: latency_blocks,
             fail: 0,
             garble: false,
-            rotten: None,
+            rotten: 0..0,
             rot: Rot::new(),
             flight: None,
             claims: 0,
@@ -97,9 +103,9 @@ impl<'r> TestCard<'r> {
         self.garble = true;
     }
 
-    /// Chunk `c` never de-frames from now on: a rotted record in the file.
-    pub fn rot_chunk(&mut self, c: ChunkIdx) {
-        self.rotten = Some(c);
+    /// Chunks `cs` never de-frame from now on: rotted records in the file.
+    pub fn rot_chunks(&mut self, cs: core::ops::Range<u32>) {
+        self.rotten = cs;
     }
 
     /// Reads claimed so far.
@@ -187,7 +193,7 @@ impl<'r> TestCard<'r> {
             let Some(c) = self.card.claim(v, s) else {
                 return;
             };
-            if self.rot.rotted(FileChunk::new(STEM, c.chunk())) {
+            if self.rot.passes_over(key(c.chunk())) {
                 self.card.requeue(c);
                 self.stats.unreadable.fetch_add(1, Ordering::Relaxed);
                 passed.push((v, s));
@@ -201,8 +207,8 @@ impl<'r> TestCard<'r> {
     /// The claimed chunk's samples into its slot, its guard ahead, Ready;
     /// a failing read is read again once, else requeued, the card faulted.
     fn land(&mut self, c: Claim, retried: bool, now: AudioBlocks) {
-        let key = FileChunk::new(STEM, c.chunk());
-        let garbled = core::mem::take(&mut self.garble) || self.rotten == Some(c.chunk());
+        let key = key(c.chunk());
+        let garbled = core::mem::take(&mut self.garble) || self.rotten.contains(&c.chunk().get());
         let err = if self.fail > 0 {
             self.fail -= 1;
             Some(ReadError::Proto(ProtoError::Crc))

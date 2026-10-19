@@ -19,7 +19,7 @@ use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 use chimera_core::stream::layout::{Piece, RAW_CHUNK_BLOCKS, RAW_CHUNK_BYTES, deframe};
 use chimera_core::stream::ring::{CardSide, Claim};
 use chimera_core::stream::serve::{
-    ErrorStep, HeldRead, ReadError, Rot, ServeStep, read_failed, servable, serve_step,
+    Blame, ErrorStep, HeldRead, ReadError, Rot, ServeStep, read_failed, servable, serve_step,
 };
 use chimera_core::stream::units::AudioBlocks;
 use chimera_fat::h7_spi::{
@@ -1068,7 +1068,7 @@ impl IrqState {
                 reg,
                 now,
                 BUS.ui_wait(),
-                &self.rot,
+                &mut self.rot,
                 &STREAM_STATS,
             ) {
                 match row.read().first() {
@@ -1249,7 +1249,6 @@ impl IrqState {
     /// true if it went Ready.
     fn deliver(&mut self, h: &mut Held, f: Fill) -> bool {
         let Fill { claim, row, .. } = f;
-        let key = row.file().chunk_key(claim.chunk());
         let at = row.read();
         let Some(out) = self.side.fill_buf(&claim) else {
             // Stale: the audio cancelled it, and the fill lands nowhere.
@@ -1269,18 +1268,23 @@ impl IrqState {
                 }
                 n
             });
-        if let Some(Ok(_)) = framed {
-            self.rot.cleared(key);
-            self.side.write_guard(&claim);
-            self.side.fill_done(claim)
-        } else {
+        let err = match framed {
+            Some(Ok(_)) => {
+                self.rot.cleared(row.key());
+                self.side.write_guard(&claim);
+                return self.side.fill_done(claim);
+            }
             // A record's tag or length is wrong: the same bytes would come
             // back, so unretried; the card's fault the first time, the
             // file's after (#609).
-            failed(ReadError::Frame(self.rot.blame(key)), false);
-            self.side.requeue(claim);
-            false
-        }
+            Some(Err(_)) => row.frame_error(&mut self.rot),
+            // The staging or the slot too short: ours, not the file's, so
+            // the fault, never a verdict on the chunk.
+            None => ReadError::Frame(Blame::Card),
+        };
+        failed(err, false);
+        self.side.requeue(claim);
+        false
     }
 
     /// CMD12 and its answer, then the busy drained. A stop that can't be

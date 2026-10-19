@@ -210,6 +210,9 @@ pub enum SourceState {
     /// Picked, and the pool keeps its ref without its bytes, for this
     /// reason (#372).
     Absent(Absence),
+    /// Streamed, and the card condemned its file whole (#609): it plays,
+    /// dropping out over the records that won't de-frame.
+    Damaged,
     /// TRANSWAVE on a source that isn't one.
     NotTranswave,
     /// TRON on a zone set (the streamed TRON's).
@@ -246,6 +249,10 @@ impl SourceState {
         };
         if let Some(why) = pool.absence(id) {
             return SourceState::Absent(why);
+        }
+        // Only TAPE streams: no scan, no words in a build without it.
+        if cfg!(feature = "tape") && pool.streams().is_some_and(|reg| reg.damaged(id)) {
+            return SourceState::Damaged;
         }
         let held = SourceState::Held {
             rate: r.rate,
@@ -330,6 +337,7 @@ impl SourceState {
             SourceState::Absent(Absence::StreamsFull) => crate::ui::source_cell::STREAMS_FULL,
             SourceState::Absent(Absence::Fragmented) => crate::ui::source_cell::FRAGMENTED,
             SourceState::Absent(Absence::NeedsRam(n)) => crate::ui::source_cell::needs_ram_words(n),
+            SourceState::Damaged => crate::ui::source_cell::FILE_DAMAGED,
             SourceState::NotTranswave => "NOT A TRANSWAVE",
             SourceState::ZonesOnTron => "ZONES: NOT TRON",
             SourceState::NeedsRam(n) => crate::ui::source_cell::needs_ram_words(n),
@@ -352,6 +360,7 @@ impl SourceState {
             SourceState::Absent(Absence::StreamsFull) => buf.write_str("FULL"),
             SourceState::Absent(Absence::Fragmented) => buf.write_str("COPY"),
             SourceState::Absent(Absence::NeedsRam(_)) => buf.write_str("RAM"),
+            SourceState::Damaged => buf.write_str("BAD FILE"),
             SourceState::NotTranswave => buf.write_str("NO WAVE"),
             SourceState::ZonesOnTron => buf.write_str("ZONES"),
             SourceState::NeedsRam(_) => buf.write_str("RAM"),

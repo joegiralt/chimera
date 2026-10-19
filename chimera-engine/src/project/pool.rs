@@ -411,7 +411,12 @@ impl Pool {
         if self.source_put(to, old.r, len, |_| Some(len)) != Ok(true) {
             // SAFETY: `to`'s pool row was never published, so no voice and
             // no card read has its stream row.
-            let _ = unsafe { reg.clear(to) };
+            if !unsafe { reg.clear(to) } {
+                // A stale ring's read holds it: drained on a later pass,
+                // the slot kept from reuse till then.
+                let since = self.table().blocks();
+                self.sources.slots[to.index()] = SrcSlot::Draining { since };
+            }
             return None;
         }
         self.source_free(s);

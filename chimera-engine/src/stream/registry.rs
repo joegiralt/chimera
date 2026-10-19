@@ -15,7 +15,7 @@
 
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use chimera_hal::store::FileName;
 
@@ -43,7 +43,20 @@ pub enum RowRefused {
 
 struct Row {
     tag: AtomicU8,
+    /// The card condemned its file whole (#609): `FILE DAMAGED`.
+    damaged: AtomicBool,
     file: UnsafeCell<MaybeUninit<StreamFile>>,
+}
+
+/// Which card the rows' files are on: it moves when every row is freed for
+/// another card's (`clear_all`), and the card interrupt forgets what it
+/// blamed on the last one's files (`serve::Rot`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CardEpoch(u32);
+
+impl CardEpoch {
+    /// A zeroed registry's: the card it boots with.
+    pub const FIRST: CardEpoch = CardEpoch(0);
 }
 
 /// All-zero bytes are an empty registry (every tag `FREE`), so the board
@@ -52,6 +65,7 @@ pub struct StreamRegistry {
     rows: [Row; STREAM_ROWS],
     /// The row the card IRQ holds, index + 1; 0 none.
     held: AtomicU8,
+    epoch: AtomicU32,
 }
 
 const _: () = assert!(size_of::<StreamRegistry>() <= 2_400);
@@ -74,10 +88,12 @@ impl StreamRegistry {
             rows: [const {
                 Row {
                     tag: AtomicU8::new(FREE),
+                    damaged: AtomicBool::new(false),
                     file: UnsafeCell::new(MaybeUninit::uninit()),
                 }
             }; STREAM_ROWS],
             held: AtomicU8::new(0),
+            epoch: AtomicU32::new(0),
         }
     }
 
@@ -101,9 +117,31 @@ impl StreamRegistry {
         // reference while its tag isn't an id's, and no one held it once
         // freed (`clear`).
         unsafe { (*row.file.get()).write(f) };
+        row.damaged.store(false, Ordering::Relaxed);
         // Under `WRITING` (asserted above).
         row.tag.store(id.index() as u8 + 1, Ordering::Release);
         Ok(())
+    }
+
+    /// Which card the rows' files are on.
+    pub fn epoch(&self) -> CardEpoch {
+        CardEpoch(self.epoch.load(Ordering::Acquire))
+    }
+
+    /// `id`'s file was condemned whole, under any row (a re-head's beside
+    /// row streams the same file).
+    pub fn damaged(&self, id: SourceId) -> bool {
+        let Some(f) = self.get(id).map(StreamFile::file) else {
+            return false;
+        };
+        self.rows.iter().any(|r| {
+            let t = r.tag.load(Ordering::Acquire);
+            // SAFETY: as `get`: an id's tag, its file written whole.
+            t != FREE
+                && t != WRITING
+                && r.damaged.load(Ordering::Relaxed)
+                && unsafe { (*r.file.get()).assume_init_ref() }.file() == f
+        })
     }
 
     /// A row is free: an `insert` of a new id would take it.
@@ -186,6 +224,8 @@ impl StreamRegistry {
     /// As `clear`, for every row.
     #[must_use]
     pub unsafe fn clear_all(&self) -> bool {
+        // Another card's files from now on.
+        self.epoch.fetch_add(1, Ordering::Release);
         // SAFETY: the caller's, for every id.
         // Every id tried, held or not.
         SourceId::ALL
@@ -203,6 +243,11 @@ pub struct RowHold<'r> {
 }
 
 impl RowHold<'_> {
+    /// Its file condemned whole: the SOURCE cell says so.
+    pub fn mark_damaged(&self) {
+        self.reg.rows[self.k].damaged.store(true, Ordering::Relaxed);
+    }
+
     pub fn file(&self) -> &StreamFile {
         // SAFETY: `hold` saw the row's id tag after marking it, so its file
         // was written whole (`Release`, `Acquire`), and `clear` leaves a

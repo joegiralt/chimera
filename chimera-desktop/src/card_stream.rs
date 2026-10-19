@@ -218,7 +218,7 @@ impl<'r> CardStream<'r> {
                 self.reg,
                 now,
                 UiWait::Idle,
-                &self.rot,
+                &mut self.rot,
                 self.stats,
             ) else {
                 return;
@@ -314,7 +314,6 @@ impl<'r> CardStream<'r> {
             return;
         }
         let r = row.read();
-        let key = row.file().chunk_key(claim.chunk());
         let Some(out) = self.side.fill_buf(&claim) else {
             // Stale: the audio cancelled it.
             let _ = self.side.fill_done(claim);
@@ -323,15 +322,15 @@ impl<'r> CardStream<'r> {
         let len = r.packed().get() as usize;
         match out.get_mut(..len).map(|o| deframe(&raw, r.skip(), o)) {
             Some(Ok(_)) => {
-                self.rot.cleared(key);
+                self.rot.cleared(row.key());
                 self.side.write_guard(&claim);
                 if self.side.fill_done(claim) {
                     self.reads += 1;
                 }
             }
             _ => {
-                let blame = self.rot.blame(key);
-                read_failed(ReadError::Frame(blame), false, self.bus, self.stats);
+                let err = row.frame_error(&mut self.rot);
+                read_failed(err, false, self.bus, self.stats);
                 self.side.requeue(claim);
             }
         }

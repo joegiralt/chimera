@@ -71,17 +71,36 @@ pub struct ChunkBlocks {
     pub skip: Bytes,
 }
 
-/// A chunk of one `.SRC`, named by its stem: what a frame error blames
-/// (#609). The stem, not the source id, as an id is reused once drained.
+/// One `.SRC` where it lies: its stem (its content's CRC) and its first
+/// block (#609). A copy of the same content elsewhere, or on another card,
+/// is another key; a source id isn't one, as ids are reused once drained.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileKey {
+    stem: u32,
+    at: Lba,
+}
+
+impl FileKey {
+    pub const fn new(stem: u32, at: Lba) -> FileKey {
+        FileKey { stem, at }
+    }
+}
+
+/// A chunk of one file by its first raw block: the same bytes at the same
+/// place, what a frame error blames (#609).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FileChunk {
-    stem: u32,
-    chunk: ChunkIdx,
+    file: FileKey,
+    at: Lba,
 }
 
 impl FileChunk {
-    pub const fn new(stem: u32, chunk: ChunkIdx) -> FileChunk {
-        FileChunk { stem, chunk }
+    pub const fn new(file: FileKey, at: Lba) -> FileChunk {
+        FileChunk { file, at }
+    }
+
+    pub const fn file(self) -> FileKey {
+        self.file
     }
 }
 
@@ -131,9 +150,9 @@ impl StreamFile {
         self.frames
     }
 
-    /// Its chunk `c`, as a frame error names it.
-    pub fn chunk_key(&self, c: ChunkIdx) -> FileChunk {
-        FileChunk::new(self.stem, c)
+    /// The file where it lies, as a frame error names it.
+    pub fn key(&self) -> FileKey {
+        FileKey::new(self.stem, self.ext.first())
     }
 
     pub fn last_chunk(&self) -> ChunkIdx {
@@ -249,6 +268,12 @@ impl ChunkRead<'_> {
     /// The chunk's packed bytes.
     pub fn packed(&self) -> Bytes {
         self.len
+    }
+
+    /// The chunk where it lies, as a frame error names it; always `Some`,
+    /// as `first`.
+    pub fn key(&self) -> Option<FileChunk> {
+        Some(FileChunk::new(self.file.key(), self.first()?.lba))
     }
 
     /// Always `Some` (`chunk_read` found it); an `Option` so the read
