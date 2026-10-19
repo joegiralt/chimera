@@ -60,7 +60,7 @@ use chimera_engine::note_queue::{NoteEvent, NoteKind};
 #[cfg(feature = "orbit")]
 use chimera_engine::orbit::runner::OrbitRunner;
 use chimera_engine::params::{
-    EngineType, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot, Steal,
+    DriveParams, EngineType, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot, Steal,
 };
 use chimera_engine::part::{DacPair, PartParams};
 use chimera_engine::preset::{Performance, Sound};
@@ -349,7 +349,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 43;
+const ROUTING_ROWS: usize = 49;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -488,7 +488,44 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
     ),
     // MODE flipped every 4 blocks: restarts and rests every flip.
     ("SWITCH", |p| modal(p, ResonatorMode::String), switch_storm),
+    // The FX slot's bills (FX plan Task 1): DRV RT − DRIVE and FOLD RT −
+    // FOLD are each stage's ramp plus a route (1 DEST − 1 OP); FOLD TAP −
+    // FOLD is the ramp, `TAP_FOLD_COST` and a capture. 1 DEST, not 1 OP,
+    // is their base: `matrix` drops the Part's default routes.
+    ("FOLD HALF", |p| one_op(p).folder.fold = 0.5, STILL),
+    ("DRV RT", |p| staged(p, BlockRef::Drive, DriveParams::DRIVE), STILL),
+    ("FOLD RT", |p| staged(p, BlockRef::Folder, FolderParams::FOLD), STILL),
+    (
+        "FOLD TAP",
+        |p| {
+            tap(p, FixedCol::Fold);
+            p.params.folder.fold = 0.5;
+        },
+        STILL,
+    ),
+    (
+        "2040 R2",
+        |p| {
+            let f = &mut one_op(p).filter;
+            f.set_kind(FilterKind::K2040);
+            f.voice = K2040Voice::Rev2;
+        },
+        STILL,
+    ),
+    ("LADDER", |p| one_op(p).filter.set_kind(FilterKind::Ladder), STILL),
 ];
+
+/// 1 OP with `block`'s stage (DRIVE or FOLD) at ½, LFO 1 (1 Hz sine,
+/// so moving) into `param` at 127: the stage ramps every block. At 1 the
+/// route's rise clamps, and the stage reads steady.
+fn staged(p: &mut PartAudio, block: BlockRef, param: chimera_engine::block::ParamId) {
+    let s = one_op(p);
+    match block {
+        BlockRef::Drive => s.drive.drive = 0.5,
+        _ => s.folder.fold = 0.5,
+    }
+    *p.mod_state = matrix(&[(ModSource::Lfo1, ParamAddr::new(block, param), 127)]);
+}
 
 /// When `Rig::time_note_on`'s round may end.
 type Idle = fn(&Instrument) -> bool;
