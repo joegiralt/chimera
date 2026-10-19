@@ -121,6 +121,7 @@ fn the_theme_is_saved_before_the_restart() {
         invert: false,
         saver: Saver::from_index(4),
         pages: Pages::Stack,
+        text: chimera_core::ui::theme::TextSize::Normal,
     };
     let mut ui = Box::new(UiState::new());
     let mut sys = Sys::new();
