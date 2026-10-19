@@ -21,6 +21,7 @@ use crate::ui::fmt::FmtBuf;
 use crate::ui::glyph::{
     self, Accidental, Braid, BraidPart, Cube, CubePart, Gauge, Rings, RingsPart, TAIL_COLS, Tail,
 };
+use crate::ui::tape_glyph;
 use crate::ui::theme;
 
 /// `s` in upper case (names are stored mixed case: "Filter", "4opFM").
@@ -416,14 +417,25 @@ where
     )
 }
 
+/// The least gap between the value and a TAPE glyph, px.
+pub const TAPE_GAP: i32 = 8;
+
 /// The value large and its gauge; with none, the text has the band.
 fn focus_value<D>(d: &mut D, value_text: &str, gauge: Gauge)
 where
     D: DrawTarget<Color = Rgb565>,
 {
+    // Beside a TAPE glyph a long word (CAPSTAN) drops to the readout size.
+    let room = theme::WAVE_X - theme::FOCUS_VALUE_X - TAPE_GAP;
+    let wide = draw::text_width(&theme::FONT_FOCUS, value_text, 0) > room;
+    let font = if matches!(gauge, Gauge::Tape(_)) && wide {
+        &theme::FONT_READOUT
+    } else {
+        &theme::FONT_FOCUS
+    };
     draw::text(
         d,
-        &theme::FONT_FOCUS,
+        font,
         value_text,
         theme::FOCUS_VALUE_X,
         theme::FOCUS_VALUE_Y,
@@ -460,7 +472,8 @@ pub fn gauge_rect(gauge: &Gauge) -> Option<(i32, i32, i32, i32)> {
         | Gauge::Wave(_)
         | Gauge::VaWave(_)
         | Gauge::VaMix(_)
-        | Gauge::Blend { .. } => None,
+        | Gauge::Blend { .. }
+        | Gauge::Tape(_) => None,
     }
 }
 
@@ -486,6 +499,7 @@ where
             crossfader(d, value, theme::BLEND_W);
             blend_ends(d, glyph::blend_ends(mode));
         }
+        Gauge::Tape(t) => tape_glyph::draw(d, &t, &tape_glyph::Palette::THEME),
         Gauge::Arc { value, bipolar } => draw::arc_gauge(
             d,
             theme::ARC_CX,

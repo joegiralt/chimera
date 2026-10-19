@@ -36,6 +36,7 @@ const XF: FocusGlyph = FocusGlyph::Crossfader;
 const BRAID: FocusGlyph = FocusGlyph::Composite(CompositeId::ChorusBraid);
 const RINGS: FocusGlyph = FocusGlyph::Composite(CompositeId::DelayRings);
 const CUBE: FocusGlyph = FocusGlyph::Composite(CompositeId::Reverb);
+const TAPE: FocusGlyph = FocusGlyph::Tape;
 
 /// Params assigned a glyph other than ARC, by `(block kind, ident)`: every
 /// instance of the block (`AlgoOp`, `Env`, `Lfo`) alike. Assigning a glyph
@@ -46,11 +47,19 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Va", "MODE", FocusGlyph::Va(VaGlyph::Mode)),
     ("Va", "WAVE1", FocusGlyph::Va(VaGlyph::Wave(VaOsc::One))),
     ("Va", "WAVE2", FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two))),
-    ("TapeEngine", "MODEL", NONE),
-    ("TapeEngine", "TYPE", NONE),
+    // TAPE's machine cells: the machine's glyph (ADR 0148).
+    ("TapeEngine", "MODEL", TAPE),
+    ("TapeEngine", "TYPE", TAPE),
     ("TapeEngine", "SLICE", NONE),
-    ("TapeEngine", "WOW", NONE),
-    ("TapeEngine", "MODE", NONE),
+    ("TapeEngine", "WOW", TAPE),
+    ("TapeEngine", "MODE", TAPE),
+    ("TapeEngine", "POSITION", TAPE),
+    ("TapeEngine", "MOTION", TAPE),
+    ("TapeEngine", "TAPE", TAPE),
+    ("TapeEngine", "AGE", TAPE),
+    ("TapeEngine", "SIZE", TAPE),
+    ("TapeEngine", "XFADE", TAPE),
+    ("TapeEngine", "DRAG", TAPE),
     ("Algo", "ALG_A", NONE),
     ("Algo", "ALG_B", NONE),
     ("Filter", "KIND", NONE),
@@ -258,8 +267,13 @@ fn every_two_state_choice_is_decided() {
                 "{b:?}.{}: SWITCH or TWO_PEERS, once",
                 s.ident
             );
+            // TAPE's two-word cells show the machine (ADR 0148).
             if peers {
-                assert_eq!(s.glyph, FocusGlyph::None, "{b:?}.{}", s.ident);
+                assert!(
+                    matches!(s.glyph, FocusGlyph::None | FocusGlyph::Tape),
+                    "{b:?}.{}",
+                    s.ident
+                );
             }
         }
     }
@@ -371,6 +385,7 @@ fn each_glyph_maps_to_its_gauge() {
             FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two)) => Gauge::Switch { on: 11.0 },
             FocusGlyph::Va(VaGlyph::Mode) => Gauge::Switch { on: 12.0 },
             FocusGlyph::Va(VaGlyph::Blend) => Gauge::Switch { on: 13.0 },
+            FocusGlyph::Tape => Gauge::Switch { on: 14.0 },
             _ => Gauge::Arc {
                 value: 0.25,
                 bipolar: true,
@@ -384,6 +399,7 @@ fn each_glyph_maps_to_its_gauge() {
             Reads::Va(VaGlyph::Wave(VaOsc::Two)) => Gauge::Switch { on: 11.0 },
             Reads::Va(VaGlyph::Mode) => Gauge::Switch { on: 12.0 },
             Reads::Va(VaGlyph::Blend) => Gauge::Switch { on: 13.0 },
+            Reads::Tape => Gauge::Switch { on: 14.0 },
         };
         assert_eq!(gauge(g, 0.25, ValFmt::Bi, composite), want, "{g:?}");
     }

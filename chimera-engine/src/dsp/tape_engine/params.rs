@@ -373,6 +373,9 @@ const fn unit(
     )
 }
 
+/// Every machine cell shows the machine's glyph (ADR 0148).
+const TAPE: crate::glyph::FocusGlyph = crate::glyph::FocusGlyph::Tape;
+
 /// The five macros are modulatable (read every block, eased); the rest is
 /// read at note-on or at a wrap. ROOT and PERIOD have no cell: a pick
 /// copies them from the source.
@@ -387,12 +390,13 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 16] = [
         Change::Crossfade,
     )
     .ident("MODEL")
-    .glyph(crate::glyph::FocusGlyph::None),
+    .glyph(TAPE),
     unit(1, "START", 0.0, false, Smoothing::NoteOn).ident("START"),
     unit(2, "END", 1.0, false, Smoothing::NoteOn).ident("END"),
     unit(3, "POSITION", 0.0, true, Smoothing::KNOB)
         .short("POS")
-        .ident("POSITION"),
+        .ident("POSITION")
+        .glyph(TAPE),
     ParamSpec::continuous(
         4,
         "MOTION",
@@ -405,10 +409,17 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 16] = [
         Smoothing::KNOB,
     )
     .short("MOT")
-    .ident("MOTION"),
-    unit(5, "TAPE", 0.0, true, Smoothing::KNOB).ident("TAPE"),
-    unit(6, "AGE", 0.0, true, Smoothing::KNOB).ident("AGE"),
-    unit(7, "SIZE", 1.0, true, Smoothing::KNOB).ident("SIZE"),
+    .ident("MOTION")
+    .glyph(TAPE),
+    unit(5, "TAPE", 0.0, true, Smoothing::KNOB)
+        .ident("TAPE")
+        .glyph(TAPE),
+    unit(6, "AGE", 0.0, true, Smoothing::KNOB)
+        .ident("AGE")
+        .glyph(TAPE),
+    unit(7, "SIZE", 1.0, true, Smoothing::KNOB)
+        .ident("SIZE")
+        .glyph(TAPE),
     ParamSpec::continuous(
         8,
         "XFADE",
@@ -421,8 +432,11 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 16] = [
         Smoothing::NoteOn,
     )
     .short("XFD")
-    .ident("XFADE"),
-    unit(9, "DRAG", 0.3, false, Smoothing::NoteOn).ident("DRAG"),
+    .ident("XFADE")
+    .glyph(TAPE),
+    unit(9, "DRAG", 0.3, false, Smoothing::NoteOn)
+        .ident("DRAG")
+        .glyph(TAPE),
     ParamSpec::choice(
         10,
         "TYPE",
@@ -432,7 +446,7 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 16] = [
         Change::NoteOn,
     )
     .ident("TYPE")
-    .glyph(crate::glyph::FocusGlyph::None),
+    .glyph(TAPE),
     ParamSpec::continuous(
         11,
         "ROOT",
@@ -477,7 +491,7 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 16] = [
         Change::NoteOn,
     )
     .ident("WOW")
-    .glyph(crate::glyph::FocusGlyph::None),
+    .glyph(TAPE),
     ParamSpec::choice(
         15,
         "MODE",
@@ -487,7 +501,7 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 16] = [
         Change::NoteOn,
     )
     .ident("MODE")
-    .glyph(crate::glyph::FocusGlyph::None),
+    .glyph(TAPE),
 ];
 
 impl Block for TapeEngineParams {

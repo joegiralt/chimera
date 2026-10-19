@@ -14,9 +14,11 @@ use crate::dsp::va::combine::{Crusher, Peaks, combine, ring_gain};
 use crate::dsp::va::osc::{MIN_INC, Morph, Unit, peak_bound, wave_at};
 
 pub use chimera_engine::glyph::{
-    BRAID_PARAMS, CUBE_PARAMS, CompositeId, FocusGlyph, REVERB_PARAMS, RINGS_PARAMS, VA_MIX_PARAMS,
-    VaGlyph, VaOsc,
+    BRAID_PARAMS, CUBE_PARAMS, CompositeId, FocusGlyph, REVERB_PARAMS, RINGS_PARAMS,
+    TAPE_GLYPH_PARAMS, VA_MIX_PARAMS, VaGlyph, VaOsc,
 };
+
+use crate::ui::tape_glyph::TapeGauge;
 
 /// What the focus band draws, with its inputs.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -53,6 +55,8 @@ pub enum Gauge {
     /// A crossfader at the set AMOUNT, its ends named by MODE
     /// (`blend_ends`).
     Blend { value: f32, mode: VaMode },
+    /// TAPE's machine glyph (`tape_glyph`): still on MODEL and MODE.
+    Tape(TapeGauge),
 }
 
 /// What a gauge built from more than the focused value reads.
@@ -60,6 +64,8 @@ pub enum Gauge {
 pub enum Reads {
     Composite(CompositeId),
     Va(VaGlyph),
+    /// `TAPE_GLYPH_PARAMS`.
+    Tape,
 }
 
 /// A staff note's accidental.
@@ -734,6 +740,7 @@ pub fn gauge(
         ) as u8)),
         FocusGlyph::Composite(id) => outside(Reads::Composite(id)),
         FocusGlyph::Va(v) => outside(Reads::Va(v)),
+        FocusGlyph::Tape => outside(Reads::Tape),
         FocusGlyph::Arc => Gauge::Arc { value, bipolar },
     }
 }
@@ -751,7 +758,8 @@ impl Gauge {
             | Gauge::Wave(_)
             | Gauge::VaWave(_)
             | Gauge::VaMix(_)
-            | Gauge::Blend { .. } => false,
+            | Gauge::Blend { .. }
+            | Gauge::Tape(_) => false,
             Gauge::Braid(_) | Gauge::Rings(_) | Gauge::Cube(_) | Gauge::Tail(_) => true,
         }
     }
@@ -766,6 +774,8 @@ impl Gauge {
             Gauge::VaMix(v) => (m(&v.osc[0]) ^ m(&v.osc[1]).rotate_left(11) ^ q(v.amount) << 22)
                 .wrapping_add(v.mode as u32),
             Gauge::Blend { mode, .. } => *mode as u32,
+            // Its quantised steps: it redraws when one moves a pixel.
+            Gauge::Tape(t) => t.key(),
             _ => 0,
         }
     }

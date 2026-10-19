@@ -38,6 +38,10 @@ pub struct Bank2Door {
     /// (`StreamLoad::step`, `stage::heads_for` are bank 1's side).
     #[cfg(feature = "bank2")]
     pub load: crate::project::LoadDoor,
+    /// TAPE's machine glyphs' raster (ADR 0148; `tape_glyph::paint` is
+    /// bank 1's side).
+    #[cfg(feature = "bank2")]
+    pub glyph: crate::tape_glyph::GlyphDoor,
 }
 
 #[cfg(feature = "bank2")]
@@ -56,6 +60,7 @@ static DOOR: Bank2Door = Bank2Door {
     reverb: crate::dsp::rev::Reverb::DOOR,
     admit: crate::instrument::Instrument::ADMIT,
     load: crate::project::LoadDoor::DOOR,
+    glyph: crate::tape_glyph::GlyphDoor::DOOR,
 };
 
 #[cfg(feature = "bank2")]
