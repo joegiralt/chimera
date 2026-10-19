@@ -323,10 +323,11 @@ pub const TAP_SHAPE_COST: crate::hw::Cost = crate::hw::Cost(80);
 /// Once, however many VCA taps.
 pub const TAP_VCA_COST: crate::hw::Cost = crate::hw::Cost(30);
 /// A tapped FOLD's per-sample loop over the folder's moving one
-/// (`Wavefolder::process`): 72.5 instructions, + 3.48 of block, 125,
-/// against the moving 45, 80: 45. On top of `FOLD_COST` and
-/// `FOLD_RAMP_COST`, which a FOLD tap always bills.
-pub const TAP_FOLD_COST: crate::hw::Cost = crate::hw::Cost(45);
+/// (`Wavefolder::process`). The unit reads 146 against a billed 140
+/// (2026-10-19, rev V, ROUTING bench, run 2, `/VOICE` slope): 51. The
+/// host count was 45 (#642). On top of `FOLD_COST` and `FOLD_RAMP_COST`,
+/// which a FOLD tap always bills.
+pub const TAP_FOLD_COST: crate::hw::Cost = crate::hw::Cost(51);
 /// Each wanted op's capture in the kernel, a compare-and-select clamp and
 /// a store a sample: 70 instructions for 8 samples in `render_ops`, 0
 /// `vdiv`: ceil5(8.75 × 1.606) = 15. Per op with any nonzero tap.

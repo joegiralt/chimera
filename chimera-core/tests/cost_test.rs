@@ -79,6 +79,18 @@ const LP24: Cost = FilterKind::Svf.cost(K2040Voice::Rev2);
 /// DIRTY 70 sit under LP24's 95; the 2040 REV2 110, EXP 135; LADDER 210
 /// (ADR 0104), billed its costliest mode.
 #[test]
+fn the_2040_and_ladder_bill_the_unit() {
+    // Unit bench 2026-10-19, rev V, ROUTING, `/VOICE` slope (#642).
+    assert_eq!(FilterKind::K2040.cost(K2040Voice::Exp), Cost(136));
+    assert_eq!(FilterKind::K2040.cost(K2040Voice::Rev2), Cost(78));
+    assert_eq!(FilterKind::Ladder.cost(K2040Voice::Exp), Cost(176));
+    assert_eq!(LADDER_COST, Cost(176));
+    assert_eq!(Voice::DRIVE_COST, Cost(58));
+    assert_eq!(Voice::DRIVE_RAMP_COST, Cost(26));
+    assert_eq!(chimera_core::taps::TAP_FOLD_COST, Cost(51));
+}
+
+#[test]
 fn filter_bills_each_type_and_mode() {
     use FilterKind as K;
     let mut seen = 0;
@@ -87,8 +99,8 @@ fn filter_bills_each_type_and_mode() {
             for v in K2040Voice::ALL {
                 let want = match (k, v) {
                     (K::Svf | K::Dirty, _) => 0,
-                    (K::K2040, K2040Voice::Rev2) => 15,
-                    (K::K2040, K2040Voice::Exp) => 40,
+                    (K::K2040, K2040Voice::Rev2) => 78,
+                    (K::K2040, K2040Voice::Exp) => 136,
                     (K::Ladder, _) => LADDER_COST.0,
                 };
                 assert_eq!(k.cost(v), Cost(want), "{k:?} {m:?} {v:?}");
@@ -327,12 +339,12 @@ fn a_running_clipper_bills_until_it_stops() {
 }
 
 /// The 2040 bills by its VOICE alone (spec § Cost), as measured over
-/// `OLD_LP24` (95): REV2 110 cycles, EXP 135; CLEAN ignores VOICE.
+/// `OLD_LP24` (95): REV2 78 cycles, EXP 136 (the unit's, #642); CLEAN ignores VOICE.
 #[test]
 fn the_2040_bills_its_voice() {
     let mut f = chimera_core::params::FilterParams::default();
     f.set_kind(FilterKind::K2040);
-    for (v, want) in [(K2040Voice::Rev2, 15), (K2040Voice::Exp, 40)] {
+    for (v, want) in [(K2040Voice::Rev2, 78), (K2040Voice::Exp, 136)] {
         f.voice = v;
         assert_eq!(f.filter_cost(), Cost(want), "{v:?}");
     }
@@ -342,9 +354,9 @@ fn the_2040_bills_its_voice() {
     p.filter.voice = K2040Voice::Exp;
     assert_eq!(Voice::cost(&p, &mods), clean, "VOICE is inert on CLEAN");
     p.filter.set_kind(FilterKind::K2040);
-    assert_eq!(Voice::cost(&p, &mods).0, clean.0 + 40);
+    assert_eq!(Voice::cost(&p, &mods).0, clean.0 + 136);
     p.filter.voice = K2040Voice::Rev2;
-    assert_eq!(Voice::cost(&p, &mods).0, clean.0 + 15);
+    assert_eq!(Voice::cost(&p, &mods).0, clean.0 + 78);
 }
 
 /// DIRTY bills 0 over `OLD_LP24` in every mode, VOICE inert (spec § Cost:
@@ -1624,11 +1636,11 @@ fn va_bills_each_mode() {
     assert_eq!(rooms, [5_436, 4_186, 5_265, 5_146]);
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     for (mode, bill, voices) in [
-        (Mix, 530, [8, 6, 8, 8]),
-        (Sync, 540, [8, 6, 8, 8]),
-        (Ring, 530, [8, 6, 8, 8]),
-        (Xor, 550, [8, 6, 8, 7]),
-        (Bits, 530, [8, 6, 8, 8]),
+        (Mix, 530, [7, 6, 7, 7]),
+        (Sync, 540, [7, 5, 7, 7]),
+        (Ring, 530, [7, 6, 7, 7]),
+        (Xor, 550, [7, 5, 7, 7]),
+        (Bits, 530, [7, 6, 7, 7]),
     ] {
         let p = va_sound(mode);
         assert_eq!(
@@ -1637,7 +1649,7 @@ fn va_bills_each_mode() {
             "{mode:?}"
         );
         let voice = Voice::cost(&p, &ModState::new()).0;
-        assert_eq!(voice, bill + 83 + 15, "{mode:?}");
+        assert_eq!(voice, bill + 83 + 78, "{mode:?}");
         assert_eq!(at(voice), voices, "{mode:?}");
     }
 }

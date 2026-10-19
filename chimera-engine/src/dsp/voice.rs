@@ -208,15 +208,16 @@ impl Voice {
     /// 3.48 of block, 80, against the steady 24 + 3.48, 45: 35 (was 29,
     /// from 42 against 24).
     pub const FOLD_RAMP_COST: Cost = Cost(35);
-    /// The drive stage, which runs once DRIVE is 0.001 or more. Measured:
-    /// bench-t13d's DRIVE LO row (541) less that run's 1 OP (488) = 53;
-    /// bench-t13c's DRIVE row (540) less that run's 1 OP (483) = 57.
-    /// Billed as the larger: 57.
-    pub const DRIVE_COST: Cost = Cost(57);
+    /// The drive stage, which runs once DRIVE is 0.001 or more. The unit
+    /// reads 58 (2026-10-19, rev V, ROUTING bench, run 2, `/VOICE` slope);
+    /// the host-era bench said 57 (#642).
+    pub const DRIVE_COST: Cost = Cost(58);
     /// DRIVE, TONE or MIX routed: the drive ramps every block, 36
-    /// instructions a sample against the steady 22; 14 × 1.46 × 1.1 = 22.5.
-    /// Unrouted, only the UI moves them: brief, in the headroom (ADR 0061).
-    pub const DRIVE_RAMP_COST: Cost = Cost(23);
+    /// instructions a sample against the steady 22. The unit reads 26
+    /// (84 − 58; 2026-10-19, rev V, ROUTING bench, run 2, `/VOICE` slope),
+    /// the host count 23 (#642). Unrouted, only the UI moves them: brief,
+    /// in the headroom (ADR 0061).
+    pub const DRIVE_RAMP_COST: Cost = Cost(26);
 
     /// A knob glide's fold and drive blocks: four steady loops' prologues,
     /// a few instructions each, no divide: under 1 a sample, billed 1
