@@ -164,6 +164,8 @@ const MODE_GOLDENS: &[(&str, u64)] = &[
     ("fm_100", 0x8f8eca18b59af852),
     ("loopfm_050", 0x4f47d06c91ee116e),
     ("loopfm_100", 0x78b9dbcc4401c215),
+    ("am_050", 0x2a982566b01fa105),
+    ("am_100", 0xc963df042a8e7b3d),
 ];
 
 #[test]
@@ -196,6 +198,14 @@ fn fm_scope_reads_osc_1_through_osc_2() {
 fn loopfm_scope_loops_with_blend() {
     assert_ne!(mix(VaMode::LoopFm, 0.0), mix(VaMode::LoopFm, 1.0));
     assert_ne!(mix(VaMode::LoopFm, 0.5), mix(VaMode::Mix, 0.5));
+}
+
+/// AM's scope is OSC 1 scaled by OSC 2 unipolarly: at BLEND 0 it is MIX's
+/// OSC 1 alone; at BLEND 1 it differs from it.
+#[test]
+fn am_scope_scales_osc_1_by_osc_2() {
+    assert_eq!(mix(VaMode::Am, 0.0), mix(VaMode::Mix, 0.0));
+    assert_ne!(mix(VaMode::Am, 1.0), mix(VaMode::Mix, 0.0));
 }
 
 /// SYNC restarts OSC 2 on OSC 1's wrap: OSC 1's second period starts as
@@ -231,6 +241,7 @@ fn blend_ends_name_what_amount_does() {
     assert_eq!(blend_ends(VaMode::Bits), ["CLEAN", "CRUSH"]);
     assert_eq!(blend_ends(VaMode::Fm), ["CLEAN", "DEEP"]);
     assert_eq!(blend_ends(VaMode::LoopFm), ["1", "LOOP"]);
+    assert_eq!(blend_ends(VaMode::Am), ["CLEAN", "AM"]);
 }
 
 fn label_w(s: &str) -> i32 {
@@ -272,7 +283,7 @@ fn a_long_mode_name_reads_small_beside_the_scope() {
     let mut scope = Fb::new();
     components::draw_gauge(&mut scope, gauge);
     let left = (theme::SCREEN_W - theme::MARGIN_X - theme::VA_MIX_W) as usize;
-    let rows = theme::FOCUS_VALUE_Y as usize..theme::FOCUS_BOTTOM as usize;
+    let rows = theme::WAVE_Y as usize..theme::FOCUS_BOTTOM as usize;
     for invert in [false, true] {
         let p = palette(&ThemeSettings {
             invert,

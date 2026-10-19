@@ -69,8 +69,9 @@ fn voice_is_its_chain_plus_one_slot() {
 }
 
 /// A voice, re-read on formant-ops at Task 15 (6,304 B on main at
-/// 4473f0a1): a tripwire, so a growth is seen and accounted.
-const VOICE_SIZE_BEFORE: usize = 6_416;
+/// 4473f0a1): a tripwire, so a growth is seen and accounted. The played
+/// Sound's FX block adds 16 B (ADR 0155).
+const VOICE_SIZE_BEFORE: usize = 6_432;
 
 /// ADR 0131: the formant kinds live in the Algo slot, which still fits
 /// inside Modal's, so they add nothing to `EngineSlot`.

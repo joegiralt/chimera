@@ -166,6 +166,7 @@ fn dest(a: ParamAddr) -> String {
                 BlockRef::Out => "OUT ",
                 BlockRef::Pitch => "PITCH ",
                 BlockRef::Folder => "FOLD ",
+                BlockRef::VoiceFx => "FX ",
                 BlockRef::Drive => "DRIVE ",
                 _ => "",
             };
