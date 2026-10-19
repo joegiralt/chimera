@@ -957,6 +957,25 @@ impl EngineType {
     /// SOON; a project's TAPE Part loads as TAPE (ADR 0141).
     pub const PLAYABLE: [EngineType; 3] = [EngineType::Algo, EngineType::Modal, EngineType::Va];
 
+    /// The FX slot's reference: the engine's signal is multiplied by it
+    /// into the slot and divided by it out (ADR 0155), so a pot bites the
+    /// same on every engine and MIX 0 is the dry signal. A constant, never
+    /// a running normaliser: the effect's dynamics survive. Measured as
+    /// INIT's pre-filter peak at C4, velocity 100, over 100 blocks
+    /// (`voice_fx_slot_test`):
+    /// - ALGO 1.0: peak 1.000 (its carriers are normalised to unity).
+    /// - MODAL 1/0.29: peak 0.349 at the strike, 0.219 held; 0.29, the
+    ///   spike's STRING peak, sits between, the strike at 1.20 and the
+    ///   held note at 0.76.
+    /// - TAPE 1.0: a full-scale source reads back at peak 1.000.
+    /// - VA 1.0: peak 0.989, the reference the others are set to.
+    pub const fn fx_scale(self) -> f32 {
+        match self {
+            EngineType::Algo | EngineType::Tape | EngineType::Va => 1.0,
+            EngineType::Modal => 1.0 / 0.29,
+        }
+    }
+
     /// Short display label for the engine and its chain.
     pub fn label(self) -> &'static str {
         match self {
