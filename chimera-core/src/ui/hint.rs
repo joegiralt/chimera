@@ -20,6 +20,10 @@ pub const NONE: Hint = &[];
 
 /// The focus band's hint: under the value, over the viz band.
 pub const FOCUS_Y: i32 = theme::FOCUS_BOTTOM - 3;
+/// LARGE's hint baseline: its 11 px cap starts a row under the focus
+/// value's baseline (ADR 0154).
+pub const FOCUS_Y_LARGE: i32 = FOCUS_Y + 1;
+const _: () = assert!(FOCUS_Y_LARGE - 11 > theme::FOCUS_VALUE_Y);
 const KEY_GAP: i32 = 3;
 const GAP: i32 = 8;
 
@@ -77,17 +81,18 @@ where
     if size == TextSize::Normal {
         return draw(d, hint, theme::MARGIN_X, FOCUS_Y);
     }
+    // Below the focus value's baseline row, never touching its ink.
     let slot = draw::Slot {
         left: theme::MARGIN_X,
-        top: FOCUS_Y - 11,
+        top: theme::FOCUS_VALUE_Y + 1,
         right,
         bottom: theme::FOCUS_BOTTOM,
     };
-    let mut x = theme::MARGIN_X;
+    let (y, mut x) = (FOCUS_Y_LARGE, theme::MARGIN_X);
     for g in hint {
         let (bold, word) = (Face::LabelBold, Face::Label);
-        draw::text_fit(d, bold, size, g.0, x, FOCUS_Y, theme::INK, T, slot);
+        draw::text_fit(d, bold, size, g.0, x, y, theme::INK, T, slot);
         x += keys_w(g, size);
-        x += draw::text_fit(d, word, size, g.1, x, FOCUS_Y, theme::MID, T, slot) + GAP;
+        x += draw::text_fit(d, word, size, g.1, x, y, theme::MID, T, slot) + GAP;
     }
 }

@@ -259,6 +259,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_personal_theme", 0x69eb789acb0d98db),
     // PERSONALIZE › CHAIN MAP: PAGES, ROW (ADR 0145).
     ("settings_personal_chain_map", 0x7aa40f30346b46bd),
+    // Long user names, LARGE's pair (ADR 0154).
+    ("sound_browser_long", 0x9f219d2caa40b9bd),
     // PERSONALIZE › TEXT SIZE at NORMAL (ADR 0154).
     ("settings_personal_text_size", 0x771bfc59119e85d2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
@@ -304,15 +306,20 @@ const GOLDENS: &[(&str, u64)] = &[
     // 32 steps, step 32 picked: the row scrolled to its last eight.
     ("orbit_notes_step32", 0x211fc000f7a5be91),
     // TEXT SIZE LARGE (ADR 0154): each its NORMAL case's screen a size up.
-    ("large_engine_algo", 0x5ae12f5618e725bb),
-    ("large_algo_level", 0xcb34eaf1e71a726c),
-    ("large_bigviz_filter", 0x15f26efb3ed4446d),
-    ("large_modal_amp", 0x1d018946e1523824),
+    ("large_engine_algo", 0xe91f2bcb6eb8bf3b),
+    ("large_algo_level", 0xf225b94d99567b7c),
+    ("large_bigviz_filter", 0xbc513237f6c402d9),
+    ("large_modal_amp", 0xbfc8b95f0eb078b8),
     ("large_va_drive", 0x01744038da287ded),
-    ("large_mixer_sends", 0x47401bbcde92e4b2),
+    // The Mix chain's map has a TAPE node with `master-tape` (ADR 0055).
+    #[cfg(not(feature = "master-tape"))]
+    ("large_mixer_sends", 0x3ea6919e3a4e3772),
+    #[cfg(feature = "master-tape")]
+    ("large_mixer_sends", 0x66e4fced766b46b8),
     ("large_settings_top", 0x9d2976351278b0df),
     ("large_settings_personal", 0x35b1c3eb794412f7),
-    ("large_sound_browser", 0xa993e2a5a08d315e),
+    ("large_sound_browser", 0x018933e3d8721858),
+    ("large_sound_browser_long", 0xa914e71773ba2c56),
     ("large_library_sounds", 0xc680b63718145a73),
     ("large_settings_text_size", 0xe57ffb4a4502d385),
     // SCN: a saved slot, SAVE's, a queued one filling (plan Task 16).

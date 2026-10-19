@@ -52,29 +52,77 @@ fn the_fit_rule_falls_back_per_text() {
 }
 
 /// LARGE changes a cell; a value too wide for its column at LARGE draws
-/// in NORMAL's face, the same pixels as NORMAL's value line.
+/// its number large and its unit in NORMAL's value face (`3.54` `kHz`); one
+/// too wide even so keeps NORMAL's face whole.
 #[test]
-fn a_cell_scales_and_a_wide_value_keeps_the_normal_face() {
+fn a_wide_value_keeps_its_unit_small_then_falls_back() {
     let short = cell("Q", "79");
     assert!(drawn(&short, TextSize::Large).px != drawn(&short, TextSize::Normal).px);
 
-    let wide = cell("FREQ", "3.54 kHz");
+    let x = theme::MARGIN_X + theme::CELL_COL_W;
+    let y = theme::CELL_LABEL_Y + theme::CELL_ROW_H + theme::cell_lines(TextSize::Large).value;
+    let mut want = Fb::new();
+    let head = draw::text(
+        &mut want,
+        &theme::FONT_VALUE_LARGE,
+        "3.54",
+        x,
+        y,
+        theme::INK2,
+    );
+    let unit_x = x + head + components::UNIT_GAP;
+    draw::text(&mut want, &theme::FONT_VALUE, "kHz", unit_x, y, theme::INK2);
+    let got = drawn(&cell("FREQ", "3.54 kHz"), TextSize::Large);
+    let rows = |fb: &Fb| -> Vec<_> {
+        (y - 14..y + 4)
+            .flat_map(|y| (x..x + theme::CELL_COL_W).map(move |x| (x, y)))
+            .map(|(x, y)| fb.at(x, y))
+            .collect()
+    };
+    assert!(rows(&got) == rows(&want), "3.54 large, kHz small");
+
+    let wide = cell("FREQ", "12345678 kHz");
     let (l, n) = (
         drawn(&wide, TextSize::Large),
         drawn(&wide, TextSize::Normal),
     );
-    let x = theme::MARGIN_X + theme::CELL_COL_W;
+    let ln = theme::cell_lines(TextSize::Large).value - theme::cell_lines(TextSize::Normal).value;
     let row = |fb: &Fb, y: i32| {
         (x..x + theme::CELL_COL_W)
             .map(|x| fb.at(x, y))
             .collect::<Vec<_>>()
     };
-    let ln = theme::cell_lines(TextSize::Large).value - theme::cell_lines(TextSize::Normal).value;
-    let base = theme::CELL_LABEL_Y + theme::CELL_ROW_H;
+    let base = theme::CELL_LABEL_Y + theme::CELL_ROW_H + theme::CELL_VALUE_DY;
     for dy in 0..12 {
-        let y = base + theme::CELL_VALUE_DY - dy;
-        assert_eq!(row(&l, y + ln), row(&n, y), "the value line, {dy} px up");
+        assert_eq!(row(&l, base - dy + ln), row(&n, base - dy), "{dy} px up");
     }
+}
+
+/// A LARGE list word too long for its room is cut with an ellipsis in the
+/// large face, never set smaller.
+#[test]
+fn a_large_list_word_is_cut_with_an_ellipsis() {
+    let slot = Slot {
+        left: 10,
+        top: 80,
+        right: 90,
+        bottom: 110,
+    };
+    let mut fb = Fb::new();
+    let font = &theme::FONT_VALUE_LARGE;
+    let w = draw::text_cut(
+        &mut fb,
+        font,
+        "CATHEDRAL ORGANS",
+        10,
+        100,
+        theme::INK,
+        0,
+        slot,
+    );
+    assert!(w <= 80, "{w}");
+    assert!(w > draw::text_width(font, "CATH", 0), "a large start");
+    assert_eq!(fb.at(10 + w - 2, 99), theme::INK, "the ellipsis' last dot");
 }
 
 /// The probe sees a LARGE text out of its slot, and nothing at NORMAL.

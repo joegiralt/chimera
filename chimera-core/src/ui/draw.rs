@@ -81,6 +81,8 @@ pub const UP: char = '▴';
 pub const DOWN: char = '▾';
 /// A 6×5 arrow: a CC to the cell it drives.
 pub const ARROW: char = '→';
+/// Three 1 px dots on the baseline: a LARGE list word cut short (ADR 0154).
+pub const ELLIPSIS: char = '…';
 
 fn mark_adv(ch: char) -> Option<i32> {
     match ch {
@@ -90,6 +92,7 @@ fn mark_adv(ch: char) -> Option<i32> {
         LEFT | RIGHT => Some(4),
         UP | DOWN => Some(5),
         ARROW if cfg!(feature = "midi-map") => Some(7),
+        ELLIPSIS => Some(6),
         _ => None,
     }
 }
@@ -116,6 +119,11 @@ where
             line(d, x + 5, y - 4, x + 3, y - 2, color, 1);
         }
         RING => ring(d, x + 2, y - 4, 2, color, 1),
+        ELLIPSIS => {
+            for i in 0..3 {
+                fill_rect(d, x + 2 * i, y - 1, 1, 1, color);
+            }
+        }
         LEFT | RIGHT | UP | DOWN => {
             for i in 0..3 {
                 let (x, y, w, h) = match ch {
@@ -183,6 +191,52 @@ where
     text_tracked(d, font, s, x, y, color, tracking)
 }
 
+/// `s` from `x` in `font`, whole if it fits before `slot.right`, else its
+/// longest start that leaves room for `ELLIPSIS`, then the ellipsis: one
+/// LARGE face for a whole list column (ADR 0154). Returns the advance.
+#[allow(clippy::too_many_arguments)]
+pub fn text_cut<D>(
+    d: &mut D,
+    font: &FontRenderer,
+    s: &str,
+    x: i32,
+    y: i32,
+    color: Rgb565,
+    tracking: i32,
+    slot: Slot,
+) -> i32
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let w = slot.right - x;
+    let dots = mark_adv(ELLIPSIS).unwrap_or(0) + tracking;
+    let end = if text_width(font, s, tracking) <= w {
+        s.len()
+    } else {
+        let mut end = s.len();
+        while end > 0 && text_width(font, &s[..end], tracking) + dots > w {
+            end -= 1;
+            while !s.is_char_boundary(end) {
+                end -= 1;
+            }
+        }
+        end
+    };
+    let head = if end == s.len() {
+        s
+    } else {
+        s[..end].trim_end()
+    };
+    #[cfg(feature = "test-support")]
+    overflow::check(font, head, x, y, tracking, slot);
+    let adv = text_tracked(d, font, head, x, y, color, tracking);
+    if end == s.len() {
+        return adv;
+    }
+    draw_mark(d, ELLIPSIS, x + adv, y, color);
+    adv + dots
+}
+
 /// Every fitted text's inked box against its slot, per thread: the
 /// LARGE walk's no-overflow check (ADR 0154).
 #[cfg(feature = "test-support")]
@@ -215,7 +269,7 @@ pub mod overflow {
         if x < slot.left || right > slot.right || top < slot.top || bottom > slot.bottom {
             SPILLS.with(|v| {
                 let mut v = v.borrow_mut();
-                // Held to a few: a suite that never takes them stays small.
+                // Held to 64: a suite that never takes them stays small.
                 if v.len() < 64 {
                     v.push(std::format!(
                         "{s:?} inks x {x}..{right} y {top}..{bottom}, slot {slot:?}"

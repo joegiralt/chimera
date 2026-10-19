@@ -448,112 +448,48 @@ fn draw_row<D: DrawTarget<Color = Rgb565>>(d: &mut D, c: &Col, r: &ListRow<'_>, 
         _ => r.note,
     };
     let below = c.note_below && note.is_some();
-    if !below && large_row(d, c, r.label, note, r.opens, y, (label, side), on && live) {
-        return;
-    }
-    let base = y + if below { UPPER_BASELINE } else { ROW_BASELINE };
+    // LARGE (ADR 0154): the whole column in the large faces, a pixel lower;
+    // a label too long is cut with an ellipsis, never set smaller.
+    let size = if below { TextSize::Normal } else { c.size };
+    let large = size == TextSize::Large;
+    let base = y + if below { UPPER_BASELINE } else { ROW_BASELINE } + i32::from(large);
+    let t = theme::LABEL_TRACKING;
+    let note_font = theme::font(Face::Label, size);
     let beside = match note {
-        Some(n) if !below => draw::text_width(&theme::FONT_LABEL, n, theme::LABEL_TRACKING) + 4,
+        Some(n) if !below => draw::text_width(note_font, n, t) + 4,
         _ => 0,
     };
-    let shown = fit(c, r.label, c.right - c.text - beside);
-    draw::text_tracked(d, c.font, shown, c.text, base, label, theme::LABEL_TRACKING);
-    let small = |d: &mut D, s: &str, x, y, color| {
-        draw::text_right(d, &theme::FONT_LABEL, s, x, y, color, theme::LABEL_TRACKING);
+    if large {
+        let slot = draw::Slot {
+            left: c.text,
+            top: y,
+            right: c.right - beside,
+            bottom: y + BAR_H,
+        };
+        let font = theme::font(Face::Value, size);
+        draw::text_cut(d, font, r.label, c.text, base, label, t, slot);
+    } else {
+        let shown = fit(c, r.label, c.right - c.text - beside);
+        draw::text_tracked(d, c.font, shown, c.text, base, label, t);
+    }
+    let small = |d: &mut D, font, s: &str, x, y, color| {
+        draw::text_right(d, font, s, x, y, color, t);
     };
     match note {
         Some(n) if below => {
             draw::text(d, &theme::FONT_LABEL, n, c.text, y + NOTE_BASELINE, side);
         }
-        Some(n) => small(d, n, c.right, base - 1, side),
+        Some(n) => small(d, note_font, n, c.right, base - 1, side),
         None if r.opens => {
             let color = if on && live {
                 theme::ACCENT
             } else {
                 theme::BAR_REST
             };
-            small(d, "›", c.right, base - 1, color)
+            small(d, &theme::FONT_LABEL, "›", c.right, base - 1, color)
         }
         None => {}
     }
-}
-
-/// A whole-width row at LARGE (ADR 0154): the label in the large value
-/// face a pixel lower, its note beside it in the large label face, both
-/// whole; `false` (nothing drawn) at NORMAL or where they don't fit, and
-/// the row draws as NORMAL's.
-#[allow(clippy::too_many_arguments)]
-fn large_row<D: DrawTarget<Color = Rgb565>>(
-    d: &mut D,
-    c: &Col,
-    label: &str,
-    note: Option<&str>,
-    opens: bool,
-    y: i32,
-    (ink, side): (Rgb565, Rgb565),
-    keyed: bool,
-) -> bool {
-    let t = theme::LABEL_TRACKING;
-    let beside = |z| {
-        note.map_or(0, |n| {
-            draw::text_width(theme::font(Face::Label, z), n, t) + 4
-        })
-    };
-    let room = c.right - c.text;
-    let width = |z| draw::text_width(theme::font(Face::Value, z), label, t) + beside(z);
-    if theme::fit(c.size, room, width) == TextSize::Normal {
-        return false;
-    }
-    let base = y + ROW_BASELINE + 1;
-    let slot = draw::Slot {
-        left: c.text,
-        top: y,
-        right: c.right - beside(TextSize::Large),
-        bottom: y + BAR_H,
-    };
-    draw::text_fit(
-        d,
-        Face::Value,
-        TextSize::Large,
-        label,
-        c.text,
-        base,
-        ink,
-        t,
-        slot,
-    );
-    match note {
-        Some(n) => {
-            let w = draw::text_width(theme::font(Face::Label, TextSize::Large), n, t);
-            let slot = draw::Slot {
-                left: c.right - w,
-                right: c.right,
-                ..slot
-            };
-            let x = c.right - w;
-            draw::text_fit(
-                d,
-                Face::Label,
-                TextSize::Large,
-                n,
-                x,
-                base - 1,
-                side,
-                t,
-                slot,
-            );
-        }
-        None if opens => {
-            let color = if keyed {
-                theme::ACCENT
-            } else {
-                theme::BAR_REST
-            };
-            draw::text_right(d, &theme::FONT_LABEL, "›", c.right, base - 1, color, t);
-        }
-        None => {}
-    }
-    true
 }
 
 /// `s` cut to `w` px at a character; short enough, it isn't measured.

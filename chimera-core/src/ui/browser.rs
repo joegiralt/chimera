@@ -510,6 +510,7 @@ fn project_body<D>(
     }
     scroll_bar(d, scroll, TOTAL_ENTRIES);
 
+    let mut info_free = true;
     if let Some(r) = refusal {
         refusal_lines(d, r);
     } else if hints {
@@ -525,6 +526,7 @@ fn project_body<D>(
         hint::gesture(d, &save, theme::MARGIN_X, SAVE_Y, does);
         if let Some((s, e)) = slot_at(cursor).and_then(|s| Some((s, pool.get(s)?))) {
             if let Some(c) = project.orphaned_by_clear(s) {
+                info_free = false;
                 let words = orphan_words(e.name(), c);
                 draw::text_tracked(
                     d,
@@ -545,7 +547,25 @@ fn project_body<D>(
             );
         }
     }
+    let name = slot_at(cursor)
+        .and_then(|s| pool.get(s))
+        .map(|e| components::upper(e.name().as_str()));
+    if info_free && let Some(n) = name {
+        full_name_line(d, n.as_str(), TAG_RIGHT - NAME_X, text);
+    }
     meter_line(d, pool, None);
+}
+
+/// LARGE: the selected Sound's name whole on the info line, in the label
+/// face, when its row had to cut it (ADR 0154).
+fn full_name_line<D>(d: &mut D, name: &str, room: i32, text: TextSize)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    if text == TextSize::Large && large_width(name) > room {
+        let (x, t) = (theme::MARGIN_X, theme::LABEL_TRACKING);
+        draw::text_tracked(d, &theme::FONT_LABEL, name, x, INFO_Y, theme::INK, t);
+    }
 }
 
 /// A LIBRARY Sound's cost if it fits the pool, a free slot included.
@@ -593,6 +613,9 @@ fn library_body<D>(
         let msg = clip(&theme::FONT_LABEL, err.message(), ORPHAN_W, 0);
         let (x, y, c) = (theme::MARGIN_X, INFO_Y, theme::WARN);
         draw::text_tracked(d, &theme::FONT_LABEL, msg, x, y, c, theme::LABEL_TRACKING);
+    } else if let Some(n) = on.and_then(|e| e.seen.name) {
+        let n = components::upper(n.as_str());
+        full_name_line(d, n.as_str(), TAG_RIGHT - LIB_NAME_X, text);
     }
     let loadable = on.filter(|e| e.err.is_none() && soon.is_none());
     let fit = loadable.map(|e| fitting(pool, e));
@@ -673,8 +696,9 @@ fn library_row<D>(
     }
     let dim = if selected { theme::BG } else { theme::MID };
     let value = |d: &mut D, s: &str, color| {
-        let font = &theme::FONT_VALUE;
-        draw::text_tracked(d, font, s, LIB_NAME_X, y, color, 0);
+        if !large_name(d, s, LIB_NAME_X, y, TAG_RIGHT - LIB_NAME_X, color, text) {
+            draw::text_tracked(d, &theme::FONT_VALUE, s, LIB_NAME_X, y, color, 0);
+        }
     };
     let factory = lib.tab() == BrowserTab::Factory;
     let (prev, next, empty) = if factory {
@@ -702,7 +726,19 @@ fn library_row<D>(
         (false, Some(_)) => theme::MID,
         (false, None) => theme::INK,
     };
+    let name = e.seen.name.map(|n| components::upper(n.as_str()));
+    // LARGE: the selected row's name too long beside its cost and tag
+    // takes the row whole, so it reads in full (ADR 0154).
+    let wide = |room| {
+        selected
+            && greyed.is_none()
+            && text == TextSize::Large
+            && name
+                .as_ref()
+                .is_some_and(|n| large_width(n.as_str()) > room)
+    };
     let right = match greyed {
+        _ if wide(lib_room(e)) => 0,
         Some(m) => {
             draw::text_right(d, &theme::FONT_LABEL, m, TAG_RIGHT, y, dim, 0);
             draw::text_width(&theme::FONT_LABEL, m, 0)
@@ -716,12 +752,12 @@ fn library_row<D>(
             TAG_RIGHT - COST_RIGHT + draw::text_width(&theme::FONT_LABEL, label.as_str(), 0)
         }
     };
-    let room = TAG_RIGHT - right - NAME_GAP - LIB_NAME_X;
-    match e.seen.name {
+    let room = TAG_RIGHT - right - NAME_GAP * i32::from(right > 0) - LIB_NAME_X;
+    match name {
         Some(n) => {
-            let n = components::upper(n.as_str());
             if !large_name(d, n.as_str(), LIB_NAME_X, y, room, ink, text) {
-                value(d, clip(&theme::FONT_VALUE, n.as_str(), room, 0), ink);
+                let shown = clip(&theme::FONT_VALUE, n.as_str(), room, 0);
+                draw::text_tracked(d, &theme::FONT_VALUE, shown, LIB_NAME_X, y, ink, 0);
             }
         }
         // No readable name: PROJECT's dash.
@@ -761,9 +797,21 @@ fn clip<'s>(font: &FontRenderer, s: &'s str, w: i32, tracking: i32) -> &'s str {
     &s[..end]
 }
 
-/// A Sound's name whole in LARGE's value face, when `text` is LARGE and
-/// it fits `room` (ADR 0154); `false`, nothing drawn, else: the row draws
-/// it NORMAL, clipped.
+/// A LIBRARY row's room for its name beside its cost and tag.
+fn lib_room(e: &crate::project::LibEntry) -> i32 {
+    let label = entry_cost(e.len).kib_label();
+    let right = TAG_RIGHT - COST_RIGHT + draw::text_width(&theme::FONT_LABEL, label.as_str(), 0);
+    TAG_RIGHT - right - NAME_GAP - LIB_NAME_X
+}
+
+/// `s` in LARGE's value face.
+fn large_width(s: &str) -> i32 {
+    draw::text_width(&theme::FONT_VALUE_LARGE, s, 0)
+}
+
+/// At LARGE, a list row's word in the large value face, cut to `room`
+/// with an ellipsis if it must: the whole column one face (ADR 0154).
+/// `false`, nothing drawn, at NORMAL: the row draws it as before.
 fn large_name<D>(
     d: &mut D,
     s: &str,
@@ -776,8 +824,7 @@ fn large_name<D>(
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let width = |z| draw::text_width(theme::font(Face::Value, z), s, 0);
-    if theme::fit(text, room, width) == TextSize::Normal {
+    if text == TextSize::Normal {
         return false;
     }
     let slot = draw::Slot {
@@ -786,7 +833,8 @@ where
         right: x + room,
         bottom: y + 6,
     };
-    draw::text_fit(d, Face::Value, TextSize::Large, s, x, y, color, 0, slot);
+    let font = theme::font(Face::Value, TextSize::Large);
+    draw::text_cut(d, font, s, x, y, color, 0, slot);
     true
 }
 
@@ -850,7 +898,20 @@ where
             1,
             if selected { theme::BG } else { theme::FAINT },
         );
-    } else {
+    }
+    // A long name stops short of the cost, or of the tag.
+    let room = match (cost, soon) {
+        (Some(c), _) => {
+            COST_RIGHT - draw::text_width(&theme::FONT_LABEL, c.kib_label().as_str(), 0)
+        }
+        (None, Some(_)) => TAG_RIGHT - draw::text_width(&theme::FONT_LABEL, SOON_TAG, 0),
+        (None, None) => TAG_RIGHT - TAG_ROOM,
+    } - NAME_GAP
+        - NAME_X;
+    // LARGE: the selected row's name too long beside its cost and tag
+    // takes the row whole, so it reads in full (ADR 0154).
+    let wide = selected && text == TextSize::Large && large_width(name.as_str()) > room;
+    if !empty {
         let color = if selected {
             theme::BG
         } else if saved {
@@ -858,19 +919,14 @@ where
         } else {
             theme::INK2
         };
-        // A long name stops short of the cost, or of the tag.
-        let room = match (cost, soon) {
-            (Some(c), _) => {
-                COST_RIGHT - draw::text_width(&theme::FONT_LABEL, c.kib_label().as_str(), 0)
-            }
-            (None, Some(_)) => TAG_RIGHT - draw::text_width(&theme::FONT_LABEL, SOON_TAG, 0),
-            (None, None) => TAG_RIGHT - TAG_ROOM,
-        } - NAME_GAP
-            - NAME_X;
+        let room = if wide { TAG_RIGHT - NAME_X } else { room };
         if !large_name(d, name.as_str(), NAME_X, y, room, color, text) {
             let shown = clip(&theme::FONT_VALUE, name.as_str(), room, 0);
             draw::text(d, &theme::FONT_VALUE, shown, NAME_X, y, color);
         }
+    }
+    if wide {
+        return;
     }
     if let Some(c) = cost {
         let label = c.kib_label();

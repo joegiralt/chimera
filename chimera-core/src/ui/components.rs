@@ -1302,18 +1302,7 @@ where
         (false, true) => theme::INK,
         (false, false) => theme::INK2,
     };
-    // Tracked by 0: the same glyphs, and the marks (RING's "3 › P3").
-    let advance = draw::text_fit(
-        d,
-        theme::Face::Value,
-        size,
-        c.text,
-        x,
-        y + lines.value,
-        value_color,
-        0,
-        value_slot,
-    );
+    let advance = cell_value(d, c.text, x, y + lines.value, value_color, value_slot, size);
     let bar = c.motion.map_or(!c.fmt.is_discrete(), |m| m.is_continuous());
     if bar && !dim {
         let fill = if c.active {
@@ -1345,6 +1334,52 @@ where
         draw::fill_rect(d, x0, y + lines.modl, (x1 - x0).max(1), 1, theme::INK2);
     }
     advance
+}
+
+/// A cell's value from `x` on baseline `y`. LARGE: whole in the large
+/// face where it fits; else its number large and its unit in NORMAL's
+/// value face beside it, as the focus value sets them (`3.54` large,
+/// `kHz` small); else whole in NORMAL's (ADR 0154). Returns the advance.
+fn cell_value<D>(
+    d: &mut D,
+    text: &str,
+    x: i32,
+    y: i32,
+    color: Rgb565,
+    slot: draw::Slot,
+    size: theme::TextSize,
+) -> i32
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    use theme::{Face, TextSize};
+    let room = slot.right - x;
+    let whole = theme::fit(size, room, |z| {
+        draw::text_width(theme::font(Face::Value, z), text, 0)
+    });
+    let (number, unit) = split_unit(text);
+    let unit_w = draw::text_width(&theme::FONT_VALUE, unit, 0) + UNIT_GAP;
+    let split = whole == TextSize::Normal
+        && !unit.is_empty()
+        && theme::fit(size, room - unit_w, |z| {
+            draw::text_width(theme::font(Face::Value, z), number, 0)
+        }) == TextSize::Large;
+    if !split {
+        // Tracked by 0: the same glyphs, and the marks (RING's "3 › P3").
+        return draw::text_fit(d, Face::Value, whole, text, x, y, color, 0, slot);
+    }
+    let head = draw::text_fit(
+        d,
+        Face::Value,
+        TextSize::Large,
+        number,
+        x,
+        y,
+        color,
+        0,
+        slot,
+    );
+    head + UNIT_GAP + draw::text(d, &theme::FONT_VALUE, unit, x + head + UNIT_GAP, y, color)
 }
 
 /// A cell's label and value slots, the cell at `x` with its row's label

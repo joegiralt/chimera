@@ -2054,6 +2054,8 @@ pub const CASES: &[ScreenCase] = &[
         to_leaf(ui, &["PERSONALIZE", "CHAIN MAP"]);
         feed(ui, Input::turn(EncoderId::A, -1));
     }),
+    // Long user names (ADR 0154's NORMAL pair for the LARGE case).
+    ("sound_browser_long", long_names),
     // PERSONALIZE › TEXT SIZE (ADR 0154): SIZE at NORMAL, the default.
     ("settings_personal_text_size", |ui| {
         to_leaf(ui, &["PERSONALIZE", "TEXT SIZE"]);
@@ -2271,6 +2273,12 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 1));
         large(ui);
     }),
+    // Long user names: the selected one takes its row whole at LARGE,
+    // the other is cut with an ellipsis, one face down the column.
+    ("large_sound_browser_long", |ui| {
+        long_names(ui);
+        large(ui);
+    }),
     ("large_library_sounds", |ui| {
         library_tab(ui, lib_card(), |_| {});
         large(ui);
@@ -2304,6 +2312,20 @@ pub fn audio_fixture() -> AudioStats {
 pub fn set_pages(ui: &mut UiState, pages: chimera_core::ui::theme_settings::Pages) {
     let t = ui.theme();
     ui.set_theme(chimera_core::ui::theme_settings::ThemeSettings { pages, ..t });
+}
+
+/// Two long user names in the pool, the browser open on the first.
+fn long_names(ui: &mut UiState) {
+    for (slot, name, engine) in [
+        (0, "CATHEDRAL ORGANS", EngineType::Algo),
+        (1, "SUBMERGED STRING", EngineType::Modal),
+    ] {
+        let mut s = Sound::init(engine);
+        s.name = chimera_core::name::Name::new(name).unwrap();
+        ui.project_mut().pool_store(SlotId::ALL[slot], &s).unwrap();
+    }
+    feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+    feed(ui, Input::turn(EncoderId::A, 0));
 }
 
 /// TEXT SIZE LARGE, set after a case's keys: each large case is its

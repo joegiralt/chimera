@@ -192,7 +192,7 @@ impl Walk {
             let spills = overflow::take();
             assert!(
                 spills.is_empty(),
-                "{what} on {page}: LARGE text left its slot:\n{}",
+                "{what} on {page}: LARGE text left its slot (first 64 shown):\n{}",
                 spills.join("\n")
             );
             assert_eq!(full.oob, 0, "{what} on {page}: full render drew off screen");
