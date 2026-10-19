@@ -1893,3 +1893,1158 @@ OUT.SEND3 = "0.15"  # 19
 OUT.LEVEL = "1"  # 127
 level = "by ear -20.5: noise peaks; set low so the pad phrase with its reverb limits under 3 dB"
 trim = "-8.1"
+
+# The second dark industrial set (S9100116-131, #567 follow-up): the
+# things ALGO does that a plain DX does not. Inharmonic and non-integer
+# ratios, beating detune stacks, feedback near the edge, FRMT and NOISE
+# operators, envelopes and LFOs on MORPH (two algorithms crossfaded),
+# random LFOs on levels and formants, drive and fold that tear. Each
+# started from a TX81Z factory voice (ADR 0138) and was mutated well
+# away from it. Browse order is the category: leads 116-118, pads and
+# atmospheres 119-122, basses 123-125, stabs 126-127, hits and FX
+# 128-131.
+
+# Inspired by the TX81Z voice Sync Lead. A 1.00 carrier under 1.41 and
+# 3.46 modulators; ENV 2 morphs ALG A (a 3-op chain, a snarl) into ALG B
+# (T8, every operator a carrier, an inharmonic chime), so each note
+# starts torn and ends as glass.
+[[sound]]
+id = "S9100116"
+name = "SHARD LEAD"
+engine = "ALGO"
+note = "A SNARL MORPHS INTO GLASS"
+demo = "mono"
+plays = "long texture"
+home = "C4"
+phrase = "lead"
+harmonic = "no"
+# from: tx81z 4a271c8a #22
+# edits: algorithm: T3 to T3 into T8, ENV 2 on MORPH; ratios: 1.41 and 3.46 modulators; lfo: LFO 2 vibrato, LFO 3 slow on op 3 LEVEL; filter: 2040 LP4, VELOCITY opens it
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.5"  # 45 ms
+ALGO.ALG_A = "T3"
+ALGO.ALG_B = "T8"
+ALGO.MORPH = "0"
+OP_A.CRSE = "4"  # 1.00
+OP_A.LEVEL = "95"
+OP_A.AR = "31"
+OP_A.D1R = "3"
+OP_A.D1L = "14"
+OP_A.RR = "9"
+OP_A.VEL = "2"
+OP_B.CRSE = "5"  # 1.41
+OP_B.LEVEL = "76"
+OP_B.AR = "31"
+OP_B.D1R = "4"
+OP_B.D1L = "12"
+OP_B.RR = "9"
+OP_B.VEL = "3"
+OP_C.CRSE = "12"  # 3.46
+OP_C.LEVEL = "70"
+OP_C.FDBK = "5"
+OP_C.AR = "31"
+OP_C.D1R = "6"
+OP_C.D1L = "10"
+OP_C.RR = "9"
+OP_C.VEL = "3"
+OP_D.CRSE = "13"  # 4.00
+OP_D.LEVEL = "58"
+OP_D.AR = "28"
+OP_D.D1R = "5"
+OP_D.D1L = "11"
+OP_D.RR = "9"
+OP_E.LEVEL = "0"
+OP_F.LEVEL = "0"
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "3200"  # 3.20 kHz
+FILTER.RESO = "0.35"  # 44
+FILTER.LEVEL = "0.85"  # 108
+ENV2.ATK = "0.2"  # 11 ms
+ENV2.DEC = "0.6"  # 415 ms
+ENV2.SUS = "0.6"  # 60%
+mod.ENV2 = "ALGO.MORPH +100"
+LFO2.RATE = "5.2"  # 33
+LFO2.SHAPE = "SINE"
+mod.LFO2 = "PITCH.FINE +3"
+LFO3.RATE = "0.18"  # 1
+LFO3.SHAPE = "TRIANGLE"
+mod.LFO3 = "OP_C.LEVEL +12"
+mod.VEL = "FILTER.CUTOFF +22, OP_B.LEVEL +10"
+mod.NOTE = "OP_C.LEVEL -50, OP_B.LEVEL -30"
+OUT.SEND2 = "0.15"  # 19
+OUT.LEVEL = "0.5"  # 64
+trim = "1.4"
+level = "by ear -13.2: set low so the texture with its delay limits under 1 dB"
+
+# Inspired by the TX81Z voice Lyrisyn. A feedback lead that sounds
+# slightly broken: a random LFO jitters the pitch a few cents like a
+# failing tape transport, another snags the index, and the modulators
+# sit 4.5 cents off their carrier so the tone never settles.
+[[sound]]
+id = "S9100117"
+name = "BROKEN WIRE"
+engine = "ALGO"
+note = "RANDOM LFOS SNAG PITCH, TONE"
+demo = "mono"
+plays = "long texture"
+home = "C4"
+phrase = "lead"
+harmonic = "no"
+# from: tx81z 4a271c8a #20
+# edits: lfo: LFO 2 random on PITCH FINE (flutter), LFO 3 random on op 3 LEVEL (snags); ratios: 2.00 and 4.00 in the chain (1 + 2 - 3 read DC); detune: modulators off their carriers; feedback: op 4 6; drive: DRIVE on; filter: DIRTY LP2
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.55"  # 65 ms
+ALGO.ALG_A = "T1"
+ALGO.ALG_B = "T1"
+OP_A.CRSE = "4"  # 1.00
+OP_A.LEVEL = "95"
+OP_A.AR = "31"
+OP_A.D1R = "3"
+OP_A.D1L = "14"
+OP_A.RR = "9"
+OP_A.VEL = "2"
+OP_B.CRSE = "8"  # 2.00
+OP_B.DETUN = "3"  # +3
+OP_B.LEVEL = "72"
+OP_B.AR = "31"
+OP_B.D1R = "4"
+OP_B.D1L = "12"
+OP_B.RR = "9"
+OP_B.VEL = "2"
+OP_C.CRSE = "13"  # 4.00
+OP_C.LEVEL = "62"
+OP_C.AR = "31"
+OP_C.D1R = "5"
+OP_C.D1L = "11"
+OP_C.RR = "9"
+OP_C.VEL = "2"
+OP_D.WAVE = "W2"
+OP_D.CRSE = "8"  # 2.00
+OP_D.DETUN = "-3"
+OP_D.LEVEL = "66"
+OP_D.FDBK = "6"
+OP_D.AR = "26"
+OP_D.D1R = "4"
+OP_D.D1L = "11"
+OP_D.RR = "9"
+OP_E.LEVEL = "0"
+OP_F.LEVEL = "0"
+DRIVE.DRIVE = "0.35"  # 44
+FILTER.KIND = "DIRTY"
+FILTER.CUTOFF = "2400"  # 2.40 kHz
+FILTER.RESO = "0.3"  # 38
+FILTER.LEVEL = "0.6"  # 76
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.45"  # 126 ms
+ENV2.SUS = "0.25"  # 25%
+mod.ENV2 = "FILTER.CUTOFF +25, OP_C.LEVEL +12"
+LFO2.RATE = "7"  # 44
+LFO2.SHAPE = "RANDOM"
+mod.LFO2 = "PITCH.FINE +3"
+LFO3.RATE = "2.3"  # 15
+LFO3.SHAPE = "RANDOM"
+mod.LFO3 = "OP_C.LEVEL +14, FILTER.CUTOFF +10"
+mod.VEL = "FILTER.CUTOFF +20"
+mod.NOTE = "OP_C.LEVEL -40, OP_D.LEVEL -40"
+OUT.LEVEL = "0.5"  # 64
+trim = "0.5"
+
+# Inspired by the TX81Z voice VocalNuts. An FM buzz under a FRMT
+# operator whose vowel a random LFO throws from one shape to the next
+# each beat: a voice speaking a language nobody knows. Marked inharmonic:
+# the stepped vowel's sidebands read 25 dB; held still, C6 read 88 dB.
+[[sound]]
+id = "S9100118"
+name = "HEX VOICE"
+engine = "ALGO"
+note = "RANDOM LFO THROWS THE VOWEL"
+demo = "mono"
+plays = "long texture"
+home = "C3"
+phrase = "lead"
+harmonic = "no"
+# from: tx81z f6f1ef23 #2
+# edits: formant: op 5 FRMT, LFO 2 random on VOWEL, ENV 2 on op 5 LEVEL; ratios: a 2.00 stack (odd harmonics, a buzz); lfo: LFO 3 slow on PITCH FINE; filter: 2040 LP4
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.5"  # 45 ms
+ALGO.ALG_A = "T5"
+ALGO.ALG_B = "T5"
+ALGO.VOWEL = "40"  # A
+OP_A.CRSE = "4"  # 1.00
+OP_A.LEVEL = "86"
+OP_A.AR = "29"
+OP_A.D1R = "2"
+OP_A.D1L = "14"
+OP_A.RR = "9"
+OP_A.VEL = "2"
+OP_B.CRSE = "8"  # 2.00
+OP_B.LEVEL = "74"
+OP_B.AR = "29"
+OP_B.D1R = "3"
+OP_B.D1L = "13"
+OP_B.RR = "9"
+OP_B.VEL = "2"
+OP_C.LEVEL = "0"
+OP_D.LEVEL = "0"
+OP_E.WAVE = "FRMT"
+OP_E.VSLOT = "F2"
+OP_E.FRMT = "80"  # 1.01 kHz
+OP_E.BW = "90"  # 269 Hz
+OP_E.LEVEL = "95"
+OP_E.AR = "28"
+OP_E.D1R = "0"
+OP_E.D1L = "15"
+OP_E.RR = "9"
+OP_F.LEVEL = "0"
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "2600"  # 2.60 kHz
+FILTER.RESO = "0.3"  # 38
+FILTER.LEVEL = "0.7"  # 89
+ENV2.ATK = "0.1"  # 4.7 ms
+ENV2.DEC = "0.5"  # 187 ms
+ENV2.SUS = "0.4"  # 40%
+mod.ENV2 = "OP_E.LEVEL +20, FILTER.CUTOFF +15"
+LFO2.RATE = "4"  # 25
+LFO2.SHAPE = "RANDOM"
+mod.LFO2 = "ALGO.VOWEL +70"
+LFO3.RATE = "0.3"  # 2
+LFO3.SHAPE = "SINE"
+mod.LFO3 = "PITCH.FINE +3"
+mod.VEL = "FILTER.CUTOFF +15, OP_B.LEVEL +12"
+mod.NOTE = "OP_B.LEVEL -40"
+OUT.SEND3 = "0.12"  # 15
+OUT.LEVEL = "1"  # 127
+trim = "-1.2"
+level = "by ear -13.9: set low so the lead phrase and texture with their reverb limit under 1 dB"
+
+# Inspired by the TX81Z voice BaadBreath. Scary: two FRMT vowels and a
+# NOISE breath over two 1.00 sines 9 cents apart; a 0.05 Hz LFO morphs
+# from parallel carriers (A1) to A16, where the vowels, the breath and a
+# 4.24 operator all modulate the sines (a 1.41 there read DC at full
+# MORPH), while a random LFO makes the choir gasp.
+[[sound]]
+id = "S9100119"
+name = "NULL CHOIR"
+engine = "ALGO"
+note = "A CHOIR OF NOTHING, GASPING"
+demo = "poly"
+plays = "long stab"
+home = "C3"
+phrase = "pad"
+harmonic = "no"
+# from: tx81z f6f1ef23 #1
+# edits: formant: ops 3 and 4 FRMT vowels; noise: op 5 a NOISE breath; algorithm: T7 to A1 into A16, LFO 2 0.05 Hz on MORPH; lfo: LFO 3 random on op 5 LEVEL and VOWEL; filter: 2040 LP4; effects: reverb send
+ALGO.ALG_A = "A1"
+ALGO.ALG_B = "A16"
+ALGO.MORPH = "20"
+ALGO.VOWEL = "15"  # O
+OP_A.CRSE = "4"  # 1.00
+OP_A.DETUN = "-3"
+OP_A.LEVEL = "84"
+OP_A.AR = "10"
+OP_A.D1R = "0"
+OP_A.D1L = "15"
+OP_A.RR = "5"
+OP_B.CRSE = "4"  # 1.00
+OP_B.DETUN = "3"  # +3
+OP_B.LEVEL = "82"
+OP_B.AR = "10"
+OP_B.D1R = "0"
+OP_B.D1L = "15"
+OP_B.RR = "5"
+OP_C.WAVE = "FRMT"
+OP_C.VSLOT = "F1"
+OP_C.FRMT = "60"  # 566 Hz
+OP_C.BW = "90"  # 269 Hz
+OP_C.LEVEL = "90"
+OP_C.AR = "9"
+OP_C.D1R = "0"
+OP_C.D1L = "15"
+OP_C.RR = "5"
+OP_D.WAVE = "FRMT"
+OP_D.VSLOT = "F2"
+OP_D.FRMT = "85"  # 1.17 kHz
+OP_D.BW = "100"  # 359 Hz
+OP_D.LEVEL = "84"
+OP_D.AR = "9"
+OP_D.D1R = "0"
+OP_D.D1L = "15"
+OP_D.RR = "5"
+OP_E.WAVE = "NOIS"
+OP_E.FRMT = "100"  # 1.80 kHz
+OP_E.BW = "150"  # 1.52 kHz
+OP_E.LEVEL = "70"
+OP_E.AR = "8"
+OP_E.D1R = "0"
+OP_E.D1L = "15"
+OP_E.RR = "5"
+OP_F.CRSE = "14"  # 4.24
+OP_F.LEVEL = "60"
+OP_F.AR = "8"
+OP_F.D1R = "0"
+OP_F.D1L = "15"
+OP_F.RR = "5"
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1500"  # 1.50 kHz
+FILTER.RESO = "0.25"  # 32
+FILTER.LEVEL = "0.7"  # 89
+LFO1.RATE = "0.19"  # 1
+LFO1.SHAPE = "SINE"
+mod.LFO1 = "PITCH.FINE +3"
+LFO2.RATE = "0.05"  # 0
+LFO2.SHAPE = "TRIANGLE"
+mod.LFO2 = "ALGO.MORPH +60"
+LFO3.RATE = "1.7"  # 11
+LFO3.SHAPE = "RANDOM"
+mod.LFO3 = "OP_E.LEVEL +20, ALGO.VOWEL +40"
+mod.VEL = "FILTER.CUTOFF +14"
+OUT.SEND3 = "0.25"  # 32
+OUT.LEVEL = "1"  # 127
+trim = "-9.2"
+level = "by ear -24.8: slow attacks and a reverb wash; set low so the pad phrase limits under 3 dB"
+
+# Inspired by the TX81Z voice Space Vibe. Scary: four carriers at
+# non-integer ratios (0.71, 1.00, 1.41, 2.82, a tritone stack) each a few
+# cents off, beating against each other; a resonant 2040 crawls on a
+# random LFO and a 0.04 Hz LFO swells op 4's 4.24 modulator in and out.
+[[sound]]
+id = "S9100120"
+name = "BLACK SUN"
+engine = "ALGO"
+note = "A TRITONE DRONE THAT CRAWLS"
+demo = "poly"
+plays = "long stab"
+home = "C2"
+phrase = "pad"
+harmonic = "no"
+# from: tx81z f6f1ef23 #22
+# edits: ratios: 0.71, 1.41 and 2.82 carriers, a 4.24 modulator; detune: every carrier off; algorithm: T8 to T7; lfo: LFO 2 random on FREQ and Q, LFO 3 0.04 Hz on op 4 LEVEL; filter: 2040 LP4 resonant; effects: reverb send
+ALGO.ALG_A = "T7"
+ALGO.ALG_B = "T7"
+OP_A.CRSE = "1"  # 0.71
+OP_A.DETUN = "-3"
+OP_A.LEVEL = "92"
+OP_A.AR = "9"
+OP_A.D1R = "0"
+OP_A.D1L = "15"
+OP_A.RR = "6"
+OP_B.CRSE = "4"  # 1.00
+OP_B.DETUN = "2"  # +2
+OP_B.LEVEL = "86"
+OP_B.AR = "9"
+OP_B.D1R = "0"
+OP_B.D1L = "15"
+OP_B.RR = "6"
+OP_C.CRSE = "5"  # 1.41
+OP_C.DETUN = "-1"
+OP_C.LEVEL = "84"
+OP_C.AR = "8"
+OP_C.D1R = "0"
+OP_C.D1L = "15"
+OP_C.RR = "6"
+OP_D.CRSE = "14"  # 4.24
+OP_D.DETUN = "3"  # +3
+OP_D.LEVEL = "60"
+OP_D.AR = "7"
+OP_D.D1R = "0"
+OP_D.D1L = "15"
+OP_D.RR = "6"
+OP_E.LEVEL = "0"
+OP_F.LEVEL = "0"
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "700"  # 700 Hz
+FILTER.RESO = "0.55"  # 70
+FILTER.LEVEL = "0.7"  # 89
+LFO1.RATE = "0.15"  # 1
+LFO1.SHAPE = "SINE"
+mod.LFO1 = "PITCH.FINE +2"
+LFO2.RATE = "0.6"  # 4
+LFO2.SHAPE = "RANDOM"
+mod.LFO2 = "FILTER.CUTOFF +18, FILTER.RESO +10"
+LFO3.RATE = "0.04"  # 0
+LFO3.SHAPE = "SINE"
+mod.LFO3 = "OP_D.LEVEL +25"
+mod.VEL = "FILTER.CUTOFF +12"
+OUT.SEND3 = "0.25"  # 32
+OUT.LEVEL = "1"  # 127
+trim = "-10.3"
+level = "by ear -28.0: a slow C2 drone; set low so its chords with their reverb limit under 3 dB"
+
+# Inspired by the TX81Z voice SynString. Four 1.00 carriers spread -4.5
+# to +4.5 cents (DETUN -3, -1, +1, +3): a beating sodium-lamp shimmer;
+# slow LFOs pan the beat between pairs and ENV 3 lifts a 3.00 overtone in
+# over seconds.
+[[sound]]
+id = "S9100121"
+name = "SODIUM HAZE"
+engine = "ALGO"
+note = "FOUR DETUNED SINES BEAT"
+demo = "poly"
+plays = "long stab"
+home = "C3"
+phrase = "pad"
+harmonic = "yes"
+# from: tx81z 7ce3e8e2 #26
+# edits: algorithm: T3 to T8 then T5, four carriers DETUN -3 to +3; envelope: ENV 3 SLOW on op 5 LEVEL; lfo: LFO 2 and 3 trade carrier pairs; filter: 2040 LP4; effects: chorus and reverb sends
+ALGO.ALG_A = "T8"
+ALGO.ALG_B = "T8"
+OP_A.CRSE = "4"  # 1.00
+OP_A.DETUN = "-3"
+OP_A.LEVEL = "88"
+OP_A.AR = "11"
+OP_A.D1R = "0"
+OP_A.D1L = "15"
+OP_A.RR = "5"
+OP_B.CRSE = "4"  # 1.00
+OP_B.DETUN = "-1"
+OP_B.LEVEL = "88"
+OP_B.AR = "11"
+OP_B.D1R = "0"
+OP_B.D1L = "15"
+OP_B.RR = "5"
+OP_C.CRSE = "4"  # 1.00
+OP_C.DETUN = "1"  # +1
+OP_C.LEVEL = "88"
+OP_C.AR = "11"
+OP_C.D1R = "0"
+OP_C.D1L = "15"
+OP_C.RR = "5"
+OP_D.CRSE = "4"  # 1.00
+OP_D.DETUN = "3"  # +3
+OP_D.LEVEL = "88"
+OP_D.AR = "11"
+OP_D.D1R = "0"
+OP_D.D1L = "15"
+OP_D.RR = "5"
+OP_E.CRSE = "10"  # 3.00
+OP_E.LEVEL = "60"
+OP_E.AR = "8"
+OP_E.D1R = "0"
+OP_E.D1L = "15"
+OP_E.RR = "5"
+OP_F.CRSE = "8"  # 2.00
+OP_F.LEVEL = "50"
+OP_F.AR = "8"
+OP_F.D1R = "0"
+OP_F.D1L = "15"
+OP_F.RR = "5"
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1800"  # 1.80 kHz
+FILTER.RESO = "0.2"  # 25
+FILTER.LEVEL = "0.7"  # 89
+ENV3.SPEED = "SLOW"
+ENV3.ATK = "0.65"  # 83
+ENV3.DEC = "0.6"  # 76
+ENV3.SUS = "0.5"  # 64
+mod.ENV3 = "OP_E.LEVEL +25"
+LFO2.RATE = "0.13"  # 1
+LFO2.SHAPE = "SINE"
+mod.LFO2 = "OP_A.LEVEL +10, OP_D.LEVEL -10"
+LFO3.RATE = "0.21"  # 1
+LFO3.SHAPE = "TRIANGLE"
+mod.LFO3 = "OP_B.LEVEL +10, OP_C.LEVEL -10, FILTER.CUTOFF +10"
+mod.VEL = "FILTER.CUTOFF +16"
+OUT.SEND1 = "0.3"  # 38
+OUT.SEND3 = "0.18"  # 23
+OUT.LEVEL = "1"  # 127
+trim = "-15.6"
+level = "by ear -20.2: six carriers a chord; set low so the pad phrase limits under 3 dB"
+
+# Inspired by the TX81Z voice Bell Pad. A pad that rots: each chord
+# starts as three clean parallel sines (A1) and a SLOW ENV 2 morphs it
+# into A14, every operator cross-modulating at 0.87, 3.14, 4.00 and
+# 5.65, so the tone corrodes while you hold it (a 1.41 there read DC at
+# full MORPH).
+[[sound]]
+id = "S9100122"
+name = "SIGNAL ROT"
+engine = "ALGO"
+note = "HOLD IT AND IT CORRODES"
+demo = "poly"
+plays = "long stab"
+home = "C3"
+phrase = "sweep"
+harmonic = "no"
+# from: tx81z 4a271c8a #30
+# edits: algorithm: T7 to A1 into A14, SLOW ENV 2 on MORPH and FREQ; ratios: 0.87, 3.14, 4.00 and 5.65 modulators; lfo: LFO 3 random on op 5 LEVEL; filter: 2040 LP4; effects: reverb send
+ALGO.ALG_A = "A1"
+ALGO.ALG_B = "A14"
+ALGO.MORPH = "0"
+OP_A.CRSE = "4"  # 1.00
+OP_A.LEVEL = "90"
+OP_A.AR = "10"
+OP_A.D1R = "0"
+OP_A.D1L = "15"
+OP_A.RR = "5"
+OP_B.CRSE = "8"  # 2.00
+OP_B.DETUN = "2"  # +2
+OP_B.LEVEL = "80"
+OP_B.AR = "10"
+OP_B.D1R = "0"
+OP_B.D1L = "15"
+OP_B.RR = "5"
+OP_C.CRSE = "3"  # 0.87
+OP_C.LEVEL = "70"
+OP_C.AR = "9"
+OP_C.D1R = "0"
+OP_C.D1L = "15"
+OP_C.RR = "5"
+OP_D.CRSE = "18"  # 5.65
+OP_D.LEVEL = "66"
+OP_D.AR = "9"
+OP_D.D1R = "0"
+OP_D.D1L = "15"
+OP_D.RR = "5"
+OP_E.CRSE = "11"  # 3.14
+OP_E.LEVEL = "56"
+OP_E.AR = "9"
+OP_E.D1R = "0"
+OP_E.D1L = "15"
+OP_E.RR = "5"
+OP_F.CRSE = "13"  # 4.00
+OP_F.LEVEL = "50"
+OP_F.AR = "9"
+OP_F.D1R = "0"
+OP_F.D1L = "15"
+OP_F.RR = "5"
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "900"  # 900 Hz
+FILTER.RESO = "0.25"  # 32
+FILTER.LEVEL = "0.7"  # 89
+ENV2.SPEED = "SLOW"
+ENV2.ATK = "0.68"  # 3.6 s
+ENV2.DEC = "0.62"  # 3.3 s
+ENV2.SUS = "0.4"  # 40%
+ENV2.REL = "0.5"  # 1.3 s
+mod.ENV2 = "ALGO.MORPH +110, FILTER.CUTOFF +30"
+LFO1.RATE = "0.2"  # 1
+LFO1.SHAPE = "SINE"
+mod.LFO1 = "PITCH.FINE +2"
+LFO3.RATE = "5"  # 32
+LFO3.SHAPE = "RANDOM"
+mod.LFO3 = "OP_E.LEVEL +10"
+mod.VEL = "FILTER.CUTOFF +12"
+OUT.SEND3 = "0.22"  # 28
+OUT.LEVEL = "1"  # 127
+trim = "-11.3"
+level = "by ear -24.1: the 1 s render hears the clean start; set low so the sweep chords limit under 3 dB"
+
+# Inspired by the TX81Z voice ElecBass 1. A bass that tears: velocity
+# drives the wavefolder and the drive together, ENV 2 morphs a clean
+# 2-op stack (T5) into a 4-op chain (T1) at the attack.
+[[sound]]
+id = "S9100123"
+name = "TORN BASS"
+engine = "ALGO"
+note = "HIT IT HARD AND IT TEARS"
+demo = "mono"
+plays = "bass texture glide"
+home = "C2"
+phrase = "bass"
+harmonic = "yes"
+# from: tx81z 4a271c8a #9
+# edits: algorithm: T3 to T5 into T1, ENV 2 on MORPH; fold: VELOCITY on FOLD; drive: DRIVE on; filter: LADDER LP4, ENV 2 opens it; lfo: LFO 3 slow on FREQ
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.45"  # 31 ms
+ALGO.ALG_A = "T5"
+ALGO.ALG_B = "T1"
+ALGO.MORPH = "0"
+OP_A.CRSE = "4"  # 1.00
+OP_A.LEVEL = "99"
+OP_A.AR = "31"
+OP_A.D1R = "5"
+OP_A.D1L = "13"
+OP_A.RR = "9"
+OP_A.VEL = "2"
+OP_B.CRSE = "8"  # 2.00
+OP_B.LEVEL = "70"
+OP_B.AR = "31"
+OP_B.D1R = "8"
+OP_B.D1L = "9"
+OP_B.RR = "9"
+OP_B.VEL = "3"
+OP_C.CRSE = "0"  # 0.50
+OP_C.LEVEL = "86"
+OP_C.AR = "31"
+OP_C.D1R = "5"
+OP_C.D1L = "13"
+OP_C.RR = "9"
+OP_D.CRSE = "13"  # 4.00
+OP_D.LEVEL = "62"
+OP_D.FDBK = "5"
+OP_D.AR = "31"
+OP_D.D1R = "10"
+OP_D.D1L = "8"
+OP_D.RR = "9"
+OP_D.VEL = "3"
+OP_E.LEVEL = "0"
+OP_F.LEVEL = "0"
+DRIVE.DRIVE = "0.3"  # 38
+FILTER.KIND = "LADDER"
+FILTER.CUTOFF = "700"  # 700 Hz
+FILTER.RESO = "0.3"  # 38
+FILTER.LEVEL = "0.6"  # 76
+FOLDER.FOLD = "0.05"  # 6
+FOLDER.MIX = "0.6"  # +12
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.45"  # 126 ms
+ENV2.SUS = "0.2"  # 20%
+mod.ENV2 = "ALGO.MORPH +80, FILTER.CUTOFF +35"
+LFO3.RATE = "0.13"  # 1
+LFO3.SHAPE = "SINE"
+mod.LFO3 = "FILTER.CUTOFF +12"
+mod.VEL = "FOLDER.FOLD +50, FILTER.CUTOFF +20"
+OUT.LEVEL = "0.5"  # 64
+mod.NOTE = "OP_B.LEVEL -60, OP_D.LEVEL -60"
+trim = "0.2"
+
+# Inspired by the TX81Z voice Jaco Bass. A sine bass with a 1.41
+# modulator (not an octave, not a fifth: a bent, clangy edge) whose index
+# a random LFO nudges on every note; ENV 2 bends the pitch down into each
+# note like a snapped string.
+[[sound]]
+id = "S9100124"
+name = "BENT BASS"
+engine = "ALGO"
+note = "EACH NOTE BENDS IN, CLANGING"
+demo = "mono"
+plays = "bass texture glide"
+home = "C2"
+phrase = "bass"
+harmonic = "no"
+# from: tx81z 4a271c8a #14
+# edits: ratios: 1.41 modulator into 1.00 (inharmonic edge); envelope: ENV 2 on PITCH (bend in) and op 2 LEVEL; lfo: LFO 3 random on op 2 LEVEL; filter: 2040 LP4, VELOCITY opens it
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.5"  # 45 ms
+ALGO.ALG_A = "T5"
+ALGO.ALG_B = "T5"
+OP_A.CRSE = "4"  # 1.00
+OP_A.LEVEL = "99"
+OP_A.AR = "31"
+OP_A.D1R = "5"
+OP_A.D1L = "13"
+OP_A.RR = "9"
+OP_A.VEL = "2"
+OP_B.CRSE = "5"  # 1.41
+OP_B.LEVEL = "66"
+OP_B.AR = "31"
+OP_B.D1R = "9"
+OP_B.D1L = "8"
+OP_B.RR = "9"
+OP_B.VEL = "4"
+OP_C.CRSE = "0"  # 0.50
+OP_C.LEVEL = "84"
+OP_C.AR = "31"
+OP_C.D1R = "4"
+OP_C.D1L = "13"
+OP_C.RR = "9"
+OP_D.LEVEL = "0"
+OP_E.LEVEL = "0"
+OP_F.LEVEL = "0"
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "1100"  # 1.10 kHz
+FILTER.RESO = "0.35"  # 44
+FILTER.LEVEL = "0.85"  # 108
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.4"  # 84 ms
+ENV2.SUS = "0"  # 0%
+mod.ENV2 = "PITCH.FINE +40, OP_B.LEVEL +15, FILTER.CUTOFF +25"
+LFO3.RATE = "3"  # 19
+LFO3.SHAPE = "RANDOM"
+mod.LFO3 = "OP_B.LEVEL +10"
+mod.VEL = "FILTER.CUTOFF +22, OP_B.LEVEL +10"
+OUT.LEVEL = "0.5"  # 64
+trim = "3.5"
+
+# Inspired by the TX81Z voice Helicopter. A bass with a motor in it: a
+# 12 Hz triangle LFO rattles the filter while a slower one drags op 4's
+# index in and out, over a pure 0.50 sub. Marked inharmonic: the
+# rattle's sidebands read 29 dB; without it C6 read 80 dB. A 12 Hz LFO
+# on an operator LEVEL read DC.
+[[sound]]
+id = "S9100125"
+name = "MOTOR BASS"
+engine = "ALGO"
+note = "A MOTOR RATTLES IN THE BASS"
+demo = "mono"
+plays = "bass texture glide"
+home = "C2"
+phrase = "bass"
+harmonic = "no"
+# from: tx81z f6f1ef23 #14
+# edits: lfo: LFO 2 12 Hz on FREQ (the rattle), LFO 3 0.2 Hz on op 4 LEVEL and FREQ; ratios: 1.00 carrier, 0.50 sub stack; filter: DIRTY LP2; drive: DRIVE on
+PITCH.STEAL = "GLIDE"
+PITCH.GLIDE_TIME = "0.45"  # 31 ms
+ALGO.ALG_A = "T5"
+ALGO.ALG_B = "T5"
+OP_A.CRSE = "4"  # 1.00
+OP_A.LEVEL = "92"
+OP_A.AR = "31"
+OP_A.D1R = "4"
+OP_A.D1L = "13"
+OP_A.RR = "9"
+OP_A.VEL = "2"
+OP_B.CRSE = "8"  # 2.00
+OP_B.LEVEL = "66"
+OP_B.AR = "31"
+OP_B.D1R = "6"
+OP_B.D1L = "10"
+OP_B.RR = "9"
+OP_B.VEL = "3"
+OP_C.CRSE = "0"  # 0.50
+OP_C.LEVEL = "90"
+OP_C.AR = "31"
+OP_C.D1R = "3"
+OP_C.D1L = "14"
+OP_C.RR = "9"
+OP_D.CRSE = "4"  # 1.00
+OP_D.LEVEL = "60"
+OP_D.AR = "31"
+OP_D.D1R = "3"
+OP_D.D1L = "12"
+OP_D.RR = "9"
+OP_E.LEVEL = "0"
+OP_F.LEVEL = "0"
+DRIVE.DRIVE = "0.3"  # 38
+FILTER.KIND = "DIRTY"
+FILTER.CUTOFF = "900"  # 900 Hz
+FILTER.RESO = "0.3"  # 38
+FILTER.LEVEL = "0.7"  # 89
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.45"  # 126 ms
+ENV2.SUS = "0.3"  # 30%
+mod.ENV2 = "FILTER.CUTOFF +30"
+LFO2.RATE = "12"  # 76
+LFO2.SHAPE = "TRIANGLE"
+mod.LFO2 = "FILTER.CUTOFF +22"
+LFO3.RATE = "0.2"  # 1
+LFO3.SHAPE = "SINE"
+mod.LFO3 = "OP_D.LEVEL +14, FILTER.CUTOFF +10"
+mod.VEL = "FILTER.CUTOFF +20"
+OUT.LEVEL = "0.5"  # 64
+trim = "4.9"
+
+# Inspired by the TX81Z voice AtackBrass. Three carriers a few cents
+# apart under 1.73 modulators: an inharmonic brass cluster, torn by the
+# drive; ENV 2 morphs T5 into T6 at each hit so the stab snarls on its
+# way out.
+[[sound]]
+id = "S9100126"
+name = "RIOT STAB"
+engine = "ALGO"
+note = "AN INHARMONIC CLUSTER, TORN"
+demo = "poly"
+plays = "stab short texture"
+home = "C3"
+phrase = "pad"
+harmonic = "no"
+# from: tx81z 7ce3e8e2 #6
+# edits: ratios: 1.73 modulators; algorithm: T5 into T6, ENV 2 on MORPH; drive: DRIVE on; filter: DIRTY LP2, ENV 2 and VELOCITY slam it; lfo: LFO 3 random on op 4 LEVEL
+ALGO.ALG_A = "T5"
+ALGO.ALG_B = "T6"
+ALGO.MORPH = "0"
+OP_A.CRSE = "4"  # 1.00
+OP_A.DETUN = "-2"
+OP_A.LEVEL = "94"
+OP_A.AR = "31"
+OP_A.D1R = "10"
+OP_A.D1L = "10"
+OP_A.D2R = "4"
+OP_A.RR = "9"
+OP_A.VEL = "3"
+OP_B.CRSE = "7"  # 1.73
+OP_B.DETUN = "-2"
+OP_B.LEVEL = "74"
+OP_B.AR = "31"
+OP_B.D1R = "11"
+OP_B.D1L = "8"
+OP_B.D2R = "4"
+OP_B.RR = "9"
+OP_B.VEL = "3"
+OP_C.CRSE = "4"  # 1.00
+OP_C.DETUN = "2"  # +2
+OP_C.LEVEL = "94"
+OP_C.AR = "31"
+OP_C.D1R = "10"
+OP_C.D1L = "10"
+OP_C.D2R = "4"
+OP_C.RR = "9"
+OP_C.VEL = "3"
+OP_D.CRSE = "7"  # 1.73
+OP_D.DETUN = "2"  # +2
+OP_D.LEVEL = "70"
+OP_D.FDBK = "5"
+OP_D.AR = "31"
+OP_D.D1R = "12"
+OP_D.D1L = "7"
+OP_D.D2R = "4"
+OP_D.RR = "9"
+OP_D.VEL = "3"
+OP_E.LEVEL = "0"
+OP_F.LEVEL = "0"
+DRIVE.DRIVE = "0.3"  # 38
+FILTER.KIND = "DIRTY"
+FILTER.CUTOFF = "800"  # 800 Hz
+FILTER.RESO = "0.35"  # 44
+FILTER.LEVEL = "0.5"  # 64
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.5"  # 187 ms
+ENV2.SUS = "0.2"  # 20%
+mod.ENV2 = "ALGO.MORPH +90, FILTER.CUTOFF +45"
+LFO3.RATE = "6"  # 38
+LFO3.SHAPE = "RANDOM"
+mod.LFO3 = "OP_B.LEVEL +8"
+mod.VEL = "FILTER.CUTOFF +25"
+OUT.SEND3 = "0.12"  # 15
+OUT.LEVEL = "1"  # 127
+trim = "-6.1"
+level = "by ear -20.0: a stab; set low so the 4-note stab and pad phrase limit under 3 dB"
+
+# Inspired by the TX81Z voice MalibuNite. A chord that has burned: high
+# inharmonic modulators (12.00, 17.30, 25.95) fizz on top of a sine, a
+# FRMT "oh" sits under it, and a random LFO crackles the fizz.
+[[sound]]
+id = "S9100127"
+name = "ASH CHORD"
+engine = "ALGO"
+note = "BURNT CHORDS THAT CRACKLE"
+demo = "poly"
+plays = "stab long"
+home = "C3"
+phrase = "pad"
+harmonic = "no"
+# from: tx81z f6f1ef23 #13
+# edits: formant: op 5 FRMT "oh"; lfo: LFO 3 random on op 2 LEVEL (crackle), LFO 2 slow on FREQ; envelope: ENV 2 on op 3 LEVEL; filter: 2040 LP4; effects: reverb send
+ALGO.ALG_A = "T1"
+ALGO.ALG_B = "T1"
+ALGO.VOWEL = "20"  # O
+OP_A.CRSE = "4"  # 1.00
+OP_A.LEVEL = "95"
+OP_A.AR = "29"
+OP_A.D1R = "6"
+OP_A.D1L = "12"
+OP_A.D2R = "2"
+OP_A.RR = "7"
+OP_A.VEL = "2"
+OP_B.CRSE = "36"  # 12.00
+OP_B.LEVEL = "44"
+OP_B.AR = "31"
+OP_B.D1R = "8"
+OP_B.D1L = "9"
+OP_B.D2R = "3"
+OP_B.RR = "7"
+OP_C.CRSE = "51"  # 17.30
+OP_C.LEVEL = "50"
+OP_C.AR = "31"
+OP_C.D1R = "10"
+OP_C.D1L = "8"
+OP_C.RR = "7"
+OP_D.CRSE = "63"  # 25.95
+OP_D.LEVEL = "56"
+OP_D.FDBK = "4"
+OP_D.AR = "31"
+OP_D.D1R = "10"
+OP_D.D1L = "8"
+OP_D.RR = "7"
+OP_E.WAVE = "FRMT"
+OP_E.VSLOT = "F1"
+OP_E.FRMT = "62"  # 599 Hz
+OP_E.BW = "90"  # 269 Hz
+OP_E.LEVEL = "86"
+OP_E.AR = "27"
+OP_E.D1R = "5"
+OP_E.D1L = "12"
+OP_E.D2R = "2"
+OP_E.RR = "7"
+OP_F.LEVEL = "0"
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "2400"  # 2.40 kHz
+FILTER.RESO = "0.2"  # 25
+FILTER.LEVEL = "0.6"  # 76
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.5"  # 187 ms
+ENV2.SUS = "0.1"  # 10%
+mod.ENV2 = "OP_C.LEVEL +15, FILTER.CUTOFF +20"
+LFO2.RATE = "0.17"  # 1
+LFO2.SHAPE = "SINE"
+mod.LFO2 = "FILTER.CUTOFF +12"
+LFO3.RATE = "11"  # 70
+LFO3.SHAPE = "RANDOM"
+mod.LFO3 = "OP_B.LEVEL +12"
+mod.VEL = "FILTER.CUTOFF +18"
+mod.NOTE = "OP_B.LEVEL -60, OP_C.LEVEL -60, OP_D.LEVEL -60"
+OUT.SEND3 = "0.15"  # 19
+OUT.LEVEL = "1"  # 127
+trim = "-3.5"
+level = "by ear -18.5: a chord hit; set low so the 4-note stab limits under 3 dB"
+
+# Inspired by the TX81Z voice Synballs. A struck tin can: modulators at
+# 4.24 and 7.85 (no harmonic series anywhere) into a 1.00 carrier, a
+# random LFO re-dents the can on every hit, high notes shorter.
+[[sound]]
+id = "S9100128"
+name = "TIN CAN"
+engine = "ALGO"
+note = "DENTED TIN, NEW EVERY HIT"
+demo = "poly"
+plays = "short long texture"
+home = "C4"
+phrase = "arp"
+harmonic = "no"
+# from: tx81z f6f1ef23 #31
+# edits: ratios: 4.24 and 7.85 modulators into 1.00; lfo: LFO 3 random on op 2 and op 3 LEVEL; envelope: ENV 2 strike on op 3 and FREQ, D1L 2 fades; filter: SVF LP2, VELOCITY opens it
+ALGO.ALG_A = "T4"
+ALGO.ALG_B = "T4"
+OP_A.CRSE = "4"  # 1.00
+OP_A.LEVEL = "97"
+OP_A.AR = "29"
+OP_A.D1R = "13"
+OP_A.D1L = "4"
+OP_A.D2R = "7"
+OP_A.RR = "8"
+OP_A.RS = "1"
+OP_A.VEL = "2"
+OP_B.CRSE = "14"  # 4.24
+OP_B.LEVEL = "70"
+OP_B.AR = "31"
+OP_B.D1R = "15"
+OP_B.D1L = "3"
+OP_B.D2R = "8"
+OP_B.RR = "8"
+OP_B.VEL = "3"
+OP_C.CRSE = "24"  # 7.85
+OP_C.LEVEL = "72"
+OP_C.AR = "31"
+OP_C.D1R = "16"
+OP_C.D1L = "3"
+OP_C.D2R = "8"
+OP_C.RR = "8"
+OP_C.VEL = "3"
+OP_D.CRSE = "9"  # 2.82
+OP_D.LEVEL = "60"
+OP_D.FDBK = "4"
+OP_D.AR = "31"
+OP_D.D1R = "17"
+OP_D.D1L = "2"
+OP_D.D2R = "8"
+OP_D.RR = "8"
+OP_E.LEVEL = "0"
+OP_F.LEVEL = "0"
+FILTER.MODE = "LP12"
+FILTER.CUTOFF = "4000"  # 4.00 kHz
+FILTER.RESO = "0.15"  # 19
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.3"  # 38 ms
+ENV2.SUS = "0"  # 0%
+mod.ENV2 = "OP_C.LEVEL +15, FILTER.CUTOFF +25"
+LFO3.RATE = "9"  # 57
+LFO3.SHAPE = "RANDOM"
+mod.LFO3 = "OP_B.LEVEL +12, OP_C.LEVEL -12"
+mod.VEL = "FILTER.CUTOFF +30, OP_C.LEVEL +10"
+mod.NOTE = "OP_C.LEVEL -50, OP_B.LEVEL -30"
+OUT.SEND3 = "0.1"  # 13
+OUT.LEVEL = "1"  # 127
+trim = "-2.0"
+level = "by ear -21.6: a short hit; set low so the arp phrase and texture limit under 1 dB"
+
+# Inspired by the TX81Z voice Spc Midiot. A glitch generator: a square
+# LFO and a random LFO, both fast, chop a NOISE band and a 1.73 / 3.14
+# stack against each other, so every note shreds into a different
+# rhythm of bits.
+[[sound]]
+id = "S9100129"
+name = "BIT SHRED"
+engine = "ALGO"
+note = "TWO FAST LFOS CHOP IT UP"
+demo = "poly"
+plays = "short long texture"
+home = "C4"
+phrase = "arp"
+harmonic = "no"
+# from: tx81z f6f1ef23 #9
+# edits: noise: op 5 a NOISE band; lfo: LFO 2 square 16 Hz on op 5 and op 1 LEVEL against each other, LFO 3 random 19 Hz on FRMT and FREQ; ratios: 1.73 and 3.14; filter: SVF BP2; drive: DRIVE on
+ALGO.ALG_A = "T5"
+ALGO.ALG_B = "T5"
+OP_A.CRSE = "7"  # 1.73
+OP_A.LEVEL = "84"
+OP_A.AR = "31"
+OP_A.D1R = "11"
+OP_A.D1L = "5"
+OP_A.D2R = "7"
+OP_A.RR = "9"
+OP_A.VEL = "2"
+OP_B.CRSE = "11"  # 3.14
+OP_B.LEVEL = "70"
+OP_B.AR = "31"
+OP_B.D1R = "11"
+OP_B.D1L = "5"
+OP_B.D2R = "7"
+OP_B.RR = "9"
+OP_C.LEVEL = "0"
+OP_D.LEVEL = "0"
+OP_E.WAVE = "NOIS"
+OP_E.FRMT = "110"  # 2.40 kHz
+OP_E.BW = "120"  # 640 Hz
+OP_E.LEVEL = "90"
+OP_E.AR = "31"
+OP_E.D1R = "11"
+OP_E.D1L = "5"
+OP_E.D2R = "7"
+OP_E.RR = "9"
+OP_F.LEVEL = "0"
+DRIVE.DRIVE = "0.4"  # 51
+FILTER.MODE = "BP12"
+FILTER.CUTOFF = "2200"  # 2.20 kHz
+FILTER.RESO = "0.35"  # 44
+LFO2.RATE = "16"  # 102
+LFO2.SHAPE = "SQUARE"
+mod.LFO2 = "OP_E.LEVEL +20, OP_A.LEVEL -20"
+LFO3.RATE = "19"  # 121
+LFO3.SHAPE = "RANDOM"
+mod.LFO3 = "OP_E.FRMT +20, FILTER.CUTOFF +25"
+mod.VEL = "FILTER.CUTOFF +20"
+OUT.LEVEL = "1"  # 127
+trim = "-7.2"
+level = "by ear -22.3: a chopped burst; set low so the arp phrase limits under 1 dB"
+
+# Inspired by the TX81Z voice Noise Shot. An arc across a spark gap: a
+# NOISE band and a feedback-7 operator on the edge of noise, ENV 2 dropping
+# the pitch two octaves in 30 ms, then a short crackle that a random
+# LFO keeps re-striking.
+[[sound]]
+id = "S9100130"
+name = "SPARK GAP"
+engine = "ALGO"
+note = "A HIGH-VOLTAGE ZAP"
+demo = "poly"
+plays = "short texture"
+home = "C4"
+phrase = "arp"
+harmonic = "no"
+# from: tx81z f6f1ef23 #27
+# edits: noise: op 5 a NOISE band; envelope: ENV 2 big pitch drop, D1L 2 fades; feedback: op 4 7; lfo: LFO 3 random 17 Hz on op 5 LEVEL and FREQ; filter: SVF HP2 then LP; drive: DRIVE on
+ALGO.ALG_A = "T4"
+ALGO.ALG_B = "T4"
+OP_A.CRSE = "6"  # 1.57
+OP_A.LEVEL = "92"
+OP_A.AR = "27"
+OP_A.D1R = "17"
+OP_A.D1L = "2"
+OP_A.D2R = "8"
+OP_A.RR = "10"
+OP_A.VEL = "2"
+OP_B.CRSE = "5"  # 1.41
+OP_B.LEVEL = "70"
+OP_B.AR = "27"
+OP_B.D1R = "18"
+OP_B.D1L = "2"
+OP_B.D2R = "8"
+OP_B.RR = "10"
+OP_C.CRSE = "4"  # 1.00
+OP_C.LEVEL = "74"
+OP_C.AR = "27"
+OP_C.D1R = "18"
+OP_C.D1L = "2"
+OP_C.D2R = "8"
+OP_C.RR = "10"
+OP_D.CRSE = "4"  # 1.00
+OP_D.LEVEL = "78"
+OP_D.FDBK = "7"
+OP_D.AR = "27"
+OP_D.D1R = "18"
+OP_D.D1L = "2"
+OP_D.D2R = "8"
+OP_D.RR = "10"
+OP_E.WAVE = "NOIS"
+OP_E.FRMT = "120"  # 3.20 kHz
+OP_E.BW = "170"  # 2.71 kHz
+OP_E.LEVEL = "92"
+OP_E.AR = "28"
+OP_E.D1R = "15"
+OP_E.D1L = "3"
+OP_E.D2R = "8"
+OP_E.RR = "10"
+OP_F.LEVEL = "0"
+DRIVE.DRIVE = "0.45"  # 57
+FILTER.MODE = "LP12"
+FILTER.CUTOFF = "7000"  # 7.00 kHz
+FILTER.RESO = "0.15"  # 19
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.32"  # 45 ms
+ENV2.SUS = "0"  # 0%
+mod.ENV2 = "PITCH.PITCH +30"
+LFO3.RATE = "17"  # 108
+LFO3.SHAPE = "RANDOM"
+mod.LFO3 = "OP_E.LEVEL +18, FILTER.CUTOFF +15"
+mod.VEL = "FILTER.CUTOFF +15, OP_E.LEVEL +10"
+OUT.SEND3 = "0.1"  # 13
+OUT.LEVEL = "1"  # 127
+trim = "-5.4"
+level = "by ear -22.6: a short hit; set low so the arp phrase and texture limit under 1 dB"
+
+# Inspired by the TX81Z voice WaterGlass. A sonar ping into the void:
+# a 1.00 sine struck by 1.57 and 4.71 modulators rings out long while a
+# random LFO detunes it a few cents per ping and the delay echoes it
+# back from somewhere far.
+[[sound]]
+id = "S9100131"
+name = "SONAR VOID"
+engine = "ALGO"
+note = "A PING THAT COMES BACK WRONG"
+demo = "poly"
+plays = "short long texture"
+home = "C4"
+phrase = "arp"
+harmonic = "no"
+# from: tx81z f6f1ef23 #5
+# edits: ratios: 1.57 and 4.71 modulators; envelope: longer ring, ENV 2 strike on op 3; lfo: LFO 3 random on PITCH FINE, LFO 2 slow on FREQ; filter: 2040 LP4; effects: delay and reverb sends
+ALGO.ALG_A = "T2"
+ALGO.ALG_B = "T2"
+OP_A.CRSE = "4"  # 1.00
+OP_A.LEVEL = "97"
+OP_A.AR = "29"
+OP_A.D1R = "8"
+OP_A.D1L = "6"
+OP_A.D2R = "4"
+OP_A.RR = "6"
+OP_A.VEL = "2"
+OP_B.CRSE = "6"  # 1.57
+OP_B.LEVEL = "62"
+OP_B.AR = "31"
+OP_B.D1R = "9"
+OP_B.D1L = "5"
+OP_B.D2R = "5"
+OP_B.RR = "6"
+OP_B.VEL = "2"
+OP_C.CRSE = "15"  # 4.71
+OP_C.LEVEL = "58"
+OP_C.AR = "31"
+OP_C.D1R = "12"
+OP_C.D1L = "3"
+OP_C.D2R = "6"
+OP_C.RR = "6"
+OP_C.VEL = "3"
+OP_D.LEVEL = "0"
+OP_E.LEVEL = "0"
+OP_F.LEVEL = "0"
+FILTER.KIND = "2040"
+FILTER.CUTOFF = "3500"  # 3.50 kHz
+FILTER.RESO = "0.2"  # 25
+FILTER.LEVEL = "0.6"  # 76
+ENV2.ATK = "0"  # 2.0 ms
+ENV2.DEC = "0.3"  # 38 ms
+ENV2.SUS = "0"  # 0%
+mod.ENV2 = "OP_C.LEVEL +15"
+LFO2.RATE = "0.11"  # 1
+LFO2.SHAPE = "SINE"
+mod.LFO2 = "FILTER.CUTOFF +15"
+LFO3.RATE = "1.1"  # 7
+LFO3.SHAPE = "RANDOM"
+mod.LFO3 = "PITCH.FINE +3"
+mod.VEL = "FILTER.CUTOFF +20, OP_C.LEVEL +10"
+mod.NOTE = "OP_C.LEVEL -40"
+OUT.SEND2 = "0.25"  # 32
+OUT.SEND3 = "0.18"  # 23
+OUT.LEVEL = "1"  # 127
+trim = "-5.7"
+level = "by ear -21.7: a ringing ping with its delay; set low so the arp phrase and texture limit under 1 dB"

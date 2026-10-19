@@ -164,6 +164,8 @@ const MODE_GOLDENS: &[(&str, u64)] = &[
     ("fm_100", 0x8f8eca18b59af852),
     ("am_050", 0x2a982566b01fa105),
     ("am_100", 0xc963df042a8e7b3d),
+    ("max_050", 0x1831da0c4eb7b178),
+    ("max_100", 0x884d5c6f119105ce),
     ("phas_050", 0x6a9a5783df5824c8),
     ("phas_100", 0x3ae42e0f39f1e69b),
 ];
@@ -198,6 +200,15 @@ fn fm_scope_reads_osc_1_through_osc_2() {
 fn am_scope_scales_osc_1_by_osc_2() {
     assert_eq!(mix(VaMode::Am, 0.0), mix(VaMode::Mix, 0.0));
     assert_ne!(mix(VaMode::Am, 1.0), mix(VaMode::Mix, 0.0));
+}
+
+/// MAX's scope is the plain mix at BLEND 0 and rides above it at BLEND 1
+/// (the larger of the two is never below their mean).
+#[test]
+fn max_scope_rises_from_the_mix() {
+    let (lo, hi) = (mix(VaMode::Max, 0.0), mix(VaMode::Max, 1.0));
+    assert_ne!(lo, hi);
+    assert_eq!(lo, mix(VaMode::Mix, 0.5));
 }
 
 /// PHASE's scope is OSC 1 bent by OSC 2: at BLEND 0 it is MIX's OSC 1
