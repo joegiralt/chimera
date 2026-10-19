@@ -515,7 +515,17 @@ fn sound_browser_title_names_the_part() {
         let mut fb = screen::Fb::new();
         let _ = fb.clear(theme::BG);
         let v = browser::BrowserView::Project;
-        browser::draw(&mut fb, &p, v, PartId::ALL[part], 0, 0, true, None);
+        browser::draw(
+            &mut fb,
+            &p,
+            v,
+            PartId::ALL[part],
+            0,
+            0,
+            true,
+            None,
+            chimera_core::ui::theme::TextSize::Normal,
+        );
         fb.px[..28 * 240].to_vec()
     };
     let (one, two) = (band(0), band(1));

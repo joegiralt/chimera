@@ -45,13 +45,13 @@ pub fn cell_texts(pool: &Pool) -> [Option<FmtBuf>; 6] {
     })
 }
 
-pub fn draw_cells<D>(d: &mut D, def: &BlockDef, pool: &Pool, top: i32)
+pub fn draw_cells<D>(d: &mut D, def: &BlockDef, pool: &Pool, top: i32, size: theme::TextSize)
 where
     D: DrawTarget<Color = Rgb565>,
 {
     for (i, text) in cell_texts(pool).iter().enumerate() {
         let Some(text) = text else {
-            components::cell(d, i, top, None);
+            components::cell(d, i, top, None, size);
             continue;
         };
         let slot = &def.params[i];
@@ -65,12 +65,12 @@ where
             look: components::Look::Live,
             motion: None,
         };
-        components::cell(d, i, top, Some(&cell));
+        components::cell(d, i, top, Some(&cell), size);
     }
 }
 
 /// `USED 64%`, its arc the same share.
-pub fn draw_focus<D>(d: &mut D, pool: &Pool)
+pub fn draw_focus<D>(d: &mut D, pool: &Pool, size: theme::TextSize)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -86,6 +86,7 @@ where
         },
         components::Look::Live,
         None,
+        size,
     );
 }
 

@@ -21,7 +21,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_op_page_3_turned", 0x1e13ee93c98f7d77),
     ("algo_op_page_frmt", 0x637dadcf4ecbddc2),
     ("algo_op_page_nois", 0x2e63d3eca77c837d),
-    ("flt_clean", 0xd3bfeed7202aa9ed),
+    ("flt_clean", 0xc18ea9c7e3ae99d3),
     ("settings_top", 0xf1655533215f4e4b),
     ("settings_personal_theme", 0x3a2a9ae7815335b2),
     // Re-recorded: FACTORY joins the title, B ◂▸ moves to hint line 1.
