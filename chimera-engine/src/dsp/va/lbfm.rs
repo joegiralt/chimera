@@ -34,13 +34,10 @@ pub fn loop_b(blend: f32, wave: f32) -> f32 {
 }
 
 /// The closed form's coefficient for feedback `b` (paper eq. 26),
-/// `(√(1 − b²) − 1)/b`: negative for `b > 0`, `−b/2` near 0.
+/// `(√(1 − b²) − 1)/b = −b/(1 + √(1 − b²))`: negative for `b > 0`, `−b/2`
+/// near 0, with no cancellation.
 pub fn b0_of(b: f32) -> f32 {
-    if b.abs() < 1e-4 {
-        -0.5 * b
-    } else {
-        (sqrt(1.0 - b * b) - 1.0) / b
-    }
+    -b / (1.0 + sqrt(1.0 - b * b))
 }
 
 /// The largest `|b0|` at `inc` cycles a sample: harmonic `k` is
@@ -56,15 +53,26 @@ pub fn b0_cap(inc: f32) -> f32 {
     }
 }
 
-/// One sample at `phase` (cycles): `Re z0 − b0`, DC-free, scaled to RMS
-/// `R`.
+/// The output scale for `b0` (`|b0| < 1`): `R·√2/√(1 − b0²)`, RMS `R`.
 #[inline(always)]
+pub fn scale_of(b0: f32) -> f32 {
+    R * core::f32::consts::SQRT_2 / sqrt(1.0 - b0 * b0)
+}
+
+/// One sample at `phase` (cycles), `|b0| < 1`: `Re z0 − b0`, DC-free,
+/// scaled to RMS `R`.
 pub fn lbfm(phase: f32, b0: f32) -> f32 {
+    lbfm_at(phase, b0, scale_of(b0))
+}
+
+/// `lbfm` with `scale = scale_of(b0)` given (it ramps per block).
+#[inline(always)]
+fn lbfm_at(phase: f32, b0: f32, scale: f32) -> f32 {
     // cos 2πφ, folded into psin's range
     let c = -psin(0.25 - (phase - 0.5).abs());
     let b2 = 1.0 + b0 * b0;
     let re = (2.0 * b0 + b2 * c) / (b2 + 2.0 * b0 * c);
-    (re - b0) * (R * core::f32::consts::SQRT_2 / sqrt(1.0 - b0 * b0))
+    (re - b0) * scale
 }
 
 /// `N` samples of one oscillator into `out`: the clock advances
@@ -83,8 +91,12 @@ pub fn render_loop<const N: usize, const MARKS: bool>(
 ) {
     let (mut p, mut j) = (*phase, *jit);
     let ((mut b, db), (mut ic, di)) = (b0, inc);
+    // the scale ramps with b0, one sqrt a block
+    let mut sc = scale_of(b);
+    let dsc = (scale_of(b + db * N as f32) - sc) * (1.0 / N as f32);
     for (o, m) in out.iter_mut().zip(mk.iter_mut()) {
         b += db;
+        sc += dsc;
         ic += di;
         let step = ic * j;
         p += step;
@@ -97,7 +109,7 @@ pub fn render_loop<const N: usize, const MARKS: bool>(
         if MARKS {
             *m = [w, w];
         }
-        *o = lbfm(p, b);
+        *o = lbfm_at(p, b, sc);
     }
     *phase = p;
     *jit = j;

@@ -255,31 +255,46 @@ fn the_new_words_fit() {
 /// the value font, and its ink stays clear of the scope's box.
 #[test]
 fn a_long_mode_name_reads_small_beside_the_scope() {
+    const GAP: usize = components::GAUGE_GAP as usize;
     let gauge = Gauge::VaMix(VaMix::from_set([0.0; 6]));
     assert_eq!(components::layout("LOOPFM", &gauge), Layout::SmallBeside);
     assert_eq!(components::layout("MIX", &gauge), Layout::WithGauge);
-    let (mut text, mut both) = (Fb::new(), Fb::new());
-    let call = |fb: &mut screen::Fb, g| {
-        components::focus_band(
-            fb,
-            "MODE",
-            "LOOPFM",
-            g,
-            chimera_core::ui::components::Look::Live,
-            None,
-            theme::TextSize::Normal,
-        )
-    };
-    call(&mut text, Gauge::None);
-    call(&mut both, components::fit_gauge("LOOPFM", gauge));
-    let left = theme::SCREEN_W - theme::MARGIN_X - theme::VA_MIX_W;
-    // the band's value row, left of the scope: the same pixels both ways
-    // once the large numerals are not drawn: here, the scope drew
-    let drew = (theme::WAVE_Y..theme::FOCUS_BOTTOM).any(|y| {
-        (left..left + theme::VA_MIX_W)
-            .any(|x| both.px[y as usize * W + x as usize] != text.px[y as usize * W + x as usize])
-    });
-    assert!(drew, "the scope is kept");
+    let mut both = Fb::new();
+    components::focus_band(
+        &mut both,
+        "MODE",
+        "LOOPFM",
+        components::fit_gauge("LOOPFM", gauge),
+        chimera_core::ui::components::Look::Live,
+        None,
+        theme::TextSize::Normal,
+    );
+    let mut scope = Fb::new();
+    components::draw_gauge(&mut scope, gauge);
+    let left = (theme::SCREEN_W - theme::MARGIN_X - theme::VA_MIX_W) as usize;
+    let rows = theme::FOCUS_VALUE_Y as usize..theme::FOCUS_BOTTOM as usize;
+    for invert in [false, true] {
+        let p = palette(&ThemeSettings {
+            invert,
+            ..ThemeSettings::DEFAULT
+        });
+        let bg = p.map_raw(0);
+        let ink = |fb: &Fb, x: usize, y: usize| p.map_raw(fb.px[y * W + x]) != bg;
+        let mut text = 0;
+        for y in rows.clone() {
+            for x in 0..W {
+                let t = ink(&both, x, y) && !ink(&scope, x, y);
+                // the text's ink: never in the gap or over the scope
+                assert!(!(t && x + GAP > left), "invert {invert}: ink at ({x}, {y})");
+                text += usize::from(t);
+            }
+        }
+        assert!(text > 100, "the word is drawn: {text}");
+        let drew = rows
+            .clone()
+            .any(|y| (left..W).any(|x| ink(&both, x, y) && ink(&scope, x, y)));
+        assert!(drew, "the scope is kept");
+    }
 }
 
 /// Every value the VA glyphs' params show ends before their gauge.

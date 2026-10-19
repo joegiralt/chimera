@@ -33,9 +33,10 @@ Issue #613 asks for one VA MODE where turning BLEND mixes OSC 1 and OSC 2 while 
 - A pitch above about F6 loses loop depth (`b0` capped), never aliasing.
 - The scope word may read in the value font beside the glyph (`LOOPFM`); no other page changes.
 - Flash: `just firmware-orbit`, bank 1 free 51,724 B before, 48,156 B after (−3,568 B: two `render_loop` instances, the closed form, the `b0` mapping and cap, the scope and the layout fallback). Above the owner's ~1.5 KB rule: the controller decides whether LOOPFM goes behind the bank-2 door.
+- WAVE's glyph still draws the oscillator shape under LOOPFM, although WAVE is the loop depth there: follow-up #667.
 - The bench gains a `LOOPFM` row (BLEND 1, WAVE default); its unit reading is pending.
 
 ## Sources
-- Smyth, "Loopback Frequency Modulation Using a Time-Varying Delay Line", DAFx-26, paper 36 (CC-BY 4.0): §2.2 (eq. 11, 12), §2.4 (the closed form, eq. 25–26); credited in `THIRD_PARTY.md` and `lbfm.rs`'s `PROVENANCE`. Our own Rust.
+- Tamara Smyth, "Loopback Frequency Modulation Using a Time-Varying Delay Line", DAFx-26, paper 36 (CC BY 4.0, https://creativecommons.org/licenses/by/4.0/; https://www.dafx.de/paper-archive/2026/papers/DAFx26_paper_36.pdf): §2.2 (eq. 11, 12), §2.4 (the closed form, eq. 25–26); credited in `THIRD_PARTY.md` and `lbfm.rs`'s `PROVENANCE`. Our own Rust.
 - The plan: `docs/superpowers/plans/2026-10-19-va-modes.md` (Tasks 13 and 14); ruling R3, R7 (private notes).
 - ADR 0118 point 9 (the count), ADR 0158 (the read phase and the clock), ADR 0159 (the scope's per-point dispatch), ADR 0040 (six voices on rev Y).
