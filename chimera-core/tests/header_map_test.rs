@@ -84,7 +84,7 @@ fn header_names_context_and_page() {
     let p1 = At::sound(0);
     assert_eq!(texts(p1), ("PART 1 · SOUND".into(), "ALGORITHM".into()));
     assert_eq!(
-        texts(p1.at(3, 0)),
+        texts(p1.at(2, 0)),
         ("PART 1 · SOUND".into(), "FILTER".into())
     );
     let m2 = At::mix(1);
@@ -283,7 +283,7 @@ fn nodes_spread_over_the_line_and_a_single_node_is_centred() {
 
 #[test]
 fn current_block_is_an_accent_pill_others_are_rings() {
-    let flt = At::sound(0).at(3, 0); // FLT of OSC ALG DRV FLT FLD MOD
+    let flt = At::sound(0).at(2, 0); // FLT of ALG OSC FLT AMP MOD
     let mut fb = Fb::new();
     dungeon_map::draw(
         &mut fb,
@@ -293,7 +293,7 @@ fn current_block_is_an_accent_pill_others_are_rings() {
         Pages::Stack,
         0,
     );
-    let (pill, other) = (node_x(3, 6), node_x(0, 6));
+    let (pill, other) = (node_x(2, 5), node_x(0, 5));
     assert_eq!(
         fb.at(pill - 14, theme::MAP_LINE_Y),
         theme::ACCENT,
@@ -312,7 +312,7 @@ fn current_block_is_an_accent_pill_others_are_rings() {
 
 #[test]
 fn sub_pages_hang_under_the_pill_with_the_current_one_lit() {
-    let env = At::sound(0).at(5, 1); // MOD: MOD, ENV, LFO
+    let env = At::sound(0).at(4, 1); // MOD: MOD, ENV, LFO
     let mut fb = Fb::new();
     dungeon_map::draw(
         &mut fb,
@@ -322,7 +322,7 @@ fn sub_pages_hang_under_the_pill_with_the_current_one_lit() {
         Pages::Stack,
         0,
     );
-    let x = node_x(5, 6) - 8;
+    let x = node_x(4, 5) - 8;
     let lit_row = theme::BRANCH_START_Y + theme::BRANCH_LINE_HEIGHT + theme::BRANCH_LINE_HEIGHT / 2;
     assert_eq!(fb.at(x, lit_row), theme::ACCENT, "ENV lit");
     let first_row = theme::BRANCH_START_Y + theme::BRANCH_LINE_HEIGHT / 2;

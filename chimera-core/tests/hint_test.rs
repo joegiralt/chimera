@@ -14,8 +14,8 @@ use chimera_core::dsp::chorus::{self, ChorusMode};
 use chimera_core::dsp::reverb::ReverbType;
 use chimera_core::orbit::RingIdx;
 use chimera_core::orbit::scene::Target;
+use chimera_core::params::OutParams;
 use chimera_core::params::ParamSnapshot;
-use chimera_core::params::{FolderParams, OutParams};
 use chimera_core::project::PartId;
 use chimera_core::ui::block_def::BlockDef;
 use chimera_core::ui::block_registry as reg;
@@ -234,7 +234,7 @@ fn the_matrix_hint_follows_the_cursors_route() {
 #[test]
 fn route_knobs_name_the_delete() {
     use chimera_core::dsp::filter::FilterKind;
-    use chimera_core::ui::block_registry::{FILTER, FILTER_MOD};
+    use chimera_core::ui::block_registry::FILTER_MOD;
     let mut ui = ui_for("flt_mod_clean");
     // A knob: its page, its slot and its label.
     type Knob = (&'static BlockDef, usize, &'static str);
@@ -242,19 +242,19 @@ fn route_knobs_name_the_delete() {
         (
             FilterKind::Svf,
             &[
-                (&FILTER, 4, "FM1"),
-                (&FILTER, 5, "FM2"),
-                (&FILTER_MOD, 1, "FM3"),
-                (&FILTER_MOD, 3, "QM"),
+                (&FILTER_MOD, 0, "FM1"),
+                (&FILTER_MOD, 1, "FM2"),
+                (&FILTER_MOD, 2, "FM3"),
+                (&FILTER_MOD, 4, "QM"),
             ],
         ),
         (
             FilterKind::K2040,
             &[
-                (&FILTER, 3, "ENV AMT"),
-                (&FILTER, 4, "KEYBD"),
-                (&FILTER_MOD, 1, "FM3"),
-                (&FILTER_MOD, 3, "QM"),
+                (&FILTER_MOD, 0, "ENV AMT"),
+                (&FILTER_MOD, 1, "KEYBD"),
+                (&FILTER_MOD, 2, "FM3"),
+                (&FILTER_MOD, 4, "QM"),
             ],
         ),
     ];
@@ -607,7 +607,7 @@ fn source_hints_fit() {
 }
 
 fn out_hint(block: BlockRef, id: ParamId, ctx: &SlotCtx) -> Hint {
-    let def = &reg::FOLDER;
+    let def = &reg::AMP;
     let i = (0..def.params.len())
         .find(|&i| view(def, i, ctx).addr() == Some(ParamAddr::new(block, id)))
         .expect("cell on AMP");
@@ -647,22 +647,15 @@ fn chorus_hint_names_the_mode() {
     );
 }
 
-/// SYM is AMP's next page: EDIT ▾ under STACK, SEQ ▸ under ROW (ADR 0145).
+/// AMP has no next page since SYM left with the fold (ADR 0155): VEL
+/// hints none, under either PAGES.
 #[test]
-fn fold_vel_mix_hint_sym() {
+fn vel_hints_no_sym() {
     use chimera_core::ui::theme_settings::Pages;
-    for (pages, want) in [
-        (Pages::Stack, &[Gesture("EDIT ▾", "SYM")]),
-        (Pages::Row, &[Gesture("SEQ ▸", "SYM")]),
-    ] {
+    for pages in [Pages::Stack, Pages::Row] {
         let c = ctx0().on_pages(pages);
-        for (b, p) in [
-            (BlockRef::Folder, FolderParams::FOLD),
-            (BlockRef::Out, OutParams::VCA_VEL),
-            (BlockRef::Folder, FolderParams::MIX),
-        ] {
-            assert_eq!(out_hint(b, p, &c), &want[..], "{pages:?}");
-        }
+        let h = out_hint(BlockRef::Out, OutParams::VCA_VEL, &c);
+        assert!(h.iter().all(|g| g.1 != "SYM"), "{pages:?}: {h:?}");
     }
 }
 
@@ -678,7 +671,6 @@ fn hints_draw() {
         c.chorus = ChorusMode::from_u8(i);
         all.push(out_hint(BlockRef::Out, OutParams::SEND1, &c));
     }
-    all.push(out_hint(BlockRef::Folder, FolderParams::FOLD, &c));
     for h in all {
         for g in h {
             assert!(
@@ -709,7 +701,7 @@ fn focus_hint_is(ui: &UiState, want: Hint) -> bool {
 #[test]
 fn chorus_send_hint_follows_the_project_chorus() {
     let amp = |ui: &mut UiState| {
-        screen::plus(ui, 4);
+        screen::plus(ui, 3);
         feed(ui, Input::turn(A, 1)); // the CHORUS cell
     };
     let sends = |ui: &mut UiState| {
@@ -737,7 +729,7 @@ const LEARN: Gesture = Gesture("MIX + SEQ", "LEARNS A CC");
 
 /// Every mappable cell's hint offers MIX + SEQ's learn (MIDI map spec
 /// § 4) but where the cell's own gesture leaves it no room (REVERB ▸,
-/// CHORUS ▸, EDIT ▾ SYM), every other cell's never, and each fits, under
+/// CHORUS ▸), every other cell's never, and each fits, under
 /// every reverb TYPE and chorus MODE.
 #[test]
 fn mappable_cells_hint_learn() {

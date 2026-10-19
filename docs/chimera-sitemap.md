@@ -28,22 +28,31 @@ SETTINGS › PERSONALIZE › CHAIN MAP › PAGES picks ROW or STACK.
 The chain follows the Part's engine. Every chain ends in MOD, and FLT and AMP are shared.
 
 ```
-ALGO    ALG ── OSC ── DRV ── FLT ── AMP ── MOD
+ALGO    ALG ── OSC ── FLT ── AMP ── MOD
          └ PIT  └ CRS … FBK (12), OP1 … OP6 (6)
                  (a formant operator adds FRM first)
 
 MODAL   EXC ── RES ── FLT ── AMP ── MOD
                 └ MDL2, PIT
 
-VA      VA ── DRV ── FLT ── AMP ── MOD
+VA      VA ── FLT ── AMP ── MOD
         └ OSC 1, OSC 2, PIT
 
-shared  FLT └ FMD (FILTER MOD)
-        AMP └ SYM
+shared  FLT └ FMD (FILTER MOD), FX
+        AMP
         MOD   MTX (matrix) └ E1 E2 E3, SPD, L1 L2 L3
 ```
 
-TAPE has a chain in the code (SRC, DECK with its model page and PIT, DRV, FLT, AMP, MOD). In 0.1.0 and until it ships, TAPE rows in the Sound browser read COMING SOON and don't load.
+TAPE has a chain in the code (SRC, DECK with its model page and PIT, FLT, AMP, MOD). In 0.1.0 and until it ships, TAPE rows in the Sound browser read COMING SOON and don't load.
+
+### FLT and AMP
+
+| Page | Cells |
+|---|---|
+| FLT | TYPE (the filter's kind) · MODE · FX · PLACE · FREQ · Q. On the 2040: TYPE · VOICE · FX · PLACE · CUTOFF · RES, and the TYPE readout names its one mode (4-POLE LP) |
+| FMD | FM1 · FM2 · FM3 · FM3 IN · QM · QM IN. On the 2040: ENV AMT · KEYBD · FM3 · FM3 IN · QM · QM IN |
+| FX | INPUT (the filter's input level) · the FX type's three pots · MIX. SOFT: DRIVE · TONE · LEVEL. FOLD: FOLD · SYMMETRY · LEVEL. OFF: dashes, MIX dimmed |
+| AMP | CHORUS · DELAY · REVERB (the three sends) · VEL (the VCA's velocity) |
 
 ### Pages that draw the whole band
 

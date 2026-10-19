@@ -1,4 +1,5 @@
-//! FLD / VCA (filter-routing spec § 5, § UI "AMP").
+//! AMP: the sends and VCA VEL (filter-routing spec § 5; the fold left for
+//! the FX slot, ADR 0155).
 
 mod screen;
 
@@ -7,7 +8,7 @@ use chimera_core::modulation::{FixedCol, ModSource};
 use chimera_core::params::{EngineType, OutParams};
 use chimera_core::preset::Sound;
 use chimera_core::project::PartId;
-use chimera_core::ui::block_registry::FOLDER;
+use chimera_core::ui::block_registry::AMP;
 use chimera_core::ui::nav::chain_def_for;
 use chimera_core::ui::{PrimeStatus, UiState, view};
 use chimera_hal::{ButtonId, EncoderId};
@@ -19,9 +20,9 @@ const VEL: ParamAddr = ParamAddr::new(BlockRef::Out, OutParams::VCA_VEL);
 fn every_part_chain_has_amp_last_before_mod() {
     for ct in EngineType::ALL {
         let blocks = chain_def_for(ct).blocks;
-        assert_eq!(blocks[blocks.len() - 2].def.id, FOLDER.id, "{ct:?}");
+        assert_eq!(blocks[blocks.len() - 2].def.id, AMP.id, "{ct:?}");
     }
-    assert_eq!((FOLDER.name, FOLDER.short), ("Fold / VCA", "AMP"));
+    assert_eq!((AMP.name, AMP.short), ("Amp", "AMP"));
 }
 
 #[test]
@@ -36,7 +37,7 @@ fn vel_is_dimmed_until_a_vca_route_exists() {
 
 fn on_amp() -> UiState {
     let mut ui = UiState::new();
-    for _ in 0..4 {
+    for _ in 0..3 {
         feed(&mut ui, Input::press(ButtonId::Plus));
     }
     ui
@@ -90,8 +91,8 @@ fn the_cells_key_carries_vels_dimming() {
 
 #[test]
 fn amp_rows() {
-    let got: Vec<_> = (0..6).map(|i| FOLDER.params[i].label()).collect();
-    assert_eq!(got, ["CHORUS", "DELAY", "REVERB", "FOLD", "VEL", "MIX"]);
+    let got: Vec<_> = (0..6).map(|i| AMP.params[i].label()).collect();
+    assert_eq!(got, ["CHORUS", "DELAY", "REVERB", "--", "VEL", "--"]);
 }
 
 /// AMP's cell 2 and the mixer's SENDS cell 2 are one address.
@@ -102,36 +103,25 @@ fn amp_and_sends_are_one_value() {
     use chimera_core::ui::block_registry::SENDS;
     use chimera_core::ui::part_page;
     let mut p = ParamSnapshot::default();
-    part_page::apply_encoder(&FOLDER, 2, 3, &mut p, &mut Op::A);
+    part_page::apply_encoder(&AMP, 2, 3, &mut p, &mut Op::A);
     assert_eq!(part_page::read_values(&SENDS, &p, Op::A)[2], 3.0 / 128.0);
 }
 
+/// No sub-page: SYM went with the fold.
 #[test]
-fn sym_is_one_edit_down() {
-    use chimera_core::addr::Op;
-    use chimera_core::params::FolderParams;
-    use chimera_core::params::ParamSnapshot;
-    use chimera_core::ui::block_def::slot_addr;
-    use chimera_core::ui::view::SlotCtx;
-    let ctx = SlotCtx::read(&ParamSnapshot::default(), Op::A);
-    let mut seen = 0;
+fn amp_has_no_sub_pages() {
     for ct in EngineType::ALL {
         let c = chain_def_for(ct);
-        for b in c.blocks.iter().filter(|b| b.def.id == FOLDER.id) {
-            seen += 1;
-            assert_eq!(b.sub_page_count(), 2, "{ct:?}");
-            assert_eq!(b.active_def(1).id, 98, "{ct:?}");
-            let sym = ParamAddr::new(BlockRef::Folder, FolderParams::SYMMETRY);
-            assert_eq!(slot_addr(b.active_def(1), 0, &ctx), Some(sym), "{ct:?}");
+        for b in c.blocks.iter().filter(|b| b.def.id == AMP.id) {
+            assert_eq!(b.sub_page_count(), 0, "{ct:?}");
         }
     }
-    assert!(seen >= 4);
 }
 
 #[test]
 fn labels_fit() {
     use chimera_core::ui::{draw, theme};
-    for s in ["CHORUS", "DELAY", "REVERB", "SYM"] {
+    for s in ["CHORUS", "DELAY", "REVERB"] {
         let w = draw::text_width(&theme::FONT_LABEL, s, theme::LABEL_TRACKING);
         assert!(w <= theme::CELL_BAR_W, "{s} {w}");
     }

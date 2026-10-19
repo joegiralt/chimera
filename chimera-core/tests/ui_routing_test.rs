@@ -1,8 +1,9 @@
 //! Priming mod destinations from pages (spec §5, Review Focus 1 and 5).
 
 use chimera_core::addr::{BlockRef, ParamAddr};
+use chimera_core::dsp::voice_fx::params::VoiceFxParams as Fx;
 use chimera_core::modulation::{CUTOFF, FixedCol};
-use chimera_core::params::{DriveParams, FilterParams};
+use chimera_core::params::FilterParams;
 use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
 use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
@@ -46,19 +47,15 @@ fn press(ui: &mut UiState, id: ButtonId) {
     ui.handle_input(&MockControls::new().button(id, ButtonState::Pressed));
 }
 
-/// Plus ×2 from a Part's home reaches the Drive page (DRIVE, TONE, MIX).
-fn to_drive(ui: &mut UiState) {
+/// Plus ×2 from a Part's home reaches FLT; FX one detent up to SOFT, then
+/// Edit ×2 reaches FLT › FX (INPUT, DRIVE, TONE, LEVEL, MIX). INPUT on A,
+/// TONE on C and LEVEL on D are registry columns (DRIVE is the fixed FX).
+fn to_fx(ui: &mut UiState) {
     for _ in 0..2 {
         press(ui, ButtonId::Plus);
     }
-}
-
-/// Plus ×3 from a Part's home reaches Filter, then Edit reaches its
-/// FLT › MODE sub-page (MODE, DRIVE).
-fn to_filter_mode(ui: &mut UiState) {
-    for _ in 0..3 {
-        press(ui, ButtonId::Plus);
-    }
+    ui.handle_input(&MockControls::new().encoder(EncoderId::C, 1));
+    press(ui, ButtonId::Edit);
     press(ui, ButtonId::Edit);
 }
 
@@ -92,10 +89,10 @@ fn unprime_slot(ui: &mut UiState, enc: EncoderId) {
     );
 }
 
-/// Plus x3 from the Drive page reaches the MOD node, its home the matrix;
-/// Minus x3 returns.
+/// Plus x2 from FLT › FX reaches the MOD node, its home the matrix;
+/// Minus x2 returns to FLT's front, and `back_to_fx` down to FLT › FX.
 fn enter_matrix(ui: &mut UiState) {
-    for _ in 0..3 {
+    for _ in 0..2 {
         press(ui, ButtonId::Plus);
     }
     assert_eq!(
@@ -107,9 +104,13 @@ fn enter_matrix(ui: &mut UiState) {
     );
 }
 fn leave_matrix(ui: &mut UiState) {
-    for _ in 0..3 {
+    for _ in 0..2 {
         press(ui, ButtonId::Minus);
     }
+}
+fn back_to_fx(ui: &mut UiState) {
+    press(ui, ButtonId::Edit);
+    press(ui, ButtonId::Edit);
 }
 
 fn primed(ui: &UiState) -> Vec<ParamAddr> {
@@ -122,34 +123,31 @@ fn primed(ui: &UiState) -> Vec<ParamAddr> {
 
 #[test]
 fn priming_on_a_part_page_registers_its_address() {
-    let mut ui = stack_ui(); // Part 1, Drive page
-    to_drive(&mut ui);
-    prime_slot_0(&mut ui);
-    assert_eq!(
-        primed(&ui),
-        [ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE)]
-    );
+    let mut ui = stack_ui(); // Part 1, FLT › FX
+    to_fx(&mut ui);
+    prime_slot(&mut ui, EncoderId::C);
+    assert_eq!(primed(&ui), [ParamAddr::new(BlockRef::VoiceFx, Fx::P2)]);
     let reg = &ui.project().part(PartId::ALL[0]).sound.dest_registry;
     // The spelling a factory Source's route gets too (`dest_label`).
-    assert_eq!(reg.get(0).unwrap().label_str(), "DRV DRIV");
+    assert_eq!(reg.get(0).unwrap().label_str(), "FX SHAPE");
     assert_eq!(ui.mod_state().num_dests(), 1);
 }
 
-/// Review fix round 1: LEVEL lives on FLT › MOD, whose own short is "FMD",
-/// not the filter's tag. `dest_label` keys its prefix off the address's
-/// block (`mod_grid::block_tag`), not the active page's short name, so
-/// priming it from the sub-page still tags it "FLT".
+/// Review fix round 1: LEVEL (INPUT) lives on FLT › FX, whose own short is
+/// "FX", not the filter's tag. `dest_label` keys its prefix off the
+/// address's block (`mod_grid::block_tag`), not the active page's short
+/// name, so priming it from the sub-page still tags it "FLT".
 #[test]
-fn priming_the_filter_level_from_flt_mode_tags_it_flt() {
+fn priming_the_filter_level_from_flt_fx_tags_it_flt() {
     let mut ui = stack_ui();
-    to_filter_mode(&mut ui);
-    prime_slot(&mut ui, EncoderId::A); // LEVEL (slot 0: LEVEL, FM3, FM3 IN, QM, QM IN, --)
+    to_fx(&mut ui);
+    prime_slot(&mut ui, EncoderId::A); // INPUT
     assert_eq!(
         primed(&ui),
         [ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL)]
     );
     let reg = &ui.project().part(PartId::ALL[0]).sound.dest_registry;
-    assert_eq!(reg.get(0).unwrap().label_str(), "FLT LEVE");
+    assert_eq!(reg.get(0).unwrap().label_str(), "FLT INPU");
 }
 
 /// Review Focus 1: priming on the Mixer (bound, not modulatable) or System
@@ -176,7 +174,7 @@ fn priming_on_legacy_page_registers_nothing() {
 #[test]
 fn priming_a_non_modulatable_param_is_refused() {
     let mut ui = stack_ui();
-    for _ in 0..5 {
+    for _ in 0..4 {
         press(&mut ui, ButtonId::Plus); // → MOD node
     }
     for _ in 0..5 {
@@ -216,10 +214,10 @@ fn algo_matrix_rows_are_the_eight_sources() {
     assert_eq!(ui.matrix_state.num_dests, 0, "the fixed four only");
 }
 
-/// From a Part's first page: Plus ×5 to the MOD node, its home the
+/// From a Part's first page: Plus ×4 to the MOD node, its home the
 /// matrix; encoder E sets the amount at the cursor (ENV → first dest).
 fn set_first_amount(ui: &mut UiState, delta: i8) {
-    for _ in 0..5 {
+    for _ in 0..4 {
         press(ui, ButtonId::Plus);
     }
     assert_eq!(
@@ -245,10 +243,10 @@ fn routes(ui: &UiState, part: usize) -> Vec<(ParamAddr, i8)> {
 /// writes Part 1's routes into it, and Part 1's amounts come back with it.
 #[test]
 fn switching_part_rebuilds_the_matrix_for_that_part() {
-    let drive = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
+    let drive = ParamAddr::new(BlockRef::VoiceFx, Fx::P2);
     let mut ui = stack_ui();
-    to_drive(&mut ui);
-    prime_slot_0(&mut ui); // Part 1: DRIVE
+    to_fx(&mut ui);
+    prime_slot(&mut ui, EncoderId::C); // Part 1: TONE
     press(&mut ui, ButtonId::B2);
     press(&mut ui, ButtonId::B1); // via Part 2: Part 1's home
     set_first_amount(&mut ui, 10); // E1 → CUTOFF
@@ -257,8 +255,8 @@ fn switching_part_rebuilds_the_matrix_for_that_part() {
     press(&mut ui, ButtonId::B2); // Part 2: nothing primed
     assert_eq!(ui.active_part, PartId::ALL[1]);
     assert_eq!(ui.matrix_state.num_dests, 0, "only the fixed columns");
-    to_drive(&mut ui);
-    ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1)); // TONE
+    to_fx(&mut ui);
+    ui.handle_input(&MockControls::new().encoder(EncoderId::D, 1)); // LEVEL
     ui.handle_input(
         &MockControls::new()
             .button(ButtonId::Mix, ButtonState::Held)
@@ -321,25 +319,25 @@ fn switching_part_rebuilds_the_matrix_for_that_part() {
 /// next navigation instead of landing on the Part's one real route.
 #[test]
 fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
-    let drive = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
-    let mix = ParamAddr::new(BlockRef::Drive, DriveParams::MIX);
+    let drive = ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL);
+    let mix = ParamAddr::new(BlockRef::VoiceFx, Fx::P3);
     let mut ui = stack_ui();
 
-    // Prime 3 destinations on Part 1 (DRIVE, TONE, MIX; columns 4, 5, 6
+    // Prime 3 destinations on Part 1 (INPUT, TONE, LEVEL; columns 4, 5, 6
     // after the fixed four) and move the cursor to column 6.
-    to_drive(&mut ui);
+    to_fx(&mut ui);
     prime_slot(&mut ui, EncoderId::A);
-    prime_slot(&mut ui, EncoderId::B);
     prime_slot(&mut ui, EncoderId::C);
+    prime_slot(&mut ui, EncoderId::D);
     enter_matrix(&mut ui);
     ui.handle_input(&MockControls::new().encoder(EncoderId::B, 6));
     assert_eq!(ui.matrix_state.sel_col, 6);
 
-    // Switch to Part 2, which has only the fixed four, then prime DRIVE.
+    // Switch to Part 2, which has only the fixed four, then prime INPUT.
     // Before the fix the cursor is still 6 here, past Part 2's last column;
-    // the switch clamps it to FOLD's column 3.
+    // the switch clamps it to FX's column 3.
     press(&mut ui, ButtonId::B2);
-    to_drive(&mut ui);
+    to_fx(&mut ui);
     prime_slot(&mut ui, EncoderId::A);
     assert_eq!(ui.matrix_state.num_dests, 1);
     assert_eq!(
@@ -348,11 +346,12 @@ fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
     );
 
     // Turn the amount encoder, leave the matrix, then prime a second
-    // destination (MIX) -- real navigation and encoder input throughout.
+    // destination (LEVEL) -- real navigation and encoder input throughout.
     enter_matrix(&mut ui);
     ui.handle_input(&MockControls::new().encoder(EncoderId::E, 50));
     leave_matrix(&mut ui);
-    prime_slot(&mut ui, EncoderId::C);
+    back_to_fx(&mut ui);
+    prime_slot(&mut ui, EncoderId::D);
 
     assert_eq!(ui.matrix_state.num_dests, 2);
     assert_eq!(
@@ -364,13 +363,13 @@ fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
     assert_eq!(
         ms.fixed_amount(0, FixedCol::Fx),
         50,
-        "ENV 1 → FOLD, under the cursor"
+        "ENV 1 → FX, under the cursor"
     );
 
     // Prime TONE: column 6, where Part 1's cursor stood, becomes real and
     // must start empty (no phantom amount or route).
-    let tone = ParamAddr::new(BlockRef::Drive, DriveParams::TONE);
-    prime_slot(&mut ui, EncoderId::B);
+    let tone = ParamAddr::new(BlockRef::VoiceFx, Fx::P2);
+    prime_slot(&mut ui, EncoderId::C);
     assert_eq!(ui.matrix_state.num_dests, 3);
     let ms = &ui.project().part(PartId::ALL[1]).sound.mod_state;
     assert_eq!(ms.dest(2), tone);
@@ -386,31 +385,32 @@ fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
 /// destination's `ParamAddr`, not its column position.
 #[test]
 fn un_priming_keeps_the_other_routes_own_amounts() {
-    let drive = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
-    let mix = ParamAddr::new(BlockRef::Drive, DriveParams::MIX);
+    let drive = ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL);
+    let mix = ParamAddr::new(BlockRef::VoiceFx, Fx::P3);
     let mut ui = stack_ui();
 
-    // Prime DRIVE (A), TONE (B), MIX (C) -- columns 4, 5, 6 after the
+    // Prime INPUT (A), TONE (C), LEVEL (D) -- columns 4, 5, 6 after the
     // fixed four.
-    to_drive(&mut ui);
+    to_fx(&mut ui);
     prime_slot(&mut ui, EncoderId::A);
-    prime_slot(&mut ui, EncoderId::B);
     prime_slot(&mut ui, EncoderId::C);
+    prime_slot(&mut ui, EncoderId::D);
     assert_eq!(ui.matrix_state.num_dests, 3);
 
     // Give each destination its own, distinct amount.
     enter_matrix(&mut ui);
     ui.handle_input(&MockControls::new().encoder(EncoderId::B, 4)); // -> col 4
-    ui.handle_input(&MockControls::new().encoder(EncoderId::E, 10)); // col 4: DRIVE +10
+    ui.handle_input(&MockControls::new().encoder(EncoderId::E, 10)); // col 4: INPUT +10
     ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1)); // -> col 5
     ui.handle_input(&MockControls::new().encoder(EncoderId::E, 20)); // col 5: TONE +20
     ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1)); // -> col 6
-    ui.handle_input(&MockControls::new().encoder(EncoderId::E, 30)); // col 6: MIX +30
+    ui.handle_input(&MockControls::new().encoder(EncoderId::E, 30)); // col 6: LEVEL +30
     assert_eq!(routes(&ui, 0).len(), 4);
 
-    // Un-prime TONE (B).
+    // Un-prime TONE (C).
     leave_matrix(&mut ui);
-    unprime_slot(&mut ui, EncoderId::B);
+    back_to_fx(&mut ui);
+    unprime_slot(&mut ui, EncoderId::C);
 
     assert_eq!(ui.matrix_state.num_dests, 2);
     assert_eq!(

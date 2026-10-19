@@ -42,7 +42,7 @@ fn chain_is_va_then_the_voice_chain() {
         .iter()
         .map(|b| b.map.unwrap_or(b.def.short))
         .collect();
-    assert_eq!(map, ["VA", "DRV", "FLT", "AMP", "MOD"]);
+    assert_eq!(map, ["VA", "FLT", "AMP", "MOD"]);
     assert_eq!((VA_CHAIN.home().node(), VA_CHAIN.home().sub()), (0, 0));
     let subs: Vec<u16> = VA_CHAIN.blocks[0].sub_pages.iter().map(|d| d.id).collect();
     assert_eq!(subs, [88, 89, PITCH.id]);

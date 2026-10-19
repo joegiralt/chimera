@@ -51,18 +51,19 @@ fn retired_filter_ids_have_no_spec() {
     }
 }
 
-/// Every type shows its MODE on exactly one FLT page (spec § 2, M6): FLT
-/// on CLEAN and DIRTY, FLT › MOD's last cell, fixed, on the 2040.
+/// MODE sits on FLT for every kind with a choice of modes; the 2040's
+/// one mode has no cell (KIND's readout names it, ADR 0155) and is on no
+/// FLT page.
 #[test]
-fn mode_is_on_one_flt_page() {
+fn mode_is_on_flt_where_it_can_change() {
     let mode = ParamAddr::new(BlockRef::Filter, FilterParams::MODE);
     for k in FilterKind::BUILT {
         let mut p = ParamSnapshot::default();
         p.filter.set_kind(k);
         let ctx = SlotCtx::read(&p, chimera_core::addr::Op::A);
         let on = |def| (0..6).any(|i| slot_addr(def, i, &ctx) == Some(mode));
-        assert!(on(&FILTER) != on(&FILTER_MOD), "{k:?}");
-        assert_eq!(on(&FILTER_MOD), k == FilterKind::K2040, "{k:?}");
+        assert_eq!(on(&FILTER), k != FilterKind::K2040, "{k:?}");
+        assert!(!on(&FILTER_MOD), "{k:?}");
     }
 }
 

@@ -240,7 +240,14 @@ impl Renderer {
                 let flt = &f.parts[f.active_part.index()].sound.params.filter;
                 let v = view::view(f.def, f.focus, &f.ctx);
                 let buf = value_text(f, f.focus, self.set[f.focus].target());
-                let readout = (v != View::Empty).then(|| (v.label(), buf.as_str()));
+                // KIND names a mode that has no cell: `TYPE · 4-POLE LP`.
+                use core::fmt::Write;
+                let mut label = FmtBuf::new();
+                let _ = match crate::ui::filter_panel::kind_note(flt.kind()) {
+                    Some(n) if v.addr() == Some(KIND) => write!(label, "{} · {n}", v.label()),
+                    _ => label.write_str(v.label()),
+                };
+                let readout = (v != View::Empty).then(|| (label.as_str(), buf.as_str()));
                 // The solid curve is the set value; modulation is the mark.
                 let at = |s: Option<usize>| s.map_or(0.0, |s| self.set[s].current());
                 viz::filter(
@@ -596,9 +603,19 @@ impl Renderer {
                 let live = f.focus as u32 | gr << 8 | led_key(f) << 16;
                 // The readout's text follows the target, not the eased value.
                 // FLT's curve is the set value: its modulation is `filter_mark`.
+                // The curve and the readout riding it move by less than a
+                // quantum as CUTOFF and RES ease in: key their exact values.
+                let (c, r) = match f.def.viz {
+                    VizType::FilterResponse => self.filter_slots(f),
+                    _ => (None, None),
+                };
+                let exact = |s: Option<usize>| s.map_or(0, |s| self.set[s].current().to_bits());
                 (
                     region::quantize_values(self.eased(f.def.viz)),
-                    region::fold_keys(live.into(), &[self.text_key(f, f.focus)]),
+                    region::fold_keys(
+                        live.into(),
+                        &[self.text_key(f, f.focus), exact(c), exact(r)],
+                    ),
                 )
             }
             PageLayout::Matrix => ([0; 6], 0),
@@ -1183,8 +1200,10 @@ fn strips_key(strips: &[viz::Strip], selected: usize) -> u32 {
 pub const MATRIX_AMOUNT_SLOT: usize = 4;
 
 /// Amount −127..127 as a 0..1 display value (0 at the centre).
-/// The filter LEVEL, whose cell carries the clip LED (the 2040's DRIVE).
+/// The filter LEVEL, whose cell (FLT › FX's INPUT) carries the clip LED.
 const LEVEL: ParamAddr = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::LEVEL);
+/// The filter KIND, whose readout names the 2040's mode.
+const KIND: ParamAddr = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::KIND);
 /// The LED's centre from the end of LEVEL's value, and above its baseline.
 const LED_DX: i32 = 7;
 const LED_RISE: i32 = 7;

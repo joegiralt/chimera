@@ -30,6 +30,7 @@ fn every_part_slot_resolves_to_a_spec() {
                 SlotBinding::Empty
                 | SlotBinding::SelectOp
                 | SlotBinding::FilterPanel(_)
+                | SlotBinding::FxPanel(_)
                 | SlotBinding::EnvPanel(..)
                 | SlotBinding::LfoPanel(..)
                 | SlotBinding::ModalPanel(..)
@@ -151,10 +152,10 @@ fn all_chains_holds_every_reachable_chain() {
 /// bindings (spec labels + the two plan-D6 overrides; plan D5 BODY fix).
 #[test]
 fn part_pages_display_like_before() {
-    use ValFmt::{Bi, Law, Names, Uni};
+    use ValFmt::{Law, Names, Uni};
     use chimera_core::dsp::modulator::EnvSpeed::Med;
     use chimera_core::dsp::modulator::law::Law::{Attack, Cutoff, DecRel, Hold, Pct};
-    let want: [(&BlockDef, [(&str, ValFmt); 6]); 8] = [
+    let want: [(&BlockDef, [(&str, ValFmt); 6]); 7] = [
         (
             &reg::MODAL_1,
             [
@@ -189,25 +190,14 @@ fn part_pages_display_like_before() {
             ],
         ),
         (
-            &reg::DRIVE,
-            [
-                ("DRIVE", Uni),
-                ("TONE", Bi),
-                ("MIX", Bi),
-                ("--", Uni),
-                ("--", Uni),
-                ("--", Uni),
-            ],
-        ),
-        (
-            &reg::FOLDER,
+            &reg::AMP,
             [
                 ("CHORUS", Uni),
                 ("DELAY", Uni),
                 ("REVERB", Uni),
-                ("FOLD", Uni),
+                ("--", Uni),
                 ("VEL", Uni),
-                ("MIX", Bi),
+                ("--", Uni),
             ],
         ),
         (
@@ -217,14 +207,17 @@ fn part_pages_display_like_before() {
                     "TYPE",
                     ValFmt::Names(&chimera_core::dsp::filter::KIND_NAMES),
                 ),
-                ("FREQ", Law(Cutoff)),
-                ("Q", Uni),
                 (
                     "MODE",
                     ValFmt::Names(chimera_core::dsp::filter::FilterKind::Svf.mode_labels()),
                 ),
-                ("FM1", ValFmt::Route),
-                ("FM2", ValFmt::Route),
+                (
+                    "FX",
+                    ValFmt::Names(&chimera_core::dsp::voice_fx::params::FxType::NAMES),
+                ),
+                ("PLACE", ValFmt::Names(&["PRE", "POST"])),
+                ("FREQ", Law(Cutoff)),
+                ("Q", Uni),
             ],
         ),
         (

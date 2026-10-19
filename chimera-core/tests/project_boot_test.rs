@@ -1050,7 +1050,7 @@ fn at_home(engine: EngineType) -> chimera_core::ui::nav::Location {
 
 /// From Part 1's home, PLUS to FLT.
 fn to_flt(ui: &mut UiState) {
-    for _ in 0..3 {
+    for _ in 0..2 {
         screen::feed(ui, screen::Input::press(chimera_hal::ButtonId::Plus));
     }
     assert_eq!(

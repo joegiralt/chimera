@@ -343,39 +343,39 @@ fn primed(ui: &UiState) -> Vec<chimera_core::addr::ParamAddr> {
     (0..reg.len()).map(|i| reg.get(i).unwrap().addr).collect()
 }
 
-/// Positive control: the drive page primes DRIVE. The filter page's
-/// cutoff is the permanent FREQ column: priming it registers nothing.
+/// Positive control: FLT › FX's INPUT primes the filter's LEVEL. The filter
+/// page's cutoff is the permanent FREQ column: priming it registers nothing.
 #[test]
 fn priming_on_main_page_registers_focused_param() {
     let mut ui = stack_ui();
     press(&mut ui, ButtonId::Plus);
-    press(&mut ui, ButtonId::Plus);
-    press(&mut ui, ButtonId::Plus); // node 3: Filter
-    ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1));
-    prime(&mut ui); // slot 1: cutoff
+    press(&mut ui, ButtonId::Plus); // node 2: Filter
+    ui.handle_input(&MockControls::new().encoder(EncoderId::E, 1));
+    prime(&mut ui); // slot 4: cutoff
     assert_eq!(primed(&ui), []);
     assert_eq!(
         ui.prime_status(),
         Some(chimera_core::ui::PrimeStatus::AlreadyRouted)
     );
-    press(&mut ui, ButtonId::Minus); // node 2: Drive
+    press(&mut ui, ButtonId::Edit);
+    press(&mut ui, ButtonId::Edit); // FLT › FX
     ui.handle_input(&MockControls::new().encoder(EncoderId::A, 1));
-    prime(&mut ui); // slot 0: drive
+    prime(&mut ui); // slot 0: INPUT
     assert_eq!(
         primed(&ui),
         [chimera_core::addr::ParamAddr::new(
-            chimera_core::addr::BlockRef::Drive,
-            chimera_core::params::DriveParams::DRIVE
+            chimera_core::addr::BlockRef::Filter,
+            chimera_core::params::FilterParams::LEVEL
         )]
     );
 }
 
-/// L1 (node 5, sub-page 5): slot 0 is LFO rate, which is not
+/// L1 (node 4, sub-page 5): slot 0 is LFO rate, which is not
 /// modulatable, so the registry refuses it.
 #[test]
 fn priming_on_the_lfo_sub_page_registers_nothing() {
     let mut ui = stack_ui();
-    for _ in 0..5 {
+    for _ in 0..4 {
         press(&mut ui, ButtonId::Plus);
     }
     for _ in 0..5 {

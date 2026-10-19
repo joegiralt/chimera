@@ -71,7 +71,7 @@ fn chain_opens_on_deck() {
         .iter()
         .map(|b| b.map.unwrap_or(b.def.short))
         .collect();
-    assert_eq!(shorts, ["SRC", "DECK", "DRV", "FLT", "AMP", "MOD"]);
+    assert_eq!(shorts, ["SRC", "DECK", "FLT", "AMP", "MOD"]);
     assert_eq!(TAPE_CHAIN.home().node(), 1);
     assert_eq!(TAPE_CHAIN.home().sub(), 0);
     assert!(core::ptr::eq(

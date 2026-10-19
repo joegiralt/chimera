@@ -420,28 +420,25 @@ fn mix_minus_in_library_clears_nothing() {
     assert_eq!(ui.project().pool().used(), used);
 }
 
-/// AMP's EDIT goes down to SYM and round again (sends spec § 3).
+/// FLT's EDIT goes down to MOD, then FX, and round again (ADR 0155).
 #[test]
-fn edit_on_amp_goes_to_sym_and_wraps() {
-    use chimera_core::ui::block_registry::{FOLDER, FOLDER_SYM};
+fn edit_on_flt_goes_to_mod_then_fx_and_wraps() {
+    use chimera_core::ui::block_registry::{FILTER, FILTER_FX, FILTER_MOD};
     let cx = cx(EngineType::Algo);
     let c = chain_def_for(EngineType::Algo);
     let n = (0..c.len())
-        .find(|&n| c.active_def(n, 0).is_some_and(|d| d.id == FOLDER.id))
+        .find(|&n| c.active_def(n, 0).is_some_and(|d| d.id == FILTER.id))
         .unwrap();
-    let (amp, sym) = (c.page(n, 0).unwrap(), c.page(n, 1).unwrap());
-    assert_eq!(c.active_def(n, 1).unwrap().id, FOLDER_SYM.id);
+    assert_eq!(c.active_def(n, 1).unwrap().id, FILTER_MOD.id);
+    assert_eq!(c.active_def(n, 2).unwrap().id, FILTER_FX.id);
+    let pages = [0, 1, 2, 0].map(|i| c.page(n, i).unwrap());
     let mut r = Recall::new();
-    let l = Location::pages(P[0], amp);
-    assert_eq!(
-        l.step(NavKey::Edit, &cx, &mut r),
-        Step::Go(Location::pages(P[0], sym))
-    );
-    let l = Location::pages(P[0], sym);
-    assert_eq!(
-        l.step(NavKey::Edit, &cx, &mut r),
-        Step::Go(Location::pages(P[0], amp))
-    );
+    for w in pages.windows(2) {
+        assert_eq!(
+            Location::pages(P[0], w[0]).step(NavKey::Edit, &cx, &mut r),
+            Step::Go(Location::pages(P[0], w[1]))
+        );
+    }
 }
 
 /// THEME's PAGES ROW (ADR 0145): the panel has EDIT left of SEQ, so EDIT

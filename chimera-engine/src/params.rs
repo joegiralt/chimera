@@ -138,9 +138,10 @@ pub static FILTER_SPECS: [ParamSpec; 8] = [
         Smoothing::KNOB,
     )
     .ident("RESO"),
+    // INPUT LEVEL (ADR 0155): the cell and column say INPUT.
     ParamSpec::continuous(
         12,
-        "LEVEL",
+        "INPUT LEVEL",
         ValFmt::Uni,
         0.0,
         1.0,
@@ -149,7 +150,8 @@ pub static FILTER_SPECS: [ParamSpec; 8] = [
         true,
         Smoothing::STAGE,
     )
-    .ident("LEVEL"),
+    .ident("LEVEL")
+    .short("INPUT"),
     // TYPE on screen; its ident stays KIND.
     ParamSpec::choice(
         6,

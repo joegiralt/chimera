@@ -651,22 +651,24 @@ fn matrix_edits_redraw_through_the_region_keys() {
         1,
         3
     ));
-    // MIX+PLUS on DRV's three knobs and FLT's C (Q, already a fixed
-    // column): seven columns, past the visible five, so the grid scrolls
-    // sideways.
+    // MIX+PLUS on FLT's Q (already a fixed column), then FLT › FX's INPUT
+    // and SOFT's TONE and LEVEL: seven columns, past the visible five, so
+    // the grid scrolls sideways.
     let prime = |ui: &mut chimera_core::ui::UiState, enc| {
         feed(ui, Input::turn(enc, 1));
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
     };
     let dests = ui.matrix_state.num_dests;
-    for _ in 0..3 {
-        feed(&mut ui, Input::press(ButtonId::Minus)); // → DRV
+    for _ in 0..2 {
+        feed(&mut ui, Input::press(ButtonId::Minus)); // → FLT
     }
-    for enc in [EncoderId::A, EncoderId::B, EncoderId::C] {
+    prime(&mut ui, EncoderId::F);
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // FX SOFT
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    feed(&mut ui, Input::press(ButtonId::Edit)); // → FLT › FX
+    for enc in [EncoderId::A, EncoderId::C, EncoderId::D] {
         prime(&mut ui, enc);
     }
-    feed(&mut ui, Input::press(ButtonId::Plus)); // → FLT
-    prime(&mut ui, EncoderId::C);
     for _ in 0..2 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // → MTX
     }
