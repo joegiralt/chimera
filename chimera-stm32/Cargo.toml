@@ -13,17 +13,18 @@ perf-probe = ["chimera-board/perf-probe"]
 # (`card-put`, ~7 KB), which no bench run needs, so ORBIT's areas fit.
 bench = ["perf-probe", "chimera-core/probe", "chimera-board/bench", "usb-console"]
 # ALGO's patches, the FX bus, the kernel and FORMANT's rows; its ELF is the one
-# `tools/loop_count.py` counts the kernel's loops on.
+# `tools/loop_count.py` counts the kernel's loops on. Built with `bank2`
+# (#654).
 bench-algo = ["bench", "midi-din", "chimera-core/span-count", "chimera-engine/demo-sounds"]
 # ROUTING: the matrix, filter types, taps and MODAL's rows.
 bench-routing = ["bench", "midi-din"]
 # MEMORY: sizes, a rebuild, MODAL's note-ons, the project CRC.
 bench-memory = ["bench", "midi-din"]
 # STRESS: NEW's Parts with every key down, and the runs' phases; ORBIT
-# plays in them with `orbit`. With `bank2` the reverb plays from bank 2
-# (ADR 0142): its A/B against this build's bank 1.
+# plays in them with `orbit`. Built with `bank2` (the reverb from bank 2,
+# ADR 0174): alone it doesn't fit FLASH (#654).
 bench-stress = ["bench", "midi-din"]
-# ORBIT: its block's cost and phases.
+# ORBIT: its block's cost and phases. Built with `bank2`, as ALGO is (#654).
 bench-orbit = ["bench", "midi-din", "orbit"]
 # TAPE COLD: each machine's cold-cache voice. It never plays MIDI; FLASH
 # (#507). Alone it keeps TAPE in bank 1 and doesn't fit FLASH (#506): build

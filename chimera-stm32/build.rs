@@ -74,8 +74,8 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     // The reverb's engines (ADR 0142): `Reverb::process`, the door's entry,
     // its TYPEs' modules and `run_loop`'s monomorphs, code and rodata (their
     // switch tables follow their names). Only with `bank2`: without it
-    // `Reverb::play` calls `process` in bank 1, where the bench's A/B
-    // (`bench-stress` against `bench-stress,bank2`) keeps it. TAPE's
+    // `Reverb::play` calls `process` in bank 1 (the desktop, the host
+    // tests, bench-routing and bench-memory). TAPE's
     // machine glyphs' raster too (ADR 0173: `tape_glyph::draw`, the door's
     // `render`), which `paint` calls in bank 1 without it.
     let reverb = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
