@@ -398,6 +398,7 @@ loom:
 test:
     cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils --features chimera-hal/testkit
     cargo test -p chimera-desktop --lib --tests
+    cargo test -p chimera-core --features master-tape --test screen_golden_test
     just test-fat-tools
 
 # The FAT layer checked by dosfstools (ADR 0048): mkfs.fat images must read

@@ -137,7 +137,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_amp", 0xf8fda68f81ea21f9),
     // The Mix chain's map loses its TAPE node without `master-tape`
-    // (ADR 0055); with it, the screens are as before.
+    // (ADR 0055); with it they have their own rows, run by `just test`.
     #[cfg(not(feature = "master-tape"))]
     ("mixer_part", 0xfd1a118204f19d77),
     // mixer_sends, mixer_out_p2 re-recorded: the sends are the Sound's OUT block (ADR 0123).
@@ -178,44 +178,44 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master_level", 0x33a39d11187d9bb1),
     #[cfg(feature = "master-tape")]
-    ("mixer_part", 0xfd1a118204f19d77),
+    ("mixer_part", 0x429ab992c626b285),
     #[cfg(feature = "master-tape")]
-    ("mixer_sends", 0x35e09ae3385236bb),
+    ("mixer_sends", 0xba83be0d8d177f8d),
     // DLY's branch hides REV's label it ran into (TAPE Task 15).
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay", 0xfbe0808a050ed002),
+    ("mixer_fx_delay", 0x498e957495d45875),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb", 0x9d9d0b61c361768c),
+    ("mixer_fx_reverb", 0xf884d95677bc4c9f),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_more", 0x7b25fe8ae4125c8c),
+    ("mixer_fx_reverb_more", 0x78bfe9ae1a6f8293),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall", 0x110a3c12bb55b53e),
+    ("mixer_fx_reverb_hall", 0x21c8e0e268a28611),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall_more", 0x733a41e95f057403),
+    ("mixer_fx_reverb_hall_more", 0x33e1535b46093a7c),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall_more2", 0x8bfbd6ba87c2ac03),
+    ("mixer_fx_reverb_hall_more2", 0xd48d23ad4d9a46dc),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate", 0x6da0632fff3b4421),
+    ("mixer_fx_reverb_gate", 0x505d2202f043580e),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate_more", 0x9c5959ebe27922a1),
+    ("mixer_fx_reverb_gate_more", 0xdc0bd1ce1ea6779a),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate_sync", 0x382b5c06de0836b8),
+    ("mixer_fx_reverb_gate_sync", 0xcb7bc913fa920663),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_bloom", 0x8bb0cf42db45e7a5),
+    ("mixer_fx_reverb_bloom", 0x0d7e76a3ba5578ea),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_bloom_more", 0x1cadf3eefa17fedb),
+    ("mixer_fx_reverb_bloom_more", 0xa267930e1d560034),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_char", 0xb3e9570b26525f00),
+    ("mixer_fx_delay_char", 0xb47f7ef56c42b2a7),
     #[cfg(feature = "master-tape")]
-    ("mixer_tape", 0xe4642868fa275a5c),
+    ("mixer_tape", 0x43381076b873ad98),
     #[cfg(feature = "master-tape")]
-    ("mixer_master", 0xaa7cc5f71d43600a),
+    ("mixer_master", 0x29929673ac6c7c44),
     #[cfg(feature = "master-tape")]
-    ("mixer_master_level", 0x33a39d11187d9bb1),
+    ("mixer_master_level", 0x041e07e545a86dfb),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_out_p2", 0xbbf4869671d1e56d),
     #[cfg(feature = "master-tape")]
-    ("mixer_out_p2", 0xbbf4869671d1e56d),
+    ("mixer_out_p2", 0x60429572e55d3aaf),
     ("algo_out_p3", 0x6a41c9fba77fd7fc),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
