@@ -201,7 +201,10 @@ release-bin:
 check-door-placed elf:
     #!/usr/bin/env bash
     set -euo pipefail
-    rust-nm -C {{elf}} | awk '/ [tT] .*(va::osc::door::|va::lbfm::render_loop|VaEngine>::render_loopfm)/ { n++; a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08180000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print "va::osc::door: nothing linked" > "/dev/stderr"; exit bad || !n }'
+    syms=$(rust-nm -C {{elf}})
+    for pat in 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm'; do
+        grep -E " [tT] .*$pat" <<< "$syms" | awk -v pat="$pat" '{ n++; a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08180000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print pat ": nothing linked" > "/dev/stderr"; exit bad || !n }'
+    done
 
 check-no-gate bin:
     #!/usr/bin/env bash

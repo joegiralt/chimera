@@ -1025,13 +1025,13 @@ fn out_of_range_values_clamp() {
 
 #[test]
 fn mode_scrolled_every_block_settles() {
-    // Six, as the duck swaps on every fourth block: the modes at the even
-    // places are the ones played (an odd count visits Sync and Fm at a
-    // swap, which clicks apart from LOOPFM).
+    // Six, as the duck swaps at blocks 1, 5, 9, ...: only the odd places
+    // play (an odd count would visit Sync and Fm at a swap and click
+    // 188%, with or without LOOPFM), so LOOPFM sits at an odd one.
     const SCROLL: [VaMode; 6] = [
         VaMode::Mix,
-        VaMode::Sync,
         VaMode::LoopFm,
+        VaMode::Ring,
         VaMode::Fm,
         VaMode::Am,
         VaMode::Max,
