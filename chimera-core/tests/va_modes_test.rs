@@ -344,3 +344,213 @@ fn leaving_fm_settles() {
         assert!(d <= lim, "{m0:?} → {m1:?}: {d} > {lim}");
     }
 }
+
+// ---- AM (#603) ----
+
+fn am(amount: f32) -> VaParams {
+    VaParams {
+        mode: VaMode::Am,
+        amount,
+        ..sine()
+    }
+}
+
+/// OSC 2 as a slow sine (8 Hz at note 24, CRSE2 −24): at BLEND 1 OSC 1's
+/// envelope dips to near 0 and never inverts, the product keeping OSC 1's
+/// sign.
+#[test]
+fn am_is_unipolar() {
+    let blocks = SR as usize / B;
+    let slow = VaParams {
+        coarse: [0, -24],
+        ..am(1.0)
+    };
+    let a = held(24, slow, blocks);
+    let one = held(
+        24,
+        VaParams {
+            mode: VaMode::Mix,
+            amount: 0.0,
+            ..slow
+        },
+        blocks,
+    );
+    let (mut low, mut flips) = (f32::MAX, 0);
+    for (&y, &x) in a.iter().zip(&one).skip(2 * B) {
+        if x.abs() > 0.05 {
+            low = low.min(y / x);
+            flips += usize::from(y * x < -1e-4);
+        }
+    }
+    println!("AM BLEND 1, 8 Hz: lowest gain {low:.4}, sign flips {flips}");
+    assert_eq!(flips, 0);
+    assert!((0.0..0.1).contains(&low), "{low}");
+}
+
+/// Unlike RING, AM keeps OSC 1's line: a fifth up, BLEND 1.
+#[test]
+fn am_sidebands_softer_than_ring() {
+    let f0 = hz_of(C4);
+    let blocks = 2 * SR as usize / B;
+    let fifth = VaParams {
+        coarse: [0, 7],
+        fine: [0.0, 1.955],
+        ..sine()
+    };
+    let line = |mode| {
+        let y = held(
+            C4,
+            VaParams {
+                mode,
+                amount: 1.0,
+                ..fifth
+            },
+            blocks,
+        );
+        let (re, im) = common::spectrum::fundamental(&y[y.len() - 32768..], SR as f32, f0);
+        20.0 * f64::from(re.hypot(im)).log10()
+    };
+    let alone = {
+        let y = held(
+            C4,
+            VaParams {
+                mode: VaMode::Mix,
+                amount: 0.0,
+                ..fifth
+            },
+            blocks,
+        );
+        let (re, im) = common::spectrum::fundamental(&y[y.len() - 32768..], SR as f32, f0);
+        20.0 * f64::from(re.hypot(im)).log10()
+    };
+    let (a, r) = (line(VaMode::Am) - alone, line(VaMode::Ring) - alone);
+    println!("carrier vs OSC 1 alone: AM {a:+.1} dB, RING {r:+.1} dB");
+    assert!(a.abs() <= 3.0, "{a}");
+    assert!(r <= -20.0, "{r}");
+}
+
+/// AM plays as loud as OSC 1 alone at every BLEND (saws, unrelated pitch
+/// and a fifth).
+#[test]
+fn am_level_matches_mix() {
+    let blocks = 2 * SR as usize / B;
+    for (coarse, fine) in [(0i8, 6.0), (7, 0.0), (12, 0.0)] {
+        for w in [0.0, SAW] {
+            let p = VaParams {
+                wave: [SAW, w],
+                coarse: [0, coarse],
+                fine: [0.0, fine],
+                ..sine()
+            };
+            let mix = rms(&held(
+                C4,
+                VaParams {
+                    mode: VaMode::Mix,
+                    amount: 0.0,
+                    ..p
+                },
+                blocks,
+            ));
+            for blend in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                let y = held(
+                    C4,
+                    VaParams {
+                        mode: VaMode::Am,
+                        amount: blend,
+                        ..p
+                    },
+                    blocks,
+                );
+                let db = 20.0 * (rms(&y) / mix).log10();
+                println!("CRSE2 {coarse} FINE2 {fine} WAVE2 {w:.2} BLEND {blend}: {db:+.2} dB");
+                assert!(
+                    db.abs() <= 1.5,
+                    "CRSE2 {coarse} WAVE2 {w} BLEND {blend}: {db}"
+                );
+            }
+        }
+    }
+}
+
+/// C5 over the lattice: wherever MIX at the same BLEND passes −45 dB, AM
+/// does (the product of two band-limited waves adds lines at |f1 ± f2|).
+#[test]
+fn am_alias_gate() {
+    let mut fails = Vec::new();
+    let mut worst = (f64::MIN, String::new());
+    for crse in [0i8, 12, 7] {
+        // INIT's FINE2 +6 for the unison and the octave (RING's gate does
+        // the same); the just fifth as FM's
+        let fine = if crse == 7 { 1.955 } else { 6.0 };
+        let ratio = 2f32.powf((f32::from(crse) * 100.0 + fine) / 1200.0);
+        for w1 in ANCHORS {
+            for w2 in [0.0, SAW] {
+                for blend in [0.25, 0.5, 1.0] {
+                    let base = VaParams {
+                        wave: [w1, w2],
+                        coarse: [0, crse],
+                        fine: [0.0, fine],
+                        ..am(blend)
+                    };
+                    let (fc, f2) = (hz_of(C5), hz_of(C5) * ratio);
+                    let gate = |mode| {
+                        let y = held(C5, VaParams { mode, ..base }, GATE_BLOCKS);
+                        alias_db_lattice(&y, SR as f32, fc, f2)
+                    };
+                    let (a, m) = (gate(VaMode::Am), gate(VaMode::Mix));
+                    let at = format!("{crse:+} {w1:.3} {w2:.3} {blend}");
+                    println!(
+                        "{at}: AM {a:.1} / MIX {m:.1} / RING {:.1} dB",
+                        gate(VaMode::Ring)
+                    );
+                    if m <= -45.0 {
+                        if a > worst.0 {
+                            worst = (a, at.clone());
+                        }
+                        // saw × saw at the fifth, full depth: the product's
+                        // slope kinks escape the 2-point kernel (RING reads
+                        // −37.4 dB there); an exception, held at −40
+                        let limit = if crse == 7 && w1 == SAW && w2 == SAW && blend == 1.0 {
+                            -40.0
+                        } else {
+                            -45.0
+                        };
+                        if a > limit {
+                            fails.push(format!("{at}: AM {a:.1} dB"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    println!("worst where MIX passes {:.1} dB at {}", worst.0, worst.1);
+    assert!(fails.is_empty(), "{fails:#?}");
+}
+
+/// Entering and leaving AM never clicks beyond the held modes' own.
+#[test]
+fn am_mode_changes_do_not_click() {
+    for (m0, m1) in [(VaMode::Mix, VaMode::Am), (VaMode::Am, VaMode::Mix)] {
+        let base = VaParams {
+            sub: 0.5,
+            fine: [0.0, 6.0],
+            coarse: [0, 7],
+            amount: 0.8,
+            ..sine()
+        };
+        let y = take_with(
+            |_| {},
+            A4,
+            base,
+            2 * AT,
+            |b, p| p.mode = if b < AT { m0 } else { m1 },
+        );
+        let held: Vec<_> = [m0, m1]
+            .iter()
+            .map(|&m| held(A4, VaParams { mode: m, ..base }, 2 * AT))
+            .collect();
+        let (d, lim) = click(&y, &held);
+        println!("{m0:?} → {m1:?}: Δ² {d:.3e} / limit {lim:.3e}");
+        assert!(d <= lim, "{m0:?} → {m1:?}: {d} > {lim}");
+    }
+}
