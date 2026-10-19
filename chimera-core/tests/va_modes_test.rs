@@ -612,7 +612,7 @@ fn max_is_the_larger() {
 /// the correction at such crossings (a ratio of 4 left cases 3.6 dB worse
 /// than kink off, 2 left 1.7, 1.3 left 0.6, 1.15 at most 0.3), and the
 /// kink corrector gains at most 0.9 dB there; the step cases are printed,
-/// bounded at −34 dB (the measured worst, −34.5) and tracked in #MAXISSUE.
+/// bounded at −34 dB (the measured worst, −34.5) and tracked in private issue #672.
 #[test]
 fn max_alias_gate() {
     let mut worst = (f64::MIN, String::new());
