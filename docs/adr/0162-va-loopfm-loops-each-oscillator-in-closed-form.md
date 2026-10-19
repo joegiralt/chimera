@@ -32,7 +32,7 @@ Issue #613 asks for one VA MODE where turning BLEND mixes OSC 1 and OSC 2 while 
 - The two oscillators at one pitch and equal `B` are one shared wave at BLEND 1 (`a + (b − a)/2`); detune or a different WAVE makes them beat.
 - A pitch above about F6 loses loop depth (`b0` capped), never aliasing.
 - The scope word may read in the value font beside the glyph (`LOOPFM`); no other page changes.
-- Flash: FLASH_LINE.
+- Flash: `just firmware-orbit`, bank 1 free 51,724 B before, 48,156 B after (−3,568 B: two `render_loop` instances, the closed form, the `b0` mapping and cap, the scope and the layout fallback). Above the owner's ~1.5 KB rule: the controller decides whether LOOPFM goes behind the bank-2 door.
 - The bench gains a `LOOPFM` row (BLEND 1, WAVE default); its unit reading is pending.
 
 ## Sources
