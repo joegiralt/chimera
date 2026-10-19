@@ -322,10 +322,11 @@ pub const COST_BITS: Cost = Cost(530);
 pub const COST_FM: Cost = Cost(590);
 /// AM: 158.2 + 134.4 + 41.0 + 3.3 (the sub) + 71.1 + 29.9 + 95.
 pub const COST_AM: Cost = Cost(540);
-/// MAX: 158.2 + 134.4 + 47.4 (the operator's loop) + 3.3 + 34.5 (a kink
-/// a sample at the worst: one sign change, its divide and the BLAMP) + 71.7
-/// + 29.9 + 95.
-pub const COST_MAX: Cost = Cost(580);
+/// MAX: 158.2 + 134.4 + 50.6 (the operator's loop, with the step test) +
+/// 3.3 + 37.7 (a kink a sample at the worst: one sign change, its divide and
+/// the BLAMP) + 71.7 + 29.9 + 95, 581.3 against MIX's 522.2 in the same
+/// count (the merged tree's block work reads 34 higher for every MODE).
+pub const COST_MAX: Cost = Cost(590);
 
 /// FM's index at BLEND `blend`, `5·blend²`, capped so OSC 1's fastest read
 /// `inc·(1 + I)` stays under `MAX_INC` (0.45 cycles a sample); `inc = 0`

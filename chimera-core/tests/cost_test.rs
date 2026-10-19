@@ -1665,7 +1665,7 @@ fn va_bills_each_mode() {
         (Bits, 530, [7, 6, 7, 7]),
         (Fm, 590, [7, 5, 7, 6]),
         (Am, 540, [7, 5, 7, 7]),
-        (Max, 580, [7, 5, 7, 7]),
+        (Max, 590, [7, 5, 7, 6]),
     ] {
         let p = va_sound(mode);
         assert_eq!(

@@ -605,12 +605,14 @@ fn max_is_the_larger() {
 
 /// The alias gate, on the kinks of `|a − b|` where both waves are
 /// continuous (sine, tri): −45 dB, or the kink correction alone
-/// (oscillators corrected both ways) 10 dB better than without it. Where
-/// either wave steps (saw, pulse) a wrap steps `a` through `b`, so `|a − b|`
-/// jumps there: a step, not the slope kink the BLAMP rounds, and the
-/// kink corrector gains 0 to 5 dB there, sometimes −4. Those cases are
-/// printed, bounded at −34 dB (the measured worst, −34.2) and tracked in
-/// #MAXISSUE.
+/// (oscillators corrected both ways) 10 dB better than without it. In every
+/// case the correction is no worse than 0.5 dB over kink off. Where either
+/// wave steps (saw, pulse) a wrap steps `a` through `b`, so `|a − b|` jumps
+/// there: a step, not the slope kink the BLAMP rounds. `KINK_STEP` skips
+/// the correction at such crossings (a ratio of 4 left cases 3.6 dB worse
+/// than kink off, 2 left 1.7, 1.3 left 0.6, 1.15 at most 0.3), and the
+/// kink corrector gains at most 0.9 dB there; the step cases are printed,
+/// bounded at −34 dB (the measured worst, −34.5) and tracked in #MAXISSUE.
 #[test]
 fn max_alias_gate() {
     let mut worst = (f64::MIN, String::new());
@@ -650,6 +652,10 @@ fn max_alias_gate() {
                     };
                     let at = format!("{note} {crse:+} {w1:.3} {w2:.3}");
                     println!("{at}: {on:.1} / {kink_off:.1} / {all_off:.1} ({mix:.1})");
+                    // the correction never makes it worse
+                    if on > kink_off + 0.5 {
+                        fails.push(format!("{at}: {on:.1} worse than kink off {kink_off:.1}"));
+                    }
                     if w1 >= SAW || w2 >= SAW {
                         if on > -34.0 {
                             fails.push(format!("{at}: {on:.1} dB > −34 (step case)"));
