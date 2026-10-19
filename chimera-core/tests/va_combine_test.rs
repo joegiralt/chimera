@@ -135,7 +135,12 @@ fn the_engine_operators_are_the_reference() {
                         let got = op.at(a, b, x, op.scale * k) / op.scale;
                         let want = combine(mode, a, b, x, k, pk, &crush);
                         match mode {
-                            VaMode::Mix | VaMode::Sync | VaMode::Ring | VaMode::Fm | VaMode::Am => {
+                            VaMode::Mix
+                            | VaMode::Sync
+                            | VaMode::Ring
+                            | VaMode::Fm
+                            | VaMode::Am
+                            | VaMode::Max => {
                                 assert_eq!(got.to_bits(), want.to_bits(), "{mode:?} {a} {b} {x}")
                             }
                             VaMode::Xor => {

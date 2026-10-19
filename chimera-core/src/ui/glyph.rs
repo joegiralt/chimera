@@ -295,7 +295,7 @@ pub fn va_mix_trace<const N: usize>(v: &VaMix, half: i32) -> [i32; N] {
 /// MIX and SYNC fade OSC 1 to OSC 2; RING and XOR the plain mix to the
 /// operator; BITS crushes the mix from 16 bits to 2; FM runs OSC 1 from
 /// plain (CLEAN) to its full index (DEEP); AM from OSC 1 alone to its
-/// full depth.
+/// full depth; MAX the plain mix to the larger of the two.
 pub const fn blend_ends(mode: VaMode) -> [&'static str; 2] {
     match mode {
         VaMode::Mix | VaMode::Sync => ["1", "2"],
@@ -304,6 +304,7 @@ pub const fn blend_ends(mode: VaMode) -> [&'static str; 2] {
         VaMode::Bits => ["CLEAN", "CRUSH"],
         VaMode::Fm => ["CLEAN", "DEEP"],
         VaMode::Am => ["CLEAN", "AM"],
+        VaMode::Max => ["MIX", "MAX"],
     }
 }
 

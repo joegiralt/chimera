@@ -371,7 +371,7 @@ fn pair_base(m0: VaMode, m1: VaMode) -> VaParams {
 /// The MIX/SYNC/RING matrix, XOR → BITS (the same duck; one pair
 /// closes the matrix at the cost of a constant), and FM in and out (its
 /// read phase settles onto the clock at the swap).
-const PAIRS: [(VaMode, VaMode); 13] = [
+const PAIRS: [(VaMode, VaMode); 15] = [
     (VaMode::Mix, VaMode::Sync),
     (VaMode::Mix, VaMode::Ring),
     (VaMode::Sync, VaMode::Mix),
@@ -385,6 +385,8 @@ const PAIRS: [(VaMode, VaMode); 13] = [
     (VaMode::Fm, VaMode::Ring),
     (VaMode::Mix, VaMode::Am),
     (VaMode::Am, VaMode::Ring),
+    (VaMode::Mix, VaMode::Max),
+    (VaMode::Max, VaMode::Sync),
 ];
 const AT: usize = 20;
 
@@ -684,7 +686,7 @@ fn every_knob_is_audible() {
         stability: 1.0,
         ..VaParams::default()
     };
-    let cases: [(&str, VaParams, Set, (f32, f32)); 14] = [
+    let cases: [(&str, VaParams, Set, (f32, f32)); 15] = [
         ("WAVE1", base, |p, v| p.wave[0] = v, (0.0, 1.0)),
         ("WAVE2", base, |p, v| p.wave[1] = v, (0.0, 1.0)),
         ("SUB", base, |p, v| p.sub = v, (0.0, 1.0)),
@@ -737,6 +739,15 @@ fn every_knob_is_audible() {
             "AMOUNT Fm",
             VaParams {
                 mode: VaMode::Fm,
+                ..base
+            },
+            |p, v| p.amount = v,
+            (0.0, 1.0),
+        ),
+        (
+            "AMOUNT Max",
+            VaParams {
+                mode: VaMode::Max,
                 ..base
             },
             |p, v| p.amount = v,
@@ -926,7 +937,7 @@ fn steal_glide_glides() {
 
 #[test]
 fn bills_follow_the_mode() {
-    let bills = [530, 540, 530, 550, 530, 590, 540];
+    let bills = [530, 540, 530, 550, 530, 590, 540, 590];
     assert!(VaEngine::mode_cost(VaMode::Sync) > VaEngine::mode_cost(VaMode::Mix));
     for (mode, bill) in VaMode::ALL.into_iter().zip(bills) {
         assert_eq!(VaEngine::mode_cost(mode), Cost(bill), "{mode:?}");
@@ -997,17 +1008,18 @@ fn out_of_range_values_clamp() {
             }
         }
     }
-    assert_eq!(n, 189);
+    assert_eq!(n, 216);
 }
 
 #[test]
 fn mode_scrolled_every_block_settles() {
-    const SCROLL: [VaMode; 5] = [
+    const SCROLL: [VaMode; 6] = [
         VaMode::Mix,
         VaMode::Sync,
         VaMode::Ring,
         VaMode::Fm,
         VaMode::Am,
+        VaMode::Max,
     ];
     let base = pair_base(VaMode::Sync, VaMode::Mix);
     let mut modes = Vec::new();
@@ -1016,7 +1028,7 @@ fn mode_scrolled_every_block_settles() {
         e.hold();
         e.note_on(A4, &p, part(0), SR);
         let y = run(e, &mut p, 60, |b, p| {
-            p.mode = if b < 40 { SCROLL[b % 5] } else { VaMode::Ring };
+            p.mode = if b < 40 { SCROLL[b % 6] } else { VaMode::Ring };
         });
         // replayed for mode() after each block
         let mut p = base;
@@ -1025,7 +1037,7 @@ fn mode_scrolled_every_block_settles() {
             f.note_on(A4, &p, part(0), SR);
             for b in 0..60 {
                 run(f, &mut p, 1, |_, p| {
-                    p.mode = if b < 40 { SCROLL[b % 5] } else { VaMode::Ring };
+                    p.mode = if b < 40 { SCROLL[b % 6] } else { VaMode::Ring };
                 });
                 modes.push(f.mode());
             }

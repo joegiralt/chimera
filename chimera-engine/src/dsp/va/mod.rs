@@ -22,7 +22,7 @@ use crate::glyph::{FocusGlyph, VaGlyph, VaOsc};
 use crate::hw::Cost;
 use crate::project::PartId;
 use crate::voice_alloc::VoiceIdx;
-use combine::{Crusher, Operator, Peaks, am_gain, ring_gain};
+use combine::{Crusher, MaxKink, Operator, Peaks, am_gain, ring_gain};
 use osc::{MAX_INC, NO_WRAP, R, Ramps, Sub, SubEdge, VarOsc, ZEROS, wave_reach};
 use stability::{JITTER_CENTS, Seed, Stability, depth};
 #[cfg(any(test, feature = "test-support"))]
@@ -42,10 +42,12 @@ pub enum VaMode {
     Fm = 5,
     /// OSC 2 scales OSC 1, never through zero (#603).
     Am = 6,
+    /// The larger of the two oscillators, its kinks rounded (#605).
+    Max = 7,
 }
 
 impl VaMode {
-    pub const ALL: [VaMode; 7] = [
+    pub const ALL: [VaMode; 8] = [
         VaMode::Mix,
         VaMode::Sync,
         VaMode::Ring,
@@ -53,6 +55,7 @@ impl VaMode {
         VaMode::Bits,
         VaMode::Fm,
         VaMode::Am,
+        VaMode::Max,
     ];
 
     /// Whether this MODE's oscillators are `osc::door`'s, which with
@@ -63,7 +66,7 @@ impl VaMode {
 }
 
 /// MODE's names, in `VaMode`'s order (display only).
-pub const MODE_NAMES: [&str; 7] = ["MIX", "SYNC", "RING", "XOR", "BITS", "FM", "AM"];
+pub const MODE_NAMES: [&str; 8] = ["MIX", "SYNC", "RING", "XOR", "BITS", "FM", "AM", "MAX"];
 
 impl DiskCode for VaMode {
     fn disk_code(self) -> u8 {
@@ -75,6 +78,7 @@ impl DiskCode for VaMode {
             VaMode::Bits => 4,
             VaMode::Fm => 5,
             VaMode::Am => 6,
+            VaMode::Max => 7,
         }
     }
 
@@ -87,6 +91,7 @@ impl DiskCode for VaMode {
             VaMode::Bits => "BITS",
             VaMode::Fm => "FM",
             VaMode::Am => "AM",
+            VaMode::Max => "MAX",
         }
     }
 
@@ -99,6 +104,7 @@ impl DiskCode for VaMode {
             4 => Some(VaMode::Bits),
             5 => Some(VaMode::Fm),
             6 => Some(VaMode::Am),
+            7 => Some(VaMode::Max),
             _ => None,
         }
     }
@@ -207,7 +213,7 @@ pub static VA_SPECS: [ParamSpec; 12] = [
         2,
         "MODE",
         ValFmt::Names(&MODE_NAMES),
-        6.0,
+        7.0,
         0.0,
         Change::Crossfade,
     )
@@ -322,6 +328,11 @@ pub const COST_BITS: Cost = Cost(530);
 pub const COST_FM: Cost = Cost(590);
 /// AM: 158.2 + 134.4 + 41.0 + 3.3 (the sub) + 71.1 + 29.9 + 95.
 pub const COST_AM: Cost = Cost(540);
+/// MAX: 158.2 + 134.4 + 50.6 (the operator's loop, with the step test) +
+/// 3.3 + 37.7 (a kink a sample at the worst: one sign change, its divide and
+/// the BLAMP) + 71.7 + 29.9 + 95, 581.3 against MIX's 522.2 in the same
+/// count (the merged tree's block work reads 34 higher for every MODE).
+pub const COST_MAX: Cost = Cost(590);
 
 /// FM's index at BLEND `blend`, `5·blend²`, capped so OSC 1's fastest read
 /// `inc·(1 + I)` stays under `MAX_INC` (0.45 cycles a sample); `inc = 0`
@@ -491,6 +502,8 @@ pub struct VaEngine {
     fm: Ramp,
     /// AM's level make-up (`am_gain`).
     am_n: Ramp,
+    /// MAX's corrector.
+    max: MaxKink,
     note: u8,
     pitch: f32,
     slide: Glide,
@@ -528,6 +541,7 @@ impl VaEngine {
             ring_k: Ramp::default(),
             fm: Ramp::default(),
             am_n: Ramp::default(),
+            max: MaxKink::NEW,
             note: 60,
             pitch: 0.0,
             slide: Glide::new(1.0, 1.0),
@@ -602,6 +616,8 @@ impl VaEngine {
                 self.sub.reset();
                 self.jit = [1.0; 2];
             }
+            // the corrector's memory goes with the voice, at any STABILITY
+            self.max.reset();
             (self.playing, self.duck) = (p.mode, Duck::Steady);
         }
         if self.seeded != Some(part) {
@@ -684,6 +700,7 @@ impl VaEngine {
             VaMode::Bits => COST_BITS,
             VaMode::Fm => COST_FM,
             VaMode::Am => COST_AM,
+            VaMode::Max => COST_MAX,
         }
     }
 
@@ -810,6 +827,7 @@ impl VaEngine {
                 self.render_bits(out, &l, gain)
             }
             VaMode::Am => self.render_am(out, &l, gain),
+            VaMode::Max => self.render_max(out, &l, gain),
             VaMode::Fm => {
                 // capped at the block's faster end; a pitch jump past the
                 // last block's cap lands on it
@@ -824,6 +842,8 @@ impl VaEngine {
             Duck::Down(0) => Duck::Down(1),
             Duck::Down(_) => {
                 self.playing = p.mode;
+                // MAX starts from nothing under the duck
+                self.max.reset();
                 // FM's index starts on its value
                 self.fm.hold();
                 self.am_n.hold();
@@ -866,6 +886,11 @@ impl VaEngine {
     #[inline(never)]
     fn render_bits(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
         self.run(out, l, VaMode::Bits, gain);
+    }
+
+    #[inline(never)]
+    fn render_max(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
+        self.run(out, l, VaMode::Max, gain);
     }
 
     /// FM (#601): OSC 2 plain, at unit peak times the index `ix` (from,
@@ -996,6 +1021,7 @@ impl VaEngine {
     ) {
         let Self {
             sub,
+            max,
             crusher,
             osc2: b,
             marks: mk,
@@ -1011,6 +1037,7 @@ impl VaEngine {
         let (mut n, mut dn, ddn) = (down * l.norm.0, down * l.norm.1, down * l.norm.2);
         // SUB's level, a sample's step at a time
         let (mut s, mut sl) = (*sub, s0);
+        let mut kink = *max;
         // one sample (a macro: a closure here is left out of line)
         macro_rules! one {
             ($i:expr) => {{
@@ -1018,7 +1045,12 @@ impl VaEngine {
                 x += dx;
                 k += dk;
                 sl += ds;
-                let c = op.at(out[i], b[i], x, k);
+                // MAX plays one sample late, the sub on the clock
+                let c = if mode == VaMode::Max {
+                    kink.step(out[i], b[i], x)
+                } else {
+                    op.at(out[i], b[i], x, k)
+                };
                 let sv = s.step(mk[i][1]);
                 let y = (c + sl * sv) * n;
                 out[i] = if DUCKED { y * g[i] } else { y };
@@ -1035,6 +1067,7 @@ impl VaEngine {
             one!(i + 3);
         }
         *sub = s;
+        *max = kink;
     }
 
     /// A glide steal's ratio now, 1 at rest.
@@ -1043,9 +1076,16 @@ impl VaEngine {
         self.slide.value()
     }
 
-    /// Both oscillators uncorrected: the alias gate's baseline.
+    /// MAX's kink corrector off, the oscillators corrected.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn kink_uncorrected(&mut self) {
+        self.max.off = true;
+    }
+
+    /// Both oscillators uncorrected (and MAX's kinks): the alias gate's baseline.
     #[cfg(any(test, feature = "test-support"))]
     pub fn uncorrected(&mut self) {
+        self.max.off = true;
         self.osc = self.osc.map(|o| o.with_correction(Correction::Off));
     }
 
