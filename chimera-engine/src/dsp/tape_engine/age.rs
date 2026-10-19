@@ -33,7 +33,7 @@ const SETTLE: f32 = 4e-5;
 pub const AGE_OPEN: f32 = 0.05;
 
 /// AGE runs, and is billed, whenever it can be heard: stored above 0, or
-/// routed (`Voice::stage_runs`' rule).
+/// routed (`Voice::fx_runs`' rule).
 pub fn age_runs(stored: f32, routed: bool) -> bool {
     stored > 0.0 || routed
 }

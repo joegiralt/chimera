@@ -654,3 +654,27 @@ impl XorShift {
         self.next_u32() as usize % n
     }
 }
+
+/// `x` through a fresh FX slot at `ty` with `pots` and `mix`, held, in its
+/// place, a block at a time at scale 1 (its tail past the last whole block
+/// zero-padded): the stage on its own, as the voice runs it.
+pub fn fx_run(
+    ty: chimera_core::dsp::voice_fx::params::FxType,
+    pots: [f32; 3],
+    mix: f32,
+    x: &mut [f32],
+) {
+    use chimera_core::dsp::voice_fx::VoiceFx;
+    use chimera_core::dsp::voice_fx::params::VoiceFxParams;
+    let mut p = VoiceFxParams::default();
+    p.set_type(ty);
+    (p.pots, p.mix) = (pots, mix);
+    let mut slot = VoiceFx::new();
+    for chunk in x.chunks_mut(BLOCK_SIZE) {
+        let mut buf = [0.0f32; BLOCK_SIZE];
+        buf[..chunk.len()].copy_from_slice(chunk);
+        let b = slot.step(&p, ty.runs(pots[0], false));
+        slot.apply(&b, p.place, &mut buf, 1.0, false, None);
+        chunk.copy_from_slice(&buf[..chunk.len()]);
+    }
+}

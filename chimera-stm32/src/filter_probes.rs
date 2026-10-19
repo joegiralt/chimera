@@ -3,9 +3,9 @@
 //! bench, whose areas have no room for their ~37 KB.
 
 use chimera_engine::dsp::filter::{self, Clean};
-use chimera_engine::dsp::wavefolder::Wavefolder;
+use chimera_engine::dsp::voice_fx::Ends;
 use chimera_engine::hw::BLOCK_SIZE;
-use chimera_engine::params::{FilterParams, FolderParams};
+use chimera_engine::params::FilterParams;
 
 /// One block of one filter path, for `tools/loop_count.py`'s static count.
 type FilterProbe = fn(&mut Clean, &mut [f32; BLOCK_SIZE], &FilterParams);
@@ -81,7 +81,7 @@ static TAP_SHAPE_PROBE: fn(&mut [f32; BLOCK_SIZE]) = filter::probe::tap_shape_pr
 #[used]
 static TAP_VCA_PROBE: fn(&mut [f32; BLOCK_SIZE]) = filter::probe::tap_vca_probe;
 
-type FoldProbe = fn(&mut Wavefolder, &mut [f32; BLOCK_SIZE], &FolderParams);
+type FoldProbe = fn(&mut [f32; BLOCK_SIZE], &Ends);
 
 #[used]
 static FOLD_TAP_PROBE: FoldProbe = filter::probe::fold_tap_probe;

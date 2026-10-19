@@ -84,13 +84,13 @@ fn deck_reads_needs_update_closed() {
     use chimera_core::dsp::tape_engine::params::TapeEngineParams;
     let model = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL);
     assert_eq!(
-        closed_text(model, Some(Bank2Status::Empty)),
+        closed_text(model, 0.0, Some(Bank2Status::Empty)),
         Some(NEEDS_UPDATE)
     );
-    assert_eq!(closed_text(model, Some(open())), None);
-    assert_eq!(closed_text(model, None), None);
+    assert_eq!(closed_text(model, 0.0, Some(open())), None);
+    assert_eq!(closed_text(model, 0.0, None), None);
     let age = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::AGE);
-    assert_eq!(closed_text(age, Some(Bank2Status::Empty)), None);
+    assert_eq!(closed_text(age, 0.0, Some(Bank2Status::Empty)), None);
     let shot = |s: Option<Bank2Status>| {
         let mut ui = UiState::new();
         if let Some(s) = s {

@@ -11,6 +11,7 @@ use chimera_core::dsp::algo::kinds::OpKind;
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::modulator::EnvType;
+use chimera_core::dsp::voice_fx::params::FxType;
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
 use chimera_core::params::{EngineType, EnvParams, ParamSnapshot};
@@ -47,6 +48,10 @@ fn recipe(addr: ParamAddr) -> ParamSnapshot {
         BlockRef::Drive => p.drive.drive = 0.5,
         BlockRef::Filter => p.filter.cutoff = 2000.0,
         BlockRef::Folder => p.folder.fold = 0.5,
+        BlockRef::VoiceFx => {
+            p.fx.set_type(FxType::Soft);
+            p.fx.pots[0] = 0.5;
+        }
         BlockRef::Env(s) => {
             p.filter.cutoff = 1000.0;
             p.envelopes[s.index()].env_type = match addr.param {
@@ -123,7 +128,9 @@ fn every_modulatable_param_audibly_changes_output() {
     for block in BlockRef::ALL {
         for spec in block.specs() {
             let addr = ParamAddr::new(block, spec.id);
-            if !addr.modulatable() {
+            // DRV and the fold are retired at Task 10 (#614): the voice
+            // plays neither, so their routes are inert until they go.
+            if !addr.modulatable() || matches!(block, BlockRef::Drive | BlockRef::Folder) {
                 continue;
             }
             for (case, base) in recipes(addr).iter().enumerate() {
@@ -144,8 +151,8 @@ fn every_modulatable_param_audibly_changes_output() {
         }
     }
     // + VCA; PITCH, FINE; Modal's macros; VA's; FRMT and BW per operator,
-    // VOWEL.
-    assert_eq!(checked, 17 + 3 * 5 + 1 + 2 + 4 + 11 + 2 * 6 + 1);
+    // VOWEL; the FX slot's pots and MIX; less DRV's three and the fold's.
+    assert_eq!(checked, 17 + 3 * 5 + 1 + 2 + 4 + 11 + 2 * 6 + 1 + 4 - 6);
 }
 
 /// #188: ENV 2 → MORPH is heard on the INIT Sound, whose ALG B differs

@@ -135,6 +135,15 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     } else {
         ("", "")
     };
+    // The VA's MOD oscillators (ADR 0163): `va::osc::door`, every MOD
+    // render's entry and its runs' instances, and LOOPFM's render. Only with `bank2`.
+    let va = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
+        "    *(.text.*3osc4door* .rodata.*3osc4door* .text.*4lbfm11render_loop* .rodata.*4lbfm11render_loop*
+      .text.*8VaEngine13render_loopfm* .rodata.*8VaEngine13render_loopfm*);
+"
+    } else {
+        ""
+    };
     fs::write(
         out_dir.join("bank2.x"),
         r#"
@@ -171,6 +180,7 @@ SECTIONS {
     *(.rodata.*10instrument9admission* .rodata.*7project8streamed4load* .rodata.*6stream5stage5place*
       .rodata.*11source_file16read_source_head* .rodata.*11source_file16read_packed_into*);
     /* REVERB */
+    /* VA */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -181,7 +191,8 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
 "#
         .replace("    /* REVERB */\n", reverb)
         .replace("    /* SLOTS */\n", slots)
-        .replace("/* ASSERTS */", asserts),
+        .replace("/* ASSERTS */", asserts)
+        .replace("    /* VA */\n", va),
     )
     .unwrap();
 

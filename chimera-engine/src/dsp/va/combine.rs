@@ -1,8 +1,9 @@
-//! The five operators and the sub's mix (spec § Combine). Each sees its
+//! The seven operators and the sub's mix (spec § Combine). Each sees its
 //! inputs within their block peak bounds and stays within 0.9; XOR and
 //! BITS alias by nature and are exempt from the alias gate.
 
 use super::VaMode;
+use super::blep::blamp_into;
 use super::osc::R;
 use crate::dsp::algo::math::exp2;
 use crate::dsp::provenance::{Patent, PatentLine, Provenance};
@@ -12,6 +13,15 @@ use crate::dsp::{clampf, sqrt};
 pub const PROVENANCE: &[Provenance] = &[
     Provenance::Textbook {
         cite: "Kleimola, \"Audio Synthesis by Bitwise Logical Modulation\", DAFx-08, 2008 (XOR)",
+    },
+    Provenance::Textbook {
+        cite: "Chowning, \"The Synthesis of Complex Audio Spectra by Means of Frequency \
+               Modulation\", JAES 21(7), 1973 (FM; FM's through-zero linear read rate is \
+               from first principles, the Intellijel DPO an instrument reference only)",
+    },
+    Provenance::Textbook {
+        cite: "Esqueda, Valimaki & Bilbao, \"Rounding Corners with BLAMP\", DAFx-16, 2016 \
+               (MAX: polyBLAMP on the kinks of |a - b|, first principles)",
     },
     Provenance::Original {
         author: "AI-assisted, owner-directed and reviewed",
@@ -141,6 +151,16 @@ pub fn ring_gain(pk: Peaks) -> f32 {
     (1.0 / R).min(0.9 / (pk.a * pk.b))
 }
 
+/// AM's gain `g = (1 − x/2) + (x/2)·b/pk.b` runs from 1 down to 0 and back,
+/// never below `1 − x`. Its level make-up keeps the output at OSC 1's own
+/// RMS: `1/√((1 − x/2)² + (x/2)²·(R/pk.b)²)`, capped so the product stays
+/// within 0.9.
+#[inline]
+pub fn am_gain(x: f32, pk: Peaks) -> f32 {
+    let (u, v) = (1.0 - 0.5 * x, 0.5 * x * R / pk.b.max(1e-6));
+    (1.0 / sqrt(u * u + v * v)).min(0.9 / pk.a.max(1e-6))
+}
+
 /// One block's operator as the engine's loop runs it: MODE and its block
 /// constants, at `scale` times `combine`'s level (2 for RING and XOR, where
 /// `½(a + b)` is then `a + b`; the scalings are exact, so the bits are
@@ -154,6 +174,8 @@ pub struct Operator {
     p2: f32,
     q: f32,
     liq: f32,
+    /// `1 / pk.b`, AM's.
+    ib: f32,
     crush: Crusher,
 }
 
@@ -176,6 +198,7 @@ impl Operator {
             q,
             // BITS crushes `½(a + b) / q`: the ½ rides in the levels (exact)
             liq: 0.5 * crush.levels() / q,
+            ib: 1.0 / pk.b.max(1e-6),
             crush: *crush,
         }
     }
@@ -186,10 +209,15 @@ impl Operator {
     pub fn at(&self, a: f32, b: f32, x: f32, ks: f32) -> f32 {
         let sum = a + b;
         match self.mode {
-            VaMode::Mix | VaMode::Sync => a + (b - a) * x,
+            VaMode::Mix | VaMode::Sync | VaMode::SoftSync => a + (b - a) * x,
             VaMode::Ring => sum + (ks * a * b - sum) * x,
             VaMode::Xor => sum + (xor16_scaled(a, b, self.kx, self.p2) - sum) * x,
             VaMode::Bits => self.q * self.crush.process_scaled(sum, self.liq),
+            // OSC 2 is in OSC 1's phase already
+            VaMode::Fm => a,
+            VaMode::LoopFm => a + (b - a) * (0.5 * x),
+            VaMode::Am => ks * a * ((1.0 - 0.5 * x) + 0.5 * x * b * self.ib),
+            VaMode::Max => max_gain(x) * (a + b + x * (a - b).abs()),
         }
     }
 }
@@ -200,7 +228,7 @@ impl Operator {
 pub fn combine(mode: VaMode, a: f32, b: f32, x: f32, k: f32, pk: Peaks, crush: &Crusher) -> f32 {
     let half = 0.5 * (a + b);
     match mode {
-        VaMode::Mix | VaMode::Sync => a + (b - a) * x,
+        VaMode::Mix | VaMode::Sync | VaMode::SoftSync => a + (b - a) * x,
         VaMode::Ring => half + (k * a * b - half) * x,
         VaMode::Xor => {
             let p = pk.a.max(pk.b);
@@ -210,6 +238,79 @@ pub fn combine(mode: VaMode, a: f32, b: f32, x: f32, k: f32, pk: Peaks, crush: &
             let q = 0.5 * (pk.a + pk.b);
             q * crush.process(half / q)
         }
+        VaMode::Fm => a,
+        VaMode::LoopFm => a + (b - a) * (0.5 * x),
+        VaMode::Am => k * a * ((1.0 - 0.5 * x) + 0.5 * x * b * (1.0 / pk.b.max(1e-6))),
+        VaMode::Max => max_gain(x) * (a + b + x * (a - b).abs()),
+    }
+}
+
+/// MAX's level trim: the larger of two unrelated waves is about 3.2 dB
+/// louder than their mix, so the output is `½(1 − MAX_TRIM·x)` of
+/// `a + b + x|a − b|` (measured: saws, sines, CRSE2 0 and 7, within 0.5 dB).
+pub const MAX_TRIM: f32 = 0.31;
+
+/// The half and the trim at AMOUNT `x`.
+#[inline(always)]
+pub fn max_gain(x: f32) -> f32 {
+    0.5 - (0.5 * MAX_TRIM) * x
+}
+
+/// How much steeper than the last sample's step a sign change of `a − b`
+/// may be and still bend (`MaxKink`); a wrap's step is far past it.
+pub const KINK_STEP: f32 = 1.15;
+
+/// MAX's corrector: the larger of two, `½(a + b) + ½x|a − b|`, one sample
+/// late, its kinks (where `a − b` changes sign) rounded by polyBLAMP.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MaxKink {
+    /// The sample before the newest, with its corrections so far.
+    held: f32,
+    /// `a − b` at the newest sample.
+    d: f32,
+    /// `|d|`'s last step, the local slope.
+    s: f32,
+    /// The alias gate's baseline: no correction.
+    #[cfg(any(test, feature = "test-support"))]
+    pub off: bool,
+}
+
+impl MaxKink {
+    pub const NEW: Self = Self {
+        held: 0.0,
+        d: 0.0,
+        s: 0.0,
+        #[cfg(any(test, feature = "test-support"))]
+        off: false,
+    };
+
+    /// The sample memory cleared, the test switch kept.
+    pub fn reset(&mut self) {
+        self.held = 0.0;
+        self.d = 0.0;
+        self.s = 0.0;
+    }
+
+    /// One sample in at AMOUNT `x`, the previous one out, corrected.
+    #[inline(always)]
+    pub fn step(&mut self, a: f32, b: f32, x: f32) -> f32 {
+        let d = a - b;
+        let h = max_gain(x);
+        let mut acc = h * (a + b + x * d.abs());
+        let s = (d - self.d).abs();
+        // a crossing that bends (a step of `d` within KINK_STEP times the
+        // last one's); where `d` jumps instead, a wrap, the oscillators'
+        // own BLEPs have handled the step
+        if d * self.d < 0.0 && s <= KINK_STEP * self.s {
+            // `t` samples since the crossing, `s` the slope of `d`; |d|'s
+            // slope jumps by 2s, `y`'s by 2·h·x·s
+            let t = d / (d - self.d);
+            #[cfg(any(test, feature = "test-support"))]
+            let s = if self.off { 0.0 } else { s };
+            blamp_into(&mut self.held, &mut acc, t, 2.0 * h * x * s);
+        }
+        (self.d, self.s) = (d, s);
+        core::mem::replace(&mut self.held, acc)
     }
 }
 

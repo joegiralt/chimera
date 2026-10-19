@@ -951,7 +951,7 @@ impl Renderer {
                 // A column wide: NEEDS UPDATE's last word (the band reads it whole).
                 _ if v
                     .addr()
-                    .and_then(|a| crate::bank2::closed_text(a, f.bank2))
+                    .and_then(|a| crate::bank2::closed_text(a, self.set[i].target(), f.bank2))
                     .is_some() =>
                 {
                     let _ = core::fmt::Write::write_str(&mut buf, crate::bank2::NEEDS_UPDATE_CELL);
@@ -1173,7 +1173,7 @@ fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
     }
     if let Some(t) = view
         .addr()
-        .and_then(|a| crate::bank2::closed_text(a, f.bank2))
+        .and_then(|a| crate::bank2::closed_text(a, v, f.bank2))
     {
         let mut buf = FmtBuf::new();
         let _ = core::fmt::Write::write_str(&mut buf, t);

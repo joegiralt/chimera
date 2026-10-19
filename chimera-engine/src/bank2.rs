@@ -49,6 +49,10 @@ pub struct Bank2Door {
     /// bank 1's side).
     #[cfg(feature = "bank2")]
     pub glyph: crate::tape_glyph::GlyphDoor,
+    /// The VA's `MOD` oscillators (ADR 0163; `VaEngine::render_fm` is
+    /// bank 1's side).
+    #[cfg(feature = "bank2")]
+    pub va: crate::dsp::va::osc::door::VaDoor,
 }
 
 #[cfg(feature = "bank2")]
@@ -68,6 +72,7 @@ static DOOR: Bank2Door = Bank2Door {
     admit: crate::instrument::Instrument::ADMIT,
     load: crate::project::LoadDoor::DOOR,
     glyph: crate::tape_glyph::GlyphDoor::DOOR,
+    va: crate::dsp::va::osc::door::DOOR,
 };
 
 #[cfg(feature = "bank2")]

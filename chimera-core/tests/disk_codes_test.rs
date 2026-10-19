@@ -454,7 +454,7 @@ fn block_codes_unique_and_round_trip() {
     }
     assert_eq!(seen.len(), BlockRef::ALL.len());
     assert_eq!(BlockRef::from_disk_code(0), None);
-    assert_eq!(BlockRef::from_disk_code(36), None);
+    assert_eq!(BlockRef::from_disk_code(37), None);
     assert_eq!(BlockRef::from_disk_code(255), None);
 }
 

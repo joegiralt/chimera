@@ -2,6 +2,7 @@ mod common;
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::modal::ResonatorMode;
+use chimera_core::dsp::voice_fx::params::FxType;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
@@ -147,11 +148,11 @@ fn test_drive_amount_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
             *p = tri();
-            p.drive.drive = 0.0;
-            p.drive.mix = 1.0;
+            p.fx.set_type(FxType::Soft);
+            p.fx.pots[0] = 0.0;
         },
         |p| {
-            p.drive.drive = 0.9;
+            p.fx.pots[0] = 0.9;
         },
         8,
         EASED,
@@ -174,11 +175,11 @@ fn test_folder_mid_note() {
     let (_, _, before, after) = render_with_param_change(
         |p| {
             *p = tri();
-            p.folder.fold = 0.0;
+            p.fx.set_type(FxType::Fold);
+            p.fx.pots[0] = 0.0;
         },
         |p| {
-            p.folder.fold = 0.8;
-            p.folder.mix = 1.0;
+            p.fx.pots[0] = 0.8;
         },
         8,
         EASED,

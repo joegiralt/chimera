@@ -161,7 +161,7 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
 }
 
 /// Normalized `val` rounded to the nearest of 0..=max.
-fn discrete(val: f32, max: u8) -> u8 {
+pub(crate) fn discrete(val: f32, max: u8) -> u8 {
     let v = (val * max as f32 + 0.5) as u8;
     if v > max { max } else { v }
 }
