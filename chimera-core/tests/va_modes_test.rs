@@ -5,6 +5,7 @@ mod common;
 
 use core::mem::MaybeUninit;
 
+use chimera_core::dsp::va::combine::MAX_TRIM;
 use chimera_core::dsp::va::{VA_CHAIN_GAIN, VaEngine, VaMode, VaParams, fm_index};
 use chimera_core::project::PartId;
 use chimera_hal::BLOCK_SIZE;
@@ -341,6 +342,227 @@ fn leaving_fm_settles() {
             "SUB 0.5 {m0:?} → {m1:?}: Δ² {d:.3e} / limit {lim:.3e} ({:.0}%)",
             100.0 * d / lim
         );
+        assert!(d <= lim, "{m0:?} → {m1:?}: {d} > {lim}");
+    }
+}
+
+// ---- MAX (#605) ----
+
+fn max(amount: f32) -> VaParams {
+    VaParams {
+        mode: VaMode::Max,
+        amount,
+        ..sine()
+    }
+}
+
+/// BLEND 1, away from the crossings (the kernel's two samples a side), the
+/// output is the larger of the two oscillators, one sample late. OSC 1
+/// and OSC 2 alone are MIX at AMOUNT 0 and 1.
+#[test]
+fn max_is_the_larger() {
+    let alone = |mode, amount| VaParams {
+        mode,
+        amount,
+        wave: [SAW, 0.3],
+        shape: [0.0, 0.4],
+        coarse: [0, 7],
+        fine: [0.0, 6.0],
+        ..sine()
+    };
+    let n = 60 * B;
+    let a = held(C4, alone(VaMode::Mix, 0.0), 60);
+    let b = held(C4, alone(VaMode::Mix, 1.0), 60);
+    let y = held(C4, alone(VaMode::Max, 1.0), 60);
+    let (mut tested, mut worst) = (0usize, 0.0f32);
+    for i in 2 * B..n - 3 {
+        let side = |j: usize| a[j] > b[j];
+        // the crossing's reach: the samples i-2..=i+1 around the one
+        // played at i (late by one)
+        if (i - 3..=i + 1).any(|j| side(j) != side(i - 1)) {
+            continue;
+        }
+        let want = (1.0 - MAX_TRIM) * a[i - 1].max(b[i - 1]);
+        worst = worst.max((y[i] - want).abs());
+        tested += 1;
+    }
+    println!("MAX BLEND 1: {tested} samples checked, worst |y − max(a, b)| {worst:.2e}");
+    assert!(tested > n / 2, "{tested}");
+    assert!(worst <= 1e-5, "{worst}");
+}
+
+/// The alias gate, as FM's: −45 dB, or the corners rounded 10 dB better
+/// than uncorrected (oscillators and kinks).
+#[test]
+fn max_alias_gate() {
+    let mut worst = (f64::MIN, String::new());
+    let mut least = (f64::MAX, String::new());
+    let mut fails = Vec::new();
+    println!("note crse wave1 wave2 blend: on / off dB");
+    for note in [C5, C6] {
+        for crse in [0i8, 7] {
+            let (fine, ratio) = match crse {
+                7 => (1.955, 1.5),
+                _ => (6.0, 2f32.powf(6.0 / 1200.0)),
+            };
+            for w1 in ANCHORS {
+                for w2 in ANCHORS {
+                    let base = VaParams {
+                        wave: [w1, w2],
+                        coarse: [0, crse],
+                        fine: [0.0, fine],
+                        ..max(1.0)
+                    };
+                    let fc = hz_of(note);
+                    let f2 = fc * ratio;
+                    let gate = |prep: fn(&mut VaEngine)| {
+                        let y = take_with(prep, note, base, GATE_BLOCKS, |_, _| {});
+                        alias_db_lattice(&y, SR as f32, fc, f2)
+                    };
+                    let on = gate(|_| {});
+                    let off = gate(VaEngine::uncorrected);
+                    let at = format!("{note} {crse:+} {w1:.3} {w2:.3}");
+                    let mix = {
+                        let p = VaParams {
+                            mode: VaMode::Mix,
+                            amount: 0.5,
+                            ..base
+                        };
+                        alias_db_lattice(&held(note, p, GATE_BLOCKS), SR as f32, fc, f2)
+                    };
+                    println!("{at}: {on:.1} / {off:.1} (MIX {mix:.1})");
+                    // a saw's wrap steps through a sine or tri: |a − b| jumps
+                    // there (a step, not the kink the correction rounds), so
+                    // it gains 5 dB here; recorded in the report
+                    let step = note == C5 && crse == 0 && w2 == SAW && w1 < SAW;
+                    if step {
+                        if on > -38.0 {
+                            fails.push(format!("{at}: {on:.1} dB > −38 (step case)"));
+                        }
+                    } else if on > -45.0 && on > off - 10.0 {
+                        fails.push(format!("{at}: {on:.1} vs off {off:.1}"));
+                    }
+                    if on > worst.0 {
+                        worst = (on, at.clone());
+                    }
+                    if off - on < least.0 {
+                        least = (off - on, at);
+                    }
+                }
+            }
+        }
+    }
+    println!("worst {:.1} dB at {}", worst.0, worst.1);
+    println!("least correction {:.1} dB at {}", least.0, least.1);
+    assert!(fails.is_empty(), "{fails:#?}");
+}
+
+/// MAX sounds as loud as the plain mix (MIX at AMOUNT ½): BLEND 0 to 1
+/// within ±1.5 dB, at INIT's tuning and a fifth apart.
+#[test]
+fn max_level_matches_mix() {
+    let blocks = 2 * SR as usize / B;
+    for (coarse, fine) in [(0i8, 6.0), (7, 0.0)] {
+        for w in ANCHORS {
+            let waves = VaParams {
+                wave: [w; 2],
+                coarse: [0, coarse],
+                fine: [0.0, fine],
+                ..sine()
+            };
+            let mix = rms(&held(
+                C4,
+                VaParams {
+                    mode: VaMode::Mix,
+                    amount: 0.5,
+                    ..waves
+                },
+                blocks,
+            ));
+            for blend in [0.0, 0.5, 1.0] {
+                let y = held(
+                    C4,
+                    VaParams {
+                        mode: VaMode::Max,
+                        amount: blend,
+                        ..waves
+                    },
+                    blocks,
+                );
+                let db = 20.0 * (rms(&y) / mix).log10();
+                println!("CRSE2 {coarse} WAVE {w:.3} BLEND {blend}: {db:+.2} dB");
+                assert!(db.abs() <= 1.5, "CRSE2 {coarse} WAVE {w} BLEND {blend}: {db}");
+            }
+        }
+    }
+}
+
+/// The larger of two zero-mean waves leans positive; the voice's DC
+/// blocker (ADR 0060) takes it out: a second's mean at the voice is
+/// under 0.3 % of its RMS.
+#[test]
+fn max_has_no_dc_at_the_voice() {
+    use chimera_core::dsp::voice::Voice;
+    use chimera_core::params::EngineType;
+    use chimera_core::preset::Sound;
+    use chimera_core::{MidiNote, Velocity};
+    for (w1, w2) in [(SAW, SAW), (0.0, SAW), (1.0, 0.0)] {
+        let mut s = Sound::init(EngineType::Va);
+        s.params.va = VaParams {
+            wave: [w1, w2],
+            ..max(1.0)
+        };
+        let (p, m) = (&s.params, &s.mod_state);
+        let mut v = common::Rig::new(common::SR);
+        v.note_on(MidiNote::new(C4).unwrap(), Velocity::DEFAULT, p);
+        let mut b = [0.0; B];
+        let mut y = Vec::new();
+        for n in 0..(3 * common::SR as usize / 2) / B {
+            v.render(&mut b, p, m);
+            if n * B >= common::SR as usize / 2 {
+                y.extend_from_slice(&b);
+            }
+        }
+        let _ = Voice::FADE;
+        let mean = y.iter().map(|&x| f64::from(x)).sum::<f64>() / y.len() as f64;
+        let r = rms(&y);
+        println!("MAX {w1}/{w2}: mean {mean:.2e}, RMS {r:.3e}, ratio {:.4}", mean / r);
+        assert!(r > 1e-3);
+        assert!(mean.abs() <= 0.003 * r, "{mean} of {r}");
+    }
+}
+
+/// In and out of MAX through the duck: no click past the rule, the kink
+/// state restarts under the duck's silence.
+#[test]
+fn max_mode_changes_do_not_click() {
+    for (m0, m1) in [
+        (VaMode::Mix, VaMode::Max),
+        (VaMode::Max, VaMode::Mix),
+        (VaMode::Fm, VaMode::Max),
+        (VaMode::Max, VaMode::Sync),
+    ] {
+        let base = VaParams {
+            wave: [SAW, 0.3],
+            fine: [0.0, 6.0],
+            coarse: [0, 7],
+            sub: 0.5,
+            amount: 0.8,
+            ..sine()
+        };
+        let y = take_with(
+            |_| {},
+            A4,
+            base,
+            2 * AT,
+            |b, p| p.mode = if b < AT { m0 } else { m1 },
+        );
+        let held: Vec<_> = [m0, m1]
+            .iter()
+            .map(|&m| held(A4, VaParams { mode: m, ..base }, 2 * AT))
+            .collect();
+        let (d, lim) = click(&y, &held);
+        println!("{m0:?} → {m1:?}: Δ² {d:.3e} / limit {lim:.3e}");
         assert!(d <= lim, "{m0:?} → {m1:?}: {d} > {lim}");
     }
 }
