@@ -509,9 +509,11 @@ fn am_alias_gate() {
                         }
                         // saw × saw at the fifth, full depth: the product's
                         // slope kinks escape the 2-point kernel (RING reads
-                        // −37.4 dB there); an exception, held at −40
+                        // −37.4 dB there); an exception, held at −43 (AM
+                        // reads −43.5; filed as
+                        // private issue #660)
                         let limit = if crse == 7 && w1 == SAW && w2 == SAW && blend == 1.0 {
-                            -40.0
+                            -43.0
                         } else {
                             -45.0
                         };

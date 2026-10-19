@@ -314,7 +314,7 @@ pub const COST_BITS: Cost = Cost(530);
 /// crossed either way at the 0.45 cap, a divide a crossing) + 134.4 + 29.4
 /// + 74.2 (5.1 of it the modulator's scaling) + 29.9 + 95.
 pub const COST_FM: Cost = Cost(590);
-/// AM: 158.2 + 134.4 + 41.0 + 71.1 + 29.9 + 95 + 3.3.
+/// AM: 158.2 + 134.4 + 41.0 + 3.3 (the sub) + 71.1 + 29.9 + 95.
 pub const COST_AM: Cost = Cost(540);
 
 /// FM's index at BLEND `blend`, `5·blend²`, capped so OSC 1's fastest read

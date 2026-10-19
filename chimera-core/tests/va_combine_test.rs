@@ -125,6 +125,11 @@ fn the_engine_operators_are_the_reference() {
             let crush = crusher(x);
             for mode in VaMode::ALL {
                 let op = Operator::new(mode, pk, &crush);
+                let k = if mode == VaMode::Am {
+                    am_gain(x, pk)
+                } else {
+                    k
+                };
                 for a in span(pk.a, 64) {
                     for b in span(pk.b, 64) {
                         let got = op.at(a, b, x, op.scale * k) / op.scale;
