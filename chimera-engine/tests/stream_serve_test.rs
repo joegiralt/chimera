@@ -9,7 +9,7 @@ use chimera_engine::storage::{SourceHead, SourceLayout, SourceRef, data_offset};
 use chimera_engine::stream::layout::{ChunkIdx, StreamFile};
 use chimera_engine::stream::registry::StreamRegistry;
 use chimera_engine::stream::ring::{AudioSide, CardSide, Rings, ThirdSlots};
-use chimera_engine::stream::serve::{ServeStep, serve_step};
+use chimera_engine::stream::serve::{Rot, ServeStep, serve_step};
 use chimera_engine::stream::slot::SlotState;
 use chimera_engine::stream::stats::StreamStats;
 use chimera_engine::stream::units::{AudioBlocks, Frames, SlotIdx};
@@ -80,7 +80,7 @@ impl Rig {
 }
 
 fn step<'r>(card: &mut CardSide<'_>, reg: &'r StreamRegistry, ui: UiWait) -> ServeStep<'r> {
-    serve_step(card, reg, NOW, ui, &StreamStats::new())
+    serve_step(card, reg, NOW, ui, &Rot::new(), &StreamStats::new())
 }
 
 /// Runs a `Read` as the interrupt does: its chunk's bytes into the slot,
@@ -195,10 +195,10 @@ fn a_want_the_card_cannot_read_is_passed_over() {
     turn.want(V2, SlotIdx::B, ix(0), NOW.after(50)).unwrap();
 
     let stats = StreamStats::new();
-    let s = serve_step(&mut card, &rig.reg, NOW, UiWait::Idle, &stats);
+    let s = serve_step(&mut card, &rig.reg, NOW, UiWait::Idle, &Rot::new(), &stats);
     assert_eq!(land(&mut card, s).1, SlotIdx::B);
     assert!(matches!(
-        serve_step(&mut card, &rig.reg, NOW, UiWait::Idle, &stats),
+        serve_step(&mut card, &rig.reg, NOW, UiWait::Idle, &Rot::new(), &stats),
         ServeStep::Idle
     ));
     // The chunk off its file, passed over each look; a ring with no row
@@ -233,10 +233,11 @@ fn a_read_holds_its_row() {
 
 /// C1, I2: a CRC or an error token is read again once; a second failure,
 /// a token timeout or CMD18's bad R1 faults the card; a chunk that won't
-/// de-frame faults it with no retry, counted apart.
+/// de-frame faults it with no retry, counted apart, or is the file's once
+/// blamed on it (#609).
 #[test]
 fn read_errors_retry_once_then_fault() {
-    use chimera_engine::stream::serve::{ErrorStep, ReadError, on_error};
+    use chimera_engine::stream::serve::{Blame, ErrorStep, ReadError, on_error};
     use chimera_hal::card_bus::ProtoError;
     let p = ReadError::Proto;
     for (err, first, again) in [
@@ -249,9 +250,14 @@ fn read_errors_retry_once_then_fault() {
         (p(ProtoError::Timeout), ErrorStep::Fault, ErrorStep::Fault),
         (p(ProtoError::R1(0x04)), ErrorStep::Fault, ErrorStep::Fault),
         (
-            ReadError::Frame,
+            ReadError::Frame(Blame::Card),
             ErrorStep::FrameError,
             ErrorStep::FrameError,
+        ),
+        (
+            ReadError::Frame(Blame::File),
+            ErrorStep::Rotted,
+            ErrorStep::Rotted,
         ),
     ] {
         assert_eq!(on_error(err, false), first, "{err:?}");
@@ -260,10 +266,10 @@ fn read_errors_retry_once_then_fault() {
 }
 
 /// The step taken: a retry touches nothing; a fault sets the bus's; a
-/// frame error counts, then faults.
+/// frame error counts, then faults, unless it is the file's (#609).
 #[test]
 fn a_failed_read_faults_the_bus_and_counts() {
-    use chimera_engine::stream::serve::{ErrorStep, ReadError, read_failed};
+    use chimera_engine::stream::serve::{Blame, ErrorStep, ReadError, read_failed};
     use chimera_hal::card_bus::{CardBus, CardFault, ProtoError};
     use std::sync::atomic::Ordering::Relaxed;
     let (bus, stats) = (CardBus::new(), StreamStats::new());
@@ -276,9 +282,70 @@ fn a_failed_read_faults_the_bus_and_counts() {
 
     let bus = CardBus::new();
     assert_eq!(
-        read_failed(ReadError::Frame, false, &bus, &stats),
+        read_failed(ReadError::Frame(Blame::Card), false, &bus, &stats),
         ErrorStep::FrameError
     );
     assert_eq!(bus.fault(), CardFault::Read);
     assert_eq!(stats.frame_errors.load(Relaxed), 1);
+
+    let bus = CardBus::new();
+    assert_eq!(
+        read_failed(ReadError::Frame(Blame::File), false, &bus, &stats),
+        ErrorStep::Rotted
+    );
+    assert_eq!(bus.fault(), CardFault::Clear, "the file's: no fault");
+    assert_eq!(stats.frame_errors.load(Relaxed), 2);
+}
+
+/// #609: a chunk's first frame error is the card's; the same chunk failing
+/// again, whatever failed between, is the file's and rotted for good; one
+/// that de-framed in between was the card's after all.
+#[test]
+fn rot_blames_the_card_once_then_the_file() {
+    use chimera_engine::stream::layout::FileChunk;
+    use chimera_engine::stream::serve::Blame;
+    let (a, b) = (FileChunk::new(7, ix(4)), FileChunk::new(7, ix(5)));
+    let other_file = FileChunk::new(8, ix(4));
+    let mut rot = Rot::new();
+    assert_eq!(rot.blame(a), Blame::Card);
+    assert!(!rot.rotted(a), "suspected, still read");
+    assert_eq!(rot.blame(b), Blame::Card);
+    assert_eq!(rot.blame(other_file), Blame::Card, "another file's chunk");
+    assert_eq!(rot.blame(a), Blame::File);
+    assert!(rot.rotted(a) && !rot.rotted(b) && !rot.rotted(other_file));
+    rot.cleared(b);
+    assert_eq!(rot.blame(b), Blame::Card, "it de-framed: the card's");
+    rot.cleared(a);
+    assert!(rot.rotted(a), "a rotted chunk stays rotted");
+}
+
+/// #609: a rotted chunk's want is passed over, requeued and counted
+/// `unreadable`, never read; other voices' wants are served.
+#[test]
+fn serve_step_passes_over_a_rotted_chunk() {
+    use chimera_engine::stream::serve::Blame;
+    use std::sync::atomic::Ordering::Relaxed;
+    let rig = Rig::new();
+    let (mut audio, mut card) = rig.sides();
+    let turn = audio.turn();
+    turn.stream(V1, id(3));
+    turn.stream(V2, id(4));
+    turn.want(V1, SlotIdx::A, ix(1), NOW.after(1)).unwrap();
+    turn.want(V2, SlotIdx::A, ix(2), NOW.after(9)).unwrap();
+    let mut rot = Rot::new();
+    let key = rig.reg.get(id(3)).unwrap().chunk_key(ix(1));
+    assert_eq!(rot.blame(key), Blame::Card);
+    assert_eq!(rot.blame(key), Blame::File);
+    let stats = StreamStats::new();
+    let s = serve_step(&mut card, &rig.reg, NOW, UiWait::Idle, &rot, &stats);
+    assert_eq!(land(&mut card, s), (V2, SlotIdx::A, Frames::new(90_000)));
+    assert_eq!(stats.unreadable.load(Relaxed), 1);
+    assert!(matches!(
+        turn.seen(V1, SlotIdx::A),
+        SlotState::Wanted { .. }
+    ));
+    assert!(matches!(
+        serve_step(&mut card, &rig.reg, NOW, UiWait::Idle, &rot, &stats),
+        ServeStep::Idle
+    ));
 }

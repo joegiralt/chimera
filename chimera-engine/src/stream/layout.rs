@@ -71,6 +71,20 @@ pub struct ChunkBlocks {
     pub skip: Bytes,
 }
 
+/// A chunk of one `.SRC`, named by its stem: what a frame error blames
+/// (#609). The stem, not the source id, as an id is reused once drained.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileChunk {
+    stem: u32,
+    chunk: ChunkIdx,
+}
+
+impl FileChunk {
+    pub const fn new(stem: u32, chunk: ChunkIdx) -> FileChunk {
+        FileChunk { stem, chunk }
+    }
+}
+
 /// A source file's samples and where they lie on the card.
 #[derive(Clone, Copy, Debug)]
 pub struct StreamFile {
@@ -115,6 +129,11 @@ impl StreamFile {
 
     pub fn frames(&self) -> Frames {
         self.frames
+    }
+
+    /// Its chunk `c`, as a frame error names it.
+    pub fn chunk_key(&self, c: ChunkIdx) -> FileChunk {
+        FileChunk::new(self.stem, c)
     }
 
     pub fn last_chunk(&self) -> ChunkIdx {

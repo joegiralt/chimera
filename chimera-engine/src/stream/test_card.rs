@@ -7,13 +7,14 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::cell::Cell;
+use core::sync::atomic::Ordering;
 
 use chimera_hal::card_bus::{CardBus, CardFault, ProtoError};
 
-use super::layout::{CHUNK_BYTES, ChunkIdx};
+use super::layout::{CHUNK_BYTES, ChunkIdx, FileChunk};
 use super::port::StreamPort;
 use super::ring::{AudioTurn, CardSide, Claim, Rings};
-use super::serve::{ErrorStep, ReadError, read_failed};
+use super::serve::{ErrorStep, ReadError, Rot, read_failed};
 use super::stats::StreamStats;
 use super::units::{AudioBlocks, Frames, Packing};
 use crate::dsp::tape_engine::read::{
@@ -21,6 +22,9 @@ use crate::dsp::tape_engine::read::{
 };
 use crate::project::SourceId;
 use crate::voice_alloc::VoiceIdx;
+
+/// Its one file's stem, as a frame error names its chunks.
+const STEM: u32 = 0;
 
 pub struct TestCard<'r> {
     card: CardSide<'r>,
@@ -31,6 +35,9 @@ pub struct TestCard<'r> {
     latency: u32,
     fail: u32,
     garble: bool,
+    /// A chunk whose record is rotted: it never de-frames.
+    rotten: Option<ChunkIdx>,
+    rot: Rot,
     /// The read in flight, the block it lands, and whether it is a retry.
     flight: Option<(Claim, AudioBlocks, bool)>,
     claims: u32,
@@ -59,6 +66,8 @@ impl<'r> TestCard<'r> {
             latency: latency_blocks,
             fail: 0,
             garble: false,
+            rotten: None,
+            rot: Rot::new(),
             flight: None,
             claims: 0,
             lookup: Box::new(move |_| Some(frames)),
@@ -86,6 +95,11 @@ impl<'r> TestCard<'r> {
     /// The next read lands bytes that won't de-frame.
     pub fn garble_next(&mut self) {
         self.garble = true;
+    }
+
+    /// Chunk `c` never de-frames from now on: a rotted record in the file.
+    pub fn rot_chunk(&mut self, c: ChunkIdx) {
+        self.rotten = Some(c);
     }
 
     /// Reads claimed so far.
@@ -149,7 +163,10 @@ impl<'r> TestCard<'r> {
     /// Between blocks, at `now`: lands the read in flight if it is due,
     /// then starts the earliest-deadline Wanted slot's, one at a time; at
     /// latency 0 every Wanted slot lands at once. Faulted, nothing starts.
+    /// A rotted chunk's want is passed over, requeued and counted, as
+    /// `serve_step` does.
     pub fn serve(&mut self, rings: &Rings, now: AudioBlocks) {
+        let mut passed = Vec::new();
         loop {
             if let Some((_, due, _)) = &self.flight {
                 if now.until(*due) > 0 {
@@ -163,12 +180,19 @@ impl<'r> TestCard<'r> {
             if self.bus.fault() == CardFault::Read {
                 return;
             }
-            let Some((v, s, _)) = rings.wants().min_by_key(|&(_, _, d)| now.until(d)) else {
+            let open = rings.wants().filter(|&(v, s, _)| !passed.contains(&(v, s)));
+            let Some((v, s, _)) = open.min_by_key(|&(_, _, d)| now.until(d)) else {
                 return;
             };
             let Some(c) = self.card.claim(v, s) else {
                 return;
             };
+            if self.rot.rotted(FileChunk::new(STEM, c.chunk())) {
+                self.card.requeue(c);
+                self.stats.unreadable.fetch_add(1, Ordering::Relaxed);
+                passed.push((v, s));
+                continue;
+            }
             self.claims += 1;
             self.flight = Some((c, now.after(self.latency), false));
         }
@@ -177,11 +201,13 @@ impl<'r> TestCard<'r> {
     /// The claimed chunk's samples into its slot, its guard ahead, Ready;
     /// a failing read is read again once, else requeued, the card faulted.
     fn land(&mut self, c: Claim, retried: bool, now: AudioBlocks) {
+        let key = FileChunk::new(STEM, c.chunk());
+        let garbled = core::mem::take(&mut self.garble) || self.rotten == Some(c.chunk());
         let err = if self.fail > 0 {
             self.fail -= 1;
             Some(ReadError::Proto(ProtoError::Crc))
         } else {
-            core::mem::take(&mut self.garble).then_some(ReadError::Frame)
+            garbled.then(|| ReadError::Frame(self.rot.blame(key)))
         };
         if let Some(err) = err {
             match read_failed(err, retried, &self.bus, &self.stats) {
@@ -189,10 +215,13 @@ impl<'r> TestCard<'r> {
                     self.claims += 1;
                     self.flight = Some((c, now.after(self.latency), true));
                 }
-                ErrorStep::Fault | ErrorStep::FrameError => self.card.requeue(c),
+                ErrorStep::Fault | ErrorStep::FrameError | ErrorStep::Rotted => {
+                    self.card.requeue(c)
+                }
             }
             return;
         }
+        self.rot.cleared(key);
         let chunk = |c: ChunkIdx| {
             let o = c.get() as usize * CHUNK_BYTES.get() as usize;
             let end = (o + CHUNK_BYTES.get() as usize).min(self.samples.len());

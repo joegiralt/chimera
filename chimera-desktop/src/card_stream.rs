@@ -17,7 +17,7 @@ use chimera_core::stream::layout::{RAW_CHUNK_BYTES, StreamFile, deframe};
 use chimera_core::stream::registry::StreamRegistry;
 use chimera_core::stream::ring::{CardSide, Claim};
 use chimera_core::stream::serve::{
-    ErrorStep, HeldRead, ReadError, ServeStep, read_failed, serve_step,
+    ErrorStep, HeldRead, ReadError, Rot, ServeStep, read_failed, serve_step,
 };
 use chimera_core::stream::stats::StreamStats;
 use chimera_core::stream::units::AudioBlocks;
@@ -154,6 +154,7 @@ pub struct CardStream<'r> {
     reads: u32,
     flight: Option<Flight<'r>>,
     ceiling: bool,
+    rot: Rot,
 }
 
 impl<'r> CardStream<'r> {
@@ -176,6 +177,7 @@ impl<'r> CardStream<'r> {
             reads: 0,
             flight: None,
             ceiling: false,
+            rot: Rot::new(),
         }
     }
 
@@ -211,9 +213,14 @@ impl<'r> CardStream<'r> {
             if self.bus.fault() == CardFault::Read || self.bus.quiet() != Quiet::Off {
                 return;
             }
-            let ServeStep::Read { claimed, row } =
-                serve_step(&mut self.side, self.reg, now, UiWait::Idle, self.stats)
-            else {
+            let ServeStep::Read { claimed, row } = serve_step(
+                &mut self.side,
+                self.reg,
+                now,
+                UiWait::Idle,
+                &self.rot,
+                self.stats,
+            ) else {
                 return;
             };
             let fails = self.fault.0 == Some(self.reads);
@@ -299,7 +306,7 @@ impl<'r> CardStream<'r> {
                         fails: true,
                     });
                 }
-                ErrorStep::Fault | ErrorStep::FrameError => {
+                ErrorStep::Fault | ErrorStep::FrameError | ErrorStep::Rotted => {
                     self.fault = FaultAfter::NEVER;
                     self.side.requeue(claim);
                 }
@@ -307,6 +314,7 @@ impl<'r> CardStream<'r> {
             return;
         }
         let r = row.read();
+        let key = row.file().chunk_key(claim.chunk());
         let Some(out) = self.side.fill_buf(&claim) else {
             // Stale: the audio cancelled it.
             let _ = self.side.fill_done(claim);
@@ -315,13 +323,15 @@ impl<'r> CardStream<'r> {
         let len = r.packed().get() as usize;
         match out.get_mut(..len).map(|o| deframe(&raw, r.skip(), o)) {
             Some(Ok(_)) => {
+                self.rot.cleared(key);
                 self.side.write_guard(&claim);
                 if self.side.fill_done(claim) {
                     self.reads += 1;
                 }
             }
             _ => {
-                read_failed(ReadError::Frame, false, self.bus, self.stats);
+                let blame = self.rot.blame(key);
+                read_failed(ReadError::Frame(blame), false, self.bus, self.stats);
                 self.side.requeue(claim);
             }
         }
