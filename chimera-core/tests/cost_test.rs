@@ -1610,7 +1610,7 @@ fn va_sound(mode: chimera_core::dsp::va::VaMode) -> ParamSnapshot {
 /// shaped edge, point 13).
 #[test]
 fn va_bills_each_mode() {
-    use chimera_core::dsp::va::VaMode::{Bits, Fm, Mix, Ring, Sync, Xor};
+    use chimera_core::dsp::va::VaMode::{Bits, Fm, Mix, Ring, SoftSync, Sync, Xor};
     let rooms = {
         let v = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
         let y = SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0;
@@ -1630,6 +1630,7 @@ fn va_bills_each_mode() {
         (Xor, 550, [8, 6, 8, 7]),
         (Bits, 530, [8, 6, 8, 8]),
         (Fm, 590, [7, 6, 7, 7]),
+        (SoftSync, 570, [8, 6, 7, 7]),
     ] {
         let p = va_sound(mode);
         assert_eq!(

@@ -314,8 +314,10 @@ pub const COST_BITS: Cost = Cost(530);
 /// crossed either way at the 0.45 cap, a divide a crossing) + 134.4 + 29.4
 /// + 74.2 (5.1 of it the modulator's scaling) + 29.9 + 95.
 pub const COST_FM: Cost = Cost(590);
-// provisional: Task 10 counts it
-pub const COST_SOFTSYNC: Cost = Cost(590);
+/// SOFT SYNC: 121.7 (master at 7 kHz) + 211.3 (TRI/SAW, OSC 2's reversing
+/// instance: its edges either way at 0.45, a divide a crossing, a turn's
+/// 88.3 × 7/48) + 36.2 + 67.5 + 30.0 + 95 (at 0.45 uncapped: 640).
+pub const COST_SOFTSYNC: Cost = Cost(570);
 
 /// FM's index at BLEND `blend`, `5·blend²`, capped so OSC 1's fastest read
 /// `inc·(1 + I)` stays under `MAX_INC` (0.45 cycles a sample); `inc = 0`
@@ -726,9 +728,11 @@ impl VaEngine {
             d,
         };
         let mut pk = [0.0f32; 2];
-        // SYNC's master stops at 7 kHz: while SYNC plays or is coming (the
-        // duck down), so the cap ramps in and out under the duck
-        let sync = p.mode == VaMode::Sync || self.playing == VaMode::Sync;
+        // SYNC's and SOFT SYNC's master stops at 7 kHz: while either plays
+        // or is coming (the duck down), so the cap ramps in and out under
+        // the duck (ADR 0161: SOFT SYNC's turns bill at it)
+        let synced = |m| matches!(m, VaMode::Sync | VaMode::SoftSync);
+        let sync = synced(p.mode) || synced(self.playing);
         let hz = [
             if sync && hz[0] > SYNC_MASTER_HZ {
                 SYNC_MASTER_HZ

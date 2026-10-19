@@ -248,7 +248,8 @@ pub fn va_mode(v: f32) -> VaMode {
 
 /// The operator's output over `VA_MIX_PERIODS` of OSC 1 across `N`
 /// points: both naive waves, OSC 2 at `VA_MIX_RATIO` (reset by OSC 1's
-/// wrap under SYNC), through `combine::combine` at AMOUNT with the
+/// wrap under SYNC, running back from it and forward again at the next
+/// under SOFT SYNC), through `combine::combine` at AMOUNT with the
 /// engine's own peak bounds, RING gain and crusher. FM reads OSC 1 at a
 /// phase integrated across the points, its rate `1 + I·b/pk.b` (`I`
 /// `fm_index` uncapped), so the scope shows the read speeding up, slowing
@@ -272,6 +273,10 @@ pub fn va_mix_trace<const N: usize>(v: &VaMix, half: i32) -> [i32; N] {
         let p1 = frac(t);
         let p2 = if v.mode == VaMode::Sync {
             frac(VA_MIX_RATIO * p1)
+        } else if v.mode == VaMode::SoftSync {
+            // forward over an even period of OSC 1, back over an odd one
+            let odd = libm::floorf(t) as i32 & 1 == 1;
+            frac(VA_MIX_RATIO * if odd { 1.0 - p1 } else { p1 })
         } else {
             frac(VA_MIX_RATIO * t)
         };

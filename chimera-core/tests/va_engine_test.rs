@@ -520,13 +520,20 @@ fn wave_driven_end_to_end_lands_in_two_blocks_without_a_click() {
 /// 7 kHz, as a master asked for 9.9 kHz does (the same bits), so the synced
 /// wave repeats every 48 samples (7 master cycles, to the phase's f32
 /// rounding); a pitch rising through the ceiling stays finite, peak-safe
-/// and click-free against the two held.
+/// and click-free against the two held. SOFT SYNC's master stops there
+/// too (ADR 0161), its wave repeating every 96 (14 master cycles, two a
+/// turn and back).
 #[test]
 fn sync_master_stops_at_its_ceiling() {
+    ceiling_holds(VaMode::Sync, 48);
+    ceiling_holds(VaMode::SoftSync, 96);
+}
+
+fn ceiling_holds(mode: VaMode, lag: usize) {
     // CRSE2 +24: the slave sits at the oscillators' own top in both asks,
     // so only the master's ceiling is under test
     let base = VaParams {
-        mode: VaMode::Sync,
+        mode,
         coarse: [0, 24],
         ..sine()
     };
@@ -541,12 +548,12 @@ fn sync_master_stops_at_its_ceiling() {
         })
     };
     let (y, z) = (at(1200.0), at(1500.0));
-    assert_eq!(y, z, "both at the ceiling");
+    assert_eq!(y, z, "{mode:?}: both at the ceiling");
     let tail = &y[y.len() - 4 * B..];
-    let period = (48..tail.len())
-        .map(|n| (tail[n] - tail[n - 48]).abs())
+    let period = (lag..tail.len())
+        .map(|n| (tail[n] - tail[n - lag]).abs())
         .fold(0.0f32, f32::max);
-    println!("SYNC master at the ceiling: |y[n] − y[n − 48]| ≤ {period:.1e}");
+    println!("{mode:?} master at the ceiling: |y[n] − y[n − {lag}]| ≤ {period:.1e}");
     assert!(period <= 1e-5, "{period}");
     // rising through the ceiling, a block at a time
     let held: Vec<_> = [0.0, 1200.0].map(at).into();
@@ -565,7 +572,7 @@ fn sync_master_stops_at_its_ceiling() {
     let pk = peak(&y) * VA_CHAIN_GAIN;
     let (d, lim) = click(&y, &held);
     println!(
-        "rising through 7 kHz: peak {pk:.3}, Δ² {d:.3e} / limit {lim:.3e} ({:.0}%)",
+        "{mode:?} rising through 7 kHz: peak {pk:.3}, Δ² {d:.3e} / limit {lim:.3e} ({:.0}%)",
         100.0 * d / lim
     );
     assert!(pk <= 0.95, "{pk}");
@@ -931,7 +938,7 @@ fn steal_glide_glides() {
 
 #[test]
 fn bills_follow_the_mode() {
-    let bills = [530, 540, 530, 550, 530, 590, 590];
+    let bills = [530, 540, 530, 550, 530, 590, 570];
     assert!(VaEngine::mode_cost(VaMode::Sync) > VaEngine::mode_cost(VaMode::Mix));
     for (mode, bill) in VaMode::ALL.into_iter().zip(bills) {
         assert_eq!(VaEngine::mode_cost(mode), Cost(bill), "{mode:?}");

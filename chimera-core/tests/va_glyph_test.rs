@@ -162,6 +162,8 @@ const MODE_GOLDENS: &[(&str, u64)] = &[
     ("bits_100", 0xc67fbc52da2a4a08),
     ("fm_050", 0x53047951d090ece0),
     ("fm_100", 0x8f8eca18b59af852),
+    ("soft_050", 0xf3568a3904c84f59),
+    ("soft_100", 0x1a37f470abe6e62d),
 ];
 
 #[test]
@@ -199,6 +201,18 @@ fn sync_resets_osc_2_on_osc_1s_wrap() {
     assert_ne!(free[..4], free[half..half + 4]);
 }
 
+/// SOFT SYNC runs OSC 2 back over OSC 1's second period: at BLEND 1 the
+/// second half is the first mirrored.
+#[test]
+fn soft_sync_mirrors_osc_2_on_osc_1s_wrap() {
+    let t = mix(VaMode::SoftSync, 1.0);
+    let n = t.len();
+    for i in 0..n / 2 {
+        assert!((t[i] - t[n - 1 - i]).abs() <= 1, "{i}: {} {}", t[i], t[n - 1 - i]);
+    }
+    assert_ne!(t, mix(VaMode::Sync, 1.0));
+}
+
 /// BITS at full AMOUNT is 2 bits: five levels at most.
 #[test]
 fn bits_crushes_to_a_few_levels() {
@@ -220,6 +234,7 @@ fn blend_ends_name_what_amount_does() {
     assert_eq!(blend_ends(VaMode::Xor), ["MIX", "XOR"]);
     assert_eq!(blend_ends(VaMode::Bits), ["CLEAN", "CRUSH"]);
     assert_eq!(blend_ends(VaMode::Fm), ["CLEAN", "DEEP"]);
+    assert_eq!(blend_ends(VaMode::SoftSync), ["1", "2"]);
 }
 
 fn label_w(s: &str) -> i32 {
@@ -334,7 +349,8 @@ fn the_va_page_draws_each_glyph() {
         assert_eq!(va(&ui).mode, m);
         let fb = shoot(&ui, &format!("va_blend_{}", MODE_NAMES[k].to_lowercase()));
         let b = band(&fb, theme::BLEND_W);
-        if m != VaMode::Sync {
+        // SYNC and SOFT SYNC fade OSC 1 to OSC 2 as MIX does
+        if !matches!(m, VaMode::Sync | VaMode::SoftSync) {
             assert!(!seen.contains(&b), "{m:?}: its own ends");
         }
         seen.push(b);
