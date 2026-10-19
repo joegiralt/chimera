@@ -84,7 +84,7 @@ class Bank2Code(unittest.TestCase):
 
     def test_the_full_benches_play_the_reverb_from_bank_2(self):
         sets = re.search(r'^bench_sets := "([^"]*)"', (ROOT / "Justfile").read_text(), re.M).group(1).split()
-        for area in ("bench-algo", "bench-stress", "bench-orbit"):
+        for area in ("bench-algo", "bench-routing", "bench-stress", "bench-orbit"):
             mine = [s for s in sets if area in s.split(",")]
             self.assertTrue(mine, area)
             for s in mine:
