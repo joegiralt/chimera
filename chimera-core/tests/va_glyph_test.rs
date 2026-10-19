@@ -166,6 +166,8 @@ const MODE_GOLDENS: &[(&str, u64)] = &[
     ("loopfm_100", 0x78b9dbcc4401c215),
     ("am_050", 0x2a982566b01fa105),
     ("am_100", 0xc963df042a8e7b3d),
+    ("max_050", 0x1831da0c4eb7b178),
+    ("max_100", 0x884d5c6f119105ce),
 ];
 
 #[test]
@@ -206,6 +208,15 @@ fn loopfm_scope_loops_with_blend() {
 fn am_scope_scales_osc_1_by_osc_2() {
     assert_eq!(mix(VaMode::Am, 0.0), mix(VaMode::Mix, 0.0));
     assert_ne!(mix(VaMode::Am, 1.0), mix(VaMode::Mix, 0.0));
+}
+
+/// MAX's scope is the plain mix at BLEND 0 and rides above it at BLEND 1
+/// (the larger of the two is never below their mean).
+#[test]
+fn max_scope_rises_from_the_mix() {
+    let (lo, hi) = (mix(VaMode::Max, 0.0), mix(VaMode::Max, 1.0));
+    assert_ne!(lo, hi);
+    assert_eq!(lo, mix(VaMode::Mix, 0.5));
 }
 
 /// SYNC restarts OSC 2 on OSC 1's wrap: OSC 1's second period starts as

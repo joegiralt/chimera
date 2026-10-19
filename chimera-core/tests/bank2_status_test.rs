@@ -181,17 +181,17 @@ fn a_closed_bank2_labels_the_reverb_type() {
     use chimera_core::dsp::reverb::ReverbParams;
     let ty = ParamAddr::new(BlockRef::Reverb, ReverbParams::TYPE);
     assert_eq!(
-        closed_text(ty, Some(Bank2Status::Empty)),
+        closed_text(ty, 0.0, Some(Bank2Status::Empty)),
         Some("NEEDS UPDATE")
     );
     assert_eq!(
-        closed_text(ty, Some(Bank2Status::Unsealed)),
+        closed_text(ty, 0.0, Some(Bank2Status::Unsealed)),
         Some("NEEDS UPDATE")
     );
-    assert_eq!(closed_text(ty, Some(open())), None);
-    assert_eq!(closed_text(ty, None), None, "no bank 2 on this target");
+    assert_eq!(closed_text(ty, 0.0, Some(open())), None);
+    assert_eq!(closed_text(ty, 0.0, None), None, "no bank 2 on this target");
     let mix = ParamAddr::new(BlockRef::Reverb, ReverbParams::MIX);
-    assert_eq!(closed_text(mix, Some(Bank2Status::Empty)), None);
+    assert_eq!(closed_text(mix, 0.0, Some(Bank2Status::Empty)), None);
 }
 
 /// The focus band reads NEEDS UPDATE; the TYPE cell, a column wide,
@@ -246,4 +246,78 @@ fn the_type_cell_reads_update_closed() {
     to_fx(&mut ui, REV);
     settle(&mut ui);
     assert!(!first_cell_reads(&render_ui(&ui), NEEDS_UPDATE_CELL));
+}
+
+/// While bank 2 isn't open VA FM is silent (ADR 0163): MODE reads NEEDS
+/// UPDATE at FM, and its own name at the bank-1 MODEs.
+#[test]
+fn a_closed_bank2_labels_va_fm() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::bank2::closed_text;
+    use chimera_core::dsp::va::{MODE_NAMES, VaMode, VaParams};
+    let mode = ParamAddr::new(BlockRef::Va, VaParams::MODE);
+    let at = |m: VaMode| m as u8 as f32 / (MODE_NAMES.len() - 1) as f32;
+    let closed = Some(Bank2Status::Empty);
+    assert_eq!(
+        closed_text(mode, at(VaMode::Fm), closed),
+        Some("NEEDS UPDATE")
+    );
+    assert_eq!(closed_text(mode, at(VaMode::Fm), Some(open())), None);
+    // LOOPFM's whole render is bank 2's too
+    assert_eq!(
+        closed_text(mode, at(VaMode::LoopFm), closed),
+        Some("NEEDS UPDATE")
+    );
+    assert_eq!(closed_text(mode, at(VaMode::LoopFm), Some(open())), None);
+    assert_eq!(
+        closed_text(mode, at(VaMode::Fm), None),
+        None,
+        "no bank 2 on this target"
+    );
+    for m in VaMode::ALL.into_iter().filter(|m| !m.in_bank2()) {
+        assert_eq!(closed_text(mode, at(m), closed), None, "{m:?}");
+    }
+    let wave = ParamAddr::new(BlockRef::Va, VaParams::WAVE1);
+    assert_eq!(closed_text(wave, at(VaMode::Fm), closed), None);
+}
+
+/// VA's home with MODE turned `by` from MIX, bank 2 at `s`.
+fn va_home(by: i8, s: Option<Bank2Status>) -> Fb {
+    use chimera_core::params::EngineType;
+    use chimera_hal::EncoderId;
+    let mut ui = stack_ui();
+    if let Some(s) = s {
+        ui.set_bank2(s);
+    }
+    load_init(&mut ui, EngineType::Va);
+    feed(&mut ui, Input::turn(EncoderId::C, by));
+    settle(&mut ui);
+    render_ui(&ui)
+}
+
+/// The VA page draws MODE's cell as UPDATE at FM closed; at MIX, or open,
+/// as it always did.
+#[test]
+fn the_va_page_draws_update_at_fm_closed() {
+    let empty = Some(Bank2Status::Empty);
+    assert_eq!(
+        va_home(0, empty).hash(),
+        va_home(0, None).hash(),
+        "MIX changed closed"
+    );
+    assert_eq!(va_home(5, Some(open())).hash(), va_home(5, None).hash());
+    assert_ne!(va_home(5, empty).hash(), va_home(5, None).hash());
+    use chimera_core::bank2::{NEEDS_UPDATE, NEEDS_UPDATE_CELL};
+    let closed = va_home(5, empty);
+    assert!(cell_reads(&closed, 2, NEEDS_UPDATE_CELL), "MODE's cell");
+    assert!(band_reads(&closed, NEEDS_UPDATE), "the focus band");
+    let fm = va_home(5, Some(open()));
+    assert!(cell_reads(&fm, 2, "FM"));
+    assert!(!band_reads(&fm, NEEDS_UPDATE));
+    // LOOPFM (MODE 8 from MIX) likewise
+    let n = chimera_core::dsp::va::VaMode::LoopFm as i8;
+    let lf = va_home(n, empty);
+    assert!(cell_reads(&lf, 2, NEEDS_UPDATE_CELL), "LOOPFM's cell");
+    assert!(band_reads(&lf, NEEDS_UPDATE), "LOOPFM's band");
+    assert!(!band_reads(&va_home(n, Some(open())), NEEDS_UPDATE));
 }

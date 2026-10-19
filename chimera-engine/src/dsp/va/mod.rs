@@ -23,7 +23,7 @@ use crate::glyph::{FocusGlyph, VaGlyph, VaOsc};
 use crate::hw::Cost;
 use crate::project::PartId;
 use crate::voice_alloc::VoiceIdx;
-use combine::{Crusher, Operator, Peaks, am_gain, ring_gain};
+use combine::{Crusher, MaxKink, Operator, Peaks, am_gain, ring_gain};
 use osc::{MAX_INC, NO_WRAP, R, Ramps, Sub, SubEdge, VarOsc, ZEROS, wave_reach};
 use stability::{JITTER_CENTS, Seed, Stability, depth};
 #[cfg(any(test, feature = "test-support"))]
@@ -43,12 +43,14 @@ pub enum VaMode {
     Fm = 5,
     /// OSC 2 scales OSC 1, never through zero (#603).
     Am = 6,
+    /// The larger of the two oscillators, its kinks rounded (#605).
+    Max = 7,
     /// Each oscillator loops back on its own frequency (#613).
-    LoopFm = 7,
+    LoopFm = 8,
 }
 
 impl VaMode {
-    pub const ALL: [VaMode; 8] = [
+    pub const ALL: [VaMode; 9] = [
         VaMode::Mix,
         VaMode::Sync,
         VaMode::Ring,
@@ -56,12 +58,21 @@ impl VaMode {
         VaMode::Bits,
         VaMode::Fm,
         VaMode::Am,
+        VaMode::Max,
         VaMode::LoopFm,
     ];
+
+    /// Whether this MODE's oscillators are `osc::door`'s, which with
+    /// `bank2` play only while bank 2 is open (ADR 0163).
+    pub const fn in_bank2(self) -> bool {
+        matches!(self, VaMode::Fm | VaMode::LoopFm)
+    }
 }
 
 /// MODE's names, in `VaMode`'s order (display only).
-pub const MODE_NAMES: [&str; 8] = ["MIX", "SYNC", "RING", "XOR", "BITS", "FM", "AM", "LOOPFM"];
+pub const MODE_NAMES: [&str; 9] = [
+    "MIX", "SYNC", "RING", "XOR", "BITS", "FM", "AM", "MAX", "LOOPFM",
+];
 
 impl DiskCode for VaMode {
     fn disk_code(self) -> u8 {
@@ -73,7 +84,8 @@ impl DiskCode for VaMode {
             VaMode::Bits => 4,
             VaMode::Fm => 5,
             VaMode::Am => 6,
-            VaMode::LoopFm => 7,
+            VaMode::Max => 7,
+            VaMode::LoopFm => 8,
         }
     }
 
@@ -86,6 +98,7 @@ impl DiskCode for VaMode {
             VaMode::Bits => "BITS",
             VaMode::Fm => "FM",
             VaMode::Am => "AM",
+            VaMode::Max => "MAX",
             VaMode::LoopFm => "LOOPFM",
         }
     }
@@ -99,7 +112,8 @@ impl DiskCode for VaMode {
             4 => Some(VaMode::Bits),
             5 => Some(VaMode::Fm),
             6 => Some(VaMode::Am),
-            7 => Some(VaMode::LoopFm),
+            7 => Some(VaMode::Max),
+            8 => Some(VaMode::LoopFm),
             _ => None,
         }
     }
@@ -208,7 +222,7 @@ pub static VA_SPECS: [ParamSpec; 12] = [
         2,
         "MODE",
         ValFmt::Names(&MODE_NAMES),
-        7.0,
+        8.0,
         0.0,
         Change::Crossfade,
     )
@@ -328,6 +342,11 @@ pub const COST_FM: Cost = Cost(590);
 pub const COST_LOOPFM: Cost = Cost(350);
 /// AM: 158.2 + 134.4 + 41.0 + 3.3 (the sub) + 71.1 + 29.9 + 95.
 pub const COST_AM: Cost = Cost(540);
+/// MAX: 158.2 + 134.4 + 50.6 (the operator's loop, with the step test) +
+/// 3.3 + 37.7 (a kink a sample at the worst: one sign change, its divide and
+/// the BLAMP) + 71.7 + 29.9 + 95, 581.3 against MIX's 522.2 in the same
+/// count (the merged tree's block work reads 34 higher for every MODE).
+pub const COST_MAX: Cost = Cost(590);
 
 /// FM's index at BLEND `blend`, `5·blend²`, capped so OSC 1's fastest read
 /// `inc·(1 + I)` stays under `MAX_INC` (0.45 cycles a sample); `inc = 0`
@@ -347,6 +366,9 @@ pub const SYNC_MASTER_HZ: f32 = 7_000.0;
 
 /// A MODE duck's gain over one block, if one runs.
 type Gain = Option<&'static [f32; BLOCK_SIZE]>;
+
+/// `render_loopfm` as the door carries it (ADR 0163, LOOPFM's whole render).
+pub type LoopFmRender = fn(&mut VaEngine, &mut [f32; BLOCK_SIZE], &Lanes, Gain, f32, [f32; 2]);
 
 /// The MODE duck's length each way, two blocks.
 const DUCK: usize = 2 * BLOCK_SIZE;
@@ -460,7 +482,8 @@ pub(crate) struct VaCarry {
 
 /// One block's lanes: each a `(from, step)` ramp a sample (`ease::at`).
 #[derive(Clone, Copy)]
-struct Lanes {
+#[doc(hidden)]
+pub struct Lanes {
     osc: [Ramps; 2],
     amount: (f32, f32),
     sub: (f32, f32),
@@ -499,6 +522,8 @@ pub struct VaEngine {
     lb: [Ramp; 2],
     /// AM's level make-up (`am_gain`).
     am_n: Ramp,
+    /// MAX's corrector.
+    max: MaxKink,
     note: u8,
     pitch: f32,
     slide: Glide,
@@ -537,6 +562,7 @@ impl VaEngine {
             fm: Ramp::default(),
             lb: [Ramp::default(); 2],
             am_n: Ramp::default(),
+            max: MaxKink::NEW,
             note: 60,
             pitch: 0.0,
             slide: Glide::new(1.0, 1.0),
@@ -611,6 +637,8 @@ impl VaEngine {
                 self.sub.reset();
                 self.jit = [1.0; 2];
             }
+            // the corrector's memory goes with the voice, at any STABILITY
+            self.max.reset();
             (self.playing, self.duck) = (p.mode, Duck::Steady);
         }
         if self.seeded != Some(part) {
@@ -697,6 +725,7 @@ impl VaEngine {
             VaMode::Fm => COST_FM,
             VaMode::LoopFm => COST_LOOPFM,
             VaMode::Am => COST_AM,
+            VaMode::Max => COST_MAX,
         }
     }
 
@@ -823,6 +852,7 @@ impl VaEngine {
                 self.render_bits(out, &l, gain)
             }
             VaMode::Am => self.render_am(out, &l, gain),
+            VaMode::Max => self.render_max(out, &l, gain),
             VaMode::Fm => {
                 // capped at the block's faster end; a pitch jump past the
                 // last block's cap lands on it
@@ -831,19 +861,28 @@ impl VaEngine {
                 let (from, to) = self.fm.step(fm_index(unit(p.amount), inc));
                 self.render_fm(out, &l, gain, (from.min(fm_cap(inc)), to))
             }
-            VaMode::LoopFm => self.render_loopfm(
-                out,
-                &l,
-                gain,
-                unit(p.amount),
-                [unit(p.wave[0]), unit(p.wave[1])],
-            ),
+            VaMode::LoopFm => {
+                let (x, wave) = (unit(p.amount), [unit(p.wave[0]), unit(p.wave[1])]);
+                // bank 2's with `bank2` (ADR 0163); closed, the voice is
+                // silent and the duck runs on
+                #[cfg(feature = "bank2")]
+                if crate::bank2::DOOR_CELL
+                    .with(|d| (d.va.loopfm)(self, out, &l, gain, x, wave))
+                    .is_none()
+                {
+                    out.fill(0.0);
+                }
+                #[cfg(not(feature = "bank2"))]
+                self.render_loopfm(out, &l, gain, x, wave);
+            }
         }
         self.duck = match duck {
             Duck::Steady => Duck::Steady,
             Duck::Down(0) => Duck::Down(1),
             Duck::Down(_) => {
                 self.playing = p.mode;
+                // MAX starts from nothing under the duck
+                self.max.reset();
                 // FM's index starts on its value
                 self.fm.hold();
                 for r in &mut self.lb {
@@ -891,6 +930,11 @@ impl VaEngine {
         self.run(out, l, VaMode::Bits, gain);
     }
 
+    #[inline(never)]
+    fn render_max(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
+        self.run(out, l, VaMode::Max, gain);
+    }
+
     /// FM (#601): OSC 2 plain, at unit peak times the index `ix` (from,
     /// to), drives OSC 1's read rate `inc·(1 + I·b)` through zero; the
     /// operator plays OSC 1 alone, with the sub and the chain gain.
@@ -921,15 +965,21 @@ impl VaEngine {
             x += dx;
             *v *= x;
         }
-        o1.render::<BLOCK_SIZE, true, false, true, true>(
-            out,
-            mk,
-            &l.osc[0],
-            &mut jit[0],
-            &mut draw,
-            b,
-            (1.0, 0.0),
-        );
+        // OSC 1's MOD render is bank 2's with `bank2` (ADR 0163). Closed,
+        // the voice is silent and OSC 1 waits as it was.
+        let mut osc1 = |f: osc::door::ModRender| {
+            f(o1, out, mk, &l.osc[0], &mut jit[0], stab, jd, b, (1.0, 0.0))
+        };
+        #[cfg(feature = "bank2")]
+        if crate::bank2::DOOR_CELL
+            .with(|d| osc1(d.va.osc1_mod))
+            .is_none()
+        {
+            out.fill(0.0);
+            return;
+        }
+        #[cfg(not(feature = "bank2"))]
+        osc1(osc::door::osc1_mod);
         #[cfg(any(test, feature = "test-support"))]
         {
             self.backwards = self.osc2.iter().any(|&v| v < -1.0);
@@ -1073,6 +1123,7 @@ impl VaEngine {
     ) {
         let Self {
             sub,
+            max,
             crusher,
             osc2: b,
             marks: mk,
@@ -1088,6 +1139,7 @@ impl VaEngine {
         let (mut n, mut dn, ddn) = (down * l.norm.0, down * l.norm.1, down * l.norm.2);
         // SUB's level, a sample's step at a time
         let (mut s, mut sl) = (*sub, s0);
+        let mut kink = *max;
         // one sample (a macro: a closure here is left out of line)
         macro_rules! one {
             ($i:expr) => {{
@@ -1095,7 +1147,12 @@ impl VaEngine {
                 x += dx;
                 k += dk;
                 sl += ds;
-                let c = op.at(out[i], b[i], x, k);
+                // MAX plays one sample late, the sub on the clock
+                let c = if mode == VaMode::Max {
+                    kink.step(out[i], b[i], x)
+                } else {
+                    op.at(out[i], b[i], x, k)
+                };
                 let sv = s.step(mk[i][1]);
                 let y = (c + sl * sv) * n;
                 out[i] = if DUCKED { y * g[i] } else { y };
@@ -1112,6 +1169,7 @@ impl VaEngine {
             one!(i + 3);
         }
         *sub = s;
+        *max = kink;
     }
 
     /// A glide steal's ratio now, 1 at rest.
@@ -1120,9 +1178,16 @@ impl VaEngine {
         self.slide.value()
     }
 
-    /// Both oscillators uncorrected: the alias gate's baseline.
+    /// MAX's kink corrector off, the oscillators corrected.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn kink_uncorrected(&mut self) {
+        self.max.off = true;
+    }
+
+    /// Both oscillators uncorrected (and MAX's kinks): the alias gate's baseline.
     #[cfg(any(test, feature = "test-support"))]
     pub fn uncorrected(&mut self) {
+        self.max.off = true;
         self.osc = self.osc.map(|o| o.with_correction(Correction::Off));
     }
 

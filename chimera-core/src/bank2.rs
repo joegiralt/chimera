@@ -96,21 +96,32 @@ fn closed(bank2: Option<Bank2Status>) -> bool {
     bank2.is_some_and(|s| !s.is_open())
 }
 
-/// The text cell `addr` shows in place of its value under `bank2`: the
-/// reverb's TYPE (ADR 0142) and TAPE's MODEL (ADR 0141) read `NEEDS
-/// UPDATE` while their code can't play.
+/// The text cell `addr` shows in place of its value `v` (0..1, as
+/// displayed) under `bank2`: the reverb's TYPE (ADR 0142), TAPE's MODEL
+/// (ADR 0141) and a VA MODE whose oscillators are bank 2's (FM, ADR 0163)
+/// read `NEEDS UPDATE` while their code can't play.
 pub fn closed_text(
     addr: crate::addr::ParamAddr,
+    v: f32,
     bank2: Option<Bank2Status>,
 ) -> Option<&'static str> {
     use crate::addr::{BlockRef, ParamAddr};
+    use crate::block::DiskCode;
     use crate::dsp::reverb::ReverbParams;
     use crate::dsp::tape_engine::params::TapeEngineParams;
+    use crate::dsp::va::{VaMode, VaParams};
     let named = [
         ParamAddr::new(BlockRef::Reverb, ReverbParams::TYPE),
         ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL),
     ];
-    (closed(bank2) && named.contains(&addr)).then_some(NEEDS_UPDATE)
+    let va_mode = || {
+        addr == ParamAddr::new(BlockRef::Va, VaParams::MODE)
+            && addr.spec().is_some_and(|s| {
+                VaMode::from_disk_code(crate::ui::fmt::discrete(v, s.fmt.max_int()))
+                    .is_some_and(VaMode::in_bank2)
+            })
+    };
+    (closed(bank2) && (named.contains(&addr) || va_mode())).then_some(NEEDS_UPDATE)
 }
 
 /// What the header of a Part playing `engine` warns under `bank2`: a TAPE
