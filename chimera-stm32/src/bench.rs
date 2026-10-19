@@ -169,7 +169,7 @@ const PATCHES: [Row; ROWS] = [
 /// SYNC's slave a fifth up, FM's modulator at unison, LOOPFM's WAVE at its
 /// default (2/3). A new MODE appends its
 /// row.
-const VA_ROWS: usize = 7;
+const VA_ROWS: usize = 8;
 const VA: [Row; VA_ROWS] = [
     ("MIX", || va(VaMode::Mix), 36, 12),
     ("SYNC", || va(VaMode::Sync), 36, 12),
@@ -177,8 +177,8 @@ const VA: [Row; VA_ROWS] = [
     ("XOR", || va(VaMode::Xor), 36, 12),
     ("BITS", || va(VaMode::Bits), 36, 12),
     ("FM", || va(VaMode::Fm), 36, 12),
-    ("LOOPFM", || va(VaMode::LoopFm), 36, 12),
     ("AM", || va(VaMode::Am), 36, 12),
+    ("LOOPFM", || va(VaMode::LoopFm), 36, 12),
 ];
 
 #[inline(never)]
