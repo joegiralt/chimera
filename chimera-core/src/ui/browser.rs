@@ -27,6 +27,7 @@ use crate::ui::meter::{self, MeterView};
 use crate::ui::settings::part::Offer;
 use crate::ui::settings::prompt::POOL_FULL;
 use crate::ui::theme;
+use crate::ui::theme::{Face, TextSize};
 
 /// Rows on screen.
 pub const VISIBLE_ROWS: usize = 8;
@@ -464,17 +465,19 @@ pub fn draw<D>(
     scroll: usize,
     hints: bool,
     refusal: Option<&str>,
+    text: TextSize,
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
     match view {
         BrowserView::Project => {
             title(d, BrowserTab::Project, part);
-            project_body(d, project, part, cursor, scroll, hints, refusal);
+            project_body(d, project, part, cursor, scroll, hints, refusal, text);
         }
         BrowserView::Library(lib, this) => {
             title(d, lib.tab(), part);
-            library_body(d, project.pool(), lib, this, cursor, scroll, hints, refusal);
+            let pool = project.pool();
+            library_body(d, pool, lib, this, cursor, scroll, hints, refusal, text);
         }
     }
     // B's turn between the tabs: a hint, right on line 1.
@@ -484,6 +487,7 @@ pub fn draw<D>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn project_body<D>(
     d: &mut D,
     project: &Project,
@@ -492,6 +496,7 @@ fn project_body<D>(
     scroll: usize,
     hints: bool,
     refusal: Option<&str>,
+    text: TextSize,
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -501,7 +506,7 @@ fn project_body<D>(
         if entry >= TOTAL_ENTRIES {
             break;
         }
-        row(d, pool, entry, row_y(i), entry == cursor);
+        row(d, pool, entry, row_y(i), entry == cursor, text);
     }
     scroll_bar(d, scroll, TOTAL_ENTRIES);
 
@@ -559,6 +564,7 @@ fn library_body<D>(
     scroll: usize,
     hints: bool,
     refusal: Option<&str>,
+    text: TextSize,
 ) where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -570,7 +576,7 @@ fn library_body<D>(
             break;
         }
         let r = lib_row_at(page, at);
-        library_row(d, lib, r, row_y(i), at == cursor);
+        library_row(d, lib, r, row_y(i), at == cursor, text);
     }
     scroll_bar(d, scroll, total);
 
@@ -650,8 +656,14 @@ fn library_body<D>(
 const LIB_NAME_X: i32 = 18;
 
 /// One LIBRARY row at baseline `y`.
-fn library_row<D>(d: &mut D, lib: &LibState, row: LibRow<'_>, y: i32, selected: bool)
-where
+fn library_row<D>(
+    d: &mut D,
+    lib: &LibState,
+    row: LibRow<'_>,
+    y: i32,
+    selected: bool,
+    text: TextSize,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
     // The lone `Empty` row is never a selection: inert, dim, no pill.
@@ -706,16 +718,12 @@ where
     };
     let room = TAG_RIGHT - right - NAME_GAP - LIB_NAME_X;
     match e.seen.name {
-        Some(n) => value(
-            d,
-            clip(
-                &theme::FONT_VALUE,
-                components::upper(n.as_str()).as_str(),
-                room,
-                0,
-            ),
-            ink,
-        ),
+        Some(n) => {
+            let n = components::upper(n.as_str());
+            if !large_name(d, n.as_str(), LIB_NAME_X, y, room, ink, text) {
+                value(d, clip(&theme::FONT_VALUE, n.as_str(), room, 0), ink);
+            }
+        }
         // No readable name: PROJECT's dash.
         None => {
             let dash = if selected { theme::BG } else { theme::FAINT };
@@ -753,7 +761,36 @@ fn clip<'s>(font: &FontRenderer, s: &'s str, w: i32, tracking: i32) -> &'s str {
     &s[..end]
 }
 
-fn row<D>(d: &mut D, pool: &Pool, entry: usize, y: i32, selected: bool)
+/// A Sound's name whole in LARGE's value face, when `text` is LARGE and
+/// it fits `room` (ADR 0154); `false`, nothing drawn, else: the row draws
+/// it NORMAL, clipped.
+fn large_name<D>(
+    d: &mut D,
+    s: &str,
+    x: i32,
+    y: i32,
+    room: i32,
+    color: Rgb565,
+    text: TextSize,
+) -> bool
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let width = |z| draw::text_width(theme::font(Face::Value, z), s, 0);
+    if theme::fit(text, room, width) == TextSize::Normal {
+        return false;
+    }
+    let slot = draw::Slot {
+        left: x,
+        top: y - 16,
+        right: x + room,
+        bottom: y + 6,
+    };
+    draw::text_fit(d, Face::Value, TextSize::Large, s, x, y, color, 0, slot);
+    true
+}
+
+fn row<D>(d: &mut D, pool: &Pool, entry: usize, y: i32, selected: bool, text: TextSize)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -830,8 +867,10 @@ where
             (None, None) => TAG_RIGHT - TAG_ROOM,
         } - NAME_GAP
             - NAME_X;
-        let shown = clip(&theme::FONT_VALUE, name.as_str(), room, 0);
-        draw::text(d, &theme::FONT_VALUE, shown, NAME_X, y, color);
+        if !large_name(d, name.as_str(), NAME_X, y, room, color, text) {
+            let shown = clip(&theme::FONT_VALUE, name.as_str(), room, 0);
+            draw::text(d, &theme::FONT_VALUE, shown, NAME_X, y, color);
+        }
     }
     if let Some(c) = cost {
         let label = c.kib_label();

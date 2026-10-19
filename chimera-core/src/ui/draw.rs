@@ -145,6 +145,92 @@ pub fn fit_font<'a>(fonts: &[&'a FontRenderer], s: &str, w: i32) -> Option<&'a F
     fonts.iter().copied().find(|f| text_width(f, s, 0) <= w)
 }
 
+/// A box a fitted text must stay inside: x `left..right`, y `top..bottom`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Slot {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+}
+
+/// `s` in `face` from `x` on baseline `y`: at `size` where it fits before
+/// `slot.right`, else NORMAL (`theme::fit`). Returns the advance.
+#[allow(clippy::too_many_arguments)]
+pub fn text_fit<D>(
+    d: &mut D,
+    face: theme::Face,
+    size: theme::TextSize,
+    s: &str,
+    x: i32,
+    y: i32,
+    color: Rgb565,
+    tracking: i32,
+    slot: Slot,
+) -> i32
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let size = theme::fit(size, slot.right - x, |z| {
+        text_width(theme::font(face, z), s, tracking)
+    });
+    let font = theme::font(face, size);
+    // NORMAL is the layout as drawn and locked; only LARGE is checked.
+    #[cfg(feature = "test-support")]
+    if size == theme::TextSize::Large {
+        overflow::check(font, s, x, y, tracking, slot);
+    }
+    text_tracked(d, font, s, x, y, color, tracking)
+}
+
+/// Every fitted text's inked box against its slot, per thread: the
+/// LARGE walk's no-overflow check (ADR 0154).
+#[cfg(feature = "test-support")]
+pub mod overflow {
+    extern crate std;
+    use super::{Slot, text_width};
+    use core::cell::RefCell;
+    use embedded_graphics::geometry::Point;
+    use std::string::String;
+    use std::vec::Vec;
+    use u8g2_fonts::FontRenderer;
+    use u8g2_fonts::types::VerticalPosition;
+
+    std::thread_local! {
+        static SPILLS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(super) fn check(font: &FontRenderer, s: &str, x: i32, y: i32, t: i32, slot: Slot) {
+        let Ok(dims) =
+            font.get_rendered_dimensions(s, Point::new(x, y), VerticalPosition::Baseline)
+        else {
+            return;
+        };
+        let Some(bb) = dims.bounding_box else {
+            return;
+        };
+        // The advance less the last glyph's tracking: the tracked run's ink.
+        let right = x + text_width(font, s, t) - t;
+        let (top, bottom) = (bb.top_left.y, bb.top_left.y + bb.size.height as i32);
+        if x < slot.left || right > slot.right || top < slot.top || bottom > slot.bottom {
+            SPILLS.with(|v| {
+                let mut v = v.borrow_mut();
+                // Held to a few: a suite that never takes them stays small.
+                if v.len() < 64 {
+                    v.push(std::format!(
+                        "{s:?} inks x {x}..{right} y {top}..{bottom}, slot {slot:?}"
+                    ));
+                }
+            });
+        }
+    }
+
+    /// The spills since the last call, cleared.
+    pub fn take() -> Vec<String> {
+        SPILLS.with(|v| core::mem::take(&mut *v.borrow_mut()))
+    }
+}
+
 /// Draw `s` ending at `right` (exclusive).
 pub fn text_right<D>(
     d: &mut D,

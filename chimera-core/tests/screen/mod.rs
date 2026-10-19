@@ -2054,6 +2054,10 @@ pub const CASES: &[ScreenCase] = &[
         to_leaf(ui, &["PERSONALIZE", "CHAIN MAP"]);
         feed(ui, Input::turn(EncoderId::A, -1));
     }),
+    // PERSONALIZE › TEXT SIZE (ADR 0154): SIZE at NORMAL, the default.
+    ("settings_personal_text_size", |ui| {
+        to_leaf(ui, &["PERSONALIZE", "TEXT SIZE"]);
+    }),
     // MIDI CONFIG › SYNC (ADR 0080): EXT, the default, focused.
     ("settings_midi_sync", |ui| {
         to_leaf(ui, &["MIDI CONFIG", "SYNC"]);
@@ -2213,6 +2217,69 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::E, -1).and_held(ButtonId::Mix));
         feed(ui, Input::turn(EncoderId::F, 40).and_held(ButtonId::Mix));
     }),
+    // TEXT SIZE LARGE (ADR 0154): each its NORMAL case's screen, the
+    // cells, the focus label, the hint and the lists a size up where each
+    // fits.
+    ("large_engine_algo", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        feed(ui, Input::turn(EncoderId::A, 2));
+        large(ui);
+    }),
+    ("large_algo_level", |ui| {
+        init_part(ui, PartId::ALL[0]);
+        to_level_page(ui);
+        feed(ui, Input::turn(EncoderId::B, 60));
+        large(ui);
+    }),
+    ("large_bigviz_filter", |ui| {
+        plus(ui, 3);
+        feed(ui, Input::turn(EncoderId::C, 80));
+        feed(ui, Input::turn(EncoderId::B, -60));
+        large(ui);
+    }),
+    ("large_modal_amp", |ui| {
+        load_init(ui, EngineType::Modal);
+        plus(ui, 3);
+        large(ui);
+    }),
+    ("large_va_drive", |ui| {
+        load_init(ui, EngineType::Va);
+        plus(ui, 1);
+        large(ui);
+    }),
+    ("large_mixer_sends", |ui| {
+        feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
+        feed(ui, Input::turn(EncoderId::C, 40));
+        large(ui);
+    }),
+    ("large_settings_top", |ui| {
+        tap(ui, ButtonId::Menu);
+        large(ui);
+    }),
+    ("large_settings_personal", |ui| {
+        to_leaf(ui, &["PERSONALIZE"]);
+        large(ui);
+    }),
+    ("large_sound_browser", |ui| {
+        let mut s = Sound::init(EngineType::Algo);
+        s.name = chimera_core::name::Name::new("WARM BASS").unwrap();
+        ui.project_mut().pool_store(SlotId::ALL[0], &s).unwrap();
+        let mut s = Sound::init(EngineType::Modal);
+        s.name = chimera_core::name::Name::new("GLASS PLUCK").unwrap();
+        ui.project_mut().pool_store(SlotId::ALL[1], &s).unwrap();
+        feed(ui, Input::chord(ButtonId::Edit, ButtonId::B1));
+        feed(ui, Input::turn(EncoderId::A, 1));
+        large(ui);
+    }),
+    ("large_library_sounds", |ui| {
+        library_tab(ui, lib_card(), |_| {});
+        large(ui);
+    }),
+    // The leaf itself, SIZE turned from NORMAL to LARGE.
+    ("large_settings_text_size", |ui| {
+        to_leaf(ui, &["PERSONALIZE", "TEXT SIZE"]);
+        feed(ui, Input::turn(EncoderId::A, 1));
+    }),
 ];
 
 /// `AudioStats` fixture for AUDIO LOAD's and ABOUT's goldens and tests.
@@ -2237,6 +2304,18 @@ pub fn audio_fixture() -> AudioStats {
 pub fn set_pages(ui: &mut UiState, pages: chimera_core::ui::theme_settings::Pages) {
     let t = ui.theme();
     ui.set_theme(chimera_core::ui::theme_settings::ThemeSettings { pages, ..t });
+}
+
+/// TEXT SIZE LARGE, set after a case's keys: each large case is its
+/// NORMAL golden's screen, a size up.
+fn large(ui: &mut UiState) {
+    set_text(ui, chimera_core::ui::theme::TextSize::Large);
+}
+
+/// TEXT SIZE at `text` (ADR 0154).
+pub fn set_text(ui: &mut UiState, text: chimera_core::ui::theme::TextSize) {
+    let t = ui.theme();
+    ui.set_theme(chimera_core::ui::theme_settings::ThemeSettings { text, ..t });
 }
 
 /// A fresh UI under STACK: ADR 0081's keys, EDIT down and SEQ up, which

@@ -13,6 +13,11 @@
 //!     cargo test -p chimera-core --test all_pages_walk_test -- --ignored --nocapture
 //!
 //! `representative_pages_walk` runs a trimmed subset on every `just check`.
+//!
+//! The LARGE walks (ADR 0154) do the same with TEXT SIZE at LARGE, and also
+//! fail on any text drawn in a LARGE face outside its slot
+//! (`draw::overflow`): a cell's label into its value, a value past its
+//! column, a hint into the gauge.
 
 mod screen;
 
@@ -26,8 +31,10 @@ use chimera_core::ui::block_def::ChainDef2;
 use chimera_core::ui::block_registry::{
     ALGO_FORMANT_CHAIN, MIXER_CHANNEL_CHAIN, MIXER_HOME, MIXER_PART,
 };
+use chimera_core::ui::draw::overflow;
 use chimera_core::ui::nav::chain_def_for;
 use chimera_core::ui::perf::PerfStats;
+use chimera_core::ui::theme::TextSize;
 use chimera_hal::{ButtonId, EncoderId};
 use screen::*;
 
@@ -116,8 +123,9 @@ impl Context {
         assert_eq!(page_def_id(ui), def.id, "{self:?} reached {}", def.name);
     }
 
-    fn start(self) -> UiState {
+    fn start(self, text: TextSize) -> UiState {
         let mut ui = crate::screen::stack_ui();
+        set_text(&mut ui, text);
         match self {
             Context::Part(engine) => load_init(&mut ui, engine),
             Context::Formant => {
@@ -149,9 +157,10 @@ struct Walk {
 }
 
 impl Walk {
-    fn new(ctx: Context, frames_per_step: usize) -> Self {
+    fn new(ctx: Context, frames_per_step: usize, text: TextSize) -> Self {
+        overflow::take();
         Self {
-            ui: ctx.start(),
+            ui: ctx.start(text),
             dirty: Fb::new(),
             frames: 0,
             tick: 0,
@@ -180,6 +189,12 @@ impl Walk {
             let mut full = Fb::new();
             self.ui.render_with_scope(&mut full, &perf, &scope);
             let page = format!("{:?}", self.ui.location());
+            let spills = overflow::take();
+            assert!(
+                spills.is_empty(),
+                "{what} on {page}: LARGE text left its slot:\n{}",
+                spills.join("\n")
+            );
             assert_eq!(full.oob, 0, "{what} on {page}: full render drew off screen");
             assert_eq!(
                 self.dirty.oob, 0,
@@ -230,7 +245,18 @@ fn walk(
     encoders: &[EncoderId],
     keep: impl Fn(usize, usize) -> bool,
 ) -> usize {
-    let mut w = Walk::new(ctx, frames_per_step);
+    walk_at(TextSize::Normal, ctx, frames_per_step, encoders, keep)
+}
+
+/// `walk` with TEXT SIZE at `text`.
+fn walk_at(
+    text: TextSize,
+    ctx: Context,
+    frames_per_step: usize,
+    encoders: &[EncoderId],
+    keep: impl Fn(usize, usize) -> bool,
+) -> usize {
+    let mut w = Walk::new(ctx, frames_per_step, text);
     for (node, block) in ctx.chain().blocks.iter().enumerate() {
         for sub in 0..block.sub_page_count().max(1) {
             if !ctx.owns(node) || !keep(node, sub) {
@@ -247,7 +273,12 @@ fn walk(
 /// encoder moves (#78): pages that differ only by their def must still
 /// redraw. Returns the frames rendered.
 fn arrive_untouched(ctx: Context, frames_per_step: usize) -> usize {
-    let mut w = Walk::new(ctx, frames_per_step);
+    arrive_untouched_at(TextSize::Normal, ctx, frames_per_step)
+}
+
+/// `arrive_untouched` with TEXT SIZE at `text`.
+fn arrive_untouched_at(text: TextSize, ctx: Context, frames_per_step: usize) -> usize {
+    let mut w = Walk::new(ctx, frames_per_step, text);
     for (node, block) in ctx.chain().blocks.iter().enumerate() {
         if !ctx.owns(node) {
             continue;
@@ -313,6 +344,66 @@ fn representative_pages_walk() {
     walk(leaf(&["PERSONALIZE", "THEME"]), 2, &enc, |_, _| true);
     for ctx in every_context() {
         arrive_untouched(ctx, 1);
+    }
+}
+
+/// Every page at LARGE, driven as `every_page_walk` drives them.
+#[test]
+#[ignore = "slow: run with --ignored"]
+fn every_page_walk_large() {
+    let mut frames = 0;
+    for ctx in every_context() {
+        frames += arrive_untouched_at(TextSize::Large, ctx, 4);
+        frames += walk_at(TextSize::Large, ctx, 4, &ENCODERS, |_, _| true);
+    }
+    println!("LARGE walk: {frames} frames, no text out of its slot");
+}
+
+/// Every page arrived at with TEXT SIZE LARGE, and the representative
+/// pages driven: no LARGE text leaves its slot, dirty == full, nothing
+/// off screen (ADR 0154).
+#[test]
+fn representative_pages_walk_large() {
+    let enc = [EncoderId::A, EncoderId::E];
+    let large = TextSize::Large;
+    walk_at(large, Context::Part(EngineType::Algo), 2, &enc, |_, sub| {
+        sub <= 1 || sub >= 13
+    });
+    for e in [EngineType::Modal, EngineType::Va] {
+        walk_at(large, Context::Part(e), 1, &enc, |_, sub| sub == 0);
+    }
+    walk_at(large, Context::Mixer(0), 2, &enc, |_, _| true);
+    walk_at(large, Context::Fx, 2, &enc, |_, sub| sub == 0);
+    for ctx in every_context() {
+        arrive_untouched_at(large, ctx, 1);
+    }
+}
+
+/// Every SETTINGS list and leaf at LARGE, the bar on each row in turn: no
+/// LARGE text leaves its slot, nothing off screen.
+#[test]
+fn every_settings_screen_large() {
+    let (perf, scope, audio) = (PerfStats::zero(), scope_fixture(), audio_fixture());
+    let mut ui = crate::screen::stack_ui();
+    set_text(&mut ui, TextSize::Large);
+    overflow::take();
+    for node in tree() {
+        to_leaf(&mut ui, &node.labels);
+        // More than the longest list: PLUS stops on the last row.
+        for row in 0..16 {
+            settle(&mut ui);
+            let mut fb = Fb::new();
+            ui.render_with_audio(&mut fb, &perf, Some(&audio), &scope);
+            let spills = overflow::take();
+            assert!(
+                spills.is_empty(),
+                "{} row {row}: LARGE text left its slot:\n{}",
+                node.name(),
+                spills.join("\n")
+            );
+            assert_eq!(fb.oob, 0, "{} drew off screen", node.name());
+            feed(&mut ui, Input::press(ButtonId::Plus));
+        }
     }
 }
 
