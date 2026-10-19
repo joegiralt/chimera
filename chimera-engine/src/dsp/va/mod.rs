@@ -40,21 +40,24 @@ pub enum VaMode {
     Bits = 4,
     /// OSC 2 frequency-modulates OSC 1 linearly, through zero (#601).
     Fm = 5,
+    /// OSC 2's read reverses at OSC 1's wraps: mirrored sync (#604).
+    SoftSync = 6,
 }
 
 impl VaMode {
-    pub const ALL: [VaMode; 6] = [
+    pub const ALL: [VaMode; 7] = [
         VaMode::Mix,
         VaMode::Sync,
         VaMode::Ring,
         VaMode::Xor,
         VaMode::Bits,
         VaMode::Fm,
+        VaMode::SoftSync,
     ];
 }
 
 /// MODE's names, in `VaMode`'s order (display only).
-pub const MODE_NAMES: [&str; 6] = ["MIX", "SYNC", "RING", "XOR", "BITS", "FM"];
+pub const MODE_NAMES: [&str; 7] = ["MIX", "SYNC", "RING", "XOR", "BITS", "FM", "SOFT"];
 
 impl DiskCode for VaMode {
     fn disk_code(self) -> u8 {
@@ -65,6 +68,7 @@ impl DiskCode for VaMode {
             VaMode::Xor => 3,
             VaMode::Bits => 4,
             VaMode::Fm => 5,
+            VaMode::SoftSync => 6,
         }
     }
 
@@ -76,6 +80,7 @@ impl DiskCode for VaMode {
             VaMode::Xor => "XOR",
             VaMode::Bits => "BITS",
             VaMode::Fm => "FM",
+            VaMode::SoftSync => "SOFTSYNC",
         }
     }
 
@@ -87,6 +92,7 @@ impl DiskCode for VaMode {
             3 => Some(VaMode::Xor),
             4 => Some(VaMode::Bits),
             5 => Some(VaMode::Fm),
+            6 => Some(VaMode::SoftSync),
             _ => None,
         }
     }
@@ -195,7 +201,7 @@ pub static VA_SPECS: [ParamSpec; 12] = [
         2,
         "MODE",
         ValFmt::Names(&MODE_NAMES),
-        5.0,
+        6.0,
         0.0,
         Change::Crossfade,
     )
@@ -308,6 +314,8 @@ pub const COST_BITS: Cost = Cost(530);
 /// crossed either way at the 0.45 cap, a divide a crossing) + 134.4 + 29.4
 /// + 74.2 (5.1 of it the modulator's scaling) + 29.9 + 95.
 pub const COST_FM: Cost = Cost(590);
+// provisional: Task 10 counts it
+pub const COST_SOFTSYNC: Cost = Cost(590);
 
 /// FM's index at BLEND `blend`, `5·blend²`, capped so OSC 1's fastest read
 /// `inc·(1 + I)` stays under `MAX_INC` (0.45 cycles a sample); `inc = 0`
@@ -665,6 +673,7 @@ impl VaEngine {
             VaMode::Xor => COST_XOR,
             VaMode::Bits => COST_BITS,
             VaMode::Fm => COST_FM,
+            VaMode::SoftSync => COST_SOFTSYNC,
         }
     }
 
@@ -779,6 +788,7 @@ impl VaEngine {
         match self.playing {
             VaMode::Mix => self.render_mix(out, &l, gain),
             VaMode::Sync => self.render_sync(out, &l, gain),
+            VaMode::SoftSync => self.render_soft_sync(out, &l, gain),
             VaMode::Ring => self.render_ring(out, &l, gain),
             VaMode::Xor => self.render_xor(out, &l, gain),
             VaMode::Bits => {
@@ -820,6 +830,11 @@ impl VaEngine {
     #[inline(never)]
     fn render_sync(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
         self.run(out, l, VaMode::Sync, gain);
+    }
+
+    #[inline(never)]
+    fn render_soft_sync(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
+        self.run(out, l, VaMode::SoftSync, gain);
     }
 
     #[inline(never)]
@@ -905,7 +920,8 @@ impl VaEngine {
         // 1 at d = 0 (STAB 1)
         let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
         let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
-        // these MODEs read no modulated phase (FM does, `render_fm`)
+        // these MODEs read no modulated phase but SOFT SYNC's OSC 2, which
+        // reverses unmodulated (FM's is `render_fm`)
         let (z, nk) = (&ZEROS, (0.0, 0.0));
         // OSC 1 marks its sub flips and its wraps, one instance for every
         // MODE (flash): only SYNC's slave reads the wraps, resetting at
@@ -921,6 +937,17 @@ impl VaEngine {
         );
         if mode == VaMode::Sync {
             o2.render::<BLOCK_SIZE, false, true, false, false>(
+                b,
+                mk,
+                &l.osc[1],
+                &mut jit[1],
+                &mut draw,
+                z,
+                nk,
+            );
+        } else if mode == VaMode::SoftSync {
+            // the wraps are turns: OSC 2's read reverses there (ADR 0161)
+            o2.render::<BLOCK_SIZE, false, true, false, true>(
                 b,
                 mk,
                 &l.osc[1],

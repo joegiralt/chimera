@@ -1210,7 +1210,8 @@ impl VarOsc {
                 }
             }
         }
-        if SYNC {
+        // a reset's target; a turn (`MOD`) has none
+        if SYNC && !MOD {
             for (k, w) in WAVES.into_iter().enumerate() {
                 blk.zero[k] = w.value_slope(w.consts(sh1, 1.0), 0.0, w.pos(sh1));
             }
@@ -1264,7 +1265,7 @@ impl VarOsc {
             let (v, e) = (c0[0] + c0[3], c1[0] + c1[3]);
             run.c[0] = Lin { v, d: (e - v) * il };
         }
-        if SYNC {
+        if SYNC && !MOD {
             let f = weight(i1);
             let (za, zb) = (blk.zero[a as usize], blk.zero[b as usize]);
             run.y0 = (1.0 - f) * za.0 + f * zb.0;

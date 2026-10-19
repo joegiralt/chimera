@@ -293,7 +293,7 @@ pub fn va_mix_trace<const N: usize>(v: &VaMix, half: i32) -> [i32; N] {
 /// plain (CLEAN) to its full index (DEEP).
 pub const fn blend_ends(mode: VaMode) -> [&'static str; 2] {
     match mode {
-        VaMode::Mix | VaMode::Sync => ["1", "2"],
+        VaMode::Mix | VaMode::Sync | VaMode::SoftSync => ["1", "2"],
         VaMode::Ring => ["MIX", "RING"],
         VaMode::Xor => ["MIX", "XOR"],
         VaMode::Bits => ["CLEAN", "CRUSH"],
