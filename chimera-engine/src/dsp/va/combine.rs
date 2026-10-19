@@ -1,4 +1,4 @@
-//! The six operators and the sub's mix (spec § Combine). Each sees its
+//! The seven operators and the sub's mix (spec § Combine). Each sees its
 //! inputs within their block peak bounds and stays within 0.9; XOR and
 //! BITS alias by nature and are exempt from the alias gate.
 
@@ -146,6 +146,16 @@ pub fn ring_gain(pk: Peaks) -> f32 {
     (1.0 / R).min(0.9 / (pk.a * pk.b))
 }
 
+/// AM's gain `g = (1 − x/2) + (x/2)·b/pk.b` runs from 1 down to 0 and back,
+/// never below `1 − x`. Its level make-up keeps the output at OSC 1's own
+/// RMS: `1/√((1 − x/2)² + (x/2)²·(R/pk.b)²)`, capped so the product stays
+/// within 0.9.
+#[inline]
+pub fn am_gain(x: f32, pk: Peaks) -> f32 {
+    let (u, v) = (1.0 - 0.5 * x, 0.5 * x * R / pk.b.max(1e-6));
+    (1.0 / sqrt(u * u + v * v)).min(0.9 / pk.a.max(1e-6))
+}
+
 /// One block's operator as the engine's loop runs it: MODE and its block
 /// constants, at `scale` times `combine`'s level (2 for RING and XOR, where
 /// `½(a + b)` is then `a + b`; the scalings are exact, so the bits are
@@ -159,6 +169,8 @@ pub struct Operator {
     p2: f32,
     q: f32,
     liq: f32,
+    /// `1 / pk.b`, AM's.
+    ib: f32,
     crush: Crusher,
 }
 
@@ -181,6 +193,7 @@ impl Operator {
             q,
             // BITS crushes `½(a + b) / q`: the ½ rides in the levels (exact)
             liq: 0.5 * crush.levels() / q,
+            ib: 1.0 / pk.b.max(1e-6),
             crush: *crush,
         }
     }
@@ -197,6 +210,7 @@ impl Operator {
             VaMode::Bits => self.q * self.crush.process_scaled(sum, self.liq),
             // OSC 2 is in OSC 1's phase already
             VaMode::Fm => a,
+            VaMode::Am => ks * a * ((1.0 - 0.5 * x) + 0.5 * x * b * self.ib),
         }
     }
 }
@@ -218,6 +232,7 @@ pub fn combine(mode: VaMode, a: f32, b: f32, x: f32, k: f32, pk: Peaks, crush: &
             q * crush.process(half / q)
         }
         VaMode::Fm => a,
+        VaMode::Am => k * a * ((1.0 - 0.5 * x) + 0.5 * x * b * (1.0 / pk.b.max(1e-6))),
     }
 }
 
