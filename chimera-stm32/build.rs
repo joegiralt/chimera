@@ -75,12 +75,16 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     // its TYPEs' modules and `run_loop`'s monomorphs, code and rodata (their
     // switch tables follow their names). Only with `bank2`: without it
     // `Reverb::play` calls `process` in bank 1, where the bench's A/B
-    // (`bench-stress` against `bench-stress,bank2`) keeps it.
+    // (`bench-stress` against `bench-stress,bank2`) keeps it. TAPE's
+    // machine glyphs' raster too (ADR 0148: `tape_glyph::draw`, the door's
+    // `render`), which `paint` calls in bank 1 without it.
     let reverb = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
         "    *(.text.*6Reverb7process* .text.*3rev4ramp .text.*3rev4room* .text.*3rev5bloom* .text.*3rev5burst*
       .text.*3rev11loop_engine* .text.*3rev8run_loop*);
     *(.rodata.*6Reverb7process* .rodata.*3rev4ramp .rodata.*3rev4room* .rodata.*3rev5bloom* .rodata.*3rev5burst*
       .rodata.*3rev11loop_engine* .rodata.*3rev8run_loop*);
+    *(.text.*14chimera_engine10tape_glyph4draw*);
+    *(.rodata.*14chimera_engine10tape_glyph4draw*);
 "
     } else {
         ""

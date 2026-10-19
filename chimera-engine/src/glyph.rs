@@ -6,6 +6,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::delay::DelayParams;
 use crate::dsp::reverb::ReverbParams;
+use crate::dsp::tape_engine::TapeEngineParams as T;
 use crate::dsp::va::VaParams;
 
 /// The gauge a parameter's focus band shows.
@@ -32,6 +33,9 @@ pub enum FocusGlyph {
     Composite(CompositeId),
     /// VA's own gauges, drawn from the VA block's set values (ADR 0129).
     Va(VaGlyph),
+    /// TAPE's machine glyph (ADR 0148): every machine cell's, drawn from
+    /// `TAPE_GLYPH_PARAMS`' set values; still on MODEL and MODE.
+    Tape,
 }
 
 /// VA's gauges: what the oscillators and the operator do to the sound.
@@ -105,7 +109,7 @@ impl CompositeId {
 }
 
 impl FocusGlyph {
-    pub const ALL: [FocusGlyph; 14] = [
+    pub const ALL: [FocusGlyph; 15] = [
         FocusGlyph::Arc,
         FocusGlyph::None,
         FocusGlyph::Switch,
@@ -120,6 +124,7 @@ impl FocusGlyph {
         FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two)),
         FocusGlyph::Va(VaGlyph::Mode),
         FocusGlyph::Va(VaGlyph::Blend),
+        FocusGlyph::Tape,
     ];
 
     /// Index in `ALL`. Exhaustive: a new variant fails to compile here
@@ -140,6 +145,7 @@ impl FocusGlyph {
             FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two)) => 11,
             FocusGlyph::Va(VaGlyph::Mode) => 12,
             FocusGlyph::Va(VaGlyph::Blend) => 13,
+            FocusGlyph::Tape => 14,
         }
     }
 }
@@ -196,3 +202,23 @@ pub const BRAID_PARAMS: [ParamAddr; 4] = [
     ParamAddr::new(BlockRef::Chorus, ChorusParams::DEPTH),
     ParamAddr::new(BlockRef::Chorus, ChorusParams::MIX),
 ];
+
+/// What TAPE's machine glyph reads, in `TapeGauge::from_set`'s order:
+/// MODEL, MODE, START, END, POSITION, MOTION, SIZE, DRAG, TAPE, AGE.
+pub const TAPE_GLYPH_PARAMS: [ParamAddr; 10] = {
+    const fn t(id: crate::block::ParamId) -> ParamAddr {
+        ParamAddr::new(BlockRef::TapeEngine, id)
+    }
+    [
+        t(T::MODEL),
+        t(T::MODE),
+        t(T::START),
+        t(T::END),
+        t(T::POSITION),
+        t(T::MOTION),
+        t(T::SIZE),
+        t(T::DRAG),
+        t(T::TAPE),
+        t(T::AGE),
+    ]
+};

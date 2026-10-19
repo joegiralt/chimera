@@ -55,6 +55,7 @@ pub mod source_table;
 pub mod storage;
 pub mod stream;
 pub mod sym_alloc;
+pub mod tape_glyph;
 pub mod taps;
 pub mod theme_settings;
 pub mod tracked;

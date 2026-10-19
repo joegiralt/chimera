@@ -40,6 +40,7 @@ pub mod saver;
 pub mod settings;
 pub mod source_cell;
 pub mod splash;
+pub mod tape_glyph;
 pub mod tape_strip;
 pub mod theme;
 pub mod theme_settings;

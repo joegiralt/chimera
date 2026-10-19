@@ -25,7 +25,8 @@ use crate::ui::dungeon_map;
 use crate::ui::fmt::{self, FmtBuf};
 use crate::ui::glyph::{
     BRAID_PARAMS, Braid, BraidPart, CompositeId, Cube, CubePart, FocusGlyph, Gauge, REVERB_PARAMS,
-    RINGS_PARAMS, Reads, Rings, RingsPart, Tail, VA_MIX_PARAMS, VaGlyph, VaMix, va_mode,
+    RINGS_PARAMS, Reads, Rings, RingsPart, TAPE_GLYPH_PARAMS, Tail, VA_MIX_PARAMS, VaGlyph, VaMix,
+    va_mode,
 };
 use crate::ui::hint;
 use crate::ui::mod_grid::MatrixState;
@@ -37,6 +38,7 @@ use crate::ui::region::{self, Layout, RegionKind};
 use crate::ui::settings::Ask;
 use crate::ui::settings::prompt::{Beneath, blank_beneath, draw_prompt};
 use crate::ui::settings::view::Bands;
+use crate::ui::tape_glyph::TapeGauge;
 use crate::ui::theme;
 use crate::ui::view::{self, EnvKind, SlotCtx, View};
 use crate::ui::viz;
@@ -715,6 +717,17 @@ impl Renderer {
             }
             Reads::Va(VaGlyph::Mode) => {
                 Gauge::VaMix(VaMix::from_set(self.eased_set(f, VA_MIX_PARAMS)))
+            }
+            // Without TAPE's DSP (the bench) there is no glyph to draw.
+            Reads::Tape if !cfg!(feature = "tape") => Gauge::None,
+            Reads::Tape => {
+                use crate::dsp::tape_engine::TapeEngineParams as T;
+                // MODEL and MODE name the machine: its still identity.
+                let still = focused.is_some_and(|a| a.param == T::MODEL || a.param == T::MODE);
+                Gauge::Tape(TapeGauge::from_set(
+                    self.eased_set(f, TAPE_GLYPH_PARAMS),
+                    still,
+                ))
             }
             Reads::Va(VaGlyph::Blend) => {
                 let [mode, amount] = self.eased_set(f, [VA_MIX_PARAMS[0], VA_MIX_PARAMS[1]]);
