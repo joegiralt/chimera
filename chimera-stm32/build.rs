@@ -87,16 +87,17 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     *(.rodata.*14chimera_engine10tape_glyph4draw*);
     /* The card interrupt's streaming work (ADR 0175, `card_dma::CardDoor`):
        `IrqState`'s steps, the reads' bursts, the stops and the drains, the
-       serve's pick and the fill's landing. Bank 1 keeps the handler's shim,
-       `closed` and what it needs: `Held::op`/`run`, `Flying::ground`,
-       `give`, `CardSide::requeue`. */
+       serve's pick. Bank 1 keeps the handler's shim, `closed` and what it
+       needs (`Held::op`/`run`, `Flying::ground`, `give`,
+       `CardSide::requeue`), and `fill_done`, which the bench's TAPE rig
+       calls too. */
     *(.text.*13chimera_board8card_dma*8IrqState* .text.*13chimera_board8card_dma*4Held3end*
       .text.*13chimera_board8card_dma*4Held3fly* .text.*13chimera_board8card_dma*4Held4xfer*
       .text.*13chimera_board8card_dma*4Held5ready* .text.*13chimera_board8card_dma*4Held6polled*
       .text.*13chimera_board8card_dma*4Held4stop* .text.*13chimera_board8card_dma*4Held7command*
       .text.*13chimera_board8card_dma*6Flying4land* .text.*13chimera_board8card_dma6failed*
       .text.*13chimera_board8card_dma6wanted* .text.*13chimera_board8card_dma7serving*
-      .text.*13chimera_board8card_dma8watch_in* .text.*6stream5serve* .text.*6stream4ring*8CardSide9fill_done*
+      .text.*13chimera_board8card_dma8watch_in* .text.*6stream5serve*
       .text.*5Rings5wants* .text.*6stream3edf*);
     *(.rodata.*13chimera_board8card_dma*8IrqState* .rodata.*6stream5serve*);
     /* TAPE's UI (ADR 0175, `chimera_core::bank2::UiDoor`): the strip's

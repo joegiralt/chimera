@@ -147,15 +147,13 @@ pub struct UiDoor {
         fn(&mut dyn Paint, &Overview, TapeModel, &TapeEngineParams, Heads, (i32, i32)),
     pub(crate) source_turn: fn(&mut SourceCell, &mut Project, PartId, i8),
     pub(crate) source_load: fn(&mut SourceCell, &mut Project, PartId),
-    pub(crate) source_kind:
-        fn(&SourceCell, &Project, PartId, u32) -> Option<(SourceHead, LoadKind)>,
+    pub(crate) source_kind: fn(&SourceCell, &Project, PartId, u32) -> Option<HeadKind>,
     #[cfg(feature = "tape")]
     pub(crate) source_tick: fn(&mut SourceCell, &mut Project),
     pub(crate) source_run: fn(&mut SourceCell, SourceJob, &mut dyn Store, &Ready, &mut Project),
 }
 
 /// A card row's head and how it loads (`SourceCell::kind`).
-#[cfg_attr(not(feature = "tape"), allow(dead_code))]
 type HeadKind = (SourceHead, LoadKind);
 
 /// `UiDoor::magic`.
