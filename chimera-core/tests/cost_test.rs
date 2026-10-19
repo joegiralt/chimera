@@ -74,10 +74,7 @@ fn voice_costs_are_the_billed_literals() {
 /// The SVF at LP24, the default: the engine terms already carry it.
 const LP24: Cost = FilterKind::Svf.cost(K2040Voice::Rev2);
 
-/// Every built (TYPE, MODE, VOICE) bills `max(0, cycles − OLD_LP24)`, as
-/// counted on the bench ELF (plan § Measured, Task 15): CLEAN 35–80 and
-/// DIRTY 70 sit under LP24's 95; the 2040 REV2 110, EXP 135; LADDER 210
-/// (ADR 0104), billed its costliest mode.
+/// The 2040, LADDER, DRIVE and tapped FOLD bill what the unit reads.
 #[test]
 fn the_2040_and_ladder_bill_the_unit() {
     // Unit bench 2026-10-19, rev V, ROUTING, `/VOICE` slope (#642).
@@ -90,6 +87,10 @@ fn the_2040_and_ladder_bill_the_unit() {
     assert_eq!(chimera_core::taps::TAP_FOLD_COST, Cost(51));
 }
 
+/// Every built (TYPE, MODE, VOICE) bills `max(0, cycles − OLD_LP24)`:
+/// CLEAN 35–80 and DIRTY 70 sit under LP24's 95 (host counts, plan §
+/// Measured, Task 15); the 2040 REV2 78, EXP 136 and LADDER 176 as the
+/// unit reads them (#642, ADR 0104), billed its costliest mode.
 #[test]
 fn filter_bills_each_type_and_mode() {
     use FilterKind as K;
@@ -195,7 +196,7 @@ fn the_moving_path_bills_once() {
 #[test]
 fn taps_bill_each_destination() {
     use chimera_core::taps::{TAP_CAPTURE_COST, TAP_FOLD_COST, TAP_VCA_COST};
-    assert!(TAP_VCA_COST >= Cost(30) && TAP_FOLD_COST >= Cost(125 - 80));
+    assert!(TAP_VCA_COST >= Cost(30) && TAP_FOLD_COST >= Cost(51));
     assert!(TAP_CAPTURE_COST >= Cost(15) && Voice::FOLD_RAMP_COST >= Cost(80 - 45));
     let none = ModState::new();
     let base = ParamSnapshot::for_engine(EngineType::Algo);

@@ -135,9 +135,9 @@ fn tap_gain(m: usize, k: f32) -> f32 {
 }
 
 /// LADDER's steady bill over `OLD_LP24` (95) as the unit reads it
-/// (2026-10-19, rev V, ROUTING bench, run 2, `/VOICE` slope): 176. The
-/// host count was 115 (#642), counted on the
-/// `filter-probes` ELF (`tools/loop_count.py`): one loop for every mode,
+/// (2026-10-19, rev V, ROUTING bench, run 2, `/VOICE` slope): 176 (#642).
+/// History: the host count was 115, from the `filter-probes` ELF
+/// (`tools/loop_count.py`): one loop for every mode,
 /// its mix read at run time (`Ladder::steady`), 119 instructions a sample,
 /// 0 `vdiv`; its block (1.00, 2 `vdiv`), the probe's (0.66),
 /// `four_pole_ends` (1.33, 1 `vdiv`) and `hold_huge`'s scan (29 a
