@@ -4,6 +4,7 @@
 //! `SCREEN_DUMP=<dir>` writes the VA page per MODE, a WAVE sweep and
 //! BLEND per MODE, dark and light (`va_*_dark`, `va_*_light`).
 
+mod common;
 mod screen;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
@@ -135,6 +136,58 @@ fn the_mode_glyph_differs_per_mode() {
     }
 }
 
+/// FNV-1a over MODE's scope of two saws at AMOUNT `amount`.
+fn trace_hash(mode: VaMode, amount: f32) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for y in mix(mode, amount) {
+        for b in y.to_le_bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    h
+}
+
+/// Every MODE's scope at BLEND 0.5 and 1, locked.
+const MODE_GOLDENS: &[(&str, u64)] = &[
+    ("mix_050", 0x9cc5eeb9241b78d5),
+    ("mix_100", 0x8a8e3f6bb7477f78),
+    ("sync_050", 0x9efcf5a7bbdf2a96),
+    ("sync_100", 0x5a0b8f059dd06d9e),
+    ("ring_050", 0x2b4d7a7ee457441e),
+    ("ring_100", 0xaa65c3e6b8fd1365),
+    ("xor_050", 0x5de78f0972e297c0),
+    ("xor_100", 0x82b25a12dbe07bbe),
+    ("bits_050", 0x39fcb39b11f54c7e),
+    ("bits_100", 0xc67fbc52da2a4a08),
+    ("fm_050", 0x53047951d090ece0),
+    ("fm_100", 0x8f8eca18b59af852),
+];
+
+#[test]
+fn mode_scopes_match_their_goldens() {
+    let names: Vec<String> = VaMode::ALL
+        .iter()
+        .enumerate()
+        .flat_map(|(k, _)| ["050", "100"].map(|a| format!("{}_{a}", MODE_NAMES[k].to_lowercase())))
+        .collect();
+    let got: Vec<(&str, u64)> = VaMode::ALL
+        .iter()
+        .flat_map(|&m| [trace_hash(m, 0.5), trace_hash(m, 1.0)])
+        .zip(&names)
+        .map(|(h, n)| (n.as_str(), h))
+        .collect();
+    common::golden::check(MODE_GOLDENS, &got);
+}
+
+/// FM's scope is OSC 1 read through zero: at BLEND 0 it is MIX's OSC 1
+/// alone; at BLEND 1 it differs from it.
+#[test]
+fn fm_scope_reads_osc_1_through_osc_2() {
+    assert_eq!(mix(VaMode::Fm, 0.0), mix(VaMode::Mix, 0.0));
+    assert_ne!(mix(VaMode::Fm, 1.0), mix(VaMode::Mix, 0.0));
+}
+
 /// SYNC restarts OSC 2 on OSC 1's wrap: OSC 1's second period starts as
 /// its first does; MIX, OSC 2 running on, does not.
 #[test]
@@ -166,6 +219,7 @@ fn blend_ends_name_what_amount_does() {
     assert_eq!(blend_ends(VaMode::Ring), ["MIX", "RING"]);
     assert_eq!(blend_ends(VaMode::Xor), ["MIX", "XOR"]);
     assert_eq!(blend_ends(VaMode::Bits), ["CLEAN", "CRUSH"]);
+    assert_eq!(blend_ends(VaMode::Fm), ["CLEAN", "DEEP"]);
 }
 
 fn label_w(s: &str) -> i32 {
