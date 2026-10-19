@@ -140,7 +140,13 @@ impl Cases {
             return;
         }
         for v in VALUES {
-            let (shown, hits) = overlap(label, text, gauge_at(glyph, fmt, v, rev));
+            let g = gauge_at(glyph, fmt, v, rev);
+            // the value font beside VA's MODE scope is its own layout: the
+            // band sets the text clear of the gauge (`va_glyph_test`)
+            if components::layout(text, &g) == Layout::SmallBeside {
+                continue;
+            }
+            let (shown, hits) = overlap(label, text, g);
             assert!(
                 hits.is_empty(),
                 "{what} {text:?} ({glyph:?}, v {v}): gauge on the value at {:?}",

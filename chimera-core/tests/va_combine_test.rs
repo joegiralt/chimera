@@ -140,7 +140,8 @@ fn the_engine_operators_are_the_reference() {
                             | VaMode::Ring
                             | VaMode::Fm
                             | VaMode::Am
-                            | VaMode::Max => {
+                            | VaMode::Max
+                            | VaMode::LoopFm => {
                                 assert_eq!(got.to_bits(), want.to_bits(), "{mode:?} {a} {b} {x}")
                             }
                             VaMode::Xor => {

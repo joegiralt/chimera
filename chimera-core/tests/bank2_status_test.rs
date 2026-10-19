@@ -263,6 +263,12 @@ fn a_closed_bank2_labels_va_fm() {
         Some("NEEDS UPDATE")
     );
     assert_eq!(closed_text(mode, at(VaMode::Fm), Some(open())), None);
+    // LOOPFM's whole render is bank 2's too
+    assert_eq!(
+        closed_text(mode, at(VaMode::LoopFm), closed),
+        Some("NEEDS UPDATE")
+    );
+    assert_eq!(closed_text(mode, at(VaMode::LoopFm), Some(open())), None);
     assert_eq!(
         closed_text(mode, at(VaMode::Fm), None),
         None,
@@ -308,4 +314,10 @@ fn the_va_page_draws_update_at_fm_closed() {
     let fm = va_home(5, Some(open()));
     assert!(cell_reads(&fm, 2, "FM"));
     assert!(!band_reads(&fm, NEEDS_UPDATE));
+    // LOOPFM (MODE 8 from MIX) likewise
+    let n = chimera_core::dsp::va::VaMode::LoopFm as i8;
+    let lf = va_home(n, empty);
+    assert!(cell_reads(&lf, 2, NEEDS_UPDATE_CELL), "LOOPFM's cell");
+    assert!(band_reads(&lf, NEEDS_UPDATE), "LOOPFM's band");
+    assert!(!band_reads(&va_home(n, Some(open())), NEEDS_UPDATE));
 }
