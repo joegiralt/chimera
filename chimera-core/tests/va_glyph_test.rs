@@ -126,6 +126,12 @@ fn the_mode_glyph_differs_per_mode() {
         let traces: Vec<_> = VaMode::ALL.iter().map(|&m| mix(m, amount)).collect();
         for i in 0..traces.len() {
             for j in i + 1..traces.len() {
+                // AM's top is RING's product (ADR 0175)
+                let same = [VaMode::ALL[i], VaMode::ALL[j]] == [VaMode::Ring, VaMode::Am];
+                if same && amount == 1.0 {
+                    assert_eq!(traces[i], traces[j], "AM at 1 is RING");
+                    continue;
+                }
                 assert_ne!(
                     traces[i], traces[j],
                     "{} vs {} at {amount}",
@@ -162,8 +168,8 @@ const MODE_GOLDENS: &[(&str, u64)] = &[
     ("bits_100", 0xc67fbc52da2a4a08),
     ("fm_050", 0x53047951d090ece0),
     ("fm_100", 0x8f8eca18b59af852),
-    ("am_050", 0x2a982566b01fa105),
-    ("am_100", 0xc963df042a8e7b3d),
+    ("am_050", 0x02fb52e6dd09be3c),
+    ("am_100", 0xaa65c3e6b8fd1365),
     ("max_050", 0x1831da0c4eb7b178),
     ("max_100", 0x884d5c6f119105ce),
 ];
@@ -241,7 +247,7 @@ fn blend_ends_name_what_amount_does() {
     assert_eq!(blend_ends(VaMode::Xor), ["MIX", "XOR"]);
     assert_eq!(blend_ends(VaMode::Bits), ["CLEAN", "CRUSH"]);
     assert_eq!(blend_ends(VaMode::Fm), ["CLEAN", "DEEP"]);
-    assert_eq!(blend_ends(VaMode::Am), ["CLEAN", "AM"]);
+    assert_eq!(blend_ends(VaMode::Am), ["CLEAN", "RING"]);
 }
 
 fn label_w(s: &str) -> i32 {
