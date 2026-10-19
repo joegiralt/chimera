@@ -100,6 +100,7 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
     use crate::dsp::modal::ModalParams;
     use crate::dsp::tape_engine::TapeEngineParams as T;
     use crate::dsp::va::VaParams as V;
+    use crate::dsp::voice_fx::params::VoiceFxParams as X;
     use crate::params::{
         DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams,
     };
@@ -183,6 +184,20 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
                 panic!("a FOLD knob without a field")
             };
             (offset_of!(P, folder) + f, Kind::F32)
+        }
+        BlockRef::VoiceFx => {
+            let f = if id == X::P1.0 {
+                offset_of!(X, pots)
+            } else if id == X::P2.0 {
+                offset_of!(X, pots) + size_of::<f32>()
+            } else if id == X::P3.0 {
+                offset_of!(X, pots) + 2 * size_of::<f32>()
+            } else if id == X::MIX.0 {
+                offset_of!(X, mix)
+            } else {
+                panic!("an FX knob without a field")
+            };
+            (offset_of!(P, fx) + f, Kind::F32)
         }
         BlockRef::Env(s) => {
             let f = if id == EnvParams::SUSTAIN.0 {

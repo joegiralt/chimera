@@ -169,4 +169,5 @@ pub mod tape;
 pub mod tape_engine;
 pub mod va;
 pub mod voice;
+pub mod voice_fx;
 pub mod wavefolder;
