@@ -19,6 +19,8 @@
 //! the wraps, the sub's flips and the jitter. A plain instance never
 //! touches `read` but to leave it on the clock.
 
+pub mod door;
+
 use super::blep::{blamp_into, blamp6_into, blep_into};
 use crate::dsp::provenance::{PatentLine, Provenance};
 use crate::dsp::{clampf, sqrt};
@@ -1097,10 +1099,34 @@ impl VarOsc {
     /// is `ie·(dir + k.0·m[i]) + k.1·m[i]` (`ie` the jittered increment;
     /// FM `k = (1, 0)`, PM `(0, 1)`), wrapped to the nearest cycle. With
     /// `SYNC` too, a mark is a turn, not a reset: the read reverses there.
-    /// A plain instance ignores `m` and `k`.
+    /// A plain instance ignores `m` and `k`. The engine's `MOD` instances
+    /// are `door`'s (ADR 0163); this one plays them on a host.
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     pub fn render<
+        const N: usize,
+        const REC: bool,
+        const SYNC: bool,
+        const FLIP: bool,
+        const MOD: bool,
+    >(
+        &mut self,
+        out: &mut [f32; N],
+        mk: &mut [[f32; 2]; N],
+        r: &Ramps,
+        jit: &mut f32,
+        draw: &mut impl FnMut() -> f32,
+        m: &[f32; N],
+        k: (f32, f32),
+    ) {
+        self.render_in::<N, REC, SYNC, FLIP, MOD>(out, mk, r, jit, draw, m, k);
+    }
+
+    /// `render`'s body, inlined into its caller: a `MOD` instance's runs
+    /// are `door::run`'s, so with `bank2` they link with the door.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn render_in<
         const N: usize,
         const REC: bool,
         const SYNC: bool,
@@ -1142,16 +1168,23 @@ impl VarOsc {
                 self.runs += 1;
             }
             let span = (i0, i1);
+            macro_rules! run {
+                ($a:ty, $b:ty) => {
+                    if MOD {
+                        door::run::<$a, $b, N, REC, SYNC, FLIP>(
+                            self, &blk, span, r, out, mk, jit, draw, m, k,
+                        )
+                    } else {
+                        self.run::<$a, $b, N, REC, SYNC, FLIP, false>(
+                            &blk, span, r, out, mk, jit, draw, m, k,
+                        )
+                    }
+                };
+            }
             match pair {
-                Pair::SineTri => self.run::<Sine, Tri, N, REC, SYNC, FLIP, MOD>(
-                    &blk, span, r, out, mk, jit, draw, m, k,
-                ),
-                Pair::TriSaw => self.run::<Tri, Saw, N, REC, SYNC, FLIP, MOD>(
-                    &blk, span, r, out, mk, jit, draw, m, k,
-                ),
-                Pair::SawPulse => self.run::<Saw, Pulse, N, REC, SYNC, FLIP, MOD>(
-                    &blk, span, r, out, mk, jit, draw, m, k,
-                ),
+                Pair::SineTri => run!(Sine, Tri),
+                Pair::TriSaw => run!(Tri, Saw),
+                Pair::SawPulse => run!(Saw, Pulse),
             }
             i0 = i1;
             pair = pair.next(up);
@@ -1343,11 +1376,37 @@ impl VarOsc {
         u
     }
 
-    /// The run of samples `i0..i1` on the pair `A`, `B`: its setup, then
-    /// its per-sample loop.
+    /// The run of samples `i0..i1` on the pair `A`, `B`: a plain
+    /// instance (`MOD`'s are `door::run`).
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     fn run<
+        A: Kind,
+        B: Kind,
+        const N: usize,
+        const REC: bool,
+        const SYNC: bool,
+        const FLIP: bool,
+        const MOD: bool,
+    >(
+        &mut self,
+        blk: &Blk,
+        span: (usize, usize),
+        r: &Ramps,
+        out: &mut [f32; N],
+        mk: &mut [[f32; 2]; N],
+        jit: &mut f32,
+        draw: &mut impl FnMut() -> f32,
+        m: &[f32; N],
+        km: (f32, f32),
+    ) {
+        self.run_in::<A, B, N, REC, SYNC, FLIP, MOD>(blk, span, r, out, mk, jit, draw, m, km);
+    }
+
+    /// `run`'s body: its setup, then its per-sample loop.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn run_in<
         A: Kind,
         B: Kind,
         const N: usize,

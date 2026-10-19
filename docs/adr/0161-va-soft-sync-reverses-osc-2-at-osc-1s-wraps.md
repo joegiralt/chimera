@@ -10,7 +10,7 @@ Issue #604 asks for a reversing sync: where SYNC resets the following oscillator
 #604's wording has the roles the other way round from SYNC ("when OSC2 wraps, OSC1 reverses"), and leaves BLEND to the builder ("how much the reverse is applied, or crossfades to MIX").
 
 ## Decision
-1. **The MODE.** SOFT SYNC is ident `SOFTSYNC` (`VaMode::SoftSync`), shown `SOFT` (`SOFT SYNC` overruns the focus band's room left of the scope, `values_stay_clear_of_the_glyphs`; the plan's fallback). Disk code: reserved 8, assigned at merge (the branch carries it as 7 on top of AM, ruling R7). Appended; nothing renumbered.
+1. **The MODE.** SOFT SYNC is ident `SOFTSYNC` (`VaMode::SoftSync`), shown `SOFT` (`SOFT SYNC` overruns the focus band's room left of the scope, `values_stay_clear_of_the_glyphs`; the plan's fallback). Disk code 8, its reserved code (after AM 6 and MAX 7, ruling R7). Appended; nothing renumbered.
 2. **Roles as SYNC, not as #604's wording (ruling R2; for the owner).** OSC 1 leads and OSC 2 reverses at OSC 1's wraps, as SYNC's OSC 1 leads and OSC 2 resets. *Why:* the sounding period and the sub stay on OSC 1, exactly as in SYNC, so moving between SYNC and SOFT SYNC keeps the note, the sub and what CRSE2 means (the slave's brightness, not the pitch); and OSC 1's recording instance (`<…, true, false, true, false>`, the one every MODE shares) is reused, so the only new code is OSC 2's reversing instance. *If the owner wants #604's roles:* swap the two render calls and add one monomorph (OSC 2 recording, OSC 1 reversing with `FLIP`); the sub would then follow OSC 2's clock.
 3. **The sounding period is two of OSC 1's.** Forward over one period, back over the next: at BLEND 1 (OSC 2 alone) the wave repeats every `2/f1`, an octave under OSC 1. That octave is already in VA as the sub; BLEND towards 1 brings it in the way SUB does. Measured: autocorrelation 0.9995 at `2/f1` and 0.51 at `1/f1` (A3, OSC 2 saw a fifth up); each second period is the first played backwards within 3.9·10⁻⁴ RMS around the turns that land on a sample.
 4. **BLEND crossfades OSC 1 → OSC 2, as SYNC.** `a + (b − a)·x`, ends `1` and `2`. The issue's alternative, "how much reverse", has no meaning for a phase: a read either turns or does not, and half a turn is a stop. A crossfade to MIX would put the unsynced OSC 2 in the patch, which SYNC also does not do.
@@ -28,10 +28,10 @@ Issue #604 asks for a reversing sync: where SYNC resets the following oscillator
 - **A ceiling of its own.** Any value that holds six voices sits near SYNC's; one ceiling for both sync MODEs keeps the rule one sentence.
 
 ## Consequences
-- OSC 2's reversing instance (`<64, false, true, false, true>`) is new code in bank 1: bank 1 free 51,724 → 41,876 B (−9,848 B) on `just firmware-orbit`, of which the instance is 8,640 B (its three runs 2,460–3,000 B each and its `render`) and `render_soft_sync` 1,042 B. Bank 1 now sits just above the ~40 KB line. Ruling R8 routes it behind the bank-2 door (ADR 0163, va-door), with FM's MOD instance; closed bank 2 makes SOFT SYNC silent and labelled like the reverb.
-- At BLEND 1 the note sounds an octave under OSC 1 (the period is two of OSC 1's); BLEND ½ keeps OSC 1's fundamental in front.
+- OSC 2's reversing instance (`<64, false, true, false, true>`, about 8.6 KB) lives behind bank 2's door (ADR 0163): the entry `door::osc2_rev`, a `VaDoor` field, `VaMode::in_bank2` covering SOFT SYNC. While bank 2 isn't open, SOFT SYNC is silent and MODE reads `NEEDS UPDATE` there, as FM. Bank 1 of the ORBIT build: 50,268 → 48,680 B free (−1,588 B: `render_soft_sync`, its operator loops and the call through the door); the `.bk2` body is 137,280 B.
+- At BLEND 1 the note sounds an octave under OSC 1 (the period is two of OSC 1's).
 - A saw slave sounds about as bright as in SYNC; the softness is in sine and triangle slaves.
-- The bench gains a `SOFT SYNC` row (BLEND 1, OSC 2 a fifth up); its unit reading is pending.
+- The bench gains a `SOFT` row (BLEND 1, OSC 2 a fifth up); its unit reading is pending.
 
 ## Sources
 - The plan: `docs/superpowers/plans/2026-10-19-va-modes.md` (Tasks 9 and 10); ruling R2 (the VA MODEs rulings: SOFT SYNC keeps SYNC's roles).
