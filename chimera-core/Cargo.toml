@@ -63,6 +63,10 @@ fault-inject = []
 # Bank 2's power-pull aid: `bank2 erase` and the install's PULL NOW holds.
 # Debug builds only, never shipping (`just firmware-gate`).
 bank2-gate = ["chimera-engine/bank2-gate"]
+# Bank 2 (ADR 0137): TAPE's DSP and, from the UI's own table at its slot
+# (`bank2::UiDoor`, ADR 0175), TAPE's cells and strip. Firmware only: a host
+# build with it calls its own table.
+bank2 = ["tape", "chimera-engine/bank2"]
 
 [dev-dependencies]
 # No default features: `--no-default-features` must reach the library too.

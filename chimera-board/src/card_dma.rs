@@ -228,13 +228,42 @@ fn filling() -> bool {
     BUS.quiet() == Quiet::Off
 }
 
-/// The UI loop's, each pass. A transfer stuck past `WATCHDOG_MS` (a TE,
-/// a MODF, a lost TC) is asked to abort. A want left with the bus free (a
-/// failed fill requeued, or a yield whose UI gave up) is woken here.
+/// The UI loop's, each pass (`watch_in`): bank 2's with `bank2`, nothing
+/// closed, where no stream plays.
 pub fn watch(now: Ms) {
+    #[cfg(feature = "bank2")]
+    crate::bank2::board_door(|d| (d.card.watch)(now));
+    #[cfg(not(feature = "bank2"))]
+    watch_in(now);
+}
+
+/// A transfer stuck past `WATCHDOG_MS` (a TE, a MODF, a lost TC) is asked
+/// to abort. A want left with the bus free (a failed fill requeued, or a
+/// yield whose UI gave up) is woken here.
+fn watch_in(now: Ms) {
     if !unstick(now) && BUS.owner() == Owner::Free && serving() && wanted() {
         pend();
     }
+}
+
+/// What bank 1 may call of the card interrupt's work (ADR 0175): with
+/// `bank2`, `IrqState`'s steps, the reads, the stops and the de-framing
+/// are bank 2's (`bank2.x`'s `card_dma` globs). Bank 1 keeps `init`, the
+/// handler's shim (its clocks and counters, the flags, `closed`) and the
+/// ground and give a closed door still needs.
+#[cfg(feature = "bank2")]
+#[repr(C)]
+pub(crate) struct CardDoor {
+    step: fn(&mut IrqState, DmaEvent, bool),
+    watch: fn(Ms),
+}
+
+#[cfg(feature = "bank2")]
+impl CardDoor {
+    pub(crate) const DOOR: CardDoor = CardDoor {
+        step: IrqState::step,
+        watch: watch_in,
+    };
 }
 
 /// A stuck transfer asked to abort; true if one was.
@@ -930,7 +959,14 @@ fn DMA2_STR0() {
     // SAFETY: `IRQ`'s one `get`: `init` set it before unmasking this
     // handler, which doesn't nest with itself.
     let st = unsafe { IRQ.get() };
-    st.step(events(), BUS.take_abort());
+    let (ev, asked) = (events(), BUS.take_abort());
+    // Bank 2's work through the door; closed, no stream plays.
+    #[cfg(feature = "bank2")]
+    if crate::bank2::board_door(|d| (d.card.step)(st, ev, asked)).is_none() {
+        closed(st);
+    }
+    #[cfg(not(feature = "bank2"))]
+    st.step(ev, asked);
     let (t1, audio1) = clocks();
     let wall = t1.wrapping_sub(t);
     let own = wall.saturating_sub(audio1.wrapping_sub(audio));
@@ -959,6 +995,37 @@ fn clocks() -> (u32, u32) {
         if AUDIO_CYCLES.load(Ordering::Relaxed) == audio {
             return (t, audio);
         }
+    }
+}
+
+/// An entry with bank 2 closed: nothing is read. Only a gate build's
+/// `bank2 erase` closes a live door, once the bus is free of streams
+/// (`close_tape`); a burst still in flight then is grounded, CS high, the
+/// bus given back and its claim requeued, with no CMD12 (that is bank 2's
+/// stop): the UI's next command finds the card mid-read and recovers it as
+/// any failed command. The flags were cleared (`events`).
+#[cfg(feature = "bank2")]
+#[inline(never)]
+fn closed(st: &mut IrqState) {
+    if let Some(f) = st.retry.take() {
+        st.side.requeue(f.claim);
+    }
+    let Job::Read(Transfer { bus, phase }) = replace(&mut st.job, Job::Idle) else {
+        return;
+    };
+    let h = bus.ground(&st.line);
+    h.deselect();
+    give(h, &st.line);
+    match phase {
+        Phase::Read {
+            kind: Kind::Fill(f),
+            ..
+        }
+        | Phase::Drain {
+            then: Then::More(f) | Then::Retry(f),
+            ..
+        } => st.side.requeue(f.claim),
+        _ => {}
     }
 }
 

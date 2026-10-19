@@ -178,9 +178,9 @@ impl StreamLoad {
     /// after reads up to `budget` bytes of heads; the last writes the
     /// descriptor and table, the registry row, then the pool row. With
     /// bank 2 shut it fails as a missing file.
-    pub fn step<S: Store>(
+    pub fn step(
         &mut self,
-        s: &mut S,
+        s: &mut dyn Store,
         r: &Ready,
         p: &mut Project,
         budget: usize,

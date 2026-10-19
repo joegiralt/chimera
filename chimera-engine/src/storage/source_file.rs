@@ -426,7 +426,7 @@ impl TapeList {
     }
 
     /// One directory read; no file is opened. No `TAPES` is an empty list.
-    pub fn list<S: Store>(s: &mut S, r: &Ready) -> Result<TapeList, StoreError> {
+    pub fn list(s: &mut dyn Store, r: &Ready) -> Result<TapeList, StoreError> {
         let mut l = TapeList::EMPTY;
         let listed = s.list(r.volume(), Dir::Tapes, &mut |f, size| {
             let stem = core::str::from_utf8(f.stem()).ok();
