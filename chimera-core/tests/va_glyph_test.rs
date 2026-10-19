@@ -162,6 +162,8 @@ const MODE_GOLDENS: &[(&str, u64)] = &[
     ("bits_100", 0xc67fbc52da2a4a08),
     ("fm_050", 0x53047951d090ece0),
     ("fm_100", 0x8f8eca18b59af852),
+    ("max_050", 0x1831da0c4eb7b178),
+    ("max_100", 0x884d5c6f119105ce),
 ];
 
 #[test]
@@ -186,6 +188,15 @@ fn mode_scopes_match_their_goldens() {
 fn fm_scope_reads_osc_1_through_osc_2() {
     assert_eq!(mix(VaMode::Fm, 0.0), mix(VaMode::Mix, 0.0));
     assert_ne!(mix(VaMode::Fm, 1.0), mix(VaMode::Mix, 0.0));
+}
+
+/// MAX's scope is the plain mix at BLEND 0 and rides above it at BLEND 1
+/// (the larger of the two is never below their mean).
+#[test]
+fn max_scope_rises_from_the_mix() {
+    let (lo, hi) = (mix(VaMode::Max, 0.0), mix(VaMode::Max, 1.0));
+    assert_ne!(lo, hi);
+    assert_eq!(lo, mix(VaMode::Mix, 0.5));
 }
 
 /// SYNC restarts OSC 2 on OSC 1's wrap: OSC 1's second period starts as

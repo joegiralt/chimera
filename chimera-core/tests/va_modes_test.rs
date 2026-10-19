@@ -491,7 +491,10 @@ fn max_level_matches_mix() {
                 );
                 let db = 20.0 * (rms(&y) / mix).log10();
                 println!("CRSE2 {coarse} WAVE {w:.3} BLEND {blend}: {db:+.2} dB");
-                assert!(db.abs() <= 1.5, "CRSE2 {coarse} WAVE {w} BLEND {blend}: {db}");
+                assert!(
+                    db.abs() <= 1.5,
+                    "CRSE2 {coarse} WAVE {w} BLEND {blend}: {db}"
+                );
             }
         }
     }
@@ -526,7 +529,10 @@ fn max_has_no_dc_at_the_voice() {
         let _ = Voice::FADE;
         let mean = y.iter().map(|&x| f64::from(x)).sum::<f64>() / y.len() as f64;
         let r = rms(&y);
-        println!("MAX {w1}/{w2}: mean {mean:.2e}, RMS {r:.3e}, ratio {:.4}", mean / r);
+        println!(
+            "MAX {w1}/{w2}: mean {mean:.2e}, RMS {r:.3e}, ratio {:.4}",
+            mean / r
+        );
         assert!(r > 1e-3);
         assert!(mean.abs() <= 0.003 * r, "{mean} of {r}");
     }
