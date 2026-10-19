@@ -420,7 +420,7 @@ fn sub_carries_its_state() {
 }
 
 #[test]
-fn xor_provenance_is_declared() {
+fn combine_provenance_is_declared() {
     use chimera_core::dsp::provenance::{Patent, Provenance};
     assert!(combine::PROVENANCE.iter().any(
         |p| matches!(p, Provenance::Textbook { cite } if cite.contains("Kleimola") && cite.contains("DAFx-08"))

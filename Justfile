@@ -9,7 +9,10 @@
 # it from bank 2, so its run needs that build's .bk2 installed.
 # `bench-stress` plays the reverb from bank 1 and `bench-stress,bank2` the
 # same code from bank 2 (ADR 0142): Gate 3's A/B of the banks' speed.
-bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,bank2 bench-stress,orbit bench-orbit bench-tape,bank2 filter-probes"
+# `bench-stress,orbit,bank2` plays it from bank 2 as the shipping ORBIT
+# build does (ADR 0142): with the reverb in bank 1 that set no longer fits
+# FLASH beside VA's MOD path; its run needs that build's .bk2 installed.
+bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-stress,bank2 bench-stress,orbit,bank2 bench-orbit bench-tape,bank2 filter-probes"
 bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit"
 
 # Build desktop simulator
