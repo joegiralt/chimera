@@ -248,8 +248,8 @@ fn the_type_cell_reads_update_closed() {
     assert!(!first_cell_reads(&render_ui(&ui), NEEDS_UPDATE_CELL));
 }
 
-/// While bank 2 isn't open VA FM is silent (ADR 0163): MODE reads NEEDS
-/// UPDATE at FM, and its own name at the bank-1 MODEs.
+/// While bank 2 isn't open VA FM and SOFT SYNC are silent (ADR 0163):
+/// MODE reads NEEDS UPDATE at them, and its own name at the bank-1 MODEs.
 #[test]
 fn a_closed_bank2_labels_va_fm() {
     use chimera_core::addr::{BlockRef, ParamAddr};
@@ -258,22 +258,17 @@ fn a_closed_bank2_labels_va_fm() {
     let mode = ParamAddr::new(BlockRef::Va, VaParams::MODE);
     let at = |m: VaMode| m as u8 as f32 / (MODE_NAMES.len() - 1) as f32;
     let closed = Some(Bank2Status::Empty);
-    assert_eq!(
-        closed_text(mode, at(VaMode::Fm), closed),
-        Some("NEEDS UPDATE")
-    );
-    assert_eq!(closed_text(mode, at(VaMode::Fm), Some(open())), None);
     // LOOPFM's whole render is bank 2's too
-    assert_eq!(
-        closed_text(mode, at(VaMode::LoopFm), closed),
-        Some("NEEDS UPDATE")
-    );
-    assert_eq!(closed_text(mode, at(VaMode::LoopFm), Some(open())), None);
-    assert_eq!(
-        closed_text(mode, at(VaMode::Fm), None),
-        None,
-        "no bank 2 on this target"
-    );
+    for m in [VaMode::Fm, VaMode::LoopFm, VaMode::SoftSync] {
+        assert!(m.in_bank2(), "{m:?}");
+        assert_eq!(closed_text(mode, at(m), closed), Some("NEEDS UPDATE"));
+        assert_eq!(closed_text(mode, at(m), Some(open())), None);
+        assert_eq!(
+            closed_text(mode, at(m), None),
+            None,
+            "{m:?}: no bank 2 on this target"
+        );
+    }
     for m in VaMode::ALL.into_iter().filter(|m| !m.in_bank2()) {
         assert_eq!(closed_text(mode, at(m), closed), None, "{m:?}");
     }
@@ -295,10 +290,10 @@ fn va_home(by: i8, s: Option<Bank2Status>) -> Fb {
     render_ui(&ui)
 }
 
-/// The VA page draws MODE's cell as UPDATE at FM closed; at MIX, or open,
-/// as it always did.
+/// The VA page draws MODE's cell as UPDATE at FM and SOFT SYNC closed; at
+/// MIX, or open, as it always did.
 #[test]
-fn the_va_page_draws_update_at_fm_closed() {
+fn the_va_page_draws_update_at_fm_and_soft_sync_closed() {
     let empty = Some(Bank2Status::Empty);
     assert_eq!(
         va_home(0, empty).hash(),
@@ -320,4 +315,13 @@ fn the_va_page_draws_update_at_fm_closed() {
     assert!(cell_reads(&lf, 2, NEEDS_UPDATE_CELL), "LOOPFM's cell");
     assert!(band_reads(&lf, NEEDS_UPDATE), "LOOPFM's band");
     assert!(!band_reads(&va_home(n, Some(open())), NEEDS_UPDATE));
+    // SOFT SYNC likewise
+    let at = chimera_core::dsp::va::VaMode::SoftSync as i8;
+    let closed = va_home(at, empty);
+    assert!(cell_reads(&closed, 2, NEEDS_UPDATE_CELL), "SOFT's cell");
+    assert!(band_reads(&closed, NEEDS_UPDATE), "SOFT's focus band");
+    assert_eq!(va_home(at, Some(open())).hash(), va_home(at, None).hash());
+    let soft = va_home(at, Some(open()));
+    assert!(cell_reads(&soft, 2, "SOFT"));
+    assert!(!band_reads(&soft, NEEDS_UPDATE));
 }

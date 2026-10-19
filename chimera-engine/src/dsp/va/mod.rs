@@ -47,10 +47,12 @@ pub enum VaMode {
     Max = 7,
     /// Each oscillator loops back on its own frequency (#613).
     LoopFm = 8,
+    /// OSC 2's read reverses at OSC 1's wraps: mirrored sync (#604).
+    SoftSync = 9,
 }
 
 impl VaMode {
-    pub const ALL: [VaMode; 9] = [
+    pub const ALL: [VaMode; 10] = [
         VaMode::Mix,
         VaMode::Sync,
         VaMode::Ring,
@@ -60,18 +62,19 @@ impl VaMode {
         VaMode::Am,
         VaMode::Max,
         VaMode::LoopFm,
+        VaMode::SoftSync,
     ];
 
     /// Whether this MODE's oscillators are `osc::door`'s, which with
     /// `bank2` play only while bank 2 is open (ADR 0163).
     pub const fn in_bank2(self) -> bool {
-        matches!(self, VaMode::Fm | VaMode::LoopFm)
+        matches!(self, VaMode::Fm | VaMode::LoopFm | VaMode::SoftSync)
     }
 }
 
 /// MODE's names, in `VaMode`'s order (display only).
-pub const MODE_NAMES: [&str; 9] = [
-    "MIX", "SYNC", "RING", "XOR", "BITS", "FM", "AM", "MAX", "LOOPFM",
+pub const MODE_NAMES: [&str; 10] = [
+    "MIX", "SYNC", "RING", "XOR", "BITS", "FM", "AM", "MAX", "LOOPFM", "SOFT",
 ];
 
 impl DiskCode for VaMode {
@@ -86,6 +89,7 @@ impl DiskCode for VaMode {
             VaMode::Am => 6,
             VaMode::Max => 7,
             VaMode::LoopFm => 8,
+            VaMode::SoftSync => 9,
         }
     }
 
@@ -100,6 +104,7 @@ impl DiskCode for VaMode {
             VaMode::Am => "AM",
             VaMode::Max => "MAX",
             VaMode::LoopFm => "LOOPFM",
+            VaMode::SoftSync => "SOFTSYNC",
         }
     }
 
@@ -114,6 +119,7 @@ impl DiskCode for VaMode {
             6 => Some(VaMode::Am),
             7 => Some(VaMode::Max),
             8 => Some(VaMode::LoopFm),
+            9 => Some(VaMode::SoftSync),
             _ => None,
         }
     }
@@ -222,7 +228,7 @@ pub static VA_SPECS: [ParamSpec; 12] = [
         2,
         "MODE",
         ValFmt::Names(&MODE_NAMES),
-        8.0,
+        9.0,
         0.0,
         Change::Crossfade,
     )
@@ -347,6 +353,10 @@ pub const COST_AM: Cost = Cost(540);
 /// the BLAMP) + 71.7 + 29.9 + 95, 581.3 against MIX's 522.2 in the same
 /// count (the merged tree's block work reads 34 higher for every MODE).
 pub const COST_MAX: Cost = Cost(590);
+/// SOFT SYNC: 121.7 (master at 7 kHz) + 211.3 (TRI/SAW, OSC 2's reversing
+/// instance: its edges either way at 0.45, a divide a crossing, a turn's
+/// 88.3 × 7/48) + 36.2 + 67.5 + 30.0 + 95 (at 0.45 uncapped: 640).
+pub const COST_SOFTSYNC: Cost = Cost(570);
 
 /// FM's index at BLEND `blend`, `5·blend²`, capped so OSC 1's fastest read
 /// `inc·(1 + I)` stays under `MAX_INC` (0.45 cycles a sample); `inc = 0`
@@ -538,6 +548,8 @@ pub struct VaEngine {
     last_k: [f32; 2],
     #[cfg(any(test, feature = "test-support"))]
     backwards: bool,
+    #[cfg(any(test, feature = "test-support"))]
+    swap_dirs: [f32; 2],
 }
 
 #[cfg(not(any(test, feature = "test-support")))]
@@ -576,6 +588,8 @@ impl VaEngine {
             last_k: [0.0; 2],
             #[cfg(any(test, feature = "test-support"))]
             backwards: false,
+            #[cfg(any(test, feature = "test-support"))]
+            swap_dirs: [1.0; 2],
         }
     }
 
@@ -726,6 +740,7 @@ impl VaEngine {
             VaMode::LoopFm => COST_LOOPFM,
             VaMode::Am => COST_AM,
             VaMode::Max => COST_MAX,
+            VaMode::SoftSync => COST_SOFTSYNC,
         }
     }
 
@@ -778,9 +793,11 @@ impl VaEngine {
             d,
         };
         let mut pk = [0.0f32; 2];
-        // SYNC's master stops at 7 kHz: while SYNC plays or is coming (the
-        // duck down), so the cap ramps in and out under the duck
-        let sync = p.mode == VaMode::Sync || self.playing == VaMode::Sync;
+        // SYNC's and SOFT SYNC's master stops at 7 kHz: while either plays
+        // or is coming (the duck down), so the cap ramps in and out under
+        // the duck (ADR 0161: SOFT SYNC's turns bill at it)
+        let synced = |m| matches!(m, VaMode::Sync | VaMode::SoftSync);
+        let sync = synced(p.mode) || synced(self.playing);
         let hz = [
             if sync && hz[0] > SYNC_MASTER_HZ {
                 SYNC_MASTER_HZ
@@ -845,6 +862,7 @@ impl VaEngine {
         match self.playing {
             VaMode::Mix => self.render_mix(out, &l, gain),
             VaMode::Sync => self.render_sync(out, &l, gain),
+            VaMode::SoftSync => self.render_soft_sync(out, &l, gain),
             VaMode::Ring => self.render_ring(out, &l, gain),
             VaMode::Xor => self.render_xor(out, &l, gain),
             VaMode::Bits => {
@@ -889,6 +907,10 @@ impl VaEngine {
                     r.hold();
                 }
                 self.am_n.hold();
+                #[cfg(any(test, feature = "test-support"))]
+                {
+                    self.swap_dirs = self.osc.each_ref().map(|o| o.read_dir());
+                }
                 // a MOD MODE's read phase becomes the clock (ADR 0158)
                 for o in &mut self.osc {
                     o.settle();
@@ -913,6 +935,59 @@ impl VaEngine {
     #[inline(never)]
     fn render_am(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
         self.run(out, l, VaMode::Am, gain);
+    }
+
+    #[inline(never)]
+    fn render_soft_sync(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
+        let Self {
+            osc: [o1, o2],
+            stab,
+            jit,
+            osc2: b,
+            marks: mk,
+            ..
+        } = self;
+        let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
+        let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+        // OSC 1 the shared instance, its wraps marked: OSC 2's turns
+        o1.render::<BLOCK_SIZE, true, false, true, false>(
+            out,
+            mk,
+            &l.osc[0],
+            &mut jit[0],
+            &mut draw,
+            &ZEROS,
+            (0.0, 0.0),
+        );
+        // OSC 2's reversing render is bank 2's with `bank2` (ADR 0163).
+        // Closed, the voice is silent and OSC 2 waits as it was.
+        let mut osc2 = |f: osc::door::ModRender| {
+            f(
+                o2,
+                b,
+                mk,
+                &l.osc[1],
+                &mut jit[1],
+                stab,
+                jd,
+                &ZEROS,
+                (0.0, 0.0),
+            )
+        };
+        #[cfg(feature = "bank2")]
+        if crate::bank2::DOOR_CELL
+            .with(|d| osc2(d.va.osc2_rev))
+            .is_none()
+        {
+            out.fill(0.0);
+            return;
+        }
+        #[cfg(not(feature = "bank2"))]
+        osc2(osc::door::osc2_rev);
+        match gain {
+            Some(g) => self.operator::<true>(out, l, VaMode::SoftSync, g),
+            None => self.operator::<false>(out, l, VaMode::SoftSync, &DUCK_UP[1]),
+        }
     }
 
     #[inline(never)]
@@ -1069,11 +1144,13 @@ impl VaEngine {
         // 1 at d = 0 (STAB 1)
         let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
         let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
-        // these MODEs read no modulated phase (FM does, `render_fm`)
+        // these MODEs read no modulated phase (FM's and SOFT SYNC's
+        // renders are their own, through the door)
         let (z, nk) = (&ZEROS, (0.0, 0.0));
         // OSC 1 marks its sub flips and its wraps, one instance for every
-        // MODE (flash): only SYNC's slave reads the wraps, resetting at
-        // them (ADR 0118 point 13)
+        // MODE (flash): only SYNC's slave reads the wraps here, resetting
+        // at them (ADR 0118 point 13); SOFT SYNC's turns at them (its own
+        // render)
         o1.render::<BLOCK_SIZE, true, false, true, false>(
             out,
             mk,
@@ -1220,6 +1297,12 @@ impl VaEngine {
     #[cfg(any(test, feature = "test-support"))]
     pub fn read_ran_backwards(&self) -> bool {
         self.backwards
+    }
+
+    /// Both reads' directions at the last MODE swap, before `settle`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn dirs_at_swap(&self) -> [f32; 2] {
+        self.swap_dirs
     }
 
     /// Both clocks jumped to `p`, as a carry restores them.

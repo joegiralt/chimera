@@ -1055,3 +1055,257 @@ fn max_mode_changes_do_not_click() {
         assert!(d <= lim, "{m0:?} → {m1:?}: {d} > {lim}");
     }
 }
+
+// ---- SOFT SYNC (#604) ----
+
+const A3: u8 = 57;
+
+/// OSC 2 a saw a fifth up, reversing at OSC 1's wraps, BLEND `amount`.
+fn soft(amount: f32) -> VaParams {
+    VaParams {
+        mode: VaMode::SoftSync,
+        wave: [0.0, SAW],
+        coarse: [0, 7],
+        amount,
+        ..sine()
+    }
+}
+
+/// Correlation of `y` with itself `lag` samples on (linearly
+/// interpolated), over its last 8192 samples.
+fn r_at(y: &[f32], lag: f64) -> f64 {
+    let (k, fr) = (lag.floor() as usize, lag.fract());
+    let tail = &y[y.len() - 8192 - k - 1..];
+    let (mut xy, mut xx, mut yy) = (0.0f64, 0.0f64, 0.0f64);
+    for n in 0..8192 {
+        let a = f64::from(tail[n]);
+        let b = f64::from(tail[n + k]) * (1.0 - fr) + f64::from(tail[n + k + 1]) * fr;
+        (xy, xx, yy) = (xy + a * b, xx + a * a, yy + b * b);
+    }
+    xy / (xx * yy).sqrt()
+}
+
+/// Each turn mirrors the read: forward over one of OSC 1's periods, back
+/// over the next, so the wave repeats every two and each second period is
+/// the first played backwards. At A3 every 11th wrap of 2400/11 samples
+/// lands on a sample: around the first two the mirror is checked sample
+/// for sample (the best whole or half-sample centre within ±2 of the
+/// wrap). Later ones drift off the sample with the f32 clock's rounding
+/// (RMS 1.2e-3 at the third, 2e-3 at the fifth), not the mirror.
+#[test]
+fn soft_sync_mirrors() {
+    let t1 = SR as f64 / f64::from(hz_of(A3));
+    let y = held(A3, soft(1.0), 200);
+    let (r2, r1) = (r_at(&y, 2.0 * t1), r_at(&y, t1));
+    println!("r(2 periods) {r2:.5}, r(1 period) {r1:.5}");
+    assert!(r2 >= 0.99, "{r2}");
+    let span = t1.floor() as usize;
+    let mut worst = 0.0f64;
+    for m in 1..=2 {
+        let at = 2 * 2400 * m;
+        let (e, c2) = (at - 4..=at + 4)
+            .map(|c2| {
+                let mut s = 0.0;
+                for k in 1..span {
+                    let (a, b) = (c2 / 2 + k, c2.div_ceil(2) - k);
+                    let d = f64::from(y[a]) - f64::from(y[b]);
+                    s += d * d;
+                }
+                ((s / (span - 1) as f64).sqrt(), c2)
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .unwrap();
+        println!(
+            "turn near {}: centre {:.1}, RMS {e:.2e}",
+            2400 * m,
+            c2 as f64 / 2.0
+        );
+        worst = worst.max(e);
+    }
+    assert!(worst <= 1e-3, "{worst}");
+}
+
+/// Power above `lo` Hz of the gate window (Hann), dB.
+fn band_db(y: &[f32], lo: f64) -> f64 {
+    use common::spectrum::fft;
+    let n = 1 << 15;
+    let x = &y[4096..4096 + n];
+    let mut re: Vec<f64> = x
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            let w = 0.5 - 0.5 * (std::f64::consts::TAU * i as f64 / n as f64).cos();
+            f64::from(v) * w
+        })
+        .collect();
+    let mut im = vec![0.0; n];
+    fft(&mut re, &mut im);
+    let bin = f64::from(SR) / n as f64;
+    let p: f64 = (1..n / 2)
+        .filter(|&k| k as f64 * bin >= lo)
+        .map(|k| re[k] * re[k] + im[k] * im[k])
+        .sum();
+    10.0 * p.log10()
+}
+
+/// A turn is a corner, a reset a step: a sine or triangle slave in SYNC
+/// carries 18–28 dB more above 8 kHz, gated at 6. Held only to never
+/// 3 dB brighter than SYNC: a saw (its own edges are steps either way:
+/// within 2 dB), and CRSE2 +7, where OSC 2 is half a cycle on at each
+/// wrap, so a sine's or triangle's reset from there is the same corner as
+/// a turn (within 0.1 dB).
+#[test]
+fn soft_sync_is_softer_than_sync() {
+    for (w2, crse) in [SAW, 1.0 / 3.0, 0.0]
+        .into_iter()
+        .flat_map(|w| [3i8, 5, 7, 10].map(|c| (w, c)))
+    {
+        let base = VaParams {
+            wave: [0.0, w2],
+            coarse: [0, crse],
+            ..soft(1.0)
+        };
+        let soft_ = band_db(&held(A3, base, GATE_BLOCKS), 8_000.0);
+        let hard = band_db(
+            &held(
+                A3,
+                VaParams {
+                    mode: VaMode::Sync,
+                    ..base
+                },
+                GATE_BLOCKS,
+            ),
+            8_000.0,
+        );
+        println!(
+            "WAVE2 {w2:.3} CRSE2 {crse}: above 8 kHz SOFT SYNC {soft_:.1} dB, SYNC {hard:.1} dB ({:+.1})",
+            soft_ - hard
+        );
+        let room = if w2 < SAW && crse != 7 { -6.0 } else { 3.0 };
+        assert!(
+            soft_ <= hard + room,
+            "WAVE2 {w2} CRSE2 {crse}: {soft_} vs {hard}"
+        );
+    }
+}
+
+/// The alias gate on the half-pitch lattice (the wave repeats every two
+/// of OSC 1's periods), corrected and not; where −45 dB is missed the
+/// correction must win 12 dB (the exceptions printed, ADR 0161).
+#[test]
+fn soft_sync_alias_gate() {
+    let mut worst = (f64::MIN, String::new());
+    let mut exceptions = Vec::new();
+    let mut fails = Vec::new();
+    for note in [C5, C6] {
+        let f0 = 0.5 * hz_of(note);
+        for x in [0.0, 1.0 / 6.0, 1.0 / 3.0, 0.5, 2.0 / 3.0, 5.0 / 6.0, 1.0] {
+            for s in [0.0, 0.5] {
+                let base = VaParams {
+                    wave: [x; 2],
+                    shape: [s; 2],
+                    ..soft(1.0)
+                };
+                let gate = |prep: fn(&mut VaEngine)| {
+                    let y = take_with(prep, note, base, GATE_BLOCKS, |_, _| {});
+                    common::spectrum::alias_db(&y, SR as f32, &[f0])
+                };
+                let (on, off) = (gate(|_| {}), gate(VaEngine::uncorrected));
+                let at = format!("{note} WAVE {x:.3} SHAPE {s}");
+                println!("{at}: {on:.1} dB (off {off:.1})");
+                if on > -45.0 {
+                    exceptions.push(format!("{at}: {on:.1} / {off:.1}"));
+                    if on > off - 12.0 {
+                        fails.push(format!("{at}: {on:.1} vs off {off:.1}"));
+                    }
+                }
+                if on > worst.0 {
+                    worst = (on, at);
+                }
+            }
+        }
+    }
+    println!(
+        "worst {:.1} dB at {}; exceptions {exceptions:#?}",
+        worst.0, worst.1
+    );
+    assert!(fails.is_empty(), "{fails:#?}");
+}
+
+/// The turns move OSC 2's phase, not its level: SOFT SYNC at BLEND 0, ½
+/// and 1 sounds as loud as MIX there.
+#[test]
+fn soft_sync_level_matches_mix() {
+    let blocks = 2 * SR as usize / B;
+    let saws = VaParams {
+        wave: [SAW; 2],
+        ..soft(0.0)
+    };
+    for blend in [0.0, 0.5, 1.0] {
+        let at = |mode| {
+            rms(&held(
+                C4,
+                VaParams {
+                    mode,
+                    amount: blend,
+                    ..saws
+                },
+                blocks,
+            ))
+        };
+        let db = 20.0 * (at(VaMode::SoftSync) / at(VaMode::Mix)).log10();
+        println!("BLEND {blend}: {db:+.2} dB");
+        assert!(db.abs() <= 1.5, "BLEND {blend}: {db}");
+    }
+}
+
+/// Entering SOFT SYNC the read starts forward (`settle` at the swap):
+/// left while OSC 2 reads backward (an odd number of turns), out to MIX
+/// and back in, it plays as a fresh engine started at those phases does.
+#[test]
+fn entering_soft_sync_starts_forward() {
+    let base = VaParams {
+        wave: [SAW, 0.3],
+        shape: [0.3, 0.0],
+        ..soft(0.8)
+    };
+    let tail = 10;
+    // SOFT SYNC for `k` blocks, then MIX through the duck's swap
+    let leave = |e: &mut VaEngine, p: &mut VaParams, k: usize| {
+        e.hold();
+        e.note_on(A4, p, PartId::new(0).unwrap(), SR);
+        run(e, p, k, |_, _| {});
+        p.mode = VaMode::Mix;
+        run(e, p, 4, |_, _| {});
+        assert_eq!(e.mode(), VaMode::Mix);
+        e.dirs_at_swap()[1]
+    };
+    // a turn every 109 samples at A4: some start leaves it backward
+    let k = (1..20)
+        .find(|&k| with_engine(|e| leave(e, &mut { base }, k)) < 0.0)
+        .expect("OSC 2 left backward");
+    let (back, settled) = with_engine(|e| {
+        let mut p = base;
+        assert_eq!(leave(e, &mut p, k), -1.0);
+        p.mode = VaMode::SoftSync;
+        run(e, &mut p, 2, |_, _| {});
+        assert_eq!(e.mode(), VaMode::SoftSync);
+        let at = e.osc_phase();
+        let y = run(e, &mut p, AT + tail, |_, _| {});
+        (y, at)
+    });
+    let fresh = with_engine(|f| {
+        let mut p = base;
+        f.hold();
+        f.note_on(A4, &p, PartId::new(0).unwrap(), SR);
+        f.set_osc_phase(settled);
+        run(f, &mut p, AT + tail, |_, _| {})
+    });
+    let err = back[AT * B..]
+        .iter()
+        .zip(&fresh[AT * B..])
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    println!("MIX → SOFT SYNC, {AT} blocks on: max |back − fresh| {err:.2e}");
+    assert!(err <= 1e-4, "{err}");
+}
