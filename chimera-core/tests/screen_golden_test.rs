@@ -240,7 +240,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("sound_browser", 0xe6ebc09a421a5c11),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
     // Then pool_full: 2352 → 2544 (the formant fields).
-    ("sound_browser_pool_full", 0x4327d7766a8f1115),
+    ("sound_browser_pool_full", 0x81ce95e09e0bd574),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.
