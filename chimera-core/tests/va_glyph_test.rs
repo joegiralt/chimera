@@ -208,7 +208,12 @@ fn soft_sync_mirrors_osc_2_on_osc_1s_wrap() {
     let t = mix(VaMode::SoftSync, 1.0);
     let n = t.len();
     for i in 0..n / 2 {
-        assert!((t[i] - t[n - 1 - i]).abs() <= 1, "{i}: {} {}", t[i], t[n - 1 - i]);
+        assert!(
+            (t[i] - t[n - 1 - i]).abs() <= 1,
+            "{i}: {} {}",
+            t[i],
+            t[n - 1 - i]
+        );
     }
     assert_ne!(t, mix(VaMode::Sync, 1.0));
 }

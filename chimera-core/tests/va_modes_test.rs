@@ -396,7 +396,7 @@ fn soft_sync_mirrors() {
             .map(|c2| {
                 let mut s = 0.0;
                 for k in 1..span {
-                    let (a, b) = (c2 / 2 + k, (c2 + 1) / 2 - k);
+                    let (a, b) = (c2 / 2 + k, c2.div_ceil(2) - k);
                     let d = f64::from(y[a]) - f64::from(y[b]);
                     s += d * d;
                 }
@@ -404,7 +404,11 @@ fn soft_sync_mirrors() {
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .unwrap();
-        println!("turn near {}: centre {:.1}, RMS {e:.2e}", 2400 * m, c2 as f64 / 2.0);
+        println!(
+            "turn near {}: centre {:.1}, RMS {e:.2e}",
+            2400 * m,
+            c2 as f64 / 2.0
+        );
         worst = worst.max(e);
     }
     assert!(worst <= 1e-3, "{worst}");
@@ -466,7 +470,10 @@ fn soft_sync_is_softer_than_sync() {
             soft_ - hard
         );
         if w2 < SAW && crse != 7 {
-            assert!(soft_ <= hard - 6.0, "WAVE2 {w2} CRSE2 {crse}: {soft_} vs {hard}");
+            assert!(
+                soft_ <= hard - 6.0,
+                "WAVE2 {w2} CRSE2 {crse}: {soft_} vs {hard}"
+            );
         }
     }
 }
@@ -507,7 +514,10 @@ fn soft_sync_alias_gate() {
             }
         }
     }
-    println!("worst {:.1} dB at {}; exceptions {exceptions:#?}", worst.0, worst.1);
+    println!(
+        "worst {:.1} dB at {}; exceptions {exceptions:#?}",
+        worst.0, worst.1
+    );
     assert!(fails.is_empty(), "{fails:#?}");
 }
 
