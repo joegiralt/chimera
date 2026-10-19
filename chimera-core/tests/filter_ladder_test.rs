@@ -696,28 +696,28 @@ fn tanh_poly_is_close_and_bounded() {
 }
 
 /// The viz draws LADDER's mode gains (review M7): LP2 at RES 1 sits its
-/// gain's 6 dB under LP4's pass band; the band-passes at RES 0 are CLEAN's
-/// Band, and at RES 1 they come down by LP4's bass loss.
+/// gain's 6 dB under LP4's pass band, and the band-passes peak at 0 dB at
+/// RES 0.
 #[test]
 fn the_viz_draws_ladders_mode_gains() {
-    use chimera_core::ui::viz::{Response, response_y};
+    use chimera_core::ui::viz::{FILTER_PASS_Y, Response, response_y};
     let r = |m| Response::of(FilterKind::Ladder, m);
     assert_eq!(r(FilterMode::Lp12), Response::LadderLp2);
     assert_eq!(r(FilterMode::Lp24), Response::K2040);
-    assert_eq!(r(FilterMode::Bp24), Response::LadderBand);
-    let (t, fc) = (10.0, 120.0);
+    assert_eq!(r(FilterMode::Bp12), Response::LadderBp2);
+    assert_eq!(r(FilterMode::Bp24), Response::LadderBp4);
+    assert_eq!(r(FilterMode::Hp24), Response::LadderHp4);
+    let (t, fc) = (0.0, 0.5);
     let (lp2, lp4) = (
         response_y(t, fc, 1.0, Response::LadderLp2),
         response_y(t, fc, 1.0, Response::K2040),
     );
     assert!(lp2 > lp4, "LP2 {lp2} under LP4 {lp4}");
-    for x in [40.0, 120.0, 200.0] {
-        assert_eq!(
-            response_y(x, fc, 0.0, Response::LadderBand),
-            response_y(x, fc, 0.0, Response::Band)
-        );
+    // The band-passes' peak at FREQ is 0 dB at RES 0.
+    for m in [Response::LadderBp2, Response::LadderBp4] {
         assert!(
-            response_y(x, fc, 1.0, Response::LadderBand) >= response_y(x, fc, 1.0, Response::Band)
+            (response_y(fc, fc, 0.0, m) - FILTER_PASS_Y).abs() <= 1,
+            "{m:?}"
         );
     }
 }

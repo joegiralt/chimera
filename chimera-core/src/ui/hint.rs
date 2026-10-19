@@ -5,6 +5,7 @@
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
+use crate::ui::theme::{Face, TextSize};
 use crate::ui::{draw, theme};
 
 /// Keys and what they do: `MIX + NOTE`, `◂▸ STEP`. A browser hint's
@@ -19,21 +20,30 @@ pub const NONE: Hint = &[];
 
 /// The focus band's hint: under the value, over the viz band.
 pub const FOCUS_Y: i32 = theme::FOCUS_BOTTOM - 3;
+/// LARGE's hint baseline: its 11 px cap starts a row under the focus
+/// value's baseline (ADR 0154).
+pub const FOCUS_Y_LARGE: i32 = FOCUS_Y + 1;
+const _: () = assert!(FOCUS_Y_LARGE - 11 > theme::FOCUS_VALUE_Y);
 const KEY_GAP: i32 = 3;
 const GAP: i32 = 8;
 
 const T: i32 = theme::LABEL_TRACKING;
 
-fn keys_w(g: &Gesture<'_>) -> i32 {
-    draw::text_width(&theme::FONT_LABEL_BOLD, g.0, T) + KEY_GAP
+fn keys_w(g: &Gesture<'_>, size: TextSize) -> i32 {
+    draw::text_width(theme::font(Face::LabelBold, size), g.0, T) + KEY_GAP
 }
 
 /// `hint`'s width as `draw` sets it: the tests' fit check.
 #[cfg(any(test, feature = "test-support"))]
 pub fn width(hint: &[Gesture<'_>]) -> i32 {
+    width_at(hint, TextSize::Normal)
+}
+
+/// `hint`'s width in `size`'s faces.
+pub fn width_at(hint: &[Gesture<'_>], size: TextSize) -> i32 {
     let w: i32 = hint
         .iter()
-        .map(|g| keys_w(g) + draw::text_width(&theme::FONT_LABEL, g.1, T) + GAP)
+        .map(|g| keys_w(g, size) + draw::text_width(theme::font(Face::Label, size), g.1, T) + GAP)
         .sum();
     (w - GAP).max(0)
 }
@@ -57,14 +67,32 @@ where
     D: DrawTarget<Color = Rgb565>,
 {
     draw::text_tracked(d, &theme::FONT_LABEL_BOLD, g.0, x, y, theme::INK, T);
-    let x = x + keys_w(g);
+    let x = x + keys_w(g, TextSize::Normal);
     x + draw::text_tracked(d, &theme::FONT_LABEL, g.1, x, y, does, T) + GAP
 }
 
-/// `hint` in the focus band, at the margin.
-pub fn focus<D>(d: &mut D, hint: Hint)
+/// `hint` in the focus band, at the margin: in `size`'s faces where the
+/// whole line ends by `right`, else NORMAL's (ADR 0154).
+pub fn focus<D>(d: &mut D, hint: Hint, size: TextSize, right: i32)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    draw(d, hint, theme::MARGIN_X, FOCUS_Y);
+    let size = theme::fit(size, right - theme::MARGIN_X, |z| width_at(hint, z));
+    if size == TextSize::Normal {
+        return draw(d, hint, theme::MARGIN_X, FOCUS_Y);
+    }
+    // Below the focus value's baseline row, never touching its ink.
+    let slot = draw::Slot {
+        left: theme::MARGIN_X,
+        top: theme::FOCUS_VALUE_Y + 1,
+        right,
+        bottom: theme::FOCUS_BOTTOM,
+    };
+    let (y, mut x) = (FOCUS_Y_LARGE, theme::MARGIN_X);
+    for g in hint {
+        let (bold, word) = (Face::LabelBold, Face::Label);
+        draw::text_fit(d, bold, size, g.0, x, y, theme::INK, T, slot);
+        x += keys_w(g, size);
+        x += draw::text_fit(d, word, size, g.1, x, y, theme::MID, T, slot) + GAP;
+    }
 }

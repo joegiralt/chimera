@@ -54,6 +54,79 @@ pub static FONT_LABEL_BOLD: FontRenderer =
 /// Extra advance between uppercase label letters.
 pub const LABEL_TRACKING: i32 = 1;
 
+// --- TEXT SIZE (ADR 0154) ---
+
+pub use chimera_engine::theme_settings::TextSize;
+
+/// LARGE's label: Helvetica 10, a cap 11 px to helvR08's 8.
+pub static FONT_LABEL_LARGE: FontRenderer =
+    FontRenderer::new::<fonts::u8g2_font_helvR10_tr>().with_ignore_unknown_chars(true);
+/// LARGE's value: Helvetica Bold 14, a cap 14 px to helvB10's 11.
+pub static FONT_VALUE_LARGE: FontRenderer =
+    FontRenderer::new::<fonts::u8g2_font_helvB14_tr>().with_ignore_unknown_chars(true);
+
+/// The three reading faces TEXT SIZE scales.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Face {
+    /// `FONT_LABEL`.
+    Label,
+    /// `FONT_LABEL_BOLD`.
+    LabelBold,
+    /// `FONT_VALUE`.
+    Value,
+}
+
+/// `face` at `size`. LARGE's bold label is the NORMAL value face.
+pub fn font(face: Face, size: TextSize) -> &'static FontRenderer {
+    match (face, size) {
+        (Face::Label, TextSize::Normal) => &FONT_LABEL,
+        (Face::LabelBold, TextSize::Normal) => &FONT_LABEL_BOLD,
+        (Face::Value, TextSize::Normal) => &FONT_VALUE,
+        (Face::Label, TextSize::Large) => &FONT_LABEL_LARGE,
+        (Face::LabelBold, TextSize::Large) => &FONT_VALUE,
+        (Face::Value, TextSize::Large) => &FONT_VALUE_LARGE,
+    }
+}
+
+/// LARGE where `width(LARGE)` is within `w`, else NORMAL: the one fit rule.
+pub fn fit(size: TextSize, w: i32, width: impl Fn(TextSize) -> i32) -> TextSize {
+    match size {
+        TextSize::Large if width(TextSize::Large) <= w => TextSize::Large,
+        _ => TextSize::Normal,
+    }
+}
+
+/// Where a cell's lines sit under its label baseline, by TEXT SIZE.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CellLines {
+    /// Label baseline below the row's.
+    pub label: i32,
+    pub value: i32,
+    pub bar: i32,
+    /// The mod amount line.
+    pub modl: i32,
+}
+
+/// NORMAL's lines are the grid's; LARGE's label drops 1 px to keep its
+/// cap inside the cells band, the bar and mod line rise to clear the next
+/// row's taller label.
+pub const fn cell_lines(size: TextSize) -> CellLines {
+    match size {
+        TextSize::Normal => CellLines {
+            label: 0,
+            value: CELL_VALUE_DY,
+            bar: CELL_BAR_DY,
+            modl: CELL_MOD_DY,
+        },
+        TextSize::Large => CellLines {
+            label: 1,
+            value: 17,
+            bar: 20,
+            modl: 23,
+        },
+    }
+}
+
 // --- Layout (240×320) ---
 
 pub const SCREEN_W: i32 = 240;

@@ -1637,12 +1637,14 @@ fn va_sound(mode: chimera_core::dsp::va::VaMode) -> ParamSnapshot {
 /// the voices each is admitted beside the reserve on the four rooms (rev V,
 /// rev Y, rev V with ORBIT, rev V with the master tape), INIT's 2040 REV2
 /// (+15) and the chain and routing (83) on top. ADR 0040's done-when is six
-/// on each: met on rev V and rev Y in every MODE, eight on rev V at 75 % (ADR 0124) (ADR 0118: WAVE's reach
+/// on each: met on rev V and rev Y in every MODE; the rooms are at 75 % (ADR 0124),
+/// where every MODE but FM fits eight on rev V and FM seven (590 + 98 = 688
+/// in 5,436; ADR 0159) (ADR 0118: WAVE's reach
 /// and SYNC's master held under 7 kHz, points 11 and 12; the sub at the
 /// shaped edge, point 13).
 #[test]
 fn va_bills_each_mode() {
-    use chimera_core::dsp::va::VaMode::{Bits, Mix, Ring, Sync, Xor};
+    use chimera_core::dsp::va::VaMode::{Bits, Fm, Mix, Ring, Sync, Xor};
     let rooms = {
         let v = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
         let y = SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0;
@@ -1661,6 +1663,7 @@ fn va_bills_each_mode() {
         (Ring, 530, [7, 6, 7, 7]),
         (Xor, 550, [7, 5, 7, 7]),
         (Bits, 530, [7, 6, 7, 7]),
+        (Fm, 590, [7, 5, 7, 6]),
     ] {
         let p = va_sound(mode);
         assert_eq!(

@@ -9,7 +9,9 @@ use chimera_core::storage::{
     SystemCheck, SystemSettings, SystemSync, encode_system, exit_plan, save_ab,
 };
 use chimera_core::ui::midi_settings::MidiSettings;
-use chimera_core::ui::theme_settings::{Accent, Black, Bright, Gamma, Pages, Saver, ThemeSettings};
+use chimera_core::ui::theme_settings::{
+    Accent, Black, Bright, Gamma, Pages, Saver, TextSize, ThemeSettings,
+};
 use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
 use common::codec_util::{
@@ -36,6 +38,7 @@ fn settings() -> SystemSettings {
             invert: true,
             saver: Saver::from_index(3),
             pages: Pages::Stack,
+            text: TextSize::Large,
         },
         last_project: ProjectId::new(7),
     }
@@ -845,4 +848,30 @@ fn every_saver_step_round_trips() {
         assert_eq!(boot(&mut s).0.theme.saver, Saver::from_index(i), "{i}");
     }
     assert_eq!(Saver::from_index(5).ms(), Some(60_000));
+}
+
+/// TEXT LARGE round-trips, and alone is a change to write; a SYSTEM from
+/// before TEXT, either v1 fixture, reads NORMAL (ADR 0154).
+#[test]
+fn text_size_round_trips_and_an_old_system_is_normal() {
+    let mut s = MemStore::new(1);
+    let large = SystemSettings {
+        theme: ThemeSettings {
+            text: TextSize::Large,
+            ..ThemeSettings::DEFAULT
+        },
+        ..SystemSettings::DEFAULT
+    };
+    save(&mut s, &large);
+    assert_eq!(boot(&mut s).0, large);
+    assert_ne!(
+        chimera_core::storage::body_crc(&large),
+        chimera_core::storage::body_crc(&SystemSettings::DEFAULT)
+    );
+    for f in [
+        include_bytes!("fixtures/v1/system.sys").as_slice(),
+        include_bytes!("fixtures/v1/system_midi.sys").as_slice(),
+    ] {
+        assert_eq!(boot_bytes(f).0.theme.text, TextSize::Normal);
+    }
 }

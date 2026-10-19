@@ -129,7 +129,7 @@ fn the_engine_operators_are_the_reference() {
                         let got = op.at(a, b, x, op.scale * k) / op.scale;
                         let want = combine(mode, a, b, x, k, pk, &crush);
                         match mode {
-                            VaMode::Mix | VaMode::Sync | VaMode::Ring => {
+                            VaMode::Mix | VaMode::Sync | VaMode::Ring | VaMode::Fm => {
                                 assert_eq!(got.to_bits(), want.to_bits(), "{mode:?} {a} {b} {x}")
                             }
                             VaMode::Xor => {
@@ -420,10 +420,13 @@ fn sub_carries_its_state() {
 }
 
 #[test]
-fn xor_provenance_is_declared() {
+fn combine_provenance_is_declared() {
     use chimera_core::dsp::provenance::{Patent, Provenance};
     assert!(combine::PROVENANCE.iter().any(
         |p| matches!(p, Provenance::Textbook { cite } if cite.contains("Kleimola") && cite.contains("DAFx-08"))
+    ));
+    assert!(combine::PROVENANCE.iter().any(
+        |p| matches!(p, Provenance::Textbook { cite } if cite.contains("Chowning") && cite.contains("1973"))
     ));
     assert!(
         combine::PATENT

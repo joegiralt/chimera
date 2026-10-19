@@ -1,4 +1,4 @@
-//! The five operators and the sub's mix (spec § Combine). Each sees its
+//! The six operators and the sub's mix (spec § Combine). Each sees its
 //! inputs within their block peak bounds and stays within 0.9; XOR and
 //! BITS alias by nature and are exempt from the alias gate.
 
@@ -12,6 +12,11 @@ use crate::dsp::{clampf, sqrt};
 pub const PROVENANCE: &[Provenance] = &[
     Provenance::Textbook {
         cite: "Kleimola, \"Audio Synthesis by Bitwise Logical Modulation\", DAFx-08, 2008 (XOR)",
+    },
+    Provenance::Textbook {
+        cite: "Chowning, \"The Synthesis of Complex Audio Spectra by Means of Frequency \
+               Modulation\", JAES 21(7), 1973 (FM; FM's through-zero linear read rate is \
+               from first principles, the Intellijel DPO an instrument reference only)",
     },
     Provenance::Original {
         author: "AI-assisted, owner-directed and reviewed",
@@ -190,6 +195,8 @@ impl Operator {
             VaMode::Ring => sum + (ks * a * b - sum) * x,
             VaMode::Xor => sum + (xor16_scaled(a, b, self.kx, self.p2) - sum) * x,
             VaMode::Bits => self.q * self.crush.process_scaled(sum, self.liq),
+            // OSC 2 is in OSC 1's phase already
+            VaMode::Fm => a,
         }
     }
 }
@@ -210,6 +217,7 @@ pub fn combine(mode: VaMode, a: f32, b: f32, x: f32, k: f32, pk: Peaks, crush: &
             let q = 0.5 * (pk.a + pk.b);
             q * crush.process(half / q)
         }
+        VaMode::Fm => a,
     }
 }
 

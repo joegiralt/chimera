@@ -285,6 +285,7 @@ fn a_fixed_slot_is_dimmed_in_the_focus_band() {
         },
         Look::Dimmed,
         None,
+        chimera_core::ui::theme::TextSize::Normal,
     );
     assert!(band(&fb) == band(&want), "the band is MODE LFO, dimmed");
     let inks = [theme::INK, theme::ACCENT];
