@@ -60,7 +60,7 @@
 - **Every new hold or MIX gesture gets a focus-band hint.** This plan adds none; TYPE and PLACE are plain turns. A builder who adds one adds its hint in the same task.
 - **Flash:**
   - Report the bank 1 and `.bk2` deltas of the ORBIT build in one line per task that moves them.
-  - Bank 1 is at about 45 KB free on ORBIT. FUZZ goes to bank 2 (Task 12). Everything else stays in bank 1.
+  - Bank 1 is at 67,040 B free on ORBIT (a19dab27, Task 1); the `.bk2` is 121,408 B. FUZZ goes to bank 2 (Task 12). Everything else stays in bank 1.
   - Escalate to the owner only if bank 1 drops below about 40 KB free. No byte-shaving rounds.
 - **Builds:**
   - Before any `cargo` or `just` command, wait until `pgrep -x "cargo|just"` prints nothing (a Monitor until-loop, not `sleep`).
@@ -89,7 +89,7 @@ These are the inputs a person will meet that the spec implies but the task tests
 - Create: (private notes) (a durable ledger, git-ignored)
 
 **Interfaces:**
-- Produces: `FUZZ_CEILING`, a number in cycles a sample: the steady bill of the costliest filter kind a voice can run (`OLD_LP24` 95 + `FilterKind::K2040.cost(Rev2)` 110 = 205 today). Later tasks quote it.
+- Produces: `FUZZ_CEILING`, a number in cycles a sample: the steady bill of the costliest filter kind a voice can run. **Measured 2026-10-19: `FUZZ_CEILING = 271`** (LADDER, `OLD_LP24` 95 + 176 on the ROUTING bench; the 2040 EXP reads 231). So FUZZ may cost up to 176 cycles a sample. The unit reads the 2040 and LADDER over their bills (#642). Ledger: (private notes). Later tasks quote it.
 
 - [ ] **Step 1: Build and flash the ALGO bench from `origin/main`** (no code change): `nice -n 15 just flash-bench algo`.
   Expected: `bench running ~4 min; console appears after`.
