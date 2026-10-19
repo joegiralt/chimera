@@ -97,7 +97,7 @@ const ST: [f32; 5] = {
 
 /// `sin 2πx` for |x| ≤ ½ turn (`S`'s polynomial in turns).
 #[inline(always)]
-fn psin(x: f32) -> f32 {
+pub(super) fn psin(x: f32) -> f32 {
     // Estrin's split of the Horner chain: one multiply-add fewer
     let (x2, x4) = (x * x, (x * x) * (x * x));
     let lo = ST[0] + x2 * ST[1];

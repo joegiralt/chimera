@@ -35,12 +35,19 @@ pub struct VaDoor {
     /// OSC 1's recording, flipping `MOD` instance: FM `k = (1, 0)`,
     /// PHASE `(0, 1)`.
     pub osc1_mod: ModRender,
+    /// LOOPFM's whole render (`VaEngine::render_loopfm`, with
+    /// `lbfm::render_loop`).
+    pub loopfm: crate::dsp::va::LoopFmRender,
     /// OSC 2's reversing instance: SOFT SYNC, `k = (0, 0)` (ADR 0161).
     pub osc2_rev: ModRender,
 }
 
 #[cfg(feature = "bank2")]
-pub const DOOR: VaDoor = VaDoor { osc1_mod, osc2_rev };
+pub const DOOR: VaDoor = VaDoor {
+    osc1_mod,
+    loopfm: crate::dsp::va::VaEngine::render_loopfm,
+    osc2_rev,
+};
 
 /// OSC 1's `MOD` render (`<64, true, false, true, true>`): it records the
 /// wraps and the sub's flips on its clock.

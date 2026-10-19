@@ -258,7 +258,8 @@ fn a_closed_bank2_labels_va_fm() {
     let mode = ParamAddr::new(BlockRef::Va, VaParams::MODE);
     let at = |m: VaMode| m as u8 as f32 / (MODE_NAMES.len() - 1) as f32;
     let closed = Some(Bank2Status::Empty);
-    for m in [VaMode::Fm, VaMode::SoftSync] {
+    // LOOPFM's whole render is bank 2's too
+    for m in [VaMode::Fm, VaMode::LoopFm, VaMode::SoftSync] {
         assert!(m.in_bank2(), "{m:?}");
         assert_eq!(closed_text(mode, at(m), closed), Some("NEEDS UPDATE"));
         assert_eq!(closed_text(mode, at(m), Some(open())), None);
@@ -308,6 +309,12 @@ fn the_va_page_draws_update_at_fm_and_soft_sync_closed() {
     let fm = va_home(5, Some(open()));
     assert!(cell_reads(&fm, 2, "FM"));
     assert!(!band_reads(&fm, NEEDS_UPDATE));
+    // LOOPFM (MODE 8 from MIX) likewise
+    let n = chimera_core::dsp::va::VaMode::LoopFm as i8;
+    let lf = va_home(n, empty);
+    assert!(cell_reads(&lf, 2, NEEDS_UPDATE_CELL), "LOOPFM's cell");
+    assert!(band_reads(&lf, NEEDS_UPDATE), "LOOPFM's band");
+    assert!(!band_reads(&va_home(n, Some(open())), NEEDS_UPDATE));
     // SOFT SYNC likewise
     let at = chimera_core::dsp::va::VaMode::SoftSync as i8;
     let closed = va_home(at, empty);
