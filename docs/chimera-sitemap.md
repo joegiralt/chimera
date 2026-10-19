@@ -1,252 +1,105 @@
 # Chimera Site Map
 
-Complete topology of every chain, block, and sub-page in the instrument.
+Every chain, page and sub-page in the instrument, as built on `main`. The source of truth is `chimera-core/src/ui/block_registry.rs` (Part and mixer chains), `ui/orbit/pages.rs` (ORBIT) and `ui/settings/tree.rs` (SETTINGS). Navigation rules: ADR 0081, 0145 and 0149.
 
-Placeholder blocks are marked with `[TBD]` — the slot exists, exact parameters to be defined later.
-
----
-
-## Part Chains (B1-B6)
-
-Each Part button enters that Part's DSP chain. Chain composition depends on the loaded template. The mod matrix is always the last block.
-
-### Factory Chain Templates
-
-**"FM Poly"** (default on Part 1)
-
-```
-[FM Osc] → [Drive] → [Filter] → [Wavefolder] → [VCA] → [Mod Matrix]
-   │
-   ├── FM-A: Algorithm, feedback, carrier ratio/wave/level/detune
-   ├── FM-B: Modulator ratio/wave/level/detune, op2 ratio/level
-   └── FM-C: Op3 ratio/wave/level, op2 wave, op4 wave/detune
-```
-
-**"FM Keys"**
-
-```
-[FM Osc] → [Filter] → [VCA] → [Mod Matrix]
-   │
-   ├── FM-A
-   ├── FM-B
-   └── FM-C
-```
-
-**"FM Bass"**
-
-```
-[FM Osc] → [Drive] → [Filter] → [VCA] → [Mod Matrix]
-   │
-   ├── FM-A
-   ├── FM-B
-   └── FM-C
-```
-
-**"FM Lead"**
-
-```
-[FM Osc] → [Drive] → [Filter] → [Wavefolder] → [VCA] → [Mod Matrix]
-   │
-   ├── FM-A
-   ├── FM-B
-   └── FM-C
-```
-
-**"FM Pad"**
-
-```
-[FM Osc] → [Filter] → [VCA] → [Mod Matrix]
-   │
-   ├── FM-A
-   ├── FM-B
-   └── FM-C
-```
-
-**"Modal Pluck"**
-
-```
-[Modal Resonator] → [Filter] → [VCA] → [Mod Matrix]
-   │
-   ├── Modal-1: Mode, excite, decay, bright, pos, inharm
-   └── Modal-2: Body, stiff, fdbk, ensemble depth/rate/mix
-```
-
-**"Modal Bow"**
-
-```
-[Modal Resonator] → [Drive] → [VCA] → [Mod Matrix]
-   │
-   ├── Modal-1
-   └── Modal-2
-```
-
-**"Kick"**
-
-```
-[Noise] → [TBD: Tuned Resonator] → [Low Pass Gate] → [Mod Matrix]
-```
-
-**"Snare"**
-
-```
-[Noise] → [Filter] → [VCA] → [Mod Matrix]
-```
-
-**"Hat"**
-
-```
-[Noise] → [Filter] → [VCA] → [Mod Matrix]
-```
+Short names are the chain map's node labels; the sub-page row spells pages in full words.
 
 ---
 
-## Part Chain Block Inventory
+## Navigation
 
-Every block type that can appear in a Part chain:
+| Key | Does |
+|---|---|
+| B1-B6 | Part *n*'s pages. The same key again: its mixer; from that Part's mixer it returns to your page. From anywhere else it lands on the engine's home page |
+| MIX + B*n* | Part *n*'s mixer (inside the mixer: keeps the page) |
+| EDIT + B*n* | The Sound browser for Part *n* |
+| MINUS / PLUS | Previous / next node along the chain |
+| EDIT / SEQ | Under ROW (the default): previous / next sub-page, SEQ wrapping from the last. Under STACK: EDIT down (wrapping), SEQ up |
+| hold SEQ | ORBIT |
+| MENU | SETTINGS; inside, back a level (SEQ goes back a level too). Hold: quick-save |
+| Dialogs | EDIT confirms; MENU or SEQ cancels; any encoder moves the highlight |
 
-| Block | Sub-pages | Layout | Viz | Status |
-|-------|-----------|--------|-----|--------|
-| FM Osc | 3 (FM-A, FM-B, FM-C) | BigViz | AlgorithmDiagram | Defined |
-| Modal Resonator | 2 (Core, Extended) | CellGrid | None | Defined |
-| Noise | 0 | CellGrid | None | Defined |
-| Drive | 0 | CellGrid | None | Defined |
-| Filter | 0 | BigViz | FilterResponse | Defined |
-| Wavefolder | 0 | CellGrid | None | Defined |
-| Low Pass Gate | 0 | BigViz | LpgResponse | Defined |
-| VCA | 0 | BigViz | Adsr | Defined |
-| Tuned Resonator | TBD | TBD | TBD | Placeholder |
-| Mod Matrix | N (grid + 1 per modulator) | CellGrid | None | Defined |
+SETTINGS › PERSONALIZE › CHAIN MAP › PAGES picks ROW or STACK; TEXT SIZE › SIZE picks NORMAL or LARGE.
 
 ---
 
-## Mixer Channel Chains (MIX + B1-B6)
+## Part chains (B1-B6)
 
-Each Part has a mixer channel strip chain. MIX + B1 = CH1, MIX + B2 = CH2, etc. All 6 channel strips have the same topology:
+The chain follows the Part's engine. Every chain ends in MOD, and FLT and AMP are shared.
 
 ```
-MIX + Bn → [Channel] → [MIDI] → [EQ] → [Sends] → [TBD: Insert?]
+ALGO    ALG ── OSC ── DRV ── FLT ── AMP ── MOD
+         └ PIT  └ CRS … FBK (12), OP1 … OP6 (6)
+                 (a formant operator adds FRM first)
+
+MODAL   EXC ── RES ── FLT ── AMP ── MOD
+                └ MDL2, PIT
+
+VA      VA ── DRV ── FLT ── AMP ── MOD
+        └ OSC 1, OSC 2, PIT
+
+shared  FLT └ FMD (FILTER MOD)
+        AMP └ SYM
+        MOD   MTX (matrix) └ E1 E2 E3, SPD, L1 L2 L3
 ```
 
-| Block | Sub-pages | Layout | Viz | Status |
-|-------|-----------|--------|-----|--------|
-| Channel | 0 | CellGrid | None | Defined — vol, pan, output, voices, mode, glide |
-| MIDI | 0 | CellGrid | None | Defined — channel, pgm, cc, bend range, transpose |
-| EQ | 0 | BigViz | EqResponse | Defined — low/mid/high gain + freq |
-| Sends | 0 | CellGrid | None | Defined — rev, dly, chr, s4 levels |
-| Insert | TBD | TBD | TBD | Placeholder — future per-channel insert effect |
+TAPE has a chain in the code (SRC, DECK with its model page and PIT, DRV, FLT, AMP, MOD). In 0.1.0 and until it ships, TAPE rows in the Sound browser read COMING SOON and don't load.
+
+### Pages that draw the whole band
+
+FLT (the filter's response curve, with CUTOFF and RES), MST, E1-E3, SPD, ORBIT's ORB and CUSTOM, and SETTINGS' ABOUT have a picture in place of a focus band. The MOD matrix keeps its focus band.
 
 ---
 
-## System Chain (MENU)
-
-Global configuration. Fixed chain, same for everyone.
+## Mixer (MIX + B*n*)
 
 ```
-MENU → [MIDI] → [Tuning] → [Theme] → [Patch] → [Updates] → [About]
+PRT ── SND ── CHR ── DLY ── REV ── MST
+                      │      │      │
+                      CHAR   MORE,  LVL
+                             MORE 2
 ```
 
-| Block | Sub-pages | Layout | Viz | Status |
-|-------|-----------|--------|-----|--------|
-| MIDI | 2 (channels, global) | CellGrid | None | Defined |
-| Tuning | 0 | CellGrid | None | Defined — master tune, scale |
-| Theme | 0 | CellGrid | None | Defined — brightness, accent color |
-| Patch | TBD | TBD | TBD | Placeholder — save/load/copy/init workflow |
-| Updates | 0 | CellGrid | None | Placeholder — firmware version, SD status |
-| About | 0 | BigViz | Logo | Placeholder — credits |
+Opens on SND, or on the effect page last left. PRT: CH, MODE, OUT, LEVEL, PAN, BEND. SND: the three send levels. EDIT from PRT or SND goes down to the Sound browser.
 
 ---
 
-## Send Effects Chain (TBD)
+## Sound browser (EDIT + B*n*)
 
-The send effect parameters need a home. Options under consideration:
-
-```
-Option A: Accessible from mixer — MIX + MENU → [Reverb] → [Delay] → [Chorus] → [Send 4] → [Master]
-Option B: Sub-pages on the Sends block in each mixer channel strip
-Option C: Dedicated chain on a button combo
-```
-
-Regardless of where they live, these blocks exist:
-
-| Block | Sub-pages | Layout | Viz | Status |
-|-------|-----------|--------|-----|--------|
-| Reverb | 0 | CellGrid | None | Placeholder — type, time, damp, size, mix, ... |
-| Delay | 0 | CellGrid | None | Placeholder — time, fdbk, wow, sat, tone, mix |
-| Chorus | 0 | CellGrid | None | Placeholder — mode, rate, depth, mix, ... |
-| Send 4 | TBD | TBD | TBD | Placeholder — future |
-| Master Bus | TBD | TBD | TBD | Placeholder — compressor, limiter, master vol |
+Tabs PROJECT, LIBRARY and FACTORY (encoder 2). Rows: INIT ALGO, INIT MODAL, INIT VA, INIT TAPE and INIT DRUM (the last two COMING SOON), then the tab's Sounds. MINUS / PLUS change Part; SEQ goes back to the mixer.
 
 ---
 
-## Chain Editor (MIX + MENU)
-
-Not a chain — a special editor mode for power users. Edits the active Part's chain.
-
-| Element | Status |
-|---------|--------|
-| Block list with CPU costs | Defined |
-| Add/delete/reorder | Defined |
-| Budget display | Defined |
-
----
-
-## Complete Navigation Map
+## ORBIT (hold SEQ)
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                                                                 │
-│  B1 → Part 1 chain    [block] → [block] → ... → [Mod Matrix]  │
-│  B2 → Part 2 chain    [block] → [block] → ... → [Mod Matrix]  │
-│  B3 → Part 3 chain    [block] → [block] → ... → [Mod Matrix]  │
-│  B4 → Part 4 chain    [block] → [block] → ... → [Mod Matrix]  │
-│  B5 → Part 5 chain    [block] → [block] → ... → [Mod Matrix]  │
-│  B6 → Part 6 chain    [block] → [block] → ... → [Mod Matrix]  │
-│                                                                 │
-│  MIX+B1 → CH1 strip   [Channel]→[MIDI]→[EQ]→[Sends]→[TBD]    │
-│  MIX+B2 → CH2 strip   [Channel]→[MIDI]→[EQ]→[Sends]→[TBD]    │
-│  MIX+B3 → CH3 strip   [Channel]→[MIDI]→[EQ]→[Sends]→[TBD]    │
-│  MIX+B4 → CH4 strip   [Channel]→[MIDI]→[EQ]→[Sends]→[TBD]    │
-│  MIX+B5 → CH5 strip   [Channel]→[MIDI]→[EQ]→[Sends]→[TBD]    │
-│  MIX+B6 → CH6 strip   [Channel]→[MIDI]→[EQ]→[Sends]→[TBD]    │
-│                                                                 │
-│  MENU → System chain   [MIDI]→[Tuning]→[Theme]→[Patch]→[Upd]→[About] │
-│                                                                 │
-│  MIX+MENU → Chain Editor (active Part)                         │
-│                                                                 │
-│  Within any chain:                                              │
-│    Minus/Plus = left/right through blocks                       │
-│    Seq/Edit = up/down through sub-pages                         │
-│    Encoders A-F = edit 6 params on current page                 │
-│    MIX + Encoder = coarse snap                                  │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+ORB ── RING ── CHRD ── SCN
+ └ CUSTOM  └ RHYTHM, VOICE, NOTES
 ```
 
----
-
-## Block Count Summary
-
-| Category | Blocks | Status |
-|----------|--------|--------|
-| DSP blocks (Part chains) | 10 | 9 defined, 1 placeholder (Tuned Resonator) |
-| Mixer blocks (channel strips) | 5 | 4 defined, 1 placeholder (Insert) |
-| System blocks | 6 | 3 defined, 3 placeholder (Patch, Updates, About) |
-| Send/Master blocks | 5 | All placeholder |
-| **Total unique block types** | **26** | **16 defined, 10 placeholder** |
+B6 plays and stops; B1-B5 open a ring; hold B1-B5 goes to the ring's Part; MIX + B1-B5 mutes it. MENU leaves.
 
 ---
 
-## Placeholder Resolution Priorities
+## SETTINGS (MENU)
 
-Blocks to define before building:
+```
+PROJECT       LOAD PROJECT, SAVE PROJECT AS, MANAGE PROJECTS, POOL, PURGE UNUSED SRC
+PART          RENAME, CLEAR, SAVE TO PROJ, RELOAD FROM PROJ, LIVE SNAP,
+              SAVE TO LIBRARY, MIDI MAP
+ORBIT         RENAME (later), CLEAR, SAVE TO PROJ, RELOAD FROM PROJ
+MIDI CONFIG   SYNC, PORT CONFIG (later), CHANNELS
+SYSEX DUMP    later
+AUDIO ROUTING OUTPUTS, SENDS (later), TUNING
+PERSONALIZE   THEME, SCREENSAVER, CHAIN MAP, TEXT SIZE
+SYSTEM        OS UPGRADE, STORAGE (later), FORMAT CARD (later), USB CONFIG (later),
+              DIAGNOSTICS, PUSH ENCODERS, ABOUT
+```
 
-1. **Send effects + Master bus** — need to decide where they live
-2. **Patch management** — save/load/copy workflow
-3. **Tuned Resonator** — kick/percussion exciter block
+THEME holds BRIGHT, GAMMA, ACCENT, BLACK, HINTS and INVERT. SCREENSAVER: OFF, 5, 7, 10, 30, 60 s, 2, 5, 10 min (default 5 min). DIAGNOSTICS: AUDIO LOAD, TEST TONE (later), INPUT TEST (later). Rows marked later are dimmed and labelled LATER; the bar lands on them, but EDIT does nothing.
 
-Blocks that can wait:
+---
 
-4. Insert effects (mixer channel)
-5. Send 4 (spare)
-6. Updates page (firmware update flow)
-7. About page (just credits)
+## Not on the map yet
+
+The chain editor, send-effect routing (SENDS under AUDIO ROUTING), SYSEX DUMP, STORAGE, FORMAT CARD and USB CONFIG are not built. Track them in the issue tracker, not here.

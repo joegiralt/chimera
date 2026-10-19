@@ -1,4 +1,4 @@
-# 0146. Prepare samples in PREP, a mode of its own, and keep each prep in a sealed `.PRP` beside its `.SRC`
+# 0171. Prepare samples in PREP, a mode of its own, and keep each prep in a sealed `.PRP` beside its `.SRC`
 
 - **Status:** Proposed
 - **Deciders:** owner (decisions 2, 3 and 8, 2026-10-15), firmware
@@ -22,7 +22,7 @@ TAPE becomes a sampler with a preparation stage (#476). Every serious sampler ke
   - **Undo:** 8 levels of the prep's marks (about 11 KB in AXI), MIX + SEQ undo and MIX + EDIT redo, a hint after each edit. PREP has no MIDI learn, so MIX + SEQ is free there. Renders aren't undone: they never overwrite, and an unwanted one is deleted in SAMPLES. Undo replaces the hand-edit prompt.
   - **Nothing depends on pushing an encoder** (ADR 0140: optional hardware); a push may only be a shortcut.
 - **SETTINGS › SAMPLES** is the library in SETTINGS' list language: sources and their preps by category, DELETE (refused while a saved Sound uses the source), RESAMPLE, CARD TEST, CLEAN UP (#398, plus: a `.PRP` whose source is gone is deleted).
-- **A card write in PREP fades streamed notes out and back in** (ADR 0147).
+- **A card write in PREP fades streamed notes out and back in** (ADR 0172).
 
 ## Alternatives considered
 - **A `.PRP` named after its source, rewritten in place.** One file per source can't hold a KIT and a REEL of the same audio without a merge, and an in-place rewrite needs an A/B pair (two files a source) on a card that is power-pulled. Content naming reuses the sealing code `put` has and matches the `.SRC` beside it.

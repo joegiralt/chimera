@@ -27,6 +27,16 @@ pub fn quantize_values(anim: &[AnimatedValue; 6]) -> [u16; 6] {
     ]
 }
 
+/// `key` and `keys` (printed-text hashes) folded to one word: equal only
+/// when both are.
+pub fn fold_keys(key: u64, keys: &[u32]) -> u32 {
+    use core::hash::Hasher;
+    let mut h = Fnv::new();
+    h.write(&key.to_le_bytes());
+    keys.iter().for_each(|k| h.write(&k.to_le_bytes()));
+    h.get()
+}
+
 /// Sentinel value that never matches real data — forces initial redraw.
 const SENTINEL: u16 = u16::MAX;
 /// Page used in sentinel snapshots (the SENTINEL values make them unequal).
@@ -68,6 +78,8 @@ pub enum RegionData {
         text: u32,
         /// HINTS on: the band draws its hint.
         hints: bool,
+        /// The mixer's jump hint shows on a bare cell (`view::mixer_hint`).
+        mixer: bool,
     },
     /// The mod matrix readout: the selected route, its animated amount and
     /// the route count.
@@ -92,6 +104,8 @@ pub enum RegionData {
         /// What an ORBIT viz draws of the scene and the runner
         /// (`orbit::draw::viz_key`).
         orbit: u32,
+        /// `viz::ModMark::key`: a moved ghost redraws its boxes alone.
+        mark: u32,
     },
     Cells {
         page: PageKey,
@@ -116,6 +130,8 @@ pub enum RegionData {
         branch_scroll: u16,
         /// MODEL: MDL2's name on the map.
         model: u8,
+        /// THEME's PAGES.
+        pages: u8,
     },
     Grid {
         sel_row: u8,
@@ -180,6 +196,7 @@ impl RegionData {
             gauge: 0,
             text: 0,
             hints: false,
+            mixer: false,
         }
     }
 
@@ -207,10 +224,14 @@ impl RegionData {
 
     /// A focus band keyed on the text it shows from outside its slot,
     /// and on HINTS, too.
-    pub fn with_text(mut self, key: u32, hints_on: bool) -> Self {
-        if let Self::Focus { text, hints, .. } = &mut self {
+    pub fn with_text(mut self, key: u32, hints_on: bool, in_mixer: bool) -> Self {
+        if let Self::Focus {
+            text, hints, mixer, ..
+        } = &mut self
+        {
             *text = key;
             *hints = hints_on;
+            *mixer = in_mixer;
         }
         self
     }
@@ -240,7 +261,21 @@ impl RegionData {
             live,
             status,
             orbit: 0,
+            mark: 0,
         }
+    }
+
+    /// This key with no mark share: equal when only the mark moved.
+    pub fn without_mark(self) -> Self {
+        self.with_mark(0)
+    }
+
+    /// A viz keyed on its modulation mark too.
+    pub fn with_mark(mut self, key: u32) -> Self {
+        if let Self::Viz { mark, .. } = &mut self {
+            *mark = key;
+        }
+        self
     }
 
     /// A viz keyed on what it draws of ORBIT too.
@@ -270,13 +305,21 @@ impl RegionData {
         }
     }
 
-    pub fn nav(chain_idx: u8, node_idx: u8, sub_page: u8, branch_scroll: u16, model: u8) -> Self {
+    pub fn nav(
+        chain_idx: u8,
+        node_idx: u8,
+        sub_page: u8,
+        branch_scroll: u16,
+        model: u8,
+        pages: u8,
+    ) -> Self {
         Self::Nav {
             chain_idx,
             node_idx,
             sub_page,
             branch_scroll,
             model,
+            pages,
         }
     }
 
@@ -288,6 +331,7 @@ impl RegionData {
             title_type: u8::MAX,
             out: u8::MAX,
             status: HeaderStatus {
+                parts: None,
                 sounding: false,
                 load_pct: u8::MAX,
                 orbit_dot: None,
@@ -308,6 +352,7 @@ impl RegionData {
             gauge: u32::MAX,
             text: u32::MAX,
             hints: false,
+            mixer: false,
         }
     }
 
@@ -318,6 +363,7 @@ impl RegionData {
             live: u32::MAX,
             status: None,
             orbit: u32::MAX,
+            mark: u32::MAX,
         }
     }
 
@@ -341,6 +387,7 @@ impl RegionData {
             sub_page: 255,
             branch_scroll: SENTINEL,
             model: 255,
+            pages: 255,
         }
     }
 
@@ -501,10 +548,10 @@ pub struct RegionSet {
     pub count: u8,
     /// The layout built, and whether a prompt is over it; `None` rebuilds.
     pub prev_screen: Option<(Layout, bool)>,
-    /// THEME's HINTS and SYSTEM's PUSH ENCODERS as the bands were last
-    /// drawn: any band may draw a hint, so a change redraws them all
-    /// (`UiState::hints_moved`).
-    pub drawn_hints: Option<(bool, bool)>,
+    /// THEME's HINTS, SYSTEM's PUSH ENCODERS and TEXT SIZE as the bands
+    /// were last drawn: any band may draw a hint or scaled text, so a
+    /// change redraws them all (`UiState::hints_moved`).
+    pub drawn_hints: Option<(bool, bool, crate::ui::theme::TextSize)>,
 }
 
 /// Which bands a screen has: a page's, or SETTINGS' (a list, or a leaf of

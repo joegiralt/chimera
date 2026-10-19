@@ -108,10 +108,16 @@ fn focus_band_shows_the_last_touched_slot() {
         },
         components::Look::Live,
         None,
+        chimera_core::ui::theme::TextSize::Normal,
     );
     // MORPH maps: its hint offers MIX + SEQ's learn.
     if cfg!(feature = "midi-map") {
-        chimera_core::ui::hint::focus(&mut want, &[chimera_core::ui::view::LEARN]);
+        chimera_core::ui::hint::focus(
+            &mut want,
+            &[chimera_core::ui::view::LEARN],
+            chimera_core::ui::theme::TextSize::Normal,
+            228,
+        );
     }
     assert!(
         band(&fb, 28, 118) == band(&want, 28, 118),
@@ -147,7 +153,13 @@ fn only_the_focused_cell_label_uses_the_accent() {
 #[test]
 fn empty_slots_are_a_dim_dash_and_choices_have_no_bar() {
     let mut fb = Fb::new();
-    components::cell(&mut fb, 0, 200, None);
+    components::cell(
+        &mut fb,
+        0,
+        200,
+        None,
+        chimera_core::ui::theme::TextSize::Normal,
+    );
     assert_eq!(fb.at(theme::MARGIN_X + 3, 197), theme::FAINT);
     let c = Cell {
         label: "MODE",
@@ -160,7 +172,13 @@ fn empty_slots_are_a_dim_dash_and_choices_have_no_bar() {
         motion: None,
     };
     let mut fb = Fb::new();
-    components::cell(&mut fb, 1, 200, Some(&c));
+    components::cell(
+        &mut fb,
+        1,
+        200,
+        Some(&c),
+        chimera_core::ui::theme::TextSize::Normal,
+    );
     let bar_y = 200 + theme::CELL_BAR_DY;
     let x = theme::MARGIN_X + theme::CELL_COL_W;
     assert!(
@@ -229,4 +247,169 @@ fn part_switch_redraws_mod_bars_that_differ() {
     let mut full = Fb::new();
     ui.render_with_scope(&mut full, &perf, &scope);
     assert!(fb.px == full.px);
+}
+
+/// Issue #559: after a turn the readout is the set value at once; only the
+/// gauges and bars ease.
+#[test]
+fn the_readout_shows_the_target_the_frame_after_a_turn() {
+    let turned = |settled: bool| {
+        let mut ui = ui_for("algo_level");
+        feed(&mut ui, Input::turn(EncoderId::C, 40));
+        if settled {
+            settle(&mut ui);
+        } else {
+            ui.update(UiTick::for_test());
+        }
+        render_ui(&ui)
+    };
+    let (mid, rest) = (turned(false), turned(true));
+    let rows = |fb: &Fb, y0: i32, y1: i32, x0: i32, x1: i32| {
+        (y0..y1)
+            .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+            .map(|(x, y)| fb.at(x, y))
+            .collect::<Vec<_>>()
+    };
+    let focus = |fb: &Fb| rows(fb, theme::FOCUS_LABEL_Y + 6, theme::FOCUS_BOTTOM, 0, 90);
+    let cell = |fb: &Fb| {
+        let x = theme::MARGIN_X + 2 * theme::CELL_COL_W;
+        let y = theme::CELL_LABEL_Y + theme::CELL_VALUE_DY - 6;
+        rows(
+            fb,
+            y,
+            theme::CELL_LABEL_Y + theme::CELL_BAR_DY - 1,
+            x,
+            x + 50,
+        )
+    };
+    assert!(mid.px != rest.px, "the gauges are still easing");
+    assert!(focus(&mid) == focus(&rest), "focus readout lags");
+    assert!(cell(&mid) == cell(&rest), "cell readout lags");
+}
+
+/// Issue #559 through the viz readout and the matrix amount, full and dirty:
+/// one tick after a turn, a filter slot that does not move the curve
+/// draws the settled screen, pixel for pixel.
+#[test]
+fn readouts_show_the_target_through_full_and_dirty_renders() {
+    // The matrix fill eases by design: only its keys are checked here.
+    for (case, enc, by, exact) in [
+        ("bigviz_filter", EncoderId::D, 40, true),
+        ("mod_matrix", EncoderId::E, 40, false),
+    ] {
+        let scope = scope_fixture();
+        let mut rest = ui_for(case);
+        feed(&mut rest, Input::turn(enc, by));
+        settle(&mut rest);
+        let mut want = Fb::new();
+        rest.render_with_scope(&mut want, &PerfStats::zero(), &scope);
+
+        let mut ui = ui_for(case);
+        let mut dirty = Fb::new();
+        ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope);
+        feed(&mut ui, Input::turn(enc, by));
+        ui.update(UiTick::for_test());
+        ui.render_dirty_with_scope(&mut dirty, &PerfStats::zero(), &scope);
+        let mut full = Fb::new();
+        ui.render_with_scope(&mut full, &PerfStats::zero(), &scope);
+        assert!(dirty.px == full.px, "{case}: dirty == full");
+        assert!(!exact || full.px == want.px, "{case}: readout lags");
+    }
+}
+
+/// The bands a dirty render flushes now, on a persistent `fb`.
+fn flushed(ui: &mut UiState, fb: &mut Fb) -> Vec<(u16, u16)> {
+    let out = ui.render_dirty_with_scope(fb, &PerfStats::zero(), &scope_fixture());
+    out.into_iter().filter(|&(a, b)| a != b).collect()
+}
+
+/// The text keys follow what is printed (#559): a target move below the
+/// display resolution dirties nothing, a change in the number dirties the
+/// focus band and the cells.
+#[test]
+fn a_cell_page_redraws_on_the_printed_number_only() {
+    let mut ui = ui_for("algo_level");
+    feed(&mut ui, Input::turn(EncoderId::C, 1));
+    settle(&mut ui);
+    let mut fb = Fb::new();
+    flushed(&mut ui, &mut fb);
+    assert!(flushed(&mut ui, &mut fb).is_empty());
+    // The number reads the set value (#575); the animator follows it.
+    let v = ui.renderer.set[2].target();
+    let aim = |ui: &mut UiState, t: f32| {
+        ui.renderer.set[2].set_target(t);
+        ui.renderer.anim[2].set_target(t);
+    };
+    aim(&mut ui, v + 0.0002);
+    assert_eq!(
+        flushed(&mut ui, &mut fb),
+        [],
+        "below the display resolution"
+    );
+    // Modulation moves the animator alone: the printed number is the set one.
+    let m = ui.renderer.anim[2].target();
+    ui.renderer.anim[2].set_target(m + 0.1);
+    assert_eq!(flushed(&mut ui, &mut fb), [], "modulation moves no number");
+    ui.renderer.anim[2].set_target(m);
+    aim(&mut ui, if v > 0.5 { v - 0.1 } else { v + 0.1 });
+    assert_eq!(flushed(&mut ui, &mut fb), [(28, 118), (186, 266)]);
+}
+
+/// The same on the matrix: its grid and route readout key on the amount as
+/// printed, and the readout's words follow the target at once.
+#[test]
+fn the_matrix_redraws_on_the_printed_amount_only() {
+    use chimera_core::ui::renderer::{MATRIX_AMOUNT_SLOT as SLOT, amount_of, amount_value};
+    let mut ui = ui_for("mod_matrix");
+    let mut fb = Fb::new();
+    flushed(&mut ui, &mut fb);
+    assert!(flushed(&mut ui, &mut fb).is_empty());
+    let now = amount_of(ui.renderer.anim[SLOT].target());
+    let v = amount_value(now);
+    assert_eq!(amount_of(v + 0.0005), now);
+    ui.renderer.anim[SLOT].set_target(v + 0.0005);
+    assert_eq!(
+        flushed(&mut ui, &mut fb),
+        [],
+        "below the display resolution"
+    );
+    let rest = {
+        let mut r = ui_for("mod_matrix");
+        feed(&mut r, Input::turn(EncoderId::E, 1));
+        settle(&mut r);
+        r
+    };
+    ui.renderer.anim[SLOT].set_target(amount_value(now + 1));
+    let bands = flushed(&mut ui, &mut fb);
+    assert!(bands.len() >= 2, "readout and grid redraw: {bands:?}");
+    // The readout is the settled one's, with the amount still easing.
+    let (mut want, y) = (Fb::new(), bands[0]);
+    rest.render_with_scope(&mut want, &PerfStats::zero(), &scope_fixture());
+    let rows = |f: &Fb| f.px[y.0 as usize * W..y.1 as usize * W].to_vec();
+    assert!(rows(&fb) == rows(&want), "route readout lags");
+}
+
+/// A slow LFO on a page: the viz band redraws only on frames where what it
+/// shows moved, never each frame by the bits of a target.
+#[test]
+fn a_slow_lfo_redraws_only_when_the_display_moves() {
+    let mut ui = ui_for("mod_matrix");
+    feed(&mut ui, Input::press(ButtonId::Minus));
+    feed(&mut ui, Input::press(ButtonId::Minus));
+    let (mut fb, mut redraws, mut moved) = (Fb::new(), 0, 0);
+    flushed(&mut ui, &mut fb);
+    let shown = |ui: &UiState| {
+        let a = &ui.renderer.anim;
+        (0..6)
+            .map(|i| chimera_core::ui::region::quantize(a[i].current()))
+            .collect::<Vec<_>>()
+    };
+    for _ in 0..40 {
+        let before = shown(&ui);
+        ui.update(UiTick::for_test());
+        moved += (shown(&ui) != before) as u32;
+        redraws += !flushed(&mut ui, &mut fb).is_empty() as u32;
+    }
+    assert!(moved > 0, "the LFO moves the page");
+    assert!(redraws <= moved, "{redraws} redraws for {moved} moves");
 }

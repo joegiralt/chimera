@@ -14,13 +14,14 @@ use chimera_core::ui::theme_settings::{Accent, Black, ThemeSettings, palette};
 use screen::*;
 
 const GOLDENS: &[(&str, u64)] = &[
-    ("engine_algo", 0x14f8295d1f5838e9),
-    ("algo_formant_page", 0x5de8238f2dbf43c3),
-    ("algo_op_page_3", 0xb6ac3cd0c290d672),
-    ("algo_op_page_3_turned", 0x3469930dff1a6231),
-    ("algo_op_page_frmt", 0x64614c2f6af9fc1c),
-    ("algo_op_page_nois", 0xa7b8b95e18bf5e17),
-    ("flt_clean", 0xcc4a729ff4ba5faf),
+    ("engine_algo", 0x0c812e5949e9cc0b),
+    // Re-recorded: a value's unit sits small beside its number (ADR 0146).
+    ("algo_formant_page", 0xaeb00b7e789eb095),
+    ("algo_op_page_3", 0xba18428d2737860c),
+    ("algo_op_page_3_turned", 0x1e13ee93c98f7d77),
+    ("algo_op_page_frmt", 0x637dadcf4ecbddc2),
+    ("algo_op_page_nois", 0x2e63d3eca77c837d),
+    ("flt_clean", 0xc18ea9c7e3ae99d3),
     ("settings_top", 0xf1655533215f4e4b),
     ("settings_personal_theme", 0x3a2a9ae7815335b2),
     // Re-recorded: FACTORY joins the title, B ◂▸ moves to hint line 1.
@@ -93,6 +94,7 @@ fn every_screen_colour_is_a_theme_token_or_a_grey() {
         t::PILL_EDGE,
         t::WARN,
         t::ALERT,
+        t::PART_LIVE,
     ]
     .map(raw);
     for name in case_names() {

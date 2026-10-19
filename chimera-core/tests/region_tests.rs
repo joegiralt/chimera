@@ -180,13 +180,13 @@ fn encoder_only_dirties_params_not_header() {
     rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, 0, HeaderStatus::default());
     rs.regions[1].prev_data = RegionData::viz(page, values_a, 0);
     rs.regions[2].prev_data = RegionData::cells(page, values_a, 0, 0, [None; 6]);
-    rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0, 0);
+    rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0, 0, 0);
 
     let current = [
         RegionData::header(0, 0, 0, 0, 0, HeaderStatus::default()),
         RegionData::viz(page, values_b, 0),
         RegionData::cells(page, values_b, 0, 0, [None; 6]),
-        RegionData::nav(0, 0, 0, 0, 0),
+        RegionData::nav(0, 0, 0, 0, 0, 0),
     ];
 
     let dirty: Vec<bool> = rs
@@ -210,13 +210,13 @@ fn nav_change_dirties_header_and_nav() {
     rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, 0, HeaderStatus::default());
     rs.regions[1].prev_data = RegionData::viz(page, values, 0);
     rs.regions[2].prev_data = RegionData::cells(page, values, 0, 0, [None; 6]);
-    rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0, 0);
+    rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0, 0, 0);
 
     let current = [
         RegionData::header(0, 1, 0, 0, 0, HeaderStatus::default()),
         RegionData::viz(page, values, 0),
         RegionData::cells(page, values, 0, 0, [None; 6]),
-        RegionData::nav(0, 1, 0, 0, 0),
+        RegionData::nav(0, 1, 0, 0, 0, 0),
     ];
 
     let dirty: Vec<bool> = rs
@@ -240,13 +240,13 @@ fn no_change_means_no_dirty() {
     rs.regions[0].prev_data = RegionData::header(0, 0, 0, 0, 0, HeaderStatus::default());
     rs.regions[1].prev_data = RegionData::viz(page, values, 0);
     rs.regions[2].prev_data = RegionData::cells(page, values, 0, 0, [None; 6]);
-    rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0, 0);
+    rs.regions[3].prev_data = RegionData::nav(0, 0, 0, 0, 0, 0);
 
     let current = [
         RegionData::header(0, 0, 0, 0, 0, HeaderStatus::default()),
         RegionData::viz(page, values, 0),
         RegionData::cells(page, values, 0, 0, [None; 6]),
-        RegionData::nav(0, 0, 0, 0, 0),
+        RegionData::nav(0, 0, 0, 0, 0, 0),
     ];
 
     let any_dirty = rs

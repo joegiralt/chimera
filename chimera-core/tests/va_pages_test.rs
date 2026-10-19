@@ -126,7 +126,7 @@ fn mode_names_fit_the_cell() {
 
 #[test]
 fn a_va_load_lands_on_va() {
-    let mut ui = chimera_core::ui::UiState::new();
+    let mut ui = crate::screen::stack_ui();
     load_init(&mut ui, EngineType::Va);
     assert_eq!(page_def_id(&ui), VA_HOME.id);
     assert!(core::ptr::eq(nav::chain_def_for(EngineType::Va), &VA_CHAIN));
@@ -134,7 +134,7 @@ fn a_va_load_lands_on_va() {
 
 #[test]
 fn edit_walks_and_wraps() {
-    let mut ui = chimera_core::ui::UiState::new();
+    let mut ui = crate::screen::stack_ui();
     load_init(&mut ui, EngineType::Va);
     let mut walk = Vec::new();
     for _ in 0..4 {

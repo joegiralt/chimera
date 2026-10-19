@@ -2,7 +2,7 @@
 
 - **Status:** Draft for owner review (2026-10-15)
 - **Umbrella:** `2026-10-15-tape-sampler-design.md` (§ 5 streaming, § 9 slices 0–1)
-- **ADRs:** 0147 (streaming by DMA behind heads), 0145 (PLAY folds ONESHOT, LOOP and PING-PONG)
+- **ADRs:** 0172 (streaming by DMA behind heads), 0170 (PLAY folds ONESHOT, LOOP and PING-PONG)
 - **Issue:** private issue #476
 - **Rules:** no_std; no heap, blocking or panic in audio; every `unsafe` with `// SAFETY:`; params never snap; host first, the unit last.
 

@@ -31,6 +31,8 @@ pub const PILL_EDGE: Rgb565 = Rgb565::new(7, 14, 6);
 /// Audio load above 60 % / 80 %.
 pub const WARN: Rgb565 = Rgb565::new(31, 32, 0);
 pub const ALERT: Rgb565 = Rgb565::new(31, 0, 0);
+/// The current Part's dot: bright green whatever the accent (`#29ff29`).
+pub const PART_LIVE: Rgb565 = Rgb565::new(5, 63, 5);
 
 // --- Fonts (u8g2; only these are linked) ---
 
@@ -52,6 +54,79 @@ pub static FONT_LABEL_BOLD: FontRenderer =
 /// Extra advance between uppercase label letters.
 pub const LABEL_TRACKING: i32 = 1;
 
+// --- TEXT SIZE (ADR 0154) ---
+
+pub use chimera_engine::theme_settings::TextSize;
+
+/// LARGE's label: Helvetica 10, a cap 11 px to helvR08's 8.
+pub static FONT_LABEL_LARGE: FontRenderer =
+    FontRenderer::new::<fonts::u8g2_font_helvR10_tr>().with_ignore_unknown_chars(true);
+/// LARGE's value: Helvetica Bold 14, a cap 14 px to helvB10's 11.
+pub static FONT_VALUE_LARGE: FontRenderer =
+    FontRenderer::new::<fonts::u8g2_font_helvB14_tr>().with_ignore_unknown_chars(true);
+
+/// The three reading faces TEXT SIZE scales.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Face {
+    /// `FONT_LABEL`.
+    Label,
+    /// `FONT_LABEL_BOLD`.
+    LabelBold,
+    /// `FONT_VALUE`.
+    Value,
+}
+
+/// `face` at `size`. LARGE's bold label is the NORMAL value face.
+pub fn font(face: Face, size: TextSize) -> &'static FontRenderer {
+    match (face, size) {
+        (Face::Label, TextSize::Normal) => &FONT_LABEL,
+        (Face::LabelBold, TextSize::Normal) => &FONT_LABEL_BOLD,
+        (Face::Value, TextSize::Normal) => &FONT_VALUE,
+        (Face::Label, TextSize::Large) => &FONT_LABEL_LARGE,
+        (Face::LabelBold, TextSize::Large) => &FONT_VALUE,
+        (Face::Value, TextSize::Large) => &FONT_VALUE_LARGE,
+    }
+}
+
+/// LARGE where `width(LARGE)` is within `w`, else NORMAL: the one fit rule.
+pub fn fit(size: TextSize, w: i32, width: impl Fn(TextSize) -> i32) -> TextSize {
+    match size {
+        TextSize::Large if width(TextSize::Large) <= w => TextSize::Large,
+        _ => TextSize::Normal,
+    }
+}
+
+/// Where a cell's lines sit under its label baseline, by TEXT SIZE.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CellLines {
+    /// Label baseline below the row's.
+    pub label: i32,
+    pub value: i32,
+    pub bar: i32,
+    /// The mod amount line.
+    pub modl: i32,
+}
+
+/// NORMAL's lines are the grid's; LARGE's label drops 1 px to keep its
+/// cap inside the cells band, the bar and mod line rise to clear the next
+/// row's taller label.
+pub const fn cell_lines(size: TextSize) -> CellLines {
+    match size {
+        TextSize::Normal => CellLines {
+            label: 0,
+            value: CELL_VALUE_DY,
+            bar: CELL_BAR_DY,
+            modl: CELL_MOD_DY,
+        },
+        TextSize::Large => CellLines {
+            label: 1,
+            value: 17,
+            bar: 20,
+            modl: 23,
+        },
+    }
+}
+
 // --- Layout (240×320) ---
 
 pub const SCREEN_W: i32 = 240;
@@ -68,6 +143,14 @@ pub const HEADER_BASELINE: i32 = 20;
 pub const HEADER_DOT_X: i32 = 225;
 pub const HEADER_DOT_Y: i32 = 16;
 pub const HEADER_DOT_R: i32 = 3;
+/// The Part dots: a row above the header text, one a Part, from the left
+/// margin.
+pub const PART_DOT_Y: i32 = 5;
+pub const PART_DOT_X: i32 = MARGIN_X + PART_DOT_R;
+pub const PART_DOT_PITCH: i32 = 10;
+/// A sounding Part's ring; the current Part's dot is one larger, the
+/// rest one smaller.
+pub const PART_DOT_R: i32 = 3;
 /// ORBIT's beat dot, one dot left of the sounding dot.
 pub const ORBIT_DOT_X: i32 = HEADER_DOT_X - 10;
 
@@ -179,6 +262,22 @@ pub const NODE_LABEL_Y: i32 = 306;
 /// Sub-page branch rows under the pill.
 pub const BRANCH_START_Y: i32 = 300;
 pub const BRANCH_LINE_HEIGHT: i32 = 10;
+/// THEME's PAGES ROW (ADR 0145): the nodes on a line at 279, the pill at
+/// least `PILL_W` wide; the sub-pages on a row under a rule at 302,
+/// between `ROW_L` and `ROW_R`, the arrows outside them.
+pub const ROW_LINE_Y: i32 = 279;
+pub const ROW_PILL_H: i32 = 18;
+pub const ROW_PILL_PAD: i32 = 10;
+pub const ROW_PILL_LABEL_Y: i32 = 283;
+pub const ROW_NODE_R: i32 = 3;
+pub const ROW_NODE_LABEL_Y: i32 = 296;
+pub const ROW_RULE_Y: i32 = 302;
+pub const ROW_Y: i32 = 314;
+pub const ROW_L: i32 = 22;
+pub const ROW_R: i32 = 218;
+pub const ROW_GAP: i32 = 10;
+pub const ROW_ARROW_L: i32 = 10;
+pub const ROW_ARROW_R: i32 = 230;
 
 /// SETTINGS (spec § Screens): breadcrumb, list and footer, in its own look.
 /// The breadcrumb's width before it drops leading parts: it clears the

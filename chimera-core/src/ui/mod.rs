@@ -14,6 +14,7 @@ pub mod filter_panel;
 pub mod fmt;
 pub mod focus;
 pub mod glyph;
+pub mod held;
 pub mod hint;
 pub mod hold;
 pub mod installing;
@@ -52,15 +53,16 @@ use core::ptr::addr_of_mut;
 use crate::storage::{Card, CardEvent, Exit, SystemSettings, SystemSync};
 use chimera_hal::store::Store;
 use chimera_hal::{
-    ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, EncoderId, PART_BUTTONS,
+    ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, Edges, EncoderId, Ms, PART_BUTTONS,
 };
 
 use crate::addr::{BlockRead, BlockRef, BlockView, BlockViewMut, Blocks, Op, ParamAddr};
 use crate::block::Block;
 use crate::boot::RomDfu;
+use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::engine::{FormantView, FormantViews};
-use crate::dsp::algo::kinds::step_kind;
-use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, step_alg};
+use crate::dsp::algo::kinds::{OpKind, step_kind};
+use crate::dsp::algo::params::step_alg;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::dsp::reverb::KnobMemory;
@@ -79,9 +81,9 @@ use crate::params::{EngineType, ParamSnapshot};
 use crate::perf::load::AudioStats;
 use crate::project::arena::ArenaWriter;
 use crate::project::{
-    self, CardOut, Confirmed, DeleteTarget, Line, LoadLink, PartEdit, PartFrom, PartId, PartSource,
-    Project, ProjectFile, ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, SaveTo,
-    SceneAsk, SceneSlot, StatusCache, Swap, TemplateCrc, part_block_mut,
+    self, CardOut, Confirmed, DeleteTarget, Line, LoadLink, PartEdit, PartFrom, PartId, PartSet,
+    PartSource, Project, ProjectFile, ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard,
+    SaveTo, SceneAsk, SceneSlot, StatusCache, Swap, TemplateCrc, part_block_mut,
 };
 use crate::scope::SCOPE_LEN;
 use crate::storage::{ProjectId, SourceRef};
@@ -118,7 +120,7 @@ use settings::view::PartBand;
 use settings::{
     Act, Answered, Ask, Done, Modal, ModalStep, NamingFor, PART_ROW, SaveAs, Screen, screen_path,
 };
-use theme_settings::ThemeSettings;
+use theme_settings::{Pages, ThemeSettings};
 use view::{SlotCtx, View};
 
 /// A replace aimed at one Part: SAVE PART FIRST saves that Part.
@@ -275,6 +277,8 @@ pub struct UiState {
     display_lfos: [Lfo; 3],
     /// The last MIX+PLUS outcome; `None` once retired (issue #21).
     prime_status: Option<PrimeStatus>,
+    /// A WAVE or ALG choice the budget refused, shown dimmed (ADR 0151).
+    held: Option<(PartId, held::Held)>,
     /// A save the pool had no room for, in the browser's band until the
     /// next input (ADR 0017's convention).
     refusal: Option<Line>,
@@ -332,6 +336,8 @@ pub struct UiState {
     lib: library::LibState,
     /// Each Part's filter LEVEL LED: its meter, held and falling.
     clip: [ClipHold; crate::hw::MAX_PARTS],
+    /// The Parts with a voice sounding, as the audio last published.
+    live: PartSet,
     /// Each reverb TYPE's knobs as last left: a TYPE nudge away and back
     /// loses nothing. RAM only; a project load clears it.
     rev_knobs: KnobMemory,
@@ -397,6 +403,7 @@ crate::in_place::field_list!(UiState => UiState {
     focus,
     display_lfos,
     prime_status,
+    held,
     refusal,
     theme,
     midi,
@@ -424,6 +431,7 @@ crate::in_place::field_list!(UiState => UiState {
     src,
     lib,
     clip,
+    live,
     rev_knobs,
     cc,
     learn,
@@ -498,6 +506,7 @@ impl UiState {
             addr_of_mut!((*p).focus).write(focus::FocusMemory::new());
             addr_of_mut!((*p).display_lfos).write([Lfo::new(); 3]);
             addr_of_mut!((*p).prime_status).write(None);
+            addr_of_mut!((*p).held).write(None);
             addr_of_mut!((*p).refusal).write(None);
             addr_of_mut!((*p).theme).write(theme);
             addr_of_mut!((*p).midi).write(midi);
@@ -512,6 +521,7 @@ impl UiState {
             addr_of_mut!((*p).job).write(None);
             addr_of_mut!((*p).card).write(Card::new());
             addr_of_mut!((*p).bank2).write(None);
+            addr_of_mut!((*p).live).write(PartSet::EMPTY);
             addr_of_mut!((*p).clip).write([ClipHold::default(); crate::hw::MAX_PARTS]);
             addr_of_mut!((*p).orbit).write(orbit::OrbitUi::new());
             addr_of_mut!((*p).led).write(led::Led::OFF);
@@ -707,6 +717,7 @@ impl UiState {
     /// else keep the page by id.
     fn project_replaced(&mut self, was: PartChain) {
         self.src.forget();
+        self.held = None;
         let part = self.active_part;
         let cx = self.cx();
         if let (Some(_), Some(p)) = (self.loc.page(&cx), self.loc.part())
@@ -895,6 +906,11 @@ impl UiState {
         self.midi = s.midi;
     }
 
+    /// The screensaver is up.
+    pub fn asleep(&self) -> bool {
+        self.idle.asleep()
+    }
+
     /// `elapsed_ms` of wall time since the last call, for the screensaver:
     /// the shells' loops call it beside `step_toast`. `busy`: card work ran
     /// this frame, so `elapsed_ms` is its blocking time. A prompt, card work
@@ -922,6 +938,7 @@ impl UiState {
     fn cx(&self) -> NavCtx {
         let mut cx = nav_cx(&self.project);
         cx.dyn_rows = self.screen().map_or(0, |s| self.screen_rows(s)) as u8;
+        cx.pages = self.theme.pages;
         cx
     }
 
@@ -1104,7 +1121,8 @@ impl UiState {
         let ctx = SlotCtx::read(&sound.params, self.sel_op)
             .on_clock(self.orbit.status.source)
             .on_rev(&self.project.perf().fx.reverb)
-            .on_chorus(&self.project.perf().fx.chorus);
+            .on_chorus(&self.project.perf().fx.chorus)
+            .on_pages(self.theme.pages);
         let base = view::SourceState::of(ctx.tape, sound.source_ref(), self.project.pool());
         let ctx = ctx.on_source(self.src.state(self.active_part, base, &self.project));
         match self.loc.orbit() {
@@ -1452,30 +1470,76 @@ impl UiState {
         });
     }
 
-    /// A WAVE or ALG turn steps over a kind or an algorithm the formant
-    /// budget refuses: say so.
+    /// A CC or pushed turn lands on a kind or an algorithm the formant
+    /// budget refuses: say so (an encoder turn shows it dimmed instead).
     #[inline(never)]
     fn formant_full(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) {
+        if !held::applies(a, shift) {
+            return;
+        }
         let p = &self.project.part(at).sound.params.algo;
-        let skipped = match a.block {
-            BlockRef::AlgoOp(op) if a.param == AlgoOpParams::WAVE => {
+        let refused = match a.block {
+            BlockRef::AlgoOp(op) => {
                 let d = if shift {
                     delta.signum() * i8::MAX
                 } else {
                     delta
                 };
-                step_kind(p.kinds(), p.linked(), op.index(), d).skipped
+                let from = p.kinds().get(op.index());
+                step_kind(p.kinds(), p.linked(), op.index(), from, d).refused
             }
-            BlockRef::Algo
-                if !shift && matches!(a.param, AlgoParams::ALG_A | AlgoParams::ALG_B) =>
-            {
-                step_alg(p, a.param, delta).skipped
-            }
-            _ => false,
+            _ => step_alg(p, a.param, p.side(a.param), delta).refused,
         };
-        if skipped {
+        if refused {
             self.error(Line::new(prompt::FORMANT_FULL));
         }
+    }
+
+    /// An encoder turn on WAVE or ALG A/B (ADR 0151): onto a kind or an
+    /// algorithm the budget refuses it lands dimmed with its reason, and
+    /// nothing is written; onto one it allows, it is written. `false` for
+    /// any other cell.
+    fn turn_choice(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) -> bool {
+        if !held::applies(a, shift) {
+            return false;
+        }
+        let p = &self.project.part(at).sound.params.algo;
+        let held = self.held.filter(|&(h, c)| h == at && c.addr == a);
+        let (code, refused) = match a.block {
+            BlockRef::AlgoOp(op) => {
+                let d = if shift {
+                    delta.signum() * i8::MAX
+                } else {
+                    delta
+                };
+                let from = held.map_or(p.kinds().get(op.index()), |(_, c)| OpKind::clamped(c.code));
+                let s = step_kind(p.kinds(), p.linked(), op.index(), from, d);
+                (s.to.code(), s.refused)
+            }
+            _ => {
+                let from = held.map_or(p.side(a.param), |(_, c)| AlgoId::clamped(c.code));
+                let s = step_alg(p, a.param, from, delta);
+                (s.to.get(), s.refused)
+            }
+        };
+        if refused {
+            self.held = Some((at, held::Held { addr: a, code }));
+        } else {
+            self.held = None;
+            self.edit_in(at, a, part_page::Edit::To(f32::from(code)));
+        }
+        true
+    }
+
+    /// The choice the focused cell shows dimmed and why, if any.
+    pub fn held_choice(&self) -> Option<held::Shown> {
+        let (at, h) = self.held?;
+        let def = self.page_def();
+        let on = slot_addr(def, self.focused_slot(), &self.ctx());
+        (at == self.active_part && on == Some(h.addr))
+            .then(|| h.why(&self.project.part(at).sound))
+            .flatten()
+            .map(|why| held::Shown { held: h, why })
     }
 
     /// The encoder's edit path (spec § 6): `a` on Part `part` turned
@@ -1606,7 +1670,12 @@ impl UiState {
         if pressed(ButtonId::Edit) && !edit_part {
             push(NavKey::Edit);
         }
-        let a = c.encoder_delta(EncoderId::A);
+        #[cfg(feature = "midi-map")]
+        let mapping = self.screen() == Some(Screen::MidiMap);
+        #[cfg(not(feature = "midi-map"))]
+        let mapping = false;
+        // MIDI MAP's B, C and D edit the row under the bar.
+        let a = list_turn(c, if mapping { &MAP_EDITS } else { &[] });
         let on_list = self.loc.settings().is_some_and(|s| s.at_leaf().is_none());
         if on_list && a != 0 {
             push(NavKey::Bar(a));
@@ -1677,6 +1746,13 @@ impl UiState {
         self.prompt().is_some()
     }
 
+    /// The highlighted pill of an open prompt.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn prompt_pick(&self) -> Option<usize> {
+        self.prompt().map(|a| a.with_view(|v| v.picked()))
+    }
+
     fn prompt(&self) -> Option<&Ask> {
         match &self.modal {
             Some(Modal::Prompt(a)) => Some(a),
@@ -1719,6 +1795,7 @@ impl UiState {
             map: (at.screen() == Some(Screen::MidiMap)).then(|| self.map_band()),
             scene: self.project.orbit().current(),
             orbit: self.orbit_band(at),
+            text: self.theme.text,
         }
     }
 
@@ -2358,14 +2435,13 @@ impl UiState {
     /// Process one frame of input: navigation + encoder deltas, then
     /// ORBIT's commands flushed for the frame's publish.
     pub fn handle_input(&mut self, controls: &impl Controls) {
-        if self.idle.touch(any_turn(controls), any_down(controls)) == saver::Touch::Swallow {
-            // A held key still ages.
-            let jog = self.jog_pass(controls.now_ms().0);
-            if cfg!(feature = "midi-map") {
-                self.cc.hand(u8::from(jog));
-            }
-            return;
-        }
+        let drop =
+            self.idle.touch(any_turn(controls), any_down(controls)) == saver::Wake::FirstDetent;
+        // One wrapper always, so the input path is compiled once.
+        self.handle_frame(&Frame(controls, drop));
+    }
+
+    fn handle_frame(&mut self, controls: &impl Controls) {
         let rev = self.project.rev();
         let model = |ui: &Self| ui.project.part(ui.active_part).sound.params.tape.model;
         let was = model(self);
@@ -2420,6 +2496,12 @@ impl UiState {
     /// audio's.
     pub fn hear_heads(&mut self, from: &'static PartHeads) {
         self.heads_from = from;
+    }
+
+    /// The header's dots read `live` as the sounding Parts until the next
+    /// `update`: for the goldens and tests.
+    pub fn show_sounding(&mut self, live: PartSet) {
+        self.live = live;
     }
 
     /// SCRUB's reel this pass: POSITION moves at the jog's speed, gliding
@@ -2496,6 +2578,12 @@ impl UiState {
         // it when this same frame is itself a prime attempt.
         if any_input(controls) {
             self.prime_status = None;
+            if ALL_BUTTONS
+                .iter()
+                .any(|&b| controls.button_state(b) == ButtonState::Pressed)
+            {
+                self.held = None;
+            }
             self.toast.dismiss();
             self.browser_dirty |= self.refusal.take().is_some();
             self.src.input();
@@ -2685,6 +2773,10 @@ impl UiState {
                 if v != View::Empty {
                     self.focus.touch(def.id, i);
                 }
+                // A turn elsewhere ends the held choice.
+                if self.held.is_some_and(|(_, h)| v.addr() != Some(h.addr)) {
+                    self.held = None;
+                }
                 if let View::Route { route, .. } = v {
                     self.edit_route(route, |a| match route {
                         // A detent a step: OFF, HALF, FULL.
@@ -2772,7 +2864,7 @@ impl UiState {
                 } else if let Some(a) = slot_addr(def, i, &ctx) {
                     if fine {
                         self.edit_fine(at, a, delta);
-                    } else {
+                    } else if !self.turn_choice(at, a, delta, shift) {
                         self.edit_addr(at, a, delta, shift);
                     }
                     self.cc_hand(at, a);
@@ -2871,6 +2963,7 @@ impl UiState {
         for (h, m) in self.clip.iter_mut().zip(&crate::meter::FILTER_CLIP) {
             h.step(m.take().get(), animation::FRAME_MS as u16);
         }
+        self.live = crate::meter::sounding_parts();
         let at = self.active_part;
         self.strip_pass();
         self.heads = self.heads_from.read(at.index());
@@ -3029,8 +3122,18 @@ impl UiState {
                 b.lib_scroll(),
             ),
         };
-        let (hints, refusal) = (self.theme.hints, self.refusal());
-        browser::draw(d, &self.project, view, part, cursor, scroll, hints, refusal);
+        let (hints, refusal, text) = (self.theme.hints, self.refusal(), self.theme.text);
+        browser::draw(
+            d,
+            &self.project,
+            view,
+            part,
+            cursor,
+            scroll,
+            hints,
+            refusal,
+            text,
+        );
     }
 
     /// The open prompt's panel, if any, over the Sound rung.
@@ -3110,12 +3213,15 @@ impl UiState {
                 anim[i].current()
             }),
             hints: self.theme.hints,
+            pages: self.theme.pages,
+            text: self.theme.text,
             push: self.push_on(),
             ctx,
             focus,
             scope,
             sounding: crate::scope::peak(scope) > crate::scope::SOUNDING_PEAK,
             orbit_dot: self.orbit.anim.dot(),
+            live: self.live,
             parts: self.project.perf().parts(),
             active_part: self.active_part,
             prime_status: self.band_status(),
@@ -3132,6 +3238,7 @@ impl UiState {
             strip: &self.overview,
             heads: self.heads,
             formant: &self.formant,
+            held: self.held_choice(),
         }
     }
 
@@ -3214,7 +3321,7 @@ impl UiState {
                 self.matrix_state.num_cols() as u8,
                 qvalues[renderer::MATRIX_AMOUNT_SLOT],
             )
-            .keyed(self.matrix_state.rev, renderer::inert(f)),
+            .keyed(self.matrix_state.rev, matrix_inert(f, &self.renderer)),
             RegionKind::Focus => RegionData::focus(
                 self.page,
                 f.focus as u8,
@@ -3231,10 +3338,15 @@ impl UiState {
             .with_set(region::quantize(self.renderer.set[f.focus].current()))
             .with_gauge(shown.map_or(0, |g| g.outside_key()))
             .with_text(
-                f.orbit_focus
-                    .as_ref()
-                    .map_or_else(|| rev_clock_key(f), |o| o.key()),
+                region::fold_keys(
+                    f.orbit_focus
+                        .as_ref()
+                        .map_or_else(|| rev_clock_key(f), |o| o.key())
+                        .into(),
+                    &[self.renderer.text_key(f, f.focus)],
+                ),
                 f.hints,
+                matches!(f.head, Head::Mix(_)),
             )
             .animated(glyph::anim_key(
                 shown.is_some_and(|g| g.animates()),
@@ -3249,6 +3361,7 @@ impl UiState {
                     .filter(|_| f.def.layout == PageLayout::BigViz);
                 RegionData::viz_with_status(self.page, values, live, status)
                     .with_orbit(self.renderer.orbit_viz_key(f))
+                    .with_mark(self.renderer.mark_key(f))
             }
             RegionKind::Cells => {
                 let looks = (0..6).fold(0u32, |k, i| k | (renderer::look(f, i) as u32) << (2 * i));
@@ -3265,14 +3378,25 @@ impl UiState {
                     core::array::from_fn(|i| renderer::mod_info(f, i).map(f32::to_bits)),
                 )
                 .keyed(self.matrix_state.rev, looks | renderer::led_key(f) << 12)
-                .with_text_key(rev_text_key(f))
+                .with_text_key(
+                    region::fold_keys(
+                        rev_text_key(f),
+                        &core::array::from_fn::<_, 6, _>(|i| self.renderer.text_key(f, i)),
+                    )
+                    .into(),
+                )
             }
+            // ROW draws no scroll: the list's easing redraws nothing.
             RegionKind::Nav => RegionData::nav(
                 chain,
                 node,
                 sub,
-                region::quantize(self.renderer.branch_scroll.current()),
+                match f.pages {
+                    Pages::Row => 0,
+                    Pages::Stack => region::quantize(self.renderer.branch_scroll.current()),
+                },
                 f.ctx.model as u8 | f.ctx.tape.index() << 4 | self.formant_key() << 7,
+                f.pages as u8,
             ),
             RegionKind::Grid => RegionData::grid_with_value(
                 self.matrix_state.sel_row as u8,
@@ -3280,7 +3404,7 @@ impl UiState {
                 self.matrix_state.scroll_x as u8,
                 qvalues[renderer::MATRIX_AMOUNT_SLOT],
             )
-            .keyed(self.matrix_state.rev, renderer::inert(f)),
+            .keyed(self.matrix_state.rev, matrix_inert(f, &self.renderer)),
             RegionKind::Crumbs | RegionKind::List | RegionKind::Footer => {
                 let key = f.settings.map_or(0, |b| match kind {
                     RegionKind::Crumbs => b.crumbs_key(f.header_status()),
@@ -3306,7 +3430,7 @@ impl UiState {
     ) {
         self.region_set
             .set_screen(self.layout(), self.prompt_open());
-        self.region_set.drawn_hints = Some((self.theme.hints, self.push_on()));
+        self.region_set.drawn_hints = Some((self.theme.hints, self.push_on(), self.theme.text));
         let mut data = [region::RegionData::sentinel_header(); region::MAX_REGIONS];
         {
             let f = self.frame(perf, audio, scope);
@@ -3320,11 +3444,11 @@ impl UiState {
         }
     }
 
-    /// THEME's HINTS or SYSTEM's PUSH ENCODERS (the push hint) moved since
-    /// the bands were drawn, noted as drawn now: every band and the
-    /// browser redraw, so no page keys its band on them.
+    /// THEME's HINTS, SYSTEM's PUSH ENCODERS (the push hint) or TEXT SIZE
+    /// moved since the bands were drawn, noted as drawn now: every band and
+    /// the browser redraw, so no page keys its band on them.
     fn hints_moved(&mut self) -> bool {
-        let now = Some((self.theme.hints, self.push_on()));
+        let now = Some((self.theme.hints, self.push_on(), self.theme.text));
         core::mem::replace(&mut self.region_set.drawn_hints, now) != now
     }
 
@@ -3420,11 +3544,28 @@ impl UiState {
                     && data[i] != r.prev_data
                     && data[i].without_anim() == r.prev_data.without_anim()
                     && let Some(gauge) = shown
-                    && let Some(rows) =
-                        renderer::Renderer::redraw_gauge(display, |d| d.pixel_buffer(), gauge)
+                    && let Some(rows) = renderer::Renderer::redraw_gauge(
+                        display,
+                        |d| d.pixel_buffer(),
+                        gauge,
+                        renderer::Renderer::focus_hint(&f),
+                        f.text,
+                    )
                 {
                     flush_list[flush_count] = rows;
                     flush_count += 1;
+                } else if r.kind == region::RegionKind::Viz
+                    && data[i] != r.prev_data
+                    && data[i].without_mark() == r.prev_data.without_mark()
+                    && flush_count + viz::ModMark::BOXES.len() <= region::MAX_REGIONS
+                {
+                    // Only the modulation mark moved: its boxes alone.
+                    for (x, y, w, h) in viz::ModMark::BOXES {
+                        renderer::Renderer::clear_rect_fb(display.pixel_buffer(), x, y, w, h);
+                        flush_list[flush_count] = (y as u16, (y + h) as u16);
+                        flush_count += 1;
+                    }
+                    self.renderer.filter_mark(&f).draw(display);
                 } else if data[i] != r.prev_data {
                     // The panel is opaque over its own last frame; what it
                     // lands on blanks once, as it opens.
@@ -3477,9 +3618,62 @@ fn part_key(c: &impl Controls) -> bool {
             .any(|&b| c.button_state(b) == ButtonState::Pressed)
 }
 
+/// MIDI MAP's value encoders: CC, MIN, MAX.
+#[cfg(feature = "midi-map")]
+const MAP_EDITS: [EncoderId; 3] = [EncoderId::B, EncoderId::C, EncoderId::D];
+#[cfg(not(feature = "midi-map"))]
+const MAP_EDITS: [EncoderId; 0] = [];
+
+/// A list's bar move this frame: the biggest turn among the encoders not
+/// in `taken` (the first on a tie), so two brushed together move it once.
+pub(crate) fn list_turn(c: &impl Controls, taken: &[EncoderId]) -> i8 {
+    ALL_ENCODERS
+        .iter()
+        .filter(|e| !taken.contains(e))
+        .map(|&e| c.encoder_delta(e))
+        .fold(0i8, |m, d| {
+            if d.unsigned_abs() > m.unsigned_abs() {
+                d
+            } else {
+                m
+            }
+        })
+}
+
 /// An encoder moved this frame.
 fn any_turn(controls: &impl Controls) -> bool {
     ALL_ENCODERS.iter().any(|&e| controls.encoder_delta(e) != 0)
+}
+
+/// `Controls`, with one detent taken off the first encoder that moved
+/// when `.1`.
+struct Frame<'a, C>(&'a C, bool);
+
+impl<C: Controls> Controls for Frame<'_, C> {
+    fn encoder_delta(&self, id: EncoderId) -> i8 {
+        if !self.1 {
+            return self.0.encoder_delta(id);
+        }
+        let first = ALL_ENCODERS.iter().find(|&&e| self.0.encoder_delta(e) != 0);
+        let d = self.0.encoder_delta(id);
+        if first == Some(&id) {
+            d - d.signum()
+        } else {
+            d
+        }
+    }
+    fn button_state(&self, id: ButtonId) -> ButtonState {
+        self.0.button_state(id)
+    }
+    fn edges(&self, id: ButtonId) -> Edges {
+        self.0.edges(id)
+    }
+    fn now_ms(&self) -> Ms {
+        self.0.now_ms()
+    }
+    fn push(&self, id: EncoderId) -> Edges {
+        self.0.push(id)
+    }
 }
 
 /// A button went down or is held down.
@@ -3592,6 +3786,7 @@ fn nav_cx(project: &Project) -> NavCtx {
         orbit: OrbitCx {
             targets: live.rings.map(|r| r.target.part()),
         },
+        pages: ThemeSettings::DEFAULT.pages,
     }
 }
 
@@ -3613,6 +3808,11 @@ fn rev_text_key(f: &renderer::Frame) -> u64 {
     }
     let pre = crate::dsp::reverb::plate_pull(&f.fx.reverb).predelay;
     region::quantize(pre) as u64 | (f.ctx.plate as u64) << 16 | (rev_clock_key(f) as u64) << 17
+}
+
+/// The matrix's inert columns and the amount's printed value, as one key.
+fn matrix_inert(f: &renderer::Frame, r: &renderer::Renderer) -> u32 {
+    region::fold_keys(renderer::inert(f).into(), &[r.amount_key()])
 }
 
 /// The tempo and fold a synced reverb cell reads (`meter::clock_word`);

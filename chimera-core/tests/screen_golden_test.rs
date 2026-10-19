@@ -23,193 +23,213 @@ use screen::*;
 // beat dot, so three paths drop their first part.
 // The pool, library and TAPE-source screens again for CHOIR, TALK BASS,
 // BREATH and VOX in the bank: the pool bar counts their bytes.
+// Re-recorded for #562: a Part's SOUND and MIX headers draw six Part dots.
 const GOLDENS: &[(&str, u64)] = &[
-    ("engine_algo", 0x38036cf069b6f8d7),
-    ("algo_alg", 0xc43f8fe941a69fd6),
-    ("algo_alg_morph_dimmed", 0x37c1f515da8aa9cc),
+    ("engine_algo", 0x0d2d9d0ea7e6476d),
+    ("algo_alg", 0x2ffaabdfb0b2b2b4),
+    ("algo_alg_morph_dimmed", 0xb6bf03cc2e9ce6c6),
     // VOWEL takes ALGO's sixth cell, dimmed with no formant; FRM page.
-    ("algo_formant_page", 0xd7abbf43c79496b6),
+    // Re-recorded: a value's unit sits small beside its number (ADR 0146).
+    ("algo_formant_page", 0xc2798d511cef5b20),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
-    ("mod_matrix_morph_inert", 0x27f70ba2fbed39e1),
+    ("mod_matrix_morph_inert", 0x53b9daa3425f3673),
     // Re-recorded: WAVE shows its scope (#310).
-    ("algo_wave", 0x9723d55078a3689a),
+    ("algo_wave", 0xe96d1f664d72dff8),
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("algo_level", 0xb2b96ddc40e39b1e),
+    ("algo_level", 0xfa7578f99a21d1b8),
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("algo_osc_last", 0xabb43bb349537702),
+    ("algo_osc_last", 0xb651d8b56742b594),
     // New: OP3's page (ADR 0130), the band's envelope and wave, and with
     // its LEVEL cell turned.
-    ("algo_op_page_3", 0x20aeeb19bb668188),
-    ("algo_op_page_frmt", 0xcbbaf0b5c7c17182),
-    ("algo_op_page_nois", 0x93f2a5e3f7e666de),
-    ("algo_op_page_3_turned", 0x3c17c0c5d8a07999),
+    ("algo_op_page_3", 0x9c9a947da8bf9d5e),
+    ("algo_op_page_frmt", 0x09cdcdd1b6c43200),
+    ("algo_op_page_nois", 0xc0f32d438825ff1c),
+    ("algo_op_page_3_turned", 0x8fe9f2208c87b32b),
     // The ENV stages' band draws the focused operator's envelope (#311).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("algo_ar", 0x02d92037a4a5fea1),
+    ("algo_ar", 0x2359b3233f7e5c27),
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("algo_d1l", 0xcc76371b50536bf9),
+    ("algo_d1l", 0x6be507451cb500ab),
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("algo_d2r", 0x83d50dc60c7a4512),
+    ("algo_d2r", 0x0145c38f4341953c),
     // Re-recorded: MODE reads LP4, CLEAN's label for LP24 (ADR 0096); then
     // TYPE live with two kinds (Task 8); then CLEAN's Cascadia words FREQ,
     // Q, FM1, FM2 (Task 12): was 0x032b329ca06df69b.
-    ("bigviz_filter", 0x5a832bd651e51efe),
+    ("bigviz_filter", 0x7325aeca21330df4),
     // Re-recorded: MODE reads HP4, CLEAN's label for HP24 (ADR 0096); then
     // LEVEL 64 in DRIVE's cell (Task 6); then FLT › MOD's six cells, FM3
     // turned, its delete hint showing (Task 12): was 0xf6e7d94448ca7888.
-    ("flt_mode", 0xc9a4e03001119a94),
+    ("flt_mode", 0x1fc9f39e9154b753),
     // Each type's FLT and FLT › MOD (filter-types § 5, Task 17): CLEAN's
     // NOTCH1, the 2040's lowered pass band and KEYBD HALF, its fixed MODE
     // dimmed and VOICE EXP, DIRTY's NOTCH1 at FREQ (its own MODE names).
-    ("flt_clean", 0x48ad43f82d53c3b8),
-    ("flt_mod_clean", 0xe4409e57eb8c885c),
-    ("flt_2040", 0x45bf4079e38e3316),
-    ("flt_mod_2040", 0x739059e65565d859),
-    ("flt_mod_2040_exp", 0xa75e45413d0f33fe),
-    ("flt_dirty", 0x2fd9a7df881017c9),
-    ("flt_mod_dirty", 0x52a872af1ad9e63a),
-    ("flt_ladder", 0x533bf12f36283be5),
-    ("flt_mod_ladder", 0x804291fcb121eca2),
+    ("flt_clean", 0x74d92b2f88dcbd21),
+    ("flt_mod_clean", 0x4a9001fada6343bb),
+    ("flt_2040", 0x6b1f20b1690db849),
+    // Modulation draws a ghost beside the set curve (#575).
+    ("flt_2040_env_amt", 0x9af3e6b28f4cde78),
+    ("flt_clean_lfo", 0xbae65670855e43a3),
+    ("flt_mod_2040", 0x4edd80b5ff004393),
+    ("flt_mod_2040_exp", 0xd4b4157e07474c0c),
+    ("flt_dirty", 0xcc55bba2bcc9f784),
+    ("flt_mod_dirty", 0xb610cb3f42782750),
+    ("flt_ladder", 0x4b84729279c65395),
+    // New (#574): the peak at its real height, 2040 RES 0.3, CLEAN BP2 and
+    // LADDER RES 0.
+    ("flt_2040_res_30", 0x3e76dac83783d845),
+    ("flt_clean_bp2", 0xa15f80c685493b0d),
+    ("flt_ladder_res_0", 0x45a414900348c835),
+    ("flt_mod_ladder", 0x49035174dbbef6f4),
     // The LEVEL LED at 0 (dark), ½ and 1: beside LEVEL, beside the 2040's
     // DRIVE and in FLT's viz corner (Task 17).
-    ("flt_led_0", 0x5e725d1446b222da),
-    ("flt_led_half", 0xdb0b393eaefa9987),
-    ("flt_led_full", 0x458fb02687f0911b),
+    ("flt_led_0", 0xa736064226f64804),
+    ("flt_led_half", 0x8f43921cc7b244c9),
+    ("flt_led_full", 0x6738db5f52794808),
     // FM3 IN on LFO 2, QM IN on OP 6 (Task 17).
-    ("flt_mod_repatched", 0xd0193d60eed2fa02),
-    ("env_a", 0x6f15c442d71edf83),
-    ("env_b_env_ad", 0x849b12e99ea94bfd),
-    ("env_b_env_ahr", 0x25bd96be29456024),
-    ("env_b_env_cycle", 0x731397722d8939e6),
-    ("env_b_lfo_free", 0x393aca1db211bd20),
-    ("env_b_lfo_sync", 0xe99f8846653ec2a8),
-    ("env_b_lfo_lfv", 0x0eae7ee6c8214c21),
-    ("env_b_burst_ad", 0x051b9e98ae0429b4),
-    ("env_b_burst_ahr", 0x8af61048dba1b1f7),
-    ("env_b_burst_cycle", 0x4506fd5dfe4a8d5b),
-    ("spd", 0x96c5fde07700d7dc),
-    ("lfo_classic", 0x2e4f722acedab974),
-    ("lfo_func", 0x327f92aad53cf5c0),
+    ("flt_mod_repatched", 0x2f1a43cd3fb36944),
+    // THEME's PAGES ROW (ADR 0145): every other screen is recorded under
+    // STACK (`screen::ui_for`). FLT's two pages, RES's three, MOD at E2
+    // with `>`, OSC at D1R with both arrows and at OP6 with `<`, DRV bare.
+    // Re-recorded: the row's pages in full words (`ROW_WORDS`).
+    ("row_flt", 0x1a99f505a09d08cb),
+    ("row_res", 0x52e7d782b213fed2),
+    ("row_mod", 0x49aae570cf1c06d8),
+    ("row_osc_mid", 0xeb1a0363a9c29c8e),
+    ("row_osc_last", 0xa5313545b849c1cf),
+    ("row_drv", 0x895a37b928501e07),
+    ("env_a", 0xdf5e9438fe953789),
+    ("env_b_env_ad", 0x32e7eff8f3ef2d73),
+    ("env_b_env_ahr", 0x3a6ee459e6aeec8a),
+    ("env_b_env_cycle", 0xf1272fca70d90bcc),
+    ("env_b_lfo_free", 0x7597f85253ef1f2a),
+    ("env_b_lfo_sync", 0x87538ca1edb1786a),
+    ("env_b_lfo_lfv", 0x946c4ab1b6a5cf1f),
+    ("env_b_burst_ad", 0xb0a76b2e42dd1af2),
+    ("env_b_burst_ahr", 0x7ba2ccbb1c1f77a1),
+    ("env_b_burst_cycle", 0x5bdb2cb3d202f7e9),
+    ("spd", 0x72e39f2d2f94f382),
+    ("lfo_classic", 0xf1b5267023ff79aa),
+    ("lfo_func", 0xee922d0687f7756e),
     // Re-recorded: AMP is the sends over FOLD, VEL, MIX, SYM one page down (sends Task 5);
     // mod_matrix_wide primes FOLD and MIX on their new cells.
-    ("amp_vel_dimmed", 0xe4f7cd9ac611053b),
-    ("amp_vel_live", 0xf3ce4cc3246f4673),
-    ("amp_sym", 0x68be9fd83dc5b011),
+    ("amp_vel_dimmed", 0xbfaae22b7783bedd),
+    ("amp_vel_live", 0x2b87901fce638e81),
+    ("amp_sym", 0x18f6d3abce3e99df),
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("algo_pitch", 0x187108b52e8535b7),
+    ("algo_pitch", 0xcb7f0c04f3dbb229),
     // Re-recorded: the EXC node (plan Task 13).
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("modal_pitch", 0x6b8da28409bba9d8),
+    ("modal_pitch", 0xa1d8e11218a836be),
     // PIT on TAPE, SNAP MUSICAL: PITCH +19 in three clicks (TAPE Task 12b);
     // again for Task 15: PIT hangs under DECK.
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("tape_pitch_musical", 0x04460b03eba3c630),
+    ("tape_pitch_musical", 0x769043dfc1afbc4a),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_exc", 0x3dcb3e058d83de73),
+    ("modal_exc", 0x1a9d74fd3e32a2a1),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_exc_bank", 0x278ee292b0a1419b),
+    ("modal_exc_bank", 0xcb81646f4c74b37d),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_exc_bowed", 0xe84c9d6fc072fc00),
+    ("modal_exc_bowed", 0x5a8756dd8d827e0a),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_home", 0x47bb2efee5fd120d),
+    ("modal_home", 0xedcfc7a8ab947a47),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_mdl2_symp", 0x47480f0b352e4aa8),
+    ("modal_mdl2_symp", 0x28a9783358085952),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_home_bowed", 0xce64178eb0c0670c),
+    ("modal_home_bowed", 0xedeb3ad6cfdbe66e),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_amp", 0x44e231e2a0f622db),
+    ("modal_amp", 0xf8fda68f81ea21f9),
     // The Mix chain's map loses its TAPE node without `master-tape`
-    // (ADR 0055); with it, the screens are as before.
+    // (ADR 0055); with it they have their own rows, run by `just test`.
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_part", 0xedd206cd4bd4a59c),
+    ("mixer_part", 0xfd1a118204f19d77),
     // mixer_sends, mixer_out_p2 re-recorded: the sends are the Sound's OUT block (ADR 0123).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_sends", 0xe04acfd7821d85d9),
+    ("mixer_sends", 0x35e09ae3385236bb),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay", 0xc697f9d549cfb496),
+    ("mixer_fx_delay", 0xfbe0808a050ed002),
     // TYPE first, the panel's units, and REV › MORE (reverb TYPEs T6);
     // the REV pages re-recorded for RATE's default and law (ADR 0121).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb", 0xd63df29d1fff7b34),
+    ("mixer_fx_reverb", 0x9d9d0b61c361768c),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_more", 0x9e7e4d1cddac9c0c),
+    ("mixer_fx_reverb_more", 0x7b25fe8ae4125c8c),
     // HALL (its SIZE cell PLATE at SIZE 0) and GATE, each page (T10);
     // MORE re-recorded: the SYNC cell, and GATE's synced LENGTH (T12).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_hall", 0xee42abcf28055f52),
+    ("mixer_fx_reverb_hall", 0x110a3c12bb55b53e),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_hall_more", 0x294f0d43d2e8e2bf),
+    ("mixer_fx_reverb_hall_more", 0x733a41e95f057403),
     // HALL re-recorded as fitted (T10b): its knobs, SPREAD, MORE 2's DENSITY.
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_hall_more2", 0x17b7da341482dcdf),
+    ("mixer_fx_reverb_hall_more2", 0x8bfbd6ba87c2ac03),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate", 0x1959301cfa1bfc54),
+    ("mixer_fx_reverb_gate", 0x6da0632fff3b4421),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate_more", 0x286d4c6b82bbf6ed),
+    ("mixer_fx_reverb_gate_more", 0x9c5959ebe27922a1),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate_sync", 0x7cbc1d7b8d07ecac),
+    ("mixer_fx_reverb_gate_sync", 0x382b5c06de0836b8),
     // BLOOM, each page (T11).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_bloom", 0x89b262d8d8284309),
+    ("mixer_fx_reverb_bloom", 0x8bb0cf42db45e7a5),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_bloom_more", 0xb8c9a258c854705b),
+    ("mixer_fx_reverb_bloom_more", 0x1cadf3eefa17fedb),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_char", 0x7479f1fb3a9df4bc),
+    ("mixer_fx_delay_char", 0xb3e9570b26525f00),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master", 0x56a92de14c3c7d2f),
+    ("mixer_master", 0xaa7cc5f71d43600a),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master_level", 0xe699d6651832774d),
+    ("mixer_master_level", 0x33a39d11187d9bb1),
     #[cfg(feature = "master-tape")]
-    ("mixer_part", 0x6c62b07122b423b6),
+    ("mixer_part", 0x429ab992c626b285),
     #[cfg(feature = "master-tape")]
-    ("mixer_sends", 0x5a0a0f6caea9f67b),
+    ("mixer_sends", 0xba83be0d8d177f8d),
     // DLY's branch hides REV's label it ran into (TAPE Task 15).
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay", 0x364b8608736dd631),
+    ("mixer_fx_delay", 0x498e957495d45875),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb", 0xec89096986df2f47),
+    ("mixer_fx_reverb", 0xf884d95677bc4c9f),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_more", 0xf5795852136e2c13),
+    ("mixer_fx_reverb_more", 0x78bfe9ae1a6f8293),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall", 0x2d7e131c9a01535d),
+    ("mixer_fx_reverb_hall", 0x21c8e0e268a28611),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall_more", 0x009f09dbbd885180),
+    ("mixer_fx_reverb_hall_more", 0x33e1535b46093a7c),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall_more2", 0xd28a6bad16b350c0),
+    ("mixer_fx_reverb_hall_more2", 0xd48d23ad4d9a46dc),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate", 0x0908875e4470c3a7),
+    ("mixer_fx_reverb_gate", 0x505d2202f043580e),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate_more", 0xc5297468f739990e),
+    ("mixer_fx_reverb_gate_more", 0xdc0bd1ce1ea6779a),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate_sync", 0x1ae7fa73664a157f),
+    ("mixer_fx_reverb_gate_sync", 0xcb7bc913fa920663),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_bloom", 0x4653d819fbea6cd6),
+    ("mixer_fx_reverb_bloom", 0x0d7e76a3ba5578ea),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_bloom_more", 0xc730d8e88bc28db4),
+    ("mixer_fx_reverb_bloom_more", 0xa267930e1d560034),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_char", 0xf907b08d9f6706ab),
+    ("mixer_fx_delay_char", 0xb47f7ef56c42b2a7),
     #[cfg(feature = "master-tape")]
-    ("mixer_tape", 0xe4642868fa275a5c),
+    ("mixer_tape", 0x43381076b873ad98),
     #[cfg(feature = "master-tape")]
-    ("mixer_master", 0x3a5be1b8bfc87215),
+    ("mixer_master", 0x29929673ac6c7c44),
     #[cfg(feature = "master-tape")]
-    ("mixer_master_level", 0xfa809f321d216a97),
+    ("mixer_master_level", 0x041e07e545a86dfb),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_out_p2", 0xc7fad296ace82da3),
+    ("mixer_out_p2", 0xbbf4869671d1e56d),
     #[cfg(feature = "master-tape")]
-    ("mixer_out_p2", 0x97c6eb559ffe4f95),
-    ("algo_out_p3", 0x0fbb7e2baf40587a),
+    ("mixer_out_p2", 0x60429572e55d3aaf),
+    ("algo_out_p3", 0x6a41c9fba77fd7fc),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17).
-    ("mod_matrix", 0x7fac5633d604d50c),
-    ("mod_matrix_wide", 0x2d53cf82f2c6856c),
+    ("mod_matrix", 0x1489a48bb5bcc212),
+    ("mod_matrix_wide", 0x5e46b81eebf7bc96),
     // OP5 → FREQ, the cursor on OP5's X cell and its hint; MODAL's eight
     // rows of 17 (Task 17).
-    ("mod_matrix_algo_taps", 0x96eee5ae9fa3f7bc),
-    ("mod_matrix_modal", 0x1fb996901f31f57a),
+    ("mod_matrix_algo_taps", 0xddd15a302b53a08e),
+    ("mod_matrix_modal", 0x827f3e3f62e4bfac),
     // Re-recorded: the pool meter, row costs, the hints' bytes (sound-pool
     // plan Task 6); and its refusal. Then the merge with filter-types: a
     // Sound is smaller (fixed columns, no registry entry).
@@ -231,7 +251,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("library_newer", 0x54415a7d9a958936),
     ("library_wont_fit", 0x24494e0f831f3bab),
     ("library_pool_full", 0x950a8303f1cef0f3),
-    ("library_naming", 0xab3925136bf27a0f),
+    ("library_naming", 0xa234ea336d54efbf),
     // The FACTORY tab: a row's description on line 2, the set's build on
     // line 3; empty, no card, and a stray TAPE file greyed COMING SOON.
     // Re-recorded on the merge: the pool meter at the formant cost.
@@ -242,11 +262,17 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: a fresh project's footer drops NEW (#286).
     // Re-recorded: INVERT in cell F (ADR 0126).
     ("settings_personal_theme", 0x69eb789acb0d98db),
+    // PERSONALIZE › CHAIN MAP: PAGES, ROW (ADR 0145).
+    ("settings_personal_chain_map", 0x7aa40f30346b46bd),
+    // Long user names, LARGE's pair (ADR 0154).
+    ("sound_browser_long", 0x9f219d2caa40b9bd),
+    // PERSONALIZE › TEXT SIZE at NORMAL (ADR 0154).
+    ("settings_personal_text_size", 0x771bfc59119e85d2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
-    ("settings_system_diag_aud_load", 0x0063331a51f3da0e),
+    ("settings_system_diag_aud_load", 0x18fe4d081416e4cb),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.
-    ("settings_project_pool", 0x0c71ec47cf18008d),
+    ("settings_project_pool", 0x6ceb6837fe4ebecc),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).
@@ -257,8 +283,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // Slot 3 written: MODIFIED, as ORBIT is in the project's CRC (Task 18).
     ("settings_orbit_save_to", 0xa4d2405ea9f09bf6),
     ("settings_load", 0x34b0bd576d341497),
-    ("settings_prompt_load", 0xc47d45b862dea1e3),
-    ("settings_naming", 0xc4298c7a6a0c5b5a),
+    ("settings_prompt_load", 0xfb661eb8bbfd7b2b),
+    ("settings_naming", 0x39679c2d5eca087a),
     // Every ORBIT page again for Task 16: the map gains SCN.
     // ORBIT's RHYTHM, CHRD and CUSTOM (plan Task 9); Task 10's header,
     // `SCENE n`, and the beat dot on the playing ones.
@@ -284,45 +310,62 @@ const GOLDENS: &[(&str, u64)] = &[
     ("orbit_notes_step", 0xc1c3dab7eeb50a2f),
     // 32 steps, step 32 picked: the row scrolled to its last eight.
     ("orbit_notes_step32", 0x211fc000f7a5be91),
+    // TEXT SIZE LARGE (ADR 0154): each its NORMAL case's screen a size up.
+    ("large_engine_algo", 0xe91f2bcb6eb8bf3b),
+    ("large_algo_level", 0xf225b94d99567b7c),
+    ("large_bigviz_filter", 0xbc513237f6c402d9),
+    ("large_modal_amp", 0xbfc8b95f0eb078b8),
+    ("large_va_drive", 0x01744038da287ded),
+    // The Mix chain's map has a TAPE node with `master-tape` (ADR 0055).
+    #[cfg(not(feature = "master-tape"))]
+    ("large_mixer_sends", 0x3ea6919e3a4e3772),
+    #[cfg(feature = "master-tape")]
+    ("large_mixer_sends", 0x66e4fced766b46b8),
+    ("large_settings_top", 0x9d2976351278b0df),
+    ("large_settings_personal", 0x35b1c3eb794412f7),
+    ("large_sound_browser", 0x018933e3d8721858),
+    ("large_sound_browser_long", 0xa914e71773ba2c56),
+    ("large_library_sounds", 0xc680b63718145a73),
+    ("large_settings_text_size", 0xe57ffb4a4502d385),
     // SCN: a saved slot, SAVE's, a queued one filling (plan Task 16).
     ("orbit_scn", 0x7c2558bf895b7432),
     // TAPE's pages (TAPE Task 15): SRC, and DECK and the model page per machine.
-    ("tape_src", 0xd81e5d7ee47a12b9),
-    ("tape_src_missing", 0xe32642060f0d88ed),
-    ("tape_deck_oneshot", 0xcee951d363a9b989),
-    ("tape_page_oneshot", 0xdaa2dad45cc62c6a),
-    ("tape_deck_loop", 0x4d56090584f310d4),
+    ("tape_src", 0x34010e9905b39be3),
+    ("tape_src_missing", 0x2d91b7ddf880e963),
+    ("tape_deck_oneshot", 0xb85329adae011ca7),
+    ("tape_page_oneshot", 0x561417f56b885448),
+    ("tape_deck_loop", 0x39827508f0883e1e),
     // New: bank 2 closed (ADR 0141).
-    ("tape_deck_needs_update", 0xbfc70954a2cccdd9),
-    ("tape_page_loop", 0x933afc3a391854d0),
-    ("tape_deck_tron", 0xa947b940b896b56d),
-    ("tape_page_tron", 0xb3d7bdd0216e81dc),
-    ("tape_deck_stretch", 0x06017f5c2324e5cc),
-    ("tape_page_stretch", 0x0c2ddf6b8c92368c),
-    ("tape_page_stretch_type", 0x1f4bf7ad5f8d6284),
-    ("tape_deck_transwave", 0xe1770391001229fc),
-    ("tape_page_transwave", 0x7b54386ad187711e),
-    ("tape_deck_scrub", 0x65f92500d05b3978),
-    ("tape_page_scrub", 0x39e1050f181e2382),
-    ("tape_deck_pingpong", 0xa39b9dfd52dfccad),
-    ("tape_page_pingpong", 0x771c4bbcff31fba7),
-    ("tape_strip_oneshot", 0x06d6e8b1b66118dc),
-    ("tape_strip_loop", 0x8e12e585f858c935),
-    ("tape_strip_tron", 0x2778d486af638a1e),
-    ("tape_strip_stretch", 0x13f85efe6b4d6502),
-    ("tape_strip_transwave", 0x5878846563723ee4),
-    ("tape_strip_scrub", 0x5da8ccf2a13a947a),
-    ("tape_strip_pingpong", 0x156517d3d543f438),
-    ("tape_strip_loop_reversed", 0x70f697c0ecbfed6e),
-    ("tape_strip_oneshot_slice", 0xcb31dbda53626b7f),
-    ("tape_strip_oneshot_slice_reversed", 0xa74f813de1fcc786),
-    ("tape_strip_pingpong_reversed", 0x7bb33060d124e1c8),
-    ("tape_strip_tron_idle", 0x2e9a7c033cdd056d),
-    ("tape_src_pool", 0x5cc2849e855b0b0e),
-    ("tape_src_card", 0x2851ad3cea608bdf),
-    ("tape_src_wont_fit", 0x7a0855b2f56038bd),
-    ("tape_src_loaded", 0x6e6533e2a42a05d2),
-    ("tape_src_read_failed", 0x60b02af140ccd019),
+    ("tape_deck_needs_update", 0x41244a50122b6ffb),
+    ("tape_page_loop", 0xeb16a2c996ee60e2),
+    ("tape_deck_tron", 0x67b08780b2a0253f),
+    ("tape_page_tron", 0x9207452429d59f82),
+    ("tape_deck_stretch", 0xfdb47bf92dcb5f42),
+    ("tape_page_stretch", 0xf14f22169f726452),
+    ("tape_page_stretch_type", 0x0f95ee1198eaee56),
+    ("tape_deck_transwave", 0xd6f95db652c6a652),
+    ("tape_page_transwave", 0xf1705be7ef6aa37c),
+    ("tape_deck_scrub", 0x914d037d3335a072),
+    ("tape_page_scrub", 0x9405497c2fe85974),
+    ("tape_deck_pingpong", 0xec7edf944ce6cfe7),
+    ("tape_page_pingpong", 0xd4678741ac553c91),
+    ("tape_strip_oneshot", 0xba01ed96d2024696),
+    ("tape_strip_loop", 0xd4442fa6a801fd2b),
+    ("tape_strip_tron", 0x4234aebaeef2ac7c),
+    ("tape_strip_stretch", 0x0163b0fb232ecef4),
+    ("tape_strip_transwave", 0xfc70d5c5cde51b42),
+    ("tape_strip_scrub", 0xbba3b72c53578624),
+    ("tape_strip_pingpong", 0x172eae52caf079be),
+    ("tape_strip_loop_reversed", 0xc8840f14239e5b88),
+    ("tape_strip_oneshot_slice", 0x007c5087c7599755),
+    ("tape_strip_oneshot_slice_reversed", 0x761a61fa5c3afeb4),
+    ("tape_strip_pingpong_reversed", 0x28022ee2966d3b02),
+    ("tape_strip_tron_idle", 0xc3c3c1d5e34f1563),
+    ("tape_src_pool", 0x4075e32c420bd2a4),
+    ("tape_src_card", 0x8fec60e2a095f9e9),
+    ("tape_src_wont_fit", 0x43d0f49e9e0fb753),
+    ("tape_src_loaded", 0xbef4ee2ea3b6b0c0),
+    ("tape_src_read_failed", 0x5a5a668cb751c657),
     ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),
     ("toast_exfat", 0xfc0cb3b4feb1a1b5),

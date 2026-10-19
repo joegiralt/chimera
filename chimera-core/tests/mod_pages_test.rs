@@ -127,7 +127,7 @@ fn a_type_flip_redraws_the_title() {
     use chimera_core::ui::page::PageLayout;
     use chimera_core::ui::perf::PerfStats;
     use chimera_core::ui::region::{RegionKind, layout_regions};
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     to_mod_sub(&mut ui, 1, &ENVELOPE);
     let (mut fb, perf, scope) = (Fb::new(), PerfStats::zero(), scope_fixture());
     ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
@@ -144,7 +144,7 @@ fn a_type_flip_redraws_the_title() {
 /// panel's values instead of sweeping from the old ones.
 #[test]
 fn a_type_change_reseeds_the_page() {
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     to_mod_sub(&mut ui, 1, &ENVELOPE);
     feed(&mut ui, Input::turn(EncoderId::F, 1)); // TYPE → B
     ui.update(UiTick::for_test());
@@ -255,7 +255,7 @@ fn a_fixed_slot_is_dimmed_in_the_focus_band() {
     use chimera_core::ui::perf::PerfStats;
     use chimera_core::ui::theme;
     use embedded_graphics::pixelcolor::Rgb565;
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     to_mod_sub(&mut ui, 5, &LFO);
     feed(&mut ui, Input::turn(EncoderId::F, 1)); // TYPE → FUNC
     feed(&mut ui, Input::turn(EncoderId::A, 1)); // MODE: focused, inert
@@ -285,6 +285,7 @@ fn a_fixed_slot_is_dimmed_in_the_focus_band() {
         },
         Look::Dimmed,
         None,
+        chimera_core::ui::theme::TextSize::Normal,
     );
     assert!(band(&fb) == band(&want), "the band is MODE LFO, dimmed");
     let inks = [theme::INK, theme::ACCENT];
@@ -311,7 +312,7 @@ fn spd_knobs_drive_the_column_above() {
             .map(|(x, y)| fb.px[y as usize * W + x as usize])
             .collect()
     };
-    let mut ui = UiState::new();
+    let mut ui = crate::screen::stack_ui();
     to_mod_sub(&mut ui, 4, &ENV_SPEED);
     let e2 = column(&mut ui, 1);
     feed(&mut ui, Input::turn(EncoderId::B, 1));

@@ -23,6 +23,8 @@ fn cx() -> NavCtx {
         dyn_rows: 0,
         orbit: OrbitCx::NONE,
         rev: chimera_core::dsp::reverb::ReverbType::Quad,
+        // ADR 0081's keys; ROW's are `row_*` below.
+        pages: chimera_core::ui::theme_settings::Pages::Stack,
     }
 }
 
@@ -376,9 +378,8 @@ fn outside_is_never_orbit_or_settings() {
 #[cfg(not(feature = "orbit"))]
 #[test]
 fn orbit_disabled_ignores_seq_hold() {
-    use chimera_core::ui::UiState;
     use chimera_hal::ButtonId;
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     let at = ui.location();
     screen::hold(&mut ui, ButtonId::Seq);
     assert_eq!(ui.location(), at);
@@ -387,9 +388,8 @@ fn orbit_disabled_ignores_seq_hold() {
 #[cfg(feature = "orbit")]
 #[test]
 fn seq_hold_on_the_unit_enters_orbit() {
-    use chimera_core::ui::UiState;
     use chimera_hal::ButtonId;
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     let home = ui.location();
     screen::hold(&mut ui, ButtonId::Seq);
     assert_eq!(ui.location().orbit(), Some(OrbitAt::HOME));
@@ -482,7 +482,7 @@ mod quick_save {
         ));
         let (sync, set, _) = SystemSync::boot(&mut card, &mut s);
         let mut r = Rig {
-            ui: Box::new(UiState::new()),
+            ui: Box::new(crate::screen::stack_ui()),
             s,
             card,
             sync,
@@ -555,7 +555,7 @@ fn orbit_buttons() {
         part_page::read_values(ui.page_def(), ui.params(), Op::A)[0]
     }
 
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     // Enter from Part 2's FILTER, to see MENU come back to it.
     ui.go_for_test(filter(P[1]));
     let entry = ui.location();
@@ -714,9 +714,8 @@ fn orbit_buttons() {
 /// Every ORBIT page draws on screen, inside 240×320.
 #[test]
 fn every_orbit_page_renders() {
-    use chimera_core::ui::UiState;
     use screen::{Fb, settle};
-    let mut ui = Box::new(UiState::new());
+    let mut ui = Box::new(crate::screen::stack_ui());
     for o in every_orbit_place().into_iter().filter(|o| o.ring() == R[0]) {
         ui.go_for_test(orbit(o));
         settle(&mut ui);
