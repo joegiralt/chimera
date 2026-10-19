@@ -118,6 +118,10 @@ impl<const B: u8> Q<B> {
 pub type Q6 = Q<6>;
 /// Five bits: 30 steps, for marks of 30 px or less.
 pub type Q5 = Q<5>;
+/// Four bits: 14 steps, for marks of 14 px or less.
+pub type Q4 = Q<4>;
+/// Three bits: 6 steps.
+pub type Q3 = Q<3>;
 
 /// ONE's run: the window START to END, as it plays.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,13 +130,15 @@ pub struct Run {
     pub end: Q6,
 }
 
-/// LOOP's and PING's loop in the window: POSITION, LENGTH and WALK.
+/// LOOP's and PING's loop in the window: POSITION, LENGTH, WALK and
+/// (LOOP's only: PING has none) XFADE.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Loop {
     pub position: Q6,
     pub length: Q6,
     /// Bipolar.
     pub walk: Q6,
+    pub xfade: Q3,
 }
 
 /// TRON's blind: LENGTH pulls it down, FADE snaps it back.
@@ -161,14 +167,15 @@ pub struct Film {
 }
 
 /// SCRUB's sponge: FINGER moves it, SPEED foams it, LENGTH is the loop
-/// lit under it, DRAG its wet trail.
+/// outlined under it, XFADE its dashed end, DRAG its wet trail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sponge {
     pub finger: Q6,
     /// Bipolar.
-    pub speed: Q6,
+    pub speed: Q4,
     pub length: Q5,
-    pub drag: Q5,
+    pub drag: Q4,
+    pub xfade: Q3,
 }
 
 /// A machine and its inputs: PLAY's three MODEs each their own.
@@ -232,11 +239,13 @@ impl Kind {
                 position: q6(0.3),
                 length: q6(0.5),
                 walk: walk(0.45),
+                xfade: Q3::of(0.5),
             }),
             Kind::Ping => Machine::Ping(Loop {
                 position: q6(0.5),
                 length: q6(0.7),
                 walk: walk(0.3),
+                xfade: Q3::of(0.0),
             }),
             Kind::Tron => Machine::Tron(Blind {
                 length: q6(0.8),
@@ -253,9 +262,10 @@ impl Kind {
             }),
             Kind::Scrub => Machine::Scrub(Sponge {
                 finger: q6(0.45),
-                speed: walk(0.6),
+                speed: Q4::of(0.5 + 0.5 * 0.6),
                 length: q5(0.4),
-                drag: q5(0.5),
+                drag: Q4::of(0.5),
+                xfade: Q3::of(0.5),
             }),
         }
     }
@@ -296,10 +306,24 @@ impl TapeGauge {
     }
 
     /// From `TAPE_GLYPH_PARAMS`' set values, normalized: MODEL, MODE,
-    /// START, END, POSITION, MOTION, SIZE, DRAG, TAPE, AGE. `still` for
-    /// MODEL's and MODE's cells, which show the machine, not its knobs.
-    pub fn from_set(set: [f32; 10], still: bool) -> Self {
-        let [model, mode, start, end, pos, motion, size, drag, tape, age] = set;
+    /// START, END, POSITION, MOTION, SIZE, DRAG, TAPE, AGE, XFADE. `still`
+    /// for MODEL's and MODE's cells, which show the machine, not its
+    /// knobs. A machine reads only what it plays (`reads_in`), so a cell it
+    /// ignores leaves the glyph as it was.
+    pub fn from_set(set: [f32; 11], still: bool) -> Self {
+        let [
+            model,
+            mode,
+            start,
+            end,
+            pos,
+            motion,
+            size,
+            drag,
+            tape,
+            age,
+            xfade,
+        ] = set;
         let pick = |v: f32, n: u8| libm::roundf(clampf(v, 0.0, 1.0) * n as f32) as u8;
         let model = TapeModel::from_index(pick(model, TapeModel::ALL.len() as u8 - 1));
         let mode = match pick(mode, 2) {
@@ -322,6 +346,8 @@ impl TapeGauge {
                     position: q6(pos),
                     length: q6(size),
                     walk: q6(motion),
+                    // PING has no crossfade.
+                    xfade: Q3::of(if kind == Kind::Loop { xfade } else { 0.0 }),
                 };
                 if kind == Kind::Loop {
                     Machine::Loop(l)
@@ -344,9 +370,10 @@ impl TapeGauge {
             }),
             Kind::Scrub => Machine::Scrub(Sponge {
                 finger: q6(pos),
-                speed: q6(motion),
+                speed: Q4::of(motion),
                 length: q5(size),
-                drag: q5(drag),
+                drag: Q4::of(drag),
+                xfade: Q3::of(xfade),
             }),
         };
         Self {
@@ -377,13 +404,17 @@ impl TapeGauge {
         let m = match self.machine {
             Machine::One(r) => s(r.start.0, 0) | s(r.end.0, 6),
             Machine::Loop(l) | Machine::Ping(l) => {
-                s(l.position.0, 0) | s(l.length.0, 6) | s(l.walk.0, 12)
+                s(l.position.0, 0) | s(l.length.0, 6) | s(l.walk.0, 12) | s(l.xfade.0, 18)
             }
             Machine::Tron(b) => s(b.length.0, 0) | s(b.fade.0, 6),
             Machine::Stretch(b) => s(b.speed.0, 0) | s(b.d_time.0, 6),
             Machine::Wave(f) => s(f.frame.0, 0) | s(f.range.0, 6) | s(f.scan.0, 12),
             Machine::Scrub(p) => {
-                s(p.finger.0, 0) | s(p.speed.0, 6) | s(p.length.0, 12) | s(p.drag.0, 17)
+                s(p.finger.0, 0)
+                    | s(p.speed.0, 6)
+                    | s(p.length.0, 10)
+                    | s(p.drag.0, 15)
+                    | s(p.xfade.0, 19)
             }
         };
         m | self.kind().tag() << 22 | s(self.wear.tape.0, 25) | s(self.wear.age.0, 28)
