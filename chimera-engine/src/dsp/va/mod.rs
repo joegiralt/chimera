@@ -596,9 +596,10 @@ impl VaEngine {
                     o.reset();
                 }
                 self.sub.reset();
-                self.max = MaxKink::NEW;
                 self.jit = [1.0; 2];
             }
+            // the corrector's memory goes with the voice, at any STABILITY
+            self.max.reset();
             (self.playing, self.duck) = (p.mode, Duck::Steady);
         }
         if self.seeded != Some(part) {
@@ -816,7 +817,7 @@ impl VaEngine {
             Duck::Down(_) => {
                 self.playing = p.mode;
                 // MAX starts from nothing under the duck
-                self.max = MaxKink::NEW;
+                self.max.reset();
                 // FM's index starts on its value
                 self.fm.hold();
                 // a MOD MODE's read phase becomes the clock (ADR 0158)
@@ -1037,7 +1038,13 @@ impl VaEngine {
         self.slide.value()
     }
 
-    /// Both oscillators uncorrected: the alias gate's baseline.
+    /// MAX's kink corrector off, the oscillators corrected.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn kink_uncorrected(&mut self) {
+        self.max.off = true;
+    }
+
+    /// Both oscillators uncorrected (and MAX's kinks): the alias gate's baseline.
     #[cfg(any(test, feature = "test-support"))]
     pub fn uncorrected(&mut self) {
         self.max.off = true;

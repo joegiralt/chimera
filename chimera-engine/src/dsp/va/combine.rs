@@ -260,6 +260,12 @@ impl MaxKink {
         off: false,
     };
 
+    /// The sample memory cleared, the test switch kept.
+    pub fn reset(&mut self) {
+        self.held = 0.0;
+        self.d = 0.0;
+    }
+
     /// One sample in at AMOUNT `x`, the previous one out, corrected.
     #[inline(always)]
     pub fn step(&mut self, a: f32, b: f32, x: f32) -> f32 {
