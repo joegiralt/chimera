@@ -187,28 +187,36 @@ fn a_place_change_mid_note_is_click_free() {
     switches_are_click_free(&out, &[40, 65], "PLACE");
 }
 
-/// TYPE turned every block for 30 blocks: changes mid-fade wait for its
-/// end and the last one wins, so a fade's length after the turning stops
-/// the slot is a fresh voice's on the final setting. 30 blocks are two
-/// fades: the last starts as the turning stops. The equality is the slot's
-/// alone (`bare`): the filter's memory of the fade isn't the slot's.
+/// TYPE turned every block for `n` blocks: changes mid-fade wait for its
+/// end and the last one wins. One arriving just after a fade starts waits
+/// it out, so the bound after the last change is two fades, 2·`FX_FADE`:
+/// past it the slot is a fresh voice's on the final setting, whatever the
+/// turning's length. The equality is the slot's alone (`bare`): the
+/// filter's memory of the fade isn't the slot's.
 #[test]
 fn turning_type_through_all_while_a_chord_sounds_never_sticks() {
-    let (p, notes) = held_chord(110);
-    let turn = |b: usize| {
-        let mut q = setting(FxType::Soft, Place::Post);
-        for k in 40..=b.min(69) {
-            q.set_type(FxType::LIST[(k + 1) % FxType::LIST.len()]);
-        }
-        q
-    };
-    let out = chord(&p, &notes, true, turn);
-    let fresh = chord(&p, &notes, true, |_| turn(69));
-    let from = (70 + FADE_BLOCKS + 2) * BLOCK_SIZE;
-    let diff = rms_diff(&out[from..], &fresh[from..]);
-    assert!(diff < 1e-6, "{diff}");
-    let heard = chord(&p, &notes, false, turn);
-    assert!(clicks(&heard).is_empty(), "{:?}", &clicks(&heard)[..1]);
+    let (p, notes) = held_chord(40 + 45 + 2 * FADE_BLOCKS + 2 + 8);
+    for n in 20..=45 {
+        let last = 40 + n - 1;
+        let turn = |b: usize| {
+            let mut q = setting(FxType::Soft, Place::Post);
+            for k in 40..=b.min(last) {
+                q.set_type(FxType::LIST[(k + 1) % FxType::LIST.len()]);
+            }
+            q
+        };
+        let out = chord(&p, &notes, true, turn);
+        let fresh = chord(&p, &notes, true, |_| turn(last));
+        let from = (last + 2 * FADE_BLOCKS + 2) * BLOCK_SIZE;
+        let diff = rms_diff(&out[from..], &fresh[from..]);
+        assert!(diff < 1e-6, "{n} blocks: {diff}");
+        let heard = chord(&p, &notes, false, turn);
+        assert!(
+            clicks(&heard).is_empty(),
+            "{n} blocks: {:?}",
+            &clicks(&heard)[..1]
+        );
+    }
 }
 
 /// The reference scale cancels: at MIX 0 any TYPE, PRE or POST, steady or

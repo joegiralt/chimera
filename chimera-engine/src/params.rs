@@ -967,7 +967,8 @@ impl EngineType {
     /// - MODAL 1/0.29: peak 0.349 at the strike, 0.219 held; 0.29, the
     ///   spike's STRING peak, sits between, the strike at 1.20 and the
     ///   held note at 0.76.
-    /// - TAPE 1.0: a full-scale source reads back at peak 1.000.
+    /// - TAPE 1.0: it has no level of its own, so the measure is of a
+    ///   full-scale source, which reads back at peak 1.000.
     /// - VA 1.0: peak 0.989, the reference the others are set to.
     pub const fn fx_scale(self) -> f32 {
         match self {

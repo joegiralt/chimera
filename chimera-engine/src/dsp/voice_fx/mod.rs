@@ -152,7 +152,8 @@ impl VoiceFx {
     /// The slot at `hook`, PRE or POST the filter: each side placed here
     /// runs on the same input `x`, at the engine's reference `scale`
     /// (`EngineType::fx_scale`), and adds its weighted wet change:
-    /// `y = x − Σ w·(x·scale − kernel(x·scale)) / scale`. A kernel at MIX 0
+    /// `y = x − Σ w·(x·scale − kernel(x·scale)) / scale`; one side alone at
+    /// full weight and scale 1 is the kernel's output. A kernel at MIX 0
     /// returns `x·scale` exactly, so its change is ±0, the sum (from +0)
     /// +0 and `y` is `x` bit for bit, −0 too. `lane` reaches only FOLD.
     pub fn apply(
@@ -164,29 +165,34 @@ impl VoiceFx {
         glide: bool,
         lane: Option<&TapLane>,
     ) {
+        let runs = |s: &&Side| s.set.1 == hook && s.set.0 != FxType::Off && s.w != (0.0, 0.0);
+        let n = b.sides.iter().filter(runs).count();
+        if n == 0 {
+            return;
+        }
+        // One side, whole, at unit scale: the kernel's output itself, bit
+        // for bit today's DRV and fold, not `x − (x − k)` a rounding off.
+        let lone = n == 1 && scale == 1.0;
         let mut d = [0.0f32; BLOCK_SIZE];
-        let mut ran = false;
-        for s in &b.sides {
-            if s.set.1 != hook || s.w == (0.0, 0.0) {
-                continue;
-            }
+        for s in b.sides.iter().filter(runs) {
             let mut k: [f32; BLOCK_SIZE] = core::array::from_fn(|i| buf[i] * scale);
             match s.set.0 {
-                FxType::Off => continue,
+                FxType::Off => {}
                 FxType::Soft => soft::run(&mut k, &b.ends, glide),
                 FxType::Fold => fold::run(&mut k, &b.ends, glide, lane),
+            }
+            if lone && s.w == (1.0, 1.0) {
+                *buf = k;
+                return;
             }
             let sw = step_of(s.w, BLOCK_SIZE);
             for (i, (d, k)) in d.iter_mut().zip(&k).enumerate() {
                 *d += at(s.w.0, sw, i) * (buf[i] * scale - k);
             }
-            ran = true;
         }
-        if ran {
-            let inv = 1.0 / scale;
-            for (y, d) in buf.iter_mut().zip(&d) {
-                *y -= d * inv;
-            }
+        let inv = 1.0 / scale;
+        for (y, d) in buf.iter_mut().zip(&d) {
+            *y -= d * inv;
         }
     }
 }
@@ -217,5 +223,32 @@ pub(crate) mod rig {
             let t = (b * BLOCK_SIZE + i) as f32 / 48_000.0;
             amp * libm::sinf(core::f32::consts::TAU * hz * t)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::params::{FxType, Place, VoiceFxParams};
+    use super::rig::{Rig, sine};
+    use super::*;
+
+    /// A lone SOFT at scale 1 and full weight is the kernel's output, bit
+    /// for bit (today's DRV), not `x − (x − k)`: high DRIVE, where the
+    /// difference rounds.
+    #[test]
+    fn a_lone_side_at_unit_scale_is_the_kernel_bit_for_bit() {
+        let mut q = VoiceFxParams::default();
+        q.set_type(FxType::Soft);
+        (q.pots, q.mix) = ([0.9, 0.3, 0.5], 0.8);
+        let (mut fx, mut rig) = (VoiceFx::new(), Rig::default());
+        for b in 0..8 {
+            let mut got = sine(b, 0.7, 110.0);
+            let mut want = got;
+            let blk = fx.step(&q, true);
+            fx.apply(&blk, Place::Pre, &mut got, 1.0, false, None);
+            soft::run(&mut want, &rig.ends(q.pots, q.mix, true), false);
+            let bits = |x: &[f32; BLOCK_SIZE]| x.map(f32::to_bits);
+            assert_eq!(bits(&got), bits(&want), "block {b}");
+        }
     }
 }
