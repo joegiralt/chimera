@@ -344,3 +344,201 @@ fn leaving_fm_settles() {
         assert!(d <= lim, "{m0:?} → {m1:?}: {d} > {lim}");
     }
 }
+
+// ---- LOOPFM (#613) ----
+
+use chimera_core::dsp::va::lbfm::{b0_cap, b0_of, lbfm, loop_b, render_loop};
+
+const R_RMS: f64 = 0.2;
+const C7: u8 = 96;
+const TWO_THIRDS: f32 = 2.0 / 3.0;
+
+/// Sines' path (WAVE is the loop's scale here, not a shape), STAB 1, no
+/// sub.
+fn loopfm(amount: f32, wave: f32) -> VaParams {
+    VaParams {
+        mode: VaMode::LoopFm,
+        amount,
+        wave: [wave; 2],
+        ..sine()
+    }
+}
+
+/// The paper's recursion (eq. 11) at 16× the rate, A2, B = 0.5: one
+/// period of its real part has the closed form's shape.
+#[test]
+fn loopfm_matches_the_recursion() {
+    let (fs, f0, b) = (16.0 * 48_000.0f64, 110.0f64, 0.5f64);
+    let w0 = std::f64::consts::TAU * f0;
+    let wc = w0 / (1.0 - b * b).sqrt();
+    let t = 1.0 / fs;
+    let n = (fs / f0).round() as usize;
+    let (mut re, mut im) = (1.0f64, 0.0f64);
+    let mut rec = Vec::with_capacity(n);
+    for _ in 0..n {
+        rec.push(re);
+        let (s, c) = ((wc + b * wc * re) * t).sin_cos();
+        (re, im) = (re * c - im * s, re * s + im * c);
+    }
+    let b0 = f64::from(b0_of(b as f32));
+    let s = R_RMS * 2f64.sqrt() / (1.0 - b0 * b0).sqrt();
+    let rec_rms = (rec.iter().map(|v| (v - b0).powi(2)).sum::<f64>() / n as f64).sqrt();
+    let mut best = f64::MAX;
+    // the unit delay detunes the recursion a hair: align phase and period
+    for dp in -20..=20 {
+        for dn in -10..=10 {
+            let off = f64::from(dp) * 5e-4;
+            let len = n as f64 * (1.0 + f64::from(dn) * 2e-4);
+            let err: f64 = (0..n)
+                .map(|i| {
+                    let ph = (i as f64 / len + off).rem_euclid(1.0) as f32;
+                    let cf = f64::from(lbfm(ph, b0 as f32)) / s + b0;
+                    (rec[i] - cf).powi(2)
+                })
+                .sum();
+            best = best.min((err / n as f64).sqrt() / rec_rms);
+        }
+    }
+    println!("closed form vs recursion: {:.3} % RMS", 100.0 * best);
+    assert!(best <= 0.01, "{best}");
+}
+
+#[test]
+fn loopfm_stays_in_tune() {
+    let f0 = hz_of(A4);
+    for blend in [0.0, 0.5, 1.0] {
+        for wave in [0.0, TWO_THIRDS, 1.0] {
+            let y = held(A4, loopfm(blend, wave), PITCH_BLOCKS);
+            let f = peak_hz(&y, SR as f32, f0);
+            let cents = 1200.0 * (f / f64::from(f0)).log2();
+            println!("LOOPFM BLEND {blend} WAVE {wave:.2}: {f:.3} Hz ({cents:+.3} cents)");
+            assert!(cents.abs() <= 1.0, "BLEND {blend} WAVE {wave}: {cents}");
+        }
+    }
+}
+
+/// One oscillator over 40 whole periods (100 samples each).
+fn one_osc(b0: f32) -> Vec<f32> {
+    const N: usize = 4000;
+    let mut out = [0.0f32; N];
+    let mut mk = [[0.0f32; 2]; N];
+    let (mut ph, mut jit) = (0.0f32, 1.0f32);
+    render_loop::<N, false>(
+        &mut ph,
+        (b0, 0.0),
+        (0.01, 0.0),
+        &mut out,
+        &mut mk,
+        &mut jit,
+        &mut || 1.0,
+    );
+    out.to_vec()
+}
+
+#[test]
+fn loopfm_is_dc_free_at_level() {
+    for b in [0.0f32, 0.5, 0.95] {
+        let y = one_osc(b0_of(b));
+        let mean = y.iter().map(|&v| f64::from(v)).sum::<f64>() / y.len() as f64;
+        let r = rms(&y) / R_RMS;
+        println!("B {b}: mean {mean:+.2e}, RMS {r:.4} R");
+        assert!(mean.abs() <= 1e-4, "B {b}: {mean}");
+        assert!((r - 1.0).abs() <= 0.01, "B {b}: {r}");
+    }
+}
+
+/// The `b0` cap keeps the closed form's first alias at −45 dB.
+#[test]
+fn loopfm_alias_gate() {
+    for note in [C5, C6, C7] {
+        let fc = hz_of(note);
+        let y = take_with(|_| {}, note, loopfm(1.0, 1.0), GATE_BLOCKS, |_, _| {});
+        let db = common::spectrum::alias_db(&y, SR as f32, &[fc]);
+        let cap = b0_cap(fc / SR as f32);
+        println!("LOOPFM note {note}: alias {db:.1} dB, |b0| cap {cap:.3}");
+        assert!(db <= -45.0, "note {note}: {db}");
+    }
+}
+
+#[test]
+fn loopfm_blend_zero_is_osc1_sine() {
+    // OSC 2 detuned: BLEND 0 plays OSC 1 alone, a sine at R
+    let p = VaParams {
+        fine: [0.0, 40.0],
+        coarse: [0, 7],
+        ..loopfm(0.0, TWO_THIRDS)
+    };
+    let y = held(C4, p, 2 * SR as usize / B);
+    let (re, im) = common::spectrum::fundamental(&y, SR as f32, hz_of(C4));
+    let amp = f64::from(re).hypot(f64::from(im));
+    let r = rms(&y) / R_RMS;
+    println!("BLEND 0: fundamental {amp:.4}, RMS {r:.4} R");
+    assert!((r - 1.0).abs() <= 0.01, "{r}");
+    // all of its energy is the fundamental
+    assert!((amp / (R_RMS * 2f64.sqrt()) - 1.0).abs() <= 0.01, "{amp}");
+}
+
+#[test]
+fn loopfm_loop_is_per_wave() {
+    assert_eq!(loop_b(1.0, 0.0), 0.0);
+    assert!((loop_b(1.0, TWO_THIRDS) - 0.95).abs() < 1e-6);
+    assert!((loop_b(0.5, TWO_THIRDS) - 0.95 * 0.25).abs() < 1e-6);
+    assert_eq!(loop_b(1.0, 1.0), 0.95);
+    // the closed form's coefficient keeps its sign; its cap shrinks with pitch
+    assert!(b0_of(0.5) < 0.0 && b0_of(0.0) == 0.0);
+    assert!((b0_of(1e-5) + 0.5e-5).abs() < 1e-9);
+    assert_eq!(b0_cap(0.5), 0.0);
+    assert!(b0_cap(0.45) < 1e-3);
+    assert!(b0_cap(0.01) > b0_cap(0.04));
+    assert!(b0_cap(0.01) > b0_of(0.95).abs());
+}
+
+/// BLEND 0 of two sines plays OSC 1 at MIX's level.
+#[test]
+fn loopfm_level_matches_mix() {
+    let blocks = 2 * SR as usize / B;
+    let sines = VaParams {
+        coarse: [0, 7],
+        fine: [0.0, 6.0],
+        ..sine()
+    };
+    let mix = rms(&held(
+        C4,
+        VaParams {
+            mode: VaMode::Mix,
+            amount: 0.0,
+            ..sines
+        },
+        blocks,
+    ));
+    let y = held(
+        C4,
+        VaParams {
+            mode: VaMode::LoopFm,
+            amount: 0.0,
+            wave: [TWO_THIRDS; 2],
+            ..sines
+        },
+        blocks,
+    );
+    let db = 20.0 * (rms(&y) / mix).log10();
+    println!("LOOPFM BLEND 0 vs MIX: {db:+.2} dB");
+    assert!(db.abs() <= 1.5, "{db}");
+}
+
+#[test]
+fn loopfm_credits_its_paper() {
+    use chimera_core::dsp::provenance::Provenance;
+    let cites: Vec<_> = chimera_core::dsp::va::lbfm::PROVENANCE
+        .iter()
+        .filter_map(|p| match p {
+            Provenance::Textbook { cite } => Some(*cite),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        cites
+            .iter()
+            .any(|c| c.contains("Smyth") && c.contains("CC-BY 4.0"))
+    );
+}
