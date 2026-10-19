@@ -44,6 +44,11 @@ pub const NOT_ON_CARD: &str = "SOURCE NOT ON CARD";
 pub const READ_FAILED: &str = "CARD READ FAILED";
 /// A source in more runs than the stream registry keeps (slice 1 § 5.3).
 pub const FRAGMENTED: &str = "FRAGMENTED · COPY IT AGAIN";
+/// A streamed file the card condemned whole (#609): records that won't
+/// de-frame, so its voices drop out over them. Its cell reads `BAD FILE`
+/// (`DAMAGED` is a pixel past the column). The band promises no fix: `put`
+/// won't replace a sealed damaged file (ADR 0106, #267).
+pub const FILE_DAMAGED: &str = "BAD FILE · DROPS OUT";
 /// A ninth streamed source: the registry's eight rows taken.
 pub const STREAMS_FULL: &str = "STREAMS FULL";
 /// A streamed source reads forward only until slice 5 (slice 1 § 2.3).
@@ -541,6 +546,10 @@ impl SourceCell {
                     *card = c;
                     if event.is_some_and(|e| e != CardEvent::Same) {
                         p.lose_streams();
+                        #[cfg(feature = "tape")]
+                        {
+                            self.stuck = [0; MAX_SOURCES];
+                        }
                     }
                     if r.is_ok() {
                         Recovery::Clear
@@ -571,8 +580,9 @@ impl SourceCell {
     }
 
     /// Once a frame: a streamed source whose Part moved START, the loop or
-    /// XFADE off its heads re-stages them `REHEAD` after the last turn,
-    /// once no note holds it (spec § 5.6, #588). Beside no other card work.
+    /// XFADE off its heads re-stages them `REHEAD` after the last turn;
+    /// a note holding it keeps the old ones (spec § 5.6, #588, #598).
+    /// Beside no other card work.
     #[cfg_attr(not(feature = "tape"), allow(unused_variables))]
     pub fn tick(&mut self, p: &mut Project) {
         #[cfg(feature = "tape")]
@@ -584,12 +594,12 @@ impl SourceCell {
         if self.job.is_some() {
             return;
         }
-        // Neither a source a note holds (#588) nor one stuck on these
-        // heads keeps the others waiting.
-        let sounding = p.pool().table().sounding();
-        let ready = |id: SourceId, h: &Heads| {
-            sounding & id.bit() == 0 && self.stuck[id.index()] != heads_key(h)
-        };
+        // Neither a source that can't re-stage yet (a note holds it, and
+        // nothing is free beside it: #598) nor one stuck on these heads
+        // keeps the others waiting.
+        let pool = p.pool();
+        let ready =
+            |id: SourceId, h: &Heads| pool.can_rehead(id) && self.stuck[id.index()] != heads_key(h);
         let Some((id, heads)) = moved_heads(p, ready) else {
             self.wait = None;
             return;
@@ -868,14 +878,16 @@ impl SourceCell {
             #[cfg(feature = "tape")]
             SourceJob::Rehead(mut l) => match l.step(s, r, p, STEP_BYTES as usize) {
                 StreamStep::More => self.job = Some(SourceJob::Rehead(l)),
-                StreamStep::Done(_) | StreamStep::Failed(StreamFail::Sounding) => {}
+                StreamStep::Done(_) => {}
                 // A card fault: tried again after another `REHEAD`.
                 StreamStep::Failed(StreamFail::Read(e))
                     if crate::storage::CardFault::store_error(&e).is_some() =>
                 {
                     self.wait = None
                 }
-                // Not again until the heads it wants change.
+                // Not again until the heads it wants change, or the card
+                // (`Sounding` too: `can_rehead` let it start, so a retry
+                // would only read the same heads again).
                 StreamStep::Failed(_) => {
                     if let Some(w) = self.wait {
                         self.stuck[w.id.index()] = heads_key(&w.heads);

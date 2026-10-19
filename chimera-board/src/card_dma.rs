@@ -19,7 +19,7 @@ use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 use chimera_core::stream::layout::{Piece, RAW_CHUNK_BLOCKS, RAW_CHUNK_BYTES, deframe};
 use chimera_core::stream::ring::{CardSide, Claim};
 use chimera_core::stream::serve::{
-    ErrorStep, HeldRead, ReadError, ServeStep, read_failed, servable, serve_step,
+    Blame, ErrorStep, HeldRead, ReadError, Rot, ServeStep, read_failed, servable, serve_step,
 };
 use chimera_core::stream::units::AudioBlocks;
 use chimera_fat::h7_spi::{
@@ -809,6 +809,8 @@ struct IrqState {
     bursts: u32,
     /// A fill to read again (`Then::Retry`): first at the next look.
     retry: Option<Fill>,
+    /// The chunks that didn't de-frame: a card's once, a file's after.
+    rot: Rot,
 }
 
 /// A cell only `DMA2_STR0` opens.
@@ -909,6 +911,7 @@ pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker_hz: u32, cpu_hz: u
         line,
         bursts: 0,
         retry: None,
+        rot: Rot::new(),
     };
     // SAFETY: once (`side` exists once: `Rings::sides`), before the unmask.
     unsafe { IRQ.set(st) };
@@ -1060,9 +1063,14 @@ impl IrqState {
         }
         if let Some(reg) = registry().filter(|_| filling()) {
             let now = AudioBlocks::new(BLOCKS.load(Ordering::Relaxed));
-            if let ServeStep::Read { claimed, row } =
-                serve_step(&mut self.side, reg, now, BUS.ui_wait(), &STREAM_STATS)
-            {
+            if let ServeStep::Read { claimed, row } = serve_step(
+                &mut self.side,
+                reg,
+                now,
+                BUS.ui_wait(),
+                &mut self.rot,
+                &STREAM_STATS,
+            ) {
                 match row.read().first() {
                     Some(piece) => {
                         return Work::Fill(Fill {
@@ -1260,16 +1268,23 @@ impl IrqState {
                 }
                 n
             });
-        if let Some(Ok(_)) = framed {
-            self.side.write_guard(&claim);
-            self.side.fill_done(claim)
-        } else {
+        let err = match framed {
+            Some(Ok(_)) => {
+                self.rot.cleared(row.key());
+                self.side.write_guard(&claim);
+                return self.side.fill_done(claim);
+            }
             // A record's tag or length is wrong: the same bytes would come
-            // back, so the fault, unretried.
-            failed(ReadError::Frame, false);
-            self.side.requeue(claim);
-            false
-        }
+            // back, so unretried; the card's fault the first time, the
+            // file's after (#609).
+            Some(Err(_)) => row.frame_error(&mut self.rot),
+            // The staging or the slot too short: ours, not the file's, so
+            // the fault, never a verdict on the chunk.
+            None => ReadError::Frame(Blame::Card),
+        };
+        failed(err, false);
+        self.side.requeue(claim);
+        false
     }
 
     /// CMD12 and its answer, then the busy drained. A stop that can't be
@@ -1411,7 +1426,7 @@ impl IrqState {
         let then = match (kind, why) {
             (Kind::Fill(f), Why::Proto(e)) => match failed(ReadError::Proto(e), f.retried) {
                 ErrorStep::Retry => Then::Retry(Fill { retried: true, ..f }),
-                ErrorStep::Fault | ErrorStep::FrameError => {
+                ErrorStep::Fault | ErrorStep::FrameError | ErrorStep::Rotted => {
                     Then::Give(self.fail_job(Kind::Fill(f), why))
                 }
             },

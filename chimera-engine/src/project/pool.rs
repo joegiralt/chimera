@@ -335,25 +335,47 @@ impl Pool {
         self.commit_with(r, len, first, undo)
     }
 
+    /// Whether source `s`'s heads can be re-staged now (#598): no voice
+    /// holds it (in place), or a free slot and stream row wait for them
+    /// beside it.
+    pub fn can_rehead(&self, s: SourceId) -> bool {
+        self.table().sounding() & s.bit() == 0
+            || self.free_source().is_some() && self.streams().is_some_and(|r| r.has_room())
+    }
+
     /// Source `s`'s heads re-staged (slice 1 § 5.6): the `len` bytes
-    /// `source_staging` holds become its row, and its old bytes a pending
-    /// hole. Only while no voice holds `s` (#588): the gate closes on it,
-    /// and a nack (a note plays it) or a timeout moves nothing, so a
-    /// playing note never loses its head (a held drone keeps the old ones:
-    /// #598). True when re-staged.
+    /// `source_staging` holds become its heads. With no voice on `s` they
+    /// replace its row in place, under the gate. While a note holds it
+    /// they go in beside it (#598): a free id on the same stream file
+    /// takes them, and `s` retires (ADR 0087), so its notes finish on the
+    /// old heads, never cut, while new notes find the new id at once. The
+    /// id the heads are under; `None`, nothing moved, when `s` sounds and
+    /// no slot or stream row is free.
     pub(in crate::project) fn source_rehead(
         &mut self,
         s: SourceId,
         len: usize,
         within: &mut dyn FnMut() -> bool,
-    ) -> bool {
+    ) -> Option<SourceId> {
         let SrcSlot::Live(old) = self.sources.slots[s.index()] else {
-            return false;
+            return None;
         };
-        let table = self.table();
-        if table.sounding() & s.bit() != 0 {
-            return false;
+        if self.table().sounding() & s.bit() == 0 && self.rehead_in_place(s, old, len, within) {
+            return Some(s);
         }
+        self.rehead_beside(s, old, len)
+    }
+
+    /// `s`'s row rewritten under an acked gate; a nack (a note started on
+    /// it) or a timeout moves nothing.
+    fn rehead_in_place(
+        &mut self,
+        s: SourceId,
+        old: SourceEntry,
+        len: usize,
+        within: &mut dyn FnMut() -> bool,
+    ) -> bool {
+        let table = self.table();
         let Ok(to) = self.arena.source_stage(SOURCE_HEAD + len) else {
             return false;
         };
@@ -379,8 +401,34 @@ impl Pool {
         done
     }
 
+    /// The heads published under a free id streaming `s`'s file, then `s`
+    /// retired: no gate, as nothing the audio reads moves.
+    fn rehead_beside(&mut self, s: SourceId, old: SourceEntry, len: usize) -> Option<SourceId> {
+        let reg = self.arena.streams()?;
+        let file = *reg.get(s)?;
+        let to = self.free_source()?;
+        reg.insert(to, file).ok()?;
+        if self.source_put(to, old.r, len, |_| Some(len)) != Ok(true) {
+            // SAFETY: `to`'s pool row was never published, so no voice and
+            // no card read has its stream row.
+            if !unsafe { reg.clear(to) } {
+                // A stale ring's read holds it: drained on a later pass,
+                // the slot kept from reuse till then.
+                let since = self.table().blocks();
+                self.sources.slots[to.index()] = SrcSlot::Draining { since };
+            }
+            return None;
+        }
+        self.source_free(s);
+        Some(to)
+    }
+
     /// `source_rehead` against the pool's clock.
-    pub(in crate::project) fn source_rehead_timed(&mut self, s: SourceId, len: usize) -> bool {
+    pub(in crate::project) fn source_rehead_timed(
+        &mut self,
+        s: SourceId,
+        len: usize,
+    ) -> Option<SourceId> {
         self.source_rehead(s, len, &mut deadline(self.clock, GATE_ACK_TIMEOUT_MS))
     }
 
