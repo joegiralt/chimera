@@ -1324,7 +1324,7 @@ fn same_card_keeps_its_rows() {
     assert_eq!(rig.band(), fine);
 }
 
-/// #609: a file the card condemned whole reads `BAD FILE · COPY AGAIN` on
+/// #609: a file the card condemned whole reads `BAD FILE · DROPS OUT` on
 /// the focus band and `BAD FILE` in its cell, each inside its width.
 #[test]
 fn a_condemned_file_says_so() {

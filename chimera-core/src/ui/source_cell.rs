@@ -45,10 +45,10 @@ pub const READ_FAILED: &str = "CARD READ FAILED";
 /// A source in more runs than the stream registry keeps (slice 1 § 5.3).
 pub const FRAGMENTED: &str = "FRAGMENTED · COPY IT AGAIN";
 /// A streamed file the card condemned whole (#609): records that won't
-/// de-frame, so its voices drop out over them. Its cell reads `BAD FILE`:
-/// `DAMAGED` is a pixel past the column, `FILE DAMAGED · COPY AGAIN` past
-/// the band.
-pub const FILE_DAMAGED: &str = "BAD FILE · COPY AGAIN";
+/// de-frame, so its voices drop out over them. Its cell reads `BAD FILE`
+/// (`DAMAGED` is a pixel past the column). The band promises no fix: `put`
+/// won't replace a sealed damaged file (ADR 0106, #267).
+pub const FILE_DAMAGED: &str = "BAD FILE · DROPS OUT";
 /// A ninth streamed source: the registry's eight rows taken.
 pub const STREAMS_FULL: &str = "STREAMS FULL";
 /// A streamed source reads forward only until slice 5 (slice 1 § 2.3).
