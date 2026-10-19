@@ -80,12 +80,11 @@ const _: () = {
     assert!(LED_KNEE > 0.0 && LED_KNEE <= 1.0);
 };
 
-/// Steady per-sample bills over `OLD_LP24` (spec § Cost), as measured:
-/// REV2 65 instructions, 110 cycles (no limiter); EXP 81, 135; less 95.
-/// Recounted with the block at 1879169d (2026-10-07): REV2 65 + 1.92, EXP
-/// 81 + 1.95, 0.047 `vdiv`; unchanged.
-const COST_REV2: u32 = 15;
-const COST_EXP: u32 = 40;
+/// Steady per-sample bills over `OLD_LP24`, as the unit reads them
+/// (2026-10-19, rev V, ROUTING bench, run 2, `/VOICE` slope): REV2 78, EXP
+/// 136. The host count was 15 and 40 (#642).
+const COST_REV2: u32 = 78;
+const COST_EXP: u32 = 136;
 
 /// What feeds the loop back: each voice's own circuit (spec § 3).
 #[derive(Clone, Copy, Debug, PartialEq)]

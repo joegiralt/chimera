@@ -171,7 +171,7 @@ fn fixed_columns_round_trip_through_a_save() {
     let mut moved = s.clone();
     moved
         .mod_state
-        .clear_fixed(ModSource::Vel.index(), FixedCol::Fold);
+        .clear_fixed(ModSource::Vel.index(), FixedCol::Fx);
     assert!(!back.bits_eq(&moved), "a fixed route's presence counts");
 }
 
@@ -184,7 +184,7 @@ fn init_routes_live_in_fixed_freq() {
             .iter()
             .fold(0u8, |b, s| b | 1 << s.index());
         assert_eq!(m.fixed_present(FixedCol::Freq), want, "{e:?}");
-        for c in [FixedCol::Q, FixedCol::Fold] {
+        for c in [FixedCol::Q, FixedCol::Fx] {
             assert_eq!(m.fixed_present(c), 0);
         }
         // TAPE's loop and VA's tone have no end: ENV 1 into VCA ends the note.

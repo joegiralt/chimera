@@ -82,10 +82,13 @@ class Bank2Code(unittest.TestCase):
         for l in dump:
             self.assertIn("-j .bank2", l, "door targets would go uncharged")
 
-    def test_the_reverb_bench_runs_in_either_bank(self):
-        sets = re.search(r'^bench_sets := "([^"]*)"', (ROOT / "Justfile").read_text(), re.M)
-        self.assertIn("bench-stress", sets.group(1).split())
-        self.assertIn("bench-stress,bank2", sets.group(1).split())
+    def test_the_full_benches_play_the_reverb_from_bank_2(self):
+        sets = re.search(r'^bench_sets := "([^"]*)"', (ROOT / "Justfile").read_text(), re.M).group(1).split()
+        for area in ("bench-algo", "bench-stress", "bench-orbit"):
+            mine = [s for s in sets if area in s.split(",")]
+            self.assertTrue(mine, area)
+            for s in mine:
+                self.assertIn("bank2", s.split(","), f"{s} doesn't fit FLASH (#654)")
 
     def test_check_runs_the_proxies_with_their_door(self):
         body = "\n".join(recipes()["check"])

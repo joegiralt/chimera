@@ -134,15 +134,17 @@ fn tap_gain(m: usize, k: f32) -> f32 {
     g0 + (g4 - g0) * clampf(k * 0.25, 0.0, 1.0)
 }
 
-/// LADDER's steady bill over `OLD_LP24` (95), counted on the
-/// `filter-probes` ELF (`tools/loop_count.py`): one loop for every mode,
+/// LADDER's steady bill over `OLD_LP24` (95) as the unit reads it
+/// (2026-10-19, rev V, ROUTING bench, run 2, `/VOICE` slope): 176 (#642).
+/// History: the host count was 115, from the `filter-probes` ELF
+/// (`tools/loop_count.py`): one loop for every mode,
 /// its mix read at run time (`Ladder::steady`), 119 instructions a sample,
 /// 0 `vdiv`; its block (1.00, 2 `vdiv`), the probe's (0.66),
 /// `four_pole_ends` (1.33, 1 `vdiv`) and `hold_huge`'s scan (29 a
 /// four-sample round, 7.25, and its block 0.3): ceil5(129.54 × 1.606 + 12
 /// × 0.047) = 210, less 95. Per-mode loops cost 2.8 KB the
 /// `bench-stress,orbit` build doesn't have.
-pub const LADDER_COST: Cost = Cost(115);
+pub const LADDER_COST: Cost = Cost(176);
 /// The moving path over the steady one: one out-of-line loop for every
 /// mode (`moving`, 140 instructions), `G` and `D` divided every sample (2
 /// `vdiv`), the mode gain at each sample's `k`, its block (1.34), the

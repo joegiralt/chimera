@@ -5,6 +5,7 @@ use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::modal::ModalParams;
 use chimera_core::dsp::modulator::EnvSlot;
 use chimera_core::dsp::va::VaParams;
+use chimera_core::dsp::voice_fx::params::VoiceFxParams as X;
 use chimera_core::params::{
     DriveParams, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot, PitchParams,
 };
@@ -109,6 +110,9 @@ fn modulatable_addresses_are_exactly_the_spec_list() {
         ParamAddr::new(BlockRef::Pitch, PitchParams::PITCH),
         ParamAddr::new(BlockRef::Pitch, PitchParams::FINE),
     ];
+    for id in [X::P1, X::P2, X::P3, X::MIX] {
+        want.push(ParamAddr::new(BlockRef::VoiceFx, id));
+    }
     want.push(ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH));
     want.push(ParamAddr::new(BlockRef::Algo, AlgoParams::VOWEL));
     for id in [

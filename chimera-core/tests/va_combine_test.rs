@@ -4,7 +4,8 @@ mod common;
 
 use chimera_core::dsp::va::VaMode;
 use chimera_core::dsp::va::combine::{
-    self, Crusher, Operator, Peaks, bits, combine, ring_gain, with_sub, xor16, xor16_scaled,
+    self, Crusher, Operator, Peaks, am_gain, bits, combine, ring_gain, with_sub, xor16,
+    xor16_scaled,
 };
 use chimera_core::dsp::va::osc::{Correction, Morph, R, Sub, Unit, VarOsc, peak_bound};
 use common::spectrum::{alias_db, alias_db_lattice, peak_hz};
@@ -124,6 +125,11 @@ fn the_engine_operators_are_the_reference() {
             let crush = crusher(x);
             for mode in VaMode::ALL {
                 let op = Operator::new(mode, pk, &crush);
+                let k = if mode == VaMode::Am {
+                    am_gain(x, pk)
+                } else {
+                    k
+                };
                 for a in span(pk.a, 64) {
                     for b in span(pk.b, 64) {
                         let got = op.at(a, b, x, op.scale * k) / op.scale;
@@ -133,7 +139,8 @@ fn the_engine_operators_are_the_reference() {
                             | VaMode::Sync
                             | VaMode::SoftSync
                             | VaMode::Ring
-                            | VaMode::Fm => {
+                            | VaMode::Fm
+                            | VaMode::Am => {
                                 assert_eq!(got.to_bits(), want.to_bits(), "{mode:?} {a} {b} {x}")
                             }
                             VaMode::Xor => {
@@ -186,6 +193,11 @@ fn every_operator_is_peak_safe() {
             for a in span(pk.a, 128) {
                 for b in span(pk.b, 128) {
                     for mode in VaMode::ALL {
+                        let k = if mode == VaMode::Am {
+                            am_gain(x, pk)
+                        } else {
+                            k
+                        };
                         let c = combine(mode, a, b, x, k, pk, &crush);
                         // 0.2222 is the sub mix's worst point (≈ 0.922)
                         for sub in [0.0, 0.2222, 0.5, 1.0] {
@@ -424,7 +436,7 @@ fn sub_carries_its_state() {
 }
 
 #[test]
-fn xor_provenance_is_declared() {
+fn combine_provenance_is_declared() {
     use chimera_core::dsp::provenance::{Patent, Provenance};
     assert!(combine::PROVENANCE.iter().any(
         |p| matches!(p, Provenance::Textbook { cite } if cite.contains("Kleimola") && cite.contains("DAFx-08"))

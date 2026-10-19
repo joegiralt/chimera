@@ -14,13 +14,14 @@ use chimera_core::dsp::limiter::{CEILING, OUTPUT_GAIN};
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode, reads};
 use chimera_core::dsp::reverb::ReverbParams;
 use chimera_core::dsp::voice::Voice;
+use chimera_core::dsp::voice_fx::params::{FxType, VoiceFxParams};
 use chimera_core::hw::{CPU_HZ_REV_V, DAC_PAIRS, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::modulation::{ModSource, VCA};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::orbit::RingIdx;
 use chimera_core::orbit::ring::Harmony;
-use chimera_core::params::{DriveParams, EngineType, FilterParams, FolderParams, OutParams};
+use chimera_core::params::{EngineType, FilterParams, OutParams};
 use chimera_core::part::PartParams;
 use chimera_core::preset::{Performance, Sound};
 use chimera_core::project::PartId;
@@ -112,8 +113,8 @@ impl Patch {
             Patch::BusyAlgo => {
                 let mut s = chimera_core::factory::factory_sound(6).expect("MORPH PAD");
                 s.params.filter.resonance = 0.4;
-                s.params.drive.drive = 0.3;
-                s.params.folder.fold = 0.2;
+                s.params.fx.set_type(FxType::Fold);
+                s.params.fx.pots[0] = 0.2;
                 route_all(&mut s, ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH));
                 s
             }
@@ -122,7 +123,8 @@ impl Patch {
                 let m = &mut s.params.modal;
                 (m.body, m.ens_mix, m.ens_depth) = (0.6, 0.5, 0.5);
                 s.params.filter.resonance = 0.3;
-                s.params.drive.drive = 0.2;
+                s.params.fx.set_type(FxType::Soft);
+                s.params.fx.pots[0] = 0.2;
                 route_all(&mut s, ParamAddr::new(BlockRef::Modal, ModalParams::BRIGHT));
                 s
             }
@@ -172,8 +174,8 @@ pub fn model_name(m: ResonatorMode) -> &'static str {
 }
 
 /// Every modulator routed: ENV 1 and LFO 1 → CUTOFF, ENV 2 → VCA (the amp
-/// follows ENV 2), ENV 3 → PITCH, LFO 2 → `engine_dest`, LFO 3 → DRIVE
-/// and FOLD, VEL → LEVEL.
+/// follows ENV 2), ENV 3 → PITCH, LFO 2 → `engine_dest`, LFO 3 → the FX
+/// slot's P1, VEL → LEVEL.
 fn route_all(s: &mut Sound, engine_dest: ParamAddr) {
     let ms = &mut s.mod_state;
     let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
@@ -189,13 +191,8 @@ fn route_all(s: &mut Sound, engine_dest: ParamAddr) {
         (ModSource::Lfo2, engine_dest, 30),
         (
             ModSource::Lfo3,
-            ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE),
+            ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P1),
             30,
-        ),
-        (
-            ModSource::Lfo3,
-            ParamAddr::new(BlockRef::Folder, FolderParams::FOLD),
-            20,
         ),
         (
             ModSource::Vel,

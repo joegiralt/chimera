@@ -7,6 +7,7 @@ use common::{SR, tri};
 
 use chimera_core::dsp::filter::level_gain;
 use chimera_core::dsp::modal::{BankModes, ResonatorMode};
+use chimera_core::dsp::voice_fx::params::{FxType, Place, pot_level};
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
@@ -93,15 +94,11 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
     p.filter
         .set_mode(chimera_core::dsp::filter::FilterMode::ALL[rng.u8(7) as usize]);
 
-    // Drive
-    p.drive.drive = rng.f32();
-    p.drive.tone = rng.f32();
-    p.drive.mix = rng.f32();
-
-    // Folder
-    p.folder.fold = rng.f32();
-    p.folder.symmetry = rng.f32();
-    p.folder.mix = rng.f32();
+    // The FX slot: SOFT or FOLD, PRE or POST
+    p.fx.set_type([FxType::Soft, FxType::Fold][rng.u8(1) as usize]);
+    p.fx.place = [Place::Pre, Place::Post][rng.u8(1) as usize];
+    p.fx.pots = [rng.f32(), rng.f32(), rng.f32()];
+    p.fx.mix = rng.f32();
 
     // Volume
     p.out.volume = 0.1 + rng.f32() * 0.9; // never zero
@@ -211,8 +208,12 @@ fn prop_note_on_produces_sound() {
             total_max = total_max.max(max);
         }
 
-        // LEVEL attenuates below ½ (to ×¼), and the floor with it.
-        let floor = 0.0001 * level_gain(params.filter.level).min(1.0);
+        // LEVEL attenuates below ½ (to ×¼), and the floor with it; so do
+        // the FX slot's LEVEL on its wet and OUT LEVEL.
+        let floor = 0.0001
+            * level_gain(params.filter.level).min(1.0)
+            * pot_level(params.fx.pots[2]).min(1.0)
+            * params.out.volume.min(1.0);
         assert!(
             total_max > floor,
             "trial {}: note_on should produce sound, max={} engine={:?} modal_mode={:?} note={}",
@@ -243,8 +244,8 @@ fn prop_param_change_changes_output() {
         let tweak = rng.u8(5);
         match tweak {
             0 => params_b.filter.cutoff = params_a.filter.cutoff * 0.1 + 100.0,
-            1 => params_b.drive.drive = 1.0 - params_a.drive.drive,
-            2 => params_b.folder.fold = 1.0 - params_a.folder.fold,
+            1 => params_b.fx.pots[0] = 1.0 - params_a.fx.pots[0],
+            2 => params_b.fx.mix = 1.0 - params_a.fx.mix,
             3 => params_b.out.volume = params_a.out.volume * 0.2,
             // The engine's own parameter, where it has one.
             _ => match params_a.engine() {
@@ -325,7 +326,7 @@ fn prop_note_off_eventually_silences() {
             params.modal.mode = ResonatorMode::Modal; // use resonator instead
         }
         params.filter.resonance *= 0.5; // prevent self-oscillation
-        params.folder.fold = 0.0; // disable folder feedback path
+        params.fx.set_type(FxType::Off); // disable the fold's feedback path
         let note = rng.note();
 
         let mut voice = Rig::new(SR);
@@ -462,13 +463,13 @@ fn prop_filter_resonance_full_sweep() {
 #[test]
 fn prop_drive_full_sweep() {
     verify_full_sweep(
-        "Drive",
+        "SOFT",
         |p| {
             *p = tri();
-            p.drive.mix = 1.0;
+            p.fx.set_type(FxType::Soft);
         },
         |p, v| {
-            p.drive.drive = v;
+            p.fx.pots[0] = v;
         },
         16,
     );
@@ -477,13 +478,13 @@ fn prop_drive_full_sweep() {
 #[test]
 fn prop_folder_full_sweep() {
     verify_full_sweep(
-        "Wavefolder",
+        "FOLD",
         |p| {
             *p = tri();
-            p.folder.mix = 1.0;
+            p.fx.set_type(FxType::Fold);
         },
         |p, v| {
-            p.folder.fold = v;
+            p.fx.pots[0] = v;
         },
         16,
     );
