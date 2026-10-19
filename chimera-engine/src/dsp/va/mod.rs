@@ -23,7 +23,7 @@ use crate::hw::Cost;
 use crate::project::PartId;
 use crate::voice_alloc::VoiceIdx;
 use combine::{Crusher, Operator, Peaks, ring_gain};
-use osc::{NO_WRAP, R, Ramps, Sub, SubEdge, VarOsc, wave_reach};
+use osc::{NO_WRAP, R, Ramps, Sub, SubEdge, VarOsc, ZEROS, wave_reach};
 use stability::{JITTER_CENTS, Seed, Stability, depth};
 #[cfg(any(test, feature = "test-support"))]
 use {osc::Correction, stability::Character};
@@ -760,6 +760,10 @@ impl VaEngine {
             Duck::Down(0) => Duck::Down(1),
             Duck::Down(_) => {
                 self.playing = p.mode;
+                // a MOD MODE's read phase becomes the clock (ADR 0158)
+                for o in &mut self.osc {
+                    o.settle();
+                }
                 Duck::Up(0)
             }
             Duck::Up(0) => Duck::Up(1),
@@ -811,14 +815,40 @@ impl VaEngine {
         // 1 at d = 0 (STAB 1)
         let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
         let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+        // no MODE reads a modulated phase yet (ADR 0158)
+        let (z, nk) = (&ZEROS, (0.0, 0.0));
         // OSC 1 marks its sub flips and its wraps, one instance for every
         // MODE (flash): only SYNC's slave reads the wraps, resetting at
         // them (ADR 0118 point 13)
-        o1.render::<BLOCK_SIZE, true, false, true>(out, mk, &l.osc[0], &mut jit[0], &mut draw);
+        o1.render::<BLOCK_SIZE, true, false, true, false>(
+            out,
+            mk,
+            &l.osc[0],
+            &mut jit[0],
+            &mut draw,
+            z,
+            nk,
+        );
         if mode == VaMode::Sync {
-            o2.render::<BLOCK_SIZE, false, true, false>(b, mk, &l.osc[1], &mut jit[1], &mut draw);
+            o2.render::<BLOCK_SIZE, false, true, false, false>(
+                b,
+                mk,
+                &l.osc[1],
+                &mut jit[1],
+                &mut draw,
+                z,
+                nk,
+            );
         } else {
-            o2.render::<BLOCK_SIZE, false, false, false>(b, mk, &l.osc[1], &mut jit[1], &mut draw);
+            o2.render::<BLOCK_SIZE, false, false, false, false>(
+                b,
+                mk,
+                &l.osc[1],
+                &mut jit[1],
+                &mut draw,
+                z,
+                nk,
+            );
         }
         // a loop of its own while the duck runs (the count bills it)
         match gain {
