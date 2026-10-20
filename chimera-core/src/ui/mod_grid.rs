@@ -171,9 +171,9 @@ pub struct MatrixState {
     /// Source list — built from mod matrix sub-pages.
     pub sources: [Option<SourceRow>; MAX_SOURCES],
     pub num_sources: usize,
-    /// The edited Part's TAPE machine and FX type: their labels name
-    /// those columns.
-    pub ctx: DestCtx,
+    /// The edited Part's TAPE machine and FX type, `DestCtx::pack`ed: their
+    /// labels name those columns. One byte: the budget counts them.
+    ctx: u8,
 }
 
 /// What names a destination's cell beyond its spec: TAPE's machine and
@@ -185,6 +185,20 @@ pub struct DestCtx {
 }
 
 impl DestCtx {
+    /// FX type in the high bits, the machine's code in the low three.
+    fn pack(self) -> u8 {
+        (self.fx as u8) << 3 | self.tape as u8
+    }
+
+    fn unpack(b: u8) -> Self {
+        let tape = TapeModel::ALL.into_iter().find(|&m| m as u8 == b & 7);
+        let fx = FxType::LIST.into_iter().find(|&t| t as u8 == b >> 3);
+        Self {
+            tape: tape.unwrap_or(TapeModel::Loop),
+            fx: fx.unwrap_or(FxType::Off),
+        }
+    }
+
     pub const DEFAULT: DestCtx = DestCtx {
         tape: TapeModel::Loop,
         fx: FxType::Off,
@@ -208,29 +222,37 @@ impl MatrixState {
             num_dests: 0,
             sources: [None; MAX_SOURCES],
             num_sources: 0,
-            ctx: DestCtx::DEFAULT,
+            ctx: DestCtx::DEFAULT.pack(),
         };
         // Matrix starts empty — no destinations enabled, no amounts set.
         // Users enable params with MIX+Plus on block pages, set amounts in grid.
         state
     }
 
+    /// What names the columns now.
+    pub fn ctx(&self) -> DestCtx {
+        DestCtx::unpack(self.ctx)
+    }
+
     /// The edited Part's machine; a change redraws the headers.
     pub fn set_tape(&mut self, m: TapeModel) {
         self.set_ctx(DestCtx {
             tape: m,
-            ..self.ctx
+            ..self.ctx()
         });
     }
 
     /// The edited Part's FX type; a change redraws the headers.
     pub fn set_fx(&mut self, t: FxType) {
-        self.set_ctx(DestCtx { fx: t, ..self.ctx });
+        self.set_ctx(DestCtx {
+            fx: t,
+            ..self.ctx()
+        });
     }
 
     fn set_ctx(&mut self, c: DestCtx) {
-        if self.ctx != c {
-            self.ctx = c;
+        if self.ctx != c.pack() {
+            self.ctx = c.pack();
             self.bump();
         }
     }
@@ -906,7 +928,7 @@ where
         );
         let name = match state.col(di) {
             Col::Fixed(f) => f.tag(),
-            Col::Reg(_) => header(&dest, state.ctx),
+            Col::Reg(_) => header(&dest, state.ctx()),
         };
         draw::text_center(d, &theme::FONT_LABEL, name, x, GRID_NAME_Y, name_color, 0);
     }
@@ -1085,7 +1107,7 @@ where
             let x = label(d, src, theme::MARGIN_X, theme::ACCENT) + ARROW_GAP;
             let x = x + draw::arrow(d, x, READOUT_Y, theme::ACCENT) + ARROW_GAP;
             let mut name = FmtBuf::new();
-            fmt_readout_dest(&mut name, src, &dest, state.ctx);
+            fmt_readout_dest(&mut name, src, &dest, state.ctx());
             label(d, name.as_str(), x, theme::ACCENT);
             let mut effect = FmtBuf::new();
             let dead = inert & (1 << state.sel_col) != 0;

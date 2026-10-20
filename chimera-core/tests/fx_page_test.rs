@@ -263,7 +263,11 @@ fn fx_band_redraws_when_type_or_place_changes() {
     let post = key(&mut ui);
     assert_ne!(base, post, "PLACE");
     ui.params_mut().fx.set_type(FxType::Fold);
-    assert_ne!(post, key(&mut ui), "TYPE");
+    let fold = key(&mut ui);
+    assert_ne!(post, fold, "TYPE");
+    // The curve follows the pots: P1 is in the region key.
+    ui.params_mut().fx.pots[0] = 0.9;
+    assert_ne!(fold, key(&mut ui), "P1");
 }
 
 /// The door's rows: OFF traces the sine itself, FUZZ's curve follows SUSTAIN.

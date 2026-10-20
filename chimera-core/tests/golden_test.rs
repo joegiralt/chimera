@@ -302,12 +302,14 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     // Then CLEAN's k law and trims (ADR 0096).
     // Then the voice-end fade (ADR 0096): its filter tail, −65 dB, fades
     // over the last block instead of cutting.
+    // Re-recorded in Task 14: DRV is SOFT, voiced at LEVEL 0.7626 to cancel
+    // its `MAKE_UP` 0.483 (the factory Sounds keep their loudness).
     (
         "factory_5",
         (
-            0xdb1cd08add369508,
+            0xa778b804866845e5,
             [
-                898824421, 3209678144, 3209854415, 1059992875, 3206492922, 3206485466, 0, 0,
+                898827728, 3209682936, 3209857559, 1059996833, 3206496509, 3206489051, 0, 0,
             ],
         ),
     ),
@@ -348,12 +350,14 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
             ],
         ),
     ),
+    // Re-recorded in Task 14: DRV is SOFT, voiced at LEVEL 0.7626 to cancel
+    // its `MAKE_UP` 0.483 (the factory Sounds keep their loudness).
     (
         "factory_9",
         (
-            0xb7a92a3c9dc1ebcd,
+            0x7b15bf77e7717f9e,
             [
-                886063688, 3196596643, 995166492, 3194522173, 3191499730, 3179660908, 3126563674, 0,
+                886068374, 3196599706, 995173522, 3194527354, 3191504998, 3179667062, 3126567846, 0,
             ],
         ),
     ),
@@ -367,12 +371,14 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
             ],
         ),
     ),
+    // Re-recorded in Task 14: DRV is SOFT, voiced at LEVEL 0.7626 to cancel
+    // its `MAKE_UP` 0.483 (the factory Sounds keep their loudness).
     (
         "factory_11",
         (
-            0xdf9ed2c6c9e93e8b,
+            0xdf3d7bdae606ed60,
             [
-                944192553, 1056497071, 1053643610, 1031344620, 3173882710, 3173425415, 0, 0,
+                944197035, 1056502661, 1053648234, 1031350218, 3173886431, 3173428979, 0, 0,
             ],
         ),
     ),

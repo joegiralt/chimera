@@ -88,10 +88,11 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
         ""
     };
     // FLT › FX's curve rows and the curves they trace: `voice_fx::look`,
-    // `soft::curve` and `fold::curve`. Only with `bank2`: without it
+    // `soft::curve` and `fold::curve`. Text is `look::render` alone: `trace`
+    // stays in bank 1 with its caller. Only with `bank2`: without it
     // `look::trace` is not drawn (the bench sets).
     let look = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
-        "    *(.text.*8voice_fx4look* .rodata.*8voice_fx4look* .text.*8voice_fx4soft5curve* .text.*8voice_fx4fold5curve*);
+        "    *(.text.*8voice_fx4look6render* .rodata.*8voice_fx4look* .text.*8voice_fx4soft5curve* .text.*8voice_fx4fold5curve*);
 "
     } else {
         ""

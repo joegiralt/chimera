@@ -52,7 +52,8 @@ use screen::*;
 // tape_src_card, tape_src_wont_fit, tape_src_loaded,
 // tape_src_read_failed.
 // New: flt_2040_kind, flt_2040_exp, flt_fx_off, flt_fx_soft, flt_fx_fold,
-// flt_front_fx, row_amp. Gone: row_drv, amp_sym, flt_mod_2040_exp.
+// flt_front_fx, row_amp. Gone: row_drv, amp_sym, flt_mod_2040_exp.// Re-recorded in Task 14: the curve viz draws SOFT and FOLD at their
+// `MAKE_UP` 0.483 and 0.684 (flt_fx_soft, flt_fx_fold, _soft_pre, _fold_post).
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x4b8d653ed15f4a3e),
@@ -130,13 +131,13 @@ const GOLDENS: &[(&str, u64)] = &[
     // FLT › FX (#614): OFF's dashes, SOFT's and FOLD's pots; FX and PLACE
     // on FLT's front.
     ("flt_fx_off", 0x7398595b237b8ceb),
-    ("flt_fx_soft", 0x511f201e5f04f945),
-    ("flt_fx_fold", 0x4f3eda43ca7e8e20),
+    ("flt_fx_soft", 0x2a1a36ca519cce4d),
+    ("flt_fx_fold", 0xe60560ce8ed46234),
     ("flt_front_fx", 0xb2030475dfdf164b),
     // Task 8 (#614): PLACE's mini glyph in its cell (every FLT front, row_flt,
     // large_va_drive) and FLT › FX's strip and curve (flt_fx_*, flt_led_*).
-    ("flt_fx_soft_pre", 0x083f7055bf7d0fab),
-    ("flt_fx_fold_post", 0xed2cc614e865e30b),
+    ("flt_fx_soft_pre", 0x7b18a5267a6ada43),
+    ("flt_fx_fold_post", 0x786864094029b3df),
     // THEME's PAGES ROW (ADR 0145): every other screen is recorded under
     // STACK (`screen::ui_for`). FLT's three pages, RES's three, MOD at E2
     // with `>`, OSC at D1R with both arrows and at OP6 with `<`, AMP bare.

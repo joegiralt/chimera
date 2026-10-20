@@ -235,7 +235,7 @@ fn model_change_applies_machine_defaults() {
     assert_ne!(settled, render_ui(&ui).hash());
 
     // The matrix reads the new machine's labels.
-    assert_eq!(ui.matrix_state.ctx.tape, TapeModel::Stretch);
+    assert_eq!(ui.matrix_state.ctx().tape, TapeModel::Stretch);
 
     // MODEL turned past its end changes nothing, so writes nothing.
     feed(&mut ui, Input::turn(EncoderId::A, -3)); // ONESHOT

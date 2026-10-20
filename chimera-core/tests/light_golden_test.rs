@@ -15,7 +15,7 @@ use screen::*;
 
 // Re-recorded for #614 (Task 7, layout A): the Algo map without DRV in
 // engine_algo, algo_formant_page and the algo_op_page_* four; flt_clean's
-// cells in layout A.
+// cells in layout A.// Re-recorded in PR 4 (Task 8): the PLACE cell's FX/FLT glyph.
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0x1f9c0460b53edbe5),
     // Re-recorded: a value's unit sits small beside its number (ADR 0146).
@@ -25,7 +25,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_op_page_frmt", 0x3248e92fc9e0cf08),
     ("algo_op_page_nois", 0x41d2669aa19cb3bf),
     // Re-recorded on the merge of main (#614): the filter picture in layout A.
-    ("flt_clean", 0x0b3331f205833193),
+    ("flt_clean", 0x78d6c32d132b4d21),
     ("settings_top", 0xf1655533215f4e4b),
     ("settings_personal_theme", 0x3a2a9ae7815335b2),
     // Re-recorded: FACTORY joins the title, B ◂▸ moves to hint line 1.

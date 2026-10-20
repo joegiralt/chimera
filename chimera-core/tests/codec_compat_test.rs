@@ -34,10 +34,13 @@ use common::{
 /// the formant demos joined the bank.
 const V1_FACTORY: usize = 8;
 
-/// A factory Sound as the frozen files hold it: before the default map.
+/// A factory Sound as the frozen files hold it: before the default map, and
+/// with the old DRV's LEVEL ½ (the factory Sounds now voice SOFT at LEVEL
+/// 0.7626 to cancel its `MAKE_UP`, Task 14).
 fn frozen(i: usize) -> Sound {
     let mut s = factory_sound(i).unwrap();
     s.map = chimera_core::midi_map::MidiMap::EMPTY;
+    s.params.fx.pots[2] = 0.5;
     s
 }
 
@@ -544,7 +547,9 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     ("factory_3.snd", 0x901698e789a3ccf9),
     ("factory_4.snd", 0x68328532bf9779a7),
     // Then the voice-end fade (ADR 0096): SQR BASS's −65 dB filter tail.
-    ("factory_5.snd", 0xdb1cd08add369508),
+    // Re-recorded in Task 14: its DRV loads as SOFT at LEVEL ½, whose
+    // `MAKE_UP` 0.483 level-matches the wet (6.3 dB quieter, no legacy compat).
+    ("factory_5.snd", 0xa9373ff2b7b9ff47),
     ("factory_6.snd", 0x144e8d10ce6ac51e),
     // Then the voice-end fade past −80 dB (#487): its −69 dB DC tail.
     ("factory_7.snd", 0x13448df1ea3c0499),
