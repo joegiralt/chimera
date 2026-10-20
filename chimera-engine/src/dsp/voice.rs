@@ -1173,7 +1173,7 @@ impl Voice {
 
         self.level = match &gain {
             Some(_) => (last_gain * 65_535.0) as u16,
-            None => (volume.clamp(0.0, 1.0) * 65_535.0) as u16,
+            None => (crate::dsp::clampf(volume, 0.0, 1.0) * 65_535.0) as u16,
         };
 
         // Check if done

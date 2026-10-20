@@ -110,7 +110,7 @@ impl Instrument {
             if mods.moves_addr(depth) {
                 1.0
             } else {
-                part.params.lfos[slot.index()].depth.clamp(0.0, 1.0)
+                crate::dsp::clampf(part.params.lfos[slot.index()].depth, 0.0, 1.0)
             }
         };
         let routes = pitch_reach_by(mods, lfo_depth);

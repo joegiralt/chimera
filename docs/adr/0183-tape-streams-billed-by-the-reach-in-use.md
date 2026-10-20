@@ -18,7 +18,7 @@ Musical findings 1, 5 and 13, perf finding 2. A note's card bill took every PITC
 ## Alternatives considered
 - **Keep the bend range billed.** Every chord pays for a bend nobody plays; bending a full chord over budget now caps its pitch instead, the rarer case.
 - **Steal the oldest held.** It takes the chord's root (the owner's "choke").
-- **LOOP billed by the loop it can reach.** The bill is a Part's, from params alone, with no source frames; it needs the source's length in the cost path, filed as a follow-up.
+- **LOOP billed by the loop it can reach.** The bill is a Part's, from params alone, with no source frames; it needs the source's length in the cost path: private issue #703.
 
 ## Consequences
 - At ROOT with the wheel at rest and TAPE 0, a 24 kHz bed fits 7 notes (8 × 41,143 B/s is over the budget by 4 %); 16 kHz fits 11.

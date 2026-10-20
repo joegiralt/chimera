@@ -94,7 +94,6 @@ pub fn edit(params: &mut impl Blocks, a: ParamAddr, how: Edit) -> bool {
     }
     let model = machine_edit(a, before, &mut *b);
     let moved = b.get(a.param) != before;
-    drop(b);
     if let Some(m) = model
         && let Some(mut env) = params.block_mut(BlockRef::Env(EnvSlot::Env1))
     {

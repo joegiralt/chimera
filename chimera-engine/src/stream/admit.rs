@@ -13,8 +13,10 @@ pub const HEAD_MS: u32 = 100;
 /// and 0 late blocks (ledger tape-plan/m2/b4-1p2.txt). Raising it needs B4
 /// re-run at the new rate.
 pub const STREAM_BUDGET_BPS: u32 = 315_978;
-/// Twice B4's load: what `STREAM_BUDGET_BPS` becomes if the unit's 2x
-/// stress run (8 x 24 kHz at 2.4x, #623) holds clean. Unused until then.
+/// Twice B4's load. The unit's 2x run (8 x 24 kHz at 2.4x, 2026-10-20,
+/// ledger stress/b4-2p4x-sustain8.txt) streamed clean, but B6's UI freeze
+/// rose to 328 ms against its 200 ms (b6-2p4x-ui8.txt): the budget stays
+/// until the UI's card waits shrink (#703).
 pub const STREAM_BUDGET_2X_BPS: u32 = 2 * STREAM_BUDGET_BPS;
 /// Worst-case tape wow, in cents.
 pub const WOW_CENTS: f32 = 33.0;
