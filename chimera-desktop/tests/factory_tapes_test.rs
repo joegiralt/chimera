@@ -294,7 +294,7 @@ fn scrub_take_that_turns_is_click_free() {
         );
         let own = qa(&straight[..straight.len().min(48_000 * 5 / 2)]).click_ratio;
         let mut base = Way::Plain.base(TapeModel::Scrub, StretchType::Mono);
-        for (id, v) in defaults(TapeModel::Scrub) {
+        for (id, v) in defaults(chimera_core::dsp::tape_engine::TapeMachine::Scrub) {
             base.write(id, v);
         }
         let y = render(base, &h, p, 60, &Script(&RAMP, &[1.5], &[]));
