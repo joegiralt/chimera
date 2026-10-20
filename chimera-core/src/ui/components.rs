@@ -105,6 +105,7 @@ pub fn header_text(
             (true, false) if def.id == FILTER_MOD.id && kind == FilterKind::Ladder => {
                 upper("Ladder Mod")
             }
+            (true, false) if def.id == FILTER_MOD.id && kind == FilterKind::Sem => upper("SEM Mod"),
             (true, false) => upper(def.name),
             (false, _) => upper(def.short),
         };

@@ -115,6 +115,11 @@ pub enum Response {
     LadderBp2,
     LadderBp4,
     LadderHp4,
+    /// SEM's MODE output, `(1 − m) + m·s²` over `s² + ks + 1`: LP, the
+    /// notch at `√((1 − m)/m)` × FREQ, HP (ADR 0192); `m` in 64ths.
+    SemMode(u8),
+    /// SEM's BANDPASS, `s/(s² + ks + 1)`: 1/k at FREQ.
+    SemBand,
 }
 
 impl Response {
@@ -129,6 +134,14 @@ impl Response {
                 Response::K2040Exp
             }
             r => r,
+        }
+    }
+
+    /// SEM's output `mode` at MODE `morph` (0..1).
+    pub fn sem(mode: crate::dsp::filter::FilterMode, morph: f32) -> Self {
+        match mode {
+            crate::dsp::filter::FilterMode::Bp12 => Response::SemBand,
+            _ => Response::SemMode((clampf(morph, 0.0, 1.0) * 64.0 + 0.5) as u8),
         }
     }
 
@@ -155,6 +168,7 @@ impl Response {
             (K::Ladder, M::Hp24 | M::Hp12) => Response::LadderHp4,
             (K::Ladder, M::Lp12) => Response::LadderLp2,
             (K::Ladder, _) => Response::K2040,
+            (K::Sem, m) => Response::sem(m, 0.0),
         }
     }
 }
@@ -227,6 +241,12 @@ fn mag_db(r: Response, w: f32, reso: f32) -> f32 {
             let g = ladder::mode_gain(m, k4);
             (g * g * n, den4(w, k4))
         }
+        Response::SemMode(q) => {
+            let m = f32::from(q) * (1.0 / 64.0);
+            let z = (1.0 - m) - m * w2;
+            (z * z, den2(w, crate::dsp::filter::sem::sem_k_tap(reso)))
+        }
+        Response::SemBand => (w2, den2(w, crate::dsp::filter::sem::sem_k_tap(reso))),
         Response::DoubleNotch => return 0.0,
     };
     // A ring at the onset is off the plot, not infinite.

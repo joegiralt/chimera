@@ -290,9 +290,12 @@ pub struct KindPanel {
     pub main: [PanelKnob; 3],
     /// FLT › MOD's first five cells (its F is empty).
     pub mods: [PanelKnob; 5],
-    /// The chip's own cell, FLT › FX's F: STABILITY on the 2040 and
-    /// LADDER (ADR 0168); none on CLEAN and DIRTY.
+    /// The chip's own cell, FLT › FX's F: STABILITY on the 2040, LADDER
+    /// and SEM (ADR 0168, 0192); none on CLEAN and DIRTY.
     pub chip: Option<PanelKnob>,
+    /// FLT › MOD's F: SEM's OUTPUT, its BANDPASS switch (ADR 0192); empty
+    /// on the others.
+    pub out: Option<PanelKnob>,
 }
 
 const fn knob_of(target: PanelTarget, label: &'static str) -> PanelKnob {
@@ -334,6 +337,7 @@ pub static CLEAN_PANEL: KindPanel = KindPanel {
     ],
     mods: mods(route(ModSource::Env1, "FM1"), route(ModSource::Note, "FM2")),
     chip: None,
+    out: None,
 };
 
 const STABILITY: Option<PanelKnob> = Some(filter(FilterParams::STAB, "STABILITY"));
@@ -358,6 +362,22 @@ pub static K2040_PANEL: KindPanel = KindPanel {
         knob_of(PanelTarget::Keybd, "KEYBD"),
     ),
     chip: STABILITY,
+    out: None,
+};
+
+/// SEM speaks the SEM-1A's panel: MODE (the LP–notch–HP pot, a knob, not
+/// CLEAN's list) · FREQ · RES, CLEAN's FM1 and FM2, STABILITY, and its
+/// S504 switch as OUTPUT, MODE or BANDPASS, on FLT › MOD's free F (ADR
+/// 0192).
+pub static SEM_PANEL: KindPanel = KindPanel {
+    main: [
+        filter(FilterParams::MORPH, "MODE"),
+        filter(FilterParams::CUTOFF, "FREQ"),
+        filter(FilterParams::RESONANCE, "RES"),
+    ],
+    mods: CLEAN_PANEL.mods,
+    chip: STABILITY,
+    out: Some(filter(FilterParams::MODE, "OUTPUT")),
 };
 
 pub fn panel(kind: FilterKind) -> &'static KindPanel {
@@ -366,6 +386,7 @@ pub fn panel(kind: FilterKind) -> &'static KindPanel {
         FilterKind::Svf | FilterKind::Dirty => &CLEAN_PANEL,
         FilterKind::Ladder => &LADDER_PANEL,
         FilterKind::K2040 => &K2040_PANEL,
+        FilterKind::Sem => &SEM_PANEL,
     }
 }
 
@@ -373,17 +394,19 @@ pub fn panel(kind: FilterKind) -> &'static KindPanel {
 pub const fn kind_note(kind: FilterKind) -> Option<&'static str> {
     match kind {
         FilterKind::K2040 => Some("4-POLE LP"),
-        FilterKind::Svf | FilterKind::Dirty | FilterKind::Ladder => None,
+        FilterKind::Svf | FilterKind::Dirty | FilterKind::Ladder | FilterKind::Sem => None,
     }
 }
 
 /// Knob `k`: 0–2 FLT's MODE or VOICE, FREQ and Q; 3–7 FLT › MOD's cells;
-/// 9 the chip's cell, if the kind has one; 10 and 11 FLT › JACK's jacks.
+/// 8 FLT › MOD's F, SEM's OUTPUT; 9 the chip's cell, if the kind has one;
+/// 10 and 11 FLT › JACK's jacks.
 pub fn knob(kind: FilterKind, k: u8) -> Option<&'static PanelKnob> {
     let p = panel(kind);
     match k {
         0..=2 => Some(&p.main[k as usize]),
         3..=7 => Some(&p.mods[k as usize - 3]),
+        8 => p.out.as_ref(),
         9 => p.chip.as_ref(),
         10 | 11 => Some(&JACKS[k as usize - 10]),
         _ => None,
@@ -402,6 +425,7 @@ pub fn applies(kind: FilterKind, id: ParamId) -> bool {
             .iter()
             .chain(p.mods.iter())
             .chain(p.chip.iter())
+            .chain(p.out.iter())
             .chain(JACKS.iter())
             .any(|k| k.target == PanelTarget::Filter(id))
 }

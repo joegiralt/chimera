@@ -201,6 +201,22 @@ impl Renderer {
         (slot(FilterParams::CUTOFF), slot(FilterParams::RESONANCE))
     }
 
+    /// The curve the viz draws: SEM's at MODE's set value, eased as the
+    /// knob's cell is (its stored value off the page).
+    fn filter_response(&self, f: &Frame, flt: &crate::params::FilterParams) -> viz::Response {
+        use crate::addr::{BlockRef, ParamAddr};
+        use crate::dsp::filter::FilterKind;
+        use crate::params::FilterParams;
+        if flt.kind() != FilterKind::Sem {
+            return viz::Response::of_voice(flt.kind(), flt.mode(), flt.voice);
+        }
+        let addr = ParamAddr::new(BlockRef::Filter, FilterParams::MORPH);
+        let m = (0..f.def.params.len())
+            .find(|&i| slot_addr(f.def, i, &f.ctx) == Some(addr))
+            .map_or(flt.morph, |s| self.set[s].current());
+        viz::Response::sem(flt.mode(), m)
+    }
+
     /// Where modulation has CUTOFF and RES now, against their set values:
     /// the set eased, plus the modulation's own offset (the animators'
     /// targets differ by it alone), so a knob turn alone leaves no mark.
@@ -256,13 +272,7 @@ impl Renderer {
                 let readout = (v != View::Empty).then(|| (label.as_str(), buf.as_str()));
                 // The solid curve is the set value; modulation is the mark.
                 let at = |s: Option<usize>| s.map_or(0.0, |s| self.set[s].current());
-                viz::filter(
-                    display,
-                    at(c),
-                    at(r),
-                    viz::Response::of_voice(flt.kind(), flt.mode(), flt.voice),
-                    readout,
-                );
+                viz::filter(display, at(c), at(r), self.filter_response(f, flt), readout);
                 self.filter_mark(f).draw(display);
                 if f.clip > 0.0 {
                     draw::clip_led(display, viz::LED_X, viz::LED_Y, f.clip);

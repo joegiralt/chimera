@@ -99,7 +99,8 @@ fn closed(bank2: Option<Bank2Status>) -> bool {
 /// The text cell `addr` shows in place of its value `v` (0..1, as
 /// displayed) under `bank2`: the reverb's TYPE (ADR 0142), TAPE's MODEL
 /// (ADR 0141) and a VA MODE whose oscillators are bank 2's (FM, ADR 0163)
-/// and the FX TYPE FUZZ (ADR 0157) read `NEEDS UPDATE` while their code can't play.
+/// and the FX TYPE FUZZ (ADR 0157) and the filter TYPE SEM (ADR 0192) read
+/// `NEEDS UPDATE` while their code can't play.
 pub fn closed_text(
     addr: crate::addr::ParamAddr,
     v: f32,
@@ -129,7 +130,18 @@ pub fn closed_text(
                     .is_some_and(FxType::in_bank2)
             })
     };
-    (closed(bank2) && (named.contains(&addr) || va_mode() || fx_type())).then_some(NEEDS_UPDATE)
+    let kind = || {
+        use crate::dsp::filter::FilterKind;
+        use crate::params::FilterParams;
+        addr == ParamAddr::new(BlockRef::Filter, FilterParams::KIND)
+            && addr.spec().is_some_and(|s| {
+                FilterKind::BUILT
+                    .get(usize::from(crate::ui::fmt::discrete(v, s.fmt.max_int())))
+                    .is_some_and(|k| k.in_bank2())
+            })
+    };
+    (closed(bank2) && (named.contains(&addr) || va_mode() || fx_type() || kind()))
+        .then_some(NEEDS_UPDATE)
 }
 
 /// What the header of a Part playing `engine` warns under `bank2`: a TAPE
