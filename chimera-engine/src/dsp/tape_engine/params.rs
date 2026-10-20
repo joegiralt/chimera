@@ -69,11 +69,48 @@ impl DiskCode for TapeModel {
     }
 }
 
-/// MODEL's retired codes: REVERSE, PING-PONG and ONESHOT, which load as
-/// PLAY (`translate_v1`).
-pub const REVERSE_CODE: u8 = 1;
-pub const PING_PONG_CODE: u8 = 2;
-pub const ONESHOT_CODE: u8 = 7;
+/// MODEL's retired codes: they load as PLAY (`translate_v1`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RetiredModel {
+    Reverse = 1,
+    PingPong = 2,
+    Oneshot = 7,
+}
+
+impl RetiredModel {
+    pub const ALL: [Self; 3] = [Self::Reverse, Self::PingPong, Self::Oneshot];
+
+    pub fn from_code(c: u8) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| *m as u8 == c)
+    }
+
+    fn play_mode(self) -> PlayMode {
+        match self {
+            Self::Reverse => PlayMode::Loop,
+            Self::PingPong => PlayMode::Ping,
+            Self::Oneshot => PlayMode::One,
+        }
+    }
+
+    fn translate(self, b: &mut dyn Block) {
+        type P = TapeEngineParams;
+        let _ = b.set_enum_code(P::MODEL, TapeModel::Play.disk_code());
+        let _ = b.set_enum_code(P::MODE, self.play_mode().disk_code());
+        match self {
+            Self::Reverse => {
+                let (start, end) = (b.get(P::START), b.get(P::END));
+                b.set(P::START, end);
+                b.set(P::END, start);
+            }
+            Self::Oneshot => {
+                b.set(P::DRAG, FADE_HOLD);
+                b.set(P::SLICE, 0.0);
+            }
+            Self::PingPong => {}
+        }
+    }
+}
 
 /// How PLAY plays: once to END, around a loop, or back and forth.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -914,27 +951,13 @@ const SLICE_IDENTS: [&str; 18] = [
 /// (2) is MODE PING. Run after the file's writes, so a sparse Sound's base
 /// START 0, END 1 becomes START 1, END 0.
 pub fn translate_v1(old: &crate::storage::Retired, b: &mut dyn Block) {
-    type P = TapeEngineParams;
-    let mode = match old.code(P::MODEL) {
-        Some(REVERSE_CODE) => PlayMode::Loop,
-        Some(PING_PONG_CODE) => PlayMode::Ping,
-        Some(ONESHOT_CODE) => PlayMode::One,
-        _ => return,
+    let Some(m) = old
+        .code(TapeEngineParams::MODEL)
+        .and_then(RetiredModel::from_code)
+    else {
+        return;
     };
-    let _ = b.set_enum_code(P::MODEL, TapeModel::Play.disk_code());
-    let _ = b.set_enum_code(P::MODE, mode.disk_code());
-    match old.code(P::MODEL) {
-        Some(REVERSE_CODE) => {
-            let (start, end) = (b.get(P::START), b.get(P::END));
-            b.set(P::START, end);
-            b.set(P::END, start);
-        }
-        Some(ONESHOT_CODE) => {
-            b.set(P::DRAG, FADE_HOLD);
-            b.set(P::SLICE, 0.0);
-        }
-        _ => {}
-    }
+    m.translate(b);
 }
 
 #[cfg(test)]

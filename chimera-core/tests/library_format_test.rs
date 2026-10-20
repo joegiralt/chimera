@@ -438,6 +438,18 @@ fn a_refused_enum_code_counts_and_a_retired_one_does_not() {
     assert_eq!(decode_skips(&retired), 0);
 }
 
+#[test]
+fn every_retired_model_loads_and_translates_to_play() {
+    use chimera_core::dsp::tape_engine::{RetiredModel, TapeModel};
+    let tape = stamped(&Sound::init(EngineType::Tape));
+    for m in RetiredModel::ALL {
+        let f = with_block_raw(&tape, 34, 0, (m as u32).to_le_bytes());
+        assert_eq!(decode_skips(&f), 0, "{m:?}");
+        let s = decode(&f).unwrap();
+        assert_eq!(s.params.tape.model(), TapeModel::Play, "{m:?}");
+    }
+}
+
 // ---- Note (showcase spec § 1, ADR 0133) ----
 
 const NOTE: u16 = 0x001D;
