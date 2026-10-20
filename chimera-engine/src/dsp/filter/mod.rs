@@ -131,9 +131,10 @@ const CLEAN_LABELS: [&str; 8] = ["LP1", "LP2", "LP4", "BP2", "BP4", "HP4", "NOTC
 pub const CLEAN_MOVE_COST: Cost = Cost(75);
 /// The 2040's moving path (ADR 0096's +12 instructions, 2 `vdiv`), with
 /// `ramps`' fill by adding (6.25): REV2 80 + 6.25 + 2.31 block
-/// instructions, 2.02 `vdiv`, 170 less steady 110 = 60; EXP 94 + 6.25 +
-/// 2.34, 190 − 135 = 55. Billed the larger: 60 (1879169d, 2026-10-07).
-pub const K2040_MOVE_COST: Cost = Cost(60);
+/// instructions, 2.02 `vdiv`, 170 less steady 110 = 60; EXP 100 + 6.25 +
+/// 2.34 with its make-up gain a sample (ADR 0191; 94 before), 200 − 135 =
+/// 65. Billed the larger: 65 (2026-10-20).
+pub const K2040_MOVE_COST: Cost = Cost(65);
 /// LEVEL's clipper on CLEAN and DIRTY, billed while it can run: the
 /// fading loop 20.0 instructions a sample, 0 `vdiv`, ceil5(20 × 1.606) =
 /// 35 (held in, 16.62: 30), over the gate shut's 0 at ½ (1879169d,
@@ -449,7 +450,8 @@ impl<'a> TapShape<'a> {
 /// the ramped amount, the clamp, `exp2_poly`, the hold, the one-pole and
 /// on the 2040 the guard, in bank 2's loops. Counted on the thumbv7em ORBIT
 /// build against each type's moving loop: LADDER 140 → 190 instructions,
-/// the 2040 REV2 90 → 145 and EXP 105 → 166; CLEAN's and DIRTY's one loop
+/// the 2040 REV2 90 → 145 and EXP 111 → 172 (105 → 166 before the
+/// make-up of ADR 0191, which rides both); CLEAN's and DIRTY's one loop
 /// for every mode adds its dispatch. Billed the costliest, EXP's 61:
 /// ceil5(61 × 1.606) = 100.
 pub const FB_COST: Cost = Cost(100);

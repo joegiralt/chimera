@@ -4,8 +4,9 @@
 //! linearly in one step, then fed back through the voice's own resonance
 //! element: REV2 (the Prophet-5 Rev 1/2) a linear SSM 2020, EXP (the RSF
 //! Kobol Expander) a 3080 limiter. VOICE also picks the drive into the chip
-//! and, on EXP, a 3080 output stage. Same parameters. No compensation: the
-//! bass loss is the circuits'.
+//! and, on EXP, a 3080 output stage and the Kobol's make-up gain, which
+//! keeps its bass at high RES (ADR 0191). Same parameters. REV2's bass
+//! loss is the circuit's, uncompensated.
 
 use super::coef::g_of;
 use super::level::{FilterMods, LevelRamp, clip_amount, level_gain};
@@ -50,17 +51,32 @@ pub const STAGE_SCALE_EXP: f32 = {
     1.5 * (node / rf) / 0.052 / R_2040
 };
 /// EXP's feedback limit, its 3080 (the Kobol's CI5, spec B3). It sets
-/// EXP's squelch, its self-oscillation level and pitch (L = ∞ sits at +14
-/// cents) and its full-scale bass loss. REV2 has none: its SSM 2020 is
-/// linear, and the ±1 V clip alone bounds its loop.
-pub const L_2040: f32 = 0.25;
+/// EXP's squelch, its self-oscillation level and pitch and its full-scale
+/// bass loss. ½ (ADR 0191; ¼ in ADR 0096): at ¼ a full-scale input
+/// squelched the ring, which the Kobol keeps over its VCO (+11 dB re the
+/// fundamental at RES max, 2026-10-20); at ½ it rings over a full-scale
+/// saw, +5.5 dB, and the ±1 V clip, not the limit, sets its level. REV2 has
+/// none: its SSM 2020 is linear, and the clip alone bounds its loop.
+pub const L_2040: f32 = 0.5;
+/// EXP's make-up gain `1 + m(k)`, `m = k·(MAKE_UP_C1 − MAKE_UP_C2·k)`
+/// (ADR 0191), on the output, after the 3080 stage, outside the loop. The
+/// RSF Kobol Expander loses about half the 4-pole's `1/(1 + k)` bass, flat
+/// from 56 Hz to 1.7 kHz, with the same bump over its bass: a RES-made
+/// make-up gain, not a shelf. Fitted to its held A1 (56.4 Hz, 2026-10-20,
+/// kobol-session): the fundamental against RES 0 at RES knob 5 −3.3 dB and
+/// max −7.0, at EXP RES 0.4 and 1 (the comparison's match by bump), where
+/// EXP lost −8.3 and −13.9 dB. +5.0 dB at RES 0.4, +6.9 at 1; 0 at RES 0.
+pub const MAKE_UP_C1: f32 = 0.6;
+pub const MAKE_UP_C2: f32 = 0.0752;
 /// REV2's cutoff trim, −13.3 cents, as the Prophet's is trimmed at full
 /// resonance (R407/R406): with a linear loop the ±1 V clip rings it +13.6
 /// sharp. A ratio on FREQ, once a block.
 pub const TRIM_REV2: f32 = 0.992348;
-/// EXP's cutoff trim, +11.5 cents: the circuit-scale stage bend (ADR 0105)
-/// rings the self-oscillating loop 11 cents flat, measured. A ratio on FREQ.
-pub const TRIM_EXP: f32 = 1.006_664_8;
+/// EXP's cutoff trim, +36 cents: the circuit-scale stage bend (ADR 0105)
+/// rang the self-oscillating loop 11 cents flat, and at `L_2040` ½ the ring
+/// reaches the ±1 V clip, which rings it 21–29 cents flatter (ADR 0191),
+/// measured. A ratio on FREQ.
+pub const TRIM_EXP: f32 = 1.021_012_1;
 /// The output level: LEVEL ½ at RES 0 is 0 dB ± 0.5 on both voices.
 pub const OUT_2040: f32 = 1.0;
 /// The LED's knee, a fraction of the swing: stage 1 asked for more than
@@ -77,6 +93,9 @@ const _: () = {
     assert!(BETA_EXP * INV_BETA_EXP > 0.9999 && BETA_EXP * INV_BETA_EXP < 1.0001);
     assert!(STAGE_SCALE_EXP > 3.03 && STAGE_SCALE_EXP < 3.05);
     assert!(L_2040 > 0.0 && OUT_2040 > 0.0);
+    // `m` is positive over RES (k ≤ 4.21 at RES 1), and flat at the top
+    // (its vertex at RES 0.95, within 0.4 % of RES 1's).
+    assert!(MAKE_UP_C1 > 0.0 && MAKE_UP_C1 > 4.21 * MAKE_UP_C2);
     assert!(LED_KNEE > 0.0 && LED_KNEE <= 1.0);
 };
 
@@ -108,6 +127,8 @@ pub trait VoiceSpec: voice::Sealed {
     const TRIM: f32 = Self::VOICE.trim();
     /// The stages' bend, a multiple of REV2's.
     const STAGE_SCALE: f32 = Self::VOICE.stage_scale();
+    /// The make-up gain.
+    const MAKE_UP: bool = Self::VOICE.make_up();
 }
 
 /// The voices' zero-sized types (`VoiceSpec`).
@@ -211,6 +232,11 @@ impl K2040Voice {
         matches!(self, K2040Voice::Exp)
     }
 
+    /// The make-up gain: EXP only (ADR 0191).
+    pub const fn make_up(self) -> bool {
+        matches!(self, K2040Voice::Exp)
+    }
+
     /// The steady bill over LP24, cycles a sample.
     pub const fn cost(self) -> Cost {
         Cost(match self {
@@ -273,6 +299,12 @@ pub fn sat_2040(v: f32) -> f32 {
     c - (4.0 / 27.0) * c * c * c
 }
 
+/// EXP's make-up gain at feedback `k`, `1 + k·(C1 − C2·k)`: 1 at RES 0.
+#[inline(always)]
+pub fn make_up(k: f32) -> f32 {
+    1.0 + k * (MAKE_UP_C1 - MAKE_UP_C2 * k)
+}
+
 /// The model's state: four stage integrators and the last block's ramp
 /// ends (`None` on a fresh filter, which starts unramped). VOICE is the
 /// params', read each block: `Filter` rescales the states when it flips
@@ -328,6 +360,8 @@ struct Coef {
     one_g: f32,
     d: f32,
     kd: f32,
+    /// EXP's make-up gain.
+    make_up: f32,
 }
 
 #[inline(always)]
@@ -342,6 +376,7 @@ fn coef(g: f32, k: f32) -> Coef {
         one_g: 1.0 - big_g,
         d,
         kd: k * d,
+        make_up: make_up(k),
     }
 }
 
@@ -488,7 +523,7 @@ impl K2040 {
         mut trace: impl FnMut(usize, &[f32; 4]),
     ) -> (f32, f32) {
         let c = coef(r.g.1, r.k.1);
-        let out = r.voice.out_scale();
+        let out = Self::out_scale::<V>(r.voice, &c);
         let (mut a, a_step) = (r.a.0, (r.a.1 - r.a.0) / BLOCK_SIZE as f32);
         let (mut peak, mut sum) = (0.0f32, 0.0f32);
         for (i, s) in buf.iter_mut().enumerate() {
@@ -511,11 +546,11 @@ impl K2040 {
         r: Ramps,
         mut trace: impl FnMut(usize, &[f32; 4]),
     ) -> (f32, f32) {
-        let out = r.voice.out_scale();
         let (mut a, a_step) = (r.a.0, (r.a.1 - r.a.0) / BLOCK_SIZE as f32);
         let (mut peak, mut sum) = (0.0f32, 0.0f32);
         for (j, sub) in buf.as_chunks_mut::<SUB>().0.iter_mut().enumerate() {
             let c = coef(step_to(r.g, j), step_to(r.k, j));
+            let out = Self::out_scale::<V>(r.voice, &c);
             for (i, s) in sub.iter_mut().enumerate() {
                 a += a_step;
                 sum += *s;
@@ -548,7 +583,6 @@ impl K2040 {
         if let Some(t) = tap {
             t.apply(&mut gs, &mut ks);
         }
-        let out = r.voice.out_scale();
         let (mut a, a_step) = (r.a.0, (r.a.1 - r.a.0) / n);
         let (mut peak, mut sum) = (0.0f32, 0.0f32);
         // FB's loop is bank 2's (ADR 0190); this one runs as it was.
@@ -573,9 +607,19 @@ impl K2040 {
             let (y, d1) = self.tick::<V>(*s * a, &c);
             trace(i, &y);
             peak = peak.max(d1.abs());
-            *s = Self::output::<V>(y[3], out);
+            *s = Self::output::<V>(y[3], Self::out_scale::<V>(r.voice, &c));
         }
         (peak, sum)
+    }
+
+    /// The output's scale at `c`: `out_scale`, times EXP's make-up gain.
+    #[inline(always)]
+    fn out_scale<V: VoiceSpec>(v: K2040Voice, c: &Coef) -> f32 {
+        if V::MAKE_UP {
+            v.out_scale() * c.make_up
+        } else {
+            v.out_scale()
+        }
     }
 
     /// `y₄` to the output: `y₄·OUT/α` on REV2; on EXP through the 3080,
@@ -671,7 +715,6 @@ pub(super) mod fed {
             fb: Fed,
             gr: (f32, f32),
         ) -> (f32, f32) {
-            let out = V::VOICE.out_scale();
             let (mut peak, mut sum) = (0.0f32, 0.0f32);
             for (i, s) in buf.iter_mut().enumerate() {
                 a += a_step;
@@ -679,7 +722,8 @@ pub(super) mod fed {
                 let c = coef(fb.g(gs[i], i, self.fbp, gr), ks[i]);
                 let (y, d1) = self.tick::<V>(*s * a, &c);
                 peak = peak.max(d1.abs());
-                let o = Self::output::<V>(y[3], out);
+                // EXP's make-up rides the output into FB and the guard.
+                let o = Self::output::<V>(y[3], Self::out_scale::<V>(V::VOICE, &c));
                 fb.feed(&mut self.fbp, o);
                 *s = guard(o, fb.depth(i));
             }

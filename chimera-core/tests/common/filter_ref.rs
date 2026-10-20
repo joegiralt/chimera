@@ -8,7 +8,7 @@ use chimera_core::dsp::filter::clean::trim;
 use chimera_core::dsp::filter::coef::g_of;
 use chimera_core::dsp::filter::g_at;
 use chimera_core::dsp::filter::k2040::{
-    ALPHA_EXP, ALPHA_REV2, BETA_EXP, INV_BETA_EXP, L_2040, OUT_2040, R_2040,
+    ALPHA_EXP, ALPHA_REV2, BETA_EXP, INV_BETA_EXP, L_2040, MAKE_UP_C1, MAKE_UP_C2, OUT_2040, R_2040,
 };
 use chimera_hal::BLOCK_SIZE;
 use std::ops::{Add, Div, Mul, Sub};
@@ -20,11 +20,6 @@ use std::ops::{Add, Div, Mul, Sub};
 /// into it, as CLEAN's modes are (Task 9 fix round).
 #[allow(dead_code)] // not every test binary reads it
 pub const OSC_BAND_DB: (f32, f32) = (-12.0, -4.0);
-
-/// The 2040's self-oscillation band on EXP, dBFS RMS: REV2's (`OSC_BAND_DB`)
-/// less EXP's 6 dB of drive, which LEVEL ½'s unity costs (spec § 3).
-#[allow(dead_code)]
-pub const OSC_BAND_EXP_DB: (f32, f32) = (-18.0, -10.0);
 
 /// `sat_c1` in f64.
 fn sat(x: f64) -> f64 {
@@ -237,7 +232,7 @@ fn sat_2040_r<T: Real>(v: T) -> T {
 /// The 2040 (spec § 3), sample by sample from rest: `x[n]` scaled by
 /// `a[n]` (`α·gain`), with `g[n]` and `k[n]`; `G` and `D` divided every
 /// sample; the voice's resonance element; the 3080 output stage if
-/// `post`. In `T`'s arithmetic, the
+/// `post`; EXP's make-up gain `1 + k·(C1 − C2·k)` (ADR 0191). In `T`'s arithmetic, the
 /// model's own order of operations.
 pub fn k2040_ref<T: Real>(
     x: &[f32],
@@ -289,6 +284,10 @@ pub fn k2040_ref<T: Real>(
             *st = y + t;
             v = y;
         }
+        let out = match voice {
+            K2040Voice::Rev2 => out,
+            K2040Voice::Exp => out * (one + k * (T::of(MAKE_UP_C1) - T::of(MAKE_UP_C2) * k)),
+        };
         let y = if post {
             sat_2040_r(T::of(BETA_EXP) * v) * out
         } else {

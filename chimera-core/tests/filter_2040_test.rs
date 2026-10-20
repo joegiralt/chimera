@@ -6,7 +6,7 @@ mod common;
 use chimera_core::block::{Block, DiskCode};
 use chimera_core::dsp::filter::coef::g_of;
 use chimera_core::dsp::filter::k2040::{
-    ALPHA_EXP, ALPHA_REV2, OUT_2040, R_2040, STAGE_SCALE_EXP, k2040_k, sat_2040,
+    ALPHA_EXP, ALPHA_REV2, OUT_2040, R_2040, STAGE_SCALE_EXP, k2040_k, make_up, sat_2040,
 };
 use chimera_core::dsp::filter::{
     Filter, FilterKind, FilterMode, FilterMods, K2040, K2040Voice, KIND_NAMES, level_gain,
@@ -20,9 +20,7 @@ use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
 use common::Rig;
 use common::codec_util::{decode, encode, filter_payload, sound_file as file};
-use common::filter_ref::{
-    OSC_BAND_DB, OSC_BAND_EXP_DB, a_track, grid_input, k2040_ref, mag_db, rms_db, thd,
-};
+use common::filter_ref::{OSC_BAND_DB, a_track, grid_input, k2040_ref, mag_db, rms_db, thd};
 
 const SR: u32 = 48_000;
 const FS: f32 = SR as f32;
@@ -107,7 +105,13 @@ fn k2040_small_signal_corner_matches_the_linear_prototype() {
             for res in [0.0f32, 0.2, 0.4, 0.6, 0.8] {
                 let p = params(v, fc, res, 0.5);
                 let f3 = proto_corner(fc, res);
-                let dc = proto_db(fc, res, 1.0) as f32;
+                // EXP's make-up lifts the whole response.
+                let up = if v.make_up() {
+                    20.0 * make_up(k2040_k(res)).log10()
+                } else {
+                    0.0
+                };
+                let dc = proto_db(fc, res, 1.0) as f32 + up;
                 let (below, above) = (
                     gain_db(&p, 0.01, (f3 * 0.95) as f32) - dc,
                     gain_db(&p, 0.01, (f3 * 1.05) as f32) - dc,
@@ -121,18 +125,26 @@ fn k2040_small_signal_corner_matches_the_linear_prototype() {
     }
 }
 
-/// EXP's full-scale bass gain against `−20·log₁₀(1 + k)`, and its resonant
+/// The loop's bass loss, `−20·log₁₀(1 + k)`, under EXP's make-up gain.
+fn bass_want(v: K2040Voice, res: f32) -> f32 {
+    let k = k2040_k(res);
+    let up = if v.make_up() { make_up(k) } else { 1.0 };
+    20.0 * (up / (1.0 + k)).log10()
+}
+
+/// The full-scale bass gain against `bass_want`, and its resonant
 /// peak against small signal, RES ≤ 0.8 (EXP is meant to compress there):
 /// the worst measured, plus margin.
 const K2040_FULL_DB: [f32; 2] = [1.0, 1.0];
 /// The ±1 V clip holds a full-scale sine at the peak: −9.11 dB on REV2 and
 /// −14.66 on EXP at RES 0.8, the worst (2026-10-06), plus 0.5.
 const K2040_PEAK_DB: [f32; 2] = [9.6, 15.2];
-/// REV2's bass at RES 1 against `1/(1 + k)`, dB: −1.2 small, −0.6 full.
-const REV2_RES1_DB: f32 = 1.5;
+/// The bass at RES 1 against `bass_want`, dB: REV2 −1.2 small, −0.6 full;
+/// EXP −1.1 small.
+const RES1_DB: f32 = 1.5;
 
 #[test]
-fn k2040_bass_loss_is_authentic_at_small_and_full_scale() {
+fn k2040_bass_loss_is_the_loops_under_the_make_up() {
     for v in VOICES {
         for amp in [0.01f32, 1.0] {
             let mut last = f32::INFINITY;
@@ -140,13 +152,14 @@ fn k2040_bass_loss_is_authentic_at_small_and_full_scale() {
                 let res = r as f32 / 10.0;
                 let tol = match (v, r, amp == 1.0) {
                     // Past onset REV2 rings at the clip (its 2020 is
-                    // linear), which ducks the bass: −1.2 dB measured.
-                    (K2040Voice::Rev2, 10, _) => REV2_RES1_DB,
+                    // linear), which ducks the bass: −1.2 dB measured. EXP
+                    // reaches the clip too since ADR 0191: −1.1.
+                    (_, 10, _) => RES1_DB,
                     (_, _, true) => K2040_FULL_DB[v as usize],
                     _ => 1.0,
                 };
                 let got = gain_db(&params(v, 2000.0, res, 0.5), amp, 100.0);
-                let want = -20.0 * (1.0 + k2040_k(res)).log10();
+                let want = bass_want(v, res);
                 println!("{v:?} amp {amp} RES {res}: {got:.2} dB (want {want:.2})");
                 assert!(got < last, "{v:?} amp {amp} RES {res}: {got} after {last}");
                 assert!(
@@ -161,7 +174,11 @@ fn k2040_bass_loss_is_authentic_at_small_and_full_scale() {
             } else {
                 1.0
             };
-            assert!((at + 14.0).abs() <= tol, "{v:?} amp {amp} RES 0.95: {at}");
+            let want = bass_want(v, 0.95);
+            assert!(
+                (at - want).abs() <= tol,
+                "{v:?} amp {amp} RES 0.95: {at} vs {want}"
+            );
         }
         // The resonant peak, at the prototype's peak frequency.
         for r in 1..=8 {
@@ -216,11 +233,12 @@ fn cents(f: f64, want: f64) -> f64 {
 /// REV2's self-oscillation, dBFS RMS (−5.8 to −5.9 measured, −4.9 at 8
 /// kHz; ± 1 dB): the ±1 V clip's level, its 2020 linear.
 const REV2_OSC_DB: f32 = -5.4;
-/// EXP's (−17.0 to −17.3 measured; ± 0.5 dB): its 3080's level. Without
-/// the limiter it rings 11 dB louder.
-const EXP_OSC_DB: f32 = -17.1;
-/// Absolute pitch, cents: REV2 −2.5 to +0.3 measured, trimmed; EXP −1.2
-/// to −1.4. EXP without its limiter reads +11 to +14.
+/// EXP's (−5.1 to −5.3 measured; ± 0.5 dB): at `L_2040` ½ its ring
+/// reaches the ±1 V clip, then the make-up's +6.9 dB at RES 1 (ADR 0191;
+/// −17.1 at ¼ with none), in REV2's band.
+const EXP_OSC_DB: f32 = -5.2;
+/// Absolute pitch, cents: REV2 −2.5 to +0.3 measured, trimmed; EXP −4.5
+/// to +4.1 (ADR 0191's clip-bound ring drifts flat up the top octaves).
 const PITCH_CENTS: f64 = 5.0;
 
 #[test]
@@ -230,10 +248,7 @@ fn k2040_self_oscillates_in_band_and_on_pitch() {
         .chain([8000.0])
         .collect();
     for v in VOICES {
-        let (lo, hi) = match v {
-            K2040Voice::Rev2 => OSC_BAND_DB,
-            K2040Voice::Exp => OSC_BAND_EXP_DB,
-        };
+        let (lo, hi) = OSC_BAND_DB;
         for &fc in &freqs {
             let y = oscillation(v, fc);
             let level = rms_db(&y);
@@ -353,9 +368,15 @@ fn jump_error(v: K2040Voice, blocks: &[(f32, f32)]) -> f64 {
     err / peak
 }
 
-/// The exact output bound: every stage within ±R, so `|out| ≤ R/α·OUT`.
+/// The exact output bound: every stage within ±R, so `|out| ≤ R/α·OUT`,
+/// times EXP's make-up gain at its largest, RES 1.
 fn bound(v: K2040Voice) -> f32 {
-    R_2040 / v.alpha() * OUT_2040 + 1e-6
+    let up = if v.make_up() {
+        make_up(k2040_k(1.0))
+    } else {
+        1.0
+    };
+    R_2040 / v.alpha() * OUT_2040 * up + 1e-6
 }
 
 #[test]
@@ -517,9 +538,10 @@ fn compression(v: K2040Voice) -> f32 {
     at(1.0) - at(0.01)
 }
 
-/// Each voice's compression, measured 2026-10-06 (± 0.3 dB): REV2's linear
-/// 2020 stays under the clip here, EXP's 3080 squelches.
-const COMPRESSION_DB: [f32; 2] = [-0.02, -6.42];
+/// Each voice's compression (± 0.3 dB): REV2's linear 2020 stays under
+/// the clip here (2026-10-06), EXP's 3080 squelches, −2.65 dB at `L_2040`
+/// ½ (ADR 0191; −6.42 at ¼).
+const COMPRESSION_DB: [f32; 2] = [-0.02, -2.65];
 
 #[test]
 fn k2040_exp_squelches_under_drive() {
@@ -623,13 +645,13 @@ fn k2040_voice_flip_keeps_level_and_codes() {
             "{from:?} → {to:?}: {before} → {after}"
         );
         // Linear content is exact: the flip lands on the new voice's own
-        // output (the trims move the corners: REV2's 13 cents, EXP's 11).
+        // output (the trims move the corners: REV2's −13 cents, EXP's +36).
         let peak = own.iter().fold(0.0f32, |m, y| m.max(y.abs()));
         let err = flipped[at..]
             .iter()
             .zip(&own[at..])
             .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
-        assert!(err <= 0.02 * peak, "{from:?} → {to:?}: {err} of {peak}");
+        assert!(err <= 0.04 * peak, "{from:?} → {to:?}: {err} of {peak}");
     }
 }
 
@@ -834,4 +856,132 @@ fn k2040_exp_stage_bend_is_at_the_circuit_scale() {
     assert!((STAGE_SCALE_EXP - 3.04).abs() < 0.01);
     assert_eq!(K2040Voice::Rev2.stage_scale(), 1.0);
     assert_eq!(K2040Voice::Exp.stage_scale(), STAGE_SCALE_EXP);
+}
+
+/// A held saw's fundamental through a fresh 2040, dB: the last 40 periods
+/// of 2 s.
+fn h1_db(p: &FilterParams, amp: f32, f0: f32) -> f32 {
+    let y = render(p, 2 * SR as usize, |i| {
+        let t = i as f32 * f0 / FS;
+        amp * (2.0 * (t - t.floor()) - 1.0)
+    });
+    let m = (40.0 * FS / f0) as usize;
+    mag_db(&y[y.len() - m..], f0, FS)
+}
+
+/// The RSF Kobol Expander's held A1 (its VCO 1, 56.4 Hz), cutoff open:
+/// the fundamental against RES 0 at RES knob 5 and max (kobol-session,
+/// 2026-10-20), at the EXP RES the comparison matched to each by bump.
+const KOBOL_BASS_DB: [(f32, f32); 2] = [(0.4, -3.3), (1.0, -7.0)];
+
+/// ADR 0191: EXP's fundamental follows the Kobol's curve, full scale and
+/// 20 dB down: RES 0 untouched, knob 5 and max within 0.5 dB, falling all
+/// the way. Before the make-up EXP read −8.3 and −13.9 there.
+#[test]
+fn k2040_exp_bass_follows_the_kobol() {
+    // RES 0: the make-up is exactly 1, so EXP is its loop, bit for bit.
+    assert_eq!(make_up(k2040_k(0.0)), 1.0);
+    for amp in [1.0f32, 0.1] {
+        let at = |res: f32| h1_db(&params(K2040Voice::Exp, 9401.0, res, 0.5), amp, 56.413);
+        let base = at(0.0);
+        for (res, want) in KOBOL_BASS_DB {
+            let got = at(res) - base;
+            println!("EXP amp {amp} RES {res}: {got:+.2} dB (Kobol {want:+.1})");
+            assert!(
+                (got - want).abs() <= 0.5,
+                "EXP amp {amp} RES {res}: {got:.2} dB"
+            );
+        }
+        let mut last = 0.0f32;
+        for r in 1..=10 {
+            let res = r as f32 / 10.0;
+            let got = at(res) - base;
+            assert!(
+                got < last,
+                "EXP amp {amp} RES {res}: {got:.2} after {last:.2}"
+            );
+            last = got;
+        }
+    }
+}
+
+/// The make-up lifts EXP's whole response, so its resonant bump over its
+/// bass is the loop's (the Kobol's +5.2 dB at knob 5 is EXP's at RES 0.4):
+/// small signal, the peak re 30 Hz, against the linear prototype's at the
+/// trimmed FREQ.
+#[test]
+fn k2040_exp_make_up_keeps_the_bump_over_the_bass() {
+    let v = K2040Voice::Exp;
+    for fc in [250.0f32, 1000.0, 4000.0] {
+        for res in [0.4f32, 0.85] {
+            let ft = fc * v.trim();
+            let peak_f = (20..8000)
+                .map(|f| f as f64)
+                .max_by(|a, b| proto_db(ft, res, *a).total_cmp(&proto_db(ft, res, *b)))
+                .unwrap() as f32;
+            let p = params(v, fc, res, 0.5);
+            let got = gain_db(&p, 0.01, peak_f) - gain_db(&p, 0.01, 30.0);
+            let want = (proto_db(ft, res, f64::from(peak_f)) - proto_db(ft, res, 30.0)) as f32;
+            println!("EXP {fc} Hz RES {res} peak {peak_f} Hz: bump {got:+.2} dB (loop {want:+.2})");
+            assert!(
+                (got - want).abs() <= 0.5,
+                "EXP {fc} RES {res}: {got:.2} vs {want:.2}"
+            );
+        }
+    }
+}
+
+/// At RES 1 EXP rings over a full-scale saw, as the Kobol rings over its
+/// VCO (+11 dB re the fundamental) and REV2 does (+8): at ¼ its 3080
+/// squelched it (−4 dB). FREQ 1 kHz, A1, the ring's strongest line re H1.
+#[test]
+fn k2040_exp_rings_over_a_full_scale_saw() {
+    let f0 = 56.413f32;
+    let y = render(
+        &params(K2040Voice::Exp, 1000.0, 1.0, 0.5),
+        2 * SR as usize,
+        |i| {
+            let t = i as f32 * f0 / FS;
+            (2.0 * (t - t.floor()) - 1.0) + if i == 0 { 0.01 } else { 0.0 }
+        },
+    );
+    let t = &y[y.len() - (40.0 * FS / f0) as usize..];
+    let h1 = mag_db(t, f0, FS);
+    let ring = (300..2000)
+        .map(|f| mag_db(t, f as f32, FS))
+        .fold(f32::MIN, f32::max);
+    println!("EXP ring re H1: {:+.2} dB", ring - h1);
+    assert!(ring - h1 >= 3.0, "EXP ring {:.2} dB re H1", ring - h1);
+}
+
+/// REV2 is untouched by EXP's make-up and limit (ADR 0191): its output over
+/// held, moving and gliding blocks, every FREQ, RES and LEVEL step, hashed
+/// bit for bit, pinned at origin/main 791ce07e, before the change.
+#[test]
+fn k2040_rev2_is_bit_identical_to_before_the_make_up() {
+    let mut p = params(K2040Voice::Rev2, 1000.0, 0.0, 0.5);
+    let mut f = K2040::new();
+    let (mut h, mut n) = (0xcbf2_9ce4_8422_2325u64, 0usize);
+    for b in 0..600usize {
+        let t = b / 20;
+        (p.cutoff, p.resonance, p.level) = (
+            [80.0f32, 400.0, 2000.0, 9000.0, 18000.0][t % 5],
+            [0.0f32, 0.3, 0.6, 0.85, 0.95, 1.0][t % 6],
+            [0.25f32, 0.5, 0.9][t % 3],
+        );
+        let mods = FilterMods {
+            glide: b % 7 == 3,
+            ..FilterMods::NONE
+        };
+        let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|_| {
+            n += 1;
+            let x = (n % 437) as f32 / 218.5 - 1.0;
+            if (n / 9000) % 2 == 0 { x } else { 0.1 * x }
+        });
+        f.process(&mut buf, &p, SR, &mods);
+        for y in buf {
+            h = (h ^ u64::from(y.to_bits())).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    assert_eq!(h, 0x6122_82d7_20ce_15d8);
 }
