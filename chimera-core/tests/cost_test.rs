@@ -2441,3 +2441,49 @@ fn a_fuzz_part_sheds_only_near_the_limit() {
         assert!(8 * one <= budget, "{v:?}: {} > {budget}", 8 * one);
     }
 }
+
+/// ADR 0168: STABILITY bills `STAB_COST` (3) on the 2040 and LADDER below
+/// 1 or routed, and nothing at 1, so a stable Sound's bill is today's; CLEAN
+/// and DIRTY never read it. INIT's Prophet setting keeps INIT VA's voices
+/// on every room.
+#[test]
+fn stability_bills_the_four_pole_kinds_below_one() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::filter::stability::STAB_COST;
+    use chimera_core::params::FilterParams;
+    use chimera_core::preset::Sound;
+    assert_eq!(STAB_COST, Cost(3));
+    let stab = ParamAddr::new(BlockRef::Filter, FilterParams::STAB);
+    let lfo = routes(&[(ModSource::Lfo1, stab, 40)]);
+    for kind in FilterKind::BUILT {
+        let mut p = on(kind);
+        let base = Voice::cost(&p, &ModState::new());
+        p.filter.stability = 0.5;
+        let extra = if kind.four_pole() {
+            STAB_COST
+        } else {
+            Cost::ZERO
+        };
+        assert_eq!(Voice::cost(&p, &ModState::new()), base + extra, "{kind:?}");
+        // Routed, over the route's own bill (CLEAN's, which reads none).
+        p.filter.stability = 1.0;
+        let routed = |p: &ParamSnapshot| Voice::cost(p, &lfo).0 - Voice::cost(p, &routes(&[])).0;
+        assert_eq!(
+            routed(&p) - routed(&on(FilterKind::Svf)),
+            extra.0,
+            "{kind:?} routed"
+        );
+    }
+    let rooms = [
+        SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - RESERVED,
+        SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - RESERVED,
+    ];
+    let init = Sound::init(EngineType::Va).params;
+    let stable = {
+        let mut p = init.clone();
+        p.filter.stability = 1.0;
+        p
+    };
+    let at = |p: &ParamSnapshot| rooms.map(|r| r / Voice::cost(p, &ModState::new()).0);
+    assert_eq!(at(&init), at(&stable));
+}

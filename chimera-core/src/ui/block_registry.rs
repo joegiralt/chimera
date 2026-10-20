@@ -282,7 +282,8 @@ pub static FILTER_MOD: BlockDef = BlockDef {
 };
 
 /// FLT › FX (ADR 0155): INPUT (the filter's LEVEL), the FX TYPE's three
-/// pots, MIX. In DRV's freed id, so page memory doesn't grow.
+/// pots, MIX, and the chip's cell, STABILITY on the 2040 and LADDER (ADR
+/// 0168). In DRV's freed id, so page memory doesn't grow.
 pub static FILTER_FX: BlockDef = BlockDef {
     id: 8,
     name: "FX",
@@ -295,7 +296,7 @@ pub static FILTER_FX: BlockDef = BlockDef {
         ParamSlot::fx_panel(1),
         ParamSlot::fx_panel(2),
         ParamSlot::param(BlockRef::VoiceFx, VoiceFxParams::MIX),
-        EMPTY,
+        ParamSlot::filter_panel(9),
     ],
 };
 

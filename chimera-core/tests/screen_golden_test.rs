@@ -134,7 +134,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // on FLT's front.
     ("flt_fx_off", 0x7398595b237b8ceb),
     ("flt_fx_soft", 0x2a1a36ca519cce4d),
-    ("flt_fx_fold", 0xe60560ce8ed46234),
+    ("flt_fx_fold", 0x43626f2582a4d9a8),
+    ("flt_fx_stab", 0x0b9603057781606a),
     ("flt_front_fx", 0x0186830cde57e60f),
     // Task 8 (#614): PLACE's mini glyph in its cell (every FLT front, row_flt,
     // large_va_drive) and FLT › FX's strip and curve (flt_fx_*, flt_led_*).
@@ -295,7 +296,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("sound_browser", 0xe6ebc09a421a5c11),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
     // Then pool_full: 2352 → 2544 (the formant fields).
-    ("sound_browser_pool_full", 0x81ce95e09e0bd574),
+    ("sound_browser_pool_full", 0x4327d7766a8f1115),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.
@@ -329,7 +330,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_system_diag_aud_load", 0x18fe4d081416e4cb),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.
-    ("settings_project_pool", 0x6ceb6837fe4ebecc),
+    ("settings_project_pool", 0xaedbd6aa48dfcbc4),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).
@@ -438,7 +439,11 @@ const GOLDENS: &[(&str, u64)] = &[
 #[test]
 fn screen_goldens_match() {
     let got: Vec<_> = case_names()
-        .map(|name| (name, render(name).hash()))
+        .map(|name| {
+            let fb = render(name);
+            fb.dump(name);
+            (name, fb.hash())
+        })
         .collect();
     common::golden::check(GOLDENS, &got);
 }

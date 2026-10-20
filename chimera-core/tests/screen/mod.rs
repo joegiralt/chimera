@@ -1517,6 +1517,11 @@ pub const CASES: &[ScreenCase] = &[
         on_flt_fx(ui, FilterKind::K2040, FxType::Fold);
         feed(ui, Input::turn(EncoderId::C, -20)); // SYMMETRY, its cell SYM
     }),
+    // STABILITY in FLT › FX's F on LADDER, turned (ADR 0168).
+    ("flt_fx_stab", |ui| {
+        on_flt_fx(ui, FilterKind::Ladder, FxType::Off);
+        feed(ui, Input::turn(EncoderId::F, -40));
+    }),
     // FLT › FX with the set curve and the strip: SOFT PRE, FOLD POST.
     ("flt_fx_soft_pre", |ui| {
         on_flt_fx(ui, FilterKind::Svf, FxType::Soft);
