@@ -346,5 +346,12 @@ fn factory_sounds_save_as_loaded() {
     }
     if built.iter().all(Option::is_some) {
         assert_eq!(all.finish(), 0xBA88_16F9, "{} Sounds", r.sounds.len());
+    } else {
+        let absent = r.sources.iter().zip(built).filter(|(_, b)| b.is_none());
+        let names: Vec<_> = absent.map(|(x, _)| x.name.as_str()).collect();
+        eprintln!(
+            "CRC pin skipped, CC0 originals absent: {}",
+            names.join(", ")
+        );
     }
 }
