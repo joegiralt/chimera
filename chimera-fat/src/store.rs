@@ -293,7 +293,8 @@ impl<D: Medium> FatStore<D> {
     /// overflows u32 (a corrupt partition offset) refuses the file,
     /// `Corrupt`, and `f` sees no more. The card's real end is not checked:
     /// a run past it fails at the card's CMD18 (R1 error or error token),
-    /// the streams' usual read fault.
+    /// the streams' usual read fault. The gap is tracked in
+    /// private issue #710.
     pub fn runs(
         &mut self,
         vol: VolumeId,
