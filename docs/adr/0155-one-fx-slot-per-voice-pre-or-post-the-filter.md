@@ -52,6 +52,12 @@ A voice can run two shaping stages today: DRV before the filter and the AMP page
 - A FUZZ Part gets fewer voices only near the CPU limit, through the admission bill.
 - DELAY can come later as a TYPE in the same slot, with code 4; its cost is memory (a buffer a voice).
 
+## Built
+
+- PLACE has no large focus-band glyph: it sits on FLT's front page, which is a BigViz with no focus band. Its cell draws the two boxes small (`MiniGlyph::Place`) and its focus behaviour is the word's.
+- FLT › FX's band (strip and curve) draws from bank 2 through the door (`voice_fx::look`); with bank 2 closed the band draws nothing extra and the cells still work. FUZZ's curve is the kernel's own.
+- TYPE and PLACE are not MIDI-mappable (switches); P1-P3 and MIX are.
+
 ## Sources
 
 - Spec `docs/superpowers/specs/2026-10-17-fx-in-filter-design.md` (chimera-fx-plan) and plan `2026-10-19-fx-in-filter.md`; issue #614.

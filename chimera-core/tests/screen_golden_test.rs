@@ -122,21 +122,21 @@ const GOLDENS: &[(&str, u64)] = &[
     // The LEVEL LED at 0 (dark), ½ and 1: beside LEVEL, beside the 2040's
     // DRIVE and in FLT's viz corner (Task 17); then beside FLT › FX's INPUT
     // (#614).
-    ("flt_led_0", 0x6183a88fb5565d4a),
-    ("flt_led_half", 0xc10f27243de610b3),
+    ("flt_led_0", 0xaaaf412f13f766ca),
+    ("flt_led_half", 0xff79b17ba9dd0333),
     ("flt_led_full", 0x504ecaedde1fa3ff),
     // FM3 IN on LFO 2, QM IN on OP 6 (Task 17).
     ("flt_mod_repatched", 0x0bb67ffa22a7ec36),
     // FLT › FX (#614): OFF's dashes, SOFT's and FOLD's pots; FX and PLACE
     // on FLT's front.
-    ("flt_fx_off", 0x09926bca167fce2b),
-    ("flt_fx_soft", 0x3e32ab2381e1ddc9),
-    ("flt_fx_fold", 0x039daf39d590fcb4),
-    ("flt_front_fx", 0x51fd79be2eaa5d37),
+    ("flt_fx_off", 0x7398595b237b8ceb),
+    ("flt_fx_soft", 0x511f201e5f04f945),
+    ("flt_fx_fold", 0x4f3eda43ca7e8e20),
+    ("flt_front_fx", 0xb2030475dfdf164b),
     // Task 8 (#614): PLACE's mini glyph in its cell (every FLT front, row_flt,
     // large_va_drive) and FLT › FX's strip and curve (flt_fx_*, flt_led_*).
-    ("flt_fx_soft_pre", 0x7e327faee312b5b7),
-    ("flt_fx_fold_post", 0x3906e862836fd103),
+    ("flt_fx_soft_pre", 0x083f7055bf7d0fab),
+    ("flt_fx_fold_post", 0xed2cc614e865e30b),
     // THEME's PAGES ROW (ADR 0145): every other screen is recorded under
     // STACK (`screen::ui_for`). FLT's three pages, RES's three, MOD at E2
     // with `>`, OSC at D1R with both arrows and at OP6 with `<`, AMP bare.

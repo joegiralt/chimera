@@ -15,7 +15,7 @@ pub type Rows = [[i8; COLS]; 2];
 
 /// `t`'s curve at `pots` (the set values, ADR 0152) into `out`.
 pub fn render(t: FxType, pots: [f32; 3], out: &mut Rows) {
-    let row = |v: f32| (v.clamp(-1.0, 1.0) * AMP) as i8;
+    let row = |v: f32| (crate::dsp::clampf(v, -1.0, 1.0) * AMP) as i8;
     for i in 0..COLS {
         let s = crate::dsp::fast_sin_turns(i as f32 / (COLS - 1) as f32);
         out[0][i] = row(s);
@@ -54,5 +54,5 @@ pub struct LookDoor {
 
 #[cfg(feature = "bank2")]
 impl LookDoor {
-    pub const DOOR: LookDoor = LookDoor { render: render };
+    pub const DOOR: LookDoor = LookDoor { render };
 }
