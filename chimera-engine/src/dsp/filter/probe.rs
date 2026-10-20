@@ -44,7 +44,7 @@ pub fn k2040_probe<V: VoiceSpec, const MOVING: bool>(
 ) {
     let r = f.ramps(p, SAMPLE_RATE, &FilterMods::NONE);
     let (_, sum) = if MOVING {
-        f.moving::<V>(buf, r, None, |_, _| {})
+        f.moving::<V>(buf, r, None, (super::Fed::OFF, (0.0, 1.0)), |_, _| {})
     } else {
         f.steady::<V>(buf, r, |_, _| {})
     };
@@ -56,7 +56,7 @@ pub fn k2040_probe<V: VoiceSpec, const MOVING: bool>(
 #[inline(never)]
 pub fn dirty_probe<const M: u8>(f: &mut Dirty, buf: &mut [f32; BLOCK_SIZE], p: &FilterParams) {
     let r = f.prelude(buf, p, SAMPLE_RATE, &FilterMods::NONE);
-    let sum = f.run::<M>(buf, r, None);
+    let sum = f.run::<M>(buf, r, None, super::Fed::OFF, SAMPLE_RATE);
     f.settle(sum);
 }
 

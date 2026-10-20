@@ -64,6 +64,8 @@ use screen::*;
 // tape_strip_loop_reversed, tape_src_pool, tape_src_loaded).
 // Re-recorded for ADR 0167 (FLT's front reordered: KIND · FX · Q · MODE ·
 // FX PLACE · FREQ): every FLT front page, row_flt, large_va_drive.
+// The fourth TAPE merge: the browsers and POOL count 16 Sounds with STAB
+// and FB (4 %).
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x4b8d653ed15f4a3e),
@@ -101,26 +103,26 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: MODE reads HP4, CLEAN's label for HP24 (ADR 0096); then
     // LEVEL 64 in DRIVE's cell (Task 6); then FLT › MOD's six cells, FM3
     // turned, its delete hint showing (Task 12): was 0xf6e7d94448ca7888.
-    ("flt_mode", 0xe6ee8137e39a4259),
+    ("flt_mode", 0x4b095ef0fa337ef0),
     // Each type's FLT and FLT › MOD (filter-types § 5, Task 17): CLEAN's
     // NOTCH1, the 2040's lowered pass band and KEYBD HALF, its fixed MODE
     // dimmed and VOICE EXP, DIRTY's NOTCH1 at FREQ (its own MODE names).
     // Layout A (#614): VOICE EXP on FLT (flt_2040_exp, was
     // flt_mod_2040_exp), KEYBD HALF on FLT › MOD, no MODE cell.
     ("flt_clean", 0x56110a2e1e38df2e),
-    ("flt_mod_clean", 0x4f4aabd71e6452c5),
+    ("flt_mod_clean", 0xfd546edb873051e8),
     ("flt_2040", 0x15653ec5210b6730),
     // KIND focused on the 2040: its readout names 4-POLE LP (#614).
     ("flt_2040_kind", 0x1e8668949f243f60),
     // Modulation draws a ghost beside the set curve (#575).
-    ("flt_2040_env_amt", 0xbccdc2ee0e19b0a7),
+    ("flt_2040_env_amt", 0x3aa14553c74ebaa7),
     ("flt_clean_lfo", 0xcdf3c95d4dd3230c),
-    ("flt_mod_2040", 0xbbaec5d6b217ecf4),
+    ("flt_mod_2040", 0x61422d3a4a75baad),
     ("flt_2040_exp", 0x15d1e8c2c7350bb9),
     ("flt_dirty", 0x6c4b2e89b9de9bf7),
-    ("flt_mod_dirty", 0x44d6578ab02c579a),
+    ("flt_mod_dirty", 0x835f55359d7f36c3),
     ("flt_ladder", 0xce6acb4caebff20a),
-    ("flt_mod_ladder", 0x79aecd65ca83688e),
+    ("flt_mod_ladder", 0xdde6c04ab30b5b4f),
     // New (#574): the peak at its real height, 2040 RES 0.3, CLEAN BP2 and
     // LADDER RES 0.
     // Re-recorded on the merge of main (#614): the filter picture and the
@@ -137,7 +139,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("flt_led_half", 0xff79b17ba9dd0333),
     ("flt_led_full", 0xc679e27959a0f747),
     // FM3 IN on LFO 2, QM IN on OP 6 (Task 17).
-    ("flt_mod_repatched", 0x0bb67ffa22a7ec36),
+    // FB on FLT › MOD (ADR 0190).
+    ("flt_mod_fb", 0x639b1b87fda9cdfc),
+    ("flt_mod_repatched", 0x3a42fcf71cbefb03),
     // FLT › FX (#614): OFF's dashes, SOFT's and FOLD's pots; FX and PLACE
     // on FLT's front.
     ("flt_fx_off", 0x7398595b237b8ceb),
@@ -153,7 +157,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // STACK (`screen::ui_for`). FLT's three pages, RES's three, MOD at E2
     // with `>`, OSC at D1R with both arrows and at OP6 with `<`, AMP bare.
     // Re-recorded: the row's pages in full words (`ROW_WORDS`).
-    ("row_flt", 0xbad2817c9a10e670),
+    ("row_flt", 0x51ab20fe12e65d68),
     ("row_res", 0x52e7d782b213fed2),
     ("row_mod", 0x61ae81a248025efe),
     ("row_osc_mid", 0x10a75dc9cea244b8),
@@ -303,10 +307,11 @@ const GOLDENS: &[(&str, u64)] = &[
     // Sound is smaller (fixed columns, no registry entry).
     // Then, with the library_* screens: FACTORY joins the title and B ◂▸
     // moves to hint line 1 (showcase Task 4).
-    ("sound_browser", 0x6623b45f5159b54c),
+    ("sound_browser", 0x2fa4a8557ca216f9),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
     // Then pool_full: 2352 → 2544 (the formant fields).
     // Re-recorded at the merge: MAX_SOUND_COST 2688 (VOICEFX and PLAY's MODE).
+    // Fourth TAPE merge: MAX_SOUND_COST 2656 (STAB, FB and TAPE), same picture.
     ("sound_browser_pool_full", 0x30d9348383441db9),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
@@ -324,7 +329,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // The FACTORY tab: a row's description on line 2, the set's build on
     // line 3; empty, no card, and a TAPE file listed.
     // Re-recorded on the merge: the pool meter at the formant cost.
-    ("factory_described", 0x059be77931b2fd86),
+    ("factory_described", 0xcbb7a29ebaea0cbe),
     ("factory_empty", 0xb13dbda8afb210c3),
     ("factory_no_card", 0xc327c2468f6650b6),
     ("factory_tape_row", 0x498ea355d4f277d3),
@@ -334,14 +339,14 @@ const GOLDENS: &[(&str, u64)] = &[
     // PERSONALIZE › CHAIN MAP: PAGES, ROW (ADR 0145).
     ("settings_personal_chain_map", 0x7aa40f30346b46bd),
     // Long user names, LARGE's pair (ADR 0154).
-    ("sound_browser_long", 0x16575d1984da08b0),
+    ("sound_browser_long", 0x7b76be0e59309d55),
     // PERSONALIZE › TEXT SIZE at NORMAL (ADR 0154).
     ("settings_personal_text_size", 0x771bfc59119e85d2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
     ("settings_system_diag_aud_load", 0x18fe4d081416e4cb),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.
-    ("settings_project_pool", 0xdfa3be17104300dc),
+    ("settings_project_pool", 0x0674700774736f4f),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).
@@ -395,8 +400,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("large_mixer_sends", 0x66e4fced766b46b8),
     ("large_settings_top", 0x9d2976351278b0df),
     ("large_settings_personal", 0x35b1c3eb794412f7),
-    ("large_sound_browser", 0x91de2b3def4d11a9),
-    ("large_sound_browser_long", 0x0998bde715859fbb),
+    ("large_sound_browser", 0x4b2ef7b9df03ce5c),
+    ("large_sound_browser_long", 0xdc1f10aa2fa8aa1e),
     ("large_library_sounds", 0x5b05a63df82aab7e),
     ("large_settings_text_size", 0xe57ffb4a4502d385),
     // SCN: a saved slot, SAVE's, a queued one filling (plan Task 16).

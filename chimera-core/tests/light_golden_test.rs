@@ -30,10 +30,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_personal_theme", 0x3a2a9ae7815335b2),
     // Re-recorded: FACTORY joins the title, B ◂▸ moves to hint line 1.
     // Then the formant merge: the pool meter's cost.
-    ("sound_browser", 0x2e16dceafb14f97d),
+    ("sound_browser", 0x4ff3933ac46b57e1),
     ("toast_exfat", 0xd8ee278545272c31),
     // Re-recorded on the formant merge: the pool meter's cost.
-    ("factory_described", 0x917878458418b9d2),
+    ("factory_described", 0x4ce8bf03c8bdd692),
     ("factory_empty", 0xde1e1dcfa7d715bf),
     ("factory_no_card", 0x2d920eb72d59c123),
     ("factory_tape_row", 0x6737af4a028fc872),

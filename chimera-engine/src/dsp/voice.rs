@@ -15,7 +15,9 @@ use crate::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
 use crate::dsp::envelope::{EnvMods, Envelope};
 use crate::dsp::fast_exp2;
 use crate::dsp::filter::stability::{self, STAB_COST};
-use crate::dsp::filter::{FILTER_LEVEL_COST, Filter, FilterMods, FilterStability, Spread};
+use crate::dsp::filter::{
+    FB_COST, FILTER_LEVEL_COST, Fed, Filter, FilterMods, FilterStability, Spread,
+};
 use crate::dsp::gate::AmpGate;
 use crate::dsp::knobs::Gliding;
 use crate::dsp::knobs::Knobs;
@@ -71,6 +73,8 @@ pub struct Voice {
     filter: Filter,
     /// The filter's chip, this slot's (STABILITY, ADR 0168).
     stab: FilterStability,
+    /// The FB amount the last block ended on: this block's ramps from it.
+    fb_last: f32,
     /// The last block's LEVEL clip, for the LED: 0 while the clipper is
     /// off or the voice idle.
     filter_clip: Clip,
@@ -222,10 +226,13 @@ impl Voice {
         let kind = f.kind();
         let algo = p.engine() == EngineType::Algo;
         let shaped = algo && (p.taps.moving(FixedCol::Freq) || p.taps.moving(FixedCol::Q));
-        let moving = shaped || mods.fixed_moves(FixedCol::Freq) || mods.fixed_moves(FixedCol::Q);
+        let fb = Self::fb_runs(p, mods);
+        let moving =
+            shaped || fb || mods.fixed_moves(FixedCol::Freq) || mods.fixed_moves(FixedCol::Q);
         let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
         f.filter_cost()
             + when(Self::stab_runs(p, mods), STAB_COST)
+            + when(fb, FB_COST)
             + when(moving, kind.move_cost())
             + when(shaped, TAP_SHAPE_COST)
             + when(Self::level_may_open(p, mods), kind.level_cost())
@@ -244,6 +251,7 @@ impl Voice {
         let taps = |c| algo && p.taps.moving(c);
         let filter_moves = taps(FixedCol::Freq)
             || taps(FixedCol::Q)
+            || Self::fb_runs(p, mods)
             || mods.fixed_moves(FixedCol::Freq)
             || mods.fixed_moves(FixedCol::Q);
         let when = |on: bool, c: Cost| if on { c } else { Cost::ZERO };
@@ -258,6 +266,12 @@ impl Voice {
         p.filter.kind().four_pole()
             && (p.filter.stability < 1.0
                 || mods.moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::STAB)))
+    }
+
+    /// FB runs: stored off 0, or routed (ADR 0190). It runs the filter's
+    /// moving path.
+    fn fb_runs(p: &ParamSnapshot, mods: &ModState) -> bool {
+        p.filter.fb != 0.0 || mods.moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::FB))
     }
 
     /// LEVEL's gate can open: stored over ½, or routed.
@@ -454,6 +468,7 @@ impl Voice {
                 fx: VoiceFx::new(),
                 filter: Filter::new(),
                 stab: FilterStability::NEW,
+                fb_last: 0.0,
                 filter_clip: Clip::ZERO,
                 gate: AmpGate::OPEN,
                 dc: DcBlocker::new(DC_HZ, (*p).sample_rate),
@@ -656,6 +671,7 @@ impl Voice {
             // ring left in the filter.
             self.filter.reset();
             self.stab.hold();
+            self.fb_last = params.filter.fb;
             self.fx.hold();
             self.dc.reset();
             self.gate = AmpGate::OPEN;
@@ -1098,6 +1114,10 @@ impl Voice {
             } else {
                 Spread::NONE
             },
+            fb: Fed::new(
+                core::mem::replace(&mut self.fb_last, m.filter.fb),
+                m.filter.fb,
+            ),
         };
         self.filter_clip = self.filter.process(output, &m.filter, sample_rate, &mods);
 

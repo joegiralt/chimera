@@ -74,8 +74,10 @@ fn voice_is_its_chain_plus_one_slot() {
 /// (ADR 0155). FUZZ's state, one per place, adds 72 B (ADR 0156), and
 /// PLAY's MODE beside it (ADR 0170) 8 B of padding. The filter's
 /// STABILITY adds 40 B: the slot's chip, 36, and the played Sound's STAB
-/// (ADR 0168).
-const VOICE_SIZE_BEFORE: usize = 6_528;
+/// (ADR 0168). FB adds 24 B: the FB signal in CLEAN, DIRTY and the
+/// four-pole slot, the last block's amount, and the played Sound's FB with
+/// its padding (ADR 0190).
+const VOICE_SIZE_BEFORE: usize = 6_552;
 
 /// ADR 0131: the formant kinds live in the Algo slot, which still fits
 /// inside Modal's, so they add nothing to `EngineSlot`.
