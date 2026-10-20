@@ -251,7 +251,8 @@ impl TapeEngine {
     }
 
     pub fn sustains(&self) -> bool {
-        self.read(|_, k| k.active && k.hold).unwrap_or(false)
+        self.read(|_, k| !matches!(k.state, super::Note::Idle) && k.hold)
+            .unwrap_or(false)
     }
 
     pub fn hold(&mut self) {
@@ -259,7 +260,8 @@ impl TapeEngine {
     }
 
     pub fn is_active(&self) -> bool {
-        self.read(|_, k| k.active).unwrap_or(false)
+        self.read(|_, k| !matches!(k.state, super::Note::Idle))
+            .unwrap_or(false)
     }
 
     pub fn heads(&self) -> Heads {

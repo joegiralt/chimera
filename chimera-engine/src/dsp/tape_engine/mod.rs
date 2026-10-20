@@ -420,14 +420,26 @@ enum Row<'v> {
     Streamed(&'v [u8], Descriptor),
 }
 
+/// A deck's note: none, one waiting on its moving source, or sounding.
+#[cfg(feature = "tape")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Note {
+    Idle,
+    /// A note-on whose source a closed gate moves: silent, it starts
+    /// (`note_on`) on the first block its row reads (spec § 4), catching
+    /// up the blocks it waited on (#595).
+    Gated {
+        waited: u32,
+    },
+    Playing,
+}
+
 #[cfg(feature = "tape")]
 pub struct TapeDeck {
     /// The source a note plays, latched at note-on (ADR 0087): never
     /// re-resolved, its row read each block.
     src: Option<SourceId>,
-    /// A note-on whose source a closed gate moves: active and silent, it
-    /// starts (`note_on`) on the first block its row reads (spec § 4).
-    gated: bool,
+    state: Note,
     /// The machine and whether FADE holds, latched at note-on.
     machine: TapeMachine,
     hold: bool,
@@ -535,7 +547,6 @@ pub struct TapeDeck {
     slide: Glide,
     /// ROOT, latched at note-on.
     root: f32,
-    active: bool,
     /// TAPE: this voice's transport, run once a block, at its own rates
     /// at depth 1; its speed deviation this block, cents.
     wow: Transport,
@@ -567,9 +578,6 @@ pub struct TapeDeck {
     inc_cap: Inc,
     /// A streamed note's rate.
     stream_rate: SourceRate,
-    /// Blocks a gated note has waited on its moving source: tape time it
-    /// catches up on when it starts (#595).
-    waited: u32,
     /// Streamed views check every tap: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     strict: bool,
@@ -580,7 +588,7 @@ impl TapeDeck {
     fn idle() -> TapeDeck {
         TapeDeck {
             src: None,
-            gated: false,
+            state: Note::Idle,
             machine: TapeMachine::Loop,
             hold: false,
             heads: [Head::default(); 2],
@@ -649,7 +657,6 @@ impl TapeDeck {
             pitch: 0.0,
             slide: Glide::new(1.0, 1.0),
             root: 6_000.0,
-            active: false,
             wow: Transport::new(),
             tap: Tap::speed_cents(1.0, BLOCK_RATE),
             rng: 0x510E_527F,
@@ -666,7 +673,6 @@ impl TapeDeck {
             mute: false,
             inc_cap: Inc::MAX,
             stream_rate: SourceRate::MIN,
-            waited: 0,
             #[cfg(any(test, feature = "test-support"))]
             strict: false,
         }
@@ -780,10 +786,9 @@ impl TapeDeck {
             None if self.src.is_some_and(|id| src.moving(id)) => {
                 (self.note, self.machine) = (note, p.machine);
                 self.hold = params::hold(p);
-                (self.gated, self.active, self.streamed) = (true, true, false);
-                self.waited = 0;
+                (self.state, self.streamed) = (Note::Gated { waited: 0 }, false);
             }
-            _ => (self.gated, self.active, self.streamed) = (false, false, false),
+            _ => (self.state, self.streamed) = (Note::Idle, false),
         }
     }
 
@@ -800,7 +805,7 @@ impl TapeDeck {
         (sample_rate, waited): (u32, u32),
         streams: Option<&mut StreamPort<'_, '_>>,
     ) {
-        (self.gated, self.active, self.streamed) = (false, false, false);
+        (self.state, self.streamed) = (Note::Idle, false);
         let (Some(port), None) = (streams, params::needs_ram(p)) else {
             return;
         };
@@ -821,7 +826,7 @@ impl TapeDeck {
         self.inc_cap = self.cap_at(r, sample_rate);
         if waited > 0 {
             self.catch_up(waited, sample_rate);
-            if !self.active {
+            if !self.is_active() {
                 return;
             }
         }
@@ -879,7 +884,7 @@ impl TapeDeck {
             .saturating_sub(blocks.saturating_mul(BLOCK_SIZE as u32));
         let to = if self.one_head() {
             if to >= self.once_end || self.left == 0 {
-                self.active = false;
+                self.state = Note::Idle;
                 return;
             }
             to
@@ -1004,8 +1009,7 @@ impl TapeDeck {
             None => None,
         };
         if let Some(v) = v {
-            if core::mem::take(&mut self.gated) {
-                let waited = core::mem::take(&mut self.waited);
+            if let Note::Gated { waited } = self.state {
                 self.start_from(
                     self.note,
                     p,
@@ -1015,7 +1019,7 @@ impl TapeDeck {
                     waited,
                 );
             } else if v.frames() < self.n || self.streamed {
-                self.active = false;
+                self.state = Note::Idle;
             } else if let Some(q) = self.moved_start(p) {
                 self.once_on(self.note, &q, &v, sample_rate);
             }
@@ -1023,9 +1027,9 @@ impl TapeDeck {
         } else {
             out.fill(0.0);
             if !self.src.is_some_and(|id| src.moving(id)) {
-                (self.gated, self.active) = (false, false);
-            } else if self.gated {
-                self.waited = self.waited.saturating_add(1);
+                self.state = Note::Idle;
+            } else if let Note::Gated { waited } = &mut self.state {
+                *waited = waited.saturating_add(1);
             }
         }
         self.end_stream(streams);
@@ -1038,7 +1042,7 @@ impl TapeDeck {
     /// never flips a hit to reverse, nor asks a streamed one to read back
     /// (`needs_ram` passed on the stored START). `p` with that START.
     fn moved_start(&mut self, p: &TapeEngineParams) -> Option<TapeEngineParams> {
-        if !(self.first && self.active && self.one_head()) {
+        if !(self.first && self.is_active() && self.one_head()) {
             return None;
         }
         let start = if self.start <= p.end {
@@ -1055,7 +1059,7 @@ impl TapeDeck {
 
     /// A streamed note that ended drops its slots.
     fn end_stream(&mut self, streams: Option<&mut StreamPort<'_, '_>>) {
-        if !self.active
+        if !self.is_active()
             && self.streamed
             && let Some(port) = streams
         {
@@ -1077,18 +1081,17 @@ impl TapeDeck {
     ) {
         let Some(port) = streams else {
             out.fill(0.0);
-            (self.gated, self.active) = (false, false);
+            self.state = Note::Idle;
             return;
         };
-        if core::mem::take(&mut self.gated) {
-            let waited = core::mem::take(&mut self.waited);
+        if let Note::Gated { waited } = self.state {
             self.start_from(self.note, p, src, sample_rate, Some(&mut *port), waited);
         }
         let row = self
             .stream_of(port)
             .and_then(|st| self.row((held, d), st.frames));
         match row {
-            Some(row) if self.active && self.streamed && row.frames() >= self.n => {
+            Some(row) if self.is_active() && self.streamed && row.frames() >= self.n => {
                 if let Some(q) = self.moved_start(p)
                     && let Some(stream) = self.stream_of(port)
                 {
@@ -1102,7 +1105,7 @@ impl TapeDeck {
                 self.stream_block(out, p, row, sample_rate, port);
             }
             _ => {
-                (self.active, self.last) = (false, 0.0);
+                (self.state, self.last) = (Note::Idle, 0.0);
                 out.fill(0.0);
             }
         }
@@ -1229,7 +1232,7 @@ impl TapeDeck {
     /// What the sounding note costs: its note-on's model, and the
     /// stream's term on a streamed source.
     pub fn playing_cost(&self) -> Option<Cost> {
-        self.active.then(|| {
+        self.is_active().then(|| {
             if self.streamed {
                 streamed_cost(self.machine)
             } else {
@@ -1247,7 +1250,7 @@ impl TapeDeck {
         let wants = f32::from(self.stream_rate) / SAMPLE_RATE as f32
             * exp2(cents / 1_200.0)
             * self.slide.value();
-        (self.active && self.streamed).then_some((wants, self.inc_cap.get()))
+        (self.is_active() && self.streamed).then_some((wants, self.inc_cap.get()))
     }
 
     /// A glide steal's ratio now, 1 at rest: for the tests.
@@ -1282,7 +1285,6 @@ impl TapeDeck {
         self.machine = p.machine;
         self.at_root = params::at_root(p);
         self.hold = params::hold(p);
-        self.gated = false;
         self.note = note;
         self.root = p.root;
         self.slide = Glide::new(1.0, 1.0);
@@ -1307,7 +1309,7 @@ impl TapeDeck {
         self.speed = 0.0;
         self.pull = 1.0 - libm::expf(-(BLOCK_SIZE as f32) / (drag_s(p.drag) * sample_rate as f32));
         self.ramp = true;
-        self.active = true;
+        self.state = Note::Playing;
         self.wow_kind = p.wow;
         self.age.set_band(rate.get());
         self.start = p.start;
@@ -1504,7 +1506,7 @@ impl TapeDeck {
         v: &SourceView<'_>,
         (sample_rate, tau): (u32, f32),
     ) {
-        if self.active {
+        if self.is_active() {
             self.glide_to(note, (sample_rate, tau));
         } else {
             self.note_on(note, p, v, sample_rate);
@@ -1515,7 +1517,7 @@ impl TapeDeck {
     /// `tau` seconds in log pitch. Idle, or on `note`, nothing moves.
     /// Gated, the note it starts on moves (its `note_on` drops the glide).
     pub fn glide_to(&mut self, note: u8, (_sample_rate, tau): (u32, f32)) {
-        if !self.active || note == self.note {
+        if !self.is_active() || note == self.note {
             return;
         }
         // SLICE NOTE plays every key at ROOT: no pitch to travel.
@@ -1550,7 +1552,7 @@ impl TapeDeck {
     /// A HOLD head plays (PLAY ONE): the voice keeps its gate, so note-off
     /// changes nothing and the note ends at END.
     pub fn sustains(&self) -> bool {
-        self.active && self.hold
+        self.is_active() && self.hold
     }
 
     /// A fresh note is to come on an idle voice: its ramp starts from 0, not
@@ -1561,7 +1563,7 @@ impl TapeDeck {
     }
 
     pub fn is_active(&self) -> bool {
-        self.active
+        !matches!(self.state, Note::Idle)
     }
 
     /// The model latched at the last note-on.
@@ -1601,7 +1603,7 @@ impl TapeDeck {
     /// where its tape runs out at this pitch, `left · inc` frames on, END
     /// at most. None while idle.
     pub fn heads(&self) -> Heads {
-        if !self.active {
+        if !self.is_active() {
             return Heads::NONE;
         }
         let p = self.probe();
@@ -1733,7 +1735,7 @@ impl TapeDeck {
     ) {
         let (v, _) = reads.run(0);
         let v = &v;
-        if !self.active {
+        if !self.is_active() {
             out.fill(0.0);
             self.last = 0.0;
             return;
@@ -1801,7 +1803,7 @@ impl TapeDeck {
                 }
                 self.rel = g;
                 if g < tron::TRON_FLOOR {
-                    self.active = false;
+                    self.state = Note::Idle;
                 }
             }
         }
@@ -1888,7 +1890,7 @@ impl TapeDeck {
         let mut c = (from, step, gain);
         // Run by run: each to the sample whose read leaves it.
         let (mut i, mut k) = (0, 0);
-        while i < BLOCK_SIZE && self.active {
+        while i < BLOCK_SIZE && self.is_active() {
             let (v, stop) = reads.run(k);
             let j = self.reach(i, (c.0, step), stop);
             c = match (self.mirror(), near) {
@@ -1899,7 +1901,7 @@ impl TapeDeck {
             (i, k) = (j, k + 1);
         }
         if self.rel < tron::TRON_FLOOR {
-            self.active = false;
+            self.state = Note::Idle;
         }
     }
 
@@ -1985,7 +1987,7 @@ impl TapeDeck {
             // The tape ran out, or the head reached END: on the block's
             // last sample, too.
             out[i..].fill(0.0);
-            self.active = false;
+            self.state = Note::Idle;
         }
         self.heads[0].pos = h;
         self.rel = g;
