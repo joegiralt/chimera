@@ -48,7 +48,7 @@ A saw or pulse OSC 2 (VA's default WAVE2 is a saw) steps. A step of the modulato
 - **Sharing FM's `MOD` instance.** The jump's test and its call's register pressure cost FM 14 a sample (209.3 → 223.5); PHASE's own instance keeps FM's code and bill, in bank 2, where flash is not short.
 
 ## Consequences
-- PHASE plays one voice fewer than FM on rev V and beside ORBIT (650 against 590).
+- PHASE plays one voice fewer than FM on rev V and beside ORBIT (650 against 580, ADR 0165).
 - A stepped modulator past six steps a block (seven with the carry) (a saw over about 4.5 kHz, a pulse over about 2.25 kHz, a SHAPEd saw or a saw–pulse mix lower) is read as motion again for the rest of the block, with the alias of before this ruling. A cheaper jump would let the budget grow (follow-up issue, filed by the controller).
 - The upper harmonics (2nd–8th) rise monotonically as BLEND goes 0 → ½ with a sine carrier and a TRI SHAPE 1 modulator, the CZ's sweep.
 - A locked 1:1 saw carrier under a saw modulator freezes the read between wraps at BLEND 1 (the offset cancels the clock): a pulse train, now band-limited like any other step.
