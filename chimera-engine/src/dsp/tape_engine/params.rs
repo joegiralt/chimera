@@ -69,18 +69,25 @@ impl DiskCode for TapeModel {
     }
 }
 
-/// MODEL's retired codes: they load as PLAY (`translate_v1`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum RetiredModel {
-    Reverse = 1,
-    PingPong = 2,
-    Oneshot = 7,
+/// `RetiredModel` and its `ALL` from one list: a variant cannot miss `ALL`.
+macro_rules! retired_models {
+    ($($v:ident = $c:literal),+ $(,)?) => {
+        /// MODEL's retired codes: they load as PLAY (`translate_v1`).
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(u8)]
+        pub enum RetiredModel {
+            $($v = $c),+
+        }
+
+        impl RetiredModel {
+            pub const ALL: [Self; [$(Self::$v),+].len()] = [$(Self::$v),+];
+        }
+    };
 }
 
-impl RetiredModel {
-    pub const ALL: [Self; 3] = [Self::Reverse, Self::PingPong, Self::Oneshot];
+retired_models!(Reverse = 1, PingPong = 2, Oneshot = 7);
 
+impl RetiredModel {
     pub fn from_code(c: u8) -> Option<Self> {
         Self::ALL.into_iter().find(|m| *m as u8 == c)
     }
