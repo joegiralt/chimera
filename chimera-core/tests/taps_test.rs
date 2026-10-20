@@ -545,6 +545,13 @@ fn every_setting() -> Vec<FilterParams> {
         assert!(p.set_mode(m));
         v.push(p);
     }
+    for (&m, morph) in FilterKind::Sem.modes().iter().zip([0.5, 0.0]) {
+        let mut p = FilterParams::default();
+        p.set_kind(FilterKind::Sem);
+        assert!(p.set_mode(m));
+        p.morph = morph;
+        v.push(p);
+    }
     v
 }
 
@@ -554,6 +561,7 @@ fn bound(p: &FilterParams) -> f32 {
         FilterKind::K2040 => R_2040 / p.voice.alpha() * OUT_2040 + 1e-6,
         FilterKind::Dirty => 1.0,
         FilterKind::Ladder => ladder_bound(p.mode(), 0.5),
+        FilterKind::Sem => chimera_core::dsp::filter::sem::SEM_BOUND,
     }
 }
 

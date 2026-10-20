@@ -228,6 +228,7 @@ fn random_changes_stay_bounded() {
             .iter()
             .map(|&m| ladder_bound(m, 1.0))
             .fold(0.0, f32::max),
+        FilterKind::Sem => chimera_core::dsp::filter::sem::SEM_BOUND,
     };
     let mut rng = 0x2545_f491_4f6c_dd1du64;
     let mut next = move || {

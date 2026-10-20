@@ -435,16 +435,17 @@ fn stepped_cc_hysteresis() {
     let mut changes = 0;
     let mut was = b.stored(P1, TYPE);
     assert_eq!(was, 0.0);
-    for v in [63, 64, 63, 64] {
+    // Five TYPEs: the boundary between the third and the fourth is at 76/77.
+    for v in [76, 77, 76, 77] {
         b.pass(&[(30, v)]);
         let now = b.stored(P1, TYPE);
         changes += usize::from(now != was);
         was = now;
     }
-    assert_eq!(changes, 1, "63/64/63/64 at a boundary moves once");
-    assert_eq!(was, 1.0);
-    b.pass(&[(30, 66)]);
-    assert_eq!(b.stored(P1, TYPE), 2.0, "2 counts past it, it moves");
+    assert_eq!(changes, 1, "76/77/76/77 at a boundary moves once");
+    assert_eq!(was, 2.0);
+    b.pass(&[(30, 79)]);
+    assert_eq!(b.stored(P1, TYPE), 3.0, "2 counts past it, it moves");
 }
 
 /// Operator A at FRMT and every other at NOISE: the budget is full, so
