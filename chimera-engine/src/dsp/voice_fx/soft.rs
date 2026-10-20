@@ -12,6 +12,10 @@ use crate::hw::BLOCK_SIZE;
 /// normal). DRV before it ran 6.3 dB hot; LEVEL ½ is now unity loudness.
 const MAKE_UP: f32 = 0.483;
 
+/// The LEVEL (P3) whose gain, `2^(4 L - 2)`, cancels `MAKE_UP`: what old
+/// DRV Sounds and the factory Sounds load with, so their loudness holds.
+pub const UNITY_LEVEL: f32 = 0.7626;
+
 /// The memoryless transfer at MIX 1, for the viz.
 pub fn curve(x: f32, pots: [f32; 3]) -> f32 {
     let [drive, tone, level] = pots;

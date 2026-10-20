@@ -13,6 +13,10 @@ use crate::taps::TapLane;
 /// as the dry, within 1.5 dB (VA INIT, C3, INPUT ½). The fold ran 3.3 dB hot.
 const MAKE_UP: f32 = 0.684;
 
+/// The LEVEL (P3) whose gain, `2^(4 L - 2)`, cancels `MAKE_UP`: what old
+/// folder Sounds load with, so their loudness holds.
+pub const UNITY_LEVEL: f32 = 0.637;
+
 /// The memoryless transfer at MIX 1, for the viz.
 pub fn curve(x: f32, pots: [f32; 3]) -> f32 {
     let [fold, sym, level] = pots;
