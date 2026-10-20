@@ -50,10 +50,12 @@ pub enum VaMode {
     LoopFm = 8,
     /// OSC 2's read reverses at OSC 1's wraps: mirrored sync (#604).
     SoftSync = 9,
+    /// OSC 2 phase-modulates OSC 1, a CZ-like phase distortion (#602).
+    Phase = 10,
 }
 
 impl VaMode {
-    pub const ALL: [VaMode; 10] = [
+    pub const ALL: [VaMode; 11] = [
         VaMode::Mix,
         VaMode::Sync,
         VaMode::Ring,
@@ -64,18 +66,23 @@ impl VaMode {
         VaMode::Max,
         VaMode::LoopFm,
         VaMode::SoftSync,
+        VaMode::Phase,
     ];
 
     /// Whether this MODE's oscillators are `osc::door`'s, which with
     /// `bank2` play only while bank 2 is open (ADR 0163).
     pub const fn in_bank2(self) -> bool {
-        matches!(self, VaMode::Fm | VaMode::LoopFm | VaMode::SoftSync)
+        matches!(
+            self,
+            VaMode::Fm | VaMode::LoopFm | VaMode::SoftSync | VaMode::Phase
+        )
     }
 }
 
-/// MODE's names, in `VaMode`'s order (display only).
-pub const MODE_NAMES: [&str; 10] = [
-    "MIX", "SYNC", "RING", "XOR", "BITS", "FM", "AM", "MAX", "LOOPFM", "SOFT",
+/// MODE's names, in `VaMode`'s order (display only; PHASE is "PHAS", the
+/// full word is 17 px too wide beside the scope).
+pub const MODE_NAMES: [&str; 11] = [
+    "MIX", "SYNC", "RING", "XOR", "BITS", "FM", "AM", "MAX", "LOOPFM", "SOFT", "PHAS",
 ];
 
 impl DiskCode for VaMode {
@@ -91,6 +98,7 @@ impl DiskCode for VaMode {
             VaMode::Max => 7,
             VaMode::LoopFm => 8,
             VaMode::SoftSync => 9,
+            VaMode::Phase => 10,
         }
     }
 
@@ -106,6 +114,7 @@ impl DiskCode for VaMode {
             VaMode::Max => "MAX",
             VaMode::LoopFm => "LOOPFM",
             VaMode::SoftSync => "SOFTSYNC",
+            VaMode::Phase => "PHASE",
         }
     }
 
@@ -121,6 +130,7 @@ impl DiskCode for VaMode {
             7 => Some(VaMode::Max),
             8 => Some(VaMode::LoopFm),
             9 => Some(VaMode::SoftSync),
+            10 => Some(VaMode::Phase),
             _ => None,
         }
     }
@@ -229,7 +239,7 @@ pub static VA_SPECS: [ParamSpec; 12] = [
         2,
         "MODE",
         ValFmt::Names(&MODE_NAMES),
-        9.0,
+        10.0,
         0.0,
         Change::Crossfade,
     )
@@ -360,6 +370,31 @@ pub const COST_MAX: Cost = Cost(590);
 /// instance: its edges either way at 0.45, a divide a crossing, a turn's
 /// 88.3 × 7/48) + 36.2 + 67.5 + 30.0 + 95 (at 0.45 uncapped: 640).
 pub const COST_SOFTSYNC: Cost = Cost(570);
+/// PHASE (ADR 0160): 223.5 (SINE/TRI, OSC 1's own MOD instance, FM's
+/// with a jump's test) + 142.9 (OSC 2 marking its steps) + 26.5 + 2.9 +
+/// 154.5 (33.5 of it six jumps and marks a block, 6.3 the offset loop) +
+/// 31.3 + 95, 676.5 against MIX's 559.9 in the same count.
+pub const COST_PHASE: Cost = Cost(650);
+
+/// PHASE's peak depth at BLEND `blend`, in cycles: `blend/2`. BLEND ½ is
+/// the CZ's full warp (PD is PM at index 2π(½ − d), Lazzarini et al.,
+/// DAFx-09).
+pub fn phase_depth(blend: f32) -> f32 {
+    0.5 * blend
+}
+
+/// `jitter_draw`'s scale of a raw word at depth `d` (the door's entries
+/// draw with it, ADR 0163).
+fn jitter_depth(d: f32) -> f32 {
+    JITTER_CENTS * d * CENT * (1.0 / 2_147_483_648.0)
+}
+
+/// STABILITY's jitter draw at depth `d`: `1 + jd·word`, one closure type
+/// for every MODE, so the renders share the oscillators' instances (flash).
+fn jitter_draw(stab: &mut Stability, d: f32) -> impl FnMut() -> f32 + '_ {
+    let jd = jitter_depth(d);
+    move || 1.0 + jd * stab.jitter_word() as f32
+}
 
 /// FM's index at BLEND `blend`, `5·blend²`, capped so OSC 1's fastest read
 /// `inc·(1 + I)` stays under `MAX_INC` (0.45 cycles a sample); `inc = 0`
@@ -529,7 +564,7 @@ pub struct VaEngine {
     amount: Ramp,
     sub_level: Ramp,
     ring_k: Ramp,
-    /// FM's index (`fm_index`).
+    /// FM's index (`fm_index`), PHASE's depth (`phase_depth`): one plays.
     fm: Ramp,
     /// LOOPFM's `b0` for each oscillator.
     lb: [Ramp; 2],
@@ -537,6 +572,11 @@ pub struct VaEngine {
     am_n: Ramp,
     /// MAX's corrector.
     max: MaxKink,
+    /// PHASE's offset (cycles) at the last sample, `D·b/pk`; NaN: none yet.
+    pm_prev: f32,
+    /// OSC 2's steps at the last block's last sample (`door::osc2_steps`'
+    /// mark): a jump in the next block's first.
+    pm_step: [f32; 2],
     note: u8,
     pitch: f32,
     slide: Glide,
@@ -578,6 +618,8 @@ impl VaEngine {
             lb: [Ramp::default(); 2],
             am_n: Ramp::default(),
             max: MaxKink::NEW,
+            pm_prev: 0.0,
+            pm_step: [0.0; 2],
             note: 60,
             pitch: 0.0,
             slide: Glide::new(1.0, 1.0),
@@ -657,6 +699,8 @@ impl VaEngine {
             // the corrector's memory goes with the voice, at any STABILITY
             self.max.reset();
             (self.playing, self.duck) = (p.mode, Duck::Steady);
+            self.pm_prev = 0.0;
+            self.pm_step = [0.0; 2];
         }
         if self.seeded != Some(part) {
             self.stab
@@ -744,6 +788,7 @@ impl VaEngine {
             VaMode::Am => COST_AM,
             VaMode::Max => COST_MAX,
             VaMode::SoftSync => COST_SOFTSYNC,
+            VaMode::Phase => COST_PHASE,
         }
     }
 
@@ -901,6 +946,10 @@ impl VaEngine {
                 #[cfg(not(feature = "bank2"))]
                 self.render_loopfm(out, &l, gain, x, wave);
             }
+            VaMode::Phase => {
+                let d = self.fm.step(phase_depth(unit(p.amount)));
+                self.render_phase(out, &l, gain, d)
+            }
         }
         self.duck = match duck {
             Duck::Steady => Duck::Steady,
@@ -909,7 +958,9 @@ impl VaEngine {
                 self.playing = p.mode;
                 // MAX starts from nothing under the duck
                 self.max.reset();
-                // FM's index starts on its value
+                // FM's index and PHASE's depth start on their value; PHASE's
+                // offset starts at the first sample's (the read is the clock
+                // after `settle`, and an offset's jump would click)
                 self.fm.hold();
                 for r in &mut self.lb {
                     r.hold();
@@ -919,6 +970,8 @@ impl VaEngine {
                 {
                     self.swap_dirs = self.osc.each_ref().map(|o| o.read_dir());
                 }
+                self.pm_prev = f32::NAN;
+                self.pm_step = [0.0; 2];
                 // a MOD MODE's read phase becomes the clock (ADR 0158)
                 for o in &mut self.osc {
                     o.settle();
@@ -955,15 +1008,14 @@ impl VaEngine {
             marks: mk,
             ..
         } = self;
-        let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
-        let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+        let jd = jitter_depth(l.d);
         // OSC 1 the shared instance, its wraps marked: OSC 2's turns
         o1.render::<BLOCK_SIZE, true, false, true, false>(
             out,
             mk,
             &l.osc[0],
             &mut jit[0],
-            &mut draw,
+            &mut jitter_draw(stab, l.d),
             &ZEROS,
             (0.0, 0.0),
         );
@@ -1031,14 +1083,13 @@ impl VaEngine {
             marks: mk,
             ..
         } = self;
-        let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
-        let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+        let jd = jitter_depth(l.d);
         o2.render::<BLOCK_SIZE, false, false, false, false>(
             b,
             mk,
             &l.osc[1],
             &mut jit[1],
-            &mut draw,
+            &mut jitter_draw(stab, l.d),
             &ZEROS,
             (0.0, 0.0),
         );
@@ -1133,6 +1184,84 @@ impl VaEngine {
         }
     }
 
+    /// PHASE (#602): OSC 2 plain, at unit peak times the depth `dp` (from,
+    /// to) cycles, offsets OSC 1's read phase; the read's rate is the
+    /// offset's difference (`k = (0, 1)`), but for OSC 2's steps, each a
+    /// jump OSC 1 takes at its mark (ADR 0160). The operator plays OSC 1
+    /// alone.
+    #[inline(never)]
+    fn render_phase(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain, dp: (f32, f32)) {
+        let Self {
+            osc: [o1, o2],
+            stab,
+            jit,
+            osc2: b,
+            marks: mk,
+            pm_prev,
+            pm_step,
+            ..
+        } = self;
+        let jd = jitter_depth(l.d);
+        let s = 1.0 / l.pk.b;
+        let (x0, dx) = (dp.0 * s, step_of(dp, BLOCK_SIZE) * s);
+        // both oscillators are bank 2's with `bank2` (ADR 0163)
+        let mut play = |osc2: osc::door::ModRender, osc1: osc::door::ModRender| {
+            // OSC 2 naive at its steps, each marked for OSC 1's next sample
+            osc2(
+                o2,
+                b,
+                mk,
+                &l.osc[1],
+                &mut jit[1],
+                stab,
+                jd,
+                &ZEROS,
+                (0.0, 0.0),
+            );
+            // the last sample's steps are the next block's first
+            (mk[0], *pm_step) = (*pm_step, mk[0]);
+            let (mut x, mut prev) = (x0, *pm_prev);
+            if prev.is_nan() {
+                prev = (x0 + dx) * b[0];
+            }
+            for v in b.iter_mut() {
+                x += dx;
+                let off = x * *v;
+                *v = off - prev;
+                prev = off;
+            }
+            *pm_prev = prev;
+            // the read's rate is the rest: each marked sample's difference
+            // less its jump (slot 0 is the last block's carry)
+            if mk[0][0] < osc::JUMP {
+                b[0] -= (x0 + dx) * mk[0][1];
+            }
+            for &k in o2.pm_marks() {
+                let k = usize::from(k);
+                if (1..BLOCK_SIZE).contains(&k) {
+                    b[k] -= (x0 + dx * (k + 1) as f32) * mk[k][1];
+                }
+            }
+            o1.set_pm_scale((x0, dx));
+            osc1(o1, out, mk, &l.osc[0], &mut jit[0], stab, jd, b, (0.0, 1.0));
+        };
+        // closed, the voice is silent and both oscillators wait as they were
+        #[cfg(feature = "bank2")]
+        if crate::bank2::DOOR_CELL
+            .with(|d| play(d.va.osc2_steps, d.va.osc1_phase))
+            .is_none()
+        {
+            out.fill(0.0);
+            return;
+        }
+        #[cfg(not(feature = "bank2"))]
+        play(osc::door::osc2_steps, osc::door::osc1_phase);
+        match gain {
+            Some(g) => self.operator::<true>(out, l, VaMode::Phase, g),
+            None => self.operator::<false>(out, l, VaMode::Phase, &DUCK_UP[1]),
+        }
+    }
+
     /// One block in `mode`, a constant in each caller, so each mode's loop
     /// is its own (the count sees each). OSC 1 renders into `out` with its
     /// sub flips and its wraps, OSC 2 beside it (synced to the
@@ -1150,8 +1279,7 @@ impl VaEngine {
         } = self;
         // a wrap's factor, `1 + jitter(d)·CENT`, from the raw draw: exactly
         // 1 at d = 0 (STAB 1)
-        let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
-        let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+        let mut draw = jitter_draw(stab, l.d);
         // these MODEs read no modulated phase (FM's and SOFT SYNC's
         // renders are their own, through the door)
         let (z, nk) = (&ZEROS, (0.0, 0.0));
@@ -1189,6 +1317,7 @@ impl VaEngine {
                 nk,
             );
         }
+        drop(draw);
         // a loop of its own while the duck runs (the count bills it)
         match gain {
             Some(g) => self.operator::<true>(out, l, mode, g),

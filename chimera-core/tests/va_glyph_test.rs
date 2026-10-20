@@ -176,6 +176,8 @@ const MODE_GOLDENS: &[(&str, u64)] = &[
     ("max_100", 0x884d5c6f119105ce),
     ("soft_050", 0xf3568a3904c84f59),
     ("soft_100", 0x1a37f470abe6e62d),
+    ("phas_050", 0x6a9a5783df5824c8),
+    ("phas_100", 0x3ae42e0f39f1e69b),
 ];
 
 #[test]
@@ -225,6 +227,14 @@ fn max_scope_rises_from_the_mix() {
     let (lo, hi) = (mix(VaMode::Max, 0.0), mix(VaMode::Max, 1.0));
     assert_ne!(lo, hi);
     assert_eq!(lo, mix(VaMode::Mix, 0.5));
+}
+
+/// PHASE's scope is OSC 1 bent by OSC 2: at BLEND 0 it is MIX's OSC 1
+/// alone; at BLEND 1 it differs from it.
+#[test]
+fn phase_scope_bends_osc_1() {
+    assert_eq!(mix(VaMode::Phase, 0.0), mix(VaMode::Mix, 0.0));
+    assert_ne!(mix(VaMode::Phase, 1.0), mix(VaMode::Mix, 0.0));
 }
 
 /// SYNC restarts OSC 2 on OSC 1's wrap: OSC 1's second period starts as
@@ -279,6 +289,7 @@ fn blend_ends_name_what_amount_does() {
     assert_eq!(blend_ends(VaMode::LoopFm), ["1", "LOOP"]);
     assert_eq!(blend_ends(VaMode::Am), ["CLEAN", "RING"]);
     assert_eq!(blend_ends(VaMode::SoftSync), ["1", "2"]);
+    assert_eq!(blend_ends(VaMode::Phase), ["CLEAN", "WARP"]);
 }
 
 fn label_w(s: &str) -> i32 {

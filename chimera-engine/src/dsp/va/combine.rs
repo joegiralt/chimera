@@ -233,7 +233,7 @@ impl Operator {
             VaMode::Xor => sum + (xor16_scaled(a, b, self.kx, self.p2) - sum) * x,
             VaMode::Bits => self.q * self.crush.process_scaled(sum, self.liq),
             // OSC 2 is in OSC 1's phase already
-            VaMode::Fm => a,
+            VaMode::Fm | VaMode::Phase => a,
             VaMode::LoopFm => a + (b - a) * (0.5 * x),
             VaMode::Am => ks * a * ((1.0 - 0.5 * x) + 0.5 * x * b * self.ib),
             VaMode::Max => max_gain(x) * (a + b + x * (a - b).abs()),
@@ -257,7 +257,7 @@ pub fn combine(mode: VaMode, a: f32, b: f32, x: f32, k: f32, pk: Peaks, crush: &
             let q = 0.5 * (pk.a + pk.b);
             q * crush.process(half / q)
         }
-        VaMode::Fm => a,
+        VaMode::Fm | VaMode::Phase => a,
         VaMode::LoopFm => a + (b - a) * (0.5 * x),
         VaMode::Am => {
             let u = am_reach(x);
