@@ -111,6 +111,8 @@ fn va_pages_have_no_gestures() {
 fn mode_names_fit_the_cell() {
     let c = ctx();
     for name in MODE_NAMES {
+        // a name too wide for the column shows its first word (`SOFT SYNC`)
+        let name = name.split(' ').next().unwrap();
         let w = draw::text_width(&theme::FONT_VALUE, name, 0);
         // the cell's value slot (a column less its gutter); a MODE has no bar
         assert!(w <= theme::CELL_COL_W - 4, "{name}: {w} px");

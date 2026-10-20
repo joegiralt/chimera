@@ -174,10 +174,10 @@ const MODE_GOLDENS: &[(&str, u64)] = &[
     ("am_100", 0xaa65c3e6b8fd1365),
     ("max_050", 0x1831da0c4eb7b178),
     ("max_100", 0x884d5c6f119105ce),
-    ("soft_050", 0xf3568a3904c84f59),
-    ("soft_100", 0x1a37f470abe6e62d),
-    ("phas_050", 0x6a9a5783df5824c8),
-    ("phas_100", 0x3ae42e0f39f1e69b),
+    ("soft sync_050", 0xf3568a3904c84f59),
+    ("soft sync_100", 0x1a37f470abe6e62d),
+    ("phase_050", 0x6a9a5783df5824c8),
+    ("phase_100", 0x3ae42e0f39f1e69b),
 ];
 
 #[test]
@@ -485,4 +485,20 @@ fn the_scope_reads_shape() {
         .shape[0] = 0.8;
     settle(&mut ui);
     assert_ne!(band(&render_ui(&ui), theme::WAVE_W), before);
+}
+
+/// Every MODE word reads whole beside the scope: large, or small in
+/// `SmallBeside`, never dropped to the no-scope layout.
+#[test]
+fn every_mode_word_fits_beside_the_scope() {
+    let gauge = Gauge::VaMix(VaMix::from_set([0.0; 6]));
+    for name in chimera_core::dsp::va::MODE_NAMES {
+        let l = components::layout(name, &gauge);
+        assert!(
+            matches!(l, Layout::WithGauge | Layout::SmallBeside),
+            "{name}: {l:?}"
+        );
+    }
+    assert_eq!(components::layout("SOFT SYNC", &gauge), Layout::SmallBeside);
+    assert_eq!(components::layout("PHASE", &gauge), Layout::SmallBeside);
 }

@@ -1014,6 +1014,16 @@ impl Renderer {
                 }
                 _ => buf = param_text(f, i, &v, self.set[i].target()),
             }
+            // A name wider than the column keeps its first word: `SOFT`,
+            // not `SOFT SYNC` (the focus band reads it whole).
+            let one = buf.as_str().split(' ').next().unwrap_or("");
+            if one.len() < buf.as_str().len()
+                && draw::text_width(&theme::FONT_VALUE, buf.as_str(), 0) > theme::CELL_COL_W - 4
+            {
+                let mut first = FmtBuf::new();
+                let _ = core::fmt::Write::write_str(&mut first, one);
+                buf = first;
+            }
             let c = components::Cell {
                 label: cell_label(&v),
                 text: buf.as_str(),

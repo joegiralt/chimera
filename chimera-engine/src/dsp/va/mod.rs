@@ -79,10 +79,20 @@ impl VaMode {
     }
 }
 
-/// MODE's names, in `VaMode`'s order (display only; PHASE is "PHAS", the
-/// full word is 17 px too wide beside the scope).
+/// MODE's names, in `VaMode`'s order (display only; the long words read
+/// small beside the scope, `Layout::SmallBeside`).
 pub const MODE_NAMES: [&str; 11] = [
-    "MIX", "SYNC", "RING", "XOR", "BITS", "FM", "AM", "MAX", "LOOPFM", "SOFT", "PHAS",
+    "MIX",
+    "SYNC",
+    "RING",
+    "XOR",
+    "BITS",
+    "FM",
+    "AM",
+    "MAX",
+    "LOOPFM",
+    "SOFT SYNC",
+    "PHASE",
 ];
 
 impl DiskCode for VaMode {
