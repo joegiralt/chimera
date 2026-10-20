@@ -847,11 +847,12 @@ fn too_big_loop_streams_with_two_heads() {
     let p = rig.params();
     let frames = b.0.sref.frames;
     let ws = window_start(p.start, frames);
+    let rate = chimera_core::stream::units::SourceRate::new(24_000).unwrap();
     let lp = Bounds::of(
         ws,
-        window_end(ws, p.end, frames, 24_000),
+        window_end(ws, p.end, frames, rate),
         (p.size, p.position, p.xfade),
-        24_000,
+        rate,
     );
     let lh = heads.as_slice()[1];
     assert!(

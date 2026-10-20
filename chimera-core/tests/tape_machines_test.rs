@@ -1006,13 +1006,7 @@ fn tron_release_fades() {
 
 #[test]
 fn tron_refuses_a_zone_set() {
-    let d = Descriptor {
-        shape: Shape::ZoneSet,
-        count: 3,
-        rate: 32_000,
-        head_frames: 0,
-        heads: 0,
-    };
+    let d = Descriptor::whole(Shape::ZoneSet, 3, 32_000).expect("a descriptor");
     let mut zs = d.to_bytes().to_vec();
     zs.resize(DESC_LEN + 27 + 3 * 33, 0);
     let zs = SourceView::new(&zs).unwrap();

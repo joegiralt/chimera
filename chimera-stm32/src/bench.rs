@@ -72,7 +72,7 @@ use chimera_engine::source_table::{AudioToken, GateView};
 use chimera_engine::stream::port::{StreamCard, Streams};
 use chimera_engine::stream::ring::{AudioSide, CardSide};
 use chimera_engine::stream::stats::StreamStats;
-use chimera_engine::stream::units::{AudioBlocks, SlotIdx};
+use chimera_engine::stream::units::{AudioBlocks, Frames, SlotIdx, SourceRate};
 use chimera_engine::sym_alloc::SymAlloc;
 use chimera_engine::taps::TapOp;
 use chimera_engine::triple::{TripleBuffer, Writer};
@@ -1360,13 +1360,7 @@ fn tape_sources(project: &mut Project, t: Tapes) -> Option<[SourceId; MAX_VOICES
         Tapes::Short => (Shape::Plain, 1, 1_024, 8_000),
     };
     let len = DESC_LEN + 3 * frames.div_ceil(2) as usize;
-    let desc = Descriptor {
-        shape,
-        count,
-        rate,
-        head_frames: 0,
-        heads: 0,
-    };
+    let desc = Descriptor::whole(shape, count, rate)?;
     let mut ids = [None; MAX_VOICES];
     for (i, id) in ids.iter_mut().enumerate() {
         let crc = 0xBE7C_0000 | (t as u32) << 8 | i as u32;
@@ -1510,15 +1504,10 @@ fn stream_sources(project: &mut Project, p: &ParamSnapshot) -> Option<[SourceId;
             rate: STREAM_RATE,
         };
         let heads = chimera_engine::stream::stage::heads_for(r, &p.tape)?;
-        let d = Descriptor {
-            shape: Shape::Plain,
-            count: 1,
-            rate: STREAM_RATE,
-            head_frames: chimera_engine::stream::admit::head_frames(STREAM_RATE),
-            heads: 0,
-        };
+        let rate = SourceRate::new(STREAM_RATE)?;
+        let reach = Frames::new(chimera_engine::stream::admit::head_frames(rate));
         *id = project.source_write(r, heads.held_len(), |b| {
-            let at = write_head_table(d, heads.as_slice(), b).unwrap_or(b.len());
+            let at = write_head_table(rate, reach, heads.as_slice(), b).unwrap_or(b.len());
             debug_assert_eq!(b.len(), streamed_held_len(heads.as_slice()));
             noise(crc, &mut b[at..]);
         });

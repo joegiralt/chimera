@@ -7,17 +7,12 @@ use chimera_core::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, Pos, Shape, SourceView, ZONE_LAYOUT_LEN, hermite,
 };
 use chimera_core::storage::twelve::{pack12, unpack12};
+use chimera_core::stream::units::Frames;
 use common::XorShift;
 use common::tape::{held_plain, sine};
 
 fn desc(shape: Shape, count: u8, rate: u16) -> Descriptor {
-    Descriptor {
-        shape,
-        count,
-        rate,
-        head_frames: 0,
-        heads: 0,
-    }
+    Descriptor::whole(shape, count, rate).expect("a descriptor")
 }
 
 /// A descriptor, `layout` bytes of zone table, then `s` packed.
@@ -49,6 +44,16 @@ fn decode_matches_unpack12() {
     }
 }
 
+/// A descriptor's bytes, unchecked: what a file may hold.
+fn raw(shape: Shape, count: u8, rate: u16, head_frames: u32, heads: u8) -> [u8; DESC_LEN] {
+    let mut b = [0; DESC_LEN];
+    (b[0], b[1]) = (shape as u8, count);
+    b[2..4].copy_from_slice(&rate.to_le_bytes());
+    b[4..8].copy_from_slice(&head_frames.to_le_bytes());
+    b[8] = heads;
+    b
+}
+
 #[test]
 fn descriptor_round_trips() {
     let ok = [
@@ -65,13 +70,7 @@ fn descriptor_round_trips() {
             } else {
                 0
             };
-            let d = Descriptor {
-                shape,
-                count,
-                rate,
-                head_frames,
-                heads: 0,
-            };
+            let d = Descriptor::new(shape, count, rate, Frames::new(head_frames), 0).unwrap();
             let b = d.to_bytes();
             assert_eq!(b[0], shape as u8);
             assert_eq!(b[2..4], rate.to_le_bytes());
@@ -88,26 +87,23 @@ fn descriptor_round_trips() {
         assert_eq!(Descriptor::from_bytes(&b), None, "reserved byte {at}");
     }
     let bad = [
-        desc(Shape::Plain, 0, 48_000),
-        desc(Shape::Plain, 2, 48_000),
-        desc(Shape::Transwave, 0, 48_000),
-        desc(Shape::Transwave, 33, 48_000),
-        desc(Shape::ZoneSet, 25, 48_000),
-        desc(Shape::Plain, 1, 0),
-        desc(Shape::Plain, 1, 48_001),
-        desc(Shape::Plain, 1, 3_999),
-        desc(Shape::ZoneSet, 1, u16::MAX),
-        Descriptor {
-            head_frames: 1,
-            ..desc(Shape::Plain, 1, 48_000)
-        },
-        Descriptor {
-            head_frames: 4_096,
-            ..desc(Shape::Transwave, 4, 48_000)
-        },
+        (Shape::Plain, 0, 48_000, 0),
+        (Shape::Plain, 2, 48_000, 0),
+        (Shape::Transwave, 0, 48_000, 0),
+        (Shape::Transwave, 33, 48_000, 0),
+        (Shape::ZoneSet, 25, 48_000, 0),
+        (Shape::Plain, 1, 0, 0),
+        (Shape::Plain, 1, 48_001, 0),
+        (Shape::Plain, 1, 3_999, 0),
+        (Shape::ZoneSet, 1, u16::MAX, 0),
+        (Shape::Plain, 1, 48_000, 1),
+        (Shape::Transwave, 4, 48_000, 4_096),
     ];
-    for d in bad {
-        assert_eq!(Descriptor::from_bytes(&d.to_bytes()), None, "{d:?}");
+    for (shape, count, rate, hf) in bad {
+        let d = Descriptor::new(shape, count, rate, Frames::new(hf), 0);
+        assert_eq!(d, None, "{shape:?} {count} {rate} {hf}");
+        let b = raw(shape, count, rate, hf, 0);
+        assert_eq!(Descriptor::from_bytes(&b), None, "{b:?}");
     }
     let mut b = good;
     b[0] = 3;

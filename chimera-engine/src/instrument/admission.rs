@@ -76,7 +76,7 @@ impl Instrument {
         if part.params.engine() != EngineType::Tape {
             return None;
         }
-        let d = Descriptor::from_bytes(src.bytes(source?)?).filter(|d| d.heads > 0)?;
+        let d = Descriptor::from_bytes(src.bytes(source?)?).filter(Descriptor::is_streamed)?;
         let mut top = note.get();
         if part.params.pitch.steal_glide().is_some() {
             for s in self
@@ -124,7 +124,7 @@ impl Instrument {
         let cents = (part.params.pitch.semitones() + self.tune) * 100.0 + routes + wow;
         let ratio = ratio_max(&part.params.tape, top, cents, bend);
         Some(Paid {
-            bill: bill(d.rate, ratio),
+            bill: bill(d.rate().get(), ratio),
             ratio,
         })
     }

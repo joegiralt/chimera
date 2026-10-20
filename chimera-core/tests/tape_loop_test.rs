@@ -5,6 +5,7 @@
 
 mod common;
 
+use chimera_core::stream::units::SourceRate;
 use core::f32::consts::TAU;
 use core::mem::MaybeUninit;
 
@@ -280,7 +281,7 @@ fn bounds_latch_at_wrap() {
         "wrapped at {}",
         heads[wrap]
     );
-    let short = loop_len(0.2, w, 48_000);
+    let short = loop_len(0.2, w, SourceRate::MAX);
     assert!(
         heads[wrap + 1..].iter().all(|&h| h < 2 * short),
         "after the wrap: {:?}",
@@ -384,7 +385,7 @@ fn walk_moves_the_loop() {
             size: 0.0,
             ..TapeEngineParams::default()
         };
-        let ll = loop_len(0.0, w, 48_000);
+        let ll = loop_len(0.0, w, SourceRate::MAX);
         let mut e = fresh();
         e.note_on(60, &p, &v, SR);
         let (_, heads) = play(&mut e, &p, &v, 1_000);

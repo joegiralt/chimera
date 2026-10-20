@@ -86,13 +86,16 @@ impl AudioBlocks {
     }
 }
 
-/// A source file's sample rate, in the range `Descriptor::from_bytes` accepts.
+/// A source's sample rate: 4 000..=48 000 Hz, the pool spec's range.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SourceRate(u16);
 
 impl SourceRate {
+    pub const MIN: SourceRate = SourceRate(4_000);
+    pub const MAX: SourceRate = SourceRate(48_000);
+
     pub const fn new(hz: u16) -> Option<Self> {
-        if hz >= 4_000 && hz <= 48_000 {
+        if hz >= Self::MIN.0 && hz <= Self::MAX.0 {
             Some(Self(hz))
         } else {
             None
@@ -101,6 +104,18 @@ impl SourceRate {
 
     pub const fn get(self) -> u16 {
         self.0
+    }
+}
+
+impl From<SourceRate> for u32 {
+    fn from(r: SourceRate) -> u32 {
+        r.0.into()
+    }
+}
+
+impl From<SourceRate> for f32 {
+    fn from(r: SourceRate) -> f32 {
+        r.0.into()
     }
 }
 

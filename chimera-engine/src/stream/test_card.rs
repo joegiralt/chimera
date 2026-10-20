@@ -61,7 +61,10 @@ impl<'r> TestCard<'r> {
     /// after it starts.
     pub fn new(card: CardSide<'r>, src: &[u8], latency_blocks: u32) -> TestCard<'r> {
         let desc = Descriptor::from_bytes(src).expect("a Plain row");
-        assert!(desc.shape == Shape::Plain && desc.heads == 0, "held whole");
+        assert!(
+            desc.shape() == Shape::Plain && !desc.is_streamed(),
+            "held whole"
+        );
         let samples = src[DESC_LEN..].to_vec();
         let frames = Frames::new(2 * (samples.len() / 3) as u32);
         TestCard {
@@ -130,12 +133,10 @@ impl<'r> TestCard<'r> {
 
     /// The streamed row holding `heads`, past the source's end as silence.
     pub fn held_heads(&self, heads: &[HeadSpec]) -> Vec<u8> {
-        let d = Descriptor {
-            head_frames: crate::stream::admit::head_frames(self.desc.rate),
-            ..self.desc
-        };
+        let rate = self.desc.rate();
+        let reach = Frames::new(crate::stream::admit::head_frames(rate));
         let mut held = alloc::vec![0; streamed_held_len(heads)];
-        let mut at = write_head_table(d, heads, &mut held).expect("its length");
+        let mut at = write_head_table(rate, reach, heads, &mut held).expect("its length");
         for h in heads {
             let o = Frames::new(h.first()).to_bytes(Packing::Twelve).get() as usize;
             let src = self.samples.get(o..).unwrap_or(&[]);

@@ -2,9 +2,11 @@
 //! start of `held`. Bank 1's with `bank2` (storage and the pool read it),
 //! as `read` re-exports it; `read`'s decode is bank 2's.
 
+use core::num::NonZeroU8;
+
 use chimera_hal::units::Bytes;
 
-use crate::stream::units::{Frames, Packing};
+use crate::stream::units::{Frames, Packing, SourceRate};
 
 /// What a source holds: one sample, a transwave's frames, or TRON's zones.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,7 +28,7 @@ impl Shape {
     }
 
     /// The largest `count` this shape takes.
-    fn max_count(self) -> u8 {
+    const fn max_count(self) -> u8 {
         match self {
             Shape::Plain => 1,
             Shape::Transwave => 32,
@@ -47,62 +49,160 @@ pub const ZONE_LAYOUT_LEN: usize = 9;
 /// The most zones a `ZoneSet` holds.
 pub const MAX_ZONES: u8 = 24;
 
+/// Whether a `Plain`'s samples are all in `held`, or streamed past its
+/// heads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Held {
+    Whole,
+    /// Its heads (slice 1 § 5.1), and its reach past each note (`HEAD_MS`
+    /// at its rate); each head's own frames are its table entry's.
+    Streamed {
+        heads: NonZeroU8,
+        reach: Frames,
+    },
+}
+
+/// A descriptor's shape with its count. A `ZoneSet`'s heads are its
+/// zones'; its `head_frames` bytes are kept as read (`reach`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    Plain(Held),
+    Transwave { count: NonZeroU8 },
+    ZoneSet { count: NonZeroU8, reach: Frames },
+}
+
 /// `held`'s first 16 B: `shape`, `count`, `rate` (LE), `head_frames` (LE,
-/// 0 when held whole), `heads`, then 7 reserved zero bytes.
+/// 0 when held whole), `heads`, then 7 reserved zero bytes. Only `new`
+/// builds one, so every one `to_bytes` writes `from_bytes` reads back.
+///
+/// ```compile_fail
+/// use chimera_engine::dsp::tape_engine::read::{Descriptor, Shape};
+/// let d = Descriptor { shape: Shape::ZoneSet, count: 1, rate: 0, head_frames: 0, heads: 1 };
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Descriptor {
-    pub shape: Shape,
-    pub count: u8,
-    pub rate: u16,
-    /// A streamed `Plain`'s reach past each note (`HEAD_MS` at its rate);
-    /// each head's own frames are its table entry's.
-    pub head_frames: u32,
-    /// A streamed `Plain`'s heads (slice 1 § 5.1); 0 when held whole, and
-    /// on a `ZoneSet`, whose heads are its zones'.
-    pub heads: u8,
+    rate: SourceRate,
+    layout: Layout,
 }
 
 impl Descriptor {
+    /// `None` for a count outside its shape's `1..=max` (a `Plain` holds
+    /// exactly 1), a rate outside `SourceRate`'s, `reach` on a
+    /// `Transwave`, a `Plain`'s `heads` and `reach` not set together, or
+    /// `heads` on a `ZoneSet`.
+    pub const fn new(
+        shape: Shape,
+        count: u8,
+        rate: u16,
+        reach: Frames,
+        heads: u8,
+    ) -> Option<Descriptor> {
+        let r = reach.get();
+        // One test, as the bytes are read: each early return would be a
+        // branch a caller's inliner weighs.
+        let held_ok = match shape {
+            Shape::Plain => (heads == 0) == (r == 0),
+            Shape::Transwave => heads == 0 && r == 0,
+            Shape::ZoneSet => heads == 0,
+        };
+        let (Some(rate), Some(n), true) = (
+            SourceRate::new(rate),
+            NonZeroU8::new(count),
+            held_ok && count <= shape.max_count(),
+        ) else {
+            return None;
+        };
+        let layout = match (shape, NonZeroU8::new(heads)) {
+            (Shape::Plain, None) => Layout::Plain(Held::Whole),
+            (Shape::Plain, Some(heads)) => Layout::Plain(Held::Streamed { heads, reach }),
+            (Shape::Transwave, _) => Layout::Transwave { count: n },
+            (Shape::ZoneSet, _) => Layout::ZoneSet { count: n, reach },
+        };
+        Some(Descriptor { rate, layout })
+    }
+
+    /// A source held whole: `new` with no heads and no reach.
+    pub const fn whole(shape: Shape, count: u8, rate: u16) -> Option<Descriptor> {
+        Self::new(shape, count, rate, Frames::new(0), 0)
+    }
+
+    pub const fn rate(&self) -> SourceRate {
+        self.rate
+    }
+
+    pub const fn layout(&self) -> Layout {
+        self.layout
+    }
+
+    pub const fn shape(&self) -> Shape {
+        match self.layout {
+            Layout::Plain(_) => Shape::Plain,
+            Layout::Transwave { .. } => Shape::Transwave,
+            Layout::ZoneSet { .. } => Shape::ZoneSet,
+        }
+    }
+
+    pub const fn count(&self) -> u8 {
+        match self.layout {
+            Layout::Plain(_) => 1,
+            Layout::Transwave { count } | Layout::ZoneSet { count, .. } => count.get(),
+        }
+    }
+
+    /// A `Plain`'s; every other shape is held whole.
+    pub const fn held(&self) -> Held {
+        match self.layout {
+            Layout::Plain(h) => h,
+            _ => Held::Whole,
+        }
+    }
+
+    /// Its samples stream past its heads: not all in `held`.
+    pub const fn is_streamed(&self) -> bool {
+        matches!(self.held(), Held::Streamed { .. })
+    }
+
+    /// Its head table's entries: 0 when held whole.
+    pub const fn heads(&self) -> u8 {
+        match self.held() {
+            Held::Streamed { heads, .. } => heads.get(),
+            Held::Whole => 0,
+        }
+    }
+
+    /// The `head_frames` bytes: a streamed `Plain`'s reach past each note,
+    /// 0 on any other but a `ZoneSet` (kept as read).
+    pub const fn reach(&self) -> Frames {
+        match self.layout {
+            Layout::Plain(Held::Streamed { reach, .. }) | Layout::ZoneSet { reach, .. } => reach,
+            _ => Frames::new(0),
+        }
+    }
+
     pub fn to_bytes(&self) -> [u8; DESC_LEN] {
         let mut b = [0; DESC_LEN];
-        (b[0], b[1]) = (self.shape as u8, self.count);
-        b[2..4].copy_from_slice(&self.rate.to_le_bytes());
-        b[4..8].copy_from_slice(&self.head_frames.to_le_bytes());
-        b[8] = self.heads;
+        (b[0], b[1]) = (self.shape() as u8, self.count());
+        b[2..4].copy_from_slice(&self.rate.get().to_le_bytes());
+        b[4..8].copy_from_slice(&self.reach().get().to_le_bytes());
+        b[8] = self.heads();
         b
     }
 
-    /// `None` for a short slice, an unknown shape, a count outside its
-    /// shape's `1..=max` (a `Plain` holds exactly 1), a rate outside
-    /// 4 000..=48 000 (the pool spec's range), `head_frames` on a
-    /// `Transwave`, a `Plain`'s `heads` and `head_frames` not set together,
-    /// `heads` on a `ZoneSet`, or a set reserved byte.
+    /// `None` for a short slice, an unknown shape, a descriptor `new`
+    /// refuses, or a set reserved byte.
     pub fn from_bytes(b: &[u8]) -> Option<Descriptor> {
         let b: &[u8; DESC_LEN] = b.get(..DESC_LEN)?.try_into().ok()?;
         let shape = Shape::from_code(b[0])?;
-        let d = Descriptor {
-            shape,
-            count: b[1],
-            rate: u16::from_le_bytes([b[2], b[3]]),
-            head_frames: u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
-            heads: b[8],
-        };
-        let heads_ok = match shape {
-            Shape::Plain => (d.heads == 0) == (d.head_frames == 0),
-            Shape::Transwave => d.heads == 0 && d.head_frames == 0,
-            Shape::ZoneSet => d.heads == 0,
-        };
-        let ok = (1..=shape.max_count()).contains(&d.count)
-            && (4_000..=48_000).contains(&d.rate)
-            && heads_ok
-            && b[9..].iter().all(|&x| x == 0);
-        ok.then_some(d)
+        let reach = Frames::new(u32::from_le_bytes([b[4], b[5], b[6], b[7]]));
+        let rate = u16::from_le_bytes([b[2], b[3]]);
+        let reserved = b[9..].iter().all(|&x| x == 0);
+        Descriptor::new(shape, b[1], rate, reach, b[8]).filter(|_| reserved)
     }
 
     /// Where the samples start in `held`: after a `ZoneSet`'s layout.
     pub(super) fn data_start(&self) -> usize {
-        match self.shape {
-            Shape::ZoneSet => DESC_LEN + ZONE_LAYOUT_LEN * self.count as usize,
+        match self.layout {
+            Layout::ZoneSet { count, .. } => DESC_LEN + ZONE_LAYOUT_LEN * count.get() as usize,
             _ => DESC_LEN,
         }
     }
@@ -166,13 +266,27 @@ pub fn streamed_held_len(heads: &[HeadSpec]) -> usize {
     DESC_LEN + HEAD_ENTRY * heads.len() + heads.iter().map(HeadSpec::byte_len).sum::<usize>()
 }
 
-/// Writes `d` (`heads` set to their count) and the table into `out`;
-/// where the first head's samples go. `None` if `out` is shorter, or past
-/// 255 heads.
-pub fn write_head_table(d: Descriptor, heads: &[HeadSpec], out: &mut [u8]) -> Option<usize> {
+/// Writes a streamed `Plain`'s descriptor at `rate`, reaching `reach`,
+/// and its table of `heads` into `out`; where the first head's samples
+/// go. `None` if `out` is shorter, or no descriptor holds them (none, or
+/// past 255, or no reach).
+pub fn write_head_table(
+    rate: SourceRate,
+    reach: Frames,
+    heads: &[HeadSpec],
+    out: &mut [u8],
+) -> Option<usize> {
+    let n = u8::try_from(heads.len()).ok().and_then(NonZeroU8::new);
+    let (Some(heads_n), true) = (n, reach.get() > 0) else {
+        return None;
+    };
+    let held = Held::Streamed {
+        heads: heads_n,
+        reach,
+    };
     let d = Descriptor {
-        heads: u8::try_from(heads.len()).ok()?,
-        ..d
+        rate,
+        layout: Layout::Plain(held),
     };
     let end = DESC_LEN + HEAD_ENTRY * heads.len();
     let out = out.get_mut(..end)?;
@@ -229,7 +343,7 @@ pub fn head_table_of(held: &[u8], d: Descriptor) -> Option<HeadTable<'_>> {
         .get(DESC_LEN..)?
         .as_chunks()
         .0
-        .get(..usize::from(d.heads))?;
+        .get(..usize::from(d.heads()))?;
     // In `u64`: past any frames a table can name.
     let mut need = (DESC_LEN + HEAD_ENTRY * entries.len()) as u64;
     for e in entries {

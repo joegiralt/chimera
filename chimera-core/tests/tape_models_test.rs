@@ -5,6 +5,7 @@
 
 mod common;
 
+use chimera_core::stream::units::SourceRate;
 use core::mem::MaybeUninit;
 
 use chimera_core::dsp::tape_engine::read::SourceView;
@@ -122,7 +123,7 @@ fn ping_pong_clamps_with_a_fade() {
     p.size = 0.1;
     let (more, probes) = play(&mut e, &p, &v, 900);
     out.extend_from_slice(&more);
-    let ll = loop_len(0.1, w, 48_000);
+    let ll = loop_len(0.1, w, SourceRate::MAX);
     let j = probes
         .iter()
         .position(|pr| pr.other.is_some())
@@ -176,7 +177,7 @@ fn scrub_finger_is_bounded() {
     let held = held_plain(&sine(48_000, 100.7, w), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let most = INC_MAX as i64 * B as i64;
-    let ll = loop_len(0.0, w, 48_000) as i64;
+    let ll = loop_len(0.0, w, SourceRate::MAX) as i64;
     for (motion, from, to) in [(0.0, 0.0, 1.0), (0.0, 1.0, 0.0), (0.5, 0.0, 1.0)] {
         let mut p = TapeEngineParams {
             model: TapeModel::Scrub,
@@ -226,7 +227,7 @@ fn scrub_drag_slews() {
         let h0 = a[1].head as f32;
         p.position = 1.0;
         let (_, b) = play(&mut e, &p, &v, 600);
-        let span = (w - loop_len(0.0, w, 48_000)) as f32;
+        let span = (w - loop_len(0.0, w, SourceRate::MAX)) as f32;
         let n = 1 + b
             .iter()
             .position(|pr| pr.head as f32 - h0 >= 0.632 * span)
@@ -281,7 +282,7 @@ fn scrub_stop_has_hysteresis() {
     let w = 48_000u32;
     let held = held_plain(&sine(48_000, 100.7, w), 48_000);
     let v = SourceView::strict(&held).unwrap();
-    let span = (w - loop_len(0.2, w, 48_000)) as f32;
+    let span = (w - loop_len(0.2, w, SourceRate::MAX)) as f32;
     // (speed, its first 100 blocks', silent after): a stopped tape starts
     // only over 2×, a moving one stops only under 1×.
     for (speed, start, silent) in [
@@ -393,7 +394,7 @@ fn scrub_moving_finger_bends_pitch() {
         e.render(&mut b, &p, &v, SR);
         probes.push(e.probe());
     }
-    let ll = loop_len(0.5, w, 48_000);
+    let ll = loop_len(0.5, w, SourceRate::MAX);
     let want = (1.0 + (w - ll) as f64 / SR as f64) * B as f64;
     let mut d = moves(&probes[blocks / 4..3 * blocks / 4]);
     d.sort();
@@ -560,7 +561,7 @@ fn ping_pong_small_shrink_at_position_0() {
     let w = 48_000u32;
     for shrink in [25u32, 60, 120, 240] {
         let size = 0.8f32;
-        let ll = loop_len(size, w, 48_000);
+        let ll = loop_len(size, w, SourceRate::MAX);
         // The SIZE whose loop is `shrink` frames shorter.
         let min = 96.0f32;
         let want = (ll - shrink) as f32;
@@ -1135,7 +1136,7 @@ fn scrub_motion_drop_with_a_jump_stays_bounded() {
     let held = held_plain(&sine(48_000, 100.7, w), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let most = INC_MAX as i64 * B as i64;
-    let ll = loop_len(0.5, w, 48_000) as i64;
+    let ll = loop_len(0.5, w, SourceRate::MAX) as i64;
     let mut p = TapeEngineParams {
         model: TapeModel::Scrub,
         size: 0.5,

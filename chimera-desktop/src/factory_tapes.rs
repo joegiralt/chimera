@@ -486,13 +486,7 @@ pub fn source(r: &SourceRecipe, m: Mono) -> Result<Built, String> {
 /// The bytes the arena holds for a built source: its descriptor, then its
 /// samples.
 pub fn held(b: &Built) -> Vec<u8> {
-    let d = Descriptor {
-        shape: b.head.shape,
-        count: b.head.count,
-        rate: b.head.sref.rate,
-        head_frames: 0,
-        heads: 0,
-    };
+    let d = Descriptor::whole(b.head.shape, b.head.count, b.head.sref.rate).expect("a descriptor");
     let mut h = d.to_bytes().to_vec();
     h.resize(DESC_LEN, 0);
     h.extend_from_slice(&b.packed);

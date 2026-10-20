@@ -285,6 +285,7 @@ impl Fade {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stream::units::SourceRate;
 
     /// A fade 100 / 2³² of a frame long: finite, its gain in [0, 1].
     #[test]
@@ -333,25 +334,25 @@ mod tests {
 
     #[test]
     fn loop_len_spans_2ms_to_the_window() {
-        assert_eq!(loop_len(0.0, 48_000, 48_000), 96);
-        assert_eq!(loop_len(1.0, 48_000, 48_000), 48_000);
-        assert_eq!(loop_len(0.5, 9_600, 48_000), 960);
+        assert_eq!(loop_len(0.0, 48_000, SourceRate::MAX), 96);
+        assert_eq!(loop_len(1.0, 48_000, SourceRate::MAX), 48_000);
+        assert_eq!(loop_len(0.5, 9_600, SourceRate::MAX), 960);
         // A window under 2 ms is the loop; never 0.
-        assert_eq!(loop_len(0.0, 3, 48_000), 3);
-        assert_eq!(loop_len(0.0, 0, 48_000), 1);
+        assert_eq!(loop_len(0.0, 3, SourceRate::MAX), 3);
+        assert_eq!(loop_len(0.0, 0, SourceRate::MAX), 1);
     }
 
     #[test]
     fn end_keeps_2ms_past_start() {
-        assert_eq!(window_end(1_000, 0.0, 48_000, 48_000), 1_096);
-        assert_eq!(window_end(47_990, 1.0, 48_000, 48_000), 48_000);
-        assert_eq!(window_end(1, 0.0, 2, 48_000), 2);
+        assert_eq!(window_end(1_000, 0.0, 48_000, SourceRate::MAX), 1_096);
+        assert_eq!(window_end(47_990, 1.0, 48_000, SourceRate::MAX), 48_000);
+        assert_eq!(window_end(1, 0.0, 2, SourceRate::MAX), 2);
         assert_eq!(window_start(1.0, 2), 1);
     }
 
     #[test]
     fn neutral_folds_inside_the_loop() {
-        let b = Bounds::of(0, 10_000, (1.0, 0.0, 0.1), 48_000);
+        let b = Bounds::of(0, 10_000, (1.0, 0.0, 0.1), SourceRate::MAX);
         assert_eq!(
             b,
             Bounds {
@@ -366,7 +367,7 @@ mod tests {
 
     #[test]
     fn room_before_the_loop_reads_there() {
-        let b = Bounds::of(0, 10_000, (0.5, 0.5, 0.1), 48_000);
+        let b = Bounds::of(0, 10_000, (0.5, 0.5, 0.1), SourceRate::MAX);
         assert!(b.ls > b.lx);
         assert_eq!(
             plan(at(b.lx), &b, 0, b.le),

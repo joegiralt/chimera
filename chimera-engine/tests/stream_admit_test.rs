@@ -4,6 +4,7 @@ use chimera_engine::stream::admit::{
     Admit, Age, Bill, LOUD, ReadRatio, STREAM_BUDGET_BPS, WOW_CENTS, admit, bill, head_frames,
     notes_at_root, ratio_max,
 };
+use chimera_engine::stream::units::SourceRate;
 use chimera_engine::voice_alloc::VoiceIdx;
 
 fn age(released: bool, since: u32) -> Age {
@@ -96,8 +97,8 @@ fn admit_refuses_a_note_over_the_whole_budget() {
 
 #[test]
 fn head_is_100_ms_rounded_up_to_even() {
-    assert_eq!(head_frames(24_000), 2_400);
-    assert_eq!(head_frames(11_025), 1_104);
+    assert_eq!(head_frames(SourceRate::new(24_000).unwrap()), 2_400);
+    assert_eq!(head_frames(SourceRate::new(11_025).unwrap()), 1_104);
 }
 
 #[test]

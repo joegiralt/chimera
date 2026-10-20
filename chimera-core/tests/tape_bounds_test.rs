@@ -40,13 +40,7 @@ fn reads_stay_in_row() {
     for run in 0..2_000 {
         let frames = 64 + rng.below(MAX_FRAMES - 64);
         let rate = rates[rng.below(rates.len())];
-        let d = Descriptor {
-            shape: Shape::Plain,
-            count: 1,
-            rate,
-            head_frames: 0,
-            heads: 0,
-        };
+        let d = Descriptor::whole(Shape::Plain, 1, rate).expect("a descriptor");
         let mut held = d.to_bytes().to_vec();
         held.extend_from_slice(&packed[..3 * frames.div_ceil(2)]);
         // Held cut short, as a head-only hold is: the shortest source at
@@ -108,13 +102,7 @@ fn transwave_reads_stay_in_row() {
         let s: Vec<i16> = (0..n)
             .map(|_| ((rng.next_u32() & 0xFFF) as i16) << 4 >> 4)
             .collect();
-        let d = Descriptor {
-            shape: Shape::Transwave,
-            count,
-            rate: 48_000,
-            head_frames: 0,
-            heads: 0,
-        };
+        let d = Descriptor::whole(Shape::Transwave, count, 48_000).expect("a descriptor");
         let mut held = d.to_bytes().to_vec();
         held.resize(DESC_LEN + 3 * n / 2, 0);
         pack12(&s, &mut held[DESC_LEN..]);

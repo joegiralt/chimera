@@ -3,6 +3,7 @@
 
 use crate::dsp::algo::math::exp2;
 use crate::dsp::clampf;
+use crate::stream::units::SourceRate;
 use crate::voice_alloc::VoiceIdx;
 
 /// Head of a source kept in RAM, in milliseconds.
@@ -142,6 +143,8 @@ pub fn notes_at_root(rate: u16, wow: bool) -> u32 {
 }
 
 /// `HEAD_MS` of frames, rounded up to even.
-pub fn head_frames(rate: u16) -> u32 {
-    (rate as u32 * HEAD_MS).div_ceil(1000).next_multiple_of(2)
+pub fn head_frames(rate: SourceRate) -> u32 {
+    (u32::from(rate) * HEAD_MS)
+        .div_ceil(1000)
+        .next_multiple_of(2)
 }

@@ -99,7 +99,7 @@ impl<'a> SourceView<'a> {
     /// `new` under `desc`, `held`'s descriptor already read.
     #[inline(always)]
     pub fn of(held: &'a [u8], desc: Descriptor) -> Option<SourceView<'a>> {
-        if desc.heads != 0 {
+        if desc.is_streamed() {
             return None;
         }
         let data = held.get(desc.data_start()..)?;

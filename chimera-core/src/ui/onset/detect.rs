@@ -19,7 +19,7 @@ fn energy(v: &SourceView<'_>, at: u32, n: u32) -> u32 {
 /// a block after `from` (`fwd`) or before it, so a mark on an onset moves
 /// on to the next.
 pub fn onset_in(v: &SourceView<'_>, from: u32, fwd: bool) -> Option<u32> {
-    let n = block(v.desc().rate);
+    let n = block(v.desc().rate().get());
     let (lo, hi) = (v.first(), v.end());
     if hi < lo + 3 * n {
         return None;
@@ -63,7 +63,7 @@ pub fn onset_in(v: &SourceView<'_>, from: u32, fwd: bool) -> Option<u32> {
 /// of a streamed one (of a file of `frames`), the nearest of them.
 pub(crate) fn onset_in_bank2(held: &[u8], frames: u32, from: u32, fwd: bool) -> Option<u32> {
     let d = Descriptor::from_bytes(held)?;
-    if d.heads == 0 {
+    if !d.is_streamed() {
         return onset_in(&SourceView::of(held, d)?, from, fwd);
     }
     let table = head_table(held)?;

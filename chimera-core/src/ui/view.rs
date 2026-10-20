@@ -918,6 +918,7 @@ pub fn band_note(addr: ParamAddr, sound: &Sound, src: SourceState) -> Option<&'s
         return None;
     }
     use crate::dsp::tape_engine::window::{loop_len, window_end, window_start};
+    let rate = crate::stream::units::SourceRate::new(rate)?;
     let ws = window_start(t.start, frames);
     let we = window_end(ws, t.end, frames, rate);
     let asked = t.xfade * loop_len(t.size, we - ws, rate) as f32;

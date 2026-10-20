@@ -16,6 +16,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use crate::dsp::tape_engine::Heads;
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
 use crate::dsp::tape_engine::read::SourceView;
+use crate::stream::units::SourceRate;
 use crate::ui::{draw, theme};
 
 pub(crate) mod raster;
@@ -33,7 +34,8 @@ pub const Y: i32 = theme::VIZ_BAND_MID - H / 2;
 pub struct Overview {
     cols: [[i8; 2]; COLS],
     frames: u32,
-    rate: u16,
+    /// `None` for `EMPTY`.
+    rate: Option<SourceRate>,
     /// A transwave's frames; 0 for any other shape.
     count: u8,
 }
@@ -46,7 +48,7 @@ impl Overview {
     pub const EMPTY: Overview = Overview {
         cols: [[0; 2]; COLS],
         frames: 0,
-        rate: 0,
+        rate: None,
         count: 0,
     };
 
@@ -64,8 +66,9 @@ impl Overview {
         self.frames
     }
 
+    /// 0 for `EMPTY`.
     pub fn rate(&self) -> u16 {
-        self.rate
+        self.rate.map_or(0, SourceRate::get)
     }
 
     /// Frame `f`'s column, from 0.

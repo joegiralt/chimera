@@ -4,7 +4,7 @@
 //! those frames: ONE's and LOOP's loops read it as they read a row.
 //! Bank 2's, with `TapeDeck` (`build.rs`' `11tape_engine4span` glob).
 
-use super::desc::{Descriptor, HeadTable, MIN_SOURCE_FRAMES, Shape, head_table_of};
+use super::desc::{Descriptor, HeadTable, MIN_SOURCE_FRAMES, head_table_of};
 use super::read::SourceView;
 use crate::stream::cursor::{Cursor, HeadIdx, Plan, RamHead, SpanSrc};
 use crate::stream::layout::CHUNK_FRAMES;
@@ -52,7 +52,7 @@ impl<'a> StreamRow<'a> {
     /// whole row reads an odd one); `None` if it isn't one.
     pub fn new(held: &'a [u8], desc: Descriptor, file: Frames) -> Option<StreamRow<'a>> {
         let frames = file.get().checked_add(1)? & !1;
-        let ok = desc.shape == Shape::Plain && desc.heads > 0 && frames >= MIN_SOURCE_FRAMES;
+        let ok = desc.is_streamed() && frames >= MIN_SOURCE_FRAMES;
         let table = head_table_of(held, desc).filter(|_| ok)?;
         Some(StreamRow {
             held,

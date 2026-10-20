@@ -5,6 +5,7 @@
 
 mod common;
 
+use chimera_core::stream::units::SourceRate;
 use core::mem::MaybeUninit;
 use core::sync::atomic::Ordering;
 
@@ -47,6 +48,7 @@ use common::{InstRig, XorShift, init_params};
 
 const SR: u32 = 48_000;
 const RATE: u16 = 24_000;
+const HZ: SourceRate = SourceRate::new(RATE).unwrap();
 /// 30 s at 24 kHz.
 const FRAMES: u32 = 720_000;
 /// `HEAD_MS`, and room for XFADE's 100 ms before the loop.
@@ -116,9 +118,9 @@ fn rings() -> (Box<Rings>, Box<ThirdSlots>) {
 fn heads_at(p: &TapeEngineParams, frames: u32, note: u8) -> [u32; 2] {
     let ws = window_start(p.start, frames);
     let fast = inc(RATE, note, 0.0, p.root, SR) * 1.02;
-    let floor = shortest(RATE, fast.min(INC_MAX));
+    let floor = shortest(HZ, fast.min(INC_MAX));
     let we = window_end_min(ws, p.end, frames, floor);
-    let b = Bounds::of_min(ws, we, (p.size, p.position, p.xfade), RATE, floor);
+    let b = Bounds::of_min(ws, we, (p.size, p.position, p.xfade), HZ, floor);
     let lx = b.lx.min(u32::from(RATE) / 10);
     [ws, b.ls.saturating_sub(lx + 8)]
 }
@@ -439,7 +441,7 @@ fn chord_burst_holds() {
         };
         c.held_heads(heads_for(r, p).unwrap().as_slice())
     };
-    let hf = head_frames(RATE);
+    let hf = head_frames(HZ);
     // Cut at its length, a head ending just past a chunk's start holds.
     let kind = 2_690 - hf + 4;
     assert_eq!(underruns(kind, &cut(hf)), 0);
@@ -467,7 +469,7 @@ fn short_loop_on_streamed_source_stays_in_ram() {
     let (rings, third) = rings();
     let mut st = Stream::new(&rings, &third, &whole, 0);
     let ws = window_start(p.start, FRAMES);
-    let b = Bounds::of(ws, FRAMES, (p.size, p.position, p.xfade), RATE);
+    let b = Bounds::of(ws, FRAMES, (p.size, p.position, p.xfade), HZ);
     assert!((990..=1_010).contains(&b.frames()), "{b:?}");
     let mut src = OneSource::new(&st.card.held(&[ws, ws], HF));
     let mut slot = MaybeUninit::uninit();
@@ -2031,8 +2033,8 @@ fn a_rotted_cluster_in_a_loop_faults_twice_then_never() {
         ..params(PlayMode::Loop, 0.0, 0.05)
     };
     let ws = window_start(p.start, FRAMES);
-    let we = window_end(ws, p.end, FRAMES, RATE);
-    let b = Bounds::of(ws, we, (p.size, p.position, p.xfade), RATE);
+    let we = window_end(ws, p.end, FRAMES, HZ);
+    let b = Bounds::of(ws, we, (p.size, p.position, p.xfade), HZ);
     let lap = (b.frames() / 32) as usize;
     let (rings, third) = rings();
     let mut st = Stream::new(&rings, &third, &whole, 0);

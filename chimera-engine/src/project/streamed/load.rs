@@ -11,14 +11,23 @@ use super::super::pool::StreamRefused;
 use super::super::sources::source_cost;
 use super::super::{Absence, PartId, PoolFull, Project, SourceId};
 use super::{LoadKind, StreamFail, StreamLoad, StreamStep, load_kind};
-use crate::dsp::tape_engine::read::{Descriptor, Shape, write_head_table};
+use crate::dsp::tape_engine::read::write_head_table;
 use crate::storage::{
     CardFault, LoadError, Ready, SourceLayout, SourceReadError, read_packed_into, read_source_head,
     source_file,
 };
 use crate::stream::admit::head_frames;
 use crate::stream::layout::StreamFile;
-use crate::stream::units::{Frames, Packing};
+use crate::stream::units::{Frames, Packing, SourceRate};
+
+/// A head past any file's bytes, or a table no descriptor holds: cold, so
+/// the pass after it isn't.
+#[cold]
+fn corrupted() -> StreamFail {
+    StreamFail::Read(SourceReadError::Load(LoadError::File(
+        crate::storage::FileError::Corrupt,
+    )))
+}
 
 /// One pass of `l` (`StreamLoad::step`).
 pub(super) fn step(
@@ -83,14 +92,11 @@ impl StreamLoad {
         let corrupt = StreamFail::Read(SourceReadError::Load(LoadError::File(
             crate::storage::FileError::Corrupt,
         )));
-        let d = Descriptor {
-            shape: Shape::Plain,
-            count: 1,
-            rate: self.sref.rate,
-            head_frames: head_frames(self.sref.rate),
-            heads: 0,
-        };
-        let table = write_head_table(d, self.heads.as_slice(), held).ok_or(corrupt)?;
+        let table = SourceRate::new(self.sref.rate)
+            .and_then(|r| {
+                write_head_table(r, Frames::new(head_frames(r)), self.heads.as_slice(), held)
+            })
+            .ok_or_else(corrupted)?;
         // The head the next bytes are in, and how far into it.
         let mut before = 0;
         for h in self.heads.as_slice() {
