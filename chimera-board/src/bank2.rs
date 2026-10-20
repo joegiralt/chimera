@@ -48,7 +48,7 @@ static BOARD_DOOR: BoardDoor = BoardDoor {
 };
 
 /// `f` on the board's table, `None` closed (see `DoorCell::with`).
-#[cfg(feature = "bank2")]
+#[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
 #[inline(always)]
 pub(crate) fn board_door<R>(f: impl FnOnce(&BoardDoor) -> R) -> Option<R> {
     use chimera_core::bank2::BOARD_DOOR_ADDR;

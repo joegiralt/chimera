@@ -421,6 +421,9 @@ impl Rot {
         super::STREAMS && (self.has(Mark::Rotted(c)) || self.has(Mark::File(c.file())))
     }
 
+    // Inline: a tail call to it the outliner shares lands in bank 1's
+    // `.text`, which may not call bank 2 (`door-check`).
+    #[inline(always)]
     fn has(&self, m: Mark) -> bool {
         self.marks.iter().flatten().any(|e| e.mark == m)
     }

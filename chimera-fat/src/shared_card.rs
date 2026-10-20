@@ -114,7 +114,7 @@ impl<D: Medium> SharedCard<D> {
     fn hold(&self) -> Result<UiHold<'_, D>, Busy> {
         let start = (self.hooks.now)();
         let mut asked = false;
-        let held = loop {
+        loop {
             let now = (self.hooks.now)();
             if self.bus.try_take(Taker::Ui, now) {
                 break Ok(UiHold {
@@ -131,8 +131,7 @@ impl<D: Medium> SharedCard<D> {
             if now.elapsed_since(start) > self.take {
                 break Err(Busy);
             }
-        };
-        held
+        }
     }
 
     /// Streams playing and no quiet yet: asks one and spins until the

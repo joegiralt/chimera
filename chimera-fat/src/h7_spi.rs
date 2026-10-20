@@ -121,10 +121,14 @@ pub fn run(ops: &[Op], f: impl FnMut(Op) -> Result<(), RegFault>) -> Result<(), 
 /// Every op, past any fault: a give or an abort leaves nothing half
 /// undone. The first fault is returned.
 pub fn run_all(ops: &[Op], mut f: impl FnMut(Op) -> Result<(), RegFault>) -> Result<(), RegFault> {
-    ops.iter().fold(Ok(()), |first, &o| {
+    let mut first = Ok(());
+    for &o in ops {
         let r = f(o);
-        first.and(r)
-    })
+        if first.is_ok() {
+            first = r;
+        }
+    }
+    first
 }
 
 /// CFG1 is saved first, before the one op that can fail: a take given
