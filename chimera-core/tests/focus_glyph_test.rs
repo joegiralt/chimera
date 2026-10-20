@@ -58,7 +58,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Filter", "VOICE", NONE),
     ("VoiceFx", "TYPE", NONE),
     // PRE and POST: its own glyph comes with FLT › FX.
-    ("VoiceFx", "PLACE", NONE),
+    ("VoiceFx", "PLACE", FocusGlyph::Place),
     // The jacks: a source's name, no amount (that is FM3's and QM's).
     ("Filter", "FM3IN", NONE),
     ("Filter", "QMIN", NONE),
@@ -176,8 +176,6 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("Filter", "KIND"),
     // REV2 and EXP: two circuits, neither off.
     ("Filter", "VOICE"),
-    // PRE and POST: either side of the filter, neither off.
-    ("VoiceFx", "PLACE"),
     // A and B are two envelope designs.
     ("Env", "TYPE"),
     // CLASSIC and FUNC are two LFO designs.
@@ -265,7 +263,8 @@ fn every_two_state_choice_is_decided() {
                 continue;
             };
             // The LFO's two-state SYNC draws the LFO itself (ADR 0177).
-            if names.len() != 2 || s.glyph == FocusGlyph::Lfo {
+            // PLACE draws its own boxes.
+            if names.len() != 2 || matches!(s.glyph, FocusGlyph::Lfo | FocusGlyph::Place) {
                 continue;
             }
             let k = kind(b);
@@ -391,6 +390,7 @@ fn each_glyph_maps_to_its_gauge() {
             FocusGlyph::Va(VaGlyph::Mode) => Gauge::Switch { on: 12.0 },
             FocusGlyph::Va(VaGlyph::Blend) => Gauge::Switch { on: 13.0 },
             FocusGlyph::Lfo => Gauge::Switch { on: 14.0 },
+            FocusGlyph::Place => Gauge::Place { post: false },
             _ => Gauge::Arc {
                 value: 0.25,
                 bipolar: true,

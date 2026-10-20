@@ -56,6 +56,8 @@ pub enum Gauge {
     Blend { value: f32, mode: VaMode },
     /// The LFO page's glyph (`lfo_glyph`), kept dimmed too.
     Lfo(crate::ui::lfo_glyph::LfoGauge),
+    /// PLACE: the FX box lit before the filter, the FLT box after it.
+    Place { post: bool },
 }
 
 /// What a gauge built from more than the focused value reads.
@@ -780,6 +782,7 @@ pub fn gauge(
         FocusGlyph::Composite(id) => outside(Reads::Composite(id)),
         FocusGlyph::Va(v) => outside(Reads::Va(v)),
         FocusGlyph::Lfo => outside(Reads::Lfo),
+        FocusGlyph::Place => Gauge::Place { post: value >= 0.5 },
         FocusGlyph::Arc => Gauge::Arc { value, bipolar },
     }
 }
@@ -798,7 +801,8 @@ impl Gauge {
             | Gauge::VaWave(_)
             | Gauge::VaMix(_)
             | Gauge::Blend { .. }
-            | Gauge::Lfo(_) => false,
+            | Gauge::Lfo(_)
+            | Gauge::Place { .. } => false,
             Gauge::Braid(_) | Gauge::Rings(_) | Gauge::Cube(_) | Gauge::Tail(_) => true,
         }
     }

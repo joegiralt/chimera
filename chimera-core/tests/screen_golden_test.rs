@@ -86,7 +86,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: MODE reads LP4, CLEAN's label for LP24 (ADR 0096); then
     // TYPE live with two kinds (Task 8); then CLEAN's Cascadia words FREQ,
     // Q, FM1, FM2 (Task 12): was 0x032b329ca06df69b.
-    ("bigviz_filter", 0x6cd2e6ff4a1be264),
+    ("bigviz_filter", 0x47e698ec41e79143),
     // Re-recorded: MODE reads HP4, CLEAN's label for HP24 (ADR 0096); then
     // LEVEL 64 in DRIVE's cell (Task 6); then FLT › MOD's six cells, FM3
     // turned, its delete hint showing (Task 12): was 0xf6e7d94448ca7888.
@@ -96,19 +96,19 @@ const GOLDENS: &[(&str, u64)] = &[
     // dimmed and VOICE EXP, DIRTY's NOTCH1 at FREQ (its own MODE names).
     // Layout A (#614): VOICE EXP on FLT (flt_2040_exp, was
     // flt_mod_2040_exp), KEYBD HALF on FLT › MOD, no MODE cell.
-    ("flt_clean", 0x9ec7bcd7852b7629),
+    ("flt_clean", 0xebe30c150c226f32),
     ("flt_mod_clean", 0x4f4aabd71e6452c5),
-    ("flt_2040", 0x9193c6a0a99f32e7),
+    ("flt_2040", 0x393e2a10c959617c),
     // KIND focused on the 2040: its readout names 4-POLE LP (#614).
-    ("flt_2040_kind", 0xc3f8a275fee54593),
+    ("flt_2040_kind", 0x40852bb27efc21c0),
     // Modulation draws a ghost beside the set curve (#575).
-    ("flt_2040_env_amt", 0x699b08d8431f7498),
-    ("flt_clean_lfo", 0x7d1dcbb838bbe51f),
+    ("flt_2040_env_amt", 0x7c1eb47488410e07),
+    ("flt_clean_lfo", 0x89d62d19ec4a783c),
     ("flt_mod_2040", 0xbbaec5d6b217ecf4),
-    ("flt_2040_exp", 0xf46d292e79bd92fa),
-    ("flt_dirty", 0x2cc8b44775c00e5c),
+    ("flt_2040_exp", 0xafb98470b835d60d),
+    ("flt_dirty", 0x186b709706877b53),
     ("flt_mod_dirty", 0x44d6578ab02c579a),
-    ("flt_ladder", 0xfdaa11559ebee7fd),
+    ("flt_ladder", 0x60b0a3315782e87e),
     ("flt_mod_ladder", 0x79aecd65ca83688e),
     // New (#574): the peak at its real height, 2040 RES 0.3, CLEAN BP2 and
     // LADDER RES 0.
@@ -116,28 +116,33 @@ const GOLDENS: &[(&str, u64)] = &[
     // #574 rows in layout A (also flt_clean, flt_2040, flt_dirty, flt_ladder,
     // flt_2040_kind, flt_2040_exp, flt_led_full, flt_front_fx, row_flt,
     // bigviz_filter above).
-    ("flt_2040_res_30", 0x4b44fbe438e8e240),
-    ("flt_clean_bp2", 0x923fe7dc9ab17fa4),
-    ("flt_ladder_res_0", 0x2cd85724671cdd7b),
+    ("flt_2040_res_30", 0xae04c3bbac0fdf4b),
+    ("flt_clean_bp2", 0x6e2e19aaa1064a87),
+    ("flt_ladder_res_0", 0xeacee734c3a2da58),
     // The LEVEL LED at 0 (dark), ½ and 1: beside LEVEL, beside the 2040's
     // DRIVE and in FLT's viz corner (Task 17); then beside FLT › FX's INPUT
     // (#614).
-    ("flt_led_0", 0xcbd43b8fec65b3c2),
-    ("flt_led_half", 0x37ecbd3d3822696b),
-    ("flt_led_full", 0xefaae4942eb1f370),
+    ("flt_led_0", 0x6183a88fb5565d4a),
+    ("flt_led_half", 0xc10f27243de610b3),
+    ("flt_led_full", 0x504ecaedde1fa3ff),
     // FM3 IN on LFO 2, QM IN on OP 6 (Task 17).
     ("flt_mod_repatched", 0x0bb67ffa22a7ec36),
     // FLT › FX (#614): OFF's dashes, SOFT's and FOLD's pots; FX and PLACE
     // on FLT's front.
-    ("flt_fx_off", 0x26d2a70b0b9483c3),
-    ("flt_fx_soft", 0x1bb51b8c56dc0ff9),
-    ("flt_fx_fold", 0xfc790f5157ba593c),
-    ("flt_front_fx", 0xbf5bbe39581abaff),
+    ("flt_fx_off", 0x09926bca167fce2b),
+    ("flt_fx_soft", 0x3e32ab2381e1ddc9),
+    ("flt_fx_fold", 0x039daf39d590fcb4),
+    ("flt_front_fx", 0x51fd79be2eaa5d37),
+    // Task 8 (#614): PLACE's mini glyph in its cell (every FLT front, row_flt,
+    // large_va_drive) and FLT › FX's strip and curve (flt_fx_*, flt_led_*).
+    ("flt_fx_soft_pre", 0x7e327faee312b5b7),
+    ("flt_fx_fold_post", 0x3906e862836fd103),
+    ("flt_front_place_focused", 0x4489c5d254ad6088),
     // THEME's PAGES ROW (ADR 0145): every other screen is recorded under
     // STACK (`screen::ui_for`). FLT's three pages, RES's three, MOD at E2
     // with `>`, OSC at D1R with both arrows and at OP6 with `<`, AMP bare.
     // Re-recorded: the row's pages in full words (`ROW_WORDS`).
-    ("row_flt", 0xa0836b245e40209b),
+    ("row_flt", 0xa7f43a02ebb9c110),
     ("row_res", 0x52e7d782b213fed2),
     ("row_mod", 0x61ae81a248025efe),
     ("row_osc_mid", 0x10a75dc9cea244b8),
@@ -274,7 +279,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17);
     // then FOLD's column named FX (#614), here and in the next three.
     ("mod_matrix", 0x5dec043ad53b73a4),
-    ("mod_matrix_wide", 0x796fe90bd3188437),
+    // Task 9 (#614): its FX headers read SOFT's TONE, not SHAP.
+    ("mod_matrix_wide", 0x7bb6ee0e2f3c4143),
     // OP5 → FREQ, the cursor on OP5's X cell and its hint; MODAL's eight
     // rows of 17 (Task 17).
     ("mod_matrix_algo_taps", 0x62d4a32f114d8080),
@@ -367,7 +373,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("large_algo_level", 0x6781c7502e39f90e),
     ("large_bigviz_filter", 0xcabe5de5ca85d1d7),
     ("large_modal_amp", 0x0a265b6a0a9884ed),
-    ("large_va_drive", 0xba4281d0b2c6fd24),
+    ("large_va_drive", 0x4c8ae95956aa9033),
     // The Mix chain's map has a TAPE node with `master-tape` (ADR 0055).
     #[cfg(not(feature = "master-tape"))]
     ("large_mixer_sends", 0x3ea6919e3a4e3772),

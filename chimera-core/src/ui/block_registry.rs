@@ -288,7 +288,7 @@ pub static FILTER_FX: BlockDef = BlockDef {
     name: "FX",
     short: "FX",
     layout: PageLayout::CellGrid,
-    viz: VizType::None,
+    viz: VizType::FxCurve,
     params: [
         ParamSlot::param(BlockRef::Filter, FilterParams::LEVEL).with_label("INPUT"),
         ParamSlot::fx_panel(0),

@@ -28,7 +28,9 @@ fn mappable(b: BlockRef, p: chimera_core::block::ParamId) -> Mappable {
 fn mappable_whitelist() {
     for b in BlockRef::ALL {
         for s in b.specs() {
-            let want = b.in_sound() && !s.patching && s.stored;
+            // TYPE and PLACE are switches (`fx_pots_are_mappable`).
+            let switch = b == BlockRef::VoiceFx && s.id.0 < 2;
+            let want = b.in_sound() && !s.patching && s.stored && !switch;
             let part_mix =
                 b == BlockRef::Part && matches!(s.id, PartParams::LEVEL | PartParams::PAN);
             assert_eq!(
@@ -276,4 +278,32 @@ fn init_wheel_vibrato_swing() {
         (32.0..=40.0).contains(&amp),
         "swing +-{amp} cents, {cents:?}"
     );
+}
+
+/// FX pots and MIX map; TYPE and PLACE are switches, not knobs.
+#[test]
+fn fx_pots_are_mappable() {
+    use chimera_core::dsp::voice_fx::params::VoiceFxParams as X;
+    let ok = |p| Mappable::new(ParamAddr::new(BlockRef::VoiceFx, p)).is_some();
+    for p in [X::P1, X::P2, X::P3, X::MIX] {
+        assert!(ok(p), "{p:?}");
+    }
+    assert!(!ok(X::TYPE) && !ok(X::PLACE));
+}
+
+/// MIDI MAP names an FX pot by the Part's type.
+#[cfg(feature = "midi-map")]
+#[test]
+fn the_midi_map_names_an_fx_pot_by_the_type() {
+    use chimera_core::dsp::voice_fx::params::{FxType, VoiceFxParams as X};
+    use chimera_core::midi_map::MapEntry;
+    use chimera_core::ui::settings::midi_map::name;
+    let e = MapEntry {
+        cc: cc(20),
+        target: mappable(BlockRef::VoiceFx, X::P2),
+        min: 0,
+        max: 255,
+    };
+    assert_eq!(name(&e, FxType::Soft), "TONE");
+    assert_eq!(name(&e, FxType::Fold), "SYMMETRY");
 }

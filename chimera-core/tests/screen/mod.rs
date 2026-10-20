@@ -1088,7 +1088,7 @@ pub fn lfo_on_freq(ui: &mut UiState) {
     );
 }
 
-fn on_flt(ui: &mut UiState, kind: chimera_core::dsp::filter::FilterKind, sub: bool) {
+pub fn on_flt(ui: &mut UiState, kind: chimera_core::dsp::filter::FilterKind, sub: bool) {
     init_part(ui, PartId::ALL[0]);
     ui.params_mut().filter.set_kind(kind);
     plus(ui, 2);
@@ -1098,7 +1098,7 @@ fn on_flt(ui: &mut UiState, kind: chimera_core::dsp::filter::FilterKind, sub: bo
 }
 
 /// Part 1 on INIT Algo as filter `kind` with FX `fx`, on FLT › FX.
-fn on_flt_fx(
+pub fn on_flt_fx(
     ui: &mut UiState,
     kind: chimera_core::dsp::filter::FilterKind,
     fx: chimera_core::dsp::voice_fx::params::FxType,
@@ -1516,6 +1516,21 @@ pub const CASES: &[ScreenCase] = &[
     ("flt_fx_fold", |ui| {
         on_flt_fx(ui, FilterKind::K2040, FxType::Fold);
         feed(ui, Input::turn(EncoderId::C, -20)); // SYMMETRY, its cell SYM
+    }),
+    // FLT › FX with the set curve and the strip: SOFT PRE, FOLD POST.
+    ("flt_fx_soft_pre", |ui| {
+        on_flt_fx(ui, FilterKind::Svf, FxType::Soft);
+        feed(ui, Input::turn(EncoderId::B, 60)); // DRIVE
+    }),
+    ("flt_fx_fold_post", |ui| {
+        on_flt_fx(ui, FilterKind::Svf, FxType::Fold);
+        feed(ui, Input::turn(EncoderId::B, 40)); // FOLD
+    }),
+    // The same, PLACE POST focused: the large boxes in the band.
+    ("flt_front_place_focused", |ui| {
+        on_flt(ui, FilterKind::Svf, false);
+        feed(ui, Input::turn(EncoderId::C, 3)); // FX FOLD: PLACE POST
+        feed(ui, Input::turn(EncoderId::D, 1)); // PLACE POST, focused
     }),
     ("flt_front_fx", |ui| {
         on_flt(ui, FilterKind::Svf, false);

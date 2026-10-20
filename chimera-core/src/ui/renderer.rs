@@ -429,6 +429,30 @@ impl Renderer {
                 let w = self.lfo_wave(f, s);
                 lfo_glyph::draw_scope(display, &w, lfo_glyph::Dot::of(&w, f.lfo));
             }
+            VizType::FxCurve => {
+                use crate::dsp::voice_fx::{
+                    fold,
+                    params::{FxType, Place},
+                    soft,
+                };
+                let fx = &f.parts[f.active_part.index()].sound.params.fx;
+                // The node before FLT on this chain: VA, OSC, DECK, EXC...
+                let source = f.map.map_or("SRC", |(chain, at)| {
+                    chain
+                        .block_at((at.node() as usize).saturating_sub(1))
+                        .map_or("SRC", |b| b.map.unwrap_or(b.def.short))
+                });
+                viz::fx_strip(display, source, fx.place == Place::Post, 128);
+                // The set pots (ADR 0152). Not voice_fx::curve: FUZZ's is
+                // bank 2's.
+                let (t, pots) = (fx.ty(), fx.pots);
+                viz::fx_curve(display, 168, |x| match t {
+                    FxType::Off => x,
+                    FxType::Soft => soft::curve(x, pots),
+                    FxType::Fold => fold::curve(x, pots),
+                    FxType::Fuzz => viz::fuzz_look(x, pots),
+                });
+            }
             _ => viz::live_output(display, f.scope),
         }
     }
@@ -601,6 +625,12 @@ impl Renderer {
                 }
                 // The curve's own steps; the playhead is `lfo_dot`'s.
                 VizType::Lfo(s) => ([0; 6], self.lfo_wave(f, s).curve_key()),
+                VizType::FxCurve => {
+                    let fx = &f.parts[f.active_part.index()].sound.params.fx;
+                    let bits = fx.pots.map(f32::to_bits);
+                    let tp = (fx.ty() as u32) << 1 | fx.place as u32;
+                    ([0; 6], region::fold_keys(tp.into(), &bits))
+                }
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
             PageLayout::BigViz => {
@@ -1050,6 +1080,9 @@ impl Renderer {
                 mod_amount: mod_info(f, i),
                 look: look(f, i),
                 motion: v.addr().and_then(|a| a.spec()).map(|s| s.motion()),
+                mini: (v.addr() == Some(PLACE)).then(|| components::MiniGlyph::Place {
+                    post: self.set[i].current() >= 0.5,
+                }),
             };
             let w = components::cell(display, i, top, Some(&c), f.text);
             if f.clip > 0.0 && v.addr() == Some(LEVEL) {
@@ -1305,6 +1338,10 @@ pub const MATRIX_AMOUNT_SLOT: usize = 4;
 /// The filter LEVEL, whose cell (FLT › FX's INPUT) carries the clip LED.
 const LEVEL: ParamAddr = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::LEVEL);
 /// The filter KIND, whose readout names the 2040's mode.
+const PLACE: ParamAddr = ParamAddr::new(
+    BlockRef::VoiceFx,
+    crate::dsp::voice_fx::params::VoiceFxParams::PLACE,
+);
 const KIND: ParamAddr = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::KIND);
 /// The LED's centre from the end of LEVEL's value, and above its baseline.
 const LED_DX: i32 = 7;

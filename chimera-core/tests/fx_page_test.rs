@@ -189,3 +189,106 @@ fn chains_have_no_drv() {
         (8, "FX", "FX")
     );
 }
+
+mod common;
+mod screen;
+
+use chimera_core::ui::components::{self, Cell, Look, MiniGlyph};
+use chimera_core::ui::glyph::Gauge;
+use chimera_core::ui::region::RegionKind;
+use screen::{Fb, settle, stack_ui};
+
+/// The ACCENT pixels' mean column in `x0..x1`.
+fn accent_centroid(fb: &Fb, x0: i32, x1: i32, y0: i32, y1: i32) -> Option<f32> {
+    let xs: Vec<i32> = (y0..y1)
+        .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+        .filter(|&(x, y)| fb.at(x, y) == theme::ACCENT)
+        .map(|(x, _)| x)
+        .collect();
+    (!xs.is_empty()).then(|| xs.iter().sum::<i32>() as f32 / xs.len() as f32)
+}
+
+#[test]
+fn place_glyph_lights_the_effect_box() {
+    let mid = (theme::SCREEN_W - theme::MARGIN_X - 40) as f32;
+    let at = |post| {
+        let mut fb = Fb::new();
+        components::draw_gauge(&mut fb, Gauge::Place { post });
+        accent_centroid(&fb, 0, theme::SCREEN_W, 0, theme::SCREEN_H).expect("a lit box")
+    };
+    assert!(at(false) < mid, "PRE lights the left box");
+    assert!(at(true) > mid, "POST lights the right box");
+}
+
+#[test]
+fn the_place_cell_draws_its_mini_glyph() {
+    let x = theme::MARGIN_X;
+    let draw = |mini| {
+        let mut fb = Fb::new();
+        let c = Cell {
+            label: "PLACE",
+            text: "POST",
+            value: 1.0,
+            fmt: chimera_core::ui::page::ValFmt::Uni,
+            active: false,
+            mod_amount: None,
+            look: Look::Live,
+            motion: None,
+            mini,
+        };
+        components::cell(
+            &mut fb,
+            0,
+            theme::CELL_LABEL_Y,
+            Some(&c),
+            theme::TextSize::Normal,
+        );
+        let (y0, y1) = (
+            theme::CELL_LABEL_Y + 4,
+            theme::CELL_LABEL_Y + theme::CELL_ROW_H,
+        );
+        accent_centroid(&fb, x, x + theme::CELL_COL_W, y0, y1)
+    };
+    let (pre, post) = (
+        draw(Some(MiniGlyph::Place { post: false })).expect("PRE lit"),
+        draw(Some(MiniGlyph::Place { post: true })).expect("POST lit"),
+    );
+    assert!(pre < post);
+    assert_eq!(draw(None), None, "the text cell has no accent");
+}
+
+#[test]
+fn fx_band_redraws_when_type_or_place_changes() {
+    let mut ui = stack_ui();
+    screen::on_flt_fx(&mut ui, FilterKind::Svf, FxType::Soft);
+    let mut fb = Fb::new();
+    let (perf, scope) = (
+        chimera_core::ui::perf::PerfStats::zero(),
+        screen::scope_fixture(),
+    );
+    let mut key = |ui: &mut chimera_core::ui::UiState| {
+        settle(ui);
+        ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
+        ui.drawn_key(RegionKind::Viz).expect("the viz is drawn")
+    };
+    let base = key(&mut ui);
+    ui.params_mut().fx.place = chimera_core::dsp::voice_fx::params::Place::Post;
+    let post = key(&mut ui);
+    assert_ne!(base, post, "PLACE");
+    ui.params_mut().fx.set_type(FxType::Fold);
+    assert_ne!(post, key(&mut ui), "TYPE");
+}
+
+#[test]
+fn the_fx_curve_is_the_set_value_and_off_is_the_line() {
+    let draw = |ty, drive: f32| {
+        let mut fb = Fb::new();
+        chimera_core::ui::viz::fx_curve(&mut fb, 100, |x| match ty {
+            FxType::Off => x,
+            _ => chimera_core::ui::viz::fuzz_look(x, [drive, 0.5, 0.5]),
+        });
+        fb.hash()
+    };
+    assert_ne!(draw(FxType::Off, 0.0), draw(FxType::Fuzz, 1.0));
+    assert_ne!(draw(FxType::Fuzz, 0.2), draw(FxType::Fuzz, 1.0));
+}

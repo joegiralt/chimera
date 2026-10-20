@@ -9,17 +9,23 @@ use chimera_hal::{ButtonId, ButtonState, Controls, EncoderId};
 use super::prompt::{Choice, DeleteAnswer, Prompt};
 use super::view::RowLook;
 use super::{Ask, Screen, screen_path};
+use crate::dsp::voice_fx::params::FxType;
 use crate::midi_in::Cc;
 use crate::midi_map::{MapEntry, MidiMap};
 use crate::params::EngineType;
 use crate::project::{Line, PartId};
 use crate::ui::UiState;
 use crate::ui::fmt::FmtBuf;
+use crate::ui::mod_grid;
 use crate::ui::nav::Location;
 
-/// The target's spec label.
-pub fn name(e: &MapEntry) -> &'static str {
-    e.target.addr().spec().map_or("??", |s| s.label)
+/// The target's spec label, or the FX type's word for its pot.
+pub fn name(e: &MapEntry, fx: FxType) -> &'static str {
+    let a = e.target.addr();
+    mod_grid::fx_cell(a, fx)
+        .map(|c| c.label)
+        .or_else(|| a.spec().map(|s| s.label))
+        .unwrap_or("??")
 }
 
 /// A row as the list draws it.
@@ -33,10 +39,10 @@ pub struct MapRow {
 
 /// `e`, its target's spec label, on a Part playing `engine`:
 /// dimmed when that engine doesn't read it. (The font has no dashes.)
-pub fn row(e: &MapEntry, engine: EngineType) -> MapRow {
+pub fn row(e: &MapEntry, engine: EngineType, fx: FxType) -> MapRow {
     let live = e.target.live(engine);
     let (mut label, mut range) = (FmtBuf::new(), FmtBuf::new());
-    let name = name(e);
+    let name = name(e, fx);
     let dead = if live { "" } else { "- " };
     let _ = write!(label, "CC {:<3} {dead}{name}", e.cc.get());
     let _ = write!(range, "{}-{}", e.min, e.max);
@@ -56,11 +62,12 @@ pub fn row(e: &MapEntry, engine: EngineType) -> MapRow {
 pub struct MapBand {
     pub map: MidiMap,
     engine: EngineType,
+    fx: FxType,
 }
 
 impl MapBand {
     pub fn row(&self, i: usize) -> MapRow {
-        row(&self.map.entries()[i], self.engine)
+        row(&self.map.entries()[i], self.engine, self.fx)
     }
 }
 
@@ -114,7 +121,7 @@ impl UiState {
             let ask = MapDelete {
                 part: p,
                 entry: e,
-                label: name(&e),
+                label: name(&e, self.project.part(p).sound.params.fx.ty()),
             };
             return self.ask(Ask::MapDelete(ask, Choice::new()));
         }
@@ -138,6 +145,7 @@ impl UiState {
         MapBand {
             map: s.map,
             engine: s.params.engine(),
+            fx: s.params.fx.ty(),
         }
     }
 

@@ -235,7 +235,7 @@ fn model_change_applies_machine_defaults() {
     assert_ne!(settled, render_ui(&ui).hash());
 
     // The matrix reads the new machine's labels.
-    assert_eq!(ui.matrix_state.tape, TapeModel::Stretch);
+    assert_eq!(ui.matrix_state.ctx.tape, TapeModel::Stretch);
 
     // MODEL turned past its end changes nothing, so writes nothing.
     feed(&mut ui, Input::turn(EncoderId::A, -3)); // ONESHOT
@@ -543,14 +543,18 @@ fn tape_pages_have_no_other_gestures() {
 /// bumps the matrix's revision, so the headers redraw.
 #[test]
 fn matrix_columns_read_the_machine() {
-    use chimera_core::ui::mod_grid::{MatrixState, ModDest, draw_grid, fmt_route_dest};
+    use chimera_core::ui::mod_grid::{DestCtx, MatrixState, ModDest, draw_grid, fmt_route_dest};
     let dest = ModDest {
         addr: tape(P::MOTION),
         label: [0; 8],
     };
-    let name = |t| {
+    let name = |tape| {
         let mut b = FmtBuf::new();
-        fmt_route_dest(&mut b, &dest, t);
+        let c = DestCtx {
+            tape,
+            ..DestCtx::DEFAULT
+        };
+        fmt_route_dest(&mut b, &dest, c);
         b.as_str().to_owned()
     };
     assert_eq!(name(TapeModel::Loop), "TPE WALK");

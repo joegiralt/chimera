@@ -254,7 +254,7 @@ pub static VOICE_FX_SPECS: [ParamSpec; 6] = [
         Change::Crossfade,
     )
     .ident("PLACE")
-    .glyph(FocusGlyph::None),
+    .glyph(FocusGlyph::Place),
     ParamSpec::continuous(
         2,
         "AMOUNT",
