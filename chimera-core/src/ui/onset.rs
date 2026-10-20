@@ -26,7 +26,7 @@ pub fn stepped(v: f32, ticks: i8, rate: u16, frames: u32) -> f32 {
         ms = ms.max(secs * 10.0);
     }
     let d = f32::from(ticks.signum()) * ms / (1_000.0 * secs);
-    (v + d).clamp(0.0, 1.0)
+    crate::dsp::clampf(v + d, 0.0, 1.0)
 }
 
 mod detect;
@@ -43,7 +43,8 @@ pub fn onset(held: &[u8], frames: u32, from: u32, fwd: bool) -> Option<u32> {
 /// START or END at `v` as time into the source: `137 MS` under a second,
 /// else `12.345 S`, to the ms a slow detent moves.
 pub fn time_text(buf: &mut crate::ui::fmt::FmtBuf, v: f32, rate: u16, frames: u32) {
-    let ms = (v.clamp(0.0, 1.0) * frames as f32 * 1_000.0 / f32::from(rate.max(1))) as u32;
+    let ms =
+        (crate::dsp::clampf(v, 0.0, 1.0) * frames as f32 * 1_000.0 / f32::from(rate.max(1))) as u32;
     let _ = if ms < 1_000 {
         write!(buf, "{ms} MS")
     } else {

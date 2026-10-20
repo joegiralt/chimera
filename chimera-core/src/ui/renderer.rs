@@ -769,8 +769,11 @@ impl Renderer {
             .addr()
             .and_then(|a| view::band_note(a, sound, f.ctx.src));
         match (f.held.filter(|s| held_on(f, &view) == Some(s.held)), note) {
-            (Some(s), _) => Self::draw_reason(display, s.why),
-            (None, Some(n)) => Self::draw_note(display, n),
+            (Some(s), _) => {
+                let why = crate::ui::held::reason(s.why);
+                Self::draw_reason(display, why.as_str(), theme::ALERT)
+            }
+            (None, Some(n)) => Self::draw_reason(display, n, theme::MID),
             (None, None) => hint::focus(display, Self::focus_hint(f), f.text, hint_right(&gauge)),
         }
         if let View::Source(view::SourceState::Card { cost, free, .. }) = view {
@@ -798,8 +801,9 @@ impl Renderer {
         f.hint(h)
     }
 
-    /// A TAPE cell's note (`view::band_note`), in the hint's place, in MID.
-    fn draw_note<D>(display: &mut D, text: &str)
+    /// Words in the hint's place: why the cell's choice is dimmed (ALERT),
+    /// or a TAPE cell's note (`view::band_note`, MID).
+    fn draw_reason<D>(display: &mut D, text: &str, color: Rgb565)
     where
         D: DrawTarget<Color = Rgb565>,
     {
@@ -810,25 +814,7 @@ impl Renderer {
             text,
             theme::MARGIN_X,
             hint::FOCUS_Y,
-            theme::MID,
-            t,
-        );
-    }
-
-    /// Why the cell's choice is dimmed, in the hint's place.
-    fn draw_reason<D>(display: &mut D, why: crate::ui::held::Reason)
-    where
-        D: DrawTarget<Color = Rgb565>,
-    {
-        let text = crate::ui::held::reason(why);
-        let t = crate::ui::source_cell::tracking(text.as_str());
-        crate::ui::draw::text_tracked(
-            display,
-            &theme::FONT_LABEL,
-            text.as_str(),
-            theme::MARGIN_X,
-            hint::FOCUS_Y,
-            theme::ALERT,
+            color,
             t,
         );
     }
