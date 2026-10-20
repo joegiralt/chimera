@@ -4,6 +4,7 @@
 
 pub mod blep;
 pub mod combine;
+pub mod lbfm;
 pub mod osc;
 pub mod stability;
 
@@ -45,10 +46,14 @@ pub enum VaMode {
     Am = 6,
     /// The larger of the two oscillators, its kinks rounded (#605).
     Max = 7,
+    /// Each oscillator loops back on its own frequency (#613).
+    LoopFm = 8,
+    /// OSC 2's read reverses at OSC 1's wraps: mirrored sync (#604).
+    SoftSync = 9,
 }
 
 impl VaMode {
-    pub const ALL: [VaMode; 8] = [
+    pub const ALL: [VaMode; 10] = [
         VaMode::Mix,
         VaMode::Sync,
         VaMode::Ring,
@@ -57,17 +62,21 @@ impl VaMode {
         VaMode::Fm,
         VaMode::Am,
         VaMode::Max,
+        VaMode::LoopFm,
+        VaMode::SoftSync,
     ];
 
     /// Whether this MODE's oscillators are `osc::door`'s, which with
     /// `bank2` play only while bank 2 is open (ADR 0163).
     pub const fn in_bank2(self) -> bool {
-        matches!(self, VaMode::Fm)
+        matches!(self, VaMode::Fm | VaMode::LoopFm | VaMode::SoftSync)
     }
 }
 
 /// MODE's names, in `VaMode`'s order (display only).
-pub const MODE_NAMES: [&str; 8] = ["MIX", "SYNC", "RING", "XOR", "BITS", "FM", "AM", "MAX"];
+pub const MODE_NAMES: [&str; 10] = [
+    "MIX", "SYNC", "RING", "XOR", "BITS", "FM", "AM", "MAX", "LOOPFM", "SOFT",
+];
 
 impl DiskCode for VaMode {
     fn disk_code(self) -> u8 {
@@ -80,6 +89,8 @@ impl DiskCode for VaMode {
             VaMode::Fm => 5,
             VaMode::Am => 6,
             VaMode::Max => 7,
+            VaMode::LoopFm => 8,
+            VaMode::SoftSync => 9,
         }
     }
 
@@ -93,6 +104,8 @@ impl DiskCode for VaMode {
             VaMode::Fm => "FM",
             VaMode::Am => "AM",
             VaMode::Max => "MAX",
+            VaMode::LoopFm => "LOOPFM",
+            VaMode::SoftSync => "SOFTSYNC",
         }
     }
 
@@ -106,6 +119,8 @@ impl DiskCode for VaMode {
             5 => Some(VaMode::Fm),
             6 => Some(VaMode::Am),
             7 => Some(VaMode::Max),
+            8 => Some(VaMode::LoopFm),
+            9 => Some(VaMode::SoftSync),
             _ => None,
         }
     }
@@ -214,7 +229,7 @@ pub static VA_SPECS: [ParamSpec; 12] = [
         2,
         "MODE",
         ValFmt::Names(&MODE_NAMES),
-        7.0,
+        9.0,
         0.0,
         Change::Crossfade,
     )
@@ -327,6 +342,11 @@ pub const COST_BITS: Cost = Cost(530);
 /// crossed either way at the 0.45 cap, a divide a crossing) + 134.4 + 29.4
 /// + 74.2 (5.1 of it the modulator's scaling) + 29.9 + 95.
 pub const COST_FM: Cost = Cost(590);
+/// LOOPFM: 84.7 (OSC 1's `render_loop`: its round with the closed form's
+/// divide, the wrap at the 0.45 cap with the jitter's draw; the scale
+/// ramps per block) + 70.1 (OSC 2's) + 34.5 + 3.3 + 51.4 (no VarOsc
+/// runs: the block is `render`'s and `render_loopfm`'s own) + 8.9 + 95.
+pub const COST_LOOPFM: Cost = Cost(350);
 /// AM: 158.2 + 134.4 + 41.0 + 3.3 (the sub) + 71.1 + 29.9 + 95, + 0.7 for
 /// `am_reach` at the BLEND ramp's two ends a block (ADR 0176: `render` 54
 /// instructions longer, about half on AM's path; its loops unchanged): 533.6.
@@ -336,6 +356,10 @@ pub const COST_AM: Cost = Cost(540);
 /// the BLAMP) + 71.7 + 29.9 + 95, 581.3 against MIX's 522.2 in the same
 /// count (the merged tree's block work reads 34 higher for every MODE).
 pub const COST_MAX: Cost = Cost(590);
+/// SOFT SYNC: 121.7 (master at 7 kHz) + 211.3 (TRI/SAW, OSC 2's reversing
+/// instance: its edges either way at 0.45, a divide a crossing, a turn's
+/// 88.3 × 7/48) + 36.2 + 67.5 + 30.0 + 95 (at 0.45 uncapped: 640).
+pub const COST_SOFTSYNC: Cost = Cost(570);
 
 /// FM's index at BLEND `blend`, `5·blend²`, capped so OSC 1's fastest read
 /// `inc·(1 + I)` stays under `MAX_INC` (0.45 cycles a sample); `inc = 0`
@@ -355,6 +379,9 @@ pub const SYNC_MASTER_HZ: f32 = 7_000.0;
 
 /// A MODE duck's gain over one block, if one runs.
 type Gain = Option<&'static [f32; BLOCK_SIZE]>;
+
+/// `render_loopfm` as the door carries it (ADR 0163, LOOPFM's whole render).
+pub type LoopFmRender = fn(&mut VaEngine, &mut [f32; BLOCK_SIZE], &Lanes, Gain, f32, [f32; 2]);
 
 /// The MODE duck's length each way, two blocks.
 const DUCK: usize = 2 * BLOCK_SIZE;
@@ -468,7 +495,8 @@ pub(crate) struct VaCarry {
 
 /// One block's lanes: each a `(from, step)` ramp a sample (`ease::at`).
 #[derive(Clone, Copy)]
-struct Lanes {
+#[doc(hidden)]
+pub struct Lanes {
     osc: [Ramps; 2],
     amount: (f32, f32),
     sub: (f32, f32),
@@ -503,6 +531,8 @@ pub struct VaEngine {
     ring_k: Ramp,
     /// FM's index (`fm_index`).
     fm: Ramp,
+    /// LOOPFM's `b0` for each oscillator.
+    lb: [Ramp; 2],
     /// AM's level make-up (`am_gain`).
     am_n: Ramp,
     /// MAX's corrector.
@@ -521,6 +551,8 @@ pub struct VaEngine {
     last_k: [f32; 2],
     #[cfg(any(test, feature = "test-support"))]
     backwards: bool,
+    #[cfg(any(test, feature = "test-support"))]
+    swap_dirs: [f32; 2],
 }
 
 #[cfg(not(any(test, feature = "test-support")))]
@@ -543,6 +575,7 @@ impl VaEngine {
             sub_level: Ramp::default(),
             ring_k: Ramp::default(),
             fm: Ramp::default(),
+            lb: [Ramp::default(); 2],
             am_n: Ramp::default(),
             max: MaxKink::NEW,
             note: 60,
@@ -558,6 +591,8 @@ impl VaEngine {
             last_k: [0.0; 2],
             #[cfg(any(test, feature = "test-support"))]
             backwards: false,
+            #[cfg(any(test, feature = "test-support"))]
+            swap_dirs: [1.0; 2],
         }
     }
 
@@ -678,6 +713,9 @@ impl VaEngine {
         self.sub_level.hold();
         self.ring_k.hold();
         self.fm.hold();
+        for r in &mut self.lb {
+            r.hold();
+        }
         self.am_n.hold();
         for o in &mut self.osc {
             o.hold();
@@ -702,8 +740,10 @@ impl VaEngine {
             VaMode::Xor => COST_XOR,
             VaMode::Bits => COST_BITS,
             VaMode::Fm => COST_FM,
+            VaMode::LoopFm => COST_LOOPFM,
             VaMode::Am => COST_AM,
             VaMode::Max => COST_MAX,
+            VaMode::SoftSync => COST_SOFTSYNC,
         }
     }
 
@@ -756,9 +796,11 @@ impl VaEngine {
             d,
         };
         let mut pk = [0.0f32; 2];
-        // SYNC's master stops at 7 kHz: while SYNC plays or is coming (the
-        // duck down), so the cap ramps in and out under the duck
-        let sync = p.mode == VaMode::Sync || self.playing == VaMode::Sync;
+        // SYNC's and SOFT SYNC's master stops at 7 kHz: while either plays
+        // or is coming (the duck down), so the cap ramps in and out under
+        // the duck (ADR 0161: SOFT SYNC's turns bill at it)
+        let synced = |m| matches!(m, VaMode::Sync | VaMode::SoftSync);
+        let sync = synced(p.mode) || synced(self.playing);
         let hz = [
             if sync && hz[0] > SYNC_MASTER_HZ {
                 SYNC_MASTER_HZ
@@ -828,6 +870,7 @@ impl VaEngine {
         match self.playing {
             VaMode::Mix => self.render_mix(out, &l, gain),
             VaMode::Sync => self.render_sync(out, &l, gain),
+            VaMode::SoftSync => self.render_soft_sync(out, &l, gain),
             VaMode::Ring => self.render_ring(out, &l, gain),
             VaMode::Xor => self.render_xor(out, &l, gain),
             VaMode::Bits => {
@@ -844,6 +887,20 @@ impl VaEngine {
                 let (from, to) = self.fm.step(fm_index(unit(p.amount), inc));
                 self.render_fm(out, &l, gain, (from.min(fm_cap(inc)), to))
             }
+            VaMode::LoopFm => {
+                let (x, wave) = (unit(p.amount), [unit(p.wave[0]), unit(p.wave[1])]);
+                // bank 2's with `bank2` (ADR 0163); closed, the voice is
+                // silent and the duck runs on
+                #[cfg(feature = "bank2")]
+                if crate::bank2::DOOR_CELL
+                    .with(|d| (d.va.loopfm)(self, out, &l, gain, x, wave))
+                    .is_none()
+                {
+                    out.fill(0.0);
+                }
+                #[cfg(not(feature = "bank2"))]
+                self.render_loopfm(out, &l, gain, x, wave);
+            }
         }
         self.duck = match duck {
             Duck::Steady => Duck::Steady,
@@ -854,7 +911,14 @@ impl VaEngine {
                 self.max.reset();
                 // FM's index starts on its value
                 self.fm.hold();
+                for r in &mut self.lb {
+                    r.hold();
+                }
                 self.am_n.hold();
+                #[cfg(any(test, feature = "test-support"))]
+                {
+                    self.swap_dirs = self.osc.each_ref().map(|o| o.read_dir());
+                }
                 // a MOD MODE's read phase becomes the clock (ADR 0158)
                 for o in &mut self.osc {
                     o.settle();
@@ -879,6 +943,59 @@ impl VaEngine {
     #[inline(never)]
     fn render_am(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
         self.run(out, l, VaMode::Am, gain);
+    }
+
+    #[inline(never)]
+    fn render_soft_sync(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
+        let Self {
+            osc: [o1, o2],
+            stab,
+            jit,
+            osc2: b,
+            marks: mk,
+            ..
+        } = self;
+        let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
+        let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+        // OSC 1 the shared instance, its wraps marked: OSC 2's turns
+        o1.render::<BLOCK_SIZE, true, false, true, false>(
+            out,
+            mk,
+            &l.osc[0],
+            &mut jit[0],
+            &mut draw,
+            &ZEROS,
+            (0.0, 0.0),
+        );
+        // OSC 2's reversing render is bank 2's with `bank2` (ADR 0163).
+        // Closed, the voice is silent and OSC 2 waits as it was.
+        let mut osc2 = |f: osc::door::ModRender| {
+            f(
+                o2,
+                b,
+                mk,
+                &l.osc[1],
+                &mut jit[1],
+                stab,
+                jd,
+                &ZEROS,
+                (0.0, 0.0),
+            )
+        };
+        #[cfg(feature = "bank2")]
+        if crate::bank2::DOOR_CELL
+            .with(|d| osc2(d.va.osc2_rev))
+            .is_none()
+        {
+            out.fill(0.0);
+            return;
+        }
+        #[cfg(not(feature = "bank2"))]
+        osc2(osc::door::osc2_rev);
+        match gain {
+            Some(g) => self.operator::<true>(out, l, VaMode::SoftSync, g),
+            None => self.operator::<false>(out, l, VaMode::SoftSync, &DUCK_UP[1]),
+        }
     }
 
     #[inline(never)]
@@ -956,6 +1073,66 @@ impl VaEngine {
         }
     }
 
+    /// LOOPFM (#613) at BLEND `x` and each oscillator's WAVE `wave`: each
+    /// loops back on its own frequency (`lbfm::render_loop` on its
+    /// `VarOsc` phase) with its own `b0`, ramped; the operator mixes OSC 2
+    /// in to an equal share.
+    #[inline(never)]
+    fn render_loopfm(
+        &mut self,
+        out: &mut [f32; BLOCK_SIZE],
+        l: &Lanes,
+        gain: Gain,
+        x: f32,
+        wave: [f32; 2],
+    ) {
+        // each |b0| capped at its block's faster end, as FM's index
+        let b0 = [0, 1].map(|k| {
+            let (i0, di) = l.osc[k].inc;
+            let cap = lbfm::b0_cap(i0.max(i0 + di * BLOCK_SIZE as f32));
+            let b = lbfm::b0_of(lbfm::loop_b(x, wave[k]));
+            let (from, to) = self.lb[k].step(b.max(-cap));
+            let from = from.max(-cap);
+            (from, step_of((from, to), BLOCK_SIZE))
+        });
+        let Self {
+            osc: [o1, o2],
+            stab,
+            jit,
+            osc2: b,
+            marks: mk,
+            ..
+        } = self;
+        let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
+        let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+        let mut p = o1.phase();
+        lbfm::render_loop::<BLOCK_SIZE, true>(
+            &mut p,
+            b0[0],
+            l.osc[0].inc,
+            out,
+            mk,
+            &mut jit[0],
+            &mut draw,
+        );
+        o1.set_phase(p);
+        let mut p = o2.phase();
+        lbfm::render_loop::<BLOCK_SIZE, false>(
+            &mut p,
+            b0[1],
+            l.osc[1].inc,
+            b,
+            mk,
+            &mut jit[1],
+            &mut draw,
+        );
+        o2.set_phase(p);
+        match gain {
+            Some(g) => self.operator::<true>(out, l, VaMode::LoopFm, g),
+            None => self.operator::<false>(out, l, VaMode::LoopFm, &DUCK_UP[1]),
+        }
+    }
+
     /// One block in `mode`, a constant in each caller, so each mode's loop
     /// is its own (the count sees each). OSC 1 renders into `out` with its
     /// sub flips and its wraps, OSC 2 beside it (synced to the
@@ -975,11 +1152,13 @@ impl VaEngine {
         // 1 at d = 0 (STAB 1)
         let jd = JITTER_CENTS * l.d * CENT * (1.0 / 2_147_483_648.0);
         let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
-        // these MODEs read no modulated phase (FM does, `render_fm`)
+        // these MODEs read no modulated phase (FM's and SOFT SYNC's
+        // renders are their own, through the door)
         let (z, nk) = (&ZEROS, (0.0, 0.0));
         // OSC 1 marks its sub flips and its wraps, one instance for every
-        // MODE (flash): only SYNC's slave reads the wraps, resetting at
-        // them (ADR 0118 point 13)
+        // MODE (flash): only SYNC's slave reads the wraps here, resetting
+        // at them (ADR 0118 point 13); SOFT SYNC's turns at them (its own
+        // render)
         o1.render::<BLOCK_SIZE, true, false, true, false>(
             out,
             mk,
@@ -1128,6 +1307,12 @@ impl VaEngine {
         self.backwards
     }
 
+    /// Both reads' directions at the last MODE swap, before `settle`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn dirs_at_swap(&self) -> [f32; 2] {
+        self.swap_dirs
+    }
+
     /// Both clocks jumped to `p`, as a carry restores them.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_osc_phase(&mut self, p: [f32; 2]) {
@@ -1230,6 +1415,45 @@ mod tests {
             })
         };
         assert_eq!(next(), next());
+    }
+
+    /// LOOPFM stores its phase in `VarOsc`: the carry restores it, and
+    /// below STAB 1 the next note runs on from it.
+    #[test]
+    fn loopfm_carry_restores() {
+        let p = VaParams {
+            mode: VaMode::LoopFm,
+            amount: 0.8,
+            stability: 0.5,
+            fine: [0.0, 6.0],
+            ..VaParams::default()
+        };
+        let part = PartId::new(2).unwrap();
+        let c = with_engine(|e| {
+            e.place(VoiceIdx::ALL[3]);
+            e.note_on(69, &p, part, SR);
+            run(e, &p, 225);
+            let c = e.carry();
+            with_engine(|f| {
+                f.restore(c);
+                assert_eq!(f.osc_phase(), e.osc_phase());
+                assert_ne!(f.osc_phase(), [0.0; 2]);
+            });
+            c
+        });
+        let next = || {
+            with_engine(|e| {
+                e.place(VoiceIdx::ALL[3]);
+                e.restore(c);
+                e.hold();
+                e.note_on(64, &p, part, SR);
+                assert_ne!(e.osc_phase(), [0.0; 2], "below STAB 1 the phases run on");
+                run(e, &p, 150)
+            })
+        };
+        let (a, b) = (next(), next());
+        assert!(a.iter().all(|v| f32::from_bits(*v).is_finite()));
+        assert_eq!(a, b);
     }
 
     /// The carry holds the walks and the streams themselves: two engines

@@ -97,7 +97,7 @@ const ST: [f32; 5] = {
 
 /// `sin 2πx` for |x| ≤ ½ turn (`S`'s polynomial in turns).
 #[inline(always)]
-fn psin(x: f32) -> f32 {
+pub(super) fn psin(x: f32) -> f32 {
     // Estrin's split of the Horner chain: one multiply-add fewer
     let (x2, x4) = (x * x, (x * x) * (x * x));
     let lo = ST[0] + x2 * ST[1];
@@ -1012,6 +1012,12 @@ impl VarOsc {
         self.read
     }
 
+    /// The read's direction, ±1.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn read_dir(&self) -> f32 {
+        self.dir
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn with_correction(mut self, c: Correction) -> Self {
         self.correction = c;
@@ -1243,7 +1249,8 @@ impl VarOsc {
                 }
             }
         }
-        if SYNC {
+        // a reset's target; a turn (`MOD`) has none
+        if SYNC && !MOD {
             for (k, w) in WAVES.into_iter().enumerate() {
                 blk.zero[k] = w.value_slope(w.consts(sh1, 1.0), 0.0, w.pos(sh1));
             }
@@ -1297,7 +1304,7 @@ impl VarOsc {
             let (v, e) = (c0[0] + c0[3], c1[0] + c1[3]);
             run.c[0] = Lin { v, d: (e - v) * il };
         }
-        if SYNC {
+        if SYNC && !MOD {
             let f = weight(i1);
             let (za, zb) = (blk.zero[a as usize], blk.zero[b as usize]);
             run.y0 = (1.0 - f) * za.0 + f * zb.0;

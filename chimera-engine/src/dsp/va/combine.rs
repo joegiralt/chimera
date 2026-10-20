@@ -228,12 +228,13 @@ impl Operator {
     pub fn at(&self, a: f32, b: f32, x: f32, ks: f32) -> f32 {
         let sum = a + b;
         match self.mode {
-            VaMode::Mix | VaMode::Sync => a + (b - a) * x,
+            VaMode::Mix | VaMode::Sync | VaMode::SoftSync => a + (b - a) * x,
             VaMode::Ring => sum + (ks * a * b - sum) * x,
             VaMode::Xor => sum + (xor16_scaled(a, b, self.kx, self.p2) - sum) * x,
             VaMode::Bits => self.q * self.crush.process_scaled(sum, self.liq),
             // OSC 2 is in OSC 1's phase already
             VaMode::Fm => a,
+            VaMode::LoopFm => a + (b - a) * (0.5 * x),
             VaMode::Am => ks * a * ((1.0 - 0.5 * x) + 0.5 * x * b * self.ib),
             VaMode::Max => max_gain(x) * (a + b + x * (a - b).abs()),
         }
@@ -246,7 +247,7 @@ impl Operator {
 pub fn combine(mode: VaMode, a: f32, b: f32, x: f32, k: f32, pk: Peaks, crush: &Crusher) -> f32 {
     let half = 0.5 * (a + b);
     match mode {
-        VaMode::Mix | VaMode::Sync => a + (b - a) * x,
+        VaMode::Mix | VaMode::Sync | VaMode::SoftSync => a + (b - a) * x,
         VaMode::Ring => half + (k * a * b - half) * x,
         VaMode::Xor => {
             let p = pk.a.max(pk.b);
@@ -257,6 +258,7 @@ pub fn combine(mode: VaMode, a: f32, b: f32, x: f32, k: f32, pk: Peaks, crush: &
             q * crush.process(half / q)
         }
         VaMode::Fm => a,
+        VaMode::LoopFm => a + (b - a) * (0.5 * x),
         VaMode::Am => {
             let u = am_reach(x);
             k * a * ((1.0 - 0.5 * u) + 0.5 * u * b * (1.0 / pk.b.max(1e-6)))
