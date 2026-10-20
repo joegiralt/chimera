@@ -349,21 +349,22 @@ static WAVE_SWEEP: [(f32, ParamId, f32); 21] = [
 
 /// STRETCH's SIZE for a D-TIME of 60 ms: `log(6) / log(25)`.
 const D_TIME_60: f32 = 0.556_641;
+use chimera_core::dsp::tape_engine::stretch::HALF_SPEED;
 
 /// STRETCH's: 2 s frozen at START (MOTION 0) at D-TIME 250 ms; then the
 /// same passage from START, a fresh take each, at 0.5×, 1× and 2× its time
-/// (MOTION 0.25, 0.5, 1), pitch fixed, D-TIME 60 ms; then at 0.5× again at
+/// (MOTION `HALF_SPEED`, 0.5, 1), pitch fixed, D-TIME 60 ms; then at 0.5× again at
 /// D-TIME 10 ms (metallic) and 250 ms (tremolo).
 static STRETCH_SWEEP: [(f32, ParamId, f32); 12] = [
     (1.99, P::MOTION, 0.0),
-    (2.0, P::MOTION, 0.25),
-    (4.99, P::MOTION, 0.25),
+    (2.0, P::MOTION, HALF_SPEED),
+    (4.99, P::MOTION, HALF_SPEED),
     (5.0, P::MOTION, 0.5),
     (7.99, P::MOTION, 0.5),
     (8.0, P::MOTION, 1.0),
     (10.99, P::MOTION, 1.0),
-    (11.0, P::MOTION, 0.25),
-    (14.5, P::MOTION, 0.25),
+    (11.0, P::MOTION, HALF_SPEED),
+    (14.5, P::MOTION, HALF_SPEED),
     (1.99, P::SIZE, 1.0),
     (2.0, P::SIZE, D_TIME_60),
     (10.99, P::SIZE, D_TIME_60),
@@ -1240,7 +1241,7 @@ mod tests {
         for (&t, (speed, d)) in s.1.iter().zip(want) {
             let mut p = P::default();
             s.apply(&mut p, t);
-            assert!((time_speed(p.motion) - speed).abs() < 1e-6, "{t} s");
+            assert!((time_speed(p.motion) - speed).abs() < 1e-4, "{t} s");
             assert!(
                 (d_time_s(p.size) - d).abs() < 1e-4,
                 "{t} s: {}",

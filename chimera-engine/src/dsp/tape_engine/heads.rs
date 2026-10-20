@@ -12,7 +12,7 @@
 //! source at `off − u`, so LOOP with END before START, PING-PONG's way down
 //! and SCRUB's backward vari-speed are LOOP's arithmetic read backward.
 
-use super::read::Pos;
+use super::read::{Pos, SourceView};
 pub use super::window::{
     Bounds, loop_len, loop_len_min, min_frames, shortest, window_end, window_end_min, window_start,
 };
@@ -164,6 +164,85 @@ pub struct Fade {
     pub inv: f32,
     /// The pass it fades into.
     pub next: Bounds,
+    /// 0: gains that sum to 1 (a short loop, correlated across the
+    /// splice); `POWER`: gains whose powers sum to about 1 (`xmix`).
+    pub power: f32,
+}
+
+/// `Fade::power` for an equal-power fade.
+pub const POWER: f32 = 0.5;
+/// A fade this long or longer may be equal-power (`power_of`): over a
+/// pad's or a bed's uncorrelated material a sum-to-1 fade dips 3 dB at its
+/// middle (#698). A shorter one, a short loop's, splices correlated
+/// material: sum to 1.
+pub const POWER_FADE_S: f32 = 0.020;
+/// Pairs `power_of` reads across a fade.
+const PAIRS: u32 = 64;
+
+/// A fade's `xgains` power from what its two heads will read (Kontakt and
+/// the S950 offer both laws; this picks by the material): the normalized
+/// correlation `ρ` of `PAIRS` sample pairs, from `a0` in `va` and `b0` in
+/// `vb`, `span` frames on, and the power that holds a mix of material
+/// that correlated at the fade's middle, `POWER` at most: correlated
+/// material (a held tone) sums to 1 and never peaks past its own level,
+/// and uncorrelated material (a bed, noise) keeps its power.
+/// `None` where the views hold under `4 · PAIRS` frames of it.
+pub fn power_of(
+    va: &SourceView<'_>,
+    a0: u32,
+    vb: &SourceView<'_>,
+    b0: u32,
+    span: u32,
+) -> Option<f32> {
+    // Over what both views hold of the fade, `MIN_PAIRS_SPAN` at least.
+    let room = |v: &SourceView<'_>, x: u32| (v.first() <= x).then(|| v.end().saturating_sub(x + 1));
+    let n = span.min(room(va, a0)?).min(room(vb, b0)?);
+    if n < PAIRS * 4 {
+        return None;
+    }
+    let d = n / PAIRS;
+    let (mut ab, mut aa, mut bb) = (0f32, 0f32, 0f32);
+    let mut r = 0x9E37_79B9u32 ^ n;
+    for j in 0..PAIRS {
+        // A random place in each stride: a tone whose period divides the
+        // stride can't alias to one phase.
+        r ^= r << 13;
+        r ^= r >> 17;
+        r ^= r << 5;
+        let x = j * d + r % d;
+        let (a, b) = (va.sample(a0 + x) as f32, vb.sample(b0 + x) as f32);
+        (ab, aa, bb) = (ab + a * b, aa + a * a, bb + b * b);
+    }
+    let rho = if aa * bb > 0.0 {
+        ab / libm::sqrtf(aa * bb)
+    } else {
+        0.0
+    };
+    // Constant power at the middle: `x·(1 + 0.75c) = 1 / √(2 + 2ρ)`.
+    let rho = clampf(rho, 0.0, 1.0);
+    Some(clampf(
+        (2.0 / libm::sqrtf(2.0 + 2.0 * rho) - 1.0) * (4.0 / 3.0),
+        0.0,
+        POWER,
+    ))
+}
+
+/// The fade's output at the second head's share `g`: a smoothstep `x`,
+/// and gains `y·(1 + c·(1 − y²))` and `x·(1 + c·(1 − x²))` (`y = 1 − x`).
+/// `c` 0 is the plain `a + x·(b − a)`; at `POWER` the powers sum to
+/// 0.945–1 (−0.24 dB at the middle, against −3 dB).
+#[inline(always)]
+pub fn xmix(a: f32, b: f32, g: f32, c: f32) -> f32 {
+    let (ga, gb) = xgains(g, c);
+    a * ga + b * gb
+}
+
+/// `xmix`'s gains at share `g`: the head going out's, the one coming in's.
+#[inline(always)]
+pub fn xgains(g: f32, c: f32) -> (f32, f32) {
+    let x = g * g * (3.0 - 2.0 * g);
+    let y = 1.0 - x;
+    (y * (1.0 + c * (1.0 - y * y)), x * (1.0 + c * (1.0 - x * x)))
 }
 
 impl Fade {
@@ -175,6 +254,7 @@ impl Fade {
             end,
             inv: 1.0 / r.max(1.0),
             next,
+            power: 0.0,
         }
     }
 
@@ -190,6 +270,7 @@ impl Fade {
             end,
             inv: share / r.max(LEAST),
             next,
+            power: 0.0,
         }
     }
 

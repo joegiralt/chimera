@@ -399,12 +399,15 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
 /// machines' rows appended at Task 12b, the rest unchanged; re-recorded for
 /// `out_gain` (Task 19), then the smoothstep note-on ramp and LOOP's
 /// smoothstep fades (#385), then CLEAN's ACCURATE tan, exact divides, k law
-/// and trims (#57, ADR 0096) on main's merge.
+/// and trims (#57, ADR 0096) on main's merge; then #698's round: INIT's
+/// LENGTH 0.8, one release a note, equal-power fades by correlation, AGE
+/// from the source's band and TRON's LENGTH over the strip (ADRs
+/// 0179–0182).
 const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_loop",
         (
-            0xfff8eff39d27f192,
+            0xc09387ff5cdbd29f,
             [
                 0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
                 1032249790,
@@ -414,7 +417,7 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_reverse",
         (
-            0x168a23b919aae974,
+            0x546fea8d7d2fe71f,
             [
                 0, 1045879065, 1017140382, 3199036123, 1040238763, 1040038395, 1050120794,
                 3189053675,
@@ -424,7 +427,7 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_pingpong",
         (
-            0x659d96f8bdaad45a,
+            0xe90418ab471afaec,
             [
                 0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
                 1032249790,
@@ -444,37 +447,37 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_scrub",
         (
-            0x10bf5c97f6b9701c,
+            0x062736c04c2d8470,
             [
-                0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
-                1032249790,
+                0, 3184964454, 1050981263, 1045752289, 1035953454, 1036098510, 3180173078,
+                3195980154,
             ],
         ),
     ),
     (
         "tape_stretch",
         (
-            0x3dedea3977e0a8dd,
+            0x769cb91d531f5ccf,
             [
-                0, 3193362778, 3163524242, 3185853581, 1035472109, 1035708095, 1024605169,
-                3164996604,
+                0, 3193362780, 3163524285, 3186117975, 1036160366, 1036405804, 1026258061,
+                3163603571,
             ],
         ),
     ),
     (
         "tape_loop_age",
         (
-            0xb83e6a52dec582e8,
+            0x273c64033e5daeab,
             [
-                3070985076, 3194124313, 3167105100, 1051448124, 3188507217, 3188200258, 3189962063,
-                1036580912,
+                3070985076, 3194246171, 3167882689, 1051410578, 3188599866, 3188292756, 3175651932,
+                1039304959,
             ],
         ),
     ),
     (
         "tape_loop_tape",
         (
-            0xefa88d38bd2102de,
+            0x9e28ec6da29249c2,
             [
                 0, 3193926882, 3159894369, 1052712166, 3177682647, 3177190977, 3196410297,
                 1051157288,
@@ -491,8 +494,6 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
             ],
         ),
     ),
-    // Re-recorded for the voice-end fade past −80 dB (#487): the slice
-    // ended on a −39 dB step, now ramped out over the last block.
     (
         "tape_oneshot_slice7",
         (
@@ -500,22 +501,19 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
             [0, 1050811635, 1053320054, 0, 0, 0, 0, 0],
         ),
     ),
-    // Re-recorded for the voice-end fade past −80 dB (#487): the tape ran
-    // out on a −39 dB step, now ramped out over the last block.
     (
         "tape_tron_held",
         (
-            0xe90f31aa5cb2475e,
+            0x21c57835bfd8f660,
             [
-                0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
-                1032249790,
+                0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067, 0,
             ],
         ),
     ),
     (
         "tape_tron_released",
         (
-            0xcdf279ecda19efe4,
+            0x7183cbea8b460022,
             [
                 0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
                 1032249790,
@@ -525,17 +523,17 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_stretch_reverse",
         (
-            0x45ceaedf606095ea,
+            0x9c57daa842f78fe6,
             [
-                0, 1045191811, 1010431416, 1037391874, 3183836458, 3184088462, 3173983647,
-                1012150857,
+                0, 1045191817, 1010431416, 1037524946, 3184551058, 3184813150, 3175765132,
+                1008516491,
             ],
         ),
     ),
     (
         "tape_loop_warble",
         (
-            0xdc6e24a82ec0f94a,
+            0xfbfdc56b2598addc,
             [
                 0, 3194037626, 3166929527, 1051513146, 3188467278, 3188333103, 1051724949,
                 3192587643,
@@ -685,11 +683,12 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
         ("tape_reverse", rev(M::Play)),
         ("tape_pingpong", ping),
         ("tape_transwave", model(M::Transwave)),
-        // A moving tape: the neutral's MOTION 0 is a stopped, silent one.
+        // A moving tape: the neutral's MOTION 0 is a stopped, silent one;
+        // ½ is 1×, which plays as LOOP does (#706).
         (
             "tape_scrub",
             TapeEngineParams {
-                motion: 0.5,
+                motion: 0.3,
                 ..model(M::Scrub)
             },
         ),
@@ -705,8 +704,8 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
                 ..one
             },
         ),
-        // Held: a 1.4 s tape runs out before the key up; released: an 8 s
-        // one fades at it.
+        // Held: LENGTH ½ over the strip, a 0.5 s tape, runs out before
+        // the key up; released: the whole strip (LENGTH 1) fades at it.
         (
             "tape_tron_held",
             TapeEngineParams {
@@ -772,6 +771,8 @@ fn reverse_golden_replays_bit_identically() {
     use chimera_core::dsp::tape_engine::TapeModel;
     use chimera_core::storage::{MIGRATIONS, TRANSLATIONS, decode_block};
     let mut s = Sound::init(EngineType::Tape);
+    // The golden plays the neutral's LENGTH 1, not INIT's 0.8.
+    s.params.tape.size = 1.0;
     let mut payload = vec![34u8, 0];
     payload.extend_from_slice(&1u32.to_le_bytes());
     decode_block(&payload, MIGRATIONS, TRANSLATIONS, Some(&mut s.params)).unwrap();

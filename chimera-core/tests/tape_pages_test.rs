@@ -47,6 +47,16 @@ fn sound_on(m: TapeMachine) -> Sound {
     s
 }
 
+/// `sound_on(m)` with TAPE running and no route into VCA: every cell its
+/// machine reads can be heard (WOW dims at TAPE 0, LOOP's and PING's FADE
+/// under an AMP route: tape_musical_ui_test).
+fn live_on(m: TapeMachine) -> Sound {
+    let mut s = sound_on(m);
+    s.params.tape.tape = 0.3;
+    s.mod_state = Default::default();
+    s
+}
+
 fn labels(def: &BlockDef, ctx: &SlotCtx) -> Vec<&'static str> {
     (0..6).map(|i| view::view(def, i, ctx).label()).collect()
 }
@@ -113,7 +123,7 @@ fn deck_holds_the_glyphs_knobs() {
         assert_eq!(got[1..], cells, "{m:?}");
         for (k, c) in machine(m).deck.iter().enumerate() {
             assert_eq!(view::view(&TAPE_DECK, k + 1, &ctx).addr(), Some(tape(c.id)));
-            assert!(!view::dimmed(tape(c.id), &sound_on(m)), "{m:?} {}", c.label);
+            assert!(!view::dimmed(tape(c.id), &live_on(m)), "{m:?} {}", c.label);
         }
     }
 }
@@ -124,7 +134,7 @@ fn deck_holds_the_glyphs_knobs() {
 fn model_page_cells() {
     use TapeMachine as M;
     let want: [(M, [&str; 3]); 7] = [
-        (M::One, ["FADE", "--", "--"]),
+        (M::One, ["FADE", "RETRIG", "--"]),
         (M::Loop, ["FADE", "--", "--"]),
         (M::Ping, ["FADE", "--", "--"]),
         (M::Tron, ["--", "--", "--"]),
@@ -144,11 +154,11 @@ fn model_page_cells() {
                 view::view(&TAPE_MODEL, k + 3, &ctx).addr(),
                 Some(tape(c.id))
             );
-            assert!(!view::dimmed(tape(c.id), &sound_on(m)), "{m:?} {}", c.label);
+            assert!(!view::dimmed(tape(c.id), &live_on(m)), "{m:?} {}", c.label);
         }
         for (k, id) in [(0, P::TAPE), (1, P::AGE), (2, P::WOW)] {
             assert_eq!(view::view(&TAPE_MODEL, k, &ctx).addr(), Some(tape(id)));
-            assert!(!view::dimmed(tape(id), &sound_on(m)), "{m:?} {id:?}");
+            assert!(!view::dimmed(tape(id), &live_on(m)), "{m:?} {id:?}");
         }
         let models = Models {
             tape: m,
@@ -275,6 +285,12 @@ fn model_change_applies_machine_defaults() {
     assert_eq!((t.model, t.mode), (TapeModel::Play, PlayMode::One));
     assert_eq!(t.drag, chimera_core::dsp::tape_engine::FADE_HOLD);
     assert_eq!((t.start, t.end), (0.2, 0.7), "the window is the source's");
+    // ONE's hit (#698, ADR 0180): ENV 1 FAST, at its floor, holding full.
+    let e = ui.params().envelopes[0];
+    assert_eq!(
+        (e.speed, e.attack, e.sustain),
+        (chimera_core::dsp::modulator::EnvSpeed::Fast, 0.0, 1.0)
+    );
 
     // MODEL turned past its end changes nothing, so writes nothing.
     ui.params_mut().tape.slice = chimera_core::dsp::tape_engine::SliceCode::new(5);
@@ -567,10 +583,14 @@ fn tape_pages_have_no_other_gestures() {
         for def in [&TAPE_SRC, &TAPE_DECK, &TAPE_MODEL] {
             for i in 0..6 {
                 let v = view::view(def, i, &ctx);
-                // MIX + SEQ's learn, every mappable cell's, and no other.
+                // MIX + SEQ's learn, every mappable cell's, and START's
+                // and END's onset snap.
                 let h = v.hint(&ctx);
+                let window = v
+                    .addr()
+                    .is_some_and(|a| matches!(a.param, P::START | P::END));
                 assert!(
-                    h.iter().all(|g| *g == view::LEARN),
+                    (window && h == view::ONSET_HINT) || h.iter().all(|g| *g == view::LEARN),
                     "{m:?} {} {i}",
                     def.short
                 );
@@ -622,7 +642,7 @@ fn matrix_columns_read_the_machine() {
 /// page shows such a cell (`deck_holds_the_glyphs_knobs`).
 #[test]
 fn cells_a_machine_ignores_are_dimmed() {
-    let dim = |m, id| view::dimmed(tape(id), &sound_on(m));
+    let dim = |m, id| view::dimmed(tape(id), &live_on(m));
     for id in [P::POSITION, P::MOTION, P::SIZE, P::XFADE] {
         assert!(dim(TapeMachine::One, id), "ONE {id:?}");
     }
@@ -743,8 +763,10 @@ fn streamed_refusals_reach_the_band() {
         text(SourceState::of(&p, Some(r), pool))
     };
     use PlayMode::{Loop, One, Ping};
-    assert!(state(TapeModel::Play, Loop, 0.0, 1.0).starts_with("24K · 30.0 S"));
-    assert!(state(TapeModel::Play, One, 0.0, 1.0).starts_with("24K · 30.0 S"));
+    // Streamed, the band gives its polyphony (#698).
+    let poly = "24K · 30.0 S · 7 STREAMS / 30.0 S";
+    assert_eq!(state(TapeModel::Play, Loop, 0.0, 1.0), poly);
+    assert_eq!(state(TapeModel::Play, One, 0.0, 1.0), poly);
     let ping = state(TapeModel::Play, Ping, 0.0, 1.0);
     assert!(ping.starts_with(&format!("{PING_NEEDS_RAM} / ")), "{ping}");
     for mode in [One, Loop] {
@@ -755,9 +777,12 @@ fn streamed_refusals_reach_the_band() {
         (TapeModel::Scrub, "SCRUB NEEDS RAM"),
         (TapeModel::Stretch, "STRETCH NEEDS RAM"),
         (TapeModel::Transwave, "WAVE NEEDS RAM"),
-        (TapeModel::Tron, "TRON NEEDS RAM"),
     ] {
         let s = state(m, Loop, 0.0, 1.0);
         assert!(s.starts_with(&format!("{why} / ")), "{s}");
     }
+    // TRON streams, its note ONE's (#698); reversed it needs RAM.
+    assert!(state(TapeModel::Tron, Loop, 0.0, 1.0).starts_with("24K · 30.0 S"));
+    let rev = state(TapeModel::Tron, Loop, 0.9, 0.1);
+    assert!(rev.starts_with(&format!("{REVERSE_NEEDS_RAM} / ")), "{rev}");
 }

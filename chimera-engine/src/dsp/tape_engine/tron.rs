@@ -17,6 +17,14 @@ pub fn tron_len_s(size: f32) -> f32 {
     0.25 * exp2(5.0 * clampf(size, 0.0, 1.0))
 }
 
+/// LENGTH over a strip of `strip_s` seconds (START to END at ROOT): LENGTH
+/// 1 is the whole strip, up to 8 s, so its top never sits past END on a
+/// short source (#698); 0.25 s at 0 as before.
+pub fn tron_len_s_in(size: f32, strip_s: f32) -> f32 {
+    let top = clampf(strip_s, 0.25, TRON_LEN_MAX_S);
+    0.25 * libm::powf(top * 4.0, clampf(size, 0.0, 1.0))
+}
+
 /// The output samples a note sounds before its tape runs out: the same at
 /// every pitch.
 pub fn tron_run_samples(len_s: f32, sample_rate: u32) -> u32 {

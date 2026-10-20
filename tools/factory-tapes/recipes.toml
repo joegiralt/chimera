@@ -305,6 +305,8 @@ name = "SINE LOOP"
 source = "SINE C4"
 model = "PLAY"
 mode = "LOOP"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "-6.5"
 
 [[sound]]
@@ -312,14 +314,16 @@ name = "EPIANO HIT"
 source = "EPIANO C4"
 model = "PLAY"
 mode = "ONE"
-trim = "-2.5"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "-5.0"
 
 [[sound]]
 name = "EPIANO STAB"
 source = "EPIANO STAB"
 model = "PLAY"
 mode = "ONE"
-trim = "+2.0"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "-0.5"
 
 [[sound]]
 name = "STAB STRETCH"
@@ -332,14 +336,16 @@ name = "TX BASS HIT"
 source = "TX BASS C2"
 model = "PLAY"
 mode = "ONE"
-trim = "+6.5"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "+4.5"
 
 [[sound]]
 name = "SQR BASS HIT"
 source = "SQR BASS C2"
 model = "PLAY"
 mode = "ONE"
-trim = "+3.5"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "+1.0"
 
 [[sound]]
 name = "BRASS LOOP"
@@ -347,6 +353,8 @@ source = "BRASS C4"
 model = "PLAY"
 mode = "LOOP"
 start = "0.2"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "+1.5"
 
 [[sound]]
@@ -354,7 +362,8 @@ name = "BELL HIT"
 source = "BELL C5"
 model = "PLAY"
 mode = "ONE"
-trim = "-4.5"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "-7.0"
 
 [[sound]]
 name = "BELL BACKWARDS"
@@ -363,7 +372,8 @@ model = "PLAY"
 mode = "ONE"
 start = "1"
 end = "0"
-trim = "-4.0"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "-7.0"
 
 [[sound]]
 name = "SAW SCRUB"
@@ -377,6 +387,8 @@ source = "PAD CHORD"
 model = "PLAY"
 mode = "LOOP"
 start = "0.15"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "+2.0"
 
 [[sound]]
@@ -386,6 +398,8 @@ model = "PLAY"
 mode = "PING"
 # Past the pad's attack.
 position = "0.5"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "+3.5"
 
 [[sound]]
@@ -394,6 +408,8 @@ source = "KEYS C4"
 model = "PLAY"
 mode = "LOOP"
 start = "0.1"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "+1.5"
 
 [[sound]]
@@ -401,21 +417,24 @@ name = "PLUCK HIT"
 source = "PLUCK C3"
 model = "PLAY"
 mode = "ONE"
-trim = "+2.0"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "-0.5"
 
 [[sound]]
 name = "PLUCK LOW"
 source = "PLUCK E2"
 model = "PLAY"
 mode = "ONE"
-trim = "+2.0"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "+0.0"
 
 [[sound]]
 name = "HARP HIT"
 source = "HARP C5"
 model = "PLAY"
 mode = "ONE"
-trim = "+0.5"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "-1.5"
 
 [[sound]]
 name = "BOWED LOOP"
@@ -423,6 +442,8 @@ source = "BOWED C3"
 model = "PLAY"
 mode = "LOOP"
 start = "0.2"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "-6.0"
 
 [[sound]]
@@ -436,20 +457,24 @@ name = "METAL HIT"
 source = "METAL C4"
 model = "PLAY"
 mode = "ONE"
-trim = "+4.0"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "+2.0"
 
 [[sound]]
 name = "GLASS HIT"
 source = "GLASS C6"
 model = "PLAY"
 mode = "ONE"
-trim = "+4.0"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "+2.0"
 
 [[sound]]
 name = "SYMP LOOP"
 source = "SYMP C3"
 model = "PLAY"
 mode = "LOOP"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "-0.5"
 
 [[sound]]
@@ -463,6 +488,8 @@ name = "NOISE LOOP"
 source = "NOISE"
 model = "PLAY"
 mode = "LOOP"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "+7.0"
 
 [[sound]]
@@ -471,6 +498,8 @@ source = "WIND"
 model = "PLAY"
 mode = "LOOP"
 tape = "0.3"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "+5.0"
 
 [[sound]]
@@ -485,13 +514,16 @@ source = "KIT 16"
 model = "PLAY"
 mode = "ONE"
 slice = "1"
-trim = "-3.0"
+# ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
+trim = "-4.0"
 
 [[sound]]
 name = "VOICE LOOP"
 source = "VOICE AH"
 model = "PLAY"
 mode = "LOOP"
+# LENGTH 1, as authored (LOOP\'s default is 0.8 since ADR 0180).
+size = "1"
 trim = "+1.0"
 
 [[sound]]

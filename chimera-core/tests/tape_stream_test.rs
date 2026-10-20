@@ -11,12 +11,12 @@ use core::sync::atomic::Ordering;
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::engines::EngineSlot;
 use chimera_core::dsp::tape_engine::heads::{
-    Bounds, shortest, window_end, window_end_min, window_start,
+    Bounds, Dir, shortest, window_end, window_end_min, window_start,
 };
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
-    COST_STREAM, FADE_HOLD, INC_MAX, PlayMode, SliceCode, TapeEngine, TapeEngineParams, TapeModel,
-    Wow, inc, ratio_max,
+    COST_STREAM, FADE_HOLD, INC_MAX, PlayMode, Retrig, SliceCode, TapeEngine, TapeEngineParams,
+    TapeModel, Wow, inc, ratio_max, tape_runs,
 };
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::NoteOrigin;
@@ -29,7 +29,7 @@ use chimera_core::part::{Held, LiveSnap, PartMode};
 use chimera_core::project::SourceId;
 use chimera_core::source_table::GateView;
 use chimera_core::storage::SourceRef;
-use chimera_core::stream::admit::{STREAM_BUDGET_BPS, bill, head_frames};
+use chimera_core::stream::admit::{STREAM_BUDGET_BPS, WOW_CENTS, bill, head_frames};
 use chimera_core::stream::cursor::{DROP_FADE, QUIET_FADE};
 use chimera_core::stream::layout::CHUNK_FRAMES;
 use chimera_core::stream::port::{StreamCard, StreamPort, Streams};
@@ -639,14 +639,61 @@ fn a_start_turn_never_cuts_a_note() {
     assert_eq!(&out[..], &wb[..100 * BLOCK_SIZE]);
 }
 
-/// POSITION moves the loop off its staged head mid-note: each wrap lands
-/// where no head holds, so the voice fades out over `DROP_FADE` before it,
-/// the fade's second head reads silence, and the wrap starts cold and fades
-/// back in. No step passes 4× the steady state's largest
-/// (`click_free_test`'s rule), at XFADE 0 (a hard splice) or not.
+/// WALK moves every pass off the heads: each wrap still lands warm, a
+/// pass ahead's prefetch following the walk (#698), and no step passes 4×
+/// the steady state's.
 #[test]
-fn moved_loop_fades_at_the_wrap() {
+fn walking_loop_lands_warm() {
     let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let p = TapeEngineParams {
+        size: 0.6,
+        motion: 0.5,
+        xfade: 0.2,
+        tape: 0.0,
+        age: 0.0,
+        ..params(PlayMode::Loop, 0.30, 0.40)
+    };
+    let (rings, third) = rings();
+    let mut st = Stream::new(&rings, &third, &whole, 0);
+    let mut src = OneSource::new(&st.card.held(&heads_at(&p, FRAMES, 60), HF));
+    let mut slot = MaybeUninit::uninit();
+    let e = deck(&mut slot);
+    e.strict_spans();
+    let mut out = Vec::new();
+    let mut b = [0.0; BLOCK_SIZE];
+    for k in 0..3_000 {
+        st.serve();
+        st.with(V, |port| {
+            if k == 0 {
+                e.start(60, &p, &src.view(), SR, Some(port));
+            }
+            e.play(&mut b, &p, &src.view(), SR, Some(port));
+        });
+        out.extend_from_slice(&b);
+        st.now += 1;
+    }
+    let step = |x: &[f32]| {
+        x.windows(2)
+            .map(|d| (d[1] - d[0]).abs())
+            .fold(0.0, f32::max)
+    };
+    assert!(e.events() >= 8, "{} events", e.events());
+    assert_eq!(st.card.stats.cold.load(Ordering::Relaxed), 0, "cold wraps");
+    let steady = step(&out[10 * BLOCK_SIZE..100 * BLOCK_SIZE]);
+    let worst = step(&out[100 * BLOCK_SIZE..]);
+    assert!(worst <= 4.0 * steady, "step {worst} over 4 x {steady}");
+}
+
+/// POSITION moves the loop off its staged head mid-note: each wrap's
+/// reads are prefetched a pass ahead into the slots its pass's end frees
+/// (#698), so every wrap lands warm. At XFADE 0.25 no step passes 4× the
+/// steady state's largest (`click_free_test`'s rule); at XFADE 0 (a hard
+/// splice) it plays what the whole row plays, sample for sample. It used
+/// to drop out at every wrap.
+#[test]
+fn moved_loop_lands_warm_at_the_wrap() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let row = SourceView::new(&whole).unwrap();
     for xfade in [0.0, 0.25] {
         let p = TapeEngineParams {
             size: 0.8,
@@ -663,8 +710,10 @@ fn moved_loop_fades_at_the_wrap() {
         let e = deck(&mut slot);
         // No read, the fade's second head's either, leaves its span.
         e.strict_spans();
+        let mut ram_slot = MaybeUninit::uninit();
+        let ram = deck(&mut ram_slot);
         let moved = TapeEngineParams { position: 0.5, ..p };
-        let mut out = Vec::new();
+        let (mut out, mut want) = (Vec::new(), Vec::new());
         let mut b = [0.0; BLOCK_SIZE];
         for k in 0..1_500 {
             let q = if k < 50 { &p } else { &moved };
@@ -676,6 +725,11 @@ fn moved_loop_fades_at_the_wrap() {
                 e.play(&mut b, q, &src.view(), SR, Some(port));
             });
             out.extend_from_slice(&b);
+            if k == 0 {
+                ram.note_on(60, q, &row, SR);
+            }
+            ram.render(&mut b, q, &row, SR);
+            want.extend_from_slice(&b);
             st.now += 1;
         }
         let step = |x: &[f32]| {
@@ -683,15 +737,21 @@ fn moved_loop_fades_at_the_wrap() {
                 .map(|d| (d[1] - d[0]).abs())
                 .fold(0.0, f32::max)
         };
-        // The first wrap comes near block 296.
-        let steady = step(&out[60 * BLOCK_SIZE..250 * BLOCK_SIZE]);
-        let worst = step(&out[250 * BLOCK_SIZE..]);
-        assert!(
-            worst <= 4.0 * steady,
-            "xfade {xfade}: step {worst} over 4 x {steady}"
-        );
         let cold = st.card.stats.cold.load(Ordering::Relaxed);
-        assert!(cold >= 3, "xfade {xfade}: {cold} cold wraps");
+        assert_eq!(cold, 0, "xfade {xfade}: cold wraps");
+        if xfade > 0.0 {
+            // The first wrap comes near block 296.
+            let steady = step(&out[60 * BLOCK_SIZE..250 * BLOCK_SIZE]);
+            let worst = step(&out[250 * BLOCK_SIZE..]);
+            assert!(worst <= 4.0 * steady, "step {worst} over 4 x {steady}");
+        } else {
+            let off = out
+                .iter()
+                .zip(&want)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0, f32::max);
+            assert!(off < 1e-5, "{off} off the whole row's");
+        }
         let tail = &out[1_000 * BLOCK_SIZE..];
         assert!(tail.iter().any(|&y| y.abs() > 0.5), "xfade {xfade}: silent");
     }
@@ -828,6 +888,18 @@ struct Played<'r> {
 }
 
 impl<'r> Played<'r> {
+    /// Every Part's wheel full up: its notes bill their whole bend range
+    /// (admission bills the bend in use, #698).
+    fn wheel_up(&mut self) {
+        for i in 0..self.rig.shared.parts.len() {
+            let channel = self.rig.shared.parts[i].mix.channel;
+            self.rig.inst.bend(BendEvent {
+                channel,
+                value: 8191,
+            });
+        }
+    }
+
     /// Parts `parts` play TAPE `p` on `src`'s streamed row, one MIDI
     /// channel each; the CPU never refuses.
     fn new(st: Stream<'r>, src: OneSource, parts: &[(usize, TapeEngineParams)]) -> Played<'r> {
@@ -949,9 +1021,15 @@ fn one_hold() -> TapeEngineParams {
     }
 }
 
-/// What a note-on of `note` bills on `p` with only the bend's range.
+/// What a note-on of `note` bills on `p` with only the bend's range, and
+/// wow while TAPE runs.
 fn bill_of(p: &TapeEngineParams, note: u8, bend: u8) -> u32 {
-    bill(RATE, ratio_max(p, note, 0.0, f32::from(bend) * 100.0)).0
+    let wow = if tape_runs(p.tape, false) {
+        WOW_CENTS
+    } else {
+        0.0
+    };
+    bill(RATE, ratio_max(p, note, wow, f32::from(bend) * 100.0)).0
 }
 
 /// Eight notes that fit the card's budget; a ninth that doesn't, unless a
@@ -962,9 +1040,14 @@ fn ninth_stream_steals_oldest_released() {
     let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
     let (rings, third) = rings();
     let st = Stream::new(&rings, &third, &whole, 0);
-    let p = one_hold();
+    // TAPE runs: wow billed.
+    let p = TapeEngineParams {
+        tape: 0.2,
+        ..one_hold()
+    };
     let src = OneSource::new(&st.card.held(&[0], HF));
     let mut pl = Played::new(st, src, &[(0, p)]);
+    pl.wheel_up();
     let bend = pl.rig.shared.parts[0].mix.bend;
     let notes = 50..58u8;
     let eight: u32 = notes.clone().map(|n| bill_of(&p, n, bend)).sum();
@@ -1044,7 +1127,7 @@ fn steal_fades_through_allocator() {
 }
 
 /// The machines that seek, and PING, refuse a streamed source before the
-/// allocator is asked; PLAY ONE and LOOP forward play it.
+/// allocator is asked; ONE, LOOP and TRON forward play it (#698).
 #[test]
 fn ping_on_streamed_source_refused_before_allocation() {
     let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
@@ -1055,7 +1138,7 @@ fn ping_on_streamed_source_refused_before_allocation() {
         (TapeModel::Scrub, PlayMode::Loop, false),
         (TapeModel::Stretch, PlayMode::Loop, false),
         (TapeModel::Transwave, PlayMode::Loop, false),
-        (TapeModel::Tron, PlayMode::Loop, false),
+        (TapeModel::Tron, PlayMode::Loop, true),
     ] {
         let (rings, third) = rings();
         let st = Stream::new(&rings, &third, &whole, 0);
@@ -1288,7 +1371,11 @@ fn raised_reach_is_readmitted_and_followed() {
     let turns: [(&str, Turn, Option<f32>); 5] = [
         ("pitch", |s| s.parts[0].params.pitch.pitch = 7.0, Some(7.0)),
         ("tuning", |s| s.tune = 50, Some(0.5)),
-        ("bend range", |s| s.parts[0].mix.bend = 12, None),
+        (
+            "bend range, the wheel up",
+            |s| s.parts[0].mix.bend = 12,
+            None,
+        ),
         (
             "route",
             |s| {
@@ -1311,9 +1398,11 @@ fn raised_reach_is_readmitted_and_followed() {
         };
         let src = OneSource::new(&st.card.held(&heads_at(&p, FRAMES, 60), HF));
         let mut pl = Played::new(st, src, &[(0, p)]);
+        pl.wheel_up();
         pl.on(0, 60);
         let v = sounding(&pl, 60);
-        for _ in 0..20 {
+        // The wheel's glide lands first.
+        for _ in 0..200 {
             pl.block();
         }
         let (was, _, paid) = speeds(&pl, v);
@@ -1465,6 +1554,7 @@ fn a_late_note_that_doesnt_fit_is_refused() {
     };
     let src = OneSource::new(&st.card.held(&[0], HF));
     let mut pl = Played::new(st, src, &[(0, p)]);
+    pl.wheel_up();
     let bend = pl.rig.shared.parts[0].mix.bend;
     let held: u32 = (51..58).map(|n| bill_of(&p, n, bend)).sum();
     assert!(held + bill_of(&p, 72, bend) > STREAM_BUDGET_BPS);
@@ -1537,11 +1627,15 @@ fn a_fading_note_reads_its_own_source_length() {
     let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
     let (rings, third) = rings();
     let st = Stream::new(&rings, &third, &whole, 0);
-    let p = one_hold();
+    let p = TapeEngineParams {
+        tape: 0.2,
+        ..one_hold()
+    };
     let held = st.card.held(&[0], HF);
     let (src, other) = OneSource::with(&held, &held);
     let mut pl = Played::new(st, src, &[(0, p), (1, p)]);
     pl.short = Some(other);
+    pl.wheel_up();
     let bend = pl.rig.shared.parts[0].mix.bend;
     let eight: u32 = (50..58).map(|n| bill_of(&p, n, bend)).sum();
     assert!(eight <= STREAM_BUDGET_BPS && eight + bill_of(&p, 63, bend) > STREAM_BUDGET_BPS);
@@ -2053,4 +2147,191 @@ fn a_rotted_chunk_drops_out_its_voice_not_the_card() {
         far_out[g0..=g1].iter().all(|&p| p > 0.1),
         "the other stream plays through"
     );
+}
+
+/// #698 finding 1: INIT's reach in use is the note's own. Its wheel
+/// vibrato (LFO 1 → PITCH at DEPTH 0) reaches nothing, the wheel at rest
+/// bends nothing, and TAPE at 0 adds no wow, so a seven-note cluster about
+/// ROOT on a 24 kHz source (289 KB/s) streams whole; under the old bill
+/// (the bend's range, the route at full swing and wow, ×1.17: 339 KB/s)
+/// its last note stole the first.
+#[test]
+fn an_init_chord_about_root_streams_whole() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let p = TapeEngineParams {
+        tape: 0.0,
+        root: 6_000.0,
+        ..one_hold()
+    };
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, p)]);
+    let init = chimera_core::preset::Sound::init(EngineType::Tape);
+    *pl.rig.shared.parts[0].mod_state = init.mod_state.clone();
+    pl.rig.shared.parts[0].params.lfos = init.params.lfos;
+    assert_eq!(pl.rig.shared.parts[0].params.lfos[0].depth, 0.0);
+    for n in 57..64 {
+        pl.on(0, n);
+    }
+    pl.block();
+    assert_eq!(pl.booked(), 7);
+    for n in 57..64 {
+        let v = pl.voice_of(0, n).expect("booked");
+        assert!(pl.rig.inst.active()[v], "{n} sounds");
+    }
+    assert!(pl.billed() <= STREAM_BUDGET_BPS);
+}
+
+/// #698 finding 11: ONE's RETRIG CUT chokes the Part's other notes (a
+/// closed hat cutting an open one); STACK lets them ring.
+#[test]
+fn retrig_cut_chokes_the_part() {
+    for (retrig, rings_on) in [(Retrig::Stack, true), (Retrig::Cut, false)] {
+        let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+        let (rings, third) = rings();
+        let st = Stream::new(&rings, &third, &whole, 0);
+        let p = TapeEngineParams {
+            retrig,
+            ..one_hold()
+        };
+        let src = OneSource::new(&st.card.held(&[0], HF));
+        let mut pl = Played::new(st, src, &[(0, p)]);
+        pl.on(0, 60);
+        for _ in 0..10 {
+            pl.block();
+        }
+        let open = pl.voice_of(0, 60).unwrap();
+        pl.on(0, 62);
+        for _ in 0..10 {
+            pl.block();
+        }
+        assert_eq!(pl.rig.inst.active()[open], rings_on, "{retrig:?}");
+        let closed = pl.voice_of(0, 62).unwrap();
+        assert!(
+            pl.rig.inst.active()[closed],
+            "{retrig:?}: the new hit plays"
+        );
+    }
+}
+
+/// #706: a routed START (VEL → START) past END on a streamed ONE stays on
+/// its side of END: the hit plays forward from END's side, every read
+/// inside its span (`strict_spans`), and never clicks.
+#[test]
+fn a_routed_start_past_end_never_reverses_a_stream() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let stored = TapeEngineParams {
+        tape: 0.0,
+        age: 0.0,
+        ..params(PlayMode::One, 0.3, 0.5)
+    };
+    let routed = TapeEngineParams {
+        start: 0.7,
+        ..stored
+    };
+    let (rings, third) = rings();
+    let mut st = Stream::new(&rings, &third, &whole, 0);
+    let mut src = OneSource::new(&st.card.held(&heads_at(&stored, FRAMES, 60), HF));
+    let mut slot = MaybeUninit::uninit();
+    let e = deck(&mut slot);
+    e.strict_spans();
+    let (mut out, mut b) = (Vec::new(), [0.0; BLOCK_SIZE]);
+    for k in 0..300 {
+        st.serve();
+        st.with(V, |port| {
+            if k == 0 {
+                e.start(60, &stored, &src.view(), SR, Some(port));
+            }
+            e.play(&mut b, &routed, &src.view(), SR, Some(port));
+            assert_eq!(e.dirs()[0], Dir::Fwd, "block {k}");
+        });
+        out.extend_from_slice(&b);
+        st.now += 1;
+    }
+    // The sine's own slope at half speed, 2π · 0.5 / 300, bounds a step.
+    assert!(out.iter().any(|y| y.abs() > 0.1), "the hit sounds");
+    let worst = out
+        .windows(2)
+        .map(|d| (d[1] - d[0]).abs())
+        .fold(0.0, f32::max);
+    assert!(worst < 0.02, "a step of {worst}");
+}
+
+/// #706: the bill is the reach in use. INIT's wheel vibrato (LFO 1 →
+/// PITCH, DEPTH 0) and the wheel at rest bill nothing past the note; DEPTH
+/// up re-bills it by the route's swing, and the wheel up by the bend.
+#[test]
+fn the_live_reach_is_what_bills() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let p = TapeEngineParams {
+        tape: 0.0,
+        root: 6_000.0,
+        ..one_hold()
+    };
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, p)]);
+    let init = chimera_core::preset::Sound::init(EngineType::Tape);
+    *pl.rig.shared.parts[0].mod_state = init.mod_state.clone();
+    pl.rig.shared.parts[0].params.lfos = init.params.lfos;
+    pl.on(0, 60);
+    pl.block();
+    let at_rest = pl.billed();
+    assert_eq!(at_rest, bill_of(&p, 60, 0), "nothing past the note");
+    pl.rig.shared.parts[0].params.lfos[0].depth = 1.0;
+    pl.block();
+    let vibrato = pl.billed();
+    assert!(vibrato > at_rest, "DEPTH up re-bills: {vibrato}");
+    pl.wheel_up();
+    pl.block();
+    let bend = pl.rig.shared.parts[0].mix.bend;
+    assert!(pl.billed() > vibrato, "the wheel up re-bills");
+    assert!(
+        pl.billed() >= bill_of(&p, 60, bend),
+        "the bend's range at the wheel's top"
+    );
+}
+
+/// #706: RETRIG CUT cuts before its note is admitted: on a full card the
+/// note takes the room of the note it chokes, never another Part's.
+#[test]
+fn a_cut_takes_the_room_it_frees() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let cut = TapeEngineParams {
+        retrig: Retrig::Cut,
+        root: 6_000.0,
+        ..one_hold()
+    };
+    let stack = TapeEngineParams {
+        root: 6_000.0,
+        ..one_hold()
+    };
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, cut), (1, stack)]);
+    // Part 2's notes first: the oldest, which a steal would take.
+    let others: Vec<u8> = (56..62).collect();
+    for &n in &others {
+        pl.on(1, n);
+    }
+    pl.block();
+    pl.on(0, 62);
+    for _ in 0..60 {
+        pl.block();
+    }
+    // Full: the next note fits only in the room the cut frees.
+    assert!(pl.billed() + bill_of(&cut, 63, 0) > STREAM_BUDGET_BPS);
+    pl.on(0, 63);
+    for _ in 0..4 {
+        pl.block();
+    }
+    for &n in &others {
+        let v = pl.voice_of(1, n).expect("Part 2 keeps its notes");
+        assert!(pl.rig.inst.active()[v], "{n} plays on");
+    }
+    let v = pl.voice_of(0, 63).expect("the cut note");
+    assert!(pl.rig.inst.active()[v]);
 }

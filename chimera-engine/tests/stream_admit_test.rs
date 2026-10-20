@@ -1,12 +1,17 @@
 //! Stream admission (slice 1 § 5): the card's byte budget.
 
 use chimera_engine::stream::admit::{
-    Admit, Age, Bill, ReadRatio, STREAM_BUDGET_BPS, admit, bill, head_frames, ratio_max,
+    Admit, Age, Bill, LOUD, ReadRatio, STREAM_BUDGET_BPS, WOW_CENTS, admit, bill, head_frames,
+    notes_at_root, ratio_max,
 };
 use chimera_engine::voice_alloc::VoiceIdx;
 
 fn age(released: bool, since: u32) -> Age {
-    Age { released, since }
+    Age {
+        released,
+        since,
+        level: LOUD,
+    }
 }
 
 fn v(i: usize) -> VoiceIdx {
@@ -35,10 +40,11 @@ fn seven_beds_fit_the_budget_an_eighth_steals() {
     assert_eq!(admit(b, p, STREAM_BUDGET_BPS), Admit::Steal(v(6)));
 }
 
-/// A TRON chord at +3 st: six fit, a seventh steals.
+/// A TRON chord at +3 st under wow (TAPE up: the caller adds it): six
+/// fit, a seventh steals.
 #[test]
 fn six_tron_notes_fit() {
-    let b = bill(24_000, ratio_max(60, 6000.0, 300.0, 0.0));
+    let b = bill(24_000, ratio_max(60, 6000.0, 300.0 + WOW_CENTS, 0.0));
     let total = 8 * b.0;
     assert!((395_000..=403_000).contains(&total), "{total}");
     let p = (0..6).map(|i| (v(i), b, age(false, 0)));
@@ -126,4 +132,81 @@ fn the_callers_re_ask_loop_steals_two_oldest_released_first() {
         }
     }
     assert_eq!(stolen, [v(2), v(1)]);
+}
+
+/// #698: over budget a held chord gives up its quietest note, the most
+/// decayed, not its oldest (the root it was built on); released notes still
+/// go first, the oldest of them.
+#[test]
+fn the_quietest_held_note_goes_first() {
+    let b = bill(24_000, ReadRatio::ONE);
+    let held = |i: usize, since: u32, level: u16| {
+        (
+            v(i),
+            b,
+            Age {
+                released: false,
+                since,
+                level,
+            },
+        )
+    };
+    // The root, oldest and loudest; a quiet fifth; a louder third.
+    let chord = [held(0, 90, LOUD), held(1, 50, 2_000), held(2, 40, 40_000)];
+    let full = || {
+        chord
+            .iter()
+            .copied()
+            .chain((3..7).map(|i| held(i, 0, LOUD)))
+    };
+    assert_eq!(admit(b, full(), STREAM_BUDGET_BPS), Admit::Steal(v(1)));
+    // A released note, however loud, goes before any held one.
+    let released = (
+        v(7),
+        b,
+        Age {
+            released: true,
+            since: 0,
+            level: LOUD,
+        },
+    );
+    let p = full().take(6).chain([released]);
+    assert_eq!(admit(b, p, STREAM_BUDGET_BPS), Admit::Steal(v(7)));
+}
+
+/// #698: a 24 kHz source fits 7 notes at ROOT with the wheel at rest and
+/// TAPE 0 (no bend, no wow billed), 11 at 16 kHz.
+#[test]
+fn notes_at_root_fit_the_budget() {
+    assert_eq!(notes_at_root(24_000, false), 7);
+    assert_eq!(notes_at_root(16_000, false), 11);
+    assert_eq!(notes_at_root(24_000, true), 7);
+    assert_eq!(notes_at_root(48_000, false), 3);
+}
+
+/// #706: a chord struck over a few ms keeps its notes: one in its attack
+/// (its VCA still rising, `ATTACK_BLOCKS`) ranks loud, so the next note
+/// takes the quietest decayed one, or the oldest, never the note struck
+/// a moment ago.
+#[test]
+fn a_note_in_its_attack_is_not_the_quietest() {
+    let b = bill(48_000, ReadRatio::ONE);
+    let held = |i: usize, since: u32, level: u16| {
+        (
+            v(i),
+            b,
+            Age {
+                released: false,
+                since,
+                level,
+            },
+        )
+    };
+    // A 48 kHz source fits three: struck 20, 10 and 2 blocks ago, the
+    // youngest still at a whisper under its attack.
+    let chord = [held(0, 20, 30_000), held(1, 10, 9_000), held(2, 2, 300)];
+    assert_eq!(
+        admit(b, chord.into_iter(), STREAM_BUDGET_BPS),
+        Admit::Steal(v(0))
+    );
 }

@@ -79,6 +79,9 @@ fn sound(a: ParamAddr) -> (Sound, Option<Vec<u8>>) {
                 s.params.tape.mode = chimera_core::dsp::tape_engine::PlayMode::One;
             }
             src = Some(held_plain(&saw_with_burst(48_000, 0.25), 48_000));
+            // The whole source a loop, its first wrap past `NEXT` (INIT's
+            // LENGTH is 0.8).
+            s.params.tape.size = 1.0;
             // TRON's fade heard past ENV 1's release on the VCA.
             s.params.envelopes[0].release = 1.0;
         }

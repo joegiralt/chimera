@@ -11,7 +11,8 @@ use core::mem::MaybeUninit;
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::wave;
 use chimera_core::dsp::tape_engine::{
-    INC_MAX, NOTE_ON_RAMP, PlayMode, TapeEngine, TapeEngineParams, TapeModel, inc, loop_len,
+    INC_MAX, NOTE_ON_RAMP, PlayMode, TapeEngine, TapeEngineParams, TapeModel, WALK_MAX_S, inc,
+    loop_len, walk_s,
 };
 use chimera_hal::BLOCK_SIZE;
 use common::tape::{Mach, held_plain, held_transwave, sine};
@@ -366,27 +367,36 @@ fn macros_ease() {
     }
 }
 
-/// MOTION 1: the loop's start walks one window (less the loop) a second,
-/// and wraps.
+/// WALK is in seconds of source, a cubic (#698): MOTION ½ walks
+/// `WALK_MAX_S / 8` = 0.5 s of source a second, so on a 1 s window the
+/// loop's start crosses half the room a second, and wraps; on a 4 s window
+/// it crosses an eighth.
 #[test]
 fn walk_moves_the_loop() {
-    let w = 48_000u32;
-    let held = held_plain(&sine(48_000, 100.0, w), 48_000);
-    let v = SourceView::strict(&held).unwrap();
-    let p = TapeEngineParams {
-        motion: 1.0,
-        size: 0.0,
-        ..TapeEngineParams::default()
-    };
-    let ll = loop_len(0.0, w, 48_000);
-    let mut e = fresh();
-    e.note_on(60, &p, &v, SR);
-    let (_, heads) = play(&mut e, &p, &v, 1_000);
-    for t in [0.25f32, 0.5, 0.75, 1.25] {
-        let b = (t * SR as f32 / BLOCK_SIZE as f32) as usize - 1;
-        let want = t.fract() * (w - ll) as f32;
-        let got = heads[b] as f32;
-        assert!((got - want).abs() < 300.0, "at {t} s: {got}, want {want}");
+    assert!((walk_s(0.5) - WALK_MAX_S / 8.0).abs() < 1e-6);
+    assert!((walk_s(-0.25) + WALK_MAX_S / 64.0).abs() < 1e-6);
+    for secs in [1u32, 4] {
+        let w = secs * 48_000;
+        let held = held_plain(&sine(48_000, 100.0, w), 48_000);
+        let v = SourceView::strict(&held).unwrap();
+        let p = TapeEngineParams {
+            motion: 0.5,
+            size: 0.0,
+            ..TapeEngineParams::default()
+        };
+        let ll = loop_len(0.0, w, 48_000);
+        let mut e = fresh();
+        e.note_on(60, &p, &v, SR);
+        let (_, heads) = play(&mut e, &p, &v, 1_000);
+        for t in [0.25f32, 0.5, 0.75, 1.25] {
+            let b = (t * SR as f32 / BLOCK_SIZE as f32) as usize - 1;
+            let want = (0.5 * t / secs as f32).fract() * (w - ll) as f32;
+            let got = heads[b] as f32;
+            assert!(
+                (got - want).abs() < 300.0,
+                "{secs} s, at {t} s: {got}, want {want}"
+            );
+        }
     }
 }
 

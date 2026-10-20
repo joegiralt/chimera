@@ -62,9 +62,14 @@ impl Instrument {
         src: &GateView<'_>,
         (key, note, source): BillAt,
     ) -> Option<Paid> {
-        use crate::dsp::engines::pitch_reach;
-        use crate::dsp::tape_engine::ratio_max;
+        use crate::addr::{BlockRef, ParamAddr};
+        use crate::dsp::engines::pitch_reach_by;
+        use crate::dsp::lfo::LfoParams;
+        use crate::dsp::modulator::LfoSlot;
         use crate::dsp::tape_engine::read::Descriptor;
+        use crate::dsp::tape_engine::{TapeEngineParams, ratio_max, tape_runs};
+        use crate::modulation::ModSource;
+        use crate::stream::admit::WOW_CENTS;
         use crate::stream::admit::bill;
         use chimera_theory::snap_reach_up;
         let part = &shared.parts[p % MAX_PARTS];
@@ -89,14 +94,47 @@ impl Instrument {
             let up = Note::new(k).map_or(11, snap_reach_up);
             top = top.max(k.saturating_add(up).min(127));
         }
-        let routes = pitch_reach(&part.mod_state);
-        let bend = f32::from(part.mix.bend) * 100.0;
-        let cents = (part.params.pitch.semitones() + self.tune) * 100.0 + routes;
+        // The reach in use (#698): each route by its source's live swing
+        // (an LFO by its DEPTH, so INIT's wheel vibrato at rest reaches
+        // nothing), wow only while TAPE runs, and the bend the wheel holds
+        // now, up. A wheel or DEPTH moving up re-bills it (`refresh_in`).
+        let mods = &part.mod_state;
+        let lfo_depth = |s: usize| {
+            let slot = match ModSource::ALL.get(s) {
+                Some(ModSource::Lfo1) => LfoSlot::Lfo1,
+                Some(ModSource::Lfo2) => LfoSlot::Lfo2,
+                Some(ModSource::Lfo3) => LfoSlot::Lfo3,
+                _ => return 1.0,
+            };
+            let depth = ParamAddr::new(BlockRef::Lfo(slot), LfoParams::DEPTH);
+            if mods.moves_addr(depth) {
+                1.0
+            } else {
+                crate::dsp::clampf(part.params.lfos[slot.index()].depth, 0.0, 1.0)
+            }
+        };
+        let routes = pitch_reach_by(mods, lfo_depth);
+        let tape = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::TAPE);
+        let wow = if tape_runs(part.params.tape.tape, mods.moves_addr(tape)) {
+            WOW_CENTS
+        } else {
+            0.0
+        };
+        let bend = self.bend_up(p, part) * 100.0;
+        let cents = (part.params.pitch.semitones() + self.tune) * 100.0 + routes + wow;
         let ratio = ratio_max(&part.params.tape, top, cents, bend);
         Some(Paid {
             bill: bill(d.rate, ratio),
             ratio,
         })
+    }
+
+    /// Part `p`'s bend up, semitones: the wheel's glided reach or where the
+    /// wheel now sits, the higher; 0 bent down.
+    fn bend_up(&self, p: usize, part: &super::PartAudio) -> f32 {
+        let w = self.wheel[usize::from(part.mix.channel.get())].max(0);
+        let target = f32::from(w) / 8191.0 * f32::from(part.mix.bend);
+        self.knobs[p % MAX_PARTS].0.bend().max(target).max(0.0)
     }
 
     /// Admits a streamed note billed `new` against the voices streaming
@@ -114,9 +152,23 @@ impl Instrument {
             .zip(&self.streaming)
             .filter_map(|(&v, s)| {
                 let b = s.billed().filter(|_| !gone[v.index()])?;
-                Some((v, b, s.age))
+                Some((v, b, self.age_now(v.index(), s.age)))
             });
         admit(new, playing, STREAM_BUDGET_BPS)
+    }
+
+    /// Voice `v`'s age as a steal sees it: shed or cut this block (dying
+    /// before its block's `age_stream`), the first to go.
+    fn age_now(&self, v: usize, age: crate::stream::admit::Age) -> crate::stream::admit::Age {
+        if self.alloc.slots()[v].dying() {
+            crate::stream::admit::Age {
+                released: true,
+                since: u32::MAX,
+                level: 0,
+            }
+        } else {
+            age
+        }
     }
 
     /// Admits voice `v`'s bill `new` mid-note (#595): only released voices

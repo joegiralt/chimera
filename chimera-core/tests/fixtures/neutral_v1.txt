@@ -315,6 +315,7 @@ Sound {
             period: 0.0,
             slice: 0,
             wow: Capstan,
+            retrig: Stack,
         },
         va: VaParams {
             wave: [

@@ -12,7 +12,7 @@ use super::part_page::Edit;
 use crate::addr::{BlockRef, ParamAddr};
 use crate::block::Motion;
 use crate::dsp::knobs::MOVES;
-use crate::dsp::tape_engine::machine::defaults;
+use crate::dsp::tape_engine::machine::{defaults, env_defaults};
 use crate::dsp::tape_engine::{TapeEngineParams, TapeMachine};
 use crate::hw::MAX_PARTS;
 use crate::midi_in::CcEvent;
@@ -118,7 +118,11 @@ const MODEL: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::
 /// machine's defaults (`part_page::edit`).
 pub(super) fn model_writes(m: TapeMachine) -> u8 {
     let k = defaults(m).filter(|&(id, _)| knob(ParamAddr::new(BlockRef::TapeEngine, id)));
-    k.count() as u8
+    let env1 = BlockRef::Env(crate::dsp::modulator::EnvSlot::Env1);
+    let e = env_defaults(m)
+        .iter()
+        .filter(|&&(id, _)| knob(ParamAddr::new(env1, id)));
+    (k.count() + e.count()) as u8
 }
 
 impl UiState {

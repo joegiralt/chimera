@@ -14,7 +14,9 @@ use chimera_core::dsp::tape_engine::machine::{MACHINES, defaults, machine};
 use chimera_core::dsp::tape_engine::oneshot::{SLICE_NOTE_BASE, Slice, slice_bounds};
 use chimera_core::dsp::tape_engine::params::hold;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape, SourceView};
-use chimera_core::dsp::tape_engine::tron::{TRON_LEN_MAX_S, tron_len_s, tron_run_samples};
+use chimera_core::dsp::tape_engine::tron::{
+    TRON_LEN_MAX_S, tron_len_s, tron_len_s_in, tron_run_samples,
+};
 use chimera_core::dsp::tape_engine::warble::Warble;
 use chimera_core::dsp::tape_engine::{
     CLAMP_FADE_S, END_RAMP, FADE_HOLD, NOTE_ON_RAMP, PlayMode, Probe, StretchType, TapeEngine,
@@ -906,14 +908,26 @@ fn tron_runs_out_after_size_at_every_pitch() {
     assert!((tron_len_s(0.0) - 0.25).abs() < 1e-6);
     assert!((tron_len_s(0.6) - 2.0).abs() < 1e-4);
     assert_eq!(tron_run_samples(2.0, SR), 96_000);
+    // LENGTH runs over the strip (#698): on a 4 s one, 0.25 s to 4 s.
+    assert!((tron_len_s_in(1.0, 4.0) - 4.0).abs() < 1e-4);
+    assert!((tron_len_s_in(0.0, 4.0) - 0.25).abs() < 1e-6);
+    assert!((tron_len_s_in(1.0, 20.0) - TRON_LEN_MAX_S).abs() < 1e-4);
+    let run = tron_run_samples(tron_len_s_in(0.6, 4.0), SR) as i64;
     for (note, tape) in [(48u8, 0.0), (60, 0.0), (67, 0.0), (60, 1.0)] {
         let n = tron_len(note, tape, 0.6) as i64;
-        assert!((n - 96_000).abs() <= 48, "note {note} TAPE {tape}: {n}");
+        assert!((n - run).abs() <= 48, "note {note} TAPE {tape}: {n}");
     }
+    // LENGTH's top is never dead: 1 plays the strip to END at ROOT, and
+    // 0.9 less of it.
+    let (top, under) = (tron_len(60, 0.0, 1.0) as i64, tron_len(60, 0.0, 0.9) as i64);
+    assert!(
+        (top - 4 * 48_000).abs() <= 48 && under < top - 10_000,
+        "{top}, {under}"
+    );
     // An octave and a fifth up reads 2^(19/12) of the source a sample:
     // END comes first.
     let want = 4.0 / 2f64.powf(19.0 / 12.0) * 48_000.0;
-    let n = tron_len(79, 0.0, 0.6) as f64;
+    let n = tron_len(79, 0.0, 1.0) as f64;
     assert!((n - want).abs() <= 48.0, "{n} against {want}");
 }
 
@@ -1086,6 +1100,7 @@ fn machine_table_is_pinned() {
     type C = (ParamId, &'static str, &'static str, f32);
     type Row = (K, &'static str, &'static [C], &'static [C]);
     const LEN: C = (P::SIZE, "LENGTH", "LEN", 1.0);
+    const LOOP_LEN: C = (P::SIZE, "LENGTH", "LEN", 0.8);
     const XFD: C = (P::XFADE, "XFADE", "XFD", 0.1);
     const FADE: C = (P::DRAG, "FADE", "FDE", 0.3);
     const POS: C = (P::POSITION, "POSITION", "POS", 0.0);
@@ -1095,10 +1110,13 @@ fn machine_table_is_pinned() {
             K::One,
             "ONE",
             &[(P::START, "START", "STA", 0.0), (P::END, "END", "END", 1.0)],
-            &[(P::DRAG, "FADE", "FDE", FADE_HOLD)],
+            &[
+                (P::DRAG, "FADE", "FDE", FADE_HOLD),
+                (P::RETRIG, "RETRIG", "RTG", 0.0),
+            ],
         ),
-        (K::Loop, "LOOP", &[POS, WALK, LEN, XFD], &[FADE]),
-        (K::Ping, "PING", &[POS, WALK, LEN], &[FADE]),
+        (K::Loop, "LOOP", &[POS, WALK, LOOP_LEN, XFD], &[FADE]),
+        (K::Ping, "PING", &[POS, WALK, LOOP_LEN], &[FADE]),
         (K::Tron, "TRON", &[LEN, FADE], &[]),
         (
             K::Scrub,
@@ -1205,7 +1223,9 @@ fn every_cell_reads_in_the_audio() {
             out
         };
         let plain = render(base);
-        for c in m.deck.iter().chain(m.cells) {
+        // RETRIG is the Instrument's: a note cutting its Part's others
+        // (`tape_stream_test`'s and `tape_musical_test`'s).
+        for c in m.deck.iter().chain(m.cells).filter(|c| c.id != P::RETRIG) {
             let spec = TapeEngineParams::default().spec(c.id).unwrap();
             let mut p = base;
             let moved = if c.id == P::START {
@@ -1245,17 +1265,23 @@ fn machine_defaults_list() {
     assert!(defaults(K::One).any(|d| d == (P::DRAG, FADE_HOLD)));
     for m in K::ALL {
         for (id, _) in defaults(m) {
+            // TRON's wear is its identity (#698): TAPE and WARBLE.
+            let wear = m == K::Tron && [P::TAPE, P::WOW].contains(&id);
             assert!(
-                ![P::MODEL, P::MODE, P::START, P::END, P::TAPE, P::AGE, P::WOW].contains(&id),
+                wear || ![P::MODEL, P::MODE, P::START, P::END, P::TAPE, P::AGE, P::WOW]
+                    .contains(&id),
                 "{m:?} sets {id:?}"
             );
         }
     }
-    // LOOP's are the neutral's.
+    let tron: Vec<(ParamId, f32)> = defaults(K::Tron).collect();
+    assert!(tron.contains(&(P::TAPE, 0.3)) && tron.contains(&(P::WOW, Wow::Warble as u8 as f32)));
+    // LOOP's are the neutral's but LENGTH, 0.8 so POSITION moves the loop.
     let n = P::default();
     assert_eq!(n.machine(), K::Loop);
     for (id, d) in defaults(K::Loop) {
-        assert_eq!(n.get(id), d, "{id:?}");
+        let want = if id == P::SIZE { 0.8 } else { n.get(id) };
+        assert_eq!(want, d, "{id:?}");
     }
     assert_eq!(n.wow, Wow::Capstan);
 }

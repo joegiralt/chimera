@@ -54,6 +54,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("TapeEngine", "SLICE", NONE),
     ("TapeEngine", "WOW", TAPE),
     ("TapeEngine", "MODE", NONE),
+    ("TapeEngine", "RETRIG", NONE),
     ("TapeEngine", "POSITION", TAPE),
     ("TapeEngine", "MOTION", TAPE),
     ("TapeEngine", "TAPE", TAPE),
@@ -214,6 +215,8 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("Midi", "SYNC"),
     // MONO and POLY: two ways to splice a grain.
     ("TapeEngine", "TYPE"),
+    // STACK and CUT: two ways a hit meets the last.
+    ("TapeEngine", "RETRIG"),
 ];
 
 /// Every LEVEL BAR param is a unipolar level, 0 to max.
