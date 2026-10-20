@@ -87,6 +87,15 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     } else {
         ""
     };
+    // FLT › FX's curve rows and the curves they trace: `voice_fx::look`,
+    // `soft::curve` and `fold::curve`. Only with `bank2`: without it
+    // `look::trace` is not drawn (the bench sets).
+    let look = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
+        "    *(.text.*8voice_fx4look* .rodata.*8voice_fx4look* .text.*8voice_fx4soft5curve* .text.*8voice_fx4fold5curve*);
+"
+    } else {
+        ""
+    };
     // FUZZ's kernel (ADR 0157): `voice_fx::fuzz`, text and rodata (its law
     // table). Only with `bank2`: without it `Fuzz::play` calls `run` in bank 1.
     let fuzz = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
@@ -122,6 +131,7 @@ SECTIONS {
     /* REVERB */
     /* VA */
     /* LFO */
+    /* LOOK */
     /* FUZZ */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
@@ -133,6 +143,7 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("    /* REVERB */\n", reverb)
         .replace("    /* VA */\n", va)
         .replace("    /* LFO */\n", lfo)
+        .replace("    /* LOOK */\n", look)
         .replace("    /* FUZZ */\n", fuzz),
     )
     .unwrap();

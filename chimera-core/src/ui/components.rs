@@ -646,7 +646,6 @@ pub fn gauge_left(gauge: &Gauge) -> Option<i32> {
         Gauge::Blend { .. } => Some(end - theme::BLEND_W - theme::XF_CAP_W / 2),
         Gauge::Staff { .. } => Some(theme::STAFF_X),
         Gauge::Wave(_) | Gauge::VaWave(_) | Gauge::Lfo(_) => Some(theme::WAVE_X),
-        Gauge::Place { .. } => Some(end - PLACE_W),
         Gauge::VaMix(_) => Some(end - theme::VA_MIX_W),
         Gauge::Braid(_) => Some(theme::BRAID_X),
         Gauge::Rings(_) => Some(theme::RINGS_X),
@@ -693,8 +692,7 @@ pub fn gauge_rect(gauge: &Gauge) -> Option<(i32, i32, i32, i32)> {
         | Gauge::VaWave(_)
         | Gauge::VaMix(_)
         | Gauge::Blend { .. }
-        | Gauge::Lfo(_)
-        | Gauge::Place { .. } => None,
+        | Gauge::Lfo(_) => None,
     }
 }
 
@@ -721,15 +719,6 @@ where
             blend_ends(d, glyph::blend_ends(mode));
         }
         Gauge::Lfo(g) => crate::ui::lfo_glyph::draw(d, &g),
-        Gauge::Place { post } => {
-            place(
-                d,
-                theme::SCREEN_W - theme::MARGIN_X - PLACE_W,
-                theme::ARC_CY,
-                post,
-                true,
-            );
-        }
         Gauge::Arc { value, bipolar } => draw::arc_gauge(
             d,
             theme::ARC_CX,
@@ -744,41 +733,27 @@ where
     }
 }
 
-/// PLACE's glyph, large: two boxes and the arrow between them.
-const PLACE_W: i32 = 80;
-
 /// What a cell shows in place of its value text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MiniGlyph {
-    /// PLACE, small: `post` lights the FLT box.
+    /// PLACE: `post` lights the FLT box.
     Place { post: bool },
 }
 
 /// An FX box and a FLT box joined by an arrow from `x`, centred on `cy`,
-/// in signal order: the effect's box (lit, ACCENT) left for PRE, right for POST. `big` sets
-/// the size and names the boxes. Returns the width.
-fn place<D>(d: &mut D, x: i32, cy: i32, post: bool, big: bool) -> i32
+/// in signal order: the effect's box (lit, ACCENT) left for PRE, right for
+/// POST. Returns the width.
+fn place<D>(d: &mut D, x: i32, cy: i32, post: bool) -> i32
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let (w, h, gap, r) = if big {
-        (28, 22, 24, 4)
-    } else {
-        (14, 10, 12, 2)
-    };
-    let names = if post { ["FLT", "FX"] } else { ["FX", "FLT"] };
-    for (i, name) in names.into_iter().enumerate() {
-        let bx = x + i as i32 * (w + gap);
-        let lit = (i == 1) == post;
-        let (y, color) = (cy - h / 2, if lit { theme::ACCENT } else { theme::MID });
-        if lit {
-            draw::round_rect(d, bx, y, w, h, r, color);
+    let (w, h, gap, r) = (14, 10, 12, 2);
+    for i in 0..2 {
+        let (bx, y) = (x + i * (w + gap), cy - h / 2);
+        if (i == 1) == post {
+            draw::round_rect(d, bx, y, w, h, r, theme::ACCENT);
         } else {
-            draw::round_outline(d, bx, y, w, h, r, color);
-        }
-        if big {
-            let ink = if lit { theme::BG } else { theme::MID };
-            draw::text_center(d, &theme::FONT_LABEL, name, bx + w / 2, cy + 4, ink, 0);
+            draw::round_outline(d, bx, y, w, h, r, theme::MID);
         }
     }
     draw::arrow(d, x + w + (gap - 8) / 2, cy + 3, theme::MID);
@@ -1442,7 +1417,7 @@ where
         (false, false) => theme::INK2,
     };
     if let Some(MiniGlyph::Place { post }) = c.mini {
-        return place(d, x, y + lines.value - 4, post, false);
+        return place(d, x, y + lines.value - 4, post);
     }
     let advance = cell_value(d, c.text, x, y + lines.value, value_color, value_slot, size);
     let bar = c.motion.map_or(!c.fmt.is_discrete(), |m| m.is_continuous());

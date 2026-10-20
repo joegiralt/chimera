@@ -430,12 +430,13 @@ impl Renderer {
                 lfo_glyph::draw_scope(display, &w, lfo_glyph::Dot::of(&w, f.lfo));
             }
             VizType::FxCurve => {
-                use crate::dsp::voice_fx::{
-                    fold,
-                    params::{FxType, Place},
-                    soft,
-                };
+                use crate::dsp::voice_fx::{look, params::Place};
                 let fx = &f.parts[f.active_part.index()].sound.params.fx;
+                // The set pots (ADR 0152). Bank 2's: closed, no band.
+                let mut rows = [[0; look::COLS]; 2];
+                if !look::trace(fx.ty(), fx.pots, &mut rows) {
+                    return;
+                }
                 // The node before FLT on this chain: VA, OSC, DECK, EXC...
                 let source = f.map.map_or("SRC", |(chain, at)| {
                     chain
@@ -443,15 +444,7 @@ impl Renderer {
                         .map_or("SRC", |b| b.map.unwrap_or(b.def.short))
                 });
                 viz::fx_strip(display, source, fx.place == Place::Post, 128);
-                // The set pots (ADR 0152). Not voice_fx::curve: FUZZ's is
-                // bank 2's.
-                let (t, pots) = (fx.ty(), fx.pots);
-                viz::fx_curve(display, 168, |x| match t {
-                    FxType::Off => x,
-                    FxType::Soft => soft::curve(x, pots),
-                    FxType::Fold => fold::curve(x, pots),
-                    FxType::Fuzz => viz::fuzz_look(x, pots),
-                });
+                viz::fx_curve(display, 168, &rows);
             }
             _ => viz::live_output(display, f.scope),
         }

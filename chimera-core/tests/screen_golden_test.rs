@@ -137,7 +137,6 @@ const GOLDENS: &[(&str, u64)] = &[
     // large_va_drive) and FLT › FX's strip and curve (flt_fx_*, flt_led_*).
     ("flt_fx_soft_pre", 0x7e327faee312b5b7),
     ("flt_fx_fold_post", 0x3906e862836fd103),
-    ("flt_front_place_focused", 0x4489c5d254ad6088),
     // THEME's PAGES ROW (ADR 0145): every other screen is recorded under
     // STACK (`screen::ui_for`). FLT's three pages, RES's three, MOD at E2
     // with `>`, OSC at D1R with both arrows and at OP6 with `<`, AMP bare.

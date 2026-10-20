@@ -194,7 +194,6 @@ mod common;
 mod screen;
 
 use chimera_core::ui::components::{self, Cell, Look, MiniGlyph};
-use chimera_core::ui::glyph::Gauge;
 use chimera_core::ui::region::RegionKind;
 use screen::{Fb, settle, stack_ui};
 
@@ -206,18 +205,6 @@ fn accent_centroid(fb: &Fb, x0: i32, x1: i32, y0: i32, y1: i32) -> Option<f32> {
         .map(|(x, _)| x)
         .collect();
     (!xs.is_empty()).then(|| xs.iter().sum::<i32>() as f32 / xs.len() as f32)
-}
-
-#[test]
-fn place_glyph_lights_the_effect_box() {
-    let mid = (theme::SCREEN_W - theme::MARGIN_X - 40) as f32;
-    let at = |post| {
-        let mut fb = Fb::new();
-        components::draw_gauge(&mut fb, Gauge::Place { post });
-        accent_centroid(&fb, 0, theme::SCREEN_W, 0, theme::SCREEN_H).expect("a lit box")
-    };
-    assert!(at(false) < mid, "PRE lights the left box");
-    assert!(at(true) > mid, "POST lights the right box");
 }
 
 #[test]
@@ -279,16 +266,21 @@ fn fx_band_redraws_when_type_or_place_changes() {
     assert_ne!(post, key(&mut ui), "TYPE");
 }
 
+/// The door's rows: OFF traces the sine itself, FUZZ's curve follows SUSTAIN.
 #[test]
-fn the_fx_curve_is_the_set_value_and_off_is_the_line() {
-    let draw = |ty, drive: f32| {
-        let mut fb = Fb::new();
-        chimera_core::ui::viz::fx_curve(&mut fb, 100, |x| match ty {
-            FxType::Off => x,
-            _ => chimera_core::ui::viz::fuzz_look(x, [drive, 0.5, 0.5]),
-        });
-        fb.hash()
+fn the_fx_rows_are_the_set_curve_and_off_is_the_line() {
+    use chimera_core::dsp::voice_fx::look::{COLS, trace};
+    let rows = |t, p| {
+        let mut r = [[0i8; COLS]; 2];
+        assert!(trace(t, p, &mut r));
+        r
     };
-    assert_ne!(draw(FxType::Off, 0.0), draw(FxType::Fuzz, 1.0));
-    assert_ne!(draw(FxType::Fuzz, 0.2), draw(FxType::Fuzz, 1.0));
+    let off = rows(FxType::Off, [0.5; 3]);
+    assert_eq!(off[0], off[1]);
+    let (lo, hi) = (
+        rows(FxType::Fuzz, [0.2, 0.5, 0.5]),
+        rows(FxType::Fuzz, [1.0, 0.5, 0.5]),
+    );
+    assert_eq!(lo[0], hi[0]);
+    assert_ne!(lo[1], hi[1]);
 }

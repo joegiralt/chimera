@@ -1526,12 +1526,6 @@ pub const CASES: &[ScreenCase] = &[
         on_flt_fx(ui, FilterKind::Svf, FxType::Fold);
         feed(ui, Input::turn(EncoderId::B, 40)); // FOLD
     }),
-    // The same, PLACE POST focused: the large boxes in the band.
-    ("flt_front_place_focused", |ui| {
-        on_flt(ui, FilterKind::Svf, false);
-        feed(ui, Input::turn(EncoderId::C, 3)); // FX FOLD: PLACE POST
-        feed(ui, Input::turn(EncoderId::D, 1)); // PLACE POST, focused
-    }),
     ("flt_front_fx", |ui| {
         on_flt(ui, FilterKind::Svf, false);
         feed(ui, Input::turn(EncoderId::C, 2)); // FX FOLD: PLACE POST

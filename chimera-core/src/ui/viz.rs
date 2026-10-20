@@ -14,6 +14,7 @@ use crate::dsp::algo::math::log2;
 use crate::dsp::algo::plan::{OPS, blend};
 use crate::dsp::algo::tx::d1l_level;
 use crate::dsp::modulator::{EnvForm, EnvSpeed, Func, HoldPos, LfoForm};
+use crate::dsp::voice_fx::look::{self, Rows};
 use crate::scope::{self, SCOPE_LEN};
 use crate::ui::alg_layout;
 use crate::ui::draw;
@@ -885,36 +886,20 @@ where
     }
 }
 
-/// Half the curve's height, and its centre row.
-const FX_CURVE_AMP: f32 = 16.0;
+const _: () = assert!(look::COLS == (theme::VIZ_RIGHT - theme::VIZ_LEFT + 1) as usize);
 
-/// The FX type's transfer: one sine period in FAINT, `f` of it in INK,
-/// across the viz, about row `cy`.
-pub fn fx_curve<D>(d: &mut D, cy: i32, f: impl Fn(f32) -> f32)
+/// The FX type's transfer, `rows` from the door (`look::trace`): the sine
+/// period in FAINT, the type's curve of it in INK, about row `cy`.
+pub fn fx_curve<D>(d: &mut D, cy: i32, rows: &Rows)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let w = (theme::VIZ_RIGHT - theme::VIZ_LEFT) as f32;
-    let row = |v: f32| cy - (clampf(v, -1.0, 1.0) * FX_CURVE_AMP) as i32;
-    let sine = |x: i32| libm::sinf((x - theme::VIZ_LEFT) as f32 / w * core::f32::consts::TAU);
-    for x in theme::VIZ_LEFT + 1..=theme::VIZ_RIGHT {
-        draw::line(d, x - 1, row(sine(x - 1)), x, row(sine(x)), theme::FAINT, 1);
+    for (r, color) in rows.iter().zip([theme::FAINT, theme::INK]) {
+        for (i, w) in r.windows(2).enumerate() {
+            let x = theme::VIZ_LEFT + i as i32;
+            draw::line(d, x, cy - w[0] as i32, x + 1, cy - w[1] as i32, color, 1);
+        }
     }
-    for x in theme::VIZ_LEFT + 1..=theme::VIZ_RIGHT {
-        let (a, b) = (sine(x - 1), sine(x));
-        draw::line(d, x - 1, row(f(a)), x, row(f(b)), theme::INK, 1);
-    }
-}
-
-/// FUZZ's curve for the viz: the clipping stages' static law as two
-/// `fast_tanh` stages at SUSTAIN's drive, then VOLUME. The viz's own
-/// approximation: the real kernel's diode law lives in bank 2 and can't
-/// be called from here (ADR 0157). TONE is a filter, so it isn't in it.
-pub fn fuzz_look(x: f32, [sustain, _, volume]: [f32; 3]) -> f32 {
-    let stage = |v: f32| crate::dsp::fast_tanh(v);
-    stage(stage(x * crate::dsp::fast_exp2(6.0 * sustain)) * 4.0)
-        * 0.83
-        * crate::dsp::voice_fx::params::pot_level(volume)
 }
 
 /// The ALGO page: A's layout moving to B's with MORPH. A link is drawn in
