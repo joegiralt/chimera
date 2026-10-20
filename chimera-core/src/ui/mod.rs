@@ -1602,7 +1602,7 @@ impl UiState {
             held.and_then(|h| onset::onset(h, frames, from, delta > 0))
                 .map_or(now, |f| f as f32 / frames.max(1) as f32)
         } else {
-            onset::stepped(now, delta, rate, frames)
+            onset::stepped(now, delta, rate.get(), frames)
         };
         if to != now {
             self.edit_in(at, a, part_page::Edit::To(to));

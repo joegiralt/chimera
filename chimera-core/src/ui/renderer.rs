@@ -1314,7 +1314,7 @@ fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
         )
     {
         let mut buf = FmtBuf::new();
-        crate::ui::onset::time_text(&mut buf, v, rate, frames);
+        crate::ui::onset::time_text(&mut buf, v, rate.get(), frames);
         return buf;
     }
     if let Some(t) = view
