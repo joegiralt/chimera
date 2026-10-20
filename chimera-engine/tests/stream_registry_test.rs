@@ -174,9 +174,12 @@ fn one_hold_at_a_time() {
     assert_eq!(b.file().frames(), Frames::new(2_000));
 }
 
-/// `clear_all` leaves a held row too.
+/// `clear_all` leaves a held row too, its read finishing on it; but the
+/// row is the last card's (M5): no `get` or `hold` finds it again, so no
+/// later read lands its blocks on the new card, and its id stays taken
+/// until a later `clear` frees it.
 #[test]
-fn clear_all_leaves_a_held_row() {
+fn clear_all_leaves_a_held_row_stale() {
     let r = StreamRegistry::new();
     for n in 0..3 {
         r.insert(id(n), file(2_000 + u32::from(n))).unwrap();
@@ -185,7 +188,17 @@ fn clear_all_leaves_a_held_row() {
     // SAFETY: nothing reads `r` but this test and its hold.
     assert!(!unsafe { r.clear_all() });
     assert_eq!(frames(&r, 0), None);
-    assert_eq!(frames(&r, 1), Some(2_001));
+    assert_eq!(
+        held.file().frames(),
+        Frames::new(2_001),
+        "the read in flight"
+    );
     drop(held);
-    assert!(unsafe { r.clear_all() });
+    assert_eq!(frames(&r, 1), None, "the last card's");
+    assert!(r.hold(id(1)).is_none());
+    assert_eq!(r.insert(id(1), file(3_000)), Err(RowRefused::Taken));
+    // SAFETY: as above.
+    assert!(unsafe { r.clear(id(1)) });
+    r.insert(id(1), file(3_000)).unwrap();
+    assert_eq!(frames(&r, 1), Some(3_000));
 }

@@ -10,8 +10,10 @@
 //!
 //! The card IRQ's read spans many entries, so it holds its row (#597), as
 //! the audio's `sounding` mask holds a source (ADR 0087): `clear` leaves a
-//! held row, and the pool's drain tries again on its next pass. Rows are
-//! inserted and cleared from the UI's thread alone.
+//! held row, and the pool's drain tries again on its next pass. A row
+//! `clear_all` leaves so is the last card's: stale, found by no `get` or
+//! `hold` again, so no read after the one in flight lands its blocks on
+//! the new card. Rows are inserted and cleared from the UI's thread alone.
 
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
@@ -45,6 +47,8 @@ struct Row {
     tag: AtomicU8,
     /// The card condemned its file whole (#609): `FILE DAMAGED`.
     damaged: AtomicBool,
+    /// Held across `clear_all`: another card's file, for no reader.
+    stale: AtomicBool,
     file: UnsafeCell<MaybeUninit<StreamFile>>,
 }
 
@@ -93,6 +97,7 @@ impl StreamRegistry {
                 Row {
                     tag: AtomicU8::new(FREE),
                     damaged: AtomicBool::new(false),
+                    stale: AtomicBool::new(false),
                     file: UnsafeCell::new(MaybeUninit::uninit()),
                 }
             }; STREAM_ROWS],
@@ -105,7 +110,8 @@ impl StreamRegistry {
     /// before it publishes the source's pool row: rows are inserted from
     /// the UI's thread alone, so the look for `id` holds until the claim.
     pub fn insert(&self, id: SourceId, f: StreamFile) -> Result<(), RowRefused> {
-        if self.get(id).is_some() {
+        // A stale row under `id` too: one row an id until its `clear`.
+        if self.row_of(id).is_some() {
             return Err(RowRefused::Taken);
         }
         let row = self
@@ -122,6 +128,7 @@ impl StreamRegistry {
         // freed (`clear`).
         unsafe { (*row.file.get()).write(f) };
         row.damaged.store(false, Ordering::Relaxed);
+        row.stale.store(false, Ordering::Relaxed);
         // Under `WRITING` (asserted above).
         row.tag.store(id.index() as u8 + 1, Ordering::Release);
         Ok(())
@@ -155,13 +162,23 @@ impl StreamRegistry {
             .any(|r| r.tag.load(Ordering::Acquire) == FREE)
     }
 
-    /// `id`'s file, if a row holds it.
-    pub fn get(&self, id: SourceId) -> Option<&StreamFile> {
+    /// The row tagged `id`, stale or not.
+    fn row_of(&self, id: SourceId) -> Option<usize> {
         let tag = id.index() as u8 + 1;
-        let row = self
-            .rows
+        self.rows
             .iter()
-            .find(|r| r.tag.load(Ordering::Acquire) == tag)?;
+            .position(|r| r.tag.load(Ordering::Acquire) == tag)
+    }
+
+    /// The live row tagged `id`: none if it is stale.
+    fn live_row(&self, id: SourceId) -> Option<usize> {
+        self.row_of(id)
+            .filter(|&k| !self.rows[k].stale.load(Ordering::Acquire))
+    }
+
+    /// `id`'s file, if a live row holds it.
+    pub fn get(&self, id: SourceId) -> Option<&StreamFile> {
+        let row = &self.rows[self.live_row(id)?];
         // SAFETY: the tag's `Acquire` saw `insert`'s `Release`, after the
         // file was written whole; it stays put while held (`clear`).
         Some(unsafe { (*row.file.get()).assume_init_ref() })
@@ -173,7 +190,10 @@ impl StreamRegistry {
         self.rows.iter().any(|r| {
             let t = r.tag.load(Ordering::Acquire);
             // SAFETY: as `get`: an id's tag, its file written whole.
-            t != FREE && t != WRITING && unsafe { (*r.file.get()).assume_init_ref() }.file() == file
+            t != FREE
+                && t != WRITING
+                && !r.stale.load(Ordering::Acquire)
+                && unsafe { (*r.file.get()).assume_init_ref() }.file() == file
         })
     }
 
@@ -182,10 +202,7 @@ impl StreamRegistry {
     /// lives, or with no row for `id`.
     pub fn hold(&self, id: SourceId) -> Option<RowHold<'_>> {
         let tag = id.index() as u8 + 1;
-        let k = self
-            .rows
-            .iter()
-            .position(|r| r.tag.load(Ordering::Acquire) == tag)?;
+        let k = self.live_row(id)?;
         // Under `STREAM_ROWS`.
         let mark = k as u8 + 1;
         self.held
@@ -222,7 +239,8 @@ impl StreamRegistry {
         true
     }
 
-    /// Every row freed but the card's held one: true if none was held.
+    /// Every row freed but the card's held one, which is left stale: true
+    /// if none was held.
     ///
     /// # Safety
     /// As `clear`, for every row.
@@ -230,6 +248,11 @@ impl StreamRegistry {
     pub unsafe fn clear_all(&self) -> bool {
         // Another card's files from now on.
         self.epoch.fetch_add(1, Ordering::Release);
+        // Stale first, so no hold starts between a `clear` that finds a row
+        // held and the mark; `insert` makes a row live again.
+        for r in &self.rows {
+            r.stale.store(true, Ordering::SeqCst);
+        }
         // SAFETY: the caller's, for every id.
         // Every id tried, held or not.
         SourceId::ALL
