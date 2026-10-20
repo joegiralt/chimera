@@ -62,7 +62,13 @@ fn sound(a: ParamAddr) -> (Sound, Option<Vec<u8>>) {
                 TapeEngineParams::DRAG => Tron,
                 // SLICE is retired: no machine has a cell for it.
                 TapeEngineParams::SLICE => Play,
-                id => *m.iter().find(|&&m| tape::reads(m, id)).unwrap(),
+                id => *m
+                    .iter()
+                    .find(|&&m| {
+                        let k = chimera_core::dsp::tape_engine::TapeMachine::of(m, s.params.tape.mode);
+                        tape::reads(k, id)
+                    })
+                    .unwrap(),
             };
             // START, END and SLICE latch at note-on in ONE; LOOP reads END live.
             if matches!(

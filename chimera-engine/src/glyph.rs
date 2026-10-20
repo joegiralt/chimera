@@ -34,7 +34,7 @@ pub enum FocusGlyph {
     /// VA's own gauges, drawn from the VA block's set values (ADR 0129).
     Va(VaGlyph),
     /// TAPE's machine glyph (ADR 0173): every machine cell's, drawn from
-    /// `TAPE_GLYPH_PARAMS`' set values; still on MODEL and MODE.
+    /// `TAPE_GLYPH_PARAMS`' set values; still on MODEL.
     Tape,
 }
 
@@ -204,14 +204,14 @@ pub const BRAID_PARAMS: [ParamAddr; 4] = [
 ];
 
 /// What TAPE's machine glyph reads, in `TapeGauge::from_set`'s order:
-/// MODEL, MODE, START, END, POSITION, MOTION, SIZE, DRAG, TAPE, AGE, XFADE.
-pub const TAPE_GLYPH_PARAMS: [ParamAddr; 11] = {
+/// MODEL (the machine, PLAY's MODE in it), START, END, POSITION, MOTION,
+/// SIZE, DRAG, TAPE, AGE, XFADE.
+pub const TAPE_GLYPH_PARAMS: [ParamAddr; 10] = {
     const fn t(id: crate::block::ParamId) -> ParamAddr {
         ParamAddr::new(BlockRef::TapeEngine, id)
     }
     [
         t(T::MODEL),
-        t(T::MODE),
         t(T::START),
         t(T::END),
         t(T::POSITION),

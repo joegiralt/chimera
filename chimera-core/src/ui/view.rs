@@ -3,7 +3,7 @@
 //! Sound, so pages, vizzes and encoders all read by address.
 
 use crate::addr::{BlockRead, BlockRef, Op, ParamAddr};
-use crate::block::{DiskCode, ValFmt};
+use crate::block::ValFmt;
 use crate::dsp::algo::kinds::{self, OpKind};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::algo::plan::OPS;
@@ -15,8 +15,8 @@ use crate::dsp::modulator::{
     EnvForm, EnvSlot, EnvSpeed, EnvType, Func, FuncMode, LfoForm, LfoSlot, LfoType, pick,
 };
 use crate::dsp::reverb::{ReverbParams, ReverbType, in_plate_zone};
-use crate::dsp::tape_engine::machine::{self, Cell};
-use crate::dsp::tape_engine::{self, PlayMode, TapeEngineParams as T, TapeModel, wave};
+use crate::dsp::tape_engine::machine;
+use crate::dsp::tape_engine::{self, TapeEngineParams as T, TapeMachine, wave};
 use crate::midi_map::Mappable;
 use crate::modulation::VCA;
 use crate::name::SoundName;
@@ -73,10 +73,9 @@ pub struct SlotCtx {
     pub lfos: [LfoKind; 3],
     /// MODEL: which cells MDL2 shows.
     pub model: ResonatorMode,
-    /// TAPE's machine: its labels and its model page's cells.
-    pub tape: TapeModel,
-    /// PLAY's MODE: ONE's FADE ends in HOLD.
-    pub mode: PlayMode,
+    /// TAPE's machine (PLAY's MODE in it): its labels and cells; ONE's
+    /// FADE ends in HOLD.
+    pub tape: TapeMachine,
     /// TAPE's PERIOD is 0: an unpitched source plays MONO as POLY.
     pub unpitched: bool,
     /// TAPE's SOURCE as SRC reads it.
@@ -125,9 +124,7 @@ impl SlotCtx {
                 }
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
-            tape: TapeModel::from_index(get(BlockRef::TapeEngine, T::MODEL) as u8),
-            mode: PlayMode::from_disk_code(get(BlockRef::TapeEngine, T::MODE) as u8)
-                .unwrap_or(PlayMode::Loop),
+            tape: TapeMachine::from_index(get(BlockRef::TapeEngine, T::MODEL) as u8),
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
             src: SourceState::None,
             rev: reverb_panel::shown(rev.kind),
@@ -193,7 +190,7 @@ impl SlotCtx {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Models {
     pub modal: ResonatorMode,
-    pub tape: TapeModel,
+    pub tape: TapeMachine,
 }
 
 impl Default for Models {
@@ -206,7 +203,7 @@ impl From<ResonatorMode> for Models {
     fn from(modal: ResonatorMode) -> Self {
         Models {
             modal,
-            tape: TapeModel::Play,
+            tape: TapeMachine::Loop,
         }
     }
 }
@@ -271,7 +268,7 @@ impl SourceState {
         };
         match pool.source_view(r) {
             Some(v) if wave::playable(model, &v) => held,
-            Some(_) if model == TapeModel::Transwave => SourceState::NotTranswave,
+            Some(_) if model == tape_engine::TapeModel::Transwave => SourceState::NotTranswave,
             None if pool.streamed(r) => {
                 tape_engine::needs_ram(p).map_or(held, SourceState::NeedsRam)
             }
@@ -597,12 +594,8 @@ fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
 fn fmt_of(addr: ParamAddr, fmt: ValFmt, ctx: &SlotCtx) -> ValFmt {
     match (addr.block, addr.param) {
         (BlockRef::Filter, FilterParams::MODE) => ValFmt::Names(ctx.kind.mode_labels()),
-        // PLAY's FADE: in MODE ONE its last step is HOLD.
-        (BlockRef::TapeEngine, T::DRAG)
-            if ctx.tape == TapeModel::Play && ctx.mode == PlayMode::One =>
-        {
-            ValFmt::Hold
-        }
+        // ONE's FADE: its last step is HOLD.
+        (BlockRef::TapeEngine, T::DRAG) if ctx.tape == TapeMachine::One => ValFmt::Hold,
         _ => fmt,
     }
 }
@@ -715,23 +708,24 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
     }
 }
 
-/// A TAPE cell on the Sound's machine: its label, or the param's own,
-/// dimmed by `tape_engine::reads`, where the machine ignores it.
+/// A TAPE cell on the Sound's machine, labelled its way: DECK's after
+/// MODEL or the model page's before TAPE, AGE and WOW (ADR 0178). A
+/// machine lists only what it reads, so a cell past its list is empty.
 fn machine_view(at: MachineSlot, ctx: &SlotCtx) -> View {
     let k = machine::machine(ctx.tape);
-    let (id, cell): (_, Option<&Cell>) = match at {
-        MachineSlot::Position => (T::POSITION, k.deck[0].as_ref()),
-        MachineSlot::Motion => (T::MOTION, k.deck[1].as_ref()),
-        MachineSlot::Page(i) => match k.cells.get(usize::from(i)) {
-            Some(c) => (c.id, Some(c)),
-            None => return View::Empty,
-        },
+    let cells = match at {
+        MachineSlot::Deck(_) => k.deck,
+        MachineSlot::Page(_) => k.cells,
     };
+    let (MachineSlot::Deck(i) | MachineSlot::Page(i)) = at;
+    let Some(cell) = cells.get(usize::from(i)) else {
+        return View::Empty;
+    };
+    let (id, label) = (cell.id, cell.label);
     let addr = ParamAddr::new(BlockRef::TapeEngine, id);
     let Some(spec) = addr.spec() else {
         return View::Empty;
     };
-    let label = cell.map_or(spec.label, |c| c.label);
     if id == T::TYPE && ctx.unpitched {
         return View::Text {
             label,
@@ -814,9 +808,7 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
         // What MODEL ignores (spec § 1 Dimming).
         (BlockRef::Modal, id) => !modal::reads(sound.params.modal.mode, id),
         // What the machine ignores (spec § 3).
-        (BlockRef::TapeEngine, id) => {
-            !tape_engine::reads_in(sound.params.tape.model, sound.params.tape.mode, id)
-        }
+        (BlockRef::TapeEngine, id) => !tape_engine::reads(sound.params.tape.machine(), id),
         _ => false,
     }
 }

@@ -56,7 +56,7 @@ pub enum Gauge {
     /// A crossfader at the set AMOUNT, its ends named by MODE
     /// (`blend_ends`).
     Blend { value: f32, mode: VaMode },
-    /// TAPE's machine glyph (`tape_glyph`): still on MODEL and MODE.
+    /// TAPE's machine glyph (`tape_glyph`): still on MODEL.
     Tape(TapeGauge),
 }
 

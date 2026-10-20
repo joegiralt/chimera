@@ -842,8 +842,8 @@ impl Renderer {
             Reads::Tape if !cfg!(feature = "tape") => Gauge::None,
             Reads::Tape => {
                 use crate::dsp::tape_engine::TapeEngineParams as T;
-                // MODEL and MODE name the machine: its still identity.
-                let still = focused.is_some_and(|a| a.param == T::MODEL || a.param == T::MODE);
+                // MODEL names the machine: its still identity.
+                let still = focused.is_some_and(|a| a.param == T::MODEL);
                 Gauge::Tape(TapeGauge::from_set(
                     self.eased_set(f, TAPE_GLYPH_PARAMS),
                     still,

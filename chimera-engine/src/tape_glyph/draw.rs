@@ -7,8 +7,8 @@
 //! `r² + r`, then the wear passes.
 
 use super::{
-    Bellows, Blind, Canvas, Film, H, Ink, Kind, Loop, Machine, PlayMode, Q, Q3, Q4, Q5, Q6, Run,
-    Sponge, TapeGauge, TapeModel, W, Wear,
+    Bellows, Blind, Canvas, Film, H, Ink, Kind, Loop, Machine, Q, Q3, Q4, Q5, Q6, Run, Sponge,
+    TapeGauge, W, Wear,
 };
 use crate::dsp::algo::math::clampf;
 use crate::dsp::fast_sin;
@@ -22,15 +22,14 @@ const FAINT: Ink = Ink::Faint;
 const ACC: Ink = Ink::Accent;
 const SOFT: Ink = Ink::Soft;
 
-/// From `TAPE_GLYPH_PARAMS`' set values, normalized: MODEL, MODE,
-/// START, END, POSITION, MOTION, SIZE, DRAG, TAPE, AGE, XFADE. `still`
-/// for MODEL's and MODE's cells, which show the machine, not its
-/// knobs. A machine reads only what it plays (`reads_in`), so a cell it
-/// ignores leaves the glyph as it was.
-pub fn inputs(set: [f32; 11], still: bool) -> TapeGauge {
+/// From `TAPE_GLYPH_PARAMS`' set values, normalized: MODEL, START, END,
+/// POSITION, MOTION, SIZE, DRAG, TAPE, AGE, XFADE. `still` for MODEL's
+/// cell, which shows the machine, not its knobs. A machine reads only
+/// what it plays (`reads`), so a param it ignores leaves the glyph as it
+/// was.
+pub fn inputs(set: [f32; 10], still: bool) -> TapeGauge {
     let [
         model,
-        mode,
         start,
         end,
         pos,
@@ -42,13 +41,7 @@ pub fn inputs(set: [f32; 11], still: bool) -> TapeGauge {
         xfade,
     ] = set;
     let pick = |v: f32, n: u8| libm::roundf(clampf(v, 0.0, 1.0) * n as f32) as u8;
-    let model = TapeModel::from_index(pick(model, TapeModel::ALL.len() as u8 - 1));
-    let mode = match pick(mode, 2) {
-        0 => PlayMode::One,
-        1 => PlayMode::Loop,
-        _ => PlayMode::Ping,
-    };
-    let kind = Kind::of(model, mode);
+    let kind = Kind::from_index(pick(model, Kind::ALL.len() as u8 - 1));
     if still {
         return TapeGauge::still(kind);
     }

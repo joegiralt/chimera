@@ -10,7 +10,7 @@ use chimera_core::clock_plan::SiliconRev;
 use chimera_core::dsp::filter::{FilterKind, FilterMode};
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
 use chimera_core::dsp::tape_engine::wave::frame_len;
-use chimera_core::dsp::tape_engine::{Heads, PlayMode, SliceCode, fade_default};
+use chimera_core::dsp::tape_engine::{Heads, PlayMode, SliceCode, TapeMachine, fade_default};
 use chimera_core::hw::{CPU_HZ_REV_V, SampleBudget};
 use chimera_core::instrument::{AudioShared, Instrument, PartHeads};
 use chimera_core::name::ProjectName;
@@ -783,10 +783,16 @@ pub fn load_init(ui: &mut UiState, engine: EngineType) {
     }
 }
 
-/// TAPE's init on Part 1, at DECK, MODEL turned `by` from PLAY.
-pub fn tape_deck(ui: &mut UiState, by: i8) {
+/// TAPE's init on Part 1, at DECK, MODEL turned from LOOP to `m`.
+pub fn tape_deck(ui: &mut UiState, m: TapeMachine) {
     load_init(ui, EngineType::Tape);
     plus(ui, 1); // SRC · DECK
+    to_machine(ui, m);
+}
+
+/// MODEL turned from LOOP, the neutral, to `m`.
+fn to_machine(ui: &mut UiState, m: TapeMachine) {
+    let by = m.index() as i8 - TapeMachine::Loop.index() as i8;
     if by != 0 {
         feed(ui, Input::turn(EncoderId::A, by));
     }
@@ -941,14 +947,12 @@ pub fn play_mode(ui: &mut UiState, mode: PlayMode) {
 }
 
 /// TAPE's init on Part 1 with the strip's source, at DECK, MODEL turned
-/// `by` from PLAY, the audio's heads `heads`.
-pub fn tape_strip(ui: &mut UiState, by: i8, heads: Heads) {
+/// to `m`, the audio's heads `heads`.
+pub fn tape_strip(ui: &mut UiState, m: TapeMachine, heads: Heads) {
     load_init(ui, EngineType::Tape);
-    strip_source(ui, by == 4);
+    strip_source(ui, m == TapeMachine::Wave);
     plus(ui, 1); // SRC · DECK
-    if by != 0 {
-        feed(ui, Input::turn(EncoderId::A, by));
-    }
+    to_machine(ui, m);
     let from: &'static PartHeads = Box::leak(Box::new(PartHeads::new()));
     from.publish(0, heads);
     ui.hear_heads(from);
@@ -1643,106 +1647,98 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 1));
     }),
     ("tape_deck_oneshot", |ui| {
-        tape_deck(ui, 0);
-        play_mode(ui, PlayMode::One);
+        tape_deck(ui, TapeMachine::One);
     }),
     ("tape_page_oneshot", |ui| {
-        tape_deck(ui, 0);
-        play_mode(ui, PlayMode::One);
+        tape_deck(ui, TapeMachine::One);
         feed(ui, Input::press(ButtonId::Edit));
     }),
-    ("tape_deck_loop", |ui| tape_deck(ui, 0)),
+    ("tape_deck_loop", |ui| tape_deck(ui, TapeMachine::Loop)),
     // Bank 2 closed: the header warns UPDATE, MODEL reads NEEDS UPDATE (ADR 0141).
     ("tape_deck_needs_update", |ui| {
         ui.set_bank2(chimera_core::bank2::Bank2Status::Empty);
-        tape_deck(ui, 0);
+        tape_deck(ui, TapeMachine::Loop);
     }),
     ("tape_page_loop", |ui| {
-        tape_deck(ui, 0);
+        tape_deck(ui, TapeMachine::Loop);
         feed(ui, Input::press(ButtonId::Edit));
     }),
-    ("tape_deck_tron", |ui| tape_deck(ui, 1)),
+    ("tape_deck_tron", |ui| tape_deck(ui, TapeMachine::Tron)),
     ("tape_page_tron", |ui| {
-        tape_deck(ui, 1);
+        tape_deck(ui, TapeMachine::Tron);
         feed(ui, Input::press(ButtonId::Edit));
     }),
-    ("tape_deck_stretch", |ui| tape_deck(ui, 3)),
+    ("tape_deck_stretch", |ui| tape_deck(ui, TapeMachine::Stretch)),
     ("tape_page_stretch", |ui| {
-        tape_deck(ui, 3);
+        tape_deck(ui, TapeMachine::Stretch);
         feed(ui, Input::press(ButtonId::Edit));
     }),
     // An unpitched source's TYPE in focus: too wide for the numerals.
     ("tape_page_stretch_type", |ui| {
-        tape_deck(ui, 3);
+        tape_deck(ui, TapeMachine::Stretch);
         feed(ui, Input::press(ButtonId::Edit));
         feed(ui, Input::turn(EncoderId::B, 1));
     }),
-    ("tape_deck_transwave", |ui| tape_deck(ui, 4)),
+    ("tape_deck_transwave", |ui| tape_deck(ui, TapeMachine::Wave)),
     ("tape_page_transwave", |ui| {
-        tape_deck(ui, 4);
+        tape_deck(ui, TapeMachine::Wave);
         feed(ui, Input::press(ButtonId::Edit));
     }),
-    ("tape_deck_scrub", |ui| tape_deck(ui, 2)),
+    ("tape_deck_scrub", |ui| tape_deck(ui, TapeMachine::Scrub)),
     ("tape_page_scrub", |ui| {
-        tape_deck(ui, 2);
+        tape_deck(ui, TapeMachine::Scrub);
         feed(ui, Input::press(ButtonId::Edit));
     }),
     ("tape_deck_pingpong", |ui| {
-        tape_deck(ui, 0);
-        play_mode(ui, PlayMode::Ping);
+        tape_deck(ui, TapeMachine::Ping);
     }),
     ("tape_page_pingpong", |ui| {
-        tape_deck(ui, 0);
-        play_mode(ui, PlayMode::Ping);
+        tape_deck(ui, TapeMachine::Ping);
         feed(ui, Input::press(ButtonId::Edit));
     }),
     // The strip (TAPE Task 16): each machine over the plucks (a transwave
     // for TRANSWAVE), with the heads the audio would store.
     ("tape_strip_oneshot", |ui| {
-        tape_strip(ui, 0, Heads::new(9_000, None));
-        play_mode(ui, PlayMode::One);
+        tape_strip(ui, TapeMachine::One, Heads::new(9_000, None));
     }),
     // A loop's fade: the second head plays on.
     ("tape_strip_loop", |ui| {
-        tape_strip(ui, 0, Heads::new(20_000, Some(2_000)))
+        tape_strip(ui, TapeMachine::Loop, Heads::new(20_000, Some(2_000)))
     }),
     ("tape_strip_tron", |ui| {
-        tape_strip(ui, 1, Heads::new(6_000, Some(30_000)))
+        tape_strip(ui, TapeMachine::Tron, Heads::new(6_000, Some(30_000)))
     }),
     ("tape_strip_stretch", |ui| {
-        tape_strip(ui, 3, Heads::new(12_000, Some(13_200)))
+        tape_strip(ui, TapeMachine::Stretch, Heads::new(12_000, Some(13_200)))
     }),
     ("tape_strip_transwave", |ui| {
-        tape_strip(ui, 4, Heads::new(2, Some(3)))
+        tape_strip(ui, TapeMachine::Wave, Heads::new(2, Some(3)))
     }),
     ("tape_strip_scrub", |ui| {
-        tape_strip(ui, 2, Heads::new(16_000, None));
+        tape_strip(ui, TapeMachine::Scrub, Heads::new(16_000, None));
         let p = chimera_core::project::PartId::ALL[0];
         ui.project_mut().edit_part(p).sound.params.tape.position = 0.4; // FINGER
     }),
     ("tape_strip_pingpong", |ui| {
-        tape_strip(ui, 0, Heads::new(25_000, None));
-        play_mode(ui, PlayMode::Ping);
+        tape_strip(ui, TapeMachine::Ping, Heads::new(25_000, None));
     }),
     // END before START on SRC: LOOP plays reversed.
     ("tape_strip_loop_reversed", |ui| {
-        tape_strip(ui, 0, Heads::new(20_000, None));
+        tape_strip(ui, TapeMachine::Loop, Heads::new(20_000, None));
         feed(ui, Input::press(ButtonId::Minus)); // SRC
         feed(ui, Input::turn(EncoderId::B, 100)); // START
         feed(ui, Input::turn(EncoderId::C, -80)); // END
     }),
     // SLICE 5 (a loaded Sound's: no cell sets it now).
     ("tape_strip_oneshot_slice", |ui| {
-        tape_strip(ui, 0, Heads::new(10_000, None)); // in slice 5
-        play_mode(ui, PlayMode::One);
+        tape_strip(ui, TapeMachine::One, Heads::new(10_000, None)); // in slice 5
         let p = chimera_core::project::PartId::ALL[0];
         ui.project_mut().edit_part(p).sound.params.tape.slice = SliceCode::new(6);
     }),
     // END before START: ONESHOT's slice 5 counts from START, PING-PONG
     // plays its sorted window.
     ("tape_strip_oneshot_slice_reversed", |ui| {
-        tape_strip(ui, 0, Heads::NONE);
-        play_mode(ui, PlayMode::One);
+        tape_strip(ui, TapeMachine::One, Heads::NONE);
         let p = &mut ui
             .project_mut()
             .edit_part(chimera_core::project::PartId::ALL[0])
@@ -1752,8 +1748,7 @@ pub const CASES: &[ScreenCase] = &[
         (p.start, p.end, p.slice) = (0.9, 0.1, SliceCode::new(6));
     }),
     ("tape_strip_pingpong_reversed", |ui| {
-        tape_strip(ui, 0, Heads::new(20_000, None));
-        play_mode(ui, PlayMode::Ping);
+        tape_strip(ui, TapeMachine::Ping, Heads::new(20_000, None));
         let p = &mut ui
             .project_mut()
             .edit_part(chimera_core::project::PartId::ALL[0])
@@ -1764,7 +1759,7 @@ pub const CASES: &[ScreenCase] = &[
     }),
     // No note: TRON's LENGTH 0 (0.25 s) at ROOT.
     ("tape_strip_tron_idle", |ui| {
-        tape_strip(ui, 1, Heads::NONE);
+        tape_strip(ui, TapeMachine::Tron, Heads::NONE);
         let p = &mut ui
             .project_mut()
             .edit_part(chimera_core::project::PartId::ALL[0])

@@ -163,7 +163,7 @@ fn every_node_fits_the_row() {
 /// bold under any model, fits the row alone.
 #[test]
 fn every_row_page_has_a_word_that_fits() {
-    use chimera_core::dsp::tape_engine::TapeModel;
+    use chimera_core::dsp::tape_engine::TapeMachine;
     use chimera_core::ui::block_registry::{MODAL_2, TAPE_MODEL};
     use chimera_core::ui::view::Models;
     for (i, a) in ROW_WORDS.iter().enumerate() {
@@ -185,7 +185,7 @@ fn every_row_page_has_a_word_that_fits() {
                     def.short
                 );
                 for modal in (0..4).map(ResonatorMode::from_u8) {
-                    for tape in TapeModel::ALL {
+                    for tape in TapeMachine::ALL {
                         let w = row_label(def, Models { modal, tape });
                         let px = text_width(&theme::FONT_LABEL_BOLD, w, theme::LABEL_TRACKING);
                         assert!(px <= room, "{w}: {px} px");

@@ -67,7 +67,7 @@ use crate::dsp::algo::params::step_alg;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::dsp::reverb::KnobMemory;
-use crate::dsp::tape_engine::{Heads, TapeEngineParams, TapeModel};
+use crate::dsp::tape_engine::{Heads, TapeEngineParams, TapeMachine, TapeModel};
 use crate::in_place::uninit_at;
 use crate::instrument::AudioShared;
 use crate::instrument::PartHeads;
@@ -2445,7 +2445,7 @@ impl UiState {
 
     fn handle_frame(&mut self, controls: &impl Controls) {
         let rev = self.project.rev();
-        let model = |ui: &Self| ui.project.part(ui.active_part).sound.params.tape.model;
+        let model = |ui: &Self| ui.project.part(ui.active_part).sound.params.tape.machine();
         let was = model(self);
         self.input(controls);
         let jog = self.jog_pass(controls.now_ms().0);
@@ -2565,7 +2565,7 @@ impl UiState {
         let whole = a.block == BlockRef::Reverb
             && reverb_panel::whole_ticks(&self.project.perf().fx.reverb, a.param);
         let jack = a.block == BlockRef::Filter && JackSlot::of(a.param).is_some();
-        let finger = a == SCRUB_FINGER && ctx.tape == TapeModel::Scrub;
+        let finger = a == SCRUB_FINGER && ctx.tape == TapeMachine::Scrub;
         if whole || jack || finger || view::is_dimmed(&v, &self.project.part(at).sound, &ctx) {
             return;
         }
@@ -2816,7 +2816,7 @@ impl UiState {
                     continue; // dimmed: the encoder is ignored
                 }
                 // SCRUB's FINGER turns the reel: `jog_pass` moves POSITION.
-                if !shift && v.addr() == Some(SCRUB_FINGER) && self.ctx().tape == TapeModel::Scrub {
+                if !shift && v.addr() == Some(SCRUB_FINGER) && self.ctx().tape == TapeMachine::Scrub {
                     self.jog.turn(delta, controls.now_ms().0);
                     continue;
                 }

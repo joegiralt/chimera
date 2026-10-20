@@ -1,7 +1,8 @@
-//! TAPE's pages (spec § 3, ADR 0093, TAPE Task 15): the chain SRC · DECK
-//! · DRV · FLT · AMP · MOD opening on DECK, DECK in MODAL's RES shape with
-//! each machine's POSITION and MOTION, the model page per machine, and
-//! `tape_engine::reads` dimming what a machine ignores. Precedent: the
+//! TAPE's pages (spec § 3, ADR 0093, TAPE Task 15, ADR 0178): the chain
+//! SRC · DECK · DRV · FLT · AMP · MOD opening on DECK, DECK holding MODEL
+//! and every knob that moves the machine's glyph, the model page the rest
+//! and TAPE, AGE and WOW, and `tape_engine::reads` dimming what a machine
+//! ignores. Precedent: the
 //! Digitakt II's machines, each its own labelled page.
 
 mod common;
@@ -14,7 +15,8 @@ use chimera_core::block::{Block, ParamId, ParamKind};
 use chimera_core::dsp::tape_engine::machine::{MACHINES, machine};
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
-    MODEL_NAMES, PlayMode, TAPE_ENGINE_SPECS, TapeEngine, TapeEngineParams, TapeModel, reads,
+    MODEL_NAMES, PlayMode, TAPE_ENGINE_SPECS, TapeEngine, TapeEngineParams, TapeMachine, TapeModel,
+    reads,
 };
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
@@ -35,15 +37,13 @@ use screen::*;
 type P = TapeEngineParams;
 const SR: u32 = 48_000;
 
-fn ctx_on(model: TapeModel) -> SlotCtx {
-    let mut s = Sound::init(EngineType::Tape);
-    s.params.tape.model = model;
-    SlotCtx::read(&s.params, chimera_core::addr::Op::A)
+fn ctx_on(m: TapeMachine) -> SlotCtx {
+    SlotCtx::read(&sound_on(m).params, chimera_core::addr::Op::A)
 }
 
-fn sound_on(model: TapeModel) -> Sound {
+fn sound_on(m: TapeMachine) -> Sound {
     let mut s = Sound::init(EngineType::Tape);
-    s.params.tape.model = model;
+    s.params.tape.set_machine(m);
     s
 }
 
@@ -92,54 +92,60 @@ fn chain_opens_on_deck() {
     assert_eq!(page_def_id(&ui), TAPE_DECK.id);
 }
 
+/// DECK: MODEL, then every knob that moves the machine's glyph, none
+/// dimmed (ADR 0178).
 #[test]
-fn deck_is_modals_res_shape() {
-    let want = [
-        (TapeModel::Play, "POSITION", "WALK"),
-        (TapeModel::Tron, "POSITION", "MOTION"),
-        (TapeModel::Scrub, "FINGER", "SPEED"),
-        (TapeModel::Stretch, "POSITION", "SPEED"),
-        (TapeModel::Transwave, "FRAME", "SCAN"),
+fn deck_holds_the_glyphs_knobs() {
+    use TapeMachine as M;
+    let want: [(M, [&str; 5]); 7] = [
+        (M::One, ["START", "END", "--", "--", "--"]),
+        (M::Loop, ["POSITION", "WALK", "LENGTH", "XFADE", "--"]),
+        (M::Ping, ["POSITION", "WALK", "LENGTH", "--", "--"]),
+        (M::Tron, ["LENGTH", "FADE", "--", "--", "--"]),
+        (M::Scrub, ["FINGER", "SPEED", "LENGTH", "XFADE", "DRAG"]),
+        (M::Stretch, ["SPEED", "D-TIME", "--", "--", "--"]),
+        (M::Wave, ["FRAME", "SCAN", "RANGE", "--", "--"]),
     ];
-    for (m, pos, mot) in want {
+    for (m, cells) in want {
         let ctx = ctx_on(m);
-        assert_eq!(
-            labels(&TAPE_DECK, &ctx),
-            ["MODEL", pos, mot, "TAPE", "AGE", "--"],
-            "{m:?}"
-        );
-        let s = sound_on(m);
-        let dim = m == TapeModel::Tron;
-        for (i, id) in [(1, P::POSITION), (2, P::MOTION)] {
-            assert_eq!(view::view(&TAPE_DECK, i, &ctx).addr(), Some(tape(id)));
-            assert_eq!(view::dimmed(tape(id), &s), dim, "{m:?} {id:?}");
+        let got = labels(&TAPE_DECK, &ctx);
+        assert_eq!(got[0], "MODEL");
+        assert_eq!(got[1..], cells, "{m:?}");
+        for (k, c) in machine(m).deck.iter().enumerate() {
+            assert_eq!(view::view(&TAPE_DECK, k + 1, &ctx).addr(), Some(tape(c.id)));
+            assert!(!view::dimmed(tape(c.id), &sound_on(m)), "{m:?} {}", c.label);
         }
-        for id in [P::MODEL, P::TAPE, P::AGE] {
-            assert!(!view::dimmed(tape(id), &s), "{m:?} {id:?}");
-        }
-        assert_eq!(view::view(&TAPE_DECK, 5, &ctx).addr(), None);
     }
 }
 
+/// The model page: what else the machine reads, then TAPE, AGE and WOW
+/// in the same cells on every machine.
 #[test]
 fn model_page_cells() {
-    let want: [(TapeModel, &[&str]); 5] = [
-        (TapeModel::Play, &["MODE", "LENGTH", "XFADE", "FADE", "WOW"]),
-        (TapeModel::Tron, &["LENGTH", "FADE", "WOW"]),
-        (TapeModel::Scrub, &["LENGTH", "XFADE", "DRAG", "WOW"]),
-        (TapeModel::Stretch, &["D-TIME", "TYPE", "WOW"]),
-        (TapeModel::Transwave, &["RANGE", "WOW"]),
+    use TapeMachine as M;
+    let want: [(M, [&str; 3]); 7] = [
+        (M::One, ["FADE", "--", "--"]),
+        (M::Loop, ["FADE", "--", "--"]),
+        (M::Ping, ["FADE", "--", "--"]),
+        (M::Tron, ["--", "--", "--"]),
+        (M::Scrub, ["--", "--", "--"]),
+        (M::Stretch, ["POSITION", "TYPE", "--"]),
+        (M::Wave, ["--", "--", "--"]),
     ];
-    let pages = ["PLAY", "TRON", "SCRUB", "STRCH", "WAVE"];
+    let pages = ["ONE", "LOOP", "PING", "TRON", "SCRUB", "STRCH", "WAVE"];
     for ((m, cells), page) in want.into_iter().zip(pages) {
         let mut ctx = ctx_on(m);
         ctx.unpitched = false;
         let got = labels(&TAPE_MODEL, &ctx);
-        assert_eq!(&got[..cells.len()], cells, "{m:?}");
-        assert!(got[cells.len()..].iter().all(|&l| l == "--"), "{m:?}");
+        assert_eq!(got[..3], cells, "{m:?}");
+        assert_eq!(got[3..], ["TAPE", "AGE", "WOW"], "{m:?}");
         for (k, c) in machine(m).cells.iter().enumerate() {
             assert_eq!(view::view(&TAPE_MODEL, k, &ctx).addr(), Some(tape(c.id)));
             assert!(!view::dimmed(tape(c.id), &sound_on(m)), "{m:?} {}", c.label);
+        }
+        for (k, id) in [(3, P::TAPE), (4, P::AGE), (5, P::WOW)] {
+            assert_eq!(view::view(&TAPE_MODEL, k, &ctx).addr(), Some(tape(id)));
+            assert!(!view::dimmed(tape(id), &sound_on(m)), "{m:?} {id:?}");
         }
         let models = Models {
             tape: m,
@@ -150,18 +156,47 @@ fn model_page_cells() {
     }
 }
 
+/// Every param that moves a machine's glyph has its cell on DECK, and
+/// every DECK cell moves it: the glyph reads what DECK holds.
+#[test]
+fn deck_is_what_moves_the_glyph() {
+    use chimera_core::ui::glyph::TAPE_GLYPH_PARAMS;
+    use chimera_core::ui::tape_glyph::TapeGauge;
+    for m in TapeMachine::ALL {
+        let mut set = [0.0, 0.1, 0.9, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, 0.2];
+        set[0] = m.index() as f32 / 6.0;
+        let base = TapeGauge::from_set(set, false);
+        assert_eq!(base.kind(), m);
+        for (i, a) in TAPE_GLYPH_PARAMS.iter().enumerate().skip(1) {
+            if matches!(a.param, P::TAPE | P::AGE) {
+                continue;
+            }
+            let moves = [0.0, 1.0].into_iter().any(|v| {
+                let mut moved = set;
+                moved[i] = v;
+                TapeGauge::from_set(moved, false).key() != base.key()
+            });
+            let on_deck = machine(m).deck.iter().any(|c| c.id == a.param);
+            assert_eq!(moves, on_deck, "{m:?} {:?}", a.param);
+        }
+    }
+}
+
 /// MODEL reads the machine's page name, which fits a cell's bar (STRETCH
 /// doesn't); the header spells it out.
 #[test]
 fn model_names_fit_the_cell() {
-    assert_eq!(MODEL_NAMES, ["PLAY", "TRON", "SCRUB", "STRCH", "WAVE"]);
+    assert_eq!(
+        MODEL_NAMES,
+        ["ONE", "LOOP", "PING", "TRON", "SCRUB", "STRCH", "WAVE"]
+    );
     for (k, name) in MACHINES.iter().zip(MODEL_NAMES) {
         assert_eq!(k.page, name);
         let w = draw::text_width(&theme::FONT_VALUE, name, 0);
         assert!(w <= theme::CELL_BAR_W, "{name}: {w} px");
     }
-    let full = ["PLAY", "TRON", "SCRUB", "STRETCH", "TRANSWAVE"];
-    for (m, want) in TapeModel::ALL.into_iter().zip(full) {
+    let full = ["ONE", "LOOP", "PING", "TRON", "SCRUB", "STRETCH", "TRANSWAVE"];
+    for (m, want) in TapeMachine::ALL.into_iter().zip(full) {
         let models = Models {
             tape: m,
             ..Models::default()
@@ -199,7 +234,7 @@ fn model_change_applies_machine_defaults() {
         .source = Some(TapeSource { r, tune: None });
     settle(&mut ui);
     let settled = render_ui(&ui).hash();
-    feed(&mut ui, Input::turn(EncoderId::A, 3)); // PLAY → STRETCH
+    feed(&mut ui, Input::turn(EncoderId::A, 4)); // LOOP → STRETCH
     let t = ui.params().tape;
     assert_eq!(t.model, TapeModel::Stretch);
     assert_eq!((t.motion, t.size, t.kind as u8), (0.5, 0.5, 0));
@@ -220,14 +255,23 @@ fn model_change_applies_machine_defaults() {
     assert_ne!(settled, render_ui(&ui).hash());
 
     // The matrix reads the new machine's labels.
-    assert_eq!(ui.matrix_state.tape, TapeModel::Stretch);
+    assert_eq!(ui.matrix_state.tape, TapeMachine::Stretch);
+
+    // Onto ONE: PLAY in MODE ONE, its FADE holding; LOOP's cells keep
+    // their values, which ONE doesn't read.
+    feed(&mut ui, Input::turn(EncoderId::A, -5)); // ONE
+    let t = ui.params().tape;
+    assert_eq!((t.model, t.mode), (TapeModel::Play, PlayMode::One));
+    assert_eq!(t.drag, chimera_core::dsp::tape_engine::FADE_HOLD);
+    assert_eq!((t.start, t.end), (0.2, 0.7), "the window is the source's");
 
     // MODEL turned past its end changes nothing, so writes nothing.
-    feed(&mut ui, Input::turn(EncoderId::A, -3)); // PLAY
     ui.params_mut().tape.slice = chimera_core::dsp::tape_engine::SliceCode::new(5);
+    ui.params_mut().tape.drag = 0.5;
     feed(&mut ui, Input::turn(EncoderId::A, -1));
-    assert_eq!(ui.params().tape.model, TapeModel::Play);
+    assert_eq!(ui.params().tape.mode, PlayMode::One);
     assert_eq!(ui.params().tape.slice.code(), 5);
+    assert_eq!(ui.params().tape.drag, 0.5);
 
     // A Sound loaded on a machine keeps what it stored.
     {
@@ -243,7 +287,7 @@ fn model_change_applies_machine_defaults() {
 #[test]
 fn scrub_finger_jogs() {
     let mut ui = ui_at_deck();
-    feed(&mut ui, Input::turn(EncoderId::A, 2)); // PLAY → SCRUB
+    feed(&mut ui, Input::turn(EncoderId::A, 3)); // LOOP → SCRUB
     assert_eq!(ui.params().tape.model, TapeModel::Scrub);
     let drag = ui.params().tape.drag;
     assert_eq!(ui.params().tape.position, 0.0);
@@ -305,15 +349,16 @@ fn reads_matches_the_audio() {
     let held = held_plain(&saw_with_burst(48_000, 1.0), 48_000);
     let wave = held_transwave(512, 4, |f, h| if h <= 1 + f as u32 { 0.5 } else { 0.0 });
     let mut checked = 0;
-    for m in TapeModel::ALL {
-        let src = if m == TapeModel::Transwave {
+    for m in TapeMachine::ALL {
+        let src = if m == TapeMachine::Wave {
             &wave
         } else {
             &held
         };
         let v = SourceView::strict(src).unwrap();
         let base = P {
-            model: m,
+            model: m.model(),
+            mode: m.mode().unwrap_or(PlayMode::Loop),
             start: 0.1,
             end: 0.9,
             position: 0.2,
@@ -349,7 +394,8 @@ fn reads_matches_the_audio() {
         let plain = render(base);
         assert!(plain.iter().any(|&y| y != 0.0), "{m:?} is silent");
         for spec in &TAPE_ENGINE_SPECS {
-            if reads(m, spec.id) {
+            // SLICE is retired: a loaded Sound's only, ONE still plays it.
+            if reads(m, spec.id) || spec.id == P::SLICE {
                 continue;
             }
             let mut p = base;
@@ -367,19 +413,13 @@ fn reads_matches_the_audio() {
             checked += 1;
         }
     }
-    assert!(checked >= 20, "{checked}");
+    assert!(checked >= 18, "{checked}");
 }
 
 #[test]
 fn reads_is_the_machine_table() {
     for k in &MACHINES {
-        let cells: Vec<ParamId> = k
-            .deck
-            .iter()
-            .flatten()
-            .chain(k.cells)
-            .map(|c| c.id)
-            .collect();
+        let cells: Vec<ParamId> = k.deck.iter().chain(k.cells).map(|c| c.id).collect();
         for id in [
             P::POSITION,
             P::MOTION,
@@ -390,21 +430,21 @@ fn reads_is_the_machine_table() {
             P::SLICE,
         ] {
             assert_eq!(
-                reads(k.model, id),
+                reads(k.machine, id),
                 cells.contains(&id),
                 "{:?} {id:?}",
-                k.model
+                k.machine
             );
         }
-        for id in [P::MODEL, P::START, P::END, P::TAPE, P::AGE, P::WOW] {
-            assert!(reads(k.model, id), "{:?} {id:?}", k.model);
+        for id in [P::MODEL, P::MODE, P::START, P::END, P::TAPE, P::AGE, P::WOW] {
+            assert!(reads(k.machine, id), "{:?} {id:?}", k.machine);
         }
     }
 }
 
 #[test]
 fn type_reads_poly_unpitched() {
-    let mut s = sound_on(TapeModel::Stretch);
+    let mut s = sound_on(TapeMachine::Stretch);
     s.params.tape.period = 0.0;
     let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
     assert_eq!(
@@ -501,7 +541,7 @@ fn no_four_tapes() {
     assert_eq!(block_tag(BlockRef::Tape), "REL");
     assert_eq!(block_name(BlockRef::Tape), "REEL");
     for k in &MACHINES {
-        for c in k.deck.iter().flatten().chain(k.cells) {
+        for c in k.deck.iter().chain(k.cells) {
             assert!(c.label != "TAPE" && c.short != "TAPE");
         }
     }
@@ -513,7 +553,7 @@ fn upper(s: &str) -> String {
 
 #[test]
 fn tape_pages_have_no_other_gestures() {
-    for m in TapeModel::ALL {
+    for m in TapeMachine::ALL {
         let ctx = ctx_on(m);
         for def in [&TAPE_SRC, &TAPE_DECK, &TAPE_MODEL] {
             for i in 0..6 {
@@ -544,9 +584,9 @@ fn matrix_columns_read_the_machine() {
         fmt_route_dest(&mut b, &dest, t);
         b.as_str().to_owned()
     };
-    assert_eq!(name(TapeModel::Play), "TPE WALK");
-    assert_eq!(name(TapeModel::Stretch), "TPE SPEED");
-    assert_eq!(name(TapeModel::Tron), "TPE MOTION");
+    assert_eq!(name(TapeMachine::Loop), "TPE WALK");
+    assert_eq!(name(TapeMachine::Stretch), "TPE SPEED");
+    assert_eq!(name(TapeMachine::Tron), "TPE MOTION");
     let mut m = MatrixState::new();
     m.dests[0] = Some(dest);
     m.num_dests = 1;
@@ -557,78 +597,88 @@ fn matrix_columns_read_the_machine() {
     };
     let walk = grid(&m);
     let rev = m.rev;
-    m.set_tape(TapeModel::Stretch);
+    m.set_tape(TapeMachine::Stretch);
     assert_ne!(m.rev, rev);
     assert_ne!(grid(&m), walk, "the header still reads WLK");
-    m.set_tape(TapeModel::Play);
+    m.set_tape(TapeMachine::Loop);
     assert_eq!(grid(&m), walk);
 }
 
-/// What the MODE ignores shows dimmed, as HOLD's cell does elsewhere: ONE
-/// plays one head to END, PING has no crossfade.
+/// What a machine ignores is dimmed where it still shows (the matrix's
+/// columns): ONE plays one head to END, PING has no crossfade. No TAPE
+/// page shows such a cell (`deck_holds_the_glyphs_knobs`).
 #[test]
-fn cells_a_mode_ignores_are_dimmed() {
-    use chimera_core::dsp::tape_engine::PlayMode;
-    let dim = |mode, id| {
-        let mut s = sound_on(TapeModel::Play);
-        s.params.tape.mode = mode;
-        view::dimmed(tape(id), &s)
-    };
+fn cells_a_machine_ignores_are_dimmed() {
+    let dim = |m, id| view::dimmed(tape(id), &sound_on(m));
     for id in [P::POSITION, P::MOTION, P::SIZE, P::XFADE] {
-        assert!(dim(PlayMode::One, id), "ONE {id:?}");
+        assert!(dim(TapeMachine::One, id), "ONE {id:?}");
     }
-    for id in [P::MODE, P::DRAG, P::WOW, P::TAPE] {
-        assert!(!dim(PlayMode::One, id), "ONE {id:?}");
+    for id in [P::MODEL, P::DRAG, P::WOW, P::TAPE, P::START, P::END] {
+        assert!(!dim(TapeMachine::One, id), "ONE {id:?}");
     }
     for id in [P::POSITION, P::MOTION, P::SIZE, P::DRAG] {
         assert!(
-            !dim(PlayMode::Loop, id) && !dim(PlayMode::Ping, id),
+            !dim(TapeMachine::Loop, id) && !dim(TapeMachine::Ping, id),
             "{id:?}"
         );
     }
-    assert!(!dim(PlayMode::Loop, P::XFADE));
-    assert!(dim(PlayMode::Ping, P::XFADE));
+    assert!(!dim(TapeMachine::Loop, P::XFADE));
+    assert!(dim(TapeMachine::Ping, P::XFADE));
 }
 
-/// PLAY's FADE ends in HOLD in MODE ONE only: elsewhere the top step is a
-/// number, as TRON's and SCRUB's are.
+/// ONE's FADE ends in HOLD: elsewhere the top step is a number, as
+/// TRON's and SCRUB's are.
 #[test]
 fn fade_reads_hold_only_in_one() {
-    use chimera_core::dsp::tape_engine::PlayMode;
     use chimera_core::ui::fmt::fmt_val;
-    let text = |model, mode| {
-        let mut s = Sound::init(EngineType::Tape);
-        (s.params.tape.model, s.params.tape.mode) = (model, mode);
-        let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
+    let text = |m| {
+        let ctx = ctx_on(m);
         let fmt = view::shown_fmt(tape(P::DRAG), &ctx).unwrap();
         let mut b = FmtBuf::new();
         fmt_val(&mut b, 1.0, fmt);
         b.as_str().to_owned()
     };
-    assert_eq!(text(TapeModel::Play, PlayMode::One), "HOLD");
-    assert_eq!(text(TapeModel::Play, PlayMode::Loop), "127");
-    assert_eq!(text(TapeModel::Play, PlayMode::Ping), "127");
-    assert_eq!(text(TapeModel::Tron, PlayMode::One), "127");
+    assert_eq!(text(TapeMachine::One), "HOLD");
+    assert_eq!(text(TapeMachine::Loop), "127");
+    assert_eq!(text(TapeMachine::Ping), "127");
+    let mut s = sound_on(TapeMachine::Tron);
+    s.params.tape.mode = PlayMode::One;
+    let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
+    let mut b = FmtBuf::new();
+    fmt_val(&mut b, 1.0, view::shown_fmt(tape(P::DRAG), &ctx).unwrap());
+    assert_eq!(b.as_str(), "127", "TRON over a stale MODE ONE");
 }
 
-/// A MODE edit writes FADE's default (ONE holds, the others 32 ms); a
-/// MODEL edit onto PLAY writes MODE LOOP and its FADE.
+/// MODEL onto ONE, LOOP or PING writes PLAY and its MODE, and the
+/// machine's defaults: ONE's FADE holds, the others 32 ms. The disk keeps
+/// PLAY's code and MODE's (ADR 0178).
 #[test]
-fn mode_edit_writes_its_fade() {
-    use chimera_core::dsp::tape_engine::{FADE_HOLD, PlayMode};
+fn model_edit_writes_play_and_its_mode() {
+    use chimera_core::dsp::tape_engine::FADE_HOLD;
     use chimera_core::ui::part_page::{Edit, edit};
     let mut s = Sound::init(EngineType::Tape);
+    assert_eq!(s.params.tape.machine(), TapeMachine::Loop);
     s.params.tape.drag = 0.7;
-    let mode = tape(P::MODE);
-    assert!(edit(&mut s.params, mode, Edit::To(0.0)));
+    let model = tape(P::MODEL);
+    assert!(edit(&mut s.params, model, Edit::To(0.0)));
+    let t = s.params.tape;
+    assert_eq!((t.model, t.mode, t.drag), (TapeModel::Play, PlayMode::One, FADE_HOLD));
+    assert!(edit(&mut s.params, model, Edit::To(2.0)));
+    let t = s.params.tape;
+    assert_eq!((t.model, t.mode, t.drag), (TapeModel::Play, PlayMode::Ping, 0.3));
+    // Off PLAY, MODE stays as it was: no other machine reads it.
+    assert!(edit(&mut s.params, model, Edit::To(3.0)));
+    let t = s.params.tape;
+    assert_eq!((t.model, t.mode), (TapeModel::Tron, PlayMode::Ping));
+    assert_eq!(t.machine(), TapeMachine::Tron);
+    use chimera_core::block::DiskCode;
+    assert_eq!(t.enum_code(P::MODEL), Some(TapeModel::Tron.disk_code()));
+    let mut one = Sound::init(EngineType::Tape);
+    one.params.tape.set_machine(TapeMachine::One);
     assert_eq!(
-        (s.params.tape.mode, s.params.tape.drag),
-        (PlayMode::One, FADE_HOLD)
-    );
-    assert!(edit(&mut s.params, mode, Edit::To(2.0)));
-    assert_eq!(
-        (s.params.tape.mode, s.params.tape.drag),
-        (PlayMode::Ping, 0.3)
+        (one.params.tape.enum_code(P::MODEL), one.params.tape.enum_code(P::MODE)),
+        (Some(0), Some(0)),
+        "PLAY's code and MODE ONE's"
     );
 }
 

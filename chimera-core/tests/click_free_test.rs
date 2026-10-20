@@ -214,7 +214,7 @@ fn test_no_clicks_tape_machines() {
             period: 100.7,
             ..P::default()
         };
-        for (id, d) in defaults(m) {
+        for (id, d) in defaults(t.machine()) {
             t.set(id, d);
         }
         cases.push(t);

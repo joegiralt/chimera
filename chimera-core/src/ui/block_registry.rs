@@ -105,8 +105,8 @@ pub static TAPE_SRC: BlockDef = BlockDef {
     ],
 };
 
-/// DECK, the home: MODAL's RES shape, MODEL, the four macros;
-/// POSITION and MOTION as the machine labels them.
+/// DECK, the home: MODEL, then every knob that moves the machine's glyph
+/// as the machine labels them (ADR 0178).
 pub static TAPE_DECK: BlockDef = BlockDef {
     id: 94,
     name: "Deck",
@@ -115,15 +115,16 @@ pub static TAPE_DECK: BlockDef = BlockDef {
     viz: VizType::Strip,
     params: [
         ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::MODEL),
-        ParamSlot::machine(MachineSlot::Position),
-        ParamSlot::machine(MachineSlot::Motion),
-        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::TAPE),
-        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::AGE),
-        EMPTY,
+        ParamSlot::machine(MachineSlot::Deck(0)),
+        ParamSlot::machine(MachineSlot::Deck(1)),
+        ParamSlot::machine(MachineSlot::Deck(2)),
+        ParamSlot::machine(MachineSlot::Deck(3)),
+        ParamSlot::machine(MachineSlot::Deck(4)),
     ],
 };
 
-/// The model page: named and filled by the machine.
+/// The model page: named by the machine, its other cells first, then
+/// TAPE, AGE and WOW in the same cells on every machine (ADR 0178).
 pub static TAPE_MODEL: BlockDef = BlockDef {
     id: 95,
     name: "Machine",
@@ -134,9 +135,9 @@ pub static TAPE_MODEL: BlockDef = BlockDef {
         ParamSlot::machine(MachineSlot::Page(0)),
         ParamSlot::machine(MachineSlot::Page(1)),
         ParamSlot::machine(MachineSlot::Page(2)),
-        ParamSlot::machine(MachineSlot::Page(3)),
-        ParamSlot::machine(MachineSlot::Page(4)),
-        ParamSlot::machine(MachineSlot::Page(5)),
+        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::TAPE),
+        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::AGE),
+        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::WOW),
     ],
 };
 

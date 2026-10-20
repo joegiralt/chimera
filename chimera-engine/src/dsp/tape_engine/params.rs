@@ -22,7 +22,7 @@ pub enum TapeModel {
 }
 
 impl TapeModel {
-    /// MODEL's screen order: its value is the index here.
+    /// Every model; MODEL lists them as `TapeMachine`s.
     pub const ALL: [TapeModel; 5] = [
         TapeModel::Play,
         TapeModel::Tron,
@@ -31,7 +31,7 @@ impl TapeModel {
         TapeModel::Transwave,
     ];
 
-    /// MODEL's value: the machine's place on screen.
+    /// The model's place in `ALL`.
     pub fn index(self) -> u8 {
         match self {
             TapeModel::Play => 0,
@@ -42,7 +42,7 @@ impl TapeModel {
         }
     }
 
-    /// By MODEL's value; past the end, the last.
+    /// By `index`; past the end, the last.
     pub fn from_index(v: u8) -> Self {
         Self::ALL[usize::from(v).min(Self::ALL.len() - 1)]
     }
@@ -114,6 +114,74 @@ impl DiskCode for PlayMode {
             2 => Some(PlayMode::Ping),
             _ => None,
         }
+    }
+}
+
+/// What MODEL lists (#651, ADR 0178): PLAY's three MODEs each a machine
+/// of their own beside the others. The block keeps PLAY and its MODE, so
+/// the disk codes hold; MODEL's value is the index here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TapeMachine {
+    One,
+    Loop,
+    Ping,
+    Tron,
+    Scrub,
+    Stretch,
+    Wave,
+}
+
+impl TapeMachine {
+    /// MODEL's screen order.
+    pub const ALL: [TapeMachine; 7] = [
+        TapeMachine::One,
+        TapeMachine::Loop,
+        TapeMachine::Ping,
+        TapeMachine::Tron,
+        TapeMachine::Scrub,
+        TapeMachine::Stretch,
+        TapeMachine::Wave,
+    ];
+
+    pub const fn of(model: TapeModel, mode: PlayMode) -> Self {
+        match (model, mode) {
+            (TapeModel::Play, PlayMode::One) => TapeMachine::One,
+            (TapeModel::Play, PlayMode::Loop) => TapeMachine::Loop,
+            (TapeModel::Play, PlayMode::Ping) => TapeMachine::Ping,
+            (TapeModel::Tron, _) => TapeMachine::Tron,
+            (TapeModel::Scrub, _) => TapeMachine::Scrub,
+            (TapeModel::Stretch, _) => TapeMachine::Stretch,
+            (TapeModel::Transwave, _) => TapeMachine::Wave,
+        }
+    }
+
+    pub const fn model(self) -> TapeModel {
+        match self {
+            TapeMachine::One | TapeMachine::Loop | TapeMachine::Ping => TapeModel::Play,
+            TapeMachine::Tron => TapeModel::Tron,
+            TapeMachine::Scrub => TapeModel::Scrub,
+            TapeMachine::Stretch => TapeModel::Stretch,
+            TapeMachine::Wave => TapeModel::Transwave,
+        }
+    }
+
+    /// PLAY's MODE; `None` off PLAY.
+    pub const fn mode(self) -> Option<PlayMode> {
+        match self {
+            TapeMachine::One => Some(PlayMode::One),
+            TapeMachine::Loop => Some(PlayMode::Loop),
+            TapeMachine::Ping => Some(PlayMode::Ping),
+            _ => None,
+        }
+    }
+
+    pub const fn index(self) -> u8 {
+        self as u8
+    }
+
+    /// By MODEL's value; past the end, the last.
+    pub fn from_index(v: u8) -> Self {
+        Self::ALL[usize::from(v).min(Self::ALL.len() - 1)]
     }
 }
 
@@ -224,13 +292,21 @@ impl DiskCode for StretchType {
     }
 }
 
-/// MODEL's names, by `TapeModel::index`: each machine's page name, as
+/// MODEL's names, by `TapeMachine::index`: each machine's page name, as
 /// STRETCH and TRANSWAVE overrun a cell's bar.
-pub const MODEL_NAMES: [&str; 5] = ["PLAY", "TRON", "SCRUB", "STRCH", "WAVE"];
+pub const MODEL_NAMES: [&str; 7] = ["ONE", "LOOP", "PING", "TRON", "SCRUB", "STRCH", "WAVE"];
 
-/// The machines' names in full, by `TapeModel::index`: the model page's
+/// The machines' names in full, by `TapeMachine::index`: the model page's
 /// header.
-pub const MACHINE_NAMES: [&str; 5] = ["PLAY", "TRON", "SCRUB", "STRETCH", "TRANSWAVE"];
+pub const MACHINE_NAMES: [&str; 7] = [
+    "ONE",
+    "LOOP",
+    "PING",
+    "TRON",
+    "SCRUB",
+    "STRETCH",
+    "TRANSWAVE",
+];
 
 /// SLICE's names, by its value.
 pub const SLICE_NAMES: [&str; 18] = [
@@ -244,7 +320,7 @@ pub const SLICE_NAMES: [&str; 18] = [
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TapeEngineParams {
     pub model: TapeModel,
-    /// PLAY's MODE.
+    /// PLAY's MODE: MODEL's ONE, LOOP or PING (`machine`).
     pub mode: PlayMode,
     pub start: f32,
     pub end: f32,
@@ -294,6 +370,19 @@ impl Default for TapeEngineParams {
 }
 
 impl TapeEngineParams {
+    /// The machine MODEL shows: the model and, on PLAY, its MODE.
+    pub const fn machine(&self) -> TapeMachine {
+        TapeMachine::of(self.model, self.mode)
+    }
+
+    /// MODEL's write: the machine's model and, on PLAY, its MODE.
+    pub fn set_machine(&mut self, m: TapeMachine) {
+        self.model = m.model();
+        if let Some(mode) = m.mode() {
+            self.mode = mode;
+        }
+    }
+
     pub const MODEL: ParamId = ParamId(0);
     pub const START: ParamId = ParamId(1);
     pub const END: ParamId = ParamId(2);
@@ -312,32 +401,24 @@ impl TapeEngineParams {
     pub const MODE: ParamId = ParamId(15);
 }
 
-/// Whether `model` reads `id`: the one table for cells, dimming and the
-/// audio test, from the machines' (`machine::MACHINES`, whose every page
-/// ends in WOW). START, END, TAPE and AGE read on every machine; ROOT and
-/// PERIOD have no cell.
-pub fn reads(model: TapeModel, id: ParamId) -> bool {
+/// Whether `m` reads `id`: the one table for cells, dimming and the audio
+/// test, from the machines' (`machine::MACHINES`). START, END, TAPE, AGE
+/// and WOW read on every machine; ROOT and PERIOD have no cell.
+pub fn reads(m: TapeMachine, id: ParamId) -> bool {
     type P = TapeEngineParams;
     match id {
-        P::MODEL | P::START | P::END | P::TAPE | P::AGE | P::ROOT | P::PERIOD => true,
-        _ => super::machine::cell_of(model, id).is_some(),
+        P::MODEL | P::MODE | P::START | P::END | P::TAPE | P::AGE | P::WOW | P::ROOT | P::PERIOD => {
+            true
+        }
+        _ => super::machine::cell_of(m, id).is_some(),
     }
 }
 
-/// `reads` under PLAY's `mode`: ONE plays one head to END, so POSITION,
-/// WALK, LENGTH and XFADE do nothing there; PING has no crossfade.
+/// `reads` for the machine `model` plays under PLAY's `mode`: ONE plays
+/// one head to END, so POSITION, WALK, LENGTH and XFADE do nothing there;
+/// PING has no crossfade.
 pub fn reads_in(model: TapeModel, mode: PlayMode, id: ParamId) -> bool {
-    type P = TapeEngineParams;
-    if model == TapeModel::Play {
-        match mode {
-            PlayMode::One if matches!(id, P::POSITION | P::MOTION | P::SIZE | P::XFADE) => {
-                return false;
-            }
-            PlayMode::Ping if id == P::XFADE => return false,
-            _ => {}
-        }
-    }
-    reads(model, id)
+    reads(TapeMachine::of(model, mode), id)
 }
 
 /// Whether `model` moves `id` by a motion of its own the knobs would only
@@ -380,13 +461,13 @@ const TAPE: crate::glyph::FocusGlyph = crate::glyph::FocusGlyph::Tape;
 /// read at note-on or at a wrap. ROOT and PERIOD have no cell: a pick
 /// copies them from the source.
 pub static TAPE_ENGINE_SPECS: [ParamSpec; 16] = [
-    // The neutral is PLAY in MODE LOOP: index 0.
+    // The neutral is PLAY in MODE LOOP: LOOP, index 1.
     ParamSpec::choice(
         0,
         "MODEL",
         ValFmt::Names(&MODEL_NAMES),
-        4.0,
-        0.0,
+        6.0,
+        1.0,
         Change::Crossfade,
     )
     .ident("MODEL")
@@ -492,6 +573,7 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 16] = [
     )
     .ident("WOW")
     .glyph(TAPE),
+    // PLAY's MODE: no cell, MODEL writes it (ADR 0178).
     ParamSpec::choice(
         15,
         "MODE",
@@ -501,7 +583,7 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 16] = [
         Change::NoteOn,
     )
     .ident("MODE")
-    .glyph(TAPE),
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 impl Block for TapeEngineParams {
@@ -512,7 +594,7 @@ impl Block for TapeEngineParams {
     #[inline(never)]
     fn get(&self, id: ParamId) -> f32 {
         match id {
-            Self::MODEL => self.model.index() as f32,
+            Self::MODEL => self.machine().index() as f32,
             Self::START => self.start,
             Self::END => self.end,
             Self::POSITION => self.position,
@@ -535,7 +617,7 @@ impl Block for TapeEngineParams {
     #[inline(never)]
     fn write(&mut self, id: ParamId, v: f32) {
         match id {
-            Self::MODEL => self.model = TapeModel::from_index(v as u8),
+            Self::MODEL => self.set_machine(TapeMachine::from_index(v as u8)),
             Self::START => self.start = v,
             Self::END => self.end = v,
             Self::POSITION => self.position = v,

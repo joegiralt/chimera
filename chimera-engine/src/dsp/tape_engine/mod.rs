@@ -95,7 +95,7 @@ pub use heads::loop_len;
 pub use oneshot::SliceCode;
 pub use params::{
     FADE_HOLD, MACHINE_NAMES, MODEL_NAMES, NeedsRam, PlayMode, StretchType, TAPE_ENGINE_SPECS,
-    TapeEngineParams, TapeModel, Wow, at_root, drag_s, fade_default, jogs, needs_ram, reads,
+    TapeEngineParams, TapeMachine, TapeModel, Wow, at_root, drag_s, fade_default, jogs, needs_ram, reads,
     reads_in,
 };
 

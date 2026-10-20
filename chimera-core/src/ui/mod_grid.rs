@@ -8,7 +8,7 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::addr::{BlockRef, ParamAddr};
-use crate::dsp::tape_engine::{TapeModel, machine};
+use crate::dsp::tape_engine::{TapeMachine, machine};
 use crate::mod_path::LABEL_LEN;
 use crate::modulation::{FixedCol, ModState};
 use crate::preset::Sound;
@@ -170,7 +170,7 @@ pub struct MatrixState {
     pub sources: [Option<SourceRow>; MAX_SOURCES],
     pub num_sources: usize,
     /// The edited Part's TAPE machine: its labels name TAPE's columns.
-    pub tape: TapeModel,
+    pub tape: TapeMachine,
 }
 
 impl MatrixState {
@@ -190,7 +190,7 @@ impl MatrixState {
             num_dests: 0,
             sources: [None; MAX_SOURCES],
             num_sources: 0,
-            tape: TapeModel::Play,
+            tape: TapeMachine::Loop,
         };
         // Matrix starts empty — no destinations enabled, no amounts set.
         // Users enable params with MIX+Plus on block pages, set amounts in grid.
@@ -198,7 +198,7 @@ impl MatrixState {
     }
 
     /// The edited Part's machine; a change redraws the headers.
-    pub fn set_tape(&mut self, m: TapeModel) {
+    pub fn set_tape(&mut self, m: TapeMachine) {
         if self.tape != m {
             self.tape = m;
             self.bump();
@@ -660,14 +660,14 @@ pub fn block_tag(b: BlockRef) -> &'static str {
 }
 
 /// A TAPE destination's cell on `tape`'s machine (`WALK`, `WLK`).
-fn machine_cell(a: ParamAddr, tape: TapeModel) -> Option<&'static machine::Cell> {
+fn machine_cell(a: ParamAddr, tape: TapeMachine) -> Option<&'static machine::Cell> {
     (a.block == BlockRef::TapeEngine)
         .then(|| machine::cell_of(tape, a.param))
         .flatten()
 }
 
 /// A destination's parameter name: its spec label, or the machine's.
-pub fn dest_name(d: &ModDest, tape: TapeModel) -> &'static str {
+pub fn dest_name(d: &ModDest, tape: TapeMachine) -> &'static str {
     machine_cell(d.addr, tape)
         .map(|c| c.label)
         .or_else(|| d.addr.spec().map(|s| s.label))
@@ -675,7 +675,7 @@ pub fn dest_name(d: &ModDest, tape: TapeModel) -> &'static str {
 }
 
 /// A column's header: the machine's short on TAPE, else `fit_header`.
-fn header(d: &ModDest, tape: TapeModel) -> &'static str {
+fn header(d: &ModDest, tape: TapeMachine) -> &'static str {
     match machine_cell(d.addr, tape) {
         Some(c) => c.short,
         None => d.addr.spec().map_or("?", fit_header),
@@ -701,7 +701,7 @@ pub fn fit_header(spec: &crate::block::ParamSpec) -> &'static str {
 
 /// A destination as the focus band names it: the column header's two lines
 /// on one, `TAG NAME` (`OP1 LEVEL`), so operators read apart.
-pub fn fmt_route_dest(buf: &mut FmtBuf, d: &ModDest, tape: TapeModel) {
+pub fn fmt_route_dest(buf: &mut FmtBuf, d: &ModDest, tape: TapeMachine) {
     let _ = write!(buf, "{} {}", block_tag(d.addr.block), dest_name(d, tape));
 }
 
@@ -755,7 +755,7 @@ const ARROW_GAP: i32 = 5;
 /// The readout's destination: `FILTER CUTOFF`, or `FLT CUTOFF` when the
 /// full block name would push the line past `theme::CONTENT_W`. The param
 /// name is never cut.
-pub fn fmt_readout_dest(buf: &mut FmtBuf, source: &str, d: &ModDest, tape: TapeModel) {
+pub fn fmt_readout_dest(buf: &mut FmtBuf, source: &str, d: &ModDest, tape: TapeMachine) {
     let _ = write!(buf, "{} {}", block_name(d.addr.block), dest_name(d, tape));
     if names_width(source, buf.as_str()) > theme::CONTENT_W {
         *buf = FmtBuf::new();

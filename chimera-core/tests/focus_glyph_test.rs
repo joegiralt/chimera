@@ -52,7 +52,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("TapeEngine", "TYPE", TAPE),
     ("TapeEngine", "SLICE", NONE),
     ("TapeEngine", "WOW", TAPE),
-    ("TapeEngine", "MODE", TAPE),
+    ("TapeEngine", "MODE", NONE),
     ("TapeEngine", "POSITION", TAPE),
     ("TapeEngine", "MOTION", TAPE),
     ("TapeEngine", "TAPE", TAPE),

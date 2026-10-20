@@ -1,5 +1,5 @@
 //! TAPE's machine glyphs (#641, ADR 0173): one 64 × 48 picture a machine,
-//! still on MODEL and MODE (its identity), live on every other machine
+//! still on MODEL (its identity), live on every other machine
 //! cell (drawn from the Part's set values).
 //!
 //! Functional core: `TapeGauge` is the quantised inputs, each a step that
@@ -15,7 +15,7 @@
 //! the canvas stay in bank 1.
 
 use crate::dsp::algo::math::clampf;
-use crate::dsp::tape_engine::{PlayMode, TapeModel};
+use crate::dsp::tape_engine::TapeMachine;
 
 /// With TAPE's DSP only: a build without it (the bench's) draws no glyph.
 #[cfg(feature = "tape")]
@@ -190,41 +190,10 @@ pub enum Machine {
     Scrub(Sponge),
 }
 
-/// The glyph a machine shows, by MODEL and PLAY's MODE.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind {
-    One,
-    Loop,
-    Ping,
-    Tron,
-    Stretch,
-    Wave,
-    Scrub,
-}
+/// The glyph a machine shows: MODEL's machine (PLAY's MODEs each their own).
+pub type Kind = TapeMachine;
 
-impl Kind {
-    pub const ALL: [Kind; 7] = [
-        Kind::One,
-        Kind::Loop,
-        Kind::Ping,
-        Kind::Tron,
-        Kind::Stretch,
-        Kind::Wave,
-        Kind::Scrub,
-    ];
-
-    pub const fn of(model: TapeModel, mode: PlayMode) -> Self {
-        match (model, mode) {
-            (TapeModel::Play, PlayMode::One) => Kind::One,
-            (TapeModel::Play, PlayMode::Loop) => Kind::Loop,
-            (TapeModel::Play, PlayMode::Ping) => Kind::Ping,
-            (TapeModel::Tron, _) => Kind::Tron,
-            (TapeModel::Stretch, _) => Kind::Stretch,
-            (TapeModel::Transwave, _) => Kind::Wave,
-            (TapeModel::Scrub, _) => Kind::Scrub,
-        }
-    }
-
+impl TapeMachine {
     /// Its still pose: fixed inputs that show what the machine is.
     pub fn still(self) -> Machine {
         let q6 = Q6::of;
@@ -305,12 +274,11 @@ impl TapeGauge {
         }
     }
 
-    /// From `TAPE_GLYPH_PARAMS`' set values, normalized: MODEL, MODE,
-    /// START, END, POSITION, MOTION, SIZE, DRAG, TAPE, AGE, XFADE (`draw`'s
-    /// `inputs`, bank 2's with `bank2`). `still` for MODEL's and MODE's
-    /// cells. Closed, and without `tape`, ONE's still pose: no glyph is
+    /// From `TAPE_GLYPH_PARAMS`' set values, normalized: MODEL, START,
+    /// END, POSITION, MOTION, SIZE, DRAG, TAPE, AGE, XFADE (`draw`'s
+    /// `inputs`, bank 2's with `bank2`). `still` for MODEL's cell. Closed, and without `tape`, ONE's still pose: no glyph is
     /// drawn then anyway (`paint`).
-    pub fn from_set(set: [f32; 11], still: bool) -> Self {
+    pub fn from_set(set: [f32; 10], still: bool) -> Self {
         #[cfg(feature = "bank2")]
         {
             crate::bank2::DOOR_CELL
@@ -391,7 +359,7 @@ pub fn paint(g: &TapeGauge, out: &mut Canvas) -> bool {
 #[repr(C)]
 pub struct GlyphDoor {
     pub render: fn(&TapeGauge, &mut Canvas),
-    pub inputs: fn([f32; 11], bool) -> TapeGauge,
+    pub inputs: fn([f32; 10], bool) -> TapeGauge,
 }
 
 #[cfg(feature = "bank2")]

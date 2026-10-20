@@ -96,7 +96,7 @@ fn deck_reads_needs_update_closed() {
         if let Some(s) = s {
             ui.set_bank2(s);
         }
-        tape_deck(&mut ui, 0);
+        tape_deck(&mut ui, chimera_core::dsp::tape_engine::TapeMachine::Loop);
         settle(&mut ui);
         let h = ui.page_header();
         assert_eq!(h.name.as_str(), "DECK");
@@ -114,7 +114,7 @@ fn deck_reads_needs_update_closed() {
     );
     assert_eq!(empty.1, Some(NEEDS_UPDATE_CELL));
     assert!(first_cell_reads(&empty.0, NEEDS_UPDATE_CELL));
-    assert!(first_cell_reads(&ok.0, "PLAY"));
+    assert!(first_cell_reads(&ok.0, "LOOP"));
 }
 
 // Streamed sources through pass 2 (slice 1 § 5.6).
