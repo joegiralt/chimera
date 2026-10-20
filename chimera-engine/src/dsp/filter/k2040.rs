@@ -9,7 +9,7 @@
 
 use super::coef::g_of;
 use super::level::{FilterMods, LevelRamp, clip_amount, level_gain};
-use super::{SUB, TapShape, ramps, step_to, tap_g_range};
+use super::{Fed, SUB, TapShape, ramps, step_to, tap_g_range};
 use crate::block::DiskCode;
 use crate::dsp::clampf;
 use crate::hw::{BLOCK_SIZE, Cost};
@@ -256,6 +256,15 @@ pub fn k2040_k(res: f32) -> f32 {
     res * (4.0 / 0.95)
 }
 
+/// FB's headroom guard on the 2040 (#393): its loop can top full scale
+/// pre-VCA under full FB at high RES (+5 dB over FB 0 in the demo), so the
+/// output leans into `sat_2040`'s knee by FB's depth `d`, 0 none: the
+/// output's at most ±1 at full FB, and the curve is continuous in `d`.
+#[inline(always)]
+fn guard(o: f32, d: f32) -> f32 {
+    o + d * (sat_2040(o) - o)
+}
+
 /// The C1 cubic, `c − (4/27)·c³` for `c = clamp(v, ±1.5)`: slope 1 at 0,
 /// flat at ±1 from ±1.5, no divide.
 #[inline(always)]
@@ -274,6 +283,8 @@ pub struct K2040 {
     /// One `Option` for the three, as DIRTY's: 8 B under three (ADR 0101's
     /// 2,112 B voice chain).
     last: Option<Ends>,
+    /// FB's signal (#393).
+    fbp: f32,
 }
 
 /// A block's end values of `g`, `k` and LEVEL's gain; LADDER's too, so a
@@ -359,7 +370,11 @@ impl K2040 {
     ) -> Clip {
         let r = self.ramps(p, fs, mods);
         let t = TapShape::new(mods, tap_g_range(fs), k2040_k);
-        let (peak, sum) = self.run(buf, r, t.as_ref(), mods.glide, |_, _| {});
+        let fb = (mods.fb, tap_g_range(fs));
+        let (peak, sum) = self.run(buf, r, t.as_ref(), mods.glide, fb, |_, _| {});
+        if !mods.fb.on() {
+            self.fbp = 0.0;
+        }
         self.settle(sum);
         clip_amount(peak * (1.0 / (LED_KNEE * R_2040)))
     }
@@ -375,7 +390,7 @@ impl K2040 {
         trace: impl FnMut(usize, &[f32; 4]),
     ) {
         let r = self.ramps(p, fs, &FilterMods::NONE);
-        let (_, sum) = self.run(buf, r, None, false, trace);
+        let (_, sum) = self.run(buf, r, None, false, (Fed::OFF, (0.0, 1.0)), trace);
         self.settle(sum);
     }
 
@@ -388,18 +403,20 @@ impl K2040 {
         r: Ramps,
         tap: Option<&TapShape>,
         glide: bool,
+        fb: (Fed, (f32, f32)),
         trace: impl FnMut(usize, &[f32; 4]),
     ) -> (f32, f32) {
         use voice::{Exp, Rev2};
-        let steady = tap.is_none() && r.g.0 == r.g.1 && r.k.0 == r.k.1;
-        let stepped = tap.is_none() && glide;
+        let still = tap.is_none() && !fb.0.on();
+        let steady = still && r.g.0 == r.g.1 && r.k.0 == r.k.1;
+        let stepped = still && glide;
         match (r.voice, steady, stepped) {
             (K2040Voice::Rev2, true, _) => self.steady::<Rev2>(buf, r, trace),
             (K2040Voice::Rev2, _, true) => self.stepped::<Rev2>(buf, r, trace),
-            (K2040Voice::Rev2, ..) => self.moving::<Rev2>(buf, r, tap, trace),
+            (K2040Voice::Rev2, ..) => self.moving::<Rev2>(buf, r, tap, fb, trace),
             (K2040Voice::Exp, true, _) => self.steady::<Exp>(buf, r, trace),
             (K2040Voice::Exp, _, true) => self.stepped::<Exp>(buf, r, trace),
-            (K2040Voice::Exp, ..) => self.moving::<Exp>(buf, r, tap, trace),
+            (K2040Voice::Exp, ..) => self.moving::<Exp>(buf, r, tap, fb, trace),
         }
     }
 
@@ -445,7 +462,7 @@ impl K2040 {
     }
 
     pub(super) fn from_parts(s: [f32; 4], last: Option<Ends>) -> Self {
-        Self { s, last }
+        Self { s, last, fbp: 0.0 }
     }
 
     /// This block's ramps, stored as the next block's start.
@@ -521,6 +538,7 @@ impl K2040 {
         buf: &mut [f32; BLOCK_SIZE],
         r: Ramps,
         tap: Option<&TapShape>,
+        (fb, gr): (Fed, (f32, f32)),
         mut trace: impl FnMut(usize, &[f32; 4]),
     ) -> (f32, f32) {
         let n = BLOCK_SIZE as f32;
@@ -533,6 +551,21 @@ impl K2040 {
         let out = r.voice.out_scale();
         let (mut a, a_step) = (r.a.0, (r.a.1 - r.a.0) / n);
         let (mut peak, mut sum) = (0.0f32, 0.0f32);
+        // FB's loop is bank 2's (ADR 0190); this one runs as it was.
+        if fb.on() {
+            let a = (r.a.0, (r.a.1 - r.a.0) / n);
+            let ran = super::fed::through(|d| {
+                let f = if V::VOICE == K2040Voice::Exp {
+                    d.exp
+                } else {
+                    d.rev2
+                };
+                f(self, buf, &gs, &ks, a, fb, gr)
+            });
+            if let Some(r) = ran {
+                return r;
+            }
+        }
         for (i, s) in buf.iter_mut().enumerate() {
             a += a_step;
             sum += *s;
@@ -601,7 +634,7 @@ impl K2040 {
 
     /// A fresh voice's filter: at rest and unramped.
     pub fn reset(&mut self) {
-        self.s = [0.0; 4];
+        (self.s, self.fbp) = ([0.0; 4], 0.0);
         self.hold();
     }
 
@@ -615,5 +648,42 @@ impl K2040 {
     #[cfg(feature = "test-support")]
     pub fn states(&self) -> [f32; 4] {
         self.s
+    }
+}
+
+/// FB's loop (ADR 0190), linked into bank 2 with `bank2` (`filter::fed`).
+pub(super) mod fed {
+    use super::super::Fed;
+    use super::{K2040, VoiceSpec, coef, guard};
+    use crate::hw::BLOCK_SIZE;
+
+    impl K2040 {
+        /// `moving`'s loop on voice `V`, each sample's `g` through the FB
+        /// signal, the output through FB's headroom guard. Returns stage
+        /// 1's peak demand and the inputs' sum.
+        #[inline(never)]
+        pub(in crate::dsp::filter) fn fed<V: VoiceSpec>(
+            &mut self,
+            buf: &mut [f32; BLOCK_SIZE],
+            gs: &[f32; BLOCK_SIZE],
+            ks: &[f32; BLOCK_SIZE],
+            (mut a, a_step): (f32, f32),
+            fb: Fed,
+            gr: (f32, f32),
+        ) -> (f32, f32) {
+            let out = V::VOICE.out_scale();
+            let (mut peak, mut sum) = (0.0f32, 0.0f32);
+            for (i, s) in buf.iter_mut().enumerate() {
+                a += a_step;
+                sum += *s;
+                let c = coef(fb.g(gs[i], i, self.fbp, gr), ks[i]);
+                let (y, d1) = self.tick::<V>(*s * a, &c);
+                peak = peak.max(d1.abs());
+                let o = Self::output::<V>(y[3], out);
+                fb.feed(&mut self.fbp, o);
+                *s = guard(o, fb.depth(i));
+            }
+            (peak, sum)
+        }
     }
 }

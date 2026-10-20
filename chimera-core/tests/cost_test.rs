@@ -2487,3 +2487,42 @@ fn stability_bills_the_four_pole_kinds_below_one() {
     let at = |p: &ParamSnapshot| rooms.map(|r| r / Voice::cost(p, &ModState::new()).0);
     assert_eq!(at(&init), at(&stable));
 }
+
+/// ADR 0190: FB bills its loop, `FB_COST`, on every TYPE when stored off
+/// 0 or routed, with the moving path it runs on unless a route already
+/// bills it; at 0 a voice's bill is today's.
+#[test]
+fn fb_bills_its_loop_and_the_moving_path() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::filter::FB_COST;
+    use chimera_core::params::FilterParams;
+    assert_eq!(FB_COST, Cost(100));
+    let fb = ParamAddr::new(BlockRef::Filter, FilterParams::FB);
+    for kind in FilterKind::BUILT {
+        let mut p = on(kind);
+        let none = ModState::new();
+        let base = Voice::filter_cost(&p, &none);
+        p.filter.fb = 0.5;
+        assert_eq!(
+            Voice::filter_cost(&p, &none),
+            base + kind.move_cost() + FB_COST,
+            "{kind:?}"
+        );
+        // A CUTOFF route already bills the moving path: FB adds its loop.
+        let lfo = cutoff_lfo(20);
+        let moving = Voice::filter_cost(&on(kind), &lfo);
+        assert_eq!(
+            Voice::filter_cost(&p, &lfo),
+            moving + FB_COST,
+            "{kind:?} routed"
+        );
+        // Routed FB at 0 stored bills it too.
+        p.filter.fb = 0.0;
+        let r = routes(&[(ModSource::Lfo1, fb, 40)]);
+        assert_eq!(
+            Voice::filter_cost(&p, &r),
+            base + kind.move_cost() + FB_COST,
+            "{kind:?} FB routed"
+        );
+    }
+}

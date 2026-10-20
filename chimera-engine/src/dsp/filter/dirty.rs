@@ -11,7 +11,7 @@
 //! state and sample for any input, `f`, `q`, ramp or tap.
 
 use super::level::{FilterMods, LevelRamp, LevelStage, level_gain};
-use super::{FilterMode, TapShape, ramps};
+use super::{Fed, FilterMode, TapShape, ramps};
 use crate::dsp::{clampf, fast_sin};
 use crate::hw::{BLOCK_SIZE, Cost};
 use crate::meter::Clip;
@@ -120,6 +120,8 @@ pub struct Dirty {
     /// and it is 8 B under three (ADR 0101's 2,112 B voice chain).
     last: Option<Ends>,
     level: LevelStage,
+    /// FB's signal (#393).
+    fbp: f32,
 }
 
 /// A block's end values of `f`, `q` and LEVEL's gain.
@@ -158,12 +160,12 @@ impl Dirty {
         let t = TapShape::new(mods, (dirty_f_raw(20.0, fs as f32), r.f_max), dirty_q);
         let t = t.as_ref();
         let sum = match p.mode() {
-            FilterMode::Bp12 => self.run::<1>(buf, r, t),
-            FilterMode::Hp12 => self.run::<2>(buf, r, t),
-            FilterMode::Notch => self.run::<3>(buf, r, t),
+            FilterMode::Bp12 => self.run::<1>(buf, r, t, mods.fb, fs),
+            FilterMode::Hp12 => self.run::<2>(buf, r, t, mods.fb, fs),
+            FilterMode::Notch => self.run::<3>(buf, r, t, mods.fb, fs),
             // LP2, and any of CLEAN's modes, which `set_mode` keeps off a
             // DIRTY Sound.
-            _ => self.run::<0>(buf, r, t),
+            _ => self.run::<0>(buf, r, t, mods.fb, fs),
         };
         self.settle(sum);
         self.level.clip()
@@ -216,6 +218,8 @@ impl Dirty {
         buf: &mut [f32; BLOCK_SIZE],
         r: Ramps,
         tap: Option<&TapShape>,
+        fb: Fed,
+        fs_hz: u32,
     ) -> f32 {
         let n = BLOCK_SIZE as f32;
         let (f_step, q_step) = ((r.f.1 - r.f.0) / n, (r.q.1 - r.q.0) / n);
@@ -230,6 +234,15 @@ impl Dirty {
         let (mut g, g1) = (gain(r.q.0), gain(r.q.1));
         let g_step = (g1 - g) / n;
         let mut sum = 0.0f32;
+        if fb.on() {
+            let fr = (dirty_f_raw(20.0, fs_hz as f32), r.f_max);
+            let ran =
+                super::fed::through(|d| (d.dirty)(self, M, buf, &fs, &qs, (g, g_step), fb, fr));
+            if let Some(sum) = ran {
+                return sum;
+            }
+        }
+        self.fbp = 0.0;
         for (i, s) in buf.iter_mut().enumerate() {
             g += g_step;
             let (f, q) = (fs[i], qs[i]);
@@ -271,7 +284,7 @@ impl Dirty {
 
     /// A fresh voice's filter: at rest and unramped.
     pub fn reset(&mut self) {
-        (self.lp, self.bp) = (0.0, 0.0);
+        (self.lp, self.bp, self.fbp) = (0.0, 0.0, 0.0);
         self.hold();
     }
 
@@ -307,5 +320,48 @@ impl Dirty {
     #[cfg(test)]
     pub(crate) fn last_f(&self) -> Option<f32> {
         self.last.map(|e| e.f)
+    }
+}
+
+/// FB's loop (ADR 0190), linked into bank 2 with `bank2` (`filter::fed`).
+mod fed {
+    use super::super::Fed;
+    use super::{DIRTY_PEAK, Dirty};
+    use crate::dsp::clampf;
+    use crate::hw::BLOCK_SIZE;
+
+    impl Dirty {
+        /// `run`'s loop, each sample's `f` through the FB signal; one loop
+        /// for every mode, `m` read a sample (FB's bill covers it). Returns
+        /// the inputs' sum.
+        #[inline(never)]
+        #[allow(clippy::too_many_arguments)]
+        pub(in crate::dsp::filter) fn fed(
+            &mut self,
+            m: u8,
+            buf: &mut [f32; BLOCK_SIZE],
+            fs: &[f32; BLOCK_SIZE],
+            qs: &[f32; BLOCK_SIZE],
+            (mut g, g_step): (f32, f32),
+            fb: Fed,
+            fr: (f32, f32),
+        ) -> f32 {
+            let mut sum = 0.0f32;
+            for (i, s) in buf.iter_mut().enumerate() {
+                g += g_step;
+                let (f, q) = (fb.g(fs[i], i, self.fbp, fr), qs[i]);
+                let x = *s;
+                sum += x;
+                let mix = match m {
+                    0 => self.sub::<0>(x, f, q) + self.sub::<0>(x, f, q),
+                    1 => self.sub::<1>(x, f, q) + self.sub::<1>(x, f, q),
+                    2 => self.sub::<2>(x, f, q) + self.sub::<2>(x, f, q),
+                    _ => self.sub::<3>(x, f, q) + self.sub::<3>(x, f, q),
+                };
+                *s = clampf(g * mix, -DIRTY_PEAK, DIRTY_PEAK);
+                fb.feed(&mut self.fbp, *s);
+            }
+            sum
+        }
     }
 }

@@ -10,7 +10,7 @@
 
 use super::coef::{g_of, sat_c1};
 use super::level::{FilterMods, LevelRamp, LevelStage, level_gain};
-use super::{CLEAN_MODES, FilterMode, SUB, TapShape, g_at, ramps, step_to, tap_g_range};
+use super::{CLEAN_MODES, Fed, FilterMode, SUB, TapShape, g_at, ramps, step_to, tap_g_range};
 use crate::hw::BLOCK_SIZE;
 use crate::meter::Clip;
 use crate::params::FilterParams;
@@ -77,6 +77,8 @@ pub struct Clean {
     last: Option<Ends>,
     /// LEVEL's gain and clipper, before the loop.
     level: LevelStage,
+    /// FB's signal, the output a sample late through its one-pole (#393).
+    fbp: f32,
 }
 
 /// A block's end values of `g`, `k` and LEVEL's gain.
@@ -168,15 +170,17 @@ impl Clean {
         let t = TapShape::new(mods, tap_g_range(fs), clean_k);
         // The mode and the loop matched once a block: each is its own loop.
         match p.mode() {
-            FilterMode::Lp6 => self.run::<0>(buf, r, t, mods.glide),
-            FilterMode::Lp12 => self.run::<1>(buf, r, t, mods.glide),
-            FilterMode::Lp24 => self.run::<2>(buf, r, t, mods.glide),
-            FilterMode::Bp12 => self.run::<3>(buf, r, t, mods.glide),
-            FilterMode::Bp24 => self.run::<4>(buf, r, t, mods.glide),
+            FilterMode::Lp6 => self.run::<0>(buf, r, t, mods.glide, mods.fb, fs),
+            FilterMode::Lp12 => self.run::<1>(buf, r, t, mods.glide, mods.fb, fs),
+            FilterMode::Lp24 => self.run::<2>(buf, r, t, mods.glide, mods.fb, fs),
+            FilterMode::Bp12 => self.run::<3>(buf, r, t, mods.glide, mods.fb, fs),
+            FilterMode::Bp24 => self.run::<4>(buf, r, t, mods.glide, mods.fb, fs),
             // DIRTY's HP2 isn't CLEAN's; were it handed one, HP4.
-            FilterMode::Hp24 | FilterMode::Hp12 => self.run::<5>(buf, r, t, mods.glide),
-            FilterMode::Notch => self.run::<6>(buf, r, t, mods.glide),
-            FilterMode::Phaser => self.run::<7>(buf, r, t, mods.glide),
+            FilterMode::Hp24 | FilterMode::Hp12 => {
+                self.run::<5>(buf, r, t, mods.glide, mods.fb, fs)
+            }
+            FilterMode::Notch => self.run::<6>(buf, r, t, mods.glide, mods.fb, fs),
+            FilterMode::Phaser => self.run::<7>(buf, r, t, mods.glide, mods.fb, fs),
         }
         // A NaN or infinite input poisons the states for good: start the
         // next block from rest.
@@ -239,14 +243,43 @@ impl Clean {
         r: Ramps,
         t: Option<TapShape>,
         glide: bool,
+        fb: Fed,
+        fs: u32,
     ) {
-        if t.is_none() && r.g.0 == r.g.1 && r.k.0 == r.k.1 {
+        let still = t.is_none() && !fb.on();
+        if still && r.g.0 == r.g.1 && r.k.0 == r.k.1 {
             self.steady::<M>(buf, r);
-        } else if t.is_none() && glide {
+        } else if still && glide {
             self.stepped::<M>(buf, r);
-        } else {
+        } else if !(fb.on() && self.fed_play(M, buf, r, t.as_ref(), fb, tap_g_range(fs))) {
             self.moving::<M>(buf, r, t.as_ref());
         }
+        if !fb.on() {
+            self.fbp = 0.0;
+        }
+    }
+
+    /// FB's block (ADR 0190): `moving`'s arrays, built here, and the loop
+    /// in bank 2 (`fed::Clean::fed`). False while the door is closed.
+    fn fed_play(
+        &mut self,
+        m: u8,
+        buf: &mut [f32; BLOCK_SIZE],
+        r: Ramps,
+        tap: Option<&TapShape>,
+        fb: Fed,
+        gr: (f32, f32),
+    ) -> bool {
+        let n = BLOCK_SIZE as f32;
+        let (g_step, k_step) = ((r.g.1 - r.g.0) / n, (r.k.1 - r.k.0) / n);
+        let (mut g, mut k) = ([0.0f32; BLOCK_SIZE], [0.0f32; BLOCK_SIZE]);
+        ramps(&mut g, &mut k, (r.g.0, g_step), (r.k.0, k_step), false);
+        if let Some(t) = tap {
+            t.apply(&mut g, &mut k);
+        }
+        let mode = CLEAN_MODES[usize::from(m.min(7))];
+        let t = (trim(mode, r.k.0), trim(mode, r.k.1));
+        super::fed::through(|d| (d.clean)(self, m, buf, &g, &k, t, fb, gr)).is_some()
     }
 
     /// `g` and `k` held: their divides once a block.
@@ -313,7 +346,7 @@ impl Clean {
     }
 
     fn rest(&mut self) {
-        (self.s1, self.s2, self.ap, self.w) = ([0.0; 2], [0.0; 2], [0.0; 4], 0.0);
+        (self.s1, self.s2, self.ap, self.w, self.fbp) = ([0.0; 2], [0.0; 2], [0.0; 4], 0.0, 0.0);
     }
 
     /// Still ringing: a state above −80 dB.
@@ -510,6 +543,48 @@ mod tests {
         assert!(peak > 0.01);
         for (i, (a, b)) in s.iter().zip(&v).enumerate() {
             assert!((a - b).abs() <= 1e-6 * peak, "sample {i}: {a} vs {b}");
+        }
+    }
+}
+
+/// FB's loop (ADR 0190), linked into bank 2 with `bank2` (`filter::fed`).
+mod fed {
+    use super::super::{Fed, g_at};
+    use super::{Clean, coef};
+    use crate::hw::BLOCK_SIZE;
+
+    impl Clean {
+        /// `moving`'s loop on `g` and `k`, each sample's `g` through the FB
+        /// signal; one loop for every mode, `m` read a sample (FB's bill
+        /// covers it), the trim ramped across `t`.
+        #[inline(never)]
+        #[allow(clippy::too_many_arguments)]
+        pub(in crate::dsp::filter) fn fed(
+            &mut self,
+            m: u8,
+            buf: &mut [f32; BLOCK_SIZE],
+            g: &[f32; BLOCK_SIZE],
+            k: &[f32; BLOCK_SIZE],
+            t: (f32, f32),
+            fb: Fed,
+            gr: (f32, f32),
+        ) {
+            let t_step = (t.1 - t.0) / BLOCK_SIZE as f32;
+            for (i, s) in buf.iter_mut().enumerate() {
+                let gi = fb.g(g[i], i, self.fbp, gr);
+                let tr = g_at(t.0, t_step, i);
+                *s = match m {
+                    0 => self.tick::<0>(*s, &coef::<0>(gi, k[i], tr)),
+                    1 => self.tick::<1>(*s, &coef::<1>(gi, k[i], tr)),
+                    2 => self.tick::<2>(*s, &coef::<2>(gi, k[i], tr)),
+                    3 => self.tick::<3>(*s, &coef::<3>(gi, k[i], tr)),
+                    4 => self.tick::<4>(*s, &coef::<4>(gi, k[i], tr)),
+                    5 => self.tick::<5>(*s, &coef::<5>(gi, k[i], tr)),
+                    6 => self.tick::<6>(*s, &coef::<6>(gi, k[i], tr)),
+                    _ => self.tick::<7>(*s, &coef::<7>(gi, k[i], tr)),
+                };
+                fb.feed(&mut self.fbp, *s);
+            }
         }
     }
 }

@@ -25,6 +25,9 @@ pub struct FilterParams {
     /// STABILITY (ADR 0168): 1 identical voices, lower each voice's chip
     /// further apart. Read on the 2040 and LADDER; inert on the others.
     pub stability: f32,
+    /// FB (#393, ADR 0190): the filter's own output into its cutoff, −1..1;
+    /// 0 none. Every TYPE.
+    pub fb: f32,
     /// FM3 IN and QM IN: the rows FM3's FREQ cell and QM's Q cell are
     /// (spec § 2). `filter_panel::repatch` moves them with their routes.
     jacks: JackPair,
@@ -40,6 +43,7 @@ impl Default for FilterParams {
             mode: FilterKind::Svf.default_mode(),
             voice: K2040Voice::Rev2,
             stability: 1.0,
+            fb: 0.0,
             jacks: JackPair::DEFAULT,
         }
     }
@@ -58,6 +62,7 @@ impl FilterParams {
     pub const LEVEL: ParamId = ParamId(12);
     pub const VOICE: ParamId = ParamId(13);
     pub const STAB: ParamId = ParamId(14);
+    pub const FB: ParamId = ParamId(15);
 
     pub fn mode(&self) -> FilterMode {
         self.mode
@@ -114,7 +119,7 @@ impl FilterParams {
 }
 
 /// Every one read by `Voice` per block; MODE is an Enum, so not modulatable.
-pub static FILTER_SPECS: [ParamSpec; 9] = [
+pub static FILTER_SPECS: [ParamSpec; 10] = [
     // 1/24 octave a tick, shown in Hz (ADR 0107).
     ParamSpec::continuous(
         0,
@@ -205,6 +210,19 @@ pub static FILTER_SPECS: [ParamSpec; 9] = [
     )
     .ident("STAB")
     .glyph(crate::glyph::FocusGlyph::Stability),
+    // FB (ADR 0190): bipolar, the filter's output a sample late into FREQ.
+    ParamSpec::continuous(
+        15,
+        "FB",
+        ValFmt::Bi,
+        -1.0,
+        1.0,
+        0.0,
+        2.0 / 128.0,
+        true,
+        Smoothing::KNOB,
+    )
+    .ident("FB"),
     // The jacks (spec § 2): patching, not sound. Indexes into their choices.
     ParamSpec::choice(
         8,
@@ -290,6 +308,7 @@ impl Block for FilterParams {
                 .unwrap_or(0) as f32,
             Self::VOICE => self.voice as u8 as f32,
             Self::STAB => self.stability,
+            Self::FB => self.fb,
             Self::FM3_IN => self.jacks.fm3_index() as f32,
             Self::QM_IN => self.jacks.qm_index() as f32,
             _ => 0.0,
@@ -309,6 +328,7 @@ impl Block for FilterParams {
             }
             Self::VOICE => self.voice = K2040Voice::from_index(v),
             Self::STAB => self.stability = v,
+            Self::FB => self.fb = v,
             Self::FM3_IN => {
                 self.set_fm3_src(pick(&Jack::FM3_CHOICES, v));
             }

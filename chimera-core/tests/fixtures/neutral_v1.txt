@@ -30,6 +30,7 @@ Sound {
             mode: Lp24,
             voice: Rev2,
             stability: 1.0,
+            fb: 0.0,
             jacks: JackPair {
                 fm3: Mod(
                     Lfo1,

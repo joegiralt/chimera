@@ -56,14 +56,20 @@ fn flt_front_reads_kind_fx_res_voice_place_cutoff_on_2040() {
 #[test]
 fn flt_mod_holds_the_routes_and_jacks() {
     let clean = sound(FilterKind::Svf, FxType::Off);
+    // FB beside the FM amounts; the jacks on FLT › JACK under their
+    // amounts' encoders (ADR 0190).
     assert_eq!(
         labels(&FILTER_MOD, &clean),
-        ["FM1", "FM2", "FM3", "FM3 IN", "QM", "QM IN"]
+        ["FM1", "FM2", "FM3", "FB", "QM", "--"]
+    );
+    assert_eq!(
+        labels(&chimera_core::ui::block_registry::FILTER_JACKS, &clean),
+        ["--", "--", "FM3 IN", "--", "QM IN", "--"]
     );
     let k2040 = sound(FilterKind::K2040, FxType::Off);
     assert_eq!(
         labels(&FILTER_MOD, &k2040),
-        ["ENV AMT", "KEYBD", "FM3", "FM3 IN", "QM", "QM IN"]
+        ["ENV AMT", "KEYBD", "FM3", "FB", "QM", "--"]
     );
     let ctx = SlotCtx::read(&k2040.params, Op::A);
     for i in [0, 1] {
@@ -176,14 +182,21 @@ fn chains_have_no_drv() {
     assert_eq!(map(EngineType::Algo), ["ALG", "OSC", "FLT", "AMP", "MOD"]);
     assert_eq!(map(EngineType::Tape), ["SRC", "DECK", "FLT", "AMP", "MOD"]);
     assert_eq!(map(EngineType::Modal), ["EXC", "RES", "FLT", "AMP", "MOD"]);
-    // FLT's pages: the front, MOD and FX; FX in DRV's freed id.
+    // FLT's pages: the front, MOD, FX and JACK; FX in DRV's freed id.
     let flt = chain_def_for(EngineType::Va)
         .blocks
         .iter()
         .find(|b| b.def.id == FILTER.id)
         .unwrap();
     let subs: Vec<u16> = flt.sub_pages.iter().map(|d| d.id).collect();
-    assert_eq!(subs, [FILTER_MOD.id, FILTER_FX.id]);
+    assert_eq!(
+        subs,
+        [
+            FILTER_MOD.id,
+            FILTER_FX.id,
+            chimera_core::ui::block_registry::FILTER_JACKS.id
+        ]
+    );
     assert_eq!(
         (FILTER_FX.id, FILTER_FX.name, FILTER_FX.short),
         (8, "FX", "FX")

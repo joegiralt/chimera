@@ -14,7 +14,7 @@
 
 use super::k2040::{Ends, four_pole_ends, k2040_k};
 use super::level::{FilterMods, clip_amount};
-use super::{FilterMode, SUB, TapShape, ramps, step_to, tap_g_range};
+use super::{Fed, FilterMode, SUB, TapShape, ramps, step_to, tap_g_range};
 use crate::dsp::clampf;
 use crate::hw::{BLOCK_SIZE, Cost};
 use crate::meter::Clip;
@@ -244,6 +244,8 @@ fn hold_slow(buf: &mut [f32; BLOCK_SIZE]) -> bool {
 pub struct Ladder {
     s: [f32; 4],
     last: Option<Ends>,
+    /// FB's signal (#393).
+    fbp: f32,
 }
 
 /// One sample's coefficients at `g` and `k`: `G = g/(1 + g)`, `D = 1/(1 +
@@ -304,12 +306,19 @@ impl Ladder {
         // larger LEVEL end, from the scan; no compare in the loops.
         let drive = x_peak * r.a.0.max(r.a.1);
         let m = ladder_index(p.mode());
-        if t.is_none() && r.g.0 == r.g.1 && r.k.0 == r.k.1 {
+        let still = t.is_none() && !mods.fb.on();
+        if still && r.g.0 == r.g.1 && r.k.0 == r.k.1 {
             self.steady(buf, r, m);
-        } else if t.is_none() && mods.glide {
+        } else if still && mods.glide {
             self.stepped(buf, r, m);
         } else {
-            self.moving(buf, r, t, m);
+            // FB's loop is bank 2's (ADR 0190); `moving` runs as it was.
+            if !(mods.fb.on() && self.fed_play(buf, r, t, m, mods.fb, tap_g_range(fs))) {
+                self.moving(buf, r, t, m);
+            }
+        }
+        if !mods.fb.on() {
+            self.fbp = 0.0;
         }
         clip_amount(drive * (1.0 / LED_KNEE))
     }
@@ -342,7 +351,7 @@ impl Ladder {
     }
 
     pub(super) fn from_parts(s: [f32; 4], last: Option<Ends>) -> Self {
-        Self { s, last }
+        Self { s, last, fbp: 0.0 }
     }
 
     /// This block's ramps, stored as the next block's start.
@@ -436,6 +445,38 @@ impl Ladder {
         }
     }
 
+    /// FB's block (ADR 0190): `moving`'s arrays and mix, built here, and
+    /// the loop in bank 2 (`fed::Ladder::fed`). False while the door is
+    /// closed.
+    fn fed_play(
+        &mut self,
+        buf: &mut [f32; BLOCK_SIZE],
+        r: Ramps,
+        tap: Option<&TapShape>,
+        m: usize,
+        fb: Fed,
+        gr: (f32, f32),
+    ) -> bool {
+        let n = BLOCK_SIZE as f32;
+        let (g_step, k_step) = ((r.g.1 - r.g.0) / n, (r.k.1 - r.k.0) / n);
+        let (mut gs, mut ks) = ([0.0f32; BLOCK_SIZE], [0.0f32; BLOCK_SIZE]);
+        ramps(&mut gs, &mut ks, (r.g.0, g_step), (r.k.0, k_step), true);
+        if let Some(t) = tap {
+            t.apply(&mut gs, &mut ks);
+        }
+        let out = OUT_LADDER / ALPHA_LADDER;
+        let Tap {
+            c: c5,
+            gain: [g0, g4],
+        } = LADDER_TAPS[m.min(LADDER_TAPS.len() - 1)];
+        let mix = FedMix {
+            a: (r.a.0, (r.a.1 - r.a.0) / n),
+            c5,
+            o: (g0 * out, (g4 - g0) * out),
+        };
+        super::fed::through(|d| (d.ladder)(self, buf, &gs, &ks, mix, fb, gr)).is_some()
+    }
+
     /// A mode's mix `c` of `y₀ … y₄`, five multiply-adds.
     #[inline(always)]
     fn mix(c: &[f32; 5], y: &[f32; 5]) -> f32 {
@@ -479,7 +520,7 @@ impl Ladder {
 
     /// A fresh voice's filter: at rest and unramped.
     pub fn reset(&mut self) {
-        self.s = [0.0; 4];
+        (self.s, self.fbp) = ([0.0; 4], 0.0);
         self.hold();
     }
 
@@ -493,5 +534,46 @@ impl Ladder {
     #[cfg(feature = "test-support")]
     pub fn states(&self) -> [f32; 4] {
         self.s
+    }
+}
+
+/// What FB's loop reads besides `g` and `k`: the input scale's `(from,
+/// step)`, the mode's mix and its gain's `(at k 0, slope a k/4)`.
+#[derive(Clone, Copy)]
+pub struct FedMix {
+    a: (f32, f32),
+    c5: [f32; 5],
+    o: (f32, f32),
+}
+
+/// FB's loop (ADR 0190), linked into bank 2 with `bank2` (`filter::fed`).
+mod fed {
+    use super::super::Fed;
+    use super::{FedMix, Ladder, coef};
+    use crate::dsp::clampf;
+    use crate::hw::BLOCK_SIZE;
+
+    impl Ladder {
+        /// `moving`'s loop, each sample's `g` through the FB signal.
+        #[inline(never)]
+        pub(in crate::dsp::filter) fn fed(
+            &mut self,
+            buf: &mut [f32; BLOCK_SIZE],
+            gs: &[f32; BLOCK_SIZE],
+            ks: &[f32; BLOCK_SIZE],
+            m: FedMix,
+            fb: Fed,
+            gr: (f32, f32),
+        ) {
+            let (mut a, a_step) = m.a;
+            for (i, s) in buf.iter_mut().enumerate() {
+                a += a_step;
+                let o = m.o.0 + m.o.1 * clampf(ks[i] * 0.25, 0.0, 1.0);
+                let c = coef(fb.g(gs[i], i, self.fbp, gr), ks[i]);
+                let y = self.tick(*s * a, &c);
+                *s = Self::mix(&m.c5, &y) * o;
+                fb.feed(&mut self.fbp, *s);
+            }
+        }
     }
 }
