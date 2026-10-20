@@ -2377,6 +2377,9 @@ pub fn ui_for(name: &str) -> UiState {
         .find(|c| c.0 == name)
         .unwrap_or_else(|| panic!("no case {name}"));
     let mut ui = UiState::new();
+    // The LFO page's playhead from a view no audio publishes: parked.
+    static QUIET: chimera_core::instrument::LfoView = chimera_core::instrument::LfoView::new();
+    ui.hear_lfo(&QUIET);
     // Recorded under STACK (ADR 0145); a `row_` case sets ROW itself.
     stack_map(&mut ui);
     setup(&mut ui);

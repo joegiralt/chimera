@@ -353,9 +353,12 @@ fn the_click_rule_catches_a_step() {
     assert!(d > lim, "{d} <= {lim}");
 }
 
-/// A pair's tuning: OSC 2 a fifth up with SYNC in it, else +6 cents.
+/// A pair's tuning: OSC 2 a fifth up with SYNC or SOFT SYNC in it, else +6 cents.
 fn pair_base(m0: VaMode, m1: VaMode) -> VaParams {
-    if m0 == VaMode::Sync || m1 == VaMode::Sync {
+    if [m0, m1]
+        .iter()
+        .any(|m| matches!(m, VaMode::Sync | VaMode::SoftSync))
+    {
         VaParams {
             coarse: [0, 7],
             ..sine()
@@ -371,7 +374,7 @@ fn pair_base(m0: VaMode, m1: VaMode) -> VaParams {
 /// The MIX/SYNC/RING matrix, XOR → BITS (the same duck; one pair
 /// closes the matrix at the cost of a constant), and FM in and out (its
 /// read phase settles onto the clock at the swap).
-const PAIRS: [(VaMode, VaMode); 18] = [
+const PAIRS: [(VaMode, VaMode); 24] = [
     (VaMode::Mix, VaMode::Sync),
     (VaMode::Mix, VaMode::Ring),
     (VaMode::Sync, VaMode::Mix),
@@ -383,10 +386,16 @@ const PAIRS: [(VaMode, VaMode); 18] = [
     (VaMode::Fm, VaMode::Mix),
     (VaMode::Sync, VaMode::Fm),
     (VaMode::Fm, VaMode::Ring),
+    (VaMode::Mix, VaMode::LoopFm),
+    (VaMode::LoopFm, VaMode::Fm),
+    (VaMode::Sync, VaMode::LoopFm),
     (VaMode::Mix, VaMode::Am),
     (VaMode::Am, VaMode::Ring),
     (VaMode::Mix, VaMode::Max),
     (VaMode::Max, VaMode::Sync),
+    (VaMode::Sync, VaMode::SoftSync),
+    (VaMode::SoftSync, VaMode::Mix),
+    (VaMode::Fm, VaMode::SoftSync),
     (VaMode::Mix, VaMode::Phase),
     (VaMode::Phase, VaMode::Fm),
     (VaMode::Fm, VaMode::Phase),
@@ -521,13 +530,20 @@ fn wave_driven_end_to_end_lands_in_two_blocks_without_a_click() {
 /// 7 kHz, as a master asked for 9.9 kHz does (the same bits), so the synced
 /// wave repeats every 48 samples (7 master cycles, to the phase's f32
 /// rounding); a pitch rising through the ceiling stays finite, peak-safe
-/// and click-free against the two held.
+/// and click-free against the two held. SOFT SYNC's master stops there
+/// too (ADR 0161), its wave repeating every 96 (14 master cycles, two a
+/// turn and back).
 #[test]
 fn sync_master_stops_at_its_ceiling() {
+    ceiling_holds(VaMode::Sync, 48);
+    ceiling_holds(VaMode::SoftSync, 96);
+}
+
+fn ceiling_holds(mode: VaMode, lag: usize) {
     // CRSE2 +24: the slave sits at the oscillators' own top in both asks,
     // so only the master's ceiling is under test
     let base = VaParams {
-        mode: VaMode::Sync,
+        mode,
         coarse: [0, 24],
         ..sine()
     };
@@ -542,12 +558,12 @@ fn sync_master_stops_at_its_ceiling() {
         })
     };
     let (y, z) = (at(1200.0), at(1500.0));
-    assert_eq!(y, z, "both at the ceiling");
+    assert_eq!(y, z, "{mode:?}: both at the ceiling");
     let tail = &y[y.len() - 4 * B..];
-    let period = (48..tail.len())
-        .map(|n| (tail[n] - tail[n - 48]).abs())
+    let period = (lag..tail.len())
+        .map(|n| (tail[n] - tail[n - lag]).abs())
         .fold(0.0f32, f32::max);
-    println!("SYNC master at the ceiling: |y[n] − y[n − 48]| ≤ {period:.1e}");
+    println!("{mode:?} master at the ceiling: |y[n] − y[n − {lag}]| ≤ {period:.1e}");
     assert!(period <= 1e-5, "{period}");
     // rising through the ceiling, a block at a time
     let held: Vec<_> = [0.0, 1200.0].map(at).into();
@@ -566,7 +582,7 @@ fn sync_master_stops_at_its_ceiling() {
     let pk = peak(&y) * VA_CHAIN_GAIN;
     let (d, lim) = click(&y, &held);
     println!(
-        "rising through 7 kHz: peak {pk:.3}, Δ² {d:.3e} / limit {lim:.3e} ({:.0}%)",
+        "{mode:?} rising through 7 kHz: peak {pk:.3}, Δ² {d:.3e} / limit {lim:.3e} ({:.0}%)",
         100.0 * d / lim
     );
     assert!(pk <= 0.95, "{pk}");
@@ -689,7 +705,7 @@ fn every_knob_is_audible() {
         stability: 1.0,
         ..VaParams::default()
     };
-    let cases: [(&str, VaParams, Set, (f32, f32)); 16] = [
+    let cases: [(&str, VaParams, Set, (f32, f32)); 18] = [
         ("WAVE1", base, |p, v| p.wave[0] = v, (0.0, 1.0)),
         ("WAVE2", base, |p, v| p.wave[1] = v, (0.0, 1.0)),
         ("SUB", base, |p, v| p.sub = v, (0.0, 1.0)),
@@ -757,9 +773,28 @@ fn every_knob_is_audible() {
             (0.0, 1.0),
         ),
         (
+            "AMOUNT LoopFm",
+            VaParams {
+                mode: VaMode::LoopFm,
+                ..base
+            },
+            |p, v| p.amount = v,
+            (0.0, 1.0),
+        ),
+        (
             "AMOUNT Max",
             VaParams {
                 mode: VaMode::Max,
+                ..base
+            },
+            |p, v| p.amount = v,
+            (0.0, 1.0),
+        ),
+        (
+            "AMOUNT SoftSync",
+            VaParams {
+                mode: VaMode::SoftSync,
+                coarse: [0, 7],
                 ..base
             },
             |p, v| p.amount = v,
@@ -949,7 +984,7 @@ fn steal_glide_glides() {
 
 #[test]
 fn bills_follow_the_mode() {
-    let bills = [530, 540, 530, 550, 530, 590, 540, 590, 650];
+    let bills = [530, 540, 530, 550, 530, 590, 540, 590, 350, 570, 650];
     assert!(VaEngine::mode_cost(VaMode::Sync) > VaEngine::mode_cost(VaMode::Mix));
     for (mode, bill) in VaMode::ALL.into_iter().zip(bills) {
         assert_eq!(VaEngine::mode_cost(mode), Cost(bill), "{mode:?}");
@@ -1020,19 +1055,26 @@ fn out_of_range_values_clamp() {
             }
         }
     }
-    assert_eq!(n, 243);
+    assert_eq!(n, 297);
 }
 
 #[test]
 fn mode_scrolled_every_block_settles() {
-    const SCROLL: [VaMode; 7] = [
+    // Ten, as the duck swaps at blocks 1, 5, 9, ...: only the odd places
+    // play (an odd count would visit Sync and Fm at a swap and click
+    // 188%, SYNC's own: private issue #677,
+    // #670), so LOOPFM and SOFT SYNC sit at odd ones.
+    const SCROLL: [VaMode; 10] = [
         VaMode::Mix,
-        VaMode::Sync,
-        VaMode::Phase,
+        VaMode::LoopFm,
         VaMode::Ring,
         VaMode::Fm,
         VaMode::Am,
         VaMode::Max,
+        VaMode::Xor,
+        VaMode::SoftSync,
+        VaMode::Bits,
+        VaMode::Am,
     ];
     let base = pair_base(VaMode::Sync, VaMode::Mix);
     let mut modes = Vec::new();
@@ -1041,7 +1083,11 @@ fn mode_scrolled_every_block_settles() {
         e.hold();
         e.note_on(A4, &p, part(0), SR);
         let y = run(e, &mut p, 60, |b, p| {
-            p.mode = if b < 40 { SCROLL[b % 7] } else { VaMode::Ring };
+            p.mode = if b < 40 {
+                SCROLL[b % SCROLL.len()]
+            } else {
+                VaMode::Ring
+            };
         });
         // replayed for mode() after each block
         let mut p = base;
@@ -1050,7 +1096,11 @@ fn mode_scrolled_every_block_settles() {
             f.note_on(A4, &p, part(0), SR);
             for b in 0..60 {
                 run(f, &mut p, 1, |_, p| {
-                    p.mode = if b < 40 { SCROLL[b % 7] } else { VaMode::Ring };
+                    p.mode = if b < 40 {
+                        SCROLL[b % SCROLL.len()]
+                    } else {
+                        VaMode::Ring
+                    };
                 });
                 modes.push(f.mode());
             }

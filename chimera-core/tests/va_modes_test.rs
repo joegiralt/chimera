@@ -5,8 +5,10 @@ mod common;
 
 use core::mem::MaybeUninit;
 
-use chimera_core::dsp::va::combine::MAX_TRIM;
+use chimera_core::dsp::dc_blocker::DcBlocker;
+use chimera_core::dsp::va::combine::{AM_KNEE, MAX_TRIM, am_reach};
 use chimera_core::dsp::va::{VA_CHAIN_GAIN, VaEngine, VaMode, VaParams, fm_index, phase_depth};
+use chimera_core::dsp::voice::DC_HZ;
 use chimera_core::project::PartId;
 use chimera_hal::BLOCK_SIZE;
 use common::spectrum::{alias_db_lattice, fundamental, peak_hz};
@@ -346,6 +348,204 @@ fn leaving_fm_settles() {
     }
 }
 
+// ---- LOOPFM (#613) ----
+
+use chimera_core::dsp::va::lbfm::{b0_cap, b0_of, lbfm, loop_b, render_loop};
+
+const R_RMS: f64 = 0.2;
+const C7: u8 = 96;
+const TWO_THIRDS: f32 = 2.0 / 3.0;
+
+/// Sines' path (WAVE is the loop's scale here, not a shape), STAB 1, no
+/// sub.
+fn loopfm(amount: f32, wave: f32) -> VaParams {
+    VaParams {
+        mode: VaMode::LoopFm,
+        amount,
+        wave: [wave; 2],
+        ..sine()
+    }
+}
+
+/// The paper's recursion (eq. 11) at 16× the rate, A2, B = 0.5: one
+/// period of its real part has the closed form's shape.
+#[test]
+fn loopfm_matches_the_recursion() {
+    let (fs, f0, b) = (16.0 * 48_000.0f64, 110.0f64, 0.5f64);
+    let w0 = std::f64::consts::TAU * f0;
+    let wc = w0 / (1.0 - b * b).sqrt();
+    let t = 1.0 / fs;
+    let n = (fs / f0).round() as usize;
+    let (mut re, mut im) = (1.0f64, 0.0f64);
+    let mut rec = Vec::with_capacity(n);
+    for _ in 0..n {
+        rec.push(re);
+        let (s, c) = ((wc + b * wc * re) * t).sin_cos();
+        (re, im) = (re * c - im * s, re * s + im * c);
+    }
+    let b0 = f64::from(b0_of(b as f32));
+    let s = R_RMS * 2f64.sqrt() / (1.0 - b0 * b0).sqrt();
+    let rec_rms = (rec.iter().map(|v| (v - b0).powi(2)).sum::<f64>() / n as f64).sqrt();
+    let mut best = f64::MAX;
+    // the unit delay detunes the recursion a hair: align phase and period
+    for dp in -20..=20 {
+        for dn in -10..=10 {
+            let off = f64::from(dp) * 5e-4;
+            let len = n as f64 * (1.0 + f64::from(dn) * 2e-4);
+            let err: f64 = (0..n)
+                .map(|i| {
+                    let ph = (i as f64 / len + off).rem_euclid(1.0) as f32;
+                    let cf = f64::from(lbfm(ph, b0 as f32)) / s + b0;
+                    (rec[i] - cf).powi(2)
+                })
+                .sum();
+            best = best.min((err / n as f64).sqrt() / rec_rms);
+        }
+    }
+    println!("closed form vs recursion: {:.3} % RMS", 100.0 * best);
+    assert!(best <= 0.01, "{best}");
+}
+
+#[test]
+fn loopfm_stays_in_tune() {
+    let f0 = hz_of(A4);
+    for blend in [0.0, 0.5, 1.0] {
+        for wave in [0.0, TWO_THIRDS, 1.0] {
+            let y = held(A4, loopfm(blend, wave), PITCH_BLOCKS);
+            let f = peak_hz(&y, SR as f32, f0);
+            let cents = 1200.0 * (f / f64::from(f0)).log2();
+            println!("LOOPFM BLEND {blend} WAVE {wave:.2}: {f:.3} Hz ({cents:+.3} cents)");
+            assert!(cents.abs() <= 1.0, "BLEND {blend} WAVE {wave}: {cents}");
+        }
+    }
+}
+
+/// One oscillator over 40 whole periods (100 samples each).
+fn one_osc(b0: f32) -> Vec<f32> {
+    const N: usize = 4000;
+    let mut out = [0.0f32; N];
+    let mut mk = [[0.0f32; 2]; N];
+    let (mut ph, mut jit) = (0.0f32, 1.0f32);
+    render_loop::<N, false>(
+        &mut ph,
+        (b0, 0.0),
+        (0.01, 0.0),
+        &mut out,
+        &mut mk,
+        &mut jit,
+        &mut || 1.0,
+    );
+    out.to_vec()
+}
+
+#[test]
+fn loopfm_is_dc_free_at_level() {
+    for b in [0.0f32, 0.5, 0.95] {
+        let y = one_osc(b0_of(b));
+        let mean = y.iter().map(|&v| f64::from(v)).sum::<f64>() / y.len() as f64;
+        let r = rms(&y) / R_RMS;
+        println!("B {b}: mean {mean:+.2e}, RMS {r:.4} R");
+        assert!(mean.abs() <= 1e-4, "B {b}: {mean}");
+        assert!((r - 1.0).abs() <= 0.01, "B {b}: {r}");
+    }
+}
+
+/// The `b0` cap keeps the closed form's first alias at −45 dB.
+#[test]
+fn loopfm_alias_gate() {
+    for note in [C5, C6, C7] {
+        let fc = hz_of(note);
+        let y = take_with(|_| {}, note, loopfm(1.0, 1.0), GATE_BLOCKS, |_, _| {});
+        let db = common::spectrum::alias_db(&y, SR as f32, &[fc]);
+        let cap = b0_cap(fc / SR as f32);
+        println!("LOOPFM note {note}: alias {db:.1} dB, |b0| cap {cap:.3}");
+        assert!(db <= -45.0, "note {note}: {db}");
+    }
+}
+
+#[test]
+fn loopfm_blend_zero_is_osc1_sine() {
+    // OSC 2 detuned: BLEND 0 plays OSC 1 alone, a sine at R
+    let p = VaParams {
+        fine: [0.0, 40.0],
+        coarse: [0, 7],
+        ..loopfm(0.0, TWO_THIRDS)
+    };
+    let y = held(C4, p, 2 * SR as usize / B);
+    let (re, im) = common::spectrum::fundamental(&y, SR as f32, hz_of(C4));
+    let amp = f64::from(re).hypot(f64::from(im));
+    let r = rms(&y) / R_RMS;
+    println!("BLEND 0: fundamental {amp:.4}, RMS {r:.4} R");
+    assert!((r - 1.0).abs() <= 0.01, "{r}");
+    // all of its energy is the fundamental
+    assert!((amp / (R_RMS * 2f64.sqrt()) - 1.0).abs() <= 0.01, "{amp}");
+}
+
+#[test]
+fn loopfm_loop_is_per_wave() {
+    assert_eq!(loop_b(1.0, 0.0), 0.0);
+    assert!((loop_b(1.0, TWO_THIRDS) - 0.95).abs() < 1e-6);
+    assert!((loop_b(0.5, TWO_THIRDS) - 0.95 * 0.25).abs() < 1e-6);
+    assert_eq!(loop_b(1.0, 1.0), 0.95);
+    // the closed form's coefficient keeps its sign; its cap shrinks with pitch
+    assert!(b0_of(0.5) < 0.0 && b0_of(0.0) == 0.0);
+    assert!((b0_of(1e-5) + 0.5e-5).abs() < 1e-9);
+    assert_eq!(b0_cap(0.5), 0.0);
+    assert!(b0_cap(0.45) < 1e-3);
+    assert!(b0_cap(0.01) > b0_cap(0.04));
+    assert!(b0_cap(0.01) > b0_of(0.95).abs());
+}
+
+/// BLEND 0 of two sines plays OSC 1 at MIX's level.
+#[test]
+fn loopfm_level_matches_mix() {
+    let blocks = 2 * SR as usize / B;
+    let sines = VaParams {
+        coarse: [0, 7],
+        fine: [0.0, 6.0],
+        ..sine()
+    };
+    let mix = rms(&held(
+        C4,
+        VaParams {
+            mode: VaMode::Mix,
+            amount: 0.0,
+            ..sines
+        },
+        blocks,
+    ));
+    let y = held(
+        C4,
+        VaParams {
+            mode: VaMode::LoopFm,
+            amount: 0.0,
+            wave: [TWO_THIRDS; 2],
+            ..sines
+        },
+        blocks,
+    );
+    let db = 20.0 * (rms(&y) / mix).log10();
+    println!("LOOPFM BLEND 0 vs MIX: {db:+.2} dB");
+    assert!(db.abs() <= 1.5, "{db}");
+}
+
+#[test]
+fn loopfm_credits_its_paper() {
+    use chimera_core::dsp::provenance::Provenance;
+    let cites: Vec<_> = chimera_core::dsp::va::lbfm::PROVENANCE
+        .iter()
+        .filter_map(|p| match p {
+            Provenance::Textbook { cite } => Some(*cite),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        cites
+            .iter()
+            .any(|c| c.contains("Smyth") && c.contains("CC-BY 4.0"))
+    );
+}
+
 // ---- AM (#603) ----
 
 fn am(amount: f32) -> VaParams {
@@ -356,15 +556,15 @@ fn am(amount: f32) -> VaParams {
     }
 }
 
-/// OSC 2 as a slow sine (8 Hz at note 24, CRSE2 −24): at BLEND 1 OSC 1's
-/// envelope dips to near 0 and never inverts, the product keeping OSC 1's
-/// sign.
+/// OSC 2 as a slow sine (8 Hz at note 24, CRSE2 −24): at the knee (BLEND
+/// 85) OSC 1's envelope dips to near 0 and never inverts, the product
+/// keeping OSC 1's sign; past it (BLEND 1, ring) it inverts.
 #[test]
 fn am_is_unipolar() {
     let blocks = SR as usize / B;
     let slow = VaParams {
         coarse: [0, -24],
-        ..am(1.0)
+        ..am(AM_KNEE)
     };
     let a = held(24, slow, blocks);
     let one = held(
@@ -383,12 +583,28 @@ fn am_is_unipolar() {
             flips += usize::from(y * x < -1e-4);
         }
     }
-    println!("AM BLEND 1, 8 Hz: lowest gain {low:.4}, sign flips {flips}");
+    println!("AM BLEND 85, 8 Hz: lowest gain {low:.4}, sign flips {flips}");
     assert_eq!(flips, 0);
     assert!((0.0..0.1).contains(&low), "{low}");
+    let ring = held(
+        24,
+        VaParams {
+            amount: 1.0,
+            ..slow
+        },
+        blocks,
+    );
+    let flips = ring
+        .iter()
+        .zip(&one)
+        .skip(2 * B)
+        .filter(|&(&y, &x)| x.abs() > 0.05 && y * x < -1e-4)
+        .count();
+    println!("AM BLEND 127: sign flips {flips}");
+    assert!(flips > 1000, "{flips}");
 }
 
-/// Unlike RING, AM keeps OSC 1's line: a fifth up, BLEND 1.
+/// Unlike RING, AM keeps OSC 1's line: a fifth up, at the knee.
 #[test]
 fn am_sidebands_softer_than_ring() {
     let f0 = hz_of(C4);
@@ -403,7 +619,7 @@ fn am_sidebands_softer_than_ring() {
             C4,
             VaParams {
                 mode,
-                amount: 1.0,
+                amount: if mode == VaMode::Am { AM_KNEE } else { 1.0 },
                 ..fifth
             },
             blocks,
@@ -452,7 +668,7 @@ fn am_level_matches_mix() {
                 },
                 blocks,
             ));
-            for blend in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            for blend in [0.0, 0.25, 0.5, AM_KNEE, 0.85, 1.0] {
                 let y = held(
                     C4,
                     VaParams {
@@ -473,8 +689,11 @@ fn am_level_matches_mix() {
     }
 }
 
-/// C5 over the lattice: wherever MIX at the same BLEND passes −45 dB, AM
-/// does (the product of two band-limited waves adds lines at |f1 ± f2|).
+/// C5 over the lattice. Up to the knee, wherever MIX at the same BLEND
+/// passes −45 dB, AM does (the product of two band-limited waves adds lines
+/// at |f1 ± f2|). Past it AM runs into RING's product and is held to RING's
+/// own figure at BLEND 1, `max(−45, RING + 0.5)` (ADR 0176: the product's
+/// slope kinks, #660).
 #[test]
 fn am_alias_gate() {
     let mut fails = Vec::new();
@@ -486,7 +705,7 @@ fn am_alias_gate() {
         let ratio = 2f32.powf((f32::from(crse) * 100.0 + fine) / 1200.0);
         for w1 in ANCHORS {
             for w2 in [0.0, SAW] {
-                for blend in [0.25, 0.5, 1.0] {
+                for blend in [0.25, 0.5, AM_KNEE, 0.85, 1.0] {
                     let base = VaParams {
                         wave: [w1, w2],
                         coarse: [0, crse],
@@ -494,32 +713,43 @@ fn am_alias_gate() {
                         ..am(blend)
                     };
                     let (fc, f2) = (hz_of(C5), hz_of(C5) * ratio);
-                    let gate = |mode| {
-                        let y = held(C5, VaParams { mode, ..base }, GATE_BLOCKS);
+                    let gate = |mode, amount| {
+                        let y = held(
+                            C5,
+                            VaParams {
+                                mode,
+                                amount,
+                                ..base
+                            },
+                            GATE_BLOCKS,
+                        );
                         alias_db_lattice(&y, SR as f32, fc, f2)
                     };
-                    let (a, m) = (gate(VaMode::Am), gate(VaMode::Mix));
-                    let at = format!("{crse:+} {w1:.3} {w2:.3} {blend}");
-                    println!(
-                        "{at}: AM {a:.1} / MIX {m:.1} / RING {:.1} dB",
-                        gate(VaMode::Ring)
-                    );
-                    if m <= -45.0 {
-                        if a > worst.0 {
-                            worst = (a, at.clone());
-                        }
-                        // saw × saw at the fifth, full depth: the product's
+                    let (a, m) = (gate(VaMode::Am, blend), gate(VaMode::Mix, blend));
+                    let at = format!("{crse:+} {w1:.3} {w2:.3} {blend:.3}");
+                    let limit = if blend > AM_KNEE {
+                        let r = gate(VaMode::Ring, 1.0);
+                        println!("{at}: AM {a:.1} / MIX {m:.1} / RING 1 {r:.1} dB");
+                        (r + 0.5).max(-45.0)
+                    } else {
+                        println!("{at}: AM {a:.1} / MIX {m:.1} dB");
+                        // saw × saw at the fifth, full AM: the product's
                         // slope kinks escape the 2-point kernel (RING reads
                         // −37.4 dB there); an exception, held at −43 (AM
                         // reads −43.5; filed as
                         // private issue #660)
-                        let limit = if crse == 7 && w1 == SAW && w2 == SAW && blend == 1.0 {
+                        if crse == 7 && w1 == SAW && w2 == SAW && blend == AM_KNEE {
                             -43.0
                         } else {
                             -45.0
-                        };
+                        }
+                    };
+                    if m <= -45.0 {
+                        if a > worst.0 {
+                            worst = (a, at.clone());
+                        }
                         if a > limit {
-                            fails.push(format!("{at}: AM {a:.1} dB"));
+                            fails.push(format!("{at}: AM {a:.1} dB > {limit:.1}"));
                         }
                     }
                 }
@@ -528,6 +758,170 @@ fn am_alias_gate() {
     }
     println!("worst where MIX passes {:.1} dB at {}", worst.0, worst.1);
     assert!(fails.is_empty(), "{fails:#?}");
+}
+
+/// Today's AM (main before #675) at BLEND `x'`, saws, SUB 0.3, C2, recorded:
+/// (CRSE2, FINE2, x', Σy² over 128 blocks, y[4096..4112]).
+#[rustfmt::skip]
+const AM_TODAY: [(i8, f32, f32, f64, [f32; 16]); 12] = [
+    (0, 6.0, 0.25, 3.384703155775411e2, [-1.0969913e-1, -1.10553004e-1, -1.11406155e-1, -1.1225862e-1, -1.1311041e-1, -1.1396145e-1, -1.148118e-1, -1.15661435e-1, -1.1651038e-1, -1.1735861e-1, -1.18206136e-1, -1.1905299e-1, -1.1989911e-1, -1.2074453e-1, -1.2158924e-1, -1.22433245e-1]),
+    (0, 6.0, 0.5, 3.5717867415594753e2, [-1.0689808e-1, -1.0767725e-1, -1.08454816e-1, -1.0923075e-1, -1.100051e-1, -1.107778e-1, -1.1154888e-1, -1.1231835e-1, -1.130862e-1, -1.1385243e-1, -1.14617035e-1, -1.1538005e-1, -1.1614142e-1, -1.16901174e-1, -1.1765929e-1, -1.1841582e-1]),
+    (0, 6.0, 0.75, 3.885137980230389e2, [-1.02292e-1, -1.0295805e-1, -1.03621274e-1, -1.0428171e-1, -1.0493936e-1, -1.0559419e-1, -1.062462e-1, -1.06895424e-1, -1.0754182e-1, -1.0818544e-1, -1.08826235e-1, -1.0946426e-1, -1.1009944e-1, -1.1073184e-1, -1.1136143e-1, -1.1198821e-1]),
+    (0, 6.0, 1.0, 4.3743384203271006e2, [-9.478289e-2, -9.527822e-2, -9.576927e-2, -9.625603e-2, -9.673853e-2, -9.721673e-2, -9.769066e-2, -9.816028e-2, -9.862564e-2, -9.90867e-2, -9.954349e-2, -9.9996e-2, -1.0044422e-1, -1.00888155e-1, -1.0132781e-1, -1.01763174e-1]),
+    (7, 1.955, 0.25, 3.308850273750051e2, [-1.1321329e-1, -1.14115484e-1, -1.15016624e-1, -1.1591669e-1, -1.1681577e-1, -1.17713735e-1, -1.1861066e-1, -1.1950652e-1, -1.20401345e-1, -1.2129511e-1, -1.2218781e-1, -1.2307952e-1, -1.23970106e-1, -1.2485967e-1, -1.2574817e-1, -1.2663563e-1]),
+    (7, 1.955, 0.5, 3.350467994570457e2, [-1.14977404e-1, -1.1586767e-1, -1.1675551e-1, -1.1764094e-1, -1.1852396e-1, -1.19404554e-1, -1.20282724e-1, -1.21158466e-1, -1.2203179e-1, -1.22902706e-1, -1.2377118e-1, -1.2463728e-1, -1.2550093e-1, -1.2636216e-1, -1.2722096e-1, -1.2807734e-1]),
+    (7, 1.955, 0.75, 3.400500056305556e2, [-1.162858e-1, -1.1714425e-1, -1.179985e-1, -1.1884858e-1, -1.1969448e-1, -1.2053616e-1, -1.2137364e-1, -1.2220695e-1, -1.2303606e-1, -1.23860985e-1, -1.24681704e-1, -1.2549827e-1, -1.2631062e-1, -1.2711877e-1, -1.2792271e-1, -1.2872249e-1]),
+    (7, 1.955, 1.0, 3.451917193435088e2, [-1.16158776e-1, -1.16948016e-1, -1.1773085e-1, -1.1850728e-1, -1.1927736e-1, -1.2004098e-1, -1.2079822e-1, -1.2154905e-1, -1.22293465e-1, -1.23031475e-1, -1.23763114e-1, -1.24488354e-1, -1.2520717e-1, -1.259196e-1, -1.2662558e-1, -1.2732519e-1]),
+    (6, 0.0, 0.25, 3.3118468758382784e2, [-1.0520505e-1, -1.0597487e-1, -1.06743686e-1, -1.0751152e-1, -1.0827837e-1, -1.09044224e-1, -1.0980908e-1, -1.1057293e-1, -1.1133581e-1, -1.1209767e-1, -1.12858556e-1, -1.1361848e-1, -1.1437738e-1, -1.1513528e-1, -1.15892194e-1, -1.16648115e-1]),
+    (6, 0.0, 0.5, 3.355462961454688e2, [-9.656589e-2, -9.7151816e-2, -9.773547e-2, -9.831684e-2, -9.889595e-2, -9.9472776e-2, -1.000473e-1, -1.0061955e-1, -1.0118951e-1, -1.0175718e-1, -1.02322586e-1, -1.0288572e-1, -1.0344657e-1, -1.0400513e-1, -1.045614e-1, -1.051154e-1]),
+    (6, 0.0, 0.75, 3.404691016617953e2, [-8.439612e-2, -8.472745e-2, -8.505483e-2, -8.537826e-2, -8.5697755e-2, -8.601329e-2, -8.632485e-2, -8.663249e-2, -8.693615e-2, -8.7235875e-2, -8.753164e-2, -8.7823465e-2, -8.811133e-2, -8.839524e-2, -8.86752e-2, -8.895121e-2]),
+    (6, 0.0, 1.0, 3.449237987603479e2, [-6.744648e-2, -6.743054e-2, -6.740856e-2, -6.738055e-2, -6.73465e-2, -6.730642e-2, -6.7260295e-2, -6.720814e-2, -6.7149945e-2, -6.708571e-2, -6.701545e-2, -6.6939145e-2, -6.68568e-2, -6.676843e-2, -6.6674024e-2, -6.657357e-2]),
+];
+
+/// At BLEND ≤ 85 AM is today's AM rescaled: BLEND `x'·AM_KNEE` renders
+/// today's BLEND `x'`, within float rounding of the mapping (the per-sample
+/// loop is the same code).
+#[test]
+fn am_below_the_knee_is_todays() {
+    let mut worst = (0.0f64, 0.0f64);
+    for (crse, fine, xp, ss, ys) in AM_TODAY {
+        let p = VaParams {
+            wave: [SAW; 2],
+            shape: [0.0; 2],
+            coarse: [0, crse],
+            fine: [0.0, fine],
+            mode: VaMode::Am,
+            amount: xp * AM_KNEE,
+            sub: 0.3,
+            stability: 1.0,
+        };
+        let y = held(36, p, 128);
+        let got: f64 = y.iter().map(|&v| f64::from(v).powi(2)).sum();
+        let rel = (got / ss - 1.0).abs();
+        let d = y[4096..4112]
+            .iter()
+            .zip(ys)
+            .map(|(&a, b)| f64::from((a - b).abs()))
+            .fold(0.0, f64::max);
+        println!("CRSE2 {crse} x' {xp}: Σy² rel {rel:.2e}, max |Δy| {d:.2e}");
+        assert!(rel <= 1e-5, "CRSE2 {crse} x' {xp}: {rel}");
+        assert!(d <= 1e-5, "CRSE2 {crse} x' {xp}: {d}");
+        worst = (worst.0.max(rel), worst.1.max(d));
+    }
+    println!("worst Σy² rel {:.2e}, |Δy| {:.2e}", worst.0, worst.1);
+}
+
+/// The reach is continuous and rising through the knee, 1 there, 2 at BLEND
+/// 1; a sweep across it on a held note clicks no more than the held BLENDs
+/// on either side.
+#[test]
+fn am_crossover_is_continuous() {
+    let e = 1e-4;
+    assert!((am_reach(AM_KNEE) - 1.0).abs() < 1e-6);
+    assert!((am_reach(1.0) - 2.0).abs() < 1e-6);
+    // no step: each side within its slope (127/85 below, 127/42 above)
+    assert!((am_reach(AM_KNEE - e) - 1.0).abs() <= 1.51 * e);
+    assert!((am_reach(AM_KNEE + e) - 1.0).abs() <= 3.03 * e);
+    let mut last = -1.0;
+    for i in 0..=1270 {
+        let u = am_reach(i as f32 / 1270.0);
+        assert!(u > last, "{i}: {u} after {last}");
+        last = u;
+    }
+    let base = VaParams {
+        sub: 0.5,
+        fine: [0.0, 6.0],
+        coarse: [0, 7],
+        ..am(0.6)
+    };
+    let (lo, hi) = (0.6, 0.75);
+    let y = take_with(
+        |_| {},
+        A4,
+        base,
+        3 * AT,
+        |b, p| {
+            p.amount = lo + (hi - lo) * (b.saturating_sub(AT) as f32 / AT as f32).min(1.0);
+        },
+    );
+    let held: Vec<_> = [lo, hi]
+        .iter()
+        .map(|&x| held(A4, VaParams { amount: x, ..base }, 3 * AT))
+        .collect();
+    let (d, lim) = click(&y, &held);
+    println!("BLEND {lo} → {hi} across the knee: Δ² {d:.3e} / limit {lim:.3e}");
+    assert!(d <= lim, "{d} > {lim}");
+}
+
+/// At BLEND 1 AM is RING's product at BLEND 1: the same wave within level
+/// (correlation, saws, the fifth).
+#[test]
+fn am_top_is_ring() {
+    let p = VaParams {
+        wave: [SAW; 2],
+        coarse: [0, 7],
+        fine: [0.0, 1.955],
+        ..am(1.0)
+    };
+    let a = held(C4, p, 200);
+    let r = held(
+        C4,
+        VaParams {
+            mode: VaMode::Ring,
+            ..p
+        },
+        200,
+    );
+    let (a, r) = (&a[100 * B..], &r[100 * B..]);
+    let xy: f64 = a
+        .iter()
+        .zip(r)
+        .map(|(&x, &y)| f64::from(x) * f64::from(y))
+        .sum();
+    let c = xy / (rms(a) * rms(r) * a.len() as f64);
+    println!(
+        "AM 1 vs RING 1: r {c:.6}, level {:+.2} dB",
+        20.0 * (rms(a) / rms(r)).log10()
+    );
+    assert!(c >= 0.9999, "{c}");
+}
+
+/// Unison's ring term carries DC (constant at FINE2 0, FINE2's beat at +6).
+/// AM at BLEND 1 carries no more than RING at BLEND 1, and through the
+/// voice's DC blocker (ADR 0060) it is under −55 dB re the RMS (ADR 0176;
+/// the half-second window's own leakage reads about −59).
+#[test]
+fn am_ring_dc_is_rings() {
+    let blocks = 2 * SR as usize / B;
+    for fine in [0.0f32, 6.0] {
+        let p = VaParams {
+            wave: [SAW; 2],
+            fine: [0.0, fine],
+            ..am(1.0)
+        };
+        let dc = |y: &[f32]| {
+            let t = &y[y.len() - SR as usize / 2..];
+            let m = t.iter().map(|&v| f64::from(v)).sum::<f64>() / t.len() as f64;
+            20.0 * (m.abs() / rms(t)).max(1e-12).log10()
+        };
+        let a = held(C4, p, blocks);
+        let r = held(
+            C4,
+            VaParams {
+                mode: VaMode::Ring,
+                ..p
+            },
+            blocks,
+        );
+        let mut blocked = a.clone();
+        DcBlocker::new(DC_HZ, SR).run(&mut blocked);
+        let (da, dr, db) = (dc(&a), dc(&r), dc(&blocked));
+        println!("FINE2 {fine}: DC AM {da:.1} / RING {dr:.1} / AM blocked {db:.1} dB re RMS");
+        assert!(da <= dr + 0.5, "FINE2 {fine}: {da} vs RING {dr}");
+        if fine == 0.0 {
+            assert!(db <= -55.0, "{db}");
+        }
+    }
 }
 
 /// Entering and leaving AM never clicks beyond the held modes' own.
@@ -856,6 +1250,260 @@ fn max_mode_changes_do_not_click() {
         println!("{m0:?} → {m1:?}: Δ² {d:.3e} / limit {lim:.3e}");
         assert!(d <= lim, "{m0:?} → {m1:?}: {d} > {lim}");
     }
+}
+
+// ---- SOFT SYNC (#604) ----
+
+const A3: u8 = 57;
+
+/// OSC 2 a saw a fifth up, reversing at OSC 1's wraps, BLEND `amount`.
+fn soft(amount: f32) -> VaParams {
+    VaParams {
+        mode: VaMode::SoftSync,
+        wave: [0.0, SAW],
+        coarse: [0, 7],
+        amount,
+        ..sine()
+    }
+}
+
+/// Correlation of `y` with itself `lag` samples on (linearly
+/// interpolated), over its last 8192 samples.
+fn r_at(y: &[f32], lag: f64) -> f64 {
+    let (k, fr) = (lag.floor() as usize, lag.fract());
+    let tail = &y[y.len() - 8192 - k - 1..];
+    let (mut xy, mut xx, mut yy) = (0.0f64, 0.0f64, 0.0f64);
+    for n in 0..8192 {
+        let a = f64::from(tail[n]);
+        let b = f64::from(tail[n + k]) * (1.0 - fr) + f64::from(tail[n + k + 1]) * fr;
+        (xy, xx, yy) = (xy + a * b, xx + a * a, yy + b * b);
+    }
+    xy / (xx * yy).sqrt()
+}
+
+/// Each turn mirrors the read: forward over one of OSC 1's periods, back
+/// over the next, so the wave repeats every two and each second period is
+/// the first played backwards. At A3 every 11th wrap of 2400/11 samples
+/// lands on a sample: around the first two the mirror is checked sample
+/// for sample (the best whole or half-sample centre within ±2 of the
+/// wrap). Later ones drift off the sample with the f32 clock's rounding
+/// (RMS 1.2e-3 at the third, 2e-3 at the fifth), not the mirror.
+#[test]
+fn soft_sync_mirrors() {
+    let t1 = SR as f64 / f64::from(hz_of(A3));
+    let y = held(A3, soft(1.0), 200);
+    let (r2, r1) = (r_at(&y, 2.0 * t1), r_at(&y, t1));
+    println!("r(2 periods) {r2:.5}, r(1 period) {r1:.5}");
+    assert!(r2 >= 0.99, "{r2}");
+    let span = t1.floor() as usize;
+    let mut worst = 0.0f64;
+    for m in 1..=2 {
+        let at = 2 * 2400 * m;
+        let (e, c2) = (at - 4..=at + 4)
+            .map(|c2| {
+                let mut s = 0.0;
+                for k in 1..span {
+                    let (a, b) = (c2 / 2 + k, c2.div_ceil(2) - k);
+                    let d = f64::from(y[a]) - f64::from(y[b]);
+                    s += d * d;
+                }
+                ((s / (span - 1) as f64).sqrt(), c2)
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .unwrap();
+        println!(
+            "turn near {}: centre {:.1}, RMS {e:.2e}",
+            2400 * m,
+            c2 as f64 / 2.0
+        );
+        worst = worst.max(e);
+    }
+    assert!(worst <= 1e-3, "{worst}");
+}
+
+/// Power above `lo` Hz of the gate window (Hann), dB.
+fn band_db(y: &[f32], lo: f64) -> f64 {
+    use common::spectrum::fft;
+    let n = 1 << 15;
+    let x = &y[4096..4096 + n];
+    let mut re: Vec<f64> = x
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            let w = 0.5 - 0.5 * (std::f64::consts::TAU * i as f64 / n as f64).cos();
+            f64::from(v) * w
+        })
+        .collect();
+    let mut im = vec![0.0; n];
+    fft(&mut re, &mut im);
+    let bin = f64::from(SR) / n as f64;
+    let p: f64 = (1..n / 2)
+        .filter(|&k| k as f64 * bin >= lo)
+        .map(|k| re[k] * re[k] + im[k] * im[k])
+        .sum();
+    10.0 * p.log10()
+}
+
+/// A turn is a corner, a reset a step: a sine or triangle slave in SYNC
+/// carries 18–28 dB more above 8 kHz, gated at 6. Held only to never
+/// 3 dB brighter than SYNC: a saw (its own edges are steps either way:
+/// within 2 dB), and CRSE2 +7, where OSC 2 is half a cycle on at each
+/// wrap, so a sine's or triangle's reset from there is the same corner as
+/// a turn (within 0.1 dB).
+#[test]
+fn soft_sync_is_softer_than_sync() {
+    for (w2, crse) in [SAW, 1.0 / 3.0, 0.0]
+        .into_iter()
+        .flat_map(|w| [3i8, 5, 7, 10].map(|c| (w, c)))
+    {
+        let base = VaParams {
+            wave: [0.0, w2],
+            coarse: [0, crse],
+            ..soft(1.0)
+        };
+        let soft_ = band_db(&held(A3, base, GATE_BLOCKS), 8_000.0);
+        let hard = band_db(
+            &held(
+                A3,
+                VaParams {
+                    mode: VaMode::Sync,
+                    ..base
+                },
+                GATE_BLOCKS,
+            ),
+            8_000.0,
+        );
+        println!(
+            "WAVE2 {w2:.3} CRSE2 {crse}: above 8 kHz SOFT SYNC {soft_:.1} dB, SYNC {hard:.1} dB ({:+.1})",
+            soft_ - hard
+        );
+        let room = if w2 < SAW && crse != 7 { -6.0 } else { 3.0 };
+        assert!(
+            soft_ <= hard + room,
+            "WAVE2 {w2} CRSE2 {crse}: {soft_} vs {hard}"
+        );
+    }
+}
+
+/// The alias gate on the half-pitch lattice (the wave repeats every two
+/// of OSC 1's periods), corrected and not; where −45 dB is missed the
+/// correction must win 12 dB (the exceptions printed, ADR 0161).
+#[test]
+fn soft_sync_alias_gate() {
+    let mut worst = (f64::MIN, String::new());
+    let mut exceptions = Vec::new();
+    let mut fails = Vec::new();
+    for note in [C5, C6] {
+        let f0 = 0.5 * hz_of(note);
+        for x in [0.0, 1.0 / 6.0, 1.0 / 3.0, 0.5, 2.0 / 3.0, 5.0 / 6.0, 1.0] {
+            for s in [0.0, 0.5] {
+                let base = VaParams {
+                    wave: [x; 2],
+                    shape: [s; 2],
+                    ..soft(1.0)
+                };
+                let gate = |prep: fn(&mut VaEngine)| {
+                    let y = take_with(prep, note, base, GATE_BLOCKS, |_, _| {});
+                    common::spectrum::alias_db(&y, SR as f32, &[f0])
+                };
+                let (on, off) = (gate(|_| {}), gate(VaEngine::uncorrected));
+                let at = format!("{note} WAVE {x:.3} SHAPE {s}");
+                println!("{at}: {on:.1} dB (off {off:.1})");
+                if on > -45.0 {
+                    exceptions.push(format!("{at}: {on:.1} / {off:.1}"));
+                    if on > off - 12.0 {
+                        fails.push(format!("{at}: {on:.1} vs off {off:.1}"));
+                    }
+                }
+                if on > worst.0 {
+                    worst = (on, at);
+                }
+            }
+        }
+    }
+    println!(
+        "worst {:.1} dB at {}; exceptions {exceptions:#?}",
+        worst.0, worst.1
+    );
+    assert!(fails.is_empty(), "{fails:#?}");
+}
+
+/// The turns move OSC 2's phase, not its level: SOFT SYNC at BLEND 0, ½
+/// and 1 sounds as loud as MIX there.
+#[test]
+fn soft_sync_level_matches_mix() {
+    let blocks = 2 * SR as usize / B;
+    let saws = VaParams {
+        wave: [SAW; 2],
+        ..soft(0.0)
+    };
+    for blend in [0.0, 0.5, 1.0] {
+        let at = |mode| {
+            rms(&held(
+                C4,
+                VaParams {
+                    mode,
+                    amount: blend,
+                    ..saws
+                },
+                blocks,
+            ))
+        };
+        let db = 20.0 * (at(VaMode::SoftSync) / at(VaMode::Mix)).log10();
+        println!("BLEND {blend}: {db:+.2} dB");
+        assert!(db.abs() <= 1.5, "BLEND {blend}: {db}");
+    }
+}
+
+/// Entering SOFT SYNC the read starts forward (`settle` at the swap):
+/// left while OSC 2 reads backward (an odd number of turns), out to MIX
+/// and back in, it plays as a fresh engine started at those phases does.
+#[test]
+fn entering_soft_sync_starts_forward() {
+    let base = VaParams {
+        wave: [SAW, 0.3],
+        shape: [0.3, 0.0],
+        ..soft(0.8)
+    };
+    let tail = 10;
+    // SOFT SYNC for `k` blocks, then MIX through the duck's swap
+    let leave = |e: &mut VaEngine, p: &mut VaParams, k: usize| {
+        e.hold();
+        e.note_on(A4, p, PartId::new(0).unwrap(), SR);
+        run(e, p, k, |_, _| {});
+        p.mode = VaMode::Mix;
+        run(e, p, 4, |_, _| {});
+        assert_eq!(e.mode(), VaMode::Mix);
+        e.dirs_at_swap()[1]
+    };
+    // a turn every 109 samples at A4: some start leaves it backward
+    let k = (1..20)
+        .find(|&k| with_engine(|e| leave(e, &mut { base }, k)) < 0.0)
+        .expect("OSC 2 left backward");
+    let (back, settled) = with_engine(|e| {
+        let mut p = base;
+        assert_eq!(leave(e, &mut p, k), -1.0);
+        p.mode = VaMode::SoftSync;
+        run(e, &mut p, 2, |_, _| {});
+        assert_eq!(e.mode(), VaMode::SoftSync);
+        let at = e.osc_phase();
+        let y = run(e, &mut p, AT + tail, |_, _| {});
+        (y, at)
+    });
+    let fresh = with_engine(|f| {
+        let mut p = base;
+        f.hold();
+        f.note_on(A4, &p, PartId::new(0).unwrap(), SR);
+        f.set_osc_phase(settled);
+        run(f, &mut p, AT + tail, |_, _| {})
+    });
+    let err = back[AT * B..]
+        .iter()
+        .zip(&fresh[AT * B..])
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    println!("MIX → SOFT SYNC, {AT} blocks on: max |back − fresh| {err:.2e}");
+    assert!(err <= 1e-4, "{err}");
 }
 
 // ---- PHASE (#602) ----

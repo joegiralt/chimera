@@ -50,6 +50,19 @@ fn gauge_at(glyph: FocusGlyph, fmt: ValFmt, v: f32, rev: ReverbType) -> Gauge {
             value: v,
             mode: VaMode::ALL[(v * 4.0) as usize],
         },
+        Reads::Lfo => {
+            use chimera_core::lfo_glyph::{Glyph, LfoGauge, Q, Wave};
+            Gauge::Lfo(LfoGauge {
+                glyph: Glyph::Rate,
+                wave: Wave::Classic {
+                    rate: Q::of(v),
+                    shape: chimera_core::dsp::lfo::LfoShape::Sine,
+                    retrig: false,
+                    phase: Q::of(0.0),
+                    depth: Q::of(1.0),
+                },
+            })
+        }
     })
 }
 
@@ -90,6 +103,29 @@ fn overlap(label: &str, text: &str, g: Gauge) -> (bool, Vec<(usize, usize)>) {
     });
     let shown = value.px != both.px;
     let alone = render(|d| components::draw_gauge(d, g));
+    // Beside an LFO glyph a long value drops to the readout size (ADR
+    // 0177): what it must keep clear of is the glyph's box and its gap.
+    if let Gauge::Lfo(_) = g {
+        use chimera_core::ui::theme;
+        let (x0, y0) = (theme::WAVE_X, theme::WAVE_Y);
+        let in_box = |x: i32, y: i32| {
+            (x0..x0 + theme::WAVE_W).contains(&x) && (y0..y0 + theme::WAVE_H).contains(&y)
+        };
+        let label_bottom = theme::FOCUS_LABEL_Y + 4;
+        let hits = (0..W * H)
+            .map(|i| ((i % W) as i32, (i / W) as i32, i))
+            .filter(|&(x, y, i)| {
+                y > label_bottom
+                    && y <= theme::FOCUS_VALUE_Y
+                    && ink(&both, i)
+                    && !ink(&alone, i)
+                    && !in_box(x, y)
+                    && x >= x0 - components::GLYPH_GAP
+            })
+            .map(|(x, y, _)| (x as usize, y as usize))
+            .collect();
+        return (shown, hits);
+    }
     let hits = (0..W * H)
         .filter(|&i| ink(&value, i) && (value.px[i] != both.px[i] || (shown && ink(&alone, i))))
         .map(|i| (i % W, i / W))
@@ -140,7 +176,13 @@ impl Cases {
             return;
         }
         for v in VALUES {
-            let (shown, hits) = overlap(label, text, gauge_at(glyph, fmt, v, rev));
+            let g = gauge_at(glyph, fmt, v, rev);
+            // the value font beside VA's MODE scope is its own layout: the
+            // band sets the text clear of the gauge (`va_glyph_test`)
+            if components::layout(text, &g) == Layout::SmallBeside {
+                continue;
+            }
+            let (shown, hits) = overlap(label, text, g);
             assert!(
                 hits.is_empty(),
                 "{what} {text:?} ({glyph:?}, v {v}): gauge on the value at {:?}",

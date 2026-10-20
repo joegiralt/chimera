@@ -269,6 +269,11 @@ impl FuncGen {
         env * pulse
     }
 
+    /// LFO φ (BURST's pulse phase), 0..1.
+    pub fn phi(&self) -> f32 {
+        self.phase as f32 / TURN
+    }
+
     /// The output now: 0..1 (ENV, BURST) or −1..1 (LFO).
     pub fn output(&self) -> f32 {
         match self.func {

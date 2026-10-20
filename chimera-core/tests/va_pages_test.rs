@@ -112,7 +112,8 @@ fn mode_names_fit_the_cell() {
     let c = ctx();
     for name in MODE_NAMES {
         let w = draw::text_width(&theme::FONT_VALUE, name, 0);
-        assert!(w <= theme::CELL_BAR_W, "{name}: {w} px");
+        // the cell's value slot (a column less its gutter); a MODE has no bar
+        assert!(w <= theme::CELL_COL_W - 4, "{name}: {w} px");
     }
     for def in [&VA_HOME, &VA_OSC1, &VA_OSC2] {
         for i in 0..6 {
