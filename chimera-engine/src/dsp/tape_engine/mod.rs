@@ -80,7 +80,7 @@ use crate::stream::units::Frames;
 use crate::stream::units::{Cents, Inc, SourceFrame, SourceRate};
 use age::Age;
 use heads::{
-    Bounds, Dir, Fade, Ghost, Head, POWER_FADE_S, Plan, Turn, Window, at, min_frames, plan,
+    Bounds, Dir, Fade, Ghost, Head, POWER_FADE_S, Plan, Sizing, Turn, Window, at, min_frames, plan,
     power_of, shortest, window_end_min, window_start, xmix,
 };
 use oneshot::slice_bounds;
@@ -652,19 +652,11 @@ impl TapeDeck {
             first: false,
             walk: 0.0,
             ws: 0,
-            bounds: Bounds {
-                ls: 0,
-                le: 1,
-                lx: 0,
-            },
+            bounds: Bounds::plain(0, 1),
             min_len: MIN_LOOP_FRAMES,
             we: 1,
             runup: false,
-            next: Bounds {
-                ls: 0,
-                le: 1,
-                lx: 0,
-            },
+            next: Bounds::plain(0, 1),
             next_rev: false,
             next_ws: 0,
             pending: None,
@@ -1098,7 +1090,7 @@ impl TapeDeck {
     /// block's travel and the taps after it.
     fn next_reads(&self) -> (u32, u32) {
         let travel = libm::ceilf(self.inc_cap().get() * BLOCK_SIZE as f32) as u32 + 3;
-        let le = self.bounds.le;
+        let le = self.bounds.le();
         if self.fade.is_some() {
             let h1 = self.heads[1].pos.whole();
             let rem = le.saturating_sub(self.heads[0].pos.whole());
@@ -1110,10 +1102,10 @@ impl TapeDeck {
             None => (self.next, self.bounds.fade_at()),
         };
         let rem = le.saturating_sub(at);
-        let from = if rem <= b.ls.saturating_sub(self.ws) {
-            b.ls - rem
+        let from = if rem <= b.ls().saturating_sub(self.ws) {
+            b.ls() - rem
         } else {
-            b.ls
+            b.ls()
         };
         (from, from.saturating_add(rem + travel))
     }
@@ -1345,7 +1337,7 @@ impl TapeDeck {
         let off_heads = next.is_some() && !self.lands(&row);
         self.cursor
             .expect(next.filter(|_| off_heads).map(|(from, to)| Wrap {
-                last: SourceFrame::new(self.bounds.le.saturating_sub(1)),
+                last: SourceFrame::new(self.bounds.le().saturating_sub(1)),
                 fade: SourceFrame::new(self.bounds.fade_at()),
                 from: SourceFrame::new(from),
                 to: SourceFrame::new(to),
@@ -1377,7 +1369,7 @@ impl TapeDeck {
             // read, a burst): the fade's second head reads silence, and the
             // voice fades out before the wrap, which starts cold (spec §
             // 5.7: drop-outs fade).
-            let left = self.bounds.le.saturating_sub(h.whole()) as f32;
+            let left = self.bounds.le().saturating_sub(h.whole()) as f32;
             if left <= self.inc_cap().get() * (BLOCK_SIZE + DROP_FADE.get() as usize) as f32 {
                 self.cursor.duck(Duck::Out);
                 self.ducked = true;
@@ -1541,7 +1533,7 @@ impl TapeDeck {
         }
         let rev = self.reversed(p.end);
         let (start, end) = self.window(p, rev);
-        self.ws = window_start(start, frames);
+        self.ws = window_start(start, v.file_frames());
         // The first pass's floor, at the note's own `inc` (SCRUB: its loop's
         // vari-speed).
         let mut fast = inc(
@@ -1567,7 +1559,11 @@ impl TapeDeck {
                 self.bounds = Bounds::of_min(
                     0,
                     we - self.ws,
-                    (self.mac.size, 0.0, xfade),
+                    Sizing {
+                        size: self.mac.size,
+                        place: 0.0,
+                        xfade,
+                    },
                     rate,
                     self.min_len,
                 );
@@ -1577,14 +1573,18 @@ impl TapeDeck {
                     self.set_mirror(true);
                     self.bounds = self.bounds.mirror(frames);
                     self.off = self.off + at(frames);
-                    start_at = self.bounds.ls;
+                    start_at = self.bounds.ls();
                 }
             }
             _ => {
                 self.bounds = Bounds::of_min(
                     self.ws,
                     we,
-                    (self.mac.size, self.mac.position, xfade),
+                    Sizing {
+                        size: self.mac.size,
+                        place: self.mac.position,
+                        xfade,
+                    },
                     rate,
                     self.min_len,
                 );
@@ -2258,7 +2258,7 @@ impl TapeDeck {
             self.ws
         } else {
             let start = if rev { 1.0 - self.start } else { self.start };
-            window_start(start, v.frames())
+            window_start(start, v.file_frames())
         };
         let clamp_len = self.clamp_len;
         if let Some(pp) = self.pp_mut() {
@@ -2919,7 +2919,11 @@ impl TapeDeck {
                 let b = Bounds::of_min(
                     0,
                     we - ws,
-                    (self.mac.size, 0.0, k.xfade),
+                    Sizing {
+                        size: self.mac.size,
+                        place: 0.0,
+                        xfade: k.xfade,
+                    },
                     k.rate,
                     self.min_len,
                 );
@@ -2931,14 +2935,15 @@ impl TapeDeck {
                     place -= 1.0;
                 }
                 let xfade = if self.ping() { 0.0 } else { k.xfade };
-                let mut b =
-                    Bounds::of_min(ws, we, (self.mac.size, place, xfade), k.rate, self.min_len);
+                let size = self.mac.size;
+                let b = Bounds::of_min(ws, we, Sizing { size, place, xfade }, k.rate, self.min_len);
                 if self.fed() {
                     // The loop head holds XFADE before the loop, at most
                     // `XFADE_MAX_MS` of source (§ 7.3 step 6, #584).
-                    b.lx = b.lx.min(xfade_max(k.rate));
+                    b.lx_at_most(xfade_max(k.rate))
+                } else {
+                    b
                 }
-                b
             }
         }
     }
@@ -2963,7 +2968,7 @@ impl TapeDeck {
                 self.turn(k);
                 continue;
             }
-            let le = self.bounds.le;
+            let le = self.bounds.le();
             if let Some(f) = self.fade.take() {
                 // The wrap: the second head plays on as the first, in its
                 // own frame if it was a flip's.
@@ -2987,7 +2992,7 @@ impl TapeDeck {
                 let len = (next.frames() as u64) << 32;
                 let over = (h - at(le)).0;
                 let over = if over >= len { over % len } else { over };
-                let pos = at(next.ls) + Pos(over);
+                let pos = at(next.ls()) + Pos(over);
                 if nx.rev != self.mirror() {
                     // A hard splice that flips: the head going out plays on
                     // the old way under the clamp's fade.
@@ -3003,7 +3008,7 @@ impl TapeDeck {
                 let next = nx.b;
                 // SCRUB's loop has nothing before it: its fades fold.
                 let ws = if self.model() == TapeModel::Scrub {
-                    next.ls
+                    next.ls()
                 } else {
                     nx.ws.min(k.frames - 1)
                 };
@@ -3123,8 +3128,8 @@ impl TapeDeck {
     fn turn(&mut self, k: &AtWrap<'_>) {
         let b = self.bounds;
         let h = self.heads[0].pos;
-        if h.whole() < b.le {
-            let rem = at(b.le) - h;
+        if h.whole() < b.le() {
+            let rem = at(b.le()) - h;
             let rem = rem.whole() as f32 + rem.frac();
             let Some(&PingPass {
                 inv_v, turn_len, ..
@@ -3141,18 +3146,18 @@ impl TapeDeck {
                 }));
                 self.event = u32::MAX;
             } else {
-                self.event = b.le;
+                self.event = b.le();
             }
             return;
         }
         let len = (b.frames() as u64) << 32;
-        let past = (h - at(b.le)).0;
+        let past = (h - at(b.le())).0;
         let over = Pos(if past >= len { past % len } else { past });
         // The reflected head, in source frames.
         let r = if self.mirror() {
-            at(b.ls) + over
+            at(b.ls()) + over
         } else {
-            at(b.le) - over
+            at(b.le()) - over
         };
         // Past the edge by more than a step (the speed rose mid-turn), the
         // reflected head reads where this one never played: the output
@@ -3189,7 +3194,7 @@ impl TapeDeck {
     fn enter(&mut self, back: bool, r: Pos, b: &Bounds) -> i64 {
         self.set_mirror(back);
         if back {
-            self.off = at(b.ls + b.le);
+            self.off = at(b.ls() + b.le());
             self.off.0 as i64 - r.0 as i64
         } else {
             self.off = Pos(0);
@@ -3208,7 +3213,7 @@ impl TapeDeck {
         let b = self.bounds;
         let turn_len = self.pp().map_or(0, |pp| pp.turn_len);
         let half = self.v * turn_len as f32 * 0.5;
-        b.le - (half as u32).min(b.frames() / 4)
+        b.le() - (half as u32).min(b.frames() / 4)
     }
 
     /// The bounds a clamp's fade holds, lengthened to this block's floor
@@ -3223,15 +3228,11 @@ impl TapeDeck {
             return b;
         }
         let ls = if back {
-            b.le.saturating_sub(len).max(ws)
+            b.le().saturating_sub(len).max(ws)
         } else {
-            b.ls.min(self.we - len)
+            b.ls().min(self.we - len)
         };
-        Bounds {
-            ls,
-            le: ls + len,
-            lx: 0,
-        }
+        Bounds::plain(ls, len)
     }
 
     /// PING-PONG turns at `r` (source frames): the frame mirrors, so the
@@ -3249,7 +3250,7 @@ impl TapeDeck {
         } else {
             self.next
         };
-        let (lo, hi) = (at(nb.ls).0 as i64, at(nb.le).0 as i64 - 1);
+        let (lo, hi) = (at(nb.ls()).0 as i64, at(nb.le()).0 as i64 - 1);
         let mut u = self.enter(back, r, &nb);
         if u > hi {
             // Past the far edge: the head comes in from the near one,

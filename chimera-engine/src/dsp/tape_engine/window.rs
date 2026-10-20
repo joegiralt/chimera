@@ -2,6 +2,8 @@
 //! arithmetic both banks take. Bank 1's, outside `bank2.x`'s globs: the
 //! deck calls it per pass, and a streamed load places its heads by it.
 
+use core::num::NonZeroU32;
+
 use super::{MIN_LOOP_FRAMES, MIN_LOOP_S, MIN_PASS_SAMPLES};
 use crate::dsp::algo::math::clampf;
 use crate::stream::units::SourceRate;
@@ -22,9 +24,10 @@ pub fn shortest(rate: SourceRate, inc: f32) -> u32 {
         .max(pass)
 }
 
-/// The window's start, of `frames` (≥ 1): in `[0, frames − 1]`.
-pub fn window_start(start: f32, frames: u32) -> u32 {
-    ((clampf(start, 0.0, 1.0) * frames as f32) as u32).min(frames - 1)
+/// The window's start, of `frames`: in `[0, frames − 1]`.
+pub fn window_start(start: f32, frames: NonZeroU32) -> u32 {
+    let n = frames.get();
+    ((clampf(start, 0.0, 1.0) * n as f32) as u32).min(n - 1)
 }
 
 /// The window's end from `ws`: END, kept ≥ START + 2 ms and ≤ `frames`.
@@ -53,29 +56,73 @@ pub fn loop_len_min(size: f32, w: u32, rate: SourceRate, shortest: u32) -> u32 {
     (libm::roundf(l) as u32).clamp(shortest.min(w), w)
 }
 
-/// One pass's loop: `[ls, le)`, its last `lx` frames the crossfade.
+/// A loop's SIZE, its place (0–1) in the room the window leaves, and its
+/// XFADE: what `Bounds::of` sizes it by.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sizing {
+    pub size: f32,
+    pub place: f32,
+    pub xfade: f32,
+}
+
+/// One pass's loop: `[ls, le)`, its last `lx` frames the crossfade. Never
+/// `le` before `ls`, nor a fade longer than the loop.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Bounds {
-    pub ls: u32,
-    pub le: u32,
-    pub lx: u32,
+    ls: u32,
+    le: u32,
+    lx: u32,
 }
 
 impl Bounds {
-    /// The loop in the window `[ws, we)`: SIZE's length, at `place` (0–1)
-    /// of the room left, its last XFADE of it the fade.
-    pub fn of(ws: u32, we: u32, sizing: (f32, f32, f32), rate: SourceRate) -> Bounds {
+    /// `[ls, le)` fading over its last `lx`; `None` if `le` is before `ls`
+    /// or the fade longer than the loop.
+    pub const fn new(ls: u32, le: u32, lx: u32) -> Option<Bounds> {
+        if le >= ls && lx <= le - ls {
+            Some(Bounds { ls, le, lx })
+        } else {
+            None
+        }
+    }
+
+    /// `len` frames from `ls`, with no fade.
+    pub const fn plain(ls: u32, len: u32) -> Bounds {
+        Bounds {
+            ls,
+            le: ls + len,
+            lx: 0,
+        }
+    }
+
+    pub const fn ls(&self) -> u32 {
+        self.ls
+    }
+
+    pub const fn le(&self) -> u32 {
+        self.le
+    }
+
+    pub const fn lx(&self) -> u32 {
+        self.lx
+    }
+
+    /// The same loop, its fade at most `cap` frames.
+    pub fn lx_at_most(self, cap: u32) -> Bounds {
+        Bounds {
+            lx: self.lx.min(cap),
+            ..self
+        }
+    }
+
+    /// The loop in the window `[ws, we)`: SIZE's length, at `place` of the
+    /// room left, its last XFADE of it the fade.
+    pub fn of(ws: u32, we: u32, sizing: Sizing, rate: SourceRate) -> Bounds {
         Self::of_min(ws, we, sizing, rate, min_frames(rate))
     }
 
     /// `of`, the loop at least `shortest` frames (or the window).
-    pub fn of_min(
-        ws: u32,
-        we: u32,
-        (size, place, xfade): (f32, f32, f32),
-        rate: SourceRate,
-        shortest: u32,
-    ) -> Bounds {
+    pub fn of_min(ws: u32, we: u32, sizing: Sizing, rate: SourceRate, shortest: u32) -> Bounds {
+        let Sizing { size, place, xfade } = sizing;
         let w = we - ws;
         let ll = loop_len_min(size, w, rate, shortest);
         let ls = ws + ((clampf(place, 0.0, 1.0) * (w - ll) as f32) as u32).min(w - ll);

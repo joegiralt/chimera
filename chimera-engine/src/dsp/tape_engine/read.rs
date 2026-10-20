@@ -8,6 +8,7 @@
 //! Every tap is clamped to `[0, frames − 1]`, or wrapped inside a
 //! transwave frame, so no read leaves the bytes the row publishes.
 
+use core::num::NonZeroU32;
 use core::ops::{Add, Sub};
 
 pub use super::desc::{
@@ -73,7 +74,7 @@ pub struct SourceView<'a> {
     samples: &'a [u8],
     desc: Descriptor,
     /// The source's frames: even, at least 2.
-    frames: u32,
+    frames: NonZeroU32,
     /// The frames held, `first..end`: even, `first < end ≤ frames`. A
     /// whole row's are `0..frames`.
     first: u32,
@@ -106,13 +107,14 @@ impl<'a> SourceView<'a> {
         let pairs = data.len() / 3;
         let frames = u32::try_from(2 * pairs)
             .ok()
-            .filter(|&f| f >= MIN_SOURCE_FRAMES)?;
+            .filter(|&f| f >= MIN_SOURCE_FRAMES)
+            .and_then(NonZeroU32::new)?;
         Some(SourceView {
             samples: &data[..3 * pairs],
             desc,
             frames,
             first: 0,
-            end: frames,
+            end: frames.get(),
             #[cfg(any(test, feature = "test-support"))]
             strict: false,
         })
@@ -141,7 +143,7 @@ impl<'a> SourceView<'a> {
         Some(SourceView {
             samples: bytes.get(..3 * pairs as usize)?,
             desc,
-            frames,
+            frames: NonZeroU32::new(frames)?,
             first,
             end: first + 2 * pairs,
             #[cfg(any(test, feature = "test-support"))]
@@ -162,7 +164,7 @@ impl<'a> SourceView<'a> {
 
     /// Silence over a source of `frames`: what a streamed voice reads
     /// where nothing is held (its gain is 0 there).
-    pub fn silent(desc: Descriptor, frames: u32) -> SourceView<'static> {
+    pub fn silent(desc: Descriptor, frames: NonZeroU32) -> SourceView<'static> {
         SourceView {
             samples: &[0; 3],
             desc,
@@ -189,6 +191,11 @@ impl<'a> SourceView<'a> {
 
     /// The source's frames (a span's too).
     pub fn frames(&self) -> u32 {
+        self.frames.get()
+    }
+
+    /// `frames`, never 0.
+    pub fn file_frames(&self) -> NonZeroU32 {
         self.frames
     }
 
@@ -245,7 +252,7 @@ impl<'a> SourceView<'a> {
         assert!(
             !self.strict
                 || ((lo == 0 || w.saturating_sub(1) >= lo)
-                    && (self.end == self.frames || w.saturating_add(2) <= last)),
+                    && (self.end == self.frames.get() || w.saturating_add(2) <= last)),
             "read at {w} outside frames {lo}..{}",
             self.end
         );
@@ -275,7 +282,7 @@ impl<'a> SourceView<'a> {
         let n = 1u32 << (log2_n & 31);
         #[cfg(any(test, feature = "test-support"))]
         assert!(
-            !self.strict || base as u64 + n as u64 <= self.frames as u64,
+            !self.strict || base as u64 + n as u64 <= u64::from(self.frames.get()),
             "frame {base} + {n} past {} frames",
             self.frames
         );

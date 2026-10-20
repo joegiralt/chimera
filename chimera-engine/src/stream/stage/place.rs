@@ -3,7 +3,9 @@
 //! through `LoadDoor`, the deck (bank 2's too) directly.
 
 use super::Heads;
-use crate::dsp::tape_engine::heads::{Bounds, window_end, window_start};
+use core::num::NonZeroU32;
+
+use crate::dsp::tape_engine::heads::{Bounds, Sizing, window_end, window_start};
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeMachine, needs_ram};
 use crate::dsp::tape_engine::read::HeadSpec;
 use crate::project::Refusal;
@@ -41,12 +43,15 @@ pub(crate) fn heads_in(r: SourceRef, p: &TapeEngineParams) -> Result<Heads, Refu
     if let Some(n) = needs_ram(p) {
         return Err(Refusal::NeedsRam(n));
     }
-    let (Some(rate), true) = (SourceRate::new(r.rate), r.frames >= 2) else {
+    let (Some(rate), Some(file)) = (
+        SourceRate::new(r.rate),
+        NonZeroU32::new(r.frames).filter(|f| f.get() >= 2),
+    ) else {
         return Err(Refusal::TooShort);
     };
     let frames = r.frames;
     let reach = head_frames(rate);
-    let ws = window_start(p.start, frames);
+    let ws = window_start(p.start, file);
     let we = window_end(ws, p.end, frames, rate);
     // To the taps of END's last read, no frame past the file's (even, as a
     // row reads it).
@@ -60,10 +65,19 @@ pub(crate) fn heads_in(r: SourceRef, p: &TapeEngineParams) -> Result<Heads, Refu
             return Ok(Heads::One(start));
         }
     }
-    let b = Bounds::of(ws, we, (p.size, p.position, p.xfade), rate);
-    let lx = b.lx.min(xfade_max(rate));
+    let b = Bounds::of(
+        ws,
+        we,
+        Sizing {
+            size: p.size,
+            place: p.position,
+            xfade: p.xfade,
+        },
+        rate,
+    );
+    let lx = b.lx().min(xfade_max(rate));
     // With no room before the loop the fade folds inside it (`heads`).
-    let early = if b.ls - ws >= lx { lx } else { 0 };
-    let looped = head(b.ls - early, lx + reach, cap).ok_or(Refusal::TooShort)?;
+    let early = if b.ls() - ws >= lx { lx } else { 0 };
+    let looped = head(b.ls() - early, lx + reach, cap).ok_or(Refusal::TooShort)?;
     Ok(Heads::Looped([start, looped]))
 }

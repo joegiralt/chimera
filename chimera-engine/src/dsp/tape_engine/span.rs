@@ -4,6 +4,8 @@
 //! those frames: ONE's and LOOP's loops read it as they read a row.
 //! Bank 2's, with `TapeDeck` (`build.rs`' `11tape_engine4span` glob).
 
+use core::num::NonZeroU32;
+
 use super::desc::{Descriptor, HeadTable, MIN_SOURCE_FRAMES, head_table_of};
 use super::read::SourceView;
 use crate::stream::cursor::{self, Cursor, HeadIdx, Plan, RamHead, SpanSrc};
@@ -41,7 +43,7 @@ pub struct StreamRow<'a> {
     held: &'a [u8],
     table: HeadTable<'a>,
     desc: Descriptor,
-    frames: u32,
+    frames: NonZeroU32,
     /// Strict views, for the tests: every tap checked against its span.
     #[cfg(any(test, feature = "test-support"))]
     strict: bool,
@@ -54,6 +56,7 @@ impl<'a> StreamRow<'a> {
         let frames = file.get().checked_add(1)? & !1;
         let ok = desc.is_streamed() && frames >= MIN_SOURCE_FRAMES;
         let table = head_table_of(held, desc).filter(|_| ok)?;
+        let frames = NonZeroU32::new(frames)?;
         Some(StreamRow {
             held,
             table,
@@ -79,13 +82,13 @@ impl<'a> StreamRow<'a> {
 
     /// The file's frames, even.
     pub fn frames(&self) -> u32 {
-        self.frames
+        self.frames.get()
     }
 
     /// Head `idx` as the cursor plays it: its frames, cut at the file's end.
     pub fn head(&self, idx: HeadIdx) -> Option<RamHead> {
         let (h, _) = self.table.get(idx.index())?;
-        let (start, end) = (h.first(), h.end().min(self.frames));
+        let (start, end) = (h.first(), h.end().min(self.frames.get()));
         (start < end).then_some(RamHead {
             idx,
             start: SourceFrame::new(start),
@@ -113,10 +116,10 @@ impl<'a> StreamRow<'a> {
     fn span<'b>(&self, bytes: &'b [u8], first: u32) -> Option<Span<'b>> {
         #[cfg(any(test, feature = "test-support"))]
         if self.strict {
-            return SourceView::strict_span(bytes, self.desc, first, self.frames)
+            return SourceView::strict_span(bytes, self.desc, first, self.frames.get())
                 .map(|view| Span { view });
         }
-        SourceView::span(bytes, self.desc, first, self.frames).map(|view| Span { view })
+        SourceView::span(bytes, self.desc, first, self.frames.get()).map(|view| Span { view })
     }
 
     /// Silence over the file: where nothing is held.
@@ -232,7 +235,7 @@ impl<'a> Reads<'a> {
     /// The second head reads silence: a fade that started before its
     /// reads landed fades to silence whole, never stepping back in.
     pub fn mute_second(&mut self) {
-        let silent = SourceView::silent(self.runs[0].0.desc(), self.runs[0].0.frames());
+        let silent = SourceView::silent(self.runs[0].0.desc(), self.runs[0].0.file_frames());
         self.seconds = [(silent, Stop::Never); 2];
         self.short = None;
     }
@@ -249,7 +252,7 @@ impl<'a> Reads<'a> {
     pub fn run(&self, k: usize) -> (SourceView<'a>, Stop) {
         self.runs.get(k).copied().unwrap_or_else(|| {
             let v = &self.runs[0].0;
-            (SourceView::silent(v.desc(), v.frames()), Stop::Never)
+            (SourceView::silent(v.desc(), v.file_frames()), Stop::Never)
         })
     }
 }

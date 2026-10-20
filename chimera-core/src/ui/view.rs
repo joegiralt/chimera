@@ -916,14 +916,12 @@ pub fn band_note(addr: ParamAddr, sound: &Sound, src: SourceState) -> Option<&'s
         return None;
     };
     let t = &sound.params.tape;
-    if addr != ParamAddr::new(BlockRef::TapeEngine, T::XFADE)
-        || t.machine() != TapeMachine::Loop
-        || frames < 2
-    {
+    if addr != ParamAddr::new(BlockRef::TapeEngine, T::XFADE) || t.machine() != TapeMachine::Loop {
         return None;
     }
+    let file = core::num::NonZeroU32::new(frames).filter(|f| f.get() >= 2)?;
     use crate::dsp::tape_engine::window::{loop_len, window_end, window_start};
-    let ws = window_start(t.start, frames);
+    let ws = window_start(t.start, file);
     let we = window_end(ws, t.end, frames, rate);
     let asked = t.xfade * loop_len(t.size, we - ws, rate) as f32;
     let cap = u32::from(rate) * crate::stream::stage::XFADE_MAX_MS / 1_000;

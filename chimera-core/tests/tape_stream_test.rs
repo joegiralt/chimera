@@ -8,12 +8,13 @@ mod common;
 use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::stream::units::{Cents, SourceRate};
 use core::mem::MaybeUninit;
+use core::num::NonZeroU32;
 use core::sync::atomic::Ordering;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::engines::EngineSlot;
 use chimera_core::dsp::tape_engine::heads::{
-    Bounds, Dir, shortest, window_end, window_end_min, window_start,
+    Bounds, Dir, Sizing, shortest, window_end, window_end_min, window_start,
 };
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
@@ -52,6 +53,7 @@ const RATE: u16 = 24_000;
 const HZ: SourceRate = SourceRate::new(RATE).unwrap();
 /// 30 s at 24 kHz.
 const FRAMES: u32 = 720_000;
+const FILE: NonZeroU32 = NonZeroU32::new(FRAMES).unwrap();
 /// `HEAD_MS`, and room for XFADE's 100 ms before the loop.
 const HF: u32 = 4_800;
 const V: VoiceIdx = VoiceIdx::ALL[0];
@@ -117,13 +119,21 @@ fn rings() -> (Box<Rings>, Box<ThirdSlots>) {
 /// reads (XFADE capped at 100 ms, a few frames early for the floor's
 /// speed), as the deck works them out.
 fn heads_at(p: &TapeEngineParams, frames: u32, note: u8) -> [u32; 2] {
-    let ws = window_start(p.start, frames);
+    let ws = window_start(p.start, NonZeroU32::new(frames).unwrap());
     let fast = inc(HZ, note, Cents::ZERO, Cents::new(p.root), SR).get() * 1.02;
     let floor = shortest(HZ, fast.min(INC_MAX));
     let we = window_end_min(ws, p.end, frames, floor);
-    let b = Bounds::of_min(ws, we, (p.size, p.position, p.xfade), HZ, floor);
-    let lx = b.lx.min(u32::from(RATE) / 10);
-    [ws, b.ls.saturating_sub(lx + 8)]
+    let b = Bounds::of_min(ws, we, sizing(p), HZ, floor);
+    let lx = b.lx().min(u32::from(RATE) / 10);
+    [ws, b.ls().saturating_sub(lx + 8)]
+}
+
+fn sizing(p: &TapeEngineParams) -> Sizing {
+    Sizing {
+        size: p.size,
+        place: p.position,
+        xfade: p.xfade,
+    }
 }
 
 fn params(mode: PlayMode, start: f32, end: f32) -> TapeEngineParams {
@@ -431,7 +441,7 @@ fn chord_burst_holds() {
         st.card.stats.underruns.load(Ordering::Relaxed)
     };
     let cut = |head: u32| {
-        move |c: &TestCard<'_>, p: &TapeEngineParams| c.held(&[window_start(p.start, FRAMES)], head)
+        move |c: &TestCard<'_>, p: &TapeEngineParams| c.held(&[window_start(p.start, FILE)], head)
     };
     let loaded = |c: &TestCard<'_>, p: &TapeEngineParams| {
         let r = SourceRef {
@@ -468,8 +478,8 @@ fn short_loop_on_streamed_source_stays_in_ram() {
     };
     let (rings, third) = rings();
     let mut st = Stream::new(&rings, &third, &whole, 0);
-    let ws = window_start(p.start, FRAMES);
-    let b = Bounds::of(ws, FRAMES, (p.size, p.position, p.xfade), HZ);
+    let ws = window_start(p.start, FILE);
+    let b = Bounds::of(ws, FRAMES, sizing(&p), HZ);
     assert!((990..=1_010).contains(&b.frames()), "{b:?}");
     let mut src = OneSource::new(&st.card.held(&[ws, ws], HF));
     let mut slot = MaybeUninit::uninit();
@@ -2098,9 +2108,9 @@ fn a_rotted_cluster_in_a_loop_faults_twice_then_never() {
         age: 0.0,
         ..params(PlayMode::Loop, 0.0, 0.05)
     };
-    let ws = window_start(p.start, FRAMES);
+    let ws = window_start(p.start, FILE);
     let we = window_end(ws, p.end, FRAMES, HZ);
-    let b = Bounds::of(ws, we, (p.size, p.position, p.xfade), HZ);
+    let b = Bounds::of(ws, we, sizing(&p), HZ);
     let lap = (b.frames() / 32) as usize;
     let (rings, third) = rings();
     let mut st = Stream::new(&rings, &third, &whole, 0);

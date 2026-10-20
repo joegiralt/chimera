@@ -7,7 +7,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use super::{COL_READS, COLS, H, Overview, Paint};
 use crate::dsp::clampf;
 use crate::dsp::tape_engine::Heads;
-use crate::dsp::tape_engine::heads::{Bounds, Dir, Window, min_frames};
+use crate::dsp::tape_engine::heads::{Bounds, Dir, Sizing, Window, min_frames};
 use crate::dsp::tape_engine::oneshot::Slice;
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeMachine};
 use crate::dsp::tape_engine::read::{Shape, SourceView};
@@ -160,19 +160,24 @@ pub(crate) fn strip_in(
             }
         },
         TapeMachine::Loop | TapeMachine::Ping => {
-            let b = Bounds::of(0, len, (p.size, p.position, p.xfade), rate);
+            let sizing = Sizing {
+                size: p.size,
+                place: p.position,
+                xfade: p.xfade,
+            };
+            let b = Bounds::of(0, len, sizing, rate);
             if m == TapeMachine::Ping {
-                edges = Some(place(b.ls, b.le));
-            } else if b.lx > 0 {
+                edges = Some(place(b.ls(), b.le()));
+            } else if b.lx() > 0 {
                 // The fade's incoming head: before the loop, or inside it
                 // when there's no room before (folded).
-                ramp = Some(if b.ls >= b.lx {
-                    place(b.ls - b.lx, b.ls)
+                ramp = Some(if b.ls() >= b.lx() {
+                    place(b.ls() - b.lx(), b.ls())
                 } else {
-                    place(b.ls, b.ls + b.lx)
+                    place(b.ls(), b.ls() + b.lx())
                 });
             }
-            place(b.ls, b.le)
+            place(b.ls(), b.le())
         }
         TapeMachine::Wave => {
             // The table's frames: the two read lit, else POSITION's.
