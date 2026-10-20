@@ -420,10 +420,11 @@ fn mix_minus_in_library_clears_nothing() {
     assert_eq!(ui.project().pool().used(), used);
 }
 
-/// FLT's EDIT goes down to MOD, then FX, and round again (ADR 0155).
+/// FLT's EDIT goes down to MOD, then FX, then JACK, and round again (ADR
+/// 0155, 0179).
 #[test]
 fn edit_on_flt_goes_to_mod_then_fx_and_wraps() {
-    use chimera_core::ui::block_registry::{FILTER, FILTER_FX, FILTER_MOD};
+    use chimera_core::ui::block_registry::{FILTER, FILTER_FX, FILTER_JACKS, FILTER_MOD};
     let cx = cx(EngineType::Algo);
     let c = chain_def_for(EngineType::Algo);
     let n = (0..c.len())
@@ -431,7 +432,8 @@ fn edit_on_flt_goes_to_mod_then_fx_and_wraps() {
         .unwrap();
     assert_eq!(c.active_def(n, 1).unwrap().id, FILTER_MOD.id);
     assert_eq!(c.active_def(n, 2).unwrap().id, FILTER_FX.id);
-    let pages = [0, 1, 2, 0].map(|i| c.page(n, i).unwrap());
+    assert_eq!(c.active_def(n, 3).unwrap().id, FILTER_JACKS.id);
+    let pages = [0, 1, 2, 3, 0].map(|i| c.page(n, i).unwrap());
     let mut r = Recall::new();
     for w in pages.windows(2) {
         assert_eq!(

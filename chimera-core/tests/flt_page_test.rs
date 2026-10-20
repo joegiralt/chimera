@@ -237,6 +237,13 @@ fn back_to_flt(ui: &mut UiState, sub: bool) {
     }
 }
 
+/// `back_to_flt`, then down to FLT › JACK (MOD, FX, JACK).
+fn to_jacks(ui: &mut UiState) {
+    back_to_flt(ui, true);
+    feed(ui, Input::press(ButtonId::Edit));
+    feed(ui, Input::press(ButtonId::Edit));
+}
+
 /// Rows `y0..y1`, columns `x0..x1` of two frames agree.
 fn same_rect(a: &Fb, b: &Fb, (x0, x1): (i32, i32), (y0, y1): (i32, i32)) -> bool {
     (y0..y1).all(|y| (x0..x1).all(|x| a.at(x, y) == b.at(x, y)))
@@ -485,6 +492,7 @@ fn applies_matches_the_panel() {
                 .iter()
                 .chain(p.mods.iter())
                 .chain(p.chip.iter())
+                .chain(filter_panel::JACKS.iter())
                 .any(|n| n.target == PanelTarget::Filter(id))
         };
         for s in FILTER_SPECS.iter() {
@@ -698,8 +706,8 @@ fn turning_fm3_in_moves_the_cable_past_an_occupied_cell() {
         .set_fixed(ModSource::Lfo1.index(), FixedCol::Freq, 40);
     s.mod_state
         .set_fixed(ModSource::Lfo2.index(), FixedCol::Freq, 11);
-    back_to_flt(&mut ui, true);
-    feed(&mut ui, Input::turn(EncoderId::D, 1)); // FM3 IN: LFO 2 is taken
+    to_jacks(&mut ui);
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // FM3 IN: LFO 2 is taken
     assert_eq!(ui.params().filter.fm3_src(), Jack::Mod(ModSource::Lfo3));
     let m = ui.mod_state();
     assert_eq!(m.fixed_amount(ModSource::Lfo3.index(), FixedCol::Freq), 40);
@@ -720,17 +728,17 @@ fn turning_fm3_in_moves_the_cable_past_an_occupied_cell() {
 #[test]
 fn skipping_a_source_in_use_shows_a_note() {
     let mut ui = on_flt(EngineType::Algo);
-    back_to_flt(&mut ui, true);
-    feed(&mut ui, Input::turn(EncoderId::D, 1)); // FM3 IN: LFO 1 → LFO 2, free
+    to_jacks(&mut ui);
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // FM3 IN: LFO 1 → LFO 2, free
     assert_eq!(ui.prime_status(), None);
     let s = ui.project_mut().edit_part(PartId::ALL[0]).sound;
     s.mod_state
         .set_fixed(ModSource::Lfo3.index(), FixedCol::Freq, 11);
-    feed(&mut ui, Input::turn(EncoderId::D, 1)); // LFO 3 is taken
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // LFO 3 is taken
     assert_eq!(ui.prime_status(), Some(PrimeStatus::SourceInUse));
     assert_eq!(PrimeStatus::SourceInUse.label(), "SOURCE IN USE");
     assert_ne!(ui.params().filter.fm3_src(), Jack::Mod(ModSource::Lfo3));
-    feed(&mut ui, Input::turn(EncoderId::C, 1)); // the next input retires it
+    feed(&mut ui, Input::turn(EncoderId::E, 1)); // the next input retires it
     assert_eq!(ui.prime_status(), None);
 }
 
@@ -783,14 +791,15 @@ fn panels_follow_the_type() {
     use chimera_core::ui::filter_panel::PanelTarget as T;
     use chimera_core::ui::theme::{CELL_COL_W, FONT_LABEL};
     let labels = |k| {
-        (0..9)
-            .map(|i| knob(k, i).unwrap().label)
+        (0..12)
+            .filter_map(|i| knob(k, i).map(|n| n.label))
+            .filter(|&l| l != "STABILITY")
             .collect::<Vec<_>>()
     };
     assert_eq!(
         labels(FilterKind::Svf),
         [
-            "MODE", "FREQ", "Q", "FM1", "FM2", "FM3", "FM3 IN", "QM", "QM IN"
+            "MODE", "FREQ", "Q", "FM1", "FM2", "FM3", "FB", "QM", "FM3 IN", "QM IN"
         ]
     );
     assert_eq!(labels(FilterKind::Dirty), labels(FilterKind::Svf));
@@ -798,7 +807,7 @@ fn panels_follow_the_type() {
     assert_eq!(
         labels(FilterKind::K2040),
         [
-            "VOICE", "CUTOFF", "RES", "ENV AMT", "KEYBD", "FM3", "FM3 IN", "QM", "QM IN"
+            "VOICE", "CUTOFF", "RES", "ENV AMT", "KEYBD", "FM3", "FB", "QM", "FM3 IN", "QM IN"
         ]
     );
     let t = |k, i| knob(k, i).map(|n| n.target);
@@ -815,16 +824,19 @@ fn panels_follow_the_type() {
         assert_eq!(t(k, 1), Some(T::Filter(FilterParams::CUTOFF)));
         assert_eq!(t(k, 2), Some(T::Filter(FilterParams::RESONANCE)));
         assert_eq!(t(k, 5), Some(T::JackAmount(JackSlot::Fm3)));
-        assert_eq!(t(k, 6), Some(T::Filter(FilterParams::FM3_IN)));
+        // FB beside the FM amounts; the jacks on FLT › JACK (ADR 0179).
+        assert_eq!(t(k, 6), Some(T::Filter(FilterParams::FB)));
         assert_eq!(t(k, 7), Some(T::JackAmount(JackSlot::Qm)));
-        assert_eq!(t(k, 8), Some(T::Filter(FilterParams::QM_IN)));
+        assert_eq!(t(k, 8), None);
+        assert_eq!(t(k, 10), Some(T::Filter(FilterParams::FM3_IN)));
+        assert_eq!(t(k, 11), Some(T::Filter(FilterParams::QM_IN)));
         // The chip's cell, FLT › FX's F: STABILITY on the four-pole kinds
         // (ADR 0168).
         let chip = k.four_pole().then_some(T::Filter(FilterParams::STAB));
         assert_eq!(t(k, 9), chip);
         assert_eq!(knob(k, 9).map(|n| n.label), chip.map(|_| "STABILITY"));
-        assert_eq!(t(k, 10), None);
-        for i in (0..10).filter(|&i| knob(k, i).is_some()) {
+        assert_eq!(t(k, 12), None);
+        for i in (0..12).filter(|&i| knob(k, i).is_some()) {
             let n = knob(k, i).unwrap();
             let w = text_width(&FONT_LABEL, n.label, 0);
             assert!(w <= CELL_COL_W - 4, "{k:?} {i} {:?}: {w}px", n.label);

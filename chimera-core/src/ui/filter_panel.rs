@@ -288,8 +288,8 @@ pub struct PanelKnob {
 pub struct KindPanel {
     /// FLT's MODE or VOICE, FREQ and Q (cells 2, 5 and 6).
     pub main: [PanelKnob; 3],
-    /// FLT › MOD's six cells.
-    pub mods: [PanelKnob; 6],
+    /// FLT › MOD's first five cells (its F is empty).
+    pub mods: [PanelKnob; 5],
     /// The chip's own cell, FLT › FX's F: STABILITY on the 2040 and
     /// LADDER (ADR 0168); none on CLEAN and DIRTY.
     pub chip: Option<PanelKnob>,
@@ -307,17 +307,23 @@ const fn route(s: ModSource, label: &'static str) -> PanelKnob {
     knob_of(PanelTarget::Route(s), label)
 }
 
-/// Two routes, then FM3 · FM3 IN · QM · QM IN: every type's FLT › MOD.
-const fn mods(a: PanelKnob, b: PanelKnob) -> [PanelKnob; 6] {
+/// Two routes, then FM3 · FB · QM: every type's FLT › MOD (ADR 0179).
+const fn mods(a: PanelKnob, b: PanelKnob) -> [PanelKnob; 5] {
     [
         a,
         b,
         knob_of(PanelTarget::JackAmount(JackSlot::Fm3), "FM3"),
-        filter(FilterParams::FM3_IN, "FM3 IN"),
+        filter(FilterParams::FB, "FB"),
         knob_of(PanelTarget::JackAmount(JackSlot::Qm), "QM"),
-        filter(FilterParams::QM_IN, "QM IN"),
     ]
 }
+
+/// FLT › JACK's jacks, every type's, each under its amount's encoder on
+/// FLT › MOD (ADR 0179): knobs 10 and 11.
+pub static JACKS: [PanelKnob; 2] = [
+    filter(FilterParams::FM3_IN, "FM3 IN"),
+    filter(FilterParams::QM_IN, "QM IN"),
+];
 
 /// CLEAN speaks Cascadia: MODE · FREQ · Q; FM1 and FM2 lead FLT › MOD.
 pub static CLEAN_PANEL: KindPanel = KindPanel {
@@ -371,14 +377,15 @@ pub const fn kind_note(kind: FilterKind) -> Option<&'static str> {
     }
 }
 
-/// Knob `k`: 0–2 FLT's MODE or VOICE, FREQ and Q; 3–8 FLT › MOD's cells;
-/// 9 the chip's cell, if the kind has one.
+/// Knob `k`: 0–2 FLT's MODE or VOICE, FREQ and Q; 3–7 FLT › MOD's cells;
+/// 9 the chip's cell, if the kind has one; 10 and 11 FLT › JACK's jacks.
 pub fn knob(kind: FilterKind, k: u8) -> Option<&'static PanelKnob> {
     let p = panel(kind);
     match k {
         0..=2 => Some(&p.main[k as usize]),
-        3..=8 => Some(&p.mods[k as usize - 3]),
+        3..=7 => Some(&p.mods[k as usize - 3]),
         9 => p.chip.as_ref(),
+        10 | 11 => Some(&JACKS[k as usize - 10]),
         _ => None,
     }
 }
@@ -395,5 +402,6 @@ pub fn applies(kind: FilterKind, id: ParamId) -> bool {
             .iter()
             .chain(p.mods.iter())
             .chain(p.chip.iter())
+            .chain(JACKS.iter())
             .any(|k| k.target == PanelTarget::Filter(id))
 }

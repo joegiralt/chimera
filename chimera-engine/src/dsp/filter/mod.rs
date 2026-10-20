@@ -1,4 +1,5 @@
 use crate::block::DiskCode;
+use crate::dsp::clampf;
 use crate::dsp::modulator::pick;
 use crate::hw::BLOCK_SIZE;
 use crate::hw::Cost;
@@ -9,6 +10,7 @@ use coef::exp2_poly;
 pub mod clean;
 pub mod coef;
 pub mod dirty;
+pub mod fed;
 pub mod k2040;
 pub mod ladder;
 pub mod level;
@@ -282,7 +284,7 @@ impl FilterKind {
     }
 
     /// What a moving block adds, once: a CUTOFF or RES route, or a FREQ or
-    /// Q tap. DIRTY's one loop already reads the arrays on every block.
+    /// Q tap, or FB. DIRTY's one loop already reads the arrays on every block.
     pub const fn move_cost(self) -> Cost {
         match self {
             FilterKind::Svf => CLEAN_MOVE_COST,
@@ -440,6 +442,99 @@ impl<'a> TapShape<'a> {
             *g = hold(*g * exp2_poly(fa[0] * x0 + fa[1] * x1), gr);
             *k = hold(*k + qa[0] * x0 + qa[1] * x1, kr);
         }
+    }
+}
+
+/// FB's bill a sample, on top of the moving path it runs on (ADR 0179):
+/// the ramped amount, the clamp, `exp2_poly`, the hold, the one-pole and
+/// on the 2040 the guard, in bank 2's loops. Counted on the thumbv7em ORBIT
+/// build against each type's moving loop: LADDER 140 → 190 instructions,
+/// the 2040 REV2 90 → 145 and EXP 105 → 166; CLEAN's and DIRTY's one loop
+/// for every mode adds its dispatch. Billed the costliest, EXP's 61:
+/// ceil5(61 × 1.606) = 100.
+pub const FB_COST: Cost = Cost(100);
+
+/// FB's octaves at ±1 for a unit of the filter's own output (#393): the
+/// voice's filtered saw runs at about ±0.3, so about ±2.5 octaves play at
+/// full FB (the demo's; ±4 barely moved the pluck).
+pub const FB_OCTAVES: f32 = 8.0;
+/// The FB signal's one-pole at full |FB|, 2.5 kHz at 48 kHz:
+/// `1 − e^(−2π·2500/48000)`. Open (1) at FB 0, so the loop's top end
+/// closes as FB rises, where its fizz is.
+pub const FB_LP_A: f32 = 0.279_397;
+
+/// FB (#393, ADR 0179): the filter's own output, a sample late, through a
+/// one-pole into its `g`: `g·2^(FB_OCTAVES·amt·clamp(y, ±1))`, held to the
+/// type's FREQ-tap range. `amt` ramps across the block, `(from, step)`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fed {
+    amt: (f32, f32),
+    /// The FB signal's one-pole, at this block's `|amt|`.
+    a: f32,
+}
+
+impl Default for Fed {
+    fn default() -> Self {
+        Fed::OFF
+    }
+}
+
+impl Fed {
+    /// No FB: the type's paths as they were.
+    pub const OFF: Fed = Fed {
+        amt: (0.0, 0.0),
+        a: 1.0,
+    };
+
+    /// A block's FB from `from` to `to` (−1..1, held).
+    pub fn new(from: f32, to: f32) -> Fed {
+        let a = 1.0 - clampf(to, -1.0, 1.0).abs() * (1.0 - FB_LP_A);
+        Fed::with_lp(from, to, a)
+    }
+
+    /// `new` with the one-pole's coefficient `a` (1: none), for the tests
+    /// that hear what it does.
+    pub fn with_lp(from: f32, to: f32, a: f32) -> Fed {
+        let (from, to) = (clampf(from, -1.0, 1.0), clampf(to, -1.0, 1.0));
+        if from == 0.0 && to == 0.0 {
+            return Fed::OFF;
+        }
+        let n = BLOCK_SIZE as f32;
+        Fed {
+            amt: (FB_OCTAVES * from, FB_OCTAVES * (to - from) / n),
+            a,
+        }
+    }
+
+    /// FB runs this block: the moving path.
+    #[inline(always)]
+    pub fn on(self) -> bool {
+        self != Fed::OFF
+    }
+
+    /// Sample `i`'s FB in octaves a unit.
+    #[inline(always)]
+    fn amt_at(self, i: usize) -> f32 {
+        self.amt.0 + self.amt.1 * (i + 1) as f32
+    }
+
+    /// Sample `i`'s |FB|, 0..1 (the 2040's headroom guard).
+    #[inline(always)]
+    pub(crate) fn depth(self, i: usize) -> f32 {
+        self.amt_at(i).abs() * (1.0 / FB_OCTAVES)
+    }
+
+    /// Sample `i`'s `g` from `g`, the FB signal `y` a sample late, held to
+    /// `r`.
+    #[inline(always)]
+    pub(crate) fn g(self, g: f32, i: usize, y: f32, r: (f32, f32)) -> f32 {
+        hold(g * exp2_poly(self.amt_at(i) * clampf(y, -1.0, 1.0)), r)
+    }
+
+    /// The FB signal after sample `out`.
+    #[inline(always)]
+    pub(crate) fn feed(self, y: &mut f32, out: f32) {
+        *y += self.a * (out - *y);
     }
 }
 

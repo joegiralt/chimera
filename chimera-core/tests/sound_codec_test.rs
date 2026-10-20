@@ -559,7 +559,7 @@ fn sparse_is_canonical() {
         assert_eq!(encode(&a) == encode(&b), eq, "case {i}");
         if eq { same += 1 } else { moved += 1 }
     }
-    assert!(same > 0 && moved > 900, "{same} same, {moved} moved");
+    assert!(same > 0 && moved > 880, "{same} same, {moved} moved");
 }
 
 #[test]
@@ -679,7 +679,7 @@ fn sparse_bound() {
         assert!(c <= MAX_SOUND_COST, "{e:?} {c}");
         most = most.max(c + 5 * stuck);
     }
-    assert_eq!(most, 2633);
+    assert_eq!(most, 2638);
     assert_eq!(MAX_SOUND_COST, most.next_multiple_of(16));
 }
 

@@ -261,8 +261,8 @@ pub static FILTER: BlockDef = BlockDef {
     ],
 };
 
-/// FLT › MOD: the type's six cells (filter-types spec § 2, § 3): FM1 · FM2
-/// (the 2040's ENV AMT · KEYBD), FM3, FM3 IN, QM, QM IN. `short` is
+/// FLT › MOD: the type's cells (filter-types spec § 2, § 3, ADR 0179): FM1 ·
+/// FM2 (the 2040's ENV AMT · KEYBD) · FM3 · FB · QM; F is empty. `short` is
 /// "FMD" (filter mod), not "MOD": on the Algo map "MOD" would read as the
 /// MOD node's own, and "FMOD" runs into the next node.
 pub static FILTER_MOD: BlockDef = BlockDef {
@@ -277,7 +277,25 @@ pub static FILTER_MOD: BlockDef = BlockDef {
         ParamSlot::filter_panel(5),
         ParamSlot::filter_panel(6),
         ParamSlot::filter_panel(7),
-        ParamSlot::filter_panel(8),
+        EMPTY,
+    ],
+};
+
+/// FLT › JACK (ADR 0179): the jacks, patching, not sound; FM3 IN in C and
+/// QM IN in E, under FM3's and QM's encoders on FLT › MOD.
+pub static FILTER_JACKS: BlockDef = BlockDef {
+    id: 98,
+    name: "Filter Jacks",
+    short: "JACK",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        EMPTY,
+        EMPTY,
+        ParamSlot::filter_panel(10),
+        EMPTY,
+        ParamSlot::filter_panel(11),
+        EMPTY,
     ],
 };
 
@@ -300,7 +318,7 @@ pub static FILTER_FX: BlockDef = BlockDef {
     ],
 };
 
-static FILTER_SUB_PAGES: [&BlockDef; 2] = [&FILTER_MOD, &FILTER_FX];
+static FILTER_SUB_PAGES: [&BlockDef; 3] = [&FILTER_MOD, &FILTER_FX, &FILTER_JACKS];
 
 // ---------------------------------------------------------------------------
 // Modulators — envelopes, LFOs, etc.

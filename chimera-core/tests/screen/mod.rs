@@ -1500,9 +1500,16 @@ pub const CASES: &[ScreenCase] = &[
     ("flt_mod_repatched", |ui| {
         on_flt(ui, FilterKind::Svf, true);
         feed(ui, Input::turn(EncoderId::C, 30)); // FM3 on LFO 1
-        feed(ui, Input::turn(EncoderId::D, 1)); // FM3 IN = LFO 2
         feed(ui, Input::turn(EncoderId::E, 40)); // QM on ENV 3
-        feed(ui, Input::turn(EncoderId::F, 20)); // QM IN = OP 6, the list's end
+        feed(ui, Input::press(ButtonId::Edit)); // FLT › FX
+        feed(ui, Input::press(ButtonId::Edit)); // FLT › JACK (ADR 0179)
+        feed(ui, Input::turn(EncoderId::C, 1)); // FM3 IN = LFO 2
+        feed(ui, Input::turn(EncoderId::E, 20)); // QM IN = OP 6, the list's end
+    }),
+    // FB turned up on the 2040 (ADR 0179).
+    ("flt_mod_fb", |ui| {
+        on_flt(ui, FilterKind::K2040, true);
+        feed(ui, Input::turn(EncoderId::D, 24));
     }),
     // FLT › FX (ADR 0155): OFF's dashes and dimmed MIX; SOFT's and FOLD's
     // words, a pot turned. FX and PLACE turned on FLT's front.

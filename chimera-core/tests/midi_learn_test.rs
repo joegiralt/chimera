@@ -16,11 +16,11 @@ use chimera_core::midi_map::{MAP_LEN, Mappable};
 use chimera_core::params::FilterParams;
 use chimera_core::project::{PartId, PartStatus, part_status};
 use chimera_core::ui::UiState;
-use chimera_core::ui::block_registry::{FILTER, FILTER_MOD};
+use chimera_core::ui::block_registry::{FILTER, FILTER_JACKS};
 use chimera_core::ui::learn::{Learn, LearnNote};
 use chimera_core::ui::nav::PartChain;
 use chimera_hal::ButtonId::{B2, Edit, Menu, Mix, Plus, Seq};
-use chimera_hal::EncoderId::{C, D, F};
+use chimera_hal::EncoderId::{C, F};
 use chimera_hal::Ms;
 use screen::{Input, feed, tap};
 
@@ -195,13 +195,16 @@ fn learn_refusals() {
     );
     assert!(ui.project().part(P1).sound.map.is_empty());
 
-    // FM3 IN patches: not mappable, and a CC changes nothing.
+    // FM3 IN patches (FLT › JACK, ADR 0179): not mappable, and a CC
+    // changes nothing.
     let mut ui = on_cutoff();
-    feed(&mut ui, Input::press(Edit));
-    assert_eq!(ui.page_def().id, FILTER_MOD.id);
+    for _ in 0..3 {
+        feed(&mut ui, Input::press(Edit));
+    }
+    assert_eq!(ui.page_def().id, FILTER_JACKS.id);
     mix_seq(&mut ui);
-    feed(&mut ui, Input::turn(D, 1)); // FM3 IN, armed: focus only
-    assert_eq!(ui.page_def().id, FILTER_MOD.id, "no SEQ tap");
+    feed(&mut ui, Input::turn(C, 1)); // FM3 IN, armed: focus only
+    assert_eq!(ui.page_def().id, FILTER_JACKS.id, "no SEQ tap");
     assert_eq!(band(&ui), "FM3 IN NOT MAPPABLE");
     let before = format!("{:?}", ui.project().part(P1).sound.params);
     cc(&mut ui, ch(0), 74, 100, 20_000);
