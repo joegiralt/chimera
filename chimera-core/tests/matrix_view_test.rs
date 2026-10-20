@@ -663,8 +663,8 @@ fn matrix_edits_redraw_through_the_region_keys() {
     for _ in 0..2 {
         feed(&mut ui, Input::press(ButtonId::Minus)); // → FLT
     }
-    prime(&mut ui, EncoderId::F);
-    feed(&mut ui, Input::turn(EncoderId::C, 1)); // FX SOFT
+    prime(&mut ui, EncoderId::C);
+    feed(&mut ui, Input::turn(EncoderId::B, 1)); // FX SOFT
     feed(&mut ui, Input::press(ButtonId::Edit));
     feed(&mut ui, Input::press(ButtonId::Edit)); // → FLT › FX
     for enc in [EncoderId::A, EncoderId::C, EncoderId::D] {

@@ -295,7 +295,7 @@ fn the_readout_shows_the_target_the_frame_after_a_turn() {
 fn readouts_show_the_target_through_full_and_dirty_renders() {
     // The matrix fill eases by design: only its keys are checked here.
     for (case, enc, by, exact) in [
-        ("bigviz_filter", EncoderId::D, 40, true),
+        ("bigviz_filter", EncoderId::E, 40, true),
         ("mod_matrix", EncoderId::E, 40, false),
     ] {
         let scope = scope_fixture();

@@ -25,7 +25,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("algo_op_page_frmt", 0x3248e92fc9e0cf08),
     ("algo_op_page_nois", 0x41d2669aa19cb3bf),
     // Re-recorded on the merge of main (#614): the filter picture in layout A.
-    ("flt_clean", 0x78d6c32d132b4d21),
+    ("flt_clean", 0xb23c27d9c36f48d1),
     ("settings_top", 0xf1655533215f4e4b),
     ("settings_personal_theme", 0x3a2a9ae7815335b2),
     // Re-recorded: FACTORY joins the title, B ◂▸ moves to hint line 1.

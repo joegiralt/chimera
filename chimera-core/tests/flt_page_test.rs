@@ -77,7 +77,7 @@ fn render(ui: &UiState) -> Vec<f32> {
 fn every_flt_knob_changes_a_held_note() {
     for ct in EngineType::ALL {
         for (sub, slots) in [
-            (0, &[1usize, 4, 5][..]),
+            (0, &[3usize, 5, 2][..]),
             (1, &[0usize, 1, 2, 4][..]),
             (2, &[0usize][..]),
         ] {
@@ -394,13 +394,13 @@ fn stand_ins_move_the_cutoff_bar() {
     let mut ui = on_flt(EngineType::Algo);
     ui.params_mut().filter.cutoff = 20.0;
     ui.update(UiTick::for_test());
-    let base = ui.renderer.anim[4].target();
+    let base = ui.renderer.anim[5].target();
     let spec = CUTOFF.spec().unwrap();
     let bar = |ui: &mut UiState, src: ModSource, amount: i8| {
         ui.mod_state_mut()
             .set_fixed(src.index(), FixedCol::Freq, amount);
         ui.update(UiTick::for_test());
-        let t = ui.renderer.anim[4].target();
+        let t = ui.renderer.anim[5].target();
         ui.mod_state_mut().set_fixed(src.index(), FixedCol::Freq, 0);
         t
     };
@@ -765,7 +765,7 @@ fn mix_minus_on_a_route_view_deletes_its_route() {
 #[test]
 fn mix_plus_on_a_fixed_param_reports_already_routed() {
     let mut ui = on_flt(EngineType::Algo);
-    for enc in [EncoderId::E, EncoderId::F] {
+    for enc in [EncoderId::F, EncoderId::C] {
         feed(&mut ui, Input::turn(enc, 1)); // FREQ, Q
         feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
         assert_eq!(
@@ -833,7 +833,7 @@ fn panels_follow_the_type() {
     for def in [&FILTER, &FILTER_MOD] {
         assert!((0..6).all(|i| view::view(def, i, &ctx).addr() != Some(mode)));
     }
-    assert_eq!(view::view(&FILTER, 1, &ctx).label(), "VOICE");
+    assert_eq!(view::view(&FILTER, 3, &ctx).label(), "VOICE");
 }
 
 #[test]
