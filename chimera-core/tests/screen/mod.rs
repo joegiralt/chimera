@@ -2109,8 +2109,8 @@ pub const CASES: &[ScreenCase] = &[
         st.eject();
         factory_tab(ui, st, |_| {})
     }),
-    // A stray TAPE factory file, lowest id first: greyed, COMING SOON.
-    ("factory_coming_soon", |ui| {
+    // A TAPE factory file, lowest id first: listed like any.
+    ("factory_tape_row", |ui| {
         let mut st = factory_card();
         factory_file(
             &mut st,

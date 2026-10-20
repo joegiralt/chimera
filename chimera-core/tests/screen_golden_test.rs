@@ -23,6 +23,8 @@ use screen::*;
 // beat dot, so three paths drop their first part.
 // The pool, library and TAPE-source screens again for CHOIR, TALK BASS,
 // BREATH and VOX in the bank: the pool bar counts their bytes.
+// Re-recorded for ADR 0187: INIT TAPE joins the browser and NEW; the pool
+// meter, cost and the factory TAPE row follow.
 // Re-recorded for #562: a Part's SOUND and MIX headers draw six Part dots.
 // Re-recorded for #614 (FX in the filter, Task 7: layout A), the map
 // without DRV, FLT's and AMP's new cells: engine_algo, algo_alg,
@@ -298,45 +300,45 @@ const GOLDENS: &[(&str, u64)] = &[
     // Sound is smaller (fixed columns, no registry entry).
     // Then, with the library_* screens: FACTORY joins the title and B ◂▸
     // moves to hint line 1 (showcase Task 4).
-    ("sound_browser", 0xe6ebc09a421a5c11),
+    ("sound_browser", 0x6623b45f5159b54c),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
     // Then pool_full: 2352 → 2544 (the formant fields).
     // Re-recorded at the merge: MAX_SOUND_COST 2688 (VOICEFX and PLAY's MODE).
-    ("sound_browser_pool_full", 0x81ce95e09e0bd574),
+    ("sound_browser_pool_full", 0x30d9348383441db9),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.
-    ("library_empty", 0xaf1407579ab08624),
-    ("library_no_card", 0x386e6c2c8027ccd9),
-    ("library_sounds", 0x8964371b11796e5f),
-    ("library_this_build", 0x0719763e23b44930),
-    ("library_cut_short", 0x8b4bddae0c9784ad),
-    ("library_older", 0x004f2248949f5c1f),
-    ("library_newer", 0x54415a7d9a958936),
+    ("library_empty", 0x8ff43b98d2c86a11),
+    ("library_no_card", 0x168ce5173d61f5ec),
+    ("library_sounds", 0x076f85f0ce687b12),
+    ("library_this_build", 0xde6811b43375f8d5),
+    ("library_cut_short", 0xb99075b511f1af08),
+    ("library_older", 0x2cc7cf964ecd32d2),
+    ("library_newer", 0x8b2feaec640678a3),
     ("library_wont_fit", 0x24494e0f831f3bab),
     ("library_pool_full", 0x950a8303f1cef0f3),
     ("library_naming", 0xa234ea336d54efbf),
     // The FACTORY tab: a row's description on line 2, the set's build on
-    // line 3; empty, no card, and a stray TAPE file greyed COMING SOON.
+    // line 3; empty, no card, and a TAPE file listed.
     // Re-recorded on the merge: the pool meter at the formant cost.
-    ("factory_described", 0xde88e442deb01c5b),
-    ("factory_empty", 0x8b3ffd0a81b93e56),
-    ("factory_no_card", 0xeb75c38b1f28726b),
-    ("factory_coming_soon", 0xe9464e21b7ec8f87),
+    ("factory_described", 0x059be77931b2fd86),
+    ("factory_empty", 0xb13dbda8afb210c3),
+    ("factory_no_card", 0xc327c2468f6650b6),
+    ("factory_tape_row", 0x498ea355d4f277d3),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     // Re-recorded: INVERT in cell F (ADR 0126).
     ("settings_personal_theme", 0x69eb789acb0d98db),
     // PERSONALIZE › CHAIN MAP: PAGES, ROW (ADR 0145).
     ("settings_personal_chain_map", 0x7aa40f30346b46bd),
     // Long user names, LARGE's pair (ADR 0154).
-    ("sound_browser_long", 0x9f219d2caa40b9bd),
+    ("sound_browser_long", 0x16575d1984da08b0),
     // PERSONALIZE › TEXT SIZE at NORMAL (ADR 0154).
     ("settings_personal_text_size", 0x771bfc59119e85d2),
     ("settings_midi_sync", 0x0e26ce69d0f54980),
     ("settings_system_diag_aud_load", 0x18fe4d081416e4cb),
     // Re-recorded: NEW holds TAPE's INIT too (TAPE Task 12), each Sound
     // sparser with the fixed columns, then VA's INIT: `12 · 2.2K`, 157K free.
-    ("settings_project_pool", 0x6ceb6837fe4ebecc),
+    ("settings_project_pool", 0xdfa3be17104300dc),
     // ORBIT's row opens its list (plan Task 17).
     ("settings_top", 0x08d6ee26dad9fb97),
     // Part 3's LIVE SNAP leaf (plan Task 15).
@@ -390,9 +392,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("large_mixer_sends", 0x66e4fced766b46b8),
     ("large_settings_top", 0x9d2976351278b0df),
     ("large_settings_personal", 0x35b1c3eb794412f7),
-    ("large_sound_browser", 0x018933e3d8721858),
-    ("large_sound_browser_long", 0xa914e71773ba2c56),
-    ("large_library_sounds", 0xc680b63718145a73),
+    ("large_sound_browser", 0x91de2b3def4d11a9),
+    ("large_sound_browser_long", 0x0998bde715859fbb),
+    ("large_library_sounds", 0x5b05a63df82aab7e),
     ("large_settings_text_size", 0xe57ffb4a4502d385),
     // SCN: a saved slot, SAVE's, a queued one filling (plan Task 16).
     ("orbit_scn", 0x7c2558bf895b7432),

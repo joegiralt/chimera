@@ -1240,18 +1240,11 @@ impl UiState {
     fn load_sound(&mut self, part: PartId, b: Browse) {
         let cursor = b.cursor();
         // The init entries lead the pool slots; a coming-soon engine's
-        // row, or a pool Sound of one, only says so.
-        let soon = |s: browser::Soon| Line::new(s.toast());
+        // row only says so.
         let from = match browser::entry_at(cursor) {
-            Some(browser::Entry::Slot(s)) => {
-                let engine = self.project.pool().get(s).map(|x| x.engine());
-                if let Some(x) = engine.and_then(browser::Soon::of) {
-                    return self.notice(soon(x));
-                }
-                PartFrom::Slot(s)
-            }
+            Some(browser::Entry::Slot(s)) => PartFrom::Slot(s),
             Some(browser::Entry::Init(e)) => PartFrom::Init(e),
-            Some(browser::Entry::Soon(s)) => return self.notice(soon(s)),
+            Some(browser::Entry::Soon(s)) => return self.notice(Line::new(s.toast())),
             None => return,
         };
         // An empty slot has nothing to ask about.
@@ -1961,13 +1954,6 @@ impl UiState {
     #[doc(hidden)]
     pub fn replaced_for_test(&mut self, was: PartChain) {
         self.project_replaced(was)
-    }
-
-    /// LIBRARY lists TAPE Sounds, for the tests of their load.
-    #[cfg(any(test, feature = "test-support"))]
-    #[doc(hidden)]
-    pub fn list_tape_for_test(&mut self) {
-        self.lib.tape = true;
     }
 
     /// A replace from `src` that asks opens its prompt; whether it did.
