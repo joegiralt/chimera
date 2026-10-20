@@ -658,6 +658,10 @@ mv-ab type:
 mv-structure +progs:
     {{utils}} mv-structure {{progs}}
 
+# TAPE's Hermite read against a polyphase sinc, 24 kHz source, -12..+24 st (#698)
+tape-interp-ab dir:
+    {{utils}} tape-interp-ab {{dir}}
+
 # Loudness, vibrato, drift, breath share, formants and vowel motion of WAVs
 voice-stats +wavs:
     {{utils}} voice-stats {{wavs}}

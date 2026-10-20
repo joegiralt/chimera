@@ -11,6 +11,7 @@ mod devices;
 mod dropouts;
 mod generic;
 mod grain;
+mod interp;
 mod metrics;
 mod models;
 mod models_burst;
@@ -61,6 +62,8 @@ usage: chimera-utils [flags] COMMAND …
                            the per-chunk CRCs of sealed sources, for `just put-beds`
   dropouts find REC.WAV --ref BED.WAV [--channel N]
                            gaps, repeats and skips in a recording of stream 0
+  tape-interp-ab DIR       TAPE's Hermite read against a polyphase sinc on a 24 kHz
+                           source at -12/0/+12/+24 st (#698), WAVs into DIR
   stim DIR                 the listening set as WAVs into DIR:
                            snare bass stab sine_short sine_long texture hats
 flags:
@@ -254,6 +257,9 @@ fn run() -> Result<bool, String> {
             beds::check(&rest[1..]).map(|_| true)
         }
         "dropouts" if rest.first().is_some_and(|c| c == "find") => dropouts::find(&rest[1..]),
+        "tape-interp-ab" if rest.len() == 1 => {
+            interp::write(std::path::Path::new(&rest[0])).map(|()| true)
+        }
         "stim" if rest.len() == 1 => {
             stim::write_listening(std::path::Path::new(&rest[0])).map(|ps| {
                 ps.iter().for_each(|p| println!("{}", p.display()));

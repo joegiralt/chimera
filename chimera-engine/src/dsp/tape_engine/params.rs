@@ -260,6 +260,43 @@ impl DiskCode for Wow {
     }
 }
 
+/// ONE's RETRIG (#698): a note on the Part STACKs on its others, or CUTs
+/// them (an open hat choked by a closed one, MPC's mute group within a
+/// Part) until KIT's choke groups land. A key struck again always cuts its
+/// own note (the allocator's re-strike).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Retrig {
+    Stack = 0,
+    Cut = 1,
+}
+
+impl DiskCode for Retrig {
+    fn disk_code(self) -> u8 {
+        self as u8
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            Retrig::Stack => "STACK",
+            Retrig::Cut => "CUT",
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(Retrig::Stack),
+            1 => Some(Retrig::Cut),
+            _ => None,
+        }
+    }
+}
+
+/// A note on `p`'s Part cuts its other notes: ONE at RETRIG CUT.
+pub fn cuts(p: &TapeEngineParams) -> bool {
+    p.machine() == TapeMachine::One && p.retrig == Retrig::Cut
+}
+
 /// STRETCH's splice: in phase with the old grain (MONO), or at the time
 /// pointer (POLY).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -343,6 +380,8 @@ pub struct TapeEngineParams {
     /// ONESHOT's SLICE: retired, kept at OFF.
     pub slice: SliceCode,
     pub wow: Wow,
+    /// ONE's RETRIG.
+    pub retrig: Retrig,
 }
 
 /// Neutral (`Sound::neutral(Tape)`, a format contract): the whole source
@@ -366,6 +405,7 @@ impl Default for TapeEngineParams {
             period: 0.0,
             slice: SliceCode::OFF,
             wow: Wow::Capstan,
+            retrig: Retrig::Stack,
         }
     }
 }
@@ -400,6 +440,7 @@ impl TapeEngineParams {
     pub const SLICE: ParamId = ParamId(13);
     pub const WOW: ParamId = ParamId(14);
     pub const MODE: ParamId = ParamId(15);
+    pub const RETRIG: ParamId = ParamId(16);
 }
 
 /// Whether `m` reads `id`: the one table for cells, dimming and the audio
@@ -464,10 +505,11 @@ const fn unit(
 /// Every machine cell shows the machine's glyph (ADR 0173).
 const TAPE: crate::glyph::FocusGlyph = crate::glyph::FocusGlyph::Tape;
 
-/// The five macros are modulatable (read every block, eased); the rest is
-/// read at note-on or at a wrap. ROOT and PERIOD have no cell: a pick
+/// The five macros are modulatable (read every block, eased), and START,
+/// latched by ONE's and TRON's first block; the rest is read at note-on or
+/// at a wrap. ROOT and PERIOD have no cell: a pick
 /// copies them from the source.
-pub static TAPE_ENGINE_SPECS: [ParamSpec; 16] = [
+pub static TAPE_ENGINE_SPECS: [ParamSpec; 17] = [
     // The neutral is PLAY in MODE LOOP: LOOP, index 1.
     ParamSpec::choice(
         0,
@@ -479,7 +521,8 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 16] = [
     )
     .ident("MODEL")
     .glyph(TAPE),
-    unit(1, "START", 0.0, false, Smoothing::NoteOn).ident("START"),
+    // A matrix destination, latched at note-on: VEL → START (#698).
+    unit(1, "START", 0.0, true, Smoothing::NoteOn).ident("START"),
     unit(2, "END", 1.0, false, Smoothing::NoteOn).ident("END"),
     unit(3, "POSITION", 0.0, true, Smoothing::KNOB)
         .short("POS")
@@ -591,6 +634,17 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 16] = [
     )
     .ident("MODE")
     .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::choice(
+        16,
+        "RETRIG",
+        ValFmt::Names(&["STACK", "CUT"]),
+        1.0,
+        0.0,
+        Change::NoteOn,
+    )
+    .short("RTG")
+    .ident("RETRIG")
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 impl Block for TapeEngineParams {
@@ -617,6 +671,7 @@ impl Block for TapeEngineParams {
             Self::SLICE => self.slice.code() as f32,
             Self::WOW => self.wow as u8 as f32,
             Self::MODE => self.mode as u8 as f32,
+            Self::RETRIG => self.retrig as u8 as f32,
             _ => 0.0,
         }
     }
@@ -652,6 +707,13 @@ impl Block for TapeEngineParams {
                 }
             }
             Self::MODE => self.mode = PlayMode::from_disk_code(v as u8).unwrap_or(PlayMode::Ping),
+            Self::RETRIG => {
+                self.retrig = if v as u8 == 0 {
+                    Retrig::Stack
+                } else {
+                    Retrig::Cut
+                }
+            }
             _ => {}
         }
     }
@@ -663,6 +725,7 @@ impl Block for TapeEngineParams {
             Self::SLICE => Some(self.slice.code()),
             Self::WOW => Some(self.wow.disk_code()),
             Self::MODE => Some(self.mode.disk_code()),
+            Self::RETRIG => Some(self.retrig.disk_code()),
             _ => None,
         }
     }
@@ -674,6 +737,7 @@ impl Block for TapeEngineParams {
             Self::SLICE => Some(SLICE_IDENTS[usize::from(self.slice.code())]),
             Self::WOW => Some(self.wow.disk_ident()),
             Self::MODE => Some(self.mode.disk_ident()),
+            Self::RETRIG => Some(self.retrig.disk_ident()),
             _ => None,
         }
     }
@@ -687,6 +751,7 @@ impl Block for TapeEngineParams {
             }),
             Self::WOW => apply_code(Wow::from_disk_code(code), |w| self.wow = w),
             Self::MODE => apply_code(PlayMode::from_disk_code(code), |m| self.mode = m),
+            Self::RETRIG => apply_code(Retrig::from_disk_code(code), |r| self.retrig = r),
             _ => false,
         }
     }

@@ -94,9 +94,9 @@ use wave::Wave;
 pub use heads::loop_len;
 pub use oneshot::SliceCode;
 pub use params::{
-    FADE_HOLD, MACHINE_NAMES, MODEL_NAMES, NeedsRam, PlayMode, StretchType, TAPE_ENGINE_SPECS,
-    TapeEngineParams, TapeMachine, TapeModel, Wow, at_root, drag_s, fade_default, jogs, needs_ram,
-    reads, reads_in,
+    FADE_HOLD, MACHINE_NAMES, MODEL_NAMES, NeedsRam, PlayMode, Retrig, StretchType,
+    TAPE_ENGINE_SPECS, TapeEngineParams, TapeMachine, TapeModel, Wow, at_root, cuts, drag_s,
+    fade_default, jogs, needs_ram, reads, reads_in,
 };
 
 // Each model's bill: its measured worst a sample, the M7's static count
@@ -124,11 +124,14 @@ pub const COST_TAPE_RUNS: Cost = Cost(10);
 /// AGE when it runs (`age::age_runs`): the wear's loop and block, 15.9 →
 /// 25.5.
 pub const COST_AGE: Cost = Cost(30);
-/// A streamed source on PLAY's bill: span switching, slot checks, the
-/// ports and the block's re-bill (`refresh_bills`, #596). Measured on the
-/// unit (TAPE STREAM bench, 2026-10-18, ADR 0013): LOOP and HIT both +100
-/// a voice over the same eight on RAM sources.
-pub const COST_STREAM: Cost = Cost(100);
+/// A streamed source on ONE's, LOOP's and TRON's bill: span switching,
+/// slot checks, the ports and the block's re-bill (`refresh_bills`, #596).
+/// Measured on the unit (TAPE STREAM bench, 2026-10-18, ADR 0013): LOOP
+/// and HIT both +100 a voice over the same eight on RAM sources; the gain's
+/// `vdiv.f32` a sample (14 cycles, not pipelined, the ELF's `render_reads`)
+/// is gone since, and at rest so is its loop (#698): 100 − 14, rounded up.
+/// The unit's bench re-measures it once the card's stress run frees it.
+pub const COST_STREAM: Cost = Cost(90);
 /// TRANSWAVE's pitch can cross a level (`COST_WAVE_LEVEL`) in a note past
 /// this many cents: the hysteresis' 0.35 to 0.715 step, ±6.2 st.
 pub const LEVEL_CENTS: f32 = 620.0;
@@ -1010,6 +1013,8 @@ impl TapeDeck {
                 );
             } else if v.frames() < self.n || self.streamed {
                 self.active = false;
+            } else if self.moved_start(p) {
+                self.once_on(self.note, p, &v, sample_rate);
             }
             self.render(out, p, &v, sample_rate);
         } else {
@@ -1021,6 +1026,18 @@ impl TapeDeck {
             }
         }
         self.end_stream(streams);
+    }
+
+    /// ONE's or TRON's START as the note's first block plays it, its
+    /// routes on (VEL, NOTE, an LFO: #698) differs from the stored one its
+    /// note-on latched: the head starts there instead, before a sample has
+    /// played. START latches there.
+    fn moved_start(&mut self, p: &TapeEngineParams) -> bool {
+        let moved = self.first && self.active && self.one_head() && p.start != self.start;
+        if moved {
+            self.start = p.start;
+        }
+        moved
     }
 
     /// A streamed note that ended drops its slots.
@@ -1059,6 +1076,15 @@ impl TapeDeck {
             .and_then(|st| self.row((held, d), st.frames));
         match row {
             Some(row) if self.active && self.streamed && row.frames() >= self.n => {
+                if self.moved_start(p)
+                    && let Some(stream) = self.stream_of(port)
+                {
+                    // Warm if START's head holds the new start, else cold.
+                    self.once_on(self.note, p, &row.silent(), sample_rate);
+                    let at = self.heads[0].pos.whole();
+                    let head = row.head(HeadIdx::START);
+                    self.cursor.start(at, self.inc_cap, head, stream, port);
+                }
                 self.stream_block(out, p, row, sample_rate, port);
             }
             _ => {

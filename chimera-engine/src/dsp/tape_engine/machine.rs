@@ -69,8 +69,11 @@ pub static MACHINES: [Machine; 7] = [
         machine: TapeMachine::One,
         page: "ONE",
         deck: &[START, END],
-        // HOLD: a drum one-shot plays to END.
-        cells: &[cell(P::DRAG, "FADE", "FDE", FADE_HOLD)],
+        // HOLD: a drum one-shot plays to END; RETRIG STACKs.
+        cells: &[
+            cell(P::DRAG, "FADE", "FDE", FADE_HOLD),
+            cell(P::RETRIG, "RETRIG", "RTG", 0.0),
+        ],
     },
     Machine {
         machine: TapeMachine::Loop,
