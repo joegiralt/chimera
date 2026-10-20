@@ -13,15 +13,19 @@ mod screen;
 use chimera_core::ui::theme_settings::{Accent, Black, ThemeSettings, palette};
 use screen::*;
 
+// Re-recorded for #614 (Task 7, layout A): the Algo map without DRV in
+// engine_algo, algo_formant_page and the algo_op_page_* four; flt_clean's
+// cells in layout A.
 const GOLDENS: &[(&str, u64)] = &[
-    ("engine_algo", 0x0c812e5949e9cc0b),
+    ("engine_algo", 0x1f9c0460b53edbe5),
     // Re-recorded: a value's unit sits small beside its number (ADR 0146).
-    ("algo_formant_page", 0xaeb00b7e789eb095),
-    ("algo_op_page_3", 0xba18428d2737860c),
-    ("algo_op_page_3_turned", 0x1e13ee93c98f7d77),
-    ("algo_op_page_frmt", 0x637dadcf4ecbddc2),
-    ("algo_op_page_nois", 0x2e63d3eca77c837d),
-    ("flt_clean", 0xc18ea9c7e3ae99d3),
+    ("algo_formant_page", 0x667903c194e3942f),
+    ("algo_op_page_3", 0x4fa1837d43fa861a),
+    ("algo_op_page_3_turned", 0x0fbe9f33b8f64f79),
+    ("algo_op_page_frmt", 0x3248e92fc9e0cf08),
+    ("algo_op_page_nois", 0x41d2669aa19cb3bf),
+    // Re-recorded on the merge of main (#614): the filter picture in layout A.
+    ("flt_clean", 0x0b3331f205833193),
     ("settings_top", 0xf1655533215f4e4b),
     ("settings_personal_theme", 0x3a2a9ae7815335b2),
     // Re-recorded: FACTORY joins the title, B ◂▸ moves to hint line 1.

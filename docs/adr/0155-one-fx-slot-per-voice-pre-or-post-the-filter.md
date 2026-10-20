@@ -1,4 +1,4 @@
-# 0155. One FX slot per voice, PRE or POST the filter
+# 0155. One FX slot per voice, PRE or POST the filter (supersedes in part 0037)
 
 - **Status:** Proposed
 - **Deciders:** owner (2026-10-17, rulings 2026-10-19), #614
@@ -29,7 +29,7 @@ A voice can run two shaping stages today: DRV before the filter and the AMP page
   | CLEAN, DIRTY, LADDER | KIND · MODE · FX · PLACE · FREQ · Q | FM1 · FM2 · FM3 · FM3 IN · QM · QM IN | INPUT · P1 · P2 · P3 · MIX |
   | 2040 | KIND · VOICE · FX · PLACE · CUTOFF · RES | ENV AMT · KEYBD · FM3 · FM3 IN · QM · QM IN | INPUT · P1 · P2 · P3 · MIX |
 
-  The 2040's fixed MODE cell is dropped: it can't change, so KIND's focus band names it (4-POLE LP). FLT › FX draws a strip of where the effect sits and the type's curve. With TYPE OFF, the pots read as dashes and MIX dimmed. PLACE has its own glyph (an FX box and a FLT box joined by an arrow, the lit one the effect).
+  The 2040's fixed MODE cell is dropped, which supersedes in part ADR 0037 (its panel kept that dimmed cell): it can't change, so KIND's focus band names it (4-POLE LP). FLT › FX draws a strip of where the effect sits and the type's curve. With TYPE OFF, the pots read as dashes and MIX dimmed. PLACE has its own glyph (an FX box and a FLT box joined by an arrow, the lit one the effect).
 - **Routed cells are matrix views.** ENV AMT, KEYBD, FM3 and QM on the filter pages are views of MOD matrix cells, as today. The matrix's fixed FOLD column becomes **FX** (`FixedCol::Fx`) and moves the current type's P1; ALGO's OP 5/6 taps on it act only while TYPE is FOLD, and are dimmed and unbilled otherwise.
 - **Each type bills its real cost** in the voice's admission bill: OFF nothing, SOFT today's DRV, FOLD today's fold, FUZZ its own measured bill. A **TYPE or PLACE change crossfades over 20 ms** (`FX_FADE` = 960 samples, the stage gate's): old and new run together, and the fade blocks are not billed, as with the filter's fade. A change arriving mid-fade waits for its end; the last one wins.
 - **A fixed reference level per engine, `EngineType::fx_scale`:** the signal is multiplied by it into the slot and divided by it out, so the same knob position bites the same on every engine and a stage at MIX 0 is the dry signal. Never a running normaliser.

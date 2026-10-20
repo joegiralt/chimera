@@ -29,8 +29,9 @@ use chimera_core::dsp::delay::DelayParams;
 use chimera_core::dsp::fx_bus::{FxBus, FxParams};
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode};
 use chimera_core::dsp::reverb::ReverbParams;
+use chimera_core::dsp::voice_fx::params::{FxType, VoiceFxParams};
 use chimera_core::hw::DAC_PAIRS;
-use chimera_core::params::{DriveParams, FilterParams, FolderParams, OutParams, PitchParams};
+use chimera_core::params::{FilterParams, OutParams, PitchParams};
 use chimera_core::part::{DacPair, PartParams};
 use common::sweep::*;
 
@@ -345,7 +346,7 @@ const SWELL: f32 = 1.122;
 /// Why the tail may hold its level to the bound, yet not be stuck: the
 /// ring beneath it still decays.
 fn stuck_ok(c: &Case, (first, last): (f32, f32), t: Timing) -> Option<&'static str> {
-    if c.rings_on() && c.is(BlockRef::Folder, FolderParams::FOLD) && c.any(|v| v >= 0.75) {
+    if c.rings_on() && c.is(BlockRef::VoiceFx, VoiceFxParams::P1) && c.any(|v| v >= 0.75) {
         // The ring before the folder: the same case at FOLD 0 must decay.
         let flat = Case {
             mv: Move::Static(0.0),
@@ -1045,8 +1046,10 @@ fn find(block: BlockRef, id: ParamId) -> Param {
 #[test]
 fn the_folder_sym_puts_no_dc_on_the_dac() {
     let mut b = Bench::new(Patch::AlgoInit, PartParams::default(), FxParams::OFF);
-    b.set(&find(BlockRef::Folder, FolderParams::FOLD), 0.5);
-    b.set(&find(BlockRef::Folder, FolderParams::SYMMETRY), 0.0);
+    b.edit_sound(|s| {
+        s.params.fx.set_type(FxType::Fold);
+        (s.params.fx.pots, s.params.fx.mix) = ([0.5, 0.0, 0.5], 0.5);
+    });
     let mut t = Tape::default();
     let off = 2 * DC_FROM;
     for blk in 0..off + 2500 {
@@ -1213,21 +1216,27 @@ fn jumps_never_click() {
             true,
             FAST,
         ),
+        // BUSY ALGO holds a FOLD in the slot, BUSY MODAL a SOFT.
         (
-            find(BlockRef::Folder, FolderParams::FOLD),
-            symp,
+            find(BlockRef::VoiceFx, VoiceFxParams::P1),
+            Patch::BusyAlgo,
             false,
             FAST,
         ),
         (
-            find(BlockRef::Folder, FolderParams::SYMMETRY),
+            find(BlockRef::VoiceFx, VoiceFxParams::P2),
             Patch::BusyModal,
             false,
             THOROUGH,
         ),
-        (find(BlockRef::Drive, DriveParams::DRIVE), symp, false, FAST),
         (
-            find(BlockRef::Drive, DriveParams::MIX),
+            find(BlockRef::VoiceFx, VoiceFxParams::P1),
+            Patch::BusyModal,
+            false,
+            FAST,
+        ),
+        (
+            find(BlockRef::VoiceFx, VoiceFxParams::MIX),
             Patch::BusyModal,
             false,
             THOROUGH,
@@ -1268,8 +1277,8 @@ fn jumps_never_click() {
 fn drive_jumps_never_click_at_any_tone() {
     let symp = Patch::ModalInit(ResonatorMode::Sympathetic);
     let (drive, tone) = (
-        find(BlockRef::Drive, DriveParams::DRIVE),
-        find(BlockRef::Drive, DriveParams::TONE),
+        find(BlockRef::VoiceFx, VoiceFxParams::P1),
+        find(BlockRef::VoiceFx, VoiceFxParams::P2),
     );
     let mut bad = Vec::new();
     for patch in [symp, Patch::Probe] {
@@ -1282,6 +1291,7 @@ fn drive_jumps_never_click_at_any_tone() {
                     wet: false,
                 };
                 let mut b = c.bench();
+                b.edit_sound(|s| s.params.fx.set_type(FxType::Soft));
                 b.set(&tone, t);
                 let r = play(&mut b, Some(&drive), c.mv, FAST);
                 let jumps: Vec<_> = r

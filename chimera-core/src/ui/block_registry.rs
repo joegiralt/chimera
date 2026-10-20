@@ -11,8 +11,9 @@ use crate::dsp::reverb::ReverbParams;
 use crate::dsp::tape::TapeParams;
 use crate::dsp::tape_engine::TapeEngineParams;
 use crate::dsp::va::VaParams;
+use crate::dsp::voice_fx::params::VoiceFxParams;
 use crate::modulation::{MAX_MOD_SOURCES, ModSource};
-use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams};
+use crate::params::{EnvParams, FilterParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{
     BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, MachineSlot, ParamSlot, VizType,
@@ -216,30 +217,15 @@ pub static PITCH: BlockDef = BlockDef {
 };
 
 // ---------------------------------------------------------------------------
-// Drive / Folder
+// Amp
 // ---------------------------------------------------------------------------
 
-pub static DRIVE: BlockDef = BlockDef {
-    id: 8,
-    name: "Drive",
-    short: "DRV",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
-    params: [
-        ParamSlot::param(BlockRef::Drive, DriveParams::DRIVE),
-        ParamSlot::param(BlockRef::Drive, DriveParams::TONE),
-        ParamSlot::param(BlockRef::Drive, DriveParams::MIX),
-        EMPTY,
-        EMPTY,
-        EMPTY,
-    ],
-};
-
-/// FLD / VCA (spec § 5): the fold, then the VCA; last before MOD on every
-/// Part chain.
-pub static FOLDER: BlockDef = BlockDef {
+/// AMP (sends spec § 3): the three sends and the VCA's VEL, last before MOD
+/// on every Part chain. The fold went to the FX slot (ADR 0155); its two
+/// cells stay empty for now.
+pub static AMP: BlockDef = BlockDef {
     id: 9,
-    name: "Fold / VCA",
+    name: "Amp",
     short: "AMP",
     layout: PageLayout::CellGrid,
     viz: VizType::None,
@@ -247,36 +233,18 @@ pub static FOLDER: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Out, OutParams::SEND1),
         ParamSlot::param(BlockRef::Out, OutParams::SEND2),
         ParamSlot::param(BlockRef::Out, OutParams::SEND3),
-        ParamSlot::param(BlockRef::Folder, FolderParams::FOLD),
+        EMPTY,
         ParamSlot::param(BlockRef::Out, OutParams::VCA_VEL),
-        ParamSlot::param(BlockRef::Folder, FolderParams::MIX),
-    ],
-};
-
-/// AMP › SYM: the fold symmetry, one EDIT down (sends spec § 3).
-pub static FOLDER_SYM: BlockDef = BlockDef {
-    id: 98,
-    name: "Symmetry",
-    short: "SYM",
-    layout: PageLayout::CellGrid,
-    viz: VizType::None,
-    params: [
-        ParamSlot::param(BlockRef::Folder, FolderParams::SYMMETRY),
-        EMPTY,
-        EMPTY,
-        EMPTY,
-        EMPTY,
         EMPTY,
     ],
 };
-
-static AMP_SUB_PAGES: [&BlockDef; 1] = [&FOLDER_SYM];
 
 // ---------------------------------------------------------------------------
 // Filter
 // ---------------------------------------------------------------------------
 
-/// FLT: KIND, then the kind's panel (spec § 6).
+/// FLT in layout A (ADR 0155): KIND · MODE or VOICE · FX · PLACE · FREQ or
+/// CUTOFF · Q or RES, the kind's words.
 pub static FILTER: BlockDef = BlockDef {
     id: 10,
     name: "Filter",
@@ -286,15 +254,15 @@ pub static FILTER: BlockDef = BlockDef {
     params: [
         ParamSlot::param(BlockRef::Filter, FilterParams::KIND),
         ParamSlot::filter_panel(0),
+        ParamSlot::param(BlockRef::VoiceFx, VoiceFxParams::TYPE),
+        ParamSlot::param(BlockRef::VoiceFx, VoiceFxParams::PLACE),
         ParamSlot::filter_panel(1),
         ParamSlot::filter_panel(2),
-        ParamSlot::filter_panel(3),
-        ParamSlot::filter_panel(4),
     ],
 };
 
-/// FLT › MOD: the type's six cells (filter-types spec § 2, § 3): LEVEL
-/// or VOICE, FM3, FM3 IN, QM, QM IN, and the 2040's fixed MODE. `short` is
+/// FLT › MOD: the type's six cells (filter-types spec § 2, § 3): FM1 · FM2
+/// (the 2040's ENV AMT · KEYBD), FM3, FM3 IN, QM, QM IN. `short` is
 /// "FMD" (filter mod), not "MOD": on the Algo map "MOD" would read as the
 /// MOD node's own, and "FMOD" runs into the next node.
 pub static FILTER_MOD: BlockDef = BlockDef {
@@ -304,16 +272,34 @@ pub static FILTER_MOD: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
+        ParamSlot::filter_panel(3),
+        ParamSlot::filter_panel(4),
         ParamSlot::filter_panel(5),
         ParamSlot::filter_panel(6),
         ParamSlot::filter_panel(7),
         ParamSlot::filter_panel(8),
-        ParamSlot::filter_panel(9),
-        ParamSlot::filter_panel(10),
     ],
 };
 
-static FILTER_SUB_PAGES: [&BlockDef; 1] = [&FILTER_MOD];
+/// FLT › FX (ADR 0155): INPUT (the filter's LEVEL), the FX TYPE's three
+/// pots, MIX. In DRV's freed id, so page memory doesn't grow.
+pub static FILTER_FX: BlockDef = BlockDef {
+    id: 8,
+    name: "FX",
+    short: "FX",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Filter, FilterParams::LEVEL).with_label("INPUT"),
+        ParamSlot::fx_panel(0),
+        ParamSlot::fx_panel(1),
+        ParamSlot::fx_panel(2),
+        ParamSlot::param(BlockRef::VoiceFx, VoiceFxParams::MIX),
+        EMPTY,
+    ],
+};
+
+static FILTER_SUB_PAGES: [&BlockDef; 2] = [&FILTER_MOD, &FILTER_FX];
 
 // ---------------------------------------------------------------------------
 // Modulators — envelopes, LFOs, etc.
@@ -657,7 +643,7 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 5] = [
     ChainBlock::page(&MODAL_EXC),
     ChainBlock::with_subs(&MODAL_1, &MODAL_SUB_PAGES),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::with_subs(&FOLDER, &AMP_SUB_PAGES),
+    ChainBlock::page(&AMP),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -706,12 +692,11 @@ static ALGO_FORMANT_OSC_SUB_PAGES: [&BlockDef; 19] = {
 };
 
 /// ALGO is the engine's home: first on the map, where entering the chain lands.
-static ALGO_BLOCKS: [ChainBlock; 6] = [
+static ALGO_BLOCKS: [ChainBlock; 5] = [
     ChainBlock::with_subs(&ALGO_ALG, &[&PITCH]),
     ChainBlock::with_subs(&ALGO_WAVE, &ALGO_OSC_SUB_PAGES),
-    ChainBlock::page(&DRIVE),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::with_subs(&FOLDER, &AMP_SUB_PAGES),
+    ChainBlock::page(&AMP),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -721,10 +706,10 @@ static ALGO_BLOCKS: [ChainBlock; 6] = [
 
 pub static ALGO_CHAIN: ChainDef2 = ChainDef2::new("Algo", &ALGO_BLOCKS, &PART_MOD_SOURCES);
 
-static ALGO_FORMANT_BLOCKS: [ChainBlock; 6] = {
-    let mut b = [ALGO_BLOCKS[0]; 6];
+static ALGO_FORMANT_BLOCKS: [ChainBlock; 5] = {
+    let mut b = [ALGO_BLOCKS[0]; 5];
     let mut i = 1;
-    while i < 6 {
+    while i < 5 {
         b[i] = ALGO_BLOCKS[i];
         i += 1;
     }
@@ -738,14 +723,13 @@ pub static ALGO_FORMANT_CHAIN: ChainDef2 =
 
 static TAPE_SUB_PAGES: [&BlockDef; 2] = [&TAPE_MODEL, &PITCH];
 
-/// SRC · DECK · DRV · FLT · AMP · MOD: ALGO's shape with MODAL's first
+/// SRC · DECK · FLT · AMP · MOD: ALGO's shape with MODAL's first
 /// node; the model page and PIT under DECK.
-static TAPE_BLOCKS: [ChainBlock; 6] = [
+static TAPE_BLOCKS: [ChainBlock; 5] = [
     ChainBlock::page(&TAPE_SRC),
     ChainBlock::with_subs(&TAPE_DECK, &TAPE_SUB_PAGES),
-    ChainBlock::page(&DRIVE),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::with_subs(&FOLDER, &AMP_SUB_PAGES),
+    ChainBlock::page(&AMP),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -759,12 +743,11 @@ pub static TAPE_CHAIN: ChainDef2 =
 
 static VA_SUB_PAGES: [&BlockDef; 3] = [&VA_OSC1, &VA_OSC2, &PITCH];
 
-/// VA · DRV · FLT · AMP · MOD: the voice chain behind VA's node.
-static VA_BLOCKS: [ChainBlock; 5] = [
+/// VA · FLT · AMP · MOD: the voice chain behind VA's node.
+static VA_BLOCKS: [ChainBlock; 4] = [
     ChainBlock::with_subs(&VA_HOME, &VA_SUB_PAGES),
-    ChainBlock::page(&DRIVE),
     ChainBlock::with_subs(&FILTER, &FILTER_SUB_PAGES),
-    ChainBlock::with_subs(&FOLDER, &AMP_SUB_PAGES),
+    ChainBlock::page(&AMP),
     ChainBlock {
         def: &MOD_MATRIX,
         sub_pages: &MOD_SUB_PAGES,
@@ -1165,8 +1148,8 @@ pub static DEMO_GLYPH_LEVEL: BlockDef = BlockDef {
     ],
 };
 
-/// GLYPH: CROSSFADER. a: ALG A to ALG B (MORPH); b: dry to wet (DRV's
-/// MIX). The cap follows the set value, never modulation.
+/// GLYPH: CROSSFADER. a: ALG A to ALG B (MORPH); b: dry to wet (the FX
+/// slot's MIX). The cap follows the set value, never modulation.
 pub static DEMO_GLYPH_XF: BlockDef = BlockDef {
     id: 74,
     name: "Glyph: Crossfader",
@@ -1175,7 +1158,7 @@ pub static DEMO_GLYPH_XF: BlockDef = BlockDef {
     viz: VizType::None,
     params: [
         ParamSlot::param(BlockRef::Algo, AlgoParams::MORPH),
-        ParamSlot::param(BlockRef::Drive, DriveParams::MIX),
+        ParamSlot::param(BlockRef::VoiceFx, VoiceFxParams::MIX),
         EMPTY,
         EMPTY,
         EMPTY,

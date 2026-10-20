@@ -249,9 +249,7 @@ pub fn part_block<'a>(
         | BlockRef::Va
         | BlockRef::Algo
         | BlockRef::AlgoOp(_)
-        | BlockRef::Drive
         | BlockRef::Filter
-        | BlockRef::Folder
         | BlockRef::VoiceFx
         | BlockRef::Env(_)
         | BlockRef::Lfo(_)
@@ -286,9 +284,7 @@ pub fn part_block_mut<'a>(
         | BlockRef::Va
         | BlockRef::Algo
         | BlockRef::AlgoOp(_)
-        | BlockRef::Drive
         | BlockRef::Filter
-        | BlockRef::Folder
         | BlockRef::VoiceFx
         | BlockRef::Env(_)
         | BlockRef::Lfo(_)

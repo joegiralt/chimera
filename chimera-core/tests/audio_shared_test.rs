@@ -1,11 +1,12 @@
 //! What crosses from the UI to the audio thread (spec § Threading).
 
 use chimera_core::addr::{BlockRef, ParamAddr};
+use chimera_core::dsp::voice_fx::params::VoiceFxParams;
 use chimera_core::instrument::{AudioShared, PartAudio};
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::ModState;
 use chimera_core::params::EngineType;
-use chimera_core::params::{DriveParams, FilterParams};
+use chimera_core::params::FilterParams;
 use chimera_core::part::PartMode;
 use chimera_core::preset::{Performance, Sound};
 use chimera_core::project::PartId;
@@ -55,7 +56,7 @@ fn update_from_overwrites_in_place() {
 
     // Give the back buffer stale routing: two destinations, amount 99.
     let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL);
-    let resonance = ParamAddr::new(BlockRef::Drive, DriveParams::TONE);
+    let resonance = ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P3);
     let mut stale_registry = ModDestRegistry::new();
     stale_registry.add(cutoff, *b"CUTOFF\0\0").unwrap();
     stale_registry.add(resonance, *b"RESO\0\0\0\0").unwrap();

@@ -173,7 +173,7 @@ pub struct PortFrom {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Edit {
     Filter,
-    Fold,
+    Fx,
     Lfo,
     Envelope,
     Effects,
@@ -183,7 +183,7 @@ pub enum Edit {
 impl Edit {
     pub const ALL: [Edit; 6] = [
         Edit::Filter,
-        Edit::Fold,
+        Edit::Fx,
         Edit::Lfo,
         Edit::Envelope,
         Edit::Effects,
@@ -194,7 +194,7 @@ impl Edit {
     pub const fn word(self) -> &'static str {
         match self {
             Edit::Filter => "filter",
-            Edit::Fold => "fold",
+            Edit::Fx => "fx",
             Edit::Lfo => "lfo",
             Edit::Envelope => "envelope",
             Edit::Effects => "effects",
@@ -484,7 +484,7 @@ fn sound(file: &str, header: usize, e: &[(usize, String, String)]) -> Result<Sou
                         at(
                             line,
                             format!(
-                                "edits {v}: \"<category>: <what>; …\", each category filter, fold, LFO, envelope, effects or formant"
+                                "edits {v}: \"<category>: <what>; …\", each category filter, fx, LFO, envelope, effects or formant"
                             ),
                         )
                     })?,
@@ -631,9 +631,7 @@ fn other_engine(a: ParamAddr, engine: EngineType) -> Result<(), String> {
         BlockRef::Algo | BlockRef::AlgoOp(_) => Some(EngineType::Algo),
         BlockRef::Modal => Some(EngineType::Modal),
         BlockRef::TapeEngine => Some(EngineType::Tape),
-        BlockRef::Drive
-        | BlockRef::Filter
-        | BlockRef::Folder
+        BlockRef::Filter
         | BlockRef::VoiceFx
         | BlockRef::Env(_)
         | BlockRef::Lfo(_)
@@ -834,7 +832,7 @@ pub fn ports(all: &[Source]) -> Result<(), String> {
         }
         if s.edits.is_none() {
             return at(
-                "a port needs edits = \"<category>: <what>\" (filter, fold, LFO, envelope, effects or formant)",
+                "a port needs edits = \"<category>: <what>\" (filter, fx, LFO, envelope, effects or formant)",
             );
         }
         match s.status {

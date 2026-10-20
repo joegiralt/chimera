@@ -1,6 +1,7 @@
-//! Each filter type's panel as `const` data (filter-types spec § 2–4): FLT's
-//! knobs 2–6 and FLT › MOD's six cells. Route knobs are views of matrix
-//! cells, and the jacks pick which row FM3's and QM's cells are on.
+//! Each filter type's panel as `const` data (filter-types spec § 2–4, layout
+//! A of ADR 0155): FLT's MODE or VOICE, FREQ and Q, and FLT › MOD's six
+//! cells. Route knobs are views of matrix cells, and the jacks pick which
+//! row FM3's and QM's cells are on.
 
 use crate::block::{ParamId, ValFmt};
 use crate::dsp::filter::FilterKind;
@@ -89,8 +90,6 @@ pub enum PanelTarget {
     Keybd,
     /// The amount of the jack's cell.
     JackAmount(JackSlot),
-    /// A Filter parameter shown fixed and dimmed (the 2040's MODE).
-    Fixed(ParamId),
 }
 
 impl PanelTarget {
@@ -100,7 +99,7 @@ impl PanelTarget {
             PanelTarget::Route(s) => Some(RouteView::Freq(s)),
             PanelTarget::Keybd => Some(RouteView::Keybd),
             PanelTarget::JackAmount(j) => Some(RouteView::Jack(j)),
-            PanelTarget::Filter(_) | PanelTarget::Fixed(_) => None,
+            PanelTarget::Filter(_) => None,
         }
     }
 }
@@ -287,10 +286,10 @@ pub struct PanelKnob {
 }
 
 pub struct KindPanel {
-    /// Knobs 2–6 of FLT.
-    pub main: [PanelKnob; 5],
+    /// FLT's MODE or VOICE, FREQ and Q (cells 2, 5 and 6).
+    pub main: [PanelKnob; 3],
     /// FLT › MOD's six cells.
-    pub mods: [Option<PanelKnob>; 6],
+    pub mods: [PanelKnob; 6],
 }
 
 const fn knob_of(target: PanelTarget, label: &'static str) -> PanelKnob {
@@ -305,74 +304,80 @@ const fn route(s: ModSource, label: &'static str) -> PanelKnob {
     knob_of(PanelTarget::Route(s), label)
 }
 
-/// FM3 · FM3 IN · QM · QM IN, every type's FLT › MOD cells 2–5.
-const fn mods(first: PanelKnob, last: Option<PanelKnob>) -> [Option<PanelKnob>; 6] {
+/// Two routes, then FM3 · FM3 IN · QM · QM IN: every type's FLT › MOD.
+const fn mods(a: PanelKnob, b: PanelKnob) -> [PanelKnob; 6] {
     [
-        Some(first),
-        Some(knob_of(PanelTarget::JackAmount(JackSlot::Fm3), "FM3")),
-        Some(filter(FilterParams::FM3_IN, "FM3 IN")),
-        Some(knob_of(PanelTarget::JackAmount(JackSlot::Qm), "QM")),
-        Some(filter(FilterParams::QM_IN, "QM IN")),
-        last,
+        a,
+        b,
+        knob_of(PanelTarget::JackAmount(JackSlot::Fm3), "FM3"),
+        filter(FilterParams::FM3_IN, "FM3 IN"),
+        knob_of(PanelTarget::JackAmount(JackSlot::Qm), "QM"),
+        filter(FilterParams::QM_IN, "QM IN"),
     ]
 }
 
-/// CLEAN speaks Cascadia: FREQ · Q · MODE · FM1 · FM2; LEVEL leads FLT › MOD.
+/// CLEAN speaks Cascadia: MODE · FREQ · Q; FM1 and FM2 lead FLT › MOD.
 pub static CLEAN_PANEL: KindPanel = KindPanel {
     main: [
+        filter(FilterParams::MODE, "MODE"),
         filter(FilterParams::CUTOFF, "FREQ"),
         filter(FilterParams::RESONANCE, "Q"),
-        filter(FilterParams::MODE, "MODE"),
-        route(ModSource::Env1, "FM1"),
-        route(ModSource::Note, "FM2"),
     ],
-    mods: mods(filter(FilterParams::LEVEL, "LEVEL"), None),
+    mods: mods(route(ModSource::Env1, "FM1"), route(ModSource::Note, "FM2")),
 };
 
-/// The 2040 speaks the Prophet's words: CUTOFF · RES · ENV AMT · KEYBD ·
-/// DRIVE (LEVEL under its panel word, spec § 3). VOICE leads FLT › MOD,
-/// and its one MODE shows last, fixed.
+/// The 2040 speaks the Prophet's words: VOICE · CUTOFF · RES, and ENV AMT
+/// and KEYBD (CLEAN's FM1 and FM2) lead FLT › MOD. Its one MODE has no
+/// cell: KIND's band names it (`kind_note`).
 pub static K2040_PANEL: KindPanel = KindPanel {
     main: [
+        filter(FilterParams::VOICE, "VOICE"),
         filter(FilterParams::CUTOFF, "CUTOFF"),
         filter(FilterParams::RESONANCE, "RES"),
-        route(ModSource::Env1, "ENV AMT"),
-        knob_of(PanelTarget::Keybd, "KEYBD"),
-        filter(FilterParams::LEVEL, "DRIVE"),
     ],
     mods: mods(
-        filter(FilterParams::VOICE, "VOICE"),
-        Some(knob_of(PanelTarget::Fixed(FilterParams::MODE), "MODE")),
+        route(ModSource::Env1, "ENV AMT"),
+        knob_of(PanelTarget::Keybd, "KEYBD"),
     ),
 };
 
 pub fn panel(kind: FilterKind) -> &'static KindPanel {
     match kind {
         // DIRTY and LADDER speak CLEAN's panel and words (spec § 4, ADR
-        // 0104): FREQ, Q, MODE; LEVEL leads FLT › MOD.
+        // 0104): MODE, FREQ, Q.
         FilterKind::Svf | FilterKind::Dirty | FilterKind::Ladder => &CLEAN_PANEL,
         FilterKind::K2040 => &K2040_PANEL,
     }
 }
 
-/// Knob `k`: 0–4 FLT's main row, 5–10 FLT › MOD's cells.
+/// What KIND's band adds: the 2040's fixed mode, which has no cell.
+pub const fn kind_note(kind: FilterKind) -> Option<&'static str> {
+    match kind {
+        FilterKind::K2040 => Some("4-POLE LP"),
+        FilterKind::Svf | FilterKind::Dirty | FilterKind::Ladder => None,
+    }
+}
+
+/// Knob `k`: 0–2 FLT's MODE or VOICE, FREQ and Q; 3–8 FLT › MOD's cells.
 pub fn knob(kind: FilterKind, k: u8) -> Option<&'static PanelKnob> {
     let p = panel(kind);
     match k {
-        0..=4 => Some(&p.main[k as usize]),
-        5..=10 => p.mods[k as usize - 5].as_ref(),
+        0..=2 => Some(&p.main[k as usize]),
+        3..=8 => Some(&p.mods[k as usize - 3]),
         _ => None,
     }
 }
 
-/// Whether the kind shows filter parameter `id` (KIND and MODE always):
-/// "not shown, not applied" covers only the filter's own parameters.
+/// Whether the kind shows filter parameter `id` (KIND, MODE and LEVEL,
+/// FLT › FX's INPUT, always): "not shown, not applied" covers only the
+/// filter's own parameters.
 pub fn applies(kind: FilterKind, id: ParamId) -> bool {
     let p = panel(kind);
     id == FilterParams::KIND
         || id == FilterParams::MODE
+        || id == FilterParams::LEVEL
         || p.main
             .iter()
-            .chain(p.mods.iter().flatten())
+            .chain(p.mods.iter())
             .any(|k| k.target == PanelTarget::Filter(id))
 }

@@ -24,7 +24,8 @@ fn render_sym_sweep() {
         panic!("set SYM_AB_OUT and SYM_AB_NAME");
     };
     let mut p = init_params(EngineType::Algo);
-    p.folder.fold = 0.3;
+    p.fx.set_type(chimera_core::dsp::voice_fx::params::FxType::Fold);
+    p.fx.pots[0] = 0.3;
     let mods = ModState::new();
     let blocks = 3 * SR as usize / BLOCK_SIZE;
     let off = 2 * SR as usize / BLOCK_SIZE;
@@ -39,7 +40,7 @@ fn render_sym_sweep() {
     let mut mono = Vec::with_capacity(blocks * BLOCK_SIZE);
     let mut block = [0.0f32; BLOCK_SIZE];
     for b in 0..blocks {
-        p.folder.symmetry = b as f32 / (blocks - 1) as f32;
+        p.fx.pots[1] = b as f32 / (blocks - 1) as f32;
         let mut sum = [0.0f32; BLOCK_SIZE];
         for r in &mut rigs {
             if b == off {

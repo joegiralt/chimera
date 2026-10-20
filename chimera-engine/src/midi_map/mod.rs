@@ -13,7 +13,8 @@ use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::ModalParams;
 use crate::dsp::modulator::LfoSlot;
 use crate::dsp::va::VaParams;
-use crate::params::{DriveParams, EngineType, FilterParams, FolderParams, OutParams};
+use crate::dsp::voice_fx::params::VoiceFxParams;
+use crate::params::{EngineType, FilterParams, OutParams};
 use crate::part::PartParams;
 
 /// A `ParamAddr` a CC may drive: a Sound's own, stored, non-patching
@@ -186,7 +187,7 @@ const fn ent(cc: u8, b: BlockRef, p: ParamId) -> MapEntry {
 /// Spec § 9: the seven shared entries in learn order, then CCs 16-19 for
 /// ALGO, MODAL and VA (TAPE has none, ADR 0132).
 static DEFAULTS: [MapEntry; 19] = {
-    use BlockRef::{Algo, Drive, Filter, Folder, Lfo, Modal, Out, Part, Va};
+    use BlockRef::{Algo, Filter, Lfo, Modal, Out, Part, Va, VoiceFx};
     [
         ent(74, Filter, FilterParams::CUTOFF),
         ent(71, Filter, FilterParams::RESONANCE),
@@ -197,8 +198,8 @@ static DEFAULTS: [MapEntry; 19] = {
         ent(1, Lfo(LfoSlot::Lfo1), LfoParams::DEPTH),
         ent(16, Algo, AlgoParams::MORPH),
         ent(17, Algo, AlgoParams::VOWEL),
-        ent(18, Drive, DriveParams::DRIVE),
-        ent(19, Folder, FolderParams::FOLD),
+        ent(18, VoiceFx, VoiceFxParams::P1),
+        ent(19, VoiceFx, VoiceFxParams::P2),
         ent(16, Modal, ModalParams::STRUCTURE),
         ent(17, Modal, ModalParams::BRIGHT),
         ent(18, Modal, ModalParams::DAMP),

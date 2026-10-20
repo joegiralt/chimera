@@ -17,13 +17,14 @@ use crate::dsp::modulator::{
 use crate::dsp::reverb::{ReverbParams, ReverbType, in_plate_zone};
 use crate::dsp::tape_engine::machine::{self, Cell};
 use crate::dsp::tape_engine::{self, TapeEngineParams as T, TapeModel, wave};
+use crate::dsp::voice_fx::params::{FxType, VoiceFxParams};
 use crate::midi_map::Mappable;
 use crate::modulation::VCA;
 use crate::name::SoundName;
 use crate::orbit::RingIdx;
 use crate::orbit::clock::ClockSource;
 use crate::orbit::scene::SceneRing;
-use crate::params::{EnvParams, FilterParams, FolderParams, OutParams};
+use crate::params::{EnvParams, FilterParams, OutParams};
 use crate::preset::Sound;
 use crate::project::arena::Cost;
 use crate::project::{Absence, Pool};
@@ -31,6 +32,7 @@ use crate::storage::SourceRef;
 use crate::ui::block_def::{BlockDef, MachineSlot, SlotBinding};
 use crate::ui::filter_panel::{self, PanelKnob, PanelTarget, RouteView};
 use crate::ui::fmt::FmtBuf;
+use crate::ui::fx_panel;
 use crate::ui::glyph::FocusGlyph;
 use crate::ui::hint::{self, Gesture, Hint};
 use crate::ui::mod_panel::{self, PanelSlot};
@@ -69,6 +71,8 @@ fn func_at(mode: f32, form: f32) -> Func {
 pub struct SlotCtx {
     pub sel_op: Op,
     pub kind: FilterKind,
+    /// The FX TYPE: which pots FLT › FX shows.
+    pub fx: FxType,
     pub envs: [EnvKind; 3],
     pub lfos: [LfoKind; 3],
     /// MODEL: which cells MDL2 shows.
@@ -108,6 +112,7 @@ impl SlotCtx {
             sel_op,
             chorus: ChorusMode::from_u8(get(BlockRef::Chorus, ChorusParams::MODE) as u8),
             kind: FilterKind::from_index(get(BlockRef::Filter, FilterParams::KIND)),
+            fx: FxType::from_index(get(BlockRef::VoiceFx, VoiceFxParams::TYPE)),
             envs: EnvSlot::ALL.map(|s| {
                 let at = |id| get(BlockRef::Env(s), id);
                 match pick(&EnvType::ALL, at(EnvParams::TYPE)) {
@@ -484,14 +489,6 @@ impl View {
                 block: BlockRef::Out,
                 param,
             }) if param == OutParams::SEND1 => CHORUS_HINTS[ctx.chorus as usize],
-            Some(ParamAddr {
-                block: BlockRef::Folder,
-                param,
-            }) if param == FolderParams::FOLD || param == FolderParams::MIX => sym_hint(ctx.pages),
-            Some(ParamAddr {
-                block: BlockRef::Out,
-                param,
-            }) if param == OutParams::VCA_VEL => sym_hint(ctx.pages),
             Some(a) if matches!(a.block, BlockRef::OrbitRing(_)) && a.param == SceneRing::MUTE => {
                 MUTE_HINT
             }
@@ -521,15 +518,6 @@ pub fn mixer_hint(own: Hint) -> Hint {
         PART_JUMP_HINT
     } else {
         own
-    }
-}
-
-/// SYM is AMP's next sub-page: EDIT down under STACK, SEQ right under
-/// ROW (`nav::sub_move`).
-fn sym_hint(pages: Pages) -> Hint {
-    match pages {
-        Pages::Stack => &[Gesture("EDIT ▾", "SYM")],
-        Pages::Row => &[Gesture("SEQ ▸", "SYM")],
     }
 }
 
@@ -604,8 +592,7 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
         SlotBinding::FilterPanel(k) => match filter_panel::knob(ctx.kind, k) {
             None => View::Empty,
             Some(&PanelKnob { target, label }) => match target {
-                // A fixed one reads dimmed through `dimmed` (one MODE).
-                PanelTarget::Filter(id) | PanelTarget::Fixed(id) => {
+                PanelTarget::Filter(id) => {
                     let addr = ParamAddr::new(BlockRef::Filter, id);
                     let fmt = addr.spec().map_or(ValFmt::Uni, |s| s.fmt);
                     param(addr, label, fmt_of(addr, fmt, ctx))
@@ -617,6 +604,16 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
                     }
                 }
             },
+        },
+        // OFF has no pots: dashes.
+        SlotBinding::FxPanel(k) => match fx_panel::cells(ctx.fx).and_then(|c| c.get(k as usize)) {
+            Some(c) => View::Param {
+                addr: ParamAddr::new(BlockRef::VoiceFx, c.id),
+                label: c.label,
+                fmt: c.fmt,
+                short: Some(c.short),
+            },
+            None => View::Empty,
         },
         SlotBinding::EnvPanel(s, k) => panel_view(
             mod_panel::env_panel(ctx.envs[s.index()]),
@@ -763,6 +760,8 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
     match (addr.block, addr.param) {
         // AMP's VEL under the Algo/Modal pass-through (spec § 5).
         (BlockRef::Out, OutParams::VCA_VEL) => sound.mod_state.routes_into(VCA) == 0,
+        // MIX mixes nothing with TYPE OFF.
+        (BlockRef::VoiceFx, VoiceFxParams::MIX) => sound.params.fx.ty() == FxType::Off,
         // KIND lists built kinds only; with one it is fixed.
         (BlockRef::Filter, FilterParams::KIND) => FilterKind::BUILT.len() == 1,
         // A single-mode kind shows its mode fixed (spec § 7).

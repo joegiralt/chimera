@@ -1,7 +1,8 @@
 use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::modulator::EnvSlot;
-use crate::params::{DriveParams, EnvParams, FilterParams, FolderParams, OutParams};
+use crate::dsp::voice_fx::params::VoiceFxParams;
+use crate::params::{EnvParams, FilterParams, OutParams};
 use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::block_registry::{self as reg, DEMO_BLOCKS};
 use crate::ui::nav::Location;
@@ -138,11 +139,11 @@ impl PageId {
 /// Demo pages borrow params from several blocks (spec §5: `envelopes[1]` is
 /// addressed as `Env(Env2)`).
 const DEMO_WAVES: [ParamAddr; 6] = [
-    ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE),
-    ParamAddr::new(BlockRef::Drive, DriveParams::TONE),
-    ParamAddr::new(BlockRef::Folder, FolderParams::FOLD),
-    ParamAddr::new(BlockRef::Folder, FolderParams::SYMMETRY),
-    ParamAddr::new(BlockRef::Folder, FolderParams::MIX),
+    ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P1),
+    ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P2),
+    ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P3),
+    ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::MIX),
+    ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE),
     ParamAddr::new(BlockRef::Out, OutParams::PAN),
 ];
 const DEMO_SHAPES: [ParamAddr; 6] = [
@@ -151,7 +152,7 @@ const DEMO_SHAPES: [ParamAddr; 6] = [
     ParamAddr::new(BlockRef::Out, OutParams::PAN),
     ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL),
     ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE),
-    ParamAddr::new(BlockRef::Drive, DriveParams::MIX),
+    ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::MIX),
 ];
 const DEMO_MOTION: [ParamAddr; 6] = [
     ParamAddr::new(BlockRef::Env(EnvSlot::Env1), EnvParams::ATTACK),

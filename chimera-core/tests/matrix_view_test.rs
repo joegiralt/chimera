@@ -68,7 +68,8 @@ fn the_readout_names_the_selected_route() {
 #[test]
 fn the_readout_states_the_effect_in_the_destinations_units() {
     use chimera_core::addr::{BlockRef, ParamAddr};
-    use chimera_core::params::{FilterParams, FolderParams, OutParams};
+    use chimera_core::dsp::voice_fx::params::VoiceFxParams;
+    use chimera_core::params::{FilterParams, OutParams};
     use chimera_core::ui::fmt::FmtBuf;
     use chimera_core::ui::mod_grid::fmt_route_effect;
     let effect = |b, id, a| {
@@ -83,10 +84,10 @@ fn the_readout_states_the_effect_in_the_destinations_units() {
     assert_eq!(effect(BlockRef::Out, OutParams::VCA, 64), "+64 = +50%");
     assert_eq!(effect(BlockRef::Out, OutParams::VCA, 127), "+127 = +100%");
     assert_eq!(
-        effect(BlockRef::Folder, FolderParams::FOLD, -30),
+        effect(BlockRef::VoiceFx, VoiceFxParams::P1, -30),
         "-30 = -24%"
     );
-    assert_eq!(effect(BlockRef::Folder, FolderParams::FOLD, 0), "0 = 0%");
+    assert_eq!(effect(BlockRef::VoiceFx, VoiceFxParams::P1, 0), "0 = 0%");
     use chimera_core::params::PitchParams;
     let pitch = PitchParams::PITCH;
     assert_eq!(effect(BlockRef::Pitch, pitch, 32), "+32 = +6.0 st");
@@ -651,22 +652,24 @@ fn matrix_edits_redraw_through_the_region_keys() {
         1,
         3
     ));
-    // MIX+PLUS on DRV's three knobs and FLT's C (Q, already a fixed
-    // column): seven columns, past the visible five, so the grid scrolls
-    // sideways.
+    // MIX+PLUS on FLT's Q (already a fixed column), then FLT › FX's INPUT
+    // and SOFT's TONE and LEVEL: seven columns, past the visible five, so
+    // the grid scrolls sideways.
     let prime = |ui: &mut chimera_core::ui::UiState, enc| {
         feed(ui, Input::turn(enc, 1));
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
     };
     let dests = ui.matrix_state.num_dests;
-    for _ in 0..3 {
-        feed(&mut ui, Input::press(ButtonId::Minus)); // → DRV
+    for _ in 0..2 {
+        feed(&mut ui, Input::press(ButtonId::Minus)); // → FLT
     }
-    for enc in [EncoderId::A, EncoderId::B, EncoderId::C] {
+    prime(&mut ui, EncoderId::F);
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // FX SOFT
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    feed(&mut ui, Input::press(ButtonId::Edit)); // → FLT › FX
+    for enc in [EncoderId::A, EncoderId::C, EncoderId::D] {
         prime(&mut ui, enc);
     }
-    feed(&mut ui, Input::press(ButtonId::Plus)); // → FLT
-    prime(&mut ui, EncoderId::C);
     for _ in 0..2 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // → MTX
     }

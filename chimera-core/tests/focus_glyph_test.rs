@@ -133,7 +133,6 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Reverb", "SYNC", NONE),
     // Blends between two ends: a crossfader.
     ("Algo", "MORPH", XF),
-    ("Drive", "MIX", XF),
     ("VoiceFx", "MIX", XF),
     ("Pitch", "STEAL", NONE),
     ("Pitch", "SNAP", NONE),
@@ -984,14 +983,14 @@ fn glyph_staff_page_moves_the_note() {
 #[test]
 fn glyph_crossfader_page_slides_left_centre_right() {
     use chimera_core::dsp::algo::params::AlgoParams;
-    use chimera_core::params::DriveParams;
+    use chimera_core::dsp::voice_fx::params::VoiceFxParams;
     let mut ui = UiState::new();
     // INIT's MORPH, which the walk below starts from.
     init_part(&mut ui, PartId::ALL[0]);
     to_xf(&mut ui);
     // Both specs carry CROSSFADER.
     let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
-    let mix = ParamAddr::new(BlockRef::Drive, DriveParams::MIX);
+    let mix = ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::MIX);
     assert_eq!(morph.spec().unwrap().glyph, FocusGlyph::Crossfader);
     assert_eq!(mix.spec().unwrap().glyph, FocusGlyph::Crossfader);
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());

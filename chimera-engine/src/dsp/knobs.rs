@@ -101,9 +101,7 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
     use crate::dsp::tape_engine::TapeEngineParams as T;
     use crate::dsp::va::VaParams as V;
     use crate::dsp::voice_fx::params::VoiceFxParams as X;
-    use crate::params::{
-        DriveParams, EnvParams, FilterParams, FolderParams, OutParams, PitchParams,
-    };
+    use crate::params::{EnvParams, FilterParams, OutParams, PitchParams};
     use core::mem::{offset_of, size_of};
     type P = ParamSnapshot;
     let id = a.param.0;
@@ -149,18 +147,6 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
             let op = offset_of!(P, algo.ops) + op.index() * size_of::<AlgoOpParams>();
             (op + f, kind)
         }
-        BlockRef::Drive => {
-            let f = if id == DriveParams::DRIVE.0 {
-                offset_of!(DriveParams, drive)
-            } else if id == DriveParams::TONE.0 {
-                offset_of!(DriveParams, tone)
-            } else if id == DriveParams::MIX.0 {
-                offset_of!(DriveParams, mix)
-            } else {
-                panic!("a DRIVE knob without a field")
-            };
-            (offset_of!(P, drive) + f, Kind::F32)
-        }
         BlockRef::Filter => {
             let f = if id == FilterParams::CUTOFF.0 {
                 offset_of!(FilterParams, cutoff)
@@ -172,18 +158,6 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
                 panic!("a filter knob without a field")
             };
             (offset_of!(P, filter) + f, Kind::F32)
-        }
-        BlockRef::Folder => {
-            let f = if id == FolderParams::FOLD.0 {
-                offset_of!(FolderParams, fold)
-            } else if id == FolderParams::SYMMETRY.0 {
-                offset_of!(FolderParams, symmetry)
-            } else if id == FolderParams::MIX.0 {
-                offset_of!(FolderParams, mix)
-            } else {
-                panic!("a FOLD knob without a field")
-            };
-            (offset_of!(P, folder) + f, Kind::F32)
         }
         BlockRef::VoiceFx => {
             let f = if id == X::P1.0 {

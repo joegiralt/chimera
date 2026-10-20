@@ -345,11 +345,11 @@ fn clips() -> Vec<Clip> {
 /// The energy off every sounding operator's harmonics of the notes held
 /// over the window at `at`, dB: rendered dry, NOIS operators muted, the
 /// routes into pitch (vibrato, drift) muted, as they move the grid, and
-/// DRIVE and the filter's LEVEL at rest, as their intermodulation of a
+/// the FX slot's P1 and the filter's LEVEL at rest, as their intermodulation of a
 /// chord's notes lands off it.
 fn alias_db(c: &Clip, at: usize) -> f32 {
     let mut s = c.sound.clone();
-    s.params.drive.drive = 0.0;
+    s.params.fx.pots[0] = 0.0;
     s.params.filter.level = 0.5;
     for d in 0..s.mod_state.num_dests() {
         if s.mod_state.dest(d).block == BlockRef::Pitch {

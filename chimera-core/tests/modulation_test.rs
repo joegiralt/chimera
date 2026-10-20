@@ -1,8 +1,9 @@
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
+use chimera_core::dsp::voice_fx::params::VoiceFxParams;
 use chimera_core::mod_path::ModDestRegistry;
 use chimera_core::modulation::{FixedCol, MAX_MOD_DESTS, MAX_MOD_SOURCES, ModState};
-use chimera_core::params::{DriveParams, FilterParams, FolderParams};
+use chimera_core::params::FilterParams;
 use chimera_core::ui::mod_grid::{FIXED_COLS, MatrixState};
 
 const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
@@ -41,7 +42,10 @@ fn mod_state_offset_no_routes() {
     let ms = ModState::new();
     let sources = [0.0f32; MAX_MOD_SOURCES];
     assert_eq!(
-        ms.offset_for(ParamAddr::new(BlockRef::Drive, DriveParams::TONE), &sources),
+        ms.offset_for(
+            ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P3),
+            &sources
+        ),
         0.0
     );
 }
@@ -69,7 +73,7 @@ fn mod_state_offset_single_route() {
 
 #[test]
 fn mod_state_offset_multiple_sources() {
-    let mut ms = one_dest(ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE), 2);
+    let mut ms = one_dest(ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P2), 2);
     ms.set_amount(0, 0, 50);
     ms.set_amount(1, 0, 100);
 
@@ -86,7 +90,7 @@ fn mod_state_offset_multiple_sources() {
 
 #[test]
 fn mod_state_offset_negative_amount() {
-    let mut ms = one_dest(ParamAddr::new(BlockRef::Folder, FolderParams::SYMMETRY), 1);
+    let mut ms = one_dest(ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::MIX), 1);
     ms.set_amount(0, 0, -80);
 
     let mut sources = [0.0f32; MAX_MOD_SOURCES];
@@ -98,7 +102,7 @@ fn mod_state_offset_negative_amount() {
 
 #[test]
 fn mod_state_set_amount_ignores_out_of_range() {
-    let mut ms = one_dest(ParamAddr::new(BlockRef::Drive, DriveParams::TONE), 2);
+    let mut ms = one_dest(ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P3), 2);
     ms.set_amount(5, 0, 99); // no such source
     ms.set_amount(0, 3, 99); // no such dest
     assert_eq!(ms.amount(5, 0), 0);
@@ -107,7 +111,7 @@ fn mod_state_set_amount_ignores_out_of_range() {
 
 #[test]
 fn mod_state_sync_from_matrix() {
-    let tone = ParamAddr::new(BlockRef::Drive, DriveParams::TONE);
+    let tone = ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P3);
     let mut registry = ModDestRegistry::new();
     registry.add(tone, *b"A  p\0\0\0\0").unwrap();
     assert!(
@@ -193,7 +197,7 @@ fn dest_and_sum_for_never_panic_out_of_range() {
 #[test]
 fn matrix_dests_are_semantic() {
     let op_c = ParamAddr::new(BlockRef::AlgoOp(Op::C), AlgoOpParams::LEVEL);
-    let sym = ParamAddr::new(BlockRef::Folder, FolderParams::SYMMETRY);
+    let sym = ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::MIX);
     let mut registry = ModDestRegistry::new();
     registry.add(op_c, *b"O3 LEVEL").unwrap();
     registry.add(sym, *b"FLDSYM\0\0").unwrap();

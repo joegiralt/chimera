@@ -360,7 +360,6 @@ pub fn to_text(v: &Voice, from: &str) -> (String, Vec<Loss>) {
         .find(|a| a.spec().ident == "CUTOFF")
         .map_or(20_000.0, |a| a.spec().max);
     line("FILTER.CUTOFF", format!("{cutoff}"));
-    line("FOLDER.FOLD", "0".into());
 
     let hz = lfo_hz(v.lfs.get());
     if hz > 20.0 {

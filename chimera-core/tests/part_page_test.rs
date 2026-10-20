@@ -7,6 +7,7 @@ use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::filter::FilterMode;
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode};
+use chimera_core::dsp::voice_fx::params::FxType;
 use chimera_core::params::OutParams;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::ui::block_def::{BlockDef, ParamSlot, VizType, slot_addr};
@@ -128,22 +129,16 @@ fn reverb_send_is_on_sends_and_amp_only() {
         .enumerate()
     {
         let want = Some(ParamAddr::new(BlockRef::Out, send));
-        assert_eq!(slot_addr(&reg::FOLDER, k, &ctx), want, "AMP {k}");
+        assert_eq!(slot_addr(&reg::AMP, k, &ctx), want, "AMP {k}");
     }
 }
 
 #[test]
-fn drive_filter_folder_pages() {
+fn filter_fx_and_amp_pages() {
     let mut p = ParamSnapshot::default();
-    assert_eq!(read(&reg::DRIVE, &p), [0.0, 0.5, 1.0, 0.0, 0.0, 0.0]);
-    turn(&reg::DRIVE, 0, 5, &mut p);
-    assert_eq!(p.drive.drive, 5.0 * ((1.0 - 0.0) / 128.0));
-    snap(&reg::DRIVE, 1, 1, &mut p);
-    assert_eq!(p.drive.tone, 107.0 / 127.0);
-
-    // MODE reads LP4's place in CLEAN's knob order, 2 of 7.
-    assert_eq!(read(&reg::FILTER, &p), [0.0, 1.0, 0.0, 2.0 / 7.0, 0.0, 0.0]);
-    turn(&reg::FILTER, 1, -1, &mut p);
+    // MODE reads LP4's place in CLEAN's knob order, 2 of 7; FX OFF, PRE.
+    assert_eq!(read(&reg::FILTER, &p), [0.0, 2.0 / 7.0, 0.0, 0.0, 1.0, 0.0]);
+    turn(&reg::FILTER, 4, -1, &mut p);
     // 1/24 octave a tick (ADR 0107).
     let want = 20000.0 * (-1.0f32 / 24.0).exp2();
     assert!(
@@ -151,18 +146,25 @@ fn drive_filter_folder_pages() {
         "{}",
         p.filter.cutoff
     );
-    turn(&reg::FILTER, 3, 1, &mut p);
+    turn(&reg::FILTER, 1, 1, &mut p);
     assert_eq!(
         p.filter.mode(),
         FilterMode::Bp12,
         "the next in CLEAN's list, after LP4"
     );
-    turn(&reg::FILTER, 3, 20, &mut p);
+    turn(&reg::FILTER, 1, 20, &mut p);
     assert_eq!(p.filter.mode(), FilterMode::Phaser, "clamps at the last");
 
-    assert_eq!(read(&reg::FOLDER, &p), [0.0, 0.0, 0.0, 0.0, 1.0, 0.5]);
-    turn(&reg::FOLDER, 3, 4, &mut p);
-    assert_eq!(p.folder.fold, 4.0 / 128.0);
+    // FX SOFT from OFF; its DRIVE on FLT › FX, SOFT's TONE snapped.
+    turn(&reg::FILTER, 2, 1, &mut p);
+    assert_eq!(p.fx.ty(), FxType::Soft);
+    assert_eq!(read(&reg::FILTER_FX, &p), [0.5, 0.0, 0.5, 0.5, 1.0, 0.0]);
+    turn(&reg::FILTER_FX, 1, 5, &mut p);
+    assert_eq!(p.fx.pots[0], 5.0 / 128.0);
+    snap(&reg::FILTER_FX, 2, 1, &mut p);
+    assert!(p.fx.pots[1] > 0.5, "{}", p.fx.pots[1]);
+
+    assert_eq!(read(&reg::AMP, &p), [0.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
 }
 
 #[test]

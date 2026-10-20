@@ -29,9 +29,7 @@ impl BlockRef {
             BlockRef::AlgoOp(Op::D) => 6,
             BlockRef::AlgoOp(Op::E) => 7,
             BlockRef::AlgoOp(Op::F) => 8,
-            BlockRef::Drive => 9,
             BlockRef::Filter => 10,
-            BlockRef::Folder => 11,
             BlockRef::Env(EnvSlot::Env1) => 12,
             BlockRef::Env(EnvSlot::Env2) => 13,
             BlockRef::Env(EnvSlot::Env3) => 14,
@@ -71,9 +69,7 @@ impl BlockRef {
             BlockRef::AlgoOp(Op::D) => "OP_D",
             BlockRef::AlgoOp(Op::E) => "OP_E",
             BlockRef::AlgoOp(Op::F) => "OP_F",
-            BlockRef::Drive => "DRIVE",
             BlockRef::Filter => "FILTER",
-            BlockRef::Folder => "FOLDER",
             BlockRef::Env(EnvSlot::Env1) => "ENV1",
             BlockRef::Env(EnvSlot::Env2) => "ENV2",
             BlockRef::Env(EnvSlot::Env3) => "ENV3",
@@ -162,10 +158,18 @@ pub const RETIRED: &[(u8, u8)] = &[
     (25, 5),
     (25, 6),
     (25, 7),
+    // DRV and the folder, now the voice FX slot's (ADR 0155): their values
+    // load through `voice_fx::legacy`, their routes through `READDRESS`.
+    (9, 0),
+    (9, 1),
+    (9, 2),
+    (11, 0),
+    (11, 1),
+    (11, 2),
 ];
 
 /// Block codes that are gone for good (each of its params is in `RETIRED`).
-pub const RETIRED_BLOCKS: &[u8] = &[];
+pub const RETIRED_BLOCKS: &[u8] = &[9, 11];
 
 /// `(block code, param id, value code)`: one enum value that is gone for good.
 /// TAPE's MODEL REVERSE (#369): LOOP with END before START plays it, so a
@@ -287,10 +291,37 @@ pub const FILTER_DRIVE: DiskAddr = DiskAddr::of(BlockRef::Filter, ParamId(2));
 
 /// A retired address whose routes, ModDests and registry entries a file
 /// loads at a live param, amount and label kept. DRIVE's land on LEVEL.
-pub const READDRESS: &[(DiskAddr, ParamAddr)] = &[(
-    FILTER_DRIVE,
-    ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::LEVEL),
-)];
+pub const READDRESS: &[(DiskAddr, ParamAddr)] = &[
+    (
+        FILTER_DRIVE,
+        ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::LEVEL),
+    ),
+    (DRIVE_DRIVE, FX_P1),
+    (DRIVE_TONE, FX_P2),
+    (DRIVE_MIX, FX_MIX),
+    (FOLDER_FOLD, FX_P1),
+    (FOLDER_SYM, FX_P2),
+    (FOLDER_MIX, FX_MIX),
+];
+
+/// DRV (block 9) and the folder (block 11), retired into the FX slot.
+const fn old(block: u8, id: u8) -> DiskAddr {
+    DiskAddr {
+        block,
+        id: ParamId(id),
+    }
+}
+const DRIVE_DRIVE: DiskAddr = old(9, 0);
+const DRIVE_TONE: DiskAddr = old(9, 1);
+const DRIVE_MIX: DiskAddr = old(9, 2);
+const FOLDER_FOLD: DiskAddr = old(11, 0);
+const FOLDER_SYM: DiskAddr = old(11, 1);
+const FOLDER_MIX: DiskAddr = old(11, 2);
+
+use crate::dsp::voice_fx::params::VoiceFxParams as Fx;
+const FX_P1: ParamAddr = ParamAddr::new(BlockRef::VoiceFx, Fx::P1);
+const FX_P2: ParamAddr = ParamAddr::new(BlockRef::VoiceFx, Fx::P2);
+const FX_MIX: ParamAddr = ParamAddr::new(BlockRef::VoiceFx, Fx::MIX);
 
 // Only a retired address is re-addressed, so a live one always loads as
 // itself; and only onto a modulatable param, so its routes play.

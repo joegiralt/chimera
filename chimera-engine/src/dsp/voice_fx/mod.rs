@@ -2,6 +2,7 @@
 //! place and pots (`params`), and `VoiceFx`, which runs them.
 
 pub mod fold;
+pub mod legacy;
 pub mod params;
 pub mod soft;
 

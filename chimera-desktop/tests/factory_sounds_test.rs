@@ -1110,6 +1110,8 @@ fn facts_use_full_words() {
         "FUNC",
         "VCA",
         "FOLD",
+        "FX",
+        "AMOUNT",
         "VELOCITY",
         "NOTE",
         "PITCH",
@@ -1226,7 +1228,7 @@ fn about_text(text: &str) -> String {
 #[test]
 fn what_it_is_names_a_va_sounds_wave_mode_and_filter() {
     let t = about_text(&format!(
-        "{BASE}VA.MODE = \"RING\"\nVA.WAVE1 = \"0.4\"\nFILTER.KIND = \"2040\"\nFILTER.RESO = \"0.3\"\nVA.STAB = \"0.6\"\nmod.VEL = \"FOLDER.FOLD +12\"\nENV2.ATK = \"0.3\"\nmod.ENV2 = \"VA.WAVE1 +48\"\n"
+        "{BASE}VA.MODE = \"RING\"\nVA.WAVE1 = \"0.4\"\nFILTER.KIND = \"2040\"\nFILTER.RESO = \"0.3\"\nVA.STAB = \"0.6\"\nmod.VEL = \"VOICEFX.P1 +12\"\nENV2.ATK = \"0.3\"\nmod.ENV2 = \"VA.WAVE1 +48\"\n"
     ));
     assert!(t.contains("ENGINE: VIRTUAL ANALOG"), "{t}");
     assert!(t.contains("WAVE 1 51 · WAVE 2"), "{t}");
@@ -1246,7 +1248,7 @@ fn what_it_is_names_a_va_sounds_wave_mode_and_filter() {
         about_text(&format!("{BASE}mod.LFO2 = \"VA.FINE2 +10\"\n")).contains("→ OSC 2 FINE +10"),
         "an oscillator's cell by its OSC page"
     );
-    assert!(t.contains("VELOCITY → FOLD +12"), "{t}");
+    assert!(t.contains("VELOCITY → FX AMOUNT +12"), "{t}");
     assert!(t.contains("→ VCA +127"), "{t}");
     assert!(t.contains("STABILITY 76: the oscillators drift"), "{t}");
 }
@@ -3168,7 +3170,7 @@ fn private_requires_from_and_edits() {
 fn private_edits_name_a_category() {
     for ok in [
         "edits = \"filter: 2040 instead of open\"",
-        "edits = \"fold: a touch\"",
+        "edits = \"fx: a touch\"",
         "edits = \"LFO: slower\"",
         "edits = \"lfo: slower\"",
         "edits = \"envelope: longer release\"",
