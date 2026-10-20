@@ -290,7 +290,7 @@ impl<D: Medium> FatStore<D> {
 
     /// `Fs::runs` on the card, if it is still `vol`, each run's first block
     /// on the device: for raw reads that bypass the FAT. A run past the
-    /// device's last LBA (a corrupt partition offset) refuses the file,
+    /// device's last block (a corrupt partition offset) refuses the file,
     /// `Corrupt`, and `f` sees no more: a raw read never names a block the
     /// card would fault on.
     pub fn runs(
@@ -301,11 +301,17 @@ impl<D: Medium> FatStore<D> {
     ) -> Result<u32, StoreError> {
         let mut past = false;
         let len = self.run(vol, |fs, lba| {
+            let end = fs
+                .blocks()
+                .dev
+                .num_blocks()
+                .map_err(|e| FsError::Dev(PartError::Dev(e)))?
+                .0;
             fs.runs(file, &mut |at, n| {
-                let last = lba
+                let first = lba
                     .checked_add(at)
-                    .and_then(|a| a.checked_add(n.saturating_sub(1)).map(|_| a));
-                match last {
+                    .filter(|a| a.checked_add(n).is_some_and(|e| e <= end));
+                match first {
                     Some(a) if !past => f(a, n),
                     _ => past = true,
                 }
