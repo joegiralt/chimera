@@ -125,7 +125,6 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Reverb", "SYNC", NONE),
     // Blends between two ends: a crossfader.
     ("Algo", "MORPH", XF),
-    ("Drive", "MIX", XF),
     ("VoiceFx", "MIX", XF),
     ("Pitch", "STEAL", NONE),
     ("Pitch", "SNAP", NONE),

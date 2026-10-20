@@ -23,7 +23,7 @@ fn ran(amount: f32, moved: bool) -> bool {
 }
 
 fn vals(raw: &[Option<f32>; 3], d: [f32; 3]) -> [f32; 3] {
-    core::array::from_fn(|i| raw[i].unwrap_or(d[i]))
+    core::array::from_fn(|i| raw[i].unwrap_or(d[i]).clamp(0.0, 1.0))
 }
 
 /// The slot an old Sound's stages become, or `None` when neither ran: the
