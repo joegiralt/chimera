@@ -45,6 +45,7 @@ fn engine_blocks(
                     let view = src.view();
                     let mut c = EngineCtx {
                         sym: &mut pool,
+                        streams: None,
                         src: &view,
                         part: chimera_core::project::PartId::ALL[0],
                         tune: 0.0,
