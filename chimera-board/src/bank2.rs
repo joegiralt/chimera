@@ -609,9 +609,16 @@ fn close_tape(ui: &mut chimera_core::ui::UiState) {
     let _ = ui.close_bank2(&chimera_core::project::LOAD_LINK, within);
     // No stream wants a fill now: the burst in flight lands and the card
     // interrupt gives the bus back before its work (bank 2's) goes.
+    // Its own `TAPE_OFF_MS`: the audio's wait above may have spent the
+    // first.
     #[cfg(not(feature = "sd-probe"))]
-    while crate::sd::BUS.owner() == chimera_hal::card_bus::Owner::Stream && within() {
-        core::hint::spin_loop();
+    {
+        let t1 = controls::ticks();
+        while crate::sd::BUS.owner() == chimera_hal::card_bus::Owner::Stream
+            && controls::ticks().wrapping_sub(t1) < TICKS
+        {
+            core::hint::spin_loop();
+        }
     }
 }
 

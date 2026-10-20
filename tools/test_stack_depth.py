@@ -142,6 +142,15 @@ class StackDepth(unittest.TestCase):
         del self.funcs["<chimera_board::card_dma::IrqState>::step"]
         self.assertEqual(sd.depth(self.funcs, "DMA2_STR0", 0x9999, None, doors)[0], 8 + 0x9999)
 
+    def test_a_door_root_with_two_pointer_calls_fails(self):
+        frame, calls, tails, _ = self.funcs["DMA2_STR0"]
+        self.funcs["DMA2_STR0"] = (frame, calls, tails, 1)
+        self.assertTrue(sd.check(self.img, 1 << 20, io.StringIO()))
+        self.funcs["DMA2_STR0"] = (frame, calls, tails, 2)
+        out = io.StringIO()
+        self.assertFalse(sd.check(self.img, 1 << 20, out))
+        self.assertIn("DMA2_STR0 has 2 pointer calls", out.getvalue())
+
     def test_a_missing_root_fails_but_midi_may_be_absent(self):
         del self.img.funcs["USART1"]
         self.assertTrue(sd.check(self.img, 1 << 20, io.StringIO()), "no MIDI DIN")

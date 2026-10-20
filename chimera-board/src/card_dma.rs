@@ -231,8 +231,13 @@ fn filling() -> bool {
 /// The UI loop's, each pass (`watch_in`): bank 2's with `bank2`, nothing
 /// closed, where no stream plays.
 pub fn watch(now: Ms) {
+    // Closed with a stream still on the bus (a gate build's erase whose
+    // wait ran out): the interrupt's `closed` grounds it and gives the bus
+    // back, so the UI's card isn't lost till a reboot.
     #[cfg(feature = "bank2")]
-    crate::bank2::board_door(|d| (d.card.watch)(now));
+    if crate::bank2::board_door(|d| (d.card.watch)(now)).is_none() && BUS.owner() == Owner::Stream {
+        pend();
+    }
     #[cfg(not(feature = "bank2"))]
     watch_in(now);
 }
@@ -1003,7 +1008,8 @@ fn clocks() -> (u32, u32) {
 /// (`close_tape`); a burst still in flight then is grounded, CS high, the
 /// bus given back and its claim requeued, with no CMD12 (that is bank 2's
 /// stop): the UI's next command finds the card mid-read and recovers it as
-/// any failed command. The flags were cleared (`events`).
+/// any failed command (a unit check owed: ADR 0175). A bench read in
+/// flight is answered `Fault`. The flags were cleared (`events`).
 #[cfg(feature = "bank2")]
 #[inline(never)]
 fn closed(st: &mut IrqState) {
@@ -1025,7 +1031,27 @@ fn closed(st: &mut IrqState) {
             then: Then::More(f) | Then::Retry(f),
             ..
         } => st.side.requeue(f.claim),
-        _ => {}
+        // The bench's read, read or stopping: its mailbox answered, so a
+        // later read isn't `Busy` for good.
+        #[cfg(feature = "bench")]
+        Phase::Read {
+            kind: Kind::Bench, ..
+        }
+        | Phase::Drain {
+            then: Then::Next {
+                done: Done::Bench, ..
+            },
+            ..
+        } => MAIL.answer(Err(ReadFail::Fault)),
+        Phase::Drain {
+            then: Then::Give(owed),
+            ..
+        } => settle(owed),
+        // A fill read whole: in its slot already.
+        Phase::Drain {
+            then: Then::Next { .. },
+            ..
+        } => {}
     }
 }
 
