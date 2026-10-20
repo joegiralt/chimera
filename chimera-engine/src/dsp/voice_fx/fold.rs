@@ -9,11 +9,16 @@ use crate::dsp::filter::{SUB, step_to};
 use crate::hw::BLOCK_SIZE;
 use crate::taps::TapLane;
 
+/// The wet's make-up gain: at FOLD 0.4, SYM and LEVEL ½ the wet is as loud
+/// as the dry, within 1.5 dB (VA INIT, C3, INPUT ½). The fold ran 3.3 dB hot.
+const MAKE_UP: f32 = 0.684;
+
 /// The memoryless transfer at MIX 1, for the viz.
 pub fn curve(x: f32, pots: [f32; 3]) -> f32 {
     let [fold, sym, level] = pots;
     let (bias, gain) = ((sym - 0.5) * 0.5, 1.0 + fold * fold * 6.0);
-    (fold_wave((x + bias) * gain) - fold_wave(bias * gain)) * super::params::pot_level(level)
+    (fold_wave((x + bias) * gain) - fold_wave(bias * gain))
+        * (super::params::pot_level(level) * MAKE_UP)
 }
 
 /// `buf` through the stage. A FOLD tap moves FOLD per sample:
@@ -25,6 +30,7 @@ pub fn run(buf: &mut [f32; BLOCK_SIZE], e: &Ends, glide: bool, lane: Option<&Tap
         return;
     }
     let l = e.level();
+    let l = (l.0 * MAKE_UP, l.1 * MAKE_UP);
     let n = buf.len();
     if let Some(t) = lane {
         let (sf, sy, sm, sg, sl) = (
@@ -122,10 +128,12 @@ mod tests {
         [sine(0, 1.0, 300.0), sine(0, 1.0, 70.0)]
     }
 
-    /// Today's fold on these cases, FNV-1a over every block, recorded
-    /// against `Wavefolder` bit for bit before wavefolder.rs went (#614).
-    const FOLD_STEADY: u64 = 0x11ca_90b6_439a_274f;
-    const FOLD_MOVING: u64 = 0x1acf_60a0_c095_fc50;
+    /// The fold's cases through FOLD, FNV-1a over every block. Recorded
+    /// against `Wavefolder` bit for bit before wavefolder.rs went (#614);
+    /// re-recorded in Task 14 for `MAKE_UP` 0.684, the one intended change
+    /// (no legacy compat): the wet is level-matched to the dry.
+    const FOLD_STEADY: u64 = 0x6f65_c4f4_5c4e_a72b;
+    const FOLD_MOVING: u64 = 0xb98d_394f_c321_7fd8;
 
     #[test]
     fn fold_at_level_half_is_todays_folder_bit_for_bit() {

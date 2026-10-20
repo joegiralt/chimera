@@ -7,10 +7,12 @@ use chimera_core::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv};
 use chimera_core::dsp::algo::kernel::{Kernel, KernelBlock, KindBlock, OpBlock, SAMPLE_SCALE};
 use chimera_core::dsp::algo::plan::{EvalPlan, OPS};
 use chimera_core::dsp::algo::waves::{WAVE_IDENTS, WaveId, mip_position};
-use chimera_core::dsp::filter::{Filter, FilterMode, FilterMods, level_from_drive};
+use chimera_core::dsp::filter::{Filter, FilterMode, FilterMods, level_from_drive, level_gain};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::{KnobMemory, ReverbParams, ReverbType};
+use chimera_core::dsp::voice_fx::VoiceFx;
+use chimera_core::dsp::voice_fx::params::{FxType, Place, VoiceFxParams};
 use chimera_core::params::FilterParams;
 use chimera_core::taps::TapRows;
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
@@ -42,7 +44,30 @@ pub enum Device {
     CleanFilter,
     /// One ALGO operator alone as a carrier.
     AlgoOp,
+    /// A voice FX TYPE in its slot, PRE or POST an open filter.
+    Fx(FxType),
 }
+
+/// The voice FX slot's knobs: its three pots, MIX, PLACE and the filter's
+/// INPUT LEVEL (½ is unity).
+const FX_KNOBS: [Knob; 7] = [
+    num("p1", 0.5),
+    num("p2", 0.5),
+    num("p3", 0.5),
+    num("mix", 1.0),
+    Knob {
+        name: "place",
+        default: 0.0,
+        choices: &["pre", "post"],
+    },
+    num("input", 0.5),
+    // `off`: no filter, INPUT LEVEL as a plain gain: the model alone, for an A/B.
+    Knob {
+        name: "filter",
+        default: 0.0,
+        choices: &["on", "off"],
+    },
+];
 
 /// A reverb's knobs, in the order its values take.
 pub const REVERB_KNOBS: [&str; 10] = [
@@ -86,6 +111,13 @@ impl Device {
             .collect();
         v.push(("clean-filter".into(), Device::CleanFilter));
         v.push(("algo-op".into(), Device::AlgoOp));
+        for (n, t) in [
+            ("fx-soft", FxType::Soft),
+            ("fx-fuzz", FxType::Fuzz),
+            ("fx-fold", FxType::Fold),
+        ] {
+            v.push((n.into(), Device::Fx(t)));
+        }
         v
     }
 
@@ -113,6 +145,7 @@ impl Device {
             }
             Device::CleanFilter => FILTER_KNOBS.into_iter().collect(),
             Device::AlgoOp => OSC_KNOBS.into_iter().collect(),
+            Device::Fx(_) => FX_KNOBS.into_iter().collect(),
         }
     }
 
@@ -160,6 +193,7 @@ impl Device {
             Device::Reverb(t) => render_reverb(*t, v, input),
             Device::CleanFilter => render_filter(v, input),
             Device::AlgoOp => render_op(v, len),
+            Device::Fx(t) => render_fx(*t, v, input),
         }
     }
 }
@@ -230,6 +264,37 @@ fn render_filter(v: &[f32], x: &[f32]) -> Vec<f32> {
     y.resize(x.len().next_multiple_of(BLOCK_SIZE), 0.0);
     for blk in y.as_chunks_mut::<BLOCK_SIZE>().0 {
         f.process(blk, &p, SAMPLE_RATE, &FilterMods::NONE);
+    }
+    y.truncate(x.len());
+    y
+}
+
+/// The slot as a voice runs it: PRE, the filter (open, INPUT LEVEL `v[5]`;
+/// `v[6]` 1 leaves it out and only gains the signal), POST, at the reference
+/// scale of an engine with none (1).
+fn render_fx(t: FxType, v: &[f32], x: &[f32]) -> Vec<f32> {
+    let mut q = VoiceFxParams::default();
+    q.set_type(t);
+    (q.pots, q.mix, q.place) = (
+        [v[0], v[1], v[2]],
+        v[3],
+        [Place::Pre, Place::Post][v[4] as usize],
+    );
+    let mut fp = FilterParams::default();
+    (fp.cutoff, fp.level) = (20_000.0, v[5]);
+    let (mut slot, mut f) = (VoiceFx::new(), Filter::new());
+    let mut y = x.to_vec();
+    y.resize(x.len().next_multiple_of(BLOCK_SIZE), 0.0);
+    for blk in y.as_chunks_mut::<BLOCK_SIZE>().0 {
+        let b = slot.step(&q, true);
+        slot.apply(&b, Place::Pre, blk, 1.0, true, None);
+        if v[6] == 0.0 {
+            f.process(blk, &fp, SAMPLE_RATE, &FilterMods::NONE);
+        } else {
+            let g = level_gain(v[5]);
+            blk.iter_mut().for_each(|s| *s *= g);
+        }
+        slot.apply(&b, Place::Post, blk, 1.0, true, None);
     }
     y.truncate(x.len());
     y

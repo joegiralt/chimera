@@ -361,6 +361,21 @@ fn stuck_ok(c: &Case, (first, last): (f32, f32), t: Timing) -> Option<&'static s
             );
         }
     }
+    if c.rings_on() && c.is(BlockRef::VoiceFx, VoiceFxParams::TYPE) {
+        // The ring before the slot: the same case with TYPE OFF must decay.
+        let off = Case {
+            mv: Move::Static(0.0),
+            ..*c
+        };
+        let (a, b) = play(&mut off.bench(), Some(&c.param), off.mv, t).tail;
+        if b < 0.89 * a {
+            return Some(
+                "a TYPE's gain (FUZZ's SUSTAIN takes a ringing model's falling tail back up to \
+                 its clip level) holds the tail near full level: the same case with TYPE OFF, \
+                 the ring before the slot, decays over the bound",
+            );
+        }
+    }
     if c.patch == Patch::ModalInit(ResonatorMode::Sympathetic)
         && c.param.block == BlockRef::Pitch
         && matches!(c.mv, Move::Jump { .. })

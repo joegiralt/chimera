@@ -7,12 +7,17 @@ use crate::dsp::fast_tanh;
 use crate::dsp::filter::{SUB, step_to};
 use crate::hw::BLOCK_SIZE;
 
+/// The wet's make-up gain: at DRIVE, TONE and LEVEL ½ the wet is as loud as
+/// the dry, within 1.5 dB (VA INIT, C3, INPUT ½, DRIVE ½: the ledger's
+/// normal). DRV before it ran 6.3 dB hot; LEVEL ½ is now unity loudness.
+const MAKE_UP: f32 = 0.483;
+
 /// The memoryless transfer at MIX 1, for the viz.
 pub fn curve(x: f32, pots: [f32; 3]) -> f32 {
     let [drive, tone, level] = pots;
     fast_tanh(x * (1.0 + drive * 8.0) * (0.5 + tone))
         * (1.5 - tone)
-        * super::params::pot_level(level)
+        * (super::params::pot_level(level) * MAKE_UP)
 }
 
 /// `buf` through the stage. `glide` (only a knob moves a setting) steps a
@@ -23,6 +28,7 @@ pub fn run(buf: &mut [f32; BLOCK_SIZE], e: &Ends, glide: bool) {
         return;
     }
     let l = e.level();
+    let l = (l.0 * MAKE_UP, l.1 * MAKE_UP);
     if e.steady() {
         let gain = 1.0 + d.1 * 8.0; // 1x to 9x input gain
         // Tone: no filter. The pre- and post-clip gains move opposite ways:
@@ -77,10 +83,12 @@ mod tests {
         b.iter().map(|x| x.to_bits()).collect()
     }
 
-    /// Today's DRV on these cases, FNV-1a over every block, recorded
-    /// against `Drive` bit for bit before drive.rs went (#614).
-    const DRV_STEADY: u64 = 0xeaaf_d861_f95a_8657;
-    const DRV_MOVING: u64 = 0x4764_583d_3241_498e;
+    /// DRV's cases through SOFT, FNV-1a over every block. Recorded against
+    /// `Drive` bit for bit before drive.rs went (#614); re-recorded in
+    /// Task 14 for `MAKE_UP` 0.483, the one intended change (no legacy
+    /// compat): the wet is level-matched to the dry.
+    const DRV_STEADY: u64 = 0x843a_9c6d_393e_b05a;
+    const DRV_MOVING: u64 = 0x2bae_6e47_4331_cc82;
 
     #[test]
     fn soft_at_level_half_is_todays_drive_bit_for_bit() {
