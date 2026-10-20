@@ -764,9 +764,14 @@ impl Renderer {
             f.prime_status,
             f.text,
         );
-        match f.held.filter(|s| held_on(f, &view) == Some(s.held)) {
-            Some(s) => Self::draw_reason(display, s.why),
-            None => hint::focus(display, Self::focus_hint(f), f.text, hint_right(&gauge)),
+        let sound = &f.parts[f.active_part.index()].sound;
+        let note = view
+            .addr()
+            .and_then(|a| view::band_note(a, sound, f.ctx.src));
+        match (f.held.filter(|s| held_on(f, &view) == Some(s.held)), note) {
+            (Some(s), _) => Self::draw_reason(display, s.why),
+            (None, Some(n)) => Self::draw_note(display, n),
+            (None, None) => hint::focus(display, Self::focus_hint(f), f.text, hint_right(&gauge)),
         }
         if let View::Source(view::SourceState::Card { cost, free, .. }) = view {
             crate::ui::source_cell::draw_card_row(display, f.pool, cost, free, f.hints);
@@ -793,8 +798,25 @@ impl Renderer {
         f.hint(h)
     }
 
+    /// A TAPE cell's note (`view::band_note`), in the hint's place, in MID.
+    fn draw_note<D>(display: &mut D, text: &str)
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let t = crate::ui::source_cell::tracking(text);
+        crate::ui::draw::text_tracked(
+            display,
+            &theme::FONT_LABEL,
+            text,
+            theme::MARGIN_X,
+            hint::FOCUS_Y,
+            theme::MID,
+            t,
+        );
+    }
+
     /// Why the cell's choice is dimmed, in the hint's place.
-    fn draw_reason<D>(display: &mut D, why: crate::dsp::algo::kinds::Why)
+    fn draw_reason<D>(display: &mut D, why: crate::ui::held::Reason)
     where
         D: DrawTarget<Color = Rgb565>,
     {
@@ -1295,6 +1317,18 @@ fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
             f32::from(h.code) / f32::from(fmt.max_int().max(1)),
             fmt,
         );
+        return buf;
+    }
+    if let (Some(a), view::SourceState::Held { rate, frames, .. }) = (view.addr(), f.ctx.src)
+        && a.block == BlockRef::TapeEngine
+        && matches!(
+            a.param,
+            crate::dsp::tape_engine::TapeEngineParams::START
+                | crate::dsp::tape_engine::TapeEngineParams::END
+        )
+    {
+        let mut buf = FmtBuf::new();
+        crate::ui::onset::time_text(&mut buf, v, rate, frames);
         return buf;
     }
     if let Some(t) = view
