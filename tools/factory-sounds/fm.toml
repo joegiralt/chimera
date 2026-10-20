@@ -2458,7 +2458,7 @@ home = "C2"
 phrase = "bass"
 harmonic = "yes"
 # from: tx81z 4a271c8a #9
-# edits: algorithm: T3 to T5 into T1, ENV 2 on MORPH; fold: VELOCITY on FOLD; drive: DRIVE on; filter: LADDER LP4, ENV 2 opens it; lfo: LFO 3 slow on FREQ
+# edits: algorithm: T3 to T5 into T1, ENV 2 on MORPH; drive: DRIVE on (the fold went with the one-slot rule, DRV wins); filter: LADDER LP4, ENV 2 opens it; lfo: LFO 3 slow on FREQ
 PITCH.STEAL = "GLIDE"
 PITCH.GLIDE_TIME = "0.45"  # 31 ms
 ALGO.ALG_A = "T5"
@@ -2498,10 +2498,9 @@ FILTER.KIND = "LADDER"
 FILTER.CUTOFF = "700"  # 700 Hz
 FILTER.RESO = "0.3"  # 38
 FILTER.LEVEL = "0.6"  # 76
-VOICEFX.TYPE = "FOLD"
-VOICEFX.PLACE = "POST"
-VOICEFX.P1 = "0.05"  # 6
-VOICEFX.MIX = "0.6"  # +12
+VOICEFX.TYPE = "SOFT"
+VOICEFX.PLACE = "PRE"
+VOICEFX.P1 = "0.3"  # 38
 ENV2.ATK = "0"  # 2.0 ms
 ENV2.DEC = "0.45"  # 126 ms
 ENV2.SUS = "0.2"  # 20%
@@ -2509,7 +2508,7 @@ mod.ENV2 = "ALGO.MORPH +80, FILTER.CUTOFF +35"
 LFO3.RATE = "0.13"  # 1
 LFO3.SHAPE = "SINE"
 mod.LFO3 = "FILTER.CUTOFF +12"
-mod.VEL = "VOICEFX.P1 +50, FILTER.CUTOFF +20"
+mod.VEL = "FILTER.CUTOFF +20"
 OUT.LEVEL = "0.5"  # 64
 mod.NOTE = "OP_B.LEVEL -60, OP_D.LEVEL -60"
 trim = "0.2"
