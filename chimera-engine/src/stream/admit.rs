@@ -76,17 +76,26 @@ pub struct Age {
 
 /// A fresh note's `Age::level`: full.
 pub const LOUD: u16 = u16::MAX;
+/// A held note this young (blocks, 50 ms at 48 kHz) is in its attack: it
+/// ranks as loud, so a chord struck over a few ms keeps its notes.
+pub const ATTACK_BLOCKS: u32 = 38;
 
 impl Age {
     /// Which voice a steal takes first, the bigger: a released one before
     /// a held one, the oldest; of held ones the quietest (the most
-    /// decayed), then the oldest. The oldest held note is usually a
-    /// chord's foundation (#698).
+    /// decayed; one still in its attack, `ATTACK_BLOCKS`, counts as loud),
+    /// then the oldest. The oldest held note is usually a chord's
+    /// foundation (#698).
     fn rank(self) -> (bool, u32, u32) {
         if self.released {
             (true, self.since, 0)
         } else {
-            (false, u32::from(LOUD - self.level), self.since)
+            let level = if self.since < ATTACK_BLOCKS {
+                LOUD
+            } else {
+                self.level
+            };
+            (false, u32::from(LOUD - level), self.since)
         }
     }
 }

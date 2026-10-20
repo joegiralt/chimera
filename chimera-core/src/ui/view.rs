@@ -323,7 +323,8 @@ impl SourceState {
                     frames,
                     cost,
                     name,
-                    notes: Some(n.min(u32::from(u8::MAX)) as u8),
+                    // No more streams than voices.
+                    notes: Some(n.min(crate::hw::MAX_VOICES as u32) as u8),
                 }
             }
             s => s,
@@ -859,6 +860,8 @@ fn panel_view(panel: &mod_panel::ModPanel, k: u8, block: BlockRef) -> View {
 pub const WOW_AT_REST: &str = "TAPE AT 0 · NO WOW TO SHAPE";
 /// LOOP's and PING's FADE under a VCA route: AMP's release ends the note.
 pub const FADE_ASIDE: &str = "AMP RELEASE ENDS THE NOTE";
+/// ONE's FADE under a VCA route: only HOLD, its last step, is heard.
+pub const FADE_HOLD_ONLY: &str = "BELOW HOLD AMP RELEASE ENDS IT";
 /// A streamed loop's XFADE past what its loop head holds (spec § 2.3).
 pub const XFADE_CAPPED: &str = "STREAMED · XFADE CAPPED AT 100 MS";
 
@@ -888,6 +891,15 @@ pub fn tape_note(addr: ParamAddr, sound: &Sound) -> Option<&'static str> {
 pub fn band_note(addr: ParamAddr, sound: &Sound, src: SourceState) -> Option<&'static str> {
     if let Some(n) = tape_note(addr, sound) {
         return Some(n);
+    }
+    // ONE's FADE stays live, its HOLD the gate; below HOLD AMP releases.
+    let t = &sound.params.tape;
+    if addr == ParamAddr::new(BlockRef::TapeEngine, T::DRAG)
+        && t.machine() == TapeMachine::One
+        && t.drag < crate::dsp::tape_engine::FADE_HOLD
+        && sound.mod_state.routes_into(VCA) != 0
+    {
+        return Some(FADE_HOLD_ONLY);
     }
     let SourceState::Held {
         rate,

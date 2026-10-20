@@ -1013,8 +1013,8 @@ impl TapeDeck {
                 );
             } else if v.frames() < self.n || self.streamed {
                 self.active = false;
-            } else if self.moved_start(p) {
-                self.once_on(self.note, p, &v, sample_rate);
+            } else if let Some(q) = self.moved_start(p) {
+                self.once_on(self.note, &q, &v, sample_rate);
             }
             self.render(out, p, &v, sample_rate);
         } else {
@@ -1031,13 +1031,23 @@ impl TapeDeck {
     /// ONE's or TRON's START as the note's first block plays it, its
     /// routes on (VEL, NOTE, an LFO: #698) differs from the stored one its
     /// note-on latched: the head starts there instead, before a sample has
-    /// played. START latches there.
-    fn moved_start(&mut self, p: &TapeEngineParams) -> bool {
-        let moved = self.first && self.active && self.one_head() && p.start != self.start;
-        if moved {
-            self.start = p.start;
+    /// played. START latches there, kept on its own side of END: a route
+    /// never flips a hit to reverse, nor asks a streamed one to read back
+    /// (`needs_ram` passed on the stored START). `p` with that START.
+    fn moved_start(&mut self, p: &TapeEngineParams) -> Option<TapeEngineParams> {
+        if !(self.first && self.active && self.one_head()) {
+            return None;
         }
-        moved
+        let start = if self.start <= p.end {
+            p.start.min(p.end)
+        } else {
+            p.start.max(p.end)
+        };
+        if start == self.start {
+            return None;
+        }
+        self.start = start;
+        Some(TapeEngineParams { start, ..*p })
     }
 
     /// A streamed note that ended drops its slots.
@@ -1076,11 +1086,11 @@ impl TapeDeck {
             .and_then(|st| self.row((held, d), st.frames));
         match row {
             Some(row) if self.active && self.streamed && row.frames() >= self.n => {
-                if self.moved_start(p)
+                if let Some(q) = self.moved_start(p)
                     && let Some(stream) = self.stream_of(port)
                 {
                     // Warm if START's head holds the new start, else cold.
-                    self.once_on(self.note, p, &row.silent(), sample_rate);
+                    self.once_on(self.note, &q, &row.silent(), sample_rate);
                     let at = self.heads[0].pos.whole();
                     let head = row.head(HeadIdx::START);
                     self.cursor.start(at, self.inc_cap, head, stream, port);

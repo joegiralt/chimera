@@ -106,6 +106,15 @@ fn streamed_source_shows_its_polyphony() {
         notes: None,
     };
     assert_eq!(band(h48.streaming(false)), "48K · 1.0 S · 3 STREAMS");
+    // 16 kHz fits 11 at ROOT, but there are eight voices (#706).
+    let h16 = SourceState::Held {
+        rate: 16_000,
+        frames: 24_000,
+        cost: Default::default(),
+        name: None,
+        notes: None,
+    };
+    assert_eq!(band(h16.streaming(false)), "16K · 1.5 S · 8 STREAMS");
 }
 
 #[test]
@@ -181,6 +190,17 @@ fn fade_steps_aside_for_amp_release() {
     for m in [TapeMachine::One, TapeMachine::Tron] {
         assert!(!view::dimmed(tape(P::DRAG), &sound_on(m)), "{m:?}");
     }
+    // Below HOLD, ONE's band says AMP releases it (#706); at HOLD, nothing.
+    let src = SourceState::None;
+    let mut one = sound_on(TapeMachine::One);
+    one.params.tape.drag = 0.5;
+    assert_eq!(
+        view::band_note(tape(P::DRAG), &one, src),
+        Some(view::FADE_HOLD_ONLY)
+    );
+    one.params.tape.drag = chimera_core::dsp::tape_engine::FADE_HOLD;
+    assert_eq!(view::band_note(tape(P::DRAG), &one, src), None);
+    fits_band(view::FADE_HOLD_ONLY);
     // No route into VCA: the key gates the voice, and FADE releases it.
     let mut s = sound_on(TapeMachine::Loop);
     s.mod_state = Default::default();

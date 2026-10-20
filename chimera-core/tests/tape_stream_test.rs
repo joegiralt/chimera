@@ -11,7 +11,7 @@ use core::sync::atomic::Ordering;
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::engines::EngineSlot;
 use chimera_core::dsp::tape_engine::heads::{
-    Bounds, shortest, window_end, window_end_min, window_start,
+    Bounds, Dir, shortest, window_end, window_end_min, window_start,
 };
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
@@ -2213,4 +2213,125 @@ fn retrig_cut_chokes_the_part() {
             "{retrig:?}: the new hit plays"
         );
     }
+}
+
+/// #706: a routed START (VEL → START) past END on a streamed ONE stays on
+/// its side of END: the hit plays forward from END's side, every read
+/// inside its span (`strict_spans`), and never clicks.
+#[test]
+fn a_routed_start_past_end_never_reverses_a_stream() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let stored = TapeEngineParams {
+        tape: 0.0,
+        age: 0.0,
+        ..params(PlayMode::One, 0.3, 0.5)
+    };
+    let routed = TapeEngineParams {
+        start: 0.7,
+        ..stored
+    };
+    let (rings, third) = rings();
+    let mut st = Stream::new(&rings, &third, &whole, 0);
+    let mut src = OneSource::new(&st.card.held(&heads_at(&stored, FRAMES, 60), HF));
+    let mut slot = MaybeUninit::uninit();
+    let e = deck(&mut slot);
+    e.strict_spans();
+    let (mut out, mut b) = (Vec::new(), [0.0; BLOCK_SIZE]);
+    for k in 0..300 {
+        st.serve();
+        st.with(V, |port| {
+            if k == 0 {
+                e.start(60, &stored, &src.view(), SR, Some(port));
+            }
+            e.play(&mut b, &routed, &src.view(), SR, Some(port));
+            assert_eq!(e.dirs()[0], Dir::Fwd, "block {k}");
+        });
+        out.extend_from_slice(&b);
+        st.now += 1;
+    }
+    // The sine's own slope at half speed, 2π · 0.5 / 300, bounds a step.
+    assert!(out.iter().any(|y| y.abs() > 0.1), "the hit sounds");
+    let worst = out
+        .windows(2)
+        .map(|d| (d[1] - d[0]).abs())
+        .fold(0.0, f32::max);
+    assert!(worst < 0.02, "a step of {worst}");
+}
+
+/// #706: the bill is the reach in use. INIT's wheel vibrato (LFO 1 →
+/// PITCH, DEPTH 0) and the wheel at rest bill nothing past the note; DEPTH
+/// up re-bills it by the route's swing, and the wheel up by the bend.
+#[test]
+fn the_live_reach_is_what_bills() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let p = TapeEngineParams {
+        tape: 0.0,
+        root: 6_000.0,
+        ..one_hold()
+    };
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, p)]);
+    let init = chimera_core::preset::Sound::init(EngineType::Tape);
+    *pl.rig.shared.parts[0].mod_state = init.mod_state.clone();
+    pl.rig.shared.parts[0].params.lfos = init.params.lfos;
+    pl.on(0, 60);
+    pl.block();
+    let at_rest = pl.billed();
+    assert_eq!(at_rest, bill_of(&p, 60, 0), "nothing past the note");
+    pl.rig.shared.parts[0].params.lfos[0].depth = 1.0;
+    pl.block();
+    let vibrato = pl.billed();
+    assert!(vibrato > at_rest, "DEPTH up re-bills: {vibrato}");
+    pl.wheel_up();
+    pl.block();
+    let bend = pl.rig.shared.parts[0].mix.bend;
+    assert!(pl.billed() > vibrato, "the wheel up re-bills");
+    assert!(
+        pl.billed() >= bill_of(&p, 60, bend),
+        "the bend's range at the wheel's top"
+    );
+}
+
+/// #706: RETRIG CUT cuts before its note is admitted: on a full card the
+/// note takes the room of the note it chokes, never another Part's.
+#[test]
+fn a_cut_takes_the_room_it_frees() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let cut = TapeEngineParams {
+        retrig: Retrig::Cut,
+        root: 6_000.0,
+        ..one_hold()
+    };
+    let stack = TapeEngineParams {
+        root: 6_000.0,
+        ..one_hold()
+    };
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, cut), (1, stack)]);
+    // Part 2's notes first: the oldest, which a steal would take.
+    let others: Vec<u8> = (56..62).collect();
+    for &n in &others {
+        pl.on(1, n);
+    }
+    pl.block();
+    pl.on(0, 62);
+    for _ in 0..60 {
+        pl.block();
+    }
+    // Full: the next note fits only in the room the cut frees.
+    assert!(pl.billed() + bill_of(&cut, 63, 0) > STREAM_BUDGET_BPS);
+    pl.on(0, 63);
+    for _ in 0..4 {
+        pl.block();
+    }
+    for &n in &others {
+        let v = pl.voice_of(1, n).expect("Part 2 keeps its notes");
+        assert!(pl.rig.inst.active()[v], "{n} plays on");
+    }
+    let v = pl.voice_of(0, 63).expect("the cut note");
+    assert!(pl.rig.inst.active()[v]);
 }

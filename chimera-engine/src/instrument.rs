@@ -1192,6 +1192,14 @@ impl Instrument {
                     };
                     #[cfg(feature = "probe")]
                     let t1 = crate::probe::now();
+                    // ONE at RETRIG CUT: the note chokes the Part's others
+                    // first, so its pick and admission take their room
+                    // (shed voices go first) and nobody else's.
+                    if part.params.engine() == EngineType::Tape
+                        && crate::dsp::tape_engine::cuts(&part.params.tape)
+                    {
+                        self.cut_part(q);
+                    }
                     // A Part's first voice brings its knobs (ADR 0112).
                     let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
                     let knobs = if first { Knobs::COST } else { Cost::ZERO };
@@ -1232,12 +1240,6 @@ impl Instrument {
                     };
                     self.held_keys[v] = base.with(ev.note);
                     self.alloc.book(v, q, mode, note, cost);
-                    // ONE at RETRIG CUT: the note chokes the Part's others.
-                    if part.params.engine() == EngineType::Tape
-                        && crate::dsp::tape_engine::cuts(&part.params.tape)
-                    {
-                        self.cut_part(q, v);
-                    }
                     let waits = self.sounding[v] as usize != p && self.voices[v].is_active();
                     // A voice taken from another Part fades out on that
                     // Part's Sound before the note starts: billed what it
@@ -1795,22 +1797,22 @@ impl Instrument {
     /// Voice `v`, marked dying, fades out: a note waiting for it is dropped
     /// unheard (ADR 0027). Any slot promised or bound to it goes when it
     /// rests, freed.
-    /// Every sounding voice of Part `q` but `keep` fades out, as a shed
-    /// one does: RETRIG CUT.
-    fn cut_part(&mut self, q: u8, keep: usize) {
-        for w in (0..MAX_VOICES).filter(|&w| w != keep) {
+    fn shed(&mut self, v: usize) {
+        let queued = self.voices[v].kill();
+        if self.waiting[v].take().is_some() || queued {
+            self.alloc.dropped_unheard();
+        }
+    }
+
+    /// Every sounding voice of Part `q` fades out, as a shed one does:
+    /// RETRIG CUT.
+    fn cut_part(&mut self, q: u8) {
+        for w in 0..MAX_VOICES {
             let s = self.alloc.slots()[w];
             if s.part() == Some(q) && !s.dying() && !s.is_free() {
                 self.alloc.kill(w);
                 self.shed(w);
             }
-        }
-    }
-
-    fn shed(&mut self, v: usize) {
-        let queued = self.voices[v].kill();
-        if self.waiting[v].take().is_some() || queued {
-            self.alloc.dropped_unheard();
         }
     }
 

@@ -447,10 +447,10 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_scrub",
         (
-            0xc09387ff5cdbd29f,
+            0x062736c04c2d8470,
             [
-                0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
-                1032249790,
+                0, 3184964454, 1050981263, 1045752289, 1035953454, 1036098510, 3180173078,
+                3195980154,
             ],
         ),
     ),
@@ -683,11 +683,12 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
         ("tape_reverse", rev(M::Play)),
         ("tape_pingpong", ping),
         ("tape_transwave", model(M::Transwave)),
-        // A moving tape: the neutral's MOTION 0 is a stopped, silent one.
+        // A moving tape: the neutral's MOTION 0 is a stopped, silent one;
+        // ½ is 1×, which plays as LOOP does (#706).
         (
             "tape_scrub",
             TapeEngineParams {
-                motion: 0.5,
+                motion: 0.3,
                 ..model(M::Scrub)
             },
         ),
@@ -703,8 +704,8 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
                 ..one
             },
         ),
-        // Held: a 1.4 s tape runs out before the key up; released: an 8 s
-        // one fades at it.
+        // Held: LENGTH ½ over the strip, a 0.5 s tape, runs out before
+        // the key up; released: the whole strip (LENGTH 1) fades at it.
         (
             "tape_tron_held",
             TapeEngineParams {

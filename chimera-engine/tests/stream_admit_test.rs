@@ -152,7 +152,7 @@ fn the_quietest_held_note_goes_first() {
         )
     };
     // The root, oldest and loudest; a quiet fifth; a louder third.
-    let chord = [held(0, 90, LOUD), held(1, 50, 2_000), held(2, 10, 40_000)];
+    let chord = [held(0, 90, LOUD), held(1, 50, 2_000), held(2, 40, 40_000)];
     let full = || {
         chord
             .iter()
@@ -182,4 +182,31 @@ fn notes_at_root_fit_the_budget() {
     assert_eq!(notes_at_root(16_000, false), 11);
     assert_eq!(notes_at_root(24_000, true), 7);
     assert_eq!(notes_at_root(48_000, false), 3);
+}
+
+/// #706: a chord struck over a few ms keeps its notes: one in its attack
+/// (its VCA still rising, `ATTACK_BLOCKS`) ranks loud, so the next note
+/// takes the quietest decayed one, or the oldest, never the note struck
+/// a moment ago.
+#[test]
+fn a_note_in_its_attack_is_not_the_quietest() {
+    let b = bill(48_000, ReadRatio::ONE);
+    let held = |i: usize, since: u32, level: u16| {
+        (
+            v(i),
+            b,
+            Age {
+                released: false,
+                since,
+                level,
+            },
+        )
+    };
+    // A 48 kHz source fits three: struck 20, 10 and 2 blocks ago, the
+    // youngest still at a whisper under its attack.
+    let chord = [held(0, 20, 30_000), held(1, 10, 9_000), held(2, 2, 300)];
+    assert_eq!(
+        admit(b, chord.into_iter(), STREAM_BUDGET_BPS),
+        Admit::Steal(v(0))
+    );
 }

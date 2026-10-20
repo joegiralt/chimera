@@ -152,9 +152,23 @@ impl Instrument {
             .zip(&self.streaming)
             .filter_map(|(&v, s)| {
                 let b = s.billed().filter(|_| !gone[v.index()])?;
-                Some((v, b, s.age))
+                Some((v, b, self.age_now(v.index(), s.age)))
             });
         admit(new, playing, STREAM_BUDGET_BPS)
+    }
+
+    /// Voice `v`'s age as a steal sees it: shed or cut this block (dying
+    /// before its block's `age_stream`), the first to go.
+    fn age_now(&self, v: usize, age: crate::stream::admit::Age) -> crate::stream::admit::Age {
+        if self.alloc.slots()[v].dying() {
+            crate::stream::admit::Age {
+                released: true,
+                since: u32::MAX,
+                level: 0,
+            }
+        } else {
+            age
+        }
     }
 
     /// Admits voice `v`'s bill `new` mid-note (#595): only released voices
