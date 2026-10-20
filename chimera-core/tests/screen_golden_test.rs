@@ -110,8 +110,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("env_b_burst_ahr", 0x7ba2ccbb1c1f77a1),
     ("env_b_burst_cycle", 0x5bdb2cb3d202f7e9),
     ("spd", 0x72e39f2d2f94f382),
-    ("lfo_classic", 0xf1b5267023ff79aa),
-    ("lfo_func", 0xee922d0687f7756e),
+    // Re-recorded: the scope draws the LFO and each control its glyph;
+    // RATE reads Hz (ADR 0177).
+    ("lfo_classic", 0xdfa4a14789eb4c7e),
+    ("lfo_func", 0x5875db77d55330b0),
     // Re-recorded: AMP is the sends over FOLD, VEL, MIX, SYM one page down (sends Task 5);
     // mod_matrix_wide primes FOLD and MIX on their new cells.
     ("amp_vel_dimmed", 0xbfaae22b7783bedd),
@@ -128,7 +130,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // again for Task 15: PIT hangs under DECK.
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
     // Re-recorded at the main merge: the header's Part dots (ADR 0150).
-    ("tape_pitch_musical", 0xf625642e97b51696),
+    // Re-recorded: its map names the machine, LOOP (ADR 0178).
+    ("tape_pitch_musical", 0x769043dfc1afbc4a),
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_exc", 0x1a9d74fd3e32a2a1),
     // Re-recorded: the EXC node (plan Task 13).
@@ -339,35 +342,37 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: every machine cell shows its machine's glyph (ADR 0173).
     ("tape_src", 0x34010e9905b39be3),
     ("tape_src_missing", 0x2d91b7ddf880e963),
-    ("tape_deck_oneshot", 0x263fd8af7335d170),
-    ("tape_page_oneshot", 0x0e6091964cd77785),
-    ("tape_deck_loop", 0x4021216159afea86),
+    // Re-recorded: MODEL lists ONE, LOOP and PING; DECK holds the glyph's
+    // knobs, the model page TAPE, AGE, WOW and the rest (ADR 0178).
+    ("tape_deck_oneshot", 0x54cea6920fa95c3d),
+    ("tape_page_oneshot", 0x74ad8bbd6c35097b),
+    ("tape_deck_loop", 0xe2b119c82dc53ca6),
     // New: bank 2 closed (ADR 0141).
-    ("tape_deck_needs_update", 0x3635760d66c81ff7),
-    ("tape_page_loop", 0x26c7908dee1dab43),
-    ("tape_deck_tron", 0x5eaef6ecbee3e1b6),
-    ("tape_page_tron", 0xeb51f2015403f715),
-    ("tape_deck_stretch", 0x8b93cac4171de1d8),
-    ("tape_page_stretch", 0x77425454a45dbe6b),
-    ("tape_page_stretch_type", 0x0f95ee1198eaee56),
-    ("tape_deck_transwave", 0xd3754619637d4724),
-    ("tape_page_transwave", 0x0be7140af033397b),
-    ("tape_deck_scrub", 0xf5c00760cb21ec9a),
-    ("tape_page_scrub", 0x97b092b98b6e1564),
-    ("tape_deck_pingpong", 0x790fd9477ef65f3e),
-    ("tape_page_pingpong", 0x12f348abe1bd9743),
-    ("tape_strip_oneshot", 0x5afae51a0cab0f2d),
-    ("tape_strip_loop", 0x3c13eea6df22465b),
-    ("tape_strip_tron", 0xcd8f602849ec1531),
-    ("tape_strip_stretch", 0xd49c1e07c02e9d5e),
-    ("tape_strip_transwave", 0x72262d2b38865b4c),
-    ("tape_strip_scrub", 0x348dae51198a060c),
-    ("tape_strip_pingpong", 0x6ec64178ea0fe38f),
+    ("tape_deck_needs_update", 0x3bdd8550303cde83),
+    ("tape_page_loop", 0x5294b5a543274cec),
+    ("tape_deck_tron", 0xc4091d41393c8c28),
+    ("tape_page_tron", 0xf9cea6e0100bbf9a),
+    ("tape_deck_stretch", 0x6ea00d8e506d8869),
+    ("tape_page_stretch", 0x4fc20a44323e2490),
+    ("tape_page_stretch_type", 0x5db32caf1d6df6a7),
+    ("tape_deck_transwave", 0x15b2777d22053681),
+    ("tape_page_transwave", 0x2d27053e8ed7abb6),
+    ("tape_deck_scrub", 0xa72deea43338918c),
+    ("tape_page_scrub", 0xe4691dab479515bf),
+    ("tape_deck_pingpong", 0x55a3f23248d5f416),
+    ("tape_page_pingpong", 0xd4573407fb5c2254),
+    ("tape_strip_oneshot", 0x63d46e26ecdef230),
+    ("tape_strip_loop", 0x525303be8e462123),
+    ("tape_strip_tron", 0xb4d6dcdd7dd0bd4b),
+    ("tape_strip_stretch", 0x15c440df230f8eaf),
+    ("tape_strip_transwave", 0x3330914abbbc2de9),
+    ("tape_strip_scrub", 0xe97c46e8cca452da),
+    ("tape_strip_pingpong", 0x28ecd59c057cd677),
     ("tape_strip_loop_reversed", 0xc8840f14239e5b88),
-    ("tape_strip_oneshot_slice", 0x11c181fafda33b52),
-    ("tape_strip_oneshot_slice_reversed", 0x35c2cdf2e5402c93),
-    ("tape_strip_pingpong_reversed", 0x9c55affccb240533),
-    ("tape_strip_tron_idle", 0xf8a93a695e1f2f3a),
+    ("tape_strip_oneshot_slice", 0x83778af52b45c10b),
+    ("tape_strip_oneshot_slice_reversed", 0x59e5e2c65e3e49d1),
+    ("tape_strip_pingpong_reversed", 0xca104d1ba138d0e8),
+    ("tape_strip_tron_idle", 0xbd112f59df72ce3c),
     ("tape_src_pool", 0x4075e32c420bd2a4),
     ("tape_src_card", 0x8fec60e2a095f9e9),
     ("tape_src_wont_fit", 0xb652372a5d5745dd),

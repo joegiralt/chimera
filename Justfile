@@ -206,13 +206,14 @@ release-bin:
 
 # A .bin holding the power-pull aid (`bank2-gate`: its marker or its PULL
 # NOW) never ships.
-# VA's MOD path (ADR 0163) is all bank 2's on a bank-2 build: a `bank2.x`
-# glob that misses a new door entry or run leaves it silently in bank 1.
+# VA's MOD path (ADR 0163) and the LFO page's raster (ADR 0177) are all
+# bank 2's on a bank-2 build: a `bank2.x` glob that misses a new door entry
+# or run leaves it silently in bank 1.
 check-door-placed elf:
     #!/usr/bin/env bash
     set -euo pipefail
     syms=$(rust-nm -C {{elf}})
-    for pat in 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm'; do
+    for pat in 'va::osc::door::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::'; do
         grep -E " [tT] .*$pat" <<< "$syms" | awk -v pat="$pat" '{ n++; a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08180000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print pat ": nothing linked" > "/dev/stderr"; exit bad || !n }'
     done
 
@@ -346,8 +347,8 @@ check:
     # TAPE's UI with bank 2 closed, through the host's own door (ADR 0175).
     cargo test -p chimera-core --features bank2 --test tape_closed_ui_test
     cargo test -p chimera-core --features bank2-gate --test console_parse_test --test console_answer_test --test bank2_status_test --test bank2_close_test
-    # TAPE's, the reverb's, the streamed loads' and VA FM's bank-1 sides through the host's own door.
-    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test stream_door_test --test glyph_door_test
+    # TAPE's, the reverb's, VA FM's, the LFO raster's and the streamed loads' bank-1 sides through the host's own door.
+    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test lfo_proxy_test --test stream_door_test --test glyph_door_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
@@ -363,7 +364,7 @@ check:
     # The bench, an area a build: all of it no longer fits FLASH. Each is
     # door-checked, as bank2-split checks the builds it splits.
     for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; done
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe,bank2
     # The bootloader links cortex-m-rt's script itself: without it lld warns
     # and links an ELF with no vector table.
     out=$(cargo build -p chimera-bootloader --target thumbv7em-none-eabihf 2>&1) || { echo "$out"; exit 1; }; echo "$out"; if echo "$out" | grep -q "cannot find entry symbol"; then exit 1; fi
@@ -399,7 +400,7 @@ stack-check:
     elf=target/thumbv7em-none-eabihf/release/chimera-stm32
     sets=("" "--no-default-features" "--features orbit" "--features bank2-gate")
     for f in {{bench_sets}}; do sets+=("--no-default-features --features $f"); done
-    sets+=("--no-default-features --features sd-probe")
+    sets+=("--no-default-features --features sd-probe,bank2")
     for features in "${sets[@]}"; do
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
         test -r "$elf"
@@ -481,7 +482,7 @@ clippy:
     # Every bench area at once: too big to link, but no area's code is dead.
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}} -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}},master-tape -- -D warnings
-    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features sd-probe -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features sd-probe,bank2 -- -D warnings
     # usb-console alone: `stats` answers from no reader
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features usb-console -- -D warnings
     cargo clippy -p chimera-bootloader --target thumbv7em-none-eabihf -- -D warnings
@@ -606,9 +607,9 @@ backup-bootloader:
     cd ~/chimera-backups && sha256sum "$(basename "$out")" > "$(basename "$out").sha256"
     echo "$out"
 
-# Flash the SD bring-up probe (--no-default-features --features sd-probe) to PreenFM3 via DFU
+# Flash the SD bring-up probe (--no-default-features --features sd-probe,bank2) to PreenFM3 via DFU
 flash-sd-probe:
-    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe,bank2
     just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 

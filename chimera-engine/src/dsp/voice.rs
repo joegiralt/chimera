@@ -803,6 +803,11 @@ impl Voice {
         self.active && self.slot.streams()
     }
 
+    /// Each LFO's phase, 0..1, for the LFO page's playhead (ADR 0177).
+    pub fn lfo_view_phases(&self) -> [f32; 3] {
+        self.lfos.each_ref().map(|l| l.view_phase())
+    }
+
     /// The sources this voice reads or will, for the audio's `sounding`
     /// mask (spec § 4): only while active (an idle engine keeps its last
     /// source latched, and must not hold its row), the latched one, fading

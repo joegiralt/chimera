@@ -34,8 +34,11 @@ pub enum FocusGlyph {
     /// VA's own gauges, drawn from the VA block's set values (ADR 0129).
     Va(VaGlyph),
     /// TAPE's machine glyph (ADR 0173): every machine cell's, drawn from
-    /// `TAPE_GLYPH_PARAMS`' set values; still on MODEL and MODE.
+    /// `TAPE_GLYPH_PARAMS`' set values; still on MODEL.
     Tape,
+    /// The LFO page's: what its control does to the LFO, drawn from the
+    /// slot's set values (`lfo_glyph`, ADR 0177).
+    Lfo,
 }
 
 /// VA's gauges: what the oscillators and the operator do to the sound.
@@ -109,7 +112,7 @@ impl CompositeId {
 }
 
 impl FocusGlyph {
-    pub const ALL: [FocusGlyph; 15] = [
+    pub const ALL: [FocusGlyph; 16] = [
         FocusGlyph::Arc,
         FocusGlyph::None,
         FocusGlyph::Switch,
@@ -125,6 +128,7 @@ impl FocusGlyph {
         FocusGlyph::Va(VaGlyph::Mode),
         FocusGlyph::Va(VaGlyph::Blend),
         FocusGlyph::Tape,
+        FocusGlyph::Lfo,
     ];
 
     /// Index in `ALL`. Exhaustive: a new variant fails to compile here
@@ -146,6 +150,7 @@ impl FocusGlyph {
             FocusGlyph::Va(VaGlyph::Mode) => 12,
             FocusGlyph::Va(VaGlyph::Blend) => 13,
             FocusGlyph::Tape => 14,
+            FocusGlyph::Lfo => 15,
         }
     }
 }
@@ -204,14 +209,14 @@ pub const BRAID_PARAMS: [ParamAddr; 4] = [
 ];
 
 /// What TAPE's machine glyph reads, in `TapeGauge::from_set`'s order:
-/// MODEL, MODE, START, END, POSITION, MOTION, SIZE, DRAG, TAPE, AGE, XFADE.
-pub const TAPE_GLYPH_PARAMS: [ParamAddr; 11] = {
+/// MODEL (the machine, PLAY's MODE in it), START, END, POSITION, MOTION,
+/// SIZE, DRAG, TAPE, AGE, XFADE.
+pub const TAPE_GLYPH_PARAMS: [ParamAddr; 10] = {
     const fn t(id: crate::block::ParamId) -> ParamAddr {
         ParamAddr::new(BlockRef::TapeEngine, id)
     }
     [
         t(T::MODEL),
-        t(T::MODE),
         t(T::START),
         t(T::END),
         t(T::POSITION),

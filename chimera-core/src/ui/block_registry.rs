@@ -4,7 +4,6 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::chorus::ChorusParams;
 use crate::dsp::comp::CompParams;
 use crate::dsp::delay::DelayParams;
-use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::{ModalPage, ModalParams};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::ReverbParams;
@@ -105,8 +104,8 @@ pub static TAPE_SRC: BlockDef = BlockDef {
     ],
 };
 
-/// DECK, the home: MODAL's RES shape, MODEL, the four macros;
-/// POSITION and MOTION as the machine labels them.
+/// DECK, the home: MODEL, then every knob that moves the machine's glyph
+/// as the machine labels them (ADR 0178).
 pub static TAPE_DECK: BlockDef = BlockDef {
     id: 94,
     name: "Deck",
@@ -115,15 +114,16 @@ pub static TAPE_DECK: BlockDef = BlockDef {
     viz: VizType::Strip,
     params: [
         ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::MODEL),
-        ParamSlot::machine(MachineSlot::Position),
-        ParamSlot::machine(MachineSlot::Motion),
-        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::TAPE),
-        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::AGE),
-        EMPTY,
+        ParamSlot::machine(MachineSlot::Deck(0)),
+        ParamSlot::machine(MachineSlot::Deck(1)),
+        ParamSlot::machine(MachineSlot::Deck(2)),
+        ParamSlot::machine(MachineSlot::Deck(3)),
+        ParamSlot::machine(MachineSlot::Deck(4)),
     ],
 };
 
-/// The model page: named and filled by the machine.
+/// The model page: named by the machine, TAPE, AGE and WOW in the same
+/// cells on every machine, then the machine's other cells (ADR 0178).
 pub static TAPE_MODEL: BlockDef = BlockDef {
     id: 95,
     name: "Machine",
@@ -131,12 +131,12 @@ pub static TAPE_MODEL: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
+        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::TAPE),
+        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::AGE),
+        ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::WOW),
         ParamSlot::machine(MachineSlot::Page(0)),
         ParamSlot::machine(MachineSlot::Page(1)),
         ParamSlot::machine(MachineSlot::Page(2)),
-        ParamSlot::machine(MachineSlot::Page(3)),
-        ParamSlot::machine(MachineSlot::Page(4)),
-        ParamSlot::machine(MachineSlot::Page(5)),
     ],
 };
 
@@ -349,7 +349,7 @@ const fn lfo_page(id: u16, name: &'static str, short: &'static str, s: LfoSlot) 
         name,
         short,
         layout: PageLayout::CellGrid,
-        viz: VizType::None,
+        viz: VizType::Lfo(s),
         params: [
             ParamSlot::lfo_panel(s, 0),
             ParamSlot::lfo_panel(s, 1),
@@ -1130,7 +1130,8 @@ pub static DEMO_GLYPH_NONE: BlockDef = BlockDef {
     ],
 };
 
-/// GLYPH: SWITCH. a flips LFO1's SYNC, FREE / RETRIG.
+/// GLYPH: SWITCH. a flips THEME's HINTS, OFF / ON (LFO SYNC, once its
+/// param, draws the LFO's own glyph: ADR 0177).
 pub static DEMO_GLYPH_SWITCH: BlockDef = BlockDef {
     id: 72,
     name: "Glyph: Switch",
@@ -1138,7 +1139,7 @@ pub static DEMO_GLYPH_SWITCH: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::param(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::SYNC),
+        ParamSlot::param(BlockRef::Theme, ThemeSettings::HINTS),
         EMPTY,
         EMPTY,
         EMPTY,

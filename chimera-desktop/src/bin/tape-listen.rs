@@ -11,7 +11,7 @@
 //! name is looked for in `$CHIMERA_TAPES_SRC` (`~/chimera-tapes-src`).
 
 use chimera_core::block::DiskCode;
-use chimera_core::dsp::tape_engine::{MACHINE_NAMES, StretchType, TapeModel};
+use chimera_core::dsp::tape_engine::{StretchType, TapeModel};
 use chimera_core::factory::FACTORY_LEN;
 use chimera_desktop::import::tape::convert::{Channel, Mono, Pitch, read_wav};
 use chimera_desktop::listen::{
@@ -176,7 +176,7 @@ fn run() -> Result<bool, String> {
                     let _ = writeln!(
                         report,
                         "{:<9} {:<17} {kind}  peak {:6.2} dBFS  click {:5.2}x at {:6.3} s  non-finite {}  {}",
-                        MACHINE_NAMES[usize::from(m.index())],
+                        chimera_desktop::factory_tapes::MODEL_WORDS[usize::from(m.index())],
                         row.slug,
                         q.peak_dbfs,
                         q.click_ratio,

@@ -11,9 +11,7 @@ use std::path::{Path, PathBuf};
 use chimera_core::block::{Block, DiskCode, ParamId};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
-use chimera_core::dsp::tape_engine::{
-    MACHINE_NAMES, PlayMode, TapeEngineParams as P, TapeModel, fade_default, machine,
-};
+use chimera_core::dsp::tape_engine::{PlayMode, TapeEngineParams as P, TapeModel, machine};
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
@@ -227,11 +225,15 @@ fn source_recipe(name: SoundName, t: &Table) -> Result<SourceRecipe, String> {
     Ok(SourceRecipe { name, origin, form })
 }
 
+/// The recipes' and manifests' model words, by `TapeModel::index`: PLAY
+/// with its `mode` beside it.
+pub const MODEL_WORDS: [&str; 5] = ["PLAY", "TRON", "SCRUB", "STRETCH", "TRANSWAVE"];
+
 fn sound_recipe(name: SoundName, t: &Table) -> Result<SoundRecipe, String> {
     let m = need(t, "model")?;
     let model = TapeModel::ALL
         .into_iter()
-        .find(|x| MACHINE_NAMES[usize::from(x.index())] == m)
+        .find(|x| MODEL_WORDS[usize::from(x.index())] == m)
         .ok_or(format!("model {m}"))?;
     let mode = match get(t, "mode") {
         None => PlayMode::Loop,
@@ -515,9 +517,8 @@ pub fn tape_sound(s: &SoundRecipe, head: &SourceHead) -> Sound {
     snd.pick_source(head, None);
     let t = &mut snd.params.tape;
     (t.model, t.mode) = (s.model, s.mode);
-    // PLAY's FADE is its MODE's (ONE holds).
-    let fade = (s.model == TapeModel::Play).then_some((P::DRAG, fade_default(s.mode)));
-    let defaults = machine::defaults(s.model).chain(fade);
+    // The machine's own, ONE's FADE holding.
+    let defaults = machine::defaults(t.machine());
     for (id, v) in defaults.chain(s.set.iter().copied()) {
         t.set(id, v);
     }
@@ -596,7 +597,7 @@ pub fn manifest(r: &Recipes, built: &[Option<Built>]) -> String {
             s.name.as_str(),
             sound_stem(i),
             b.head.sref.crc,
-            MACHINE_NAMES[usize::from(s.model.index())],
+            MODEL_WORDS[usize::from(s.model.index())],
             s.mode.disk_ident()
         );
         first = false;

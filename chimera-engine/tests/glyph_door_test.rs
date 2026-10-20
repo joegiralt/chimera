@@ -10,7 +10,7 @@ use chimera_engine::tape_glyph::{Canvas, Kind, TapeGauge, draw};
 
 #[test]
 fn glyph_inputs_and_paint_open_and_closed() {
-    let set = [0.0, 0.5, 0.1, 0.9, 0.3, 0.6, 0.4, 0.2, 0.7, 0.8, 0.5];
+    let set = [0.0, 0.1, 0.9, 0.3, 0.6, 0.4, 0.2, 0.7, 0.8, 0.5];
     let mut out = Canvas::new();
 
     DOOR_CELL.close();

@@ -34,7 +34,7 @@ pub fn nudge_fine(b: &mut dyn Block, id: ParamId, delta: i8) {
 pub enum ValFmt {
     /// Unipolar: 0 to 127. Snaps: 0, 100, 127.
     Uni,
-    /// `Uni`, its top step reading HOLD: PLAY's FADE in MODE ONE.
+    /// `Uni`, its top step reading HOLD: ONE's FADE.
     Hold,
     /// Bipolar: -64 to +63. Snaps: -64, -44, 0, +43, +63.
     Bi,

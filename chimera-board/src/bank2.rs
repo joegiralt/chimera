@@ -494,7 +494,8 @@ fn open_door(seal: &chimera_image::Seal) -> (Bank2Status, Verdict) {
 /// next boot; so does success (nothing renames it), and a boot with flash
 /// `Good` never reads it. `None`: nothing written; else bank 2 as the door
 /// then judged it.
-#[cfg(feature = "bank2")]
+// The SD probe halts after its probe: it installs nothing.
+#[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
 #[inline(never)]
 pub fn boot_install(
     store: &mut impl chimera_hal::store::Store,
@@ -515,6 +516,7 @@ pub fn boot_install(
 /// OFF, then the door: the install's result and bank 2 as the door then
 /// judged it. The boot's install and the console's, one copy.
 #[cfg(feature = "bank2")]
+#[cfg_attr(feature = "sd-probe", allow(dead_code))]
 #[inline(never)]
 fn write_staged(
     staged: &mut impl ImageRead,
@@ -546,6 +548,7 @@ fn write_staged(
 /// The install's phase under DON'T POWER OFF; a gate build holds at each
 /// mark for a hand to pull the power.
 #[cfg(feature = "bank2")]
+#[cfg_attr(feature = "sd-probe", allow(dead_code))]
 struct Shown<'a, D> {
     d: &'a mut D,
     at: chimera_image::Phase,

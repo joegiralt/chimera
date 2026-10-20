@@ -3,7 +3,7 @@
 
 mod screen;
 
-use chimera_core::dsp::tape_engine::TapeModel;
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::project::PartId;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::draw;
@@ -115,7 +115,7 @@ fn the_readout_names_the_voice_pitch() {
         label: [0; 8],
     };
     let mut buf = FmtBuf::new();
-    fmt_readout_dest(&mut buf, "LFO 1", &dest, TapeModel::Play);
+    fmt_readout_dest(&mut buf, "LFO 1", &dest, TapeMachine::Loop);
     assert_eq!(buf.as_str(), "VOICE PITCH");
     assert_eq!(block_tag(BlockRef::Pitch), "PIT");
 }
@@ -706,15 +706,15 @@ fn every_route_readout_fits_its_line() {
         addr: ParamAddr::new(BlockRef::Filter, chimera_core::params::FilterParams::CUTOFF),
         label: [0; 8],
     };
-    fmt_readout_dest(&mut full, "ENV 3", &cutoff, TapeModel::Play);
+    fmt_readout_dest(&mut full, "ENV 3", &cutoff, TapeMachine::Loop);
     assert_eq!(full.as_str(), "FILTER CUTOFF");
     let mut widest = 0;
     for b in BlockRef::ALL {
         // TAPE's columns read each machine's labels.
-        let tapes: &[TapeModel] = if b == BlockRef::TapeEngine {
-            &TapeModel::ALL
+        let tapes: &[TapeMachine] = if b == BlockRef::TapeEngine {
+            &TapeMachine::ALL
         } else {
-            &[TapeModel::Play]
+            &[TapeMachine::Loop]
         };
         for (spec, &t) in b
             .specs()

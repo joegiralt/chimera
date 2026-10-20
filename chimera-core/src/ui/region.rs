@@ -106,6 +106,8 @@ pub enum RegionData {
         orbit: u32,
         /// `viz::ModMark::key`: a moved ghost redraws its boxes alone.
         mark: u32,
+        /// `lfo_glyph::Dot::key`: a moved playhead redraws its boxes alone.
+        dot: u16,
     },
     Cells {
         page: PageKey,
@@ -262,6 +264,7 @@ impl RegionData {
             status,
             orbit: 0,
             mark: 0,
+            dot: 0,
         }
     }
 
@@ -276,6 +279,27 @@ impl RegionData {
             *mark = key;
         }
         self
+    }
+
+    /// This key with no playhead share: equal when only the dot moved.
+    pub fn without_dot(self) -> Self {
+        self.with_dot(0)
+    }
+
+    /// A viz keyed on the LFO scope's playhead too.
+    pub fn with_dot(mut self, key: u16) -> Self {
+        if let Self::Viz { dot, .. } = &mut self {
+            *dot = key;
+        }
+        self
+    }
+
+    /// The LFO playhead this key was drawn with.
+    pub fn dot(&self) -> u16 {
+        match self {
+            Self::Viz { dot, .. } => *dot,
+            _ => 0,
+        }
     }
 
     /// A viz keyed on what it draws of ORBIT too.
@@ -364,6 +388,7 @@ impl RegionData {
             status: None,
             orbit: u32::MAX,
             mark: u32::MAX,
+            dot: u16::MAX,
         }
     }
 

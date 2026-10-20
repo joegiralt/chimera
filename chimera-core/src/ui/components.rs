@@ -309,7 +309,8 @@ where
 /// its `gauge`. A dimmed or absent slot reads as its cell does, with no
 /// gauge: a dimmed value in MID, an absent route's dash in INK2. A TAPE
 /// cell its machine ignores keeps the machine's glyph beside its dimmed
-/// value (ADR 0173).
+/// value (ADR 0173), and an LFO cell its mode ignores (CLASSIC PHASE under
+/// FREE) its glyph (ADR 0177).
 ///
 /// While a MIX+PLUS `status` is pending (issue #21) the value readout — the
 /// large numerals and the arc gauge — is replaced by the status word(s) at
@@ -385,8 +386,9 @@ pub fn focus_band<D>(
                 theme::LABEL_TRACKING,
             );
         }
-        // A TAPE cell its machine ignores: dimmed, its glyph as it was.
-        None if look == Look::Dimmed && matches!(gauge, Gauge::Tape(_)) => {
+        // A TAPE cell its machine ignores, an LFO cell its mode ignores:
+        // dimmed, its glyph as it was.
+        None if look == Look::Dimmed && matches!(gauge, Gauge::Tape(_) | Gauge::Lfo(_)) => {
             focus_value(d, value_text, gauge, layout, theme::MID)
         }
         None if look != Look::Live => {
@@ -483,6 +485,9 @@ pub fn focus_label_slot(gauge: &Gauge) -> draw::Slot {
 /// The least gap between the value and a TAPE glyph, px.
 pub const TAPE_GAP: i32 = 8;
 
+/// The least gap between the value and an LFO glyph, px.
+pub const GLYPH_GAP: i32 = 8;
+
 /// The value large and its gauge; with none, the text has the band.
 fn focus_value<D>(d: &mut D, value_text: &str, gauge: Gauge, layout: Layout, ink: Rgb565)
 where
@@ -504,6 +509,35 @@ where
         }
         draw_gauge(d, gauge);
         return;
+    }
+    if let Gauge::Lfo(g) = gauge {
+        // Beside an LFO glyph a long word (RETRIG, CLASSIC) drops to the
+        // readout size, as TAPE's do.
+        if layout == Layout::NoGauge {
+            let (number, unit) = split_unit(value_text);
+            let x = theme::FOCUS_VALUE_X
+                + draw::text(
+                    d,
+                    &theme::FONT_READOUT,
+                    number,
+                    theme::FOCUS_VALUE_X,
+                    theme::FOCUS_VALUE_Y,
+                    ink,
+                );
+            if !unit.is_empty() {
+                draw::text(
+                    d,
+                    &theme::FONT_VALUE,
+                    unit,
+                    x + UNIT_GAP,
+                    theme::FOCUS_VALUE_Y,
+                    theme::MID,
+                );
+            }
+        } else {
+            big_value(d, value_text, ink, theme::MID);
+        }
+        return crate::ui::lfo_glyph::draw(d, &g);
     }
     big_value(d, value_text, ink, theme::MID);
     if layout == Layout::WithGauge {
@@ -611,6 +645,7 @@ pub const GAUGE_GAP: i32 = 4;
 fn gap(gauge: &Gauge) -> i32 {
     match gauge {
         Gauge::Tape(_) => TAPE_GAP,
+        Gauge::Lfo(_) => GLYPH_GAP,
         _ => GAUGE_GAP,
     }
 }
@@ -626,7 +661,7 @@ pub fn gauge_left(gauge: &Gauge) -> Option<i32> {
         Gauge::Crossfader { .. } => Some(end - theme::XF_W - theme::XF_CAP_W / 2),
         Gauge::Blend { .. } => Some(end - theme::BLEND_W - theme::XF_CAP_W / 2),
         Gauge::Staff { .. } => Some(theme::STAFF_X),
-        Gauge::Wave(_) | Gauge::VaWave(_) => Some(theme::WAVE_X),
+        Gauge::Wave(_) | Gauge::VaWave(_) | Gauge::Lfo(_) => Some(theme::WAVE_X),
         Gauge::VaMix(_) => Some(end - theme::VA_MIX_W),
         Gauge::Braid(_) => Some(theme::BRAID_X),
         Gauge::Rings(_) => Some(theme::RINGS_X),
@@ -639,8 +674,8 @@ pub fn gauge_left(gauge: &Gauge) -> Option<i32> {
 pub fn fit_gauge(value_text: &str, gauge: Gauge) -> Gauge {
     match layout(value_text, &gauge) {
         Layout::WithGauge | Layout::SmallBeside => gauge,
-        // A TAPE glyph stays: its long word drops to the readout size.
-        Layout::NoGauge if matches!(gauge, Gauge::Tape(_)) => gauge,
+        // A TAPE or LFO glyph stays: its long word drops to the readout size.
+        Layout::NoGauge if matches!(gauge, Gauge::Tape(_) | Gauge::Lfo(_)) => gauge,
         _ => Gauge::None,
     }
 }
@@ -674,7 +709,8 @@ pub fn gauge_rect(gauge: &Gauge) -> Option<(i32, i32, i32, i32)> {
         | Gauge::VaWave(_)
         | Gauge::VaMix(_)
         | Gauge::Blend { .. }
-        | Gauge::Tape(_) => None,
+        | Gauge::Tape(_)
+        | Gauge::Lfo(_) => None,
     }
 }
 
@@ -701,6 +737,7 @@ where
             blend_ends(d, glyph::blend_ends(mode));
         }
         Gauge::Tape(t) => tape_glyph::draw(d, &t, &tape_glyph::Palette::THEME),
+        Gauge::Lfo(g) => crate::ui::lfo_glyph::draw(d, &g),
         Gauge::Arc { value, bipolar } => draw::arc_gauge(
             d,
             theme::ARC_CX,

@@ -11,7 +11,7 @@
 mod common;
 mod screen;
 
-use chimera_core::dsp::tape_engine::{PlayMode, TapeModel};
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::components::TAPE_GAP;
 use chimera_core::ui::perf::PerfStats;
@@ -396,7 +396,11 @@ fn a_step_is_about_a_pixel() {
     // Below a step nothing changes; the key holds the steps, so a value
     // that moves less than a step costs no redraw.
     let at = |v: f32| {
-        TapeGauge::from_set([0.0, 0.5, 0.0, 1.0, v, 0.5, 0.5, 0.3, 0.0, 0.0, 0.2], false).key()
+        TapeGauge::from_set(
+            [1.0 / 6.0, 0.0, 1.0, v, 0.5, 0.5, 0.3, 0.0, 0.0, 0.2],
+            false,
+        )
+        .key()
     };
     let step = 1.0 / Q6::MAX as f32;
     assert_eq!(at(0.5), at(0.5 + 0.4 * step));
@@ -404,28 +408,16 @@ fn a_step_is_about_a_pixel() {
 }
 
 #[test]
-fn model_and_mode_pick_the_glyph() {
-    let set = |model: TapeModel, mode: PlayMode| {
-        let m = model.index() as f32 / 4.0;
-        let p = mode as u8 as f32 / 2.0;
-        TapeGauge::from_set([m, p, 0.0, 1.0, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, 0.2], false).kind()
-    };
-    assert_eq!(set(TapeModel::Play, PlayMode::One), Kind::One);
-    assert_eq!(set(TapeModel::Play, PlayMode::Loop), Kind::Loop);
-    assert_eq!(set(TapeModel::Play, PlayMode::Ping), Kind::Ping);
-    assert_eq!(set(TapeModel::Tron, PlayMode::Ping), Kind::Tron);
-    assert_eq!(set(TapeModel::Scrub, PlayMode::Loop), Kind::Scrub);
-    assert_eq!(set(TapeModel::Stretch, PlayMode::Loop), Kind::Stretch);
-    assert_eq!(set(TapeModel::Transwave, PlayMode::One), Kind::Wave);
+fn model_picks_the_glyph() {
+    // MODEL's value is the machine, PLAY's three MODEs among them.
+    for m in TapeMachine::ALL {
+        let v = m.index() as f32 / 6.0;
+        let g = TapeGauge::from_set([v, 0.0, 1.0, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, 0.2], false);
+        assert_eq!(g.kind(), m);
+    }
     // Still: the knobs don't move it.
-    let a = TapeGauge::from_set(
-        [0.25, 0.5, 0.0, 1.0, 0.1, 0.9, 0.2, 0.3, 1.0, 1.0, 0.0],
-        true,
-    );
-    let b = TapeGauge::from_set(
-        [0.25, 0.5, 0.3, 0.4, 0.8, 0.1, 0.9, 0.7, 0.0, 0.0, 1.0],
-        true,
-    );
+    let a = TapeGauge::from_set([0.5, 0.0, 1.0, 0.1, 0.9, 0.2, 0.3, 1.0, 1.0, 0.0], true);
+    let b = TapeGauge::from_set([0.5, 0.3, 0.4, 0.8, 0.1, 0.9, 0.7, 0.0, 0.0, 1.0], true);
     assert_eq!(a, b);
     assert_eq!(a, TapeGauge::still(Kind::Tron));
 }
@@ -444,7 +436,7 @@ fn glyph_box_lit(fb: &Fb) -> usize {
 
 #[test]
 fn dirty_redraw_equals_full_while_a_knob_turns() {
-    for model in 0..5i8 {
+    for model in TapeMachine::ALL {
         let mut ui = chimera_core::ui::UiState::new();
         tape_deck(&mut ui, model);
         settle(&mut ui);
@@ -452,7 +444,7 @@ fn dirty_redraw_equals_full_while_a_knob_turns() {
         let mut fb = Fb::new();
         ui.render_dirty_with_scope(&mut fb, &perf, &scope_fixture());
         // MODEL's cell: the still glyph.
-        assert!(glyph_box_lit(&fb) > 40, "model {model}: a still glyph");
+        assert!(glyph_box_lit(&fb) > 40, "{model:?}: a still glyph");
         for (enc, by) in [
             (EncoderId::B, 9),
             (EncoderId::C, -7),
@@ -467,17 +459,17 @@ fn dirty_redraw_equals_full_while_a_knob_turns() {
                 ui.render_with_scope(&mut full, &perf, &scope_fixture());
                 assert!(
                     fb.px == full.px,
-                    "model {model} {enc:?}: dirty frame matches a full render"
+                    "{model:?} {enc:?}: dirty frame matches a full render"
                 );
             }
         }
-        assert!(glyph_box_lit(&fb) > 40, "model {model}: a live glyph");
+        assert!(glyph_box_lit(&fb) > 40, "{model:?}: a live glyph");
     }
 }
 
 #[test]
 fn nothing_redraws_at_idle() {
-    for model in 0..5i8 {
+    for model in TapeMachine::ALL {
         let mut ui = chimera_core::ui::UiState::new();
         tape_deck(&mut ui, model);
         feed(&mut ui, Input::turn(EncoderId::B, 4));
@@ -492,10 +484,7 @@ fn nothing_redraws_at_idle() {
                 .into_iter()
                 .filter(|&r| band(r))
                 .collect();
-            assert!(
-                flushed.is_empty(),
-                "model {model} frame {frame}: {flushed:?}"
-            );
+            assert!(flushed.is_empty(), "{model:?} frame {frame}: {flushed:?}");
         }
     }
 }
@@ -642,10 +631,10 @@ fn xfade_dashes_the_loop_end_where_it_plays() {
     assert_ne!(wheel(0.0), wheel(1.0));
     let scrub = |xf: f32| Box64::of(&live(Machine::Scrub(sponge(0.5, 0.5, 0.8, 0.0, xf)))).hash();
     assert_ne!(scrub(0.0), scrub(1.0));
-    // PING has no crossfade: XFADE (dimmed there) leaves it.
+    // PING has no crossfade: XFADE (no cell there) leaves it.
     let ping = |xf: f32| {
         TapeGauge::from_set(
-            [0.0, 1.0, 0.0, 1.0, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, xf],
+            [2.0 / 6.0, 0.0, 1.0, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, xf],
             false,
         )
     };
@@ -655,102 +644,80 @@ fn xfade_dashes_the_loop_end_where_it_plays() {
 
 #[test]
 fn ignored_params_leave_the_glyph() {
-    // A cell the machine ignores (`reads_in`: TRON's POSITION and MOTION,
+    // A param the machine ignores (`reads`: TRON's POSITION and MOTION,
     // ONE's POSITION, WALK, LENGTH and XFADE, PING's XFADE) moves neither
     // the key nor a pixel.
-    use chimera_core::dsp::tape_engine::reads_in;
+    use chimera_core::dsp::tape_engine::reads;
     use chimera_core::ui::glyph::TAPE_GLYPH_PARAMS;
-    let modes = [PlayMode::One, PlayMode::Loop, PlayMode::Ping];
     let mut checked = 0;
-    for model in TapeModel::ALL {
-        for mode in modes {
-            let mut set = [0.0, 0.0, 0.1, 0.9, 0.3, 0.6, 0.5, 0.3, 0.2, 0.1, 0.2];
-            set[0] = model.index() as f32 / 4.0;
-            set[1] = mode as u8 as f32 / 2.0;
-            let base = TapeGauge::from_set(set, false);
-            for (i, a) in TAPE_GLYPH_PARAMS.iter().enumerate().skip(2) {
-                if reads_in(model, mode, a.param) {
-                    continue;
-                }
-                for v in [0.0, 1.0] {
-                    let mut moved = set;
-                    moved[i] = v;
-                    let g = TapeGauge::from_set(moved, false);
-                    assert_eq!(g.key(), base.key(), "{model:?} {mode:?} {:?}", a.param);
-                    assert_eq!(Box64::of(&g).hash(), Box64::of(&base).hash());
-                }
-                checked += 1;
+    for m in TapeMachine::ALL {
+        let mut set = [0.0, 0.1, 0.9, 0.3, 0.6, 0.5, 0.3, 0.2, 0.1, 0.2];
+        set[0] = m.index() as f32 / 6.0;
+        let base = TapeGauge::from_set(set, false);
+        for (i, a) in TAPE_GLYPH_PARAMS.iter().enumerate().skip(1) {
+            if reads(m, a.param) {
+                continue;
             }
+            for v in [0.0, 1.0] {
+                let mut moved = set;
+                moved[i] = v;
+                let g = TapeGauge::from_set(moved, false);
+                assert_eq!(g.key(), base.key(), "{m:?} {:?}", a.param);
+                assert_eq!(Box64::of(&g).hash(), Box64::of(&base).hash());
+            }
+            checked += 1;
         }
     }
     assert!(checked >= 8, "{checked}");
 }
 
 #[test]
-fn dimmed_cells_keep_the_glyph() {
-    // Touching a cell the machine ignores hid the glyph. Now it stays,
-    // exactly as on a live cell, before and after its knob turns.
-    use chimera_core::dsp::tape_engine::TapeEngineParams as T;
-    use chimera_core::dsp::tape_engine::reads_in;
+fn no_tape_page_cell_is_dimmed() {
+    // Each machine's pages list only what it reads (ADR 0178), so no
+    // TAPE cell reads dimmed and none needs ADR 0173's dimmed glyph.
+    use chimera_core::ui::block_registry::{TAPE_DECK, TAPE_MODEL};
+    use chimera_core::ui::view::{self, SlotCtx};
+    for m in TapeMachine::ALL {
+        let mut s = chimera_core::preset::Sound::init(chimera_core::params::EngineType::Tape);
+        s.params.tape.set_machine(m);
+        s.params.tape.period = 109.1;
+        let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
+        for def in [&TAPE_DECK, &TAPE_MODEL] {
+            for i in 0..6 {
+                let v = view::view(def, i, &ctx);
+                assert!(!view::is_dimmed(&v, &s, &ctx), "{m:?} {} {i}", def.short);
+            }
+        }
+    }
+}
+
+#[test]
+fn unpitched_type_shows_no_glyph() {
+    // What is left dimmed: STRETCH's TYPE over an unpitched source reads
+    // POLY (UNPITCHED), a fixed text, not a param the machine ignores. As
+    // every dimmed cell but those (ADR 0173), it shows no gauge: its long
+    // word has the band, and a turn moves nothing.
     use chimera_hal::ButtonId;
-    let box_px = |fb: &Fb| -> Vec<Rgb565> {
-        (theme::WAVE_Y..theme::WAVE_Y + H)
-            .flat_map(|y| (theme::WAVE_X..theme::WAVE_X + W).map(move |x| (x, y)))
-            .map(|(x, y)| fb.at(x, y))
-            .collect()
-    };
+    let mut ui = stack_ui();
+    tape_deck(&mut ui, TapeMachine::Stretch);
+    feed(&mut ui, Input::press(ButtonId::Edit));
     let shot = |ui: &mut chimera_core::ui::UiState| {
         settle(ui);
         let mut fb = Fb::new();
         ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
-        box_px(&fb)
+        fb
     };
-    let encs = [
-        EncoderId::A,
-        EncoderId::B,
-        EncoderId::C,
-        EncoderId::D,
-        EncoderId::E,
-        EncoderId::F,
-    ];
-    // (MODEL by, PLAY's MODE, the page (0 DECK, 1 the model page), slot,
-    // the param it holds): every dimmed TAPE cell.
-    let cells = [
-        (1i8, PlayMode::Loop, 0, 1usize, T::POSITION),
-        (1, PlayMode::Loop, 0, 2, T::MOTION),
-        (0, PlayMode::One, 0, 1, T::POSITION),
-        (0, PlayMode::One, 0, 2, T::MOTION),
-        (0, PlayMode::One, 1, 1, T::SIZE),
-        (0, PlayMode::One, 1, 2, T::XFADE),
-        (0, PlayMode::Ping, 1, 2, T::XFADE),
-    ];
-    for (by, mode, page, slot, id) in cells {
-        let model = TapeModel::ALL[by as usize];
-        assert!(!reads_in(model, mode, id), "{model:?} {mode:?} {id:?}");
-        // Under STACK, EDIT goes down to the model page (ADR 0145).
-        let mut ui = stack_ui();
-        tape_deck(&mut ui, by);
-        play_mode(&mut ui, mode);
-        // DECK's TAPE cell: a live glyph.
-        feed(&mut ui, Input::turn(EncoderId::D, 1));
-        feed(&mut ui, Input::turn(EncoderId::D, -1));
-        let want = shot(&mut ui);
-        assert!(
-            want.iter().any(|&c| c != theme::BG),
-            "{model:?} {mode:?}: a glyph"
-        );
-        if page == 1 {
-            feed(&mut ui, Input::press(ButtonId::Edit));
-        }
-        for by in [1, 9, -20] {
-            feed(&mut ui, Input::turn(encs[slot], by));
-            assert_eq!(
-                shot(&mut ui),
-                want,
-                "{model:?} {mode:?} page {page} slot {slot}: turned {by}"
-            );
-        }
-    }
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    feed(&mut ui, Input::turn(EncoderId::B, -1));
+    assert!(glyph_box_lit(&shot(&mut ui)) > 40, "a glyph on AGE");
+    feed(&mut ui, Input::turn(EncoderId::E, 1));
+    let want = shot(&mut ui);
+    assert!(
+        glyph_box_lit(&want) < 40,
+        "no glyph beside TYPE (UNPITCHED)"
+    );
+    feed(&mut ui, Input::turn(EncoderId::E, -1));
+    assert!(shot(&mut ui).px == want.px, "a turn moves nothing");
 }
 
 #[test]
@@ -774,19 +741,14 @@ fn stretch_chevrons_count_the_speed_not_the_knob() {
 }
 
 #[test]
-fn mode_turned_on_the_page_dims_and_frees_the_loop_cells() {
-    // `dimmed_cells_keep_the_glyph` sets MODE behind the UI; here MODE is
-    // turned on the PLAY page, LOOP → ONE → LOOP, as on the unit (owner
-    // UAT on 581cbcfe). In ONE, POSITION, WALK, LENGTH and XFADE ignore
-    // their knobs and the match holds; back in LOOP they move again. A
-    // dirty frame always equals a full one.
+fn model_turned_onto_one_puts_start_and_end_on_deck() {
+    // LOOP → ONE → LOOP on DECK, as on the unit: ONE's DECK is START and
+    // END, which burn the match; back on LOOP, POSITION rolls the wheel.
+    // A dirty frame always equals a full one.
+    use chimera_core::dsp::tape_engine::PlayMode;
     use chimera_core::project::PartId;
-    use chimera_hal::ButtonId;
     let perf = PerfStats::zero();
-    let tape = |ui: &chimera_core::ui::UiState| {
-        let t = &ui.project().part(PartId::ALL[0]).sound.params.tape;
-        (t.mode, [t.position, t.motion, t.size, t.xfade])
-    };
+    let tape = |ui: &chimera_core::ui::UiState| ui.project().part(PartId::ALL[0]).sound.params.tape;
     let mut fb = Fb::new();
     let mut shot = |ui: &mut chimera_core::ui::UiState| {
         for _ in 0..120 {
@@ -801,39 +763,28 @@ fn mode_turned_on_the_page_dims_and_frees_the_loop_cells() {
             .map(|(x, y)| full.at(x, y))
             .collect::<Vec<_>>()
     };
-    // Under STACK, EDIT goes down a page (ADR 0145; #671).
     let mut ui = stack_ui();
-    tape_deck(&mut ui, 0);
+    tape_deck(&mut ui, TapeMachine::Loop);
     shot(&mut ui);
-    // DECK → PLAY; MODE LOOP → ONE.
-    feed(&mut ui, Input::press(ButtonId::Edit));
     feed(&mut ui, Input::turn(EncoderId::A, -1));
-    assert_eq!(tape(&ui).0, PlayMode::One);
-    feed(&mut ui, Input::turn(EncoderId::E, 1));
-    feed(&mut ui, Input::turn(EncoderId::E, -1));
-    let one = shot(&mut ui);
-    let held = tape(&ui);
-    for enc in [EncoderId::B, EncoderId::C] {
-        feed(&mut ui, Input::turn(enc, -20));
-        assert_eq!(shot(&mut ui), one, "PLAY {enc:?} in ONE");
+    assert_eq!(tape(&ui).mode, PlayMode::One);
+    for (enc, by) in [(EncoderId::B, 20), (EncoderId::C, -20)] {
+        let before = shot(&mut ui);
+        let was = (tape(&ui).start, tape(&ui).end);
+        feed(&mut ui, Input::turn(enc, by));
+        assert_ne!(
+            (tape(&ui).start, tape(&ui).end),
+            was,
+            "{enc:?} is START or END"
+        );
+        assert_ne!(shot(&mut ui), before, "{enc:?} burns the match");
     }
-    // PLAY → PITCH → DECK.
-    feed(&mut ui, Input::press(ButtonId::Edit));
-    feed(&mut ui, Input::press(ButtonId::Edit));
-    for enc in [EncoderId::B, EncoderId::C] {
-        feed(&mut ui, Input::turn(enc, 20));
-        assert_eq!(shot(&mut ui), one, "DECK {enc:?} in ONE");
-    }
-    assert_eq!(tape(&ui), held, "ONE's ignored cells kept their values");
-    // Back to PLAY, MODE ONE → LOOP: POSITION moves the wheel.
-    feed(&mut ui, Input::press(ButtonId::Edit));
     feed(&mut ui, Input::turn(EncoderId::A, 1));
-    assert_eq!(tape(&ui).0, PlayMode::Loop);
-    feed(&mut ui, Input::press(ButtonId::Edit));
-    feed(&mut ui, Input::press(ButtonId::Edit));
+    assert_eq!(tape(&ui).mode, PlayMode::Loop);
     feed(&mut ui, Input::turn(EncoderId::B, 1));
     let before = shot(&mut ui);
+    let pos = tape(&ui).position;
     feed(&mut ui, Input::turn(EncoderId::B, 20));
     assert_ne!(shot(&mut ui), before, "POSITION rolls the wheel in LOOP");
-    assert!(tape(&ui).1[0] > held.1[0]);
+    assert!(tape(&ui).position > pos);
 }

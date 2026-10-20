@@ -186,7 +186,7 @@ fn column(c: FixedCol) -> String {
 }
 
 /// A source with its settings as its page shows them: `LFO 1 (SINE, RATE
-/// 3 = 0.5 Hz)`, `ENV 2 (ATTACK 26 ms · …)`, `VELOCITY`.
+/// 0.50 Hz)`, `ENV 2 (ATTACK 26 ms · …)`, `VELOCITY`.
 fn modulator(snd: &Sound, ctx: &SlotCtx, src: ModSource) -> String {
     if let Some(e) = src.env_slot() {
         let b = BlockRef::Env(e);
@@ -232,10 +232,9 @@ fn modulator(snd: &Sound, ctx: &SlotCtx, src: ModSource) -> String {
                 ""
             };
             format!(
-                "{} ({shape}, RATE {} = {} Hz{retrig})",
+                "{} ({shape}, RATE {}{retrig})",
                 src.name(),
                 shown(snd, ctx, at(LfoParams::RATE)),
-                snd.params.lfos[l.index()].rate
             )
         }
         LfoKind::Func(_) => format!(

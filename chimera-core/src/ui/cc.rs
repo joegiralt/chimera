@@ -13,7 +13,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::block::Motion;
 use crate::dsp::knobs::MOVES;
 use crate::dsp::tape_engine::machine::defaults;
-use crate::dsp::tape_engine::{TapeEngineParams, TapeModel};
+use crate::dsp::tape_engine::{TapeEngineParams, TapeMachine};
 use crate::hw::MAX_PARTS;
 use crate::midi_in::CcEvent;
 use crate::midi_map::ramp::{Ramp, bin, budget};
@@ -116,7 +116,7 @@ const MODEL: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::
 
 /// The knob writes a MODEL change to `m` makes besides MODEL's own: its
 /// machine's defaults (`part_page::edit`).
-pub(super) fn model_writes(m: TapeModel) -> u8 {
+pub(super) fn model_writes(m: TapeMachine) -> u8 {
     let k = defaults(m).filter(|&(id, _)| knob(ParamAddr::new(BlockRef::TapeEngine, id)));
     k.count() as u8
 }
@@ -214,7 +214,7 @@ impl UiState {
         }
         let mut cost = u8::from(knob(a));
         if a == MODEL {
-            cost += model_writes(TapeModel::from_index((spec.min + f32::from(to)) as u8));
+            cost += model_writes(TapeMachine::from_index((spec.min + f32::from(to)) as u8));
         }
         if cost > self.cc.room[i] {
             self.cc.pend[i][j] = to as u8;

@@ -9,7 +9,7 @@ use chimera_core::block::DiskCode;
 use chimera_core::block::ParamId;
 use chimera_core::dsp::tape_engine::TapeEngineParams as P;
 use chimera_core::dsp::tape_engine::read::Shape;
-use chimera_core::dsp::tape_engine::{MACHINE_NAMES, PlayMode, StretchType, TapeModel};
+use chimera_core::dsp::tape_engine::{PlayMode, StretchType, TapeModel};
 use chimera_desktop::factory_tapes::{
     ROOT, VERSION, build_all, held, originals, pitch, read_recipes, tape_sound, write_set,
 };
@@ -280,7 +280,7 @@ fn demo(dir: &str) -> Result<bool, String> {
             "{}{{\"file\": \"{}\", \"machine\": \"{}\", \"sound\": \"{name}\", \"source\": \"{}\", \"note\": {note}, \"takes\": {:?}, \"ramp\": \"{}\", \"peak_dbfs\": {:.2}, \"click\": {:.2}}}",
             if k == 0 { "" } else { ",\n" },
             file.replace(".wav", ".oga"),
-            MACHINE_NAMES[usize::from(base.model.index())],
+            chimera_desktop::factory_tapes::MODEL_WORDS[usize::from(base.model.index())],
             s.source.as_str(),
             notes,
             ramp.map_or(String::from("none"), |(id, a, z)| format!(

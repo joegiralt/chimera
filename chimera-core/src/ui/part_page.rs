@@ -3,10 +3,10 @@
 //! bound param's spec.
 
 use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
-use crate::block::{Block, DiskCode};
+use crate::block::Block;
 use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::tape_engine::machine::defaults;
-use crate::dsp::tape_engine::{PlayMode, TapeEngineParams, TapeModel, fade_default};
+use crate::dsp::tape_engine::{TapeEngineParams, TapeMachine};
 use crate::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use crate::ui::view::{SlotCtx, View, view};
 
@@ -96,17 +96,14 @@ pub fn edit(params: &mut impl Blocks, a: ParamAddr, how: Edit) -> bool {
 }
 
 /// A MODEL edit on TAPE writes the new machine's defaults (spec § 2
-/// Machines), and a MODE edit on PLAY its FADE's (ONE holds); a load never
+/// Machines; ONE, LOOP and PING each a machine, ADR 0178); a load never
 /// does. The engine eases them in.
 fn machine_edit(a: ParamAddr, before: f32, b: &mut dyn Block) {
-    let (model, mode) = (TapeEngineParams::MODEL, TapeEngineParams::MODE);
+    let model = TapeEngineParams::MODEL;
     if a == ParamAddr::new(BlockRef::TapeEngine, model) && b.get(model) != before {
-        for (id, v) in defaults(TapeModel::from_index(b.get(model) as u8)) {
+        for (id, v) in defaults(TapeMachine::from_index(b.get(model) as u8)) {
             b.set(id, v);
         }
-    } else if a == ParamAddr::new(BlockRef::TapeEngine, mode) && b.get(mode) != before {
-        let m = PlayMode::from_disk_code(b.get(mode) as u8).unwrap_or(PlayMode::Loop);
-        b.set(TapeEngineParams::DRAG, fade_default(m));
     }
 }
 

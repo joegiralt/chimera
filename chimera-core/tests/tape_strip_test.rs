@@ -277,7 +277,11 @@ fn strip_rows(ui: &chimera_core::ui::UiState) -> Vec<u16> {
 #[test]
 fn strip_glides_with_its_cells() {
     let mut ui = chimera_core::ui::UiState::new();
-    tape_strip(&mut ui, 0, Heads::NONE);
+    tape_strip(
+        &mut ui,
+        chimera_core::dsp::tape_engine::TapeMachine::Loop,
+        Heads::NONE,
+    );
     feed(&mut ui, Input::press(ButtonId::Minus)); // SRC
     settle(&mut ui);
     let before = strip_rows(&ui);
