@@ -23,11 +23,11 @@ const SRC: Streamed = Streamed {
     frames: FILE,
 };
 const HEAD: RamHead = RamHead {
-    idx: HeadIdx::START,
+    idx: HeadIdx::Start,
     start: SourceFrame::new(0),
     end: SourceFrame::new(4_800),
 };
-const H0: HeadIdx = HeadIdx::START;
+const H0: HeadIdx = HeadIdx::Start;
 const DROP: u32 = DROP_FADE.get();
 const QUIET: u32 = QUIET_FADE.get();
 
@@ -398,7 +398,7 @@ fn underrun_fades_out_ending_at_last_held_frame() {
 fn head_holds_from_the_frame_after_its_start() {
     let start = 3 * CF + 100;
     let head = RamHead {
-        idx: HeadIdx::LOOP,
+        idx: HeadIdx::Loop,
         start: SourceFrame::new(start),
         end: SourceFrame::new(start + 4_800),
     };
@@ -411,11 +411,11 @@ fn head_holds_from_the_frame_after_its_start() {
     let rig = Rig::new();
     let mut p = rig.play();
     p.start(start + 1, Some(head));
-    assert_eq!(p.cur.flow(), Flow::Head(HeadIdx::LOOP));
+    assert_eq!(p.cur.flow(), Flow::Head(HeadIdx::Loop));
     let (plan, _) = p.block(1.0);
     assert_eq!(
         runs(&plan),
-        [(SpanSrc::Head(HeadIdx::LOOP), start + 1..start + 66)]
+        [(SpanSrc::Head(HeadIdx::Loop), start + 1..start + 66)]
     );
     // The handoff chunk holds the head's last read.
     assert_eq!(p.wanted().first().map(|w| w.0), Some((start + 4_797) / CF));

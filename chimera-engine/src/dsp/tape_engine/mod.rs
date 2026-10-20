@@ -819,7 +819,7 @@ impl TapeDeck {
         let Some(row) = self.row(held, stream.frames) else {
             return;
         };
-        let Some(head) = row.head_span(HeadIdx::START) else {
+        let Some(head) = row.head_span(HeadIdx::Start) else {
             return;
         };
         // Reads nothing: the window from the file's frames and the rate.
@@ -838,7 +838,7 @@ impl TapeDeck {
         self.cursor.start(
             SourceFrame::new(at),
             self.inc_cap,
-            row.head(HeadIdx::START),
+            row.head(HeadIdx::Start),
             stream,
             port,
         );
@@ -926,7 +926,7 @@ impl TapeDeck {
     fn lands(&self, row: &StreamRow<'_>) -> bool {
         let (from, to) = self.next_reads();
         let holds = |s: Option<span::Span<'_>>| s.is_some_and(|s| s.holds(from) && s.holds(to));
-        holds(row.head_span(HeadIdx::LOOP))
+        holds(row.head_span(HeadIdx::Loop))
             || holds(self.cursor.head().and_then(|h| row.head_span(h.idx)))
     }
 
@@ -1098,7 +1098,7 @@ impl TapeDeck {
                     // Warm if START's head holds the new start, else cold.
                     self.once_on(self.note, &q, &row.silent(), sample_rate);
                     let at = self.heads[0].pos.whole();
-                    let head = row.head(HeadIdx::START);
+                    let head = row.head(HeadIdx::Start);
                     self.cursor
                         .start(SourceFrame::new(at), self.inc_cap, head, stream, port);
                 }
@@ -1202,7 +1202,7 @@ impl TapeDeck {
                 self.cursor.jump(
                     SourceFrame::new(at),
                     self.inc_cap,
-                    row.head(HeadIdx::LOOP),
+                    row.head(HeadIdx::Loop),
                     port,
                 );
             }

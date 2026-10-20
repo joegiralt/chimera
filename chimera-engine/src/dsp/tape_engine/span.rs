@@ -180,7 +180,7 @@ impl<'a> Reads<'a> {
             };
             *run = (span.map_or(silent, |s| s.view), Stop::At(r.end.get()));
         }
-        let head = row.head_span(HeadIdx::LOOP);
+        let head = row.head_span(HeadIdx::Loop);
         let mut seconds = [(head.map_or(silent, |s| s.view), Stop::Never); 2];
         let (mut landed, mut short) = (true, None);
         if let Some((from, to)) = wrap {

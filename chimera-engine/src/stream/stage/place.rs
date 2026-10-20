@@ -48,18 +48,12 @@ pub(crate) fn heads_in(r: SourceRef, p: &TapeEngineParams) -> Option<Heads> {
     let cap = we.saturating_add(2).min(frames).next_multiple_of(2);
     let start = head(ws, reach, cap)?;
     if p.machine() != TapeMachine::Loop {
-        return Some(Heads {
-            specs: [start; 2],
-            n: 1,
-        });
+        return Some(Heads::One(start));
     }
     let b = Bounds::of(ws, we, (p.size, p.position, p.xfade), rate);
     let lx = b.lx.min(xfade_max(rate));
     // With no room before the loop the fade folds inside it (`heads`).
     let early = if b.ls - ws >= lx { lx } else { 0 };
     let looped = head(b.ls - early, lx + reach, cap)?;
-    Some(Heads {
-        specs: [start, looped],
-        n: 2,
-    })
+    Some(Heads::Looped([start, looped]))
 }

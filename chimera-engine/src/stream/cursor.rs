@@ -65,14 +65,15 @@ const _: () = assert!(TRAVEL_MAX + MAX_INC as u32 * DROP_FADE.get() < 2 * CF - 3
 
 /// Which of a source's heads: START's, or the loop's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HeadIdx(u8);
+pub enum HeadIdx {
+    Start,
+    Loop,
+}
 
 impl HeadIdx {
-    pub const START: HeadIdx = HeadIdx(0);
-    pub const LOOP: HeadIdx = HeadIdx(1);
-
+    /// Its entry in the head table.
     pub const fn index(self) -> usize {
-        self.0 as usize
+        self as usize
     }
 }
 
@@ -142,7 +143,7 @@ pub struct Plan {
 
 impl Plan {
     const NONE: (SpanSrc, Range<SourceFrame>) = (
-        SpanSrc::Head(HeadIdx::START),
+        SpanSrc::Head(HeadIdx::Start),
         SourceFrame::ZERO..SourceFrame::ZERO,
     );
 
