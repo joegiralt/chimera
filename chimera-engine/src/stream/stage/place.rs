@@ -37,18 +37,16 @@ fn head(at: u32, reach: u32, cap: u32) -> Option<HeadSpec> {
 }
 
 /// `r`'s heads for `p`, or why it has none: `p` needs the source in RAM,
-/// or too few frames for a head. A rate no descriptor holds never reaches
-/// here (`SourceCheck`); it reads as too short.
+/// or too few frames for a head. `SourceCheck` has passed `r`'s rate, so
+/// `clamped` never moves it.
 pub(crate) fn heads_in(r: SourceRef, p: &TapeEngineParams) -> Result<Heads, Refusal> {
     if let Some(n) = needs_ram(p) {
         return Err(Refusal::NeedsRam(n));
     }
-    let (Some(rate), Some(file)) = (
-        SourceRate::new(r.rate),
-        NonZeroU32::new(r.frames).filter(|f| f.get() >= 2),
-    ) else {
+    let Some(file) = NonZeroU32::new(r.frames).filter(|f| f.get() >= 2) else {
         return Err(Refusal::TooShort);
     };
+    let rate = SourceRate::clamped(r.rate);
     let frames = r.frames;
     let reach = head_frames(rate);
     let ws = window_start(p.start, file);
