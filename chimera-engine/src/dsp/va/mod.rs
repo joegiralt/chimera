@@ -708,6 +708,8 @@ impl VaEngine {
             // the corrector's memory goes with the voice, at any STABILITY
             self.max.reset();
             (self.playing, self.duck) = (p.mode, Duck::Steady);
+            // a note starts PHASE's offset from 0, so it ramps in; a MODE
+            // switch (NaN) starts it where it already is
             self.pm_prev = 0.0;
             self.pm_step = [0.0; 2];
         }
