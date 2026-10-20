@@ -2393,7 +2393,11 @@ fn fuzz_is_billed_its_measured_cost() {
     let mut p = fuzz_voice(K2040Voice::Rev2);
     assert_eq!(Voice::cost(&p, &none), bare + FxType::Fuzz.cost());
     p.fx.pots[0] = 0.0;
-    assert_eq!(Voice::cost(&p, &none), bare + FxType::Fuzz.cost(), "SUSTAIN 0");
+    assert_eq!(
+        Voice::cost(&p, &none),
+        bare + FxType::Fuzz.cost(),
+        "SUSTAIN 0"
+    );
     assert_eq!(FxType::Fuzz.cost(), Cost(175));
 }
 

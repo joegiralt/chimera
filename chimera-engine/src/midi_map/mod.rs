@@ -26,6 +26,9 @@ impl Mappable {
     pub const fn new(a: ParamAddr) -> Option<Self> {
         let ok = if matches!(a.block, BlockRef::Part) {
             a.param.0 == PartParams::LEVEL.0 || a.param.0 == PartParams::PAN.0
+        } else if matches!(a.block, BlockRef::VoiceFx) && a.param.0 < VoiceFxParams::P1.0 {
+            // TYPE and PLACE crossfade a stage in and out: a switch, not a knob.
+            false
         } else if a.block.in_sound() {
             match a.spec() {
                 Some(s) => !s.patching && s.stored,

@@ -46,6 +46,9 @@ pub enum VizType {
     /// L1–L3: one cycle of the slot's LFO, the newest voice's playhead on
     /// it (ADR 0177).
     Lfo(crate::dsp::modulator::LfoSlot),
+    /// FLT › FX: `source › FX › FLT` (or the filter first) and the type's
+    /// transfer curve.
+    FxCurve,
 }
 
 /// A node of the FX flow; the value is its index in `viz::effects_flow`.

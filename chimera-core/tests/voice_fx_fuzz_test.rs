@@ -237,7 +237,7 @@ fn rms_db(x: &[f32]) -> f32 {
 
 /// At SUSTAIN, TONE and VOLUME 1/2 the wet is as loud as the dry, within
 /// 1.75 dB (VA INIT, C3, into the slot PRE). The plan's 1.5 dB and RF 4's
-/// bound of 4 can't both hold: OUT 0.092 peaks at 3.99 and sits 1.6 dB
+/// bound of 4 can't both hold: MAKE_UP 0.092 peaks at 3.99 and sits 1.6 dB
 /// under. RF 4's bound wins; Task 14 makes the final pass.
 #[test]
 fn fuzz_at_noon_is_as_loud_as_the_dry() {

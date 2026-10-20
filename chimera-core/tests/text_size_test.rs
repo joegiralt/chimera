@@ -23,6 +23,7 @@ fn cell(label: &'static str, text: &'static str) -> Cell<'static> {
         mod_amount: Some(0.5),
         look: Look::Live,
         motion: None,
+        mini: None,
     }
 }
 

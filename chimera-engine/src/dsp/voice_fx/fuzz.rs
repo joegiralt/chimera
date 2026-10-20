@@ -53,7 +53,7 @@ const SPAN: f32 = 5.913_032;
 /// At SUSTAIN, TONE, VOLUME ½ the wet is 1.6 dB under VA INIT C3's dry, and
 /// every pot at 1 (VOLUME's ×4 top) peaks at 3.99 into the 2040, under its
 /// bound of 4 (RF 4). Task 14 makes the final pass (ADR 0156).
-const OUT: f32 = 0.092;
+const MAKE_UP: f32 = 0.092;
 
 /// The law's table: `u' = |x| + 2⁻⁶` over `[2⁻⁶, 2¹⁰)`, four intervals an
 /// octave, indexed by its float bits. The offset starts interval 0 at
@@ -154,7 +154,7 @@ fn drive(s: f32) -> f32 {
 /// The wet's gain at VOLUME `v`.
 #[inline(always)]
 fn volume(v: f32) -> f32 {
-    OUT * super::params::pot_level(v)
+    MAKE_UP * super::params::pot_level(v)
 }
 
 /// The memoryless transfer of the clipping stages at the pots' gains, for

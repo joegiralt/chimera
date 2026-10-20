@@ -33,7 +33,7 @@ A voice can run two shaping stages today: DRV before the filter and the AMP page
 - **Routed cells are matrix views.** ENV AMT, KEYBD, FM3 and QM on the filter pages are views of MOD matrix cells, as today. The matrix's fixed FOLD column becomes **FX** (`FixedCol::Fx`) and moves the current type's P1; ALGO's OP 5/6 taps on it act only while TYPE is FOLD, and are dimmed and unbilled otherwise.
 - **Each type bills its real cost** in the voice's admission bill: OFF nothing, SOFT today's DRV, FOLD today's fold, FUZZ its own measured bill. A **TYPE or PLACE change crossfades over 20 ms** (`FX_FADE` = 960 samples, the stage gate's): old and new run together, and the fade blocks are not billed, as with the filter's fade. A change arriving mid-fade waits for its end; the last one wins.
 - **A fixed reference level per engine, `EngineType::fx_scale`:** the signal is multiplied by it into the slot and divided by it out, so the same knob position bites the same on every engine and a stage at MIX 0 is the dry signal. Never a running normaliser.
-- **Old Sounds load safely, not the same.** DRV's DRIVE, TONE and MIX load as SOFT PRE; the fold's FOLD, SYM and MIX as FOLD POST. If both ran (`Voice::stage_runs`), **DRV wins** and the fold is dropped. Routes and MIDI-map entries on DRIVE, FOLD and SYM move to P1 or P2 by position. Blocks 9 (DRIVE) and 11 (FOLDER) are retired, never reused.
+- **Old Sounds load safely, not the same.** DRV's DRIVE, TONE and MIX load as SOFT PRE; the fold's FOLD, SYM and MIX as FOLD POST. If both ran (`Voice::stage_runs`), **DRV wins** and the fold is dropped. Routes and MIDI-map entries on DRIVE, FOLD and SYM move to P1 or P2 by position. Blocks 9 (DRIVE) and 11 (FOLDER) are retired, never reused. LEVEL compensates the make-up so loudness holds: an old DRV or fold loads with P3 at the value that cancels SOFT's or FOLD's `MAKE_UP`.
 - **LPG's KIND code 7 and ident `LPG` are reserved** for the low-pass gate (built with DRUM). It is not selectable, and nothing loads as it.
 
 ## Alternatives considered
@@ -51,6 +51,12 @@ A voice can run two shaping stages today: DRV before the filter and the AMP page
 - `ParamSnapshot` grows 20 B (`VoiceFxParams`), and `Voice` holds its played copy, so a `Voice` less its slot is 2,184 B: **`VOICE_CHAIN_BYTES` 2,176 → 2,240**, the next 64 (ADR 0051/0101/0131's rule). Retiring DRV and the fold's state and params is expected to free more than that; to be measured in Tasks 6 and 10.
 - A FUZZ Part gets fewer voices only near the CPU limit, through the admission bill.
 - DELAY can come later as a TYPE in the same slot, with code 4; its cost is memory (a buffer a voice).
+
+## Built
+
+- PLACE has no large focus-band glyph: it sits on FLT's front page, which is a BigViz with no focus band. Its cell draws the two boxes small (`MiniGlyph::Place`) and its focus behaviour is the word's.
+- FLT › FX's band (strip and curve) draws from bank 2 through the door (`voice_fx::look`); with bank 2 closed the band draws nothing extra and the cells still work. FUZZ's curve is the kernel's own.
+- TYPE and PLACE are not MIDI-mappable (switches); P1-P3 and MIX are.
 
 ## Sources
 

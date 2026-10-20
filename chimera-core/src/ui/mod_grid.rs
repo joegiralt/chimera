@@ -9,12 +9,14 @@ use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::tape_engine::{TapeModel, machine};
+use crate::dsp::voice_fx::params::FxType;
 use crate::mod_path::LABEL_LEN;
 use crate::modulation::{FixedCol, ModState};
 use crate::preset::Sound;
 use crate::taps::{TapOp, TapRoutes};
 use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
+use crate::ui::fx_panel;
 use crate::ui::hint::{self, Gesture, Hint};
 use crate::ui::theme;
 
@@ -169,8 +171,38 @@ pub struct MatrixState {
     /// Source list — built from mod matrix sub-pages.
     pub sources: [Option<SourceRow>; MAX_SOURCES],
     pub num_sources: usize,
-    /// The edited Part's TAPE machine: its labels name TAPE's columns.
+    /// The edited Part's TAPE machine and FX type, `DestCtx::pack`ed: their
+    /// labels name those columns. One byte: the budget counts them.
+    ctx: u8,
+}
+
+/// What names a destination's cell beyond its spec: TAPE's machine and
+/// the FX slot's type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DestCtx {
     pub tape: TapeModel,
+    pub fx: FxType,
+}
+
+impl DestCtx {
+    /// FX type in the high bits, the machine's code in the low three.
+    fn pack(self) -> u8 {
+        (self.fx as u8) << 3 | self.tape as u8
+    }
+
+    fn unpack(b: u8) -> Self {
+        let tape = TapeModel::ALL.into_iter().find(|&m| m as u8 == b & 7);
+        let fx = FxType::LIST.into_iter().find(|&t| t as u8 == b >> 3);
+        Self {
+            tape: tape.unwrap_or(TapeModel::Loop),
+            fx: fx.unwrap_or(FxType::Off),
+        }
+    }
+
+    pub const DEFAULT: DestCtx = DestCtx {
+        tape: TapeModel::Loop,
+        fx: FxType::Off,
+    };
 }
 
 impl MatrixState {
@@ -190,17 +222,37 @@ impl MatrixState {
             num_dests: 0,
             sources: [None; MAX_SOURCES],
             num_sources: 0,
-            tape: TapeModel::Loop,
+            ctx: DestCtx::DEFAULT.pack(),
         };
         // Matrix starts empty — no destinations enabled, no amounts set.
         // Users enable params with MIX+Plus on block pages, set amounts in grid.
         state
     }
 
+    /// What names the columns now.
+    pub fn ctx(&self) -> DestCtx {
+        DestCtx::unpack(self.ctx)
+    }
+
     /// The edited Part's machine; a change redraws the headers.
     pub fn set_tape(&mut self, m: TapeModel) {
-        if self.tape != m {
-            self.tape = m;
+        self.set_ctx(DestCtx {
+            tape: m,
+            ..self.ctx()
+        });
+    }
+
+    /// The edited Part's FX type; a change redraws the headers.
+    pub fn set_fx(&mut self, t: FxType) {
+        self.set_ctx(DestCtx {
+            fx: t,
+            ..self.ctx()
+        });
+    }
+
+    fn set_ctx(&mut self, c: DestCtx) {
+        if self.ctx != c.pack() {
+            self.ctx = c.pack();
             self.bump();
         }
     }
@@ -664,19 +716,31 @@ fn machine_cell(a: ParamAddr, tape: TapeModel) -> Option<&'static machine::Cell>
         .flatten()
 }
 
-/// A destination's parameter name: its spec label, or the machine's.
-pub fn dest_name(d: &ModDest, tape: TapeModel) -> &'static str {
-    machine_cell(d.addr, tape)
-        .map(|c| c.label)
+/// An FX pot's cell under `fx` (`DRIVE`, `DRV`). `None` off the FX block,
+/// and for TYPE, PLACE and MIX, which keep their spec labels.
+pub fn fx_cell(a: ParamAddr, fx: FxType) -> Option<&'static fx_panel::FxCell> {
+    (a.block == BlockRef::VoiceFx)
+        .then(|| fx_panel::cell_of(fx, a.param))
+        .flatten()
+}
+
+/// A destination's parameter name: its spec label, or the machine's or
+/// the FX type's.
+pub fn dest_name(d: &ModDest, c: DestCtx) -> &'static str {
+    machine_cell(d.addr, c.tape)
+        .map(|m| m.label)
+        .or_else(|| fx_cell(d.addr, c.fx).map(|x| x.label))
         .or_else(|| d.addr.spec().map(|s| s.label))
         .unwrap_or("?")
 }
 
-/// A column's header: the machine's short on TAPE, else `fit_header`.
-fn header(d: &ModDest, tape: TapeModel) -> &'static str {
-    match machine_cell(d.addr, tape) {
-        Some(c) => c.short,
-        None => d.addr.spec().map_or("?", fit_header),
+/// A column's header: the machine's or the FX type's short, else
+/// `fit_header`.
+fn header(d: &ModDest, c: DestCtx) -> &'static str {
+    match (machine_cell(d.addr, c.tape), fx_cell(d.addr, c.fx)) {
+        (Some(m), _) => m.short,
+        (_, Some(x)) => x.short,
+        _ => d.addr.spec().map_or("?", fit_header),
     }
 }
 
@@ -699,8 +763,8 @@ pub fn fit_header(spec: &crate::block::ParamSpec) -> &'static str {
 
 /// A destination as the focus band names it: the column header's two lines
 /// on one, `TAG NAME` (`OP1 LEVEL`), so operators read apart.
-pub fn fmt_route_dest(buf: &mut FmtBuf, d: &ModDest, tape: TapeModel) {
-    let _ = write!(buf, "{} {}", block_tag(d.addr.block), dest_name(d, tape));
+pub fn fmt_route_dest(buf: &mut FmtBuf, d: &ModDest, c: DestCtx) {
+    let _ = write!(buf, "{} {}", block_tag(d.addr.block), dest_name(d, c));
 }
 
 /// A block's full name, for the readout (`FILTER`; `block_tag` is `FLT`).
@@ -751,11 +815,11 @@ const ARROW_GAP: i32 = 5;
 /// The readout's destination: `FILTER CUTOFF`, or `FLT CUTOFF` when the
 /// full block name would push the line past `theme::CONTENT_W`. The param
 /// name is never cut.
-pub fn fmt_readout_dest(buf: &mut FmtBuf, source: &str, d: &ModDest, tape: TapeModel) {
-    let _ = write!(buf, "{} {}", block_name(d.addr.block), dest_name(d, tape));
+pub fn fmt_readout_dest(buf: &mut FmtBuf, source: &str, d: &ModDest, c: DestCtx) {
+    let _ = write!(buf, "{} {}", block_name(d.addr.block), dest_name(d, c));
     if names_width(source, buf.as_str()) > theme::CONTENT_W {
         *buf = FmtBuf::new();
-        fmt_route_dest(buf, d, tape);
+        fmt_route_dest(buf, d, c);
     }
 }
 
@@ -864,7 +928,7 @@ where
         );
         let name = match state.col(di) {
             Col::Fixed(f) => f.tag(),
-            Col::Reg(_) => header(&dest, state.tape),
+            Col::Reg(_) => header(&dest, state.ctx()),
         };
         draw::text_center(d, &theme::FONT_LABEL, name, x, GRID_NAME_Y, name_color, 0);
     }
@@ -1043,7 +1107,7 @@ where
             let x = label(d, src, theme::MARGIN_X, theme::ACCENT) + ARROW_GAP;
             let x = x + draw::arrow(d, x, READOUT_Y, theme::ACCENT) + ARROW_GAP;
             let mut name = FmtBuf::new();
-            fmt_readout_dest(&mut name, src, &dest, state.tape);
+            fmt_readout_dest(&mut name, src, &dest, state.ctx());
             label(d, name.as_str(), x, theme::ACCENT);
             let mut effect = FmtBuf::new();
             let dead = inert & (1 << state.sel_col) != 0;

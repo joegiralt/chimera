@@ -3014,6 +3014,7 @@ impl UiState {
         }
         let ctx = self.ctx();
         self.matrix_state.set_tape(ctx.tape);
+        self.matrix_state.set_fx(ctx.fx);
         let sound = &self.project.part(at).sound;
 
         // Apply mod offsets for display — makes bars and vizzes animate with modulation.

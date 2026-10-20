@@ -24,6 +24,10 @@ use chimera_hal::BLOCK_SIZE;
 use common::codec_util::{decode_project_lossy, fix_crc, record_offsets, sound_file};
 use common::{Rig, clicks};
 
+/// P3 an old DRV or folder loads with: it cancels the type's make-up.
+const SOFT_P3: f32 = chimera_core::dsp::voice_fx::soft::UNITY_LEVEL;
+const FOLD_P3: f32 = chimera_core::dsp::voice_fx::fold::UNITY_LEVEL;
+
 const DRIVE: u8 = 9;
 const FOLDER: u8 = 11;
 
@@ -70,7 +74,7 @@ const P2: ParamAddr = ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P2);
 #[test]
 fn old_drv_loads_as_soft_pre() {
     let (s, skips) = load(&[engine(), old_block(DRIVE, &[(0, 0.4), (1, 0.7), (2, 0.8)])]);
-    assert_eq!(fx(&s), (FxType::Soft, Place::Pre, [0.4, 0.7, 0.5], 0.8));
+    assert_eq!(fx(&s), (FxType::Soft, Place::Pre, [0.4, 0.7, SOFT_P3], 0.8));
     assert_eq!(skips, 0);
 }
 
@@ -81,13 +85,16 @@ fn out_of_range_values_clamp() {
         engine(),
         old_block(DRIVE, &[(0, 5.0), (1, -3.0), (2, -1.0)]),
     ]);
-    assert_eq!(fx(&s), (FxType::Soft, Place::Pre, [1.0, 0.0, 0.5], 0.0));
+    assert_eq!(fx(&s), (FxType::Soft, Place::Pre, [1.0, 0.0, SOFT_P3], 0.0));
 }
 
 #[test]
 fn old_fold_loads_as_fold_post() {
     let (s, skips) = load(&[engine(), old_block(FOLDER, &[(0, 0.3), (1, 0.2)])]);
-    assert_eq!(fx(&s), (FxType::Fold, Place::Post, [0.3, 0.2, 0.5], 0.5));
+    assert_eq!(
+        fx(&s),
+        (FxType::Fold, Place::Post, [0.3, 0.2, FOLD_P3], 0.5)
+    );
     assert_eq!(skips, 0);
 }
 
@@ -98,7 +105,7 @@ fn drv_wins_when_both_ran() {
         old_block(DRIVE, &[(0, 0.4), (1, 0.7), (2, 0.8)]),
         old_block(FOLDER, &[(0, 0.3), (1, 0.2), (2, 0.9)]),
     ]);
-    assert_eq!(fx(&s), (FxType::Soft, Place::Pre, [0.4, 0.7, 0.5], 0.8));
+    assert_eq!(fx(&s), (FxType::Soft, Place::Pre, [0.4, 0.7, SOFT_P3], 0.8));
     assert_eq!(skips, 0);
 }
 
@@ -121,7 +128,10 @@ fn a_routed_drive_at_zero_ran() {
 fn an_old_fold_tap_ran_the_fold() {
     let jack = Jack::Tap(TapOp::Op6).disk_code();
     let (s, skips) = load(&[engine(), (RecordTag::TapRoutes, vec![jack, FOLDER, 0, 100])]);
-    assert_eq!(fx(&s), (FxType::Fold, Place::Post, [0.0, 0.5, 0.5], 0.5));
+    assert_eq!(
+        fx(&s),
+        (FxType::Fold, Place::Post, [0.0, 0.5, FOLD_P3], 0.5)
+    );
     assert_eq!(s.params.taps.get(TapOp::Op6, FixedCol::Fx), Some(100));
     assert_eq!(skips, 0);
     let p1 = [BlockRef::VoiceFx.disk_code().unwrap(), VoiceFxParams::P1.0];
@@ -260,7 +270,7 @@ fn an_old_project_part_loads_its_drv() {
     let s = &p.perf().parts()[0].sound;
     assert_eq!(
         (s.params.fx.ty(), s.params.fx.place, s.params.fx.pots),
-        (FxType::Soft, Place::Pre, [0.4, 0.7, 0.5])
+        (FxType::Soft, Place::Pre, [0.4, 0.7, SOFT_P3])
     );
 }
 

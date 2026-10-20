@@ -376,6 +376,9 @@ fn bench(wave: WaveId, drive: f32, tone: f32) -> (Bench, Param) {
     b.set(&find(fx, VoiceFxParams::TYPE), soft as f32);
     b.set(&find(fx, VoiceFxParams::P1), drive);
     b.set(&find(fx, VoiceFxParams::P2), tone);
+    // SOFT's `MAKE_UP` (0.483) level-matched the wet; LEVEL 0.7625 (x2.07)
+    // gives the sine its old peak.
+    b.set(&find(fx, VoiceFxParams::P3), 0.7625);
     b.set(&find(fx, VoiceFxParams::MIX), 1.0);
     let flt = |b| b == BlockRef::Filter;
     b.set(&find(flt, FilterParams::CUTOFF), 20_000.0);

@@ -544,7 +544,9 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     ("factory_3.snd", 0x901698e789a3ccf9),
     ("factory_4.snd", 0x68328532bf9779a7),
     // Then the voice-end fade (ADR 0096): SQR BASS's −65 dB filter tail.
-    ("factory_5.snd", 0xdb1cd08add369508),
+    // Re-recorded in Task 14: its DRV loads as SOFT with LEVEL cancelling its
+    // `MAKE_UP` 0.483 (same loudness, not the same bits).
+    ("factory_5.snd", 0xa778b804866845e5),
     ("factory_6.snd", 0x144e8d10ce6ac51e),
     // Then the voice-end fade past −80 dB (#487): its −69 dB DC tail.
     ("factory_7.snd", 0x13448df1ea3c0499),

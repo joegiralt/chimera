@@ -284,6 +284,7 @@ fn an_absent_route_knob_shows_a_dash() {
         mod_amount: None,
         look: Look::Absent,
         motion: None,
+        mini: None,
     };
     components::cell(
         &mut want,

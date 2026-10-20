@@ -3,6 +3,7 @@
 //! both keeps DRV; it needn't sound the same (no legacy compat).
 
 use super::params::{FxType, Place, VoiceFxParams};
+use super::{fold, soft};
 use crate::dsp::algo::math::clampf;
 
 /// DRV's raw values by old id (DRIVE, TONE, MIX) and the folder's (FOLD,
@@ -33,15 +34,30 @@ fn vals(raw: &[Option<f32>; 3], d: [f32; 3]) -> [f32; 3] {
 pub fn legacy_fx(l: &Legacy, drive_routed: bool, fold_moved: bool) -> Option<VoiceFxParams> {
     let [drive, tone, dmix] = vals(&l.drive, DRIVE_DEFAULT);
     let [fold, sym, fmix] = vals(&l.fold, FOLD_DEFAULT);
-    let (ty, place, p1, p2, mix) = if ran(drive, drive_routed) {
-        (FxType::Soft, Place::Pre, drive, tone, dmix)
+    // P3 cancels the type's make-up: an old Sound keeps its loudness.
+    let (ty, place, p1, p2, p3, mix) = if ran(drive, drive_routed) {
+        (
+            FxType::Soft,
+            Place::Pre,
+            drive,
+            tone,
+            soft::UNITY_LEVEL,
+            dmix,
+        )
     } else if ran(fold, fold_moved) {
-        (FxType::Fold, Place::Post, fold, sym, fmix)
+        (
+            FxType::Fold,
+            Place::Post,
+            fold,
+            sym,
+            fold::UNITY_LEVEL,
+            fmix,
+        )
     } else {
         return None;
     };
     let mut p = VoiceFxParams::default();
     p.set_type(ty);
-    (p.place, p.pots, p.mix) = (place, [p1, p2, 0.5], mix);
+    (p.place, p.pots, p.mix) = (place, [p1, p2, p3], mix);
     Some(p)
 }

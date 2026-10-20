@@ -189,3 +189,102 @@ fn chains_have_no_drv() {
         (8, "FX", "FX")
     );
 }
+
+mod common;
+mod screen;
+
+use chimera_core::ui::components::{self, Cell, Look, MiniGlyph};
+use chimera_core::ui::region::RegionKind;
+use screen::{Fb, settle, stack_ui};
+
+/// The ACCENT pixels' mean column in `x0..x1`.
+fn accent_centroid(fb: &Fb, x0: i32, x1: i32, y0: i32, y1: i32) -> Option<f32> {
+    let xs: Vec<i32> = (y0..y1)
+        .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+        .filter(|&(x, y)| fb.at(x, y) == theme::ACCENT)
+        .map(|(x, _)| x)
+        .collect();
+    (!xs.is_empty()).then(|| xs.iter().sum::<i32>() as f32 / xs.len() as f32)
+}
+
+#[test]
+fn the_place_cell_draws_its_mini_glyph() {
+    let x = theme::MARGIN_X;
+    let draw = |mini| {
+        let mut fb = Fb::new();
+        let c = Cell {
+            label: "PLACE",
+            text: "POST",
+            value: 1.0,
+            fmt: chimera_core::ui::page::ValFmt::Uni,
+            active: false,
+            mod_amount: None,
+            look: Look::Live,
+            motion: None,
+            mini,
+        };
+        components::cell(
+            &mut fb,
+            0,
+            theme::CELL_LABEL_Y,
+            Some(&c),
+            theme::TextSize::Normal,
+        );
+        let (y0, y1) = (
+            theme::CELL_LABEL_Y + 4,
+            theme::CELL_LABEL_Y + theme::CELL_ROW_H,
+        );
+        accent_centroid(&fb, x, x + theme::CELL_COL_W, y0, y1)
+    };
+    let (pre, post) = (
+        draw(Some(MiniGlyph::Place { post: false })).expect("PRE lit"),
+        draw(Some(MiniGlyph::Place { post: true })).expect("POST lit"),
+    );
+    assert!(pre < post);
+    assert_eq!(draw(None), None, "the text cell has no accent");
+}
+
+#[test]
+fn fx_band_redraws_when_type_or_place_changes() {
+    let mut ui = stack_ui();
+    screen::on_flt_fx(&mut ui, FilterKind::Svf, FxType::Soft);
+    let mut fb = Fb::new();
+    let (perf, scope) = (
+        chimera_core::ui::perf::PerfStats::zero(),
+        screen::scope_fixture(),
+    );
+    let mut key = |ui: &mut chimera_core::ui::UiState| {
+        settle(ui);
+        ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
+        ui.drawn_key(RegionKind::Viz).expect("the viz is drawn")
+    };
+    let base = key(&mut ui);
+    ui.params_mut().fx.place = chimera_core::dsp::voice_fx::params::Place::Post;
+    let post = key(&mut ui);
+    assert_ne!(base, post, "PLACE");
+    ui.params_mut().fx.set_type(FxType::Fold);
+    let fold = key(&mut ui);
+    assert_ne!(post, fold, "TYPE");
+    // The curve follows the pots: P1 is in the region key.
+    ui.params_mut().fx.pots[0] = 0.9;
+    assert_ne!(fold, key(&mut ui), "P1");
+}
+
+/// The door's rows: OFF traces the sine itself, FUZZ's curve follows SUSTAIN.
+#[test]
+fn the_fx_rows_are_the_set_curve_and_off_is_the_line() {
+    use chimera_core::dsp::voice_fx::look::{COLS, trace};
+    let rows = |t, p| {
+        let mut r = [[0i8; COLS]; 2];
+        assert!(trace(t, p, &mut r));
+        r
+    };
+    let off = rows(FxType::Off, [0.5; 3]);
+    assert_eq!(off[0], off[1]);
+    let (lo, hi) = (
+        rows(FxType::Fuzz, [0.2, 0.5, 0.5]),
+        rows(FxType::Fuzz, [1.0, 0.5, 0.5]),
+    );
+    assert_eq!(lo[0], hi[0]);
+    assert_ne!(lo[1], hi[1]);
+}
