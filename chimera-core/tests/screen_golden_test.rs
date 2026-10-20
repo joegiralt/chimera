@@ -97,7 +97,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Each type's FLT and FLT › MOD (filter-types § 5, Task 17): CLEAN's
     // NOTCH1, the 2040's lowered pass band and KEYBD HALF, its fixed MODE
     // dimmed and VOICE EXP, DIRTY's NOTCH1 at FREQ (its own MODE names).
-    // Layout A (#614): VOICE EXP on FLT (flt_2040_exp, was
+    // Layout A (#614): VOICE EXPNDR on FLT (flt_2040_exp, was
     // flt_mod_2040_exp), KEYBD HALF on FLT › MOD, no MODE cell.
     ("flt_clean", 0x56110a2e1e38df2e),
     ("flt_mod_clean", 0x3b429be456859f89),
@@ -108,7 +108,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("flt_2040_env_amt", 0x3aa14553c74ebaa7),
     ("flt_clean_lfo", 0xcdf3c95d4dd3230c),
     ("flt_mod_2040", 0x245dab0018c33a18),
-    ("flt_2040_exp", 0x15d1e8c2c7350bb9),
+    ("flt_2040_exp", 0x4cc08b535dd4156d),
     ("flt_dirty", 0x6c4b2e89b9de9bf7),
     ("flt_mod_dirty", 0xcb3a020442623ede),
     ("flt_ladder", 0xce6acb4caebff20a),

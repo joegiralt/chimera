@@ -167,7 +167,7 @@ pub enum K2040Voice {
 }
 
 /// VOICE's screen names, in `K2040Voice::ALL`'s order.
-pub static VOICE_LABELS: [&str; 2] = ["REV2", "EXP"];
+pub static VOICE_LABELS: [&str; 2] = ["REV2", "EXPNDR"];
 
 const _: () = {
     assert!(K2040Voice::ALL.len() == VOICE_LABELS.len());
