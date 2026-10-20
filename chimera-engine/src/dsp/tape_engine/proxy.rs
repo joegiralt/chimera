@@ -169,7 +169,8 @@ impl TapeEngine {
     }
 
     pub fn streams(&self) -> bool {
-        self.read(|_, k| k.streamed).unwrap_or(false)
+        self.read(|_, k| matches!(k.state, super::Note::Playing(super::Feed::Streamed(_))))
+            .unwrap_or(false)
     }
 
     pub fn start(

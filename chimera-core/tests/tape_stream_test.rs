@@ -1747,6 +1747,54 @@ fn an_engine_change_drops_the_slots() {
     assert!(ring_empty(&mut pl, v), "every slot dropped");
 }
 
+/// A block with no port ends a streamed note there and its stream with it
+/// (#697 H1): `streams` reads false, so the instrument drops the voice's
+/// ring (`run_block`'s rule after each voice), with no cursor left to stop.
+#[test]
+fn a_portless_block_ends_the_stream() {
+    use chimera_core::stream::slot::SlotState;
+    use chimera_core::stream::units::SlotIdx;
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let mut st = Stream::new(&rings, &third, &whole, 0);
+    let mut src = OneSource::new(&st.card.held(&[0], HF));
+    let p = one_hold();
+    let mut slot = MaybeUninit::uninit();
+    let e = deck(&mut slot);
+    let mut b = [0.0; BLOCK_SIZE];
+    for k in 0..20 {
+        st.serve();
+        st.with(V, |port| {
+            if k == 0 {
+                e.start(60, &p, &src.view(), SR, Some(port));
+            }
+            e.play(&mut b, &p, &src.view(), SR, Some(port));
+        });
+        st.now += 1;
+    }
+    let empty = |st: &mut Stream<'_>| {
+        let turn = st.audio.turn();
+        SlotIdx::ALL
+            .iter()
+            .all(|&s| turn.seen(V, s) == SlotState::Empty)
+    };
+    assert!(e.streams() && e.is_active(), "it streams");
+    assert!(!empty(&mut st), "its ring holds slots");
+    e.play(&mut b, &p, &src.view(), SR, None);
+    assert!(b.iter().all(|&y| y == 0.0), "nothing plays");
+    assert!(
+        !e.is_active() && !e.streams(),
+        "the note and its stream end"
+    );
+    if !e.streams() {
+        let mut turn = st.audio.turn();
+        for s in SlotIdx::ALL {
+            turn.cancel(V, s);
+        }
+    }
+    assert!(empty(&mut st), "the ring dropped");
+}
+
 /// A shell's whole block through the voices' ports (`run_block_ported`):
 /// a note the drain hands it starts streamed on its port, and the render
 /// reads on through it.
