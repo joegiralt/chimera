@@ -458,14 +458,68 @@ struct Stream {
     mute: bool,
 }
 
+/// The machine a note plays, and what only it keeps.
+#[cfg(feature = "tape")]
+#[derive(Clone, Copy)]
+enum MachineState {
+    One(Once),
+    Loop,
+    Ping(PingPass),
+    Tron(Once),
+    Scrub(Scrub),
+    Stretch(Stretch),
+    Wave(Wave),
+}
+
+/// ONESHOT's and TRON's note: the window's end in the head's frame, and
+/// the output samples left on TRON's tape (ONESHOT's never run out).
+#[cfg(feature = "tape")]
+#[derive(Clone, Copy)]
+struct Once {
+    end: u32,
+    left: u32,
+}
+
+/// PING-PONG's: its clamp in progress and its turn; `inc`'s reciprocal at
+/// the block's end, a turn's longest half (samples), the clamp's step a
+/// sample, and the distance (frames) a head outside covers in one clamp.
+#[cfg(feature = "tape")]
+#[derive(Clone, Copy)]
+struct PingPass {
+    ghost: Option<Ghost>,
+    turning: Option<Turn>,
+    inv_v: f32,
+    turn_len: u16,
+    clamp_dg: f32,
+    reach: f32,
+}
+
+/// SCRUB's: the finger's move each sample (wrapping) and its change a
+/// sample, which ramps across the block as `inc` does; the tape stopped,
+/// the output's share (linear before its smoothstep) and its move a block
+/// (`HUSH_S`); the loop's speed in frames a sample at the last block's
+/// end, signed, and DRAG's one-pole share a block.
+#[cfg(feature = "tape")]
+#[derive(Clone, Copy)]
+struct Scrub {
+    df: u64,
+    ddf: u64,
+    stopped: bool,
+    hush: f32,
+    hush_step: f32,
+    speed: f32,
+    pull: f32,
+}
+
 #[cfg(feature = "tape")]
 pub struct TapeDeck {
     /// The source a note plays, latched at note-on (ADR 0087): never
     /// re-resolved, its row read each block.
     src: Option<SourceId>,
     state: Note,
-    /// The machine and whether FADE holds, latched at note-on.
-    machine: TapeMachine,
+    /// The machine and its own state, and whether FADE holds, latched at
+    /// note-on.
+    machine: MachineState,
     hold: bool,
     /// The head, and the head a fade reads into, each in its frame `u`:
     /// mirrored, the source is read at `off − u`, else at `u` (`off + u`
@@ -476,37 +530,12 @@ pub struct TapeDeck {
     /// `lo + hi − 1` of the window. PING-PONG down: `ls + le`. SCRUB: the
     /// finger, plus the source's length when mirrored.
     off: Pos,
-    /// SCRUB: the finger's move each sample (wrapping), and its change a
-    /// sample: it ramps across the block, as `inc` does.
-    df: u64,
-    ddf: u64,
-    /// SCRUB: the tape is stopped; the output's share, linear before its
-    /// smoothstep, and its move a block (`HUSH_S`).
-    stopped: bool,
-    hush: f32,
-    hush_step: f32,
-    /// TRANSWAVE's note: its frames, level and scan.
-    wave: Wave,
-    /// STRETCH's note: its grains and clock.
-    stretch: Stretch,
-    /// SCRUB: the loop's speed in frames a sample at the last block's end,
-    /// signed; DRAG's one-pole share a block.
-    speed: f32,
-    pull: f32,
     /// The source's frames, latched at note-on.
     n: u32,
-    /// PING-PONG's clamp in progress, and its turn.
-    ghost: Option<Ghost>,
-    turning: Option<Turn>,
-    /// `inc` at the block's end and its reciprocal, a turn's longest
-    /// half (samples), a clamp's length (samples) and the distance (frames)
-    /// a head outside covers in one: PING-PONG's, set once a block.
+    /// `inc` at the block's end, and a clamp's length (samples): a LOOP
+    /// flip's fade and PING-PONG's clamp take it.
     v: f32,
-    inv_v: f32,
-    turn_len: u16,
     clamp_len: u32,
-    clamp_dg: f32,
-    reach: f32,
     /// Events handled: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     events: u32,
@@ -542,11 +571,8 @@ pub struct TapeDeck {
     fade_ws: u32,
     /// START, latched at note-on: END before it plays reversed.
     start: f32,
-    /// ONESHOT and TRON: the window's end in the head's frame, the output
-    /// samples left on TRON's tape (ONESHOT's never run out), the release's
-    /// gain and its fall a sample (1 until key up), and FADE's fall.
-    once_end: u32,
-    left: u32,
+    /// The release's gain and its fall a sample (1 until key up), and
+    /// FADE's fall: TRON's, and PLAY's but at HOLD.
     rel: f32,
     rel_k: f32,
     fade_k: f32,
@@ -606,28 +632,13 @@ impl TapeDeck {
         TapeDeck {
             src: None,
             state: Note::Idle,
-            machine: TapeMachine::Loop,
+            machine: MachineState::Loop,
             hold: false,
             heads: [Head::default(); 2],
             off: Pos(0),
-            df: 0,
-            ddf: 0,
-            stopped: false,
-            hush: 1.0,
-            hush_step: 1.0,
-            wave: Wave::IDLE,
-            stretch: Stretch::IDLE,
-            speed: 0.0,
-            pull: 1.0,
             n: 2,
-            ghost: None,
-            turning: None,
             v: 1.0,
-            inv_v: 1.0,
-            turn_len: 48,
             clamp_len: 240,
-            clamp_dg: 1.0 / 240.0,
-            reach: 241.0,
             #[cfg(any(test, feature = "test-support"))]
             events: 0,
             inc: Ramp::default(),
@@ -659,8 +670,6 @@ impl TapeDeck {
             pending: None,
             fade_ws: 0,
             start: 0.0,
-            once_end: 1,
-            left: 0,
             rel: 1.0,
             rel_k: 1.0,
             fade_k: 1.0,
@@ -779,6 +788,123 @@ impl TapeDeck {
         }
     }
 
+    /// Machine `m` before its note-on sets it up.
+    fn idle_machine(m: TapeMachine) -> MachineState {
+        let once = Once { end: 1, left: 0 };
+        match m {
+            TapeMachine::One => MachineState::One(once),
+            TapeMachine::Loop => MachineState::Loop,
+            TapeMachine::Ping => MachineState::Ping(PingPass {
+                ghost: None,
+                turning: None,
+                inv_v: 1.0,
+                turn_len: 48,
+                clamp_dg: 1.0 / 240.0,
+                reach: 241.0,
+            }),
+            TapeMachine::Tron => MachineState::Tron(once),
+            TapeMachine::Scrub => MachineState::Scrub(Scrub {
+                df: 0,
+                ddf: 0,
+                stopped: false,
+                hush: 1.0,
+                hush_step: 1.0,
+                speed: 0.0,
+                pull: 1.0,
+            }),
+            TapeMachine::Stretch => MachineState::Stretch(Stretch::IDLE),
+            TapeMachine::Wave => MachineState::Wave(Wave::IDLE),
+        }
+    }
+
+    /// The machine latched at the last note-on.
+    fn tape_machine(&self) -> TapeMachine {
+        match self.machine {
+            MachineState::One(_) => TapeMachine::One,
+            MachineState::Loop => TapeMachine::Loop,
+            MachineState::Ping(_) => TapeMachine::Ping,
+            MachineState::Tron(_) => TapeMachine::Tron,
+            MachineState::Scrub(_) => TapeMachine::Scrub,
+            MachineState::Stretch(_) => TapeMachine::Stretch,
+            MachineState::Wave(_) => TapeMachine::Wave,
+        }
+    }
+
+    fn once_state(&self) -> Option<&Once> {
+        match &self.machine {
+            MachineState::One(o) | MachineState::Tron(o) => Some(o),
+            _ => None,
+        }
+    }
+
+    fn once_state_mut(&mut self) -> Option<&mut Once> {
+        match &mut self.machine {
+            MachineState::One(o) | MachineState::Tron(o) => Some(o),
+            _ => None,
+        }
+    }
+
+    fn pp(&self) -> Option<&PingPass> {
+        match &self.machine {
+            MachineState::Ping(pp) => Some(pp),
+            _ => None,
+        }
+    }
+
+    fn pp_mut(&mut self) -> Option<&mut PingPass> {
+        match &mut self.machine {
+            MachineState::Ping(pp) => Some(pp),
+            _ => None,
+        }
+    }
+
+    /// PING-PONG's clamp in progress.
+    fn ghost(&self) -> Option<Ghost> {
+        self.pp().and_then(|pp| pp.ghost)
+    }
+
+    fn set_ghost(&mut self, g: Option<Ghost>) {
+        if let Some(pp) = self.pp_mut() {
+            pp.ghost = g;
+        }
+    }
+
+    /// PING-PONG's turn in progress.
+    fn turning(&self) -> Option<Turn> {
+        self.pp().and_then(|pp| pp.turning)
+    }
+
+    fn set_turning(&mut self, t: Option<Turn>) {
+        if let Some(pp) = self.pp_mut() {
+            pp.turning = t;
+        }
+    }
+
+    fn scrub(&self) -> Option<&Scrub> {
+        match &self.machine {
+            MachineState::Scrub(sc) => Some(sc),
+            _ => None,
+        }
+    }
+
+    fn scrub_mut(&mut self) -> Option<&mut Scrub> {
+        match &mut self.machine {
+            MachineState::Scrub(sc) => Some(sc),
+            _ => None,
+        }
+    }
+
+    /// SCRUB's finger's move a sample and its change; 0 off SCRUB.
+    fn finger(&self) -> (u64, u64) {
+        self.scrub().map_or((0, 0), |sc| (sc.df, sc.ddf))
+    }
+
+    fn set_df(&mut self, df: u64) {
+        if let Some(sc) = self.scrub_mut() {
+            sc.df = df;
+        }
+    }
+
     /// The note is over: a streamed one's cursor stops at the block's end.
     fn end(&mut self) {
         self.state = match self.state {
@@ -842,7 +968,10 @@ impl TapeDeck {
         match v {
             Some(v) if wave::playable(p.machine, &v) => self.note_on(note, p, &v, sample_rate),
             None if self.src.is_some_and(|id| src.moving(id)) => {
-                (self.note, self.machine) = (note, p.machine);
+                self.note = note;
+                if self.tape_machine() != p.machine {
+                    self.machine = Self::idle_machine(p.machine);
+                }
                 self.hold = params::hold(p);
                 self.state = Note::Gated { waited: 0 };
             }
@@ -943,11 +1072,13 @@ impl TapeDeck {
         let frames = (blocks as f32 * BLOCK_SIZE as f32 * i) as u32;
         let to = self.heads[0].pos.whole().saturating_add(frames);
         // TRON's tape ran out in output time while it waited.
-        self.left = self
-            .left
-            .saturating_sub(blocks.saturating_mul(BLOCK_SIZE as u32));
-        let to = if self.one_head() {
-            if to >= self.once_end || self.left == 0 {
+        if let Some(o) = self.once_state_mut() {
+            o.left = o
+                .left
+                .saturating_sub(blocks.saturating_mul(BLOCK_SIZE as u32));
+        }
+        let to = if let Some(&o) = self.once_state() {
+            if to >= o.end || o.left == 0 {
                 self.end();
                 return;
             }
@@ -1303,9 +1434,9 @@ impl TapeDeck {
     pub fn playing_cost(&self) -> Option<Cost> {
         self.is_active().then(|| {
             if self.fed() {
-                streamed_cost(self.machine)
+                streamed_cost(self.tape_machine())
             } else {
-                Self::model_cost(self.machine)
+                Self::model_cost(self.tape_machine())
             }
         })
     }
@@ -1353,7 +1484,6 @@ impl TapeDeck {
     ) {
         let (frames, rate) = (v.frames(), v.desc().rate());
         self.state = Note::Playing(Feed::Ram);
-        self.machine = p.machine;
         self.at_root = params::at_root(p);
         self.hold = params::hold(p);
         self.note = note;
@@ -1367,18 +1497,21 @@ impl TapeDeck {
         self.first = true;
         self.walk = 0.0;
         self.n = frames;
-        self.ghost = None;
-        self.turning = None;
-        self.turn_len = clampf(libm::roundf(TURN_S * sample_rate as f32), 2.0, 1_000.0) as u16;
         self.clamp_len = libm::roundf(CLAMP_FADE_S * sample_rate as f32).max(1.0) as u32;
-        self.clamp_dg = 1.0 / self.clamp_len as f32;
-        self.df = 0;
-        self.ddf = 0;
-        self.hush = 1.0;
-        self.stopped = false;
-        self.hush_step = BLOCK_SIZE as f32 / (HUSH_S * sample_rate as f32);
-        self.speed = 0.0;
-        self.pull = 1.0 - libm::expf(-(BLOCK_SIZE as f32) / (drag_s(p.drag) * sample_rate as f32));
+        self.machine = match Self::idle_machine(p.machine) {
+            MachineState::Ping(pp) => MachineState::Ping(PingPass {
+                turn_len: clampf(libm::roundf(TURN_S * sample_rate as f32), 2.0, 1_000.0) as u16,
+                clamp_dg: 1.0 / self.clamp_len as f32,
+                ..pp
+            }),
+            MachineState::Scrub(sc) => MachineState::Scrub(Scrub {
+                hush_step: BLOCK_SIZE as f32 / (HUSH_S * sample_rate as f32),
+                pull: 1.0
+                    - libm::expf(-(BLOCK_SIZE as f32) / (drag_s(p.drag) * sample_rate as f32)),
+                ..sc
+            }),
+            m => m,
+        };
         self.ramp = true;
         self.wow_kind = p.wow;
         self.age.set_band(rate.get());
@@ -1390,7 +1523,8 @@ impl TapeDeck {
             return;
         }
         if self.model() == TapeModel::Transwave {
-            self.wave = Wave::on(v, wave::cycles(note, self.pitch, sample_rate));
+            self.machine =
+                MachineState::Wave(Wave::on(v, wave::cycles(note, self.pitch, sample_rate)));
             return;
         }
         if self.model() == TapeModel::Stretch {
@@ -1402,7 +1536,7 @@ impl TapeDeck {
                 sample_rate,
             )
             .get();
-            self.stretch = Stretch::on(p, v, i, &self.mac, sample_rate);
+            self.machine = MachineState::Stretch(Stretch::on(p, v, i, &self.mac, sample_rate));
             return;
         }
         let rev = self.reversed(p.end);
@@ -1476,15 +1610,15 @@ impl TapeDeck {
 
     /// PLAY in MODE ONE, LOOP or PING: the paths the old machines took.
     fn one(&self) -> bool {
-        self.machine == TapeMachine::One
+        matches!(self.machine, MachineState::One(_))
     }
 
     fn lp(&self) -> bool {
-        self.machine == TapeMachine::Loop
+        matches!(self.machine, MachineState::Loop)
     }
 
     fn ping(&self) -> bool {
-        self.machine == TapeMachine::Ping
+        matches!(self.machine, MachineState::Ping(_))
     }
 
     /// ONE and TRON play one head toward the window's end.
@@ -1505,7 +1639,7 @@ impl TapeDeck {
     /// (`1 − START`), as REVERSE's was. PING-PONG and SCRUB take the sorted
     /// window.
     fn window(&self, p: &TapeEngineParams, rev: bool) -> (f32, f32) {
-        if !self.machine.ordered() {
+        if !self.tape_machine().ordered() {
             (p.start.min(p.end), p.start.max(p.end))
         } else if rev {
             (1.0 - p.start, 1.0 - p.end)
@@ -1538,20 +1672,25 @@ impl TapeDeck {
     fn once_on(&mut self, note: u8, p: &TapeEngineParams, v: &SourceView<'_>, sample_rate: u32) {
         let (frames, rate) = (v.frames(), v.desc().rate());
         let mut w = Window::of(p.start, p.end, frames, min_frames(rate));
-        if self.one() {
+        let left = if self.one() {
             w = slice_bounds(w, p.slice.slice(), note);
-            self.left = u32::MAX;
+            u32::MAX
         } else {
             let strip = w.frames() as f32 / f32::from(rate);
-            self.left = tron::tron_run_samples(tron::tron_len_s_in(p.size, strip), sample_rate);
-        }
+            tron::tron_run_samples(tron::tron_len_s_in(p.size, strip), sample_rate)
+        };
         let rev = w.dir == Dir::Rev;
         self.off = if rev { at(w.lo + w.hi - 1) } else { Pos(0) };
         self.heads = [Head {
             pos: at(w.lo),
             mirror: rev,
         }; 2];
-        self.once_end = w.hi;
+        let o = Once { end: w.hi, left };
+        self.machine = if self.one() {
+            MachineState::One(o)
+        } else {
+            MachineState::Tron(o)
+        };
         (self.rel, self.rel_k) = (1.0, 1.0);
         self.fade_k = tron::release_k(p.drag, sample_rate);
         self.fade = None;
@@ -1638,7 +1777,7 @@ impl TapeDeck {
 
     /// The model latched at the last note-on.
     pub fn model(&self) -> TapeModel {
-        self.machine.model()
+        self.tape_machine().model()
     }
 
     /// The source frame head `h` reads; one before frame 0 reads 0.
@@ -1677,31 +1816,27 @@ impl TapeDeck {
             return Heads::NONE;
         }
         let p = self.probe();
-        if self.model() == TapeModel::Tron {
-            let run = (self.left as f32 * self.inc.value().unwrap_or(0.0)) as u32;
-            let out = self.heads[0]
-                .pos
-                .whole()
-                .saturating_add(run)
-                .min(self.once_end);
+        if let MachineState::Tron(o) = self.machine {
+            let run = (o.left as f32 * self.inc.value().unwrap_or(0.0)) as u32;
+            let out = self.heads[0].pos.whole().saturating_add(run).min(o.end);
             return Heads::new(p.head, Some(self.frame(at(out))));
         }
         Heads::new(p.head, p.other)
     }
 
     pub fn probe(&self) -> Probe {
-        if self.model() == TapeModel::Transwave {
-            let (head, other, gain) = self.wave.frames();
+        if let MachineState::Wave(w) = &self.machine {
+            let (head, other, gain) = w.frames();
             return Probe {
                 head,
                 other: Some(other),
                 gain,
-                level: self.wave.level(),
-                from: self.wave.from(),
+                level: w.level(),
+                from: w.from(),
             };
         }
-        if self.model() == TapeModel::Stretch {
-            let (head, other, gain) = self.stretch.probe();
+        if let MachineState::Stretch(st) = &self.machine {
+            let (head, other, gain) = st.probe();
             return Probe {
                 head,
                 other: Some(other),
@@ -1711,7 +1846,7 @@ impl TapeDeck {
             };
         }
         let first = self.frame(self.heads[0].pos);
-        match self.ghost {
+        match self.ghost() {
             // The head left outside fades out; the one inside fades in.
             Some(g) => Probe {
                 head: g.pos.whole().min(self.n),
@@ -1733,8 +1868,8 @@ impl TapeDeck {
     /// Each head's way: the old grain's and the new one's (STRETCH), the
     /// head's and a fade's second head's (the rest).
     pub fn dirs(&self) -> [Dir; 2] {
-        if self.model() == TapeModel::Stretch {
-            return self.stretch.dirs();
+        if let MachineState::Stretch(st) = &self.machine {
+            return st.dirs();
         }
         self.heads
             .map(|h| if h.mirror { Dir::Rev } else { Dir::Fwd })
@@ -1743,20 +1878,29 @@ impl TapeDeck {
     /// Events handled since `init_in_place`: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn events(&self) -> u32 {
-        self.events + self.stretch.events
+        match &self.machine {
+            MachineState::Stretch(st) => self.events + st.events,
+            _ => self.events,
+        }
     }
 
     /// STRETCH's wraps in the loop since the note-on, lifted and bare: for
     /// the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn wraps(&self) -> [u32; 2] {
-        self.stretch.wraps
+        match &self.machine {
+            MachineState::Stretch(st) => st.wraps,
+            _ => Stretch::IDLE.wraps,
+        }
     }
 
     /// STRETCH's grain clock: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn grain(&self) -> stretch::GrainClock {
-        self.stretch.clock()
+        match &self.machine {
+            MachineState::Stretch(st) => st.clock(),
+            _ => Stretch::IDLE.clock(),
+        }
     }
 
     /// The heads' speed at the last block's end, frames a sample: for the
@@ -1835,14 +1979,14 @@ impl TapeDeck {
             self.mac.age = 0.0;
         }
         self.slide.tick();
-        if self.model() == TapeModel::Transwave {
+        if let MachineState::Wave(w) = &mut self.machine {
             let target = clampf(
                 wave::cycles(self.note, self.pitch + self.cents, sample_rate) * self.slide.value(),
                 f32::EPSILON,
                 wave::CYCLES_MAX,
             );
             let m = self.mac;
-            self.wave.render(
+            w.render(
                 out,
                 v,
                 self.inc.step(target),
@@ -1854,14 +1998,16 @@ impl TapeDeck {
         } else if self.model() == TapeModel::Stretch {
             let target = self.target_inc(v.desc().rate(), 0.0, sample_rate);
             let m = self.mac;
-            self.stretch.render(
-                out,
-                v,
-                self.inc.step(target),
-                (m.position, m.motion, m.size),
-                p.end,
-                sample_rate,
-            );
+            if let MachineState::Stretch(st) = &mut self.machine {
+                st.render(
+                    out,
+                    v,
+                    self.inc.step(target),
+                    (m.position, m.motion, m.size),
+                    p.end,
+                    sample_rate,
+                );
+            }
         } else {
             self.render_heads(out, reads, (p, first), sample_rate);
             if self.rel_k != 1.0 {
@@ -1938,10 +2084,17 @@ impl TapeDeck {
         let target = self.target_inc(reads.run(0).0.desc().rate(), tune, sample_rate);
         let (from, to) = self.inc.step(target);
         let fast = from.max(to);
-        let rem = Pos(at(self.once_end).0.saturating_sub(self.heads[0].pos.0));
+        let Some(&Once {
+            end: once_end,
+            left: left_n,
+        }) = self.once_state()
+        else {
+            return;
+        };
+        let rem = Pos(at(once_end).0.saturating_sub(self.heads[0].pos.0));
         let rem = rem.whole() as f32 + rem.frac();
         let reach = (BLOCK_SIZE as u32 + END_RAMP) as f32;
-        let near = rem <= reach * fast + 2.0 || (self.left as f32) <= reach;
+        let near = rem <= reach * fast + 2.0 || (left_n as f32) <= reach;
         // Near the end the gain ramps to 0 over `END_RAMP` samples' travel
         // at the block's fastest head, or over the tape's last `END_RAMP`
         // samples, whichever is lower at the block's end: a line through
@@ -1949,7 +2102,7 @@ impl TapeDeck {
         // `inc` is ramped), clamped to 0..1 a sample.
         let travel = 0.5 * BLOCK_SIZE as f32 * (from + to) + 0.5 * (to - from);
         let (by_end, by_left) = (1.0 / (END_RAMP as f32 * fast), 1.0 / END_RAMP as f32);
-        let left = self.left as f32;
+        let left = left_n as f32;
         let gain = if (rem - travel) * by_end <= (left - BLOCK_SIZE as f32) * by_left {
             (rem * by_end, travel * by_end * (1.0 / BLOCK_SIZE as f32))
         } else {
@@ -2003,7 +2156,9 @@ impl TapeDeck {
             cur = cur.wrapping_add(step);
             h = h + Pos(cur);
         }
-        self.left = self.left.saturating_sub(n);
+        if let Some(o) = self.once_state_mut() {
+            o.left = o.left.saturating_sub(n);
+        }
         self.heads[0].pos = h;
         self.rel = g;
         (cur, step, gain)
@@ -2040,20 +2195,26 @@ impl TapeDeck {
         let off = self.off;
         let mut h = self.heads[0].pos;
         let (mut g, k) = (self.rel, self.rel_k);
-        let end = at(self.once_end);
+        let Some(&Once { end, mut left }) = self.once_state() else {
+            return (cur, step, (r, dr));
+        };
+        let end = at(end);
         let (mut i, stop) = (run.start, run.end.min(BLOCK_SIZE));
-        while i < stop && h < end && self.left > 0 {
+        while i < stop && h < end && left > 0 {
             r -= dr;
             let x = clampf(r, 0.0, 1.0);
             // `off − h` under frame 0 at `lo` 0: `read`'s clamp, as in `once`.
             out[i] = v.read(if REV { off - h } else { h }) * g * (x * x * (3.0 - 2.0 * x));
             g *= k;
-            self.left -= 1;
+            left -= 1;
             cur = cur.wrapping_add(step);
             h = h + Pos(cur);
             i += 1;
         }
-        if h >= end || self.left == 0 {
+        if let Some(o) = self.once_state_mut() {
+            o.left = left;
+        }
+        if h >= end || left == 0 {
             // The tape ran out, or the head reached END: on the block's
             // last sample, too.
             out[i..].fill(0.0);
@@ -2099,11 +2260,12 @@ impl TapeDeck {
             let start = if rev { 1.0 - self.start } else { self.start };
             window_start(start, v.frames())
         };
-        if self.ping() {
+        let clamp_len = self.clamp_len;
+        if let Some(pp) = self.pp_mut() {
+            pp.inv_v = 1.0 / to;
+            pp.reach = to * clamp_len as f32 + 1.0;
             self.v = to;
-            self.inv_v = 1.0 / to;
-            self.reach = to * self.clamp_len as f32 + 1.0;
-            if self.turning.is_none() {
+            if self.turning().is_none() {
                 self.event = self.pp_event();
             }
         }
@@ -2136,15 +2298,14 @@ impl TapeDeck {
         if self.runup && self.next_rev == self.mirror() {
             self.follow_next();
         }
-        if scrub {
+        if let Some(sc) = self.scrub_mut() {
             // The finger's speed at the block's ends, frames a sample.
-            let end =
-                (self.df as i64).wrapping_add((self.ddf as i64).wrapping_mul(BLOCK_SIZE as i64));
-            let finger = (self.df as i64).unsigned_abs().max(end.unsigned_abs()) as f32
+            let end = (sc.df as i64).wrapping_add((sc.ddf as i64).wrapping_mul(BLOCK_SIZE as i64));
+            let finger = (sc.df as i64).unsigned_abs().max(end.unsigned_abs()) as f32
                 * (1.0 / 4_294_967_296.0);
             let speed = from.max(to).max(finger);
             // Hysteresis: stop under STILL, start over twice it.
-            self.stopped = if self.stopped && !first {
+            sc.stopped = if sc.stopped && !first {
                 speed <= 2.0 * STILL
             } else {
                 speed < STILL
@@ -2168,7 +2329,7 @@ impl TapeDeck {
             };
             let (r, c) = (&r, (i, cur, step));
             let rs = (r, &second, stop, stop1);
-            (i, cur) = match (self.ghost.is_some(), self.turning.is_some()) {
+            (i, cur) = match (self.ghost().is_some(), self.turning().is_some()) {
                 (true, _) => self.run_slow::<true>(out, r, c, &k),
                 (false, true) => self.run_slow::<false>(out, r, c, &k),
                 (false, false) if self.flipping() => match self.mirror() {
@@ -2206,14 +2367,20 @@ impl TapeDeck {
         first: bool,
         k: &AtWrap<'_>,
     ) -> (f32, f32) {
+        let Some(&Scrub {
+            speed, pull, df, ..
+        }) = self.scrub()
+        else {
+            return (0.0, 0.0);
+        };
         let want = 2.0 * self.mac.motion * inc;
-        if self.speed == 0.0 && want != 0.0 && (want < 0.0) != self.mirror() {
+        if speed == 0.0 && want != 0.0 && (want < 0.0) != self.mirror() {
             self.turn_scrub();
         }
         let ahead = if self.mirror() { -want } else { want };
         let to = if ahead < 0.0 { 0.0 } else { ahead.min(INC_MAX) };
-        let from = if first { to } else { libm::fabsf(self.speed) };
-        self.speed = if self.mirror() { -to } else { to };
+        let from = if first { to } else { libm::fabsf(speed) };
+        let speed = if self.mirror() { -to } else { to };
         self.floor(from.max(to), k);
 
         let we = self.we;
@@ -2223,16 +2390,22 @@ impl TapeDeck {
         // The finger's speed ramps from the last block's to this one's, so
         // the head's speed is linear across the block, and bounded at
         // both ends, so everywhere in it.
-        let df_to = if first {
+        let (df, df_to) = if first {
             self.off = target + at_n;
-            self.df = 0;
-            0
+            (0, 0)
         } else {
             let gap = (target.0 as i64).wrapping_sub(finger.0 as i64) as f32;
             let most = (INC_MAX - from.max(to)) * 4_294_967_296.0;
-            clampf(self.pull * gap / BLOCK_SIZE as f32, -most, most) as i64
+            (
+                df,
+                clampf(pull * gap / BLOCK_SIZE as f32, -most, most) as i64,
+            )
         };
-        self.ddf = (df_to.wrapping_sub(self.df as i64) / BLOCK_SIZE as i64) as u64;
+        if let Some(sc) = self.scrub_mut() {
+            sc.speed = speed;
+            sc.df = df;
+            sc.ddf = (df_to.wrapping_sub(df as i64) / BLOCK_SIZE as i64) as u64;
+        }
         (from, to)
     }
 
@@ -2272,17 +2445,20 @@ impl TapeDeck {
     /// output over `HUSH_S`, a smoothstep, ramped linearly across each block.
     /// The heads play on underneath, so nothing jumps when it comes back.
     fn hush_block(&mut self, out: &mut [f32; BLOCK_SIZE], first: bool) {
-        let to = if self.stopped { 0.0 } else { 1.0 };
-        if first {
-            self.hush = to;
-        }
-        let x0 = self.hush;
-        let x1 = if self.stopped {
-            (x0 - self.hush_step).max(0.0)
-        } else {
-            (x0 + self.hush_step).min(1.0)
+        let Some(sc) = self.scrub_mut() else {
+            return;
         };
-        self.hush = x1;
+        let to = if sc.stopped { 0.0 } else { 1.0 };
+        if first {
+            sc.hush = to;
+        }
+        let x0 = sc.hush;
+        let x1 = if sc.stopped {
+            (x0 - sc.hush_step).max(0.0)
+        } else {
+            (x0 + sc.hush_step).min(1.0)
+        };
+        sc.hush = x1;
         let (g0, g1) = (x0 * x0 * (3.0 - 2.0 * x0), x1 * x1 * (3.0 - 2.0 * x1));
         if g0 == 1.0 && g1 == 1.0 {
             return;
@@ -2393,8 +2569,8 @@ impl TapeDeck {
             Stop::At(s) => ev.min(s),
             Stop::Never => ev,
         };
-        let (mut ev, mut g, mut off, mut df) = (at(self.event), self.gain, self.off, self.df);
-        let ddf = self.ddf;
+        let (mut df, ddf) = self.finger();
+        let (mut ev, mut g, mut off) = (at(self.event), self.gain, self.off);
         while i < BLOCK_SIZE {
             let mut hit = false;
             if MIRROR && !MOVING {
@@ -2526,7 +2702,7 @@ impl TapeDeck {
                 (self.heads[0].pos, self.heads[1].pos) = (h0, h1);
                 (self.gain, self.off) = (g, off);
                 if MOVING {
-                    self.df = df;
+                    self.set_df(df);
                 }
                 if self.heads[0].pos.whole() < self.event {
                     // The run's stop, not an event.
@@ -2547,7 +2723,7 @@ impl TapeDeck {
         (self.heads[0].pos, self.heads[1].pos) = (h0, h1);
         (self.gain, self.off) = (g, off);
         if MOVING {
-            self.df = df;
+            self.set_df(df);
         }
         (i, cur)
     }
@@ -2557,7 +2733,10 @@ impl TapeDeck {
     /// compile as before the flip.
     #[inline(never)]
     fn leaves(&self, mirror: bool) -> bool {
-        self.mirror() != mirror || self.flipping() || self.ghost.is_some() || self.turning.is_some()
+        self.mirror() != mirror
+            || self.flipping()
+            || self.ghost().is_some()
+            || self.turning().is_some()
     }
 
     /// PING-PONG's slow samples: turns (`turning`), where the head slows to
@@ -2580,8 +2759,8 @@ impl TapeDeck {
         (mut i, mut cur, step): (usize, u64, u64),
         k: &AtWrap<'_>,
     ) -> (usize, u64) {
-        let dg = self.clamp_dg;
-        let mut gh = self.ghost.unwrap_or(Ghost {
+        let dg = self.pp().map_or(0.0, |pp| pp.clamp_dg);
+        let mut gh = self.ghost().unwrap_or(Ghost {
             pos: Pos(0),
             hold: None,
             back: false,
@@ -2593,7 +2772,7 @@ impl TapeDeck {
             let (mirror, off) = (self.mirror(), self.off);
             // The head's read position, moving down in a mirrored frame.
             let mut r = self.real(self.heads[0].pos);
-            let turning = self.turning;
+            let turning = self.turning();
             let mut t = turning.unwrap_or(Turn {
                 k: 0,
                 th: 1,
@@ -2663,31 +2842,31 @@ impl TapeDeck {
                 gh.done += n;
                 if gh.done >= gh.len {
                     // The clamp is done: the plain run takes over.
-                    self.ghost = None;
+                    self.set_ghost(None);
                     self.gain = 0.0;
                     if turning.is_some() {
                         t.k += n as u16;
-                        self.turning = Some(t);
+                        self.set_turning(Some(t));
                         self.end_half(t, k);
                     }
-                    if hit || (turning.is_some() && self.turning.is_none()) {
+                    if hit || (turning.is_some() && self.turning().is_none()) {
                         self.on_event(k);
                     }
                     return (i, cur);
                 }
                 // An event may retarget the fade (`fade_from`): it reads
                 // the fade's state from `self`, and it comes back here.
-                self.ghost = Some(gh);
+                self.set_ghost(Some(gh));
                 self.gain = g;
             }
             if turning.is_some() {
                 t.k += n as u16;
-                self.turning = Some(t);
-                if self.end_half(t, k) && !GHOST && self.ghost.is_some() {
+                self.set_turning(Some(t));
+                if self.end_half(t, k) && !GHOST && self.ghost().is_some() {
                     // A clamp started at the flip.
                     return (i, cur);
                 }
-                if self.turning.is_none() && !GHOST {
+                if self.turning().is_none() && !GHOST {
                     // The turn is over: on to the next edge, here if it is
                     // within the block, else in the plain run.
                     let to = self.event.saturating_sub(self.heads[0].pos.whole());
@@ -2696,18 +2875,18 @@ impl TapeDeck {
                     }
                 }
             }
-            if hit || (turning.is_some() && self.turning.is_none()) {
+            if hit || (turning.is_some() && self.turning().is_none()) {
                 self.on_event(k);
-                if !GHOST && self.ghost.is_some() {
+                if !GHOST && self.ghost().is_some() {
                     return (i, cur);
                 }
             }
-            if let (true, Some(h)) = (GHOST, self.ghost) {
+            if let (true, Some(h)) = (GHOST, self.ghost()) {
                 (gh, g) = (h, self.gain);
             }
         }
         if GHOST {
-            self.ghost = Some(gh);
+            self.set_ghost(Some(gh));
             self.gain = g;
         }
         (i, cur)
@@ -2724,7 +2903,7 @@ impl TapeDeck {
             true
         } else {
             if t.k == 2 * t.th {
-                self.turning = None;
+                self.set_turning(None);
                 self.event = self.pp_event();
             }
             false
@@ -2947,13 +3126,19 @@ impl TapeDeck {
         if h.whole() < b.le {
             let rem = at(b.le) - h;
             let rem = rem.whole() as f32 + rem.frac();
-            let th = (2.0 * rem * self.inv_v).min(self.turn_len as f32) as u16;
+            let Some(&PingPass {
+                inv_v, turn_len, ..
+            }) = self.pp()
+            else {
+                return;
+            };
+            let th = (2.0 * rem * inv_v).min(turn_len as f32) as u16;
             if th >= 2 {
-                self.turning = Some(Turn {
+                self.set_turning(Some(Turn {
                     k: 0,
                     th,
                     unit: (1u32 << 16) / (2 * th as u32),
-                });
+                }));
                 self.event = u32::MAX;
             } else {
                 self.event = b.le;
@@ -2984,18 +3169,18 @@ impl TapeDeck {
     /// had reached, `a + g·(head − a)` (moved to its own hold, if any), is
     /// the new fade's `hold`, so the output carries on and fades from there.
     fn fade_from(&mut self, pos: Pos, back: bool, k: &AtWrap<'_>) {
-        let hold = self.ghost.map(|gh| {
+        let hold = self.ghost().map(|gh| {
             let (g, a) = (self.gain, k.v.read(gh.pos));
             let y = a + g * (k.v.read(pos) - a);
             gh.hold.map_or(y, |h| y + (1.0 - g) * (h - y))
         });
-        self.ghost = Some(Ghost {
+        self.set_ghost(Some(Ghost {
             pos,
             hold,
             back,
             done: 0,
             len: self.clamp_len,
-        });
+        }));
         self.gain = 0.0;
     }
 
@@ -3021,7 +3206,8 @@ impl TapeDeck {
     /// distance a turn at this speed takes, at most a quarter of the loop.
     fn pp_event(&self) -> u32 {
         let b = self.bounds;
-        let half = self.v * self.turn_len as f32 * 0.5;
+        let turn_len = self.pp().map_or(0, |pp| pp.turn_len);
+        let half = self.v * turn_len as f32 * 0.5;
         b.le - (half as u32).min(b.frames() / 4)
     }
 
@@ -3058,7 +3244,7 @@ impl TapeDeck {
         // Where the head is before any jump: `r` at a turn's rest, the
         // overshooting head on a late reflection (whose fade is started).
         let pre = self.real(self.heads[0].pos);
-        let nb = if self.ghost.is_some() {
+        let nb = if self.ghost().is_some() {
             self.held(back)
         } else {
             self.next
@@ -3078,9 +3264,10 @@ impl TapeDeck {
         let mut inside = u.clamp(lo, hi);
         // Below 0 (a loop shrunk under a head going down at POSITION 0) it
         // would wrap: clamped.
-        if u >= 0 && (((inside - u) >> 32) as f32) < self.reach {
+        let reach = self.pp().map_or(0.0, |pp| pp.reach);
+        if u >= 0 && (((inside - u) >> 32) as f32) < reach {
             inside = u;
-        } else if self.ghost.is_none_or(|g| g.done > 0 || g.pos != pre) {
+        } else if self.ghost().is_none_or(|g| g.done > 0 || g.pos != pre) {
             self.fade_from(pre, back, k);
         }
         self.heads[0].pos = Pos(inside as u64);
