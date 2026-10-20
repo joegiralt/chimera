@@ -1110,7 +1110,10 @@ fn machine_table_is_pinned() {
             K::One,
             "ONE",
             &[(P::START, "START", "STA", 0.0), (P::END, "END", "END", 1.0)],
-            &[(P::DRAG, "FADE", "FDE", FADE_HOLD)],
+            &[
+                (P::DRAG, "FADE", "FDE", FADE_HOLD),
+                (P::RETRIG, "RETRIG", "RTG", 0.0),
+            ],
         ),
         (K::Loop, "LOOP", &[POS, WALK, LOOP_LEN, XFD], &[FADE]),
         (K::Ping, "PING", &[POS, WALK, LOOP_LEN], &[FADE]),
@@ -1220,7 +1223,9 @@ fn every_cell_reads_in_the_audio() {
             out
         };
         let plain = render(base);
-        for c in m.deck.iter().chain(m.cells) {
+        // RETRIG is the Instrument's: a note cutting its Part's others
+        // (`tape_stream_test`'s and `tape_musical_test`'s).
+        for c in m.deck.iter().chain(m.cells).filter(|c| c.id != P::RETRIG) {
             let spec = TapeEngineParams::default().spec(c.id).unwrap();
             let mut p = base;
             let moved = if c.id == P::START {

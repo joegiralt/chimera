@@ -568,8 +568,10 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     // On the rig's second of saw (`common::rig`); re-recorded for TAPE's
     // `out_gain` (ADR 0063, TAPE Task 19), then its smoothstep note-on ramp
     // (#385), then CLEAN's ACCURATE tan, exact divides, k law and trims
-    // (#57, ADR 0096), then PLAY's FADE release in LOOP (ADR 0170).
-    ("init_tape.snd", 0x822bc3296369d035),
+    // (#57, ADR 0096), then PLAY's FADE release in LOOP (ADR 0170), then
+    // AMP's release the one release a note and the fades' power (ADRs 0179,
+    // 0182).
+    ("init_tape.snd", 0xcaf4315437e08679),
     // Factory 0's render: the stamp changes no sound.
     ("library_1.snd", 0x2b0219df38902ede),
     // Factory 1's render: the Note changes no sound.

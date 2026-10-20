@@ -764,6 +764,9 @@ fn tape_init_on_the_reference_sits_at_the_median() {
     let s = Sound::init(EngineType::Tape);
     *tape.shared.parts[0].params = s.params;
     tape.shared.parts[0].params.tape.period = 48_000.0 / 261.625_58;
+    // The whole reference looped, as Task 19 calibrated: INIT's LENGTH 0.8
+    // (ADR 0180) would loop its louder attack.
+    tape.shared.parts[0].params.tape.size = 1.0;
     *tape.shared.parts[0].mod_state = s.mod_state;
     tape.shared.parts[0].source = Some(id);
     let d = tape.lufs() - median;

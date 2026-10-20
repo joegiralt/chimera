@@ -93,6 +93,7 @@ fn neutral_tape_loops_whole() {
             period: 0.0,
             slice: chimera_core::dsp::tape_engine::SliceCode::OFF,
             wow: Wow::Capstan,
+            retrig: chimera_core::dsp::tape_engine::Retrig::Stack,
         }
     );
 }

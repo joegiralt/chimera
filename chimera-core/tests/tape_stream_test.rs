@@ -15,8 +15,8 @@ use chimera_core::dsp::tape_engine::heads::{
 };
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
-    COST_STREAM, FADE_HOLD, INC_MAX, PlayMode, SliceCode, TapeEngine, TapeEngineParams, TapeModel,
-    Wow, inc, ratio_max, tape_runs,
+    COST_STREAM, FADE_HOLD, INC_MAX, PlayMode, Retrig, SliceCode, TapeEngine, TapeEngineParams,
+    TapeModel, Wow, inc, ratio_max, tape_runs,
 };
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::NoteOrigin;
@@ -2147,4 +2147,70 @@ fn a_rotted_chunk_drops_out_its_voice_not_the_card() {
         far_out[g0..=g1].iter().all(|&p| p > 0.1),
         "the other stream plays through"
     );
+}
+
+/// #698 finding 1: INIT's reach in use is the note's own. Its wheel
+/// vibrato (LFO 1 → PITCH at DEPTH 0) reaches nothing, the wheel at rest
+/// bends nothing, and TAPE at 0 adds no wow, so a seven-note cluster about
+/// ROOT on a 24 kHz source (289 KB/s) streams whole; under the old bill
+/// (the bend's range, the route at full swing and wow, ×1.17: 339 KB/s)
+/// its last note stole the first.
+#[test]
+fn an_init_chord_about_root_streams_whole() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let p = TapeEngineParams {
+        tape: 0.0,
+        root: 6_000.0,
+        ..one_hold()
+    };
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, p)]);
+    let init = chimera_core::preset::Sound::init(EngineType::Tape);
+    *pl.rig.shared.parts[0].mod_state = init.mod_state.clone();
+    pl.rig.shared.parts[0].params.lfos = init.params.lfos;
+    assert_eq!(pl.rig.shared.parts[0].params.lfos[0].depth, 0.0);
+    for n in 57..64 {
+        pl.on(0, n);
+    }
+    pl.block();
+    assert_eq!(pl.booked(), 7);
+    for n in 57..64 {
+        let v = pl.voice_of(0, n).expect("booked");
+        assert!(pl.rig.inst.active()[v], "{n} sounds");
+    }
+    assert!(pl.billed() <= STREAM_BUDGET_BPS);
+}
+
+/// #698 finding 11: ONE's RETRIG CUT chokes the Part's other notes (a
+/// closed hat cutting an open one); STACK lets them ring.
+#[test]
+fn retrig_cut_chokes_the_part() {
+    for (retrig, rings_on) in [(Retrig::Stack, true), (Retrig::Cut, false)] {
+        let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+        let (rings, third) = rings();
+        let st = Stream::new(&rings, &third, &whole, 0);
+        let p = TapeEngineParams {
+            retrig,
+            ..one_hold()
+        };
+        let src = OneSource::new(&st.card.held(&[0], HF));
+        let mut pl = Played::new(st, src, &[(0, p)]);
+        pl.on(0, 60);
+        for _ in 0..10 {
+            pl.block();
+        }
+        let open = pl.voice_of(0, 60).unwrap();
+        pl.on(0, 62);
+        for _ in 0..10 {
+            pl.block();
+        }
+        assert_eq!(pl.rig.inst.active()[open], rings_on, "{retrig:?}");
+        let closed = pl.voice_of(0, 62).unwrap();
+        assert!(
+            pl.rig.inst.active()[closed],
+            "{retrig:?}: the new hit plays"
+        );
+    }
 }

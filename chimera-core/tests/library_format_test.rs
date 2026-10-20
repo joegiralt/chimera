@@ -171,7 +171,8 @@ const PLAIN: [(usize, u64); 15] = [
     (464, 0x548dd4eb65f23948),
     (132, 0x91e8cb92bf5162e0),
     (132, 0x8575cbc8307a58e3),
-    (136, 0x82a8213584981303),
+    // INIT TAPE's LOOP LENGTH 0.8 (ADR 0180): a one-param block more.
+    (146, 0x474adc4c807cd4e0),
 ];
 
 #[test]

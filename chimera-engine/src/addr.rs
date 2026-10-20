@@ -207,10 +207,9 @@ impl BlockRef {
             | BlockRef::Out
             | BlockRef::Pitch
             | BlockRef::VoiceFx
+            | BlockRef::TapeEngine
             | BlockRef::Env(_) => true,
-            // Not yet: the voice plays TAPE from build step 3.
-            BlockRef::TapeEngine
-            | BlockRef::Lfo(_)
+            BlockRef::Lfo(_)
             | BlockRef::Chorus
             | BlockRef::Delay
             | BlockRef::Reverb

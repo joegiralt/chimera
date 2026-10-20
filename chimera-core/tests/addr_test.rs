@@ -135,6 +135,17 @@ fn modulatable_addresses_are_exactly_the_spec_list() {
             want.push(ParamAddr::new(BlockRef::AlgoOp(op), id));
         }
     }
+    // TAPE's five macros and ONE's START (#698).
+    for id in [
+        chimera_core::dsp::tape_engine::TapeEngineParams::START,
+        chimera_core::dsp::tape_engine::TapeEngineParams::POSITION,
+        chimera_core::dsp::tape_engine::TapeEngineParams::MOTION,
+        chimera_core::dsp::tape_engine::TapeEngineParams::TAPE,
+        chimera_core::dsp::tape_engine::TapeEngineParams::AGE,
+        chimera_core::dsp::tape_engine::TapeEngineParams::SIZE,
+    ] {
+        want.push(ParamAddr::new(BlockRef::TapeEngine, id));
+    }
     for s in EnvSlot::ALL {
         for id in [
             EnvParams::LEVEL,

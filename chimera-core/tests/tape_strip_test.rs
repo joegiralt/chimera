@@ -166,6 +166,8 @@ fn heads_published_once_a_block() {
         let a = &mut shared.parts[p];
         *a.params = Sound::init(EngineType::Tape).params;
         a.params.tape.model = model;
+        // TRON's LENGTH 1: the whole strip (ADR 0180).
+        a.params.tape.size = 1.0;
         *a.mod_state = ModState::new();
         a.source = Some(src.id);
     }
@@ -207,8 +209,8 @@ fn heads_published_once_a_block() {
         "the newest note's head"
     );
 
-    // TRON's second is where its 8 s of tape runs out: at C4, past this
-    // 1 s source, so END.
+    // TRON's second is where its tape runs out: LENGTH 1 is the strip, so
+    // at C4 (ROOT) END.
     block(&mut inst, &[on(&shared, 1, 60)], &shared);
     let t = HEADS.read(1);
     assert!(t.head().is_some());

@@ -323,7 +323,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("loop_still", 0xee7ce65bb21a8edd),
     ("ping_still", 0x11fb45bbcaa0aaad),
     ("tron_still", 0x2da91fd3c252b178),
-    ("stretch_still", 0xb9668e1e280b56e7),
+    ("stretch_still", 0xec7471660def4d69),
     ("wave_still", 0x35b91a1f3869788b),
     ("scrub_still", 0xfa9dc37b17460909),
     ("one_whole", 0x5fb8d1a1a37be6ee),

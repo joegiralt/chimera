@@ -134,7 +134,7 @@ fn deck_holds_the_glyphs_knobs() {
 fn model_page_cells() {
     use TapeMachine as M;
     let want: [(M, [&str; 3]); 7] = [
-        (M::One, ["FADE", "--", "--"]),
+        (M::One, ["FADE", "RETRIG", "--"]),
         (M::Loop, ["FADE", "--", "--"]),
         (M::Ping, ["FADE", "--", "--"]),
         (M::Tron, ["--", "--", "--"]),
@@ -285,6 +285,12 @@ fn model_change_applies_machine_defaults() {
     assert_eq!((t.model, t.mode), (TapeModel::Play, PlayMode::One));
     assert_eq!(t.drag, chimera_core::dsp::tape_engine::FADE_HOLD);
     assert_eq!((t.start, t.end), (0.2, 0.7), "the window is the source's");
+    // ONE's hit (#698, ADR 0180): ENV 1 FAST, at its floor, holding full.
+    let e = ui.params().envelopes[0];
+    assert_eq!(
+        (e.speed, e.attack, e.sustain),
+        (chimera_core::dsp::modulator::EnvSpeed::Fast, 0.0, 1.0)
+    );
 
     // MODEL turned past its end changes nothing, so writes nothing.
     ui.params_mut().tape.slice = chimera_core::dsp::tape_engine::SliceCode::new(5);

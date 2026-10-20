@@ -2,7 +2,7 @@
 
 use chimera_engine::stream::admit::{
     Admit, Age, Bill, LOUD, ReadRatio, STREAM_BUDGET_BPS, WOW_CENTS, admit, bill, head_frames,
-    ratio_max,
+    notes_at_root, ratio_max,
 };
 use chimera_engine::voice_alloc::VoiceIdx;
 
@@ -132,4 +132,54 @@ fn the_callers_re_ask_loop_steals_two_oldest_released_first() {
         }
     }
     assert_eq!(stolen, [v(2), v(1)]);
+}
+
+/// #698: over budget a held chord gives up its quietest note, the most
+/// decayed, not its oldest (the root it was built on); released notes still
+/// go first, the oldest of them.
+#[test]
+fn the_quietest_held_note_goes_first() {
+    let b = bill(24_000, ReadRatio::ONE);
+    let held = |i: usize, since: u32, level: u16| {
+        (
+            v(i),
+            b,
+            Age {
+                released: false,
+                since,
+                level,
+            },
+        )
+    };
+    // The root, oldest and loudest; a quiet fifth; a louder third.
+    let chord = [held(0, 90, LOUD), held(1, 50, 2_000), held(2, 10, 40_000)];
+    let full = || {
+        chord
+            .iter()
+            .copied()
+            .chain((3..7).map(|i| held(i, 0, LOUD)))
+    };
+    assert_eq!(admit(b, full(), STREAM_BUDGET_BPS), Admit::Steal(v(1)));
+    // A released note, however loud, goes before any held one.
+    let released = (
+        v(7),
+        b,
+        Age {
+            released: true,
+            since: 0,
+            level: LOUD,
+        },
+    );
+    let p = full().take(6).chain([released]);
+    assert_eq!(admit(b, p, STREAM_BUDGET_BPS), Admit::Steal(v(7)));
+}
+
+/// #698: a 24 kHz source fits 7 notes at ROOT with the wheel at rest and
+/// TAPE 0 (no bend, no wow billed), 11 at 16 kHz.
+#[test]
+fn notes_at_root_fit_the_budget() {
+    assert_eq!(notes_at_root(24_000, false), 7);
+    assert_eq!(notes_at_root(16_000, false), 11);
+    assert_eq!(notes_at_root(24_000, true), 7);
+    assert_eq!(notes_at_root(48_000, false), 3);
 }
