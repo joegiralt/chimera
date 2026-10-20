@@ -29,6 +29,7 @@ pub use chimera_engine::midi_settings;
 pub mod mod_grid;
 pub mod mod_panel;
 pub mod nav;
+pub mod onset;
 pub mod op_page;
 pub mod orbit;
 pub mod page;
@@ -1136,7 +1137,8 @@ impl UiState {
             .on_chorus(&self.project.perf().fx.chorus)
             .on_pages(self.theme.pages);
         let base =
-            view::SourceState::of(&sound.params.tape, sound.source_ref(), self.project.pool());
+            view::SourceState::of(&sound.params.tape, sound.source_ref(), self.project.pool())
+                .tape_routed(view::tape_routed(sound));
         let ctx = ctx.on_source(self.src.state(self.active_part, base, &self.project));
         match self.loc.orbit() {
             Some(o) => ctx.on_ring(o.ring()),
@@ -1513,6 +1515,9 @@ impl UiState {
     /// nothing is written; onto one it allows, it is written. `false` for
     /// any other cell.
     fn turn_choice(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) -> bool {
+        if a == held::MODEL {
+            return self.turn_model(at, delta, shift);
+        }
         if !held::applies(a, shift) {
             return false;
         }
@@ -1544,13 +1549,80 @@ impl UiState {
         true
     }
 
+    /// A MODEL turn on a streamed source (ADR 0151's rule): onto a machine
+    /// the source refuses (`needs_ram`) it lands dimmed with the reason,
+    /// nothing written, so a key never plays into silence. `false` off a
+    /// streamed source: the plain edit.
+    fn turn_model(&mut self, at: PartId, delta: i8, shift: bool) -> bool {
+        if !self.streams(at) {
+            return false;
+        }
+        let sound = &self.project.part(at).sound;
+        let now = sound.params.tape.machine().index();
+        let held = self.held.filter(|&(h, c)| h == at && c.addr == held::MODEL);
+        let from = held.map_or(now, |(_, c)| c.code);
+        let last = TapeMachine::ALL.len() as i16 - 1;
+        let to = match (shift, delta > 0) {
+            (true, true) => last,
+            (true, false) => 0,
+            _ => (i16::from(from) + i16::from(delta)).clamp(0, last),
+        } as u8;
+        let h = held::Held {
+            addr: held::MODEL,
+            code: to,
+        };
+        if h.why(sound, true).is_some() {
+            self.held = Some((at, h));
+        } else {
+            self.held = None;
+            if to != now {
+                self.edit_in(at, held::MODEL, part_page::Edit::To(f32::from(to)));
+            }
+        }
+        true
+    }
+
+    /// START or END turned on a held source (#698 finding 6): in time,
+    /// `onset::stepped`; with MIX, to the next onset the turn's way, or
+    /// left where it is with none in RAM. `false` for any other cell.
+    fn turn_window(&mut self, at: PartId, a: ParamAddr, delta: i8, shift: bool) -> bool {
+        use crate::dsp::tape_engine::TapeEngineParams as T;
+        if a.block != BlockRef::TapeEngine || !matches!(a.param, T::START | T::END) {
+            return false;
+        }
+        let view::SourceState::Held { rate, frames, .. } = self.ctx().src else {
+            return false;
+        };
+        let sound = &self.project.part(at).sound;
+        let now = crate::block::Block::get(&sound.params.tape, a.param);
+        let to = if shift {
+            let r = sound.source_ref();
+            let held = r.and_then(|r| self.project.pool().held(r));
+            let from = (now * frames as f32) as u32;
+            held.and_then(|h| onset::onset(h, frames, from, delta > 0))
+                .map_or(now, |f| f as f32 / frames.max(1) as f32)
+        } else {
+            onset::stepped(now, delta, rate, frames)
+        };
+        if to != now {
+            self.edit_in(at, a, part_page::Edit::To(to));
+        }
+        true
+    }
+
+    /// Part `at`'s source streams.
+    fn streams(&self, at: PartId) -> bool {
+        let r = self.project.part(at).sound.source_ref();
+        r.is_some_and(|r| self.project.pool().streamed(r))
+    }
+
     /// The choice the focused cell shows dimmed and why, if any.
     pub fn held_choice(&self) -> Option<held::Shown> {
         let (at, h) = self.held?;
         let def = self.page_def();
         let on = slot_addr(def, self.focused_slot(), &self.ctx());
         (at == self.active_part && on == Some(h.addr))
-            .then(|| h.why(&self.project.part(at).sound))
+            .then(|| h.why(&self.project.part(at).sound, self.streams(at)))
             .flatten()
             .map(|why| held::Shown { held: h, why })
     }
@@ -2902,7 +2974,8 @@ impl UiState {
                 {
                     self.sel_op = self.sel_op.nudged(delta);
                 } else if let Some(a) = slot_addr(def, i, &ctx) {
-                    if fine {
+                    if self.turn_window(at, a, delta, shift) {
+                    } else if fine {
                         self.edit_fine(at, a, delta);
                     } else if !self.turn_choice(at, a, delta, shift) {
                         self.edit_addr(at, a, delta, shift);

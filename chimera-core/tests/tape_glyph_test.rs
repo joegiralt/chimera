@@ -674,13 +674,18 @@ fn ignored_params_leave_the_glyph() {
 #[test]
 fn no_tape_page_cell_is_dimmed() {
     // Each machine's pages list only what it reads (ADR 0178), so no
-    // TAPE cell reads dimmed and none needs ADR 0173's dimmed glyph.
+    // TAPE cell reads dimmed and none needs ADR 0173's dimmed glyph, but
+    // what can't be heard: WOW at TAPE 0, LOOP's and PING's FADE under an
+    // AMP route (tape_musical_ui_test). Here TAPE runs and no route
+    // reaches VCA.
     use chimera_core::ui::block_registry::{TAPE_DECK, TAPE_MODEL};
     use chimera_core::ui::view::{self, SlotCtx};
     for m in TapeMachine::ALL {
         let mut s = chimera_core::preset::Sound::init(chimera_core::params::EngineType::Tape);
         s.params.tape.set_machine(m);
         s.params.tape.period = 109.1;
+        s.params.tape.tape = 0.3;
+        s.mod_state = Default::default();
         let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
         for def in [&TAPE_DECK, &TAPE_MODEL] {
             for i in 0..6 {

@@ -235,6 +235,9 @@ pub enum SourceState {
         frames: u32,
         cost: Cost,
         name: Option<SoundName>,
+        /// Streamed: the notes at ROOT the card's budget fits
+        /// (`admit::notes_at_root`), the band's polyphony.
+        notes: Option<u8>,
     },
     /// The cell on a card row, not loaded: its head once read (`None`, its
     /// stem stands in), its cost, and the pool's free bytes.
@@ -270,13 +273,15 @@ impl SourceState {
             frames: r.frames,
             cost: pool.source(id).map_or(Cost::default(), |e| e.cost()),
             name: None,
+            notes: None,
         };
         match pool.source_view(r) {
             Some(v) if wave::playable(model, &v) => held,
             Some(_) if model == tape_engine::TapeModel::Transwave => SourceState::NotTranswave,
-            None if pool.streamed(r) => {
-                tape_engine::needs_ram(p).map_or(held, SourceState::NeedsRam)
-            }
+            None if pool.streamed(r) => match tape_engine::needs_ram(p) {
+                Some(n) => SourceState::NeedsRam(n),
+                None => held.streaming(p.tape > 0.0),
+            },
             _ => SourceState::ZonesOnTron,
         }
     }
@@ -285,18 +290,58 @@ impl SourceState {
     pub fn named(self, n: Option<SoundName>) -> Self {
         match self {
             SourceState::Held {
-                rate, frames, cost, ..
+                rate,
+                frames,
+                cost,
+                notes,
+                ..
             } => SourceState::Held {
                 rate,
                 frames,
                 cost,
                 name: n,
+                notes,
             },
             s => s,
         }
     }
 
-    /// The focus band's: `CHOIR · 24K · 1.5 S · 41K`, or why it won't play.
+    /// A held source as streamed: its notes at ROOT, wow billed when TAPE
+    /// runs (`tape_runs`).
+    pub fn streaming(self, wow: bool) -> Self {
+        match self {
+            SourceState::Held {
+                rate,
+                frames,
+                cost,
+                name,
+                ..
+            } => {
+                let n = crate::stream::admit::notes_at_root(rate, wow);
+                SourceState::Held {
+                    rate,
+                    frames,
+                    cost,
+                    name,
+                    notes: Some(n.min(u32::from(u8::MAX)) as u8),
+                }
+            }
+            s => s,
+        }
+    }
+
+    /// A streamed source's notes re-counted with TAPE routed: its wow is
+    /// billed whatever TAPE stores.
+    pub fn tape_routed(self, routed: bool) -> Self {
+        match self {
+            SourceState::Held { notes: Some(_), .. } if routed => self.streaming(true),
+            s => s,
+        }
+    }
+
+    /// The focus band's: `CHOIR · 24K · 1.5 S · 41K`, a streamed one's
+    /// `CHOIR · 24K · 7 STREAMS` (the notes at ROOT the card fits), or
+    /// why it won't play.
     pub fn text(self, buf: &mut FmtBuf) {
         use core::fmt::Write;
         let tail =
@@ -315,8 +360,30 @@ impl SourceState {
             SourceState::Held {
                 rate,
                 frames,
+                name,
+                notes: Some(n),
+                ..
+            } => {
+                // A name leaves no room for the length (32 B).
+                match name {
+                    Some(name) => {
+                        let _ = write!(buf, "{} · {}K · ", name.as_str(), rate / 1000);
+                    }
+                    None => {
+                        let _ = write!(buf, "{}K · ", rate / 1000);
+                        seconds(buf, rate, frames);
+                        let _ = buf.write_str(" · ");
+                    }
+                }
+                let word = if n == 1 { "STREAM" } else { "STREAMS" };
+                let _ = write!(buf, "{n} {word}");
+            }
+            SourceState::Held {
+                rate,
+                frames,
                 cost,
                 name,
+                notes: None,
             } => tail(buf, name, Some((rate, frames)), cost),
             SourceState::Card {
                 stem,
@@ -517,6 +584,9 @@ impl View {
             Some(a) if matches!(a.block, BlockRef::OrbitRing(_)) && a.param == SceneRing::MUTE => {
                 MUTE_HINT
             }
+            Some(a) if a.block == BlockRef::TapeEngine && matches!(a.param, T::START | T::END) => {
+                ONSET_HINT
+            }
             Some(a) if cfg!(feature = "midi-map") && Mappable::new(a).is_some() => LEARN_HINT,
             _ => hint::NONE,
         }
@@ -563,6 +633,8 @@ const CHORUS_HINTS: [Hint; 4] = [
 ];
 
 const MUTE_HINT: Hint = &[Gesture("MIX + B1-5", "MUTES THAT RING")];
+/// START and END: MIX + a turn snaps to the next onset its way (#698).
+pub const ONSET_HINT: Hint = &[Gesture("MIX + TURN", "NEXT ONSET")];
 
 fn param(addr: ParamAddr, label: &'static str, fmt: ValFmt) -> View {
     let short = addr
@@ -783,6 +855,70 @@ fn panel_view(panel: &mod_panel::ModPanel, k: u8, block: BlockRef) -> View {
     }
 }
 
+/// WOW shapes TAPE's wow: at rest (TAPE 0, unrouted) there is none.
+pub const WOW_AT_REST: &str = "TAPE AT 0 · NO WOW TO SHAPE";
+/// LOOP's and PING's FADE under a VCA route: AMP's release ends the note.
+pub const FADE_ASIDE: &str = "AMP RELEASE ENDS THE NOTE";
+/// A streamed loop's XFADE past what its loop head holds (spec § 2.3).
+pub const XFADE_CAPPED: &str = "STREAMED · XFADE CAPPED AT 100 MS";
+
+/// Why a TAPE cell is dimmed though its machine reads it: WOW with TAPE
+/// at rest, LOOP's or PING's FADE while a VCA route holds the voice (one
+/// release a note: AMP's). ONE keeps FADE live, its HOLD step the gate.
+pub fn tape_note(addr: ParamAddr, sound: &Sound) -> Option<&'static str> {
+    if addr.block != BlockRef::TapeEngine {
+        return None;
+    }
+    let t = &sound.params.tape;
+    match addr.param {
+        T::WOW if !tape_engine::tape_runs(t.tape, tape_routed(sound)) => Some(WOW_AT_REST),
+        T::DRAG
+            if matches!(t.machine(), TapeMachine::Loop | TapeMachine::Ping)
+                && sound.mod_state.routes_into(VCA) != 0 =>
+        {
+            Some(FADE_ASIDE)
+        }
+        _ => None,
+    }
+}
+
+/// What the focus band says in its hint's place about a TAPE cell: why
+/// it is dimmed (`tape_note`), or a streamed LOOP's XFADE past the 100 ms
+/// its loop head holds.
+pub fn band_note(addr: ParamAddr, sound: &Sound, src: SourceState) -> Option<&'static str> {
+    if let Some(n) = tape_note(addr, sound) {
+        return Some(n);
+    }
+    let SourceState::Held {
+        rate,
+        frames,
+        notes: Some(_),
+        ..
+    } = src
+    else {
+        return None;
+    };
+    let t = &sound.params.tape;
+    if addr != ParamAddr::new(BlockRef::TapeEngine, T::XFADE)
+        || t.machine() != TapeMachine::Loop
+        || frames < 2
+    {
+        return None;
+    }
+    use crate::dsp::tape_engine::window::{loop_len, window_end, window_start};
+    let ws = window_start(t.start, frames);
+    let we = window_end(ws, t.end, frames, rate);
+    let asked = t.xfade * loop_len(t.size, we - ws, rate) as f32;
+    let cap = u32::from(rate) * crate::stream::stage::XFADE_MAX_MS / 1_000;
+    (asked > cap as f32).then_some(XFADE_CAPPED)
+}
+
+/// A route moves TAPE: its wow runs whatever TAPE stores (`tape_runs`).
+pub fn tape_routed(sound: &Sound) -> bool {
+    let a = ParamAddr::new(BlockRef::TapeEngine, T::TAPE);
+    sound.mod_state.moves_addr(a)
+}
+
 /// A fixed or inapplicable slot draws dimmed, and its encoder is ignored
 /// (spec § UI "Dimmed").
 pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
@@ -806,8 +942,11 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
         (BlockRef::AlgoOp(op), id) => !kinds::reads(sound.params.algo.kinds().get(op.index()), id),
         // What MODEL ignores (spec § 1 Dimming).
         (BlockRef::Modal, id) => !modal::reads(sound.params.modal.mode, id),
-        // What the machine ignores (spec § 3).
-        (BlockRef::TapeEngine, id) => !tape_engine::reads(sound.params.tape.machine(), id),
+        // What the machine ignores (spec § 3), and what can't be heard:
+        // WOW with TAPE at rest, PLAY's FADE under an AMP route (`fade_aside`).
+        (BlockRef::TapeEngine, id) => {
+            !tape_engine::reads(sound.params.tape.machine(), id) || tape_note(addr, sound).is_some()
+        }
         // CLASSIC FREE plays the Part's clock: PHASE is RETRIG's start
         // alone (ADR 0177).
         (BlockRef::Lfo(s), crate::dsp::lfo::LfoParams::PHASE) => {

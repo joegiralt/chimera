@@ -828,10 +828,8 @@ fn too_big_play_one_streams_with_start_head() {
         Some(b.0.sref),
         "the Part plays it"
     );
-    assert_eq!(
-        rig.band(),
-        "BED · 24K · 6.3 S · ".to_string() + Cost::of(16 + heads.held_len()).kib_label().as_str()
-    );
+    // Streamed, the band gives its polyphony at ROOT (#698).
+    assert_eq!(rig.band(), "BED · 24K · 7 STREAMS");
 }
 
 #[test]
