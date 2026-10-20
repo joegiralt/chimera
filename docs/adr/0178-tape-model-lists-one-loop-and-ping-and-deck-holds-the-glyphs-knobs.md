@@ -39,6 +39,7 @@ The pages were laid out by param, not by what the machine shows. DECK held POSIT
 - **TAPE and AGE on DECK as before.** They wear every glyph but are no machine's own shape. On page 2, in the same cells on every machine beside WOW, they read as the one tape-wear group.
 
 ## Consequences
+- **Flash:** ORBIT's bank 1 gains 172 B (34,024 → 34,196 B free on `tape-streaming`); the per-mode special cases in `reads_in` and the MODE edit are gone.
 - **Goldens:** every TAPE DECK and model page is re-recorded on purpose (`tape_deck_*`, `tape_page_*`, `tape_strip_*`). The PNGs for the owner are in (private notes), outside the repo.
 - **CC learn, the matrix and the header** name the seven machines. A CC on MODEL counts the new machine's default writes against the Part's knob budget, as before.
 - **A MODEL turn from LOOP to PING now resets LOOP's cells** to PING's defaults, which a MODE turn did not do.
