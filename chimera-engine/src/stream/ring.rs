@@ -235,13 +235,7 @@ impl Rings {
             return None;
         }
         let at = Store { rings: self, third };
-        Some((
-            AudioSide { at },
-            CardSide {
-                at,
-                live: [[false; SlotIdx::ALL.len()]; MAX_VOICES],
-            },
-        ))
+        Some((AudioSide { at }, CardSide { at, live: 0 }))
     }
 
     /// Every Wanted slot and its deadline, for EDF.
@@ -469,6 +463,7 @@ impl<'a> Ready<'a> {
 /// a second until `fill_done` or `requeue`): the 6-bit generation wraps
 /// after 64 cancels, so two live claims on one slot could pass a stale
 /// check.
+#[must_use = "finish with fill_done or requeue"]
 pub struct Claim {
     voice: VoiceIdx,
     slot: SlotIdx,
@@ -493,10 +488,17 @@ impl Claim {
 /// The card's side: the one writer of slot bytes.
 pub struct CardSide<'r> {
     at: Store<'r>,
-    live: [[bool; SlotIdx::ALL.len()]; MAX_VOICES],
+    /// Bit `Self::bit` set while a `Claim` on that slot is out.
+    live: u32,
 }
 
+const _: () = assert!(MAX_VOICES * SlotIdx::ALL.len() <= u32::BITS as usize);
+
 impl<'r> CardSide<'r> {
+    fn bit(v: VoiceIdx, s: SlotIdx) -> u32 {
+        1 << (v.index() * SlotIdx::ALL.len() + s.index())
+    }
+
     /// The rings it fills, for their wants and sources.
     pub fn rings(&self) -> &'r Rings {
         self.at.rings
@@ -504,7 +506,7 @@ impl<'r> CardSide<'r> {
 
     /// Wanted → Filling.
     pub fn claim(&mut self, v: VoiceIdx, s: SlotIdx) -> Option<Claim> {
-        if self.live[v.index()][s.index()] {
+        if self.live & Self::bit(v, s) != 0 {
             return None;
         }
         let (chunk, generation) = self.at.slot(v, s).claim()?;
@@ -512,7 +514,7 @@ impl<'r> CardSide<'r> {
         self.at
             .guard(v, s)
             .store(Guard::Unguarded.bits(), Ordering::Relaxed);
-        self.live[v.index()][s.index()] = true;
+        self.live |= Self::bit(v, s);
         Some(Claim {
             voice: v,
             slot: s,
@@ -593,7 +595,7 @@ impl<'r> CardSide<'r> {
     /// chunk after it, Ready already and Unguarded (it landed first: a
     /// requeue), takes its guard from it (#581).
     pub fn fill_done(&mut self, c: Claim) -> bool {
-        self.live[c.voice.index()][c.slot.index()] = false;
+        self.live &= !Self::bit(c.voice, c.slot);
         let done = self
             .at
             .slot(c.voice, c.slot)
@@ -640,7 +642,7 @@ impl<'r> CardSide<'r> {
 
     /// Filling → Wanted, same generation: a fault, to try again.
     pub fn requeue(&mut self, c: Claim) {
-        self.live[c.voice.index()][c.slot.index()] = false;
+        self.live &= !Self::bit(c.voice, c.slot);
         self.at
             .slot(c.voice, c.slot)
             .finish(c.chunk, c.generation, Finish::Requeue);

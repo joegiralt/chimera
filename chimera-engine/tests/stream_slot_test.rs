@@ -294,7 +294,7 @@ fn wants_lists_wanted_slots_with_their_deadlines() {
     turn.want(V, B, ix(1), AudioBlocks::new(9)).unwrap();
     turn.want(w, A, ix(2), AudioBlocks::new(3)).unwrap();
     turn.want(w, B, ix(3), D).unwrap();
-    card.claim(w, B).unwrap();
+    let _claim = card.claim(w, B).unwrap();
     let wants: Vec<_> = r.wants().collect();
     assert_eq!(
         wants,
