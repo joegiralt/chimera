@@ -289,10 +289,12 @@ impl<D: Medium> FatStore<D> {
     }
 
     /// `Fs::runs` on the card, if it is still `vol`, each run's first block
-    /// on the device: for raw reads that bypass the FAT. A run past the
-    /// device's last LBA (a corrupt partition offset) refuses the file,
-    /// `Corrupt`, and `f` sees no more: a raw read never names a block the
-    /// card would fault on.
+    /// on the device: for raw reads that bypass the FAT. A run whose LBA
+    /// overflows u32 (a corrupt partition offset) refuses the file,
+    /// `Corrupt`, and `f` sees no more. The card's real end is not checked:
+    /// a run past it fails at the card's CMD18 (R1 error or error token),
+    /// the streams' usual read fault. The gap is tracked in
+    /// private issue #710.
     pub fn runs(
         &mut self,
         vol: VolumeId,

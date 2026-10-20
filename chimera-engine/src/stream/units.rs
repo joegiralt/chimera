@@ -1,7 +1,7 @@
 //! Stream units: audio frames, the audio block clock, source rates and
-//! speed, and the small indices a stream's slots and rings use.
+//! read steps, and the small indices a stream's slots and rings use.
 
-use core::num::NonZeroU32;
+use core::ops::{Mul, Sub};
 
 use chimera_hal::units::{Bytes, Millis, StreamCount};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
@@ -58,6 +58,53 @@ impl Frames {
     }
 }
 
+/// A source frame's index: where a read is, or a span starts or ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SourceFrame(u32);
+
+impl SourceFrame {
+    pub const ZERO: SourceFrame = SourceFrame(0);
+    pub const MAX: SourceFrame = SourceFrame(u32::MAX);
+
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    pub const fn saturating_add(self, n: Frames) -> Self {
+        Self(self.0.saturating_add(n.0))
+    }
+
+    pub const fn saturating_sub(self, n: Frames) -> Self {
+        Self(self.0.saturating_sub(n.0))
+    }
+}
+
+/// The frames from `o` on to `self`; 0 if `o` is later.
+impl Sub for SourceFrame {
+    type Output = Frames;
+    fn sub(self, o: SourceFrame) -> Frames {
+        Frames(self.0.saturating_sub(o.0))
+    }
+}
+
+/// A length in output samples, at the audio rate: a fade's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OutSamples(u32);
+
+impl OutSamples {
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
 /// The audio block counter: an instant that wraps, compared with `until`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AudioBlocks(u32);
@@ -86,13 +133,16 @@ impl AudioBlocks {
     }
 }
 
-/// A source file's sample rate, in the range `Descriptor::from_bytes` accepts.
+/// A source's sample rate: 4 000..=48 000 Hz, the pool spec's range.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SourceRate(u16);
 
 impl SourceRate {
+    pub const MIN: SourceRate = SourceRate(4_000);
+    pub const MAX: SourceRate = SourceRate(48_000);
+
     pub const fn new(hz: u16) -> Option<Self> {
-        if hz >= 4_000 && hz <= 48_000 {
+        if hz >= Self::MIN.0 && hz <= Self::MAX.0 {
             Some(Self(hz))
         } else {
             None
@@ -104,28 +154,53 @@ impl SourceRate {
     }
 }
 
-/// Playback speed in thousandths.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Ratio(u32);
+impl From<SourceRate> for u32 {
+    fn from(r: SourceRate) -> u32 {
+        r.0.into()
+    }
+}
 
-impl Ratio {
-    pub const ONE: Ratio = Ratio(1_000);
+impl From<SourceRate> for f32 {
+    fn from(r: SourceRate) -> f32 {
+        r.0.into()
+    }
+}
 
-    pub const fn from_milli(m: u32) -> Option<Self> {
-        if m >= 1 && m <= 32_000 {
-            Some(Self(m))
-        } else {
-            None
-        }
+/// A pitch distance in cents, 100 a semitone.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct Cents(f32);
+
+impl Cents {
+    pub const ZERO: Cents = Cents(0.0);
+
+    pub const fn new(c: f32) -> Self {
+        Self(c)
     }
 
-    /// Source frames one audio block consumes, times 1000; never 0.
-    pub const fn frames_per_block_x1000(self, rate: SourceRate) -> NonZeroU32 {
-        let v = BLOCK_SIZE as u64 * rate.0 as u64 * self.0 as u64 / SAMPLE_RATE as u64;
-        match NonZeroU32::new(v as u32) {
-            Some(n) => n,
-            None => NonZeroU32::MIN,
-        }
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+}
+
+/// A count of audio blocks: how long, not when (`AudioBlocks`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Blocks(u32);
+
+impl Blocks {
+    pub const ZERO: Blocks = Blocks(0);
+    pub const MAX: Blocks = Blocks(u32::MAX);
+
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    /// One more, saturating.
+    pub const fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
     }
 }
 
@@ -150,6 +225,15 @@ impl Inc {
 
     pub const fn get(self) -> f32 {
         self.0
+    }
+}
+
+/// The source frames a read at `self` passes in `n` output samples, rounded
+/// down.
+impl Mul<OutSamples> for Inc {
+    type Output = Frames;
+    fn mul(self, n: OutSamples) -> Frames {
+        Frames((self.0 * n.0 as f32) as u32)
     }
 }
 

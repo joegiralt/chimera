@@ -15,6 +15,7 @@ use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::PartId;
 use chimera_core::storage::{SourceRef, TapeSource};
+use chimera_core::stream::units::SourceRate;
 use chimera_core::ui::block_registry::{TAPE_DECK, TAPE_MODEL};
 use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::held::Reason;
@@ -84,7 +85,7 @@ fn streamed_source_shows_its_polyphony() {
     fits_band(&band(s));
     // Wow is billed only when TAPE runs: at 26 kHz it costs a note.
     let held = SourceState::Held {
-        rate: 26_000,
+        rate: SourceRate::new(26_000).unwrap(),
         frames: 26_000,
         cost: Default::default(),
         name: None,
@@ -99,7 +100,7 @@ fn streamed_source_shows_its_polyphony() {
     );
     // 48 kHz: three.
     let h48 = SourceState::Held {
-        rate: 48_000,
+        rate: SourceRate::new(48_000).unwrap(),
         frames: 48_000,
         cost: Default::default(),
         name: None,
@@ -108,7 +109,7 @@ fn streamed_source_shows_its_polyphony() {
     assert_eq!(band(h48.streaming(false)), "48K · 1.0 S · 3 STREAMS");
     // 16 kHz fits 11 at ROOT, but there are eight voices (#706).
     let h16 = SourceState::Held {
-        rate: 16_000,
+        rate: SourceRate::new(16_000).unwrap(),
         frames: 24_000,
         cost: Default::default(),
         name: None,
@@ -212,7 +213,7 @@ fn fade_steps_aside_for_amp_release() {
 fn streamed_xfade_says_its_cap() {
     let s = sound_on(TapeMachine::Loop);
     let ram = SourceState::Held {
-        rate: 24_000,
+        rate: SourceRate::new(24_000).unwrap(),
         frames: 720_000,
         cost: Default::default(),
         name: None,

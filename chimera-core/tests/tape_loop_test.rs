@@ -5,6 +5,7 @@
 
 mod common;
 
+use chimera_core::stream::units::{Cents, SourceRate};
 use core::f32::consts::TAU;
 use core::mem::MaybeUninit;
 
@@ -118,7 +119,17 @@ fn plays_in_tune() {
 
 #[test]
 fn inc_clamps_at_16() {
-    assert_eq!(inc(48_000, 127, 2_400.0, 6_000.0, SR), INC_MAX);
+    assert_eq!(
+        inc(
+            SourceRate::MAX,
+            127,
+            Cents::new(2_400.0),
+            Cents::new(6_000.0),
+            SR
+        )
+        .get(),
+        INC_MAX
+    );
     let held = held_plain(&sine(48_000, 100.0, 10_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let p = TapeEngineParams::default();
@@ -280,7 +291,7 @@ fn bounds_latch_at_wrap() {
         "wrapped at {}",
         heads[wrap]
     );
-    let short = loop_len(0.2, w, 48_000);
+    let short = loop_len(0.2, w, SourceRate::MAX);
     assert!(
         heads[wrap + 1..].iter().all(|&h| h < 2 * short),
         "after the wrap: {:?}",
@@ -384,7 +395,7 @@ fn walk_moves_the_loop() {
             size: 0.0,
             ..TapeEngineParams::default()
         };
-        let ll = loop_len(0.0, w, 48_000);
+        let ll = loop_len(0.0, w, SourceRate::MAX);
         let mut e = fresh();
         e.note_on(60, &p, &v, SR);
         let (_, heads) = play(&mut e, &p, &v, 1_000);
@@ -539,7 +550,17 @@ fn midi_extremes_stay_finite() {
     let (out, heads) = play(&mut e, &p, &v, SR as usize / BLOCK_SIZE);
     assert!(heads[heads.len() - 1] > heads[0], "the head still advances");
     assert!(out.iter().all(|y| y.is_finite()));
-    assert!(inc(8_000, 0, -2_400.0, 12_700.0, SR) >= f32::EPSILON);
+    assert!(
+        inc(
+            SourceRate::new(8_000).unwrap(),
+            0,
+            Cents::new(-2_400.0),
+            Cents::new(12_700.0),
+            SR
+        )
+        .get()
+            >= f32::EPSILON
+    );
 
     let held = held_plain(&sine(48_000, 100.0, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
@@ -547,7 +568,17 @@ fn midi_extremes_stay_finite() {
         tape: 1.0,
         ..TapeEngineParams::default()
     };
-    assert_eq!(inc(48_000, 127, 2_400.0, p.root, SR), 16.0);
+    assert_eq!(
+        inc(
+            SourceRate::MAX,
+            127,
+            Cents::new(2_400.0),
+            Cents::new(p.root),
+            SR
+        )
+        .get(),
+        16.0
+    );
     let mut e = fresh();
     e.set_pitch(2_400.0);
     e.note_on(127, &p, &v, SR);

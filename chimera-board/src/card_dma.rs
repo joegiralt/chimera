@@ -19,7 +19,7 @@ use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 use chimera_core::stream::layout::{Piece, RAW_CHUNK_BLOCKS, RAW_CHUNK_BYTES, deframe};
 use chimera_core::stream::ring::{CardSide, Claim};
 use chimera_core::stream::serve::{
-    Blame, ErrorStep, HeldRead, Parked, ReadError, Rot, ServeStep, read_failed, readable,
+    Attempt, Blame, ErrorStep, HeldRead, Parked, ReadError, Rot, ServeStep, read_failed, readable,
     serve_step,
 };
 use chimera_core::stream::units::AudioBlocks;
@@ -35,15 +35,17 @@ use chimera_fat::sd_proto::{
 };
 use chimera_hal::Ms;
 use chimera_hal::card_bus::{CardFault, Owner, Quiet, Took, WATCHDOG_MS, Wake};
-use chimera_hal::units::{BlockCount, BytesPerSec, Lba, Micros};
+use chimera_hal::units::{BlockCount, Bytes, BytesPerSec, Lba, Micros};
 use cortex_m::asm::dmb;
-use cortex_m::peripheral::{DWT, NVIC};
+use cortex_m::peripheral::NVIC;
 use stm32h7xx_hal::pac::{self, interrupt};
 
 use crate::controls::now_ms;
 use crate::priority::{self, Priority};
 use crate::sd::{BUS, CARD_ADDR, SD_FAST_HZ};
-use crate::shared::{AUDIO_CYCLES, BLOCKS, MIDI_CYCLES, STREAM_STATS, registry, rings};
+use crate::shared::{
+    AUDIO_CYCLES, BLOCKS, Cycles, MIDI_CYCLES, STREAM_STATS, Stamp, registry, rings, stamp,
+};
 
 /// The bound on any register poll.
 pub const REG_WAIT_US: Micros = Micros::new(50);
@@ -266,7 +268,7 @@ fn watch_in(now: Ms) {
 #[cfg(feature = "bank2")]
 #[repr(C)]
 pub(crate) struct CardDoor {
-    step: fn(&mut IrqState, DmaEvent, bool),
+    step: fn(&mut IrqState, DmaEvent, Abort),
     watch: fn(Ms),
 }
 
@@ -317,27 +319,41 @@ struct Line {
     /// Bytes a second at the real SCK (M5).
     clock: BytesPerSec,
     /// `REG_WAIT_US` in cycles.
-    reg_wait: u32,
+    reg_wait: Cycles,
     /// `TOKEN_TIMEOUT_MS` of bytes at SCK: the busy drain's bound.
-    drain_bytes: u32,
-    cycles_per_us: u32,
+    drain_bytes: Bytes,
+    cycles_per_us: Cycles,
 }
 
 impl Line {
-    fn us(&self, cycles: u32) -> Micros {
-        Micros::new(cycles / self.cycles_per_us)
+    fn us(&self, cycles: Cycles) -> Micros {
+        Micros::new(cycles.get() / self.cycles_per_us.get())
+    }
+}
+
+/// A clock rate in hertz.
+#[derive(Clone, Copy)]
+pub struct Hz(u32);
+
+impl Hz {
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
     }
 }
 
 /// Polls `ready` for at most `cycles` cycles and `cycles` tries, so a
 /// cycle counter that doesn't count still ends it.
-fn wait(cycles: u32, mut ready: impl FnMut() -> bool) -> bool {
-    let t0 = DWT::cycle_count();
-    for _ in 0..cycles {
+fn wait(cycles: Cycles, mut ready: impl FnMut() -> bool) -> bool {
+    let t0 = Cycles::now();
+    for _ in 0..cycles.get() {
         if ready() {
             return true;
         }
-        if DWT::cycle_count().wrapping_sub(t0) > cycles {
+        if Cycles::now().since(t0) > cycles {
             break;
         }
     }
@@ -753,6 +769,13 @@ impl Dest {
     }
 }
 
+/// Whether the handler's entry found an abort asked (`CardBus::ask_abort`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Abort {
+    Asked,
+    Unasked,
+}
+
 /// A slot's fill: one job, however many CMD18s its chunk takes.
 struct Fill {
     /// The one `Claim` (Task 5) of the slot.
@@ -762,8 +785,8 @@ struct Fill {
     row: HeldRead<'static>,
     /// The piece under way.
     piece: Piece,
-    /// Its transfer failed once already (`serve::on_error`).
-    retried: bool,
+    /// Its piece's first read, or the retry (`serve::on_error`).
+    attempt: Attempt,
 }
 
 /// What a transfer is for.
@@ -806,7 +829,7 @@ enum Then {
     Next {
         done: Done,
         /// Cycles at CMD18.
-        t0: u32,
+        t0: Cycles,
     },
     /// An abort: the bus goes back, then the answer.
     Give(Owed),
@@ -830,7 +853,7 @@ enum Phase {
     Read {
         walk: Reading,
         /// Cycles at CMD18.
-        t0: u32,
+        t0: Cycles,
         kind: Kind,
         /// Where the read's packed data ends, and where the burst's bytes.
         end: usize,
@@ -899,13 +922,13 @@ impl<T> IrqOnly<T> {
 static IRQ: IrqOnly<IrqState> = IrqOnly::new();
 
 /// DMA2's streams for SPI2, then the IRQ's state, then `DMA2_STR0` at
-/// `Priority::CARD`, unmasked last. `spi_ker_hz` is SPI2's kernel clock
+/// `Priority::CARD`, unmasked last. `spi_ker` is SPI2's kernel clock
 /// (`Spi::<SPI2, _>::kernel_clk_unwrap`). False, the IRQ left masked and
 /// counted a fault, if no divider brings that clock to `SD_FAST_HZ`: then
 /// nothing streams (the boot lends the registry no rows).
 #[must_use]
-pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker_hz: u32, cpu_hz: u32) -> bool {
-    let Some(mbr) = Mbr::fastest(spi_ker_hz, SD_FAST_HZ) else {
+pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker: Hz, cpu: Hz) -> bool {
+    let Some(mbr) = Mbr::fastest(spi_ker.get(), SD_FAST_HZ) else {
         STATS.faults.fetch_add(1, Ordering::Relaxed);
         return false;
     };
@@ -950,14 +973,12 @@ pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker_hz: u32, cpu_hz: u
     rx.fcr.write(|w| w.dmdis().enabled());
     tx.fcr.write(|w| w.dmdis().enabled());
     clear_streams(d);
-    let cycles_per_us = (cpu_hz / 1_000_000).max(1);
+    let cycles_per_us = Cycles::new((cpu.get() / 1_000_000).max(1));
     let line = Line {
         mbr,
-        clock: BytesPerSec::spi(mbr.sck_hz(spi_ker_hz)),
-        reg_wait: REG_WAIT_US.get() * cycles_per_us,
-        drain_bytes: BytesPerSec::spi(mbr.sck_hz(spi_ker_hz))
-            .bytes_in(TOKEN_TIMEOUT_MS)
-            .get(),
+        clock: BytesPerSec::spi(mbr.sck_hz(spi_ker.get())),
+        reg_wait: Cycles::new(REG_WAIT_US.get() * cycles_per_us.get()),
+        drain_bytes: BytesPerSec::spi(mbr.sck_hz(spi_ker.get())).bytes_in(TOKEN_TIMEOUT_MS),
         cycles_per_us,
     };
     let st = IrqState {
@@ -981,12 +1002,17 @@ pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker_hz: u32, cpu_hz: u
 /// one step of the job. A pend mid-transfer is ignored (I6).
 #[interrupt]
 fn DMA2_STR0() {
-    let (t, over) = clocks();
+    let enter = clocks();
     STATS.entries.fetch_add(1, Ordering::Relaxed);
     // SAFETY: `IRQ`'s one `get`: `init` set it before unmasking this
     // handler, which doesn't nest with itself.
     let st = unsafe { IRQ.get() };
-    let (ev, asked) = (events(), BUS.take_abort());
+    let ev = events();
+    let asked = if BUS.take_abort() {
+        Abort::Asked
+    } else {
+        Abort::Unasked
+    };
     // Bank 2's work through the door; closed, no stream plays.
     #[cfg(feature = "bank2")]
     if crate::bank2::board_door(|d| (d.card.step)(st, ev, asked)).is_none() {
@@ -994,13 +1020,15 @@ fn DMA2_STR0() {
     }
     #[cfg(not(feature = "bank2"))]
     st.step(ev, asked);
-    let (t1, over1) = clocks();
-    let wall = t1.wrapping_sub(t);
-    let own = wall.saturating_sub(over1.wrapping_sub(over));
+    let leave = clocks();
+    let wall = leave.at.since(enter.at);
+    let own = wall
+        .get()
+        .saturating_sub(leave.over.since(enter.over).get());
     // The bench's check is no streaming cost.
     #[cfg(feature = "bench")]
     let own = own.saturating_sub(bench::CHECK_CYCLES.swap(0, Ordering::Relaxed));
-    let own_us = st.line.us(own).get();
+    let own_us = st.line.us(Cycles::new(own)).get();
     STATS
         .irq_us_max
         .fetch_max(st.line.us(wall).get(), Ordering::Relaxed);
@@ -1010,25 +1038,14 @@ fn DMA2_STR0() {
 }
 
 /// The cycle counter and the cycles of the interrupts over this one (the
-/// audio's and MIDI DIN's) as one pair: an entry of either between the
-/// reads is caught and the pair read again (N1). The fences keep the
-/// counter's read between the loads.
+/// audio's and MIDI DIN's) as one pair.
 #[inline(always)]
-fn clocks() -> (u32, u32) {
-    let over = || {
+fn clocks() -> Stamp {
+    stamp(|| {
         AUDIO_CYCLES
             .load(Ordering::Relaxed)
             .wrapping_add(MIDI_CYCLES.load(Ordering::Relaxed))
-    };
-    loop {
-        let before = over();
-        compiler_fence(Ordering::SeqCst);
-        let t = DWT::cycle_count();
-        compiler_fence(Ordering::SeqCst);
-        if over() == before {
-            return (t, before);
-        }
-    }
+    })
 }
 
 /// An entry with bank 2 closed: nothing is read. Only a gate build's
@@ -1093,17 +1110,17 @@ enum Work {
 }
 
 impl IrqState {
-    fn step(&mut self, ev: DmaEvent, asked: bool) {
+    fn step(&mut self, ev: DmaEvent, asked: Abort) {
         let in_flight = matches!(self.job, Job::Read(_));
         let g = gate(in_flight, ev);
-        if g == Gate::Ignore && !asked {
+        if g == Gate::Ignore && asked == Abort::Unasked {
             return;
         }
         // Not in flight, a TE or an ask has nothing to stop: look instead.
         let Job::Read(Transfer { bus, phase }) = replace(&mut self.job, Job::Idle) else {
             return self.look();
         };
-        let fail = if asked {
+        let fail = if asked == Abort::Asked {
             Some(Why::Asked)
         } else if g == Gate::Advance {
             None
@@ -1198,7 +1215,7 @@ impl IrqState {
                             claim: claimed,
                             row,
                             piece,
-                            retried: false,
+                            attempt: Attempt::First,
                         });
                     }
                     // `serve_step` read it: never.
@@ -1244,7 +1261,7 @@ impl IrqState {
         if let Err(why) = h.ready(&self.line) {
             return self.drop_job(h, kind, why);
         }
-        let t0 = DWT::cycle_count();
+        let t0 = Cycles::now();
         match h.command(CMD18, arg, &self.line) {
             Ok(()) => {
                 let end = kind.start();
@@ -1255,7 +1272,7 @@ impl IrqState {
     }
 
     /// The next burst of `walk`, or its stop.
-    fn fly(&mut self, h: Held, walk: Walk, t0: u32, kind: Kind, end: usize) {
+    fn fly(&mut self, h: Held, walk: Walk, t0: Cycles, kind: Kind, end: usize) {
         let walk = match walk {
             Walk::Read(r) => r,
             Walk::Stop => return self.finish(h, t0, kind),
@@ -1294,7 +1311,7 @@ impl IrqState {
         &mut self,
         bus: Flying,
         walk: Reading,
-        t0: u32,
+        t0: Cycles,
         kind: Kind,
         end: usize,
         upto: usize,
@@ -1336,13 +1353,13 @@ impl IrqState {
     /// after it: CMD12, the drain, then the next piece. The last: the
     /// chunk goes to its slot (a stop error after keeps it, I8), then
     /// CMD12 and the drain.
-    fn finish(&mut self, mut h: Held, t0: u32, kind: Kind) {
+    fn finish(&mut self, mut h: Held, t0: Cycles, kind: Kind) {
         let done = match kind {
             Kind::Fill(f) => match f.row.read().after(&f.piece) {
                 Some(piece) => {
                     let f = Fill {
                         piece,
-                        retried: false,
+                        attempt: Attempt::First,
                         ..f
                     };
                     return self.stop(h, Then::More(f));
@@ -1352,7 +1369,7 @@ impl IrqState {
                     let filled = self.deliver(&mut h, f);
                     #[cfg(feature = "bench")]
                     if filled {
-                        bench::filled(self.line.us(DWT::cycle_count().wrapping_sub(t0)));
+                        bench::filled(self.line.us(Cycles::now().since(t0)));
                     }
                     #[cfg(not(feature = "bench"))]
                     let _ = filled;
@@ -1403,7 +1420,7 @@ impl IrqState {
             // the fault, never a verdict on the chunk.
             None => ReadError::Frame(Blame::Card),
         };
-        failed(err, false);
+        failed(err, Attempt::First);
         self.side.requeue(claim);
         false
     }
@@ -1417,7 +1434,7 @@ impl IrqState {
                 if answer.is_err() && matches!(then, Then::Next { .. } | Then::More(_)) {
                     STATS.stop_errors.fetch_add(1, Ordering::Relaxed);
                 }
-                self.drain(h, self.line.drain_bytes, then);
+                self.drain(h, self.line.drain_bytes.get(), then);
             }
             Err(_) => self.fault(h, then),
         }
@@ -1474,7 +1491,7 @@ impl IrqState {
                 STATS.reads.fetch_add(1, Ordering::Relaxed);
                 STATS.bursts.fetch_add(self.bursts, Ordering::Relaxed);
                 STATS.bursts_max.fetch_max(self.bursts, Ordering::Relaxed);
-                let took = self.line.us(DWT::cycle_count().wrapping_sub(t0));
+                let took = self.line.us(Cycles::now().since(t0));
                 match done {
                     Done::Filled => {}
                     #[cfg(feature = "bench")]
@@ -1558,8 +1575,11 @@ impl IrqState {
     fn abort(&mut self, h: Held, kind: Kind, why: Why) {
         STATS.aborts.fetch_add(1, Ordering::Relaxed);
         let then = match (kind, why) {
-            (Kind::Fill(f), Why::Proto(e)) => match failed(ReadError::Proto(e), f.retried) {
-                ErrorStep::Retry => Then::Retry(Fill { retried: true, ..f }),
+            (Kind::Fill(f), Why::Proto(e)) => match failed(ReadError::Proto(e), f.attempt) {
+                ErrorStep::Retry => Then::Retry(Fill {
+                    attempt: Attempt::Retry,
+                    ..f
+                }),
                 ErrorStep::Fault | ErrorStep::FrameError | ErrorStep::Rotted => {
                     Then::Give(self.fail_job(Kind::Fill(f), why))
                 }
@@ -1607,9 +1627,9 @@ fn counted(was: CardFault) {
 
 /// A fill's read error, decided (`serve::read_failed`, which sets the
 /// fault and counts a frame error), its fault counted.
-fn failed(err: ReadError, retried: bool) -> ErrorStep {
+fn failed(err: ReadError, a: Attempt) -> ErrorStep {
     let was = BUS.fault();
-    let step = read_failed(err, retried, &BUS, &STREAM_STATS);
+    let step = read_failed(err, a, &BUS, &STREAM_STATS);
     counted(was);
     step
 }
@@ -1641,6 +1661,7 @@ mod bench {
     use core::ptr::{addr_of, addr_of_mut};
     use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering, fence};
 
+    use crate::shared::Cycles;
     use chimera_core::stream::bench::{BENCH, BenchBeds};
     use chimera_core::stream::layout::ChunkIdx;
     use chimera_core::voice_alloc::VoiceIdx;
@@ -1648,7 +1669,6 @@ mod bench {
     use chimera_hal::card_bus::CardFault;
     use chimera_hal::store::StoreError;
     use chimera_hal::units::{BlockCount, Lba, Micros, Millis};
-    use cortex_m::peripheral::DWT;
 
     use chimera_core::console::Inject;
 
@@ -1778,13 +1798,13 @@ mod bench {
     pub(super) static CHECK_CYCLES: AtomicU32 = AtomicU32::new(0);
 
     pub(super) fn check(v: VoiceIdx, c: ChunkIdx, bytes: &[u8]) {
-        let t0 = DWT::cycle_count();
+        let t0 = Cycles::now();
         if let Some(b) = beds().and_then(|b| b.check(v))
             && !b.verify(c, bytes)
         {
             BENCH.check_failed(v);
         }
-        CHECK_CYCLES.fetch_add(DWT::cycle_count().wrapping_sub(t0), Ordering::Relaxed);
+        CHECK_CYCLES.fetch_add(Cycles::now().since(t0).get(), Ordering::Relaxed);
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]

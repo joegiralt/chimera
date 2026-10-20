@@ -5,6 +5,7 @@
 
 mod common;
 
+use chimera_core::stream::units::{Cents, SourceRate};
 use core::mem::MaybeUninit;
 use core::sync::atomic::Ordering;
 
@@ -47,6 +48,7 @@ use common::{InstRig, XorShift, init_params};
 
 const SR: u32 = 48_000;
 const RATE: u16 = 24_000;
+const HZ: SourceRate = SourceRate::new(RATE).unwrap();
 /// 30 s at 24 kHz.
 const FRAMES: u32 = 720_000;
 /// `HEAD_MS`, and room for XFADE's 100 ms before the loop.
@@ -115,10 +117,10 @@ fn rings() -> (Box<Rings>, Box<ThirdSlots>) {
 /// speed), as the deck works them out.
 fn heads_at(p: &TapeEngineParams, frames: u32, note: u8) -> [u32; 2] {
     let ws = window_start(p.start, frames);
-    let fast = inc(RATE, note, 0.0, p.root, SR) * 1.02;
-    let floor = shortest(RATE, fast.min(INC_MAX));
+    let fast = inc(HZ, note, Cents::ZERO, Cents::new(p.root), SR).get() * 1.02;
+    let floor = shortest(HZ, fast.min(INC_MAX));
     let we = window_end_min(ws, p.end, frames, floor);
-    let b = Bounds::of_min(ws, we, (p.size, p.position, p.xfade), RATE, floor);
+    let b = Bounds::of_min(ws, we, (p.size, p.position, p.xfade), HZ, floor);
     let lx = b.lx.min(u32::from(RATE) / 10);
     [ws, b.ls.saturating_sub(lx + 8)]
 }
@@ -439,7 +441,7 @@ fn chord_burst_holds() {
         };
         c.held_heads(heads_for(r, p).unwrap().as_slice())
     };
-    let hf = head_frames(RATE);
+    let hf = head_frames(HZ);
     // Cut at its length, a head ending just past a chunk's start holds.
     let kind = 2_690 - hf + 4;
     assert_eq!(underruns(kind, &cut(hf)), 0);
@@ -467,7 +469,7 @@ fn short_loop_on_streamed_source_stays_in_ram() {
     let (rings, third) = rings();
     let mut st = Stream::new(&rings, &third, &whole, 0);
     let ws = window_start(p.start, FRAMES);
-    let b = Bounds::of(ws, FRAMES, (p.size, p.position, p.xfade), RATE);
+    let b = Bounds::of(ws, FRAMES, (p.size, p.position, p.xfade), HZ);
     assert!((990..=1_010).contains(&b.frames()), "{b:?}");
     let mut src = OneSource::new(&st.card.held(&[ws, ws], HF));
     let mut slot = MaybeUninit::uninit();
@@ -1006,7 +1008,7 @@ impl<'r> Played<'r> {
             .stream_bills()
             .iter()
             .flatten()
-            .map(|b| b.0)
+            .map(|b| b.get())
             .sum()
     }
 }
@@ -1027,9 +1029,14 @@ fn bill_of(p: &TapeEngineParams, note: u8, bend: u8) -> u32 {
     let wow = if tape_runs(p.tape, false) {
         WOW_CENTS
     } else {
-        0.0
+        Cents::ZERO
     };
-    bill(RATE, ratio_max(p, note, wow, f32::from(bend) * 100.0)).0
+    let n = MidiNote::new(note).unwrap();
+    bill(
+        HZ,
+        ratio_max(p, n, wow, Cents::new(f32::from(bend) * 100.0)),
+    )
+    .get()
 }
 
 /// Eight notes that fit the card's budget; a ninth that doesn't, unless a
@@ -1052,8 +1059,8 @@ fn ninth_stream_steals_oldest_released() {
     let notes = 50..58u8;
     let eight: u32 = notes.clone().map(|n| bill_of(&p, n, bend)).sum();
     let ninth = bill_of(&p, 63, bend);
-    assert!(eight <= STREAM_BUDGET_BPS && eight + ninth > STREAM_BUDGET_BPS);
-    assert!(eight - bill_of(&p, 51, bend) + ninth <= STREAM_BUDGET_BPS);
+    assert!(eight <= STREAM_BUDGET_BPS.get() && eight + ninth > STREAM_BUDGET_BPS.get());
+    assert!(eight - bill_of(&p, 51, bend) + ninth <= STREAM_BUDGET_BPS.get());
 
     for n in notes.clone() {
         pl.on(0, n);
@@ -1076,7 +1083,11 @@ fn ninth_stream_steals_oldest_released() {
     assert!(!slots[first].dying());
     for _ in 0..10 {
         pl.block();
-        assert!(pl.billed() <= STREAM_BUDGET_BPS, "{} over", pl.billed());
+        assert!(
+            pl.billed() <= STREAM_BUDGET_BPS.get(),
+            "{} over",
+            pl.billed()
+        );
     }
     assert!(
         pl.rig.inst.active().iter().all(|&a| a),
@@ -1345,7 +1356,7 @@ fn speeds(pl: &Played<'_>, v: usize) -> (f32, f32, f32) {
         panic!("a TAPE voice");
     };
     let (wants, cap) = t.speed().expect("a streamed deck");
-    let paid = pl.rig.inst.stream_bills()[v].unwrap().0 as f32;
+    let paid = pl.rig.inst.stream_bills()[v].unwrap().get() as f32;
     let k = SR as f32 / f32::from(RATE);
     (
         wants * k,
@@ -1459,7 +1470,11 @@ fn a_knob_turn_never_steals_a_held_voice() {
     pl.rig.shared.parts[0].params.pitch.pitch = 7.0;
     for _ in 0..20 {
         pl.block();
-        assert!(pl.billed() <= STREAM_BUDGET_BPS, "{} over", pl.billed());
+        assert!(
+            pl.billed() <= STREAM_BUDGET_BPS.get(),
+            "{} over",
+            pl.billed()
+        );
     }
     let slots = pl.rig.inst.allocator().slots();
     assert!(
@@ -1486,7 +1501,11 @@ fn a_knob_turn_steals_released_voices_only() {
         pl.block();
         // A stolen voice's bill counts until its fade ends.
         if k > 3 {
-            assert!(pl.billed() <= STREAM_BUDGET_BPS, "{} over", pl.billed());
+            assert!(
+                pl.billed() <= STREAM_BUDGET_BPS.get(),
+                "{} over",
+                pl.billed()
+            );
         }
     }
     let slots = pl.rig.inst.allocator().slots();
@@ -1557,7 +1576,7 @@ fn a_late_note_that_doesnt_fit_is_refused() {
     pl.wheel_up();
     let bend = pl.rig.shared.parts[0].mix.bend;
     let held: u32 = (51..58).map(|n| bill_of(&p, n, bend)).sum();
-    assert!(held + bill_of(&p, 72, bend) > STREAM_BUDGET_BPS);
+    assert!(held + bill_of(&p, 72, bend) > STREAM_BUDGET_BPS.get());
     for n in 51..58 {
         pl.on(0, n);
     }
@@ -1638,7 +1657,9 @@ fn a_fading_note_reads_its_own_source_length() {
     pl.wheel_up();
     let bend = pl.rig.shared.parts[0].mix.bend;
     let eight: u32 = (50..58).map(|n| bill_of(&p, n, bend)).sum();
-    assert!(eight <= STREAM_BUDGET_BPS && eight + bill_of(&p, 63, bend) > STREAM_BUDGET_BPS);
+    assert!(
+        eight <= STREAM_BUDGET_BPS.get() && eight + bill_of(&p, 63, bend) > STREAM_BUDGET_BPS.get()
+    );
     pl.on(0, 57);
     for n in 50..57 {
         pl.on(1, n);
@@ -2031,8 +2052,8 @@ fn a_rotted_cluster_in_a_loop_faults_twice_then_never() {
         ..params(PlayMode::Loop, 0.0, 0.05)
     };
     let ws = window_start(p.start, FRAMES);
-    let we = window_end(ws, p.end, FRAMES, RATE);
-    let b = Bounds::of(ws, we, (p.size, p.position, p.xfade), RATE);
+    let we = window_end(ws, p.end, FRAMES, HZ);
+    let b = Bounds::of(ws, we, (p.size, p.position, p.xfade), HZ);
     let lap = (b.frames() / 32) as usize;
     let (rings, third) = rings();
     let mut st = Stream::new(&rings, &third, &whole, 0);
@@ -2180,7 +2201,7 @@ fn an_init_chord_about_root_streams_whole() {
         let v = pl.voice_of(0, n).expect("booked");
         assert!(pl.rig.inst.active()[v], "{n} sounds");
     }
-    assert!(pl.billed() <= STREAM_BUDGET_BPS);
+    assert!(pl.billed() <= STREAM_BUDGET_BPS.get());
 }
 
 /// #698 finding 11: ONE's RETRIG CUT chokes the Part's other notes (a
@@ -2323,7 +2344,7 @@ fn a_cut_takes_the_room_it_frees() {
         pl.block();
     }
     // Full: the next note fits only in the room the cut frees.
-    assert!(pl.billed() + bill_of(&cut, 63, 0) > STREAM_BUDGET_BPS);
+    assert!(pl.billed() + bill_of(&cut, 63, 0) > STREAM_BUDGET_BPS.get());
     pl.on(0, 63);
     for _ in 0..4 {
         pl.block();

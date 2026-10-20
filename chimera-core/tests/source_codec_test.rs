@@ -48,13 +48,7 @@ fn source(seed: u8, frames: u32, name: &str) -> (SourceHead, Vec<u8>) {
 
 /// What the arena holds for a source: its descriptor, then its bytes.
 fn held(head: &SourceHead, data: &[u8]) -> Vec<u8> {
-    let d = Descriptor {
-        shape: head.shape,
-        count: head.count,
-        rate: head.sref.rate,
-        head_frames: 0,
-        heads: 0,
-    };
+    let d = Descriptor::whole(head.shape, head.count, head.sref.rate).expect("a descriptor");
     let mut v = d.to_bytes().to_vec();
     v.extend_from_slice(data);
     v

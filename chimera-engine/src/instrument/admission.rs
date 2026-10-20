@@ -9,35 +9,87 @@ use core::sync::atomic::Ordering::Relaxed;
 use chimera_hal::card_bus::CardFault;
 use chimera_theory::Note;
 
-use super::{AudioShared, Instrument, NoteOrigin, Paid};
+use chimera_hal::units::BytesPerSec;
+
+use super::{AudioShared, Instrument, NoteOrigin, Paid, part_id};
 use crate::MidiNote;
-use crate::hw::{Cost, MAX_PARTS, MAX_VOICES};
+use crate::hw::{Cost, MAX_VOICES};
 use crate::params::EngineType;
 use crate::part::PartMode;
-use crate::project::SourceId;
+use crate::project::{PartId, SourceId};
 use crate::source_table::GateView;
-use crate::stream::admit::{Admit, Bill, STREAM_BUDGET_BPS, admit};
+use crate::stream::admit::{Admit, Age, Bill, STREAM_BUDGET_BPS, admit};
 use crate::stream::stats::StreamStats;
-use crate::voice_alloc::VoiceIdx;
+use crate::voice_alloc::{VoiceIdx, VoiceSet};
 
-/// A note-on as the pick sees it: its Part, mode, note and origin.
-pub(crate) type PickAt = (u8, PartMode, MidiNote, NoteOrigin);
-/// Key, note and source of a note asking the card.
-pub(crate) type BillAt = (MidiNote, MidiNote, Option<SourceId>);
+/// A note-on as the pick sees it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PickAt {
+    pub(crate) part: PartId,
+    pub(crate) mode: PartMode,
+    pub(crate) note: MidiNote,
+    pub(crate) origin: NoteOrigin,
+}
+
+/// A note asking the card: the key struck, the note it plays (snapped or
+/// harmonised), and its source.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BillAt {
+    pub(crate) key: MidiNote,
+    pub(crate) note: MidiNote,
+    pub(crate) source: Option<SourceId>,
+}
 
 /// What bank 1 may call of admission (ADR 0137): bank 2's with `bank2`.
 #[repr(C)]
 pub struct AdmitDoor {
-    pub(crate) bill: fn(&Instrument, usize, &AudioShared, &GateView<'_>, BillAt) -> Option<Paid>,
+    bill: fn(&Instrument, PartId, &AudioShared, &GateView<'_>, BillAt) -> Option<Paid>,
     #[allow(clippy::type_complexity)]
-    pub(crate) pick: fn(
+    pick: fn(
         &mut Instrument,
         PickAt,
         (Cost, bool),
         Paid,
         (Option<&StreamStats>, CardFault),
     ) -> Option<(usize, Option<Paid>)>,
-    pub(crate) refresh: fn(&mut Instrument, &AudioShared, &GateView<'_>, Option<&StreamStats>),
+    refresh: fn(&mut Instrument, &AudioShared, &GateView<'_>, Option<&StreamStats>),
+}
+
+impl AdmitDoor {
+    #[inline(always)]
+    pub(crate) fn bill(
+        &self,
+        i: &Instrument,
+        p: PartId,
+        shared: &AudioShared,
+        src: &GateView<'_>,
+        at: BillAt,
+    ) -> Option<Paid> {
+        (self.bill)(i, p, shared, src, at)
+    }
+
+    #[inline(always)]
+    pub(crate) fn pick(
+        &self,
+        i: &mut Instrument,
+        at: PickAt,
+        costs: (Cost, bool),
+        new: Paid,
+        ctx: (Option<&StreamStats>, CardFault),
+    ) -> Option<(usize, Option<Paid>)> {
+        (self.pick)(i, at, costs, new, ctx)
+    }
+
+    #[inline(always)]
+    pub(crate) fn refresh(
+        &self,
+        i: &mut Instrument,
+        shared: &AudioShared,
+        src: &GateView<'_>,
+        stats: Option<&StreamStats>,
+    ) {
+        (self.refresh)(i, shared, src, stats)
+    }
 }
 
 impl Instrument {
@@ -57,10 +109,10 @@ impl Instrument {
     /// Part's key can re-snap up to `snap_reach_up` over itself.
     fn bill_in(
         &self,
-        p: usize,
+        p: PartId,
         shared: &AudioShared,
         src: &GateView<'_>,
-        (key, note, source): BillAt,
+        BillAt { key, note, source }: BillAt,
     ) -> Option<Paid> {
         use crate::addr::{BlockRef, ParamAddr};
         use crate::dsp::engines::pitch_reach_by;
@@ -69,30 +121,30 @@ impl Instrument {
         use crate::dsp::tape_engine::read::Descriptor;
         use crate::dsp::tape_engine::{TapeEngineParams, ratio_max, tape_runs};
         use crate::modulation::ModSource;
-        use crate::stream::admit::WOW_CENTS;
-        use crate::stream::admit::bill;
+        use crate::stream::admit::{WOW_CENTS, bill};
+        use crate::stream::units::Cents;
         use chimera_theory::snap_reach_up;
-        let part = &shared.parts[p % MAX_PARTS];
+        let part = &shared.parts[p.index()];
         if part.params.engine() != EngineType::Tape {
             return None;
         }
-        let d = Descriptor::from_bytes(src.bytes(source?)?).filter(|d| d.heads > 0)?;
-        let mut top = note.get();
+        let d = Descriptor::from_bytes(src.bytes(source?)?).filter(Descriptor::is_streamed)?;
+        let mut top = note;
         if part.params.pitch.steal_glide().is_some() {
             for s in self
                 .alloc
                 .slots()
                 .iter()
-                .filter(|s| s.part() == Some(p as u8))
+                .filter(|s| s.part() == Some(p.index() as u8))
             {
-                top = top.max(s.note().map_or(0, MidiNote::get));
+                top = top.max(s.note().unwrap_or(top));
             }
         }
         // HELD may turn to RE-SNAP mid-note: any snapping Part's key may.
         if part.mix.snap.target().is_some() {
             let k = key.get();
             let up = Note::new(k).map_or(11, snap_reach_up);
-            top = top.max(k.saturating_add(up).min(127));
+            top = top.max(MidiNote::clamped(k.saturating_add(up)));
         }
         // The reach in use (#698): each route by its source's live swing
         // (an LFO by its DEPTH, so INIT's wheel vibrato at rest reaches
@@ -116,25 +168,25 @@ impl Instrument {
         let routes = pitch_reach_by(mods, lfo_depth);
         let tape = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::TAPE);
         let wow = if tape_runs(part.params.tape.tape, mods.moves_addr(tape)) {
-            WOW_CENTS
+            WOW_CENTS.get()
         } else {
             0.0
         };
-        let bend = self.bend_up(p, part) * 100.0;
+        let bend = Cents::new(self.bend_up(p, part) * 100.0);
         let cents = (part.params.pitch.semitones() + self.tune) * 100.0 + routes + wow;
-        let ratio = ratio_max(&part.params.tape, top, cents, bend);
+        let ratio = ratio_max(&part.params.tape, top, Cents::new(cents), bend);
         Some(Paid {
-            bill: bill(d.rate, ratio),
+            bill: bill(d.rate(), ratio),
             ratio,
         })
     }
 
     /// Part `p`'s bend up, semitones: the wheel's glided reach or where the
     /// wheel now sits, the higher; 0 bent down.
-    fn bend_up(&self, p: usize, part: &super::PartAudio) -> f32 {
+    fn bend_up(&self, p: PartId, part: &super::PartAudio) -> f32 {
         let w = self.wheel[usize::from(part.mix.channel.get())].max(0);
         let target = f32::from(w) / 8191.0 * f32::from(part.mix.bend);
-        self.knobs[p % MAX_PARTS].0.bend().max(target).max(0.0)
+        self.knobs[p.index()].0.bend().max(target).max(0.0)
     }
 
     /// Admits a streamed note billed `new` against the voices streaming
@@ -143,7 +195,7 @@ impl Instrument {
     /// question 2). A voice still fading counts until it is freed; a shed
     /// one goes first. Under a card fault nothing streams: refused, no
     /// voice stolen.
-    fn admit_stream(&self, new: Bill, gone: &[bool; MAX_VOICES], fault: CardFault) -> Admit {
+    fn admit_stream(&self, new: Bill, gone: VoiceSet, fault: CardFault) -> Admit {
         if fault == CardFault::Read {
             return Admit::Refuse;
         }
@@ -151,21 +203,17 @@ impl Instrument {
             .iter()
             .zip(&self.streaming)
             .filter_map(|(&v, s)| {
-                let b = s.billed().filter(|_| !gone[v.index()])?;
-                Some((v, b, self.age_now(v.index(), s.age)))
+                let b = s.billed().filter(|_| !gone.contains(v))?;
+                Some((v, b, self.age_now(v, s.age)))
             });
         admit(new, playing, STREAM_BUDGET_BPS)
     }
 
     /// Voice `v`'s age as a steal sees it: shed or cut this block (dying
     /// before its block's `age_stream`), the first to go.
-    fn age_now(&self, v: usize, age: crate::stream::admit::Age) -> crate::stream::admit::Age {
-        if self.alloc.slots()[v].dying() {
-            crate::stream::admit::Age {
-                released: true,
-                since: u32::MAX,
-                level: 0,
-            }
+    fn age_now(&self, v: VoiceIdx, age: Age) -> Age {
+        if self.alloc.slots()[v.index()].dying() {
+            Age::DYING
         } else {
             age
         }
@@ -174,9 +222,8 @@ impl Instrument {
     /// Admits voice `v`'s bill `new` mid-note (#595): only released voices
     /// go, each fading out as a shed one does; a held note is never cut.
     /// False: it doesn't fit, nothing stolen.
-    fn admit_mid(&mut self, v: usize, new: Bill) -> bool {
-        let mut gone = [false; MAX_VOICES];
-        gone[v] = true;
+    fn admit_mid(&mut self, v: VoiceIdx, new: Bill) -> bool {
+        let mut gone = VoiceSet::EMPTY.with(v);
         // Each steal adds a voice to `gone`: at most one a voice.
         for _ in 0..=MAX_VOICES {
             let st = &self.streaming;
@@ -184,17 +231,18 @@ impl Instrument {
                 VoiceIdx::ALL
                     .iter()
                     .zip(st)
-                    .filter(|&(w, _)| !gone[w.index()])
+                    .filter(|&(&w, _)| !gone.contains(w))
                     .filter_map(|(&w, s)| Some((w, s.billed()?, s.age)))
             };
             let held = others()
-                .filter(|o| !o.2.released)
-                .fold(0u32, |a, o| a.saturating_add(o.1.0));
-            let released = others().filter(|o| o.2.released);
-            match admit(new, released, STREAM_BUDGET_BPS.saturating_sub(held)) {
+                .filter(|o| !o.2.released())
+                .fold(0u32, |a, o| a.saturating_add(o.1.get()));
+            let released = others().filter(|o| o.2.released());
+            let room = BytesPerSec::new(STREAM_BUDGET_BPS.get().saturating_sub(held));
+            match admit(new, released, room) {
                 Admit::Ok => return true,
                 Admit::Steal(w) => {
-                    gone[w.index()] = true;
+                    gone = gone.with(w);
                     self.alloc.kill(w.index());
                     self.shed(w.index());
                 }
@@ -207,8 +255,8 @@ impl Instrument {
     /// Voice `v`'s note, paid for, now reaches `new` (#595): re-admitted
     /// (`admit_mid`), its cap following; or it holds at its cap, counted
     /// once a rise.
-    fn raise(&mut self, v: usize, new: Paid, stats: Option<&StreamStats>) {
-        let st = self.streaming[v];
+    fn raise(&mut self, v: VoiceIdx, new: Paid, stats: Option<&StreamStats>) {
+        let st = self.streaming[v.index()];
         let Some(old) = st.paid.filter(|old| new.ratio > old.ratio) else {
             return;
         };
@@ -216,10 +264,11 @@ impl Instrument {
             bill: new.bill.max(old.bill),
             ratio: new.ratio,
         };
+        let i = v.index();
         if self.admit_mid(v, up.bill) {
-            (self.streaming[v].paid, self.streaming[v].capped) = (Some(up), false);
+            (self.streaming[i].paid, self.streaming[i].capped) = (Some(up), false);
         } else if !st.capped {
-            self.streaming[v].capped = true;
+            self.streaming[i].capped = true;
             if let Some(s) = stats {
                 s.held_at_cap.fetch_add(1, Relaxed);
             }
@@ -237,7 +286,8 @@ impl Instrument {
         src: &GateView<'_>,
         stats: Option<&StreamStats>,
     ) {
-        for v in 0..MAX_VOICES {
+        for vi in VoiceIdx::ALL {
+            let v = vi.index();
             let s = self.alloc.slots()[v];
             let (Some(q), Some(note)) = (s.part(), s.note()) else {
                 continue;
@@ -246,13 +296,17 @@ impl Instrument {
             if s.dying() || !voice.is_active() || voice.fading() || self.waiting[v].is_some() {
                 continue;
             }
-            let at = (self.keys[v], note, voice.reads()[0]);
-            let Some(new) = self.bill_in(q as usize, shared, src, at) else {
+            let at = BillAt {
+                key: self.keys[v],
+                note,
+                source: voice.reads()[0],
+            };
+            let Some(new) = self.bill_in(part_id(q), shared, src, at) else {
                 continue;
             };
             if self.streaming[v].paid.is_some() {
-                self.raise(v, new, stats);
-            } else if self.admit_mid(v, new.bill) {
+                self.raise(vi, new, stats);
+            } else if self.admit_mid(vi, new.bill) {
                 self.streaming[v].paid = Some(new);
             } else {
                 if let Some(s) = stats {
@@ -278,28 +332,27 @@ impl Instrument {
         new: Paid,
         (stats, fault): (Option<&StreamStats>, CardFault),
     ) -> Option<(usize, Option<Paid>)> {
-        let mut gone = [false; MAX_VOICES];
+        let mut gone = VoiceSet::EMPTY;
         // Each steal adds a voice to `gone`: at most one a voice.
         for _ in 0..=MAX_VOICES {
-            let Some(v) = self.pick_one(at, cost) else {
+            let Some(vi) = self.pick_one(at, cost).and_then(VoiceIdx::new) else {
                 break;
             };
-            let (q, mode, note, _) = at;
+            let v = vi.index();
             let s = self.alloc.slots()[v];
             let replaces = !s.dying()
-                && s.part() == Some(q)
-                && (mode == PartMode::Mono || s.note() == Some(note));
+                && s.part() == Some(at.part.index() as u8)
+                && (at.mode == PartMode::Mono || s.note() == Some(at.note));
             if replaces && glides && self.voices[v].is_active() && self.streaming[v].paid.is_some()
             {
-                self.raise(v, new, stats);
+                self.raise(vi, new, stats);
                 return Some((v, self.streaming[v].paid));
             }
-            let mut ask = gone;
-            ask[v] |= replaces;
-            match self.admit_stream(new.bill, &ask, fault) {
+            let ask = if replaces { gone.with(vi) } else { gone };
+            match self.admit_stream(new.bill, ask, fault) {
                 Admit::Ok => return Some((v, Some(new))),
                 Admit::Steal(w) => {
-                    gone[w.index()] = true;
+                    gone = gone.with(w);
                     self.alloc.kill(w.index());
                     self.shed(w.index());
                 }

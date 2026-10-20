@@ -7,7 +7,7 @@ use core::ops::Range;
 use chimera_hal::store::{Extents, FileName, FileRuns, Transfers};
 use chimera_hal::units::{BlockCount, Bytes, FileBlock, Lba};
 
-use super::units::{Frames, Packing};
+use super::units::{Frames, Packing, SourceFrame};
 use crate::storage::{
     RECORD_HEAD_LEN, RecordTag, SOURCE_DATA_MAX, SourceLayout, data_offset, source_name,
 };
@@ -60,7 +60,31 @@ impl ChunkIdx {
     pub const fn next(self) -> Option<Self> {
         Self::new(self.0 + 1)
     }
+
+    /// The chunk holding frame `f`: every frame's fits.
+    pub const fn of(f: SourceFrame) -> Self {
+        Self(f.get() / CHUNK_FRAMES.get())
+    }
+
+    /// `n` chunks on, at most `MAX`.
+    pub const fn saturating_add(self, n: u32) -> Self {
+        let c = self.0.saturating_add(n);
+        Self(if c < Self::MAX.0 { c } else { Self::MAX.0 })
+    }
+
+    /// Its first frame; `SourceFrame::MAX` past `u32`.
+    pub const fn first_frame(self) -> SourceFrame {
+        SourceFrame::new(self.0.saturating_mul(CHUNK_FRAMES.get()))
+    }
+
+    /// The chunks `self..=to`, in order.
+    pub fn through(self, to: ChunkIdx) -> impl Iterator<Item = ChunkIdx> {
+        (self.0..=to.0).map(ChunkIdx)
+    }
 }
+
+// `ChunkIdx::of` holds every `u32` frame.
+const _: () = assert!(u32::MAX / CHUNK_FRAMES.get() <= ChunkIdx::MAX.0);
 
 /// The blocks of a chunk, in the file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,8 +185,8 @@ impl StreamFile {
     }
 
     /// The chunk holding `f`; `None` past the end.
-    pub fn chunk_of(&self, f: Frames) -> Option<ChunkIdx> {
-        (f < self.frames).then(|| ChunkIdx(f.get() / CHUNK_FRAMES.get()))
+    pub fn chunk_of(&self, f: SourceFrame) -> Option<ChunkIdx> {
+        (f.get() < self.frames.get()).then(|| ChunkIdx::of(f))
     }
 
     /// `None` past `last_chunk`.

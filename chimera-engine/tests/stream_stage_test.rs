@@ -10,9 +10,11 @@ use chimera_engine::storage::SourceRef;
 use chimera_engine::stream::admit::head_frames;
 use chimera_engine::stream::layout::CHUNK_FRAMES;
 use chimera_engine::stream::stage::{XFADE_MAX_MS, heads_for, xfade_max};
+use chimera_engine::stream::units::SourceRate;
 
 const CF: u32 = CHUNK_FRAMES.get();
 const RATE: u16 = 24_000;
+const HZ: SourceRate = SourceRate::new(RATE).unwrap();
 const FRAMES: u32 = 30 * RATE as u32;
 
 fn r() -> SourceRef {
@@ -53,7 +55,7 @@ fn start_head_starts_before_start_made_even() {
 
 #[test]
 fn every_head_ends_just_past_the_next_chunk_boundary() {
-    let reach = head_frames(RATE);
+    let reach = head_frames(HZ);
     // Every alignment of START against the chunks, the worst included:
     // `HEAD_MS` of reach ending a frame short of a boundary.
     for k in 0..CF / 64 {
@@ -77,7 +79,7 @@ fn every_head_ends_just_past_the_next_chunk_boundary() {
 
 #[test]
 fn loop_head_holds_xfade_and_head_ms() {
-    let reach = head_frames(RATE);
+    let reach = head_frames(HZ);
     for (size, place, xfade) in [
         (0.6, 0.5, 0.0),
         (0.6, 0.5, 0.05),
@@ -91,11 +93,11 @@ fn loop_head_holds_xfade_and_head_ms() {
         let ws = window_start(p.start, FRAMES);
         let b = Bounds::of(
             ws,
-            window_end(ws, p.end, FRAMES, RATE),
+            window_end(ws, p.end, FRAMES, HZ),
             (size, place, xfade),
-            RATE,
+            HZ,
         );
-        let lx = b.lx.min(xfade_max(RATE));
+        let lx = b.lx.min(xfade_max(HZ));
         let early = if b.ls - ws >= lx { lx } else { 0 };
         let lh = h.as_slice()[1];
         assert!(
@@ -112,7 +114,7 @@ fn loop_head_holds_xfade_and_head_ms() {
         );
         assert!(ends_past_a_boundary(lh.end()), "{size} {place} {xfade}");
     }
-    assert_eq!(xfade_max(RATE), RATE as u32 * XFADE_MAX_MS / 1_000);
+    assert_eq!(xfade_max(HZ), RATE as u32 * XFADE_MAX_MS / 1_000);
 }
 
 #[test]
@@ -121,7 +123,7 @@ fn a_head_stops_at_end_or_the_file() {
     let mut p = play(PlayMode::One, 0.5);
     p.end = 0.5 + 500.0 / FRAMES as f32;
     let h = heads_for(r(), &p).unwrap().as_slice()[0];
-    let we = window_end(window_start(p.start, FRAMES), p.end, FRAMES, RATE);
+    let we = window_end(window_start(p.start, FRAMES), p.end, FRAMES, HZ);
     assert!(
         h.end() >= we + 2 && h.end() <= we + 3,
         "to END: {} for {we}",

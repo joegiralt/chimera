@@ -39,7 +39,7 @@ impl OneSource {
         let table: &'static SourceTable = Box::leak(Box::new(SourceTable::new()));
         let bytes: &'static mut [u8] = Box::leak([held, second].concat().into_boxed_slice());
         table.attach_for_test(bytes.as_mut_ptr());
-        let rate = |b: &[u8]| Descriptor::from_bytes(b).map_or(0, |d| d.rate);
+        let rate = |b: &[u8]| Descriptor::from_bytes(b).map_or(0, |d| d.rate().get());
         let (id, id2) = (SourceId::ALL[0], SourceId::ALL[1]);
         table.publish_for_test(id, 0, held.len() as u32, rate(held));
         if !second.is_empty() {
@@ -91,13 +91,7 @@ impl OneSource {
 
 /// `samples` packed after a `Plain` descriptor at `rate`, held whole.
 pub fn held_plain(samples: &[f32], rate: u16) -> Vec<u8> {
-    let d = Descriptor {
-        shape: Shape::Plain,
-        count: 1,
-        rate,
-        head_frames: 0,
-        heads: 0,
-    };
+    let d = Descriptor::whole(Shape::Plain, 1, rate).expect("a descriptor");
     let s: Vec<i16> = samples.iter().map(|&x| to12(x)).collect();
     let mut held = d.to_bytes().to_vec();
     held.resize(DESC_LEN + 3 * s.len().div_ceil(2), 0);
@@ -138,13 +132,7 @@ pub fn saw_with_burst(rate: u16, secs: f32) -> Vec<f32> {
 /// keeps harmonics `1..=wave::harmonics`, as the importer's do, rounded to
 /// 12 bits.
 pub fn held_transwave(top: u32, count: u8, amp: impl Fn(usize, u32) -> f32) -> Vec<u8> {
-    let d = Descriptor {
-        shape: Shape::Transwave,
-        count,
-        rate: 48_000,
-        head_frames: 0,
-        heads: 0,
-    };
+    let d = Descriptor::whole(Shape::Transwave, count, 48_000).expect("a descriptor");
     let mut s: Vec<i16> = Vec::new();
     for f in 0..count as usize {
         let mut l = wave::nominal_top(top).trailing_zeros();

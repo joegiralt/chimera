@@ -442,7 +442,7 @@ fn load_into<S: Store>(
 /// With bank 2 shut none.
 #[cfg(feature = "tape")]
 fn stream_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: u32) -> u8 {
-    super::LoadDoor::with(|d| (d.sources)(s, r, p, ids)).unwrap_or(0)
+    super::LoadDoor::with(|d| d.sources(s, r, p, ids)).unwrap_or(0)
 }
 
 /// No TAPE: nothing streams.

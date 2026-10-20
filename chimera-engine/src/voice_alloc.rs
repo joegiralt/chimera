@@ -59,6 +59,24 @@ impl VoiceIdx {
     }
 }
 
+/// A set of voices, a bit each.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VoiceSet(u8);
+
+const _: () = assert!(MAX_VOICES <= u8::BITS as usize);
+
+impl VoiceSet {
+    pub const EMPTY: VoiceSet = VoiceSet(0);
+
+    pub const fn with(self, v: VoiceIdx) -> VoiceSet {
+        VoiceSet(self.0 | 1 << v.0)
+    }
+
+    pub const fn contains(self, v: VoiceIdx) -> bool {
+        self.0 & 1 << v.0 != 0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct VoiceSlot {
     part: Option<u8>,

@@ -29,31 +29,75 @@ pub type ModRender = fn(
     (f32, f32),
 );
 
+/// A `MOD` render as `VaDoor` holds it: called, never handed out.
+#[repr(transparent)]
+pub struct ModEntry(ModRender);
+
+impl ModEntry {
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn render(
+        &self,
+        o: &mut VarOsc,
+        out: &mut [f32; BLOCK_SIZE],
+        mk: &mut [[f32; 2]; BLOCK_SIZE],
+        r: &Ramps,
+        jit: &mut f32,
+        stab: &mut Stability,
+        jd: f32,
+        m: &[f32; BLOCK_SIZE],
+        k: (f32, f32),
+    ) {
+        (self.0)(o, out, mk, r, jit, stab, jd, m, k)
+    }
+}
+
+pub const OSC1_MOD: ModEntry = ModEntry(osc1_mod);
+pub const OSC2_REV: ModEntry = ModEntry(osc2_rev);
+pub const OSC1_PHASE: ModEntry = ModEntry(osc1_phase);
+pub const OSC2_STEPS: ModEntry = ModEntry(osc2_steps);
+
 /// The VA's entries in the door's table.
 #[cfg(feature = "bank2")]
 #[repr(C)]
 pub struct VaDoor {
     /// OSC 1's recording, flipping `MOD` instance: FM `k = (1, 0)`.
-    pub osc1_mod: ModRender,
+    pub osc1_mod: ModEntry,
     /// LOOPFM's whole render (`VaEngine::render_loopfm`, with
     /// `lbfm::render_loop`).
-    pub loopfm: crate::dsp::va::LoopFmRender,
+    loopfm: crate::dsp::va::LoopFmRender,
     /// OSC 2's reversing instance: SOFT SYNC, `k = (0, 0)` (ADR 0161).
-    pub osc2_rev: ModRender,
+    pub osc2_rev: ModEntry,
     /// PHASE's OSC 1, `k = (0, 1)`, taking OSC 2's steps as jumps.
-    pub osc1_phase: ModRender,
+    pub osc1_phase: ModEntry,
     /// PHASE's OSC 2, plain, reporting its steps (`m`, `k` unread).
-    pub osc2_steps: ModRender,
+    pub osc2_steps: ModEntry,
 }
 
 #[cfg(feature = "bank2")]
 pub const DOOR: VaDoor = VaDoor {
-    osc1_mod,
+    osc1_mod: OSC1_MOD,
     loopfm: crate::dsp::va::VaEngine::render_loopfm,
-    osc2_rev,
-    osc1_phase,
-    osc2_steps,
+    osc2_rev: OSC2_REV,
+    osc1_phase: OSC1_PHASE,
+    osc2_steps: OSC2_STEPS,
 };
+
+#[cfg(feature = "bank2")]
+impl VaDoor {
+    #[inline(always)]
+    pub(in crate::dsp::va) fn loopfm(
+        &self,
+        e: &mut crate::dsp::va::VaEngine,
+        out: &mut [f32; BLOCK_SIZE],
+        l: &crate::dsp::va::Lanes,
+        gain: crate::dsp::va::Gain,
+        x: f32,
+        wave: [f32; 2],
+    ) {
+        (self.loopfm)(e, out, l, gain, x, wave)
+    }
+}
 
 /// OSC 1's `MOD` render (`<64, true, false, true, true>`): it records the
 /// wraps and the sub's flips on its clock.

@@ -453,7 +453,7 @@ impl Stretch {
         end: f32,
         sr: u32,
     ) -> Block {
-        let (frames, rate) = (v.frames(), v.desc().rate);
+        let (frames, rate) = (v.frames(), v.desc().rate());
         // END before START: the window mirrored, START its start there.
         let rev = Dir::of(self.start, end) == Dir::Rev;
         let (start, end) = if rev {
@@ -477,7 +477,7 @@ impl Stretch {
         let wq = (w as u64) << 32;
         let d = d_time_s(size);
         let half = ((d * sr as f32 * 0.5 + 0.5) as u32).max(MIN_PASS_SAMPLES);
-        let locked = locks(self.kind, self.pf, w, (d * rate as f32 + 0.5) as u32);
+        let locked = locks(self.kind, self.pf, w, (d * f32::from(rate) + 0.5) as u32);
         let span = if locked {
             // The fewest whole periods that are a wrap's travel at the
             // block's fastest `inc` and at least `INC_MAX` frames, so a
@@ -497,7 +497,7 @@ impl Stretch {
         let tiny = (span >> 32) < (MIN_PASS_SAMPLES as f32 * from.max(to)) as u64;
         let x = clampf(position, 0.0, 1.0) * w as f32;
         let off = q(x).min(wq - 1);
-        let speed = time_speed(motion) * rate as f32 / sr as f32;
+        let speed = time_speed(motion) * f32::from(rate) / sr as f32;
         Block {
             ws,
             hi,
@@ -875,13 +875,7 @@ mod tests {
     /// `ramp`, sample `i` at `base + i · step`.
     fn ramp_of(frames: usize, base: usize, step: usize) -> ([u8; 16 + 336], usize) {
         use super::super::read::{DESC_LEN, Descriptor, Shape};
-        let d = Descriptor {
-            shape: Shape::Plain,
-            count: 1,
-            rate: 48_000,
-            head_frames: 0,
-            heads: 0,
-        };
+        let d = Descriptor::whole(Shape::Plain, 1, 48_000).unwrap();
         let mut x = [0i16; 224];
         for (i, y) in x.iter_mut().enumerate() {
             *y = ((base + i * step) % 2_048) as i16;

@@ -24,7 +24,7 @@ use chimera_core::stream::registry::StreamRegistry;
 use chimera_core::stream::ring::{Rings, ThirdSlots};
 use chimera_core::stream::stage::heads_for;
 use chimera_core::stream::stats::StreamStats;
-use chimera_core::stream::units::AudioBlocks;
+use chimera_core::stream::units::{AudioBlocks, Frames, SourceRate};
 use chimera_core::voice_alloc::VoiceIdx;
 use chimera_desktop::card_stream::{CardStream, ClockUs, FaultAfter, Latency, stream_file};
 use chimera_desktop::listen::write_wav;
@@ -65,15 +65,10 @@ impl Table {
 /// the heads' samples (`TestCard::held_heads`'s).
 fn streamed_row(head: &SourceHead, packed: &[u8], p: &TapeEngineParams) -> Option<Vec<u8>> {
     let heads = heads_for(head.sref, p)?;
-    let d = Descriptor {
-        shape: Shape::Plain,
-        count: 1,
-        rate: head.sref.rate,
-        head_frames: head_frames(head.sref.rate),
-        heads: 0,
-    };
+    let rate = SourceRate::new(head.sref.rate)?;
+    let reach = Frames::new(head_frames(rate));
     let mut held = vec![0; streamed_held_len(heads.as_slice())];
-    let mut at = write_head_table(d, heads.as_slice(), &mut held)?;
+    let mut at = write_head_table(rate, reach, heads.as_slice(), &mut held)?;
     for h in heads.as_slice() {
         let o = 3 * (h.first() / 2) as usize;
         let src = packed.get(o..).unwrap_or(&[]);
@@ -297,15 +292,10 @@ fn stream_qa() {
     );
     for (head, packed, name) in beds(&card) {
         let rate = head.sref.rate;
-        let mut held = Descriptor {
-            shape: Shape::Plain,
-            count: 1,
-            rate,
-            head_frames: 0,
-            heads: 0,
-        }
-        .to_bytes()
-        .to_vec();
+        let mut held = Descriptor::whole(Shape::Plain, 1, rate)
+            .expect("a descriptor")
+            .to_bytes()
+            .to_vec();
         held.extend_from_slice(&packed);
         assert_eq!(held.len(), DESC_LEN + packed.len());
         let note = ((u32::from(head.root) + 50) / 100).min(127) as u8;
@@ -408,7 +398,9 @@ fn sine_bed(card: &Path) -> (SourceHead, Vec<u8>) {
 #[test]
 #[ignore = "QA: `just stream-qa`"]
 fn stream_qa_stressed() {
+    use chimera_core::MidiNote;
     use chimera_core::stream::admit::{STREAM_BUDGET_BPS, bill, ratio_max};
+    use chimera_core::stream::units::Cents;
     let out = PathBuf::from(format!("{ROOT}/target/stream-qa"));
     let card = out.join("stressed");
     let _ = std::fs::remove_dir_all(&card);
@@ -419,9 +411,20 @@ fn stream_qa_stressed() {
     let notes = [84u8, 62, 62, 62];
     let billed: u32 = notes
         .iter()
-        .map(|&n| bill(24_000, ratio_max(n, 6_000.0, 0.0, 0.0)).0)
+        .map(|&n| {
+            let r = ratio_max(
+                MidiNote::new(n).unwrap(),
+                Cents::new(6_000.0),
+                Cents::ZERO,
+                Cents::ZERO,
+            );
+            bill(SourceRate::new(24_000).unwrap(), r).get()
+        })
         .sum();
-    assert!(billed <= STREAM_BUDGET_BPS, "admission takes {billed}");
+    assert!(
+        billed <= STREAM_BUDGET_BPS.get(),
+        "admission takes {billed}"
+    );
     let p = TapeEngineParams {
         model: TapeModel::Play,
         mode: PlayMode::Loop,
@@ -429,15 +432,10 @@ fn stream_qa_stressed() {
         ..TapeEngineParams::default()
     };
     let row = streamed_row(&head, &packed, &p).expect("streams");
-    let mut held = Descriptor {
-        shape: Shape::Plain,
-        count: 1,
-        rate: 24_000,
-        head_frames: 0,
-        heads: 0,
-    }
-    .to_bytes()
-    .to_vec();
+    let mut held = Descriptor::whole(Shape::Plain, 1, 24_000)
+        .expect("a descriptor")
+        .to_bytes()
+        .to_vec();
     held.extend_from_slice(&packed);
     let blocks = 5 * SAMPLE_RATE as usize / BLOCK_SIZE;
 

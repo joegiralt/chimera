@@ -3,7 +3,7 @@
 //! TAPE Sound at the factory median (ADR 0063).
 
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::dsp::tape_engine::read::Shape;
+use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
 use chimera_core::dsp::tape_engine::{PlayMode, TapeModel};
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
@@ -61,6 +61,16 @@ fn manifest_crcs_are_pinned() {
             ),
             None => eprintln!("{}: its CC0 original is absent, skipped", s.name.as_str()),
         }
+    }
+}
+
+/// Every factory source's descriptor reads back to its own bytes.
+#[test]
+fn factory_descriptors_round_trip() {
+    for b in set().1.iter().flatten() {
+        let h = held(b);
+        let d = Descriptor::from_bytes(&h).expect("a descriptor");
+        assert_eq!(d.to_bytes(), h[..DESC_LEN], "{:?}", b.head.sref);
     }
 }
 

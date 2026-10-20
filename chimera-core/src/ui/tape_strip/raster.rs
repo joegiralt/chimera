@@ -12,6 +12,7 @@ use crate::dsp::tape_engine::oneshot::Slice;
 use crate::dsp::tape_engine::params::{PlayMode, TapeEngineParams, TapeModel};
 use crate::dsp::tape_engine::read::{Shape, SourceView};
 use crate::dsp::tape_engine::tron::tron_len_s_in;
+use crate::stream::units::SourceRate;
 use crate::ui::theme;
 
 impl Overview {
@@ -29,9 +30,9 @@ impl Overview {
         let d = v.desc();
         let mut o = Overview {
             frames: n,
-            rate: d.rate,
-            count: if d.shape == Shape::Transwave {
-                d.count
+            rate: Some(d.rate()),
+            count: if d.shape() == Shape::Transwave {
+                d.count()
             } else {
                 0
             },
@@ -62,7 +63,7 @@ pub(crate) fn key_in(o: &Overview, model: TapeModel, p: &TapeEngineParams, heads
     };
     let words = [
         o.frames,
-        u32::from(o.rate),
+        o.rate.map_or(0, u32::from),
         model as u32,
         p.mode as u32,
         u32::from(p.slice.code()),
@@ -113,8 +114,10 @@ pub(crate) fn strip_in(
     if n == 0 {
         return rect(d, x, y + H / 2, COLS as i32, 1, theme::FAINT);
     }
+    // Only `EMPTY` has no rate, and no frames.
+    let rate = o.rate.unwrap_or(SourceRate::MIN);
     let col = |f: u32| x + o.column(f);
-    let mut w = Window::of(p.start, p.end, n, min_frames(o.rate));
+    let mut w = Window::of(p.start, p.end, n, min_frames(rate));
     if !model.ordered(p.mode) {
         w.dir = Dir::Fwd;
     }
@@ -152,13 +155,13 @@ pub(crate) fn strip_in(
             Some(out) if fwd => (w.lo, out.max(w.lo)),
             Some(out) => (out.min(w.hi), w.hi),
             None => {
-                let strip = len as f32 / f32::from(o.rate);
-                let run = (tron_len_s_in(p.size, strip) * f32::from(o.rate)) as u32;
+                let strip = len as f32 / f32::from(rate);
+                let run = (tron_len_s_in(p.size, strip) * f32::from(rate)) as u32;
                 place(0, run.min(len))
             }
         },
         (TapeModel::Play, _) => {
-            let b = Bounds::of(0, len, (p.size, p.position, p.xfade), o.rate);
+            let b = Bounds::of(0, len, (p.size, p.position, p.xfade), rate);
             if p.mode == PlayMode::Ping {
                 edges = Some(place(b.ls, b.le));
             } else if b.lx > 0 {

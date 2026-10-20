@@ -1343,9 +1343,8 @@ impl BlockDevice for High {
 
 impl chimera_fat::Medium for High {}
 
-/// M7: a partition whose offset puts a file's blocks past the device's
-/// last LBA refuses the file as corrupt; its runs never name a bogus block
-/// a raw read would fault the card on.
+/// M7: a partition whose offset puts a file's blocks past u32::MAX refuses
+/// the file as corrupt; its runs never name an LBA that wrapped.
 #[test]
 fn runs_past_the_last_lba_are_corrupt() {
     let (disk, vol) = card();

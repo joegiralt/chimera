@@ -150,13 +150,10 @@ pub fn held_from(m: &Mono, rate: u32) -> Result<(Vec<u8>, Pitch), String> {
     }
     let pitch = yin(&x, rate);
     let q = quantise_tpdf(&x, SEED);
-    let desc = Descriptor {
-        shape: Shape::Plain,
-        count: 1,
-        rate: u16::try_from(rate).expect("a rate under 65 536"),
-        head_frames: 0,
-        heads: 0,
-    };
+    let desc = u16::try_from(rate)
+        .ok()
+        .and_then(|r| Descriptor::whole(Shape::Plain, 1, r))
+        .ok_or_else(|| format!("no source at {rate} Hz"))?;
     let mut held = desc.to_bytes().to_vec();
     held.resize(DESC_LEN + 3 * q.len() / 2, 0);
     pack12(&q, &mut held[DESC_LEN..]);
@@ -190,13 +187,10 @@ pub fn held_transwave(m: &Mono, frames: usize) -> Result<(Vec<u8>, f32), String>
     };
     let picked: Vec<Vec<f32>> = (0..n).map(|k| cycles[pick(k)].clone()).collect();
     let q = round12(&transwave(&picked, DEFAULT_TOP)).ok_or("silent cycles")?;
-    let desc = Descriptor {
-        shape: Shape::Transwave,
-        count: n as u8,
-        rate: 48_000,
-        head_frames: 0,
-        heads: 0,
-    };
+    let desc = u8::try_from(n)
+        .ok()
+        .and_then(|n| Descriptor::whole(Shape::Transwave, n, 48_000))
+        .ok_or("too many frames")?;
     let mut held = desc.to_bytes().to_vec();
     held.resize(DESC_LEN + 3 * q.len() / 2, 0);
     pack12(&q, &mut held[DESC_LEN..]);

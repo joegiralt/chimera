@@ -17,7 +17,7 @@ use chimera_core::stream::layout::{RAW_CHUNK_BYTES, StreamFile, deframe};
 use chimera_core::stream::registry::StreamRegistry;
 use chimera_core::stream::ring::{CardSide, Claim};
 use chimera_core::stream::serve::{
-    ErrorStep, HeldRead, Parked, ReadError, Rot, ServeStep, read_failed, serve_step,
+    Attempt, ErrorStep, HeldRead, Parked, ReadError, Rot, ServeStep, read_failed, serve_step,
 };
 use chimera_core::stream::stats::StreamStats;
 use chimera_core::stream::units::AudioBlocks;
@@ -137,7 +137,7 @@ struct Flight<'r> {
     row: HeldRead<'r>,
     raw: Vec<u8>,
     due: ClockUs,
-    retried: bool,
+    attempt: Attempt,
     fails: bool,
 }
 
@@ -232,7 +232,7 @@ impl<'r> CardStream<'r> {
                         row,
                         raw,
                         due: at.after(self.draw()),
-                        retried: false,
+                        attempt: Attempt::First,
                         fails,
                     });
                 }
@@ -286,14 +286,14 @@ impl<'r> CardStream<'r> {
             claim,
             row,
             raw,
-            retried,
+            attempt,
             fails,
             ..
         } = f;
         if fails {
             match read_failed(
                 ReadError::Proto(ProtoError::Crc),
-                retried,
+                attempt,
                 self.bus,
                 self.stats,
             ) {
@@ -303,7 +303,7 @@ impl<'r> CardStream<'r> {
                         row,
                         raw,
                         due: at.after(self.draw()),
-                        retried: true,
+                        attempt: Attempt::Retry,
                         fails: true,
                     });
                 }
@@ -331,7 +331,7 @@ impl<'r> CardStream<'r> {
             }
             _ => {
                 let err = row.frame_error(&mut self.rot);
-                read_failed(err, false, self.bus, self.stats);
+                read_failed(err, Attempt::First, self.bus, self.stats);
                 self.side.requeue(claim);
             }
         }

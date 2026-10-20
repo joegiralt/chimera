@@ -218,7 +218,7 @@ impl SourceLayout {
 
     fn playable(&self) -> bool {
         self.head.sref.frames >= MIN_SOURCE_FRAMES
-            && Descriptor::from_bytes(&self.descriptor().to_bytes()).is_some()
+            && self.descriptor().is_some()
             && held_len(self.head.sref)
                 .and_then(|n| n.checked_add(self.layout_len()))
                 .is_some()
@@ -234,14 +234,8 @@ impl SourceLayout {
     }
 
     /// The descriptor `held` starts with: the whole source, no head.
-    fn descriptor(&self) -> Descriptor {
-        Descriptor {
-            shape: self.head.shape,
-            count: self.head.count,
-            rate: self.head.sref.rate,
-            head_frames: 0,
-            heads: 0,
-        }
+    fn descriptor(&self) -> Option<Descriptor> {
+        Descriptor::whole(self.head.shape, self.head.count, self.head.sref.rate)
     }
 
     fn layout_len(&self) -> usize {
@@ -342,7 +336,14 @@ pub fn held_len(r: SourceRef) -> Option<usize> {
 /// zone's `start`, `frames` and `key` each (spec § 8). Returns its length,
 /// where the samples start. Panics if `out` is shorter.
 pub fn write_descriptor(l: &SourceLayout, out: &mut [u8]) -> usize {
-    out[..DESC_LEN].copy_from_slice(&l.descriptor().to_bytes());
+    // `playable` made `Descriptor::whole` of these three accept them: held
+    // whole, no heads, no reach, so the rest is zero.
+    let h = l.head();
+    debug_assert!(l.descriptor().is_some());
+    let d = &mut out[..DESC_LEN];
+    d.fill(0);
+    (d[0], d[1]) = (h.shape as u8, h.count);
+    d[2..4].copy_from_slice(&h.sref.rate.to_le_bytes());
     for (i, z) in l.zones().iter().enumerate() {
         out[DESC_LEN + i * ZONE_LAYOUT_LEN..][..ZONE_LAYOUT_LEN].copy_from_slice(&z.layout());
     }

@@ -801,13 +801,7 @@ fn to_machine(ui: &mut UiState, m: TapeMachine) {
 
 /// Samples as the arena holds them: a descriptor, then 12 bits each.
 fn held(shape: Shape, count: u8, rate: u16, x: &[f32]) -> Vec<u8> {
-    let d = Descriptor {
-        shape,
-        count,
-        rate,
-        head_frames: 0,
-        heads: 0,
-    };
+    let d = Descriptor::whole(shape, count, rate).expect("a descriptor");
     let s: Vec<i16> = x
         .iter()
         .map(|&v| (chimera_core::dsp::clampf(v, -1.0, 1.0) * 2047.0).round() as i16)

@@ -49,7 +49,7 @@ pub fn trace(t: FxType, pots: [f32; 3], out: &mut Rows) -> bool {
 #[cfg(feature = "bank2")]
 #[repr(C)]
 pub struct LookDoor {
-    pub render: fn(FxType, [f32; 3], &mut Rows),
+    render: fn(FxType, [f32; 3], &mut Rows),
 }
 
 #[cfg(feature = "bank2")]

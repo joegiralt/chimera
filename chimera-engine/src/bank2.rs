@@ -6,6 +6,7 @@
 //! door only through the address a judged `Door` carries.
 
 use chimera_image::{BANK2_BASE, Door, HEADER_LEN};
+use core::marker::PhantomData;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 pub const DOOR_MAGIC: u32 = 0xB2D0_0001;
@@ -18,20 +19,57 @@ pub const DOOR_ADDR: u32 = BANK2_BASE + HEADER_LEN;
 /// The board's table (`chimera_board::bank2::BoardDoor`): the card
 /// interrupt's streaming work. A crate the engine can't name keeps its own
 /// table at its own fixed slot after the door (`bank2.x` asserts each),
-/// reached through `DoorCell::with_at`.
+/// reached through its `DoorSlot`.
 pub const BOARD_DOOR_ADDR: u32 = DOOR_ADDR + 0x100;
 /// The UI's table (`chimera_core::bank2::UiDoor`): TAPE's cells and strip.
 pub const UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x180;
 
+/// A fixed slot after the door and the type `bank2.x` links there: a crate
+/// the engine can't name declares its table's slot once, beside the
+/// assert, and reads it only through `DoorCell::with_slot`.
+///
+/// ```compile_fail,E0133
+/// use chimera_engine::bank2::{DoorSlot, UI_DOOR_ADDR};
+/// let _ = DoorSlot::<u32>::new(UI_DOOR_ADDR); // unsafe: the pairing is vouched
+/// ```
+pub struct DoorSlot<T> {
+    at: u32,
+    _t: PhantomData<fn() -> T>,
+}
+
+impl<T> DoorSlot<T> {
+    /// # Safety
+    /// `bank2.x` links a `T` at `at` in every build with `bank2` (its slot's
+    /// assert).
+    pub const unsafe fn new(at: u32) -> Self {
+        DoorSlot {
+            at,
+            _t: PhantomData,
+        }
+    }
+}
+
+impl<T> Clone for DoorSlot<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for DoorSlot<T> {}
+
 /// The door table: what bank 1 may call or read in bank 2. Reached only
-/// inside `DoorCell::with`: never copy `probe` or `table` out of it, they
-/// point into bank 2, which an install erases.
+/// inside `DoorCell::with`; its entries are private, called through
+/// methods, so no pointer into bank 2 (which an install erases) leaves.
+///
+/// ```compile_fail,E0616
+/// let _ = chimera_engine::bank2::DOOR_CELL.with(|d| d.probe);
+/// ```
 #[repr(C)]
 pub struct Bank2Door {
     pub magic: u32,
-    pub probe: extern "Rust" fn(u32) -> u32,
+    probe: extern "Rust" fn(u32) -> u32,
     /// Byte `i` is `i as u8 ^ 0xB2`.
-    pub table: &'static [u8; TABLE_LEN],
+    table: &'static [u8; TABLE_LEN],
     /// TAPE's deck (`TapeEngine` is bank 1's proxy of it).
     #[cfg(feature = "bank2")]
     pub tape: crate::dsp::tape_engine::TapeDoor,
@@ -63,6 +101,18 @@ pub struct Bank2Door {
     /// FUZZ's kernel (ADR 0157; `Fuzz::play` is bank 1's side).
     #[cfg(feature = "bank2")]
     pub fuzz: crate::dsp::voice_fx::fuzz::FuzzDoor,
+}
+
+impl Bank2Door {
+    #[inline(always)]
+    pub fn probe(&self, x: u32) -> u32 {
+        (self.probe)(x)
+    }
+
+    #[inline(always)]
+    pub fn table(&self) -> &[u8; TABLE_LEN] {
+        self.table
+    }
 }
 
 #[cfg(feature = "bank2")]
@@ -116,9 +166,16 @@ impl DoorCell {
         DoorCell(AtomicUsize::new(0))
     }
 
-    /// Publishes a door judged and checked (`Judged`): from here every
+    /// Publishes a door judged and checked (`Checked`): from here every
     /// interrupt's door call goes through it.
-    pub fn open(&self, _: Judged) {
+    ///
+    /// ```compile_fail,E0308
+    /// use chimera_engine::bank2::{DOOR_CELL, Judged};
+    /// fn open_unchecked(j: Judged) {
+    ///     DOOR_CELL.open(j);
+    /// }
+    /// ```
+    pub fn open(&self, _: Checked) {
         self.0.store(DOOR_ADDR as usize, Ordering::Release);
     }
 
@@ -150,23 +207,19 @@ impl DoorCell {
         Some(f(unsafe { &*(a as *const Bank2Door) }))
     }
 
-    /// `f` on the table of type `T` that this link put at `at`, one of
-    /// the fixed slots after the door (`BOARD_DOOR_ADDR`, `UI_DOOR_ADDR`);
-    /// `None` closed, and on a host (`open_host`'s door is a plain static,
-    /// with no slots after it), where those crates call their own code.
-    ///
-    /// # Safety
-    /// `bank2.x` links a `T` at `at` in this build (its slot's assert).
-    pub unsafe fn with_at<T, R>(&self, at: u32, f: impl FnOnce(&T) -> R) -> Option<R> {
+    /// `f` on the table in slot `s`; `None` closed, and on a host
+    /// (`open_host`'s door is a plain static, with no slots after it),
+    /// where those crates call their own code.
+    pub fn with_slot<T, R>(&self, s: DoorSlot<T>, f: impl FnOnce(&T) -> R) -> Option<R> {
         let a = self.0.load(Ordering::Acquire);
         if a != DOOR_ADDR as usize {
             return None;
         }
         // SAFETY: the cell holds `DOOR_ADDR` only from `open` on a door
         // judged `Good` for this build's seal (see `with`): this link's
-        // body is in bank 2, so at `at` is its `T`, as the caller vouches,
-        // and it lives as long as the image does, past `f`.
-        Some(f(unsafe { &*(at as *const T) }))
+        // body is in bank 2, so at `s.at` is its `T` (`DoorSlot::new`'s
+        // contract), and it lives as long as the image does, past `f`.
+        Some(f(unsafe { &*(s.at as *const T) }))
     }
 
     /// Opens on this build's own `DOOR`, linked into the host's binary:
@@ -188,9 +241,12 @@ impl DoorCell {
 
 /// A door judged `Good` for this build's seal, at this link's `DOOR_ADDR`,
 /// not yet in the cell: the boot's and an install's checks read its
-/// tables through this before `DoorCell::open` publishes it, so no
-/// interrupt calls through a table they haven't passed (I2).
+/// tables through this (`check`) before `DoorCell::open` publishes it, so
+/// no interrupt calls through a table they haven't passed (I2).
 pub struct Judged(());
+
+/// A judged door that passed its check: what `DoorCell::open` publishes.
+pub struct Checked(());
 
 impl Judged {
     /// `d`, if it is at this link's `DOOR_ADDR`; a door anywhere else (a
@@ -210,15 +266,16 @@ impl Judged {
         f(unsafe { &*(DOOR_ADDR as usize as *const Bank2Door) })
     }
 
-    /// `f` on the table of type `T` at fixed slot `at` (see
-    /// `DoorCell::with_at`).
-    ///
-    /// # Safety
-    /// `bank2.x` links a `T` at `at` in this build (its slot's assert).
-    pub unsafe fn with_at<T, R>(&self, at: u32, f: impl FnOnce(&T) -> R) -> R {
-        // SAFETY: this link's body is in bank 2 (`with`), so at `at` is its
-        // `T`, as the caller vouches.
-        f(unsafe { &*(at as usize as *const T) })
+    /// `f` on the table in slot `s` (see `DoorCell::with_slot`).
+    pub fn with_slot<T, R>(&self, s: DoorSlot<T>, f: impl FnOnce(&T) -> R) -> R {
+        // SAFETY: this link's body is in bank 2 (`with`), so at `s.at` is
+        // its `T` (`DoorSlot::new`'s contract).
+        f(unsafe { &*(s.at as usize as *const T) })
+    }
+
+    /// The door, if `passes` it: the only way to a `Checked`.
+    pub fn check(self, passes: impl FnOnce(&Judged) -> bool) -> Option<Checked> {
+        passes(&self).then_some(Checked(()))
     }
 }
 

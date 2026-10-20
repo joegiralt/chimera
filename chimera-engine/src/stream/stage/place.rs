@@ -9,6 +9,7 @@ use crate::dsp::tape_engine::read::HeadSpec;
 use crate::storage::SourceRef;
 use crate::stream::admit::head_frames;
 use crate::stream::layout::CHUNK_FRAMES;
+use crate::stream::units::SourceRate;
 
 use super::XFADE_MAX_MS;
 
@@ -19,7 +20,7 @@ const PAST: u32 = 4;
 const _: () = assert!(PAST.is_multiple_of(2) && PAST < CF);
 
 /// `XFADE_MAX_MS` of frames at `rate`, even.
-pub fn xfade_max(rate: u16) -> u32 {
+pub fn xfade_max(rate: SourceRate) -> u32 {
     (u32::from(rate) * XFADE_MAX_MS / 1_000) & !1
 }
 
@@ -34,10 +35,11 @@ fn head(at: u32, reach: u32, cap: u32) -> Option<HeadSpec> {
 
 /// `r`'s heads for `p`; `None` where `p` needs the source in RAM.
 pub(crate) fn heads_in(r: SourceRef, p: &TapeEngineParams) -> Option<Heads> {
-    if needs_ram(p).is_some() || r.frames < 2 {
+    let rate = SourceRate::new(r.rate);
+    let (Some(rate), None, true) = (rate, needs_ram(p), r.frames >= 2) else {
         return None;
-    }
-    let (frames, rate) = (r.frames, r.rate);
+    };
+    let frames = r.frames;
     let reach = head_frames(rate);
     let ws = window_start(p.start, frames);
     let we = window_end(ws, p.end, frames, rate);
@@ -46,18 +48,12 @@ pub(crate) fn heads_in(r: SourceRef, p: &TapeEngineParams) -> Option<Heads> {
     let cap = we.saturating_add(2).min(frames).next_multiple_of(2);
     let start = head(ws, reach, cap)?;
     if p.machine() != TapeMachine::Loop {
-        return Some(Heads {
-            specs: [start; 2],
-            n: 1,
-        });
+        return Some(Heads::One(start));
     }
     let b = Bounds::of(ws, we, (p.size, p.position, p.xfade), rate);
     let lx = b.lx.min(xfade_max(rate));
     // With no room before the loop the fade folds inside it (`heads`).
     let early = if b.ls - ws >= lx { lx } else { 0 };
     let looped = head(b.ls - early, lx + reach, cap)?;
-    Some(Heads {
-        specs: [start, looped],
-        n: 2,
-    })
+    Some(Heads::Looped([start, looped]))
 }

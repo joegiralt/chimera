@@ -58,9 +58,9 @@ pub fn load_kind(h: &SourceHead, free: Cost, p: &TapeEngineParams) -> LoadKind {
 /// all bank 2's with `bank2` (`load`, `stage::place`).
 #[repr(C)]
 pub struct LoadDoor {
-    pub(crate) heads_for: fn(SourceRef, &TapeEngineParams) -> Option<Heads>,
-    pub(crate) step: fn(&mut StreamLoad, &mut dyn Store, &Ready, &mut Project, usize) -> StreamStep,
-    pub(crate) sources: fn(&mut dyn Store, &Ready, &mut Project, u32) -> u8,
+    heads_for: fn(SourceRef, &TapeEngineParams) -> Option<Heads>,
+    step: fn(&mut StreamLoad, &mut dyn Store, &Ready, &mut Project, usize) -> StreamStep,
+    sources: fn(&mut dyn Store, &Ready, &mut Project, u32) -> u8,
 }
 
 impl LoadDoor {
@@ -69,6 +69,29 @@ impl LoadDoor {
         step: load::step,
         sources: load::stream_sources,
     };
+
+    #[inline(always)]
+    pub(crate) fn heads_for(&self, r: SourceRef, p: &TapeEngineParams) -> Option<Heads> {
+        (self.heads_for)(r, p)
+    }
+
+    #[inline(always)]
+    pub(crate) fn step(
+        &self,
+        l: &mut StreamLoad,
+        s: &mut dyn Store,
+        r: &Ready,
+        p: &mut Project,
+        budget: usize,
+    ) -> StreamStep {
+        (self.step)(l, s, r, p, budget)
+    }
+
+    #[cfg(feature = "tape")]
+    #[inline(always)]
+    pub(crate) fn sources(&self, s: &mut dyn Store, r: &Ready, p: &mut Project, ids: u32) -> u8 {
+        (self.sources)(s, r, p, ids)
+    }
 
     /// `f` on the door: bank 2's through the door with `bank2`, `None`
     /// closed; this build's own without.
@@ -185,7 +208,7 @@ impl StreamLoad {
         p: &mut Project,
         budget: usize,
     ) -> StreamStep {
-        LoadDoor::with(|d| (d.step)(self, s, r, p, budget)).unwrap_or(StreamStep::Failed(
+        LoadDoor::with(|d| d.step(self, s, r, p, budget)).unwrap_or(StreamStep::Failed(
             StreamFail::Read(SourceReadError::Load(LoadError::Missing)),
         ))
     }

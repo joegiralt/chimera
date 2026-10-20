@@ -11,7 +11,7 @@ use chimera_engine::stream::layout::{
     CHUNK_BYTES, CHUNK_FRAMES, ChunkIdx, Deframe, FRAMED_CHUNK_BYTES, RAW_CHUNK_BLOCKS,
     RAW_CHUNK_BYTES, StreamFile, deframe,
 };
-use chimera_engine::stream::units::Frames;
+use chimera_engine::stream::units::{Frames, SourceFrame};
 use chimera_hal::store::{FileRuns, ReadSink, Runs, Store};
 use chimera_hal::testkit::MemStore;
 use chimera_hal::units::{BlockCount, Bytes, Lba};
@@ -241,8 +241,8 @@ fn last_chunk_is_short() {
     let r = sf.chunk_frames(last).unwrap();
     assert_eq!(r.start, Frames::new(CHUNK_FRAMES.get() * 2));
     assert_eq!(r.end, Frames::new(f));
-    assert_eq!(sf.chunk_of(Frames::new(f - 1)), Some(last));
-    assert_eq!(sf.chunk_of(Frames::new(f)), None);
+    assert_eq!(sf.chunk_of(SourceFrame::new(f - 1)), Some(last));
+    assert_eq!(sf.chunk_of(SourceFrame::new(f)), None);
 }
 
 #[test]

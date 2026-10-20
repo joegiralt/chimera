@@ -9,7 +9,7 @@ use chimera_engine::stream::port::StreamPort;
 use chimera_engine::stream::ring::{AudioSide, CardSide, Rings, ThirdSlots};
 use chimera_engine::stream::slot::SlotState;
 use chimera_engine::stream::stats::StreamStats;
-use chimera_engine::stream::units::{AudioBlocks, Frames, Inc, SlotIdx};
+use chimera_engine::stream::units::{AudioBlocks, Frames, Inc, SlotIdx, SourceFrame};
 use chimera_engine::voice_alloc::VoiceIdx;
 use chimera_hal::card_bus::CardBus;
 use chimera_hal::{BLOCK_SIZE, Ms};
@@ -23,16 +23,24 @@ const SRC: Streamed = Streamed {
     frames: FILE,
 };
 const HEAD: RamHead = RamHead {
-    idx: HeadIdx::START,
-    start: 0,
-    end: 4_800,
+    idx: HeadIdx::Start,
+    start: SourceFrame::new(0),
+    end: SourceFrame::new(4_800),
 };
-const H0: HeadIdx = HeadIdx::START;
+const H0: HeadIdx = HeadIdx::Start;
 const DROP: u32 = DROP_FADE.get();
 const QUIET: u32 = QUIET_FADE.get();
 
 thread_local! {
     static PENDS: Cell<u32> = const { Cell::new(0) };
+}
+
+/// A plan's runs, as plain read positions.
+fn runs(plan: &Plan) -> Vec<(SpanSrc, std::ops::Range<u32>)> {
+    plan.runs()
+        .iter()
+        .map(|(s, r)| (*s, r.start.get()..r.end.get()))
+        .collect()
 }
 
 fn pend() {
@@ -108,7 +116,8 @@ impl Play<'_> {
 
     fn start_at(&mut self, pos: u32, inc_max: f32, head: Option<RamHead>) {
         self.pos = f64::from(pos);
-        self.with(|c, p| c.start(pos, Inc::new(inc_max), head, SRC, p));
+        let at = SourceFrame::new(pos);
+        self.with(|c, p| c.start(at, Inc::new(inc_max), head, SRC, p));
     }
 
     /// Plans a block, then runs its samples at `inc`: each one's position
@@ -175,7 +184,7 @@ impl Play<'_> {
 fn audible_outside(plan: &Plan, samples: &[(f64, f32)]) -> usize {
     samples
         .iter()
-        .filter(|&&(pos, g)| g > 0.0 && !plan.runs().iter().any(|r| r.1.contains(&(pos as u32))))
+        .filter(|&&(pos, g)| g > 0.0 && !runs(plan).iter().any(|r| r.1.contains(&(pos as u32))))
         .count()
 }
 
@@ -289,11 +298,11 @@ fn block_split_at_span_end() {
     // The head until chunk 1's slot (unguarded: the head was before it)
     // holds a read, from CF + 1.
     let (plan, _) = p.block(1.0);
-    assert_eq!(plan.runs(), [(SpanSrc::Head(H0), 0..65)]);
+    assert_eq!(runs(&plan), [(SpanSrc::Head(H0), 0..65)]);
     p.pos = f64::from(CF) - 38.0;
     let (plan, _) = p.block(1.0);
     assert_eq!(
-        plan.runs(),
+        runs(&plan),
         [
             (SpanSrc::Head(H0), CF - 38..CF + 1),
             (SpanSrc::Slot(a), CF + 1..CF + 27)
@@ -311,7 +320,7 @@ fn block_split_at_span_end() {
     p.pos = f64::from(2 * CF) - 30.0;
     let (plan, _) = p.block(1.0);
     assert_eq!(
-        plan.runs(),
+        runs(&plan),
         [
             (SpanSrc::Slot(a), 2 * CF - 30..2 * CF - 3),
             (SpanSrc::Slot(b), 2 * CF - 3..2 * CF + 35)
@@ -330,10 +339,10 @@ fn runs_cover_every_block_at_speed() {
         p.serve();
         let i0 = p.pos as u32;
         let (plan, gains) = p.block(16.0);
-        let runs = plan.runs();
+        let runs = runs(&plan);
         assert!(!runs.is_empty() && runs.len() <= 2);
         assert_eq!(runs[0].1.start, i0);
-        if let [x, y] = runs {
+        if let [x, y] = &runs[..] {
             assert_eq!(x.1.end, y.1.start);
         }
         assert_eq!(runs[runs.len() - 1].1.end, i0 + 16 * 64 + 1);
@@ -349,7 +358,8 @@ fn starve(p: &mut Play, inc: f64) -> (u32, Vec<(f64, f32)>) {
         let (plan, mut gains) = p.block(inc);
         assert_eq!(audible_outside(&plan, &gains), 0);
         if let FadeCmd::Out { end_frame } = plan.fade {
-            for r in plan.runs() {
+            let end_frame = end_frame.get();
+            for r in runs(&plan) {
                 assert!(r.1.end <= end_frame + 1, "reads past the held frames");
             }
             for _ in 0..3 {
@@ -371,7 +381,7 @@ fn underrun_fades_out_ending_at_last_held_frame() {
         p.start_at(0, inc as f32, Some(HEAD));
         let (end_frame, gains) = starve(&mut p, inc);
         // The head's last read whose taps it holds.
-        assert_eq!(end_frame, HEAD.end - 3);
+        assert_eq!(end_frame, HEAD.end.get() - 3);
         let zero = gains.iter().position(|&(_, g)| g == 0.0).unwrap();
         assert!(
             zero < DROP as usize,
@@ -388,9 +398,9 @@ fn underrun_fades_out_ending_at_last_held_frame() {
 fn head_holds_from_the_frame_after_its_start() {
     let start = 3 * CF + 100;
     let head = RamHead {
-        idx: HeadIdx::LOOP,
-        start,
-        end: start + 4_800,
+        idx: HeadIdx::Loop,
+        start: SourceFrame::new(start),
+        end: SourceFrame::new(start + 4_800),
     };
     // The read at START takes the frame before it, which the head lacks.
     let rig = Rig::new();
@@ -401,11 +411,11 @@ fn head_holds_from_the_frame_after_its_start() {
     let rig = Rig::new();
     let mut p = rig.play();
     p.start(start + 1, Some(head));
-    assert_eq!(p.cur.flow(), Flow::Head(HeadIdx::LOOP));
+    assert_eq!(p.cur.flow(), Flow::Head(HeadIdx::Loop));
     let (plan, _) = p.block(1.0);
     assert_eq!(
-        plan.runs(),
-        [(SpanSrc::Head(HeadIdx::LOOP), start + 1..start + 66)]
+        runs(&plan),
+        [(SpanSrc::Head(HeadIdx::Loop), start + 1..start + 66)]
     );
     // The handoff chunk holds the head's last read.
     assert_eq!(p.wanted().first().map(|w| w.0), Some((start + 4_797) / CF));
@@ -576,7 +586,7 @@ fn a_jump_under_quiet_keeps_its_level() {
     }
     rig.bus.ask_quiet(Ms(0));
     let at = p.pos as u32;
-    p.with(|c, port| c.jump(at, Inc::new(1.0), Some(HEAD), port));
+    p.with(|c, port| c.jump(SourceFrame::new(at), Inc::new(1.0), Some(HEAD), port));
     let (_, gains) = p.block(1.0);
     let step = 1.0 / QUIET as f32;
     assert!((gains[0].1 - (1.0 - step)).abs() < 1e-4, "{}", gains[0].1);
@@ -636,6 +646,6 @@ fn a_start_names_its_source_on_the_ring() {
     p.start(0, None);
     assert_eq!(rig.rings.source(V), Some(SRC.id));
     assert!(!p.wanted().is_empty());
-    p.with(|c, port| c.jump(CF, Inc::new(1.0), None, port));
+    p.with(|c, port| c.jump(SourceFrame::new(CF), Inc::new(1.0), None, port));
     assert_eq!(rig.rings.source(V), Some(SRC.id));
 }

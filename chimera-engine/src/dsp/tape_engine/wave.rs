@@ -138,10 +138,10 @@ pub fn playable(model: TapeModel, v: &SourceView<'_>) -> bool {
     let d = v.desc();
     match model {
         TapeModel::Transwave => {
-            d.shape == Shape::Transwave && top_of(v.frames(), d.count).is_some()
+            d.shape() == Shape::Transwave && top_of(v.frames(), d.count()).is_some()
         }
         // Per-key zones are the streamed TRON's (spec § 8).
-        TapeModel::Tron => d.shape != Shape::ZoneSet,
+        TapeModel::Tron => d.shape() != Shape::ZoneSet,
         _ => true,
     }
 }
@@ -213,7 +213,7 @@ impl Wave {
     /// A note at `cycles` a sample on `v`: the largest level whose step is
     /// at most 1, phase and scan at 0. Silent on a source it can't play.
     pub fn on(v: &SourceView<'_>, cycles: f32) -> Wave {
-        let count = v.desc().count;
+        let count = v.desc().count();
         let top = match top_of(v.frames(), count) {
             Some(top) if playable(TapeModel::Transwave, v) => top,
             _ => return Wave::IDLE,

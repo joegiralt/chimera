@@ -21,6 +21,7 @@ use chimera_core::storage::{
     read_source_into, source_crc, source_file_min_len, write_descriptor, write_file, write_source,
     write_zone_set, zone_set_crc,
 };
+use chimera_core::stream::units::Frames;
 use chimera_hal::store::{Dir, Store};
 use chimera_hal::testkit::MemStore;
 use common::codec_util::{VecSink, decode, encode, fix_crc, record_offsets};
@@ -192,7 +193,7 @@ fn descriptor_leads_held() {
     assert_eq!(r, Ok(DESC_LEN + 5 * ZONE_LAYOUT_LEN + data.len()));
     let d = Descriptor::from_bytes(&out[..DESC_LEN]).expect("a descriptor");
     assert_eq!(
-        (d.shape, d.count, d.rate, d.head_frames),
+        (d.shape(), d.count(), d.rate().get(), d.reach().get()),
         (Shape::ZoneSet, 5, 24_000, 0)
     );
     for (i, zone) in z.zones().iter().enumerate() {
@@ -623,13 +624,7 @@ fn listed_zones_reads_the_size() {
 /// `end`, both even (`HeadSpec`), each head as long as its own.
 #[test]
 fn streamed_plain_descriptor_round_trips() {
-    let d = Descriptor {
-        shape: Shape::Plain,
-        count: 1,
-        rate: 24_000,
-        head_frames: 2_400,
-        heads: 2,
-    };
+    let d = Descriptor::new(Shape::Plain, 1, 24_000, Frames::new(2_400), 2).unwrap();
     let b = d.to_bytes();
     assert_eq!(b[8], 2);
     assert_eq!(Descriptor::from_bytes(&b), Some(d));
@@ -641,9 +636,10 @@ fn streamed_plain_descriptor_round_trips() {
     assert_eq!(HeadSpec::new(0, 11), None, "odd end");
     assert_eq!(HeadSpec::new(10, 10), None, "empty");
     let mut held = vec![0; streamed_held_len(&heads)];
-    let at = write_head_table(d, &heads, &mut held).unwrap();
+    let (rate, reach) = (d.rate(), d.reach());
+    let at = write_head_table(rate, reach, &heads, &mut held).unwrap();
     assert_eq!(
-        write_head_table(d, &heads, &mut [0; DESC_LEN]),
+        write_head_table(rate, reach, &heads, &mut [0; DESC_LEN]),
         None,
         "too short"
     );
@@ -668,11 +664,7 @@ fn streamed_plain_descriptor_round_trips() {
         head_table(&empty).is_none(),
         "a head ending where it starts"
     );
-    let whole = Descriptor {
-        head_frames: 0,
-        heads: 0,
-        ..d
-    };
+    let whole = Descriptor::whole(Shape::Plain, 1, 24_000).unwrap();
     assert!(
         head_table(&whole.to_bytes()).unwrap().is_empty(),
         "held whole"
@@ -684,51 +676,34 @@ fn streamed_plain_descriptor_round_trips() {
 /// streams none.
 #[test]
 fn heads_on_a_whole_plain_refused() {
-    let plain = Descriptor {
-        shape: Shape::Plain,
-        count: 1,
-        rate: 24_000,
-        head_frames: 2_400,
-        heads: 0,
-    };
     let bad = [
-        plain,
-        Descriptor {
-            head_frames: 0,
-            heads: 1,
-            ..plain
-        },
-        Descriptor {
-            shape: Shape::Transwave,
-            heads: 1,
-            ..plain
-        },
-        Descriptor {
-            shape: Shape::ZoneSet,
-            heads: 1,
-            ..plain
-        },
+        (Shape::Plain, 2_400, 0),
+        (Shape::Plain, 0, 1),
+        (Shape::Transwave, 2_400, 1),
+        (Shape::ZoneSet, 2_400, 1),
     ];
-    for d in bad {
-        assert_eq!(Descriptor::from_bytes(&d.to_bytes()), None, "{d:?}");
+    for (shape, hf, heads) in bad {
+        assert_eq!(
+            Descriptor::new(shape, 1, 24_000, Frames::new(hf), heads),
+            None,
+            "{shape:?} {hf} {heads}"
+        );
+        let mut b = [0; DESC_LEN];
+        (b[0], b[1]) = (shape as u8, 1);
+        b[2..4].copy_from_slice(&24_000u16.to_le_bytes());
+        b[4..8].copy_from_slice(&hf.to_le_bytes());
+        b[8] = heads;
+        assert_eq!(Descriptor::from_bytes(&b), None, "{b:?}");
     }
-    let zones = Descriptor {
-        shape: Shape::ZoneSet,
-        ..plain
-    };
+    let zones = Descriptor::new(Shape::ZoneSet, 1, 24_000, Frames::new(2_400), 0).unwrap();
     assert_eq!(Descriptor::from_bytes(&zones.to_bytes()), Some(zones));
 }
 
 #[test]
 fn reserved_bytes_still_zero() {
-    let good = Descriptor {
-        shape: Shape::Plain,
-        count: 1,
-        rate: 24_000,
-        head_frames: 2_400,
-        heads: 2,
-    }
-    .to_bytes();
+    let good = Descriptor::new(Shape::Plain, 1, 24_000, Frames::new(2_400), 2)
+        .unwrap()
+        .to_bytes();
     for at in 9..DESC_LEN {
         let mut b = good;
         b[at] = 1;

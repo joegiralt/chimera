@@ -29,6 +29,7 @@ use crate::preset::Sound;
 use crate::project::arena::Cost;
 use crate::project::{Absence, Pool};
 use crate::storage::SourceRef;
+use crate::stream::units::SourceRate;
 use crate::ui::block_def::{BlockDef, MachineSlot, SlotBinding};
 use crate::ui::filter_panel::{self, PanelKnob, PanelTarget, RouteView};
 use crate::ui::fmt::FmtBuf;
@@ -231,7 +232,7 @@ pub enum SourceState {
     /// A streamed source the note would need in RAM (slice 1 § 2.3).
     NeedsRam(tape_engine::NeedsRam),
     Held {
-        rate: u16,
+        rate: SourceRate,
         frames: u32,
         cost: Cost,
         name: Option<SoundName>,
@@ -268,8 +269,11 @@ impl SourceState {
         if cfg!(feature = "tape") && pool.streams().is_some_and(|reg| reg.damaged(id)) {
             return SourceState::Damaged;
         }
+        let Some(rate) = SourceRate::new(r.rate) else {
+            return SourceState::Absent(Absence::Missing);
+        };
         let held = SourceState::Held {
-            rate: r.rate,
+            rate,
             frames: r.frames,
             cost: pool.source(id).map_or(Cost::default(), |e| e.cost()),
             name: None,
@@ -368,11 +372,11 @@ impl SourceState {
                 // A name leaves no room for the length (32 B).
                 match name {
                     Some(name) => {
-                        let _ = write!(buf, "{} · {}K · ", name.as_str(), rate / 1000);
+                        let _ = write!(buf, "{} · {}K · ", name.as_str(), rate.get() / 1000);
                     }
                     None => {
-                        let _ = write!(buf, "{}K · ", rate / 1000);
-                        seconds(buf, rate, frames);
+                        let _ = write!(buf, "{}K · ", rate.get() / 1000);
+                        seconds(buf, rate.get(), frames);
                         let _ = buf.write_str(" · ");
                     }
                 }
@@ -385,7 +389,7 @@ impl SourceState {
                 cost,
                 name,
                 notes: None,
-            } => tail(buf, name, Some((rate, frames)), cost),
+            } => tail(buf, name, Some((rate.get(), frames)), cost),
             SourceState::Card {
                 stem,
                 head: None,
@@ -444,7 +448,7 @@ impl SourceState {
             SourceState::ZonesOnTron => buf.write_str("ZONES"),
             SourceState::NeedsRam(_) => buf.write_str("RAM"),
             SourceState::Held { rate, frames, .. } => {
-                seconds(buf, rate, frames);
+                seconds(buf, rate.get(), frames);
                 Ok(())
             }
             SourceState::Card { cost, .. } => buf.write_str(cost.kib_label().as_str()),

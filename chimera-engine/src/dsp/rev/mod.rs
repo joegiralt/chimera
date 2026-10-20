@@ -746,7 +746,7 @@ impl Reverb {
 #[cfg(feature = "bank2")]
 #[repr(C)]
 pub struct ReverbDoor {
-    pub process: fn(&mut Reverb, &[f32; BLOCK_SIZE], &ReverbParams, f32, Tempo, u32, &mut Stereo),
+    process: fn(&mut Reverb, &[f32; BLOCK_SIZE], &ReverbParams, f32, Tempo, u32, &mut Stereo),
 }
 
 #[cfg(feature = "bank2")]

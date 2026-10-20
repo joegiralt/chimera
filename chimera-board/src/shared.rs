@@ -2,7 +2,7 @@ use core::mem::MaybeUninit;
 use core::ptr::{addr_of, addr_of_mut};
 #[cfg(feature = "perf-probe")]
 use core::sync::atomic::AtomicU8;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering, compiler_fence};
 
 use chimera_core::dsp::algo::engine::{FormantView, FormantViews};
 use chimera_core::dsp::algo::waves::{self, Waves};
@@ -306,6 +306,55 @@ pub static AUDIO_CYCLES: AtomicU32 = AtomicU32::new(0);
 /// Cycles spent in MIDI DIN's interrupt less the audio's inside it,
 /// wrapping: the card IRQ takes them off its own entries' time too.
 pub static MIDI_CYCLES: AtomicU32 = AtomicU32::new(0);
+/// A count of CPU cycles, or a reading of the wrapping cycle counter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Cycles(u32);
+
+impl Cycles {
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    pub fn now() -> Self {
+        Self(cortex_m::peripheral::DWT::cycle_count())
+    }
+
+    /// Cycles from `then` to now, wrapping.
+    pub fn since(self, then: Self) -> Self {
+        Self(self.0.wrapping_sub(then.0))
+    }
+}
+
+/// The cycle counter and the other interrupts' cycle total, read as a pair.
+#[derive(Clone, Copy)]
+pub struct Stamp {
+    pub at: Cycles,
+    pub over: Cycles,
+}
+
+/// `Stamp` of the counter and `over()` as one pair: a change of `over`
+/// between the reads is caught and the pair read again (N1). The fences
+/// keep the counter's read between the loads.
+#[inline(always)]
+pub fn stamp(over: impl Fn() -> u32) -> Stamp {
+    loop {
+        let before = over();
+        compiler_fence(Ordering::SeqCst);
+        let at = Cycles::now();
+        compiler_fence(Ordering::SeqCst);
+        if over() == before {
+            return Stamp {
+                at,
+                over: Cycles::new(before),
+            };
+        }
+    }
+}
+
 /// The streams' counters: the voices', and the card IRQ's time.
 pub static STREAM_STATS: StreamStats = StreamStats::new();
 /// MIDI DIN's line errors: overrun, framing, noise.

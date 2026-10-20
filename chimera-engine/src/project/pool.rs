@@ -289,7 +289,7 @@ impl Pool {
                     .bytes(e.offset + SOURCE_HEAD as u32, e.held as usize)
             })
             .and_then(crate::dsp::tape_engine::read::Descriptor::from_bytes)
-            .is_some_and(|d| d.heads > 0)
+            .is_some_and(|d| d.is_streamed())
     }
 
     /// Source `r`'s held bytes; `None` when the pool doesn't hold them.

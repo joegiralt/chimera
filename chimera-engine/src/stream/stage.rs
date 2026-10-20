@@ -24,14 +24,19 @@ const _: () = assert!(XFADE_MAX_MS <= super::admit::HEAD_MS);
 
 /// A streamed source's heads: START's, then the loop's in LOOP.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Heads {
-    specs: [HeadSpec; 2],
-    n: u8,
+pub enum Heads {
+    One(HeadSpec),
+    /// START's, then the loop's.
+    Looped([HeadSpec; 2]),
 }
 
 impl Heads {
+    /// In table order: START's first.
     pub fn as_slice(&self) -> &[HeadSpec] {
-        &self.specs[..usize::from(self.n)]
+        match self {
+            Heads::One(h) => core::slice::from_ref(h),
+            Heads::Looped(hs) => hs,
+        }
     }
 
     /// The row's `held`: the descriptor, the table, the heads.
@@ -43,5 +48,5 @@ impl Heads {
 /// `r`'s heads for `p` (`place`, through `LoadDoor` with `bank2`); `None`
 /// where `p` needs the source in RAM, or with bank 2 shut.
 pub fn heads_for(r: SourceRef, p: &TapeEngineParams) -> Option<Heads> {
-    crate::project::LoadDoor::with(|d| (d.heads_for)(r, p)).flatten()
+    crate::project::LoadDoor::with(|d| d.heads_for(r, p)).flatten()
 }

@@ -4,12 +4,12 @@
 //! those frames: ONE's and LOOP's loops read it as they read a row.
 //! Bank 2's, with `TapeDeck` (`build.rs`' `11tape_engine4span` glob).
 
-use super::desc::{Descriptor, HeadTable, MIN_SOURCE_FRAMES, Shape, head_table_of};
+use super::desc::{Descriptor, HeadTable, MIN_SOURCE_FRAMES, head_table_of};
 use super::read::SourceView;
-use crate::stream::cursor::{Cursor, HeadIdx, Plan, RamHead, SpanSrc};
+use crate::stream::cursor::{self, Cursor, HeadIdx, Plan, RamHead, SpanSrc};
 use crate::stream::layout::CHUNK_FRAMES;
 use crate::stream::ring::{AudioTurn, GUARD_FRAMES, Ready};
-use crate::stream::units::{Frames, SlotIdx};
+use crate::stream::units::{Frames, SlotIdx, SourceFrame};
 use crate::voice_alloc::VoiceIdx;
 
 // A slot's span starts on a 12-bit pair: `SourceView::span` takes an even
@@ -26,11 +26,11 @@ pub struct Span<'a> {
 impl Span<'_> {
     /// A Hermite read at source frame `i` (taps `i − 1..=i + 2`) lies
     /// inside, or clamps only at the source's own ends: the cursor's rule
-    /// (`stream::cursor`).
+    /// (`cursor::holds`).
     pub fn holds(&self, i: u32) -> bool {
         let v = &self.view;
-        (v.first() == 0 || i > v.first())
-            && (v.end() == v.frames() || i.saturating_add(2) < v.end())
+        let held = SourceFrame::new(v.first())..SourceFrame::new(v.end());
+        cursor::holds(held, Frames::new(v.frames()), SourceFrame::new(i))
     }
 }
 
@@ -52,7 +52,7 @@ impl<'a> StreamRow<'a> {
     /// whole row reads an odd one); `None` if it isn't one.
     pub fn new(held: &'a [u8], desc: Descriptor, file: Frames) -> Option<StreamRow<'a>> {
         let frames = file.get().checked_add(1)? & !1;
-        let ok = desc.shape == Shape::Plain && desc.heads > 0 && frames >= MIN_SOURCE_FRAMES;
+        let ok = desc.is_streamed() && frames >= MIN_SOURCE_FRAMES;
         let table = head_table_of(held, desc).filter(|_| ok)?;
         Some(StreamRow {
             held,
@@ -86,7 +86,11 @@ impl<'a> StreamRow<'a> {
     pub fn head(&self, idx: HeadIdx) -> Option<RamHead> {
         let (h, _) = self.table.get(idx.index())?;
         let (start, end) = (h.first(), h.end().min(self.frames));
-        (start < end).then_some(RamHead { idx, start, end })
+        (start < end).then_some(RamHead {
+            idx,
+            start: SourceFrame::new(start),
+            end: SourceFrame::new(end),
+        })
     }
 
     /// Head `idx`'s span: its first frame is even (`HeadSpec`).
@@ -174,9 +178,9 @@ impl<'a> Reads<'a> {
                 SpanSrc::Head(h) => row.head_span(h),
                 SpanSrc::Slot(s) => slot(s),
             };
-            *run = (span.map_or(silent, |s| s.view), Stop::At(r.end));
+            *run = (span.map_or(silent, |s| s.view), Stop::At(r.end.get()));
         }
-        let head = row.head_span(HeadIdx::LOOP);
+        let head = row.head_span(HeadIdx::Loop);
         let mut seconds = [(head.map_or(silent, |s| s.view), Stop::Never); 2];
         let (mut landed, mut short) = (true, None);
         if let Some((from, to)) = wrap {
