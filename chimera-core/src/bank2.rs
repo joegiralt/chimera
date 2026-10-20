@@ -170,6 +170,8 @@ pub struct UiDoor {
     #[cfg(feature = "tape")]
     pub(crate) source_tick: fn(&mut SourceCell, &mut Project),
     pub(crate) source_run: fn(&mut SourceCell, SourceJob, &mut dyn Store, &Ready, &mut Project),
+    /// START's and END's onset snap (`ui::onset`, ADR 0185).
+    pub(crate) onset: fn(&[u8], u32, u32, bool) -> Option<u32>,
 }
 
 /// A card row's head and how it loads (`SourceCell::kind`).
@@ -192,6 +194,7 @@ impl UiDoor {
         #[cfg(feature = "tape")]
         source_tick: SourceCell::rehead_in,
         source_run: SourceCell::run_in,
+        onset: crate::ui::onset::onset_in_bank2,
     };
 }
 
