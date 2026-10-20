@@ -1519,7 +1519,7 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("flt_front_fx", |ui| {
         on_flt(ui, FilterKind::Svf, false);
-        feed(ui, Input::turn(EncoderId::C, 2)); // FX FOLD: PLACE POST
+        feed(ui, Input::turn(EncoderId::C, 3)); // FX FOLD (past FUZZ): PLACE POST
         feed(ui, Input::turn(EncoderId::D, -1)); // PLACE PRE, focused
     }),
     // THEME's PAGES ROW (ADR 0145): FLT's three pages, no arrows; RES's

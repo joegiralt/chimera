@@ -39,6 +39,9 @@ pub struct Bank2Door {
     /// and `curve` are bank 1's side).
     #[cfg(feature = "bank2")]
     pub lfo: crate::lfo_glyph::LfoDoor,
+    /// FUZZ's kernel (ADR 0157; `Fuzz::play` is bank 1's side).
+    #[cfg(feature = "bank2")]
+    pub fuzz: crate::dsp::voice_fx::fuzz::FuzzDoor,
 }
 
 #[cfg(feature = "bank2")]
@@ -57,6 +60,7 @@ static DOOR: Bank2Door = Bank2Door {
     reverb: crate::dsp::rev::Reverb::DOOR,
     va: crate::dsp::va::osc::door::DOOR,
     lfo: crate::lfo_glyph::LfoDoor::DOOR,
+    fuzz: crate::dsp::voice_fx::fuzz::Fuzz::DOOR,
 };
 
 #[cfg(feature = "bank2")]

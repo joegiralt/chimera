@@ -187,6 +187,22 @@ fn a_place_change_mid_note_is_click_free() {
     switches_are_click_free(&out, &[40, 65], "PLACE");
 }
 
+/// FUZZ PRE to POST and back: each side runs its own `Fuzz` on its own
+/// signal, the side fading in from fresh memory.
+#[test]
+fn a_fuzz_place_change_mid_note_is_click_free() {
+    let (p, notes) = held_chord(95);
+    let out = chord(&p, &notes, false, |b| {
+        let place = if (40..65).contains(&b) {
+            Place::Post
+        } else {
+            Place::Pre
+        };
+        setting(FxType::Fuzz, place)
+    });
+    switches_are_click_free(&out, &[40, 65], "FUZZ PLACE");
+}
+
 /// TYPE turned every block for `n` blocks: changes mid-fade wait for its
 /// end and the last one wins. One arriving just after a fade starts waits
 /// it out, so the bound after the last change is two fades, 2·`FX_FADE`:

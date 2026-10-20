@@ -31,6 +31,13 @@ static SOFT: [FxCell; 3] = [
     cell(X::P3, "LEVEL", "LVL", ValFmt::Uni),
 ];
 
+static FUZZ: [FxCell; 3] = [
+    cell(X::P1, "SUSTAIN", "SUS", ValFmt::Uni),
+    // The Muff's tone stack: LP to HP, the mid scoop at noon.
+    cell(X::P2, "TONE", "TONE", ValFmt::Bi),
+    cell(X::P3, "VOLUME", "VOL", ValFmt::Uni),
+];
+
 static FOLD: [FxCell; 3] = [
     cell(X::P1, "FOLD", "FOLD", ValFmt::Uni),
     cell(X::P2, "SYMMETRY", "SYM", ValFmt::Bi),
@@ -42,6 +49,7 @@ pub fn cells(t: FxType) -> Option<&'static [FxCell; 3]> {
     match t {
         FxType::Off => None,
         FxType::Soft => Some(&SOFT),
+        FxType::Fuzz => Some(&FUZZ),
         FxType::Fold => Some(&FOLD),
     }
 }

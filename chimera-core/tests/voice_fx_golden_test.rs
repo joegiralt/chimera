@@ -116,6 +116,45 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
             ],
         ),
     ),
+    // FUZZ's, recorded at its kernel (#614, Task 11), re-recorded at OUT 0.092 (Task 12).
+    (
+        "va_c3_fuzz_pre",
+        (
+            0xec9e435365a823c3,
+            [
+                0, 3205377212, 3204698625, 1057667708, 3204358665, 3204349738, 0, 0,
+            ],
+        ),
+    ),
+    (
+        "va_c3_fuzz_post",
+        (
+            0x56ceec1a9de0d554,
+            [
+                0, 3205377558, 3204698861, 1057667475, 3204359271, 3204350338, 0, 0,
+            ],
+        ),
+    ),
+    (
+        "algo_c4_fuzz_pre",
+        (
+            0x97b59aecacb4ac96,
+            [
+                949186984, 3176783889, 1040865222, 3181080956, 3182116681, 3182686291, 3176815722,
+                1040425035,
+            ],
+        ),
+    ),
+    (
+        "algo_c4_fuzz_post",
+        (
+            0x14ab6cea830a0c29,
+            [
+                949188413, 3177408781, 1040865716, 3181078279, 3182115859, 3182684538, 3176823012,
+                1040426517,
+            ],
+        ),
+    ),
 ];
 
 #[test]
@@ -125,7 +164,11 @@ fn every_type_and_place_matches_its_golden() {
         (EngineType::Va, 48, "va_c3"),
         (EngineType::Algo, 60, "algo_c4"),
     ] {
-        for (ty, t) in [(FxType::Soft, "soft"), (FxType::Fold, "fold")] {
+        for (ty, t) in [
+            (FxType::Soft, "soft"),
+            (FxType::Fuzz, "fuzz"),
+            (FxType::Fold, "fold"),
+        ] {
             for (place, pl) in [(Place::Pre, "pre"), (Place::Post, "post")] {
                 let out = render(&slot(engine, ty, place, 1.0), note);
                 let name: &'static str = format!("{e}_{t}_{pl}").leak();
