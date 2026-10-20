@@ -22,6 +22,7 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use chimera_hal::store::FileName;
 
 use super::layout::StreamFile;
+use super::ring::AtomicTag;
 use crate::project::SourceId;
 
 /// Rows: one a ring, so one a stream.
@@ -129,8 +130,7 @@ impl StreamRegistry {
         unsafe { (*row.file.get()).write(f) };
         row.damaged.store(false, Ordering::Relaxed);
         row.stale.store(false, Ordering::Relaxed);
-        // Under `WRITING` (asserted above).
-        row.tag.store(id.index() as u8 + 1, Ordering::Release);
+        row.tag.store(AtomicTag::encode(id), Ordering::Release);
         Ok(())
     }
 
@@ -164,7 +164,7 @@ impl StreamRegistry {
 
     /// The row tagged `id`, stale or not.
     fn row_of(&self, id: SourceId) -> Option<usize> {
-        let tag = id.index() as u8 + 1;
+        let tag = AtomicTag::encode(id);
         self.rows
             .iter()
             .position(|r| r.tag.load(Ordering::Acquire) == tag)
@@ -201,7 +201,7 @@ impl StreamRegistry {
     /// until the hold drops. One hold at a time: `None` while another
     /// lives, or with no row for `id`.
     pub fn hold(&self, id: SourceId) -> Option<RowHold<'_>> {
-        let tag = id.index() as u8 + 1;
+        let tag = AtomicTag::encode(id);
         let k = self.live_row(id)?;
         // Under `STREAM_ROWS`.
         let mark = k as u8 + 1;
@@ -223,7 +223,7 @@ impl StreamRegistry {
     /// retired with its `sounding` bit clear (the retire gate).
     #[must_use]
     pub unsafe fn clear(&self, id: SourceId) -> bool {
-        let tag = id.index() as u8 + 1;
+        let tag = AtomicTag::encode(id);
         let Some(k) = self.rows.iter().position(|r| {
             r.tag
                 .compare_exchange(tag, FREE, Ordering::SeqCst, Ordering::Relaxed)

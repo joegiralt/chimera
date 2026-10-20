@@ -62,6 +62,45 @@ impl Guard {
             Guard::Unguarded
         }
     }
+
+    const fn bits(self) -> u8 {
+        match self {
+            Guard::Guarded => 1,
+            Guard::Unguarded => 0,
+        }
+    }
+}
+
+/// A source id in an atomic byte: its index + 1, 0 none.
+pub(super) struct AtomicTag(AtomicU8);
+
+impl AtomicTag {
+    #[cfg(not(loom))]
+    const fn none() -> AtomicTag {
+        AtomicTag(AtomicU8::new(0))
+    }
+
+    #[cfg(loom)]
+    fn none() -> AtomicTag {
+        AtomicTag(AtomicU8::new(0))
+    }
+
+    /// `id`'s tag: never 0, nor `u8::MAX`.
+    pub(super) const fn encode(id: SourceId) -> u8 {
+        id.index() as u8 + 1
+    }
+
+    pub(super) fn decode(t: u8) -> Option<SourceId> {
+        SourceId::new(t.checked_sub(1)?)
+    }
+
+    fn load(&self, o: Ordering) -> Option<SourceId> {
+        Self::decode(self.0.load(o))
+    }
+
+    fn store(&self, id: SourceId, o: Ordering) {
+        self.0.store(Self::encode(id), o);
+    }
 }
 
 type SlotCell = UnsafeCell<[u8; SLOT_BYTES]>;
@@ -74,8 +113,8 @@ pub struct Ring {
     /// Slots A and B's; C's are in `ThirdSlots`.
     bytes: [SlotCell; 2],
     guard: [AtomicU8; SLOTS],
-    /// The source its wants read, id + 1; 0 none.
-    source: AtomicU8,
+    /// The source its wants read.
+    source: AtomicTag,
 }
 
 // Every id + 1 fits the byte, 0 left for none.
@@ -137,7 +176,7 @@ impl Ring {
             slots: [const { Slot::new() }; SLOTS],
             bytes: [const { UnsafeCell::new([0; SLOT_BYTES]) }; 2],
             guard: [const { AtomicU8::new(0) }; SLOTS],
-            source: AtomicU8::new(0),
+            source: AtomicTag::none(),
         }
     }
 
@@ -147,7 +186,7 @@ impl Ring {
             slots: core::array::from_fn(|_| Slot::new()),
             bytes: core::array::from_fn(|_| UnsafeCell::new([0; SLOT_BYTES])),
             guard: core::array::from_fn(|_| AtomicU8::new(0)),
-            source: AtomicU8::new(0),
+            source: AtomicTag::none(),
         }
     }
 }
@@ -220,8 +259,7 @@ impl Rings {
     /// after a claim, whose `Acquire` saw the want's `Release`: the
     /// source its note set before it.
     pub fn source(&self, v: VoiceIdx) -> Option<SourceId> {
-        let id = self.rings[v.index()].source.load(Ordering::Relaxed);
-        SourceId::new(id.checked_sub(1)?)
+        self.rings[v.index()].source.load(Ordering::Relaxed)
     }
 
     fn slot(&self, v: VoiceIdx, s: SlotIdx) -> &Slot {
@@ -280,11 +318,9 @@ impl<'s> AudioTurn<'s> {
     /// its last note's slots cancelled, before its wants (whose `Release`
     /// publishes it).
     pub fn stream(&self, v: VoiceIdx, id: SourceId) {
-        // Under `SourceId::ALL.len()` (asserted above).
-        let tag = id.index() as u8 + 1;
         self.at.rings.rings[v.index()]
             .source
-            .store(tag, Ordering::Relaxed);
+            .store(id, Ordering::Relaxed);
     }
 
     pub fn seen(&self, v: VoiceIdx, s: SlotIdx) -> SlotState {
@@ -462,7 +498,9 @@ impl<'r> CardSide<'r> {
     pub fn claim(&mut self, v: VoiceIdx, s: SlotIdx) -> Option<Claim> {
         let (chunk, generation) = self.at.slot(v, s).claim()?;
         // Before `fill_done`'s `Release`; a write_guard may set it.
-        self.at.guard(v, s).store(0, Ordering::Relaxed);
+        self.at
+            .guard(v, s)
+            .store(Guard::Unguarded.bits(), Ordering::Relaxed);
         Some(Claim {
             voice: v,
             slot: s,
@@ -535,7 +573,8 @@ impl<'r> CardSide<'r> {
             )
         };
         to[..GUARD].copy_from_slice(&from[SLOT_BYTES - GUARD..]);
-        at.guard(c.voice, c.slot).store(1, Ordering::Relaxed);
+        at.guard(c.voice, c.slot)
+            .store(Guard::Guarded.bits(), Ordering::Relaxed);
     }
 
     /// Filling → Ready; false if the fill was dropped (cancelled). The
@@ -561,7 +600,8 @@ impl<'r> CardSide<'r> {
                 && c.chunk
                     .next()
                     .is_some_and(|n| at.slot(c.voice, s).ready_chunk() == Some(n))
-                && at.guard(c.voice, s).load(Ordering::Relaxed) == 0
+                && Guard::from_bits(at.guard(c.voice, s).load(Ordering::Relaxed))
+                    == Guard::Unguarded
         }) else {
             return;
         };
@@ -581,7 +621,8 @@ impl<'r> CardSide<'r> {
         };
         to.copy_from_slice(&from[SLOT_BYTES - GUARD..]);
         // The bytes before the flag: `ready` loads it `Acquire`.
-        at.guard(c.voice, next).store(1, Ordering::Release);
+        at.guard(c.voice, next)
+            .store(Guard::Guarded.bits(), Ordering::Release);
     }
 
     /// Filling → Wanted, same generation: a fault, to try again.
