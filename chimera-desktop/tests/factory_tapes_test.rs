@@ -4,7 +4,7 @@
 
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
-use chimera_core::dsp::tape_engine::{PlayMode, TapeModel};
+use chimera_core::dsp::tape_engine::{TapeMachine, TapeModel};
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
@@ -211,9 +211,9 @@ fn factory_sounds_sit_at_the_median() {
             ((b.head.root + 50) / 100) as u8
         };
         let secs = b.head.sref.frames as f32 / f32::from(b.head.sref.rate);
-        let blocks = match (s.model, s.mode, t.slice.code()) {
-            (TapeModel::Play, PlayMode::One, 1) => (secs / 16.0 * BPS as f32) as usize,
-            (TapeModel::Play, PlayMode::One, _) => ((secs * BPS as f32) as usize).min(BPS),
+        let blocks = match (s.machine, t.slice.code()) {
+            (TapeMachine::One, 1) => (secs / 16.0 * BPS as f32) as usize,
+            (TapeMachine::One, _) => ((secs * BPS as f32) as usize).min(BPS),
             _ => BPS,
         };
         let d = rig.lufs(note, blocks.max(1)) - median;

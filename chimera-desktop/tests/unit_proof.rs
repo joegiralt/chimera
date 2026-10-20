@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use chimera_core::MidiChannel;
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::dsp::tape_engine::{COST_STREAM, PlayMode, TapeModel};
+use chimera_core::dsp::tape_engine::{COST_STREAM, TapeMachine};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::hw::{CPU_HZ_REV_V, Cost, SampleBudget};
@@ -245,8 +245,7 @@ fn project() {
         let recipe = SoundRecipe {
             name: SoundName::new(h.name.as_str()).expect("a name"),
             source: h.name,
-            model: TapeModel::Play,
-            mode: PlayMode::Loop,
+            machine: TapeMachine::Loop,
             set: Vec::new(),
             trim_db: 0.0,
         };
