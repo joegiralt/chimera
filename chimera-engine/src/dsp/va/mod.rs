@@ -23,7 +23,7 @@ use crate::glyph::{FocusGlyph, VaGlyph, VaOsc};
 use crate::hw::Cost;
 use crate::project::PartId;
 use crate::voice_alloc::VoiceIdx;
-use combine::{Crusher, MaxKink, Operator, Peaks, am_gain, ring_gain};
+use combine::{Crusher, MaxKink, Operator, Peaks, am_gain, am_reach, ring_gain};
 use osc::{MAX_INC, NO_WRAP, R, Ramps, Sub, SubEdge, VarOsc, ZEROS, wave_reach};
 use stability::{JITTER_CENTS, Seed, Stability, depth};
 #[cfg(any(test, feature = "test-support"))]
@@ -41,7 +41,8 @@ pub enum VaMode {
     Bits = 4,
     /// OSC 2 frequency-modulates OSC 1 linearly, through zero (#601).
     Fm = 5,
-    /// OSC 2 scales OSC 1, never through zero (#603).
+    /// OSC 2 scales OSC 1, unipolar to BLEND 85, then on into ring at 127
+    /// (#603, #675, ADR 0176).
     Am = 6,
     /// The larger of the two oscillators, its kinks rounded (#605).
     Max = 7,
@@ -346,7 +347,9 @@ pub const COST_FM: Cost = Cost(590);
 /// ramps per block) + 70.1 (OSC 2's) + 34.5 + 3.3 + 51.4 (no VarOsc
 /// runs: the block is `render`'s and `render_loopfm`'s own) + 8.9 + 95.
 pub const COST_LOOPFM: Cost = Cost(350);
-/// AM: 158.2 + 134.4 + 41.0 + 3.3 (the sub) + 71.1 + 29.9 + 95.
+/// AM: 158.2 + 134.4 + 41.0 + 3.3 (the sub) + 71.1 + 29.9 + 95, + 0.7 for
+/// `am_reach` at the BLEND ramp's two ends a block (ADR 0176: `render` 54
+/// instructions longer, about half on AM's path; its loops unchanged): 533.6.
 pub const COST_AM: Cost = Cost(540);
 /// MAX: 158.2 + 134.4 + 50.6 (the operator's loop, with the step test) +
 /// 3.3 + 37.7 (a kink a sample at the worst: one sign change, its divide and
@@ -843,6 +846,11 @@ impl VaEngine {
         if self.playing == VaMode::Am {
             let n = self.am_n.step(am_gain(unit(p.amount), l.pk));
             l.k = (n.0, step_of(n, BLOCK_SIZE));
+            // the operator reads AM's reach: BLEND's ramp mapped at its ends,
+            // straight between them (continuous through the knee)
+            let (x0, dx) = l.amount;
+            let u = (am_reach(x0), am_reach(x0 + dx * BLOCK_SIZE as f32));
+            l.amount = (u.0, step_of(u, BLOCK_SIZE));
         }
         #[cfg(any(test, feature = "test-support"))]
         {

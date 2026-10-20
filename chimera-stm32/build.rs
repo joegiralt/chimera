@@ -144,6 +144,15 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     } else {
         ""
     };
+    // The LFO page's glyphs and scope curve (ADR 0177): `lfo_glyph::draw`,
+    // the door's `render` and `curve`. Only with `bank2`: without it
+    // `lfo_glyph::paint` and `curve` call them in bank 1.
+    let lfo = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
+        "    *(.text.*14chimera_engine9lfo_glyph4draw* .rodata.*14chimera_engine9lfo_glyph4draw*);
+"
+    } else {
+        ""
+    };
     fs::write(
         out_dir.join("bank2.x"),
         r#"
@@ -181,6 +190,7 @@ SECTIONS {
       .rodata.*11source_file16read_source_head* .rodata.*11source_file16read_packed_into*);
     /* REVERB */
     /* VA */
+    /* LFO */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -192,7 +202,8 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("    /* REVERB */\n", reverb)
         .replace("    /* SLOTS */\n", slots)
         .replace("/* ASSERTS */", asserts)
-        .replace("    /* VA */\n", va),
+        .replace("    /* VA */\n", va)
+        .replace("    /* LFO */\n", lfo),
     )
     .unwrap();
 

@@ -213,7 +213,8 @@ fn ui_state_rest_under_4k() {
     // six encoders' pushes (ADR 0140). 32 B the SOURCE cell's re-head
     // wait: the heads a streamed source wants, and since when; 128 B its
     // latch of each source's heads that can't be re-staged (slice 1
-    // § 5.6). The focus
+    // § 5.6). 16 B the LFO page's playhead and where it reads it (ADR
+    // 0177). The focus
     // memory's 8 B (a slot per page id, the OP pages' ids up to 105, #484)
     // fit in what `LibId` gave back as a bare u32 instead of a tagged enum.
     assert!(
@@ -231,7 +232,8 @@ fn ui_state_rest_under_4k() {
             + 48
             + 12
             + 32
-            + 128,
+            + 128
+            + 16,
         "UiState grew to {rest} B besides its Project"
     );
 }

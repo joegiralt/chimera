@@ -58,6 +58,8 @@ pub enum Gauge {
     Blend { value: f32, mode: VaMode },
     /// TAPE's machine glyph (`tape_glyph`): still on MODEL.
     Tape(TapeGauge),
+    /// The LFO page's glyph (`lfo_glyph`), kept dimmed too.
+    Lfo(crate::ui::lfo_glyph::LfoGauge),
 }
 
 /// What a gauge built from more than the focused value reads.
@@ -67,6 +69,8 @@ pub enum Reads {
     Va(VaGlyph),
     /// `TAPE_GLYPH_PARAMS`.
     Tape,
+    /// The focused LFO slot's params.
+    Lfo,
 }
 
 /// A staff note's accidental.
@@ -313,9 +317,9 @@ pub fn va_mix_trace<const N: usize>(v: &VaMix, half: i32) -> [i32; N] {
 /// The words at BLEND's ends under `mode`: what AMOUNT 0 and 1 give.
 /// MIX and SYNC fade OSC 1 to OSC 2; RING and XOR the plain mix to the
 /// operator; BITS crushes the mix from 16 bits to 2; FM runs OSC 1 from
-/// plain (CLEAN) to its full index (DEEP); AM from OSC 1 alone to its
-/// full depth; MAX the plain mix to the larger of the two; LOOPFM from OSC 1
-/// alone to both looping (LOOP).
+/// plain (CLEAN) to its full index (DEEP); AM from OSC 1 alone through
+/// full AM (BLEND 85) to ring; MAX the plain mix to the larger of the two;
+/// LOOPFM from OSC 1 alone to both looping (LOOP).
 pub const fn blend_ends(mode: VaMode) -> [&'static str; 2] {
     match mode {
         VaMode::Mix | VaMode::Sync | VaMode::SoftSync => ["1", "2"],
@@ -323,7 +327,7 @@ pub const fn blend_ends(mode: VaMode) -> [&'static str; 2] {
         VaMode::Xor => ["MIX", "XOR"],
         VaMode::Bits => ["CLEAN", "CRUSH"],
         VaMode::Fm => ["CLEAN", "DEEP"],
-        VaMode::Am => ["CLEAN", "AM"],
+        VaMode::Am => ["CLEAN", "RING"],
         VaMode::Max => ["MIX", "MAX"],
         VaMode::LoopFm => ["1", "LOOP"],
     }
@@ -775,6 +779,7 @@ pub fn gauge(
         FocusGlyph::Composite(id) => outside(Reads::Composite(id)),
         FocusGlyph::Va(v) => outside(Reads::Va(v)),
         FocusGlyph::Tape => outside(Reads::Tape),
+        FocusGlyph::Lfo => outside(Reads::Lfo),
         FocusGlyph::Arc => Gauge::Arc { value, bipolar },
     }
 }
@@ -793,7 +798,8 @@ impl Gauge {
             | Gauge::VaWave(_)
             | Gauge::VaMix(_)
             | Gauge::Blend { .. }
-            | Gauge::Tape(_) => false,
+            | Gauge::Tape(_)
+            | Gauge::Lfo(_) => false,
             Gauge::Braid(_) | Gauge::Rings(_) | Gauge::Cube(_) | Gauge::Tail(_) => true,
         }
     }
@@ -810,6 +816,8 @@ impl Gauge {
             Gauge::Blend { mode, .. } => *mode as u32,
             // Its quantised steps: it redraws when one moves a pixel.
             Gauge::Tape(t) => t.key(),
+            // Its quantised steps: it redraws when one moves.
+            Gauge::Lfo(g) => g.key(),
             _ => 0,
         }
     }

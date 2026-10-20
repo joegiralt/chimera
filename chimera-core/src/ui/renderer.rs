@@ -10,7 +10,7 @@ use crate::block::find_spec;
 use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
-use crate::dsp::modulator::{EnvType, HoldPos};
+use crate::dsp::modulator::{EnvType, HoldPos, LfoSlot};
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
 use crate::dsp::va::osc::{Morph, Unit};
 use crate::part::DacPair;
@@ -30,6 +30,7 @@ use crate::ui::glyph::{
     va_mode,
 };
 use crate::ui::hint;
+use crate::ui::lfo_glyph::{self, LfoGauge};
 use crate::ui::mod_grid::MatrixState;
 use crate::ui::nav::PageAt;
 use crate::ui::orbit::draw::{self as orbit, OrbitFrame};
@@ -122,6 +123,9 @@ pub struct Frame<'a> {
     pub formant: &'a crate::dsp::algo::engine::FormantView,
     /// The focused cell's refused choice, shown dimmed (ADR 0151).
     pub held: Option<crate::ui::held::Shown>,
+    /// An LFO page's playhead: its slot's newest voice on the active Part,
+    /// `None` with no voice (ADR 0177).
+    pub lfo: Option<crate::ui::lfo_glyph::Head>,
 }
 
 impl Frame<'_> {
@@ -416,6 +420,10 @@ impl Renderer {
                 let (rates, inset) = Self::op_page(f, op);
                 crate::ui::op_page::draw_band(display, rates, inset);
             }
+            VizType::Lfo(s) => {
+                let w = self.lfo_wave(f, s);
+                lfo_glyph::draw_scope(display, &w, lfo_glyph::Dot::of(&w, f.lfo));
+            }
             _ => viz::live_output(display, f.scope),
         }
     }
@@ -586,6 +594,8 @@ impl Renderer {
                     let (r, inset) = Self::op_page(f, op);
                     ([0; 6], crate::ui::op_page::key(r, inset))
                 }
+                // The curve's own steps; the playhead is `lfo_dot`'s.
+                VizType::Lfo(s) => ([0; 6], self.lfo_wave(f, s).curve_key()),
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
             PageLayout::BigViz => {
@@ -849,6 +859,19 @@ impl Renderer {
                     still,
                 ))
             }
+            Reads::Lfo => match focused.map(|a| a.block) {
+                Some(BlockRef::Lfo(s)) => {
+                    let kind = f.ctx.lfos[s.index()];
+                    let p = focused.map_or(crate::block::ParamId(0), |a| a.param);
+                    lfo_glyph::glyph_for(kind, p).map_or(Gauge::None, |glyph| {
+                        Gauge::Lfo(LfoGauge {
+                            glyph,
+                            wave: self.lfo_wave(f, s),
+                        })
+                    })
+                }
+                _ => Gauge::None,
+            },
             Reads::Va(VaGlyph::Blend) => {
                 let [mode, amount] = self.eased_set(f, [VA_MIX_PARAMS[0], VA_MIX_PARAMS[1]]);
                 Gauge::Blend {
@@ -858,6 +881,54 @@ impl Renderer {
             }
         });
         components::fit_gauge(text.as_str(), g)
+    }
+
+    /// LFO slot `s`'s wave on its page, from its set values eased.
+    fn lfo_wave(&self, f: &Frame, s: LfoSlot) -> lfo_glyph::Wave {
+        lfo_glyph::wave(
+            f.ctx.lfos[s.index()],
+            self.eased_set(f, lfo_glyph::params(s)),
+        )
+    }
+
+    /// The LFO scope's playhead on its page, if this is one.
+    pub fn lfo_dot(&self, f: &Frame) -> Option<lfo_glyph::Dot> {
+        match f.def.viz {
+            VizType::Lfo(s) => Some(lfo_glyph::Dot::of(&self.lfo_wave(f, s), f.lfo)),
+            _ => None,
+        }
+    }
+
+    /// Redraw only the LFO scope's playhead, moved from `was` (its old and
+    /// new boxes, each cleared and drawn whole within it); the rows to
+    /// flush.
+    pub fn redraw_lfo_dot<D>(
+        &self,
+        display: &mut D,
+        fb: impl Fn(&mut D) -> &mut [u16],
+        f: &Frame,
+        was: lfo_glyph::Dot,
+    ) -> [(u16, u16); 2]
+    where
+        D: DrawTarget<Color = Rgb565>,
+    {
+        let VizType::Lfo(s) = f.def.viz else {
+            return [(0, 0); 2];
+        };
+        let w = self.lfo_wave(f, s);
+        let now = lfo_glyph::Dot::of(&w, f.lfo);
+        let (ys, _) = lfo_glyph::columns(&w);
+        let boxes = [was, now].map(|dot| dot.rect(&ys));
+        for (x, y, bw, bh) in boxes {
+            Self::clear_rect_fb(fb(display), x, y, bw, bh);
+        }
+        // The curve under each box's columns, then the dot on top.
+        for (x, _, bw, _) in boxes {
+            let c0 = (x - theme::VIZ_LEFT).max(0) as usize;
+            let c1 = (x + bw - theme::VIZ_LEFT).max(0) as usize;
+            lfo_glyph::draw_scope_cols(display, &w, now, c0..c1);
+        }
+        boxes.map(|(_, y, _, bh)| (y.max(0) as u16, (y + bh) as u16))
     }
 
     /// A composite's inputs, `addrs`' set values normalized: eased (`set`)
@@ -886,7 +957,9 @@ impl Renderer {
         let g = self.gauge(f);
         match look(f, f.focus) {
             components::Look::Live => Some(g),
-            components::Look::Dimmed if matches!(g, Gauge::Tape(_)) => Some(g),
+            // A TAPE cell its machine ignores, an LFO cell its mode
+            // ignores, keep their glyph (ADR 0173, 0177).
+            components::Look::Dimmed if matches!(g, Gauge::Tape(_) | Gauge::Lfo(_)) => Some(g),
             _ => None,
         }
     }

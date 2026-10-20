@@ -110,8 +110,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("env_b_burst_ahr", 0x7ba2ccbb1c1f77a1),
     ("env_b_burst_cycle", 0x5bdb2cb3d202f7e9),
     ("spd", 0x72e39f2d2f94f382),
-    ("lfo_classic", 0xf1b5267023ff79aa),
-    ("lfo_func", 0xee922d0687f7756e),
+    // Re-recorded: the scope draws the LFO and each control its glyph;
+    // RATE reads Hz (ADR 0177).
+    ("lfo_classic", 0xdfa4a14789eb4c7e),
+    ("lfo_func", 0x5875db77d55330b0),
     // Re-recorded: AMP is the sends over FOLD, VEL, MIX, SYM one page down (sends Task 5);
     // mod_matrix_wide primes FOLD and MIX on their new cells.
     ("amp_vel_dimmed", 0xbfaae22b7783bedd),

@@ -809,6 +809,12 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
         (BlockRef::Modal, id) => !modal::reads(sound.params.modal.mode, id),
         // What the machine ignores (spec § 3).
         (BlockRef::TapeEngine, id) => !tape_engine::reads(sound.params.tape.machine(), id),
+        // CLASSIC FREE plays the Part's clock: PHASE is RETRIG's start
+        // alone (ADR 0177).
+        (BlockRef::Lfo(s), crate::dsp::lfo::LfoParams::PHASE) => {
+            let l = &sound.params.lfos[s.index()];
+            l.lfo_type == crate::dsp::modulator::LfoType::Classic && l.sync == 0
+        }
         _ => false,
     }
 }

@@ -36,6 +36,9 @@ pub enum FocusGlyph {
     /// TAPE's machine glyph (ADR 0173): every machine cell's, drawn from
     /// `TAPE_GLYPH_PARAMS`' set values; still on MODEL.
     Tape,
+    /// The LFO page's: what its control does to the LFO, drawn from the
+    /// slot's set values (`lfo_glyph`, ADR 0177).
+    Lfo,
 }
 
 /// VA's gauges: what the oscillators and the operator do to the sound.
@@ -109,7 +112,7 @@ impl CompositeId {
 }
 
 impl FocusGlyph {
-    pub const ALL: [FocusGlyph; 15] = [
+    pub const ALL: [FocusGlyph; 16] = [
         FocusGlyph::Arc,
         FocusGlyph::None,
         FocusGlyph::Switch,
@@ -125,6 +128,7 @@ impl FocusGlyph {
         FocusGlyph::Va(VaGlyph::Mode),
         FocusGlyph::Va(VaGlyph::Blend),
         FocusGlyph::Tape,
+        FocusGlyph::Lfo,
     ];
 
     /// Index in `ALL`. Exhaustive: a new variant fails to compile here
@@ -146,6 +150,7 @@ impl FocusGlyph {
             FocusGlyph::Va(VaGlyph::Mode) => 12,
             FocusGlyph::Va(VaGlyph::Blend) => 13,
             FocusGlyph::Tape => 14,
+            FocusGlyph::Lfo => 15,
         }
     }
 }

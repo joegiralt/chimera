@@ -43,6 +43,9 @@ pub enum VizType {
     OpPage(Op),
     /// TAPE's SRC and DECK: the source, the machine's part of it, the heads.
     Strip,
+    /// L1–L3: one cycle of the slot's LFO, the newest voice's playhead on
+    /// it (ADR 0177).
+    Lfo(crate::dsp::modulator::LfoSlot),
 }
 
 /// A node of the FX flow; the value is its index in `viz::effects_flow`.

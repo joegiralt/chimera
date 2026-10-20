@@ -128,7 +128,7 @@ pub static LFO_SPECS: [ParamSpec; 11] = [
     ParamSpec::continuous(
         0,
         "RATE",
-        ValFmt::Uni,
+        ValFmt::Law(crate::dsp::modulator::law::Law::LfoHz),
         0.01,
         20.0,
         1.0,
@@ -136,7 +136,8 @@ pub static LFO_SPECS: [ParamSpec; 11] = [
         false,
         Smoothing::Own,
     )
-    .ident("RATE"),
+    .ident("RATE")
+    .glyph(crate::glyph::FocusGlyph::Lfo),
     ParamSpec::choice(
         1,
         "SHAPE",
@@ -146,7 +147,7 @@ pub static LFO_SPECS: [ParamSpec; 11] = [
         Change::Snap,
     )
     .ident("SHAPE")
-    .glyph(crate::glyph::FocusGlyph::None),
+    .glyph(crate::glyph::FocusGlyph::Lfo),
     ParamSpec::choice(
         2,
         "SYNC",
@@ -156,7 +157,7 @@ pub static LFO_SPECS: [ParamSpec; 11] = [
         Change::NoteOn,
     )
     .ident("SYNC")
-    .glyph(crate::glyph::FocusGlyph::Switch),
+    .glyph(crate::glyph::FocusGlyph::Lfo),
     ParamSpec::continuous(
         3,
         "PHASE",
@@ -168,7 +169,8 @@ pub static LFO_SPECS: [ParamSpec; 11] = [
         false,
         Smoothing::NoteOn,
     )
-    .ident("PHASE"),
+    .ident("PHASE")
+    .glyph(crate::glyph::FocusGlyph::Lfo),
     ParamSpec::continuous(
         4,
         "DEPTH",
@@ -180,7 +182,8 @@ pub static LFO_SPECS: [ParamSpec; 11] = [
         false,
         Smoothing::KNOB,
     )
-    .ident("DEPTH"),
+    .ident("DEPTH")
+    .glyph(crate::glyph::FocusGlyph::Lfo),
     ParamSpec::continuous(
         5,
         "OFST",
@@ -212,19 +215,20 @@ pub static LFO_SPECS: [ParamSpec; 11] = [
         Change::Crossfade,
     )
     .ident("FORM")
-    .glyph(crate::glyph::FocusGlyph::None),
+    .glyph(crate::glyph::FocusGlyph::Lfo),
     ParamSpec::continuous(
         8,
         "RISE",
         ValFmt::Uni,
         0.0,
-        1.0,
+        crate::dsp::modulator::law::LFO_RISE_MAX,
         0.309,
         1.0 / 128.0,
         false,
         Smoothing::Own,
     )
-    .ident("RISE"),
+    .ident("RISE")
+    .glyph(crate::glyph::FocusGlyph::Lfo),
     ParamSpec::continuous(
         9,
         "FALL",
@@ -236,7 +240,8 @@ pub static LFO_SPECS: [ParamSpec; 11] = [
         false,
         Smoothing::Own,
     )
-    .ident("FALL"),
+    .ident("FALL")
+    .glyph(crate::glyph::FocusGlyph::Lfo),
     ParamSpec::continuous(
         10,
         "SHAPE",
@@ -248,7 +253,8 @@ pub static LFO_SPECS: [ParamSpec; 11] = [
         false,
         Smoothing::KNOB,
     )
-    .ident("SHAPE_B"),
+    .ident("SHAPE_B")
+    .glyph(crate::glyph::FocusGlyph::Lfo),
 ];
 
 /// SYNC's values, by the flag's byte (a flag's byte is its meaning).
@@ -479,6 +485,15 @@ impl Lfo {
     /// Reset phase (called on note-on if sync mode)
     pub fn retrigger(&mut self, phase_offset: f32) {
         self.phase = phase_offset;
+    }
+
+    /// The phase the LFO page's playhead shows, 0..1: CLASSIC's own (the
+    /// Part's clock under FREE), FUNC's φ.
+    pub fn view_phase(&self) -> f32 {
+        match self.kind {
+            Some(Kind::Func(_)) => self.func.phi(),
+            _ => self.phase,
+        }
     }
 
     /// Get current output without advancing
