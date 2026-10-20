@@ -32,6 +32,7 @@ pub mod import;
 /// The in-place constructors' helpers, also `chimera-core`'s `UiState`'s.
 pub mod in_place;
 pub mod instrument;
+pub mod lfo_glyph;
 pub mod meter;
 pub mod midi_in;
 pub mod midi_map;

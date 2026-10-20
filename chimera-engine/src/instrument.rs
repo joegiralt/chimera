@@ -76,6 +76,81 @@ impl Default for PartHeads {
 /// may play TAPE through an `Instrument`.
 pub static HEADS: PartHeads = PartHeads::new();
 
+/// The LFO page's playhead (ADR 0177): the UI names the Part it shows
+/// (`watch`), and once a block the audio stores that Part's newest
+/// voice's phase in each LFO slot, nothing while no LFO page is up. A word
+/// a slot: the Part, a live bit and the phase in 24 bits.
+pub struct LfoView {
+    watch: AtomicU32,
+    at: [AtomicU32; 3],
+}
+
+/// One slot's playhead as published.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LfoAt {
+    pub part: usize,
+    /// The newest voice's phase, 0..1; `None` with no voice.
+    pub phase: Option<f32>,
+}
+
+impl LfoView {
+    const LIVE: u32 = 1 << 31;
+    const TURN: f32 = (1 << 24) as f32;
+
+    pub const fn new() -> Self {
+        Self {
+            watch: AtomicU32::new(0),
+            at: [const { AtomicU32::new(0) }; 3],
+        }
+    }
+
+    /// The UI: the Part whose LFO page is up, or none, which also clears
+    /// the last playheads: the next page up starts with none.
+    pub fn watch(&self, part: Option<usize>) {
+        self.watch.store(part.map_or(0, |p| p as u32 + 1), Relaxed);
+        if part.is_none() {
+            self.at.iter().for_each(|w| w.store(0, Relaxed));
+        }
+    }
+
+    /// The audio: the Part to publish, if any.
+    pub fn watched(&self) -> Option<usize> {
+        (self.watch.load(Relaxed) as usize).checked_sub(1)
+    }
+
+    /// Every slot's, for `part`: its newest voice's phases, or none.
+    pub fn publish_all(&self, part: usize, phases: Option<[f32; 3]>) {
+        for slot in 0..3 {
+            let phase = phases.map(|p| p[slot]);
+            self.publish(slot, LfoAt { part, phase });
+        }
+    }
+
+    pub fn publish(&self, slot: usize, at: LfoAt) {
+        let phase = at.phase.map_or(0, |p| {
+            Self::LIVE | (crate::dsp::clampf(p, 0.0, 1.0) * Self::TURN) as u32 & 0xff_ffff
+        });
+        self.at[slot].store(phase | (at.part as u32) << 24, Relaxed);
+    }
+
+    pub fn read(&self, slot: usize) -> LfoAt {
+        let w = self.at[slot].load(Relaxed);
+        LfoAt {
+            part: (w >> 24 & 0x7f) as usize,
+            phase: (w & Self::LIVE != 0).then(|| (w & 0xff_ffff) as f32 / Self::TURN),
+        }
+    }
+}
+
+impl Default for LfoView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The playheads the LFO page draws.
+pub static LFO_VIEW: LfoView = LfoView::new();
+
 /// One Part as the audio thread sees it.
 #[derive(Clone, Debug)]
 pub struct PartAudio {
@@ -1673,6 +1748,7 @@ impl Instrument {
         self.step_lfo_clocks(shared);
 
         self.publish_heads();
+        self.publish_lfo_view();
         crate::meter::publish_sounding_parts(self.sounding_set());
         self.clear_left = SYM_CLEAR_BUDGET;
 
@@ -1746,6 +1822,28 @@ impl Instrument {
         for (c, part) in self.lfo_clocks.iter_mut().zip(&shared.parts) {
             c.advance(&part.params.lfos, step);
         }
+    }
+
+    /// The LFO page's playheads (ADR 0177): the watched Part's newest
+    /// sounding voice's phase in each slot. A load and three stores a
+    /// block, none while no LFO page is up. Out of line: the audio
+    /// interrupt stays small.
+    #[inline(never)]
+    fn publish_lfo_view(&self) {
+        let Some(part) = LFO_VIEW.watched() else {
+            return;
+        };
+        let mut newest = None;
+        for (v, s) in self.alloc.slots().iter().enumerate() {
+            if !s.is_free()
+                && self.sounding[v] as usize % MAX_PARTS == part
+                && self.voices[v].is_active()
+                && newest.is_none_or(|(a, _)| s.age() >= a)
+            {
+                newest = Some((s.age(), v));
+            }
+        }
+        LFO_VIEW.publish_all(part, newest.map(|(_, v)| self.voices[v].lfo_view_phases()));
     }
 
     /// The strip's heads (spec § 3): each Part's newest voice playing

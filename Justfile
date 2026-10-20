@@ -196,12 +196,15 @@ release-bin:
 
 # A .bin holding the power-pull aid (`bank2-gate`: its marker or its PULL
 # NOW) never ships.
-# VA's MOD path (ADR 0163) is all bank 2's on a bank-2 build: a `bank2.x`
-# glob that misses a new door entry or run leaves it silently in bank 1.
+# VA's MOD path (ADR 0163) and the LFO page's raster (ADR 0177) are all
+# bank 2's on a bank-2 build: a `bank2.x` glob that misses a new door entry
+# or run leaves it silently in bank 1.
 check-door-placed elf:
     #!/usr/bin/env bash
     set -euo pipefail
-    rust-nm -C {{elf}} | awk '/ [tT] .*va::osc::door::/ { n++; a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08180000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print "va::osc::door: nothing linked" > "/dev/stderr"; exit bad || !n }'
+    for m in 'va::osc::door::' 'chimera_engine::lfo_glyph::draw::'; do
+        rust-nm -C {{elf}} | awk -v m="$m" 'index($0, m) && / [tT] / { n++; a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08180000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print m ": nothing linked" > "/dev/stderr"; exit bad || !n }'
+    done
 
 check-no-gate bin:
     #!/usr/bin/env bash
@@ -331,8 +334,8 @@ check:
     cargo test -p chimera-core -p chimera-engine --no-default-features
     cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
     cargo test -p chimera-core --features bank2-gate --test console_parse_test --test console_answer_test --test bank2_status_test --test bank2_close_test
-    # TAPE's, the reverb's and VA FM's bank-1 sides through the host's own door.
-    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test
+    # TAPE's, the reverb's, VA FM's and the LFO raster's bank-1 sides through the host's own door.
+    cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test lfo_proxy_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
