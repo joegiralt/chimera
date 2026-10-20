@@ -205,6 +205,12 @@ pub fn ui_door<R>(f: impl FnOnce(&UiDoor) -> R) -> Option<R> {
     }
     #[cfg(all(feature = "tape", not(all(feature = "bank2", target_os = "none"))))]
     {
+        // A host test under `bank2` answers as the unit does: only while
+        // the door cell is open (`open_host`).
+        #[cfg(all(feature = "bank2", feature = "test-support"))]
+        if !DOOR_CELL.is_open() {
+            return None;
+        }
         Some(f(&UiDoor::OWN))
     }
     // Without TAPE's DSP (the bench) TAPE's UI is as closed, and links out.

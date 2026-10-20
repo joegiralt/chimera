@@ -51,6 +51,7 @@ ROOTS = ("Reset", "__stext", "main", "DefaultHandler", "DefaultHandler_") + ISRS
 POINTER_NEST = 3
 # A root whose one pointer call is a door entry (ADR 0175) whose target is
 # known: charged that target's depth, not every address-taken function's.
+# A second pointer call in such a root fails the check.
 # The card interrupt's shim calls `IrqState::step` through the board's slot.
 DOOR_CALLS = {"DMA2_STR0": ("<chimera_board::card_dma::IrqState>::step",)}
 
@@ -107,7 +108,7 @@ def parse(lines) -> Image:
         h = HEADER.match(line)
         if h:
             cur = h.group(2)
-            img.funcs[cur] = [0, set(), set(), False]
+            img.funcs[cur] = [0, set(), set(), 0]
             img.starts[cur] = int(h.group(1), 16)
             lo, table = {}, False
             continue
@@ -149,7 +150,7 @@ def parse(lines) -> Image:
                 f[2].add(t.group(1))
         elif op.startswith("blx") or (op == "bx" and args.strip() != "lr"):
             if re.match(r"(r\d+|ip|lr)\b", args.strip()):
-                f[3] = True
+                f[3] += 1
     img.funcs = {k: tuple(v) for k, v in img.funcs.items()}
     return img
 
@@ -298,6 +299,10 @@ def check(img, stack_bytes, out):
             print("           recursion cut at: %s" % ", ".join(sorted(short(c, 60) for c in cut)), file=out)
         if ind:
             print("           %d functions call through a pointer, each charged above" % len(ind), file=out)
+    for root, _ in DOOR_CALLS.items():
+        if root in img.funcs and img.funcs[root][3] > 1:
+            print("stack-depth: %s has %d pointer calls, its door's one only" % (root, img.funcs[root][3]), file=out)
+            ok = False
     for f in small_reached(img.funcs):
         print("stack-depth: an audio or MIDI interrupt reaches %s, built for size" % short(f), file=out)
         ok = False
