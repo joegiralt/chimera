@@ -9,7 +9,7 @@ mod screen;
 use core::ops::ControlFlow;
 
 use chimera_core::dsp::tape_engine::TapeMachine;
-use chimera_core::dsp::tape_engine::heads::{Bounds, window_end, window_start};
+use chimera_core::dsp::tape_engine::heads::{Bounds, Sizing, window_end, window_start};
 use chimera_core::dsp::tape_engine::params::TapeEngineParams;
 use chimera_core::dsp::tape_engine::read::Shape;
 use chimera_core::dsp::tape_engine::read::{HeadSpec, head_table};
@@ -850,17 +850,21 @@ fn too_big_loop_streams_with_two_heads() {
     assert_heads(&rig, &b, heads.as_slice());
     let p = rig.params();
     let frames = b.0.sref.frames;
-    let ws = window_start(p.start, frames);
+    let ws = window_start(p.start, core::num::NonZeroU32::new(frames).unwrap());
     let rate = chimera_core::stream::units::SourceRate::new(24_000).unwrap();
     let lp = Bounds::of(
         ws,
         window_end(ws, p.end, frames, rate),
-        (p.size, p.position, p.xfade),
+        Sizing {
+            size: p.size,
+            place: p.position,
+            xfade: p.xfade,
+        },
         rate,
     );
     let lh = heads.as_slice()[1];
     assert!(
-        lp.lx > 0 && lh.first() < lp.ls - lp.lx,
+        lp.lx() > 0 && lh.first() < lp.ls() - lp.lx(),
         "the loop head begins XFADE early"
     );
 }

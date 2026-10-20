@@ -3,7 +3,7 @@
 //! (#583); the loop's from XFADE before it, holding XFADE + `HEAD_MS`
 //! (#584).
 
-use chimera_engine::dsp::tape_engine::heads::{Bounds, window_end, window_start};
+use chimera_engine::dsp::tape_engine::heads::{Bounds, Sizing, window_end, window_start};
 use chimera_engine::dsp::tape_engine::params::TapeEngineParams;
 use chimera_engine::dsp::tape_engine::{PlayMode, TapeMachine, TapeModel};
 use chimera_engine::storage::SourceRef;
@@ -16,6 +16,7 @@ const CF: u32 = CHUNK_FRAMES.get();
 const RATE: u16 = 24_000;
 const HZ: SourceRate = SourceRate::new(RATE).unwrap();
 const FRAMES: u32 = 30 * RATE as u32;
+const FILE: core::num::NonZeroU32 = core::num::NonZeroU32::new(FRAMES).unwrap();
 
 fn r() -> SourceRef {
     SourceRef {
@@ -46,7 +47,7 @@ fn start_head_starts_before_start_made_even() {
         let p = play(PlayMode::One, start);
         let h = heads_for(r(), &p).expect("ONE streams");
         assert_eq!(h.as_slice().len(), 1, "ONE: START's head alone");
-        let s = window_start(start, FRAMES);
+        let s = window_start(start, FILE);
         let want = if s == 0 { 0 } else { (s - 1) & !1 };
         assert_eq!(h.as_slice()[0].first(), want, "START {start}");
     }
@@ -62,7 +63,7 @@ fn every_head_ends_just_past_the_next_chunk_boundary() {
         let start = s as f32 / FRAMES as f32;
         let p = play(PlayMode::One, start);
         let h = heads_for(r(), &p).unwrap().as_slice()[0];
-        let at = window_start(start, FRAMES);
+        let at = window_start(start, FILE);
         assert!(
             ends_past_a_boundary(h.end()),
             "START at {at}: ends {}",
@@ -89,26 +90,26 @@ fn loop_head_holds_xfade_and_head_ms() {
         (p.size, p.position, p.xfade) = (size, place, xfade);
         let h = heads_for(r(), &p).expect("LOOP streams");
         assert_eq!(h.as_slice().len(), 2, "LOOP: START's and the loop's");
-        let ws = window_start(p.start, FRAMES);
+        let ws = window_start(p.start, FILE);
         let b = Bounds::of(
             ws,
             window_end(ws, p.end, FRAMES, HZ),
-            (size, place, xfade),
+            Sizing { size, place, xfade },
             HZ,
         );
-        let lx = b.lx.min(xfade_max(HZ));
-        let early = if b.ls - ws >= lx { lx } else { 0 };
+        let lx = b.lx().min(xfade_max(HZ));
+        let early = if b.ls() - ws >= lx { lx } else { 0 };
         let lh = h.as_slice()[1];
         assert!(
-            lh.first() < b.ls - early,
+            lh.first() < b.ls() - early,
             "{size} {place} {xfade}: from before the fade"
         );
         assert!(
-            lh.first() + 2 >= b.ls - early,
+            lh.first() + 2 >= b.ls() - early,
             "{size} {place} {xfade}: no frame more"
         );
         assert!(
-            lh.end() >= b.ls - early + lx + reach,
+            lh.end() >= b.ls() - early + lx + reach,
             "{size} {place} {xfade}"
         );
         assert!(ends_past_a_boundary(lh.end()), "{size} {place} {xfade}");
@@ -122,7 +123,7 @@ fn a_head_stops_at_end_or_the_file() {
     let mut p = play(PlayMode::One, 0.5);
     p.end = 0.5 + 500.0 / FRAMES as f32;
     let h = heads_for(r(), &p).unwrap().as_slice()[0];
-    let we = window_end(window_start(p.start, FRAMES), p.end, FRAMES, HZ);
+    let we = window_end(window_start(p.start, FILE), p.end, FRAMES, HZ);
     assert!(
         h.end() >= we + 2 && h.end() <= we + 3,
         "to END: {} for {we}",

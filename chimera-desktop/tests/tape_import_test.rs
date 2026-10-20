@@ -1,7 +1,7 @@
 //! `chimera-import tape` (TAPE spec § 6): a WAV to a sealed `.SRC` on the
 //! sim's card, and the report that says what it made.
 
-use chimera_core::dsp::tape_engine::heads::Bounds;
+use chimera_core::dsp::tape_engine::heads::{Bounds, Sizing};
 use chimera_core::dsp::tape_engine::read::{Descriptor, Shape, SourceView};
 use chimera_core::name::SoundName;
 use chimera_core::project::Project;
@@ -209,14 +209,18 @@ fn smpl_loop_suggests_position_and_size() {
         let b = Bounds::of(
             0,
             frames,
-            (s.size, s.position, 0.0),
+            Sizing {
+                size: s.size,
+                place: s.position,
+                xfade: 0.0,
+            },
             SourceRate::new(rate.hz()).unwrap(),
         );
         let tol = frames as f32 * 0.002;
         assert!(
-            (b.ls as f32 - frames as f32 / 4.0).abs() < tol,
+            (b.ls() as f32 - frames as f32 / 4.0).abs() < tol,
             "{rate:?}: starts at {} of {frames}",
-            b.ls
+            b.ls()
         );
         assert!(
             (b.frames() as f32 - frames as f32 / 2.0).abs() < tol,
@@ -318,11 +322,15 @@ fn smpl_loop_end_is_inclusive() {
     let b = Bounds::of(
         0,
         rep.head.sref.frames,
-        (s.size, s.position, 0.0),
+        Sizing {
+            size: s.size,
+            place: s.position,
+            xfade: 0.0,
+        },
         SourceRate::MAX,
     );
     assert_eq!(b.frames(), 1_000, "{s:?}");
-    assert!(b.ls.abs_diff(99) <= 1, "{b:?}");
+    assert!(b.ls().abs_diff(99) <= 1, "{b:?}");
 }
 
 /// `--transwave 512` on 18 cycles (16 whole ones clear the resampler's

@@ -14,7 +14,8 @@
 
 use super::read::{Pos, SourceView};
 pub use super::window::{
-    Bounds, loop_len, loop_len_min, min_frames, shortest, window_end, window_end_min, window_start,
+    Bounds, Sizing, loop_len, loop_len_min, min_frames, shortest, window_end, window_end_min,
+    window_start,
 };
 use crate::dsp::algo::math::clampf;
 
@@ -129,20 +130,20 @@ pub enum Plan {
 }
 
 /// A fade of `rem` reads `rem` frames before the next pass's restart. They
-/// lie before `next.ls` if the window has them there; else inside the loop
+/// lie before `next.ls()` if the window has them there; else inside the loop
 /// (folded), up to half of it.
 pub fn plan(rem: Pos, next: &Bounds, ws: u32, le: u32) -> Plan {
     let r = rem.whole() as f32 + rem.frac();
-    let before = next.ls - ws;
+    let before = next.ls() - ws;
     if r <= before as f32 {
         return Plan::Fade {
-            restart: at(next.ls),
+            restart: at(next.ls()),
         };
     }
     let room = before.max(next.frames() / 2);
     if r <= room as f32 {
         Plan::Fade {
-            restart: at(next.ls) + rem,
+            restart: at(next.ls()) + rem,
         }
     } else if room == 0 {
         Plan::Splice
@@ -286,6 +287,7 @@ impl Fade {
 mod tests {
     use super::*;
     use crate::stream::units::SourceRate;
+    use core::num::NonZeroU32;
 
     /// A fade 100 / 2³² of a frame long: finite, its gain in [0, 1].
     #[test]
@@ -315,21 +317,10 @@ mod tests {
 
     #[test]
     fn mirror_twice_is_the_same() {
-        let b = Bounds {
-            ls: 10,
-            le: 90,
-            lx: 8,
-        };
-        assert_eq!(
-            b.mirror(100),
-            Bounds {
-                ls: 10,
-                le: 90,
-                lx: 8
-            }
-        );
+        let b = Bounds::new(10, 90, 8).unwrap();
+        assert_eq!(b.mirror(100), Bounds::new(10, 90, 8).unwrap());
         assert_eq!(b.mirror(200).mirror(200), b);
-        assert_eq!(b.mirror(200).ls, 110);
+        assert_eq!(b.mirror(200).ls(), 110);
     }
 
     #[test]
@@ -347,47 +338,52 @@ mod tests {
         assert_eq!(window_end(1_000, 0.0, 48_000, SourceRate::MAX), 1_096);
         assert_eq!(window_end(47_990, 1.0, 48_000, SourceRate::MAX), 48_000);
         assert_eq!(window_end(1, 0.0, 2, SourceRate::MAX), 2);
-        assert_eq!(window_start(1.0, 2), 1);
+        assert_eq!(window_start(1.0, NonZeroU32::new(2).unwrap()), 1);
     }
 
     #[test]
     fn neutral_folds_inside_the_loop() {
-        let b = Bounds::of(0, 10_000, (1.0, 0.0, 0.1), SourceRate::MAX);
-        assert_eq!(
-            b,
-            Bounds {
-                ls: 0,
-                le: 10_000,
-                lx: 1_000
-            }
+        let b = Bounds::of(
+            0,
+            10_000,
+            Sizing {
+                size: 1.0,
+                place: 0.0,
+                xfade: 0.1,
+            },
+            SourceRate::MAX,
         );
+        assert_eq!(b, Bounds::new(0, 10_000, 1_000).unwrap());
         let rem = at(1_000);
-        assert_eq!(plan(rem, &b, 0, b.le), Plan::Fade { restart: at(1_000) });
+        assert_eq!(plan(rem, &b, 0, b.le()), Plan::Fade { restart: at(1_000) });
     }
 
     #[test]
     fn room_before_the_loop_reads_there() {
-        let b = Bounds::of(0, 10_000, (0.5, 0.5, 0.1), SourceRate::MAX);
-        assert!(b.ls > b.lx);
+        let b = Bounds::of(
+            0,
+            10_000,
+            Sizing {
+                size: 0.5,
+                place: 0.5,
+                xfade: 0.1,
+            },
+            SourceRate::MAX,
+        );
+        assert!(b.ls() > b.lx());
         assert_eq!(
-            plan(at(b.lx), &b, 0, b.le),
-            Plan::Fade { restart: at(b.ls) }
+            plan(at(b.lx()), &b, 0, b.le()),
+            Plan::Fade {
+                restart: at(b.ls())
+            }
         );
     }
 
     #[test]
     fn a_fade_too_long_for_the_room_waits() {
-        let b = Bounds {
-            ls: 0,
-            le: 100,
-            lx: 10,
-        };
+        let b = Bounds::new(0, 100, 10).unwrap();
         assert_eq!(plan(at(5_000), &b, 0, 48_000), Plan::Later(48_000 - 50));
-        let one = Bounds {
-            ls: 0,
-            le: 1,
-            lx: 0,
-        };
+        let one = Bounds::new(0, 1, 0).unwrap();
         assert_eq!(plan(at(5), &one, 0, 48_000), Plan::Splice);
     }
 }
