@@ -116,7 +116,7 @@ pub fn env_panel(k: EnvKind) -> &'static ModPanel {
 /// CLASSIC: RATE · SHAPE · SYNC / PHASE · DEPTH · TYPE (OFST's cell is TYPE's).
 static CLASSIC: ModPanel = ModPanel {
     slots: [
-        p(L::RATE, "RATE", ValFmt::Uni),
+        p(L::RATE, "RATE", ValFmt::Law(Law::LfoHz)),
         p(L::SHAPE, "SHAPE", ValFmt::Names(&SHAPE_NAMES)),
         p(L::SYNC, "SYNC", ValFmt::Names(&SYNC_NAMES)),
         p(L::PHASE, "PHASE", ValFmt::Uni),
@@ -136,7 +136,7 @@ const FUNC_MODE: Option<PanelSlot> = Some(PanelSlot::Fixed {
 static FUNC: ModPanel = ModPanel {
     slots: [
         FUNC_MODE,
-        p(L::RISE, "RATE", ValFmt::Law(Law::BRate)),
+        p(L::RISE, "RATE", ValFmt::Law(Law::LfoRate)),
         p(L::FALL, "PHASE", ValFmt::Law(Law::Phase)),
         p(L::SHAPE_B, "TILT", ValFmt::Law(Law::Tilt)),
         LFO_FORM,
@@ -146,7 +146,7 @@ static FUNC: ModPanel = ModPanel {
 static FUNC_LFV: ModPanel = ModPanel {
     slots: [
         FUNC_MODE,
-        p(L::RISE, "RATE", ValFmt::Law(Law::BRate)),
+        p(L::RISE, "RATE", ValFmt::Law(Law::LfoRate)),
         p(L::FALL, "DELTA", ValFmt::Law(Law::Pct)),
         p(L::SHAPE_B, "SLEW", ValFmt::Law(Law::Pct)),
         LFO_FORM,

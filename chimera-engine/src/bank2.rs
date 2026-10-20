@@ -35,6 +35,10 @@ pub struct Bank2Door {
     /// bank 1's side).
     #[cfg(feature = "bank2")]
     pub va: crate::dsp::va::osc::door::VaDoor,
+    /// The LFO page's glyphs and scope curve (ADR 0177; `lfo_glyph::paint`
+    /// and `curve` are bank 1's side).
+    #[cfg(feature = "bank2")]
+    pub lfo: crate::lfo_glyph::LfoDoor,
 }
 
 #[cfg(feature = "bank2")]
@@ -52,6 +56,7 @@ static DOOR: Bank2Door = Bank2Door {
     tape: crate::dsp::tape_engine::TapeDeck::DOOR,
     reverb: crate::dsp::rev::Reverb::DOOR,
     va: crate::dsp::va::osc::door::DOOR,
+    lfo: crate::lfo_glyph::LfoDoor::DOOR,
 };
 
 #[cfg(feature = "bank2")]

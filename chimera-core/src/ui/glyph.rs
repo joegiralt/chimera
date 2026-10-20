@@ -54,6 +54,8 @@ pub enum Gauge {
     /// A crossfader at the set AMOUNT, its ends named by MODE
     /// (`blend_ends`).
     Blend { value: f32, mode: VaMode },
+    /// The LFO page's glyph (`lfo_glyph`), kept dimmed too.
+    Lfo(crate::ui::lfo_glyph::LfoGauge),
 }
 
 /// What a gauge built from more than the focused value reads.
@@ -61,6 +63,8 @@ pub enum Gauge {
 pub enum Reads {
     Composite(CompositeId),
     Va(VaGlyph),
+    /// The focused LFO slot's params.
+    Lfo,
 }
 
 /// A staff note's accidental.
@@ -768,6 +772,7 @@ pub fn gauge(
         ) as u8)),
         FocusGlyph::Composite(id) => outside(Reads::Composite(id)),
         FocusGlyph::Va(v) => outside(Reads::Va(v)),
+        FocusGlyph::Lfo => outside(Reads::Lfo),
         FocusGlyph::Arc => Gauge::Arc { value, bipolar },
     }
 }
@@ -785,7 +790,8 @@ impl Gauge {
             | Gauge::Wave(_)
             | Gauge::VaWave(_)
             | Gauge::VaMix(_)
-            | Gauge::Blend { .. } => false,
+            | Gauge::Blend { .. }
+            | Gauge::Lfo(_) => false,
             Gauge::Braid(_) | Gauge::Rings(_) | Gauge::Cube(_) | Gauge::Tail(_) => true,
         }
     }
@@ -800,6 +806,8 @@ impl Gauge {
             Gauge::VaMix(v) => (m(&v.osc[0]) ^ m(&v.osc[1]).rotate_left(11) ^ q(v.amount) << 22)
                 .wrapping_add(v.mode as u32),
             Gauge::Blend { mode, .. } => *mode as u32,
+            // Its quantised steps: it redraws when one moves.
+            Gauge::Lfo(g) => g.key(),
             _ => 0,
         }
     }
