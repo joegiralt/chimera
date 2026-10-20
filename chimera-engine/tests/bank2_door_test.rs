@@ -2,7 +2,7 @@
 //! door address opens it. A host has no bank 2, so nothing here is ever
 //! dereferenced: `with` is only called closed.
 
-use chimera_engine::bank2::{DOOR_ADDR, DoorCell};
+use chimera_engine::bank2::{DOOR_ADDR, DoorCell, Judged};
 use chimera_image::crc::Crc32;
 use chimera_image::{BANK2_BASE, Bank2Memory, Door, Header, ImageRead, ReadFail, Seal, Version};
 
@@ -23,10 +23,19 @@ unsafe impl Bank2Memory for Mem {}
 
 const SEAL: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-/// Opens `c` on a door at `door_off`.
+/// Opens `c` on a door at `door_off`, if it is this link's.
 fn open(c: &DoorCell, door_off: u32) -> bool {
     // SAFETY: the door was judged against `SEAL`, the stand-in build's seal.
-    unsafe { c.open(&door(door_off)) }
+    match unsafe { Judged::of(&door(door_off)) } {
+        Some(j) => {
+            c.open(j);
+            true
+        }
+        None => {
+            c.close();
+            false
+        }
+    }
 }
 
 fn door(door_off: u32) -> Door {
@@ -76,4 +85,17 @@ fn a_door_elsewhere_stays_closed() {
     assert!(open(&c, 0x100));
     assert!(!open(&c, 0x200));
     assert!(!c.is_open());
+}
+
+/// I2: a judged door is checked before it is published: judging leaves
+/// the cell closed, so no interrupt calls through it until `open`.
+#[test]
+fn a_judged_door_is_not_open_till_opened() {
+    let c = DoorCell::new();
+    // SAFETY: as `open`.
+    let j = unsafe { Judged::of(&door(0x100)) }.expect("this link's door");
+    assert!(!c.is_open());
+    assert!(c.with(|_| ()).is_none());
+    c.open(j);
+    assert!(c.is_open());
 }

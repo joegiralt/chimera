@@ -4,7 +4,7 @@ use core::fmt::{self, Write};
 
 /// Bank 1's state of the door, for the board.
 pub use chimera_engine::bank2::{
-    BOARD_DOOR_ADDR, DOOR_CELL, DOOR_MAGIC, PROBE_ADDS, TABLE_LEN, UI_DOOR_ADDR,
+    BOARD_DOOR_ADDR, DOOR_CELL, DOOR_MAGIC, Judged, PROBE_ADDS, TABLE_LEN, UI_DOOR_ADDR,
 };
 use chimera_hal::store::Store;
 use chimera_image::{FlashFail, Verdict};
@@ -235,9 +235,13 @@ pub fn ui_closed() -> bool {
     cfg!(feature = "tape") && ui_door(|_| ()).is_none()
 }
 
-/// The UI's table answers (the boot's door check).
-pub fn ui_door_ok() -> bool {
-    ui_door(|d| d.magic == UI_MAGIC) == Some(true)
+/// The UI's table in judged door `j` answers (the boot's door check, run
+/// before the door opens).
+#[cfg(feature = "bank2")]
+pub fn ui_door_ok(j: &chimera_engine::bank2::Judged) -> bool {
+    // SAFETY: `bank2.x` links `UI_DOOR`, a `UiDoor`, at its slot,
+    // `UI_DOOR_ADDR` (its assert).
+    unsafe { j.with_at(UI_DOOR_ADDR, |d: &UiDoor| d.magic == UI_MAGIC) }
 }
 
 /// A flash op's failure in words: `timeout`, `errors 00040000`, …
