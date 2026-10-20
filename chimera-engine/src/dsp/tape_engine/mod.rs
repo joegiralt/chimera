@@ -283,9 +283,9 @@ impl TapeDeck {
 /// Frames a head advances each output sample:
 /// `rate / sample_rate · 2^((note·100 + pitch − root) / 1200)`, clamped
 /// (`Inc`).
-pub fn inc(rate: SourceRate, note: u8, pitch: Cents, root: Cents, sample_rate: u32) -> Inc {
+pub fn inc(rate: SourceRate, note: MidiNote, pitch: Cents, root: Cents, sample_rate: u32) -> Inc {
     let oct = clampf(
-        (note as f32 * 100.0 + pitch.get() - root.get()) / 1_200.0,
+        (f32::from(note.get()) * 100.0 + pitch.get() - root.get()) / 1_200.0,
         -40.0,
         40.0,
     );
@@ -590,20 +590,20 @@ pub struct TapeDeck {
     /// The last sample out: a note-on ramps from it, so a retrigger never
     /// steps.
     last: f32,
-    note: u8,
-    /// PIT's PITCH and FINE with their routes, cents.
-    pitch: f32,
+    note: MidiNote,
+    /// PIT's PITCH and FINE with their routes.
+    pitch: Cents,
     /// A glide steal's ratio, gliding to 1.
     slide: Glide,
     /// ROOT, latched at note-on.
-    root: f32,
+    root: Cents,
     /// TAPE: this voice's transport, run once a block, at its own rates
     /// at depth 1; its speed deviation this block, cents.
     wow: Transport,
     tap: Tap,
     /// The voice's own draws: each note's wow rate.
     rng: u32,
-    cents: f32,
+    cents: Cents,
     /// AGE: this voice's wear.
     age: Age,
     /// WOW, latched at note-on, and WARBLE's draws, this voice's own.
@@ -671,14 +671,14 @@ impl TapeDeck {
             gain: 0.0,
             ramp: false,
             last: 0.0,
-            note: 60,
-            pitch: 0.0,
+            note: MidiNote::clamped(60),
+            pitch: Cents::ZERO,
             slide: Glide::new(1.0, 1.0),
-            root: 6_000.0,
+            root: Cents::new(6_000.0),
             wow: Transport::new(),
             tap: Tap::speed_cents(1.0, BLOCK_RATE),
             rng: 0x510E_527F,
-            cents: 0.0,
+            cents: Cents::ZERO,
             age: Age::new(),
             wow_kind: Wow::Capstan,
             warble: Warble::new(),
@@ -931,13 +931,13 @@ impl TapeDeck {
         sample_rate: u32,
         streams: Option<&mut StreamPort<'_, '_>>,
     ) {
-        self.start_from(note, p, src, sample_rate, streams, 0);
+        self.start_from(MidiNote::clamped(note), p, src, sample_rate, streams, 0);
     }
 
     /// `start`, a gated note `waited` blocks after its note-on.
     fn start_from(
         &mut self,
-        note: u8,
+        note: MidiNote,
         p: &TapeEngineParams,
         src: &GateView<'_>,
         sample_rate: u32,
@@ -958,7 +958,9 @@ impl TapeDeck {
             None => None,
         };
         match v {
-            Some(v) if wave::playable(p.machine, &v) => self.note_on(note, p, &v, sample_rate),
+            Some(v) if wave::playable(p.machine, &v) => {
+                self.note_on(note.get(), p, &v, sample_rate)
+            }
             None if self.src.is_some_and(|id| src.moving(id)) => {
                 self.note = note;
                 if self.tape_machine() != p.machine {
@@ -978,7 +980,7 @@ impl TapeDeck {
     #[inline(never)]
     fn start_streamed(
         &mut self,
-        note: u8,
+        note: MidiNote,
         p: &TapeEngineParams,
         held: (&[u8], Descriptor),
         (sample_rate, waited): (u32, u32),
@@ -998,7 +1000,7 @@ impl TapeDeck {
             return;
         };
         // Reads nothing: the window from the file's frames and the rate.
-        self.note_on(note, p, &head.view, sample_rate);
+        self.note_on(note.get(), p, &head.view, sample_rate);
         let rate = row.desc().rate();
         let r = port.ratio_max.unwrap_or_else(|| self.own_ratio(note));
         self.state = Note::Playing(Feed::Streamed(Stream {
@@ -1029,19 +1031,14 @@ impl TapeDeck {
 
     /// An unbilled port's ratio (the bench's, the deck tests'): `note` at
     /// its pitch, and wow. SLICE NOTE plays at ROOT.
-    fn own_ratio(&self, note: u8) -> ReadRatio {
+    fn own_ratio(&self, note: MidiNote) -> ReadRatio {
         let root = if self.at_root {
-            f32::from(note) * 100.0
+            Cents::new(f32::from(note.get()) * 100.0)
         } else {
             self.root
         };
         let wow = crate::stream::admit::WOW_CENTS.get();
-        crate::stream::admit::ratio_max(
-            MidiNote::clamped(note),
-            Cents::new(root),
-            Cents::new(self.pitch + wow),
-            Cents::ZERO,
-        )
+        crate::stream::admit::ratio_max(note, root, Cents::new(self.pitch.get() + wow), Cents::ZERO)
     }
 
     /// A note that waited `blocks` on a moving source plays from where
@@ -1055,8 +1052,8 @@ impl TapeDeck {
         let i = inc(
             rate,
             self.note,
-            Cents::new(self.pitch + self.tune()),
-            Cents::new(self.root),
+            Cents::new(self.pitch.get() + self.tune().get()),
+            self.root,
             sample_rate,
         )
         .get();
@@ -1145,11 +1142,11 @@ impl TapeDeck {
     }
 
     /// SLICE NOTE plays at ROOT: the cents that take the note there.
-    fn tune(&self) -> f32 {
+    fn tune(&self) -> Cents {
         if self.at_root {
-            self.root - f32::from(self.note) * 100.0
+            Cents::new(self.root.get() - f32::from(self.note.get()) * 100.0)
         } else {
-            0.0
+            Cents::ZERO
         }
     }
 
@@ -1437,8 +1434,11 @@ impl TapeDeck {
     /// no cap, and its cap: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn speed(&self) -> Option<(f32, f32)> {
-        let cents =
-            f32::from(self.note) * 100.0 + self.pitch + self.cents + self.tune() - self.root;
+        let cents = f32::from(self.note.get()) * 100.0
+            + self.pitch.get()
+            + self.cents.get()
+            + self.tune().get()
+            - self.root.get();
         let Note::Playing(Feed::Streamed(s)) = self.state else {
             return None;
         };
@@ -1462,7 +1462,7 @@ impl TapeDeck {
     /// The voice's PITCH and FINE with their routes, in cents, for the next
     /// `note_on` or `render`.
     pub fn set_pitch(&mut self, cents: f32) {
-        self.pitch = cents;
+        self.pitch = Cents::new(cents);
     }
 
     /// MODEL, START, ROOT, DRAG, WOW and SLICE latch here; the head starts
@@ -1474,12 +1474,13 @@ impl TapeDeck {
         v: &SourceView<'_>,
         sample_rate: u32,
     ) {
+        let note = MidiNote::clamped(note);
         let (frames, rate) = (v.frames(), v.desc().rate());
         self.state = Note::Playing(Feed::Ram);
         self.at_root = params::at_root(p);
         self.hold = params::hold(p);
         self.note = note;
-        self.root = p.root;
+        self.root = Cents::new(p.root);
         self.slide = Glide::new(1.0, 1.0);
         self.inc.hold();
         // This note's wow rate, ±`WOW_SPREAD`: one draw, the phase runs on.
@@ -1515,19 +1516,14 @@ impl TapeDeck {
             return;
         }
         if self.model() == TapeModel::Transwave {
-            self.machine =
-                MachineState::Wave(Wave::on(v, wave::cycles(note, self.pitch, sample_rate)));
+            self.machine = MachineState::Wave(Wave::on(
+                v,
+                wave::cycles(note.get(), self.pitch.get(), sample_rate),
+            ));
             return;
         }
         if self.model() == TapeModel::Stretch {
-            let i = inc(
-                rate,
-                note,
-                Cents::new(self.pitch),
-                Cents::new(self.root),
-                sample_rate,
-            )
-            .get();
+            let i = inc(rate, note, self.pitch, self.root, sample_rate).get();
             self.machine = MachineState::Stretch(Stretch::on(p, v, i, &self.mac, sample_rate));
             return;
         }
@@ -1536,14 +1532,7 @@ impl TapeDeck {
         self.ws = window_start(start, v.file_frames());
         // The first pass's floor, at the note's own `inc` (SCRUB: its loop's
         // vari-speed).
-        let mut fast = inc(
-            rate,
-            note,
-            Cents::new(self.pitch),
-            Cents::new(self.root),
-            sample_rate,
-        )
-        .get();
+        let mut fast = inc(rate, note, self.pitch, self.root, sample_rate).get();
         if self.model() == TapeModel::Scrub {
             fast = (2.0 * libm::fabsf(clampf(p.motion, -1.0, 1.0)) * fast).min(INC_MAX);
         }
@@ -1669,11 +1658,17 @@ impl TapeDeck {
     /// side but at the source's edge, mirrored about it when END is before
     /// START. TRON's tape runs
     /// out after SIZE's length in output samples.
-    fn once_on(&mut self, note: u8, p: &TapeEngineParams, v: &SourceView<'_>, sample_rate: u32) {
+    fn once_on(
+        &mut self,
+        note: MidiNote,
+        p: &TapeEngineParams,
+        v: &SourceView<'_>,
+        sample_rate: u32,
+    ) {
         let (frames, rate) = (v.frames(), v.desc().rate());
         let mut w = Window::of(p.start, p.end, frames, min_frames(rate));
         let left = if self.one() {
-            w = slice_bounds(w, p.slice.slice(), note);
+            w = slice_bounds(w, p.slice.slice(), note.get());
             u32::MAX
         } else {
             let strip = w.frames() as f32 / f32::from(rate);
@@ -1726,6 +1721,7 @@ impl TapeDeck {
     /// `tau` seconds in log pitch. Idle, or on `note`, nothing moves.
     /// Gated, the note it starts on moves (its `note_on` drops the glide).
     pub fn glide_to(&mut self, note: u8, (_sample_rate, tau): (u32, f32)) {
+        let note = MidiNote::clamped(note);
         if !self.is_active() || note == self.note {
             return;
         }
@@ -1733,7 +1729,7 @@ impl TapeDeck {
         let from = if self.at_root {
             self.slide.value()
         } else {
-            exp2((self.note as f32 - note as f32) / 12.0) * self.slide.value()
+            exp2((f32::from(self.note.get()) - f32::from(note.get())) / 12.0) * self.slide.value()
         };
         self.slide = Glide::new(from, tau);
         self.slide.toward(1.0);
@@ -1968,12 +1964,12 @@ impl TapeDeck {
         self.cents = if self.mac.tape > 0.0 {
             if to.tape == 0.0 && self.mac.tape < MACRO_SETTLE {
                 self.mac.tape = 0.0;
-                0.0
+                Cents::ZERO
             } else {
                 self.transport()
             }
         } else {
-            0.0
+            Cents::ZERO
         };
         if self.mac.age > 0.0 && to.age == 0.0 && self.mac.age < MACRO_SETTLE {
             self.mac.age = 0.0;
@@ -1981,7 +1977,11 @@ impl TapeDeck {
         self.slide.tick();
         if let MachineState::Wave(w) = &mut self.machine {
             let target = clampf(
-                wave::cycles(self.note, self.pitch + self.cents, sample_rate) * self.slide.value(),
+                wave::cycles(
+                    self.note.get(),
+                    self.pitch.get() + self.cents.get(),
+                    sample_rate,
+                ) * self.slide.value(),
                 f32::EPSILON,
                 wave::CYCLES_MAX,
             );
@@ -1996,7 +1996,7 @@ impl TapeDeck {
         } else if self.one_head() {
             self.render_once(out, reads, sample_rate);
         } else if self.model() == TapeModel::Stretch {
-            let target = self.target_inc(v.desc().rate(), 0.0, sample_rate);
+            let target = self.target_inc(v.desc().rate(), Cents::ZERO, sample_rate);
             let m = self.mac;
             if let MachineState::Stretch(st) = &mut self.machine {
                 st.render(
@@ -2038,13 +2038,13 @@ impl TapeDeck {
     /// PITCH, FINE, the wow and `extra` cents, a glide steal's ratio on it,
     /// clamped. Out of line: one copy for every model that plays heads.
     #[inline(never)]
-    fn target_inc(&self, rate: SourceRate, extra: f32, sample_rate: u32) -> f32 {
+    fn target_inc(&self, rate: SourceRate, extra: Cents, sample_rate: u32) -> f32 {
         clampf(
             inc(
                 rate,
                 self.note,
-                Cents::new(self.pitch + self.cents + extra),
-                Cents::new(self.root),
+                Cents::new(self.pitch.get() + self.cents.get() + extra.get()),
+                self.root,
                 sample_rate,
             )
             .get()
@@ -2058,19 +2058,19 @@ impl TapeDeck {
     /// (`Tap::speed_cents`), which `inc` ramps to across the block. TAPE 0
     /// adds exact zeros. The voice's rates were set at its seed (`tap`, depth 1), so a block
     /// only scales the offsets by TAPE.
-    fn transport(&mut self) -> f32 {
+    fn transport(&mut self) -> Cents {
         #[cfg(any(test, feature = "test-support"))]
         if self.no_transport {
-            return 0.0;
+            return Cents::ZERO;
         }
-        match self.wow_kind {
+        Cents::new(match self.wow_kind {
             Wow::Capstan => {
                 let (wow, flutter) = self.wow.offsets(&self.tap);
                 (wow + flutter) * self.mac.tape
             }
             // In place of the capstan, never beside it.
             Wow::Warble => self.warble.cents(self.mac.tape, BLOCK_RATE),
-        }
+        })
     }
 
     /// ONESHOT's and TRON's block: one head toward the window's end, its
@@ -2244,7 +2244,7 @@ impl TapeDeck {
                 / sample_rate as f32;
         self.walk = w - libm::floorf(w);
 
-        let target = self.target_inc(rate, 0.0, sample_rate);
+        let target = self.target_inc(rate, Cents::ZERO, sample_rate);
         let (mut from, mut to) = self.inc.step(target);
         // The next pass's frame: LOOP's END moved across START flips it,
         // at the next wrap. Its window's start is that frame's.

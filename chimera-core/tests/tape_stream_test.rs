@@ -120,7 +120,15 @@ fn rings() -> (Box<Rings>, Box<ThirdSlots>) {
 /// speed), as the deck works them out.
 fn heads_at(p: &TapeEngineParams, frames: u32, note: u8) -> [u32; 2] {
     let ws = window_start(p.start, NonZeroU32::new(frames).unwrap());
-    let fast = inc(HZ, note, Cents::ZERO, Cents::new(p.root), SR).get() * 1.02;
+    let fast = inc(
+        HZ,
+        MidiNote::clamped(note),
+        Cents::ZERO,
+        Cents::new(p.root),
+        SR,
+    )
+    .get()
+        * 1.02;
     let floor = shortest(HZ, fast.min(INC_MAX));
     let we = window_end_min(ws, p.end, frames, floor);
     let b = Bounds::of_min(ws, we, sizing(p), HZ, floor);
