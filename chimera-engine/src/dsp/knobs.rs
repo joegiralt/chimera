@@ -158,6 +158,8 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
                 offset_of!(FilterParams, stability)
             } else if id == FilterParams::FB.0 {
                 offset_of!(FilterParams, fb)
+            } else if id == FilterParams::MORPH.0 {
+                offset_of!(FilterParams, morph)
             } else {
                 panic!("a filter knob without a field")
             };

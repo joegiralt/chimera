@@ -113,6 +113,15 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     } else {
         ""
     };
+    // SEM's kernel (ADR 0192): `filter::sem::kern`, every loop of it, text
+    // and rodata. Only with `bank2`: without it `Sem::process` calls it in
+    // bank 1.
+    let sem = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
+        "    *(.text.*6filter3sem4kern* .rodata.*6filter3sem4kern*);
+"
+    } else {
+        ""
+    };
     fs::write(
         out_dir.join("bank2.x"),
         r#"
@@ -143,6 +152,7 @@ SECTIONS {
     /* LOOK */
     /* FUZZ */
     /* FED */
+    /* SEM */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -155,7 +165,8 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("    /* LFO */\n", lfo)
         .replace("    /* LOOK */\n", look)
         .replace("    /* FUZZ */\n", fuzz)
-        .replace("    /* FED */\n", fed),
+        .replace("    /* FED */\n", fed)
+        .replace("    /* SEM */\n", sem),
     )
     .unwrap();
 
