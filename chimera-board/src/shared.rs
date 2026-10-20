@@ -308,9 +308,17 @@ pub static AUDIO_CYCLES: AtomicU32 = AtomicU32::new(0);
 pub static MIDI_CYCLES: AtomicU32 = AtomicU32::new(0);
 /// A count of CPU cycles, or a reading of the wrapping cycle counter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Cycles(pub u32);
+pub struct Cycles(u32);
 
 impl Cycles {
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
     pub fn now() -> Self {
         Self(cortex_m::peripheral::DWT::cycle_count())
     }
@@ -341,7 +349,7 @@ pub fn stamp(over: impl Fn() -> u32) -> Stamp {
         if over() == before {
             return Stamp {
                 at,
-                over: Cycles(before),
+                over: Cycles::new(before),
             };
         }
     }

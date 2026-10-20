@@ -97,6 +97,6 @@ fn USART1() {
     }
     let leave = stamp(audio_cycles);
     let audio = leave.over.since(enter.over);
-    let own = leave.at.since(enter.at).0.saturating_sub(audio.0);
+    let own = leave.at.since(enter.at).get().saturating_sub(audio.get());
     MIDI_CYCLES.fetch_add(own, Ordering::Relaxed);
 }

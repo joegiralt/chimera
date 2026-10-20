@@ -403,7 +403,12 @@ fn start_card(
 ) -> bool {
     use stm32h7xx_hal::spi::{Enabled, Spi};
     let ker = Spi::<pac::SPI2, Enabled>::kernel_clk_unwrap(clocks).raw();
-    card_dma::init(nvic, side, card_dma::Hz(ker), card_dma::Hz(cpu_hz))
+    card_dma::init(
+        nvic,
+        side,
+        card_dma::Hz::new(ker),
+        card_dma::Hz::new(cpu_hz),
+    )
 }
 
 /// The bench's text and flush, built here with the UI's (ADR 0108):

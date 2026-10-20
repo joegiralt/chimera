@@ -327,19 +327,29 @@ struct Line {
 
 impl Line {
     fn us(&self, cycles: Cycles) -> Micros {
-        Micros::new(cycles.0 / self.cycles_per_us.0)
+        Micros::new(cycles.get() / self.cycles_per_us.get())
     }
 }
 
 /// A clock rate in hertz.
 #[derive(Clone, Copy)]
-pub struct Hz(pub u32);
+pub struct Hz(u32);
+
+impl Hz {
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
 
 /// Polls `ready` for at most `cycles` cycles and `cycles` tries, so a
 /// cycle counter that doesn't count still ends it.
 fn wait(cycles: Cycles, mut ready: impl FnMut() -> bool) -> bool {
     let t0 = Cycles::now();
-    for _ in 0..cycles.0 {
+    for _ in 0..cycles.get() {
         if ready() {
             return true;
         }
@@ -918,7 +928,7 @@ static IRQ: IrqOnly<IrqState> = IrqOnly::new();
 /// nothing streams (the boot lends the registry no rows).
 #[must_use]
 pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker: Hz, cpu: Hz) -> bool {
-    let Some(mbr) = Mbr::fastest(spi_ker.0, SD_FAST_HZ) else {
+    let Some(mbr) = Mbr::fastest(spi_ker.get(), SD_FAST_HZ) else {
         STATS.faults.fetch_add(1, Ordering::Relaxed);
         return false;
     };
@@ -963,12 +973,12 @@ pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker: Hz, cpu: Hz) -> b
     rx.fcr.write(|w| w.dmdis().enabled());
     tx.fcr.write(|w| w.dmdis().enabled());
     clear_streams(d);
-    let cycles_per_us = Cycles((cpu.0 / 1_000_000).max(1));
+    let cycles_per_us = Cycles::new((cpu.get() / 1_000_000).max(1));
     let line = Line {
         mbr,
-        clock: BytesPerSec::spi(mbr.sck_hz(spi_ker.0)),
-        reg_wait: Cycles(REG_WAIT_US.get() * cycles_per_us.0),
-        drain_bytes: BytesPerSec::spi(mbr.sck_hz(spi_ker.0)).bytes_in(TOKEN_TIMEOUT_MS),
+        clock: BytesPerSec::spi(mbr.sck_hz(spi_ker.get())),
+        reg_wait: Cycles::new(REG_WAIT_US.get() * cycles_per_us.get()),
+        drain_bytes: BytesPerSec::spi(mbr.sck_hz(spi_ker.get())).bytes_in(TOKEN_TIMEOUT_MS),
         cycles_per_us,
     };
     let st = IrqState {
@@ -1012,11 +1022,13 @@ fn DMA2_STR0() {
     st.step(ev, asked);
     let leave = clocks();
     let wall = leave.at.since(enter.at);
-    let own = wall.0.saturating_sub(leave.over.since(enter.over).0);
+    let own = wall
+        .get()
+        .saturating_sub(leave.over.since(enter.over).get());
     // The bench's check is no streaming cost.
     #[cfg(feature = "bench")]
     let own = own.saturating_sub(bench::CHECK_CYCLES.swap(0, Ordering::Relaxed));
-    let own_us = st.line.us(Cycles(own)).get();
+    let own_us = st.line.us(Cycles::new(own)).get();
     STATS
         .irq_us_max
         .fetch_max(st.line.us(wall).get(), Ordering::Relaxed);
@@ -1792,7 +1804,7 @@ mod bench {
         {
             BENCH.check_failed(v);
         }
-        CHECK_CYCLES.fetch_add(Cycles::now().since(t0).0, Ordering::Relaxed);
+        CHECK_CYCLES.fetch_add(Cycles::now().since(t0).get(), Ordering::Relaxed);
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
