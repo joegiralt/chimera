@@ -454,8 +454,8 @@ impl K2040 {
         let v = p.voice;
         let (from, to, gain) = four_pole_ends(&mut self.last, p, v.trim(), fs, mods);
         Ramps {
-            g: (from.g, to.g),
-            k: (from.k, to.k),
+            g: mods.spread.g((from.g, to.g)),
+            k: mods.spread.k((from.k, to.k)),
             a: (gain.0 * v.alpha(), gain.1 * v.alpha()),
             voice: v,
         }

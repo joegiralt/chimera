@@ -14,6 +14,7 @@ pub mod ladder;
 pub mod level;
 #[cfg(any(test, feature = "probe", feature = "filter-probe"))]
 pub mod probe;
+pub mod stability;
 
 pub use clean::Clean;
 pub use dirty::Dirty;
@@ -23,6 +24,7 @@ pub use level::{
     FilterMods, LevelRamp, LevelStage, clip_amount, clipped, level_from_drive, level_gain,
     translate_drive,
 };
+pub use stability::{FilterStability, Spread};
 
 /// The filter modes. The discriminants are the old `mode` byte (#111), so
 /// every Sound keeps its mode (LP24 = 2); new ones append (ADR 0009).
@@ -206,8 +208,8 @@ impl FilterKind {
     ];
 
     /// The 2040 and LADDER: four stages and ramp ends, one slot between
-    /// them (`Poles`).
-    const fn four_pole(self) -> bool {
+    /// them (`Poles`); the kinds STABILITY acts on (ADR 0168).
+    pub const fn four_pole(self) -> bool {
         matches!(self, FilterKind::K2040 | FilterKind::Ladder)
     }
 

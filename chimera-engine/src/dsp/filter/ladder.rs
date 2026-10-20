@@ -350,8 +350,8 @@ impl Ladder {
     pub(super) fn ramps(&mut self, p: &FilterParams, fs: u32, mods: &FilterMods) -> Ramps {
         let (from, to, gain) = four_pole_ends(&mut self.last, p, TRIM_LADDER, fs, mods);
         Ramps {
-            g: (from.g, to.g),
-            k: (from.k, to.k),
+            g: mods.spread.g((from.g, to.g)),
+            k: mods.spread.k((from.k, to.k)),
             a: (gain.0 * ALPHA_LADDER, gain.1 * ALPHA_LADDER),
         }
     }
