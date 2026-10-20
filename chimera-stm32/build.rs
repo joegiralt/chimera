@@ -70,9 +70,10 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
         ""
     };
     // The VA's MOD oscillators (ADR 0163): `va::osc::door`, every MOD
-    // render's entry and its runs' instances. Only with `bank2`.
+    // render's entry and its runs' instances, and LOOPFM's render. Only with `bank2`.
     let va = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
-        "    *(.text.*3osc4door* .rodata.*3osc4door*);
+        "    *(.text.*3osc4door* .rodata.*3osc4door* .text.*4lbfm11render_loop* .rodata.*4lbfm11render_loop*
+      .text.*8VaEngine13render_loopfm* .rodata.*8VaEngine13render_loopfm*);
 "
     } else {
         ""

@@ -104,10 +104,15 @@ impl LfoView {
         }
     }
 
-    /// The UI: the Part whose LFO page is up, or none, which also clears
-    /// the last playheads: the next page up starts with none.
+    /// The UI, each frame: the Part whose LFO page is up, or none. Stored
+    /// only when it changes; leaving clears the last playheads, so the
+    /// next page up starts with none.
     pub fn watch(&self, part: Option<usize>) {
-        self.watch.store(part.map_or(0, |p| p as u32 + 1), Relaxed);
+        let w = part.map_or(0, |p| p as u32 + 1);
+        if self.watch.load(Relaxed) == w {
+            return;
+        }
+        self.watch.store(w, Relaxed);
         if part.is_none() {
             self.at.iter().for_each(|w| w.store(0, Relaxed));
         }

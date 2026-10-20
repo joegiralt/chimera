@@ -1,6 +1,7 @@
-//! VA FM's OSC 1 through the door (ADR 0163): with no door (a build
-//! without `bank2`) or open, FM plays every bit it played before the
-//! move; closed, an FM voice is silent and the other MODEs play on.
+//! VA FM's OSC 1, LOOPFM's render and SOFT SYNC's OSC 2 through the door
+//! (ADR 0163): with no door (a build without `bank2`) or open, they play
+//! every bit they played in bank 1; closed, such a voice is silent and the
+//! other MODEs play on.
 
 use core::mem::MaybeUninit;
 
@@ -11,12 +12,13 @@ use chimera_hal::BLOCK_SIZE;
 const SR: u32 = 48_000;
 const BLOCKS: usize = 200;
 
-/// FM's three runs, a sub, STABILITY's jitter, the duck both ways (MIX
-/// to FM at block 60, back at 140), on a low and a high note.
-fn scene(note: u8, b: usize) -> VaParams {
+/// A door MODE's runs, a sub, STABILITY's jitter, the duck both ways (MIX
+/// to `mode` at block 60, back at 140), on a low and a high note; SOFT
+/// SYNC's OSC 2 a fifth up.
+fn scene(note: u8, b: usize, mode: VaMode) -> VaParams {
     VaParams {
         mode: if (60..140).contains(&b) {
-            VaMode::Fm
+            mode
         } else {
             VaMode::Mix
         },
@@ -25,7 +27,14 @@ fn scene(note: u8, b: usize) -> VaParams {
         amount: if b < 100 { 0.5 } else { 1.0 },
         stability: 0.5,
         sub: 0.5,
-        coarse: [0, if note > 70 { 7 } else { 0 }],
+        coarse: [
+            0,
+            if note > 70 || mode == VaMode::SoftSync {
+                7
+            } else {
+                0
+            },
+        ],
         ..VaParams::default()
     }
 }
@@ -54,43 +63,57 @@ fn print(blocks: &[[f32; BLOCK_SIZE]]) -> u64 {
 }
 
 /// The scenes' prints before the move (`896bae53`, OSC 1's MOD render
+/// called in place; SOFT SYNC's at `52b48dd7`, OSC 2's reversing render
 /// called in place).
-const BEFORE: [(u8, u64); 2] = [(48, 0x69d1_9009_2f94_a263), (84, 0xe30a_41c6_2610_2b05)];
+const BEFORE: [(VaMode, u8, u64); 6] = [
+    (VaMode::Fm, 48, 0x69d1_9009_2f94_a263),
+    (VaMode::Fm, 84, 0xe30a_41c6_2610_2b05),
+    (VaMode::LoopFm, 48, 0x406a_4dee_d44b_bc0d),
+    (VaMode::LoopFm, 84, 0xa9ac_ea23_5650_161a),
+    (VaMode::SoftSync, 48, 0x08e9_a681_9062_1129),
+    (VaMode::SoftSync, 84, 0x91c2_07b0_480f_bb78),
+];
 
 fn plays_as_before() {
-    for (note, want) in BEFORE {
-        assert_eq!(print(&take(note, |b| scene(note, b))), want, "note {note}");
+    for (mode, note, want) in BEFORE {
+        assert_eq!(
+            print(&take(note, |b| scene(note, b, mode))),
+            want,
+            "{mode:?} note {note}"
+        );
     }
 }
 
 #[cfg(not(all(feature = "bank2", feature = "test-support")))]
 #[test]
-fn fm_plays_as_before_with_no_door() {
+fn the_door_modes_play_as_before_with_no_door() {
     plays_as_before();
 }
 
 /// One test: the door is a process-wide static.
 #[cfg(all(feature = "bank2", feature = "test-support"))]
 #[test]
-fn fm_plays_through_the_door_and_is_silent_closed() {
+fn the_door_modes_play_through_the_door_and_are_silent_closed() {
     use chimera_engine::bank2::DOOR_CELL;
     assert!(!DOOR_CELL.is_open());
     let silent = |b: &[f32; BLOCK_SIZE]| b.iter().all(|&v| v == 0.0);
     // Closed: FM is silent from the duck's swap, and only there; MIX plays
     // into it and out of it (no panic, the duck runs on).
-    for note in [48, 84] {
-        let y = take(note, |b| scene(note, b));
-        for (b, blk) in y.iter().enumerate() {
-            // the duck swaps after two blocks down, both ways
-            let fm = (62..142).contains(&b);
-            assert_eq!(silent(blk), fm, "note {note} block {b}");
+    for mode in [VaMode::Fm, VaMode::LoopFm, VaMode::SoftSync] {
+        for note in [48, 84] {
+            let y = take(note, |b| scene(note, b, mode));
+            for (b, blk) in y.iter().enumerate() {
+                // the duck swaps after two blocks down, both ways
+                let door = (62..142).contains(&b);
+                assert_eq!(silent(blk), door, "{mode:?} note {note} block {b}");
+            }
         }
     }
     // Every other MODE plays as with the door open.
     let other = |m: VaMode| {
         move |b: usize| VaParams {
             mode: m,
-            ..scene(48, b)
+            ..scene(48, b, VaMode::Fm)
         }
     };
     let modes = VaMode::ALL.into_iter().filter(|m| !m.in_bank2());

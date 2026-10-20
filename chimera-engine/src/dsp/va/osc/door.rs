@@ -35,10 +35,19 @@ pub struct VaDoor {
     /// OSC 1's recording, flipping `MOD` instance: FM `k = (1, 0)`,
     /// PHASE `(0, 1)`.
     pub osc1_mod: ModRender,
+    /// LOOPFM's whole render (`VaEngine::render_loopfm`, with
+    /// `lbfm::render_loop`).
+    pub loopfm: crate::dsp::va::LoopFmRender,
+    /// OSC 2's reversing instance: SOFT SYNC, `k = (0, 0)` (ADR 0161).
+    pub osc2_rev: ModRender,
 }
 
 #[cfg(feature = "bank2")]
-pub const DOOR: VaDoor = VaDoor { osc1_mod };
+pub const DOOR: VaDoor = VaDoor {
+    osc1_mod,
+    loopfm: crate::dsp::va::VaEngine::render_loopfm,
+    osc2_rev,
+};
 
 /// OSC 1's `MOD` render (`<64, true, false, true, true>`): it records the
 /// wraps and the sub's flips on its clock.
@@ -57,6 +66,25 @@ pub fn osc1_mod(
 ) {
     let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
     o.render_in::<BLOCK_SIZE, true, false, true, true>(out, mk, r, jit, &mut draw, m, k);
+}
+
+/// OSC 2's reversing render (`<64, false, true, false, true>`): a mark is
+/// a turn, its read reverses there (SOFT SYNC, ADR 0161).
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+pub fn osc2_rev(
+    o: &mut VarOsc,
+    out: &mut [f32; BLOCK_SIZE],
+    mk: &mut [[f32; 2]; BLOCK_SIZE],
+    r: &Ramps,
+    jit: &mut f32,
+    stab: &mut Stability,
+    jd: f32,
+    m: &[f32; BLOCK_SIZE],
+    k: (f32, f32),
+) {
+    let mut draw = || 1.0 + jd * stab.jitter_word() as f32;
+    o.render_in::<BLOCK_SIZE, false, true, false, true>(out, mk, r, jit, &mut draw, m, k);
 }
 
 /// `VarOsc::run`'s `MOD` instances.
