@@ -81,8 +81,12 @@ impl TapeDeck {
     }
 }
 
+// A deck is built on its voice's first call through the door, in the audio
+// block: eight voices' first notes in one block write eight decks, a few
+// µs. Kept small so that stays so; never copied whole (no `Copy`).
+const _: () = assert!(size_of::<TapeDeck>() <= 1024);
+
 /// A voice's TAPE: the deck's room, and whether it is built.
-#[derive(Clone, Copy)]
 pub struct TapeEngine {
     deck: MaybeUninit<TapeDeck>,
     /// `deck` is built: every field written through the door.

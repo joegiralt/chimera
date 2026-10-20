@@ -411,7 +411,6 @@ enum Row<'v> {
 }
 
 #[cfg(feature = "tape")]
-#[derive(Clone, Copy)]
 pub struct TapeDeck {
     /// The source a note plays, latched at note-on (ADR 0087): never
     /// re-resolved, its row read each block.
