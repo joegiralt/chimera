@@ -144,7 +144,8 @@ fn the_engine_operators_are_the_reference() {
                             | VaMode::Am
                             | VaMode::Max
                             | VaMode::LoopFm
-                            | VaMode::SoftSync => {
+                            | VaMode::SoftSync
+                            | VaMode::Phase => {
                                 assert_eq!(got.to_bits(), want.to_bits(), "{mode:?} {a} {b} {x}")
                             }
                             VaMode::Xor => {
