@@ -29,9 +29,11 @@ fn render(p: &ParamSnapshot, note: u8) -> Vec<f32> {
 }
 
 /// `engine`'s INIT with the slot at `ty`, `place`, P1 ½ and `mix`; the
-/// other pots at their defaults (P2 ½, LEVEL ½).
+/// other pots at their defaults (P2 ½, LEVEL ½). The filter at STABILITY
+/// 1, as the goldens were recorded: the slot is what they pin.
 fn slot(engine: EngineType, ty: FxType, place: Place, mix: f32) -> ParamSnapshot {
     let mut p = Sound::init(engine).params;
+    p.filter.stability = 1.0;
     p.fx.set_type(ty);
     (p.fx.place, p.fx.pots[0], p.fx.mix) = (place, 0.5, mix);
     p

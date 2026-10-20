@@ -112,6 +112,6 @@ fn registry_accepts_exactly_the_modulatable_addresses() {
     // FX column's.)
     // + ENV n LEVEL, TIME, RISE, FALL, SHAPE; VCA; PITCH, FINE; Modal's macros;
     // VA's eleven; each operator's FRMT and BW, and VOWEL; the FX slot's
-    // pots and MIX
-    assert_eq!(accepted, 11 + 3 * 5 + 1 + 2 + 4 + 11 + 2 * 6 + 1 + 4);
+    // pots and MIX; the filter's STABILITY and FB
+    assert_eq!(accepted, 11 + 3 * 5 + 1 + 2 + 4 + 11 + 2 * 6 + 1 + 4 + 2);
 }

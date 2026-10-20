@@ -2441,3 +2441,88 @@ fn a_fuzz_part_sheds_only_near_the_limit() {
         assert!(8 * one <= budget, "{v:?}: {} > {budget}", 8 * one);
     }
 }
+
+/// ADR 0168: STABILITY bills `STAB_COST` (3) on the 2040 and LADDER below
+/// 1 or routed, and nothing at 1, so a stable Sound's bill is today's; CLEAN
+/// and DIRTY never read it. INIT's Prophet setting keeps INIT VA's voices
+/// on every room.
+#[test]
+fn stability_bills_the_four_pole_kinds_below_one() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::filter::stability::STAB_COST;
+    use chimera_core::params::FilterParams;
+    use chimera_core::preset::Sound;
+    assert_eq!(STAB_COST, Cost(3));
+    let stab = ParamAddr::new(BlockRef::Filter, FilterParams::STAB);
+    let lfo = routes(&[(ModSource::Lfo1, stab, 40)]);
+    for kind in FilterKind::BUILT {
+        let mut p = on(kind);
+        let base = Voice::cost(&p, &ModState::new());
+        p.filter.stability = 0.5;
+        let extra = if kind.four_pole() {
+            STAB_COST
+        } else {
+            Cost::ZERO
+        };
+        assert_eq!(Voice::cost(&p, &ModState::new()), base + extra, "{kind:?}");
+        // Routed, over the route's own bill (CLEAN's, which reads none).
+        p.filter.stability = 1.0;
+        let routed = |p: &ParamSnapshot| Voice::cost(p, &lfo).0 - Voice::cost(p, &routes(&[])).0;
+        assert_eq!(
+            routed(&p) - routed(&on(FilterKind::Svf)),
+            extra.0,
+            "{kind:?} routed"
+        );
+    }
+    let rooms = [
+        SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - RESERVED,
+        SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - RESERVED,
+    ];
+    let init = Sound::init(EngineType::Va).params;
+    let stable = {
+        let mut p = init.clone();
+        p.filter.stability = 1.0;
+        p
+    };
+    let at = |p: &ParamSnapshot| rooms.map(|r| r / Voice::cost(p, &ModState::new()).0);
+    assert_eq!(at(&init), at(&stable));
+}
+
+/// ADR 0190: FB bills its loop, `FB_COST`, on every TYPE when stored off
+/// 0 or routed, with the moving path it runs on unless a route already
+/// bills it; at 0 a voice's bill is today's.
+#[test]
+fn fb_bills_its_loop_and_the_moving_path() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::filter::FB_COST;
+    use chimera_core::params::FilterParams;
+    assert_eq!(FB_COST, Cost(100));
+    let fb = ParamAddr::new(BlockRef::Filter, FilterParams::FB);
+    for kind in FilterKind::BUILT {
+        let mut p = on(kind);
+        let none = ModState::new();
+        let base = Voice::filter_cost(&p, &none);
+        p.filter.fb = 0.5;
+        assert_eq!(
+            Voice::filter_cost(&p, &none),
+            base + kind.move_cost() + FB_COST,
+            "{kind:?}"
+        );
+        // A CUTOFF route already bills the moving path: FB adds its loop.
+        let lfo = cutoff_lfo(20);
+        let moving = Voice::filter_cost(&on(kind), &lfo);
+        assert_eq!(
+            Voice::filter_cost(&p, &lfo),
+            moving + FB_COST,
+            "{kind:?} routed"
+        );
+        // Routed FB at 0 stored bills it too.
+        p.filter.fb = 0.0;
+        let r = routes(&[(ModSource::Lfo1, fb, 40)]);
+        assert_eq!(
+            Voice::filter_cost(&p, &r),
+            base + kind.move_cost() + FB_COST,
+            "{kind:?} FB routed"
+        );
+    }
+}

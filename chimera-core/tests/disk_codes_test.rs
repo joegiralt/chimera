@@ -572,7 +572,7 @@ fn valid_addr_only_from_specs() {
     let ids: Vec<u8> = ValidAddr::of_block(BlockRef::Filter)
         .map(|a| a.addr().param.0)
         .collect();
-    assert_eq!(ids, [0, 1, 12, 6, 7, 13, 8, 11]);
+    assert_eq!(ids, [0, 1, 12, 6, 7, 13, 14, 15, 8, 11]);
     let kind = ValidAddr::find(BlockRef::Filter, FilterParams::KIND).unwrap();
     assert!(kind.coded());
     assert_eq!(kind.spec().label, "TYPE");

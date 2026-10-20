@@ -13,6 +13,7 @@ use crate::dsp::va::combine::{Crusher, Peaks, am_gain, combine, ring_gain};
 use crate::dsp::va::lbfm::{lbfm, target_b0};
 use crate::dsp::va::osc::{MIN_INC, Morph, Unit, peak_bound, wave_at};
 use crate::dsp::va::{VaMode, fm_index, phase_depth};
+use crate::ui::theme;
 
 pub use chimera_engine::glyph::{
     BRAID_PARAMS, CUBE_PARAMS, CompositeId, FocusGlyph, REVERB_PARAMS, RINGS_PARAMS, VA_MIX_PARAMS,
@@ -56,6 +57,10 @@ pub enum Gauge {
     Blend { value: f32, mode: VaMode },
     /// The LFO page's glyph (`lfo_glyph`), kept dimmed too.
     Lfo(crate::ui::lfo_glyph::LfoGauge),
+    /// STABILITY's spirit level: the bubble `offset` px right of centre
+    /// and the wander's reach `reach` px either side, both whole pixels
+    /// of the set value, so it redraws only when one moves.
+    Stability { offset: i8, reach: i8 },
 }
 
 /// What a gauge built from more than the focused value reads.
@@ -780,6 +785,7 @@ pub fn gauge(
         FocusGlyph::Composite(id) => outside(Reads::Composite(id)),
         FocusGlyph::Va(v) => outside(Reads::Va(v)),
         FocusGlyph::Lfo => outside(Reads::Lfo),
+        FocusGlyph::Stability => stability(value),
         FocusGlyph::Arc => Gauge::Arc { value, bipolar },
     }
 }
@@ -798,7 +804,8 @@ impl Gauge {
             | Gauge::VaWave(_)
             | Gauge::VaMix(_)
             | Gauge::Blend { .. }
-            | Gauge::Lfo(_) => false,
+            | Gauge::Lfo(_)
+            | Gauge::Stability { .. } => false,
             Gauge::Braid(_) | Gauge::Rings(_) | Gauge::Cube(_) | Gauge::Tail(_) => true,
         }
     }
@@ -817,6 +824,22 @@ impl Gauge {
             Gauge::Lfo(g) => g.key(),
             _ => 0,
         }
+    }
+}
+
+/// The bubble's travel, px either side of centre: to the vial's ends.
+pub const BUBBLE_TRAVEL: i32 = (theme::VIAL_W - theme::BUBBLE_W) / 2 - 2;
+
+/// The spirit level at STABILITY `v`: VA's depth law, `(1 − v)²`, so the
+/// bubble leaves the marks as the voices start to wander and reaches the
+/// vial's ends at 0. It rests at half its reach, the ghost showing the
+/// rest.
+fn stability(v: f32) -> Gauge {
+    let x = 1.0 - clampf(v, 0.0, 1.0);
+    let reach = libm::roundf(x * x * BUBBLE_TRAVEL as f32) as i8;
+    Gauge::Stability {
+        offset: reach / 2,
+        reach,
     }
 }
 
