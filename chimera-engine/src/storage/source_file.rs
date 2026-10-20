@@ -336,9 +336,14 @@ pub fn held_len(r: SourceRef) -> Option<usize> {
 /// zone's `start`, `frames` and `key` each (spec § 8). Returns its length,
 /// where the samples start. Panics if `out` is shorter.
 pub fn write_descriptor(l: &SourceLayout, out: &mut [u8]) -> usize {
-    // Every layout is `playable`: its descriptor is.
-    let d = l.descriptor().map_or([0; DESC_LEN], |d| d.to_bytes());
-    out[..DESC_LEN].copy_from_slice(&d);
+    // `playable` made `Descriptor::whole` of these three accept them: held
+    // whole, no heads, no reach, so the rest is zero.
+    let h = l.head();
+    debug_assert!(l.descriptor().is_some());
+    let d = &mut out[..DESC_LEN];
+    d.fill(0);
+    (d[0], d[1]) = (h.shape as u8, h.count);
+    d[2..4].copy_from_slice(&h.sref.rate.to_le_bytes());
     for (i, z) in l.zones().iter().enumerate() {
         out[DESC_LEN + i * ZONE_LAYOUT_LEN..][..ZONE_LAYOUT_LEN].copy_from_slice(&z.layout());
     }

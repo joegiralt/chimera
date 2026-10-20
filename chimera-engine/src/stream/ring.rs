@@ -235,7 +235,13 @@ impl Rings {
             return None;
         }
         let at = Store { rings: self, third };
-        Some((AudioSide { at }, CardSide { at, live: 0 }))
+        Some((
+            AudioSide { at },
+            CardSide {
+                at,
+                live: [[false; SlotIdx::ALL.len()]; MAX_VOICES],
+            },
+        ))
     }
 
     /// Every Wanted slot and its deadline, for EDF.
@@ -488,17 +494,10 @@ impl Claim {
 /// The card's side: the one writer of slot bytes.
 pub struct CardSide<'r> {
     at: Store<'r>,
-    /// Bit `Self::bit` set while a `Claim` on that slot is out.
-    live: u32,
+    live: [[bool; SlotIdx::ALL.len()]; MAX_VOICES],
 }
 
-const _: () = assert!(MAX_VOICES * SlotIdx::ALL.len() <= u32::BITS as usize);
-
 impl<'r> CardSide<'r> {
-    fn bit(v: VoiceIdx, s: SlotIdx) -> u32 {
-        1 << (v.index() * SlotIdx::ALL.len() + s.index())
-    }
-
     /// The rings it fills, for their wants and sources.
     pub fn rings(&self) -> &'r Rings {
         self.at.rings
@@ -506,7 +505,7 @@ impl<'r> CardSide<'r> {
 
     /// Wanted → Filling.
     pub fn claim(&mut self, v: VoiceIdx, s: SlotIdx) -> Option<Claim> {
-        if self.live & Self::bit(v, s) != 0 {
+        if self.live[v.index()][s.index()] {
             return None;
         }
         let (chunk, generation) = self.at.slot(v, s).claim()?;
@@ -514,7 +513,7 @@ impl<'r> CardSide<'r> {
         self.at
             .guard(v, s)
             .store(Guard::Unguarded.bits(), Ordering::Relaxed);
-        self.live |= Self::bit(v, s);
+        self.live[v.index()][s.index()] = true;
         Some(Claim {
             voice: v,
             slot: s,
@@ -595,7 +594,7 @@ impl<'r> CardSide<'r> {
     /// chunk after it, Ready already and Unguarded (it landed first: a
     /// requeue), takes its guard from it (#581).
     pub fn fill_done(&mut self, c: Claim) -> bool {
-        self.live &= !Self::bit(c.voice, c.slot);
+        self.live[c.voice.index()][c.slot.index()] = false;
         let done = self
             .at
             .slot(c.voice, c.slot)
@@ -642,7 +641,7 @@ impl<'r> CardSide<'r> {
 
     /// Filling → Wanted, same generation: a fault, to try again.
     pub fn requeue(&mut self, c: Claim) {
-        self.live &= !Self::bit(c.voice, c.slot);
+        self.live[c.voice.index()][c.slot.index()] = false;
         self.at
             .slot(c.voice, c.slot)
             .finish(c.chunk, c.generation, Finish::Requeue);
