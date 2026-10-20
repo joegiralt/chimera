@@ -243,8 +243,8 @@ pub static AMP: BlockDef = BlockDef {
 // Filter
 // ---------------------------------------------------------------------------
 
-/// FLT in layout A (ADR 0155): KIND · MODE or VOICE · FX · PLACE · FREQ or
-/// CUTOFF · Q or RES, the kind's words.
+/// FLT's front (ADR 0167): KIND · FX · Q or RES · MODE or VOICE · FX PLACE ·
+/// FREQ or CUTOFF, the kind's words.
 pub static FILTER: BlockDef = BlockDef {
     id: 10,
     name: "Filter",
@@ -253,11 +253,11 @@ pub static FILTER: BlockDef = BlockDef {
     viz: VizType::FilterResponse,
     params: [
         ParamSlot::param(BlockRef::Filter, FilterParams::KIND),
-        ParamSlot::filter_panel(0),
         ParamSlot::param(BlockRef::VoiceFx, VoiceFxParams::TYPE),
-        ParamSlot::param(BlockRef::VoiceFx, VoiceFxParams::PLACE),
-        ParamSlot::filter_panel(1),
         ParamSlot::filter_panel(2),
+        ParamSlot::filter_panel(0),
+        ParamSlot::param(BlockRef::VoiceFx, VoiceFxParams::PLACE).with_label("FX PLACE"),
+        ParamSlot::filter_panel(1),
     ],
 };
 

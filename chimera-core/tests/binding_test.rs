@@ -208,16 +208,16 @@ fn part_pages_display_like_before() {
                     ValFmt::Names(&chimera_core::dsp::filter::KIND_NAMES),
                 ),
                 (
-                    "MODE",
-                    ValFmt::Names(chimera_core::dsp::filter::FilterKind::Svf.mode_labels()),
-                ),
-                (
                     "FX",
                     ValFmt::Names(&chimera_core::dsp::voice_fx::params::FxType::NAMES),
                 ),
-                ("PLACE", ValFmt::Names(&["PRE", "POST"])),
-                ("FREQ", Law(Cutoff)),
                 ("Q", Uni),
+                (
+                    "MODE",
+                    ValFmt::Names(chimera_core::dsp::filter::FilterKind::Svf.mode_labels()),
+                ),
+                ("FX PLACE", ValFmt::Names(&["PRE", "POST"])),
+                ("FREQ", Law(Cutoff)),
             ],
         ),
         (

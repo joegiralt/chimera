@@ -1390,8 +1390,8 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("bigviz_filter", |ui| {
         plus(ui, 2);
-        feed(ui, Input::turn(EncoderId::F, 80)); // resonance
-        feed(ui, Input::turn(EncoderId::E, -60)); // cutoff, focused
+        feed(ui, Input::turn(EncoderId::C, 80)); // resonance
+        feed(ui, Input::turn(EncoderId::F, -60)); // cutoff, focused
     }),
     ("flt_mode", |ui| {
         plus(ui, 2);
@@ -1402,8 +1402,8 @@ pub const CASES: &[ScreenCase] = &[
     ("flt_clean", |ui| {
         on_flt(ui, FilterKind::Svf, false);
         ui.params_mut().filter.set_mode(FilterMode::Notch); // NOTCH1: 2 × FREQ
-        feed(ui, Input::turn(EncoderId::E, -80)); // FREQ
-        feed(ui, Input::turn(EncoderId::F, 40)); // Q
+        feed(ui, Input::turn(EncoderId::F, -80)); // FREQ
+        feed(ui, Input::turn(EncoderId::C, 40)); // Q
     }),
     ("flt_mod_clean", |ui| {
         on_flt(ui, FilterKind::Svf, true);
@@ -1411,8 +1411,8 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("flt_2040", |ui| {
         on_flt(ui, FilterKind::K2040, false);
-        feed(ui, Input::turn(EncoderId::E, -70)); // CUTOFF
-        feed(ui, Input::turn(EncoderId::F, 90)); // RES: the pass band falls
+        feed(ui, Input::turn(EncoderId::F, -70)); // CUTOFF
+        feed(ui, Input::turn(EncoderId::C, 90)); // RES: the pass band falls
     }),
     // KIND focused on the 2040: its readout names the mode it has no cell
     // for (layout A).
@@ -1429,11 +1429,11 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::A, 40)); // ENV AMT
         feed(ui, Input::press(ButtonId::Edit)); // FLT › FX
         feed(ui, Input::press(ButtonId::Edit)); // FLT
-        feed(ui, Input::turn(EncoderId::E, -80)); // CUTOFF
+        feed(ui, Input::turn(EncoderId::F, -80)); // CUTOFF
     }),
     ("flt_clean_lfo", |ui| {
         on_flt(ui, FilterKind::Svf, false);
-        feed(ui, Input::turn(EncoderId::E, -80)); // FREQ
+        feed(ui, Input::turn(EncoderId::F, -80)); // FREQ
         lfo_on_freq(ui);
     }),
     ("flt_mod_2040", |ui| {
@@ -1442,13 +1442,13 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("flt_2040_exp", |ui| {
         on_flt(ui, FilterKind::K2040, false);
-        feed(ui, Input::turn(EncoderId::B, 1)); // VOICE EXP
+        feed(ui, Input::turn(EncoderId::D, 1)); // VOICE EXP
     }),
     ("flt_dirty", |ui| {
         on_flt(ui, FilterKind::Dirty, false);
         ui.params_mut().filter.set_mode(FilterMode::Notch); // NOTCH1: at FREQ
-        feed(ui, Input::turn(EncoderId::E, -70)); // FREQ
-        feed(ui, Input::turn(EncoderId::F, 60)); // RES
+        feed(ui, Input::turn(EncoderId::F, -70)); // FREQ
+        feed(ui, Input::turn(EncoderId::C, 60)); // RES
     }),
     ("flt_mod_dirty", |ui| {
         // CLEAN's cells and words (spec § 4); flt_mode's FM3 turn would
@@ -1459,25 +1459,25 @@ pub const CASES: &[ScreenCase] = &[
     // LADDER (ADR 0104): CLEAN's cells, its LP4's bass loss in the viz.
     ("flt_ladder", |ui| {
         on_flt(ui, FilterKind::Ladder, false);
-        feed(ui, Input::turn(EncoderId::E, -70)); // FREQ
-        feed(ui, Input::turn(EncoderId::F, 90)); // Q: the pass band falls
+        feed(ui, Input::turn(EncoderId::F, -70)); // FREQ
+        feed(ui, Input::turn(EncoderId::C, 90)); // Q: the pass band falls
     }),
     // #574: the resonance peak at its real height, a 2040 at RES 0.3 and a
     // LADDER at RES 0 (no peak).
     ("flt_2040_res_30", |ui| {
         on_flt(ui, FilterKind::K2040, false);
         ui.params_mut().filter.resonance = 0.3;
-        feed(ui, Input::turn(EncoderId::B, -70)); // CUTOFF
+        feed(ui, Input::turn(EncoderId::D, -70)); // VOICE
     }),
     ("flt_clean_bp2", |ui| {
         on_flt(ui, FilterKind::Svf, false);
         ui.params_mut().filter.set_mode(FilterMode::Bp12);
         ui.params_mut().filter.resonance = 0.3;
-        feed(ui, Input::turn(EncoderId::B, -70)); // FREQ
+        feed(ui, Input::turn(EncoderId::D, -70)); // MODE
     }),
     ("flt_ladder_res_0", |ui| {
         on_flt(ui, FilterKind::Ladder, false);
-        feed(ui, Input::turn(EncoderId::B, -70)); // FREQ
+        feed(ui, Input::turn(EncoderId::D, -70)); // MODE
     }),
     ("flt_mod_ladder", |ui| {
         on_flt(ui, FilterKind::Ladder, true);
@@ -1495,7 +1495,7 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("flt_led_full", |ui| {
         on_flt(ui, FilterKind::K2040, false);
-        feed(ui, Input::turn(EncoderId::E, -60)); // CUTOFF
+        feed(ui, Input::turn(EncoderId::F, -60)); // CUTOFF
     }),
     ("flt_mod_repatched", |ui| {
         on_flt(ui, FilterKind::Svf, true);
@@ -1528,8 +1528,8 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("flt_front_fx", |ui| {
         on_flt(ui, FilterKind::Svf, false);
-        feed(ui, Input::turn(EncoderId::C, 3)); // FX FOLD (past FUZZ): PLACE POST
-        feed(ui, Input::turn(EncoderId::D, -1)); // PLACE PRE, focused
+        feed(ui, Input::turn(EncoderId::B, 3)); // FX FOLD (past FUZZ): PLACE POST
+        feed(ui, Input::turn(EncoderId::E, -1)); // PLACE PRE, focused
     }),
     // THEME's PAGES ROW (ADR 0145): FLT's three pages, no arrows; RES's
     // three; MOD at ENV2, cut on the right; OSC at D1R, cut both ways, and
@@ -1944,7 +1944,7 @@ pub const CASES: &[ScreenCase] = &[
         for _ in 0..2 {
             feed(ui, Input::press(ButtonId::Minus)); // → FLT
         }
-        feed(ui, Input::turn(EncoderId::C, 1)); // FX SOFT
+        feed(ui, Input::turn(EncoderId::B, 1)); // FX SOFT
         feed(ui, Input::press(ButtonId::Edit));
         feed(ui, Input::press(ButtonId::Edit)); // FLT › FX
         for enc in [EncoderId::A, EncoderId::C, EncoderId::D, EncoderId::E] {

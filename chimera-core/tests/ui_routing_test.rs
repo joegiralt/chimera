@@ -54,7 +54,7 @@ fn to_fx(ui: &mut UiState) {
     for _ in 0..2 {
         press(ui, ButtonId::Plus);
     }
-    ui.handle_input(&MockControls::new().encoder(EncoderId::C, 1));
+    ui.handle_input(&MockControls::new().encoder(EncoderId::B, 1));
     press(ui, ButtonId::Edit);
     press(ui, ButtonId::Edit);
 }
