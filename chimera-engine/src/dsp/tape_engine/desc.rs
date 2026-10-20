@@ -75,9 +75,10 @@ pub enum Layout {
 /// 0 when held whole), `heads`, then 7 reserved zero bytes. Only `new`
 /// builds one, so every one `to_bytes` writes `from_bytes` reads back.
 ///
-/// ```compile_fail
+/// ```compile_fail,E0451
 /// use chimera_engine::dsp::tape_engine::read::{Descriptor, Shape};
-/// let d = Descriptor { shape: Shape::ZoneSet, count: 1, rate: 0, head_frames: 0, heads: 1 };
+/// let d = Descriptor::whole(Shape::Plain, 1, 48_000).unwrap();
+/// let _ = Descriptor { ..d };
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Descriptor {

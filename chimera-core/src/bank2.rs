@@ -159,7 +159,7 @@ pub fn closed_part(
 /// a host, the UI calls its own (`UiDoor::OWN`). Its entries are called
 /// through its methods, so none leaves `ui_door`:
 ///
-/// ```compile_fail
+/// ```compile_fail,E0616
 /// let _ = chimera_core::bank2::ui_door(|d| d.strip);
 /// ```
 #[repr(C)]

@@ -28,7 +28,7 @@ pub const UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x180;
 /// the engine can't name declares its table's slot once, beside the
 /// assert, and reads it only through `DoorCell::with_slot`.
 ///
-/// ```compile_fail
+/// ```compile_fail,E0133
 /// use chimera_engine::bank2::{DoorSlot, UI_DOOR_ADDR};
 /// let _ = DoorSlot::<u32>::new(UI_DOOR_ADDR); // unsafe: the pairing is vouched
 /// ```
@@ -61,7 +61,7 @@ impl<T> Copy for DoorSlot<T> {}
 /// inside `DoorCell::with`; its entries are private, called through
 /// methods, so no pointer into bank 2 (which an install erases) leaves.
 ///
-/// ```compile_fail
+/// ```compile_fail,E0616
 /// let _ = chimera_engine::bank2::DOOR_CELL.with(|d| d.probe);
 /// ```
 #[repr(C)]
@@ -169,7 +169,7 @@ impl DoorCell {
     /// Publishes a door judged and checked (`Checked`): from here every
     /// interrupt's door call goes through it.
     ///
-    /// ```compile_fail
+    /// ```compile_fail,E0308
     /// use chimera_engine::bank2::{DOOR_CELL, Judged};
     /// fn open_unchecked(j: Judged) {
     ///     DOOR_CELL.open(j);
