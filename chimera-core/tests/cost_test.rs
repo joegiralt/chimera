@@ -1637,11 +1637,11 @@ fn va_sound(mode: chimera_core::dsp::va::VaMode) -> ParamSnapshot {
 /// the voices each is admitted beside the reserve on the four rooms (rev V,
 /// rev Y, rev V with ORBIT, rev V with the master tape), INIT's 2040 REV2
 /// (+15) and the chain and routing (83) on top. ADR 0040's done-when is six
-/// on each: met on rev V and rev Y in every MODE; the rooms are at 75 % (ADR 0124),
-/// where every MODE but FM fits eight on rev V and FM seven (590 + 98 = 688
-/// in 5,436; ADR 0159) (ADR 0118: WAVE's reach
-/// and SYNC's master held under 7 kHz, points 11 and 12; the sub at the
-/// shaped edge, point 13).
+/// on each: met on rev V, beside ORBIT and with the master tape in every
+/// MODE; on rev Y only MIX (six) and LOOPFM (eight) reach it, the others
+/// fit five (the recount of 2026-10-20, ADR 0165). The rooms are at 75 % (ADR 0124). ADR 0118: WAVE's reach and
+/// SYNC's master held under 7 kHz, points 11 and 12; the sub at the shaped
+/// edge, point 13.
 #[test]
 fn va_bills_each_mode() {
     use chimera_core::dsp::va::VaMode::{
@@ -1661,15 +1661,15 @@ fn va_bills_each_mode() {
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     for (mode, bill, voices) in [
         (Mix, 530, [7, 6, 7, 7]),
-        (Sync, 540, [7, 5, 7, 7]),
-        (Ring, 530, [7, 6, 7, 7]),
+        (Sync, 550, [7, 5, 7, 7]),
+        (Ring, 540, [7, 5, 7, 7]),
         (Xor, 550, [7, 5, 7, 7]),
-        (Bits, 530, [7, 6, 7, 7]),
-        (Fm, 590, [7, 5, 7, 6]),
+        (Bits, 540, [7, 5, 7, 7]),
+        (Fm, 580, [7, 5, 7, 6]),
         (Am, 540, [7, 5, 7, 7]),
         (Max, 590, [7, 5, 7, 6]),
         (LoopFm, 350, [8, 8, 8, 8]),
-        (SoftSync, 570, [7, 5, 7, 7]),
+        (SoftSync, 590, [7, 5, 7, 6]),
         (Phase, 650, [6, 5, 6, 6]),
     ] {
         let p = va_sound(mode);
