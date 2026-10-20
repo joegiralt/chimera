@@ -236,8 +236,9 @@ impl<'a> SourceView<'a> {
     /// The source at `p`: taps `p.whole() − 1 ..= p.whole() + 2`, each
     /// clamped to the frames held (a whole past 2³¹ reads as below 0). A
     /// strict span checks them before the clamp, which only the source's
-    /// own ends may take.
-    #[inline]
+    /// own ends may take. Inside the frames held, one compare and no clamp
+    /// (`read_edge` takes the rest, out of line).
+    #[inline(always)]
     pub fn read(&self, p: Pos) -> f32 {
         let (w, lo, last) = (p.whole() as i32, self.first as i32, self.end as i32 - 1);
         #[cfg(any(test, feature = "test-support"))]
@@ -248,13 +249,20 @@ impl<'a> SourceView<'a> {
             "read at {w} outside frames {lo}..{}",
             self.end
         );
-        // All four taps inside, one compare (`w − 1 − lo` wraps when `w`
-        // is under `lo + 1`): the clamp is for a read at the frames' ends.
-        let inside = (w.wrapping_sub(lo + 1) as u32) <= (last - lo - 3) as u32 && last - lo >= 3;
-        if inside {
+        // `w − 1 − lo` wraps when `w` is under `lo + 1`; a span of under
+        // four frames has no inside.
+        if (w.wrapping_sub(lo + 1) as u32) < (last - lo - 2).max(0) as u32 {
             let at = |k: i32| self.decode((w + k) as u32);
             return hermite([at(-1), at(0), at(1), at(2)], p.frac());
         }
+        self.read_edge(p)
+    }
+
+    /// `read` within two frames of the frames' ends: every tap clamped.
+    #[cold]
+    #[inline(never)]
+    fn read_edge(&self, p: Pos) -> f32 {
+        let (w, lo, last) = (p.whole() as i32, self.first as i32, self.end as i32 - 1);
         let tap = |k: i32| self.decode(w.saturating_add(k).max(lo).min(last) as u32);
         hermite([tap(-1), tap(0), tap(1), tap(2)], p.frac())
     }
