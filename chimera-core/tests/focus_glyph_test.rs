@@ -103,6 +103,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     // STABILITY's spirit level (#593), VA's and the filter's.
     ("Va", "STAB", FocusGlyph::Stability),
     ("Filter", "STAB", FocusGlyph::Stability),
+    ("Filter", "FB", FocusGlyph::Feedback),
     ("Comp", "MAKEUP", LEVEL),
     ("Comp", "MIX", LEVEL),
     ("Comp", "VOL", LEVEL),
@@ -399,6 +400,8 @@ fn each_glyph_maps_to_its_gauge() {
                 offset: 6,
                 reach: 12,
             },
+            // -0.5 in eighths.
+            FocusGlyph::Feedback => Gauge::Feedback { q: -4 },
             _ => Gauge::Arc {
                 value: 0.25,
                 bipolar: true,

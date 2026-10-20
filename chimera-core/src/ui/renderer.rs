@@ -841,7 +841,8 @@ impl Renderer {
             FocusGlyph::Crossfader
             | FocusGlyph::Staff
             | FocusGlyph::Wave
-            | FocusGlyph::Stability => self.set[f.focus].current(),
+            | FocusGlyph::Stability
+            | FocusGlyph::Feedback => self.set[f.focus].current(),
             _ => self.anim[f.focus].current(),
         };
         let frame = f.clock.frame();
