@@ -27,7 +27,9 @@ const P: f32 = 109.3;
 
 fn fresh() -> TapeEngine {
     let mut slot = MaybeUninit::uninit();
-    *TapeEngine::init_in_place(&mut slot)
+    TapeEngine::init_in_place(&mut slot);
+    // SAFETY: `init_in_place` wrote it whole.
+    unsafe { slot.assume_init() }
 }
 
 fn stretch(kind: StretchType, period: f32) -> TapeEngineParams {

@@ -32,7 +32,9 @@ const MODELS: [Mach; 6] = [
 
 fn fresh() -> TapeEngine {
     let mut slot = MaybeUninit::uninit();
-    *TapeEngine::init_in_place(&mut slot)
+    TapeEngine::init_in_place(&mut slot);
+    // SAFETY: `init_in_place` wrote it whole.
+    unsafe { slot.assume_init() }
 }
 
 /// A long 1 kHz sine at 48 kHz (no wrap inside `secs`), or TRANSWAVE's
