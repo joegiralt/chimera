@@ -364,7 +364,7 @@ check:
     # The bench, an area a build: all of it no longer fits FLASH. Each is
     # door-checked, as bank2-split checks the builds it splits.
     for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; done
-    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
+    cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe,bank2
     # The bootloader links cortex-m-rt's script itself: without it lld warns
     # and links an ELF with no vector table.
     out=$(cargo build -p chimera-bootloader --target thumbv7em-none-eabihf 2>&1) || { echo "$out"; exit 1; }; echo "$out"; if echo "$out" | grep -q "cannot find entry symbol"; then exit 1; fi
@@ -400,7 +400,7 @@ stack-check:
     elf=target/thumbv7em-none-eabihf/release/chimera-stm32
     sets=("" "--no-default-features" "--features orbit" "--features bank2-gate")
     for f in {{bench_sets}}; do sets+=("--no-default-features --features $f"); done
-    sets+=("--no-default-features --features sd-probe")
+    sets+=("--no-default-features --features sd-probe,bank2")
     for features in "${sets[@]}"; do
         cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf $features
         test -r "$elf"
@@ -482,7 +482,7 @@ clippy:
     # Every bench area at once: too big to link, but no area's code is dead.
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}} -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}},master-tape -- -D warnings
-    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features sd-probe -- -D warnings
+    cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features sd-probe,bank2 -- -D warnings
     # usb-console alone: `stats` answers from no reader
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features usb-console -- -D warnings
     cargo clippy -p chimera-bootloader --target thumbv7em-none-eabihf -- -D warnings
@@ -607,9 +607,9 @@ backup-bootloader:
     cd ~/chimera-backups && sha256sum "$(basename "$out")" > "$(basename "$out").sha256"
     echo "$out"
 
-# Flash the SD bring-up probe (--no-default-features --features sd-probe) to PreenFM3 via DFU
+# Flash the SD bring-up probe (--no-default-features --features sd-probe,bank2) to PreenFM3 via DFU
 flash-sd-probe:
-    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe
+    cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe,bank2
     just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 
