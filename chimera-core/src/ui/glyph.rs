@@ -10,7 +10,7 @@ use crate::dsp::clampf;
 use crate::dsp::rev::sync::{FoldState, Tempo};
 use crate::dsp::reverb::{EngineKnobs, RevSync, ReverbParams, ReverbType, knobs};
 use crate::dsp::va::combine::{Crusher, Peaks, am_gain, combine, ring_gain};
-use crate::dsp::va::lbfm::{b0_of, lbfm, loop_b};
+use crate::dsp::va::lbfm::{lbfm, target_b0};
 use crate::dsp::va::osc::{MIN_INC, Morph, Unit, peak_bound, wave_at};
 use crate::dsp::va::{VaMode, fm_index, phase_depth};
 
@@ -278,7 +278,7 @@ pub fn va_mix_trace<const N: usize>(v: &VaMix, half: i32) -> [i32; N] {
     let last = (N - 1).max(1) as f32;
     let (dt, index) = (VA_MIX_PERIODS / last, fm_index(v.amount, 0.0));
     // LOOPFM: each oscillator's b0 (WAVE scales its own loop), uncapped
-    let loops = v.osc.map(|m| b0_of(loop_b(v.amount, m.wave.get())));
+    let loops = v.osc.map(|m| target_b0(v.amount, m.wave.get()));
     let depth = phase_depth(v.amount);
     let mut read = 0.0;
     let ys = core::array::from_fn(|i| {
