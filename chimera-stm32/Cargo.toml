@@ -59,7 +59,9 @@ card-put = ["usb-console", "chimera-board/card-put", "chimera-core/source-writer
 sweep-free = ["chimera-board/sweep-free"]
 # The console's `fault dma <1|2>`: provokes a transfer error on a trailing
 # DMA stream, to test its re-arm on the unit (#25). Never in a shipping build.
-fault-inject = ["usb-console", "perf-probe", "midi-din", "chimera-board/fault-inject", "chimera-core/fault-inject"]
+# Bank 2 as the shipping set: without it VA's MOD oscillators stay in bank 1
+# and it doesn't fit FLASH (8,116 B over since PHASE's, ADR 0160).
+fault-inject = ["usb-console", "perf-probe", "midi-din", "bank2", "chimera-board/fault-inject", "chimera-core/fault-inject"]
 # Bank 2's section (header and door at 0x08100000, `build.rs`) and bank 1's
 # seal of it (ADR 0137). The Justfile splits the ELF into .bin and .bk2.
 bank2 = ["chimera-engine/bank2", "chimera-board/bank2"]
