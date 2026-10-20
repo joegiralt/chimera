@@ -306,6 +306,19 @@ fn hush(bus: &CardBus) -> Option<i16> {
     }
 }
 
+/// A LOOP wrap known a pass ahead (#698): this pass's reads end at `last`
+/// (the read at `fade` starts the fade), and the next pass's fade and
+/// first block read `from..=to`. The cursor wants no chunk past this
+/// pass's end, and the next pass's start chunks in the slots that frees,
+/// so the wrap lands warm: REEL's "known a step ahead" (spec § 5.6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Wrap {
+    pub last: u32,
+    pub fade: u32,
+    pub from: u32,
+    pub to: u32,
+}
+
 /// What a note streams: its source, whose registry row the card reads,
 /// and its file's frames, both latched at its start (#594).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -326,6 +339,8 @@ pub struct Cursor {
     /// The note's fastest read: every plan and deadline uses it, so a
     /// fade planned in one block holds through the next.
     inc: Inc,
+    /// The wrap the next plans prefetch for (`expect`).
+    wrap: Option<Wrap>,
 }
 
 impl Default for Cursor {
@@ -343,6 +358,26 @@ impl Cursor {
             gain: Fade::SILENT,
             state: Flow::Cold,
             inc: Inc::MIN,
+            wrap: None,
+        }
+    }
+
+    /// The wrap the next plans prefetch for; `None`: the read runs on.
+    pub fn expect(&mut self, wrap: Option<Wrap>) {
+        self.wrap = wrap;
+    }
+
+    /// The Ready slot holding read `pos`, reaching furthest.
+    fn ring_at(&self, pos: u32, port: &StreamPort<'_, '_>) -> Option<SlotIdx> {
+        let spans = self.spans(port);
+        let s = spans[..SLOTS]
+            .iter()
+            .flatten()
+            .filter(|s| s.holds(pos))
+            .max_by_key(|s| s.last)?;
+        match s.src {
+            SpanSrc::Slot(i) => Some(i),
+            SpanSrc::Head(_) => None,
         }
     }
 
@@ -389,6 +424,7 @@ impl Cursor {
         }
         port.turn.stream(port.voice, src.id);
         self.src = Some(src);
+        self.wrap = None;
         match head.filter(|&h| head_span(h, src.frames).holds(pos)) {
             Some(h) => {
                 self.head = Some(h);
@@ -423,6 +459,17 @@ impl Cursor {
             return;
         };
         let level = self.gain.level;
+        // A prefetched wrap (`Wrap`) lands on its Ready slot: warm, its
+        // slots kept.
+        let on_head = head.is_some_and(|h| head_span(h, src.frames).holds(pos));
+        if !on_head && let Some(s) = self.ring_at(pos, port) {
+            (self.head, self.state, self.inc) = (None, Flow::Ring(s), inc_max);
+            self.wrap = None;
+            let step = if level < FULL { DROP_STEP } else { 0 };
+            self.gain = Fade { level, step };
+            self.tend(pos, true, port);
+            return;
+        }
         self.start(pos, inc_max, head, src, port);
         // Its level kept, under a quiet too (`plan` fades it from there).
         if matches!(self.state, Flow::Head(_)) {
@@ -446,7 +493,11 @@ impl Cursor {
         // `as` saturates (NaN to 0): no read past `u32`.
         let i0 = pos as u32;
         let i_last = (pos + f64::from(inc * BLOCK as f32)) as u32;
-        let look = i_last.saturating_add((inc * DROP_FADE.get() as f32) as u32 + 1);
+        let mut look = i_last.saturating_add((inc * DROP_FADE.get() as f32) as u32 + 1);
+        // The pass reads no further than its wrap.
+        if let Some(w) = self.wrap {
+            look = look.min(w.last);
+        }
 
         let hushed = hush(port.bus);
         match (hushed, self.state == Flow::Quiet) {
@@ -580,8 +631,7 @@ impl Cursor {
         let Some(last) = last_chunk(file) else {
             return;
         };
-        let base = self.base(i0, file, last);
-        let top = base.saturating_add(SLOTS as u32 - 1).min(last);
+        let wanted = self.wanted(i0, file, last);
         let v = port.voice;
         let mut have = [false; SLOTS];
         for s in SlotIdx::ALL {
@@ -602,21 +652,22 @@ impl Cursor {
                     continue;
                 }
             };
-            let keep = (base..=top).contains(&chunk) && (ready || asking);
-            match (keep, ready) {
-                (true, _) => {
-                    if let Some(h) = have.get_mut((chunk - base) as usize) {
-                        *h = true;
-                    }
-                }
-                (false, true) => port.turn.release(v, s),
-                (false, false) => port.turn.cancel(v, s),
+            let at = wanted.iter().position(|&w| w == Some(chunk));
+            match (at.filter(|_| ready || asking), ready) {
+                (Some(k), _) => have[k] = true,
+                (None, true) => port.turn.release(v, s),
+                (None, false) => port.turn.cancel(v, s),
             }
         }
-        if !asking || base > top {
+        if !asking {
             return;
         }
-        for (c, _) in (base..=top).zip(have).filter(|&(_, h)| !h) {
+        for (c, _) in wanted
+            .iter()
+            .zip(have)
+            .filter_map(|(&c, h)| Some((c?, h)))
+            .filter(|&(_, h)| !h)
+        {
             let Some(s) = SlotIdx::ALL
                 .into_iter()
                 .find(|&s| port.turn.seen(v, s) == SlotState::Empty)
@@ -634,12 +685,43 @@ impl Cursor {
         }
     }
 
+    /// The chunks wanted, in order, a slot each: from `base` on, and with
+    /// a `Wrap`, none past the pass's end but the next pass's start in the
+    /// slots that leaves.
+    fn wanted(&self, i0: u32, file: Frames, last: u32) -> [Option<u32>; SLOTS] {
+        let base = self.base(i0, file, last);
+        let mut top = base.saturating_add(SLOTS as u32 - 1).min(last);
+        let mut next = None;
+        if let Some(w) = self.wrap {
+            top = top.min(chunk_of(w.last.saturating_add(AFTER)));
+            let lo = chunk_of(w.from.saturating_sub(1)).min(last);
+            next = Some(lo..=chunk_of(w.to.saturating_add(AFTER)).min(last));
+        }
+        let mut out = [None; SLOTS];
+        let mut n = 0;
+        let linear = (base <= top).then_some(base..=top).into_iter().flatten();
+        for c in linear.chain(next.into_iter().flatten()) {
+            if n < SLOTS && !out[..n].contains(&Some(c)) {
+                out[n] = Some(c);
+                n += 1;
+            }
+        }
+        out
+    }
+
     /// `now` plus the blocks until the read needs chunk `c`: at its start,
     /// or once the head runs out.
     fn deadline(&self, c: u32, i0: u32, port: &StreamPort<'_, '_>) -> AudioBlocks {
         let mut need = c.saturating_mul(CF);
         if let Some(h) = self.head {
             need = need.max(head_span(h, self.file()).last.saturating_add(1));
+        }
+        // A wrap's chunk is read from its fade's start on.
+        if let Some(w) = self
+            .wrap
+            .filter(|w| c < chunk_of(i0) || c > chunk_of(w.last.saturating_add(AFTER)))
+        {
+            need = w.fade;
         }
         let ahead = need.saturating_sub(i0) as f32;
         let blocks = (ahead / (self.inc.get() * BLOCK as f32).max(1.0)) as u32;

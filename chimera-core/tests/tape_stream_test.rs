@@ -639,14 +639,61 @@ fn a_start_turn_never_cuts_a_note() {
     assert_eq!(&out[..], &wb[..100 * BLOCK_SIZE]);
 }
 
-/// POSITION moves the loop off its staged head mid-note: each wrap lands
-/// where no head holds, so the voice fades out over `DROP_FADE` before it,
-/// the fade's second head reads silence, and the wrap starts cold and fades
-/// back in. No step passes 4× the steady state's largest
-/// (`click_free_test`'s rule), at XFADE 0 (a hard splice) or not.
+/// WALK moves every pass off the heads: each wrap still lands warm, a
+/// pass ahead's prefetch following the walk (#698), and no step passes 4×
+/// the steady state's.
 #[test]
-fn moved_loop_fades_at_the_wrap() {
+fn walking_loop_lands_warm() {
     let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let p = TapeEngineParams {
+        size: 0.6,
+        motion: 0.5,
+        xfade: 0.2,
+        tape: 0.0,
+        age: 0.0,
+        ..params(PlayMode::Loop, 0.30, 0.40)
+    };
+    let (rings, third) = rings();
+    let mut st = Stream::new(&rings, &third, &whole, 0);
+    let mut src = OneSource::new(&st.card.held(&heads_at(&p, FRAMES, 60), HF));
+    let mut slot = MaybeUninit::uninit();
+    let e = deck(&mut slot);
+    e.strict_spans();
+    let mut out = Vec::new();
+    let mut b = [0.0; BLOCK_SIZE];
+    for k in 0..3_000 {
+        st.serve();
+        st.with(V, |port| {
+            if k == 0 {
+                e.start(60, &p, &src.view(), SR, Some(port));
+            }
+            e.play(&mut b, &p, &src.view(), SR, Some(port));
+        });
+        out.extend_from_slice(&b);
+        st.now += 1;
+    }
+    let step = |x: &[f32]| {
+        x.windows(2)
+            .map(|d| (d[1] - d[0]).abs())
+            .fold(0.0, f32::max)
+    };
+    assert!(e.events() >= 8, "{} events", e.events());
+    assert_eq!(st.card.stats.cold.load(Ordering::Relaxed), 0, "cold wraps");
+    let steady = step(&out[10 * BLOCK_SIZE..100 * BLOCK_SIZE]);
+    let worst = step(&out[100 * BLOCK_SIZE..]);
+    assert!(worst <= 4.0 * steady, "step {worst} over 4 x {steady}");
+}
+
+/// POSITION moves the loop off its staged head mid-note: each wrap's
+/// reads are prefetched a pass ahead into the slots its pass's end frees
+/// (#698), so every wrap lands warm. At XFADE 0.25 no step passes 4× the
+/// steady state's largest (`click_free_test`'s rule); at XFADE 0 (a hard
+/// splice) it plays what the whole row plays, sample for sample. It used
+/// to drop out at every wrap.
+#[test]
+fn moved_loop_lands_warm_at_the_wrap() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let row = SourceView::new(&whole).unwrap();
     for xfade in [0.0, 0.25] {
         let p = TapeEngineParams {
             size: 0.8,
@@ -663,8 +710,10 @@ fn moved_loop_fades_at_the_wrap() {
         let e = deck(&mut slot);
         // No read, the fade's second head's either, leaves its span.
         e.strict_spans();
+        let mut ram_slot = MaybeUninit::uninit();
+        let ram = deck(&mut ram_slot);
         let moved = TapeEngineParams { position: 0.5, ..p };
-        let mut out = Vec::new();
+        let (mut out, mut want) = (Vec::new(), Vec::new());
         let mut b = [0.0; BLOCK_SIZE];
         for k in 0..1_500 {
             let q = if k < 50 { &p } else { &moved };
@@ -676,6 +725,11 @@ fn moved_loop_fades_at_the_wrap() {
                 e.play(&mut b, q, &src.view(), SR, Some(port));
             });
             out.extend_from_slice(&b);
+            if k == 0 {
+                ram.note_on(60, q, &row, SR);
+            }
+            ram.render(&mut b, q, &row, SR);
+            want.extend_from_slice(&b);
             st.now += 1;
         }
         let step = |x: &[f32]| {
@@ -683,15 +737,21 @@ fn moved_loop_fades_at_the_wrap() {
                 .map(|d| (d[1] - d[0]).abs())
                 .fold(0.0, f32::max)
         };
-        // The first wrap comes near block 296.
-        let steady = step(&out[60 * BLOCK_SIZE..250 * BLOCK_SIZE]);
-        let worst = step(&out[250 * BLOCK_SIZE..]);
-        assert!(
-            worst <= 4.0 * steady,
-            "xfade {xfade}: step {worst} over 4 x {steady}"
-        );
         let cold = st.card.stats.cold.load(Ordering::Relaxed);
-        assert!(cold >= 3, "xfade {xfade}: {cold} cold wraps");
+        assert_eq!(cold, 0, "xfade {xfade}: cold wraps");
+        if xfade > 0.0 {
+            // The first wrap comes near block 296.
+            let steady = step(&out[60 * BLOCK_SIZE..250 * BLOCK_SIZE]);
+            let worst = step(&out[250 * BLOCK_SIZE..]);
+            assert!(worst <= 4.0 * steady, "step {worst} over 4 x {steady}");
+        } else {
+            let off = out
+                .iter()
+                .zip(&want)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0, f32::max);
+            assert!(off < 1e-5, "{off} off the whole row's");
+        }
         let tail = &out[1_000 * BLOCK_SIZE..];
         assert!(tail.iter().any(|&y| y.abs() > 0.5), "xfade {xfade}: silent");
     }
@@ -964,7 +1024,11 @@ fn one_hold() -> TapeEngineParams {
 /// What a note-on of `note` bills on `p` with only the bend's range, and
 /// wow while TAPE runs.
 fn bill_of(p: &TapeEngineParams, note: u8, bend: u8) -> u32 {
-    let wow = if tape_runs(p.tape, false) { WOW_CENTS } else { 0.0 };
+    let wow = if tape_runs(p.tape, false) {
+        WOW_CENTS
+    } else {
+        0.0
+    };
     bill(RATE, ratio_max(p, note, wow, f32::from(bend) * 100.0)).0
 }
 
@@ -1307,7 +1371,11 @@ fn raised_reach_is_readmitted_and_followed() {
     let turns: [(&str, Turn, Option<f32>); 5] = [
         ("pitch", |s| s.parts[0].params.pitch.pitch = 7.0, Some(7.0)),
         ("tuning", |s| s.tune = 50, Some(0.5)),
-        ("bend range, the wheel up", |s| s.parts[0].mix.bend = 12, None),
+        (
+            "bend range, the wheel up",
+            |s| s.parts[0].mix.bend = 12,
+            None,
+        ),
         (
             "route",
             |s| {

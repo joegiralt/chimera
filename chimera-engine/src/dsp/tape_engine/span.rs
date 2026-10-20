@@ -9,7 +9,7 @@ use super::read::SourceView;
 use crate::stream::cursor::{Cursor, HeadIdx, Plan, RamHead, SpanSrc};
 use crate::stream::layout::CHUNK_FRAMES;
 use crate::stream::ring::{AudioTurn, GUARD_FRAMES, Ready};
-use crate::stream::units::Frames;
+use crate::stream::units::{Frames, SlotIdx};
 use crate::voice_alloc::VoiceIdx;
 
 // A slot's span starts on a 12-bit pair: `SourceView::span` takes an even
@@ -129,43 +129,115 @@ pub enum Stop {
 }
 
 /// A block's reads: each run's view and where it stops (past the runs,
-/// silence: the gain is 0 there), then LOOP's loop-start head, which a
-/// fade's second head and a wrap read. A row held whole is one run that
-/// never stops.
+/// silence: the gain is 0 there), then what LOOP's next pass reads, which
+/// a fade's second head and a wrap read: the loop-start head, or a
+/// prefetched wrap's Ready slots, up to two (`second_at`). A row held
+/// whole is one run that never stops.
 pub struct Reads<'a> {
     runs: [(SourceView<'a>, Stop); 2],
-    /// The loop-start head (a whole row: the row).
-    pub second: SourceView<'a>,
+    seconds: [(SourceView<'a>, Stop); 2],
+    /// The next pass's reads are held, from their start: the second head
+    /// reads no silence, but past `short`'s read if a slot it takes over
+    /// to hasn't landed yet.
+    pub landed: bool,
+    pub short: Option<u32>,
 }
 
 impl<'a> Reads<'a> {
     pub fn whole(v: SourceView<'a>) -> Reads<'a> {
         Reads {
             runs: [(v, Stop::Never); 2],
-            second: v,
+            seconds: [(v, Stop::Never); 2],
+            landed: true,
+            short: None,
         }
     }
 
-    /// The cursor's `plan` over `row`: its runs, then silence.
+    /// The cursor's `plan` over `row`: its runs, then silence. The second
+    /// head reads the loop-start head; `wrap` (from, to): what the next
+    /// pass reads, from the loop-start head if it holds all of it, else
+    /// from one or two Ready slots that do between them (`ready`: the
+    /// cursor's), else silence.
     pub fn streamed(
         plan: &Plan,
         row: &StreamRow<'a>,
         cursor: &Cursor,
         turn: &'a AudioTurn<'_>,
         v: VoiceIdx,
+        wrap: Option<(u32, u32)>,
     ) -> Reads<'a> {
         let silent = row.silent();
         let mut runs = [(silent, Stop::Never); 2];
+        let slot = |s| cursor.ready(turn, v, s).and_then(|r| row.slot_span(&r));
         for ((src, r), run) in plan.runs().iter().zip(runs.iter_mut()) {
             let span = match *src {
                 SpanSrc::Head(h) => row.head_span(h),
-                SpanSrc::Slot(s) => cursor.ready(turn, v, s).and_then(|r| row.slot_span(&r)),
+                SpanSrc::Slot(s) => slot(s),
             };
             *run = (span.map_or(silent, |s| s.view), Stop::At(r.end));
         }
+        let head = row.head_span(HeadIdx::LOOP);
+        let mut seconds = [(head.map_or(silent, |s| s.view), Stop::Never); 2];
+        let (mut landed, mut short) = (true, None);
+        if let Some((from, to)) = wrap {
+            let holds = |s: &Span<'_>| s.holds(from) && s.holds(to);
+            // The head the cursor plays may hold it (a loop near START).
+            let other = cursor.head().and_then(|h| row.head_span(h.idx));
+            if let Some(o) = other.filter(|o| holds(o) && !head.is_some_and(|h| holds(&h))) {
+                seconds = [(o.view, Stop::Never); 2];
+            } else if !head.is_some_and(|h| holds(&h)) {
+                let ready = SlotIdx::ALL.map(slot);
+                match Self::wrapped(ready, from, to, silent) {
+                    Some((w, s)) => (seconds, short) = (w, s),
+                    None => (seconds, landed) = ([(silent, Stop::Never); 2], false),
+                }
+            }
+        }
         Reads {
             runs,
-            second: row.head_span(HeadIdx::LOOP).map_or(silent, |s| s.view),
+            seconds,
+            landed,
+            short,
+        }
+    }
+
+    /// `from..=to` read from the spans `ready`: one holding both, or one
+    /// holding `from` and one taking over before its last read holding
+    /// `to`; that one not landed yet, silence past `a`'s last read (`short`).
+    #[allow(clippy::type_complexity)]
+    fn wrapped(
+        ready: [Option<Span<'a>>; crate::stream::ring::SLOTS],
+        from: u32,
+        to: u32,
+        silent: SourceView<'a>,
+    ) -> Option<([(SourceView<'a>, Stop); 2], Option<u32>)> {
+        let all = || ready.iter().flatten();
+        let a = all()
+            .filter(|s| s.holds(from))
+            .max_by_key(|s| s.view.end())?;
+        if a.holds(to) {
+            return Some(([(a.view, Stop::Never); 2], None));
+        }
+        // `a` holds reads up to `end − 3`; `b` from its own `first + 1`.
+        let a_last = a.view.end().saturating_sub(3);
+        let b = all().find(|s| s.holds(a_last) && s.holds(to) && s.view.first() > a.view.first());
+        let (b, short) = b.map_or((silent, Some(a_last)), |b| (b.view, None));
+        Some(([(a.view, Stop::At(a_last)), (b, Stop::Never)], short))
+    }
+
+    /// The second head reads silence: a fade that started before its
+    /// reads landed fades to silence whole, never stepping back in.
+    pub fn mute_second(&mut self) {
+        let silent = SourceView::silent(self.runs[0].0.desc(), self.runs[0].0.frames());
+        self.seconds = [(silent, Stop::Never); 2];
+        self.short = None;
+    }
+
+    /// The second head's view at read `h`, and where it stops.
+    pub fn second_at(&self, h: u32) -> (SourceView<'a>, Stop) {
+        match self.seconds[0] {
+            (_, Stop::At(s)) if h >= s => self.seconds[1],
+            x => x,
         }
     }
 
