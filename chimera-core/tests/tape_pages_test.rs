@@ -755,9 +755,12 @@ fn streamed_refusals_reach_the_band() {
         (TapeModel::Scrub, "SCRUB NEEDS RAM"),
         (TapeModel::Stretch, "STRETCH NEEDS RAM"),
         (TapeModel::Transwave, "WAVE NEEDS RAM"),
-        (TapeModel::Tron, "TRON NEEDS RAM"),
     ] {
         let s = state(m, Loop, 0.0, 1.0);
         assert!(s.starts_with(&format!("{why} / ")), "{s}");
     }
+    // TRON streams, its note ONE's (#698); reversed it needs RAM.
+    assert!(state(TapeModel::Tron, Loop, 0.0, 1.0).starts_with("24K · 30.0 S"));
+    let rev = state(TapeModel::Tron, Loop, 0.9, 0.1);
+    assert!(rev.starts_with(&format!("{REVERSE_NEEDS_RAM} / ")), "{rev}");
 }

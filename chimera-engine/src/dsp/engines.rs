@@ -400,11 +400,12 @@ impl EngineSlot {
         }
     }
 
-    pub fn note_off(&mut self, ctx: &mut EngineCtx<'_>) {
+    /// `vca`: a VCA route holds the voice (TAPE's FADE steps aside).
+    pub fn note_off(&mut self, ctx: &mut EngineCtx<'_>, vca: bool) {
         match self {
             Self::Algo(a) => a.note_off(),
             Self::Modal(m) => m.note_off(ctx.sym),
-            Self::Tape(t) => t.note_off(),
+            Self::Tape(t) => t.release_by(vca),
             Self::Va(v) => v.note_off(),
         }
     }
@@ -573,6 +574,11 @@ fn level_billed(p: &ParamSnapshot, mods: &ModState) -> bool {
 /// The most cents PITCH's and FINE's routes can move a note, every source
 /// at full swing.
 pub(crate) fn pitch_reach(mods: &ModState) -> f32 {
+    pitch_reach_by(mods, |_| 1.0)
+}
+
+/// `pitch_reach` with source `s` swinging `scale(s)` of its full (0 to 1).
+pub(crate) fn pitch_reach_by(mods: &ModState, scale: impl Fn(usize) -> f32) -> f32 {
     [PitchParams::PITCH, PitchParams::FINE]
         .into_iter()
         .map(|q| {
@@ -583,7 +589,7 @@ pub(crate) fn pitch_reach(mods: &ModState) -> f32 {
                 _ => 0.0,
             };
             let d = mods.find(addr);
-            let swing = |s| d.map_or(0.0, |d| amount_scale(mods.amount(s, d)).abs());
+            let swing = |s| d.map_or(0.0, |d| amount_scale(mods.amount(s, d)).abs() * scale(s));
             cents * (0..mods.num_sources()).map(swing).sum::<f32>()
         })
         .sum()

@@ -49,7 +49,7 @@ pub struct TapeDoor {
     pub playing_cost: fn(&TapeDeck) -> Option<Cost>,
     pub set_pitch: fn(&mut TapeDeck, f32),
     pub glide_to: fn(&mut TapeDeck, u8, (u32, f32)),
-    pub note_off: fn(&mut TapeDeck),
+    pub release_by: fn(&mut TapeDeck, bool),
     pub hold: fn(&mut TapeDeck),
     pub heads: fn(&TapeDeck) -> Heads,
 }
@@ -71,7 +71,7 @@ impl TapeDeck {
         playing_cost: Self::playing_cost,
         set_pitch: Self::set_pitch,
         glide_to: Self::glide_to,
-        note_off: Self::note_off,
+        release_by: Self::release_by,
         hold: Self::hold,
         heads: Self::heads,
     };
@@ -243,7 +243,11 @@ impl TapeEngine {
     }
 
     pub fn note_off(&mut self) {
-        self.run(|t, k| (t.note_off)(k));
+        self.release_by(false);
+    }
+
+    pub fn release_by(&mut self, vca: bool) {
+        self.run(|t, k| (t.release_by)(k, vca));
     }
 
     pub fn sustains(&self) -> bool {

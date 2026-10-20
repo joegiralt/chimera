@@ -141,16 +141,25 @@ fn what_needs_ram_has_no_heads() {
     ping.mode = PlayMode::Loop;
     (ping.start, ping.end) = (0.6, 0.2);
     assert!(heads_for(r(), &ping).is_none(), "END before START");
-    for m in [
-        TapeModel::Tron,
-        TapeModel::Scrub,
-        TapeModel::Stretch,
-        TapeModel::Transwave,
-    ] {
+    for m in [TapeModel::Scrub, TapeModel::Stretch, TapeModel::Transwave] {
         let p = TapeEngineParams {
             model: m,
             ..play(PlayMode::One, 0.2)
         };
         assert!(heads_for(r(), &p).is_none(), "{m:?}");
+    }
+}
+
+/// TRON streams as ONE does (#698): one START head, whatever MODE it left.
+#[test]
+fn tron_streams_on_one_start_head() {
+    for mode in [PlayMode::One, PlayMode::Loop, PlayMode::Ping] {
+        let p = TapeEngineParams {
+            model: TapeModel::Tron,
+            ..play(mode, 0.2)
+        };
+        let h = heads_for(r(), &p).expect("TRON's heads");
+        let one = heads_for(r(), &play(PlayMode::One, 0.2)).unwrap();
+        assert_eq!(h, one, "{mode:?}");
     }
 }

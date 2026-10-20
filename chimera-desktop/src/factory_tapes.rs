@@ -522,6 +522,10 @@ pub fn tape_sound(s: &SoundRecipe, head: &SourceHead) -> Sound {
     for (id, v) in defaults.chain(s.set.iter().copied()) {
         t.set(id, v);
     }
+    // ONE's hit: ENV 1 at its floor, holding full (`env_defaults`).
+    for &(id, v) in machine::env_defaults(t.machine()) {
+        snd.params.envelopes[0].set(id, v);
+    }
     // On the knob's grid, as INIT's 45/128 is.
     let v = snd.params.out.volume * 10f32.powf(s.trim_db / 20.0);
     snd.params.out.volume = ((v * 128.0).round() / 128.0).min(1.0);

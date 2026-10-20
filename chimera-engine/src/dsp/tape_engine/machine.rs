@@ -8,8 +8,10 @@
 //! The UI writes a machine's defaults when MODEL changes (Task 15), never
 //! on load; the neutral stays PLAY in LOOP.
 
-use super::params::{FADE_HOLD, StretchType, TapeEngineParams as P, TapeMachine};
+use super::params::{FADE_HOLD, StretchType, TapeEngineParams as P, TapeMachine, Wow};
 use crate::block::ParamId;
+use crate::dsp::modulator::EnvSpeed;
+use crate::params::EnvParams as E;
 
 /// One labelled control on a machine.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -52,6 +54,11 @@ const WALK: Cell = cell(P::MOTION, "WALK", "WLK", 0.0);
 /// MOTION 0.5: the source's own speed, so a fresh STRETCH or SCRUB plays.
 const SPEED: Cell = cell(P::MOTION, "SPEED", "SPD", 0.5);
 const LENGTH: Cell = cell(P::SIZE, "LENGTH", "LEN", 1.0);
+/// LOOP's LENGTH 0.8: a loop shorter than the window (about 1 s of a 4 s
+/// source), so POSITION and WALK move it from the first turn (#698).
+const LOOP_LENGTH: Cell = cell(P::SIZE, "LENGTH", "LEN", LOOP_LENGTH_DEFAULT);
+/// LOOP's and PING's LENGTH, and INIT's.
+pub const LOOP_LENGTH_DEFAULT: f32 = 0.8;
 const XFADE: Cell = cell(P::XFADE, "XFADE", "XFD", 0.1);
 /// FADE 0.3: 32 ms (`fade_default`).
 const FADE: Cell = cell(P::DRAG, "FADE", "FDE", 0.3);
@@ -68,13 +75,13 @@ pub static MACHINES: [Machine; 7] = [
     Machine {
         machine: TapeMachine::Loop,
         page: "LOOP",
-        deck: &[POS, WALK, LENGTH, XFADE],
+        deck: &[POS, WALK, LOOP_LENGTH, XFADE],
         cells: &[FADE],
     },
     Machine {
         machine: TapeMachine::Ping,
         page: "PING",
-        deck: &[POS, WALK, LENGTH],
+        deck: &[POS, WALK, LOOP_LENGTH],
         cells: &[FADE],
     },
     Machine {
@@ -140,12 +147,40 @@ pub fn cell_of(m: TapeMachine, id: ParamId) -> Option<&'static Cell> {
 
 /// What the UI writes when MODEL becomes `m`: its cells but the window
 /// (START and END, the source's) and the wear (TAPE, AGE and WOW, a
-/// flavour the player keeps across machines).
+/// flavour the player keeps across machines), but TRON's: its wear is its
+/// identity (`TRON_WEAR`).
 pub fn defaults(m: TapeMachine) -> impl Iterator<Item = (ParamId, f32)> {
     let k = machine(m);
+    let wear: &[(ParamId, f32)] = if m == TapeMachine::Tron {
+        &TRON_WEAR
+    } else {
+        &[]
+    };
     k.deck
         .iter()
         .chain(k.cells)
         .filter(|c| !matches!(c.id, P::START | P::END))
         .map(|c| (c.id, c.default))
+        .chain(wear.iter().copied())
 }
+
+/// TRON's wear at a MODEL change (#698): an M400's tape is never still,
+/// TAPE 0.3 under WARBLE's wobble.
+pub const TRON_WEAR: [(ParamId, f32); 2] = [(P::TAPE, 0.3), (P::WOW, Wow::Warble as u8 as f32)];
+
+/// ENV 1's cells (`BlockRef::Env(Env1)`) the UI writes when MODEL becomes
+/// `m`. ONE: the hit opens at the envelope's floor (FAST, 0.2 ms; the
+/// 1 ms note-on ramp keeps it click-free) and holds at full, so the sample
+/// is its own envelope, as an MPC pad's (#698). The others leave ENV 1 be.
+pub fn env_defaults(m: TapeMachine) -> &'static [(ParamId, f32)] {
+    match m {
+        TapeMachine::One => &ONE_ENV,
+        _ => &[],
+    }
+}
+
+const ONE_ENV: [(ParamId, f32); 3] = [
+    (E::SPEED, EnvSpeed::Fast as u8 as f32),
+    (E::ATTACK, 0.0),
+    (E::SUSTAIN, 1.0),
+];

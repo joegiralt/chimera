@@ -16,7 +16,7 @@ use chimera_core::dsp::tape_engine::heads::{
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
     COST_STREAM, FADE_HOLD, INC_MAX, PlayMode, SliceCode, TapeEngine, TapeEngineParams, TapeModel,
-    Wow, inc, ratio_max,
+    Wow, inc, ratio_max, tape_runs,
 };
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::NoteOrigin;
@@ -29,7 +29,7 @@ use chimera_core::part::{Held, LiveSnap, PartMode};
 use chimera_core::project::SourceId;
 use chimera_core::source_table::GateView;
 use chimera_core::storage::SourceRef;
-use chimera_core::stream::admit::{STREAM_BUDGET_BPS, bill, head_frames};
+use chimera_core::stream::admit::{STREAM_BUDGET_BPS, WOW_CENTS, bill, head_frames};
 use chimera_core::stream::cursor::{DROP_FADE, QUIET_FADE};
 use chimera_core::stream::layout::CHUNK_FRAMES;
 use chimera_core::stream::port::{StreamCard, StreamPort, Streams};
@@ -828,6 +828,18 @@ struct Played<'r> {
 }
 
 impl<'r> Played<'r> {
+    /// Every Part's wheel full up: its notes bill their whole bend range
+    /// (admission bills the bend in use, #698).
+    fn wheel_up(&mut self) {
+        for i in 0..self.rig.shared.parts.len() {
+            let channel = self.rig.shared.parts[i].mix.channel;
+            self.rig.inst.bend(BendEvent {
+                channel,
+                value: 8191,
+            });
+        }
+    }
+
     /// Parts `parts` play TAPE `p` on `src`'s streamed row, one MIDI
     /// channel each; the CPU never refuses.
     fn new(st: Stream<'r>, src: OneSource, parts: &[(usize, TapeEngineParams)]) -> Played<'r> {
@@ -949,9 +961,11 @@ fn one_hold() -> TapeEngineParams {
     }
 }
 
-/// What a note-on of `note` bills on `p` with only the bend's range.
+/// What a note-on of `note` bills on `p` with only the bend's range, and
+/// wow while TAPE runs.
 fn bill_of(p: &TapeEngineParams, note: u8, bend: u8) -> u32 {
-    bill(RATE, ratio_max(p, note, 0.0, f32::from(bend) * 100.0)).0
+    let wow = if tape_runs(p.tape, false) { WOW_CENTS } else { 0.0 };
+    bill(RATE, ratio_max(p, note, wow, f32::from(bend) * 100.0)).0
 }
 
 /// Eight notes that fit the card's budget; a ninth that doesn't, unless a
@@ -962,9 +976,14 @@ fn ninth_stream_steals_oldest_released() {
     let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
     let (rings, third) = rings();
     let st = Stream::new(&rings, &third, &whole, 0);
-    let p = one_hold();
+    // TAPE runs: wow billed.
+    let p = TapeEngineParams {
+        tape: 0.2,
+        ..one_hold()
+    };
     let src = OneSource::new(&st.card.held(&[0], HF));
     let mut pl = Played::new(st, src, &[(0, p)]);
+    pl.wheel_up();
     let bend = pl.rig.shared.parts[0].mix.bend;
     let notes = 50..58u8;
     let eight: u32 = notes.clone().map(|n| bill_of(&p, n, bend)).sum();
@@ -1044,7 +1063,7 @@ fn steal_fades_through_allocator() {
 }
 
 /// The machines that seek, and PING, refuse a streamed source before the
-/// allocator is asked; PLAY ONE and LOOP forward play it.
+/// allocator is asked; ONE, LOOP and TRON forward play it (#698).
 #[test]
 fn ping_on_streamed_source_refused_before_allocation() {
     let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
@@ -1055,7 +1074,7 @@ fn ping_on_streamed_source_refused_before_allocation() {
         (TapeModel::Scrub, PlayMode::Loop, false),
         (TapeModel::Stretch, PlayMode::Loop, false),
         (TapeModel::Transwave, PlayMode::Loop, false),
-        (TapeModel::Tron, PlayMode::Loop, false),
+        (TapeModel::Tron, PlayMode::Loop, true),
     ] {
         let (rings, third) = rings();
         let st = Stream::new(&rings, &third, &whole, 0);
@@ -1288,7 +1307,7 @@ fn raised_reach_is_readmitted_and_followed() {
     let turns: [(&str, Turn, Option<f32>); 5] = [
         ("pitch", |s| s.parts[0].params.pitch.pitch = 7.0, Some(7.0)),
         ("tuning", |s| s.tune = 50, Some(0.5)),
-        ("bend range", |s| s.parts[0].mix.bend = 12, None),
+        ("bend range, the wheel up", |s| s.parts[0].mix.bend = 12, None),
         (
             "route",
             |s| {
@@ -1311,9 +1330,11 @@ fn raised_reach_is_readmitted_and_followed() {
         };
         let src = OneSource::new(&st.card.held(&heads_at(&p, FRAMES, 60), HF));
         let mut pl = Played::new(st, src, &[(0, p)]);
+        pl.wheel_up();
         pl.on(0, 60);
         let v = sounding(&pl, 60);
-        for _ in 0..20 {
+        // The wheel's glide lands first.
+        for _ in 0..200 {
             pl.block();
         }
         let (was, _, paid) = speeds(&pl, v);
@@ -1465,6 +1486,7 @@ fn a_late_note_that_doesnt_fit_is_refused() {
     };
     let src = OneSource::new(&st.card.held(&[0], HF));
     let mut pl = Played::new(st, src, &[(0, p)]);
+    pl.wheel_up();
     let bend = pl.rig.shared.parts[0].mix.bend;
     let held: u32 = (51..58).map(|n| bill_of(&p, n, bend)).sum();
     assert!(held + bill_of(&p, 72, bend) > STREAM_BUDGET_BPS);
@@ -1537,11 +1559,15 @@ fn a_fading_note_reads_its_own_source_length() {
     let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
     let (rings, third) = rings();
     let st = Stream::new(&rings, &third, &whole, 0);
-    let p = one_hold();
+    let p = TapeEngineParams {
+        tape: 0.2,
+        ..one_hold()
+    };
     let held = st.card.held(&[0], HF);
     let (src, other) = OneSource::with(&held, &held);
     let mut pl = Played::new(st, src, &[(0, p), (1, p)]);
     pl.short = Some(other);
+    pl.wheel_up();
     let bend = pl.rig.shared.parts[0].mix.bend;
     let eight: u32 = (50..58).map(|n| bill_of(&p, n, bend)).sum();
     assert!(eight <= STREAM_BUDGET_BPS && eight + bill_of(&p, 63, bend) > STREAM_BUDGET_BPS);

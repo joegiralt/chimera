@@ -215,16 +215,17 @@ pub enum NeedsRam {
     Ping,
     /// END before START.
     Reverse,
-    /// SCRUB, STRETCH and WAVE; TRON until slice 2.
+    /// SCRUB, STRETCH and WAVE.
     Machine(TapeModel),
 }
 
-/// `None`: PLAY in MODE ONE or LOOP, END at or after START.
+/// `None`: ONE, LOOP or TRON, END at or after START. TRON's note is ONE's
+/// path, one head forward to END, so it streams as ONE does (#698).
 pub fn needs_ram(p: &TapeEngineParams) -> Option<NeedsRam> {
     match (p.model, p.mode) {
         (TapeModel::Play, PlayMode::Ping) => Some(NeedsRam::Ping),
-        (TapeModel::Play, _) if p.end < p.start => Some(NeedsRam::Reverse),
-        (TapeModel::Play, _) => None,
+        (TapeModel::Play | TapeModel::Tron, _) if p.end < p.start => Some(NeedsRam::Reverse),
+        (TapeModel::Play | TapeModel::Tron, _) => None,
         (m, _) => Some(NeedsRam::Machine(m)),
     }
 }

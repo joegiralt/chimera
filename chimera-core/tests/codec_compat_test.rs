@@ -49,7 +49,7 @@ fn sources() -> Vec<(String, Sound)> {
     v.push(("init_algo.snd".into(), v1_init(EngineType::Algo)));
     v.push(("init_modal.snd".into(), v1_init(EngineType::Modal)));
     // TAPE's INIT as TAPE Task 12 saved it: engine code 2 frozen (ADR 0045).
-    v.push(("init_tape.snd".into(), Sound::plain_init(EngineType::Tape)));
+    v.push(("init_tape.snd".into(), v1_init_tape()));
     // A library Sound (library spec): factory 0 behind a `Build` record.
     v.push((LIBRARY_FIXTURE.into(), frozen(0)));
     // A described one (showcase spec § 1): factory 1 behind `Build` and `Note`.
@@ -94,6 +94,14 @@ fn v1_init(engine: EngineType) -> Sound {
     for o in &mut s.params.algo.ops {
         o.rr = 8;
     }
+    s
+}
+
+/// TAPE's INIT as TAPE Task 12 saved it: LENGTH 1, before INIT's LOOP
+/// took 0.8 (#698).
+fn v1_init_tape() -> Sound {
+    let mut s = Sound::plain_init(EngineType::Tape);
+    s.params.tape.size = 1.0;
     s
 }
 
@@ -619,7 +627,7 @@ fn init_tape_fixture_pins_engine_code_2() {
     assert_eq!(EngineType::Tape.disk_code(), 2);
     let s = decode(&fixture("init_tape.snd")).unwrap();
     assert_eq!(s.engine(), EngineType::Tape);
-    assert!(s.bits_eq(&Sound::plain_init(EngineType::Tape)));
+    assert!(s.bits_eq(&v1_init_tape()));
 }
 
 /// VA's engine code is 3 for good: the frozen INIT loads as VA.

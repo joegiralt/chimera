@@ -99,6 +99,9 @@ pub struct Voice {
     /// The velocity the VCA's VEL played last block: a re-strike's ramps
     /// from it (#483).
     vca_velocity: Velocity,
+    /// The VCA's gain at the last block's end, in 65 535ths: how loud the
+    /// note is, for a streamed steal (`admit::Age::level`).
+    level: u16,
     /// The source the last note, or the one waiting, plays (TAPE).
     last_source: Option<SourceId>,
     /// Samples left of a fade-out (`kill`, a switch); 0 when not
@@ -453,6 +456,7 @@ impl Voice {
                 last_note: MidiNote::A4,
                 last_velocity: Velocity::DEFAULT,
                 vca_velocity: Velocity::DEFAULT,
+                level: 0,
                 last_source: None,
                 fade: 0,
                 after_fade: AfterFade::Idle,
@@ -726,7 +730,14 @@ impl Voice {
         if self.after_fade == AfterFade::Restart {
             self.after_fade = AfterFade::Idle;
         }
-        self.slot.note_off(ctx);
+        // One release a note: a VCA route holds the voice, so its ENV
+        // releases it, not TAPE's FADE as well.
+        self.slot.note_off(ctx, self.vca.bits != 0);
+    }
+
+    /// The VCA's gain last block, in 65 535ths.
+    pub fn level(&self) -> u16 {
+        self.level
     }
 
     /// Fading out: a steal's, a shed's, or ahead of a queued note.
@@ -1159,6 +1170,11 @@ impl Voice {
                 last_gain = g * vel;
             }
         }
+
+        self.level = match &gain {
+            Some(_) => (last_gain * 65_535.0) as u16,
+            None => (volume.clamp(0.0, 1.0) * 65_535.0) as u16,
+        };
 
         // Check if done
         self.active = self.slot.is_active();

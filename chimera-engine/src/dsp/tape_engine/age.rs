@@ -1,5 +1,5 @@
 //! AGE, the wear (spec 2026-10-04 § 2): a one-pole low-pass whose corner
-//! falls `AGE_TOP_HZ · (1/8)^age`, white hiss up to −42 dBFS RMS, and above
+//! falls from the source's band edge (`AGE_TOP_HZ` at most) by `(1/8)^age`, white hiss up to −42 dBFS RMS, and above
 //! ½ dropouts: the gain dipping `(age − ½)·2·9` dB at random for 20–80 ms,
 //! eased a block at a time. Each voice has its own hiss and dropouts (a
 //! Mellotron's strip of tape a note).
@@ -48,6 +48,8 @@ pub struct Age {
     /// Blocks of the dropout left; 0 when none.
     left: u32,
     rng: u32,
+    /// The corner at AGE 0: the source's own band edge (`set_band`).
+    top: f32,
 }
 
 impl Default for Age {
@@ -64,7 +66,15 @@ impl Age {
             target: 1.0,
             left: 0,
             rng: 0x6A09_E667,
+            top: AGE_TOP_HZ,
         }
+    }
+
+    /// The note's source plays at `rate`: AGE's corner starts at its band
+    /// edge, `rate / 2` (`AGE_TOP_HZ` at most), so AGE darkens over its
+    /// whole travel on a low-rate source too (#698).
+    pub fn set_band(&mut self, rate: u16) {
+        self.top = (0.5 * f32::from(rate)).min(AGE_TOP_HZ);
     }
 
     /// Its own hiss and dropouts, from `s`.
@@ -97,9 +107,9 @@ impl Age {
 
     #[inline(never)]
     fn wear(&mut self, x: &mut [f32; BLOCK_SIZE], age: f32) {
-        // 1 − e^(−2π·corner/rate), the corner `AGE_TOP_HZ · 2^(−3·age)`.
+        // 1 − e^(−2π·corner/rate), the corner `top · 2^(−3·age)`.
         const K: f32 = core::f32::consts::TAU / SAMPLE_RATE as f32 * core::f32::consts::LOG2_E;
-        let shut = exp2(-K * AGE_TOP_HZ * exp2(-3.0 * age));
+        let shut = exp2(-K * self.top * exp2(-3.0 * age));
         let a = 1.0 - shut * (age * (1.0 / AGE_OPEN)).min(1.0);
         self.dropout(age);
         let g0 = self.g;

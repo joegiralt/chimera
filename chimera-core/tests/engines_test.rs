@@ -112,7 +112,7 @@ fn modal_row_no_amp_env_and_lives_until_modes_decay() {
         &mut ctx(&mut pool, &none),
     );
     assert!(e.is_active());
-    e.note_off(&mut ctx(&mut pool, &none));
+    e.note_off(&mut ctx(&mut pool, &none), false);
     render(&mut e, &p, &mut pool, 1500);
     assert!(!e.is_active());
 }
@@ -134,7 +134,7 @@ fn algo_row_no_amp_env_and_lives_until_its_carriers_release() {
     );
     render(&mut e, &p, &mut pool, 1);
     assert!(e.is_active());
-    e.note_off(&mut ctx(&mut pool, &none));
+    e.note_off(&mut ctx(&mut pool, &none), false);
     // RR 5: T60 about 1.1 s.
     render(&mut e, &p, &mut pool, 1500);
     assert!(!e.is_active());

@@ -414,6 +414,7 @@ impl Streaming {
         age: Age {
             released: false,
             since: 0,
+            level: crate::stream::admit::LOUD,
         },
         capped: false,
     };
@@ -1101,16 +1102,19 @@ impl Instrument {
             _ if s.dying() => Age {
                 released: true,
                 since: u32::MAX,
+                level: 0,
             },
             a if a.released == s.held() => Age {
                 released: !s.held(),
                 since: 0,
+                ..a
             },
             a => Age {
                 since: a.since.saturating_add(1),
                 ..a
             },
         };
+        st.age.level = self.voices[v].level();
         if !self.voices[v].fading() {
             st.fading = None;
         }
@@ -1286,6 +1290,7 @@ impl Instrument {
                             age: Age {
                                 released: false,
                                 since: 0,
+                                level: crate::stream::admit::LOUD,
                             },
                             capped: false,
                         };

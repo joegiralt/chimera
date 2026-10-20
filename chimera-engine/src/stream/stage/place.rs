@@ -4,7 +4,7 @@
 
 use super::Heads;
 use crate::dsp::tape_engine::heads::{Bounds, window_end, window_start};
-use crate::dsp::tape_engine::params::{PlayMode, TapeEngineParams, needs_ram};
+use crate::dsp::tape_engine::params::{TapeEngineParams, TapeMachine, needs_ram};
 use crate::dsp::tape_engine::read::HeadSpec;
 use crate::storage::SourceRef;
 use crate::stream::admit::head_frames;
@@ -45,7 +45,7 @@ pub(crate) fn heads_in(r: SourceRef, p: &TapeEngineParams) -> Option<Heads> {
     // row reads it).
     let cap = we.saturating_add(2).min(frames).next_multiple_of(2);
     let start = head(ws, reach, cap)?;
-    if p.mode != PlayMode::Loop {
+    if p.machine() != TapeMachine::Loop {
         return Some(Heads {
             specs: [start; 2],
             n: 1,

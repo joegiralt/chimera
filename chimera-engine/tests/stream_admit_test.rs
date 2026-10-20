@@ -1,12 +1,17 @@
 //! Stream admission (slice 1 § 5): the card's byte budget.
 
 use chimera_engine::stream::admit::{
-    Admit, Age, Bill, ReadRatio, STREAM_BUDGET_BPS, admit, bill, head_frames, ratio_max,
+    Admit, Age, Bill, LOUD, ReadRatio, STREAM_BUDGET_BPS, WOW_CENTS, admit, bill, head_frames,
+    ratio_max,
 };
 use chimera_engine::voice_alloc::VoiceIdx;
 
 fn age(released: bool, since: u32) -> Age {
-    Age { released, since }
+    Age {
+        released,
+        since,
+        level: LOUD,
+    }
 }
 
 fn v(i: usize) -> VoiceIdx {
@@ -35,10 +40,11 @@ fn seven_beds_fit_the_budget_an_eighth_steals() {
     assert_eq!(admit(b, p, STREAM_BUDGET_BPS), Admit::Steal(v(6)));
 }
 
-/// A TRON chord at +3 st: six fit, a seventh steals.
+/// A TRON chord at +3 st under wow (TAPE up: the caller adds it): six
+/// fit, a seventh steals.
 #[test]
 fn six_tron_notes_fit() {
-    let b = bill(24_000, ratio_max(60, 6000.0, 300.0, 0.0));
+    let b = bill(24_000, ratio_max(60, 6000.0, 300.0 + WOW_CENTS, 0.0));
     let total = 8 * b.0;
     assert!((395_000..=403_000).contains(&total), "{total}");
     let p = (0..6).map(|i| (v(i), b, age(false, 0)));

@@ -96,6 +96,8 @@ impl TapeEngine {
 
     pub fn note_off(&mut self) {}
 
+    pub fn release_by(&mut self, _vca: bool) {}
+
     pub fn sustains(&self) -> bool {
         false
     }

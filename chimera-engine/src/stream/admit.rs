@@ -53,19 +53,40 @@ pub fn bill(rate: u16, ratio_max: ReadRatio) -> Bill {
 }
 
 /// The fastest read ratio a note can reach: its distance from the root,
-/// plus the pitch route's reach, the bend range and wow. Not clamped below
-/// 1 on purpose: notes below the root read slower.
+/// plus the pitch route's reach and the bend (wow is the caller's: in
+/// `pitch_reach_cents` when TAPE runs). Not clamped below 1 on purpose:
+/// notes below the root read slower.
 pub fn ratio_max(note: u8, root_cents: f32, pitch_reach_cents: f32, bend_cents: f32) -> ReadRatio {
-    let cents = note as f32 * 100.0 - root_cents + pitch_reach_cents + bend_cents + WOW_CENTS;
+    let cents = note as f32 * 100.0 - root_cents + pitch_reach_cents + bend_cents;
     ReadRatio::new(exp2(cents / 1200.0))
 }
 
 /// How long a playing voice has been so: `since` counts blocks from its
 /// release when `released`, from its start when held. Bigger is older.
+/// `level`: its VCA's gain last block, in 65 535ths (`LOUD` for a fresh
+/// note).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Age {
     pub released: bool,
     pub since: u32,
+    pub level: u16,
+}
+
+/// A fresh note's `Age::level`: full.
+pub const LOUD: u16 = u16::MAX;
+
+impl Age {
+    /// Which voice a steal takes first, the bigger: a released one before
+    /// a held one, the oldest; of held ones the quietest (the most
+    /// decayed), then the oldest. The oldest held note is usually a
+    /// chord's foundation (#698).
+    fn rank(self) -> (bool, u32, u32) {
+        if self.released {
+            (true, self.since, 0)
+        } else {
+            (false, u32::from(LOUD - self.level), self.since)
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,7 +98,8 @@ pub enum Admit {
 }
 
 /// Admit `new` against `budget`. Released voices go before held, the oldest
-/// first; a bill over the whole budget refuses outright.
+/// first, then the quietest held (`Age::rank`); a bill over the whole
+/// budget refuses outright.
 pub fn admit(
     new: Bill,
     playing: impl Iterator<Item = (VoiceIdx, Bill, Age)>,
@@ -90,7 +112,7 @@ pub fn admit(
     let mut victim: Option<(VoiceIdx, Age)> = None;
     for (i, b, age) in playing {
         used = used.saturating_add(b.0);
-        let older = victim.is_none_or(|(_, v)| (age.released, age.since) > (v.released, v.since));
+        let older = victim.is_none_or(|(_, v)| age.rank() > v.rank());
         if older {
             victim = Some((i, age));
         }

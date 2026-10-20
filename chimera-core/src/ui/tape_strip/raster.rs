@@ -11,7 +11,7 @@ use crate::dsp::tape_engine::heads::{Bounds, Dir, Window, min_frames};
 use crate::dsp::tape_engine::oneshot::Slice;
 use crate::dsp::tape_engine::params::{PlayMode, TapeEngineParams, TapeModel};
 use crate::dsp::tape_engine::read::{Shape, SourceView};
-use crate::dsp::tape_engine::tron::tron_len_s;
+use crate::dsp::tape_engine::tron::tron_len_s_in;
 use crate::ui::theme;
 
 impl Overview {
@@ -152,7 +152,8 @@ pub(crate) fn strip_in(
             Some(out) if fwd => (w.lo, out.max(w.lo)),
             Some(out) => (out.min(w.hi), w.hi),
             None => {
-                let run = (tron_len_s(p.size) * f32::from(o.rate)) as u32;
+                let strip = len as f32 / f32::from(o.rate);
+                let run = (tron_len_s_in(p.size, strip) * f32::from(o.rate)) as u32;
                 place(0, run.min(len))
             }
         },

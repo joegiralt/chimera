@@ -500,7 +500,7 @@ fn blind(p: &mut Pix, b: Blind) {
 fn accordion(p: &mut Pix, b: Bellows) {
     // `stretch::time_speed`.
     let m = b.speed.bi();
-    let sp = if m >= 0.0 { 2.0 * m } else { m };
+    let sp = crate::dsp::tape_engine::stretch::time_speed(m);
     let w = r(56.0 - 19.0 * libm::fabsf(sp));
     let n = r(3.0 + 9.0 * (1.0 - b.d_time.unit())).max(1);
     let (x0, x1, top, bot) = (32 - (w >> 1), 32 + (w >> 1), 20, 40);
