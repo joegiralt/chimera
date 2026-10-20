@@ -264,10 +264,11 @@ impl FilterKind {
     /// 0: the engine terms carry LP24 (plan § Measured, Task 15, counted
     /// with the block at 1879169d). CLEAN: LP4, BP4 and HP4 41 + 3.25
     /// instructions, 75 (80 with LEVEL's gain); NOTCH2 18 + 3.06, 35; the
-    /// one-stage modes less: 0. The 2040 by VOICE (`K2040Voice::cost`):
-    /// REV2 110, EXP 135. DIRTY 30.25 + `ramps`' 6.25 + 4.08, 70, every
-    /// block and mode: 0. LADDER its costliest mode (`LADDER_COST`), so the
-    /// mode isn't asked.
+    /// one-stage modes less: 0. The 2040 and LADDER as the unit reads them
+    /// (#642): the 2040 by VOICE (`K2040Voice::cost`) REV2 78, EXP 136;
+    /// LADDER 176, its costliest mode (`LADDER_COST`), so the mode isn't
+    /// asked. DIRTY 30.25 + `ramps`' 6.25 + 4.08, 70, every block and
+    /// mode: 0.
     pub const fn cost(self, voice: K2040Voice) -> Cost {
         match self {
             FilterKind::Svf => Cost::ZERO,

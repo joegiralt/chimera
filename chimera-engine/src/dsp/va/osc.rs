@@ -12,6 +12,14 @@
 //! place plus a whole number of cycles) with `u = phase − o` in `0..1`: `u`
 //! leaving that range is the crossing, and `u` is the eval's phase since
 //! the edge, so the eval and the crossings never disagree.
+//!
+//! A `MOD` instance reads a second phase beside the clock (ADR 0158):
+//! `read`, moved each sample by a modulated rate (FM, PM, a reversing
+//! sync's turns). The edges and the sine follow `read`; the clock keeps
+//! the wraps, the sub's flips and the jitter. A plain instance never
+//! touches `read` but to leave it on the clock.
+
+pub mod door;
 
 use super::blep::{blamp_into, blamp6_into, blep_into};
 use crate::dsp::provenance::{PatentLine, Provenance};
@@ -21,6 +29,18 @@ pub const PROVENANCE: &[Provenance] = &[
     Provenance::Textbook {
         cite: "Tierney, Rader & Gold, \"A Digital Frequency Synthesizer\", \
                IEEE Trans. Audio Electroacoustics 19(1), 1971 (phase accumulator)",
+    },
+    Provenance::Textbook {
+        cite: "Esqueda, Valimaki & Bilbao, \"Rounding Corners with BLAMP\", DAFx-16, 2016 \
+               (a reversing read's turn as a BLAMP)",
+    },
+    Provenance::Textbook {
+        cite: "Valimaki & Huovilainen, \"Antialiasing oscillators in subtractive synthesis\", \
+               IEEE SPM 24(2), 2007 (steps crossed at a modulated rate)",
+    },
+    Provenance::Textbook {
+        cite: "Roth, Keller, Castaneda & Studer, \"Alias-free oscillator synchronization via \
+               additive synthesis\", DAFx-26 paper 49, CC-BY 4.0 (mirrored sync, definition only)",
     },
     Provenance::Original {
         author: "AI-assisted, owner-directed and reviewed",
@@ -77,7 +97,7 @@ const ST: [f32; 5] = {
 
 /// `sin 2πx` for |x| ≤ ½ turn (`S`'s polynomial in turns).
 #[inline(always)]
-fn psin(x: f32) -> f32 {
+pub(super) fn psin(x: f32) -> f32 {
     // Estrin's split of the Horner chain: one multiply-add fewer
     let (x2, x4) = (x * x, (x * x) * (x * x));
     let lo = ST[0] + x2 * ST[1];
@@ -757,6 +777,10 @@ struct Blk {
 /// "No wrap" in a wrap buffer (a wrap's `t` is in 0..=1).
 pub const NO_WRAP: f32 = -1.0;
 
+/// A block (64 samples, the engine's) of no modulation: a plain
+/// instance's `m`, never read.
+pub static ZEROS: [f32; 64] = [0.0; 64];
+
 /// The fraction of `x` (|x| < 2³¹), in 0..1.
 #[inline(always)]
 fn frac(x: f32) -> f32 {
@@ -844,7 +868,13 @@ const EDGE_LOG: usize = 8;
 
 #[derive(Clone, Copy, Debug)]
 pub struct VarOsc {
+    /// The clock: the wraps, the sub's flips, the jitter's draws.
     phase: f32,
+    /// The read phase (0..=1) the edges and the sine follow: the clock's
+    /// own after a plain run, its modulated twin after a `MOD` one.
+    read: f32,
+    /// The read's direction, ±1 (a reversing sync's turns flip it).
+    dir: f32,
     inv_sr: f32,
     #[cfg(any(test, feature = "test-support"))]
     correction: Correction,
@@ -885,6 +915,8 @@ pub struct VarOsc {
 impl VarOsc {
     pub const NEW: Self = Self {
         phase: 0.0,
+        read: 0.0,
+        dir: 1.0,
         inv_sr: 1.0 / 48_000.0,
         #[cfg(any(test, feature = "test-support"))]
         correction: Correction::On,
@@ -924,6 +956,7 @@ impl VarOsc {
     /// constants recomputed at the next sample.
     pub fn reset(&mut self) {
         self.phase = 0.0;
+        (self.read, self.dir) = (0.0, 1.0);
         self.held = 0.0;
         self.live = 0;
         self.flipped = false;
@@ -962,7 +995,27 @@ impl VarOsc {
     pub fn set_phase(&mut self, p: f32) {
         let f = p - libm::floorf(p);
         self.phase = if (0.0..1.0).contains(&f) { f } else { 0.0 };
+        (self.read, self.dir) = (self.phase, 1.0);
         self.live = 0;
+    }
+
+    /// The clock jumps to the read phase, forward: leaving a `MOD` render
+    /// for a plain one (the MODE duck's swap). The edges' phases since
+    /// them are the read's already, so they stay; no edge is made.
+    pub fn settle(&mut self) {
+        (self.phase, self.dir) = (self.read, 1.0);
+    }
+
+    /// The read phase (`phase` after a plain render).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn read_phase(&self) -> f32 {
+        self.read
+    }
+
+    /// The read's direction, ±1.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn read_dir(&self) -> f32 {
+        self.dir
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -986,7 +1039,47 @@ impl VarOsc {
         };
         let mut out = [0.0f32];
         let mut mk = [[sync.map_or(NO_WRAP, |t| clampf(t, 0.0, 1.0)), NO_WRAP]];
-        self.render::<1, true, true, true>(&mut out, &mut mk, &r, &mut 1.0, &mut || 1.0);
+        let draw = &mut || 1.0;
+        self.render::<1, true, true, true, false>(
+            &mut out,
+            &mut mk,
+            &r,
+            &mut 1.0,
+            draw,
+            &[0.0],
+            (0.0, 0.0),
+        );
+        let [wr, fl] = mk[0];
+        Tick {
+            out: out[0],
+            wrap: (wr >= 0.0).then_some(wr),
+            flip: (fl >= 0.0).then_some(fl),
+        }
+    }
+
+    /// `tick` on the `MOD` path: the read moves `dir·inc + rr_extra` (PM's
+    /// form, `k = (0, 1)`); `turn` is a reversing sync's turn `t` samples
+    /// ago (the reversing branch). `wrap` and `flip` are the clock's.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn tick_mod(&mut self, inc: f32, m: Morph, rr_extra: f32, turn: Option<f32>) -> Tick {
+        self.logged = 0;
+        let r = Ramps {
+            inc: (inc, 0.0),
+            wave: (m.wave.get(), 0.0),
+            shape: (m.shape.get(), 0.0),
+        };
+        let mut out = [0.0f32];
+        let mut mk = [[turn.map_or(NO_WRAP, |t| clampf(t, 0.0, 1.0)), NO_WRAP]];
+        let draw = &mut || 1.0;
+        self.render::<1, true, true, true, true>(
+            &mut out,
+            &mut mk,
+            &r,
+            &mut 1.0,
+            draw,
+            &[rr_extra],
+            (0.0, 1.0),
+        );
         let [wr, fl] = mk[0];
         Tick {
             out: out[0],
@@ -1001,16 +1094,55 @@ impl VarOsc {
     /// `REC` writes the wrap, `FLIP` the flip; `SYNC` restarts the phase at
     /// each wrap it reads there first. `jit` scales the increment; `draw`
     /// gives the next at each wrap (STABILITY's jitter).
+    ///
+    /// `MOD` reads the modulated phase (ADR 0158): sample `i`'s read rate
+    /// is `ie·(dir + k.0·m[i]) + k.1·m[i]` (`ie` the jittered increment;
+    /// FM `k = (1, 0)`, PM `(0, 1)`), wrapped to the nearest cycle. With
+    /// `SYNC` too, a mark is a turn, not a reset: the read reverses there.
+    /// A plain instance ignores `m` and `k`. The engine's `MOD` instances
+    /// are `door`'s (ADR 0163); this one plays them on a host.
     #[inline(never)]
-    pub fn render<const N: usize, const REC: bool, const SYNC: bool, const FLIP: bool>(
+    #[allow(clippy::too_many_arguments)]
+    pub fn render<
+        const N: usize,
+        const REC: bool,
+        const SYNC: bool,
+        const FLIP: bool,
+        const MOD: bool,
+    >(
         &mut self,
         out: &mut [f32; N],
         mk: &mut [[f32; 2]; N],
         r: &Ramps,
         jit: &mut f32,
         draw: &mut impl FnMut() -> f32,
+        m: &[f32; N],
+        k: (f32, f32),
     ) {
-        let blk = self.block::<SYNC>(r, N, *jit);
+        self.render_in::<N, REC, SYNC, FLIP, MOD>(out, mk, r, jit, draw, m, k);
+    }
+
+    /// `render`'s body, inlined into its caller: a `MOD` instance's runs
+    /// are `door::run`'s, so with `bank2` they link with the door.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn render_in<
+        const N: usize,
+        const REC: bool,
+        const SYNC: bool,
+        const FLIP: bool,
+        const MOD: bool,
+    >(
+        &mut self,
+        out: &mut [f32; N],
+        mk: &mut [[f32; 2]; N],
+        r: &Ramps,
+        jit: &mut f32,
+        draw: &mut impl FnMut() -> f32,
+        m: &[f32; N],
+        k: (f32, f32),
+    ) {
+        let blk = self.block::<SYNC, MOD>(r, N, *jit);
         #[cfg(any(test, feature = "test-support"))]
         {
             self.runs = 0;
@@ -1036,16 +1168,23 @@ impl VarOsc {
                 self.runs += 1;
             }
             let span = (i0, i1);
+            macro_rules! run {
+                ($a:ty, $b:ty) => {
+                    if MOD {
+                        door::run::<$a, $b, N, REC, SYNC, FLIP>(
+                            self, &blk, span, r, out, mk, jit, draw, m, k,
+                        )
+                    } else {
+                        self.run::<$a, $b, N, REC, SYNC, FLIP, false>(
+                            &blk, span, r, out, mk, jit, draw, m, k,
+                        )
+                    }
+                };
+            }
             match pair {
-                Pair::SineTri => {
-                    self.run::<Sine, Tri, N, REC, SYNC, FLIP>(&blk, span, r, out, mk, jit, draw)
-                }
-                Pair::TriSaw => {
-                    self.run::<Tri, Saw, N, REC, SYNC, FLIP>(&blk, span, r, out, mk, jit, draw)
-                }
-                Pair::SawPulse => {
-                    self.run::<Saw, Pulse, N, REC, SYNC, FLIP>(&blk, span, r, out, mk, jit, draw)
-                }
+                Pair::SineTri => run!(Sine, Tri),
+                Pair::TriSaw => run!(Tri, Saw),
+                Pair::SawPulse => run!(Saw, Pulse),
             }
             i0 = i1;
             pair = pair.next(up);
@@ -1082,7 +1221,7 @@ impl VarOsc {
     /// for a sync slave, each wave's value and slope at phase 0 (unit weight)
     /// at the block's end.
     #[inline(never)]
-    fn block<const SYNC: bool>(&mut self, r: &Ramps, n: usize, jit: f32) -> Blk {
+    fn block<const SYNC: bool, const MOD: bool>(&mut self, r: &Ramps, n: usize, jit: f32) -> Blk {
         // the engine's blocks have `begin`'s; a lone `tick` fills here
         if !self.next_ok {
             self.ends(end_shape(r, n));
@@ -1100,14 +1239,18 @@ impl VarOsc {
                 SubEdge::Wrap => 1.0,
             },
         };
-        for (e, w) in [Wave::Tri, Wave::Saw, Wave::Pulse].into_iter().enumerate() {
-            let (p0, p1) = (w.pos(sh0), w.pos(sh1));
-            for q in 0..2 {
-                let rate = ie - (p1[q] - p0[q]) * il;
-                blk.rate[e][q] = (1.0 / rate, rate.abs() * (1.0 / 6.0));
+        // a `MOD` read's rates are its samples' own (`cross`)
+        if !MOD {
+            for (e, w) in [Wave::Tri, Wave::Saw, Wave::Pulse].into_iter().enumerate() {
+                let (p0, p1) = (w.pos(sh0), w.pos(sh1));
+                for q in 0..2 {
+                    let rate = ie - (p1[q] - p0[q]) * il;
+                    blk.rate[e][q] = (1.0 / rate, rate.abs() * (1.0 / 6.0));
+                }
             }
         }
-        if SYNC {
+        // a reset's target; a turn (`MOD`) has none
+        if SYNC && !MOD {
             for (k, w) in WAVES.into_iter().enumerate() {
                 blk.zero[k] = w.value_slope(w.consts(sh1, 1.0), 0.0, w.pos(sh1));
             }
@@ -1121,7 +1264,7 @@ impl VarOsc {
     /// divide); each edge's place glides to its place there. Inlined into
     /// the run's loop, so the `Run` stays in registers.
     #[inline(always)]
-    fn setup<A: Kind, B: Kind, const SYNC: bool>(
+    fn setup<A: Kind, B: Kind, const SYNC: bool, const MOD: bool>(
         &mut self,
         blk: &Blk,
         (i0, i1): (usize, usize),
@@ -1161,20 +1304,20 @@ impl VarOsc {
             let (v, e) = (c0[0] + c0[3], c1[0] + c1[3]);
             run.c[0] = Lin { v, d: (e - v) * il };
         }
-        if SYNC {
+        if SYNC && !MOD {
             let f = weight(i1);
             let (za, zb) = (blk.zero[a as usize], blk.zero[b as usize]);
             run.y0 = (1.0 - f) * za.0 + f * zb.0;
             run.d0 = (1.0 - f) * za.1 + f * zb.1;
         }
         let mut live = 0;
-        if let Some((e, u, od)) = self.glide(a, [p0[0], p0[1]], [p1[0], p1[1]], il) {
+        if let Some((e, u, od)) = self.glide::<MOD>(a, [p0[0], p0[1]], [p1[0], p1[1]], il) {
             live |= 1 << e;
             ([run.u[0], run.u[1]], [run.od[0], run.od[1]]) = (u, od);
             let [x, y] = blk.rate[e];
             ([run.rcp[0], run.rcp[1]], [run.ar[0], run.ar[1]]) = ([x.0, y.0], [x.1, y.1]);
         }
-        if let Some((e, u, od)) = self.glide(b, [p0[2], p0[3]], [p1[2], p1[3]], il) {
+        if let Some((e, u, od)) = self.glide::<MOD>(b, [p0[2], p0[3]], [p1[2], p1[3]], il) {
             live |= 1 << e;
             ([run.u[2], run.u[3]], [run.od[2], run.od[3]]) = (u, od);
             let [x, y] = blk.rate[e];
@@ -1187,9 +1330,9 @@ impl VarOsc {
     /// Wave `w`'s two edges over a run from places `p0` to `p1`: its slot,
     /// the phase since each edge and each place's step a sample, gliding
     /// to its place at the run's end. A wave entering starts on its
-    /// places, uncrossed.
+    /// places, uncrossed. The edges are the read's (`MOD`), else the clock's.
     #[inline(always)]
-    fn glide(
+    fn glide<const MOD: bool>(
         &mut self,
         w: Wave,
         p0: [f32; 2],
@@ -1200,9 +1343,9 @@ impl VarOsc {
         // slots are 0..=2: the bound lets the indexing go unchecked
         let e = e.min(2);
         if self.live & (1 << e) == 0 {
-            self.since[e] = self.enter(w, p0);
+            self.since[e] = self.enter::<MOD>(w, p0);
         }
-        let (u, p) = (self.since[e], self.phase);
+        let (u, p) = (self.since[e], if MOD { self.read } else { self.phase });
         let step = |u: f32, end: f32| {
             // the edge's place now (a whole number of cycles off); places
             // span under ½ a cycle, so the nearest whole is its own
@@ -1215,10 +1358,10 @@ impl VarOsc {
     /// The phase since each edge for a wave entering at places `pos`: no
     /// crossing.
     #[inline(never)]
-    fn enter(&mut self, w: Wave, pos: [f32; 2]) -> [f32; 2] {
+    fn enter<const MOD: bool>(&mut self, w: Wave, pos: [f32; 2]) -> [f32; 2] {
         // places are in 0..=1 and the phase in 0..1: the edge is at the
         // place or a cycle before it
-        let p = self.phase;
+        let p = if MOD { self.read } else { self.phase };
         let u = pos.map(|x| {
             let mut o = if p < x { x - 1.0 } else { x };
             if p - o >= 1.0 {
@@ -1233,8 +1376,8 @@ impl VarOsc {
         u
     }
 
-    /// The run of samples `i0..i1` on the pair `A`, `B`: its setup, then
-    /// its per-sample loop.
+    /// The run of samples `i0..i1` on the pair `A`, `B`: a plain
+    /// instance (`MOD`'s are `door::run`).
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     fn run<
@@ -1244,6 +1387,33 @@ impl VarOsc {
         const REC: bool,
         const SYNC: bool,
         const FLIP: bool,
+        const MOD: bool,
+    >(
+        &mut self,
+        blk: &Blk,
+        span: (usize, usize),
+        r: &Ramps,
+        out: &mut [f32; N],
+        mk: &mut [[f32; 2]; N],
+        jit: &mut f32,
+        draw: &mut impl FnMut() -> f32,
+        m: &[f32; N],
+        km: (f32, f32),
+    ) {
+        self.run_in::<A, B, N, REC, SYNC, FLIP, MOD>(blk, span, r, out, mk, jit, draw, m, km);
+    }
+
+    /// `run`'s body: its setup, then its per-sample loop.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn run_in<
+        A: Kind,
+        B: Kind,
+        const N: usize,
+        const REC: bool,
+        const SYNC: bool,
+        const FLIP: bool,
+        const MOD: bool,
     >(
         &mut self,
         blk: &Blk,
@@ -1253,9 +1423,13 @@ impl VarOsc {
         mk: &mut [[f32; 2]; N],
         jit: &mut f32,
         draw: &mut impl FnMut() -> f32,
+        m: &[f32; N],
+        km: (f32, f32),
     ) {
-        let run = self.setup::<A, B, SYNC>(blk, (i0, i1), r, N);
+        let run = self.setup::<A, B, SYNC, MOD>(blk, (i0, i1), r, N);
         let (mut p, mut held, mut h, mut j) = (self.phase, self.held, self.h, *jit);
+        // the read phase, its direction and this sample's rate (`MOD`)
+        let (mut rd, mut dir, mut rr) = (self.read, self.dir, 0.0f32);
         // the next event's place (`FLIP` only): the sub's flip place until
         // the phase passes it this cycle, then the wrap. The place is 1
         // exactly at SHAPE 0, so the flip is the wrap, bit for bit
@@ -1291,7 +1465,7 @@ impl VarOsc {
             } else if FLIP {
                 mk[i][1] = NO_WRAP;
             }
-            let p1 = if SYNC && t >= 0.0 {
+            let p1 = if SYNC && !MOD && t >= 0.0 {
                 // the reset `t` samples ago, in time order: own edges up to
                 // it, the reset, own edges after it (below, as any sample's)
                 let dp = ie * (1.0 - t);
@@ -1308,14 +1482,23 @@ impl VarOsc {
                 if A::EDGES {
                     for e in 0..2 {
                         let k = (rcp[e], ar[e]);
-                        self.cross::<A>(e, &mut u[e], t, k, ca, &mut h, (&mut held, &mut acc));
+                        self.cross::<A, false>(
+                            e,
+                            &mut u[e],
+                            t,
+                            k,
+                            0.0,
+                            ca,
+                            &mut h,
+                            (&mut held, &mut acc),
+                        );
                     }
                 }
                 if B::EDGES {
                     for e in 0..2 {
                         let k = (rcp[e + 2], ar[e + 2]);
                         let ue = &mut u[e + 2];
-                        self.cross::<B>(e, ue, t, k, cb, &mut h, (&mut held, &mut acc));
+                        self.cross::<B, false>(e, ue, t, k, 0.0, cb, &mut h, (&mut held, &mut acc));
                     }
                 }
                 // y(0) − y(φ⁻) and the slopes' difference × inc
@@ -1382,34 +1565,130 @@ impl VarOsc {
                         j = draw();
                     }
                 }
-                for (k, u) in u.iter_mut().enumerate() {
-                    if edged(k) {
-                        *u += ie - od[k];
+                if !MOD {
+                    for (k, u) in u.iter_mut().enumerate() {
+                        if edged(k) {
+                            *u += ie - od[k];
+                        }
                     }
                 }
                 q
             };
+            if MOD {
+                // the read's rate, wrapped to the nearest cycle: a whole
+                // cycle's jump is no motion for a periodic wave
+                let mi = m[i];
+                let rate = |d: f32| {
+                    let x = ie * (d + km.0 * mi) + km.1 * mi;
+                    x - floor(x + 0.5)
+                };
+                rr = rate(dir);
+                if SYNC && t >= 0.0 {
+                    // a turn `t` samples ago: the read up to it, its corner
+                    // (a BLAMP), the read back from it; each edge's place
+                    // moves with time, `od` split between the two legs
+                    let a = 1.0 - t;
+                    for (k, u) in u.iter_mut().enumerate() {
+                        if edged(k) {
+                            *u += (rr - od[k]) * a;
+                        }
+                    }
+                    if A::EDGES {
+                        for e in 0..2 {
+                            let v = rr - od[e];
+                            let ue = &mut u[e];
+                            self.cross::<A, true>(
+                                e,
+                                ue,
+                                t,
+                                (0.0, 0.0),
+                                v,
+                                ca,
+                                &mut h,
+                                (&mut held, &mut acc),
+                            );
+                        }
+                    }
+                    if B::EDGES {
+                        for e in 0..2 {
+                            let v = rr - od[e + 2];
+                            let ue = &mut u[e + 2];
+                            self.cross::<B, true>(
+                                e,
+                                ue,
+                                t,
+                                (0.0, 0.0),
+                                v,
+                                cb,
+                                &mut h,
+                                (&mut held, &mut acc),
+                            );
+                        }
+                    }
+                    rd = frac(rd + rr * a);
+                    let (va, vb) = (ca.map(|l| l.v), [bias(cb[0]), cb[1].v, cb[2].v]);
+                    let d = A::slope(va, rd, [u[0], u[1]]) + B::slope(vb, rd, [u[2], u[3]]);
+                    dir = -dir;
+                    let back = rate(dir);
+                    // the slope a sample jumps by the slope a cycle × the
+                    // rate's jump (−2·dir·ie unmodulated)
+                    let slope = d * (back - rr);
+                    if self.apply(t, 0.0, slope) {
+                        blamp_into(&mut held, &mut acc, t, slope);
+                    }
+                    rr = back;
+                    for (k, u) in u.iter_mut().enumerate() {
+                        if edged(k) {
+                            *u += (rr - od[k]) * t;
+                        }
+                    }
+                    rd = frac(rd + rr * t);
+                } else {
+                    for (k, u) in u.iter_mut().enumerate() {
+                        if edged(k) {
+                            *u += rr - od[k];
+                        }
+                    }
+                    rd = frac(rd + rr);
+                }
+            }
             // -0.0: no time offset (`x + -0.0` is `x`)
             if A::EDGES {
                 for e in 0..2 {
-                    let k = (rcp[e], ar[e]);
-                    self.cross::<A>(e, &mut u[e], -0.0, k, ca, &mut h, (&mut held, &mut acc));
+                    let (k, v) = ((rcp[e], ar[e]), rr - od[e]);
+                    self.cross::<A, MOD>(
+                        e,
+                        &mut u[e],
+                        -0.0,
+                        k,
+                        v,
+                        ca,
+                        &mut h,
+                        (&mut held, &mut acc),
+                    );
                 }
             }
             if B::EDGES {
                 for e in 0..2 {
-                    let k = (rcp[e + 2], ar[e + 2]);
+                    let (k, v) = ((rcp[e + 2], ar[e + 2]), rr - od[e + 2]);
                     let ue = &mut u[e + 2];
-                    self.cross::<B>(e, ue, -0.0, k, cb, &mut h, (&mut held, &mut acc));
+                    self.cross::<B, MOD>(e, ue, -0.0, k, v, cb, &mut h, (&mut held, &mut acc));
                 }
             }
-            let y = A::value([c[0].v, c[1].v, c[2].v], p1, [u[0], u[1]], h)
-                + B::value([bias(c[3]), c[4].v, c[5].v], p1, [u[2], u[3]], h);
+            // the sine reads the read phase (`MOD`), else the clock
+            let pr = if MOD { rd } else { p1 };
+            let y = A::value([c[0].v, c[1].v, c[2].v], pr, [u[0], u[1]], h)
+                + B::value([bias(c[3]), c[4].v, c[5].v], pr, [u[2], u[3]], h);
             out[i] = held;
             held = y + acc;
             p = p1;
         }
         (self.phase, self.held, self.h, *jit) = (p, held, h, j);
+        if MOD {
+            (self.read, self.dir) = (rd, dir);
+        } else {
+            self.read = p;
+        }
         if FLIP {
             self.flipped = done;
         }
@@ -1423,15 +1702,18 @@ impl VarOsc {
     /// Edge `e` of wave `K`, `u` the phase since it (`t0` samples before
     /// the sample): if `u` left 0..1, the edge was crossed, corrected at
     /// `t0 + d₁/r` samples ago, forward or backward (an edge outrunning the
-    /// phase).
+    /// phase). `r` is the block's (`1/r` and `|r|/6` in `k`), or with `MOD`
+    /// the sample's own, `v`, divided here: a divide a crossing, none a
+    /// sample.
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
-    fn cross<K: Kind>(
+    fn cross<K: Kind, const MOD: bool>(
         &mut self,
         e: usize,
         u: &mut f32,
         t0: f32,
         (rcp, ar): (f32, f32),
+        v: f32,
         c: [Lin; 3],
         h: &mut f32,
         (held, acc): (&mut f32, &mut f32),
@@ -1441,13 +1723,14 @@ impl VarOsc {
         if bits < 1.0f32.to_bits() {
             return;
         }
+        let ar = if MOD { v.abs() * (1.0 / 6.0) } else { ar };
         if (bits as i32) < 0 {
-            let t = clampf(t0 + *u * rcp, 0.0, 1.0);
+            let t = clampf(t0 + if MOD { *u / v } else { *u * rcp }, 0.0, 1.0);
             *u += 1.0;
             self.correct::<K>(e, false, t, c, ar, h, (held, acc));
         } else {
             *u -= 1.0;
-            let t = clampf(t0 + *u * rcp, 0.0, 1.0);
+            let t = clampf(t0 + if MOD { *u / v } else { *u * rcp }, 0.0, 1.0);
             self.correct::<K>(e, true, t, c, ar, h, (held, acc));
         }
     }

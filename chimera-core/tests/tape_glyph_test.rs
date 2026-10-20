@@ -801,7 +801,8 @@ fn mode_turned_on_the_page_dims_and_frees_the_loop_cells() {
             .map(|(x, y)| full.at(x, y))
             .collect::<Vec<_>>()
     };
-    let mut ui = chimera_core::ui::UiState::new();
+    // Under STACK, EDIT goes down a page (ADR 0145; #671).
+    let mut ui = stack_ui();
     tape_deck(&mut ui, 0);
     shot(&mut ui);
     // DECK → PLAY; MODE LOOP → ONE.

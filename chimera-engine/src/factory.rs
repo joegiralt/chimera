@@ -88,6 +88,14 @@ mod authored {
     /// the FM patches whose timbre is the operators', not the filter's.
     const OPEN: f32 = 20000.0;
 
+    /// The FX slot as SOFT PRE at LEVEL ½: the old DRV at `drive`, `tone`,
+    /// bit for bit.
+    fn soft(p: &mut crate::params::ParamSnapshot, drive: f32, tone: f32) {
+        use crate::dsp::voice_fx::params::FxType;
+        p.fx.set_type(FxType::Soft);
+        (p.fx.pots[0], p.fx.pots[1]) = (drive, tone);
+    }
+
     /// `env` is AR, D1R, D1L, D2R, RR.
     fn op(coarse: u8, level: u8, env: [u8; 5]) -> AlgoOpParams {
         let [ar, d1r, d1l, d2r, rr] = env;
@@ -296,7 +304,7 @@ mod authored {
                 );
                 (s.params.filter.cutoff, s.params.filter.resonance) = (900.0, 0.4);
                 // DRIVE 0.3 trimmed for LEVEL 95's +0.01 dB: the clipper's input is unchanged.
-                s.params.drive.drive = 0.299_496_26;
+                soft(&mut s.params, 0.299_496_26, 0.5);
                 // Its level from before INIT's moved to the median (ADR 0063).
                 s.params.out.volume = 0.8;
                 s
@@ -591,8 +599,7 @@ mod authored {
                 p.filter.cutoff = 1_800.0;
                 p.filter.resonance = 0.35;
                 p.filter.level = 0.65;
-                p.drive.drive = 0.35;
-                p.drive.tone = 0.6;
+                soft(p, 0.35, 0.6);
                 route(&mut s, VOWEL, b"ALGVOWEL", ModSource::Env2, 90);
                 route(&mut s, VOWEL, b"ALGVOWEL", ModSource::Lfo1, 35);
                 route(&mut s, PITCH, b"PITCH\0\0\0", ModSource::Env3, 5);
@@ -683,8 +690,7 @@ mod authored {
                 p.filter.set_kind(FilterKind::Dirty);
                 p.filter.cutoff = 2_500.0;
                 p.filter.resonance = 0.35;
-                p.drive.drive = 0.45;
-                p.drive.tone = 0.55;
+                soft(p, 0.45, 0.55);
                 p.out.sends = [0.0, 0.3, 0.15];
                 route(&mut s, VOWEL, b"ALGVOWEL", ModSource::Env2, 75);
                 route(&mut s, VOWEL, b"ALGVOWEL", ModSource::Lfo1, 20);

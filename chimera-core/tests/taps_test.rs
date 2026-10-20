@@ -76,7 +76,7 @@ fn tap_routes_round_trip_and_bad_entries_drop() {
         entry(10, q, 12),
         entry(8, op5_level, 13),
         entry(9, flt_level, 14),
-        entry(9, FixedCol::Fold.addr(), -40),
+        entry(9, FixedCol::Fx.addr(), -40),
     ];
     let payload: Vec<u8> = entries.concat();
     let d = decode(&sound_file(&[
@@ -86,7 +86,7 @@ fn tap_routes_round_trip_and_bad_entries_drop() {
     .unwrap();
     let mut want = TapRoutes::default();
     want.set(TapOp::Op5, FixedCol::Q, 30);
-    want.set(TapOp::Op6, FixedCol::Fold, -40);
+    want.set(TapOp::Op6, FixedCol::Fx, -40);
     assert_eq!(d.params.taps, want);
     // A 3-byte tail is not an entry.
     let mut tail = payload;
@@ -240,12 +240,12 @@ fn qm_on_a_tap_views_the_tap_cell() {
 fn tap_routes_moving_and_wanted() {
     let mut t = TapRoutes::default();
     assert!(t.is_empty() && !t.moving(FixedCol::Freq) && t.wanted() == [false, false]);
-    t.set(TapOp::Op6, FixedCol::Fold, 0);
-    assert!(!t.is_empty() && !t.moving(FixedCol::Fold) && t.wanted() == [false, false]);
-    t.set(TapOp::Op6, FixedCol::Fold, -3);
-    assert!(t.moving(FixedCol::Fold) && !t.moving(FixedCol::Q));
+    t.set(TapOp::Op6, FixedCol::Fx, 0);
+    assert!(!t.is_empty() && !t.moving(FixedCol::Fx) && t.wanted() == [false, false]);
+    t.set(TapOp::Op6, FixedCol::Fx, -3);
+    assert!(t.moving(FixedCol::Fx) && !t.moving(FixedCol::Q));
     assert_eq!(t.wanted(), [false, true]);
-    t.clear(TapOp::Op6, FixedCol::Fold);
+    t.clear(TapOp::Op6, FixedCol::Fx);
     assert!(t.is_empty());
     // The depth conversion: 10 octaves a route, 4 a tap, held to ±127.
     assert_eq!(to_tap_amount(40), 100);
@@ -267,9 +267,11 @@ use chimera_core::dsp::filter::k2040::{OUT_2040, R_2040};
 use chimera_core::dsp::filter::ladder::ladder_bound;
 use chimera_core::dsp::filter::{Filter, FilterKind, FilterMode, FilterMods, K2040Voice};
 use chimera_core::dsp::voice::Voice;
-use chimera_core::dsp::wavefolder::Wavefolder;
+use chimera_core::dsp::voice_fx::Ends;
+use chimera_core::dsp::voice_fx::fold;
+use chimera_core::dsp::voice_fx::params::FxType;
 use chimera_core::modulation::ModState;
-use chimera_core::params::{FolderParams, ParamSnapshot};
+use chimera_core::params::ParamSnapshot;
 use chimera_core::taps::{TapLane, TapRows, tap_vca};
 use chimera_core::{MidiNote, Velocity};
 use chimera_hal::BLOCK_SIZE;
@@ -443,20 +445,20 @@ fn freq_tap_makes_sidebands_on_lp2() {
 
 #[test]
 fn fold_tap_moves_the_fold_at_the_op_rate() {
-    let p = FolderParams {
-        fold: 0.2,
-        symmetry: 0.5,
-        mix: 1.0,
+    // FOLD 0.2, SYM ½, LEVEL ½, MIX 1, held.
+    let e = Ends {
+        pots: [(0.2, 0.2), (0.5, 0.5), (0.5, 0.5)],
+        mix: (1.0, 1.0),
+        gate: (1.0, 1.0),
     };
     let run = |tap: bool| {
-        let mut w = Wavefolder::new();
         let mut out = Vec::new();
         for b in 0..150 {
             let rows = rows_with(290.0, b);
             let l = lane(&rows, 1.0);
             let mut buf: [f32; BLOCK_SIZE] =
                 core::array::from_fn(|i| 0.8 * sine(200.0, b * BLOCK_SIZE + i));
-            w.process(&mut buf, &p, true, tap.then_some(&l));
+            fold::run(&mut buf, &e, false, tap.then_some(&l));
             out.extend_from_slice(&buf);
         }
         let t = tail(&out);
@@ -466,15 +468,18 @@ fn fold_tap_moves_the_fold_at_the_op_rate() {
     assert!(db(s / f) > -60.0, "tapped: {} dB", db(s / f));
     let (f, s) = run(false);
     assert!(db(s / f) < -90.0, "untapped: {} dB", db(s / f));
-    // FOLD off, a FOLD tap: the folder runs (and is billed).
+    // FOLD at P1 0, an FX tap: the fold runs (and is billed).
     let mut q = algo(A7, &[(5, 0, 99)]).params;
-    q.folder.fold = 0.0;
-    assert!(!Voice::stage_runs(&q, &ModState::new()).0);
-    q.taps.set(TapOp::Op6, FixedCol::Fold, 127);
-    assert!(Voice::stage_runs(&q, &ModState::new()).0);
+    q.fx.set_type(FxType::Fold);
+    q.fx.pots[0] = 0.0;
+    assert!(!Voice::fx_runs(&q, &ModState::new()));
+    q.taps.set(TapOp::Op6, FixedCol::Fx, 127);
+    assert!(Voice::fx_runs(&q, &ModState::new()));
     let mut m = ParamSnapshot::for_engine(EngineType::Modal);
-    (m.folder.fold, m.taps) = (0.0, q.taps);
-    assert!(!Voice::stage_runs(&m, &ModState::new()).0, "inert off ALGO");
+    (m.fx, m.taps) = (q.fx, q.taps);
+    assert!(!Voice::fx_runs(&m, &ModState::new()), "inert off ALGO");
+    q.fx.set_type(FxType::Soft);
+    assert!(!Voice::fx_runs(&q, &ModState::new()), "inert off FOLD");
 }
 
 #[test]

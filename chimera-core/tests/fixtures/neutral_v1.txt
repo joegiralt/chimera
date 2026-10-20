@@ -48,6 +48,16 @@ Sound {
             symmetry: 0.5,
             mix: 0.5,
         },
+        fx: VoiceFxParams {
+            ty: Off,
+            place: Pre,
+            pots: [
+                0.0,
+                0.5,
+                0.5,
+            ],
+            mix: 1.0,
+        },
         envelopes: [
             EnvParams {
                 attack: 0.189,

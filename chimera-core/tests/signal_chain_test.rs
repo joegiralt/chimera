@@ -1,22 +1,19 @@
 mod common;
-use chimera_core::dsp::drive::Drive;
 use chimera_core::dsp::filter::{Clean, FilterMods};
-use chimera_core::dsp::wavefolder::Wavefolder;
+use chimera_core::dsp::voice_fx::params::FxType;
 use chimera_core::modulation::ModState;
-use chimera_core::params::{DriveParams, FilterParams, FolderParams, ParamSnapshot};
+use chimera_core::params::{FilterParams, ParamSnapshot};
 use chimera_core::{MidiNote, Velocity};
 use common::Rig;
-use common::tri;
+use common::{fx_run, tri};
 
 // ── Drive ───────────────────────────────────────────────────────────
 
 #[test]
 fn test_drive_passthrough_at_zero() {
-    let mut drive = Drive::new();
-    let params = DriveParams::default(); // drive=0
     let mut buf = [0.5, -0.5, 0.3, -0.3];
     let original = buf;
-    drive.process(&mut buf, &params, params.drive >= 0.001);
+    fx_run(FxType::Soft, [0.0, 0.5, 0.5], 1.0, &mut buf);
     for (a, b) in buf.iter().zip(original.iter()) {
         assert!((a - b).abs() < 0.001, "drive=0 should passthrough");
     }
@@ -24,15 +21,8 @@ fn test_drive_passthrough_at_zero() {
 
 #[test]
 fn test_drive_clips_signal() {
-    let mut drive = Drive::new();
-    let params = DriveParams {
-        drive: 1.0, // full drive
-        mix: 1.0,
-        ..Default::default()
-    };
-
     let mut buf = [1.0; 4];
-    drive.process(&mut buf, &params, params.drive >= 0.001);
+    fx_run(FxType::Soft, [1.0, 0.5, 0.5], 1.0, &mut buf);
     for &s in &buf {
         assert!(s.abs() <= 1.5, "drive should soft-clip, got {}", s);
     }
@@ -40,15 +30,8 @@ fn test_drive_clips_signal() {
 
 #[test]
 fn test_drive_output_bounded() {
-    let mut drive = Drive::new();
-    let params = DriveParams {
-        drive: 1.0,
-        mix: 1.0,
-        ..Default::default()
-    };
-
     let mut buf = [5.0, -5.0, 10.0, -10.0];
-    drive.process(&mut buf, &params, params.drive >= 0.001);
+    fx_run(FxType::Soft, [1.0, 0.5, 0.5], 1.0, &mut buf);
     for &s in &buf {
         assert!(s.abs() < 3.0, "drive output should be bounded, got {}", s);
     }
@@ -141,11 +124,9 @@ fn fast_tanh_is_within_its_documented_error() {
 
 #[test]
 fn test_folder_passthrough_at_zero() {
-    let mut folder = Wavefolder::new();
-    let params = FolderParams::default(); // fold=0
     let mut buf = [0.5, -0.5, 0.8, -0.8];
     let original = buf;
-    folder.process(&mut buf, &params, params.fold >= 0.001, None);
+    fx_run(FxType::Fold, [0.0, 0.5, 0.5], 0.5, &mut buf);
     for (a, b) in buf.iter().zip(original.iter()) {
         assert!((a - b).abs() < 0.001, "fold=0 should passthrough");
     }
@@ -153,15 +134,8 @@ fn test_folder_passthrough_at_zero() {
 
 #[test]
 fn test_folder_output_bounded() {
-    let mut folder = Wavefolder::new();
-    let params = FolderParams {
-        fold: 1.0,
-        mix: 1.0,
-        ..Default::default()
-    };
-
     let mut buf = [5.0, -5.0, 10.0, -10.0];
-    folder.process(&mut buf, &params, params.fold >= 0.001, None);
+    fx_run(FxType::Fold, [1.0, 0.5, 0.5], 1.0, &mut buf);
     for &s in &buf {
         assert!(
             s.abs() <= 1.01,
@@ -173,13 +147,6 @@ fn test_folder_output_bounded() {
 
 #[test]
 fn test_folder_adds_harmonics() {
-    let mut folder = Wavefolder::new();
-    let params = FolderParams {
-        fold: 1.0,
-        mix: 1.0,
-        ..Default::default()
-    };
-
     // Sine wave
     let mut buf = [0.0f32; 64];
     for (i, s) in buf.iter_mut().enumerate() {
@@ -191,7 +158,7 @@ fn test_folder_adds_harmonics() {
         .filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0))
         .count();
 
-    folder.process(&mut buf, &params, params.fold >= 0.001, None);
+    fx_run(FxType::Fold, [1.0, 0.5, 0.5], 1.0, &mut buf);
 
     let zc_after: usize = buf
         .windows(2)
@@ -296,10 +263,8 @@ fn test_voice_output_bounded() {
     let mut voice = Rig::new(chimera_hal::SAMPLE_RATE);
     let mut params = tri();
     params.algo.ops[1].level = 70;
-    params.drive.drive = 1.0;
-    params.drive.mix = 1.0;
-    params.folder.fold = 0.5;
-    params.folder.mix = 1.0;
+    params.fx.set_type(FxType::Soft);
+    params.fx.pots[0] = 1.0;
 
     voice.note_on(
         MidiNote::new(60).unwrap(),

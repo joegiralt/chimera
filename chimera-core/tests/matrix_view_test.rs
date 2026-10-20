@@ -124,7 +124,7 @@ fn the_readout_names_the_voice_pitch() {
 #[test]
 fn an_absent_route_reads_dashes() {
     let mut ui = ui_for("mod_matrix");
-    feed(&mut ui, Input::turn(EncoderId::B, 3)); // LFO1 → FOLD: none
+    feed(&mut ui, Input::turn(EncoderId::B, 3)); // LFO1 → FX: none
     assert!(!ui.matrix_state.is_present(1, 3));
     settle(&mut ui);
     let mut fb = Fb::new();
@@ -135,7 +135,7 @@ fn an_absent_route_reads_dashes() {
         };
         let x = t(d, "LFO 1", theme::MARGIN_X) + 5;
         let x = x + draw::arrow(d, x, READOUT_Y, theme::ACCENT) + 5;
-        t(d, "FOLDER FOLD", x);
+        t(d, "FX AMOUNT", x);
         draw::text(
             d,
             &theme::FONT_VALUE,

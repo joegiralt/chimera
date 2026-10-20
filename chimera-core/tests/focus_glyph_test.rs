@@ -65,6 +65,9 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Filter", "KIND", NONE),
     ("Filter", "MODE", NONE),
     ("Filter", "VOICE", NONE),
+    ("VoiceFx", "TYPE", NONE),
+    // PRE and POST: its own glyph comes with FLT › FX.
+    ("VoiceFx", "PLACE", NONE),
     // The jacks: a source's name, no amount (that is FM3's and QM's).
     ("Filter", "FM3IN", NONE),
     ("Filter", "QMIN", NONE),
@@ -133,6 +136,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     // Blends between two ends: a crossfader.
     ("Algo", "MORPH", XF),
     ("Drive", "MIX", XF),
+    ("VoiceFx", "MIX", XF),
     ("Pitch", "STEAL", NONE),
     ("Pitch", "SNAP", NONE),
     ("Part", "MODE", NONE),
@@ -175,6 +179,8 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("Filter", "KIND"),
     // REV2 and EXP: two circuits, neither off.
     ("Filter", "VOICE"),
+    // PRE and POST: either side of the filter, neither off.
+    ("VoiceFx", "PLACE"),
     // A and B are two envelope designs.
     ("Env", "TYPE"),
     // CLASSIC and FUNC are two LFO designs.

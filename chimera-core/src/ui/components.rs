@@ -335,6 +335,23 @@ pub fn focus_band<D>(
     // the status size, the whole row its own.
     let wide = layout == Layout::Small;
     match status {
+        // VA's MODE scope keeps its place: a long MODE name reads in the
+        // value font beside it
+        None if layout == Layout::SmallBeside => {
+            let live = look == Look::Live;
+            draw::text_tracked(
+                d,
+                &theme::FONT_VALUE,
+                value_text,
+                theme::MARGIN_X,
+                theme::FOCUS_VALUE_Y,
+                if live { theme::INK } else { theme::MID },
+                theme::LABEL_TRACKING,
+            );
+            if live {
+                draw_gauge(d, gauge);
+            }
+        }
         None if wide => {
             draw::text_tracked(
                 d,
@@ -551,6 +568,9 @@ pub enum Layout {
     NoGauge,
     /// The value font, the whole row: past the large value's reach.
     Small,
+    /// The value font with VA's MODE scope beside it: a word too wide for
+    /// the large numerals there.
+    SmallBeside,
 }
 
 /// The advance of the large value as `big_value` sets it.
@@ -572,7 +592,14 @@ pub fn layout(value_text: &str, gauge: &Gauge) -> Layout {
         return Layout::Small;
     }
     match gauge_left(gauge) {
-        Some(left) if theme::FOCUS_VALUE_X + w + gap(gauge) > left => Layout::NoGauge,
+        Some(left) if theme::FOCUS_VALUE_X + w + gap(gauge) > left => {
+            let small = draw::text_width(&theme::FONT_VALUE, value_text, theme::LABEL_TRACKING);
+            if matches!(gauge, Gauge::VaMix(_)) && theme::MARGIN_X + small + gap(gauge) <= left {
+                Layout::SmallBeside
+            } else {
+                Layout::NoGauge
+            }
+        }
         _ => Layout::WithGauge,
     }
 }
@@ -611,7 +638,7 @@ pub fn gauge_left(gauge: &Gauge) -> Option<i32> {
 /// `gauge`, or none where `layout` leaves it out.
 pub fn fit_gauge(value_text: &str, gauge: Gauge) -> Gauge {
     match layout(value_text, &gauge) {
-        Layout::WithGauge => gauge,
+        Layout::WithGauge | Layout::SmallBeside => gauge,
         // A TAPE glyph stays: its long word drops to the readout size.
         Layout::NoGauge if matches!(gauge, Gauge::Tape(_)) => gauge,
         _ => Gauge::None,

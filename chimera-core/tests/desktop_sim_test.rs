@@ -10,6 +10,7 @@ use common::Rig;
 use common::{SR, goertzel, rms, tri};
 
 use chimera_core::dsp::modal::ResonatorMode;
+use chimera_core::dsp::voice_fx::params::FxType;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
 use chimera_core::ui::UiState;
@@ -238,8 +239,8 @@ fn test_desktop_drive_affects_output() {
     let driven = sim_render(
         |ui| {
             *ui.params_mut() = tri();
-            ui.params_mut().drive.drive = 0.9;
-            ui.params_mut().drive.mix = 1.0;
+            ui.params_mut().fx.set_type(FxType::Soft);
+            ui.params_mut().fx.pots[0] = 0.9;
         },
         60,
         16,

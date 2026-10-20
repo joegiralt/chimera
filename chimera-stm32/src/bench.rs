@@ -45,7 +45,9 @@ use chimera_engine::dsp::rev::sync::Tempo;
 use chimera_engine::dsp::reverb::ReverbType;
 use chimera_engine::dsp::tape_engine::read::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape};
 use chimera_engine::dsp::tape_engine::{PlayMode, StretchType, TapeModel, wave};
+use chimera_engine::dsp::va::VaMode;
 use chimera_engine::dsp::voice::Voice;
+use chimera_engine::dsp::voice_fx::params::FxType;
 #[cfg(feature = "bench-algo")]
 use chimera_engine::factory::{Demo, demo_sound};
 use chimera_engine::factory::{FACTORY_LEN, factory_sound};
@@ -60,7 +62,7 @@ use chimera_engine::note_queue::{NoteEvent, NoteKind};
 #[cfg(feature = "orbit")]
 use chimera_engine::orbit::runner::OrbitRunner;
 use chimera_engine::params::{
-    EngineType, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot, Steal,
+    EngineType, EnvParams, FilterParams, OutParams, ParamSnapshot, Steal,
 };
 use chimera_engine::part::{DacPair, PartParams};
 use chimera_engine::preset::{Performance, Sound};
@@ -167,6 +169,36 @@ const PATCHES: [Row; ROWS] = [
     // LADDER − 1 OP: LADDER's steady bill over CLEAN LP4 (ADR 0104).
     ("LADDER", ladder_op, 36, 12),
 ];
+
+/// The VA screen's rows, a row a MODE: each at BLEND 1 (the operator all in),
+/// SYNC's and SOFT SYNC's slave a fifth up, FM's modulator at unison,
+/// LOOPFM's WAVE at its default (2/3). A new MODE appends its row.
+const VA_ROWS: usize = 10;
+const VA: [Row; VA_ROWS] = [
+    ("MIX", || va(VaMode::Mix), 36, 12),
+    ("SYNC", || va(VaMode::Sync), 36, 12),
+    ("RING", || va(VaMode::Ring), 36, 12),
+    ("XOR", || va(VaMode::Xor), 36, 12),
+    ("BITS", || va(VaMode::Bits), 36, 12),
+    ("FM", || va(VaMode::Fm), 36, 12),
+    ("AM", || va(VaMode::Am), 36, 12),
+    ("MAX", || va(VaMode::Max), 36, 12),
+    ("LOOPFM", || va(VaMode::LoopFm), 36, 12),
+    ("SOFT", || va(VaMode::SoftSync), 36, 12),
+];
+
+#[inline(never)]
+fn va(mode: VaMode) -> ParamSnapshot {
+    let mut p = snapshot(EngineType::Va);
+    p.va.mode = mode;
+    p.va.amount = 1.0;
+    match mode {
+        VaMode::Sync | VaMode::SoftSync => p.va.coarse[1] = 7,
+        VaMode::Fm => p.va.coarse[1] = 0,
+        _ => {}
+    }
+    p
+}
 
 /// 1 OP through LADDER LP4.
 fn ladder_op() -> ParamSnapshot {
@@ -354,7 +386,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 43;
+const ROUTING_ROWS: usize = 49;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -436,13 +468,13 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
         |p| slide(p, Some((Func::Env(EnvForm::Ad), 0.8))),
         STILL,
     ),
-    ("FOLD", |p| one_op(p).folder.fold = 1.0, STILL),
-    ("DRIVE", |p| one_op(p).drive.drive = 1.0, STILL),
+    ("FOLD", |p| fx(p, FxType::Fold, 1.0), STILL),
+    ("SOFT", |p| fx(p, FxType::Soft, 1.0), STILL),
     ("1 DEST", |p| one_dest(p, LfoType::Classic), STILL),
     ("FUNC LFO", |p| one_dest(p, LfoType::Func), STILL),
     ("A LEVEL", a_level, STILL),
     // |x| ≤ 1.4·|dry|: every sample takes `fast_tanh`'s divide.
-    ("DRIVE LO", |p| one_op(p).drive.drive = 0.05, STILL),
+    ("SOFT LO", |p| fx(p, FxType::Soft, 0.05), STILL),
     // `apply_offset`, and the SVF's ramped `g` every block.
     (
         "1 CUTOFF",
@@ -493,7 +525,52 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
     ),
     // MODE flipped every 4 blocks: restarts and rests every flip.
     ("SWITCH", |p| modal(p, ResonatorMode::String), switch_storm),
+    // The FX slot's bills (FX plan Task 1): SOFT RT − SOFT and FOLD RT −
+    // FOLD are each type's ramp plus a route (1 DEST − 1 OP); FOLD TAP −
+    // FOLD is the ramp, `TAP_FOLD_COST` and a capture. 1 DEST, not 1 OP,
+    // is their base: `matrix` drops the Part's default routes.
+    ("FOLD HALF", |p| fx(p, FxType::Fold, 0.5), STILL),
+    ("SOFT RT", |p| staged(p, FxType::Soft), STILL),
+    ("FOLD RT", |p| staged(p, FxType::Fold), STILL),
+    (
+        "FOLD TAP",
+        |p| {
+            tap(p, FixedCol::Fx);
+            p.params.fx.set_type(FxType::Fold);
+            p.params.fx.pots[0] = 0.5;
+        },
+        STILL,
+    ),
+    (
+        "2040 R2",
+        |p| {
+            let f = &mut one_op(p).filter;
+            f.set_kind(FilterKind::K2040);
+            f.voice = K2040Voice::Rev2;
+        },
+        STILL,
+    ),
+    (
+        "LADDER",
+        |p| one_op(p).filter.set_kind(FilterKind::Ladder),
+        STILL,
+    ),
 ];
+
+/// 1 OP with the FX slot at `ty`, P1 ½, LFO 1 (1 Hz sine, so moving) into
+/// the FX column at 127: the type ramps every block. At 1 the route's rise
+/// clamps, and the slot reads steady.
+fn staged(p: &mut PartAudio, ty: FxType) {
+    fx(p, ty, 0.5);
+    *p.mod_state = matrix(&[(ModSource::Lfo1, FixedCol::Fx.addr(), 127)]);
+}
+
+/// 1 OP with the FX slot at `ty`, in its default place, P1 at `p1`.
+fn fx(p: &mut PartAudio, ty: FxType, p1: f32) {
+    let s = one_op(p);
+    s.fx.set_type(ty);
+    s.fx.pots[0] = p1;
+}
 
 /// When `Rig::time_note_on`'s round may end.
 type Idle = fn(&Instrument) -> bool;
@@ -730,16 +807,17 @@ fn slide(p: &mut PartAudio, b: Option<(Func, f32)>) {
 
 /// Spec § Tests "Bench": 1 OP; ENV 2 type B, ENV mode, SHAPE off centre →
 /// VCA; ENV 1 → CUTOFF; every source routed; all three LFOs FUNC. FOLD is
-/// stored at 1, so the folder runs whatever LFO 3 does.
+/// stored at 1, so the fold runs whatever LFO 3 does.
 fn mods(p: &mut PartAudio) {
     b_on_vca(p, Func::Env(EnvForm::Ad), 0.8);
-    p.params.folder.fold = 1.0;
+    p.params.fx.set_type(FxType::Fold);
+    p.params.fx.pots[0] = 1.0;
     for l in p.params.lfos.iter_mut() {
         l.lfo_type = LfoType::Func;
     }
     let res = ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE);
     let flt_level = ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL);
-    let fold = ParamAddr::new(BlockRef::Folder, FolderParams::FOLD);
+    let fold = FixedCol::Fx.addr();
     let morph = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
     let level = ParamAddr::new(BlockRef::Out, OutParams::VOLUME);
     *p.mod_state = matrix(&[
@@ -960,6 +1038,21 @@ fn algo_page(rig: &mut Rig<'_>, rec: &mut Recorder<'_>, clocks: Clocks) {
     let mut formant = [Counts::default(); FORMANT_ROWS];
     time_rows(rig, &FORMANT, &mut formant, (36, 10));
     show_rows(rec, "FORMANT", &FORMANT, &formant);
+    hold(clocks);
+    let mut va = [Counts::default(); VA_ROWS];
+    for (row, &(_, patch, low, step)) in va.iter_mut().zip(&VA) {
+        for n in 1..=MAX_VOICES {
+            let setup = |s: &mut AudioShared| *s.parts[0].params = black_box(patch());
+            row.add(n, rig.time(&setup, &|_, _| {}, n, low, step));
+        }
+    }
+    rec.clear();
+    let mut line = FmtBuf::new();
+    rec.heading("VA");
+    for (i, (&(label, ..), c)) in VA.iter().zip(&va).enumerate() {
+        voice_row(rec, &mut line, 46 + i as i32 * ROW_H, label, c);
+    }
+    rec.flush();
 }
 
 /// Each of `rows` at 1..8 voices, notes `low` up by `step`.

@@ -156,14 +156,16 @@ const PLAIN: [(usize, u64); 15] = [
     (222, 0x9230ae34f69000cc),
     (197, 0x792b43e5997f6bf6),
     (157, 0x2d008a43ca7e3f7e),
-    (162, 0x34123d7b02c3b0b6),
+    // SQR BASS's DRV, now the FX slot's SOFT (#614).
+    (167, 0xfc6214efacd13b2f),
     (268, 0x972b0812999ae0b4),
     (277, 0xdae80c8f09d402aa),
     // CHOIR, TALK BASS, BREATH and VOX, captured when they joined the bank.
     (483, 0xa1b270a0d6ed7e9a),
-    (438, 0x35c8685593322b14),
+    // TALK BASS's and VOX's DRV, now the FX slot's SOFT (#614).
+    (443, 0x92013857df984fd5),
     (446, 0xc543fd314e7a61a9),
-    (454, 0x6d802ef9fe3b7b71),
+    (459, 0x0366f2eeb31db162),
     (132, 0x91e8cb92bf5162e0),
     (132, 0x8575cbc8307a58e3),
     (136, 0x82a8213584981303),

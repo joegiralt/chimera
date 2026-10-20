@@ -362,7 +362,7 @@ fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
     );
     let ms = &ui.project().part(PartId::ALL[1]).sound.mod_state;
     assert_eq!(
-        ms.fixed_amount(0, FixedCol::Fold),
+        ms.fixed_amount(0, FixedCol::Fx),
         50,
         "ENV 1 → FOLD, under the cursor"
     );

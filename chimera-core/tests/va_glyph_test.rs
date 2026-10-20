@@ -4,6 +4,7 @@
 //! `SCREEN_DUMP=<dir>` writes the VA page per MODE, a WAVE sweep and
 //! BLEND per MODE, dark and light (`va_*_dark`, `va_*_light`).
 
+mod common;
 mod screen;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
@@ -11,7 +12,7 @@ use chimera_core::dsp::va::osc::{Morph, Unit, wave_at};
 use chimera_core::dsp::va::{MODE_NAMES, VA_SPECS, VaMode, VaParams};
 use chimera_core::params::EngineType;
 use chimera_core::ui::UiState;
-use chimera_core::ui::components::{SCOPE_HALF, SCOPE_N, VA_MIX_N};
+use chimera_core::ui::components::{self, Layout, SCOPE_HALF, SCOPE_N, VA_MIX_N};
 use chimera_core::ui::glyph::{
     FocusGlyph, Gauge, VA_MIX_PARAMS, VaGlyph, VaMix, VaOsc, blend_ends, va_mix_trace,
     va_wave_trace,
@@ -135,6 +136,91 @@ fn the_mode_glyph_differs_per_mode() {
     }
 }
 
+/// FNV-1a over MODE's scope of two saws at AMOUNT `amount`.
+fn trace_hash(mode: VaMode, amount: f32) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for y in mix(mode, amount) {
+        for b in y.to_le_bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    h
+}
+
+/// Every MODE's scope at BLEND 0.5 and 1, locked.
+const MODE_GOLDENS: &[(&str, u64)] = &[
+    ("mix_050", 0x9cc5eeb9241b78d5),
+    ("mix_100", 0x8a8e3f6bb7477f78),
+    ("sync_050", 0x9efcf5a7bbdf2a96),
+    ("sync_100", 0x5a0b8f059dd06d9e),
+    ("ring_050", 0x2b4d7a7ee457441e),
+    ("ring_100", 0xaa65c3e6b8fd1365),
+    ("xor_050", 0x5de78f0972e297c0),
+    ("xor_100", 0x82b25a12dbe07bbe),
+    ("bits_050", 0x39fcb39b11f54c7e),
+    ("bits_100", 0xc67fbc52da2a4a08),
+    ("fm_050", 0x53047951d090ece0),
+    ("fm_100", 0x8f8eca18b59af852),
+    ("loopfm_050", 0x4f47d06c91ee116e),
+    ("loopfm_100", 0x78b9dbcc4401c215),
+    ("am_050", 0x2a982566b01fa105),
+    ("am_100", 0xc963df042a8e7b3d),
+    ("max_050", 0x1831da0c4eb7b178),
+    ("max_100", 0x884d5c6f119105ce),
+    ("soft_050", 0xf3568a3904c84f59),
+    ("soft_100", 0x1a37f470abe6e62d),
+];
+
+#[test]
+fn mode_scopes_match_their_goldens() {
+    let names: Vec<String> = VaMode::ALL
+        .iter()
+        .enumerate()
+        .flat_map(|(k, _)| ["050", "100"].map(|a| format!("{}_{a}", MODE_NAMES[k].to_lowercase())))
+        .collect();
+    let got: Vec<(&str, u64)> = VaMode::ALL
+        .iter()
+        .flat_map(|&m| [trace_hash(m, 0.5), trace_hash(m, 1.0)])
+        .zip(&names)
+        .map(|(h, n)| (n.as_str(), h))
+        .collect();
+    common::golden::check(MODE_GOLDENS, &got);
+}
+
+/// FM's scope is OSC 1 read through zero: at BLEND 0 it is MIX's OSC 1
+/// alone; at BLEND 1 it differs from it.
+#[test]
+fn fm_scope_reads_osc_1_through_osc_2() {
+    assert_eq!(mix(VaMode::Fm, 0.0), mix(VaMode::Mix, 0.0));
+    assert_ne!(mix(VaMode::Fm, 1.0), mix(VaMode::Mix, 0.0));
+}
+
+/// LOOPFM's scope draws both oscillators as loopback FM: BLEND moves it
+/// (mix and loop together), and it is not MIX's.
+#[test]
+fn loopfm_scope_loops_with_blend() {
+    assert_ne!(mix(VaMode::LoopFm, 0.0), mix(VaMode::LoopFm, 1.0));
+    assert_ne!(mix(VaMode::LoopFm, 0.5), mix(VaMode::Mix, 0.5));
+}
+
+/// AM's scope is OSC 1 scaled by OSC 2 unipolarly: at BLEND 0 it is MIX's
+/// OSC 1 alone; at BLEND 1 it differs from it.
+#[test]
+fn am_scope_scales_osc_1_by_osc_2() {
+    assert_eq!(mix(VaMode::Am, 0.0), mix(VaMode::Mix, 0.0));
+    assert_ne!(mix(VaMode::Am, 1.0), mix(VaMode::Mix, 0.0));
+}
+
+/// MAX's scope is the plain mix at BLEND 0 and rides above it at BLEND 1
+/// (the larger of the two is never below their mean).
+#[test]
+fn max_scope_rises_from_the_mix() {
+    let (lo, hi) = (mix(VaMode::Max, 0.0), mix(VaMode::Max, 1.0));
+    assert_ne!(lo, hi);
+    assert_eq!(lo, mix(VaMode::Mix, 0.5));
+}
+
 /// SYNC restarts OSC 2 on OSC 1's wrap: OSC 1's second period starts as
 /// its first does; MIX, OSC 2 running on, does not.
 #[test]
@@ -144,6 +230,23 @@ fn sync_resets_osc_2_on_osc_1s_wrap() {
     assert_eq!(sync[..4], sync[half..half + 4]);
     let free = mix(VaMode::Mix, 1.0);
     assert_ne!(free[..4], free[half..half + 4]);
+}
+
+/// SOFT SYNC runs OSC 2 back over OSC 1's second period: at BLEND 1 the
+/// second half is the first mirrored.
+#[test]
+fn soft_sync_mirrors_osc_2_on_osc_1s_wrap() {
+    let t = mix(VaMode::SoftSync, 1.0);
+    let n = t.len();
+    for i in 0..n / 2 {
+        assert!(
+            (t[i] - t[n - 1 - i]).abs() <= 1,
+            "{i}: {} {}",
+            t[i],
+            t[n - 1 - i]
+        );
+    }
+    assert_ne!(t, mix(VaMode::Sync, 1.0));
 }
 
 /// BITS at full AMOUNT is 2 bits: five levels at most.
@@ -166,6 +269,10 @@ fn blend_ends_name_what_amount_does() {
     assert_eq!(blend_ends(VaMode::Ring), ["MIX", "RING"]);
     assert_eq!(blend_ends(VaMode::Xor), ["MIX", "XOR"]);
     assert_eq!(blend_ends(VaMode::Bits), ["CLEAN", "CRUSH"]);
+    assert_eq!(blend_ends(VaMode::Fm), ["CLEAN", "DEEP"]);
+    assert_eq!(blend_ends(VaMode::LoopFm), ["1", "LOOP"]);
+    assert_eq!(blend_ends(VaMode::Am), ["CLEAN", "AM"]);
+    assert_eq!(blend_ends(VaMode::SoftSync), ["1", "2"]);
 }
 
 fn label_w(s: &str) -> i32 {
@@ -186,6 +293,52 @@ fn the_new_words_fit() {
     }
 }
 
+/// A MODE name too wide for the large numerals beside the scope reads in
+/// the value font, and its ink stays clear of the scope's box.
+#[test]
+fn a_long_mode_name_reads_small_beside_the_scope() {
+    const GAP: usize = components::GAUGE_GAP as usize;
+    let gauge = Gauge::VaMix(VaMix::from_set([0.0; 6]));
+    assert_eq!(components::layout("LOOPFM", &gauge), Layout::SmallBeside);
+    assert_eq!(components::layout("MIX", &gauge), Layout::WithGauge);
+    let mut both = Fb::new();
+    components::focus_band(
+        &mut both,
+        "MODE",
+        "LOOPFM",
+        components::fit_gauge("LOOPFM", gauge),
+        chimera_core::ui::components::Look::Live,
+        None,
+        theme::TextSize::Normal,
+    );
+    let mut scope = Fb::new();
+    components::draw_gauge(&mut scope, gauge);
+    let left = (theme::SCREEN_W - theme::MARGIN_X - theme::VA_MIX_W) as usize;
+    let rows = theme::WAVE_Y as usize..theme::FOCUS_BOTTOM as usize;
+    for invert in [false, true] {
+        let p = palette(&ThemeSettings {
+            invert,
+            ..ThemeSettings::DEFAULT
+        });
+        let bg = p.map_raw(0);
+        let ink = |fb: &Fb, x: usize, y: usize| p.map_raw(fb.px[y * W + x]) != bg;
+        let mut text = 0;
+        for y in rows.clone() {
+            for x in 0..W {
+                let t = ink(&both, x, y) && !ink(&scope, x, y);
+                // the text's ink: never in the gap or over the scope
+                assert!(!(t && x + GAP > left), "invert {invert}: ink at ({x}, {y})");
+                text += usize::from(t);
+            }
+        }
+        assert!(text > 100, "the word is drawn: {text}");
+        let drew = rows
+            .clone()
+            .any(|y| (left..W).any(|x| ink(&both, x, y) && ink(&scope, x, y)));
+        assert!(drew, "the scope is kept");
+    }
+}
+
 /// Every value the VA glyphs' params show ends before their gauge.
 #[test]
 fn values_stay_clear_of_the_glyphs() {
@@ -193,7 +346,9 @@ fn values_stay_clear_of_the_glyphs() {
     let right = |w: &str| theme::FOCUS_VALUE_X + draw::text_width(&theme::FONT_FOCUS, w, 0);
     let edge = theme::SCREEN_W - theme::MARGIN_X;
     for name in MODE_NAMES {
-        assert!(right(name) + GAP <= edge - theme::VA_MIX_W, "{name}");
+        // large beside the scope, or the value font beside it: never over it
+        let gauge = Gauge::VaMix(VaMix::from_set([0.0; 6]));
+        assert_ne!(components::layout(name, &gauge), Layout::NoGauge, "{name}");
     }
     for v in 0..=127 {
         let v = v.to_string();
@@ -280,7 +435,8 @@ fn the_va_page_draws_each_glyph() {
         assert_eq!(va(&ui).mode, m);
         let fb = shoot(&ui, &format!("va_blend_{}", MODE_NAMES[k].to_lowercase()));
         let b = band(&fb, theme::BLEND_W);
-        if m != VaMode::Sync {
+        // SYNC and SOFT SYNC fade OSC 1 to OSC 2 as MIX does
+        if !matches!(m, VaMode::Sync | VaMode::SoftSync) {
             assert!(!seen.contains(&b), "{m:?}: its own ends");
         }
         seen.push(b);
