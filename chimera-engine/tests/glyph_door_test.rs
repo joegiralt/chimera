@@ -1,4 +1,4 @@
-//! TAPE's glyph through the door (ADR 0173, 0175): open, `from_set` and
+//! TAPE's glyph through the door (ADR 0173, 0175): open, `TapeGauge::of` and
 //! `paint` are bank 2's `draw::inputs` and `draw::render`; closed, ONE's
 //! still pose and no paint. The fixed slots after the door
 //! (`DoorCell::with_slot`) answer only on the unit: the host's door is a
@@ -6,23 +6,26 @@
 #![cfg(all(feature = "bank2", feature = "test-support"))]
 
 use chimera_engine::bank2::{BOARD_DOOR_ADDR, DOOR_CELL, DoorSlot, UI_DOOR_ADDR};
-use chimera_engine::tape_glyph::{Canvas, Kind, TapeGauge, draw};
+use chimera_engine::tape_glyph::{Canvas, GlyphInputs, Kind, Pose, TapeGauge, draw};
 
 #[test]
 fn glyph_inputs_and_paint_open_and_closed() {
-    let set = [0.0, 0.1, 0.9, 0.3, 0.6, 0.4, 0.2, 0.7, 0.8, 0.5];
+    let set = GlyphInputs::from_set(
+        [0.0, 0.1, 0.9, 0.3, 0.6, 0.4, 0.2, 0.7, 0.8, 0.5],
+        Pose::Live,
+    );
     let mut out = Canvas::new();
 
     DOOR_CELL.close();
-    assert_eq!(TapeGauge::from_set(set, false), TapeGauge::still(Kind::One));
+    assert_eq!(TapeGauge::of(&set), TapeGauge::still(Kind::One));
     assert!(!chimera_engine::tape_glyph::paint(
-        &draw::inputs(set, false),
+        &draw::inputs(&set),
         &mut out
     ));
 
     DOOR_CELL.open_host();
-    let live = TapeGauge::from_set(set, false);
-    assert_eq!(live, draw::inputs(set, false));
+    let live = TapeGauge::of(&set);
+    assert_eq!(live, draw::inputs(&set));
     assert_ne!(live, TapeGauge::still(Kind::One));
     assert!(chimera_engine::tape_glyph::paint(&live, &mut out));
     // SAFETY: never dereferenced: the host's door has no slots.

@@ -40,7 +40,7 @@ use crate::ui::region::{self, Layout, RegionKind};
 use crate::ui::settings::Ask;
 use crate::ui::settings::prompt::{Beneath, blank_beneath, draw_prompt};
 use crate::ui::settings::view::Bands;
-use crate::ui::tape_glyph::TapeGauge;
+use crate::ui::tape_glyph::{GlyphInputs, Pose, TapeGauge};
 use crate::ui::theme;
 use crate::ui::view::{self, EnvKind, SlotCtx, View};
 use crate::ui::viz;
@@ -906,11 +906,13 @@ impl Renderer {
             Reads::Tape => {
                 use crate::dsp::tape_engine::TapeEngineParams as T;
                 // MODEL names the machine: its still identity.
-                let still = focused.is_some_and(|a| a.param == T::MODEL);
-                Gauge::Tape(TapeGauge::from_set(
-                    self.eased_set(f, TAPE_GLYPH_PARAMS),
-                    still,
-                ))
+                let pose = if focused.is_some_and(|a| a.param == T::MODEL) {
+                    Pose::Still
+                } else {
+                    Pose::Live
+                };
+                let set = self.eased_set(f, TAPE_GLYPH_PARAMS);
+                Gauge::Tape(TapeGauge::of(&GlyphInputs::from_set(set, pose)))
             }
             Reads::Lfo => match focused.map(|a| a.block) {
                 Some(BlockRef::Lfo(s)) => {

@@ -50,8 +50,11 @@ fn gauge_at(glyph: FocusGlyph, fmt: ValFmt, v: f32, rev: ReverbType) -> Gauge {
             value: v,
             mode: VaMode::ALL[(v * 4.0) as usize],
         },
-        Reads::Tape => Gauge::Tape(chimera_core::ui::tape_glyph::TapeGauge::from_set(
-            [v; 10], false,
+        Reads::Tape => Gauge::Tape(chimera_core::ui::tape_glyph::TapeGauge::of(
+            &chimera_core::ui::tape_glyph::GlyphInputs::from_set(
+                [v; 10],
+                chimera_core::ui::tape_glyph::Pose::Live,
+            ),
         )),
         Reads::Lfo => {
             use chimera_core::lfo_glyph::{Glyph, LfoGauge, Q, Wave};

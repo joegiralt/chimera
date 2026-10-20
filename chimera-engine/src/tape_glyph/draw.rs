@@ -7,12 +7,11 @@
 //! `r² + r`, then the wear passes.
 
 use super::{
-    Bellows, Blind, Canvas, Film, H, Ink, Kind, Loop, Machine, Q, Q3, Q4, Q5, Q6, Run, Sponge,
-    TapeGauge, W, Wear,
+    Bellows, Blind, Bounce, Canvas, Film, GlyphInputs, H, Ink, Kind, Loop, Machine, Pose, Q, Q3,
+    Q4, Q5, Q6, Run, Sponge, TapeGauge, W, Wear,
 };
 use crate::dsp::algo::math::clampf;
 use crate::dsp::fast_sin;
-use crate::dsp::tape_engine::MachineIndex;
 use core::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
 
 const BG: Ink = Ink::Bg;
@@ -23,16 +22,24 @@ const FAINT: Ink = Ink::Faint;
 const ACC: Ink = Ink::Accent;
 const SOFT: Ink = Ink::Soft;
 
-/// From `TAPE_GLYPH_PARAMS`' set values, normalized: MODEL, START, END,
-/// POSITION, MOTION, SIZE, DRAG, TAPE, AGE, XFADE. `still` for MODEL's
-/// cell, which shows the machine, not its knobs. A machine reads only
-/// what it plays (`reads`), so a param it ignores leaves the glyph as it
-/// was.
-pub fn inputs(set: [f32; 10], still: bool) -> TapeGauge {
-    let [model, start, end, pos, motion, size, drag, tape, age, xfade] = set;
-    let pick = |v: f32, n: u8| libm::roundf(clampf(v, 0.0, 1.0) * n as f32) as u8;
-    let kind = Kind::from_index(MachineIndex(pick(model, Kind::ALL.len() as u8 - 1)));
-    if still {
+/// `i`'s gauge. `Pose::Still` (MODEL's cell) shows the machine, not its
+/// knobs. A machine reads only what it plays (`reads`), so a param it
+/// ignores leaves the glyph as it was.
+pub fn inputs(i: &GlyphInputs) -> TapeGauge {
+    let &GlyphInputs {
+        machine: kind,
+        start,
+        end,
+        position: pos,
+        motion,
+        size,
+        drag,
+        tape,
+        age,
+        xfade,
+        pose,
+    } = i;
+    if pose == Pose::Still {
         return TapeGauge::still(kind);
     }
     let (q6, q5) = (Q6::of, Q5::of);
@@ -41,20 +48,17 @@ pub fn inputs(set: [f32; 10], still: bool) -> TapeGauge {
             start: q6(start),
             end: q6(end),
         }),
-        Kind::Loop | Kind::Ping => {
-            let l = Loop {
-                position: q6(pos),
-                length: q6(size),
-                walk: q6(motion),
-                // PING has no crossfade.
-                xfade: Q3::of(if kind == Kind::Loop { xfade } else { 0.0 }),
-            };
-            if kind == Kind::Loop {
-                Machine::Loop(l)
-            } else {
-                Machine::Ping(l)
-            }
-        }
+        Kind::Loop => Machine::Loop(Loop {
+            position: q6(pos),
+            length: q6(size),
+            walk: q6(motion),
+            xfade: Q3::of(xfade),
+        }),
+        Kind::Ping => Machine::Ping(Bounce {
+            position: q6(pos),
+            length: q6(size),
+            walk: q6(motion),
+        }),
         Kind::Tron => Machine::Tron(Blind {
             length: q6(size),
             fade: q5(drag),
@@ -126,12 +130,7 @@ fn wear(b: &Canvas, tape: f32, age: f32, out: &mut Canvas) {
     for y in 0..H {
         let sh = libm::roundf(tape * WOW_PX * fast_sin(y as f32 * 0.42 + 1.3)) as i32;
         for x in 0..W {
-            let sx = x - sh;
-            out.0[(y * W + x) as usize] = if (0..W).contains(&sx) {
-                b.at(sx, y)
-            } else {
-                BG
-            };
+            out.0[(y * W + x) as usize] = b.at(x - sh, y).unwrap_or(BG);
         }
     }
     if age <= 0.02 {
@@ -419,7 +418,7 @@ fn wheel(p: &mut Pix, l: Loop) {
 /// POSITION slides the court along the window, WALK tilts the ball's path
 /// and lengthens its trail.
 #[inline(never)]
-fn pong(p: &mut Pix, l: Loop) {
+fn pong(p: &mut Pix, l: Bounce) {
     let walk = l.walk.bi();
     let (lo, hi) = loop_span(l.position.unit(), l.length.unit());
     let g = (hi - lo).max(12.0);

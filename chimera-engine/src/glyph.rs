@@ -208,7 +208,7 @@ pub const BRAID_PARAMS: [ParamAddr; 4] = [
     ParamAddr::new(BlockRef::Chorus, ChorusParams::MIX),
 ];
 
-/// What TAPE's machine glyph reads, in `TapeGauge::from_set`'s order:
+/// What TAPE's machine glyph reads, in `GlyphInputs::from_set`'s order:
 /// MODEL (the machine, PLAY's MODE in it), START, END, POSITION, MOTION,
 /// SIZE, DRAG, TAPE, AGE, XFADE.
 pub const TAPE_GLYPH_PARAMS: [ParamAddr; 10] = {

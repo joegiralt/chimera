@@ -15,7 +15,7 @@
 //! the canvas stay in bank 1.
 
 use crate::dsp::algo::math::clampf;
-use crate::dsp::tape_engine::TapeMachine;
+use crate::dsp::tape_engine::{MachineIndex, TapeMachine};
 
 /// With TAPE's DSP only: a build without it (the bench's) draws no glyph.
 #[cfg(feature = "tape")]
@@ -67,6 +67,15 @@ impl Ink {
     }
 }
 
+// `ALL` is in discriminant order: a palette indexes by `ink as usize`.
+const _: () = {
+    let mut i = 0;
+    while i < Ink::ALL.len() {
+        assert!(Ink::ALL[i] as usize == i);
+        i += 1;
+    }
+};
+
 /// The box's pixels, row by row: 3 KB, the UI's to hold for a paint.
 pub struct Canvas(pub [Ink; (W * H) as usize]);
 
@@ -75,8 +84,10 @@ impl Canvas {
         Canvas([Ink::Bg; (W * H) as usize])
     }
 
-    pub fn at(&self, x: i32, y: i32) -> Ink {
-        self.0[(y * W + x) as usize]
+    /// The ink at (`x`, `y`); `None` outside the box.
+    pub fn at(&self, x: i32, y: i32) -> Option<Ink> {
+        let inside = (0..W).contains(&x) && (0..H).contains(&y);
+        inside.then(|| self.0[(y * W + x) as usize])
     }
 }
 
@@ -130,8 +141,7 @@ pub struct Run {
     pub end: Q6,
 }
 
-/// LOOP's and PING's loop in the window: POSITION, LENGTH, WALK and
-/// (LOOP's only: PING has none) XFADE.
+/// LOOP's loop in the window: POSITION, LENGTH, WALK and XFADE.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Loop {
     pub position: Q6,
@@ -139,6 +149,21 @@ pub struct Loop {
     /// Bipolar.
     pub walk: Q6,
     pub xfade: Q3,
+}
+
+/// PING's loop in the window: POSITION, LENGTH and WALK. It has no
+/// crossfade.
+///
+/// ```compile_fail,E0560
+/// use chimera_engine::tape_glyph::{Bounce, Q3, Q6};
+/// let _ = Bounce { position: Q6::of(0.0), length: Q6::of(0.0), walk: Q6::of(0.0), xfade: Q3::of(1.0) };
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bounce {
+    pub position: Q6,
+    pub length: Q6,
+    /// Bipolar.
+    pub walk: Q6,
 }
 
 /// TRON's blind: LENGTH pulls it down, FADE snaps it back.
@@ -183,7 +208,7 @@ pub struct Sponge {
 pub enum Machine {
     One(Run),
     Loop(Loop),
-    Ping(Loop),
+    Ping(Bounce),
     Tron(Blind),
     Stretch(Bellows),
     Wave(Film),
@@ -210,11 +235,10 @@ impl TapeMachine {
                 walk: walk(0.45),
                 xfade: Q3::of(0.5),
             }),
-            Kind::Ping => Machine::Ping(Loop {
+            Kind::Ping => Machine::Ping(Bounce {
                 position: q6(0.5),
                 length: q6(0.7),
                 walk: walk(0.3),
-                xfade: Q3::of(0.0),
             }),
             Kind::Tron => Machine::Tron(Blind {
                 length: q6(0.8),
@@ -258,6 +282,87 @@ impl Wear {
     };
 }
 
+/// Which pose a glyph takes: `Still` on MODEL's cell, which shows the
+/// machine, not its knobs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pose {
+    Still,
+    Live,
+}
+
+/// What a glyph is drawn from: the machine and the Part's set values,
+/// normalized (eased, as the cells show them).
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(C)]
+pub struct GlyphInputs {
+    pub machine: TapeMachine,
+    pub start: f32,
+    pub end: f32,
+    pub position: f32,
+    pub motion: f32,
+    pub size: f32,
+    pub drag: f32,
+    pub tape: f32,
+    pub age: f32,
+    pub xfade: f32,
+    pub pose: Pose,
+}
+
+impl GlyphInputs {
+    /// From `TAPE_GLYPH_PARAMS`' set values, normalized; MODEL's to its
+    /// nearest machine.
+    pub fn from_set(set: [f32; 10], pose: Pose) -> Self {
+        let [
+            model,
+            start,
+            end,
+            position,
+            motion,
+            size,
+            drag,
+            tape,
+            age,
+            xfade,
+        ] = set;
+        let at = crate::dsp::rev::sync::index_of(model, TapeMachine::ALL.len());
+        Self {
+            machine: TapeMachine::from_index(MachineIndex(at as u8)),
+            start,
+            end,
+            position,
+            motion,
+            size,
+            drag,
+            tape,
+            age,
+            xfade,
+            pose,
+        }
+    }
+}
+
+// `from_set`'s order.
+const _: () = {
+    use crate::dsp::tape_engine::TapeEngineParams as T;
+    let order = [
+        T::MODEL,
+        T::START,
+        T::END,
+        T::POSITION,
+        T::MOTION,
+        T::SIZE,
+        T::DRAG,
+        T::TAPE,
+        T::AGE,
+        T::XFADE,
+    ];
+    let mut i = 0;
+    while i < order.len() {
+        assert!(crate::glyph::TAPE_GLYPH_PARAMS[i].param.0 == order[i].0);
+        i += 1;
+    }
+};
+
 /// What the glyph draws: a machine's inputs and its wear.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TapeGauge {
@@ -274,24 +379,23 @@ impl TapeGauge {
         }
     }
 
-    /// From `TAPE_GLYPH_PARAMS`' set values, normalized: MODEL, START,
-    /// END, POSITION, MOTION, SIZE, DRAG, TAPE, AGE, XFADE (`draw`'s
-    /// `inputs`, bank 2's with `bank2`). `still` for MODEL's cell. Closed, and without `tape`, ONE's still pose: no glyph is
-    /// drawn then anyway (`paint`).
-    pub fn from_set(set: [f32; 10], still: bool) -> Self {
+    /// `i`'s gauge (`draw`'s `inputs`, bank 2's with `bank2`). Closed,
+    /// and without `tape`, ONE's still pose: no glyph is drawn then anyway
+    /// (`paint`).
+    pub fn of(i: &GlyphInputs) -> Self {
         #[cfg(feature = "bank2")]
         {
             crate::bank2::DOOR_CELL
-                .with(|d| (d.glyph.inputs)(set, still))
+                .with(|d| (d.glyph.inputs)(i))
                 .unwrap_or(Self::still(Kind::One))
         }
         #[cfg(all(feature = "tape", not(feature = "bank2")))]
         {
-            draw::inputs(set, still)
+            draw::inputs(i)
         }
         #[cfg(not(feature = "tape"))]
         {
-            let _ = (set, still);
+            let _ = i;
             Self::still(Kind::One)
         }
     }
@@ -314,9 +418,10 @@ impl TapeGauge {
         let s = |v: u8, at: u32| (v as u32) << at;
         let m = match self.machine {
             Machine::One(r) => s(r.start.0, 0) | s(r.end.0, 6),
-            Machine::Loop(l) | Machine::Ping(l) => {
+            Machine::Loop(l) => {
                 s(l.position.0, 0) | s(l.length.0, 6) | s(l.walk.0, 12) | s(l.xfade.0, 18)
             }
+            Machine::Ping(b) => s(b.position.0, 0) | s(b.length.0, 6) | s(b.walk.0, 12),
             Machine::Tron(b) => s(b.length.0, 0) | s(b.fade.0, 6),
             Machine::Stretch(b) => s(b.speed.0, 0) | s(b.d_time.0, 6),
             Machine::Wave(f) => s(f.frame.0, 0) | s(f.range.0, 6) | s(f.scan.0, 12),
@@ -359,7 +464,7 @@ pub fn paint(g: &TapeGauge, out: &mut Canvas) -> bool {
 #[repr(C)]
 pub struct GlyphDoor {
     render: fn(&TapeGauge, &mut Canvas),
-    inputs: fn([f32; 10], bool) -> TapeGauge,
+    inputs: fn(&GlyphInputs) -> TapeGauge,
 }
 
 #[cfg(feature = "bank2")]

@@ -174,11 +174,11 @@ fn model_page_cells() {
 #[test]
 fn deck_is_what_moves_the_glyph() {
     use chimera_core::ui::glyph::TAPE_GLYPH_PARAMS;
-    use chimera_core::ui::tape_glyph::TapeGauge;
+    use chimera_core::ui::tape_glyph::{GlyphInputs, Pose, TapeGauge};
     for m in TapeMachine::ALL {
         let mut set = [0.0, 0.1, 0.9, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, 0.2];
         set[0] = m.index() as f32 / 6.0;
-        let base = TapeGauge::from_set(set, false);
+        let base = TapeGauge::of(&GlyphInputs::from_set(set, Pose::Live));
         assert_eq!(base.kind(), m);
         for (i, a) in TAPE_GLYPH_PARAMS.iter().enumerate().skip(1) {
             if matches!(a.param, P::TAPE | P::AGE) {
@@ -187,7 +187,7 @@ fn deck_is_what_moves_the_glyph() {
             let moves = [0.0, 1.0].into_iter().any(|v| {
                 let mut moved = set;
                 moved[i] = v;
-                TapeGauge::from_set(moved, false).key() != base.key()
+                TapeGauge::of(&GlyphInputs::from_set(moved, Pose::Live)).key() != base.key()
             });
             let on_deck = machine(m).deck.iter().any(|c| c.id == a.param);
             assert_eq!(moves, on_deck, "{m:?} {:?}", a.param);

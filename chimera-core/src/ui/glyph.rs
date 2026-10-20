@@ -7,7 +7,7 @@ use crate::dsp::algo::kinds::OpKind;
 use crate::dsp::algo::waves::{WAVE_LEN, WaveId};
 use crate::dsp::chorus::ChorusMode;
 use crate::dsp::clampf;
-use crate::dsp::rev::sync::{FoldState, Tempo};
+use crate::dsp::rev::sync::{FoldState, Tempo, index_of};
 use crate::dsp::reverb::{EngineKnobs, RevSync, ReverbParams, ReverbType, knobs};
 use crate::dsp::va::combine::{Crusher, Peaks, am_gain, combine, ring_gain};
 use crate::dsp::va::lbfm::{b0_of, lbfm, loop_b};
@@ -253,8 +253,7 @@ impl VaMix {
 
 /// MODE at its normalized set value.
 pub fn va_mode(v: f32) -> VaMode {
-    let last = (VaMode::ALL.len() - 1) as f32;
-    VaMode::ALL[libm::roundf(clampf(v, 0.0, 1.0) * last) as usize]
+    VaMode::ALL[index_of(v, VaMode::ALL.len())]
 }
 
 /// The operator's output over `VA_MIX_PERIODS` of OSC 1 across `N`
@@ -713,7 +712,7 @@ impl Braid {
     /// From `BRAID_PARAMS`' set values, normalized.
     pub fn from_set(set: [f32; 4], focus: Option<BraidPart>, frame: u32) -> Self {
         Self {
-            mode: ChorusMode::from_u8(libm::roundf(clampf(set[0], 0.0, 1.0) * 3.0) as u8),
+            mode: ChorusMode::from_u8(index_of(set[0], 4) as u8),
             rate: clampf(set[1], 0.0, 1.0),
             depth: clampf(set[2], 0.0, 1.0),
             mix: clampf(set[3], 0.0, 1.0),

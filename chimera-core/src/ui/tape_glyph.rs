@@ -9,15 +9,15 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::Rectangle;
 
 pub use chimera_engine::tape_glyph::{
-    Bellows, Blind, Canvas, Film, H, Ink, Kind, Loop, Machine, Q, Q3, Q4, Q5, Q6, Run, Sponge,
-    TapeGauge, W, Wear,
+    Bellows, Blind, Bounce, Canvas, Film, GlyphInputs, H, Ink, Kind, Loop, Machine, Pose, Q, Q3,
+    Q4, Q5, Q6, Run, Sponge, TapeGauge, W, Wear,
 };
 
 const _: () = assert!(W == theme::WAVE_W && H == theme::WAVE_H);
 
 /// The colour of each `Ink`: the theme's tokens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Palette(pub [Rgb565; 7]);
+pub struct Palette(pub [Rgb565; Ink::ALL.len()]);
 
 impl Palette {
     /// By `Ink`: BG, INK, INK2, MID, FAINT, ACCENT, ACCENT_SOFT.
