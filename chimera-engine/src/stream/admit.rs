@@ -13,6 +13,9 @@ pub const HEAD_MS: u32 = 100;
 /// and 0 late blocks (ledger tape-plan/m2/b4-1p2.txt). Raising it needs B4
 /// re-run at the new rate.
 pub const STREAM_BUDGET_BPS: u32 = 315_978;
+/// Twice B4's load: what `STREAM_BUDGET_BPS` becomes if the unit's 2x
+/// stress run (8 x 24 kHz at 2.4x, #623) holds clean. Unused until then.
+pub const STREAM_BUDGET_2X_BPS: u32 = 2 * STREAM_BUDGET_BPS;
 /// Worst-case tape wow, in cents.
 pub const WOW_CENTS: f32 = 33.0;
 
@@ -96,6 +99,13 @@ pub fn admit(
         return Admit::Ok;
     }
     victim.map_or(Admit::Refuse, |(i, _)| Admit::Steal(i))
+}
+
+/// Streamed notes at ROOT a source of `rate` fits in the budget, `wow`
+/// billed when TAPE runs: SOURCE's band says it before a chord steals.
+pub fn notes_at_root(rate: u16, wow: bool) -> u32 {
+    let cents = if wow { WOW_CENTS } else { 0.0 };
+    STREAM_BUDGET_BPS / bill(rate, ReadRatio::new(exp2(cents / 1200.0))).0.max(1)
 }
 
 /// `HEAD_MS` of frames, rounded up to even.
