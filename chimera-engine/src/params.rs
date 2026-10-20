@@ -203,7 +203,8 @@ pub static FILTER_SPECS: [ParamSpec; 9] = [
         true,
         Smoothing::KNOB,
     )
-    .ident("STAB"),
+    .ident("STAB")
+    .glyph(crate::glyph::FocusGlyph::Stability),
     // The jacks (spec § 2): patching, not sound. Indexes into their choices.
     ParamSpec::choice(
         8,

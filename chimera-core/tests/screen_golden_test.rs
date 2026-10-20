@@ -135,7 +135,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("flt_fx_off", 0x7398595b237b8ceb),
     ("flt_fx_soft", 0x2a1a36ca519cce4d),
     ("flt_fx_fold", 0x43626f2582a4d9a8),
-    ("flt_fx_stab", 0x0b9603057781606a),
+    ("flt_fx_stab", 0xbe3738e95c9891a2),
     ("flt_front_fx", 0x0186830cde57e60f),
     // Task 8 (#614): PLACE's mini glyph in its cell (every FLT front, row_flt,
     // large_va_drive) and FLT › FX's strip and curve (flt_fx_*, flt_led_*).
