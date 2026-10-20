@@ -16,7 +16,7 @@ use crate::project::SourceId;
 use crate::source_table::GateView;
 use crate::stream::port::StreamPort;
 
-use super::{Heads, PlayMode, TapeDeck, TapeEngineParams, TapeModel, model_cost};
+use super::{Heads, TapeDeck, TapeEngineParams, TapeMachine, model_cost};
 
 /// What bank 1 may call of the deck: one entry a method that does work,
 /// all of them bank 2's (`TapeDeck::DOOR`).
@@ -212,9 +212,9 @@ impl TapeEngine {
             .unwrap_or(Cost(0))
     }
 
-    pub fn model_cost(m: TapeModel, mode: PlayMode) -> Cost {
+    pub fn model_cost(m: TapeMachine) -> Cost {
         if DOOR_CELL.is_open() {
-            model_cost(m, mode)
+            model_cost(m)
         } else {
             Cost(0)
         }

@@ -14,7 +14,8 @@ use chimera_core::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape, SourceView,
 };
 use chimera_core::dsp::tape_engine::{
-    FADE_HOLD, PlayMode, StretchType, TapeEngine, TapeEngineParams as P, TapeModel, Wow,
+    FADE_HOLD, PlayMode, StretchType, TapeEngine, TapeEngineParams as P, TapeMachine, TapeModel,
+    Wow,
 };
 use chimera_core::dsp::va::VaMode;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
@@ -524,7 +525,7 @@ impl Way {
     /// SLICE NOTE.
     pub fn base(self, model: TapeModel, kind: StretchType) -> P {
         let p = P {
-            model,
+            machine: TapeMachine::of(model, PlayMode::Loop),
             kind,
             ..P::default()
         };
@@ -540,16 +541,16 @@ impl Way {
                 ..p
             },
             Way::One => P {
-                mode: PlayMode::One,
+                machine: TapeMachine::of(model, PlayMode::One),
                 drag: FADE_HOLD,
                 ..p
             },
             Way::Ping => P {
-                mode: PlayMode::Ping,
+                machine: TapeMachine::of(model, PlayMode::Ping),
                 ..p
             },
             Way::SliceNote => P {
-                mode: PlayMode::One,
+                machine: TapeMachine::of(model, PlayMode::One),
                 drag: FADE_HOLD,
                 slice: chimera_core::dsp::tape_engine::SliceCode::NOTE,
                 ..p

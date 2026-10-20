@@ -8,7 +8,7 @@
 use chimera_engine::bank2::DOOR_CELL;
 use chimera_engine::dsp::tape_engine::params::{NeedsRam, TapeEngineParams};
 use chimera_engine::dsp::tape_engine::read::Shape;
-use chimera_engine::dsp::tape_engine::{PlayMode, TapeModel};
+use chimera_engine::dsp::tape_engine::{TapeMachine, TapeModel};
 use chimera_engine::name::SoundName;
 use chimera_engine::project::arena::Cost;
 use chimera_engine::project::{LoadKind, load_kind};
@@ -35,8 +35,7 @@ fn head(frames: u32) -> SourceHead {
 #[test]
 fn loads_place_heads_open_and_refuse_closed() {
     let p = TapeEngineParams {
-        model: TapeModel::Play,
-        mode: PlayMode::One,
+        machine: TapeMachine::One,
         ..TapeEngineParams::default()
     };
     let long = head(30 * RATE as u32);

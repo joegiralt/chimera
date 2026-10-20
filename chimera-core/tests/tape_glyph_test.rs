@@ -750,7 +750,7 @@ fn model_turned_onto_one_puts_start_and_end_on_deck() {
     // LOOP → ONE → LOOP on DECK, as on the unit: ONE's DECK is START and
     // END, which burn the match; back on LOOP, POSITION rolls the wheel.
     // A dirty frame always equals a full one.
-    use chimera_core::dsp::tape_engine::PlayMode;
+
     use chimera_core::project::PartId;
     let perf = PerfStats::zero();
     let tape = |ui: &chimera_core::ui::UiState| ui.project().part(PartId::ALL[0]).sound.params.tape;
@@ -772,7 +772,7 @@ fn model_turned_onto_one_puts_start_and_end_on_deck() {
     tape_deck(&mut ui, TapeMachine::Loop);
     shot(&mut ui);
     feed(&mut ui, Input::turn(EncoderId::A, -1));
-    assert_eq!(tape(&ui).mode, PlayMode::One);
+    assert_eq!(tape(&ui).machine, TapeMachine::One);
     for (enc, by) in [(EncoderId::B, 20), (EncoderId::C, -20)] {
         let before = shot(&mut ui);
         let was = (tape(&ui).start, tape(&ui).end);
@@ -785,7 +785,7 @@ fn model_turned_onto_one_puts_start_and_end_on_deck() {
         assert_ne!(shot(&mut ui), before, "{enc:?} burns the match");
     }
     feed(&mut ui, Input::turn(EncoderId::A, 1));
-    assert_eq!(tape(&ui).mode, PlayMode::Loop);
+    assert_eq!(tape(&ui).machine, TapeMachine::Loop);
     feed(&mut ui, Input::turn(EncoderId::B, 1));
     let before = shot(&mut ui);
     let pos = tape(&ui).position;

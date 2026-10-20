@@ -10,6 +10,7 @@ mod common;
 use common::*;
 
 use chimera_core::dsp::tape_engine::TapeEngineParams;
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::{MidiNote, Velocity};
@@ -660,20 +661,23 @@ fn golden_check_catches_every_disagreement() {
 fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
     use chimera_core::dsp::tape_engine::{FADE_HOLD, PlayMode, TapeModel as M};
     let p = TapeEngineParams::default();
-    let model = |model| TapeEngineParams { model, ..p };
+    let model = |model| TapeEngineParams {
+        machine: TapeMachine::of(model, PlayMode::Loop),
+        ..p
+    };
     // The old machines, played as PLAY in each MODE (ADR 0170): ONE at
     // HOLD is ONESHOT.
     let ping = TapeEngineParams {
-        mode: PlayMode::Ping,
+        machine: TapeMachine::Ping,
         ..p
     };
     let one = TapeEngineParams {
-        mode: PlayMode::One,
+        machine: TapeMachine::One,
         drag: FADE_HOLD,
         ..p
     };
     let rev = |model| TapeEngineParams {
-        model,
+        machine: TapeMachine::of(model, PlayMode::Loop),
         start: 1.0,
         end: 0.0,
         ..p
@@ -734,7 +738,7 @@ fn tape_render(t: &TapeEngineParams) -> Vec<f32> {
     use common::tape::{held_plain, saw_to_square, saw_with_burst};
     let mut s = Sound::init(EngineType::Tape);
     s.params.tape = *t;
-    let sources = if t.model == TapeModel::Transwave {
+    let sources = if t.model() == TapeModel::Transwave {
         vec![saw_to_square()]
     } else {
         [24_000, 8_000]
@@ -777,7 +781,7 @@ fn reverse_golden_replays_bit_identically() {
     payload.extend_from_slice(&1u32.to_le_bytes());
     decode_block(&payload, MIGRATIONS, TRANSLATIONS, Some(&mut s.params)).unwrap();
     let t = s.params.tape;
-    assert_eq!((t.model, t.start, t.end), (TapeModel::Play, 1.0, 0.0));
+    assert_eq!((t.model(), t.start, t.end), (TapeModel::Play, 1.0, 0.0));
     let out = tape_render(&t);
     let want = TAPE_GOLDENS
         .iter()

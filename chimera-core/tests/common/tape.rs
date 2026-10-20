@@ -264,8 +264,7 @@ impl Mach {
         p: chimera_core::dsp::tape_engine::TapeEngineParams,
     ) -> chimera_core::dsp::tape_engine::TapeEngineParams {
         let p = chimera_core::dsp::tape_engine::TapeEngineParams {
-            model: self.model,
-            mode: self.mode,
+            machine: chimera_core::dsp::tape_engine::TapeMachine::of(self.model, self.mode),
             ..p
         };
         if self.rev {

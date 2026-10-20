@@ -5,6 +5,7 @@
 
 mod common;
 
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::stream::units::SourceRate;
 use core::mem::MaybeUninit;
 
@@ -83,8 +84,7 @@ fn ping_pong_turns_are_continuous() {
     let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let p = TapeEngineParams {
-        model: TapeModel::Play,
-        mode: PlayMode::Ping,
+        machine: TapeMachine::Ping,
         size: 0.45,
         position: 0.5,
         ..TapeEngineParams::default()
@@ -113,8 +113,7 @@ fn ping_pong_clamps_with_a_fade() {
     let held = held_plain(&sine(48_000, 100.7, w), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let mut p = TapeEngineParams {
-        model: TapeModel::Play,
-        mode: PlayMode::Ping,
+        machine: TapeMachine::Ping,
         ..TapeEngineParams::default()
     };
     let mut e = fresh();
@@ -180,7 +179,7 @@ fn scrub_finger_is_bounded() {
     let ll = loop_len(0.0, w, SourceRate::MAX) as i64;
     for (motion, from, to) in [(0.0, 0.0, 1.0), (0.0, 1.0, 0.0), (0.5, 0.0, 1.0)] {
         let mut p = TapeEngineParams {
-            model: TapeModel::Scrub,
+            machine: TapeMachine::Scrub,
             size: 0.0,
             drag: 0.0,
             motion,
@@ -216,7 +215,7 @@ fn scrub_drag_slews() {
     let v = SourceView::strict(&held).unwrap();
     for drag in [0.3, 0.5, 1.0] {
         let mut p = TapeEngineParams {
-            model: TapeModel::Scrub,
+            machine: TapeMachine::Scrub,
             size: 0.0,
             drag,
             ..TapeEngineParams::default()
@@ -249,7 +248,7 @@ fn scrub_still_is_silent() {
     let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let mut p = TapeEngineParams {
-        model: TapeModel::Scrub,
+        machine: TapeMachine::Scrub,
         position: 0.3,
         size: 0.2,
         ..TapeEngineParams::default()
@@ -291,7 +290,7 @@ fn scrub_stop_has_hysteresis() {
         (1.5e-3, 4e-3, false),
     ] {
         let mut p = TapeEngineParams {
-            model: TapeModel::Scrub,
+            machine: TapeMachine::Scrub,
             size: 0.2,
             drag: 0.0,
             ..TapeEngineParams::default()
@@ -339,7 +338,7 @@ fn scrub_mid_note_stop_passes_the_dc_blocker() {
     let v = SourceView::strict(&held).unwrap();
     for stop_at in [50usize, 57, 63, 71] {
         let mut p = TapeEngineParams {
-            model: TapeModel::Scrub,
+            machine: TapeMachine::Scrub,
             size: 0.5,
             position: 0.3,
             motion: 0.5,
@@ -378,7 +377,7 @@ fn scrub_moving_finger_bends_pitch() {
     let held = held_plain(&sine(48_000, 100.7, w), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let mut p = TapeEngineParams {
-        model: TapeModel::Scrub,
+        machine: TapeMachine::Scrub,
         size: 0.5,
         motion: 0.5,
         drag: 0.0,
@@ -414,7 +413,7 @@ fn scrub_turns_are_click_free() {
     let steady = max_step(&sine(48_000, 100.7, 4_800));
     for (size, xfade) in [(0.3, 0.5), (0.5, 0.2)] {
         let mut p = TapeEngineParams {
-            model: TapeModel::Scrub,
+            machine: TapeMachine::Scrub,
             size,
             xfade,
             position: 0.4,
@@ -459,7 +458,7 @@ fn scrub_motion_below_zero_plays_backward() {
     let v = SourceView::strict(&held).unwrap();
     for (from, to) in [(-0.5, -0.5), (0.5, -0.5), (-0.25, 1.0)] {
         let mut p = TapeEngineParams {
-            model: TapeModel::Scrub,
+            machine: TapeMachine::Scrub,
             size: 0.8,
             position: 0.5,
             motion: from,
@@ -489,7 +488,7 @@ fn scrub_crawl_has_no_corner() {
     let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let mut p = TapeEngineParams {
-        model: TapeModel::Scrub,
+        machine: TapeMachine::Scrub,
         size: 0.0,
         xfade: 0.5,
         position: 0.3,
@@ -527,8 +526,7 @@ fn ping_pong_creeping_bounds_bend_nothing() {
     let held = held_plain(&sine(48_000, 100.7, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let mut p = TapeEngineParams {
-        model: TapeModel::Play,
-        mode: PlayMode::Ping,
+        machine: TapeMachine::Ping,
         size: 0.3,
         position: 0.3,
         ..TapeEngineParams::default()
@@ -567,8 +565,7 @@ fn ping_pong_small_shrink_at_position_0() {
         let want = (ll - shrink) as f32;
         let smaller = (want / min).ln() / (w as f32 / min).ln();
         let mut p = TapeEngineParams {
-            model: TapeModel::Play,
-            mode: PlayMode::Ping,
+            machine: TapeMachine::Ping,
             size,
             ..TapeEngineParams::default()
         };
@@ -599,8 +596,7 @@ fn ping_pong_size_lfo_soak() {
     let steady = max_step(&sine(48_000, 100.7, 4_800));
     for (rate, position) in [(0.003f32, 0.0f32), (0.02, 0.0), (0.05, 1.0), (0.2, 0.5)] {
         let mut p = TapeEngineParams {
-            model: TapeModel::Play,
-            mode: PlayMode::Ping,
+            machine: TapeMachine::Ping,
             position,
             ..TapeEngineParams::default()
         };
@@ -637,7 +633,7 @@ fn pass_rate_is_bounded() {
         let model = m.model;
         for xfade in [0.0, 0.5] {
             let p = TapeEngineParams {
-                model,
+                machine: TapeMachine::of(model, PlayMode::Loop),
                 start: 0.5,
                 end: 0.5 + 64.0 / 48_000.0,
                 size: 0.0,
@@ -688,7 +684,7 @@ fn inc_sweep_across_the_floor_is_click_free() {
     ] {
         let model = m.model;
         let p = TapeEngineParams {
-            model,
+            machine: TapeMachine::of(model, PlayMode::Loop),
             size: 0.0,
             xfade: 0.5,
             position: 0.3,
@@ -751,7 +747,7 @@ fn pitch_drops_latch_the_floor_at_a_wrap() {
     ] {
         let model = m.model;
         let p = TapeEngineParams {
-            model,
+            machine: TapeMachine::of(model, PlayMode::Loop),
             size: 0.0,
             xfade: 0.1,
             position: 0.3,
@@ -799,8 +795,7 @@ fn ping_pong_pitch_jumps_are_click_free() {
     let v = SourceView::strict(&held).unwrap();
     for (motion, position) in [(0.0, 0.3), (0.5, 0.3), (0.0, 0.0)] {
         let p = TapeEngineParams {
-            model: TapeModel::Play,
-            mode: PlayMode::Ping,
+            machine: TapeMachine::Ping,
             size: 0.0,
             position,
             motion,
@@ -847,8 +842,7 @@ fn ping_pong_jumps_under_a_running_clamp_are_click_free() {
         for motion in [0.0, 0.5] {
             let run = |pitch: &dyn Fn(usize) -> f32| {
                 let p = |n: usize| TapeEngineParams {
-                    model: TapeModel::Play,
-                    mode: PlayMode::Ping,
+                    machine: TapeMachine::Ping,
                     size,
                     position: if (n / 3).is_multiple_of(2) { 0.1 } else { 0.9 },
                     motion,
@@ -889,8 +883,7 @@ fn ping_pong_clamp_keeps_the_floor() {
     let held = held_plain(&sine(48_000, 2_000.0, 48_000), 48_000);
     let v = SourceView::strict(&held).unwrap();
     let mut p = TapeEngineParams {
-        model: TapeModel::Play,
-        mode: PlayMode::Ping,
+        machine: TapeMachine::Ping,
         size: 0.0,
         ..TapeEngineParams::default()
     };
@@ -998,7 +991,7 @@ fn tiny_loops_cost_within_their_bills() {
     ] {
         let model = m.model;
         let p = TapeEngineParams {
-            model,
+            machine: TapeMachine::of(model, PlayMode::Loop),
             size: 0.0,
             xfade: 0.5,
             motion: 1.0,
@@ -1011,7 +1004,7 @@ fn tiny_loops_cost_within_their_bills() {
     for m in [Mach::fwd(TapeModel::Play), Mach::rev(TapeModel::Play)] {
         let model = m.model;
         let p = TapeEngineParams {
-            model,
+            machine: TapeMachine::of(model, PlayMode::Loop),
             size: 0.0,
             xfade: 0.5,
             ..TapeEngineParams::default()
@@ -1021,8 +1014,7 @@ fn tiny_loops_cost_within_their_bills() {
         rows.push((format!("{m:?}, shortest loop"), (model, m.mode), t));
     }
     let square = |n: usize| TapeEngineParams {
-        model: TapeModel::Play,
-        mode: PlayMode::Ping,
+        machine: TapeMachine::Ping,
         size: 0.0,
         position: if (n / 8).is_multiple_of(2) { 0.0 } else { 1.0 },
         ..TapeEngineParams::default()
@@ -1034,7 +1026,7 @@ fn tiny_loops_cost_within_their_bills() {
         t,
     ));
     let scrub = TapeEngineParams {
-        model: TapeModel::Scrub,
+        machine: TapeMachine::Scrub,
         size: 0.0,
         xfade: 0.5,
         motion: 1.0,
@@ -1089,7 +1081,7 @@ fn transwave_costs_within_its_bills() {
         blocks,
     );
     let scan = |_| TapeEngineParams {
-        model: TapeModel::Transwave,
+        machine: TapeMachine::Wave,
         position: 0.5,
         motion: 1.0,
         size: 1.0,
@@ -1138,7 +1130,7 @@ fn scrub_motion_drop_with_a_jump_stays_bounded() {
     let most = INC_MAX as i64 * B as i64;
     let ll = loop_len(0.5, w, SourceRate::MAX) as i64;
     let mut p = TapeEngineParams {
-        model: TapeModel::Scrub,
+        machine: TapeMachine::Scrub,
         size: 0.5,
         drag: 0.0,
         motion: 1.0,
@@ -1176,7 +1168,7 @@ fn scrub_fresh_note_turns_without_a_step() {
         (0.3, 0.4, 0.02),
     ] {
         let mut p = TapeEngineParams {
-            model: TapeModel::Scrub,
+            machine: TapeMachine::Scrub,
             size,
             xfade: 0.1,
             drag: 0.3,

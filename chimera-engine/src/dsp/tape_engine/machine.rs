@@ -8,7 +8,7 @@
 //! The UI writes a machine's defaults when MODEL changes (Task 15), never
 //! on load; the neutral stays PLAY in LOOP.
 
-use super::params::{FADE_HOLD, StretchType, TapeEngineParams as P, TapeMachine, Wow};
+use super::params::{FADE_HOLD, Retrig, StretchType, TapeEngineParams as P, TapeMachine, Wow};
 use crate::block::ParamId;
 use crate::dsp::modulator::EnvSpeed;
 use crate::params::EnvParams as E;
@@ -19,7 +19,36 @@ pub struct Cell {
     pub id: ParamId,
     pub label: &'static str,
     pub short: &'static str,
-    pub default: f32,
+    // `CellDefault` flat: the enum's tag would add 4 B a cell.
+    value: f32,
+    choice: bool,
+}
+
+impl Cell {
+    pub const fn default(&self) -> CellDefault {
+        if self.choice {
+            CellDefault::Choice(self.value as u8)
+        } else {
+            CellDefault::Unit(self.value)
+        }
+    }
+}
+
+/// A cell's default: a fraction of its range, or a choice's place.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CellDefault {
+    Unit(f32),
+    Choice(u8),
+}
+
+impl CellDefault {
+    /// As `Block::set` takes it.
+    pub fn value(self) -> f32 {
+        match self {
+            CellDefault::Unit(v) => v,
+            CellDefault::Choice(c) => f32::from(c),
+        }
+    }
 }
 
 /// A machine: its model page's name, DECK's cells after MODEL (the
@@ -42,7 +71,18 @@ const fn cell(id: ParamId, label: &'static str, short: &'static str, default: f3
         id,
         label,
         short,
-        default,
+        value: default,
+        choice: false,
+    }
+}
+
+const fn choice(id: ParamId, label: &'static str, short: &'static str, default: u8) -> Cell {
+    Cell {
+        id,
+        label,
+        short,
+        value: default as f32,
+        choice: true,
     }
 }
 
@@ -72,7 +112,7 @@ pub static MACHINES: [Machine; 7] = [
         // HOLD: a drum one-shot plays to END; RETRIG STACKs.
         cells: &[
             cell(P::DRAG, "FADE", "FDE", FADE_HOLD),
-            cell(P::RETRIG, "RETRIG", "RTG", 0.0),
+            choice(P::RETRIG, "RETRIG", "RTG", Retrig::Stack as u8),
         ],
     },
     Machine {
@@ -111,10 +151,7 @@ pub static MACHINES: [Machine; 7] = [
         page: "STRCH",
         // D-TIME 0.5: 50 ms. The bellows draw neither POSITION nor TYPE.
         deck: &[SPEED, cell(P::SIZE, "D-TIME", "DTM", 0.5)],
-        cells: &[
-            POS,
-            cell(P::TYPE, "TYPE", "TYP", StretchType::Mono as u8 as f32),
-        ],
+        cells: &[POS, choice(P::TYPE, "TYPE", "TYP", StretchType::Mono as u8)],
     },
     Machine {
         machine: TapeMachine::Wave,
@@ -163,7 +200,7 @@ pub fn defaults(m: TapeMachine) -> impl Iterator<Item = (ParamId, f32)> {
         .iter()
         .chain(k.cells)
         .filter(|c| !matches!(c.id, P::START | P::END))
-        .map(|c| (c.id, c.default))
+        .map(|c| (c.id, c.value))
         .chain(wear.iter().copied())
 }
 

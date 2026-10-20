@@ -44,7 +44,7 @@ use chimera_engine::dsp::rev::extra_cost;
 use chimera_engine::dsp::rev::sync::Tempo;
 use chimera_engine::dsp::reverb::ReverbType;
 use chimera_engine::dsp::tape_engine::read::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape};
-use chimera_engine::dsp::tape_engine::{PlayMode, StretchType, TapeModel, wave};
+use chimera_engine::dsp::tape_engine::{PlayMode, StretchType, TapeMachine, TapeModel, wave};
 use chimera_engine::dsp::va::VaMode;
 use chimera_engine::dsp::voice::Voice;
 use chimera_engine::dsp::voice_fx::params::FxType;
@@ -1145,7 +1145,7 @@ const TAPE_ROWS: [TapeRow; 13] = [
         "STRETCH",
         Tapes::Long,
         |p| {
-            (p.tape.model, p.tape.size) = (TapeModel::Stretch, 0.0);
+            (p.tape.machine, p.tape.size) = (TapeMachine::Stretch, 0.0);
             (p.tape.kind, p.tape.period) = (StretchType::Mono, 109.0);
         },
         HOLD,
@@ -1156,7 +1156,7 @@ const TAPE_ROWS: [TapeRow; 13] = [
         "WAVE C7",
         Tapes::Wave,
         |p| {
-            p.tape.model = TapeModel::Transwave;
+            p.tape.machine = TapeMachine::Wave;
             p.pitch.steal = Steal::Glide;
         },
         |p, b| {
@@ -1237,7 +1237,7 @@ const TAPE_ROWS: [TapeRow; 13] = [
 
 /// SIZE 0, XFADE ½, ROOT 0: `inc` clamped on any source.
 fn tiny(p: &mut ParamSnapshot, model: TapeModel, mode: PlayMode) {
-    (p.tape.model, p.tape.mode) = (model, mode);
+    p.tape.machine = TapeMachine::of(model, mode);
     (p.tape.size, p.tape.xfade, p.tape.root) = (0.0, 0.5, 0.0);
 }
 
@@ -1475,17 +1475,21 @@ const STREAM_ROWS: [StreamRow; 2] = [
     // onto the loop head.
     (
         "LOOP",
-        |p| (p.tape.mode, p.tape.size, p.tape.xfade) = (PlayMode::Loop, 1.0, 0.5),
+        |p| (p.tape.machine, p.tape.size, p.tape.xfade) = (TapeMachine::Loop, 1.0, 0.5),
         HOLD,
     ),
-    ("HIT", |p| p.tape.mode = PlayMode::One, |_, _| Hit::Again),
+    (
+        "HIT",
+        |p| p.tape.machine = TapeMachine::One,
+        |_, _| Hit::Again,
+    ),
 ];
 
 /// The Sound a row sets: PLAY at ROOT C4, TAPE and AGE at 0.5.
 fn stream_sound(row: &StreamRow) -> ParamSnapshot {
     let mut p = snapshot(EngineType::Tape);
     (p.tape.tape, p.tape.age) = (0.5, 0.5);
-    (p.tape.model, p.tape.root) = (TapeModel::Play, 6_000.0);
+    (p.tape.machine, p.tape.root) = (TapeMachine::Loop, 6_000.0);
     (row.1)(&mut p);
     p
 }

@@ -5,7 +5,7 @@
 
 use chimera_engine::dsp::tape_engine::heads::{Bounds, window_end, window_start};
 use chimera_engine::dsp::tape_engine::params::TapeEngineParams;
-use chimera_engine::dsp::tape_engine::{PlayMode, TapeModel};
+use chimera_engine::dsp::tape_engine::{PlayMode, TapeMachine, TapeModel};
 use chimera_engine::storage::SourceRef;
 use chimera_engine::stream::admit::head_frames;
 use chimera_engine::stream::layout::CHUNK_FRAMES;
@@ -27,8 +27,7 @@ fn r() -> SourceRef {
 
 fn play(mode: PlayMode, start: f32) -> TapeEngineParams {
     TapeEngineParams {
-        model: TapeModel::Play,
-        mode,
+        machine: TapeMachine::play(mode),
         start,
         end: 1.0,
         ..TapeEngineParams::default()
@@ -140,28 +139,27 @@ fn a_head_stops_at_end_or_the_file() {
 fn what_needs_ram_has_no_heads() {
     let mut ping = play(PlayMode::Ping, 0.2);
     assert!(heads_for(r(), &ping).is_none(), "PING");
-    ping.mode = PlayMode::Loop;
+    ping.machine = TapeMachine::Loop;
     (ping.start, ping.end) = (0.6, 0.2);
     assert!(heads_for(r(), &ping).is_none(), "END before START");
     for m in [TapeModel::Scrub, TapeModel::Stretch, TapeModel::Transwave] {
         let p = TapeEngineParams {
-            model: m,
+            machine: TapeMachine::of(m, PlayMode::One),
             ..play(PlayMode::One, 0.2)
         };
         assert!(heads_for(r(), &p).is_none(), "{m:?}");
     }
 }
 
-/// TRON streams as ONE does (#698): one START head, whatever MODE it left.
+/// TRON streams as ONE does (#698): one START head. A MODE off PLAY can't
+/// be held (`TapeEngineParams`' doctest).
 #[test]
 fn tron_streams_on_one_start_head() {
-    for mode in [PlayMode::One, PlayMode::Loop, PlayMode::Ping] {
-        let p = TapeEngineParams {
-            model: TapeModel::Tron,
-            ..play(mode, 0.2)
-        };
-        let h = heads_for(r(), &p).expect("TRON's heads");
-        let one = heads_for(r(), &play(PlayMode::One, 0.2)).unwrap();
-        assert_eq!(h, one, "{mode:?}");
-    }
+    let p = TapeEngineParams {
+        machine: TapeMachine::Tron,
+        ..play(PlayMode::Loop, 0.2)
+    };
+    let h = heads_for(r(), &p).expect("TRON's heads");
+    let one = heads_for(r(), &play(PlayMode::One, 0.2)).unwrap();
+    assert_eq!(h, one);
 }

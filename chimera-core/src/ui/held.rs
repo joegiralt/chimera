@@ -7,7 +7,7 @@ use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::kinds::{Linked, OpKind, Why, why_kind};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
-use crate::dsp::tape_engine::{NeedsRam, TapeEngineParams, TapeMachine, needs_ram};
+use crate::dsp::tape_engine::{MachineIndex, NeedsRam, TapeEngineParams, TapeMachine, needs_ram};
 use crate::preset::Sound;
 use crate::project::Line;
 
@@ -56,7 +56,7 @@ impl Held {
     pub fn why(self, sound: &Sound, streamed: bool) -> Option<Reason> {
         if self.addr == MODEL {
             let mut t = sound.params.tape;
-            t.set_machine(TapeMachine::from_index(self.code));
+            t.set_machine(TapeMachine::from_index(MachineIndex(self.code)));
             return needs_ram(&t).filter(|_| streamed).map(Reason::NeedsRam);
         }
         let p = &sound.params.algo;

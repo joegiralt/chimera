@@ -11,10 +11,11 @@ use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, Shape, streamed_held_len, write_head_table,
 };
-use chimera_core::dsp::tape_engine::{PlayMode, TapeEngine, TapeEngineParams, TapeModel};
+use chimera_core::dsp::tape_engine::{PlayMode, TapeEngine, TapeEngineParams};
 use chimera_core::project::SourceId;
 use chimera_core::source_table::SourceTable;
 use chimera_core::storage::{Card, SourceHead, read_packed_into, read_source_head, source_name};
@@ -302,8 +303,7 @@ fn stream_qa() {
         let secs = head.sref.frames as f32 / f32::from(rate);
         for mode in [PlayMode::One, PlayMode::Loop] {
             let p = TapeEngineParams {
-                model: TapeModel::Play,
-                mode,
+                machine: TapeMachine::play(mode),
                 root: f32::from(head.root),
                 ..TapeEngineParams::default()
             };
@@ -426,8 +426,7 @@ fn stream_qa_stressed() {
         "admission takes {billed}"
     );
     let p = TapeEngineParams {
-        model: TapeModel::Play,
-        mode: PlayMode::Loop,
+        machine: TapeMachine::Loop,
         root: 6_000.0,
         ..TapeEngineParams::default()
     };

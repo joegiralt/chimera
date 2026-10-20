@@ -11,7 +11,7 @@ use crate::dsp::algo::algorithms::AlgoId;
 use crate::dsp::algo::env::EnvRates;
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::modulator::{EnvType, HoldPos, LfoSlot};
-use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
+use crate::dsp::tape_engine::params::{TapeEngineParams, TapeMachine};
 use crate::dsp::va::osc::{Morph, Unit};
 use crate::part::DacPair;
 use crate::perf::load::AudioStats;
@@ -462,8 +462,9 @@ impl Renderer {
     }
 
     /// The active Part's machine and its TAPE params, this page's as its
-    /// slots glide: the strip never snaps.
-    fn strip_params(&self, f: &Frame) -> (TapeModel, TapeEngineParams) {
+    /// slots glide: the strip never snaps. On PLAY the MODE glides with
+    /// MODEL; off it, the machine is the Part's.
+    fn strip_params(&self, f: &Frame) -> (TapeMachine, TapeEngineParams) {
         let t = f.parts[f.active_part.index()].sound.params.tape;
         let mut p = t;
         for (i, anim) in self.anim.iter().enumerate().take(f.def.params.len()) {
@@ -476,7 +477,11 @@ impl Renderer {
                 crate::block::Block::set(&mut p, a.param, v);
             }
         }
-        (t.model, p)
+        let m = match (t.machine.mode(), p.machine.mode()) {
+            (Some(was), now) => TapeMachine::play(now.unwrap_or(was)),
+            (None, _) => t.machine,
+        };
+        (m, p)
     }
 
     /// The focused operator's envelope rates, this page's from its animated

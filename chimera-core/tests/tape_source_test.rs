@@ -7,6 +7,7 @@ mod common;
 
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::knobs::KnobPublisher;
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::params::TapeModel;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Shape};
 use chimera_core::dsp::voice::Voice;
@@ -89,7 +90,8 @@ impl Rig {
     fn tape(&mut self, part: usize, model: TapeModel, source: Option<SourceId>) {
         let a = &mut self.shared.parts[part];
         *a.params = Sound::init(EngineType::Tape).params;
-        a.params.tape.model = model;
+        a.params.tape.machine =
+            TapeMachine::of(model, chimera_core::dsp::tape_engine::PlayMode::Loop);
         *a.mod_state = ModState::new();
         a.source = source;
     }
@@ -586,7 +588,7 @@ fn a_glide_on_a_gated_note_moves_its_start() {
 
     // A model that can't play it, found only once the gate opens: idle.
     let wave = TapeEngineParams {
-        model: TapeModel::Transwave,
+        machine: TapeMachine::Wave,
         ..p
     };
     let mut g = fresh();
@@ -603,12 +605,11 @@ fn a_glide_on_a_gated_note_moves_its_start() {
 /// gate opens leaves it playing to END.
 #[test]
 fn a_gated_hold_note_sustains() {
-    use chimera_core::dsp::tape_engine::{FADE_HOLD, PlayMode, TapeEngine, TapeEngineParams};
+    use chimera_core::dsp::tape_engine::{FADE_HOLD, TapeEngine, TapeEngineParams};
     use common::tape::OneSource;
     let (_, held) = plain(1, 100.0);
     let p = TapeEngineParams {
-        model: TapeModel::Play,
-        mode: PlayMode::One,
+        machine: TapeMachine::One,
         drag: FADE_HOLD,
         ..TapeEngineParams::default()
     };

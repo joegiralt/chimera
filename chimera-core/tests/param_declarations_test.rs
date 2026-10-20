@@ -10,6 +10,7 @@ use chimera_core::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use chimera_core::block::{Motion, ParamSpec, Smoothing};
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::modal::{self, ResonatorMode};
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::{self as tape, TapeEngineParams, TapeModel};
 use chimera_core::modulation::ModSource;
 use chimera_core::params::EngineType;
@@ -57,7 +58,7 @@ fn sound(a: ParamAddr) -> (Sound, Option<Vec<u8>>) {
             // rest, the first machine that reads it. A quarter-second
             // source: LOOP wraps within a note.
             let m = [Play, Stretch, Transwave, Tron, Scrub];
-            s.params.tape.model = match a.param {
+            let model = match a.param {
                 TapeEngineParams::PERIOD => Stretch,
                 TapeEngineParams::DRAG => Tron,
                 // SLICE is retired: no machine has a cell for it.
@@ -65,18 +66,22 @@ fn sound(a: ParamAddr) -> (Sound, Option<Vec<u8>>) {
                 id => *m
                     .iter()
                     .find(|&&m| {
-                        let k =
-                            chimera_core::dsp::tape_engine::TapeMachine::of(m, s.params.tape.mode);
+                        let k = chimera_core::dsp::tape_engine::TapeMachine::of(
+                            m,
+                            chimera_core::dsp::tape_engine::PlayMode::Loop,
+                        );
                         tape::reads(k, id)
                     })
                     .unwrap(),
             };
+            s.params.tape.machine =
+                TapeMachine::of(model, chimera_core::dsp::tape_engine::PlayMode::Loop);
             // START, END and SLICE latch at note-on in ONE; LOOP reads END live.
             if matches!(
                 a.param,
                 TapeEngineParams::START | TapeEngineParams::END | TapeEngineParams::SLICE
             ) {
-                s.params.tape.mode = chimera_core::dsp::tape_engine::PlayMode::One;
+                s.params.tape.machine = TapeMachine::One;
             }
             src = Some(held_plain(&saw_with_burst(48_000, 0.25), 48_000));
             // The whole source a loop, its first wrap past `NEXT` (INIT's

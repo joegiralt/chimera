@@ -11,6 +11,7 @@ use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::rev::Reverb;
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::dsp::reverb::ReverbParams;
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::modulation::ModState;
 use chimera_core::params::{EngineType, ParamSnapshot};
@@ -210,7 +211,7 @@ fn test_no_clicks_tape_machines() {
     let mut cases = Vec::new();
     for m in TapeModel::ALL {
         let mut t = P {
-            model: m,
+            machine: chimera_core::dsp::tape_engine::TapeMachine::of(m, PlayMode::Loop),
             period: 100.7,
             ..P::default()
         };
@@ -227,8 +228,7 @@ fn test_no_clicks_tape_machines() {
         }
     }
     cases.push(P {
-        model: TapeModel::Play,
-        mode: PlayMode::One,
+        machine: TapeMachine::One,
         drag: FADE_HOLD,
         slice: chimera_core::dsp::tape_engine::SliceCode::new(6),
         ..P::default()
@@ -241,7 +241,7 @@ fn test_no_clicks_tape_machines() {
     for t in cases {
         let mut p = chimera_core::preset::Sound::neutral(EngineType::Tape).params;
         p.tape = t;
-        let held = if t.model == TapeModel::Transwave {
+        let held = if t.model() == TapeModel::Transwave {
             &wave
         } else {
             &plain
@@ -260,7 +260,7 @@ fn test_no_clicks_tape_machines() {
         assert!(
             c.is_empty(),
             "{:?} {}..{}: {} clicks: {:?}",
-            t.model,
+            t.model(),
             t.start,
             t.end,
             c.len(),

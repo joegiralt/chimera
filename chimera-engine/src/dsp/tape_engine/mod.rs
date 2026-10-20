@@ -94,9 +94,9 @@ use wave::Wave;
 pub use heads::loop_len;
 pub use oneshot::SliceCode;
 pub use params::{
-    FADE_HOLD, MACHINE_NAMES, MODEL_NAMES, NeedsRam, PlayMode, Retrig, StretchType,
-    TAPE_ENGINE_SPECS, TapeEngineParams, TapeMachine, TapeModel, Wow, at_root, cuts, drag_s,
-    fade_default, jogs, needs_ram, reads, reads_in,
+    Choice, FADE_HOLD, KeptMode, MACHINE_NAMES, MODEL_NAMES, MachineIndex, NeedsRam, PlayMode,
+    Retrig, StretchType, TAPE_ENGINE_SPECS, TapeEngineParams, TapeMachine, TapeModel, Wow, at_root,
+    cuts, drag_s, fade_default, jogs, needs_ram, reads,
 };
 
 // Each model's bill: its measured worst a sample, the M7's static count
@@ -181,23 +181,21 @@ const BLOCK_RATE: f32 = (SAMPLE_RATE as usize / BLOCK_SIZE) as f32;
 
 /// Each model's measured worst, either way round (spec § 5): bank 1's
 /// table, which the proxy reads without the door.
-pub const fn model_cost(m: TapeModel, mode: PlayMode) -> Cost {
+pub const fn model_cost(m: TapeMachine) -> Cost {
     match m {
-        TapeModel::Play => match mode {
-            PlayMode::One => COST_ONESHOT,
-            PlayMode::Loop => COST_LOOP,
-            PlayMode::Ping => COST_PING,
-        },
-        TapeModel::Tron => COST_TRON,
-        TapeModel::Scrub => COST_SCRUB,
-        TapeModel::Transwave => COST_WAVE,
-        TapeModel::Stretch => COST_STRETCH,
+        TapeMachine::One => COST_ONESHOT,
+        TapeMachine::Loop => COST_LOOP,
+        TapeMachine::Ping => COST_PING,
+        TapeMachine::Tron => COST_TRON,
+        TapeMachine::Scrub => COST_SCRUB,
+        TapeMachine::Wave => COST_WAVE,
+        TapeMachine::Stretch => COST_STRETCH,
     }
 }
 
 /// `model_cost` on a streamed source: ONE, LOOP and TRON stream.
-pub const fn streamed_cost(m: TapeModel, mode: PlayMode) -> Cost {
-    Cost(model_cost(m, mode).0 + COST_STREAM.0)
+pub const fn streamed_cost(m: TapeMachine) -> Cost {
+    Cost(model_cost(m).0 + COST_STREAM.0)
 }
 
 /// The fastest read ratio a streamed note on `p` reaches (slice 1 § 5.5,
@@ -430,9 +428,8 @@ pub struct TapeDeck {
     /// A note-on whose source a closed gate moves: active and silent, it
     /// starts (`note_on`) on the first block its row reads (spec § 4).
     gated: bool,
-    model: TapeModel,
-    /// PLAY's MODE and whether FADE holds, latched at note-on.
-    mode: PlayMode,
+    /// The machine and whether FADE holds, latched at note-on.
+    machine: TapeMachine,
     hold: bool,
     /// The head, and the head a fade reads into, each in its frame `u`:
     /// mirrored, the source is read at `off − u`, else at `u` (`off + u`
@@ -584,8 +581,7 @@ impl TapeDeck {
         TapeDeck {
             src: None,
             gated: false,
-            model: TapeModel::Play,
-            mode: PlayMode::Loop,
+            machine: TapeMachine::Loop,
             hold: false,
             heads: [Head::default(); 2],
             off: Pos(0),
@@ -780,9 +776,9 @@ impl TapeDeck {
             None => None,
         };
         match v {
-            Some(v) if wave::playable(p.model, &v) => self.note_on(note, p, &v, sample_rate),
+            Some(v) if wave::playable(p.machine, &v) => self.note_on(note, p, &v, sample_rate),
             None if self.src.is_some_and(|id| src.moving(id)) => {
-                (self.note, self.model, self.mode) = (note, p.model, p.mode);
+                (self.note, self.machine) = (note, p.machine);
                 self.hold = params::hold(p);
                 (self.gated, self.active, self.streamed) = (true, true, false);
                 self.waited = 0;
@@ -982,7 +978,7 @@ impl TapeDeck {
         };
         match Descriptor::from_bytes(held) {
             Some(d) if d.is_streamed() => params::needs_ram(p).is_some(),
-            Some(d) => !SourceView::of(held, d).is_some_and(|v| wave::playable(p.model, &v)),
+            Some(d) => !SourceView::of(held, d).is_some_and(|v| wave::playable(p.machine, &v)),
             None => true,
         }
     }
@@ -1215,7 +1211,7 @@ impl TapeDeck {
     /// change is `EngineSlot`'s, which sees the pitch.
     pub fn cost(p: &TapeEngineParams, mods: &ModState) -> Cost {
         let routed = |q| mods.moves_addr(ParamAddr::new(BlockRef::TapeEngine, q));
-        let mut c = Self::model_cost(p.model, p.mode);
+        let mut c = Self::model_cost(p.machine);
         if tape_runs(p.tape, routed(TapeEngineParams::TAPE)) {
             c = c + COST_TAPE_RUNS;
         }
@@ -1226,8 +1222,8 @@ impl TapeDeck {
     }
 
     /// Each model's measured worst, either way round (spec § 5).
-    pub const fn model_cost(m: TapeModel, mode: PlayMode) -> Cost {
-        model_cost(m, mode)
+    pub const fn model_cost(m: TapeMachine) -> Cost {
+        model_cost(m)
     }
 
     /// What the sounding note costs: its note-on's model, and the
@@ -1235,9 +1231,9 @@ impl TapeDeck {
     pub fn playing_cost(&self) -> Option<Cost> {
         self.active.then(|| {
             if self.streamed {
-                streamed_cost(self.model, self.mode)
+                streamed_cost(self.machine)
             } else {
-                Self::model_cost(self.model, self.mode)
+                Self::model_cost(self.machine)
             }
         })
     }
@@ -1283,8 +1279,7 @@ impl TapeDeck {
     ) {
         let (frames, rate) = (v.frames(), v.desc().rate());
         (self.streamed, self.inc_cap) = (false, Inc::MAX);
-        self.model = p.model;
-        self.mode = p.mode;
+        self.machine = p.machine;
         self.at_root = params::at_root(p);
         self.hold = params::hold(p);
         self.gated = false;
@@ -1322,11 +1317,11 @@ impl TapeDeck {
             self.once_on(note, p, v, sample_rate);
             return;
         }
-        if self.model == TapeModel::Transwave {
+        if self.model() == TapeModel::Transwave {
             self.wave = Wave::on(v, wave::cycles(note, self.pitch, sample_rate));
             return;
         }
-        if self.model == TapeModel::Stretch {
+        if self.model() == TapeModel::Stretch {
             let i = inc(
                 rate,
                 note,
@@ -1351,7 +1346,7 @@ impl TapeDeck {
             sample_rate,
         )
         .get();
-        if self.model == TapeModel::Scrub {
+        if self.model() == TapeModel::Scrub {
             fast = (2.0 * libm::fabsf(clampf(p.motion, -1.0, 1.0)) * fast).min(INC_MAX);
         }
         self.min_len = shortest(rate, fast);
@@ -1361,7 +1356,7 @@ impl TapeDeck {
         self.set_mirror(false);
         self.off = Pos(0);
         let mut start_at = self.ws;
-        match self.model {
+        match self.model() {
             TapeModel::Scrub => {
                 self.bounds = Bounds::of_min(
                     0,
@@ -1409,20 +1404,20 @@ impl TapeDeck {
 
     /// PLAY in MODE ONE, LOOP or PING: the paths the old machines took.
     fn one(&self) -> bool {
-        self.model == TapeModel::Play && self.mode == PlayMode::One
+        self.machine == TapeMachine::One
     }
 
     fn lp(&self) -> bool {
-        self.model == TapeModel::Play && self.mode == PlayMode::Loop
+        self.machine == TapeMachine::Loop
     }
 
     fn ping(&self) -> bool {
-        self.model == TapeModel::Play && self.mode == PlayMode::Ping
+        self.machine == TapeMachine::Ping
     }
 
     /// ONE and TRON play one head toward the window's end.
     fn one_head(&self) -> bool {
-        self.one() || self.model == TapeModel::Tron
+        self.one() || self.model() == TapeModel::Tron
     }
 
     /// LOOP plays its next pass reversed: END before the START latched at
@@ -1438,7 +1433,7 @@ impl TapeDeck {
     /// (`1 − START`), as REVERSE's was. PING-PONG and SCRUB take the sorted
     /// window.
     fn window(&self, p: &TapeEngineParams, rev: bool) -> (f32, f32) {
-        if !self.model.ordered(self.mode) {
+        if !self.machine.ordered() {
             (p.start.min(p.end), p.start.max(p.end))
         } else if rev {
             (1.0 - p.start, 1.0 - p.end)
@@ -1545,7 +1540,9 @@ impl TapeDeck {
     /// aside (#698). ONE at HOLD ignores note-off (`sustains`); the other
     /// machines do nothing, their VCA lets go.
     pub fn release_by(&mut self, vca: bool) {
-        if self.model == TapeModel::Tron || (self.model == TapeModel::Play && !self.hold && !vca) {
+        if self.model() == TapeModel::Tron
+            || (self.model() == TapeModel::Play && !self.hold && !vca)
+        {
             self.rel_k = self.fade_k;
         }
     }
@@ -1569,7 +1566,7 @@ impl TapeDeck {
 
     /// The model latched at the last note-on.
     pub fn model(&self) -> TapeModel {
-        self.model
+        self.machine.model()
     }
 
     /// The source frame head `h` reads; one before frame 0 reads 0.
@@ -1591,7 +1588,7 @@ impl TapeDeck {
     fn frame(&self, u: Pos) -> u32 {
         let r = if self.mirror() {
             self.off - u
-        } else if self.model == TapeModel::Scrub {
+        } else if self.model() == TapeModel::Scrub {
             self.off + u
         } else {
             u
@@ -1608,7 +1605,7 @@ impl TapeDeck {
             return Heads::NONE;
         }
         let p = self.probe();
-        if self.model == TapeModel::Tron {
+        if self.model() == TapeModel::Tron {
             let run = (self.left as f32 * self.inc.value().unwrap_or(0.0)) as u32;
             let out = self.heads[0]
                 .pos
@@ -1621,7 +1618,7 @@ impl TapeDeck {
     }
 
     pub fn probe(&self) -> Probe {
-        if self.model == TapeModel::Transwave {
+        if self.model() == TapeModel::Transwave {
             let (head, other, gain) = self.wave.frames();
             return Probe {
                 head,
@@ -1631,7 +1628,7 @@ impl TapeDeck {
                 from: self.wave.from(),
             };
         }
-        if self.model == TapeModel::Stretch {
+        if self.model() == TapeModel::Stretch {
             let (head, other, gain) = self.stretch.probe();
             return Probe {
                 head,
@@ -1664,7 +1661,7 @@ impl TapeDeck {
     /// Each head's way: the old grain's and the new one's (STRETCH), the
     /// head's and a fade's second head's (the rest).
     pub fn dirs(&self) -> [Dir; 2] {
-        if self.model == TapeModel::Stretch {
+        if self.model() == TapeModel::Stretch {
             return self.stretch.dirs();
         }
         self.heads
@@ -1766,7 +1763,7 @@ impl TapeDeck {
             self.mac.age = 0.0;
         }
         self.slide.tick();
-        if self.model == TapeModel::Transwave {
+        if self.model() == TapeModel::Transwave {
             let target = clampf(
                 wave::cycles(self.note, self.pitch + self.cents, sample_rate) * self.slide.value(),
                 f32::EPSILON,
@@ -1782,7 +1779,7 @@ impl TapeDeck {
             );
         } else if self.one_head() {
             self.render_once(out, reads, sample_rate);
-        } else if self.model == TapeModel::Stretch {
+        } else if self.model() == TapeModel::Stretch {
             let target = self.target_inc(v.desc().rate(), 0.0, sample_rate);
             let m = self.mac;
             self.stretch.render(
@@ -2050,7 +2047,7 @@ impl TapeDeck {
             v,
             v1: &v1,
         };
-        let scrub = self.model == TapeModel::Scrub;
+        let scrub = self.model() == TapeModel::Scrub;
         if scrub {
             (from, to) = self.scrub_block(p, to, first, &k);
         } else {
@@ -2666,7 +2663,7 @@ impl TapeDeck {
     /// XFADE now. SCRUB's loop is `[0, Ll)` behind the finger.
     fn next_bounds(&self, k: &AtWrap<'_>) -> Bounds {
         let (ws, we) = (self.next_ws.min(k.frames - 1), self.we);
-        match self.model {
+        match self.model() {
             TapeModel::Scrub => {
                 let b = Bounds::of_min(
                     0,
@@ -2754,7 +2751,7 @@ impl TapeDeck {
                 let nx = self.pending.unwrap_or(self.upcoming());
                 let next = nx.b;
                 // SCRUB's loop has nothing before it: its fades fold.
-                let ws = if self.model == TapeModel::Scrub {
+                let ws = if self.model() == TapeModel::Scrub {
                     next.ls
                 } else {
                     nx.ws.min(k.frames - 1)
@@ -2795,7 +2792,7 @@ impl TapeDeck {
     /// 1, which never peaks.
     #[cold]
     fn fade_power(&self, h0: Pos, h1: Pos, span: u32, k: &AtWrap<'_>) -> f32 {
-        let plain = !self.mirror() && self.model != TapeModel::Scrub;
+        let plain = !self.mirror() && self.model() != TapeModel::Scrub;
         let measured = plain
             .then(|| power_of(k.v, h0.whole(), k.v1, h1.whole(), span))
             .flatten();

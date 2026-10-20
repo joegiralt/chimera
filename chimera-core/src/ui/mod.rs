@@ -70,7 +70,7 @@ use crate::dsp::algo::params::step_alg;
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::dsp::reverb::KnobMemory;
-use crate::dsp::tape_engine::{Heads, TapeEngineParams, TapeMachine, TapeModel};
+use crate::dsp::tape_engine::{Heads, TapeEngineParams, TapeMachine};
 use crate::in_place::uninit_at;
 use crate::instrument::AudioShared;
 use crate::instrument::{LfoView, PartHeads};
@@ -2619,7 +2619,7 @@ impl UiState {
     /// to a stop through DRAG once the FINGER is let go.
     fn jog_pass(&mut self, now_ms: u32) -> bool {
         let t = self.project.part(self.active_part).sound.params.tape;
-        if t.model != TapeModel::Scrub {
+        if t.machine != TapeMachine::Scrub {
             self.jog = jog::Jog::new();
             return false;
         }

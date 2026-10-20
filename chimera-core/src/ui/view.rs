@@ -16,7 +16,7 @@ use crate::dsp::modulator::{
 };
 use crate::dsp::reverb::{ReverbParams, ReverbType, in_plate_zone};
 use crate::dsp::tape_engine::machine;
-use crate::dsp::tape_engine::{self, TapeEngineParams as T, TapeMachine, wave};
+use crate::dsp::tape_engine::{self, MachineIndex, TapeEngineParams as T, TapeMachine, wave};
 use crate::dsp::voice_fx::params::{FxType, VoiceFxParams};
 use crate::midi_map::Mappable;
 use crate::modulation::VCA;
@@ -130,7 +130,7 @@ impl SlotCtx {
                 }
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
-            tape: TapeMachine::from_index(get(BlockRef::TapeEngine, T::MODEL) as u8),
+            tape: TapeMachine::from_index(MachineIndex(get(BlockRef::TapeEngine, T::MODEL) as u8)),
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
             src: SourceState::None,
             rev: reverb_panel::shown(rev.kind),
@@ -255,7 +255,6 @@ pub enum SourceState {
 impl SourceState {
     /// What a note-on on `p` finds for `r` in `pool`.
     pub fn of(p: &T, r: Option<SourceRef>, pool: &Pool) -> Self {
-        let model = p.model;
         let Some(r) = r else {
             return SourceState::None;
         };
@@ -280,8 +279,8 @@ impl SourceState {
             notes: None,
         };
         match pool.source_view(r) {
-            Some(v) if wave::playable(model, &v) => held,
-            Some(_) if model == tape_engine::TapeModel::Transwave => SourceState::NotTranswave,
+            Some(v) if wave::playable(p.machine, &v) => held,
+            Some(_) if p.machine == TapeMachine::Wave => SourceState::NotTranswave,
             None if pool.streamed(r) => match tape_engine::needs_ram(p) {
                 Some(n) => SourceState::NeedsRam(n),
                 None => held.streaming(p.tape > 0.0),

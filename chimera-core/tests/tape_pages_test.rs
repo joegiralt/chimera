@@ -257,7 +257,7 @@ fn model_change_applies_machine_defaults() {
     let settled = render_ui(&ui).hash();
     feed(&mut ui, Input::turn(EncoderId::A, 4)); // LOOP → STRETCH
     let t = ui.params().tape;
-    assert_eq!(t.model, TapeModel::Stretch);
+    assert_eq!(t.model(), TapeModel::Stretch);
     assert_eq!((t.motion, t.size, t.kind as u8), (0.5, 0.5, 0));
     assert_eq!((t.start, t.end, t.tape, t.age), (0.2, 0.7, 0.4, 0.3));
     assert_eq!(t.wow, chimera_core::dsp::tape_engine::Wow::Warble);
@@ -282,7 +282,7 @@ fn model_change_applies_machine_defaults() {
     // their values, which ONE doesn't read.
     feed(&mut ui, Input::turn(EncoderId::A, -5)); // ONE
     let t = ui.params().tape;
-    assert_eq!((t.model, t.mode), (TapeModel::Play, PlayMode::One));
+    assert_eq!(t.machine, TapeMachine::One);
     assert_eq!(t.drag, chimera_core::dsp::tape_engine::FADE_HOLD);
     assert_eq!((t.start, t.end), (0.2, 0.7), "the window is the source's");
     // ONE's hit (#698, ADR 0180): ENV 1 FAST, at its floor, holding full.
@@ -296,14 +296,14 @@ fn model_change_applies_machine_defaults() {
     ui.params_mut().tape.slice = chimera_core::dsp::tape_engine::SliceCode::new(5);
     ui.params_mut().tape.drag = 0.5;
     feed(&mut ui, Input::turn(EncoderId::A, -1));
-    assert_eq!(ui.params().tape.mode, PlayMode::One);
+    assert_eq!(ui.params().tape.machine, TapeMachine::One);
     assert_eq!(ui.params().tape.slice.code(), 5);
     assert_eq!(ui.params().tape.drag, 0.5);
 
     // A Sound loaded on a machine keeps what it stored.
     {
         let t = &mut ui.params_mut().tape;
-        t.model = TapeModel::Scrub;
+        t.machine = TapeMachine::Scrub;
         t.motion = 0.2;
     }
     feed(&mut ui, Input::default());
@@ -315,7 +315,7 @@ fn model_change_applies_machine_defaults() {
 fn scrub_finger_jogs() {
     let mut ui = ui_at_deck();
     feed(&mut ui, Input::turn(EncoderId::A, 3)); // LOOP → SCRUB
-    assert_eq!(ui.params().tape.model, TapeModel::Scrub);
+    assert_eq!(ui.params().tape.model(), TapeModel::Scrub);
     let drag = ui.params().tape.drag;
     assert_eq!(ui.params().tape.position, 0.0);
     // 8 detents in 125 ms.
@@ -382,8 +382,7 @@ fn reads_matches_the_audio() {
         let src = if m == TapeMachine::Wave { &wave } else { &held };
         let v = SourceView::strict(src).unwrap();
         let base = P {
-            model: m.model(),
-            mode: m.mode().unwrap_or(PlayMode::Loop),
+            machine: TapeMachine::of(m.model(), m.mode().unwrap_or(PlayMode::Loop)),
             start: 0.1,
             end: 0.9,
             position: 0.2,
@@ -505,7 +504,7 @@ fn src_reads_states() {
     let pool = ui.project().pool();
     let state = |model, r| {
         let p = TapeEngineParams {
-            model,
+            machine: TapeMachine::of(model, PlayMode::Loop),
             ..TapeEngineParams::default()
         };
         SourceState::of(&p, r, pool)
@@ -675,7 +674,7 @@ fn fade_reads_hold_only_in_one() {
     assert_eq!(text(TapeMachine::Loop), "127");
     assert_eq!(text(TapeMachine::Ping), "127");
     let mut s = sound_on(TapeMachine::Tron);
-    s.params.tape.mode = PlayMode::One;
+    s.params.tape.set(P::MODE, PlayMode::One as u8 as f32);
     let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
     let mut b = FmtBuf::new();
     fmt_val(&mut b, 1.0, view::shown_fmt(tape(P::DRAG), &ctx).unwrap());
@@ -695,22 +694,16 @@ fn model_edit_writes_play_and_its_mode() {
     let model = tape(P::MODEL);
     assert!(edit(&mut s.params, model, Edit::To(0.0)));
     let t = s.params.tape;
-    assert_eq!(
-        (t.model, t.mode, t.drag),
-        (TapeModel::Play, PlayMode::One, FADE_HOLD)
-    );
+    assert_eq!((t.machine, t.drag), (TapeMachine::One, FADE_HOLD));
     assert!(edit(&mut s.params, model, Edit::To(2.0)));
     let t = s.params.tape;
-    assert_eq!(
-        (t.model, t.mode, t.drag),
-        (TapeModel::Play, PlayMode::Ping, 0.3)
-    );
-    // Off PLAY, MODE stays as it was: no other machine reads it.
+    assert_eq!((t.machine, t.drag), (TapeMachine::Ping, 0.3));
+    // Off PLAY, MODE's code stays as it was: no machine reads it.
     assert!(edit(&mut s.params, model, Edit::To(3.0)));
     let t = s.params.tape;
-    assert_eq!((t.model, t.mode), (TapeModel::Tron, PlayMode::Ping));
-    assert_eq!(t.machine(), TapeMachine::Tron);
     use chimera_core::block::DiskCode;
+    assert_eq!(t.enum_code(P::MODE), Some(PlayMode::Ping.disk_code()));
+    assert_eq!(t.machine(), TapeMachine::Tron);
     assert_eq!(t.enum_code(P::MODEL), Some(TapeModel::Tron.disk_code()));
     let mut one = Sound::init(EngineType::Tape);
     one.params.tape.set_machine(TapeMachine::One);
@@ -754,8 +747,7 @@ fn streamed_refusals_reach_the_band() {
     let pool = ui.project().pool();
     let state = |model, mode, start, end| {
         let p = TapeEngineParams {
-            model,
-            mode,
+            machine: TapeMachine::of(model, mode),
             start,
             end,
             ..TapeEngineParams::default()

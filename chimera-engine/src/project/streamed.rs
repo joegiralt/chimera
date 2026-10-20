@@ -49,7 +49,7 @@ pub fn load_kind(h: &SourceHead, free: Cost, p: &TapeEngineParams) -> LoadKind {
     }
     match (h.shape, heads_for(h.sref, p)) {
         (Shape::Plain, Some(heads)) => LoadKind::Streamed(heads),
-        _ => LoadKind::Refused(needs_ram(p).unwrap_or(NeedsRam::Machine(p.model))),
+        _ => LoadKind::Refused(needs_ram(p).unwrap_or(NeedsRam::Machine(p.model()))),
     }
 }
 

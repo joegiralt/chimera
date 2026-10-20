@@ -8,13 +8,13 @@ mod common;
 
 use core::mem::MaybeUninit;
 
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::read::{Pos, SourceView};
 use chimera_core::dsp::tape_engine::stretch::{
     GrainClock, HALF_SPEED, WRAP_SAMPLES, d_time_s, lock, locks, time_speed,
 };
 use chimera_core::dsp::tape_engine::{
     INC_MAX, MIN_PASS_SAMPLES, NOTE_ON_RAMP, Probe, StretchType, TapeEngine, TapeEngineParams,
-    TapeModel,
 };
 use chimera_hal::BLOCK_SIZE;
 use common::XorShift;
@@ -34,7 +34,7 @@ fn fresh() -> TapeEngine {
 
 fn stretch(kind: StretchType, period: f32) -> TapeEngineParams {
     TapeEngineParams {
-        model: TapeModel::Stretch,
+        machine: TapeMachine::Stretch,
         kind,
         period,
         ..TapeEngineParams::default()

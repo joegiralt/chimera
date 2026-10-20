@@ -317,3 +317,34 @@ fn scrub_take_that_turns_is_click_free() {
         );
     }
 }
+
+#[path = "../../chimera-core/tests/common/codec_util.rs"]
+mod codec_util;
+
+/// Every factory TAPE Sound loads and saves to its file's bytes (ADR
+/// 0189), and those bytes are pinned. An absent CC0 original's Sounds
+/// stand on another source, and the pin waits for the whole set.
+#[test]
+fn factory_sounds_save_as_loaded() {
+    use chimera_core::storage::Crc32;
+    use codec_util::{decode, encode};
+    let (r, built) = set();
+    let stand_in = &built.iter().flatten().next().unwrap().head;
+    let mut all = Crc32::new();
+    for s in &r.sounds {
+        let head = r
+            .sources
+            .iter()
+            .zip(built)
+            .find(|(x, _)| x.name == s.source)
+            .and_then(|(_, b)| b.as_ref())
+            .map_or(stand_in, |b| &b.head);
+        let file = encode(&tape_sound(s, head));
+        let got = decode(&file).unwrap();
+        assert_eq!(encode(&got), file, "{}", s.name.as_str());
+        all.update(&file);
+    }
+    if built.iter().all(Option::is_some) {
+        assert_eq!(all.finish(), 0xBA88_16F9, "{} Sounds", r.sounds.len());
+    }
+}

@@ -12,6 +12,7 @@ use super::{
 };
 use crate::dsp::algo::math::clampf;
 use crate::dsp::fast_sin;
+use crate::dsp::tape_engine::MachineIndex;
 use core::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
 
 const BG: Ink = Ink::Bg;
@@ -30,7 +31,7 @@ const SOFT: Ink = Ink::Soft;
 pub fn inputs(set: [f32; 10], still: bool) -> TapeGauge {
     let [model, start, end, pos, motion, size, drag, tape, age, xfade] = set;
     let pick = |v: f32, n: u8| libm::roundf(clampf(v, 0.0, 1.0) * n as f32) as u8;
-    let kind = Kind::from_index(pick(model, Kind::ALL.len() as u8 - 1));
+    let kind = Kind::from_index(MachineIndex(pick(model, Kind::ALL.len() as u8 - 1)));
     if still {
         return TapeGauge::still(kind);
     }

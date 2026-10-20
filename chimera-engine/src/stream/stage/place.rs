@@ -47,8 +47,13 @@ pub(crate) fn heads_in(r: SourceRef, p: &TapeEngineParams) -> Option<Heads> {
     // row reads it).
     let cap = we.saturating_add(2).min(frames).next_multiple_of(2);
     let start = head(ws, reach, cap)?;
-    if p.machine() != TapeMachine::Loop {
-        return Some(Heads::One(start));
+    type K = TapeMachine;
+    match p.machine {
+        K::Loop => {}
+        // ONE and TRON read one head; `needs_ram` refused the others.
+        K::One | K::Tron | K::Ping | K::Scrub | K::Stretch | K::Wave => {
+            return Some(Heads::One(start));
+        }
     }
     let b = Bounds::of(ws, we, (p.size, p.position, p.xfade), rate);
     let lx = b.lx.min(xfade_max(rate));

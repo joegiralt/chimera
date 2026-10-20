@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use chimera_core::block::{Block, DiskCode, ParamId};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
-use chimera_core::dsp::tape_engine::{PlayMode, TapeEngineParams as P, TapeModel, machine};
+use chimera_core::dsp::tape_engine::{
+    PlayMode, TapeEngineParams as P, TapeMachine, TapeModel, machine,
+};
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
@@ -510,7 +512,7 @@ pub fn tape_sound(s: &SoundRecipe, head: &SourceHead) -> Sound {
     snd.name = s.name;
     snd.pick_source(head, None);
     let t = &mut snd.params.tape;
-    (t.model, t.mode) = (s.model, s.mode);
+    t.machine = TapeMachine::of(s.model, s.mode);
     // The machine's own, ONE's FADE holding.
     let defaults = machine::defaults(t.machine());
     for (id, v) in defaults.chain(s.set.iter().copied()) {

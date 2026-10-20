@@ -12,7 +12,7 @@ use chimera_image::{FlashFail, Verdict};
 pub use chimera_image::{Seal, Version};
 
 use crate::dsp::tape_engine::Heads;
-use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
+use crate::dsp::tape_engine::params::{TapeEngineParams, TapeMachine};
 use crate::dsp::tape_engine::read::SourceView;
 use crate::project::{LoadKind, PartId, Project};
 use crate::storage::{Ready, SourceHead};
@@ -166,9 +166,9 @@ pub fn closed_part(
 pub struct UiDoor {
     magic: u32,
     overview: fn(&SourceView<'_>, f32, f32) -> Overview,
-    strip_key: fn(&Overview, TapeModel, &TapeEngineParams, Heads) -> u32,
+    strip_key: fn(&Overview, TapeMachine, &TapeEngineParams, Heads) -> u32,
     #[allow(clippy::type_complexity)]
-    strip: fn(&mut dyn Paint, &Overview, TapeModel, &TapeEngineParams, Heads, (i32, i32)),
+    strip: fn(&mut dyn Paint, &Overview, TapeMachine, &TapeEngineParams, Heads, (i32, i32)),
     source_turn: fn(&mut SourceCell, &mut Project, PartId, i8),
     source_load: fn(&mut SourceCell, &mut Project, PartId),
     source_kind: fn(&SourceCell, &Project, PartId, u32) -> Option<HeadKind>,
@@ -211,11 +211,11 @@ impl UiDoor {
     pub(crate) fn strip_key(
         &self,
         o: &Overview,
-        model: TapeModel,
+        m: TapeMachine,
         p: &TapeEngineParams,
         heads: Heads,
     ) -> u32 {
-        (self.strip_key)(o, model, p, heads)
+        (self.strip_key)(o, m, p, heads)
     }
 
     #[inline(always)]
@@ -223,12 +223,12 @@ impl UiDoor {
         &self,
         on: &mut dyn Paint,
         o: &Overview,
-        model: TapeModel,
+        m: TapeMachine,
         p: &TapeEngineParams,
         heads: Heads,
         at: (i32, i32),
     ) {
-        (self.strip)(on, o, model, p, heads, at)
+        (self.strip)(on, o, m, p, heads, at)
     }
 
     #[inline(always)]

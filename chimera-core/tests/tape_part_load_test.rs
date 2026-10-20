@@ -6,6 +6,7 @@ mod screen;
 
 use chimera_core::bank2::{Bank2Status, NEEDS_UPDATE, NEEDS_UPDATE_CELL, Version, closed_text};
 use chimera_core::block::Block;
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::params::TapeEngineParams;
 use chimera_core::params::EngineType;
 use chimera_core::project::{Origin, PartFrom, PartId, PartSource, Project};
@@ -123,7 +124,7 @@ mod streamed {
     use super::*;
     use chimera_core::dsp::tape_engine::params::TapeEngineParams;
     use chimera_core::dsp::tape_engine::read::Shape;
-    use chimera_core::dsp::tape_engine::{PlayMode, TapeModel};
+
     use chimera_core::name::SoundName;
     use chimera_core::project::test_support::save_at;
     use chimera_core::project::{
@@ -169,7 +170,7 @@ mod streamed {
     }
 
     fn one(t: &mut TapeEngineParams) {
-        (t.model, t.mode) = (TapeModel::Play, PlayMode::One);
+        t.machine = TapeMachine::One;
     }
 
     /// Part `n` on TAPE, PLAY ONE, playing `r`.
@@ -475,7 +476,7 @@ mod streamed {
         put(&mut s, &bed);
         let (mut p, t) = Project::boxed();
         tape_part(&mut p, t, 0, bed.0.sref);
-        p.edit_part(PartId::ALL[0]).sound.params.tape.mode = PlayMode::Ping;
+        p.edit_part(PartId::ALL[0]).sound.params.tape.machine = TapeMachine::Ping;
         p.source_absent(bed.0.sref).unwrap();
         let (q, _) = round_trip(&mut s, &mut p, false);
         let id = q.pool().find_source(bed.0.sref).unwrap();

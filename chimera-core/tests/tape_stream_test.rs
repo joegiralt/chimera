@@ -5,6 +5,7 @@
 
 mod common;
 
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::stream::units::{Cents, SourceRate};
 use core::mem::MaybeUninit;
 use core::sync::atomic::Ordering;
@@ -127,8 +128,7 @@ fn heads_at(p: &TapeEngineParams, frames: u32, note: u8) -> [u32; 2] {
 
 fn params(mode: PlayMode, start: f32, end: f32) -> TapeEngineParams {
     TapeEngineParams {
-        model: TapeModel::Play,
-        mode,
+        machine: TapeMachine::play(mode),
         start,
         end,
         tape: 1.0,
@@ -508,8 +508,7 @@ fn span_reads_stay_in_bounds() {
         let whole = held_plain(&s, RATE);
         let (a, z) = (unit(&mut rng), unit(&mut rng));
         let p = TapeEngineParams {
-            model: TapeModel::Play,
-            mode: [PlayMode::One, PlayMode::Loop][rng.below(2)],
+            machine: TapeMachine::play([PlayMode::One, PlayMode::Loop][rng.below(2)]),
             start: a.min(z),
             end: a.max(z),
             position: unit(&mut rng),
@@ -1154,7 +1153,7 @@ fn ping_on_streamed_source_refused_before_allocation() {
         let (rings, third) = rings();
         let st = Stream::new(&rings, &third, &whole, 0);
         let p = TapeEngineParams {
-            model,
+            machine: TapeMachine::of(model, mode),
             ..params(mode, 0.0, 1.0)
         };
         let src = OneSource::new(&st.card.held(&heads_at(&p, FRAMES, 60), HF));
@@ -1196,7 +1195,7 @@ fn mode_changed_to_ping_refuses_later_notes() {
     for _ in 0..10 {
         pl.block();
     }
-    pl.rig.shared.parts[0].params.tape.mode = PlayMode::Ping;
+    pl.rig.shared.parts[0].params.tape.machine = TapeMachine::Ping;
     pl.on(0, 64);
     assert_eq!(pl.booked(), 1);
     assert_eq!(pl.voice_of(0, 64), None);

@@ -9,7 +9,7 @@ use chimera_core::block::DiskCode;
 use chimera_core::block::ParamId;
 use chimera_core::dsp::tape_engine::TapeEngineParams as P;
 use chimera_core::dsp::tape_engine::read::Shape;
-use chimera_core::dsp::tape_engine::{PlayMode, StretchType, TapeModel};
+use chimera_core::dsp::tape_engine::{PlayMode, StretchType, TapeMachine, TapeModel};
 use chimera_desktop::factory_tapes::{
     ROOT, VERSION, build_all, held, originals, pitch, read_recipes, tape_sound, write_set,
 };
@@ -238,7 +238,7 @@ fn demo(dir: &str) -> Result<bool, String> {
         let snd = tape_sound(s, &b.head);
         let mut base = snd.params.tape;
         if let Some((m, mode)) = model {
-            (base.model, base.mode) = (m, mode);
+            base.machine = TapeMachine::of(m, mode);
         }
         let secs = 1.5 * notes.len() as f32;
         let points: Vec<(f32, ParamId, f32)> = match ramp {
@@ -271,7 +271,7 @@ fn demo(dir: &str) -> Result<bool, String> {
         let file = format!(
             "{:02}-{}-{}.wav",
             k + 1,
-            model_slug(base.model),
+            model_slug(base.model()),
             name.to_lowercase().replace(' ', "-")
         );
         write_wav(&PathBuf::from(dir).join(&file), &y)?;
@@ -280,7 +280,7 @@ fn demo(dir: &str) -> Result<bool, String> {
             "{}{{\"file\": \"{}\", \"machine\": \"{}\", \"sound\": \"{name}\", \"source\": \"{}\", \"note\": {note}, \"takes\": {:?}, \"ramp\": \"{}\", \"peak_dbfs\": {:.2}, \"click\": {:.2}}}",
             if k == 0 { "" } else { ",\n" },
             file.replace(".wav", ".oga"),
-            chimera_desktop::factory_tapes::MODEL_WORDS[usize::from(base.model.index())],
+            chimera_desktop::factory_tapes::MODEL_WORDS[usize::from(base.model().index())],
             s.source.as_str(),
             notes,
             ramp.map_or(String::from("none"), |(id, a, z)| format!(
