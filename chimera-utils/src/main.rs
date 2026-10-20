@@ -35,7 +35,7 @@ usage: chimera-utils [flags] COMMAND …
   bank2-seal --check BIN BK2
                            fail unless the .bk2's seal is the .bin's
   door-check ELF           fail on any bank-1 relocation into bank 2
-  filter-fb DIR            FB's A/B (ADR 0179): a Surfer-style pluck on each TYPE at FB
+  filter-fb DIR            FB's A/B (ADR 0190): a Surfer-style pluck on each TYPE at FB
                            0, ½, full, RMS-matched WAVs and levels.md into DIR
   devices                  the devices and their knobs (fx-soft/fuzz/fold: p1 p2 p3 mix
                            place pre|post input, the voice FX slot beside an open filter)

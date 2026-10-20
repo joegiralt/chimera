@@ -824,7 +824,7 @@ fn panels_follow_the_type() {
         assert_eq!(t(k, 1), Some(T::Filter(FilterParams::CUTOFF)));
         assert_eq!(t(k, 2), Some(T::Filter(FilterParams::RESONANCE)));
         assert_eq!(t(k, 5), Some(T::JackAmount(JackSlot::Fm3)));
-        // FB beside the FM amounts; the jacks on FLT › JACK (ADR 0179).
+        // FB beside the FM amounts; the jacks on FLT › JACK (ADR 0190).
         assert_eq!(t(k, 6), Some(T::Filter(FilterParams::FB)));
         assert_eq!(t(k, 7), Some(T::JackAmount(JackSlot::Qm)));
         assert_eq!(t(k, 8), None);

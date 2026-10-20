@@ -307,7 +307,7 @@ const fn route(s: ModSource, label: &'static str) -> PanelKnob {
     knob_of(PanelTarget::Route(s), label)
 }
 
-/// Two routes, then FM3 · FB · QM: every type's FLT › MOD (ADR 0179).
+/// Two routes, then FM3 · FB · QM: every type's FLT › MOD (ADR 0190).
 const fn mods(a: PanelKnob, b: PanelKnob) -> [PanelKnob; 5] {
     [
         a,
@@ -319,7 +319,7 @@ const fn mods(a: PanelKnob, b: PanelKnob) -> [PanelKnob; 5] {
 }
 
 /// FLT › JACK's jacks, every type's, each under its amount's encoder on
-/// FLT › MOD (ADR 0179): knobs 10 and 11.
+/// FLT › MOD (ADR 0190): knobs 10 and 11.
 pub static JACKS: [PanelKnob; 2] = [
     filter(FilterParams::FM3_IN, "FM3 IN"),
     filter(FilterParams::QM_IN, "QM IN"),

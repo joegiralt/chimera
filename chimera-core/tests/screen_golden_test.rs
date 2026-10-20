@@ -129,7 +129,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("flt_led_half", 0xff79b17ba9dd0333),
     ("flt_led_full", 0xc679e27959a0f747),
     // FM3 IN on LFO 2, QM IN on OP 6 (Task 17).
-    // FB on FLT › MOD (ADR 0179).
+    // FB on FLT › MOD (ADR 0190).
     ("flt_mod_fb", 0x639b1b87fda9cdfc),
     ("flt_mod_repatched", 0x3a42fcf71cbefb03),
     // FLT › FX (#614): OFF's dashes, SOFT's and FOLD's pots; FX and PLACE

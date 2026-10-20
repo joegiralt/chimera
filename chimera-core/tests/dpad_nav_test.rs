@@ -421,7 +421,7 @@ fn mix_minus_in_library_clears_nothing() {
 }
 
 /// FLT's EDIT goes down to MOD, then FX, then JACK, and round again (ADR
-/// 0155, 0179).
+/// 0155, 0190).
 #[test]
 fn edit_on_flt_goes_to_mod_then_fx_and_wraps() {
     use chimera_core::ui::block_registry::{FILTER, FILTER_FX, FILTER_JACKS, FILTER_MOD};

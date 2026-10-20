@@ -1,4 +1,4 @@
-//! FB through the door (ADR 0179): open, each TYPE's FB block crosses to
+//! FB through the door (ADR 0190): open, each TYPE's FB block crosses to
 //! bank 2's loop and is heard; closed, the block runs the plain moving path,
 //! bit for bit FB 0's. The host builds its own door (`open_host`); the door
 //! is a process-wide static, so the tests take turns.

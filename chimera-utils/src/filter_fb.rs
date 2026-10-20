@@ -1,4 +1,4 @@
-//! FB's A/B (#393, ADR 0179): a bass pluck in the spirit of the Kobol
+//! FB's A/B (#393, ADR 0190): a bass pluck in the spirit of the Kobol
 //! Expander's 'Surfer' (patch sheet #37), on the INIT VA voice through
 //! `Instrument`, each TYPE at FB 0, ½ and full, RES 0.5. Each WAV is RMS
 //! matched to −22 dBFS (32-bit float, mono, 48 kHz); `levels.md` lists the

@@ -105,7 +105,7 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     } else {
         ""
     };
-    // The filters' FB loops (ADR 0179): each type's `fed` module, text only
+    // The filters' FB loops (ADR 0190): each type's `fed` module, text only
     // (`filter::fed`). Only with `bank2`: without it they run in bank 1.
     let fed = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
         "    *(.text.*6filter*3fed*);

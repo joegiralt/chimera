@@ -445,7 +445,7 @@ impl<'a> TapShape<'a> {
     }
 }
 
-/// FB's bill a sample, on top of the moving path it runs on (ADR 0179):
+/// FB's bill a sample, on top of the moving path it runs on (ADR 0190):
 /// the ramped amount, the clamp, `exp2_poly`, the hold, the one-pole and
 /// on the 2040 the guard, in bank 2's loops. Counted on the thumbv7em ORBIT
 /// build against each type's moving loop: LADDER 140 → 190 instructions,
@@ -463,7 +463,7 @@ pub const FB_OCTAVES: f32 = 8.0;
 /// closes as FB rises, where its fizz is.
 pub const FB_LP_A: f32 = 0.279_397;
 
-/// FB (#393, ADR 0179): the filter's own output, a sample late, through a
+/// FB (#393, ADR 0190): the filter's own output, a sample late, through a
 /// one-pole into its `g`: `g·2^(FB_OCTAVES·amt·clamp(y, ±1))`, held to the
 /// type's FREQ-tap range. `amt` ramps across the block, `(from, step)`.
 #[derive(Clone, Copy, Debug, PartialEq)]

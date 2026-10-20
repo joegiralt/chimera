@@ -57,7 +57,7 @@ fn flt_front_reads_kind_fx_res_voice_place_cutoff_on_2040() {
 fn flt_mod_holds_the_routes_and_jacks() {
     let clean = sound(FilterKind::Svf, FxType::Off);
     // FB beside the FM amounts; the jacks on FLT › JACK under their
-    // amounts' encoders (ADR 0179).
+    // amounts' encoders (ADR 0190).
     assert_eq!(
         labels(&FILTER_MOD, &clean),
         ["FM1", "FM2", "FM3", "FB", "QM", "--"]

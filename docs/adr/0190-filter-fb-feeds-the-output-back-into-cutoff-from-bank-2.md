@@ -1,4 +1,4 @@
-# 0179. Feed each filter's output back into its cutoff (FB), its loops in bank 2 (supersedes in part 0155)
+# 0190. Feed each filter's output back into its cutoff (FB), its loops in bank 2 (supersedes in part 0155)
 
 - **Status:** Proposed
 - **Deciders:** owner (2026-10-07 request, #393; 2026-10-20 "build it")

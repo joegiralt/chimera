@@ -25,7 +25,7 @@ pub struct FilterParams {
     /// STABILITY (ADR 0168): 1 identical voices, lower each voice's chip
     /// further apart. Read on the 2040 and LADDER; inert on the others.
     pub stability: f32,
-    /// FB (#393, ADR 0179): the filter's own output into its cutoff, −1..1;
+    /// FB (#393, ADR 0190): the filter's own output into its cutoff, −1..1;
     /// 0 none. Every TYPE.
     pub fb: f32,
     /// FM3 IN and QM IN: the rows FM3's FREQ cell and QM's Q cell are
@@ -210,7 +210,7 @@ pub static FILTER_SPECS: [ParamSpec; 10] = [
     )
     .ident("STAB")
     .glyph(crate::glyph::FocusGlyph::Stability),
-    // FB (ADR 0179): bipolar, the filter's output a sample late into FREQ.
+    // FB (ADR 0190): bipolar, the filter's output a sample late into FREQ.
     ParamSpec::continuous(
         15,
         "FB",

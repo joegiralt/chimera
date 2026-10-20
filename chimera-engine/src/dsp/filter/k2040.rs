@@ -551,7 +551,7 @@ impl K2040 {
         let out = r.voice.out_scale();
         let (mut a, a_step) = (r.a.0, (r.a.1 - r.a.0) / n);
         let (mut peak, mut sum) = (0.0f32, 0.0f32);
-        // FB's loop is bank 2's (ADR 0179); this one runs as it was.
+        // FB's loop is bank 2's (ADR 0190); this one runs as it was.
         if fb.on() {
             let a = (r.a.0, (r.a.1 - r.a.0) / n);
             let ran = super::fed::through(|d| {
@@ -651,7 +651,7 @@ impl K2040 {
     }
 }
 
-/// FB's loop (ADR 0179), linked into bank 2 with `bank2` (`filter::fed`).
+/// FB's loop (ADR 0190), linked into bank 2 with `bank2` (`filter::fed`).
 pub(super) mod fed {
     use super::super::Fed;
     use super::{K2040, VoiceSpec, coef, guard};

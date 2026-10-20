@@ -312,7 +312,7 @@ impl Ladder {
         } else if still && mods.glide {
             self.stepped(buf, r, m);
         } else {
-            // FB's loop is bank 2's (ADR 0179); `moving` runs as it was.
+            // FB's loop is bank 2's (ADR 0190); `moving` runs as it was.
             if !(mods.fb.on() && self.fed_play(buf, r, t, m, mods.fb, tap_g_range(fs))) {
                 self.moving(buf, r, t, m);
             }
@@ -445,7 +445,7 @@ impl Ladder {
         }
     }
 
-    /// FB's block (ADR 0179): `moving`'s arrays and mix, built here, and
+    /// FB's block (ADR 0190): `moving`'s arrays and mix, built here, and
     /// the loop in bank 2 (`fed::Ladder::fed`). False while the door is
     /// closed.
     fn fed_play(
@@ -546,7 +546,7 @@ pub struct FedMix {
     o: (f32, f32),
 }
 
-/// FB's loop (ADR 0179), linked into bank 2 with `bank2` (`filter::fed`).
+/// FB's loop (ADR 0190), linked into bank 2 with `bank2` (`filter::fed`).
 mod fed {
     use super::super::Fed;
     use super::{FedMix, Ladder, coef};

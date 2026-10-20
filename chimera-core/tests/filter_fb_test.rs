@@ -1,4 +1,4 @@
-//! FB (#393, ADR 0179): the filter's own output, a sample late, through a
+//! FB (#393, ADR 0190): the filter's own output, a sample late, through a
 //! one-pole into its cutoff, on every TYPE. FB 0 is today's filter bit for
 //! bit; full FB at full RES stays bounded; FB moves without a click; the
 //! one-pole keeps the top end down.

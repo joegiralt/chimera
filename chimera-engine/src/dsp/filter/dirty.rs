@@ -323,7 +323,7 @@ impl Dirty {
     }
 }
 
-/// FB's loop (ADR 0179), linked into bank 2 with `bank2` (`filter::fed`).
+/// FB's loop (ADR 0190), linked into bank 2 with `bank2` (`filter::fed`).
 mod fed {
     use super::super::Fed;
     use super::{DIRTY_PEAK, Dirty};

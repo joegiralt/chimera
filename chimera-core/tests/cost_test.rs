@@ -2488,7 +2488,7 @@ fn stability_bills_the_four_pole_kinds_below_one() {
     assert_eq!(at(&init), at(&stable));
 }
 
-/// ADR 0179: FB bills its loop, `FB_COST`, on every TYPE when stored off
+/// ADR 0190: FB bills its loop, `FB_COST`, on every TYPE when stored off
 /// 0 or routed, with the moving path it runs on unless a route already
 /// bills it; at 0 a voice's bill is today's.
 #[test]

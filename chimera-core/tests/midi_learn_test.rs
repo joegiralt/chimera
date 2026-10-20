@@ -195,7 +195,7 @@ fn learn_refusals() {
     );
     assert!(ui.project().part(P1).sound.map.is_empty());
 
-    // FM3 IN patches (FLT › JACK, ADR 0179): not mappable, and a CC
+    // FM3 IN patches (FLT › JACK, ADR 0190): not mappable, and a CC
     // changes nothing.
     let mut ui = on_cutoff();
     for _ in 0..3 {

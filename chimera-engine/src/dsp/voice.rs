@@ -265,7 +265,7 @@ impl Voice {
                 || mods.moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::STAB)))
     }
 
-    /// FB runs: stored off 0, or routed (ADR 0179). It runs the filter's
+    /// FB runs: stored off 0, or routed (ADR 0190). It runs the filter's
     /// moving path.
     fn fb_runs(p: &ParamSnapshot, mods: &ModState) -> bool {
         p.filter.fb != 0.0 || mods.moves_addr(ParamAddr::new(BlockRef::Filter, FilterParams::FB))

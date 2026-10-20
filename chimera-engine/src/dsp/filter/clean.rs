@@ -259,7 +259,7 @@ impl Clean {
         }
     }
 
-    /// FB's block (ADR 0179): `moving`'s arrays, built here, and the loop
+    /// FB's block (ADR 0190): `moving`'s arrays, built here, and the loop
     /// in bank 2 (`fed::Clean::fed`). False while the door is closed.
     fn fed_play(
         &mut self,
@@ -547,7 +547,7 @@ mod tests {
     }
 }
 
-/// FB's loop (ADR 0179), linked into bank 2 with `bank2` (`filter::fed`).
+/// FB's loop (ADR 0190), linked into bank 2 with `bank2` (`filter::fed`).
 mod fed {
     use super::super::{Fed, g_at};
     use super::{Clean, coef};
