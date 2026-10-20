@@ -6,12 +6,12 @@
 ## Context
 The type-driven review (`tape-adversarial/types.md` M7) found the stream machinery in builds without `tape`: `pub mod stream` and `tape_engine` are unconditional, `card_dma` is built and `init`'d whenever `sd-probe` is off, and three cuts are runtime ones: the audio shell picks `NoPorts` on `!stream::STREAMS`, `serve::Rot` tests `STREAMS`, the codec's streamed-load arm has `cfg!(feature = "tape")` in a guard. It asked for `#[cfg(feature = "tape")]` on `stream::{cursor, ring, serve, slot, registry, stage, layout}`, an always-on `stream::off`, and `card_dma` behind `any(tape, bench)`.
 
-Measured on the committed tree (ecd4f8bf), release, `rust-size -A`:
+Measured on the committed tree (5f99415f), release, `rust-size -A`:
 
 | build | `.text` | `.rodata` | `.bss` | `.sram4` | `.ram_d2` |
 |---|---|---|---|---|---|
-| `--features orbit` (ships, has `tape`) | 761,008 | 136,236 | 465,120 | 64,836 | 239,964 |
-| `--no-default-features` (no `tape`) | 787,744 | 122,440 | 461,788 | 64,836 | 239,480 |
+| `--features orbit` (ships, has `tape`) | 760,568 | 136,268 | 465,136 | 64,836 | 239,948 |
+| `--no-default-features` (no `tape`) | 787,512 | 122,472 | 461,808 | 64,836 | 239,464 |
 
 What the gate could take out of the `tape`-less build, by symbol: about 10.1 KB of `.text` (`card_dma`, `stream::*`, `card_speed`) and about 104 KB of RAM (`shared::RINGS` 64,836 in SRAM4, `THIRD` 32,305 and `REGISTRY` 2,248 in D2, `card_dma`'s buffer and state 5,280). The shipping build has `tape` on, so it would save nothing there.
 
