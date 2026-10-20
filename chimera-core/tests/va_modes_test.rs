@@ -5,8 +5,10 @@ mod common;
 
 use core::mem::MaybeUninit;
 
-use chimera_core::dsp::va::combine::MAX_TRIM;
+use chimera_core::dsp::dc_blocker::DcBlocker;
+use chimera_core::dsp::va::combine::{AM_KNEE, MAX_TRIM, am_reach};
 use chimera_core::dsp::va::{VA_CHAIN_GAIN, VaEngine, VaMode, VaParams, fm_index};
+use chimera_core::dsp::voice::DC_HZ;
 use chimera_core::project::PartId;
 use chimera_hal::BLOCK_SIZE;
 use common::spectrum::{alias_db_lattice, peak_hz};
@@ -554,15 +556,15 @@ fn am(amount: f32) -> VaParams {
     }
 }
 
-/// OSC 2 as a slow sine (8 Hz at note 24, CRSE2 −24): at BLEND 1 OSC 1's
-/// envelope dips to near 0 and never inverts, the product keeping OSC 1's
-/// sign.
+/// OSC 2 as a slow sine (8 Hz at note 24, CRSE2 −24): at the knee (BLEND
+/// 85) OSC 1's envelope dips to near 0 and never inverts, the product
+/// keeping OSC 1's sign; past it (BLEND 1, ring) it inverts.
 #[test]
 fn am_is_unipolar() {
     let blocks = SR as usize / B;
     let slow = VaParams {
         coarse: [0, -24],
-        ..am(1.0)
+        ..am(AM_KNEE)
     };
     let a = held(24, slow, blocks);
     let one = held(
@@ -581,12 +583,28 @@ fn am_is_unipolar() {
             flips += usize::from(y * x < -1e-4);
         }
     }
-    println!("AM BLEND 1, 8 Hz: lowest gain {low:.4}, sign flips {flips}");
+    println!("AM BLEND 85, 8 Hz: lowest gain {low:.4}, sign flips {flips}");
     assert_eq!(flips, 0);
     assert!((0.0..0.1).contains(&low), "{low}");
+    let ring = held(
+        24,
+        VaParams {
+            amount: 1.0,
+            ..slow
+        },
+        blocks,
+    );
+    let flips = ring
+        .iter()
+        .zip(&one)
+        .skip(2 * B)
+        .filter(|&(&y, &x)| x.abs() > 0.05 && y * x < -1e-4)
+        .count();
+    println!("AM BLEND 127: sign flips {flips}");
+    assert!(flips > 1000, "{flips}");
 }
 
-/// Unlike RING, AM keeps OSC 1's line: a fifth up, BLEND 1.
+/// Unlike RING, AM keeps OSC 1's line: a fifth up, at the knee.
 #[test]
 fn am_sidebands_softer_than_ring() {
     let f0 = hz_of(C4);
@@ -601,7 +619,7 @@ fn am_sidebands_softer_than_ring() {
             C4,
             VaParams {
                 mode,
-                amount: 1.0,
+                amount: if mode == VaMode::Am { AM_KNEE } else { 1.0 },
                 ..fifth
             },
             blocks,
@@ -650,7 +668,7 @@ fn am_level_matches_mix() {
                 },
                 blocks,
             ));
-            for blend in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            for blend in [0.0, 0.25, 0.5, AM_KNEE, 0.85, 1.0] {
                 let y = held(
                     C4,
                     VaParams {
@@ -671,8 +689,11 @@ fn am_level_matches_mix() {
     }
 }
 
-/// C5 over the lattice: wherever MIX at the same BLEND passes −45 dB, AM
-/// does (the product of two band-limited waves adds lines at |f1 ± f2|).
+/// C5 over the lattice. Up to the knee, wherever MIX at the same BLEND
+/// passes −45 dB, AM does (the product of two band-limited waves adds lines
+/// at |f1 ± f2|). Past it AM runs into RING's product and is held to RING's
+/// own figure at BLEND 1, `max(−45, RING + 0.5)` (ADR 0176: the product's
+/// slope kinks, #660).
 #[test]
 fn am_alias_gate() {
     let mut fails = Vec::new();
@@ -684,7 +705,7 @@ fn am_alias_gate() {
         let ratio = 2f32.powf((f32::from(crse) * 100.0 + fine) / 1200.0);
         for w1 in ANCHORS {
             for w2 in [0.0, SAW] {
-                for blend in [0.25, 0.5, 1.0] {
+                for blend in [0.25, 0.5, AM_KNEE, 0.85, 1.0] {
                     let base = VaParams {
                         wave: [w1, w2],
                         coarse: [0, crse],
@@ -692,32 +713,43 @@ fn am_alias_gate() {
                         ..am(blend)
                     };
                     let (fc, f2) = (hz_of(C5), hz_of(C5) * ratio);
-                    let gate = |mode| {
-                        let y = held(C5, VaParams { mode, ..base }, GATE_BLOCKS);
+                    let gate = |mode, amount| {
+                        let y = held(
+                            C5,
+                            VaParams {
+                                mode,
+                                amount,
+                                ..base
+                            },
+                            GATE_BLOCKS,
+                        );
                         alias_db_lattice(&y, SR as f32, fc, f2)
                     };
-                    let (a, m) = (gate(VaMode::Am), gate(VaMode::Mix));
-                    let at = format!("{crse:+} {w1:.3} {w2:.3} {blend}");
-                    println!(
-                        "{at}: AM {a:.1} / MIX {m:.1} / RING {:.1} dB",
-                        gate(VaMode::Ring)
-                    );
-                    if m <= -45.0 {
-                        if a > worst.0 {
-                            worst = (a, at.clone());
-                        }
-                        // saw × saw at the fifth, full depth: the product's
+                    let (a, m) = (gate(VaMode::Am, blend), gate(VaMode::Mix, blend));
+                    let at = format!("{crse:+} {w1:.3} {w2:.3} {blend:.3}");
+                    let limit = if blend > AM_KNEE {
+                        let r = gate(VaMode::Ring, 1.0);
+                        println!("{at}: AM {a:.1} / MIX {m:.1} / RING 1 {r:.1} dB");
+                        (r + 0.5).max(-45.0)
+                    } else {
+                        println!("{at}: AM {a:.1} / MIX {m:.1} dB");
+                        // saw × saw at the fifth, full AM: the product's
                         // slope kinks escape the 2-point kernel (RING reads
                         // −37.4 dB there); an exception, held at −43 (AM
                         // reads −43.5; filed as
                         // private issue #660)
-                        let limit = if crse == 7 && w1 == SAW && w2 == SAW && blend == 1.0 {
+                        if crse == 7 && w1 == SAW && w2 == SAW && blend == AM_KNEE {
                             -43.0
                         } else {
                             -45.0
-                        };
+                        }
+                    };
+                    if m <= -45.0 {
+                        if a > worst.0 {
+                            worst = (a, at.clone());
+                        }
                         if a > limit {
-                            fails.push(format!("{at}: AM {a:.1} dB"));
+                            fails.push(format!("{at}: AM {a:.1} dB > {limit:.1}"));
                         }
                     }
                 }
@@ -726,6 +758,170 @@ fn am_alias_gate() {
     }
     println!("worst where MIX passes {:.1} dB at {}", worst.0, worst.1);
     assert!(fails.is_empty(), "{fails:#?}");
+}
+
+/// Today's AM (main before #675) at BLEND `x'`, saws, SUB 0.3, C2, recorded:
+/// (CRSE2, FINE2, x', Σy² over 128 blocks, y[4096..4112]).
+#[rustfmt::skip]
+const AM_TODAY: [(i8, f32, f32, f64, [f32; 16]); 12] = [
+    (0, 6.0, 0.25, 3.384703155775411e2, [-1.0969913e-1, -1.10553004e-1, -1.11406155e-1, -1.1225862e-1, -1.1311041e-1, -1.1396145e-1, -1.148118e-1, -1.15661435e-1, -1.1651038e-1, -1.1735861e-1, -1.18206136e-1, -1.1905299e-1, -1.1989911e-1, -1.2074453e-1, -1.2158924e-1, -1.22433245e-1]),
+    (0, 6.0, 0.5, 3.5717867415594753e2, [-1.0689808e-1, -1.0767725e-1, -1.08454816e-1, -1.0923075e-1, -1.100051e-1, -1.107778e-1, -1.1154888e-1, -1.1231835e-1, -1.130862e-1, -1.1385243e-1, -1.14617035e-1, -1.1538005e-1, -1.1614142e-1, -1.16901174e-1, -1.1765929e-1, -1.1841582e-1]),
+    (0, 6.0, 0.75, 3.885137980230389e2, [-1.02292e-1, -1.0295805e-1, -1.03621274e-1, -1.0428171e-1, -1.0493936e-1, -1.0559419e-1, -1.062462e-1, -1.06895424e-1, -1.0754182e-1, -1.0818544e-1, -1.08826235e-1, -1.0946426e-1, -1.1009944e-1, -1.1073184e-1, -1.1136143e-1, -1.1198821e-1]),
+    (0, 6.0, 1.0, 4.3743384203271006e2, [-9.478289e-2, -9.527822e-2, -9.576927e-2, -9.625603e-2, -9.673853e-2, -9.721673e-2, -9.769066e-2, -9.816028e-2, -9.862564e-2, -9.90867e-2, -9.954349e-2, -9.9996e-2, -1.0044422e-1, -1.00888155e-1, -1.0132781e-1, -1.01763174e-1]),
+    (7, 1.955, 0.25, 3.308850273750051e2, [-1.1321329e-1, -1.14115484e-1, -1.15016624e-1, -1.1591669e-1, -1.1681577e-1, -1.17713735e-1, -1.1861066e-1, -1.1950652e-1, -1.20401345e-1, -1.2129511e-1, -1.2218781e-1, -1.2307952e-1, -1.23970106e-1, -1.2485967e-1, -1.2574817e-1, -1.2663563e-1]),
+    (7, 1.955, 0.5, 3.350467994570457e2, [-1.14977404e-1, -1.1586767e-1, -1.1675551e-1, -1.1764094e-1, -1.1852396e-1, -1.19404554e-1, -1.20282724e-1, -1.21158466e-1, -1.2203179e-1, -1.22902706e-1, -1.2377118e-1, -1.2463728e-1, -1.2550093e-1, -1.2636216e-1, -1.2722096e-1, -1.2807734e-1]),
+    (7, 1.955, 0.75, 3.400500056305556e2, [-1.162858e-1, -1.1714425e-1, -1.179985e-1, -1.1884858e-1, -1.1969448e-1, -1.2053616e-1, -1.2137364e-1, -1.2220695e-1, -1.2303606e-1, -1.23860985e-1, -1.24681704e-1, -1.2549827e-1, -1.2631062e-1, -1.2711877e-1, -1.2792271e-1, -1.2872249e-1]),
+    (7, 1.955, 1.0, 3.451917193435088e2, [-1.16158776e-1, -1.16948016e-1, -1.1773085e-1, -1.1850728e-1, -1.1927736e-1, -1.2004098e-1, -1.2079822e-1, -1.2154905e-1, -1.22293465e-1, -1.23031475e-1, -1.23763114e-1, -1.24488354e-1, -1.2520717e-1, -1.259196e-1, -1.2662558e-1, -1.2732519e-1]),
+    (6, 0.0, 0.25, 3.3118468758382784e2, [-1.0520505e-1, -1.0597487e-1, -1.06743686e-1, -1.0751152e-1, -1.0827837e-1, -1.09044224e-1, -1.0980908e-1, -1.1057293e-1, -1.1133581e-1, -1.1209767e-1, -1.12858556e-1, -1.1361848e-1, -1.1437738e-1, -1.1513528e-1, -1.15892194e-1, -1.16648115e-1]),
+    (6, 0.0, 0.5, 3.355462961454688e2, [-9.656589e-2, -9.7151816e-2, -9.773547e-2, -9.831684e-2, -9.889595e-2, -9.9472776e-2, -1.000473e-1, -1.0061955e-1, -1.0118951e-1, -1.0175718e-1, -1.02322586e-1, -1.0288572e-1, -1.0344657e-1, -1.0400513e-1, -1.045614e-1, -1.051154e-1]),
+    (6, 0.0, 0.75, 3.404691016617953e2, [-8.439612e-2, -8.472745e-2, -8.505483e-2, -8.537826e-2, -8.5697755e-2, -8.601329e-2, -8.632485e-2, -8.663249e-2, -8.693615e-2, -8.7235875e-2, -8.753164e-2, -8.7823465e-2, -8.811133e-2, -8.839524e-2, -8.86752e-2, -8.895121e-2]),
+    (6, 0.0, 1.0, 3.449237987603479e2, [-6.744648e-2, -6.743054e-2, -6.740856e-2, -6.738055e-2, -6.73465e-2, -6.730642e-2, -6.7260295e-2, -6.720814e-2, -6.7149945e-2, -6.708571e-2, -6.701545e-2, -6.6939145e-2, -6.68568e-2, -6.676843e-2, -6.6674024e-2, -6.657357e-2]),
+];
+
+/// At BLEND ≤ 85 AM is today's AM rescaled: BLEND `x'·AM_KNEE` renders
+/// today's BLEND `x'`, within float rounding of the mapping (the per-sample
+/// loop is the same code).
+#[test]
+fn am_below_the_knee_is_todays() {
+    let mut worst = (0.0f64, 0.0f64);
+    for (crse, fine, xp, ss, ys) in AM_TODAY {
+        let p = VaParams {
+            wave: [SAW; 2],
+            shape: [0.0; 2],
+            coarse: [0, crse],
+            fine: [0.0, fine],
+            mode: VaMode::Am,
+            amount: xp * AM_KNEE,
+            sub: 0.3,
+            stability: 1.0,
+        };
+        let y = held(36, p, 128);
+        let got: f64 = y.iter().map(|&v| f64::from(v).powi(2)).sum();
+        let rel = (got / ss - 1.0).abs();
+        let d = y[4096..4112]
+            .iter()
+            .zip(ys)
+            .map(|(&a, b)| f64::from((a - b).abs()))
+            .fold(0.0, f64::max);
+        println!("CRSE2 {crse} x' {xp}: Σy² rel {rel:.2e}, max |Δy| {d:.2e}");
+        assert!(rel <= 1e-5, "CRSE2 {crse} x' {xp}: {rel}");
+        assert!(d <= 1e-5, "CRSE2 {crse} x' {xp}: {d}");
+        worst = (worst.0.max(rel), worst.1.max(d));
+    }
+    println!("worst Σy² rel {:.2e}, |Δy| {:.2e}", worst.0, worst.1);
+}
+
+/// The reach is continuous and rising through the knee, 1 there, 2 at BLEND
+/// 1; a sweep across it on a held note clicks no more than the held BLENDs
+/// on either side.
+#[test]
+fn am_crossover_is_continuous() {
+    let e = 1e-4;
+    assert!((am_reach(AM_KNEE) - 1.0).abs() < 1e-6);
+    assert!((am_reach(1.0) - 2.0).abs() < 1e-6);
+    // no step: each side within its slope (127/85 below, 127/42 above)
+    assert!((am_reach(AM_KNEE - e) - 1.0).abs() <= 1.51 * e);
+    assert!((am_reach(AM_KNEE + e) - 1.0).abs() <= 3.03 * e);
+    let mut last = -1.0;
+    for i in 0..=1270 {
+        let u = am_reach(i as f32 / 1270.0);
+        assert!(u > last, "{i}: {u} after {last}");
+        last = u;
+    }
+    let base = VaParams {
+        sub: 0.5,
+        fine: [0.0, 6.0],
+        coarse: [0, 7],
+        ..am(0.6)
+    };
+    let (lo, hi) = (0.6, 0.75);
+    let y = take_with(
+        |_| {},
+        A4,
+        base,
+        3 * AT,
+        |b, p| {
+            p.amount = lo + (hi - lo) * (b.saturating_sub(AT) as f32 / AT as f32).min(1.0);
+        },
+    );
+    let held: Vec<_> = [lo, hi]
+        .iter()
+        .map(|&x| held(A4, VaParams { amount: x, ..base }, 3 * AT))
+        .collect();
+    let (d, lim) = click(&y, &held);
+    println!("BLEND {lo} → {hi} across the knee: Δ² {d:.3e} / limit {lim:.3e}");
+    assert!(d <= lim, "{d} > {lim}");
+}
+
+/// At BLEND 1 AM is RING's product at BLEND 1: the same wave within level
+/// (correlation, saws, the fifth).
+#[test]
+fn am_top_is_ring() {
+    let p = VaParams {
+        wave: [SAW; 2],
+        coarse: [0, 7],
+        fine: [0.0, 1.955],
+        ..am(1.0)
+    };
+    let a = held(C4, p, 200);
+    let r = held(
+        C4,
+        VaParams {
+            mode: VaMode::Ring,
+            ..p
+        },
+        200,
+    );
+    let (a, r) = (&a[100 * B..], &r[100 * B..]);
+    let xy: f64 = a
+        .iter()
+        .zip(r)
+        .map(|(&x, &y)| f64::from(x) * f64::from(y))
+        .sum();
+    let c = xy / (rms(a) * rms(r) * a.len() as f64);
+    println!(
+        "AM 1 vs RING 1: r {c:.6}, level {:+.2} dB",
+        20.0 * (rms(a) / rms(r)).log10()
+    );
+    assert!(c >= 0.9999, "{c}");
+}
+
+/// Unison's ring term carries DC (constant at FINE2 0, FINE2's beat at +6).
+/// AM at BLEND 1 carries no more than RING at BLEND 1, and through the
+/// voice's DC blocker (ADR 0060) it is under −55 dB re the RMS (ADR 0176;
+/// the half-second window's own leakage reads about −59).
+#[test]
+fn am_ring_dc_is_rings() {
+    let blocks = 2 * SR as usize / B;
+    for fine in [0.0f32, 6.0] {
+        let p = VaParams {
+            wave: [SAW; 2],
+            fine: [0.0, fine],
+            ..am(1.0)
+        };
+        let dc = |y: &[f32]| {
+            let t = &y[y.len() - SR as usize / 2..];
+            let m = t.iter().map(|&v| f64::from(v)).sum::<f64>() / t.len() as f64;
+            20.0 * (m.abs() / rms(t)).max(1e-12).log10()
+        };
+        let a = held(C4, p, blocks);
+        let r = held(
+            C4,
+            VaParams {
+                mode: VaMode::Ring,
+                ..p
+            },
+            blocks,
+        );
+        let mut blocked = a.clone();
+        DcBlocker::new(DC_HZ, SR).run(&mut blocked);
+        let (da, dr, db) = (dc(&a), dc(&r), dc(&blocked));
+        println!("FINE2 {fine}: DC AM {da:.1} / RING {dr:.1} / AM blocked {db:.1} dB re RMS");
+        assert!(da <= dr + 0.5, "FINE2 {fine}: {da} vs RING {dr}");
+        if fine == 0.0 {
+            assert!(db <= -55.0, "{db}");
+        }
+    }
 }
 
 /// Entering and leaving AM never clicks beyond the held modes' own.
