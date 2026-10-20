@@ -14,7 +14,7 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use loom::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use crate::Ms;
-use crate::units::{Millis, StreamCount, UiWait};
+use crate::units::{Millis, StreamCount};
 
 /// A write holds the streams quiet until this long passes without one.
 pub const QUIET_HOLD_MS: Millis = Millis::new(20);
@@ -113,7 +113,6 @@ pub struct CardBus {
     owner: AtomicU8,
     /// A `Stream` take's `Ms`, for the watchdog.
     since: AtomicU32,
-    ui_waiting: AtomicBool,
     wanted: AtomicBool,
     abort: AtomicBool,
     quiet: AtomicU8,
@@ -130,7 +129,6 @@ macro_rules! fresh {
         CardBus {
             owner: AtomicU8::new(Owner::Free as u8),
             since: AtomicU32::new(0),
-            ui_waiting: AtomicBool::new(false),
             wanted: AtomicBool::new(false),
             abort: AtomicBool::new(false),
             quiet: AtomicU8::new(Quiet::Off as u8),
@@ -213,14 +211,6 @@ impl CardBus {
         }
     }
 
-    /// The card IRQ's yield to a waiting UI: a want without a take, so the
-    /// UI's give answers `Pend` and the IRQ looks again. Sound only from
-    /// the IRQ, which runs whole between two UI steps: the UI, seen
-    /// waiting, has not yet given.
-    pub fn want(&self) {
-        self.wanted.store(true, Ordering::SeqCst);
-    }
-
     pub fn owner(&self) -> Owner {
         Owner::from_bits(self.owner.load(Ordering::Acquire))
     }
@@ -240,19 +230,6 @@ impl CardBus {
     /// The IRQ's read of an abort: once per ask.
     pub fn take_abort(&self) -> bool {
         self.abort.swap(false, Ordering::AcqRel)
-    }
-
-    pub fn set_ui_wait(&self, w: UiWait) {
-        self.ui_waiting
-            .store(w == UiWait::Waiting, Ordering::Release);
-    }
-
-    pub fn ui_wait(&self) -> UiWait {
-        if self.ui_waiting.load(Ordering::Acquire) {
-            UiWait::Waiting
-        } else {
-            UiWait::Idle
-        }
     }
 
     /// Off → Asked, stamped `now`; otherwise nothing. Only the UI asks,

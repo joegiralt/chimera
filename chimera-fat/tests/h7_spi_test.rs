@@ -114,3 +114,85 @@ fn gate_ignores_spurious_entries() {
     assert_eq!(gate(false, c), Gate::Idle);
     assert_eq!(gate(false, DmaEvent::Spurious), Gate::Idle);
 }
+
+/// SPI2's CFG1 as the ops touch it; `saved` starts at 0, as a `Held` does.
+struct Cfg1Model {
+    cfg1: u32,
+    saved: u32,
+    fail: Op,
+    ran: Vec<Op>,
+}
+
+const HAL_CFG1: u32 = 0x7007_0007; // MBR /256, FTHLV, DSIZE 8 bits
+
+impl Cfg1Model {
+    fn new(fail: Op) -> Self {
+        Cfg1Model {
+            cfg1: HAL_CFG1,
+            saved: 0,
+            fail,
+            ran: Vec::new(),
+        }
+    }
+
+    fn op(&mut self, o: Op) -> Result<(), RegFault> {
+        self.ran.push(o);
+        if o == self.fail {
+            return Err(RegFault::Timeout(o));
+        }
+        match o {
+            Op::SaveCfg1 => self.saved = self.cfg1,
+            Op::SetMbr => self.cfg1 &= !(7 << 28),
+            Op::RestoreCfg1 => self.cfg1 = self.saved,
+            Op::RxDma(on) => self.cfg1 = self.cfg1 & !(1 << 14) | u32::from(on) << 14,
+            Op::TxDma(on) => self.cfg1 = self.cfg1 & !(1 << 15) | u32::from(on) << 15,
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+/// A take whose suspend times out is given straight back: the give puts
+/// back the HAL's CFG1, never a CFG1 the take never read.
+#[test]
+fn a_failed_take_gives_back_the_hals_cfg1() {
+    // The waits and checks: the shell's only fallible ops.
+    let can_fail = |o: &Op| {
+        matches!(
+            o,
+            Op::Suspend | Op::WaitEot | Op::CheckErrors | Op::StreamsOn(_) | Op::StreamsOff
+        )
+    };
+    for fail in TAKE.into_iter().filter(can_fail) {
+        let mut m = Cfg1Model::new(fail);
+        if run(&TAKE, |o| m.op(o)).is_ok() {
+            continue;
+        }
+        m.fail = Op::WaitEot;
+        assert_eq!(run_all(&GIVE, |o| m.op(o)), Ok(()));
+        assert_eq!(m.cfg1, HAL_CFG1, "TAKE failed at {fail:?}");
+    }
+}
+
+#[test]
+fn run_stops_at_the_first_fault() {
+    let mut m = Cfg1Model::new(Op::Suspend);
+    assert_eq!(
+        run(&burst(bl(512)), |o| m.op(o)),
+        Err(RegFault::Timeout(Op::Suspend))
+    );
+    assert_eq!(m.ran, [Op::Suspend]);
+}
+
+/// An abort whose streams-off or suspend times out still clears every
+/// enable: a polled stop after it never meets RXDMAEN.
+#[test]
+fn abort_runs_every_op_past_a_fault() {
+    for fail in [Op::StreamsOff, Op::Suspend] {
+        let mut m = Cfg1Model::new(fail);
+        m.cfg1 |= 3 << 14;
+        assert_eq!(run_all(&ABORT, |o| m.op(o)), Err(RegFault::Timeout(fail)));
+        assert_eq!(m.ran, ABORT);
+        assert_eq!(m.cfg1 & (3 << 14), 0);
+    }
+}

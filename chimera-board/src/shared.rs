@@ -303,6 +303,9 @@ pub static BLOCKS: AtomicU32 = AtomicU32::new(0);
 /// Cycles spent in the audio interrupt, wrapping: what the card IRQ takes
 /// off its own entries' time.
 pub static AUDIO_CYCLES: AtomicU32 = AtomicU32::new(0);
+/// Cycles spent in MIDI DIN's interrupt less the audio's inside it,
+/// wrapping: the card IRQ takes them off its own entries' time too.
+pub static MIDI_CYCLES: AtomicU32 = AtomicU32::new(0);
 /// The streams' counters: the voices', and the card IRQ's time.
 pub static STREAM_STATS: StreamStats = StreamStats::new();
 /// MIDI DIN's line errors: overrun, framing, noise.

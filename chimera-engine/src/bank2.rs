@@ -116,17 +116,10 @@ impl DoorCell {
         DoorCell(AtomicUsize::new(0))
     }
 
-    /// Opens on a judged door at this link's `DOOR_ADDR`; a door anywhere
-    /// else (a header the seal does not cover, gone wrong) leaves it closed.
-    /// True if open.
-    ///
-    /// # Safety
-    /// `d` was opened with this build's seal (`chimera_board::bank2_seal()`).
-    pub unsafe fn open(&self, d: &Door) -> bool {
-        let ok = d.door_addr() == DOOR_ADDR;
-        self.0
-            .store(if ok { DOOR_ADDR as usize } else { 0 }, Ordering::Release);
-        ok
+    /// Publishes a door judged and checked (`Judged`): from here every
+    /// interrupt's door call goes through it.
+    pub fn open(&self, _: Judged) {
+        self.0.store(DOOR_ADDR as usize, Ordering::Release);
     }
 
     pub fn close(&self) {
@@ -190,6 +183,42 @@ impl DoorCell {
     pub fn open_host_if_linked(&self) {
         #[cfg(feature = "bank2")]
         self.open_host();
+    }
+}
+
+/// A door judged `Good` for this build's seal, at this link's `DOOR_ADDR`,
+/// not yet in the cell: the boot's and an install's checks read its
+/// tables through this before `DoorCell::open` publishes it, so no
+/// interrupt calls through a table they haven't passed (I2).
+pub struct Judged(());
+
+impl Judged {
+    /// `d`, if it is at this link's `DOOR_ADDR`; a door anywhere else (a
+    /// header the seal does not cover, gone wrong) is none.
+    ///
+    /// # Safety
+    /// `d` was opened with this build's seal (`chimera_board::bank2_seal()`).
+    pub unsafe fn of(d: &Door) -> Option<Judged> {
+        (d.door_addr() == DOOR_ADDR).then_some(Judged(()))
+    }
+
+    /// `f` on the door table, read where it lies (see `DoorCell::with`).
+    pub fn with<R>(&self, f: impl FnOnce(&Bank2Door) -> R) -> R {
+        // SAFETY: a `Judged` is made only by `of`, on a door its caller
+        // vouched was opened with this build's seal and at `DOOR_ADDR`: as
+        // `DoorCell::with`'s nonzero address.
+        f(unsafe { &*(DOOR_ADDR as usize as *const Bank2Door) })
+    }
+
+    /// `f` on the table of type `T` at fixed slot `at` (see
+    /// `DoorCell::with_at`).
+    ///
+    /// # Safety
+    /// `bank2.x` links a `T` at `at` in this build (its slot's assert).
+    pub unsafe fn with_at<T, R>(&self, at: u32, f: impl FnOnce(&T) -> R) -> R {
+        // SAFETY: this link's body is in bank 2 (`with`), so at `at` is its
+        // `T`, as the caller vouches.
+        f(unsafe { &*(at as usize as *const T) })
     }
 }
 

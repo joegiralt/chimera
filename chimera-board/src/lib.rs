@@ -392,17 +392,18 @@ pub type BenchRings<'a> = Option<(
     &'a mut chimera_core::stream::ring::CardSide<'static>,
 )>;
 
-/// The card IRQ's start, with the rings' card side.
+/// The card IRQ's start, with the rings' card side: false if it can't run
+/// (`card_dma::init`).
 #[cfg(not(feature = "sd-probe"))]
 fn start_card(
     nvic: &mut cortex_m::peripheral::NVIC,
     clocks: &CoreClocks,
     cpu_hz: u32,
     side: chimera_core::stream::ring::CardSide<'static>,
-) {
+) -> bool {
     use stm32h7xx_hal::spi::{Enabled, Spi};
     let ker = Spi::<pac::SPI2, Enabled>::kernel_clk_unwrap(clocks).raw();
-    card_dma::init(nvic, side, ker, cpu_hz);
+    card_dma::init(nvic, side, ker, cpu_hz)
 }
 
 /// The bench's text and flush, built here with the UI's (ADR 0108):
@@ -470,12 +471,6 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         ui.set_bank2(bank2.status);
     }
     ui.project_mut().set_gate_clock(gate_ms);
-    // Streamed sources' files go in the registry for the card (slice 1
-    // § 5.5); a bench build's beds keep its rows to themselves.
-    #[cfg(not(feature = "bench"))]
-    if let Some(r) = shared::registry() {
-        ui.project_mut().set_streams(r);
-    }
 
     // Start-up, in order, behind the splash until PART 1 can be drawn:
     // 1. SYSTEM and the last project from the card, however slow;
@@ -500,7 +495,15 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     #[cfg_attr(not(all(feature = "bench", feature = "bench-tape")), allow(unused_mut))]
     let (mut streams, mut card_side) = shared::ring_sides().expect("ring sides taken once");
     #[cfg(not(all(feature = "bench", feature = "bench-tape")))]
-    start_card(&mut cp.NVIC, &clocks, clk.cpu_hz, card_side);
+    let _card_irq = start_card(&mut cp.NVIC, &clocks, clk.cpu_hz, card_side);
+    // Streamed sources' files go in the registry for the card (slice 1
+    // § 5.5), if its interrupt runs: else no row is lent, and a source too
+    // big for the arena reads STREAMS FULL, not a silent stream. A bench
+    // build's beds keep its rows to themselves.
+    #[cfg(not(feature = "bench"))]
+    if let Some(r) = shared::registry().filter(|_| _card_irq) {
+        ui.project_mut().set_streams(r);
+    }
     let mut card = Card::new();
     // No card or a card fault shows at the project's boot; a SYSTEM
     // file that can't be read still applies the defaults silently:

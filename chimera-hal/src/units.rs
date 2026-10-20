@@ -171,10 +171,3 @@ impl StreamCount {
         Self::new(b)
     }
 }
-
-/// The UI waits for the bus, or does not.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UiWait {
-    Idle,
-    Waiting,
-}

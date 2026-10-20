@@ -24,7 +24,7 @@ pub struct StreamStats {
     pub late_refused: AtomicU32,
     pub frame_errors: AtomicU32,
     /// Reads passed over: a want's chunk its file can't read, left
-    /// Wanted (`serve_step`).
+    /// Wanted and parked, once a want (`serve_step`, `serve::Parked`).
     pub unreadable: AtomicU32,
     /// Writes' quiets, ask to release: the longest, and how many.
     pub quiet_ms_max: AtomicU32,

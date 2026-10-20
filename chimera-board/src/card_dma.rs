@@ -19,12 +19,13 @@ use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 use chimera_core::stream::layout::{Piece, RAW_CHUNK_BLOCKS, RAW_CHUNK_BYTES, deframe};
 use chimera_core::stream::ring::{CardSide, Claim};
 use chimera_core::stream::serve::{
-    Blame, ErrorStep, HeldRead, ReadError, Rot, ServeStep, read_failed, servable, serve_step,
+    Blame, ErrorStep, HeldRead, Parked, ReadError, Rot, ServeStep, read_failed, readable,
+    serve_step,
 };
 use chimera_core::stream::units::AudioBlocks;
 use chimera_fat::h7_spi::{
-    ABORT, BURST_END, BurstLen, Cr1, DmaEvent, GIVE, Gate, Mbr, Op, POLLED, RegFault, TAKE, burst,
-    gate,
+    self, ABORT, BURST_END, BurstLen, Cr1, DmaEvent, GIVE, Gate, Mbr, Op, POLLED, RegFault, TAKE,
+    burst, gate,
 };
 use chimera_fat::sd::NCR_BYTES;
 use chimera_fat::sd_addr::CmdArg;
@@ -42,7 +43,7 @@ use stm32h7xx_hal::pac::{self, interrupt};
 use crate::controls::now_ms;
 use crate::priority::{self, Priority};
 use crate::sd::{BUS, CARD_ADDR, SD_FAST_HZ};
-use crate::shared::{AUDIO_CYCLES, BLOCKS, STREAM_STATS, registry, rings};
+use crate::shared::{AUDIO_CYCLES, BLOCKS, MIDI_CYCLES, STREAM_STATS, registry, rings};
 
 /// The bound on any register poll.
 pub const REG_WAIT_US: Micros = Micros::new(50);
@@ -101,10 +102,11 @@ pub struct CardStats {
     pub stop_errors: AtomicU32,
     /// The longest entry of `DMA2_STR0`, in µs, audio preemption and all.
     pub irq_us_max: AtomicU32,
-    /// The longest entry less the audio interrupt's cycles inside it.
+    /// The longest entry less the audio's and MIDI DIN's cycles inside it.
     pub irq_own_us_max: AtomicU32,
     /// Card faults set: a read failed past its retry (`serve::on_error`),
-    /// a busy that never drained, a stop never sent.
+    /// a busy that never drained, a stop never sent; and an `init` that
+    /// found no SPI divider, or a keep that lost the bus (never, both).
     pub faults: AtomicU32,
     /// Entries of `DMA2_STR0`, pends too.
     pub entries: AtomicU32,
@@ -214,12 +216,16 @@ pub fn fail_next(n: u32) {
     FAIL.store(n, Ordering::Release);
 }
 
-/// A Wanted slot this IRQ can read: its ring names a registry row.
+/// The wants `serve_step` found it can't read: no wake for them.
+static PARKED: Parked = Parked::new();
+
+/// A Wanted slot this IRQ can read: its ring names a registry row, and
+/// its chunk isn't parked (`serve::readable`).
 fn wanted() -> bool {
     filling()
         && rings()
             .zip(registry())
-            .is_some_and(|(r, reg)| servable(r, reg).next().is_some())
+            .is_some_and(|(r, reg)| readable(r, reg, &PARKED).next().is_some())
 }
 
 /// No write's quiet: under one, the fill in flight finishes and no new one
@@ -243,8 +249,9 @@ pub fn watch(now: Ms) {
 }
 
 /// A transfer stuck past `WATCHDOG_MS` (a TE, a MODF, a lost TC) is asked
-/// to abort. A want left with the bus free (a failed fill requeued, or a
-/// yield whose UI gave up) is woken here.
+/// to abort. A want left with the bus free (a failed fill requeued, or
+/// one whose look found the bus the UI's) is woken here; a parked one,
+/// whose chunk can't be read, is not.
 fn watch_in(now: Ms) {
     if !unstick(now) && BUS.owner() == Owner::Free && serving() && wanted() {
         pend();
@@ -395,8 +402,8 @@ struct Held {
     cfg1: u32,
 }
 
-/// TAKE's first three: a kept bus's CFG1 is already this handler's, and
-/// SPE goes off before TSIZE is written.
+/// TAKE's suspend and SPE off, without its save: a kept bus's CFG1 is
+/// already this handler's, and SPE goes off before TSIZE is written.
 const REARM: [Op; 3] = [Op::Suspend, Op::ClearFlags, Op::Cr1(Cr1::OFF)];
 
 impl Held {
@@ -418,12 +425,18 @@ impl Held {
 
     /// Holds on for the next transfer, the watchdog's stamp renewed. No
     /// other taker runs between the give and the take: the UI is thread
-    /// mode, the audio never takes and this handler doesn't nest.
-    fn keep(self) -> Held {
+    /// mode, the audio never takes and this handler doesn't nest. `None`
+    /// if the take failed all the same: the bus isn't this handler's, so
+    /// no op touches SPI2 again, and a fault is counted.
+    fn keep(self) -> Option<Held> {
         let _ = BUS.give();
-        let took = BUS.take_or_want(now_ms());
-        debug_assert_eq!(took, Took::Taken);
-        self
+        match BUS.take_or_want(now_ms()) {
+            Took::Taken => Some(self),
+            Took::Wanted => {
+                STATS.faults.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+        }
     }
 
     fn spi(&self) -> &'static pac::spi1::RegisterBlock {
@@ -498,10 +511,11 @@ impl Held {
             Op::MasterOn => spi.cfg2.modify(|_, w| w.master().master()),
             Op::SaveCfg1 => self.cfg1 = spi.cfg1.read().bits(),
             Op::SetMbr => spi.cfg1.modify(|_, w| w.mbr().bits(line.mbr.bits())),
-            // SAFETY: the value `SaveCfg1` read from this register.
+            // SAFETY: the value `SaveCfg1` read from this register: TAKE's
+            // first op, before any that can fail (`h7_spi::TAKE`).
             Op::RestoreCfg1 => spi.cfg1.write(|w| unsafe { w.bits(self.cfg1) }),
             Op::Tsize(n) => {
-                let n = n.map_or(0, |n| u16::try_from(n.get()).unwrap_or(0));
+                let n = n.map_or(0, BurstLen::as_u16);
                 spi.cr2.modify(|_, w| w.tsize().bits(n));
             }
             Op::RxDma(on) => spi.cfg1.modify(|_, w| w.rxdmaen().bit(on)),
@@ -512,8 +526,13 @@ impl Held {
                 // this burst spends) and the CPU's writes to it are done.
                 dmb();
                 compiler_fence(Ordering::Release);
-                let n = u16::try_from(n.get()).unwrap_or(0);
+                let n = n.as_u16();
                 let (rx, tx) = (&d.st[RX], &d.st[TX]);
+                // A stream still on ignores NDTR and M0AR: it would run
+                // this burst on the last one's address.
+                if rx.cr.read().en().is_enabled() || tx.cr.read().en().is_enabled() {
+                    return Err(RegFault::StreamOn);
+                }
                 rx.ndtr.write(|w| w.ndt().bits(n));
                 // SAFETY: `dest` is inside `DMA_BUF` with `n` bytes after it
                 // (`Dest::of`), in D2 SRAM, which DMA2 reaches; or, armed by
@@ -541,7 +560,7 @@ impl Held {
     }
 
     fn run(&mut self, ops: &[Op], line: &Line, dest: u32) -> Result<(), RegFault> {
-        ops.iter().try_for_each(|&o| self.op(o, line, dest))
+        h7_spi::run(ops, |o| self.op(o, line, dest))
     }
 
     /// SPE off, then the endless polled transaction.
@@ -649,7 +668,7 @@ impl Flying {
     /// burst had done.
     fn ground(self, line: &Line) -> Held {
         let Flying(mut h) = self;
-        let _ = h.run(&ABORT, line, 0);
+        let _ = h7_spi::run_all(&ABORT, |o| h.op(o, line, 0));
         h
     }
 }
@@ -658,9 +677,7 @@ impl Flying {
 /// past a failed suspend, so CFG1 (MBR, the DMA enables) is always the
 /// HAL's again.
 fn give(mut h: Held, line: &Line) {
-    for &o in &GIVE {
-        let _ = h.op(o, line, 0);
-    }
+    let _ = h7_spi::run_all(&GIVE, |o| h.op(o, line, 0));
     if BUS.give() == Wake::Pend {
         pend();
     }
@@ -883,10 +900,14 @@ static IRQ: IrqOnly<IrqState> = IrqOnly::new();
 
 /// DMA2's streams for SPI2, then the IRQ's state, then `DMA2_STR0` at
 /// `Priority::CARD`, unmasked last. `spi_ker_hz` is SPI2's kernel clock
-/// (`Spi::<SPI2, _>::kernel_clk_unwrap`).
-pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker_hz: u32, cpu_hz: u32) {
+/// (`Spi::<SPI2, _>::kernel_clk_unwrap`). False, the IRQ left masked and
+/// counted a fault, if no divider brings that clock to `SD_FAST_HZ`: then
+/// nothing streams (the boot lends the registry no rows).
+#[must_use]
+pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker_hz: u32, cpu_hz: u32) -> bool {
     let Some(mbr) = Mbr::fastest(spi_ker_hz, SD_FAST_HZ) else {
-        return;
+        STATS.faults.fetch_add(1, Ordering::Relaxed);
+        return false;
     };
     // SAFETY: before `DMA2_STR0` is unmasked, in thread mode, as the audio's
     // DMA1 enable is; DMAMUX1's channels 8 and 9 are this file's alone.
@@ -953,13 +974,14 @@ pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker_hz: u32, cpu_hz: u
     // SAFETY: the state is set; the handler touches DMA2, SPI2 and CS only
     // as above.
     unsafe { NVIC::unmask(pac::Interrupt::DMA2_STR0) };
+    true
 }
 
 /// RX's transfer complete or error, or a pend (a want, a give, an abort):
 /// one step of the job. A pend mid-transfer is ignored (I6).
 #[interrupt]
 fn DMA2_STR0() {
-    let (t, audio) = clocks();
+    let (t, over) = clocks();
     STATS.entries.fetch_add(1, Ordering::Relaxed);
     // SAFETY: `IRQ`'s one `get`: `init` set it before unmasking this
     // handler, which doesn't nest with itself.
@@ -972,9 +994,9 @@ fn DMA2_STR0() {
     }
     #[cfg(not(feature = "bank2"))]
     st.step(ev, asked);
-    let (t1, audio1) = clocks();
+    let (t1, over1) = clocks();
     let wall = t1.wrapping_sub(t);
-    let own = wall.saturating_sub(audio1.wrapping_sub(audio));
+    let own = wall.saturating_sub(over1.wrapping_sub(over));
     // The bench's check is no streaming cost.
     #[cfg(feature = "bench")]
     let own = own.saturating_sub(bench::CHECK_CYCLES.swap(0, Ordering::Relaxed));
@@ -987,18 +1009,24 @@ fn DMA2_STR0() {
     STREAM_STATS.irq_cycles.fetch_add(own, Ordering::Relaxed);
 }
 
-/// The cycle counter and the audio's cycles as one pair: an audio entry
-/// between the two reads is caught and the pair read again (N1). The
-/// fences keep the counter's read between the two loads.
+/// The cycle counter and the cycles of the interrupts over this one (the
+/// audio's and MIDI DIN's) as one pair: an entry of either between the
+/// reads is caught and the pair read again (N1). The fences keep the
+/// counter's read between the loads.
 #[inline(always)]
 fn clocks() -> (u32, u32) {
+    let over = || {
+        AUDIO_CYCLES
+            .load(Ordering::Relaxed)
+            .wrapping_add(MIDI_CYCLES.load(Ordering::Relaxed))
+    };
     loop {
-        let audio = AUDIO_CYCLES.load(Ordering::Relaxed);
+        let before = over();
         compiler_fence(Ordering::SeqCst);
         let t = DWT::cycle_count();
         compiler_fence(Ordering::SeqCst);
-        if AUDIO_CYCLES.load(Ordering::Relaxed) == audio {
-            return (t, audio);
+        if over() == before {
+            return (t, before);
         }
     }
 }
@@ -1160,8 +1188,8 @@ impl IrqState {
                 &mut self.side,
                 reg,
                 now,
-                BUS.ui_wait(),
                 &mut self.rot,
+                &PARKED,
                 &STREAM_STATS,
             ) {
                 match row.read().first() {
@@ -1497,7 +1525,20 @@ impl IrqState {
     fn next(&mut self, h: Held) {
         match self.work() {
             Work::Nothing => give(h, &self.line),
-            work => self.start(h.keep(), work),
+            work => match h.keep() {
+                Some(h) => self.start(h, work),
+                None => self.unwork(work),
+            },
+        }
+    }
+
+    /// Work claimed that won't start: its claim back, the bench answered.
+    fn unwork(&mut self, work: Work) {
+        match work {
+            Work::Fill(f) => self.side.requeue(f.claim),
+            #[cfg(feature = "bench")]
+            Work::Bench(..) => MAIL.answer(Err(ReadFail::Fault)),
+            Work::Nothing => {}
         }
     }
 

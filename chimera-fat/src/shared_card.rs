@@ -9,7 +9,7 @@ use core::fmt;
 use chimera_hal::Ms;
 use chimera_hal::card_bus::{CardBus, CardFault, QUIET_SPIN_MS, Quiet, Taker, Wake};
 use chimera_hal::store::StoreError;
-use chimera_hal::units::{Millis, UiWait};
+use chimera_hal::units::Millis;
 use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx};
 
 use crate::sd_addr::{AddrMode, CardAddr};
@@ -113,9 +113,8 @@ impl<D: Medium> SharedCard<D> {
     /// watchdog is asked to abort, once a spin.
     fn hold(&self) -> Result<UiHold<'_, D>, Busy> {
         let start = (self.hooks.now)();
-        self.bus.set_ui_wait(UiWait::Waiting);
         let mut asked = false;
-        let held = loop {
+        loop {
             let now = (self.hooks.now)();
             if self.bus.try_take(Taker::Ui, now) {
                 break Ok(UiHold {
@@ -132,9 +131,7 @@ impl<D: Medium> SharedCard<D> {
             if now.elapsed_since(start) > self.take {
                 break Err(Busy);
             }
-        };
-        self.bus.set_ui_wait(UiWait::Idle);
-        held
+        }
     }
 
     /// Streams playing and no quiet yet: asks one and spins until the
@@ -197,10 +194,12 @@ impl<D: Medium> Medium for SharedCard<D> {
         }
     }
 
-    /// The address mode goes with the card, busy or not.
+    /// The address mode goes with the card, once the bus is held: a busy
+    /// re-init never ran, and the card IRQ keeps reading the card it had.
     fn reinit(&self) -> Result<(), StoreError> {
+        let h = self.op_hold()?;
         self.addr.clear();
-        self.op_hold()?.dev.reinit()
+        h.dev.reinit()
     }
 
     fn mounted(&self) -> Result<(), StoreError> {

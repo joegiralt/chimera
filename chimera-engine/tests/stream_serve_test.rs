@@ -13,13 +13,13 @@ use chimera_engine::stream::registry::StreamRegistry;
 use chimera_engine::stream::ring::{AudioSide, CardSide, Rings, ThirdSlots};
 #[cfg(feature = "tape")]
 use chimera_engine::stream::serve::Blame;
-use chimera_engine::stream::serve::{Rot, ServeStep, serve_step};
+use chimera_engine::stream::serve::{Parked, Rot, ServeStep, readable, serve_step};
 use chimera_engine::stream::slot::SlotState;
 use chimera_engine::stream::stats::StreamStats;
 use chimera_engine::stream::units::{AudioBlocks, Frames, SlotIdx};
 use chimera_engine::voice_alloc::VoiceIdx;
 use chimera_hal::store::{FileRuns, Runs};
-use chimera_hal::units::{BlockCount, Bytes, Lba, UiWait};
+use chimera_hal::units::{BlockCount, Bytes, Lba};
 
 const NOW: AudioBlocks = AudioBlocks::new(100);
 const V1: VoiceIdx = VoiceIdx::ALL[1];
@@ -83,8 +83,15 @@ impl Rig {
     }
 }
 
-fn step<'r>(card: &mut CardSide<'_>, reg: &'r StreamRegistry, ui: UiWait) -> ServeStep<'r> {
-    serve_step(card, reg, NOW, ui, &mut Rot::new(), &StreamStats::new())
+fn step<'r>(card: &mut CardSide<'_>, reg: &'r StreamRegistry) -> ServeStep<'r> {
+    serve_step(
+        card,
+        reg,
+        NOW,
+        &mut Rot::new(),
+        &Parked::new(),
+        &StreamStats::new(),
+    )
 }
 
 /// Runs a `Read` as the interrupt does: its chunk's bytes into the slot,
@@ -112,7 +119,7 @@ fn irq_step_fills_wanted_slot() {
     let g1 = turn.want(V1, SlotIdx::A, ix(0), NOW.after(9)).unwrap();
     let g2 = turn.want(V2, SlotIdx::B, ix(2), NOW.after(3)).unwrap();
 
-    let first = step(&mut card, &rig.reg, UiWait::Idle);
+    let first = step(&mut card, &rig.reg);
     assert_eq!(
         land(&mut card, first),
         (V2, SlotIdx::B, Frames::new(90_000))
@@ -120,13 +127,10 @@ fn irq_step_fills_wanted_slot() {
     let r = turn.ready(V2, SlotIdx::B, g2).unwrap();
     assert_eq!((r.chunk(), r.sample(0).map(|s| s & 0xFF)), (ix(2), Some(9)));
 
-    let next = step(&mut card, &rig.reg, UiWait::Idle);
+    let next = step(&mut card, &rig.reg);
     assert_eq!(land(&mut card, next), (V1, SlotIdx::A, Frames::new(50_000)));
     assert!(turn.ready(V1, SlotIdx::A, g1).is_some());
-    assert!(matches!(
-        step(&mut card, &rig.reg, UiWait::Idle),
-        ServeStep::Idle
-    ));
+    assert!(matches!(step(&mut card, &rig.reg), ServeStep::Idle));
 }
 
 /// A slot the audio cancels while its read is in flight takes nothing:
@@ -138,7 +142,7 @@ fn a_slot_cancelled_mid_read_lands_nowhere() {
     let mut turn = audio.turn();
     turn.stream(V1, id(3));
     turn.want(V1, SlotIdx::C, ix(1), NOW).unwrap();
-    let ServeStep::Read { claimed, row } = step(&mut card, &rig.reg, UiWait::Idle) else {
+    let ServeStep::Read { claimed, row } = step(&mut card, &rig.reg) else {
         panic!("a read");
     };
     turn.cancel(V1, SlotIdx::C);
@@ -152,34 +156,24 @@ fn a_slot_cancelled_mid_read_lands_nowhere() {
         turn.seen(V1, SlotIdx::C),
         SlotState::Wanted { .. }
     ));
-    let s = step(&mut card, &rig.reg, UiWait::Idle);
+    let s = step(&mut card, &rig.reg);
     assert_eq!(land(&mut card, s).1, SlotIdx::C);
     assert!(turn.ready(V1, SlotIdx::C, again).is_some());
 }
 
-/// Owner rule (#569): any want beats a waiting UI; the UI gets the bus
-/// only once every ring is full.
+/// Owner rule (#569): any want beats a waiting UI: `Idle`, the bus going
+/// back, only once no want is left to read.
 #[test]
 fn the_ui_is_last() {
     let rig = Rig::new();
     let (mut audio, mut card) = rig.sides();
     let turn = audio.turn();
-    assert!(matches!(
-        step(&mut card, &rig.reg, UiWait::Waiting),
-        ServeStep::Yield
-    ));
+    assert!(matches!(step(&mut card, &rig.reg), ServeStep::Idle));
     turn.stream(V1, id(3));
     turn.want(V1, SlotIdx::A, ix(0), NOW.after(5_000)).unwrap();
-    let s = step(&mut card, &rig.reg, UiWait::Waiting);
+    let s = step(&mut card, &rig.reg);
     assert_eq!(land(&mut card, s).0, V1, "a far want before the UI");
-    assert!(matches!(
-        step(&mut card, &rig.reg, UiWait::Waiting),
-        ServeStep::Yield
-    ));
-    assert!(matches!(
-        step(&mut card, &rig.reg, UiWait::Idle),
-        ServeStep::Idle
-    ));
+    assert!(matches!(step(&mut card, &rig.reg), ServeStep::Idle));
 }
 
 /// A want whose ring names no row, or a chunk past its file, is left
@@ -198,33 +192,23 @@ fn a_want_the_card_cannot_read_is_passed_over() {
     turn.want(V2, SlotIdx::A, past, NOW).unwrap();
     turn.want(V2, SlotIdx::B, ix(0), NOW.after(50)).unwrap();
 
-    let stats = StreamStats::new();
-    let s = serve_step(
-        &mut card,
-        &rig.reg,
-        NOW,
-        UiWait::Idle,
-        &mut Rot::new(),
-        &stats,
-    );
+    let (stats, parked) = (StreamStats::new(), Parked::new());
+    let mut rot = Rot::new();
+    let s = serve_step(&mut card, &rig.reg, NOW, &mut rot, &parked, &stats);
     assert_eq!(land(&mut card, s).1, SlotIdx::B);
-    assert!(matches!(
-        serve_step(
-            &mut card,
-            &rig.reg,
-            NOW,
-            UiWait::Idle,
-            &mut Rot::new(),
-            &stats
-        ),
-        ServeStep::Idle
-    ));
-    // The chunk off its file, passed over each look; a ring with no row
-    // isn't a read at all.
+    for _ in 0..3 {
+        assert!(matches!(
+            serve_step(&mut card, &rig.reg, NOW, &mut rot, &parked, &stats),
+            ServeStep::Idle
+        ));
+    }
+    // The chunk off its file, parked and counted once, not each look; a
+    // ring with no row isn't a read at all.
     assert_eq!(
         stats.unreadable.load(std::sync::atomic::Ordering::Relaxed),
-        2
+        1
     );
+    assert_eq!(readable(&rig.rings, &rig.reg, &parked).count(), 0);
     for (v, s) in [(v0, SlotIdx::A), (V1, SlotIdx::A), (V2, SlotIdx::A)] {
         assert!(
             matches!(turn.seen(v, s), SlotState::Wanted { .. }),
@@ -242,7 +226,7 @@ fn a_read_holds_its_row() {
     let turn = audio.turn();
     turn.stream(V1, id(3));
     turn.want(V1, SlotIdx::A, ix(0), NOW).unwrap();
-    let s = step(&mut card, &rig.reg, UiWait::Idle);
+    let s = step(&mut card, &rig.reg);
     // SAFETY: no voice holds source 3 but the read's hold.
     assert!(!unsafe { rig.reg.clear(id(3)) }, "held by the read");
     land(&mut card, s);
@@ -415,23 +399,33 @@ fn serve_step_passes_over_a_rotted_chunk_till_the_card_changes() {
     let key = f.chunk_read(ix(1)).unwrap().key().unwrap();
     assert_eq!(rot.blame(key), Blame::Card);
     assert_eq!(rot.blame(key), Blame::Chunk);
-    let stats = StreamStats::new();
-    let s = serve_step(&mut card, &rig.reg, NOW, UiWait::Idle, &mut rot, &stats);
+    let (stats, parked) = (StreamStats::new(), Parked::new());
+    let s = serve_step(&mut card, &rig.reg, NOW, &mut rot, &parked, &stats);
     assert_eq!(land(&mut card, s), (V2, SlotIdx::A, Frames::new(90_000)));
     assert_eq!(stats.unreadable.load(Relaxed), 1);
     assert!(matches!(
         turn.seen(V1, SlotIdx::A),
         SlotState::Wanted { .. }
     ));
-    assert!(matches!(
-        serve_step(&mut card, &rig.reg, NOW, UiWait::Idle, &mut rot, &stats),
-        ServeStep::Idle
-    ));
+    // M2: parked, so no wake for it, and no count each look.
+    for _ in 0..3 {
+        assert!(matches!(
+            serve_step(&mut card, &rig.reg, NOW, &mut rot, &parked, &stats),
+            ServeStep::Idle
+        ));
+    }
+    assert_eq!(stats.unreadable.load(Relaxed), 1);
+    assert_eq!(readable(&rig.rings, &rig.reg, &parked).count(), 0);
     // Another card: every row freed, the same file's row back.
     // SAFETY: no voice or card read holds a reference into the rows.
     assert!(unsafe { rig.reg.clear_all() });
     rig.reg.insert(id(3), f).unwrap();
-    let s = serve_step(&mut card, &rig.reg, NOW, UiWait::Idle, &mut rot, &stats);
+    assert_eq!(
+        readable(&rig.rings, &rig.reg, &parked).count(),
+        1,
+        "unparked"
+    );
+    let s = serve_step(&mut card, &rig.reg, NOW, &mut rot, &parked, &stats);
     let ServeStep::Read { claimed, .. } = s else {
         panic!("read again on the new card");
     };
@@ -451,11 +445,11 @@ fn a_condemned_file_marks_its_rows() {
     let f = *rig.reg.get(id(3)).unwrap();
     rig.reg.insert(id(5), f).unwrap();
     let mut rot = Rot::new();
-    let stats = StreamStats::new();
+    let (stats, parked) = (StreamStats::new(), Parked::new());
     let mut fail = |c: u32| {
         let s = turn.want(V1, SlotIdx::A, ix(c), NOW.after(1));
         assert!(s.is_some());
-        let s = serve_step(&mut card, &rig.reg, NOW, UiWait::Idle, &mut rot, &stats);
+        let s = serve_step(&mut card, &rig.reg, NOW, &mut rot, &parked, &stats);
         let ServeStep::Read { claimed, row } = s else {
             panic!("a read");
         };

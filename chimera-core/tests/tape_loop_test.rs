@@ -41,7 +41,9 @@ fn as_model(m: Mach, p: TapeEngineParams) -> TapeEngineParams {
 
 fn fresh() -> TapeEngine {
     let mut slot = MaybeUninit::uninit();
-    *TapeEngine::init_in_place(&mut slot)
+    TapeEngine::init_in_place(&mut slot);
+    // SAFETY: `init_in_place` wrote it whole.
+    unsafe { slot.assume_init() }
 }
 
 /// `blocks` blocks of `e` under `p`, with each block's probe head.

@@ -4,26 +4,24 @@
 //! and what a failed read does next, a chunk that won't de-frame blamed on
 //! the card once and on its file after (#609).
 
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use chimera_hal::card_bus::{CardBus, CardFault, ProtoError};
-use chimera_hal::units::UiWait;
 
 use super::edf::{Pick, Want, pick, wants};
-use super::layout::{ChunkPlan, ChunkRead, FileChunk, FileKey, StreamFile};
+use super::layout::{ChunkIdx, ChunkPlan, ChunkRead, FileChunk, FileKey, StreamFile};
 use super::registry::{CardEpoch, RowHold, StreamRegistry};
 use super::ring::{CardSide, Claim, Rings, SLOTS};
+use super::slot::SlotState;
 use super::stats::StreamStats;
-use super::units::AudioBlocks;
+use super::units::{AudioBlocks, Generation};
 use crate::hw::MAX_VOICES;
 
 pub enum ServeStep<'r> {
     /// Read `claimed`'s chunk (`row.read()`); the row stays held until
     /// `row` drops.
     Read { claimed: Claim, row: HeldRead<'r> },
-    /// Every ring full and the UI waits: the bus goes to it.
-    Yield,
-    /// Nothing to read.
+    /// Nothing to read: the bus goes back.
     Idle,
 }
 
@@ -69,33 +67,130 @@ pub fn servable<'a>(rings: &'a Rings, reg: &'a StreamRegistry) -> impl Iterator<
     })
 }
 
-/// The next read: EDF over the servable wants (owner rule: any want
-/// before a waiting UI, `edf::pick`). A want cancelled since the pick, or
-/// whose chunk its file can't read (past its runs, or `rot` passes it
-/// over), is passed over, the latter left Wanted (requeued) for a later
-/// wake and counted (`unreadable`). `rot` forgets everything when the
-/// registry's card moves on (`CardEpoch`). Never a fault (`on_error`): the
-/// file's, not the card's, so a re-init can't mend it, and its voice alone
-/// starves, fading out, and comes back past the chunk as tape time runs.
+/// The servable wants the card can read: none `parked` (`serve_step`).
+/// The UI's wake (`watch`) and the card IRQ's look ask this, so a want
+/// that can never be read neither pends nor takes the bus.
+pub fn readable<'a>(
+    rings: &'a Rings,
+    reg: &'a StreamRegistry,
+    parked: &'a Parked,
+) -> impl Iterator<Item = Want> + 'a {
+    servable(rings, reg).filter(|w| !parked.holds(rings, reg, w))
+}
+
+/// The wants `serve_step` found it can't read (a chunk past its file's
+/// runs, or one `Rot` passes over), each by its want's chunk and
+/// generation, and the card they were judged on. Each is counted `unreadable` once, and
+/// left out of `readable`, so a voice looping over one doesn't wake the
+/// card IRQ to take and give the bus every UI pass. A want made since (a
+/// new chunk or generation, which the audio's pend brings to `serve_step`) or
+/// another card's (`CardEpoch`) is not parked. The card IRQ writes it;
+/// the UI reads it.
+pub struct Parked {
+    /// The want parked at each voice's slot (`Parked::mark`); 0 none.
+    slots: [[AtomicU32; SLOTS]; MAX_VOICES],
+    epoch: AtomicU32,
+}
+
+// A mark's chunk, generation and set bit fit its word.
+const _: () = assert!(ChunkIdx::MAX.get() < 1 << (31 - Generation::BITS));
+
+impl Default for Parked {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Parked {
+    pub const fn new() -> Parked {
+        Parked {
+            slots: [const { [const { AtomicU32::new(0) }; SLOTS] }; MAX_VOICES],
+            epoch: AtomicU32::new(0),
+        }
+    }
+
+    /// Want `w` is parked: still Wanted for the chunk and under the
+    /// generation it was parked with, on the same card.
+    pub fn holds(&self, rings: &Rings, reg: &StreamRegistry, w: &Want) -> bool {
+        let SlotState::Wanted {
+            chunk, generation, ..
+        } = rings.seen(w.voice, w.slot)
+        else {
+            return false;
+        };
+        self.epoch.load(Ordering::Acquire) == reg.epoch().bits()
+            && self.slots[w.voice.index()][w.slot.index()].load(Ordering::Relaxed)
+                == Self::mark(chunk, generation)
+    }
+
+    /// A want's chunk (24 bits) and generation (6), and a set bit: never 0.
+    fn mark(chunk: ChunkIdx, generation: Generation) -> u32 {
+        1 << 31 | chunk.get() << Generation::BITS | generation.bits()
+    }
+
+    /// Every slot judged again on `reg`'s card: a servable want whose
+    /// chunk can't be read is parked, counted the first time; any other
+    /// slot is not.
+    fn renew(&self, rings: &Rings, reg: &StreamRegistry, rot: &Rot, stats: &StreamStats) {
+        let epoch = reg.epoch().bits();
+        if self.epoch.swap(epoch, Ordering::AcqRel) != epoch {
+            self.slots
+                .iter()
+                .flatten()
+                .for_each(|s| s.store(0, Ordering::Relaxed));
+        }
+        let mut unread = [[0; SLOTS]; MAX_VOICES];
+        for w in servable(rings, reg) {
+            let SlotState::Wanted {
+                chunk, generation, ..
+            } = rings.seen(w.voice, w.slot)
+            else {
+                continue;
+            };
+            let file = rings.source(w.voice).and_then(|id| reg.get(id));
+            let key = file.and_then(|f| f.chunk_read(chunk)?.key());
+            if !key.is_some_and(|k| !rot.passes_over(k)) {
+                unread[w.voice.index()][w.slot.index()] = Self::mark(chunk, generation);
+            }
+        }
+        for (slots, unread) in self.slots.iter().zip(unread) {
+            for (slot, g) in slots.iter().zip(unread) {
+                if slot.swap(g, Ordering::Relaxed) != g && g != 0 {
+                    stats.unreadable.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
+    }
+}
+
+/// The next read: EDF over the readable wants (owner rule: any want
+/// before a waiting UI, `edf::pick`, so the UI gets the bus only at
+/// `Idle`). A want whose chunk its file can't read (past its runs, or
+/// `rot` passes it over) is `parked`, left Wanted and counted
+/// (`unreadable`) once; one cancelled since the pick, or whose row went
+/// between the look and the hold, is passed over, requeued and counted.
+/// `rot` forgets everything when the registry's card moves on
+/// (`CardEpoch`). Never a fault (`on_error`): the file's, not the card's,
+/// so a re-init can't mend it, and its voice alone starves, fading out,
+/// and comes back past the chunk as tape time runs.
 pub fn serve_step<'r>(
     card: &mut CardSide<'_>,
     reg: &'r StreamRegistry,
     now: AudioBlocks,
-    ui: UiWait,
     rot: &mut Rot,
+    parked: &Parked,
     stats: &StreamStats,
 ) -> ServeStep<'r> {
     rot.sync(reg.epoch());
     let rot = &*rot;
     let rings = card.rings();
+    parked.renew(rings, reg, rot, stats);
     let mut passed = [[false; SLOTS]; MAX_VOICES];
     loop {
-        let open = servable(rings, reg).filter(|w| !passed[w.voice.index()][w.slot.index()]);
+        let open =
+            readable(rings, reg, parked).filter(|w| !passed[w.voice.index()][w.slot.index()]);
         let Pick::Fill(w) = pick(open, now) else {
-            return match ui {
-                UiWait::Waiting => ServeStep::Yield,
-                UiWait::Idle => ServeStep::Idle,
-            };
+            return ServeStep::Idle;
         };
         passed[w.voice.index()][w.slot.index()] = true;
         let Some(claimed) = card.claim(w.voice, w.slot) else {
@@ -326,6 +421,9 @@ impl Rot {
         super::STREAMS && (self.has(Mark::Rotted(c)) || self.has(Mark::File(c.file())))
     }
 
+    // Inline: a tail call to it the outliner shares lands in bank 1's
+    // `.text`, which may not call bank 2 (`door-check`).
+    #[inline(always)]
     fn has(&self, m: Mark) -> bool {
         self.marks.iter().flatten().any(|e| e.mark == m)
     }

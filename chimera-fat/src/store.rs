@@ -289,16 +289,32 @@ impl<D: Medium> FatStore<D> {
     }
 
     /// `Fs::runs` on the card, if it is still `vol`, each run's first block
-    /// on the device: for raw reads that bypass the FAT.
+    /// on the device: for raw reads that bypass the FAT. A run past the
+    /// device's last LBA (a corrupt partition offset) refuses the file,
+    /// `Corrupt`, and `f` sees no more: a raw read never names a block the
+    /// card would fault on.
     pub fn runs(
         &mut self,
         vol: VolumeId,
         file: FileName,
         f: &mut dyn FnMut(u32, u32),
     ) -> Result<u32, StoreError> {
-        self.run(vol, |fs, lba| {
-            fs.runs(file, &mut |at, n| f(lba.saturating_add(at), n))
-        })
+        let mut past = false;
+        let len = self.run(vol, |fs, lba| {
+            fs.runs(file, &mut |at, n| {
+                let last = lba
+                    .checked_add(at)
+                    .and_then(|a| a.checked_add(n.saturating_sub(1)).map(|_| a));
+                match last {
+                    Some(a) if !past => f(a, n),
+                    _ => past = true,
+                }
+            })
+        })?;
+        if past {
+            return Err(StoreError::Corrupt);
+        }
+        Ok(len)
     }
 
     /// The lost-cluster sweep (#360): `Store::sweep`, one operation under

@@ -8,7 +8,7 @@ use chimera_fat::{FatStore, Medium};
 use chimera_hal::Ms;
 use chimera_hal::card_bus::{CardBus, CardFault, Owner, Quiet, Taker, WATCHDOG_MS};
 use chimera_hal::store::{Dir, FileName, ReadSink, Store, StoreError};
-use chimera_hal::units::{Millis, StreamCount, UiWait};
+use chimera_hal::units::{Millis, StreamCount};
 use core::cell::{Cell, RefCell};
 use core::ops::ControlFlow;
 use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx};
@@ -251,7 +251,6 @@ fn ui_waits_for_stream_then_proceeds() {
     GIVE_AT.set(Some((5, bus)));
     assert_eq!(read(&c), Ok(()));
     assert_eq!(log(), [("give", Owner::Free), ("read", Owner::Ui)]);
-    assert_eq!(bus.ui_wait(), UiWait::Idle);
 }
 
 #[test]
@@ -262,7 +261,6 @@ fn ui_times_out_busy_untouched() {
     assert!(CLOCK.get() > TAKE.get());
     assert_eq!(log(), []);
     assert_eq!(bus.owner(), Owner::Stream);
-    assert_eq!(bus.ui_wait(), UiWait::Idle);
 }
 
 struct Drain;
@@ -364,6 +362,20 @@ fn every_medium_io_call_takes_the_bus() {
         ]
     );
     assert_eq!(bus.owner(), Owner::Free);
+}
+
+/// A re-init the stream's hold makes busy never ran: the card's address
+/// mode stays, so the card IRQ doesn't see it unmounted for nothing.
+#[test]
+fn a_busy_reinit_keeps_the_card_addr() {
+    let (c, bus, addr) = card(false);
+    assert_eq!(c.mounted(), Ok(()));
+    assert!(bus.try_take(Taker::Stream, Ms(0)));
+    assert_eq!(c.reinit(), Err(StoreError::Busy));
+    assert_eq!(addr.get(), Some(AddrMode::Block));
+    bus.give();
+    assert_eq!(c.reinit(), Ok(()));
+    assert_eq!(addr.get(), None);
 }
 
 #[test]

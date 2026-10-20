@@ -1,6 +1,6 @@
 use chimera_hal::Ms;
 use chimera_hal::card_bus::{CardBus, CardFault, Owner, Quiet, Taker, Took, Wake};
-use chimera_hal::units::{Millis, StreamCount, UiWait};
+use chimera_hal::units::{Millis, StreamCount};
 
 #[test]
 fn take_and_give() {
@@ -154,16 +154,6 @@ fn fault_word_round_trip() {
 }
 
 #[test]
-fn ui_wait_round_trips() {
-    let b = CardBus::new();
-    assert_eq!(b.ui_wait(), UiWait::Idle);
-    b.set_ui_wait(UiWait::Waiting);
-    assert_eq!(b.ui_wait(), UiWait::Waiting);
-    b.set_ui_wait(UiWait::Idle);
-    assert_eq!(b.ui_wait(), UiWait::Idle);
-}
-
-#[test]
 fn a_hold_counts_from_its_answer_not_an_old_write() {
     let b = CardBus::new();
     b.note_write(Ms(0));
@@ -190,13 +180,4 @@ fn a_stream_take_drops_a_stale_abort() {
     assert!(!b.take_abort());
     b.ask_abort();
     assert!(b.take_abort());
-}
-
-#[test]
-fn a_yield_to_a_waiting_ui_is_answered_by_its_give() {
-    let b = CardBus::new();
-    b.want();
-    assert!(b.try_take(Taker::Ui, Ms(0)));
-    assert_eq!(b.give(), Wake::Pend);
-    assert_eq!(b.give(), Wake::Quiet);
 }

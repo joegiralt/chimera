@@ -560,7 +560,9 @@ fn a_glide_on_a_gated_note_moves_its_start() {
     use common::tape::OneSource;
     let fresh = || {
         let mut slot = core::mem::MaybeUninit::uninit();
-        *TapeEngine::init_in_place(&mut slot)
+        TapeEngine::init_in_place(&mut slot);
+        // SAFETY: `init_in_place` wrote it whole.
+        unsafe { slot.assume_init() }
     };
     let (_, held) = plain(1, 100.0);
     let p = TapeEngineParams::default();
