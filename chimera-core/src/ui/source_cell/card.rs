@@ -94,7 +94,7 @@ impl SourceCell {
                         part,
                         stem,
                         size,
-                        pick: false,
+                        to: HeadFor::Name,
                     });
                 }
             }
@@ -115,7 +115,7 @@ impl SourceCell {
                 part,
                 stem: r.crc,
                 size,
-                pick: true,
+                to: HeadFor::Pick,
             });
         }
     }
@@ -207,12 +207,12 @@ impl SourceCell {
                 part,
                 stem,
                 size,
-                pick,
+                to,
             } => match read_head(s, r, stem, size) {
                 Ok(h) => {
                     self.heads.put(h);
                     let sound = &p.part(part).sound;
-                    if pick && sound.source_ref() == Some(h.sref) {
+                    if to == HeadFor::Pick && sound.source_ref() == Some(h.sref) {
                         p.edit_part(part).sound.pick_source(&h, None);
                     }
                 }

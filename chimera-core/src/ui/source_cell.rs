@@ -447,17 +447,26 @@ impl SourceMemo {
     }
 }
 
+/// What a queued head read is for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HeadFor {
+    /// The row's name.
+    Name,
+    /// A pick: the name, and ROOT and PERIOD for the Part.
+    Pick,
+}
+
 /// Card work SOURCE queued: run by `card_work`, one a UI pass, under BUSY.
 pub(crate) enum SourceJob {
     /// List the card, then turn.
     List(PartId, i8),
-    /// Read a head for its name; with `pick`, its ROOT and PERIOD go to
-    /// `part`'s Sound if it still plays that source.
+    /// Read a head for its name, and for `HeadFor::Pick` its ROOT and
+    /// PERIOD to `part`'s Sound if it still plays that source.
     Head {
         part: PartId,
         stem: u32,
         size: u32,
-        pick: bool,
+        to: HeadFor,
     },
     Load(PartId, SourceLoad),
     /// A card row too big for the arena, loading as its heads.
