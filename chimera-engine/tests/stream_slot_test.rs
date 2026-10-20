@@ -234,10 +234,11 @@ fn stale_claim_gets_no_buffer() {
     let first = card.claim(V, A).unwrap();
     turn.cancel(V, A);
     turn.want(V, A, ix(3), D).unwrap();
-    let second = card.claim(V, A).unwrap();
+    assert!(card.claim(V, A).is_none(), "the stale claim is still live");
     assert!(card.fill_buf(&first).is_none());
-    assert!(card.fill_buf(&second).is_some());
     assert!(!card.fill_done(first));
+    let second = card.claim(V, A).unwrap();
+    assert!(card.fill_buf(&second).is_some());
     assert!(card.fill_done(second));
 }
 
