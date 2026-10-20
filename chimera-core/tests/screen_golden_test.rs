@@ -52,8 +52,11 @@ use screen::*;
 // tape_src_card, tape_src_wont_fit, tape_src_loaded,
 // tape_src_read_failed.
 // New: flt_2040_kind, flt_2040_exp, flt_fx_off, flt_fx_soft, flt_fx_fold,
-// flt_front_fx, row_amp. Gone: row_drv, amp_sym, flt_mod_2040_exp.// Re-recorded in Task 14: the curve viz draws SOFT and FOLD at their
+// flt_front_fx, row_amp. Gone: row_drv, amp_sym, flt_mod_2040_exp.
+// Re-recorded in Task 14: the curve viz draws SOFT and FOLD at their
 // `MAKE_UP` 0.483 and 0.684 (flt_fx_soft, flt_fx_fold, _soft_pre, _fold_post).
+// Again for the TAPE merge: every TAPE map drops DRV (#614), and
+// sound_browser_pool_full counts main's factory bytes.
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x4b8d653ed15f4a3e),
@@ -181,7 +184,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
     // Re-recorded at the main merge: the header's Part dots (ADR 0150).
     // Re-recorded: its map names the machine, LOOP (ADR 0178).
-    ("tape_pitch_musical", 0x769043dfc1afbc4a),
+    ("tape_pitch_musical", 0x57bccbb87c98b3a5),
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_exc", 0x1a9d74fd3e32a2a1),
     // Re-recorded: the EXC node (plan Task 13).
@@ -296,7 +299,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
     // Then pool_full: 2352 → 2544 (the formant fields).
     // Re-recorded at the merge: MAX_SOUND_COST 2688 (VOICEFX and PLAY's MODE).
-    ("sound_browser_pool_full", 0x4327d7766a8f1115),
+    ("sound_browser_pool_full", 0x81ce95e09e0bd574),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.
@@ -393,44 +396,44 @@ const GOLDENS: &[(&str, u64)] = &[
     // TAPE's pages (TAPE Task 15): SRC, and DECK and the model page per machine.
     // Re-recorded at the main merge: the header's Part dots (ADR 0150).
     // Re-recorded: every machine cell shows its machine's glyph (ADR 0173).
-    ("tape_src", 0x34010e9905b39be3),
-    ("tape_src_missing", 0x2d91b7ddf880e963),
+    ("tape_src", 0x2ce444f656e7f685),
+    ("tape_src_missing", 0x85708a674c5cfd05),
     // Re-recorded: MODEL lists ONE, LOOP and PING; DECK holds the glyph's
     // knobs, the model page TAPE, AGE, WOW and the rest (ADR 0178).
-    ("tape_deck_oneshot", 0x54cea6920fa95c3d),
-    ("tape_page_oneshot", 0x74ad8bbd6c35097b),
-    ("tape_deck_loop", 0xe2b119c82dc53ca6),
+    ("tape_deck_oneshot", 0xddac0b3a442a2ace),
+    ("tape_page_oneshot", 0x8db8b423dc49ef70),
+    ("tape_deck_loop", 0xd26c86e2d98b3919),
     // New: bank 2 closed (ADR 0141).
-    ("tape_deck_needs_update", 0x3bdd8550303cde83),
-    ("tape_page_loop", 0x5294b5a543274cec),
-    ("tape_deck_tron", 0xc4091d41393c8c28),
-    ("tape_page_tron", 0xf9cea6e0100bbf9a),
-    ("tape_deck_stretch", 0x6ea00d8e506d8869),
-    ("tape_page_stretch", 0x4fc20a44323e2490),
-    ("tape_page_stretch_type", 0x5db32caf1d6df6a7),
-    ("tape_deck_transwave", 0x15b2777d22053681),
-    ("tape_page_transwave", 0x2d27053e8ed7abb6),
-    ("tape_deck_scrub", 0xa72deea43338918c),
-    ("tape_page_scrub", 0xe4691dab479515bf),
-    ("tape_deck_pingpong", 0x55a3f23248d5f416),
-    ("tape_page_pingpong", 0xd4573407fb5c2254),
-    ("tape_strip_oneshot", 0x63d46e26ecdef230),
-    ("tape_strip_loop", 0x525303be8e462123),
-    ("tape_strip_tron", 0xb4d6dcdd7dd0bd4b),
-    ("tape_strip_stretch", 0x15c440df230f8eaf),
-    ("tape_strip_transwave", 0x3330914abbbc2de9),
-    ("tape_strip_scrub", 0xe97c46e8cca452da),
-    ("tape_strip_pingpong", 0x28ecd59c057cd677),
-    ("tape_strip_loop_reversed", 0xc8840f14239e5b88),
-    ("tape_strip_oneshot_slice", 0x83778af52b45c10b),
-    ("tape_strip_oneshot_slice_reversed", 0x59e5e2c65e3e49d1),
-    ("tape_strip_pingpong_reversed", 0xca104d1ba138d0e8),
-    ("tape_strip_tron_idle", 0xbd112f59df72ce3c),
-    ("tape_src_pool", 0x4075e32c420bd2a4),
-    ("tape_src_card", 0x8fec60e2a095f9e9),
-    ("tape_src_wont_fit", 0xb652372a5d5745dd),
-    ("tape_src_loaded", 0xbef4ee2ea3b6b0c0),
-    ("tape_src_read_failed", 0x5a5a668cb751c657),
+    ("tape_deck_needs_update", 0x707c17adbd156600),
+    ("tape_page_loop", 0x9f0b7fa2edd10197),
+    ("tape_deck_tron", 0xfbe1971ab0fd9b37),
+    ("tape_page_tron", 0x990d40c32354eb05),
+    ("tape_deck_stretch", 0xfc1aabf764107c6e),
+    ("tape_page_stretch", 0x15c690ec97e0637b),
+    ("tape_page_stretch_type", 0xf19cf72dfc47fd6c),
+    ("tape_deck_transwave", 0xde8bbeffbb06c81a),
+    ("tape_page_transwave", 0x9c9f0c7d78080841),
+    ("tape_deck_scrub", 0x38206f8d2ff7fa0f),
+    ("tape_page_scrub", 0xa0e10bf5966f0e5c),
+    ("tape_deck_pingpong", 0x126f5f1551b605b5),
+    ("tape_page_pingpong", 0x807d3b13404a17b7),
+    ("tape_strip_oneshot", 0x411a85c8b1f6ce8f),
+    ("tape_strip_loop", 0x8f27303e0b2b2de0),
+    ("tape_strip_tron", 0x92d1139ec52d5494),
+    ("tape_strip_stretch", 0x3cd55def9fbb3fec),
+    ("tape_strip_transwave", 0x8578d1cff2b53962),
+    ("tape_strip_scrub", 0xbc6f5e8bda4a1ee5),
+    ("tape_strip_pingpong", 0x61f1223225336990),
+    ("tape_strip_loop_reversed", 0x3cd8d0d69e8fda7e),
+    ("tape_strip_oneshot_slice", 0x7da8e91ab04b2224),
+    ("tape_strip_oneshot_slice_reversed", 0xa51ee9b88ee8afda),
+    ("tape_strip_pingpong_reversed", 0x8ee8f289802c399f),
+    ("tape_strip_tron_idle", 0x340ec44fb606f073),
+    ("tape_src_pool", 0x1a2310f01387e05a),
+    ("tape_src_card", 0xd9e193292c4987f3),
+    ("tape_src_wont_fit", 0x896c448e7060aa47),
+    ("tape_src_loaded", 0x4587d0ef8bbb46b6),
+    ("tape_src_read_failed", 0xa7d6268da8eee639),
     ("busy", 0x198544cd36863145),
     ("toast_saved", 0xe344dd99a47d0dad),
     ("toast_exfat", 0xfc0cb3b4feb1a1b5),
