@@ -420,9 +420,12 @@ enum Row<'v> {
     Streamed(&'v [u8], Descriptor),
 }
 
-/// A deck's note: none, one waiting on its moving source, or sounding.
+/// A deck's note: none, one waiting on its moving source, or sounding,
+/// its row read whole or streamed through the voice's ring. One flat tag
+/// (a byte): bank 1 reads `streams` and `is_active` off it every block.
 #[cfg(feature = "tape")]
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u8)]
 enum Note {
     Idle,
     /// A note-on whose source a closed gate moves: silent, it starts
@@ -431,19 +434,13 @@ enum Note {
     Gated {
         waited: u32,
     },
-    Playing(Feed),
+    /// Sounding from its row, held whole.
+    Ram,
+    /// Sounding through the cursor.
+    Streamed(Stream),
     /// A streamed note ended this block: the block's end stops its cursor
     /// (`end_stream`), with a port or without.
     Ending(Stream),
-}
-
-/// Where a sounding note reads: its row whole, or streamed through the
-/// voice's ring.
-#[cfg(feature = "tape")]
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Feed {
-    Ram,
-    Streamed(Stream),
 }
 
 /// A streamed note's own: its rate, and the fastest step a sample its
@@ -612,7 +609,7 @@ pub struct TapeDeck {
     /// The transport is skipped: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     no_transport: bool,
-    /// A streamed note's cursor (slice 1 § 7.3): its `Feed::Streamed`
+    /// A streamed note's cursor (slice 1 § 7.3): its `Note::Streamed`
     /// plays through it.
     cursor: Cursor,
     /// A LOOP wrap moved the head this block: the cursor starts there.
@@ -740,20 +737,20 @@ impl TapeDeck {
 
     /// A streamed note owns its voice's ring, from its start to its end.
     pub fn streams(&self) -> bool {
-        matches!(self.state, Note::Playing(Feed::Streamed(_)))
+        matches!(self.state, Note::Streamed(_))
     }
 
     /// The streamed note's own, to the block's end once it ended.
     fn stream(&self) -> Option<&Stream> {
         match &self.state {
-            Note::Playing(Feed::Streamed(s)) | Note::Ending(s) => Some(s),
+            Note::Streamed(s) | Note::Ending(s) => Some(s),
             _ => None,
         }
     }
 
     fn stream_mut(&mut self) -> Option<&mut Stream> {
         match &mut self.state {
-            Note::Playing(Feed::Streamed(s)) | Note::Ending(s) => Some(s),
+            Note::Streamed(s) | Note::Ending(s) => Some(s),
             _ => None,
         }
     }
@@ -900,7 +897,7 @@ impl TapeDeck {
     /// The note is over: a streamed one's cursor stops at the block's end.
     fn end(&mut self) {
         self.state = match self.state {
-            Note::Playing(Feed::Streamed(s)) | Note::Ending(s) => Note::Ending(s),
+            Note::Streamed(s) | Note::Ending(s) => Note::Ending(s),
             _ => Note::Idle,
         };
     }
@@ -1003,11 +1000,11 @@ impl TapeDeck {
         self.note_on(note.get(), p, &head.view, sample_rate);
         let rate = row.desc().rate();
         let r = port.ratio_max.unwrap_or_else(|| self.own_ratio(note));
-        self.state = Note::Playing(Feed::Streamed(Stream {
+        self.state = Note::Streamed(Stream {
             rate,
             inc_cap: Self::cap_at(rate, r, sample_rate),
             mute: false,
-        }));
+        });
         if waited > 0 {
             self.catch_up(waited, sample_rate);
             if !self.is_active() {
@@ -1439,7 +1436,7 @@ impl TapeDeck {
             + self.cents.get()
             + self.tune().get()
             - self.root.get();
-        let Note::Playing(Feed::Streamed(s)) = self.state else {
+        let Note::Streamed(s) = self.state else {
             return None;
         };
         let wants =
@@ -1476,7 +1473,7 @@ impl TapeDeck {
     ) {
         let note = MidiNote::clamped(note);
         let (frames, rate) = (v.frames(), v.desc().rate());
-        self.state = Note::Playing(Feed::Ram);
+        self.state = Note::Ram;
         self.at_root = params::at_root(p);
         self.hold = params::hold(p);
         self.note = note;
