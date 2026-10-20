@@ -3,6 +3,7 @@
 //! both keeps DRV; it needn't sound the same (no legacy compat).
 
 use super::params::{FxType, Place, VoiceFxParams};
+use crate::dsp::algo::math::clampf;
 
 /// DRV's raw values by old id (DRIVE, TONE, MIX) and the folder's (FOLD,
 /// SYM, MIX); `None`: the file left the neutral value out.
@@ -23,7 +24,7 @@ fn ran(amount: f32, moved: bool) -> bool {
 }
 
 fn vals(raw: &[Option<f32>; 3], d: [f32; 3]) -> [f32; 3] {
-    core::array::from_fn(|i| raw[i].unwrap_or(d[i]).clamp(0.0, 1.0))
+    core::array::from_fn(|i| clampf(raw[i].unwrap_or(d[i]), 0.0, 1.0))
 }
 
 /// The slot an old Sound's stages become, or `None` when neither ran: the
