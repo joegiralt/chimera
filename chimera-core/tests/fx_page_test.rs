@@ -1,5 +1,5 @@
-//! FLT's pages in layout A (#614, ADR 0155): KIND · MODE or VOICE · FX ·
-//! PLACE · FREQ or CUTOFF · Q or RES up front, the routes and jacks on
+//! FLT's pages (#614, ADR 0155, front reordered by ADR 0167): KIND · FX ·
+//! Q or RES · MODE or VOICE · FX PLACE · FREQ or CUTOFF up front, the routes and jacks on
 //! FLT › MOD, and FLT › FX's INPUT, the type's pots and MIX.
 
 use chimera_core::addr::{BlockRef, Op};
@@ -27,30 +27,30 @@ fn labels(def: &chimera_core::ui::block_def::BlockDef, s: &Sound) -> Vec<&'stati
 }
 
 #[test]
-fn flt_front_reads_kind_mode_fx_place_freq_q_on_clean() {
+fn flt_front_reads_kind_fx_q_mode_place_freq_on_clean() {
     for k in [FilterKind::Svf, FilterKind::Dirty, FilterKind::Ladder] {
         let s = sound(k, FxType::Off);
         assert_eq!(
             labels(&FILTER, &s),
-            ["TYPE", "MODE", "FX", "PLACE", "FREQ", "Q"],
+            ["TYPE", "FX", "Q", "MODE", "FX PLACE", "FREQ"],
             "{k:?}"
         );
     }
 }
 
 #[test]
-fn flt_front_reads_kind_voice_fx_place_cutoff_res_on_2040() {
+fn flt_front_reads_kind_fx_res_voice_place_cutoff_on_2040() {
     let s = sound(FilterKind::K2040, FxType::Off);
     assert_eq!(
         labels(&FILTER, &s),
-        ["TYPE", "VOICE", "FX", "PLACE", "CUTOFF", "RES"]
+        ["TYPE", "FX", "RES", "VOICE", "FX PLACE", "CUTOFF"]
     );
     let ctx = SlotCtx::read(&s.params, Op::A);
     let addr = |i| view::view(&FILTER, i, &ctx).addr().unwrap();
-    assert_eq!(addr(1).param, FilterParams::VOICE);
-    assert_eq!(addr(2).block, BlockRef::VoiceFx);
-    assert_eq!(addr(2).param, VoiceFxParams::TYPE);
-    assert_eq!(addr(3).param, VoiceFxParams::PLACE);
+    assert_eq!(addr(3).param, FilterParams::VOICE);
+    assert_eq!(addr(1).block, BlockRef::VoiceFx);
+    assert_eq!(addr(1).param, VoiceFxParams::TYPE);
+    assert_eq!(addr(4).param, VoiceFxParams::PLACE);
 }
 
 #[test]

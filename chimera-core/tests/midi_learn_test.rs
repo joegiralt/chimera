@@ -20,7 +20,7 @@ use chimera_core::ui::block_registry::{FILTER, FILTER_MOD};
 use chimera_core::ui::learn::{Learn, LearnNote};
 use chimera_core::ui::nav::PartChain;
 use chimera_hal::ButtonId::{B2, Edit, Menu, Mix, Plus, Seq};
-use chimera_hal::EncoderId::{D, E, F};
+use chimera_hal::EncoderId::{C, D, F};
 use chimera_hal::Ms;
 use screen::{Input, feed, tap};
 
@@ -46,8 +46,8 @@ fn on_cutoff() -> Box<UiState> {
         feed(&mut ui, Input::press(Plus));
     }
     assert_eq!(ui.page_def().id, FILTER.id);
-    feed(&mut ui, Input::turn(E, 1));
-    assert_eq!(ui.focused_slot(), 4);
+    feed(&mut ui, Input::turn(F, 1));
+    assert_eq!(ui.focused_slot(), 5);
     ui
 }
 
@@ -114,8 +114,8 @@ fn armed_turn_moves_focus_only() {
     let mut ui = on_cutoff();
     mix_seq(&mut ui);
     let before = format!("{:?}", ui.project().part(P1).sound.params);
-    feed(&mut ui, Input::turn(F, 5));
-    assert_eq!(ui.focused_slot(), 5);
+    feed(&mut ui, Input::turn(C, 5));
+    assert_eq!(ui.focused_slot(), 2);
     assert_eq!(
         format!("{:?}", ui.project().part(P1).sound.params),
         before,

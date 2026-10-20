@@ -154,6 +154,8 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
                 offset_of!(FilterParams, resonance)
             } else if id == FilterParams::LEVEL.0 {
                 offset_of!(FilterParams, level)
+            } else if id == FilterParams::STAB.0 {
+                offset_of!(FilterParams, stability)
             } else {
                 panic!("a filter knob without a field")
             };

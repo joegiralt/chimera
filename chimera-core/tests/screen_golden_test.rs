@@ -62,6 +62,8 @@ use screen::*;
 // #698: WOW dims at TAPE 0 and LOOP's and PING's FADE under an AMP route
 // (tape_page_*); START and END read time (tape_strip_oneshot*,
 // tape_strip_loop_reversed, tape_src_pool, tape_src_loaded).
+// Re-recorded for ADR 0167 (FLT's front reordered: KIND · FX · Q · MODE ·
+// FX PLACE · FREQ): every FLT front page, row_flt, large_va_drive.
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x4b8d653ed15f4a3e),
@@ -95,7 +97,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: MODE reads LP4, CLEAN's label for LP24 (ADR 0096); then
     // TYPE live with two kinds (Task 8); then CLEAN's Cascadia words FREQ,
     // Q, FM1, FM2 (Task 12): was 0x032b329ca06df69b.
-    ("bigviz_filter", 0x47e698ec41e79143),
+    ("bigviz_filter", 0x78a8f269dbaa88cb),
     // Re-recorded: MODE reads HP4, CLEAN's label for HP24 (ADR 0096); then
     // LEVEL 64 in DRIVE's cell (Task 6); then FLT › MOD's six cells, FM3
     // turned, its delete hint showing (Task 12): was 0xf6e7d94448ca7888.
@@ -105,19 +107,19 @@ const GOLDENS: &[(&str, u64)] = &[
     // dimmed and VOICE EXP, DIRTY's NOTCH1 at FREQ (its own MODE names).
     // Layout A (#614): VOICE EXP on FLT (flt_2040_exp, was
     // flt_mod_2040_exp), KEYBD HALF on FLT › MOD, no MODE cell.
-    ("flt_clean", 0xebe30c150c226f32),
+    ("flt_clean", 0x56110a2e1e38df2e),
     ("flt_mod_clean", 0x4f4aabd71e6452c5),
-    ("flt_2040", 0x393e2a10c959617c),
+    ("flt_2040", 0x15653ec5210b6730),
     // KIND focused on the 2040: its readout names 4-POLE LP (#614).
-    ("flt_2040_kind", 0x40852bb27efc21c0),
+    ("flt_2040_kind", 0x1e8668949f243f60),
     // Modulation draws a ghost beside the set curve (#575).
-    ("flt_2040_env_amt", 0x7c1eb47488410e07),
-    ("flt_clean_lfo", 0x89d62d19ec4a783c),
+    ("flt_2040_env_amt", 0xbccdc2ee0e19b0a7),
+    ("flt_clean_lfo", 0xcdf3c95d4dd3230c),
     ("flt_mod_2040", 0xbbaec5d6b217ecf4),
-    ("flt_2040_exp", 0xafb98470b835d60d),
-    ("flt_dirty", 0x186b709706877b53),
+    ("flt_2040_exp", 0x15d1e8c2c7350bb9),
+    ("flt_dirty", 0x6c4b2e89b9de9bf7),
     ("flt_mod_dirty", 0x44d6578ab02c579a),
-    ("flt_ladder", 0x60b0a3315782e87e),
+    ("flt_ladder", 0xce6acb4caebff20a),
     ("flt_mod_ladder", 0x79aecd65ca83688e),
     // New (#574): the peak at its real height, 2040 RES 0.3, CLEAN BP2 and
     // LADDER RES 0.
@@ -125,23 +127,24 @@ const GOLDENS: &[(&str, u64)] = &[
     // #574 rows in layout A (also flt_clean, flt_2040, flt_dirty, flt_ladder,
     // flt_2040_kind, flt_2040_exp, flt_led_full, flt_front_fx, row_flt,
     // bigviz_filter above).
-    ("flt_2040_res_30", 0xae04c3bbac0fdf4b),
-    ("flt_clean_bp2", 0x6e2e19aaa1064a87),
-    ("flt_ladder_res_0", 0xeacee734c3a2da58),
+    ("flt_2040_res_30", 0xec0d1a26aabe229b),
+    ("flt_clean_bp2", 0x09dd5feef072a997),
+    ("flt_ladder_res_0", 0xb120396d7760b858),
     // The LEVEL LED at 0 (dark), ½ and 1: beside LEVEL, beside the 2040's
     // DRIVE and in FLT's viz corner (Task 17); then beside FLT › FX's INPUT
     // (#614).
     ("flt_led_0", 0xaaaf412f13f766ca),
     ("flt_led_half", 0xff79b17ba9dd0333),
-    ("flt_led_full", 0x504ecaedde1fa3ff),
+    ("flt_led_full", 0xc679e27959a0f747),
     // FM3 IN on LFO 2, QM IN on OP 6 (Task 17).
     ("flt_mod_repatched", 0x0bb67ffa22a7ec36),
     // FLT › FX (#614): OFF's dashes, SOFT's and FOLD's pots; FX and PLACE
     // on FLT's front.
     ("flt_fx_off", 0x7398595b237b8ceb),
     ("flt_fx_soft", 0x2a1a36ca519cce4d),
-    ("flt_fx_fold", 0xe60560ce8ed46234),
-    ("flt_front_fx", 0xb2030475dfdf164b),
+    ("flt_fx_fold", 0x43626f2582a4d9a8),
+    ("flt_fx_stab", 0xbe3738e95c9891a2),
+    ("flt_front_fx", 0x0186830cde57e60f),
     // Task 8 (#614): PLACE's mini glyph in its cell (every FLT front, row_flt,
     // large_va_drive) and FLT › FX's strip and curve (flt_fx_*, flt_led_*).
     ("flt_fx_soft_pre", 0x7b18a5267a6ada43),
@@ -150,7 +153,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // STACK (`screen::ui_for`). FLT's three pages, RES's three, MOD at E2
     // with `>`, OSC at D1R with both arrows and at OP6 with `<`, AMP bare.
     // Re-recorded: the row's pages in full words (`ROW_WORDS`).
-    ("row_flt", 0xa7f43a02ebb9c110),
+    ("row_flt", 0xbad2817c9a10e670),
     ("row_res", 0x52e7d782b213fed2),
     ("row_mod", 0x61ae81a248025efe),
     ("row_osc_mid", 0x10a75dc9cea244b8),
@@ -384,7 +387,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("large_algo_level", 0x6781c7502e39f90e),
     ("large_bigviz_filter", 0xcabe5de5ca85d1d7),
     ("large_modal_amp", 0x0a265b6a0a9884ed),
-    ("large_va_drive", 0x4c8ae95956aa9033),
+    ("large_va_drive", 0x2257cff3560615e2),
     // The Mix chain's map has a TAPE node with `master-tape` (ADR 0055).
     #[cfg(not(feature = "master-tape"))]
     ("large_mixer_sends", 0x3ea6919e3a4e3772),
@@ -451,7 +454,11 @@ const GOLDENS: &[(&str, u64)] = &[
 #[test]
 fn screen_goldens_match() {
     let got: Vec<_> = case_names()
-        .map(|name| (name, render(name).hash()))
+        .map(|name| {
+            let fb = render(name);
+            fb.dump(name);
+            (name, fb.hash())
+        })
         .collect();
     common::golden::check(GOLDENS, &got);
 }

@@ -667,6 +667,7 @@ pub fn gauge_left(gauge: &Gauge) -> Option<i32> {
         Gauge::Switch { .. } => Some(theme::SWITCH_CX - theme::SWITCH_W / 2),
         Gauge::LevelBar { .. } => Some(theme::LEVEL_TICK_X - 1),
         Gauge::Crossfader { .. } => Some(end - theme::XF_W - theme::XF_CAP_W / 2),
+        Gauge::Stability { .. } => Some(end - theme::VIAL_W),
         Gauge::Blend { .. } => Some(end - theme::BLEND_W - theme::XF_CAP_W / 2),
         Gauge::Staff { .. } => Some(theme::STAFF_X),
         Gauge::Wave(_) | Gauge::VaWave(_) | Gauge::Lfo(_) => Some(theme::WAVE_X),
@@ -718,7 +719,8 @@ pub fn gauge_rect(gauge: &Gauge) -> Option<(i32, i32, i32, i32)> {
         | Gauge::VaMix(_)
         | Gauge::Blend { .. }
         | Gauge::Tape(_)
-        | Gauge::Lfo(_) => None,
+        | Gauge::Lfo(_)
+        | Gauge::Stability { .. } => None,
     }
 }
 
@@ -746,6 +748,7 @@ where
         }
         Gauge::Tape(t) => tape_glyph::draw(d, &t, &tape_glyph::Palette::THEME),
         Gauge::Lfo(g) => crate::ui::lfo_glyph::draw(d, &g),
+        Gauge::Stability { offset, reach } => spirit_level(d, offset.into(), reach.into()),
         Gauge::Arc { value, bipolar } => draw::arc_gauge(
             d,
             theme::ARC_CX,
@@ -855,6 +858,35 @@ where
         theme::ACCENT,
     );
     draw::fill_rect(d, cx - cap_w / 2 + 2, cy - 1, cap_w - 4, 2, theme::BG);
+}
+
+/// STABILITY's spirit level (#593): a FAINT vial, the wander's reach a
+/// FAINT ghost of the bubble's path, two MID marks at the middle and the
+/// bubble in the accent `offset` px right of them.
+fn spirit_level<D>(d: &mut D, offset: i32, reach: i32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let (w, h) = (theme::VIAL_W, theme::VIAL_H);
+    let (bw, bh) = (theme::BUBBLE_W, theme::BUBBLE_H);
+    let x0 = theme::SCREEN_W - theme::MARGIN_X - w;
+    let (cx, cy) = (x0 + w / 2, theme::ARC_CY);
+    draw::round_outline(d, x0, cy - h / 2, w, h, (h / 2) as u32, theme::FAINT);
+    if reach > 0 {
+        draw::pill(
+            d,
+            cx - reach - bw / 2,
+            cy - 2,
+            2 * reach + bw,
+            4,
+            theme::FAINT,
+        );
+    }
+    // The marks just clear of the bubble at rest, through the vial's top.
+    for x in [cx - bw / 2 - 3, cx + bw / 2 + 2] {
+        draw::fill_rect(d, x, cy - h / 2 - 4, 1, 7, theme::MID);
+    }
+    draw::pill(d, cx + offset - bw / 2, cy - bh / 2, bw, bh, theme::ACCENT);
 }
 
 /// The scope's points: one a pixel across its frame, less the padding.
