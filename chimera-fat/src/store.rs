@@ -289,10 +289,11 @@ impl<D: Medium> FatStore<D> {
     }
 
     /// `Fs::runs` on the card, if it is still `vol`, each run's first block
-    /// on the device: for raw reads that bypass the FAT. A run past the
-    /// device's last block (a corrupt partition offset) refuses the file,
-    /// `Corrupt`, and `f` sees no more: a raw read never names a block the
-    /// card would fault on.
+    /// on the device: for raw reads that bypass the FAT. A run whose LBA
+    /// overflows u32 (a corrupt partition offset) refuses the file,
+    /// `Corrupt`, and `f` sees no more. The card's real end is not checked:
+    /// a run past it fails at the card's CMD18 (R1 error or error token),
+    /// the streams' usual read fault.
     pub fn runs(
         &mut self,
         vol: VolumeId,
@@ -301,17 +302,11 @@ impl<D: Medium> FatStore<D> {
     ) -> Result<u32, StoreError> {
         let mut past = false;
         let len = self.run(vol, |fs, lba| {
-            let end = fs
-                .blocks()
-                .dev
-                .num_blocks()
-                .map_err(|e| FsError::Dev(PartError::Dev(e)))?
-                .0;
             fs.runs(file, &mut |at, n| {
-                let first = lba
+                let last = lba
                     .checked_add(at)
-                    .filter(|a| a.checked_add(n).is_some_and(|e| e <= end));
-                match first {
+                    .and_then(|a| a.checked_add(n.saturating_sub(1)).map(|_| a));
+                match last {
                     Some(a) if !past => f(a, n),
                     _ => past = true,
                 }

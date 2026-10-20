@@ -1299,12 +1299,10 @@ fn read_at_matches_read() {
 }
 
 /// The card `base` with its partition moved to `at` by the MBR: block `at`
-/// onward is the partition's, read through to `base`'s. The device says
-/// it holds `blocks`.
+/// onward is the partition's, read through to `base`'s.
 struct High {
     base: Rc<RamDisk>,
     at: u32,
-    blocks: u32,
 }
 
 impl BlockDevice for High {
@@ -1339,15 +1337,14 @@ impl BlockDevice for High {
     }
 
     fn num_blocks(&self) -> Result<embedded_sdmmc::BlockCount, image::DiskError> {
-        Ok(embedded_sdmmc::BlockCount(self.blocks))
+        Ok(embedded_sdmmc::BlockCount(u32::MAX))
     }
 }
 
 impl chimera_fat::Medium for High {}
 
-/// M7: a partition whose offset puts a file's blocks past the device's
-/// last LBA refuses the file as corrupt; its runs never name a bogus block
-/// a raw read would fault the card on.
+/// M7: a partition whose offset puts a file's blocks past u32::MAX refuses
+/// the file as corrupt; its runs never name an LBA that wrapped.
 #[test]
 fn runs_past_the_last_lba_are_corrupt() {
     let (disk, vol) = card();
@@ -1362,43 +1359,11 @@ fn runs_past_the_last_lba_are_corrupt() {
     // The FAT and the root below the file's blocks still read; its blocks
     // land past u32::MAX.
     let at = u32::MAX - first + 1;
-    let mut s = FatStore::new(High {
-        base: disk,
-        at,
-        blocks: u32::MAX,
-    });
+    let mut s = FatStore::new(High { base: disk, at });
     let vol = s.mount().unwrap();
     let mut got = Vec::new();
     assert_eq!(
         s.runs(vol, name(b"DATA"), &mut |at, n| got.push((at, n))),
         Err(StoreError::Corrupt)
     );
-}
-
-/// A file whose last block lies past the card's block count, well below
-/// `u32::MAX`, is corrupt too; one that ends on the card's last block reads.
-#[test]
-fn runs_past_the_card_end_are_corrupt() {
-    let (disk, vol) = card();
-    let mut s = probed(&disk);
-    let cluster = layout_of(&disk).cluster_bytes() as usize;
-    s.write(vol, name(b"DATA"), &mut |w| w.put(&pattern(5, 2 * cluster)))
-        .unwrap();
-    let mut runs = Vec::new();
-    s.runs(vol, name(b"DATA"), &mut |at, n| runs.push((at, n)))
-        .unwrap();
-    let end = runs.iter().map(|&(at, n)| at + n).max().unwrap();
-    let on = |blocks| {
-        let mut s = FatStore::new(High {
-            base: disk.clone(),
-            at: PART_LBA,
-            blocks,
-        });
-        let vol = s.mount().unwrap();
-        let mut got = Vec::new();
-        s.runs(vol, name(b"DATA"), &mut |at, n| got.push((at, n)))
-            .map(|_| got)
-    };
-    assert_eq!(on(end), Ok(runs));
-    assert_eq!(on(end - 1), Err(StoreError::Corrupt));
 }
