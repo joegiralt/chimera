@@ -33,8 +33,10 @@ pub enum LoadKind {
 pub enum Refusal {
     /// The Part plays it a way that needs it whole.
     NeedsRam(NeedsRam),
-    /// A transwave or zone set: only a plain source streams.
-    Shape(Shape),
+    /// A transwave: only a plain source streams.
+    Transwave,
+    /// A zone set: only a plain source streams.
+    ZoneSet,
     /// Too few frames past START for a head.
     TooShort,
     /// Bank 2 shut: no heads are placed (TAPE is silent then).
@@ -64,7 +66,8 @@ pub fn load_kind(h: &SourceHead, free: Cost, p: &TapeEngineParams) -> LoadKind {
     match (h.shape, heads_for(h.sref, p)) {
         (Shape::Plain, Ok(heads)) => LoadKind::Streamed(heads),
         (_, Err(why @ Refusal::NeedsRam(_))) => LoadKind::Refused(why),
-        (Shape::Transwave | Shape::ZoneSet, _) => LoadKind::Refused(Refusal::Shape(h.shape)),
+        (Shape::Transwave, _) => LoadKind::Refused(Refusal::Transwave),
+        (Shape::ZoneSet, _) => LoadKind::Refused(Refusal::ZoneSet),
         (Shape::Plain, Err(why)) => LoadKind::Refused(why),
     }
 }

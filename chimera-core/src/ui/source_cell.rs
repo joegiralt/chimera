@@ -15,7 +15,6 @@ use chimera_hal::card_bus::CardFault;
 use chimera_hal::store::{ReadSink, Store, StoreError};
 
 use crate::dsp::tape_engine::params::TapeEngineParams;
-use crate::dsp::tape_engine::read::Shape;
 #[cfg(feature = "tape")]
 use crate::dsp::tape_engine::read::head_table;
 use crate::dsp::tape_engine::{NeedsRam, Seeks};
@@ -75,9 +74,8 @@ pub fn needs_ram_words(n: NeedsRam) -> &'static str {
 pub fn refusal_words(r: Refusal) -> &'static str {
     match r {
         Refusal::NeedsRam(n) => needs_ram_words(n),
-        Refusal::Shape(Shape::Transwave) => TRANSWAVE_NO_STREAM,
-        // A plain source streams: never refused for its shape (`load_kind`).
-        Refusal::Shape(Shape::ZoneSet | Shape::Plain) => ZONES_NO_STREAM,
+        Refusal::Transwave => TRANSWAVE_NO_STREAM,
+        Refusal::ZoneSet => ZONES_NO_STREAM,
         Refusal::TooShort => TOO_SHORT_TO_STREAM,
         Refusal::Closed => crate::bank2::NEEDS_UPDATE,
     }
@@ -87,7 +85,7 @@ pub fn refusal_words(r: Refusal) -> &'static str {
 pub fn refusal_cell(r: Refusal) -> &'static str {
     match r {
         Refusal::NeedsRam(_) => "RAM",
-        Refusal::Shape(_) => "TOO BIG",
+        Refusal::Transwave | Refusal::ZoneSet => "TOO BIG",
         Refusal::TooShort => "SHORT",
         Refusal::Closed => crate::bank2::NEEDS_UPDATE_CELL,
     }

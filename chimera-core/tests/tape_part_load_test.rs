@@ -517,7 +517,7 @@ mod streamed {
         tape_part(&mut p, t, 0, wave.0.sref);
         p.edit_part(PartId::ALL[0]).sound.params.tape.machine = TapeMachine::Loop;
         let tape = p.part(PartId::ALL[0]).sound.params.tape;
-        let shape = Refusal::Shape(Shape::Transwave);
+        let shape = Refusal::Transwave;
         assert_eq!(
             load_kind(&wave.0, Cost::of(0), &tape),
             LoadKind::Refused(shape)
