@@ -14,8 +14,7 @@ use chimera_core::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape, SourceView,
 };
 use chimera_core::dsp::tape_engine::{
-    FADE_HOLD, MACHINE_NAMES, PlayMode, StretchType, TapeEngine, TapeEngineParams as P, TapeModel,
-    Wow,
+    FADE_HOLD, PlayMode, StretchType, TapeEngine, TapeEngineParams as P, TapeModel, Wow,
 };
 use chimera_core::dsp::va::VaMode;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
@@ -926,7 +925,7 @@ pub fn credits(toml: &str) -> Result<Vec<(String, Src)>, String> {
 /// `model`'s name in file names and on the command line: `play`,
 /// `transwave`….
 pub fn model_slug(model: TapeModel) -> String {
-    MACHINE_NAMES[usize::from(model.index())].to_lowercase()
+    crate::factory_tapes::MODEL_WORDS[usize::from(model.index())].to_lowercase()
 }
 
 pub fn file_name(model: TapeModel, src: &Src, kind: &str) -> String {
@@ -969,7 +968,7 @@ pub fn page(rows: &[(TapeModel, &Src)]) -> String {
         if it.peek().is_none() {
             continue;
         }
-        let name = MACHINE_NAMES[usize::from(m.index())];
+        let name = crate::factory_tapes::MODEL_WORDS[usize::from(m.index())];
         let _ = write!(
             out,
             "<section><h2>{name}</h2><p class=\"legend\">{}</p>",
