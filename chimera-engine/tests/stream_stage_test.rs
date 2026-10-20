@@ -138,16 +138,16 @@ fn a_head_stops_at_end_or_the_file() {
 #[test]
 fn what_needs_ram_has_no_heads() {
     let mut ping = play(PlayMode::Ping, 0.2);
-    assert!(heads_for(r(), &ping).is_none(), "PING");
+    assert!(heads_for(r(), &ping).is_err(), "PING");
     ping.machine = TapeMachine::Loop;
     (ping.start, ping.end) = (0.6, 0.2);
-    assert!(heads_for(r(), &ping).is_none(), "END before START");
+    assert!(heads_for(r(), &ping).is_err(), "END before START");
     for m in [TapeModel::Scrub, TapeModel::Stretch, TapeModel::Transwave] {
         let p = TapeEngineParams {
             machine: TapeMachine::of(m, PlayMode::One),
             ..play(PlayMode::One, 0.2)
         };
-        assert!(heads_for(r(), &p).is_none(), "{m:?}");
+        assert!(heads_for(r(), &p).is_err(), "{m:?}");
     }
 }
 

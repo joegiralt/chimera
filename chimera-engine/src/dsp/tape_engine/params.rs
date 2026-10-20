@@ -297,6 +297,20 @@ pub fn at_root(p: &TapeEngineParams) -> bool {
     p.machine == TapeMachine::One && p.slice.slice().by_note()
 }
 
+/// The machines that seek: none streams (slice 1 § 2.7). PLAY's MODEs
+/// and TRON read forward, so they aren't among them.
+///
+/// ```compile_fail,E0599
+/// use chimera_engine::dsp::tape_engine::params::{NeedsRam, Seeks};
+/// let _ = NeedsRam::Machine(Seeks::Play);
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Seeks {
+    Scrub,
+    Stretch,
+    Wave,
+}
+
 /// Why a streamed source can't play `p` (slice 1 § 2.3): streams read
 /// forward only until slice 5, and the other machines seek.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -304,8 +318,7 @@ pub enum NeedsRam {
     Ping,
     /// END before START.
     Reverse,
-    /// SCRUB, STRETCH and WAVE.
-    Machine(TapeModel),
+    Machine(Seeks),
 }
 
 /// `None`: ONE, LOOP or TRON, END at or after START. TRON's note is ONE's
@@ -316,7 +329,9 @@ pub fn needs_ram(p: &TapeEngineParams) -> Option<NeedsRam> {
         K::Ping => Some(NeedsRam::Ping),
         K::One | K::Loop | K::Tron if p.end < p.start => Some(NeedsRam::Reverse),
         K::One | K::Loop | K::Tron => None,
-        m @ (K::Scrub | K::Stretch | K::Wave) => Some(NeedsRam::Machine(m.model())),
+        K::Scrub => Some(NeedsRam::Machine(Seeks::Scrub)),
+        K::Stretch => Some(NeedsRam::Machine(Seeks::Stretch)),
+        K::Wave => Some(NeedsRam::Machine(Seeks::Wave)),
     }
 }
 

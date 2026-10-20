@@ -6,12 +6,12 @@
 #![cfg(all(feature = "bank2", feature = "test-support"))]
 
 use chimera_engine::bank2::DOOR_CELL;
-use chimera_engine::dsp::tape_engine::params::{NeedsRam, TapeEngineParams};
+use chimera_engine::dsp::tape_engine::TapeMachine;
+use chimera_engine::dsp::tape_engine::params::TapeEngineParams;
 use chimera_engine::dsp::tape_engine::read::Shape;
-use chimera_engine::dsp::tape_engine::{TapeMachine, TapeModel};
 use chimera_engine::name::SoundName;
 use chimera_engine::project::arena::Cost;
-use chimera_engine::project::{LoadKind, load_kind};
+use chimera_engine::project::{LoadKind, Refusal, load_kind};
 use chimera_engine::storage::{SourceHead, SourceRef};
 use chimera_engine::stream::stage::heads_for;
 
@@ -44,10 +44,10 @@ fn loads_place_heads_open_and_refuse_closed() {
     let all = Cost::of(usize::MAX / 2);
 
     DOOR_CELL.close();
-    assert_eq!(heads_for(long.sref, &p), None);
+    assert_eq!(heads_for(long.sref, &p), Err(Refusal::Closed));
     assert_eq!(
         load_kind(&long, none, &p),
-        LoadKind::Refused(NeedsRam::Machine(TapeModel::Play))
+        LoadKind::Refused(Refusal::Closed)
     );
     assert_eq!(load_kind(&short, all, &p), LoadKind::Whole);
 

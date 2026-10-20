@@ -65,7 +65,7 @@ impl Table {
 /// The streamed row a load stages for `p`: the descriptor, the head table,
 /// the heads' samples (`TestCard::held_heads`'s).
 fn streamed_row(head: &SourceHead, packed: &[u8], p: &TapeEngineParams) -> Option<Vec<u8>> {
-    let heads = heads_for(head.sref, p)?;
+    let heads = heads_for(head.sref, p).ok()?;
     let rate = SourceRate::new(head.sref.rate)?;
     let reach = Frames::new(head_frames(rate));
     let mut held = vec![0; streamed_held_len(heads.as_slice())];

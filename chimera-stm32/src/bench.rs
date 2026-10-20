@@ -1507,7 +1507,7 @@ fn stream_sources(project: &mut Project, p: &ParamSnapshot) -> Option<[SourceId;
             frames: STREAM_FRAMES,
             rate: STREAM_RATE,
         };
-        let heads = chimera_engine::stream::stage::heads_for(r, &p.tape)?;
+        let heads = chimera_engine::stream::stage::heads_for(r, &p.tape).ok()?;
         let rate = SourceRate::new(STREAM_RATE)?;
         let reach = Frames::new(chimera_engine::stream::admit::head_frames(rate));
         *id = project.source_write(r, heads.held_len(), |b| {

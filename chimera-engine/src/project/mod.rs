@@ -50,7 +50,7 @@ pub use store::{
     clear_project, delete_project, find_named, list_projects, load_project, new_project_id,
     project_file, save_project, save_project_as,
 };
-pub use streamed::{LoadDoor, LoadKind, StreamFail, StreamLoad, StreamStep, load_kind};
+pub use streamed::{LoadDoor, LoadKind, Refusal, StreamFail, StreamLoad, StreamStep, load_kind};
 pub use swap::{GateStep, LOAD_ACK_TIMEOUT_MS, LOAD_LINK, LoadGate, LoadLink, Settled, Swap};
 pub use template::{NEW_PARTS, TemplateCrc};
 

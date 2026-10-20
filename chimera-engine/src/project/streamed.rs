@@ -8,7 +8,7 @@ use chimera_hal::store::{FileRuns, Store};
 use super::arena::Cost;
 use super::sources::{SOURCE_HEAD, SourceId, source_cost};
 use super::{PoolFull, Project};
-use crate::dsp::tape_engine::params::{NeedsRam, TapeEngineParams, needs_ram};
+use crate::dsp::tape_engine::params::{NeedsRam, TapeEngineParams};
 use crate::dsp::tape_engine::read::Shape;
 use crate::storage::{LoadError, Ready, SourceHead, SourceLayout, SourceReadError, SourceRef};
 use crate::stream::layout::StreamFile;
@@ -23,8 +23,21 @@ pub enum LoadKind {
     Whole,
     /// Too big: its heads, the rest streamed.
     Streamed(Heads),
-    /// Too big, and the Part plays it in a way that needs it whole.
-    Refused(NeedsRam),
+    /// Too big, and it can't stream: why.
+    Refused(Refusal),
+}
+
+/// Why a card file too big for the arena won't load (spec § 5.6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// The Part plays it a way that needs it whole.
+    NeedsRam(NeedsRam),
+    /// A transwave or zone set: only a plain source streams.
+    Shape(Shape),
+    /// Too few frames past START for a head.
+    TooShort,
+    /// Bank 2 shut: no heads are placed (TAPE is silent then).
+    Closed,
 }
 
 impl LoadKind {
@@ -38,8 +51,8 @@ impl LoadKind {
 }
 
 /// Card file `h` for a Part playing it with `p`, `free` bytes left: whole
-/// if it fits, else streamed if `p` plays it forward (a `Plain` only).
-/// With bank 2 shut no heads are placed: refused (TAPE is silent then).
+/// if it fits, else streamed if `p` plays it forward (a `Plain` only),
+/// else refused, saying why.
 pub fn load_kind(h: &SourceHead, free: Cost, p: &TapeEngineParams) -> LoadKind {
     let whole = SourceLayout::whole(*h)
         .map(|l| l.held_len())
@@ -48,8 +61,10 @@ pub fn load_kind(h: &SourceHead, free: Cost, p: &TapeEngineParams) -> LoadKind {
         return LoadKind::Whole;
     }
     match (h.shape, heads_for(h.sref, p)) {
-        (Shape::Plain, Some(heads)) => LoadKind::Streamed(heads),
-        _ => LoadKind::Refused(needs_ram(p).unwrap_or(NeedsRam::Machine(p.model()))),
+        (Shape::Plain, Ok(heads)) => LoadKind::Streamed(heads),
+        (_, Err(why @ Refusal::NeedsRam(_))) => LoadKind::Refused(why),
+        (Shape::Transwave | Shape::ZoneSet, _) => LoadKind::Refused(Refusal::Shape(h.shape)),
+        (Shape::Plain, Err(why)) => LoadKind::Refused(why),
     }
 }
 
@@ -58,7 +73,7 @@ pub fn load_kind(h: &SourceHead, free: Cost, p: &TapeEngineParams) -> LoadKind {
 /// all bank 2's with `bank2` (`load`, `stage::place`).
 #[repr(C)]
 pub struct LoadDoor {
-    heads_for: fn(SourceRef, &TapeEngineParams) -> Option<Heads>,
+    heads_for: fn(SourceRef, &TapeEngineParams) -> Result<Heads, Refusal>,
     step: fn(&mut StreamLoad, &mut dyn Store, &Ready, &mut Project, usize) -> StreamStep,
     sources: fn(&mut dyn Store, &Ready, &mut Project, u32) -> u8,
 }
@@ -71,7 +86,7 @@ impl LoadDoor {
     };
 
     #[inline(always)]
-    pub(crate) fn heads_for(&self, r: SourceRef, p: &TapeEngineParams) -> Option<Heads> {
+    pub(crate) fn heads_for(&self, r: SourceRef, p: &TapeEngineParams) -> Result<Heads, Refusal> {
         (self.heads_for)(r, p)
     }
 

@@ -249,7 +249,7 @@ pub enum SourceState {
         free: Cost,
     },
     /// A card read failed: until the next input.
-    Failed(&'static str),
+    Failed(crate::ui::source_cell::SourceNote),
 }
 
 impl SourceState {
@@ -418,12 +418,12 @@ impl SourceState {
             SourceState::Absent(Absence::ReadFailed) => READ_FAILED,
             SourceState::Absent(Absence::StreamsFull) => crate::ui::source_cell::STREAMS_FULL,
             SourceState::Absent(Absence::Fragmented) => crate::ui::source_cell::FRAGMENTED,
-            SourceState::Absent(Absence::NeedsRam(n)) => crate::ui::source_cell::needs_ram_words(n),
+            SourceState::Absent(Absence::NeedsRam(r)) => crate::ui::source_cell::refusal_words(r),
             SourceState::Damaged => crate::ui::source_cell::FILE_DAMAGED,
             SourceState::NotTranswave => "NOT A TRANSWAVE",
             SourceState::ZonesOnTron => "ZONES: NOT TRON",
             SourceState::NeedsRam(n) => crate::ui::source_cell::needs_ram_words(n),
-            SourceState::Failed(w) => w,
+            SourceState::Failed(w) => w.words(),
             _ => "NONE",
         }
     }
@@ -441,7 +441,9 @@ impl SourceState {
             }
             SourceState::Absent(Absence::StreamsFull) => buf.write_str("FULL"),
             SourceState::Absent(Absence::Fragmented) => buf.write_str("COPY"),
-            SourceState::Absent(Absence::NeedsRam(_)) => buf.write_str("RAM"),
+            SourceState::Absent(Absence::NeedsRam(r)) => {
+                buf.write_str(crate::ui::source_cell::refusal_cell(r))
+            }
             SourceState::Damaged => buf.write_str("BAD FILE"),
             SourceState::NotTranswave => buf.write_str("NO WAVE"),
             SourceState::ZonesOnTron => buf.write_str("ZONES"),

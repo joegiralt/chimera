@@ -39,7 +39,7 @@ fn moved_heads(p: &Project, ready: impl Fn(SourceId, &Heads) -> bool) -> Option<
         let first = seen & id.bit() == 0;
         seen |= id.bit();
         let staged = head_table(pool.held(r)?)?;
-        let want = heads_for(r, &sound.params.tape)?;
+        let want = heads_for(r, &sound.params.tape).ok()?;
         let moved =
             first && !staged.is_empty() && !staged.iter().eq(want.as_slice().iter().copied());
         (moved && ready(id, &want)).then_some((id, want))
@@ -133,7 +133,7 @@ impl SourceCell {
                     self.job = Some(SourceJob::Stream(part, l));
                 }
             }
-            Some((_, LoadKind::Refused(n))) => self.note = Some(needs_ram_words(n)),
+            Some((_, LoadKind::Refused(why))) => self.note = Some(SourceNote::Refused(why)),
             _ => {
                 if let Some(l) = SourceLoad::start(p, stem, size) {
                     self.job = Some(SourceJob::Load(part, l));
@@ -232,7 +232,7 @@ impl SourceCell {
                     self.at = None;
                     self.pick(p, part, l.sref());
                 }
-                StreamStep::Failed(f) => self.note = Some(stream_fail_words(f)),
+                StreamStep::Failed(f) => self.note = Some(stream_note(f)),
             },
             #[cfg(feature = "tape")]
             SourceJob::Rehead(mut l) => match l.step(s, r, p, STEP_BYTES as usize) {

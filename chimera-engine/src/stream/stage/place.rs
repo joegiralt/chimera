@@ -6,6 +6,7 @@ use super::Heads;
 use crate::dsp::tape_engine::heads::{Bounds, window_end, window_start};
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeMachine, needs_ram};
 use crate::dsp::tape_engine::read::HeadSpec;
+use crate::project::Refusal;
 use crate::storage::SourceRef;
 use crate::stream::admit::head_frames;
 use crate::stream::layout::CHUNK_FRAMES;
@@ -33,11 +34,15 @@ fn head(at: u32, reach: u32, cap: u32) -> Option<HeadSpec> {
     HeadSpec::new(first, end.min(cap))
 }
 
-/// `r`'s heads for `p`; `None` where `p` needs the source in RAM.
-pub(crate) fn heads_in(r: SourceRef, p: &TapeEngineParams) -> Option<Heads> {
-    let rate = SourceRate::new(r.rate);
-    let (Some(rate), None, true) = (rate, needs_ram(p), r.frames >= 2) else {
-        return None;
+/// `r`'s heads for `p`, or why it has none: `p` needs the source in RAM,
+/// or too few frames for a head. A rate no descriptor holds never reaches
+/// here (`SourceCheck`); it reads as too short.
+pub(crate) fn heads_in(r: SourceRef, p: &TapeEngineParams) -> Result<Heads, Refusal> {
+    if let Some(n) = needs_ram(p) {
+        return Err(Refusal::NeedsRam(n));
+    }
+    let (Some(rate), true) = (SourceRate::new(r.rate), r.frames >= 2) else {
+        return Err(Refusal::TooShort);
     };
     let frames = r.frames;
     let reach = head_frames(rate);
@@ -46,19 +51,19 @@ pub(crate) fn heads_in(r: SourceRef, p: &TapeEngineParams) -> Option<Heads> {
     // To the taps of END's last read, no frame past the file's (even, as a
     // row reads it).
     let cap = we.saturating_add(2).min(frames).next_multiple_of(2);
-    let start = head(ws, reach, cap)?;
+    let start = head(ws, reach, cap).ok_or(Refusal::TooShort)?;
     type K = TapeMachine;
     match p.machine {
         K::Loop => {}
         // ONE and TRON read one head; `needs_ram` refused the others.
         K::One | K::Tron | K::Ping | K::Scrub | K::Stretch | K::Wave => {
-            return Some(Heads::One(start));
+            return Ok(Heads::One(start));
         }
     }
     let b = Bounds::of(ws, we, (p.size, p.position, p.xfade), rate);
     let lx = b.lx.min(xfade_max(rate));
     // With no room before the loop the fade folds inside it (`heads`).
     let early = if b.ls - ws >= lx { lx } else { 0 };
-    let looped = head(b.ls - early, lx + reach, cap)?;
-    Some(Heads::Looped([start, looped]))
+    let looped = head(b.ls - early, lx + reach, cap).ok_or(Refusal::TooShort)?;
+    Ok(Heads::Looped([start, looped]))
 }
