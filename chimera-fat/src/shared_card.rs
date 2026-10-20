@@ -9,7 +9,7 @@ use core::fmt;
 use chimera_hal::Ms;
 use chimera_hal::card_bus::{CardBus, CardFault, QUIET_SPIN_MS, Quiet, Taker, Wake};
 use chimera_hal::store::StoreError;
-use chimera_hal::units::{Millis, UiWait};
+use chimera_hal::units::Millis;
 use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx};
 
 use crate::sd_addr::{AddrMode, CardAddr};
@@ -113,7 +113,6 @@ impl<D: Medium> SharedCard<D> {
     /// watchdog is asked to abort, once a spin.
     fn hold(&self) -> Result<UiHold<'_, D>, Busy> {
         let start = (self.hooks.now)();
-        self.bus.set_ui_wait(UiWait::Waiting);
         let mut asked = false;
         let held = loop {
             let now = (self.hooks.now)();
@@ -133,7 +132,6 @@ impl<D: Medium> SharedCard<D> {
                 break Err(Busy);
             }
         };
-        self.bus.set_ui_wait(UiWait::Idle);
         held
     }
 

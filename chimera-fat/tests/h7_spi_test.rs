@@ -127,7 +127,12 @@ const HAL_CFG1: u32 = 0x7007_0007; // MBR /256, FTHLV, DSIZE 8 bits
 
 impl Cfg1Model {
     fn new(fail: Op) -> Self {
-        Cfg1Model { cfg1: HAL_CFG1, saved: 0, fail, ran: Vec::new() }
+        Cfg1Model {
+            cfg1: HAL_CFG1,
+            saved: 0,
+            fail,
+            ran: Vec::new(),
+        }
     }
 
     fn op(&mut self, o: Op) -> Result<(), RegFault> {
@@ -153,7 +158,10 @@ impl Cfg1Model {
 fn a_failed_take_gives_back_the_hals_cfg1() {
     // The waits and checks: the shell's only fallible ops.
     let can_fail = |o: &Op| {
-        matches!(o, Op::Suspend | Op::WaitEot | Op::CheckErrors | Op::StreamsOn(_) | Op::StreamsOff)
+        matches!(
+            o,
+            Op::Suspend | Op::WaitEot | Op::CheckErrors | Op::StreamsOn(_) | Op::StreamsOff
+        )
     };
     for fail in TAKE.into_iter().filter(can_fail) {
         let mut m = Cfg1Model::new(fail);
@@ -169,7 +177,10 @@ fn a_failed_take_gives_back_the_hals_cfg1() {
 #[test]
 fn run_stops_at_the_first_fault() {
     let mut m = Cfg1Model::new(Op::Suspend);
-    assert_eq!(run(&burst(bl(512)), |o| m.op(o)), Err(RegFault::Timeout(Op::Suspend)));
+    assert_eq!(
+        run(&burst(bl(512)), |o| m.op(o)),
+        Err(RegFault::Timeout(Op::Suspend))
+    );
     assert_eq!(m.ran, [Op::Suspend]);
 }
 

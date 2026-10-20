@@ -211,6 +211,11 @@ impl Rings {
         })
     }
 
+    /// Slot `s` of voice `v`'s state, as the card sees it.
+    pub fn seen(&self, v: VoiceIdx, s: SlotIdx) -> SlotState {
+        self.slot(v, s).seen()
+    }
+
     /// The source voice `v`'s wants read (`AudioTurn::stream`). Read
     /// after a claim, whose `Acquire` saw the want's `Release`: the
     /// source its note set before it.

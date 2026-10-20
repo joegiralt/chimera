@@ -8,7 +8,7 @@ use chimera_fat::{FatStore, Medium};
 use chimera_hal::Ms;
 use chimera_hal::card_bus::{CardBus, CardFault, Owner, Quiet, Taker, WATCHDOG_MS};
 use chimera_hal::store::{Dir, FileName, ReadSink, Store, StoreError};
-use chimera_hal::units::{Millis, StreamCount, UiWait};
+use chimera_hal::units::{Millis, StreamCount};
 use core::cell::{Cell, RefCell};
 use core::ops::ControlFlow;
 use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx};
@@ -251,7 +251,6 @@ fn ui_waits_for_stream_then_proceeds() {
     GIVE_AT.set(Some((5, bus)));
     assert_eq!(read(&c), Ok(()));
     assert_eq!(log(), [("give", Owner::Free), ("read", Owner::Ui)]);
-    assert_eq!(bus.ui_wait(), UiWait::Idle);
 }
 
 #[test]
@@ -262,7 +261,6 @@ fn ui_times_out_busy_untouched() {
     assert!(CLOCK.get() > TAKE.get());
     assert_eq!(log(), []);
     assert_eq!(bus.owner(), Owner::Stream);
-    assert_eq!(bus.ui_wait(), UiWait::Idle);
 }
 
 struct Drain;

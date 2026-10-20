@@ -57,6 +57,10 @@ pub struct CardEpoch(u32);
 impl CardEpoch {
     /// A zeroed registry's: the card it boots with.
     pub const FIRST: CardEpoch = CardEpoch(0);
+
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
 }
 
 /// All-zero bytes are an empty registry (every tag `FREE`), so the board

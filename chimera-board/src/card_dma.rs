@@ -19,12 +19,13 @@ use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 use chimera_core::stream::layout::{Piece, RAW_CHUNK_BLOCKS, RAW_CHUNK_BYTES, deframe};
 use chimera_core::stream::ring::{CardSide, Claim};
 use chimera_core::stream::serve::{
-    Blame, ErrorStep, HeldRead, ReadError, Rot, ServeStep, read_failed, servable, serve_step,
+    Blame, ErrorStep, HeldRead, Parked, ReadError, Rot, ServeStep, read_failed, readable,
+    serve_step,
 };
 use chimera_core::stream::units::AudioBlocks;
 use chimera_fat::h7_spi::{
-    self,    ABORT, BURST_END, BurstLen, Cr1, DmaEvent, GIVE, Gate, Mbr, Op, POLLED, RegFault, TAKE, burst,
-    gate,
+    self, ABORT, BURST_END, BurstLen, Cr1, DmaEvent, GIVE, Gate, Mbr, Op, POLLED, RegFault, TAKE,
+    burst, gate,
 };
 use chimera_fat::sd::NCR_BYTES;
 use chimera_fat::sd_addr::CmdArg;
@@ -214,12 +215,16 @@ pub fn fail_next(n: u32) {
     FAIL.store(n, Ordering::Release);
 }
 
-/// A Wanted slot this IRQ can read: its ring names a registry row.
+/// The wants `serve_step` found it can't read: no wake for them.
+static PARKED: Parked = Parked::new();
+
+/// A Wanted slot this IRQ can read: its ring names a registry row, and
+/// its chunk isn't parked (`serve::readable`).
 fn wanted() -> bool {
     filling()
         && rings()
             .zip(registry())
-            .is_some_and(|(r, reg)| servable(r, reg).next().is_some())
+            .is_some_and(|(r, reg)| readable(r, reg, &PARKED).next().is_some())
 }
 
 /// No write's quiet: under one, the fill in flight finishes and no new one
@@ -243,8 +248,9 @@ pub fn watch(now: Ms) {
 }
 
 /// A transfer stuck past `WATCHDOG_MS` (a TE, a MODF, a lost TC) is asked
-/// to abort. A want left with the bus free (a failed fill requeued, or a
-/// yield whose UI gave up) is woken here.
+/// to abort. A want left with the bus free (a failed fill requeued, or
+/// one whose look found the bus the UI's) is woken here; a parked one,
+/// whose chunk can't be read, is not.
 fn watch_in(now: Ms) {
     if !unstick(now) && BUS.owner() == Owner::Free && serving() && wanted() {
         pend();
@@ -1164,8 +1170,8 @@ impl IrqState {
                 &mut self.side,
                 reg,
                 now,
-                BUS.ui_wait(),
                 &mut self.rot,
+                &PARKED,
                 &STREAM_STATS,
             ) {
                 match row.read().first() {

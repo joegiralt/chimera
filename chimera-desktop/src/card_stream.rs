@@ -17,13 +17,12 @@ use chimera_core::stream::layout::{RAW_CHUNK_BYTES, StreamFile, deframe};
 use chimera_core::stream::registry::StreamRegistry;
 use chimera_core::stream::ring::{CardSide, Claim};
 use chimera_core::stream::serve::{
-    ErrorStep, HeldRead, ReadError, Rot, ServeStep, read_failed, serve_step,
+    ErrorStep, HeldRead, Parked, ReadError, Rot, ServeStep, read_failed, serve_step,
 };
 use chimera_core::stream::stats::StreamStats;
 use chimera_core::stream::units::AudioBlocks;
 use chimera_hal::card_bus::{CardBus, CardFault, ProtoError, Quiet};
 use chimera_hal::store::{CHUNK, Store, StoreError, synthetic_lba};
-use chimera_hal::units::UiWait;
 
 use crate::store::DirStore;
 
@@ -155,6 +154,7 @@ pub struct CardStream<'r> {
     flight: Option<Flight<'r>>,
     ceiling: bool,
     rot: Rot,
+    parked: Parked,
 }
 
 impl<'r> CardStream<'r> {
@@ -178,6 +178,7 @@ impl<'r> CardStream<'r> {
             flight: None,
             ceiling: false,
             rot: Rot::new(),
+            parked: Parked::new(),
         }
     }
 
@@ -217,8 +218,8 @@ impl<'r> CardStream<'r> {
                 &mut self.side,
                 self.reg,
                 now,
-                UiWait::Idle,
                 &mut self.rot,
+                &self.parked,
                 self.stats,
             ) else {
                 return;
