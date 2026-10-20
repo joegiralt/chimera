@@ -248,6 +248,13 @@ impl<'a> SourceView<'a> {
             "read at {w} outside frames {lo}..{}",
             self.end
         );
+        // All four taps inside, one compare (`w − 1 − lo` wraps when `w`
+        // is under `lo + 1`): the clamp is for a read at the frames' ends.
+        let inside = (w.wrapping_sub(lo + 1) as u32) <= (last - lo - 3) as u32 && last - lo >= 3;
+        if inside {
+            let at = |k: i32| self.decode((w + k) as u32);
+            return hermite([at(-1), at(0), at(1), at(2)], p.frac());
+        }
         let tap = |k: i32| self.decode(w.saturating_add(k).max(lo).min(last) as u32);
         hermite([tap(-1), tap(0), tap(1), tap(2)], p.frac())
     }

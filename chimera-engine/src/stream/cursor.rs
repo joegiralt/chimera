@@ -47,6 +47,7 @@ const AFTER: u32 = 2;
 /// Full gain, in steps both fades divide exactly, so each lands on 0
 /// and 1 with no residue.
 const FULL: i16 = 1_440;
+const INV_FULL: f32 = 1.0 / FULL as f32;
 const DROP_STEP: i16 = FULL / DROP_FADE.get() as i16;
 const QUIET_STEP: i16 = FULL / QUIET_FADE.get() as i16;
 const _: () = assert!(DROP_STEP * DROP_FADE.get() as i16 == FULL);
@@ -530,7 +531,21 @@ impl Cursor {
     pub fn gain(&mut self) -> f32 {
         let f = &mut self.gain;
         f.level = f.level.saturating_add(f.step).clamp(0, FULL);
-        f32::from(f.level) / f32::from(FULL)
+        f32::from(f.level) * INV_FULL
+    }
+
+    /// `out` under the gain, a sample at a time; at rest (full, or silent
+    /// and falling) one multiply a sample, or none at full.
+    pub fn apply(&mut self, out: &mut [f32]) {
+        let f = self.gain;
+        let resting = (f.level == FULL && f.step >= 0) || (f.level == 0 && f.step <= 0);
+        if !resting {
+            for y in out.iter_mut() {
+                *y *= self.gain();
+            }
+        } else if f.level == 0 {
+            out.fill(0.0);
+        }
     }
 
     /// The note's file's frames; none before a start.
