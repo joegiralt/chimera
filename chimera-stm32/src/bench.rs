@@ -382,7 +382,7 @@ fn worst_comp(s: &mut AudioShared) {
     (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
 }
 
-const ROUTING_ROWS: usize = 49;
+const ROUTING_ROWS: usize = 52;
 /// Rows per ROUTING screen: ten from y 46 at `ROW_H` 25 end at 283.
 const ROUTING_PAGE: usize = 10;
 
@@ -537,6 +537,13 @@ const ROUTING: [RoutingRow; ROUTING_ROWS] = [
         },
         STILL,
     ),
+    // FUZZ (FX plan Task 13; ADR 0156): FUZZ − 1 OP is its steady bill
+    // (`FxType::Fuzz.cost`, 175), FUZZ MOVE − FUZZ its ramp (SUSTAIN from
+    // LFO 1; `ramp_cost`) less the route, and FUZZ 8V, at full SUSTAIN (the
+    // ADAA guard's slow side), is read at its 8-voice cell.
+    ("FUZZ", |p| fx(p, FxType::Fuzz, 0.5), STILL),
+    ("FUZZ MOVE", |p| staged(p, FxType::Fuzz), STILL),
+    ("FUZZ 8V", |p| fx(p, FxType::Fuzz, 1.0), STILL),
     (
         "2040 R2",
         |p| {

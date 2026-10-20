@@ -71,10 +71,11 @@ impl FxType {
     ///   at 480 MHz), 43, and the offset of silence's fold (ADR 0060), 1
     ///   instruction a sample, 1.6 by ADR 0056's host method. LEVEL's
     ///   multiply adds about 1: re-measured on the unit in Task 13.
-    /// - FUZZ: a placeholder until Task 13 bills it on the unit. The
-    ///   research's paper count, 93 instructions and 2 `vdiv` a sample at
-    ///   1× (ADR 0156), is what `tools/loop_count.py` reads on the ORBIT
-    ///   ELF's `Fuzz::steady` (186 and 4 a round of two samples): 175.
+    /// - FUZZ: the host count, `tools/loop_count.py` on the ORBIT ELF's
+    ///   `Fuzz::steady` (ADR 0056): 186 instructions and 4 `vdiv` a round of
+    ///   two samples, 93 and 2 a sample (ADR 0156), 175. The unit's `FUZZ`
+    ///   row (`bench.rs`, less 1 OP) is PENDING (unit); FUZZ plus the bare
+    ///   chain stays under the ceiling, 271 - 95.
     pub const fn cost(self) -> Cost {
         match self {
             FxType::Off => Cost::ZERO,
@@ -91,16 +92,17 @@ impl FxType {
     /// - FOLD: recounted on the bench ELF at 1879169d (2026-10-07): the
     ///   moving loop 45 instructions a sample (silence's fold per sample,
     ///   ADR 0060) + 3.48 of block, 80, against the steady 24 + 3.48, 45.
-    /// - FUZZ: a placeholder until Task 13: four settings stepped and the
-    ///   mix's gains formed a sample, about 10 instructions, and the loop
-    ///   not unrolled, about 3, over the steady loop: 13, 20.
+    /// - FUZZ: the moving loop, counted on the ORBIT ELF's `Fuzz::run` (the
+    ///   per-sample `tick` with four settings stepped and the gains formed):
+    ///   123 instructions and 2 `vdiv` a sample, 225, over the steady 175:
+    ///   50. The unit's `FUZZ MOVE` row is PENDING (unit).
     ///
     /// Unrouted, only the UI moves them: brief, in the headroom (ADR 0061).
     pub const fn ramp_cost(self) -> Cost {
         match self {
             FxType::Off => Cost::ZERO,
             FxType::Soft => Cost(26),
-            FxType::Fuzz => Cost(20),
+            FxType::Fuzz => Cost(50),
             FxType::Fold => Cost(35),
         }
     }
@@ -108,8 +110,8 @@ impl FxType {
     /// A knob glide's blocks: four steady loops' prologues, a few
     /// instructions each, no divide: under 1 a sample, billed 1 (ADR 0117).
     /// FUZZ's four prologues each take two `exp2`s (SUSTAIN and VOLUME)
-    /// and the call, about 45 instructions: 3 a sample, a placeholder 5
-    /// until Task 13.
+    /// and the call, about 45 instructions: 3 a sample, billed 5 (a
+    /// margin; the unit's reading is PENDING).
     pub const fn glide_cost(self) -> Cost {
         match self {
             FxType::Off => Cost::ZERO,
