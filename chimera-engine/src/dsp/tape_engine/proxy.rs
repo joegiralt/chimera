@@ -22,13 +22,13 @@ use super::{Heads, PlayMode, TapeDeck, TapeEngineParams, TapeModel, model_cost};
 /// all of them bank 2's (`TapeDeck::DOOR`).
 #[repr(C)]
 pub struct TapeDoor {
-    pub init: fn(&mut MaybeUninit<TapeDeck>),
-    pub seed: fn(&mut TapeDeck, u32),
-    pub strip: fn(&TapeDeck) -> super::Strip,
-    pub restore: fn(&mut TapeDeck, super::Strip),
-    pub latch: fn(&mut TapeDeck, SourceId),
-    pub unlatch: fn(&mut TapeDeck),
-    pub start: fn(
+    init: fn(&mut MaybeUninit<TapeDeck>),
+    seed: fn(&mut TapeDeck, u32),
+    strip: fn(&TapeDeck) -> super::Strip,
+    restore: fn(&mut TapeDeck, super::Strip),
+    latch: fn(&mut TapeDeck, SourceId),
+    unlatch: fn(&mut TapeDeck),
+    start: fn(
         &mut TapeDeck,
         u8,
         &TapeEngineParams,
@@ -36,8 +36,8 @@ pub struct TapeDoor {
         u32,
         Option<&mut StreamPort<'_, '_>>,
     ),
-    pub refuses: fn(&TapeEngineParams, Option<SourceId>, &GateView<'_>) -> bool,
-    pub play: fn(
+    refuses: fn(&TapeEngineParams, Option<SourceId>, &GateView<'_>) -> bool,
+    play: fn(
         &mut TapeDeck,
         &mut [f32; BLOCK_SIZE],
         &TapeEngineParams,
@@ -45,13 +45,13 @@ pub struct TapeDoor {
         u32,
         Option<&mut StreamPort<'_, '_>>,
     ),
-    pub cost: fn(&TapeEngineParams, &ModState) -> Cost,
-    pub playing_cost: fn(&TapeDeck) -> Option<Cost>,
-    pub set_pitch: fn(&mut TapeDeck, f32),
-    pub glide_to: fn(&mut TapeDeck, u8, (u32, f32)),
-    pub release_by: fn(&mut TapeDeck, bool),
-    pub hold: fn(&mut TapeDeck),
-    pub heads: fn(&TapeDeck) -> Heads,
+    cost: fn(&TapeEngineParams, &ModState) -> Cost,
+    playing_cost: fn(&TapeDeck) -> Option<Cost>,
+    set_pitch: fn(&mut TapeDeck, f32),
+    glide_to: fn(&mut TapeDeck, u8, (u32, f32)),
+    release_by: fn(&mut TapeDeck, bool),
+    hold: fn(&mut TapeDeck),
+    heads: fn(&TapeDeck) -> Heads,
 }
 
 impl TapeDeck {

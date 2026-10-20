@@ -28,7 +28,7 @@ fn open(c: &DoorCell, door_off: u32) -> bool {
     // SAFETY: the door was judged against `SEAL`, the stand-in build's seal.
     match unsafe { Judged::of(&door(door_off)) } {
         Some(j) => {
-            c.open(j);
+            c.open(j.check(|_| true).expect("passes"));
             true
         }
         None => {
@@ -96,6 +96,14 @@ fn a_judged_door_is_not_open_till_opened() {
     let j = unsafe { Judged::of(&door(0x100)) }.expect("this link's door");
     assert!(!c.is_open());
     assert!(c.with(|_| ()).is_none());
-    c.open(j);
+    c.open(j.check(|_| true).expect("passes"));
     assert!(c.is_open());
+}
+
+/// A judged door that fails its check is never `Checked`, so never opens.
+#[test]
+fn a_door_that_fails_its_check_cannot_open() {
+    // SAFETY: as `open`.
+    let j = unsafe { Judged::of(&door(0x100)) }.expect("this link's door");
+    assert!(j.check(|_| false).is_none());
 }

@@ -4,7 +4,8 @@ use core::fmt::{self, Write};
 
 /// Bank 1's state of the door, for the board.
 pub use chimera_engine::bank2::{
-    BOARD_DOOR_ADDR, DOOR_CELL, DOOR_MAGIC, Judged, PROBE_ADDS, TABLE_LEN, UI_DOOR_ADDR,
+    BOARD_DOOR_ADDR, Checked, DOOR_CELL, DOOR_MAGIC, DoorSlot, Judged, PROBE_ADDS, TABLE_LEN,
+    UI_DOOR_ADDR,
 };
 use chimera_hal::store::Store;
 use chimera_image::{FlashFail, Verdict};
@@ -155,23 +156,27 @@ pub fn closed_part(
 
 /// The UI's table in bank 2 (ADR 0175), at `UI_DOOR_ADDR`: TAPE's cells
 /// and strip, which the engine's door can't name. Without `bank2`, and on
-/// a host, the UI calls its own (`UiDoor::OWN`).
+/// a host, the UI calls its own (`UiDoor::OWN`). Its entries are called
+/// through its methods, so none leaves `ui_door`:
+///
+/// ```compile_fail
+/// let _ = chimera_core::bank2::ui_door(|d| d.strip);
+/// ```
 #[repr(C)]
 pub struct UiDoor {
     magic: u32,
-    pub(crate) overview: fn(&SourceView<'_>, f32, f32) -> Overview,
-    pub(crate) strip_key: fn(&Overview, TapeModel, &TapeEngineParams, Heads) -> u32,
+    overview: fn(&SourceView<'_>, f32, f32) -> Overview,
+    strip_key: fn(&Overview, TapeModel, &TapeEngineParams, Heads) -> u32,
     #[allow(clippy::type_complexity)]
-    pub(crate) strip:
-        fn(&mut dyn Paint, &Overview, TapeModel, &TapeEngineParams, Heads, (i32, i32)),
-    pub(crate) source_turn: fn(&mut SourceCell, &mut Project, PartId, i8),
-    pub(crate) source_load: fn(&mut SourceCell, &mut Project, PartId),
-    pub(crate) source_kind: fn(&SourceCell, &Project, PartId, u32) -> Option<HeadKind>,
+    strip: fn(&mut dyn Paint, &Overview, TapeModel, &TapeEngineParams, Heads, (i32, i32)),
+    source_turn: fn(&mut SourceCell, &mut Project, PartId, i8),
+    source_load: fn(&mut SourceCell, &mut Project, PartId),
+    source_kind: fn(&SourceCell, &Project, PartId, u32) -> Option<HeadKind>,
     #[cfg(feature = "tape")]
-    pub(crate) source_tick: fn(&mut SourceCell, &mut Project),
-    pub(crate) source_run: fn(&mut SourceCell, SourceJob, &mut dyn Store, &Ready, &mut Project),
+    source_tick: fn(&mut SourceCell, &mut Project),
+    source_run: fn(&mut SourceCell, SourceJob, &mut dyn Store, &Ready, &mut Project),
     /// START's and END's onset snap (`ui::onset`, ADR 0185).
-    pub(crate) onset: fn(&[u8], u32, u32, bool) -> Option<u32>,
+    onset: fn(&[u8], u32, u32, bool) -> Option<u32>,
 }
 
 /// A card row's head and how it loads (`SourceCell::kind`).
@@ -196,7 +201,86 @@ impl UiDoor {
         source_run: SourceCell::run_in,
         onset: crate::ui::onset::onset_in_bank2,
     };
+
+    #[inline(always)]
+    pub(crate) fn overview(&self, v: &SourceView<'_>, start: f32, end: f32) -> Overview {
+        (self.overview)(v, start, end)
+    }
+
+    #[inline(always)]
+    pub(crate) fn strip_key(
+        &self,
+        o: &Overview,
+        model: TapeModel,
+        p: &TapeEngineParams,
+        heads: Heads,
+    ) -> u32 {
+        (self.strip_key)(o, model, p, heads)
+    }
+
+    #[inline(always)]
+    pub(crate) fn strip(
+        &self,
+        on: &mut dyn Paint,
+        o: &Overview,
+        model: TapeModel,
+        p: &TapeEngineParams,
+        heads: Heads,
+        at: (i32, i32),
+    ) {
+        (self.strip)(on, o, model, p, heads, at)
+    }
+
+    #[inline(always)]
+    pub(crate) fn source_turn(&self, c: &mut SourceCell, p: &mut Project, part: PartId, d: i8) {
+        (self.source_turn)(c, p, part, d)
+    }
+
+    #[inline(always)]
+    pub(crate) fn source_load(&self, c: &mut SourceCell, p: &mut Project, part: PartId) {
+        (self.source_load)(c, p, part)
+    }
+
+    #[inline(always)]
+    pub(crate) fn source_kind(
+        &self,
+        c: &SourceCell,
+        p: &Project,
+        part: PartId,
+        stem: u32,
+    ) -> Option<HeadKind> {
+        (self.source_kind)(c, p, part, stem)
+    }
+
+    #[cfg(feature = "tape")]
+    #[inline(always)]
+    pub(crate) fn source_tick(&self, c: &mut SourceCell, p: &mut Project) {
+        (self.source_tick)(c, p)
+    }
+
+    #[inline(always)]
+    pub(crate) fn source_run(
+        &self,
+        c: &mut SourceCell,
+        job: SourceJob,
+        s: &mut dyn Store,
+        r: &Ready,
+        p: &mut Project,
+    ) {
+        (self.source_run)(c, job, s, r, p)
+    }
+
+    #[inline(always)]
+    pub(crate) fn onset(&self, held: &[u8], frames: u32, from: u32, fwd: bool) -> Option<u32> {
+        (self.onset)(held, frames, from, fwd)
+    }
 }
+
+/// `UI_DOOR`'s slot.
+#[cfg(feature = "bank2")]
+// SAFETY: `bank2.x` links `UI_DOOR`, a `UiDoor`, at `UI_DOOR_ADDR` (its
+// assert, `__bank2_ui_door`).
+const UI_SLOT: DoorSlot<UiDoor> = unsafe { DoorSlot::new(UI_DOOR_ADDR) };
 
 #[cfg(feature = "bank2")]
 #[unsafe(link_section = ".bank2.door.ui")]
@@ -210,9 +294,7 @@ static UI_DOOR: UiDoor = UiDoor::OWN;
 pub fn ui_door<R>(f: impl FnOnce(&UiDoor) -> R) -> Option<R> {
     #[cfg(all(feature = "bank2", target_os = "none"))]
     {
-        // SAFETY: `bank2.x` links `UI_DOOR`, a `UiDoor`, at its slot,
-        // `UI_DOOR_ADDR` (its assert).
-        unsafe { DOOR_CELL.with_at(UI_DOOR_ADDR, f) }
+        DOOR_CELL.with_slot(UI_SLOT, f)
     }
     #[cfg(all(feature = "tape", not(all(feature = "bank2", target_os = "none"))))]
     {
@@ -242,9 +324,7 @@ pub fn ui_closed() -> bool {
 /// before the door opens).
 #[cfg(feature = "bank2")]
 pub fn ui_door_ok(j: &chimera_engine::bank2::Judged) -> bool {
-    // SAFETY: `bank2.x` links `UI_DOOR`, a `UiDoor`, at its slot,
-    // `UI_DOOR_ADDR` (its assert).
-    unsafe { j.with_at(UI_DOOR_ADDR, |d: &UiDoor| d.magic == UI_MAGIC) }
+    j.with_slot(UI_SLOT, |d| d.magic == UI_MAGIC)
 }
 
 /// A flash op's failure in words: `timeout`, `errors 00040000`, …

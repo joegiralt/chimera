@@ -43,16 +43,53 @@ pub(crate) struct BillAt {
 /// What bank 1 may call of admission (ADR 0137): bank 2's with `bank2`.
 #[repr(C)]
 pub struct AdmitDoor {
-    pub(crate) bill: fn(&Instrument, PartId, &AudioShared, &GateView<'_>, BillAt) -> Option<Paid>,
+    bill: fn(&Instrument, PartId, &AudioShared, &GateView<'_>, BillAt) -> Option<Paid>,
     #[allow(clippy::type_complexity)]
-    pub(crate) pick: fn(
+    pick: fn(
         &mut Instrument,
         PickAt,
         (Cost, bool),
         Paid,
         (Option<&StreamStats>, CardFault),
     ) -> Option<(usize, Option<Paid>)>,
-    pub(crate) refresh: fn(&mut Instrument, &AudioShared, &GateView<'_>, Option<&StreamStats>),
+    refresh: fn(&mut Instrument, &AudioShared, &GateView<'_>, Option<&StreamStats>),
+}
+
+impl AdmitDoor {
+    #[inline(always)]
+    pub(crate) fn bill(
+        &self,
+        i: &Instrument,
+        p: PartId,
+        shared: &AudioShared,
+        src: &GateView<'_>,
+        at: BillAt,
+    ) -> Option<Paid> {
+        (self.bill)(i, p, shared, src, at)
+    }
+
+    #[inline(always)]
+    pub(crate) fn pick(
+        &self,
+        i: &mut Instrument,
+        at: PickAt,
+        costs: (Cost, bool),
+        new: Paid,
+        ctx: (Option<&StreamStats>, CardFault),
+    ) -> Option<(usize, Option<Paid>)> {
+        (self.pick)(i, at, costs, new, ctx)
+    }
+
+    #[inline(always)]
+    pub(crate) fn refresh(
+        &self,
+        i: &mut Instrument,
+        shared: &AudioShared,
+        src: &GateView<'_>,
+        stats: Option<&StreamStats>,
+    ) {
+        (self.refresh)(i, shared, src, stats)
+    }
 }
 
 impl Instrument {

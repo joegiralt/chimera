@@ -78,7 +78,7 @@ pub enum Aa {
 #[cfg(feature = "bank2")]
 #[repr(C)]
 pub struct FuzzDoor {
-    pub run: fn(&mut Fuzz, &mut [f32; BLOCK_SIZE], &Ends, bool),
+    run: fn(&mut Fuzz, &mut [f32; BLOCK_SIZE], &Ends, bool),
 }
 
 #[cfg(feature = "bank2")]

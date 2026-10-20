@@ -1023,7 +1023,7 @@ impl Instrument {
         if shared.parts[p.index()].params.engine() != EngineType::Tape {
             return None;
         }
-        Self::admission(|d| (d.bill)(self, p, shared, src, at)).flatten()
+        Self::admission(|d| d.bill(self, p, shared, src, at)).flatten()
     }
 
     /// Once a block, before the voices render: the streamed notes'
@@ -1034,7 +1034,7 @@ impl Instrument {
         src: &GateView<'_>,
         stats: Option<&StreamStats>,
     ) {
-        Self::admission(|d| (d.refresh)(self, shared, src, stats));
+        Self::admission(|d| d.refresh(self, shared, src, stats));
     }
 
     /// The voice a note-on books: a streamed note through admission
@@ -1048,7 +1048,7 @@ impl Instrument {
         ctx: (Option<&StreamStats>, CardFault),
     ) -> Option<(usize, Option<Paid>)> {
         if let Some(new) = stream
-            && let Some(r) = Self::admission(|d| (d.pick)(self, at, costs, new, ctx))
+            && let Some(r) = Self::admission(|d| d.pick(self, at, costs, new, ctx))
         {
             return r;
         }

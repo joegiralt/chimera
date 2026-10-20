@@ -358,8 +358,8 @@ pub fn paint(g: &TapeGauge, out: &mut Canvas) -> bool {
 #[cfg(feature = "bank2")]
 #[repr(C)]
 pub struct GlyphDoor {
-    pub render: fn(&TapeGauge, &mut Canvas),
-    pub inputs: fn([f32; 10], bool) -> TapeGauge,
+    render: fn(&TapeGauge, &mut Canvas),
+    inputs: fn([f32; 10], bool) -> TapeGauge,
 }
 
 #[cfg(feature = "bank2")]

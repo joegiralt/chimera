@@ -546,7 +546,7 @@ impl SourceCell {
     #[cfg_attr(not(feature = "tape"), allow(unused_variables))]
     pub fn tick(&mut self, p: &mut Project) {
         #[cfg(feature = "tape")]
-        crate::bank2::ui_door(|u| (u.source_tick)(self, p));
+        crate::bank2::ui_door(|u| u.source_tick(self, p));
     }
 
     pub fn loading(&self) -> bool {
@@ -636,19 +636,19 @@ impl SourceCell {
     /// a card row is only shown, dimmed, until MIX + PLUS loads it
     /// (`card`'s `turn_in`). Closed, it doesn't turn.
     pub fn turn(&mut self, p: &mut Project, part: PartId, delta: i8) {
-        crate::bank2::ui_door(|u| (u.source_turn)(self, p, part, delta));
+        crate::bank2::ui_door(|u| u.source_turn(self, p, part, delta));
     }
 
     /// MIX + PLUS on SOURCE: loads the card row it's on, if it fits
     /// (`card`'s `load_in`). Closed, nothing loads.
     pub fn load(&mut self, p: &mut Project, part: PartId) {
-        crate::bank2::ui_door(|u| (u.source_load)(self, p, part));
+        crate::bank2::ui_door(|u| u.source_load(self, p, part));
     }
 
     /// How card row `stem` loads for `part` (`card`'s `kind_in`); closed,
     /// unknown.
     fn kind(&self, p: &Project, part: PartId, stem: u32) -> Option<(SourceHead, LoadKind)> {
-        crate::bank2::ui_door(|u| (u.source_kind)(self, p, part, stem)).flatten()
+        crate::bank2::ui_door(|u| u.source_kind(self, p, part, stem)).flatten()
     }
 
     /// One pass of the queued card work. Out of line: its rows and the
@@ -682,7 +682,7 @@ impl SourceCell {
         match job {
             SourceJob::Stage(l) => self.job = Some(SourceJob::Stage(l)),
             job => {
-                crate::bank2::ui_door(move |u| (u.source_run)(self, job, s, r, p));
+                crate::bank2::ui_door(move |u| u.source_run(self, job, s, r, p));
             }
         }
     }

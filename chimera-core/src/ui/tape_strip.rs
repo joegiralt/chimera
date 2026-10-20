@@ -55,7 +55,7 @@ impl Overview {
     /// `[START, END]` of `v` in `COLS` spans (`raster`'s `of_in`); closed,
     /// `EMPTY`.
     pub fn of(v: &SourceView<'_>, start: f32, end: f32) -> Overview {
-        crate::bank2::ui_door(|u| (u.overview)(v, start, end)).unwrap_or(Overview::EMPTY)
+        crate::bank2::ui_door(|u| u.overview(v, start, end)).unwrap_or(Overview::EMPTY)
     }
 
     pub fn col(&self, c: usize) -> [i8; 2] {
@@ -80,7 +80,7 @@ impl Overview {
 /// What the viz region redraws on: the overview, the machine's params and
 /// the heads to the column (`raster`'s `key_in`); closed, 0.
 pub fn key(o: &Overview, model: TapeModel, p: &TapeEngineParams, heads: Heads) -> u32 {
-    crate::bank2::ui_door(|u| (u.strip_key)(o, model, p, heads)).unwrap_or(0)
+    crate::bank2::ui_door(|u| u.strip_key(o, model, p, heads)).unwrap_or(0)
 }
 
 /// What the strip draws with: a display behind a `dyn`, so its raster is
@@ -120,5 +120,5 @@ pub fn draw_strip<D>(
     D: DrawTarget<Color = Rgb565>,
 {
     let mut on = On(d);
-    crate::bank2::ui_door(|u| (u.strip)(&mut on, o, model, p, heads, (x, y)));
+    crate::bank2::ui_door(|u| u.strip(&mut on, o, model, p, heads, (x, y)));
 }

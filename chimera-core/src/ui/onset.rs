@@ -37,7 +37,7 @@ pub(crate) use detect::onset_in_bank2;
 /// The next onset in `held` (a source of `frames`) from `from` the turn's
 /// way (`fwd`): bank 2's detector through the door; `None` with it shut.
 pub fn onset(held: &[u8], frames: u32, from: u32, fwd: bool) -> Option<u32> {
-    crate::bank2::ui_door(|d| (d.onset)(held, frames, from, fwd)).flatten()
+    crate::bank2::ui_door(|d| d.onset(held, frames, from, fwd)).flatten()
 }
 
 /// START or END at `v` as time into the source: `137 MS` under a second,

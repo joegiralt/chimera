@@ -47,14 +47,18 @@ static BOARD_DOOR: BoardDoor = BoardDoor {
     card: crate::card_dma::CardDoor::DOOR,
 };
 
+/// `BOARD_DOOR`'s slot.
+#[cfg(feature = "bank2")]
+// SAFETY: `bank2.x` links `BOARD_DOOR`, a `BoardDoor`, at `BOARD_DOOR_ADDR`
+// (its assert, `__bank2_board_door`).
+const BOARD_SLOT: chimera_core::bank2::DoorSlot<BoardDoor> =
+    unsafe { chimera_core::bank2::DoorSlot::new(chimera_core::bank2::BOARD_DOOR_ADDR) };
+
 /// `f` on the board's table, `None` closed (see `DoorCell::with`).
 #[cfg(all(feature = "bank2", not(feature = "sd-probe")))]
 #[inline(always)]
 pub(crate) fn board_door<R>(f: impl FnOnce(&BoardDoor) -> R) -> Option<R> {
-    use chimera_core::bank2::BOARD_DOOR_ADDR;
-    // SAFETY: `bank2.x` links `BOARD_DOOR`, a `BoardDoor`, at its slot,
-    // `BOARD_DOOR_ADDR` (its assert).
-    unsafe { DOOR_CELL.with_at(BOARD_DOOR_ADDR, f) }
+    DOOR_CELL.with_slot(BOARD_SLOT, f)
 }
 
 /// MPU region 2's state over S0-S3; region 1 (no access) is under it.
@@ -450,7 +454,7 @@ pub fn reset_on_ecc_fault() {
 /// in.
 #[cfg(feature = "bank2")]
 fn open_door(seal: &chimera_image::Seal) -> (Bank2Status, Verdict) {
-    use chimera_core::bank2::{BOARD_DOOR_ADDR, DOOR_MAGIC, Judged, PROBE_ADDS, TABLE_LEN};
+    use chimera_core::bank2::{DOOR_MAGIC, Judged, PROBE_ADDS, TABLE_LEN};
     use chimera_image::Door;
 
     DOOR_CELL.close();
@@ -466,24 +470,23 @@ fn open_door(seal: &chimera_image::Seal) -> (Bank2Status, Verdict) {
     let judged = unsafe { Judged::of(&door) };
     // Checked where it lies, then published: the audio and card
     // interrupts, live at an install, call through it only once it passed.
-    let ok = judged.as_ref().is_some_and(|j| {
-        j.with(|d| {
-            let last = TABLE_LEN - 1;
-            d.magic == DOOR_MAGIC
-                && (d.probe)(1) == 1 + PROBE_ADDS
-                && d.table[0] == 0xB2
-                && d.table[last] == last as u8 ^ 0xB2
+    let checked = judged.and_then(|j| {
+        j.check(|j| {
+            j.with(|d| {
+                let last = TABLE_LEN - 1;
+                d.magic == DOOR_MAGIC
+                    && d.probe(1) == 1 + PROBE_ADDS
+                    && d.table()[0] == 0xB2
+                    && d.table()[last] == last as u8 ^ 0xB2
+            }) && j.with_slot(BOARD_SLOT, |b| b.magic == BOARD_MAGIC)
+                && chimera_core::bank2::ui_door_ok(j)
         })
-        // SAFETY: `bank2.x` links `BOARD_DOOR`, a `BoardDoor`, at its slot,
-        // `BOARD_DOOR_ADDR` (its assert).
-        && unsafe { j.with_at(BOARD_DOOR_ADDR, |b: &BoardDoor| b.magic == BOARD_MAGIC) }
-        && chimera_core::bank2::ui_door_ok(j)
     });
-    let Some(judged) = judged.filter(|_| ok) else {
+    let Some(checked) = checked else {
         set_mpu(Mpu2::Read);
         return (Bank2Status::Corrupt, flash);
     };
-    DOOR_CELL.open(judged);
+    DOOR_CELL.open(checked);
     let status = Bank2Status::Open {
         version: *door.version(),
         seal: door.seal().bytes(),
