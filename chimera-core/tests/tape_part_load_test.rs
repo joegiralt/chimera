@@ -368,6 +368,101 @@ mod streamed {
         assert_eq!(b.as_str(), READ_FAILED);
     }
 
+    /// M3: a card file under the project's stem whose head names other
+    /// rate is another source: pass 2 leaves the Part's absent, and it
+    /// takes no stream row under a new id.
+    #[test]
+    fn pass_two_refuses_a_file_naming_another_ref() {
+        let mut s = MemStore::new(1);
+        let bed = source(6, 150_000);
+        put(&mut s, &bed);
+        let (mut p, t) = Project::boxed();
+        tape_part(&mut p, t, 0, bed.0.sref);
+        p.source_absent(bed.0.sref).unwrap();
+        let mut other = source(6, 150_000);
+        other.0.sref.rate = 48_000;
+        assert_eq!(source_file(other.0.sref), source_file(bed.0.sref));
+        let mut s2 = MemStore::new(1);
+        put(&mut s2, &other);
+        let bytes = file_bytes(&mut s2, &other);
+        let mut card = Card::new();
+        assert!(matches!(
+            save_at(&mut card, &mut s, &mut p, 1),
+            ProjectNote::Saved(_)
+        ));
+        s.plant(source_file(bed.0.sref), &bytes);
+        let (mut q, t) = Project::boxed();
+        let vol = s.mount().unwrap();
+        let id = ProjectId::new(1).unwrap();
+        let go = ReplaceGuard::check(&q, t, ProjectSource::File { id, vol }).expect("no prompt");
+        let out = load_project(&mut card, &mut s, &mut q, go, &LoadLink::new());
+        assert!(out.swap.is_some(), "{:?}", out.note);
+        let id = q.pool().find_source(bed.0.sref).expect("the ref kept");
+        assert_eq!(q.pool().absence(id), Some(Absence::Missing));
+        assert!(
+            q.pool().find_source(other.0.sref).is_none(),
+            "no row for the impostor"
+        );
+        let streams = q.pool().streams().unwrap();
+        assert!(
+            SourceId::ALL.into_iter().all(|i| streams.get(i).is_none()),
+            "no stream row"
+        );
+    }
+
+    /// M4: the gap moved under a streamed load between its passes (another
+    /// source went in below it): it stages again and loads, never POOL FULL.
+    #[test]
+    fn a_streamed_load_whose_gap_moves_stages_again() {
+        use chimera_core::project::test_support::set_free_to;
+        let mut s = MemStore::new(1);
+        let bed = source(7, 150_000);
+        put(&mut s, &bed);
+        let r = bed.0.sref;
+        let (mut p, t) = Project::boxed();
+        tape_part(&mut p, t, 0, r);
+        let heads = heads_for(r, &p.part(PartId::ALL[0]).sound.params.tape).unwrap();
+        let mut card = Card::new();
+        let got = card
+            .run(&mut s, |s, rd| {
+                let mut l = StreamLoad::start(&mut p, bed.0, heads).unwrap();
+                let mut moved = false;
+                let mut passes = 0;
+                loop {
+                    passes += 1;
+                    if passes == 3 && !moved {
+                        let free = p.pool().free().bytes() as usize;
+                        set_free_to(&mut p, chimera_core::project::arena::Cost::of(free - 4_096));
+                        moved = true;
+                    }
+                    match l.step(s, rd, &mut p, 4_096) {
+                        StreamStep::More => {}
+                        StreamStep::Done(id) => break Ok::<_, chimera_hal::store::StoreError>(id),
+                        StreamStep::Failed(f) => panic!("{f:?}"),
+                    }
+                }
+            })
+            .unwrap()
+            .result
+            .unwrap();
+        assert_eq!(p.pool().find_source(r), Some(got));
+        assert!(p.pool().streamed(r));
+        // The heads read again whole at the new place: the same bytes a
+        // clean load stages.
+        let (mut clean, t) = Project::boxed();
+        tape_part(&mut clean, t, 0, r);
+        let mut card = Card::new();
+        let done = card
+            .run(&mut s, |s, rd| {
+                let mut l = StreamLoad::start(&mut clean, bed.0, heads).unwrap();
+                while l.step(s, rd, &mut clean, 4_096) == StreamStep::More {}
+                Ok::<_, chimera_hal::store::StoreError>(())
+            })
+            .unwrap();
+        done.result.unwrap();
+        assert_eq!(p.pool().held(r), clean.pool().held(r));
+    }
+
     /// A Part that plays its too-big source a way that needs it whole:
     /// pass 2 keeps it absent and the cell says why.
     #[test]

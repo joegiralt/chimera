@@ -6,6 +6,7 @@
 use chimera_hal::store::{RunsError, Store, StoreError};
 use chimera_hal::units::Bytes;
 
+use super::super::arena::ARENA_BYTES;
 use super::super::pool::StreamRefused;
 use super::super::sources::source_cost;
 use super::super::{Absence, PartId, PoolFull, Project, SourceId};
@@ -70,9 +71,18 @@ impl StreamLoad {
             free: p.pool().free(),
         });
         let (stage, held) = p.source_staging(len).ok_or(gone)?;
+        // The gap moved since the last pass (a source in or out below it):
+        // nothing is published yet, so its heads are staged again there.
         if stage != self.stage {
-            return Err(gone);
+            self.stage = stage;
+            self.at = 0;
+            return Ok(None);
         }
+        // A head past any file's bytes, or a table longer than its row:
+        // the head's numbers are wrong, not the pool's room.
+        let corrupt = StreamFail::Read(SourceReadError::Load(LoadError::File(
+            crate::storage::FileError::Corrupt,
+        )));
         let d = Descriptor {
             shape: Shape::Plain,
             count: 1,
@@ -80,7 +90,7 @@ impl StreamLoad {
             head_frames: head_frames(self.sref.rate),
             heads: 0,
         };
-        let table = write_head_table(d, self.heads.as_slice(), held).ok_or(gone)?;
+        let table = write_head_table(d, self.heads.as_slice(), held).ok_or(corrupt)?;
         // The head the next bytes are in, and how far into it.
         let mut before = 0;
         for h in self.heads.as_slice() {
@@ -91,7 +101,7 @@ impl StreamLoad {
                 let from = Frames::new(h.first())
                     .to_bytes(Packing::Twelve)
                     .checked_add(Bytes::new(into as u32))
-                    .ok_or(gone)?;
+                    .ok_or(corrupt)?;
                 read_packed_into(s, r, self.sref, from, out).map_err(StreamFail::Read)?;
                 self.at += n;
                 return Ok(None);
@@ -155,6 +165,12 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
             }
         };
         let head = match read_source_head(s, r, e.r.crc, runs.len.get()) {
+            // The stem alone matched: another source's file under it is
+            // not this one (as `StreamLoad::pass` and `read_sources` judge).
+            Ok(head) if head.sref != e.r => {
+                p.pool.mark_absent(id, Absence::Missing);
+                continue;
+            }
             Ok(head) => head,
             Err(err) => {
                 p.pool.mark_absent(id, Absence::ReadFailed);
@@ -172,11 +188,16 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
             }
             LoadKind::Whole => continue,
         };
+        // Its runs don't hold its samples, or its heads don't fit the gap.
         let Some(mut l) = StreamLoad::found(p, head, heads, runs) else {
+            p.pool.mark_absent(id, Absence::Missing);
             continue;
         };
+        // One card operation, as `read_sources`' whole reads (ADR 0087):
+        // the heads are the arena's, so a load reads at most `ARENA_BYTES`
+        // of them, whatever the budget.
         let why = loop {
-            match step(&mut l, s, r, p, usize::MAX) {
+            match step(&mut l, s, r, p, ARENA_BYTES) {
                 StreamStep::More => {}
                 StreamStep::Done(_) => {
                     n = n.saturating_add(1);
@@ -188,7 +209,10 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
                     fault = err.store_error().is_some();
                     break Some(Absence::ReadFailed);
                 }
-                StreamStep::Failed(_) => break None,
+                // The heads didn't fit; `Sounding` is a re-head's alone.
+                StreamStep::Failed(StreamFail::Pool(_) | StreamFail::Sounding) => {
+                    break Some(Absence::Missing);
+                }
             }
         };
         if let Some(w) = why {
