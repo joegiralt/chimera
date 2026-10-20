@@ -777,6 +777,15 @@ struct Blk {
 /// "No wrap" in a wrap buffer (a wrap's `t` is in 0..=1).
 pub const NO_WRAP: f32 = -1.0;
 
+/// A jump's mark lies under this (`JUMP − 1 − t`, `t` in 0..=1): never a
+/// wrap's, so a mark left from the last block is never one.
+pub const JUMP: f32 = -2.0;
+
+/// PHASE's jumps a block (`render_steps`): each costs a jump's way in OSC
+/// 1 (`door::jump`), so the bill takes this many; past them OSC 2's steps
+/// are corrected as ever and OSC 1 reads them as motion (ADR 0160).
+pub const PM_JUMPS: u8 = 6;
+
 /// A block (64 samples, the engine's) of no modulation: a plain
 /// instance's `m`, never read.
 pub static ZEROS: [f32; 64] = [0.0; 64];
@@ -866,6 +875,16 @@ impl Run {
 #[cfg(any(test, feature = "test-support"))]
 const EDGE_LOG: usize = 8;
 
+/// The loop's state a jump moves (`door::jump`): the edges' phases since
+/// them, the pulse's level, the read and the corrector.
+struct Leg {
+    u: [f32; 4],
+    h: f32,
+    rd: f32,
+    held: f32,
+    acc: f32,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct VarOsc {
     /// The clock: the wraps, the sub's flips, the jitter's draws.
@@ -875,6 +894,13 @@ pub struct VarOsc {
     read: f32,
     /// The read's direction, ±1 (a reversing sync's turns flip it).
     dir: f32,
+    /// A jump's scale, cycles a unit step, at the block's samples:
+    /// `(from, step)` as a `Ramps` lane (`set_pm_scale`).
+    pm_scale: (f32, f32),
+    /// The jumps OSC 2 may still report this block (`PM_JUMPS`).
+    pm_jumps: u8,
+    /// The marks' slots it reported, in order (`pm_marks`).
+    pm_at: [u8; PM_JUMPS as usize],
     inv_sr: f32,
     #[cfg(any(test, feature = "test-support"))]
     correction: Correction,
@@ -917,6 +943,9 @@ impl VarOsc {
         phase: 0.0,
         read: 0.0,
         dir: 1.0,
+        pm_scale: (0.0, 0.0),
+        pm_jumps: 0,
+        pm_at: [0; PM_JUMPS as usize],
         inv_sr: 1.0 / 48_000.0,
         #[cfg(any(test, feature = "test-support"))]
         correction: Correction::On,
@@ -1004,6 +1033,18 @@ impl VarOsc {
     /// them are the read's already, so they stay; no edge is made.
     pub fn settle(&mut self) {
         (self.phase, self.dir) = (self.read, 1.0);
+    }
+
+    /// The slots of the marks PHASE's OSC 2 reported this block
+    /// (`door::osc2_steps`), in order.
+    pub fn pm_marks(&self) -> &[u8] {
+        &self.pm_at[..usize::from(PM_JUMPS - self.pm_jumps)]
+    }
+
+    /// A jump's scale this block (PHASE's OSC 1, `door::osc1_phase`): `x`
+    /// at sample `i` is `from + step·(i + 1)`.
+    pub fn set_pm_scale(&mut self, x: (f32, f32)) {
+        self.pm_scale = x;
     }
 
     /// The read phase (`phase` after a plain render).
@@ -1119,7 +1160,7 @@ impl VarOsc {
         m: &[f32; N],
         k: (f32, f32),
     ) {
-        self.render_in::<N, REC, SYNC, FLIP, MOD>(out, mk, r, jit, draw, m, k);
+        self.render_in::<N, REC, SYNC, FLIP, MOD, false>(out, mk, r, jit, draw, m, k);
     }
 
     /// `render`'s body, inlined into its caller: a `MOD` instance's runs
@@ -1132,6 +1173,7 @@ impl VarOsc {
         const SYNC: bool,
         const FLIP: bool,
         const MOD: bool,
+        const PH: bool,
     >(
         &mut self,
         out: &mut [f32; N],
@@ -1170,8 +1212,8 @@ impl VarOsc {
             let span = (i0, i1);
             macro_rules! run {
                 ($a:ty, $b:ty) => {
-                    if MOD {
-                        door::run::<$a, $b, N, REC, SYNC, FLIP>(
+                    if MOD || PH {
+                        door::run::<$a, $b, N, REC, SYNC, FLIP, MOD, PH>(
                             self, &blk, span, r, out, mk, jit, draw, m, k,
                         )
                     } else {
@@ -1400,7 +1442,9 @@ impl VarOsc {
         m: &[f32; N],
         km: (f32, f32),
     ) {
-        self.run_in::<A, B, N, REC, SYNC, FLIP, MOD>(blk, span, r, out, mk, jit, draw, m, km);
+        self.run_in::<A, B, N, REC, SYNC, FLIP, MOD, false>(
+            blk, span, r, out, mk, jit, draw, m, km,
+        );
     }
 
     /// `run`'s body: its setup, then its per-sample loop.
@@ -1414,6 +1458,7 @@ impl VarOsc {
         const SYNC: bool,
         const FLIP: bool,
         const MOD: bool,
+        const PH: bool,
     >(
         &mut self,
         blk: &Blk,
@@ -1427,6 +1472,9 @@ impl VarOsc {
         km: (f32, f32),
     ) {
         let run = self.setup::<A, B, SYNC, MOD>(blk, (i0, i1), r, N);
+        // PHASE (ADR 0160): OSC 1 takes jumps at their marks (`MOD`), OSC 2
+        // reports its steps for them
+        let (jumps, steps) = (MOD && PH && !SYNC, PH && !MOD);
         let (mut p, mut held, mut h, mut j) = (self.phase, self.held, self.h, *jit);
         // the read phase, its direction and this sample's rate (`MOD`)
         let (mut rd, mut dir, mut rr) = (self.read, self.dir, 0.0f32);
@@ -1458,6 +1506,33 @@ impl VarOsc {
             let mut acc = -0.0f32;
             // a lone `tick` both reads a sync and writes its wrap here
             let t = if SYNC { mk[i][0] } else { NO_WRAP };
+            // PHASE's OSC 2: this sample's steps, a mark for OSC 1's next
+            // sample (`door::osc2_steps`)
+            let mut rep = [0.0f32; 2];
+            if jumps && mk[i][0] < JUMP {
+                // a jump's mark, before the marks are cleared: the read
+                // moved up to the jump, the jump, then set back so the
+                // sample's own motion and crossings play the rest
+                let x = self.pm_scale.0 + self.pm_scale.1 * (i + 1) as f32;
+                // the read's rate around it, as below
+                let r = ie * (dir + km.0 * m[i]) + km.1 * m[i];
+                let tj = (JUMP - 1.0 - mk[i][0], x * mk[i][1], r - floor(r + 0.5));
+                let mut st = Leg {
+                    u,
+                    h,
+                    rd,
+                    held,
+                    acc,
+                };
+                door::jump::<A, B>(self, &mut st, tj, &od, (ca, cb));
+                Leg {
+                    u,
+                    h,
+                    rd,
+                    held,
+                    acc,
+                } = st;
+            }
             if REC && FLIP {
                 mk[i] = [NO_WRAP; 2];
             } else if REC {
@@ -1482,7 +1557,7 @@ impl VarOsc {
                 if A::EDGES {
                     for e in 0..2 {
                         let k = (rcp[e], ar[e]);
-                        self.cross::<A, false>(
+                        self.cross::<A, false, false>(
                             e,
                             &mut u[e],
                             t,
@@ -1491,6 +1566,7 @@ impl VarOsc {
                             ca,
                             &mut h,
                             (&mut held, &mut acc),
+                            &mut rep,
                         );
                     }
                 }
@@ -1498,7 +1574,17 @@ impl VarOsc {
                     for e in 0..2 {
                         let k = (rcp[e + 2], ar[e + 2]);
                         let ue = &mut u[e + 2];
-                        self.cross::<B, false>(e, ue, t, k, 0.0, cb, &mut h, (&mut held, &mut acc));
+                        self.cross::<B, false, false>(
+                            e,
+                            ue,
+                            t,
+                            k,
+                            0.0,
+                            cb,
+                            &mut h,
+                            (&mut held, &mut acc),
+                            &mut rep,
+                        );
                     }
                 }
                 // y(0) − y(φ⁻) and the slopes' difference × inc
@@ -1597,7 +1683,7 @@ impl VarOsc {
                         for e in 0..2 {
                             let v = rr - od[e];
                             let ue = &mut u[e];
-                            self.cross::<A, true>(
+                            self.cross::<A, true, false>(
                                 e,
                                 ue,
                                 t,
@@ -1606,6 +1692,7 @@ impl VarOsc {
                                 ca,
                                 &mut h,
                                 (&mut held, &mut acc),
+                                &mut rep,
                             );
                         }
                     }
@@ -1613,7 +1700,7 @@ impl VarOsc {
                         for e in 0..2 {
                             let v = rr - od[e + 2];
                             let ue = &mut u[e + 2];
-                            self.cross::<B, true>(
+                            self.cross::<B, true, false>(
                                 e,
                                 ue,
                                 t,
@@ -1622,6 +1709,7 @@ impl VarOsc {
                                 cb,
                                 &mut h,
                                 (&mut held, &mut acc),
+                                &mut rep,
                             );
                         }
                     }
@@ -1656,7 +1744,7 @@ impl VarOsc {
             if A::EDGES {
                 for e in 0..2 {
                     let (k, v) = ((rcp[e], ar[e]), rr - od[e]);
-                    self.cross::<A, MOD>(
+                    self.cross::<A, MOD, PH>(
                         e,
                         &mut u[e],
                         -0.0,
@@ -1665,6 +1753,7 @@ impl VarOsc {
                         ca,
                         &mut h,
                         (&mut held, &mut acc),
+                        &mut rep,
                     );
                 }
             }
@@ -1672,13 +1761,33 @@ impl VarOsc {
                 for e in 0..2 {
                     let (k, v) = ((rcp[e + 2], ar[e + 2]), rr - od[e + 2]);
                     let ue = &mut u[e + 2];
-                    self.cross::<B, MOD>(e, ue, -0.0, k, v, cb, &mut h, (&mut held, &mut acc));
+                    self.cross::<B, MOD, PH>(
+                        e,
+                        ue,
+                        -0.0,
+                        k,
+                        v,
+                        cb,
+                        &mut h,
+                        (&mut held, &mut acc),
+                        &mut rep,
+                    );
                 }
             }
             // the sine reads the read phase (`MOD`), else the clock
             let pr = if MOD { rd } else { p1 };
             let y = A::value([c[0].v, c[1].v, c[2].v], pr, [u[0], u[1]], h)
                 + B::value([bias(c[3]), c[4].v, c[5].v], pr, [u[2], u[3]], h);
+            if steps && rep[1] != 0.0 {
+                // OSC 2 one late: its steps are a jump in OSC 1's next
+                // sample, marked there (the last sample's in the first) and
+                // listed, up to `PM_JUMPS` a block (past them `correct`
+                // corrects them as ever)
+                let k = (i + 1) % N;
+                mk[k] = [JUMP - 1.0 - clampf(rep[0] / rep[1], 0.0, 1.0), rep[1]];
+                self.pm_at[usize::from(PM_JUMPS - self.pm_jumps)] = k as u8;
+                self.pm_jumps -= 1;
+            }
             out[i] = held;
             held = y + acc;
             p = p1;
@@ -1707,7 +1816,7 @@ impl VarOsc {
     /// sample.
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
-    fn cross<K: Kind, const MOD: bool>(
+    fn cross<K: Kind, const MOD: bool, const PH: bool>(
         &mut self,
         e: usize,
         u: &mut f32,
@@ -1717,6 +1826,7 @@ impl VarOsc {
         c: [Lin; 3],
         h: &mut f32,
         (held, acc): (&mut f32, &mut f32),
+        rep: &mut [f32; 2],
     ) {
         let bits = u.to_bits();
         // in 0..1 below 1's bits; a negative `u` has the sign bit
@@ -1727,18 +1837,21 @@ impl VarOsc {
         if (bits as i32) < 0 {
             let t = clampf(t0 + if MOD { *u / v } else { *u * rcp }, 0.0, 1.0);
             *u += 1.0;
-            self.correct::<K>(e, false, t, c, ar, h, (held, acc));
+            self.correct::<K, MOD, PH>(e, false, t, c, ar, h, (held, acc), rep);
         } else {
             *u -= 1.0;
             let t = clampf(t0 + if MOD { *u / v } else { *u * rcp }, 0.0, 1.0);
-            self.correct::<K>(e, true, t, c, ar, h, (held, acc));
+            self.correct::<K, MOD, PH>(e, true, t, c, ar, h, (held, acc), rep);
         }
     }
 
-    /// The crossing's correction at `t`, constants lerped back to it.
+    /// The crossing's correction at `t`, constants lerped back to it; in
+    /// PHASE's OSC 2 (`PH`, no `MOD`), while `pm_jumps` lasts, a step is
+    /// summed into `rep` instead, `[Σ s·t, Σ s]`, and marked at the sample's
+    /// end (`door::osc2_steps`).
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
-    fn correct<K: Kind>(
+    fn correct<K: Kind, const MOD: bool, const PH: bool>(
         &mut self,
         e: usize,
         fwd: bool,
@@ -1747,6 +1860,7 @@ impl VarOsc {
         ar: f32,
         h: &mut f32,
         (held, acc): (&mut f32, &mut f32),
+        rep: &mut [f32; 2],
     ) {
         let jump = K::jump(c, t, e, fwd, *h);
         if K::FLIPS {
@@ -1758,6 +1872,9 @@ impl VarOsc {
             if self.apply(t, 0.0, 6.0 * s6) {
                 blamp6_into(held, acc, t, s6);
             }
+        } else if PH && !MOD && self.pm_jumps > 0 {
+            rep[0] += jump * t;
+            rep[1] += jump;
         } else if self.apply(t, jump, 0.0) {
             blep_into(held, acc, t, jump);
         }

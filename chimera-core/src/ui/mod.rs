@@ -22,6 +22,7 @@ pub mod installing;
 pub mod jog;
 pub mod learn;
 pub mod led;
+pub mod lfo_glyph;
 pub mod library;
 pub mod meter;
 pub use chimera_engine::midi_settings;
@@ -70,7 +71,7 @@ use crate::dsp::reverb::KnobMemory;
 use crate::dsp::tape_engine::{Heads, TapeEngineParams, TapeModel};
 use crate::in_place::uninit_at;
 use crate::instrument::AudioShared;
-use crate::instrument::PartHeads;
+use crate::instrument::{LfoView, PartHeads};
 use crate::mod_path::RegistryError;
 use crate::modulation::{MAX_MOD_SOURCES, ModSource, ModState};
 use crate::name::ProjectName;
@@ -327,6 +328,11 @@ pub struct UiState {
     overview: tape_strip::Overview,
     heads: Heads,
     heads_from: &'static PartHeads,
+    /// An LFO page's playhead (ADR 0177): its slot's newest voice on the
+    /// active Part, read each frame, and where from: the audio's
+    /// (`instrument::LFO_VIEW`) but in tests.
+    lfo_head: Option<lfo_glyph::Head>,
+    lfo_from: &'static LfoView,
     /// The edited Part's newest voice's formant view, as the audio last
     /// published it: what an OP page's band draws.
     formant: FormantView,
@@ -428,6 +434,8 @@ crate::in_place::field_list!(UiState => UiState {
     overview,
     heads,
     heads_from,
+    lfo_head,
+    lfo_from,
     formant,
     src,
     lib,
@@ -497,6 +505,8 @@ impl UiState {
             addr_of_mut!((*p).overview).write(tape_strip::Overview::EMPTY);
             addr_of_mut!((*p).heads).write(Heads::NONE);
             addr_of_mut!((*p).heads_from).write(&crate::instrument::HEADS);
+            addr_of_mut!((*p).lfo_head).write(None);
+            addr_of_mut!((*p).lfo_from).write(&crate::instrument::LFO_VIEW);
             addr_of_mut!((*p).formant).write(FormantView::NONE);
             addr_of_mut!((*p).src).write(source_cell::SourceCell::NEW);
             library::LibState::init_in_place(uninit_at(addr_of_mut!((*p).lib)));
@@ -2463,6 +2473,24 @@ impl UiState {
         self.flush_orbit();
     }
 
+    /// The LFO page's playhead (ADR 0177): while one is up, the audio
+    /// watches the active Part and the page reads its slot's newest voice;
+    /// none on any other page.
+    #[inline(never)]
+    fn lfo_pass(&mut self) {
+        let at = self.active_part.index();
+        let slot = match self.page_def().viz {
+            VizType::Lfo(s) => Some(s),
+            _ => None,
+        };
+        self.lfo_from.watch(slot.map(|_| at));
+        self.lfo_head = slot.and_then(|s| {
+            let a = self.lfo_from.read(s.index());
+            let phase = a.phase.filter(|_| a.part == at)?;
+            Some(lfo_glyph::Head::next(self.lfo_head, phase))
+        });
+    }
+
     /// The strip's overview, worked out on a strip page when the source
     /// it shows isn't the one held (the page opened on another Part, or
     /// SOURCE changed); never on START or END.
@@ -2497,6 +2525,12 @@ impl UiState {
     /// audio's.
     pub fn hear_heads(&mut self, from: &'static PartHeads) {
         self.heads_from = from;
+    }
+
+    /// The LFO page's playhead reads `from` (the goldens' own), not the
+    /// audio's.
+    pub fn hear_lfo(&mut self, from: &'static LfoView) {
+        self.lfo_from = from;
     }
 
     /// The header's dots read `live` as the sounding Parts until the next
@@ -2968,6 +3002,7 @@ impl UiState {
         let at = self.active_part;
         self.strip_pass();
         self.heads = self.heads_from.read(at.index());
+        self.lfo_pass();
 
         // Read base param values
         let def = self.page_def();
@@ -3238,6 +3273,7 @@ impl UiState {
             orbit,
             strip: &self.overview,
             heads: self.heads,
+            lfo: self.lfo_head,
             formant: &self.formant,
             held: self.held_choice(),
         }
@@ -3355,6 +3391,7 @@ impl UiState {
             )),
             RegionKind::Viz => {
                 let (values, live) = self.renderer.viz_inputs(f);
+                let dot = self.renderer.lfo_dot(f).map_or(0, lfo_glyph::Dot::key);
                 // BigViz pages have no focus band: their viz carries the
                 // prime status instead.
                 let status = f
@@ -3363,6 +3400,7 @@ impl UiState {
                 RegionData::viz_with_status(self.page, values, live, status)
                     .with_orbit(self.renderer.orbit_viz_key(f))
                     .with_mark(self.renderer.mark_key(f))
+                    .with_dot(dot)
             }
             RegionKind::Cells => {
                 let looks = (0..6).fold(0u32, |k, i| k | (renderer::look(f, i) as u32) << (2 * i));
@@ -3560,6 +3598,20 @@ impl UiState {
                 {
                     flush_list[flush_count] = rows;
                     flush_count += 1;
+                } else if r.kind == region::RegionKind::Viz
+                    && data[i] != r.prev_data
+                    && data[i].without_dot() == r.prev_data.without_dot()
+                    && flush_count + 2 <= region::MAX_REGIONS
+                {
+                    // Only the LFO scope's playhead moved: its two boxes.
+                    let was = lfo_glyph::Dot::from_key(r.prev_data.dot());
+                    for rows in self
+                        .renderer
+                        .redraw_lfo_dot(display, |d| d.pixel_buffer(), &f, was)
+                    {
+                        flush_list[flush_count] = rows;
+                        flush_count += 1;
+                    }
                 } else if r.kind == region::RegionKind::Viz
                     && data[i] != r.prev_data
                     && data[i].without_mark() == r.prev_data.without_mark()

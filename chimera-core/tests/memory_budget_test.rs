@@ -210,11 +210,12 @@ fn ui_state_rest_under_4k() {
     // MIDI map's CCs (6 Parts × 16 entries' 16 B ramp and bin), and 120 B more
     // for each entry's waiting bin, the hand's marks and each Part's room a
     // pass; 48 B bank 2's status (its version and seal, ADR 0137). 12 B the
-    // six encoders' pushes (ADR 0140). The focus
+    // six encoders' pushes (ADR 0140). 16 B the LFO page's playhead and
+    // where it reads it (ADR 0177). The focus
     // memory's 8 B (a slot per page id, the OP pages' ids up to 105, #484)
     // fit in what `LibId` gave back as a bare u32 instead of a tagged enum.
     assert!(
-        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072 + 80 + 16 + 52 + 1648 + 120 + 48 + 12,
+        rest <= 4096 + 512 + 2816 + 128 + 192 + 3072 + 80 + 16 + 52 + 1648 + 120 + 48 + 12 + 16,
         "UiState grew to {rest} B besides its Project"
     );
 }

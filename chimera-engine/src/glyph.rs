@@ -32,6 +32,9 @@ pub enum FocusGlyph {
     Composite(CompositeId),
     /// VA's own gauges, drawn from the VA block's set values (ADR 0129).
     Va(VaGlyph),
+    /// The LFO page's: what its control does to the LFO, drawn from the
+    /// slot's set values (`lfo_glyph`, ADR 0177).
+    Lfo,
 }
 
 /// VA's gauges: what the oscillators and the operator do to the sound.
@@ -105,7 +108,7 @@ impl CompositeId {
 }
 
 impl FocusGlyph {
-    pub const ALL: [FocusGlyph; 14] = [
+    pub const ALL: [FocusGlyph; 15] = [
         FocusGlyph::Arc,
         FocusGlyph::None,
         FocusGlyph::Switch,
@@ -120,6 +123,7 @@ impl FocusGlyph {
         FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two)),
         FocusGlyph::Va(VaGlyph::Mode),
         FocusGlyph::Va(VaGlyph::Blend),
+        FocusGlyph::Lfo,
     ];
 
     /// Index in `ALL`. Exhaustive: a new variant fails to compile here
@@ -140,6 +144,7 @@ impl FocusGlyph {
             FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two)) => 11,
             FocusGlyph::Va(VaGlyph::Mode) => 12,
             FocusGlyph::Va(VaGlyph::Blend) => 13,
+            FocusGlyph::Lfo => 14,
         }
     }
 }

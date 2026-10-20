@@ -126,6 +126,12 @@ fn the_mode_glyph_differs_per_mode() {
         let traces: Vec<_> = VaMode::ALL.iter().map(|&m| mix(m, amount)).collect();
         for i in 0..traces.len() {
             for j in i + 1..traces.len() {
+                // AM's top is RING's product (ADR 0176)
+                let same = [VaMode::ALL[i], VaMode::ALL[j]] == [VaMode::Ring, VaMode::Am];
+                if same && amount == 1.0 {
+                    assert_eq!(traces[i], traces[j], "AM at 1 is RING");
+                    continue;
+                }
                 assert_ne!(
                     traces[i], traces[j],
                     "{} vs {} at {amount}",
@@ -164,12 +170,14 @@ const MODE_GOLDENS: &[(&str, u64)] = &[
     ("fm_100", 0x8f8eca18b59af852),
     ("loopfm_050", 0x4f47d06c91ee116e),
     ("loopfm_100", 0x78b9dbcc4401c215),
-    ("am_050", 0x2a982566b01fa105),
-    ("am_100", 0xc963df042a8e7b3d),
+    ("am_050", 0x02fb52e6dd09be3c),
+    ("am_100", 0xaa65c3e6b8fd1365),
     ("max_050", 0x1831da0c4eb7b178),
     ("max_100", 0x884d5c6f119105ce),
     ("soft_050", 0xf3568a3904c84f59),
     ("soft_100", 0x1a37f470abe6e62d),
+    ("phas_050", 0x6a9a5783df5824c8),
+    ("phas_100", 0x3ae42e0f39f1e69b),
 ];
 
 #[test]
@@ -219,6 +227,14 @@ fn max_scope_rises_from_the_mix() {
     let (lo, hi) = (mix(VaMode::Max, 0.0), mix(VaMode::Max, 1.0));
     assert_ne!(lo, hi);
     assert_eq!(lo, mix(VaMode::Mix, 0.5));
+}
+
+/// PHASE's scope is OSC 1 bent by OSC 2: at BLEND 0 it is MIX's OSC 1
+/// alone; at BLEND 1 it differs from it.
+#[test]
+fn phase_scope_bends_osc_1() {
+    assert_eq!(mix(VaMode::Phase, 0.0), mix(VaMode::Mix, 0.0));
+    assert_ne!(mix(VaMode::Phase, 1.0), mix(VaMode::Mix, 0.0));
 }
 
 /// SYNC restarts OSC 2 on OSC 1's wrap: OSC 1's second period starts as
@@ -271,8 +287,9 @@ fn blend_ends_name_what_amount_does() {
     assert_eq!(blend_ends(VaMode::Bits), ["CLEAN", "CRUSH"]);
     assert_eq!(blend_ends(VaMode::Fm), ["CLEAN", "DEEP"]);
     assert_eq!(blend_ends(VaMode::LoopFm), ["1", "LOOP"]);
-    assert_eq!(blend_ends(VaMode::Am), ["CLEAN", "AM"]);
+    assert_eq!(blend_ends(VaMode::Am), ["CLEAN", "RING"]);
     assert_eq!(blend_ends(VaMode::SoftSync), ["1", "2"]);
+    assert_eq!(blend_ends(VaMode::Phase), ["CLEAN", "WARP"]);
 }
 
 fn label_w(s: &str) -> i32 {

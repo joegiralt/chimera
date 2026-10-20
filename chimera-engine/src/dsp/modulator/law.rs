@@ -73,6 +73,17 @@ pub const B_RATE: Range = Range {
     min: 0.05,
     oct: 13.965_784,
 };
+/// An LFO slot's FUNC RATE, 0.05 – 93.75 Hz: B's LFO range up to the
+/// block rate ÷ 8 at 48 kHz (`block_rate_max`), where a per-block slot
+/// stops (ADR 0177). The stored RISE is B's position, `B_RATE`, up to
+/// `LFO_RISE_MAX`; this is its knob, 0..1 over that.
+pub const LFO_RATE: Range = Range {
+    min: 0.05,
+    oct: 10.872_675,
+};
+/// The stored RISE at `LFO_RATE`'s top: `B_RATE.at(LFO_RISE_MAX)` is
+/// 93.75 Hz. A save above it loads clamped to it.
+pub const LFO_RISE_MAX: f32 = LFO_RATE.oct / B_RATE.oct;
 /// BURST pulse RATE, 0.05 Hz – 1 kHz.
 pub const BURST_RATE: Range = Range {
     min: 0.05,
@@ -140,6 +151,10 @@ pub enum Law {
     DecRel(EnvSpeed),
     BTime,
     BRate,
+    /// An LFO slot's FUNC RATE (`LFO_RATE`).
+    LfoRate,
+    /// CLASSIC RATE: Hz, linear over 0.01–20.
+    LfoHz,
     BurstRate,
     BurstLen,
     GlideTime,
@@ -159,11 +174,12 @@ impl Law {
             Law::DecRel(s) => speed_ranges(s).dec_rel,
             Law::BTime => B_TIME,
             Law::BRate => B_RATE,
+            Law::LfoRate => LFO_RATE,
             Law::BurstRate => BURST_RATE,
             Law::BurstLen => BURST_LEN,
             Law::GlideTime => GLIDE_TIME,
             Law::Cutoff => CUTOFF_HZ,
-            Law::Phase | Law::Pct | Law::Curve | Law::Tilt => return None,
+            Law::Phase | Law::Pct | Law::Curve | Law::Tilt | Law::LfoHz => return None,
         })
     }
 }

@@ -151,13 +151,32 @@ pub fn ring_gain(pk: Peaks) -> f32 {
     (1.0 / R).min(0.9 / (pk.a * pk.b))
 }
 
-/// AM's gain `g = (1 − x/2) + (x/2)·b/pk.b` runs from 1 down to 0 and back,
-/// never below `1 − x`. Its level make-up keeps the output at OSC 1's own
-/// RMS: `1/√((1 − x/2)² + (x/2)²·(R/pk.b)²)`, capped so the product stays
-/// within 0.9.
+/// BLEND 85 of 127: AM's knee (ADR 0176). Below it BLEND runs the whole
+/// unipolar AM, above it on into ring.
+pub const AM_KNEE: f32 = 85.0 / 127.0;
+
+/// AM's reach `u` at BLEND `x`: `x/AM_KNEE` up to the knee (1, 100 % AM),
+/// then on to 2 (ring) at BLEND 1, continuous.
+#[inline]
+pub fn am_reach(x: f32) -> f32 {
+    let x = clampf(x, 0.0, 1.0);
+    if x <= AM_KNEE {
+        x * (1.0 / AM_KNEE)
+    } else {
+        1.0 + (x - AM_KNEE) * (1.0 / (1.0 - AM_KNEE))
+    }
+}
+
+/// AM's gain at reach `u`, `g = (1 − u/2) + (u/2)·b/pk.b`: unipolar to
+/// `u` = 1 (from 1 down to 0 and back, never below `1 − u`), over-modulated
+/// past it, the ring `b/pk.b` at 2; `|g| ≤ 1` throughout. Its level make-up
+/// at BLEND `x` keeps the output at OSC 1's own RMS:
+/// `1/√((1 − u/2)² + (u/2)²·(R/pk.b)²)`, capped so the product stays within
+/// 0.9.
 #[inline]
 pub fn am_gain(x: f32, pk: Peaks) -> f32 {
-    let (u, v) = (1.0 - 0.5 * x, 0.5 * x * R / pk.b.max(1e-6));
+    let h = 0.5 * am_reach(x);
+    let (u, v) = (1.0 - h, h * R / pk.b.max(1e-6));
     (1.0 / sqrt(u * u + v * v)).min(0.9 / pk.a.max(1e-6))
 }
 
@@ -204,7 +223,7 @@ impl Operator {
     }
 
     /// `scale · combine(mode, a, b, x, k, …)`, `ks` being RING's `k ·
-    /// scale`.
+    /// scale`; AM's `x` is its reach (`am_reach`), mapped a block.
     #[inline(always)]
     pub fn at(&self, a: f32, b: f32, x: f32, ks: f32) -> f32 {
         let sum = a + b;
@@ -214,7 +233,7 @@ impl Operator {
             VaMode::Xor => sum + (xor16_scaled(a, b, self.kx, self.p2) - sum) * x,
             VaMode::Bits => self.q * self.crush.process_scaled(sum, self.liq),
             // OSC 2 is in OSC 1's phase already
-            VaMode::Fm => a,
+            VaMode::Fm | VaMode::Phase => a,
             VaMode::LoopFm => a + (b - a) * (0.5 * x),
             VaMode::Am => ks * a * ((1.0 - 0.5 * x) + 0.5 * x * b * self.ib),
             VaMode::Max => max_gain(x) * (a + b + x * (a - b).abs()),
@@ -238,9 +257,12 @@ pub fn combine(mode: VaMode, a: f32, b: f32, x: f32, k: f32, pk: Peaks, crush: &
             let q = 0.5 * (pk.a + pk.b);
             q * crush.process(half / q)
         }
-        VaMode::Fm => a,
+        VaMode::Fm | VaMode::Phase => a,
         VaMode::LoopFm => a + (b - a) * (0.5 * x),
-        VaMode::Am => k * a * ((1.0 - 0.5 * x) + 0.5 * x * b * (1.0 / pk.b.max(1e-6))),
+        VaMode::Am => {
+            let u = am_reach(x);
+            k * a * ((1.0 - 0.5 * u) + 0.5 * u * b * (1.0 / pk.b.max(1e-6)))
+        }
         VaMode::Max => max_gain(x) * (a + b + x * (a - b).abs()),
     }
 }

@@ -12,7 +12,7 @@ use crate::dsp::reverb::{EngineKnobs, RevSync, ReverbParams, ReverbType, knobs};
 use crate::dsp::va::combine::{Crusher, Peaks, am_gain, combine, ring_gain};
 use crate::dsp::va::lbfm::{b0_of, lbfm, loop_b};
 use crate::dsp::va::osc::{MIN_INC, Morph, Unit, peak_bound, wave_at};
-use crate::dsp::va::{VaMode, fm_index};
+use crate::dsp::va::{VaMode, fm_index, phase_depth};
 
 pub use chimera_engine::glyph::{
     BRAID_PARAMS, CUBE_PARAMS, CompositeId, FocusGlyph, REVERB_PARAMS, RINGS_PARAMS, VA_MIX_PARAMS,
@@ -54,6 +54,8 @@ pub enum Gauge {
     /// A crossfader at the set AMOUNT, its ends named by MODE
     /// (`blend_ends`).
     Blend { value: f32, mode: VaMode },
+    /// The LFO page's glyph (`lfo_glyph`), kept dimmed too.
+    Lfo(crate::ui::lfo_glyph::LfoGauge),
 }
 
 /// What a gauge built from more than the focused value reads.
@@ -61,6 +63,8 @@ pub enum Gauge {
 pub enum Reads {
     Composite(CompositeId),
     Va(VaGlyph),
+    /// The focused LFO slot's params.
+    Lfo,
 }
 
 /// A staff note's accidental.
@@ -254,7 +258,8 @@ pub fn va_mode(v: f32) -> VaMode {
 /// engine's own peak bounds, RING gain and crusher. FM reads OSC 1 at a
 /// phase integrated across the points, its rate `1 + I·b/pk.b` (`I`
 /// `fm_index` uncapped), so the scope shows the read speeding up, slowing
-/// and running backwards. Scaled so its peak is `half` px (a near-silent
+/// and running backwards. PHASE reads OSC 1 at `p1 + phase_depth·b/pk.b`,
+/// the wave bent where OSC 2 is high. Scaled so its peak is `half` px (a near-silent
 /// output no louder than a tenth of the inputs' peak), up positive.
 pub fn va_mix_trace<const N: usize>(v: &VaMix, half: i32) -> [i32; N] {
     let [m1, m2] = v.osc;
@@ -274,6 +279,7 @@ pub fn va_mix_trace<const N: usize>(v: &VaMix, half: i32) -> [i32; N] {
     let (dt, index) = (VA_MIX_PERIODS / last, fm_index(v.amount, 0.0));
     // LOOPFM: each oscillator's b0 (WAVE scales its own loop), uncapped
     let loops = v.osc.map(|m| b0_of(loop_b(v.amount, m.wave.get())));
+    let depth = phase_depth(v.amount);
     let mut read = 0.0;
     let ys = core::array::from_fn(|i| {
         let t = VA_MIX_PERIODS * i as f32 / last;
@@ -298,6 +304,9 @@ pub fn va_mix_trace<const N: usize>(v: &VaMix, half: i32) -> [i32; N] {
             read += dt * (1.0 + index * b / pk.b);
             return a;
         }
+        if v.mode == VaMode::Phase {
+            return wave_at(frac(p1 + depth * b / pk.b), m1, MIN_INC).0;
+        }
         let a = wave_at(p1, m1, MIN_INC).0;
         combine(v.mode, a, b, v.amount, k, pk, &crush)
     });
@@ -307,9 +316,12 @@ pub fn va_mix_trace<const N: usize>(v: &VaMix, half: i32) -> [i32; N] {
 /// The words at BLEND's ends under `mode`: what AMOUNT 0 and 1 give.
 /// MIX and SYNC fade OSC 1 to OSC 2; RING and XOR the plain mix to the
 /// operator; BITS crushes the mix from 16 bits to 2; FM runs OSC 1 from
+/// plain (CLEAN) to its full index (DEEP); AM from OSC 1 alone through
+/// full AM (BLEND 85) to ring; MAX the plain mix to the larger of the two;
+/// LOOPFM from OSC 1 alone to both looping (LOOP).
 /// plain (CLEAN) to its full index (DEEP); AM from OSC 1 alone to its
-/// full depth; MAX the plain mix to the larger of the two; LOOPFM from OSC 1
-/// alone to both looping (LOOP).
+/// full depth; MAX the plain mix to the larger of the two; PHASE from OSC
+/// 1 plain to the CZ's full warp.
 pub const fn blend_ends(mode: VaMode) -> [&'static str; 2] {
     match mode {
         VaMode::Mix | VaMode::Sync | VaMode::SoftSync => ["1", "2"],
@@ -317,9 +329,10 @@ pub const fn blend_ends(mode: VaMode) -> [&'static str; 2] {
         VaMode::Xor => ["MIX", "XOR"],
         VaMode::Bits => ["CLEAN", "CRUSH"],
         VaMode::Fm => ["CLEAN", "DEEP"],
-        VaMode::Am => ["CLEAN", "AM"],
+        VaMode::Am => ["CLEAN", "RING"],
         VaMode::Max => ["MIX", "MAX"],
         VaMode::LoopFm => ["1", "LOOP"],
+        VaMode::Phase => ["CLEAN", "WARP"],
     }
 }
 
@@ -768,6 +781,7 @@ pub fn gauge(
         ) as u8)),
         FocusGlyph::Composite(id) => outside(Reads::Composite(id)),
         FocusGlyph::Va(v) => outside(Reads::Va(v)),
+        FocusGlyph::Lfo => outside(Reads::Lfo),
         FocusGlyph::Arc => Gauge::Arc { value, bipolar },
     }
 }
@@ -785,7 +799,8 @@ impl Gauge {
             | Gauge::Wave(_)
             | Gauge::VaWave(_)
             | Gauge::VaMix(_)
-            | Gauge::Blend { .. } => false,
+            | Gauge::Blend { .. }
+            | Gauge::Lfo(_) => false,
             Gauge::Braid(_) | Gauge::Rings(_) | Gauge::Cube(_) | Gauge::Tail(_) => true,
         }
     }
@@ -800,6 +815,8 @@ impl Gauge {
             Gauge::VaMix(v) => (m(&v.osc[0]) ^ m(&v.osc[1]).rotate_left(11) ^ q(v.amount) << 22)
                 .wrapping_add(v.mode as u32),
             Gauge::Blend { mode, .. } => *mode as u32,
+            // Its quantised steps: it redraws when one moves.
+            Gauge::Lfo(g) => g.key(),
             _ => 0,
         }
     }
