@@ -599,13 +599,21 @@ pub fn big_width(value_text: &str) -> i32 {
 /// large, the value alone, the value font. Never overlapping.
 pub fn layout(value_text: &str, gauge: &Gauge) -> Layout {
     let w = big_width(value_text);
+    // VA's MODE scope keeps its place for a word the large numerals can't hold
+    let beside = |left: i32| {
+        let small = draw::text_width(&theme::FONT_VALUE, value_text, theme::LABEL_TRACKING);
+        matches!(gauge, Gauge::VaMix(_)) && theme::MARGIN_X + small + GAUGE_GAP <= left
+    };
+    let left = gauge_left(gauge);
     if w > theme::CONTENT_W {
-        return Layout::Small;
+        return match left {
+            Some(left) if beside(left) => Layout::SmallBeside,
+            _ => Layout::Small,
+        };
     }
-    match gauge_left(gauge) {
+    match left {
         Some(left) if theme::FOCUS_VALUE_X + w + gap(gauge) > left => {
-            let small = draw::text_width(&theme::FONT_VALUE, value_text, theme::LABEL_TRACKING);
-            if matches!(gauge, Gauge::VaMix(_)) && theme::MARGIN_X + small + GAUGE_GAP <= left {
+            if beside(left) {
                 Layout::SmallBeside
             } else {
                 Layout::NoGauge

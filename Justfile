@@ -531,6 +531,8 @@ flash-bench area extra="":
 
 # Flash the fault-injection build (console `fault dma <1|2>`, for #25) via
 # DFU: the shipping set plus `fault-inject`, less `put`. A test build only.
+# Bank 2 is not written: if the unit's differs, the seal keeps the door shut
+# (FM, LOOPFM, SOFT SYNC, PHASE silent, NEEDS UPDATE); #25 does not need it.
 flash-fault:
     #!/usr/bin/env bash
     set -euo pipefail

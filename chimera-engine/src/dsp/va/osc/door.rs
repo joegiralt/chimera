@@ -93,7 +93,6 @@ pub fn osc2_rev(
     o.render_in::<BLOCK_SIZE, false, true, false, true, false>(out, mk, r, jit, &mut draw, m, k);
 }
 
-/// `VarOsc::run`'s `MOD` instances.
 /// PHASE's OSC 1 (`<64, true, false, true, true>` with `PH`, ADR 0160):
 /// `osc1_mod`'s, and a mark of OSC 2's steps (`osc2_steps`) in `mk` is a
 /// jump of the read (`jump`); `m` is the read's rate without them.
