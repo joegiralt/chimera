@@ -57,6 +57,7 @@ pub const PING_NEEDS_RAM: &str = "PING NEEDS RAM";
 pub const REVERSE_NEEDS_RAM: &str = "REVERSE NEEDS RAM";
 
 /// Why a streamed source won't play: the focus band's words.
+#[inline(never)]
 pub fn needs_ram_words(n: NeedsRam) -> &'static str {
     match n {
         NeedsRam::Ping => PING_NEEDS_RAM,
@@ -70,6 +71,7 @@ pub fn needs_ram_words(n: NeedsRam) -> &'static str {
 
 /// Why a card file too big for the arena won't load: the focus band's
 /// words (ADR 0186).
+#[inline(never)]
 pub fn refusal_words(r: Refusal) -> &'static str {
     match r {
         Refusal::NeedsRam(n) => needs_ram_words(n),
@@ -487,10 +489,10 @@ pub struct SourceCell {
     /// many frames.
     #[cfg(feature = "tape")]
     wait: Option<Wait>,
-    /// Each source's heads whose re-stage failed for a reason that stays
-    /// (`heads_key`; 0 none): not tried again until it wants others.
+    /// Each source's heads whose re-stage failed for a reason that stays:
+    /// not tried again until it wants others.
     #[cfg(feature = "tape")]
-    stuck: [u32; MAX_SOURCES],
+    stuck: [Option<HeadsKey>; MAX_SOURCES],
     /// The card IRQ's read fault, as the last UI pass met it.
     read: Recovery,
 }
@@ -508,14 +510,35 @@ enum Recovery {
     Stuck,
 }
 
-/// Heads wanted for a streamed source, unchanged for `frames` frames.
+/// Heads wanted for a streamed source, unchanged for `frames`.
 #[cfg(feature = "tape")]
 #[derive(Clone, Copy)]
 struct Wait {
     id: SourceId,
     heads: Heads,
-    frames: u16,
+    frames: UiFrames,
 }
+
+/// A count of UI passes, `FRAME_MS` each.
+#[cfg(feature = "tape")]
+#[derive(Clone, Copy)]
+struct UiFrames(u16);
+
+#[cfg(feature = "tape")]
+impl UiFrames {
+    fn next(self) -> UiFrames {
+        UiFrames(self.0.saturating_add(1))
+    }
+
+    fn at_least(self, t: chimera_hal::units::Millis) -> bool {
+        u32::from(self.0) * crate::ui::animation::FRAME_MS >= t.get()
+    }
+}
+
+/// A source's heads, folded to a word (`card`'s `heads_key`).
+#[cfg(feature = "tape")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct HeadsKey(NonZeroU32);
 
 /// How long the heads wait after the last turn (spec § 5.6).
 pub const REHEAD: chimera_hal::units::Millis = chimera_hal::units::Millis::new(200);
@@ -531,7 +554,7 @@ impl SourceCell {
         #[cfg(feature = "tape")]
         wait: None,
         #[cfg(feature = "tape")]
-        stuck: [0; MAX_SOURCES],
+        stuck: [None; MAX_SOURCES],
         read: Recovery::Clear,
     };
 
@@ -551,7 +574,7 @@ impl SourceCell {
                         p.lose_streams();
                         #[cfg(feature = "tape")]
                         {
-                            self.stuck = [0; MAX_SOURCES];
+                            self.stuck = [None; MAX_SOURCES];
                         }
                     }
                     if r.is_ok() {

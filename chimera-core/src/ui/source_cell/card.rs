@@ -16,11 +16,12 @@ fn stops(pool: &Pool, card: &[(u32, u32)]) -> ([SourceRow; MAX_SOURCES + MAX_TAP
     (out, n)
 }
 
-/// `heads`, folded to a word that is never 0 (FNV-1a).
+/// `heads`, folded to a word (FNV-1a).
 #[cfg(feature = "tape")]
-fn heads_key(heads: &Heads) -> u32 {
+fn heads_key(heads: &Heads) -> HeadsKey {
     let words = heads.as_slice().iter().flat_map(|h| [h.first(), h.end()]);
-    words.fold(0x811C_9DC5, |k, w| (k ^ w).wrapping_mul(0x0100_0193)) | 1
+    let k = words.fold(0x811C_9DC5, |k, w| (k ^ w).wrapping_mul(0x0100_0193));
+    HeadsKey(NonZeroU32::MIN | k)
 }
 
 /// The first streamed source a Part's START, loop or XFADE moved off its
@@ -29,15 +30,15 @@ fn heads_key(heads: &Heads) -> u32 {
 #[cfg(feature = "tape")]
 fn moved_heads(p: &Project, ready: impl Fn(SourceId, &Heads) -> bool) -> Option<(SourceId, Heads)> {
     let pool = p.pool();
-    let mut seen = 0u32;
+    let mut seen = crate::project::SourceSet::EMPTY;
     PartId::ALL.into_iter().find_map(|part| {
         let sound = &p.part(part).sound;
         let r = sound
             .source_ref()
             .filter(|_| sound.engine() == crate::params::EngineType::Tape)?;
         let id = pool.find_source(r)?;
-        let first = seen & id.bit() == 0;
-        seen |= id.bit();
+        let first = !seen.contains(id);
+        seen = seen.with(id);
         let staged = head_table(pool.held(r)?)?;
         let want = heads_for(r, &sound.params.tape).ok()?;
         let moved =
@@ -172,8 +173,9 @@ impl SourceCell {
         // nothing is free beside it: #598) nor one stuck on these heads
         // keeps the others waiting.
         let pool = p.pool();
-        let ready =
-            |id: SourceId, h: &Heads| pool.can_rehead(id) && self.stuck[id.index()] != heads_key(h);
+        let ready = |id: SourceId, h: &Heads| {
+            pool.can_rehead(id) && self.stuck[id.index()] != Some(heads_key(h))
+        };
         let Some((id, heads)) = moved_heads(p, ready) else {
             self.wait = None;
             return;
@@ -183,12 +185,12 @@ impl SourceCell {
             _ => Wait {
                 id,
                 heads,
-                frames: 0,
+                frames: UiFrames(0),
             },
         };
-        let frames = w.frames.saturating_add(1);
+        let frames = w.frames.next();
         self.wait = Some(Wait { frames, ..w });
-        if u32::from(frames) * crate::ui::animation::FRAME_MS >= REHEAD.get() {
+        if frames.at_least(REHEAD) {
             self.job = StreamLoad::rehead(p, id, heads).map(SourceJob::Rehead);
         }
     }
@@ -249,7 +251,7 @@ impl SourceCell {
                 // would only read the same heads again).
                 StreamStep::Failed(_) => {
                     if let Some(w) = self.wait {
-                        self.stuck[w.id.index()] = heads_key(&w.heads);
+                        self.stuck[w.id.index()] = Some(heads_key(&w.heads));
                     }
                 }
             },
