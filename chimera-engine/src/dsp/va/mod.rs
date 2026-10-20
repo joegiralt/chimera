@@ -257,7 +257,7 @@ pub static VA_SPECS: [ParamSpec; 12] = [
     .glyph(FocusGlyph::Va(VaGlyph::Mode)),
     uni(3, "AMNT", "AMOUNT", 0.5).glyph(FocusGlyph::Va(VaGlyph::Blend)),
     uni(4, "SUB", "SUB", 0.0).glyph(FocusGlyph::LevelBar),
-    uni(5, "STAB", "STAB", 1.0),
+    uni(5, "STAB", "STAB", 1.0).glyph(FocusGlyph::Stability),
     coarse(6, "CRSE1", "CR1"),
     fine(7, "FINE1", "FN1"),
     uni(8, "SHAPE1", "SHAPE1", 0.0).short("SH1"),
