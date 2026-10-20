@@ -194,31 +194,33 @@ impl SourceZones {
 pub struct SourceLayout {
     head: SourceHead,
     zones: Option<SourceZones>,
+    desc: Descriptor,
 }
 
 impl SourceLayout {
     /// A `Plain` or `Transwave` head: it has no layout.
     pub fn whole(head: SourceHead) -> Option<SourceLayout> {
-        let l = SourceLayout { head, zones: None };
+        let l = SourceLayout::new(head, None)?;
         (head.shape != Shape::ZoneSet && l.playable()).then_some(l)
     }
 
     /// A `ZoneSet` head with its zones: `count` of them, ending at its
     /// frames.
     pub fn zoned(head: SourceHead, zones: SourceZones) -> Option<SourceLayout> {
-        let l = SourceLayout {
-            head,
-            zones: Some(zones),
-        };
+        let l = SourceLayout::new(head, Some(zones))?;
         let fits = head.shape == Shape::ZoneSet
             && head.count == zones.n
             && head.sref.frames == zones.frames();
         (fits && l.playable()).then_some(l)
     }
 
+    fn new(head: SourceHead, zones: Option<SourceZones>) -> Option<SourceLayout> {
+        let desc = Descriptor::whole(head.shape, head.count, head.sref.rate)?;
+        Some(SourceLayout { head, zones, desc })
+    }
+
     fn playable(&self) -> bool {
         self.head.sref.frames >= MIN_SOURCE_FRAMES
-            && self.descriptor().is_some()
             && held_len(self.head.sref)
                 .and_then(|n| n.checked_add(self.layout_len()))
                 .is_some()
@@ -234,8 +236,8 @@ impl SourceLayout {
     }
 
     /// The descriptor `held` starts with: the whole source, no head.
-    fn descriptor(&self) -> Option<Descriptor> {
-        Descriptor::whole(self.head.shape, self.head.count, self.head.sref.rate)
+    fn descriptor(&self) -> Descriptor {
+        self.desc
     }
 
     fn layout_len(&self) -> usize {
@@ -336,9 +338,7 @@ pub fn held_len(r: SourceRef) -> Option<usize> {
 /// zone's `start`, `frames` and `key` each (spec § 8). Returns its length,
 /// where the samples start. Panics if `out` is shorter.
 pub fn write_descriptor(l: &SourceLayout, out: &mut [u8]) -> usize {
-    // Every layout is `playable`: its descriptor is.
-    let d = l.descriptor().map_or([0; DESC_LEN], |d| d.to_bytes());
-    out[..DESC_LEN].copy_from_slice(&d);
+    out[..DESC_LEN].copy_from_slice(&l.descriptor().to_bytes());
     for (i, z) in l.zones().iter().enumerate() {
         out[DESC_LEN + i * ZONE_LAYOUT_LEN..][..ZONE_LAYOUT_LEN].copy_from_slice(&z.layout());
     }
