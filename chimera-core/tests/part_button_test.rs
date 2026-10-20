@@ -64,7 +64,7 @@ fn mix_b1_then_c_turns_the_reverb_send_not_out() {
 #[test]
 fn b_n_toggles_sound_and_mixer_and_returns_to_the_page_left() {
     let mut ui = UiState::new();
-    for _ in 0..3 {
+    for _ in 0..2 {
         press(&mut ui, ButtonId::Plus); // → FLT
     }
     assert_eq!(at(&ui), (On::Sound(0), FILTER.id));
@@ -164,7 +164,7 @@ fn a_changed_engine_returns_home_not_to_the_page_left() {
     use chimera_core::params::EngineType;
     use chimera_core::ui::block_registry::MODAL_1;
     let mut ui = UiState::new();
-    for _ in 0..3 {
+    for _ in 0..2 {
         press(&mut ui, ButtonId::Plus); // → FLT
     }
     press(&mut ui, ButtonId::B1); // mixer

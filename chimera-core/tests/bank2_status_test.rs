@@ -248,7 +248,7 @@ fn the_type_cell_reads_update_closed() {
     assert!(!first_cell_reads(&render_ui(&ui), NEEDS_UPDATE_CELL));
 }
 
-/// While bank 2 isn't open VA FM and SOFT SYNC are silent (ADR 0163):
+/// While bank 2 isn't open VA FM, LOOPFM, SOFT SYNC and PHASE are silent (ADR 0163):
 /// MODE reads NEEDS UPDATE at them, and its own name at the bank-1 MODEs.
 #[test]
 fn a_closed_bank2_labels_va_fm() {
@@ -259,7 +259,7 @@ fn a_closed_bank2_labels_va_fm() {
     let at = |m: VaMode| m as u8 as f32 / (MODE_NAMES.len() - 1) as f32;
     let closed = Some(Bank2Status::Empty);
     // LOOPFM's whole render is bank 2's too
-    for m in [VaMode::Fm, VaMode::LoopFm, VaMode::SoftSync] {
+    for m in [VaMode::Fm, VaMode::LoopFm, VaMode::SoftSync, VaMode::Phase] {
         assert!(m.in_bank2(), "{m:?}");
         assert_eq!(closed_text(mode, at(m), closed), Some("NEEDS UPDATE"));
         assert_eq!(closed_text(mode, at(m), Some(open())), None);
@@ -324,4 +324,46 @@ fn the_va_page_draws_update_at_fm_and_soft_sync_closed() {
     let soft = va_home(at, Some(open()));
     assert!(cell_reads(&soft, 2, "SOFT"));
     assert!(!band_reads(&soft, NEEDS_UPDATE));
+    // PHASE likewise
+    let at = chimera_core::dsp::va::VaMode::Phase as i8;
+    let closed = va_home(at, empty);
+    assert!(cell_reads(&closed, 2, NEEDS_UPDATE_CELL), "PHASE's cell");
+    assert!(band_reads(&closed, NEEDS_UPDATE), "PHASE's focus band");
+    assert_eq!(va_home(at, Some(open())).hash(), va_home(at, None).hash());
+    let phase = va_home(at, Some(open()));
+    assert!(cell_reads(&phase, 2, "PHASE"));
+    assert!(!band_reads(&phase, NEEDS_UPDATE));
+}
+
+/// While bank 2 isn't open FUZZ passes dry (ADR 0157): the FX TYPE reads
+/// NEEDS UPDATE at FUZZ, and its own name at the bank-1 types.
+#[test]
+fn fuzz_type_reads_needs_update_while_closed() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::bank2::closed_text;
+    use chimera_core::dsp::voice_fx::params::{FxType, VoiceFxParams};
+    let ty = ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::TYPE);
+    let at = |t: FxType| {
+        FxType::LIST.iter().position(|&x| x == t).unwrap() as f32 / (FxType::LIST.len() - 1) as f32
+    };
+    for closed in [Bank2Status::Empty, Bank2Status::Unsealed] {
+        assert_eq!(
+            closed_text(ty, at(FxType::Fuzz), Some(closed)),
+            Some("NEEDS UPDATE")
+        );
+        for t in [FxType::Off, FxType::Soft, FxType::Fold] {
+            assert_eq!(closed_text(ty, at(t), Some(closed)), None, "{t:?}");
+        }
+    }
+    assert_eq!(closed_text(ty, at(FxType::Fuzz), Some(open())), None);
+    assert_eq!(
+        closed_text(ty, at(FxType::Fuzz), None),
+        None,
+        "no bank 2 here"
+    );
+    let p1 = ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P1);
+    assert_eq!(
+        closed_text(p1, at(FxType::Fuzz), Some(Bank2Status::Empty)),
+        None
+    );
 }

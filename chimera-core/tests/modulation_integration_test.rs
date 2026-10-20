@@ -1,9 +1,10 @@
 mod common;
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::dsp::algo::params::{AlgoOpParams, AlgoParams};
+use chimera_core::dsp::voice_fx::params::VoiceFxParams;
 use chimera_core::modulation::ModState;
 use chimera_core::params::ParamSnapshot;
-use chimera_core::params::{DriveParams, EngineType, FilterParams};
+use chimera_core::params::{EngineType, FilterParams};
 use chimera_core::ui::mod_grid::MatrixState;
 use chimera_core::{MidiNote, Velocity};
 use common::Rig;
@@ -12,7 +13,7 @@ use common::{rms, tri};
 use chimera_hal::BLOCK_SIZE;
 
 const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
-const DRIVE: ParamAddr = ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE);
+const DRIVE: ParamAddr = ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P2);
 const MORPH: ParamAddr = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
 const OP1_LEVEL: ParamAddr = ParamAddr::new(BlockRef::AlgoOp(Op::A), AlgoOpParams::LEVEL);
 

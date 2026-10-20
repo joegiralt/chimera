@@ -179,13 +179,12 @@ fn diff_rows(a: &Fb, b: &Fb, top: i32, bottom: i32) -> usize {
         .count()
 }
 
-/// OSC → ALG → DRV → FLT, CUTOFF focused.
+/// ALG → OSC → FLT, CUTOFF focused.
 fn filter_page() -> UiState {
     let mut ui = crate::screen::stack_ui();
     feed(&mut ui, Input::press(ButtonId::Plus));
     feed(&mut ui, Input::press(ButtonId::Plus));
-    feed(&mut ui, Input::press(ButtonId::Plus));
-    feed(&mut ui, Input::turn(EncoderId::B, 1));
+    feed(&mut ui, Input::turn(EncoderId::E, 1));
     settle(&mut ui);
     ui
 }
@@ -320,12 +319,12 @@ fn prime_every_slot(ui: &mut UiState, slots: &[EncoderId], out: &mut Vec<PrimeSt
     }
 }
 
-/// The Algo chain reaches 14 registry addresses (MORPH, VOL, six LEVELs,
-/// Drive's three, the filter's LEVEL on FLT › MODE, Folder's SYM and MIX);
-/// CUTOFF, RESO and FOLD are permanent columns, so priming them reports
-/// ALREADY ROUTED. Then each ENV's TIME and LEVEL: through real input,
-/// exactly `MAX_MOD_DESTS` report ADDED, then MATRIX FULL, and the matrix
-/// holds every added one.
+/// The Algo chain reaches 12 registry addresses (MORPH, VOL, six LEVELs,
+/// and on FLT › FX under SOFT the filter's LEVEL (INPUT), TONE, LEVEL and
+/// MIX); CUTOFF, RESO and FX (SOFT's DRIVE) are permanent columns, so
+/// priming them reports ALREADY ROUTED. Then each ENV's ATTACK, DECAY and
+/// SUSTAIN: through real input, exactly `MAX_MOD_DESTS` report ADDED, then
+/// MATRIX FULL, and the matrix holds every added one.
 #[test]
 fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     use chimera_core::modulation::MAX_MOD_DESTS;
@@ -336,13 +335,15 @@ fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     prime_every_slot(&mut ui, &ALL_SLOTS[2..5], &mut seen); // ALGO: MORPH, TRNSP (refused), VOL
     to_level_page(&mut ui);
     prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen); // six LEVELs
-    feed(&mut ui, Input::press(ButtonId::Plus)); // Drive
+    // Filter: CUTOFF, RESO fixed (KIND, MODE, FX, PLACE refused); C's
+    // turn picks FX SOFT.
+    feed(&mut ui, Input::press(ButtonId::Plus));
     prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
-    feed(&mut ui, Input::press(ButtonId::Plus)); // Filter: CUTOFF, RESO fixed (MODE refused)
+    feed(&mut ui, Input::press(ButtonId::Edit)); // FLT › MOD: routes and jacks
     prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
-    feed(&mut ui, Input::press(ButtonId::Edit)); // FLT › MODE: the filter's LEVEL
+    feed(&mut ui, Input::press(ButtonId::Edit)); // FLT › FX: INPUT, the pots, MIX
     prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
-    feed(&mut ui, Input::press(ButtonId::Plus)); // Folder: FOLD fixed
+    feed(&mut ui, Input::press(ButtonId::Plus)); // AMP
     prime_every_slot(&mut ui, &ALL_SLOTS, &mut seen);
     let chain = seen.iter().filter(|&&s| s == PrimeStatus::Added).count();
     assert!(chain < MAX_MOD_DESTS, "{seen:?}");
@@ -350,7 +351,8 @@ fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
         feed(&mut ui, Input::press(ButtonId::B2));
         feed(&mut ui, Input::press(ButtonId::B1)); // via Part 2: Part 1's home
         to_mod_sub(&mut ui, n, def);
-        prime_every_slot(&mut ui, &[EncoderId::A, EncoderId::C], &mut seen); // TIME, LEVEL
+        // ATTACK, DECAY, SUSTAIN
+        prime_every_slot(&mut ui, &ALL_SLOTS[..3], &mut seen);
     }
 
     let added = seen.iter().filter(|&&s| s == PrimeStatus::Added).count();

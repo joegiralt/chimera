@@ -12,11 +12,12 @@ use chimera_core::dsp::filter::{
 };
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::lfo::LfoShape;
+use chimera_core::dsp::voice_fx::params::{FxType, VoiceFxParams};
 use chimera_core::factory::factory_sound;
 use chimera_core::meter::{Clip, FILTER_CLIP};
 use chimera_core::mod_path::{LABEL_LEN, ModDestRegistry};
 use chimera_core::modulation::{ModSource, ModState};
-use chimera_core::params::{DriveParams, EngineType, FilterParams, ParamSnapshot};
+use chimera_core::params::{EngineType, FilterParams, ParamSnapshot};
 use chimera_core::part::PartParams;
 use chimera_core::preset::Sound;
 use chimera_core::storage::{
@@ -367,10 +368,18 @@ fn bench(wave: WaveId, drive: f32, tone: f32) -> (Bench, Param) {
     };
     let op_a = |b| matches!(b, BlockRef::AlgoOp(o) if o.index() == 0);
     b.set(&find(op_a, AlgoOpParams::WAVE), f32::from(wave.get()));
-    let drv = |b| b == BlockRef::Drive;
-    b.set(&find(drv, DriveParams::DRIVE), drive);
-    b.set(&find(drv, DriveParams::TONE), tone);
-    b.set(&find(drv, DriveParams::MIX), 1.0);
+    let fx = |b| b == BlockRef::VoiceFx;
+    let soft = FxType::LIST
+        .iter()
+        .position(|&t| t == FxType::Soft)
+        .unwrap();
+    b.set(&find(fx, VoiceFxParams::TYPE), soft as f32);
+    b.set(&find(fx, VoiceFxParams::P1), drive);
+    b.set(&find(fx, VoiceFxParams::P2), tone);
+    // SOFT's `MAKE_UP` (0.483) level-matched the wet; LEVEL 0.7625 (x2.07)
+    // gives the sine its old peak.
+    b.set(&find(fx, VoiceFxParams::P3), 0.7625);
+    b.set(&find(fx, VoiceFxParams::MIX), 1.0);
     let flt = |b| b == BlockRef::Filter;
     b.set(&find(flt, FilterParams::CUTOFF), 20_000.0);
     (b, find(flt, FilterParams::LEVEL))

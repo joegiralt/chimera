@@ -6,9 +6,7 @@ use chimera_core::dsp::modal::ModalParams;
 use chimera_core::dsp::modulator::EnvSlot;
 use chimera_core::dsp::va::VaParams;
 use chimera_core::dsp::voice_fx::params::VoiceFxParams as X;
-use chimera_core::params::{
-    DriveParams, EnvParams, FilterParams, FolderParams, OutParams, ParamSnapshot, PitchParams,
-};
+use chimera_core::params::{EnvParams, FilterParams, OutParams, ParamSnapshot, PitchParams};
 use chimera_core::preset::Performance;
 use chimera_core::project::PartId;
 
@@ -96,15 +94,9 @@ fn block_mut_reaches_the_named_instance() {
 #[test]
 fn modulatable_addresses_are_exactly_the_spec_list() {
     let mut want = vec![
-        ParamAddr::new(BlockRef::Drive, DriveParams::DRIVE),
-        ParamAddr::new(BlockRef::Drive, DriveParams::TONE),
-        ParamAddr::new(BlockRef::Drive, DriveParams::MIX),
         ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF),
         ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE),
         ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL),
-        ParamAddr::new(BlockRef::Folder, FolderParams::FOLD),
-        ParamAddr::new(BlockRef::Folder, FolderParams::SYMMETRY),
-        ParamAddr::new(BlockRef::Folder, FolderParams::MIX),
         ParamAddr::new(BlockRef::Out, OutParams::VOLUME),
         ParamAddr::new(BlockRef::Out, OutParams::VCA),
         ParamAddr::new(BlockRef::Pitch, PitchParams::PITCH),

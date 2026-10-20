@@ -38,16 +38,6 @@ Sound {
                 ),
             },
         },
-        drive: DriveParams {
-            drive: 0.0,
-            tone: 0.5,
-            mix: 1.0,
-        },
-        folder: FolderParams {
-            fold: 0.0,
-            symmetry: 0.5,
-            mix: 0.5,
-        },
         fx: VoiceFxParams {
             ty: Off,
             place: Pre,

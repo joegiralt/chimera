@@ -368,13 +368,13 @@ fn sweep(hands: &[EncoderId]) {
 
 #[test]
 fn cc_sweep_never_snaps() {
-    sweep(&[EncoderId::B]);
+    sweep(&[EncoderId::E]);
 }
 
 /// Two knobs turned each pass: the CCs give up a write for each.
 #[test]
 fn cc_sweep_under_two_hands_never_overflows() {
-    sweep(&[EncoderId::B, EncoderId::C]);
+    sweep(&[EncoderId::E, EncoderId::F]);
 }
 
 #[test]
@@ -572,9 +572,9 @@ fn hand_wins() {
     b.pass(&[]);
     let mid = b.stored(P1, CUTOFF);
     assert!(mid > spec(CUTOFF).min, "mid-ramp");
-    b.pass_with(vec![], Some(Input::turn(EncoderId::B, 3)), 0, 0);
+    b.pass_with(vec![], Some(Input::turn(EncoderId::E, 3)), 0, 0);
     let turned = b.stored(P1, CUTOFF);
-    assert!(turned > mid, "B turns CUTOFF");
+    assert!(turned > mid, "E turns CUTOFF");
     b.passes(20);
     assert_eq!(b.stored(P1, CUTOFF), turned, "the hand's value stays");
 }
@@ -682,12 +682,12 @@ fn hand_beats_a_cc_in_its_pass() {
     let ccs = vec![b.ev(P1, 74, 127)];
     b.pass_with(
         ccs,
-        Some(Input::turn(EncoderId::B, -3)),
+        Some(Input::turn(EncoderId::E, -3)),
         PASS_MS,
         PASS_BLOCKS,
     );
     let cut = b.stored(P1, CUTOFF);
-    assert!(cut < cut0, "B turned CUTOFF down");
+    assert!(cut < cut0, "E turned CUTOFF down");
     let ccs = vec![b.ev(P1, 75, 127)];
     b.pass_with(
         ccs,
@@ -785,7 +785,7 @@ fn two_passes_in_one_block_never_overflow() {
             .collect();
         b.pass_with(ccs, None, PASS_MS, PASS_BLOCKS);
         b.pass_with(vec![], None, PASS_MS, 0);
-        let turn = Input::turn(EncoderId::B, 1);
+        let turn = Input::turn(EncoderId::E, 1);
         b.pass_with(vec![], Some(turn), PASS_MS, 0);
         b.render();
         assert!(b.most as usize <= MOVES, "a block took {} moves", b.most);

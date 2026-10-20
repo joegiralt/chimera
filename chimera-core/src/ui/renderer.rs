@@ -248,7 +248,14 @@ impl Renderer {
                 let flt = &f.parts[f.active_part.index()].sound.params.filter;
                 let v = view::view(f.def, f.focus, &f.ctx);
                 let buf = value_text(f, f.focus, self.set[f.focus].target());
-                let readout = (v != View::Empty).then(|| (v.label(), buf.as_str()));
+                // KIND names a mode that has no cell: `TYPE · 4-POLE LP`.
+                use core::fmt::Write;
+                let mut label = FmtBuf::new();
+                let _ = match crate::ui::filter_panel::kind_note(flt.kind()) {
+                    Some(n) if v.addr() == Some(KIND) => write!(label, "{} · {n}", v.label()),
+                    _ => label.write_str(v.label()),
+                };
+                let readout = (v != View::Empty).then(|| (label.as_str(), buf.as_str()));
                 // The solid curve is the set value; modulation is the mark.
                 let at = |s: Option<usize>| s.map_or(0.0, |s| self.set[s].current());
                 viz::filter(
@@ -424,6 +431,23 @@ impl Renderer {
                 let w = self.lfo_wave(f, s);
                 lfo_glyph::draw_scope(display, &w, lfo_glyph::Dot::of(&w, f.lfo));
             }
+            VizType::FxCurve => {
+                use crate::dsp::voice_fx::{look, params::Place};
+                let fx = &f.parts[f.active_part.index()].sound.params.fx;
+                // The set pots (ADR 0152). Bank 2's: closed, no band.
+                let mut rows = [[0; look::COLS]; 2];
+                if !look::trace(fx.ty(), fx.pots, &mut rows) {
+                    return;
+                }
+                // The node before FLT on this chain: VA, OSC, DECK, EXC...
+                let source = f.map.map_or("SRC", |(chain, at)| {
+                    chain
+                        .block_at((at.node() as usize).saturating_sub(1))
+                        .map_or("SRC", |b| b.map.unwrap_or(b.def.short))
+                });
+                viz::fx_strip(display, source, fx.place == Place::Post, 128);
+                viz::fx_curve(display, 168, &rows);
+            }
             _ => viz::live_output(display, f.scope),
         }
     }
@@ -596,6 +620,12 @@ impl Renderer {
                 }
                 // The curve's own steps; the playhead is `lfo_dot`'s.
                 VizType::Lfo(s) => ([0; 6], self.lfo_wave(f, s).curve_key()),
+                VizType::FxCurve => {
+                    let fx = &f.parts[f.active_part.index()].sound.params.fx;
+                    let bits = fx.pots.map(f32::to_bits);
+                    let tp = (fx.ty() as u32) << 1 | fx.place as u32;
+                    ([0; 6], region::fold_keys(tp.into(), &bits))
+                }
                 _ => ([0; 6], viz::live_key(f.scope)),
             },
             PageLayout::BigViz => {
@@ -610,9 +640,19 @@ impl Renderer {
                 let live = f.focus as u32 | gr << 8 | led_key(f) << 16;
                 // The readout's text follows the target, not the eased value.
                 // FLT's curve is the set value: its modulation is `filter_mark`.
+                // The curve and the readout riding it move by less than a
+                // quantum as CUTOFF and RES ease in: key their exact values.
+                let (c, r) = match f.def.viz {
+                    VizType::FilterResponse => self.filter_slots(f),
+                    _ => (None, None),
+                };
+                let exact = |s: Option<usize>| s.map_or(0, |s| self.set[s].current().to_bits());
                 (
                     region::quantize_values(self.eased(f.def.viz)),
-                    region::fold_keys(live.into(), &[self.text_key(f, f.focus)]),
+                    region::fold_keys(
+                        live.into(),
+                        &[self.text_key(f, f.focus), exact(c), exact(r)],
+                    ),
                 )
             }
             PageLayout::Matrix => ([0; 6], 0),
@@ -1031,6 +1071,16 @@ impl Renderer {
                 }
                 _ => buf = param_text(f, i, &v, self.set[i].target()),
             }
+            // A name wider than the column keeps its first word: `SOFT`,
+            // not `SOFT SYNC` (the focus band reads it whole).
+            let one = buf.as_str().split(' ').next().unwrap_or("");
+            if one.len() < buf.as_str().len()
+                && draw::text_width(&theme::FONT_VALUE, buf.as_str(), 0) > theme::CELL_COL_W - 4
+            {
+                let mut first = FmtBuf::new();
+                let _ = core::fmt::Write::write_str(&mut first, one);
+                buf = first;
+            }
             let c = components::Cell {
                 label: cell_label(&v),
                 text: buf.as_str(),
@@ -1040,6 +1090,9 @@ impl Renderer {
                 mod_amount: mod_info(f, i),
                 look: look(f, i),
                 motion: v.addr().and_then(|a| a.spec()).map(|s| s.motion()),
+                mini: (v.addr() == Some(PLACE)).then(|| components::MiniGlyph::Place {
+                    post: self.set[i].current() >= 0.5,
+                }),
             };
             let w = components::cell(display, i, top, Some(&c), f.text);
             if f.clip > 0.0 && v.addr() == Some(LEVEL) {
@@ -1292,8 +1345,14 @@ fn strips_key(strips: &[viz::Strip], selected: usize) -> u32 {
 pub const MATRIX_AMOUNT_SLOT: usize = 4;
 
 /// Amount −127..127 as a 0..1 display value (0 at the centre).
-/// The filter LEVEL, whose cell carries the clip LED (the 2040's DRIVE).
+/// The filter LEVEL, whose cell (FLT › FX's INPUT) carries the clip LED.
 const LEVEL: ParamAddr = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::LEVEL);
+/// The filter KIND, whose readout names the 2040's mode.
+const PLACE: ParamAddr = ParamAddr::new(
+    BlockRef::VoiceFx,
+    crate::dsp::voice_fx::params::VoiceFxParams::PLACE,
+);
+const KIND: ParamAddr = ParamAddr::new(BlockRef::Filter, crate::params::FilterParams::KIND);
 /// The LED's centre from the end of LEVEL's value, and above its baseline.
 const LED_DX: i32 = 7;
 const LED_RISE: i32 = 7;

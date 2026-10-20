@@ -303,10 +303,10 @@ pub trait EditsCheck {
 /// | Category | Keys |
 /// |---|---|
 /// | filter | `FILTER.*`; any route or tap into `FILTER.*` |
-/// | fold | `FOLDER.*`; any route or tap into `FOLDER.*` |
+/// | fx | `VOICEFX.*`; any route or tap into `VOICEFX.*` |
 /// | LFO | `LFO1-3.*`; every `mod.LFO1-3` route |
 /// | envelope | each op's AR, D1R, D1L, D2R, RR, RS; `ENV1-3.*`; every `mod.ENV1-3` route |
-/// | effects | `DRIVE.*`, `CHORUS.*`, `DELAY.*`, `REVERB.*`, `TAPE.*`, `COMP.*`, `OUT.SEND1-3` |
+/// | effects | `CHORUS.*`, `DELAY.*`, `REVERB.*`, `TAPE.*`, `COMP.*`, `OUT.SEND1-3` |
 /// | formant | `OP_E.*`, `OP_F.*`, `ALGO.VOWEL`; `tap.OP5`/`tap.OP6`; any route into `OP_E`/`OP_F` |
 pub fn category(snd: &Sound, e: Edit) -> Vec<(String, String)> {
     let mut items = Vec::new();
@@ -337,7 +337,7 @@ fn owns(e: Edit, key: &str) -> bool {
     let routed = !src.is_empty();
     match e {
         Edit::Filter => block == "FILTER",
-        Edit::Fold => block == "FOLDER",
+        Edit::Fx => block == "VOICEFX",
         Edit::Lfo if routed => src.starts_with("mod.LFO"),
         Edit::Lfo => block.starts_with("LFO"),
         Edit::Envelope if routed => src.starts_with("mod.ENV"),
@@ -347,7 +347,7 @@ fn owns(e: Edit, key: &str) -> bool {
                     && ["AR", "D1R", "D1L", "D2R", "RR", "RS"].contains(&param))
         }
         Edit::Effects => {
-            ["DRIVE", "CHORUS", "DELAY", "REVERB", "TAPE", "COMP"].contains(&block)
+            ["CHORUS", "DELAY", "REVERB", "TAPE", "COMP"].contains(&block)
                 || (block == "OUT" && param.starts_with("SEND"))
         }
         Edit::Formant => {

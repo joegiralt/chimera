@@ -269,7 +269,7 @@ use chimera_core::dsp::filter::{Filter, FilterKind, FilterMode, FilterMods, K204
 use chimera_core::dsp::voice::Voice;
 use chimera_core::dsp::voice_fx::Ends;
 use chimera_core::dsp::voice_fx::fold;
-use chimera_core::dsp::voice_fx::params::FxType;
+use chimera_core::dsp::voice_fx::params::{FxType, Place};
 use chimera_core::modulation::ModState;
 use chimera_core::params::ParamSnapshot;
 use chimera_core::taps::{TapLane, TapRows, tap_vca};
@@ -480,6 +480,30 @@ fn fold_tap_moves_the_fold_at_the_op_rate() {
     assert!(!Voice::fx_runs(&m, &ModState::new()), "inert off ALGO");
     q.fx.set_type(FxType::Soft);
     assert!(!Voice::fx_runs(&q, &ModState::new()), "inert off FOLD");
+}
+
+/// FOLD's tap reaches the fold wherever PLACE puts it: at PRE the tapped
+/// fold sounds different from the untapped one, and the bill is PLACE's
+/// either way (#614).
+#[test]
+fn fold_tap_acts_at_pre_too() {
+    let mut s = am_patch();
+    s.params.fx.set_type(FxType::Fold);
+    s.params.fx.place = Place::Pre;
+    s.params.fx.pots[0] = 0.0;
+    let none = play(&s.params, &s.mod_state, 150);
+    s.params.taps.set(TapOp::Op6, FixedCol::Fx, 127);
+    assert!(Voice::fx_runs(&s.params, &s.mod_state));
+    let tapped = play(&s.params, &s.mod_state, 150);
+    let diff = none
+        .iter()
+        .zip(&tapped)
+        .map(|(a, b)| (a - b).powi(2))
+        .sum::<f32>();
+    assert!(diff > 1.0, "the tap moved the fold at PRE: {diff}");
+    let pre = Voice::cost(&s.params, &s.mod_state);
+    s.params.fx.place = Place::Post;
+    assert_eq!(pre, Voice::cost(&s.params, &s.mod_state));
 }
 
 #[test]

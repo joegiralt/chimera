@@ -337,7 +337,7 @@ fn leaving_fm_settles() {
         );
         let held: Vec<_> = [m0, m1]
             .iter()
-            .map(|&m| held(A4, VaParams { mode: m, ..base }, 2 * AT))
+            .map(|&m| held(A4, VaParams { mode: m, ..base }, 6 * AT))
             .collect();
         let (d, lim) = click(&y, &held);
         println!(
@@ -944,7 +944,7 @@ fn am_mode_changes_do_not_click() {
         );
         let held: Vec<_> = [m0, m1]
             .iter()
-            .map(|&m| held(A4, VaParams { mode: m, ..base }, 2 * AT))
+            .map(|&m| held(A4, VaParams { mode: m, ..base }, 6 * AT))
             .collect();
         let (d, lim) = click(&y, &held);
         println!("{m0:?} → {m1:?}: Δ² {d:.3e} / limit {lim:.3e}");
@@ -1244,7 +1244,7 @@ fn max_mode_changes_do_not_click() {
         );
         let held: Vec<_> = [m0, m1]
             .iter()
-            .map(|&m| held(A4, VaParams { mode: m, ..base }, 2 * AT))
+            .map(|&m| held(A4, VaParams { mode: m, ..base }, 6 * AT))
             .collect();
         let (d, lim) = click(&y, &held);
         println!("{m0:?} → {m1:?}: Δ² {d:.3e} / limit {lim:.3e}");
@@ -1702,7 +1702,9 @@ fn phase_level_matches_mix() {
     }
 }
 
-/// PHASE in and out of the duck never clicks, the sub on or off.
+/// PHASE in and out of the duck never clicks: from and to every other
+/// MODE, the note started in the source MODE, the sub on or off, OSC 2 a
+/// sine/triangle-ish wave or a pulse (the stepped modulator).
 #[test]
 fn phase_changes_never_click() {
     let base = VaParams {
@@ -1713,31 +1715,44 @@ fn phase_changes_never_click() {
         amount: 0.8,
         ..sine()
     };
-    for sub in [0.0, 0.5] {
-        for (m0, m1) in [
-            (VaMode::Mix, VaMode::Phase),
-            (VaMode::Phase, VaMode::Mix),
-            (VaMode::Phase, VaMode::Fm),
-            (VaMode::Fm, VaMode::Phase),
-        ] {
-            let base = VaParams { sub, ..base };
-            let y = take_with(
-                |_| {},
-                A4,
-                base,
-                2 * AT,
-                |b, p| p.mode = if b < AT { m0 } else { m1 },
-            );
-            let held: Vec<_> = [m0, m1]
-                .iter()
-                .map(|&m| held(A4, VaParams { mode: m, ..base }, 2 * AT))
-                .collect();
-            let (d, lim) = click(&y, &held);
-            println!(
-                "SUB {sub} {m0:?} -> {m1:?}: d2 {d:.3e} / limit {lim:.3e} ({:.0}%)",
-                100.0 * d / lim
-            );
-            assert!(d <= lim, "{m0:?} -> {m1:?}: {d} > {lim}");
+    let pulse = VaParams {
+        wave: [SAW, 1.0],
+        ..base
+    };
+    for base in [base, pulse] {
+        for sub in [0.0, 0.5] {
+            for other in VaMode::ALL.into_iter().filter(|&m| m != VaMode::Phase) {
+                for (m0, m1) in [(other, VaMode::Phase), (VaMode::Phase, other)] {
+                    let base = VaParams {
+                        sub,
+                        mode: m0,
+                        ..base
+                    };
+                    let y = take_with(
+                        |_| {},
+                        A4,
+                        base,
+                        2 * AT,
+                        |b, p| p.mode = if b < AT { m0 } else { m1 },
+                    );
+                    let held: Vec<_> = [m0, m1]
+                        .iter()
+                        .map(|&m| held(A4, VaParams { mode: m, ..base }, 6 * AT))
+                        .collect();
+                    // The swap's window, the duck's four blocks: the new MODE
+                    // settles at another relative phase of the OSCs than a
+                    // fresh note's, so the limit is the held peak over a long
+                    // run (MIX -> PHASE, pulse, SUB .5 read 101 % of a 40
+                    // block run's, 73 % of this one)
+                    let (d, lim) = click(&y[(AT - 2) * B..(AT + 4) * B], &held);
+                    println!(
+                        "SUB {sub} WAVE2 {} {m0:?} -> {m1:?}: d2 {d:.3e} / limit {lim:.3e} ({:.0}%)",
+                        base.wave[1],
+                        100.0 * d / lim
+                    );
+                    assert!(d <= lim, "{m0:?} -> {m1:?}: {d} > {lim}");
+                }
+            }
         }
     }
 }

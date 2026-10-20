@@ -414,7 +414,9 @@ fn test_voice_drive_adds_grit() {
             voice.render(&mut block, &params, &empty_mod);
             all.extend_from_slice(&block);
         }
-        harmonic_energy(&all, freq)
+        // Against the fundamental: SOFT's `MAKE_UP` level-matches the wet, so
+        // grit is the harmonics' share, not their absolute energy.
+        harmonic_energy(&all, freq) / goertzel(&all, freq, SR)
     };
 
     let clean = measure(0.0);

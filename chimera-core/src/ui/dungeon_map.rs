@@ -43,7 +43,7 @@ pub fn page_label(def: &BlockDef, models: impl Into<Models>) -> &'static str {
 /// The row's word for each page on a node with sub-pages: the word a
 /// musician reads, in full where it fits (ADR 0145). STACK and the crumbs
 /// keep `short`. MDL2 and TAPE's model page are named at draw time.
-pub static ROW_WORDS: [(&BlockDef, &str); 51] = [
+pub static ROW_WORDS: [(&BlockDef, &str); 50] = [
     (&reg::ALGO_ALG, "ALGORITHM"),
     (&reg::PITCH, "PITCH"),
     (&reg::ALGO_WAVE, "WAVE"),
@@ -68,8 +68,7 @@ pub static ROW_WORDS: [(&BlockDef, &str); 51] = [
     (&reg::ALGO_OP_PAGES[5], "OPERATOR 6"),
     (&reg::FILTER, "FILTER"),
     (&reg::FILTER_MOD, "MODULATION"),
-    (&reg::FOLDER, "AMP"),
-    (&reg::FOLDER_SYM, "SYMMETRY"),
+    (&reg::FILTER_FX, "FX"),
     (&reg::MOD_MATRIX, "MATRIX"),
     (&reg::ENVELOPE, "ENV1"),
     (&reg::ENV_2, "ENV2"),
@@ -149,7 +148,7 @@ where
         );
     }
     // The sub-pages' labels own their rows: a node label on the right
-    // they'd run into (DECK's `DECK` into `DRV`) gives way.
+    // they'd run into (DECK's `DECK` into `FLT`) gives way.
     let reach = branch_reach(chain, at, models, node_x(node, n));
     for (i, block) in chain.blocks.iter().enumerate() {
         let x = node_x(i, n);

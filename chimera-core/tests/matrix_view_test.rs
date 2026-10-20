@@ -68,7 +68,8 @@ fn the_readout_names_the_selected_route() {
 #[test]
 fn the_readout_states_the_effect_in_the_destinations_units() {
     use chimera_core::addr::{BlockRef, ParamAddr};
-    use chimera_core::params::{FilterParams, FolderParams, OutParams};
+    use chimera_core::dsp::voice_fx::params::VoiceFxParams;
+    use chimera_core::params::{FilterParams, OutParams};
     use chimera_core::ui::fmt::FmtBuf;
     use chimera_core::ui::mod_grid::fmt_route_effect;
     let effect = |b, id, a| {
@@ -83,10 +84,10 @@ fn the_readout_states_the_effect_in_the_destinations_units() {
     assert_eq!(effect(BlockRef::Out, OutParams::VCA, 64), "+64 = +50%");
     assert_eq!(effect(BlockRef::Out, OutParams::VCA, 127), "+127 = +100%");
     assert_eq!(
-        effect(BlockRef::Folder, FolderParams::FOLD, -30),
+        effect(BlockRef::VoiceFx, VoiceFxParams::P1, -30),
         "-30 = -24%"
     );
-    assert_eq!(effect(BlockRef::Folder, FolderParams::FOLD, 0), "0 = 0%");
+    assert_eq!(effect(BlockRef::VoiceFx, VoiceFxParams::P1, 0), "0 = 0%");
     use chimera_core::params::PitchParams;
     let pitch = PitchParams::PITCH;
     assert_eq!(effect(BlockRef::Pitch, pitch, 32), "+32 = +6.0 st");
@@ -109,13 +110,13 @@ fn the_readout_names_the_voice_pitch() {
     use chimera_core::addr::{BlockRef, ParamAddr};
     use chimera_core::params::PitchParams;
     use chimera_core::ui::fmt::FmtBuf;
-    use chimera_core::ui::mod_grid::{ModDest, block_tag, fmt_readout_dest};
+    use chimera_core::ui::mod_grid::{DestCtx, ModDest, block_tag, fmt_readout_dest};
     let dest = ModDest {
         addr: ParamAddr::new(BlockRef::Pitch, PitchParams::PITCH),
         label: [0; 8],
     };
     let mut buf = FmtBuf::new();
-    fmt_readout_dest(&mut buf, "LFO 1", &dest, TapeMachine::Loop);
+    fmt_readout_dest(&mut buf, "LFO 1", &dest, DestCtx::DEFAULT);
     assert_eq!(buf.as_str(), "VOICE PITCH");
     assert_eq!(block_tag(BlockRef::Pitch), "PIT");
 }
@@ -651,22 +652,24 @@ fn matrix_edits_redraw_through_the_region_keys() {
         1,
         3
     ));
-    // MIX+PLUS on DRV's three knobs and FLT's C (Q, already a fixed
-    // column): seven columns, past the visible five, so the grid scrolls
-    // sideways.
+    // MIX+PLUS on FLT's Q (already a fixed column), then FLT › FX's INPUT
+    // and SOFT's TONE and LEVEL: seven columns, past the visible five, so
+    // the grid scrolls sideways.
     let prime = |ui: &mut chimera_core::ui::UiState, enc| {
         feed(ui, Input::turn(enc, 1));
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
     };
     let dests = ui.matrix_state.num_dests;
-    for _ in 0..3 {
-        feed(&mut ui, Input::press(ButtonId::Minus)); // → DRV
+    for _ in 0..2 {
+        feed(&mut ui, Input::press(ButtonId::Minus)); // → FLT
     }
-    for enc in [EncoderId::A, EncoderId::B, EncoderId::C] {
+    prime(&mut ui, EncoderId::F);
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // FX SOFT
+    feed(&mut ui, Input::press(ButtonId::Edit));
+    feed(&mut ui, Input::press(ButtonId::Edit)); // → FLT › FX
+    for enc in [EncoderId::A, EncoderId::C, EncoderId::D] {
         prime(&mut ui, enc);
     }
-    feed(&mut ui, Input::press(ButtonId::Plus)); // → FLT
-    prime(&mut ui, EncoderId::C);
     for _ in 0..2 {
         feed(&mut ui, Input::press(ButtonId::Plus)); // → MTX
     }
@@ -699,22 +702,35 @@ fn every_route_readout_fits_its_line() {
     use chimera_core::modulation::ModSource;
     use chimera_core::ui::fmt::FmtBuf;
     use chimera_core::ui::mod_grid::{
-        MatrixState, ModDest, block_tag, dest_name, draw_readout, fmt_readout_dest, fmt_route_dest,
+        DestCtx, MatrixState, ModDest, block_tag, dest_name, draw_readout, fmt_readout_dest,
+        fmt_route_dest,
     };
     let mut full = FmtBuf::new();
     let cutoff = ModDest {
         addr: ParamAddr::new(BlockRef::Filter, chimera_core::params::FilterParams::CUTOFF),
         label: [0; 8],
     };
-    fmt_readout_dest(&mut full, "ENV 3", &cutoff, TapeMachine::Loop);
+    fmt_readout_dest(&mut full, "ENV 3", &cutoff, DestCtx::DEFAULT);
     assert_eq!(full.as_str(), "FILTER CUTOFF");
     let mut widest = 0;
     for b in BlockRef::ALL {
-        // TAPE's columns read each machine's labels.
-        let tapes: &[TapeMachine] = if b == BlockRef::TapeEngine {
-            &TapeMachine::ALL
-        } else {
-            &[TapeMachine::Loop]
+        // TAPE's columns read each machine's labels, FX's each type's.
+        let tapes: Vec<DestCtx> = match b {
+            BlockRef::TapeEngine => TapeMachine::ALL
+                .iter()
+                .map(|&tape| DestCtx {
+                    tape,
+                    ..DestCtx::DEFAULT
+                })
+                .collect(),
+            BlockRef::VoiceFx => chimera_core::dsp::voice_fx::params::FxType::LIST
+                .iter()
+                .map(|&fx| DestCtx {
+                    fx,
+                    ..DestCtx::DEFAULT
+                })
+                .collect(),
+            _ => vec![DestCtx::DEFAULT],
         };
         for (spec, &t) in b
             .specs()
@@ -743,7 +759,8 @@ fn every_route_readout_fits_its_line() {
                 fmt_readout_dest(&mut name, src.name(), &dest, t);
                 assert!(name.as_str().ends_with(label), "{}", name.as_str());
                 let mut m = MatrixState::new();
-                m.set_tape(t);
+                m.set_tape(t.tape);
+                m.set_fx(t.fx);
                 m.rebuild_sources(&chimera_core::ui::block_registry::PART_MOD_SOURCES);
                 m.dests[0] = Some(dest);
                 m.num_dests = 1;
@@ -948,4 +965,55 @@ fn row_labels_fit_left_of_the_grid() {
         let right = theme::MARGIN_X + draw::text_width(&theme::FONT_LABEL_BOLD, s, 0);
         assert!(right + 3 <= cell_origin(0, 0, R).0, "{s} ends at {right}");
     }
+}
+
+/// An FX pot reads the type's word: the header its short, the band its
+/// label (ADR 0155); OFF and the unnamed ones keep their spec's.
+#[test]
+fn a_routed_fx_pot_is_named_by_the_type() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::voice_fx::params::{FxType, VoiceFxParams as X};
+    use chimera_core::ui::fmt::FmtBuf;
+    use chimera_core::ui::mod_grid::{DestCtx, ModDest, fmt_readout_dest, fx_cell};
+    let dest = |p| ModDest {
+        addr: ParamAddr::new(BlockRef::VoiceFx, p),
+        label: [0; 8],
+    };
+    let band = |p, fx| {
+        let mut b = FmtBuf::new();
+        fmt_readout_dest(
+            &mut b,
+            "LFO 1",
+            &dest(p),
+            DestCtx {
+                fx,
+                ..DestCtx::DEFAULT
+            },
+        );
+        b.as_str().to_string()
+    };
+    let short = |p, fx| fx_cell(dest(p).addr, fx).map(|c| c.short);
+    assert_eq!(band(X::P2, FxType::Soft), "FX TONE");
+    assert_eq!(short(X::P2, FxType::Soft), Some("TONE"));
+    assert_eq!(band(X::P1, FxType::Soft), "FX DRIVE");
+    assert_eq!(short(X::P1, FxType::Soft), Some("DRV"));
+    assert_eq!(band(X::P2, FxType::Fold), "FX SYMMETRY");
+    assert_eq!(short(X::P2, FxType::Fold), Some("SYM"));
+    assert_eq!(band(X::P1, FxType::Fuzz), "FX SUSTAIN");
+    assert_eq!(band(X::P3, FxType::Fuzz), "FX VOLUME");
+    // TYPE, PLACE and MIX keep their spec labels; OFF names nothing.
+    for p in [X::TYPE, X::PLACE, X::MIX] {
+        assert_eq!(short(p, FxType::Soft), None);
+    }
+    assert_eq!(short(X::P1, FxType::Off), None);
+    assert_eq!(band(X::MIX, FxType::Soft), "FX MIX");
+}
+
+#[test]
+fn the_fx_column_is_the_fixed_fourth() {
+    use chimera_core::dsp::voice_fx::params::VoiceFxParams as X;
+    use chimera_core::modulation::FixedCol;
+    assert_eq!(FixedCol::Fx.tag(), "FX");
+    assert_eq!(FixedCol::Fx.index(), 3);
+    assert_eq!(FixedCol::Fx.addr().param, X::P1);
 }

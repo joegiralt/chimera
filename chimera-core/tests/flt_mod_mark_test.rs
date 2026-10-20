@@ -13,12 +13,12 @@ use chimera_core::ui::viz::{self, ModMark, PLOT_BASE, PLOT_TOP};
 use chimera_hal::EncoderId;
 use screen::*;
 
-/// Part 1 on FLT with a turned FREQ (CUTOFF is slot 1), nothing routed.
+/// Part 1 on FLT with a turned FREQ (CUTOFF is slot 4), nothing routed.
 fn flt() -> UiState {
     let mut ui = stack_ui();
     init_part(&mut ui, PartId::ALL[0]);
-    plus(&mut ui, 3);
-    feed(&mut ui, Input::turn(EncoderId::B, -30));
+    plus(&mut ui, 2);
+    feed(&mut ui, Input::turn(EncoderId::E, -30));
     settle(&mut ui);
     ui
 }
@@ -50,7 +50,7 @@ fn ground() -> u16 {
 fn an_lfo_moves_the_mark_not_the_number_or_the_curve() {
     let mut ui = flt();
     lfo_on_freq(&mut ui);
-    let set = ui.renderer.set[1].target();
+    let set = ui.renderer.set[4].target();
     let (mut curves, mut marks, mut numbers) = (vec![], vec![], vec![]);
     for _ in 0..40 {
         ui.update(UiTick::for_test());
@@ -59,7 +59,7 @@ fn an_lfo_moves_the_mark_not_the_number_or_the_curve() {
         // is the CUTOFF cell's text line.
         curves.push(rows(&fb, PLOT_TOP, PLOT_BASE + 1));
         marks.push(mark_pixels(&fb));
-        let y = theme::CELL_LABEL_Y + theme::CELL_VALUE_DY;
+        let y = theme::CELL_LABEL_Y + theme::CELL_ROW_H + theme::CELL_VALUE_DY;
         numbers.push(
             rows(&fb, y - 12, y + 2)
                 .chunks(W)
@@ -70,13 +70,13 @@ fn an_lfo_moves_the_mark_not_the_number_or_the_curve() {
                 })
                 .collect::<Vec<_>>(),
         );
-        assert_eq!(ui.renderer.set[1].target(), set);
+        assert_eq!(ui.renderer.set[4].target(), set);
     }
     assert!(curves.windows(2).all(|w| w[0] == w[1]), "curve moved");
     assert!(numbers.windows(2).all(|w| w[0] == w[1]), "number moved");
     assert!(marks.windows(2).any(|w| w[0] != w[1]), "mark never moved");
     // The animator the cell's bar reads does move; the number reads the set.
-    assert_ne!(ui.renderer.anim[1].target(), ui.renderer.set[1].target());
+    assert_ne!(ui.renderer.anim[4].target(), ui.renderer.set[4].target());
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn unmodulated_shows_no_mark() {
     assert!(mark_pixels(&full(&ui)).iter().all(|&p| p == g));
     // Turning a knob eases the set and animator alike: still none.
     let mut ui = ui;
-    feed(&mut ui, Input::turn(EncoderId::B, 25));
+    feed(&mut ui, Input::turn(EncoderId::E, 25));
     for _ in 0..10 {
         ui.update(UiTick::for_test());
         assert!(mark_pixels(&full(&ui)).iter().all(|&p| p == g));

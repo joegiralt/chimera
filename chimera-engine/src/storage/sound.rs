@@ -6,6 +6,7 @@ use chimera_hal::store::StoreError;
 use super::{SourceRef, TapeSource, ZoneTune};
 use crate::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use crate::block::{DiskCode, ParamId};
+use crate::dsp::voice_fx::legacy::{Legacy, legacy_fx};
 use crate::midi_in::Cc;
 use crate::midi_map::{MAP_LEN, MapEntry, Mappable, MidiMap};
 use crate::mod_path::{LABEL_LEN, MAX_REGISTRY_DESTS, ModDestRegistry};
@@ -32,9 +33,9 @@ const _: () = assert!(MAX_REGISTRY_DESTS * REGISTRY_ENTRY_LEN <= MAX_RECORD_LEN)
 
 /// The most a Sound costs in the pool: its 16 B name and its sparse records
 /// with every param off neutral, a full registry, every route and tap, a
-/// `SourceRef`, a 24-zone `ZoneTune` and a full `MidiMap` (2 589 + 84 =
-/// 2 673 B for 283 params), rounded up to 16 B. `sparse_bound` pins it.
-pub const MAX_SOUND_COST: usize = 2688;
+/// `SourceRef`, a 24-zone `ZoneTune` and a full `MidiMap` (2 549 + 84 =
+/// 2 633 B for 277 params), rounded up to 16 B. `sparse_bound` pins it.
+pub const MAX_SOUND_COST: usize = 2640;
 
 impl Sound {
     /// The frozen base a file decodes onto: every param at its v1 default,
@@ -236,6 +237,11 @@ pub struct SoundCheck {
     /// The Filter block record held FM3 IN and QM IN: else `infer_jacks`.
     had_fm3: bool,
     had_qm: bool,
+    /// DRV's and the folder's retired values, by old id (spec § Loading
+    /// old Sounds): applied to the FX slot at `finish`.
+    legacy: Legacy,
+    /// The file tapped the old fold's FOLD (an ALGO FX tap).
+    fold_tap: bool,
     /// Entries pass 2 dropped from this file; 0 in pass 1.
     skips: u16,
     /// Pass 2's codes the formant budget refused in file order, the first
@@ -269,6 +275,8 @@ impl SoundCheck {
             routes_len: 0,
             had_fm3: false,
             had_qm: false,
+            legacy: Legacy::default(),
+            fold_tap: false,
             skips: 0,
             refused: [[0; 3]; REFUSED],
             n_refused: 0,
@@ -380,6 +388,8 @@ impl SoundCheck {
                 self.blocks = ByteSet::new();
                 self.routes_len = 0;
                 (self.had_fm3, self.had_qm) = (false, false);
+                self.legacy = Legacy::default();
+                self.fold_tap = false;
                 self.skips = 0;
                 self.n_refused = 0;
                 self.over = false;
@@ -424,6 +434,19 @@ impl SoundCheck {
         match tag {
             RecordTag::Engine => self.engine_record(p, staged),
             RecordTag::Block => {
+                if let Some(&b @ (DRIVE_BLOCK | FOLDER_BLOCK)) = p.first() {
+                    let l = if b == DRIVE_BLOCK {
+                        &mut self.legacy.drive
+                    } else {
+                        &mut self.legacy.fold
+                    };
+                    for e in p[1..].as_chunks::<ENTRY_LEN>().0 {
+                        let v = f32::from_le_bytes([e[1], e[2], e[3], e[4]]);
+                        if let Some(x) = l.get_mut(usize::from(e[0])) {
+                            *x = v.is_finite().then_some(v);
+                        }
+                    }
+                }
                 if p.first() == BlockRef::Filter.disk_code().as_ref() {
                     let has = |id: ParamId| p[1..].chunks(ENTRY_LEN).any(|e| e[0] == id.0);
                     self.had_fm3 = has(FilterParams::FM3_IN);
@@ -461,6 +484,11 @@ impl SoundCheck {
             }
             RecordTag::LastProject => Ok(()),
             RecordTag::TapRoutes => {
+                self.fold_tap = p
+                    .as_chunks::<ROUTE_LEN>()
+                    .0
+                    .iter()
+                    .any(|r| r[1] == FOLDER_BLOCK && r[2] == 0 && r[3] != 0);
                 self.skip(tap_routes(p, staged.map(|s| &mut s.params.taps))?);
                 Ok(())
             }
@@ -540,6 +568,20 @@ impl SoundCheck {
                 // takes its registry column, else is dropped.
                 m.set_route_addr(src.index(), addr, amount as i8);
             }
+            // A routed stage ran at 0 too (DRIVE and the fold's first pot).
+            let routed = |block: u8| {
+                routes
+                    .iter()
+                    .any(|r| r[1] == block && r[2] == 0 && r[3] != 0)
+            };
+            let fold_moved = routed(FOLDER_BLOCK) || self.fold_tap;
+            if !BlockRef::VoiceFx
+                .disk_code()
+                .is_some_and(|c| self.blocks.contains(c))
+                && let Some(fx) = legacy_fx(&self.legacy, routed(DRIVE_BLOCK), fold_moved)
+            {
+                s.params.fx = fx;
+            }
             infer_jacks(&mut s.params.filter, m, !self.had_fm3, !self.had_qm);
             self.skip(lost);
         }
@@ -561,6 +603,10 @@ impl SoundCheck {
         Ok(())
     }
 }
+
+/// The retired blocks DRV (9) and the folder (11).
+const DRIVE_BLOCK: u8 = 9;
+const FOLDER_BLOCK: u8 = 11;
 
 /// A patch saved before the jacks (filter-types spec § 2), or a jack the
 /// sparse encoder left out: FM3 IN is the single fixed-FREQ route that is

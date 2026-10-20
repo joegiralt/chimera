@@ -522,13 +522,21 @@ fn retired_never_live() {
             (22, 5),
             (25, 5),
             (25, 6),
-            (25, 7)
+            (25, 7),
+            (9, 0),
+            (9, 1),
+            (9, 2),
+            (11, 0),
+            (11, 1),
+            (11, 2)
         ]
     );
     // TAPE's MODEL REVERSE (#369): LOOP with END before START; PING-PONG
     // and ONESHOT, folded into PLAY (ADR 0170).
     assert_eq!(RETIRED_CODES, &[(34, 0, 1), (34, 0, 2), (34, 0, 7)]);
-    assert!(RETIRED_SOURCES.is_empty() && RETIRED_BLOCKS.is_empty());
+    assert!(RETIRED_SOURCES.is_empty());
+    // DRV and the folder (ADR 0155): never reused.
+    assert_eq!(RETIRED_BLOCKS, &[9, 11]);
     for &(block, id) in RETIRED {
         for b in BlockRef::ALL
             .into_iter()
@@ -561,7 +569,7 @@ fn retired_never_live() {
 #[cfg(debug_assertions)]
 #[should_panic(expected = "block does not match")]
 fn read_value_checks_the_block() {
-    let a = ValidAddr::find(BlockRef::Drive, ParamId(0)).unwrap();
+    let a = ValidAddr::find(BlockRef::VoiceFx, ParamId(2)).unwrap();
     read_value(&FilterParams::default(), a);
 }
 

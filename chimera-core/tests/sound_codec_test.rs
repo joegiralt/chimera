@@ -520,11 +520,7 @@ fn sparse_byte_identity() {
         let mut s = factory_sound(i).unwrap();
         s.map = chimera_core::midi_map::MidiMap::EMPTY; // the old files predate it
         assert_eq!(cost(&full), 1143 + 16 * usize::from(i == 6), "{i}");
-        // SQR BASS's DRV is the FX slot's now; its old file holds the DRV
-        // until Task 10's legacy load moves it there (#614).
-        if i != 5 {
-            assert_eq!(encode(&decode(&full).unwrap()), encode(&s), "{i}");
-        }
+        assert_eq!(encode(&decode(&full).unwrap()), encode(&s), "{i}");
     }
     for name in ["init_algo.snd", "init_modal.snd"] {
         let old = decode(&v1_fixture(name)).unwrap();
@@ -575,7 +571,7 @@ fn sparse_sizes() {
     // The table Sounds, then the formant demos, whose routes, LFOs and
     // envelopes add about 200 B.
     let (table, demos) = costs.split_at(8);
-    assert!(table.iter().all(|c| (200..=320).contains(c)), "{costs:?}");
+    assert!(table.iter().all(|c| (190..=320).contains(c)), "{costs:?}");
     assert!(demos.iter().all(|c| (459..=539).contains(c)), "{costs:?}");
     // 46 B of name, Engine, an empty Registry, ModDests and Routes (its
     // three fixed-FREQ routes), and 70 B for the values INIT moved off
@@ -667,10 +663,10 @@ fn worst(e: EngineType) -> (Sound, usize) {
     (s, stuck)
 }
 
-/// 16 + 5 (`Engine`) + 22 × 5 (block heads) + 283 × 5 (params) + 164
+/// 16 + 5 (`Engine`) + 20 × 5 (block heads) + 277 × 5 (params) + 164
 /// (`Registry`) + 37 (`ModDests`) + 644 (`Routes`, the fixed columns'
 /// among them) + 36 (`TapRoutes`) + 14 (`SourceRef`) + 148 (`ZoneTune`,
-/// 24 zones) + 84 (`MidiMap`, 16 entries) = 2 673 B, less 5 B for each param that has nowhere to move.
+/// 24 zones) + 84 (`MidiMap`, 16 entries) = 2 633 B, less 5 B for each param that has nowhere to move.
 /// A new param moves it: raise
 /// `MAX_SOUND_COST` with it.
 #[test]
@@ -683,7 +679,7 @@ fn sparse_bound() {
         assert!(c <= MAX_SOUND_COST, "{e:?} {c}");
         most = most.max(c + 5 * stuck);
     }
-    assert_eq!(most, 2673);
+    assert_eq!(most, 2633);
     assert_eq!(MAX_SOUND_COST, most.next_multiple_of(16));
 }
 

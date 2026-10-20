@@ -138,9 +138,10 @@ pub static FILTER_SPECS: [ParamSpec; 8] = [
         Smoothing::KNOB,
     )
     .ident("RESO"),
+    // INPUT LEVEL (ADR 0155): the cell and column say INPUT.
     ParamSpec::continuous(
         12,
-        "LEVEL",
+        "INPUT LEVEL",
         ValFmt::Uni,
         0.0,
         1.0,
@@ -149,7 +150,8 @@ pub static FILTER_SPECS: [ParamSpec; 8] = [
         true,
         Smoothing::STAGE,
     )
-    .ident("LEVEL"),
+    .ident("LEVEL")
+    .short("INPUT"),
     // TYPE on screen; its ident stays KIND.
     ParamSpec::choice(
         6,
@@ -715,187 +717,6 @@ impl Block for EnvParams {
                 apply_code(EnvForm::from_disk_code(code), |f| self.func.burst_form = f)
             }
             _ => false,
-        }
-    }
-}
-
-/// Parameters for pre-filter drive stage
-#[derive(Clone, Copy, Debug)]
-pub struct DriveParams {
-    pub drive: f32,
-    pub tone: f32,
-    pub mix: f32,
-}
-
-impl Default for DriveParams {
-    fn default() -> Self {
-        Self {
-            drive: 0.0,
-            tone: 0.5,
-            mix: 1.0,
-        }
-    }
-}
-
-impl DriveParams {
-    pub const DRIVE: ParamId = ParamId(0);
-    pub const TONE: ParamId = ParamId(1);
-    pub const MIX: ParamId = ParamId(2);
-}
-
-/// All three are read by `Voice` every block from the modulated copy.
-pub static DRIVE_SPECS: [ParamSpec; 3] = [
-    ParamSpec::continuous(
-        0,
-        "DRIVE",
-        ValFmt::Uni,
-        0.0,
-        1.0,
-        0.0,
-        1.0 / 128.0,
-        true,
-        Smoothing::STAGE,
-    )
-    .ident("DRIVE"),
-    ParamSpec::continuous(
-        1,
-        "TONE",
-        ValFmt::Bi,
-        0.0,
-        1.0,
-        0.5,
-        1.0 / 128.0,
-        true,
-        Smoothing::STAGE,
-    )
-    .ident("TONE"),
-    ParamSpec::continuous(
-        2,
-        "MIX",
-        ValFmt::Bi,
-        0.0,
-        1.0,
-        1.0,
-        1.0 / 128.0,
-        true,
-        Smoothing::STAGE,
-    )
-    .ident("MIX")
-    .glyph(crate::glyph::FocusGlyph::Crossfader),
-];
-
-impl Block for DriveParams {
-    fn specs(&self) -> &'static [ParamSpec] {
-        &DRIVE_SPECS
-    }
-
-    #[inline(never)]
-    fn get(&self, id: ParamId) -> f32 {
-        match id {
-            Self::DRIVE => self.drive,
-            Self::TONE => self.tone,
-            Self::MIX => self.mix,
-            _ => 0.0,
-        }
-    }
-
-    #[inline(never)]
-    fn write(&mut self, id: ParamId, v: f32) {
-        match id {
-            Self::DRIVE => self.drive = v,
-            Self::TONE => self.tone = v,
-            Self::MIX => self.mix = v,
-            _ => {}
-        }
-    }
-}
-
-/// Parameters for post-filter wavefolder
-#[derive(Clone, Copy, Debug)]
-pub struct FolderParams {
-    pub fold: f32,
-    pub symmetry: f32,
-    pub mix: f32,
-}
-
-impl Default for FolderParams {
-    fn default() -> Self {
-        Self {
-            fold: 0.0,
-            symmetry: 0.5,
-            mix: 0.5,
-        }
-    }
-}
-
-impl FolderParams {
-    pub const FOLD: ParamId = ParamId(0);
-    pub const SYMMETRY: ParamId = ParamId(1);
-    pub const MIX: ParamId = ParamId(2);
-}
-
-/// All three are read by `Voice` every block from the modulated copy.
-pub static FOLDER_SPECS: [ParamSpec; 3] = [
-    ParamSpec::continuous(
-        0,
-        "FOLD",
-        ValFmt::Uni,
-        0.0,
-        1.0,
-        0.0,
-        1.0 / 128.0,
-        true,
-        Smoothing::STAGE,
-    )
-    .ident("FOLD"),
-    ParamSpec::continuous(
-        1,
-        "SYM",
-        ValFmt::Bi,
-        0.0,
-        1.0,
-        0.5,
-        1.0 / 128.0,
-        true,
-        Smoothing::STAGE,
-    )
-    .ident("SYM"),
-    ParamSpec::continuous(
-        2,
-        "MIX",
-        ValFmt::Bi,
-        0.0,
-        1.0,
-        0.5,
-        1.0 / 128.0,
-        true,
-        Smoothing::STAGE,
-    )
-    .ident("MIX"),
-];
-
-impl Block for FolderParams {
-    fn specs(&self) -> &'static [ParamSpec] {
-        &FOLDER_SPECS
-    }
-
-    #[inline(never)]
-    fn get(&self, id: ParamId) -> f32 {
-        match id {
-            Self::FOLD => self.fold,
-            Self::SYMMETRY => self.symmetry,
-            Self::MIX => self.mix,
-            _ => 0.0,
-        }
-    }
-
-    #[inline(never)]
-    fn write(&mut self, id: ParamId, v: f32) {
-        match id {
-            Self::FOLD => self.fold = v,
-            Self::SYMMETRY => self.symmetry = v,
-            Self::MIX => self.mix = v,
-            _ => {}
         }
     }
 }
@@ -1468,8 +1289,6 @@ pub struct ParamSnapshot {
     /// source of truth for engine choice (spec §6).
     engine: EngineType,
     pub filter: FilterParams,
-    pub drive: DriveParams,
-    pub folder: FolderParams,
     pub fx: crate::dsp::voice_fx::params::VoiceFxParams,
     pub envelopes: [EnvParams; 3],
     pub algo: crate::dsp::algo::params::AlgoParams,
@@ -1520,9 +1339,7 @@ impl BlockRead for ParamSnapshot {
             BlockRef::Va => &self.va,
             BlockRef::Algo => &self.algo,
             BlockRef::AlgoOp(op) => return Some(BlockView::Op(self.algo.op(op))),
-            BlockRef::Drive => &self.drive,
             BlockRef::Filter => &self.filter,
-            BlockRef::Folder => &self.folder,
             BlockRef::VoiceFx => &self.fx,
             BlockRef::Env(s) => &self.envelopes[s.index()],
             BlockRef::Lfo(s) => &self.lfos[s.index()],
@@ -1553,9 +1370,7 @@ impl Blocks for ParamSnapshot {
             BlockRef::Va => &mut self.va,
             BlockRef::Algo => &mut self.algo,
             BlockRef::AlgoOp(op) => return Some(BlockViewMut::Op(self.algo.op_mut(op))),
-            BlockRef::Drive => &mut self.drive,
             BlockRef::Filter => &mut self.filter,
-            BlockRef::Folder => &mut self.folder,
             BlockRef::VoiceFx => &mut self.fx,
             BlockRef::Env(s) => &mut self.envelopes[s.index()],
             BlockRef::Lfo(s) => &mut self.lfos[s.index()],
@@ -1585,8 +1400,6 @@ impl Default for ParamSnapshot {
                 cutoff: 20000.0, // fully open
                 ..Default::default()
             },
-            drive: DriveParams::default(),
-            folder: FolderParams::default(),
             fx: crate::dsp::voice_fx::params::VoiceFxParams::default(),
             envelopes: [
                 EnvParams::default(),

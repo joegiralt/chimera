@@ -153,6 +153,24 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     } else {
         ""
     };
+    // FLT › FX's curve rows and the curves they trace: `voice_fx::look`,
+    // `soft::curve` and `fold::curve`. Text is `look::render` alone: `trace`
+    // stays in bank 1 with its caller. Only with `bank2`: without it
+    // `look::trace` is not drawn (the bench sets).
+    let look = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
+        "    *(.text.*8voice_fx4look6render* .rodata.*8voice_fx4look* .text.*8voice_fx4soft5curve* .text.*8voice_fx4fold5curve*);
+"
+    } else {
+        ""
+    };
+    // FUZZ's kernel (ADR 0157): `voice_fx::fuzz`, text and rodata (its law
+    // table). Only with `bank2`: without it `Fuzz::play` calls `run` in bank 1.
+    let fuzz = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
+        "    *(.text.*8voice_fx4fuzz* .rodata.*8voice_fx4fuzz*);
+"
+    } else {
+        ""
+    };
     fs::write(
         out_dir.join("bank2.x"),
         r#"
@@ -191,6 +209,8 @@ SECTIONS {
     /* REVERB */
     /* VA */
     /* LFO */
+    /* LOOK */
+    /* FUZZ */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -203,7 +223,9 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("    /* SLOTS */\n", slots)
         .replace("/* ASSERTS */", asserts)
         .replace("    /* VA */\n", va)
-        .replace("    /* LFO */\n", lfo),
+        .replace("    /* LFO */\n", lfo)
+        .replace("    /* LOOK */\n", look)
+        .replace("    /* FUZZ */\n", fuzz),
     )
     .unwrap();
 

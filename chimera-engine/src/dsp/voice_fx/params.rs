@@ -5,28 +5,28 @@ use crate::block::{Block, Change, DiskCode, ParamId, ParamSpec, Smoothing, ValFm
 use crate::glyph::FocusGlyph;
 use crate::hw::Cost;
 
-/// What the slot runs. Codes are forever: 2 is FUZZ's and 4 DELAY's, neither
-/// built yet.
+/// What the slot runs. Codes are forever: 4 is DELAY's, not built yet.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum FxType {
     #[default]
     Off = 0,
     Soft = 1,
+    Fuzz = 2,
     Fold = 3,
 }
 
 impl FxType {
     /// TYPE's order on the knob.
-    pub const LIST: [FxType; 3] = [FxType::Off, FxType::Soft, FxType::Fold];
+    pub const LIST: [FxType; 4] = [FxType::Off, FxType::Soft, FxType::Fuzz, FxType::Fold];
     /// TYPE's screen names, in `LIST`'s order.
-    pub const NAMES: [&'static str; 3] = ["OFF", "SOFT", "FOLD"];
+    pub const NAMES: [&'static str; 4] = ["OFF", "SOFT", "FUZZ", "FOLD"];
 
-    /// Where the type sits when picked from OFF: a drive before the
-    /// filter, a fold after it.
+    /// Where the type sits when picked from OFF: a drive or fuzz before
+    /// the filter, a fold after it.
     pub const fn default_place(self) -> Place {
         match self {
-            FxType::Off | FxType::Soft => Place::Pre,
+            FxType::Off | FxType::Soft | FxType::Fuzz => Place::Pre,
             FxType::Fold => Place::Post,
         }
     }
@@ -36,15 +36,32 @@ impl FxType {
         Self::LIST[(v.max(0.0) as usize).min(Self::LIST.len() - 1)]
     }
 
-    fn index(self) -> usize {
-        Self::LIST.iter().position(|&t| t == self).unwrap_or(0)
+    /// Whether the type's kernel is bank 2's (FUZZ, ADR 0157), so it
+    /// passes dry while bank 2 can't play.
+    pub const fn in_bank2(self) -> bool {
+        matches!(self, FxType::Fuzz)
+    }
+
+    /// Its place in `LIST`.
+    const fn index(self) -> usize {
+        match self {
+            FxType::Off => 0,
+            FxType::Soft => 1,
+            FxType::Fuzz => 2,
+            FxType::Fold => 3,
+        }
     }
 
     /// Whether the slot runs: once P1 is 0.001 or more, or `moved` (a route
-    /// on P1, or FOLD's tap) may raise it. OFF never. The bill and the gate
-    /// read the same answer (`Voice::fx_runs`).
+    /// on P1, or FOLD's tap) may raise it. OFF never; FUZZ always, as the
+    /// pedal at SUSTAIN 0 still fuzzes. The bill and the gate read the same
+    /// answer (`Voice::fx_runs`).
     pub fn runs(self, p1: f32, moved: bool) -> bool {
-        self != FxType::Off && (p1 >= 0.001 || moved)
+        match self {
+            FxType::Off => false,
+            FxType::Fuzz => true,
+            FxType::Soft | FxType::Fold => p1 >= 0.001 || moved,
+        }
     }
 
     /// The type running steady.
@@ -54,10 +71,16 @@ impl FxType {
     ///   at 480 MHz), 43, and the offset of silence's fold (ADR 0060), 1
     ///   instruction a sample, 1.6 by ADR 0056's host method. LEVEL's
     ///   multiply adds about 1: re-measured on the unit in Task 13.
+    /// - FUZZ: the host count, `tools/loop_count.py` on the ORBIT ELF's
+    ///   `Fuzz::steady` (ADR 0056): 186 instructions and 4 `vdiv` a round of
+    ///   two samples, 93 and 2 a sample (ADR 0156), 175. The unit's `FUZZ`
+    ///   row (`bench.rs`, less 1 OP) is PENDING (unit); FUZZ plus the bare
+    ///   chain stays under the ceiling, 271 - 95.
     pub const fn cost(self) -> Cost {
         match self {
             FxType::Off => Cost::ZERO,
             FxType::Soft => Cost(58),
+            FxType::Fuzz => Cost(175),
             FxType::Fold => Cost(45),
         }
     }
@@ -69,21 +92,30 @@ impl FxType {
     /// - FOLD: recounted on the bench ELF at 1879169d (2026-10-07): the
     ///   moving loop 45 instructions a sample (silence's fold per sample,
     ///   ADR 0060) + 3.48 of block, 80, against the steady 24 + 3.48, 45.
+    /// - FUZZ: the moving loop, counted on the ORBIT ELF's `Fuzz::run` (the
+    ///   per-sample `tick` with four settings stepped and the gains formed):
+    ///   123 instructions and 2 `vdiv` a sample, 225, over the steady 175:
+    ///   50. The unit's `FUZZ MOVE` row is PENDING (unit).
     ///
     /// Unrouted, only the UI moves them: brief, in the headroom (ADR 0061).
     pub const fn ramp_cost(self) -> Cost {
         match self {
             FxType::Off => Cost::ZERO,
             FxType::Soft => Cost(26),
+            FxType::Fuzz => Cost(50),
             FxType::Fold => Cost(35),
         }
     }
 
     /// A knob glide's blocks: four steady loops' prologues, a few
     /// instructions each, no divide: under 1 a sample, billed 1 (ADR 0117).
+    /// FUZZ's four prologues each take two `exp2`s (SUSTAIN and VOLUME)
+    /// and the call, about 45 instructions: 3 a sample, billed 5 (a
+    /// margin; the unit's reading is PENDING).
     pub const fn glide_cost(self) -> Cost {
         match self {
             FxType::Off => Cost::ZERO,
+            FxType::Fuzz => Cost(5),
             FxType::Soft | FxType::Fold => Cost(1),
         }
     }
@@ -98,6 +130,7 @@ impl DiskCode for FxType {
         match self {
             FxType::Off => "OFF",
             FxType::Soft => "SOFT",
+            FxType::Fuzz => "FUZZ",
             FxType::Fold => "FOLD",
         }
     }
@@ -106,6 +139,7 @@ impl DiskCode for FxType {
         match c {
             0 => Some(FxType::Off),
             1 => Some(FxType::Soft),
+            2 => Some(FxType::Fuzz),
             3 => Some(FxType::Fold),
             _ => None,
         }
