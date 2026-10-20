@@ -116,8 +116,8 @@ fn a_row_streams_its_file() {
     let f = file(5_000);
     assert!(!r.streams(f.file()));
     r.insert(id(2), f).unwrap();
-    assert!(r.streams(source_name(5_000)));
-    assert!(!r.streams(source_name(5_001)));
+    assert!(r.streams(source_name(chimera_engine::storage::Stem::new(5_000))));
+    assert!(!r.streams(source_name(chimera_engine::storage::Stem::new(5_001))));
     // SAFETY: nothing reads `r` but this test.
     assert!(unsafe { r.clear(id(2)) });
     assert!(!r.streams(f.file()));

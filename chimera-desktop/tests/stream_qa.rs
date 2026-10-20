@@ -11,10 +11,11 @@ use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, Shape, streamed_held_len, write_head_table,
 };
-use chimera_core::dsp::tape_engine::{PlayMode, TapeEngine, TapeEngineParams, TapeModel};
+use chimera_core::dsp::tape_engine::{PlayMode, TapeEngine, TapeEngineParams};
 use chimera_core::project::SourceId;
 use chimera_core::source_table::SourceTable;
 use chimera_core::storage::{Card, SourceHead, read_packed_into, read_source_head, source_name};
@@ -64,7 +65,7 @@ impl Table {
 /// The streamed row a load stages for `p`: the descriptor, the head table,
 /// the heads' samples (`TestCard::held_heads`'s).
 fn streamed_row(head: &SourceHead, packed: &[u8], p: &TapeEngineParams) -> Option<Vec<u8>> {
-    let heads = heads_for(head.sref, p)?;
+    let heads = heads_for(head.sref, p).ok()?;
     let rate = SourceRate::new(head.sref.rate)?;
     let reach = Frames::new(head_frames(rate));
     let mut held = vec![0; streamed_held_len(heads.as_slice())];
@@ -256,7 +257,8 @@ fn beds(card: &Path) -> Vec<(SourceHead, Vec<u8>, String)> {
         let stem = u32::from_str_radix(std::str::from_utf8(f.stem()).unwrap(), 16).unwrap();
         let got = Card::new()
             .run(&mut store, |s, r| {
-                let head = read_source_head(s, r, stem, len).map_err(|_| StoreError::Io)?;
+                let head = read_source_head(s, r, chimera_core::storage::Stem::new(stem), len)
+                    .map_err(|_| StoreError::Io)?;
                 let mut packed = vec![0; 3 * head.sref.frames.div_ceil(2) as usize];
                 read_packed_into(s, r, head.sref, Bytes::new(0), &mut packed)
                     .map_err(|_| StoreError::Io)?;
@@ -265,7 +267,7 @@ fn beds(card: &Path) -> Vec<(SourceHead, Vec<u8>, String)> {
             .unwrap()
             .result
             .unwrap();
-        assert_eq!(source_name(got.0.sref.crc), f);
+        assert_eq!(source_name(got.0.sref.stem()), f);
         if got.0.shape == Shape::Plain {
             let name = got.0.name.as_str().trim_end().to_string();
             out.push((got.0, got.1, name));
@@ -302,8 +304,7 @@ fn stream_qa() {
         let secs = head.sref.frames as f32 / f32::from(rate);
         for mode in [PlayMode::One, PlayMode::Loop] {
             let p = TapeEngineParams {
-                model: TapeModel::Play,
-                mode,
+                machine: TapeMachine::play(mode),
                 root: f32::from(head.root),
                 ..TapeEngineParams::default()
             };
@@ -426,8 +427,7 @@ fn stream_qa_stressed() {
         "admission takes {billed}"
     );
     let p = TapeEngineParams {
-        model: TapeModel::Play,
-        mode: PlayMode::Loop,
+        machine: TapeMachine::Loop,
         root: 6_000.0,
         ..TapeEngineParams::default()
     };

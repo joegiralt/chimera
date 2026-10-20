@@ -9,6 +9,7 @@
 
 use crate::dsp::tape_engine::params::TapeEngineParams;
 use crate::dsp::tape_engine::read::{HeadSpec, streamed_held_len};
+use crate::project::Refusal;
 use crate::storage::SourceRef;
 
 mod place;
@@ -45,8 +46,8 @@ impl Heads {
     }
 }
 
-/// `r`'s heads for `p` (`place`, through `LoadDoor` with `bank2`); `None`
-/// where `p` needs the source in RAM, or with bank 2 shut.
-pub fn heads_for(r: SourceRef, p: &TapeEngineParams) -> Option<Heads> {
-    crate::project::LoadDoor::with(|d| d.heads_for(r, p)).flatten()
+/// `r`'s heads for `p` (`place`, through `LoadDoor` with `bank2`), or why
+/// it has none: `Closed` with bank 2 shut.
+pub fn heads_for(r: SourceRef, p: &TapeEngineParams) -> Result<Heads, Refusal> {
+    crate::project::LoadDoor::with(|d| d.heads_for(r, p)).unwrap_or(Err(Refusal::Closed))
 }

@@ -16,7 +16,7 @@ use crate::dsp::modulator::{
 };
 use crate::dsp::reverb::{ReverbParams, ReverbType, in_plate_zone};
 use crate::dsp::tape_engine::machine;
-use crate::dsp::tape_engine::{self, TapeEngineParams as T, TapeMachine, wave};
+use crate::dsp::tape_engine::{self, MachineIndex, TapeEngineParams as T, TapeMachine, wave};
 use crate::dsp::voice_fx::params::{FxType, VoiceFxParams};
 use crate::midi_map::Mappable;
 use crate::modulation::VCA;
@@ -28,7 +28,7 @@ use crate::params::{EnvParams, FilterParams, OutParams};
 use crate::preset::Sound;
 use crate::project::arena::Cost;
 use crate::project::{Absence, Pool};
-use crate::storage::SourceRef;
+use crate::storage::{SourceRef, Stem};
 use crate::stream::units::SourceRate;
 use crate::ui::block_def::{BlockDef, MachineSlot, SlotBinding};
 use crate::ui::filter_panel::{self, PanelKnob, PanelTarget, RouteView};
@@ -130,7 +130,7 @@ impl SlotCtx {
                 }
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
-            tape: TapeMachine::from_index(get(BlockRef::TapeEngine, T::MODEL) as u8),
+            tape: TapeMachine::from_index(MachineIndex(get(BlockRef::TapeEngine, T::MODEL) as u8)),
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
             src: SourceState::None,
             rev: reverb_panel::shown(rev.kind),
@@ -243,19 +243,18 @@ pub enum SourceState {
     /// The cell on a card row, not loaded: its head once read (`None`, its
     /// stem stands in), its cost, and the pool's free bytes.
     Card {
-        stem: u32,
+        stem: Stem,
         head: Option<(SoundName, u16, u32)>,
         cost: Cost,
         free: Cost,
     },
     /// A card read failed: until the next input.
-    Failed(&'static str),
+    Failed(crate::ui::source_cell::SourceNote),
 }
 
 impl SourceState {
     /// What a note-on on `p` finds for `r` in `pool`.
     pub fn of(p: &T, r: Option<SourceRef>, pool: &Pool) -> Self {
-        let model = p.model;
         let Some(r) = r else {
             return SourceState::None;
         };
@@ -280,8 +279,8 @@ impl SourceState {
             notes: None,
         };
         match pool.source_view(r) {
-            Some(v) if wave::playable(model, &v) => held,
-            Some(_) if model == tape_engine::TapeModel::Transwave => SourceState::NotTranswave,
+            Some(v) if wave::playable(p.machine, &v) => held,
+            Some(_) if p.machine == TapeMachine::Wave => SourceState::NotTranswave,
             None if pool.streamed(r) => match tape_engine::needs_ram(p) {
                 Some(n) => SourceState::NeedsRam(n),
                 None => held.streaming(p.tape > 0.0),
@@ -396,7 +395,7 @@ impl SourceState {
                 cost,
                 ..
             } => {
-                let _ = write!(buf, "{stem:08X} · ");
+                let _ = write!(buf, "{:08X} · ", stem.get());
                 tail(buf, None, None, cost)
             }
             SourceState::Card {
@@ -419,12 +418,12 @@ impl SourceState {
             SourceState::Absent(Absence::ReadFailed) => READ_FAILED,
             SourceState::Absent(Absence::StreamsFull) => crate::ui::source_cell::STREAMS_FULL,
             SourceState::Absent(Absence::Fragmented) => crate::ui::source_cell::FRAGMENTED,
-            SourceState::Absent(Absence::NeedsRam(n)) => crate::ui::source_cell::needs_ram_words(n),
+            SourceState::Absent(Absence::NeedsRam(r)) => crate::ui::source_cell::refusal_words(r),
             SourceState::Damaged => crate::ui::source_cell::FILE_DAMAGED,
             SourceState::NotTranswave => "NOT A TRANSWAVE",
             SourceState::ZonesOnTron => "ZONES: NOT TRON",
             SourceState::NeedsRam(n) => crate::ui::source_cell::needs_ram_words(n),
-            SourceState::Failed(w) => w,
+            SourceState::Failed(w) => w.words(),
             _ => "NONE",
         }
     }
@@ -442,7 +441,9 @@ impl SourceState {
             }
             SourceState::Absent(Absence::StreamsFull) => buf.write_str("FULL"),
             SourceState::Absent(Absence::Fragmented) => buf.write_str("COPY"),
-            SourceState::Absent(Absence::NeedsRam(_)) => buf.write_str("RAM"),
+            SourceState::Absent(Absence::NeedsRam(r)) => {
+                buf.write_str(crate::ui::source_cell::refusal_cell(r))
+            }
             SourceState::Damaged => buf.write_str("BAD FILE"),
             SourceState::NotTranswave => buf.write_str("NO WAVE"),
             SourceState::ZonesOnTron => buf.write_str("ZONES"),

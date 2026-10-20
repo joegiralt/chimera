@@ -5,6 +5,7 @@
 
 mod common;
 
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::stream::units::{Cents, SourceRate};
 use core::f32::consts::TAU;
 use core::mem::MaybeUninit;
@@ -336,8 +337,7 @@ fn note_on_ramp_has_no_corner() {
         (TapeModel::Stretch, PlayMode::Loop),
     ] {
         let p = TapeEngineParams {
-            model,
-            mode,
+            machine: TapeMachine::of(model, mode),
             start: 0.125,
             motion: if model == TapeModel::Stretch {
                 0.5
@@ -459,7 +459,7 @@ fn tiny_sources_play_finite() {
                 for (start, end) in [(0.0, 0.0), (0.5, 0.5), (1.0, 1.0), (0.0, 1.0), (1.0, 0.0)] {
                     for (size, xfade) in [(0.0, 0.0), (0.0, 0.5), (1.0, 0.1), (1.0, 0.5)] {
                         let p = TapeEngineParams {
-                            model,
+                            machine: TapeMachine::of(model, PlayMode::Loop),
                             start,
                             end,
                             size,
@@ -488,8 +488,7 @@ fn tiny_sources_play_finite() {
                 for (start, end) in [(0.0, 0.0), (0.5, 0.5), (1.0, 1.0), (0.0, 1.0), (1.0, 0.0)] {
                     for size in [0.0, 1.0] {
                         let p = TapeEngineParams {
-                            model,
-                            mode: PlayMode::One,
+                            machine: TapeMachine::of(model, PlayMode::One),
                             slice: chimera_core::dsp::tape_engine::SliceCode::new(slice),
                             start,
                             end,
@@ -510,7 +509,7 @@ fn tiny_sources_play_finite() {
             }
             // TRANSWAVE can't play a `Plain`: silent, not stuck.
             let p = TapeEngineParams {
-                model: TapeModel::Transwave,
+                machine: TapeMachine::Wave,
                 ..TapeEngineParams::default()
             };
             let mut e = fresh();
@@ -524,7 +523,7 @@ fn tiny_sources_play_finite() {
     let v = SourceView::strict(&held).unwrap();
     for (position, motion, size) in [(0.0, -1.0, 1.0), (1.0, 1.0, 1.0), (0.5, 0.0, 0.0)] {
         let p = TapeEngineParams {
-            model: TapeModel::Transwave,
+            machine: TapeMachine::Wave,
             position,
             motion,
             size,
@@ -594,8 +593,7 @@ fn midi_extremes_stay_finite() {
             for (note, pitch) in [(0u8, -2_400.0f32), (127, 2_400.0)] {
                 for (start, end) in [(0.2, 0.8), (0.8, 0.2)] {
                     let p = TapeEngineParams {
-                        model,
-                        mode,
+                        machine: TapeMachine::of(model, mode),
                         slice: chimera_core::dsp::tape_engine::SliceCode::new(slice),
                         start,
                         end,
@@ -625,7 +623,7 @@ fn midi_extremes_stay_finite() {
     assert!(wave::cycles(0, -2_400.0, SR) >= f32::EPSILON);
     for (note, pitch, level) in [(0u8, -2_400.0f32, 9u8), (127, 2_400.0, 4)] {
         let p = TapeEngineParams {
-            model: TapeModel::Transwave,
+            machine: TapeMachine::Wave,
             position: 0.5,
             motion: 1.0,
             tape: 1.0,

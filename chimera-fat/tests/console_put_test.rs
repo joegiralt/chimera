@@ -270,10 +270,11 @@ fn an_abort_mid_way_stops_it() {
 
 #[test]
 fn more_data_than_the_size_is_refused() {
-    // A whole project is 5,348 B, a whole number of lines plus 20 B: cut 10
-    // bytes so its last line carries more than one.
+    // Cut the fewest bytes (at least one) that leave the last line carrying
+    // more than one, whatever the project's length.
     let full = project_bytes("AVRIL 14", 1);
-    let body = &full[..full.len() - 10];
+    let cut = (1..).find(|c| (full.len() - c) % 48 > 1).unwrap();
+    let body = &full[..full.len() - cut];
     assert!(
         body.len() % 48 > 1,
         "the last line carries more than one byte"
@@ -763,7 +764,7 @@ fn a_source_put_lands_sealed_and_lists() {
     assert!(source_loads(&mut s, &h));
     let vol = s.mount().unwrap();
     assert_eq!(
-        s.delete(vol, source_name(h.sref.crc)),
+        s.delete(vol, source_name(h.sref.stem())),
         Err(StoreError::ReadOnly)
     );
     assert_eq!(

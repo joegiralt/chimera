@@ -356,7 +356,7 @@ fn model_page_reads_its_notes() {
     settle(&mut ui);
     assert!(label_reads(&render_ui(&ui), view::FADE_ASIDE));
     assert_eq!(ui.params().tape.drag, drag);
-    assert_eq!(ui.params().tape.model, TapeModel::Play);
+    assert_eq!(ui.params().tape.model(), TapeModel::Play);
 }
 
 /// `text` in the label font where the focus band's hint goes, in MID.

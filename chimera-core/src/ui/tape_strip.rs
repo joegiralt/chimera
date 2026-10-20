@@ -14,7 +14,7 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
 use crate::dsp::tape_engine::Heads;
-use crate::dsp::tape_engine::params::{TapeEngineParams, TapeModel};
+use crate::dsp::tape_engine::params::{TapeEngineParams, TapeMachine};
 use crate::dsp::tape_engine::read::SourceView;
 use crate::stream::units::SourceRate;
 use crate::ui::{draw, theme};
@@ -79,8 +79,8 @@ impl Overview {
 
 /// What the viz region redraws on: the overview, the machine's params and
 /// the heads to the column (`raster`'s `key_in`); closed, 0.
-pub fn key(o: &Overview, model: TapeModel, p: &TapeEngineParams, heads: Heads) -> u32 {
-    crate::bank2::ui_door(|u| u.strip_key(o, model, p, heads)).unwrap_or(0)
+pub fn key(o: &Overview, m: TapeMachine, p: &TapeEngineParams, heads: Heads) -> u32 {
+    crate::bank2::ui_door(|u| u.strip_key(o, m, p, heads)).unwrap_or(0)
 }
 
 /// What the strip draws with: a display behind a `dyn`, so its raster is
@@ -105,13 +105,13 @@ impl<D: DrawTarget<Color = Rgb565>> Paint for On<'_, D> {
     }
 }
 
-/// The strip at `(x, y)`, 216 × 40 px (ticks hang 3 px below): `model`
+/// The strip at `(x, y)`, 216 × 40 px (ticks hang 3 px below): `m`
 /// over `o` at `p` (the page's values as they glide), `heads` the audio's.
 /// Closed, nothing: the header says UPDATE.
 pub fn draw_strip<D>(
     d: &mut D,
     o: &Overview,
-    model: TapeModel,
+    m: TapeMachine,
     p: &TapeEngineParams,
     heads: Heads,
     x: i32,
@@ -120,5 +120,5 @@ pub fn draw_strip<D>(
     D: DrawTarget<Color = Rgb565>,
 {
     let mut on = On(d);
-    crate::bank2::ui_door(|u| u.strip(&mut on, o, model, p, heads, (x, y)));
+    crate::bank2::ui_door(|u| u.strip(&mut on, o, m, p, heads, (x, y)));
 }

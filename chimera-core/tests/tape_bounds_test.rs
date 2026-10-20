@@ -7,6 +7,7 @@ mod common;
 
 use core::mem::MaybeUninit;
 
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape, SourceView};
 use chimera_core::dsp::tape_engine::wave;
 use chimera_core::dsp::tape_engine::{
@@ -49,8 +50,7 @@ fn reads_stay_in_row() {
         held.truncate(keep);
         let v = SourceView::strict(&held).unwrap();
         let p = TapeEngineParams {
-            model: MODELS[rng.below(MODELS.len())],
-            mode: MODES[rng.below(3)],
+            machine: TapeMachine::of(MODELS[rng.below(MODELS.len())], MODES[rng.below(3)]),
             start: unit(&mut rng),
             end: unit(&mut rng),
             position: unit(&mut rng),
@@ -66,6 +66,7 @@ fn reads_stay_in_row() {
             slice: SliceCode::new(rng.below(18) as u8),
             wow: [Wow::Capstan, Wow::Warble][rng.below(2)],
             retrig: Retrig::Stack,
+            ..TapeEngineParams::default()
         };
         let mut slot = MaybeUninit::uninit();
         let e = TapeEngine::init_in_place(&mut slot);
@@ -73,7 +74,7 @@ fn reads_stay_in_row() {
         e.note_on(rng.below(128) as u8, &p, &v, 48_000);
         let mut b = [0.0; BLOCK_SIZE];
         let reach = v.frames() + INC_MAX as u32;
-        assert!(p.model != TapeModel::Transwave || b.iter().all(|&y| y == 0.0));
+        assert!(p.model() != TapeModel::Transwave || b.iter().all(|&y| y == 0.0));
         for _ in 0..4 {
             e.render(&mut b, &p, &v, 48_000);
             assert!(b.iter().all(|y| y.is_finite()), "run {run}: {p:?}");
@@ -112,7 +113,7 @@ fn transwave_reads_stay_in_row() {
         }
         let v = SourceView::strict(&held).unwrap();
         let p = TapeEngineParams {
-            model: TapeModel::Transwave,
+            machine: TapeMachine::Wave,
             position: unit(&mut rng),
             motion: 2.0 * unit(&mut rng) - 1.0,
             size: unit(&mut rng),
@@ -153,7 +154,7 @@ fn scrub_reversing_at_a_crawl_stays_finite() {
         let held = held_plain(&s, [4_000, 8_000][rng.below(2)]);
         let v = SourceView::strict(&held).unwrap();
         let mut p = TapeEngineParams {
-            model: TapeModel::Scrub,
+            machine: TapeMachine::Scrub,
             size: unit(&mut rng),
             xfade: 0.5 * unit(&mut rng),
             position: unit(&mut rng),
@@ -200,8 +201,7 @@ fn edge(rng: &mut XorShift) -> f32 {
 fn drawn(rng: &mut XorShift, model: TapeModel, period: f32) -> TapeEngineParams {
     let start = edge(rng);
     TapeEngineParams {
-        model,
-        mode: MODES[rng.below(3)],
+        machine: TapeMachine::of(model, MODES[rng.below(3)]),
         start,
         end: if rng.below(5) == 0 { start } else { edge(rng) },
         position: edge(rng),
@@ -217,6 +217,7 @@ fn drawn(rng: &mut XorShift, model: TapeModel, period: f32) -> TapeEngineParams 
         slice: SliceCode::new(rng.below(18) as u8),
         wow: [Wow::Capstan, Wow::Warble][rng.below(2)],
         retrig: Retrig::Stack,
+        ..TapeEngineParams::default()
     }
 }
 

@@ -20,6 +20,7 @@ use chimera_core::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use chimera_core::block::{ParamSpec, Smoothing};
 use chimera_core::dsp::knobs::{KNOBS, Knob, coeff};
 use chimera_core::dsp::modal::ResonatorMode;
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::PartId;
@@ -288,7 +289,8 @@ fn scrub_position_follows_the_jog_directly() {
     for (model, direct) in [(TapeModel::Scrub, true), (TapeModel::Play, false)] {
         let mut s = Sound::init(EngineType::Algo);
         s.params.envelopes[0].sustain = 1.0;
-        s.params.tape.model = model;
+        s.params.tape.machine =
+            TapeMachine::of(model, chimera_core::dsp::tape_engine::PlayMode::Loop);
         let mut r = Rig::new([s, Sound::init(EngineType::Algo)]);
         r.note(0, true);
         for _ in 0..50 {

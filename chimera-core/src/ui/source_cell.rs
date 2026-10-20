@@ -17,18 +17,18 @@ use chimera_hal::store::{ReadSink, Store, StoreError};
 use crate::dsp::tape_engine::params::TapeEngineParams;
 #[cfg(feature = "tape")]
 use crate::dsp::tape_engine::read::head_table;
-use crate::dsp::tape_engine::{NeedsRam, TapeModel};
+use crate::dsp::tape_engine::{NeedsRam, Seeks};
 use crate::preset::Sound;
 use crate::project::arena::{Cost, MAX_SOURCES};
 use crate::project::{
-    Absence, PartId, Pool, Project, SOURCE_HEAD, SourceId, SourceNeed, StreamFail,
+    Absence, PartId, Pool, Project, Refusal, SOURCE_HEAD, SourceId, SourceNeed, StreamFail,
 };
 pub use crate::project::{LoadKind, load_kind};
 #[cfg(feature = "tape")]
 use crate::project::{StreamLoad, StreamStep};
 use crate::storage::{
-    Card, CardEvent, MAX_TAPES, Ready, SourceCheck, SourceHead, SourceRef, TapeList, TapeSource,
-    after_mount, held_for_file_len, source_file,
+    Card, CardEvent, MAX_TAPES, Ready, SourceCheck, SourceHead, SourceRef, Stem, TapeList,
+    TapeSource, after_mount, held_for_file_len, source_name,
 };
 #[cfg(feature = "tape")]
 use crate::stream::stage::{Heads, heads_for};
@@ -56,29 +56,80 @@ pub const PING_NEEDS_RAM: &str = "PING NEEDS RAM";
 pub const REVERSE_NEEDS_RAM: &str = "REVERSE NEEDS RAM";
 
 /// Why a streamed source won't play: the focus band's words.
+#[inline(never)]
 pub fn needs_ram_words(n: NeedsRam) -> &'static str {
     match n {
         NeedsRam::Ping => PING_NEEDS_RAM,
         NeedsRam::Reverse => REVERSE_NEEDS_RAM,
         // The machines that seek (slice 1 § 2.7): provisional copy.
-        NeedsRam::Machine(TapeModel::Scrub) => "SCRUB NEEDS RAM",
-        NeedsRam::Machine(TapeModel::Stretch) => "STRETCH NEEDS RAM",
-        NeedsRam::Machine(TapeModel::Transwave) => "WAVE NEEDS RAM",
-        NeedsRam::Machine(TapeModel::Tron) => "TRON NEEDS RAM",
-        NeedsRam::Machine(TapeModel::Play) => "NEEDS RAM",
+        NeedsRam::Machine(Seeks::Scrub) => "SCRUB NEEDS RAM",
+        NeedsRam::Machine(Seeks::Stretch) => "STRETCH NEEDS RAM",
+        NeedsRam::Machine(Seeks::Wave) => "WAVE NEEDS RAM",
     }
 }
 
-/// Why a streamed load published nothing: the focus band's words.
-pub fn stream_fail_words(f: StreamFail) -> &'static str {
+/// Why a card file too big for the arena won't load: the focus band's
+/// words (ADR 0186).
+#[inline(never)]
+pub fn refusal_words(r: Refusal) -> &'static str {
+    match r {
+        Refusal::NeedsRam(n) => needs_ram_words(n),
+        Refusal::Transwave => TRANSWAVE_NO_STREAM,
+        Refusal::ZoneSet => ZONES_NO_STREAM,
+        Refusal::TooShort => TOO_SHORT_TO_STREAM,
+        Refusal::Closed => crate::bank2::NEEDS_UPDATE,
+    }
+}
+
+/// `refusal_words`, short enough for the cell's column.
+pub fn refusal_cell(r: Refusal) -> &'static str {
+    match r {
+        Refusal::NeedsRam(_) => "RAM",
+        Refusal::Transwave | Refusal::ZoneSet => "TOO BIG",
+        Refusal::TooShort => "SHORT",
+        Refusal::Closed => crate::bank2::NEEDS_UPDATE_CELL,
+    }
+}
+
+pub const TRANSWAVE_NO_STREAM: &str = "TRANSWAVE: NO STREAM";
+pub const ZONES_NO_STREAM: &str = "ZONES: NO STREAM";
+pub const TOO_SHORT_TO_STREAM: &str = "TOO SHORT TO STREAM";
+
+/// Why SOURCE's card work failed: the focus band's words until the next
+/// input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceNote {
+    NotOnCard,
+    ReadFailed,
+    Fragmented,
+    StreamsFull,
+    PoolFull,
+    Refused(Refusal),
+}
+
+impl SourceNote {
+    pub fn words(self) -> &'static str {
+        match self {
+            SourceNote::NotOnCard => NOT_ON_CARD,
+            SourceNote::ReadFailed => READ_FAILED,
+            SourceNote::Fragmented => FRAGMENTED,
+            SourceNote::StreamsFull => STREAMS_FULL,
+            SourceNote::PoolFull => crate::ui::settings::prompt::POOL_FULL,
+            SourceNote::Refused(r) => refusal_words(r),
+        }
+    }
+}
+
+/// Why a streamed load published nothing.
+pub fn stream_note(f: StreamFail) -> SourceNote {
     match f {
-        StreamFail::Fragmented => FRAGMENTED,
-        StreamFail::Full => STREAMS_FULL,
-        StreamFail::Pool(_) => crate::ui::settings::prompt::POOL_FULL,
+        StreamFail::Fragmented => SourceNote::Fragmented,
+        StreamFail::Full => SourceNote::StreamsFull,
+        StreamFail::Pool(_) => SourceNote::PoolFull,
         StreamFail::Read(crate::storage::SourceReadError::Load(
             crate::storage::LoadError::Missing,
-        )) => NOT_ON_CARD,
-        StreamFail::Read(_) | StreamFail::Sounding => READ_FAILED,
+        )) => SourceNote::NotOnCard,
+        StreamFail::Read(_) | StreamFail::Sounding => SourceNote::ReadFailed,
     }
 }
 
@@ -90,7 +141,7 @@ pub enum SourceRow {
     Divider,
     /// A card file the pool doesn't hold, by its stem (the CRC).
     Card {
-        stem: u32,
+        stem: Stem,
         cost: Cost,
     },
 }
@@ -107,11 +158,11 @@ fn held(pool: &Pool, s: SourceId) -> Option<SourceRef> {
 
 /// The pool's sources, a divider, then `card`'s files (stem, size) the
 /// pool doesn't hold. No divider with no card row.
-pub fn rows<'a>(pool: &'a Pool, card: &'a [(u32, u32)]) -> impl Iterator<Item = SourceRow> + 'a {
+pub fn rows<'a>(pool: &'a Pool, card: &'a [(Stem, u32)]) -> impl Iterator<Item = SourceRow> + 'a {
     let in_pool = move |stem| {
         SourceId::ALL
             .into_iter()
-            .any(|s| held(pool, s).is_some_and(|r| r.crc == stem))
+            .any(|s| held(pool, s).is_some_and(|r| r.stem() == stem))
     };
     let cards = card.iter().filter_map(move |&(stem, size)| {
         let cost = card_cost(size).filter(|_| !in_pool(stem))?;
@@ -127,19 +178,11 @@ pub fn rows<'a>(pool: &'a Pool, card: &'a [(u32, u32)]) -> impl Iterator<Item = 
 }
 
 /// What a card read's failure reads: a file gone, or anything else.
-pub fn said(e: StoreError) -> &'static str {
+pub fn said(e: StoreError) -> SourceNote {
     match e {
-        StoreError::NotFound => NOT_ON_CARD,
-        _ => READ_FAILED,
+        StoreError::NotFound => SourceNote::NotOnCard,
+        _ => SourceNote::ReadFailed,
     }
-}
-
-fn file(stem: u32) -> chimera_hal::store::FileName {
-    source_file(SourceRef {
-        crc: stem,
-        frames: 0,
-        rate: 0,
-    })
 }
 
 /// Feeds a read to a `SourceCheck` until `left` bytes are taken.
@@ -181,10 +224,10 @@ impl ReadSink for Feed<'_> {
 pub fn read_head(
     s: &mut dyn Store,
     r: &Ready,
-    stem: u32,
+    stem: Stem,
     size: u32,
-) -> Result<SourceHead, &'static str> {
-    let mut check = SourceCheck::new(stem, size).map_err(|_| READ_FAILED)?;
+) -> Result<SourceHead, SourceNote> {
+    let mut check = SourceCheck::new(stem, size).map_err(|_| SourceNote::ReadFailed)?;
     let mut feed = Feed {
         check: &mut check,
         held: None,
@@ -192,9 +235,9 @@ pub fn read_head(
         got: 0,
         refused: false,
     };
-    s.read_at(r.volume(), file(stem), 0, &mut feed)
+    s.read_at(r.volume(), source_name(stem), 0, &mut feed)
         .map_err(said)?;
-    check.head().ok_or(READ_FAILED)
+    check.head().ok_or(SourceNote::ReadFailed)
 }
 
 /// A card row loading: `held` staged in the gap's bottom through
@@ -202,7 +245,7 @@ pub fn read_head(
 /// whole, passing file publishes. Nothing moves or publishes before, so
 /// dropping it mid-load is a cancel: the gap and the meter are as they were.
 pub struct SourceLoad {
-    stem: u32,
+    stem: Stem,
     size: u32,
     /// Bytes read so far.
     at: u32,
@@ -219,7 +262,7 @@ pub struct SourceLoad {
 pub enum LoadStep {
     More,
     Done(SourceId, SourceHead),
-    Failed(&'static str),
+    Failed(SourceNote),
 }
 
 /// One pass of a `SourceLoad` that doesn't publish.
@@ -228,13 +271,13 @@ pub enum StagedStep {
     More,
     /// Whole and passing in the staging, unpublished.
     Staged(SourceNeed),
-    Failed(&'static str),
+    Failed(SourceNote),
 }
 
 impl SourceLoad {
     /// Card file `stem` of `size` bytes, into `p`'s gap; `None` when it
     /// won't fit.
-    pub fn start(p: &mut Project, stem: u32, size: u32) -> Option<SourceLoad> {
+    pub fn start(p: &mut Project, stem: Stem, size: u32) -> Option<SourceLoad> {
         let held = held_for_file_len(size)? as usize;
         let (stage, _) = p.source_staging(held)?;
         Some(SourceLoad {
@@ -256,7 +299,7 @@ impl SourceLoad {
             StagedStep::Staged(need) => {
                 match (p.source_commit(need.r, need.held), self.check.head()) {
                     (Ok(id), Some(head)) => LoadStep::Done(id, head),
-                    _ => LoadStep::Failed(crate::ui::settings::prompt::POOL_FULL),
+                    _ => LoadStep::Failed(SourceNote::PoolFull),
                 }
             }
         }
@@ -268,10 +311,10 @@ impl SourceLoad {
     pub fn step_staged(&mut self, s: &mut dyn Store, r: &Ready, p: &mut Project) -> StagedStep {
         // A gap that moved under the staging: never published.
         let Some((stage, held)) = p.source_staging(self.held) else {
-            return StagedStep::Failed(READ_FAILED);
+            return StagedStep::Failed(SourceNote::ReadFailed);
         };
         if stage != self.stage {
-            return StagedStep::Failed(READ_FAILED);
+            return StagedStep::Failed(SourceNote::ReadFailed);
         }
         let mut feed = Feed {
             check: &mut self.check,
@@ -280,13 +323,13 @@ impl SourceLoad {
             got: 0,
             refused: false,
         };
-        let read = s.read_at(r.volume(), file(self.stem), self.at, &mut feed);
+        let read = s.read_at(r.volume(), source_name(self.stem), self.at, &mut feed);
         let (got, refused) = (feed.got, feed.refused);
         if let Err(e) = read {
             return StagedStep::Failed(said(e));
         }
         if refused || got == 0 {
-            return StagedStep::Failed(READ_FAILED);
+            return StagedStep::Failed(SourceNote::ReadFailed);
         }
         self.at += got;
         if self.at < self.size {
@@ -299,7 +342,7 @@ impl SourceLoad {
                 held,
                 on_card: true,
             }),
-            _ => StagedStep::Failed(READ_FAILED),
+            _ => StagedStep::Failed(SourceNote::ReadFailed),
         }
     }
 }
@@ -311,8 +354,12 @@ pub struct HeadCache([Option<SourceHead>; HEAD_CACHE]);
 impl HeadCache {
     pub const EMPTY: HeadCache = HeadCache([None; HEAD_CACHE]);
 
-    pub fn get(&self, crc: u32) -> Option<SourceHead> {
-        self.0.iter().flatten().find(|h| h.sref.crc == crc).copied()
+    pub fn get(&self, stem: Stem) -> Option<SourceHead> {
+        self.0
+            .iter()
+            .flatten()
+            .find(|h| h.sref.stem() == stem)
+            .copied()
     }
 
     pub fn put(&mut self, h: SourceHead) {
@@ -356,11 +403,11 @@ pub struct SourceMemo([Option<Memo>; MAX_SOURCES]);
 impl SourceMemo {
     pub const EMPTY: SourceMemo = SourceMemo([None; MAX_SOURCES]);
 
-    pub fn get(&self, crc: u32) -> Option<Memo> {
+    pub fn get(&self, stem: Stem) -> Option<Memo> {
         self.0
             .iter()
             .flatten()
-            .find(|m| m.crc.get() == crc)
+            .find(|m| m.crc.get() == stem.get())
             .copied()
     }
 
@@ -392,7 +439,7 @@ impl SourceMemo {
             _ => sound.source = Some(TapeSource::from(to)),
         }
         let (t, p) = (&mut sound.params.tape, &mut sound.params.pitch);
-        match self.get(to.crc) {
+        match self.get(to.stem()) {
             Some(m) => {
                 (t.start, t.end) = (m.start, m.end);
                 (p.pitch, p.fine) = (f32::from(m.pitch), f32::from(m.fine));
@@ -402,17 +449,26 @@ impl SourceMemo {
     }
 }
 
+/// What a queued head read is for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HeadFor {
+    /// The row's name.
+    Name,
+    /// A pick: the name, and ROOT and PERIOD for the Part.
+    Pick,
+}
+
 /// Card work SOURCE queued: run by `card_work`, one a UI pass, under BUSY.
 pub(crate) enum SourceJob {
     /// List the card, then turn.
     List(PartId, i8),
-    /// Read a head for its name; with `pick`, its ROOT and PERIOD go to
-    /// `part`'s Sound if it still plays that source.
+    /// Read a head for its name, and for `HeadFor::Pick` its ROOT and
+    /// PERIOD to `part`'s Sound if it still plays that source.
     Head {
         part: PartId,
-        stem: u32,
+        stem: Stem,
         size: u32,
-        pick: bool,
+        to: HeadFor,
     },
     Load(PartId, SourceLoad),
     /// A card row too big for the arena, loading as its heads.
@@ -437,17 +493,17 @@ pub struct SourceCell {
     /// `None`: listed again at the next turn.
     card: Option<TapeList>,
     /// The card row the cell is on, on that Part: (stem, size).
-    at: Option<(PartId, u32, u32)>,
+    at: Option<(PartId, Stem, u32)>,
     job: Option<SourceJob>,
-    note: Option<&'static str>,
+    note: Option<SourceNote>,
     /// A streamed source whose heads its Part moved off, and since how
     /// many frames.
     #[cfg(feature = "tape")]
     wait: Option<Wait>,
-    /// Each source's heads whose re-stage failed for a reason that stays
-    /// (`heads_key`; 0 none): not tried again until it wants others.
+    /// Each source's heads whose re-stage failed for a reason that stays:
+    /// not tried again until it wants others.
     #[cfg(feature = "tape")]
-    stuck: [u32; MAX_SOURCES],
+    stuck: [Option<HeadsKey>; MAX_SOURCES],
     /// The card IRQ's read fault, as the last UI pass met it.
     read: Recovery,
 }
@@ -465,14 +521,35 @@ enum Recovery {
     Stuck,
 }
 
-/// Heads wanted for a streamed source, unchanged for `frames` frames.
+/// Heads wanted for a streamed source, unchanged for `frames`.
 #[cfg(feature = "tape")]
 #[derive(Clone, Copy)]
 struct Wait {
     id: SourceId,
     heads: Heads,
-    frames: u16,
+    frames: UiFrames,
 }
+
+/// A count of UI passes, `FRAME_MS` each.
+#[cfg(feature = "tape")]
+#[derive(Clone, Copy)]
+struct UiFrames(u16);
+
+#[cfg(feature = "tape")]
+impl UiFrames {
+    fn next(self) -> UiFrames {
+        UiFrames(self.0.saturating_add(1))
+    }
+
+    fn at_least(self, t: chimera_hal::units::Millis) -> bool {
+        u32::from(self.0) * crate::ui::animation::FRAME_MS >= t.get()
+    }
+}
+
+/// A source's heads, folded to a word (`card`'s `heads_key`).
+#[cfg(feature = "tape")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct HeadsKey(NonZeroU32);
 
 /// How long the heads wait after the last turn (spec § 5.6).
 pub const REHEAD: chimera_hal::units::Millis = chimera_hal::units::Millis::new(200);
@@ -488,7 +565,7 @@ impl SourceCell {
         #[cfg(feature = "tape")]
         wait: None,
         #[cfg(feature = "tape")]
-        stuck: [0; MAX_SOURCES],
+        stuck: [None; MAX_SOURCES],
         read: Recovery::Clear,
     };
 
@@ -508,7 +585,7 @@ impl SourceCell {
                         p.lose_streams();
                         #[cfg(feature = "tape")]
                         {
-                            self.stuck = [0; MAX_SOURCES];
+                            self.stuck = [None; MAX_SOURCES];
                         }
                     }
                     if r.is_ok() {
@@ -606,7 +683,7 @@ impl SourceCell {
     pub fn state(&self, part: PartId, base: SourceState, p: &Project) -> SourceState {
         // Closed, the cell can't turn or load: it says so (ADR 0175).
         if crate::bank2::ui_closed() {
-            return SourceState::Failed(crate::bank2::NEEDS_UPDATE);
+            return SourceState::Failed(SourceNote::Refused(Refusal::Closed));
         }
         if let Some(w) = self.note {
             return SourceState::Failed(w);
@@ -629,7 +706,7 @@ impl SourceCell {
         if self.read != Recovery::Clear && r.is_some_and(|r| p.pool().streamed(r)) {
             return SourceState::Absent(Absence::ReadFailed);
         }
-        base.named(r.and_then(|r| self.heads.get(r.crc)).map(|h| h.name))
+        base.named(r.and_then(|r| self.heads.get(r.stem())).map(|h| h.name))
     }
 
     /// SOURCE turned `delta` detents on `part`: a pool row plays at once;
@@ -647,7 +724,7 @@ impl SourceCell {
 
     /// How card row `stem` loads for `part` (`card`'s `kind_in`); closed,
     /// unknown.
-    fn kind(&self, p: &Project, part: PartId, stem: u32) -> Option<(SourceHead, LoadKind)> {
+    fn kind(&self, p: &Project, part: PartId, stem: Stem) -> Option<(SourceHead, LoadKind)> {
         crate::bank2::ui_door(|u| u.source_kind(self, p, part, stem)).flatten()
     }
 
@@ -667,7 +744,7 @@ impl SourceCell {
         });
         if ran.is_err() && seen {
             // No card, or it won't mount: the job's own failure.
-            self.note = Some(READ_FAILED);
+            self.note = Some(SourceNote::ReadFailed);
         }
         // A re-head that found no card: tried again after another `REHEAD`.
         #[cfg(feature = "tape")]

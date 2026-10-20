@@ -11,7 +11,7 @@ use core::ops::ControlFlow;
 use chimera_hal::store::{Dir, FileName, ReadSink, Store, StoreError};
 use chimera_hal::units::Bytes;
 
-use super::SourceRef;
+use super::{SourceRef, Stem};
 use crate::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, MAX_ZONES, MIN_SOURCE_FRAMES, Shape, ZONE_LAYOUT_LEN,
 };
@@ -396,11 +396,12 @@ pub fn held_len_zoned(r: SourceRef, zones: u8) -> Option<usize> {
 
 /// `/CHIMERA/TAPES/<CRC>.SRC`, the CRC in upper-case hex.
 pub fn source_file(r: SourceRef) -> FileName {
-    source_name(r.crc)
+    source_name(r.stem())
 }
 
-/// `source_file` by the stem's CRC alone, as `put` names it.
-pub fn source_name(crc: u32) -> FileName {
+/// `source_file` by the stem alone, as `put` names it.
+pub fn source_name(stem: Stem) -> FileName {
+    let crc = stem.get();
     let hex = |n: u32| b"0123456789ABCDEF"[n as usize & 0xF];
     let stem: [u8; 8] = core::array::from_fn(|i| hex(crc >> (28 - 4 * i)));
     FileName::new(Dir::Tapes, &stem, b"SRC").expect("8 hex digits is a stem")
@@ -412,17 +413,17 @@ pub const MAX_TAPES: usize = 64;
 /// `/CHIMERA/TAPES` as listed: each `.SRC` stem and size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TapeList {
-    files: [(u32, u32); MAX_TAPES],
+    files: [(Stem, u32); MAX_TAPES],
     n: u8,
 }
 
 impl TapeList {
     pub const EMPTY: TapeList = TapeList {
-        files: [(0, 0); MAX_TAPES],
+        files: [(Stem::new(0), 0); MAX_TAPES],
         n: 0,
     };
 
-    pub fn files(&self) -> &[(u32, u32)] {
+    pub fn files(&self) -> &[(Stem, u32)] {
         &self.files[..self.n as usize]
     }
 
@@ -435,7 +436,7 @@ impl TapeList {
             if let Some(crc) = stem.and_then(|t| u32::from_str_radix(t, 16).ok())
                 && (l.n as usize) < MAX_TAPES
             {
-                l.files[l.n as usize] = (crc, size);
+                l.files[l.n as usize] = (Stem::new(crc), size);
                 l.n += 1;
             }
         });
@@ -451,14 +452,14 @@ impl TapeList {
 #[derive(Clone, Copy)]
 enum Expect {
     Ref(SourceRef),
-    Stem(u32),
+    Stem(Stem),
 }
 
 impl Expect {
     fn file(self) -> FileName {
         match self {
             Expect::Ref(r) => source_file(r),
-            Expect::Stem(crc) => source_name(crc),
+            Expect::Stem(stem) => source_name(stem),
         }
     }
 }
@@ -548,7 +549,7 @@ impl Records {
                 let h = SourceHead::from_bytes(p).ok_or(Bad::Head)?;
                 let named = match self.expect {
                     Expect::Ref(r) => h.sref == r,
-                    Expect::Stem(crc) => h.sref.crc == crc,
+                    Expect::Stem(stem) => h.sref.stem() == stem,
                 };
                 if !named {
                     return Err(Bad::Other);
@@ -856,7 +857,7 @@ impl ReadSink for HeadOnly<'_> {
 pub fn read_source_head<S: Store + ?Sized>(
     s: &mut S,
     r: &Ready,
-    stem: u32,
+    stem: Stem,
     len: u32,
 ) -> Result<SourceHead, SourceReadError> {
     let bad = SourceReadError::Load(LoadError::File(FileError::Corrupt));
@@ -917,12 +918,12 @@ pub struct SourceCheck {
 }
 
 impl SourceCheck {
-    /// A file of `len` bytes, put as `<stem_crc>.SRC`. `len` is the one
+    /// A file of `len` bytes, put as `<stem>.SRC`. `len` is the one
     /// `put` announces: the framer needs it to find the trailer.
-    pub fn new(stem_crc: u32, len: u32) -> Result<SourceCheck, PutRefusal> {
+    pub fn new(stem: Stem, len: u32) -> Result<SourceCheck, PutRefusal> {
         Ok(SourceCheck {
             framer: Framer::new(len).map_err(PutRefusal::File)?,
-            rec: Records::new(Expect::Stem(stem_crc)),
+            rec: Records::new(Expect::Stem(stem)),
             fed: 0,
             len,
             refused: None,
@@ -1048,7 +1049,7 @@ pub fn write_zone_set<S: Store>(
     write_layout(s, r, &l, data)
 }
 
-/// Before a source is written as `<stem_crc>.SRC`, the file already
+/// Before a source is written as `<stem>.SRC`, the file already
 /// there: `Present` if it verifies (sealed now if it wasn't: nothing to
 /// write); `Replaced` for an unsealed one that fails, the torn remains of
 /// a cut write, deleted; `New` for none. `Damaged` for a sealed file that
@@ -1057,9 +1058,9 @@ pub fn write_zone_set<S: Store>(
 pub fn source_target<S: Store>(
     s: &mut S,
     r: &Ready,
-    stem_crc: u32,
+    stem: Stem,
 ) -> Result<Wrote, super::SaveError> {
-    target(s, r, Expect::Stem(stem_crc))
+    target(s, r, Expect::Stem(stem))
 }
 
 /// `source_target` for the file `e` names; `write_source` asks for its
@@ -1087,17 +1088,13 @@ fn target<S: Store>(s: &mut S, r: &Ready, e: Expect) -> Result<Wrote, super::Sav
     }
 }
 
-/// After a write of `<stem_crc>.SRC`: read back whole, its head naming
+/// After a write of `<stem>.SRC`: read back whole, its head naming
 /// the stem, its samples hashing to it, then sealed. Unsealed on any
 /// `Err`, so the next write replaces it.
 #[cfg(feature = "source-writer")]
-pub fn verify_and_seal<S: Store>(
-    s: &mut S,
-    r: &Ready,
-    stem_crc: u32,
-) -> Result<(), super::SaveError> {
-    verify(s, r, Expect::Stem(stem_crc))?;
-    s.seal(r.volume(), source_name(stem_crc))?;
+pub fn verify_and_seal<S: Store>(s: &mut S, r: &Ready, stem: Stem) -> Result<(), super::SaveError> {
+    verify(s, r, Expect::Stem(stem))?;
+    s.seal(r.volume(), source_name(stem))?;
     Ok(())
 }
 

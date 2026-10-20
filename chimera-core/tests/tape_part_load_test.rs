@@ -6,6 +6,7 @@ mod screen;
 
 use chimera_core::bank2::{Bank2Status, NEEDS_UPDATE, NEEDS_UPDATE_CELL, Version, closed_text};
 use chimera_core::block::Block;
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::params::TapeEngineParams;
 use chimera_core::params::EngineType;
 use chimera_core::project::{Origin, PartFrom, PartId, PartSource, Project};
@@ -123,7 +124,7 @@ mod streamed {
     use super::*;
     use chimera_core::dsp::tape_engine::params::TapeEngineParams;
     use chimera_core::dsp::tape_engine::read::Shape;
-    use chimera_core::dsp::tape_engine::{PlayMode, TapeModel};
+
     use chimera_core::name::SoundName;
     use chimera_core::project::test_support::save_at;
     use chimera_core::project::{
@@ -169,7 +170,7 @@ mod streamed {
     }
 
     fn one(t: &mut TapeEngineParams) {
-        (t.model, t.mode) = (TapeModel::Play, PlayMode::One);
+        t.machine = TapeMachine::One;
     }
 
     /// Part `n` on TAPE, PLAY ONE, playing `r`.
@@ -468,6 +469,7 @@ mod streamed {
     #[test]
     fn pass_two_says_what_the_part_needs_whole() {
         use chimera_core::dsp::tape_engine::NeedsRam;
+        use chimera_core::project::Refusal;
         use chimera_core::ui::source_cell::PING_NEEDS_RAM;
         use chimera_core::ui::view::SourceState;
         let mut s = MemStore::new(1);
@@ -475,13 +477,13 @@ mod streamed {
         put(&mut s, &bed);
         let (mut p, t) = Project::boxed();
         tape_part(&mut p, t, 0, bed.0.sref);
-        p.edit_part(PartId::ALL[0]).sound.params.tape.mode = PlayMode::Ping;
+        p.edit_part(PartId::ALL[0]).sound.params.tape.machine = TapeMachine::Ping;
         p.source_absent(bed.0.sref).unwrap();
         let (q, _) = round_trip(&mut s, &mut p, false);
         let id = q.pool().find_source(bed.0.sref).unwrap();
         assert_eq!(
             q.pool().absence(id),
-            Some(Absence::NeedsRam(NeedsRam::Ping))
+            Some(Absence::NeedsRam(Refusal::NeedsRam(NeedsRam::Ping)))
         );
         let st = SourceState::of(
             &q.part(PartId::ALL[0]).sound.params.tape,
@@ -491,5 +493,55 @@ mod streamed {
         let mut b = chimera_core::ui::fmt::FmtBuf::new();
         st.text(&mut b);
         assert_eq!(b.as_str(), PING_NEEDS_RAM);
+    }
+
+    /// A transwave too big for the arena can't stream, whatever it plays:
+    /// under PLAY LOOP pass 2 keeps it absent for its shape, and the cell
+    /// says so, not NEEDS RAM (H3).
+    #[test]
+    fn pass_two_says_a_big_transwave_wont_stream() {
+        use chimera_core::project::arena::Cost;
+        use chimera_core::project::{LoadKind, Refusal, load_kind};
+        use chimera_core::ui::draw::text_width;
+        use chimera_core::ui::source_cell::TRANSWAVE_NO_STREAM;
+        use chimera_core::ui::theme::{CELL_COL_W, CONTENT_W, FONT_VALUE, LABEL_TRACKING};
+        use chimera_core::ui::view::SourceState;
+        let mut s = MemStore::new(1);
+        let (mut head, data) = source(6, 150_000);
+        head.shape = Shape::Transwave;
+        head.count = 2;
+        head.sref.crc = source_crc(WholeShape::Transwave, 2, &data);
+        let wave = (head, data);
+        put(&mut s, &wave);
+        let (mut p, t) = Project::boxed();
+        tape_part(&mut p, t, 0, wave.0.sref);
+        p.edit_part(PartId::ALL[0]).sound.params.tape.machine = TapeMachine::Loop;
+        let tape = p.part(PartId::ALL[0]).sound.params.tape;
+        let shape = Refusal::Transwave;
+        assert_eq!(
+            load_kind(&wave.0, Cost::of(0), &tape),
+            LoadKind::Refused(shape)
+        );
+        p.source_absent(wave.0.sref).unwrap();
+        let (q, _) = round_trip(&mut s, &mut p, false);
+        let id = q.pool().find_source(wave.0.sref).unwrap();
+        assert_eq!(q.pool().absence(id), Some(Absence::NeedsRam(shape)));
+        let st = SourceState::of(
+            &q.part(PartId::ALL[0]).sound.params.tape,
+            Some(wave.0.sref),
+            q.pool(),
+        );
+        let (mut band, mut cell) = (
+            chimera_core::ui::fmt::FmtBuf::new(),
+            chimera_core::ui::fmt::FmtBuf::new(),
+        );
+        st.text(&mut band);
+        st.cell(&mut cell);
+        assert_eq!(band.as_str(), TRANSWAVE_NO_STREAM);
+        assert_eq!(cell.as_str(), "TOO BIG");
+        let w = text_width(&FONT_VALUE, band.as_str(), LABEL_TRACKING);
+        assert!(w <= CONTENT_W, "band {w}px over {CONTENT_W}");
+        let w = text_width(&FONT_VALUE, cell.as_str(), 0);
+        assert!(w <= CELL_COL_W, "cell {w}px over {CELL_COL_W}");
     }
 }

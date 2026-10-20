@@ -9,7 +9,7 @@ use chimera_hal::units::{BlockCount, Bytes, FileBlock, Lba};
 
 use super::units::{Frames, Packing, SourceFrame};
 use crate::storage::{
-    RECORD_HEAD_LEN, RecordTag, SOURCE_DATA_MAX, SourceLayout, data_offset, source_name,
+    RECORD_HEAD_LEN, RecordTag, SOURCE_DATA_MAX, SourceLayout, Stem, data_offset, source_name,
 };
 
 /// A `SourceData` record: tag `u16`, length `u16`, then the samples.
@@ -100,12 +100,12 @@ pub struct ChunkBlocks {
 /// is another key; a source id isn't one, as ids are reused once drained.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FileKey {
-    stem: u32,
+    stem: Stem,
     at: Lba,
 }
 
 impl FileKey {
-    pub const fn new(stem: u32, at: Lba) -> FileKey {
+    pub const fn new(stem: Stem, at: Lba) -> FileKey {
         FileKey { stem, at }
     }
 }
@@ -133,7 +133,7 @@ impl FileChunk {
 pub struct StreamFile {
     ext: Extents,
     /// Its `.SRC`'s stem: the file a delete must not free under a stream.
-    stem: u32,
+    stem: Stem,
     data_off: Bytes,
     data_len: Bytes,
     frames: Frames,
@@ -151,7 +151,7 @@ impl StreamFile {
             .checked_add(data_offset(l).get())?;
         let sf = StreamFile {
             ext: runs.ext,
-            stem: l.head().sref.crc,
+            stem: l.head().sref.stem(),
             data_off: data_offset(l),
             data_len: Bytes::new(data_len),
             frames: Frames::new(l.head().sref.frames),

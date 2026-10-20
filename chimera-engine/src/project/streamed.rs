@@ -4,11 +4,12 @@
 //! cell's load and a project load's pass 2 both take this path.
 
 use chimera_hal::store::{FileRuns, Store};
+use chimera_hal::units::Bytes;
 
 use super::arena::Cost;
-use super::sources::{SOURCE_HEAD, SourceId, source_cost};
+use super::sources::{SOURCE_HEAD, SourceId, SourceSet, source_cost};
 use super::{PoolFull, Project};
-use crate::dsp::tape_engine::params::{NeedsRam, TapeEngineParams, needs_ram};
+use crate::dsp::tape_engine::params::{NeedsRam, TapeEngineParams};
 use crate::dsp::tape_engine::read::Shape;
 use crate::storage::{LoadError, Ready, SourceHead, SourceLayout, SourceReadError, SourceRef};
 use crate::stream::layout::StreamFile;
@@ -23,8 +24,23 @@ pub enum LoadKind {
     Whole,
     /// Too big: its heads, the rest streamed.
     Streamed(Heads),
-    /// Too big, and the Part plays it in a way that needs it whole.
-    Refused(NeedsRam),
+    /// Too big, and it can't stream: why.
+    Refused(Refusal),
+}
+
+/// Why a card file too big for the arena won't load (spec § 5.6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// The Part plays it a way that needs it whole.
+    NeedsRam(NeedsRam),
+    /// A transwave: only a plain source streams.
+    Transwave,
+    /// A zone set: only a plain source streams.
+    ZoneSet,
+    /// Too few frames past START for a head.
+    TooShort,
+    /// Bank 2 shut: no heads are placed (TAPE is silent then).
+    Closed,
 }
 
 impl LoadKind {
@@ -38,8 +54,8 @@ impl LoadKind {
 }
 
 /// Card file `h` for a Part playing it with `p`, `free` bytes left: whole
-/// if it fits, else streamed if `p` plays it forward (a `Plain` only).
-/// With bank 2 shut no heads are placed: refused (TAPE is silent then).
+/// if it fits, else streamed if `p` plays it forward (a `Plain` only),
+/// else refused, saying why.
 pub fn load_kind(h: &SourceHead, free: Cost, p: &TapeEngineParams) -> LoadKind {
     let whole = SourceLayout::whole(*h)
         .map(|l| l.held_len())
@@ -48,8 +64,11 @@ pub fn load_kind(h: &SourceHead, free: Cost, p: &TapeEngineParams) -> LoadKind {
         return LoadKind::Whole;
     }
     match (h.shape, heads_for(h.sref, p)) {
-        (Shape::Plain, Some(heads)) => LoadKind::Streamed(heads),
-        _ => LoadKind::Refused(needs_ram(p).unwrap_or(NeedsRam::Machine(p.model))),
+        (Shape::Plain, Ok(heads)) => LoadKind::Streamed(heads),
+        (_, Err(why @ Refusal::NeedsRam(_))) => LoadKind::Refused(why),
+        (Shape::Transwave, _) => LoadKind::Refused(Refusal::Transwave),
+        (Shape::ZoneSet, _) => LoadKind::Refused(Refusal::ZoneSet),
+        (Shape::Plain, Err(why)) => LoadKind::Refused(why),
     }
 }
 
@@ -58,9 +77,9 @@ pub fn load_kind(h: &SourceHead, free: Cost, p: &TapeEngineParams) -> LoadKind {
 /// all bank 2's with `bank2` (`load`, `stage::place`).
 #[repr(C)]
 pub struct LoadDoor {
-    heads_for: fn(SourceRef, &TapeEngineParams) -> Option<Heads>,
+    heads_for: fn(SourceRef, &TapeEngineParams) -> Result<Heads, Refusal>,
     step: fn(&mut StreamLoad, &mut dyn Store, &Ready, &mut Project, usize) -> StreamStep,
-    sources: fn(&mut dyn Store, &Ready, &mut Project, u32) -> u8,
+    sources: fn(&mut dyn Store, &Ready, &mut Project, SourceSet) -> u8,
 }
 
 impl LoadDoor {
@@ -71,7 +90,7 @@ impl LoadDoor {
     };
 
     #[inline(always)]
-    pub(crate) fn heads_for(&self, r: SourceRef, p: &TapeEngineParams) -> Option<Heads> {
+    pub(crate) fn heads_for(&self, r: SourceRef, p: &TapeEngineParams) -> Result<Heads, Refusal> {
         (self.heads_for)(r, p)
     }
 
@@ -89,7 +108,13 @@ impl LoadDoor {
 
     #[cfg(feature = "tape")]
     #[inline(always)]
-    pub(crate) fn sources(&self, s: &mut dyn Store, r: &Ready, p: &mut Project, ids: u32) -> u8 {
+    pub(crate) fn sources(
+        &self,
+        s: &mut dyn Store,
+        r: &Ready,
+        p: &mut Project,
+        ids: SourceSet,
+    ) -> u8 {
         (self.sources)(s, r, p, ids)
     }
 
@@ -136,12 +161,28 @@ pub struct StreamLoad {
     heads: Heads,
     /// A pool row's heads re-staged, not a new row published.
     rehead: Option<SourceId>,
-    /// The file's runs, once found: the first pass's.
-    file: Option<StreamFile>,
-    /// Head bytes read so far, of every head's.
-    at: usize,
+    phase: Phase,
     /// The arena offset the staging started at: a gap that moved fails it.
     stage: u32,
+}
+
+/// Where a `StreamLoad` is.
+#[derive(Clone, Copy)]
+#[expect(clippy::large_enum_variant, reason = "one, in the one load")]
+enum Phase {
+    /// The first pass finds the file's runs.
+    Find,
+    /// The heads read: `at` bytes so far, of every head's.
+    Heads { file: StreamFile, at: Bytes },
+}
+
+impl Phase {
+    fn heads(file: StreamFile) -> Phase {
+        Phase::Heads {
+            file,
+            at: Bytes::new(0),
+        }
+    }
 }
 
 impl StreamLoad {
@@ -152,8 +193,7 @@ impl StreamLoad {
             sref: head.sref,
             heads,
             rehead: None,
-            file: None,
-            at: 0,
+            phase: Phase::Find,
             stage,
         })
     }
@@ -170,7 +210,7 @@ impl StreamLoad {
         let file = StreamFile::from_layout(&SourceLayout::whole(head)?, runs)?;
         let l = Self::start(p, head, heads)?;
         Some(StreamLoad {
-            file: Some(file),
+            phase: Phase::heads(file),
             ..l
         })
     }
@@ -186,8 +226,7 @@ impl StreamLoad {
             sref,
             heads,
             rehead: Some(id),
-            file: Some(file),
-            at: 0,
+            phase: Phase::heads(file),
             stage,
         })
     }

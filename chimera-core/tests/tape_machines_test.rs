@@ -9,6 +9,7 @@ mod common;
 use core::mem::MaybeUninit;
 
 use chimera_core::block::{Block, DiskCode, ParamId};
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::heads::{Dir, Window};
 use chimera_core::dsp::tape_engine::machine::{MACHINES, defaults, machine};
 use chimera_core::dsp::tape_engine::oneshot::{SLICE_NOTE_BASE, Slice, slice_bounds};
@@ -19,8 +20,8 @@ use chimera_core::dsp::tape_engine::tron::{
 };
 use chimera_core::dsp::tape_engine::warble::Warble;
 use chimera_core::dsp::tape_engine::{
-    CLAMP_FADE_S, END_RAMP, FADE_HOLD, NOTE_ON_RAMP, PlayMode, Probe, StretchType, TapeEngine,
-    TapeEngineParams, TapeModel, Wow, drag_s, fade_default, wave,
+    CLAMP_FADE_S, END_RAMP, FADE_HOLD, MachineIndex, NOTE_ON_RAMP, PlayMode, Probe, StretchType,
+    TapeEngine, TapeEngineParams, TapeModel, Wow, drag_s, fade_default, wave,
 };
 use chimera_core::params::{EngineType, PitchParams, Snap, musical_step};
 use chimera_core::preset::Sound;
@@ -94,14 +95,14 @@ fn models_keep_their_codes() {
     use chimera_core::dsp::tape_engine::TapeMachine as K;
     for (i, k) in K::ALL.into_iter().enumerate() {
         assert_eq!(k.index() as usize, i);
-        assert_eq!(K::from_index(i as u8), k);
+        assert_eq!(K::from_index(MachineIndex(i as u8)), k);
         let mut p = P::default();
         p.set(P::MODEL, i as f32);
         assert_eq!(p.get(P::MODEL), i as f32);
-        assert_eq!((p.model, p.machine()), (k.model(), k));
-        assert_eq!(K::of(k.model(), p.mode), k);
+        assert_eq!((p.model(), p.machine()), (k.model(), k));
+        assert_eq!(K::of(k.model(), k.mode().unwrap_or(PlayMode::Loop)), k);
     }
-    assert_eq!(K::from_index(200), K::Wave);
+    assert_eq!(K::from_index(MachineIndex(200)), K::Wave);
     for (m, c) in [(PlayMode::One, 0), (PlayMode::Loop, 1), (PlayMode::Ping, 2)] {
         assert_eq!(m.disk_code(), c);
         assert_eq!(PlayMode::from_disk_code(c), Some(m));
@@ -119,6 +120,65 @@ fn block(entries: &[(u8, [u8; 4])]) -> Vec<u8> {
     b
 }
 
+/// Every (MODEL, MODE) code pair a file can hold loads as one machine and
+/// saves as the file had it, off PLAY too (ADR 0189). A retired MODEL
+/// saves as its PLAY machine, and that file round-trips.
+#[test]
+fn every_model_and_mode_code_round_trips() {
+    use chimera_core::dsp::tape_engine::TapeMachine as K;
+    use chimera_core::storage::RecordTag;
+    use common::codec_util::{decode, encode, fix_crc, record_offsets, sound_file};
+    let neutral = encode(&Sound::neutral(EngineType::Tape));
+    // Sparse, as the encoder writes it: LOOP's codes are the neutral's. The
+    // TAPE record goes after the engine's, where the encoder puts a block.
+    let file = |model: u8, mode: u8| {
+        let mut e = vec![];
+        if model != 0 {
+            e.push((0, u32::from(model).to_le_bytes()));
+        }
+        if mode != 1 {
+            e.push((15, u32::from(mode).to_le_bytes()));
+        }
+        if e.is_empty() {
+            return neutral.clone();
+        }
+        let one = sound_file(&[(RecordTag::Block, block(&e))]);
+        let at = record_offsets(&neutral)[1];
+        let mut f = neutral[..at].to_vec();
+        f.extend_from_slice(&one[28..one.len() - 4]);
+        f.extend_from_slice(&neutral[at..]);
+        fix_crc(&mut f);
+        f
+    };
+    let play = [K::One, K::Loop, K::Ping];
+    for model in 0..=7u8 {
+        for mode in 0..=2u8 {
+            let f = file(model, mode);
+            let s = decode(&f).unwrap();
+            let want = match model {
+                0 => play[usize::from(mode)],
+                1 => K::Loop,
+                2 => K::Ping,
+                3 => K::Wave,
+                4 => K::Scrub,
+                5 => K::Stretch,
+                6 => K::Tron,
+                _ => K::One,
+            };
+            assert_eq!(s.params.tape.machine(), want, "MODEL {model} MODE {mode}");
+            let saved = encode(&s);
+            match model {
+                1 | 2 | 7 => {
+                    let again = decode(&saved).unwrap();
+                    assert!(again.bits_eq(&s), "MODEL {model} MODE {mode}");
+                    assert_eq!(encode(&again), saved, "MODEL {model} MODE {mode}");
+                }
+                _ => assert_eq!(saved, f, "MODEL {model} MODE {mode}"),
+            }
+        }
+    }
+}
+
 #[test]
 fn reverse_code_loads_as_loop_swapped() {
     let load = |payload: &[u8]| {
@@ -131,18 +191,18 @@ fn reverse_code_loads_as_loop_swapped() {
         (1, 0.1f32.to_le_bytes()),
         (2, 0.7f32.to_le_bytes()),
     ]));
-    assert_eq!(t.model, TapeModel::Play);
+    assert_eq!(t.model(), TapeModel::Play);
     assert_eq!((t.start, t.end), (0.7, 0.1));
     // Sparse: the base START 0, END 1, swapped after the writes.
     let t = load(&block(&[(0, 1u32.to_le_bytes())]));
-    assert_eq!(t.model, TapeModel::Play);
+    assert_eq!(t.model(), TapeModel::Play);
     assert_eq!((t.start, t.end), (1.0, 0.0));
     // A live code is untouched.
     let t = load(&block(&[
         (0, 6u32.to_le_bytes()),
         (1, 0.1f32.to_le_bytes()),
     ]));
-    assert_eq!((t.model, t.start, t.end), (TapeModel::Tron, 0.1, 1.0));
+    assert_eq!((t.model(), t.start, t.end), (TapeModel::Tron, 0.1, 1.0));
 }
 
 /// ONESHOT (7), LOOP (0), PING-PONG (2) and REVERSE (1) load as PLAY
@@ -159,29 +219,20 @@ fn play_loads_old_codes() {
     let drag = (9, 0.6f32.to_le_bytes());
     let slice = (13, 1u32.to_le_bytes());
     let t = load(&block(&[code(7), drag, slice]));
-    assert_eq!((t.model, t.mode), (TapeModel::Play, PlayMode::One));
+    assert_eq!(t.machine, TapeMachine::One);
     assert_eq!(t.drag, FADE_HOLD);
     assert!(hold(&t));
     assert_eq!(t.slice.code(), 0, "SLICE loads and is ignored");
     let t = load(&block(&[code(0), drag]));
-    assert_eq!(
-        (t.model, t.mode, t.drag),
-        (TapeModel::Play, PlayMode::Loop, 0.6)
-    );
+    assert_eq!((t.machine, t.drag), (TapeMachine::Loop, 0.6));
     let t = load(&block(&[code(2), drag]));
-    assert_eq!(
-        (t.model, t.mode, t.drag),
-        (TapeModel::Play, PlayMode::Ping, 0.6)
-    );
+    assert_eq!((t.machine, t.drag), (TapeMachine::Ping, 0.6));
     let t = load(&block(&[code(1), drag]));
-    assert_eq!(
-        (t.model, t.mode, t.drag),
-        (TapeModel::Play, PlayMode::Loop, 0.6)
-    );
+    assert_eq!((t.machine, t.drag), (TapeMachine::Loop, 0.6));
     assert!(t.end < t.start);
     // A file of today names MODE itself: ONE keeps its own DRAG.
     let t = load(&block(&[code(0), (15, 0u32.to_le_bytes()), drag]));
-    assert_eq!((t.mode, t.drag), (PlayMode::One, 0.6));
+    assert_eq!((t.machine, t.drag), (TapeMachine::One, 0.6));
 }
 
 #[test]
@@ -191,7 +242,7 @@ fn fade_releases_loop_and_ping() {
     for mode in [PlayMode::Loop, PlayMode::Ping] {
         let run = |drag: f32| {
             let p = P {
-                mode,
+                machine: TapeMachine::play(mode),
                 drag,
                 size: 0.5,
                 ..P::default()
@@ -227,20 +278,20 @@ fn fade_releases_loop_and_ping() {
 fn hold_only_in_one() {
     let mut p = P::default();
     for mode in [PlayMode::Loop, PlayMode::Ping] {
-        p.mode = mode;
+        p.machine = TapeMachine::play(mode);
         for d in [0.0, 0.3, 0.99, 1.0] {
             p.drag = d;
             assert!(!hold(&p), "{mode:?} at {d}");
         }
         assert!((drag_s(1.0) - 0.5).abs() < 1e-5);
     }
-    p.mode = PlayMode::One;
+    p.machine = TapeMachine::One;
     p.drag = 0.99;
     assert!(!hold(&p));
     p.drag = FADE_HOLD;
     assert!(hold(&p));
     // Only PLAY has MODEs.
-    p.model = TapeModel::Tron;
+    p.machine = TapeMachine::Tron;
     assert!(!hold(&p));
     assert_eq!(fade_default(PlayMode::One), FADE_HOLD);
     for mode in [PlayMode::Loop, PlayMode::Ping] {
@@ -497,7 +548,7 @@ fn stretch_flip_lands_at_a_splice() {
     let held = sine_src(96_000);
     let v = SourceView::strict(&held).unwrap();
     let p = P {
-        model: TapeModel::Stretch,
+        machine: TapeMachine::Stretch,
         start: 0.5,
         end: 0.9,
         motion: 0.5,
@@ -562,7 +613,7 @@ fn stretch_reversed_grains_move_as_one() {
     let held = sine_src(96_000);
     let v = SourceView::strict(&held).unwrap();
     let p = P {
-        model: TapeModel::Stretch,
+        machine: TapeMachine::Stretch,
         start: 0.9,
         end: 0.1,
         motion: 0.5,
@@ -607,8 +658,7 @@ fn sorted_window_models_ignore_order() {
         };
         let v = SourceView::strict(src).unwrap();
         let p = P {
-            model,
-            mode,
+            machine: TapeMachine::of(model, mode),
             start: 0.2,
             end: 0.8,
             motion,
@@ -650,8 +700,7 @@ fn oneshot_plays_once() {
         (0.2, 0.6, 72, 2.0),
     ] {
         let p = P {
-            model: TapeModel::Play,
-            mode: PlayMode::One,
+            machine: TapeMachine::One,
             drag: FADE_HOLD,
             start,
             end,
@@ -690,7 +739,7 @@ fn voice_run(
     blocks: usize,
 ) -> (Vec<f32>, Option<usize>) {
     let mut s = Sound::init(EngineType::Tape);
-    (s.params.tape.mode, s.params.tape.drag) = (mode, fade);
+    (s.params.tape.machine, s.params.tape.drag) = (TapeMachine::play(mode), fade);
     let mut r = Rig::new(SR);
     r.note_on(
         MidiNote::new(60).unwrap(),
@@ -743,8 +792,7 @@ fn oneshot_end_is_click_free() {
     let v = SourceView::strict(&held).unwrap();
     for (start, end) in [(0.1, 0.5013), (0.5013, 0.1)] {
         let p = P {
-            model: TapeModel::Play,
-            mode: PlayMode::One,
+            machine: TapeMachine::One,
             drag: FADE_HOLD,
             start,
             end,
@@ -858,8 +906,7 @@ fn slice_note_picks_without_transposing() {
     let v = SourceView::strict(&held).unwrap();
     let inc_of = |slice: u8, note: u8, pitch: f32| {
         let p = P {
-            model: TapeModel::Play,
-            mode: PlayMode::One,
+            machine: TapeMachine::One,
             drag: FADE_HOLD,
             slice: chimera_core::dsp::tape_engine::SliceCode::new(slice),
             ..P::default()
@@ -889,7 +936,7 @@ fn tron_len(note: u8, tape: f32, size: f32) -> usize {
     let held = sine_src(4 * 48_000);
     let v = SourceView::strict(&held).unwrap();
     let p = P {
-        model: TapeModel::Tron,
+        machine: TapeMachine::Tron,
         size,
         tape,
         ..P::default()
@@ -936,7 +983,7 @@ fn tron_never_loops() {
     let held = sine_src(48_000);
     let v = SourceView::strict(&held).unwrap();
     let p = P {
-        model: TapeModel::Tron,
+        machine: TapeMachine::Tron,
         ..P::default()
     };
     let mut e = fresh();
@@ -957,7 +1004,7 @@ fn tron_release_fades() {
     let v = SourceView::strict(&held).unwrap();
     for fade in [0.3, 0.0, 1.0] {
         let p = P {
-            model: TapeModel::Tron,
+            machine: TapeMachine::Tron,
             drag: fade,
             ..P::default()
         };
@@ -991,7 +1038,7 @@ fn tron_release_fades() {
     let held = sine_src(4 * 48_000);
     let v = SourceView::strict(&held).unwrap();
     let p = P {
-        model: TapeModel::Tron,
+        machine: TapeMachine::Tron,
         drag: 0.0,
         ..P::default()
     };
@@ -1010,12 +1057,12 @@ fn tron_refuses_a_zone_set() {
     let mut zs = d.to_bytes().to_vec();
     zs.resize(DESC_LEN + 27 + 3 * 33, 0);
     let zs = SourceView::new(&zs).unwrap();
-    assert!(!wave::playable(TapeModel::Tron, &zs));
+    assert!(!wave::playable(TapeMachine::Tron, &zs));
     let plain = sine_src(4_800);
     let wv = held_transwave(512, 2, |_, h| if h == 1 { 0.5 } else { 0.0 });
     for held in [&plain, &wv] {
         assert!(wave::playable(
-            TapeModel::Tron,
+            TapeMachine::Tron,
             &SourceView::new(held).unwrap()
         ));
     }
@@ -1144,8 +1191,9 @@ fn machine_table_is_pinned() {
             &[],
         ),
     ];
-    let row =
-        |c: &chimera_core::dsp::tape_engine::machine::Cell| (c.id, c.label, c.short, c.default);
+    let row = |c: &chimera_core::dsp::tape_engine::machine::Cell| {
+        (c.id, c.label, c.short, c.default().value())
+    };
     for (i, (k, page, deck, cells)) in want.into_iter().enumerate() {
         let m = &MACHINES[i];
         assert_eq!(m.machine, k);
@@ -1181,8 +1229,7 @@ fn every_cell_reads_in_the_audio() {
         };
         let v = SourceView::strict(src).unwrap();
         let mut base = P {
-            model,
-            mode,
+            machine: TapeMachine::of(model, mode),
             tape: 0.6,
             period: 109.1,
             ..P::default()
@@ -1228,7 +1275,7 @@ fn every_cell_reads_in_the_audio() {
                 // Inside the 400 blocks heard.
                 0.15
             } else if spec.max <= 1.0 && spec.kind == chimera_core::block::ParamKind::Enum {
-                1.0 - c.default
+                1.0 - c.default().value()
             } else if c.id == P::SLICE {
                 6.0
             } else {
@@ -1384,8 +1431,7 @@ fn oneshot_ends_on_a_blocks_last_sample() {
     let held = ramp_src(6_400);
     let v = SourceView::strict(&held).unwrap();
     let p = P {
-        model: TapeModel::Play,
-        mode: PlayMode::One,
+        machine: TapeMachine::One,
         drag: FADE_HOLD,
         ..P::default()
     };

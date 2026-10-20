@@ -96,7 +96,7 @@ fn head_of(root: &Path, rep: &Report) -> SourceHead {
         .join("CHIMERA/TAPES")
         .join(rep.file().rsplit('/').next().unwrap());
     let bytes = std::fs::read(path).unwrap();
-    let mut c = SourceCheck::new(rep.head.sref.crc, bytes.len() as u32).unwrap();
+    let mut c = SourceCheck::new(rep.head.sref.stem(), bytes.len() as u32).unwrap();
     c.feed(&bytes).unwrap();
     c.finish().unwrap()
 }

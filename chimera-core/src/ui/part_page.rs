@@ -7,7 +7,7 @@ use crate::block::Block;
 use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::modulator::EnvSlot;
 use crate::dsp::tape_engine::machine::{defaults, env_defaults};
-use crate::dsp::tape_engine::{TapeEngineParams, TapeMachine};
+use crate::dsp::tape_engine::{MachineIndex, TapeEngineParams, TapeMachine};
 use crate::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use crate::ui::view::{SlotCtx, View, view};
 
@@ -111,7 +111,7 @@ pub fn edit(params: &mut impl Blocks, a: ParamAddr, how: Edit) -> bool {
 fn machine_edit(a: ParamAddr, before: f32, b: &mut dyn Block) -> Option<TapeMachine> {
     let model = TapeEngineParams::MODEL;
     if a == ParamAddr::new(BlockRef::TapeEngine, model) && b.get(model) != before {
-        let m = TapeMachine::from_index(b.get(model) as u8);
+        let m = TapeMachine::from_index(MachineIndex(b.get(model) as u8));
         for (id, v) in defaults(m) {
             b.set(id, v);
         }

@@ -29,6 +29,7 @@ use chimera_core::dsp::delay::DelayParams;
 use chimera_core::dsp::fx_bus::{FxBus, FxParams};
 use chimera_core::dsp::modal::{ModalParams, ResonatorMode};
 use chimera_core::dsp::reverb::ReverbParams;
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::voice_fx::params::{FxType, VoiceFxParams};
 use chimera_core::hw::DAC_PAIRS;
 use chimera_core::params::{FilterParams, OutParams, PitchParams};
@@ -1701,7 +1702,8 @@ fn tape_params_sweep() {
                     };
                     for v in values {
                         let mut s = Sound::init(EngineType::Tape);
-                        s.params.tape.model = model;
+                        s.params.tape.machine =
+                            TapeMachine::of(model, chimera_core::dsp::tape_engine::PlayMode::Loop);
                         if model == TapeModel::Scrub {
                             s.params.tape.motion = 0.5; // a moving tape
                         }

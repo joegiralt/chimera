@@ -13,7 +13,7 @@ use crate::block::OffsetLaw;
 use crate::dsp::algo::engine::{AlgoEngine, AlgoLive};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::modal::{Halo, ModalEngine, ModalParams, Model, ResonatorMode, SymPool};
-use crate::dsp::tape_engine::{COST_WAVE_LEVEL, LEVEL_CENTS, TapeEngine, TapeModel};
+use crate::dsp::tape_engine::{COST_WAVE_LEVEL, LEVEL_CENTS, TapeEngine, TapeMachine};
 use crate::dsp::va::{VA_OUT_GAIN, VaEngine};
 use crate::hw::Cost;
 use crate::in_place::{in_place_enum, move_out};
@@ -531,7 +531,7 @@ impl EngineSlot {
         match self {
             Self::Algo(_) => Cost::ZERO,
             Self::Modal(_) => ModalEngine::cost(&p.modal),
-            Self::Tape(_) => TapeEngine::model_cost(p.tape.model, p.tape.mode),
+            Self::Tape(_) => TapeEngine::model_cost(p.tape.machine),
             Self::Va(_) => VaEngine::cost(&p.va),
         }
     }
@@ -562,7 +562,7 @@ impl EngineSlot {
 /// TRANSWAVE: a pitch that moves far enough changes level, a block of four
 /// heads (`COST_WAVE_LEVEL`).
 fn wave_levels(p: &ParamSnapshot) -> bool {
-    p.tape.model == TapeModel::Transwave
+    p.tape.machine == TapeMachine::Wave
 }
 
 /// Pitch can move past `LEVEL_CENTS` in a note: a glide steal, or PITCH

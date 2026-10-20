@@ -357,7 +357,8 @@ const CHUNK: usize = 64;
 /// Feeds `bytes` in `CHUNK`s: the chunk the first refusal came from, and
 /// it, or `finish`'s answer.
 fn feed(stem: u32, bytes: &[u8]) -> Result<SourceHead, (usize, PutRefusal)> {
-    let mut c = SourceCheck::new(stem, bytes.len() as u32).map_err(|e| (0, e))?;
+    let mut c = SourceCheck::new(chimera_core::storage::Stem::new(stem), bytes.len() as u32)
+        .map_err(|e| (0, e))?;
     for (i, b) in bytes.chunks(CHUNK).enumerate() {
         c.feed(b).map_err(|e| (i, e))?;
     }
@@ -439,7 +440,7 @@ fn source_check_refuses_early() {
         "frames − 2"
     );
     // A refusal sticks.
-    let mut c = SourceCheck::new(p.sref.crc, project.len() as u32).unwrap();
+    let mut c = SourceCheck::new(p.sref.stem(), project.len() as u32).unwrap();
     assert_eq!(c.feed(&project), Err(PutRefusal::Kind));
     assert_eq!(c.feed(&[]), Err(PutRefusal::Kind));
     assert_eq!(c.finish(), Err(PutRefusal::Kind));

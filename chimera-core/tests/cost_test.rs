@@ -14,6 +14,7 @@ use chimera_core::dsp::engines::EngineSlot;
 use chimera_core::dsp::filter::ladder::{LADDER_COST, LADDER_MOVE_COST};
 use chimera_core::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 use chimera_core::dsp::fx_bus::FxBus;
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::dsp::voice_fx::params::{FxType, VoiceFxParams};
 use chimera_core::hw::{
@@ -714,7 +715,7 @@ fn the_model_bills_every_bench_row_high() {
     );
     let tape = |(model, mode), (start, end): (f32, f32), steal_glide: bool| {
         let mut p = tape_sound(model);
-        p.tape.mode = mode;
+        p.tape.machine = TapeMachine::of(model, mode);
         (p.tape.tape, p.tape.age, p.tape.start, p.tape.end) = (0.5, 0.5, start, end);
         if steal_glide {
             p.pitch.steal = chimera_core::params::Steal::Glide;
@@ -1566,7 +1567,7 @@ fn routes(r: &[(ModSource, chimera_core::addr::ParamAddr, i8)]) -> ModState {
 
 fn tape_sound(model: chimera_core::dsp::tape_engine::TapeModel) -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Tape);
-    p.tape.model = model;
+    p.tape.machine = TapeMachine::of(model, chimera_core::dsp::tape_engine::PlayMode::Loop);
     p
 }
 
@@ -1613,7 +1614,7 @@ fn tape_bills_each_model() {
     ] {
         for reversed in [false, true] {
             let mut p = tape_sound(model);
-            p.tape.mode = mode;
+            p.tape.machine = TapeMachine::of(model, mode);
             if reversed {
                 (p.tape.start, p.tape.end) = (1.0, 0.0);
             }
@@ -1643,7 +1644,7 @@ fn tape_bills_each_model() {
             // A streamed source (slice 1 § 5.5): only PLAY streams.
             if model == Play && mode != PlayMode::Ping {
                 assert_eq!(
-                    streamed_cost(model, mode),
+                    streamed_cost(TapeMachine::of(model, mode)),
                     Cost(bill + COST_STREAM.0),
                     "{model:?} {mode:?} streamed"
                 );

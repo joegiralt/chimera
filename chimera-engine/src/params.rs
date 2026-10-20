@@ -1311,7 +1311,7 @@ impl ParamSnapshot {
     /// Whether this Sound moves `a` by its own motion, so the Part's knobs
     /// hand it on at once (ADR 0112): SCRUB's jog.
     pub fn moves_itself(&self, a: ParamAddr) -> bool {
-        a.block == BlockRef::TapeEngine && crate::dsp::tape_engine::jogs(self.tape.model, a.param)
+        a.block == BlockRef::TapeEngine && crate::dsp::tape_engine::jogs(self.tape.machine, a.param)
     }
 
     /// Default params for `engine`.

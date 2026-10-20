@@ -149,6 +149,17 @@ impl SourceRate {
         }
     }
 
+    /// `hz` held to the range, for a rate already checked elsewhere.
+    pub const fn clamped(hz: u16) -> Self {
+        if hz < Self::MIN.0 {
+            Self::MIN
+        } else if hz > Self::MAX.0 {
+            Self::MAX
+        } else {
+            Self(hz)
+        }
+    }
+
     pub const fn get(self) -> u16 {
         self.0
     }

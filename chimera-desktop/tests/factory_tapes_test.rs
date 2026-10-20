@@ -4,7 +4,7 @@
 
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
-use chimera_core::dsp::tape_engine::{PlayMode, TapeModel};
+use chimera_core::dsp::tape_engine::{TapeMachine, TapeModel};
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
@@ -211,9 +211,9 @@ fn factory_sounds_sit_at_the_median() {
             ((b.head.root + 50) / 100) as u8
         };
         let secs = b.head.sref.frames as f32 / f32::from(b.head.sref.rate);
-        let blocks = match (s.model, s.mode, t.slice.code()) {
-            (TapeModel::Play, PlayMode::One, 1) => (secs / 16.0 * BPS as f32) as usize,
-            (TapeModel::Play, PlayMode::One, _) => ((secs * BPS as f32) as usize).min(BPS),
+        let blocks = match (s.machine, t.slice.code()) {
+            (TapeMachine::One, 1) => (secs / 16.0 * BPS as f32) as usize,
+            (TapeMachine::One, _) => ((secs * BPS as f32) as usize).min(BPS),
             _ => BPS,
         };
         let d = rig.lufs(note, blocks.max(1)) - median;
@@ -314,6 +314,44 @@ fn scrub_take_that_turns_is_click_free() {
             "{name}: click {:.1}x at {:.3} s (straight {own:.2}x)",
             q.click_ratio,
             q.click_at as f32 / 48_000.0
+        );
+    }
+}
+
+#[path = "../../chimera-core/tests/common/codec_util.rs"]
+mod codec_util;
+
+/// Every factory TAPE Sound loads and saves to its file's bytes (ADR
+/// 0189), and those bytes are pinned. An absent CC0 original's Sounds
+/// stand on another source, and the pin waits for the whole set.
+#[test]
+fn factory_sounds_save_as_loaded() {
+    use chimera_core::storage::Crc32;
+    use codec_util::{decode, encode};
+    let (r, built) = set();
+    let stand_in = &built.iter().flatten().next().unwrap().head;
+    let mut all = Crc32::new();
+    for s in &r.sounds {
+        let head = r
+            .sources
+            .iter()
+            .zip(built)
+            .find(|(x, _)| x.name == s.source)
+            .and_then(|(_, b)| b.as_ref())
+            .map_or(stand_in, |b| &b.head);
+        let file = encode(&tape_sound(s, head));
+        let got = decode(&file).unwrap();
+        assert_eq!(encode(&got), file, "{}", s.name.as_str());
+        all.update(&file);
+    }
+    if built.iter().all(Option::is_some) {
+        assert_eq!(all.finish(), 0xBA88_16F9, "{} Sounds", r.sounds.len());
+    } else {
+        let absent = r.sources.iter().zip(built).filter(|(_, b)| b.is_none());
+        let names: Vec<_> = absent.map(|(x, _)| x.name.as_str()).collect();
+        eprintln!(
+            "CRC pin skipped, CC0 originals absent: {}",
+            names.join(", ")
         );
     }
 }

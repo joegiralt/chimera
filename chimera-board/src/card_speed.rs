@@ -28,7 +28,7 @@ use chimera_core::hw::MAX_VOICES;
 use chimera_core::note_queue::{NoteEvent, NoteKind, NoteProducer};
 use chimera_core::perf::load::AudioStats;
 use chimera_core::storage::{
-    HEADER_LEN, RecordTag, SOURCE_HEAD_LEN, SourceHead, SourceLayout, source_name,
+    HEADER_LEN, RecordTag, SOURCE_HEAD_LEN, SourceHead, SourceLayout, Stem, source_name,
 };
 use chimera_core::stream::bench::{
     ArmError, BENCH, BedCheck, BedTable, Listen, MAX_BED_CHUNKS, Ratio, bed_id,
@@ -1308,7 +1308,7 @@ fn place(
     reg: &StreamRegistry,
     slot: &mut Option<BedCheck>,
 ) -> Option<(FileName, SourceRate, u32)> {
-    let name = source_name(table.stem(k)?);
+    let name = source_name(Stem::new(table.stem(k)?));
     let runs = Store::runs(store, vol, name).ok()?;
     let mut head = Head {
         buf: [0; HEAD_END],

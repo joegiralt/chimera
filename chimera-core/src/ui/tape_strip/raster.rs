@@ -9,7 +9,7 @@ use crate::dsp::clampf;
 use crate::dsp::tape_engine::Heads;
 use crate::dsp::tape_engine::heads::{Bounds, Dir, Window, min_frames};
 use crate::dsp::tape_engine::oneshot::Slice;
-use crate::dsp::tape_engine::params::{PlayMode, TapeEngineParams, TapeModel};
+use crate::dsp::tape_engine::params::{TapeEngineParams, TapeMachine};
 use crate::dsp::tape_engine::read::{Shape, SourceView};
 use crate::dsp::tape_engine::tron::tron_len_s_in;
 use crate::stream::units::SourceRate;
@@ -56,7 +56,7 @@ impl Overview {
 
 /// What the viz region redraws on: the overview, the machine's params and
 /// the heads to the column.
-pub(crate) fn key_in(o: &Overview, model: TapeModel, p: &TapeEngineParams, heads: Heads) -> u32 {
+pub(crate) fn key_in(o: &Overview, m: TapeMachine, p: &TapeEngineParams, heads: Heads) -> u32 {
     let col = |h: Option<u32>| {
         h.filter(|_| o.frames > 0)
             .map_or(u32::MAX, |h| o.column(h) as u32)
@@ -64,8 +64,7 @@ pub(crate) fn key_in(o: &Overview, model: TapeModel, p: &TapeEngineParams, heads
     let words = [
         o.frames,
         o.rate.map_or(0, u32::from),
-        model as u32,
-        p.mode as u32,
+        m as u32,
         u32::from(p.slice.code()),
         p.size.to_bits(),
         p.xfade.to_bits(),
@@ -100,12 +99,12 @@ fn tri(d: &mut dyn Paint, x: i32, y: i32, (dx, dy): (i32, i32), color: Rgb565) {
     }
 }
 
-/// The strip at `(x, y)`, 216 × 40 px (ticks hang 3 px below): `model`
+/// The strip at `(x, y)`, 216 × 40 px (ticks hang 3 px below): `m`
 /// over `o` at `p` (the page's values as they glide), `heads` the audio's.
 pub(crate) fn strip_in(
     d: &mut dyn Paint,
     o: &Overview,
-    model: TapeModel,
+    m: TapeMachine,
     p: &TapeEngineParams,
     heads: Heads,
     (x, y): (i32, i32),
@@ -118,7 +117,7 @@ pub(crate) fn strip_in(
     let rate = o.rate.unwrap_or(SourceRate::MIN);
     let col = |f: u32| x + o.column(f);
     let mut w = Window::of(p.start, p.end, n, min_frames(rate));
-    if !model.ordered(p.mode) {
+    if !m.ordered() {
         w.dir = Dir::Fwd;
     }
     let len = w.frames();
@@ -133,8 +132,8 @@ pub(crate) fn strip_in(
     };
     let slice = |k: u64| w.lo + (k * u64::from(len) / 16) as u32;
     let (mut ramp, mut edges, mut ticks) = (None, None, 0u32);
-    let lit = match (model, p.mode) {
-        (TapeModel::Play, PlayMode::One) => {
+    let lit = match m {
+        TapeMachine::One => {
             let s = p.slice.slice();
             ticks = if s == Slice::Off { 0 } else { 16 };
             // Slice k from START (`slice_bounds`), or under NOTE the one
@@ -151,7 +150,7 @@ pub(crate) fn strip_in(
         }
         // The tape SIZE gives at the newest note's pitch (the audio's), or
         // at ROOT's with none: from START to where it runs out, or END.
-        (TapeModel::Tron, _) => match heads.second() {
+        TapeMachine::Tron => match heads.second() {
             Some(out) if fwd => (w.lo, out.max(w.lo)),
             Some(out) => (out.min(w.hi), w.hi),
             None => {
@@ -160,9 +159,9 @@ pub(crate) fn strip_in(
                 place(0, run.min(len))
             }
         },
-        (TapeModel::Play, _) => {
+        TapeMachine::Loop | TapeMachine::Ping => {
             let b = Bounds::of(0, len, (p.size, p.position, p.xfade), rate);
-            if p.mode == PlayMode::Ping {
+            if m == TapeMachine::Ping {
                 edges = Some(place(b.ls, b.le));
             } else if b.lx > 0 {
                 // The fade's incoming head: before the loop, or inside it
@@ -175,7 +174,7 @@ pub(crate) fn strip_in(
             }
             place(b.ls, b.le)
         }
-        (TapeModel::Transwave, _) => {
+        TapeMachine::Wave => {
             // The table's frames: the two read lit, else POSITION's.
             let c = u32::from(o.count.max(1));
             ticks = c;
@@ -184,7 +183,7 @@ pub(crate) fn strip_in(
             let h = heads.head().unwrap_or(at);
             (f(h), f(heads.second().unwrap_or(h).max(h) + 1))
         }
-        (TapeModel::Scrub | TapeModel::Stretch, _) => (w.lo, w.hi),
+        TapeMachine::Scrub | TapeMachine::Stretch => (w.lo, w.hi),
     };
     let (l, r) = (col(lit.0), col(lit.1.max(lit.0 + 1) - 1));
     rect(d, l, y, r - l + 1, H, theme::ACCENT_DIM);
@@ -198,7 +197,7 @@ pub(crate) fn strip_in(
 
     // Slices of the window, or a transwave's frames of the source.
     for k in 1..ticks {
-        let f = if model == TapeModel::Transwave {
+        let f = if m == TapeMachine::Wave {
             (u64::from(k) * u64::from(n) / u64::from(ticks)) as u32
         } else {
             slice(u64::from(k))
@@ -226,22 +225,22 @@ pub(crate) fn strip_in(
         tri(d, col(a), mid, (-1, 0), theme::INK2);
         tri(d, col(b), mid, (1, 0), theme::INK2);
     }
-    if model == TapeModel::Scrub {
+    if m == TapeMachine::Scrub {
         // The finger.
         let f = w.lo + (clampf(p.position, 0.0, 1.0) * len as f32) as u32;
         tri(d, col(f), y, (0, 1), theme::INK);
     }
-    if model == TapeModel::Transwave {
+    if m == TapeMachine::Wave {
         return;
     }
-    if let Some(h) = heads.second().filter(|_| model != TapeModel::Tron) {
+    if let Some(h) = heads.second().filter(|_| m != TapeMachine::Tron) {
         for dy in (0..H).step_by(2) {
             rect(d, col(h), y + dy, 1, 1, theme::ACCENT);
         }
     }
     if let Some(h) = heads.head() {
         rect(d, col(h), y, 1, H, theme::ACCENT);
-        if model.ordered(p.mode) {
+        if m.ordered() {
             tri(d, col(h) + dir, y + 3, (dir, 0), theme::ACCENT);
         }
     }

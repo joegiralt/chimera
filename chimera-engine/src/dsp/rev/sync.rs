@@ -156,6 +156,7 @@ impl Division {
 
 /// Entry `round(p·(n − 1))` of a list of `n` (spec: how a division is
 /// stored); NaN reads 0.
+#[inline(never)]
 pub fn index_of(p: f32, n: usize) -> usize {
     let last = n.saturating_sub(1) as f32;
     libm::roundf(clampf(p, 0.0, 1.0) * last) as usize

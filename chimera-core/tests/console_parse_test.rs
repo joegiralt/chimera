@@ -267,7 +267,7 @@ fn put_takes_a_tapes_path() {
     let one = |s: &str| feed(&mut Console::new(), s.as_bytes()).remove(0);
     let want = |resume| {
         Ok(Request::Put(PutArg {
-            to: PutTo::Source(0x0BAD_F00D),
+            to: PutTo::Source(chimera_core::storage::Stem::new(0x0BAD_F00D)),
             size: 600_000,
             crc: 0x1234_5678,
             resume,

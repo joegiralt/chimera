@@ -120,7 +120,7 @@ pub fn stream_file(store: &mut DirStore, sref: SourceRef) -> Option<StreamFile> 
                 .runs(r.volume(), source_file(sref))
                 .map_err(|_| StoreError::Io)?;
             let head =
-                read_source_head(s, r, sref.crc, runs.len.get()).map_err(|_| StoreError::Io)?;
+                read_source_head(s, r, sref.stem(), runs.len.get()).map_err(|_| StoreError::Io)?;
             Ok::<_, StoreError>(
                 SourceLayout::whole(head).and_then(|l| StreamFile::from_layout(&l, runs)),
             )

@@ -8,11 +8,11 @@ mod screen;
 
 use core::ops::ControlFlow;
 
+use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::heads::{Bounds, window_end, window_start};
 use chimera_core::dsp::tape_engine::params::TapeEngineParams;
 use chimera_core::dsp::tape_engine::read::Shape;
 use chimera_core::dsp::tape_engine::read::{HeadSpec, head_table};
-use chimera_core::dsp::tape_engine::{PlayMode, TapeModel};
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
@@ -334,9 +334,9 @@ fn rows_pool_then_card() {
     let mut rig = Rig::new(&[]);
     rig.pool(&[&a, &b]);
     let card = [
-        (c.0.sref.crc, file_len(&c.0)),
-        (a.0.sref.crc, file_len(&a.0)),
-        (d.0.sref.crc, file_len(&d.0)),
+        (c.0.sref.stem(), file_len(&c.0)),
+        (a.0.sref.stem(), file_len(&a.0)),
+        (d.0.sref.stem(), file_len(&d.0)),
     ];
     let got: Vec<_> = rows(rig.ui.project().pool(), &card).collect();
     let pool = rig.ui.project().pool();
@@ -349,11 +349,11 @@ fn rows_pool_then_card() {
             SourceRow::Pool(id(&b.0)),
             SourceRow::Divider,
             SourceRow::Card {
-                stem: c.0.sref.crc,
+                stem: c.0.sref.stem(),
                 cost: cost(&c.0)
             },
             SourceRow::Card {
-                stem: d.0.sref.crc,
+                stem: d.0.sref.stem(),
                 cost: cost(&d.0)
             },
         ]
@@ -425,7 +425,7 @@ fn loaded_row_moves_above_divider() {
     rig.load();
     let pool = rig.ui.project().pool();
     let id = pool.find_source(h.sref).expect("published");
-    let card = [(h.sref.crc, file_len(&h))];
+    let card = [(h.sref.stem(), file_len(&h))];
     assert_eq!(rows(pool, &card).collect::<Vec<_>>(), [SourceRow::Pool(id)]);
     let s = rig.sound();
     assert_eq!(s.source_ref(), Some(h.sref), "the Part plays it");
@@ -439,7 +439,7 @@ fn loaded_row_moves_above_divider() {
 #[test]
 fn wont_fit_alerts() {
     let mut rig = Rig::new(&[choir()]);
-    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::Ping));
+    rig.tape(|t| t.machine = TapeMachine::Ping);
     // Fill the pool until the CHOIR won't fit.
     let mut seed = 20;
     while rig.ui.project().pool().free() >= card_cost(file_len(&choir().0)).unwrap() {
@@ -567,9 +567,13 @@ fn source_memory_is_ram_only() {
         s.params.tape.start = crc as f32 / 100.0;
     }
     m.keep(&s);
-    assert_eq!(m.get(1), None, "the oldest went");
     assert_eq!(
-        m.get(2),
+        m.get(chimera_core::storage::Stem::new(1)),
+        None,
+        "the oldest went"
+    );
+    assert_eq!(
+        m.get(chimera_core::storage::Stem::new(2)),
         Some(Memo {
             crc: core::num::NonZeroU32::new(2).unwrap(),
             start: 0.02,
@@ -578,7 +582,7 @@ fn source_memory_is_ram_only() {
             fine: 0
         })
     );
-    assert!(m.get(33).is_some());
+    assert!(m.get(chimera_core::storage::Stem::new(33)).is_some());
 
     // A save holds no memory, and a load starts it empty.
     let (a, b) = (source(1, 6_000, "A"), source(2, 7_000, "B"));
@@ -682,7 +686,7 @@ fn the_last_chunk_does_not_publish_before_adopt() {
     let (h, d) = choir();
     let mut rig = Rig::new(&[choir()]);
     let srcs = rig.ui.project().pool().source_count();
-    let mut l = SourceLoad::start(rig.ui.project_mut(), h.sref.crc, file_len(&h)).unwrap();
+    let mut l = SourceLoad::start(rig.ui.project_mut(), h.sref.stem(), file_len(&h)).unwrap();
     let ui = &mut rig.ui;
     let last = loop {
         let step = rig
@@ -801,7 +805,7 @@ fn fits_loads_whole() {
 fn too_big_play_one_streams_with_start_head() {
     let b = bed(1);
     let mut rig = Rig::new(std::slice::from_ref(&b));
-    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.tape(|t| t.machine = TapeMachine::One);
     let heads = heads_for(b.0.sref, &rig.params()).unwrap();
     assert_eq!(heads.as_slice().len(), 1);
     let free = rig.ui.project().pool().free();
@@ -837,7 +841,7 @@ fn too_big_loop_streams_with_two_heads() {
     let b = bed(2);
     let mut rig = Rig::new(std::slice::from_ref(&b));
     rig.tape(|t| {
-        (t.model, t.mode) = (TapeModel::Play, PlayMode::Loop);
+        t.machine = TapeMachine::Loop;
         (t.size, t.position, t.xfade) = (0.7, 0.6, 0.1);
     });
     let heads = heads_for(b.0.sref, &rig.params()).unwrap();
@@ -883,22 +887,19 @@ fn refused(f: impl FnOnce(&mut TapeEngineParams), words: &str) {
 
 #[test]
 fn too_big_ping_refused() {
-    refused(
-        |t| (t.model, t.mode) = (TapeModel::Play, PlayMode::Ping),
-        PING_NEEDS_RAM,
-    );
+    refused(|t| t.machine = TapeMachine::Ping, PING_NEEDS_RAM);
 }
 
 #[test]
 fn too_big_scrub_refused() {
-    refused(|t| t.model = TapeModel::Scrub, "SCRUB NEEDS RAM");
+    refused(|t| t.machine = TapeMachine::Scrub, "SCRUB NEEDS RAM");
 }
 
 #[test]
 fn fragmented_refused() {
     let b = bed(4);
     let mut rig = Rig::new(std::slice::from_ref(&b));
-    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.tape(|t| t.machine = TapeMachine::One);
     rig.turn(1);
     rig.s.fragmented = true;
     let free = rig.ui.project().pool().free();
@@ -919,7 +920,7 @@ fn fragmented_refused() {
 fn ninth_streamed_source_refuses() {
     let beds: Vec<_> = (10..19).map(bed).collect();
     let mut rig = Rig::new(&beds);
-    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.tape(|t| t.machine = TapeMachine::One);
     let mut streamed = Vec::new();
     for _ in 0..9 {
         rig.turn(100);
@@ -932,7 +933,10 @@ fn ninth_streamed_source_refuses() {
     let pool = rig.ui.project().pool();
     let held: Vec<_> = beds.iter().filter(|b| pool.streamed(b.0.sref)).collect();
     assert_eq!(held.len(), 8);
-    let ninth = beds.iter().find(|b| b.0.sref.crc == streamed[8]).unwrap();
+    let ninth = beds
+        .iter()
+        .find(|b| b.0.sref.stem() == streamed[8])
+        .unwrap();
     assert_eq!(pool.find_source(ninth.0.sref), None, "the ninth: nothing");
     assert_eq!(rig.band(), STREAMS_FULL);
 }
@@ -945,7 +949,7 @@ fn ninth_streamed_source_refuses() {
 fn streamed_load_trusts_the_seal() {
     let b = bed(5);
     let mut rig = Rig::new(std::slice::from_ref(&b));
-    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.tape(|t| t.machine = TapeMachine::One);
     let heads = heads_for(b.0.sref, &rig.params()).unwrap();
     let size = file_len(&b.0);
     rig.turn(1);
@@ -961,7 +965,7 @@ fn streamed_load_trusts_the_seal() {
     file[n - 100] ^= 0xFF;
     let mut rig = Rig::new(std::slice::from_ref(&b));
     rig.s.inner.plant(source_file(b.0.sref), &file);
-    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.tape(|t| t.machine = TapeMachine::One);
     rig.turn(1);
     rig.load();
     assert!(
@@ -974,7 +978,7 @@ fn streamed_load_trusts_the_seal() {
     file[first + 508] ^= 0xFF;
     let mut rig = Rig::new(std::slice::from_ref(&b));
     rig.s.inner.plant(source_file(b.0.sref), &file);
-    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.tape(|t| t.machine = TapeMachine::One);
     rig.turn(1);
     rig.load();
     assert_eq!(rig.band(), READ_FAILED);
@@ -993,7 +997,7 @@ fn streamed_load_trusts_the_seal() {
 fn registry_row_before_pool_row() {
     let b = bed(6);
     let mut rig = Rig::new(std::slice::from_ref(&b));
-    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.tape(|t| t.machine = TapeMachine::One);
     let reg = rig.registry();
     let other = bed(7).0;
     let l = SourceLayout::whole(other).unwrap();
@@ -1027,7 +1031,7 @@ fn registry_row_before_pool_row() {
 fn reheading_after_start_turn() {
     let b = bed(8);
     let mut rig = Rig::new(std::slice::from_ref(&b));
-    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.tape(|t| t.machine = TapeMachine::One);
     rig.turn(1);
     rig.load();
     let before = heads_for(b.0.sref, &rig.params()).unwrap();
@@ -1076,7 +1080,7 @@ fn reheading_goes_beside_a_held_note() {
     }
     let b = bed(9);
     let mut rig = Rig::new(std::slice::from_ref(&b));
-    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.tape(|t| t.machine = TapeMachine::One);
     rig.turn(1);
     rig.load();
     let before = heads_for(b.0.sref, &rig.params()).unwrap();
@@ -1181,7 +1185,7 @@ fn a_held_source_doesnt_stop_anothers_reheading() {
     }
     let (a, b) = (bed(20), bed(21));
     let mut rig = Rig::new(&[a.clone(), b.clone()]);
-    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.tape(|t| t.machine = TapeMachine::One);
     for _ in 0..2 {
         rig.turn(100);
         rig.load();
@@ -1243,7 +1247,7 @@ fn a_held_source_doesnt_stop_anothers_reheading() {
 /// `b` loaded streamed on Part 1 at PLAY ONE.
 fn streamed_rig(b: &(SourceHead, Vec<u8>)) -> Rig {
     let mut rig = Rig::new(std::slice::from_ref(b));
-    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.tape(|t| t.machine = TapeMachine::One);
     rig.turn(1);
     rig.load();
     assert!(rig.ui.project().pool().streamed(b.0.sref));
@@ -1359,7 +1363,7 @@ fn reheading_waits_when_nothing_is_free_beside() {
     }
     let b = bed(31);
     let mut rig = Rig::new(std::slice::from_ref(&b));
-    rig.tape(|t| (t.model, t.mode) = (TapeModel::Play, PlayMode::One));
+    rig.tape(|t| t.machine = TapeMachine::One);
     rig.turn(1);
     rig.load();
     let before = heads_for(b.0.sref, &rig.params()).unwrap();

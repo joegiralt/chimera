@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use chimera_core::block::{Block, DiskCode, ParamId};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
-use chimera_core::dsp::tape_engine::{PlayMode, TapeEngineParams as P, TapeModel, machine};
+use chimera_core::dsp::tape_engine::{
+    PlayMode, TapeEngineParams as P, TapeMachine, TapeModel, machine,
+};
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
@@ -84,15 +86,12 @@ pub struct SourceRecipe {
     pub form: Form,
 }
 
-/// A factory TAPE Sound: TAPE INIT on `source`, MODEL `model` with its
-/// machine's defaults, then `set`, its level trimmed `trim_db`.
+/// A factory TAPE Sound: TAPE INIT on `source`, its `machine`'s defaults, then `set`, its level trimmed `trim_db`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SoundRecipe {
     pub name: SoundName,
     pub source: SoundName,
-    pub model: TapeModel,
-    /// PLAY's MODE: ONE, LOOP or PING.
-    pub mode: PlayMode,
+    pub machine: TapeMachine,
     pub set: Vec<(ParamId, f32)>,
     pub trim_db: f32,
 }
@@ -259,8 +258,7 @@ fn sound_recipe(name: SoundName, t: &Table) -> Result<SoundRecipe, String> {
     Ok(SoundRecipe {
         name,
         source: SoundName::new(need(t, "source")?).map_err(|e| format!("source: {e:?}"))?,
-        model,
-        mode,
+        machine: TapeMachine::of(model, mode),
         set,
         trim_db: num(t, "trim")?.unwrap_or(0.0),
     })
@@ -510,7 +508,7 @@ pub fn tape_sound(s: &SoundRecipe, head: &SourceHead) -> Sound {
     snd.name = s.name;
     snd.pick_source(head, None);
     let t = &mut snd.params.tape;
-    (t.model, t.mode) = (s.model, s.mode);
+    t.machine = s.machine;
     // The machine's own, ONE's FADE holding.
     let defaults = machine::defaults(t.machine());
     for (id, v) in defaults.chain(s.set.iter().copied()) {
@@ -595,8 +593,8 @@ pub fn manifest(r: &Recipes, built: &[Option<Built>]) -> String {
             s.name.as_str(),
             sound_stem(i),
             b.head.sref.crc,
-            MODEL_WORDS[usize::from(s.model.index())],
-            s.mode.disk_ident()
+            MODEL_WORDS[usize::from(s.machine.model().index())],
+            s.machine.mode().unwrap_or(PlayMode::Loop).disk_ident()
         );
         first = false;
     }

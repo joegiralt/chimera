@@ -28,7 +28,7 @@ use crate::ui::settings::job::Job;
 use crate::ui::settings::prompt;
 use crate::ui::settings::replace::LibraryAsk;
 use crate::ui::settings::{Ask, NamingFor, PART_ROW, SAVE_TO_LIB_ROW};
-use crate::ui::source_cell::{READ_FAILED, SOURCE_MISSING, SourceLoad, StagedStep};
+use crate::ui::source_cell::{READ_FAILED, SOURCE_MISSING, SourceLoad, SourceNote, StagedStep};
 
 /// What the Sound rung lists: kept for the session, PROJECT at boot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -491,7 +491,7 @@ impl UiState {
         match self.stream_size(card, store, file.vol, need) {
             // Gone or changed since the read: it loads absent.
             None => self.lib_adopt(go, read, Some(Staged::Missing(need.r))),
-            Some(size) => match SourceLoad::start(&mut self.project, need.r.crc, size) {
+            Some(size) => match SourceLoad::start(&mut self.project, need.r.stem(), size) {
                 Some(stream) => {
                     debug_assert!(
                         !self.src.busy(),
@@ -546,13 +546,15 @@ impl UiState {
                 Ok::<_, StoreError>(stream.step_staged(s, r, p))
             }) {
                 Ok(o) => {
-                    let step = o.result.unwrap_or(StagedStep::Failed(READ_FAILED));
+                    let step = o
+                        .result
+                        .unwrap_or(StagedStep::Failed(SourceNote::ReadFailed));
                     self.saw(Some(o.event));
                     step
                 }
-                Err(_) => StagedStep::Failed(READ_FAILED),
+                Err(_) => StagedStep::Failed(SourceNote::ReadFailed),
             },
-            None => StagedStep::Failed(READ_FAILED),
+            None => StagedStep::Failed(SourceNote::ReadFailed),
         };
         if step == StagedStep::More {
             self.lib.load = Some(l);
@@ -564,7 +566,7 @@ impl UiState {
             (StagedStep::Staged(got), Some(need)) if got.r == need.r => {
                 self.lib_adopt(l.go, l.read, Some(Staged::Read(need)))
             }
-            (StagedStep::Failed(w), _) => self.error(Line::new(w)),
+            (StagedStep::Failed(w), _) => self.error(Line::new(w.words())),
             _ => self.error(Line::new(READ_FAILED)),
         }
         self.lib_ended();

@@ -6,7 +6,7 @@ use super::*;
 
 /// The rows SOURCE stops on, in order: `rows` less the divider.
 #[inline(never)]
-fn stops(pool: &Pool, card: &[(u32, u32)]) -> ([SourceRow; MAX_SOURCES + MAX_TAPES], usize) {
+fn stops(pool: &Pool, card: &[(Stem, u32)]) -> ([SourceRow; MAX_SOURCES + MAX_TAPES], usize) {
     let mut out = [SourceRow::Divider; MAX_SOURCES + MAX_TAPES];
     let mut n = 0;
     for r in rows(pool, card).filter(|r| *r != SourceRow::Divider) {
@@ -16,11 +16,12 @@ fn stops(pool: &Pool, card: &[(u32, u32)]) -> ([SourceRow; MAX_SOURCES + MAX_TAP
     (out, n)
 }
 
-/// `heads`, folded to a word that is never 0 (FNV-1a).
+/// `heads`, folded to a word (FNV-1a).
 #[cfg(feature = "tape")]
-fn heads_key(heads: &Heads) -> u32 {
+fn heads_key(heads: &Heads) -> HeadsKey {
     let words = heads.as_slice().iter().flat_map(|h| [h.first(), h.end()]);
-    words.fold(0x811C_9DC5, |k, w| (k ^ w).wrapping_mul(0x0100_0193)) | 1
+    let k = words.fold(0x811C_9DC5, |k, w| (k ^ w).wrapping_mul(0x0100_0193));
+    HeadsKey(NonZeroU32::MIN | k)
 }
 
 /// The first streamed source a Part's START, loop or XFADE moved off its
@@ -29,17 +30,17 @@ fn heads_key(heads: &Heads) -> u32 {
 #[cfg(feature = "tape")]
 fn moved_heads(p: &Project, ready: impl Fn(SourceId, &Heads) -> bool) -> Option<(SourceId, Heads)> {
     let pool = p.pool();
-    let mut seen = 0u32;
+    let mut seen = crate::project::SourceSet::EMPTY;
     PartId::ALL.into_iter().find_map(|part| {
         let sound = &p.part(part).sound;
         let r = sound
             .source_ref()
             .filter(|_| sound.engine() == crate::params::EngineType::Tape)?;
         let id = pool.find_source(r)?;
-        let first = seen & id.bit() == 0;
-        seen |= id.bit();
+        let first = !seen.contains(id);
+        seen = seen.with(id);
         let staged = head_table(pool.held(r)?)?;
-        let want = heads_for(r, &sound.params.tape)?;
+        let want = heads_for(r, &sound.params.tape).ok()?;
         let moved =
             first && !staged.is_empty() && !staged.iter().eq(want.as_slice().iter().copied());
         (moved && ready(id, &want)).then_some((id, want))
@@ -47,7 +48,7 @@ fn moved_heads(p: &Project, ready: impl Fn(SourceId, &Heads) -> bool) -> Option<
 }
 
 impl SourceCell {
-    fn size(&self, stem: u32) -> Option<u32> {
+    fn size(&self, stem: Stem) -> Option<u32> {
         let files = self.card.as_ref()?.files();
         files.iter().find(|f| f.0 == stem).map(|f| f.1)
     }
@@ -93,7 +94,7 @@ impl SourceCell {
                         part,
                         stem,
                         size,
-                        pick: false,
+                        to: HeadFor::Name,
                     });
                 }
             }
@@ -107,14 +108,14 @@ impl SourceCell {
         if p.part(part).sound.source_ref() == Some(r) {
             return;
         }
-        let head = self.heads.get(r.crc);
+        let head = self.heads.get(r.stem());
         self.memo.turn(p.edit_part(part).sound, r, head.as_ref());
-        if let (None, Some(size)) = (head, self.size(r.crc)) {
+        if let (None, Some(size)) = (head, self.size(r.stem())) {
             self.job = Some(SourceJob::Head {
                 part,
-                stem: r.crc,
+                stem: r.stem(),
                 size,
-                pick: true,
+                to: HeadFor::Pick,
             });
         }
     }
@@ -133,7 +134,7 @@ impl SourceCell {
                     self.job = Some(SourceJob::Stream(part, l));
                 }
             }
-            Some((_, LoadKind::Refused(n))) => self.note = Some(needs_ram_words(n)),
+            Some((_, LoadKind::Refused(why))) => self.note = Some(SourceNote::Refused(why)),
             _ => {
                 if let Some(l) = SourceLoad::start(p, stem, size) {
                     self.job = Some(SourceJob::Load(part, l));
@@ -149,7 +150,7 @@ impl SourceCell {
         &self,
         p: &Project,
         part: PartId,
-        stem: u32,
+        stem: Stem,
     ) -> Option<(SourceHead, LoadKind)> {
         if !cfg!(feature = "tape") {
             return None;
@@ -172,8 +173,9 @@ impl SourceCell {
         // nothing is free beside it: #598) nor one stuck on these heads
         // keeps the others waiting.
         let pool = p.pool();
-        let ready =
-            |id: SourceId, h: &Heads| pool.can_rehead(id) && self.stuck[id.index()] != heads_key(h);
+        let ready = |id: SourceId, h: &Heads| {
+            pool.can_rehead(id) && self.stuck[id.index()] != Some(heads_key(h))
+        };
         let Some((id, heads)) = moved_heads(p, ready) else {
             self.wait = None;
             return;
@@ -183,12 +185,12 @@ impl SourceCell {
             _ => Wait {
                 id,
                 heads,
-                frames: 0,
+                frames: UiFrames(0),
             },
         };
-        let frames = w.frames.saturating_add(1);
+        let frames = w.frames.next();
         self.wait = Some(Wait { frames, ..w });
-        if u32::from(frames) * crate::ui::animation::FRAME_MS >= REHEAD.get() {
+        if frames.at_least(REHEAD) {
             self.job = StreamLoad::rehead(p, id, heads).map(SourceJob::Rehead);
         }
     }
@@ -205,12 +207,12 @@ impl SourceCell {
                 part,
                 stem,
                 size,
-                pick,
+                to,
             } => match read_head(s, r, stem, size) {
                 Ok(h) => {
                     self.heads.put(h);
                     let sound = &p.part(part).sound;
-                    if pick && sound.source_ref() == Some(h.sref) {
+                    if to == HeadFor::Pick && sound.source_ref() == Some(h.sref) {
                         p.edit_part(part).sound.pick_source(&h, None);
                     }
                 }
@@ -232,7 +234,7 @@ impl SourceCell {
                     self.at = None;
                     self.pick(p, part, l.sref());
                 }
-                StreamStep::Failed(f) => self.note = Some(stream_fail_words(f)),
+                StreamStep::Failed(f) => self.note = Some(stream_note(f)),
             },
             #[cfg(feature = "tape")]
             SourceJob::Rehead(mut l) => match l.step(s, r, p, STEP_BYTES as usize) {
@@ -249,7 +251,7 @@ impl SourceCell {
                 // would only read the same heads again).
                 StreamStep::Failed(_) => {
                     if let Some(w) = self.wait {
-                        self.stuck[w.id.index()] = heads_key(&w.heads);
+                        self.stuck[w.id.index()] = Some(heads_key(&w.heads));
                     }
                 }
             },

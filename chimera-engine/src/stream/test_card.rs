@@ -24,7 +24,10 @@ use crate::project::SourceId;
 use crate::voice_alloc::VoiceIdx;
 
 /// Its one file, as a frame error names it: stem 0 at block 0.
-const FILE: FileKey = FileKey::new(0, chimera_hal::units::Lba::new(0));
+const FILE: FileKey = FileKey::new(
+    crate::storage::Stem::new(0),
+    chimera_hal::units::Lba::new(0),
+);
 
 /// Chunk `c` where it lies: a raw chunk's blocks each.
 fn key(c: ChunkIdx) -> FileChunk {

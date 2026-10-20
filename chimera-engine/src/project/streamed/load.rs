@@ -9,8 +9,8 @@ use chimera_hal::units::Bytes;
 use super::super::arena::ARENA_BYTES;
 use super::super::pool::StreamRefused;
 use super::super::sources::source_cost;
-use super::super::{Absence, PartId, PoolFull, Project, SourceId};
-use super::{LoadKind, StreamFail, StreamLoad, StreamStep, load_kind};
+use super::super::{Absence, PartId, PoolFull, Project, SourceId, SourceSet};
+use super::{LoadKind, Phase, StreamFail, StreamLoad, StreamStep, load_kind};
 use crate::dsp::tape_engine::read::write_head_table;
 use crate::storage::{
     CardFault, LoadError, Ready, SourceLayout, SourceReadError, read_packed_into, read_source_head,
@@ -53,7 +53,7 @@ impl StreamLoad {
         budget: usize,
     ) -> Result<Option<SourceId>, StreamFail> {
         let read = |e: StoreError| StreamFail::Read(e.into());
-        let Some(file) = self.file else {
+        let Phase::Heads { file, at } = self.phase else {
             let name = source_file(self.sref);
             let runs = s.runs(r.volume(), name).map_err(|e| match e {
                 RunsError::Fragmented(_) => StreamFail::Fragmented,
@@ -62,18 +62,17 @@ impl StreamLoad {
                 }
                 RunsError::Store(e) => read(e),
             })?;
-            let got =
-                read_source_head(s, r, self.sref.crc, runs.len.get()).map_err(StreamFail::Read)?;
+            let got = read_source_head(s, r, self.sref.stem(), runs.len.get())
+                .map_err(StreamFail::Read)?;
             let bad = StreamFail::Read(SourceReadError::Load(LoadError::File(
                 crate::storage::FileError::Corrupt,
             )));
             let l = SourceLayout::whole(got).filter(|_| got.sref == self.sref);
-            self.file = Some(
-                l.and_then(|l| StreamFile::from_layout(&l, runs))
-                    .ok_or(bad)?,
-            );
+            let file = l.and_then(|l| StreamFile::from_layout(&l, runs));
+            self.phase = Phase::heads(file.ok_or(bad)?);
             return Ok(None);
         };
+        let at = at.get() as usize;
         let len = self.heads.held_len();
         let gone = StreamFail::Pool(PoolFull {
             needs: source_cost(len),
@@ -84,7 +83,7 @@ impl StreamLoad {
         // nothing is published yet, so its heads are staged again there.
         if stage != self.stage {
             self.stage = stage;
-            self.at = 0;
+            self.phase = Phase::heads(file);
             return Ok(None);
         }
         // A head past any file's bytes, or a table longer than its row:
@@ -100,16 +99,17 @@ impl StreamLoad {
         // The head the next bytes are in, and how far into it.
         let mut before = 0;
         for h in self.heads.as_slice() {
-            if self.at < before + h.byte_len() {
-                let into = self.at - before;
+            if at < before + h.byte_len() {
+                let into = at - before;
                 let n = (h.byte_len() - into).min(budget.max(3) / 3 * 3);
-                let out = &mut held[table + self.at..][..n];
+                let out = &mut held[table + at..][..n];
                 let from = Frames::new(h.first())
                     .to_bytes(Packing::Twelve)
                     .checked_add(Bytes::new(into as u32))
                     .ok_or(corrupt)?;
                 read_packed_into(s, r, self.sref, from, out).map_err(StreamFail::Read)?;
-                self.at += n;
+                let at = Bytes::new((at + n) as u32);
+                self.phase = Phase::Heads { file, at };
                 return Ok(None);
             }
             before += h.byte_len();
@@ -141,9 +141,9 @@ impl StreamLoad {
 /// forward load as their heads (slice 1 § 5.6), as the SOURCE cell's load
 /// does; one every stream row refuses, or in too many runs, stays absent
 /// and says why. How many streamed. A card fault ends them.
-pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids: u32) -> u8 {
+pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids: SourceSet) -> u8 {
     let (mut n, mut fault) = (0u8, false);
-    for id in SourceId::ALL.into_iter().filter(|i| ids & i.bit() != 0) {
+    for id in ids.iter() {
         let Some(e) = p.pool.source(id) else { continue };
         // A card fault ends the reads: the rest read as failed.
         if fault {
@@ -170,7 +170,7 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
                 continue;
             }
         };
-        let head = match read_source_head(s, r, e.r.crc, runs.len.get()) {
+        let head = match read_source_head(s, r, e.r.stem(), runs.len.get()) {
             // The stem alone matched: another source's file under it is
             // not this one (as `StreamLoad::pass` and `read_sources` judge).
             Ok(head) if head.sref != e.r => {

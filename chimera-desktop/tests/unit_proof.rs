@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use chimera_core::MidiChannel;
 use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::dsp::tape_engine::{COST_STREAM, PlayMode, TapeModel};
+use chimera_core::dsp::tape_engine::{COST_STREAM, TapeMachine};
 use chimera_core::dsp::voice::Voice;
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::hw::{CPU_HZ_REV_V, Cost, SampleBudget};
@@ -192,7 +192,9 @@ fn heads() -> Vec<(SourceHead, u64)> {
             let b = std::fs::read(&p).expect("src");
             let stem = p.file_stem().and_then(|s| s.to_str()).expect("a stem");
             let stem = u32::from_str_radix(stem, 16).expect("a CRC stem");
-            let mut check = SourceCheck::new(stem, b.len() as u32).expect("a source");
+            let mut check =
+                SourceCheck::new(chimera_core::storage::Stem::new(stem), b.len() as u32)
+                    .expect("a source");
             check.feed(&b).expect("checks");
             (check.finish().expect("a source head"), b.len() as u64)
         })
@@ -243,8 +245,7 @@ fn project() {
         let recipe = SoundRecipe {
             name: SoundName::new(h.name.as_str()).expect("a name"),
             source: h.name,
-            model: TapeModel::Play,
-            mode: PlayMode::Loop,
+            machine: TapeMachine::Loop,
             set: Vec::new(),
             trim_db: 0.0,
         };

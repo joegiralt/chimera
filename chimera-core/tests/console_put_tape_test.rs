@@ -281,7 +281,7 @@ fn loads_sealed(s: &mut Mem, h: &SourceHead) {
     assert_eq!(n, out.len());
     let vol = s.mount().unwrap();
     assert_eq!(
-        s.delete(vol, source_name(h.sref.crc)),
+        s.delete(vol, source_name(h.sref.stem())),
         Err(StoreError::ReadOnly),
         "sealed"
     );
@@ -297,7 +297,7 @@ fn source_put_writes_sealed() {
     assert_eq!(unread, 0);
     assert_eq!(acks(&file).lines().count(), 3);
     assert_eq!(
-        read_file(&mut s, source_name(stem)).unwrap(),
+        read_file(&mut s, source_name(chimera_core::storage::Stem::new(stem))).unwrap(),
         file,
         "as sent"
     );
@@ -328,7 +328,7 @@ fn damaged_never_rewritten() {
     let (h, file) = source(1, 4_000);
     let mut bad = file.clone();
     bad[200] ^= 1;
-    let (vol, name) = (s.mount().unwrap(), source_name(h.sref.crc));
+    let (vol, name) = (s.mount().unwrap(), source_name(h.sref.stem()));
     s.make_dir(vol, Dir::Chimera).unwrap();
     s.make_dir(vol, Dir::Tapes).unwrap();
     s.write(vol, name, &mut |w| w.put(&bad)).unwrap();
@@ -394,7 +394,7 @@ fn broken_put_then_rerun_writes_once() {
 fn a_torn_unsealed_file_is_replaced() {
     let mut s = mem();
     let (h, file) = source(2, 4_000);
-    let (vol, name) = (s.mount().unwrap(), source_name(h.sref.crc));
+    let (vol, name) = (s.mount().unwrap(), source_name(h.sref.stem()));
     s.make_dir(vol, Dir::Chimera).unwrap();
     s.make_dir(vol, Dir::Tapes).unwrap();
     s.write(vol, name, &mut |w| w.put(&file[..1_000])).unwrap();

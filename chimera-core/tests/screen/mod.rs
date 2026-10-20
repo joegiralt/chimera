@@ -897,7 +897,7 @@ pub fn src_card(ui: &mut UiState, then: CardRow) {
         // (slice 1 § 5.6).
         let p1 = chimera_core::project::PartId::ALL[0];
         let t = &mut ui.project_mut().edit_part(p1).sound.params.tape;
-        t.mode = chimera_core::dsp::tape_engine::PlayMode::Ping;
+        t.machine = chimera_core::dsp::tape_engine::TapeMachine::Ping;
         strip_source(ui, false);
         strip_source(ui, true);
         let mut crc = 0x0F11_0000;
@@ -938,7 +938,7 @@ pub fn src_card(ui: &mut UiState, then: CardRow) {
 pub fn play_mode(ui: &mut UiState, mode: PlayMode) {
     let p = chimera_core::project::PartId::ALL[0];
     let t = &mut ui.project_mut().edit_part(p).sound.params.tape;
-    (t.mode, t.drag) = (mode, fade_default(mode));
+    (t.machine, t.drag) = (TapeMachine::play(mode), fade_default(mode));
 }
 
 /// TAPE's init on Part 1 with the strip's source, at DECK, MODEL turned
