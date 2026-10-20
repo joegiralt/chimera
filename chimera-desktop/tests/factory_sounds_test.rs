@@ -1087,7 +1087,7 @@ fn facts_use_full_words() {
         "LP2",
         "BP2",
         "REV2",
-        "EXP",
+        "EXPNDR",
         "ENV",
         "LFO",
         "ATTACK",
