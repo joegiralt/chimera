@@ -74,6 +74,16 @@ fn old_drv_loads_as_soft_pre() {
     assert_eq!(skips, 0);
 }
 
+/// A file's values past the old 0..1 ranges load clamped.
+#[test]
+fn out_of_range_values_clamp() {
+    let (s, _) = load(&[
+        engine(),
+        old_block(DRIVE, &[(0, 5.0), (1, -3.0), (2, -1.0)]),
+    ]);
+    assert_eq!(fx(&s), (FxType::Soft, Place::Pre, [1.0, 0.0, 0.5], 0.0));
+}
+
 #[test]
 fn old_fold_loads_as_fold_post() {
     let (s, skips) = load(&[engine(), old_block(FOLDER, &[(0, 0.3), (1, 0.2)])]);

@@ -4,7 +4,7 @@ mod common;
 
 use chimera_core::dsp::va::VaMode;
 use chimera_core::dsp::va::combine::{
-    self, Crusher, Operator, Peaks, am_gain, bits, combine, ring_gain, with_sub, xor16,
+    self, Crusher, Operator, Peaks, am_gain, am_reach, bits, combine, ring_gain, with_sub, xor16,
     xor16_scaled,
 };
 use chimera_core::dsp::va::osc::{Correction, Morph, R, Sub, Unit, VarOsc, peak_bound};
@@ -132,7 +132,9 @@ fn the_engine_operators_are_the_reference() {
                 };
                 for a in span(pk.a, 64) {
                     for b in span(pk.b, 64) {
-                        let got = op.at(a, b, x, op.scale * k) / op.scale;
+                        // AM's operator reads its reach, mapped a block
+                        let xo = if mode == VaMode::Am { am_reach(x) } else { x };
+                        let got = op.at(a, b, xo, op.scale * k) / op.scale;
                         let want = combine(mode, a, b, x, k, pk, &crush);
                         match mode {
                             VaMode::Mix
@@ -142,7 +144,8 @@ fn the_engine_operators_are_the_reference() {
                             | VaMode::Am
                             | VaMode::Max
                             | VaMode::LoopFm
-                            | VaMode::SoftSync => {
+                            | VaMode::SoftSync
+                            | VaMode::Phase => {
                                 assert_eq!(got.to_bits(), want.to_bits(), "{mode:?} {a} {b} {x}")
                             }
                             VaMode::Xor => {

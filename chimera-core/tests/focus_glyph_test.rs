@@ -3,7 +3,7 @@
 
 mod screen;
 
-use chimera_core::addr::{BlockRead, BlockRef, Op, ParamAddr};
+use chimera_core::addr::{BlockRef, Op, ParamAddr};
 use chimera_core::block::{ParamSpec, Smoothing, ValFmt};
 use chimera_core::dsp::algo::kinds::OpKind;
 use chimera_core::dsp::algo::params::AlgoOpParams;
@@ -31,6 +31,7 @@ use screen::*;
 
 const NONE: FocusGlyph = FocusGlyph::None;
 const SWITCH: FocusGlyph = FocusGlyph::Switch;
+const LFO: FocusGlyph = FocusGlyph::Lfo;
 const LEVEL: FocusGlyph = FocusGlyph::LevelBar;
 const XF: FocusGlyph = FocusGlyph::Crossfader;
 const BRAID: FocusGlyph = FocusGlyph::Composite(CompositeId::ChorusBraid);
@@ -70,8 +71,8 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Env", "LFO_FORM", NONE),
     ("Env", "BRST_FORM", NONE),
     ("Lfo", "TYPE", NONE),
-    ("Lfo", "FORM", NONE),
-    ("Lfo", "SHAPE", NONE),
+    ("Lfo", "FORM", LFO),
+    ("Lfo", "SHAPE", LFO),
     // A wave choice: a scope tracing its table.
     ("AlgoOp", "WAVE", FocusGlyph::Wave),
     // SKIRT is a window's step, VSLOT a vowel slot: words and digits, no amount.
@@ -80,7 +81,14 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     // Semitones: a note on the staff.
     ("Algo", "TRNSP", FocusGlyph::Staff),
     // Two states, one of them off: a toggle.
-    ("Lfo", "SYNC", SWITCH),
+    ("Lfo", "SYNC", LFO),
+    // The LFO page's own glyphs (ADR 0177): every control but TYPE.
+    ("Lfo", "RATE", LFO),
+    ("Lfo", "PHASE", LFO),
+    ("Lfo", "DEPTH", LFO),
+    ("Lfo", "RISE", LFO),
+    ("Lfo", "FALL", LFO),
+    ("Lfo", "SHAPE_B", LFO),
     // Set-and-leave levels, 0 to max: a fader.
     ("Out", "LEVEL", LEVEL),
     ("AlgoOp", "LEVEL", LEVEL),
@@ -125,7 +133,6 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Reverb", "SYNC", NONE),
     // Blends between two ends: a crossfader.
     ("Algo", "MORPH", XF),
-    ("Drive", "MIX", XF),
     ("VoiceFx", "MIX", XF),
     ("Pitch", "STEAL", NONE),
     ("Pitch", "SNAP", NONE),
@@ -257,7 +264,8 @@ fn every_two_state_choice_is_decided() {
             let ValFmt::Names(names) = s.fmt else {
                 continue;
             };
-            if names.len() != 2 {
+            // The LFO's two-state SYNC draws the LFO itself (ADR 0177).
+            if names.len() != 2 || s.glyph == FocusGlyph::Lfo {
                 continue;
             }
             let k = kind(b);
@@ -382,6 +390,7 @@ fn each_glyph_maps_to_its_gauge() {
             FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two)) => Gauge::Switch { on: 11.0 },
             FocusGlyph::Va(VaGlyph::Mode) => Gauge::Switch { on: 12.0 },
             FocusGlyph::Va(VaGlyph::Blend) => Gauge::Switch { on: 13.0 },
+            FocusGlyph::Lfo => Gauge::Switch { on: 14.0 },
             _ => Gauge::Arc {
                 value: 0.25,
                 bipolar: true,
@@ -395,6 +404,7 @@ fn each_glyph_maps_to_its_gauge() {
             Reads::Va(VaGlyph::Wave(VaOsc::Two)) => Gauge::Switch { on: 11.0 },
             Reads::Va(VaGlyph::Mode) => Gauge::Switch { on: 12.0 },
             Reads::Va(VaGlyph::Blend) => Gauge::Switch { on: 13.0 },
+            Reads::Lfo => Gauge::Switch { on: 14.0 },
         };
         assert_eq!(gauge(g, 0.25, ValFmt::Bi, composite), want, "{g:?}");
     }
@@ -815,27 +825,23 @@ fn knob_x(on: i32) -> i32 {
 
 #[test]
 fn glyph_switch_page_flips_a_real_two_state_param() {
+    use chimera_core::ui::theme_settings::ThemeSettings;
     let mut ui = UiState::new();
     to_demo(&mut ui, &reg::DEMO_GLYPH_SWITCH);
-    // LFO1 SYNC's own spec carries SWITCH.
-    let sync = ParamAddr::new(BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::SYNC);
-    assert_eq!(sync.spec().unwrap().glyph, FocusGlyph::Switch);
-    let lfo_sync = |ui: &UiState| {
-        ui.params()
-            .block(BlockRef::Lfo(LfoSlot::Lfo1))
-            .unwrap()
-            .get(LfoParams::SYNC)
-    };
+    // THEME HINTS' own spec carries SWITCH.
+    let hints = ParamAddr::new(BlockRef::Theme, ThemeSettings::HINTS);
+    assert_eq!(hints.spec().unwrap().glyph, FocusGlyph::Switch);
+    let hints_on = |ui: &UiState| ui.renderer.set[0].target();
 
-    // It reads as the LFO page shows it: FREE / RETRIG.
+    // It reads as THEME shows it: OFF / ON.
     let ctx = SlotCtx::read(ui.params(), ui.selected_op());
     let v = view(ui.page_def(), 0, &ctx);
-    assert_eq!(v.addr(), Some(sync));
-    assert_eq!(v.fmt(), ValFmt::Names(&["FREE", "RETRIG"]));
+    assert_eq!(v.addr(), Some(hints));
+    assert_eq!(v.fmt(), ValFmt::Names(&["OFF", "ON"]));
 
     feed(&mut ui, Input::turn(EncoderId::A, -1));
     settle(&mut ui);
-    assert_eq!(lfo_sync(&ui), 0.0);
+    assert_eq!(hints_on(&ui), 0.0);
     let off = render_ui(&ui);
     assert_eq!(off.oob, 0);
     assert_eq!(arc_top(&off), theme::BG, "no arc");
@@ -847,9 +853,9 @@ fn glyph_switch_page_flips_a_real_two_state_param() {
     assert_eq!(off.at(knob_x(1), theme::ARC_CY), theme::FAINT, "track");
 
     feed(&mut ui, Input::turn(EncoderId::A, 1));
-    assert_eq!(lfo_sync(&ui), 1.0);
     // Eased: one frame in, the knob is on its way.
     ui.update(UiTick::for_test());
+    assert_eq!(hints_on(&ui), 1.0);
     let t = ui.renderer.anim[0].current();
     assert!(t > 0.0 && t < 1.0, "eased: {t}");
     settle(&mut ui);

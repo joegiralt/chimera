@@ -1241,10 +1241,7 @@ fn what_it_is_names_a_va_sounds_wave_mode_and_filter() {
         "{t}"
     );
     // Each route in plain words, its modulator as the unit shows it.
-    assert!(
-        t.contains("LFO 1 (SINE, RATE 6 = 1 Hz) → CUTOFF +20"),
-        "{t}"
-    );
+    assert!(t.contains("LFO 1 (SINE, RATE 1.00 Hz) → CUTOFF +20"), "{t}");
     assert!(t.contains("ENV 2 (ATTACK 26 ms"), "{t}");
     assert!(t.contains(") → WAVE 1 +48"), "{t}");
     assert!(

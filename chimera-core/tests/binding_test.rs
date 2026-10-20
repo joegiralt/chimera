@@ -154,7 +154,7 @@ fn all_chains_holds_every_reachable_chain() {
 fn part_pages_display_like_before() {
     use ValFmt::{Law, Names, Uni};
     use chimera_core::dsp::modulator::EnvSpeed::Med;
-    use chimera_core::dsp::modulator::law::Law::{Attack, Cutoff, DecRel, Hold, Pct};
+    use chimera_core::dsp::modulator::law::Law::{Attack, Cutoff, DecRel, Hold, LfoHz, Pct};
     let want: [(&BlockDef, [(&str, ValFmt); 6]); 7] = [
         (
             &reg::MODAL_1,
@@ -234,7 +234,8 @@ fn part_pages_display_like_before() {
         (
             &reg::LFO,
             [
-                ("RATE", Uni),
+                // Hz on its own linear curve (ADR 0177).
+                ("RATE", Law(LfoHz)),
                 ("SHAPE", Names(&["SINE", "TRI", "SAW", "SQR", "S&H"])),
                 ("SYNC", Names(&["FREE", "RETRIG"])),
                 ("PHASE", Uni),

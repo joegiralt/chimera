@@ -166,9 +166,9 @@ const PATCHES: [Row; ROWS] = [
 ];
 
 /// The VA screen's rows, a row a MODE: each at BLEND 1 (the operator all in),
-/// SYNC's and SOFT SYNC's slave a fifth up, FM's modulator at unison,
-/// LOOPFM's WAVE at its default (2/3). A new MODE appends its row.
-const VA_ROWS: usize = 10;
+/// SYNC's and SOFT SYNC's slave a fifth up, FM's and PHASE's modulator at
+/// unison, LOOPFM's WAVE at its default (2/3). A new MODE appends its row.
+const VA_ROWS: usize = 11;
 const VA: [Row; VA_ROWS] = [
     ("MIX", || va(VaMode::Mix), 36, 12),
     ("SYNC", || va(VaMode::Sync), 36, 12),
@@ -180,6 +180,7 @@ const VA: [Row; VA_ROWS] = [
     ("MAX", || va(VaMode::Max), 36, 12),
     ("LOOPFM", || va(VaMode::LoopFm), 36, 12),
     ("SOFT", || va(VaMode::SoftSync), 36, 12),
+    ("PHASE", || va(VaMode::Phase), 36, 12),
 ];
 
 #[inline(never)]
@@ -189,7 +190,7 @@ fn va(mode: VaMode) -> ParamSnapshot {
     p.va.amount = 1.0;
     match mode {
         VaMode::Sync | VaMode::SoftSync => p.va.coarse[1] = 7,
-        VaMode::Fm => p.va.coarse[1] = 0,
+        VaMode::Fm | VaMode::Phase => p.va.coarse[1] = 0,
         _ => {}
     }
     p

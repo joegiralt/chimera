@@ -12,9 +12,9 @@ pub use chimera_engine::{MidiChannel, MidiNote, Velocity};
 pub use chimera_engine::probe;
 pub use chimera_engine::{
     addr, audio_out, block, board, boot, budget, clock_plan, dsp, factory, hw, import, in_place,
-    instrument, meter, midi_in, midi_map, mod_path, modulation, name, note_queue, orbit, params,
-    part, perf, played, preset, project, reset, scope, source_table, storage, sym_alloc, taps,
-    tracked, triple, voice_alloc,
+    instrument, lfo_glyph, meter, midi_in, midi_map, mod_path, modulation, name, note_queue, orbit,
+    params, part, perf, played, preset, project, reset, scope, source_table, storage, sym_alloc,
+    taps, tracked, triple, voice_alloc,
 };
 
 pub mod bank2;

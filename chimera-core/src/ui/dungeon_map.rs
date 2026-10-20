@@ -148,7 +148,7 @@ where
         );
     }
     // The sub-pages' labels own their rows: a node label on the right
-    // they'd run into (DECK's `DECK` into `DRV`) gives way.
+    // they'd run into (DECK's `DECK` into `FLT`) gives way.
     let reach = branch_reach(chain, at, models, node_x(node, n));
     for (i, block) in chain.blocks.iter().enumerate() {
         let x = node_x(i, n);

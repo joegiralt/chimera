@@ -78,6 +78,15 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     } else {
         ""
     };
+    // The LFO page's glyphs and scope curve (ADR 0177): `lfo_glyph::draw`,
+    // the door's `render` and `curve`. Only with `bank2`: without it
+    // `lfo_glyph::paint` and `curve` call them in bank 1.
+    let lfo = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
+        "    *(.text.*14chimera_engine9lfo_glyph4draw* .rodata.*14chimera_engine9lfo_glyph4draw*);
+"
+    } else {
+        ""
+    };
     fs::write(
         out_dir.join("bank2.x"),
         r#"
@@ -104,6 +113,7 @@ SECTIONS {
       .rodata.*11tape_engine*8TapeDeck*);
     /* REVERB */
     /* VA */
+    /* LFO */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -112,7 +122,8 @@ ASSERT(__bank2_end <= 0x08180000, "bank 2 stays clear of bootloader 1.09's slots
 ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door follows the 256-byte header");
 "#
         .replace("    /* REVERB */\n", reverb)
-        .replace("    /* VA */\n", va),
+        .replace("    /* VA */\n", va)
+        .replace("    /* LFO */\n", lfo),
     )
     .unwrap();
 

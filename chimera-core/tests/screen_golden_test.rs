@@ -154,8 +154,11 @@ const GOLDENS: &[(&str, u64)] = &[
     ("env_b_burst_ahr", 0xc8d91ad6c14aaf4f),
     ("env_b_burst_cycle", 0xace5233f63f26a97),
     ("spd", 0x8354b555c4c1c4a0),
-    ("lfo_classic", 0xc15cac5f650dbf3c),
-    ("lfo_func", 0x6ef6f2f298d37030),
+    // Re-recorded: the scope draws the LFO and each control its glyph;
+    // RATE reads Hz (ADR 0177). Then re-recorded on the merge with #614: the
+    // chain map without DRV under main's LFO page.
+    ("lfo_classic", 0x0cff5358dd1c18e0),
+    ("lfo_func", 0xae823f94b4712202),
     // Re-recorded: AMP is the sends over FOLD, VEL, MIX, SYM one page down (sends Task 5);
     // mod_matrix_wide primes FOLD and MIX on their new cells. Then AMP is
     // the sends and VEL alone, SYM gone (#614).
