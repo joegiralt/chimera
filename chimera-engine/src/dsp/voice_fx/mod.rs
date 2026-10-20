@@ -201,7 +201,7 @@ impl VoiceFx {
             match s.set.0 {
                 FxType::Off => {}
                 FxType::Soft => soft::run(&mut k, &b.ends, glide),
-                FxType::Fuzz => self.fuzz[s.set.1 as usize].run(&mut k, &b.ends, glide),
+                FxType::Fuzz => self.fuzz[s.set.1 as usize].play(&mut k, &b.ends, glide),
                 FxType::Fold => fold::run(&mut k, &b.ends, glide, lane),
             }
             if lone && s.w == (1.0, 1.0) {

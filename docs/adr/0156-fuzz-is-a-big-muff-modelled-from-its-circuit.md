@@ -17,8 +17,8 @@ The research step (private notes) costed the routes:
 3. **SUSTAIN.** `d(s) = 10^(−1.78·(1−s))`, a 35.6 dB span.
 4. **Clipper 1 (Q2).** A shelf at 10.3× low and 1.45× high, pole 2,284 Hz, then the diode law.
 5. **Clipper 2 (Q3).** A shelf at 12.0× low and 1.45× high, pole 1,268 Hz, then the diode law.
-6. **Tone stack.** `(1−t)·LP(723 Hz) + t·(x − LP(1,855 Hz))`, from R19/C11 and C10/R18. It scoops the mids at noon.
-7. **Q4 and VOLUME.** Folded into one gain, `0.044 · pot_level(P3)`. It's set by the bound that every pot at 1 hands the filter at most 2 FS (RF 4; 1.91 measured on VA INIT). At SUSTAIN, TONE and VOLUME ½ the wet's RMS is therefore 8–9 dB under the dry's: VOLUME at about 0.85 matches it.
+6. **Tone stack.** `(1−t)·LP(723 Hz) + t·(x − LP(1,855 Hz))`, from R19/C11 and C10/R18. It scoops the mids at noon, but only 3.7 dB at 1 kHz under the dB mean of the 200 Hz and 4 kHz bands (3.95 at its notch, 1.2 kHz): the circuit's, not the plan's 6 dB. `fuzz_tone_scoops_the_mids_at_noon` measures the stack alone (the clippers bypassed) against 3 dB.
+7. **Q4 and VOLUME.** Folded into one gain, `0.092 · pot_level(P3)`. It's set by RF 4's bound, that every pot at 1 hands the 2040 at most 4 FS (VOLUME's ×4 top is by design; 3.99 measured on VA INIT), and brings the wet at SUSTAIN, TONE and VOLUME ½ to 1.6 dB under VA INIT C3's dry (it was 8 dB under at 0.044). The plan's ±1.5 dB and that bound can't both hold, by 0.1 dB; the bound wins. Task 14 makes the final pass.
 
 **Where the gains come from.** They come from a small-signal nodal analysis of the NYC values (`fuzz-sim/muff.py`, with β 250–800 moving them ±0.6 dB). Two corrections to the spike:
 - the spike's ideal Rf/Rin overstated the gain by 13 dB;

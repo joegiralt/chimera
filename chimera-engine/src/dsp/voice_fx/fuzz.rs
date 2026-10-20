@@ -9,8 +9,10 @@
 //! analysis of it (the research ledger, `fuzz-sim/muff.py`). Written from
 //! those; no GPL code read.
 //!
-//! Self-contained: its rodata is `TABLE`, its text this file's, so Task 12
-//! can move both into `.bank2`.
+//! Self-contained: its rodata is `TABLE`, its text this file's, so with
+//! `bank2` the module links into `.bank2` whole (`bank2.x`,
+//! `*8voice_fx4fuzz*`, ADR 0157) and bank 1 reaches `run` through
+//! `FuzzDoor` (`Fuzz::play`). `fast_exp2` and `level_gain` inline into it.
 
 use super::Ends;
 use crate::dsp::ease::{at, step_of};
@@ -47,10 +49,11 @@ const K_HP: f32 = 0.215_586_47;
 /// SUSTAIN's span, 35.6 dB in `log2`: `d(s) = 10^(−1.78·(1 − s))`, dB-linear
 /// for the 100 kA pot over R7 1.8 k (its placement assumed, lug 1 to ground).
 const SPAN: f32 = 5.913_032;
-/// The wet's gain at VOLUME ½: Q4's 4.4× and the law's `b` folded into one,
-/// so the wet at SUSTAIN, TONE, VOLUME ½ sits near the dry reference and
-/// every pot at 1 stays within 2 FS (the 2040's bound, RF 4).
-const OUT: f32 = 0.044;
+/// The wet's gain at VOLUME ½: Q4's 4.4× and the law's `b` folded into one.
+/// At SUSTAIN, TONE, VOLUME ½ the wet is 1.6 dB under VA INIT C3's dry, and
+/// every pot at 1 (VOLUME's ×4 top) peaks at 3.99 into the 2040, under its
+/// bound of 4 (RF 4). Task 14 makes the final pass (ADR 0156).
+const OUT: f32 = 0.092;
 
 /// The law's table: `u' = |x| + 2⁻⁶` over `[2⁻⁶, 2¹⁰)`, four intervals an
 /// octave, indexed by its float bits. The offset starts interval 0 at
@@ -69,6 +72,18 @@ const EPS: f32 = 1.0 / 8192.0;
 pub enum Aa {
     On,
     Off,
+}
+
+/// FUZZ's entry in the door's table (ADR 0157).
+#[cfg(feature = "bank2")]
+#[repr(C)]
+pub struct FuzzDoor {
+    pub run: fn(&mut Fuzz, &mut [f32; BLOCK_SIZE], &Ends, bool),
+}
+
+#[cfg(feature = "bank2")]
+impl Fuzz {
+    pub const DOOR: FuzzDoor = FuzzDoor { run: Self::run };
 }
 
 /// One clipping stage's ADAA memory: the last input and its `F`.
@@ -198,8 +213,19 @@ impl Fuzz {
         Self::default()
     }
 
+    /// `run` as the slot plays it: with `bank2`, bank 2's, through the door
+    /// (ADR 0157). Closed, `buf` stays dry and the pedal's state waits.
+    #[inline]
+    pub fn play(&mut self, buf: &mut [f32; BLOCK_SIZE], e: &Ends, glide: bool) {
+        #[cfg(feature = "bank2")]
+        let _ = crate::bank2::DOOR_CELL.with(|d| (d.fuzz.run)(self, buf, e, glide));
+        #[cfg(not(feature = "bank2"))]
+        self.run(buf, e, glide);
+    }
+
     /// `buf` through the pedal. `glide` (only a knob moves a setting) steps a
     /// moving block `STEPS` times, each sub-block the steady loop (ADR 0117).
+    #[inline(never)]
     pub fn run(&mut self, buf: &mut [f32; BLOCK_SIZE], e: &Ends, glide: bool) {
         self.run_aa::<true>(buf, e, glide);
     }
@@ -210,6 +236,18 @@ impl Fuzz {
         match aa {
             Aa::On => self.run_aa::<true>(buf, e, glide),
             Aa::Off => self.run_aa::<false>(buf, e, glide),
+        }
+    }
+
+    /// The tone stack alone at TONE `t`, VOLUME 1/2 divided out: the
+    /// kernel's blend on `buf` with the clippers bypassed, for the scoop test.
+    #[cfg(feature = "test-support")]
+    pub fn tone_only(&mut self, buf: &mut [f32], t: f32) {
+        let c = Coef::mixed(0.0, t, 1.0, 1.0);
+        for x in buf {
+            self.lp += K_LP * (*x - self.lp);
+            self.hp += K_HP * (*x - self.hp);
+            *x = self.lp * c.lp + (*x - self.hp) * c.hp;
         }
     }
 

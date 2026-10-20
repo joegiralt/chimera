@@ -334,3 +334,36 @@ fn the_va_page_draws_update_at_fm_and_soft_sync_closed() {
     assert!(cell_reads(&phase, 2, "PHASE"));
     assert!(!band_reads(&phase, NEEDS_UPDATE));
 }
+
+/// While bank 2 isn't open FUZZ passes dry (ADR 0157): the FX TYPE reads
+/// NEEDS UPDATE at FUZZ, and its own name at the bank-1 types.
+#[test]
+fn fuzz_type_reads_needs_update_while_closed() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::bank2::closed_text;
+    use chimera_core::dsp::voice_fx::params::{FxType, VoiceFxParams};
+    let ty = ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::TYPE);
+    let at = |t: FxType| {
+        FxType::LIST.iter().position(|&x| x == t).unwrap() as f32 / (FxType::LIST.len() - 1) as f32
+    };
+    for closed in [Bank2Status::Empty, Bank2Status::Unsealed] {
+        assert_eq!(
+            closed_text(ty, at(FxType::Fuzz), Some(closed)),
+            Some("NEEDS UPDATE")
+        );
+        for t in [FxType::Off, FxType::Soft, FxType::Fold] {
+            assert_eq!(closed_text(ty, at(t), Some(closed)), None, "{t:?}");
+        }
+    }
+    assert_eq!(closed_text(ty, at(FxType::Fuzz), Some(open())), None);
+    assert_eq!(
+        closed_text(ty, at(FxType::Fuzz), None),
+        None,
+        "no bank 2 here"
+    );
+    let p1 = ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P1);
+    assert_eq!(
+        closed_text(p1, at(FxType::Fuzz), Some(Bank2Status::Empty)),
+        None
+    );
+}

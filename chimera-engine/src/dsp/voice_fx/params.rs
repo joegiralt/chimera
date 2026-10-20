@@ -36,6 +36,12 @@ impl FxType {
         Self::LIST[(v.max(0.0) as usize).min(Self::LIST.len() - 1)]
     }
 
+    /// Whether the type's kernel is bank 2's (FUZZ, ADR 0157), so it
+    /// passes dry while bank 2 can't play.
+    pub const fn in_bank2(self) -> bool {
+        matches!(self, FxType::Fuzz)
+    }
+
     /// Its place in `LIST`.
     const fn index(self) -> usize {
         match self {
