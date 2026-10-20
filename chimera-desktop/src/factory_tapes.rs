@@ -505,6 +505,8 @@ pub fn pitch(h: &SourceHead) -> Pitch {
 /// `s` as a TAPE Sound on `head` (picked as SOURCE picks it).
 pub fn tape_sound(s: &SoundRecipe, head: &SourceHead) -> Sound {
     let mut snd = Sound::init(EngineType::Tape);
+    // A factory Sound's filter stays stable, as `plain_init`'s (ADR 0168).
+    snd.params.filter.stability = 1.0;
     snd.name = s.name;
     snd.pick_source(head, None);
     let t = &mut snd.params.tape;

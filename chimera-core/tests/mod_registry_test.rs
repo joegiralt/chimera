@@ -114,5 +114,8 @@ fn registry_accepts_exactly_the_modulatable_addresses() {
     // VA's eleven; each operator's FRMT and BW, and VOWEL; the FX slot's
     // pots and MIX; TAPE's five macros and ONE's START (#698); the filter's
     // STABILITY and FB
-    assert_eq!(accepted, 11 + 3 * 5 + 1 + 2 + 4 + 11 + 2 * 6 + 1 + 4 + 6 + 2);
+    assert_eq!(
+        accepted,
+        11 + 3 * 5 + 1 + 2 + 4 + 11 + 2 * 6 + 1 + 4 + 6 + 2
+    );
 }
