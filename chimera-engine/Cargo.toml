@@ -32,7 +32,7 @@ bank2-gate = []
 card-put = []
 # The TAPE engine's DSP and streaming: on for the desktop and tests, and in
 # every shipping build through `bank2`, which plays it from bank 2. The UI
-# keeps TAPE locked (COMING SOON, ADR 0132) until its rework (#476).
+# plays TAPE like any engine (ADR 0187).
 tape = []
 # The master tape stage on DAC pair 1 (ADR 0055: off the chain by default;
 # its parameters and disk codes stay either way).

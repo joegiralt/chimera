@@ -123,7 +123,7 @@ fn init_rows_lead_the_list_and_load() {
     feed(&mut ui, Input::press(ButtonId::Edit));
     assert_eq!(
         ui.project().part(PartId::ALL[1]).sound.engine(),
-        EngineType::Va
+        EngineType::Tape
     );
 }
 
@@ -157,10 +157,7 @@ fn entries_split_into_init_rows_then_slots() {
         assert!(browser::slot_at(e).is_none() && browser::init_at(e).is_none());
         assert_eq!(browser::entry_at(e), Some(Entry::Soon(s)));
     }
-    assert!(
-        !INIT_TYPES.contains(&EngineType::Tape),
-        "TAPE is coming soon"
-    );
+    assert!(INIT_TYPES.contains(&EngineType::Tape), "TAPE has its INIT");
     assert_eq!(
         browser::entry_at(INITS - 1),
         Some(Entry::Init(INIT_TYPES[INITS - 1]))
@@ -232,13 +229,7 @@ fn rows_tag_their_engine_in_full() {
     let soons = Soon::ALL.len();
     let fb = drawn(&p, 20, INITS + soons - 1); // the last soon row, the slots under it
     for (i, e) in EngineType::ALL.into_iter().enumerate() {
-        // A pool Sound of a coming-soon engine says so, not its engine.
-        let label = if e == EngineType::Tape {
-            SOON_TAG
-        } else {
-            e.label()
-        };
-        assert!(tag_px(&fb, 1 + i, label), "slot row {i}");
+        assert!(tag_px(&fb, 1 + i, e.label()), "slot row {i}");
     }
     assert!(!tag_px(&fb, 1, "MODAL"), "the tags differ");
 }
@@ -681,31 +672,6 @@ fn loading_a_soon_row_is_a_no_op() {
     }
 }
 
-/// A TAPE Sound in the pool (an old project's) reads COMING SOON, with no
-/// cost under the tag, and loading it only toasts.
-#[test]
-fn a_tape_slot_reads_coming_soon_and_never_loads() {
-    let mut ui = chimera_core::ui::UiState::new();
-    let slot = SlotId::ALL[20];
-    let mut tape = Sound::init(EngineType::Tape);
-    tape.name = SoundName::new("REEL").unwrap();
-    ui.project_mut().pool_store(slot, &tape).unwrap();
-    let row = HEAD + slot.index();
-    let fb = drawn(ui.project(), HEAD, row + 1 - VISIBLE_ROWS);
-    let vis = VISIBLE_ROWS - 1;
-    assert!(row_has(&fb, vis, theme::INK2), "named in INIT's shade");
-    assert!(!row_has(&fb, vis, theme::INK), "not as a saved Sound");
-    feed(&mut ui, Input::chord(ButtonId::Edit, ButtonId::B1));
-    let part = PartId::ALL[0];
-    let before = ui.project().part(part).sound.clone();
-    feed(&mut ui, Input::turn(EncoderId::A, slot.index() as i8));
-    feed(&mut ui, Input::press(ButtonId::Edit));
-    assert!(ui.project().part(part).sound.bits_eq(&before));
-    assert!(!ui.prompt_open());
-    assert_eq!(toast(&mut ui), Soon::Tape.toast());
-    assert_eq!(ui.location().browse().map(|(_, b)| b.cursor()), Some(row));
-}
-
 /// Clear and save on a soon row act on nothing.
 #[test]
 fn clear_and_save_never_act_on_a_soon_row() {
@@ -736,10 +702,9 @@ fn clear_and_save_never_act_on_a_soon_row() {
     }
 }
 
-/// LIBRARY never lists a TAPE Sound (ADR 0132): one beside a VA Sound
-/// draws as the VA Sound alone.
+/// LIBRARY lists a TAPE Sound like any other (ADR 0187).
 #[test]
-fn library_lists_no_tape_sound() {
+fn library_lists_tape_sounds() {
     let with = |engines: &[EngineType]| {
         let mut st = MemStore::new(1);
         for &e in engines {
@@ -750,12 +715,8 @@ fn library_lists_no_tape_sound() {
         }
         render_ui(&library_ui(st)).px
     };
-    let va = with(&[EngineType::Va]);
-    assert_eq!(with(&[EngineType::Va, EngineType::Tape]), va);
-    assert_eq!(with(&[EngineType::Tape, EngineType::Va]), va);
     assert_ne!(
-        with(&[EngineType::Va, EngineType::Modal]),
-        va,
-        "a row draws"
+        with(&[EngineType::Va, EngineType::Tape]),
+        with(&[EngineType::Va])
     );
 }

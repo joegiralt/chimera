@@ -114,12 +114,12 @@
 
 ### Task B1: One `TapeMachine` in memory (H2, M3)
 
-**Files:** `dsp/tape_engine/params.rs`, `machine.rs`, `stream/stage/place.rs`, `project/streamed.rs`, `chimera-core` callers, `docs/adr/0187-*.md` + `docs/adr/README.md`.
+**Files:** `dsp/tape_engine/params.rs`, `machine.rs`, `stream/stage/place.rs`, `project/streamed.rs`, `chimera-core` callers, `docs/adr/0189-*.md` + `docs/adr/README.md`.
 
 - Params hold `machine: TapeMachine`; the (MODEL code, MODE code) pair exists only in `enum_code` / `set_enum_code` / `translate_v1`. `hold`, `at_root`, `needs_ram`, `heads_in`, `model_cost`, `streamed_cost`, `reads_in`, `ordered` match on `TapeMachine`.
 - M3: `Choice` trait (`from_value(f32) -> Option<Self>`, `value(self) -> f32`) for TYPE, WOW, MODE, MODEL, exhaustive; `Cell::default` typed (`enum Default { Unit(f32), Choice(u8) }`). `MachineIndex(u8)` names MODEL's value domain; `TapeModel` the disk code. A `compile_fail` doctest: passing a `TapeModel` code where a `MachineIndex` is wanted.
 - An off-PLAY MODE written by a factory file: the saved bytes must still match. If dropping the remembered MODE would change a factory Sound's bytes, keep the code the file had (codec-side), never in params.
-- ADR 0187 supersedes 0178 in part (the two in-memory fields); 0178 is not edited.
+- ADR 0189 supersedes 0178 in part (the two in-memory fields); 0178 is not edited.
 
 - [ ] Test first: round-trip every factory TAPE Sound (load → save → bytes equal) and every machine × codec pair.
 - [ ] Implement; all tests and goldens unchanged.
