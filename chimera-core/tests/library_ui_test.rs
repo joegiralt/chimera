@@ -173,10 +173,8 @@ impl Rig {
         self.feed(Input::turn(e, d));
     }
 
-    /// Part 1's Sound rung, the LIBRARY tab, TAPE Sounds listed (no
-    /// player sees them: ADR 0132).
+    /// Part 1's Sound rung, the LIBRARY tab.
     fn open_library(&mut self) {
-        self.ui.list_tape_for_test();
         self.feed(Input::chord(ButtonId::Edit, ButtonId::B1));
         self.turn(EncoderId::B, 1);
         assert_eq!(self.ui.lib_tab(), Tab::Library);
@@ -1091,24 +1089,6 @@ fn factory_load_goes_through_guard_and_adopt() {
     let p = r.ui.project();
     assert!(p.pool().get(slot).unwrap().matches(&factory_sound(2)));
     assert_eq!(part_status(p.part(P1), p.pool()), PartStatus::Clean);
-}
-
-/// A stray TAPE factory file: listed, and EDIT only says COMING SOON.
-#[test]
-fn factory_tape_row_greyed_says_coming_soon() {
-    let mut r = Rig::new();
-    let mut s = Sound::init(EngineType::Tape);
-    s.name = SoundName::new("OLD TAPE").unwrap();
-    r.put_raw(9_000_001, &stamped(&s));
-    r.open_factory();
-    r.work();
-    assert_eq!(r.page().0, vec![9_000_001]);
-    let counts = r.counts();
-    r.press(ButtonId::Edit);
-    assert!(!r.ui.prompt_open());
-    assert!(!r.ui.card_pending());
-    assert_eq!(r.toast(), "TAPE: COMING SOON");
-    assert_eq!(r.counts(), counts);
 }
 
 /// 48 to a page, lowest id first: `NEXT ›` turns to the last 2, whose page

@@ -774,9 +774,13 @@ impl EngineType {
     ];
 
     /// The engines a player picks: the browser's INIT rows and NEW's INIT
-    /// Sounds. TAPE waits for its rework (#476, ADR 0132): it reads COMING
-    /// SOON; a project's TAPE Part loads as TAPE (ADR 0141).
-    pub const PLAYABLE: [EngineType; 3] = [EngineType::Algo, EngineType::Modal, EngineType::Va];
+    /// Sounds (TAPE since ADR 0187; DRUM is still COMING SOON, ADR 0132).
+    pub const PLAYABLE: [EngineType; 4] = [
+        EngineType::Algo,
+        EngineType::Modal,
+        EngineType::Va,
+        EngineType::Tape,
+    ];
 
     /// The FX slot's reference: the engine's signal is multiplied by it
     /// into the slot and divided by it out (ADR 0155), so a pot bites the

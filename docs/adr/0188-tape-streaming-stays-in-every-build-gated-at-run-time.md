@@ -1,4 +1,4 @@
-# 0187. Keep TAPE's streaming in every build, gated at run time
+# 0188. Keep TAPE's streaming in every build, gated at run time
 
 - **Status:** Proposed
 - **Deciders:** firmware (#697, review finding M7)

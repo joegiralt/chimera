@@ -43,7 +43,7 @@ shared  FLT └ FMD (FILTER MOD), FX
         MOD   MTX (matrix) └ E1 E2 E3, SPD, L1 L2 L3
 ```
 
-TAPE has a chain in the code (SRC, DECK with its model page and PIT, FLT, AMP, MOD). In 0.1.0 and until it ships, TAPE rows in the Sound browser read COMING SOON and don't load.
+TAPE has a chain in the code (SRC, DECK with its model page and PIT, FLT, AMP, MOD). TAPE rows in the Sound browser load like any engine's (ADR 0187); with bank 2 closed the Part reads NEEDS UPDATE (ADR 0141).
 
 ### FLT and AMP
 
@@ -75,7 +75,7 @@ Opens on SND, or on the effect page last left. PRT: CH, MODE, OUT, LEVEL, PAN, B
 
 ## Sound browser (EDIT + B*n*)
 
-Tabs PROJECT, LIBRARY and FACTORY (encoder 2). Rows: INIT ALGO, INIT MODAL, INIT VA, INIT TAPE and INIT DRUM (the last two COMING SOON), then the tab's Sounds. MINUS / PLUS change Part; SEQ goes back to the mixer.
+Tabs PROJECT, LIBRARY and FACTORY (encoder 2). Rows: INIT ALGO, INIT MODAL, INIT VA, INIT TAPE and INIT DRUM (DRUM COMING SOON), then the tab's Sounds. MINUS / PLUS change Part; SEQ goes back to the mixer.
 
 ---
 
