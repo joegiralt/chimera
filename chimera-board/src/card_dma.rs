@@ -23,7 +23,7 @@ use chimera_core::stream::serve::{
 };
 use chimera_core::stream::units::AudioBlocks;
 use chimera_fat::h7_spi::{
-    ABORT, BURST_END, BurstLen, Cr1, DmaEvent, GIVE, Gate, Mbr, Op, POLLED, RegFault, TAKE, burst,
+    self,    ABORT, BURST_END, BurstLen, Cr1, DmaEvent, GIVE, Gate, Mbr, Op, POLLED, RegFault, TAKE, burst,
     gate,
 };
 use chimera_fat::sd::NCR_BYTES;
@@ -395,8 +395,8 @@ struct Held {
     cfg1: u32,
 }
 
-/// TAKE's first three: a kept bus's CFG1 is already this handler's, and
-/// SPE goes off before TSIZE is written.
+/// TAKE's suspend and SPE off, without its save: a kept bus's CFG1 is
+/// already this handler's, and SPE goes off before TSIZE is written.
 const REARM: [Op; 3] = [Op::Suspend, Op::ClearFlags, Op::Cr1(Cr1::OFF)];
 
 impl Held {
@@ -498,10 +498,11 @@ impl Held {
             Op::MasterOn => spi.cfg2.modify(|_, w| w.master().master()),
             Op::SaveCfg1 => self.cfg1 = spi.cfg1.read().bits(),
             Op::SetMbr => spi.cfg1.modify(|_, w| w.mbr().bits(line.mbr.bits())),
-            // SAFETY: the value `SaveCfg1` read from this register.
+            // SAFETY: the value `SaveCfg1` read from this register: TAKE's
+            // first op, before any that can fail (`h7_spi::TAKE`).
             Op::RestoreCfg1 => spi.cfg1.write(|w| unsafe { w.bits(self.cfg1) }),
             Op::Tsize(n) => {
-                let n = n.map_or(0, |n| u16::try_from(n.get()).unwrap_or(0));
+                let n = n.map_or(0, BurstLen::as_u16);
                 spi.cr2.modify(|_, w| w.tsize().bits(n));
             }
             Op::RxDma(on) => spi.cfg1.modify(|_, w| w.rxdmaen().bit(on)),
@@ -512,8 +513,13 @@ impl Held {
                 // this burst spends) and the CPU's writes to it are done.
                 dmb();
                 compiler_fence(Ordering::Release);
-                let n = u16::try_from(n.get()).unwrap_or(0);
+                let n = n.as_u16();
                 let (rx, tx) = (&d.st[RX], &d.st[TX]);
+                // A stream still on ignores NDTR and M0AR: it would run
+                // this burst on the last one's address.
+                if rx.cr.read().en().is_enabled() || tx.cr.read().en().is_enabled() {
+                    return Err(RegFault::StreamOn);
+                }
                 rx.ndtr.write(|w| w.ndt().bits(n));
                 // SAFETY: `dest` is inside `DMA_BUF` with `n` bytes after it
                 // (`Dest::of`), in D2 SRAM, which DMA2 reaches; or, armed by
@@ -541,7 +547,7 @@ impl Held {
     }
 
     fn run(&mut self, ops: &[Op], line: &Line, dest: u32) -> Result<(), RegFault> {
-        ops.iter().try_for_each(|&o| self.op(o, line, dest))
+        h7_spi::run(ops, |o| self.op(o, line, dest))
     }
 
     /// SPE off, then the endless polled transaction.
@@ -649,7 +655,7 @@ impl Flying {
     /// burst had done.
     fn ground(self, line: &Line) -> Held {
         let Flying(mut h) = self;
-        let _ = h.run(&ABORT, line, 0);
+        let _ = h7_spi::run_all(&ABORT, |o| h.op(o, line, 0));
         h
     }
 }
@@ -658,9 +664,7 @@ impl Flying {
 /// past a failed suspend, so CFG1 (MBR, the DMA enables) is always the
 /// HAL's again.
 fn give(mut h: Held, line: &Line) {
-    for &o in &GIVE {
-        let _ = h.op(o, line, 0);
-    }
+    let _ = h7_spi::run_all(&GIVE, |o| h.op(o, line, 0));
     if BUS.give() == Wake::Pend {
         pend();
     }

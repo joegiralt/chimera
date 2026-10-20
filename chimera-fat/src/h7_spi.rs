@@ -37,6 +37,11 @@ impl BurstLen {
     pub const fn get(self) -> usize {
         self.0 as usize
     }
+
+    /// TSIZE's and NDTR's 16 bits, never 0.
+    pub const fn as_u16(self) -> u16 {
+        self.0
+    }
 }
 
 /// CFG1.MBR, 0 to 7: SCK = kernel >> (mbr + 1).
@@ -91,7 +96,8 @@ pub enum Op {
     TxDma(bool),
     /// LIFCR: every flag of streams 0 and 1.
     ClearStreams,
-    /// RX's NDTR, M0AR and EN, then TX's.
+    /// RX's NDTR, M0AR and EN, then TX's; `StreamOn` if either still
+    /// reads EN.
     StreamsOn(BurstLen),
     /// EN = 0 on both, then wait until both read 0.
     StreamsOff,
@@ -102,13 +108,32 @@ pub enum RegFault {
     Timeout(Op),
     Ovr,
     Modf,
+    /// `StreamsOn` found a stream still enabled: its NDTR and M0AR would
+    /// not take.
+    StreamOn,
 }
 
+/// Each op in turn, stopping at the first fault: a take, a burst, its end.
+pub fn run(ops: &[Op], f: impl FnMut(Op) -> Result<(), RegFault>) -> Result<(), RegFault> {
+    ops.iter().copied().try_for_each(f)
+}
+
+/// Every op, past any fault: a give or an abort leaves nothing half
+/// undone. The first fault is returned.
+pub fn run_all(ops: &[Op], mut f: impl FnMut(Op) -> Result<(), RegFault>) -> Result<(), RegFault> {
+    ops.iter().fold(Ok(()), |first, &o| {
+        let r = f(o);
+        first.and(r)
+    })
+}
+
+/// CFG1 is saved first, before the one op that can fail: a take given
+/// straight back restores the HAL's CFG1, never one it never read.
 pub const TAKE: [Op; 7] = [
+    Op::SaveCfg1,
     Op::Suspend,
     Op::ClearFlags,
     Op::Cr1(Cr1::OFF),
-    Op::SaveCfg1,
     Op::SetMbr,
     Op::AfcntrOn,
     Op::MasterOn,
