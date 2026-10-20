@@ -7,15 +7,15 @@
 # bench-tape alone keeps TAPE in bank 1 and doesn't fit FLASH
 # (private issue #506); `bench-tape,bank2` plays
 # it from bank 2, so its run needs that build's .bk2 installed.
-# ALGO, ROUTING, STRESS and ORBIT play the reverb (and VA's MOD path, ADR
-# 0163) from bank 2, as the unit does (ADR 0174): alone they don't fit
-# FLASH (#654; ROUTING by 3,264 B), and Gate 3 found bank 2 never slower
-# (ADR 0142). Their runs need their build's .bk2 installed. MEMORY keeps
-# bank 1 (6.7 KB left).
+# ALGO, ROUTING, MEMORY, STRESS and ORBIT play the reverb (and VA's MOD
+# path, ADR 0163) from bank 2, as the unit does (ADR 0174): alone they don't
+# fit FLASH (#654; ROUTING by 3,264 B, MEMORY by 14,312 B since PHASE's
+# oscillators, ADR 0160), and Gate 3 found bank 2 never slower (ADR 0142).
+# Their runs need their build's .bk2 installed.
 # `bench-stress,orbit` is out: without bank2 VA's MOD path stays in its
 # bank 1 (ADR 0163) and it doesn't fit FLASH, and from bank 2 it fails the
 # stack check (private issue #656).
-bench_sets := "fault-inject bench-algo,bank2 bench-algo,master-tape,bank2 bench-routing,bank2 bench-memory bench-stress,bank2 bench-orbit,bank2 bench-tape,bank2 filter-probes"
+bench_sets := "fault-inject bench-algo,bank2 bench-algo,master-tape,bank2 bench-routing,bank2 bench-memory,bank2 bench-stress,bank2 bench-orbit,bank2 bench-tape,bank2 filter-probes"
 bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit"
 
 # Build desktop simulator
