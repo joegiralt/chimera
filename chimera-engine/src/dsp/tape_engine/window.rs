@@ -120,7 +120,9 @@ impl Bounds {
         Self::of_min(ws, we, sizing, rate, min_frames(rate))
     }
 
-    /// `of`, the loop at least `shortest` frames (or the window).
+    /// `of`, the loop at least `shortest` frames (or the window). The
+    /// window is never empty, `we > ws` (`window_end_min` keeps it so), and
+    /// `loop_len_min` never exceeds it, so neither subtraction wraps.
     pub fn of_min(ws: u32, we: u32, sizing: Sizing, rate: SourceRate, shortest: u32) -> Bounds {
         let Sizing { size, place, xfade } = sizing;
         let w = we - ws;

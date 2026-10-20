@@ -1577,6 +1577,46 @@ fn a_note_on_a_moving_source_plays_once_it_reads() {
     assert!(worst < 0.02, "{worst} off tape time");
 }
 
+/// A streamed note that waits on its moving source past its own end is
+/// over when the gate opens (`catch_up`): no cursor starts on it, so the
+/// ring never names its stream nor is asked for a slot.
+#[test]
+fn a_note_that_waited_past_its_end_starts_no_stream() {
+    const SHORT: u32 = 48_000;
+    let whole = held_plain(&sine(RATE, 300.0, SHORT), RATE);
+    let (rings, third) = rings();
+    let mut st = Stream::new(&rings, &third, &whole, 0);
+    let mut src = OneSource::new(&st.card.held(&[0], HF));
+    let p = TapeEngineParams {
+        tape: 0.0,
+        age: 0.0,
+        ..one_hold()
+    };
+    let mut slot = MaybeUninit::uninit();
+    let e = deck(&mut slot);
+    let mut b = [0.0; BLOCK_SIZE];
+    src.close();
+    // At ROOT a 24 kHz source plays half a frame a sample: past its end
+    // well inside this many blocks.
+    let wait = 2 * SHORT as usize / BLOCK_SIZE + 20;
+    for k in 0..wait {
+        st.with(V, |port| {
+            if k == 0 {
+                e.start(60, &p, &src.view(), SR, Some(port));
+            }
+            e.play(&mut b, &p, &src.view(), SR, Some(port));
+        });
+        st.now += 1;
+    }
+    assert!(e.is_active() && !e.streams(), "gated");
+    src.open();
+    st.with(V, |port| e.play(&mut b, &p, &src.view(), SR, Some(port)));
+    assert!(!e.is_active() && !e.streams(), "over on its first block");
+    assert!(b.iter().all(|&y| y == 0.0));
+    assert_eq!(rings.source(V), None, "no stream named on the ring");
+    assert_eq!(rings.wants().count(), 0, "no slot asked");
+}
+
 /// #595 (b): one that doesn't fit when its source reads is refused, the
 /// voice freed, counted; the held notes play on.
 #[test]

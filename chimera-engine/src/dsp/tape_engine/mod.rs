@@ -766,13 +766,17 @@ impl TapeDeck {
     }
 
     fn set_cap(&mut self, c: Inc) {
-        if let Some(s) = self.stream_mut() {
+        let s = self.stream_mut();
+        debug_assert!(s.is_some(), "a cap off a stream");
+        if let Some(s) = s {
             s.inc_cap = c;
         }
     }
 
     fn set_mute(&mut self, m: bool) {
-        if let Some(s) = self.stream_mut() {
+        let s = self.stream_mut();
+        debug_assert!(s.is_some(), "a mute off a stream");
+        if let Some(s) = s {
             s.mute = m;
         }
     }
@@ -853,7 +857,9 @@ impl TapeDeck {
     }
 
     fn set_ghost(&mut self, g: Option<Ghost>) {
-        if let Some(pp) = self.pp_mut() {
+        let pp = self.pp_mut();
+        debug_assert!(pp.is_some(), "a clamp off PING-PONG");
+        if let Some(pp) = pp {
             pp.ghost = g;
         }
     }
@@ -864,7 +870,9 @@ impl TapeDeck {
     }
 
     fn set_turning(&mut self, t: Option<Turn>) {
-        if let Some(pp) = self.pp_mut() {
+        let pp = self.pp_mut();
+        debug_assert!(pp.is_some(), "a turn off PING-PONG");
+        if let Some(pp) = pp {
             pp.turning = t;
         }
     }
@@ -889,7 +897,9 @@ impl TapeDeck {
     }
 
     fn set_df(&mut self, df: u64) {
-        if let Some(sc) = self.scrub_mut() {
+        let sc = self.scrub_mut();
+        debug_assert!(sc.is_some(), "a finger off SCRUB");
+        if let Some(sc) = sc {
             sc.df = df;
         }
     }
@@ -1309,6 +1319,7 @@ impl TapeDeck {
     ) {
         // Admission paid for faster (a knob, a glide, a re-snap: #595):
         // the cursor plans for it from here.
+        debug_assert!(self.fed(), "a stream's block off a stream");
         let rate = self.stream().map_or(SourceRate::MIN, |s| s.rate);
         if let Some(r) = port.ratio_max
             && Self::cap_at(rate, r, sample_rate) > self.inc_cap()
@@ -1764,8 +1775,13 @@ impl TapeDeck {
         self.age.hold();
     }
 
+    /// A note sounds or waits on its source; one that ended this block
+    /// (`Ending`) does not.
     pub fn is_active(&self) -> bool {
-        !matches!(self.state, Note::Idle)
+        matches!(
+            self.state,
+            Note::Gated { .. } | Note::Ram | Note::Streamed(_)
+        )
     }
 
     /// The model latched at the last note-on.
@@ -3271,5 +3287,20 @@ impl TapeDeck {
         self.heads[0].pos = Pos(inside as u64);
         self.bounds = nb;
         self.event = self.pp_event();
+    }
+}
+
+#[cfg(all(test, feature = "tape"))]
+mod tests {
+    use super::*;
+
+    /// `idle_machine` and `tape_machine` name the same machine, all seven.
+    #[test]
+    fn each_machine_state_names_its_machine() {
+        let mut d = TapeDeck::idle();
+        for m in TapeMachine::ALL {
+            d.machine = TapeDeck::idle_machine(m);
+            assert_eq!(d.tape_machine(), m);
+        }
     }
 }
