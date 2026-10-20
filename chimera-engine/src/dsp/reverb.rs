@@ -633,6 +633,7 @@ fn ms_range(r: &Ranges, id: ParamId) -> (f32, f32) {
 }
 
 /// Slot `id` at `v` as a division at `tempo`, folded into its range.
+#[inline(never)]
 fn synced_ms(
     r: &Ranges,
     id: ParamId,
