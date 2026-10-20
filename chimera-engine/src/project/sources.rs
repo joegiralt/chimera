@@ -24,6 +24,29 @@ impl SourceId {
 
 const _: () = assert!(MAX_SOURCES <= u32::BITS as usize);
 
+/// Pool sources, a bit each (`SourceId::bit`). Bank 2's door takes it by
+/// value: its word is the ABI.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct SourceSet(u32);
+
+impl SourceSet {
+    pub const EMPTY: SourceSet = SourceSet(0);
+
+    pub const fn with(self, s: SourceId) -> SourceSet {
+        SourceSet(self.0 | s.bit())
+    }
+
+    pub const fn contains(self, s: SourceId) -> bool {
+        self.0 & s.bit() != 0
+    }
+
+    /// Its sources, in id order.
+    pub fn iter(self) -> impl Iterator<Item = SourceId> {
+        SourceId::ALL.into_iter().filter(move |&s| self.contains(s))
+    }
+}
+
 /// Its on-disk ref lives in `storage` (a card format type), named here too.
 pub use crate::storage::SourceRef;
 

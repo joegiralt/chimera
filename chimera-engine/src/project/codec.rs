@@ -41,7 +41,7 @@ use crate::storage::{
 use super::arena::{ARENA_BYTES, Cost, MAX_SOURCES};
 use super::parts::new_part;
 use super::pool::{Pool, entry_len};
-use super::sources::{SourceId, SourceRef, ref_cost};
+use super::sources::{SourceId, SourceRef, SourceSet, ref_cost};
 use super::swap::{LoadLink, Swap};
 use super::template::NEW_PARTS;
 use super::{EncodedSound, Origin, Part, PartId, PartSet, Project, SlotId};
@@ -388,10 +388,10 @@ pub struct ProjectCheck {
     dropped_slots: u8,
     dropped_sources: u8,
     /// Pass 2's absent entries the plan takes: the loader reads them.
-    to_read: u32,
+    to_read: SourceSet,
     /// Pass 2's absent entries the plan left out for room: the loader
     /// streams those a TAPE Part plays (slice 1 § 5.6).
-    to_stream: u32,
+    to_stream: SourceSet,
     context: Context,
     parts: PartSet,
     fx: bool,
@@ -428,8 +428,8 @@ impl ProjectCheck {
             plan: Plan::ALL,
             dropped_slots: 0,
             dropped_sources: 0,
-            to_read: 0,
-            to_stream: 0,
+            to_read: SourceSet::EMPTY,
+            to_stream: SourceSet::EMPTY,
             context: Context::None,
             parts: PartSet::EMPTY,
             fx: false,
@@ -566,8 +566,8 @@ impl ProjectCheck {
         let c = self.costs_mut();
         (c.slots, c.n_refs, c.part_used) = (0, 0, 0);
         c.slot_costs.fill(0);
-        (self.dropped_slots, self.dropped_sources, self.to_read) = (0, 0, 0);
-        self.to_stream = 0;
+        (self.dropped_slots, self.dropped_sources) = (0, 0);
+        (self.to_read, self.to_stream) = (SourceSet::EMPTY, SourceSet::EMPTY);
         (self.context, self.parts) = (Context::None, PartSet::EMPTY);
         (self.fx, self.fx_blocks, self.mix, self.origin) = (false, 0, false, false);
         self.origins = [ReadOrigin::Missing; MAX_PARTS];
@@ -600,12 +600,12 @@ impl ProjectCheck {
         let bit = 1 << k;
         let planned = self.plan.sources & bit != 0;
         match t.pool.source_absent(r) {
-            Some(id) if planned => self.to_read |= id.bit(),
+            Some(id) if planned => self.to_read = self.to_read.with(id),
             Some(id) if self.plan.missing & bit != 0 => {
                 t.pool.mark_absent(id, super::Absence::NotOnCard)
             }
             // Too big for the room: streamed if a TAPE Part plays it.
-            Some(id) if cfg!(feature = "tape") => self.to_stream |= id.bit(),
+            Some(id) if cfg!(feature = "tape") => self.to_stream = self.to_stream.with(id),
             Some(_) => {}
             // No slot free: the ref is lost, and a save would drop it. A
             // ref the plan left out for room is counted already.
@@ -922,13 +922,13 @@ impl<'a> ProjectDecoder<'a> {
 
     /// After pass 2: the sources the loader reads from the card, each an
     /// absent entry until it does.
-    pub(crate) fn to_read(&self) -> u32 {
+    pub(crate) fn to_read(&self) -> SourceSet {
         self.check.to_read
     }
 
     /// After pass 2: the sources too big for the arena's room, each an
     /// absent entry: the loader streams those a TAPE Part plays.
-    pub(crate) fn to_stream(&self) -> u32 {
+    pub(crate) fn to_stream(&self) -> SourceSet {
         self.check.to_stream
     }
 

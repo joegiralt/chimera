@@ -4,9 +4,10 @@
 //! cell's load and a project load's pass 2 both take this path.
 
 use chimera_hal::store::{FileRuns, Store};
+use chimera_hal::units::Bytes;
 
 use super::arena::Cost;
-use super::sources::{SOURCE_HEAD, SourceId, source_cost};
+use super::sources::{SOURCE_HEAD, SourceId, SourceSet, source_cost};
 use super::{PoolFull, Project};
 use crate::dsp::tape_engine::params::{NeedsRam, TapeEngineParams};
 use crate::dsp::tape_engine::read::Shape;
@@ -75,7 +76,7 @@ pub fn load_kind(h: &SourceHead, free: Cost, p: &TapeEngineParams) -> LoadKind {
 pub struct LoadDoor {
     heads_for: fn(SourceRef, &TapeEngineParams) -> Result<Heads, Refusal>,
     step: fn(&mut StreamLoad, &mut dyn Store, &Ready, &mut Project, usize) -> StreamStep,
-    sources: fn(&mut dyn Store, &Ready, &mut Project, u32) -> u8,
+    sources: fn(&mut dyn Store, &Ready, &mut Project, SourceSet) -> u8,
 }
 
 impl LoadDoor {
@@ -104,7 +105,13 @@ impl LoadDoor {
 
     #[cfg(feature = "tape")]
     #[inline(always)]
-    pub(crate) fn sources(&self, s: &mut dyn Store, r: &Ready, p: &mut Project, ids: u32) -> u8 {
+    pub(crate) fn sources(
+        &self,
+        s: &mut dyn Store,
+        r: &Ready,
+        p: &mut Project,
+        ids: SourceSet,
+    ) -> u8 {
         (self.sources)(s, r, p, ids)
     }
 
@@ -151,12 +158,27 @@ pub struct StreamLoad {
     heads: Heads,
     /// A pool row's heads re-staged, not a new row published.
     rehead: Option<SourceId>,
-    /// The file's runs, once found: the first pass's.
-    file: Option<StreamFile>,
-    /// Head bytes read so far, of every head's.
-    at: usize,
+    phase: Phase,
     /// The arena offset the staging started at: a gap that moved fails it.
     stage: u32,
+}
+
+/// Where a `StreamLoad` is.
+#[derive(Clone, Copy)]
+enum Phase {
+    /// The first pass finds the file's runs.
+    Find,
+    /// The heads read: `at` bytes so far, of every head's.
+    Heads { file: StreamFile, at: Bytes },
+}
+
+impl Phase {
+    fn heads(file: StreamFile) -> Phase {
+        Phase::Heads {
+            file,
+            at: Bytes::new(0),
+        }
+    }
 }
 
 impl StreamLoad {
@@ -167,8 +189,7 @@ impl StreamLoad {
             sref: head.sref,
             heads,
             rehead: None,
-            file: None,
-            at: 0,
+            phase: Phase::Find,
             stage,
         })
     }
@@ -185,7 +206,7 @@ impl StreamLoad {
         let file = StreamFile::from_layout(&SourceLayout::whole(head)?, runs)?;
         let l = Self::start(p, head, heads)?;
         Some(StreamLoad {
-            file: Some(file),
+            phase: Phase::heads(file),
             ..l
         })
     }
@@ -201,8 +222,7 @@ impl StreamLoad {
             sref,
             heads,
             rehead: Some(id),
-            file: Some(file),
-            at: 0,
+            phase: Phase::heads(file),
             stage,
         })
     }

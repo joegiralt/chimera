@@ -39,7 +39,8 @@ pub use note::{Differ, LINE_LEN, Line, ProjectNote, Subject};
 pub use parts::{Loads, Origin, Part, PartEdit, PartRead, Performance, part_block, part_block_mut};
 pub use pool::{EncodedSound, Pool, PoolFull};
 pub use sources::{
-    Absence, Purged, SOURCE_HEAD, SourceEntry, SourceId, SourceRef, Unused, Users, source_users,
+    Absence, Purged, SOURCE_HEAD, SourceEntry, SourceId, SourceRef, SourceSet, Unused, Users,
+    source_users,
 };
 pub use store::PROJECT_DEMO_TOP;
 #[cfg(feature = "card-put")]
