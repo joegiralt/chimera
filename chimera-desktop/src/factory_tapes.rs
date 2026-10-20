@@ -11,9 +11,7 @@ use std::path::{Path, PathBuf};
 use chimera_core::block::{Block, DiskCode, ParamId};
 use chimera_core::dsp::modal::ResonatorMode;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape};
-use chimera_core::dsp::tape_engine::{
-    PlayMode, TapeEngineParams as P, TapeModel, machine,
-};
+use chimera_core::dsp::tape_engine::{PlayMode, TapeEngineParams as P, TapeModel, machine};
 use chimera_core::factory::{FACTORY_LEN, factory_sound};
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;

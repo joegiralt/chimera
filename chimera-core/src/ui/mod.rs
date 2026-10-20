@@ -2850,7 +2850,8 @@ impl UiState {
                     continue; // dimmed: the encoder is ignored
                 }
                 // SCRUB's FINGER turns the reel: `jog_pass` moves POSITION.
-                if !shift && v.addr() == Some(SCRUB_FINGER) && self.ctx().tape == TapeMachine::Scrub {
+                if !shift && v.addr() == Some(SCRUB_FINGER) && self.ctx().tape == TapeMachine::Scrub
+                {
                     self.jog.turn(delta, controls.now_ms().0);
                     continue;
                 }

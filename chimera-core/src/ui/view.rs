@@ -709,7 +709,7 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
 }
 
 /// A TAPE cell on the Sound's machine, labelled its way: DECK's after
-/// MODEL or the model page's before TAPE, AGE and WOW (ADR 0178). A
+/// MODEL or the model page's after TAPE, AGE and WOW (ADR 0178). A
 /// machine lists only what it reads, so a cell past its list is empty.
 fn machine_view(at: MachineSlot, ctx: &SlotCtx) -> View {
     let k = machine::machine(ctx.tape);

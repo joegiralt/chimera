@@ -118,8 +118,8 @@ fn deck_holds_the_glyphs_knobs() {
     }
 }
 
-/// The model page: what else the machine reads, then TAPE, AGE and WOW
-/// in the same cells on every machine.
+/// The model page: TAPE, AGE and WOW in the same cells on every machine,
+/// then what else the machine reads.
 #[test]
 fn model_page_cells() {
     use TapeMachine as M;
@@ -137,13 +137,16 @@ fn model_page_cells() {
         let mut ctx = ctx_on(m);
         ctx.unpitched = false;
         let got = labels(&TAPE_MODEL, &ctx);
-        assert_eq!(got[..3], cells, "{m:?}");
-        assert_eq!(got[3..], ["TAPE", "AGE", "WOW"], "{m:?}");
+        assert_eq!(got[..3], ["TAPE", "AGE", "WOW"], "{m:?}");
+        assert_eq!(got[3..], cells, "{m:?}");
         for (k, c) in machine(m).cells.iter().enumerate() {
-            assert_eq!(view::view(&TAPE_MODEL, k, &ctx).addr(), Some(tape(c.id)));
+            assert_eq!(
+                view::view(&TAPE_MODEL, k + 3, &ctx).addr(),
+                Some(tape(c.id))
+            );
             assert!(!view::dimmed(tape(c.id), &sound_on(m)), "{m:?} {}", c.label);
         }
-        for (k, id) in [(3, P::TAPE), (4, P::AGE), (5, P::WOW)] {
+        for (k, id) in [(0, P::TAPE), (1, P::AGE), (2, P::WOW)] {
             assert_eq!(view::view(&TAPE_MODEL, k, &ctx).addr(), Some(tape(id)));
             assert!(!view::dimmed(tape(id), &sound_on(m)), "{m:?} {id:?}");
         }
@@ -195,7 +198,15 @@ fn model_names_fit_the_cell() {
         let w = draw::text_width(&theme::FONT_VALUE, name, 0);
         assert!(w <= theme::CELL_BAR_W, "{name}: {w} px");
     }
-    let full = ["ONE", "LOOP", "PING", "TRON", "SCRUB", "STRETCH", "TRANSWAVE"];
+    let full = [
+        "ONE",
+        "LOOP",
+        "PING",
+        "TRON",
+        "SCRUB",
+        "STRETCH",
+        "TRANSWAVE",
+    ];
     for (m, want) in TapeMachine::ALL.into_iter().zip(full) {
         let models = Models {
             tape: m,
@@ -350,11 +361,7 @@ fn reads_matches_the_audio() {
     let wave = held_transwave(512, 4, |f, h| if h <= 1 + f as u32 { 0.5 } else { 0.0 });
     let mut checked = 0;
     for m in TapeMachine::ALL {
-        let src = if m == TapeMachine::Wave {
-            &wave
-        } else {
-            &held
-        };
+        let src = if m == TapeMachine::Wave { &wave } else { &held };
         let v = SourceView::strict(src).unwrap();
         let base = P {
             model: m.model(),
@@ -448,7 +455,7 @@ fn type_reads_poly_unpitched() {
     s.params.tape.period = 0.0;
     let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
     assert_eq!(
-        view::view(&TAPE_MODEL, 1, &ctx),
+        view::view(&TAPE_MODEL, 4, &ctx),
         View::Text {
             label: "TYPE",
             text: "POLY (UNPITCHED)"
@@ -456,7 +463,7 @@ fn type_reads_poly_unpitched() {
     );
     s.params.tape.period = 109.1;
     let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
-    assert_eq!(view::view(&TAPE_MODEL, 1, &ctx).addr(), Some(tape(P::TYPE)));
+    assert_eq!(view::view(&TAPE_MODEL, 4, &ctx).addr(), Some(tape(P::TYPE)));
 }
 
 #[test]
@@ -662,10 +669,16 @@ fn model_edit_writes_play_and_its_mode() {
     let model = tape(P::MODEL);
     assert!(edit(&mut s.params, model, Edit::To(0.0)));
     let t = s.params.tape;
-    assert_eq!((t.model, t.mode, t.drag), (TapeModel::Play, PlayMode::One, FADE_HOLD));
+    assert_eq!(
+        (t.model, t.mode, t.drag),
+        (TapeModel::Play, PlayMode::One, FADE_HOLD)
+    );
     assert!(edit(&mut s.params, model, Edit::To(2.0)));
     let t = s.params.tape;
-    assert_eq!((t.model, t.mode, t.drag), (TapeModel::Play, PlayMode::Ping, 0.3));
+    assert_eq!(
+        (t.model, t.mode, t.drag),
+        (TapeModel::Play, PlayMode::Ping, 0.3)
+    );
     // Off PLAY, MODE stays as it was: no other machine reads it.
     assert!(edit(&mut s.params, model, Edit::To(3.0)));
     let t = s.params.tape;
@@ -676,7 +689,10 @@ fn model_edit_writes_play_and_its_mode() {
     let mut one = Sound::init(EngineType::Tape);
     one.params.tape.set_machine(TapeMachine::One);
     assert_eq!(
-        (one.params.tape.enum_code(P::MODEL), one.params.tape.enum_code(P::MODE)),
+        (
+            one.params.tape.enum_code(P::MODEL),
+            one.params.tape.enum_code(P::MODE)
+        ),
         (Some(0), Some(0)),
         "PLAY's code and MODE ONE's"
     );

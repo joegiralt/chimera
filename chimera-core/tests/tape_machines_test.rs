@@ -1130,7 +1130,8 @@ fn machine_table_is_pinned() {
             &[],
         ),
     ];
-    let row = |c: &chimera_core::dsp::tape_engine::machine::Cell| (c.id, c.label, c.short, c.default);
+    let row =
+        |c: &chimera_core::dsp::tape_engine::machine::Cell| (c.id, c.label, c.short, c.default);
     for (i, (k, page, deck, cells)) in want.into_iter().enumerate() {
         let m = &MACHINES[i];
         assert_eq!(m.machine, k);
@@ -1155,7 +1156,10 @@ fn every_cell_reads_in_the_audio() {
     let held = held_plain(&saw_with_burst(48_000, 1.0), 48_000);
     let wave = held_transwave(512, 4, |f, h| if h <= 1 + f as u32 { 0.5 } else { 0.0 });
     for m in &MACHINES {
-        let (model, mode) = (m.machine.model(), m.machine.mode().unwrap_or(PlayMode::Loop));
+        let (model, mode) = (
+            m.machine.model(),
+            m.machine.mode().unwrap_or(PlayMode::Loop),
+        );
         let src = if model == TapeModel::Transwave {
             &wave
         } else {

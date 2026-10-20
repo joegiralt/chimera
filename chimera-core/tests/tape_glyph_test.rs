@@ -396,7 +396,11 @@ fn a_step_is_about_a_pixel() {
     // Below a step nothing changes; the key holds the steps, so a value
     // that moves less than a step costs no redraw.
     let at = |v: f32| {
-        TapeGauge::from_set([1.0 / 6.0, 0.0, 1.0, v, 0.5, 0.5, 0.3, 0.0, 0.0, 0.2], false).key()
+        TapeGauge::from_set(
+            [1.0 / 6.0, 0.0, 1.0, v, 0.5, 0.5, 0.3, 0.0, 0.0, 0.2],
+            false,
+        )
+        .key()
     };
     let step = 1.0 / Q6::MAX as f32;
     assert_eq!(at(0.5), at(0.5 + 0.4 * step));
@@ -480,10 +484,7 @@ fn nothing_redraws_at_idle() {
                 .into_iter()
                 .filter(|&r| band(r))
                 .collect();
-            assert!(
-                flushed.is_empty(),
-                "{model:?} frame {frame}: {flushed:?}"
-            );
+            assert!(flushed.is_empty(), "{model:?} frame {frame}: {flushed:?}");
         }
     }
 }
@@ -706,13 +707,16 @@ fn unpitched_type_shows_no_glyph() {
         ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
         fb
     };
-    feed(&mut ui, Input::turn(EncoderId::E, 1));
-    feed(&mut ui, Input::turn(EncoderId::E, -1));
-    assert!(glyph_box_lit(&shot(&mut ui)) > 40, "a glyph on AGE");
     feed(&mut ui, Input::turn(EncoderId::B, 1));
-    let want = shot(&mut ui);
-    assert!(glyph_box_lit(&want) < 40, "no glyph beside TYPE (UNPITCHED)");
     feed(&mut ui, Input::turn(EncoderId::B, -1));
+    assert!(glyph_box_lit(&shot(&mut ui)) > 40, "a glyph on AGE");
+    feed(&mut ui, Input::turn(EncoderId::E, 1));
+    let want = shot(&mut ui);
+    assert!(
+        glyph_box_lit(&want) < 40,
+        "no glyph beside TYPE (UNPITCHED)"
+    );
+    feed(&mut ui, Input::turn(EncoderId::E, -1));
     assert!(shot(&mut ui).px == want.px, "a turn moves nothing");
 }
 
@@ -768,7 +772,11 @@ fn model_turned_onto_one_puts_start_and_end_on_deck() {
         let before = shot(&mut ui);
         let was = (tape(&ui).start, tape(&ui).end);
         feed(&mut ui, Input::turn(enc, by));
-        assert_ne!((tape(&ui).start, tape(&ui).end), was, "{enc:?} is START or END");
+        assert_ne!(
+            (tape(&ui).start, tape(&ui).end),
+            was,
+            "{enc:?} is START or END"
+        );
         assert_ne!(shot(&mut ui), before, "{enc:?} burns the match");
     }
     feed(&mut ui, Input::turn(EncoderId::A, 1));

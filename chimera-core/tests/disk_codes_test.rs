@@ -248,7 +248,11 @@ fn idents_are_tokens_and_unique() {
                 // TAPE's ONE, LOOP and PING are PLAY's code; MODE tells
                 // them apart (ADR 0178).
                 let play = b == BlockRef::TapeEngine && s.ident == "MODEL" && v <= 2;
-                assert!(play || !values.contains(&i), "{b:?} {} repeats {i}", s.ident);
+                assert!(
+                    play || !values.contains(&i),
+                    "{b:?} {} repeats {i}",
+                    s.ident
+                );
                 values.push(i);
             }
             bank.block(b).set(s.id, s.default);

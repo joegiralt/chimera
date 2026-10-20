@@ -407,9 +407,15 @@ impl TapeEngineParams {
 pub fn reads(m: TapeMachine, id: ParamId) -> bool {
     type P = TapeEngineParams;
     match id {
-        P::MODEL | P::MODE | P::START | P::END | P::TAPE | P::AGE | P::WOW | P::ROOT | P::PERIOD => {
-            true
-        }
+        P::MODEL
+        | P::MODE
+        | P::START
+        | P::END
+        | P::TAPE
+        | P::AGE
+        | P::WOW
+        | P::ROOT
+        | P::PERIOD => true,
         _ => super::machine::cell_of(m, id).is_some(),
     }
 }

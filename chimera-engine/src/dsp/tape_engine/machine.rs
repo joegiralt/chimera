@@ -3,8 +3,8 @@
 //! reads and has its own defaults, so a player is nudged toward what it
 //! does (Elektron Digitakt II, as the owner cites it; Octatrack manual OS
 //! 1.25, § Machines). DECK holds MODEL and every knob that moves the
-//! machine's glyph; the model page whatever else it reads, then TAPE, AGE
-//! and WOW in the same cells on every machine.
+//! machine's glyph; the model page TAPE, AGE and WOW in the same cells on
+//! every machine, then whatever else it reads.
 //! The UI writes a machine's defaults when MODEL changes (Task 15), never
 //! on load; the neutral stays PLAY in LOOP.
 
@@ -21,7 +21,7 @@ pub struct Cell {
 }
 
 /// A machine: its model page's name, DECK's cells after MODEL (the
-/// glyph's knobs) and its model page's before TAPE, AGE and WOW.
+/// glyph's knobs) and its model page's after TAPE, AGE and WOW.
 #[derive(Clone, Copy, Debug)]
 pub struct Machine {
     pub machine: TapeMachine,
@@ -32,7 +32,7 @@ pub struct Machine {
 
 /// DECK's cells after MODEL.
 pub const DECK_CELLS: usize = 5;
-/// The model page's cells before TAPE, AGE and WOW.
+/// The model page's cells after TAPE, AGE and WOW.
 pub const PAGE_CELLS: usize = 3;
 
 const fn cell(id: ParamId, label: &'static str, short: &'static str, default: f32) -> Cell {

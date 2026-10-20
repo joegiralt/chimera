@@ -65,7 +65,8 @@ fn sound(a: ParamAddr) -> (Sound, Option<Vec<u8>>) {
                 id => *m
                     .iter()
                     .find(|&&m| {
-                        let k = chimera_core::dsp::tape_engine::TapeMachine::of(m, s.params.tape.mode);
+                        let k =
+                            chimera_core::dsp::tape_engine::TapeMachine::of(m, s.params.tape.mode);
                         tape::reads(k, id)
                     })
                     .unwrap(),

@@ -103,7 +103,7 @@ pub enum SlotBinding {
 }
 
 /// Where a TAPE cell sits: cell `k` of DECK after MODEL (the glyph's
-/// knobs) or of the model page before TAPE, AGE and WOW, each labelled by
+/// knobs) or of the model page after TAPE, AGE and WOW, each labelled by
 /// the Sound's machine (ADR 0178).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MachineSlot {

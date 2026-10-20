@@ -28,18 +28,7 @@ const SOFT: Ink = Ink::Soft;
 /// what it plays (`reads`), so a param it ignores leaves the glyph as it
 /// was.
 pub fn inputs(set: [f32; 10], still: bool) -> TapeGauge {
-    let [
-        model,
-        start,
-        end,
-        pos,
-        motion,
-        size,
-        drag,
-        tape,
-        age,
-        xfade,
-    ] = set;
+    let [model, start, end, pos, motion, size, drag, tape, age, xfade] = set;
     let pick = |v: f32, n: u8| libm::roundf(clampf(v, 0.0, 1.0) * n as f32) as u8;
     let kind = Kind::from_index(pick(model, Kind::ALL.len() as u8 - 1));
     if still {

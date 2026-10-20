@@ -122,8 +122,8 @@ pub static TAPE_DECK: BlockDef = BlockDef {
     ],
 };
 
-/// The model page: named by the machine, its other cells first, then
-/// TAPE, AGE and WOW in the same cells on every machine (ADR 0178).
+/// The model page: named by the machine, TAPE, AGE and WOW in the same
+/// cells on every machine, then the machine's other cells (ADR 0178).
 pub static TAPE_MODEL: BlockDef = BlockDef {
     id: 95,
     name: "Machine",
@@ -131,12 +131,12 @@ pub static TAPE_MODEL: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::None,
     params: [
-        ParamSlot::machine(MachineSlot::Page(0)),
-        ParamSlot::machine(MachineSlot::Page(1)),
-        ParamSlot::machine(MachineSlot::Page(2)),
         ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::TAPE),
         ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::AGE),
         ParamSlot::param(BlockRef::TapeEngine, TapeEngineParams::WOW),
+        ParamSlot::machine(MachineSlot::Page(0)),
+        ParamSlot::machine(MachineSlot::Page(1)),
+        ParamSlot::machine(MachineSlot::Page(2)),
     ],
 };
 

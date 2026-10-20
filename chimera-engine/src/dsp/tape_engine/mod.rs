@@ -95,8 +95,8 @@ pub use heads::loop_len;
 pub use oneshot::SliceCode;
 pub use params::{
     FADE_HOLD, MACHINE_NAMES, MODEL_NAMES, NeedsRam, PlayMode, StretchType, TAPE_ENGINE_SPECS,
-    TapeEngineParams, TapeMachine, TapeModel, Wow, at_root, drag_s, fade_default, jogs, needs_ram, reads,
-    reads_in,
+    TapeEngineParams, TapeMachine, TapeModel, Wow, at_root, drag_s, fade_default, jogs, needs_ram,
+    reads, reads_in,
 };
 
 // Each model's bill: its measured worst a sample, the M7's static count

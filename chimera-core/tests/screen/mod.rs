@@ -1668,7 +1668,9 @@ pub const CASES: &[ScreenCase] = &[
         tape_deck(ui, TapeMachine::Tron);
         feed(ui, Input::press(ButtonId::Edit));
     }),
-    ("tape_deck_stretch", |ui| tape_deck(ui, TapeMachine::Stretch)),
+    ("tape_deck_stretch", |ui| {
+        tape_deck(ui, TapeMachine::Stretch)
+    }),
     ("tape_page_stretch", |ui| {
         tape_deck(ui, TapeMachine::Stretch);
         feed(ui, Input::press(ButtonId::Edit));
@@ -1677,7 +1679,7 @@ pub const CASES: &[ScreenCase] = &[
     ("tape_page_stretch_type", |ui| {
         tape_deck(ui, TapeMachine::Stretch);
         feed(ui, Input::press(ButtonId::Edit));
-        feed(ui, Input::turn(EncoderId::B, 1));
+        feed(ui, Input::turn(EncoderId::E, 1));
     }),
     ("tape_deck_transwave", |ui| tape_deck(ui, TapeMachine::Wave)),
     ("tape_page_transwave", |ui| {
