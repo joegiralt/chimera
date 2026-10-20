@@ -197,10 +197,12 @@ impl<D: Medium> Medium for SharedCard<D> {
         }
     }
 
-    /// The address mode goes with the card, busy or not.
+    /// The address mode goes with the card, once the bus is held: a busy
+    /// re-init never ran, and the card IRQ keeps reading the card it had.
     fn reinit(&self) -> Result<(), StoreError> {
+        let h = self.op_hold()?;
         self.addr.clear();
-        self.op_hold()?.dev.reinit()
+        h.dev.reinit()
     }
 
     fn mounted(&self) -> Result<(), StoreError> {

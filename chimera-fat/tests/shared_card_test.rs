@@ -366,6 +366,20 @@ fn every_medium_io_call_takes_the_bus() {
     assert_eq!(bus.owner(), Owner::Free);
 }
 
+/// A re-init the stream's hold makes busy never ran: the card's address
+/// mode stays, so the card IRQ doesn't see it unmounted for nothing.
+#[test]
+fn a_busy_reinit_keeps_the_card_addr() {
+    let (c, bus, addr) = card(false);
+    assert_eq!(c.mounted(), Ok(()));
+    assert!(bus.try_take(Taker::Stream, Ms(0)));
+    assert_eq!(c.reinit(), Err(StoreError::Busy));
+    assert_eq!(addr.get(), Some(AddrMode::Block));
+    bus.give();
+    assert_eq!(c.reinit(), Ok(()));
+    assert_eq!(addr.get(), None);
+}
+
 #[test]
 fn mounted_publishes_the_card_addr_and_reinit_clears_it() {
     let (c, bus, addr) = card(false);
