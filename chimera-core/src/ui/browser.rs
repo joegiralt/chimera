@@ -41,18 +41,16 @@ pub const TOTAL_ENTRIES: usize = HEAD + MAX_SOUNDS;
 /// What a coming-soon row says in place of an engine tag.
 pub const SOON_TAG: &str = "COMING SOON";
 
-/// An engine listed but not playable yet: its row, and a pool Sound of
-/// it, read COMING SOON, and EDIT only toasts (ADR 0132).
+/// An engine listed but not playable yet: its row reads COMING SOON, and
+/// EDIT only toasts (ADR 0132; TAPE left it in ADR 0187).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Soon {
-    /// Until its rework (#476).
-    Tape,
     /// Until the DRUM engine exists.
     Drum,
 }
 
 impl Soon {
-    pub const ALL: [Soon; 2] = [Soon::Tape, Soon::Drum];
+    pub const ALL: [Soon; 1] = [Soon::Drum];
 
     /// Its row's entry, under the INIT rows.
     pub const fn entry(self) -> usize {
@@ -61,7 +59,6 @@ impl Soon {
 
     pub const fn label(self) -> &'static str {
         match self {
-            Soon::Tape => "TAPE",
             Soon::Drum => "DRUM",
         }
     }
@@ -69,14 +66,8 @@ impl Soon {
     /// Its toast on a load.
     pub const fn toast(self) -> &'static str {
         match self {
-            Soon::Tape => "TAPE: COMING SOON",
             Soon::Drum => "DRUM: COMING SOON",
         }
-    }
-
-    /// The engine a pool Sound can't load on yet: TAPE's.
-    pub fn of(engine: EngineType) -> Option<Soon> {
-        (engine == EngineType::Tape).then_some(Soon::Tape)
     }
 }
 
@@ -229,8 +220,6 @@ pub const OLDER: &str = "OLDER ›";
 pub const EMPTY_FACTORY: &str = "NO FACTORY SOUNDS";
 pub const PREVIOUS: &str = "‹ PREVIOUS";
 pub const NEXT: &str = "NEXT ›";
-/// EDIT's words on a row of an engine coming soon.
-pub const SOON_LOAD: Gesture<'static> = Gesture("EDIT", SOON_TAG);
 pub const SAVE_TO_LIBRARY: Gesture<'static> = Gesture("MIX + EDIT", "SAVES TO LIBRARY");
 /// Line 3, the selected row's stamp: information, drawn with HINTS off.
 pub const STAMP_Y: i32 = CLEAR_Y;
@@ -605,7 +594,6 @@ fn library_body<D>(
         LibRow::Sound(e) => Some(e),
         _ => None,
     };
-    let soon = on.and_then(|e| lib.soon(e));
     // A listing that failed partway: its words under the rows it left.
     if let (Some(err), Some(p)) = (lib.err(), page)
         && !p.entries().is_empty()
@@ -617,14 +605,11 @@ fn library_body<D>(
         let n = components::upper(n.as_str());
         full_name_line(d, n.as_str(), TAG_RIGHT - LIB_NAME_X, text);
     }
-    let loadable = on.filter(|e| e.err.is_none() && soon.is_none());
+    let loadable = on.filter(|e| e.err.is_none());
     let fit = loadable.map(|e| fitting(pool, e));
     if let Some(r) = refusal {
         refusal_lines(d, r);
     } else if hints {
-        if soon.is_some() {
-            hint::draw(d, &[SOON_LOAD], theme::MARGIN_X, HINT_Y);
-        }
         if let Some(fit) = fit {
             let words = load_words(fit);
             let does = if fit.is_some() {
@@ -717,10 +702,7 @@ fn library_row<D>(
     };
     // Greyed: the name dimmed, the `FileError` (or COMING SOON) in place
     // of cost and tag.
-    let greyed = e
-        .err
-        .map(|err| err.message())
-        .or(lib.soon(e).map(|_| SOON_TAG));
+    let greyed = e.err.map(|err| err.message());
     let ink = match (selected, greyed) {
         (true, _) => theme::BG,
         (false, Some(_)) => theme::MID,
@@ -867,15 +849,9 @@ where
         }
         None => return,
     };
-    let soon = match entry_at(entry) {
-        Some(Entry::Soon(s)) => Some(s),
-        _ => chain.and_then(Soon::of),
-    };
-    // A pool Sound of a coming-soon engine reads like its INIT row: its
-    // cost would sit under the wider tag.
-    let cost = cost.filter(|_| soon.is_none());
+    let soon = matches!(entry_at(entry), Some(Entry::Soon(_)));
     let saved = cost.is_some();
-    let empty = chain.is_none() && soon.is_none();
+    let empty = chain.is_none() && !soon;
     if selected {
         draw::pill(d, 8, y - 16, 224, 22, theme::ACCENT);
     }
@@ -904,8 +880,8 @@ where
         (Some(c), _) => {
             COST_RIGHT - draw::text_width(&theme::FONT_LABEL, c.kib_label().as_str(), 0)
         }
-        (None, Some(_)) => TAG_RIGHT - draw::text_width(&theme::FONT_LABEL, SOON_TAG, 0),
-        (None, None) => TAG_RIGHT - TAG_ROOM,
+        (None, true) => TAG_RIGHT - draw::text_width(&theme::FONT_LABEL, SOON_TAG, 0),
+        (None, false) => TAG_RIGHT - TAG_ROOM,
     } - NAME_GAP
         - NAME_X;
     // LARGE: the selected row's name too long beside its cost and tag
@@ -933,8 +909,8 @@ where
         draw::text_right(d, &theme::FONT_LABEL, label.as_str(), COST_RIGHT, y, dim, 0);
     }
     match (soon, chain) {
-        (Some(_), _) => draw::text_right(d, &theme::FONT_LABEL, SOON_TAG, TAG_RIGHT, y, dim, 0),
-        (None, Some(engine)) => tag(d, engine, y, dim),
-        (None, None) => {}
+        (true, _) => draw::text_right(d, &theme::FONT_LABEL, SOON_TAG, TAG_RIGHT, y, dim, 0),
+        (false, Some(engine)) => tag(d, engine, y, dim),
+        (false, None) => {}
     }
 }

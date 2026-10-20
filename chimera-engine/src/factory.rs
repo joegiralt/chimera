@@ -1,6 +1,6 @@
 //! The factory bank: eight Algo Sounds, the four formant demos (CHOIR,
 //! TALK BASS, BREATH, VOX), then an INIT per playable engine
-//! (`EngineType::PLAYABLE`: no TAPE, ADR 0132), kept as the pool's own
+//! (`EngineType::PLAYABLE`, TAPE too: ADR 0187), kept as the pool's own
 //! bytes in `factory.bin` so NEW copies them, no decode. The authored
 //! Sounds below check the blob (`GOLDEN_RECORD=1` rewrites it).
 //!

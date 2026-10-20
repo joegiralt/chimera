@@ -219,7 +219,7 @@ fn edited_part_never_stale_after_reload() {
         kinds(part_actions(&q, a)),
         [
             PartActionKind::OverSlot(s),
-            PartActionKind::NewSlot(SlotId::ALL[FACTORY_LEN + 3]),
+            PartActionKind::NewSlot(SlotId::ALL[FACTORY_LEN + EngineType::PLAYABLE.len()]),
             PartActionKind::Revert(s),
         ]
     );
@@ -280,7 +280,7 @@ fn actions_offer_only_what_applies() {
     use PartActionKind::{NewSlot, OverSlot, Revert};
     let (mut p, t) = Project::boxed();
     let s = SlotId::ALL[0];
-    let free = SlotId::ALL[FACTORY_LEN + 3];
+    let free = SlotId::ALL[FACTORY_LEN + EngineType::PLAYABLE.len()];
     let [
         clean_init,
         clean_slot,
