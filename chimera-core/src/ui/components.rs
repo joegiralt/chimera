@@ -644,6 +644,7 @@ pub fn gauge_left(gauge: &Gauge) -> Option<i32> {
         Gauge::LevelBar { .. } => Some(theme::LEVEL_TICK_X - 1),
         Gauge::Crossfader { .. } => Some(end - theme::XF_W - theme::XF_CAP_W / 2),
         Gauge::Stability { .. } => Some(end - theme::VIAL_W),
+        Gauge::Feedback { .. } => Some(theme::WAVE_X),
         Gauge::Blend { .. } => Some(end - theme::BLEND_W - theme::XF_CAP_W / 2),
         Gauge::Staff { .. } => Some(theme::STAFF_X),
         Gauge::Wave(_) | Gauge::VaWave(_) | Gauge::Lfo(_) => Some(theme::WAVE_X),
@@ -694,7 +695,8 @@ pub fn gauge_rect(gauge: &Gauge) -> Option<(i32, i32, i32, i32)> {
         | Gauge::VaMix(_)
         | Gauge::Blend { .. }
         | Gauge::Lfo(_)
-        | Gauge::Stability { .. } => None,
+        | Gauge::Stability { .. }
+        | Gauge::Feedback { .. } => None,
     }
 }
 
@@ -722,6 +724,7 @@ where
         }
         Gauge::Lfo(g) => crate::ui::lfo_glyph::draw(d, &g),
         Gauge::Stability { offset, reach } => spirit_level(d, offset.into(), reach.into()),
+        Gauge::Feedback { q } => feedback_loop(d, q.into()),
         Gauge::Arc { value, bipolar } => draw::arc_gauge(
             d,
             theme::ARC_CX,
@@ -860,6 +863,75 @@ where
         draw::fill_rect(d, x, cy - h / 2 - 4, 1, 7, theme::MID);
     }
     draw::pill(d, cx + offset - bw / 2, cy - bh / 2, bw, bh, theme::ACCENT);
+}
+
+/// FEEDBACK's glyph (ADR 0190): a low-pass curve with a loop from its
+/// output back under the cutoff corner. The loop thickens and the corner
+/// wobbles with `|q|` (steps of an eighth): positive a sharp bright
+/// zig-zag, negative a soft rounded dip. At 0 the curve is plain and the
+/// loop a faint dotted line.
+fn feedback_loop<D>(d: &mut D, q: i32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let (x0, y0, w, h) = (theme::WAVE_X, theme::WAVE_Y, theme::WAVE_W, theme::WAVE_H);
+    draw::round_outline(d, x0, y0, w, h, 4, theme::FAINT);
+    let m = q.abs();
+    let (cx, cy) = (x0 + 30, y0 + 14);
+    let (ex, ey) = (x0 + 58, cy + 18);
+    let (by, tip) = (y0 + 41, cy + 8);
+    // The loop: output down, back along the bottom, up to the corner.
+    let legs = [(ex, ey, ex, by), (ex, by, cx, by), (cx, by, cx, tip)];
+    if m == 0 {
+        for (ax, ay, bx, bye) in legs {
+            let n = (bx - ax).abs().max((bye - ay).abs());
+            for i in (0..=n).step_by(3) {
+                let (px, py) = (ax + (bx - ax).signum() * i, ay + (bye - ay).signum() * i);
+                draw::fill_rect(d, px, py, 1, 1, theme::MID);
+            }
+        }
+    } else {
+        let t = 1 + m as u32 / 3;
+        for (ax, ay, bx, bye) in legs {
+            draw::line(d, ax, ay, bx, bye, theme::MID, t);
+        }
+    }
+    let head = if m == 0 { theme::MID } else { theme::ACCENT };
+    draw::line(d, cx, tip, cx - 3, tip + 4, head, 1);
+    draw::line(d, cx, tip, cx + 3, tip + 4, head, 1);
+    // The curve: flat, the corner, then the roll-off.
+    let a = m * 5 / crate::ui::glyph::FEEDBACK_STEPS;
+    draw::line(d, x0 + 6, cy, cx - 9, cy, theme::ACCENT, 2);
+    if q > 0 {
+        let pts = [
+            (-9, 0),
+            (-6, -a),
+            (-3, a / 2),
+            (0, -a),
+            (3, a / 2),
+            (6, -a),
+            (9, 0),
+        ];
+        for i in 1..pts.len() {
+            let (p, n) = (pts[i - 1], pts[i]);
+            draw::line(d, cx + p.0, cy + p.1, cx + n.0, cy + n.1, theme::INK, 2);
+        }
+    } else {
+        let dip = |dx: i32| cy + a * (81 - dx * dx) / 81;
+        for dx in (-9..9).step_by(3) {
+            draw::line(
+                d,
+                cx + dx,
+                dip(dx),
+                cx + dx + 3,
+                dip(dx + 3),
+                theme::ACCENT,
+                2,
+            );
+        }
+    }
+    draw::line(d, cx + 9, cy, cx + 19, cy + 8, theme::ACCENT, 2);
+    draw::line(d, cx + 19, cy + 8, ex, ey, theme::ACCENT, 2);
 }
 
 /// The scope's points: one a pixel across its frame, less the padding.

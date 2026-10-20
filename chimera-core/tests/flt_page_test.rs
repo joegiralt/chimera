@@ -799,7 +799,7 @@ fn panels_follow_the_type() {
     assert_eq!(
         labels(FilterKind::Svf),
         [
-            "MODE", "FREQ", "Q", "FM1", "FM2", "FM3", "FB", "QM", "FM3 IN", "QM IN"
+            "MODE", "FREQ", "Q", "FM1", "FM2", "FM3", "FEEDBACK", "QM", "FM3 IN", "QM IN"
         ]
     );
     assert_eq!(labels(FilterKind::Dirty), labels(FilterKind::Svf));
@@ -807,7 +807,8 @@ fn panels_follow_the_type() {
     assert_eq!(
         labels(FilterKind::K2040),
         [
-            "VOICE", "CUTOFF", "RES", "ENV AMT", "KEYBD", "FM3", "FB", "QM", "FM3 IN", "QM IN"
+            "VOICE", "CUTOFF", "RES", "ENV AMT", "KEYBD", "FM3", "FEEDBACK", "QM", "FM3 IN",
+            "QM IN"
         ]
     );
     let t = |k, i| knob(k, i).map(|n| n.target);

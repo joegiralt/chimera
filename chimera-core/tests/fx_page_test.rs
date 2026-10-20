@@ -60,7 +60,7 @@ fn flt_mod_holds_the_routes_and_jacks() {
     // amounts' encoders (ADR 0190).
     assert_eq!(
         labels(&FILTER_MOD, &clean),
-        ["FM1", "FM2", "FM3", "FB", "QM", "--"]
+        ["FM1", "FM2", "FM3", "FEEDBACK", "QM", "--"]
     );
     assert_eq!(
         labels(&chimera_core::ui::block_registry::FILTER_JACKS, &clean),
@@ -69,7 +69,7 @@ fn flt_mod_holds_the_routes_and_jacks() {
     let k2040 = sound(FilterKind::K2040, FxType::Off);
     assert_eq!(
         labels(&FILTER_MOD, &k2040),
-        ["ENV AMT", "KEYBD", "FM3", "FB", "QM", "--"]
+        ["ENV AMT", "KEYBD", "FM3", "FEEDBACK", "QM", "--"]
     );
     let ctx = SlotCtx::read(&k2040.params, Op::A);
     for i in [0, 1] {

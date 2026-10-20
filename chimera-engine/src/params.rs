@@ -213,7 +213,7 @@ pub static FILTER_SPECS: [ParamSpec; 10] = [
     // FB (ADR 0190): bipolar, the filter's output a sample late into FREQ.
     ParamSpec::continuous(
         15,
-        "FB",
+        "FEEDBACK",
         ValFmt::Bi,
         -1.0,
         1.0,
@@ -222,7 +222,9 @@ pub static FILTER_SPECS: [ParamSpec; 10] = [
         true,
         Smoothing::KNOB,
     )
-    .ident("FB"),
+    .ident("FB")
+    .short("FDBK")
+    .glyph(crate::glyph::FocusGlyph::Feedback),
     // The jacks (spec § 2): patching, not sound. Indexes into their choices.
     ParamSpec::choice(
         8,

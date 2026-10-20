@@ -61,6 +61,9 @@ pub enum Gauge {
     /// and the wander's reach `reach` px either side, both whole pixels
     /// of the set value, so it redraws only when one moves.
     Stability { offset: i8, reach: i8 },
+    /// The filter's FEEDBACK (ADR 0190): `q` in -`FEEDBACK_STEPS`..=`FEEDBACK_STEPS`,
+    /// the set value in eighths, so it redraws only when a step moves.
+    Feedback { q: i8 },
 }
 
 /// What a gauge built from more than the focused value reads.
@@ -786,6 +789,7 @@ pub fn gauge(
         FocusGlyph::Va(v) => outside(Reads::Va(v)),
         FocusGlyph::Lfo => outside(Reads::Lfo),
         FocusGlyph::Stability => stability(value),
+        FocusGlyph::Feedback => feedback(value),
         FocusGlyph::Arc => Gauge::Arc { value, bipolar },
     }
 }
@@ -805,7 +809,8 @@ impl Gauge {
             | Gauge::VaMix(_)
             | Gauge::Blend { .. }
             | Gauge::Lfo(_)
-            | Gauge::Stability { .. } => false,
+            | Gauge::Stability { .. }
+            | Gauge::Feedback { .. } => false,
             Gauge::Braid(_) | Gauge::Rings(_) | Gauge::Cube(_) | Gauge::Tail(_) => true,
         }
     }
@@ -840,6 +845,17 @@ fn stability(v: f32) -> Gauge {
     Gauge::Stability {
         offset: reach / 2,
         reach,
+    }
+}
+
+/// FEEDBACK's steps either side of 0.
+pub const FEEDBACK_STEPS: i32 = 8;
+
+/// FEEDBACK `v` (0..1 for -1..1) in whole steps.
+fn feedback(v: f32) -> Gauge {
+    let b = clampf(v, 0.0, 1.0) * 2.0 - 1.0;
+    Gauge::Feedback {
+        q: libm::roundf(b * FEEDBACK_STEPS as f32) as i8,
     }
 }
 
