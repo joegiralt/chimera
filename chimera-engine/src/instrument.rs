@@ -396,7 +396,8 @@ pub(crate) struct Paid {
 #[derive(Clone, Copy, Debug)]
 struct Streaming {
     /// Its note's; `None` off the card, or not admitted yet (its source
-    /// moving at note-on).
+    /// moving at note-on). What the card is booked for, not whether the
+    /// voice streams: that is its deck's (`TapeDeck::streams`).
     paid: Option<Paid>,
     /// The note it took fades out first on the same ring: billed until
     /// the fade ends.
