@@ -1649,6 +1649,7 @@ mod bench {
     use core::ptr::{addr_of, addr_of_mut};
     use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering, fence};
 
+    use crate::shared::Cycles;
     use chimera_core::stream::bench::{BENCH, BenchBeds};
     use chimera_core::stream::layout::ChunkIdx;
     use chimera_core::voice_alloc::VoiceIdx;
@@ -1656,7 +1657,6 @@ mod bench {
     use chimera_hal::card_bus::CardFault;
     use chimera_hal::store::StoreError;
     use chimera_hal::units::{BlockCount, Lba, Micros, Millis};
-    use cortex_m::peripheral::DWT;
 
     use chimera_core::console::Inject;
 
