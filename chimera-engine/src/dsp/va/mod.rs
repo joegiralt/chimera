@@ -1152,7 +1152,7 @@ impl VaEngine {
         let b0 = [0, 1].map(|k| {
             let (i0, di) = l.osc[k].inc;
             let cap = lbfm::b0_cap(i0.max(i0 + di * BLOCK_SIZE as f32));
-            let b = lbfm::b0_of(lbfm::loop_b(x, wave[k]));
+            let b = lbfm::target_b0(x, wave[k]);
             let (from, to) = self.lb[k].step(b.max(-cap));
             let from = from.max(-cap);
             (from, step_of((from, to), BLOCK_SIZE))
