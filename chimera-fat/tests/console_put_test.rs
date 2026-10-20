@@ -763,7 +763,7 @@ fn a_source_put_lands_sealed_and_lists() {
     assert!(source_loads(&mut s, &h));
     let vol = s.mount().unwrap();
     assert_eq!(
-        s.delete(vol, source_name(h.sref.crc)),
+        s.delete(vol, source_name(h.sref.stem())),
         Err(StoreError::ReadOnly)
     );
     assert_eq!(

@@ -6,7 +6,7 @@ use super::*;
 
 /// The rows SOURCE stops on, in order: `rows` less the divider.
 #[inline(never)]
-fn stops(pool: &Pool, card: &[(u32, u32)]) -> ([SourceRow; MAX_SOURCES + MAX_TAPES], usize) {
+fn stops(pool: &Pool, card: &[(Stem, u32)]) -> ([SourceRow; MAX_SOURCES + MAX_TAPES], usize) {
     let mut out = [SourceRow::Divider; MAX_SOURCES + MAX_TAPES];
     let mut n = 0;
     for r in rows(pool, card).filter(|r| *r != SourceRow::Divider) {
@@ -48,7 +48,7 @@ fn moved_heads(p: &Project, ready: impl Fn(SourceId, &Heads) -> bool) -> Option<
 }
 
 impl SourceCell {
-    fn size(&self, stem: u32) -> Option<u32> {
+    fn size(&self, stem: Stem) -> Option<u32> {
         let files = self.card.as_ref()?.files();
         files.iter().find(|f| f.0 == stem).map(|f| f.1)
     }
@@ -108,12 +108,12 @@ impl SourceCell {
         if p.part(part).sound.source_ref() == Some(r) {
             return;
         }
-        let head = self.heads.get(r.crc);
+        let head = self.heads.get(r.stem());
         self.memo.turn(p.edit_part(part).sound, r, head.as_ref());
-        if let (None, Some(size)) = (head, self.size(r.crc)) {
+        if let (None, Some(size)) = (head, self.size(r.stem())) {
             self.job = Some(SourceJob::Head {
                 part,
-                stem: r.crc,
+                stem: r.stem(),
                 size,
                 to: HeadFor::Pick,
             });
@@ -150,7 +150,7 @@ impl SourceCell {
         &self,
         p: &Project,
         part: PartId,
-        stem: u32,
+        stem: Stem,
     ) -> Option<(SourceHead, LoadKind)> {
         if !cfg!(feature = "tape") {
             return None;

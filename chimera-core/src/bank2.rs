@@ -171,7 +171,7 @@ pub struct UiDoor {
     strip: fn(&mut dyn Paint, &Overview, TapeMachine, &TapeEngineParams, Heads, (i32, i32)),
     source_turn: fn(&mut SourceCell, &mut Project, PartId, i8),
     source_load: fn(&mut SourceCell, &mut Project, PartId),
-    source_kind: fn(&SourceCell, &Project, PartId, u32) -> Option<HeadKind>,
+    source_kind: fn(&SourceCell, &Project, PartId, crate::storage::Stem) -> Option<HeadKind>,
     #[cfg(feature = "tape")]
     source_tick: fn(&mut SourceCell, &mut Project),
     source_run: fn(&mut SourceCell, SourceJob, &mut dyn Store, &Ready, &mut Project),
@@ -247,7 +247,7 @@ impl UiDoor {
         c: &SourceCell,
         p: &Project,
         part: PartId,
-        stem: u32,
+        stem: crate::storage::Stem,
     ) -> Option<HeadKind> {
         (self.source_kind)(c, p, part, stem)
     }

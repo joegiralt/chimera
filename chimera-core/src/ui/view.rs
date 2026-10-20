@@ -28,7 +28,7 @@ use crate::params::{EnvParams, FilterParams, OutParams};
 use crate::preset::Sound;
 use crate::project::arena::Cost;
 use crate::project::{Absence, Pool};
-use crate::storage::SourceRef;
+use crate::storage::{SourceRef, Stem};
 use crate::stream::units::SourceRate;
 use crate::ui::block_def::{BlockDef, MachineSlot, SlotBinding};
 use crate::ui::filter_panel::{self, PanelKnob, PanelTarget, RouteView};
@@ -243,7 +243,7 @@ pub enum SourceState {
     /// The cell on a card row, not loaded: its head once read (`None`, its
     /// stem stands in), its cost, and the pool's free bytes.
     Card {
-        stem: u32,
+        stem: Stem,
         head: Option<(SoundName, u16, u32)>,
         cost: Cost,
         free: Cost,
@@ -395,7 +395,7 @@ impl SourceState {
                 cost,
                 ..
             } => {
-                let _ = write!(buf, "{stem:08X} · ");
+                let _ = write!(buf, "{:08X} · ", stem.get());
                 tail(buf, None, None, cost)
             }
             SourceState::Card {

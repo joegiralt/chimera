@@ -27,8 +27,8 @@ pub use crate::project::{LoadKind, load_kind};
 #[cfg(feature = "tape")]
 use crate::project::{StreamLoad, StreamStep};
 use crate::storage::{
-    Card, CardEvent, MAX_TAPES, Ready, SourceCheck, SourceHead, SourceRef, TapeList, TapeSource,
-    after_mount, held_for_file_len, source_name,
+    Card, CardEvent, MAX_TAPES, Ready, SourceCheck, SourceHead, SourceRef, Stem, TapeList,
+    TapeSource, after_mount, held_for_file_len, source_name,
 };
 #[cfg(feature = "tape")]
 use crate::stream::stage::{Heads, heads_for};
@@ -141,7 +141,7 @@ pub enum SourceRow {
     Divider,
     /// A card file the pool doesn't hold, by its stem (the CRC).
     Card {
-        stem: u32,
+        stem: Stem,
         cost: Cost,
     },
 }
@@ -158,11 +158,11 @@ fn held(pool: &Pool, s: SourceId) -> Option<SourceRef> {
 
 /// The pool's sources, a divider, then `card`'s files (stem, size) the
 /// pool doesn't hold. No divider with no card row.
-pub fn rows<'a>(pool: &'a Pool, card: &'a [(u32, u32)]) -> impl Iterator<Item = SourceRow> + 'a {
+pub fn rows<'a>(pool: &'a Pool, card: &'a [(Stem, u32)]) -> impl Iterator<Item = SourceRow> + 'a {
     let in_pool = move |stem| {
         SourceId::ALL
             .into_iter()
-            .any(|s| held(pool, s).is_some_and(|r| r.crc == stem))
+            .any(|s| held(pool, s).is_some_and(|r| r.stem() == stem))
     };
     let cards = card.iter().filter_map(move |&(stem, size)| {
         let cost = card_cost(size).filter(|_| !in_pool(stem))?;
@@ -224,7 +224,7 @@ impl ReadSink for Feed<'_> {
 pub fn read_head(
     s: &mut dyn Store,
     r: &Ready,
-    stem: u32,
+    stem: Stem,
     size: u32,
 ) -> Result<SourceHead, SourceNote> {
     let mut check = SourceCheck::new(stem, size).map_err(|_| SourceNote::ReadFailed)?;
@@ -245,7 +245,7 @@ pub fn read_head(
 /// whole, passing file publishes. Nothing moves or publishes before, so
 /// dropping it mid-load is a cancel: the gap and the meter are as they were.
 pub struct SourceLoad {
-    stem: u32,
+    stem: Stem,
     size: u32,
     /// Bytes read so far.
     at: u32,
@@ -277,7 +277,7 @@ pub enum StagedStep {
 impl SourceLoad {
     /// Card file `stem` of `size` bytes, into `p`'s gap; `None` when it
     /// won't fit.
-    pub fn start(p: &mut Project, stem: u32, size: u32) -> Option<SourceLoad> {
+    pub fn start(p: &mut Project, stem: Stem, size: u32) -> Option<SourceLoad> {
         let held = held_for_file_len(size)? as usize;
         let (stage, _) = p.source_staging(held)?;
         Some(SourceLoad {
@@ -354,8 +354,12 @@ pub struct HeadCache([Option<SourceHead>; HEAD_CACHE]);
 impl HeadCache {
     pub const EMPTY: HeadCache = HeadCache([None; HEAD_CACHE]);
 
-    pub fn get(&self, crc: u32) -> Option<SourceHead> {
-        self.0.iter().flatten().find(|h| h.sref.crc == crc).copied()
+    pub fn get(&self, stem: Stem) -> Option<SourceHead> {
+        self.0
+            .iter()
+            .flatten()
+            .find(|h| h.sref.stem() == stem)
+            .copied()
     }
 
     pub fn put(&mut self, h: SourceHead) {
@@ -399,11 +403,11 @@ pub struct SourceMemo([Option<Memo>; MAX_SOURCES]);
 impl SourceMemo {
     pub const EMPTY: SourceMemo = SourceMemo([None; MAX_SOURCES]);
 
-    pub fn get(&self, crc: u32) -> Option<Memo> {
+    pub fn get(&self, stem: Stem) -> Option<Memo> {
         self.0
             .iter()
             .flatten()
-            .find(|m| m.crc.get() == crc)
+            .find(|m| m.crc.get() == stem.get())
             .copied()
     }
 
@@ -435,7 +439,7 @@ impl SourceMemo {
             _ => sound.source = Some(TapeSource::from(to)),
         }
         let (t, p) = (&mut sound.params.tape, &mut sound.params.pitch);
-        match self.get(to.crc) {
+        match self.get(to.stem()) {
             Some(m) => {
                 (t.start, t.end) = (m.start, m.end);
                 (p.pitch, p.fine) = (f32::from(m.pitch), f32::from(m.fine));
@@ -462,7 +466,7 @@ pub(crate) enum SourceJob {
     /// PERIOD to `part`'s Sound if it still plays that source.
     Head {
         part: PartId,
-        stem: u32,
+        stem: Stem,
         size: u32,
         to: HeadFor,
     },
@@ -489,7 +493,7 @@ pub struct SourceCell {
     /// `None`: listed again at the next turn.
     card: Option<TapeList>,
     /// The card row the cell is on, on that Part: (stem, size).
-    at: Option<(PartId, u32, u32)>,
+    at: Option<(PartId, Stem, u32)>,
     job: Option<SourceJob>,
     note: Option<SourceNote>,
     /// A streamed source whose heads its Part moved off, and since how
@@ -702,7 +706,7 @@ impl SourceCell {
         if self.read != Recovery::Clear && r.is_some_and(|r| p.pool().streamed(r)) {
             return SourceState::Absent(Absence::ReadFailed);
         }
-        base.named(r.and_then(|r| self.heads.get(r.crc)).map(|h| h.name))
+        base.named(r.and_then(|r| self.heads.get(r.stem())).map(|h| h.name))
     }
 
     /// SOURCE turned `delta` detents on `part`: a pool row plays at once;
@@ -720,7 +724,7 @@ impl SourceCell {
 
     /// How card row `stem` loads for `part` (`card`'s `kind_in`); closed,
     /// unknown.
-    fn kind(&self, p: &Project, part: PartId, stem: u32) -> Option<(SourceHead, LoadKind)> {
+    fn kind(&self, p: &Project, part: PartId, stem: Stem) -> Option<(SourceHead, LoadKind)> {
         crate::bank2::ui_door(|u| u.source_kind(self, p, part, stem)).flatten()
     }
 

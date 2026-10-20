@@ -35,7 +35,9 @@ use crate::storage::{
     library_file, peek_header, pick, save_target, write_file,
 };
 #[cfg(feature = "source-writer")]
-use crate::storage::{PutRefusal, SourceCheck, Wrote, source_name, source_target, verify_and_seal};
+use crate::storage::{
+    PutRefusal, SourceCheck, Stem, Wrote, source_name, source_target, verify_and_seal,
+};
 use crate::stream::bench::MAX_BED_CHUNKS;
 use crate::stream::layout::FRAMED_CHUNK_BYTES;
 
@@ -140,13 +142,13 @@ fn sound(p: &[u8]) -> Option<LibId> {
 
 /// `/CHIMERA/TAPES/0BADF00D.SRC`, any case: the stem is the source's CRC.
 #[cfg(feature = "source-writer")]
-fn source(p: &[u8]) -> Option<u32> {
+fn source(p: &[u8]) -> Option<Stem> {
     let (dir, name) = p.split_at_checked(TAPES.len())?;
     let (stem, ext) = name.split_at_checked(8)?;
     if !dir.eq_ignore_ascii_case(TAPES) || !ext.eq_ignore_ascii_case(b".SRC") {
         return None;
     }
-    number(stem, 16, 8)
+    number(stem, 16, 8).map(Stem::new)
 }
 
 /// Where a `put` goes.
@@ -159,7 +161,7 @@ pub enum PutTo {
     Sound { id: LibId, over: bool },
     /// A TAPE source, by its stem: written once and sealed.
     #[cfg(feature = "source-writer")]
-    Source(u32),
+    Source(Stem),
     /// Bank 2's image, staged for `bank2 install` and the boot.
     Bank2,
     /// The bench's check table, replaced whole.
@@ -587,7 +589,7 @@ fn session<F: Files, P: Out>(
 fn source_session<F: Files, P: Out>(
     s: &mut F,
     r: &Ready,
-    stem: u32,
+    stem: Stem,
     mut check: SourceCheck,
     arg: PutArg,
     port: &mut P,

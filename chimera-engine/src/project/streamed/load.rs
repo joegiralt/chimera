@@ -62,8 +62,8 @@ impl StreamLoad {
                 }
                 RunsError::Store(e) => read(e),
             })?;
-            let got =
-                read_source_head(s, r, self.sref.crc, runs.len.get()).map_err(StreamFail::Read)?;
+            let got = read_source_head(s, r, self.sref.stem(), runs.len.get())
+                .map_err(StreamFail::Read)?;
             let bad = StreamFail::Read(SourceReadError::Load(LoadError::File(
                 crate::storage::FileError::Corrupt,
             )));
@@ -170,7 +170,7 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
                 continue;
             }
         };
-        let head = match read_source_head(s, r, e.r.crc, runs.len.get()) {
+        let head = match read_source_head(s, r, e.r.stem(), runs.len.get()) {
             // The stem alone matched: another source's file under it is
             // not this one (as `StreamLoad::pass` and `read_sources` judge).
             Ok(head) if head.sref != e.r => {

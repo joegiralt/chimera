@@ -6,6 +6,21 @@ use core::num::NonZeroU8;
 
 use crate::dsp::tape_engine::read::MAX_ZONES;
 
+/// A `.SRC`'s stem: its content's CRC, which names the file
+/// (`source_name`). Not a size, though both are `u32` on the card.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stem(u32);
+
+impl Stem {
+    pub const fn new(crc: u32) -> Stem {
+        Stem(crc)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
 /// A source's identity: its card file's CRC, its length and its rate. A
 /// Sound carries one, never audio. 10 B on disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,6 +32,11 @@ pub struct SourceRef {
 
 impl SourceRef {
     pub const LEN: usize = 10;
+
+    /// Its file's stem.
+    pub const fn stem(self) -> Stem {
+        Stem(self.crc)
+    }
 
     pub fn to_bytes(&self) -> [u8; Self::LEN] {
         let mut b = [0; Self::LEN];

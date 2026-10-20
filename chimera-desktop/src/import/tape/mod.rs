@@ -765,7 +765,7 @@ fn card_head<S: Store>(s: &mut S, r: &Ready, sref: SourceRef) -> Result<SourceHe
         }
     })?;
     let damaged = |_| ImportError::Save(SaveError::Damaged);
-    let check = SourceCheck::new(sref.crc, len.ok_or(StoreError::NotFound)?).map_err(damaged)?;
+    let check = SourceCheck::new(sref.stem(), len.ok_or(StoreError::NotFound)?).map_err(damaged)?;
     let mut feed = Feed(check);
     s.read(vol, file, &mut feed)?;
     feed.0.finish().map_err(damaged)

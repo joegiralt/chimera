@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use chimera_engine::dsp::tape_engine::read::Shape;
-use chimera_engine::storage::{Crc32, PutRefusal, SourceCheck, SourceLayout};
+use chimera_engine::storage::{Crc32, PutRefusal, SourceCheck, SourceLayout, Stem};
 use chimera_engine::stream::bench::{BedCheck, BedChecks, MAX_BED_CHUNKS};
 use chimera_engine::stream::layout::{ChunkIdx, StreamFile, deframe};
 use chimera_hal::store::{FileRuns, Runs};
@@ -90,7 +90,7 @@ fn table(path: &Path) -> Result<BedCheck, String> {
         .ok_or_else(|| format!("{name}: the name is not the source's CRC in hex"))?;
     let len = u32::try_from(file.len()).map_err(|_| format!("{name}: too big"))?;
     let refuse = |e: PutRefusal| format!("{name}: {}", e.message());
-    let mut check = SourceCheck::new(stem, len).map_err(refuse)?;
+    let mut check = SourceCheck::new(Stem::new(stem), len).map_err(refuse)?;
     check.feed(&file).map_err(refuse)?;
     let head = check.finish().map_err(refuse)?;
     if head.shape != Shape::Plain {

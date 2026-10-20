@@ -445,8 +445,8 @@ fn a_streamed_stem_is_not_deleted() {
         ext: runs.finish().unwrap(),
         len: Bytes::new(len),
     };
-    let file = source_name(h.sref.crc);
-    let other = source_name(h.sref.crc ^ 1);
+    let file = source_name(h.sref.stem());
+    let other = source_name(chimera_core::storage::Stem::new(h.sref.crc ^ 1));
     let disk = Rc::new(with_clusters(CLUSTERS, 0x57E));
     let mut s = probed(&disk);
     s.guard_streamed(|f| REG.streams(f));

@@ -491,7 +491,7 @@ impl UiState {
         match self.stream_size(card, store, file.vol, need) {
             // Gone or changed since the read: it loads absent.
             None => self.lib_adopt(go, read, Some(Staged::Missing(need.r))),
-            Some(size) => match SourceLoad::start(&mut self.project, need.r.crc, size) {
+            Some(size) => match SourceLoad::start(&mut self.project, need.r.stem(), size) {
                 Some(stream) => {
                     debug_assert!(
                         !self.src.busy(),

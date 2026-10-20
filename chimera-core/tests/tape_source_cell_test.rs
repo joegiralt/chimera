@@ -334,9 +334,9 @@ fn rows_pool_then_card() {
     let mut rig = Rig::new(&[]);
     rig.pool(&[&a, &b]);
     let card = [
-        (c.0.sref.crc, file_len(&c.0)),
-        (a.0.sref.crc, file_len(&a.0)),
-        (d.0.sref.crc, file_len(&d.0)),
+        (c.0.sref.stem(), file_len(&c.0)),
+        (a.0.sref.stem(), file_len(&a.0)),
+        (d.0.sref.stem(), file_len(&d.0)),
     ];
     let got: Vec<_> = rows(rig.ui.project().pool(), &card).collect();
     let pool = rig.ui.project().pool();
@@ -349,11 +349,11 @@ fn rows_pool_then_card() {
             SourceRow::Pool(id(&b.0)),
             SourceRow::Divider,
             SourceRow::Card {
-                stem: c.0.sref.crc,
+                stem: c.0.sref.stem(),
                 cost: cost(&c.0)
             },
             SourceRow::Card {
-                stem: d.0.sref.crc,
+                stem: d.0.sref.stem(),
                 cost: cost(&d.0)
             },
         ]
@@ -425,7 +425,7 @@ fn loaded_row_moves_above_divider() {
     rig.load();
     let pool = rig.ui.project().pool();
     let id = pool.find_source(h.sref).expect("published");
-    let card = [(h.sref.crc, file_len(&h))];
+    let card = [(h.sref.stem(), file_len(&h))];
     assert_eq!(rows(pool, &card).collect::<Vec<_>>(), [SourceRow::Pool(id)]);
     let s = rig.sound();
     assert_eq!(s.source_ref(), Some(h.sref), "the Part plays it");
@@ -567,9 +567,13 @@ fn source_memory_is_ram_only() {
         s.params.tape.start = crc as f32 / 100.0;
     }
     m.keep(&s);
-    assert_eq!(m.get(1), None, "the oldest went");
     assert_eq!(
-        m.get(2),
+        m.get(chimera_core::storage::Stem::new(1)),
+        None,
+        "the oldest went"
+    );
+    assert_eq!(
+        m.get(chimera_core::storage::Stem::new(2)),
         Some(Memo {
             crc: core::num::NonZeroU32::new(2).unwrap(),
             start: 0.02,
@@ -578,7 +582,7 @@ fn source_memory_is_ram_only() {
             fine: 0
         })
     );
-    assert!(m.get(33).is_some());
+    assert!(m.get(chimera_core::storage::Stem::new(33)).is_some());
 
     // A save holds no memory, and a load starts it empty.
     let (a, b) = (source(1, 6_000, "A"), source(2, 7_000, "B"));
@@ -682,7 +686,7 @@ fn the_last_chunk_does_not_publish_before_adopt() {
     let (h, d) = choir();
     let mut rig = Rig::new(&[choir()]);
     let srcs = rig.ui.project().pool().source_count();
-    let mut l = SourceLoad::start(rig.ui.project_mut(), h.sref.crc, file_len(&h)).unwrap();
+    let mut l = SourceLoad::start(rig.ui.project_mut(), h.sref.stem(), file_len(&h)).unwrap();
     let ui = &mut rig.ui;
     let last = loop {
         let step = rig
@@ -929,7 +933,10 @@ fn ninth_streamed_source_refuses() {
     let pool = rig.ui.project().pool();
     let held: Vec<_> = beds.iter().filter(|b| pool.streamed(b.0.sref)).collect();
     assert_eq!(held.len(), 8);
-    let ninth = beds.iter().find(|b| b.0.sref.crc == streamed[8]).unwrap();
+    let ninth = beds
+        .iter()
+        .find(|b| b.0.sref.stem() == streamed[8])
+        .unwrap();
     assert_eq!(pool.find_source(ninth.0.sref), None, "the ninth: nothing");
     assert_eq!(rig.band(), STREAMS_FULL);
 }

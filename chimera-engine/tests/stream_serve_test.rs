@@ -312,7 +312,10 @@ fn a_failed_read_faults_the_bus_and_counts() {
 
 #[cfg(feature = "tape")]
 fn chunk(stem: u32, file_at: u32, at: u32) -> FileChunk {
-    FileChunk::new(FileKey::new(stem, Lba::new(file_at)), Lba::new(at))
+    FileChunk::new(
+        FileKey::new(chimera_engine::storage::Stem::new(stem), Lba::new(file_at)),
+        Lba::new(at),
+    )
 }
 
 /// #609: a chunk's first frame error is the card's; the same chunk failing

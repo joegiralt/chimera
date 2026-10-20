@@ -192,7 +192,9 @@ fn heads() -> Vec<(SourceHead, u64)> {
             let b = std::fs::read(&p).expect("src");
             let stem = p.file_stem().and_then(|s| s.to_str()).expect("a stem");
             let stem = u32::from_str_radix(stem, 16).expect("a CRC stem");
-            let mut check = SourceCheck::new(stem, b.len() as u32).expect("a source");
+            let mut check =
+                SourceCheck::new(chimera_core::storage::Stem::new(stem), b.len() as u32)
+                    .expect("a source");
             check.feed(&b).expect("checks");
             (check.finish().expect("a source head"), b.len() as u64)
         })
