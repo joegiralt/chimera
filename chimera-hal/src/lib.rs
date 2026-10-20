@@ -305,6 +305,11 @@ impl MidiNote {
         if n <= 127 { Some(Self(n)) } else { None }
     }
 
+    /// `n` limited to 127: for a note already taken from a `MidiNote`.
+    pub const fn clamped(n: u8) -> Self {
+        Self(if n > 127 { 127 } else { n })
+    }
+
     pub const fn get(self) -> u8 {
         self.0
     }

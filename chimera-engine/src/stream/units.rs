@@ -1,7 +1,6 @@
 //! Stream units: audio frames, the audio block clock, source rates and
-//! speed, and the small indices a stream's slots and rings use.
+//! read steps, and the small indices a stream's slots and rings use.
 
-use core::num::NonZeroU32;
 use core::ops::{Mul, Sub};
 
 use chimera_hal::units::{Bytes, Millis, StreamCount};
@@ -167,28 +166,41 @@ impl From<SourceRate> for f32 {
     }
 }
 
-/// Playback speed in thousandths.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Ratio(u32);
+/// A pitch distance in cents, 100 a semitone.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct Cents(f32);
 
-impl Ratio {
-    pub const ONE: Ratio = Ratio(1_000);
+impl Cents {
+    pub const ZERO: Cents = Cents(0.0);
 
-    pub const fn from_milli(m: u32) -> Option<Self> {
-        if m >= 1 && m <= 32_000 {
-            Some(Self(m))
-        } else {
-            None
-        }
+    pub const fn new(c: f32) -> Self {
+        Self(c)
     }
 
-    /// Source frames one audio block consumes, times 1000; never 0.
-    pub const fn frames_per_block_x1000(self, rate: SourceRate) -> NonZeroU32 {
-        let v = BLOCK_SIZE as u64 * rate.0 as u64 * self.0 as u64 / SAMPLE_RATE as u64;
-        match NonZeroU32::new(v as u32) {
-            Some(n) => n,
-            None => NonZeroU32::MIN,
-        }
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+}
+
+/// A count of audio blocks: how long, not when (`AudioBlocks`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Blocks(u32);
+
+impl Blocks {
+    pub const ZERO: Blocks = Blocks(0);
+    pub const MAX: Blocks = Blocks(u32::MAX);
+
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    /// One more, saturating.
+    pub const fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
     }
 }
 

@@ -15,15 +15,17 @@
 use core::ops::Range;
 use core::sync::atomic::Ordering;
 
+use chimera_hal::BLOCK_SIZE;
 use chimera_hal::card_bus::{CardBus, CardFault, Quiet};
-use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 
-use super::admit::STREAM_BUDGET_BPS;
-use super::layout::{CHUNK_BYTES, CHUNK_FRAMES, ChunkIdx, RAW_CHUNK_BYTES};
+use super::admit::{ReadRatio, STREAM_BUDGET_BPS, bill};
+use super::layout::{CHUNK_FRAMES, ChunkIdx};
 use super::port::StreamPort;
 use super::ring::{AudioTurn, GUARD_FRAMES, Guard, Ready, SLOTS};
 use super::slot::SlotState;
-use super::units::{AudioBlocks, Frames, Generation, Inc, OutSamples, SlotIdx, SourceFrame};
+use super::units::{
+    AudioBlocks, Frames, Generation, Inc, OutSamples, SlotIdx, SourceFrame, SourceRate,
+};
 use crate::project::SourceId;
 use crate::voice_alloc::VoiceIdx;
 
@@ -33,12 +35,14 @@ pub const DROP_FADE: OutSamples = OutSamples::new(144);
 pub const QUIET_FADE: OutSamples = OutSamples::new(480);
 /// The fastest read planned for, source frames an output sample.
 const MAX_INC: f32 = Inc::MAX.get();
-/// Admission's bill (`admit::bill`) for a read at 1 frame a sample: 1.5 B
-/// a frame, 9 raw blocks a chunk.
-const BILL_AT_ONE: u64 =
-    SAMPLE_RATE as u64 * 3 * RAW_CHUNK_BYTES as u64 / (2 * CHUNK_BYTES.get() as u64);
-// No admitted voice reads faster than the cursor plans for.
-const _: () = assert!((STREAM_BUDGET_BPS as u64).div_ceil(BILL_AT_ONE) < MAX_INC as u64);
+// No admitted voice reads faster than the cursor plans for: the fastest
+// source at 1 frame a sample is the dearest bill a ratio scales.
+const _: () = assert!(
+    STREAM_BUDGET_BPS
+        .get()
+        .div_ceil(bill(SourceRate::MAX, ReadRatio::ONE).get())
+        < MAX_INC as u32
+);
 
 const CF: u32 = CHUNK_FRAMES.get();
 const BLOCK: u32 = BLOCK_SIZE as u32;
@@ -62,6 +66,22 @@ const _: () = assert!(TRAVEL_MAX < CF - 3);
 // A block and a drop fade ahead stay inside the chunks always asked:
 // the one under the read and the two after, `2 x CF - 3` past it.
 const _: () = assert!(TRAVEL_MAX + MAX_INC as u32 * DROP_FADE.get() < 2 * CF - 3);
+
+/// The deck's own fade (`Cursor::duck`): out before a jump no span
+/// holds, or back in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Duck {
+    Out,
+    In,
+}
+
+/// What a block's tend does with the chunks wanted: asks the missing, or
+/// keeps only those Ready (under a quiet).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Tend {
+    Ask,
+    ReadyOnly,
+}
 
 /// Which of a source's heads: START's, or the loop's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -422,12 +442,15 @@ impl Cursor {
         self.head
     }
 
-    /// The deck's own fade, out (`true`) before a jump no span holds, or
-    /// back in: over `DROP_FADE`, while it plays a span (a drop-out, a cold
-    /// start or quiet runs its own).
-    pub fn duck(&mut self, out: bool) {
+    /// The deck's own fade, out before a jump no span holds, or back in:
+    /// over `DROP_FADE`, while it plays a span (a drop-out, a cold start or
+    /// quiet runs its own).
+    pub fn duck(&mut self, d: Duck) {
         if matches!(self.state, Flow::Head(_) | Flow::Ring(_)) {
-            self.gain.step = if out { -DROP_STEP } else { DROP_STEP };
+            self.gain.step = match d {
+                Duck::Out => -DROP_STEP,
+                Duck::In => DROP_STEP,
+            };
         }
     }
 
@@ -473,7 +496,7 @@ impl Cursor {
             }
         }
         self.inc = inc_max;
-        self.tend(pos, true, port);
+        self.tend(pos, Tend::Ask, port);
     }
 
     /// A jump mid-note (a wrap, heads re-staged) to `pos`: `start` on the
@@ -499,7 +522,7 @@ impl Cursor {
             self.wrap = None;
             let step = if level < FULL { DROP_STEP } else { 0 };
             self.gain = Fade { level, step };
-            self.tend(pos, true, port);
+            self.tend(pos, Tend::Ask, port);
             return;
         }
         self.start(pos, inc_max, head, src, port);
@@ -558,7 +581,12 @@ impl Cursor {
             }
             return Plan::silent(FadeCmd::Hold, self.inc);
         }
-        self.tend(i0, self.state != Flow::Quiet, port);
+        let t = if self.state == Flow::Quiet {
+            Tend::ReadyOnly
+        } else {
+            Tend::Ask
+        };
+        self.tend(i0, t, port);
 
         let spans = self.spans(port);
         let walk = walk(&spans, i0);
@@ -659,9 +687,10 @@ impl Cursor {
     }
 
     /// Drops every slot outside the chunks wanted (released if Ready, else
-    /// cancelled, so a late fill lands nowhere) and, `asking`, wants the
-    /// missing ones into the free slots. Not `asking`, every want goes.
-    fn tend(&mut self, i0: SourceFrame, asking: bool, port: &mut StreamPort<'_, '_>) {
+    /// cancelled, so a late fill lands nowhere) and, `Tend::Ask`, wants the
+    /// missing ones into the free slots. `Tend::ReadyOnly`, every want goes.
+    fn tend(&mut self, i0: SourceFrame, t: Tend, port: &mut StreamPort<'_, '_>) {
+        let asking = t == Tend::Ask;
         let file = self.file();
         let Some(last) = last_chunk(file) else {
             return;

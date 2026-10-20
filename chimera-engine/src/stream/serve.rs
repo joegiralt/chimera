@@ -257,12 +257,19 @@ pub enum ErrorStep {
     Rotted,
 }
 
+/// Which read of a fill's piece failed: its first, or the one retry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Attempt {
+    First,
+    Retry,
+}
+
 /// A CRC16 mismatch or an error token is read again, once; a second
 /// failure, a token timeout or a bad R1 faults (C1). A chunk that won't
 /// de-frame faults the first time, and is the file's after (#609).
-pub fn on_error(err: ReadError, retried: bool) -> ErrorStep {
+pub fn on_error(err: ReadError, a: Attempt) -> ErrorStep {
     match err {
-        ReadError::Proto(ProtoError::Crc | ProtoError::ErrorToken(_)) if !retried => {
+        ReadError::Proto(ProtoError::Crc | ProtoError::ErrorToken(_)) if a == Attempt::First => {
             ErrorStep::Retry
         }
         ReadError::Proto(_) => ErrorStep::Fault,
@@ -272,8 +279,8 @@ pub fn on_error(err: ReadError, retried: bool) -> ErrorStep {
 }
 
 /// `on_error`'s step, taken: a fault set on `bus`, a frame error counted.
-pub fn read_failed(err: ReadError, retried: bool, bus: &CardBus, stats: &StreamStats) -> ErrorStep {
-    let step = on_error(err, retried);
+pub fn read_failed(err: ReadError, a: Attempt, bus: &CardBus, stats: &StreamStats) -> ErrorStep {
+    let step = on_error(err, a);
     if matches!(step, ErrorStep::FrameError | ErrorStep::Rotted) {
         stats.frame_errors.fetch_add(1, Ordering::Relaxed);
     }

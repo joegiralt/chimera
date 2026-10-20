@@ -57,7 +57,7 @@ pub type TapeEngine = TapeDeck;
 use core::mem::MaybeUninit;
 use core::ops::Range;
 
-use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
+use chimera_hal::{BLOCK_SIZE, MidiNote, SAMPLE_RATE};
 
 use crate::addr::{BlockRef, ParamAddr};
 use crate::dsp::algo::math::{clampf, exp2};
@@ -71,14 +71,13 @@ use crate::project::SourceId;
 use crate::source_table::GateView;
 use crate::stream::admit::ReadRatio;
 #[cfg(feature = "tape")]
-use crate::stream::cursor::{Cursor, DROP_FADE, HeadIdx, Streamed, Wrap};
+use crate::stream::cursor::{Cursor, DROP_FADE, Duck, HeadIdx, Streamed, Wrap};
 use crate::stream::port::StreamPort;
 #[cfg(feature = "tape")]
 use crate::stream::stage::xfade_max;
 #[cfg(feature = "tape")]
 use crate::stream::units::Frames;
-use crate::stream::units::Inc;
-use crate::stream::units::{SourceFrame, SourceRate};
+use crate::stream::units::{Cents, Inc, SourceFrame, SourceRate};
 use age::Age;
 use heads::{
     Bounds, Dir, Fade, Ghost, Head, POWER_FADE_S, Plan, Turn, Window, at, min_frames, plan,
@@ -206,13 +205,13 @@ pub const fn streamed_cost(m: TapeModel, mode: PlayMode) -> Cost {
 /// wow when TAPE runs) and the bend; SLICE NOTE plays at ROOT. MOTION and WALK move
 /// PLAY's loop, never its speed, so they add nothing. A glide's reach is
 /// the caller's: it passes the note the glide can start from.
-pub fn ratio_max(p: &TapeEngineParams, note: u8, cents: f32, bend_cents: f32) -> ReadRatio {
+pub fn ratio_max(p: &TapeEngineParams, note: MidiNote, cents: Cents, bend: Cents) -> ReadRatio {
     let root = if params::at_root(p) {
-        f32::from(note) * 100.0
+        f32::from(note.get()) * 100.0
     } else {
         p.root
     };
-    crate::stream::admit::ratio_max(note, root, cents, bend_cents)
+    crate::stream::admit::ratio_max(note, Cents::new(root), cents, bend)
 }
 
 /// WALK's speed at MOTION `m`, seconds of source a second: a cubic about
@@ -284,19 +283,15 @@ impl TapeDeck {
 }
 
 /// Frames a head advances each output sample:
-/// `rate / sample_rate · 2^((note·100 + pitch_cents − root) / 1200)`,
-/// clamped to `[ε, INC_MAX]` so a head never stands still.
-pub fn inc(rate: u16, note: u8, pitch_cents: f32, root: f32, sample_rate: u32) -> f32 {
+/// `rate / sample_rate · 2^((note·100 + pitch − root) / 1200)`, clamped
+/// (`Inc`).
+pub fn inc(rate: SourceRate, note: u8, pitch: Cents, root: Cents, sample_rate: u32) -> Inc {
     let oct = clampf(
-        (note as f32 * 100.0 + pitch_cents - root) / 1_200.0,
+        (note as f32 * 100.0 + pitch.get() - root.get()) / 1_200.0,
         -40.0,
         40.0,
     );
-    clampf(
-        rate as f32 / sample_rate as f32 * exp2(oct),
-        f32::EPSILON,
-        INC_MAX,
-    )
+    Inc::new(f32::from(rate) / sample_rate as f32 * exp2(oct))
 }
 
 /// POSITION, MOTION, TAPE, AGE and SIZE as the heads play them: eased
@@ -857,8 +852,13 @@ impl TapeDeck {
         } else {
             self.root
         };
-        let wow = crate::stream::admit::WOW_CENTS;
-        crate::stream::admit::ratio_max(note, root, self.pitch + wow, 0.0)
+        let wow = crate::stream::admit::WOW_CENTS.get();
+        crate::stream::admit::ratio_max(
+            MidiNote::clamped(note),
+            Cents::new(root),
+            Cents::new(self.pitch + wow),
+            Cents::ZERO,
+        )
     }
 
     /// A note that waited `blocks` on a moving source plays from where
@@ -867,12 +867,13 @@ impl TapeDeck {
     /// moves for a few blocks).
     fn catch_up(&mut self, blocks: u32, sample_rate: u32) {
         let i = inc(
-            self.stream_rate.get(),
+            self.stream_rate,
             self.note,
-            self.pitch + self.tune(),
-            self.root,
+            Cents::new(self.pitch + self.tune()),
+            Cents::new(self.root),
             sample_rate,
-        );
+        )
+        .get();
         // `as` saturates: never past `u32`.
         let frames = (blocks as f32 * BLOCK_SIZE as f32 * i) as u32;
         let to = self.heads[0].pos.whole().saturating_add(frames);
@@ -1170,7 +1171,7 @@ impl TapeDeck {
             h1 + self.inc_cap.get() * (BLOCK_SIZE + DROP_FADE.get() as usize) as f32 >= last as f32
         };
         if self.lp() && fading && reads.short.is_some_and(out_soon) {
-            self.cursor.duck(true);
+            self.cursor.duck(Duck::Out);
             self.ducked = true;
         } else if self.lp() && (!reads.landed || self.mute) {
             // The prefetch hasn't landed (a pass shorter than the card's
@@ -1179,11 +1180,11 @@ impl TapeDeck {
             // 5.7: drop-outs fade).
             let left = self.bounds.le.saturating_sub(h.whole()) as f32;
             if left <= self.inc_cap.get() * (BLOCK_SIZE + DROP_FADE.get() as usize) as f32 {
-                self.cursor.duck(true);
+                self.cursor.duck(Duck::Out);
                 self.ducked = true;
             }
         } else if core::mem::take(&mut self.ducked) {
-            self.cursor.duck(false);
+            self.cursor.duck(Duck::In);
         }
         self.render_reads(out, p, &reads, sample_rate);
         // A fade that started into silence stays silent to its end.
@@ -1326,7 +1327,14 @@ impl TapeDeck {
             return;
         }
         if self.model == TapeModel::Stretch {
-            let i = inc(rate.get(), note, self.pitch, self.root, sample_rate);
+            let i = inc(
+                rate,
+                note,
+                Cents::new(self.pitch),
+                Cents::new(self.root),
+                sample_rate,
+            )
+            .get();
             self.stretch = Stretch::on(p, v, i, &self.mac, sample_rate);
             return;
         }
@@ -1335,7 +1343,14 @@ impl TapeDeck {
         self.ws = window_start(start, frames);
         // The first pass's floor, at the note's own `inc` (SCRUB: its loop's
         // vari-speed).
-        let mut fast = inc(rate.get(), note, self.pitch, self.root, sample_rate);
+        let mut fast = inc(
+            rate,
+            note,
+            Cents::new(self.pitch),
+            Cents::new(self.root),
+            sample_rate,
+        )
+        .get();
         if self.model == TapeModel::Scrub {
             fast = (2.0 * libm::fabsf(clampf(p.motion, -1.0, 1.0)) * fast).min(INC_MAX);
         }
@@ -1811,12 +1826,14 @@ impl TapeDeck {
     fn target_inc(&self, rate: SourceRate, extra: f32, sample_rate: u32) -> f32 {
         clampf(
             inc(
-                rate.get(),
+                rate,
                 self.note,
-                self.pitch + self.cents + extra,
-                self.root,
+                Cents::new(self.pitch + self.cents + extra),
+                Cents::new(self.root),
                 sample_rate,
-            ) * self.slide.value(),
+            )
+            .get()
+                * self.slide.value(),
             f32::EPSILON,
             self.inc_cap.get(),
         )

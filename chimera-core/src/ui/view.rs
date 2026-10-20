@@ -317,7 +317,8 @@ impl SourceState {
                 name,
                 ..
             } => {
-                let n = crate::stream::admit::notes_at_root(rate, wow);
+                let n = crate::stream::units::SourceRate::new(rate)
+                    .map_or(0, |r| crate::stream::admit::notes_at_root(r, wow));
                 SourceState::Held {
                     rate,
                     frames,

@@ -19,7 +19,7 @@ use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 use chimera_core::stream::layout::{Piece, RAW_CHUNK_BLOCKS, RAW_CHUNK_BYTES, deframe};
 use chimera_core::stream::ring::{CardSide, Claim};
 use chimera_core::stream::serve::{
-    Blame, ErrorStep, HeldRead, Parked, ReadError, Rot, ServeStep, read_failed, readable,
+    Attempt, Blame, ErrorStep, HeldRead, Parked, ReadError, Rot, ServeStep, read_failed, readable,
     serve_step,
 };
 use chimera_core::stream::units::AudioBlocks;
@@ -266,7 +266,7 @@ fn watch_in(now: Ms) {
 #[cfg(feature = "bank2")]
 #[repr(C)]
 pub(crate) struct CardDoor {
-    step: fn(&mut IrqState, DmaEvent, bool),
+    step: fn(&mut IrqState, DmaEvent, Abort),
     watch: fn(Ms),
 }
 
@@ -753,6 +753,13 @@ impl Dest {
     }
 }
 
+/// Whether the handler's entry found an abort asked (`CardBus::ask_abort`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Abort {
+    Asked,
+    Unasked,
+}
+
 /// A slot's fill: one job, however many CMD18s its chunk takes.
 struct Fill {
     /// The one `Claim` (Task 5) of the slot.
@@ -762,8 +769,8 @@ struct Fill {
     row: HeldRead<'static>,
     /// The piece under way.
     piece: Piece,
-    /// Its transfer failed once already (`serve::on_error`).
-    retried: bool,
+    /// Its piece's first read, or the retry (`serve::on_error`).
+    attempt: Attempt,
 }
 
 /// What a transfer is for.
@@ -986,7 +993,12 @@ fn DMA2_STR0() {
     // SAFETY: `IRQ`'s one `get`: `init` set it before unmasking this
     // handler, which doesn't nest with itself.
     let st = unsafe { IRQ.get() };
-    let (ev, asked) = (events(), BUS.take_abort());
+    let ev = events();
+    let asked = if BUS.take_abort() {
+        Abort::Asked
+    } else {
+        Abort::Unasked
+    };
     // Bank 2's work through the door; closed, no stream plays.
     #[cfg(feature = "bank2")]
     if crate::bank2::board_door(|d| (d.card.step)(st, ev, asked)).is_none() {
@@ -1093,17 +1105,17 @@ enum Work {
 }
 
 impl IrqState {
-    fn step(&mut self, ev: DmaEvent, asked: bool) {
+    fn step(&mut self, ev: DmaEvent, asked: Abort) {
         let in_flight = matches!(self.job, Job::Read(_));
         let g = gate(in_flight, ev);
-        if g == Gate::Ignore && !asked {
+        if g == Gate::Ignore && asked == Abort::Unasked {
             return;
         }
         // Not in flight, a TE or an ask has nothing to stop: look instead.
         let Job::Read(Transfer { bus, phase }) = replace(&mut self.job, Job::Idle) else {
             return self.look();
         };
-        let fail = if asked {
+        let fail = if asked == Abort::Asked {
             Some(Why::Asked)
         } else if g == Gate::Advance {
             None
@@ -1198,7 +1210,7 @@ impl IrqState {
                             claim: claimed,
                             row,
                             piece,
-                            retried: false,
+                            attempt: Attempt::First,
                         });
                     }
                     // `serve_step` read it: never.
@@ -1342,7 +1354,7 @@ impl IrqState {
                 Some(piece) => {
                     let f = Fill {
                         piece,
-                        retried: false,
+                        attempt: Attempt::First,
                         ..f
                     };
                     return self.stop(h, Then::More(f));
@@ -1403,7 +1415,7 @@ impl IrqState {
             // the fault, never a verdict on the chunk.
             None => ReadError::Frame(Blame::Card),
         };
-        failed(err, false);
+        failed(err, Attempt::First);
         self.side.requeue(claim);
         false
     }
@@ -1558,8 +1570,11 @@ impl IrqState {
     fn abort(&mut self, h: Held, kind: Kind, why: Why) {
         STATS.aborts.fetch_add(1, Ordering::Relaxed);
         let then = match (kind, why) {
-            (Kind::Fill(f), Why::Proto(e)) => match failed(ReadError::Proto(e), f.retried) {
-                ErrorStep::Retry => Then::Retry(Fill { retried: true, ..f }),
+            (Kind::Fill(f), Why::Proto(e)) => match failed(ReadError::Proto(e), f.attempt) {
+                ErrorStep::Retry => Then::Retry(Fill {
+                    attempt: Attempt::Retry,
+                    ..f
+                }),
                 ErrorStep::Fault | ErrorStep::FrameError | ErrorStep::Rotted => {
                     Then::Give(self.fail_job(Kind::Fill(f), why))
                 }
@@ -1607,9 +1622,9 @@ fn counted(was: CardFault) {
 
 /// A fill's read error, decided (`serve::read_failed`, which sets the
 /// fault and counts a frame error), its fault counted.
-fn failed(err: ReadError, retried: bool) -> ErrorStep {
+fn failed(err: ReadError, a: Attempt) -> ErrorStep {
     let was = BUS.fault();
-    let step = read_failed(err, retried, &BUS, &STREAM_STATS);
+    let step = read_failed(err, a, &BUS, &STREAM_STATS);
     counted(was);
     step
 }

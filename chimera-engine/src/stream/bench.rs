@@ -12,13 +12,14 @@ use core::num::NonZeroU32;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
+use chimera_hal::SAMPLE_RATE;
 use chimera_hal::units::StreamCount;
 
 use super::layout::{CHUNK_BYTES, CHUNK_FRAMES, ChunkIdx, StreamFile};
 use super::registry::StreamRegistry;
 use super::ring::{AudioTurn, Ready};
 use super::slot::SlotState;
-use super::units::{AudioBlocks, Ratio, SlotIdx, SourceFrame, SourceRate};
+use super::units::{AudioBlocks, SlotIdx, SourceFrame, SourceRate};
 use crate::hw::{BLOCK_SIZE, MAX_VOICES};
 use crate::project::SourceId;
 use crate::storage::Crc32;
@@ -37,6 +38,32 @@ const _: () = assert!(
 const _: () = assert!(BLOCK_SIZE as u32 * 32 < CHUNK_FRAMES.get());
 
 const MAGIC: [u8; 4] = *b"BEDS";
+
+/// A bench head's speed in thousandths: the card bench's alone (a voice
+/// reads at an `admit::ReadRatio`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ratio(u32);
+
+impl Ratio {
+    pub const ONE: Ratio = Ratio(1_000);
+
+    pub const fn from_milli(m: u32) -> Option<Self> {
+        if m >= 1 && m <= 32_000 {
+            Some(Self(m))
+        } else {
+            None
+        }
+    }
+
+    /// Source frames one audio block consumes, times 1000; never 0.
+    pub const fn frames_per_block_x1000(self, rate: SourceRate) -> NonZeroU32 {
+        let v = BLOCK_SIZE as u64 * rate.get() as u64 * self.0 as u64 / SAMPLE_RATE as u64;
+        match NonZeroU32::new(v as u32) {
+            Some(n) => n,
+            None => NonZeroU32::MIN,
+        }
+    }
+}
 
 const _: () = assert!(MAX_BEDS <= SourceId::ALL.len());
 

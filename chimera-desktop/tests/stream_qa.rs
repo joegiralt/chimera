@@ -398,7 +398,9 @@ fn sine_bed(card: &Path) -> (SourceHead, Vec<u8>) {
 #[test]
 #[ignore = "QA: `just stream-qa`"]
 fn stream_qa_stressed() {
+    use chimera_core::MidiNote;
     use chimera_core::stream::admit::{STREAM_BUDGET_BPS, bill, ratio_max};
+    use chimera_core::stream::units::Cents;
     let out = PathBuf::from(format!("{ROOT}/target/stream-qa"));
     let card = out.join("stressed");
     let _ = std::fs::remove_dir_all(&card);
@@ -409,9 +411,20 @@ fn stream_qa_stressed() {
     let notes = [84u8, 62, 62, 62];
     let billed: u32 = notes
         .iter()
-        .map(|&n| bill(24_000, ratio_max(n, 6_000.0, 0.0, 0.0)).0)
+        .map(|&n| {
+            let r = ratio_max(
+                MidiNote::new(n).unwrap(),
+                Cents::new(6_000.0),
+                Cents::ZERO,
+                Cents::ZERO,
+            );
+            bill(SourceRate::new(24_000).unwrap(), r).get()
+        })
         .sum();
-    assert!(billed <= STREAM_BUDGET_BPS, "admission takes {billed}");
+    assert!(
+        billed <= STREAM_BUDGET_BPS.get(),
+        "admission takes {billed}"
+    );
     let p = TapeEngineParams {
         model: TapeModel::Play,
         mode: PlayMode::Loop,

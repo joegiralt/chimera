@@ -1,3 +1,4 @@
+use chimera_engine::stream::bench::Ratio;
 use chimera_engine::stream::units::*;
 use chimera_engine::voice_alloc::VoiceIdx;
 use chimera_hal::units::{Bytes, Millis};

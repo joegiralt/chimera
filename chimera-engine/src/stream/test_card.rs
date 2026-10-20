@@ -14,7 +14,7 @@ use chimera_hal::card_bus::{CardBus, CardFault, ProtoError};
 use super::layout::{CHUNK_BYTES, ChunkIdx, FileChunk, FileKey};
 use super::port::StreamPort;
 use super::ring::{AudioTurn, CardSide, Claim, Rings};
-use super::serve::{ErrorStep, ReadError, Rot, read_failed};
+use super::serve::{Attempt, ErrorStep, ReadError, Rot, read_failed};
 use super::stats::StreamStats;
 use super::units::{AudioBlocks, Frames, Packing};
 use crate::dsp::tape_engine::read::{
@@ -44,8 +44,8 @@ pub struct TestCard<'r> {
     /// The chunks whose records are rotted: they never de-frame.
     rotten: core::ops::Range<u32>,
     rot: Rot,
-    /// The read in flight, the block it lands, and whether it is a retry.
-    flight: Option<(Claim, AudioBlocks, bool)>,
+    /// The read in flight, the block it lands, and which attempt it is.
+    flight: Option<(Claim, AudioBlocks, Attempt)>,
     claims: u32,
     /// Its lookup: every source is this one.
     lookup: Box<dyn Fn(SourceId) -> Option<Frames>>,
@@ -179,8 +179,8 @@ impl<'r> TestCard<'r> {
                 if now.until(*due) > 0 {
                     return;
                 }
-                if let Some((c, _, retried)) = self.flight.take() {
-                    self.land(c, retried, now);
+                if let Some((c, _, a)) = self.flight.take() {
+                    self.land(c, a, now);
                     continue;
                 }
             }
@@ -201,13 +201,13 @@ impl<'r> TestCard<'r> {
                 continue;
             }
             self.claims += 1;
-            self.flight = Some((c, now.after(self.latency), false));
+            self.flight = Some((c, now.after(self.latency), Attempt::First));
         }
     }
 
     /// The claimed chunk's samples into its slot, its guard ahead, Ready;
     /// a failing read is read again once, else requeued, the card faulted.
-    fn land(&mut self, c: Claim, retried: bool, now: AudioBlocks) {
+    fn land(&mut self, c: Claim, a: Attempt, now: AudioBlocks) {
         let key = key(c.chunk());
         let garbled = core::mem::take(&mut self.garble) || self.rotten.contains(&c.chunk().get());
         let err = if self.fail > 0 {
@@ -217,10 +217,10 @@ impl<'r> TestCard<'r> {
             garbled.then(|| ReadError::Frame(self.rot.blame(key)))
         };
         if let Some(err) = err {
-            match read_failed(err, retried, &self.bus, &self.stats) {
+            match read_failed(err, a, &self.bus, &self.stats) {
                 ErrorStep::Retry => {
                     self.claims += 1;
-                    self.flight = Some((c, now.after(self.latency), true));
+                    self.flight = Some((c, now.after(self.latency), Attempt::Retry));
                 }
                 ErrorStep::Fault | ErrorStep::FrameError | ErrorStep::Rotted => {
                     self.card.requeue(c)

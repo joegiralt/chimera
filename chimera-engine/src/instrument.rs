@@ -411,11 +411,7 @@ impl Streaming {
     const IDLE: Streaming = Streaming {
         paid: None,
         fading: None,
-        age: Age {
-            released: false,
-            since: 0,
-            level: crate::stream::admit::LOUD,
-        },
+        age: Age::FRESH,
         capped: false,
     };
 
@@ -1019,12 +1015,12 @@ impl Instrument {
     /// Part that doesn't play TAPE asks nothing.
     fn stream_bill(
         &self,
-        p: usize,
+        p: PartId,
         shared: &AudioShared,
         src: &GateView<'_>,
         at: admission::BillAt,
     ) -> Option<Paid> {
-        if shared.parts[p % MAX_PARTS].params.engine() != EngineType::Tape {
+        if shared.parts[p.index()].params.engine() != EngineType::Tape {
             return None;
         }
         Self::admission(|d| (d.bill)(self, p, shared, src, at)).flatten()
@@ -1066,11 +1062,14 @@ impl Instrument {
     /// The allocator's pick for a note-on (`Allocator::pick_where`), among
     /// voices of its origin. Bank 1's: its filter is a `dyn Fn`, whose
     /// table bank 1 holds.
-    fn pick_one(&mut self, (q, mode, note, from): admission::PickAt, cost: Cost) -> Option<usize> {
+    fn pick_one(&mut self, at: admission::PickAt, cost: Cost) -> Option<usize> {
         let reserved = self.reserved();
         let origins = &self.note_origin;
+        let q = at.part.index() as u8;
         self.alloc
-            .pick_where(q, mode, note, cost, reserved, &|v| origins[v] == from)
+            .pick_where(q, at.mode, at.note, cost, reserved, &|v| {
+                origins[v] == at.origin
+            })
     }
 
     /// Voice `v`'s port this call, capped at what it is paid, only while
@@ -1098,23 +1097,12 @@ impl Instrument {
     fn age_stream(&mut self, v: usize) {
         let s = self.alloc.slots()[v];
         let st = &mut self.streaming[v];
-        st.age = match st.age {
-            _ if s.dying() => Age {
-                released: true,
-                since: u32::MAX,
-                level: 0,
-            },
-            a if a.released == s.held() => Age {
-                released: !s.held(),
-                since: 0,
-                ..a
-            },
-            a => Age {
-                since: a.since.saturating_add(1),
-                ..a
-            },
+        let level = self.voices[v].level();
+        st.age = if s.dying() {
+            Age::DYING
+        } else {
+            st.age.after_block(s.held(), level)
         };
-        st.age.level = self.voices[v].level();
         if !self.voices[v].fading() {
             st.fading = None;
         }
@@ -1185,6 +1173,9 @@ impl Instrument {
                         continue;
                     }
                     let (q, mode) = (p as u8, part.mix.mode);
+                    let Some(id) = PartId::new(q) else {
+                        continue;
+                    };
                     // ORBIT's notes are snapped in their ring.
                     let note = match from {
                         NoteOrigin::Live => part.live_note(ev.note, self.harmony),
@@ -1204,13 +1195,24 @@ impl Instrument {
                     let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
                     let knobs = if first { Knobs::COST } else { Cost::ZERO };
                     let mut cost = self.costs[p] + knobs + self.high_note(p, shared, note, first);
-                    let stream = self.stream_bill(p, shared, src, (ev.note, note, part.source));
+                    let at = admission::BillAt {
+                        key: ev.note,
+                        note,
+                        source: part.source,
+                    };
+                    let stream = self.stream_bill(id, shared, src, at);
                     if stream.is_some() {
                         cost = cost + COST_STREAM;
                     }
                     let glides = part.params.pitch.steal_glide().is_some();
+                    let pick = admission::PickAt {
+                        part: id,
+                        mode,
+                        note,
+                        origin: from,
+                    };
                     let Some((v, stream)) = self.pick_admitted(
-                        (q, mode, note, from),
+                        pick,
                         (cost, glides),
                         stream,
                         (ports.stats(), ports.fault()),
@@ -1295,11 +1297,7 @@ impl Instrument {
                         self.streaming[v] = Streaming {
                             paid: stream,
                             fading: old.filter(|_| self.voices[v].fading()),
-                            age: Age {
-                                released: false,
-                                since: 0,
-                                level: crate::stream::admit::LOUD,
-                            },
+                            age: Age::FRESH,
                             capped: false,
                         };
                     }

@@ -239,7 +239,7 @@ fn a_read_holds_its_row() {
 /// blamed on it (#609).
 #[test]
 fn read_errors_retry_once_then_fault() {
-    use chimera_engine::stream::serve::{Blame, ErrorStep, ReadError, on_error};
+    use chimera_engine::stream::serve::{Attempt, Blame, ErrorStep, ReadError, on_error};
     use chimera_hal::card_bus::ProtoError;
     let p = ReadError::Proto;
     for (err, first, again) in [
@@ -267,8 +267,8 @@ fn read_errors_retry_once_then_fault() {
             ErrorStep::Rotted,
         ),
     ] {
-        assert_eq!(on_error(err, false), first, "{err:?}");
-        assert_eq!(on_error(err, true), again, "{err:?} retried");
+        assert_eq!(on_error(err, Attempt::First), first, "{err:?}");
+        assert_eq!(on_error(err, Attempt::Retry), again, "{err:?} retried");
     }
 }
 
@@ -276,20 +276,26 @@ fn read_errors_retry_once_then_fault() {
 /// frame error counts, then faults, unless it is the file's (#609).
 #[test]
 fn a_failed_read_faults_the_bus_and_counts() {
-    use chimera_engine::stream::serve::{Blame, ErrorStep, ReadError, read_failed};
+    use chimera_engine::stream::serve::{Attempt, Blame, ErrorStep, ReadError, read_failed};
     use chimera_hal::card_bus::{CardBus, CardFault, ProtoError};
     use std::sync::atomic::Ordering::Relaxed;
     let (bus, stats) = (CardBus::new(), StreamStats::new());
     let crc = ReadError::Proto(ProtoError::Crc);
-    assert_eq!(read_failed(crc, false, &bus, &stats), ErrorStep::Retry);
+    assert_eq!(
+        read_failed(crc, Attempt::First, &bus, &stats),
+        ErrorStep::Retry
+    );
     assert_eq!(bus.fault(), CardFault::Clear);
-    assert_eq!(read_failed(crc, true, &bus, &stats), ErrorStep::Fault);
+    assert_eq!(
+        read_failed(crc, Attempt::Retry, &bus, &stats),
+        ErrorStep::Fault
+    );
     assert_eq!(bus.fault(), CardFault::Read);
     assert_eq!(stats.frame_errors.load(Relaxed), 0);
 
     let bus = CardBus::new();
     assert_eq!(
-        read_failed(ReadError::Frame(Blame::Card), false, &bus, &stats),
+        read_failed(ReadError::Frame(Blame::Card), Attempt::First, &bus, &stats),
         ErrorStep::FrameError
     );
     assert_eq!(bus.fault(), CardFault::Read);
@@ -297,7 +303,7 @@ fn a_failed_read_faults_the_bus_and_counts() {
 
     let bus = CardBus::new();
     assert_eq!(
-        read_failed(ReadError::Frame(Blame::File), false, &bus, &stats),
+        read_failed(ReadError::Frame(Blame::File), Attempt::First, &bus, &stats),
         ErrorStep::Rotted
     );
     assert_eq!(bus.fault(), CardFault::Clear, "the file's: no fault");
