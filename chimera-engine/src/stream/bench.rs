@@ -18,7 +18,7 @@ use super::layout::{CHUNK_BYTES, CHUNK_FRAMES, ChunkIdx, StreamFile};
 use super::registry::StreamRegistry;
 use super::ring::{AudioTurn, Ready};
 use super::slot::SlotState;
-use super::units::{AudioBlocks, Frames, Ratio, SlotIdx, SourceRate};
+use super::units::{AudioBlocks, Ratio, SlotIdx, SourceFrame, SourceRate};
 use crate::hw::{BLOCK_SIZE, MAX_VOICES};
 use crate::project::SourceId;
 use crate::storage::Crc32;
@@ -617,8 +617,8 @@ impl BenchStreams {
             let was = head.at.load(Ordering::Relaxed);
             let at = (was + fpb.get()) % total;
             head.at.store(at, Ordering::Relaxed);
-            let old = file.chunk_of(Frames::new(was / 1_000));
-            let new = file.chunk_of(Frames::new(at / 1_000));
+            let old = file.chunk_of(SourceFrame::new(was / 1_000));
+            let new = file.chunk_of(SourceFrame::new(at / 1_000));
             if new != old {
                 let passed = head.cur();
                 free(turn, v, passed);
@@ -651,7 +651,7 @@ impl BenchStreams {
             }
         }
         let at = head.at.load(Ordering::Relaxed);
-        let Some(here) = file.chunk_of(Frames::new(at / 1_000)) else {
+        let Some(here) = file.chunk_of(SourceFrame::new(at / 1_000)) else {
             return false;
         };
         let after = |c: ChunkIdx| {

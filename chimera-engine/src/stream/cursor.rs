@@ -23,14 +23,14 @@ use super::layout::{CHUNK_BYTES, CHUNK_FRAMES, ChunkIdx, RAW_CHUNK_BYTES};
 use super::port::StreamPort;
 use super::ring::{AudioTurn, GUARD_FRAMES, Guard, Ready, SLOTS};
 use super::slot::SlotState;
-use super::units::{AudioBlocks, Frames, Generation, Inc, SlotIdx};
+use super::units::{AudioBlocks, Frames, Generation, Inc, OutSamples, SlotIdx, SourceFrame};
 use crate::project::SourceId;
 use crate::voice_alloc::VoiceIdx;
 
-/// A drop-out's fade, out and back in, in output samples.
-pub const DROP_FADE: Frames = Frames::new(144);
-/// Quiet's fade out, in output samples.
-pub const QUIET_FADE: Frames = Frames::new(480);
+/// A drop-out's fade, out and back in.
+pub const DROP_FADE: OutSamples = OutSamples::new(144);
+/// Quiet's fade out.
+pub const QUIET_FADE: OutSamples = OutSamples::new(480);
 /// The fastest read planned for, source frames an output sample.
 const MAX_INC: f32 = Inc::MAX.get();
 /// Admission's bill (`admit::bill`) for a read at 1 frame a sample: 1.5 B
@@ -44,6 +44,7 @@ const CF: u32 = CHUNK_FRAMES.get();
 const BLOCK: u32 = BLOCK_SIZE as u32;
 /// Taps after a read's own frame.
 const AFTER: u32 = 2;
+const AFTER_F: Frames = Frames::new(AFTER);
 /// Full gain, in steps both fades divide exactly, so each lands on 0
 /// and 1 with no residue.
 const FULL: i16 = 1_440;
@@ -79,8 +80,8 @@ impl HeadIdx {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RamHead {
     pub idx: HeadIdx,
-    pub start: u32,
-    pub end: u32,
+    pub start: SourceFrame,
+    pub end: SourceFrame,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,7 +124,7 @@ pub enum FadeCmd {
     Hold,
     /// Falling, silent by the read at `end_frame`, the last held.
     Out {
-        end_frame: u32,
+        end_frame: SourceFrame,
     },
     In,
 }
@@ -132,7 +133,7 @@ pub enum FadeCmd {
 /// slot's through `Cursor::ready`, under the block's turn.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plan {
-    runs: [(SpanSrc, Range<u32>); 2],
+    runs: [(SpanSrc, Range<SourceFrame>); 2],
     n: u8,
     pub fade: FadeCmd,
     /// The note's fastest read: the deck caps each sample's step at it.
@@ -140,7 +141,10 @@ pub struct Plan {
 }
 
 impl Plan {
-    const NONE: (SpanSrc, Range<u32>) = (SpanSrc::Head(HeadIdx::START), 0..0);
+    const NONE: (SpanSrc, Range<SourceFrame>) = (
+        SpanSrc::Head(HeadIdx::START),
+        SourceFrame::ZERO..SourceFrame::ZERO,
+    );
 
     fn silent(fade: FadeCmd, inc_max: Inc) -> Plan {
         Plan {
@@ -153,8 +157,8 @@ impl Plan {
 
     /// The walk's first two legs, to the block's last read or the last
     /// held, whichever is first.
-    fn read(&mut self, w: &Walk, i_last: u32) {
-        let end = w.held.min(i_last).saturating_add(1);
+    fn read(&mut self, w: &Walk, i_last: SourceFrame) {
+        let end = w.held.min_at(i_last).saturating_add(Frames::new(1));
         for (k, run) in self.runs.iter_mut().enumerate().take(w.n) {
             let Some(&(src, at)) = w.legs.get(k).filter(|l| l.1 < end) else {
                 break;
@@ -171,22 +175,84 @@ impl Plan {
 
     /// The block's reads, in order: a span each, and the read positions
     /// it takes. Past the last, the voice reads nothing (its gain is 0).
-    pub fn runs(&self) -> &[(SpanSrc, Range<u32>)] {
+    pub fn runs(&self) -> &[(SpanSrc, Range<SourceFrame>)] {
         self.runs.get(..usize::from(self.n)).unwrap_or(&[])
     }
+}
+
+/// Where a span's reads end: at a frame, or held to the file's end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SpanEnd {
+    At(SourceFrame),
+    FileEnd,
+}
+
+impl SpanEnd {
+    fn covers(self, i: SourceFrame) -> bool {
+        match self {
+            SpanEnd::At(last) => i <= last,
+            SpanEnd::FileEnd => true,
+        }
+    }
+
+    /// The last read held, or `i` if that's sooner.
+    fn min_at(self, i: SourceFrame) -> SourceFrame {
+        match self {
+            SpanEnd::At(last) => last.min(i),
+            SpanEnd::FileEnd => i,
+        }
+    }
+
+    /// The first read after; `SourceFrame::MAX` held to the file's end.
+    fn after(self) -> SourceFrame {
+        match self {
+            SpanEnd::At(last) => last.saturating_add(Frames::new(1)),
+            SpanEnd::FileEnd => SourceFrame::MAX,
+        }
+    }
+}
+
+/// The reads frames `held` of a file of `file` take, `first..=last`: from
+/// the frame after its first (a read takes the frame before), or from 0
+/// at the file's start; to `AFTER` short of its end (the taps after),
+/// or every read on at the file's end, where the view clamps. `None` if
+/// it can end no read.
+pub fn reads(held: Range<SourceFrame>, file: Frames) -> Option<(SourceFrame, SpanEnd)> {
+    let first = match held.start.get() {
+        0 => SourceFrame::ZERO,
+        f => SourceFrame::new(f.saturating_add(1)),
+    };
+    let last = if held.end.get() >= file.get() {
+        SpanEnd::FileEnd
+    } else {
+        SpanEnd::At(SourceFrame::new(held.end.get().checked_sub(AFTER + 1)?))
+    };
+    Some((first, last))
+}
+
+/// A Hermite read at `i` (taps `i - 1..=i + 2`) lies inside `held`, or
+/// clamps only at the file's own ends: the one rule the cursor plans by
+/// and a span reads by.
+pub fn holds(held: Range<SourceFrame>, file: Frames, i: SourceFrame) -> bool {
+    reads(held, file).is_some_and(|(first, last)| first <= i && last.covers(i))
 }
 
 /// The read positions a span holds, `first..=last`.
 #[derive(Clone, Copy)]
 struct Span {
     src: SpanSrc,
-    first: u32,
-    last: u32,
+    first: SourceFrame,
+    last: SpanEnd,
 }
 
 impl Span {
-    fn holds(&self, i: u32) -> bool {
-        self.first <= i && i <= self.last
+    fn new(src: SpanSrc, held: Range<SourceFrame>, file: Frames) -> Option<Span> {
+        let (first, last) = reads(held, file)?;
+        Some(Span { src, first, last })
+    }
+
+    fn holds(&self, i: SourceFrame) -> bool {
+        self.first <= i && self.last.covers(i)
     }
 }
 
@@ -195,9 +261,9 @@ const SPANS: usize = SLOTS + 1;
 /// Span to span from a read: legs, each a span and the read it takes over
 /// at, and the last read held.
 struct Walk {
-    legs: [(SpanSrc, u32); SPANS],
+    legs: [(SpanSrc, SourceFrame); SPANS],
     n: usize,
-    held: u32,
+    held: SpanEnd,
 }
 
 /// From `i0`: a Ready slot holding it (the one reaching furthest), else
@@ -205,7 +271,7 @@ struct Walk {
 /// and reaches further. Taking over early keeps a span entered mid-block
 /// a whole chunk long, so a block needs two runs at most. `None` if
 /// nothing holds `i0`.
-fn walk(spans: &[Option<Span>; SPANS], i0: u32) -> Option<Walk> {
+fn walk(spans: &[Option<Span>; SPANS], i0: SourceFrame) -> Option<Walk> {
     let all = || spans.iter().flatten();
     let mut cur = *all()
         .filter(|s| s.holds(i0))
@@ -214,9 +280,7 @@ fn walk(spans: &[Option<Span>; SPANS], i0: u32) -> Option<Walk> {
     let mut n = 1;
     while let Some(&from) = legs.get(n - 1).filter(|_| n < SPANS) {
         let Some(next) = all()
-            .filter(|s| {
-                s.first > from.1 && s.first <= cur.last.saturating_add(1) && s.last > cur.last
-            })
+            .filter(|s| s.first > from.1 && s.first <= cur.last.after() && s.last > cur.last)
             .min_by_key(|s| s.first)
         else {
             break;
@@ -234,59 +298,26 @@ fn walk(spans: &[Option<Span>; SPANS], i0: u32) -> Option<Walk> {
     })
 }
 
-fn chunk_of(i: u32) -> u32 {
-    i / CF
+fn last_chunk(file: Frames) -> Option<ChunkIdx> {
+    file.get()
+        .checked_sub(1)
+        .map(|f| ChunkIdx::of(SourceFrame::new(f)))
 }
 
-fn last_chunk(file: Frames) -> Option<u32> {
-    file.get().checked_sub(1).map(chunk_of)
-}
-
-/// A head holds from its second frame (a read takes the frame before),
-/// or from 0 at the file's start; one reaching the file's end holds every
-/// read after it (the view clamps at both ends).
-fn head_span(h: RamHead, file: Frames) -> Span {
-    let last = if h.end >= file.get() {
-        u32::MAX
-    } else {
-        h.end.saturating_sub(AFTER + 1)
-    };
-    let first = if h.start == 0 {
-        0
-    } else {
-        h.start.saturating_add(1)
-    };
-    Span {
-        src: SpanSrc::Head(h.idx),
-        first,
-        last,
-    }
+fn head_span(h: RamHead, file: Frames) -> Option<Span> {
+    Span::new(SpanSrc::Head(h.idx), h.start..h.end, file)
 }
 
 /// Chunk `c` in slot `s`, its guard ahead of it if Guarded; the first
 /// chunk and the last clamp at the file's ends.
-fn slot_span(s: SlotIdx, c: ChunkIdx, g: Guard, last: u32) -> Span {
-    let c = c.get();
+fn slot_span(s: SlotIdx, c: ChunkIdx, g: Guard, file: Frames) -> Option<Span> {
     let guard = match g {
-        Guard::Guarded => GUARD_FRAMES.get(),
-        Guard::Unguarded => 0,
+        Guard::Guarded => GUARD_FRAMES,
+        Guard::Unguarded => Frames::new(0),
     };
-    let start = c.saturating_mul(CF);
-    let first = if c == 0 {
-        0
-    } else {
-        start.saturating_sub(guard).saturating_add(1)
-    };
-    let last = if c >= last {
-        u32::MAX
-    } else {
-        start.saturating_add(CF - AFTER - 1)
-    };
-    Span {
-        src: SpanSrc::Slot(s),
-        first,
-        last,
-    }
+    let start = c.first_frame();
+    let held = start.saturating_sub(guard)..start.saturating_add(CHUNK_FRAMES);
+    Span::new(SpanSrc::Slot(s), held, file)
 }
 
 fn flow_of(src: SpanSrc) -> Flow {
@@ -313,10 +344,10 @@ fn hush(bus: &CardBus) -> Option<i16> {
 /// so the wrap lands warm: REEL's "known a step ahead" (spec § 5.6).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Wrap {
-    pub last: u32,
-    pub fade: u32,
-    pub from: u32,
-    pub to: u32,
+    pub last: SourceFrame,
+    pub fade: SourceFrame,
+    pub from: SourceFrame,
+    pub to: SourceFrame,
 }
 
 /// What a note streams: its source, whose registry row the card reads,
@@ -368,7 +399,7 @@ impl Cursor {
     }
 
     /// The Ready slot holding read `pos`, reaching furthest.
-    fn ring_at(&self, pos: u32, port: &StreamPort<'_, '_>) -> Option<SlotIdx> {
+    fn ring_at(&self, pos: SourceFrame, port: &StreamPort<'_, '_>) -> Option<SlotIdx> {
         let spans = self.spans(port);
         let s = spans[..SLOTS]
             .iter()
@@ -413,7 +444,7 @@ impl Cursor {
     /// (else starts cold; silent under a quiet), and asks every slot.
     pub fn start(
         &mut self,
-        pos: u32,
+        pos: SourceFrame,
         inc_max: Inc,
         head: Option<RamHead>,
         src: Streamed,
@@ -425,7 +456,7 @@ impl Cursor {
         port.turn.stream(port.voice, src.id);
         self.src = Some(src);
         self.wrap = None;
-        match head.filter(|&h| head_span(h, src.frames).holds(pos)) {
+        match head.filter(|&h| head_span(h, src.frames).is_some_and(|s| s.holds(pos))) {
             Some(h) => {
                 self.head = Some(h);
                 self.state = Flow::Head(h.idx);
@@ -450,7 +481,7 @@ impl Cursor {
     /// steps, nor one under a quiet snaps to 0. Nothing before a start.
     pub fn jump(
         &mut self,
-        pos: u32,
+        pos: SourceFrame,
         inc_max: Inc,
         head: Option<RamHead>,
         port: &mut StreamPort<'_, '_>,
@@ -461,7 +492,7 @@ impl Cursor {
         let level = self.gain.level;
         // A prefetched wrap (`Wrap`) lands on its Ready slot: warm, its
         // slots kept.
-        let on_head = head.is_some_and(|h| head_span(h, src.frames).holds(pos));
+        let on_head = head.is_some_and(|h| head_span(h, src.frames).is_some_and(|s| s.holds(pos)));
         if !on_head && let Some(s) = self.ring_at(pos, port) {
             (self.head, self.state, self.inc) = (None, Flow::Ring(s), inc_max);
             self.wrap = None;
@@ -491,9 +522,10 @@ impl Cursor {
     pub fn plan(&mut self, pos: f64, port: &mut StreamPort<'_, '_>) -> Plan {
         let inc = self.inc.get();
         // `as` saturates (NaN to 0): no read past `u32`.
-        let i0 = pos as u32;
-        let i_last = (pos + f64::from(inc * BLOCK as f32)) as u32;
-        let mut look = i_last.saturating_add((inc * DROP_FADE.get() as f32) as u32 + 1);
+        let i0 = SourceFrame::new(pos as u32);
+        let i_last = SourceFrame::new((pos + f64::from(inc * BLOCK as f32)) as u32);
+        let ahead = (self.inc * DROP_FADE).get() + 1;
+        let mut look = i_last.saturating_add(Frames::new(ahead));
         // The pass reads no further than its wrap.
         if let Some(w) = self.wrap {
             look = look.min(w.last);
@@ -514,7 +546,9 @@ impl Cursor {
             port.loud.set(true);
         }
         let file = self.file();
-        if self.head.is_some_and(|h| head_span(h, file).last < i0) {
+        // A head that holds no read is passed too.
+        let passed = |h| head_span(h, file).is_none_or(|s| s.last < SpanEnd::At(i0));
+        if self.head.is_some_and(passed) {
             self.head = None;
         }
         if self.state == Flow::Quiet && self.gain.level <= 0 {
@@ -528,8 +562,9 @@ impl Cursor {
         let spans = self.spans(port);
         let walk = walk(&spans, i0);
         let held = walk.as_ref().map(|w| w.held);
-        let ok = held.is_some_and(|h| h >= look);
-        let end_frame = held.unwrap_or(i0);
+        let ok = held.is_some_and(|h| h >= SpanEnd::At(look));
+        // Not `ok`, the walk ends before the file's.
+        let end_frame = held.map_or(i0, |h| h.min_at(SourceFrame::MAX));
         if walk.is_none() && self.gain.level > 0 {
             // Audible with nothing to read: a jump that skipped `start`.
             port.stats.unplanned.fetch_add(1, Ordering::Relaxed);
@@ -612,21 +647,20 @@ impl Cursor {
 
     /// The first chunk wanted: the one under the read (the last, past
     /// END), or with a head, the one holding the head's last read (so a
-    /// slot takes over in time); past the last chunk if the head reaches
-    /// the end.
-    fn base(&self, i0: u32, file: Frames, last: u32) -> u32 {
-        let under = chunk_of(i0.saturating_sub(1)).min(last);
-        match self.head.map(|h| head_span(h, file).last) {
-            Some(u32::MAX) => u32::MAX,
-            Some(last) => under.max(chunk_of(last)),
-            None => under,
+    /// slot takes over in time); `None` if the head reaches the end.
+    fn base(&self, i0: SourceFrame, file: Frames, last: ChunkIdx) -> Option<ChunkIdx> {
+        let under = ChunkIdx::of(i0.saturating_sub(Frames::new(1))).min(last);
+        match self.head.map(|h| head_span(h, file).map(|s| s.last)) {
+            Some(Some(SpanEnd::FileEnd)) => None,
+            Some(Some(SpanEnd::At(l))) => Some(under.max(ChunkIdx::of(l))),
+            Some(None) | None => Some(under),
         }
     }
 
     /// Drops every slot outside the chunks wanted (released if Ready, else
     /// cancelled, so a late fill lands nowhere) and, `asking`, wants the
     /// missing ones into the free slots. Not `asking`, every want goes.
-    fn tend(&mut self, i0: u32, asking: bool, port: &mut StreamPort<'_, '_>) {
+    fn tend(&mut self, i0: SourceFrame, asking: bool, port: &mut StreamPort<'_, '_>) {
         let file = self.file();
         let Some(last) = last_chunk(file) else {
             return;
@@ -638,14 +672,14 @@ impl Cursor {
             let mine = |g: Generation| g == self.wants[s.index()];
             let (chunk, ready) = match port.turn.seen(v, s) {
                 SlotState::Empty => continue,
-                SlotState::Ready { chunk, generation } if mine(generation) => (chunk.get(), true),
+                SlotState::Ready { chunk, generation } if mine(generation) => (chunk, true),
                 SlotState::Wanted {
                     chunk, generation, ..
                 }
                 | SlotState::Filling { chunk, generation }
                     if mine(generation) =>
                 {
-                    (chunk.get(), false)
+                    (chunk, false)
                 }
                 _ => {
                     port.turn.cancel(v, s);
@@ -674,11 +708,8 @@ impl Cursor {
             else {
                 return;
             };
-            let Some(chunk) = ChunkIdx::new(c) else {
-                return;
-            };
             let by = self.deadline(c, i0, port);
-            if let Some(g) = port.turn.want(v, s, chunk, by) {
+            if let Some(g) = port.turn.want(v, s, c, by) {
                 self.wants[s.index()] = g;
                 (port.pend)();
             }
@@ -688,18 +719,25 @@ impl Cursor {
     /// The chunks wanted, in order, a slot each: from `base` on, and with
     /// a `Wrap`, none past the pass's end but the next pass's start in the
     /// slots that leaves.
-    fn wanted(&self, i0: u32, file: Frames, last: u32) -> [Option<u32>; SLOTS] {
+    fn wanted(&self, i0: SourceFrame, file: Frames, last: ChunkIdx) -> [Option<ChunkIdx>; SLOTS] {
         let base = self.base(i0, file, last);
-        let mut top = base.saturating_add(SLOTS as u32 - 1).min(last);
+        let mut top = base.map(|b| b.saturating_add(SLOTS as u32 - 1).min(last));
         let mut next = None;
         if let Some(w) = self.wrap {
-            top = top.min(chunk_of(w.last.saturating_add(AFTER)));
-            let lo = chunk_of(w.from.saturating_sub(1)).min(last);
-            next = Some(lo..=chunk_of(w.to.saturating_add(AFTER)).min(last));
+            let end = ChunkIdx::of(w.last.saturating_add(AFTER_F));
+            top = top.map(|t| t.min(end));
+            let lo = ChunkIdx::of(w.from.saturating_sub(Frames::new(1))).min(last);
+            let hi = ChunkIdx::of(w.to.saturating_add(AFTER_F)).min(last);
+            next = Some(lo.through(hi));
         }
         let mut out = [None; SLOTS];
         let mut n = 0;
-        let linear = (base <= top).then_some(base..=top).into_iter().flatten();
+        let linear = base
+            .zip(top)
+            .filter(|(b, t)| b <= t)
+            .map(|(b, t)| b.through(t))
+            .into_iter()
+            .flatten();
         for c in linear.chain(next.into_iter().flatten()) {
             if n < SLOTS && !out[..n].contains(&Some(c)) {
                 out[n] = Some(c);
@@ -711,19 +749,19 @@ impl Cursor {
 
     /// `now` plus the blocks until the read needs chunk `c`: at its start,
     /// or once the head runs out.
-    fn deadline(&self, c: u32, i0: u32, port: &StreamPort<'_, '_>) -> AudioBlocks {
-        let mut need = c.saturating_mul(CF);
-        if let Some(h) = self.head {
-            need = need.max(head_span(h, self.file()).last.saturating_add(1));
+    fn deadline(&self, c: ChunkIdx, i0: SourceFrame, port: &StreamPort<'_, '_>) -> AudioBlocks {
+        let mut need = c.first_frame();
+        if let Some(s) = self.head.and_then(|h| head_span(h, self.file())) {
+            need = need.max(s.last.after());
         }
         // A wrap's chunk is read from its fade's start on.
         if let Some(w) = self
             .wrap
-            .filter(|w| c < chunk_of(i0) || c > chunk_of(w.last.saturating_add(AFTER)))
+            .filter(|w| c < ChunkIdx::of(i0) || c > ChunkIdx::of(w.last.saturating_add(AFTER_F)))
         {
             need = w.fade;
         }
-        let ahead = need.saturating_sub(i0) as f32;
+        let ahead = (need - i0).get() as f32;
         let blocks = (ahead / (self.inc.get() * BLOCK as f32).max(1.0)) as u32;
         port.now.after(blocks.min(MAX_AHEAD))
     }
@@ -731,14 +769,14 @@ impl Cursor {
     /// The head, and every slot Ready under this cursor's want.
     fn spans(&self, port: &StreamPort<'_, '_>) -> [Option<Span>; SPANS] {
         let mut out = [None; SPANS];
-        let last = last_chunk(self.file()).unwrap_or(0);
+        let file = self.file();
         for (o, s) in out.iter_mut().zip(SlotIdx::ALL) {
             *o = port
                 .turn
                 .ready(port.voice, s, self.wants[s.index()])
-                .map(|r| slot_span(s, r.chunk(), r.guard(), last));
+                .and_then(|r| slot_span(s, r.chunk(), r.guard(), file));
         }
-        out[SLOTS] = self.head.map(|h| head_span(h, self.file()));
+        out[SLOTS] = self.head.and_then(|h| head_span(h, file));
         out
     }
 }

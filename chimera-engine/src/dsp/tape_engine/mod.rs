@@ -78,7 +78,7 @@ use crate::stream::stage::xfade_max;
 #[cfg(feature = "tape")]
 use crate::stream::units::Frames;
 use crate::stream::units::Inc;
-use crate::stream::units::SourceRate;
+use crate::stream::units::{SourceFrame, SourceRate};
 use age::Age;
 use heads::{
     Bounds, Dir, Fade, Ghost, Head, POWER_FADE_S, Plan, Turn, Window, at, min_frames, plan,
@@ -835,8 +835,13 @@ impl TapeDeck {
             }
         }
         let at = self.heads[0].pos.whole();
-        self.cursor
-            .start(at, self.inc_cap, row.head(HeadIdx::START), stream, port);
+        self.cursor.start(
+            SourceFrame::new(at),
+            self.inc_cap,
+            row.head(HeadIdx::START),
+            stream,
+            port,
+        );
     }
 
     /// A streamed note's cap at read ratio `r`, frames a sample.
@@ -1094,7 +1099,8 @@ impl TapeDeck {
                     self.once_on(self.note, &q, &row.silent(), sample_rate);
                     let at = self.heads[0].pos.whole();
                     let head = row.head(HeadIdx::START);
-                    self.cursor.start(at, self.inc_cap, head, stream, port);
+                    self.cursor
+                        .start(SourceFrame::new(at), self.inc_cap, head, stream, port);
                 }
                 self.stream_block(out, p, row, sample_rate, port);
             }
@@ -1130,7 +1136,8 @@ impl TapeDeck {
             && row.head(h.idx) != Some(h)
         {
             let at = self.heads[0].pos.whole();
-            self.cursor.jump(at, self.inc_cap, row.head(h.idx), port);
+            self.cursor
+                .jump(SourceFrame::new(at), self.inc_cap, row.head(h.idx), port);
         }
         let h = self.heads[0].pos;
         // The next wrap's reads: off the RAM heads (POSITION, LENGTH, WALK
@@ -1140,10 +1147,10 @@ impl TapeDeck {
         let off_heads = next.is_some() && !self.lands(&row);
         self.cursor
             .expect(next.filter(|_| off_heads).map(|(from, to)| Wrap {
-                last: self.bounds.le.saturating_sub(1),
-                fade: self.bounds.fade_at(),
-                from,
-                to,
+                last: SourceFrame::new(self.bounds.le.saturating_sub(1)),
+                fade: SourceFrame::new(self.bounds.fade_at()),
+                from: SourceFrame::new(from),
+                to: SourceFrame::new(to),
             }));
         let plan = self
             .cursor
@@ -1192,8 +1199,12 @@ impl TapeDeck {
                 .and_then(|h| row.head_span(h.idx))
                 .is_some_and(|s| s.holds(at));
             if !held {
-                self.cursor
-                    .jump(at, self.inc_cap, row.head(HeadIdx::LOOP), port);
+                self.cursor.jump(
+                    SourceFrame::new(at),
+                    self.inc_cap,
+                    row.head(HeadIdx::LOOP),
+                    port,
+                );
             }
         }
     }

@@ -2,6 +2,7 @@
 //! speed, and the small indices a stream's slots and rings use.
 
 use core::num::NonZeroU32;
+use core::ops::{Mul, Sub};
 
 use chimera_hal::units::{Bytes, Millis, StreamCount};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
@@ -55,6 +56,53 @@ impl Frames {
         match p {
             Packing::Twelve => Bytes::new(self.0.div_ceil(2).saturating_mul(3)),
         }
+    }
+}
+
+/// A source frame's index: where a read is, or a span starts or ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SourceFrame(u32);
+
+impl SourceFrame {
+    pub const ZERO: SourceFrame = SourceFrame(0);
+    pub const MAX: SourceFrame = SourceFrame(u32::MAX);
+
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    pub const fn saturating_add(self, n: Frames) -> Self {
+        Self(self.0.saturating_add(n.0))
+    }
+
+    pub const fn saturating_sub(self, n: Frames) -> Self {
+        Self(self.0.saturating_sub(n.0))
+    }
+}
+
+/// The frames from `o` on to `self`; 0 if `o` is later.
+impl Sub for SourceFrame {
+    type Output = Frames;
+    fn sub(self, o: SourceFrame) -> Frames {
+        Frames(self.0.saturating_sub(o.0))
+    }
+}
+
+/// A length in output samples, at the audio rate: a fade's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OutSamples(u32);
+
+impl OutSamples {
+    pub const fn new(n: u32) -> Self {
+        Self(n)
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
     }
 }
 
@@ -165,6 +213,15 @@ impl Inc {
 
     pub const fn get(self) -> f32 {
         self.0
+    }
+}
+
+/// The source frames a read at `self` passes in `n` output samples, rounded
+/// down.
+impl Mul<OutSamples> for Inc {
+    type Output = Frames;
+    fn mul(self, n: OutSamples) -> Frames {
+        Frames((self.0 * n.0 as f32) as u32)
     }
 }
 
