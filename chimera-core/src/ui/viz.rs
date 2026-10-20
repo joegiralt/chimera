@@ -106,6 +106,9 @@ pub enum Response {
     /// The 2040's LP4 and LADDER's LP4: `1/((1 + s)⁴ + k)`, the pass band
     /// lowered by `1/(1 + k)` as RES rises.
     K2040,
+    /// The 2040 on VOICE EXP: LP4 under its make-up gain `1 + m(k)`, the
+    /// pass band lowered by about half as much (ADR 0191).
+    K2040Exp,
     /// LADDER's LP2, BP2, BP4 and HP4: LP4's denominator, each mode's
     /// numerator and gain (ADR 0104).
     LadderLp2,
@@ -115,6 +118,20 @@ pub enum Response {
 }
 
 impl Response {
+    /// `of`, with the 2040's VOICE: EXP draws its make-up gain.
+    pub fn of_voice(
+        kind: crate::dsp::filter::FilterKind,
+        m: crate::dsp::filter::FilterMode,
+        voice: crate::dsp::filter::K2040Voice,
+    ) -> Self {
+        match Self::of(kind, m) {
+            Response::K2040 if kind == crate::dsp::filter::FilterKind::K2040 && voice.make_up() => {
+                Response::K2040Exp
+            }
+            r => r,
+        }
+    }
+
     pub fn of(kind: crate::dsp::filter::FilterKind, m: crate::dsp::filter::FilterMode) -> Self {
         use crate::dsp::filter::{FilterKind as K, FilterMode as M};
         match (kind, m) {
@@ -196,6 +213,10 @@ fn mag_db(r: Response, w: f32, reso: f32) -> f32 {
             (z * z, den2(w, k))
         }
         Response::K2040 => (1.0, den4(w, k4)),
+        Response::K2040Exp => {
+            let up = crate::dsp::filter::k2040::make_up(k4);
+            (up * up, den4(w, k4))
+        }
         Response::LadderLp2 | Response::LadderBp2 | Response::LadderBp4 | Response::LadderHp4 => {
             let (m, n) = match r {
                 Response::LadderLp2 => (M::Lp12, (1.0 + w2) * (1.0 + w2)),

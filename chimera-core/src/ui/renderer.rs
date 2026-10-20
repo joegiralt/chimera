@@ -260,7 +260,7 @@ impl Renderer {
                     display,
                     at(c),
                     at(r),
-                    viz::Response::of(flt.kind(), flt.mode()),
+                    viz::Response::of_voice(flt.kind(), flt.mode(), flt.voice),
                     readout,
                 );
                 self.filter_mark(f).draw(display);
