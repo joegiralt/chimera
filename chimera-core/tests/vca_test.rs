@@ -100,7 +100,8 @@ fn env2_on_the_vca_follows_its_contour() {
 #[test]
 fn half_the_amount_is_half_the_level() {
     let mut p = init(EngineType::Algo);
-    p.folder.fold = 0.6;
+    p.fx.set_type(chimera_core::dsp::voice_fx::params::FxType::Fold);
+    p.fx.pots[0] = 0.6;
     let full = render(&p, &mods(&[(ModSource::Env2, VCA, 126)]), 50, 80, 100);
     let half = render(&p, &mods(&[(ModSource::Env2, VCA, 63)]), 50, 80, 100);
     for (i, (f, h)) in full.iter().zip(&half).enumerate() {

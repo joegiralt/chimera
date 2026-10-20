@@ -154,7 +154,7 @@ fn filter_open_and_lfo_2_3_env_1_3_free() {
         .spec()
         .max;
     assert_eq!(val(&snd, "FILTER", "CUTOFF"), format!("{cutoff}"));
-    assert_eq!(val(&snd, "FOLDER", "FOLD"), "0");
+    assert_eq!(val(&snd, "VOICEFX", "TYPE"), "OFF");
     for b in ["ENV1", "ENV3", "LFO2", "LFO3"] {
         for p in ["RATE", "ATK", "DEC", "SHAPE", "SYNC"] {
             let ok = BlockRef::ALL
@@ -528,7 +528,7 @@ fn edits_verified() {
     // Each category passes on a change it owns, and fails on none.
     let cases: [(&str, (&str, &str)); 6] = [
         ("filter: 2040 low pass", ("FILTER.CUTOFF", "1200")),
-        ("fold: a little", ("FOLDER.FOLD", "0.3")),
+        ("fx: a little", ("VOICEFX.P1", "0.3")),
         ("LFO: a slow wobble", ("LFO2.RATE", "0.3")),
         ("envelope: longer release", ("OP_A.RR", "3")),
         ("effects: a reverb send", ("OUT.SEND3", "0.2")),

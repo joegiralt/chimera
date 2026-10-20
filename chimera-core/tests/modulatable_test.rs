@@ -45,9 +45,7 @@ fn recipe(addr: ParamAddr) -> ParamSnapshot {
         _ => p.algo = AlgoParams::single(WaveId::TRI),
     }
     match block {
-        BlockRef::Drive => p.drive.drive = 0.5,
         BlockRef::Filter => p.filter.cutoff = 2000.0,
-        BlockRef::Folder => p.folder.fold = 0.5,
         BlockRef::VoiceFx => {
             p.fx.set_type(FxType::Soft);
             p.fx.pots[0] = 0.5;
@@ -128,9 +126,7 @@ fn every_modulatable_param_audibly_changes_output() {
     for block in BlockRef::ALL {
         for spec in block.specs() {
             let addr = ParamAddr::new(block, spec.id);
-            // DRV and the fold are retired at Task 10 (#614): the voice
-            // plays neither, so their routes are inert until they go.
-            if !addr.modulatable() || matches!(block, BlockRef::Drive | BlockRef::Folder) {
+            if !addr.modulatable() {
                 continue;
             }
             for (case, base) in recipes(addr).iter().enumerate() {

@@ -31,7 +31,7 @@ fn part_home(p: PartId) -> Location {
 /// From Part 2's home, PLUS to FILTER.
 fn filter_on_part_2(ui: &mut UiState) -> Location {
     feed(ui, Input::press(ButtonId::B2));
-    for _ in 0..3 {
+    for _ in 0..2 {
         feed(ui, Input::press(ButtonId::Plus));
     }
     assert!(matches!(ui.page(), PageKey::Part { def, .. } if def == FILTER.id));
@@ -42,7 +42,7 @@ fn filter_on_part_2(ui: &mut UiState) -> Location {
 fn menu_tap_opens_settings_and_backs_out() {
     let mut ui = crate::screen::stack_ui();
     let filter = filter_on_part_2(&mut ui);
-    assert_eq!(filter, Location::pages(P[1], PageAt::of(3, 0)));
+    assert_eq!(filter, Location::pages(P[1], PageAt::of(2, 0)));
     tap(&mut ui, ButtonId::Menu);
     assert_eq!(ui.location(), top());
     assert!(ui.in_settings());
@@ -66,12 +66,12 @@ fn seq_tap_is_sub_page_up_on_release() {
     let mut ui = crate::screen::stack_ui();
     filter_on_part_2(&mut ui);
     feed(&mut ui, Input::press(ButtonId::Edit));
-    let down = Location::pages(P[1], PageAt::of(3, 1));
+    let down = Location::pages(P[1], PageAt::of(2, 1));
     assert_eq!(ui.location(), down);
     feed(&mut ui, Input::press(ButtonId::Seq));
     assert_eq!(ui.location(), down);
     feed(&mut ui, Input::release(ButtonId::Seq).at(100));
-    assert_eq!(ui.location(), Location::pages(P[1], PageAt::of(3, 0)));
+    assert_eq!(ui.location(), Location::pages(P[1], PageAt::of(2, 0)));
 }
 
 #[test]

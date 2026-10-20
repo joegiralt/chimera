@@ -1500,3 +1500,26 @@ fn dirty_trim_never_snaps() {
     println!("DIRTY trim: steady step {steady:.4}, across the RES move {jump:.4}");
     assert!(jump <= 1.5 * steady, "{jump} against {steady}");
 }
+
+/// The 2040's one mode can't change, so KIND's band names it (layout A,
+/// ADR 0155; the `flt_2040_kind` screen golden draws it); the others have
+/// a MODE cell.
+#[test]
+fn the_2040s_kind_band_names_its_mode() {
+    use chimera_core::ui::filter_panel::kind_note;
+    assert_eq!(kind_note(FilterKind::K2040), Some("4-POLE LP"));
+    for k in [FilterKind::Svf, FilterKind::Dirty, FilterKind::Ladder] {
+        assert_eq!(kind_note(k), None, "{k:?}");
+    }
+}
+
+/// LEVEL reads INPUT LEVEL, INPUT on its cell and column (ADR 0155); its
+/// ident stays.
+#[test]
+fn level_is_input_level() {
+    let s = chimera_core::block::find_spec(&FILTER_SPECS, FilterParams::LEVEL).unwrap();
+    assert_eq!(
+        (s.label, s.short, s.ident),
+        ("INPUT LEVEL", Some("INPUT"), "LEVEL")
+    );
+}

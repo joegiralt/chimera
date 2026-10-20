@@ -88,12 +88,14 @@ mod authored {
     /// the FM patches whose timbre is the operators', not the filter's.
     const OPEN: f32 = 20000.0;
 
-    /// The FX slot as SOFT PRE at LEVEL ½: the old DRV at `drive`, `tone`,
-    /// bit for bit.
+    /// The FX slot as SOFT PRE: the old DRV at `drive`, `tone`. P3 is `soft::UNITY_LEVEL`,
+    /// the LEVEL that cancels SOFT's `MAKE_UP` (Task 14), so
+    /// these Sounds keep the loudness they were voiced at.
     fn soft(p: &mut crate::params::ParamSnapshot, drive: f32, tone: f32) {
         use crate::dsp::voice_fx::params::FxType;
         p.fx.set_type(FxType::Soft);
-        (p.fx.pots[0], p.fx.pots[1]) = (drive, tone);
+        (p.fx.pots[0], p.fx.pots[1], p.fx.pots[2]) =
+            (drive, tone, crate::dsp::voice_fx::soft::UNITY_LEVEL);
     }
 
     /// `env` is AR, D1R, D1L, D2R, RR.

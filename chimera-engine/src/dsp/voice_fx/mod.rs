@@ -2,6 +2,9 @@
 //! place and pots (`params`), and `VoiceFx`, which runs them.
 
 pub mod fold;
+pub mod fuzz;
+pub mod legacy;
+pub mod look;
 pub mod params;
 pub mod soft;
 
@@ -37,6 +40,17 @@ impl Ends {
     #[inline]
     pub(crate) fn steady(&self) -> bool {
         self.pots.iter().all(|p| p.0 == p.1) && self.mix.0 == self.mix.1 && self.gate == (1.0, 1.0)
+    }
+}
+
+/// `t`'s memoryless transfer at MIX 1, for the FX page's curve: OFF is the
+/// dry line.
+pub fn curve(t: FxType, x: f32, pots: [f32; 3]) -> f32 {
+    match t {
+        FxType::Off => x,
+        FxType::Soft => soft::curve(x, pots),
+        FxType::Fuzz => fuzz::curve(x, pots),
+        FxType::Fold => fold::curve(x, pots),
     }
 }
 
@@ -76,9 +90,9 @@ struct Fade {
 }
 
 /// A voice's FX slot: P1–P3's and MIX's ramps, the run gate, the setting
-/// the last block ran and the switch in progress. A TYPE or PLACE change
-/// crossfades from the old setting over `FX_FADE`, never snapped; one
-/// arriving mid-fade waits for its end.
+/// the last block ran, the switch in progress and FUZZ's memory, one a
+/// place. A TYPE or PLACE change crossfades from the old setting over
+/// `FX_FADE`, never snapped; one arriving mid-fade waits for its end.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct VoiceFx {
     pots: [Ramp; 3],
@@ -90,6 +104,9 @@ pub struct VoiceFx {
     /// No `pending`: the params hold the latest setting, so a change made
     /// mid-fade is read again when the fade ends, and the last one wins.
     fade: Option<Fade>,
+    /// FUZZ PRE's and POST's: a PLACE fade runs both sides at once, each on
+    /// its own signal, so each keeps its own memory.
+    fuzz: [fuzz::Fuzz; 2],
 }
 
 impl VoiceFx {
@@ -116,6 +133,10 @@ impl VoiceFx {
             (Some(_), Some(to)) => to,
             (_, Some(from)) if from != want => {
                 self.fade = Some(Fade { from, done: 0 });
+                // The side fading in starts fresh, not on a past run's memory.
+                if want.0 == FxType::Fuzz {
+                    self.fuzz[want.1 as usize] = fuzz::Fuzz::new();
+                }
                 want
             }
             _ => want,
@@ -181,6 +202,7 @@ impl VoiceFx {
             match s.set.0 {
                 FxType::Off => {}
                 FxType::Soft => soft::run(&mut k, &b.ends, glide),
+                FxType::Fuzz => self.fuzz[s.set.1 as usize].play(&mut k, &b.ends, glide),
                 FxType::Fold => fold::run(&mut k, &b.ends, glide, lane),
             }
             if lone && s.w == (1.0, 1.0) {

@@ -86,10 +86,12 @@ fn all_twelve_round_trip_on_disk() {
 
 #[test]
 fn unknown_mode_code_loads_as_mix() {
+    // the first code past the last MODE
+    let past = VaMode::ALL.len() as u8;
     let mut p = VaParams::default();
-    assert!(!p.set_enum_code(VaParams::MODE, 10));
+    assert!(!p.set_enum_code(VaParams::MODE, past));
     assert_eq!(p.mode, VaMode::Mix);
-    assert_eq!(VaMode::from_disk_code(10), None);
+    assert_eq!(VaMode::from_disk_code(past), None);
 }
 
 #[test]

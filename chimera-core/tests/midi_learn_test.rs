@@ -20,7 +20,7 @@ use chimera_core::ui::block_registry::{FILTER, FILTER_MOD};
 use chimera_core::ui::learn::{Learn, LearnNote};
 use chimera_core::ui::nav::PartChain;
 use chimera_hal::ButtonId::{B2, Edit, Menu, Mix, Plus, Seq};
-use chimera_hal::EncoderId::{B, C};
+use chimera_hal::EncoderId::{D, E, F};
 use chimera_hal::Ms;
 use screen::{Input, feed, tap};
 
@@ -46,8 +46,8 @@ fn on_cutoff() -> Box<UiState> {
         feed(&mut ui, Input::press(Plus));
     }
     assert_eq!(ui.page_def().id, FILTER.id);
-    feed(&mut ui, Input::turn(B, 1));
-    assert_eq!(ui.focused_slot(), 1);
+    feed(&mut ui, Input::turn(E, 1));
+    assert_eq!(ui.focused_slot(), 4);
     ui
 }
 
@@ -114,8 +114,8 @@ fn armed_turn_moves_focus_only() {
     let mut ui = on_cutoff();
     mix_seq(&mut ui);
     let before = format!("{:?}", ui.project().part(P1).sound.params);
-    feed(&mut ui, Input::turn(C, 5));
-    assert_eq!(ui.focused_slot(), 2);
+    feed(&mut ui, Input::turn(F, 5));
+    assert_eq!(ui.focused_slot(), 5);
     assert_eq!(
         format!("{:?}", ui.project().part(P1).sound.params),
         before,
@@ -200,7 +200,7 @@ fn learn_refusals() {
     feed(&mut ui, Input::press(Edit));
     assert_eq!(ui.page_def().id, FILTER_MOD.id);
     mix_seq(&mut ui);
-    feed(&mut ui, Input::turn(C, 1)); // FM3 IN, armed: focus only
+    feed(&mut ui, Input::turn(D, 1)); // FM3 IN, armed: focus only
     assert_eq!(ui.page_def().id, FILTER_MOD.id, "no SEQ tap");
     assert_eq!(band(&ui), "FM3 IN NOT MAPPABLE");
     let before = format!("{:?}", ui.project().part(P1).sound.params);

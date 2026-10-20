@@ -64,6 +64,7 @@ where
             mod_amount: None,
             look: components::Look::Live,
             motion: None,
+            mini: None,
         };
         components::cell(d, i, top, Some(&cell), size);
     }

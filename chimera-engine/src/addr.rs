@@ -58,9 +58,7 @@ pub enum BlockRef {
     Algo,
     /// One Algo operator (`AlgoOpParams`).
     AlgoOp(Op),
-    Drive,
     Filter,
-    Folder,
     /// The voice's FX slot (`VoiceFxParams`, ADR 0155).
     VoiceFx,
     /// ENV slot `n`: `envelopes[n]`.
@@ -100,7 +98,7 @@ pub enum BlockRef {
 }
 
 impl BlockRef {
-    pub const ALL: [BlockRef; 36] = [
+    pub const ALL: [BlockRef; 34] = [
         BlockRef::Modal,
         BlockRef::Algo,
         BlockRef::AlgoOp(Op::A),
@@ -109,9 +107,7 @@ impl BlockRef {
         BlockRef::AlgoOp(Op::D),
         BlockRef::AlgoOp(Op::E),
         BlockRef::AlgoOp(Op::F),
-        BlockRef::Drive,
         BlockRef::Filter,
-        BlockRef::Folder,
         BlockRef::Env(EnvSlot::Env1),
         BlockRef::Env(EnvSlot::Env2),
         BlockRef::Env(EnvSlot::Env3),
@@ -147,9 +143,7 @@ impl BlockRef {
             BlockRef::Va => &crate::dsp::va::VA_SPECS,
             BlockRef::Algo => &crate::dsp::algo::params::ALGO_SPECS,
             BlockRef::AlgoOp(_) => &crate::dsp::algo::params::ALGO_OP_SPECS,
-            BlockRef::Drive => &crate::params::DRIVE_SPECS,
             BlockRef::Filter => &crate::params::FILTER_SPECS,
-            BlockRef::Folder => &crate::params::FOLDER_SPECS,
             BlockRef::VoiceFx => &crate::dsp::voice_fx::params::VOICE_FX_SPECS,
             BlockRef::Env(_) => &crate::params::ENV_SPECS,
             BlockRef::Lfo(_) => &crate::dsp::lfo::LFO_SPECS,
@@ -178,9 +172,7 @@ impl BlockRef {
             | BlockRef::Va
             | BlockRef::Algo
             | BlockRef::AlgoOp(_)
-            | BlockRef::Drive
             | BlockRef::Filter
-            | BlockRef::Folder
             | BlockRef::VoiceFx
             | BlockRef::Env(_)
             | BlockRef::Lfo(_)
@@ -211,9 +203,7 @@ impl BlockRef {
             | BlockRef::Va
             | BlockRef::Algo
             | BlockRef::AlgoOp(_)
-            | BlockRef::Drive
             | BlockRef::Filter
-            | BlockRef::Folder
             | BlockRef::Out
             | BlockRef::Pitch
             | BlockRef::VoiceFx

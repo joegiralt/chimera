@@ -14,6 +14,7 @@ use crate::dsp::algo::math::log2;
 use crate::dsp::algo::plan::{OPS, blend};
 use crate::dsp::algo::tx::d1l_level;
 use crate::dsp::modulator::{EnvForm, EnvSpeed, Func, HoldPos, LfoForm};
+use crate::dsp::voice_fx::look::{self, Rows};
 use crate::scope::{self, SCOPE_LEN};
 use crate::ui::alg_layout;
 use crate::ui::draw;
@@ -851,6 +852,52 @@ where
                 theme::FAINT,
                 fill,
             );
+        }
+    }
+}
+
+/// FLT › FX's strip: `source › FX › FLT`, or `source › FLT › FX` for
+/// POST, the FX node lit. The same nodes as `effects_flow`.
+pub fn fx_strip<D>(d: &mut D, source: &str, post: bool, y: i32)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    use crate::ui::dungeon_map::{node_x, pill_node, ring_node};
+    draw::fill_rect(
+        d,
+        theme::MAP_X0,
+        y,
+        theme::MAP_X1 - theme::MAP_X0,
+        1,
+        theme::FAINT,
+    );
+    let order = if post {
+        [source, "FLT", "FX"]
+    } else {
+        [source, "FX", "FLT"]
+    };
+    for (i, label) in order.into_iter().enumerate() {
+        let x = node_x(i, 3);
+        if label == "FX" {
+            pill_node(d, x, y, label, theme::INK);
+        } else {
+            ring_node(d, x, y, label, y + 18);
+        }
+    }
+}
+
+const _: () = assert!(look::COLS == (theme::VIZ_RIGHT - theme::VIZ_LEFT + 1) as usize);
+
+/// The FX type's transfer, `rows` from the door (`look::trace`): the sine
+/// period in FAINT, the type's curve of it in INK, about row `cy`.
+pub fn fx_curve<D>(d: &mut D, cy: i32, rows: &Rows)
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    for (r, color) in rows.iter().zip([theme::FAINT, theme::INK]) {
+        for (i, w) in r.windows(2).enumerate() {
+            let x = theme::VIZ_LEFT + i as i32;
+            draw::line(d, x, cy - w[0] as i32, x + 1, cy - w[1] as i32, color, 1);
         }
     }
 }

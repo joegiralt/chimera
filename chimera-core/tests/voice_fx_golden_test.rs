@@ -38,81 +38,120 @@ fn slot(engine: EngineType, ty: FxType, place: Place, mix: f32) -> ParamSnapshot
 }
 
 /// (case, (FNV-1a 64 over every sample's bits, sample bits at SPOT_IDX)).
-// Recorded at the slot's wiring (#614, Task 6).
+// Recorded at the slot's wiring (#614, Task 6); SOFT and FOLD rows
+// re-recorded in Task 14 for their `MAKE_UP` (level-matched wet).
 const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "va_c3_soft_pre",
         (
-            0x4d0135076ed1e842,
+            0x96a84a659bb7ad36,
             [
-                0, 3215478914, 3214582890, 1067408088, 3214684706, 3214678009, 0, 0,
+                0, 3206715266, 3205849718, 1058664374, 3205948070, 3205941600, 0, 0,
             ],
         ),
     ),
     (
         "va_c3_soft_post",
         (
-            0x7cf7a979602c8366,
+            0x3f3fd1d7bc9db678,
             [
-                0, 3215482388, 3214592158, 1067398931, 3214689496, 3214682795, 0, 0,
+                0, 3206718618, 3205858658, 1058655533, 3205952690, 3205946217, 0, 0,
+            ],
+        ),
+    ),
+    (
+        "va_c3_fuzz_pre",
+        (
+            0xec9e435365a823c3,
+            [
+                0, 3205377212, 3204698625, 1057667708, 3204358665, 3204349738, 0, 0,
+            ],
+        ),
+    ),
+    (
+        "va_c3_fuzz_post",
+        (
+            0x56ceec1a9de0d554,
+            [
+                0, 3205377558, 3204698861, 1057667475, 3204359271, 3204350338, 0, 0,
             ],
         ),
     ),
     (
         "va_c3_fold_pre",
         (
-            0xf2c2437c57c93743,
+            0xabcc24c709319a96,
             [
-                0, 3213722362, 3211972795, 1067258309, 1047536202, 1048635333, 0, 0,
+                0, 3208746636, 3206944242, 1062657782, 1042563082, 1043355471, 0, 0,
             ],
         ),
     ),
     (
         "va_c3_fold_post",
         (
-            0x7f38672d6c6d076c,
+            0xd2aae62932b7925b,
             [
-                0, 3213724215, 3211973979, 1067254278, 1047492838, 1048613670, 0, 0,
+                0, 3208749173, 3206945051, 1062652282, 1042533496, 1043325912, 0, 0,
             ],
         ),
     ),
     (
         "algo_c4_soft_pre",
         (
-            0x918c2cf0190de88b,
+            0xee0339a0c6b1e10f,
             [
-                991314980, 3199664328, 1051945892, 1051226140, 3199465503, 3199457812, 3188181505,
-                3174027665,
+                982591546, 3190869431, 1043154226, 1042506552, 3190679069, 3190671638, 3179490563,
+                3165449471,
             ],
         ),
     ),
     (
         "algo_c4_soft_post",
         (
-            0x1e996857f64213b7,
+            0xa680768eb2340451,
             [
-                991316302, 3199663800, 1051948290, 1051777810, 3199464395, 3199456679, 3188183348,
-                3174028285,
+                982592823, 3190867437, 1043159808, 1042995117, 3190674824, 3190667370, 3179492098,
+                3165450148,
+            ],
+        ),
+    ),
+    (
+        "algo_c4_fuzz_pre",
+        (
+            0x97b59aecacb4ac96,
+            [
+                949186984, 3176783889, 1040865222, 3181080956, 3182116681, 3182686291, 3176815722,
+                1040425035,
+            ],
+        ),
+    ),
+    (
+        "algo_c4_fuzz_post",
+        (
+            0x14ab6cea830a0c29,
+            [
+                949188413, 3177408781, 1040865716, 3181078279, 3182115859, 3182684538, 3176823012,
+                1040426517,
             ],
         ),
     ),
     (
         "algo_c4_fold_pre",
         (
-            0xb46c67bc8353b761,
+            0xe7b2545e60bdddf3,
             [
-                982927868, 1033606417, 1026113616, 1048522313, 988228026, 1023964401, 3180330905,
-                3166061092,
+                978163820, 1028970911, 1021808186, 1043244323, 983482112, 1018869340, 3175415228,
+                3162068071,
             ],
         ),
     ),
     (
         "algo_c4_fold_post",
         (
-            0xf35a5cb2b78d86b2,
+            0x48a5894ce1590ecd,
             [
-                982927785, 1033614918, 1026186046, 1051973052, 989754560, 1024013554, 3180329307,
-                3166061000,
+                978163705, 1028981641, 1021905940, 1047921561, 984485859, 1018934053, 3175412934,
+                3162067852,
             ],
         ),
     ),
@@ -125,7 +164,11 @@ fn every_type_and_place_matches_its_golden() {
         (EngineType::Va, 48, "va_c3"),
         (EngineType::Algo, 60, "algo_c4"),
     ] {
-        for (ty, t) in [(FxType::Soft, "soft"), (FxType::Fold, "fold")] {
+        for (ty, t) in [
+            (FxType::Soft, "soft"),
+            (FxType::Fuzz, "fuzz"),
+            (FxType::Fold, "fold"),
+        ] {
             for (place, pl) in [(Place::Pre, "pre"), (Place::Post, "post")] {
                 let out = render(&slot(engine, ty, place, 1.0), note);
                 let name: &'static str = format!("{e}_{t}_{pl}").leak();
@@ -139,9 +182,10 @@ fn every_type_and_place_matches_its_golden() {
 /// The old chain on VA INIT C4, DRIVE ½ (TONE ½, MIX 1) and FOLD ½ (SYM ½,
 /// MIX ½), each alone: FNV-1a over the golden harness's render, recorded
 /// before the stages were deleted (#614). SOFT PRE and FOLD POST at LEVEL ½
-/// are those stages, bit for bit.
-const OLD_DRV: u64 = 0xd6bd_8ae7_98d6_3859;
-const OLD_FOLD: u64 = 0x3802_70ca_2d1b_f542;
+/// were those stages bit for bit; Task 14 re-recorded both for the
+/// `MAKE_UP` of SOFT (0.483) and FOLD (0.684), which level-match the wet.
+const OLD_DRV: u64 = 0x5db4_3ba4_e2df_eb02;
+const OLD_FOLD: u64 = 0x9574_eaed_bbb6_a7ae;
 
 #[test]
 fn soft_pre_is_todays_drv_and_fold_post_is_todays_fold() {

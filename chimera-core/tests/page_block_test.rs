@@ -12,9 +12,9 @@ use chimera_core::ui::page::PageId;
 fn demo_pages_step_like_before() {
     let mut p = ParamSnapshot::default();
     PageId::Demo(reg::DEMO_WAVES.id).apply_encoder(1, -2, &mut p);
-    assert_eq!(p.drive.tone, 0.5 - 2.0 * (1.0 / 128.0));
+    assert_eq!(p.fx.pots[1], 0.5 - 2.0 * (1.0 / 128.0));
     PageId::Demo(reg::DEMO_WAVES.id).apply_encoder(3, -1, &mut p);
-    assert_eq!(p.folder.symmetry, 0.5 - 1.0 / 128.0);
+    assert_eq!(p.fx.mix, 1.0 - 1.0 / 128.0);
     PageId::Demo(reg::DEMO_SHAPES.id).apply_encoder(4, 3, &mut p);
     assert_eq!(p.filter.resonance, 3.0 / 128.0);
     PageId::Demo(reg::DEMO_MOTION.id).apply_encoder(4, 1, &mut p);

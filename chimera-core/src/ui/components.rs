@@ -622,13 +622,21 @@ pub fn big_width(value_text: &str) -> i32 {
 /// large, the value alone, the value font. Never overlapping.
 pub fn layout(value_text: &str, gauge: &Gauge) -> Layout {
     let w = big_width(value_text);
+    // VA's MODE scope keeps its place for a word the large numerals can't hold
+    let beside = |left: i32| {
+        let small = draw::text_width(&theme::FONT_VALUE, value_text, theme::LABEL_TRACKING);
+        matches!(gauge, Gauge::VaMix(_)) && theme::MARGIN_X + small + gap(gauge) <= left
+    };
+    let left = gauge_left(gauge);
     if w > theme::CONTENT_W {
-        return Layout::Small;
+        return match left {
+            Some(left) if beside(left) => Layout::SmallBeside,
+            _ => Layout::Small,
+        };
     }
-    match gauge_left(gauge) {
+    match left {
         Some(left) if theme::FOCUS_VALUE_X + w + gap(gauge) > left => {
-            let small = draw::text_width(&theme::FONT_VALUE, value_text, theme::LABEL_TRACKING);
-            if matches!(gauge, Gauge::VaMix(_)) && theme::MARGIN_X + small + gap(gauge) <= left {
+            if beside(left) {
                 Layout::SmallBeside
             } else {
                 Layout::NoGauge
@@ -750,6 +758,33 @@ where
             theme::ACCENT,
         ),
     }
+}
+
+/// What a cell shows in place of its value text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MiniGlyph {
+    /// PLACE: `post` lights the FLT box.
+    Place { post: bool },
+}
+
+/// An FX box and a FLT box joined by an arrow from `x`, centred on `cy`,
+/// in signal order: the effect's box (lit, ACCENT) left for PRE, right for
+/// POST. Returns the width.
+fn place<D>(d: &mut D, x: i32, cy: i32, post: bool) -> i32
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    let (w, h, gap, r) = (14, 10, 12, 2);
+    for i in 0..2 {
+        let (bx, y) = (x + i * (w + gap), cy - h / 2);
+        if (i == 1) == post {
+            draw::round_rect(d, bx, y, w, h, r, theme::ACCENT);
+        } else {
+            draw::round_outline(d, bx, y, w, h, r, theme::MID);
+        }
+    }
+    draw::arrow(d, x + w + (gap - 8) / 2, cy + 3, theme::MID);
+    2 * w + gap
 }
 
 /// The SWITCH glyph at the band's right: a faint pill track, lit in the
@@ -1363,6 +1398,8 @@ pub struct Cell<'a> {
     /// only its value (PITCH, CRSE, ORBIT's CHANCE). Without one (a page's
     /// own cells), by its readout.
     pub motion: Option<Motion>,
+    /// Drawn in place of the value text and bar.
+    pub mini: Option<MiniGlyph>,
 }
 
 /// Draw cell `i` (knob order a–f, 3×2) with its label baseline `top + row·36`,
@@ -1406,6 +1443,9 @@ where
         (false, true) => theme::INK,
         (false, false) => theme::INK2,
     };
+    if let Some(MiniGlyph::Place { post }) = c.mini {
+        return place(d, x, y + lines.value - 4, post);
+    }
     let advance = cell_value(d, c.text, x, y + lines.value, value_color, value_slot, size);
     let bar = c.motion.map_or(!c.fmt.is_discrete(), |m| m.is_continuous());
     if bar && !dim {

@@ -14,12 +14,10 @@ fn voice_fx_block_code_and_ident_are_frozen() {
 
 #[test]
 fn fx_type_and_place_codes_are_frozen() {
-    assert_eq!(
-        [FxType::Off, FxType::Soft, FxType::Fold].map(|t| t.disk_code()),
-        [0, 1, 3]
-    );
+    assert_eq!(FxType::LIST.map(|t| t.disk_code()), [0, 1, 2, 3]);
+    assert_eq!(FxType::Fuzz.disk_ident(), "FUZZ");
     assert_eq!([Place::Pre, Place::Post].map(|p| p.disk_code()), [0, 1]);
-    assert_eq!(FxType::from_disk_code(2), None); // FUZZ arrives in Task 11
+    assert_eq!(FxType::from_disk_code(4), None); // DELAY's, not built
 }
 
 #[test]
@@ -49,14 +47,18 @@ fn defaults_are_off_pre_and_unity_level() {
 
 #[test]
 fn the_type_list_and_names_agree() {
-    assert_eq!(FxType::LIST, [FxType::Off, FxType::Soft, FxType::Fold]);
-    assert_eq!(FxType::NAMES, ["OFF", "SOFT", "FOLD"]);
+    assert_eq!(
+        FxType::LIST,
+        [FxType::Off, FxType::Soft, FxType::Fuzz, FxType::Fold]
+    );
+    assert_eq!(FxType::NAMES, ["OFF", "SOFT", "FUZZ", "FOLD"]);
     for (i, t) in FxType::LIST.into_iter().enumerate() {
         assert_eq!(FxType::from_index(i as f32), t);
     }
     assert_eq!(FxType::from_index(-3.0), FxType::Off);
     assert_eq!(FxType::from_index(99.0), FxType::Fold);
     assert_eq!(FxType::Soft.default_place(), Place::Pre);
+    assert_eq!(FxType::Fuzz.default_place(), Place::Pre);
     assert_eq!(FxType::Fold.default_place(), Place::Post);
     assert_eq!(FxType::Off.default_place(), Place::Pre);
 }
@@ -81,7 +83,6 @@ fn every_fx_param_round_trips_through_block() {
         assert_eq!(p.enum_code(VoiceFxParams::TYPE), Some(t.disk_code()));
         assert_eq!(p.enum_ident(VoiceFxParams::TYPE), Some(t.disk_ident()));
     }
-    assert!(!p.set_enum_code(VoiceFxParams::TYPE, 2));
     assert!(!p.set_enum_code(VoiceFxParams::TYPE, 4));
     for pl in [Place::Pre, Place::Post] {
         assert!(p.set_enum_code(VoiceFxParams::PLACE, pl.disk_code()));
@@ -99,9 +100,11 @@ fn every_fx_param_round_trips_through_block() {
 
     // TYPE and PLACE through their indexes, as a knob turn sets them.
     let mut q = VoiceFxParams::default();
-    q.set(VoiceFxParams::TYPE, 2.0);
+    q.set(VoiceFxParams::TYPE, 3.0);
     assert_eq!((q.ty(), q.place), (FxType::Fold, Place::Post));
-    assert_eq!(q.get(VoiceFxParams::TYPE), 2.0);
+    assert_eq!(q.get(VoiceFxParams::TYPE), 3.0);
+    q.set(VoiceFxParams::TYPE, 2.0);
+    assert_eq!((q.ty(), q.get(VoiceFxParams::TYPE)), (FxType::Fuzz, 2.0));
     q.set(VoiceFxParams::PLACE, 0.0);
     assert_eq!((q.place, q.get(VoiceFxParams::PLACE)), (Place::Pre, 0.0));
 }

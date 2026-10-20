@@ -102,10 +102,10 @@ fn an_empty_slot_does_not_take_focus() {
         fb
     };
     let mut ui = UiState::new();
-    for _ in 0..2 {
-        feed(&mut ui, Input::press(chimera_hal::ButtonId::Plus)); // ALG, OSC, DRV
+    for _ in 0..3 {
+        feed(&mut ui, Input::press(chimera_hal::ButtonId::Plus)); // ALG, OSC, FLT, AMP
     }
-    feed(&mut ui, Input::turn(EncoderId::C, 1)); // MIX
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // REVERB
     settle(&mut ui);
     let before = render(&ui);
     feed(&mut ui, Input::turn(EncoderId::F, 3)); // slot f: empty

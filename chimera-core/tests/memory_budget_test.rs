@@ -70,9 +70,10 @@ fn voice_is_its_chain_plus_one_slot() {
 
 /// A voice, re-read on formant-ops at Task 15 (6,304 B on main at
 /// 4473f0a1): a tripwire, so a growth is seen and accounted. The played
-/// Sound's FX block adds 16 B (ADR 0155), and with PLAY's MODE beside it
-/// (ADR 0170) 8 B more of padding.
-const VOICE_SIZE_BEFORE: usize = 6_440;
+/// Sound's FX block adds 16 B, and DRV's and the folder's blocks leave 24 B
+/// (ADR 0155). FUZZ's state, one per place, adds 72 B (ADR 0156), and
+/// PLAY's MODE beside it (ADR 0170) 8 B of padding.
+const VOICE_SIZE_BEFORE: usize = 6_488;
 
 /// ADR 0131: the formant kinds live in the Algo slot, which still fits
 /// inside Modal's, so they add nothing to `EngineSlot`.

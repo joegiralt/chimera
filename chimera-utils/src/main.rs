@@ -36,7 +36,8 @@ usage: chimera-utils [flags] COMMAND …
   bank2-seal --check BIN BK2
                            fail unless the .bk2's seal is the .bin's
   door-check ELF           fail on any bank-1 relocation into bank 2
-  devices                  the devices and their knobs
+  devices                  the devices and their knobs (fx-soft/fuzz/fold: p1 p2 p3 mix
+                           place pre|post input, the voice FX slot beside an open filter)
   mv-refs [PROG …]         MidiVerb II references (default 1–49)
   mv-fit TYPE PROG …       fit TYPE's knobs to programs
   mv-verify TYPE           re-measure the fits: residuals, PASS/FAIL

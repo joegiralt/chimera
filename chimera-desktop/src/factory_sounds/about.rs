@@ -160,14 +160,13 @@ fn dest(a: ParamAddr) -> String {
         BlockRef::AlgoOp(op) => format!("OP {} {word}", op.index() + 1),
         BlockRef::Env(s) => format!("ENV {} {word}", s.index() + 1),
         BlockRef::Lfo(s) => format!("LFO {} {word}", s.index() + 1),
+        // The slot's pots mean the type's own; the About names the cell.
+        BlockRef::VoiceFx => format!("FX {word}"),
         b if matches!(label, "LEVEL" | "MIX" | "FINE" | "TONE") => {
             let block = match b {
                 BlockRef::Filter => "FILTER ",
                 BlockRef::Out => "OUT ",
                 BlockRef::Pitch => "PITCH ",
-                BlockRef::Folder => "FOLD ",
-                BlockRef::VoiceFx => "FX ",
-                BlockRef::Drive => "DRIVE ",
                 _ => "",
             };
             format!("{block}{word}")

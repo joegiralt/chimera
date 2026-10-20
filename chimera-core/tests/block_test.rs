@@ -209,11 +209,6 @@ fn modal_conforms() {
 }
 
 #[test]
-fn drive_conforms() {
-    conforms("drive", chimera_core::params::DriveParams::default());
-}
-
-#[test]
 fn filter_conforms() {
     conforms("filter", chimera_core::params::FilterParams::default());
 }
@@ -226,11 +221,6 @@ fn snapshot_filter_starts_open() {
         chimera_core::params::ParamSnapshot::default().filter.cutoff,
         20000.0
     );
-}
-
-#[test]
-fn folder_conforms() {
-    conforms("folder", chimera_core::params::FolderParams::default());
 }
 
 #[test]

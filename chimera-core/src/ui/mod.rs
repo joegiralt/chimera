@@ -13,6 +13,7 @@ pub mod dungeon_map;
 pub mod filter_panel;
 pub mod fmt;
 pub mod focus;
+pub mod fx_panel;
 pub mod glyph;
 pub mod held;
 pub mod hint;
@@ -3022,6 +3023,7 @@ impl UiState {
         }
         let ctx = self.ctx();
         self.matrix_state.set_tape(ctx.tape);
+        self.matrix_state.set_fx(ctx.fx);
         let sound = &self.project.part(at).sound;
 
         // Apply mod offsets for display — makes bars and vizzes animate with modulation.
@@ -3425,10 +3427,15 @@ impl UiState {
                     core::array::from_fn(|i| renderer::mod_info(f, i).map(f32::to_bits)),
                 )
                 .keyed(self.matrix_state.rev, looks | renderer::led_key(f) << 12)
+                // A bar's end pixel moves by less than a quantum as its value
+                // eases home: key the exact values the bars draw.
                 .with_text_key(
                     region::fold_keys(
                         rev_text_key(f),
-                        &core::array::from_fn::<_, 6, _>(|i| self.renderer.text_key(f, i)),
+                        &core::array::from_fn::<_, 12, _>(|i| match i {
+                            0..6 => self.renderer.text_key(f, i),
+                            _ => self.renderer.anim[i - 6].current().to_bits(),
+                        }),
                     )
                     .into(),
                 )

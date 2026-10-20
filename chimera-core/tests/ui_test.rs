@@ -196,10 +196,9 @@ fn test_page_from_location_part_chain() {
     for (node, def) in [
         (0, &reg::ALGO_ALG),
         (1, &reg::ALGO_WAVE),
-        (2, &reg::DRIVE),
-        (3, &reg::FILTER),
-        (4, &reg::FOLDER),
-        (5, &reg::MOD_MATRIX),
+        (2, &reg::FILTER),
+        (3, &reg::AMP),
+        (4, &reg::MOD_MATRIX),
     ] {
         assert_eq!(key(pages(node, 0), Op::A), part(def), "node {node}");
     }
@@ -212,10 +211,10 @@ fn test_page_from_location_part_chain() {
         (6, &reg::LFO_2),
         (7, &reg::LFO_3),
     ] {
-        assert_eq!(key(pages(5, sub), Op::A), part(def), "sub-page {sub}");
+        assert_eq!(key(pages(4, sub), Op::A), part(def), "sub-page {sub}");
     }
     // The operator selection is part of a Part page's identity.
-    assert_ne!(key(pages(5, 7), Op::B), key(pages(5, 7), Op::A));
+    assert_ne!(key(pages(4, 7), Op::B), key(pages(4, 7), Op::A));
 }
 
 #[test]
@@ -244,13 +243,12 @@ fn test_settings_leaves_have_their_own_page() {
 // -- BlockDef registry: format coverage --
 
 #[test]
-fn test_drive_block_formats_in_registry() {
+fn test_fx_block_formats_in_registry() {
     use chimera_core::ui::block_registry;
     use chimera_core::ui::page::ValFmt;
-    let def = &block_registry::DRIVE;
-    assert_eq!(def.params[0].format(), ValFmt::Uni); // DRIVE
-    assert_eq!(def.params[1].format(), ValFmt::Bi); // TONE
-    assert_eq!(def.params[2].format(), ValFmt::Bi); // MIX
+    let def = &block_registry::FILTER_FX;
+    assert_eq!(def.params[0].format(), ValFmt::Uni); // INPUT
+    assert_eq!(def.params[4].format(), ValFmt::Bi); // MIX
 }
 
 #[test]
@@ -263,7 +261,7 @@ fn test_filter_mode_is_named_in_registry() {
         chimera_core::addr::Op::A,
     );
     assert!(matches!(
-        view(&block_registry::FILTER, 3, &ctx).fmt(),
+        view(&block_registry::FILTER, 1, &ctx).fmt(),
         ValFmt::Names(_)
     ));
 }

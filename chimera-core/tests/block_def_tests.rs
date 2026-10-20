@@ -9,8 +9,8 @@ fn filter_block_params() {
         &chimera_core::params::ParamSnapshot::default(),
         chimera_core::addr::Op::A,
     );
-    assert_eq!(view(def, 1, &ctx).label(), "FREQ");
-    assert_eq!(view(def, 2, &ctx).label(), "Q");
+    assert_eq!(view(def, 4, &ctx).label(), "FREQ");
+    assert_eq!(view(def, 5, &ctx).label(), "Q");
     assert_eq!(def.layout, PageLayout::BigViz);
 }
 
@@ -18,7 +18,7 @@ fn filter_block_params() {
 fn chain_active_def_resolves() {
     let chain = &block_registry::ALGO_CHAIN;
     assert_eq!(chain.active_def(0, 0).unwrap().name, "Algorithm");
-    assert_eq!(chain.active_def(3, 0).unwrap().name, "Filter");
+    assert_eq!(chain.active_def(2, 0).unwrap().name, "Filter");
     assert!(chain.active_def(99, 0).is_none());
 }
 
@@ -76,10 +76,10 @@ fn algo_chain_is_alg_osc_then_the_voice_chain() {
         .iter()
         .map(|b| b.map.unwrap_or(b.def.short))
         .collect();
-    assert_eq!(labels, ["ALG", "OSC", "DRV", "FLT", "AMP", "MOD"]);
+    assert_eq!(labels, ["ALG", "OSC", "FLT", "AMP", "MOD"]);
     assert_eq!(chain.active_def(1, 0).unwrap().name, "Wave");
     assert!(chain.blocks[1].sub_pages.iter().any(|d| d.name == "Level"));
-    assert_eq!(chain.blocks[5].sub_pages.len(), 7);
+    assert_eq!(chain.blocks[4].sub_pages.len(), 7);
 }
 
 /// Lists and the Sound rung show `NO_PAGE`: no chain's page shares its id,

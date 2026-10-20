@@ -46,6 +46,9 @@ pub enum VizType {
     /// L1–L3: one cycle of the slot's LFO, the newest voice's playhead on
     /// it (ADR 0177).
     Lfo(crate::dsp::modulator::LfoSlot),
+    /// FLT › FX: `source › FX › FLT` (or the filter first) and the type's
+    /// transfer curve.
+    FxCurve,
 }
 
 /// A node of the FX flow; the value is its index in `viz::effects_flow`.
@@ -79,8 +82,11 @@ pub enum SlotBinding {
     /// the slot (one of 600-odd statics) stays small.
     Legacy(&'static ValFmt),
     /// Knob `k` of the Sound's filter type's panel (`filter_panel::knob`):
-    /// 0–4 FLT's knobs 2–6, 5–10 FLT › MOD's cells.
+    /// 0–2 FLT's MODE or VOICE, FREQ and Q, 3–8 FLT › MOD's cells.
     FilterPanel(u8),
+    /// Pot `k` (P1–P3) of FLT › FX under the Sound's FX TYPE
+    /// (`fx_panel::cells`).
+    FxPanel(u8),
     /// Cell k of ENV slot s's page, per its TYPE, MODE and FORM.
     EnvPanel(crate::dsp::modulator::EnvSlot, u8),
     /// Cell k of LFO slot s's page, per its TYPE and FORM.
@@ -167,6 +173,13 @@ impl ParamSlot {
         }
     }
 
+    pub const fn fx_panel(k: u8) -> Self {
+        Self {
+            binding: SlotBinding::FxPanel(k),
+            label_override: None,
+        }
+    }
+
     pub const fn env_panel(s: crate::dsp::modulator::EnvSlot, k: u8) -> Self {
         Self {
             binding: SlotBinding::EnvPanel(s, k),
@@ -249,6 +262,7 @@ impl ParamSlot {
             | SlotBinding::SelectOp
             | SlotBinding::Legacy(_)
             | SlotBinding::FilterPanel(_)
+            | SlotBinding::FxPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
             | SlotBinding::ModalPanel(..)
@@ -267,6 +281,7 @@ impl ParamSlot {
             SlotBinding::Empty
             | SlotBinding::Orbit(_)
             | SlotBinding::FilterPanel(_)
+            | SlotBinding::FxPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
             | SlotBinding::ModalPanel(..)
@@ -287,6 +302,7 @@ impl ParamSlot {
             SlotBinding::Empty
             | SlotBinding::Orbit(_)
             | SlotBinding::FilterPanel(_)
+            | SlotBinding::FxPanel(_)
             | SlotBinding::EnvPanel(..)
             | SlotBinding::LfoPanel(..)
             | SlotBinding::ModalPanel(..)

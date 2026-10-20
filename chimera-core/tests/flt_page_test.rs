@@ -70,15 +70,20 @@ fn render(ui: &UiState) -> Vec<f32> {
     out
 }
 
-/// Every bound FLT and FLT › MODE knob changes a held note on Algo and
-/// Modal once turned (a route knob once its route is nonzero).
+/// Every filter knob on FLT, FLT › MOD and FLT › FX changes a held note on
+/// every engine once turned (a route knob once its route is nonzero). FX
+/// and PLACE are the slot's: OFF, then a type at DRIVE 0, is silent.
 #[test]
 fn every_flt_knob_changes_a_held_note() {
     for ct in EngineType::ALL {
-        for (sub, slots) in [(0, &[1usize, 2, 3, 4, 5][..]), (1, &[0usize, 1, 3][..])] {
+        for (sub, slots) in [
+            (0, &[1usize, 4, 5][..]),
+            (1, &[0usize, 1, 2, 4][..]),
+            (2, &[0usize][..]),
+        ] {
             for &slot in slots {
                 let mut ui = on_flt(ct);
-                if sub == 1 {
+                for _ in 0..sub {
                     feed(&mut ui, Input::press(ButtonId::Edit));
                 }
                 let before = render(&ui);
@@ -124,7 +129,8 @@ fn a_route_knob_creates_its_route() {
     let mut ui = on_flt(EngineType::Algo);
     full_registry(&mut ui, true);
     assert_eq!(ui.mod_state().fixed_present(FixedCol::Freq), 0);
-    feed(&mut ui, Input::turn(EncoderId::E, 5)); // ENV
+    feed(&mut ui, Input::press(ButtonId::Edit)); // FLT › MOD
+    feed(&mut ui, Input::turn(EncoderId::A, 5)); // FM1
     assert_eq!(
         ui.mod_state()
             .fixed_amount(ModSource::Env1.index(), FixedCol::Freq),
@@ -132,7 +138,7 @@ fn a_route_knob_creates_its_route() {
     );
     // The knob and the matrix cell show the same amount.
     settle(&mut ui);
-    assert_eq!(amount_of(ui.renderer.anim[4].current()), 5);
+    assert_eq!(amount_of(ui.renderer.anim[0].current()), 5);
 }
 
 /// FREQ is a permanent column: a full registry never turns a route knob off.
@@ -141,7 +147,8 @@ fn a_full_registry_keeps_the_route_knob_on() {
     let mut ui = on_flt(EngineType::Algo);
     full_registry(&mut ui, false);
     assert_eq!(ui.mod_state().num_dests(), MAX_MOD_DESTS);
-    feed(&mut ui, Input::turn(EncoderId::F, 5)); // KEY
+    feed(&mut ui, Input::press(ButtonId::Edit)); // FLT › MOD
+    feed(&mut ui, Input::turn(EncoderId::B, 5)); // FM2
     assert_eq!(ui.prime_status(), None);
     let note = ui
         .mod_state()
@@ -152,12 +159,12 @@ fn a_full_registry_keeps_the_route_knob_on() {
     );
 }
 
-/// Plus five times from Part 1's home: the MOD node, whose home is the
+/// Plus four times from Part 1's home: the MOD node, whose home is the
 /// matrix.
 fn to_matrix(ui: &mut UiState) {
     feed(ui, Input::press(ButtonId::B2));
     feed(ui, Input::press(ButtonId::B1)); // via Part 2: Part 1's home
-    for _ in 0..5 {
+    for _ in 0..4 {
         feed(ui, Input::press(ButtonId::Plus));
     }
     assert_eq!(
@@ -189,7 +196,7 @@ fn deleting_a_route_at_zero_redraws_the_grid() {
     assert!(flushed.contains(&(y0, y1)), "{flushed:?}");
 }
 
-/// MIX+MINUS on a matrix cell deletes its route; the ENV knob shows a dash
+/// MIX+MINUS on a matrix cell deletes its route; the FM1 knob shows a dash
 /// until it is turned, and turning it creates the route.
 #[test]
 fn mix_minus_deletes_and_the_knob_recreates() {
@@ -209,7 +216,8 @@ fn mix_minus_deletes_and_the_knob_recreates() {
     for _ in 0..flt_node(EngineType::Algo) {
         feed(&mut ui, Input::press(ButtonId::Plus));
     }
-    feed(&mut ui, Input::turn(EncoderId::E, 3)); // ENV
+    feed(&mut ui, Input::press(ButtonId::Edit)); // FLT › MOD
+    feed(&mut ui, Input::turn(EncoderId::A, 3)); // FM1
     assert_eq!(
         ui.matrix_state.route(0, CUTOFF),
         Some(3),
@@ -217,7 +225,7 @@ fn mix_minus_deletes_and_the_knob_recreates() {
     );
 }
 
-/// Back to FLT (Part 1's home, then PLUS), or on to FLT › MODE with `sub`.
+/// Back to FLT (Part 1's home, then PLUS), or on to FLT › MOD with `sub`.
 fn back_to_flt(ui: &mut UiState, sub: bool) {
     feed(ui, Input::press(ButtonId::B2));
     feed(ui, Input::press(ButtonId::B1)); // via Part 2: Part 1's home
@@ -234,30 +242,29 @@ fn same_rect(a: &Fb, b: &Fb, (x0, x1): (i32, i32), (y0, y1): (i32, i32)) -> bool
     (y0..y1).all(|y| (x0..x1).all(|x| a.at(x, y) == b.at(x, y)))
 }
 
-/// The "—" knob: with E1 → CUTOFF deleted, FLT's focused ENV cell draws a
-/// dash where the value goes (no value, no bar) and the viz readout reads
-/// `--`, through the dirty render the desktop and firmware use.
+/// The "—" knob: with E1 → CUTOFF deleted, FLT › MOD's focused FM1 cell
+/// draws a dash where the value goes (no value, no bar), through the dirty
+/// render the desktop and firmware use.
 #[test]
 fn an_absent_route_knob_shows_a_dash() {
     use chimera_core::ui::components::{self, Cell, Look};
     use chimera_core::ui::perf::PerfStats;
-    use chimera_core::ui::{theme, viz};
+    use chimera_core::ui::theme;
     let mut ui = on_flt(EngineType::Algo);
-    feed(&mut ui, Input::turn(EncoderId::E, 1)); // focus ENV
-    feed(&mut ui, Input::turn(EncoderId::E, -1)); // back to 0, still present
+    feed(&mut ui, Input::press(ButtonId::Edit)); // FLT › MOD
+    feed(&mut ui, Input::turn(EncoderId::A, 1)); // focus FM1
+    feed(&mut ui, Input::turn(EncoderId::A, -1)); // back to 0, still present
     to_matrix(&mut ui);
     let (mut fb, perf, scope) = (Fb::new(), PerfStats::zero(), scope_fixture());
     ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
-    back_to_flt(&mut ui, false);
+    back_to_flt(&mut ui, true);
+    feed(&mut ui, Input::turn(EncoderId::A, 0)); // FM1 focused
     settle(&mut ui);
     ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
 
     let (label, fmt) = ("FM1", chimera_core::ui::page::ValFmt::Route);
-    let (x, y) = (
-        theme::MARGIN_X + theme::CELL_COL_W,
-        theme::CELL_LABEL_Y + theme::CELL_ROW_H,
-    );
+    let (x, y) = (theme::MARGIN_X, theme::CELL_LABEL_Y);
     for dx in 0..12 {
         for dy in 0..2 {
             assert_eq!(
@@ -277,10 +284,11 @@ fn an_absent_route_knob_shows_a_dash() {
         mod_amount: None,
         look: Look::Absent,
         motion: None,
+        mini: None,
     };
     components::cell(
         &mut want,
-        4,
+        0,
         theme::CELL_LABEL_Y,
         Some(&c),
         chimera_core::ui::theme::TextSize::Normal,
@@ -290,29 +298,9 @@ fn an_absent_route_knob_shows_a_dash() {
             &fb,
             &want,
             (x, x + theme::CELL_COL_W),
-            (y - 8, theme::CELLS_BOTTOM)
+            (y - 8, y + theme::CELL_ROW_H - 8)
         ),
-        "the ENV cell is a dash: no value text, no bar"
-    );
-
-    let mut want = Fb::new();
-    want.px.fill(fb.px[0]);
-    let a = |i: usize| ui.renderer.anim[i].current();
-    viz::filter(
-        &mut want,
-        a(1),
-        a(2),
-        viz::Response::Low24,
-        Some((label, "--")),
-    );
-    assert!(
-        same_rect(
-            &fb,
-            &want,
-            (0, 240),
-            (theme::HEADER_BOTTOM, theme::BIGVIZ_BOTTOM)
-        ),
-        "the readout reads --"
+        "the FM1 cell is a dash: no value text, no bar"
     );
 }
 
@@ -326,8 +314,8 @@ fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
     use chimera_core::ui::theme;
     let mut ui = on_flt(EngineType::Algo);
     feed(&mut ui, Input::press(ButtonId::Edit));
-    feed(&mut ui, Input::turn(EncoderId::B, 1)); // focus FM3
-    feed(&mut ui, Input::turn(EncoderId::B, -1));
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // focus FM3
+    feed(&mut ui, Input::turn(EncoderId::C, -1));
     to_matrix(&mut ui);
     feed(&mut ui, Input::turn(EncoderId::A, 3)); // row LFO1
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
@@ -344,7 +332,7 @@ fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
         "FM3",
         "--",
         chimera_core::ui::glyph::Gauge::Arc {
-            value: ui.renderer.anim[1].current(),
+            value: ui.renderer.anim[2].current(),
             bipolar: chimera_core::ui::page::ValFmt::Route.is_bipolar(),
         },
         components::Look::Absent,
@@ -372,8 +360,8 @@ fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
     assert!(band.contains(&theme::INK), "the hint's keys");
 }
 
-/// The Cells key carries the real looks: FLT's TYPE (slot 0) live, ENV
-/// (slot 4) absent, KEY (slot 5) live, and the matrix's revision.
+/// The Cells key carries the real looks: FLT › MOD's FM1 (slot 0) absent,
+/// FM2 (slot 1) live, and the matrix's revision.
 #[test]
 fn the_cells_key_carries_the_looks() {
     use chimera_core::ui::components::Look;
@@ -382,19 +370,17 @@ fn the_cells_key_carries_the_looks() {
     let mut ui = on_flt(EngineType::Algo);
     to_matrix(&mut ui); // E1 → CUTOFF
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
-    back_to_flt(&mut ui, false);
+    back_to_flt(&mut ui, true);
     let mut fb = Fb::new();
     ui.render_dirty_with_audio(&mut fb, &PerfStats::zero(), None, &scope_fixture());
     let Some(RegionData::Cells {
         looks, matrix_rev, ..
     }) = ui.drawn_key(RegionKind::Cells)
     else {
-        panic!("FLT has cells");
+        panic!("FLT › MOD has cells");
     };
-    assert_eq!(looks >> 8 & 3, Look::Absent as u32, "ENV");
-    assert_eq!(looks >> 10 & 3, Look::Live as u32, "KEY");
-    assert_eq!(looks & 3, Look::Live as u32, "TYPE");
-    assert_eq!(looks >> 2 & 0x3f, 0, "the other slots are live");
+    assert_eq!(looks & 3, Look::Absent as u32, "FM1");
+    assert_eq!(looks >> 2 & 3, Look::Live as u32, "FM2");
     assert_eq!(matrix_rev, ui.matrix_state.rev);
 }
 
@@ -408,13 +394,13 @@ fn stand_ins_move_the_cutoff_bar() {
     let mut ui = on_flt(EngineType::Algo);
     ui.params_mut().filter.cutoff = 20.0;
     ui.update(UiTick::for_test());
-    let base = ui.renderer.anim[1].target();
+    let base = ui.renderer.anim[4].target();
     let spec = CUTOFF.spec().unwrap();
     let bar = |ui: &mut UiState, src: ModSource, amount: i8| {
         ui.mod_state_mut()
             .set_fixed(src.index(), FixedCol::Freq, amount);
         ui.update(UiTick::for_test());
-        let t = ui.renderer.anim[1].target();
+        let t = ui.renderer.anim[4].target();
         ui.mod_state_mut().set_fixed(src.index(), FixedCol::Freq, 0);
         t
     };
@@ -497,11 +483,15 @@ fn applies_matches_the_panel() {
         let on = |id| {
             p.main
                 .iter()
-                .chain(p.mods.iter().flatten())
+                .chain(p.mods.iter())
                 .any(|n| n.target == PanelTarget::Filter(id))
         };
         for s in FILTER_SPECS.iter() {
-            let want = on(s.id) || s.id == FilterParams::KIND || s.id == FilterParams::MODE;
+            // LEVEL is FLT › FX's INPUT, outside the kind's panel.
+            let want = on(s.id)
+                || s.id == FilterParams::KIND
+                || s.id == FilterParams::MODE
+                || s.id == FilterParams::LEVEL;
             assert_eq!(filter_panel::applies(k, s.id), want, "{k:?} {:?}", s.id);
         }
     }
@@ -602,8 +592,8 @@ fn the_fm3_and_qm_knobs_write_their_cells() {
     let lfo1 = ui
         .mod_state()
         .fixed_amount(ModSource::Lfo1.index(), FixedCol::Freq);
-    feed(&mut ui, Input::turn(EncoderId::B, 7)); // FM3
-    feed(&mut ui, Input::turn(EncoderId::D, -5)); // QM
+    feed(&mut ui, Input::turn(EncoderId::C, 7)); // FM3
+    feed(&mut ui, Input::turn(EncoderId::E, -5)); // QM
     let m = ui.mod_state();
     assert_eq!(
         m.fixed_amount(ModSource::Lfo1.index(), FixedCol::Freq),
@@ -708,7 +698,7 @@ fn turning_fm3_in_moves_the_cable_past_an_occupied_cell() {
     s.mod_state
         .set_fixed(ModSource::Lfo2.index(), FixedCol::Freq, 11);
     back_to_flt(&mut ui, true);
-    feed(&mut ui, Input::turn(EncoderId::C, 1)); // FM3 IN: LFO 2 is taken
+    feed(&mut ui, Input::turn(EncoderId::D, 1)); // FM3 IN: LFO 2 is taken
     assert_eq!(ui.params().filter.fm3_src(), Jack::Mod(ModSource::Lfo3));
     let m = ui.mod_state();
     assert_eq!(m.fixed_amount(ModSource::Lfo3.index(), FixedCol::Freq), 40);
@@ -730,16 +720,16 @@ fn turning_fm3_in_moves_the_cable_past_an_occupied_cell() {
 fn skipping_a_source_in_use_shows_a_note() {
     let mut ui = on_flt(EngineType::Algo);
     back_to_flt(&mut ui, true);
-    feed(&mut ui, Input::turn(EncoderId::C, 1)); // FM3 IN: LFO 1 → LFO 2, free
+    feed(&mut ui, Input::turn(EncoderId::D, 1)); // FM3 IN: LFO 1 → LFO 2, free
     assert_eq!(ui.prime_status(), None);
     let s = ui.project_mut().edit_part(PartId::ALL[0]).sound;
     s.mod_state
         .set_fixed(ModSource::Lfo3.index(), FixedCol::Freq, 11);
-    feed(&mut ui, Input::turn(EncoderId::C, 1)); // LFO 3 is taken
+    feed(&mut ui, Input::turn(EncoderId::D, 1)); // LFO 3 is taken
     assert_eq!(ui.prime_status(), Some(PrimeStatus::SourceInUse));
     assert_eq!(PrimeStatus::SourceInUse.label(), "SOURCE IN USE");
     assert_ne!(ui.params().filter.fm3_src(), Jack::Mod(ModSource::Lfo3));
-    feed(&mut ui, Input::turn(EncoderId::B, 1)); // the next input retires it
+    feed(&mut ui, Input::turn(EncoderId::C, 1)); // the next input retires it
     assert_eq!(ui.prime_status(), None);
 }
 
@@ -750,27 +740,19 @@ fn mix_minus_on_a_route_view_deletes_its_route() {
     use chimera_core::ui::view::{self, SlotCtx};
     let mut ui = on_flt(EngineType::Algo);
     feed(&mut ui, Input::press(ButtonId::Edit)); // FLT › MOD
-    feed(&mut ui, Input::turn(EncoderId::D, 9)); // QM: ENV 3 → Q
+    feed(&mut ui, Input::turn(EncoderId::E, 9)); // QM: ENV 3 → Q
     assert!(ui.mod_state().fixed_present(FixedCol::Q) != 0);
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
     assert_eq!(ui.mod_state().fixed_present(FixedCol::Q), 0);
     let ctx = SlotCtx::read(ui.params(), chimera_core::addr::Op::A);
-    for i in [1, 3] {
+    for i in [0, 1, 2, 4] {
         assert_eq!(
             view::view(&FILTER_MOD, i, &ctx).hint(&ctx),
             mod_grid::DELETE,
             "{i}"
         );
     }
-    for i in [4, 5] {
-        assert_eq!(
-            view::view(&FILTER, i, &ctx).hint(&ctx),
-            mod_grid::DELETE,
-            "{i}"
-        );
-    }
-    back_to_flt(&mut ui, false);
-    feed(&mut ui, Input::turn(EncoderId::F, 1)); // FM2
+    feed(&mut ui, Input::turn(EncoderId::B, 1)); // FM2
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Minus));
     assert_eq!(
         ui.mod_state().fixed_present(FixedCol::Freq) & 1 << ModSource::Note.index(),
@@ -783,7 +765,7 @@ fn mix_minus_on_a_route_view_deletes_its_route() {
 #[test]
 fn mix_plus_on_a_fixed_param_reports_already_routed() {
     let mut ui = on_flt(EngineType::Algo);
-    for enc in [EncoderId::B, EncoderId::C] {
+    for enc in [EncoderId::E, EncoderId::F] {
         feed(&mut ui, Input::turn(enc, 1)); // FREQ, Q
         feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Plus));
         assert_eq!(
@@ -800,55 +782,58 @@ fn panels_follow_the_type() {
     use chimera_core::ui::filter_panel::PanelTarget as T;
     use chimera_core::ui::theme::{CELL_COL_W, FONT_LABEL};
     let labels = |k| {
-        (0..5)
+        (0..9)
             .map(|i| knob(k, i).unwrap().label)
             .collect::<Vec<_>>()
     };
-    assert_eq!(labels(FilterKind::Svf), ["FREQ", "Q", "MODE", "FM1", "FM2"]);
+    assert_eq!(
+        labels(FilterKind::Svf),
+        [
+            "MODE", "FREQ", "Q", "FM1", "FM2", "FM3", "FM3 IN", "QM", "QM IN"
+        ]
+    );
     assert_eq!(labels(FilterKind::Dirty), labels(FilterKind::Svf));
     assert_eq!(labels(FilterKind::Ladder), labels(FilterKind::Svf));
     assert_eq!(
         labels(FilterKind::K2040),
-        ["CUTOFF", "RES", "ENV AMT", "KEYBD", "DRIVE"]
+        [
+            "VOICE", "CUTOFF", "RES", "ENV AMT", "KEYBD", "FM3", "FM3 IN", "QM", "QM IN"
+        ]
     );
     let t = |k, i| knob(k, i).map(|n| n.target);
     assert_eq!(
-        t(FilterKind::K2040, 4),
-        Some(T::Filter(FilterParams::LEVEL))
-    );
-    assert_eq!(t(FilterKind::K2040, 3), Some(T::Keybd));
-    assert_eq!(t(FilterKind::K2040, 2), Some(T::Route(ModSource::Env1)));
-    assert_eq!(
-        t(FilterKind::K2040, 5),
+        t(FilterKind::K2040, 0),
         Some(T::Filter(FilterParams::VOICE))
     );
-    assert_eq!(t(FilterKind::K2040, 10), Some(T::Fixed(FilterParams::MODE)));
+    assert_eq!(t(FilterKind::K2040, 3), Some(T::Route(ModSource::Env1)));
+    assert_eq!(t(FilterKind::K2040, 4), Some(T::Keybd));
+    assert_eq!(t(FilterKind::Svf, 0), Some(T::Filter(FilterParams::MODE)));
     assert_eq!(t(FilterKind::Svf, 3), Some(T::Route(ModSource::Env1)));
     assert_eq!(t(FilterKind::Svf, 4), Some(T::Route(ModSource::Note)));
-    assert_eq!(t(FilterKind::Svf, 10), None);
     for k in FilterKind::BUILT {
-        assert!(t(k, 5).is_some(), "{k:?}");
-        assert_eq!(t(k, 6), Some(T::JackAmount(JackSlot::Fm3)));
-        assert_eq!(t(k, 7), Some(T::Filter(FilterParams::FM3_IN)));
-        assert_eq!(t(k, 8), Some(T::JackAmount(JackSlot::Qm)));
-        assert_eq!(t(k, 9), Some(T::Filter(FilterParams::QM_IN)));
-        for i in 0..11 {
-            if let Some(n) = knob(k, i) {
-                let w = text_width(&FONT_LABEL, n.label, 0);
-                assert!(w <= CELL_COL_W - 4, "{k:?} {i} {:?}: {w}px", n.label);
-            }
+        assert_eq!(t(k, 1), Some(T::Filter(FilterParams::CUTOFF)));
+        assert_eq!(t(k, 2), Some(T::Filter(FilterParams::RESONANCE)));
+        assert_eq!(t(k, 5), Some(T::JackAmount(JackSlot::Fm3)));
+        assert_eq!(t(k, 6), Some(T::Filter(FilterParams::FM3_IN)));
+        assert_eq!(t(k, 7), Some(T::JackAmount(JackSlot::Qm)));
+        assert_eq!(t(k, 8), Some(T::Filter(FilterParams::QM_IN)));
+        assert_eq!(t(k, 9), None);
+        for i in 0..9 {
+            let n = knob(k, i).unwrap();
+            let w = text_width(&FONT_LABEL, n.label, 0);
+            assert!(w <= CELL_COL_W - 4, "{k:?} {i} {:?}: {w}px", n.label);
         }
     }
-    assert_eq!(t(FilterKind::Svf, 5), Some(T::Filter(FilterParams::LEVEL)));
-    // The 2040's MODE shows LP4, dimmed.
+    // The 2040's one MODE has no cell: KIND's readout names it.
     use chimera_core::ui::view::{self, SlotCtx};
     let mut s = Sound::plain_init(EngineType::Algo);
     s.params.filter.set_kind(FilterKind::K2040);
     let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
-    let v = view::view(&FILTER_MOD, 5, &ctx);
-    assert_eq!(v.label(), "MODE");
-    assert!(view::is_dimmed(&v, &s, &ctx));
-    assert_eq!(view::view(&FILTER_MOD, 0, &ctx).label(), "VOICE");
+    let mode = ParamAddr::new(BlockRef::Filter, FilterParams::MODE);
+    for def in [&FILTER, &FILTER_MOD] {
+        assert!((0..6).all(|i| view::view(def, i, &ctx).addr() != Some(mode)));
+    }
+    assert_eq!(view::view(&FILTER, 1, &ctx).label(), "VOICE");
 }
 
 #[test]
@@ -875,21 +860,22 @@ fn keybd_steps_off_half_full() {
     );
 }
 
-/// The 2040's KEYBD knob steps NOTE → FREQ.
+/// The 2040's KEYBD knob (FLT › MOD) steps NOTE → FREQ.
 #[test]
 fn keybd_knob_steps_the_note_route() {
     let mut ui = on_flt(EngineType::Algo);
     feed(&mut ui, Input::turn(EncoderId::A, 1)); // TYPE: 2040
     assert_eq!(ui.params().filter.kind(), FilterKind::K2040);
+    feed(&mut ui, Input::press(ButtonId::Edit)); // FLT › MOD
     let note = |ui: &UiState| {
         ui.mod_state()
             .fixed_amount(ModSource::Note.index(), FixedCol::Freq)
     };
-    feed(&mut ui, Input::turn(EncoderId::E, 1));
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
     assert_eq!(note(&ui), keybd_step(0, 1).max(64));
-    feed(&mut ui, Input::turn(EncoderId::E, 1));
+    feed(&mut ui, Input::turn(EncoderId::B, 1));
     assert_eq!(note(&ui), 127);
-    feed(&mut ui, Input::turn(EncoderId::E, -2));
+    feed(&mut ui, Input::turn(EncoderId::B, -2));
     assert_eq!(note(&ui), 0);
 }
 

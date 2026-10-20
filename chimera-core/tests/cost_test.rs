@@ -1668,11 +1668,11 @@ fn va_sound(mode: chimera_core::dsp::va::VaMode) -> ParamSnapshot {
 /// the voices each is admitted beside the reserve on the four rooms (rev V,
 /// rev Y, rev V with ORBIT, rev V with the master tape), INIT's 2040 REV2
 /// (+15) and the chain and routing (83) on top. ADR 0040's done-when is six
-/// on each: met on rev V and rev Y in every MODE; the rooms are at 75 % (ADR 0124),
-/// where every MODE but FM fits eight on rev V and FM seven (590 + 98 = 688
-/// in 5,436; ADR 0159) (ADR 0118: WAVE's reach
-/// and SYNC's master held under 7 kHz, points 11 and 12; the sub at the
-/// shaped edge, point 13).
+/// on each: met on rev V, beside ORBIT and with the master tape in every
+/// MODE; on rev Y only MIX (six) and LOOPFM (eight) reach it, the others
+/// fit five (the recount of 2026-10-20, ADR 0165). The rooms are at 75 % (ADR 0124). ADR 0118: WAVE's reach and
+/// SYNC's master held under 7 kHz, points 11 and 12; the sub at the shaped
+/// edge, point 13.
 #[test]
 fn va_bills_each_mode() {
     use chimera_core::dsp::va::VaMode::{
@@ -1692,15 +1692,15 @@ fn va_bills_each_mode() {
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     for (mode, bill, voices) in [
         (Mix, 530, [7, 6, 7, 7]),
-        (Sync, 540, [7, 5, 7, 7]),
-        (Ring, 530, [7, 6, 7, 7]),
+        (Sync, 550, [7, 5, 7, 7]),
+        (Ring, 540, [7, 5, 7, 7]),
         (Xor, 550, [7, 5, 7, 7]),
-        (Bits, 530, [7, 6, 7, 7]),
-        (Fm, 590, [7, 5, 7, 6]),
+        (Bits, 540, [7, 5, 7, 7]),
+        (Fm, 580, [7, 5, 7, 6]),
         (Am, 540, [7, 5, 7, 7]),
         (Max, 590, [7, 5, 7, 6]),
         (LoopFm, 350, [8, 8, 8, 8]),
-        (SoftSync, 570, [7, 5, 7, 7]),
+        (SoftSync, 590, [7, 5, 7, 6]),
         (Phase, 650, [6, 5, 6, 6]),
     ] {
         let p = va_sound(mode);
@@ -2396,4 +2396,79 @@ fn a_noise_band_bills_its_link() {
         );
     }
     const { assert!(AlgoEngine::COST_NOIS_LINKED.0 > AlgoEngine::COST_NOIS.0) };
+}
+
+/// FUZZ's ceiling (bench ledger fx-in-filter/bench.md): the costliest filter
+/// kind's steady bill, LADDER at 95 + 176, over `OLD_LP24`'s 95.
+const FUZZ_CEILING: u32 = 271;
+const OLD_LP24: u32 = 95;
+
+/// VA INIT on the 2040 at VOICE `v` with FUZZ PRE.
+fn fuzz_voice(v: K2040Voice) -> ParamSnapshot {
+    let mut p = ParamSnapshot::for_engine(EngineType::Va);
+    p.filter.set_kind(FilterKind::K2040);
+    p.filter.voice = v;
+    p.fx.set_type(FxType::Fuzz);
+    p
+}
+
+/// FUZZ bills `tools/loop_count.py`'s count on `Fuzz::steady` (93 instructions
+/// and 2 `vdiv` a sample, 175) once the chain's bare bill is paid; it runs at
+/// SUSTAIN 0 too.
+#[test]
+fn fuzz_is_billed_its_measured_cost() {
+    let none = ModState::new();
+    let mut off = fuzz_voice(K2040Voice::Rev2);
+    off.fx.set_type(FxType::Off);
+    let bare = Voice::cost(&off, &none);
+    let mut p = fuzz_voice(K2040Voice::Rev2);
+    assert_eq!(Voice::cost(&p, &none), bare + FxType::Fuzz.cost());
+    p.fx.pots[0] = 0.0;
+    assert_eq!(
+        Voice::cost(&p, &none),
+        bare + FxType::Fuzz.cost(),
+        "SUSTAIN 0"
+    );
+    assert_eq!(FxType::Fuzz.cost(), Cost(175));
+}
+
+/// A route on a FUZZ pot adds the moving loop's excess over the steady one:
+/// 123 instructions and 2 `vdiv` a sample, 225, less 175.
+#[test]
+fn fuzz_routed_adds_its_ramp() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    let none = ModState::new();
+    let p = fuzz_voice(K2040Voice::Rev2);
+    let bare = Voice::cost(&p, &none);
+    let empty = chimera_core::mod_path::ModDestRegistry::new();
+    let mut ms = ModState::from_registry(&empty, 8);
+    let t = ms
+        .push(ParamAddr::new(BlockRef::VoiceFx, VoiceFxParams::P2))
+        .unwrap();
+    ms.set_route(ModSource::Vel.index(), t, 1);
+    assert_eq!(
+        Voice::cost(&p, &ms),
+        bare + FxType::Fuzz.ramp_cost() + ModRouting::DEST_FIRST
+    );
+    assert_eq!(FxType::Fuzz.ramp_cost(), Cost(50));
+}
+
+/// FUZZ plus the bare chain is no costlier than the costliest filter.
+#[test]
+fn fuzz_fits_the_ceiling() {
+    assert!(FxType::Fuzz.cost().0 + OLD_LP24 <= FUZZ_CEILING);
+}
+
+/// Eight FUZZ voices of VA INIT on the 2040 (EXP, the dearer VOICE) fit the
+/// audio budget (75 % of the CPU) before the bus and the reserves: a FUZZ
+/// Part sheds only near the limit.
+#[test]
+fn a_fuzz_part_sheds_only_near_the_limit() {
+    let none = ModState::new();
+    let budget = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
+    for v in [K2040Voice::Rev2, K2040Voice::Exp] {
+        let one = Voice::cost(&fuzz_voice(v), &none).0;
+        eprintln!("{v:?}: one voice {one}, eight {} of {budget}", 8 * one);
+        assert!(8 * one <= budget, "{v:?}: {} > {budget}", 8 * one);
+    }
 }
