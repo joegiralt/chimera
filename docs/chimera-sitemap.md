@@ -36,7 +36,7 @@ MODAL   EXC ── RES ── FLT ── AMP ── MOD
                 └ MDL2, PIT
 
 VA      VA ── FLT ── AMP ── MOD
-        └ OSC 1, OSC 2, PIT
+        └ OSC1, OSC2, PIT
 
 shared  FLT └ FMD (FILTER MOD), FX, JACK
         AMP
