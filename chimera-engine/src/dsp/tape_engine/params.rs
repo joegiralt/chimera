@@ -524,11 +524,7 @@ impl DiskCode for Wow {
 
 impl Choice for Wow {
     fn from_value(v: f32) -> Option<Self> {
-        match v as u8 {
-            0 => Some(Wow::Capstan),
-            1 => Some(Wow::Warble),
-            _ => None,
-        }
+        Self::from_disk_code(v as u8)
     }
 
     fn value(self) -> f32 {
@@ -570,11 +566,7 @@ impl DiskCode for Retrig {
 
 impl Choice for Retrig {
     fn from_value(v: f32) -> Option<Self> {
-        match v as u8 {
-            0 => Some(Retrig::Stack),
-            1 => Some(Retrig::Cut),
-            _ => None,
-        }
+        Self::from_disk_code(v as u8)
     }
 
     fn value(self) -> f32 {
@@ -657,12 +649,12 @@ impl DiskCode for StretchType {
     }
 }
 
-/// By code and by value: the table, not a match, so TYPE's decoding is data.
+/// By code (and so by value): the table, not a match, so TYPE's decoding is data.
 const STRETCH_TYPES: [StretchType; 3] = [StretchType::Mono, StretchType::Poly, StretchType::Grain];
 
 impl Choice for StretchType {
     fn from_value(v: f32) -> Option<Self> {
-        STRETCH_TYPES.get(usize::from(v as u8)).copied()
+        Self::from_disk_code(v as u8)
     }
 
     fn value(self) -> f32 {
