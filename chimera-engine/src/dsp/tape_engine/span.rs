@@ -188,15 +188,17 @@ impl<'a> Reads<'a> {
         let (mut landed, mut short) = (true, None);
         if let Some((from, to)) = wrap {
             let holds = |s: &Span<'_>| s.holds(from) && s.holds(to);
-            // The head the cursor plays may hold it (a loop near START).
-            let other = cursor.head().and_then(|h| row.head_span(h.idx));
-            if let Some(o) = other.filter(|o| holds(o) && !head.is_some_and(|h| holds(&h))) {
-                seconds = [(o.view, Stop::Never); 2];
-            } else if !head.is_some_and(|h| holds(&h)) {
-                let ready = SlotIdx::ALL.map(slot);
-                match Self::wrapped(ready, from, to, silent) {
-                    Some((w, s)) => (seconds, short) = (w, s),
-                    None => (seconds, landed) = ([(silent, Stop::Never); 2], false),
+            if !head.is_some_and(|h| holds(&h)) {
+                // The head the cursor plays may hold it (a loop near START).
+                let other = cursor.head().and_then(|h| row.head_span(h.idx));
+                if let Some(o) = other.filter(holds) {
+                    seconds = [(o.view, Stop::Never); 2];
+                } else {
+                    let ready = SlotIdx::ALL.map(slot);
+                    match Self::wrapped(ready, from, to, silent) {
+                        Some((w, s)) => (seconds, short) = (w, s),
+                        None => (seconds, landed) = ([(silent, Stop::Never); 2], false),
+                    }
                 }
             }
         }
