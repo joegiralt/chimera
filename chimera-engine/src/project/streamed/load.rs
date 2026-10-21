@@ -64,12 +64,9 @@ impl StreamLoad {
             })?;
             let got = read_source_head(s, r, self.sref.stem(), runs.len.get())
                 .map_err(StreamFail::Read)?;
-            let bad = StreamFail::Read(SourceReadError::Load(LoadError::File(
-                crate::storage::FileError::Corrupt,
-            )));
             let l = SourceLayout::whole(got).filter(|_| got.sref == self.sref);
             let file = l.and_then(|l| StreamFile::from_layout(&l, runs));
-            self.phase = Phase::heads(file.ok_or(bad)?);
+            self.phase = Phase::heads(file.ok_or_else(corrupted)?);
             return Ok(None);
         };
         let at = at.get() as usize;
@@ -88,9 +85,6 @@ impl StreamLoad {
         }
         // A head past any file's bytes, or a table longer than its row:
         // the head's numbers are wrong, not the pool's room.
-        let corrupt = StreamFail::Read(SourceReadError::Load(LoadError::File(
-            crate::storage::FileError::Corrupt,
-        )));
         let table = SourceRate::new(self.sref.rate)
             .and_then(|r| {
                 write_head_table(r, Frames::new(head_frames(r)), self.heads.as_slice(), held)
@@ -106,7 +100,7 @@ impl StreamLoad {
                 let from = Frames::new(h.first())
                     .to_bytes(Packing::Twelve)
                     .checked_add(Bytes::new(into as u32))
-                    .ok_or(corrupt)?;
+                    .ok_or_else(corrupted)?;
                 read_packed_into(s, r, self.sref, from, out).map_err(StreamFail::Read)?;
                 let at = Bytes::new((at + n) as u32);
                 self.phase = Phase::Heads { file, at };
@@ -114,15 +108,14 @@ impl StreamLoad {
             }
             before += h.byte_len();
         }
+        p.bump();
         if let Some(id) = self.rehead {
-            p.bump();
             return p
                 .pool
                 .source_rehead_timed(id, len)
                 .map(Some)
                 .ok_or(StreamFail::Sounding);
         }
-        p.bump();
         p.pool
             .source_commit_streamed(self.sref, len, file)
             .map(Some)

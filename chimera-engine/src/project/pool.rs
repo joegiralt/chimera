@@ -274,20 +274,20 @@ impl Pool {
         r: SourceRef,
     ) -> Option<crate::dsp::tape_engine::read::SourceView<'_>> {
         let e = self.source(self.find_source(r)?)?;
-        let held = self
-            .arena
-            .bytes(e.offset + SOURCE_HEAD as u32, e.held as usize);
-        crate::dsp::tape_engine::read::SourceView::new(held)
+        crate::dsp::tape_engine::read::SourceView::new(self.entry_bytes(e))
+    }
+
+    /// `e`'s held bytes, past its head.
+    fn entry_bytes(&self, e: SourceEntry) -> &[u8] {
+        self.arena
+            .bytes(e.offset + SOURCE_HEAD as u32, e.held as usize)
     }
 
     /// Source `r` is held as heads, the rest streamed (slice 1 § 5.3).
     pub fn streamed(&self, r: SourceRef) -> bool {
         self.find_source(r)
             .and_then(|s| self.source(s))
-            .map(|e| {
-                self.arena
-                    .bytes(e.offset + SOURCE_HEAD as u32, e.held as usize)
-            })
+            .map(|e| self.entry_bytes(e))
             .and_then(crate::dsp::tape_engine::read::Descriptor::from_bytes)
             .is_some_and(|d| d.is_streamed())
     }
@@ -295,10 +295,7 @@ impl Pool {
     /// Source `r`'s held bytes; `None` when the pool doesn't hold them.
     pub fn held(&self, r: SourceRef) -> Option<&[u8]> {
         let e = self.source(self.find_source(r)?).filter(|e| !e.absent())?;
-        Some(
-            self.arena
-                .bytes(e.offset + SOURCE_HEAD as u32, e.held as usize),
-        )
+        Some(self.entry_bytes(e))
     }
 
     /// The registry streamed sources' files go in (slice 1 § 5.5).

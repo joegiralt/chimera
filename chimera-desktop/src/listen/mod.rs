@@ -13,6 +13,7 @@ use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::read::{
     DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape, SourceView,
 };
+use chimera_core::dsp::tape_engine::stretch::HALF_SPEED;
 use chimera_core::dsp::tape_engine::{
     Direction, FADE_HOLD, StretchType, TapeEngine, TapeEngineParams as P, TapeMachine, TapeModel,
     Tron, Wow,
@@ -344,7 +345,6 @@ static WAVE_SWEEP: [(f32, ParamId, f32); 21] = [
 
 /// STRETCH's SIZE for a D-TIME of 60 ms: `log(6) / log(25)`.
 const D_TIME_60: f32 = 0.556_641;
-use chimera_core::dsp::tape_engine::stretch::HALF_SPEED;
 
 /// STRETCH's: 2 s frozen at START (MOTION 0) at D-TIME 250 ms; then the
 /// same passage from START, a fresh take each, at 0.5×, 1× and 2× its time
@@ -446,10 +446,6 @@ static ONESHOT_TAKES: [f32; 20] = [
     13.0, 14.0,
 ];
 
-pub const ONESHOT_LEGEND: &str = "0–2.5 s the whole window once · 2.5–10 s a take each 0.5 s, \
-    SLICE 1→16 by the knob · 10–14.5 s END before START (reversed), a take a second · \
-    11.5–14.5 s TAPE and AGE at 0.5";
-
 /// ONESHOT at SLICE NOTE: 16 notes from C4, 0.5 s apart, each its slice
 /// at ROOT's pitch.
 static ONESHOT_NOTE_KEYS: [(f32, ParamId, f32); 1] = [(8.0, P::TAPE, 0.0)];
@@ -461,9 +457,6 @@ static ONESHOT_NOTE_NOTES: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
 /// TRON's: held 10 s at ROOT, then 10 s an octave up; LENGTH 8 s, so the
 /// tape runs out (or END comes) before each key's 10 s.
 static TRON_KEYS: [(f32, ParamId, f32); 1] = [(20.0, P::TAPE, 0.0)];
-
-pub const TRON_LEGEND: &str = "0–10 s held at ROOT · 10–20 s held an octave up: each key \
-    its own 8 s of tape (END may come first)";
 
 /// How a machine is heard besides its plain script (spec § 2 Machines):
 /// END before START, WOW WARBLE, WALK's other MODEs (LOOP is Plain),
@@ -928,10 +921,10 @@ pub fn credits(toml: &str) -> Result<Vec<(String, Src)>, String> {
         .collect()
 }
 
-/// `model`'s name in file names and on the command line: `play`,
+/// `model`'s name in file names and on the command line: `walk`,
 /// `transwave`….
 pub fn model_slug(model: TapeModel) -> String {
-    crate::factory_tapes::MODEL_WORDS[usize::from(model.index())].to_lowercase()
+    crate::factory_tapes::model_word(model).to_lowercase()
 }
 
 pub fn file_name(model: TapeModel, src: &Src, kind: &str) -> String {
@@ -974,7 +967,7 @@ pub fn page(rows: &[(TapeModel, &Src)]) -> String {
         if it.peek().is_none() {
             continue;
         }
-        let name = crate::factory_tapes::MODEL_WORDS[usize::from(m.index())];
+        let name = crate::factory_tapes::model_word(m);
         let _ = write!(
             out,
             "<section><h2>{name}</h2><p class=\"legend\">{}</p>",
@@ -1216,8 +1209,7 @@ mod tests {
     fn every_script_starts_neutral_and_runs_14_5_s() {
         for m in TapeModel::ALL {
             let s = script(m);
-            let secs = 14.5;
-            assert_eq!(s.secs(), secs, "{m:?}");
+            assert_eq!(s.secs(), 14.5, "{m:?}");
             let (mut a, mut b) = (P::default(), P::default());
             s.apply(&mut a, 0.0);
             s.apply(&mut b, 1.9);

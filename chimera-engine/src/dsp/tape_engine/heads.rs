@@ -215,10 +215,7 @@ pub fn power_of(
     for j in 0..PAIRS {
         // A random place in each stride: a tone whose period divides the
         // stride can't alias to one phase.
-        r ^= r << 13;
-        r ^= r >> 17;
-        r ^= r << 5;
-        let x = j * d + r % d;
+        let x = j * d + crate::dsp::xorshift32(&mut r) % d;
         let (a, b) = (va.sample(a0 + x) as f32, vb.sample(b0 + x) as f32);
         (ab, aa, bb) = (ab + a * b, aa + a * a, bb + b * b);
     }

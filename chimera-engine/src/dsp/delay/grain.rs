@@ -18,15 +18,14 @@
 // MIT License; the notice is `dsp::grain::core`'s.
 
 use super::{
-    DelayParams, DelayType, Eased, FLUTTER_SAMPLES, LINE_SCALE, MAX_DELAY_SAMPLES, TIME_FADE, Tap,
-    TapeDelay, WOW_SAMPLES, read, to_line,
+    DelayParams, Eased, FLUTTER_SAMPLES, LINE_SCALE, MAX_DELAY_SAMPLES, TIME_FADE, Tap, TapeDelay,
+    WOW_SAMPLES, read, to_line,
 };
 use crate::dsp::algo::math::exp2;
-use crate::dsp::ease::{at, ease_coeff, step_of};
+use crate::dsp::ease::{at, step_of};
 pub use crate::dsp::grain::core::{
-    At, Clock, Engine, Frames, Gain, Grain, GrainLen, GrainSource, MAX_STARTS, Pos, Rate, Rng,
-    Samples, Sched, Slot, Speed, Start, Started, Steal, TapAt, Trigger, bell, hermite,
-    log_one_minus_x,
+    At, Clock, Engine, Frames, Gain, GrainLen, GrainSource, Pos, Rate, Rng, Samples, Sched, Speed,
+    Start, Steal, TapAt, Trigger, bell, log_one_minus_x,
 };
 use crate::dsp::{Unit, clampf};
 use chimera_hal::BLOCK_SIZE;
@@ -74,22 +73,6 @@ impl GrainSource for Line<'_> {
     fn frame(&self, i: At<Self>) -> f32 {
         // SAFETY: an `At<Line>` is below `FRAMES`, the line's length.
         f32::from(unsafe { *self.0.get_unchecked(i.get()) })
-    }
-
-    #[inline(always)]
-    fn taps(&self, i: TapAt<Self>) -> [f32; 4] {
-        let i = i.get();
-        // SAFETY: a `TapAt<Line>` has `1 ≤ i` and `i + 2 < FRAMES`, the
-        // line's length, so `i − 1 ..= i + 2` lie inside it.
-        unsafe {
-            [
-                *self.0.get_unchecked(i - 1),
-                *self.0.get_unchecked(i),
-                *self.0.get_unchecked(i + 1),
-                *self.0.get_unchecked(i + 2),
-            ]
-        }
-        .map(f32::from)
     }
 }
 
@@ -253,11 +236,7 @@ pub fn run(d: &mut TapeDelay, buf: &mut [f32; BLOCK_SIZE], p: &DelayParams, fs: 
     if d.grain.share == Unit::ZERO {
         d.grain = State::NEW;
     }
-    let to = if p.kind() == DelayType::Grain {
-        1.0
-    } else {
-        0.0
-    };
+    let to = p.kind().value();
     let step = BLOCK_SIZE as f32 / f32::from(TIME_FADE);
     let s = d.grain.share.get();
     let share = (
@@ -276,15 +255,7 @@ pub fn run(d: &mut TapeDelay, buf: &mut [f32; BLOCK_SIZE], p: &DelayParams, fs: 
     } else if d.fade == 0 && tap.base() != d.time {
         (d.next, d.fade) = (tap.base(), TIME_FADE);
     }
-    let mix = if p.is_on() { p.mix } else { 0.0 };
-    let k = ease_coeff(fs);
-    let e = Eased {
-        mix: d.mix.step(mix, k),
-        feedback: d.feedback.step(p.feedback, k),
-        saturation: d.saturation.step(p.saturation, k),
-        tone: d.tone.step(p.tone, k),
-        mechanics: d.mechanics.step(p.wow_flutter, k),
-    };
+    let e = d.eased(p, fs);
     let ctl = Ctl::new(p, Frames::new(tap.base()), fs);
     let mut g = [0.0; BLOCK_SIZE];
     let wp = d.write_pos;

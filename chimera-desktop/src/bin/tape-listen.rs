@@ -176,7 +176,7 @@ fn run() -> Result<bool, String> {
                     let _ = writeln!(
                         report,
                         "{:<9} {:<17} {kind}  peak {:6.2} dBFS  click {:5.2}x at {:6.3} s  non-finite {}  {}",
-                        chimera_desktop::factory_tapes::MODEL_WORDS[usize::from(m.index())],
+                        chimera_desktop::factory_tapes::model_word(m),
                         row.slug,
                         q.peak_dbfs,
                         q.click_ratio,

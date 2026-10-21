@@ -280,7 +280,7 @@ fn demo(dir: &str) -> Result<bool, String> {
             "{}{{\"file\": \"{}\", \"machine\": \"{}\", \"sound\": \"{name}\", \"source\": \"{}\", \"note\": {note}, \"takes\": {:?}, \"ramp\": \"{}\", \"peak_dbfs\": {:.2}, \"click\": {:.2}}}",
             if k == 0 { "" } else { ",\n" },
             file.replace(".wav", ".oga"),
-            chimera_desktop::factory_tapes::MODEL_WORDS[usize::from(base.model().index())],
+            chimera_desktop::factory_tapes::model_word(base.model()),
             s.source.as_str(),
             notes,
             ramp.map_or(String::from("none"), |(id, a, z)| format!(

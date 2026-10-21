@@ -392,6 +392,13 @@ impl<'s> AudioTurn<'s> {
         self.at.slot(v, s).cancel();
     }
 
+    /// Every slot of voice `v` cancelled.
+    pub fn cancel_all(&mut self, v: VoiceIdx) {
+        for s in SlotIdx::ALL {
+            self.cancel(v, s);
+        }
+    }
+
     /// The slot's samples, if it is Ready under `g`.
     pub fn ready<'t>(&'t self, v: VoiceIdx, s: SlotIdx, g: Generation) -> Option<Ready<'t>> {
         let chunk = self.at.slot(v, s).ready(g)?;

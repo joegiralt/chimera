@@ -67,11 +67,6 @@ impl Pos {
         Self((i as u64) << 32)
     }
 
-    /// `frames` in, to `f32`'s precision.
-    pub fn of(frames: Frames) -> Self {
-        Self(q32(frames.get()))
-    }
-
     /// `back` before frame `head` on a ring of `len` frames.
     pub fn behind(head: usize, back: Frames, len: usize) -> Self {
         let (head, back, end) = (
@@ -138,8 +133,6 @@ impl Samples {
 pub struct GrainLen(f32);
 
 impl GrainLen {
-    pub const MIN: Self = Self(2.0);
-
     pub const fn new(s: Samples) -> Self {
         Self(s.get().max(2.0))
     }
@@ -365,12 +358,6 @@ impl Triggers {
 pub struct Clock {
     phase: f32,
     ratio: f32,
-}
-
-impl Default for Clock {
-    fn default() -> Self {
-        Self::NEW
-    }
 }
 
 impl Clock {
@@ -599,6 +586,13 @@ impl<const G: usize> Started<G> {
     pub fn as_slice(&self) -> &[(Trigger, Slot<G>)] {
         &self.at[..usize::from(self.n)]
     }
+
+    fn push(&mut self, e: (Trigger, Slot<G>)) {
+        if let Some(slot) = self.at.get_mut(usize::from(self.n)) {
+            *slot = e;
+            self.n += 1;
+        }
+    }
 }
 
 /// `G` grains, their clock and the samples since the last start
@@ -609,12 +603,6 @@ pub struct Engine<const G: usize> {
     clock: Clock,
     rng: Rng,
     since: u32,
-}
-
-impl<const G: usize> Default for Engine<G> {
-    fn default() -> Self {
-        Self::NEW
-    }
 }
 
 impl<const G: usize> Engine<G> {
@@ -677,8 +665,7 @@ impl<const G: usize> Engine<G> {
             };
             let k = self.nearest_end();
             self.grains[k].start(s, t.frac);
-            started.at[usize::from(started.n)] = (t, Slot(k as u8));
-            started.n += 1;
+            started.push((t, Slot(k as u8)));
             if let Some(steal) = sched.steal {
                 let interval = self.since.wrapping_add(t.at as u32);
                 self.steal_ahead(steal, Samples::new(interval as f32));

@@ -115,6 +115,7 @@ impl SlotCtx {
             size: get(BlockRef::Reverb, ReverbParams::SIZE),
             ..ReverbParams::default()
         };
+        let tape = TapeMachine::from_index(MachineIndex(get(BlockRef::TapeEngine, T::MODEL) as u8));
         Self {
             sel_op,
             chorus: ChorusMode::from_u8(get(BlockRef::Chorus, ChorusParams::MODE) as u8),
@@ -135,9 +136,8 @@ impl SlotCtx {
                 }
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
-            tape: TapeMachine::from_index(MachineIndex(get(BlockRef::TapeEngine, T::MODEL) as u8)),
-            holds: TapeMachine::from_index(MachineIndex(get(BlockRef::TapeEngine, T::MODEL) as u8))
-                == TapeMachine::Walk
+            tape,
+            holds: tape == TapeMachine::Walk
                 && Direction::from_value(get(BlockRef::TapeEngine, T::MODE))
                     .is_some_and(Direction::once)
                 && Tron::from_value(get(BlockRef::TapeEngine, T::TRON)) != Some(Tron::On),
@@ -923,7 +923,6 @@ pub fn band_note(addr: ParamAddr, sound: &Sound, src: SourceState) -> Option<&'s
     else {
         return None;
     };
-    let t = &sound.params.tape;
     if addr != ParamAddr::new(BlockRef::TapeEngine, T::XFADE) || t.way() != Way::Loop {
         return None;
     }

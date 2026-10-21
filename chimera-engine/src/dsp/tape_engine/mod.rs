@@ -525,13 +525,11 @@ enum MachineState {
     Wave(Wave),
 }
 
-/// ONESHOT's and TRON's note: the window's end in the head's frame, and
-/// the output samples left on TRON's tape (ONESHOT's never run out).
+/// ONE's note: the window's end in the head's frame.
 #[cfg(feature = "tape")]
 #[derive(Clone, Copy)]
 struct Once {
     end: u32,
-    left: u32,
 }
 
 /// PING-PONG's: its clamp in progress and its turn; `inc`'s reciprocal at
@@ -860,7 +858,7 @@ impl TapeDeck {
 
     /// Path `m` before its note-on sets it up.
     fn idle_machine(m: Way) -> MachineState {
-        let once = Once { end: 1, left: 0 };
+        let once = Once { end: 1 };
         match m {
             Way::One => MachineState::One(once),
             Way::Loop => MachineState::Loop,
@@ -907,13 +905,6 @@ impl TapeDeck {
 
     fn once_state(&self) -> Option<&Once> {
         match &self.machine {
-            MachineState::One(o) => Some(o),
-            _ => None,
-        }
-    }
-
-    fn once_state_mut(&mut self) -> Option<&mut Once> {
-        match &mut self.machine {
             MachineState::One(o) => Some(o),
             _ => None,
         }
@@ -1147,14 +1138,8 @@ impl TapeDeck {
         // `as` saturates: never past `u32`.
         let frames = (blocks as f32 * BLOCK_SIZE as f32 * i) as u32;
         let to = self.heads[0].pos.whole().saturating_add(frames);
-        // TRON's tape ran out in output time while it waited.
-        if let Some(o) = self.once_state_mut() {
-            o.left = o
-                .left
-                .saturating_sub(blocks.saturating_mul(BLOCK_SIZE as u32));
-        }
         let to = if let Some(&o) = self.once_state() {
-            if to >= o.end || o.left == 0 {
+            if to >= o.end {
                 self.end();
                 return;
             }
@@ -1306,14 +1291,14 @@ impl TapeDeck {
         self.end_stream(streams);
     }
 
-    /// ONE's or TRON's START as the note's first block plays it, its
+    /// ONE's START as the note's first block plays it, its
     /// routes on (VEL, NOTE, an LFO: #698) differs from the stored one its
     /// note-on latched: the head starts there instead, before a sample has
     /// played. START latches there, kept on its own side of END: a route
     /// never flips a hit to reverse, nor asks a streamed one to read back
     /// (`needs_ram` passed on the stored START). `p` with that START.
     fn moved_start(&mut self, p: &TapeEngineParams) -> Option<TapeEngineParams> {
-        if !(self.first && self.is_active() && self.one_head()) {
+        if !(self.first && self.is_active() && self.one()) {
             return None;
         }
         let start = if self.start <= p.end {
@@ -1641,7 +1626,7 @@ impl TapeDeck {
         self.start = self.played(p).0;
         (self.rel, self.rel_k) = (1.0, 1.0);
         self.fade_k = tron::release_k(p.drag, sample_rate);
-        if self.one_head() {
+        if self.one() {
             self.once_on(note, p, v, sample_rate);
             return;
         }
@@ -1770,11 +1755,6 @@ impl TapeDeck {
         self.tape.state() != TapeState::Off
     }
 
-    /// ONE and TRON play one head toward the window's end.
-    fn one_head(&self) -> bool {
-        matches!(self.machine, MachineState::One(_))
-    }
-
     /// LOOP plays its next pass reversed: END, as played, before the START
     /// latched at note-on (#369).
     fn reversed(&self, end: f32) -> bool {
@@ -1835,11 +1815,9 @@ impl TapeDeck {
         self.fade.is_some() && self.heads[1].mirror != self.heads[0].mirror
     }
 
-    /// ONESHOT's and TRON's note: one head from START toward END in the
-    /// window (ONESHOT: its slice), at least 2 ms (`min_frames`) on END's
-    /// side but at the source's edge, mirrored about it when END is before
-    /// START. TRON's tape runs
-    /// out after SIZE's length in output samples.
+    /// ONE's note: one head from START toward END in the window's slice,
+    /// at least 2 ms (`min_frames`) on END's side but at the source's edge,
+    /// mirrored about it when END is before START.
     fn once_on(
         &mut self,
         note: MidiNote,
@@ -1853,9 +1831,7 @@ impl TapeDeck {
         if p.direction == Direction::Reverse {
             w.dir = w.dir.flip();
         }
-        if self.one() {
-            w = slice_bounds(w, p.slice.slice(), note.get());
-        }
+        w = slice_bounds(w, p.slice.slice(), note.get());
         // POSITION and DRIFT move where it starts, counted the way it plays.
         let from = drift::from(w, drift::place(p.position, self.drift), floor);
         // LENGTH is how much of the rest plays (LOOP's law).
@@ -1866,10 +1842,7 @@ impl TapeDeck {
             pos: at(from),
             mirror: rev,
         }; 2];
-        self.machine = MachineState::One(Once {
-            end,
-            left: u32::MAX,
-        });
+        self.machine = MachineState::One(Once { end });
         (self.rel, self.rel_k) = (1.0, 1.0);
         self.fade_k = tron::release_k(p.drag, sample_rate);
         self.fade = None;
@@ -2013,9 +1986,7 @@ impl TapeDeck {
         if w > i32::MAX as u32 { 0 } else { w }
     }
 
-    /// The strip's heads (`Heads`): the probe's, but TRON's second is
-    /// where its tape runs out at this pitch, `left · inc` frames on, END
-    /// at most. None while idle.
+    /// The strip's heads (`Heads`): the probe's. None while idle.
     pub fn heads(&self) -> Heads {
         if !self.is_active() {
             return Heads::NONE;
@@ -2190,7 +2161,7 @@ impl TapeDeck {
                 (m.position, m.motion, m.size),
                 (first, sample_rate),
             );
-        } else if self.one_head() {
+        } else if self.one() {
             self.render_once(out, reads, sample_rate);
         } else if self.model() == TapeModel::Stretch {
             let target = self.target_inc(v.desc().rate(), Cents::ZERO, sample_rate);
@@ -2277,10 +2248,10 @@ impl TapeDeck {
         })
     }
 
-    /// ONESHOT's and TRON's block: one head toward the window's end, its
-    /// gain the release's (TRON's key up). Within reach of the end or the
-    /// tape's run-out, each sample ramps to 0 over `END_RAMP` and the note
-    /// ends there; a span shorter than a block's travel ends inside it.
+    /// ONE's block: one head toward the window's end, its gain the
+    /// release's. Within reach of the end each sample ramps to 0 over
+    /// `END_RAMP` and the note ends there; a span shorter than a block's
+    /// travel ends inside it.
     #[inline(never)]
     fn render_once(&mut self, out: &mut [f32; BLOCK_SIZE], reads: &Reads<'_>, sample_rate: u32) {
         // SLICE NOTE: the note picks the slice and plays at ROOT.
@@ -2288,30 +2259,20 @@ impl TapeDeck {
         let target = self.target_inc(reads.run(0).0.desc().rate(), tune, sample_rate);
         let (from, to) = self.inc.step(target);
         let fast = from.max(to);
-        let Some(&Once {
-            end: once_end,
-            left: left_n,
-        }) = self.once_state()
-        else {
+        let Some(&Once { end: once_end }) = self.once_state() else {
             return;
         };
         let rem = Pos(at(once_end).0.saturating_sub(self.heads[0].pos.0));
         let rem = rem.whole() as f32 + rem.frac();
         let reach = (BLOCK_SIZE as u32 + END_RAMP) as f32;
-        let near = rem <= reach * fast + 2.0 || (left_n as f32) <= reach;
+        let near = rem <= reach * fast + 2.0;
         // Near the end the gain ramps to 0 over `END_RAMP` samples' travel
-        // at the block's fastest head, or over the tape's last `END_RAMP`
-        // samples, whichever is lower at the block's end: a line through
-        // its values at the block's ends (the head's travel is linear, as
-        // `inc` is ramped), clamped to 0..1 a sample.
+        // at the block's fastest head: a line through its values at the
+        // block's ends (the head's travel is linear, as `inc` is ramped),
+        // clamped to 0..1 a sample.
         let travel = 0.5 * BLOCK_SIZE as f32 * (from + to) + 0.5 * (to - from);
-        let (by_end, by_left) = (1.0 / (END_RAMP as f32 * fast), 1.0 / END_RAMP as f32);
-        let left = left_n as f32;
-        let gain = if (rem - travel) * by_end <= (left - BLOCK_SIZE as f32) * by_left {
-            (rem * by_end, travel * by_end * (1.0 / BLOCK_SIZE as f32))
-        } else {
-            (left * by_left, by_left)
-        };
+        let by_end = 1.0 / (END_RAMP as f32 * fast);
+        let gain = (rem * by_end, travel * by_end * (1.0 / BLOCK_SIZE as f32));
         let (from, to) = (Pos::from_f32(from).0, Pos::from_f32(to).0);
         let step = (to.wrapping_sub(from) as i64 / BLOCK_SIZE as i64) as u64;
         let mut c = (from, step, gain);
@@ -2350,7 +2311,6 @@ impl TapeDeck {
         };
         let mut h = self.heads[0].pos;
         let (mut g, k) = (self.rel, self.rel_k);
-        let n = run.len() as u32;
         for y in out[run].iter_mut() {
             // Reversed at `lo` 0, the head's last fraction reads just
             // under frame 0: the position wraps, and `SourceView::read`
@@ -2359,9 +2319,6 @@ impl TapeDeck {
             g *= k;
             cur = cur.wrapping_add(step);
             h = h + Pos(cur);
-        }
-        if let Some(o) = self.once_state_mut() {
-            o.left = o.left.saturating_sub(n);
         }
         self.heads[0].pos = h;
         self.rel = g;
@@ -2383,11 +2340,11 @@ impl TapeDeck {
         i
     }
 
-    /// `render_once`'s samples near the end or the run-out, read forward or
+    /// `render_once`'s samples near the end, read forward or
     /// (`REV`) at `off − u`: the end's line falls `dr` a sample from `r`,
     /// its gain that clamped to 0..1 and smoothstepped (so the ramp has no
     /// corner where it starts), to land on 0 there, and the note ends where
-    /// the head reaches END or the tape runs out.
+    /// the head reaches END.
     #[inline(never)]
     fn once_near<const REV: bool>(
         &mut self,
@@ -2399,28 +2356,23 @@ impl TapeDeck {
         let off = self.off;
         let mut h = self.heads[0].pos;
         let (mut g, k) = (self.rel, self.rel_k);
-        let Some(&Once { end, mut left }) = self.once_state() else {
+        let Some(&Once { end }) = self.once_state() else {
             return (cur, step, (r, dr));
         };
         let end = at(end);
         let (mut i, stop) = (run.start, run.end.min(BLOCK_SIZE));
-        while i < stop && h < end && left > 0 {
+        while i < stop && h < end {
             r -= dr;
             let x = clampf(r, 0.0, 1.0);
             // `off − h` under frame 0 at `lo` 0: `read`'s clamp, as in `once`.
             out[i] = v.read(if REV { off - h } else { h }) * g * (x * x * (3.0 - 2.0 * x));
             g *= k;
-            left -= 1;
             cur = cur.wrapping_add(step);
             h = h + Pos(cur);
             i += 1;
         }
-        if let Some(o) = self.once_state_mut() {
-            o.left = left;
-        }
-        if h >= end || left == 0 {
-            // The tape ran out, or the head reached END: on the block's
-            // last sample, too.
+        if h >= end {
+            // The head reached END: on the block's last sample, too.
             out[i..].fill(0.0);
             self.end();
         }

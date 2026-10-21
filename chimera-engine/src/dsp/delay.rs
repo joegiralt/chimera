@@ -156,8 +156,7 @@ impl DelayParams {
     /// These params with GRAIN's `id` (7–11) at `v`; any other id leaves
     /// them as they are.
     pub const fn with(mut self, id: ParamId, v: f32) -> Self {
-        let i = id.0.wrapping_sub(Self::TYPE.0) as usize;
-        if i < self.grain.len() {
+        if let Some(i) = grain_slot(id) {
             self.grain[i] = v;
         }
         self
@@ -392,9 +391,13 @@ pub const fn extra_cost(p: &DelayParams) -> crate::hw::Cost {
 
 /// `id`'s place in `DelayParams::grain`, if it is GRAIN's.
 #[inline(always)]
-fn grain_slot(id: ParamId) -> Option<usize> {
-    let i = usize::from(id.0.wrapping_sub(DelayParams::TYPE.0));
-    (i < 5).then_some(i)
+const fn grain_slot(id: ParamId) -> Option<usize> {
+    let i = id.0.wrapping_sub(DelayParams::TYPE.0) as usize;
+    if i < DelayParams::DEFAULT.grain.len() {
+        Some(i)
+    } else {
+        None
+    }
 }
 
 /// GRAIN's kernel, bank 2's (ADR 0202): bank 1 calls `run` while TYPE
@@ -729,20 +732,27 @@ impl TapeDelay {
         if self.fade == 0 && tap.base() != self.time {
             (self.next, self.fade) = (tap.base(), TIME_FADE);
         }
-        let mix = if params.is_on() { params.mix } else { 0.0 };
-        let k = ease_coeff(sample_rate);
-        let e = Eased {
-            mix: self.mix.step(mix, k),
-            feedback: self.feedback.step(params.feedback, k),
-            saturation: self.saturation.step(params.saturation, k),
-            tone: self.tone.step(params.tone, k),
-            mechanics: self.mechanics.step(params.wow_flutter, k),
-        };
+        let e = self.eased(params, sample_rate);
         match (self.fade > 0, e.moving()) {
             (false, false) => self.span::<false, false>(buf, &tap, e, insert),
             (false, true) => self.span::<false, true>(buf, &tap, e, insert),
             (true, false) => self.span::<true, false>(buf, &tap, e, insert),
             (true, true) => self.span::<true, true>(buf, &tap, e, insert),
+        }
+    }
+
+    /// The block's eased settings: MIX (0 while off), FDBK, SAT, TONE and
+    /// MECHANICS, each a step on.
+    #[inline(always)]
+    fn eased(&mut self, p: &DelayParams, fs: u32) -> Eased {
+        let mix = if p.is_on() { p.mix } else { 0.0 };
+        let k = ease_coeff(fs);
+        Eased {
+            mix: self.mix.step(mix, k),
+            feedback: self.feedback.step(p.feedback, k),
+            saturation: self.saturation.step(p.saturation, k),
+            tone: self.tone.step(p.tone, k),
+            mechanics: self.mechanics.step(p.wow_flutter, k),
         }
     }
 

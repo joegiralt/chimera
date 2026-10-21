@@ -7,7 +7,7 @@ use crate::dsp::modulator::law::{GRAIN_SIZE, STRETCH_LENGTH};
 /// `x` in [0, 1]; NaN reads 0.
 #[inline(always)]
 fn unit(x: f32) -> f32 {
-    if x.is_nan() { 0.0 } else { clampf(x, 0.0, 1.0) }
+    clampf(x, 0.0, 1.0)
 }
 
 /// Seconds of output, never negative.
@@ -35,7 +35,8 @@ impl Samples {
 
     #[inline(always)]
     pub fn new(x: f32) -> Samples {
-        Samples(if x.is_nan() { 0.0 } else { x.max(0.0) })
+        // `max` takes the non-NaN side: NaN reads 0.
+        Samples(x.max(0.0))
     }
 
     pub fn get(self) -> f32 {
@@ -141,7 +142,7 @@ impl WinPos {
 
     #[inline(always)]
     pub fn new(x: f32) -> WinPos {
-        WinPos(if x.is_nan() { 0.0 } else { x.max(0.0) })
+        WinPos(x.max(0.0))
     }
 
     pub fn get(self) -> f32 {

@@ -53,6 +53,15 @@ struct Row {
     file: UnsafeCell<MaybeUninit<StreamFile>>,
 }
 
+impl Row {
+    /// Its file, if the row holds an id's (neither free nor being written).
+    fn published(&self) -> Option<&StreamFile> {
+        let t = self.tag.load(Ordering::Acquire);
+        // SAFETY: as `get`: an id's tag, its file written whole.
+        (t != FREE && t != WRITING).then(|| unsafe { (*self.file.get()).assume_init_ref() })
+    }
+}
+
 /// Which card the rows' files are on: it moves when every row is freed for
 /// another card's (`clear_all`), and the card interrupt forgets what it
 /// blamed on the last one's files (`serve::Rot`).
@@ -146,12 +155,8 @@ impl StreamRegistry {
             return false;
         };
         self.rows.iter().any(|r| {
-            let t = r.tag.load(Ordering::Acquire);
-            // SAFETY: as `get`: an id's tag, its file written whole.
-            t != FREE
-                && t != WRITING
-                && r.damaged.load(Ordering::Relaxed)
-                && unsafe { (*r.file.get()).assume_init_ref() }.file() == f
+            r.published()
+                .is_some_and(|x| r.damaged.load(Ordering::Relaxed) && x.file() == f)
         })
     }
 
@@ -188,12 +193,8 @@ impl StreamRegistry {
     /// (`FatStore::guard_streamed`).
     pub fn streams(&self, file: FileName) -> bool {
         self.rows.iter().any(|r| {
-            let t = r.tag.load(Ordering::Acquire);
-            // SAFETY: as `get`: an id's tag, its file written whole.
-            t != FREE
-                && t != WRITING
-                && !r.stale.load(Ordering::Acquire)
-                && unsafe { (*r.file.get()).assume_init_ref() }.file() == file
+            r.published()
+                .is_some_and(|x| !r.stale.load(Ordering::Acquire) && x.file() == file)
         })
     }
 

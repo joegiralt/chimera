@@ -368,12 +368,19 @@ pub fn random_reads(seed: u32) -> impl Iterator<Item = (usize, u32)> {
     let mut state = 1 << 32 | u64::from(seed);
     let slots = FILE_BLOCKS / READ_BLOCKS;
     (0..RANDOM_READS).map(move |_| {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        let r = (state >> 32) as u32;
+        let r = xorshift64(&mut state);
         ((r >> 31) as usize, (r % slots) * READ_BLOCKS)
     })
+}
+
+/// Xorshift64 (13, 7, 17): the next state, its high word drawn. A zero
+/// state stays zero, so seed it.
+#[inline(always)]
+pub fn xorshift64(state: &mut u64) -> u32 {
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    (*state >> 32) as u32
 }
 
 /// TRON's pattern: `STREAM_ROUNDS` rounds of each of `STREAMS` streams

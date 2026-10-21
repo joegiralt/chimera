@@ -299,7 +299,6 @@ pub struct Fragmented {
 /// `Extents`.
 pub struct Runs {
     runs: [(Lba, BlockCount); MAX_RUNS],
-    kept: usize,
     seen: u32,
 }
 
@@ -313,7 +312,6 @@ impl Runs {
     pub const fn new() -> Self {
         Runs {
             runs: [(Lba::new(0), BlockCount::ONE); MAX_RUNS],
-            kept: 0,
             seen: 0,
         }
     }
@@ -321,9 +319,8 @@ impl Runs {
     /// The next run: its first device block and its length. Past
     /// `MAX_RUNS` it is counted and not kept.
     pub fn push(&mut self, first: Lba, blocks: BlockCount) {
-        if let Some(slot) = self.runs.get_mut(self.kept) {
+        if let Some(slot) = self.runs.get_mut(self.seen as usize) {
             *slot = (first, blocks);
-            self.kept += 1;
         }
         self.seen = self.seen.saturating_add(1);
     }
@@ -334,7 +331,7 @@ impl Runs {
         }
         Ok(Extents {
             runs: self.runs,
-            kept: self.kept,
+            kept: self.seen as usize,
         })
     }
 }

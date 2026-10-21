@@ -208,18 +208,19 @@ pub fn defaults(m: TapeMachine, d: Direction) -> impl Iterator<Item = (ParamId, 
         .chain(k.cells)
         .filter(move |c| !matches!(c.id, P::START | P::END | P::MODE))
         .map(move |c| match c.id {
-            P::SIZE | P::DRAG if play => (c.id, by_direction(c.id, d)),
+            P::SIZE if play => walk(d)[0],
+            P::DRAG if play => walk(d)[1],
             _ => (c.id, c.value),
         })
 }
 
-/// WALK's LENGTH or FADE default in `d`: once through, the whole window
+/// WALK's LENGTH and FADE defaults in `d`: once through, the whole window
 /// held to its end (ONE's, ADR 0180); around a loop, LOOP's (#698).
-fn by_direction(id: ParamId, d: Direction) -> f32 {
-    match id {
-        P::SIZE if d.once() => 1.0,
-        P::SIZE => LOOP_LENGTH_DEFAULT,
-        _ => fade_default(d),
+const fn walk(d: Direction) -> &'static [(ParamId, f32); 2] {
+    if d.once() {
+        &ONCE_DEFAULTS
+    } else {
+        &LOOP_DEFAULTS
     }
 }
 
@@ -228,15 +229,18 @@ fn by_direction(id: ParamId, d: Direction) -> f32 {
 /// defaults, as a MODEL turn between ONE and LOOP did (ADR 0203). Within
 /// a side, nothing.
 pub fn direction_defaults(was: Direction, now: Direction) -> &'static [(ParamId, f32)] {
-    match (was.once(), now.once()) {
-        (false, true) => &ONCE_DEFAULTS,
-        (true, false) => &LOOP_DEFAULTS,
-        _ => &[],
+    if was.once() != now.once() {
+        walk(now)
+    } else {
+        &[]
     }
 }
 
 const ONCE_DEFAULTS: [(ParamId, f32); 2] = [(P::SIZE, 1.0), (P::DRAG, FADE_HOLD)];
-const LOOP_DEFAULTS: [(ParamId, f32); 2] = [(P::SIZE, LOOP_LENGTH_DEFAULT), (P::DRAG, 0.3)];
+const LOOP_DEFAULTS: [(ParamId, f32); 2] = [
+    (P::SIZE, LOOP_LENGTH_DEFAULT),
+    (P::DRAG, fade_default(Direction::Loop)),
+];
 
 /// ENV 1's cells (`BlockRef::Env(Env1)`) the UI writes when MODEL becomes
 /// `m`'s ENV 1 a MODEL turn writes, `d` WALK's DIRECTION: WALK once

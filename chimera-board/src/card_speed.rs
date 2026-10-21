@@ -22,6 +22,7 @@ use chimera_core::console::{
     Histogram, Inject, IrqCounts, Latency, Load, MIN_APART_PER_MILLE, PerMille, Percentile,
     RANDOM_READS, READ_BLOCKS, ROOM_MARGIN_BYTES, SEQ_BLOCKS, SPAN_BLOCKS, STREAM_ROUNDS, STREAMS,
     StreamLines, Throughput, apart_per_mille, fit_line, interleaved, random_reads, span_start,
+    xorshift64,
 };
 use chimera_core::dsp::tape_engine::read::Shape;
 use chimera_core::hw::MAX_VOICES;
@@ -727,13 +728,6 @@ fn cycles_us(cpu_hz: u32, cycles: u32) -> Micros {
     Micros::new(cycles / (cpu_hz / 1_000_000).max(1))
 }
 
-fn xorshift(state: &mut u64) -> u32 {
-    *state ^= *state << 13;
-    *state ^= *state >> 7;
-    *state ^= *state << 17;
-    (*state >> 32) as u32
-}
-
 /// The beds' files, once set: the registry's bed rows.
 fn loaded_beds() -> impl Iterator<Item = &'static StreamFile> {
     let reg = card_dma::beds().and(registry());
@@ -750,9 +744,9 @@ fn chunk_lba(k: usize, c: u32) -> Option<Lba> {
 
 /// A random chunk's first block, of a random bed.
 fn somewhere(rng: &mut u64) -> Option<Lba> {
-    let k = xorshift(rng) as usize % loaded_beds().count().max(1);
+    let k = xorshift64(rng) as usize % loaded_beds().count().max(1);
     let last = loaded_beds().nth(k)?.last_chunk().get();
-    chunk_lba(k, xorshift(rng) % (last + 1))
+    chunk_lba(k, xorshift64(rng) % (last + 1))
 }
 
 impl CardBench {
