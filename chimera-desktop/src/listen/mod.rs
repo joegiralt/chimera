@@ -446,10 +446,6 @@ static ONESHOT_TAKES: [f32; 20] = [
     13.0, 14.0,
 ];
 
-pub const ONESHOT_LEGEND: &str = "0–2.5 s the whole window once · 2.5–10 s a take each 0.5 s, \
-    SLICE 1→16 by the knob · 10–14.5 s END before START (reversed), a take a second · \
-    11.5–14.5 s TAPE and AGE at 0.5";
-
 /// ONESHOT at SLICE NOTE: 16 notes from C4, 0.5 s apart, each its slice
 /// at ROOT's pitch.
 static ONESHOT_NOTE_KEYS: [(f32, ParamId, f32); 1] = [(8.0, P::TAPE, 0.0)];
@@ -461,9 +457,6 @@ static ONESHOT_NOTE_NOTES: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
 /// TRON's: held 10 s at ROOT, then 10 s an octave up; LENGTH 8 s, so the
 /// tape runs out (or END comes) before each key's 10 s.
 static TRON_KEYS: [(f32, ParamId, f32); 1] = [(20.0, P::TAPE, 0.0)];
-
-pub const TRON_LEGEND: &str = "0–10 s held at ROOT · 10–20 s held an octave up: each key \
-    its own 8 s of tape (END may come first)";
 
 /// How a machine is heard besides its plain script (spec § 2 Machines):
 /// END before START, WOW WARBLE, WALK's other MODEs (LOOP is Plain),
