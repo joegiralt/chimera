@@ -514,7 +514,7 @@ impl TapeGauge {
 
     /// `of` straight from `TAPE_GLYPH_PARAMS`' set values: the decode is
     /// bank 2's too (`draw::inputs_set`), so bank 1 only gathers them.
-    pub fn of_set(set: [f32; 13], pose: Pose) -> Self {
+    pub fn of_set(set: [f32; 15], pose: Pose) -> Self {
         #[cfg(feature = "bank2")]
         {
             crate::bank2::DOOR_CELL
@@ -608,7 +608,7 @@ pub fn paint(g: &TapeGauge, out: &mut Canvas) -> bool {
 pub struct GlyphDoor {
     render: fn(&TapeGauge, &mut Canvas),
     inputs: fn(&GlyphInputs) -> TapeGauge,
-    inputs_set: fn([f32; 13], Pose) -> TapeGauge,
+    inputs_set: fn([f32; 15], Pose) -> TapeGauge,
 }
 
 #[cfg(feature = "bank2")]

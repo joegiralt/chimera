@@ -27,7 +27,7 @@ const SOFT: Ink = Ink::Soft;
 /// `i`'s gauge. `Pose::Still` (MODEL's cell) shows the machine, not its
 /// knobs. A machine reads only what it plays (`reads`), so a param it
 /// ignores leaves the glyph as it was.
-pub fn inputs_set(set: [f32; 13], pose: Pose) -> TapeGauge {
+pub fn inputs_set(set: [f32; 15], pose: Pose) -> TapeGauge {
     inputs(&GlyphInputs::from_set(set, pose))
 }
 

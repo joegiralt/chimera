@@ -9,7 +9,8 @@ use chimera_core::ui::tape_glyph::{
 };
 
 /// The glyph's set values for WALK in `d`, TRON `tron`, DRIFT `drift`.
-fn set(d: Direction, tron: bool, drift: f32, fade: f32) -> [f32; 13] {
+/// STRETCH's LENGTH and TYPE (ADR 0204) at their rest.
+fn set(d: Direction, tron: bool, drift: f32, fade: f32) -> [f32; 15] {
     [
         0.0,
         0.0,
@@ -24,6 +25,8 @@ fn set(d: Direction, tron: bool, drift: f32, fade: f32) -> [f32; 13] {
         d as u8 as f32 / 3.0,
         f32::from(u8::from(tron)),
         drift,
+        0.5,
+        0.0,
     ]
 }
 
