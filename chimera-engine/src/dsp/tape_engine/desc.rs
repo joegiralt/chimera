@@ -277,7 +277,7 @@ pub fn write_head_table(
     heads: &[HeadSpec],
     out: &mut [u8],
 ) -> Option<usize> {
-    let n = u8::try_from(heads.len()).ok()?;
+    let n = u8::try_from(heads.len()).ok().filter(|&n| n != 0)?;
     let d = Descriptor::new(Shape::Plain, 1, rate.get(), reach, n)?;
     let end = DESC_LEN + HEAD_ENTRY * heads.len();
     let out = out.get_mut(..end)?;
