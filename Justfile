@@ -163,7 +163,6 @@ bank2-split elf out:
     if [ "$(basename {{out}})" != chimera-gate ]; then just check-no-gate {{out}}.bin; fi
     rm -f {{out}}.bk2
     sections=$(rust-objdump -h {{elf}})
-    syms=$(rust-nm {{elf}})
     if awk '$2 == ".bank2" && $3 != "00000000" { f = 1 } END { exit !f }' <<< "$sections"; then
         pkg=$(cargo pkgid -p chimera-stm32)
         hash=$(git rev-parse --short=8 HEAD)

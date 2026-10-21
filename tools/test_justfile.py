@@ -94,6 +94,8 @@ class Bank2Code(unittest.TestCase):
         for dep in ("chimera-board", "chimera-core", "chimera-engine"):
             self.assertRegex(toml, rf'(?m)^{dep} = {{.*features = \["bank2"\]')
         self.assertNotIn("CARGO_FEATURE_BANK2", (ROOT / "chimera-stm32/build.rs").read_text())
+        split = "\n".join(recipes()["bank2-split"])
+        self.assertRegex(split, r"else\n\s+echo .*no bank 2.*exit 1", "an empty .bank2 must fail the split")
 
     def test_check_runs_the_proxies_with_their_door(self):
         body = "\n".join(recipes()["check"])
