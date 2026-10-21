@@ -192,7 +192,7 @@ fn fx_encoders_step_like_before() {
     assert_eq!(perf.fx.delay.rev_send, 0.5);
     turn_def(&reg::DELAY_CHAR, 0, 1, &mut perf);
     assert!((perf.fx.delay.wow_flutter - (0.15 + 1.0 / 128.0)).abs() < 1e-6);
-    // TYPE to GRAIN, and DLY › GRAIN's pots (ADR 0199).
+    // TYPE to GRAIN, and DLY › GRAIN's pots (ADR 0202).
     turn_def(&reg::DELAY, 0, 1, &mut perf);
     assert_eq!(
         perf.fx.delay.kind(),

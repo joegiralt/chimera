@@ -1,4 +1,4 @@
-# 0199. DELAY TYPE GRAIN from Beads
+# 0202. DELAY TYPE GRAIN from Beads
 
 - **Status:** Proposed
 - **Deciders:** owner (#612: a Beads-style grain delay beside today's TAPE delay, no new RAM, one instance on the bus; 2026-10-21: in now, bank 1 frozen), firmware (the port, the controls, the bill)

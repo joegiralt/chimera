@@ -1964,7 +1964,7 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::press(ButtonId::Edit)); // DLY › CHAR
         feed(ui, Input::turn(EncoderId::A, 20)); // WOW
     }),
-    // GRAIN (ADR 0199): DLY with TYPE GRAIN, then DLY › GRAIN.
+    // GRAIN (ADR 0202): DLY with TYPE GRAIN, then DLY › GRAIN.
     ("mixer_fx_delay_grain", |ui| {
         to_fx(ui, DLY);
         feed(ui, Input::turn(EncoderId::A, 1)); // TYPE → GRAIN

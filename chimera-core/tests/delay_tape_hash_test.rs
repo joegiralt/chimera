@@ -1,4 +1,4 @@
-//! TAPE, bit for bit (ADR 0199): a saved project loads with TYPE TAPE and
+//! TAPE, bit for bit (ADR 0202): a saved project loads with TYPE TAPE and
 //! its delay plays exactly what it played before TYPE existed. The hashes
 //! were taken on origin/main f745c0a1, before GRAIN.
 

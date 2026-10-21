@@ -332,7 +332,7 @@ const OWN_OUTSIDE: &[&str] = &[
     "Delay TONE",
     "Delay MIX",
     "Delay REV",
-    // GRAIN (ADR 0199): each grain reads its SIZE, DENSITY, PITCH and
+    // GRAIN (ADR 0202): each grain reads its SIZE, DENSITY, PITCH and
     // TEXTURE when it starts, under its own bell.
     "Delay SIZE",
     "Delay DENSITY",

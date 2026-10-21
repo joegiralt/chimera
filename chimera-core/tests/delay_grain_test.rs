@@ -1,4 +1,4 @@
-//! GRAIN, the delay's Beads-style TYPE (ADR 0199): the engine against an
+//! GRAIN, the delay's Beads-style TYPE (ADR 0202): the engine against an
 //! f64 reference of the port, its clock at several densities, the pitch
 //! shift's accuracy, feedback that never runs away, TYPE and TIME changes
 //! that never click, NaN, and its codes.
@@ -403,7 +403,7 @@ fn crossing_hz(x: &[f32]) -> f64 {
 /// (DENSITY 0, a grain a second; SIZE 0.9) a 440 Hz sine reads 440 ·
 /// 2^(PITCH/12) within a cent, at 0, +7, +12, −12, +24 and −24. Grains
 /// started on a regular train add up to lines a grain rate apart, as any
-/// grain shifter's do: TEXTURE spreads them (ADR 0199).
+/// grain shifter's do: TEXTURE spreads them (ADR 0202).
 #[test]
 fn pitch_shifts_each_grain_within_a_cent() {
     for semis in [0.0f32, 7.0, 12.0, -12.0, 24.0, -24.0] {

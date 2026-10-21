@@ -216,7 +216,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // mixer_sends, mixer_out_p2 re-recorded: the sends are the Sound's OUT block (ADR 0123).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_sends", 0x35e09ae3385236bb),
-    // Re-recorded: TYPE in front (ADR 0199).
+    // Re-recorded: TYPE in front (ADR 0202).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay", 0x0858ddab18f1090a),
     // TYPE first, the panel's units, and REV › MORE (reverb TYPEs T6);
@@ -245,10 +245,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_fx_reverb_bloom", 0x8bb0cf42db45e7a5),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_bloom_more", 0x1cadf3eefa17fedb),
-    // Re-recorded: the map's DLY branch holds GRAIN (ADR 0199).
+    // Re-recorded: the map's DLY branch holds GRAIN (ADR 0202).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay_char", 0xf7d292f46d3dbced),
-    // GRAIN: DLY, DLY › GRAIN at PITCH +12, and bank 2 closed (ADR 0199).
+    // GRAIN: DLY, DLY › GRAIN at PITCH +12, and bank 2 closed (ADR 0202).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay_grain", 0xef1ed3ecaaa14bba),
     #[cfg(not(feature = "master-tape"))]

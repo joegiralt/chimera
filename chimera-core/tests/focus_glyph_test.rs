@@ -122,7 +122,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Delay", "TONE", RINGS),
     ("Delay", "MIX", RINGS),
     ("Delay", "REV", RINGS),
-    // TAPE and GRAIN: two delays, a word (ADR 0199). GRAIN's four pots
+    // TAPE and GRAIN: two delays, a word (ADR 0202). GRAIN's four pots
     // keep the arc: the rings draw TAPE's head.
     ("Delay", "TYPE", NONE),
     // The reverb: every knob shows its composite (the cube under QUAD);
@@ -1307,7 +1307,7 @@ fn rings_ui(slot: EncoderId) -> UiState {
 fn glyph_rings_page_moves_only_inside_its_box() {
     use chimera_core::dsp::delay::DelayParams;
     // Every delay param the rings read carries them; TYPE is a word and
-    // GRAIN's pots keep the arc (ADR 0199).
+    // GRAIN's pots keep the arc (ADR 0202).
     for s in BlockRef::Delay.specs() {
         let want = match s.ident {
             "TYPE" => NONE,

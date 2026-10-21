@@ -1,4 +1,4 @@
-//! The delay, TYPE TAPE or GRAIN (ADR 0199). TAPE: Space Echo-style, with
+//! The delay, TYPE TAPE or GRAIN (ADR 0202). TAPE: Space Echo-style, with
 //! MECHANICS (wow and flutter), saturation and high-frequency rolloff.
 //! GRAIN: Beads-style repeats, grains read from the same line (`grain`,
 //! bank 2's).
@@ -92,7 +92,7 @@ pub struct DelayParams {
     pub rev_send: f32,
     /// GRAIN's TYPE and knobs, ids 7–11 in order: TYPE's index (0 TAPE,
     /// 1 GRAIN, `kind`), SIZE, DENSITY, PITCH (semitones, −24..24) and
-    /// TEXTURE (ADR 0199). One array, so `get` and `write` reach them in
+    /// TEXTURE (ADR 0202). One array, so `get` and `write` reach them in
     /// one arm each and bank 1's codec code stays as it was (ADR 0198).
     pub grain: [f32; 5],
 }
@@ -266,7 +266,7 @@ pub static DELAY_SPECS: [ParamSpec; 12] = [
     )
     .ident("REV")
     .glyph(RINGS),
-    // GRAIN (ADR 0199): its pots hold their values under TAPE.
+    // GRAIN (ADR 0202): its pots hold their values under TAPE.
     // TYPE stored as its index, a real, as HINTS is: no enum codes, so no
     // codec code in bank 1 (ADR 0198).
     ParamSpec::stepped(
@@ -371,7 +371,7 @@ impl Block for DelayParams {
 }
 
 /// GRAIN's steady block over the bus's bill, which holds TAPE's
-/// (`tools/loop_count.py` on the ORBIT ELF, ADR 0199): its sample loop 61
+/// (`tools/loop_count.py` on the ORBIT ELF, ADR 0202): its sample loop 61
 /// instructions and a divide, 110 cycles; the block's own 10.1 and 0.23,
 /// 20, and two starts' gains (a `powf` each), 5; six grains at 46
 /// instructions a sample each (the loop runs two samples a round), 74, and
@@ -396,7 +396,7 @@ fn grain_slot(id: ParamId) -> Option<usize> {
     (i < 5).then_some(i)
 }
 
-/// GRAIN's kernel, bank 2's (ADR 0199): bank 1 calls `run` while TYPE
+/// GRAIN's kernel, bank 2's (ADR 0202): bank 1 calls `run` while TYPE
 /// is GRAIN or still fading.
 #[repr(C)]
 pub struct GrainDoor {
@@ -409,7 +409,7 @@ impl GrainDoor {
 
 /// `f` on GRAIN: through the door with `bank2` (`None` while it is
 /// closed); on a host, bank 1's own. Firmware without bank 2 has no
-/// room for it (ADR 0198, 0199): it plays TAPE, as a closed door does.
+/// room for it (ADR 0198, 0202): it plays TAPE, as a closed door does.
 #[inline(always)]
 fn through<R>(f: impl FnOnce(&GrainDoor) -> R) -> Option<R> {
     #[cfg(feature = "bank2")]
@@ -615,7 +615,7 @@ pub struct TapeDelay {
     saturation: Ease,
     tone: Ease,
     mechanics: Ease,
-    /// GRAIN's grains and its share of the return (bank 2's, ADR 0199).
+    /// GRAIN's grains and its share of the return (bank 2's, ADR 0202).
     grain: grain::State,
 }
 

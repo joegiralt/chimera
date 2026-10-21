@@ -2610,7 +2610,7 @@ fn sem_bills_its_count_and_its_voices() {
     );
 }
 
-/// GRAIN (ADR 0199) bills `GRAIN_COST` beside the bus while TYPE is GRAIN,
+/// GRAIN (ADR 0202) bills `GRAIN_COST` beside the bus while TYPE is GRAIN,
 /// as a reverb TYPE bills its extra; TAPE bills nothing more. Each
 /// engine's INIT keeps every voice it had under TAPE but one at most, and
 /// never fewer than the floor, at rev V and rev Y.

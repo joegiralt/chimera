@@ -1,4 +1,4 @@
-//! GRAIN, the delay's second TYPE (ADR 0199): repeats made of grains read
+//! GRAIN, the delay's second TYPE (ADR 0202): repeats made of grains read
 //! from the delay's own line by the grain core (`dsp::grain::core`, after
 //! Mutable Instruments Beads, MIT, its notice there). This module is the
 //! delay's side: the line as a `GrainSource`, the knobs' laws, where a
@@ -8,7 +8,7 @@
 //! Ported from Beads here: a grain's start (the sub-sample offset, the
 //! duration trimmed to the line, the delay held off the write head) and
 //! the feedback's soft clip (`stmlib::SoftClip`, `fast_tanh`) and DC
-//! blocker. Not ported, and why, in ADR 0199.
+//! blocker. Not ported, and why, in ADR 0202.
 //!
 //! With `bank2` this module links into bank 2 whole (`bank2.x`,
 //! `*5delay5grain*`, and the core's `*3dsp5grain*`); bank 1 reaches `run`
@@ -33,7 +33,7 @@ use chimera_hal::BLOCK_SIZE;
 const N: usize = MAX_DELAY_SAMPLES;
 
 /// Grains at once (Beads' delay player: 32): six keep an ALGO INIT's
-/// voices on rev Y but one (ADR 0199).
+/// voices on rev Y but one (ADR 0202).
 pub const GRAINS: usize = 6;
 /// The nearest a grain reads to the write head, samples: the block is read
 /// before it is written, so a grain at sample 63 must still find its

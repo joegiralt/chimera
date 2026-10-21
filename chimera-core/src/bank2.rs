@@ -100,7 +100,7 @@ fn closed(bank2: Option<Bank2Status>) -> bool {
 /// displayed) under `bank2`: the reverb's TYPE (ADR 0142), TAPE's MODEL
 /// (ADR 0141) and a VA MODE whose oscillators are bank 2's (FM, ADR 0163)
 /// and the FX TYPE FUZZ (ADR 0157), the filter TYPE SEM (ADR 0192), VA
-/// NOISE's KIND (ADR 0197, every KIND) and the delay TYPE GRAIN (ADR 0199,
+/// NOISE's KIND (ADR 0197, every KIND) and the delay TYPE GRAIN (ADR 0202,
 /// which plays as TAPE) read `NEEDS UPDATE` while their code can't play.
 pub fn closed_text(
     addr: crate::addr::ParamAddr,

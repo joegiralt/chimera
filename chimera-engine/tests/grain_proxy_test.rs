@@ -1,4 +1,4 @@
-//! GRAIN through the door (ADR 0199): open, `TapeDelay::run` crosses to
+//! GRAIN through the door (ADR 0202): open, `TapeDelay::run` crosses to
 //! bank 2's `grain::run` and plays the grains, every bit of what a build
 //! without bank 2 plays; closed, GRAIN plays as TAPE, bit for bit. The host builds its own door
 //! (`open_host`); the door is a process-wide static, so the tests take

@@ -490,7 +490,7 @@ pub static DELAY: BlockDef = BlockDef {
     short: "DLY",
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Delay)),
-    // TYPE · the shared five (ADR 0199): TAPE's own in DLY › CHAR,
+    // TYPE · the shared five (ADR 0202): TAPE's own in DLY › CHAR,
     // GRAIN's in DLY › GRAIN.
     params: [
         ParamSlot::param(BlockRef::Delay, DelayParams::TYPE),
@@ -520,7 +520,7 @@ pub static DELAY_CHAR: BlockDef = BlockDef {
     ],
 };
 
-/// DLY › GRAIN: GRAIN's four (ADR 0199). A table, no code, so bank 1
+/// DLY › GRAIN: GRAIN's four (ADR 0202). A table, no code, so bank 1
 /// stays frozen (ADR 0198): the page is there under TAPE too, its knobs
 /// held for GRAIN.
 pub static DELAY_GRAIN: BlockDef = BlockDef {

@@ -646,7 +646,7 @@ pub struct Instrument {
     /// How they move: glide, or land (`land_knobs`).
     knob_pace: Pace,
     /// The reverb's reserve from the budget this block, with GRAIN's
-    /// (ADR 0199), and the reverb's tracker.
+    /// (ADR 0202), and the reverb's tracker.
     rev_extra: Cost,
     rev_bill: RevBill,
     /// SETTINGS > TUNING in cents, eased a block at a time (never snap),
@@ -1677,7 +1677,7 @@ impl Instrument {
         scope: &mut ScopeWriter,
         src: &GateView<'_>,
     ) {
-        // The reverb TYPE's extra, and GRAIN's (ADR 0199).
+        // The reverb TYPE's extra, and GRAIN's (ADR 0202).
         self.rev_extra = self.rev_bill.step(shared.fx.reverb.kind)
             + crate::dsp::delay::extra_cost(&shared.fx.delay);
         let (_, cents) = self

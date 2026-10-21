@@ -53,7 +53,7 @@ usage: chimera-utils [flags] COMMAND …
   door-check ELF           fail on any bank-1 relocation into bank 2
   filter-fb DIR            FB's A/B (ADR 0190): a Surfer-style pluck on each TYPE at FB
                            0, ½, full, RMS-matched WAVs and levels.md into DIR
-  grain-listen OUTDIR      the delay's TAPE against GRAIN (ADR 0199): pluck, stab and
+  grain-listen OUTDIR      the delay's TAPE against GRAIN (ADR 0202): pluck, stab and
                            percussion × TAPE and GRAIN settings through the full engine,
                            raw WAVs and levels.json
   devices                  the devices and their knobs (fx-soft/fuzz/fold: p1 p2 p3 mix
