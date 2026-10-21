@@ -1696,7 +1696,11 @@ pub const CASES: &[ScreenCase] = &[
     // PIT's tuner (ADR 0201): middle C sounding at PITCH +7 and FINE -25.
     ("algo_pitch_note", |ui| {
         to_pitch(ui, EngineType::Algo);
-        ui.hear_note(chimera_core::project::PartId::ALL[0], Some(60), true);
+        ui.hear_note(
+            chimera_core::project::PartId::ALL[0],
+            chimera_core::MidiNote::new(60),
+            true,
+        );
         feed(ui, Input::turn(EncoderId::A, 7));
         feed(ui, Input::turn(EncoderId::B, -25));
     }),
@@ -1717,14 +1721,22 @@ pub const CASES: &[ScreenCase] = &[
         });
         sound.params.tape.period = 0.0;
         to_pitch(ui, EngineType::Tape);
-        ui.hear_note(chimera_core::project::PartId::ALL[0], Some(60), false);
+        ui.hear_note(
+            chimera_core::project::PartId::ALL[0],
+            chimera_core::MidiNote::new(60),
+            false,
+        );
         feed(ui, Input::turn(EncoderId::A, 7));
     }),
     // VA under LARGE: the corner keeps to it.
     ("large_va_pitch_note", |ui| {
         load_init(ui, EngineType::Va);
         to_pitch(ui, EngineType::Va);
-        ui.hear_note(chimera_core::project::PartId::ALL[0], Some(57), true);
+        ui.hear_note(
+            chimera_core::project::PartId::ALL[0],
+            chimera_core::MidiNote::new(57),
+            true,
+        );
         feed(ui, Input::turn(EncoderId::B, 13));
         large(ui);
     }),

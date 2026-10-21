@@ -2599,7 +2599,7 @@ impl UiState {
     /// PIT's tuner takes `note` as `part`'s last, and the edited Part as
     /// `sounding`, never the audio's: for the goldens and tests.
     #[cfg(feature = "test-support")]
-    pub fn hear_note(&mut self, part: PartId, note: Option<u8>, sounding: bool) {
+    pub fn hear_note(&mut self, part: PartId, note: Option<crate::MidiNote>, sounding: bool) {
         self.tuner.hear(part, note, sounding);
     }
 

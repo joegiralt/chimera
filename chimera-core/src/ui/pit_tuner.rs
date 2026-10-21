@@ -45,7 +45,7 @@ impl Shown {
 /// Each Part's last live note, as it sounds after the scale's snap, and
 /// what the corner shows now.
 pub struct Tuner {
-    last: [Option<u8>; MAX_PARTS],
+    last: [Option<crate::MidiNote>; MAX_PARTS],
     /// `hear`'s: whether the edited Part sounds, and `played` unread.
     #[cfg(any(test, feature = "test-support"))]
     heard: Option<bool>,
@@ -64,7 +64,12 @@ impl Tuner {
     /// `sounding` says, whatever the audio publishes: for the goldens and
     /// tests.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn hear(&mut self, part: crate::project::PartId, note: Option<u8>, sounding: bool) {
+    pub fn hear(
+        &mut self,
+        part: crate::project::PartId,
+        note: Option<crate::MidiNote>,
+        sounding: bool,
+    ) {
         self.heard = Some(sounding);
         self.last[part.index()] = note;
     }

@@ -10,6 +10,7 @@
 mod common;
 mod screen;
 
+use chimera_core::MidiNote;
 use chimera_core::dsp::tape_engine::params::TapeMachine;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
@@ -18,16 +19,36 @@ use chimera_core::storage::{SourceRef, TapeSource};
 use chimera_core::ui::UiState;
 use chimera_core::ui::perf::PerfStats;
 use chimera_core::ui::pit_tuner::Shown;
-use chimera_core::ui::pit_tuner::calc::{CORNER_W, Pitch, lines, pitch, shown};
+use chimera_core::ui::pit_tuner::calc::{
+    CORNER_W, Known, Light, Reading, Readout, Shift, Tone, lines, pitch, shown,
+};
 use chimera_core::ui::theme::{self, TextSize};
 use chimera_hal::EncoderId;
 use screen::*;
 
 const P1: PartId = PartId::ALL[0];
 
-fn read(p: Pitch) -> (String, String) {
-    let (a, b) = lines(p, false);
+fn read(r: Readout) -> (String, String) {
+    let (a, b) = lines(r);
     (a.as_str().into(), b.as_str().into())
+}
+
+/// A lit note at `c` cents above MIDI 0.
+fn lit(c: f32) -> Readout {
+    Readout::Lit(Known::Note(Tone::of_cents(c)))
+}
+
+/// A known reading at `c`.
+fn at(c: f32) -> Option<Reading> {
+    Some(Reading::Known(Known::Note(Tone::of_cents(c))))
+}
+
+fn key(n: u8) -> MidiNote {
+    MidiNote::new(n).unwrap()
+}
+
+fn shown_lit(r: Option<Reading>) -> (String, String) {
+    read(Readout::of(r, Light::Lit))
 }
 
 fn texts(s: &Shown) -> [String; 2] {
@@ -58,29 +79,17 @@ fn tape(machine: TapeMachine, root: f32, period: f32) -> Sound {
 
 #[test]
 fn a4_reads_440_hz_and_c4_its_own() {
-    assert_eq!(
-        read(Pitch::At(6_900.0)),
-        ("A4 +0ct".into(), "440.0 Hz".into())
-    );
-    assert_eq!(
-        read(Pitch::At(6_000.0)),
-        ("C4 +0ct".into(), "261.6 Hz".into())
-    );
-    assert_eq!(
-        read(Pitch::At(6_901.0)),
-        ("A4 +1ct".into(), "440.3 Hz".into())
-    );
-    assert_eq!(
-        read(Pitch::At(8_100.0)),
-        ("A5 +0ct".into(), "880.0 Hz".into())
-    );
+    assert_eq!(read(lit(6_900.0)), ("A4 +0ct".into(), "440.0 Hz".into()));
+    assert_eq!(read(lit(6_000.0)), ("C4 +0ct".into(), "261.6 Hz".into()));
+    assert_eq!(read(lit(6_901.0)), ("A4 +1ct".into(), "440.3 Hz".into()));
+    assert_eq!(read(lit(8_100.0)), ("A5 +0ct".into(), "880.0 Hz".into()));
 }
 
 /// Exactly between two notes is the upper one at −50; a hair under it
 /// the lower one at +49, both ways from A4.
 #[test]
 fn cents_turn_over_at_50() {
-    let note = |c| read(Pitch::At(c)).0;
+    let note = |c| read(lit(c)).0;
     assert_eq!(note(6_949.0), "A4 +49ct");
     assert_eq!(note(6_949.4), "A4 +49ct");
     assert_eq!(note(6_949.6), "A#4 -50ct");
@@ -100,15 +109,15 @@ fn every_engines_offsets_sum() {
     a.params.pitch.fine = -25.0;
     a.params.algo.transpose = -12;
     assert_eq!(
-        pitch(60, &a, 10),
-        Some(Pitch::At(6_000.0 + 700.0 - 25.0 - 1_200.0 + 10.0))
+        pitch(key(60), &a, 10),
+        at(6_000.0 + 700.0 - 25.0 - 1_200.0 + 10.0)
     );
     let mut v = Sound::init(EngineType::Va);
     v.params.va.coarse = [12, -7];
     v.params.va.fine = [3.0, 6.0];
-    assert_eq!(pitch(69, &v, 0), Some(Pitch::At(6_900.0 + 1_200.0 + 3.0)));
+    assert_eq!(pitch(key(69), &v, 0), at(6_900.0 + 1_200.0 + 3.0));
     let m = Sound::init(EngineType::Modal);
-    assert_eq!(pitch(69, &m, -3), Some(Pitch::At(6_897.0)));
+    assert_eq!(pitch(key(69), &m, -3), at(6_897.0));
 }
 
 // ── TAPE ─────────────────────────────────────────────────────────────
@@ -126,14 +135,14 @@ fn tape_plays_the_key_over_its_root() {
     ] {
         let mut s = tape(m, 4_800.0, 183.4);
         s.params.pitch.pitch = 7.0;
-        assert_eq!(pitch(48, &s, 0), Some(Pitch::At(5_500.0)), "{m:?}");
-        assert_eq!(read(pitch(48, &s, 0).unwrap()).0, "G3 +0ct");
+        assert_eq!(pitch(key(48), &s, 0), at(5_500.0), "{m:?}");
+        assert_eq!(shown_lit(pitch(key(48), &s, 0)).0, "G3 +0ct");
         s.params.tape.root = 4_930.0;
-        assert_eq!(pitch(48, &s, 0), Some(Pitch::At(5_500.0)), "{m:?} any root");
+        assert_eq!(pitch(key(48), &s, 0), at(5_500.0), "{m:?} any root");
     }
     // TRANSWAVE's cycle plays the note itself.
     let w = tape(TapeMachine::Wave, 4_800.0, 0.0);
-    assert_eq!(pitch(69, &w, 0), Some(Pitch::At(6_900.0)));
+    assert_eq!(pitch(key(69), &w, 0), at(6_900.0));
 }
 
 /// No period: the import found no pitch, so the root is a guess. The
@@ -143,10 +152,10 @@ fn an_unknown_root_reads_root_unknown_and_the_shift() {
     let mut s = tape(TapeMachine::Loop, 6_000.0, 0.0);
     s.params.pitch.pitch = 7.0;
     s.params.pitch.fine = 12.0;
-    let p = pitch(60, &s, 0).unwrap();
-    assert_eq!(p, Pitch::Shift(712.0));
-    assert_eq!(read(p), ("ROOT ?".into(), "+7st +12ct".into()));
-    assert_eq!(read(pitch(48, &s, 0).unwrap()).1, "-5st +12ct");
+    let p = pitch(key(60), &s, 0);
+    assert_eq!(p, Some(Reading::RootUnknown(Shift::of_cents(712.0))));
+    assert_eq!(shown_lit(p), ("ROOT ?".into(), "+7st +12ct".into()));
+    assert_eq!(shown_lit(pitch(key(48), &s, 0)).1, "-5st +12ct");
 }
 
 /// SCRUB runs at 2 · |MOTION| of the source's speed, and stands at 0.
@@ -154,19 +163,22 @@ fn an_unknown_root_reads_root_unknown_and_the_shift() {
 fn scrub_follows_motion() {
     let mut s = tape(TapeMachine::Scrub, 6_000.0, 100.0);
     s.params.tape.motion = 0.0;
-    assert_eq!(pitch(60, &s, 0), Some(Pitch::Still));
-    assert_eq!(read(Pitch::Still), ("STILL".into(), String::new()));
+    assert_eq!(pitch(key(60), &s, 0), Some(Reading::Known(Known::Still)));
+    assert_eq!(
+        read(Readout::Lit(Known::Still)),
+        ("STILL".into(), String::new())
+    );
     s.params.tape.motion = -0.5;
-    assert_eq!(pitch(60, &s, 0), Some(Pitch::At(6_000.0)));
+    assert_eq!(pitch(key(60), &s, 0), at(6_000.0));
     s.params.tape.motion = 1.0;
-    assert_eq!(pitch(60, &s, 0), Some(Pitch::At(7_200.0)));
+    assert_eq!(pitch(key(60), &s, 0), at(7_200.0));
 }
 
 #[test]
 fn tape_with_no_source_reads_nothing() {
     let mut s = tape(TapeMachine::Loop, 6_000.0, 100.0);
     s.source = None;
-    assert_eq!(pitch(60, &s, 0), None);
+    assert_eq!(pitch(key(60), &s, 0), None);
 }
 
 // ── The corner ───────────────────────────────────────────────────────
@@ -176,16 +188,16 @@ fn tape_with_no_source_reads_nothing() {
 #[test]
 fn the_corner_fits_at_every_text_size() {
     let worst = [
-        lines(Pitch::At(-50.0), true),
-        lines(Pitch::At(13_649.0), false),
-        lines(Pitch::Shift(-4_850.0), true),
-        lines(Pitch::Still, true),
+        Readout::Reference(Known::Note(Tone::of_cents(-50.0))),
+        lit(13_649.0),
+        Readout::RootUnknown(Shift::of_cents(-4_850.0), Light::Reference),
+        Readout::Reference(Known::Still),
     ];
     for size in [TextSize::Normal, TextSize::Large] {
-        for (a, b) in &worst {
-            let s = shown(clone(a), clone(b), size, true);
+        for r in worst {
+            let s = shown(r, size);
             let (x, y, w, h) = s.back;
-            assert!(w <= CORNER_W + 4, "{size:?} {}: {w}", a.as_str());
+            assert!(w <= CORNER_W + 4, "{size:?} {r:?}: {w}");
             assert!(x + w == theme::VIZ_RIGHT + 1 && y == theme::VIZ_BAND_TOP);
             assert!(y + h < theme::VIZ_BAND_MID, "{size:?}: {h}");
             for l in s.lines.iter().flatten() {
@@ -193,10 +205,20 @@ fn the_corner_fits_at_every_text_size() {
             }
         }
     }
+    let none = shown(Readout::None, TextSize::Normal);
+    assert!(none.lines.iter().all(Option::is_none) && none.back.2 == 0);
 }
 
-fn clone(b: &chimera_core::ui::fmt::FmtBuf) -> chimera_core::ui::fmt::FmtBuf {
-    chimera_core::ui::fmt::FmtBuf::of(format_args!("{}", b.as_str()))
+/// A reference and a source with no root say so on the second line; a
+/// dim note reads as a lit one, only its ink differs.
+#[test]
+fn reference_and_root_unknown_say_so() {
+    let c4 = Known::Note(Tone::of_cents(6_000.0));
+    assert_eq!(read(Readout::Reference(c4)).1, "REF C4 261.6 Hz");
+    assert_eq!(read(Readout::Dim(c4)), read(Readout::Lit(c4)));
+    let r = Readout::RootUnknown(Shift::of_cents(-1_200.0), Light::Reference);
+    assert_eq!(read(r), ("ROOT ?".into(), "REF C4 -12st +0ct".into()));
+    assert_eq!(Tone::of_cents(6_900.0).hz().get(), 440.0);
 }
 
 fn tick(ui: &mut UiState) {
@@ -225,11 +247,11 @@ fn silence_reads_the_last_note_dim_and_the_reference_before_any() {
     tick(&mut ui);
     assert_eq!(texts(ui.tuner()), ["C4 +0ct", "REF C4 261.6 Hz"]);
     assert_eq!(colors(ui.tuner()), [theme::MID; 2]);
-    ui.hear_note(P1, Some(69), false);
+    ui.hear_note(P1, MidiNote::new(69), false);
     tick(&mut ui);
     assert_eq!(texts(ui.tuner()), ["A4 +0ct", "440.0 Hz"]);
     assert_eq!(colors(ui.tuner()), [theme::MID; 2]);
-    ui.hear_note(P1, Some(69), true);
+    ui.hear_note(P1, MidiNote::new(69), true);
     tick(&mut ui);
     assert_eq!(colors(ui.tuner()), [theme::INK, theme::INK2]);
     // Off PIT, nothing.
@@ -247,7 +269,7 @@ fn silence_reads_the_last_note_dim_and_the_reference_before_any() {
 #[test]
 fn fine_moves_the_cents_the_frame_it_turns() {
     let mut ui = pit(EngineType::Modal);
-    ui.hear_note(P1, Some(60), false);
+    ui.hear_note(P1, MidiNote::new(60), false);
     tick(&mut ui);
     assert_eq!(texts(ui.tuner())[0], "C4 +0ct");
     for (by, want) in [(1, "C4 +1ct"), (11, "C4 +12ct"), (-30, "C4 -18ct")] {
@@ -275,7 +297,7 @@ fn tape_on_pit_reads_root_and_transposition() {
     edit.source = s.source;
     edit.params.tape.root = 4_800.0;
     edit.params.tape.period = 183.4;
-    ui.hear_note(P1, Some(48), true);
+    ui.hear_note(P1, MidiNote::new(48), true);
     feed(&mut ui, Input::turn(EncoderId::A, 7));
     tick(&mut ui);
     assert_eq!(texts(ui.tuner()), ["G3 +0ct", "196.0 Hz"]);
@@ -320,7 +342,11 @@ fn primed(ui: &mut UiState) -> Fb {
 #[test]
 fn nothing_redraws_at_idle() {
     for engine in [EngineType::Algo, EngineType::Tape, EngineType::Va] {
-        for (note, sounds) in [(None, false), (Some(69), false), (Some(69), true)] {
+        for (note, sounds) in [
+            (None, false),
+            (MidiNote::new(69), false),
+            (MidiNote::new(69), true),
+        ] {
             let mut ui = pit(engine);
             ui.hear_note(P1, note, sounds);
             settle(&mut ui);
@@ -343,7 +369,7 @@ fn a_dirty_redraw_equals_a_full_one_while_fine_turns() {
     for size in [TextSize::Normal, TextSize::Large] {
         let mut ui = pit(EngineType::Algo);
         set_text(&mut ui, size);
-        ui.hear_note(P1, Some(69), false);
+        ui.hear_note(P1, MidiNote::new(69), false);
         settle(&mut ui);
         let mut fb = primed(&mut ui);
         for frame in 0..30 {

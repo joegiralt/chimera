@@ -76,6 +76,14 @@ door.
    bank 1 +144 B (.text; .rodata and .data +0), bank 2 +2,528 B.
    Closed, the corner is empty.
 
+6. **Types.** A pitch is a `Tone` (cents above MIDI 0) and gives its
+   `Hz` and its `Named` note; the played key is a `MidiNote`; a source
+   with no root plays at a `Shift`, which names no note. What the corner
+   shows is a `Readout`: `None`, `Lit`, `Dim` or `Reference` of a `Known`
+   (a `Tone` or SCRUB's `Still`), or `RootUnknown(Shift, Light)`, so a
+   root that isn't known can't be drawn as a confident note, and a
+   reference can't be lit.
+
 ## Alternatives considered
 - **Detection only.** Rejected: noisy on drums and chords, deaf below D4,
   reads the master mix not the Part, and silent between notes, when the

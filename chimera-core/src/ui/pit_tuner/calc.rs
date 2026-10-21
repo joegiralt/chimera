@@ -23,6 +23,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use u8g2_fonts::types::{FontColor, VerticalPosition};
 
 use super::{Line, Shown};
+use crate::MidiNote;
 use crate::dsp::tape_engine::params::{TapeMachine, at_root};
 use crate::params::EngineType;
 use crate::preset::Sound;
@@ -35,7 +36,7 @@ use crate::ui::tape_strip::Paint;
 use crate::ui::theme::{self, Face, TextSize};
 
 /// The note the corner reads before the Part has played one: middle C.
-pub const REF_NOTE: u8 = 60;
+pub const REF_NOTE: MidiNote = MidiNote::clamped(60);
 /// The corner's width: LARGE falls back to NORMAL past it.
 pub const CORNER_W: i32 = 112;
 /// Below this |MOTION| SCRUB's head stands.
@@ -100,24 +101,145 @@ fn cents(b: &mut FmtBuf, c: i32) {
     word(b, Word::Ct);
 }
 
-/// Where a Part's pitch rests.
+/// A pitch as cents above MIDI note 0: A4 (6 900) is 440 Hz. What the
+/// voice's sum comes to.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Pitch {
-    /// Cents above MIDI note 0: A4 (6 900) is 440 Hz.
-    At(f32),
-    /// A source with no known root: cents off its own speed.
-    Shift(f32),
-    /// SCRUB at MOTION 0.
+pub struct Tone(f32);
+
+impl Tone {
+    pub const fn of_cents(c: f32) -> Tone {
+        Tone(c)
+    }
+
+    /// The key's own pitch.
+    pub fn of_note(n: MidiNote) -> Tone {
+        Tone(f32::from(n.get()) * 100.0)
+    }
+
+    /// `by` cents up.
+    pub fn up(self, by: f32) -> Tone {
+        Tone(self.0 + by)
+    }
+
+    pub fn cents(self) -> f32 {
+        self.0
+    }
+
+    /// At A4 = 440 Hz.
+    pub fn hz(self) -> Hz {
+        Hz(440.0 * libm::exp2f((self.0 - 6_900.0) / 1_200.0))
+    }
+
+    /// The nearest note, to 1 cent.
+    pub fn named(self) -> Named {
+        let (note, off) = nearest(libm::roundf(self.0) as i32);
+        Named { note, off }
+    }
+}
+
+/// A frequency.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Hz(f32);
+
+impl Hz {
+    pub fn get(self) -> f32 {
+        self.0
+    }
+
+    /// To 0.1 Hz.
+    fn tenths(self) -> u32 {
+        libm::roundf(self.0 * 10.0) as u32
+    }
+}
+
+/// A tone's nearest note (a note number, C4 60; past MIDI's range it
+/// names on) and the cents off it, −50..=49. Only `Tone::named` makes one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Named {
+    note: i32,
+    off: i32,
+}
+
+/// Cents off a source's own speed: how a source with no known root plays.
+/// It names no note, so nothing can show it as one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shift(f32);
+
+impl Shift {
+    pub const fn of_cents(c: f32) -> Shift {
+        Shift(c)
+    }
+
+    /// Whole semitones and the cents past them, −50..=49, to 1 cent.
+    fn steps(self) -> (i32, i32) {
+        nearest(libm::roundf(self.0) as i32)
+    }
+}
+
+/// A pitch that is known: a tone, or SCRUB's head standing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Known {
+    Note(Tone),
     Still,
+}
+
+/// Where a Part's pitch rests: known, or a source's shift with no root.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Reading {
+    Known(Known),
+    RootUnknown(Shift),
+}
+
+/// How the corner draws: lit while the Part sounds, dim between notes,
+/// and dim with `REF C4` before the Part's first note.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Light {
+    Lit,
+    Dim,
+    Reference,
+}
+
+/// What the corner shows. A root that isn't known carries a `Shift`, never
+/// a `Tone`, so it can't read as a note.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Readout {
+    None,
+    Lit(Known),
+    Dim(Known),
+    Reference(Known),
+    RootUnknown(Shift, Light),
+}
+
+impl Readout {
+    /// `r` drawn `light`; no reading (TAPE with no source), nothing.
+    pub fn of(r: Option<Reading>, light: Light) -> Readout {
+        match (r, light) {
+            (None, _) => Readout::None,
+            (Some(Reading::RootUnknown(s)), l) => Readout::RootUnknown(s, l),
+            (Some(Reading::Known(k)), Light::Lit) => Readout::Lit(k),
+            (Some(Reading::Known(k)), Light::Dim) => Readout::Dim(k),
+            (Some(Reading::Known(k)), Light::Reference) => Readout::Reference(k),
+        }
+    }
+
+    fn light(self) -> Option<Light> {
+        match self {
+            Readout::None => None,
+            Readout::Lit(_) => Some(Light::Lit),
+            Readout::Dim(_) => Some(Light::Dim),
+            Readout::Reference(_) => Some(Light::Reference),
+            Readout::RootUnknown(_, l) => Some(l),
+        }
+    }
 }
 
 /// `s` playing `note` under TUNING `tune` cents; `None` for TAPE with no
 /// source, which plays nothing.
-pub fn pitch(note: u8, s: &Sound, tune: i8) -> Option<Pitch> {
+pub fn pitch(note: MidiNote, s: &Sound, tune: i8) -> Option<Reading> {
     let p = &s.params;
-    let key = f32::from(note) * 100.0;
     let set = p.pitch.semitones() * 100.0 + f32::from(tune);
-    let at = |extra: f32| Some(Pitch::At(key + set + extra));
+    let key = Tone::of_note(note).up(set);
+    let at = |extra: f32| Some(Reading::Known(Known::Note(key.up(extra))));
     match p.engine() {
         EngineType::Algo => at(f32::from(p.algo.transpose) * 100.0),
         EngineType::Modal => at(0.0),
@@ -131,60 +253,66 @@ pub fn pitch(note: u8, s: &Sound, tune: i8) -> Option<Pitch> {
             let speed = if t.machine == TapeMachine::Scrub {
                 let m = libm::fabsf(t.motion);
                 if m < STILL_MOTION {
-                    return Some(Pitch::Still);
+                    return Some(Reading::Known(Known::Still));
                 }
                 1_200.0 * libm::log2f(2.0 * m)
             } else {
                 0.0
             };
             // SLICE NOTE plays every key at ROOT.
-            let key = if at_root(t) { t.root } else { key };
-            let c = key + set + speed;
-            Some(if t.period > 0.0 {
-                Pitch::At(c)
+            let key = if at_root(t) {
+                Tone(t.root).up(set)
             } else {
-                Pitch::Shift(c - t.root)
+                key
+            };
+            let c = key.up(speed);
+            Some(if t.period > 0.0 {
+                Reading::Known(Known::Note(c))
+            } else {
+                Reading::RootUnknown(Shift(c.cents() - t.root))
             })
         }
     }
 }
 
-/// `cents` above MIDI note 0 in Hz, A4 = 440.
-pub fn hz(cents: f32) -> f32 {
-    440.0 * libm::exp2f((cents - 6_900.0) / 1_200.0)
-}
-
 /// The corner's two lines: the note and cents, then Hz, to 1 cent and
-/// 0.1 Hz. `reference`: no note played yet, so the pitch is `REF_NOTE`'s.
-pub fn lines(p: Pitch, reference: bool) -> (FmtBuf, FmtBuf) {
+/// 0.1 Hz; a source with no root, `ROOT ?` and its shift. A reference
+/// leads its second line with `REF C4`.
+pub fn lines(r: Readout) -> (FmtBuf, FmtBuf) {
     let (mut a, mut b) = (FmtBuf::new(), FmtBuf::new());
-    if reference {
+    if r.light() == Some(Light::Reference) {
         word(&mut b, Word::Ref);
-        note_name(&mut b, i32::from(REF_NOTE));
+        note_name(&mut b, i32::from(REF_NOTE.get()));
         word(&mut b, Word::Space);
     }
-    match p {
-        Pitch::At(c) => {
-            let (n, off) = nearest(libm::roundf(c) as i32);
-            note_name(&mut a, n);
-            word(&mut a, Word::Space);
-            cents(&mut a, off);
-            let tenths = libm::roundf(hz(c) * 10.0) as i32;
-            int(&mut b, tenths / 10, false);
-            let _ = b.write_char('.');
-            int(&mut b, tenths % 10, false);
-            word(&mut b, Word::Space);
-            word(&mut b, Word::Hz);
-        }
-        Pitch::Shift(c) => {
+    let known = match r {
+        Readout::None => None,
+        Readout::Lit(k) | Readout::Dim(k) | Readout::Reference(k) => Some(k),
+        Readout::RootUnknown(s, _) => {
             word(&mut a, Word::Root);
-            let (st, off) = nearest(libm::roundf(c) as i32);
+            let (st, off) = s.steps();
             int(&mut b, st, true);
             word(&mut b, Word::St);
             word(&mut b, Word::Space);
             cents(&mut b, off);
+            None
         }
-        Pitch::Still => word(&mut a, Word::Still),
+    };
+    match known {
+        Some(Known::Note(t)) => {
+            let n = t.named();
+            note_name(&mut a, n.note);
+            word(&mut a, Word::Space);
+            cents(&mut a, n.off);
+            let tenths = t.hz().tenths();
+            int(&mut b, (tenths / 10) as i32, false);
+            let _ = b.write_char('.');
+            int(&mut b, (tenths % 10) as i32, false);
+            word(&mut b, Word::Space);
+            word(&mut b, Word::Hz);
+        }
+        Some(Known::Still) => word(&mut a, Word::Still),
+        None => {}
     }
     (a, b)
 }
@@ -198,9 +326,14 @@ fn baselines(size: TextSize) -> (i32, i32) {
     }
 }
 
-/// `a` and `b` set right on the band's edge at `size`, or NORMAL where
-/// LARGE overruns the corner; lit or dim.
-pub fn shown(a: FmtBuf, b: FmtBuf, size: TextSize, lit: bool) -> Shown {
+/// `r` set right on the band's edge at `size`, or NORMAL where LARGE
+/// overruns the corner.
+pub fn shown(r: Readout, size: TextSize) -> Shown {
+    let Some(light) = r.light() else {
+        return Shown::NONE;
+    };
+    let lit = light == Light::Lit;
+    let (a, b) = lines(r);
     let fonts = |s| (theme::font(Face::Value, s), theme::font(Face::Label, s));
     let width = |s| {
         let (fa, fb) = fonts(s);
@@ -253,7 +386,7 @@ pub fn pass_in(ui: &mut UiState) {
         && let (Some(n), Some(o)) = (crate::played::last_in(), crate::played::last_out())
         && let Some(last) = t.last.get_mut(usize::from(n.part))
     {
-        *last = Some(o.note);
+        *last = Some(crate::MidiNote::clamped(o.note));
     }
     let at = ui.active_part;
     let part = ui.project.perf().parts().get(at.index());
@@ -262,15 +395,14 @@ pub fn pass_in(ui: &mut UiState) {
         return;
     };
     let last = t.last.get(at.index()).copied().flatten();
-    let (note, reference) = last.map_or((REF_NOTE, true), |n| (n, false));
-    t.shown = match pitch(note, &part.sound, ui.midi.tune) {
-        Some(p) => {
-            let (a, b) = lines(p, reference);
-            let sounds = heard.unwrap_or_else(|| ui.live.contains(at));
-            shown(a, b, ui.theme.text, !reference && sounds)
-        }
-        None => Shown::NONE,
+    let sounds = heard.unwrap_or_else(|| ui.live.contains(at));
+    let (note, light) = match last {
+        None => (REF_NOTE, Light::Reference),
+        Some(n) if sounds => (n, Light::Lit),
+        Some(n) => (n, Light::Dim),
     };
+    let r = Readout::of(pitch(note, &part.sound, ui.midi.tune), light);
+    t.shown = shown(r, ui.theme.text);
 }
 
 /// A display behind `Paint` as the fonts' target: each row's run of one

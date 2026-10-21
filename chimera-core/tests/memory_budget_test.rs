@@ -220,7 +220,8 @@ fn ui_state_rest_under_4k() {
     // wait: the heads a streamed source wants, and since when; 128 B its
     // latch of each source's heads that can't be re-staged (slice 1
     // § 5.6). 16 B the LFO page's playhead and where it reads it (ADR
-    // 0177). The focus
+    // 0177). 152 B PIT's tuner: each Part's last note and the corner's two
+    // lines (ADR 0201). The focus
     // memory's 8 B (a slot per page id, the OP pages' ids up to 105, #484)
     // fit in what `LibId` gave back as a bare u32 instead of a tagged enum.
     assert!(
@@ -239,7 +240,8 @@ fn ui_state_rest_under_4k() {
             + 12
             + 32
             + 128
-            + 16,
+            + 16
+            + 152,
         "UiState grew to {rest} B besides its Project"
     );
 }
