@@ -248,7 +248,7 @@ pub static FILTER_SPECS: [ParamSpec; 11] = [
     // The jacks (spec § 2): patching, not sound. Indexes into their choices.
     ParamSpec::choice(
         8,
-        "FM3 IN",
+        "FREQ SRC",
         ValFmt::Names(&FM3_IN_NAMES),
         7.0,
         0.0,
@@ -259,7 +259,7 @@ pub static FILTER_SPECS: [ParamSpec; 11] = [
     .glyph(crate::glyph::FocusGlyph::None),
     ParamSpec::choice(
         11,
-        "QM IN",
+        "RES SRC",
         ValFmt::Names(&QM_IN_NAMES),
         9.0,
         3.0,

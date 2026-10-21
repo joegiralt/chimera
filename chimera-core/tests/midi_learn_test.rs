@@ -205,10 +205,10 @@ fn learn_refusals() {
     mix_seq(&mut ui);
     feed(&mut ui, Input::turn(C, 1)); // FM3 IN, armed: focus only
     assert_eq!(ui.page_def().id, FILTER_JACKS.id, "no SEQ tap");
-    assert_eq!(band(&ui), "FM3 IN NOT MAPPABLE");
+    assert_eq!(band(&ui), "FREQ SRC NOT MAPPABLE");
     let before = format!("{:?}", ui.project().part(P1).sound.params);
     cc(&mut ui, ch(0), 74, 100, 20_000);
-    assert_eq!(band(&ui), "FM3 IN NOT MAPPABLE");
+    assert_eq!(band(&ui), "FREQ SRC NOT MAPPABLE");
     assert!(armed(&ui));
     assert!(ui.project().part(P1).sound.map.is_empty());
     assert_eq!(format!("{:?}", ui.project().part(P1).sound.params), before);

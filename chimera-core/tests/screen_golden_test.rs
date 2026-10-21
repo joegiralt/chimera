@@ -93,28 +93,28 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: MODE reads HP4, CLEAN's label for HP24 (ADR 0096); then
     // LEVEL 64 in DRIVE's cell (Task 6); then FLT › MOD's six cells, FM3
     // turned, its delete hint showing (Task 12): was 0xf6e7d94448ca7888.
-    ("flt_mode", 0xa13ed8a80cc584a5),
+    ("flt_mode", 0x8361f372cba8df63),
     // Each type's FLT and FLT › MOD (filter-types § 5, Task 17): CLEAN's
     // NOTCH1, the 2040's lowered pass band and KEYBD HALF, its fixed MODE
     // dimmed and VOICE EXP, DIRTY's NOTCH1 at FREQ (its own MODE names).
     // Layout A (#614): VOICE EXPNDR on FLT (flt_2040_exp, was
     // flt_mod_2040_exp), KEYBD HALF on FLT › MOD, no MODE cell.
     ("flt_clean", 0x56110a2e1e38df2e),
-    ("flt_mod_clean", 0x3b429be456859f89),
+    ("flt_mod_clean", 0xd7f74f61c4685396),
     ("flt_2040", 0x15653ec5210b6730),
     // KIND focused on the 2040: its readout names 4-POLE LP (#614).
     ("flt_2040_kind", 0x1e8668949f243f60),
     // Modulation draws a ghost beside the set curve (#575).
-    ("flt_2040_env_amt", 0x3aa14553c74ebaa7),
+    ("flt_2040_env_amt", 0xdabadff9e26fed4f),
     ("flt_clean_lfo", 0xcdf3c95d4dd3230c),
-    ("flt_mod_2040", 0x245dab0018c33a18),
+    ("flt_mod_2040", 0x874d2be769536a3a),
     ("flt_2040_exp", 0x4cc08b535dd4156d),
     ("flt_dirty", 0x6c4b2e89b9de9bf7),
-    ("flt_mod_dirty", 0xcb3a020442623ede),
+    ("flt_mod_dirty", 0xee8493802d548242),
     ("flt_ladder", 0xce6acb4caebff20a),
-    ("flt_mod_ladder", 0xd860b23036cd68f2),
+    ("flt_mod_ladder", 0x96def7f072a03866),
     ("flt_sem", 0x75e5ccb533d0012e),
-    ("flt_mod_sem", 0xe8705f38a3bbb655),
+    ("flt_mod_sem", 0x2fb7e90b0c31855c),
     ("flt_sem_bp", 0x0a6d2faa61b68b67),
     // New (#574): the peak at its real height, 2040 RES 0.3, CLEAN BP2 and
     // LADDER RES 0.
@@ -133,8 +133,8 @@ const GOLDENS: &[(&str, u64)] = &[
     ("flt_led_full", 0xc679e27959a0f747),
     // FM3 IN on LFO 2, QM IN on OP 6 (Task 17).
     // FB on FLT › MOD (ADR 0190).
-    ("flt_mod_fb", 0x5589653b181bd943),
-    ("flt_mod_repatched", 0x3a42fcf71cbefb03),
+    ("flt_mod_fb", 0xae55fae78261ebbe),
+    ("flt_mod_repatched", 0xafec0f75419629ad),
     // FLT › FX (#614): OFF's dashes, SOFT's and FOLD's pots; FX and PLACE
     // on FLT's front.
     ("flt_fx_off", 0x7398595b237b8ceb),

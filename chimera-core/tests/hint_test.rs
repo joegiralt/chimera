@@ -242,19 +242,19 @@ fn route_knobs_name_the_delete() {
         (
             FilterKind::Svf,
             &[
-                (&FILTER_MOD, 0, "FM1"),
-                (&FILTER_MOD, 1, "FM2"),
-                (&FILTER_MOD, 2, "FM3"),
-                (&FILTER_MOD, 4, "QM"),
+                (&FILTER_MOD, 0, "ENV AMT"),
+                (&FILTER_MOD, 1, "KEYBOARD"),
+                (&FILTER_MOD, 2, "FREQ MOD"),
+                (&FILTER_MOD, 4, "RES MOD"),
             ],
         ),
         (
             FilterKind::K2040,
             &[
                 (&FILTER_MOD, 0, "ENV AMT"),
-                (&FILTER_MOD, 1, "KEYBD"),
-                (&FILTER_MOD, 2, "FM3"),
-                (&FILTER_MOD, 4, "QM"),
+                (&FILTER_MOD, 1, "KEYBOARD"),
+                (&FILTER_MOD, 2, "FREQ MOD"),
+                (&FILTER_MOD, 4, "RES MOD"),
             ],
         ),
     ];
