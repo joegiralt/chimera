@@ -22,7 +22,7 @@ use super::{
     TapeDelay, WOW_SAMPLES, read, to_line,
 };
 use crate::dsp::algo::math::exp2;
-use crate::dsp::ease::{at, ease_coeff, step_of};
+use crate::dsp::ease::{at, step_of};
 pub use crate::dsp::grain::core::{
     At, Clock, Engine, Frames, Gain, Grain, GrainLen, GrainSource, MAX_STARTS, Pos, Rate, Rng,
     Samples, Sched, Slot, Speed, Start, Started, Steal, TapAt, Trigger, bell, hermite,
@@ -256,15 +256,7 @@ pub fn run(d: &mut TapeDelay, buf: &mut [f32; BLOCK_SIZE], p: &DelayParams, fs: 
     } else if d.fade == 0 && tap.base() != d.time {
         (d.next, d.fade) = (tap.base(), TIME_FADE);
     }
-    let mix = if p.is_on() { p.mix } else { 0.0 };
-    let k = ease_coeff(fs);
-    let e = Eased {
-        mix: d.mix.step(mix, k),
-        feedback: d.feedback.step(p.feedback, k),
-        saturation: d.saturation.step(p.saturation, k),
-        tone: d.tone.step(p.tone, k),
-        mechanics: d.mechanics.step(p.wow_flutter, k),
-    };
+    let e = d.eased(p, fs);
     let ctl = Ctl::new(p, Frames::new(tap.base()), fs);
     let mut g = [0.0; BLOCK_SIZE];
     let wp = d.write_pos;
