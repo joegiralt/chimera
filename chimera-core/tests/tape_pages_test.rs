@@ -16,8 +16,8 @@ use chimera_core::block::{Block, ParamId, ParamKind};
 use chimera_core::dsp::tape_engine::machine::{MACHINES, machine};
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
-    DIRECTION_NAMES, Direction, MODEL_NAMES, StretchType, TAPE_ENGINE_SPECS, TapeEngine, TapeEngineParams,
-    TapeMachine, TapeModel, reads,
+    DIRECTION_NAMES, Direction, MODEL_NAMES, StretchType, TAPE_ENGINE_SPECS, TapeEngine,
+    TapeEngineParams, TapeMachine, TapeModel, reads,
 };
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;

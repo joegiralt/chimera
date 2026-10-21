@@ -36,9 +36,9 @@ use super::super::read::SourceView;
 use super::super::{MIN_LOOP_FRAMES, Probe};
 use super::classic::time_speed;
 use super::cloud::{Cloud, GrainAt, Src, rng};
-use crate::dsp::grain::core::Rng;
 use super::units::{Period, Samples, Seconds, Speed, StretchEnd, WinPos};
 use crate::dsp::algo::math::{clampf, exp2};
+use crate::dsp::grain::core::Rng;
 
 /// Grains overlapping: a start every GRAIN / 4 or later.
 pub const OVERLAP: f32 = 4.0;

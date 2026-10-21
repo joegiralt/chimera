@@ -96,9 +96,9 @@ pub use heads::loop_len;
 pub use oneshot::SliceCode;
 pub use params::{
     Choice, DIRECTION_NAMES, Direction, Drift, FADE_HOLD, KeyMode, MACHINE_NAMES, MODEL_NAMES,
-    MachineIndex, NeedsRam, RetiredModel, Retrig, STRETCH_DEFAULTS, Seeks, StretchType, TAPE_ENGINE_SPECS,
-    TapeEngineParams, TapeMachine, TapeModel, Tron, Way, Wow, at_root, backward, cuts, drag_s,
-    fade_default, jogs, needs_ram, reads,
+    MachineIndex, NeedsRam, RetiredModel, Retrig, STRETCH_DEFAULTS, Seeks, StretchType,
+    TAPE_ENGINE_SPECS, TapeEngineParams, TapeMachine, TapeModel, Tron, Way, Wow, at_root, backward,
+    cuts, drag_s, fade_default, jogs, needs_ram, reads,
 };
 
 // Each model's bill: its measured worst a sample, the M7's static count
