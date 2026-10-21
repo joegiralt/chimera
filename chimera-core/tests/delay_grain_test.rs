@@ -5,7 +5,7 @@
 
 use chimera_core::block::Block;
 use chimera_core::dsp::delay::grain::{
-    self, Clock, Ctl, Engine, GRAINS, MAX_D, MIN_D, bell, log_one_minus_x, soft_clip, uniform,
+    self, Clock, Ctl, Engine, GRAINS, Line, MAX_D, MIN_D, bell, log_one_minus_x, soft_clip, uniform,
 };
 use chimera_core::dsp::delay::{DelayParams, DelayType, LINE_SCALE, MAX_DELAY_SAMPLES, TapeDelay};
 use chimera_hal::BLOCK_SIZE;
@@ -151,8 +151,7 @@ impl Reference {
             .block(ctl.rate, ctl.texture, &mut self.rng, &mut starts);
         let depth =
             (f64::from(ctl.rate) * f64::from(ctl.dur) * 0.5).clamp(1.0, GRAINS as f64 / 2.0);
-        // The port's heads step in Q16.16.
-        let speed = (f64::from(ctl.speed) * 65_536.0).floor() / 65_536.0;
+        let speed = f64::from(ctl.speed);
         let phase = 1.0 - 0.5 * f64::from(ctl.texture);
         let law = phase + (0.5 - phase) * f64::from(ctl.shift);
         let amp = depth.powf(-law);
@@ -196,12 +195,14 @@ impl Reference {
 fn against_reference(p: &DelayParams, blocks: usize) -> (f64, f64) {
     let line = noisy_line();
     let ctl = Ctl::new(p, p.time_ms * FS as f32 / 1000.0, FS);
-    let (mut e, mut r) = (Engine::NEW, Reference::new());
+    let (mut e, mut r) = (Engine::<GRAINS>::NEW, Reference::new());
     let (mut worst, mut sum, mut n) = (0.0f64, 0.0f64, 0usize);
     for b in 0..blocks {
         let wp = (b * BLOCK_SIZE) % N;
         let (mut a, mut x) = ([0.0f32; BLOCK_SIZE], [0.0f64; BLOCK_SIZE]);
-        e.block(&line, wp, &ctl, &mut a);
+        e.block(&Line(&line), &ctl.sched(), &mut a, |at, frac, u| {
+            ctl.start(wp, at, frac, u)
+        });
         r.block(&line, wp, &ctl, &mut x);
         for (&a, &x) in a.iter().zip(&x) {
             worst = worst.max((f64::from(a) - x).abs());
@@ -339,11 +340,14 @@ fn the_pool_holds_the_cloud() {
         .with(DelayParams::SIZE, 1.0)
         .with(DelayParams::DENSITY, 1.0);
     let ctl = Ctl::new(&p, 12_000.0, FS);
-    let mut e = Engine::NEW;
+    let mut e = Engine::<GRAINS>::NEW;
     let mut most = 0;
     for b in 0..2000 {
         let mut out = [0.0; BLOCK_SIZE];
-        e.block(&line, (b * BLOCK_SIZE) % N, &ctl, &mut out);
+        let wp = (b * BLOCK_SIZE) % N;
+        e.block(&Line(&line), &ctl.sched(), &mut out, |at, frac, u| {
+            ctl.start(wp, at, frac, u)
+        });
         most = most.max(e.active());
     }
     assert!(most >= GRAINS / 2, "{most} grains at once");

@@ -153,6 +153,7 @@ pub mod filter;
 pub mod fx_bus;
 pub mod gate;
 pub mod glide;
+pub mod grain;
 pub mod halfband;
 pub mod knobs;
 pub mod lfo;

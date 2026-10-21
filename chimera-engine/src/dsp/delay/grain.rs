@@ -1,65 +1,36 @@
 //! GRAIN, the delay's second TYPE (ADR 0199): repeats made of grains read
-//! from the delay's own line, after Mutable Instruments Beads' grain engine
-//! (`beads/dsp/`: `granular_player.h`, `delay_grain.h`, `grain_envelope.h`,
-//! `voice_stealing_envelope.h`, `trigger_generator.cc`,
-//! `granular_processor.h`).
+//! from the delay's own line by the grain core (`dsp::grain::core`, after
+//! Mutable Instruments Beads, MIT, its notice there). This module is the
+//! delay's side: the line as a `GrainSource`, the knobs' laws, where a
+//! grain starts behind the write head (`DelayGrain::Start`'s trims), its
+//! gain, the feedback path and the TYPE crossfade against TAPE.
 //!
-//! Ported from Beads:
-//! - the pulse-train trigger and its random intervals (`RenderPulseTrain`,
-//!   `-1/ln(1 − x)`, `LogOneMinusX`'s series), TEXTURE blending them in;
-//! - a grain's start: the sub-sample offset, the duration trimmed to the
-//!   line and the delay held off the write head (`DelayGrain::Start`);
-//! - the bell envelope (`GrainEnvelope` at SHAPE ⅔: smoothstep up, down);
-//! - the stealing: after each start the grains closest to their end are
-//!   faded (`SortGrainList`, `VoiceStealingEnvelope`);
-//! - the Hermite read (`DelayLine::Read<INTERPOLATION_HERMITE>`);
-//! - the feedback's soft clip (`stmlib::SoftClip`, `fast_tanh`) and DC
-//!   blocker.
-//!
-//! Not ported, and why, in ADR 0199: the seconds-long buffer and its
-//! time-stretch clouds (500 ms here, ADR 0014), stereo pan, SHAPE, reverse
-//! grains, the 32-grain pool (6 here), the delay mode's taps, the media
-//! models and the reverb.
+//! Ported from Beads here: a grain's start (the sub-sample offset, the
+//! duration trimmed to the line, the delay held off the write head) and
+//! the feedback's soft clip (`stmlib::SoftClip`, `fast_tanh`) and DC
+//! blocker. Not ported, and why, in ADR 0199.
 //!
 //! With `bank2` this module links into bank 2 whole (`bank2.x`,
-//! `*5delay5grain*`); bank 1 reaches `run` only through
-//! `GrainDoor`. With the door closed GRAIN plays as TAPE.
+//! `*5delay5grain*`, and the core's `*3dsp5grain*`); bank 1 reaches `run`
+//! only through `GrainDoor`. With the door closed GRAIN plays as TAPE.
 //
-// Beads is Copyright 2017 Emilie Gillet (emilie.o.gillet@gmail.com), under
-// the MIT License:
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
+// The start's trims are Beads' (Copyright 2017 Emilie Gillet), under the
+// MIT License; the notice is `dsp::grain::core`'s.
 
 use super::{
-    DelayParams, DelayType, Eased, FLUTTER_SAMPLES, MAX_DELAY_SAMPLES, TIME_FADE, Tap, TapeDelay,
-    WOW_SAMPLES, read, to_line,
+    DelayParams, DelayType, Eased, FLUTTER_SAMPLES, LINE_SCALE, MAX_DELAY_SAMPLES, TIME_FADE, Tap,
+    TapeDelay, WOW_SAMPLES, read, to_line,
 };
 use crate::dsp::algo::math::exp2;
 use crate::dsp::clampf;
 use crate::dsp::ease::{at, ease_coeff, step_of};
+pub use crate::dsp::grain::core::{
+    Clock, Engine, Grain, GrainSource, MAX_STARTS, ONE, Q32, Sched, Start, bell, hermite,
+    log_one_minus_x, q32, uniform,
+};
 use chimera_hal::BLOCK_SIZE;
 
 const N: usize = MAX_DELAY_SAMPLES;
-/// The line's length in Q16.16.
-const N_Q: u32 = (N as u32) << 16;
-const Q: f32 = 65_536.0;
 
 /// Grains at once (Beads' delay player: 32): six keep an ALGO INIT's
 /// voices on rev Y but one (ADR 0199).
@@ -87,264 +58,39 @@ pub const INSTANT_S: f32 = 0.005;
 pub const PREEMPT_S: f32 = 0.1;
 /// The feedback's DC blocker, Hz (Beads: an SVF high-pass at 40 Hz).
 pub const DC_HZ: f32 = 20.0;
-/// Starts a block holds; at 128 Hz and Beads' widest random interval
-/// (9.5×) a block sees two.
-const MAX_STARTS: usize = 4;
-
-/// A uniform draw in [0, 1) (`stmlib::Random::GetFloat`'s use), from the
-/// top 24 bits.
-#[inline]
-pub fn uniform(rng: &mut u32) -> f32 {
-    let x = crate::dsp::xorshift32(rng);
-    (x >> 8) as f32 * (1.0 / 16_777_216.0)
-}
-
-/// Beads' `LogOneMinusX`: ln(1 − x) by four terms of its series.
-#[inline]
-pub fn log_one_minus_x(x: f32) -> f32 {
-    -x * (1.0 + x * (0.5 + x * (0.3333 + x * 0.25)))
-}
 
 /// `stmlib::SoftClip` (Beads' feedback limit): already ported, ADR 0097.
 pub use crate::dsp::fast_tanh as soft_clip;
 
-/// Beads' bell (`GrainEnvelope` at SHAPE ⅔: attack ½, release ½,
-/// smoothness 1): smoothstep up the first half, down the second. `phase`
-/// in [0, 1]; 0 at both ends.
-#[inline(always)]
-pub fn bell(phase: f32) -> f32 {
-    let tri = 1.0 - (2.0 * phase - 1.0).abs();
-    let tri = tri.max(0.0);
-    tri * tri * (3.0 - 2.0 * tri)
-}
+/// The delay's line as a grain source, at its `i16` scale (`Ctl::start`'s
+/// gain takes `LINE_SCALE` off).
+pub struct Line<'a>(pub &'a [i16; N]);
 
-/// The grains' trigger: Beads' pulse train. TEXTURE 0 is its regular
-/// train; 1 its random one, each interval's rate × `-1/ln(1 − x)`, x
-/// uniform in [0.1, 1); between, the ratio blends linearly.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Clock {
-    phase: f32,
-    ratio: f32,
-}
-
-impl Default for Clock {
-    fn default() -> Self {
-        Self::NEW
-    }
-}
-
-impl Clock {
-    pub const NEW: Self = Self {
-        phase: 0.0,
-        ratio: 1.0,
-    };
-
-    /// One block at `f` cycles a sample: each start's sample and the share
-    /// of a sample past the crossing (Beads' `fractional_sample`). Returns
-    /// how many of `out` it filled.
-    pub fn block(
-        &mut self,
-        f: f32,
-        texture: f32,
-        rng: &mut u32,
-        out: &mut [(usize, f32); MAX_STARTS],
-    ) -> usize {
-        let mut n = 0;
-        let mut i = 0usize;
-        loop {
-            // Beads' CONSTRAIN(f, 0.000001, 0.25).
-            let g = clampf(f * self.ratio, 1e-6, 0.25);
-            let k = libm::ceilf((1.0 - self.phase) / g).max(1.0);
-            if k > (BLOCK_SIZE - i) as f32 {
-                self.phase += g * (BLOCK_SIZE - i) as f32;
-                return n;
-            }
-            let k = k as usize;
-            i += k;
-            self.phase = clampf(self.phase + g * k as f32 - 1.0, 0.0, 0.999_999);
-            if n < MAX_STARTS {
-                out[n] = (i - 1, self.phase / g);
-                n += 1;
-            }
-            let x = 0.1 + 0.9 * uniform(rng);
-            let random = -1.0 / log_one_minus_x(x);
-            self.ratio = 1.0 + texture * (random - 1.0);
-        }
-    }
-}
-
-/// One grain: a read head on the line and its envelopes (`DelayGrain`).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Grain {
-    /// The read head, Q16.16 into the line (Beads: 22.10 behind the head).
-    pos: u32,
-    /// Its step a sample, Q16.16: the pitch.
-    speed: u32,
-    /// The bell's phase, 0..1, and its step.
-    phase: f32,
-    inc: f32,
-    /// The stealing fade (`VoiceStealingEnvelope`): value and step down.
-    steal: f32,
-    dec: f32,
-    amp: f32,
-    /// Samples left; 0 is done.
-    remaining: i32,
-}
-
-impl Grain {
-    pub const IDLE: Self = Self {
-        pos: 0,
-        speed: 0,
-        phase: 0.0,
-        inc: 0.0,
-        steal: 0.0,
-        dec: 0.0,
-        amp: 0.0,
-        remaining: 0,
-    };
-
-    pub fn done(&self) -> bool {
-        self.remaining <= 0
-    }
-
-    pub fn remaining(&self) -> i32 {
-        self.remaining
-    }
-
-    /// Beads' `FadeOut`: a grain with more than `samples` left ends in
-    /// `samples`, linearly.
-    pub fn fade_out(&mut self, samples: f32) {
-        let samples = samples.max(1.0);
-        if self.remaining as f32 > samples {
-            self.dec = 1.0 / samples;
-            self.remaining = (self.steal * samples) as i32;
-        }
-    }
-
-    /// Starts at the write head `head` (a ring position, the sample it
-    /// starts on), `delay` samples behind it, at `speed`, for `dur`
-    /// samples, `frac` of a sample late (`DelayGrain::Start`): the length
-    /// trimmed so the line holds it, the delay so the head never crosses.
-    pub fn start(&mut self, head: usize, delay: f32, speed: f32, dur: f32, amp: f32, frac: f32) {
-        let c = speed - 1.0;
-        let delay = delay - frac * c;
-        let dur = if c != 0.0 {
-            dur.min((MAX_D - MIN_D) / c.abs())
-        } else {
-            dur
-        }
-        .max(2.0);
-        let lo = MIN_D + c.max(0.0) * dur;
-        let hi = MAX_D + c.min(0.0) * dur;
-        let delay = clampf(delay, lo, hi);
-        let back = (delay * Q) as u32;
-        let head = (head as u32) << 16;
-        self.pos = if head >= back {
-            head - back
-        } else {
-            head + N_Q - back
-        };
-        self.speed = (speed * Q) as u32;
-        self.inc = 1.0 / dur;
-        self.phase = (self.inc * frac).min(1.0);
-        self.steal = 1.0;
-        self.dec = 0.0;
-        self.amp = amp;
-        self.remaining = dur as i32;
-    }
-
-    /// Samples `from..to` of the block into `out`, read from `line`: in
-    /// runs whose taps stay clear of the ring's ends (no wrap test a
-    /// sample), and the stealing fade only while one runs.
+impl GrainSource for Line<'_> {
     #[inline(always)]
-    fn render(&mut self, line: &[i16; N], out: &mut [f32; BLOCK_SIZE], from: usize, to: usize) {
-        let n = (to - from).min(self.remaining.max(0) as usize);
-        let mut at = from;
-        while at < from + n {
-            let i = (self.pos >> 16) as usize;
-            let want = from + n - at;
-            let run = if i >= 1 && i + 2 < N {
-                // Samples until the newest tap passes the ring's end.
-                let room = ((((N - 2) as u32) << 16) - 1 - self.pos) / self.speed.max(1) + 1;
-                want.min(room as usize)
-            } else {
-                0
-            };
-            if run == 0 {
-                self.wrapped(line, &mut out[at]);
-                at += 1;
-            } else if self.dec == 0.0 {
-                self.run::<false>(line, &mut out[at..at + run]);
-                at += run;
-            } else {
-                self.run::<true>(line, &mut out[at..at + run]);
-                at += run;
-            }
-        }
-        self.remaining -= n as i32;
+    fn len(&self) -> usize {
+        N
     }
 
-    /// `out`'s samples, every tap inside the ring.
     #[inline(always)]
-    fn run<const STEAL: bool>(&mut self, line: &[i16; N], out: &mut [f32]) {
-        let (mut pos, speed) = (self.pos, self.speed);
-        let (mut phase, inc) = (self.phase, self.inc);
-        let (mut steal, dec) = (self.steal, self.dec);
-        let amp = self.amp * (1.0 / super::LINE_SCALE);
-        for o in out {
-            let i = (pos >> 16) as usize;
-            let t = (pos & 0xFFFF) as f32 * (1.0 / Q);
-            // SAFETY: `render` sized the run so that every sample's taps,
-            // `i − 1 ..= i + 2`, lie inside the line (`i ≥ 1`, `i + 2 < N`):
-            // the head only advances, and the run ends before the newest
-            // tap passes `N − 1`.
-            let x = unsafe {
-                [
-                    *line.get_unchecked(i - 1),
-                    *line.get_unchecked(i),
-                    *line.get_unchecked(i + 1),
-                    *line.get_unchecked(i + 2),
-                ]
-            }
-            .map(f32::from);
-            let mut g = amp * bell(phase);
-            if STEAL {
-                steal -= dec;
-                g *= steal.max(0.0);
-            }
-            *o += hermite(x, t) * g;
-            phase += inc;
-            pos += speed;
-        }
-        (self.pos, self.phase, self.steal) = (pos, phase, steal);
+    fn frame(&self, i: usize) -> f32 {
+        f32::from(self.0[i])
     }
 
-    /// One sample whose taps wrap the ring.
-    fn wrapped(&mut self, line: &[i16; N], o: &mut f32) {
-        let i = (self.pos >> 16) as usize;
-        let t = (self.pos & 0xFFFF) as f32 * (1.0 / Q);
-        let x: [f32; 4] = core::array::from_fn(|k| f32::from(line[(i + N + k - 1) % N]));
-        self.steal -= self.dec;
-        let g = self.amp * (1.0 / super::LINE_SCALE) * bell(self.phase) * self.steal.max(0.0);
-        *o += hermite(x, t) * g;
-        self.phase += self.inc;
-        self.pos += self.speed;
-        if self.pos >= N_Q {
-            self.pos -= N_Q;
+    #[inline(always)]
+    fn taps(&self, i: usize) -> [f32; 4] {
+        // SAFETY: the core asks only with `1 ≤ i` and `i + 2 < N`
+        // (`GrainSource::taps`), so `i − 1 ..= i + 2` lie inside the line.
+        unsafe {
+            [
+                *self.0.get_unchecked(i - 1),
+                *self.0.get_unchecked(i),
+                *self.0.get_unchecked(i + 1),
+                *self.0.get_unchecked(i + 2),
+            ]
         }
+        .map(f32::from)
     }
-}
-
-/// Beads' Hermite (`DelayLine::Read<INTERPOLATION_HERMITE>`), its own form:
-/// between `x[1]` and `x[2]` at `t`.
-#[inline(always)]
-pub fn hermite(x: [f32; 4], t: f32) -> f32 {
-    let c = (x[2] - x[0]) * 0.5;
-    let v = x[1] - x[2];
-    let w = c + v;
-    let a = w + v + (x[3] - x[1]) * 0.5;
-    let b = w + a;
-    ((a * t - b) * t + c) * t + x[1]
 }
 
 /// One block's grain settings, from the knobs.
@@ -390,6 +136,16 @@ impl Ctl {
         }
     }
 
+    /// The clock's settings.
+    pub fn sched(&self) -> Sched {
+        Sched {
+            rate: self.rate,
+            texture: self.texture,
+            instant: self.instant,
+            preempt: self.preempt,
+        }
+    }
+
     /// A grain's gain: its bells overlap `rate · dur / 2` deep on average
     /// (a bell's mean is ½), at most half the grains. Read from one place
     /// at PITCH 0 they add in phase, so TEXTURE 0 divides by the depth;
@@ -403,104 +159,37 @@ impl Ctl {
         let law = phase + (0.5 - phase) * self.shift;
         libm::powf(depth, -law)
     }
-}
 
-/// The grains, their clock and the samples since the last start
-/// (`GranularPlayer`).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Engine {
-    grains: [Grain; GRAINS],
-    clock: Clock,
-    rng: u32,
-    since: u32,
-}
-
-impl Default for Engine {
-    fn default() -> Self {
-        Self::NEW
-    }
-}
-
-impl Engine {
-    pub const NEW: Self = Self {
-        grains: [Grain::IDLE; GRAINS],
-        clock: Clock::NEW,
-        rng: 0x9E37_79B9,
-        since: 0,
-    };
-
-    pub fn grains(&self) -> &[Grain; GRAINS] {
-        &self.grains
-    }
-
-    /// Grains playing.
-    pub fn active(&self) -> usize {
-        self.grains.iter().filter(|g| !g.done()).count()
-    }
-
-    /// The block's grains into `out` (zeroed first): the line is read, never
-    /// written, so it must hold every sample up to `wp`, the write head at
-    /// the block's first sample. Each start renders the grains up to it,
-    /// takes the grain nearest its end, and fades the next two (Beads'
-    /// sorted scheduler: the 2 nearest their end, of 6).
-    pub fn block(&mut self, line: &[i16; N], wp: usize, ctl: &Ctl, out: &mut [f32; BLOCK_SIZE]) {
-        *out = [0.0; BLOCK_SIZE];
-        let mut starts = [(0usize, 0.0f32); MAX_STARTS];
-        let n = self
-            .clock
-            .block(ctl.rate, ctl.texture, &mut self.rng, &mut starts);
-        let amp = ctl.amp();
-        let mut from = 0;
-        for &(at, frac) in &starts[..n] {
-            self.render(line, out, from, at);
-            from = at;
-            let u = uniform(&mut self.rng);
-            let delay = ctl.delay * (1.0 + ctl.texture * SPRAY * (2.0 * u - 1.0));
-            let k = self.nearest_end();
-            self.grains[k].start((wp + at) % N, delay, ctl.speed, ctl.dur, amp, frac);
-            let interval = self.since.wrapping_add(at as u32);
-            self.steal_ahead(ctl, interval as f32);
-            // Counted from this start: the block's end adds the rest.
-            self.since = 0u32.wrapping_sub(at as u32);
+    /// The grain a trigger at sample `at` of the block starts, `frac` of a
+    /// sample late, the write head at `wp` on the block's first sample, `u`
+    /// TEXTURE's spray (`DelayGrain::Start`): TIME behind the head, the
+    /// length trimmed so the line holds it, the delay held so the head
+    /// never crosses the write head.
+    pub fn start(&self, wp: usize, at: usize, frac: f32, u: f32) -> Start {
+        let delay = self.delay * (1.0 + self.texture * SPRAY * (2.0 * u - 1.0));
+        let c = self.speed - 1.0;
+        let delay = delay - frac * c;
+        let dur = if c != 0.0 {
+            self.dur.min((MAX_D - MIN_D) / c.abs())
+        } else {
+            self.dur
         }
-        self.render(line, out, from, BLOCK_SIZE);
-        self.since = self.since.wrapping_add(BLOCK_SIZE as u32).min(1 << 24);
-    }
-
-    fn render(&mut self, line: &[i16; N], out: &mut [f32; BLOCK_SIZE], from: usize, to: usize) {
-        if from >= to {
-            return;
+        .max(2.0);
+        let lo = MIN_D + c.max(0.0) * dur;
+        let hi = MAX_D + c.min(0.0) * dur;
+        let back = q32(clampf(delay, lo, hi));
+        let head = (((wp + at) % N) as Q32) * ONE;
+        let pos = if head >= back {
+            head - back
+        } else {
+            head + (N as Q32) * ONE - back
+        };
+        Start {
+            pos,
+            speed: self.speed,
+            dur,
+            amp: self.amp() * (1.0 / LINE_SCALE),
         }
-        for g in self.grains.iter_mut().filter(|g| !g.done()) {
-            g.render(line, out, from, to);
-        }
-    }
-
-    /// The grain with the fewest samples left (a done one has none).
-    fn nearest_end(&self) -> usize {
-        let mut k = 0;
-        for (i, g) in self.grains.iter().enumerate() {
-            if g.remaining < self.grains[k].remaining {
-                k = i;
-            }
-        }
-        k
-    }
-
-    /// Beads' `SortGrainList`, sorted branch: the grain now nearest its end
-    /// ends within the steal's crossfade, the next within the interval just
-    /// gone or the pre-emptive fade, whichever is shorter; so the next start
-    /// finds a grain done, or nearly.
-    fn steal_ahead(&mut self, ctl: &Ctl, interval: f32) {
-        let first = self.nearest_end();
-        let mut second = usize::from(first == 0);
-        for (i, g) in self.grains.iter().enumerate() {
-            if i != first && g.remaining < self.grains[second].remaining {
-                second = i;
-            }
-        }
-        self.grains[first].fade_out(ctl.instant);
-        self.grains[second].fade_out(interval.max(ctl.instant).min(ctl.preempt));
     }
 }
 
@@ -508,7 +197,7 @@ impl Engine {
 /// crossfade, its four knobs' eases and the feedback's filters.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct State {
-    pub(super) engine: Engine,
+    pub(super) engine: Engine<GRAINS>,
     /// GRAIN's share of the return, 0 (TAPE) to 1, TYPE's crossfade.
     pub(super) share: f32,
     /// The feedback's tone and DC states.
@@ -573,7 +262,13 @@ pub fn run(d: &mut TapeDelay, buf: &mut [f32; BLOCK_SIZE], p: &DelayParams, fs: 
     };
     let ctl = Ctl::new(p, tap.base(), fs);
     let mut g = [0.0; BLOCK_SIZE];
-    d.grain.engine.block(&d.buffer, d.write_pos, &ctl, &mut g);
+    let wp = d.write_pos;
+    let line = Line(&d.buffer);
+    d.grain
+        .engine
+        .block(&line, &ctl.sched(), &mut g, |at, frac, u| {
+            ctl.start(wp, at, frac, u)
+        });
     span(d, buf, &g, &tap, e, share, tape_heard, insert, fs);
 }
 

@@ -373,12 +373,13 @@ impl Block for DelayParams {
 /// GRAIN's steady block over the bus's bill, which holds TAPE's
 /// (`tools/loop_count.py` on the ORBIT ELF, ADR 0199): its sample loop 61
 /// instructions and a divide, 110 cycles; the block's own 10.1 and 0.23,
-/// 20; six grains at 46 instructions a sample each (the loop runs two
-/// samples a round), 74, and their runs' setup, 1: 575. TAPE's head, idle
+/// 20, and two starts' gains (a `powf` each), 5; six grains at 46
+/// instructions a sample each (the loop runs two samples a round), 74, and
+/// their runs' setup, 1: 580, billed 590. TAPE's head, idle
 /// under GRAIN, isn't taken off. A TYPE crossfade runs both for 20 ms,
 /// in the headroom (ADR 0061). The unit's reading is PENDING
 /// (private issue #746).
-pub const GRAIN_COST: crate::hw::Cost = crate::hw::Cost(580);
+pub const GRAIN_COST: crate::hw::Cost = crate::hw::Cost(590);
 
 /// What the delay bills over the bus: GRAIN's cost while TYPE is GRAIN.
 pub const fn extra_cost(p: &DelayParams) -> crate::hw::Cost {
@@ -407,16 +408,22 @@ impl GrainDoor {
 }
 
 /// `f` on GRAIN: through the door with `bank2` (`None` while it is
-/// closed), else bank 1's own.
+/// closed); on a host, bank 1's own. Firmware without bank 2 has no
+/// room for it (ADR 0198, 0199): it plays TAPE, as a closed door does.
 #[inline(always)]
 fn through<R>(f: impl FnOnce(&GrainDoor) -> R) -> Option<R> {
     #[cfg(feature = "bank2")]
     {
         crate::bank2::DOOR_CELL.with(|d| f(&d.grain))
     }
-    #[cfg(not(feature = "bank2"))]
+    #[cfg(all(not(feature = "bank2"), not(target_os = "none")))]
     {
         Some(f(&GrainDoor::DOOR))
+    }
+    #[cfg(all(not(feature = "bank2"), target_os = "none"))]
+    {
+        let _ = f;
+        None
     }
 }
 
@@ -673,13 +680,14 @@ impl TapeDelay {
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid for writes of one `Self`. Every field is
-        // valid as zero bytes (floats, integers, `false`, `Ease`) and all
-        // but the transport's and the grains' seeds are zero in `new()`;
-        // both are written whole before the slot is assumed initialised.
+        // valid as zero bytes (floats, integers, `false`, `Ease`, and
+        // GRAIN's state, which its kernel renews before its first block)
+        // and all but the transport's seed are zero in `new()`; the
+        // transport is written whole before the slot is assumed
+        // initialised.
         unsafe {
             p.write_bytes(0, 1);
             addr_of_mut!((*p).transport).write(Transport::new());
-            addr_of_mut!((*p).grain).write(grain::State::NEW);
             slot.assume_init_mut()
         }
     }

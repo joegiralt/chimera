@@ -124,10 +124,11 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     } else {
         ""
     };
-    // The delay's GRAIN (ADR 0199): `delay::grain`, text and rodata. Only
+    // The delay's GRAIN (ADR 0199): `delay::grain` and the grain core
+    // `dsp::grain`, text and rodata. Only
     // with `bank2`: without it `TapeDelay::run` calls it in bank 1.
     let grain = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
-        "    *(.text.*5delay5grain* .rodata.*5delay5grain*);
+        "    *(.text.*5delay5grain* .rodata.*5delay5grain* .text.*3dsp5grain* .rodata.*3dsp5grain*);
 "
     } else {
         ""

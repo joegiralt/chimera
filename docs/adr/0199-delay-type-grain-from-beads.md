@@ -15,7 +15,26 @@ Constraints:
 Beads' STM32 code is MIT (Copyright 2017 Emilie Gillet, `pichenettes/eurorack`, `beads/dsp/`). No GPL code was read; the repo's AVR projects were not opened.
 
 ## Decision
-### The port (`chimera-engine/src/dsp/delay/grain.rs`, MIT notice in the file)
+### The port: one grain core, the delay's side apart
+- **The core,** `chimera-engine/src/dsp/grain/core.rs` (MIT notice in the file): the clock, the bell, the stealing fades, the Hermite read and the scheduler (`Engine<G>`), generic over where the audio comes from. TAPE's STRETCH will run on the same core (one grain engine, not two). It reads through:
+
+  ```rust
+  pub trait GrainSource {
+      /// Frames it holds; a head wraps at the end.
+      fn len(&self) -> usize;
+      /// Frame `i`, `i < len()`, at the source's own scale.
+      fn frame(&self, i: usize) -> f32;
+      /// Frames `i − 1 ..= i + 2`; asked only with `1 ≤ i` and `i + 2 < len()`.
+      fn taps(&self, i: usize) -> [f32; 4] { /* from `frame` */ }
+  }
+  ```
+
+  Integer frames, not an `f32` position: the core keeps each head in Q32.32 (`Q32`), so a head reaches 2³² frames and a pitch holds within 10⁻⁹, where an `f32` position would lose a sample's fraction past 2²⁴ frames (6 minutes) and a step's precision long before; the Hermite is the core's, so a source only hands out frames. `taps` lets a source drop its bounds checks (the delay's line does). At each trigger `Engine::block` asks its user for a `Start` (position, speed, length, gain).
+- **The delay's side,** `chimera-engine/src/dsp/delay/grain.rs`: the line as a `GrainSource` (`Line`), the knobs' laws, where a grain starts behind the write head, its gain, the feedback path and the TYPE crossfade.
+
+Both link into bank 2 (`*3dsp5grain*`, `*5delay5grain*`).
+
+### What was taken from Beads
 Taken from Beads:
 - **The trigger:** `TriggerGenerator::RenderPulseTrain`. A phase accumulator at DENSITY's rate; each crossing starts a grain with the sub-sample fraction past it. Its random mode multiplies each interval's rate by `−1/ln(1 − x)`, `x` uniform in [0.1, 1), by `LogOneMinusX`'s four-term series. TEXTURE blends the ratio linearly from 1 (Beads' regular train) to that draw (its random train). Beads switches between the two on the DENSITY knob's halves; here DENSITY is a plain rate and TEXTURE the randomness.
 - **A grain's start:** `DelayGrain::Start`. The delay is corrected by the sub-sample fraction times the consumption speed (`speed − 1`), the duration is trimmed so the line holds it (`MAX / |speed − 1|`), and the delay is held so the head never crosses the write head during the grain (Beads' trim, which makes its STOP policy's crossing check unneeded). The envelope starts the same fraction in.
@@ -26,7 +45,7 @@ Taken from Beads:
 
 Ours, and why:
 - **Six grains** (Beads: 32 in its delay player). Each grain costs 74 cycles a sample; six keep an ALGO INIT's voices on rev Y but one (below). A start always finds a grain: the scheduler steals the nearest the end.
-- **Positions in Q16.16** (Beads: 22.10 behind the head). A 2⁻¹⁶-sample step holds PITCH within 0.03 cents.
+- **Positions in Q32.32** (Beads: 22.10 behind the head).
 - **The gain.** Beads divides each grain by `√(grains playing + 1)`, which assumes grains add in power. Read from one place, at PITCH 0, they add in phase, so a cloud at one TIME swelled with its depth. Each grain is divided by its expected overlap `depth = rate · size / 2` (a bell's mean is ½, held between 1 and half the grains) to the power `1 − TEXTURE/2`: in phase at TEXTURE 0, in power at 1.
 - **SIZE:** 10 ms · 50^SIZE, 10 to 500 ms (Beads: 8 ms to 4 s over its buffer). **DENSITY:** 2^(7·DENSITY) grains a second, 1 to 128 Hz (Beads' pulse train tops out at 130.81 Hz). **PITCH:** −24 to +24 semitones, a speed of 2^(PITCH/12). **TEXTURE** also sprays each start ±50 % of TIME (Beads' TIME randomness). The start position is TIME behind the head, as Beads' TIME knob sets it.
 - **The block.** The grains are rendered for the whole block before the line is written, so a grain never reads closer than 68 samples to the write head (a block, the Hermite's newest tap, and two to spare). Each grain renders in runs whose taps stay inside the ring: no wrap test a sample.
@@ -52,7 +71,7 @@ Left out: the seconds-long buffer and its time-stretch clouds (no RAM); stereo p
 - **TAPE is bit for bit:** `delay_tape_hash_test` hashes the delay's send and insert returns over 1,600 blocks of plucks and noise, with TIME, FDBK, MECHANICS, SAT, TONE and MIX all moving (TIME twice, its crossfade). The hashes were taken on origin/main `f745c0a1` before TYPE existed and match unchanged.
 
 ### Memory
-- No new line. `TapeDelay` grows 224 B (`grain::State`: six grains of 32 B, the clock, the TYPE share, the feedback's filter states), in the FX bus's AXI budget. `DelayParams` grows 20 B (`grain: [f32; 5]`, ids 7–11 in one array so `get` and `write` reach them in one arm each).
+- No new line. `TapeDelay` grows 272 B (`grain::State`: six grains of 40 B, the clock, the TYPE share, the feedback's filter states), in the FX bus's AXI budget. `DelayParams` grows 20 B (`grain: [f32; 5]`, ids 7–11 in one array so `get` and `write` reach them in one arm each).
 
 ### Cost
 `tools/loop_count.py` on the ORBIT ELF (static counts, ADR 0056's 1.606 cycles an instruction and 12 a divide):
@@ -60,11 +79,12 @@ Left out: the seconds-long buffer and its time-stretch clouds (no RAM); stereo p
 | Part | Instructions a sample | Cycles |
 |---|---|---|
 | The sample loop (TONE, DC, soft clip, write, return) | 61 + 1 `vdiv` | 110 |
-| The block (clock, knobs' laws, starts) | 10.1 + 0.23 `vdiv` | 20 |
+| The block (clock, knobs' laws) | 10.1 + 0.23 `vdiv` | 20 |
+| Two starts' gains (a `powf` each), a block | ~3 | 5 |
 | A grain (Hermite, bell, accumulate; the loop runs two samples a round) | 46 | 74 |
 | Six grains, and their runs' setup | 276 + 0.6 | 445 |
 
-`GRAIN_COST` is 580 cycles a sample: 7.7 % of rev V's 7,500-cycle audio budget (9.3 % of rev Y's 6,250). It is billed beside the bus while TYPE is GRAIN (`delay::extra_cost`, beside the reverb TYPE's extra in `Instrument::render_with`), and TAPE bills nothing new. TAPE's idle head isn't taken off. A TYPE crossfade runs both for 20 ms, in the headroom (ADR 0061). Each engine's INIT voices (`grain_bills_its_cost_and_keeps_the_voices`):
+`GRAIN_COST` is 590 cycles a sample (580 counted, rounded up): 7.9 % of rev V's 7,500-cycle audio budget (9.4 % of rev Y's 6,250). It is billed beside the bus while TYPE is GRAIN (`delay::extra_cost`, beside the reverb TYPE's extra in `Instrument::render_with`), and TAPE bills nothing new. TAPE's idle head isn't taken off. A TYPE crossfade runs both for 20 ms, in the headroom (ADR 0061). Each engine's INIT voices (`grain_bills_its_cost_and_keeps_the_voices`):
 
 | | rev V TAPE → GRAIN | rev Y TAPE → GRAIN |
 |---|---|---|
@@ -101,7 +121,7 @@ What the bank-1 bytes are, all of it the closed door's (0198 point 1):
 The budget lines rise by exactly each set's measured Δ bank 1, each naming this ADR. Bank 2 grows +6,464 B on every set: `delay::grain::run` (the TYPE crossfade's loop and the steady loop, the clock and the knobs' laws) and `Engine::render`'s runs.
 
 ## Fidelity of the port
-- `the_engine_matches_its_f64_reference` runs the engine and an f64 reference of the port (its trims, gains, envelope, stealing and Hermite; the reference shares the engine's clock, whose starts have their own test, and its Q16.16 speed) over six settings across SIZE, DENSITY, PITCH ±24 and TEXTURE: within 5·10⁻⁴ of signals near 0.1 RMS. What remains is f32's 2⁻⁹-sample grip on a start 24,000 samples back.
+- `the_engine_matches_its_f64_reference` runs the engine and an f64 reference of the port (its trims, gains, envelope, stealing and Hermite; the reference shares the engine's clock, whose starts have their own test) over six settings across SIZE, DENSITY, PITCH ±24 and TEXTURE: within 5·10⁻⁴ of signals near 0.1 RMS. What remains is f32's 2⁻⁹-sample grip on a start 24,000 samples back.
 - `the_ported_pieces_match_beads`: the bell is smoothstep up and down, the soft clip and `LogOneMinusX` are Beads' formulas.
 - `grains_start_at_density_and_regularly`: at TEXTURE 0, 1, 11.3 and 128 grains a second at DENSITY 0, ½ and 1, each interval within a sample. `texture_makes_the_intervals_irregular`: at TEXTURE 1 the intervals spread, the rate stays within 3× and a block never holds more than two starts.
 - `pitch_shifts_each_grain_within_a_cent`: alone in a grain, a 440 Hz sine reads 440 · 2^(PITCH/12) within a cent at 0, +7, ±12 and ±24. Grains started on a regular train add up to lines a grain rate apart, as any granular shifter's do (Beads' too): TEXTURE spreads them.
