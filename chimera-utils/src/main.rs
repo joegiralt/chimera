@@ -18,6 +18,8 @@ mod plot;
 mod reference;
 mod sig;
 mod stim;
+mod unitab;
+mod vanoise;
 mod voice;
 
 use chimera_core::dsp::reverb::ReverbType;
@@ -28,6 +30,8 @@ pub const SR: f64 = chimera_hal::SAMPLE_RATE as f64;
 
 const USAGE: &str = "\
 usage: chimera-utils [flags] COMMAND …
+  unitab render|table|cmp …   filter VOICE A/B on the full engine, against the unit
+  vanoise hash|check|render … VA NOISE on the full engine: bit hashes, the page's set
   ab REF DEVICE [k=v …]    REF vs a Chimera DEVICE: null, response, THD, centroid; A/B WAVs
                            (an effect also on the listening set)
   bank2-seal ELF BIN BK2 --version TEXT
@@ -204,6 +208,8 @@ fn run() -> Result<bool, String> {
         }
         "door-check" if rest.len() == 1 => bank2::door_check(&rest[0]),
         "filter-fb" if rest.len() == 1 => filter_fb::run(Path::new(&rest[0])).map(|_| true),
+        "unitab" => unitab::run(rest).map(|_| true),
+        "vanoise" => vanoise::run(rest).map(|_| true),
         "devices" => {
             for (name, d) in devices::Device::all() {
                 let ks: Vec<String> = d

@@ -1653,4 +1653,43 @@ mod tests {
         });
         assert_eq!(played, fresh);
     }
+
+    /// Every MODE's output bits, hashed (FNV-1a): two notes, STABILITY's
+    /// jitter, SUB, a SHAPE and a MODE change under way. The constant is
+    /// main's before NOISE (ADR 0197): LEVEL 0 must leave every bit as it was.
+    #[test]
+    fn noise_off_is_bit_identical() {
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for (i, &m) in VaMode::ALL.iter().enumerate() {
+            let p = VaParams {
+                mode: m,
+                amount: 0.7,
+                sub: 0.4,
+                stability: 0.6,
+                wave: [0.5, 0.9],
+                shape: [0.3, 0.0],
+                fine: [0.0, 7.0],
+                coarse: [0, 5],
+                ..VaParams::default()
+            };
+            let next = VaParams {
+                mode: VaMode::ALL[(i + 3) % VaMode::ALL.len()],
+                ..p
+            };
+            let bits = with_engine(|e| {
+                e.place(VoiceIdx::ALL[1]);
+                e.note_on(45, &p, PartId::new(1).unwrap(), SR);
+                let mut v = run(e, &p, 120);
+                e.note_on(64, &p, PartId::new(1).unwrap(), SR);
+                v.extend(run(e, &next, 120));
+                v
+            });
+            for b in bits {
+                for byte in b.to_le_bytes() {
+                    h = (h ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+                }
+            }
+        }
+        assert_eq!(h, 0xefdb_13e5_776a_536c, "hash {h:#018x}");
+    }
 }
