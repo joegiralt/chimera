@@ -55,6 +55,9 @@ pub struct Bank2Door {
     /// VA NOISE's pass (ADR 0197; `Noise::add` is bank 1's side).
     #[cfg(feature = "bank2")]
     pub noise: crate::dsp::va::noise::NoiseDoor,
+    /// The delay's GRAIN (ADR 0199; `TapeDelay::run` is bank 1's side).
+    #[cfg(feature = "bank2")]
+    pub grain: crate::dsp::delay::GrainDoor,
 }
 
 #[cfg(feature = "bank2")]
@@ -78,6 +81,7 @@ static DOOR: Bank2Door = Bank2Door {
     fed: crate::dsp::filter::fed::FedDoor::DOOR,
     sem: crate::dsp::filter::sem::SemDoor::DOOR,
     noise: crate::dsp::va::noise::NoiseDoor::DOOR,
+    grain: crate::dsp::delay::GrainDoor::DOOR,
 };
 
 #[cfg(feature = "bank2")]

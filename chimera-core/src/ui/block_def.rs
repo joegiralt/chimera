@@ -102,6 +102,8 @@ pub enum SlotBinding {
     /// Cell k of REV's knobs 1–4 or of REV › MORE, per the reverb's TYPE
     /// (`reverb_panel::knob`).
     ReverbPanel(crate::ui::reverb_panel::RevPage, u8),
+    /// DLY › CHAR's cell `k`: the delay TYPE's own (ADR 0199).
+    DelayPanel(u8),
     /// A param of the ORBIT ring the location selects.
     SelectedRing(ParamId),
     /// One of ORBIT's own cells.
@@ -229,6 +231,13 @@ impl ParamSlot {
         }
     }
 
+    pub const fn delay_panel(k: u8) -> Self {
+        Self {
+            binding: SlotBinding::DelayPanel(k),
+            label_override: None,
+        }
+    }
+
     pub const fn orbit(cell: crate::ui::orbit::OrbitCell) -> Self {
         Self {
             binding: SlotBinding::Orbit(cell),
@@ -267,6 +276,7 @@ impl ParamSlot {
             | SlotBinding::LfoPanel(..)
             | SlotBinding::ModalPanel(..)
             | SlotBinding::ReverbPanel(..)
+            | SlotBinding::DelayPanel(_)
             | SlotBinding::Machine(_)
             | SlotBinding::Source => None,
         }
@@ -286,6 +296,7 @@ impl ParamSlot {
             | SlotBinding::LfoPanel(..)
             | SlotBinding::ModalPanel(..)
             | SlotBinding::ReverbPanel(..)
+            | SlotBinding::DelayPanel(_)
             | SlotBinding::Legacy(_)
             | SlotBinding::Machine(_) => "--",
             SlotBinding::Source => "SOURCE",
@@ -307,6 +318,7 @@ impl ParamSlot {
             | SlotBinding::LfoPanel(..)
             | SlotBinding::ModalPanel(..)
             | SlotBinding::ReverbPanel(..)
+            | SlotBinding::DelayPanel(_)
             | SlotBinding::Machine(_)
             | SlotBinding::Source => ValFmt::Uni,
             SlotBinding::SelectOp => ValFmt::OneBased(Op::ALL.len() as u8 - 1),

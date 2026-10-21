@@ -35,6 +35,7 @@ fn every_part_slot_resolves_to_a_spec() {
                 | SlotBinding::LfoPanel(..)
                 | SlotBinding::ModalPanel(..)
                 | SlotBinding::ReverbPanel(..)
+                | SlotBinding::DelayPanel(_)
                 | SlotBinding::Machine(_)
                 | SlotBinding::Source => {}
                 SlotBinding::Param(_) | SlotBinding::SelectedOp(_) | SlotBinding::OpPanel(..) => {

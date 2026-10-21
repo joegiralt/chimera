@@ -122,6 +122,9 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Delay", "TONE", RINGS),
     ("Delay", "MIX", RINGS),
     ("Delay", "REV", RINGS),
+    // TAPE and GRAIN: two delays, a word (ADR 0199). GRAIN's four pots
+    // keep the arc: the rings draw TAPE's head.
+    ("Delay", "TYPE", NONE),
     // The reverb: every knob shows its composite (the cube under QUAD);
     // TYPE and SYNC are words (reverb TYPEs spec § TYPE and the words).
     ("Reverb", "TIME", CUBE),
@@ -200,6 +203,8 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("Pitch", "SNAP"),
     // CAPSTAN and WARBLE: two flutters.
     ("TapeEngine", "WOW"),
+    // TAPE and GRAIN: two delays.
+    ("Delay", "TYPE"),
     // SCALE and CHORD: two sets to snap to.
     ("OrbitRing", "SNAP"),
     // STEP and POOL: two ways to pick a note.
@@ -1301,9 +1306,15 @@ fn rings_ui(slot: EncoderId) -> UiState {
 #[test]
 fn glyph_rings_page_moves_only_inside_its_box() {
     use chimera_core::dsp::delay::DelayParams;
-    // Every delay param carries the rings.
+    // Every delay param the rings read carries them; TYPE is a word and
+    // GRAIN's pots keep the arc (ADR 0199).
     for s in BlockRef::Delay.specs() {
-        assert_eq!(s.glyph, RINGS, "{}", s.ident);
+        let want = match s.ident {
+            "TYPE" => NONE,
+            "SIZE" | "DENSITY" | "PITCH" | "TEXTURE" => FocusGlyph::Arc,
+            _ => RINGS,
+        };
+        assert_eq!(s.glyph, want, "{}", s.ident);
     }
     // Every value the page's params show stays clear of the box.
     for id in [

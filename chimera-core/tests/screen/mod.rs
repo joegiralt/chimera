@@ -1964,6 +1964,23 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::press(ButtonId::Edit)); // DLY › CHAR
         feed(ui, Input::turn(EncoderId::A, 20)); // WOW
     }),
+    // GRAIN (ADR 0199): DLY with TYPE GRAIN, then its CHAR.
+    ("mixer_fx_delay_grain", |ui| {
+        to_fx(ui, DLY);
+        feed(ui, Input::turn(EncoderId::A, 1)); // TYPE → GRAIN
+    }),
+    ("mixer_fx_delay_char_grain", |ui| {
+        to_fx(ui, DLY);
+        feed(ui, Input::turn(EncoderId::A, 1)); // TYPE → GRAIN
+        feed(ui, Input::press(ButtonId::Edit)); // DLY › CHAR
+        feed(ui, Input::turn(EncoderId::C, 12)); // PITCH +12
+    }),
+    // Bank 2 closed: TYPE reads UPDATE, CHAR shows TAPE's, which plays.
+    ("mixer_fx_delay_grain_needs_update", |ui| {
+        ui.set_bank2(chimera_core::bank2::Bank2Status::Empty);
+        to_fx(ui, DLY);
+        feed(ui, Input::turn(EncoderId::A, 1)); // TYPE → GRAIN
+    }),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", |ui| {
         to_fx(ui, TAPE);

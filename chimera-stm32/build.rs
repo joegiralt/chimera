@@ -124,6 +124,14 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     } else {
         ""
     };
+    // The delay's GRAIN (ADR 0199): `delay::grain`, text and rodata. Only
+    // with `bank2`: without it `TapeDelay::run` calls it in bank 1.
+    let grain = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
+        "    *(.text.*5delay5grain* .rodata.*5delay5grain*);
+"
+    } else {
+        ""
+    };
     fs::write(
         out_dir.join("bank2.x"),
         r#"
@@ -155,6 +163,7 @@ SECTIONS {
     /* FUZZ */
     /* FED */
     /* SEM */
+    /* GRAIN */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -168,7 +177,8 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("    /* LOOK */\n", look)
         .replace("    /* FUZZ */\n", fuzz)
         .replace("    /* FED */\n", fed)
-        .replace("    /* SEM */\n", sem),
+        .replace("    /* SEM */\n", sem)
+        .replace("    /* GRAIN */\n", grain),
     )
     .unwrap();
 

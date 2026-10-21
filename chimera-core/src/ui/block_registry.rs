@@ -490,18 +490,19 @@ pub static DELAY: BlockDef = BlockDef {
     short: "DLY",
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Delay)),
+    // TYPE · the shared five (ADR 0199): the TYPE's own in DLY › CHAR.
     params: [
+        ParamSlot::param(BlockRef::Delay, DelayParams::TYPE),
         ParamSlot::param(BlockRef::Delay, DelayParams::TIME_MS),
         ParamSlot::param(BlockRef::Delay, DelayParams::FEEDBACK),
         ParamSlot::param(BlockRef::Delay, DelayParams::TONE),
         ParamSlot::param(BlockRef::Delay, DelayParams::REV_SEND),
         ParamSlot::param(BlockRef::Delay, DelayParams::MIX),
-        EMPTY,
     ],
 };
 
-/// DLY › CHAR: the tape character, off the delay's main page (FX diet spec
-/// § UI; an assumed default, pending the owner's word).
+/// DLY › CHAR: the TYPE's character, off the delay's main page: TAPE's
+/// MECHANICS and SAT, GRAIN's SIZE, DENSITY, PITCH and TEXTURE (ADR 0199).
 pub static DELAY_CHAR: BlockDef = BlockDef {
     id: 56,
     name: "Delay Char",
@@ -509,12 +510,12 @@ pub static DELAY_CHAR: BlockDef = BlockDef {
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Delay)),
     params: [
-        ParamSlot::param(BlockRef::Delay, DelayParams::WOW_FLUTTER),
-        ParamSlot::param(BlockRef::Delay, DelayParams::SATURATION),
-        EMPTY,
-        EMPTY,
-        EMPTY,
-        EMPTY,
+        ParamSlot::delay_panel(0),
+        ParamSlot::delay_panel(1),
+        ParamSlot::delay_panel(2),
+        ParamSlot::delay_panel(3),
+        ParamSlot::delay_panel(4),
+        ParamSlot::delay_panel(5),
     ],
 };
 

@@ -195,6 +195,7 @@ fn project_a() -> FxParams {
             tone: 0.6,
             mix: 0.7,
             rev_send: 0.3,
+            ..DelayParams::DEFAULT
         },
         reverb: ReverbParams {
             time: 0.7,
@@ -245,6 +246,11 @@ fn project_b() -> FxParams {
             tone: 0.3,
             mix: 0.5,
             rev_send: 0.0,
+            kind: chimera_core::dsp::delay::DelayType::Grain,
+            size: 0.3,
+            density: 0.8,
+            pitch: 12.0,
+            texture: 0.5,
         },
         reverb: ReverbParams {
             time: 0.4,

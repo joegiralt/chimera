@@ -11,6 +11,7 @@ mod devices;
 mod filter_fb;
 mod generic;
 mod grain;
+mod grain_listen;
 mod metrics;
 mod models;
 mod models_burst;
@@ -52,6 +53,9 @@ usage: chimera-utils [flags] COMMAND …
   door-check ELF           fail on any bank-1 relocation into bank 2
   filter-fb DIR            FB's A/B (ADR 0190): a Surfer-style pluck on each TYPE at FB
                            0, ½, full, RMS-matched WAVs and levels.md into DIR
+  grain-listen OUTDIR      the delay's TAPE against GRAIN (ADR 0199): pluck, stab and
+                           percussion × TAPE and GRAIN settings through the full engine,
+                           raw WAVs and levels.json
   devices                  the devices and their knobs (fx-soft/fuzz/fold: p1 p2 p3 mix
                            place pre|post input, the voice FX slot beside an open filter)
   mv-refs [PROG …]         MidiVerb II references (default 1–49)
@@ -220,6 +224,7 @@ fn run() -> Result<bool, String> {
         "door-check" if rest.len() == 1 => bank2::door_check(&rest[0]),
         "filter-fb" if rest.len() == 1 => filter_fb::run(Path::new(&rest[0])).map(|_| true),
         "unitab" => unitab::run(rest).map(|_| true),
+        "grain-listen" => grain_listen::run(rest).map(|_| true),
         "circuit" => circuit::run(rest).map(|_| true),
         "vanoise" => vanoise::run(rest).map(|_| true),
         "devices" => {

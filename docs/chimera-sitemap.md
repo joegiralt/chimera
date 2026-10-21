@@ -78,7 +78,7 @@ PRT ── SND ── CHR ── DLY ── REV ── MST
                              MORE 2
 ```
 
-Opens on SND, or on the effect page last left. PRT: CH, MODE, OUT, LEVEL, PAN, BEND. SND: the three send levels. EDIT from PRT or SND goes down to the Sound browser.
+Opens on SND, or on the effect page last left. PRT: CH, MODE, OUT, LEVEL, PAN, BEND. SND: the three send levels. DLY: TYPE (TAPE or GRAIN), TIME, FDBK, TONE, REV, MIX; its CHAR follows TYPE: TAPE's MECHANICS and SAT, GRAIN's SIZE, DENSITY, PITCH and TEXTURE. While bank 2 needs an update, TYPE reads NEEDS UPDATE at GRAIN, which plays as TAPE, and CHAR shows TAPE's. EDIT from PRT or SND goes down to the Sound browser.
 
 ---
 

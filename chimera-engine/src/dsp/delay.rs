@@ -1,8 +1,13 @@
-//! Tape-style delay with MECHANICS (wow and flutter), saturation, and
-//! high-frequency rolloff. Inspired by Roland Space Echo / analog tape delay
-//! character.
+//! The delay, TYPE TAPE or GRAIN (ADR 0199). TAPE: Space Echo-style, with
+//! MECHANICS (wow and flutter), saturation and high-frequency rolloff.
+//! GRAIN: Beads-style repeats, grains read from the same line (`grain`,
+//! bank 2's).
 
-use crate::block::{Block, ParamId, ParamSpec, Smoothing, ValFmt};
+pub mod grain;
+
+use crate::block::{
+    Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
+};
 use crate::dsp::algo::math::inv_sqrt;
 use crate::dsp::clampf;
 use crate::dsp::ease::{Ease, at, ease_coeff, step_of};
@@ -44,7 +49,43 @@ fn to_line(x: f32) -> i16 {
 /// interpolator's second tap.
 const _: () = assert!(24_000 + (WOW_SAMPLES + FLUTTER_SAMPLES) as usize + 2 <= MAX_DELAY_SAMPLES);
 
-/// Tape delay parameters.
+/// What makes the repeats. Codes are forever.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DelayType {
+    #[default]
+    Tape = 0,
+    Grain = 1,
+}
+
+impl DelayType {
+    pub const NAMES: [&'static str; 2] = ["TAPE", "GRAIN"];
+
+    /// The TYPE at `v`, its index; NaN and out of range are held in it.
+    pub fn at(v: f32) -> Self {
+        if v >= 0.5 { Self::Grain } else { Self::Tape }
+    }
+}
+
+impl DiskCode for DelayType {
+    fn disk_code(self) -> u8 {
+        self as u8
+    }
+
+    fn disk_ident(self) -> &'static str {
+        Self::NAMES[self as usize]
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            0 => Some(Self::Tape),
+            1 => Some(Self::Grain),
+            _ => None,
+        }
+    }
+}
+
+/// Delay parameters: TIME, FDBK, TONE, MIX and REV are both TYPEs'.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DelayParams {
     /// Delay time in ms (10..500)
@@ -64,6 +105,15 @@ pub struct DelayParams {
     /// The delay's return into the reverb's send (0..1): FX diet spec
     /// § REV SEND.
     pub rev_send: f32,
+    pub kind: DelayType,
+    /// GRAIN's grain length (0..1, `grain::SIZE_*`).
+    pub size: f32,
+    /// GRAIN's grains a second (0..1, `grain::RATE_*`).
+    pub density: f32,
+    /// GRAIN's shift of each grain, semitones (−24..24).
+    pub pitch: f32,
+    /// GRAIN's spray and irregular timing (0..1).
+    pub texture: f32,
 }
 
 impl DelayParams {
@@ -75,6 +125,11 @@ impl DelayParams {
         tone: 0.6,
         mix: 1.0, // unity return (sends spec § 4)
         rev_send: 0.0,
+        kind: DelayType::Tape,
+        size: 0.6,
+        density: 0.6,
+        pitch: 0.0,
+        texture: 0.2,
     };
 }
 
@@ -98,6 +153,11 @@ impl DelayParams {
     pub const TONE: ParamId = ParamId(4);
     pub const MIX: ParamId = ParamId(5);
     pub const REV_SEND: ParamId = ParamId(6);
+    pub const TYPE: ParamId = ParamId(7);
+    pub const SIZE: ParamId = ParamId(8);
+    pub const DENSITY: ParamId = ParamId(9);
+    pub const PITCH: ParamId = ParamId(10);
+    pub const TEXTURE: ParamId = ParamId(11);
 }
 
 /// Delay runs outside `Voice`, on the FX bus: nothing is modulatable.
@@ -105,7 +165,7 @@ impl DelayParams {
 const RINGS: crate::glyph::FocusGlyph =
     crate::glyph::FocusGlyph::Composite(crate::glyph::CompositeId::DelayRings);
 
-pub static DELAY_SPECS: [ParamSpec; 7] = [
+pub static DELAY_SPECS: [ParamSpec; 12] = [
     ParamSpec::continuous(
         0,
         "TIME",
@@ -198,6 +258,66 @@ pub static DELAY_SPECS: [ParamSpec; 7] = [
     )
     .ident("REV")
     .glyph(RINGS),
+    // GRAIN (ADR 0199): its pots hold their values under TAPE.
+    ParamSpec::choice(
+        7,
+        "TYPE",
+        ValFmt::Names(&DelayType::NAMES),
+        1.0,
+        0.0,
+        Change::Crossfade,
+    )
+    .ident("TYPE")
+    .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::continuous(
+        8,
+        "SIZE",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.6,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("SIZE"),
+    ParamSpec::continuous(
+        9,
+        "DENSITY",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.6,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("DENSITY")
+    .short("DENS"),
+    ParamSpec::stepped(
+        10,
+        "PITCH",
+        ValFmt::Signed(24),
+        -24.0,
+        24.0,
+        0.0,
+        false,
+        Motion::Continuous(Smoothing::Own),
+    )
+    .ident("PITCH"),
+    ParamSpec::continuous(
+        11,
+        "TEXTURE",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.2,
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .ident("TEXTURE")
+    .short("TEXT"),
 ];
 
 impl Block for DelayParams {
@@ -215,6 +335,11 @@ impl Block for DelayParams {
             Self::TONE => self.tone,
             Self::MIX => self.mix,
             Self::REV_SEND => self.rev_send,
+            Self::TYPE => self.kind as u8 as f32,
+            Self::SIZE => self.size,
+            Self::DENSITY => self.density,
+            Self::PITCH => self.pitch,
+            Self::TEXTURE => self.texture,
             _ => 0.0,
         }
     }
@@ -229,8 +354,73 @@ impl Block for DelayParams {
             Self::TONE => self.tone = v,
             Self::MIX => self.mix = v,
             Self::REV_SEND => self.rev_send = v,
+            Self::TYPE => self.kind = DelayType::at(v),
+            Self::SIZE => self.size = v,
+            Self::DENSITY => self.density = v,
+            Self::PITCH => self.pitch = v,
+            Self::TEXTURE => self.texture = v,
             _ => {}
         }
+    }
+
+    fn enum_code(&self, id: ParamId) -> Option<u8> {
+        (id == Self::TYPE).then_some(self.kind.disk_code())
+    }
+
+    fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
+        (id == Self::TYPE).then_some(self.kind.disk_ident())
+    }
+
+    fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
+        id == Self::TYPE && apply_code(DelayType::from_disk_code(code), |t| self.kind = t)
+    }
+}
+
+/// GRAIN's kernel and its sub-page cells, bank 2's (ADR 0199): bank 1
+/// calls `run` while TYPE is GRAIN or still fading.
+#[repr(C)]
+pub struct GrainDoor {
+    pub run: fn(&mut TapeDelay, &mut [f32; BLOCK_SIZE], &DelayParams, u32, bool),
+    pub cells: [Option<ParamId>; 6],
+}
+
+impl GrainDoor {
+    pub const DOOR: GrainDoor = GrainDoor {
+        run: grain::run,
+        cells: grain::CELLS,
+    };
+}
+
+/// `f` on GRAIN: through the door with `bank2` (`None` while it is
+/// closed), else bank 1's own.
+#[inline(always)]
+fn through<R>(f: impl FnOnce(&GrainDoor) -> R) -> Option<R> {
+    #[cfg(feature = "bank2")]
+    {
+        crate::bank2::DOOR_CELL.with(|d| f(&d.grain))
+    }
+    #[cfg(not(feature = "bank2"))]
+    {
+        Some(f(&GrainDoor::DOOR))
+    }
+}
+
+/// DLY › CHAR's cells under TAPE: MECHANICS and SAT.
+pub const TAPE_CELLS: [Option<ParamId>; 6] = [
+    Some(DelayParams::WOW_FLUTTER),
+    Some(DelayParams::SATURATION),
+    None,
+    None,
+    None,
+    None,
+];
+
+/// DLY › CHAR's cells under `kind`: GRAIN's are bank 2's, so while GRAIN
+/// can't play the page shows TAPE's, which is what plays.
+pub fn char_cells(kind: DelayType) -> [Option<ParamId>; 6] {
+    match kind {
+        DelayType::Grain => through(|d| d.cells).unwrap_or(TAPE_CELLS),
+        DelayType::Tape => TAPE_CELLS,
     }
 }
 
@@ -422,9 +612,11 @@ pub struct TapeDelay {
     saturation: Ease,
     tone: Ease,
     mechanics: Ease,
+    /// GRAIN's grains and its share of the return (bank 2's, ADR 0199).
+    grain: grain::State,
 }
 
-crate::in_place::field_list!(TapeDelay => TapeDelay { buffer, write_pos, lp_state, transport, time, next, fade, primed, mix, feedback, saturation, tone, mechanics });
+crate::in_place::field_list!(TapeDelay => TapeDelay { buffer, write_pos, lp_state, transport, time, next, fade, primed, mix, feedback, saturation, tone, mechanics, grain });
 
 /// One block's eased settings, each `(from, to)`.
 #[derive(Clone, Copy)]
@@ -472,6 +664,7 @@ impl TapeDelay {
             saturation: Ease::default(),
             tone: Ease::default(),
             mechanics: Ease::default(),
+            grain: grain::State::NEW,
         }
     }
 
@@ -485,11 +678,12 @@ impl TapeDelay {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid for writes of one `Self`. Every field is
         // valid as zero bytes (floats, integers, `false`, `Ease`) and all
-        // but the transport's seed are zero in `new()`; the transport is
-        // written whole before the slot is assumed initialised.
+        // but the transport's and the grains' seeds are zero in `new()`;
+        // both are written whole before the slot is assumed initialised.
         unsafe {
             p.write_bytes(0, 1);
             addr_of_mut!((*p).transport).write(Transport::new());
+            addr_of_mut!((*p).grain).write(grain::State::NEW);
             slot.assume_init_mut()
         }
     }
@@ -517,6 +711,12 @@ impl TapeDelay {
         sample_rate: u32,
         insert: bool,
     ) {
+        // GRAIN, or TAPE fading back from it: bank 2's. Closed, TAPE plays.
+        if (params.kind == DelayType::Grain || self.grain.share != 0.0)
+            && through(|d| (d.run)(self, buf, params, sample_rate, insert)).is_some()
+        {
+            return;
+        }
         let tap = Tap::new(params, sample_rate);
         if !self.primed {
             (self.time, self.primed) = (tap.base(), true);

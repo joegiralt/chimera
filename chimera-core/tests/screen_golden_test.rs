@@ -216,8 +216,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // mixer_sends, mixer_out_p2 re-recorded: the sends are the Sound's OUT block (ADR 0123).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_sends", 0x35e09ae3385236bb),
+    // Re-recorded: TYPE in front (ADR 0199).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay", 0xfbe0808a050ed002),
+    ("mixer_fx_delay", 0x43f7a0dc7de5b19b),
     // TYPE first, the panel's units, and REV › MORE (reverb TYPEs T6);
     // the REV pages re-recorded for RATE's default and law (ADR 0121).
     #[cfg(not(feature = "master-tape"))]
@@ -246,6 +247,13 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_fx_reverb_bloom_more", 0x1cadf3eefa17fedb),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay_char", 0xb3e9570b26525f00),
+    // GRAIN: DLY, its CHAR at PITCH +12, and bank 2 closed (ADR 0199).
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_delay_grain", 0x539faab78dcd5dab),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_delay_char_grain", 0x3e86370045ab0bc9),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_delay_grain_needs_update", 0xebf99b8b035ecdef),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master", 0xaa7cc5f71d43600a),
     #[cfg(not(feature = "master-tape"))]
@@ -256,7 +264,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_sends", 0xba83be0d8d177f8d),
     // DLY's branch hides REV's label it ran into (TAPE Task 15).
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay", 0x498e957495d45875),
+    ("mixer_fx_delay", 0x3aafee28e7d8d358),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb", 0xf884d95677bc4c9f),
     #[cfg(feature = "master-tape")]
@@ -279,6 +287,12 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_fx_reverb_bloom_more", 0xa267930e1d560034),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay_char", 0xb47f7ef56c42b2a7),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_delay_grain", 0x449acab305e48e68),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_delay_char_grain", 0xdd746404e0ae40fa),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_delay_grain_needs_update", 0x0a00d3afc8dea3c4),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", 0x43381076b873ad98),
     #[cfg(feature = "master-tape")]

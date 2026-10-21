@@ -87,6 +87,8 @@ pub struct SlotCtx {
     pub chorus: ChorusMode,
     /// The reverb panel REV and REV › MORE show (`reverb_panel::shown`).
     pub rev: ReverbType,
+    /// The delay TYPE whose cells DLY › CHAR shows.
+    pub delay: crate::dsp::delay::DelayType,
     /// HALL's SIZE sits in its plate zone: the SIZE cell reads `PLATE`.
     pub plate: bool,
     /// The ORBIT ring the location selects: what `SelectedRing` edits.
@@ -132,6 +134,10 @@ impl SlotCtx {
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
             src: SourceState::None,
             rev: reverb_panel::shown(rev.kind),
+            delay: crate::dsp::delay::DelayType::at(get(
+                BlockRef::Delay,
+                crate::dsp::delay::DelayParams::TYPE,
+            )),
             plate: in_plate_zone(&rev),
             ring: RingIdx::ALL[0],
             clock: ClockSource::Internal,
@@ -179,6 +185,14 @@ impl SlotCtx {
     pub fn on_chorus(self, fx: &ChorusParams) -> Self {
         Self {
             chorus: ChorusMode::from_u8(fx.mode),
+            ..self
+        }
+    }
+
+    /// This context under the project delay `fx`: the TYPE DLY › CHAR shows.
+    pub fn on_delay(self, fx: &crate::dsp::delay::DelayParams) -> Self {
+        Self {
+            delay: fx.kind,
             ..self
         }
     }
@@ -641,6 +655,16 @@ pub fn view(def: &BlockDef, i: usize, ctx: &SlotCtx) -> View {
                     let addr = ParamAddr::new(BlockRef::AlgoOp(op), id);
                     addr.spec()
                         .map_or(View::Empty, |s| param(addr, label, s.fmt))
+                }
+                _ => View::Empty,
+            }
+        }
+        SlotBinding::DelayPanel(k) => {
+            match crate::dsp::delay::char_cells(ctx.delay).get(usize::from(k)) {
+                Some(&Some(id)) => {
+                    let addr = ParamAddr::new(BlockRef::Delay, id);
+                    addr.spec()
+                        .map_or(View::Empty, |s| param(addr, s.label, s.fmt))
                 }
                 _ => View::Empty,
             }
