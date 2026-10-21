@@ -8,7 +8,7 @@ use chimera_hal::card_bus::{CardBus, CardFault};
 use super::admit::ReadRatio;
 use super::ring::{AudioSide, AudioTurn};
 use super::stats::StreamStats;
-use super::units::{AudioBlocks, Frames, SlotIdx};
+use super::units::{AudioBlocks, Frames};
 use crate::dsp::engines::EngineCtx;
 use crate::dsp::modal::SymPool;
 use crate::project::{PartId, SourceId};
@@ -171,9 +171,7 @@ impl VoicePorts for Streams<'_, '_> {
 
     fn drop_ring(&mut self, v: VoiceIdx) {
         let mut turn = self.audio.turn();
-        for s in SlotIdx::ALL {
-            turn.cancel(v, s);
-        }
+        turn.cancel_all(v);
     }
 
     fn stats(&self) -> Option<&StreamStats> {

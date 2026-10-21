@@ -633,9 +633,7 @@ impl BenchStreams {
         // `admit` and the const asserts above: none of this overflows.
         let total = file.frames().get() * 1_000;
         if !head.primed.swap(true, Ordering::Relaxed) {
-            for s in SlotIdx::ALL {
-                turn.cancel(v, s);
-            }
+            turn.cancel_all(v);
             turn.stream(v, bed_id(v));
             head.at.store(0, Ordering::Relaxed);
             head.set_cur(SlotIdx::A);

@@ -456,9 +456,7 @@ impl Cursor {
 
     /// The note is over: every slot dropped, silent until the next start.
     pub fn stop(&mut self, port: &mut StreamPort<'_, '_>) {
-        for s in SlotIdx::ALL {
-            port.turn.cancel(port.voice, s);
-        }
+        port.turn.cancel_all(port.voice);
         (self.head, self.state, self.gain) = (None, Flow::Cold, Fade::SILENT);
     }
 
@@ -474,9 +472,7 @@ impl Cursor {
         src: Streamed,
         port: &mut StreamPort<'_, '_>,
     ) {
-        for s in SlotIdx::ALL {
-            port.turn.cancel(port.voice, s);
-        }
+        port.turn.cancel_all(port.voice);
         port.turn.stream(port.voice, src.id);
         self.src = Some(src);
         self.wrap = None;
@@ -576,9 +572,7 @@ impl Cursor {
             self.head = None;
         }
         if self.state == Flow::Quiet && self.gain.level <= 0 {
-            for s in SlotIdx::ALL {
-                port.turn.cancel(port.voice, s);
-            }
+            port.turn.cancel_all(port.voice);
             return Plan::silent(FadeCmd::Hold, self.inc);
         }
         let t = if self.state == Flow::Quiet {
