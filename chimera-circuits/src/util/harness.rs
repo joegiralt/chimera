@@ -157,3 +157,14 @@ pub fn probe(f0: f64, fc: f64, res: f64, level_db: f64, sine: bool) -> Case {
 pub fn tail(y: &[f64]) -> &[f64] {
     &y[y.len() - (0.25 * FS) as usize..]
 }
+
+impl Case {
+    /// A `Voice` call's input and controls as a `Case`.
+    pub fn of(x: &[f64], c: &[crate::Controls]) -> Case {
+        Case {
+            x: x.to_vec(),
+            fc: c.iter().map(|c| c.cutoff).collect(),
+            res: c.iter().map(|c| c.res).collect(),
+        }
+    }
+}
