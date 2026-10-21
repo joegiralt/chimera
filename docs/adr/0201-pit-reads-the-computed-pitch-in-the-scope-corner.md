@@ -72,8 +72,12 @@ door.
    caller. Bank 1 keeps the `Tuner` state (RAM), the two door calls, the
    frame's field and the key's XOR into the scope's; the corner's key
    is 0 off PIT, so every scope page shares the one arm. Measured on
-   the default firmware against origin/tape-streaming (0d026a9a):
-   bank 1 +104 B (.text; .rodata and .data +0), bank 2 +2,624 B.
+   the default firmware against origin/tape-streaming (0d026a9a) as built
+   then: bank 1 +104 B, bank 2 +2,624 B; the merged branch's `.text` reads
+   +144 B. On the integrated tree (integration-1021, before → after #755's
+   merge, each set as `just check` builds it): `orbit` 908,092 → 908,196 (+104); `default` 886,816 → 887,088 (+272); `bank2-gate` 888,612 → 888,876 (+264); `fault-inject` 860,968 → 860,944 (-24); `bench-algo` 905,288 → 905,384 (+96); `bench-algo,master-tape` 882,744 → 882,808 (+64); `bench-routing` 901,264 → 901,376 (+112); `bench-memory` 903,812 → 903,924 (+112); `bench-stress` 906,056 → 906,176 (+120); `bench-orbit` 885,956 → 886,004 (+48); `bench-tape` 868,544 → 868,568 (+24); `filter-probes` 917,488 → 917,456 (-32). The door
+   calls and their layout; each line of `tools/bank1-budget.txt` names
+   this ADR with its share.
    Closed, the corner is empty.
 
 6. **Types.** A pitch is a `Tone` (cents above MIDI 0) and gives its
@@ -103,8 +107,13 @@ door.
 - An FM Sound whose carrier ratio isn't 1 sounds its carrier, not the
   note: the corner reads the note (the ratio is the timbre's).
 - The corner covers up to 112 × 33 px of the scope's top-right.
-- RAM: the `Tuner` state (six last notes and the two lines). Flash: 104 B
-  of bank 1, 2,624 B of bank 2.
+- RAM: the `Tuner` state (six last notes and the two lines). Flash: bank
+  1 as measured per set above (+104 B on ORBIT, +272 B default on the
+  integrated tree), 2,624 B of bank 2.
+- TAPE's reading is an exhaustive match on the machine (integration-1021):
+  WAVE plays the note, SCRUB MOTION's speed, WALK and every STRETCH TYPE
+  the key; SLICE NOTE and SCRUB's KEY POSITION (ADR 0205) play at ROOT
+  through `plays_at_root`, which the engine's note-on shares.
 
 ## Sources
 - Request: owner, 2026-10-21 (PIT tuner).
