@@ -258,7 +258,7 @@ def depth(funcs, root, charge=0, comp=None, doors=None, only=None):
     return total, chain, cut, indirect
 
 
-def pointer_charge(img, out):
+def pointer_charge(img, out, comp=None):
     """What one pointer call may cost: the deepest function whose address
     the image holds (Thumb bit set), with its own pointer calls charged one
     level less, `POINTER_NEST` levels in all (the innermost charged 0).
@@ -266,7 +266,7 @@ def pointer_charge(img, out):
     calls themselves (a `Store` body calling a sink), so the nesting is the
     stated assumption."""
     taken = sorted(f for f, a in img.starts.items() if (a | 1) in img.words and f not in ROOTS and f not in DOOR_ONLY)
-    comp = components(img.funcs)
+    comp = comp if comp is not None else components(img.funcs)
     charge, deepest = 0, "-"
     for _ in range(POINTER_NEST):
         charge, deepest = max(((depth(img.funcs, f, charge, comp, None, DOOR_ONLY)[0], f) for f in taken), default=(0, "-"))
@@ -297,8 +297,8 @@ def short(name, n=90):
 
 def check(img, stack_bytes, out):
     """True if every root is found and the nested sum fits."""
-    charge = pointer_charge(img, out)
     comp = components(img.funcs)
+    charge = pointer_charge(img, out, comp)
     ok, total = True, 0
     for i, root in enumerate((THREAD,) + ISRS):
         if root not in img.funcs:
@@ -314,7 +314,7 @@ def check(img, stack_bytes, out):
             print("           recursion cut at: %s" % ", ".join(sorted(short(c, 60) for c in cut)), file=out)
         if ind:
             print("           %d functions call through a pointer, each charged above" % len(ind), file=out)
-    for root, _ in DOOR_CALLS.items():
+    for root in DOOR_CALLS:
         if root in img.funcs and img.funcs[root][3] > 1:
             print("stack-depth: %s has %d pointer calls, its door's one only" % (root, img.funcs[root][3]), file=out)
             ok = False
