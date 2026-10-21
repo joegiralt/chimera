@@ -99,26 +99,26 @@ Each set's plain release build (`just check`'s), before (origin/main `5a2e50e7`,
 
 | Set | Bank 1 before → after (B) | Δ bank 1 | of it rodata | text | rest | Δ bank 2 |
 |---|---|---|---|---|---|---|
-| `orbit` | 886,120 → 887,332 | +1,212 | +840 | +288 | +84 | +6,464 |
-| `default` | 865,716 → 866,400 | +684 | +840 | -234 | +78 | +6,464 |
-| `bank2-gate` | 867,600 → 868,244 | +644 | +840 | -276 | +80 | +6,464 |
-| `fault-inject` | 838,924 → 840,344 | +1,420 | +840 | +510 | +70 | +6,464 |
-| `bench-algo,bank2` | 877,564 → 878,952 | +1,388 | +860 | +456 | +72 | +6,464 |
-| `bench-algo,master-tape,bank2` | 873,528 → 874,996 | +1,468 | +860 | +524 | +84 | +6,464 |
-| `bench-routing,bank2` | 874,816 → 876,212 | +1,396 | +840 | +462 | +94 | +6,464 |
-| `bench-memory,bank2` | 863,652 → 865,064 | +1,412 | +840 | +484 | +88 | +6,464 |
-| `bench-stress,bank2` | 877,288 → 878,692 | +1,404 | +860 | +472 | +72 | +6,464 |
-| `bench-orbit,bank2` | 868,828 → 870,248 | +1,420 | +840 | +520 | +60 | +6,464 |
-| `bench-tape,bank2` | 848,168 → 849,460 | +1,292 | +840 | +376 | +76 | +6,464 |
-| `filter-probes` | 892,932 → 894,344 | +1,412 | +840 | +510 | +62 | +6,464 |
+| `orbit` | 886,120 → 887,620 | +1,500 | +888 | +480 | +132 | +6,816 |
+| `default` | 865,716 → 866,712 | +996 | +888 | -4 | +112 | +6,816 |
+| `bank2-gate` | 867,600 → 868,580 | +980 | +888 | -12 | +104 | +6,816 |
+| `fault-inject` | 838,924 → 840,624 | +1,700 | +888 | +710 | +102 | +6,816 |
+| `bench-algo,bank2` | 877,564 → 879,272 | +1,708 | +908 | +672 | +128 | +6,816 |
+| `bench-algo,master-tape,bank2` | 873,528 → 874,772 | +1,244 | +908 | +234 | +102 | +6,816 |
+| `bench-routing,bank2` | 874,816 → 876,476 | +1,660 | +888 | +650 | +122 | +6,816 |
+| `bench-memory,bank2` | 863,652 → 865,336 | +1,684 | +888 | +660 | +136 | +6,816 |
+| `bench-stress,bank2` | 877,288 → 878,900 | +1,612 | +908 | +608 | +96 | +6,816 |
+| `bench-orbit,bank2` | 868,828 → 870,536 | +1,708 | +888 | +712 | +108 | +6,816 |
+| `bench-tape,bank2` | 848,168 → 849,748 | +1,580 | +888 | +582 | +110 | +6,816 |
+| `filter-probes` | 892,932 → 894,656 | +1,724 | +888 | +722 | +114 | +6,816 |
 
 What the bank-1 bytes are, all of it the closed door's (0198 point 1):
 - **Specs:** `DELAY_SPECS` grows by five `ParamSpec`s, +360 B, and their labels, idents and TYPE's two names.
 - **The page table:** `DELAY_GRAIN`, +120 B; its map word, +12 B; the delay's sub-page list, +4 B.
-- **The stored params:** `DelayParams` grows 20 B (`grain: [f32; 5]`), so `FxParams` and every Performance holding it grow. That alone, measured by giving origin/main's `DelayParams` 20 B of padding and nothing else, moves the ORBIT build's bank 1 by +232 B, all of it layout: field offsets and immediates in the UI's and the board's code (`UiState::input` +284, `chimera_board::synth` +124). Across the sets the text column swings −276 to +524 B for this reason, with no new function in it.
+- **The stored params:** `DelayParams` grows 20 B (`grain: [f32; 5]`), so `FxParams` and every Performance holding it grow. That alone, measured by giving origin/main's `DelayParams` 20 B of padding and nothing else, moves the ORBIT build's bank 1 by +232 B, all of it layout: field offsets and immediates in the UI's and the board's code (`UiState::input` +284, `chimera_board::synth` +124). Across the sets the text column swings with the layout for this reason, with no new function in it.
 - **The stubs:** the door call in `TapeDelay::run` (+16 B in `render_half`), `bank2::closed_text`'s GRAIN arm (+36), `get` and `write` reaching `grain` (+36), and `extra_cost`'s bill.
 
-The budget lines rise by exactly each set's measured Δ bank 1, each naming this ADR. Bank 2 grows +6,464 B on every set: `delay::grain::run` (the TYPE crossfade's loop and the steady loop, the clock and the knobs' laws) and `Engine::render`'s runs.
+The budget lines rise by exactly each set's measured Δ bank 1, each naming this ADR. Bank 2 grows +6,816 B on every set: `delay::grain::run` (the TYPE crossfade's loop and the steady loop, the clock and the knobs' laws, the starts) and the core's `Engine::render` on the line.
 
 ## Fidelity of the port
 - `the_engine_matches_its_f64_reference` runs the engine and an f64 reference of the port (its trims, gains, envelope, stealing and Hermite; the reference shares the engine's clock, whose starts have their own test) over six settings across SIZE, DENSITY, PITCH ±24 and TEXTURE: within 5·10⁻⁴ of signals near 0.1 RMS. What remains is f32's 2⁻⁹-sample grip on a start 24,000 samples back.

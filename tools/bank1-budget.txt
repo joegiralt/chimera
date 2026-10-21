@@ -9,15 +9,15 @@
 # Every line names an ADR or the file refuses to load.
 #
 # <set: features as check builds it>  <bytes>  # ADR NNNN: why
-orbit                          887332  # ADR 0199: +1212 GRAIN's closed-door data, over 0198's 886120 at eb0cdf0f
-default                        866400  # ADR 0199: +684 GRAIN's closed-door data, over 0198's 865716 at eb0cdf0f
-bank2-gate                     868244  # ADR 0199: +644 GRAIN's closed-door data, over 0198's 867600 at eb0cdf0f
-fault-inject                   840344  # ADR 0199: +1420 GRAIN's closed-door data, over 0198's 838924 at eb0cdf0f
-bench-algo,bank2               878952  # ADR 0199: +1388 GRAIN's closed-door data, over 0198's 877564 at eb0cdf0f
-bench-algo,master-tape,bank2   874996  # ADR 0199: +1468 GRAIN's closed-door data, over 0198's 873528 at eb0cdf0f
-bench-routing,bank2            876212  # ADR 0199: +1396 GRAIN's closed-door data, over 0198's 874816 at eb0cdf0f
-bench-memory,bank2             865064  # ADR 0199: +1412 GRAIN's closed-door data, over 0198's 863652 at eb0cdf0f
-bench-stress,bank2             878692  # ADR 0199: +1404 GRAIN's closed-door data, over 0198's 877288 at eb0cdf0f
-bench-orbit,bank2              870248  # ADR 0199: +1420 GRAIN's closed-door data, over 0198's 868828 at eb0cdf0f
-bench-tape,bank2               849460  # ADR 0199: +1292 GRAIN's closed-door data, over 0198's 848168 at eb0cdf0f
-filter-probes                  894344  # ADR 0199: +1412 GRAIN's closed-door data, over 0198's 892932 at eb0cdf0f
+orbit                          887620  # ADR 0199: +1500 GRAIN's closed-door data, over 0198's 886120 at eb0cdf0f
+default                        866712  # ADR 0199: +996 GRAIN's closed-door data, over 0198's 865716 at eb0cdf0f
+bank2-gate                     868580  # ADR 0199: +980 GRAIN's closed-door data, over 0198's 867600 at eb0cdf0f
+fault-inject                   840624  # ADR 0199: +1700 GRAIN's closed-door data, over 0198's 838924 at eb0cdf0f
+bench-algo,bank2               879272  # ADR 0199: +1708 GRAIN's closed-door data, over 0198's 877564 at eb0cdf0f
+bench-algo,master-tape,bank2   874772  # ADR 0199: +1244 GRAIN's closed-door data, over 0198's 873528 at eb0cdf0f
+bench-routing,bank2            876476  # ADR 0199: +1660 GRAIN's closed-door data, over 0198's 874816 at eb0cdf0f
+bench-memory,bank2             865336  # ADR 0199: +1684 GRAIN's closed-door data, over 0198's 863652 at eb0cdf0f
+bench-stress,bank2             878900  # ADR 0199: +1612 GRAIN's closed-door data, over 0198's 877288 at eb0cdf0f
+bench-orbit,bank2              870536  # ADR 0199: +1708 GRAIN's closed-door data, over 0198's 868828 at eb0cdf0f
+bench-tape,bank2               849748  # ADR 0199: +1580 GRAIN's closed-door data, over 0198's 848168 at eb0cdf0f
+filter-probes                  894656  # ADR 0199: +1724 GRAIN's closed-door data, over 0198's 892932 at eb0cdf0f
