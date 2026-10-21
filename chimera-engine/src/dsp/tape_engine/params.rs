@@ -41,11 +41,6 @@ impl TapeModel {
             TapeModel::Transwave => 3,
         }
     }
-
-    /// By `index`; past the end, the last.
-    pub fn from_index(v: u8) -> Self {
-        Self::ALL[usize::from(v).min(Self::ALL.len() - 1)]
-    }
 }
 
 impl DiskCode for TapeModel {
