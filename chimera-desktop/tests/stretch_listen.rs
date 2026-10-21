@@ -8,7 +8,7 @@ use chimera_core::block::Block as _;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::machine::{defaults, env_defaults};
 use chimera_core::dsp::tape_engine::stretch::grain::{THRIFT, Thrift};
-use chimera_core::dsp::tape_engine::{StretchType, TapeEngineParams as P, TapeMachine};
+use chimera_core::dsp::tape_engine::{StretchType, TapeEngineParams as P, Way};
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
@@ -92,13 +92,14 @@ trim = "0"
 }
 
 /// What the UI writes on a MODEL turn (`part_page::machine_edit`).
-fn turn(s: &Sound, m: TapeMachine) -> Sound {
+fn turn(s: &Sound, w: Way) -> Sound {
     let mut s = s.clone();
-    s.params.tape.machine = m;
-    for (id, v) in defaults(m) {
+    s.params.tape.set_way(w);
+    let (m, d) = (s.params.tape.machine, s.params.tape.direction);
+    for (id, v) in defaults(m, d) {
         s.params.tape.set(id, v);
     }
-    for &(id, v) in env_defaults(m) {
+    for &(id, v) in env_defaults(m, d) {
         s.params.envelopes[0].set(id, v);
     }
     s
@@ -306,7 +307,7 @@ fn listen() {
     let f = Thrift::Four;
     cases.push((
         "bell-natural".into(),
-        turn(&bell, TapeMachine::One),
+        turn(&bell, Way::One),
         bb,
         len,
         len + 1.0,
@@ -382,7 +383,7 @@ fn listen() {
     let plen = pb.head.sref.frames as f32 / f32::from(pb.head.sref.rate);
     cases.push((
         "pad-natural".into(),
-        turn(&pad, TapeMachine::One),
+        turn(&pad, Way::One),
         pb,
         plen,
         plen + 1.0,
@@ -416,7 +417,7 @@ fn listen() {
     let alen = ab.head.sref.frames as f32 / f32::from(ab.head.sref.rate);
     cases.push((
         "voice-natural".into(),
-        turn(&ah, TapeMachine::One),
+        turn(&ah, Way::One),
         ab,
         alen,
         alen + 1.0,
