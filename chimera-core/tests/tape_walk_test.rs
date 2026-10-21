@@ -725,3 +725,57 @@ fn voices_end() {
         assert!(!e.is_active(), "{d:?} released");
     }
 }
+
+/// TRON REVERSE plays the whole window backward, as TRON FORWARD with END
+/// before START does, bit for bit; and REVERSE on END before START plays
+/// it forward.
+#[test]
+fn tron_reverse_is_end_before_start() {
+    let h = ramp();
+    let v = SourceView::new(&h).unwrap();
+    let tron = |d: Direction, start: f32, end: f32| P {
+        tron: Tron::On,
+        drag: 0.3,
+        start,
+        end,
+        ..play(d)
+    };
+    let rev = run(
+        &mut fresh(0),
+        &tron(Direction::Reverse, 0.0, 1.0),
+        &v,
+        60,
+        blocks(1.2),
+        None,
+    );
+    assert!(
+        at(&rev, 0.1) > at(&rev, 0.5) && at(&rev, 0.5) > at(&rev, 0.9),
+        "falling: {} {} {}",
+        at(&rev, 0.1),
+        at(&rev, 0.5),
+        at(&rev, 0.9)
+    );
+    assert!(
+        (at(&rev, 0.1) - 0.72).abs() < 0.02,
+        "from END: {}",
+        at(&rev, 0.1)
+    );
+    let fwd = run(
+        &mut fresh(0),
+        &tron(Direction::Forward, 1.0, 0.0),
+        &v,
+        60,
+        blocks(1.2),
+        None,
+    );
+    assert_eq!(rev, fwd);
+    let back = run(
+        &mut fresh(0),
+        &tron(Direction::Reverse, 1.0, 0.0),
+        &v,
+        60,
+        blocks(1.2),
+        None,
+    );
+    assert!(at(&back, 0.1) < at(&back, 0.5) && at(&back, 0.5) < at(&back, 0.9));
+}

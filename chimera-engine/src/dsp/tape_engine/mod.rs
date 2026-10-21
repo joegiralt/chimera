@@ -1638,7 +1638,7 @@ impl TapeDeck {
         self.ramp = true;
         self.wow_kind = p.wow;
         self.age.set_band(rate.get());
-        self.start = p.start;
+        self.start = self.played(p).0;
         (self.rel, self.rel_k) = (1.0, 1.0);
         self.fade_k = tron::release_k(p.drag, sample_rate);
         if self.one_head() {
@@ -1665,7 +1665,7 @@ impl TapeDeck {
                 MachineState::Stretch(stretch::Note::on(p, v, i, (&self.mac, seed), sample_rate));
             return;
         }
-        let rev = self.reversed(p.end);
+        let rev = self.reversed(self.played(p).1);
         let (start, end) = self.window(p, rev);
         self.ws = window_start(start, v.file_frames());
         // The first pass's floor, at the note's own `inc` (SCRUB: its loop's
@@ -1775,14 +1775,22 @@ impl TapeDeck {
         matches!(self.machine, MachineState::One(_))
     }
 
-    /// LOOP plays its next pass reversed: END before the START latched at
-    /// note-on (#369), or TRON on REVERSE with END after it.
+    /// LOOP plays its next pass reversed: END, as played, before the START
+    /// latched at note-on (#369).
     fn reversed(&self, end: f32) -> bool {
         // Streamed, forward only (slice 1 § 2.3): END turned before START
         // mid-note never flips it.
-        self.lp()
-            && !self.fed()
-            && ((Dir::of(self.start, end) == Dir::Rev) != (self.round == Round::Reversed))
+        self.lp() && !self.fed() && Dir::of(self.start, end) == Dir::Rev
+    }
+
+    /// START and END as played: TRON on REVERSE swaps them, so it plays as
+    /// FORWARD with END before START (ADR 0203).
+    fn played(&self, p: &TapeEngineParams) -> (f32, f32) {
+        if self.round == Round::Reversed {
+            (p.end, p.start)
+        } else {
+            (p.start, p.end)
+        }
     }
 
     /// The loop's SIZE: LENGTH's, but TRON's whole window.
@@ -1801,10 +1809,13 @@ impl TapeDeck {
     fn window(&self, p: &TapeEngineParams, rev: bool) -> (f32, f32) {
         if !self.tape_machine().ordered() {
             (p.start.min(p.end), p.start.max(p.end))
-        } else if rev {
-            (1.0 - p.start, 1.0 - p.end)
         } else {
-            (p.start, p.end)
+            let (start, end) = self.played(p);
+            if rev {
+                (1.0 - start, 1.0 - end)
+            } else {
+                (start, end)
+            }
         }
     }
 
@@ -1942,7 +1953,8 @@ impl TapeDeck {
     /// machines do nothing, their VCA lets go.
     pub fn release_by(&mut self, vca: bool) {
         if self.tron() || (self.model() == TapeModel::Walk && !self.hold && !vca) {
-            self.rel_k = self.fade_k;
+            // A tape run out already falls faster: key up never slows it.
+            self.rel_k = self.rel_k.min(self.fade_k);
         }
     }
 
@@ -2435,7 +2447,7 @@ impl TapeDeck {
         // The next pass's frame: LOOP's END moved across START flips it,
         // at the next wrap. Its window's start is that frame's.
         let rev = if self.lp() {
-            self.reversed(p.end)
+            self.reversed(self.played(p).1)
         } else {
             self.mirror()
         };
