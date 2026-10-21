@@ -3,10 +3,9 @@
 //! (#583); the loop's from XFADE before it, holding XFADE + `HEAD_MS`
 //! (#584).
 
-use chimera_core::dsp::tape_engine::{Way, Direction, Tron};
 use chimera_engine::dsp::tape_engine::heads::{Bounds, Sizing, window_end, window_start};
 use chimera_engine::dsp::tape_engine::params::TapeEngineParams;
-use chimera_engine::dsp::tape_engine::{Direction, TapeMachine, TapeModel};
+use chimera_engine::dsp::tape_engine::{Direction, TapeMachine, TapeModel, Tron, Way};
 use chimera_engine::storage::SourceRef;
 use chimera_engine::stream::admit::head_frames;
 use chimera_engine::stream::layout::CHUNK_FRAMES;
@@ -29,7 +28,8 @@ fn r() -> SourceRef {
 
 fn play(mode: Direction, start: f32) -> TapeEngineParams {
     TapeEngineParams {
-        machine: TapeMachine::play(mode),
+        machine: TapeMachine::Play,
+        direction: mode,
         start,
         end: 1.0,
         ..TapeEngineParams::default()

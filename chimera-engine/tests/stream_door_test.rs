@@ -5,7 +5,6 @@
 //! door (`open_host`). One test: the door is a process-wide static.
 #![cfg(all(feature = "bank2", feature = "test-support"))]
 
-use chimera_core::dsp::tape_engine::Direction;
 use chimera_engine::bank2::DOOR_CELL;
 use chimera_engine::dsp::tape_engine::TapeMachine;
 use chimera_engine::dsp::tape_engine::params::TapeEngineParams;

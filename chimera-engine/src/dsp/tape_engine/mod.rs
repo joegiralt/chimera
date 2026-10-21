@@ -3314,11 +3314,11 @@ impl TapeDeck {
 mod tests {
     use super::*;
 
-    /// `idle_machine` and `tape_machine` name the same machine, all seven.
+    /// `idle_machine` and `tape_machine` name the same path, all seven.
     #[test]
     fn each_machine_state_names_its_machine() {
         let mut d = TapeDeck::idle();
-        for m in TapeMachine::ALL {
+        for m in Way::ALL {
             d.machine = TapeDeck::idle_machine(m);
             assert_eq!(d.tape_machine(), m);
         }

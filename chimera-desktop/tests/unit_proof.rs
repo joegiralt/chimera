@@ -248,6 +248,7 @@ fn project() {
             source: h.name,
             machine: TapeMachine::Play,
             direction: Direction::Loop,
+            tron: chimera_core::dsp::tape_engine::Tron::Off,
             set: Vec::new(),
             trim_db: 0.0,
         };

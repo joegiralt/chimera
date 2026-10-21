@@ -304,7 +304,7 @@ fn stream_qa() {
         let secs = head.sref.frames as f32 / f32::from(rate);
         for mode in [Direction::Forward, Direction::Loop] {
             let p = TapeEngineParams {
-                machine: TapeMachine::play(mode),
+                direction: mode,
                 root: f32::from(head.root),
                 ..TapeEngineParams::default()
             };
