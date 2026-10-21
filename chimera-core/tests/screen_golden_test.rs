@@ -250,13 +250,14 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_master", 0xaa7cc5f71d43600a),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master_level", 0x33a39d11187d9bb1),
+    // Re-recorded: the map names the master tape MTP, not REEL (#646).
     #[cfg(feature = "master-tape")]
-    ("mixer_part", 0x429ab992c626b285),
+    ("mixer_part", 0x9f6c12c0b45db43d),
     #[cfg(feature = "master-tape")]
-    ("mixer_sends", 0xba83be0d8d177f8d),
+    ("mixer_sends", 0x4f5f9daa56c5aea5),
     // DLY's branch hides REV's label it ran into (TAPE Task 15).
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay", 0x498e957495d45875),
+    ("mixer_fx_delay", 0x4a8bdad905f55c61),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb", 0xf884d95677bc4c9f),
     #[cfg(feature = "master-tape")]
@@ -278,17 +279,17 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_bloom_more", 0xa267930e1d560034),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_char", 0xb47f7ef56c42b2a7),
+    ("mixer_fx_delay_char", 0x323fc0627565e957),
     #[cfg(feature = "master-tape")]
-    ("mixer_tape", 0x43381076b873ad98),
+    ("mixer_tape", 0xdbadbeba402b34e4),
     #[cfg(feature = "master-tape")]
-    ("mixer_master", 0x29929673ac6c7c44),
+    ("mixer_master", 0x7b0e9395aaa4c7f8),
     #[cfg(feature = "master-tape")]
-    ("mixer_master_level", 0x041e07e545a86dfb),
+    ("mixer_master_level", 0xdf9c8193151e72b3),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_out_p2", 0xbbf4869671d1e56d),
     #[cfg(feature = "master-tape")]
-    ("mixer_out_p2", 0x60429572e55d3aaf),
+    ("mixer_out_p2", 0xec847a587865a15f),
     ("algo_out_p3", 0x543753bd58a29fa6),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17);
@@ -399,7 +400,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("large_mixer_sends", 0x3ea6919e3a4e3772),
     #[cfg(feature = "master-tape")]
-    ("large_mixer_sends", 0x66e4fced766b46b8),
+    ("large_mixer_sends", 0x2db88c25aaaa4ce0),
     ("large_settings_top", 0x9d2976351278b0df),
     ("large_settings_personal", 0x35b1c3eb794412f7),
     ("large_sound_browser", 0x018933e3d8721858),

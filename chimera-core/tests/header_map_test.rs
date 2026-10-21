@@ -421,8 +421,41 @@ fn the_algo_map_has_no_overlapping_nodes() {
     }
 }
 
+/// STACK's node line on every chain: the 34 px pill and the untracked
+/// labels beside it never touch, whichever is current. Extents are
+/// half-open, so `end == start` is touching.
+#[test]
+fn the_stack_nodes_never_overlap() {
+    let w = |l: &str| chimera_core::ui::draw::text_width(&theme::FONT_LABEL, l, 0);
+    for chain in chimera_core::ui::block_registry::ALL_CHAINS.iter() {
+        let n = chain.blocks.len();
+        for cur in 0..n {
+            let ext: Vec<(i32, i32)> = (0..n)
+                .map(|i| {
+                    let b = &chain.blocks[i];
+                    let x = node_x(i, n);
+                    let w = if i == cur {
+                        theme::PILL_W
+                    } else {
+                        w(b.map.unwrap_or(b.def.short))
+                    };
+                    (x - w / 2, x - w / 2 + w)
+                })
+                .collect();
+            for p in ext.windows(2) {
+                assert!(
+                    p[0].1 < p[1].0,
+                    "{} node {cur} current: {ext:?}",
+                    chain.name
+                );
+            }
+        }
+    }
+}
+
 /// ROW's node line: the pill (at least 34, its bold label + 10) and the
 /// tracked labels beside it never touch, on any chain, whichever is current.
+/// Extents are half-open, so `end == start` is touching (#646).
 #[test]
 fn the_row_nodes_never_overlap() {
     let t = theme::LABEL_TRACKING;
