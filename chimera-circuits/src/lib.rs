@@ -26,7 +26,7 @@ pub mod vtl5c3;
 /// The one rate the models' 1× versions run at: Chimera's.
 pub const FS: f64 = 48_000.0;
 
-/// What a harness hands a model for one block: the knobs as the synth's
+/// What a harness hands a model at each sample: the knobs as the synth's
 /// filter page has them.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Controls {
@@ -40,11 +40,13 @@ pub struct Controls {
     pub gate: f64,
 }
 
-/// A model run the way the synth runs a filter: mono, 48 kHz, a block at a
-/// time, the controls held over the block (a model may smooth them).
+/// A model run offline, the way every lab rendered: the whole input at
+/// once, so an oversampled reference can resample it in one go.
 pub trait Voice: Send {
-    /// Filters (or gates) `x` in place.
-    fn process(&mut self, x: &mut [f32], c: &Controls);
+    /// `x` at 48 kHz (1.0 = the model's full scale), `c[i]` the controls at
+    /// sample `i` (as long as `x`); the output at 48 kHz, as long as `x`,
+    /// at the model's own level: never normalised.
+    fn render(&mut self, x: &[f64], c: &[Controls]) -> Vec<f64>;
 }
 
 /// One model the render tool can build.
@@ -93,20 +95,18 @@ mod tests {
                 "{} twice",
                 e.name
             );
-            let mut v = (e.make)();
-            let c = Controls {
+            let c = [Controls {
                 cutoff: 1000.0,
                 res: 0.5,
                 gate: 1.0,
-            };
-            let mut x: Vec<f32> = (0..4800)
+            }; 4800];
+            let x: Vec<f64> = (0..4800)
                 .map(|i| if i % 100 < 50 { 0.5 } else { -0.5 })
                 .collect();
-            for b in x.chunks_mut(32) {
-                v.process(b, &c);
-            }
-            assert!(x.iter().all(|s| s.is_finite()), "{} blew up", e.name);
-            assert!(x.iter().any(|s| *s != 0.0), "{} is silent", e.name);
+            let y = (e.make)().render(&x, &c);
+            assert_eq!(y.len(), x.len(), "{}", e.name);
+            assert!(y.iter().all(|s| s.is_finite()), "{} blew up", e.name);
+            assert!(y.iter().any(|s| *s != 0.0), "{} is silent", e.name);
         }
     }
 }
