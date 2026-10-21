@@ -201,7 +201,7 @@ pub struct UiDoor {
     onset: fn(&[u8], u32, u32, bool) -> Option<u32>,
     /// WALK's machine defaults, cell notes and held refusals (`ui::walk`,
     /// ADR 0203).
-    machine_edit: fn(ParamAddr, f32, &mut dyn Block) -> &'static [(ParamId, f32)],
+    machine_edit: fn(ParamAddr, f32, &mut dyn Block) -> EnvWrites,
     tape_note: fn(ParamAddr, &Sound) -> Option<&'static str>,
     tape_held: fn(&TapeEngineParams, ParamId, u8) -> Option<NeedsRam>,
     /// SCRUB's reel a UI pass (`ui::jog`, ADR 0205).
@@ -213,6 +213,9 @@ pub struct UiDoor {
 
 /// A card row's head and how it loads (`SourceCell::kind`).
 type HeadKind = (SourceHead, LoadKind);
+
+/// The ENV 1 cells a MODEL or DIRECTION turn writes, each with its value.
+type EnvWrites = &'static [(ParamId, f32)];
 
 /// `UiDoor::magic`.
 const UI_MAGIC: u32 = 0xB2C0_0002;
@@ -325,12 +328,7 @@ impl UiDoor {
     }
 
     #[inline(always)]
-    pub(crate) fn machine_edit(
-        &self,
-        a: ParamAddr,
-        before: f32,
-        b: &mut dyn Block,
-    ) -> &'static [(ParamId, f32)] {
+    pub(crate) fn machine_edit(&self, a: ParamAddr, before: f32, b: &mut dyn Block) -> EnvWrites {
         (self.machine_edit)(a, before, b)
     }
 
