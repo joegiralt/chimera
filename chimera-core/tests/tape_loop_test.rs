@@ -16,7 +16,7 @@ use chimera_core::dsp::tape_engine::{
     INC_MAX, NOTE_ON_RAMP, PlayMode, TapeEngine, TapeEngineParams, TapeModel, WALK_MAX_S, inc,
     loop_len, walk_s,
 };
-use chimera_hal::BLOCK_SIZE;
+use chimera_hal::{BLOCK_SIZE, MidiNote};
 use common::tape::{Mach, held_plain, held_transwave, sine};
 
 const SR: u32 = 48_000;
@@ -123,7 +123,7 @@ fn inc_clamps_at_16() {
     assert_eq!(
         inc(
             SourceRate::MAX,
-            127,
+            MidiNote::clamped(127),
             Cents::new(2_400.0),
             Cents::new(6_000.0),
             SR
@@ -552,7 +552,7 @@ fn midi_extremes_stay_finite() {
     assert!(
         inc(
             SourceRate::new(8_000).unwrap(),
-            0,
+            MidiNote::clamped(0),
             Cents::new(-2_400.0),
             Cents::new(12_700.0),
             SR
@@ -570,7 +570,7 @@ fn midi_extremes_stay_finite() {
     assert_eq!(
         inc(
             SourceRate::MAX,
-            127,
+            MidiNote::clamped(127),
             Cents::new(2_400.0),
             Cents::new(p.root),
             SR

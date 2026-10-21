@@ -463,7 +463,7 @@ impl Stretch {
         };
         // Never under `MIN_LOOP_FRAMES` (64, and no source is shorter): a
         // START near the end moves the window's start back.
-        let ws = window_start(start, frames).min(frames.saturating_sub(MIN_LOOP_FRAMES));
+        let ws = window_start(start, v.file_frames()).min(frames.saturating_sub(MIN_LOOP_FRAMES));
         let floor = shortest(
             rate,
             (2 * WRAP_SAMPLES / MIN_PASS_SAMPLES) as f32 * from.max(to),
