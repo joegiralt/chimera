@@ -399,7 +399,8 @@ impl GlyphInputs {
             drift,
         ] = set;
         let index_of = crate::dsp::rev::sync::index_of;
-        let m = TapeMachine::from_index(MachineIndex(index_of(model, TapeMachine::ALL.len()) as u8));
+        let m =
+            TapeMachine::from_index(MachineIndex(index_of(model, TapeMachine::ALL.len()) as u8));
         let direction = Direction::ALL[index_of(direction, Direction::ALL.len())];
         let on = tron > 0.5;
         let tron = if on { Tron::On } else { Tron::Off };

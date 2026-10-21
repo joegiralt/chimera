@@ -6,11 +6,11 @@
 
 mod common;
 
-use chimera_core::dsp::tape_engine::Way;
 use chimera_core::addr::{BlockRead, BlockRef, Blocks, ParamAddr};
 use chimera_core::block::{Motion, ParamSpec, Smoothing};
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::modal::{self, ResonatorMode};
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::dsp::tape_engine::{self as tape, TapeEngineParams};
 use chimera_core::modulation::ModSource;
 use chimera_core::params::EngineType;

@@ -11,7 +11,7 @@ use core::mem::MaybeUninit;
 
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
-    CLAMP_FADE_S, INC_MAX, MIN_PASS_SAMPLES, Direction, TapeEngine, TapeEngineParams, TapeModel,
+    CLAMP_FADE_S, Direction, INC_MAX, MIN_PASS_SAMPLES, TapeEngine, TapeEngineParams, TapeModel,
     drag_s, loop_len,
 };
 use chimera_hal::BLOCK_SIZE;

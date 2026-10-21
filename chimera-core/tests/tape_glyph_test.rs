@@ -405,7 +405,21 @@ fn a_step_is_about_a_pixel() {
     // that moves less than a step costs no redraw.
     let at = |v: f32| {
         TapeGauge::of(&GlyphInputs::from_set(
-            [0.0, 0.0, 1.0, v, 0.5, 0.5, 0.3, 0.0, 0.0, 0.2, 2.0 / 3.0, 0.0, 0.0],
+            [
+                0.0,
+                0.0,
+                1.0,
+                v,
+                0.5,
+                0.5,
+                0.3,
+                0.0,
+                0.0,
+                0.2,
+                2.0 / 3.0,
+                0.0,
+                0.0,
+            ],
             Pose::Live,
         ))
         .key()
@@ -442,11 +456,15 @@ fn model_picks_the_glyph() {
     }
     // Still: the knobs don't move it.
     let a = TapeGauge::of(&GlyphInputs::from_set(
-        [0.0, 0.0, 1.0, 0.1, 0.9, 0.2, 0.3, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0],
+        [
+            0.0, 0.0, 1.0, 0.1, 0.9, 0.2, 0.3, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0,
+        ],
         Pose::Still,
     ));
     let b = TapeGauge::of(&GlyphInputs::from_set(
-        [0.0, 0.3, 0.4, 0.8, 0.1, 0.9, 0.7, 0.0, 0.0, 1.0, 0.0, 1.0, 0.9],
+        [
+            0.0, 0.3, 0.4, 0.8, 0.1, 0.9, 0.7, 0.0, 0.0, 1.0, 0.0, 1.0, 0.9,
+        ],
         Pose::Still,
     ));
     assert_eq!(a, b);
@@ -665,7 +683,9 @@ fn xfade_dashes_the_loop_end_where_it_plays() {
     // PING has no crossfade: XFADE (no cell there) leaves it.
     let ping = |xf: f32| {
         TapeGauge::of(&GlyphInputs::from_set(
-            [0.0, 0.0, 1.0, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, xf, 1.0, 0.0, 0.0],
+            [
+                0.0, 0.0, 1.0, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, xf, 1.0, 0.0, 0.0,
+            ],
             Pose::Live,
         ))
     };
@@ -685,7 +705,9 @@ fn ignored_params_leave_the_glyph() {
     // is checked by the other tests.
     for w in Way::ALL {
         let (m, d, t) = w.parts();
-        let mut set = [0.0, 0.1, 0.9, 0.3, 0.6, 0.5, 0.3, 0.2, 0.1, 0.2, 0.0, 0.0, 0.0];
+        let mut set = [
+            0.0, 0.1, 0.9, 0.3, 0.6, 0.5, 0.3, 0.2, 0.1, 0.2, 0.0, 0.0, 0.0,
+        ];
         (set[0], set[10], set[11]) = (m.index() as f32 / 3.0, d as u8 as f32 / 3.0, t as u8 as f32);
         let base = TapeGauge::of(&GlyphInputs::from_set(set, Pose::Live));
         for (i, a) in TAPE_GLYPH_PARAMS.iter().enumerate().skip(1) {

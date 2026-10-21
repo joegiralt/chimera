@@ -8,15 +8,15 @@ mod common;
 use core::mem::MaybeUninit;
 
 use chimera_core::block::{Block, DiskCode};
+use chimera_core::dsp::tape_engine::drift;
 use chimera_core::dsp::tape_engine::heads::loop_len;
 use chimera_core::dsp::tape_engine::machine::{defaults, direction_defaults, env_defaults};
-use chimera_core::dsp::tape_engine::params::{RETIRED_ONE, Drift};
+use chimera_core::dsp::tape_engine::params::{Drift, RETIRED_ONE};
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::tron::TRON_LEN_MAX_S;
-use chimera_core::dsp::tape_engine::drift;
 use chimera_core::dsp::tape_engine::{
-    Direction, FADE_HOLD, RetiredModel, TapeEngine, TapeEngineParams, TapeMachine, TapeModel,
-    Tron, Way, fade_default, needs_ram,
+    Direction, FADE_HOLD, RetiredModel, TapeEngine, TapeEngineParams, TapeMachine, TapeModel, Tron,
+    Way, fade_default, needs_ram,
 };
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
@@ -63,7 +63,14 @@ fn play(d: Direction) -> P {
 
 /// `blocks` of `e` on `p` from a note-on of `note`, the key let go at
 /// block `off` (if any).
-fn run(e: &mut TapeEngine, p: &P, v: &SourceView<'_>, note: u8, blocks: usize, off: Option<usize>) -> Vec<f32> {
+fn run(
+    e: &mut TapeEngine,
+    p: &P,
+    v: &SourceView<'_>,
+    note: u8,
+    blocks: usize,
+    off: Option<usize>,
+) -> Vec<f32> {
     e.hold();
     e.note_on(note, p, v, SR);
     let mut out = Vec::new();
@@ -102,8 +109,15 @@ fn forward_plays_the_window_once_and_ends() {
     let v = SourceView::new(&h).unwrap();
     let mut e = fresh(0);
     let out = run(&mut e, &play(Direction::Forward), &v, 60, blocks(1.5), None);
-    assert!(at(&out, 0.1) < at(&out, 0.5) && at(&out, 0.5) < at(&out, 0.9), "rising");
-    assert!((at(&out, 0.1) + 0.72).abs() < 0.02, "from START: {}", at(&out, 0.1));
+    assert!(
+        at(&out, 0.1) < at(&out, 0.5) && at(&out, 0.5) < at(&out, 0.9),
+        "rising"
+    );
+    assert!(
+        (at(&out, 0.1) + 0.72).abs() < 0.02,
+        "from START: {}",
+        at(&out, 0.1)
+    );
     let end = sounding(&out) as f32 / SR as f32;
     assert!((0.99..1.01).contains(&end), "ends at END: {end}");
     assert!(!e.is_active());
@@ -115,8 +129,15 @@ fn reverse_plays_it_backward_and_ends() {
     let v = SourceView::new(&h).unwrap();
     let mut e = fresh(0);
     let out = run(&mut e, &play(Direction::Reverse), &v, 60, blocks(1.5), None);
-    assert!(at(&out, 0.1) > at(&out, 0.5) && at(&out, 0.5) > at(&out, 0.9), "falling");
-    assert!((at(&out, 0.1) - 0.72).abs() < 0.02, "from END: {}", at(&out, 0.1));
+    assert!(
+        at(&out, 0.1) > at(&out, 0.5) && at(&out, 0.5) > at(&out, 0.9),
+        "falling"
+    );
+    assert!(
+        (at(&out, 0.1) - 0.72).abs() < 0.02,
+        "from END: {}",
+        at(&out, 0.1)
+    );
     let end = sounding(&out) as f32 / SR as f32;
     assert!((0.99..1.01).contains(&end), "ends at START: {end}");
     assert!(!e.is_active());
@@ -127,7 +148,14 @@ fn reverse_plays_it_backward_and_ends() {
 fn reverse_is_end_before_start() {
     let h = ramp();
     let v = SourceView::new(&h).unwrap();
-    let rev = run(&mut fresh(0), &play(Direction::Reverse), &v, 60, blocks(1.2), None);
+    let rev = run(
+        &mut fresh(0),
+        &play(Direction::Reverse),
+        &v,
+        60,
+        blocks(1.2),
+        None,
+    );
     let swapped = P {
         start: 1.0,
         end: 0.0,
@@ -152,7 +180,12 @@ fn loop_keeps_going_past_the_window() {
     let mut e = fresh(0);
     let out = run(&mut e, &play(Direction::Loop), &v, 60, blocks(3.0), None);
     assert!(e.is_active());
-    assert!(out[(2.5 * SR as f32) as usize..].iter().any(|y| y.abs() > 0.1), "still sounding");
+    assert!(
+        out[(2.5 * SR as f32) as usize..]
+            .iter()
+            .any(|y| y.abs() > 0.1),
+        "still sounding"
+    );
 }
 
 #[test]
@@ -197,7 +230,12 @@ fn fade_never_clicks() {
     };
     let pad = run(&mut fresh(0), &tron, &v, 60, blocks(1.0), Some(blocks(0.1)));
     let run_out = run(&mut fresh(0), &tron, &v, 60, blocks(1.0), None);
-    for (name, x) in [("seam", &seam), ("release", &release), ("pad", &pad), ("run-out", &run_out)] {
+    for (name, x) in [
+        ("seam", &seam),
+        ("release", &release),
+        ("pad", &pad),
+        ("run-out", &run_out),
+    ] {
         assert!(max_step(x) <= own, "{name}: {}", max_step(x));
     }
 }
@@ -213,9 +251,16 @@ fn position_starts_there_and_length_takes_the_rest() {
         ..play(Direction::Forward)
     };
     let out = run(&mut fresh(0), &p, &v, 60, blocks(1.5), None);
-    assert!(at(&out, 0.01).abs() < 0.03, "from the middle: {}", at(&out, 0.01));
+    assert!(
+        at(&out, 0.01).abs() < 0.03,
+        "from the middle: {}",
+        at(&out, 0.01)
+    );
     let end = sounding(&out) as f32 / SR as f32;
-    assert!((0.49..0.51).contains(&end), "LENGTH 1 plays the rest: {end}");
+    assert!(
+        (0.49..0.51).contains(&end),
+        "LENGTH 1 plays the rest: {end}"
+    );
     // REVERSE counts POSITION from END.
     let r = P {
         position: 0.25,
@@ -229,7 +274,11 @@ fn position_starts_there_and_length_takes_the_rest() {
         ..play(Direction::Forward)
     };
     let out = run(&mut fresh(0), &short, &v, 60, blocks(1.5), None);
-    let want = loop_len(0.5, 48_000, chimera_core::stream::units::SourceRate::new(48_000).unwrap());
+    let want = loop_len(
+        0.5,
+        48_000,
+        chimera_core::stream::units::SourceRate::new(48_000).unwrap(),
+    );
     let got = sounding(&out) as u32;
     assert!(got.abs_diff(want) <= 2 * B as u32, "{got} vs {want}");
 }
@@ -256,11 +305,20 @@ fn walks(w: f32, n: usize, seed: u32) -> (Vec<f32>, Vec<f32>) {
 fn walk_bounds_hold_and_it_wraps_both_ways() {
     for w in [0.01, 0.1, 0.3, 0.5, 0.75, 1.0] {
         let (d, places) = walks(w, 20_000, 3);
-        assert!(places.iter().all(|&x| (0.0..1.0).contains(&x)), "{w}: in the window");
+        assert!(
+            places.iter().all(|&x| (0.0..1.0).contains(&x)),
+            "{w}: in the window"
+        );
         if w <= 0.5 {
-            assert!(d.iter().all(|m| m.abs() <= w + 1e-6), "{w}: steps at most WALK");
+            assert!(
+                d.iter().all(|m| m.abs() <= w + 1e-6),
+                "{w}: steps at most WALK"
+            );
         }
-        assert!(d.iter().any(|&m| m < 0.0) && d.iter().any(|&m| m > 0.0), "{w}: both signs");
+        assert!(
+            d.iter().any(|&m| m < 0.0) && d.iter().any(|&m| m > 0.0),
+            "{w}: both signs"
+        );
     }
     // Over the ends: a step back from 0.05 by more than 0.05 lands near 1,
     // one forward from 0.95 near 0.
@@ -286,15 +344,24 @@ fn walk_spreads_as_it_should() {
         let abs = d.iter().map(|m| m.abs()).sum::<f32>() / n;
         let rms = (d.iter().map(|m| m * m).sum::<f32>() / n).sqrt();
         assert!(mean.abs() < 0.01 * w, "{w}: mean {mean}");
-        assert!((abs / (w / 2.0) - 1.0).abs() < 0.02, "{w}: mean |step| {abs}");
-        assert!((rms / (w / 3f32.sqrt()) - 1.0).abs() < 0.02, "{w}: RMS {rms}");
+        assert!(
+            (abs / (w / 2.0) - 1.0).abs() < 0.02,
+            "{w}: mean |step| {abs}"
+        );
+        assert!(
+            (rms / (w / 3f32.sqrt()) - 1.0).abs() < 0.02,
+            "{w}: RMS {rms}"
+        );
     }
     let (_, places) = walks(1.0, 50_000, 13);
     let mut bins = [0u32; 10];
     for x in places {
         bins[(x * 10.0) as usize] += 1;
     }
-    assert!(bins.iter().all(|&b| (4_500..5_500).contains(&b)), "{bins:?}");
+    assert!(
+        bins.iter().all(|&b| (4_500..5_500).contains(&b)),
+        "{bins:?}"
+    );
 }
 
 /// DRIFT 0 draws nothing and rests at POSITION; a NaN is DRIFT 0.
@@ -385,7 +452,10 @@ fn tron_runs_out_held() {
     for note in [48, 60, 72] {
         let out = run(&mut fresh(0), &on, &v, note, blocks(1.5), None);
         let end = sounding(&out) as f32 / SR as f32;
-        assert!((0.24..0.27).contains(&end), "{note}: runs out at 0.25 s, {end}");
+        assert!(
+            (0.24..0.27).contains(&end),
+            "{note}: runs out at 0.25 s, {end}"
+        );
     }
     let off = P {
         tron: Tron::Off,
@@ -414,11 +484,32 @@ fn tron_pad_stops_at_key_up() {
     let tron = run(&mut fresh(0), &on, &v, 60, blocks(2.0), Some(up));
     let end = sounding(&tron) as f32 / SR as f32;
     assert!((0.5..0.85).contains(&end), "the pad lifts: {end}");
-    let top = run(&mut fresh(0), &P { drag: FADE_HOLD, ..on }, &v, 60, blocks(2.0), Some(up));
-    let level = |x: &[f32], s: f32| x[(s * SR as f32) as usize..][..4_800].iter().map(|y| y * y).sum::<f32>();
-    assert!(level(&top, 1.5) < 0.05 * level(&top, 0.3), "at the top it still lifts");
+    let top = run(
+        &mut fresh(0),
+        &P {
+            drag: FADE_HOLD,
+            ..on
+        },
+        &v,
+        60,
+        blocks(2.0),
+        Some(up),
+    );
+    let level = |x: &[f32], s: f32| {
+        x[(s * SR as f32) as usize..][..4_800]
+            .iter()
+            .map(|y| y * y)
+            .sum::<f32>()
+    };
+    assert!(
+        level(&top, 1.5) < 0.05 * level(&top, 0.3),
+        "at the top it still lifts"
+    );
     let held = run(&mut fresh(0), &off, &v, 60, blocks(2.0), Some(up));
-    assert!(sounding(&held) as f32 / SR as f32 > 1.95, "HOLD plays to END");
+    assert!(
+        sounding(&held) as f32 / SR as f32 > 1.95,
+        "HOLD plays to END"
+    );
     // Around a loop the tape runs out at 8 s.
     let lp = P {
         tron: Tron::On,
@@ -427,10 +518,23 @@ fn tron_pad_stops_at_key_up() {
     let mut e = fresh(0);
     let out = run(&mut e, &lp, &v, 60, blocks(8.5), None);
     let end = sounding(&out) as f32 / SR as f32;
-    assert!((TRON_LEN_MAX_S..TRON_LEN_MAX_S + 0.1).contains(&end), "{end}");
+    assert!(
+        (TRON_LEN_MAX_S..TRON_LEN_MAX_S + 0.1).contains(&end),
+        "{end}"
+    );
     assert!(!e.is_active());
     let mut e = fresh(0);
-    run(&mut e, &P { tron: Tron::Off, ..lp }, &v, 60, blocks(8.5), None);
+    run(
+        &mut e,
+        &P {
+            tron: Tron::Off,
+            ..lp
+        },
+        &v,
+        60,
+        blocks(8.5),
+        None,
+    );
     assert!(e.is_active(), "OFF loops on");
 }
 
@@ -456,10 +560,16 @@ fn old_machines_load_as_play() {
     // MODE ONE: FORWARD from the window's start, whole, as ONE read
     // neither POSITION nor LENGTH.
     let t = decoded(&[(MODEL, 0), (MODE, u32::from(RETIRED_ONE))]);
-    assert_eq!((t.way(), t.direction, t.position, t.size), (Way::One, Direction::Forward, 0.0, 1.0));
+    assert_eq!(
+        (t.way(), t.direction, t.position, t.size),
+        (Way::One, Direction::Forward, 0.0, 1.0)
+    );
     // MODE LOOP and PING keep their codes and their reads.
     let t = decoded(&[(MODEL, 0), (MODE, 1)]);
-    assert_eq!((t.direction, t.position, t.size), (Direction::Loop, 0.4, 0.5));
+    assert_eq!(
+        (t.direction, t.position, t.size),
+        (Direction::Loop, 0.4, 0.5)
+    );
     let t = decoded(&[(MODEL, 0), (MODE, 2)]);
     assert_eq!(t.direction, Direction::Ping);
     // TRON (6), whatever MODE it kept: FORWARD, TRON on, from START, its
@@ -474,7 +584,10 @@ fn old_machines_load_as_play() {
     }
     // ONESHOT (7), PING-PONG (2) and REVERSE (1), retired before WALK.
     let t = decoded(&[(MODEL, 7)]);
-    assert_eq!((t.way(), t.drag, t.position, t.size), (Way::One, FADE_HOLD, 0.0, 1.0));
+    assert_eq!(
+        (t.way(), t.drag, t.position, t.size),
+        (Way::One, FADE_HOLD, 0.0, 1.0)
+    );
     assert_eq!(decoded(&[(MODEL, 2)]).way(), Way::Ping);
     let t = decoded(&[(MODEL, 1)]);
     assert_eq!((t.way(), t.start, t.end), (Way::Loop, 1.0, 0.0));
@@ -496,7 +609,10 @@ fn old_codes_are_never_reused() {
     t.set_way(Way::One);
     assert_eq!(t.enum_code(P::MODE), Some(3));
     t.set_way(Way::Tron);
-    assert_eq!((t.enum_code(P::MODEL), t.enum_code(P::TRON)), (Some(0), Some(1)));
+    assert_eq!(
+        (t.enum_code(P::MODEL), t.enum_code(P::TRON)),
+        (Some(0), Some(1))
+    );
 }
 
 // ── The machine's cells ──────────────────────────────────────────────
@@ -513,7 +629,10 @@ fn play_defaults_follow_direction() {
     assert!(d.contains(&(P::DRAG, 0.3)));
     assert!(direction_defaults(Direction::Forward, Direction::Reverse).is_empty());
     assert!(direction_defaults(Direction::Loop, Direction::Ping).is_empty());
-    assert_eq!(direction_defaults(Direction::Loop, Direction::Forward)[1], (P::DRAG, FADE_HOLD));
+    assert_eq!(
+        direction_defaults(Direction::Loop, Direction::Forward)[1],
+        (P::DRAG, FADE_HOLD)
+    );
     assert!(!env_defaults(TapeMachine::Walk, Direction::Forward).is_empty());
     assert!(env_defaults(TapeMachine::Walk, Direction::Loop).is_empty());
 }
@@ -577,7 +696,18 @@ fn voices_end() {
         // TRON's tape at LENGTH 0: 0.25 s.
         let size = if tron == Tron::On { 0.0 } else { 1.0 };
         let mut e = fresh(0);
-        run(&mut e, &P { tron, size, ..play(d) }, &v, 60, blocks(1.2), None);
+        run(
+            &mut e,
+            &P {
+                tron,
+                size,
+                ..play(d)
+            },
+            &v,
+            60,
+            blocks(1.2),
+            None,
+        );
         assert!(!e.is_active(), "{d:?} {tron:?}");
     }
     for d in [Direction::Loop, Direction::Ping] {

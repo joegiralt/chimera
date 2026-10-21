@@ -138,7 +138,11 @@ impl SlotCtx {
             way: Way::of(
                 TapeMachine::from_index(MachineIndex(get(BlockRef::TapeEngine, T::MODEL) as u8)),
                 Direction::ALL[usize::from(get(BlockRef::TapeEngine, T::MODE) as u8).min(3)],
-                if get(BlockRef::TapeEngine, T::TRON) > 0.5 { Tron::On } else { Tron::Off },
+                if get(BlockRef::TapeEngine, T::TRON) > 0.5 {
+                    Tron::On
+                } else {
+                    Tron::Off
+                },
             ),
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
             src: SourceState::None,

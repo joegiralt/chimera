@@ -13,7 +13,7 @@ use core::mem::MaybeUninit;
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::wave;
 use chimera_core::dsp::tape_engine::{
-    INC_MAX, NOTE_ON_RAMP, Direction, TapeEngine, TapeEngineParams, TapeModel, Way, inc, loop_len,
+    Direction, INC_MAX, NOTE_ON_RAMP, TapeEngine, TapeEngineParams, TapeModel, Way, inc, loop_len,
 };
 use chimera_hal::{BLOCK_SIZE, MidiNote};
 use common::tape::{Mach, held_plain, held_transwave, sine};
@@ -397,7 +397,10 @@ fn motion_leaves_the_loop() {
     a.note_on(60, &still, &v, SR);
     let mut b = fresh();
     b.note_on(60, &moving, &v, SR);
-    assert_eq!(play(&mut a, &still, &v, 300).0, play(&mut b, &moving, &v, 300).0);
+    assert_eq!(
+        play(&mut a, &still, &v, 300).0,
+        play(&mut b, &moving, &v, 300).0
+    );
 }
 
 /// STEAL GLIDE glides `inc`: an octave up at τ 0.1 s is 63 % of the way
@@ -468,7 +471,12 @@ fn tiny_sources_play_finite() {
             }
             // ONESHOT (SLICE OFF, NOTE, 16) and TRON, every window either
             // way, at the clamp: they end, finite.
-            for (way, slice) in [(Way::One, 0u8), (Way::One, 1), (Way::One, 17), (Way::Tron, 0)] {
+            for (way, slice) in [
+                (Way::One, 0u8),
+                (Way::One, 1),
+                (Way::One, 17),
+                (Way::Tron, 0),
+            ] {
                 for (start, end) in [(0.0, 0.0), (0.5, 0.5), (1.0, 1.0), (0.0, 1.0), (1.0, 0.0)] {
                     for size in [0.0, 1.0] {
                         let p = TapeEngineParams {

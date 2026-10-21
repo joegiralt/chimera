@@ -5,8 +5,8 @@
 
 mod common;
 
-use chimera_core::dsp::tape_engine::Way;
 use chimera_core::dsp::tape_engine::TapeMachine;
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::stream::units::{Cents, SourceRate};
 use core::mem::MaybeUninit;
 use core::num::NonZeroU32;
@@ -19,7 +19,8 @@ use chimera_core::dsp::tape_engine::heads::{
 };
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
-    COST_STREAM, FADE_HOLD, INC_MAX, Direction, Retrig, SliceCode, TapeEngine, TapeEngineParams, Wow, inc, ratio_max, tape_runs,
+    COST_STREAM, Direction, FADE_HOLD, INC_MAX, Retrig, SliceCode, TapeEngine, TapeEngineParams,
+    Wow, inc, ratio_max, tape_runs,
 };
 use chimera_core::hw::SampleBudget;
 use chimera_core::instrument::NoteOrigin;

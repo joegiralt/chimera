@@ -1743,9 +1743,7 @@ pub const CASES: &[ScreenCase] = &[
         tape_deck(ui, Way::Tron);
         feed(ui, Input::press(ButtonId::Edit));
     }),
-    ("tape_deck_stretch", |ui| {
-        tape_deck(ui, Way::Stretch)
-    }),
+    ("tape_deck_stretch", |ui| tape_deck(ui, Way::Stretch)),
     ("tape_page_stretch", |ui| {
         tape_deck(ui, Way::Stretch);
         feed(ui, Input::press(ButtonId::Edit));

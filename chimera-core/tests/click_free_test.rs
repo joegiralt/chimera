@@ -203,7 +203,7 @@ fn test_no_clicks_tape_machines() {
     use chimera_core::block::Block;
     use chimera_core::dsp::tape_engine::machine::defaults;
     use chimera_core::dsp::tape_engine::{
-        FADE_HOLD, Direction, TapeEngineParams as P, TapeModel, Wow,
+        Direction, FADE_HOLD, TapeEngineParams as P, TapeModel, Wow,
     };
     use common::tape::{held_plain, held_transwave, sine};
     let plain = held_plain(&sine(48_000, 100.7, 4 * 24_000), 48_000);

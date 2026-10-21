@@ -29,6 +29,7 @@
 
 pub mod age;
 mod desc;
+pub mod drift;
 pub mod heads;
 pub mod machine;
 pub mod oneshot;
@@ -38,7 +39,6 @@ pub mod read;
 pub mod span;
 pub mod stretch;
 pub mod tron;
-pub mod drift;
 pub mod warble;
 pub mod wave;
 pub mod window;
@@ -95,9 +95,9 @@ use wave::Wave;
 pub use heads::loop_len;
 pub use oneshot::SliceCode;
 pub use params::{
-    Choice, DIRECTION_NAMES, Direction, FADE_HOLD, MACHINE_NAMES, MODEL_NAMES, MachineIndex,
+    Choice, DIRECTION_NAMES, Direction, Drift, FADE_HOLD, MACHINE_NAMES, MODEL_NAMES, MachineIndex,
     NeedsRam, RetiredModel, Retrig, Seeks, StretchType, TAPE_ENGINE_SPECS, TapeEngineParams,
-    TapeMachine, TapeModel, Tron, Drift, Way, Wow, at_root, backward, cuts, drag_s, fade_default, jogs,
+    TapeMachine, TapeModel, Tron, Way, Wow, at_root, backward, cuts, drag_s, fade_default, jogs,
     needs_ram, reads,
 };
 
@@ -973,9 +973,7 @@ impl TapeDeck {
             None => None,
         };
         match v {
-            Some(v) if wave::playable(p.way(), &v) => {
-                self.note_on(note.get(), p, &v, sample_rate)
-            }
+            Some(v) if wave::playable(p.way(), &v) => self.note_on(note.get(), p, &v, sample_rate),
             None if self.src.is_some_and(|id| src.moving(id)) => {
                 self.note = note;
                 if self.tape_machine() != p.way() {
@@ -1610,7 +1608,11 @@ impl TapeDeck {
                 );
                 if self.whole {
                     // TRON's strip starts at POSITION and DRIFT's place.
-                    let w = Window { lo: self.ws, hi: we, dir: Dir::Fwd };
+                    let w = Window {
+                        lo: self.ws,
+                        hi: we,
+                        dir: Dir::Fwd,
+                    };
                     start_at = drift::from(w, drift::place(p.position, self.drift), self.min_len);
                 }
                 if self.lp() && rev {

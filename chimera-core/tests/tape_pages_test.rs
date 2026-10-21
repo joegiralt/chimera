@@ -8,7 +8,7 @@
 mod common;
 mod screen;
 
-use chimera_core::dsp::tape_engine::{Way, Tron};
+use chimera_core::dsp::tape_engine::{Tron, Way};
 use core::mem::MaybeUninit;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
@@ -16,8 +16,8 @@ use chimera_core::block::{Block, ParamId, ParamKind};
 use chimera_core::dsp::tape_engine::machine::{MACHINES, machine};
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
-    DIRECTION_NAMES, MODEL_NAMES, Direction, TAPE_ENGINE_SPECS, TapeEngine, TapeEngineParams, TapeMachine, TapeModel,
-    reads,
+    DIRECTION_NAMES, Direction, MODEL_NAMES, TAPE_ENGINE_SPECS, TapeEngine, TapeEngineParams,
+    TapeMachine, TapeModel, reads,
 };
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
@@ -206,7 +206,9 @@ fn deck_is_what_moves_the_glyph() {
     use chimera_core::ui::tape_glyph::{GlyphInputs, Pose, TapeGauge};
     let set_of = |w: Way| {
         let (m, d, t) = w.parts();
-        let mut set = [0.0, 0.1, 0.9, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, 0.2, 0.0, 0.0, 0.3];
+        let mut set = [
+            0.0, 0.1, 0.9, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, 0.2, 0.0, 0.0, 0.3,
+        ];
         (set[0], set[10], set[11]) = (m.index() as f32 / 3.0, d as u8 as f32 / 3.0, t as u8 as f32);
         set
     };
@@ -229,7 +231,10 @@ fn deck_is_what_moves_the_glyph() {
             let on_deck = machine(w.machine()).deck.iter().any(|c| c.id == a.param);
             assert_eq!(moves(w, i), on_deck, "{w:?} {:?}", a.param);
         }
-        let on_deck = machine(TapeMachine::Walk).deck.iter().any(|c| c.id == a.param);
+        let on_deck = machine(TapeMachine::Walk)
+            .deck
+            .iter()
+            .any(|c| c.id == a.param);
         let any = paths.iter().any(|&w| moves(w, i));
         if on_deck {
             assert!(any, "PLAY {:?} moves no path's glyph", a.param);
@@ -690,7 +695,16 @@ fn cells_a_machine_ignores_are_dimmed() {
     let dim = |m, id| view::dimmed(tape(id), &live_on(m));
     for w in [Way::One, Way::Loop, Way::Ping, Way::Tron] {
         assert!(dim(w, P::MOTION), "{w:?} MOTION");
-        for id in [P::POSITION, P::SIZE, P::DRAG, P::MODE, P::TRON, P::DRIFT, P::START, P::END] {
+        for id in [
+            P::POSITION,
+            P::SIZE,
+            P::DRAG,
+            P::MODE,
+            P::TRON,
+            P::DRIFT,
+            P::START,
+            P::END,
+        ] {
             assert!(!dim(w, id), "{w:?} {id:?}");
         }
     }
@@ -730,20 +744,40 @@ fn model_edit_writes_play_and_its_mode() {
     let mut s = Sound::init(EngineType::Tape);
     assert_eq!(s.params.tape.way(), Way::Loop);
     let (model, dir) = (tape(P::MODEL), tape(P::MODE));
-    assert!(edit(&mut s.params, dir, Edit::To(Direction::Forward as u8 as f32)));
+    assert!(edit(
+        &mut s.params,
+        dir,
+        Edit::To(Direction::Forward as u8 as f32)
+    ));
     let t = s.params.tape;
     assert_eq!((t.way(), t.drag, t.size), (Way::One, FADE_HOLD, 1.0));
     assert_eq!(s.params.envelopes[0].sustain, 1.0, "ONE's hit");
     s.params.tape.drag = 0.7;
-    assert!(edit(&mut s.params, dir, Edit::To(Direction::Reverse as u8 as f32)));
+    assert!(edit(
+        &mut s.params,
+        dir,
+        Edit::To(Direction::Reverse as u8 as f32)
+    ));
     assert_eq!(s.params.tape.drag, 0.7, "within once through, nothing");
-    assert!(edit(&mut s.params, dir, Edit::To(Direction::Ping as u8 as f32)));
+    assert!(edit(
+        &mut s.params,
+        dir,
+        Edit::To(Direction::Ping as u8 as f32)
+    ));
     let t = s.params.tape;
     assert_eq!((t.way(), t.drag, t.size), (Way::Ping, 0.3, 0.8));
     s.params.tape.tron = Tron::On;
-    assert!(edit(&mut s.params, model, Edit::To(TapeMachine::Scrub.index() as f32)));
+    assert!(edit(
+        &mut s.params,
+        model,
+        Edit::To(TapeMachine::Scrub.index() as f32)
+    ));
     let t = s.params.tape;
-    assert_eq!(t.enum_code(P::MODE), Some(Direction::Ping.disk_code()), "kept");
+    assert_eq!(
+        t.enum_code(P::MODE),
+        Some(Direction::Ping.disk_code()),
+        "kept"
+    );
     assert!(edit(&mut s.params, model, Edit::To(0.0)));
     let t = s.params.tape;
     assert_eq!((t.way(), t.tron, t.drag), (Way::Ping, Tron::Off, 0.3));

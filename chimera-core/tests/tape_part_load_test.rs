@@ -4,9 +4,9 @@
 mod common;
 mod screen;
 
-use chimera_core::dsp::tape_engine::Way;
 use chimera_core::bank2::{Bank2Status, NEEDS_UPDATE, NEEDS_UPDATE_CELL, Version, closed_text};
 use chimera_core::block::Block;
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::dsp::tape_engine::params::TapeEngineParams;
 use chimera_core::params::EngineType;
 use chimera_core::project::{Origin, PartFrom, PartId, PartSource, Project};
@@ -477,7 +477,11 @@ mod streamed {
         put(&mut s, &bed);
         let (mut p, t) = Project::boxed();
         tape_part(&mut p, t, 0, bed.0.sref);
-        p.edit_part(PartId::ALL[0]).sound.params.tape.set_way(Way::Ping);
+        p.edit_part(PartId::ALL[0])
+            .sound
+            .params
+            .tape
+            .set_way(Way::Ping);
         p.source_absent(bed.0.sref).unwrap();
         let (q, _) = round_trip(&mut s, &mut p, false);
         let id = q.pool().find_source(bed.0.sref).unwrap();
@@ -515,7 +519,11 @@ mod streamed {
         put(&mut s, &wave);
         let (mut p, t) = Project::boxed();
         tape_part(&mut p, t, 0, wave.0.sref);
-        p.edit_part(PartId::ALL[0]).sound.params.tape.set_way(Way::Loop);
+        p.edit_part(PartId::ALL[0])
+            .sound
+            .params
+            .tape
+            .set_way(Way::Loop);
         let tape = p.part(PartId::ALL[0]).sound.params.tape;
         let shape = Refusal::Transwave;
         assert_eq!(

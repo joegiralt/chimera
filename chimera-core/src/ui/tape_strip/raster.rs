@@ -7,10 +7,10 @@ use embedded_graphics::pixelcolor::Rgb565;
 use super::{COL_READS, COLS, H, Overview, Paint};
 use crate::dsp::clampf;
 use crate::dsp::tape_engine::Heads;
+use crate::dsp::tape_engine::drift;
 use crate::dsp::tape_engine::heads::{Bounds, Dir, Sizing, Window, loop_len, min_frames};
 use crate::dsp::tape_engine::oneshot::Slice;
 use crate::dsp::tape_engine::params::{Direction, TapeEngineParams, TapeMachine, Way};
-use crate::dsp::tape_engine::drift;
 use crate::dsp::tape_engine::read::{Shape, SourceView};
 use crate::stream::units::SourceRate;
 use crate::ui::theme;
@@ -136,7 +136,15 @@ pub(crate) fn strip_in(
     let slice = |k: u64| w.lo + (k * u64::from(len) / 16) as u32;
     let (mut ramp, mut edges, mut ticks) = (None, None, 0u32);
     // POSITION's start, counted from START, the way it plays.
-    let from = drift::from(Window { lo: 0, hi: len, dir: Dir::Fwd }, p.position, min_frames(rate));
+    let from = drift::from(
+        Window {
+            lo: 0,
+            hi: len,
+            dir: Dir::Fwd,
+        },
+        p.position,
+        min_frames(rate),
+    );
     let lit = match way {
         Way::One => {
             let s = p.slice.slice();

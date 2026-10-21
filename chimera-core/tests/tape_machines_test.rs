@@ -6,7 +6,7 @@
 
 mod common;
 
-use chimera_core::dsp::tape_engine::{Way, Tron};
+use chimera_core::dsp::tape_engine::{Tron, Way};
 use core::mem::MaybeUninit;
 
 use chimera_core::block::{Block, DiskCode, ParamId};
@@ -16,12 +16,10 @@ use chimera_core::dsp::tape_engine::machine::{MACHINES, defaults, machine};
 use chimera_core::dsp::tape_engine::oneshot::{SLICE_NOTE_BASE, Slice, slice_bounds};
 use chimera_core::dsp::tape_engine::params::hold;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Descriptor, Shape, SourceView};
-use chimera_core::dsp::tape_engine::tron::{
-    TRON_LEN_MAX_S, tron_len_s, tron_run_samples,
-};
+use chimera_core::dsp::tape_engine::tron::{TRON_LEN_MAX_S, tron_len_s, tron_run_samples};
 use chimera_core::dsp::tape_engine::warble::Warble;
 use chimera_core::dsp::tape_engine::{
-    CLAMP_FADE_S, END_RAMP, FADE_HOLD, MachineIndex, NOTE_ON_RAMP, Direction, Probe, StretchType,
+    CLAMP_FADE_S, Direction, END_RAMP, FADE_HOLD, MachineIndex, NOTE_ON_RAMP, Probe, StretchType,
     TapeEngine, TapeEngineParams, TapeModel, Wow, drag_s, fade_default, wave,
 };
 use chimera_core::params::{EngineType, PitchParams, Snap, musical_step};
@@ -976,7 +974,10 @@ fn tron_runs_out_after_size_at_every_pitch() {
         let run = tron_run_samples(tron_len_s(size), SR) as i64;
         for (note, tape) in [(48u8, 0.0), (60, 0.0), (79, 0.0), (60, 1.0)] {
             let n = tron_len(note, tape, size) as i64;
-            assert!((0..=960 + B as i64).contains(&(n - run)), "LENGTH {size} note {note} TAPE {tape}: {n}");
+            assert!(
+                (0..=960 + B as i64).contains(&(n - run)),
+                "LENGTH {size} note {note} TAPE {tape}: {n}"
+            );
         }
     }
 }
@@ -998,10 +999,17 @@ fn tron_comes_round_until_its_tape_runs_out() {
     e.note_on(60, &p, &v, SR);
     let (out, probes) = play(&mut e, &p, &v, 3 * SR as usize / B);
     let n = sounding(&out);
-    assert!((96_000..97_000).contains(&n), "2 s of tape over a 1 s strip: {n}");
+    assert!(
+        (96_000..97_000).contains(&n),
+        "2 s of tape over a 1 s strip: {n}"
+    );
     let back = probes.windows(2).filter(|w| w[1].head < w[0].head).count();
     assert!(back >= 1, "round again: {back}");
-    assert!(max_step(&out[B..n]) < 0.0625 * 1.05, "the seam: {}", max_step(&out[B..n]));
+    assert!(
+        max_step(&out[B..n]) < 0.0625 * 1.05,
+        "the seam: {}",
+        max_step(&out[B..n])
+    );
     assert!(!e.is_active());
 }
 
@@ -1073,10 +1081,7 @@ fn tron_refuses_a_zone_set() {
     let plain = sine_src(4_800);
     let wv = held_transwave(512, 2, |_, h| if h == 1 { 0.5 } else { 0.0 });
     for held in [&plain, &wv] {
-        assert!(wave::playable(
-            Way::Tron,
-            &SourceView::new(held).unwrap()
-        ));
+        assert!(wave::playable(Way::Tron, &SourceView::new(held).unwrap()));
     }
 }
 
@@ -1290,9 +1295,12 @@ fn every_cell_reads_in_the_audio() {
         // RETRIG is the Instrument's: a note cutting its Part's others
         // (`tape_stream_test`'s and `tape_musical_test`'s).
         // DIRECTION is the path: each is its own row here.
-        for c in m.deck.iter().chain(m.cells).filter(|c| {
-            !matches!(c.id, P::RETRIG | P::MODE) && heard(c.id)
-        }) {
+        for c in m
+            .deck
+            .iter()
+            .chain(m.cells)
+            .filter(|c| !matches!(c.id, P::RETRIG | P::MODE) && heard(c.id))
+        {
             let spec = TapeEngineParams::default().spec(c.id).unwrap();
             let mut p = base;
             let moved = if c.id == P::START {

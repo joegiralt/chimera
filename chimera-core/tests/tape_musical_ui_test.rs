@@ -7,9 +7,9 @@
 mod common;
 mod screen;
 
-use chimera_core::dsp::tape_engine::Way;
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::block::ParamId;
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{TapeEngineParams, TapeModel};
 use chimera_core::params::EngineType;
@@ -137,7 +137,10 @@ fn direction_holds_what_a_streamed_source_refuses() {
     assert!(cell_reads(&shot, 3, "PING"));
     // REVERSE reads back, so it is held too.
     feed(&mut ui, Input::turn(EncoderId::D, -2));
-    assert_eq!(ui.held_choice().map(|s| s.held.code), Some(Direction::Reverse as u8));
+    assert_eq!(
+        ui.held_choice().map(|s| s.held.code),
+        Some(Direction::Reverse as u8)
+    );
     // On from the held choice: FORWARD streams: written.
     feed(&mut ui, Input::turn(EncoderId::D, -1));
     assert_eq!(ui.params().tape.way(), Way::One);
@@ -368,7 +371,10 @@ fn model_page_reads_its_notes() {
     feed(&mut ui, Input::turn(EncoderId::F, 1)); // RETRIG: LOOP never cuts
     settle(&mut ui);
     assert!(label_reads(&render_ui(&ui), view::RETRIG_ONCE_ONLY));
-    assert_eq!(ui.params().tape.retrig, chimera_core::dsp::tape_engine::Retrig::Stack);
+    assert_eq!(
+        ui.params().tape.retrig,
+        chimera_core::dsp::tape_engine::Retrig::Stack
+    );
     assert_eq!(ui.params().tape.model(), TapeModel::Walk);
 }
 

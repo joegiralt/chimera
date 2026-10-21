@@ -5,9 +5,9 @@
 
 mod common;
 
-use chimera_core::dsp::tape_engine::Direction;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::knobs::KnobPublisher;
+use chimera_core::dsp::tape_engine::Direction;
 use chimera_core::dsp::tape_engine::TapeMachine;
 use chimera_core::dsp::tape_engine::params::TapeModel;
 use chimera_core::dsp::tape_engine::read::{DESC_LEN, Shape};
@@ -91,8 +91,7 @@ impl Rig {
     fn tape(&mut self, part: usize, model: TapeModel, source: Option<SourceId>) {
         let a = &mut self.shared.parts[part];
         *a.params = Sound::init(EngineType::Tape).params;
-        a.params.tape.machine =
-            TapeMachine::of(model);
+        a.params.tape.machine = TapeMachine::of(model);
         *a.mod_state = ModState::new();
         a.source = source;
     }

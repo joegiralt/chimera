@@ -6,11 +6,11 @@
 
 mod common;
 
-use chimera_core::dsp::tape_engine::Way;
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::dsp::modulator::EnvSlot;
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::dsp::tape_engine::machine::env_defaults;
-use chimera_core::dsp::tape_engine::{FADE_HOLD, Direction, TapeEngineParams, TapeMachine};
+use chimera_core::dsp::tape_engine::{Direction, FADE_HOLD, TapeEngineParams, TapeMachine};
 use chimera_core::modulation::{ModSource, ModState};
 use chimera_core::params::{EngineType, EnvParams, ParamSnapshot};
 use chimera_core::preset::Sound;

@@ -660,7 +660,7 @@ fn golden_check_catches_every_disagreement() {
 /// then the machines (TAPE Task 12b). `tape_reverse` is Task 12's REVERSE,
 /// now LOOP with END before START: its row is unchanged.
 fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
-    use chimera_core::dsp::tape_engine::{FADE_HOLD, Direction, TapeModel as M};
+    use chimera_core::dsp::tape_engine::{Direction, FADE_HOLD, TapeModel as M};
     let p = TapeEngineParams::default();
     let model = |model| TapeEngineParams {
         machine: TapeMachine::of(model),
@@ -722,7 +722,10 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
                 ..p.with_way(chimera_core::dsp::tape_engine::Way::Tron)
             },
         ),
-        ("tape_tron_released", p.with_way(chimera_core::dsp::tape_engine::Way::Tron)),
+        (
+            "tape_tron_released",
+            p.with_way(chimera_core::dsp::tape_engine::Way::Tron),
+        ),
         ("tape_stretch_reverse", rev(M::Stretch)),
         (
             "tape_loop_warble",

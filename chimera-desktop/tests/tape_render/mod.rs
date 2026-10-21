@@ -10,7 +10,9 @@ use chimera_core::preset::Sound;
 use chimera_core::project::Project;
 use chimera_core::scope::{ScopeWriter, scope_buffer};
 use chimera_core::{MidiNote, Velocity};
-use chimera_desktop::factory_tapes::{Recipes, build_all, held, originals, read_recipes, tape_sound};
+use chimera_desktop::factory_tapes::{
+    Recipes, build_all, held, originals, read_recipes, tape_sound,
+};
 use chimera_desktop::import::tape::Built;
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use std::sync::OnceLock;
@@ -58,7 +60,10 @@ pub fn render(snd: &Sound, b: &Built, events: &[(f32, u8, bool)], secs: f32) -> 
     *shared.parts[0].params = snd.params.clone();
     *shared.parts[0].mod_state = snd.mod_state.clone();
     shared.parts[0].source = Some(id);
-    let mut inst = Box::new(Instrument::new(SAMPLE_RATE, SampleBudget::for_cpu(u32::MAX)));
+    let mut inst = Box::new(Instrument::new(
+        SAMPLE_RATE,
+        SampleBudget::for_cpu(u32::MAX),
+    ));
     inst.land_knobs();
     let (mut fx, mut dac) = (Box::new(FxBus::new()), Box::new(DacBlocks::new()));
     let mut scope = ScopeWriter::new(Box::leak(Box::new(scope_buffer())).split().0);
@@ -73,9 +78,17 @@ pub fn render(snd: &Sound, b: &Built, events: &[(f32, u8, bool)], secs: f32) -> 
         let view = tok.begin_block();
         while next < ev.len() && ev[next].0 <= t {
             let (_, note, on) = ev[next];
-            let kind = if on { NoteKind::On(Velocity::DEFAULT) } else { NoteKind::Off };
+            let kind = if on {
+                NoteKind::On(Velocity::DEFAULT)
+            } else {
+                NoteKind::Off
+            };
             inst.handle_with(
-                NoteEvent { channel: ch, note: MidiNote::new(note).unwrap(), kind },
+                NoteEvent {
+                    channel: ch,
+                    note: MidiNote::new(note).unwrap(),
+                    kind,
+                },
                 &shared,
                 &view,
             );

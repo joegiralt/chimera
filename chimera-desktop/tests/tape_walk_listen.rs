@@ -7,7 +7,9 @@ mod tape_render;
 use chimera_core::block::Block as _;
 use chimera_core::dsp::tape_engine::machine::{direction_defaults, env_defaults};
 use chimera_core::dsp::tape_engine::params::Drift;
-use chimera_core::dsp::tape_engine::{Direction, FADE_HOLD, TapeEngineParams as P, TapeMachine, Tron};
+use chimera_core::dsp::tape_engine::{
+    Direction, FADE_HOLD, TapeEngineParams as P, TapeMachine, Tron,
+};
 use chimera_core::preset::Sound;
 use chimera_core::storage::{Check, Decode, Framer, SoundDecoder};
 use std::fmt::Write as _;
@@ -70,7 +72,10 @@ fn stats(x: &[f32]) -> (f32, f32) {
     let mut f = frames(&m, 100.0);
     f.sort_by(|a, b| b.partial_cmp(a).unwrap());
     let h = &f[..f.len().div_ceil(2)];
-    (db(peak), db((h.iter().map(|v| v * v).sum::<f32>() / h.len() as f32).sqrt()))
+    (
+        db(peak),
+        db((h.iter().map(|v| v * v).sum::<f32>() / h.len() as f32).sqrt()),
+    )
 }
 
 #[test]
@@ -79,7 +84,11 @@ fn takes() {
     let dir = PathBuf::from(std::env::var("PAGE_OUT").expect("PAGE_OUT"));
     std::fs::create_dir_all(&dir).unwrap();
     let mut log = String::new();
-    let mut take = |name: &str, s: &Sound, b: &chimera_desktop::import::tape::Built, ev: &Events, secs: f32| {
+    let mut take = |name: &str,
+                    s: &Sound,
+                    b: &chimera_desktop::import::tape::Built,
+                    ev: &Events,
+                    secs: f32| {
         let x = render(s, b, ev, secs);
         write_wav(&dir.join(format!("{name}.wav")), &x, 2);
         let (pk, lv) = stats(&x);
@@ -96,7 +105,13 @@ fn takes() {
         ("loop", Direction::Loop),
         ("ping", Direction::Ping),
     ] {
-        take(&format!("dir_bell_{slug}"), &direction(&bell, d), b, &phrase(r), 4.5);
+        take(
+            &format!("dir_bell_{slug}"),
+            &direction(&bell, d),
+            b,
+            &phrase(r),
+            4.5,
+        );
     }
     // And on PAD LOOP's chord.
     let (pad, b) = factory("PAD LOOP").unwrap();
@@ -107,7 +122,13 @@ fn takes() {
         ("loop", Direction::Loop),
         ("ping", Direction::Ping),
     ] {
-        take(&format!("dir_pad_{slug}"), &direction(&pad, d), b, &phrase(r), 4.5);
+        take(
+            &format!("dir_pad_{slug}"),
+            &direction(&pad, d),
+            b,
+            &phrase(r),
+            4.5,
+        );
     }
 
     // DRIFT on a repeated note: TRON BOWED's 4 s strip, FORWARD, a quarter
@@ -127,7 +148,13 @@ fn takes() {
     for w in [0.0, 0.1, 0.3, 1.0] {
         let mut s = one.clone();
         s.params.tape.drift = Drift::of(w);
-        take(&format!("drift_bowed_{:03}", (w * 100.0) as u32), &s, b, &reps, 5.2);
+        take(
+            &format!("drift_bowed_{:03}", (w * 100.0) as u32),
+            &s,
+            b,
+            &reps,
+            5.2,
+        );
     }
     if let Some((voice, b)) = factory("VOICE LOOP") {
         let r = root(b);
@@ -140,7 +167,13 @@ fn takes() {
         for w in [0.0, 0.3, 1.0] {
             let mut s = voice.clone();
             (s.params.tape.drift, s.params.tape.size) = (Drift::of(w), 0.5);
-            take(&format!("drift_voice_{:03}", (w * 100.0) as u32), &s, b, &reps, 4.8);
+            take(
+                &format!("drift_voice_{:03}", (w * 100.0) as u32),
+                &s,
+                b,
+                &reps,
+                4.8,
+            );
         }
     }
 
@@ -170,7 +203,13 @@ fn takes() {
         ("tron", "factory TRON BOWED", "TRON BOWED"),
     ] {
         let b = source(src).unwrap();
-        take(&format!("old_{slug}_after"), &old(case), b, &phrase(root(b)), 4.5);
+        take(
+            &format!("old_{slug}_after"),
+            &old(case),
+            b,
+            &phrase(root(b)),
+            4.5,
+        );
     }
     print!("{log}");
     std::fs::write(dir.join("takes.tsv"), log).unwrap();

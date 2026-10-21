@@ -5,13 +5,22 @@
 
 use chimera_core::dsp::tape_engine::Direction;
 use chimera_core::ui::tape_glyph::{
-    Canvas, GlyphInputs, Kind, Machine, Palette, Pose, StepStyle, TapeGauge, W, H,
+    Canvas, GlyphInputs, H, Kind, Machine, Palette, Pose, StepStyle, TapeGauge, W,
 };
 
 /// The glyph's set values for WALK in `d`, TRON `tron`, DRIFT `drift`.
 fn set(d: Direction, tron: bool, drift: f32, fade: f32) -> [f32; 13] {
     [
-        0.0, 0.0, 1.0, 0.15, 0.0, 0.75, fade, 0.0, 0.0, 0.2,
+        0.0,
+        0.0,
+        1.0,
+        0.15,
+        0.0,
+        0.75,
+        fade,
+        0.0,
+        0.0,
+        0.2,
         d as u8 as f32 / 3.0,
         f32::from(u8::from(tron)),
         drift,
@@ -19,7 +28,10 @@ fn set(d: Direction, tron: bool, drift: f32, fade: f32) -> [f32; 13] {
 }
 
 fn gauge(d: Direction, tron: bool, drift: f32, fade: f32) -> TapeGauge {
-    TapeGauge::of(&GlyphInputs::from_set(set(d, tron, drift, fade), Pose::Live))
+    TapeGauge::of(&GlyphInputs::from_set(
+        set(d, tron, drift, fade),
+        Pose::Live,
+    ))
 }
 
 fn canvas(g: &TapeGauge, style: StepStyle) -> Canvas {
@@ -34,7 +46,11 @@ fn walk_draws_footsteps_for_every_path() {
         for tron in [false, true] {
             let g = gauge(d, tron, 0.0, 0.0);
             assert!(matches!(g.machine, Machine::Walk(_)), "{d:?}");
-            let lit = canvas(&g, StepStyle::DEFAULT).0.iter().filter(|&&i| i != chimera_core::ui::tape_glyph::Ink::Bg).count();
+            let lit = canvas(&g, StepStyle::DEFAULT)
+                .0
+                .iter()
+                .filter(|&&i| i != chimera_core::ui::tape_glyph::Ink::Bg)
+                .count();
             assert!(lit > 40, "{d:?} {tron}: {lit}");
         }
     }
@@ -112,7 +128,12 @@ fn write_variants() {
                 }
                 b.extend(std::iter::repeat_n(0u8, (row - n) as usize));
             }
-            let name = format!("glyph_{}_{}{}.bmp", ["prints", "treads", "trail"][k], slug, "");
+            let name = format!(
+                "glyph_{}_{}{}.bmp",
+                ["prints", "treads", "trail"][k],
+                slug,
+                ""
+            );
             std::fs::write(dir.join(name), b).unwrap();
         }
     }

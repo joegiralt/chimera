@@ -3,7 +3,6 @@
 
 mod common;
 
-use chimera_core::dsp::tape_engine::Way;
 use chimera_core::budget::{CONTROL_RESERVE, FORMANT_N, FORMANT_N_UNLINKED, HEAVY_OVERHEAD};
 use chimera_core::dsp::algo::algorithms::{ALGO_COUNT, AlgoId};
 use chimera_core::dsp::algo::engine::AlgoEngine;
@@ -17,6 +16,7 @@ use chimera_core::dsp::filter::sem::{SEM_COST, SEM_MOVE_COST};
 use chimera_core::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::TapeMachine;
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::dsp::voice::Voice;
 use chimera_core::dsp::voice_fx::params::{FxType, VoiceFxParams};
 use chimera_core::hw::{
@@ -729,17 +729,9 @@ fn the_model_bills_every_bench_row_high() {
     let (fwd, rev) = ((0.0, 1.0), (1.0, 0.0));
     for (name, billed, measured) in [
         ("TAPE LOOP", tape(lp, fwd, false), 0),
-        (
-            "TAPE STRETCH",
-            tape(Way::Stretch, fwd, false),
-            0,
-        ),
+        ("TAPE STRETCH", tape(Way::Stretch, fwd, false), 0),
         // ±12 st every block: billed as a glide or a deep route is.
-        (
-            "TAPE WAVE C7",
-            tape(Way::Wave, fwd, true),
-            0,
-        ),
+        ("TAPE WAVE C7", tape(Way::Wave, fwd, true), 0),
         ("TINY LOOP 8", tape(lp, fwd, false), 0),
         ("TINY REV 8", tape(lp, rev, false), 0),
         ("TINY PING 8", tape(ping, fwd, false), 0),

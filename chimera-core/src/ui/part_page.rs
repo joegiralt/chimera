@@ -4,10 +4,10 @@
 
 use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
 use crate::block::Block;
+use crate::block::ParamId;
 use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::modulator::EnvSlot;
 use crate::dsp::tape_engine::machine::{defaults, direction_defaults, env_defaults};
-use crate::block::ParamId;
 use crate::dsp::tape_engine::{
     Direction, FADE_HOLD, MachineIndex, TapeEngineParams, TapeMachine, fade_default,
 };
@@ -132,7 +132,11 @@ fn machine_edit(a: ParamAddr, before: f32, b: &mut dyn Block) -> &'static [(Para
             for &(id, v) in writes {
                 b.set(id, v);
             }
-            if writes.is_empty() { &[] } else { env_defaults(m, d) }
+            if writes.is_empty() {
+                &[]
+            } else {
+                env_defaults(m, d)
+            }
         }
         // TRON on: its pad always lifts, so FADE at HOLD becomes TRON's
         // 32 ms, as a MODEL turn onto TRON wrote.

@@ -534,7 +534,11 @@ pub fn tape_sound(s: &SoundRecipe, head: &SourceHead) -> Sound {
     }
     // ONE's hit: ENV 1 at its floor, holding full (`env_defaults`); TRON
     // keeps INIT's, as the TRON machine did.
-    let env = if s.tron == Tron::On { &[][..] } else { machine::env_defaults(t.machine(), s.direction) };
+    let env = if s.tron == Tron::On {
+        &[][..]
+    } else {
+        machine::env_defaults(t.machine(), s.direction)
+    };
     for &(id, v) in env {
         snd.params.envelopes[0].set(id, v);
     }

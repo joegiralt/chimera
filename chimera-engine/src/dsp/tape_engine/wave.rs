@@ -137,9 +137,7 @@ pub fn next_level(log2_n: u32, step: f32, top: u32) -> u32 {
 pub fn playable(m: Way, v: &SourceView<'_>) -> bool {
     let d = v.desc();
     match m {
-        Way::Wave => {
-            d.shape() == Shape::Transwave && top_of(v.frames(), d.count()).is_some()
-        }
+        Way::Wave => d.shape() == Shape::Transwave && top_of(v.frames(), d.count()).is_some(),
         // Per-key zones are the streamed TRON's (spec § 8).
         Way::Tron => d.shape() != Shape::ZoneSet,
         _ => true,

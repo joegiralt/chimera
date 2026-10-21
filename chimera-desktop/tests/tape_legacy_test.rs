@@ -90,7 +90,11 @@ fn factory_sounds_on_play_render_as_before() {
         let Some((s, b)) = factory(name) else {
             continue;
         };
-        assert_eq!(hash(&render(&s, b, &phrase(root(b)), 4.5)), c.hash, "{name}");
+        assert_eq!(
+            hash(&render(&s, b, &phrase(root(b)), 4.5)),
+            c.hash,
+            "{name}"
+        );
         checked += 1;
     }
     assert!(checked >= 28, "{checked}");
@@ -144,17 +148,54 @@ fn tron_is_heard_on_a_held_chord() {
     off.params.tape.drag = chimera_core::dsp::tape_engine::FADE_HOLD;
     let r = root(b);
     let held = chord(&[r - 24, r - 19, r - 15], 0.0, 10.0);
-    let (a, z) = (mono(&render(&on, b, &held, 11.0)), mono(&render(&off, b, &held, 11.0)));
-    assert!(level_in(&a, 7.0, 7.8) > -30.0, "ON: still on tape at 7 s, {}", level_in(&a, 7.0, 7.8));
-    assert!(level_in(&a, 8.2, 9.5) < -60.0, "ON: run out at 8 s, {}", level_in(&a, 8.2, 9.5));
-    assert!(level_in(&z, 8.2, 9.5) > -30.0, "OFF plays on, {}", level_in(&z, 8.2, 9.5));
+    let (a, z) = (
+        mono(&render(&on, b, &held, 11.0)),
+        mono(&render(&off, b, &held, 11.0)),
+    );
+    assert!(
+        level_in(&a, 7.0, 7.8) > -30.0,
+        "ON: still on tape at 7 s, {}",
+        level_in(&a, 7.0, 7.8)
+    );
+    assert!(
+        level_in(&a, 8.2, 9.5) < -60.0,
+        "ON: run out at 8 s, {}",
+        level_in(&a, 8.2, 9.5)
+    );
+    assert!(
+        level_in(&z, 8.2, 9.5) > -30.0,
+        "OFF plays on, {}",
+        level_in(&z, 8.2, 9.5)
+    );
     // At the root the strip ends at 4 s, OFF; ON goes round to 8 s.
     let root_chord = chord(&[r, r + 4, r + 7], 0.0, 10.0);
-    let (a, z) = (mono(&render(&on, b, &root_chord, 9.0)), mono(&render(&off, b, &root_chord, 9.0)));
-    assert!(level_in(&a, 5.0, 7.5) > -30.0, "ON: round again, {}", level_in(&a, 5.0, 7.5));
-    assert!(level_in(&z, 5.0, 7.5) < -60.0, "OFF: ended at END, {}", level_in(&z, 5.0, 7.5));
+    let (a, z) = (
+        mono(&render(&on, b, &root_chord, 9.0)),
+        mono(&render(&off, b, &root_chord, 9.0)),
+    );
+    assert!(
+        level_in(&a, 5.0, 7.5) > -30.0,
+        "ON: round again, {}",
+        level_in(&a, 5.0, 7.5)
+    );
+    assert!(
+        level_in(&z, 5.0, 7.5) < -60.0,
+        "OFF: ended at END, {}",
+        level_in(&z, 5.0, 7.5)
+    );
     let up = chord(&[r - 12, r - 7, r - 3], 0.0, 1.5);
-    let (a, z) = (mono(&render(&on, b, &up, 3.0)), mono(&render(&off, b, &up, 3.0)));
-    assert!(level_in(&a, 1.7, 2.5) < -60.0, "ON: the pad lifts, {}", level_in(&a, 1.7, 2.5));
-    assert!(level_in(&z, 1.7, 2.5) > -30.0, "OFF holds, {}", level_in(&z, 1.7, 2.5));
+    let (a, z) = (
+        mono(&render(&on, b, &up, 3.0)),
+        mono(&render(&off, b, &up, 3.0)),
+    );
+    assert!(
+        level_in(&a, 1.7, 2.5) < -60.0,
+        "ON: the pad lifts, {}",
+        level_in(&a, 1.7, 2.5)
+    );
+    assert!(
+        level_in(&z, 1.7, 2.5) > -30.0,
+        "OFF holds, {}",
+        level_in(&z, 1.7, 2.5)
+    );
 }

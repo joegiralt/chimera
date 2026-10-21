@@ -378,7 +378,11 @@ impl Way {
             Way::Ping => Direction::Ping,
             _ => Direction::Loop,
         };
-        let t = if matches!(self, Way::Tron) { Tron::On } else { Tron::Off };
+        let t = if matches!(self, Way::Tron) {
+            Tron::On
+        } else {
+            Tron::Off
+        };
         (self.machine(), d, t)
     }
 
@@ -791,14 +795,7 @@ impl TapeEngineParams {
 pub fn reads(m: TapeMachine, id: ParamId) -> bool {
     type P = TapeEngineParams;
     match id {
-        P::MODEL
-        | P::START
-        | P::END
-        | P::TAPE
-        | P::AGE
-        | P::WOW
-        | P::ROOT
-        | P::PERIOD => true,
+        P::MODEL | P::START | P::END | P::TAPE | P::AGE | P::WOW | P::ROOT | P::PERIOD => true,
         _ => super::machine::cell_of(m, id).is_some(),
     }
 }

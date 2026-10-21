@@ -5,10 +5,10 @@
 mod common;
 mod screen;
 
-use chimera_core::dsp::tape_engine::Way;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::dsp::tape_engine::Heads;
 use chimera_core::dsp::tape_engine::TapeMachine;
+use chimera_core::dsp::tape_engine::Way;
 use chimera_core::dsp::tape_engine::params::TapeEngineParams;
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::hw::SampleBudget;

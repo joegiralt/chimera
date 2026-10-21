@@ -44,7 +44,9 @@ use chimera_engine::dsp::rev::extra_cost;
 use chimera_engine::dsp::rev::sync::Tempo;
 use chimera_engine::dsp::reverb::ReverbType;
 use chimera_engine::dsp::tape_engine::read::{DESC_LEN, Descriptor, MIN_SOURCE_FRAMES, Shape};
-use chimera_engine::dsp::tape_engine::{Direction, StretchType, TapeMachine, TapeModel, Tron, wave};
+use chimera_engine::dsp::tape_engine::{
+    Direction, StretchType, TapeMachine, TapeModel, Tron, wave,
+};
 use chimera_engine::dsp::va::VaMode;
 use chimera_engine::dsp::voice::Voice;
 use chimera_engine::dsp::voice_fx::params::FxType;
@@ -1550,8 +1552,7 @@ static STREAM_ROWS: [StreamRow; 2] = [
 fn stream_sound(row: &StreamRow) -> ParamSnapshot {
     let mut p = snapshot(EngineType::Tape);
     (p.tape.tape, p.tape.age) = (0.5, 0.5);
-    (p.tape.machine, p.tape.direction, p.tape.root) =
-        (TapeMachine::Walk, Direction::Loop, 6_000.0);
+    (p.tape.machine, p.tape.direction, p.tape.root) = (TapeMachine::Walk, Direction::Loop, 6_000.0);
     (row.1)(&mut p);
     p
 }

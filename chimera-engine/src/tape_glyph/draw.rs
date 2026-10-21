@@ -12,8 +12,8 @@ use super::{
 };
 use crate::dsp::algo::math::clampf;
 use crate::dsp::algo::math::exp2;
-use crate::dsp::tape_engine::Direction;
 use crate::dsp::fast_sin;
+use crate::dsp::tape_engine::Direction;
 use core::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
 
 const BG: Ink = Ink::Bg;
@@ -55,7 +55,11 @@ pub fn inputs(i: &GlyphInputs) -> TapeGauge {
             position: q6(pos),
             length: q6(size),
             drift: Q4::of(drift),
-            fade: Q3::of(if kind == Kind::One && drag >= 1.0 { 0.0 } else { drag }),
+            fade: Q3::of(if kind == Kind::One && drag >= 1.0 {
+                0.0
+            } else {
+                drag
+            }),
             tron: kind == Kind::Tron || tron,
         }),
         Kind::Stretch => Machine::Stretch(Bellows {
@@ -739,7 +743,14 @@ fn scatter(k: i32) -> (f32, f32) {
 
 /// One footstep at (`x`, `y`), heading `(dx, dy)` (unit), on the `side`
 /// (±1) of its line, in `style`.
-fn step(p: &mut Pix, (x, y): (i32, i32), (dx, dy): (f32, f32), side: i32, ink: Ink, style: StepStyle) {
+fn step(
+    p: &mut Pix,
+    (x, y): (i32, i32),
+    (dx, dy): (f32, f32),
+    side: i32,
+    ink: Ink,
+    style: StepStyle,
+) {
     // Off the line by 2 px to its side.
     let (ox, oy) = (r(-dy * 2.0) * side, r(dx * 2.0) * side);
     let (x, y) = (x + ox, y + oy);
@@ -748,7 +759,11 @@ fn step(p: &mut Pix, (x, y): (i32, i32), (dx, dy): (f32, f32), side: i32, ink: I
             // The heel behind, the ball ahead, the toes past it.
             p.dot(x - r(dx * 2.5), y - r(dy * 2.5), 1, ink);
             p.dot(x + r(dx * 1.0), y + r(dy * 1.0), 1, ink);
-            p.px(x + r(dx * 1.0) + r(dy * 1.5), y + r(dy * 1.0) - r(dx * 1.5), ink);
+            p.px(
+                x + r(dx * 1.0) + r(dy * 1.5),
+                y + r(dy * 1.0) - r(dx * 1.5),
+                ink,
+            );
             p.px(x + r(dx * 3.0), y + r(dy * 3.0), ink);
         }
         StepStyle::Treads => {
@@ -810,8 +825,18 @@ fn steps(p: &mut Pix, w: Steps, style: StepStyle) {
             let n = (((to - from) / 8.0) as i32).max(1) + 1;
             let d = if back { -1.0 } else { 1.0 };
             for k in 0..n {
-                let x = if back { to - 8.0 * k as f32 } else { from + 8.0 * k as f32 };
-                let out = end.is_some_and(|e| if back { x < (x1 - (e as f32 - x0)) } else { x > e as f32 });
+                let x = if back {
+                    to - 8.0 * k as f32
+                } else {
+                    from + 8.0 * k as f32
+                };
+                let out = end.is_some_and(|e| {
+                    if back {
+                        x < (x1 - (e as f32 - x0))
+                    } else {
+                        x > e as f32
+                    }
+                });
                 let ink = if out { FAINT } else { step_ink(k, n - 1, fade) };
                 let side = if k % 2 == 0 { 1 } else { -1 };
                 step(p, at(k, x, 24.0), (d, 0.0), side, ink, style);
@@ -819,7 +844,12 @@ fn steps(p: &mut Pix, w: Steps, style: StepStyle) {
             if let Some(e) = end {
                 tape_end(p, if back { r(x1) - (e - r(x0)) } else { e }, 24);
             }
-            p.arrow(if back { lo - 2 } else { hi + 2 }, 24, if back { -1 } else { 1 }, INK2);
+            p.arrow(
+                if back { lo - 2 } else { hi + 2 },
+                24,
+                if back { -1 } else { 1 },
+                INK2,
+            );
         }
         Direction::Loop => {
             let (lo, hi) = loop_span(pos, len);
@@ -838,8 +868,19 @@ fn steps(p: &mut Pix, w: Steps, style: StepStyle) {
                 let (c, sn) = (cos(a), fast_sin(a));
                 // Clockwise, as a loop reads left to right on top.
                 let (dx, dy) = (-sn, c);
-                let ink = if w.tron && k == n - 1 { FAINT } else { step_ink(k, n - 1, fade) };
-                step(p, at(k, cx + rx * c, cy - ry * sn), (dx, -dy), if k % 2 == 0 { 1 } else { -1 }, ink, style);
+                let ink = if w.tron && k == n - 1 {
+                    FAINT
+                } else {
+                    step_ink(k, n - 1, fade)
+                };
+                step(
+                    p,
+                    at(k, cx + rx * c, cy - ry * sn),
+                    (dx, -dy),
+                    if k % 2 == 0 { 1 } else { -1 },
+                    ink,
+                    style,
+                );
             }
             if w.tron {
                 tape_end(p, r(cx), r(cy - ry));
@@ -851,10 +892,21 @@ fn steps(p: &mut Pix, w: Steps, style: StepStyle) {
             let n = (((hi - lo) / 7.0) as i32).max(1) + 1;
             for (lane, y, d) in [(0, 16.0, 1.0f32), (1, 32.0, -1.0)] {
                 for k in 0..n {
-                    let x = if d > 0.0 { lo + 7.0 * k as f32 } else { hi - 7.0 * k as f32 };
+                    let x = if d > 0.0 {
+                        lo + 7.0 * k as f32
+                    } else {
+                        hi - 7.0 * k as f32
+                    };
                     let i = lane * n + k;
                     let ink = step_ink(i, 2 * n - 1, fade);
-                    step(p, at(i, x, y), (d, 0.0), if k % 2 == 0 { 1 } else { -1 }, ink, style);
+                    step(
+                        p,
+                        at(i, x, y),
+                        (d, 0.0),
+                        if k % 2 == 0 { 1 } else { -1 },
+                        ink,
+                        style,
+                    );
                 }
             }
             // The turns at each end.

@@ -5,7 +5,7 @@
 
 mod common;
 
-use chimera_core::dsp::tape_engine::{Way, Direction};
+use chimera_core::dsp::tape_engine::{Direction, Way};
 use core::mem::size_of;
 
 use chimera_core::dsp::engines::{EngineCtx, EngineSlot, SlotKind};
@@ -360,11 +360,7 @@ fn a_sounding_note_bills_its_latched_model() {
     edit.tape.set_way(Way::One);
     assert_eq!(slot.model_cost(&s.params), COST_LOOP);
     assert_eq!(slot.model_cost(&edit), COST_ONESHOT);
-    assert_eq!(
-        TapeEngine::model_cost(Way::One),
-        COST_ONESHOT,
-        "the edit's"
-    );
+    assert_eq!(TapeEngine::model_cost(Way::One), COST_ONESHOT, "the edit's");
 }
 
 /// A retune (ORBIT's re-snap) and a glide steal glide a sounding TAPE

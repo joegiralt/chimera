@@ -132,9 +132,18 @@ const DIRECTION: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEnginePara
 pub(super) fn direction_writes(m: TapeMachine, was: Direction, now: Direction) -> u8 {
     let w = direction_defaults(was, now);
     let env1 = BlockRef::Env(crate::dsp::modulator::EnvSlot::Env1);
-    let e = if w.is_empty() { &[][..] } else { env_defaults(m, now) };
-    let k = w.iter().filter(|&&(id, _)| knob(ParamAddr::new(BlockRef::TapeEngine, id)));
-    (k.count() + e.iter().filter(|&&(id, _)| knob(ParamAddr::new(env1, id))).count()) as u8
+    let e = if w.is_empty() {
+        &[][..]
+    } else {
+        env_defaults(m, now)
+    };
+    let k = w
+        .iter()
+        .filter(|&&(id, _)| knob(ParamAddr::new(BlockRef::TapeEngine, id)));
+    (k.count()
+        + e.iter()
+            .filter(|&&(id, _)| knob(ParamAddr::new(env1, id)))
+            .count()) as u8
 }
 
 impl UiState {
