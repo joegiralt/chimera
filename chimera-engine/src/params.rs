@@ -887,6 +887,12 @@ pub struct OutParams {
     /// Chorus, delay, reverb sends (`FxBus` order), 0..1 each: the Sound's
     /// own, eased by the mixer (ADR 0123).
     pub sends: [f32; crate::dsp::fx_bus::FX_SENDS],
+    /// The VCA's low-pass gate (ADR 0195), 0..1 each, all 0 a plain VCA:
+    /// LPG couples darkening to gain, DECAY is the vactrol's fall, STRIKE
+    /// pings it at each note-on.
+    pub lpg: f32,
+    pub decay: f32,
+    pub strike: f32,
 }
 
 /// INIT's OUT LEVEL: ALGO INIT's C4 at velocity 100 at the factory median,
@@ -901,6 +907,9 @@ impl Default for OutParams {
             vca: 0.0,
             vca_vel: 1.0,
             sends: [0.0; crate::dsp::fx_bus::FX_SENDS],
+            lpg: 0.0,
+            decay: 0.0,
+            strike: 0.0,
         }
     }
 }
@@ -915,11 +924,21 @@ impl OutParams {
     pub const SEND3: ParamId = ParamId(6);
     pub const SENDS: [ParamId; crate::dsp::fx_bus::FX_SENDS] =
         [Self::SEND1, Self::SEND2, Self::SEND3];
+    pub const LPG: ParamId = ParamId(7);
+    pub const DECAY: ParamId = ParamId(8);
+    pub const STRIKE: ParamId = ParamId(9);
+
+    /// The gate runs (ADR 0195): LPG, DECAY or STRIKE above 0, as played.
+    #[inline(always)]
+    pub fn gated(&self) -> bool {
+        self.lpg > 0.0 || self.decay > 0.0 || self.strike > 0.0
+    }
 }
 
 /// Volume and VEL are read by `Voice`'s VCA every block, VCA is a hidden
-/// destination; pan is not used by `Voice`.
-pub static OUT_SPECS: [ParamSpec; 7] = [
+/// destination; pan is not used by `Voice`. LPG, DECAY and STRIKE are the
+/// VCA's gate (ADR 0195).
+pub static OUT_SPECS: [ParamSpec; 10] = [
     ParamSpec::continuous(
         0,
         "LEVEL",
@@ -1008,6 +1027,44 @@ pub static OUT_SPECS: [ParamSpec; 7] = [
     )
     .ident("SEND3")
     .glyph(crate::glyph::FocusGlyph::LevelBar),
+    ParamSpec::continuous(
+        7,
+        "LPG",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        true,
+        Smoothing::KNOB,
+    )
+    .ident("LPG"),
+    ParamSpec::continuous(
+        8,
+        "DECAY",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        true,
+        Smoothing::KNOB,
+    )
+    .ident("DECAY")
+    .short("DCAY"),
+    ParamSpec::continuous(
+        9,
+        "STRIKE",
+        ValFmt::Uni,
+        0.0,
+        1.0,
+        0.0,
+        1.0 / 128.0,
+        true,
+        Smoothing::KNOB,
+    )
+    .ident("STRIKE")
+    .short("STRK"),
 ];
 
 impl Block for OutParams {
@@ -1025,6 +1082,9 @@ impl Block for OutParams {
             Self::SEND1 => self.sends[0],
             Self::SEND2 => self.sends[1],
             Self::SEND3 => self.sends[2],
+            Self::LPG => self.lpg,
+            Self::DECAY => self.decay,
+            Self::STRIKE => self.strike,
             _ => 0.0,
         }
     }
@@ -1039,6 +1099,9 @@ impl Block for OutParams {
             Self::SEND1 => self.sends[0] = v,
             Self::SEND2 => self.sends[1] = v,
             Self::SEND3 => self.sends[2] = v,
+            Self::LPG => self.lpg = v,
+            Self::DECAY => self.decay = v,
+            Self::STRIKE => self.strike = v,
             _ => {}
         }
     }

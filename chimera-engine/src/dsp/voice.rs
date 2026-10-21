@@ -19,6 +19,7 @@ use crate::dsp::filter::{
     FB_COST, FILTER_LEVEL_COST, Fed, Filter, FilterMods, FilterStability, Spread,
 };
 use crate::dsp::gate::AmpGate;
+use crate::dsp::lpg::Lpg;
 use crate::dsp::knobs::Gliding;
 use crate::dsp::knobs::Knobs;
 use crate::dsp::lfo::{Lfo, LfoClock};
@@ -32,7 +33,7 @@ use crate::meter::Clip;
 use crate::modulation::{
     FixedCol, MAX_MOD_SOURCES, ModRouting, ModSource, ModState, amount_scale, note_source,
 };
-use crate::params::{EngineType, EnvParams, FilterParams, ParamSnapshot, Steal};
+use crate::params::{EngineType, EnvParams, FilterParams, OutParams, ParamSnapshot, Steal};
 use crate::project::SourceId;
 use crate::taps::{
     TAP_CAPTURE_COST, TAP_FOLD_COST, TAP_SHAPE_COST, TAP_VCA_COST, TapLane, TapOp, TapRoutes,
@@ -82,6 +83,9 @@ pub struct Voice {
     gate: AmpGate,
     /// DC from the stages before it (ADR 0060).
     dc: DcBlocker,
+    /// The VCA's low-pass gate (ADR 0195): its state while LPG, DECAY or
+    /// STRIKE is up.
+    lpg: Lpg,
     /// OUT LEVEL × the engine's gain, ramped across each block.
     volume: Ramp,
     envs: [Envelope; 3],
@@ -211,6 +215,20 @@ impl Voice {
             + ModRouting::cost(p, mods)
             + Self::fx_cost(p, mods)
             + Self::tap_cost(p)
+            + Self::gate_cost(p, mods)
+    }
+
+    /// The VCA's gate (ADR 0195): billed while LPG, DECAY or STRIKE is
+    /// stored above 0 or routed.
+    fn gate_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
+        let routed = [OutParams::LPG, OutParams::DECAY, OutParams::STRIKE]
+            .iter()
+            .any(|&id| mods.moves_addr(ParamAddr::new(BlockRef::Out, id)));
+        if p.out.gated() || routed {
+            crate::dsp::lpg::LPG_COST
+        } else {
+            Cost::ZERO
+        }
     }
 
     /// The filter as `p` and `mods` run it: the steady bill, the moving
@@ -469,6 +487,7 @@ impl Voice {
                 filter_clip: Clip::ZERO,
                 gate: AmpGate::OPEN,
                 dc: DcBlocker::new(DC_HZ, (*p).sample_rate),
+                lpg: Lpg::NEW,
                 volume: Ramp::default(),
                 envs: [Envelope::new(); 3],
                 lfos: [Lfo::new(); 3],
@@ -662,6 +681,8 @@ impl Voice {
             // A promise made for a note since replaced doesn't outlive it.
             pool.alloc_mut().cancel(self.id);
         }
+        // The gate's strike (ADR 0195); a fresh note's gate starts afresh.
+        self.lpg.strike(!self.active);
         if !self.active {
             // A fresh note: no ramp from the last note's settings, and no
             // ring left in the filter.
@@ -1137,57 +1158,70 @@ impl Voice {
         // The block's last routed gain, × AMP's VEL: whether the lifetime
         // check below ends the voice through a fade.
         let mut last_gain = 0.0;
-        match &gain {
-            None => {
-                // No route: the engine decides (spec § 4). No wildcard, so a new
-                // engine can't inherit the pass-through (VA gates: #148).
-                match &self.slot {
-                    // TAPE's and VA's key ends it (`key_gates`), through the fade.
-                    EngineSlot::Algo(_)
-                    | EngineSlot::Modal(_)
-                    | EngineSlot::Tape(_)
-                    | EngineSlot::Va(_) => {
-                        // Its own envelopes shape the sound: today's expression, bit for bit.
-                        if dv == 0.0 {
-                            for sample in output.iter_mut() {
-                                *sample *= volume;
-                            }
-                        } else {
-                            for (i, sample) in output.iter_mut().enumerate() {
-                                *sample *= at(v.0, dv, i);
+        // LPG, DECAY or STRIKE up: the gate is the VCA (ADR 0195), through
+        // bank 2's door; closed, the VCA plays as ever.
+        let gate = if m.out.gated() {
+            gate::through(|d| (d.run)(self, output, gain.as_ref(), (v.0, dv)))
+        } else {
+            None
+        };
+        if let Some(g) = gate {
+            last_gain = g.last;
+        } else {
+            self.lpg.idle();
+            let m = &self.played;
+            match &gain {
+                None => {
+                    // No route: the engine decides (spec § 4). No wildcard, so a new
+                    // engine can't inherit the pass-through (VA gates: #148).
+                    match &self.slot {
+                        // TAPE's and VA's key ends it (`key_gates`), through the fade.
+                        EngineSlot::Algo(_)
+                        | EngineSlot::Modal(_)
+                        | EngineSlot::Tape(_)
+                        | EngineSlot::Va(_) => {
+                            // Its own envelopes shape the sound: today's expression, bit for bit.
+                            if dv == 0.0 {
+                                for sample in output.iter_mut() {
+                                    *sample *= volume;
+                                }
+                            } else {
+                                for (i, sample) in output.iter_mut().enumerate() {
+                                    *sample *= at(v.0, dv, i);
+                                }
                             }
                         }
                     }
                 }
-            }
-            Some(gain) => {
-                let amp = |v: Velocity| 1.0 - m.out.vca_vel + m.out.vca_vel * v.unit();
-                let (was, vel) = (amp(self.vca_velocity), amp(self.last_velocity));
-                self.vca_velocity = self.last_velocity;
-                let k = volume * vel;
-                #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
-                if was != vel {
-                    // A re-strike or steal of a sounding voice at another
-                    // velocity: AMP's VEL ramps with OUT LEVEL, one ramp,
-                    // never a step (#483); a multiply a sample fewer than
-                    // OUT LEVEL's ramp below, so the bill stands.
-                    let r = (v.0 * was, k);
-                    let (from, step) = (r.0, step_of(r, BLOCK_SIZE));
-                    for (i, (sample, g)) in output.iter_mut().zip(gain).enumerate() {
-                        *sample *= at(from, step, i) * g.max(0.0).min(1.0);
+                Some(gain) => {
+                    let amp = |v: Velocity| 1.0 - m.out.vca_vel + m.out.vca_vel * v.unit();
+                    let (was, vel) = (amp(self.vca_velocity), amp(self.last_velocity));
+                    self.vca_velocity = self.last_velocity;
+                    let k = volume * vel;
+                    #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
+                    if was != vel {
+                        // A re-strike or steal of a sounding voice at another
+                        // velocity: AMP's VEL ramps with OUT LEVEL, one ramp,
+                        // never a step (#483); a multiply a sample fewer than
+                        // OUT LEVEL's ramp below, so the bill stands.
+                        let r = (v.0 * was, k);
+                        let (from, step) = (r.0, step_of(r, BLOCK_SIZE));
+                        for (i, (sample, g)) in output.iter_mut().zip(gain).enumerate() {
+                            *sample *= at(from, step, i) * g.max(0.0).min(1.0);
+                        }
+                    } else if dv == 0.0 {
+                        for (sample, g) in output.iter_mut().zip(gain) {
+                            *sample *= k * g.max(0.0).min(1.0);
+                        }
+                    } else {
+                        for (i, (sample, g)) in output.iter_mut().zip(gain).enumerate() {
+                            *sample *= at(v.0, dv, i) * vel * g.max(0.0).min(1.0);
+                        }
                     }
-                } else if dv == 0.0 {
-                    for (sample, g) in output.iter_mut().zip(gain) {
-                        *sample *= k * g.max(0.0).min(1.0);
-                    }
-                } else {
-                    for (i, (sample, g)) in output.iter_mut().zip(gain).enumerate() {
-                        *sample *= at(v.0, dv, i) * vel * g.max(0.0).min(1.0);
-                    }
+                    #[allow(clippy::manual_clamp)]
+                    let g = gain[BLOCK_SIZE - 1].max(0.0).min(1.0);
+                    last_gain = g * vel;
                 }
-                #[allow(clippy::manual_clamp)]
-                let g = gain[BLOCK_SIZE - 1].max(0.0).min(1.0);
-                last_gain = g * vel;
             }
         }
 
@@ -1214,15 +1248,19 @@ impl Voice {
         }
 
         // A TAPE or VA note with no route into VCA ends at key up, through
-        // the fade.
-        if self.active && self.fade == 0 && self.key_gates() && !self.held {
+        // the fade; under the gate, when it shuts.
+        if self.active && self.fade == 0 && self.key_gates() && gate.is_none() && !self.held {
             self.after_fade = AfterFade::Idle;
             self.fade = Self::FADE;
         }
 
         // Lifetime by the VCA's routes (spec § 4), once per block: a voice
         // no routed source holds ends, through the fade if it still sounds.
-        if self.active && self.fade == 0 && self.vca.bits != 0 && !self.vca_holds() {
+        let holds = match gate {
+            Some(g) => g.holds,
+            None => self.vca.bits == 0 || self.vca_holds(),
+        };
+        if self.active && self.fade == 0 && !holds {
             if last_gain != 0.0 {
                 self.after_fade = AfterFade::Idle;
                 self.fade = Self::FADE;
@@ -1309,6 +1347,8 @@ fn env_mod(n: &mut EnvMods, mod_state: &ModState, d: usize, values: &[f32; MAX_M
         _ => {}
     }
 }
+
+pub mod gate;
 
 #[cfg(test)]
 mod tests {

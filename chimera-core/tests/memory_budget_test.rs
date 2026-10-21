@@ -78,8 +78,8 @@ fn voice_is_its_chain_plus_one_slot() {
 /// Sound's FB with its padding (ADR 0190). SEM adds 32 B: its two states,
 /// FB signal and last block's ends (28) and the played Sound's MODE knob
 /// (ADR 0192). VA NOISE adds 8 B: the played Sound's KIND and LEVEL
-/// (ADR 0197).
-const VOICE_SIZE_BEFORE: usize = 6_584;
+/// (ADR 0197). The VCA's gate adds its 64 B and padding (ADR 0195).
+const VOICE_SIZE_BEFORE: usize = 6_664;
 
 /// ADR 0131: the formant kinds live in the Algo slot, which still fits
 /// inside Modal's, so they add nothing to `EngineSlot`.

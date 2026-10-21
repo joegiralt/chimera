@@ -206,6 +206,12 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
                 offset_of!(OutParams, volume)
             } else if id == OutParams::VCA_VEL.0 {
                 offset_of!(OutParams, vca_vel)
+            } else if id == OutParams::LPG.0 {
+                offset_of!(OutParams, lpg)
+            } else if id == OutParams::DECAY.0 {
+                offset_of!(OutParams, decay)
+            } else if id == OutParams::STRIKE.0 {
+                offset_of!(OutParams, strike)
             } else {
                 panic!("an OUT knob without a field")
             };

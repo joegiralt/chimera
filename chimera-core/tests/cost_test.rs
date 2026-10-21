@@ -2609,3 +2609,64 @@ fn sem_bills_its_count_and_its_voices() {
         "SEM: ALGO steady, moving; VA steady, moving"
     );
 }
+
+/// ADR 0195: the VCA's gate bills `LPG_COST` (`tools/loop_count.py` on the
+/// `filter-probes` ELF, `lpg_probe`) only while LPG, DECAY or STRIKE is
+/// above 0 or routed; at 0 a voice costs what it did. Its voices with SEM
+/// and the 2040 in front, ALGO INIT and VA INIT, on rev V and rev Y beside
+/// the reserve.
+#[test]
+fn the_gate_bills_only_when_up_and_its_voices() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::dsp::lpg::LPG_COST;
+    use chimera_core::params::OutParams;
+    let rooms = [
+        SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - RESERVED,
+        SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - RESERVED,
+    ];
+    let still = ModState::new();
+    for e in [EngineType::Algo, EngineType::Va] {
+        let p = ParamSnapshot::for_engine(e);
+        let base = Voice::cost(&p, &still);
+        for k in 0..3 {
+            let mut q = p.clone();
+            match k {
+                0 => q.out.lpg = 1.0 / 128.0,
+                1 => q.out.decay = 1.0 / 128.0,
+                _ => q.out.strike = 1.0 / 128.0,
+            }
+            assert_eq!(Voice::cost(&q, &still), base + LPG_COST, "{e:?} knob {k}");
+        }
+        let lfo = {
+            let mut m = ModState::with_sources(2);
+            let a = ParamAddr::new(BlockRef::Out, OutParams::LPG);
+            assert!(m.set_route_addr(1, a, 64));
+            m
+        };
+        // Routed, it bills as stored above 0.
+        let mut q = p.clone();
+        q.out.lpg = 0.5;
+        assert_eq!(Voice::cost(&p, &lfo), Voice::cost(&q, &lfo), "{e:?} routed");
+    }
+    let voices = |e: EngineType, k: FilterKind, on: bool| {
+        let mut p = ParamSnapshot::for_engine(e);
+        p.filter.set_kind(k);
+        if on {
+            p.out.lpg = 1.0;
+        }
+        let c = Voice::cost(&p, &still).0;
+        rooms.map(|r| (r / c).min(MAX_VOICES as u32))
+    };
+    let mut table = Vec::new();
+    for k in [FilterKind::Sem, FilterKind::K2040] {
+        for on in [false, true] {
+            let row = [voices(EngineType::Algo, k, on), voices(EngineType::Va, k, on)];
+            println!("{k:?} gate {on}: ALGO {:?}, VA {:?} (rev V, rev Y)", row[0], row[1]);
+            table.push(row);
+        }
+    }
+    assert_eq!(table, GATE_VOICES, "SEM off, on; 2040 off, on");
+}
+
+/// SEM off, on; the 2040 off, on: ALGO and VA, rev V and rev Y.
+const GATE_VOICES: [[[u32; 2]; 2]; 4] = [[[0; 2]; 2]; 4];

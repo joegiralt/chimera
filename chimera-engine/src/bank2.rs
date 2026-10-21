@@ -55,6 +55,10 @@ pub struct Bank2Door {
     /// VA NOISE's pass (ADR 0197; `Noise::add` is bank 1's side).
     #[cfg(feature = "bank2")]
     pub noise: crate::dsp::va::noise::NoiseDoor,
+    /// The VCA's low-pass gate (ADR 0195; `voice::gate::through` is bank
+    /// 1's side).
+    #[cfg(feature = "bank2")]
+    pub gate: crate::dsp::voice::gate::GateDoor,
 }
 
 #[cfg(feature = "bank2")]
@@ -78,6 +82,7 @@ static DOOR: Bank2Door = Bank2Door {
     fed: crate::dsp::filter::fed::FedDoor::DOOR,
     sem: crate::dsp::filter::sem::SemDoor::DOOR,
     noise: crate::dsp::va::noise::NoiseDoor::DOOR,
+    gate: crate::dsp::voice::gate::GateDoor::DOOR,
 };
 
 #[cfg(feature = "bank2")]

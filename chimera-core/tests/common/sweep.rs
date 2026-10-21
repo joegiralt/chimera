@@ -475,6 +475,11 @@ impl Bench {
         tape.voice_cost = tape.voice_cost.max(Voice::cost(&p.params, &p.mod_state).0);
     }
 
+    /// Voices whose engine still sounds (a held key's ended voice does not).
+    pub fn sounding(&self) -> usize {
+        self.inst.sounding()
+    }
+
     pub fn all_free(&self) -> bool {
         self.inst.allocator().slots().iter().all(|s| s.is_free())
     }
