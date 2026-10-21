@@ -388,6 +388,7 @@ pub struct GlyphInputs {
 impl GlyphInputs {
     /// From `TAPE_GLYPH_PARAMS`' set values, normalized; MODEL's to its
     /// nearest machine.
+    #[inline(always)]
     pub fn from_set(set: [f32; 13], pose: Pose) -> Self {
         let [
             model,
@@ -494,6 +495,26 @@ impl TapeGauge {
         }
     }
 
+    /// `of` straight from `TAPE_GLYPH_PARAMS`' set values: the decode is
+    /// bank 2's too (`draw::inputs_set`), so bank 1 only gathers them.
+    pub fn of_set(set: [f32; 13], pose: Pose) -> Self {
+        #[cfg(feature = "bank2")]
+        {
+            crate::bank2::DOOR_CELL
+                .with(|d| (d.glyph.inputs_set)(set, pose))
+                .unwrap_or(Self::still(Kind::One))
+        }
+        #[cfg(all(feature = "tape", not(feature = "bank2")))]
+        {
+            draw::inputs_set(set, pose)
+        }
+        #[cfg(not(feature = "tape"))]
+        {
+            let _ = (set, pose);
+            Self::still(Kind::One)
+        }
+    }
+
     pub const fn kind(&self) -> Kind {
         match self.machine {
             Machine::One(_) => Kind::One,
@@ -568,6 +589,7 @@ pub fn paint(g: &TapeGauge, out: &mut Canvas) -> bool {
 pub struct GlyphDoor {
     render: fn(&TapeGauge, &mut Canvas),
     inputs: fn(&GlyphInputs) -> TapeGauge,
+    inputs_set: fn([f32; 13], Pose) -> TapeGauge,
 }
 
 #[cfg(feature = "bank2")]
@@ -575,5 +597,6 @@ impl GlyphDoor {
     pub const DOOR: GlyphDoor = GlyphDoor {
         render: draw::render,
         inputs: draw::inputs,
+        inputs_set: draw::inputs_set,
     };
 }

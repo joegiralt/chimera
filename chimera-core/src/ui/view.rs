@@ -82,9 +82,8 @@ pub struct SlotCtx {
     pub model: ResonatorMode,
     /// TAPE's machine: its labels and cells.
     pub tape: TapeMachine,
-    /// Its path (WALK's DIRECTION and TRON in it): WALK once through with
-    /// TRON off has FADE end in HOLD.
-    pub way: Way,
+    /// WALK once through with TRON off: FADE ends in HOLD.
+    pub holds: bool,
     /// TAPE's PERIOD is 0: an unpitched source plays MONO as POLY.
     pub unpitched: bool,
     /// TAPE's SOURCE as SRC reads it.
@@ -135,12 +134,11 @@ impl SlotCtx {
             }),
             model: ResonatorMode::from_u8(get(BlockRef::Modal, ModalParams::MODE) as u8),
             tape: TapeMachine::from_index(MachineIndex(get(BlockRef::TapeEngine, T::MODEL) as u8)),
-            way: Way::of(
-                TapeMachine::from_index(MachineIndex(get(BlockRef::TapeEngine, T::MODEL) as u8)),
-                Direction::from_value(get(BlockRef::TapeEngine, T::MODE))
-                    .unwrap_or(Direction::Loop),
-                Tron::from_value(get(BlockRef::TapeEngine, T::TRON)).unwrap_or(Tron::Off),
-            ),
+            holds: TapeMachine::from_index(MachineIndex(get(BlockRef::TapeEngine, T::MODEL) as u8))
+                == TapeMachine::Walk
+                && Direction::from_value(get(BlockRef::TapeEngine, T::MODE))
+                    .is_some_and(Direction::once)
+                && Tron::from_value(get(BlockRef::TapeEngine, T::TRON)) != Some(Tron::On),
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
             src: SourceState::None,
             rev: reverb_panel::shown(rev.kind),
@@ -671,7 +669,7 @@ fn fmt_of(addr: ParamAddr, fmt: ValFmt, ctx: &SlotCtx) -> ValFmt {
     match (addr.block, addr.param) {
         (BlockRef::Filter, FilterParams::MODE) => ValFmt::Names(ctx.kind.mode_labels()),
         // ONE's FADE: its last step is HOLD.
-        (BlockRef::TapeEngine, T::DRAG) if ctx.way == Way::One => ValFmt::Hold,
+        (BlockRef::TapeEngine, T::DRAG) if ctx.holds => ValFmt::Hold,
         _ => fmt,
     }
 }
