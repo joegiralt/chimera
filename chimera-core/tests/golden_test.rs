@@ -537,9 +537,9 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_stretch_grain",
         (
-            0x363094a3ed9329d6,
+            0xdcb96f9eb0451042,
             [
-                0, 3194131440, 1048588676, 1038371030, 3194242296, 3194046961, 3198953301,
+                0, 3194122263, 1048588676, 1038371030, 3194242296, 3194046961, 3198953301,
                 1043531043,
             ],
         ),
@@ -547,10 +547,10 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_stretch_grain_reverse",
         (
-            0xb211fed6aa68e748,
+            0xc537bb2d694cbb20,
             [
-                0, 1046647976, 3196089543, 3185855755, 1046758516, 1046563182, 1051469676,
-                3191014680,
+                0, 1045956079, 3196498648, 3187434611, 1045894812, 1045703982, 1051045107,
+                3191800288,
             ],
         ),
     ),
@@ -750,7 +750,10 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
         ),
         ("tape_stretch_reverse", rev(M::Stretch)),
         // GRAIN (ADR 0204): its own rows; CLASSIC's above are as recorded
-        // before GRAIN existed.
+        // before GRAIN existed. Re-recorded on #749's final core: the strike
+        // reads its own head (a hair off the old grain's at the second
+        // spot), and a reversed grain reads forward at a negative speed,
+        // its taps no longer a frame ahead of its place.
         (
             "tape_stretch_grain",
             TapeEngineParams {
