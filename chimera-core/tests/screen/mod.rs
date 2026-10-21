@@ -792,7 +792,7 @@ pub fn tape_deck(ui: &mut UiState, m: Way) {
 }
 
 /// MODEL turned from WALK in LOOP, the neutral, to `m`'s machine; on WALK
-/// DIRECTION (cell 4) turned to `m`'s, and TRON (MCH's cell 4) switched on.
+/// DIRECTION (cell 4) turned to `m`'s, and TRON switched on.
 fn to_machine(ui: &mut UiState, m: Way) {
     let (machine, d, tron) = m.parts();
     let by = machine.index() as i8 - TapeMachine::Walk.index() as i8;
@@ -804,9 +804,10 @@ fn to_machine(ui: &mut UiState, m: Way) {
         feed(ui, Input::turn(EncoderId::D, by));
     }
     if tron == chimera_core::dsp::tape_engine::Tron::On {
-        feed(ui, Input::press(ButtonId::Edit));
-        feed(ui, Input::turn(EncoderId::D, 1));
-        feed(ui, Input::press(ButtonId::Seq));
+        // TRON is the WALK page's: set it, as its toggle would.
+        let p = chimera_core::project::PartId::ALL[0];
+        ui.project_mut().edit_part(p).sound.params.tape.tron = tron;
+        feed(ui, Input::default());
     }
 }
 
@@ -1766,6 +1767,15 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("tape_deck_pingpong", |ui| {
         tape_deck(ui, Way::Ping);
+    }),
+    // WALK (ADR 0203): REVERSE's footsteps, and DRIFT's scatter on LOOP.
+    ("tape_deck_reverse", |ui| {
+        tape_deck(ui, Way::One);
+        feed(ui, Input::turn(EncoderId::D, 1));
+    }),
+    ("tape_deck_drift", |ui| {
+        tape_deck(ui, Way::Loop);
+        feed(ui, Input::turn(EncoderId::F, 64));
     }),
     ("tape_page_pingpong", |ui| {
         tape_deck(ui, Way::Ping);

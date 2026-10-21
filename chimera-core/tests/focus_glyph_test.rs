@@ -53,7 +53,11 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("TapeEngine", "TYPE", TAPE),
     ("TapeEngine", "SLICE", NONE),
     ("TapeEngine", "WOW", TAPE),
-    ("TapeEngine", "MODE", NONE),
+    // WALK's DIRECTION lays the footsteps; TRON is a toggle; DRIFT
+    // scatters them (ADR 0203).
+    ("TapeEngine", "MODE", TAPE),
+    ("TapeEngine", "TRON", SWITCH),
+    ("TapeEngine", "DRIFT", TAPE),
     ("TapeEngine", "RETRIG", NONE),
     ("TapeEngine", "POSITION", TAPE),
     ("TapeEngine", "MOTION", TAPE),

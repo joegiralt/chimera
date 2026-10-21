@@ -6,9 +6,9 @@
 #![cfg(all(feature = "bank2", feature = "test-support"))]
 
 use chimera_engine::bank2::DOOR_CELL;
-use chimera_engine::dsp::tape_engine::TapeMachine;
 use chimera_engine::dsp::tape_engine::params::TapeEngineParams;
 use chimera_engine::dsp::tape_engine::read::Shape;
+use chimera_engine::dsp::tape_engine::{Direction, TapeMachine};
 use chimera_engine::name::SoundName;
 use chimera_engine::project::arena::Cost;
 use chimera_engine::project::{LoadKind, Refusal, load_kind};

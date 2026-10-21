@@ -996,7 +996,7 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 19] = [
         Change::NoteOn,
     )
     .ident("TRON")
-    .glyph(TAPE),
+    .glyph(crate::glyph::FocusGlyph::Switch),
     // Read at note-on: each note steps POSITION by up to DRIFT (ADR 0203).
     unit(20, "DRIFT", 0.0, false, Smoothing::NoteOn)
         .short("DFT")

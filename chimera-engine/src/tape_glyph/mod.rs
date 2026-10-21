@@ -396,7 +396,11 @@ impl GlyphInputs {
         let m =
             TapeMachine::from_index(MachineIndex(index_of(model, TapeMachine::ALL.len()) as u8));
         let direction = Direction::ALL[index_of(direction, Direction::ALL.len())];
-        let tron = if index_of(tron, 2) == 1 { Tron::On } else { Tron::Off };
+        let tron = if index_of(tron, 2) == 1 {
+            Tron::On
+        } else {
+            Tron::Off
+        };
         Self {
             machine: Way::of(m, direction, tron),
             start,

@@ -80,6 +80,7 @@ use crate::stream::stage::xfade_max;
 use crate::stream::units::Frames;
 use crate::stream::units::{Cents, Inc, SourceFrame, SourceRate};
 use age::Age;
+use drift::{DriftRng, Place};
 use heads::{
     Bounds, Dir, Fade, Ghost, Head, POWER_FADE_S, Plan, Sizing, Turn, Window, at, min_frames, plan,
     power_of, shortest, window_end_min, window_start, xmix,
@@ -91,7 +92,6 @@ use span::{Reads, Stop, StreamRow};
 use stretch::Stretch;
 use warble::Warble;
 use wave::Wave;
-use drift::{DriftRng, Place};
 
 pub use heads::loop_len;
 pub use oneshot::SliceCode;
@@ -1688,7 +1688,11 @@ impl TapeDeck {
 
     /// The loop's SIZE: LENGTH's, but TRON's whole window.
     fn loop_size(&self) -> f32 {
-        if self.round == Round::No { self.mac.size } else { 1.0 }
+        if self.round == Round::No {
+            self.mac.size
+        } else {
+            1.0
+        }
     }
 
     /// START and END as the model plays them. Reversed (`rev`), LOOP's
@@ -3356,7 +3360,11 @@ mod tests {
         let mut d = TapeDeck::idle();
         for m in Way::ALL {
             d.machine = TapeDeck::idle_machine(m);
-            d.round = if m == Way::Tron { Round::Window } else { Round::No };
+            d.round = if m == Way::Tron {
+                Round::Window
+            } else {
+                Round::No
+            };
             assert_eq!(d.tape_machine(), m);
         }
     }

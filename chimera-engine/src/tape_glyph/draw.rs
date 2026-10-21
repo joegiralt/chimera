@@ -821,8 +821,9 @@ fn steps(p: &mut Pix, w: Steps, style: StepStyle) {
             let (lo, hi) = (r(from), r(to));
             window_strip(p, lo, hi, 44, 0);
             // TRON once through: its tape is LENGTH's share of 8 s.
-            let end = (w.tron == Tron::On)
-                .then(|| r(x0 + tron::TapeSeconds::of_length(len).get() / TRON_LEN_MAX_S * (x1 - x0)));
+            let end = (w.tron == Tron::On).then(|| {
+                r(x0 + tron::TapeSeconds::of_length(len).get() / TRON_LEN_MAX_S * (x1 - x0))
+            });
             let n = (((to - from) / 8.0) as i32).max(1) + 1;
             let d = if back { -1.0 } else { 1.0 };
             for k in 0..n {

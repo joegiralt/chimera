@@ -66,6 +66,9 @@ use screen::*;
 // FX PLACE · FREQ): every FLT front page, row_flt, large_va_drive.
 // The fourth TAPE merge: the browsers and POOL count 16 Sounds with STAB
 // and FB (4 %).
+// ADR 0203: WALK replaces ONE, LOOP, PING and TRON (its DECK, its page,
+// its footsteps and strip, tape_deck_reverse and tape_deck_drift new);
+// sound_browser_pool_full's bound moves with WALK's two params.
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x4b8d653ed15f4a3e),
@@ -199,7 +202,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
     // Re-recorded at the main merge: the header's Part dots (ADR 0150).
     // Re-recorded: its map names the machine, LOOP (ADR 0178).
-    ("tape_pitch_musical", 0x57bccbb87c98b3a5),
+    ("tape_pitch_musical", 0xebb38641a3992e19),
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_exc", 0x1a9d74fd3e32a2a1),
     // Re-recorded: the EXC node (plan Task 13).
@@ -256,44 +259,44 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master_level", 0x33a39d11187d9bb1),
     #[cfg(feature = "master-tape")]
-    ("mixer_part", 0x429ab992c626b285),
+    ("mixer_part", 0xfd1a118204f19d77),
     #[cfg(feature = "master-tape")]
-    ("mixer_sends", 0xba83be0d8d177f8d),
+    ("mixer_sends", 0x35e09ae3385236bb),
     // DLY's branch hides REV's label it ran into (TAPE Task 15).
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay", 0x498e957495d45875),
+    ("mixer_fx_delay", 0xfbe0808a050ed002),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb", 0xf884d95677bc4c9f),
+    ("mixer_fx_reverb", 0x9d9d0b61c361768c),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_more", 0x78bfe9ae1a6f8293),
+    ("mixer_fx_reverb_more", 0x7b25fe8ae4125c8c),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall", 0x21c8e0e268a28611),
+    ("mixer_fx_reverb_hall", 0x110a3c12bb55b53e),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall_more", 0x33e1535b46093a7c),
+    ("mixer_fx_reverb_hall_more", 0x733a41e95f057403),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_hall_more2", 0xd48d23ad4d9a46dc),
+    ("mixer_fx_reverb_hall_more2", 0x8bfbd6ba87c2ac03),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate", 0x505d2202f043580e),
+    ("mixer_fx_reverb_gate", 0x6da0632fff3b4421),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate_more", 0xdc0bd1ce1ea6779a),
+    ("mixer_fx_reverb_gate_more", 0x9c5959ebe27922a1),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate_sync", 0xcb7bc913fa920663),
+    ("mixer_fx_reverb_gate_sync", 0x382b5c06de0836b8),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_bloom", 0x0d7e76a3ba5578ea),
+    ("mixer_fx_reverb_bloom", 0x8bb0cf42db45e7a5),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_bloom_more", 0xa267930e1d560034),
+    ("mixer_fx_reverb_bloom_more", 0x1cadf3eefa17fedb),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_char", 0xb47f7ef56c42b2a7),
+    ("mixer_fx_delay_char", 0xb3e9570b26525f00),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", 0x43381076b873ad98),
     #[cfg(feature = "master-tape")]
-    ("mixer_master", 0x29929673ac6c7c44),
+    ("mixer_master", 0xaa7cc5f71d43600a),
     #[cfg(feature = "master-tape")]
-    ("mixer_master_level", 0x041e07e545a86dfb),
+    ("mixer_master_level", 0x33a39d11187d9bb1),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_out_p2", 0xbbf4869671d1e56d),
     #[cfg(feature = "master-tape")]
-    ("mixer_out_p2", 0x60429572e55d3aaf),
+    ("mixer_out_p2", 0xbbf4869671d1e56d),
     ("algo_out_p3", 0x543753bd58a29fa6),
     // Re-recorded: four fixed columns, FREQ Q VCA FOLD (filter-types § 7);
     // then ALGO's ten rows of 14, OP5 and OP6 with X cells (Task 17);
@@ -316,7 +319,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded at the merge: MAX_SOUND_COST 2688 (VOICEFX and PLAY's MODE).
     // Fourth TAPE merge: MAX_SOUND_COST 2656 (STAB, FB and TAPE), same picture.
     // Then SEM's MORPH: the dense fill leaves 0.1K FREE, not 0.0K.
-    ("sound_browser_pool_full", 0x4de1ac0696ea9318),
+    ("sound_browser_pool_full", 0xbbf3ded065a88bb9),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.
@@ -401,7 +404,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("large_mixer_sends", 0x3ea6919e3a4e3772),
     #[cfg(feature = "master-tape")]
-    ("large_mixer_sends", 0x66e4fced766b46b8),
+    ("large_mixer_sends", 0x3ea6919e3a4e3772),
     ("large_settings_top", 0x9d2976351278b0df),
     ("large_settings_personal", 0x35b1c3eb794412f7),
     ("large_sound_browser", 0x4b2ef7b9df03ce5c),
@@ -417,14 +420,14 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_src_missing", 0x85708a674c5cfd05),
     // Re-recorded: MODEL lists ONE, LOOP and PING; DECK holds the glyph's
     // knobs, the model page TAPE, AGE, WOW and the rest (ADR 0178).
-    ("tape_deck_oneshot", 0xddac0b3a442a2ace),
-    ("tape_page_oneshot", 0xc1ab888a72ad448b),
-    ("tape_deck_loop", 0x7729120709f86912),
+    ("tape_deck_oneshot", 0x3f32f4d5e221b17b),
+    ("tape_page_oneshot", 0x7fb5a187d2e29ffb),
+    ("tape_deck_loop", 0xaabe8875a98d21a2),
     // New: bank 2 closed (ADR 0141).
-    ("tape_deck_needs_update", 0x754e23f44b5ce17f),
-    ("tape_page_loop", 0xe384ebb8802bc1ce),
-    ("tape_deck_tron", 0xfbe1971ab0fd9b37),
-    ("tape_page_tron", 0x01ab82e2229cccf9),
+    ("tape_deck_needs_update", 0x2baeb028b2934a9c),
+    ("tape_page_loop", 0xc7c4ceedf0e08197),
+    ("tape_deck_tron", 0x42d3cb491160dad4),
+    ("tape_page_tron", 0xf0fd4f6cfc1fcdce),
     ("tape_deck_stretch", 0x33e395cf798ccc3c),
     ("tape_page_stretch", 0xbeb317ea13da8a67),
     ("tape_page_stretch_type", 0x2388e89c04b15a30),
@@ -432,20 +435,22 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_page_transwave", 0xcf7697ab32e621c5),
     ("tape_deck_scrub", 0x38206f8d2ff7fa0f),
     ("tape_page_scrub", 0x2980dccca3896a88),
-    ("tape_deck_pingpong", 0x1e8a9e6d25cb018a),
-    ("tape_page_pingpong", 0xfb082cae989abeb8),
-    ("tape_strip_oneshot", 0xd0d3879ef227791c),
-    ("tape_strip_loop", 0x7a93bcdc395e9db7),
-    ("tape_strip_tron", 0x92d1139ec52d5494),
+    ("tape_deck_pingpong", 0x8707082939da847c),
+    ("tape_deck_reverse", 0xbf5a0c16b971477f),
+    ("tape_deck_drift", 0x051c0b634e4484f9),
+    ("tape_page_pingpong", 0xd89fbd01ef2f6427),
+    ("tape_strip_oneshot", 0x2351e17d09aba98a),
+    ("tape_strip_loop", 0x45170ab0124291df),
+    ("tape_strip_tron", 0xac3230a5a5bd2d76),
     ("tape_strip_stretch", 0x7fac311807a65826),
     ("tape_strip_transwave", 0x8578d1cff2b53962),
     ("tape_strip_scrub", 0xbc6f5e8bda4a1ee5),
-    ("tape_strip_pingpong", 0x68c3cfea764a1094),
+    ("tape_strip_pingpong", 0xf96f3a35d1785b5e),
     ("tape_strip_loop_reversed", 0x8c6bc98f7858d886),
-    ("tape_strip_oneshot_slice", 0x8b54df619e454573),
-    ("tape_strip_oneshot_slice_reversed", 0xd5b6657ba7b74491),
-    ("tape_strip_pingpong_reversed", 0x8ee8f289802c399f),
-    ("tape_strip_tron_idle", 0x340ec44fb606f073),
+    ("tape_strip_oneshot_slice", 0xda826c450d9cbb61),
+    ("tape_strip_oneshot_slice_reversed", 0xfc44e058a17b550c),
+    ("tape_strip_pingpong_reversed", 0x5102447e24b0268d),
+    ("tape_strip_tron_idle", 0x1609a91eff5b8529),
     ("tape_src_pool", 0x6ac82eb8b9a261f1),
     ("tape_src_card", 0xd9e193292c4987f3),
     ("tape_src_wont_fit", 0x5877eb1a8b000d0a),

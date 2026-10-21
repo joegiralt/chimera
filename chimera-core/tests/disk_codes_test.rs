@@ -532,8 +532,12 @@ fn retired_never_live() {
         ]
     );
     // TAPE's MODEL REVERSE (#369): LOOP with END before START; PING-PONG
-    // and ONESHOT, folded into PLAY (ADR 0170).
-    assert_eq!(RETIRED_CODES, &[(34, 0, 1), (34, 0, 2), (34, 0, 7)]);
+    // and ONESHOT, folded into PLAY (ADR 0170); TRON and MODE ONE, into
+    // WALK's TRON and DIRECTION FORWARD (ADR 0203).
+    assert_eq!(
+        RETIRED_CODES,
+        &[(34, 0, 1), (34, 0, 2), (34, 0, 6), (34, 0, 7), (34, 15, 0)]
+    );
     assert!(RETIRED_SOURCES.is_empty());
     // DRV and the folder (ADR 0155): never reused.
     assert_eq!(RETIRED_BLOCKS, &[9, 11]);

@@ -95,7 +95,6 @@ pub fn render(snd: &Sound, b: &Built, events: &[(f32, u8, bool)], secs: f32) -> 
             next += 1;
         }
         inst.render_with(&mut fx, &mut dac, &shared, &mut scope, &view);
-        drop(view);
         tok.store_sounding(inst.source_mask());
         out.extend_from_slice(&dac.out()[0]);
     }

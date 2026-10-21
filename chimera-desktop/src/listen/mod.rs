@@ -1261,7 +1261,7 @@ mod tests {
         let html = page(&rows);
         for s in ["tx-bass", "choir"] {
             for kind in ["dry", "wet"] {
-                let f = format!("play-{s}-{kind}.wav");
+                let f = format!("walk-{s}-{kind}.wav");
                 assert!(html.contains(&f), "{f} missing");
             }
         }
