@@ -277,18 +277,8 @@ pub fn write_head_table(
     heads: &[HeadSpec],
     out: &mut [u8],
 ) -> Option<usize> {
-    let n = u8::try_from(heads.len()).ok().and_then(NonZeroU8::new);
-    let (Some(heads_n), true) = (n, reach.get() > 0) else {
-        return None;
-    };
-    let held = Held::Streamed {
-        heads: heads_n,
-        reach,
-    };
-    let d = Descriptor {
-        rate,
-        layout: Layout::Plain(held),
-    };
+    let n = u8::try_from(heads.len()).ok()?;
+    let d = Descriptor::new(Shape::Plain, 1, rate.get(), reach, n)?;
     let end = DESC_LEN + HEAD_ENTRY * heads.len();
     let out = out.get_mut(..end)?;
     out[..DESC_LEN].copy_from_slice(&d.to_bytes());
