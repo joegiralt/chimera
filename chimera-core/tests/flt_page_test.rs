@@ -270,7 +270,7 @@ fn an_absent_route_knob_shows_a_dash() {
     settle(&mut ui);
     ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
 
-    let (label, fmt) = ("FM1", chimera_core::ui::page::ValFmt::Route);
+    let (label, fmt) = ("ENV AMT", chimera_core::ui::page::ValFmt::Route);
     let (x, y) = (theme::MARGIN_X, theme::CELL_LABEL_Y);
     for dx in 0..12 {
         for dy in 0..2 {
@@ -336,7 +336,7 @@ fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
     want.px.fill(fb.px[0]);
     components::focus_band(
         &mut want,
-        "FM3",
+        "FREQ MOD",
         "--",
         chimera_core::ui::glyph::Gauge::Arc {
             value: ui.renderer.anim[2].current(),
@@ -386,8 +386,8 @@ fn the_cells_key_carries_the_looks() {
     else {
         panic!("FLT › MOD has cells");
     };
-    assert_eq!(looks & 3, Look::Absent as u32, "FM1");
-    assert_eq!(looks >> 2 & 3, Look::Live as u32, "FM2");
+    assert_eq!(looks & 3, Look::Absent as u32, "ENV AMT");
+    assert_eq!(looks >> 2 & 3, Look::Live as u32, "KEYBOARD");
     assert_eq!(matrix_rev, ui.matrix_state.rev);
 }
 
@@ -801,7 +801,8 @@ fn panels_follow_the_type() {
     assert_eq!(
         labels(FilterKind::Svf),
         [
-            "MODE", "FREQ", "Q", "FM1", "FM2", "FM3", "FEEDBACK", "QM", "FM3 IN", "QM IN"
+            "MODE", "FREQ", "Q", "ENV AMT", "KEYBOARD", "FREQ MOD", "FEEDBACK", "RES MOD",
+            "FREQ SRC", "RES SRC"
         ]
     );
     assert_eq!(labels(FilterKind::Dirty), labels(FilterKind::Svf));
@@ -810,15 +811,15 @@ fn panels_follow_the_type() {
     assert_eq!(
         labels(FilterKind::Sem),
         [
-            "MODE", "FREQ", "RES", "FM1", "FM2", "FM3", "FEEDBACK", "QM", "OUTPUT", "FM3 IN",
-            "QM IN"
+            "MODE", "FREQ", "RES", "ENV AMT", "KEYBOARD", "FREQ MOD", "FEEDBACK", "RES MOD",
+            "OUTPUT", "FREQ SRC", "RES SRC"
         ]
     );
     assert_eq!(
         labels(FilterKind::K2040),
         [
-            "VOICE", "CUTOFF", "RES", "ENV AMT", "KEYBD", "FM3", "FEEDBACK", "QM", "FM3 IN",
-            "QM IN"
+            "VOICE", "CUTOFF", "RES", "ENV AMT", "KEYBOARD", "FREQ MOD", "FEEDBACK", "RES MOD",
+            "FREQ SRC", "RES SRC"
         ]
     );
     let t = |k, i| knob(k, i).map(|n| n.target);
