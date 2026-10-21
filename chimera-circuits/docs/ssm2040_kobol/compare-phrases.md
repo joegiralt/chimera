@@ -1,0 +1,10 @@
+# Phrases: ours sequenced from play.py, a plain saw (VCO1 half: peak 0.5), our ADS for FREQ and VCA, fitted per take to the Kobol's level and spectral-centroid tracks (10 ms)
+
+- phrase_bass_vca8 rev2: FREQ@A1 50 Hz, track 0.52 oct/oct, env 1.00 oct, filter decay 0.319 s sustain 0.06, amp decay 0.425 s sustain 1.00, RES 1.00; centroid error 0.32 oct rms (score 3.056)
+- phrase_bass_vca8 exp: FREQ@A1 57 Hz, track 1.20 oct/oct, env 1.00 oct, filter decay 0.150 s sustain 0.42, amp decay 0.425 s sustain 1.00, RES 1.00; centroid error 0.38 oct rms (score 3.027)
+- phrase_bass rev2: FREQ@A1 41 Hz, track 0.09 oct/oct, env 0.00 oct, filter decay 0.296 s sustain 0.31, amp decay 0.425 s sustain 1.00, RES 1.00; centroid error 0.41 oct rms (score 2.683)
+- phrase_bass exp: FREQ@A1 41 Hz, track 0.59 oct/oct, env 0.00 oct, filter decay 0.150 s sustain 0.50, amp decay 0.425 s sustain 1.00, RES 0.55; centroid error 0.39 oct rms (score 2.699)
+- phrase_acid_vca8 rev2: FREQ@A1 1045 Hz, track 1.80 oct/oct, env 0.60 oct, filter decay 0.138 s sustain 0.38, amp decay 0.131 s sustain 1.00, RES 0.87; centroid error 1.85 oct rms (score 5.923)
+- phrase_acid_vca8 exp: FREQ@A1 172 Hz, track 0.50 oct/oct, env 1.00 oct, filter decay 0.172 s sustain 0.43, amp decay 0.133 s sustain 1.00, RES 0.97; centroid error 1.85 oct rms (score 5.889)
+- phrase_acid rev2: FREQ@A1 57 Hz, track 0.50 oct/oct, env 1.00 oct, filter decay 0.261 s sustain 0.45, amp decay 0.348 s sustain 0.80, RES 1.00; centroid error 0.42 oct rms (score 0.990)
+- phrase_acid exp: FREQ@A1 172 Hz, track 0.50 oct/oct, env 0.00 oct, filter decay 0.150 s sustain 0.50, amp decay 0.348 s sustain 0.76, RES 0.48; centroid error 0.42 oct rms (score 0.992)
