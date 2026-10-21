@@ -3,13 +3,11 @@
 //! shift's accuracy, feedback that never runs away, TYPE and TIME changes
 //! that never click, NaN, and its codes.
 
-use chimera_core::block::{Block, DiskCode};
+use chimera_core::block::Block;
 use chimera_core::dsp::delay::grain::{
     self, Clock, Ctl, Engine, GRAINS, MAX_D, MIN_D, bell, log_one_minus_x, soft_clip, uniform,
 };
-use chimera_core::dsp::delay::{
-    DelayParams, DelayType, LINE_SCALE, MAX_DELAY_SAMPLES, TAPE_CELLS, TapeDelay, char_cells,
-};
+use chimera_core::dsp::delay::{DelayParams, DelayType, LINE_SCALE, MAX_DELAY_SAMPLES, TapeDelay};
 use chimera_hal::BLOCK_SIZE;
 
 const N: usize = MAX_DELAY_SAMPLES;
@@ -17,13 +15,13 @@ const FS: u32 = 48_000;
 
 fn grain_params() -> DelayParams {
     DelayParams {
-        kind: DelayType::Grain,
         time_ms: 250.0,
         feedback: 0.0,
         mix: 1.0,
         tone: 1.0,
         ..DelayParams::DEFAULT
     }
+    .with(DelayParams::TYPE, DelayType::Grain.value())
 }
 
 /// A line of band-limited noise at about −10 dBFS of its ±2 scale.
@@ -226,13 +224,11 @@ fn the_engine_matches_its_f64_reference() {
         (1.0, 1.0, 24.0, 0.3),
         (0.0, 0.0, -24.0, 1.0),
     ] {
-        let p = DelayParams {
-            size,
-            density,
-            pitch,
-            texture,
-            ..grain_params()
-        };
+        let p = grain_params()
+            .with(DelayParams::SIZE, size)
+            .with(DelayParams::DENSITY, density)
+            .with(DelayParams::PITCH, pitch)
+            .with(DelayParams::TEXTURE, texture);
         let (worst, rms) = against_reference(&p, 1500);
         assert!(rms > 0.002, "{p:?}: silent ({rms})");
         assert!(worst < 5e-4, "{p:?}: {worst} off, RMS {rms}");
@@ -267,11 +263,9 @@ fn the_ported_pieces_match_beads() {
 // ---------------------------------------------------------------------------
 
 fn starts_over(density: f32, texture: f32, secs: f32) -> (usize, Vec<usize>) {
-    let p = DelayParams {
-        density,
-        texture,
-        ..grain_params()
-    };
+    let p = grain_params()
+        .with(DelayParams::DENSITY, density)
+        .with(DelayParams::TEXTURE, texture);
     let ctl = Ctl::new(&p, 4800.0, FS);
     let (mut c, mut rng) = (Clock::NEW, 0x9E37_79B9u32);
     let blocks = (secs * FS as f32) as usize / BLOCK_SIZE;
@@ -339,11 +333,9 @@ fn texture_makes_the_intervals_irregular() {
 #[test]
 fn the_pool_holds_the_cloud() {
     let line = noisy_line();
-    let p = DelayParams {
-        size: 1.0,
-        density: 1.0,
-        ..grain_params()
-    };
+    let p = DelayParams { ..grain_params() }
+        .with(DelayParams::SIZE, 1.0)
+        .with(DelayParams::DENSITY, 1.0);
     let ctl = Ctl::new(&p, 12_000.0, FS);
     let mut e = Engine::NEW;
     let mut most = 0;
@@ -406,13 +398,11 @@ fn crossing_hz(x: &[f32]) -> f64 {
 #[test]
 fn pitch_shifts_each_grain_within_a_cent() {
     for semis in [0.0f32, 7.0, 12.0, -12.0, 24.0, -24.0] {
-        let p = DelayParams {
-            pitch: semis,
-            texture: 0.0,
-            size: 0.9,
-            density: 0.0,
-            ..grain_params()
-        };
+        let p = DelayParams { ..grain_params() }
+            .with(DelayParams::PITCH, semis)
+            .with(DelayParams::TEXTURE, 0.0)
+            .with(DelayParams::SIZE, 0.9)
+            .with(DelayParams::DENSITY, 0.0);
         let mut d = Box::new(TapeDelay::new());
         let out = play(&mut d, &p, 2000, sine(440.0, 0.5));
         // The second grain, at 2 s: the first may start before the line
@@ -442,13 +432,13 @@ fn full_feedback_with_pitch_up_never_runs_away() {
     for (pitch, texture) in [(12.0f32, 0.0f32), (12.0, 1.0), (24.0, 0.5), (7.0, 0.0)] {
         let p = DelayParams {
             feedback: 1.0,
-            pitch,
-            texture,
             tone: 1.0,
-            density: 0.8,
-            size: 0.7,
             ..grain_params()
-        };
+        }
+        .with(DelayParams::PITCH, pitch)
+        .with(DelayParams::TEXTURE, texture)
+        .with(DelayParams::DENSITY, 0.8)
+        .with(DelayParams::SIZE, 0.7);
         let mut d = Box::new(TapeDelay::new());
         let burst = |b: usize| -> [f32; BLOCK_SIZE] {
             let mut rng = (b as u32).wrapping_mul(2_654_435_761) | 1;
@@ -480,10 +470,10 @@ fn full_feedback_with_pitch_up_never_runs_away() {
 fn shimmer_decays_below_full_feedback() {
     let p = DelayParams {
         feedback: 0.8,
-        pitch: 12.0,
         tone: 0.8,
         ..grain_params()
-    };
+    }
+    .with(DelayParams::PITCH, 12.0);
     let mut d = Box::new(TapeDelay::new());
     let out = play(&mut d, &p, 375 * 10, |b| {
         if b < 75 {
@@ -509,17 +499,14 @@ fn max_step(x: &[f32]) -> f32 {
 #[test]
 fn type_switches_never_click() {
     let tape = DelayParams {
-        kind: DelayType::Tape,
         wow_flutter: 0.0,
-        size: 0.9,
-        density: 0.8,
-        texture: 0.0,
         ..grain_params()
-    };
-    let grain = DelayParams {
-        kind: DelayType::Grain,
-        ..tape
-    };
+    }
+    .with(DelayParams::TYPE, DelayType::Tape.value())
+    .with(DelayParams::SIZE, 0.9)
+    .with(DelayParams::DENSITY, 0.8)
+    .with(DelayParams::TEXTURE, 0.0);
+    let grain = DelayParams { ..tape }.with(DelayParams::TYPE, DelayType::Grain.value());
     let mut d = Box::new(TapeDelay::new());
     let src = sine(220.0, 0.5);
     let mut out = Vec::new();
@@ -553,12 +540,10 @@ fn type_switches_never_click() {
 /// steady return's.
 #[test]
 fn time_changes_never_click_under_grain() {
-    let a = DelayParams {
-        size: 0.8,
-        density: 0.8,
-        texture: 0.0,
-        ..grain_params()
-    };
+    let a = DelayParams { ..grain_params() }
+        .with(DelayParams::SIZE, 0.8)
+        .with(DelayParams::DENSITY, 0.8)
+        .with(DelayParams::TEXTURE, 0.0);
     let b = DelayParams { time_ms: 61.0, ..a };
     let mut d = Box::new(TapeDelay::new());
     let src = sine(220.0, 0.5);
@@ -579,13 +564,13 @@ fn time_changes_never_click_under_grain() {
 #[test]
 fn nan_never_reaches_the_return() {
     let p = DelayParams {
-        size: f32::NAN,
-        density: f32::NAN,
-        pitch: f32::NAN,
-        texture: f32::NAN,
         feedback: 0.7,
         ..grain_params()
-    };
+    }
+    .with(DelayParams::SIZE, f32::NAN)
+    .with(DelayParams::DENSITY, f32::NAN)
+    .with(DelayParams::PITCH, f32::NAN)
+    .with(DelayParams::TEXTURE, f32::NAN);
     let ctl = Ctl::new(&p, 4800.0, FS);
     for v in [ctl.dur, ctl.rate, ctl.speed, ctl.texture, ctl.amp()] {
         assert!(v.is_finite(), "{ctl:?}");
@@ -602,49 +587,29 @@ fn nan_never_reaches_the_return() {
     });
     assert!(out.iter().all(|v| v.is_finite()));
     assert!(out.iter().any(|v| *v != 0.0), "NaN silenced it");
-    let kind = DelayParams {
-        kind: DelayType::at(f32::NAN),
-        ..p
-    };
-    assert_eq!(kind.kind, DelayType::Tape);
+    let kind = DelayParams { ..p }.with(DelayParams::TYPE, f32::NAN);
+    assert_eq!(kind.kind(), DelayType::Tape);
 }
 
 /// TYPE is delay param 7 (0–6 are in use, ADR 0009), TAPE by default and
-/// as a project saved before it loads; its codes are TAPE 0, GRAIN 1.
+/// as a project saved before it loads; stored as its index (TAPE 0, GRAIN
+/// 1), a real the codec clamps and rounds, so an unknown one lands on a
+/// TYPE.
 #[test]
 fn type_is_param_7_and_tape_by_default() {
     let mut p = DelayParams::default();
-    assert_eq!(p.kind, DelayType::Tape);
+    assert_eq!(p.kind(), DelayType::Tape);
     assert_eq!(DelayParams::TYPE.0, 7);
-    assert_eq!(p.enum_code(DelayParams::TYPE), Some(0));
-    assert!(p.set_enum_code(DelayParams::TYPE, 1));
-    assert_eq!(p.kind, DelayType::Grain);
-    assert_eq!(p.enum_ident(DelayParams::TYPE), Some("GRAIN"));
-    assert!(!p.set_enum_code(DelayParams::TYPE, 2), "no third TYPE yet");
-    assert_eq!(p.kind, DelayType::Grain);
+    assert_eq!(p.get(DelayParams::TYPE), 0.0);
+    p.set(DelayParams::TYPE, 1.0);
+    assert_eq!(p.kind(), DelayType::Grain);
+    p.set(DelayParams::TYPE, 7.0);
+    assert_eq!(p.get(DelayParams::TYPE), 1.0, "held to GRAIN");
+    p.set(DelayParams::TYPE, -3.0);
+    assert_eq!(p.kind(), DelayType::Tape);
     for t in [DelayType::Tape, DelayType::Grain] {
-        assert_eq!(DelayType::from_disk_code(t.disk_code()), Some(t));
+        assert_eq!(DelayType::at(t.value()), t);
     }
-    p.write(DelayParams::TYPE, 0.0);
-    assert_eq!(p.kind, DelayType::Tape);
-}
-
-/// DLY › CHAR follows TYPE: TAPE's MECHANICS and SAT, GRAIN's four (with
-/// no bank 2 on the host, bank 1's own).
-#[test]
-fn the_char_page_follows_type() {
-    assert_eq!(char_cells(DelayType::Tape), TAPE_CELLS);
-    assert_eq!(
-        char_cells(DelayType::Grain),
-        [
-            Some(DelayParams::SIZE),
-            Some(DelayParams::DENSITY),
-            Some(DelayParams::PITCH),
-            Some(DelayParams::TEXTURE),
-            None,
-            None
-        ]
-    );
 }
 
 /// GRAIN's return, a regression pin of the port: TIME 250 ms, FDBK 0.6,
@@ -653,10 +618,10 @@ fn the_char_page_follows_type() {
 fn grain_render_is_pinned() {
     let p = DelayParams {
         feedback: 0.6,
-        pitch: 12.0,
-        texture: 0.4,
         ..grain_params()
-    };
+    }
+    .with(DelayParams::PITCH, 12.0)
+    .with(DelayParams::TEXTURE, 0.4);
     let mut d = Box::new(TapeDelay::new());
     let out = play(&mut d, &p, 1200, |b| {
         core::array::from_fn(|i| {

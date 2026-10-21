@@ -119,13 +119,12 @@ fn settings() -> Vec<(&'static str, DelayParams)> {
         mix: 1.0,
         ..DelayParams::DEFAULT
     };
-    let g = |size, density, pitch, texture| DelayParams {
-        kind: DelayType::Grain,
-        size,
-        density,
-        pitch,
-        texture,
-        ..tape
+    let g = |size, density, pitch, texture| {
+        tape.with(DelayParams::TYPE, DelayType::Grain.value())
+            .with(DelayParams::SIZE, size)
+            .with(DelayParams::DENSITY, density)
+            .with(DelayParams::PITCH, pitch)
+            .with(DelayParams::TEXTURE, texture)
     };
     vec![
         ("tape", tape),

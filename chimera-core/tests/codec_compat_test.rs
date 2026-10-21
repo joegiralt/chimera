@@ -507,11 +507,8 @@ fn project_fixture_loads() {
     // defaults (ADR 0199; TAPE's sound is pinned in delay_tape_hash_test).
     let d = p.perf().fx.delay;
     let dflt = chimera_core::dsp::delay::DelayParams::DEFAULT;
-    assert_eq!(d.kind, chimera_core::dsp::delay::DelayType::Tape);
-    assert_eq!(
-        (d.size, d.density, d.pitch, d.texture),
-        (dflt.size, dflt.density, dflt.pitch, dflt.texture)
-    );
+    assert_eq!(d.kind(), chimera_core::dsp::delay::DelayType::Tape);
+    assert_eq!(d.grain, dflt.grain);
 }
 
 #[test]

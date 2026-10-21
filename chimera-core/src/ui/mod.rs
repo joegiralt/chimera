@@ -1133,7 +1133,6 @@ impl UiState {
             .on_clock(self.orbit.status.source)
             .on_rev(&self.project.perf().fx.reverb)
             .on_chorus(&self.project.perf().fx.chorus)
-            .on_delay(&self.project.perf().fx.delay)
             .on_pages(self.theme.pages);
         let base = view::SourceState::of(ctx.tape, sound.source_ref(), self.project.pool());
         let ctx = ctx.on_source(self.src.state(self.active_part, base, &self.project));

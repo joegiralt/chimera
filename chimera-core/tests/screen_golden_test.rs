@@ -218,7 +218,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_sends", 0x35e09ae3385236bb),
     // Re-recorded: TYPE in front (ADR 0199).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay", 0x43f7a0dc7de5b19b),
+    ("mixer_fx_delay", 0x0858ddab18f1090a),
     // TYPE first, the panel's units, and REV › MORE (reverb TYPEs T6);
     // the REV pages re-recorded for RATE's default and law (ADR 0121).
     #[cfg(not(feature = "master-tape"))]
@@ -245,15 +245,16 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_fx_reverb_bloom", 0x8bb0cf42db45e7a5),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_bloom_more", 0x1cadf3eefa17fedb),
+    // Re-recorded: the map's DLY branch holds GRAIN (ADR 0199).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_char", 0xb3e9570b26525f00),
-    // GRAIN: DLY, its CHAR at PITCH +12, and bank 2 closed (ADR 0199).
+    ("mixer_fx_delay_char", 0xf7d292f46d3dbced),
+    // GRAIN: DLY, DLY › GRAIN at PITCH +12, and bank 2 closed (ADR 0199).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_grain", 0x539faab78dcd5dab),
+    ("mixer_fx_delay_grain", 0xef1ed3ecaaa14bba),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_char_grain", 0x3e86370045ab0bc9),
+    ("mixer_fx_delay_grain_page", 0xd8814ef0bb2d5569),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_grain_needs_update", 0xebf99b8b035ecdef),
+    ("mixer_fx_delay_grain_needs_update", 0xc98f6ca5642f4246),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master", 0xaa7cc5f71d43600a),
     #[cfg(not(feature = "master-tape"))]
@@ -290,7 +291,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay_grain", 0x449acab305e48e68),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_char_grain", 0xdd746404e0ae40fa),
+    ("mixer_fx_delay_grain_page", 0x419a8d7169806caf),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay_grain_needs_update", 0x0a00d3afc8dea3c4),
     #[cfg(feature = "master-tape")]

@@ -192,16 +192,16 @@ fn fx_encoders_step_like_before() {
     assert_eq!(perf.fx.delay.rev_send, 0.5);
     turn_def(&reg::DELAY_CHAR, 0, 1, &mut perf);
     assert!((perf.fx.delay.wow_flutter - (0.15 + 1.0 / 128.0)).abs() < 1e-6);
-    // TYPE to GRAIN: CHAR's first cell is SIZE (ADR 0199).
+    // TYPE to GRAIN, and DLY › GRAIN's pots (ADR 0199).
     turn_def(&reg::DELAY, 0, 1, &mut perf);
     assert_eq!(
-        perf.fx.delay.kind,
+        perf.fx.delay.kind(),
         chimera_core::dsp::delay::DelayType::Grain
     );
-    turn_def(&reg::DELAY_CHAR, 0, 1, &mut perf);
-    assert!((perf.fx.delay.size - (0.6 + 1.0 / 128.0)).abs() < 1e-6);
-    turn_def(&reg::DELAY_CHAR, 2, 12, &mut perf);
-    assert_eq!(perf.fx.delay.pitch, 12.0);
+    turn_def(&reg::DELAY_GRAIN, 0, 1, &mut perf);
+    assert!((perf.fx.delay.size() - (0.6 + 1.0 / 128.0)).abs() < 1e-6);
+    turn_def(&reg::DELAY_GRAIN, 2, 12, &mut perf);
+    assert_eq!(perf.fx.delay.pitch(), 12.0);
     turn_def(&reg::DELAY, 0, -1, &mut perf);
     part_page::snap_encoder(&reg::DELAY, 5, 1, &mut perf.edit(PartId::ALL[0]), Op::A);
     assert_eq!(perf.fx.delay.mix, 100.0 / 127.0);
@@ -378,9 +378,8 @@ fn fx_pages_light_their_effect_in_the_flow() {
 /// move to DLY › CHAR (an assumed default, pending the owner), on both
 /// Mix chains.
 #[test]
-fn the_delay_page_is_type_time_fdbk_tone_rev_mix_with_char_below() {
-    use chimera_core::dsp::delay::{DelayParams as D, DelayType};
-    use chimera_core::ui::view::{SlotCtx, view};
+fn the_delay_page_is_type_time_fdbk_tone_rev_mix_with_char_and_grain_below() {
+    use chimera_core::dsp::delay::DelayParams as D;
     let at = |p| Some(ParamAddr::new(BlockRef::Delay, p));
     assert_eq!(
         bound(&reg::DELAY),
@@ -393,17 +392,8 @@ fn the_delay_page_is_type_time_fdbk_tone_rev_mix_with_char_below() {
             at(D::MIX),
         ]
     );
-    // CHAR follows TYPE (ADR 0199).
-    let ctx = SlotCtx::read(&chimera_core::params::ParamSnapshot::default(), Op::A);
-    let shown = |kind| {
-        let d = D { kind, ..D::DEFAULT };
-        let ctx = ctx.on_delay(&d);
-        (0..6)
-            .map(|i| view(&reg::DELAY_CHAR, i, &ctx).addr())
-            .collect::<Vec<_>>()
-    };
     assert_eq!(
-        shown(DelayType::Tape),
+        bound(&reg::DELAY_CHAR),
         [
             at(D::WOW_FLUTTER),
             at(D::SATURATION),
@@ -414,7 +404,7 @@ fn the_delay_page_is_type_time_fdbk_tone_rev_mix_with_char_below() {
         ]
     );
     assert_eq!(
-        shown(DelayType::Grain),
+        bound(&reg::DELAY_GRAIN),
         [
             at(D::SIZE),
             at(D::DENSITY),
@@ -431,7 +421,12 @@ fn the_delay_page_is_type_time_fdbk_tone_rev_mix_with_char_below() {
         .find(|b| b.def.id == reg::DELAY.id)
         .unwrap();
     let subs: Vec<u16> = dly.sub_pages.iter().map(|d| d.id).collect();
-    assert_eq!(subs, [reg::DELAY_CHAR.id], "{}", chain.name);
+    assert_eq!(
+        subs,
+        [reg::DELAY_CHAR.id, reg::DELAY_GRAIN.id],
+        "{}",
+        chain.name
+    );
 }
 
 /// Reverb TYPEs spec § Pages: REV is TYPE · the TYPE's four · MIX, and

@@ -246,12 +246,16 @@ fn project_b() -> FxParams {
             tone: 0.3,
             mix: 0.5,
             rev_send: 0.0,
-            kind: chimera_core::dsp::delay::DelayType::Grain,
-            size: 0.3,
-            density: 0.8,
-            pitch: 12.0,
-            texture: 0.5,
-        },
+            ..DelayParams::DEFAULT
+        }
+        .with(
+            DelayParams::TYPE,
+            chimera_core::dsp::delay::DelayType::Grain.value(),
+        )
+        .with(DelayParams::SIZE, 0.3)
+        .with(DelayParams::DENSITY, 0.8)
+        .with(DelayParams::PITCH, 12.0)
+        .with(DelayParams::TEXTURE, 0.5),
         reverb: ReverbParams {
             time: 0.4,
             damping: 0.7,

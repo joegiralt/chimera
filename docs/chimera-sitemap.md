@@ -74,11 +74,11 @@ FLT (the filter's response curve, with CUTOFF and RES), MST, E1-E3, SPD, ORBIT's
 ```
 PRT ── SND ── CHR ── DLY ── REV ── MST
                       │      │      │
-                      CHAR   MORE,  LVL
-                             MORE 2
+                      CHAR,  MORE,  LVL
+                      GRAIN  MORE 2
 ```
 
-Opens on SND, or on the effect page last left. PRT: CH, MODE, OUT, LEVEL, PAN, BEND. SND: the three send levels. DLY: TYPE (TAPE or GRAIN), TIME, FDBK, TONE, REV, MIX; its CHAR follows TYPE: TAPE's MECHANICS and SAT, GRAIN's SIZE, DENSITY, PITCH and TEXTURE. While bank 2 needs an update, TYPE reads NEEDS UPDATE at GRAIN, which plays as TAPE, and CHAR shows TAPE's. EDIT from PRT or SND goes down to the Sound browser.
+Opens on SND, or on the effect page last left. PRT: CH, MODE, OUT, LEVEL, PAN, BEND. SND: the three send levels. DLY: TYPE (TAPE or GRAIN), TIME, FDBK, TONE, REV, MIX; below it CHAR (TAPE's MECHANICS and SAT) and GRAIN (SIZE, DENSITY, PITCH, TEXTURE), each heard under its TYPE. While bank 2 needs an update, TYPE reads NEEDS UPDATE at GRAIN, which plays as TAPE. EDIT from PRT or SND goes down to the Sound browser.
 
 ---
 

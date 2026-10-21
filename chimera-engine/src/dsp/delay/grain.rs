@@ -18,11 +18,11 @@
 //!
 //! Not ported, and why, in ADR 0199: the seconds-long buffer and its
 //! time-stretch clouds (500 ms here, ADR 0014), stereo pan, SHAPE, reverse
-//! grains, the 32-grain pool (8 here), the delay mode's taps, the media
+//! grains, the 32-grain pool (6 here), the delay mode's taps, the media
 //! models and the reverb.
 //!
 //! With `bank2` this module links into bank 2 whole (`bank2.x`,
-//! `*5delay5grain*`); bank 1 reaches `run` and `CELLS` only through
+//! `*5delay5grain*`); bank 1 reaches `run` only through
 //! `GrainDoor`. With the door closed GRAIN plays as TAPE.
 //
 // Beads is Copyright 2017 Emilie Gillet (emilie.o.gillet@gmail.com), under
@@ -51,7 +51,6 @@ use super::{
     DelayParams, DelayType, Eased, FLUTTER_SAMPLES, MAX_DELAY_SAMPLES, TIME_FADE, Tap, TapeDelay,
     WOW_SAMPLES, read, to_line,
 };
-use crate::block::ParamId;
 use crate::dsp::algo::math::exp2;
 use crate::dsp::clampf;
 use crate::dsp::ease::{at, ease_coeff, step_of};
@@ -62,8 +61,9 @@ const N: usize = MAX_DELAY_SAMPLES;
 const N_Q: u32 = (N as u32) << 16;
 const Q: f32 = 65_536.0;
 
-/// Grains at once (Beads' delay player: 32).
-pub const GRAINS: usize = 8;
+/// Grains at once (Beads' delay player: 32): six keep an ALGO INIT's
+/// voices on rev Y but one (ADR 0199).
+pub const GRAINS: usize = 6;
 /// The nearest a grain reads to the write head, samples: the block is read
 /// before it is written, so a grain at sample 63 must still find its
 /// Hermite's newest tap written (63 + 3), and two to spare.
@@ -90,16 +90,6 @@ pub const DC_HZ: f32 = 20.0;
 /// Starts a block holds; at 128 Hz and Beads' widest random interval
 /// (9.5×) a block sees two.
 const MAX_STARTS: usize = 4;
-
-/// The sub-page's cells under GRAIN, `ui`'s DLY › CHAR (ADR 0199).
-pub const CELLS: [Option<ParamId>; 6] = [
-    Some(DelayParams::SIZE),
-    Some(DelayParams::DENSITY),
-    Some(DelayParams::PITCH),
-    Some(DelayParams::TEXTURE),
-    None,
-    None,
-];
 
 /// A uniform draw in [0, 1) (`stmlib::Random::GetFloat`'s use), from the
 /// top 24 bits.
@@ -263,45 +253,98 @@ impl Grain {
         self.remaining = dur as i32;
     }
 
-    /// Samples `from..` of the block into `out`, read from `line`.
+    /// Samples `from..to` of the block into `out`, read from `line`: in
+    /// runs whose taps stay clear of the ring's ends (no wrap test a
+    /// sample), and the stealing fade only while one runs.
     #[inline(always)]
     fn render(&mut self, line: &[i16; N], out: &mut [f32; BLOCK_SIZE], from: usize, to: usize) {
+        let n = (to - from).min(self.remaining.max(0) as usize);
+        let mut at = from;
+        while at < from + n {
+            let i = (self.pos >> 16) as usize;
+            let want = from + n - at;
+            let run = if i >= 1 && i + 2 < N {
+                // Samples until the newest tap passes the ring's end.
+                let room = ((((N - 2) as u32) << 16) - 1 - self.pos) / self.speed.max(1) + 1;
+                want.min(room as usize)
+            } else {
+                0
+            };
+            if run == 0 {
+                self.wrapped(line, &mut out[at]);
+                at += 1;
+            } else if self.dec == 0.0 {
+                self.run::<false>(line, &mut out[at..at + run]);
+                at += run;
+            } else {
+                self.run::<true>(line, &mut out[at..at + run]);
+                at += run;
+            }
+        }
+        self.remaining -= n as i32;
+    }
+
+    /// `out`'s samples, every tap inside the ring.
+    #[inline(always)]
+    fn run<const STEAL: bool>(&mut self, line: &[i16; N], out: &mut [f32]) {
         let (mut pos, speed) = (self.pos, self.speed);
         let (mut phase, inc) = (self.phase, self.inc);
         let (mut steal, dec) = (self.steal, self.dec);
         let amp = self.amp * (1.0 / super::LINE_SCALE);
-        let mut left = self.remaining;
-        for o in &mut out[from..to] {
-            if left <= 0 {
-                break;
-            }
+        for o in out {
             let i = (pos >> 16) as usize;
             let t = (pos & 0xFFFF) as f32 * (1.0 / Q);
-            let x = if i >= 1 && i + 2 < N {
-                [line[i - 1], line[i], line[i + 1], line[i + 2]]
-            } else {
-                let at = |k: usize| line[(i + N + k - 1) % N];
-                [at(0), at(1), at(2), at(3)]
+            // SAFETY: `render` sized the run so that every sample's taps,
+            // `i − 1 ..= i + 2`, lie inside the line (`i ≥ 1`, `i + 2 < N`):
+            // the head only advances, and the run ends before the newest
+            // tap passes `N − 1`.
+            let x = unsafe {
+                [
+                    *line.get_unchecked(i - 1),
+                    *line.get_unchecked(i),
+                    *line.get_unchecked(i + 1),
+                    *line.get_unchecked(i + 2),
+                ]
             }
             .map(f32::from);
-            // Beads' Hermite, its own form.
-            let c = (x[2] - x[0]) * 0.5;
-            let v = x[1] - x[2];
-            let w = c + v;
-            let a = w + v + (x[3] - x[1]) * 0.5;
-            let b = w + a;
-            let s = ((a * t - b) * t + c) * t + x[1];
-            steal -= dec;
-            *o += s * bell(phase) * steal.max(0.0) * amp;
-            phase = (phase + inc).min(1.0);
-            pos += speed;
-            if pos >= N_Q {
-                pos -= N_Q;
+            let mut g = amp * bell(phase);
+            if STEAL {
+                steal -= dec;
+                g *= steal.max(0.0);
             }
-            left -= 1;
+            *o += hermite(x, t) * g;
+            phase += inc;
+            pos += speed;
         }
-        (self.pos, self.phase, self.steal, self.remaining) = (pos, phase, steal, left.max(0));
+        (self.pos, self.phase, self.steal) = (pos, phase, steal);
     }
+
+    /// One sample whose taps wrap the ring.
+    fn wrapped(&mut self, line: &[i16; N], o: &mut f32) {
+        let i = (self.pos >> 16) as usize;
+        let t = (self.pos & 0xFFFF) as f32 * (1.0 / Q);
+        let x: [f32; 4] = core::array::from_fn(|k| f32::from(line[(i + N + k - 1) % N]));
+        self.steal -= self.dec;
+        let g = self.amp * (1.0 / super::LINE_SCALE) * bell(self.phase) * self.steal.max(0.0);
+        *o += hermite(x, t) * g;
+        self.phase += self.inc;
+        self.pos += self.speed;
+        if self.pos >= N_Q {
+            self.pos -= N_Q;
+        }
+    }
+}
+
+/// Beads' Hermite (`DelayLine::Read<INTERPOLATION_HERMITE>`), its own form:
+/// between `x[1]` and `x[2]` at `t`.
+#[inline(always)]
+pub fn hermite(x: [f32; 4], t: f32) -> f32 {
+    let c = (x[2] - x[0]) * 0.5;
+    let v = x[1] - x[2];
+    let w = c + v;
+    let a = w + v + (x[3] - x[1]) * 0.5;
+    let b = w + a;
+    ((a * t - b) * t + c) * t + x[1]
 }
 
 /// One block's grain settings, from the knobs.
@@ -327,17 +370,17 @@ impl Ctl {
     pub fn new(p: &DelayParams, delay: f32, fs: u32) -> Self {
         let sr = fs as f32;
         let unit = |v: f32| if v.is_nan() { 0.0 } else { clampf(v, 0.0, 1.0) };
-        let pitch = if p.pitch.is_nan() {
+        let pitch = if p.pitch().is_nan() {
             0.0
         } else {
-            clampf(p.pitch, -24.0, 24.0)
+            clampf(p.pitch(), -24.0, 24.0)
         };
         Self {
             delay,
-            dur: SIZE_MIN * libm::powf(SIZE_SPAN, unit(p.size)) * sr,
-            rate: RATE_MIN * exp2(RATE_OCTAVES * unit(p.density)) / sr,
+            dur: SIZE_MIN * libm::powf(SIZE_SPAN, unit(p.size())) * sr,
+            rate: RATE_MIN * exp2(RATE_OCTAVES * unit(p.density())) / sr,
             speed: exp2(pitch * (1.0 / 12.0)),
-            texture: unit(p.texture),
+            texture: unit(p.texture()),
             instant: INSTANT_S * sr,
             preempt: PREEMPT_S * sr,
         }
@@ -391,7 +434,7 @@ impl Engine {
     /// written, so it must hold every sample up to `wp`, the write head at
     /// the block's first sample. Each start renders the grains up to it,
     /// takes the grain nearest its end, and fades the next two (Beads'
-    /// sorted scheduler: the 2 nearest their end, of 8).
+    /// sorted scheduler: the 2 nearest their end, of 6).
     pub fn block(&mut self, line: &[i16; N], wp: usize, ctl: &Ctl, out: &mut [f32; BLOCK_SIZE]) {
         *out = [0.0; BLOCK_SIZE];
         let mut starts = [(0usize, 0.0f32); MAX_STARTS];
@@ -488,7 +531,11 @@ pub fn run(d: &mut TapeDelay, buf: &mut [f32; BLOCK_SIZE], p: &DelayParams, fs: 
     if d.grain.share == 0.0 {
         d.grain = State::NEW;
     }
-    let to = if p.kind == DelayType::Grain { 1.0 } else { 0.0 };
+    let to = if p.kind() == DelayType::Grain {
+        1.0
+    } else {
+        0.0
+    };
     let step = BLOCK_SIZE as f32 / f32::from(TIME_FADE);
     let s = d.grain.share;
     let share = (
@@ -586,8 +633,10 @@ fn span(
                 t += dt;
             }
             tape_lp += c * (delayed - tape_lp);
+            // `fast_tanh` for TAPE's tanh over the 20 ms TYPE crossfade
+            // alone (within 0.024): no call in the loop.
             let sat =
-                libm::tanhf(tape_lp * at(sat_gain.0, sat_gain.1, i)) * at(sat_inv.0, sat_inv.1, i);
+                soft_clip(tape_lp * at(sat_gain.0, sat_gain.1, i)) * at(sat_inv.0, sat_inv.1, i);
             wet += (1.0 - share) * delayed;
             fb += (1.0 - share) * sat;
         }
