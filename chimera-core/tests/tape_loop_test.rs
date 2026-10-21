@@ -378,7 +378,7 @@ fn macros_ease() {
     }
 }
 
-/// MOTION no longer walks WALK's loop in time (ADR 0202: DRIFT steps at
+/// MOTION no longer walks WALK's loop in time (ADR 0203: DRIFT steps at
 /// each note, `tape_play_test`): a LOOP at MOTION ½ plays as at 0.
 #[test]
 fn motion_leaves_the_loop() {
@@ -494,7 +494,7 @@ fn tiny_sources_play_finite() {
                             out.iter().all(|y| y.is_finite()),
                             "{frames} frames, {way:?} {slice}, {start}..{end}"
                         );
-                        // TRON goes round until its tape runs out (ADR 0202).
+                        // TRON goes round until its tape runs out (ADR 0203).
                         assert!(way == Way::Tron || !e.is_active(), "{way:?} {slice}: ends");
                     }
                 }

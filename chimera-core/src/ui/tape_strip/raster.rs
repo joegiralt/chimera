@@ -166,7 +166,7 @@ pub(crate) fn strip_in(
             }
         }
         // TRON goes round its window from POSITION until its tape runs
-        // out (ADR 0202).
+        // out (ADR 0203).
         Way::Tron => place(from, len),
         Way::Loop | Way::Ping => {
             let sizing = Sizing {

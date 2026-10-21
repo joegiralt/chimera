@@ -49,7 +49,7 @@ pub fn inputs(i: &GlyphInputs) -> TapeGauge {
     }
     let (q6, q5) = (Q6::of, Q5::of);
     let machine = match kind {
-        // WALK's footsteps (ADR 0202). FADE at HOLD fades nothing.
+        // WALK's footsteps (ADR 0203). FADE at HOLD fades nothing.
         Kind::One | Kind::Loop | Kind::Ping | Kind::Tron => Machine::Walk(Steps {
             dir: direction as u8,
             position: q6(pos),

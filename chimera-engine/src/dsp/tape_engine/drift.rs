@@ -1,4 +1,4 @@
-//! WALK's DRIFT (ADR 0202): at each note-on POSITION steps by a random
+//! WALK's DRIFT (ADR 0203): at each note-on POSITION steps by a random
 //! amount of up to DRIFT windows either way, from where the last note's
 //! step left it, so repeats wander through the source (Octatrack's random
 //! start, carried from note to note). Each voice draws from its own seeded

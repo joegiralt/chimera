@@ -86,7 +86,7 @@ fn models_keep_their_codes() {
     }
     assert_eq!(M::ALL, [M::Walk, M::Stretch, M::Scrub, M::Transwave]);
     // MODEL's value is the machine's place; the disk keeps the model's
-    // code, and WALK's DIRECTION's in MODE (ADR 0202).
+    // code, and WALK's DIRECTION's in MODE (ADR 0203).
     use chimera_core::dsp::tape_engine::TapeMachine as K;
     for (i, k) in K::ALL.into_iter().enumerate() {
         assert_eq!(k.index() as usize, i);
@@ -962,7 +962,7 @@ fn tron_len(note: u8, tape: f32, size: f32) -> usize {
 }
 
 /// TRON's tape is LENGTH's, 0.25 to 8 s, whatever the strip and at every
-/// pitch (ADR 0202): the M400's 8 s strip. Within 20 ms of it the note
+/// pitch (ADR 0203): the M400's 8 s strip. Within 20 ms of it the note
 /// has fallen to nothing.
 #[test]
 fn tron_runs_out_after_size_at_every_pitch() {
@@ -1160,7 +1160,7 @@ fn machine_table_is_pinned() {
     const LEN: C = (P::SIZE, "LENGTH", "LEN", 1.0);
     const XFD: C = (P::XFADE, "XFADE", "XFD", 0.1);
     const POS: C = (P::POSITION, "POSITION", "POS", 0.0);
-    // WALK (ADR 0202): DECK LENGTH, FADE, DIRECTION, POSITION, DRIFT; its
+    // WALK (ADR 0203): DECK LENGTH, FADE, DIRECTION, POSITION, DRIFT; its
     // page TRON, XFADE and RETRIG.
     let want: [Row; 4] = [
         (

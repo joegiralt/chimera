@@ -1,4 +1,4 @@
-//! The WALK listening page's takes (ADR 0202), through the whole
+//! The WALK listening page's takes (ADR 0203), through the whole
 //! instrument, raw (ab-method: no normalisation), 32-bit float stereo:
 //! `PAGE_OUT=dir cargo test -p chimera-desktop --test tape_play_listen -- --ignored --nocapture`
 

@@ -349,7 +349,7 @@ fn factory_sounds_save_as_loaded() {
         all.update(&file);
     }
     if built.iter().all(Option::is_some) {
-        // Re-pinned for PLAY (ADR 0202): FORWARD's DIRECTION code (3) for
+        // Re-pinned for PLAY (ADR 0203): FORWARD's DIRECTION code (3) for
         // MODE ONE's, its LENGTH 1, and TRON BOWED as PLAY with TRON on.
         // Each still renders as before (`tape_legacy_test`).
         assert_eq!(all.finish(), 0x0386_F811, "{} Sounds", r.sounds.len());

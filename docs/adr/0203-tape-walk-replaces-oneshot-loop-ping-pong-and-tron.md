@@ -1,4 +1,4 @@
-# 0202. TAPE: WALK replaces ONESHOT, LOOP, PING-PONG and TRON
+# 0203. TAPE: WALK replaces ONESHOT, LOOP, PING-PONG and TRON
 
 - **Status:** Proposed
 - **Deciders:** owner (2026-10-21: the four machines are "ultimately the same thing"; machine names are verbs; the machine is WALK, not PLAY, which would read as the transport's play; TRON "should just be toggleable"; the drift is random; WALK gets a glyph of its own), firmware (the coordinator's rulings, recorded below)

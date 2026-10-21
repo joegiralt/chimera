@@ -221,7 +221,7 @@ pub const BRAID_PARAMS: [ParamAddr; 4] = [
 
 /// What TAPE's machine glyph reads, in `GlyphInputs::from_set`'s order:
 /// MODEL, START, END, POSITION, MOTION, SIZE, DRAG, TAPE, AGE, XFADE, then
-/// WALK's DIRECTION, TRON and DRIFT (ADR 0202).
+/// WALK's DIRECTION, TRON and DRIFT (ADR 0203).
 pub const TAPE_GLYPH_PARAMS: [ParamAddr; 13] = {
     const fn t(id: crate::block::ParamId) -> ParamAddr {
         ParamAddr::new(BlockRef::TapeEngine, id)

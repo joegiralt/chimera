@@ -403,7 +403,7 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
 /// and trims (#57, ADR 0096) on main's merge; then #698's round: INIT's
 /// LENGTH 0.8, one release a note, equal-power fades by correlation, AGE
 /// from the source's band and TRON's LENGTH over the strip (ADRs
-/// 0179–0182); then the TRON rows for WALK (ADR 0202).
+/// 0179–0182); then the TRON rows for WALK (ADR 0203).
 const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "tape_loop",
@@ -711,7 +711,7 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
                 ..one
             },
         ),
-        // Re-recorded for WALK's TRON (ADR 0202): its tape is LENGTH's of
+        // Re-recorded for WALK's TRON (ADR 0203): its tape is LENGTH's of
         // 8 s whatever the strip, the window round again until then.
         // Held: LENGTH ½, a 1.4 s tape; released: LENGTH 1, 8 s, fades at
         // the key up.

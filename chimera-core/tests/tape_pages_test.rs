@@ -109,7 +109,7 @@ fn chain_opens_on_deck() {
 }
 
 /// DECK: MODEL, then the machine's knobs (ADR 0178); WALK's are LENGTH,
-/// FADE, DIRECTION, POSITION and DRIFT on every path (ADR 0202). None is
+/// FADE, DIRECTION, POSITION and DRIFT on every path (ADR 0203). None is
 /// dimmed.
 #[test]
 fn deck_holds_the_glyphs_knobs() {
@@ -199,7 +199,7 @@ fn play_page_notes_say_why() {
 /// Off WALK, every param that moves a machine's glyph has its cell on
 /// DECK, and every DECK cell moves it. WALK's DECK cells each move the
 /// glyph on at least one of its paths (FADE only TRON's blind, DRIFT only
-/// the loops'); its XFADE, on its page, moves LOOP's wheel (ADR 0202).
+/// the loops'); its XFADE, on its page, moves LOOP's wheel (ADR 0203).
 #[test]
 fn deck_is_what_moves_the_glyph() {
     use chimera_core::ui::glyph::TAPE_GLYPH_PARAMS;
@@ -247,7 +247,7 @@ fn deck_is_what_moves_the_glyph() {
 }
 
 /// MODEL reads the machine's page name, which fits a cell's bar (STRETCH
-/// doesn't); the header spells it out. The machines are verbs (ADR 0202).
+/// doesn't); the header spells it out. The machines are verbs (ADR 0203).
 #[test]
 fn model_names_fit_the_cell() {
     assert_eq!(MODEL_NAMES, ["WALK", "STRCH", "SCRUB", "WAVE"]);
@@ -666,7 +666,7 @@ fn matrix_columns_read_the_machine() {
         fmt_route_dest(&mut b, &dest, c);
         b.as_str().to_owned()
     };
-    // WALK reads no MOTION (its DRIFT is a param of its own, ADR 0202).
+    // WALK reads no MOTION (its DRIFT is a param of its own, ADR 0203).
     assert_eq!(name(TapeMachine::Walk), "TPE MOTION");
     assert_eq!(name(TapeMachine::Stretch), "TPE SPEED");
     assert_eq!(name(TapeMachine::Wave), "TPE SCAN");
@@ -734,7 +734,7 @@ fn fade_reads_hold_only_in_one() {
 
 /// MODEL onto WALK writes its defaults for the DIRECTION it keeps: once
 /// through FADE holds, around a loop 32 ms; TRON off. DIRECTION across
-/// once and loop writes LENGTH and FADE (ADR 0202). The disk keeps WALK's
+/// once and loop writes LENGTH and FADE (ADR 0203). The disk keeps WALK's
 /// code and DIRECTION's in MODE.
 #[test]
 fn model_edit_writes_play_and_its_mode() {

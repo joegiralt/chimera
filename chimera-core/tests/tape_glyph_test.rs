@@ -323,7 +323,7 @@ fn cases() -> Vec<(String, TapeGauge)> {
     v
 }
 
-// The still and worn rows are WALK's footsteps since ADR 0202; the live
+// The still and worn rows are WALK's footsteps since ADR 0203; the live
 // rows of ONE's match, LOOP's wheel, PING's court and TRON's blind are the
 // kept pictures', unchanged.
 const GOLDENS: &[(&str, u64)] = &[
@@ -808,7 +808,7 @@ fn stretch_chevrons_count_the_speed_not_the_knob() {
 
 #[test]
 fn direction_turned_onto_forward_burns_the_match() {
-    // LOOP → FORWARD → LOOP on DECK, as on the unit (ADR 0202): FORWARD's
+    // LOOP → FORWARD → LOOP on DECK, as on the unit (ADR 0203): FORWARD's
     // LENGTH (B) and POSITION (E) cut the match's run; back on LOOP,
     // POSITION rolls the wheel. A dirty frame always equals a full one.
 

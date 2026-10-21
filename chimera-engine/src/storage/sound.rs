@@ -34,7 +34,7 @@ const _: () = assert!(MAX_REGISTRY_DESTS * REGISTRY_ENTRY_LEN <= MAX_RECORD_LEN)
 /// The most a Sound costs in the pool: its 16 B name and its sparse records
 /// with every param off neutral, a full registry, every route and tap, a
 /// `SourceRef`, a 24-zone `ZoneTune` and a full `MidiMap` (2 579 + 84 =
-/// 2 663 B for 281 params: WALK's TRON and DRIFT, ADR 0202), rounded up
+/// 2 663 B for 281 params: WALK's TRON and DRIFT, ADR 0203), rounded up
 /// to 16 B. `sparse_bound` pins it.
 pub const MAX_SOUND_COST: usize = 2672;
 

@@ -6,7 +6,7 @@
 //! machine's glyph; the model page TAPE, AGE and WOW in the same cells on
 //! every machine, then whatever else it reads.
 //! The UI writes a machine's defaults when MODEL changes (Task 15), never
-//! on load; the neutral stays WALK in LOOP. WALK (ADR 0202) holds what
+//! on load; the neutral stays WALK in LOOP. WALK (ADR 0203) holds what
 //! ONE, LOOP, PING and TRON were: DIRECTION and TRON are its cells.
 
 use super::params::{
@@ -103,7 +103,7 @@ const XFADE: Cell = cell(P::XFADE, "XFADE", "XFD", 0.1);
 
 /// By `TapeMachine::index`.
 pub static MACHINES: [Machine; 4] = [
-    // WALK (ADR 0202): what ONE, LOOP, PING and TRON were. LENGTH and
+    // WALK (ADR 0203): what ONE, LOOP, PING and TRON were. LENGTH and
     // FADE default by DIRECTION (`defaults`); DIRECTION is kept.
     Machine {
         machine: TapeMachine::Walk,
@@ -201,7 +201,7 @@ fn by_direction(id: ParamId, d: Direction) -> f32 {
 
 /// What the UI writes when DIRECTION goes from `was` to `now`: crossing
 /// between once through and a loop, LENGTH and FADE take `now`'s
-/// defaults, as a MODEL turn between ONE and LOOP did (ADR 0202). Within
+/// defaults, as a MODEL turn between ONE and LOOP did (ADR 0203). Within
 /// a side, nothing.
 pub fn direction_defaults(was: Direction, now: Direction) -> &'static [(ParamId, f32)] {
     match (was.once(), now.once()) {

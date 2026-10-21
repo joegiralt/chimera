@@ -17,7 +17,7 @@
 #
 # [[sound]]: name; source; model (its machine's defaults), WALK with its mode
 # (DIRECTION: FORWARD, REVERSE, LOOP or PING; once through holds) and tron
-# (ON or OFF, ADR 0202); then TAPE params
+# (ON or OFF, ADR 0203); then TAPE params
 # by label (START, END, POSITION, MOTION, TAPE, AGE, SIZE, XFADE, DRAG,
 # TYPE, SLICE, WOW) as stored values; trim in dB on OUT LEVEL, so each sits
 # at the factory median (`factory_sounds_sit_at_the_median`).
@@ -484,7 +484,7 @@ source = "TRON BOWED"
 model = "WALK"
 mode = "FORWARD"
 tron = "ON"
-# The TRON machine's own (ADR 0202): FADE 32 ms, an M400's tape under WARBLE.
+# The TRON machine's own (ADR 0203): FADE 32 ms, an M400's tape under WARBLE.
 drag = "0.3"
 tape = "0.3"
 wow = "1"

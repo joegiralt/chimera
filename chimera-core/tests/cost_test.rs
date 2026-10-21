@@ -715,7 +715,7 @@ fn the_model_bills_every_bench_row_high() {
     // The TAPE rows (spec § 5), TAPE and AGE at 0.5 on each, as the bench
     // plays them; read cold on the unit. 0 until the owner's session.
     // WALK's DIRECTIONs and TRON are the old LOOP, PING-PONG, ONESHOT and
-    // TRON (ADR 0202).
+    // TRON (ADR 0203).
     let (lp, ping, one) = (Way::Loop, Way::Ping, Way::One);
     let tape = |w: Way, (start, end): (f32, f32), steal_glide: bool| {
         let mut p = tape_sound(w.machine().model());

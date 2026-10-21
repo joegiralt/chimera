@@ -1,4 +1,4 @@
-//! WALK (ADR 0202): one machine for what ONE, LOOP, PING-PONG and TRON
+//! WALK (ADR 0203): one machine for what ONE, LOOP, PING-PONG and TRON
 //! were. Each DIRECTION, FADE without clicks, POSITION and DRIFT (its
 //! bounds, wrap, both signs and spread), TRON's run-out and pad, the old
 //! machines' codes, NaN safety and where a voice ends.

@@ -56,7 +56,7 @@ pub(crate) fn heads_in(r: SourceRef, p: &TapeEngineParams) -> Result<Heads, Refu
     let cap = we.saturating_add(2).min(frames).next_multiple_of(2);
     let start = head(ws, reach, cap).ok_or(Refusal::TooShort)?;
     // LOOP (TRON or not) loops off a second head. ONE and TRON read one,
-    // from START: POSITION or DRIFT past it starts cold (ADR 0202);
+    // from START: POSITION or DRIFT past it starts cold (ADR 0203);
     // `needs_ram` refused the others.
     if p.way() != Way::Loop {
         return Ok(Heads::One(start));

@@ -476,7 +476,7 @@ pub enum Way {
     One,
     Ping,
     SliceNote,
-    /// WALK FORWARD with TRON on (ADR 0202).
+    /// WALK FORWARD with TRON on (ADR 0203).
     Tron,
 }
 

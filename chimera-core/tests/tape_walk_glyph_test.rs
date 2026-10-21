@@ -1,4 +1,4 @@
-//! WALK's footsteps glyph (ADR 0202): DIRECTION lays them, DRIFT scatters
+//! WALK's footsteps glyph (ADR 0203): DIRECTION lays them, DRIFT scatters
 //! them, FADE fades the last, TRON marks its tape's end; quantised inputs,
 //! no frame term. `GLYPH_OUT=dir … -- --ignored` writes the owner's
 //! variants as BMPs, 4× (each style, each pose).

@@ -210,7 +210,7 @@ fn heads_published_once_a_block() {
         "the newest note's head"
     );
 
-    // TRON goes round its window as LOOP does (ADR 0202): its heads are
+    // TRON goes round its window as LOOP does (ADR 0203): its heads are
     // a loop's, the second only while a seam fades.
     block(&mut inst, &[on(&shared, 1, 60)], &shared);
     let t = HEADS.read(1);

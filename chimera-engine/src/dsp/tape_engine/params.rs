@@ -10,7 +10,7 @@ use crate::dsp::algo::math::exp2;
 /// How a note plays its source: the machines (spec § 2 Machines). Each
 /// discriminant is its disk code. WALK is LOOP's code 0; ONESHOT (7),
 /// PING-PONG (2), REVERSE (1) and TRON (6) are retired and load as WALK
-/// (`translate_v1`, ADR 0202).
+/// (`translate_v1`, ADR 0203).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TapeModel {
@@ -84,7 +84,7 @@ macro_rules! retired_models {
 retired_models!(Reverse = 1, PingPong = 2, Tron = 6, Oneshot = 7);
 
 /// DIRECTION's retired code: MODE ONE (0), which read neither POSITION nor
-/// LENGTH. It loads as FORWARD from the window's start, whole (ADR 0202).
+/// LENGTH. It loads as FORWARD from the window's start, whole (ADR 0203).
 pub const RETIRED_ONE: u8 = 0;
 
 impl RetiredModel {
@@ -128,7 +128,7 @@ fn one_as_forward(b: &mut dyn Block) {
     b.set(P::SIZE, 1.0);
 }
 
-/// WALK's DIRECTION (ADR 0202): once forward, once reversed, around a
+/// WALK's DIRECTION (ADR 0203): once forward, once reversed, around a
 /// loop, or back and forth. Discriminants are DIRECTION's values (its
 /// screen order); the disk codes are `disk_code`'s, LOOP's and PING's kept
 /// from MODE and ONE's (0) retired.
@@ -216,7 +216,7 @@ impl Drift {
     }
 }
 
-/// WALK's TRON (ADR 0202): the Mellotron M400's tape. ON, a note's tape
+/// WALK's TRON (ADR 0203): the Mellotron M400's tape. ON, a note's tape
 /// runs out (LENGTH's, up to 8 s, on FORWARD and REVERSE; 8 s around a
 /// loop) and key up lifts the pressure pad through FADE.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -275,7 +275,7 @@ pub trait Choice: Sized + Copy {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MachineIndex(pub u8);
 
-/// What MODEL lists (ADR 0202): the machines are verbs. WALK holds what
+/// What MODEL lists (ADR 0203): the machines are verbs. WALK holds what
 /// ONE, LOOP, PING and TRON were, as DIRECTION and TRON.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TapeMachine {
@@ -633,7 +633,7 @@ pub const SLICE_NAMES: [&str; 18] = [
 /// END, POSITION and SIZE are fractions; the window is `[START, END]` of the
 /// source, END kept ≥ START + 2 ms where it plays (`heads::window_end`).
 ///
-/// TRON is WALK's, not a machine (ADR 0202):
+/// TRON is WALK's, not a machine (ADR 0203):
 /// ```compile_fail,E0599
 /// use chimera_engine::dsp::tape_engine::TapeMachine;
 /// let _ = TapeMachine::Tron;
@@ -954,7 +954,7 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 19] = [
     )
     .ident("WOW")
     .glyph(TAPE),
-    // WALK's DIRECTION, MODE on disk (ADR 0202): LOOP by default.
+    // WALK's DIRECTION, MODE on disk (ADR 0203): LOOP by default.
     ParamSpec::choice(
         15,
         "DIRECTION",
@@ -987,7 +987,7 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 19] = [
     )
     .ident("TRON")
     .glyph(TAPE),
-    // Read at note-on: each note steps POSITION by up to DRIFT (ADR 0202).
+    // Read at note-on: each note steps POSITION by up to DRIFT (ADR 0203).
     unit(20, "DRIFT", 0.0, false, Smoothing::NoteOn)
         .short("DFT")
         .ident("DRIFT")
@@ -1108,7 +1108,7 @@ const SLICE_IDENTS: [&str; 18] = [
     "S13", "S14", "S15", "S16",
 ];
 
-/// A file from before WALK (ADR 0170, ADR 0202): MODEL's retired codes
+/// A file from before WALK (ADR 0170, ADR 0203): MODEL's retired codes
 /// and MODE ONE load as WALK. REVERSE (1) is LOOP with START and END
 /// swapped, which plays it bit for bit; ONESHOT (7) is FORWARD with FADE at
 /// HOLD and no SLICE; PING-PONG (2) is PING; TRON (6) is FORWARD with TRON

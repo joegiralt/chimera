@@ -40,7 +40,7 @@ pub struct Shown {
 
 /// TAPE's MODEL: on a streamed source a turn holds a machine it refuses.
 pub const MODEL: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL);
-/// WALK's DIRECTION: likewise REVERSE and PING-PONG (ADR 0202).
+/// WALK's DIRECTION: likewise REVERSE and PING-PONG (ADR 0203).
 pub const DIRECTION: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODE);
 
 /// Whether `a` is a cell this applies to.

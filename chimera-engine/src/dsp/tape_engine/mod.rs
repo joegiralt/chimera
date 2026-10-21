@@ -108,7 +108,7 @@ pub use params::{
 pub const COST_LOOP: Cost = Cost(450);
 /// ONESHOT: a short slice's end ramp, retriggered, 135.4 → 229.5.
 pub const COST_ONESHOT: Cost = Cost(230);
-/// TRON goes round its window as LOOP does (ADR 0202): LOOP's bill.
+/// TRON goes round its window as LOOP does (ADR 0203): LOOP's bill.
 pub const COST_TRON: Cost = COST_LOOP;
 /// PING-PONG clamping in its shortest loop, 289.4 → 489.
 pub const COST_PING: Cost = Cost(490);
@@ -1505,7 +1505,7 @@ impl TapeDeck {
         self.drift = drift::step(self.drift, p.drift.get(), &mut self.drift_rng);
         // TRON: around a loop the tape runs out at 8 s; once through at
         // LENGTH's, 0.25 to 8 s whatever the strip, its window round again
-        // until then (ADR 0202).
+        // until then (ADR 0203).
         self.whole = p.way() == Way::Tron;
         self.flip = self.whole && p.direction == Direction::Reverse;
         let tape_s = if self.whole {

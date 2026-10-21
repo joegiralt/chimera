@@ -203,7 +203,7 @@ pub struct Sponge {
     pub xfade: Q3,
 }
 
-/// WALK's footsteps (ADR 0202): DIRECTION lays them (a line forward or
+/// WALK's footsteps (ADR 0203): DIRECTION lays them (a line forward or
 /// back, a loop, there and back), POSITION and LENGTH the stretch they
 /// cover, DRIFT scatters them, FADE fades the last ones out, and TRON
 /// marks where its tape ends.
@@ -229,7 +229,7 @@ impl Steps {
     }
 }
 
-/// How WALK's footsteps are drawn: the owner picks one (ADR 0202's
+/// How WALK's footsteps are drawn: the owner picks one (ADR 0203's
 /// listening page); `render` draws `StepStyle::DEFAULT`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StepStyle {
@@ -261,7 +261,7 @@ pub enum Machine {
 }
 
 /// The glyph a machine shows: the deck's path, so WALK lays its
-/// footsteps by DIRECTION and TRON (ADR 0202).
+/// footsteps by DIRECTION and TRON (ADR 0203).
 pub type Kind = Way;
 
 impl Way {

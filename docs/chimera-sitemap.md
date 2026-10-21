@@ -47,7 +47,7 @@ TAPE has a chain in the code (SRC, DECK with its model page and PIT, FLT, AMP, M
 
 ### TAPE
 
-MODEL lists the machines WALK, STRETCH (STRCH), SCRUB and WAVE. Each machine has its own DECK cells after MODEL and its own model page after TAPE, AGE and WOW; the model page is named by the machine (ADR 0178, 0202).
+MODEL lists the machines WALK, STRETCH (STRCH), SCRUB and WAVE. Each machine has its own DECK cells after MODEL and its own model page after TAPE, AGE and WOW; the model page is named by the machine (ADR 0178, 0203).
 
 | Page | Cells |
 |---|---|
