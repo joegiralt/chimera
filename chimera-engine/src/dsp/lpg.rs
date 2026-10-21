@@ -40,14 +40,17 @@
 //!   the state is the level each step, and the routes' detail between the
 //!   steps rides on it, so the gain is the routes' own, sample for sample.
 //! - **STRIKE** pings the gate at each note-on (`ProcessPing`), the ping
-//!   rising to the level plus STRIKE × the note's velocity; the level is × (1 − STRIKE), so
-//!   at 1 the strike alone drives it.
+//!   rising to the level plus STRIKE × the note's velocity (never down to
+//!   it); the level is × (1 − STRIKE), so at 1 the strike alone drives
+//!   it. A note on a voice at rest starts it shut, as Plaits' from rest.
 //!
 //! The cadence runs across the voice's blocks, so a 64-sample block holds
 //! five or six steps. Every loop is bank 2's (`voice::gate::kern`).
 
+use crate::dsp::va::osc::Unit;
 use crate::dsp::{clampf, fast_exp2};
 use crate::hw::{BLOCK_SIZE, Cost};
+use crate::{MidiNote, Velocity};
 
 type Buf = [f32; BLOCK_SIZE];
 
@@ -68,6 +71,8 @@ const FADE_IN: f32 = 64.0;
 /// A key-gated note with no route (TAPE, VA): after key up its level falls
 /// to 0 over the voice's 128-sample fade, a step at a time.
 const KEY_FALL: f32 = STEP as f32 / 128.0;
+const FULL: Unit = Unit::new(1.0);
+const NONE: Unit = Unit::new(0.0);
 
 /// The gate's bill while it runs (`tools/loop_count.py` on the
 /// `filter-probes` ELF, `lpg_probe`; ADR 0195). The routed loop, unrolled
@@ -78,92 +83,189 @@ const KEY_FALL: f32 = STEP as f32 / 128.0;
 /// not. Billed 85 either way.
 pub const LPG_COST: Cost = Cost(85);
 
+/// AMP's LPG, DECAY and STRIKE as the gate reads them.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Knobs {
+    pub lpg: Unit,
+    pub decay: Unit,
+    pub strike: Unit,
+}
+
+impl Knobs {
+    /// `OutParams::gate`'s `[LPG, DECAY, STRIKE]`.
+    #[inline(always)]
+    pub const fn of(k: [f32; 3]) -> Knobs {
+        Knobs {
+            lpg: Unit::new(k[0]),
+            decay: Unit::new(k[1]),
+            strike: Unit::new(k[2]),
+        }
+    }
+
+    /// STRIKE at 1: the strike alone drives the gate, the level none.
+    #[inline(always)]
+    pub fn strike_alone(self) -> bool {
+        self.strike.get() >= 1.0
+    }
+}
+
+/// Plaits' COLOR, `1 − LPG`: the bleed past the filter and the cutoff's
+/// floor.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Colour(f32);
+
+impl Colour {
+    #[inline(always)]
+    pub fn of(lpg: Unit) -> Colour {
+        Colour(1.0 - lpg.get())
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+}
+
+/// A key-gated note's key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Key {
+    Held,
+    Up,
+}
+
+/// What the gate's level follows.
+#[derive(Clone, Copy, Debug)]
+pub enum Level<'a> {
+    /// The VCA routes' gain a sample, × AMP's VEL at the note.
+    Routes(&'a Buf, Unit),
+    /// No route on an engine the key ends (TAPE, VA): the key.
+    Key(Key),
+    /// No route on an engine that shapes itself (ALGO, MODAL): open.
+    Open,
+}
+
 /// What drives the gate this block.
 #[derive(Clone, Copy, Debug)]
 pub struct Drive<'a> {
-    /// The VCA routes' gain a sample, `None` with no route.
-    pub level: Option<&'a Buf>,
-    /// AMP's VEL at the note: × the routes.
-    pub vel: f32,
-    /// The note's velocity, 0..1: × the strike's peak.
-    pub hit: f32,
-    /// A key-gated engine with no route: the key is the level (held).
-    pub key: Option<bool>,
-    pub lpg: f32,
-    pub decay: f32,
-    pub strike: f32,
-    /// The note, for the strike's rise (Plaits'), and the rate.
-    pub note: f32,
+    pub level: Level<'a>,
+    pub knobs: Knobs,
+    /// The note's velocity: × the strike's peak.
+    pub hit: Velocity,
+    /// The note, for the strike's rise (Plaits').
+    pub note: MidiNote,
     pub fs: f32,
 }
 
-/// The gate: the SVF's two states, the vactrol, the gain's ramp, this
-/// step's coefficients and the step's samples left; the key's level; the
-/// last block's LPG and STRIKE, this block's ramp start.
+/// A note-on the gate has yet to see.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Onset {
+    /// On a voice at rest: the gate starts shut, as Plaits' from rest.
+    Fresh,
+    /// On a sounding voice: the strike rises from where the vactrol is.
+    Again,
+}
+
+/// Whether the gate ran last block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    /// It did not: the next block starts where the plain VCA is.
+    Idle,
+    Running,
+}
+
+/// A value ramped across one step, a sample at a time.
+#[derive(Clone, Copy, Debug)]
+struct StepRamp {
+    at: f32,
+    inc: f32,
+}
+
+impl StepRamp {
+    const fn hold(at: f32) -> StepRamp {
+        StepRamp { at, inc: 0.0 }
+    }
+
+    /// Across the next step to `to`.
+    #[inline(always)]
+    fn aim(&mut self, to: f32) {
+        self.inc = (to - self.at) * (1.0 / f32::from(STEP));
+    }
+
+    #[inline(always)]
+    fn next(&mut self) -> f32 {
+        self.at += self.inc;
+        self.at
+    }
+}
+
+/// The gate: the SVF's two states, the vactrol, the gain's and the
+/// bleed's ramps, this step's coefficients and the step's samples left;
+/// the key's level; the last block's LPG and STRIKE.
 #[derive(Clone, Copy, Debug)]
 pub struct Lpg {
     s1: f32,
     s2: f32,
     vac: f32,
-    gain: f32,
-    inc: f32,
+    gain: StepRamp,
     g: f32,
     h: f32,
-    /// The bleed now and its step a sample: it ramps across a step, so a
-    /// fast LPG never steps.
-    bleed: f32,
-    binc: f32,
-    key: f32,
-    /// The routes' level as the step ramps it, its step a sample, and the
-    /// weight of the routes' own detail over that ramp: DECAY under its
-    /// fade-in follows the routes a sample at a time, not a step late.
-    lh: f32,
-    linc: f32,
+    /// The bleed ramps across a step, so a fast LPG never steps.
+    bleed: StepRamp,
+    key: Unit,
+    /// The routes' level as the step ramps it, and the weight of the
+    /// routes' own detail over that ramp: DECAY under its fade-in follows
+    /// the routes a sample at a time, not a step late.
+    lh: StepRamp,
     detail: f32,
-    last: [f32; 2],
+    last: (Unit, Unit),
     left: u8,
     /// A strike is rising (Plaits' `ramp_up_`).
-    ramp_up: bool,
-    /// A note-on since the last block.
-    struck: bool,
-    /// The gate ran last block; else the next starts where the VCA is.
-    ran: bool,
+    rising: bool,
+    pending: Option<Onset>,
+    phase: Phase,
 }
 
 /// One block's run: LPG and STRIKE `(from, to)`, the vactrol's fade-in,
 /// the fall's two coefficients a step and a strike's rise.
 #[derive(Clone, Copy, Debug)]
 struct Run {
-    a: (f32, f32),
-    s: (f32, f32),
+    a: (Unit, Unit),
+    s: (Unit, Unit),
     w: f32,
     short: f32,
     tail: f32,
     attack: f32,
 }
 
-/// Plaits' fall a step at decay `d` and COLOR `hf`, rate `fs`: the short
-/// decay and the tail (voice.cc).
+/// Plaits' fall a step at `decay` and `colour`, rate `fs`: the short decay
+/// and the tail (voice.cc).
 #[inline(always)]
-pub fn fall(d: f32, hf: f32, fs: f32) -> (f32, f32) {
+pub fn fall(decay: Unit, colour: Colour, fs: f32) -> (f32, f32) {
+    let (d, hf) = (decay.get(), colour.get());
     let step = f32::from(STEP) / fs;
     let short = 200.0 * step * fast_exp2(-8.0 * d);
     let tail = 20.0 * step * fast_exp2(-6.0 * d + hf) - short;
     (short, tail)
 }
 
-/// Plaits' bleed past the filter at state `v` and COLOR `hf`.
+/// Plaits' bleed past the filter at state `v`.
 #[inline(always)]
-fn bleed_of(v: f32, hf: f32) -> f32 {
+fn bleed_of(v: f32, colour: Colour) -> f32 {
+    let hf = colour.get();
     let t = 1.0 - v;
     let t2 = t * t;
     (t2 + (1.0 - t2) * hf) * hf * hf
 }
 
-/// voice.cc's compressed LEVEL `1.3·l/(0.3 + l)`, weighed in by LPG `a`.
+/// voice.cc's compressed LEVEL `1.3·l/(0.3 + l)`, weighed in by LPG.
 #[inline(always)]
-fn compress(l: f32, a: f32) -> f32 {
-    l + a * (1.3 * l / (0.3 + l) - l)
+fn compress(l: f32, lpg: Unit) -> f32 {
+    l + lpg.get() * (1.3 * l / (0.3 + l) - l)
+}
+
+/// `from` to `to` at `t`, 0..1.
+#[inline(always)]
+fn lerp((from, to): (Unit, Unit), t: f32) -> Unit {
+    Unit::new(from.get() + (to.get() - from.get()) * t)
 }
 
 impl Lpg {
@@ -171,71 +273,82 @@ impl Lpg {
         s1: 0.0,
         s2: 0.0,
         vac: 0.0,
-        gain: 0.0,
-        inc: 0.0,
+        gain: StepRamp::hold(0.0),
         g: 0.0,
         h: 0.0,
-        bleed: 0.0,
-        binc: 0.0,
-        key: 0.0,
-        lh: 0.0,
-        linc: 0.0,
+        bleed: StepRamp::hold(0.0),
+        key: NONE,
+        lh: StepRamp::hold(0.0),
         detail: 0.0,
-        last: [0.0; 2],
+        last: (NONE, NONE),
         left: 0,
-        ramp_up: false,
-        struck: false,
-        ran: false,
+        rising: false,
+        pending: None,
+        phase: Phase::Idle,
     };
 
-    /// A gate that ran and is shut at LPG `lpg` and STRIKE `strike`: the
-    /// next note opens it as Plaits' does from rest (the fixtures').
-    pub fn shut(lpg: f32, strike: f32) -> Lpg {
+    /// At rest at LPG `lpg` and STRIKE `strike`, as Plaits' gate before
+    /// its first note.
+    fn shut(lpg: Unit, strike: Unit) -> Lpg {
         Lpg {
-            ran: true,
-            last: [lpg, strike],
-            bleed: bleed_of(0.0, 1.0 - lpg),
+            phase: Phase::Running,
+            last: (lpg, strike),
+            bleed: StepRamp::hold(bleed_of(0.0, Colour::of(lpg))),
+            ..Lpg::NEW
+        }
+    }
+
+    /// Where the plain VCA is at level `l`, so turning the gate on never
+    /// steps: the gain the level, the bleed whole, LPG and STRIKE ramping
+    /// in from 0, and no ring.
+    fn at_vca(l: f32, key: Unit) -> Lpg {
+        Lpg {
+            vac: l,
+            gain: StepRamp::hold(l),
+            lh: StepRamp::hold(l),
+            key,
+            bleed: StepRamp::hold(1.0),
+            phase: Phase::Running,
             ..Lpg::NEW
         }
     }
 
     /// A note-on: the next block strikes, if STRIKE is up.
     #[inline(always)]
-    pub fn strike(&mut self) {
-        self.struck = true;
+    pub fn strike(&mut self, onset: Onset) {
+        self.pending = Some(onset);
     }
 
     /// A block the gate did not run: the next one starts where the VCA
     /// is.
     #[inline(always)]
     pub fn idle(&mut self) {
-        (self.ran, self.struck) = (false, false);
+        (self.phase, self.pending) = (Phase::Idle, None);
     }
 
     /// Open: rising from a strike, or above −80 dB.
     pub fn open(&self) -> bool {
-        self.ramp_up || self.vac > SHUT
+        self.rising || self.vac > SHUT
     }
 
     /// The vactrol: the gain the step ramps to.
-    pub fn level(&self) -> f32 {
-        self.vac
+    pub fn level(&self) -> Unit {
+        Unit::new(self.vac)
     }
 
     /// The level at sample `i`: the routes × VEL, the key's, or open.
     #[inline(always)]
     fn input(&mut self, d: &Drive, i: usize) -> f32 {
-        match (d.level, d.key) {
-            (Some(g), _) => clampf(g[i], 0.0, 1.0) * d.vel,
-            (None, Some(held)) => {
-                self.key = if held {
-                    1.0
-                } else {
-                    (self.key - KEY_FALL).max(0.0)
+        match d.level {
+            Level::Routes(g, vel) => clampf(g[i], 0.0, 1.0) * vel.get(),
+            Level::Key(k) => {
+                self.key = match k {
+                    Key::Held => FULL,
+                    Key::Up => Unit::new(self.key.get() - KEY_FALL),
                 };
-                self.key
+                self.key.get()
             }
-            (None, None) => 1.0,
+            Level::Open => 1.0,
         }
     }
 
@@ -243,40 +356,39 @@ impl Lpg {
     /// the probe each hold one copy.
     #[inline(always)]
     pub fn block(&mut self, buf: &mut Buf, d: &Drive) {
-        let a = clampf(d.lpg, 0.0, 1.0);
-        let s = clampf(d.strike, 0.0, 1.0);
-        let dec = clampf(d.decay, 0.0, 1.0);
-        let struck = self.struck;
-        if !self.ran {
-            // Where the plain VCA is, so turning the gate on never steps:
-            // the gain the level, the bleed whole, LPG and STRIKE ramping in
-            // from the 0 they were, and no ring left. A fresh voice starts
-            // so too: its routes from 0.
-            *self = Lpg {
-                key: if d.key == Some(false) { 0.0 } else { 1.0 },
-                bleed: 1.0,
-                ran: true,
-                ..Lpg::NEW
+        let Knobs {
+            lpg: a,
+            decay: dec,
+            strike: s,
+        } = d.knobs;
+        let onset = self.pending.take();
+        if onset == Some(Onset::Fresh) {
+            *self = Lpg::shut(a, s);
+        } else if self.phase == Phase::Idle {
+            self.key = if matches!(d.level, Level::Key(Key::Up)) {
+                NONE
+            } else {
+                FULL
             };
             let l = self.input(d, 0);
-            (self.vac, self.gain, self.lh) = (l, l, l);
+            *self = Lpg::at_vca(l, self.key);
         }
-        self.struck = false;
-        if struck && s > 0.0 {
-            self.ramp_up = true;
+        if onset.is_some() && s.get() > 0.0 {
+            self.rising = true;
         }
-        let [a0, s0] = core::mem::replace(&mut self.last, [a, s]);
-        let (short, tail) = fall(dec, 1.0 - a, d.fs);
+        let (a0, s0) = core::mem::replace(&mut self.last, (a, s));
+        let (short, tail) = fall(dec, Colour::of(a), d.fs);
         // Plaits' `NoteToFrequency(note) · kBlockSize · 2`, while it rises.
-        let attack = if self.ramp_up {
-            2.0 * f32::from(STEP) * 440.0 / d.fs * fast_exp2((d.note - 69.0) * (1.0 / 12.0))
+        let attack = if self.rising {
+            let note = f32::from(d.note.get());
+            2.0 * f32::from(STEP) * 440.0 / d.fs * fast_exp2((note - 69.0) * (1.0 / 12.0))
         } else {
             0.0
         };
         let r = Run {
             a: (a0, a),
             s: (s0, s),
-            w: (dec * FADE_IN).min(1.0),
+            w: (dec.get() * FADE_IN).min(1.0),
             short,
             tail,
             attack,
@@ -287,26 +399,23 @@ impl Lpg {
                 self.step(d, i, &r);
             }
             let n = usize::from(self.left).min(BLOCK_SIZE - i);
-            let (g, h, inc, binc) = (self.g, self.h, self.inc, self.binc);
+            let (g, h) = (self.g, self.h);
             let rg = R + g;
             let (mut gain, mut b) = (self.gain, self.bleed);
             match d.level {
-                Some(lv) => {
-                    let (mut lh, linc, k) = (self.lh, self.linc, self.detail);
+                Level::Routes(lv, vel) => {
+                    let (mut lh, k) = (self.lh, self.detail);
                     for (x, l) in buf[i..i + n].iter_mut().zip(&lv[i..i + n]) {
-                        gain += inc;
-                        b += binc;
-                        lh += linc;
-                        let e = clampf(*l, 0.0, 1.0) * d.vel;
-                        *x = self.tick(*x * (gain + k * (e - lh)), g, rg, h, b);
+                        let (gn, bn, ln) = (gain.next(), b.next(), lh.next());
+                        let e = clampf(*l, 0.0, 1.0) * vel.get();
+                        *x = self.tick(*x * (gn + k * (e - ln)), g, rg, h, bn);
                     }
                     self.lh = lh;
                 }
-                None => {
+                Level::Key(_) | Level::Open => {
                     for x in &mut buf[i..i + n] {
-                        gain += inc;
-                        b += binc;
-                        *x = self.tick(*x * gain, g, rg, h, b);
+                        let (gn, bn) = (gain.next(), b.next());
+                        *x = self.tick(*x * gn, g, rg, h, bn);
                     }
                 }
             }
@@ -320,25 +429,31 @@ impl Lpg {
     /// One of Plaits' steps at sample `i` of the block: the vactrol moves
     /// toward its input (`LPGEnvelope::ProcessLP`, after `ProcessPing`'s
     /// rise on a strike), and the step's gain ramp, cutoff and bleed follow
-    /// it. The cutoff and bleed read the state before the move, as Plaits'; the bleed
-    /// ramps to its value across the step.
+    /// it. The cutoff and bleed read the state before the move, as Plaits';
+    /// the bleed ramps to its value across the step.
     #[inline(always)]
     fn step(&mut self, d: &Drive, i: usize, r: &Run) {
         let t = i as f32 * (1.0 / BLOCK_SIZE as f32);
-        let a = r.a.0 + (r.a.1 - r.a.0) * t;
-        let s = r.s.0 + (r.s.1 - r.s.0) * t;
-        let hf = 1.0 - a;
+        let a = lerp(r.a, t);
+        let s = lerp(r.s, t).get();
+        let hf = Colour::of(a);
         let l = self.input(d, i);
         let u = (1.0 - s) * compress(l, a);
-        self.linc = (l - self.lh) * (1.0 / f32::from(STEP));
+        self.lh.aim(l);
         self.detail = (1.0 - r.w) * (1.0 - s);
-        let input = if self.ramp_up {
-            self.vac += r.attack;
-            let peak = (u + s * d.hit).min(1.0);
+        let input = if self.rising {
+            let peak = (u + s * d.hit.unit()).min(1.0);
             if self.vac >= peak {
-                (self.vac, self.ramp_up) = (peak, false);
+                // Struck again above this strike's peak: no drop to it, the
+                // fall takes it from here (Plaits' peak is 1, never under).
+                self.rising = false;
+            } else {
+                self.vac += r.attack;
+                if self.vac >= peak {
+                    (self.vac, self.rising) = (peak, false);
+                }
             }
-            if self.ramp_up { self.vac } else { u }
+            if self.rising { self.vac } else { u }
         } else {
             u
         };
@@ -352,12 +467,12 @@ impl Lpg {
             r.short + (1.0 - v4) * r.tail
         };
         self.vac = v + (1.0 - r.w * (1.0 - c)) * err;
-        let f = 0.003 + 0.3 * v4 + 0.04 * hf;
+        let f = 0.003 + 0.3 * v4 + 0.04 * hf.get();
         let g = f * (PI + TAN_A * f * f);
         self.g = g;
         self.h = 1.0 / (1.0 + R * g + g * g);
-        self.binc = (bleed_of(v, hf) - self.bleed) * (1.0 / f32::from(STEP));
-        self.inc = (self.vac - self.gain) * (1.0 / f32::from(STEP));
+        self.bleed.aim(bleed_of(v, hf));
+        self.gain.aim(self.vac);
         self.left = STEP;
     }
 
@@ -380,7 +495,7 @@ impl Lpg {
         if !(self.s1.is_finite()
             && self.s2.is_finite()
             && self.vac.is_finite()
-            && self.lh.is_finite())
+            && self.lh.at.is_finite())
         {
             *self = Lpg::NEW;
         }

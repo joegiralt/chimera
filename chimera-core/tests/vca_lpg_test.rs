@@ -105,7 +105,8 @@ fn the_gate_at_zero_is_todays_vca_bit_for_bit() {
 use chimera_core::dsp::algo::params::AlgoParams;
 use chimera_core::dsp::algo::waves::WaveId;
 use chimera_core::dsp::fx_bus::FxParams;
-use chimera_core::dsp::lpg::{Drive, Lpg};
+use chimera_core::dsp::lpg::{Drive, Knobs, Level, Lpg, Onset};
+use chimera_core::dsp::va::osc::Unit;
 use chimera_core::part::PartParams;
 use common::codec_util::{decode, encode, sound_file as file};
 use common::filter_ref::rms_db;
@@ -117,23 +118,21 @@ const TAU: f64 = 2.0 * std::f64::consts::PI;
 /// The gate alone at LPG `a`, DECAY `d`, STRIKE `s`: `x` through it, its
 /// level the routes' `level` (`None`: no route), a fresh note struck at 0
 /// on `note`.
-fn gate(a: f32, d: f32, s: f32, x: &[f32], level: Option<&[f32]>, note: f32) -> Vec<f32> {
-    let mut g = Lpg::shut(a, s);
-    g.strike();
+fn gate(a: f32, d: f32, s: f32, x: &[f32], level: Option<&[f32]>, note: u8) -> Vec<f32> {
+    let mut g = Lpg::NEW;
+    g.strike(Onset::Fresh);
     let mut out = Vec::with_capacity(x.len());
     for b in 0..x.len().div_ceil(BLOCK_SIZE) {
         let at = |v: &[f32], i: usize| v.get(b * BLOCK_SIZE + i).copied().unwrap_or(0.0);
         let mut buf: [f32; BLOCK_SIZE] = core::array::from_fn(|i| at(x, i));
         let lv: Option<[f32; BLOCK_SIZE]> = level.map(|l| core::array::from_fn(|i| at(l, i)));
         let drive = Drive {
-            level: lv.as_ref(),
-            vel: 1.0,
-            hit: 1.0,
-            key: None,
-            lpg: a,
-            decay: d,
-            strike: s,
-            note,
+            level: lv
+                .as_ref()
+                .map_or(Level::Open, |l| Level::Routes(l, Unit::new(1.0))),
+            knobs: Knobs::of([a, d, s]),
+            hit: Velocity::MAX,
+            note: MidiNote::new(note).unwrap(),
             fs: FS as f32,
         };
         g.block(&mut buf, &drive);
@@ -247,7 +246,7 @@ fn lpg_at_one_is_the_labs_plaits_port() {
         .map(|i| (0.5 * (2.0 * (i as f64 * 110.0 / FS).fract() - 1.0)) as f32)
         .collect();
     let held: Vec<f32> = (0..n).map(|i| if i < 4800 { 1.0 } else { 0.0 }).collect();
-    let y = gate(1.0, *d, 0.0, &x, Some(&held), 60.0);
+    let y = gate(1.0, *d, 0.0, &x, Some(&held), 60);
     let want: Vec<f64> = want.iter().map(|&v| f64::from(v)).collect();
     let null = null_db(&y, &want);
     println!("fixture: null {null:.1} dB");
@@ -262,7 +261,7 @@ fn lpg_at_one_is_the_labs_plaits_port() {
 #[test]
 fn strike_at_one_is_plaits_ping() {
     let n = 48_000;
-    for (d, note) in [(0.3, 48.0), (0.5, 60.0), (0.8, 72.0), (0.1, 36.0)] {
+    for (d, note) in [(0.3, 48), (0.5, 60), (0.8, 72), (0.1, 36)] {
         let x = tone_saw(220.0, n);
         let y = gate(1.0, d, 1.0, &x, None, note);
         let null = null_db(&y, &plaits(&x, None, f64::from(d), 0.0, f64::from(note)));
@@ -366,12 +365,12 @@ fn the_gate_opens_bright_and_shuts_as_plaits() {
     for (name, y, want) in [
         (
             "routes",
-            gate(1.0, 0.5, 0.0, &x, Some(&p), 57.0),
+            gate(1.0, 0.5, 0.0, &x, Some(&p), 57),
             plaits(&x, Some(&p), 0.5, 0.0, 57.0),
         ),
         (
             "strike",
-            gate(1.0, 0.5, 1.0, &x, None, 57.0),
+            gate(1.0, 0.5, 1.0, &x, None, 57),
             plaits(&x, None, 0.5, 0.0, 57.0),
         ),
     ] {
@@ -405,15 +404,15 @@ fn each_knob_does_what_it_says() {
     let x = tone_saw(220.0, n);
     let p = perc(n);
     // LPG: the same hit's 50 ms centroid falls as LPG rises.
-    let c50 = |a: f32| centroid(&gate(a, 0.5, 0.0, &x, Some(&p), 57.0), 45 * 48);
+    let c50 = |a: f32| centroid(&gate(a, 0.5, 0.0, &x, Some(&p), 57), 45 * 48);
     let cs = [0.0, 0.5, 1.0].map(c50);
     assert!(cs[0] > cs[1] && cs[1] > cs[2], "{cs:?}");
     // DECAY: the time to −40 dB grows.
-    let t40 = |d: f32| checks(&gate(1.0, d, 0.0, &x, Some(&p), 57.0))[3];
+    let t40 = |d: f32| checks(&gate(1.0, d, 0.0, &x, Some(&p), 57))[3];
     let ts = [0.1, 0.4, 0.7].map(t40);
     assert!(ts[0] < ts[1] && ts[1] < ts[2], "{ts:?}");
     // DECAY 0 at LPG 0: the gain is the routes' level, sample for sample.
-    let y = gate(0.0, 0.0, 0.0, &x, Some(&p), 57.0);
+    let y = gate(0.0, 0.0, 0.0, &x, Some(&p), 57);
     let vca: Vec<f32> = x.iter().zip(&p).map(|(a, b)| a * b).collect();
     let vca64: Vec<f64> = vca.iter().map(|&v| f64::from(v)).collect();
     let null = null_db(&y, &vca64);
@@ -421,7 +420,7 @@ fn each_knob_does_what_it_says() {
     // STRIKE ½ on a held level of ½: the level plays × ½, the ping rises ½
     // over it, then falls back to it.
     let half = vec![0.5f32; n];
-    let y = gate(0.0, 0.5, 0.5, &vec![1.0; n], Some(&half), 60.0);
+    let y = gate(0.0, 0.5, 0.5, &vec![1.0; n], Some(&half), 60);
     let peak = y[..4800].iter().fold(0.0f32, |m, v| m.max(*v));
     let held = y[n - 1];
     assert!((peak - 0.75).abs() < 0.01, "{peak}");
@@ -557,8 +556,8 @@ fn the_gate_sweeps_smoothly() {
     let n = 48_000;
     let half = [0.5f32; BLOCK_SIZE];
     for which in 0..3 {
-        let mut g = Lpg::shut(0.5, 0.3);
-        g.strike();
+        let mut g = Lpg::NEW;
+        g.strike(Onset::Fresh);
         let mut y = Vec::new();
         for b in 0..n / BLOCK_SIZE {
             let t = b as f32 * BLOCK_SIZE as f32 / n as f32;
@@ -569,14 +568,10 @@ fn the_gate_sweeps_smoothly() {
                 0.3 * (core::f32::consts::TAU * 110.0 * j / FS as f32).sin()
             });
             let d = Drive {
-                level: Some(&half),
-                vel: 1.0,
-                hit: 1.0,
-                key: None,
-                lpg: k[0],
-                decay: k[1],
-                strike: k[2],
-                note: 60.0,
+                level: Level::Routes(&half, Unit::new(1.0)),
+                knobs: Knobs::of(k),
+                hit: Velocity::MAX,
+                note: MidiNote::new(60).unwrap(),
                 fs: FS as f32,
             };
             g.block(&mut buf, &d);
@@ -602,14 +597,10 @@ fn the_gate_recovers_from_nan() {
     let run = |g: &mut Lpg, x: f32, level: &[f32; BLOCK_SIZE]| {
         let mut buf = [x; BLOCK_SIZE];
         let d = Drive {
-            level: Some(level),
-            vel: 1.0,
-            hit: 1.0,
-            key: None,
-            lpg: 0.7,
-            decay: 0.5,
-            strike: 0.3,
-            note: 60.0,
+            level: Level::Routes(level, Unit::new(1.0)),
+            knobs: Knobs::of([0.7, 0.5, 0.3]),
+            hit: Velocity::MAX,
+            note: MidiNote::new(60).unwrap(),
             fs: FS as f32,
         };
         g.block(&mut buf, &d);
@@ -676,4 +667,53 @@ fn old_sounds_load_as_plain_vcas() {
 
 fn gated_into(s: &mut Sound) {
     s.params.out.gate = [0.75, 0.5, 0.25];
+}
+
+/// Every strike is Plaits' ping at the note's velocity: on a voice at rest
+/// (ALGO with no route, VA INIT's ENV 1) as on a held one, a soft note
+/// strikes softer.
+#[test]
+fn a_fresh_voice_strikes_at_its_velocity() {
+    for s in [saw_sound(), Sound::init(EngineType::Va)] {
+        let first = |vel: u8| {
+            let mut b = bench(gated(s.clone(), 0.5, 0.5, 1.0));
+            let mut t = Tape::default();
+            b.note(48, Some(vel));
+            for _ in 0..BPS / 4 {
+                b.render(&mut t);
+            }
+            t.rms(0, 0, BPS / 10)
+        };
+        let (loud, soft) = (first(127), first(30));
+        assert!(soft < 0.5 * loud, "{:?}: {soft} vs {loud}", s.engine());
+    }
+}
+
+/// A softer strike on a ringing gate never drops it to the new peak: the
+/// fall takes it from where it is.
+#[test]
+fn a_softer_strike_never_drops_the_gate() {
+    let open = [1.0f32; BLOCK_SIZE];
+    let drive = |vel: u8| Drive {
+        level: Level::Routes(&open, Unit::new(1.0)),
+        knobs: Knobs::of([0.5, 0.5, 1.0]),
+        hit: Velocity::new(vel).unwrap(),
+        note: MidiNote::new(60).unwrap(),
+        fs: FS as f32,
+    };
+    let mut g = Lpg::NEW;
+    let mut buf = [0.3f32; BLOCK_SIZE];
+    g.strike(Onset::Fresh);
+    for _ in 0..20 {
+        g.block(&mut buf, &drive(127));
+    }
+    let was = g.level().get();
+    g.strike(Onset::Again);
+    g.block(&mut buf, &drive(20));
+    assert!(was > 0.5, "{was}");
+    assert!(
+        g.level().get() > 0.95 * was,
+        "{} from {was}",
+        g.level().get()
+    );
 }

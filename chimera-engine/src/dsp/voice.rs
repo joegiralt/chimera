@@ -22,7 +22,7 @@ use crate::dsp::gate::AmpGate;
 use crate::dsp::knobs::Gliding;
 use crate::dsp::knobs::Knobs;
 use crate::dsp::lfo::{Lfo, LfoClock};
-use crate::dsp::lpg::Lpg;
+use crate::dsp::lpg::{Lpg, Onset};
 use crate::dsp::modal::{ResonatorMode, SymPool};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::voice_fx::VoiceFx;
@@ -669,8 +669,12 @@ impl Voice {
             // A promise made for a note since replaced doesn't outlive it.
             pool.alloc_mut().cancel(self.id);
         }
-        // The gate's strike (ADR 0195).
-        self.lpg.strike();
+        // The gate's strike (ADR 0195): a voice at rest starts it shut.
+        self.lpg.strike(if self.active {
+            Onset::Again
+        } else {
+            Onset::Fresh
+        });
         if !self.active {
             // A fresh note: no ramp from the last note's settings, and no
             // ring left in the filter.
@@ -1152,7 +1156,7 @@ impl Voice {
         // to judge and play; closed, or all three at 0, the VCA as ever.
         let gate = gate::through(|d| (d.run)(self, output, gain.as_ref(), (v.0, dv))).flatten();
         if let Some(g) = gate {
-            last_gain = g.last;
+            last_gain = g.last.get();
         } else {
             let m = &self.played;
             match &gain {

@@ -4,7 +4,8 @@
 //! With the door closed the VCA plays as it always has.
 
 use super::Voice;
-use crate::dsp::lpg::Drive;
+use crate::dsp::lpg::{Drive, Key, Knobs, Level};
+use crate::dsp::va::osc::Unit;
 use crate::hw::{BLOCK_SIZE, Cost};
 use crate::modulation::ModState;
 use crate::params::ParamSnapshot;
@@ -15,7 +16,7 @@ type Buf = [f32; BLOCK_SIZE];
 /// fade) and whether it holds the voice.
 #[derive(Clone, Copy, Debug)]
 pub struct Gate {
-    pub last: f32,
+    pub last: Unit,
     pub holds: bool,
 }
 
@@ -60,7 +61,7 @@ pub(super) fn through<R>(f: impl FnOnce(&GateDoor) -> R) -> Option<R> {
 }
 
 pub(super) mod kern {
-    use super::{Buf, Cost, Drive, Gate, ModState, ParamSnapshot, Voice};
+    use super::{Buf, Cost, Drive, Gate, Key, Knobs, Level, ModState, ParamSnapshot, Unit, Voice};
     use crate::addr::{BlockRef, ParamAddr};
     use crate::dsp::ease::at;
     use crate::dsp::lpg::LPG_COST;
@@ -95,18 +96,20 @@ pub(super) mod kern {
             v.lpg.idle();
             return None;
         }
-        let vel = 1.0 - o.vca_vel + o.vca_vel * v.last_velocity.unit();
+        let vel = Unit::new(1.0 - o.vca_vel + o.vca_vel * v.last_velocity.unit());
         v.vca_velocity = v.last_velocity;
         let key_gated = v.key_gates();
+        let knobs = Knobs::of(o.gate);
+        let level = match gain {
+            Some(g) => Level::Routes(g, vel),
+            None if key_gated => Level::Key(if v.held { Key::Held } else { Key::Up }),
+            None => Level::Open,
+        };
         let d = Drive {
-            level: gain,
-            vel,
-            hit: v.last_velocity.unit(),
-            key: key_gated.then_some(v.held),
-            lpg: o.gate[0],
-            decay: o.gate[1],
-            strike: o.gate[2],
-            note: f32::from(v.last_note.get()),
+            level,
+            knobs,
+            hit: v.last_velocity,
+            note: v.last_note,
             fs: v.sample_rate as f32,
         };
         v.lpg.block(out, &d);
@@ -122,7 +125,7 @@ pub(super) mod kern {
         };
         Some(Gate {
             last: v.lpg.level(),
-            holds: v.lpg.open() || (o.gate[2] < 1.0 && today),
+            holds: v.lpg.open() || (!knobs.strike_alone() && today),
         })
     }
 }
