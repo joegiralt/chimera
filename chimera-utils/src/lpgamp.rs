@@ -94,7 +94,7 @@ fn engine(snd: &Sound, p: &Phrase) -> Vec<f32> {
 }
 
 fn gate(mut s: Sound, lpg: f32, decay: f32, strike: f32) -> Sound {
-    (s.params.out.lpg, s.params.out.decay, s.params.out.strike) = (lpg, decay, strike);
+    s.params.out.gate = [lpg, decay, strike];
     s
 }
 

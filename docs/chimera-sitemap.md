@@ -61,7 +61,7 @@ TAPE has a chain in the code (SRC, DECK with its model page and PIT, FLT, AMP, M
 | FMD | ENV AMT · KEYBOARD · FREQ MOD · FDBK (feedback) · RES MOD, F empty. FREQ MOD and RES MOD read the sources set on JACK. On SEM: F is OUTPUT, MODE (the MODE knob's sweep) or BP (band-pass) |
 | FX | INPUT (the filter's input level) · the FX type's three pots · MIX · STABILITY (on the 2040, LADDER and SEM). SOFT: DRIVE · TONE · LEVEL. FOLD: FOLD · SYMMETRY · LEVEL. OFF: dashes, MIX dimmed |
 | JACK | FREQ SRC in C and RES SRC in E: the sources FREQ MOD and RES MOD read |
-| AMP | VEL (the VCA's velocity) · LPG · DECAY · STRIKE, E and F empty. LPG, DECAY and STRIKE turn the VCA into a low-pass gate; all three at 0 is a plain VCA. LPG ties darkening to gain, so quieter is darker. DECAY is how slowly the gate closes. STRIKE pings the gate at each note-on. VEL scales the routes into VCA and the strike |
+| AMP | VEL (the VCA's velocity) · LPG · DECAY · STRIKE, E and F empty. LPG, DECAY and STRIKE turn the VCA into a low-pass gate; all three at 0 is a plain VCA. LPG ties darkening to gain, so quieter is darker. DECAY is how slowly the gate closes. STRIKE pings the gate at each note-on, as hard as the note is played. VEL scales the routes into VCA |
 | SENDS | CHORUS · DELAY · REVERB (the three sends), the mixer's SENDS page |
 
 ### Pages that draw the whole band

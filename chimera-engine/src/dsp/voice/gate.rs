@@ -5,7 +5,9 @@
 
 use super::Voice;
 use crate::dsp::lpg::Drive;
-use crate::hw::BLOCK_SIZE;
+use crate::hw::{BLOCK_SIZE, Cost};
+use crate::modulation::ModState;
+use crate::params::ParamSnapshot;
 
 type Buf = [f32; BLOCK_SIZE];
 
@@ -18,16 +20,23 @@ pub struct Gate {
 }
 
 /// The kernel: the voice, its block after the DC blocker, the VCA routes'
-/// gain and OUT LEVEL's ramp `(from, step)`.
-pub type GateRun = fn(&mut Voice, &mut Buf, Option<&Buf>, (f32, f32)) -> Gate;
+/// gain and OUT LEVEL's ramp `(from, step)`; `None`, the block untouched,
+/// while LPG, DECAY and STRIKE are all 0.
+pub type GateRun = fn(&mut Voice, &mut Buf, Option<&Buf>, (f32, f32)) -> Option<Gate>;
+/// The gate's bill on a Sound: `LPG_COST` while it runs.
+pub type GateCost = fn(&ParamSnapshot, &ModState) -> Cost;
 
 #[repr(C)]
 pub struct GateDoor {
     pub run: GateRun,
+    pub cost: GateCost,
 }
 
 impl GateDoor {
-    pub const DOOR: GateDoor = GateDoor { run: kern::run };
+    pub const DOOR: GateDoor = GateDoor {
+        run: kern::run,
+        cost: kern::cost,
+    };
 }
 
 /// `f` on the kernel: through the door with `bank2` (`None` while it is
@@ -51,26 +60,52 @@ pub(super) fn through<R>(f: impl FnOnce(&GateDoor) -> R) -> Option<R> {
 }
 
 pub(super) mod kern {
-    use super::{Buf, Drive, Gate, Voice};
+    use super::{Buf, Cost, Drive, Gate, ModState, ParamSnapshot, Voice};
+    use crate::addr::{BlockRef, ParamAddr};
     use crate::dsp::ease::at;
+    use crate::dsp::lpg::LPG_COST;
+    use crate::params::OutParams;
+
+    /// Billed while LPG, DECAY or STRIKE is stored above 0 or routed.
+    #[inline(never)]
+    pub(super) fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
+        let routed = [OutParams::LPG, OutParams::DECAY, OutParams::STRIKE]
+            .iter()
+            .any(|&id| mods.moves_addr(ParamAddr::new(BlockRef::Out, id)));
+        if p.out.gated() || routed {
+            LPG_COST
+        } else {
+            Cost::ZERO
+        }
+    }
 
     /// The gate in the VCA's place: AMP's VEL on the routes and the
     /// strike, the key as the level of a key-gated note with no route, then
     /// OUT LEVEL. The voice is held while the gate is open, or as the VCA
     /// holds it unless STRIKE alone drives the gate.
     #[inline(never)]
-    pub(super) fn run(v: &mut Voice, out: &mut Buf, gain: Option<&Buf>, vol: (f32, f32)) -> Gate {
+    pub(super) fn run(
+        v: &mut Voice,
+        out: &mut Buf,
+        gain: Option<&Buf>,
+        vol: (f32, f32),
+    ) -> Option<Gate> {
         let o = v.played.out;
+        if !o.gated() {
+            v.lpg.idle();
+            return None;
+        }
         let vel = 1.0 - o.vca_vel + o.vca_vel * v.last_velocity.unit();
         v.vca_velocity = v.last_velocity;
         let key_gated = v.key_gates();
         let d = Drive {
             level: gain,
             vel,
+            hit: v.last_velocity.unit(),
             key: key_gated.then_some(v.held),
-            lpg: o.lpg,
-            decay: o.decay,
-            strike: o.strike,
+            lpg: o.gate[0],
+            decay: o.gate[1],
+            strike: o.gate[2],
             note: f32::from(v.last_note.get()),
             fs: v.sample_rate as f32,
         };
@@ -85,9 +120,9 @@ pub(super) mod kern {
         } else {
             !key_gated
         };
-        Gate {
+        Some(Gate {
             last: v.lpg.level(),
-            holds: v.lpg.open() || (o.strike < 1.0 && today),
-        }
+            holds: v.lpg.open() || (o.gate[2] < 1.0 && today),
+        })
     }
 }

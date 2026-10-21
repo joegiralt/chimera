@@ -758,11 +758,8 @@ fn panel_view(panel: &mod_panel::ModPanel, k: u8, block: BlockRef) -> View {
 /// (spec § UI "Dimmed").
 pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
     match (addr.block, addr.param) {
-        // AMP's VEL under the Algo/Modal pass-through (spec § 5), unless
-        // the gate's strike reads it (ADR 0195).
-        (BlockRef::Out, OutParams::VCA_VEL) => {
-            sound.mod_state.routes_into(VCA) == 0 && sound.params.out.strike == 0.0
-        }
+        // AMP's VEL under the Algo/Modal pass-through (spec § 5).
+        (BlockRef::Out, OutParams::VCA_VEL) => sound.mod_state.routes_into(VCA) == 0,
         // MIX mixes nothing with TYPE OFF.
         (BlockRef::VoiceFx, VoiceFxParams::MIX) => sound.params.fx.ty() == FxType::Off,
         // KIND lists built kinds only; with one it is fixed.

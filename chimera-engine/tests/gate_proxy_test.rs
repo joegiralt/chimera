@@ -24,7 +24,7 @@ static DOOR: Mutex<()> = Mutex::new(());
 /// the gate's knobs at `k`.
 fn render(k: [f32; 3]) -> Vec<u32> {
     let mut s = Sound::init(EngineType::Va);
-    (s.params.out.lpg, s.params.out.decay, s.params.out.strike) = (k[0], k[1], k[2]);
+    s.params.out.gate = k;
     let mut shared = Box::<AudioShared>::default();
     *shared.parts[0].params = s.params;
     *shared.parts[0].mod_state = s.mod_state;

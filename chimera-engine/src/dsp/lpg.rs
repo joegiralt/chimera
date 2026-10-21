@@ -40,7 +40,7 @@
 //!   the state is the level each step, and the routes' detail between the
 //!   steps rides on it, so the gain is the routes' own, sample for sample.
 //! - **STRIKE** pings the gate at each note-on (`ProcessPing`), the ping
-//!   rising to the level plus STRIKE × VEL; the level is × (1 − STRIKE), so
+//!   rising to the level plus STRIKE × the note's velocity; the level is × (1 − STRIKE), so
 //!   at 1 the strike alone drives it.
 //!
 //! The cadence runs across the voice's blocks, so a 64-sample block holds
@@ -83,8 +83,10 @@ pub const LPG_COST: Cost = Cost(85);
 pub struct Drive<'a> {
     /// The VCA routes' gain a sample, `None` with no route.
     pub level: Option<&'a Buf>,
-    /// AMP's VEL at the note: × the routes and the strike's peak.
+    /// AMP's VEL at the note: × the routes.
     pub vel: f32,
+    /// The note's velocity, 0..1: × the strike's peak.
+    pub hit: f32,
     /// A key-gated engine with no route: the key is the level (held).
     pub key: Option<bool>,
     pub lpg: f32,
@@ -313,7 +315,7 @@ impl Lpg {
         self.detail = (1.0 - r.w) * (1.0 - s);
         let input = if self.ramp_up {
             self.vac += r.attack;
-            let peak = (u + s * d.vel).min(1.0);
+            let peak = (u + s * d.hit).min(1.0);
             if self.vac >= peak {
                 (self.vac, self.ramp_up) = (peak, false);
             }

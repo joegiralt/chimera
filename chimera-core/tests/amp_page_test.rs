@@ -90,14 +90,6 @@ fn the_cells_key_carries_vels_dimming() {
     assert_eq!(vel_look(&mut ui), Look::Live as u32);
 }
 
-/// A STRIKE reads VEL: its peak is × VEL, so the cell is live.
-#[test]
-fn a_strike_wakes_vel() {
-    let mut s = Sound::init(EngineType::Algo);
-    s.params.out.strike = 0.5;
-    assert!(!view::dimmed(VEL, &s));
-}
-
 #[test]
 fn amp_rows() {
     use chimera_core::ui::block_registry::SENDS;

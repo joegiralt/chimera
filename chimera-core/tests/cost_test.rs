@@ -2631,9 +2631,9 @@ fn the_gate_bills_only_when_up_and_its_voices() {
         for k in 0..3 {
             let mut q = p.clone();
             match k {
-                0 => q.out.lpg = 1.0 / 128.0,
-                1 => q.out.decay = 1.0 / 128.0,
-                _ => q.out.strike = 1.0 / 128.0,
+                0 => q.out.gate[0] = 1.0 / 128.0,
+                1 => q.out.gate[1] = 1.0 / 128.0,
+                _ => q.out.gate[2] = 1.0 / 128.0,
             }
             assert_eq!(Voice::cost(&q, &still), base + LPG_COST, "{e:?} knob {k}");
         }
@@ -2645,14 +2645,14 @@ fn the_gate_bills_only_when_up_and_its_voices() {
         };
         // Routed, it bills as stored above 0.
         let mut q = p.clone();
-        q.out.lpg = 0.5;
+        q.out.gate[0] = 0.5;
         assert_eq!(Voice::cost(&p, &lfo), Voice::cost(&q, &lfo), "{e:?} routed");
     }
     let voices = |e: EngineType, k: FilterKind, on: bool| {
         let mut p = ParamSnapshot::for_engine(e);
         p.filter.set_kind(k);
         if on {
-            p.out.lpg = 1.0;
+            p.out.gate[0] = 1.0;
         }
         let c = Voice::cost(&p, &still).0;
         rooms.map(|r| (r / c).min(MAX_VOICES as u32))

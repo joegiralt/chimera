@@ -887,12 +887,10 @@ pub struct OutParams {
     /// Chorus, delay, reverb sends (`FxBus` order), 0..1 each: the Sound's
     /// own, eased by the mixer (ADR 0123).
     pub sends: [f32; crate::dsp::fx_bus::FX_SENDS],
-    /// The VCA's low-pass gate (ADR 0195), 0..1 each, all 0 a plain VCA:
-    /// LPG couples darkening to gain, DECAY is the vactrol's fall, STRIKE
-    /// pings it at each note-on.
-    pub lpg: f32,
-    pub decay: f32,
-    pub strike: f32,
+    /// The VCA's low-pass gate (ADR 0195), `[LPG, DECAY, STRIKE]`, 0..1
+    /// each, all 0 a plain VCA: LPG couples darkening to gain, DECAY is the
+    /// vactrol's fall, STRIKE pings it at each note-on.
+    pub gate: [f32; 3],
 }
 
 /// INIT's OUT LEVEL: ALGO INIT's C4 at velocity 100 at the factory median,
@@ -907,9 +905,7 @@ impl Default for OutParams {
             vca: 0.0,
             vca_vel: 1.0,
             sends: [0.0; crate::dsp::fx_bus::FX_SENDS],
-            lpg: 0.0,
-            decay: 0.0,
-            strike: 0.0,
+            gate: [0.0; 3],
         }
     }
 }
@@ -931,7 +927,7 @@ impl OutParams {
     /// The gate runs (ADR 0195): LPG, DECAY or STRIKE above 0, as played.
     #[inline(always)]
     pub fn gated(&self) -> bool {
-        self.lpg > 0.0 || self.decay > 0.0 || self.strike > 0.0
+        self.gate.iter().any(|&k| k > 0.0)
     }
 }
 
@@ -1079,12 +1075,9 @@ impl Block for OutParams {
             Self::PAN => self.pan,
             Self::VCA => self.vca,
             Self::VCA_VEL => self.vca_vel,
-            Self::SEND1 => self.sends[0],
-            Self::SEND2 => self.sends[1],
-            Self::SEND3 => self.sends[2],
-            Self::LPG => self.lpg,
-            Self::DECAY => self.decay,
-            Self::STRIKE => self.strike,
+            // The sends, then the gate (ADR 0195): ids 4–6 and 7–9.
+            ParamId(i @ 4..=6) => self.sends[usize::from(i - 4)],
+            ParamId(i @ 7..=9) => self.gate[usize::from(i - 7)],
             _ => 0.0,
         }
     }
@@ -1096,12 +1089,8 @@ impl Block for OutParams {
             Self::PAN => self.pan = v,
             Self::VCA => self.vca = v,
             Self::VCA_VEL => self.vca_vel = v,
-            Self::SEND1 => self.sends[0] = v,
-            Self::SEND2 => self.sends[1] = v,
-            Self::SEND3 => self.sends[2] = v,
-            Self::LPG => self.lpg = v,
-            Self::DECAY => self.decay = v,
-            Self::STRIKE => self.strike = v,
+            ParamId(i @ 4..=6) => self.sends[usize::from(i - 4)] = v,
+            ParamId(i @ 7..=9) => self.gate[usize::from(i - 7)] = v,
             _ => {}
         }
     }

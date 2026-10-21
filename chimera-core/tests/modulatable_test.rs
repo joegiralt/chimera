@@ -60,7 +60,7 @@ fn recipe(addr: ParamAddr) -> ParamSnapshot {
         // The VCA's gate (ADR 0195): a struck, half-dark gate, so DECAY's
         // fall is heard.
         BlockRef::Out if addr.param.0 >= 7 => {
-            (p.out.lpg, p.out.decay, p.out.strike) = (0.5, 0.3, 0.5);
+            p.out.gate = [0.5, 0.3, 0.5];
         }
         BlockRef::VoiceFx => {
             p.fx.set_type(FxType::Soft);

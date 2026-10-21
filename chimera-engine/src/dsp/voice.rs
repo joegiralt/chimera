@@ -33,7 +33,7 @@ use crate::meter::Clip;
 use crate::modulation::{
     FixedCol, MAX_MOD_SOURCES, ModRouting, ModSource, ModState, amount_scale, note_source,
 };
-use crate::params::{EngineType, EnvParams, FilterParams, OutParams, ParamSnapshot, Steal};
+use crate::params::{EngineType, EnvParams, FilterParams, ParamSnapshot, Steal};
 use crate::project::SourceId;
 use crate::taps::{
     TAP_CAPTURE_COST, TAP_FOLD_COST, TAP_SHAPE_COST, TAP_VCA_COST, TapLane, TapOp, TapRoutes,
@@ -215,20 +215,8 @@ impl Voice {
             + ModRouting::cost(p, mods)
             + Self::fx_cost(p, mods)
             + Self::tap_cost(p)
-            + Self::gate_cost(p, mods)
-    }
-
-    /// The VCA's gate (ADR 0195): billed while LPG, DECAY or STRIKE is
-    /// stored above 0 or routed.
-    fn gate_cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
-        let routed = [OutParams::LPG, OutParams::DECAY, OutParams::STRIKE]
-            .iter()
-            .any(|&id| mods.moves_addr(ParamAddr::new(BlockRef::Out, id)));
-        if p.out.gated() || routed {
-            crate::dsp::lpg::LPG_COST
-        } else {
-            Cost::ZERO
-        }
+            // The VCA's gate (ADR 0195), bank 2's: none with its door closed.
+            + gate::through(|d| (d.cost)(p, mods)).unwrap_or(Cost::ZERO)
     }
 
     /// The filter as `p` and `mods` run it: the steady bill, the moving
@@ -866,12 +854,14 @@ impl Voice {
     /// No route into VCA, and the engine can't end the note itself: a TAPE
     /// loop has no end (spec § 2), nor does VA, so its key holds it, as a
     /// VCA route from a source other than an ENV does.
+    #[inline(always)]
     fn key_gates(&self) -> bool {
         self.vca.bits == 0 && matches!(self.slot, EngineSlot::Tape(_) | EngineSlot::Va(_))
     }
 
     /// A VCA source still holds the voice (spec § 4): an ENV slot per its
     /// TYPE and FORM, anything else while the key is held.
+    #[inline(always)]
     fn vca_holds(&self) -> bool {
         let key = self.held;
         ModSource::ALL
@@ -1158,17 +1148,12 @@ impl Voice {
         // The block's last routed gain, × AMP's VEL: whether the lifetime
         // check below ends the voice through a fade.
         let mut last_gain = 0.0;
-        // LPG, DECAY or STRIKE up: the gate is the VCA (ADR 0195), through
-        // bank 2's door; closed, the VCA plays as ever.
-        let gate = if m.out.gated() {
-            gate::through(|d| (d.run)(self, output, gain.as_ref(), (v.0, dv)))
-        } else {
-            None
-        };
+        // LPG, DECAY or STRIKE up: the gate is the VCA (ADR 0195), bank 2's
+        // to judge and play; closed, or all three at 0, the VCA as ever.
+        let gate = gate::through(|d| (d.run)(self, output, gain.as_ref(), (v.0, dv))).flatten();
         if let Some(g) = gate {
             last_gain = g.last;
         } else {
-            self.lpg.idle();
             let m = &self.played;
             match &gain {
                 None => {

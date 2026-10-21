@@ -128,6 +128,7 @@ fn gate(a: f32, d: f32, s: f32, x: &[f32], level: Option<&[f32]>, note: f32) -> 
         let drive = Drive {
             level: lv.as_ref(),
             vel: 1.0,
+            hit: 1.0,
             key: None,
             lpg: a,
             decay: d,
@@ -430,7 +431,7 @@ fn saw_sound() -> Sound {
 }
 
 fn gated(mut s: Sound, a: f32, d: f32, k: f32) -> Sound {
-    (s.params.out.lpg, s.params.out.decay, s.params.out.strike) = (a, d, k);
+    s.params.out.gate = [a, d, k];
     s
 }
 
@@ -465,7 +466,7 @@ fn the_gate_never_gates_twice() {
         let mut s = Sound::init(EngineType::Va);
         s.params.envelopes[0].sustain = sustain;
         if on {
-            s.params.out.lpg = 1.0 / 128.0;
+            s.params.out.gate[0] = 1.0 / 128.0;
         }
         let mut b = bench(s);
         let t = hold(&mut b, None, BPS * 2);
@@ -524,9 +525,9 @@ fn the_knobs_never_zipper() {
         for k in 0..BPS {
             let v = (k + 1) as f32 / BPS as f32;
             b.turn_sound(|s| match which {
-                0 => s.params.out.lpg = v,
-                1 => s.params.out.decay = v,
-                _ => s.params.out.strike = v,
+                0 => s.params.out.gate[0] = v,
+                1 => s.params.out.gate[1] = v,
+                _ => s.params.out.gate[2] = v,
             });
             b.render(&mut t);
         }
@@ -561,6 +562,7 @@ fn the_gate_sweeps_smoothly() {
             let d = Drive {
                 level: Some(&half),
                 vel: 1.0,
+                hit: 1.0,
                 key: None,
                 lpg: k[0],
                 decay: k[1],
@@ -593,6 +595,7 @@ fn the_gate_recovers_from_nan() {
         let d = Drive {
             level: Some(level),
             vel: 1.0,
+            hit: 1.0,
             key: None,
             lpg: 0.7,
             decay: 0.5,
@@ -638,8 +641,7 @@ fn old_sounds_load_as_plain_vcas() {
     let d = decode(&encode(&s)).unwrap();
     assert!(d.bits_eq(&s));
     assert_eq!(
-        (d.params.out.lpg, d.params.out.decay, d.params.out.strike),
-        (0.75, 0.5, 0.25)
+        d.params.out.gate, [0.75, 0.5, 0.25]
     );
     let init = encode(&Sound::init(EngineType::Va));
     assert!(init.len() < encode(&s).len());
@@ -656,5 +658,5 @@ fn old_sounds_load_as_plain_vcas() {
 }
 
 fn gated_into(s: &mut Sound) {
-    (s.params.out.lpg, s.params.out.decay, s.params.out.strike) = (0.75, 0.5, 0.25);
+    s.params.out.gate = [0.75, 0.5, 0.25];
 }
