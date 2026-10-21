@@ -54,6 +54,7 @@ use screen::*;
 // New: flt_2040_kind, flt_2040_exp, flt_fx_off, flt_fx_soft, flt_fx_fold,
 // flt_front_fx, row_amp. Gone: row_drv, amp_sym, flt_mod_2040_exp.// Re-recorded in Task 14: the curve viz draws SOFT and FOLD at their
 // `MAKE_UP` 0.483 and 0.684 (flt_fx_soft, flt_fx_fold, _soft_pre, _fold_post).
+// Re-recorded for the FREQ MOD / RES MOD band naming its source: flt_mode, flt_mod_clean.
 // Re-recorded for ADR 0167 (FLT's front reordered: KIND · FX · Q · MODE ·
 // FX PLACE · FREQ): every FLT front page, row_flt, large_va_drive.
 const GOLDENS: &[(&str, u64)] = &[
@@ -93,14 +94,14 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: MODE reads HP4, CLEAN's label for HP24 (ADR 0096); then
     // LEVEL 64 in DRIVE's cell (Task 6); then FLT › MOD's six cells, FM3
     // turned, its delete hint showing (Task 12): was 0xf6e7d94448ca7888.
-    ("flt_mode", 0x8361f372cba8df63),
+    ("flt_mode", 0x39f981d71a39b49b),
     // Each type's FLT and FLT › MOD (filter-types § 5, Task 17): CLEAN's
     // NOTCH1, the 2040's lowered pass band and KEYBD HALF, its fixed MODE
     // dimmed and VOICE EXP, DIRTY's NOTCH1 at FREQ (its own MODE names).
     // Layout A (#614): VOICE EXPNDR on FLT (flt_2040_exp, was
     // flt_mod_2040_exp), KEYBD HALF on FLT › MOD, no MODE cell.
     ("flt_clean", 0x56110a2e1e38df2e),
-    ("flt_mod_clean", 0xd7f74f61c4685396),
+    ("flt_mod_clean", 0xed08e904e809a166),
     ("flt_2040", 0x15653ec5210b6730),
     // KIND focused on the 2040: its readout names 4-POLE LP (#614).
     ("flt_2040_kind", 0x1e8668949f243f60),
