@@ -70,6 +70,10 @@ use screen::*;
 // ADR 0205: SCRUB's LENGTH 70 ms and KEY on its page (tape_deck_scrub,
 // tape_page_scrub, tape_strip_scrub); a Sound's bound 2 672 B moves the
 // pool's count (sound_browser_pool_full).
+// ADR 0195: AMP is VEL · LPG · DECAY · STRIKE, the sends on AMP › SENDS.
+// New: amp_gate, amp_sends. Re-recorded: row_amp, amp_vel_dimmed,
+// amp_vel_live, modal_amp, large_bigviz_filter (an AMP screen),
+// large_modal_amp; sound_browser_pool_full (a dense Sound is 15 B larger).
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x4b8d653ed15f4a3e),
@@ -169,7 +173,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("row_mod", 0x61ae81a248025efe),
     ("row_osc_mid", 0x10a75dc9cea244b8),
     ("row_osc_last", 0xa3198b2d2fb8a67d),
-    ("row_amp", 0xedf62a5f9b585964),
+    ("row_amp", 0xfa6545ca8559b8a5),
     // New: VA OSC1 and OSC2 under STACK and ROW; the ROW bar says OSC1 / OSC2, not OSCILLATOR n.
     ("va_osc1", 0x117052eda46fe399),
     ("va_osc2", 0xd1bd400c5e8d1428),
@@ -195,8 +199,10 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: AMP is the sends over FOLD, VEL, MIX, SYM one page down (sends Task 5);
     // mod_matrix_wide primes FOLD and MIX on their new cells. Then AMP is
     // the sends and VEL alone, SYM gone (#614).
-    ("amp_vel_dimmed", 0xb39846680183f2f5),
-    ("amp_vel_live", 0xd455067ceda96ed2),
+    ("amp_vel_dimmed", 0x97b5ec576db1686d),
+    ("amp_gate", 0xac47230d2acbfe20),
+    ("amp_sends", 0xc9b0116af8f449fa),
+    ("amp_vel_live", 0xd2952b0ccaa7127e),
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
     ("algo_pitch", 0xd16ac1fa1fd56727),
@@ -223,7 +229,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_home_bowed", 0xedeb3ad6cfdbe66e),
     // Re-recorded: the EXC node (plan Task 13).
-    ("modal_amp", 0xc6aa8cf54614ca9d),
+    ("modal_amp", 0xa87011df4f83c078),
     // The Mix chain's map loses its TAPE node without `master-tape`
     // (ADR 0055); with it they have their own rows, run by `just test`.
     #[cfg(not(feature = "master-tape"))]
@@ -343,6 +349,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Fourth TAPE merge: MAX_SOUND_COST 2656 (STAB, FB and TAPE), same picture.
     // Then SEM's MORPH: the dense fill leaves 0.1K FREE, not 0.0K. Then VA's
     // KIND and LEVEL (ADR 0197): each dense Sound 10 B more, the pool fills sooner.
+    // Then the VCA's gate (ADR 0195): 15 B more.
     ("sound_browser_pool_full", 0x30d9348383441db9),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
@@ -421,8 +428,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // large_algo_level, large_bigviz_filter, large_modal_amp, large_va_drive.
     ("large_engine_algo", 0x05c1170e863ceb31),
     ("large_algo_level", 0x6781c7502e39f90e),
-    ("large_bigviz_filter", 0xcabe5de5ca85d1d7),
-    ("large_modal_amp", 0x0a265b6a0a9884ed),
+    ("large_bigviz_filter", 0xdf4afe14780965be),
+    ("large_modal_amp", 0xe38ccc705df20b41),
     // VA's NOISE page (ADR 0197): KIND · LEVEL; LEVEL at 60 with its bar;
     // KIND on DIGITAL.
     ("va_noise", 0xa02dcec5295dacbb),

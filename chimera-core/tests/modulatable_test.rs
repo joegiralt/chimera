@@ -63,6 +63,11 @@ fn recipe(addr: ParamAddr) -> ParamSnapshot {
                 p.filter.set_kind(FilterKind::Sem);
             }
         }
+        // The VCA's gate (ADR 0195): a struck, half-dark gate, so DECAY's
+        // fall is heard.
+        BlockRef::Out if addr.param.0 >= 7 => {
+            p.out.gate = [0.5, 0.3, 0.5];
+        }
         BlockRef::VoiceFx => {
             p.fx.set_type(FxType::Soft);
             p.fx.pots[0] = 0.5;
@@ -180,10 +185,11 @@ fn every_modulatable_param_audibly_changes_output() {
     // + VCA; PITCH, FINE; Modal's macros; VA's twelve (NOISE's LEVEL among
     // them); FRMT and BW per operator, VOWEL; the FX slot's pots and MIX;
     // less DRV's three and the fold's; TAPE's five macros and ONE's START
-    // (#698); the filter's STABILITY, FB and SEM's MODE.
+    // (#698); the filter's STABILITY, FB and SEM's MODE; the VCA's LPG, DECAY
+    // and STRIKE (ADR 0195).
     assert_eq!(
         checked,
-        17 + 3 * 5 + 1 + 2 + 4 + 12 + 2 * 6 + 1 + 4 - 6 + 6 + 3
+        17 + 3 * 5 + 1 + 2 + 4 + 12 + 2 * 6 + 1 + 4 - 6 + 6 + 3 + 3
     );
 }
 

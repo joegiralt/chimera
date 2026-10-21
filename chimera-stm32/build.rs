@@ -172,6 +172,9 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // `dsp::grain`, text and rodata.
     let grain = "    *(.text.*5delay5grain* .rodata.*5delay5grain* .text.*3dsp5grain* .rodata.*3dsp5grain*);
 ";
+    // The VCA's gate (ADR 0195): `voice::gate::kern`, as SEM's.
+    let gate = "    *(.text.*5voice4gate4kern* .rodata.*5voice4gate4kern*);
+";
     fs::write(
         out_dir.join("bank2.x"),
         r#"
@@ -220,6 +223,7 @@ SECTIONS {
     /* SEM */
     /* BENCH */
     /* GRAIN */
+    /* GATE */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -241,7 +245,8 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("    /* BENCH */\n", bench)
         .replace("    /* BENCH SLOT */\n", bench_slot)
         .replace("/* BENCH ASSERT */", bench_assert)
-        .replace("    /* GRAIN */\n", grain),
+        .replace("    /* GRAIN */\n", grain)
+        .replace("    /* GATE */\n", gate),
     )
     .unwrap();
 

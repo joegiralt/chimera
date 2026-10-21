@@ -15,6 +15,7 @@ mod generic;
 mod grain;
 mod grain_listen;
 mod interp;
+mod lpgamp;
 mod metrics;
 mod models;
 mod models_burst;
@@ -47,6 +48,8 @@ usage: chimera-utils [flags] COMMAND …
                            the known-pair check
   vanoise hash|check|render …
                            VA NOISE on the full engine: bit hashes, the page's set
+  lpg-amp render OUTDIR SOUND EVENTS
+                           the VCA's gate on its listening set, raw levels
   ab REF DEVICE [k=v …]    REF vs a Chimera DEVICE: null, response, THD, centroid; A/B WAVs
                            (an effect also on the listening set)
   bank2-seal ELF BIN BK2 --version TEXT
@@ -238,6 +241,9 @@ fn run() -> Result<bool, String> {
         "grain-listen" => grain_listen::run(rest).map(|_| true),
         "circuit" => circuit::run(rest).map(|_| true),
         "vanoise" => vanoise::run(rest).map(|_| true),
+        "lpg-amp" if rest.first().is_some_and(|c| c == "render") => {
+            lpgamp::render(&rest[1..]).map(|_| true)
+        }
         "devices" => {
             for (name, d) in devices::Device::all() {
                 let ks: Vec<String> = d

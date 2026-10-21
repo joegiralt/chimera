@@ -192,11 +192,11 @@ fn part_pages_display_like_before() {
         (
             &reg::AMP,
             [
-                ("CHORUS", Uni),
-                ("DELAY", Uni),
-                ("REVERB", Uni),
-                ("--", Uni),
                 ("VEL", Uni),
+                ("LPG", Uni),
+                ("DECAY", Uni),
+                ("STRIKE", Uni),
+                ("--", Uni),
                 ("--", Uni),
             ],
         ),

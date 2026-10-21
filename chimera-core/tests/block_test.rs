@@ -296,7 +296,7 @@ fn snap_walks_bipolar_points_both_ways() {
 /// (VA spec § Params); the three sends add 12 B (ADR 0123); the operators'
 /// `Kinds` add 4 B (formant spec § 1) and their six fields and VOWEL 36 B (§ 2);
 /// PLAY's MODE adds 4 B with its padding (ADR 0170); the voice FX block 20 B
-/// (ADR 0155).
+/// (ADR 0155); the VCA's gate 12 B (ADR 0195).
 #[test]
 fn snapshot_is_small() {
     let size = core::mem::size_of::<chimera_core::params::ParamSnapshot>();

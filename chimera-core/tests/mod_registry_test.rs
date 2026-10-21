@@ -113,9 +113,10 @@ fn registry_accepts_exactly_the_modulatable_addresses() {
     // + ENV n LEVEL, TIME, RISE, FALL, SHAPE; VCA; PITCH, FINE; Modal's macros;
     // VA's twelve (NOISE's LEVEL the last); each operator's FRMT and BW, and
     // VOWEL; the FX slot's pots and MIX; TAPE's five macros and ONE's START
-    // (#698); the filter's STABILITY, FB and SEM's MODE
+    // (#698); the filter's STABILITY, FB and SEM's MODE; the VCA's LPG, DECAY
+    // and STRIKE (ADR 0195)
     assert_eq!(
         accepted,
-        11 + 3 * 5 + 1 + 2 + 4 + 12 + 2 * 6 + 1 + 4 + 6 + 3
+        11 + 3 * 5 + 1 + 2 + 4 + 12 + 2 * 6 + 1 + 4 + 6 + 3 + 3
     );
 }

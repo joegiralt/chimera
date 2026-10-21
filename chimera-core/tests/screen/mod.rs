@@ -1689,11 +1689,25 @@ pub const CASES: &[ScreenCase] = &[
     }),
     ("amp_vel_dimmed", |ui| {
         plus(ui, 3);
-        feed(ui, Input::turn(EncoderId::E, 1)); // VEL focused, dimmed
+        feed(ui, Input::turn(EncoderId::A, 1)); // VEL focused, dimmed
+    }),
+    // AMP's gate (ADR 0195): LPG, DECAY and STRIKE up, STRIKE focused; VEL
+    // live under the strike.
+    ("amp_gate", |ui| {
+        plus(ui, 3);
+        feed(ui, Input::turn(EncoderId::B, 96));
+        feed(ui, Input::turn(EncoderId::C, 64));
+        feed(ui, Input::turn(EncoderId::D, 127));
+    }),
+    // AMP › SENDS: the mixer's SENDS under AMP, REVERB up and focused.
+    ("amp_sends", |ui| {
+        plus(ui, 3);
+        feed(ui, Input::press(ButtonId::Edit));
+        feed(ui, Input::turn(EncoderId::C, 40));
     }),
     ("amp_vel_live", |ui| {
         plus(ui, 3);
-        feed(ui, Input::turn(EncoderId::E, 1));
+        feed(ui, Input::turn(EncoderId::A, 1));
         prime(ui); // VEL primes the VCA: a permanent column, ALREADY ROUTED
         plus(ui, 1);
         to_matrix(ui); // ENV1 → FREQ

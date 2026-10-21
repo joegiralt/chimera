@@ -9,15 +9,15 @@
 # Every line names an ADR or the file refuses to load.
 #
 # <set: features as check builds it>  <bytes>  # ADR NNNN: why
-orbit                          906800  # ADR 0202: +1500 GRAIN's closed-door data, over ADR 0198's line at the main merge
-default                        885252  # ADR 0202: +996 GRAIN's closed-door data, over ADR 0198's line at the main merge
-bank2-gate                     887072  # ADR 0202: +980 GRAIN's closed-door data, over ADR 0198's line at the main merge
-fault-inject                   860084  # ADR 0202: +1700 GRAIN's closed-door data, over ADR 0198's line at the main merge
-bench-algo                     903996  # ADR 0202: +1708 GRAIN's closed-door data, over ADR 0198's line at the main merge
-bench-algo,master-tape         881508  # ADR 0202: +1244 GRAIN's closed-door data, over ADR 0198's line at the main merge
-bench-routing                  899908  # ADR 0202: +1660 GRAIN's closed-door data, over ADR 0198's line at the main merge
-bench-memory                   902560  # ADR 0202: +1684 GRAIN's closed-door data, over ADR 0198's line at the main merge
-bench-stress                   904660  # ADR 0202: +1612 GRAIN's closed-door data, over ADR 0198's line at the main merge
-bench-orbit                    885136  # ADR 0202: +1708 GRAIN's closed-door data, over ADR 0198's line at the main merge
-bench-tape                     867164  # ADR 0202: +1580 GRAIN's closed-door data, over ADR 0198's line at the main merge
-filter-probes                  913164  # ADR 0202: +1724 GRAIN's closed-door data, over ADR 0198's line at the main merge
+orbit                          907548  # ADR 0202: +1500 GRAIN's closed-door data, over ADR 0198's line at the main merge; ADR 0195: +748, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+default                        885368  # ADR 0202: +996 GRAIN's closed-door data, over ADR 0198's line at the main merge; ADR 0195: +116, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+bank2-gate                     887204  # ADR 0202: +980 GRAIN's closed-door data, over ADR 0198's line at the main merge; ADR 0195: +132, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+fault-inject                   860912  # ADR 0202: +1700 GRAIN's closed-door data, over ADR 0198's line at the main merge; ADR 0195: +828, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+bench-algo                     904600  # ADR 0202: +1708 GRAIN's closed-door data, over ADR 0198's line at the main merge; ADR 0195: +604, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+bench-algo,master-tape         881984  # ADR 0202: +1244 GRAIN's closed-door data, over ADR 0198's line at the main merge; ADR 0195: +476, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+bench-routing                  900528  # ADR 0202: +1660 GRAIN's closed-door data, over ADR 0198's line at the main merge; ADR 0195: +620, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+bench-memory                   903340  # ADR 0202: +1684 GRAIN's closed-door data, over ADR 0198's line at the main merge; ADR 0195: +780, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+bench-stress                   905384  # ADR 0202: +1612 GRAIN's closed-door data, over ADR 0198's line at the main merge; ADR 0195: +724, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+bench-orbit                    886076  # ADR 0202: +1708 GRAIN's closed-door data, over ADR 0198's line at the main merge; ADR 0195: +940, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+bench-tape                     868128  # ADR 0202: +1580 GRAIN's closed-door data, over ADR 0198's line at the main merge; ADR 0195: +964, the VCA gate's specs, knob and page tables, the Sound's 12 B and the door's stubs
+filter-probes                  917360  # ADR 0202: +1724 GRAIN's closed-door data, over ADR 0198's line at the main merge; ADR 0195: +4196, the same and lpg_probe, the count's probe
