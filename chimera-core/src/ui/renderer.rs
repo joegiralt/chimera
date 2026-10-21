@@ -126,6 +126,8 @@ pub struct Frame<'a> {
     /// An LFO page's playhead: its slot's newest voice on the active Part,
     /// `None` with no voice (ADR 0177).
     pub lfo: Option<crate::ui::lfo_glyph::Head>,
+    /// PIT's corner (ADR 0201).
+    pub tuner: &'a crate::ui::pit_tuner::Shown,
 }
 
 impl Frame<'_> {
@@ -458,6 +460,10 @@ impl Renderer {
                 viz::fx_strip(display, source, fx.place == Place::Post, 128);
                 viz::fx_curve(display, 168, &rows);
             }
+            VizType::Tuner => {
+                viz::live_output(display, f.scope);
+                crate::ui::pit_tuner::paint(display, f.tuner);
+            }
             _ => viz::live_output(display, f.scope),
         }
     }
@@ -640,6 +646,10 @@ impl Renderer {
                     let bits = fx.pots.map(f32::to_bits);
                     let tp = (fx.ty() as u32) << 1 | fx.place as u32;
                     ([0; 6], region::fold_keys(tp.into(), &bits))
+                }
+                VizType::Tuner => {
+                    let live = viz::live_key(f.scope);
+                    ([0; 6], region::fold_keys(live.into(), &[f.tuner.key]))
                 }
                 _ => ([0; 6], viz::live_key(f.scope)),
             },

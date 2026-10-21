@@ -49,6 +49,8 @@ pub enum VizType {
     /// FLT › FX: `source › FX › FLT` (or the filter first) and the type's
     /// transfer curve.
     FxCurve,
+    /// PIT: the live output, the sounding pitch in its corner (ADR 0201).
+    Tuner,
 }
 
 /// A node of the FX flow; the value is its index in `viz::effects_flow`.

@@ -189,6 +189,8 @@ pub struct UiDoor {
     source_run: fn(&mut SourceCell, SourceJob, &mut dyn Store, &Ready, &mut Project),
     /// START's and END's onset snap (`ui::onset`, ADR 0185).
     onset: fn(&[u8], u32, u32, bool) -> Option<u32>,
+    /// PIT's tuner (`ui::pit_tuner`, ADR 0201).
+    pit: fn(&mut crate::ui::pit_tuner::Tuner, &crate::ui::pit_tuner::Ins<'_>),
 }
 
 /// A card row's head and how it loads (`SourceCell::kind`).
@@ -198,8 +200,9 @@ type HeadKind = (SourceHead, LoadKind);
 const UI_MAGIC: u32 = 0xB2C0_0001;
 
 impl UiDoor {
-    /// Every entry is `tape_strip::raster`'s or `source_cell::card`'s, the
-    /// modules `bank2.x` links into bank 2.
+    /// Every entry is `tape_strip::raster`'s, `source_cell::card`'s,
+    /// `onset::detect`'s or `pit_tuner::calc`'s, the modules `bank2.x`
+    /// links into bank 2.
     pub const OWN: UiDoor = UiDoor {
         magic: UI_MAGIC,
         overview: Overview::of_in,
@@ -212,6 +215,7 @@ impl UiDoor {
         source_tick: SourceCell::rehead_in,
         source_run: SourceCell::run_in,
         onset: crate::ui::onset::onset_in_bank2,
+        pit: crate::ui::pit_tuner::calc::pass_in,
     };
 
     #[inline(always)]
@@ -280,6 +284,15 @@ impl UiDoor {
         p: &mut Project,
     ) {
         (self.source_run)(c, job, s, r, p)
+    }
+
+    #[inline(always)]
+    pub(crate) fn pit(
+        &self,
+        t: &mut crate::ui::pit_tuner::Tuner,
+        i: &crate::ui::pit_tuner::Ins<'_>,
+    ) {
+        (self.pit)(t, i)
     }
 
     #[inline(always)]

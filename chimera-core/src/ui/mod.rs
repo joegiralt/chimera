@@ -35,6 +35,7 @@ pub mod orbit;
 pub mod page;
 pub mod part_page;
 pub mod perf;
+pub mod pit_tuner;
 pub mod pool_page;
 pub mod push;
 pub mod region;
@@ -335,6 +336,8 @@ pub struct UiState {
     /// (`instrument::LFO_VIEW`) but in tests.
     lfo_head: Option<lfo_glyph::Head>,
     lfo_from: &'static LfoView,
+    /// PIT's tuner: each Part's last note and the corner (ADR 0201).
+    tuner: pit_tuner::Tuner,
     /// The edited Part's newest voice's formant view, as the audio last
     /// published it: what an OP page's band draws.
     formant: FormantView,
@@ -438,6 +441,7 @@ crate::in_place::field_list!(UiState => UiState {
     heads_from,
     lfo_head,
     lfo_from,
+    tuner,
     formant,
     src,
     lib,
@@ -509,6 +513,7 @@ impl UiState {
             addr_of_mut!((*p).heads_from).write(&crate::instrument::HEADS);
             addr_of_mut!((*p).lfo_head).write(None);
             addr_of_mut!((*p).lfo_from).write(&crate::instrument::LFO_VIEW);
+            addr_of_mut!((*p).tuner).write(pit_tuner::Tuner::NEW);
             addr_of_mut!((*p).formant).write(FormantView::NONE);
             addr_of_mut!((*p).src).write(source_cell::SourceCell::NEW);
             library::LibState::init_in_place(uninit_at(addr_of_mut!((*p).lib)));
@@ -2591,6 +2596,19 @@ impl UiState {
 
     /// The LFO page's playhead reads `from` (the goldens' own), not the
     /// audio's.
+    /// PIT's tuner takes `note` as `part`'s last, and the edited Part as
+    /// `sounding`, never the audio's: for the goldens and tests.
+    #[cfg(feature = "test-support")]
+    pub fn hear_note(&mut self, part: PartId, note: Option<u8>, sounding: bool) {
+        self.tuner.hear(part, note, sounding);
+    }
+
+    /// PIT's corner as last worked out: for the tests.
+    #[cfg(feature = "test-support")]
+    pub fn tuner(&self) -> &pit_tuner::Shown {
+        &self.tuner.shown
+    }
+
     pub fn hear_lfo(&mut self, from: &'static LfoView) {
         self.lfo_from = from;
     }
@@ -3071,6 +3089,18 @@ impl UiState {
         self.strip_pass();
         self.heads = self.heads_from.read(at.index());
         self.lfo_pass();
+        let on = self.page_def().viz == VizType::Tuner;
+        pit_tuner::pass(
+            &mut self.tuner,
+            &pit_tuner::Ins {
+                parts: self.project.perf().parts(),
+                active: at,
+                live: self.live,
+                tune: self.midi.tune,
+                text: self.theme.text,
+                on,
+            },
+        );
 
         // Read base param values
         let def = self.page_def();
@@ -3343,6 +3373,7 @@ impl UiState {
             strip: &self.overview,
             heads: self.heads,
             lfo: self.lfo_head,
+            tuner: &self.tuner.shown,
             formant: &self.formant,
             held: self.held_choice(),
         }

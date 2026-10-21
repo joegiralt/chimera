@@ -189,17 +189,23 @@ const GOLDENS: &[(&str, u64)] = &[
     ("amp_vel_live", 0xd455067ceda96ed2),
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("algo_pitch", 0xd16ac1fa1fd56727),
+    // Re-recorded: the scope's corner reads REF C4 (ADR 0201).
+    ("algo_pitch", 0xaea5614dc8b3c57f),
     // Re-recorded: the EXC node (plan Task 13).
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
-    ("modal_pitch", 0xa1d8e11218a836be),
+    // Re-recorded: the scope's corner reads REF C4 (ADR 0201).
+    ("modal_pitch", 0xf393e330a5b8f647),
     // PIT on TAPE, SNAP MUSICAL: PITCH +19 in three clicks (TAPE Task 12b);
     // again for Task 15: PIT hangs under DECK.
     // Re-recorded: a knob that glides shows a bar (ADR 0112).
     // Re-recorded at the main merge: the header's Part dots (ADR 0150).
     // Re-recorded: its map names the machine, LOOP (ADR 0178).
     ("tape_pitch_musical", 0x57bccbb87c98b3a5),
+    // New: PIT's tuner (ADR 0201).
+    ("algo_pitch_note", 0x84aab66825c66813),
+    ("tape_pitch_root_unknown", 0xdb2aca9db24ab26c),
+    ("large_va_pitch_note", 0x370152d8a253e914),
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_exc", 0x1a9d74fd3e32a2a1),
     // Re-recorded: the EXC node (plan Task 13).

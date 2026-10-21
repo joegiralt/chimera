@@ -55,6 +55,12 @@ TAPE has a chain in the code (SRC, DECK with its model page and PIT, FLT, AMP, M
 | JACK | FREQ SRC in C and RES SRC in E: the sources FREQ MOD and RES MOD read |
 | AMP | CHORUS · DELAY · REVERB (the three sends) · VEL (the VCA's velocity) |
 
+### PIT
+
+Every engine has PIT: PITCH · FINE · STEAL · TIME (glide) · SNAP, F empty. The scope's top-right corner is a tuner (ADR 0201): the pitch the Part's last note sounds at, as a note and cents (`C4 +12ct`, A4 = 440 Hz) over its frequency (`261.6 Hz`). It is worked out from the note, PITCH, FINE, TUNING and the engine's own transposition (ALGO's TRNSP, VA's OSC 1), so it moves the moment PITCH or FINE turns. It is lit while the Part sounds and dim between notes; before the Part's first note it reads middle C, marked `REF C4`. Glide, bend, modulation and wow are left out: it reads where the pitch rests.
+
+On TAPE a source plays at the key it is played on, by its root. A source whose import found no pitch has no known root: the corner reads `ROOT ?` over the shift from the source's own speed (`+7st +0ct`). TRANSWAVE plays the note; SCRUB plays at twice MOTION's speed, `STILL` at 0. A TAPE Part with no source shows nothing. With bank 2 closed the corner is empty.
+
 ### Pages that draw the whole band
 
 FLT (the filter's response curve, with CUTOFF and RES), MST, E1-E3, SPD, ORBIT's ORB and CUSTOM, and SETTINGS' ABOUT have a picture in place of a focus band. The MOD matrix keeps its focus band.
