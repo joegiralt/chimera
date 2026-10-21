@@ -108,7 +108,7 @@ impl PanelTarget {
 /// to edit it).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RouteView {
-    /// (source, FREQ): FM1, FM2, ENV AMT.
+    /// (source, FREQ): ENV AMT, KEYBOARD.
     Freq(ModSource),
     /// (NOTE, FREQ), stepped.
     Keybd,
@@ -310,32 +310,35 @@ const fn route(s: ModSource, label: &'static str) -> PanelKnob {
     knob_of(PanelTarget::Route(s), label)
 }
 
-/// Two routes, then FM3 · FEEDBACK · QM: every type's FLT › MOD (ADR 0190).
+/// Two routes, then FREQ MOD · FEEDBACK · RES MOD: every type's FLT › MOD (ADR 0190).
 const fn mods(a: PanelKnob, b: PanelKnob) -> [PanelKnob; 5] {
     [
         a,
         b,
-        knob_of(PanelTarget::JackAmount(JackSlot::Fm3), "FM3"),
+        knob_of(PanelTarget::JackAmount(JackSlot::Fm3), "FREQ MOD"),
         filter(FilterParams::FB, "FEEDBACK"),
-        knob_of(PanelTarget::JackAmount(JackSlot::Qm), "QM"),
+        knob_of(PanelTarget::JackAmount(JackSlot::Qm), "RES MOD"),
     ]
 }
 
 /// FLT › JACK's jacks, every type's, each under its amount's encoder on
 /// FLT › MOD (ADR 0190): knobs 10 and 11.
 pub static JACKS: [PanelKnob; 2] = [
-    filter(FilterParams::FM3_IN, "FM3 IN"),
-    filter(FilterParams::QM_IN, "QM IN"),
+    filter(FilterParams::FM3_IN, "FREQ SRC"),
+    filter(FilterParams::QM_IN, "RES SRC"),
 ];
 
-/// CLEAN speaks Cascadia: MODE · FREQ · Q; FM1 and FM2 lead FLT › MOD.
+/// CLEAN: MODE · FREQ · Q; ENV AMT and KEYBOARD lead FLT › MOD.
 pub static CLEAN_PANEL: KindPanel = KindPanel {
     main: [
         filter(FilterParams::MODE, "MODE"),
         filter(FilterParams::CUTOFF, "FREQ"),
         filter(FilterParams::RESONANCE, "Q"),
     ],
-    mods: mods(route(ModSource::Env1, "FM1"), route(ModSource::Note, "FM2")),
+    mods: mods(
+        route(ModSource::Env1, "ENV AMT"),
+        route(ModSource::Note, "KEYBOARD"),
+    ),
     chip: None,
     out: None,
 };
@@ -349,7 +352,7 @@ pub static LADDER_PANEL: KindPanel = KindPanel {
 };
 
 /// The 2040 speaks the Prophet's words: VOICE · CUTOFF · RES, and ENV AMT
-/// and KEYBD (CLEAN's FM1 and FM2) lead FLT › MOD. Its one MODE has no
+/// and KEYBOARD lead FLT › MOD. Its one MODE has no
 /// cell: KIND's band names it (`kind_note`).
 pub static K2040_PANEL: KindPanel = KindPanel {
     main: [
@@ -359,14 +362,14 @@ pub static K2040_PANEL: KindPanel = KindPanel {
     ],
     mods: mods(
         route(ModSource::Env1, "ENV AMT"),
-        knob_of(PanelTarget::Keybd, "KEYBD"),
+        knob_of(PanelTarget::Keybd, "KEYBOARD"),
     ),
     chip: STABILITY,
     out: None,
 };
 
 /// SEM speaks the SEM-1A's panel: MODE (the LP–notch–HP pot, a knob, not
-/// CLEAN's list) · FREQ · RES, CLEAN's FM1 and FM2, STABILITY, and its
+/// CLEAN's list) · FREQ · RES, ENV AMT, KEYBOARD, STABILITY, and its
 /// S504 switch as OUTPUT, MODE or BANDPASS, on FLT › MOD's free F (ADR
 /// 0192).
 pub static SEM_PANEL: KindPanel = KindPanel {

@@ -270,7 +270,7 @@ fn an_absent_route_knob_shows_a_dash() {
     settle(&mut ui);
     ui.render_dirty_with_audio(&mut fb, &perf, None, &scope);
 
-    let (label, fmt) = ("FM1", chimera_core::ui::page::ValFmt::Route);
+    let (label, fmt) = ("ENV AMT", chimera_core::ui::page::ValFmt::Route);
     let (x, y) = (theme::MARGIN_X, theme::CELL_LABEL_Y);
     for dx in 0..12 {
         for dy in 0..2 {
@@ -336,7 +336,7 @@ fn an_absent_route_knob_reads_dashes_in_the_focus_band() {
     want.px.fill(fb.px[0]);
     components::focus_band(
         &mut want,
-        "FM3",
+        "FREQ MOD LFO1",
         "--",
         chimera_core::ui::glyph::Gauge::Arc {
             value: ui.renderer.anim[2].current(),
@@ -386,8 +386,8 @@ fn the_cells_key_carries_the_looks() {
     else {
         panic!("FLT › MOD has cells");
     };
-    assert_eq!(looks & 3, Look::Absent as u32, "FM1");
-    assert_eq!(looks >> 2 & 3, Look::Live as u32, "FM2");
+    assert_eq!(looks & 3, Look::Absent as u32, "ENV AMT");
+    assert_eq!(looks >> 2 & 3, Look::Live as u32, "KEYBOARD");
     assert_eq!(matrix_rev, ui.matrix_state.rev);
 }
 
@@ -801,7 +801,8 @@ fn panels_follow_the_type() {
     assert_eq!(
         labels(FilterKind::Svf),
         [
-            "MODE", "FREQ", "Q", "FM1", "FM2", "FM3", "FEEDBACK", "QM", "FM3 IN", "QM IN"
+            "MODE", "FREQ", "Q", "ENV AMT", "KEYBOARD", "FREQ MOD", "FEEDBACK", "RES MOD",
+            "FREQ SRC", "RES SRC"
         ]
     );
     assert_eq!(labels(FilterKind::Dirty), labels(FilterKind::Svf));
@@ -810,15 +811,15 @@ fn panels_follow_the_type() {
     assert_eq!(
         labels(FilterKind::Sem),
         [
-            "MODE", "FREQ", "RES", "FM1", "FM2", "FM3", "FEEDBACK", "QM", "OUTPUT", "FM3 IN",
-            "QM IN"
+            "MODE", "FREQ", "RES", "ENV AMT", "KEYBOARD", "FREQ MOD", "FEEDBACK", "RES MOD",
+            "OUTPUT", "FREQ SRC", "RES SRC"
         ]
     );
     assert_eq!(
         labels(FilterKind::K2040),
         [
-            "VOICE", "CUTOFF", "RES", "ENV AMT", "KEYBD", "FM3", "FEEDBACK", "QM", "FM3 IN",
-            "QM IN"
+            "VOICE", "CUTOFF", "RES", "ENV AMT", "KEYBOARD", "FREQ MOD", "FEEDBACK", "RES MOD",
+            "FREQ SRC", "RES SRC"
         ]
     );
     let t = |k, i| knob(k, i).map(|n| n.target);
@@ -1051,4 +1052,107 @@ fn mode_reads_the_types_own_names() {
         p.set(FilterParams::MODE, spec.default);
         assert_eq!(p.mode(), k.default_mode(), "{k:?}");
     }
+}
+
+/// The focus band's label row of FLT › MOD's cell `slot` (FREQ MOD, RES MOD)
+/// reads `{label} {tag}`: the source its jack acts as, as the JACK page
+/// names it, on every TYPE and engine, and it follows FREQ SRC / RES SRC.
+#[test]
+fn the_focus_band_names_the_routed_source() {
+    use chimera_core::dsp::filter::FilterKind;
+    use chimera_core::taps::Jack;
+    use chimera_core::ui::components::{self, Look};
+    use chimera_core::ui::filter_panel::JackSlot;
+    use chimera_core::ui::glyph::Gauge;
+    use chimera_core::ui::perf::PerfStats;
+    use chimera_core::ui::theme;
+    let label_rect = |fb: &Fb| -> Vec<_> {
+        (theme::HEADER_BOTTOM..theme::FOCUS_LABEL_Y + 4)
+            .flat_map(|y| (0..150).map(move |x| (x, y)))
+            .map(|(x, y)| fb.at(x, y))
+            .collect()
+    };
+    let band = |text: &str, bg: u16| {
+        let mut fb = Fb::new();
+        fb.px.fill(bg);
+        components::focus_band(
+            &mut fb,
+            text,
+            "--",
+            Gauge::Arc {
+                value: 0.5,
+                bipolar: true,
+            },
+            Look::Live,
+            None,
+            theme::TextSize::Normal,
+        );
+        fb
+    };
+    let mut worst = 0;
+    for engine in [EngineType::Algo, EngineType::Va] {
+        for kind in FilterKind::BUILT {
+            let mut ui = on_flt(engine);
+            ui.params_mut().filter.set_kind(kind);
+            feed(&mut ui, Input::press(ButtonId::Edit)); // FLT › MOD
+            for (slot, enc, label, choices) in [
+                (
+                    JackSlot::Fm3,
+                    EncoderId::C,
+                    "FREQ MOD",
+                    &Jack::FM3_CHOICES[..],
+                ),
+                (JackSlot::Qm, EncoderId::E, "RES MOD", &Jack::QM_CHOICES[..]),
+            ] {
+                feed(&mut ui, Input::turn(enc, 1)); // focus the cell
+                let mut seen = Vec::new();
+                for &j in choices {
+                    match slot {
+                        JackSlot::Fm3 => ui.params_mut().filter.set_fm3_src(j),
+                        JackSlot::Qm => ui.params_mut().filter.set_qm_src(j),
+                    };
+                    settle(&mut ui);
+                    let mut fb = Fb::new();
+                    ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
+                    let acts = slot.effective(&ui.project().part(PartId::ALL[0]).sound);
+                    let text = format!("{label} {}", acts.tag());
+                    worst = worst.max(text.len());
+                    let (got, want) = (label_rect(&fb), label_rect(&band(&text, fb.px[0])));
+                    let bad = got.iter().zip(&want).filter(|(a, b)| a != b).count();
+                    assert!(bad == 0, "{engine:?} {kind:?} {text}: {bad} px differ");
+                    seen.push(label_rect(&fb));
+                }
+                assert!(
+                    seen.windows(2).any(|w| w[0] != w[1]),
+                    "the band follows {label}'s source"
+                );
+            }
+        }
+    }
+    assert!(worst > 0);
+}
+
+/// The longest band label fits the label slot at NORMAL, left of the arc.
+#[test]
+fn the_longest_source_label_fits_the_band() {
+    use chimera_core::taps::Jack;
+    use chimera_core::ui::components::focus_label_slot;
+    use chimera_core::ui::draw::text_width;
+    use chimera_core::ui::glyph::Gauge;
+    use chimera_core::ui::theme::{self, Face, TextSize};
+    let slot = focus_label_slot(&Gauge::Arc {
+        value: 0.5,
+        bipolar: true,
+    });
+    let room = slot.right - theme::MARGIN_X;
+    let font = theme::font(Face::Value, TextSize::Normal);
+    let w = |l: &str, js: &[Jack]| {
+        js.iter()
+            .map(|j| text_width(font, &format!("{l} {}", j.tag()), theme::LABEL_TRACKING))
+            .max()
+            .unwrap()
+    };
+    let worst = w("FREQ MOD", &Jack::FM3_CHOICES).max(w("RES MOD", &Jack::QM_CHOICES));
+    println!("worst band label {worst} px of {room}");
+    assert!(worst <= room);
 }

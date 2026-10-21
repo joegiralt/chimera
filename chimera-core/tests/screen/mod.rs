@@ -1595,6 +1595,31 @@ pub const CASES: &[ScreenCase] = &[
         plus(ui, 3);
         set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
     }),
+    // VA's OSC1 and OSC2 pages: the chain bar says OSC1 / OSC2, not OSCILLATOR n.
+    ("va_osc1", |ui| {
+        stack_map(ui);
+        load_init(ui, EngineType::Va);
+        tap(ui, ButtonId::Edit);
+    }),
+    ("va_osc2", |ui| {
+        stack_map(ui);
+        load_init(ui, EngineType::Va);
+        tap(ui, ButtonId::Edit);
+        tap(ui, ButtonId::Edit);
+    }),
+    ("row_va_osc1", |ui| {
+        stack_map(ui);
+        load_init(ui, EngineType::Va);
+        tap(ui, ButtonId::Edit);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
+    ("row_va_osc2", |ui| {
+        stack_map(ui);
+        load_init(ui, EngineType::Va);
+        tap(ui, ButtonId::Edit);
+        tap(ui, ButtonId::Edit);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
     ("env_a", |ui| {
         to_mod_sub(ui, 1, &reg::ENVELOPE);
         feed(ui, Input::turn(EncoderId::B, 6));
