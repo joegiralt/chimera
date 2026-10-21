@@ -10,15 +10,15 @@
 mod common;
 mod screen;
 
+use chimera_core::dsp::tape_engine::params::TapeMachine;
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::PartId;
 use chimera_core::storage::{SourceRef, TapeSource};
-use chimera_core::dsp::tape_engine::params::TapeMachine;
 use chimera_core::ui::UiState;
 use chimera_core::ui::perf::PerfStats;
-use chimera_core::ui::pit_tuner::calc::{CORNER_W, Pitch, lines, pitch, shown};
 use chimera_core::ui::pit_tuner::Shown;
+use chimera_core::ui::pit_tuner::calc::{CORNER_W, Pitch, lines, pitch, shown};
 use chimera_core::ui::theme::{self, TextSize};
 use chimera_hal::EncoderId;
 use screen::*;
@@ -58,10 +58,22 @@ fn tape(machine: TapeMachine, root: f32, period: f32) -> Sound {
 
 #[test]
 fn a4_reads_440_hz_and_c4_its_own() {
-    assert_eq!(read(Pitch::At(6_900.0)), ("A4 +0ct".into(), "440.0 Hz".into()));
-    assert_eq!(read(Pitch::At(6_000.0)), ("C4 +0ct".into(), "261.6 Hz".into()));
-    assert_eq!(read(Pitch::At(6_901.0)), ("A4 +1ct".into(), "440.3 Hz".into()));
-    assert_eq!(read(Pitch::At(8_100.0)), ("A5 +0ct".into(), "880.0 Hz".into()));
+    assert_eq!(
+        read(Pitch::At(6_900.0)),
+        ("A4 +0ct".into(), "440.0 Hz".into())
+    );
+    assert_eq!(
+        read(Pitch::At(6_000.0)),
+        ("C4 +0ct".into(), "261.6 Hz".into())
+    );
+    assert_eq!(
+        read(Pitch::At(6_901.0)),
+        ("A4 +1ct".into(), "440.3 Hz".into())
+    );
+    assert_eq!(
+        read(Pitch::At(8_100.0)),
+        ("A5 +0ct".into(), "880.0 Hz".into())
+    );
 }
 
 /// Exactly between two notes is the upper one at −50; a hair under it
@@ -87,7 +99,10 @@ fn every_engines_offsets_sum() {
     a.params.pitch.pitch = 7.0;
     a.params.pitch.fine = -25.0;
     a.params.algo.transpose = -12;
-    assert_eq!(pitch(60, &a, 10), Some(Pitch::At(6_000.0 + 700.0 - 25.0 - 1_200.0 + 10.0)));
+    assert_eq!(
+        pitch(60, &a, 10),
+        Some(Pitch::At(6_000.0 + 700.0 - 25.0 - 1_200.0 + 10.0))
+    );
     let mut v = Sound::init(EngineType::Va);
     v.params.va.coarse = [12, -7];
     v.params.va.fine = [3.0, 6.0];
@@ -103,7 +118,12 @@ fn every_engines_offsets_sum() {
 /// root is.
 #[test]
 fn tape_plays_the_key_over_its_root() {
-    for m in [TapeMachine::One, TapeMachine::Loop, TapeMachine::Tron, TapeMachine::Stretch] {
+    for m in [
+        TapeMachine::One,
+        TapeMachine::Loop,
+        TapeMachine::Tron,
+        TapeMachine::Stretch,
+    ] {
         let mut s = tape(m, 4_800.0, 183.4);
         s.params.pitch.pitch = 7.0;
         assert_eq!(pitch(48, &s, 0), Some(Pitch::At(5_500.0)), "{m:?}");
@@ -215,7 +235,10 @@ fn silence_reads_the_last_note_dim_and_the_reference_before_any() {
     // Off PIT, nothing.
     feed(&mut ui, Input::press(chimera_hal::ButtonId::Edit));
     tick(&mut ui);
-    assert_ne!(ui.page_def().viz, chimera_core::ui::block_def::VizType::Tuner);
+    assert_ne!(
+        ui.page_def().viz,
+        chimera_core::ui::block_def::VizType::Tuner
+    );
     assert!(ui.tuner().lines.iter().all(Option::is_none));
 }
 
@@ -231,7 +254,11 @@ fn fine_moves_the_cents_the_frame_it_turns() {
         let was = ui.params().pitch.fine;
         feed(&mut ui, Input::turn(EncoderId::B, by));
         tick(&mut ui);
-        assert_eq!(ui.params().pitch.fine - was, f32::from(by), "a detent a cent");
+        assert_eq!(
+            ui.params().pitch.fine - was,
+            f32::from(by),
+            "a detent a cent"
+        );
         assert_eq!(texts(ui.tuner())[0], want);
     }
     feed(&mut ui, Input::turn(EncoderId::A, 2));
@@ -261,15 +288,23 @@ fn tape_on_pit_reads_root_and_transposition() {
 
 fn full(ui: &UiState) -> Fb {
     let mut fb = Fb::new();
-    ui.render_with_scope(&mut fb, &PerfStats::zero(), &[0.0; chimera_core::scope::SCOPE_LEN]);
+    ui.render_with_scope(
+        &mut fb,
+        &PerfStats::zero(),
+        &[0.0; chimera_core::scope::SCOPE_LEN],
+    );
     fb
 }
 
 fn dirty(ui: &mut UiState, fb: &mut Fb) -> Vec<(u16, u16)> {
-    ui.render_dirty_with_scope(fb, &PerfStats::zero(), &[0.0; chimera_core::scope::SCOPE_LEN])
-        .into_iter()
-        .filter(|r| *r != (0, 0))
-        .collect()
+    ui.render_dirty_with_scope(
+        fb,
+        &PerfStats::zero(),
+        &[0.0; chimera_core::scope::SCOPE_LEN],
+    )
+    .into_iter()
+    .filter(|r| *r != (0, 0))
+    .collect()
 }
 
 fn primed(ui: &mut UiState) -> Fb {
@@ -292,7 +327,10 @@ fn nothing_redraws_at_idle() {
             let mut fb = primed(&mut ui);
             for _ in 0..40 {
                 tick(&mut ui);
-                assert!(dirty(&mut ui, &mut fb).is_empty(), "{engine:?} {note:?} {sounds}");
+                assert!(
+                    dirty(&mut ui, &mut fb).is_empty(),
+                    "{engine:?} {note:?} {sounds}"
+                );
             }
         }
     }

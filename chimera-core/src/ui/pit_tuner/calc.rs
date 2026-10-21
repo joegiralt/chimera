@@ -28,6 +28,7 @@ use crate::params::EngineType;
 use crate::preset::Sound;
 use crate::ui::UiState;
 use crate::ui::block_def::VizType;
+use crate::ui::draw::text_width;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::saver::{nearest, note_name};
 use crate::ui::tape_strip::Paint;
@@ -203,8 +204,7 @@ pub fn shown(a: FmtBuf, b: FmtBuf, size: TextSize, lit: bool) -> Shown {
     let fonts = |s| (theme::font(Face::Value, s), theme::font(Face::Label, s));
     let width = |s| {
         let (fa, fb) = fonts(s);
-        crate::ui::draw::text_width(fa, a.as_str(), 0)
-            .max(crate::ui::draw::text_width(fb, b.as_str(), 0))
+        text_width(fa, a.as_str(), 0).max(text_width(fb, b.as_str(), 0))
     };
     let size = theme::fit(size, CORNER_W, width);
     let (fa, fb) = fonts(size);
@@ -216,7 +216,7 @@ pub fn shown(a: FmtBuf, b: FmtBuf, size: TextSize, lit: bool) -> Shown {
         (theme::MID, theme::MID)
     };
     let line = |text: FmtBuf, font, y, color| {
-        let w = crate::ui::draw::text_width(font, text.as_str(), 0);
+        let w = text_width(font, text.as_str(), 0);
         (w > 0).then_some(Line {
             text,
             font,
@@ -239,8 +239,7 @@ pub fn shown(a: FmtBuf, b: FmtBuf, size: TextSize, lit: bool) -> Shown {
             .and_then(Option::as_ref)
             .map_or(&[][..], |l| l.text.as_str().as_bytes())
     };
-    let key =
-        crate::ui::region::settings_key(&[text(0), text(1), &[u8::from(lit), size as u8]]);
+    let key = crate::ui::region::settings_key(&[text(0), text(1), &[u8::from(lit), size as u8]]);
     Shown { back, lines, key }
 }
 
