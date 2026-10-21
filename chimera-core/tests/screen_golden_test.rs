@@ -160,8 +160,9 @@ const GOLDENS: &[(&str, u64)] = &[
     // New: VA OSC1 and OSC2 under STACK and ROW; the ROW bar says OSC1 / OSC2, not OSCILLATOR n.
     ("va_osc1", 0x117052eda46fe399),
     ("va_osc2", 0xd1bd400c5e8d1428),
-    ("row_va_osc1", 0xf9e16c734d8030a9),
-    ("row_va_osc2", 0x1c565687256ca1e1),
+    // Then the row gains NOISE (ADR 0197): OSC1 · OSC2 · NOISE · PITCH.
+    ("row_va_osc1", 0x1ce4f23ee9eb7f84),
+    ("row_va_osc2", 0x413f81a42d6a8978),
     ("env_a", 0x5e214e1a2c59ff77),
     ("env_b_env_ad", 0xcfb572705ac049f9),
     ("env_b_env_ahr", 0x8027de37baeab87c),
