@@ -187,7 +187,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // mod_matrix_wide primes FOLD and MIX on their new cells. Then AMP is
     // the sends and VEL alone, SYM gone (#614).
     ("amp_vel_dimmed", 0x97b5ec576db1686d),
-    ("amp_gate", 0x6c881eb1c6b32aa0),
+    ("amp_gate", 0xac47230d2acbfe20),
     ("amp_sends", 0xc9b0116af8f449fa),
     ("amp_vel_live", 0xd2952b0ccaa7127e),
     // Re-recorded: PIT shows SNAP on E (TAPE Task 12b).
@@ -315,7 +315,8 @@ const GOLDENS: &[(&str, u64)] = &[
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
     // Then pool_full: 2352 → 2544 (the formant fields). Then VA's KIND and
     // LEVEL (ADR 0197): each dense Sound 10 B more, the pool fills sooner.
-    ("sound_browser_pool_full", 0x81ce95e09e0bd574),
+    // Then the VCA's gate (ADR 0195): 15 B more.
+    ("sound_browser_pool_full", 0x8c26f23d775090b4),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.

@@ -21,6 +21,8 @@ Plaits' gate is behavioural, not a circuit. One state (Plaits calls it the vactr
 - **What drives it.** With routes into VCA: the routes' gain × AMP's VEL, Plaits' LEVEL (`ProcessLP`). With no route on ALGO and MODAL: 1, since their own envelopes shape the sound. With no route on TAPE and VA, where the key ends the note today: the key, and after key up a fall over the voice's 128-sample fade, a step at a time. OUT LEVEL multiplies after the gate, ramped as today.
 - **No double gating.** Under the gate, the routes drive it and the VCA multiplies by OUT LEVEL alone. At LPG 1/128 the gate plays VA INIT's level within 0.2 dB, and ENV 1's SUSTAIN ½ is 6 dB under SUSTAIN 1, not 12 (`the_gate_never_gates_twice`).
 - **Voices end when the gate shuts.** While the gate runs, it holds the voice until its gain is under −80 dB and no strike is rising. Below STRIKE 1, the voice is also held as the plain VCA would hold it: a route's source still holding it, or, with no route, its engine. At STRIKE 1 the gate alone holds it, so a struck note ends when the gate shuts even with the key held (the key keeps its slot, as any held note's). The key-up fade of a TAPE or VA note with no route gives way to the gate's fall.
+- **The bleed ramps.** Plaits holds its bleed for its 12 samples; here it ramps across them, so a fast LPG never steps. At LPG 1 the bleed is 0 throughout, so the fixtures still null.
+- **Turning it on.** When the gate starts on a sounding note it starts where the plain VCA is: its state at the level, the bleed whole and LPG and STRIKE ramping in from 0, with no ring left.
 - **The port** is `chimera-engine/src/dsp/lpg.rs`: no_std f32, no allocation, no `unsafe`, the MIT notice in the file, and THIRD_PARTY.md credits Emilie Gillet. Its step, gain ramp and SVF are #739's: `LPGEnvelope::ProcessLP` and `ProcessPing`, the cutoff and bleed read off the state before its move; `LowPassGate::Process`, the gain ramped across each 12 samples and stmlib's `Svf` at Q 0.4 with FREQUENCY_DIRTY held for them. The 12-sample step runs across the voice's 64-sample blocks with its phase carried, so a block holds five or six steps. At LPG 1 it nulls the lab's f64 port on #739's fixture at −129.5 dB, and STRIKE 1 nulls an f64 port of `ProcessPing` at −116 to −129 dB.
 - **Bank 2.** The gate runs only through `GateDoor { run }` (`Bank2Door::gate`): `voice::gate::kern::run`, which `bank2.x` links into `.bank2` (`*5voice4gate4kern*`), with `Lpg::block` inlined into it. `check-door-placed` checks `voice::gate::kern::`. With the door closed, the voice plays the plain VCA, bit for bit (`gate_proxy_test`). A firmware built without bank 2 (`--no-default-features`, a build check, never shipped) has no room for the kernel in bank 1, so there the gate is always its closed door. Host builds without bank 2 (the tests, the desktop) run the kernel in place.
 - **Pages.** AMP is VEL · LPG · DECAY · STRIKE, E and F free. VEL stays first. No convention puts it elsewhere, and A to D are the knobs in the order they shape a note: how hard, how dark, how long, how struck. The sends move to AMP › SENDS, which is the mixer's own SENDS page (id 30: CHORUS · DELAY · REVERB). So one value has one page and one focus, and no page is added. The sends keep their idents (`SEND1`–`SEND3`) and ids (4–6), so saved Sounds and MIDI maps keep working. The words are full: VEL, LPG (the owner's term), DECAY, STRIKE. The matrix header for DECAY reads DCAY, which fits.
@@ -39,9 +41,23 @@ Plaits' gate is behavioural, not a circuit. One state (Plaits calls it the vactr
 - **The gate in bank 1:** bank 1 is frozen (owner). Its kernel is about 1 KB that only gated Sounds run.
 
 ## Consequences
-- **Flash** (ORBIT build, against origin/main f745c0a1): BANK1_TBD
-- **RAM:** the voice grows 80 B (6,576 → 6,656): the gate's 64 B and padding. `VOICE_CHAIN_BYTES` goes from 2,336 to 2,408. `MAX_SOUND_COST` goes from 2,656 to 2,672 B, since a dense Sound now has 280 params (2,648 B).
-- **Cost and voices:** COST_TBD
+- **Flash** (the `orbit` set as `just check` builds it, against origin/main 5a2e50e7):
+  - **Bank 2** grows 4,384 B (`.bk2` 185,504 → 189,888): the kernel, `Lpg::block` inlined into it, and the bill.
+  - **Bank 1** grows 532 B (886,120 → 886,652). All of that is the closed-door data ADR 0198 allows:
+    - 348 B of rodata: `OUT_SPECS`' three specs (216), their `KNOBS` entries (60), `ROW_WORDS`' AMP and SENDS (24), `spec`'s switch table (12), and the words LPG, DECAY, STRIKE, DCAY, STRK and SENDS (32);
+    - 200 B for the Sound's 12 more bytes (`OutParams::gate`). Base plus that one field and nothing else measures 886,320 B: every struct that holds a Sound moves, and its offsets take longer instructions.
+  - **Bank-1 code** is net −16 B against that measure. The door stubs are `Instrument::render_with`'s call into `GateDoor::run` and its fallback (+56), the strike's flag in `Voice::trigger` (+36), the gate's state in `Voice::init_chain` (+16) and the bill's call into `GateDoor::cost` in `recost` (+8). Inlining that shifted elsewhere outweighs them (`handle_from_with` −122, `render_half` −68).
+  - Each `tools/bank1-budget.txt` line is raised by 548 B, the measured data, and names this ADR. `filter-probes` also carries `lpg_probe`, the count's probe, in its bank 1; it is never shipped.
+- **RAM:** the voice grows 72 B (6,584 → 6,656): the gate's 68 B and padding. `VOICE_CHAIN_BYTES` goes from 2,336 to 2,408. A Sound's params grow 12 B (`ParamSnapshot` 648 → 660). `MAX_SOUND_COST` goes from 2,656 to 2,672 B, since a dense Sound now has 282 params (2,658 B).
+- **Cost** (`tools/loop_count.py` on the `filter-probes` ELF, `lpg::lpg_probe`): the routed loop is unrolled 4×, 127 instructions a time round (31.75 a sample), and the unrouted one 68 (17). The block's 654 instructions are 10.2 a sample. Its step, about 122 instructions and 2 `vdiv`, runs 5⅓ times a block: 8.3 more and 0.21 `vdiv` a sample with the block's own. So `ceil5(50.2 × 1.606 + 12 × 0.21)` = **85 cycles routed** and 60 unrouted. `LPG_COST` bills 85 either way, on top of the VCA it does not credit, and only while LPG, DECAY or STRIKE is above 0 or routed. This is a static count, not yet read on the unit.
+- **Voices** (`the_gate_bills_only_when_up_and_its_voices`), INIT Sounds beside the reserve, rev V (480 MHz) / rev Y (400 MHz):
+
+  | Filter in front | ALGO INIT | ALGO INIT, gate up | VA INIT | VA INIT, gate up |
+  |---|---|---|---|---|
+  | SEM | 7 / 5 | 6 / 4 | 8 / 6 | 7 / 5 |
+  | 2040 (REV2) | 6 / 5 | 6 / 4 | 7 / 6 | 7 / 5 |
+
+  The gate costs one voice on rev Y everywhere, and one on rev V with SEM.
 - **Gate checks** on one 220 Hz saw hit at LPG 1, DECAY ½ (onset centroid, 50 ms centroid, time to −20 and −40 dB, level at 1 s). Each is within 1 % / 2 ms / 0.3 dB of the f64 port:
   - the lab's ping into the routes: 2418 Hz, 1299 Hz, 342 ms, 1022 ms, −38.6 dB;
   - STRIKE 1 alone: 2457 Hz, 1287 Hz, 340 ms, 1017 ms, −38.6 dB.

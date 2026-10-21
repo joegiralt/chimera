@@ -2669,4 +2669,9 @@ fn the_gate_bills_only_when_up_and_its_voices() {
 }
 
 /// SEM off, on; the 2040 off, on: ALGO and VA, rev V and rev Y.
-const GATE_VOICES: [[[u32; 2]; 2]; 4] = [[[0; 2]; 2]; 4];
+const GATE_VOICES: [[[u32; 2]; 2]; 4] = [
+    [[7, 5], [8, 6]],
+    [[6, 4], [7, 5]],
+    [[6, 5], [7, 6]],
+    [[6, 4], [7, 5]],
+];

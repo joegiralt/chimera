@@ -109,7 +109,10 @@ pub struct Lpg {
     inc: f32,
     g: f32,
     h: f32,
+    /// The bleed now and its step a sample: it ramps across a step, so a
+    /// fast LPG never steps.
     bleed: f32,
+    binc: f32,
     key: f32,
     /// The routes' level as the step ramps it, its step a sample, and the
     /// weight of the routes' own detail over that ramp: DECAY under its
@@ -125,8 +128,6 @@ pub struct Lpg {
     struck: bool,
     /// The gate ran last block; else the next starts where the VCA is.
     ran: bool,
-    /// A fresh note: the next start is shut, so the gate opens as Plaits'.
-    cold: bool,
 }
 
 /// One block's run: LPG and STRIKE `(from, to)`, the vactrol's fade-in,
@@ -151,6 +152,14 @@ pub fn fall(d: f32, hf: f32, fs: f32) -> (f32, f32) {
     (short, tail)
 }
 
+/// Plaits' bleed past the filter at state `v` and COLOR `hf`.
+#[inline(always)]
+fn bleed_of(v: f32, hf: f32) -> f32 {
+    let t = 1.0 - v;
+    let t2 = t * t;
+    (t2 + (1.0 - t2) * hf) * hf * hf
+}
+
 /// voice.cc's compressed LEVEL `1.3·l/(0.3 + l)`, weighed in by LPG `a`.
 #[inline(always)]
 fn compress(l: f32, a: f32) -> f32 {
@@ -167,6 +176,7 @@ impl Lpg {
         g: 0.0,
         h: 0.0,
         bleed: 0.0,
+        binc: 0.0,
         key: 0.0,
         lh: 0.0,
         linc: 0.0,
@@ -176,24 +186,30 @@ impl Lpg {
         ramp_up: false,
         struck: false,
         ran: false,
-        cold: false,
     };
 
-    /// A note-on: the next block strikes (if STRIKE is up); a fresh voice's
-    /// gate starts shut.
-    #[inline(always)]
-    pub fn strike(&mut self, fresh: bool) {
-        self.struck = true;
-        if fresh {
-            (self.ran, self.cold) = (false, true);
+    /// A gate that ran and is shut at LPG `lpg` and STRIKE `strike`: the
+    /// next note opens it as Plaits' does from rest (the fixtures').
+    pub fn shut(lpg: f32, strike: f32) -> Lpg {
+        Lpg {
+            ran: true,
+            last: [lpg, strike],
+            bleed: bleed_of(0.0, 1.0 - lpg),
+            ..Lpg::NEW
         }
+    }
+
+    /// A note-on: the next block strikes, if STRIKE is up.
+    #[inline(always)]
+    pub fn strike(&mut self) {
+        self.struck = true;
     }
 
     /// A block the gate did not run: the next one starts where the VCA
     /// is.
     #[inline(always)]
     pub fn idle(&mut self) {
-        (self.ran, self.struck, self.cold) = (false, false, false);
+        (self.ran, self.struck) = (false, false);
     }
 
     /// Open: rising from a strike, or above −80 dB.
@@ -232,18 +248,18 @@ impl Lpg {
         let dec = clampf(d.decay, 0.0, 1.0);
         let struck = self.struck;
         if !self.ran {
-            // A fresh note's gate shut; else where the VCA is, so turning
-            // the gate on never steps. No ring left either way.
-            let cold = self.cold;
+            // Where the plain VCA is, so turning the gate on never steps:
+            // the gain the level, the bleed whole, LPG and STRIKE ramping in
+            // from the 0 they were, and no ring left. A fresh voice starts
+            // so too: its routes from 0.
             *self = Lpg {
                 key: if d.key == Some(false) { 0.0 } else { 1.0 },
-                last: [a, s],
+                bleed: 1.0,
                 ran: true,
                 ..Lpg::NEW
             };
-            let l = if cold { 0.0 } else { self.input(d, 0) };
-            let u = (1.0 - s) * compress(l, a);
-            (self.vac, self.gain, self.lh) = (u, u, l);
+            let l = self.input(d, 0);
+            (self.vac, self.gain, self.lh) = (l, l, l);
         }
         self.struck = false;
         if struck && s > 0.0 {
@@ -271,14 +287,15 @@ impl Lpg {
                 self.step(d, i, &r);
             }
             let n = usize::from(self.left).min(BLOCK_SIZE - i);
-            let (g, h, b, inc) = (self.g, self.h, self.bleed, self.inc);
+            let (g, h, inc, binc) = (self.g, self.h, self.inc, self.binc);
             let rg = R + g;
-            let mut gain = self.gain;
+            let (mut gain, mut b) = (self.gain, self.bleed);
             match d.level {
                 Some(lv) => {
                     let (mut lh, linc, k) = (self.lh, self.linc, self.detail);
                     for (x, l) in buf[i..i + n].iter_mut().zip(&lv[i..i + n]) {
                         gain += inc;
+                        b += binc;
                         lh += linc;
                         let e = clampf(*l, 0.0, 1.0) * d.vel;
                         *x = self.tick(*x * (gain + k * (e - lh)), g, rg, h, b);
@@ -288,11 +305,12 @@ impl Lpg {
                 None => {
                     for x in &mut buf[i..i + n] {
                         gain += inc;
+                        b += binc;
                         *x = self.tick(*x * gain, g, rg, h, b);
                     }
                 }
             }
-            self.gain = gain;
+            (self.gain, self.bleed) = (gain, b);
             self.left -= n as u8;
             i += n;
         }
@@ -302,7 +320,8 @@ impl Lpg {
     /// One of Plaits' steps at sample `i` of the block: the vactrol moves
     /// toward its input (`LPGEnvelope::ProcessLP`, after `ProcessPing`'s
     /// rise on a strike), and the step's gain ramp, cutoff and bleed follow
-    /// it. The cutoff and bleed read the state before the move, as Plaits'.
+    /// it. The cutoff and bleed read the state before the move, as Plaits'; the bleed
+    /// ramps to its value across the step.
     #[inline(always)]
     fn step(&mut self, d: &Drive, i: usize, r: &Run) {
         let t = i as f32 * (1.0 / BLOCK_SIZE as f32);
@@ -327,8 +346,6 @@ impl Lpg {
         let err = input - v;
         let v2 = v * v;
         let v4 = v2 * v2;
-        let tl = 1.0 - v;
-        let t2 = tl * tl;
         let c = if err > 0.0 {
             ATTACK
         } else {
@@ -339,7 +356,7 @@ impl Lpg {
         let g = f * (PI + TAN_A * f * f);
         self.g = g;
         self.h = 1.0 / (1.0 + R * g + g * g);
-        self.bleed = (t2 + (1.0 - t2) * hf) * hf * hf;
+        self.binc = (bleed_of(v, hf) - self.bleed) * (1.0 / f32::from(STEP));
         self.inc = (self.vac - self.gain) * (1.0 / f32::from(STEP));
         self.left = STEP;
     }

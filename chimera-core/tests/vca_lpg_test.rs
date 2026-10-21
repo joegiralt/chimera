@@ -118,8 +118,8 @@ const TAU: f64 = 2.0 * std::f64::consts::PI;
 /// level the routes' `level` (`None`: no route), a fresh note struck at 0
 /// on `note`.
 fn gate(a: f32, d: f32, s: f32, x: &[f32], level: Option<&[f32]>, note: f32) -> Vec<f32> {
-    let mut g = Lpg::NEW;
-    g.strike(true);
+    let mut g = Lpg::shut(a, s);
+    g.strike();
     let mut out = Vec::with_capacity(x.len());
     for b in 0..x.len().div_ceil(BLOCK_SIZE) {
         let at = |v: &[f32], i: usize| v.get(b * BLOCK_SIZE + i).copied().unwrap_or(0.0);
@@ -548,8 +548,8 @@ fn the_gate_sweeps_smoothly() {
     let n = 48_000;
     let half = [0.5f32; BLOCK_SIZE];
     for which in 0..3 {
-        let mut g = Lpg::NEW;
-        g.strike(true);
+        let mut g = Lpg::shut(0.5, 0.3);
+        g.strike();
         let mut y = Vec::new();
         for b in 0..n / BLOCK_SIZE {
             let t = b as f32 * BLOCK_SIZE as f32 / n as f32;

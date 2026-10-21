@@ -75,7 +75,7 @@ pub const VOICE_RAM_BUDGET: usize = D2_SRAM - D2_DMA_RESERVE - D2_KNOBS - D2_FOR
 /// 2,176 for the formant operators' 13 glided settings in `AlgoLive`, which
 /// ADR 0131 records; 2,240 for the played Sound's FX block, ADR 0155;
 /// 2,336 for FUZZ's memory, one a place, 2 × 44 B, ADR 0156; 2,408 for
-/// the VCA's low-pass gate, 64 B and its padding, ADR 0195).
+/// the VCA's low-pass gate, 68 B and its padding, ADR 0195).
 pub const VOICE_CHAIN_BYTES: usize = 2408;
 
 /// Framebuffer: 240 × 320 RGB565, one static in AXI (`chimera-board/src/display.rs`).

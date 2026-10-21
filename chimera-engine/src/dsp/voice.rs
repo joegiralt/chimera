@@ -669,8 +669,8 @@ impl Voice {
             // A promise made for a note since replaced doesn't outlive it.
             pool.alloc_mut().cancel(self.id);
         }
-        // The gate's strike (ADR 0195); a fresh note's gate starts afresh.
-        self.lpg.strike(!self.active);
+        // The gate's strike (ADR 0195).
+        self.lpg.strike();
         if !self.active {
             // A fresh note: no ramp from the last note's settings, and no
             // ring left in the filter.
