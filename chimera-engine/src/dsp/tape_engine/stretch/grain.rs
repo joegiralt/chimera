@@ -35,7 +35,8 @@ use super::super::params::TapeEngineParams;
 use super::super::read::SourceView;
 use super::super::{MIN_LOOP_FRAMES, Probe};
 use super::classic::time_speed;
-use super::cloud::{Cloud, GrainAt, Src};
+use super::cloud::{Cloud, GrainAt, Src, rng};
+use crate::dsp::grain::core::Rng;
 use super::units::{Period, Samples, Seconds, Speed, StretchEnd, WinPos};
 use crate::dsp::algo::math::{clampf, exp2};
 
@@ -213,7 +214,7 @@ pub struct Grains {
     level: Level,
     /// The next interval's draw, a factor on GRAIN / 4, 1 or more.
     jit: f32,
-    rng: u32,
+    rng: Rng,
     bypass: Bypass,
     /// Grains started: for the tests.
     #[cfg(any(test, feature = "test-support"))]
@@ -247,7 +248,7 @@ impl Grains {
             head: WinPos::START,
             mix: 0.0,
         },
-        rng: 1,
+        rng: rng(1),
         #[cfg(any(test, feature = "test-support"))]
         events: 0,
     };
@@ -259,12 +260,17 @@ impl Grains {
         let win = Window::of(p, v);
         let speed = Speed::new(inc);
         let dur = p.grain().seconds().samples(sr);
+        let first = GrainAt {
+            at: WinPos::START,
+            speed,
+            dur,
+        };
+        let cloud = match win.dir {
+            Dir::Rev => Cloud::struck(&Src::<true>::new(*v, win.base, win.len), first),
+            Dir::Fwd => Cloud::struck(&Src::<false>::new(*v, win.base, win.len), first),
+        };
         Grains {
-            cloud: Cloud::struck(GrainAt {
-                at: WinPos::START,
-                speed,
-                dur,
-            }),
+            cloud,
             win,
             period: lock_period(p, v, win),
             newest: Newest {
@@ -272,7 +278,7 @@ impl Grains {
                 speed,
                 since: Samples::ZERO,
             },
-            rng: seed | 1,
+            rng: rng(seed),
             ..IDLE_NOTE
         }
     }
@@ -358,9 +364,12 @@ impl Grains {
         let top = win.top(speed, dur, end);
         let mut rng = self.rng;
         let mut buf = [0.0; BLOCK_SIZE];
+        // The grains in play follow the key's speed as the bend and the
+        // wow move it (`set_speed`), not only the grains to come.
+        self.cloud.set_speed(&src, speed);
         let starts = self.cloud.block(&src, every, &mut buf, |k, u| {
             // The voice's own draw beside the core's.
-            let u = u + crate::dsp::grain::core::uniform(&mut rng);
+            let u = u + rng.uniform().get();
             let u = u - libm::floorf(u);
             let want = clampf(
                 t.get() + k as f32 * tstep.get() - ahead - back * u,
@@ -371,8 +380,6 @@ impl Grains {
                 Some(p) => lock(newest.head(k), WinPos::new(want), p, top),
                 None => WinPos::new(want),
             };
-            // A grain keeps the speed it starts at (the core latches it):
-            // a bend or the wow moves the grains to come.
             GrainAt { at, speed, dur }
         });
         self.rng = rng;
@@ -385,7 +392,7 @@ impl Grains {
             };
             // Only ever later than its quarter GRAIN: four grains overlap
             // at most, so four bill the voice.
-            self.jit = 1.0 + spray.jitter() * crate::dsp::grain::core::uniform(&mut self.rng);
+            self.jit = 1.0 + spray.jitter() * self.rng.uniform().get();
         }
         #[cfg(any(test, feature = "test-support"))]
         {
@@ -449,7 +456,7 @@ impl Grains {
         // covers (`span` frames), at a fresh offset each block, so a frozen
         // pointer samples the wave at every phase, not its one point.
         let step = span * (1.0 / PROBES as f32);
-        let o = crate::dsp::grain::core::uniform(&mut self.rng);
+        let o = self.rng.uniform().get();
         let room = self.win.len as f32 - 3.0;
         let mut pw = 0.0;
         for i in 0..PROBES {
