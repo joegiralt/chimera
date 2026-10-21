@@ -295,9 +295,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_part", 0x9f6c12c0b45db43d),
     #[cfg(feature = "master-tape")]
     ("mixer_sends", 0x4f5f9daa56c5aea5),
-    // DLY's branch hides REV's label it ran into (TAPE Task 15).
+    // DLY's branch hides REV's label it ran into (TAPE Task 15). With master-tape
+    // the delay pages, GRAIN's among them (#749), map seven nodes with MTP (#756).
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay", 0x4a8bdad905f55c61),
+    ("mixer_fx_delay", 0x5b21af63949b68dc),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb", 0xf884d95677bc4c9f),
     #[cfg(feature = "master-tape")]
@@ -321,11 +322,11 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay_char", 0x323fc0627565e957),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_grain", 0x449acab305e48e68),
+    ("mixer_fx_delay_grain", 0x869e1540291fb66c),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_grain_page", 0x419a8d7169806caf),
+    ("mixer_fx_delay_grain_page", 0x45d7ede89404786f),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_grain_needs_update", 0x0a00d3afc8dea3c4),
+    ("mixer_fx_delay_grain_needs_update", 0x4d0db4ababe3a198),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", 0xdbadbeba402b34e4),
     #[cfg(feature = "master-tape")]
