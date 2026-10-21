@@ -4,6 +4,8 @@
 # more than 1 KB under it (lower the line: freed room stays bank 2's).
 #
 # A raise is an ADR exception: edit the line and name that ADR in its comment.
+# A feature's closed-door data (specs, disk codes, page tables, labels) is
+# one: its ADR measures and lists it. `BANK1_LOWER=1 just check` lowers lines.
 # Every line names an ADR or the file refuses to load.
 #
 # <set: features as check builds it>  <bytes>  # ADR NNNN: why

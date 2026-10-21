@@ -48,15 +48,22 @@ def judge(name, size, budgets):
             f"bank 1 of {name} is {size} B, {size - b} B over its budget of {b} B.\n"
             "Bank 1 is frozen (ADR 0198): move the new code behind a bank-2 door\n"
             "(ADR 0137; as SemDoor, FuzzDoor or the reverb's), leaving bank 1 a stub.\n"
-            "Only an ADR exception raises the budget: edit tools/bank1-budget.txt\n"
-            "with a comment naming that ADR."
+            "Only data a closed door needs (specs, disk codes, page tables, labels),\n"
+            "measured and listed in the feature's ADR, or another ADR 0198 exception\n"
+            "raises the line: edit tools/bank1-budget.txt, its comment naming that ADR."
         )
     if size < b - GIVE_BACK:
         return (
             f"bank 1 of {name} is {size} B, {b - size} B under its budget of {b} B:\n"
-            f"lower its line in tools/bank1-budget.txt to {size} so the room stays bank 2's."
+            f"lower its line in tools/bank1-budget.txt to {size} so the room stays bank 2's\n"
+            "(`BANK1_LOWER=1 just check` lowers every set's line it builds)."
         )
     return None
+
+
+def lower(text, name, size):
+    """`text` with `name`'s line set to `size`, its comment kept."""
+    return re.sub(rf"^({re.escape(name)}\s+)\d+", rf"\g<1>{size}", text, count=1, flags=re.M)
 
 
 def main(argv):
@@ -64,9 +71,14 @@ def main(argv):
         print(__doc__, file=sys.stderr)
         return 2
     name, binp = argv[1], argv[2]
-    budgets = load(pathlib.Path(argv[3] if len(argv) == 4 else BUDGET).read_text())
+    path = pathlib.Path(argv[3] if len(argv) == 4 else BUDGET)
+    budgets = load(path.read_text())
     size = os.stat(binp).st_size
     why = judge(name, size, budgets)
+    if why and size < budgets.get(name, 0) and os.environ.get("BANK1_LOWER"):
+        path.write_text(lower(path.read_text(), name, size))
+        print(f"bank 1 of {name}: {size} B, its line lowered from {budgets[name]} B")
+        return 0
     if why:
         print(why, file=sys.stderr)
         return 1
