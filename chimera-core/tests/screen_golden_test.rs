@@ -221,10 +221,11 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded at the main merge: the header's Part dots (ADR 0150).
     // Re-recorded: its map names the machine, LOOP (ADR 0178).
     ("tape_pitch_musical", 0xebb38641a3992e19),
-    // New: PIT's tuner (ADR 0201).
+    // New: PIT's tuner (ADR 0201). Re-recorded at the integration: the map
+    // under it says WALK (ADR 0203) and NOISE above PIT (ADR 0197).
     ("algo_pitch_note", 0x84aab66825c66813),
-    ("tape_pitch_root_unknown", 0xdb2aca9db24ab26c),
-    ("large_va_pitch_note", 0x370152d8a253e914),
+    ("tape_pitch_root_unknown", 0xb289953a05153b28),
+    ("large_va_pitch_note", 0x359d3b962f4f7710),
     // Re-recorded: the EXC node (plan Task 13).
     ("modal_exc", 0x1a9d74fd3e32a2a1),
     // Re-recorded: the EXC node (plan Task 13).
