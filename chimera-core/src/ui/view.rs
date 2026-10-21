@@ -17,7 +17,7 @@ use crate::dsp::modulator::{
 use crate::dsp::reverb::{ReverbParams, ReverbType, in_plate_zone};
 use crate::dsp::tape_engine::machine;
 use crate::dsp::tape_engine::{
-    self, Direction, MachineIndex, TapeEngineParams as T, TapeMachine, Tron, Way, wave,
+    self, Choice, Direction, MachineIndex, TapeEngineParams as T, TapeMachine, Tron, Way, wave,
 };
 use crate::dsp::voice_fx::params::{FxType, VoiceFxParams};
 use crate::midi_map::Mappable;
@@ -137,12 +137,8 @@ impl SlotCtx {
             tape: TapeMachine::from_index(MachineIndex(get(BlockRef::TapeEngine, T::MODEL) as u8)),
             way: Way::of(
                 TapeMachine::from_index(MachineIndex(get(BlockRef::TapeEngine, T::MODEL) as u8)),
-                Direction::ALL[usize::from(get(BlockRef::TapeEngine, T::MODE) as u8).min(3)],
-                if get(BlockRef::TapeEngine, T::TRON) > 0.5 {
-                    Tron::On
-                } else {
-                    Tron::Off
-                },
+                Direction::from_value(get(BlockRef::TapeEngine, T::MODE)).unwrap_or(Direction::Loop),
+                Tron::from_value(get(BlockRef::TapeEngine, T::TRON)).unwrap_or(Tron::Off),
             ),
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
             src: SourceState::None,

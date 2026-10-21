@@ -11,9 +11,9 @@ use super::{
     Q4, Q5, Q6, Run, Sponge, StepStyle, Steps, TapeGauge, W, Wear,
 };
 use crate::dsp::algo::math::clampf;
-use crate::dsp::algo::math::exp2;
 use crate::dsp::fast_sin;
-use crate::dsp::tape_engine::Direction;
+use crate::dsp::tape_engine::tron::{self, TRON_LEN_MAX_S};
+use crate::dsp::tape_engine::{Direction, Tron};
 use core::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
 
 const BG: Ink = Ink::Bg;
@@ -51,7 +51,7 @@ pub fn inputs(i: &GlyphInputs) -> TapeGauge {
     let machine = match kind {
         // WALK's footsteps (ADR 0203). FADE at HOLD fades nothing.
         Kind::One | Kind::Loop | Kind::Ping | Kind::Tron => Machine::Walk(Steps {
-            dir: direction as u8,
+            dir: direction,
             position: q6(pos),
             length: q6(size),
             drift: Q4::of(drift),
@@ -60,7 +60,7 @@ pub fn inputs(i: &GlyphInputs) -> TapeGauge {
             } else {
                 drag
             }),
-            tron: kind == Kind::Tron || tron,
+            tron,
         }),
         Kind::Stretch => Machine::Stretch(Bellows {
             speed: q6(motion),
@@ -821,7 +821,8 @@ fn steps(p: &mut Pix, w: Steps, style: StepStyle) {
             let (lo, hi) = (r(from), r(to));
             window_strip(p, lo, hi, 44, 0);
             // TRON once through: its tape is LENGTH's share of 8 s.
-            let end = w.tron.then(|| r(x0 + exp2(5.0 * len - 5.0) * (x1 - x0)));
+            let end = (w.tron == Tron::On)
+                .then(|| r(x0 + tron::TapeSeconds::of_length(len).get() / TRON_LEN_MAX_S * (x1 - x0)));
             let n = (((to - from) / 8.0) as i32).max(1) + 1;
             let d = if back { -1.0 } else { 1.0 };
             for k in 0..n {
@@ -868,7 +869,7 @@ fn steps(p: &mut Pix, w: Steps, style: StepStyle) {
                 let (c, sn) = (cos(a), fast_sin(a));
                 // Clockwise, as a loop reads left to right on top.
                 let (dx, dy) = (-sn, c);
-                let ink = if w.tron && k == n - 1 {
+                let ink = if w.tron == Tron::On && k == n - 1 {
                     FAINT
                 } else {
                     step_ink(k, n - 1, fade)
@@ -882,7 +883,7 @@ fn steps(p: &mut Pix, w: Steps, style: StepStyle) {
                     style,
                 );
             }
-            if w.tron {
+            if w.tron == Tron::On {
                 tape_end(p, r(cx), r(cy - ry));
             }
         }
@@ -914,7 +915,7 @@ fn steps(p: &mut Pix, w: Steps, style: StepStyle) {
             p.line(r(hi) + 4, 24, r(hi) + 2, 32, INK2);
             p.line(r(lo) - 2, 32, r(lo) - 4, 24, INK2);
             p.line(r(lo) - 4, 24, r(lo) - 2, 16, INK2);
-            if w.tron {
+            if w.tron == Tron::On {
                 tape_end(p, r(hi) + 6, 24);
             }
         }

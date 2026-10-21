@@ -6,49 +6,67 @@
 //! DRIFT 0 rests at POSITION and draws nothing.
 
 use super::heads::Window;
+use super::params::Drift;
 use crate::dsp::algo::math::clampf;
 
-/// A voice's draws before its seed.
-pub const SEED: u32 = 0x2545_F491;
+/// Where DRIFT has wandered, in windows: always in `[0, 1)`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Place(f32);
 
-/// Voice `s`'s draws: distinct from its wow's (`TapeDeck::seed`).
-pub const fn seed(s: u32) -> u32 {
-    (s.wrapping_mul(0x85EB_CA6B) ^ SEED) | 1
-}
+impl Place {
+    pub const ZERO: Place = Place(0.0);
 
-/// A uniform draw in `[−1, 1)`.
-fn draw(rng: &mut u32) -> f32 {
-    let mut x = *rng;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    *rng = x;
-    x as i32 as f32 * (1.0 / 2_147_483_648.0)
-}
-
-/// The walk's place after a note-on at `walk` from `at`, in windows
-/// `[0, 1)`: `at` plus up to ±`walk`, wrapped. 0 at DRIFT 0 (or a NaN).
-pub fn step(at: f32, walk: f32, rng: &mut u32) -> f32 {
-    let walk = clampf(walk, 0.0, 1.0);
-    if !(walk > 0.0) {
-        return 0.0;
+    /// `x` wrapped into `[0, 1)`; a NaN is 0.
+    pub fn wrapped(x: f32) -> Place {
+        let w = x - libm::floorf(x);
+        Place(if (0.0..1.0).contains(&w) { w } else { 0.0 })
     }
-    wrap(at + walk * draw(rng))
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
 }
 
-/// `x` into `[0, 1)`; a NaN is 0.
-pub fn wrap(x: f32) -> f32 {
-    let w = x - libm::floorf(x);
-    if w >= 0.0 && w < 1.0 { w } else { 0.0 }
+/// A voice's own draws: a seeded xorshift, never 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DriftRng(u32);
+
+impl DriftRng {
+    /// Before its seed.
+    pub const IDLE: DriftRng = DriftRng(0x2545_F491);
+
+    /// Voice `s`'s: distinct from its wow's (`TapeDeck::seed`).
+    pub const fn seed(s: u32) -> DriftRng {
+        DriftRng((s.wrapping_mul(0x85EB_CA6B) ^ Self::IDLE.0) | 1)
+    }
+
+    /// A uniform draw in `[−1, 1)`.
+    fn draw(&mut self) -> f32 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.0 = x;
+        x as i32 as f32 * (1.0 / 2_147_483_648.0)
+    }
 }
 
-/// POSITION moved by the walk, `[0, 1)` wrapped; POSITION alone (its 1
-/// kept) while the walk rests, so a still walk changes nothing.
-pub fn place(position: f32, walk: f32) -> f32 {
-    if walk == 0.0 {
+/// The place after a note-on at `drift` from `at`: `at` plus up to
+/// ±DRIFT, wrapped. DRIFT off rests at 0 and draws nothing.
+pub fn step(at: Place, drift: Drift, rng: &mut DriftRng) -> Place {
+    if drift == Drift::OFF {
+        return Place::ZERO;
+    }
+    Place::wrapped(at.get() + drift.get() * rng.draw())
+}
+
+/// POSITION moved by the place, wrapped; POSITION alone (its 1 kept)
+/// while the place rests, so DRIFT off changes nothing.
+pub fn place(position: f32, at: Place) -> f32 {
+    if at == Place::ZERO {
         position
     } else {
-        wrap(position + walk)
+        Place::wrapped(position + at.get()).get()
     }
 }
 

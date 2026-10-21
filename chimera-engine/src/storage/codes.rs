@@ -7,7 +7,7 @@ use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::block::{Block, DiskCode, ParamId, ParamKind, ParamSpec};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
 use crate::dsp::reverb::{RevSync, ReverbType};
-use crate::dsp::tape_engine::params::{RETIRED_ONE, RetiredModel, TapeEngineParams};
+use crate::dsp::tape_engine::params::{RetiredMode, RetiredModel, TapeEngineParams};
 use crate::modulation::ModSource;
 use crate::orbit::chords::ScaleKind;
 use crate::orbit::ring::{NoteMode, Range, SnapTo};
@@ -189,7 +189,7 @@ const fn retired_codes() -> [(u8, u8, u8); RetiredModel::ALL.len() + 1] {
         out[i] = (block, TapeEngineParams::MODEL.0, RetiredModel::ALL[i] as u8);
         i += 1;
     }
-    out[i] = (block, TapeEngineParams::MODE.0, RETIRED_ONE);
+    out[i] = (block, TapeEngineParams::MODE.0, RetiredMode::One.code());
     out
 }
 

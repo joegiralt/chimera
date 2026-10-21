@@ -1554,7 +1554,12 @@ impl UiState {
         let now = crate::block::Block::get(&sound.params.tape, a.param) as u8;
         let held = self.held.filter(|&(h, c)| h == at && c.addr == a);
         let from = held.map_or(now, |(_, c)| c.code);
-        let last = a.spec().map_or(0, |s| s.max as i16);
+        // MODEL and DIRECTION each list four.
+        const _: () = assert!(
+            crate::dsp::tape_engine::TapeMachine::ALL.len() == 4
+                && crate::dsp::tape_engine::Direction::ALL.len() == 4
+        );
+        let last = 3;
         let to = match (shift, delta > 0) {
             (true, true) => last,
             (true, false) => 0,
@@ -2529,7 +2534,8 @@ impl UiState {
             let defaults = if now.0 != was.0 {
                 cc::model_writes(now.0, now.1)
             } else if now.1 != was.1 {
-                cc::direction_writes(now.0, was.1, now.1)
+                // At most a MODEL turn's writes (`cc::model_writes`).
+                cc::model_writes(now.0, now.1)
             } else {
                 0
             };

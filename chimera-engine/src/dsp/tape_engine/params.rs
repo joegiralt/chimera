@@ -85,7 +85,17 @@ retired_models!(Reverse = 1, PingPong = 2, Tron = 6, Oneshot = 7);
 
 /// DIRECTION's retired code: MODE ONE (0), which read neither POSITION nor
 /// LENGTH. It loads as FORWARD from the window's start, whole (ADR 0203).
-pub const RETIRED_ONE: u8 = 0;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RetiredMode {
+    One = 0,
+}
+
+impl RetiredMode {
+    pub const fn code(self) -> u8 {
+        self as u8
+    }
+}
 
 impl RetiredModel {
     pub fn from_code(c: u8) -> Option<Self> {
@@ -1120,7 +1130,7 @@ pub fn translate_v1(old: &crate::storage::Retired, b: &mut dyn Block) {
     type P = TapeEngineParams;
     if let Some(m) = old.code(P::MODEL).and_then(RetiredModel::from_code) {
         m.translate(b);
-    } else if old.code(P::MODE) == Some(RETIRED_ONE) {
+    } else if old.code(P::MODE) == Some(RetiredMode::One.code()) {
         // Off WALK the code was only kept: the machine's POSITION and
         // LENGTH are its own.
         if b.enum_code(P::MODEL) == Some(TapeModel::Walk.disk_code()) {

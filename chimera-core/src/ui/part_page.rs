@@ -9,7 +9,7 @@ use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::modulator::EnvSlot;
 use crate::dsp::tape_engine::machine::{defaults, direction_defaults, env_defaults};
 use crate::dsp::tape_engine::{
-    Direction, FADE_HOLD, MachineIndex, TapeEngineParams, TapeMachine, fade_default,
+    Choice, Direction, FADE_HOLD, MachineIndex, TapeEngineParams, TapeMachine, fade_default,
 };
 use crate::ui::block_def::{BlockDef, SlotBinding, slot_addr};
 use crate::ui::view::{SlotCtx, View, view};
@@ -117,7 +117,8 @@ fn machine_edit(a: ParamAddr, before: f32, b: &mut dyn Block) -> &'static [(Para
     if a.block != BlockRef::TapeEngine || b.get(a.param) == before {
         return &[];
     }
-    let d = Direction::ALL[usize::from(b.get(T::MODE) as u8).min(Direction::ALL.len() - 1)];
+    let dir = |v: f32| Direction::from_value(v).unwrap_or(Direction::Loop);
+    let d = dir(b.get(T::MODE));
     let m = TapeMachine::from_index(MachineIndex(b.get(T::MODEL) as u8));
     match a.param {
         T::MODEL => {
@@ -127,7 +128,7 @@ fn machine_edit(a: ParamAddr, before: f32, b: &mut dyn Block) -> &'static [(Para
             env_defaults(m, d)
         }
         T::MODE => {
-            let was = Direction::ALL[usize::from(before as u8).min(Direction::ALL.len() - 1)];
+            let was = dir(before);
             let writes = direction_defaults(was, d);
             for &(id, v) in writes {
                 b.set(id, v);

@@ -209,23 +209,17 @@ pub struct Sponge {
 /// marks where its tape ends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Steps {
-    /// DIRECTION's value, 0 to 3.
-    pub dir: u8,
+    pub dir: Direction,
     pub position: Q6,
     pub length: Q6,
     pub drift: Q4,
     pub fade: Q3,
-    pub tron: bool,
+    pub tron: Tron,
 }
 
 impl Steps {
     pub const fn direction(self) -> Direction {
-        match self.dir {
-            0 => Direction::Forward,
-            1 => Direction::Reverse,
-            2 => Direction::Loop,
-            _ => Direction::Ping,
-        }
+        self.dir
     }
 }
 
@@ -267,9 +261,9 @@ pub type Kind = Way;
 impl Way {
     /// Its still pose: fixed inputs that show what the machine is.
     pub fn still(self) -> Machine {
-        let steps = |dir: Direction, tron: bool| {
+        let steps = |dir: Direction, tron: Tron| {
             Machine::Walk(Steps {
-                dir: dir as u8,
+                dir,
                 position: Q6::of(0.1),
                 length: Q6::of(0.8),
                 drift: Q4::of(0.25),
@@ -278,10 +272,10 @@ impl Way {
             })
         };
         match self {
-            Kind::One => steps(Direction::Forward, false),
-            Kind::Loop => steps(Direction::Loop, false),
-            Kind::Ping => steps(Direction::Ping, false),
-            Kind::Tron => steps(Direction::Forward, true),
+            Kind::One => steps(Direction::Forward, Tron::Off),
+            Kind::Loop => steps(Direction::Loop, Tron::Off),
+            Kind::Ping => steps(Direction::Ping, Tron::Off),
+            Kind::Tron => steps(Direction::Forward, Tron::On),
             Kind::Stretch | Kind::Wave | Kind::Scrub => self.kept(),
         }
     }
@@ -375,7 +369,7 @@ pub struct GlyphInputs {
     /// WALK's DIRECTION (REVERSE draws ONE's run backward) and DRIFT.
     pub direction: Direction,
     pub drift: f32,
-    pub tron: bool,
+    pub tron: Tron,
     pub pose: Pose,
 }
 
@@ -402,8 +396,7 @@ impl GlyphInputs {
         let m =
             TapeMachine::from_index(MachineIndex(index_of(model, TapeMachine::ALL.len()) as u8));
         let direction = Direction::ALL[index_of(direction, Direction::ALL.len())];
-        let on = tron > 0.5;
-        let tron = if on { Tron::On } else { Tron::Off };
+        let tron = if index_of(tron, 2) == 1 { Tron::On } else { Tron::Off };
         Self {
             machine: Way::of(m, direction, tron),
             start,
@@ -417,7 +410,7 @@ impl GlyphInputs {
             xfade,
             direction,
             drift,
-            tron: on,
+            tron,
             pose,
         }
     }
@@ -494,12 +487,7 @@ impl TapeGauge {
             Machine::Stretch(_) => Kind::Stretch,
             Machine::Wave(_) => Kind::Wave,
             Machine::Scrub(_) => Kind::Scrub,
-            Machine::Walk(s) => match (s.direction(), s.tron) {
-                (Direction::Forward | Direction::Reverse, false) => Kind::One,
-                (Direction::Forward | Direction::Reverse, true) => Kind::Tron,
-                (Direction::Loop, _) => Kind::Loop,
-                (Direction::Ping, _) => Kind::Ping,
-            },
+            Machine::Walk(s) => Way::of(TapeMachine::Walk, s.dir, s.tron),
         }
     }
 
@@ -517,12 +505,12 @@ impl TapeGauge {
             Machine::Stretch(b) => s(b.speed.0, 0) | s(b.d_time.0, 6),
             Machine::Wave(f) => s(f.frame.0, 0) | s(f.range.0, 6) | s(f.scan.0, 12),
             Machine::Walk(w) => {
-                s(w.dir, 0)
+                s(w.dir as u8, 0)
                     | s(w.position.0, 2)
                     | s(w.length.0, 8)
                     | s(w.drift.0, 14)
                     | s(w.fade.0, 18)
-                    | s(u8::from(w.tron), 21)
+                    | s(w.tron as u8, 21)
             }
             Machine::Scrub(p) => {
                 s(p.finger.0, 0)

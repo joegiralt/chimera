@@ -8,10 +8,10 @@ mod common;
 use core::mem::MaybeUninit;
 
 use chimera_core::block::{Block, DiskCode};
-use chimera_core::dsp::tape_engine::drift;
+use chimera_core::dsp::tape_engine::drift::{self, DriftRng, Place};
 use chimera_core::dsp::tape_engine::heads::loop_len;
 use chimera_core::dsp::tape_engine::machine::{defaults, direction_defaults, env_defaults};
-use chimera_core::dsp::tape_engine::params::{Drift, RETIRED_ONE};
+use chimera_core::dsp::tape_engine::params::{Drift, RetiredMode};
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::tron::TRON_LEN_MAX_S;
 use chimera_core::dsp::tape_engine::{
@@ -285,26 +285,28 @@ fn position_starts_there_and_length_takes_the_rest() {
 
 // ── DRIFT ─────────────────────────────────────────────────────────────
 
-/// `n` steps from 0 at `w`: each step's signed move (wrapped to ±½) and
-/// each place.
-fn walks(w: f32, n: usize, seed: u32) -> (Vec<f32>, Vec<f32>) {
-    let mut rng = drift::seed(seed);
-    let (mut at, mut d, mut places) = (0.0, Vec::new(), Vec::new());
+/// `n` steps from 0 at DRIFT `w`: each step's signed move (wrapped to
+/// ±½) and each place.
+fn walks(w: Drift, n: usize, seed: u32) -> (Vec<f32>, Vec<f32>) {
+    let mut rng = DriftRng::seed(seed);
+    let (mut at, mut d, mut places) = (Place::ZERO, Vec::new(), Vec::new());
     for _ in 0..n {
         let next = drift::step(at, w, &mut rng);
-        let mut m = next - at;
+        let (next, at_f) = (next, at.get());
+        let mut m = next.get() - at_f;
         m -= m.round();
         d.push(m);
-        places.push(next);
+        places.push(next.get());
         at = next;
     }
     (d, places)
 }
 
 #[test]
-fn walk_bounds_hold_and_it_wraps_both_ways() {
+fn drift_bounds_hold_and_it_wraps_both_ways() {
     for w in [0.01, 0.1, 0.3, 0.5, 0.75, 1.0] {
-        let (d, places) = walks(w, 20_000, 3);
+        let (d, places) = walks(Drift::of(w), 20_000, 3);
+        let w = Drift::of(w).get();
         assert!(
             places.iter().all(|&x| (0.0..1.0).contains(&x)),
             "{w}: in the window"
@@ -322,7 +324,7 @@ fn walk_bounds_hold_and_it_wraps_both_ways() {
     }
     // Over the ends: a step back from 0.05 by more than 0.05 lands near 1,
     // one forward from 0.95 near 0.
-    let (_, places) = walks(0.3, 2_000, 5);
+    let (_, places) = walks(Drift::of(0.3), 2_000, 5);
     let pairs = places.windows(2);
     let mut down = false;
     let mut up = false;
@@ -336,9 +338,10 @@ fn walk_bounds_hold_and_it_wraps_both_ways() {
 /// The steps are uniform in ±DRIFT: mean 0, |step| DRIFT/2 on average,
 /// RMS DRIFT/√3; at full DRIFT the places cover the window evenly.
 #[test]
-fn walk_spreads_as_it_should() {
+fn drift_spreads_as_it_should() {
     for w in [0.1, 0.25, 0.5] {
-        let (d, _) = walks(w, 50_000, 11);
+        let (d, _) = walks(Drift::of(w), 50_000, 11);
+        let w = Drift::of(w).get();
         let n = d.len() as f32;
         let mean = d.iter().sum::<f32>() / n;
         let abs = d.iter().map(|m| m.abs()).sum::<f32>() / n;
@@ -353,7 +356,7 @@ fn walk_spreads_as_it_should() {
             "{w}: RMS {rms}"
         );
     }
-    let (_, places) = walks(1.0, 50_000, 13);
+    let (_, places) = walks(Drift::of(1.0), 50_000, 13);
     let mut bins = [0u32; 10];
     for x in places {
         bins[(x * 10.0) as usize] += 1;
@@ -366,21 +369,24 @@ fn walk_spreads_as_it_should() {
 
 /// DRIFT 0 draws nothing and rests at POSITION; a NaN is DRIFT 0.
 #[test]
-fn walk_zero_rests() {
-    let mut rng = drift::seed(1);
+fn drift_off_rests() {
+    let mut rng = DriftRng::seed(1);
     let before = rng;
-    assert_eq!(drift::step(0.4, 0.0, &mut rng), 0.0);
-    assert_eq!(drift::step(0.4, f32::NAN, &mut rng), 0.0);
+    let at = Place::wrapped(0.4);
+    assert_eq!(drift::step(at, Drift::OFF, &mut rng), Place::ZERO);
+    assert_eq!(drift::step(at, Drift::of(f32::NAN), &mut rng), Place::ZERO);
     assert_eq!(rng, before);
-    assert_eq!(drift::place(0.7, 0.0), 0.7);
-    assert_eq!(drift::place(1.0, 0.0), 1.0);
+    assert_eq!(drift::place(0.7, Place::ZERO), 0.7);
+    assert_eq!(drift::place(1.0, Place::ZERO), 1.0);
+    assert_eq!(Place::wrapped(f32::NAN), Place::ZERO);
+    assert_eq!(Place::wrapped(-0.25).get(), 0.75);
     assert_eq!(Drift::of(f32::NAN), Drift::OFF);
 }
 
 /// DRIFT 0 renders bit for bit as a Sound that never set it, note after
 /// note, on every direction.
 #[test]
-fn walk_zero_is_bit_identical_to_no_walk() {
+fn drift_off_is_bit_identical_to_no_walk() {
     let h = sine_src();
     let v = SourceView::new(&h).unwrap();
     for d in Direction::ALL {
@@ -405,7 +411,7 @@ fn walk_zero_is_bit_identical_to_no_walk() {
 /// Each note starts where the walk has wandered, inside the window, and a
 /// voice's seed repeats it.
 #[test]
-fn walk_moves_each_note_repeatably() {
+fn drift_moves_each_note_repeatably() {
     let h = ramp();
     let v = SourceView::new(&h).unwrap();
     let p = P {
@@ -559,7 +565,7 @@ fn old_machines_load_as_play() {
     const MODE: u8 = 15;
     // MODE ONE: FORWARD from the window's start, whole, as ONE read
     // neither POSITION nor LENGTH.
-    let t = decoded(&[(MODEL, 0), (MODE, u32::from(RETIRED_ONE))]);
+    let t = decoded(&[(MODEL, 0), (MODE, u32::from(RetiredMode::One.code()))]);
     assert_eq!(
         (t.way(), t.direction, t.position, t.size),
         (Way::One, Direction::Forward, 0.0, 1.0)
@@ -601,10 +607,10 @@ fn old_codes_are_never_reused() {
         assert!(RetiredModel::from_code(m.disk_code()).is_none(), "{m:?}");
     }
     for d in Direction::ALL {
-        assert_ne!(d.disk_code(), RETIRED_ONE, "{d:?}");
+        assert_ne!(d.disk_code(), RetiredMode::One.code(), "{d:?}");
         assert_eq!(Direction::from_disk_code(d.disk_code()), Some(d));
     }
-    assert_eq!(Direction::from_disk_code(RETIRED_ONE), None);
+    assert_eq!(Direction::from_disk_code(RetiredMode::One.code()), None);
     let mut t = P::default();
     t.set_way(Way::One);
     assert_eq!(t.enum_code(P::MODE), Some(3));
