@@ -11,8 +11,8 @@ use core::mem::MaybeUninit;
 
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
-    CLAMP_FADE_S, INC_MAX, MIN_PASS_SAMPLES, PlayMode, TapeEngine, TapeEngineParams, TapeModel,
-    drag_s, loop_len,
+    AIM_S, CLAMP_FADE_S, INC_MAX, MIN_PASS_SAMPLES, PlayMode, TapeEngine, TapeEngineParams,
+    TapeModel, drag_s, loop_len,
 };
 use chimera_hal::BLOCK_SIZE;
 use common::tape::{Mach, held_plain, held_transwave, sine};
@@ -231,11 +231,79 @@ fn scrub_drag_slews() {
             .iter()
             .position(|pr| pr.head as f32 - h0 >= 0.632 * span)
             .expect("the finger arrives");
-        let want = drag_s(drag) * SR as f32;
+        // Two one-poles in series, the aim's (`AIM_S`) then DRAG's: the
+        // time their step response reaches 63 % (ADR 0200).
+        let (ta, tf) = (AIM_S, drag_s(drag));
+        let y = |t: f32| 1.0 - (ta * (-t / ta).exp() - tf * (-t / tf).exp()) / (ta - tf);
+        let want = (0..48_000)
+            .find(|&i| y(i as f32 / SR as f32) >= 0.632)
+            .unwrap() as f32;
         let got = (n * B) as f32;
         assert!(
-            (got - want).abs() <= B as f32,
+            (got - want).abs() <= 2.0 * B as f32,
             "DRAG {drag}: 63 % at {got} samples, want {want}"
+        );
+    }
+}
+
+/// POSITION's steps never step the finger's speed (ADR 0200): a jump
+/// starts the reel moving over blocks, not at once, and a staircase at a
+/// UI pass's rate (a detent every 33 ms, the jog's) moves the head at an
+/// even speed, not a sawtooth of it, at every DRAG.
+#[test]
+fn scrub_finger_speed_never_steps() {
+    let w = 4 * 48_000u32;
+    let held = held_plain(&sine(48_000, 100.7, w), 48_000);
+    let v = SourceView::strict(&held).unwrap();
+    for drag in [0.0, 0.3, 0.6, 1.0] {
+        let base = TapeEngineParams {
+            machine: TapeMachine::Scrub,
+            size: 0.0,
+            drag,
+            motion: 0.0,
+            ..TapeEngineParams::default()
+        };
+        // A jump 0 → 0.5: no block's speed is more than a quarter of the
+        // peak's from the last block's.
+        let mut p = base;
+        let mut e = fresh();
+        e.note_on(60, &p, &v, SR);
+        let (_, a) = play(&mut e, &p, &v, 4);
+        p.position = 0.5;
+        let (_, b) = play(&mut e, &p, &v, 200);
+        let probes: Vec<_> = a[a.len() - 1..].iter().chain(&b).copied().collect();
+        let d = moves(&probes);
+        let top = d.iter().fold(0i64, |m, x| m.max(x.abs())) as f32;
+        let step = d.windows(2).fold(0i64, |m, x| m.max((x[1] - x[0]).abs())) as f32;
+        assert!(
+            d[0].abs() as f32 <= 0.4 * top && step <= 0.4 * top,
+            "drag {drag}, a jump: first block {} and largest change {step} of a peak {top}",
+            d[0]
+        );
+        // A staircase: 1/256 of the window every 25 blocks (33.3 ms), 2.5 s.
+        let mut p = base;
+        let mut e = fresh();
+        e.note_on(60, &p, &v, SR);
+        let mut probes = Vec::new();
+        for k in 0..1_875 {
+            if k % 25 == 0 {
+                p.position += 1.0 / 256.0;
+            }
+            let (_, pr) = play(&mut e, &p, &v, 1);
+            probes.extend(pr);
+        }
+        // The second half, the reel up to speed: two blocks a reading, so a
+        // frame's rounding is under 2 %.
+        let d: Vec<i64> = moves(&probes[940..])
+            .chunks(2)
+            .map(|c| c.iter().sum())
+            .collect();
+        let (lo, hi) = d
+            .iter()
+            .fold((i64::MAX, 0), |(l, h), &x| (l.min(x), h.max(x)));
+        assert!(
+            hi as f32 <= 1.4 * lo as f32,
+            "drag {drag}, a staircase: the finger's speed swings {lo}..{hi} frames a reading"
         );
     }
 }
