@@ -469,7 +469,7 @@ test-firmware-features:
     [[ ",$core," == *,tape,* ]] || { echo "the firmware's chimera-core has no tape: [$core]" >&2; exit 1; }
     f="$core,$(sed 's|\([^,]*\)|chimera-engine/\1|g' <<<"$engine")"
     echo "firmware features: $f"
-    cargo test -p chimera-core --no-default-features --features "$f" --test tape_part_load_test --test tape_source_cell_test
+    cargo test -p chimera-core --no-default-features --features "$f" --test tape_part_load_test --test tape_source_cell_test --test turn_reaches_engine_test
 
 # The FAT layer checked by dosfstools (ADR 0048): mkfs.fat images must read
 # back and fsck.fat -n must pass, after the suite and after console puts
