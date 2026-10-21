@@ -47,20 +47,20 @@ TAPE has a chain in the code (SRC, DECK with its model page and PIT, FLT, AMP, M
 
 ### TAPE
 
-MODEL lists the machines PLAY, STRETCH (STRCH), SCRUB and WAVE. Each machine has its own DECK cells after MODEL and its own model page after TAPE, AGE and WOW; the model page is named by the machine (ADR 0178, 0200).
+MODEL lists the machines WALK, STRETCH (STRCH), SCRUB and WAVE. Each machine has its own DECK cells after MODEL and its own model page after TAPE, AGE and WOW; the model page is named by the machine (ADR 0178, 0202).
 
 | Page | Cells |
 |---|---|
 | SRC | SOURCE · START · END · VOL |
-| DECK on PLAY | MODEL · LENGTH · FADE · DIRECTION (FWD, REVERSE, LOOP, PING) · POSITION · WALK |
-| PLAY | TAPE · AGE · WOW · TRON (OFF, ON) · XFADE · RETRIG. XFADE reads only on LOOP, RETRIG only on FWD and REVERSE with TRON off; elsewhere each is dimmed and the band says why |
+| DECK on WALK | MODEL · LENGTH · FADE · DIRECTION (FWD, REVERSE, LOOP, PING) · POSITION · DRIFT |
+| WALK | TAPE · AGE · WOW · TRON (OFF, ON) · XFADE · RETRIG. XFADE reads on LOOP and with TRON on, RETRIG on FWD and REVERSE with TRON off; elsewhere each is dimmed and the band says why |
 | DECK on STRETCH | MODEL · SPEED · D-TIME |
 | STRCH | TAPE · AGE · WOW · POSITION · TYPE |
 | DECK on SCRUB | MODEL · FINGER · SPEED · LENGTH · XFADE · DRAG |
 | DECK on WAVE | MODEL · FRAME · SCAN · RANGE |
 | PIT | under DECK, after the model page |
 
-On PLAY, FADE's last step reads HOLD on FWD and REVERSE with TRON off. WALK moves POSITION by a random step at each note. TRON on runs each note's tape out and lifts it at key up. On a streamed source, DIRECTION holds REVERSE and PING dimmed with `… NEEDS RAM · STREAMED`.
+On WALK, FADE's last step reads HOLD on FWD and REVERSE with TRON off. DRIFT moves POSITION by a random step at each note. TRON on gives each key a tape of 0.25 to 8 s (LENGTH), the window coming round until it runs out, and lifts it at key up. WALK's glyph is footsteps: their line, loop or lanes by DIRECTION, scattered by DRIFT, a tape's end with TRON. On a streamed source, DIRECTION holds REVERSE and PING dimmed with `… NEEDS RAM · STREAMED`.
 
 ### FLT and AMP
 
