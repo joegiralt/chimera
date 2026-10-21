@@ -1667,6 +1667,40 @@ fn tape_bills_each_model() {
     }
 }
 
+/// STRETCH bills by TYPE (ADR 0204): CLASSIC 450, GRAIN 570, and the
+/// voices GRAIN is admitted beside the reserve on rev V, rev Y, rev V with
+/// ORBIT and with the master tape, TAPE and AGE off and both at 0.5.
+#[test]
+fn stretch_bills_by_type() {
+    use chimera_core::dsp::tape_engine::{StretchType, TapeModel};
+    let rooms = {
+        let v = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
+        let y = SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0;
+        [
+            v - RESERVED,
+            y - RESERVED,
+            v - RESERVED - ORBIT_COST,
+            v - RESERVED_TAPE,
+        ]
+    };
+    let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
+    for (kind, bill, off, both) in [
+        (StretchType::Mono, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
+        (StretchType::Poly, 450, [8, 7, 8, 8], [8, 7, 8, 8]),
+        (StretchType::Grain, 570, [8, 6, 8, 7], [7, 6, 7, 7]),
+    ] {
+        let mut p = tape_sound(TapeModel::Stretch);
+        p.tape.machine = TapeMachine::Stretch;
+        p.tape.kind = kind;
+        for (stored, want, extra) in [(0.0, off, 0), (0.5, both, 40)] {
+            (p.tape.tape, p.tape.age) = (stored, stored);
+            let voice = Voice::cost(&p, &ModState::new()).0;
+            assert_eq!(voice, bill + extra + 83, "{kind:?} at {stored}");
+            assert_eq!(at(voice), want, "{kind:?} at {stored}");
+        }
+    }
+}
+
 fn va_sound(mode: chimera_core::dsp::va::VaMode) -> ParamSnapshot {
     let mut p = ParamSnapshot::for_engine(EngineType::Va);
     p.va.mode = mode;

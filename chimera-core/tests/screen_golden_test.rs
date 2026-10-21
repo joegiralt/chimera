@@ -319,6 +319,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded at the merge: MAX_SOUND_COST 2688 (VOICEFX and PLAY's MODE).
     // Fourth TAPE merge: MAX_SOUND_COST 2656 (STAB, FB and TAPE), same picture.
     // Then SEM's MORPH: the dense fill leaves 0.1K FREE, not 0.0K.
+    // STRETCH GRAIN's four params: MAX_SOUND_COST 2688 (ADR 0204).
     ("sound_browser_pool_full", 0x30d9348383441db9),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
@@ -428,9 +429,9 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_page_loop", 0xe384ebb8802bc1ce),
     ("tape_deck_tron", 0xfbe1971ab0fd9b37),
     ("tape_page_tron", 0x01ab82e2229cccf9),
-    ("tape_deck_stretch", 0x33e395cf798ccc3c),
-    ("tape_page_stretch", 0xbeb317ea13da8a67),
-    ("tape_page_stretch_type", 0x2388e89c04b15a30),
+    ("tape_deck_stretch", 0xfa69c48b86c95f29),
+    ("tape_page_stretch", 0x7b850cbe882e1b02),
+    ("tape_page_stretch_type", 0xce026cb5431c9843),
     ("tape_deck_transwave", 0xde8bbeffbb06c81a),
     ("tape_page_transwave", 0xcf7697ab32e621c5),
     ("tape_deck_scrub", 0x4e984b2dd79b5313),
@@ -440,7 +441,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("tape_strip_oneshot", 0xd0d3879ef227791c),
     ("tape_strip_loop", 0x7a93bcdc395e9db7),
     ("tape_strip_tron", 0x92d1139ec52d5494),
-    ("tape_strip_stretch", 0x7fac311807a65826),
+    ("tape_strip_stretch", 0x06800cc66e50276b),
     ("tape_strip_transwave", 0x8578d1cff2b53962),
     ("tape_strip_scrub", 0x4862fecc1608ba29),
     ("tape_strip_pingpong", 0x68c3cfea764a1094),

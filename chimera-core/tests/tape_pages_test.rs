@@ -15,8 +15,8 @@ use chimera_core::block::{Block, ParamId, ParamKind};
 use chimera_core::dsp::tape_engine::machine::{MACHINES, machine};
 use chimera_core::dsp::tape_engine::read::SourceView;
 use chimera_core::dsp::tape_engine::{
-    MODEL_NAMES, PlayMode, TAPE_ENGINE_SPECS, TapeEngine, TapeEngineParams, TapeMachine, TapeModel,
-    reads,
+    MODEL_NAMES, PlayMode, StretchType, TAPE_ENGINE_SPECS, TapeEngine, TapeEngineParams,
+    TapeMachine, TapeModel, reads,
 };
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
@@ -28,7 +28,7 @@ use chimera_core::ui::block_registry::{
 use chimera_core::ui::dungeon_map::page_label;
 use chimera_core::ui::fmt::FmtBuf;
 use chimera_core::ui::mod_grid::{block_name, block_tag};
-use chimera_core::ui::view::{self, Models, SlotCtx, SourceState, View};
+use chimera_core::ui::view::{self, Models, SlotCtx, SourceState};
 use chimera_core::ui::{draw, nav, theme};
 use chimera_hal::{BLOCK_SIZE, EncoderId};
 use common::tape::{held_plain, held_transwave, saw_with_burst, sine};
@@ -113,7 +113,10 @@ fn deck_holds_the_glyphs_knobs() {
         (M::Ping, ["POSITION", "WALK", "LENGTH", "--", "--"]),
         (M::Tron, ["LENGTH", "FADE", "--", "--", "--"]),
         (M::Scrub, ["FINGER", "SPEED", "LENGTH", "XFADE", "DRAG"]),
-        (M::Stretch, ["SPEED", "D-TIME", "--", "--", "--"]),
+        (
+            M::Stretch,
+            ["TYPE", "SPEED", "LENGTH", "D-TIME", "POSITION"],
+        ),
         (M::Wave, ["FRAME", "SCAN", "RANGE", "--", "--"]),
     ];
     for (m, cells) in want {
@@ -123,7 +126,10 @@ fn deck_holds_the_glyphs_knobs() {
         assert_eq!(got[1..], cells, "{m:?}");
         for (k, c) in machine(m).deck.iter().enumerate() {
             assert_eq!(view::view(&TAPE_DECK, k + 1, &ctx).addr(), Some(tape(c.id)));
-            assert!(!view::dimmed(tape(c.id), &live_on(m)), "{m:?} {}", c.label);
+            let live = live_on(m);
+            // STRETCH dims the other TYPE's (ADR 0204).
+            let other = TapeEngine::stretch_only(live.params.tape.kind, c.id).is_some();
+            assert_eq!(view::dimmed(tape(c.id), &live), other, "{m:?} {}", c.label);
         }
     }
 }
@@ -139,7 +145,7 @@ fn model_page_cells() {
         (M::Ping, ["FADE", "--", "--"]),
         (M::Tron, ["--", "--", "--"]),
         (M::Scrub, ["KEY", "--", "--"]),
-        (M::Stretch, ["POSITION", "TYPE", "--"]),
+        (M::Stretch, ["GRAIN", "SPRAY", "END"]),
         (M::Wave, ["--", "--", "--"]),
     ];
     let pages = ["ONE", "LOOP", "PING", "TRON", "SCRUB", "STRCH", "WAVE"];
@@ -154,7 +160,9 @@ fn model_page_cells() {
                 view::view(&TAPE_MODEL, k + 3, &ctx).addr(),
                 Some(tape(c.id))
             );
-            assert!(!view::dimmed(tape(c.id), &live_on(m)), "{m:?} {}", c.label);
+            let live = live_on(m);
+            let other = TapeEngine::stretch_only(live.params.tape.kind, c.id).is_some();
+            assert_eq!(view::dimmed(tape(c.id), &live), other, "{m:?} {}", c.label);
         }
         for (k, id) in [(0, P::TAPE), (1, P::AGE), (2, P::WOW)] {
             assert_eq!(view::view(&TAPE_MODEL, k, &ctx).addr(), Some(tape(id)));
@@ -176,15 +184,23 @@ fn deck_is_what_moves_the_glyph() {
     use chimera_core::ui::glyph::TAPE_GLYPH_PARAMS;
     use chimera_core::ui::tape_glyph::{GlyphInputs, Pose, TapeGauge};
     for m in TapeMachine::ALL {
-        let mut set = [0.0, 0.1, 0.9, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, 0.2];
+        let mut set = [0.0, 0.1, 0.9, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, 0.2, 0.4, 0.0];
         set[0] = m.index() as f32 / 6.0;
-        let base = TapeGauge::of(&GlyphInputs::from_set(set, Pose::Live));
-        assert_eq!(base.kind(), m);
+        assert_eq!(
+            TapeGauge::of(&GlyphInputs::from_set(set, Pose::Live)).kind(),
+            m
+        );
         for (i, a) in TAPE_GLYPH_PARAMS.iter().enumerate().skip(1) {
             if matches!(a.param, P::TAPE | P::AGE) {
                 continue;
             }
-            let moves = [0.0, 1.0].into_iter().any(|v| {
+            // A STRETCH cell moves the glyph under the TYPE that plays it.
+            let mut set = set;
+            if TapeEngine::stretch_only(StretchType::Mono, a.param).is_some() {
+                set[11] = 2.0;
+            }
+            let base = TapeGauge::of(&GlyphInputs::from_set(set, Pose::Live));
+            let moves = [0.0, 1.0, 2.0].into_iter().any(|v| {
                 let mut moved = set;
                 moved[i] = v;
                 TapeGauge::of(&GlyphInputs::from_set(moved, Pose::Live)).key() != base.key()
@@ -258,7 +274,8 @@ fn model_change_applies_machine_defaults() {
     feed(&mut ui, Input::turn(EncoderId::A, 4)); // LOOP → STRETCH
     let t = ui.params().tape;
     assert_eq!(t.model(), TapeModel::Stretch);
-    assert_eq!((t.motion, t.size, t.kind as u8), (0.5, 0.5, 0));
+    assert_eq!(t.motion, 0.5);
+    assert_eq!(t.stretch, chimera_core::dsp::tape_engine::STRETCH_DEFAULTS);
     assert_eq!((t.start, t.end, t.tape, t.age), (0.2, 0.7, 0.4, 0.3));
     assert_eq!(t.wow, chimera_core::dsp::tape_engine::Wow::Warble);
     assert_eq!(
@@ -269,10 +286,11 @@ fn model_change_applies_machine_defaults() {
             .map(|s| s.r),
         Some(r)
     );
-    // Eased: the screen right after the turn is on its way, not there.
+    // STRETCH writes ONE's ENV 1 (ADR 0204): its SPEED, FAST, is a new
+    // page context, so the page lands at once, as a KIND change does.
     let now = render_ui(&ui).hash();
     settle(&mut ui);
-    assert_ne!(now, render_ui(&ui).hash(), "the change snapped");
+    assert_eq!(now, render_ui(&ui).hash(), "a re-seeded page eases nothing");
     assert_ne!(settled, render_ui(&ui).hash());
 
     // The matrix reads the new machine's labels.
@@ -464,23 +482,6 @@ fn reads_is_the_machine_table() {
             assert!(reads(k.machine, id), "{:?} {id:?}", k.machine);
         }
     }
-}
-
-#[test]
-fn type_reads_poly_unpitched() {
-    let mut s = sound_on(TapeMachine::Stretch);
-    s.params.tape.period = 0.0;
-    let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
-    assert_eq!(
-        view::view(&TAPE_MODEL, 4, &ctx),
-        View::Text {
-            label: "TYPE",
-            text: "POLY (UNPITCHED)"
-        }
-    );
-    s.params.tape.period = 109.1;
-    let ctx = SlotCtx::read(&s.params, chimera_core::addr::Op::A);
-    assert_eq!(view::view(&TAPE_MODEL, 4, &ctx).addr(), Some(tape(P::TYPE)));
 }
 
 #[test]

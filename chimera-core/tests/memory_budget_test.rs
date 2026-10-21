@@ -78,7 +78,8 @@ fn voice_is_its_chain_plus_one_slot() {
 /// four-pole slot, the last block's amount, and the played Sound's FB with
 /// its padding (ADR 0190). SEM adds 32 B: its two states, FB signal and
 /// last block's ends (28) and the played Sound's MODE knob (ADR 0192).
-const VOICE_SIZE_BEFORE: usize = 6_584;
+/// STRETCH's four params in the played Sound add 16 B (ADR 0204).
+const VOICE_SIZE_BEFORE: usize = 6_600;
 
 /// ADR 0131: the formant kinds live in the Algo slot, which still fits
 /// inside Modal's, so they add nothing to `EngineSlot`.

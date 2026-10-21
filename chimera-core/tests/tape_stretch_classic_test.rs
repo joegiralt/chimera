@@ -1,4 +1,4 @@
-//! TAPE's STRETCH (spec § 2 STRETCH, Why period-locking): two grains read
+//! TAPE STRETCH CLASSIC (ADR 0204; spec § 2 STRETCH, Why period-locking): two grains read
 //! at the note's pitch, spliced every D-TIME/2 under one complementary fade
 //! while a time pointer runs at MOTION's speed. Precedent: Akai S950
 //! Operator's Manual p. 32 (TIMESTRETCH, D-TIME, MONO and POLY); the JUCE

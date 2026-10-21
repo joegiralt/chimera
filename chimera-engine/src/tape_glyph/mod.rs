@@ -173,12 +173,18 @@ pub struct Blind {
     pub fade: Q5,
 }
 
-/// STRETCH's accordion: SPEED opens or squeezes it, D-TIME folds it.
+/// STRETCH's accordion: SPEED opens or squeezes it; GRAIN's LENGTH folds
+/// it and a row of grains sits under it, CLASSIC's D-TIME folds it and
+/// POSITION marks where time starts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Bellows {
     /// Bipolar: MOTION.
     pub speed: Q6,
-    pub d_time: Q5,
+    /// LENGTH (GRAIN) or D-TIME (CLASSIC).
+    pub fold: Q5,
+    /// CLASSIC's POSITION; 0 on GRAIN.
+    pub at: Q5,
+    pub grain: bool,
 }
 
 /// TRANSWAVE's film: FRAME in the gate, RANGE the gate's width, SCAN's
@@ -246,7 +252,9 @@ impl TapeMachine {
             }),
             Kind::Stretch => Machine::Stretch(Bellows {
                 speed: walk(0.25),
-                d_time: q5(0.45),
+                fold: q5(0.55),
+                at: q5(0.0),
+                grain: true,
             }),
             Kind::Wave => Machine::Wave(Film {
                 frame: q6(0.45),
@@ -305,13 +313,16 @@ pub struct GlyphInputs {
     pub tape: f32,
     pub age: f32,
     pub xfade: f32,
+    pub length: f32,
+    /// STRETCH's TYPE, its stored value.
+    pub kind: f32,
     pub pose: Pose,
 }
 
 impl GlyphInputs {
     /// From `TAPE_GLYPH_PARAMS`' set values, normalized; MODEL's to its
     /// nearest machine.
-    pub fn from_set(set: [f32; 10], pose: Pose) -> Self {
+    pub fn from_set(set: [f32; 12], pose: Pose) -> Self {
         let [
             model,
             start,
@@ -323,6 +334,8 @@ impl GlyphInputs {
             tape,
             age,
             xfade,
+            length,
+            kind,
         ] = set;
         let at = crate::dsp::rev::sync::index_of(model, TapeMachine::ALL.len());
         Self {
@@ -336,6 +349,8 @@ impl GlyphInputs {
             tape,
             age,
             xfade,
+            length,
+            kind,
             pose,
         }
     }
@@ -355,6 +370,8 @@ const _: () = {
         T::TAPE,
         T::AGE,
         T::XFADE,
+        T::LENGTH,
+        T::TYPE,
     ];
     let mut i = 0;
     while i < order.len() {
@@ -423,7 +440,9 @@ impl TapeGauge {
             }
             Machine::Ping(b) => s(b.position.0, 0) | s(b.length.0, 6) | s(b.walk.0, 12),
             Machine::Tron(b) => s(b.length.0, 0) | s(b.fade.0, 6),
-            Machine::Stretch(b) => s(b.speed.0, 0) | s(b.d_time.0, 6),
+            Machine::Stretch(b) => {
+                s(b.speed.0, 0) | s(b.fold.0, 6) | s(b.at.0, 11) | (b.grain as u32) << 16
+            }
             Machine::Wave(f) => s(f.frame.0, 0) | s(f.range.0, 6) | s(f.scan.0, 12),
             Machine::Scrub(p) => {
                 s(p.finger.0, 0)

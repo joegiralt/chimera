@@ -63,6 +63,10 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("TapeEngine", "SIZE", TAPE),
     ("TapeEngine", "XFADE", TAPE),
     ("TapeEngine", "DRAG", TAPE),
+    ("TapeEngine", "STRETCH_LENGTH", TAPE),
+    ("TapeEngine", "GRAIN", TAPE),
+    ("TapeEngine", "SPRAY", TAPE),
+    ("TapeEngine", "STRETCH_END", TAPE),
     ("Algo", "ALG_A", NONE),
     ("Algo", "ALG_B", NONE),
     ("Filter", "KIND", NONE),
@@ -224,6 +228,8 @@ const TWO_PEERS: &[(&str, &str)] = &[
     ("TapeEngine", "RETRIG"),
     // POSITION and PITCH: two things a SCRUB key chooses.
     ("TapeEngine", "KEY"),
+    // HOLD and STOP: two ends of a stretch, neither off.
+    ("TapeEngine", "STRETCH_END"),
 ];
 
 /// Every LEVEL BAR param is a unipolar level, 0 to max.

@@ -196,6 +196,8 @@ SECTIONS {
     *(.rodata.*11tape_engine5scrub* .rodata.*11tape_engine5heads* .rodata.*11tape_engine7stretch* .rodata.*11tape_engine4wave* .rodata.*11tape_engine4read*
       .rodata.*11tape_engine3age* .rodata.*11tape_engine6warble* .rodata.*11tape_engine7oneshot* .rodata.*11tape_engine4tron*
       .rodata.*11tape_engine4span* .rodata.*6stream6cursor* .rodata.*11tape_engine*8TapeDeck*);
+    /* The grain core (`dsp::grain`, ADR 0202), STRETCH's too (ADR 0204). */
+    *(.text.*3dsp5grain* .rodata.*3dsp5grain*);
     /* Streamed admission and loads (`AdmitDoor`, `LoadDoor`): the bill,
        the stealing pick and the block's re-bill; the heads' placement, a
        load's passes and their head reads. Bank 1 keeps the wrappers and

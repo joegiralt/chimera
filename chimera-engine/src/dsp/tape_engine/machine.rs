@@ -9,7 +9,8 @@
 //! on load; the neutral stays PLAY in LOOP.
 
 use super::params::{
-    FADE_HOLD, KeyMode, Retrig, StretchType, TapeEngineParams as P, TapeMachine, Wow,
+    FADE_HOLD, KeyMode, Retrig, STRETCH_DEFAULTS, StretchType, TapeEngineParams as P, TapeMachine,
+    Wow,
 };
 use crate::block::ParamId;
 use crate::dsp::modulator::EnvSpeed;
@@ -61,6 +62,9 @@ pub struct Machine {
     pub page: &'static str,
     pub deck: &'static [Cell],
     pub cells: &'static [Cell],
+    /// ENV 1's cells a MODEL turn writes (`env_defaults`): a table, not a
+    /// match, so a machine's are data (ADR 0204).
+    pub env: &'static [(ParamId, f32)],
 }
 
 /// DECK's cells after MODEL.
@@ -119,18 +123,21 @@ pub static MACHINES: [Machine; 7] = [
             cell(P::DRAG, "FADE", "FDE", FADE_HOLD),
             choice(P::RETRIG, "RETRIG", "RTG", Retrig::Stack as u8),
         ],
+        env: &ONE_ENV,
     },
     Machine {
         machine: TapeMachine::Loop,
         page: "LOOP",
         deck: &[POS, WALK, LOOP_LENGTH, XFADE],
         cells: &[FADE],
+        env: &[],
     },
     Machine {
         machine: TapeMachine::Ping,
         page: "PING",
         deck: &[POS, WALK, LOOP_LENGTH],
         cells: &[FADE],
+        env: &[],
     },
     Machine {
         machine: TapeMachine::Tron,
@@ -138,6 +145,7 @@ pub static MACHINES: [Machine; 7] = [
         // LENGTH 1: 8 s. TRON draws its FADE: the snap back is the machine.
         deck: &[LENGTH, FADE],
         cells: &[],
+        env: &[],
     },
     Machine {
         machine: TapeMachine::Scrub,
@@ -151,13 +159,28 @@ pub static MACHINES: [Machine; 7] = [
         ],
         // KEY POSITION: a key places the finger and plays at ROOT.
         cells: &[choice(P::KEY, "KEY", "KEY", KeyMode::Position as u8)],
+        env: &[],
     },
     Machine {
         machine: TapeMachine::Stretch,
         page: "STRCH",
-        // D-TIME 0.5: 50 ms. The bellows draw neither POSITION nor TYPE.
-        deck: &[SPEED, cell(P::SIZE, "D-TIME", "DTM", 0.5)],
-        cells: &[POS, choice(P::TYPE, "TYPE", "TYP", StretchType::Mono as u8)],
+        // Two TYPEs (ADR 0204), a turn landing on GRAIN: LENGTH 2 s at
+        // SPEED 1×, GRAIN 80 ms, SPRAY 40 %, END HOLD; CLASSIC's D-TIME
+        // 50 ms from POSITION 0. Each TYPE's cells dim on the other. The
+        // bellows draw TYPE, SPEED, and LENGTH or D-TIME and POSITION.
+        deck: &[
+            choice(P::TYPE, "TYPE", "TYP", StretchType::Grain as u8),
+            SPEED,
+            cell(P::LENGTH, "LENGTH", "LEN", STRETCH_DEFAULTS[0]),
+            cell(P::SIZE, "D-TIME", "DTM", 0.5),
+            POS,
+        ],
+        cells: &[
+            cell(P::GRAIN, "GRAIN", "GRN", STRETCH_DEFAULTS[1]),
+            cell(P::SPRAY, "SPRAY", "SPR", STRETCH_DEFAULTS[2]),
+            choice(P::FINISH, "END", "END", 0),
+        ],
+        env: &ONE_ENV,
     },
     Machine {
         machine: TapeMachine::Wave,
@@ -168,6 +191,7 @@ pub static MACHINES: [Machine; 7] = [
             cell(P::SIZE, "RANGE", "RNG", 1.0),
         ],
         cells: &[],
+        env: &[],
     },
 ];
 
@@ -217,12 +241,11 @@ pub const TRON_WEAR: [(ParamId, f32); 2] = [(P::TAPE, 0.3), (P::WOW, Wow::Warble
 /// ENV 1's cells (`BlockRef::Env(Env1)`) the UI writes when MODEL becomes
 /// `m`. ONE: the hit opens at the envelope's floor (FAST, 0.2 ms; the
 /// 1 ms note-on ramp keeps it click-free) and holds at full, so the sample
-/// is its own envelope, as an MPC pad's (#698). The others leave ENV 1 be.
+/// is its own envelope, as an MPC pad's (#698); STRETCH's too, so a
+/// stretched strike keeps it and plays at ONE's level (ADR 0204). The
+/// others leave ENV 1 be.
 pub fn env_defaults(m: TapeMachine) -> &'static [(ParamId, f32)] {
-    match m {
-        TapeMachine::One => &ONE_ENV,
-        _ => &[],
-    }
+    machine(m).env
 }
 
 const ONE_ENV: [(ParamId, f32); 3] = [

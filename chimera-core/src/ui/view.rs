@@ -815,12 +815,6 @@ fn machine_view(at: MachineSlot, ctx: &SlotCtx) -> View {
     let Some(spec) = addr.spec() else {
         return View::Empty;
     };
-    if id == T::TYPE && ctx.unpitched {
-        return View::Text {
-            label,
-            text: "POLY (UNPITCHED)",
-        };
-    }
     param(addr, label, fmt_of(addr, spec.fmt, ctx))
 }
 
@@ -894,6 +888,9 @@ pub fn tape_note(addr: ParamAddr, sound: &Sound) -> Option<&'static str> {
     let t = &sound.params.tape;
     match addr.param {
         T::WOW if !tape_engine::tape_runs(t.tape, tape_routed(sound)) => Some(WOW_AT_REST),
+        id if t.machine() == TapeMachine::Stretch => {
+            tape_engine::TapeEngine::stretch_only(t.kind, id)
+        }
         T::DRAG
             if matches!(t.machine(), TapeMachine::Loop | TapeMachine::Ping)
                 && sound.mod_state.routes_into(VCA) != 0 =>

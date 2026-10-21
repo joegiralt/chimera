@@ -68,7 +68,7 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     assert_eq!(e.heads(), Heads::NONE);
     assert_eq!(e.playing_cost(), None);
     assert_eq!(TapeEngine::cost(&p, &mods), Cost(0));
-    assert_eq!(TapeEngine::model_cost(p.machine), Cost(0));
+    assert_eq!(TapeEngine::model_cost(&p), Cost(0));
 
     // Open: the deck's every sample.
     DOOR_CELL.open_host();
@@ -112,10 +112,7 @@ fn the_proxy_plays_as_the_deck_open_and_nothing_closed() {
     assert_eq!(e.source(), Some(id));
     assert_eq!(e.sustains(), d.sustains());
     assert_eq!(TapeEngine::cost(&p, &mods), TapeDeck::cost(&p, &mods));
-    assert_eq!(
-        TapeEngine::model_cost(p.machine),
-        TapeDeck::model_cost(p.machine)
-    );
+    assert_eq!(TapeEngine::model_cost(&p), TapeDeck::model_cost(&p));
     // A strip moved to a rebuilt slot carries on as the deck's.
     let (ds, es) = (d.strip(), e.strip());
     let mut dslot2 = MaybeUninit::uninit();

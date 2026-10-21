@@ -320,6 +320,12 @@ Sound {
             wow: Capstan,
             retrig: Stack,
             key: Position,
+            stretch: [
+                0.6015625,
+                0.4609375,
+                0.3984375,
+                0.0,
+            ],
         },
         va: VaParams {
             wave: [

@@ -534,6 +534,26 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
         ),
     ),
     (
+        "tape_stretch_grain",
+        (
+            0x363094a3ed9329d6,
+            [
+                0, 3194131440, 1048588676, 1038371030, 3194242296, 3194046961, 3198953301,
+                1043531043,
+            ],
+        ),
+    ),
+    (
+        "tape_stretch_grain_reverse",
+        (
+            0xb211fed6aa68e748,
+            [
+                0, 1046647976, 3196089543, 3185855755, 1046758516, 1046563182, 1051469676,
+                3191014680,
+            ],
+        ),
+    ),
+    (
         "tape_loop_warble",
         (
             0xfbfdc56b2598addc,
@@ -721,6 +741,22 @@ fn tape_cases() -> Vec<(&'static str, TapeEngineParams)> {
         ),
         ("tape_tron_released", model(M::Tron)),
         ("tape_stretch_reverse", rev(M::Stretch)),
+        // GRAIN (ADR 0204): its own rows; CLASSIC's above are as recorded
+        // before GRAIN existed.
+        (
+            "tape_stretch_grain",
+            TapeEngineParams {
+                kind: chimera_core::dsp::tape_engine::StretchType::Grain,
+                ..model(M::Stretch)
+            },
+        ),
+        (
+            "tape_stretch_grain_reverse",
+            TapeEngineParams {
+                kind: chimera_core::dsp::tape_engine::StretchType::Grain,
+                ..rev(M::Stretch)
+            },
+        ),
         (
             "tape_loop_warble",
             TapeEngineParams {

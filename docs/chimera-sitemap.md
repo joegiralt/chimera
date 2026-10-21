@@ -54,6 +54,8 @@ DECK: MODEL · FINGER · SPEED · LENGTH · XFADE · DRAG. The SCRUB page: TAPE 
 - **KEY POSITION**, the default, makes a key place the finger and plays at ROOT. C is the window's start and each semitone up is 1/12 further along, in every octave. FINGER adds to the key's place. On FINGER the focus band reads KEYS PLACE THE FINGER.
 - **KEY PITCH** plays the scrub at the key's pitch.
 
+TAPE STRETCH (ADR 0204) has two TYPEs, CLASSIC and GRAIN: DECK holds MODEL · TYPE · SPEED (0 freezes) · LENGTH (0.25–8 s, GRAIN) · D-TIME (CLASSIC) · POSITION (CLASSIC); its model page STRCH holds TAPE · AGE · WOW · GRAIN (30–250 ms) · SPRAY · END (HOLD or STOP), the last three GRAIN's. Each TYPE's cells dim on the other.
+
 ### FLT and AMP
 
 | Page | Cells |

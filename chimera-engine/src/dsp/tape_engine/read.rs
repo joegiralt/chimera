@@ -215,6 +215,38 @@ impl<'a> SourceView<'a> {
         self.decode(i.max(self.first).min(self.end - 1))
     }
 
+    /// Samples `i − 1 ..= i + 2` of a whole row (no span: STRETCH holds
+    /// its source in RAM), unscaled, `i` held to `1 ..= end − 4` (the last
+    /// frame reads as the one before it). The four are 48 bits of the
+    /// stream from bit `12·(i − 1)`: two unaligned words, not four
+    /// halfwords, each sample a shift up and one back.
+    #[inline(always)]
+    pub fn row_taps(&self, i: u32) -> [i32; 4] {
+        debug_assert!(self.first == 0 && self.end >= 64);
+        let j = (i.max(1).min(self.end - 4) - 1) as usize;
+        #[cfg(any(test, feature = "test-support"))]
+        assert!(!self.strict || (j + 3) < self.end as usize);
+        let o = (3 * j) >> 1;
+        let s = 4 * (j as u32 & 1);
+        // SAFETY: `j ≤ end − 5` and `samples` is `3 · end / 2` bytes (a
+        // whole row, `first` 0, `end` even), so `o + 6 ≤ (3 · end − 15) / 2
+        // + 6 < 3 · end / 2`: both words, bytes `o ..= o + 6`, are inside
+        // it. `read_unaligned` takes any alignment.
+        let (a, b) = unsafe {
+            let p = self.samples.as_ptr().add(o);
+            (
+                u32::from_le(core::ptr::read_unaligned(p.cast::<u32>())),
+                u32::from_le(core::ptr::read_unaligned(p.add(3).cast::<u32>())),
+            )
+        };
+        [
+            ((a << (20 - s)) as i32) >> 20,
+            ((a << (8 - s)) as i32) >> 20,
+            ((b << (20 - s)) as i32) >> 20,
+            ((b << (8 - s)) as i32) >> 20,
+        ]
+    }
+
     /// Sample `first ≤ i < end`. It is 12 bits at bit `12·(i − first)` of
     /// the stream: one unaligned halfword load at byte `3·(j >> 1) +
     /// (j & 1)`, `j = i − first`, shifted by 0 or 4 for its parity (`first`

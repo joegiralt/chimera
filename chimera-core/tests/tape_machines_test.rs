@@ -1175,10 +1175,17 @@ fn machine_table_is_pinned() {
             K::Stretch,
             "STRCH",
             &[
+                (P::TYPE, "TYPE", "TYP", 2.0),
                 (P::MOTION, "SPEED", "SPD", 0.5),
+                (P::LENGTH, "LENGTH", "LEN", 77.0 / 128.0),
                 (P::SIZE, "D-TIME", "DTM", 0.5),
+                POS,
             ],
-            &[POS, (P::TYPE, "TYPE", "TYP", 0.0)],
+            &[
+                (P::GRAIN, "GRAIN", "GRN", 59.0 / 128.0),
+                (P::SPRAY, "SPRAY", "SPR", 51.0 / 128.0),
+                (P::FINISH, "END", "END", 0.0),
+            ],
         ),
         (
             K::Wave,
@@ -1241,6 +1248,8 @@ fn every_cell_reads_in_the_audio() {
             TapeModel::Transwave => base.motion = 0.3,
             // A loop shorter than the window, so POSITION places it.
             TapeModel::Play | TapeModel::Scrub => base.size = 0.6,
+            // A GRAIN stretch that ends inside the 400 blocks: END is heard.
+            TapeModel::Stretch => base.stretch[0] = 0.0,
             _ => {}
         }
         let render = |p: P, note: u8| {
@@ -1274,13 +1283,29 @@ fn every_cell_reads_in_the_audio() {
         // (`tape_stream_test`'s and `tape_musical_test`'s).
         for c in m.deck.iter().chain(m.cells).filter(|c| c.id != P::RETRIG) {
             let spec = TapeEngineParams::default().spec(c.id).unwrap();
+            // A STRETCH cell is heard under the TYPE that plays it: CLASSIC
+            // MONO for D-TIME and POSITION (ADR 0204).
+            let base = if TapeEngine::stretch_only(base.kind, c.id).is_some() {
+                P {
+                    kind: StretchType::Mono,
+                    ..base
+                }
+            } else {
+                base
+            };
+            let plain = render(base, note);
             let mut p = base;
             let moved = if c.id == P::START {
                 0.2
             } else if c.id == P::END {
                 // Inside the 400 blocks heard.
                 0.15
-            } else if spec.max <= 1.0 && spec.kind == chimera_core::block::ParamKind::Enum {
+            } else if spec.max <= 1.0
+                && matches!(
+                    spec.kind,
+                    chimera_core::block::ParamKind::Enum | chimera_core::block::ParamKind::Stepped
+                )
+            {
                 1.0 - c.default().value()
             } else if c.id == P::SLICE {
                 6.0
@@ -1303,9 +1328,14 @@ fn machine_defaults_list() {
     use chimera_core::dsp::tape_engine::TapeMachine as K;
     let stretch: Vec<(ParamId, f32)> = defaults(K::Stretch).collect();
     for want in [
+        (P::TYPE, StretchType::Grain as u8 as f32),
         (P::MOTION, 0.5),
         (P::SIZE, 0.5),
-        (P::TYPE, StretchType::Mono as u8 as f32),
+        (P::POSITION, 0.0),
+        (P::LENGTH, 77.0 / 128.0),
+        (P::GRAIN, 59.0 / 128.0),
+        (P::SPRAY, 51.0 / 128.0),
+        (P::FINISH, 0.0),
     ] {
         assert!(stretch.contains(&want), "{want:?} in {stretch:?}");
     }

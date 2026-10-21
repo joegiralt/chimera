@@ -2,10 +2,13 @@
 //! once written.
 
 use super::oneshot::SliceCode;
+use super::stretch::units::{GrainLen, Length, Spray, StretchEnd};
 use crate::block::{
-    Block, Change, DiskCode, ParamId, ParamSpec, Smoothing, ValFmt, apply_code, identity_code,
+    Block, Change, DiskCode, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code,
+    identity_code,
 };
 use crate::dsp::algo::math::exp2;
+use crate::dsp::modulator::law::Law;
 
 /// How a note plays its source: the machines (spec § 2 Machines). Each
 /// discriminant is its disk code. PLAY is LOOP's code 0; ONESHOT (7),
@@ -477,46 +480,41 @@ impl Choice for KeyMode {
     }
 }
 
-/// STRETCH's splice: in phase with the old grain (MONO), or at the time
-/// pointer (POLY).
+/// STRETCH's TYPE (ADR 0204): CLASSIC, the S950 splice in phase with the
+/// old grain (MONO) or at the time pointer (POLY), or GRAIN, four grains
+/// on the shared core. Codes append: a Sound from before GRAIN is CLASSIC.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum StretchType {
     Mono = 0,
     Poly = 1,
+    Grain = 2,
 }
 
 impl DiskCode for StretchType {
     fn disk_code(self) -> u8 {
-        match self {
-            StretchType::Mono => 0,
-            StretchType::Poly => 1,
-        }
+        self as u8
     }
 
     fn disk_ident(self) -> &'static str {
         match self {
             StretchType::Mono => "MONO",
             StretchType::Poly => "POLY",
+            StretchType::Grain => "GRAIN",
         }
     }
 
     fn from_disk_code(c: u8) -> Option<Self> {
-        match c {
-            0 => Some(StretchType::Mono),
-            1 => Some(StretchType::Poly),
-            _ => None,
-        }
+        STRETCH_TYPES.get(usize::from(c)).copied()
     }
 }
 
+/// By code and by value: the table, not a match, so TYPE's decoding is data.
+const STRETCH_TYPES: [StretchType; 3] = [StretchType::Mono, StretchType::Poly, StretchType::Grain];
+
 impl Choice for StretchType {
     fn from_value(v: f32) -> Option<Self> {
-        match v as u8 {
-            0 => Some(StretchType::Mono),
-            1 => Some(StretchType::Poly),
-            _ => None,
-        }
+        STRETCH_TYPES.get(usize::from(v as u8)).copied()
     }
 
     fn value(self) -> f32 {
@@ -589,6 +587,11 @@ pub struct TapeEngineParams {
     pub retrig: Retrig,
     /// SCRUB's KEY.
     pub key: KeyMode,
+    /// STRETCH's LENGTH, GRAIN, SPRAY and END (ids 22–25, ADR 0204), as
+    /// the knobs and the codec hold them: one array, so `get` and `write`
+    /// reach them in one arm each. The DSP reads them typed (`length`,
+    /// `grain`, `spray`, `end_mode`), each held in its range.
+    pub stretch: [f32; 4],
 }
 
 /// As the disk has it: MODEL's model and MODE (`neutral_v1.txt` pins it).
@@ -613,6 +616,7 @@ impl core::fmt::Debug for TapeEngineParams {
             .field("wow", &self.wow)
             .field("retrig", &self.retrig)
             .field("key", &self.key)
+            .field("stretch", &self.stretch)
             .finish()
     }
 }
@@ -640,6 +644,7 @@ impl Default for TapeEngineParams {
             wow: Wow::Capstan,
             retrig: Retrig::Stack,
             key: KeyMode::Position,
+            stretch: STRETCH_DEFAULTS,
         }
     }
 }
@@ -702,7 +707,39 @@ impl TapeEngineParams {
     pub const RETRIG: ParamId = ParamId(16);
     /// 17 and 18 are SLICE's (#748), 19 and 20 PLAY's.
     pub const KEY: ParamId = ParamId(21);
+    // STRETCH GRAIN's (ADR 0204).
+    pub const LENGTH: ParamId = ParamId(22);
+    pub const GRAIN: ParamId = ParamId(23);
+    pub const SPRAY: ParamId = ParamId(24);
+    pub const FINISH: ParamId = ParamId(25);
+
+    /// STRETCH's LENGTH, 0.25 to 8 s.
+    #[inline(always)]
+    pub fn length(&self) -> Length {
+        Length::of_knob(self.stretch[0])
+    }
+
+    /// STRETCH's GRAIN, 30 to 250 ms.
+    #[inline(always)]
+    pub fn grain(&self) -> GrainLen {
+        GrainLen::of_knob(self.stretch[1])
+    }
+
+    /// STRETCH's SPRAY.
+    #[inline(always)]
+    pub fn spray(&self) -> Spray {
+        Spray::of_knob(self.stretch[2])
+    }
+
+    /// STRETCH's END: HOLD or STOP.
+    #[inline(always)]
+    pub fn end_mode(&self) -> StretchEnd {
+        StretchEnd::of_knob(self.stretch[3])
+    }
 }
+
+/// LENGTH 2 s, GRAIN 80 ms, SPRAY 40 %, END HOLD: each on the knob's grid.
+pub const STRETCH_DEFAULTS: [f32; 4] = [77.0 / 128.0, 59.0 / 128.0, 51.0 / 128.0, 0.0];
 
 /// Whether `m` reads `id`: the one table for cells, dimming and the audio
 /// test, from the machines' (`machine::MACHINES`). START, END, TAPE, AGE
@@ -763,7 +800,7 @@ const TAPE: crate::glyph::FocusGlyph = crate::glyph::FocusGlyph::Tape;
 /// latched by ONE's and TRON's first block; the rest is read at note-on or
 /// at a wrap. ROOT and PERIOD have no cell: a pick
 /// copies them from the source.
-pub static TAPE_ENGINE_SPECS: [ParamSpec; 18] = [
+pub static TAPE_ENGINE_SPECS: [ParamSpec; 22] = [
     // The neutral is PLAY in MODE LOOP: LOOP, index 1.
     ParamSpec::choice(
         0,
@@ -825,8 +862,8 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 18] = [
     ParamSpec::choice(
         10,
         "TYPE",
-        ValFmt::Names(&["MONO", "POLY"]),
-        1.0,
+        ValFmt::Names(&["CLASSIC", "CLS POLY", "GRAIN"]),
+        2.0,
         0.0,
         Change::NoteOn,
     )
@@ -909,6 +946,64 @@ pub static TAPE_ENGINE_SPECS: [ParamSpec; 18] = [
     )
     .ident("KEY")
     .glyph(TAPE),
+    // STRETCH's (ADR 0204): read every block, so a turn moves the grains
+    // to come; the playing ones finish where they started. Not
+    // modulatable: no route reaches them (as XFADE and DRAG).
+    ParamSpec::continuous(
+        22,
+        "LENGTH",
+        ValFmt::Law(Law::StretchLength),
+        0.0,
+        1.0,
+        STRETCH_DEFAULTS[0],
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .short("LEN")
+    .ident("STRETCH_LENGTH")
+    .glyph(TAPE),
+    ParamSpec::continuous(
+        23,
+        "GRAIN",
+        ValFmt::Law(Law::GrainSize),
+        0.0,
+        1.0,
+        STRETCH_DEFAULTS[1],
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .short("GRN")
+    .ident("GRAIN")
+    .glyph(TAPE),
+    ParamSpec::continuous(
+        24,
+        "SPRAY",
+        ValFmt::Law(Law::Pct),
+        0.0,
+        1.0,
+        STRETCH_DEFAULTS[2],
+        1.0 / 128.0,
+        false,
+        Smoothing::Own,
+    )
+    .short("SPR")
+    .ident("SPRAY")
+    .glyph(TAPE),
+    // FINISH: the cell's END, a word apart from the window's END.
+    ParamSpec::stepped(
+        25,
+        "FINISH",
+        ValFmt::Names(&["HOLD", "STOP"]),
+        0.0,
+        1.0,
+        STRETCH_DEFAULTS[3],
+        false,
+        Motion::Stepped(Change::Snap),
+    )
+    .ident("STRETCH_END")
+    .glyph(TAPE),
 ];
 
 impl Block for TapeEngineParams {
@@ -937,6 +1032,7 @@ impl Block for TapeEngineParams {
             Self::MODE => self.mode().value(),
             Self::RETRIG => self.retrig.value(),
             Self::KEY => self.key.value(),
+            ParamId(id @ 22..=25) => self.stretch[usize::from(id - 22)],
             _ => 0.0,
         }
     }
@@ -966,6 +1062,7 @@ impl Block for TapeEngineParams {
             }
             Self::RETRIG => set(&mut self.retrig, v),
             Self::KEY => set(&mut self.key, v),
+            ParamId(id @ 22..=25) => self.stretch[usize::from(id - 22)] = v,
             _ => {}
         }
     }
