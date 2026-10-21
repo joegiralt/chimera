@@ -2542,10 +2542,8 @@ impl UiState {
                 .iter()
                 .filter(|&&e| controls.encoder_delta(e) != 0);
             let now = model(self);
-            let defaults = if now.0 != was.0 {
-                cc::model_writes(now.0, now.1)
-            } else if now.1 != was.1 {
-                // At most a MODEL turn's writes (`cc::model_writes`).
+            // At most a MODEL turn's writes (`cc::model_writes`).
+            let defaults = if now != was {
                 cc::model_writes(now.0, now.1)
             } else {
                 0
