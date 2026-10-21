@@ -974,11 +974,12 @@ pub fn init(nvic: &mut NVIC, side: CardSide<'static>, spi_ker: Hz, cpu: Hz) -> b
     tx.fcr.write(|w| w.dmdis().enabled());
     clear_streams(d);
     let cycles_per_us = Cycles::new((cpu.get() / 1_000_000).max(1));
+    let clock = BytesPerSec::spi(mbr.sck_hz(spi_ker.get()));
     let line = Line {
         mbr,
-        clock: BytesPerSec::spi(mbr.sck_hz(spi_ker.get())),
+        clock,
         reg_wait: Cycles::new(REG_WAIT_US.get() * cycles_per_us.get()),
-        drain_bytes: BytesPerSec::spi(mbr.sck_hz(spi_ker.get())).bytes_in(TOKEN_TIMEOUT_MS),
+        drain_bytes: clock.bytes_in(TOKEN_TIMEOUT_MS),
         cycles_per_us,
     };
     let st = IrqState {
