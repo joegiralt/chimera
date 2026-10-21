@@ -223,6 +223,18 @@ check-bin-size bin:
     if [ "$n" -ge 917504 ]; then echo "{{bin}} is $n B: the stock bootloader's SD flash would erase itself at 917,504 B or more" >&2; exit 1; fi
     echo "{{bin}}: $n B, $((917504 - n)) B under the SD-flash limit"
 
+# Bank 1 is frozen (ADR 0198): the last-built firmware's bank 1 (the .bin
+# without .bank2) may not outgrow its set's line in tools/bank1-budget.txt
+# by more than 64 B, and must lower the line when it frees 1 KB. Sets
+# without bank 2 (`--no-default-features`, `sd-probe`) carry no budget:
+# code moved behind a door lands in their bank 1.
+check-bank1 set:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p target/bank1
+    rust-objcopy -R .bank2 -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 "target/bank1/{{set}}.bin"
+    python3 tools/bank1_budget.py "{{set}}" "target/bank1/{{set}}.bin"
+
 # Draft a release of the path-clean firmware on the PUBLIC chimera-releases
 # repo (#413): `just release 0.1.0 [--dry-run]`. Refuses a dirty tree or a
 # version already tagged or released; builds `release-bin`; names the files
@@ -325,7 +337,7 @@ build:
 # tests and its no-MIDI build, the dosfstools cross-checks, the firmware built and linked with default
 # features, with none, with ORBIT, each bench area (ALGO also with the master
 # tape, STRESS also with ORBIT), the filter probes and the SD probe, clippy on host
-# and firmware (every feature set), rustfmt and the stack check. The desktop needs ALSA's
+# and firmware (every feature set), rustfmt and the stack check; each bank-2 firmware set is held to its bank-1 budget (ADR 0198). The desktop needs ALSA's
 # pkg-config file; point PKG_CONFIG_PATH at it if it is not installed
 # system-wide. The host tool's tests run first, against a fake unit.
 # chimera-circuits runs its fast tests here; its slow and ngspice
@@ -348,12 +360,16 @@ check:
     # their dev builds sit at or past FLASH
     # (private issue #303).
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
+    just check-bank1 default
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
+    just check-bank1 orbit
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bank2-gate
+    just check-bank1 bank2-gate
     # The bench, an area a build: all of it no longer fits FLASH. Each is
-    # door-checked, as bank2-split checks the builds it splits.
-    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; done
+    # door-checked, as bank2-split checks the builds it splits, and held to
+    # its bank-1 budget (ADR 0198).
+    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; just check-bank1 "$f" || exit 1; done
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
     # The bootloader links cortex-m-rt's script itself: without it lld warns
     # and links an ELF with no vector table.
