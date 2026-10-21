@@ -62,7 +62,8 @@ fn matrices(engine: EngineType) -> [ModState; 3] {
 
 /// Every engine's INIT through each VCA matrix, VEL at 1 and ½, under
 /// CLEAN, the 2040, DIRTY, LADDER and SEM; then every VA MODE. The
-/// constant is main's before the gate (ADR 0195).
+/// constant is the plain VCA's (ADR 0195), read again on the integrated
+/// tree with the gate's door closed: TAPE's INIT is WALK's there.
 #[test]
 fn the_gate_at_zero_is_todays_vca_bit_for_bit() {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
@@ -97,7 +98,7 @@ fn the_gate_at_zero_is_todays_vca_bit_for_bit() {
         p.va.amount = 0.6;
         play(&p, &matrices(EngineType::Va)[1], &mut h);
     }
-    assert_eq!(h, 0xf54a_71e5_c050_585d, "hash {h:#018x}");
+    assert_eq!(h, 0x5be1_3eec_9222_5cf5, "hash {h:#018x}");
 }
 
 // ============================================================ Plaits
