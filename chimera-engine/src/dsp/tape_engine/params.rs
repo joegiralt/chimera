@@ -423,7 +423,7 @@ pub const FADE_HOLD: f32 = 1.0;
 
 /// FADE's default in `d`: FORWARD and REVERSE hold (a drum one-shot), the
 /// loops release over 32 ms.
-pub fn fade_default(d: Direction) -> f32 {
+pub const fn fade_default(d: Direction) -> f32 {
     if d.once() { FADE_HOLD } else { 0.3 }
 }
 
