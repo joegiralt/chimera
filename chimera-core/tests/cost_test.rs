@@ -2641,3 +2641,26 @@ fn sem_bills_its_count_and_its_voices() {
         "SEM: ALGO steady, moving; VA steady, moving"
     );
 }
+
+/// GRAIN (ADR 0202) bills `GRAIN_COST` beside the bus while TYPE is GRAIN,
+/// as a reverb TYPE bills its extra; TAPE bills nothing more. Each
+/// engine's INIT keeps every voice it had under TAPE but one at most, and
+/// never fewer than the floor, at rev V and rev Y.
+#[test]
+fn grain_bills_its_cost_and_keeps_the_voices() {
+    use chimera_core::dsp::delay::{DelayParams, DelayType, GRAIN_COST, extra_cost};
+    let grain = DelayParams::DEFAULT.with(DelayParams::TYPE, DelayType::Grain.value());
+    assert_eq!(extra_cost(&DelayParams::DEFAULT), Cost::ZERO);
+    assert_eq!(extra_cost(&grain), GRAIN_COST);
+    for hz in [CPU_HZ_REV_V, CPU_HZ_REV_Y] {
+        let budget = SampleBudget::for_cpu(hz).as_cost().0 - FxBus::COST.0 - CONTROL_RESERVE.0;
+        for e in EngineType::PLAYABLE {
+            let v = voice_cost(e).0;
+            let tape = (budget / v).min(MAX_VOICES as u32);
+            let with = ((budget - GRAIN_COST.0) / v).min(MAX_VOICES as u32);
+            println!("{hz} {e:?}: TAPE {tape} voices, GRAIN {with}, budget {budget} voice {v}");
+            assert!(with + 1 >= tape, "{e:?} at {hz}: {tape} to {with}");
+            assert!(with >= FLOOR_VOICES, "{e:?} at {hz}: {with}");
+        }
+    }
+}

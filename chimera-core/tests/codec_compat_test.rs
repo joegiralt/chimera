@@ -511,6 +511,12 @@ fn project_fixture_loads() {
         assert_values(&*blk, pinned, b.disk_ident().unwrap());
     }
     assert_eq!(p.perf().fx.delay.mix, 0.3);
+    // Saved before the delay had a TYPE: TAPE, GRAIN's knobs at their
+    // defaults (ADR 0202; TAPE's sound is pinned in delay_tape_hash_test).
+    let d = p.perf().fx.delay;
+    let dflt = chimera_core::dsp::delay::DelayParams::DEFAULT;
+    assert_eq!(d.kind(), chimera_core::dsp::delay::DelayType::Tape);
+    assert_eq!(d.grain, dflt.grain);
 }
 
 #[test]

@@ -356,6 +356,12 @@ const OWN_OUTSIDE: &[&str] = &[
     "Delay TONE",
     "Delay MIX",
     "Delay REV",
+    // GRAIN (ADR 0202): each grain reads its SIZE, DENSITY, PITCH and
+    // TEXTURE when it starts, under its own bell.
+    "Delay SIZE",
+    "Delay DENSITY",
+    "Delay PITCH",
+    "Delay TEXTURE",
     // Reverb: each TYPE eases its gains and filters (τ 20-50 ms), crossfades
     // its read heads (30 ms), and MIX `Ease`s; TYPE and SYNC are choices.
     "Reverb TIME",

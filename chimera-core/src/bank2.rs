@@ -111,9 +111,9 @@ fn closed(bank2: Option<Bank2Status>) -> bool {
 /// The text cell `addr` shows in place of its value `v` (0..1, as
 /// displayed) under `bank2`: the reverb's TYPE (ADR 0142), TAPE's MODEL
 /// (ADR 0141) and a VA MODE whose oscillators are bank 2's (FM, ADR 0163)
-/// and the FX TYPE FUZZ (ADR 0157) and the filter TYPE SEM (ADR 0192) and
-/// VA NOISE's KIND (ADR 0197, every KIND) read `NEEDS UPDATE` while their
-/// code can't play.
+/// and the FX TYPE FUZZ (ADR 0157), the filter TYPE SEM (ADR 0192), VA
+/// NOISE's KIND (ADR 0197, every KIND) and the delay TYPE GRAIN (ADR 0202,
+/// which plays as TAPE) read `NEEDS UPDATE` while their code can't play.
 pub fn closed_text(
     addr: crate::addr::ParamAddr,
     v: f32,
@@ -154,7 +154,12 @@ pub fn closed_text(
                     .is_some_and(|k| k.in_bank2())
             })
     };
-    (closed(bank2) && (named.contains(&addr) || va_mode() || fx_type() || kind()))
+    let grain = || {
+        use crate::dsp::delay::{DelayParams, DelayType};
+        addr == ParamAddr::new(BlockRef::Delay, DelayParams::TYPE)
+            && DelayType::at(v) == DelayType::Grain
+    };
+    (closed(bank2) && (named.contains(&addr) || va_mode() || fx_type() || kind() || grain()))
         .then_some(NEEDS_UPDATE)
 }
 

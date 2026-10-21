@@ -148,8 +148,11 @@ them from MIX+B6, so they read PART 6 · MIX.
 | ![](mixer_sends.png) | SND | Home: the three sends and the FX flow |
 | ![](mixer_out_p2.png) | SND | Part 1 sent to P2: the OUT warning |
 | ![](mixer_chr.png) | CHR | Chorus: MODE, RATE, DEPTH, MIX |
-| ![](mixer_fx_delay.png) | DLY | Delay: TIME, FEEDBACK, TONE, REV send, MIX |
-| ![](mixer_fx_delay_char.png) | DLY › CHAR | Tape character: WOW turned, SATURATION |
+| ![](mixer_fx_delay.png) | DLY | Delay: TYPE, TIME, FEEDBACK, TONE, REV send, MIX |
+| ![](mixer_fx_delay_char.png) | DLY › CHAR | TAPE's character: WOW turned, SATURATION |
+| ![](mixer_fx_delay_grain.png) | DLY | TYPE GRAIN |
+| ![](mixer_fx_delay_grain_page.png) | DLY › GRAIN | GRAIN's SIZE, DENSITY, PITCH at +12, TEXTURE |
+| ![](mixer_fx_delay_grain_needs_update.png) | DLY | TYPE GRAIN while bank 2 needs an update: it plays TAPE |
 | ![](mixer_fx_reverb.png) | REV | Reverb, GRIT turned |
 | ![](mixer_master.png) | MST | Compressor curve, RATIO 4:1 |
 | ![](mixer_master_level.png) | MST › LVL | Master VOL and PAN |

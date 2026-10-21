@@ -9,15 +9,15 @@
 # Every line names an ADR or the file refuses to load.
 #
 # <set: features as check builds it>  <bytes>  # ADR NNNN: why
-orbit                          905300  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
-default                        884256  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
-bank2-gate                     886092  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
-fault-inject                   858384  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
-bench-algo                     902288  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
-bench-algo,master-tape         880264  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
-bench-routing                  898248  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
-bench-memory                   900876  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
-bench-stress                   903048  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
-bench-orbit                    883428  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
-bench-tape                     865584  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
-filter-probes                  911440  # ADR 0198: frozen at main 5a2e50e7 merged into tape-streaming a6f35a7b (bank 2 required, ADR 0194)
+orbit                          906800  # ADR 0202: +1500 GRAIN's closed-door data, over ADR 0198's line at the main merge
+default                        885252  # ADR 0202: +996 GRAIN's closed-door data, over ADR 0198's line at the main merge
+bank2-gate                     887072  # ADR 0202: +980 GRAIN's closed-door data, over ADR 0198's line at the main merge
+fault-inject                   860084  # ADR 0202: +1700 GRAIN's closed-door data, over ADR 0198's line at the main merge
+bench-algo                     903996  # ADR 0202: +1708 GRAIN's closed-door data, over ADR 0198's line at the main merge
+bench-algo,master-tape         881508  # ADR 0202: +1244 GRAIN's closed-door data, over ADR 0198's line at the main merge
+bench-routing                  899908  # ADR 0202: +1660 GRAIN's closed-door data, over ADR 0198's line at the main merge
+bench-memory                   902560  # ADR 0202: +1684 GRAIN's closed-door data, over ADR 0198's line at the main merge
+bench-stress                   904660  # ADR 0202: +1612 GRAIN's closed-door data, over ADR 0198's line at the main merge
+bench-orbit                    885136  # ADR 0202: +1708 GRAIN's closed-door data, over ADR 0198's line at the main merge
+bench-tape                     867164  # ADR 0202: +1580 GRAIN's closed-door data, over ADR 0198's line at the main merge
+filter-probes                  913164  # ADR 0202: +1724 GRAIN's closed-door data, over ADR 0198's line at the main merge

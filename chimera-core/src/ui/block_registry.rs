@@ -491,18 +491,20 @@ pub static DELAY: BlockDef = BlockDef {
     short: "DLY",
     layout: PageLayout::CellGrid,
     viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Delay)),
+    // TYPE · the shared five (ADR 0202): TAPE's own in DLY › CHAR,
+    // GRAIN's in DLY › GRAIN.
     params: [
+        ParamSlot::param(BlockRef::Delay, DelayParams::TYPE),
         ParamSlot::param(BlockRef::Delay, DelayParams::TIME_MS),
         ParamSlot::param(BlockRef::Delay, DelayParams::FEEDBACK),
         ParamSlot::param(BlockRef::Delay, DelayParams::TONE),
         ParamSlot::param(BlockRef::Delay, DelayParams::REV_SEND),
         ParamSlot::param(BlockRef::Delay, DelayParams::MIX),
-        EMPTY,
     ],
 };
 
-/// DLY › CHAR: the tape character, off the delay's main page (FX diet spec
-/// § UI; an assumed default, pending the owner's word).
+/// DLY › CHAR: TAPE's character, off the delay's main page (FX diet spec
+/// § UI).
 pub static DELAY_CHAR: BlockDef = BlockDef {
     id: 56,
     name: "Delay Char",
@@ -519,7 +521,26 @@ pub static DELAY_CHAR: BlockDef = BlockDef {
     ],
 };
 
-static DELAY_SUB_PAGES: [&BlockDef; 1] = [&DELAY_CHAR];
+/// DLY › GRAIN: GRAIN's four (ADR 0202). A table, no code, so bank 1
+/// stays frozen (ADR 0198): the page is there under TAPE too, its knobs
+/// held for GRAIN.
+pub static DELAY_GRAIN: BlockDef = BlockDef {
+    id: 111,
+    name: "Delay Grain",
+    short: "GRAIN",
+    layout: PageLayout::CellGrid,
+    viz: VizType::EffectsFlow(FxFlow::Effect(FxNode::Delay)),
+    params: [
+        ParamSlot::param(BlockRef::Delay, DelayParams::SIZE),
+        ParamSlot::param(BlockRef::Delay, DelayParams::DENSITY),
+        ParamSlot::param(BlockRef::Delay, DelayParams::PITCH),
+        ParamSlot::param(BlockRef::Delay, DelayParams::TEXTURE),
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+static DELAY_SUB_PAGES: [&BlockDef; 2] = [&DELAY_CHAR, &DELAY_GRAIN];
 
 /// Tape on DAC pair 1 (FX diet spec § Tape); only with `master-tape`
 /// (ADR 0055).

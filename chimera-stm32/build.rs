@@ -168,6 +168,10 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     } else {
         ("", "", "")
     };
+    // The delay's GRAIN (ADR 0202): `delay::grain` and the grain core
+    // `dsp::grain`, text and rodata.
+    let grain = "    *(.text.*5delay5grain* .rodata.*5delay5grain* .text.*3dsp5grain* .rodata.*3dsp5grain*);
+";
     fs::write(
         out_dir.join("bank2.x"),
         r#"
@@ -215,6 +219,7 @@ SECTIONS {
     /* FED */
     /* SEM */
     /* BENCH */
+    /* GRAIN */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -235,7 +240,8 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("    /* SEM */\n", sem)
         .replace("    /* BENCH */\n", bench)
         .replace("    /* BENCH SLOT */\n", bench_slot)
-        .replace("/* BENCH ASSERT */", bench_assert),
+        .replace("/* BENCH ASSERT */", bench_assert)
+        .replace("    /* GRAIN */\n", grain),
     )
     .unwrap();
 
