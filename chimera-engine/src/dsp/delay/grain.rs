@@ -18,8 +18,8 @@
 // MIT License; the notice is `dsp::grain::core`'s.
 
 use super::{
-    DelayParams, Eased, FLUTTER_SAMPLES, LINE_SCALE, MAX_DELAY_SAMPLES, TIME_FADE, Tap,
-    TapeDelay, WOW_SAMPLES, read, to_line,
+    DelayParams, Eased, FLUTTER_SAMPLES, LINE_SCALE, MAX_DELAY_SAMPLES, TIME_FADE, Tap, TapeDelay,
+    WOW_SAMPLES, read, to_line,
 };
 use crate::dsp::algo::math::exp2;
 use crate::dsp::ease::{at, step_of};

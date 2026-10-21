@@ -44,7 +44,8 @@ use crate::dsp::grain::core::Rng;
 pub const OVERLAP: f32 = 4.0;
 
 /// GRAIN's cheaper builds under measurement (ADR 0204, the owner's ask):
-/// none plays by default. `Four` is GRAIN as shipped.
+/// test builds only. `Four` is GRAIN as shipped.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Thrift {
@@ -58,6 +59,7 @@ pub enum Thrift {
     Bypass = 3,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl Thrift {
     pub const ALL: [Thrift; 4] = [Thrift::Four, Thrift::Three, Thrift::ByRatio, Thrift::Bypass];
 
@@ -76,21 +78,16 @@ impl Thrift {
 #[cfg(any(test, feature = "test-support"))]
 pub static THRIFT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
+#[cfg(any(test, feature = "test-support"))]
 #[inline(always)]
 fn thrift() -> Thrift {
-    #[cfg(any(test, feature = "test-support"))]
-    {
-        let k = THRIFT.load(core::sync::atomic::Ordering::Relaxed);
-        Thrift::ALL[usize::from(k).min(3)]
-    }
-    #[cfg(not(any(test, feature = "test-support")))]
-    {
-        Thrift::Four
-    }
+    let k = THRIFT.load(core::sync::atomic::Ordering::Relaxed);
+    Thrift::ALL[usize::from(k).min(3)]
 }
 
 /// `Thrift::Bypass`'s plain head: where it reads, and its share of the
 /// output against the grains' (0 grains, 1 the head).
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Bypass {
     head: WinPos,
@@ -98,6 +95,7 @@ struct Bypass {
 }
 
 /// The bypass crossfade, samples.
+#[cfg(any(test, feature = "test-support"))]
 const BYPASS_FADE: f32 = 960.0;
 /// END HOLD parks at most this long, seconds.
 pub const HOLD_S: f32 = 8.0;
@@ -215,6 +213,7 @@ pub struct Grains {
     /// The next interval's draw, a factor on GRAIN / 4, 1 or more.
     jit: f32,
     rng: Rng,
+    #[cfg(any(test, feature = "test-support"))]
     bypass: Bypass,
     /// Grains started: for the tests.
     #[cfg(any(test, feature = "test-support"))]
@@ -244,6 +243,7 @@ impl Grains {
             uh: 0.0,
         },
         jit: 1.0,
+        #[cfg(any(test, feature = "test-support"))]
         bypass: Bypass {
             head: WinPos::START,
             mix: 0.0,
@@ -337,29 +337,25 @@ impl Grains {
         let back = spray.reach() * f32::from(v.desc().rate());
         // A grain starts `ahead` behind `T`, so its middle sounds `T`.
         let ahead = (speed.get() - tstep.get()) * dur.get() * 0.5;
-        let thrift = thrift();
-        let ratio = speed.get() / libm::fabsf(tstep.get()).max(1e-6);
-        // Within 3 % of 1× and no SPRAY the plain head plays (Bypass).
-        let near = thrift == Thrift::Bypass
-            && spray.share() == 0.0
-            && libm::fabsf(tstep.get() / speed.get() - 1.0) < 0.03
-            && self.stage == Stage::Playing;
-        let mix0 = self.bypass.mix;
-        if near && mix0 == 0.0 {
-            self.bypass.head = self.t;
-        }
-        let mix1 = clampf(
-            mix0 + if near { 1.0 } else { -1.0 } * BLOCK_SIZE as f32 / BYPASS_FADE,
-            0.0,
-            1.0,
-        );
+        #[cfg(any(test, feature = "test-support"))]
+        let (per, (mix0, mix1)) = {
+            let thrift = thrift();
+            let ratio = speed.get() / libm::fabsf(tstep.get()).max(1e-6);
+            (
+                thrift.overlap(ratio.max(1.0)),
+                self.bypass_mix(thrift, spray, speed, tstep),
+            )
+        };
+        #[cfg(not(any(test, feature = "test-support")))]
+        let per = OVERLAP;
         let every = match self.stage {
             Stage::Ending => None,
+            #[cfg(any(test, feature = "test-support"))]
             _ if mix0 == 1.0 && mix1 == 1.0 => None,
             // By the longest grain still sounding, not GRAIN's now: a GRAIN
             // turned short keeps four grains in play, none cut.
             _ => Some(Samples::new(
-                dur.get().max(self.cloud.longest()) * self.jit / thrift.overlap(ratio.max(1.0)),
+                dur.get().max(self.cloud.longest()) * self.jit / per,
             )),
         };
         let (t, win, period, newest) = (self.t, self.win, self.period, self.newest);
@@ -402,8 +398,51 @@ impl Grains {
         }
         self.walk(tstep, ahead, top, end, sr);
         self.level(out, &buf, &src, speed.get() * dur.get());
+        #[cfg(any(test, feature = "test-support"))]
+        self.bypass_out(out, &src, speed, (mix0, mix1));
+        let ended = self.stage == Stage::Ending && !self.cloud.sounding();
+        #[cfg(any(test, feature = "test-support"))]
+        let ended = ended && mix1 == 0.0;
+        !ended
+    }
+
+    /// `Thrift::Bypass`'s share of the plain head over the block, from and
+    /// to; the head latched at `T` as it fades in from none.
+    #[cfg(any(test, feature = "test-support"))]
+    fn bypass_mix(
+        &mut self,
+        thrift: Thrift,
+        spray: super::units::Spray,
+        speed: Speed,
+        tstep: Speed,
+    ) -> (f32, f32) {
+        // Within 3 % of 1× and no SPRAY the plain head plays (Bypass).
+        let near = thrift == Thrift::Bypass
+            && spray.share() == 0.0
+            && libm::fabsf(tstep.get() / speed.get() - 1.0) < 0.03
+            && self.stage == Stage::Playing;
+        let mix0 = self.bypass.mix;
+        if near && mix0 == 0.0 {
+            self.bypass.head = self.t;
+        }
+        let mix1 = clampf(
+            mix0 + if near { 1.0 } else { -1.0 } * BLOCK_SIZE as f32 / BYPASS_FADE,
+            0.0,
+            1.0,
+        );
+        (mix0, mix1)
+    }
+
+    /// The plain head, crossfaded with the grains in `out`.
+    #[cfg(any(test, feature = "test-support"))]
+    fn bypass_out<const REV: bool>(
+        &mut self,
+        out: &mut [f32; BLOCK_SIZE],
+        src: &Src<REV>,
+        speed: Speed,
+        (mix0, mix1): (f32, f32),
+    ) {
         if mix0 > 0.0 || mix1 > 0.0 {
-            // The plain head, crossfaded with the grains.
             let dm = (mix1 - mix0) * (1.0 / BLOCK_SIZE as f32);
             let (mut m, mut h) = (mix0, self.bypass.head.get());
             for o in out.iter_mut() {
@@ -414,7 +453,6 @@ impl Grains {
             self.bypass.head = WinPos::new(h);
         }
         self.bypass.mix = mix1;
-        !(self.stage == Stage::Ending && !self.cloud.sounding() && mix1 == 0.0)
     }
 
     /// The pointer a block on at `tstep`: held at the start, or at the end
