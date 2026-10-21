@@ -626,6 +626,11 @@ impl SourceCell {
         crate::bank2::ui_door(|u| u.source_tick(self, p));
     }
 
+    /// The Part SOURCE sits on an unloaded card row of: it plays nothing.
+    pub fn on_card(&self) -> Option<PartId> {
+        self.at.map(|a| a.0)
+    }
+
     pub fn loading(&self) -> bool {
         #[cfg(feature = "tape")]
         if matches!(self.job, Some(SourceJob::Stream(..))) {

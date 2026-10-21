@@ -225,7 +225,7 @@ fn main() {
             let _ = swap.settle(&LOAD_LINK, || Instant::now() < deadline);
             audio.update(u.project(), LOAD_LINK.epoch(), |b| {
                 u.publish_orbit(&mut b.orbit);
-                u.publish_tune(b);
+                u.publish_ui(b);
             });
         });
         // Leaving SETTINGS syncs SYSTEM; a toast says how it went.
@@ -238,7 +238,7 @@ fn main() {
         // Push every Part, the FX and ORBIT to the audio thread.
         audio.update(ui.project(), LOAD_LINK.epoch(), |b| {
             ui.publish_orbit(&mut b.orbit);
-            ui.publish_tune(b);
+            ui.publish_ui(b);
         });
 
         ui.render_with_scope(&mut display, &perf.stats, scope_r.read());

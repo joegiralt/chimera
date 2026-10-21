@@ -8,7 +8,9 @@ mod screen;
 
 use core::ops::ControlFlow;
 
+use chimera_core::dsp::knobs::KnobPublisher;
 use chimera_core::dsp::tape_engine::TapeMachine;
+use chimera_core::instrument::AudioShared;
 use chimera_core::dsp::tape_engine::heads::{Bounds, Sizing, window_end, window_start};
 use chimera_core::dsp::tape_engine::params::TapeEngineParams;
 use chimera_core::dsp::tape_engine::read::Shape;
@@ -432,6 +434,33 @@ fn loaded_row_moves_above_divider() {
     assert_eq!(s.params.tape.root, f32::from(h.root));
     assert_eq!(s.params.tape.period, 91.0);
     assert!(pool.source_view(h.sref).is_some());
+}
+
+/// #742: SOURCE on a card row it hasn't loaded plays nothing, as its
+/// label says; off the row, the Part's own source plays again.
+#[test]
+fn an_unloaded_card_row_plays_nothing() {
+    let arp = source(1, 6_000, "ARP");
+    let mut rig = Rig::new(&[choir()]);
+    rig.pool(&[&arp]);
+    let id = rig.ui.project().pool().find_source(arp.0.sref).unwrap();
+    let heard = |rig: &Rig| {
+        let mut out = AudioShared::default();
+        out.update_from_project(rig.ui.project(), 0, &mut KnobPublisher::new());
+        rig.ui.publish_ui(&mut out);
+        out.parts[0].source
+    };
+    rig.turn(1); // ARP
+    assert_eq!(heard(&rig), Some(id));
+    rig.turn(1); // CHOIR, on the card
+    assert_eq!(rig.band(), "CHOIR · 24K · 1.2 S · 41K");
+    assert_eq!(heard(&rig), None, "an unloaded row plays nothing");
+    rig.turn(-1); // ARP again
+    assert_eq!(heard(&rig), Some(id));
+    rig.turn(1);
+    // Another page: off the row, ARP reads and plays.
+    feed(&mut rig.ui, Input::press(ButtonId::Plus));
+    assert_eq!(heard(&rig), Some(id));
 }
 
 /// A card row that won't fit whole, on a Part that needs it whole (PING:
