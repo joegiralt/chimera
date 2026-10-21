@@ -169,6 +169,11 @@ pub const STILL: f32 = 1e-3;
 /// A mid-note stop or start eases SCRUB's output over 30 ms, smoothstep, so
 /// the held value leaves through the DC blocker without a tick.
 pub const HUSH_S: f32 = 0.030;
+/// SCRUB's aim: POSITION's one-pole ahead of DRAG's, 40 ms. A step of
+/// POSITION (a detent, a UI pass's jog, a CC) moves the aim, never the
+/// finger's speed at once: a 33 ms staircase moves it within −8 %/+4 % of its
+/// speed, where DRAG's one-pole alone swung it ×2.8 (ADR 0200).
+pub const AIM_S: f32 = 0.040;
 /// The macros' share of the way each block: MODAL's (ADR 0056).
 const EASE: f32 = 0.3;
 /// TAPE or AGE easing to 0 is 0 under this, so the transport or the wear
@@ -506,6 +511,11 @@ struct Scrub {
     hush_step: f32,
     speed: f32,
     pull: f32,
+    /// Where the finger heads: POSITION through a one-pole of `AIM_S`,
+    /// `aim_pull` a block, so the finger's speed never steps when
+    /// POSITION does (a detent, a UI pass, a CC).
+    aim: Pos,
+    aim_pull: f32,
 }
 
 #[cfg(feature = "tape")]
@@ -804,6 +814,8 @@ impl TapeDeck {
                 hush_step: 1.0,
                 speed: 0.0,
                 pull: 1.0,
+                aim: Pos(0),
+                aim_pull: 1.0,
             }),
             TapeMachine::Stretch => MachineState::Stretch(Stretch::IDLE),
             TapeMachine::Wave => MachineState::Wave(Wave::IDLE),
@@ -1509,6 +1521,7 @@ impl TapeDeck {
                 hush_step: BLOCK_SIZE as f32 / (HUSH_S * sample_rate as f32),
                 pull: 1.0
                     - libm::expf(-(BLOCK_SIZE as f32) / (drag_s(p.drag) * sample_rate as f32)),
+                aim_pull: 1.0 - libm::expf(-(BLOCK_SIZE as f32) / (AIM_S * sample_rate as f32)),
                 ..sc
             }),
             m => m,
@@ -2381,7 +2394,12 @@ impl TapeDeck {
         k: &AtWrap<'_>,
     ) -> (f32, f32) {
         let Some(&Scrub {
-            speed, pull, df, ..
+            speed,
+            pull,
+            df,
+            aim,
+            aim_pull,
+            ..
         }) = self.scrub()
         else {
             return (0.0, 0.0);
@@ -2403,18 +2421,26 @@ impl TapeDeck {
         // The finger's speed ramps from the last block's to this one's, so
         // the head's speed is linear across the block, and bounded at
         // both ends, so everywhere in it.
-        let (df, df_to) = if first {
+        // The finger follows the aim, which follows POSITION: two poles, so
+        // a step in POSITION starts the reel moving smoothly, never at once.
+        let (aim, (df, df_to)) = if first {
             self.off = target + at_n;
-            (0, 0)
+            (target, (0, 0))
         } else {
-            let gap = (target.0 as i64).wrapping_sub(finger.0 as i64) as f32;
+            let left = (target.0 as i64).wrapping_sub(aim.0 as i64) as f32;
+            let aim = Pos((aim.0 as i64).wrapping_add((aim_pull * left) as i64) as u64);
+            let gap = (aim.0 as i64).wrapping_sub(finger.0 as i64) as f32;
             let most = (INC_MAX - from.max(to)) * 4_294_967_296.0;
             (
-                df,
-                clampf(pull * gap / BLOCK_SIZE as f32, -most, most) as i64,
+                aim,
+                (
+                    df,
+                    clampf(pull * gap / BLOCK_SIZE as f32, -most, most) as i64,
+                ),
             )
         };
         if let Some(sc) = self.scrub_mut() {
+            sc.aim = aim;
             sc.speed = speed;
             sc.df = df;
             sc.ddf = (df_to.wrapping_sub(df as i64) / BLOCK_SIZE as i64) as u64;
