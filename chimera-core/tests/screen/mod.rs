@@ -2328,6 +2328,28 @@ pub const CASES: &[ScreenCase] = &[
         plus(ui, 3);
         large(ui);
     }),
+    // VA's NOISE page (ADR 0197): EDIT three times from VA; then LEVEL
+    // up, its level bar in the band; then KIND on DIGITAL.
+    ("va_noise", |ui| {
+        load_init(ui, EngineType::Va);
+        for _ in 0..3 {
+            tap(ui, ButtonId::Edit);
+        }
+    }),
+    ("va_noise_level", |ui| {
+        load_init(ui, EngineType::Va);
+        for _ in 0..3 {
+            tap(ui, ButtonId::Edit);
+        }
+        feed(ui, Input::turn(EncoderId::B, 60));
+    }),
+    ("va_noise_digital", |ui| {
+        load_init(ui, EngineType::Va);
+        for _ in 0..3 {
+            tap(ui, ButtonId::Edit);
+        }
+        feed(ui, Input::turn(EncoderId::A, 3));
+    }),
     ("large_va_drive", |ui| {
         load_init(ui, EngineType::Va);
         plus(ui, 1);

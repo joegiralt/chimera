@@ -45,6 +45,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     // Word choices: the word is the value, there is no amount to gauge.
     ("Modal", "MODE", NONE),
     ("Va", "MODE", FocusGlyph::Va(VaGlyph::Mode)),
+    ("Va", "NOISEKIND", NONE),
     ("Va", "WAVE1", FocusGlyph::Va(VaGlyph::Wave(VaOsc::One))),
     ("Va", "WAVE2", FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two))),
     ("TapeEngine", "MODEL", NONE),
@@ -100,6 +101,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Tape", "MIX", LEVEL),
     ("Va", "AMOUNT", FocusGlyph::Va(VaGlyph::Blend)),
     ("Va", "SUB", LEVEL),
+    ("Va", "NOISE", LEVEL),
     // STABILITY's spirit level (#593), VA's and the filter's.
     ("Va", "STAB", FocusGlyph::Stability),
     ("Filter", "STAB", FocusGlyph::Stability),

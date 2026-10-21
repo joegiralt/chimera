@@ -1,14 +1,15 @@
-//! VA's pages (spec § Pages, ADR 0112 point 8): VA, OSC 1, OSC 2.
+//! VA's pages (spec § Pages, ADR 0112 point 8, ADR 0197): VA, OSC 1, OSC 2,
+//! NOISE.
 
 mod common;
 mod screen;
 
 use chimera_core::addr::{BlockRef, Op, ParamAddr};
-use chimera_core::dsp::va::{MODE_NAMES, VaParams};
+use chimera_core::dsp::va::{KIND_NAMES, MODE_NAMES, VaParams};
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::ui::block_def::BlockDef;
-use chimera_core::ui::block_registry::{PITCH, VA_CHAIN, VA_HOME, VA_OSC1, VA_OSC2};
+use chimera_core::ui::block_registry::{PITCH, VA_CHAIN, VA_HOME, VA_NOISE, VA_OSC1, VA_OSC2};
 use chimera_core::ui::view::{self, SlotCtx};
 use chimera_core::ui::{draw, nav, theme};
 use chimera_hal::ButtonId;
@@ -45,7 +46,7 @@ fn chain_is_va_then_the_voice_chain() {
     assert_eq!(map, ["VA", "FLT", "AMP", "MOD"]);
     assert_eq!((VA_CHAIN.home().node(), VA_CHAIN.home().sub()), (0, 0));
     let subs: Vec<u16> = VA_CHAIN.blocks[0].sub_pages.iter().map(|d| d.id).collect();
-    assert_eq!(subs, [88, 89, PITCH.id]);
+    assert_eq!(subs, [88, 89, VA_NOISE.id, PITCH.id]);
     assert_eq!((VA_HOME.id, VA_OSC1.id, VA_OSC2.id), (87, 88, 89));
 }
 
@@ -77,14 +78,27 @@ fn osc_page_cells() {
 }
 
 #[test]
+fn noise_page_cells() {
+    assert_eq!(labels(&VA_NOISE), ["KIND", "LEVEL", "--", "--", "--", "--"]);
+    assert_eq!(
+        addrs(&VA_NOISE),
+        va([Some(P::NOISE_KIND), Some(P::NOISE), None, None, None, None])
+    );
+    // LEVEL modulates and maps as SUB does; KIND is a choice
+    let spec = |id| ParamAddr::new(BlockRef::Va, id).spec().unwrap();
+    assert!(spec(P::NOISE).modulatable && spec(P::SUB).modulatable);
+    assert!(!spec(P::NOISE_KIND).modulatable);
+}
+
+#[test]
 fn bars_follow_motion() {
     let c = ctx();
-    for def in [&VA_HOME, &VA_OSC1, &VA_OSC2] {
+    for def in [&VA_HOME, &VA_OSC1, &VA_OSC2, &VA_NOISE] {
         for i in 0..6 {
             let Some(a) = view::view(def, i, &c).addr() else {
                 continue;
             };
-            let want = !matches!(a.param, P::MODE | P::CRSE1 | P::CRSE2);
+            let want = !matches!(a.param, P::MODE | P::CRSE1 | P::CRSE2 | P::NOISE_KIND);
             assert_eq!(
                 a.spec().unwrap().motion().is_continuous(),
                 want,
@@ -98,7 +112,7 @@ fn bars_follow_motion() {
 #[test]
 fn va_pages_have_no_gestures() {
     let c = ctx();
-    for def in [&VA_HOME, &VA_OSC1, &VA_OSC2] {
+    for def in [&VA_HOME, &VA_OSC1, &VA_OSC2, &VA_NOISE] {
         for i in 0..6 {
             // MIX + SEQ's learn, every mappable cell's, and no other.
             let h = view::view(def, i, &c).hint(&c);
@@ -110,14 +124,14 @@ fn va_pages_have_no_gestures() {
 #[test]
 fn mode_names_fit_the_cell() {
     let c = ctx();
-    for name in MODE_NAMES {
+    for name in MODE_NAMES.iter().chain(&KIND_NAMES) {
         // a name too wide for the column shows its first word (`SOFT SYNC`)
         let name = name.split(' ').next().unwrap();
         let w = draw::text_width(&theme::FONT_VALUE, name, 0);
         // the cell's value slot (a column less its gutter); a MODE has no bar
         assert!(w <= theme::CELL_COL_W - 4, "{name}: {w} px");
     }
-    for def in [&VA_HOME, &VA_OSC1, &VA_OSC2] {
+    for def in [&VA_HOME, &VA_OSC1, &VA_OSC2, &VA_NOISE] {
         for i in 0..6 {
             // The cell draws its label in FONT_LABEL, tracked.
             let l = view::view(def, i, &c).label();
@@ -140,9 +154,12 @@ fn edit_walks_and_wraps() {
     let mut ui = crate::screen::stack_ui();
     load_init(&mut ui, EngineType::Va);
     let mut walk = Vec::new();
-    for _ in 0..4 {
+    for _ in 0..5 {
         tap(&mut ui, ButtonId::Edit);
         walk.push(page_def_id(&ui));
     }
-    assert_eq!(walk, [VA_OSC1.id, VA_OSC2.id, PITCH.id, VA_HOME.id]);
+    assert_eq!(
+        walk,
+        [VA_OSC1.id, VA_OSC2.id, VA_NOISE.id, PITCH.id, VA_HOME.id]
+    );
 }

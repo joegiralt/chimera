@@ -5,6 +5,7 @@
 pub mod blep;
 pub mod combine;
 pub mod lbfm;
+pub mod noise;
 pub mod osc;
 pub mod stability;
 
@@ -24,6 +25,8 @@ use crate::hw::Cost;
 use crate::project::PartId;
 use crate::voice_alloc::VoiceIdx;
 use combine::{Crusher, MaxKink, Operator, Peaks, am_gain, am_reach, ring_gain};
+use noise::Noise;
+pub use noise::{KIND_NAMES, NoiseKind};
 use osc::{MAX_INC, NO_WRAP, R, Ramps, Sub, SubEdge, VarOsc, ZEROS, wave_reach};
 use stability::{JITTER_CENTS, Seed, Stability, depth};
 #[cfg(any(test, feature = "test-support"))]
@@ -158,6 +161,9 @@ pub struct VaParams {
     pub amount: f32,
     pub sub: f32,
     pub stability: f32,
+    /// NOISE's colour and LEVEL (ADR 0197).
+    pub noise_kind: NoiseKind,
+    pub noise: f32,
 }
 
 /// The format's neutral (ADR 0087): a saved Sound omits what is neutral.
@@ -172,6 +178,8 @@ impl Default for VaParams {
             amount: 0.5,
             sub: 0.0,
             stability: 1.0,
+            noise_kind: NoiseKind::White,
+            noise: 0.0,
         }
     }
 }
@@ -189,6 +197,8 @@ impl VaParams {
     pub const CRSE2: ParamId = ParamId(9);
     pub const FINE2: ParamId = ParamId(10);
     pub const SHAPE2: ParamId = ParamId(11);
+    pub const NOISE_KIND: ParamId = ParamId(12);
+    pub const NOISE: ParamId = ParamId(13);
 }
 
 const fn uni(id: u8, label: &'static str, ident: &'static str, default: f32) -> ParamSpec {
@@ -238,7 +248,7 @@ const fn fine(id: u8, label: &'static str, short: &'static str) -> ParamSpec {
     .cents(100.0)
 }
 
-pub static VA_SPECS: [ParamSpec; 12] = [
+pub static VA_SPECS: [ParamSpec; 14] = [
     uni(0, "WAVE1", "WAVE1", 2.0 / 3.0)
         .short("WV1")
         .glyph(FocusGlyph::Va(VaGlyph::Wave(VaOsc::One))),
@@ -264,6 +274,17 @@ pub static VA_SPECS: [ParamSpec; 12] = [
     coarse(9, "CRSE2", "CR2"),
     fine(10, "FINE2", "FN2"),
     uni(11, "SHAPE2", "SHAPE2", 0.0).short("SH2"),
+    ParamSpec::choice(
+        12,
+        "KIND",
+        ValFmt::Names(&KIND_NAMES),
+        3.0,
+        0.0,
+        Change::Snap,
+    )
+    .ident("NOISEKIND")
+    .glyph(FocusGlyph::None),
+    uni(13, "NOISE", "NOISE", 0.0).glyph(FocusGlyph::LevelBar),
 ];
 
 impl Block for VaParams {
@@ -285,6 +306,8 @@ impl Block for VaParams {
             Self::CRSE2 => self.coarse[1] as f32,
             Self::FINE2 => self.fine[1],
             Self::SHAPE2 => self.shape[1],
+            Self::NOISE_KIND => self.noise_kind.disk_code() as f32,
+            Self::NOISE => self.noise,
             _ => 0.0,
         }
     }
@@ -305,20 +328,38 @@ impl Block for VaParams {
             Self::CRSE2 => self.coarse[1] = semis(),
             Self::FINE2 => self.fine[1] = v,
             Self::SHAPE2 => self.shape[1] = v,
+            Self::NOISE_KIND => {
+                self.noise_kind = NoiseKind::from_disk_code(v as u8).unwrap_or_default()
+            }
+            Self::NOISE => self.noise = v,
             _ => {}
         }
     }
 
     fn enum_code(&self, id: ParamId) -> Option<u8> {
-        (id == Self::MODE).then(|| self.mode.disk_code())
+        match id {
+            Self::MODE => Some(self.mode.disk_code()),
+            Self::NOISE_KIND => Some(self.noise_kind.disk_code()),
+            _ => None,
+        }
     }
 
     fn enum_ident(&self, id: ParamId) -> Option<&'static str> {
-        (id == Self::MODE).then(|| self.mode.disk_ident())
+        match id {
+            Self::MODE => Some(self.mode.disk_ident()),
+            Self::NOISE_KIND => Some(self.noise_kind.disk_ident()),
+            _ => None,
+        }
     }
 
     fn set_enum_code(&mut self, id: ParamId, code: u8) -> bool {
-        id == Self::MODE && apply_code(VaMode::from_disk_code(code), |m| self.mode = m)
+        match id {
+            Self::MODE => apply_code(VaMode::from_disk_code(code), |m| self.mode = m),
+            Self::NOISE_KIND => {
+                apply_code(NoiseKind::from_disk_code(code), |k| self.noise_kind = k)
+            }
+            _ => false,
+        }
     }
 }
 
@@ -384,6 +425,17 @@ pub const COST_SOFTSYNC: Cost = Cost(590);
 /// 119.9 (33.5 of it six jumps and marks a block, 6.3 the offset loop) +
 /// 31.3 + 95 = 641.9.
 pub const COST_PHASE: Cost = Cost(650);
+
+/// NOISE's pass by KIND (ADR 0197): `tools/loop_count.py` on the M7 build
+/// of `noise.rs` (cortex-m7, opt-level 2), a sample's round plus the
+/// block's setup ÷ 64: WHITE 10.6 + 0.5 instructions, PINK 20.0 + 0.7, RED
+/// 16.0 + 0.6, DIGITAL 18.3 + 0.6 with a draw every sample (its fast path
+/// 12.0). `render`'s own share (the level's lane, `z²` in the norm) is
+/// under 0.1 a sample.
+pub const COST_NOISE_WHITE: Cost = Cost(20);
+pub const COST_NOISE_PINK: Cost = Cost(35);
+pub const COST_NOISE_RED: Cost = Cost(30);
+pub const COST_NOISE_DIGITAL: Cost = Cost(35);
 
 /// PHASE's peak depth at BLEND `blend`, in cycles: `blend/2`. BLEND ½ is
 /// the CZ's full warp (PD is PM at index 2π(½ − d), Lazzarini et al.,
@@ -513,11 +565,13 @@ fn held(v: f32, lo: f32, hi: f32) -> f32 {
     }
 }
 
-/// `Lanes::norm` for SUB's block `(from, to)`.
-fn norm((s0, s1): (f32, f32)) -> (f32, f32, f32) {
-    let n = |s: f32| VA_CHAIN_GAIN / sqrt(1.0 + s * s);
+/// `Lanes::norm` for SUB's and NOISE's blocks `(from, to)`: the two
+/// sources beside the operator, level-stable. NOISE at 0 adds `+ 0.0` to
+/// `1 + s²`, the same bits.
+fn norm((s0, s1): (f32, f32), (z0, z1): (f32, f32)) -> (f32, f32, f32) {
+    let n = |s: f32, z: f32| VA_CHAIN_GAIN / sqrt(1.0 + s * s + z * z);
     let h = (BLOCK_SIZE / 2) as f32;
-    let (n0, n1, n2) = (n(s0), n(0.5 * (s0 + s1)), n(s1));
+    let (n0, n1, n2) = (n(s0, z0), n(0.5 * (s0 + s1), 0.5 * (z0 + z1)), n(s1, z1));
     // n(j) = n0 + a·j + b·j², j = 0 the sample before, through j = h and 2h
     let b = (n2 - 2.0 * n1 + n0) / (2.0 * h * h);
     let a = (n1 - n0) / h - b * h;
@@ -545,12 +599,14 @@ pub struct Lanes {
     amount: (f32, f32),
     sub: (f32, f32),
     k: (f32, f32),
-    /// `VA_CHAIN_GAIN / √(1 + SUB²)` along SUB's ramp: a quadratic through
+    /// `VA_CHAIN_GAIN / √(1 + SUB² + NOISE²)` along their ramps: a quadratic through
     /// the block's ends and middle, its value at sample 0, its step and its
     /// step's step (within 10⁻⁷ of exact on a knob's sweep).
     norm: (f32, f32, f32),
     pk: Peaks,
     d: f32,
+    /// NOISE's RMS (a share of R) along its ramp; `(0, 0)`: off.
+    nz: (f32, f32),
 }
 
 /// Two variable-wave oscillators, combined by MODE, with a sub under OSC 1
@@ -579,6 +635,9 @@ pub struct VaEngine {
     lb: [Ramp; 2],
     /// AM's level make-up (`am_gain`).
     am_n: Ramp,
+    /// NOISE: the voice's source and its level's ramp.
+    noise: Noise,
+    nz: Ramp,
     /// MAX's corrector.
     max: MaxKink,
     /// PHASE's offset (cycles) at the last sample, `D·b/pk`; NaN: none yet.
@@ -626,6 +685,8 @@ impl VaEngine {
             fm: Ramp::default(),
             lb: [Ramp::default(); 2],
             am_n: Ramp::default(),
+            noise: Noise::new(1),
+            nz: Ramp::default(),
             max: MaxKink::NEW,
             pm_prev: 0.0,
             pm_step: [0.0; 2],
@@ -654,6 +715,8 @@ impl VaEngine {
     /// The voice slot whose seed this engine draws.
     pub fn place(&mut self, voice: VoiceIdx) {
         self.voice = voice;
+        // each voice its own stream
+        self.noise = Noise::new(0x9e37_79b9u32.wrapping_mul(voice.index() as u32 + 1));
     }
 
     pub(crate) fn carry(&self) -> VaCarry {
@@ -772,6 +835,7 @@ impl VaEngine {
             r.hold();
         }
         self.am_n.hold();
+        self.nz.hold();
         for o in &mut self.osc {
             o.hold();
         }
@@ -805,6 +869,16 @@ impl VaEngine {
 
     pub fn cost(p: &VaParams) -> Cost {
         Self::mode_cost(p.mode)
+    }
+
+    /// NOISE's pass a sample, per KIND, when it plays (ADR 0197).
+    pub const fn noise_cost(k: NoiseKind) -> Cost {
+        match k {
+            NoiseKind::White => COST_NOISE_WHITE,
+            NoiseKind::Pink => COST_NOISE_PINK,
+            NoiseKind::Red => COST_NOISE_RED,
+            NoiseKind::Digital => COST_NOISE_DIGITAL,
+        }
     }
 
     /// The playing MODE's bill, while a note sounds.
@@ -842,14 +916,16 @@ impl VaEngine {
             (ft, (ft.0, step_of(ft, BLOCK_SIZE)))
         };
         let (sub_ft, sub) = lane(&mut self.sub_level, unit(p.sub));
+        let (nz_ft, nz) = lane(&mut self.nz, noise::level(unit(p.noise), p.noise_kind));
         let mut l = Lanes {
             osc: [Ramps::default(); 2],
             amount: lane(&mut self.amount, unit(p.amount)).1,
             sub,
             k: (0.0, 0.0),
-            norm: norm(sub_ft),
+            norm: norm(sub_ft, nz_ft),
             pk: Peaks { a: 0.0, b: 0.0 },
             d,
+            nz,
         };
         let mut pk = [0.0f32; 2];
         // SYNC's and SOFT SYNC's master stops at 7 kHz: while either plays
@@ -961,6 +1037,12 @@ impl VaEngine {
                 let d = self.fm.step(phase_depth(unit(p.amount)));
                 self.render_phase(out, &l, gain, d)
             }
+        }
+        // NOISE beside the operator; at 0 both ends, not a bit moves
+        if nz_ft.0 > 0.0 || nz_ft.1 > 0.0 {
+            let (i0, di) = l.osc[0].inc;
+            let inc = i0 + di * (BLOCK_SIZE / 2) as f32;
+            self.noise.add(out, p.noise_kind, l.nz, l.norm, inc);
         }
         self.duck = match duck {
             Duck::Steady => Duck::Steady,

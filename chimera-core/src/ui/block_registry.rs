@@ -141,7 +141,7 @@ pub static TAPE_MODEL: BlockDef = BlockDef {
 };
 
 // ---------------------------------------------------------------------------
-// VA engine pages (spec § Pages): VA, then OSC 1 and OSC 2 beneath it
+// VA engine pages (spec § Pages): VA, then OSC 1, OSC 2 and NOISE beneath it
 // ---------------------------------------------------------------------------
 
 /// VA, the home. Ids 87-89: free, under the focus table's top. AMOUNT
@@ -188,6 +188,24 @@ pub static VA_OSC2: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Va, VaParams::CRSE2).with_label("CRSE"),
         ParamSlot::param(BlockRef::Va, VaParams::FINE2).with_label("FINE"),
         ParamSlot::param(BlockRef::Va, VaParams::SHAPE2).with_label("SHAPE"),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
+/// NOISE (ADR 0197): the voice's noise source, mixed beside SUB after
+/// MODE. Id 110: the next past SETTINGS' 109.
+pub static VA_NOISE: BlockDef = BlockDef {
+    id: 110,
+    name: "Noise",
+    short: "NOISE",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Va, VaParams::NOISE_KIND),
+        ParamSlot::param(BlockRef::Va, VaParams::NOISE).with_label("LEVEL"),
+        EMPTY,
         EMPTY,
         EMPTY,
         EMPTY,
@@ -761,7 +779,7 @@ static TAPE_BLOCKS: [ChainBlock; 5] = [
 pub static TAPE_CHAIN: ChainDef2 =
     ChainDef2::new("Tape", &TAPE_BLOCKS, &PART_MOD_SOURCES).with_home_def(&TAPE_DECK);
 
-static VA_SUB_PAGES: [&BlockDef; 3] = [&VA_OSC1, &VA_OSC2, &PITCH];
+static VA_SUB_PAGES: [&BlockDef; 4] = [&VA_OSC1, &VA_OSC2, &VA_NOISE, &PITCH];
 
 /// VA · FLT · AMP · MOD: the voice chain behind VA's node.
 static VA_BLOCKS: [ChainBlock; 4] = [
