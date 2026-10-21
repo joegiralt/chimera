@@ -4,14 +4,20 @@
 //! that never click, NaN, and its codes.
 
 use chimera_core::block::Block;
+use chimera_core::dsp::Unit;
 use chimera_core::dsp::delay::grain::{
-    self, Clock, Ctl, Engine, GRAINS, Line, MAX_D, MIN_D, bell, log_one_minus_x, soft_clip, uniform,
+    self, Clock, Ctl, Engine, Frames, GRAINS, Line, MAX_D, MIN_D, Rng, Speed, bell,
+    log_one_minus_x, soft_clip,
 };
 use chimera_core::dsp::delay::{DelayParams, DelayType, LINE_SCALE, MAX_DELAY_SAMPLES, TapeDelay};
 use chimera_hal::BLOCK_SIZE;
 
 const N: usize = MAX_DELAY_SAMPLES;
 const FS: u32 = 48_000;
+
+fn rng(seed: u32) -> Rng {
+    Rng::seeded(core::num::NonZeroU32::new(seed).unwrap())
+}
 
 fn grain_params() -> DelayParams {
     DelayParams {
@@ -26,11 +32,11 @@ fn grain_params() -> DelayParams {
 
 /// A line of band-limited noise at about −10 dBFS of its ±2 scale.
 fn noisy_line() -> Box<[i16; N]> {
-    let mut rng = 0x2468_ace1u32;
+    let mut rng = rng(0x2468_ace1);
     let mut lp = 0.0f32;
     let mut line = Box::new([0i16; N]);
     for s in line.iter_mut() {
-        lp += 0.3 * ((uniform(&mut rng) - 0.5) * 2.0 - lp);
+        lp += 0.3 * ((rng.uniform().get() - 0.5) * 2.0 - lp);
         *s = (lp * 0.6 * LINE_SCALE) as i16;
     }
     line
@@ -73,7 +79,7 @@ fn rbell(p: f64) -> f64 {
 
 impl RGrain {
     fn start(&mut self, head: usize, delay: f64, speed: f64, dur: f64, amp: f64, frac: f64) {
-        let (min_d, max_d) = (f64::from(MIN_D), f64::from(MAX_D));
+        let (min_d, max_d) = (f64::from(MIN_D.get()), f64::from(MAX_D.get()));
         let c = speed - 1.0;
         let delay = delay - frac * c;
         let dur = if c != 0.0 {
@@ -121,7 +127,7 @@ impl RGrain {
 struct Reference {
     grains: [RGrain; GRAINS],
     clock: Clock,
-    rng: u32,
+    rng: Rng,
     since: i64,
 }
 
@@ -130,7 +136,7 @@ impl Reference {
         Self {
             grains: [RGrain::default(); GRAINS],
             clock: Clock::NEW,
-            rng: 0x9E37_79B9,
+            rng: Rng::NEW,
             since: 0,
         }
     }
@@ -147,40 +153,39 @@ impl Reference {
 
     fn block(&mut self, line: &[i16; N], wp: usize, ctl: &Ctl, out: &mut [f64; BLOCK_SIZE]) {
         *out = [0.0; BLOCK_SIZE];
-        let mut starts = [(0usize, 0.0f32); 4];
-        let n = self
-            .clock
-            .block(ctl.rate, ctl.texture, &mut self.rng, &mut starts);
-        let depth = (f64::from(ctl.rate) * f64::from(ctl.dur) * 0.5)
+        let starts = self.clock.block(ctl.rate, ctl.texture, &mut self.rng);
+        let tex = f64::from(ctl.texture.get());
+        let busy = 1.0 + tex * (0.74 - 0.61 * tex);
+        let depth = (f64::from(ctl.rate.get()) * busy * f64::from(ctl.dur.get()) * 0.5)
             .max(1.0)
             .min(GRAINS as f64 / 2.0);
-        let speed = f64::from(ctl.speed);
-        let phase = 1.0 - 0.5 * f64::from(ctl.texture);
-        let law = phase + (0.5 - phase) * f64::from(ctl.shift);
+        let speed = f64::from(ctl.speed.ratio());
+        let phase = 1.0 - 0.5 * tex;
+        let law = phase + (0.5 - phase) * f64::from(ctl.shift.get());
         let amp = depth.powf(-law);
         let mut from = 0;
-        for &(at, frac) in &starts[..n] {
+        for t in starts.as_slice() {
+            let (at, frac) = (t.at(), t.frac().get());
             self.grains
                 .iter_mut()
                 .for_each(|g| g.render(line, out, from, at));
             from = at;
-            let u = f64::from(uniform(&mut self.rng));
-            let tex = f64::from(ctl.texture);
-            let delay =
-                f64::from(ctl.delay) * (1.0 + tex * f64::from(grain::SPRAY) * (2.0 * u - 1.0));
+            let u = f64::from(self.rng.uniform().get());
+            let delay = f64::from(ctl.delay.get())
+                * (1.0 + tex * f64::from(grain::SPRAY) * (2.0 * u - 1.0));
             let k = self.nearest(None);
             self.grains[k].start(
                 (wp + at) % N,
                 delay,
                 speed,
-                f64::from(ctl.dur),
+                f64::from(ctl.dur.get()),
                 amp,
                 f64::from(frac),
             );
             let interval = (self.since + at as i64) as f64;
             let first = self.nearest(None);
             let second = self.nearest(Some(first));
-            let (instant, preempt) = (f64::from(ctl.instant), f64::from(ctl.preempt));
+            let (instant, preempt) = (f64::from(ctl.instant.get()), f64::from(ctl.preempt.get()));
             self.grains[first].fade_out(instant);
             self.grains[second].fade_out(interval.max(instant).min(preempt));
             self.since = -(at as i64);
@@ -197,14 +202,14 @@ impl Reference {
 /// both read the same samples): the worst error and the output's RMS.
 fn against_reference(p: &DelayParams, blocks: usize) -> (f64, f64) {
     let line = noisy_line();
-    let ctl = Ctl::new(p, p.time_ms * FS as f32 / 1000.0, FS);
+    let ctl = Ctl::new(p, Frames::new(p.time_ms * FS as f32 / 1000.0), FS);
     let (mut e, mut r) = (Engine::<GRAINS>::NEW, Reference::new());
     let (mut worst, mut sum, mut n) = (0.0f64, 0.0f64, 0usize);
     for b in 0..blocks {
         let wp = (b * BLOCK_SIZE) % N;
         let (mut a, mut x) = ([0.0f32; BLOCK_SIZE], [0.0f64; BLOCK_SIZE]);
-        e.block(&Line(&line), &ctl.sched(), &mut a, |at, frac, u| {
-            ctl.start(wp, at, frac, u)
+        e.block(&Line(&line), &ctl.sched(), &mut a, |t, u| {
+            ctl.start(wp, t, u)
         });
         r.block(&line, wp, &ctl, &mut x);
         for (&a, &x) in a.iter().zip(&x) {
@@ -272,18 +277,16 @@ fn starts_over(density: f32, texture: f32, secs: f32) -> (usize, Vec<usize>) {
     let p = grain_params()
         .with(DelayParams::DENSITY, density)
         .with(DelayParams::TEXTURE, texture);
-    let ctl = Ctl::new(&p, 4800.0, FS);
-    let (mut c, mut rng) = (Clock::NEW, 0x9E37_79B9u32);
+    let ctl = Ctl::new(&p, Frames::new(4800.0), FS);
+    let (mut c, mut rng) = (Clock::NEW, Rng::NEW);
     let blocks = (secs * FS as f32) as usize / BLOCK_SIZE;
     let (mut n, mut at) = (0, Vec::new());
     for b in 0..blocks {
-        let mut out = [(0usize, 0.0f32); 4];
-        let k = c.block(ctl.rate, texture, &mut rng, &mut out);
-        for &(i, frac) in &out[..k] {
-            assert!(i < BLOCK_SIZE && (0.0..1.0).contains(&frac));
-            at.push(b * BLOCK_SIZE + i);
+        let ts = c.block(ctl.rate, Unit::new(texture), &mut rng);
+        for t in ts.as_slice() {
+            at.push(b * BLOCK_SIZE + t.at());
         }
-        n += k;
+        n += ts.as_slice().len();
     }
     (n, at)
 }
@@ -342,14 +345,14 @@ fn the_pool_holds_the_cloud() {
     let p = DelayParams { ..grain_params() }
         .with(DelayParams::SIZE, 1.0)
         .with(DelayParams::DENSITY, 1.0);
-    let ctl = Ctl::new(&p, 12_000.0, FS);
+    let ctl = Ctl::new(&p, Frames::new(12_000.0), FS);
     let mut e = Engine::<GRAINS>::NEW;
     let mut most = 0;
     for b in 0..2000 {
         let mut out = [0.0; BLOCK_SIZE];
         let wp = (b * BLOCK_SIZE) % N;
-        e.block(&Line(&line), &ctl.sched(), &mut out, |at, frac, u| {
-            ctl.start(wp, at, frac, u)
+        e.block(&Line(&line), &ctl.sched(), &mut out, |t, u| {
+            ctl.start(wp, t, u)
         });
         most = most.max(e.active());
     }
@@ -450,10 +453,10 @@ fn full_feedback_with_pitch_up_never_runs_away() {
         .with(DelayParams::SIZE, 0.7);
         let mut d = Box::new(TapeDelay::new());
         let burst = |b: usize| -> [f32; BLOCK_SIZE] {
-            let mut rng = (b as u32).wrapping_mul(2_654_435_761) | 1;
+            let mut rng = rng((b as u32).wrapping_mul(2_654_435_761) | 1);
             core::array::from_fn(|_| {
                 if b < 375 {
-                    2.0 * uniform(&mut rng) - 1.0
+                    2.0 * rng.uniform().get() - 1.0
                 } else {
                     0.0
                 }
@@ -620,11 +623,9 @@ fn nan_never_reaches_the_return() {
     .with(DelayParams::DENSITY, f32::NAN)
     .with(DelayParams::PITCH, f32::NAN)
     .with(DelayParams::TEXTURE, f32::NAN);
-    let ctl = Ctl::new(&p, 4800.0, FS);
-    for v in [ctl.dur, ctl.rate, ctl.speed, ctl.texture, ctl.amp()] {
-        assert!(v.is_finite(), "{ctl:?}");
-    }
-    assert_eq!(ctl.speed, 1.0);
+    // Finite by its types; PITCH's NaN reads as 0.
+    let ctl = Ctl::new(&p, Frames::new(4800.0), FS);
+    assert_eq!(ctl.speed, Speed::UNITY);
     let mut d = Box::new(TapeDelay::new());
     let out = play(&mut d, &p, 2000, |b| {
         let mut x = sine(300.0, 0.5)(b);

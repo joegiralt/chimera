@@ -22,12 +22,12 @@ use super::{
     TapeDelay, WOW_SAMPLES, read, to_line,
 };
 use crate::dsp::algo::math::exp2;
-use crate::dsp::clampf;
 use crate::dsp::ease::{at, ease_coeff, step_of};
 pub use crate::dsp::grain::core::{
-    Clock, Engine, Grain, GrainSource, MAX_STARTS, ONE, Q32, Sched, Start, bell, hermite,
-    log_one_minus_x, q32, uniform,
+    At, Clock, Engine, Frames, Gain, Grain, GrainLen, GrainSource, MAX_STARTS, Pos, Rate, Rng,
+    Samples, Sched, Speed, Start, TapAt, Trigger, bell, hermite, log_one_minus_x,
 };
+use crate::dsp::{Unit, clampf};
 use chimera_hal::BLOCK_SIZE;
 
 const N: usize = MAX_DELAY_SAMPLES;
@@ -38,9 +38,9 @@ pub const GRAINS: usize = 6;
 /// The nearest a grain reads to the write head, samples: the block is read
 /// before it is written, so a grain at sample 63 must still find its
 /// Hermite's newest tap written (63 + 3), and two to spare.
-pub const MIN_D: f32 = (BLOCK_SIZE + 4) as f32;
+pub const MIN_D: Frames = Frames::new((BLOCK_SIZE + 4) as f32);
 /// The farthest: the line less the Hermite's oldest tap, and two to spare.
-pub const MAX_D: f32 = (N - 4) as f32;
+pub const MAX_D: Frames = Frames::new((N - 4) as f32);
 
 /// SIZE: a grain's length, `SIZE_MIN · SIZE_SPAN^size` seconds, 10 ms to
 /// 500 ms (Beads: 8 ms to 4 s over its buffer).
@@ -67,20 +67,19 @@ pub use crate::dsp::fast_tanh as soft_clip;
 pub struct Line<'a>(pub &'a [i16; N]);
 
 impl GrainSource for Line<'_> {
+    const FRAMES: usize = N;
+
     #[inline(always)]
-    fn frames(&self) -> usize {
-        N
+    fn frame(&self, i: At<Self>) -> f32 {
+        // SAFETY: an `At<Line>` is below `FRAMES`, the line's length.
+        f32::from(unsafe { *self.0.get_unchecked(i.get()) })
     }
 
     #[inline(always)]
-    fn frame(&self, i: usize) -> f32 {
-        f32::from(self.0[i])
-    }
-
-    #[inline(always)]
-    fn taps(&self, i: usize) -> [f32; 4] {
-        // SAFETY: the core asks only with `1 ≤ i` and `i + 2 < N`
-        // (`GrainSource::taps`), so `i − 1 ..= i + 2` lie inside the line.
+    fn taps(&self, i: TapAt<Self>) -> [f32; 4] {
+        let i = i.get();
+        // SAFETY: a `TapAt<Line>` has `1 ≤ i` and `i + 2 < FRAMES`, the
+        // line's length, so `i − 1 ..= i + 2` lie inside it.
         unsafe {
             [
                 *self.0.get_unchecked(i - 1),
@@ -96,29 +95,27 @@ impl GrainSource for Line<'_> {
 /// One block's grain settings, from the knobs.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Ctl {
-    /// TIME, samples behind the head.
-    pub delay: f32,
-    /// SIZE, samples.
-    pub dur: f32,
-    /// DENSITY, cycles a sample.
-    pub rate: f32,
+    /// TIME, behind the head.
+    pub delay: Frames,
+    /// SIZE.
+    pub dur: Samples,
+    /// DENSITY.
+    pub rate: Rate,
     /// PITCH as a read speed.
-    pub speed: f32,
+    pub speed: Speed,
     /// How far PITCH is from 0, up to a semitone: shifted grains add in
     /// power (`amp`).
-    pub shift: f32,
-    pub texture: f32,
-    /// The crossfades, samples.
-    pub instant: f32,
-    pub preempt: f32,
+    pub shift: Unit,
+    pub texture: Unit,
+    /// The crossfades.
+    pub instant: Samples,
+    pub preempt: Samples,
 }
 
 impl Ctl {
     /// SIZE, DENSITY, PITCH and TEXTURE as `p` holds them (each held in
-    /// range; NaN as its floor), TIME `delay` samples, at `fs`.
-    pub fn new(p: &DelayParams, delay: f32, fs: u32) -> Self {
-        let sr = fs as f32;
-        let unit = |v: f32| if v.is_nan() { 0.0 } else { clampf(v, 0.0, 1.0) };
+    /// range; NaN as its floor), TIME `delay` behind the head, at `fs`.
+    pub fn new(p: &DelayParams, delay: Frames, fs: u32) -> Self {
         let pitch = if p.pitch().is_nan() {
             0.0
         } else {
@@ -126,13 +123,19 @@ impl Ctl {
         };
         Self {
             delay,
-            dur: SIZE_MIN * libm::powf(SIZE_SPAN, unit(p.size())) * sr,
-            rate: RATE_MIN * exp2(RATE_OCTAVES * unit(p.density())) / sr,
-            speed: exp2(pitch * (1.0 / 12.0)),
-            shift: pitch.abs().min(1.0),
-            texture: unit(p.texture()),
-            instant: INSTANT_S * sr,
-            preempt: PREEMPT_S * sr,
+            dur: Samples::secs(
+                SIZE_MIN * libm::powf(SIZE_SPAN, Unit::new(p.size()).get()),
+                fs,
+            ),
+            rate: Rate::hz(
+                RATE_MIN * exp2(RATE_OCTAVES * Unit::new(p.density()).get()),
+                fs,
+            ),
+            speed: Speed::of(exp2(pitch * (1.0 / 12.0))),
+            shift: Unit::new(pitch.abs()),
+            texture: Unit::new(p.texture()),
+            instant: Samples::secs(INSTANT_S, fs),
+            preempt: Samples::secs(PREEMPT_S, fs),
         }
     }
 
@@ -151,8 +154,13 @@ impl Ctl {
     /// faster than DENSITY's train: Beads' draw, blended in by TEXTURE,
     /// averages `1 + t(0.74 − 0.61t)` of its rate (within 3 % above).
     fn depth(&self) -> f32 {
-        let busy = 1.0 + self.texture * (0.74 - 0.61 * self.texture);
-        clampf(self.rate * busy * self.dur * 0.5, 1.0, GRAINS as f32 * 0.5)
+        let t = self.texture.get();
+        let busy = 1.0 + t * (0.74 - 0.61 * t);
+        clampf(
+            self.rate.get() * busy * self.dur.get() * 0.5,
+            1.0,
+            GRAINS as f32 * 0.5,
+        )
     }
 
     /// How the grains add: in phase read from one place (TEXTURE 0, PITCH
@@ -160,53 +168,49 @@ impl Ctl {
     /// different distance back); a semitone of PITCH blends the one into
     /// the other.
     fn law(&self) -> f32 {
-        let phase = 1.0 - 0.5 * self.texture;
-        phase + (0.5 - phase) * self.shift
+        let phase = 1.0 - 0.5 * self.texture.get();
+        phase + (0.5 - phase) * self.shift.get()
     }
 
     /// A grain's gain: the depth to the power of `law` (Beads:
     /// 1/√(grains + 1), always in power).
-    pub fn amp(&self) -> f32 {
-        libm::powf(self.depth(), -self.law())
+    pub fn amp(&self) -> Gain {
+        Gain::new(libm::powf(self.depth(), -self.law()))
     }
 
     /// The feedback's share of the return, `depth^(law − 1)`: the loop
     /// counts the grains in phase whatever `law` assumes, as a low tone
     /// under a small spray, or a shifted regular train's own lines, add;
     /// so FDBK under 1 always dies away.
-    pub fn fb_trim(&self) -> f32 {
-        libm::powf(self.depth(), self.law() - 1.0)
+    pub fn fb_trim(&self) -> Unit {
+        Unit::new(libm::powf(self.depth(), self.law() - 1.0))
     }
 
-    /// The grain a trigger at sample `at` of the block starts, `frac` of a
-    /// sample late, the write head at `wp` on the block's first sample, `u`
+    /// The grain trigger `t` starts (its sample in the block, its fraction
+    /// late), the write head at `wp` on the block's first sample, `u`
     /// TEXTURE's spray (`DelayGrain::Start`): TIME behind the head, the
     /// length trimmed so the line holds it, the delay held so the head
     /// never crosses the write head.
-    pub fn start(&self, wp: usize, at: usize, frac: f32, u: f32) -> Start {
-        let delay = self.delay * (1.0 + self.texture * SPRAY * (2.0 * u - 1.0));
-        let c = self.speed - 1.0;
-        let delay = delay - frac * c;
+    pub fn start(&self, wp: usize, t: Trigger, u: Unit) -> Start {
+        let (tex, speed) = (self.texture.get(), self.speed.ratio());
+        let delay = self.delay.get() * (1.0 + tex * SPRAY * (2.0 * u.get() - 1.0));
+        let c = speed - 1.0;
+        let delay = delay - t.frac().get() * c;
+        let (min_d, max_d) = (MIN_D.get(), MAX_D.get());
         let dur = if c != 0.0 {
-            self.dur.min((MAX_D - MIN_D) / c.abs())
+            self.dur.get().min((max_d - min_d) / c.abs())
         } else {
-            self.dur
-        }
-        .max(2.0);
-        let lo = MIN_D + c.max(0.0) * dur;
-        let hi = MAX_D + c.min(0.0) * dur;
-        let back = q32(clampf(delay, lo, hi));
-        let head = (((wp + at) % N) as Q32) * ONE;
-        let pos = if head >= back {
-            head - back
-        } else {
-            head + (N as Q32) * ONE - back
+            self.dur.get()
         };
+        let len = GrainLen::new(Samples::new(dur));
+        let lo = min_d + c.max(0.0) * len.get();
+        let hi = max_d + c.min(0.0) * len.get();
+        let back = Frames::new(clampf(delay, lo, hi));
         Start {
-            pos,
+            pos: Pos::behind(wp + t.at(), back, N),
             speed: self.speed,
-            dur,
-            amp: self.amp() * (1.0 / LINE_SCALE),
+            len,
+            amp: Gain::new(self.amp().get() * (1.0 / LINE_SCALE)),
         }
     }
 }
@@ -217,7 +221,7 @@ impl Ctl {
 pub struct State {
     pub(super) engine: Engine<GRAINS>,
     /// GRAIN's share of the return, 0 (TAPE) to 1, TYPE's crossfade.
-    pub(super) share: f32,
+    pub(super) share: Unit,
     /// The feedback's tone and DC states.
     lp: f32,
     dc: [f32; 2],
@@ -226,7 +230,7 @@ pub struct State {
 impl State {
     pub const NEW: Self = Self {
         engine: Engine::NEW,
-        share: 0.0,
+        share: Unit::ZERO,
         lp: 0.0,
         dc: [0.0; 2],
     };
@@ -243,7 +247,7 @@ pub fn run(d: &mut TapeDelay, buf: &mut [f32; BLOCK_SIZE], p: &DelayParams, fs: 
     }
     // From silence the grains start fresh: none left reading where the
     // line has since moved on.
-    if d.grain.share == 0.0 {
+    if d.grain.share == Unit::ZERO {
         d.grain = State::NEW;
     }
     let to = if p.kind() == DelayType::Grain {
@@ -252,7 +256,7 @@ pub fn run(d: &mut TapeDelay, buf: &mut [f32; BLOCK_SIZE], p: &DelayParams, fs: 
         0.0
     };
     let step = BLOCK_SIZE as f32 / f32::from(TIME_FADE);
-    let s = d.grain.share;
+    let s = d.grain.share.get();
     let share = (
         s,
         if to > s {
@@ -261,7 +265,7 @@ pub fn run(d: &mut TapeDelay, buf: &mut [f32; BLOCK_SIZE], p: &DelayParams, fs: 
             (s - step).max(to)
         },
     );
-    d.grain.share = share.1;
+    d.grain.share = Unit::new(share.1);
     let tape_heard = share.0 < 1.0 || share.1 < 1.0;
     if !tape_heard {
         // TAPE silent: its head waits at TIME.
@@ -278,20 +282,18 @@ pub fn run(d: &mut TapeDelay, buf: &mut [f32; BLOCK_SIZE], p: &DelayParams, fs: 
         tone: d.tone.step(p.tone, k),
         mechanics: d.mechanics.step(p.wow_flutter, k),
     };
-    let ctl = Ctl::new(p, tap.base(), fs);
+    let ctl = Ctl::new(p, Frames::new(tap.base()), fs);
     let mut g = [0.0; BLOCK_SIZE];
     let wp = d.write_pos;
     let line = Line(&d.buffer);
     d.grain
         .engine
-        .block(&line, &ctl.sched(), &mut g, |at, frac, u| {
-            ctl.start(wp, at, frac, u)
-        });
+        .block(&line, &ctl.sched(), &mut g, |t, u| ctl.start(wp, t, u));
     span(
         d,
         buf,
         &g,
-        ctl.fb_trim(),
+        ctl.fb_trim().get(),
         &tap,
         e,
         share,

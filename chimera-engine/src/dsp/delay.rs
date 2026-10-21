@@ -717,7 +717,7 @@ impl TapeDelay {
         insert: bool,
     ) {
         // GRAIN, or TAPE fading back from it: bank 2's. Closed, TAPE plays.
-        if (params.kind() == DelayType::Grain || self.grain.share != 0.0)
+        if (params.kind() == DelayType::Grain || self.grain.share != crate::dsp::Unit::ZERO)
             && through(|d| (d.run)(self, buf, params, sample_rate, insert)).is_some()
         {
             return;

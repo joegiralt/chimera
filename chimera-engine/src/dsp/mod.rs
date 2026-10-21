@@ -141,6 +141,23 @@ pub use self::algo::math::log2 as fast_log2;
 /// `x` held to `[lo, hi]` without a panic path.
 pub use self::algo::math::clampf;
 
+/// An `f32` in 0..=1; NaN is 0.
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub struct Unit(f32);
+
+impl Unit {
+    pub const ZERO: Self = Self(0.0);
+    pub const ONE: Self = Self(1.0);
+
+    pub const fn new(v: f32) -> Self {
+        Self(clampf(v, 0.0, 1.0))
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+}
+
 pub mod algo;
 pub mod chorus;
 pub mod comp;

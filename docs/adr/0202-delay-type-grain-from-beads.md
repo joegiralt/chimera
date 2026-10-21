@@ -19,17 +19,18 @@ Beads' STM32 code is MIT (Copyright 2017 Emilie Gillet, `pichenettes/eurorack`, 
 - **The core,** `chimera-engine/src/dsp/grain/core.rs` (MIT notice in the file): the clock, the bell, the stealing fades, the Hermite read and the scheduler (`Engine<G>`), generic over where the audio comes from. TAPE's STRETCH will run on the same core (one grain engine, not two). It reads through:
 
   ```rust
-  pub trait GrainSource {
-      /// Frames it holds; a head wraps at the end.
-      fn frames(&self) -> usize;
-      /// Frame `i`, `i < frames()`, at the source's own scale.
-      fn frame(&self, i: usize) -> f32;
-      /// Frames `i − 1 ..= i + 2`; asked only with `1 ≤ i` and `i + 2 < frames()`.
-      fn taps(&self, i: usize) -> [f32; 4] { /* from `frame` */ }
+  pub trait GrainSource: Sized {
+      /// Frames it holds; a head wraps at the end. At least 4 and more
+      /// than `MAX_SPEED`: asserted at compile time where the core is built.
+      const FRAMES: usize;
+      /// Frame `i`: an `At<Self>`, below `FRAMES`, made by the core alone.
+      fn frame(&self, i: At<Self>) -> f32;
+      /// Frames `i − 1 ..= i + 2`: a `TapAt<Self>`, all inside, made by the core alone.
+      fn taps(&self, i: TapAt<Self>) -> [f32; 4] { /* from `frame` */ }
   }
   ```
 
-  Integer frames, not an `f32` position: the core keeps each head in Q32.32 (`Q32`), so a head reaches 2³² frames and a pitch holds within 10⁻⁹, where an `f32` position would lose a sample's fraction past 2²⁴ frames (6 minutes) and a step's precision long before; the Hermite is the core's, so a source only hands out frames. `taps` lets a source drop its bounds checks (the delay's line does). At each trigger `Engine::block` asks its user for a `Start` (position, speed, length, gain).
+  Its units are types, so a wrong one doesn't compile and an out-of-range one can't be made: `Pos` (a head, Q32.32 frames: a head reaches 2³² frames and moves within 10⁻⁹, where an `f32` position would lose a sample's fraction past 2²⁴ frames), `Speed` (Q32.32 frames a sample, 0 to `MAX_SPEED` 16), `Frames` (a distance in a source), `Samples` (output time), `GrainLen` (2 samples or more), `Gain` (finite, 0 or more), `Rate` (grains a sample, 0 to ¼), `Unit` (TEXTURE, a trigger's fraction, a draw), `Rng` (a seed never 0), `Trigger`/`Triggers` (a sample in the block, at most `MAX_STARTS`). The index tokens replace the bounds checks: the delay's line reads both unchecked on their invariant. The Hermite is the core's, so a source only hands out frames. `Engine::set_speed` moves every grain's speed at once, for a user whose speed moves under its grains (STRETCH's flutter); GRAIN never calls it. At each trigger `Engine::block` asks its user for a `Start` (position, speed, length, gain).
 - **The delay's side,** `chimera-engine/src/dsp/delay/grain.rs`: the line as a `GrainSource` (`Line`), the knobs' laws, where a grain starts behind the write head, its gain, the feedback path and the TYPE crossfade.
 
 Both link into bank 2 (`*3dsp5grain*`, `*5delay5grain*`).

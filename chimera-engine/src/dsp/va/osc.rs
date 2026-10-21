@@ -115,19 +115,7 @@ fn dpsin(x: f32) -> f32 {
     lo + x4 * hi
 }
 
-/// An `f32` in 0..=1; NaN is 0.
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
-pub struct Unit(f32);
-
-impl Unit {
-    pub const fn new(v: f32) -> Self {
-        Self(clampf(v, 0.0, 1.0))
-    }
-
-    pub const fn get(self) -> f32 {
-        self.0
-    }
-}
+pub use crate::dsp::Unit;
 
 /// One oscillator's WAVE and SHAPE.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
