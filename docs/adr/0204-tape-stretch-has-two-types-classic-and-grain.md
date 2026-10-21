@@ -33,12 +33,12 @@ All of it sits behind one adapter, `stretch/cloud.rs` (`Src`, `Cloud`, `GrainAt`
 
 
 ### GRAIN (`tape_engine/stretch/grain.rs`)
-- **LENGTH** (param 21, 0.25 s · 32^x, 0.25–8 s, default 2 s): a pointer `T` walks the window (START to END; END before START walks it backward) at its length ÷ LENGTH a second, times **SPEED** (MOTION, `time_speed` as 0181: −1× to +2×, 0 freezes, default 1×). The source reaches its end at LENGTH on every key.
-- **Grains:** six slots, four overlapping: a start every GRAIN/4 or later, never sooner, so four overlap at most and no start steals one still sounding (the core's fades are set past any grain's length); each grain GRAIN long (param 22, 30 ms · (250/30)^x, default 80 ms), read at the key's speed, so the pitch is the key's. A grain starts `A = (inc − tstep) · GRAIN/2` frames behind `T`, so it sounds the source where the pointer says at its middle, at any key. Four smoothstep bells a quarter apart sum to 2 exactly; their squares to within 0.08 dB.
+- **LENGTH** (param 22, 0.25 s · 32^x, 0.25–8 s, default 2 s): a pointer `T` walks the window (START to END; END before START walks it backward) at its length ÷ LENGTH a second, times **SPEED** (MOTION, `time_speed` as 0181: −1× to +2×, 0 freezes, default 1×). The source reaches its end at LENGTH on every key.
+- **Grains:** six slots, four overlapping: a start every GRAIN/4 or later, never sooner, so four overlap at most and no start steals one still sounding (the core's fades are set past any grain's length); each grain GRAIN long (param 23, 30 ms · (250/30)^x, default 80 ms), read at the key's speed, so the pitch is the key's. A grain starts `A = (inc − tstep) · GRAIN/2` frames behind `T`, so it sounds the source where the pointer says at its middle, at any key. Four smoothstep bells a quarter apart sum to 2 exactly; their squares to within 0.08 dB.
 - **The strike:** the note's first grain starts at full and plays its bell's second half: the attack is heard whole, then the others take over.
 - **Pitched sources lock:** with the source's PERIOD (the importer's YIN, copied at pick) and two periods in the window, a grain starts a whole number of periods from the newest grain's head, as near its place as that allows (S950 MONO's lock, now always on where there is a period). The period is ROOT's where YIN's and ROOT's are whole multiples within 3 %: TX BELL C5's YIN reads its hum, 258.6 Hz, 1.2 % off half the 523.3 Hz strike, and locked to it the strike sagged 17 cents at 8 s; locked to ROOT it holds 0 cents. Every grain then reads the same waveform in phase: no comb, no beating between grains.
-- **SPRAY** (param 23, 0–100 %, default 40 %): each start up to 25 ms further back at random, and each interval up to 25 % past GRAIN/4, from the voice's seed beside the core's draw. On an unpitched source it scatters the grains so they never comb; on a pitched one the lock rounds the scatter to whole periods.
-- **END** (param 24, FINISH: HOLD or STOP, default HOLD): HOLD parks the grains on the window's last GRAIN of source while the key is held, 8 s at most, then fades as STOP; STOP starts grains up to one centred on the window's end (its second half reading silence) and no more. The note ends with its last grain. Key-up is the amp envelope's.
+- **SPRAY** (param 24, 0–100 %, default 40 %): each start up to 25 ms further back at random, and each interval up to 25 % past GRAIN/4, from the voice's seed beside the core's draw. On an unpitched source it scatters the grains so they never comb; on a pitched one the lock rounds the scatter to whole periods.
+- **END** (param 25, FINISH: HOLD or STOP, default HOLD): HOLD parks the grains on the window's last GRAIN of source while the key is held, 8 s at most, then fades as STOP; STOP starts grains up to one centred on the window's end (its second half reading silence) and no more. The note ends with its last grain. Key-up is the amp envelope's.
 - **The level:** the grains' sum is divided by their windows' sum, ramped across each block from its ends: grains that read alike stay at the source's level through every start, the strike and the end. Grains that read unlike add in power: the source's power about `T` (eight reads a block across what a grain there covers, at a fresh offset) against the divided cloud's, the source's over 21 ms and the cloud's rising at once, lifts the cloud back, at most by the windows' sum over the root of their squares' (all unlike). As the last grains fade both gains hold. At 1× with no SPRAY every grain reads the pointer's sample and the note nulls ONE's (−62 dB on the bell, −69 dB on the saw).
 
 - **Types** (`stretch/units.rs`, the owner's type-driven rule): LENGTH is a `Length`, GRAIN a `GrainLen` (each a `Seconds` held in its range), SPRAY a `Spray` (its share, its 25 ms reach and its interval jitter), END a `StretchEnd` (`Hold` or `Stop`); places in the window are `WinPos` (never negative), speeds `Speed`, lengths and counts `Samples`, the lock's `Period` (at least a frame; `None` unpitched), the note's stage `Playing`, `Parked(Samples)` or `Ending`. Each is made through its constructor, which holds its range and reads NaN as its floor, so the DSP never sees one out of range. The params keep the four as the knobs and the codec do, `[f32; 4]`, and hand them out typed (`length`, `grain`, `spray`, `end_mode`).
@@ -62,26 +62,26 @@ Three grains is the one build that brings GRAIN under CLASSIC's bill. Its pitch 
 ### Bank 1 and bank 2
 `dsp::grain` links into bank 2 (`bank2.x`, `*3dsp5grain*`), as do `stretch` and all its modules (CLASSIC, GRAIN, the adapter, the types), `read`'s `row_taps` and the TYPE's dim (`TapeDeck::stretch_only`). The idle images of the note's state are statics in `.bank2.rodata` (`stretch::IDLE`, `grain::IDLE_NOTE`, `cloud::IDLE_CLOUD`): as anonymous constants they had put 776 B into bank 1.
 
-Each set's plain release build, `rust-objcopy -R .bank2` (bank 1) and `-j .bank2` (bank 2), against origin/tape-streaming `8d0faa8d`:
+Each set's plain release build, `rust-objcopy -R .bank2` (bank 1) and `-j .bank2` (bank 2), against origin/tape-streaming `a6f35a7b` (with #753's SCRUB):
 
 | Set | Bank 1 before → after (B) | Δ bank 1 | Δ bank 2 |
 |---|---|---|---|
-| `default` | 884,148 → 884,876 | +728 | +21,440 |
-| `orbit` | 904,952 → 905,896 | +944 | +21,440 |
+| `default` | 884,168 → 884,808 | +640 | +21,280 |
+| `orbit` | 905,308 → 906,292 | +984 | +21,280 |
 
-What the bank-1 bytes are (the default build, `llvm-size` and `rust-nm`):
-- **The params' growth alone,** measured as GRAIN measured its own (0202): the four `f32`s added to `TapeEngineParams` on base, nothing else, moves bank 1 by −32 B (default) and +200 B (orbit), the code that builds and copies a snapshot (`init_chain`, `neutral_params`, `plain_init`) and layout; `MAX_SOUND_COST` 2,656 → 2,688 on top moves nothing.
+What the bank-1 bytes are (the default build, `llvm-size` and `rust-nm`, itemised on `8d0faa8d`, where the same change measured +728 B default and +944 B orbit):
+- **The params' growth alone,** measured as GRAIN measured its own (0202): the four `f32`s added to `TapeEngineParams` on base, nothing else, moves bank 1 by −32 B (default) and +200 B (orbit), the code that builds and copies a snapshot (`init_chain`, `neutral_params`, `plain_init`) and layout; `MAX_SOUND_COST` 2,672 → 2,688 (284 params) on top moves nothing.
 - **Closed-door data, +632 B of rodata:** the four param specs (+288 B), the machine table (+56 B: each machine's ENV 1 defaults now a table, not a match), STRETCH's cells, and the strings: the labels, idents and short names (LENGTH, GRAIN, SPRAY, FINISH, END, LEN, GRN, SPR, TYP, STRETCH_LENGTH, STRETCH_END), HOLD and STOP, and TYPE's CLASSIC, CLS POLY and GRAIN.
 - **+128 B of text,** of which: the four params' one `get` and one `write` arm (+48 B, what the codec needs to load and save them with the door closed), the two slider laws' arms in `Law::range` (+28 B, the specs' display laws), the door stub for the TYPE's dim in `tape_note` (+32 B), and `view` −40 B (POLY (UNPITCHED) gone); the rest is the snapshot's growth above and layout (`region_data`, `recost`, `model_writes`, `machine_cell`: ±20 B each, as the params-alone build moves unrelated functions by as much).
 No STRETCH code is in bank 1: no `stretch` or `grain` symbol lies below 0x08100000.
 
 ### Compatibility
 - Old STRETCH Sounds load as CLASSIC and render bit for bit as before (above). Every other machine is bit for bit too.
-- Codes only append: TYPE's GRAIN is code 2 (the disk-codes fixture gains `E 34 10 2 GRAIN`); GRAIN's four params are ids 21–24 (`B 34` lines, appended; END stored as its index, a stepped real, as THEME's HINTS).
+- Codes only append: TYPE's GRAIN is code 2 (the disk-codes fixture gains `E 34 10 2 GRAIN`); GRAIN's four params are ids 22–25 (21 is SCRUB's KEY, 17–20 SLICE's and PLAY's) (`B 34` lines, appended; END stored as its index, a stepped real, as THEME's HINTS).
 - The factory STRETCH Sounds turn to GRAIN with ONE's ENV 1; their trims are re-measured to the set's median.
 
 ### Memory
-`TapeEngineParams` grows 16 B, so the played Sound in each voice does: `VOICE_CHAIN_BYTES` 2,336 → 2,352 (8 voices, 128 B of D2), a voice 6,584 → 6,600 B, `ParamSnapshot` to 676 B. A Sound's worst sparse file grows 20 B: `MAX_SOUND_COST` 2,656 → 2,688. The source stays in RAM as today; streaming STRETCH is later. A note's state fits `TapeDeck`'s 1 KB.
+`TapeEngineParams` grows 16 B, so the played Sound in each voice does: `VOICE_CHAIN_BYTES` 2,336 → 2,352 (8 voices, 128 B of D2), a voice 6,584 → 6,600 B, `ParamSnapshot` to 676 B. A Sound's worst sparse file grows 20 B: `MAX_SOUND_COST` 2,672 → 2,688 (284 params). The source stays in RAM as today; streaming STRETCH is later. A note's state fits `TapeDeck`'s 1 KB.
 
 ### Cost
 | Voices beside the reserve | rev V | rev Y | rev V + ORBIT | rev V + master tape |
