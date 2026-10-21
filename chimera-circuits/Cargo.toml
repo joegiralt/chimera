@@ -1,0 +1,16 @@
+[package]
+name = "chimera-circuits"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+# Host only (ADR 0196): the circuit models, shipped or not, kept buildable.
+# No firmware crate depends on this one, and it is never in the STM32 build.
+# The models themselves need nothing of Chimera's: the engine is only a
+# dev-dependency, for the tests that compare a model with a shipped KIND.
+[dependencies]
+rustfft = "6.4"
+
+[dev-dependencies]
+chimera-core = { path = "../chimera-core" }
+chimera-hal = { path = "../chimera-hal" }
