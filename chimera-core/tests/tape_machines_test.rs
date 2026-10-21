@@ -1278,7 +1278,6 @@ fn every_cell_reads_in_the_audio() {
         } else {
             60
         };
-        let plain = render(base, note);
         // RETRIG is the Instrument's: a note cutting its Part's others
         // (`tape_stream_test`'s and `tape_musical_test`'s).
         for c in m.deck.iter().chain(m.cells).filter(|c| c.id != P::RETRIG) {

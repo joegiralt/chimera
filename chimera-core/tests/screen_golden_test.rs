@@ -320,7 +320,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Fourth TAPE merge: MAX_SOUND_COST 2656 (STAB, FB and TAPE), same picture.
     // Then SEM's MORPH: the dense fill leaves 0.1K FREE, not 0.0K.
     // STRETCH GRAIN's four params: MAX_SOUND_COST 2688 (ADR 0204).
-    ("sound_browser_pool_full", 0x30d9348383441db9),
+    ("sound_browser_pool_full", 0xbbf3ded065a88bb9),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.
