@@ -24,9 +24,8 @@ use super::{
 use crate::dsp::algo::math::exp2;
 use crate::dsp::ease::{at, step_of};
 pub use crate::dsp::grain::core::{
-    At, Clock, Engine, Frames, Gain, Grain, GrainLen, GrainSource, MAX_STARTS, Pos, Rate, Rng,
-    Samples, Sched, Slot, Speed, Start, Started, Steal, TapAt, Trigger, bell, hermite,
-    log_one_minus_x,
+    At, Clock, Engine, Frames, Gain, GrainLen, GrainSource, Pos, Rate, Rng, Samples, Sched, Speed,
+    Start, Steal, TapAt, Trigger, bell, log_one_minus_x,
 };
 use crate::dsp::{Unit, clampf};
 use chimera_hal::BLOCK_SIZE;
