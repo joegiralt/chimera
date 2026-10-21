@@ -1026,12 +1026,13 @@ impl Renderer {
         if !plain || f.prime_status.is_some() || view::view(f.def, f.focus, &f.ctx) == View::Empty {
             return None;
         }
-        let g = self.gauge(f);
         match look(f, f.focus) {
-            components::Look::Live => Some(g),
+            components::Look::Live => Some(self.gauge(f)),
             // A TAPE cell its machine ignores, an LFO cell its mode
             // ignores, keep their glyph (ADR 0173, 0177).
-            components::Look::Dimmed if matches!(g, Gauge::Tape(_) | Gauge::Lfo(_)) => Some(g),
+            components::Look::Dimmed => {
+                Some(self.gauge(f)).filter(|g| matches!(g, Gauge::Tape(_) | Gauge::Lfo(_)))
+            }
             _ => None,
         }
     }
