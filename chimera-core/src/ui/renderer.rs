@@ -460,11 +460,11 @@ impl Renderer {
                 viz::fx_strip(display, source, fx.place == Place::Post, 128);
                 viz::fx_curve(display, 168, &rows);
             }
-            VizType::Tuner => {
+            // PIT's corner rides the scope (ADR 0201): empty off PIT.
+            _ => {
                 viz::live_output(display, f.scope);
                 crate::ui::pit_tuner::paint(display, f.tuner);
             }
-            _ => viz::live_output(display, f.scope),
         }
     }
 
@@ -647,11 +647,8 @@ impl Renderer {
                     let tp = (fx.ty() as u32) << 1 | fx.place as u32;
                     ([0; 6], region::fold_keys(tp.into(), &bits))
                 }
-                VizType::Tuner => {
-                    let live = viz::live_key(f.scope);
-                    ([0; 6], region::fold_keys(live.into(), &[f.tuner.key]))
-                }
-                _ => ([0; 6], viz::live_key(f.scope)),
+                // PIT's corner's key is 0 off PIT.
+                _ => ([0; 6], viz::live_key(f.scope) ^ f.tuner.key),
             },
             PageLayout::BigViz => {
                 // The GR meter redraws every 0.25 dB; ABOUT on bank 2's word.

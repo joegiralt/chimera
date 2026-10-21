@@ -61,10 +61,20 @@ door.
    NORMAL draws helvB10 over helvR08, LARGE helvB14 over helvR10 where
    both fit `CORNER_W` (112 px), else NORMAL; the box stays above the
    scope's middle line.
-5. **Banks.** The working (`ui::pit_tuner::calc`) is bank 2's
-   (`bank2.x` glob, `check-door-placed`), reached through `UiDoor::pit`.
-   Bank 1 keeps the per-Part notes, the door call once a frame, the
-   frame's field and the paint. Closed, the corner is empty.
+5. **Banks.** The working and the paint (`ui::pit_tuner::calc`) are
+   bank 2's (`bank2.x` glob, `check-door-placed`), reached through
+   `UiDoor::pit` (the pass, once a frame, on `UiState`) and
+   `UiDoor::pit_paint` (onto the strip's `dyn Paint`; the fonts' raster
+   is instanced over `calc::Runs`, so its name carries the module and
+   the glob takes it). Its words are a named static and its numbers its
+   own digits, so no unnamed rodata lands in bank 1; `played::last_in`
+   and `last_out` are inlined so neither is outlined for its second
+   caller. Bank 1 keeps the `Tuner` state (RAM), the two door calls, the
+   frame's field and the key's XOR into the scope's; the corner's key
+   is 0 off PIT, so every scope page shares the one arm. Measured on
+   the default firmware against origin/tape-streaming (0d026a9a):
+   bank 1 +144 B (.text; .rodata and .data +0), bank 2 +2,528 B.
+   Closed, the corner is empty.
 
 ## Alternatives considered
 - **Detection only.** Rejected: noisy on drums and chords, deaf below D4,
@@ -85,7 +95,8 @@ door.
 - An FM Sound whose carrier ratio isn't 1 sounds its carrier, not the
   note: the corner reads the note (the ratio is the timbre's).
 - The corner covers up to 112 × 33 px of the scope's top-right.
-- A per-Part `last` costs 6 bytes of RAM; the rest is bank 2's.
+- RAM: the `Tuner` state (six last notes and the two lines). Flash: 144 B
+  of bank 1, 2,528 B of bank 2.
 
 ## Sources
 - Request: owner, 2026-10-21 (PIT tuner).

@@ -189,8 +189,9 @@ pub struct UiDoor {
     source_run: fn(&mut SourceCell, SourceJob, &mut dyn Store, &Ready, &mut Project),
     /// START's and END's onset snap (`ui::onset`, ADR 0185).
     onset: fn(&[u8], u32, u32, bool) -> Option<u32>,
-    /// PIT's tuner (`ui::pit_tuner`, ADR 0201).
-    pit: fn(&mut crate::ui::pit_tuner::Tuner, &crate::ui::pit_tuner::Ins<'_>),
+    /// PIT's tuner (`ui::pit_tuner`, ADR 0201): its pass and its paint.
+    pit: fn(&mut crate::ui::UiState),
+    pit_paint: fn(&mut dyn Paint, &crate::ui::pit_tuner::Shown),
 }
 
 /// A card row's head and how it loads (`SourceCell::kind`).
@@ -216,6 +217,7 @@ impl UiDoor {
         source_run: SourceCell::run_in,
         onset: crate::ui::onset::onset_in_bank2,
         pit: crate::ui::pit_tuner::calc::pass_in,
+        pit_paint: crate::ui::pit_tuner::calc::paint_in,
     };
 
     #[inline(always)]
@@ -287,12 +289,13 @@ impl UiDoor {
     }
 
     #[inline(always)]
-    pub(crate) fn pit(
-        &self,
-        t: &mut crate::ui::pit_tuner::Tuner,
-        i: &crate::ui::pit_tuner::Ins<'_>,
-    ) {
-        (self.pit)(t, i)
+    pub(crate) fn pit(&self, ui: &mut crate::ui::UiState) {
+        (self.pit)(ui)
+    }
+
+    #[inline(always)]
+    pub(crate) fn pit_paint(&self, on: &mut dyn Paint, s: &crate::ui::pit_tuner::Shown) {
+        (self.pit_paint)(on, s)
     }
 
     #[inline(always)]

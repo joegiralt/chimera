@@ -3089,18 +3089,8 @@ impl UiState {
         self.strip_pass();
         self.heads = self.heads_from.read(at.index());
         self.lfo_pass();
-        let on = self.page_def().viz == VizType::Tuner;
-        pit_tuner::pass(
-            &mut self.tuner,
-            &pit_tuner::Ins {
-                parts: self.project.perf().parts(),
-                active: at,
-                live: self.live,
-                tune: self.midi.tune,
-                text: self.theme.text,
-                on,
-            },
-        );
+        // PIT's tuner (ADR 0201): bank 2's pass; closed, the corner stays empty.
+        crate::bank2::ui_door(|d| d.pit(self));
 
         // Read base param values
         let def = self.page_def();

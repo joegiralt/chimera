@@ -2,19 +2,16 @@
 //! Part's last note sounds at, `C4 +12ct` over `261.6 Hz`, worked out from
 //! the note and the Sound (`calc`), never heard off the output. Lit while
 //! the Part sounds, dim between notes (the last note under the PITCH and
-//! FINE set now), `REF C4` before any. The working is bank 2's
-//! (`calc`, through `UiDoor::pit`); bank 1 keeps the state and paints the
-//! lines it is handed. Closed, the corner is empty.
+//! FINE set now), `REF C4` before any. Its working and its paint are bank
+//! 2's (`calc`, through `UiDoor::pit` and `pit_paint`); bank 1 keeps the
+//! state and the two door calls. Closed, the corner is empty.
 
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 use u8g2_fonts::FontRenderer;
 
 use crate::hw::MAX_PARTS;
-use crate::project::{PartId, PartSet};
-use crate::ui::draw;
 use crate::ui::fmt::FmtBuf;
-use crate::ui::theme::TextSize;
 
 pub mod calc;
 
@@ -67,7 +64,7 @@ impl Tuner {
     /// `sounding` says, whatever the audio publishes: for the goldens and
     /// tests.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn hear(&mut self, part: PartId, note: Option<u8>, sounding: bool) {
+    pub fn hear(&mut self, part: crate::project::PartId, note: Option<u8>, sounding: bool) {
         self.heard = Some(sounding);
         self.last[part.index()] = note;
     }
@@ -82,33 +79,11 @@ impl Tuner {
     }
 }
 
-/// A pass's inputs: the Parts, which is edited and which sound, SETTINGS'
-/// TUNING (cents), TEXT SIZE, and whether PIT is up.
-pub struct Ins<'a> {
-    pub parts: &'a crate::ui::renderer::Parts,
-    pub active: PartId,
-    pub live: PartSet,
-    pub tune: i8,
-    pub text: TextSize,
-    pub on: bool,
-}
-
-/// One frame's pass: the last notes taken, the corner worked out. Closed,
-/// it shows nothing.
-pub fn pass(t: &mut Tuner, i: &Ins<'_>) {
-    if crate::bank2::ui_door(|d| d.pit(t, i)).is_none() {
-        t.shown = Shown::NONE;
-    }
-}
-
-/// The corner, over the scope already drawn.
+/// The corner, over the scope already drawn; closed, nothing.
 pub fn paint<D>(d: &mut D, s: &Shown)
 where
     D: DrawTarget<Color = Rgb565>,
 {
-    let (x, y, w, h) = s.back;
-    draw::fill_rect(d, x, y, w, h, crate::ui::theme::BG);
-    for l in s.lines.iter().flatten() {
-        draw::text(d, l.font, l.text.as_str(), l.x, l.y, l.color);
-    }
+    let mut on = crate::ui::tape_strip::On(d);
+    crate::bank2::ui_door(|u| u.pit_paint(&mut on, s));
 }

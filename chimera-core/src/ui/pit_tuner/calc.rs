@@ -1,5 +1,8 @@
-//! PIT's tuner worked out (ADR 0201): bank 2's with `bank2` (`bank2.x`
-//! globs this module), reached through the UI's door (`UiDoor::pit`).
+//! PIT's tuner worked out and painted (ADR 0201): bank 2's with `bank2`
+//! (`bank2.x` globs this module, and the font raster's instances over
+//! `Runs`, whose names carry it), reached through the UI's door
+//! (`UiDoor::pit`, `pit_paint`). Its words are `WORDS`, a named static,
+//! and its numbers its own digits, so it adds no unnamed rodata to bank 1.
 //!
 //! The pitch is the voice's own sum, as `Slot::set_pitch` and each engine
 //! take it: the note after the scale's snap, PITCH and FINE, TUNING, and
@@ -13,12 +16,21 @@
 
 use core::fmt::Write;
 
-use super::{Ins, Line, Shown, Tuner};
+use embedded_graphics::Pixel;
+use embedded_graphics::draw_target::DrawTarget;
+use embedded_graphics::geometry::{OriginDimensions, Point, Size};
+use embedded_graphics::pixelcolor::Rgb565;
+use u8g2_fonts::types::{FontColor, VerticalPosition};
+
+use super::{Line, Shown};
 use crate::dsp::tape_engine::params::{TapeMachine, at_root};
 use crate::params::EngineType;
 use crate::preset::Sound;
+use crate::ui::UiState;
+use crate::ui::block_def::VizType;
 use crate::ui::fmt::FmtBuf;
-use crate::ui::saver::{cents, nearest, note_name};
+use crate::ui::saver::{nearest, note_name};
+use crate::ui::tape_strip::Paint;
 use crate::ui::theme::{self, Face, TextSize};
 
 /// The note the corner reads before the Part has played one: middle C.
@@ -27,6 +39,65 @@ pub const REF_NOTE: u8 = 60;
 pub const CORNER_W: i32 = 112;
 /// Below this |MOTION| SCRUB's head stands.
 const STILL_MOTION: f32 = 1e-3;
+
+/// Every word the corner writes, cut by `Word`.
+static WORDS: [u8; 22] = *b"REF  HzROOT ?STILLstct";
+
+#[derive(Clone, Copy)]
+enum Word {
+    Ref,
+    Space,
+    Hz,
+    Root,
+    Still,
+    St,
+    Ct,
+}
+
+fn word(b: &mut FmtBuf, w: Word) {
+    let (at, len) = match w {
+        Word::Ref => (0, 4),
+        Word::Space => (3, 1),
+        Word::Hz => (5, 2),
+        Word::Root => (7, 6),
+        Word::Still => (13, 5),
+        Word::St => (18, 2),
+        Word::Ct => (20, 2),
+    };
+    if let Some(s) = WORDS.get(at..at + len) {
+        // SAFETY: `WORDS` is ASCII, so every slice of it is UTF-8.
+        let _ = b.write_str(unsafe { core::str::from_utf8_unchecked(s) });
+    }
+}
+
+/// `v` in decimal, signed (`+0` for 0) where `plus`.
+fn int(b: &mut FmtBuf, v: i32, plus: bool) {
+    let mut d = [0u8; 11];
+    let mut n = v.unsigned_abs();
+    let mut i = d.len();
+    loop {
+        i -= 1;
+        d[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 || i == 1 {
+            break;
+        }
+    }
+    if v < 0 || plus {
+        i -= 1;
+        d[i] = if v < 0 { b'-' } else { b'+' };
+    }
+    if let Some(s) = d.get(i..) {
+        // SAFETY: digits and a sign, ASCII.
+        let _ = b.write_str(unsafe { core::str::from_utf8_unchecked(s) });
+    }
+}
+
+/// "+12ct", "-3ct", "+0ct".
+fn cents(b: &mut FmtBuf, c: i32) {
+    int(b, c, true);
+    word(b, Word::Ct);
+}
 
 /// Where a Part's pitch rests.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -87,28 +158,32 @@ pub fn hz(cents: f32) -> f32 {
 pub fn lines(p: Pitch, reference: bool) -> (FmtBuf, FmtBuf) {
     let (mut a, mut b) = (FmtBuf::new(), FmtBuf::new());
     if reference {
-        let _ = b.write_str("REF ");
+        word(&mut b, Word::Ref);
         note_name(&mut b, i32::from(REF_NOTE));
-        let _ = b.write_str(" ");
+        word(&mut b, Word::Space);
     }
     match p {
         Pitch::At(c) => {
             let (n, off) = nearest(libm::roundf(c) as i32);
             note_name(&mut a, n);
-            let _ = a.write_str(" ");
+            word(&mut a, Word::Space);
             cents(&mut a, off);
-            let tenths = libm::roundf(hz(c) * 10.0) as u32;
-            let _ = write!(b, "{}.{} Hz", tenths / 10, tenths % 10);
+            let tenths = libm::roundf(hz(c) * 10.0) as i32;
+            int(&mut b, tenths / 10, false);
+            let _ = b.write_char('.');
+            int(&mut b, tenths % 10, false);
+            word(&mut b, Word::Space);
+            word(&mut b, Word::Hz);
         }
         Pitch::Shift(c) => {
-            let _ = a.write_str("ROOT ?");
+            word(&mut a, Word::Root);
             let (st, off) = nearest(libm::roundf(c) as i32);
-            let _ = write!(b, "{st:+}st ");
+            int(&mut b, st, true);
+            word(&mut b, Word::St);
+            word(&mut b, Word::Space);
             cents(&mut b, off);
         }
-        Pitch::Still => {
-            let _ = a.write_str("STILL");
-        }
+        Pitch::Still => word(&mut a, Word::Still),
     }
     (a, b)
 }
@@ -151,20 +226,29 @@ pub fn shown(a: FmtBuf, b: FmtBuf, size: TextSize, lit: bool) -> Shown {
         })
     };
     let lines = [line(a, fa, ya, ca), line(b, fb, yb, cb)];
-    let left = lines.iter().flatten().map(|l| l.x).min().unwrap_or(right);
+    let left = match &lines {
+        [Some(a), Some(b)] => a.x.min(b.x),
+        [Some(l), None] | [None, Some(l)] => l.x,
+        [None, None] => right,
+    };
     let top = theme::VIZ_BAND_TOP;
     let back = (left - 4, top, right - (left - 4), yb + 4 - top);
-    let key = crate::ui::region::settings_key(&[
-        lines[0].as_ref().map_or(&[][..], |l| l.text.as_str().as_bytes()),
-        lines[1].as_ref().map_or(&[][..], |l| l.text.as_str().as_bytes()),
-        &[u8::from(lit), size as u8],
-    ]);
+    let text = |i: usize| {
+        lines
+            .get(i)
+            .and_then(Option::as_ref)
+            .map_or(&[][..], |l| l.text.as_str().as_bytes())
+    };
+    let key =
+        crate::ui::region::settings_key(&[text(0), text(1), &[u8::from(lit), size as u8]]);
     Shown { back, lines, key }
 }
 
-/// The door's entry: `played`'s last note taken for its Part, then, on
-/// PIT, the edited Part's corner.
-pub fn pass_in(t: &mut Tuner, i: &Ins<'_>) {
+/// The door's entry, once a frame: `played`'s last note taken for its
+/// Part, then, on PIT, the edited Part's corner.
+pub fn pass_in(ui: &mut UiState) {
+    let on = matches!(ui.page_def().viz, VizType::Tuner);
+    let t = &mut ui.tuner;
     let heard = t.heard();
     if heard.is_none()
         && let (Some(n), Some(o)) = (crate::played::last_in(), crate::played::last_out())
@@ -172,18 +256,74 @@ pub fn pass_in(t: &mut Tuner, i: &Ins<'_>) {
     {
         *last = Some(o.note);
     }
-    if !i.on {
+    let at = ui.active_part;
+    let part = ui.project.perf().parts().get(at.index());
+    let (Some(part), true) = (part, on) else {
         t.shown = Shown::NONE;
         return;
-    }
-    let at = i.active.index();
-    let (note, reference) = t.last[at].map_or((REF_NOTE, true), |n| (n, false));
-    t.shown = match pitch(note, &i.parts[at].sound, i.tune) {
+    };
+    let last = t.last.get(at.index()).copied().flatten();
+    let (note, reference) = last.map_or((REF_NOTE, true), |n| (n, false));
+    t.shown = match pitch(note, &part.sound, ui.midi.tune) {
         Some(p) => {
             let (a, b) = lines(p, reference);
-            let sounds = heard.unwrap_or_else(|| i.live.contains(i.active));
-            shown(a, b, i.text, !reference && sounds)
+            let sounds = heard.unwrap_or_else(|| ui.live.contains(at));
+            shown(a, b, ui.theme.text, !reference && sounds)
         }
         None => Shown::NONE,
     };
+}
+
+/// A display behind `Paint` as the fonts' target: each row's run of one
+/// colour one rect.
+struct Runs<'a>(&'a mut dyn Paint);
+
+impl OriginDimensions for Runs<'_> {
+    fn size(&self) -> Size {
+        Size::new(theme::SCREEN_W as u32, theme::SCREEN_H as u32)
+    }
+}
+
+impl DrawTarget for Runs<'_> {
+    type Color = Rgb565;
+    type Error = core::convert::Infallible;
+
+    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+    where
+        I: IntoIterator<Item = Pixel<Rgb565>>,
+    {
+        let mut run: Option<(Point, i32, Rgb565)> = None;
+        for Pixel(p, c) in pixels {
+            match &mut run {
+                Some((at, w, rc)) if at.y == p.y && at.x + *w == p.x && *rc == c => *w += 1,
+                _ => {
+                    if let Some((at, w, rc)) = run {
+                        self.0.rect(at.x, at.y, w, 1, rc);
+                    }
+                    run = Some((p, 1, c));
+                }
+            }
+        }
+        if let Some((at, w, rc)) = run {
+            self.0.rect(at.x, at.y, w, 1, rc);
+        }
+        Ok(())
+    }
+}
+
+/// The door's paint: the backing box, then the lines.
+pub fn paint_in(on: &mut dyn Paint, s: &Shown) {
+    let (x, y, w, h) = s.back;
+    on.rect(x, y, w, h, theme::BG);
+    let mut runs = Runs(on);
+    for l in &s.lines {
+        let Some(l) = l else { continue };
+        let _ = l.font.render(
+            l.text.as_str(),
+            Point::new(l.x, l.y),
+            VerticalPosition::Baseline,
+            FontColor::Transparent(l.color),
+            &mut runs,
+        );
+    }
 }
