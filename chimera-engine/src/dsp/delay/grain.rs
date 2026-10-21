@@ -75,22 +75,6 @@ impl GrainSource for Line<'_> {
         // SAFETY: an `At<Line>` is below `FRAMES`, the line's length.
         f32::from(unsafe { *self.0.get_unchecked(i.get()) })
     }
-
-    #[inline(always)]
-    fn taps(&self, i: TapAt<Self>) -> [f32; 4] {
-        let i = i.get();
-        // SAFETY: a `TapAt<Line>` has `1 ≤ i` and `i + 2 < FRAMES`, the
-        // line's length, so `i − 1 ..= i + 2` lie inside it.
-        unsafe {
-            [
-                *self.0.get_unchecked(i - 1),
-                *self.0.get_unchecked(i),
-                *self.0.get_unchecked(i + 1),
-                *self.0.get_unchecked(i + 2),
-            ]
-        }
-        .map(f32::from)
-    }
 }
 
 /// One block's grain settings, from the knobs.
