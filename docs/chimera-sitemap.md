@@ -79,6 +79,8 @@ DECK: MODEL · FINGER · SPEED · LENGTH · XFADE · DRAG. The SCRUB page: TAPE 
 | OSC1, OSC2 | CRSE · FINE · SHAPE, D-F empty |
 | NOISE | KIND (WHITE, PINK, RED, DIGITAL) · LEVEL, C-F empty. One noise source a voice, mixed beside SUB after MODE, before the filter. DIGITAL is a sample-and-hold that steps 16 times each OSC 1 cycle, so it brightens up the keyboard |
 
+TAPE STRETCH (ADR 0204) has two TYPEs, CLASSIC and GRAIN: DECK holds MODEL · TYPE · SPEED (0 freezes) · LENGTH (0.25–8 s, GRAIN) · D-TIME (CLASSIC) · POSITION (CLASSIC); its model page STRCH holds TAPE · AGE · WOW · GRAIN (30–250 ms) · SPRAY · END (HOLD or STOP), the last three GRAIN's. Each TYPE's cells dim on the other.
+
 ### FLT and AMP
 
 | Page | Cells |

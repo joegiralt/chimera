@@ -331,6 +331,10 @@ const OWN_IN_SOUND: &[&str] = &[
     "Out CHORUS",
     "Out DELAY",
     "Out REVERB",
+    // STRETCH's grains read these as each starts (ADR 0204).
+    "TapeEngine LENGTH",
+    "TapeEngine GRAIN",
+    "TapeEngine SPRAY",
 ];
 
 /// The bus, mixer and master: each eases its own settings (ADR 0061).

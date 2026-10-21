@@ -246,33 +246,41 @@ fn cases() -> Vec<(String, TapeGauge)> {
                 fade: q5(1.0),
             }),
         ),
-        // STRETCH: frozen, natural, squeezed, backward.
+        // STRETCH: CLASSIC frozen and natural, GRAIN squeezed and backward.
         (
             "stretch_frozen",
             Machine::Stretch(Bellows {
                 speed: bi6(0.0),
-                d_time: q5(0.0),
+                fold: q5(0.0),
+                at: q5(0.0),
+                grain: false,
             }),
         ),
         (
             "stretch_natural",
             Machine::Stretch(Bellows {
                 speed: bi6(0.5),
-                d_time: q5(0.5),
+                fold: q5(0.5),
+                at: q5(0.3),
+                grain: false,
             }),
         ),
         (
             "stretch_squeezed",
             Machine::Stretch(Bellows {
                 speed: bi6(1.0),
-                d_time: q5(1.0),
+                fold: q5(1.0),
+                at: q5(0.0),
+                grain: true,
             }),
         ),
         (
             "stretch_backward",
             Machine::Stretch(Bellows {
                 speed: bi6(-1.0),
-                d_time: q5(0.3),
+                fold: q5(0.3),
+                at: q5(0.0),
+                grain: true,
             }),
         ),
         // TRANSWAVE: first frame unscanned, mid-table scanned fast.
@@ -346,10 +354,10 @@ const GOLDENS: &[(&str, u64)] = &[
     ("ping_narrow_steep", 0x6631576472a91c5d),
     ("tron_short_fast", 0xe4b7d0c60805eab3),
     ("tron_long_slow", 0x829ed9e2a1494395),
-    ("stretch_frozen", 0x2cd7b98c0971ce88),
-    ("stretch_natural", 0xd28bb4170d4e09f1),
-    ("stretch_squeezed", 0x84b7d78ba99fe847),
-    ("stretch_backward", 0xb8d3f9eaf28f1ea5),
+    ("stretch_frozen", 0x290c61c145a2d408),
+    ("stretch_natural", 0xd7fbf6a843d9c0b1),
+    ("stretch_squeezed", 0x92840185dae1d62f),
+    ("stretch_backward", 0xed3022d8f813ab4d),
     ("wave_first", 0x58ef7d42209aa44c),
     ("wave_scan_fast", 0xe07365d25ef85b35),
     ("scrub_standstill", 0x6324ec910bd1561d),
@@ -419,6 +427,8 @@ fn a_step_is_about_a_pixel() {
                 2.0 / 3.0,
                 0.0,
                 0.0,
+                0.5,
+                0.0,
             ],
             Pose::Live,
         ))
@@ -449,6 +459,8 @@ fn model_picks_the_glyph() {
                 d as u8 as f32 / 3.0,
                 t as u8 as f32,
                 0.0,
+                0.5,
+                0.0,
             ],
             Pose::Live,
         ));
@@ -457,13 +469,13 @@ fn model_picks_the_glyph() {
     // Still: the knobs don't move it.
     let a = TapeGauge::of(&GlyphInputs::from_set(
         [
-            0.0, 0.0, 1.0, 0.1, 0.9, 0.2, 0.3, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 1.0, 0.1, 0.9, 0.2, 0.3, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.5, 0.0,
         ],
         Pose::Still,
     ));
     let b = TapeGauge::of(&GlyphInputs::from_set(
         [
-            0.0, 0.3, 0.4, 0.8, 0.1, 0.9, 0.7, 0.0, 0.0, 1.0, 0.0, 1.0, 0.9,
+            0.0, 0.3, 0.4, 0.8, 0.1, 0.9, 0.7, 0.0, 0.0, 1.0, 0.0, 1.0, 0.9, 0.5, 0.0,
         ],
         Pose::Still,
     ));
@@ -684,7 +696,7 @@ fn xfade_dashes_the_loop_end_where_it_plays() {
     let ping = |xf: f32| {
         TapeGauge::of(&GlyphInputs::from_set(
             [
-                0.0, 0.0, 1.0, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, xf, 1.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.3, 0.6, 0.5, 0.3, 0.0, 0.0, xf, 1.0, 0.0, 0.0, 0.5, 0.0,
             ],
             Pose::Live,
         ))
@@ -706,7 +718,7 @@ fn ignored_params_leave_the_glyph() {
     for w in Way::ALL {
         let (m, d, t) = w.parts();
         let mut set = [
-            0.0, 0.1, 0.9, 0.3, 0.6, 0.5, 0.3, 0.2, 0.1, 0.2, 0.0, 0.0, 0.0,
+            0.0, 0.1, 0.9, 0.3, 0.6, 0.5, 0.3, 0.2, 0.1, 0.2, 0.0, 0.0, 0.0, 0.4, 0.0,
         ];
         (set[0], set[10], set[11]) = (m.index() as f32 / 3.0, d as u8 as f32 / 3.0, t as u8 as f32);
         let base = TapeGauge::of(&GlyphInputs::from_set(set, Pose::Live));
@@ -732,8 +744,8 @@ fn no_tape_page_cell_is_dimmed() {
     // Each machine's pages list only what it reads (ADR 0178), so no
     // TAPE cell reads dimmed and none needs ADR 0173's dimmed glyph, but
     // what can't be heard: WOW at TAPE 0, LOOP's and PING's FADE under an
-    // AMP route (tape_musical_ui_test). Here TAPE runs and no route
-    // reaches VCA.
+    // AMP route (tape_musical_ui_test), and STRETCH's other TYPE's cells.
+    // Here TAPE runs and no route reaches VCA.
     use chimera_core::ui::block_registry::{TAPE_DECK, TAPE_MODEL};
     use chimera_core::ui::view::{self, SlotCtx};
     for m in Way::ALL {
@@ -751,39 +763,25 @@ fn no_tape_page_cell_is_dimmed() {
                 if matches!(why, Some(view::XFADE_LOOP_ONLY | view::RETRIG_ONCE_ONLY)) {
                     continue;
                 }
-                assert!(!view::is_dimmed(&v, &s, &ctx), "{m:?} {} {i}", def.short);
+                // STRETCH dims the other TYPE's cells (ADR 0204), and only
+                // those.
+                let other = v.addr().is_some_and(|a| {
+                    chimera_core::dsp::tape_engine::TapeEngine::stretch_only(
+                        s.params.tape.kind,
+                        a.param,
+                    )
+                    .is_some()
+                        && m == Way::Stretch
+                });
+                assert_eq!(
+                    view::is_dimmed(&v, &s, &ctx),
+                    other,
+                    "{m:?} {} {i}",
+                    def.short
+                );
             }
         }
     }
-}
-
-#[test]
-fn unpitched_type_shows_no_glyph() {
-    // What is left dimmed: STRETCH's TYPE over an unpitched source reads
-    // POLY (UNPITCHED), a fixed text, not a param the machine ignores. As
-    // every dimmed cell but those (ADR 0173), it shows no gauge: its long
-    // word has the band, and a turn moves nothing.
-    use chimera_hal::ButtonId;
-    let mut ui = stack_ui();
-    tape_deck(&mut ui, Way::Stretch);
-    feed(&mut ui, Input::press(ButtonId::Edit));
-    let shot = |ui: &mut chimera_core::ui::UiState| {
-        settle(ui);
-        let mut fb = Fb::new();
-        ui.render_with_scope(&mut fb, &PerfStats::zero(), &scope_fixture());
-        fb
-    };
-    feed(&mut ui, Input::turn(EncoderId::B, 1));
-    feed(&mut ui, Input::turn(EncoderId::B, -1));
-    assert!(glyph_box_lit(&shot(&mut ui)) > 40, "a glyph on AGE");
-    feed(&mut ui, Input::turn(EncoderId::E, 1));
-    let want = shot(&mut ui);
-    assert!(
-        glyph_box_lit(&want) < 40,
-        "no glyph beside TYPE (UNPITCHED)"
-    );
-    feed(&mut ui, Input::turn(EncoderId::E, -1));
-    assert!(shot(&mut ui).px == want.px, "a turn moves nothing");
 }
 
 #[test]
@@ -793,7 +791,9 @@ fn stretch_chevrons_count_the_speed_not_the_knob() {
     let chevrons = |m: f32| {
         let b = Box64::of(&live(Machine::Stretch(Bellows {
             speed: bi6(m),
-            d_time: q5(0.5),
+            fold: q5(0.5),
+            at: q5(0.0),
+            grain: true,
         })));
         let acc = ink(tape_glyph::Ink::Accent);
         (M + 42..M + H)

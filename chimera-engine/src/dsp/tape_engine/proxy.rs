@@ -16,7 +16,7 @@ use crate::project::SourceId;
 use crate::source_table::GateView;
 use crate::stream::port::StreamPort;
 
-use super::{Heads, TapeDeck, TapeEngineParams, Way, model_cost};
+use super::{Heads, TapeDeck, TapeEngineParams};
 
 /// What bank 1 may call of the deck: one entry a method that does work,
 /// all of them bank 2's (`TapeDeck::DOOR`).
@@ -46,12 +46,14 @@ pub struct TapeDoor {
         Option<&mut StreamPort<'_, '_>>,
     ),
     cost: fn(&TapeEngineParams, &ModState) -> Cost,
+    model_cost: fn(&TapeEngineParams) -> Cost,
     playing_cost: fn(&TapeDeck) -> Option<Cost>,
     set_pitch: fn(&mut TapeDeck, f32),
     glide_to: fn(&mut TapeDeck, u8, (u32, f32)),
     release_by: fn(&mut TapeDeck, bool),
     hold: fn(&mut TapeDeck),
     heads: fn(&TapeDeck) -> Heads,
+    stretch_only: fn(super::StretchType, crate::block::ParamId) -> Option<&'static str>,
 }
 
 impl TapeDeck {
@@ -68,12 +70,14 @@ impl TapeDeck {
         refuses: Self::refuses,
         play: Self::play,
         cost: Self::cost,
+        model_cost: Self::model_cost,
         playing_cost: Self::playing_cost,
         set_pitch: Self::set_pitch,
         glide_to: Self::glide_to,
         release_by: Self::release_by,
         hold: Self::hold,
         heads: Self::heads,
+        stretch_only: Self::stretch_only,
     };
 
     fn door_init(slot: &mut MaybeUninit<TapeDeck>) {
@@ -213,12 +217,10 @@ impl TapeEngine {
             .unwrap_or(Cost(0))
     }
 
-    pub fn model_cost(m: Way) -> Cost {
-        if DOOR_CELL.is_open() {
-            model_cost(m)
-        } else {
-            Cost(0)
-        }
+    pub fn model_cost(p: &TapeEngineParams) -> Cost {
+        DOOR_CELL
+            .with(|d| (d.tape.model_cost)(p))
+            .unwrap_or(Cost(0))
     }
 
     pub fn playing_cost(&self) -> Option<Cost> {
@@ -267,5 +269,10 @@ impl TapeEngine {
 
     pub fn heads(&self) -> Heads {
         self.read(|t, k| (t.heads)(k)).unwrap_or(Heads::NONE)
+    }
+
+    /// Closed, none.
+    pub fn stretch_only(k: super::StretchType, id: crate::block::ParamId) -> Option<&'static str> {
+        DOOR_CELL.with(|d| (d.tape.stretch_only)(k, id)).flatten()
     }
 }

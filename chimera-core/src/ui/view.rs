@@ -823,12 +823,6 @@ fn machine_view(at: MachineSlot, ctx: &SlotCtx) -> View {
     let Some(spec) = addr.spec() else {
         return View::Empty;
     };
-    if id == T::TYPE && ctx.unpitched {
-        return View::Text {
-            label,
-            text: "POLY (UNPITCHED)",
-        };
-    }
     param(addr, label, fmt_of(addr, spec.fmt, ctx))
 }
 

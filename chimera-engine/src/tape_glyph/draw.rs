@@ -47,6 +47,8 @@ pub fn inputs(i: &GlyphInputs) -> TapeGauge {
         direction,
         drift,
         tron,
+        length,
+        kind: stretch_type,
         pose,
     } = i;
     if pose == Pose::Still {
@@ -67,10 +69,15 @@ pub fn inputs(i: &GlyphInputs) -> TapeGauge {
             }),
             tron,
         }),
-        Kind::Stretch => Machine::Stretch(Bellows {
-            speed: q6(motion),
-            d_time: q5(size),
-        }),
+        Kind::Stretch => {
+            let grain = stretch_type >= 1.5;
+            Machine::Stretch(Bellows {
+                speed: q6(motion),
+                fold: q5(if grain { length } else { size }),
+                at: q5(if grain { 0.0 } else { pos }),
+                grain,
+            })
+        }
         Kind::Wave => Machine::Wave(Film {
             frame: q6(pos),
             range: q6(size),
@@ -505,15 +512,22 @@ fn blind(p: &mut Pix, b: Blind) {
 
 /// STRETCH: an accordion under a note. SPEED (−1 to +2 times) opens the
 /// bellows: wide with pause bars at 0, natural at 1×, squeezed at 2×, the
-/// chevrons back below 0. D-TIME folds them: short splices, fine folds.
-/// The note never moves (the pitch).
+/// chevrons back below 0. GRAIN: LENGTH folds them (a long stretch, many
+/// folds) over a row of grains; CLASSIC: D-TIME folds them (short
+/// splices, fine folds) and a tick marks POSITION. The note never moves
+/// (the pitch).
 #[inline(never)]
 fn accordion(p: &mut Pix, b: Bellows) {
     // `stretch::time_speed`.
     let m = b.speed.bi();
     let sp = crate::dsp::tape_engine::stretch::time_speed(m);
     let w = r(56.0 - 19.0 * libm::fabsf(sp));
-    let n = r(3.0 + 9.0 * (1.0 - b.d_time.unit())).max(1);
+    let n = if b.grain {
+        r(3.0 + 9.0 * b.fold.unit())
+    } else {
+        r(3.0 + 9.0 * (1.0 - b.fold.unit()))
+    }
+    .max(1);
     let (x0, x1, top, bot) = (32 - (w >> 1), 32 + (w >> 1), 20, 40);
     p.rect(x0, top + 2, x1 - x0, bot - top - 4, SOFT);
     let xs = |i: i32| x0 + r((x1 - x0) as f32 * i as f32 / n as f32);
@@ -542,6 +556,17 @@ fn accordion(p: &mut Pix, b: Bellows) {
         if (i - nx - 1).abs() > 7 {
             p.rect(i, ny, 2, 1, FAINT);
         }
+    }
+    if b.grain {
+        // GRAIN: four grains overlapping in a row below.
+        for k in 0..4 {
+            let gx = 18 + 8 * k;
+            p.oval(gx, 52, 4, 1, MID);
+        }
+    } else {
+        // CLASSIC: POSITION, where time starts, ticked over the bellows.
+        let tx = x0 + r((x1 - x0) as f32 * b.at.unit());
+        p.rect(tx, top - 5, 1, 4, ACC);
     }
     // Time's way under it: pause bars at a standstill, else up to four
     // chevrons.

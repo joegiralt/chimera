@@ -330,7 +330,7 @@ trim = "-0.5"
 name = "STAB STRETCH"
 source = "EPIANO STAB"
 model = "STRETCH"
-trim = "+2.0"
+trim = "+0.5"
 
 [[sound]]
 name = "TX BASS HIT"
@@ -453,7 +453,7 @@ trim = "-6.0"
 name = "BOWED STRETCH"
 source = "BOWED CHORD"
 model = "STRETCH"
-trim = "-1.0"
+trim = "-2.5"
 
 [[sound]]
 name = "METAL HIT"
@@ -540,7 +540,7 @@ trim = "+1.0"
 name = "VOICE STRETCH"
 source = "VOICE AH"
 model = "STRETCH"
-trim = "+1.0"
+trim = "-1.0"
 
 [[sound]]
 name = "WAVE MORPH"

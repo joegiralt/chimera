@@ -65,6 +65,9 @@ pub(crate) fn tape_note_in(addr: ParamAddr, sound: &Sound) -> Option<&'static st
     let t = &sound.params.tape;
     match addr.param {
         T::WOW if !tape_engine::tape_runs(t.tape, tape_routed(sound)) => Some(WOW_AT_REST),
+        id if t.machine == TapeMachine::Stretch => {
+            tape_engine::TapeEngine::stretch_only(t.kind, id)
+        }
         T::DRAG
             if matches!(t.way(), Way::Loop | Way::Ping)
                 && !t.tron_on()

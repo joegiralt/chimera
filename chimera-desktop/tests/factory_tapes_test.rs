@@ -354,7 +354,9 @@ fn factory_sounds_save_as_loaded() {
         // ADR 0205: SAW SCRUB and RAIN SCRUB take SCRUB's new defaults
         // (LENGTH 70 ms, KEY POSITION) and their re-trims. ADR 0203: MODE
         // ONE's Sounds save FORWARD (3) and LENGTH 1, TRON BOWED WALK with
-        // TRON on; each renders as before (`tape_legacy_test`).
+        // TRON on; each renders as before (`tape_legacy_test`). ADR 0204: the
+        // STRETCH Sounds turn to GRAIN, with ONE's ENV 1, re-trimmed.
+        // Re-pinned on the integration's merged tree.
         assert_eq!(all.finish(), 0x8DC4_E96D, "{} Sounds", r.sounds.len());
     } else {
         let absent = r.sources.iter().zip(built).filter(|(_, b)| b.is_none());

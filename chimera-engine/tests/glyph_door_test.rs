@@ -12,7 +12,7 @@ use chimera_engine::tape_glyph::{Canvas, GlyphInputs, Kind, Pose, TapeGauge, dra
 fn glyph_inputs_and_paint_open_and_closed() {
     let set = GlyphInputs::from_set(
         [
-            0.0, 0.1, 0.9, 0.3, 0.6, 0.4, 0.2, 0.7, 0.8, 0.5, 0.0, 0.0, 0.0,
+            0.0, 0.1, 0.9, 0.3, 0.6, 0.4, 0.2, 0.7, 0.8, 0.5, 0.0, 0.0, 0.0, 0.5, 0.0,
         ],
         Pose::Live,
     );

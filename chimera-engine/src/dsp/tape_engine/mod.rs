@@ -17,9 +17,8 @@
 //! (Morphagene manual, Slide and Vari-Speed) loops behind a finger that
 //! follows POSITION through DRAG; MOTION is its vari-speed. TRANSWAVE
 //! (Ensoniq VFX/SD-1 transwaves; PPG Wave and Waldorf Microwave mips) scans
-//! a table of single-cycle frames (`wave`). STRETCH (Akai S950 Operator's
-//! Manual p. 32, TIMESTRETCH) splices two grains at a time pointer
-//! (`stretch`).
+//! a table of single-cycle frames (`wave`). STRETCH plays the source over
+//! LENGTH seconds at the key's pitch, in grains (`stretch`, ADR 0204).
 //!
 //! The engine itself is the `tape` feature's (ADR 0132): a build without
 //! it links `off`'s silent stand-in. With `bank2` (the firmware's) the
@@ -90,7 +89,6 @@ use oneshot::slice_bounds;
 use read::{Descriptor, Pos, SourceView};
 #[cfg(feature = "tape")]
 use span::{Reads, Stop, StreamRow};
-use stretch::Stretch;
 use warble::Warble;
 use wave::Wave;
 
@@ -98,7 +96,7 @@ pub use heads::loop_len;
 pub use oneshot::SliceCode;
 pub use params::{
     Choice, DIRECTION_NAMES, Direction, Drift, FADE_HOLD, KeyMode, MACHINE_NAMES, MODEL_NAMES,
-    MachineIndex, NeedsRam, RetiredModel, Retrig, Seeks, StretchType, TAPE_ENGINE_SPECS,
+    MachineIndex, NeedsRam, RetiredModel, Retrig, STRETCH_DEFAULTS, Seeks, StretchType, TAPE_ENGINE_SPECS,
     TapeEngineParams, TapeMachine, TapeModel, Tron, Way, Wow, at_root, backward, cuts, drag_s,
     fade_default, jogs, needs_ram, reads,
 };
@@ -121,8 +119,12 @@ pub const COST_WAVE: Cost = Cost(400);
 /// TRANSWAVE's level change over `COST_WAVE`: four heads, 432.9 → 743,
 /// billed 770 in all. TAPE's `glide_cost` term.
 pub const COST_WAVE_LEVEL: Cost = Cost(370);
-/// STRETCH either way, a short source's lifted wraps, 442.5.
+/// STRETCH CLASSIC either way, a short source's lifted wraps, 442.5.
 pub const COST_STRETCH: Cost = Cost(450);
+/// STRETCH GRAIN (ADR 0204): four grains of the core's run loop, 84
+/// instructions a sample each (`tools/loop_count.py`, 135 cycles), and the
+/// block's windows, level and power reads, 25: 565.
+pub const COST_STRETCH_GRAIN: Cost = Cost(570);
 /// TAPE when it runs (`tape_runs`): the transport, 1.2 → 1.9.
 pub const COST_TAPE_RUNS: Cost = Cost(10);
 /// AGE when it runs (`age::age_runs`): the wear's loop and block, 15.9 →
@@ -201,6 +203,15 @@ pub const fn model_cost(m: Way) -> Cost {
         Way::Scrub => COST_SCRUB,
         Way::Wave => COST_WAVE,
         Way::Stretch => COST_STRETCH,
+    }
+}
+
+/// STRETCH's worst by its TYPE (ADR 0204): CLASSIC's heads, or GRAIN's
+/// four grains.
+pub const fn stretch_cost(k: StretchType) -> Cost {
+    match k {
+        StretchType::Mono | StretchType::Poly => COST_STRETCH,
+        StretchType::Grain => COST_STRETCH_GRAIN,
     }
 }
 
@@ -499,15 +510,18 @@ enum Round {
     Reversed,
 }
 
-/// The machine a note plays, and what only it keeps.
+/// The machine a note plays, and what only it keeps. STRETCH's grains are
+/// the largest; the deck holds one state in place, no heap, its size held
+/// under 1 KB (`proxy`).
 #[cfg(feature = "tape")]
 #[derive(Clone, Copy)]
+#[allow(clippy::large_enum_variant)]
 enum MachineState {
     One(Once),
     Loop,
     Ping(PingPass),
     Scrub(Scrub),
-    Stretch(Stretch),
+    Stretch(stretch::Note),
     Wave(Wave),
 }
 
@@ -873,7 +887,7 @@ impl TapeDeck {
                 aim_pull: 1.0,
                 key: None,
             }),
-            Way::Stretch => MachineState::Stretch(Stretch::IDLE),
+            Way::Stretch => MachineState::Stretch(stretch::IDLE),
             Way::Wave => MachineState::Wave(Wave::IDLE),
         }
     }
@@ -1477,7 +1491,7 @@ impl TapeDeck {
     /// change is `EngineSlot`'s, which sees the pitch.
     pub fn cost(p: &TapeEngineParams, mods: &ModState) -> Cost {
         let routed = |q| mods.moves_addr(ParamAddr::new(BlockRef::TapeEngine, q));
-        let mut c = Self::model_cost(p.way());
+        let mut c = Self::model_cost(p);
         if tape_runs(p.tape, routed(TapeEngineParams::TAPE)) {
             c = c + COST_TAPE_RUNS;
         }
@@ -1487,9 +1501,27 @@ impl TapeDeck {
         c
     }
 
-    /// Each model's measured worst, either way round (spec § 5).
-    pub const fn model_cost(m: Way) -> Cost {
-        model_cost(m)
+    /// A STRETCH cell its TYPE `k` doesn't play, and the band's words why:
+    /// GRAIN's under CLASSIC, CLASSIC's under GRAIN (ADR 0204). Bank 2's:
+    /// with the door closed nothing dims.
+    pub fn stretch_only(k: StretchType, id: crate::block::ParamId) -> Option<&'static str> {
+        type P = TapeEngineParams;
+        let grain = matches!(id, P::LENGTH | P::GRAIN | P::SPRAY | P::FINISH);
+        let classic = matches!(id, P::SIZE | P::POSITION);
+        match k {
+            StretchType::Grain if classic => Some("CLASSIC TYPE ONLY"),
+            StretchType::Mono | StretchType::Poly if grain => Some("GRAIN TYPE ONLY"),
+            _ => None,
+        }
+    }
+
+    /// `p`'s model's measured worst, either way round (spec § 5), and
+    /// STRETCH's by its TYPE.
+    pub const fn model_cost(p: &TapeEngineParams) -> Cost {
+        match p.way() {
+            Way::Stretch => stretch_cost(p.kind),
+            w => model_cost(w),
+        }
     }
 
     /// What the sounding note costs: its note-on's model, and the
@@ -1498,8 +1530,12 @@ impl TapeDeck {
         self.is_active().then(|| {
             if self.fed() {
                 streamed_cost(self.tape_machine())
+            } else if let MachineState::Stretch(n) = &self.machine
+                && n.grains()
+            {
+                COST_STRETCH_GRAIN
             } else {
-                Self::model_cost(self.tape_machine())
+                model_cost(self.tape_machine())
             }
         })
     }
@@ -1618,7 +1654,15 @@ impl TapeDeck {
         }
         if self.model() == TapeModel::Stretch {
             let i = inc(rate, note, self.pitch, self.root, sample_rate).get();
-            self.machine = MachineState::Stretch(Stretch::on(p, v, i, &self.mac, sample_rate));
+            // GRAIN's voice draw; CLASSIC takes none, so its notes are as
+            // they always were.
+            let seed = if p.kind == StretchType::Grain {
+                xorshift32(&mut self.rng)
+            } else {
+                0
+            };
+            self.machine =
+                MachineState::Stretch(stretch::Note::on(p, v, i, (&self.mac, seed), sample_rate));
             return;
         }
         let rev = self.reversed(p.end);
@@ -1980,14 +2024,7 @@ impl TapeDeck {
             };
         }
         if let MachineState::Stretch(st) = &self.machine {
-            let (head, other, gain) = st.probe();
-            return Probe {
-                head,
-                other: Some(other),
-                gain,
-                level: 0,
-                from: None,
-            };
+            return st.probe();
         }
         let first = self.frame(self.heads[0].pos);
         match self.ghost() {
@@ -2009,8 +2046,8 @@ impl TapeDeck {
         }
     }
 
-    /// Each head's way: the old grain's and the new one's (STRETCH), the
-    /// head's and a fade's second head's (the rest).
+    /// Each head's way: the grains' (STRETCH), the head's and a fade's
+    /// second head's (the rest).
     pub fn dirs(&self) -> [Dir; 2] {
         if let MachineState::Stretch(st) = &self.machine {
             return st.dirs();
@@ -2023,7 +2060,7 @@ impl TapeDeck {
     #[cfg(any(test, feature = "test-support"))]
     pub fn events(&self) -> u32 {
         match &self.machine {
-            MachineState::Stretch(st) => self.events + st.events,
+            MachineState::Stretch(st) => self.events + st.events(),
             _ => self.events,
         }
     }
@@ -2033,8 +2070,8 @@ impl TapeDeck {
     #[cfg(any(test, feature = "test-support"))]
     pub fn wraps(&self) -> [u32; 2] {
         match &self.machine {
-            MachineState::Stretch(st) => st.wraps,
-            _ => Stretch::IDLE.wraps,
+            MachineState::Stretch(st) => st.wraps(),
+            _ => [0; 2],
         }
     }
 
@@ -2043,7 +2080,7 @@ impl TapeDeck {
     pub fn grain(&self) -> stretch::GrainClock {
         match &self.machine {
             MachineState::Stretch(st) => st.clock(),
-            _ => Stretch::IDLE.clock(),
+            _ => stretch::classic::Stretch::IDLE.clock(),
         }
     }
 
@@ -2145,16 +2182,12 @@ impl TapeDeck {
             self.render_once(out, reads, sample_rate);
         } else if self.model() == TapeModel::Stretch {
             let target = self.target_inc(v.desc().rate(), Cents::ZERO, sample_rate);
+            let ramp = self.inc.step(target);
             let m = self.mac;
-            if let MachineState::Stretch(st) = &mut self.machine {
-                st.render(
-                    out,
-                    v,
-                    self.inc.step(target),
-                    (m.position, m.motion, m.size),
-                    p.end,
-                    sample_rate,
-                );
+            if let MachineState::Stretch(st) = &mut self.machine
+                && !st.render(out, v, ramp, &m, p, sample_rate)
+            {
+                self.end();
             }
         } else {
             self.render_heads(out, reads, (p, first), sample_rate);
