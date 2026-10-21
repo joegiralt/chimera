@@ -1,0 +1,306 @@
+//! numpy's `default_rng(seed)` (SeedSequence, PCG64, the ziggurat normal),
+//! copied from `chimera-utils/src/stim.rs`: a seed draws what the Python
+//! harness drew.
+//!
+//! Third-party code, ported:
+//!
+//! - `seed_state` is NumPy's `SeedSequence` (numpy/random/bit_generator.pyx);
+//!   `Rng::normal`, `Rng::uniform` and `Rng::interval` are NumPy's
+//!   `random_standard_normal`, `next_double` and `random_interval`
+//!   (numpy/random/src/distributions/distributions.c), and `Rng::shuffle` its
+//!   `Generator.shuffle`. Under NumPy's BSD-3-Clause license:
+//!
+//!   Copyright (c) 2005-2024, NumPy Developers.
+//!   Copyright (c) 2019 Kevin Sheppard (numpy.random, from randomgen).
+//!   All rights reserved.
+//!
+//!   Redistribution and use in source and binary forms, with or without
+//!   modification, are permitted provided that the following conditions are
+//!   met:
+//!
+//!   * Redistributions of source code must retain the above copyright
+//!     notice, this list of conditions and the following disclaimer.
+//!   * Redistributions in binary form must reproduce the above copyright
+//!     notice, this list of conditions and the following disclaimer in the
+//!     documentation and/or other materials provided with the distribution.
+//!   * Neither the name of the NumPy Developers nor the names of any
+//!     contributors may be used to endorse or promote products derived from
+//!     this software without specific prior written permission.
+//!
+//!   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+//!   IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+//!   TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+//!   PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER
+//!   OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+//!   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+//!   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+//!   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+//!   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+//!   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+//!   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//!
+//! - PCG64 (XSL-RR 128/64, `Rng::new`/`step`/`next_u64`) is Melissa
+//!   O'Neill's PCG family (pcg-random.org), dual-licensed Apache-2.0 or MIT,
+//!   as NumPy's PCG64 is; used here under the MIT license:
+//!
+//!   Copyright 2014 Melissa O'Neill <oneill@pcg-random.org>
+//!
+//!   Permission is hereby granted, free of charge, to any person obtaining a
+//!   copy of this software and associated documentation files (the
+//!   "Software"), to deal in the Software without restriction, including
+//!   without limitation the rights to use, copy, modify, merge, publish,
+//!   distribute, sublicense, and/or sell copies of the Software, and to
+//!   permit persons to whom the Software is furnished to do so, subject to
+//!   the following conditions:
+//!
+//!   The above copyright notice and this permission notice shall be included
+//!   in all copies or substantial portions of the Software.
+//!
+//!   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+//!   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+//!   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+//!   IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+//!   CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+//!   TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+//!   SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+//! - The ziggurat's tables are rebuilt by Marsaglia and Tsang's recurrence
+//!   ("The Ziggurat Method for Generating Random Variables", JSS 2000).
+
+use std::sync::OnceLock;
+
+/// numpy's `SeedSequence(seed).generate_state(4, uint64)`: the pool of four
+/// 32-bit words mixed from the seed, then drawn out as eight.
+fn seed_state(seed: u32) -> [u64; 4] {
+    const INIT_A: u32 = 0x43b0_d7e5;
+    const MULT_A: u32 = 0x931e_8875;
+    const INIT_B: u32 = 0x8b51_f9dd;
+    const MULT_B: u32 = 0x58f3_8ded;
+    const MIX_L: u32 = 0xca01_f9dd;
+    const MIX_R: u32 = 0x4973_f715;
+    let mut ha = INIT_A;
+    let mut hashmix = |v: u32| {
+        let mut v = v ^ ha;
+        ha = ha.wrapping_mul(MULT_A);
+        v = v.wrapping_mul(ha);
+        v ^ (v >> 16)
+    };
+    let mix = |x: u32, y: u32| {
+        let r = MIX_L.wrapping_mul(x).wrapping_sub(MIX_R.wrapping_mul(y));
+        r ^ (r >> 16)
+    };
+    let mut pool = [0u32; 4];
+    for (i, w) in pool.iter_mut().enumerate() {
+        *w = hashmix(if i == 0 { seed } else { 0 });
+    }
+    for src in 0..4 {
+        for dst in 0..4 {
+            if src != dst {
+                let h = hashmix(pool[src]);
+                pool[dst] = mix(pool[dst], h);
+            }
+        }
+    }
+    let mut hb = INIT_B;
+    let words: Vec<u32> = (0..8)
+        .map(|i| {
+            let mut v = pool[i % 4] ^ hb;
+            hb = hb.wrapping_mul(MULT_B);
+            v = v.wrapping_mul(hb);
+            v ^ (v >> 16)
+        })
+        .collect();
+    core::array::from_fn(|i| words[2 * i] as u64 | (words[2 * i + 1] as u64) << 32)
+}
+
+/// The ziggurat's tables (256 levels, 52-bit), built by Marsaglia and
+/// Tsang's recurrence. numpy's were computed at higher precision; these
+/// agree to about 1e-14, below anything an f32 render can see.
+struct Zig {
+    ki: [u64; 256],
+    wi: [f64; 256],
+    fi: [f64; 256],
+}
+
+const ZIG_R: f64 = 3.654_152_885_361_009;
+/// Each layer's area: `r·e^(−r²/2) + √(π/2)·erfc(r/√2)`.
+const ZIG_V: f64 = 0.004_928_673_233_974_658;
+
+fn zig() -> &'static Zig {
+    static Z: OnceLock<Zig> = OnceLock::new();
+    Z.get_or_init(|| {
+        let m1 = (1u64 << 52) as f64;
+        let mut z = Zig {
+            ki: [0; 256],
+            wi: [0.0; 256],
+            fi: [0.0; 256],
+        };
+        let (mut dn, mut tn) = (ZIG_R, ZIG_R);
+        let q = ZIG_V / (-0.5 * dn * dn).exp();
+        z.ki[0] = ((dn / q) * m1) as u64;
+        z.wi[0] = q / m1;
+        z.wi[255] = dn / m1;
+        z.fi[0] = 1.0;
+        z.fi[255] = (-0.5 * dn * dn).exp();
+        for i in (1..255).rev() {
+            dn = (-2.0 * (ZIG_V / dn + (-0.5 * dn * dn).exp()).ln()).sqrt();
+            z.ki[i + 1] = ((dn / tn) * m1) as u64;
+            tn = dn;
+            z.fi[i] = (-0.5 * dn * dn).exp();
+            z.wi[i] = dn / m1;
+        }
+        z
+    })
+}
+
+/// numpy's `Generator(PCG64(SeedSequence(seed)))`.
+pub struct Rng {
+    state: u128,
+    inc: u128,
+    /// The upper half of the last 64-bit draw, unused (`next_uint32`).
+    half: Option<u32>,
+}
+
+const PCG_MULT: u128 = 0x2360_ed05_1fc6_5da4_4385_df64_9fcc_f645;
+
+impl Rng {
+    pub fn new(seed: u32) -> Self {
+        let v = seed_state(seed);
+        let init = (v[0] as u128) << 64 | v[1] as u128;
+        let seq = (v[2] as u128) << 64 | v[3] as u128;
+        let mut r = Self {
+            state: 0,
+            inc: (seq << 1) | 1,
+            half: None,
+        };
+        r.step();
+        r.state = r.state.wrapping_add(init);
+        r.step();
+        r
+    }
+
+    fn step(&mut self) {
+        self.state = self.state.wrapping_mul(PCG_MULT).wrapping_add(self.inc);
+    }
+
+    /// XSL-RR of the advanced state.
+    pub fn next_u64(&mut self) -> u64 {
+        self.step();
+        let s = self.state;
+        ((s >> 64) as u64 ^ s as u64).rotate_right((s >> 122) as u32)
+    }
+
+    fn next_u32(&mut self) -> u32 {
+        if let Some(h) = self.half.take() {
+            return h;
+        }
+        let v = self.next_u64();
+        self.half = Some((v >> 32) as u32);
+        v as u32
+    }
+
+    /// `random()`: uniform in [0, 1).
+    pub fn uniform(&mut self) -> f64 {
+        (self.next_u64() >> 11) as f64 * (1.0 / 9_007_199_254_740_992.0)
+    }
+
+    /// `standard_normal()`: the ziggurat.
+    pub fn normal(&mut self) -> f64 {
+        let z = zig();
+        loop {
+            let r = self.next_u64();
+            let idx = (r & 0xff) as usize;
+            let r = r >> 8;
+            let rabs = (r >> 1) & 0x000f_ffff_ffff_ffff;
+            let mut x = rabs as f64 * z.wi[idx];
+            if r & 1 == 1 {
+                x = -x;
+            }
+            if rabs < z.ki[idx] {
+                return x;
+            }
+            if idx == 0 {
+                loop {
+                    let xx = -(1.0 / ZIG_R) * (-self.uniform()).ln_1p();
+                    let yy = -(-self.uniform()).ln_1p();
+                    if yy + yy > xx * xx {
+                        return if (rabs >> 8) & 1 == 1 {
+                            -(ZIG_R + xx)
+                        } else {
+                            ZIG_R + xx
+                        };
+                    }
+                }
+            } else if (z.fi[idx - 1] - z.fi[idx]) * self.uniform() + z.fi[idx]
+                < (-0.5 * x * x).exp()
+            {
+                return x;
+            }
+        }
+    }
+
+    /// An integer in `0..=max` by masked rejection (`random_interval`).
+    fn interval(&mut self, max: u64) -> u64 {
+        if max == 0 {
+            return 0;
+        }
+        let mask = u64::MAX >> max.leading_zeros();
+        loop {
+            let v = if max <= u32::MAX as u64 {
+                self.next_u32() as u64
+            } else {
+                self.next_u64()
+            } & mask;
+            if v <= max {
+                return v;
+            }
+        }
+    }
+
+    /// `shuffle()`: Fisher–Yates from the end.
+    pub fn shuffle<T>(&mut self, v: &mut [T]) {
+        for i in (1..v.len()).rev() {
+            let j = self.interval(i as u64) as usize;
+            v.swap(i, j);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_seed_draws_what_numpy_default_rng_draws() {
+        // np.random.default_rng(s).bit_generator.random_raw(3)
+        let mut r = Rng::new(0);
+        let raw = [r.next_u64(), r.next_u64(), r.next_u64()];
+        assert_eq!(
+            raw,
+            [
+                11749869230777074271,
+                4976686463289251617,
+                755828109848996024
+            ]
+        );
+        let mut r = Rng::new(15);
+        assert_eq!(r.next_u64(), 12778859617612771073);
+        // default_rng(1).standard_normal(3)
+        let mut r = Rng::new(1);
+        let n = [r.normal(), r.normal(), r.normal()];
+        // Equal to the tables' precision (about 1e-14).
+        let want = [0.345584192064786, 0.8216181435011584, 0.33043707618338714];
+        assert!(
+            n.iter().zip(want).all(|(a, b)| (a / b - 1.0).abs() < 1e-13),
+            "{n:?}"
+        );
+        // default_rng(1): random(5), then permutation(10) and permutation(7)
+        let mut r = Rng::new(1);
+        (0..5).for_each(|_| _ = r.uniform());
+        let mut p: Vec<u32> = (0..10).collect();
+        r.shuffle(&mut p);
+        assert_eq!(p, [1, 0, 6, 9, 7, 2, 3, 4, 5, 8]);
+        let mut p: Vec<u32> = (0..7).collect();
+        r.shuffle(&mut p);
+        assert_eq!(p, [1, 3, 0, 6, 4, 5, 2]);
+    }
+}

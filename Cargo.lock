@@ -253,6 +253,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "chimera-circuits"
+version = "0.1.0"
+dependencies = [
+ "chimera-core",
+ "chimera-hal",
+ "rustfft",
+]
+
+[[package]]
 name = "chimera-core"
 version = "0.1.0"
 dependencies = [
