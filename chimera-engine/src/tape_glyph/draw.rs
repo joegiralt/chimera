@@ -24,6 +24,9 @@ const FAINT: Ink = Ink::Faint;
 const ACC: Ink = Ink::Accent;
 const SOFT: Ink = Ink::Soft;
 
+/// WALK's runners round a track (the owner's people mockups).
+mod people;
+
 /// `i`'s gauge. `Pose::Still` (MODEL's cell) shows the machine, not its
 /// knobs. A machine reads only what it plays (`reads`), so a param it
 /// ignores leaves the glyph as it was.
@@ -802,7 +805,7 @@ fn step(
             p.line(bx + r(dy * 2.0), by - r(dx * 2.0), x, y, ink);
         }
         // The figures draw no steps of their own (`signal`, `treadmill`).
-        StepStyle::Trail | StepStyle::Signal | StepStyle::Treadmill => {
+        _ => {
             p.rect(x - 1, y - 1, 2, 2, ink);
         }
     }
@@ -839,6 +842,9 @@ fn steps(p: &mut Pix, w: Steps, style: StepStyle) {
     match style {
         StepStyle::Signal => return signal(p, w),
         StepStyle::Treadmill => return treadmill(p, w),
+        StepStyle::Oval => return people::oval(p, w, false),
+        StepStyle::Stadium => return people::oval(p, w, true),
+        StepStyle::Straight => return people::straight(p, w),
         _ => {}
     }
     let (pos, len) = (w.position.unit(), w.length.unit());

@@ -91,20 +91,64 @@ fn write_variants() {
     let dir = std::path::PathBuf::from(std::env::var("GLYPH_OUT").expect("GLYPH_OUT"));
     std::fs::create_dir_all(&dir).unwrap();
     let pal = Palette::THEME;
+    // (slug, DIRECTION, TRON, DRIFT, FADE, POSITION, LENGTH)
     let poses = [
-        ("fwd", Direction::Forward, false, 0.0),
-        ("reverse", Direction::Reverse, false, 0.0),
-        ("loop", Direction::Loop, false, 0.0),
-        ("ping", Direction::Ping, false, 0.0),
-        ("fwd-drift", Direction::Forward, false, 1.0),
-        ("loop-drift", Direction::Loop, false, 1.0),
-        ("fwd-tron", Direction::Forward, true, 0.0),
-        ("loop-tron", Direction::Loop, true, 0.0),
+        ("fwd", Direction::Forward, false, 0.0, 0.3, 0.15, 0.75),
+        ("reverse", Direction::Reverse, false, 0.0, 0.3, 0.15, 0.75),
+        ("loop", Direction::Loop, false, 0.0, 0.3, 0.15, 0.75),
+        ("ping", Direction::Ping, false, 0.0, 0.3, 0.15, 0.75),
+        ("fwd-drift", Direction::Forward, false, 1.0, 0.3, 0.15, 0.75),
+        ("loop-drift", Direction::Loop, false, 1.0, 0.3, 0.15, 0.75),
+        ("fwd-tron", Direction::Forward, true, 0.0, 0.3, 0.15, 0.75),
+        ("loop-tron", Direction::Loop, true, 0.0, 0.3, 0.15, 0.75),
+        ("fwd-fade0", Direction::Forward, false, 0.0, 0.0, 0.15, 0.75),
+        ("fwd-fade1", Direction::Forward, false, 0.0, 0.9, 0.15, 0.75),
+        ("fwd-short", Direction::Forward, false, 0.0, 0.3, 0.15, 0.3),
+        ("fwd-late", Direction::Forward, false, 0.0, 0.3, 0.55, 0.75),
+        ("loop-short", Direction::Loop, false, 0.0, 0.3, 0.7, 0.3),
+        ("ping-tron", Direction::Ping, true, 0.0, 0.3, 0.15, 0.75),
+        (
+            "reverse-tron",
+            Direction::Reverse,
+            true,
+            0.0,
+            0.3,
+            0.15,
+            0.75,
+        ),
+        (
+            "fwd-drift-half",
+            Direction::Forward,
+            false,
+            0.5,
+            0.3,
+            0.15,
+            0.75,
+        ),
+    ];
+    let only = std::env::var("GLYPH_STYLES").unwrap_or_default();
+    let names = [
+        "prints",
+        "treads",
+        "trail",
+        "signal",
+        "treadmill",
+        "oval",
+        "stadium",
+        "straight",
     ];
     for (k, style) in StepStyle::ALL.into_iter().enumerate() {
-        for (slug, d, tron, drift) in poses {
-            let c = canvas(&gauge(d, tron, drift, 0.3), style);
-            let s = 4;
+        if !only.is_empty() && !only.split(',').any(|o| o == names[k]) {
+            continue;
+        }
+        for ((slug, d, tron, drift, fade, pos, len), s) in
+            poses.into_iter().flat_map(|p| [(p, 1), (p, 4)])
+        {
+            let mut set = set(d, tron, drift, fade);
+            set[3] = pos;
+            set[5] = len;
+            let g = TapeGauge::of(&GlyphInputs::from_set(set, Pose::Live));
+            let c = canvas(&g, style);
             let (w, h) = (W * s, H * s);
             let row = (w * 3 + 3) & !3;
             let mut b = Vec::new();
@@ -131,11 +175,7 @@ fn write_variants() {
                 }
                 b.extend(std::iter::repeat_n(0u8, (row - n) as usize));
             }
-            let name = format!(
-                "glyph_{}_{}.bmp",
-                ["prints", "treads", "trail", "signal", "treadmill"][k],
-                slug
-            );
+            let name = format!("glyph_{}_{}_{}x.bmp", names[k], slug, s);
             std::fs::write(dir.join(name), b).unwrap();
         }
     }

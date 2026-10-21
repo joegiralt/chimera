@@ -245,15 +245,27 @@ pub enum StepStyle {
     /// A figure on a treadmill: the belt's arrows run the DIRECTION,
     /// DRIFT wobbles the stride, TRON lights the stop button.
     Treadmill,
+    /// Little runners round an oval seen from above at an angle: the lit
+    /// stretch is the run, the finish tape TRON's end.
+    Oval,
+    /// The oval in depth: big runners on the near straight, small ones on
+    /// the far.
+    Stadium,
+    /// The home straight from the side, the track taking DIRECTION's
+    /// shape: a straight, the oval on LOOP, cones on PING-PONG.
+    Straight,
 }
 
 impl StepStyle {
-    pub const ALL: [StepStyle; 5] = [
+    pub const ALL: [StepStyle; 8] = [
         StepStyle::Prints,
         StepStyle::Treads,
         StepStyle::Trail,
         StepStyle::Signal,
         StepStyle::Treadmill,
+        StepStyle::Oval,
+        StepStyle::Stadium,
+        StepStyle::Straight,
     ];
     pub const DEFAULT: StepStyle = StepStyle::Prints;
 }
