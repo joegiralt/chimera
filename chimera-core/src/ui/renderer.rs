@@ -126,6 +126,8 @@ pub struct Frame<'a> {
     /// An LFO page's playhead: its slot's newest voice on the active Part,
     /// `None` with no voice (ADR 0177).
     pub lfo: Option<crate::ui::lfo_glyph::Head>,
+    /// PIT's corner (ADR 0201).
+    pub tuner: &'a crate::ui::pit_tuner::Shown,
 }
 
 impl Frame<'_> {
@@ -458,7 +460,11 @@ impl Renderer {
                 viz::fx_strip(display, source, fx.place == Place::Post, 128);
                 viz::fx_curve(display, 168, &rows);
             }
-            _ => viz::live_output(display, f.scope),
+            // PIT's corner rides the scope (ADR 0201): empty off PIT.
+            _ => {
+                viz::live_output(display, f.scope);
+                crate::ui::pit_tuner::paint(display, f.tuner);
+            }
         }
     }
 
@@ -641,7 +647,8 @@ impl Renderer {
                     let tp = (fx.ty() as u32) << 1 | fx.place as u32;
                     ([0; 6], region::fold_keys(tp.into(), &bits))
                 }
-                _ => ([0; 6], viz::live_key(f.scope)),
+                // PIT's corner's key is 0 off PIT.
+                _ => ([0; 6], viz::live_key(f.scope) ^ f.tuner.key),
             },
             PageLayout::BigViz => {
                 // The GR meter redraws every 0.25 dB; ABOUT on bank 2's word.

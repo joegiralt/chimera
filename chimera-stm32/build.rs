@@ -97,9 +97,10 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
       .text.*5Rings5wants* .text.*6stream3edf*);
     *(.rodata.*13chimera_board8card_dma*8IrqState* .rodata.*6stream5serve*);
     /* TAPE's UI (ADR 0175, `chimera_core::bank2::UiDoor`): the strip's
-       raster and the SOURCE cell's card work and turns, and SCRUB's jog
-       (`Jog::pass`, ADR 0205). Bank 1 keeps the overview's cache, the
-       cell's state and the wrappers.
+       raster and the SOURCE cell's card work and turns, SCRUB's jog
+       (`Jog::pass`, ADR 0205) and PIT's tuner (ADR 0201,
+       `pit_tuner::calc`). Bank 1 keeps the overview's cache, the cell's
+       and the tuner's state and the wrappers.
        Whole functions only, not their closures: the machine outliner
        shares their small calls with bank 1's code. */
     *(.text.*12chimera_core2ui10tape_strip6raster8strip_in .text.*12chimera_core2ui10tape_strip6raster3tri
@@ -112,9 +113,10 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
       .text.*7project8streamed*10StreamLoad5start .text.*7project8streamed*10StreamLoad5found
       .text.*7project8streamed*10StreamLoad6rehead .text.*7project8streamed9load_kind
       .text.*12chimera_core2ui5onset6detect* .text.*12chimera_core2ui3jog*3Jog4pass*
-      .text.*12chimera_core2ui3jog*3Jog4rate*);
+      .text.*12chimera_core2ui3jog*3Jog4rate* .text.*12chimera_core2ui9pit_tuner4calc*);
     *(.rodata.*12chimera_core2ui10tape_strip6raster* .rodata.*12chimera_core2ui11source_cell4card*
-      .rodata.*12chimera_core2ui5onset6detect* .rodata.*12chimera_core2ui3jog*);
+      .rodata.*12chimera_core2ui5onset6detect* .rodata.*12chimera_core2ui3jog*
+      .rodata.*12chimera_core2ui9pit_tuner4calc*);
 ";
     // The crates the engine can't name keep their own tables, each at a
     // fixed slot after the door (`chimera_engine::bank2`'s `*_DOOR_ADDR`):

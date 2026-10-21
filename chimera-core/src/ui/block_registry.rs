@@ -218,13 +218,14 @@ pub static VA_NOISE: BlockDef = BlockDef {
 // ---------------------------------------------------------------------------
 
 /// PIT: the voice's PITCH and FINE, a steal's STEAL and GLIDE TIME
-/// (#254), and PITCH's SNAP (TAPE Task 12b); F is free.
+/// (#254), and PITCH's SNAP (TAPE Task 12b); F is free. The scope reads
+/// the sounding pitch in its corner (ADR 0201).
 pub static PITCH: BlockDef = BlockDef {
     id: 66,
     name: "Pitch",
     short: "PIT",
     layout: PageLayout::CellGrid,
-    viz: VizType::None,
+    viz: VizType::Tuner,
     params: [
         ParamSlot::param(BlockRef::Pitch, PitchParams::PITCH),
         ParamSlot::param(BlockRef::Pitch, PitchParams::FINE),

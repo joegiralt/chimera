@@ -1732,6 +1732,53 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::E, 1)); // SNAP MUSICAL
         feed(ui, Input::turn(EncoderId::A, 3)); // PITCH +19, focused
     }),
+    // PIT's tuner (ADR 0201): middle C sounding at PITCH +7 and FINE -25.
+    ("algo_pitch_note", |ui| {
+        to_pitch(ui, EngineType::Algo);
+        ui.hear_note(
+            chimera_core::project::PartId::ALL[0],
+            chimera_core::MidiNote::new(60),
+            true,
+        );
+        feed(ui, Input::turn(EncoderId::A, 7));
+        feed(ui, Input::turn(EncoderId::B, -25));
+    }),
+    // A TAPE source with no known root, silent: ROOT ? and the shift, dim.
+    ("tape_pitch_root_unknown", |ui| {
+        load_init(ui, EngineType::Tape);
+        let sound = &mut ui
+            .project_mut()
+            .edit_part(chimera_core::project::PartId::ALL[0])
+            .sound;
+        sound.source = Some(chimera_core::storage::TapeSource {
+            r: chimera_core::storage::SourceRef {
+                crc: 0x5EED,
+                frames: 36_000,
+                rate: 24_000,
+            },
+            tune: None,
+        });
+        sound.params.tape.period = 0.0;
+        to_pitch(ui, EngineType::Tape);
+        ui.hear_note(
+            chimera_core::project::PartId::ALL[0],
+            chimera_core::MidiNote::new(60),
+            false,
+        );
+        feed(ui, Input::turn(EncoderId::A, 7));
+    }),
+    // VA under LARGE: the corner keeps to it.
+    ("large_va_pitch_note", |ui| {
+        load_init(ui, EngineType::Va);
+        to_pitch(ui, EngineType::Va);
+        ui.hear_note(
+            chimera_core::project::PartId::ALL[0],
+            chimera_core::MidiNote::new(57),
+            true,
+        );
+        feed(ui, Input::turn(EncoderId::B, 13));
+        large(ui);
+    }),
     // TAPE's pages (TAPE Task 15): SRC, then DECK and the model page per
     // machine, MODEL turned from PLAY (index 0, MODE LOOP).
     ("tape_src", |ui| load_init(ui, EngineType::Tape)),
@@ -2542,6 +2589,8 @@ pub fn ui_for(name: &str) -> UiState {
     // The LFO page's playhead from a view no audio publishes: parked.
     static QUIET: chimera_core::instrument::LfoView = chimera_core::instrument::LfoView::new();
     ui.hear_lfo(&QUIET);
+    // PIT's tuner from no note, whatever another test plays.
+    ui.hear_note(chimera_core::project::PartId::ALL[0], None, false);
     // Recorded under STACK (ADR 0145); a `row_` case sets ROW itself.
     stack_map(&mut ui);
     setup(&mut ui);

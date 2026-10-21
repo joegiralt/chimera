@@ -198,6 +198,9 @@ pub struct UiDoor {
     onset: fn(&[u8], u32, u32, bool) -> Option<u32>,
     /// SCRUB's reel a UI pass (`ui::jog`, ADR 0205).
     jog: fn(&mut crate::ui::jog::Jog, chimera_hal::Ms, f32) -> f32,
+    /// PIT's tuner (`ui::pit_tuner`, ADR 0201): its pass and its paint.
+    pit: fn(&mut crate::ui::UiState),
+    pit_paint: fn(&mut dyn Paint, &crate::ui::pit_tuner::Shown),
 }
 
 /// A card row's head and how it loads (`SourceCell::kind`).
@@ -207,8 +210,9 @@ type HeadKind = (SourceHead, LoadKind);
 const UI_MAGIC: u32 = 0xB2C0_0001;
 
 impl UiDoor {
-    /// Every entry is `tape_strip::raster`'s or `source_cell::card`'s, the
-    /// modules `bank2.x` links into bank 2.
+    /// Every entry is `tape_strip::raster`'s, `source_cell::card`'s,
+    /// `onset::detect`'s or `pit_tuner::calc`'s, the modules `bank2.x`
+    /// links into bank 2.
     pub const OWN: UiDoor = UiDoor {
         magic: UI_MAGIC,
         overview: Overview::of_in,
@@ -222,6 +226,8 @@ impl UiDoor {
         source_run: SourceCell::run_in,
         onset: crate::ui::onset::onset_in_bank2,
         jog: crate::ui::jog::Jog::pass,
+        pit: crate::ui::pit_tuner::calc::pass_in,
+        pit_paint: crate::ui::pit_tuner::calc::paint_in,
     };
 
     #[inline(always)]
@@ -290,6 +296,16 @@ impl UiDoor {
         p: &mut Project,
     ) {
         (self.source_run)(c, job, s, r, p)
+    }
+
+    #[inline(always)]
+    pub(crate) fn pit(&self, ui: &mut crate::ui::UiState) {
+        (self.pit)(ui)
+    }
+
+    #[inline(always)]
+    pub(crate) fn pit_paint(&self, on: &mut dyn Paint, s: &crate::ui::pit_tuner::Shown) {
+        (self.pit_paint)(on, s)
     }
 
     #[inline(always)]
