@@ -42,12 +42,7 @@ impl DriftRng {
 
     /// A uniform draw in `[−1, 1)`.
     fn draw(&mut self) -> f32 {
-        let mut x = self.0;
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-        self.0 = x;
-        x as i32 as f32 * (1.0 / 2_147_483_648.0)
+        crate::dsp::xorshift32(&mut self.0) as i32 as f32 * (1.0 / 2_147_483_648.0)
     }
 }
 
