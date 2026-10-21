@@ -39,10 +39,14 @@
 //! - **DECAY** is Plaits' decay. Its first 1/64 fades the vactrol in: at 0
 //!   the state is the level each step, and the routes' detail between the
 //!   steps rides on it, so the gain is the routes' own, sample for sample.
-//! - **STRIKE** pings the gate at each note-on (`ProcessPing`), the ping
-//!   rising to the level plus STRIKE × the note's velocity (never down to
-//!   it); the level is × (1 − STRIKE), so at 1 the strike alone drives
-//!   it. A note on a voice at rest starts it shut, as Plaits' from rest.
+//! - **STRIKE** pings the gate at each note-on (`ProcessPing`), rising by
+//!   STRIKE × the note's velocity (never down to it), then falling back
+//!   through DECAY. Over the routes it is an accent on the envelope, as
+//!   LxD's STRIKE: the two sum into the vactrol, saturating at 1, and the
+//!   gate never falls below the envelope. With no route (`Law::Ping`) the
+//!   level is × (1 − STRIKE), so at 1 the strike alone drives it, as
+//!   Plaits' with LEVEL unpatched. A note on a voice at rest starts it
+//!   shut, as Plaits' from rest.
 //!
 //! The cadence runs across the voice's blocks, so a 64-sample block holds
 //! five or six steps. Every loop is bank 2's (`voice::gate::kern`).
@@ -102,10 +106,11 @@ impl Knobs {
         }
     }
 
-    /// STRIKE at 1: the strike alone drives the gate, the level none.
+    /// STRIKE at 1 under `Law::Ping`: the strike alone drives the gate,
+    /// the level none.
     #[inline(always)]
-    pub fn strike_alone(self) -> bool {
-        self.strike.get() >= 1.0
+    pub fn strike_alone(self, law: Law) -> bool {
+        law == Law::Ping && self.strike.get() >= 1.0
     }
 }
 
@@ -141,6 +146,27 @@ pub enum Level<'a> {
     Key(Key),
     /// No route on an engine that shapes itself (ALGO, MODAL): open.
     Open,
+}
+
+/// How a strike meets the level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Law {
+    /// The level holds the gate (the routes): the strike is an accent on
+    /// it, `1 − (1 − level)(1 − strike)`, and the fall ends at the level.
+    Accent,
+    /// Nothing holds it (no route): the level gives way as STRIKE rises,
+    /// × (1 − STRIKE), and the strike adds to it (Plaits' ping).
+    Ping,
+}
+
+impl Level<'_> {
+    #[inline(always)]
+    pub const fn law(&self) -> Law {
+        match self {
+            Level::Routes(..) => Law::Accent,
+            Level::Key(_) | Level::Open => Law::Ping,
+        }
+    }
 }
 
 /// What drives the gate this block.
@@ -438,11 +464,21 @@ impl Lpg {
         let s = lerp(r.s, t).get();
         let hf = Colour::of(a);
         let l = self.input(d, i);
-        let u = (1.0 - s) * compress(l, a);
+        let law = d.level.law();
+        let c = compress(l, a);
+        let u = match law {
+            Law::Accent => c,
+            Law::Ping => (1.0 - s) * c,
+        };
         self.lh.aim(l);
-        self.detail = (1.0 - r.w) * (1.0 - s);
+        // Only the routes read it, and they are never `Law::Ping`.
+        self.detail = 1.0 - r.w;
         let input = if self.rising {
-            let peak = (u + s * d.hit.unit()).min(1.0);
+            let x = s * d.hit.unit();
+            let peak = match law {
+                Law::Accent => u + x * (1.0 - u),
+                Law::Ping => (u + x).min(1.0),
+            };
             if self.vac >= peak {
                 // Struck again above this strike's peak: no drop to it, the
                 // fall takes it from here (Plaits' peak is 1, never under).
