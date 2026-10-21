@@ -23,6 +23,9 @@ pub const DOOR_ADDR: u32 = BANK2_BASE + HEADER_LEN;
 pub const BOARD_DOOR_ADDR: u32 = DOOR_ADDR + 0x100;
 /// The UI's table (`chimera_core::bank2::UiDoor`): TAPE's cells and strip.
 pub const UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x180;
+/// The bench's table (`chimera-stm32`'s `bench::BenchDoor`, ADR 0194): its
+/// run, in a bench build only.
+pub const BENCH_DOOR_ADDR: u32 = DOOR_ADDR + 0x200;
 
 /// A fixed slot after the door and the type `bank2.x` links there: a crate
 /// the engine can't name declares its table's slot once, beside the

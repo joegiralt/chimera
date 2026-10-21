@@ -73,13 +73,9 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
 
     // The reverb's engines (ADR 0142): `Reverb::process`, the door's entry,
     // its TYPEs' modules and `run_loop`'s monomorphs, code and rodata (their
-    // switch tables follow their names). Only with `bank2`: without it
-    // `Reverb::play` calls `process` in bank 1 (the desktop, the host
-    // tests, bench-routing and bench-memory). TAPE's
-    // machine glyphs' raster too (ADR 0173: `tape_glyph::draw`, the door's
-    // `render`), which `paint` calls in bank 1 without it.
-    let reverb = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
-        "    *(.text.*6Reverb7process* .text.*3rev4ramp .text.*3rev4room* .text.*3rev5bloom* .text.*3rev5burst*
+    // switch tables follow their names). TAPE's machine glyphs'
+    // raster too (ADR 0173: `tape_glyph::draw`, the door's `render`).
+    let reverb = "    *(.text.*6Reverb7process* .text.*3rev4ramp .text.*3rev4room* .text.*3rev5bloom* .text.*3rev5burst*
       .text.*3rev11loop_engine* .text.*3rev8run_loop*);
     *(.rodata.*6Reverb7process* .rodata.*3rev4ramp .rodata.*3rev4room* .rodata.*3rev5bloom* .rodata.*3rev5burst*
       .rodata.*3rev11loop_engine* .rodata.*3rev8run_loop*);
@@ -117,78 +113,56 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
       .text.*12chimera_core2ui5onset6detect*);
     *(.rodata.*12chimera_core2ui10tape_strip6raster* .rodata.*12chimera_core2ui11source_cell4card*
       .rodata.*12chimera_core2ui5onset6detect*);
-"
-    } else {
-        ""
-    };
+";
     // The crates the engine can't name keep their own tables, each at a
     // fixed slot after the door (`chimera_engine::bank2`'s `*_DOOR_ADDR`):
     // the board's (the card interrupt), then the UI's.
-    let (slots, asserts) = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
-        (
-            "    . = __bank2_door + 0x100; __bank2_board_door = .;
+    let (slots, asserts) = (
+        "    . = __bank2_door + 0x100; __bank2_board_door = .;
     KEEP(*(.bank2.door.board));
     . = __bank2_door + 0x180; __bank2_ui_door = .;
     KEEP(*(.bank2.door.ui));
 ",
-            "ASSERT(__bank2_board_door == 0x08100200, \"the board's table at its slot\");
+        "ASSERT(__bank2_board_door == 0x08100200, \"the board's table at its slot\");
 ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
-        )
-    } else {
-        ("", "")
-    };
+    );
     // The VA's MOD oscillators (ADR 0163): `va::osc::door`, every MOD
-    // render's entry and its runs' instances, and LOOPFM's render. Only with `bank2`.
-    let va = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
-        "    *(.text.*3osc4door* .rodata.*3osc4door* .text.*4lbfm11render_loop* .rodata.*4lbfm11render_loop*
+    // render's entry and its runs' instances, and LOOPFM's render.
+    let va = "    *(.text.*3osc4door* .rodata.*3osc4door* .text.*4lbfm11render_loop* .rodata.*4lbfm11render_loop*
       .text.*8VaEngine13render_loopfm* .rodata.*8VaEngine13render_loopfm*);
-"
-    } else {
-        ""
-    };
+";
     // The LFO page's glyphs and scope curve (ADR 0177): `lfo_glyph::draw`,
-    // the door's `render` and `curve`. Only with `bank2`: without it
-    // `lfo_glyph::paint` and `curve` call them in bank 1.
-    let lfo = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
+    // the door's `render` and `curve`.
+    let lfo =
         "    *(.text.*14chimera_engine9lfo_glyph4draw* .rodata.*14chimera_engine9lfo_glyph4draw*);
-"
-    } else {
-        ""
-    };
+";
     // FLT › FX's curve rows and the curves they trace: `voice_fx::look`,
     // `soft::curve` and `fold::curve`. Text is `look::render` alone: `trace`
-    // stays in bank 1 with its caller. Only with `bank2`: without it
-    // `look::trace` is not drawn (the bench sets).
-    let look = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
-        "    *(.text.*8voice_fx4look6render* .rodata.*8voice_fx4look* .text.*8voice_fx4soft5curve* .text.*8voice_fx4fold5curve*);
-"
-    } else {
-        ""
-    };
+    // stays in bank 1 with its caller.
+    let look = "    *(.text.*8voice_fx4look6render* .rodata.*8voice_fx4look* .text.*8voice_fx4soft5curve* .text.*8voice_fx4fold5curve*);
+";
     // FUZZ's kernel (ADR 0157): `voice_fx::fuzz`, text and rodata (its law
-    // table). Only with `bank2`: without it `Fuzz::play` calls `run` in bank 1.
-    let fuzz = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
-        "    *(.text.*8voice_fx4fuzz* .rodata.*8voice_fx4fuzz*);
-"
-    } else {
-        ""
-    };
+    // table).
+    let fuzz = "    *(.text.*8voice_fx4fuzz* .rodata.*8voice_fx4fuzz*);
+";
     // The filters' FB loops (ADR 0190): each type's `fed` module, text only
-    // (`filter::fed`). Only with `bank2`: without it they run in bank 1.
-    let fed = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
-        "    *(.text.*6filter*3fed*);
-"
-    } else {
-        ""
-    };
+    // (`filter::fed`).
+    let fed = "    *(.text.*6filter*3fed*);
+";
     // SEM's kernel (ADR 0192): `filter::sem::kern`, every loop of it, text
-    // and rodata. Only with `bank2`: without it `Sem::process` calls it in
-    // bank 1.
-    let sem = if env::var_os("CARGO_FEATURE_BANK2").is_some() {
-        "    *(.text.*6filter3sem4kern* .rodata.*6filter3sem4kern*);
-"
+    // and rodata.
+    let sem = "    *(.text.*6filter3sem4kern* .rodata.*6filter3sem4kern*);
+";
+    // The bench (ADR 0194): `chimera_stm32::bench`, text and rodata, and
+    // its table at the slot after the UI's. A bench build only.
+    let (bench, bench_slot, bench_assert) = if env::var_os("CARGO_FEATURE_BENCH").is_some() {
+        (
+            "    *(.text.*13chimera_stm325bench* .rodata.*13chimera_stm325bench*);\n",
+            "    . = __bank2_door + 0x200; __bank2_bench_door = .;\n    KEEP(*(.bank2.door.bench));\n",
+            "ASSERT(__bank2_bench_door == 0x08100300, \"the bench's table at its slot\");",
+        )
     } else {
-        ""
+        ("", "", "")
     };
     fs::write(
         out_dir.join("bank2.x"),
@@ -196,14 +170,15 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
 /* Bank 2's image (ADR 0137): the 256-byte header, the door table after it,
    then what the door reaches. Inserted before .text, and read before
    link.x so its statements match first: cortex-m-rt's *(.text .text.*)
-   never takes a section named here. Without `bank2` it is empty and the
-   Justfile makes no .bk2. */
+   never takes a section named here. Every firmware build has
+   it (ADR 0194). */
 SECTIONS {
   .bank2 : ALIGN(32) {
     KEEP(*(.bank2.header));
     . = ALIGN(32); __bank2_door = .;
     KEEP(*(.bank2.door));
     /* SLOTS */
+    /* BENCH SLOT */
     *(.bank2.text .bank2.text.*);
     *(.bank2.rodata .bank2.rodata.*);
     /* TAPE's deck (`tape_engine::proxy`), by v0-mangled path: its own
@@ -234,6 +209,7 @@ SECTIONS {
     /* FUZZ */
     /* FED */
     /* SEM */
+    /* BENCH */
     . = ALIGN(32); __bank2_end = .;
   } > BANK2
 } INSERT BEFORE .text;
@@ -241,6 +217,7 @@ ASSERT(ADDR(.bank2) == 0x08100000, "bank 2 starts at 0x08100000");
 ASSERT(__bank2_end <= 0x08180000, "bank 2 stays clear of bootloader 1.09's slots at 0x08180000");
 ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door follows the 256-byte header");
 /* ASSERTS */
+/* BENCH ASSERT */
 "#
         .replace("    /* REVERB */\n", reverb)
         .replace("    /* SLOTS */\n", slots)
@@ -250,7 +227,10 @@ ASSERT(__bank2_end == ADDR(.bank2) || __bank2_door == 0x08100100, "the door foll
         .replace("    /* LOOK */\n", look)
         .replace("    /* FUZZ */\n", fuzz)
         .replace("    /* FED */\n", fed)
-        .replace("    /* SEM */\n", sem),
+        .replace("    /* SEM */\n", sem)
+        .replace("    /* BENCH */\n", bench)
+        .replace("    /* BENCH SLOT */\n", bench_slot)
+        .replace("/* BENCH ASSERT */", bench_assert),
     )
     .unwrap();
 

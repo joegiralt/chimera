@@ -4,8 +4,8 @@ use core::fmt::{self, Write};
 
 /// Bank 1's state of the door, for the board.
 pub use chimera_engine::bank2::{
-    BOARD_DOOR_ADDR, Checked, DOOR_CELL, DOOR_MAGIC, DoorSlot, Judged, PROBE_ADDS, TABLE_LEN,
-    UI_DOOR_ADDR,
+    BENCH_DOOR_ADDR, BOARD_DOOR_ADDR, Checked, DOOR_CELL, DOOR_MAGIC, DoorSlot, Judged, PROBE_ADDS,
+    TABLE_LEN, UI_DOOR_ADDR,
 };
 use chimera_hal::store::Store;
 use chimera_image::{FlashFail, Verdict};
